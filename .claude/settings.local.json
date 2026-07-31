@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -n '^#\\\\{1,2\\\\} ' HANDOFF.md)",
+      "Bash(make)"
+    ]
+  }
+}

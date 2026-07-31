@@ -1,0 +1,12 @@
+build/kernel/arch/x86/power.o: kernel/arch/x86/power.c \
+ kernel/include/kernel.h kernel/include/vga.h kernel/include/kernel.h \
+ kernel/include/sched.h kernel/include/paging.h kernel/include/idt.h \
+ kernel/include/fat12.h kernel/include/power.h
+kernel/include/kernel.h:
+kernel/include/vga.h:
+kernel/include/kernel.h:
+kernel/include/sched.h:
+kernel/include/paging.h:
+kernel/include/idt.h:
+kernel/include/fat12.h:
+kernel/include/power.h:
