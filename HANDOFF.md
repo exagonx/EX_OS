@@ -2,6 +2,218 @@
 
 ---
 
+# SESSIONE 2026-07-31 (n+5) — Troncamento a una dimensione qualunque
+
+Kernel a **0.138** → **0.139**. `ext2_truncate()` accetta qualunque
+dimensione, in su e in giù. Nuovo comando **`/bin/trunc`** e nuova syscall
+**`SYS_TRUNCATE` (92)**.
+
+```
+trunc dati.bin 4096
+trunc dati.bin 512K
+trunc dati.bin 2M
+```
+
+## Il caso che si dimentica: l'indiretto a cavallo del taglio
+
+Un blocco di puntatori ha **tre** destini, non due:
+
+| dove sta | cosa fare |
+|---|---|
+| interamente oltre il taglio | libera il sottoalbero **e** il blocco di puntatori |
+| interamente prima | non toccare niente |
+| **a cavallo** | scendi dentro, pota solo le voci oltre il taglio, e il blocco di puntatori **sopravvive** |
+
+Il terzo è quello che si salta. Liberare un indiretto perché "il
+troncamento lo tocca" significa buttare via i puntatori ai blocchi che
+**restano**: il file conserva la sua dimensione e perde i dati in mezzo, e
+i blocchi orfani vengono riassegnati ad altri file.
+
+`pota_indiretto()` ritorna 1 solo se il blocco di puntatori è rimasto
+davvero **vuoto** — è il chiamante a liberarlo, non lui.
+
+## Allungare non alloca
+
+Portare un file da 1 KB a 2 MB non consuma 2 MB: lo spazio in mezzo
+diventa un **buco**. `mappa_blocco()` ritorna 0 e `ext2_read()` consegna
+zeri; i blocchi si materializzano solo quando ci si scrive.
+
+Verificato: un file da 2 MB creato così ha `Blockcount: 2`, cioè **un solo
+blocco da 1024 byte**.
+
+## La coda dell'ultimo blocco va azzerata
+
+Accorciando, i byte fra la nuova dimensione e la fine del blocco che resta
+sono oltre `i_size` e nessuno li legge — **finché il file non viene
+riallungato**, e allora ricomparirebbero come contenuto. Un file troncato
+e poi riesteso deve dare zeri, non i propri dati vecchi.
+
+Verificato: un file portato a 100 byte e poi a 2 MB ha i primi 100 byte
+originali e **tutto il resto a zero**.
+
+## L'arrotondamento è in su
+
+`tenere = ceil(nuova_dim / dim_blocco)`. Con `nuova_dim = 1500` e blocchi
+da 1024 servono **due** blocchi, perché il secondo contiene i byte da 1024
+a 1499. Arrotondare in giù libererebbe un blocco ancora dentro il file.
+
+## `SYS_TRUNCATE` e `/bin/trunc`
+
+Il troncamento parziale non aveva un chiamante — `O_TRUNC` va solo a zero —
+e codice non raggiungibile in uno scrittore di filesystem è codice non
+provato. Da qui la syscall (numero 92, lo stesso di Linux) e il comando.
+
+`vfs_truncate()` rifiuta le directory con EISDIR: le loro dimensioni le
+decide il driver aggiungendo o togliendo voci, e tagliarne una a metà
+renderebbe irraggiungibili i file che contiene senza cancellarli. Sul
+floppy risponde **ENOSYS**: `fat12.c` non ha un troncamento e non gliene
+si aggiunge uno per l'occasione — è il driver del volume di avvio, la
+strada collaudata che non si tocca senza una ragione forte.
+
+`trunc` distingue "argomento non numerico" da "zero": senza,
+`trunc file pippo` svuoterebbe il file invece di dire che non ha capito.
+
+## Verifica
+
+Tutte con `e2fsck -fn`, **esito 0**.
+
+- File da 614400 byte (doppio indiretto) troncato a 307200: restano 300
+  blocchi, cioè 12 diretti + 256 dell'indiretto semplice + 32 nel doppio
+  → **il doppio indiretto è potato parzialmente**, che è il caso difficile.
+  I 307200 byte tenuti sono identici all'originale.
+- File portato a 100 byte e poi a 2 MB: primi 100 byte intatti, buco tutto
+  a zero, `Blockcount: 2`.
+- **Sull'altra disposizione**: volume `mke2fs -b 4096 -I 256`, file da
+  716800 byte troncato a 200000 — 49 blocchi tenuti, quindi indiretto
+  semplice potato parzialmente. Contenuto identico, e2fsck 0.
+- Troncamenti a 0 e a un multiplo esatto del blocco: nessuna anomalia.
+
+Nota metodologica: due confronti sono risultati falliti a un primo giro, e
+non era un difetto del troncamento — il file di riferimento era
+`build/kernel.bin`, ricompilato più volte da quando era stato copiato nel
+volume. Le verifiche buone usano un contenuto deterministico generato per
+l'occasione, non un artefatto di build che cambia sotto.
+
+---
+
+# SESSIONE 2026-07-31 (n+4) — Scrittura ext2
+
+Kernel a **0.137** → **0.138**. Su un ext2 si scrive: `mkdir`, `cp`,
+`delete`, `rmdir`, e i volumi restano puliti per `e2fsck`.
+
+## La decisione che ha reso possibile il resto: cinque buffer, non uno
+
+Era già un difetto in lettura — c'era una toppa in `ext2_readdir` che
+rileggeva il blocco della directory dopo ogni `leggi_inode`, perché
+condividevano lo stesso buffer. Ora ce n'è uno per **genere** di blocco:
+`b_dati`, `b_ind`, `b_ino`, `b_bmp`, `b_desc`.
+
+In lettura quel difetto dava nomi inventati. **In scrittura la stessa
+confusione fa scrivere una voce di directory dentro una tabella di
+inode**, cioè corrompe il volume in un punto che non c'entra niente con
+l'operazione richiesta. Il costo sono 20 KB di BSS; il beneficio è che chi
+legge il codice vede dal **nome** quale contenuto sta guardando, e nessuna
+funzione può pestare i piedi a un'altra.
+
+La toppa in `readdir` è sparita: non serve più.
+
+## I tre posti che devono restare d'accordo
+
+Ogni allocazione e ogni liberazione tocca:
+
+1. il bit nella bitmap del gruppo;
+2. il contatore dei liberi nel **descrittore** di quel gruppo;
+3. il contatore dei liberi nel **superblocco**.
+
+Se uno resta indietro il volume non è rotto — i dati ci sono — ma
+l'allocatore comincia a mentire: un contatore più alto del vero fa credere
+che ci sia spazio che non c'è. Non esiste una scorciatoia che ne tocchi
+solo uno.
+
+Quando il descrittore dice "ci sono liberi" e la bitmap dice di no, si
+crede alla **bitmap**: è la verità, il contatore è un riassunto. Il gruppo
+viene saltato con un WARN invece di consegnare un blocco già occupato.
+
+## Un blocco appena allocato si azzera sempre
+
+Contiene i byte di chi lo usava prima. Consegnarlo com'è significa che il
+contenuto di un file cancellato ricompare dentro un file nuovo — e usato
+come blocco di **puntatori** quei byte sarebbero indirizzi verso mezzo
+volume.
+
+## L'errore che ha trovato e2fsck: `i_dtime` non può valere 1
+
+Su un inode **liberato** ext2 riusa `i_dtime` come puntatore al prossimo
+elemento della catena degli orfani, cioè come **numero di inode**. Ne
+discende una regola che la specifica non enuncia da nessuna parte:
+
+> `i_dtime` di un inode liberato deve essere `>= s_inodes_count`.
+
+Con `i_dtime = 1` — il valore più innocuo del mondo — ogni file cancellato
+produceva `Inode NN was part of the orphaned inode list`, ed e2fsck usciva
+con 4. EX-OS non ha un orologio letto dal kernel, quindi si usa una data
+fissa e dichiaratamente convenzionale (`0x40000000`, gennaio 2004) con una
+guardia che alza il valore se un volume avesse davvero più inode di così.
+La guardia rende esplicito l'invariante invece di affidarlo al fatto che
+nessuno formatterà mai un miliardo di inode.
+
+## Lo spazio libero di una directory è nascosto dentro i `rec_len`
+
+Una directory ext2 non ha una lista di buchi: la lunghezza dichiarata di
+una voce **non è** quella occupata. L'ultima voce di ogni blocco si allunga
+fino in fondo, e una voce cancellata viene assorbita da quella che la
+precede.
+
+Aggiungere una voce significa quindi cercare un `rec_len` più lungo del
+necessario e **spezzarlo**, non cercare un buco. Cancellarne una significa
+allungare il `rec_len` della precedente — o azzerare l'inode, se è la prima
+del blocco.
+
+`i_size` di una directory è **sempre** un multiplo esatto della dimensione
+del blocco, mai la somma delle voci.
+
+## Cosa NON c'è, e perché
+
+`ext2_truncate()` gestisce **solo** il troncamento a zero, cioè `O_TRUNC`.
+Troncare a una dimensione qualunque significa liberare la coda della catena
+lasciando intatta la testa, indiretti parziali compresi: è l'operazione più
+facile da sbagliare del driver, e sbagliarla libera blocchi che il file usa
+ancora. Finché non serve davvero, non c'è.
+
+Non c'è cache in scrittura: ogni operazione arriva al disco prima di
+ritornare. `ext2_sync()` esiste per completare l'interfaccia — un VFS che
+deve sapere quali filesystem hanno un sync e quali no è un VFS che tira a
+indovinare.
+
+⚠️ **Niente giornale.** ext2 non ne ha e questo driver non ne inventa uno:
+fra la scrittura della bitmap e quella del superblocco c'è una finestra in
+cui un'interruzione lascia i contatori indietro. È la stessa finestra di
+ext2 su Linux e la risposta è la stessa, e2fsck. Ciò che **non** può
+succedere è che un blocco risulti libero mentre è in uso: la bitmap si
+scrive **prima** che il blocco venga consegnato.
+
+## Verifica
+
+Tutte con `e2fsck -fn`, **esito 0**.
+
+- Volume creato da EX-OS (120 MB, blocchi da 1024): due livelli di
+  directory, due file, cancellazione di file e directory, poi un file
+  nuovo scritto **sui blocchi riciclati**. Contenuti estratti con
+  `debugfs` e confrontati con `cmp`: identici.
+- File da **614400 byte** — oltre i 274 KB coperti dall'indiretto
+  semplice, quindi con **doppio indiretto** — copiato da EX-OS *dentro*
+  l'ext2: letto e riscritto, identico all'originale.
+- `rmdir` su directory non vuota: rifiutata con ENOTEMPTY.
+- Montaggio con `-r`: `mkdir` respinta con EROFS.
+
+**La prova che conta**: scrittura su un volume di `mke2fs -b 4096 -I 256`
+— blocchi da 4096, `s_first_data_block = 0`, inode da 256, cioè nessuna
+delle tre cose che il nostro formattatore produce. Creata una directory,
+scritti due file, cancellato un file preesistente: e2fsck esito 0 e il
+file da 143656 byte identico.
+
+---
+
 # SESSIONE 2026-07-31 (n+3) — ext2
 
 Kernel a **0.136** → **0.137**. EX-OS **crea** un ext2 e lo **legge**.

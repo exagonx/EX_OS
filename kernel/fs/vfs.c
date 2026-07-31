@@ -390,13 +390,6 @@ int vfs_mount(const char *dev, const char *punto, int sola_lettura)
         mnt = ext2_mount(blkdev);
         if (mnt < 0) return ERR(EIO);
 
-        /* ext2 si monta SEMPRE in sola lettura, qualunque cosa abbia
-         * chiesto il chiamante: il driver non sa scrivere. Imporlo qui e
-         * non fidarsi del flag e' cio' che fa fallire una `mkdir` con
-         * EROFS — che l'utente capisce — invece di lasciarla arrivare a un
-         * driver che non ha la funzione e fallisce con un errore generico
-         * a tre livelli di distanza. */
-        sola_lettura = 1;
         g_mnt[slot].tipo = VFS_FS_EXT2;
     } else {
         mnt = fat_mount(blkdev);
@@ -419,7 +412,8 @@ int vfs_mount(const char *dev, const char *punto, int sola_lettura)
     v_copia(g_mnt[slot].dev, dev, BLK_NOME_MAX);
 
     if (g_mnt[slot].tipo == VFS_FS_EXT2)
-        klog(LOG_INFO, "VFS: montato %s su %s (ext2, sola lettura)", dev, punto);
+        klog(LOG_INFO, "VFS: montato %s su %s (ext2, %s)", dev, punto,
+             g_mnt[slot].sola_lettura ? "sola lettura" : "lettura/scrittura");
     else
         klog(LOG_INFO, "VFS: montato %s su %s (FAT%d, %s)",
              dev, punto, fat_tipo(mnt),
@@ -496,10 +490,18 @@ int vfs_open(const char *abs, uint32_t flags)
     } else if (g_mnt[im].tipo == VFS_FS_EXT2) {
         Ext2DirEntry e;
 
-        /* Nessun O_CREAT e nessun O_TRUNC da gestire: il montaggio e'
-         * forzato in sola lettura, quindi il controllo EROFS in testa a
-         * questa funzione ha gia' respinto ogni flag di scrittura. */
-        if (ext2_stat(g_mnt[im].mnt, interno, &e) != 0) return ERR(ENOENT);
+        if (ext2_stat(g_mnt[im].mnt, interno, &e) != 0) {
+            if (!(flags & O_CREAT)) return ERR(ENOENT);
+            {
+                int r = ext2_create(g_mnt[im].mnt, interno);
+                if (r == -2) return ERR(EEXIST);
+                if (r != 0)  return ERR(EIO);
+            }
+            if (ext2_stat(g_mnt[im].mnt, interno, &e) != 0) return ERR(EIO);
+        } else if (flags & O_TRUNC) {
+            if (ext2_truncate(g_mnt[im].mnt, interno, 0) != 0) return ERR(EIO);
+        }
+
         if (e.is_dir) return ERR(EISDIR);
         g_file[slot].h12 = -1;
     } else {
@@ -556,6 +558,11 @@ int vfs_write(int h, const void *buf, uint32_t size, uint32_t offset)
 
     if (g_mnt[im].tipo == VFS_FS_FAT12FD)
         return fat12_write(g_file[h].h12, buf, size);
+
+    if (g_mnt[im].tipo == VFS_FS_EXT2) {
+        int n = ext2_write(g_mnt[im].mnt, g_file[h].interno, buf, size, offset);
+        return (n < 0) ? ERR(EIO) : n;
+    }
 
     {
         int n = fat_write(g_mnt[im].mnt, g_file[h].interno, buf, size, offset);
@@ -752,6 +759,23 @@ static int modifica(const char *abs, int quale)
         return fat12_delete(interno);
     }
 
+    /* ext2 usa la stessa convenzione di ritorni di fat.c — -2 per il caso
+     * che il chiamante deve distinguere — proprio perche' questo blocco
+     * possa essere identico invece che quasi identico. */
+    if (g_mnt[im].tipo == VFS_FS_EXT2) {
+        int r;
+        if (quale == 0) {
+            r = ext2_mkdir(g_mnt[im].mnt, interno);
+            if (r == -2) return ERR(EEXIST);
+        } else if (quale == 1) {
+            r = ext2_rmdir(g_mnt[im].mnt, interno);
+            if (r == -2) return ERR(ENOTEMPTY);
+        } else {
+            r = ext2_unlink(g_mnt[im].mnt, interno);
+        }
+        return (r != 0) ? ERR(EIO) : 0;
+    }
+
     /* fat.c distingue due casi con -2, e il chiamante deve poterli
      * distinguere anche lui: "esiste gia'" e "directory non vuota" sono
      * cose che l'utente puo' correggere, "errore" no. */
@@ -774,6 +798,40 @@ int vfs_mkdir (const char *abs) { return modifica(abs, 0); }
 int vfs_rmdir (const char *abs) { return modifica(abs, 1); }
 int vfs_unlink(const char *abs) { return modifica(abs, 2); }
 
+int vfs_truncate(const char *abs, uint32_t nuova_dim)
+{
+    char    interno[VFS_PATH_MAX];
+    int     im;
+    VfsStat st;
+
+    if (abs == NULL) return ERR(EINVAL);
+
+    im = instrada(abs, interno, sizeof(interno));
+    if (im < 0) return ERR(ENOENT);
+    if (g_mnt[im].sola_lettura) return ERR(EROFS);
+    if (e_radice(interno))      return ERR(EISDIR);
+
+    /* Una directory non si tronca: le sue dimensioni le decide il driver
+     * aggiungendo o togliendo voci, e tagliarla a meta' renderebbe
+     * irraggiungibili i file che ci stanno dentro senza cancellarli. */
+    if (vfs_stat(abs, &st) != 0) return ERR(ENOENT);
+    if (st.is_dir)               return ERR(EISDIR);
+
+    if (g_mnt[im].tipo == VFS_FS_FAT12FD) {
+        /* fat12.c non ha un troncamento, e non gliene si aggiunge uno per
+         * questa occasione: e' il driver del floppy di avvio, la strada
+         * collaudata che non si tocca senza una ragione forte. */
+        return ERR(ENOSYS);
+    }
+
+    if (g_mnt[im].tipo == VFS_FS_EXT2)
+        return (ext2_truncate(g_mnt[im].mnt, interno, nuova_dim) != 0)
+             ? ERR(EIO) : 0;
+
+    return (fat_truncate(g_mnt[im].mnt, interno, nuova_dim) != 0)
+         ? ERR(EIO) : 0;
+}
+
 void vfs_sync(void)
 {
     int i;
@@ -784,6 +842,8 @@ void vfs_sync(void)
      * alcuni lascerebbe un volume coerente e un altro no, senza che
      * l'utente possa sapere quale. */
     for (i = 0; i < VFS_MAX_MOUNT; i++) {
-        if (g_mnt[i].usato && g_mnt[i].tipo == VFS_FS_FAT) fat_sync(g_mnt[i].mnt);
+        if (!g_mnt[i].usato) continue;
+        if (g_mnt[i].tipo == VFS_FS_FAT)  fat_sync(g_mnt[i].mnt);
+        if (g_mnt[i].tipo == VFS_FS_EXT2) ext2_sync(g_mnt[i].mnt);
     }
 }

@@ -63,6 +63,7 @@ typedef int             ssize_t;
 #define SYS_PARTWRITE   195
 #define SYS_BLKREAD     196
 #define SYS_BLKWRITE    197
+#define SYS_TRUNCATE     92
 #define SYS_CHDIR       12
 #define SYS_READDIR     141
 #define SYS_IPC_SEND     220
@@ -807,6 +808,11 @@ int blkread(const char *dev, unsigned int lba, unsigned int n, void *buf)
 int blkwrite(const char *dev, unsigned int lba, unsigned int n, const void *buf)
 {
     return (int)_syscall4(SYS_BLKWRITE, (uint32_t)dev, lba, n, (uint32_t)buf);
+}
+
+int truncate(const char *path, unsigned int size)
+{
+    return (int)_syscall2(SYS_TRUNCATE, (uint32_t)path, size);
 }
 
 /* =============================================================================

@@ -348,6 +348,21 @@ int partwrite(unsigned int disco, PartTabella *tab);
 int blkread (const char *dev, unsigned int lba, unsigned int n, void *buf);
 int blkwrite(const char *dev, unsigned int lba, unsigned int n, const void *buf);
 
+/* =============================================================================
+ * Cambia la dimensione di un file
+ *
+ * ALLUNGARE non alloca niente: lo spazio in mezzo diventa un BUCO, che si
+ * legge come zeri e non occupa spazio sul volume finche' non ci si scrive.
+ * E' il modo di creare un file grande senza consumare il disco.
+ *
+ * ACCORCIARE libera i blocchi in coda. I byte oltre la nuova dimensione
+ * sono persi: riallungando si ottengono zeri, non i dati di prima.
+ *
+ * -38 (ENOSYS) sul floppy: fat12.c non ha un troncamento. -30 (EROFS) su
+ * un montaggio in sola lettura, -21 (EISDIR) su una directory.
+ * ============================================================================= */
+int truncate(const char *path, unsigned int size);
+
 
 
 

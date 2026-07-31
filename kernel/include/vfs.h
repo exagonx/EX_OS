@@ -93,6 +93,12 @@ int  vfs_readdir(const char *abs, VfsDirEntry *out, uint32_t max,
 int  vfs_mkdir  (const char *abs);
 int  vfs_rmdir  (const char *abs);
 int  vfs_unlink (const char *abs);
+
+/* Cambia la dimensione di un file. Allungare crea un buco che si legge
+ * come zeri; accorciare libera i blocchi in coda. Il floppy (fat12.c) non
+ * la sa fare e risponde ENOSYS: e' l'unico driver senza troncamento, e
+ * dirlo e' meglio che fingere di aver fatto qualcosa. */
+int  vfs_truncate(const char *abs, uint32_t nuova_dim);
 void vfs_sync   (void);
 
 #endif /* VFS_H */

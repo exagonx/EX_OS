@@ -56,6 +56,7 @@
 #define SYS_PARTWRITE   195    /* riscrive la tabella delle partizioni (vedi PartTabella) */
 #define SYS_BLKREAD     196    /* legge settori da una partizione NON montata */
 #define SYS_BLKWRITE    197    /* scrive settori in una partizione NON montata */
+#define SYS_TRUNCATE     92    /* cambia la dimensione di un file (vedi sys_truncate) */
 #define SYS_REBOOT       88    /* spegne, riavvia o ferma il sistema */
 
 /* Numero totale syscall supportate */
@@ -452,6 +453,7 @@ int32_t sys_bootinstall(InterruptFrame *f);
 int32_t sys_partwrite(InterruptFrame *f);
 int32_t sys_blkread(InterruptFrame *f);
 int32_t sys_blkwrite(InterruptFrame *f);
+int32_t sys_truncate(InterruptFrame *f);
 int32_t sys_reboot(InterruptFrame *f);
 int32_t sys_ipc_send(InterruptFrame *f);
 int32_t sys_ipc_recv(InterruptFrame *f);

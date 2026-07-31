@@ -1926,6 +1926,29 @@ int32_t sys_blkwrite(InterruptFrame *frame)
 }
 
 /* =============================================================================
+ * SYS_TRUNCATE (92) -- Cambia la dimensione di un file
+ *
+ * ebx = percorso*   ecx = nuova dimensione in byte
+ *
+ * Allungare non alloca niente: lo spazio in mezzo diventa un buco che si
+ * legge come zeri. Accorciare libera i blocchi in coda.
+ * ============================================================================= */
+int32_t sys_truncate(InterruptFrame *frame)
+{
+    const char *path = (const char *)frame->ebx;
+    uint32_t    dim  = frame->ecx;
+    char        abs[256];
+    int         r;
+
+    if (!syscall_verify_str(path, 256)) return ERR(EFAULT);
+    if (resolve_path(path, abs, sizeof(abs)) != 0) return ERR(EINVAL);
+
+    r = vfs_truncate(abs, dim);
+    klog(LOG_INFO, "SYSCALL truncate('%s', %u) -> %d", abs, dim, r);
+    return (int32_t)r;
+}
+
+/* =============================================================================
  * SYS_REBOOT (88) -- Spegne, riavvia o ferma il sistema
  *
  * ebx = comando: EXOS_RB_POWEROFF / EXOS_RB_RESTART / EXOS_RB_HALT

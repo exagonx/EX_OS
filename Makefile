@@ -293,6 +293,25 @@ $(MKFS_BIN): $(MKFS_SRC) $(MKFS_EXT2) $(MKFS_HDR) $(MKFS_LD) $(LIBC_SRC) $(LIBC_
 .PHONY: mkfs
 mkfs: dirs $(MKFS_BIN)
 
+# --- Programma utente /bin/trunc ----------------------------------------------
+# Cambia la dimensione di un file (SYS_TRUNCATE). Stesso schema di /bin/ls.
+TRUNC_SRC  := bin/trunc/trunc.c
+TRUNC_BIN  := $(BUILD_BIN)/trunc
+TRUNC_LD   := bin/trunc/trunc.ld
+
+$(TRUNC_BIN): $(TRUNC_SRC) $(TRUNC_LD) $(LIBC_SRC) $(LIBC_START)
+	@echo "=== Compilazione /bin/trunc ==="
+	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -c $(TRUNC_SRC) -o $(BUILD_OBJ)/trunc_main.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                 -o $(BUILD_OBJ)/trunc_libc.o
+	$(CC) -m32 -c $(LIBC_START)                         -o $(BUILD_OBJ)/trunc_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib -T $(TRUNC_LD) \
+	    $(BUILD_OBJ)/trunc_start.o $(BUILD_OBJ)/trunc_main.o $(BUILD_OBJ)/trunc_libc.o -o $@
+	@echo "[OK] trunc compilato: $@"
+
+.PHONY: trunc
+trunc: dirs $(TRUNC_BIN)
+
 .PHONY: stack
 stack: dirs $(STACK_BIN)
 
@@ -519,7 +538,7 @@ $(KBD_DRV_OUT): $(KBD_DRV_SRC) $(KBD_DRV_PROTO) $(KBD_DRV_LD) $(LIBC_SRC) $(LIBC
 kbd_drv: dirs $(KBD_DRV_OUT)
 
 .PHONY: all
-all: dirs stage1 stage2 kernel shell hello ls mem stack disk fdisk mkfs mount_prog cp_prog install_prog textline mkdir_prog rmdir_prog delete_prog libc floppy_drv kbd_drv floppy
+all: dirs stage1 stage2 kernel shell hello ls mem stack disk fdisk mkfs trunc mount_prog cp_prog install_prog textline mkdir_prog rmdir_prog delete_prog libc floppy_drv kbd_drv floppy
 	@echo ""
 	@echo "============================================"
 	@echo " EX-OS build completata!"

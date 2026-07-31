@@ -341,14 +341,39 @@ blocchi da 1024. È scritto **dalla specifica**, non portato da e2fsprogs né da
 driver di Linux: quest'ultimo non è un modulo che legge ext2, è un modulo che
 *traduce* ext2 nel VFS di Linux, e portarlo significherebbe portare quel VFS.
 
-`kernel/fs/ext2.c` lo legge, in **sola lettura**. Non è una fase incompiuta:
-leggere richiede di capire il formato, scrivere richiede di non romperlo mai —
-sono due lavori, e farli insieme significa scoprire gli errori del primo dentro
-i danni del secondo. Un ext2 si monta sempre in sola lettura qualunque cosa si
-chieda, così una `mkdir` fallisce con EROFS invece di arrivare a un driver che
-quella funzione non ce l'ha.
+`kernel/fs/ext2.c` lo legge **e lo scrive**: `mkdir`, `cp`, `delete`, `rmdir`.
+La lettura è stata scritta e verificata per prima, da sola — leggere richiede di
+capire il formato, scrivere richiede di non romperlo mai, e con un lettore già
+provato contro volumi fatti da `mke2fs` ogni errore di scrittura si vede subito
+per quello che è.
 
-Il driver legge anche i volumi fatti da `mke2fs`: la dimensione del blocco
+### /bin/trunc — cambia la dimensione di un file
+
+```
+trunc <file> <byte>     suffissi K e M ammessi
+```
+
+**Allungare non occupa spazio** su ext2: lo spazio in mezzo diventa un *buco*
+che si legge come zeri, e i blocchi si materializzano solo quando ci si scrive.
+Un file portato a 2 MB così occupa un blocco solo. Su FAT il kernel alloca sul
+serio, perché FAT non sa rappresentare un buco.
+
+**Accorciare è distruttivo e non chiede conferma**, per la stessa ragione per
+cui non la chiede `delete` su un nome preciso: chi scrive il nome di un file e
+un numero più piccolo della sua dimensione ha già detto cosa vuole. La conferma
+serve quando il comando fa più di quanto l'utente abbia nominato.
+
+Sul floppy risponde `-38` (ENOSYS): `fat12.c` non ha un troncamento, ed è il
+driver del volume di avvio — la strada collaudata che non si tocca senza una
+ragione forte.
+
+⚠️ ext2 non ha un giornale e questo driver non ne inventa uno: un'interruzione a
+metà di un'operazione può lasciare i contatori dei liberi indietro rispetto alle
+bitmap, ed è quello che serve `e2fsck`. Ciò che **non** può succedere è che un
+blocco risulti libero mentre è già in uso — le bitmap si scrivono sempre prima
+che il blocco venga consegnato.
+
+Il driver legge e scrive anche i volumi fatti da `mke2fs`: la dimensione del blocco
 (1024/2048/4096), `s_first_data_block` (1 o 0 a seconda) e la dimensione
 dell'inode (128 o 256) vengono tutte dal superblocco, mai date per scontate.
 
