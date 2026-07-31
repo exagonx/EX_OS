@@ -93,15 +93,35 @@ _start:
     mov  al, 68
     out  dx, al
 
-    mov  eax, [0x7C00 + 0x1A0 + 16]   ; dimensione esatta del kernel
+    mov  eax, [0x7C00 + 0x1A0 + 10]   ; dimensione esatta del kernel
     mov  [ksiz], eax
-    mov  eax, [0x7C00 + 0x1A0 + 10]   ; LBA assoluto del kernel
-    mov  cx,  [0x7C00 + 0x1A0 + 14]   ; settori
     mov  word [dseg], 0x1000          ; destinazione: 0x10000, come da floppy
+
+    ; --- La mappa del kernel e' una LISTA di intervalli ------------------
+    ; Su ext2 il blocco di puntatori sta in mezzo ai dati, quindi un
+    ; kernel e' spezzato in due o piu' tratti contigui. Vedi il commento
+    ; esteso in bootloader/stage1hd/boothd.asm.
+    ;
+    ; Il contatore e il puntatore stanno in MEMORIA e non in registri:
+    ; DX serve alla lettura (numero di unita' BIOS) e i pochi registri
+    ; liberi a 16 bit finiscono subito.
+    mov  ax, [0x7C00 + 0x1A0 + 14]    ; quanti intervalli
+    mov  [n_ext], ax
+    mov  word [p_ext], 0x7C00 + 0x1A0 + 16
+
+.dnext:
+    cmp  word [n_ext], 0
+    jz   .kdone
+
+    mov  si, [p_ext]
+    mov  eax, [si]                    ; LBA assoluto dell'intervallo
+    mov  cx,  [si + 4]                ; quanti settori
+    add  word [p_ext], 6
+    dec  word [n_ext]
 
 .dload:
     test cx, cx
-    jz   .kdone
+    jz   .dnext                       ; intervallo finito: al prossimo
 
     mov  [dap_lba], eax
     mov  bx, [dseg]
@@ -402,6 +422,12 @@ dap_lba:
     dd   0
     dd   0
 dseg  dw 0x1000
+
+; --- Percorrenza della lista di intervalli del kernel (avvio da disco) ---
+; In memoria e non in registri: DX serve alla lettura BIOS e a 16 bit i
+; registri liberi finiscono subito.
+n_ext dw 0                ; intervalli ancora da leggere
+p_ext dw 0                ; puntatore al prossimo, dentro l'area di patch
 
 kname db 'KERNEL  BIN'
 

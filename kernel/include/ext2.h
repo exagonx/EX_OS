@@ -30,8 +30,8 @@
 #include "kernel.h"
 
 #define EXT2_MAX_MOUNT      2
-#define EXT2_NOME_MAX       60      /* ext2 arriva a 255; qui ci si ferma */
-#define EXT2_PERCORSO_MAX   128
+#define EXT2_NOME_MAX       256     /* 255 caratteri + NUL: il massimo di ext2 */
+#define EXT2_PERCORSO_MAX   320
 
 typedef struct {
     char     nome[EXT2_NOME_MAX];
@@ -96,5 +96,34 @@ int  ext2_write   (int mnt, const char *percorso, const void *buf,
                    uint32_t size, uint32_t offset);
 int  ext2_truncate(int mnt, const char *percorso, uint32_t nuova_dim);
 int  ext2_sync    (int mnt);
+
+/* =============================================================================
+ * La mappa dei settori di un file, per chi non sa leggere un filesystem
+ *
+ * Serve al settore di avvio e a Stage 2: leggono SETTORI, non file, e
+ * l'unica cosa che possono ricevere e' "da qui, per tanti".
+ *
+ * PERCHE' UNA LISTA E NON UN INTERVALLO UNICO, come su FAT. Un file ext2
+ * non e' quasi mai contiguo, e non per frammentazione: il blocco di
+ * PUNTATORI viene allocato in mezzo ai dati, perche' serve prima del
+ * tredicesimo blocco. Un kernel da 147 KB appena copiato su un volume
+ * vergine sta cosi':
+ *
+ *     (0-11):74-85, (IND):86, (12-144):87-219
+ *
+ * cioe' due tratti contigui separati dall'indiretto. Pretendere un
+ * intervallo unico significherebbe rifiutare ogni file oltre i 12 blocchi,
+ * cioe' ogni kernel.
+ *
+ * `lba` e `cnt` sono in SETTORI da 512 byte, relativi al volume. Il totale
+ * e' troncato alla dimensione reale del file: leggere fino alla fine
+ * dell'ultimo blocco tirerebbe in memoria byte di un altro file.
+ *
+ * Ritorna 0, -2 se servirebbero piu' di `max` intervalli, -1 su errore o
+ * se il file e' SPARSO — un buco non e' caricabile da chi legge settori:
+ * non sa che li' devono esserci zeri.
+ * ============================================================================= */
+int  ext2_estensioni(int mnt, const char *percorso, uint32_t *lba,
+                     uint32_t *cnt, uint32_t max, uint32_t *n_out);
 
 #endif /* EXT2_H */

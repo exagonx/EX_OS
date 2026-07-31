@@ -22,7 +22,10 @@
 #define FAT_MAX_MOUNT       4
 #define FAT_MAX_OPEN        16
 #define FAT_NOME_MAX        13      /* "NOME8.EXT" + NUL */
-#define FAT_PERCORSO_MAX    128
+/* Allineato a VFS_PATH_MAX: il VFS passa qui il percorso interno al
+ * volume, e un buffer piu' corto lo troncherebbe silenziosamente. I nomi
+ * FAT restano 8.3 — e' la PROFONDITA' che puo' crescere. */
+#define FAT_PERCORSO_MAX    320
 
 /* Attributi (identici a FAT12 classico) */
 #define FAT_ATTR_RDONLY     0x01

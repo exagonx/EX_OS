@@ -259,15 +259,52 @@ riga in inserimento e riporta al prompt.
 
 ## Inizializzare un disco rigido: /bin/fdisk e /bin/mkfs
 
-Il ciclo completo, da disco vergine a volume montato:
+Il ciclo completo, da disco vergine a sistema avviabile:
 
 ```
 disk                        cosa vede il sistema
-fdisk hd0                   crea le partizioni
-mkfs -t fat32 -L DATI hd0p1 ci scrive dentro un filesystem
+fdisk hd0                   crea le partizioni, marca attiva la prima
+mkfs -t ext2 -L exos hd0p1  ci scrive dentro un filesystem
 mount hd0p1 /disk           montalo
-install /disk               (facoltativo) rendilo avviabile
+install /disk               rendilo avviabile
 ```
+
+Poi si toglie il floppy e si riavvia. Funziona sia su **FAT16/FAT32** sia su
+**ext2**.
+
+### La mappa dei settori, e perché il kernel ne ha una lista
+
+Il settore di avvio non sa leggere alcun filesystem: in 512 byte, tolti BPB e
+firma, non ci sta. Riceve LBA e lunghezza di Stage 2 e del kernel, e legge
+settori. È `install` — che gira *dentro* EX-OS, dove i driver ci sono già — a
+comporre quella mappa.
+
+⚠️ Il prezzo è lo stesso patto di LILO: **ricopiare kernel o Stage 2 obbliga a
+rilanciare `install`.**
+
+Per il kernel la mappa è una **lista** di intervalli, non uno solo. Su ext2 un
+file non è quasi mai contiguo, e non per frammentazione: il blocco di
+*puntatori* viene allocato in mezzo ai dati, perché serve prima del tredicesimo
+blocco. Un kernel da 147 KB appena copiato sta così:
+
+```
+(0-11):74-85, (IND):86, (12-144):87-219
+```
+
+Stage 2 invece resta un intervallo solo: sta in ~1 KB, cioè dentro i 12 blocchi
+diretti, dove nessun indiretto si è ancora infilato — ed è il pezzo che va
+trovato da 512 byte di codice, quindi la sua mappa deve stare in sei byte.
+
+Su FAT la lista ha una voce sola: il formato è lo stesso per i due filesystem,
+così Stage 2 non deve sapere da dove sta caricando.
+
+### I nomi si creano in minuscolo
+
+Il kernel cerca `/bin/sh`, `/boot/kernel.cfg`, `/dev/kbd.drv`. Su FAT il caso
+non conta — il driver mette in maiuscolo sia ciò che scrive sia ciò che cerca —
+ma su **ext2 `BIN` e `bin` sono due directory diverse**, e un sistema installato
+in `BIN` non troverebbe la propria shell. `install` crea tutto in minuscolo,
+nomi dei file compresi.
 
 ### /bin/fdisk — partizionatore MBR
 
@@ -372,6 +409,16 @@ metà di un'operazione può lasciare i contatori dei liberi indietro rispetto al
 bitmap, ed è quello che serve `e2fsck`. Ciò che **non** può succedere è che un
 blocco risulti libero mentre è già in uso — le bitmap si scrivono sempre prima
 che il blocco venga consegnato.
+
+**Nomi lunghi**: fino a 255 caratteri, il massimo di ext2. Non era solo la
+struttura `VfsDirEntry` da allargare — il nome attraversa sei tetti in fila
+(driver, VFS, ABI della syscall, lunghezza dei percorsi, argomenti di `spawn`,
+riga della tastiera) e alzarne uno solo avrebbe spostato il taglio di un passo.
+Un nome troncato non è un nome accorciato: è un nome che non apre niente.
+
+Su FAT i nomi restano 8.3; il campo è largo per il filesystem più generoso.
+Sopra i 511 caratteri una riga di comando non si può digitare, ed è il limite di
+un singolo messaggio IPC fra tastiera e shell.
 
 Il driver legge e scrive anche i volumi fatti da `mke2fs`: la dimensione del blocco
 (1024/2048/4096), `s_first_data_block` (1 o 0 a seconda) e la dimensione

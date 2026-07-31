@@ -32,7 +32,7 @@
 #define VFS_MAX_MOUNT   6
 #define VFS_MAX_OPEN    24
 #define VFS_PUNTO_MAX   24
-#define VFS_PATH_MAX    128
+#define VFS_PATH_MAX    320
 
 #define VFS_FS_FAT12FD  1   /* kernel/fs/fat12.c — il floppy di avvio */
 #define VFS_FS_FAT      2   /* kernel/fs/fat.c   — FAT12/16/32 su blocchi */
@@ -42,7 +42,9 @@
  * 8.3 di FAT, altrimenti aggiungere un filesystem non-FAT costringerebbe
  * a toccarle di nuovo. */
 typedef struct {
-    char     nome[16];
+    /* 256 = il massimo di ext2. Vedi DIRENT_NAME_MAX in syscall.h: un nome
+     * troncato non e' un nome accorciato, e' un nome che non apre niente. */
+    char     nome[256];
     uint32_t dimensione;
     uint8_t  is_dir;
 } VfsDirEntry;

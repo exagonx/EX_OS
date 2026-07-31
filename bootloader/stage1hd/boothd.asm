@@ -167,26 +167,50 @@ msg_stop:     db 'Sistema fermo.', 13, 10, 0
     times 0x1A0 - ($ - $$) db 0
 
 ; =============================================================================
-; AREA DI PATCH — offset 0x1A0, 20 byte. La scrive l'installatore, e la
-; legge anche Stage 2 (che trova questo settore ancora a 0x7C00).
+; AREA DI PATCH — offset 0x1A0. La scrive l'installatore, e la legge anche
+; Stage 2 (che trova questo settore ancora a 0x7C00).
 ;
 ; L'offset e' fisso e dichiarato qui una volta sola: e' un contratto fra
 ; tre pezzi di codice scritti in linguaggi diversi (questo assembly,
-; kernel/boot/bootinst.c e bootloader/stage2/loader.c). Se cambia qui e
+; bootloader/stage2/loader.asm e kernel/boot/bootinst.c). Se cambia qui e
 ; non la', l'unico sintomo e' un sistema che non parte.
+;
+; -----------------------------------------------------------------------
+; PERCHE' IL KERNEL HA UNA LISTA DI INTERVALLI E STAGE 2 NO
+;
+; Su FAT un file contiguo e' un intervallo solo. Su ext2 non lo e' quasi
+; mai, e non per frammentazione: il blocco di PUNTATORI viene allocato in
+; mezzo ai dati, perche' serve prima del tredicesimo blocco. Un kernel da
+; 147 KB appena copiato su un volume vergine sta cosi':
+;
+;     (0-11):74-85, (IND):86, (12-144):87-219
+;
+; cioe' due tratti contigui separati dall'indiretto. Con un intervallo
+; solo non sarebbe caricabile NESSUN kernel da ext2.
+;
+; Stage 2 invece resta un intervallo solo, e non e' una svista: sta in
+; ~1 KB, cioe' dentro i primi 12 blocchi diretti, dove nessun indiretto
+; esiste ancora. E' il pezzo che DEVE essere trovato senza saper leggere
+; niente, quindi la sua mappa deve poter stare in una manciata di byte.
 ; =============================================================================
-magia:   dd 0x44485845     ; 'EXHD' — presente gia' nel binario: e' il segno
-                           ; con cui Stage 2 riconosce di essere stato
-                           ; avviato da disco e non da floppy
-s2_lba:  dd 0              ; LBA ASSOLUTO di Stage 2 sul disco
-s2_cnt:  dw 0              ; quanti settori
-k_lba:   dd 0              ; LBA ASSOLUTO del kernel
-k_cnt:   dw 0              ; quanti settori
-k_size:  dd 0              ; dimensione ESATTA in byte.
-                           ; Serve perche' i settori arrotondano per eccesso:
-                           ; Stage 2 copia il kernel a 0x100000 usando questo
-                           ; numero, e copiarne 511 in piu' significherebbe
-                           ; sporcare cio' che segue l'immagine.
+magia:   dd 0x44485845     ; +0  'EXHD' — presente gia' nel binario: e' il
+                           ;     segno con cui Stage 2 riconosce di essere
+                           ;     stato avviato da disco e non da floppy
+s2_lba:  dd 0              ; +4  LBA ASSOLUTO di Stage 2 sul disco
+s2_cnt:  dw 0              ; +8  quanti settori (un intervallo solo)
+k_size:  dd 0              ; +10 dimensione ESATTA del kernel in byte.
+                           ;     Serve perche' i settori arrotondano per
+                           ;     eccesso: Stage 2 copia a 0x100000 usando
+                           ;     questo numero, e copiarne 511 in piu'
+                           ;     sporcherebbe cio' che segue l'immagine.
+k_next:  dw 0              ; +14 quanti intervalli del kernel seguono
+k_ext:                     ; +16 { dd lba_assoluto; dw settori } x K_MAX_EXT
+K_MAX_EXT equ 12           ;     12 x 6 = 72 byte, fino a 0x1F8.
+                           ;     Bastano per un kernel di qualche MB: gli
+                           ;     intervalli non crescono con la dimensione
+                           ;     ma con il numero di blocchi indiretti
+                           ;     attraversati, cioe' uno ogni 256 blocchi.
+    times K_MAX_EXT db 0, 0, 0, 0, 0, 0
 
     times 510 - ($ - $$) db 0
     dw 0xAA55

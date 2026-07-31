@@ -45,7 +45,7 @@
  * tetto proprio (READDIR_MAX_BATCH), quindi questo numero è solo la
  * dimensione del blocco: la directory viene percorsa a blocchi finché
  * non finisce. */
-#define BLOCCO       32
+#define BLOCCO       LISTDIR_MAX_BATCH
 
 /* Quanti file al massimo si possono cancellare in un colpo solo.
  * La root FAT12 ne contiene al più 224; una sottodirectory può crescere,

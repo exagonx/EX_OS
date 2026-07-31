@@ -77,7 +77,7 @@ typedef int             ssize_t;
 
 /* Voce di directory — deve restare identica a kernel/include/syscall.h
  * (DirEntry) e a lib/include/libc.h: attraversa l'ABI della syscall. */
-#define DIRENT_NAME_MAX 13
+#define DIRENT_NAME_MAX 256
 typedef struct {
     char           name[DIRENT_NAME_MAX];
     unsigned int   size;
@@ -166,6 +166,7 @@ typedef struct {
 typedef struct {
     unsigned int s2_lba, s2_cnt;
     unsigned int k_lba,  k_cnt;
+    unsigned int k_next;
     unsigned int disco;
     unsigned int voce;
 } BootInstallInfo;

@@ -268,7 +268,25 @@ void vfs_init(uint8_t boot_drive)
          * primo disco — il caso normale — coincidono. */
         int idisco = blk_trova("hd0");
         int ipart  = (idisco >= 0) ? partizione_attiva(idisco) : -1;
-        int mnt    = (ipart  >= 0) ? fat_mount(ipart) : -1;
+        int mnt    = -1;
+        int tipo   = 0;
+
+        /* Il filesystem della root si RICONOSCE, non si assume. Prima
+         * c'era solo fat_mount(): avviando da una partizione ext2 quella
+         * chiamata fallisce, e il sistema ripiegava sul floppy — che
+         * durante un avvio da disco non c'e', quindi il sintomo era
+         * "shell non trovata" senza alcun accenno alla causa vera. */
+        if (ipart >= 0) {
+            VolumeInfo vi;
+
+            if (vol_identifica(ipart, &vi) == 0 && vi.tipo == VOL_FS_EXT2) {
+                mnt  = ext2_mount(ipart);
+                tipo = VFS_FS_EXT2;
+            } else {
+                mnt  = fat_mount(ipart);
+                tipo = VFS_FS_FAT;
+            }
+        }
 
         if (mnt >= 0) {
             const BlkDev *d = blk_get(ipart);
@@ -278,13 +296,17 @@ void vfs_init(uint8_t boot_drive)
              * libero, e ripartizionarlo sarebbe permesso. */
             blk_acquisisci(ipart);
 
-            g_mnt[0].tipo   = VFS_FS_FAT;
+            g_mnt[0].tipo   = (uint8_t)tipo;
             g_mnt[0].mnt    = mnt;
             g_mnt[0].blkdev = ipart;
             v_copia(g_mnt[0].dev, d ? d->nome : "hd0", BLK_NOME_MAX);
 
-            klog(LOG_INFO, "VFS: root '/' su %s (FAT%d, avvio da disco 0x%02x)",
-                 g_mnt[0].dev, fat_tipo(mnt), boot_drive);
+            if (tipo == VFS_FS_EXT2)
+                klog(LOG_INFO, "VFS: root '/' su %s (ext2, avvio da disco 0x%02x)",
+                     g_mnt[0].dev, boot_drive);
+            else
+                klog(LOG_INFO, "VFS: root '/' su %s (FAT%d, avvio da disco 0x%02x)",
+                     g_mnt[0].dev, fat_tipo(mnt), boot_drive);
             return;
         }
 

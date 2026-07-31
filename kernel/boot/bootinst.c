@@ -30,11 +30,17 @@
  *      della tabella delle partizioni non vengono mai toccati, tranne il
  *      singolo byte del flag "attiva".
  *   2. del settore di avvio della partizione si riscrive tutto TRANNE i
- *      byte 3..89, che sono il BPB del filesystem gia' presente e vengono
- *      riletti dal disco e rimessi al loro posto.
+ *      byte 3..89 SU FAT, che sono il BPB del filesystem gia' presente e
+ *      vengono riletti dal disco e rimessi al loro posto.
  *
- * Senza la (2), installare l'avvio renderebbe illeggibile il volume che
- * si sta cercando di rendere avviabile.
+ *      Su ext2 quei byte si riscrivono, ed e' la scelta giusta: li' non
+ *      sono metadati. I primi 1024 byte di un volume ext2 sono l'area
+ *      RISERVATA al record di avvio — per questo s_first_data_block vale
+ *      1 con blocchi da 1024 — e il superblocco comincia solo dopo.
+ *      Conservarli bucherebbe il codice del settore di avvio.
+ *
+ * Senza la (2), installare l'avvio su FAT renderebbe illeggibile il volume
+ * che si sta cercando di rendere avviabile.
  *
  * -----------------------------------------------------------------------
  * LA MAPPA, E IL SUO PREZZO
@@ -44,9 +50,14 @@
  * del kernel, e li legge come settori.
  *
  * ⚠️ Ne discende che riscrivere quei due file OBBLIGA a rieseguire
- * l'installazione. E ne discende anche che i file devono essere
- * CONTIGUI: fat_estensione() lo verifica e rifiuta, invece di produrre
- * una mappa che comprende cluster di altri file.
+ * l'installazione.
+ *
+ * Su FAT i file devono essere CONTIGUI: fat_estensione() lo verifica e
+ * rifiuta, invece di produrre una mappa che comprende cluster di altri
+ * file. Su ext2 non possono esserlo — il blocco di puntatori si infila
+ * fra i dati — e la mappa del kernel e' una LISTA di intervalli. Stage 2
+ * resta un intervallo solo perche' sta nei primi 12 blocchi diretti, dove
+ * nessun indiretto e' ancora stato allocato.
  * ============================================================================= */
 
 #include "kernel.h"
@@ -54,6 +65,7 @@
 #include "blk.h"
 #include "vfs.h"
 #include "fat.h"
+#include "ext2.h"
 #include "syscall.h"
 
 /* Immagini prodotte da NASM e incorporate a compile time (vedi Makefile).
@@ -69,6 +81,10 @@ extern const unsigned int  boot_hd_bin_len;
  * Se cambia li' e non qui, l'unico sintomo e' un sistema che non parte. */
 #define PATCH_OFF     0x1A0
 #define PATCH_MAGIA   0x44485845u      /* 'EXHD' */
+
+/* Deve coincidere con K_MAX_EXT in bootloader/stage1hd/boothd.asm: e' lo
+ * spazio che il settore di avvio riserva alla lista. */
+#define K_MAX_EXT     12
 
 #define BPB_INIZIO    3
 #define BPB_FINE      90               /* [3, 90) */
@@ -129,8 +145,10 @@ int boot_installa(const char *punto, BootInstEsito *esito)
 {
     const VfsMount *vm = NULL;
     const BlkDev   *part;
-    int             i, n, idisco, ivoce, fsmnt;
-    uint32_t        s2_rel, s2_cnt, k_rel, k_cnt, k_byte;
+    int             i, n, idisco, ivoce, fsmnt, e_ext2;
+    uint32_t        s2_rel, s2_cnt, k_byte;
+    uint32_t        k_lba[K_MAX_EXT], k_cnt[K_MAX_EXT], k_next = 0;
+    uint32_t        k_tot = 0;
     uint8_t         sett[512];
     uint8_t         bpb[BPB_FINE - BPB_INIZIO];
 
@@ -154,11 +172,13 @@ int boot_installa(const char *punto, BootInstEsito *esito)
     }
     if (vm == NULL) return ERR(ENOENT);
 
-    if (vm->tipo != VFS_FS_FAT) {
+    if (vm->tipo != VFS_FS_FAT && vm->tipo != VFS_FS_EXT2) {
         klog(LOG_ERROR, "INSTALL: '%s' e' il floppy di avvio, non un disco", punto);
         return ERR(EINVAL);
     }
     if (vm->sola_lettura) return ERR(EROFS);
+
+    e_ext2 = (vm->tipo == VFS_FS_EXT2);
 
     fsmnt = vm->mnt;
     part  = blk_get(vm->blkdev);
@@ -170,15 +190,56 @@ int boot_installa(const char *punto, BootInstEsito *esito)
         return ERR(ENODEV);
     }
 
-    /* --- 2. la mappa dei due file --- */
-    {
+    /* --- 2. la mappa dei due file ------------------------------------
+     *
+     * Stage 2 vuole UN intervallo, il kernel una LISTA. Non e'
+     * un'incoerenza: Stage 2 e' ~1 KB, cioe' dentro i primi 12 blocchi
+     * diretti di un inode ext2, dove nessun blocco di puntatori si e'
+     * ancora infilato in mezzo. E' anche il pezzo che dev'essere trovato
+     * da 512 byte di codice, quindi la sua mappa deve stare in sei byte.
+     * Vedi il commento esteso in bootloader/stage1hd/boothd.asm. */
+    if (e_ext2) {
+        uint32_t s2_lba1[2], s2_cnt1[2], s2_n = 0;
+        Ext2DirEntry e;
+        int r;
+
+        r = ext2_estensioni(fsmnt, "/boot/stage2.bin", s2_lba1, s2_cnt1, 2, &s2_n);
+        if (r != 0 || s2_n != 1) {
+            klog(LOG_ERROR, "INSTALL: /boot/stage2.bin mancante o spezzato "
+                            "in %u intervalli: il settore di avvio ne legge uno",
+                 s2_n);
+            return (r == 0) ? ERR(ESPIPE) : ERR(ENOENT);
+        }
+        s2_rel = s2_lba1[0];
+        s2_cnt = s2_cnt1[0];
+
+        r = ext2_estensioni(fsmnt, "/boot/kernel.bin", k_lba, k_cnt,
+                            K_MAX_EXT, &k_next);
+        if (r == -2) {
+            klog(LOG_ERROR, "INSTALL: /boot/kernel.bin e' spezzato in piu' di "
+                            "%d intervalli", K_MAX_EXT);
+            return ERR(ESPIPE);
+        }
+        if (r != 0) { klog(LOG_ERROR, "INSTALL: /boot/kernel.bin mancante"); return ERR(ENOENT); }
+
+        if (ext2_stat(fsmnt, "/boot/kernel.bin", &e) != 0) return ERR(EIO);
+        k_byte = e.dimensione;
+    } else {
+        uint32_t k_rel, k_sett;
         int r = fat_estensione(fsmnt, "/BOOT/STAGE2.BIN", &s2_rel, &s2_cnt);
         if (r == -2) { klog(LOG_ERROR, "INSTALL: /BOOT/STAGE2.BIN e' frammentato"); return ERR(ESPIPE); }
         if (r != 0)  { klog(LOG_ERROR, "INSTALL: /BOOT/STAGE2.BIN mancante"); return ERR(ENOENT); }
 
-        r = fat_estensione(fsmnt, "/BOOT/KERNEL.BIN", &k_rel, &k_cnt);
+        r = fat_estensione(fsmnt, "/BOOT/KERNEL.BIN", &k_rel, &k_sett);
         if (r == -2) { klog(LOG_ERROR, "INSTALL: /BOOT/KERNEL.BIN e' frammentato"); return ERR(ESPIPE); }
         if (r != 0)  { klog(LOG_ERROR, "INSTALL: /BOOT/KERNEL.BIN mancante"); return ERR(ENOENT); }
+
+        /* Su FAT il file e' contiguo o non si installa: la lista ha una
+         * voce sola. Il formato resta lo stesso dei due filesystem, cosi'
+         * Stage 2 non deve sapere da dove sta caricando. */
+        k_lba[0] = k_rel;
+        k_cnt[0] = k_sett;
+        k_next   = 1;
 
         /* La dimensione ESATTA, non i settori: Stage 2 copia il kernel a
          * 0x100000 usando questo numero, e arrotondare per eccesso
@@ -191,28 +252,49 @@ int boot_installa(const char *punto, BootInstEsito *esito)
         }
     }
 
-    /* Il conteggio viaggia in un campo a 16 bit del settore di avvio: un
-     * kernel oltre i 32 MB non sarebbe caricabile, e accorgersene qui e'
-     * meglio che vedere un troncamento silenzioso all'avvio. */
-    if (s2_cnt > 0xFFFF || k_cnt > 0xFFFF) {
-        klog(LOG_ERROR, "INSTALL: file troppo grande per la mappa a 16 bit");
-        return ERR(EFBIG);
+    /* I conteggi viaggiano in campi a 16 bit del settore di avvio.
+     * Accorgersene qui e' meglio che vedere un troncamento silenzioso
+     * all'avvio. */
+    if (s2_cnt == 0 || s2_cnt > 0xFFFF) return ERR(EFBIG);
+    for (i = 0; i < (int)k_next; i++) {
+        if (k_cnt[i] == 0 || k_cnt[i] > 0xFFFF) {
+            klog(LOG_ERROR, "INSTALL: intervallo %d del kernel non "
+                            "rappresentabile (%u settori)", i, k_cnt[i]);
+            return ERR(EFBIG);
+        }
+        k_tot += k_cnt[i];
     }
+    if (k_next == 0) return ERR(EIO);
 
     /* Gli LBA nel settore di avvio sono ASSOLUTI sul disco: il BIOS non
      * sa nulla di partizioni. */
+    for (i = 0; i < (int)k_next; i++) k_lba[i] += (uint32_t)part->primo;
+
     esito->s2_lba = (uint32_t)part->primo + s2_rel;
-    esito->k_lba  = (uint32_t)part->primo + k_rel;
     esito->s2_cnt = s2_cnt;
-    esito->k_cnt  = k_cnt;
+    esito->k_lba  = k_lba[0];
+    esito->k_cnt  = k_tot;
+    esito->k_next = k_next;
     esito->disco  = part->disco;
 
     /* --- 3. settore di avvio della partizione --- */
 
-    /* Il BPB si rilegge dal disco e si rimette: e' del filesystem, non
-     * nostro. Sovrascriverlo renderebbe illeggibile il volume. */
+    /* IL BPB SI CONSERVA SOLO SU FAT, e la differenza non e' una
+     * raffinatezza: e' opposta nei due casi.
+     *
+     * Su FAT i byte 3..89 del settore 0 sono il BPB del volume:
+     * sovrascriverlo rende illeggibile il filesystem che si sta cercando
+     * di rendere avviabile.
+     *
+     * Su ext2 quei byte NON sono metadati. I primi 1024 byte del volume
+     * sono l'area riservata al record di avvio — e' per questo che
+     * s_first_data_block vale 1 con blocchi da 1024 — e il superblocco
+     * comincia solo dopo. Conservarli qui vorrebbe dire bucare il codice
+     * del settore di avvio con 87 byte di spazzatura, cioe' installare un
+     * avvio che salta dentro il nulla. */
     if (blk_read(vm->blkdev, 0, 1, sett) != 0) return ERR(EIO);
-    for (i = BPB_INIZIO; i < BPB_FINE; i++) bpb[i - BPB_INIZIO] = sett[i];
+    if (!e_ext2)
+        for (i = BPB_INIZIO; i < BPB_FINE; i++) bpb[i - BPB_INIZIO] = sett[i];
 
     if (boot_hd_bin_len != 512) {
         klog(LOG_ERROR, "INSTALL: immagine del settore di avvio malformata (%u byte)",
@@ -220,7 +302,8 @@ int boot_installa(const char *punto, BootInstEsito *esito)
         return ERR(EIO);
     }
     for (i = 0; i < 512; i++) sett[i] = boot_hd_bin[i];
-    for (i = BPB_INIZIO; i < BPB_FINE; i++) sett[i] = bpb[i - BPB_INIZIO];
+    if (!e_ext2)
+        for (i = BPB_INIZIO; i < BPB_FINE; i++) sett[i] = bpb[i - BPB_INIZIO];
 
     if (prendi32(sett + PATCH_OFF) != PATCH_MAGIA) {
         klog(LOG_ERROR, "INSTALL: magia assente a 0x%x: contratto rotto", PATCH_OFF);
@@ -228,9 +311,13 @@ int boot_installa(const char *punto, BootInstEsito *esito)
     }
     metti32(sett + PATCH_OFF + 4,  esito->s2_lba);
     metti16(sett + PATCH_OFF + 8,  s2_cnt);
-    metti32(sett + PATCH_OFF + 10, esito->k_lba);
-    metti16(sett + PATCH_OFF + 14, k_cnt);
-    metti32(sett + PATCH_OFF + 16, k_byte);
+    metti32(sett + PATCH_OFF + 10, k_byte);
+    metti16(sett + PATCH_OFF + 14, k_next);
+
+    for (i = 0; i < (int)k_next; i++) {
+        metti32(sett + PATCH_OFF + 16 + i * 6,     k_lba[i]);
+        metti16(sett + PATCH_OFF + 16 + i * 6 + 4, k_cnt[i]);
+    }
 
     if (blk_write(vm->blkdev, 0, 1, sett) != 0) return ERR(EIO);
 
@@ -270,7 +357,7 @@ int boot_installa(const char *punto, BootInstEsito *esito)
     esito->voce = (uint32_t)ivoce + 1;
 
     klog(LOG_INFO, "INSTALL: avvio installato su hd%u (partizione %d): "
-                   "stage2 LBA %u x%u, kernel LBA %u x%u",
-         part->disco, ivoce + 1, esito->s2_lba, s2_cnt, esito->k_lba, k_cnt);
+                   "stage2 LBA %u x%u, kernel %u settori in %u intervalli",
+         part->disco, ivoce + 1, esito->s2_lba, s2_cnt, k_tot, k_next);
     return 0;
 }

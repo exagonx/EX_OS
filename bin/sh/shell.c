@@ -423,7 +423,12 @@ static void verbose_init(void)
  * Ritorna argc.
  * ============================================================================= */
 #define MAX_ARGS    16
-#define MAX_LINE    256
+/* 512, cioe' quanto il driver di tastiera puo' consegnare in un messaggio
+ * (KBD_LINE_MAX). Era 256: bastava con i nomi 8.3, non basta piu' da
+ * quando un nome ext2 puo' essere di 255 byte, perche' `cp <lungo> <dest>`
+ * supera i 256. Un nome che si puo' creare ed elencare ma non digitare e'
+ * un nome irraggiungibile per meta'. */
+#define MAX_LINE    512
 
 static int parse_line(char *line, char *argv[], int max_args)
 {
@@ -605,9 +610,13 @@ static void cmd_sleep(int argc, char *argv[])
     );
 }
 
+/* 320 come PERCORSO_MAX del kernel: qui si compone "<PATH>/<comando>", e
+ * un buffer piu' corto taglierebbe percorsi che la syscall accetterebbe. */
+#define PATH_MAX_SH 320
+
 static void run_program(const char *prog, int argc, char *argv[])
 {
-    char path[256];
+    char path[PATH_MAX_SH];
     int32_t status;
 
     if (prog[0] != '/') {
@@ -617,11 +626,11 @@ static void run_program(const char *prog, int argc, char *argv[])
         const char *p = path_env;
         while (*p) {
             uint32_t i = 0;
-            while (*p && *p != ':' && i < 200) { path[i++] = *p++; }
+            while (*p && *p != ':' && i < PATH_MAX_SH - 64) { path[i++] = *p++; }
             if (*p == ':') p++;
             if (i == 0) continue;
             path[i++] = '/';
-            sh_strcpy(path + i, prog, 256 - i);
+            sh_strcpy(path + i, prog, PATH_MAX_SH - i);
 
             /* argv[0] = path completo del comando */
             char *spawn_argv[32];
@@ -672,11 +681,11 @@ static void run_program_replace(const char *prog, int argc, char *argv[])
         const char *p = path_env;
         while (*p) {
             uint32_t i = 0;
-            while (*p && *p != ':' && i < 200) { path[i++] = *p++; }
+            while (*p && *p != ':' && i < PATH_MAX_SH - 64) { path[i++] = *p++; }
             if (*p == ':') p++;
             if (i == 0) continue;
             path[i++] = '/';
-            sh_strcpy(path + i, prog, 256 - i);
+            sh_strcpy(path + i, prog, PATH_MAX_SH - i);
 
             int ret = sh_exec(path);
             if (ret >= 0) return;

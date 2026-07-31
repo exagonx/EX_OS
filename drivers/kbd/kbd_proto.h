@@ -56,6 +56,12 @@
  * Deve restare <= IPC_MSG_MAX_DATA (512, vedi kernel/include/ipc.h e
  * lib/include/libc.h): oltre quel limite il kernel troncherebbe il
  * payload senza che nessuna delle due sponde se ne accorga. */
-#define KBD_LINE_MAX        256
+/* 512 = il massimo che un singolo messaggio IPC puo' portare. Era 256, e
+ * con i nomi 8.3 nessuna riga ci arrivava; da quando un nome ext2 puo'
+ * essere di 255 byte, `cp <lungo> <dest>` supera i 256 e la riga arrivava
+ * TAGLIATA — con l'eco a schermo completo, quindi senza che niente lo
+ * facesse sospettare: il comando spariva a meta' e l'utente vedeva un
+ * errore che parlava d'altro. */
+#define KBD_LINE_MAX        512
 
 #endif /* KBD_PROTO_H */

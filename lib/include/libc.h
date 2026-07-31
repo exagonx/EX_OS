@@ -268,7 +268,8 @@ int mountinfo(MountInfo *buf, unsigned int max, unsigned int start);
  * ============================================================================= */
 typedef struct {
     unsigned int s2_lba, s2_cnt;
-    unsigned int k_lba,  k_cnt;
+    unsigned int k_lba,  k_cnt;   /* primo intervallo, e settori TOTALI */
+    unsigned int k_next;          /* in quanti intervalli e' spezzato */
     unsigned int disco;
     unsigned int voce;
 } BootInstallInfo;
@@ -378,7 +379,17 @@ int truncate(const char *path, unsigned int size);
  * struct identica, deve restare sincronizzata a mano: stessa convenzione
  * usata altrove nel progetto, es. i numeri di syscall duplicati in
  * bin/sh/shell.c invece di includere gli header del kernel). */
-#define DIRENT_NAME_MAX 13
+/* 256 = 255 caratteri + NUL, il massimo di ext2. Su FAT i nomi restano
+ * 8.3 e ne usano 13: il campo e' largo per il filesystem piu' generoso. */
+#define DIRENT_NAME_MAX 256
+
+/* Voci che il kernel consegna al MASSIMO per chiamata. Chiederne di piu'
+ * non e' un errore ma non serve: la chiamata ne restituisce comunque
+ * questo numero, e chi usa l'idioma "ne ho ricevute meno di quante ne ho
+ * chieste, quindi sono finite" si fermerebbe a meta' directory. Usare
+ * questa costante come dimensione del proprio blocco rende quell'idioma
+ * sempre vero. */
+#define LISTDIR_MAX_BATCH 16
 typedef struct {
     char           name[DIRENT_NAME_MAX];
     unsigned int   size;

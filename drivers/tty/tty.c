@@ -53,7 +53,10 @@ static uint32_t g_kbd_pid   = 0;
 /* =============================================================================
  * Ring buffer input tastiera (solo modalità TTY_INPUT_INTERNAL)
  * ============================================================================= */
-#define TTY_BUF_SIZE    256
+/* Deve reggere la riga piu' lunga che la shell accetta (MAX_LINE): una
+ * riga piu' lunga del ring viene consegnata a pezzi, e il comando arriva
+ * troncato senza che niente lo segnali. */
+#define TTY_BUF_SIZE    512
 
 typedef struct {
     char     buf[TTY_BUF_SIZE];

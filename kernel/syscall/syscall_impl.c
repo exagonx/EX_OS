@@ -39,7 +39,20 @@ extern void vga_putchar(char c);
 extern Process g_process_pool[MAX_PROCESSES];
 
 /* Directory di lavoro corrente (globale, semplificazione per ora) */
-static char g_cwd[256] = "/";
+/* =============================================================================
+ * Quanto puo' essere lungo un percorso assoluto, in un posto solo.
+ *
+ * Era 256 sparso in una dozzina di dichiarazioni, ed era abbastanza finche'
+ * i nomi erano 8.3. Con ext2 un NOME solo puo' essere 255 byte: "/" piu' un
+ * nome massimo fa gia' 257, e con 256 il percorso di un file legittimo
+ * verrebbe troncato — cioe' aprirebbe un altro file, o nessuno.
+ *
+ * Deve restare >= VFS_PATH_MAX, altrimenti il VFS riceve percorsi gia'
+ * tagliati e nessun controllo piu' a valle puo' accorgersene.
+ * ============================================================================= */
+#define PERCORSO_MAX  VFS_PATH_MAX
+
+static char g_cwd[PERCORSO_MAX] = "/";
 
 /* =============================================================================
  * Helper: trova un fd libero nel processo corrente
@@ -281,14 +294,14 @@ int32_t sys_open(InterruptFrame *frame)
     int         free_fd;
     int         inode;
 
-    if (!syscall_verify_str(path, 256)) return ERR(EFAULT);
+    if (!syscall_verify_str(path, PERCORSO_MAX)) return ERR(EFAULT);
 
     free_fd = find_free_fd(proc);
     if (free_fd < 0) return ERR(EMFILE);
 
     /* Risolvi eventuali percorsi relativi contro la directory corrente */
     {
-        char abs[256];
+        char abs[PERCORSO_MAX];
         if (resolve_path(path, abs, sizeof(abs)) != 0) return ERR(EINVAL);
         inode = vfs_open(abs, (uint32_t)flags);
     }
@@ -560,9 +573,9 @@ int32_t sys_exec(InterruptFrame *frame)
     const char  *path = (const char *)frame->ebx;
     Process     *proc = proc_get_current();
     ElfLoadResult res;
-    char         kpath[256];
+    char         kpath[PERCORSO_MAX];
 
-    if (!syscall_verify_str(path, 256)) return ERR(EFAULT);
+    if (!syscall_verify_str(path, PERCORSO_MAX)) return ERR(EFAULT);
 
     /* Copia il path in un buffer kernel PRIMA di cambiare CR3: il
      * puntatore originale vive nello user stack del chiamante (vecchia
@@ -578,7 +591,7 @@ int32_t sys_exec(InterruptFrame *frame)
     /* Risolvi contro la directory corrente: `exec prog` dentro /bin deve
      * funzionare come `exec /bin/prog`. */
     {
-        char abs[256];
+        char abs[PERCORSO_MAX];
         if (resolve_path(kpath, abs, sizeof(abs)) != 0) return ERR(EINVAL);
         kstrcpy(kpath, abs, sizeof(kpath));
     }
@@ -649,7 +662,11 @@ int32_t sys_exec(InterruptFrame *frame)
  * Ritorna: PID del figlio (>0), errno negativo in caso di errore
  * ============================================================================= */
 #define MAX_SPAWN_ARGS  16
-#define MAX_ARG_LEN    128
+
+/* Un argomento e' quasi sempre un PERCORSO, quindi il tetto e' lo stesso.
+ * Era 128, e con i nomi 8.3 bastava; da quando un nome ext2 puo' essere di
+ * 255 byte, 128 taglia percorsi del tutto legittimi. */
+#define MAX_ARG_LEN    PERCORSO_MAX
 
 /* Scrive `len` byte da `src` all'indirizzo virtuale `user_virt` nella PD `pd`,
  * usando l'indirizzo fisico (identity-mapped) per ogni pagina — nessun switch CR3.
@@ -681,13 +698,13 @@ int32_t sys_spawn(InterruptFrame *frame)
     char       **uargv  = (char **)frame->edx;
     Process     *parent = proc_get_current();
     ElfLoadResult res;
-    char kpath[256];
+    char kpath[PERCORSO_MAX];
 
-    if (!syscall_verify_str(path, 256)) return ERR(EFAULT);
+    if (!syscall_verify_str(path, PERCORSO_MAX)) return ERR(EFAULT);
     { uint32_t pi; for (pi = 0; pi < 255 && path[pi]; pi++) kpath[pi] = path[pi]; kpath[pi] = '\0'; }
 
     /* Percorso relativo -> assoluto usando la directory corrente. */
-    { char abs[256];
+    { char abs[PERCORSO_MAX];
       if (resolve_path(kpath, abs, sizeof(abs)) != 0) return ERR(EINVAL);
       kstrcpy(kpath, abs, sizeof(kpath)); }
 
@@ -701,7 +718,18 @@ int32_t sys_spawn(InterruptFrame *frame)
         for (i = 0; i < argc; i++) {
             if (!syscall_verify_ptr(&uargv[i], sizeof(char*))) break;
             const char *ua = uargv[i];
-            if (!ua || !syscall_verify_str(ua, MAX_ARG_LEN)) break;
+
+            /* Un argomento illeggibile o piu' lungo del tetto FERMA lo
+             * spawn. Prima si usciva dal ciclo e il programma partiva con
+             * gli argomenti raccolti fin li': `cp lungo dest` diventava
+             * `cp`, che stampa il proprio uso — e l'utente conclude che il
+             * file non esiste. Un errore esplicito dice cosa e' successo. */
+            if (!ua || !syscall_verify_str(ua, MAX_ARG_LEN)) {
+                klog(LOG_ERROR, "SYSCALL spawn('%s'): argomento %u illeggibile "
+                                "o piu' lungo di %u byte", kpath, i,
+                                MAX_ARG_LEN - 1u);
+                return ERR(EINVAL);
+            }
             uint32_t ai;
             for (ai = 0; ai < MAX_ARG_LEN-1 && ua[ai]; ai++) kbufs[i][ai] = ua[ai];
             kbufs[i][ai] = '\0';
@@ -947,10 +975,10 @@ int32_t sys_chdir(InterruptFrame *frame)
 {
     const char *path = (const char *)frame->ebx;
 
-    if (!syscall_verify_str(path, 256)) return ERR(EFAULT);
+    if (!syscall_verify_str(path, PERCORSO_MAX)) return ERR(EFAULT);
 
     {
-        char     abs[256];
+        char     abs[PERCORSO_MAX];
         VfsStat  st;
 
         if (resolve_path(path, abs, sizeof(abs)) != 0) return ERR(EINVAL);
@@ -994,7 +1022,7 @@ int32_t sys_stat(InterruptFrame *frame)
     const char *path = (const char *)frame->ebx;
     Stat       *st   = (Stat *)frame->ecx;
 
-    if (!syscall_verify_str(path, 256))      return ERR(EFAULT);
+    if (!syscall_verify_str(path, PERCORSO_MAX))      return ERR(EFAULT);
     if (!syscall_verify_ptr(st, sizeof(Stat))) return ERR(EFAULT);
 
     /* TODO Fase 3: cerccare file nel FAT12 e riempire Stat */
@@ -1067,7 +1095,7 @@ int32_t sys_lseek(InterruptFrame *frame)
  * PASSA DAL VFS (0.132): cosi' `ls /disk` elenca il disco montato, e
  * `ls /` mostra i punti di montaggio insieme ai file del floppy.
  * ============================================================================= */
-#define READDIR_MAX_BATCH 64   /* limite di sicurezza, indipendente da
+#define READDIR_MAX_BATCH 16   /* limite di sicurezza, indipendente da
                                    quanto richiesto dal chiamante */
 
 int32_t sys_readdir(InterruptFrame *frame)
@@ -1076,11 +1104,11 @@ int32_t sys_readdir(InterruptFrame *frame)
     DirEntry   *user_buf    = (DirEntry *)frame->ecx;
     uint32_t    max_entries = frame->edx;
     uint32_t    start       = frame->esi;
-    char        kpath[256];
+    char        kpath[PERCORSO_MAX];
     VfsDirEntry ventries[READDIR_MAX_BATCH];
     uint32_t    fcount, cap, i;
 
-    if (path && !syscall_verify_str(path, 256)) return ERR(EFAULT);
+    if (path && !syscall_verify_str(path, PERCORSO_MAX)) return ERR(EFAULT);
     if (max_entries == 0) return ERR(EINVAL);
 
     cap = max_entries;
@@ -1175,10 +1203,10 @@ int32_t sys_getenv(InterruptFrame *frame)
 int32_t sys_mkdir(InterruptFrame *frame)
 {
     const char *path = (const char *)frame->ebx;
-    char        abs[256];
+    char        abs[PERCORSO_MAX];
     int         r;
 
-    if (!syscall_verify_str(path, 256)) return ERR(EFAULT);
+    if (!syscall_verify_str(path, PERCORSO_MAX)) return ERR(EFAULT);
     if (resolve_path(path, abs, sizeof(abs)) != 0) return ERR(EINVAL);
 
     r = vfs_mkdir(abs);
@@ -1199,10 +1227,10 @@ int32_t sys_mkdir(InterruptFrame *frame)
 int32_t sys_rmdir(InterruptFrame *frame)
 {
     const char *path = (const char *)frame->ebx;
-    char        abs[256];
+    char        abs[PERCORSO_MAX];
     int         r;
 
-    if (!syscall_verify_str(path, 256)) return ERR(EFAULT);
+    if (!syscall_verify_str(path, PERCORSO_MAX)) return ERR(EFAULT);
     if (resolve_path(path, abs, sizeof(abs)) != 0) return ERR(EINVAL);
 
     r = vfs_rmdir(abs);
@@ -1224,10 +1252,10 @@ int32_t sys_rmdir(InterruptFrame *frame)
 int32_t sys_unlink(InterruptFrame *frame)
 {
     const char *path = (const char *)frame->ebx;
-    char        abs[256];
+    char        abs[PERCORSO_MAX];
     int         r;
 
-    if (!syscall_verify_str(path, 256)) return ERR(EFAULT);
+    if (!syscall_verify_str(path, PERCORSO_MAX)) return ERR(EFAULT);
     if (resolve_path(path, abs, sizeof(abs)) != 0) return ERR(EINVAL);
 
     r = vfs_unlink(abs);
@@ -1739,6 +1767,7 @@ int32_t sys_bootinstall(InterruptFrame *frame)
 
     uinfo->s2_lba = e.s2_lba; uinfo->s2_cnt = e.s2_cnt;
     uinfo->k_lba  = e.k_lba;  uinfo->k_cnt  = e.k_cnt;
+    uinfo->k_next = e.k_next;
     uinfo->disco  = e.disco;  uinfo->voce   = e.voce;
     return 0;
 }
@@ -1937,10 +1966,10 @@ int32_t sys_truncate(InterruptFrame *frame)
 {
     const char *path = (const char *)frame->ebx;
     uint32_t    dim  = frame->ecx;
-    char        abs[256];
+    char        abs[PERCORSO_MAX];
     int         r;
 
-    if (!syscall_verify_str(path, 256)) return ERR(EFAULT);
+    if (!syscall_verify_str(path, PERCORSO_MAX)) return ERR(EFAULT);
     if (resolve_path(path, abs, sizeof(abs)) != 0) return ERR(EINVAL);
 
     r = vfs_truncate(abs, dim);

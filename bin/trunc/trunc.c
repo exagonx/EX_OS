@@ -108,7 +108,7 @@ int main(int argc, char **argv)
      * Se non si riesce a leggerla non e' un errore: il troncamento si fa
      * lo stesso, e si dice meno. */
     {
-        DirEntry v[32];
+        DirEntry v[LISTDIR_MAX_BATCH];
         int n, i, k;
         char dir[128];
         const char *nome = argv[1];
@@ -123,7 +123,7 @@ int main(int argc, char **argv)
             nome = argv[1] + k + 1;
         }
 
-        n = listdir(dir, v, 32);
+        n = listdir(dir, v, LISTDIR_MAX_BATCH);
         for (i = 0; i < n; i++) {
             if (strcmp(v[i].name, nome) == 0) {
                 vecchia = v[i].size;

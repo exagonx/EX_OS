@@ -9,7 +9,12 @@
 
 /* Voci lette per chiamata. Non è il numero massimo di voci mostrabili:
  * la directory viene percorsa a blocchi finché non finisce. */
-#define BLOCCO 32
+/* Il blocco per chiamata e' LISTDIR_MAX_BATCH e non un numero scelto
+ * qui: il kernel non ne consegna di piu' comunque, e chiederne 32 per poi
+ * fermarsi appena ne tornano meno di 32 vorrebbe dire fermarsi alla prima
+ * pagina. Con i nomi lunghi ogni voce pesa 264 byte, quindi il blocco e'
+ * anche cio' che decide quanto stack usa questo programma. */
+#define BLOCCO LISTDIR_MAX_BATCH
 
 int main(int argc, char **argv)
 {

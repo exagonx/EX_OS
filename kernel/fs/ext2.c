@@ -1900,3 +1900,72 @@ int ext2_sync(int mnt)
      * ci prova a indovinare. */
     return blk_flush(m->blkdev);
 }
+
+/* =============================================================================
+ * La mappa dei settori di un file. Il contratto e il perche' di una LISTA
+ * stanno in kernel/include/ext2.h.
+ * ============================================================================= */
+int ext2_estensioni(int mnt, const char *percorso, uint32_t *lba,
+                    uint32_t *cnt, uint32_t max, uint32_t *n_out)
+{
+    Ext2Mount *m = prendi(mnt);
+    uint8_t    inode[128];
+    uint32_t   num, dim, n_blocchi, sett_totali, spb, i, usati = 0, emessi = 0;
+
+    if (m == NULL || lba == NULL || cnt == NULL || n_out == NULL) return -1;
+    if (max == 0) return -1;
+
+    *n_out = 0;
+
+    num = risolvi(m, mnt, percorso, inode);
+    if (num == 0) return -1;
+    if ((le16(inode) & MODE_TIPO) != MODE_FILE) return -1;
+
+    dim = le32(inode + 4);
+    if (dim == 0) return -1;
+
+    spb         = m->dim_blocco / 512u;
+    n_blocchi   = (dim + m->dim_blocco - 1u) / m->dim_blocco;
+    sett_totali = (dim + 511u) / 512u;
+
+    for (i = 0; i < n_blocchi; i++) {
+        uint32_t b = mappa_blocco(m, mnt, inode, i);
+        uint32_t q;
+
+        if (b == 0) {
+            klog(LOG_ERROR, "EXT2: '%s' e' sparso: chi legge settori non sa "
+                            "che nel buco devono esserci zeri", percorso);
+            return -1;
+        }
+
+        /* L'ultimo blocco si tronca alla dimensione vera del file: leggere
+         * fino in fondo al blocco tirerebbe in memoria i byte che stanno
+         * oltre, che appartengono a un altro file. */
+        q = spb;
+        if (emessi + q > sett_totali) q = sett_totali - emessi;
+        if (q == 0) break;
+
+        /* Consecutivo al precedente: si allunga l'intervallo invece di
+         * aprirne uno nuovo. E' cio' che fa stare un kernel intero in due
+         * voci e non in centoquarantacinque. */
+        if (usati > 0 && b * spb == lba[usati - 1u] + cnt[usati - 1u]) {
+            cnt[usati - 1u] += q;
+            emessi += q;
+            continue;
+        }
+
+        if (usati >= max) {
+            klog(LOG_ERROR, "EXT2: '%s' e' spezzato in piu' di %u intervalli",
+                 percorso, max);
+            return -2;
+        }
+
+        lba[usati] = b * spb;
+        cnt[usati] = q;
+        usati++;
+        emessi += q;
+    }
+
+    *n_out = usati;
+    return 0;
+}

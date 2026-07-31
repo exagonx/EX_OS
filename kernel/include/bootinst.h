@@ -22,7 +22,8 @@
  * "fatto" senza numeri non e' verificabile. */
 typedef struct {
     uint32_t s2_lba, s2_cnt;    /* Stage 2: LBA assoluto e settori */
-    uint32_t k_lba,  k_cnt;     /* kernel */
+    uint32_t k_lba,  k_cnt;     /* kernel: PRIMO intervallo e settori TOTALI */
+    uint32_t k_next;            /* in quanti intervalli e' spezzato */
     uint32_t disco;             /* indice ATA */
     uint32_t voce;              /* voce di partizione marcata attiva, 1-4 */
 } BootInstEsito;

@@ -2,6 +2,198 @@
 
 ---
 
+# SESSIONE 2026-07-31 (n+7) — Avvio da ext2
+
+Kernel a **0.140** → **0.141**. **EX-OS si installa su ext2 e ci si
+avvia.** Verificato senza floppy collegato: root `hd0p1` ext2 in
+lettura/scrittura.
+
+```
+fdisk hd0                    partizione tipo 83, attiva
+mkfs -t ext2 -L exos hd0p1
+mount hd0p1 /disk
+install /disk
+```
+
+## Il problema non era leggere ext2: era che un file ext2 non è contiguo
+
+Il protocollo di avvio passava **un solo** `(lba, cnt)` per il kernel. Non
+bastava, e non per frammentazione — è la struttura del formato. Il kernel
+da 147 KB appena copiato su un volume vergine sta così:
+
+```
+(0-11):74-85, (IND):86, (12-144):87-219
+```
+
+Il blocco di **puntatori** viene allocato in mezzo ai dati, perché serve
+prima del tredicesimo blocco. Con un intervallo solo non sarebbe
+caricabile **nessun** kernel da ext2.
+
+## Cosa è cambiato nel contratto a tre
+
+L'area di patch a 0x1A0 è passata da 20 byte a 88:
+
+```
++0   magia   'EXHD'
++4   s2_lba  dd     Stage 2: sempre UN intervallo
++8   s2_cnt  dw
++10  k_size  dd     dimensione esatta del kernel
++14  k_next  dw     quanti intervalli seguono
++16  k_ext[12] { dd lba; dw cnt }
+```
+
+`s2_lba`/`s2_cnt` **non hanno cambiato offset**, quindi
+`boothd.asm` non è stato toccato nel codice: solo la dichiarazione.
+
+**Stage 2 resta un intervallo solo, e non è una svista.** Sta in ~1 KB,
+cioè dentro i primi 12 blocchi diretti, dove nessun indiretto si è ancora
+infilato. Ed è il pezzo che dev'essere trovato da 512 byte di codice: la
+sua mappa deve stare in sei byte.
+
+Su FAT la lista ha una voce sola. Il formato è **lo stesso per i due
+filesystem**, così Stage 2 non deve sapere da dove sta caricando.
+
+## Il BPB si conserva solo su FAT, e su ext2 è l'opposto
+
+Su FAT i byte 3..89 del settore 0 sono il BPB: sovrascriverlo rende
+illeggibile il volume che si sta rendendo avviabile.
+
+Su ext2 quei byte **non sono metadati**. I primi 1024 byte sono l'area
+riservata al record di avvio — è per questo che `s_first_data_block` vale
+1 con blocchi da 1024 — e il superblocco comincia solo dopo. Conservarli
+avrebbe bucato il codice del settore di avvio con 87 byte di spazzatura:
+un avvio che salta nel nulla.
+
+## Le maiuscole, che FAT nascondeva
+
+Il kernel cerca `/bin/sh`, `/boot/kernel.cfg`, `/dev/kbd.drv`: tutto
+minuscolo. `install` creava `BOOT`, `BIN`, `LIB`, `DEV` e i file con i
+nomi che FAT12 restituisce — cioè **maiuscoli**.
+
+Su FAT non si vedeva: il driver mette in maiuscolo sia ciò che scrive sia
+ciò che cerca, quindi `BIN` e `bin` sono la stessa directory. Su ext2 sono
+due directory diverse, e il sistema installato non avrebbe trovato la
+propria shell.
+
+`install` ora crea tutto in minuscolo, **nomi dei file compresi**: da FAT12
+i nomi arrivano sempre maiuscoli perché è come il formato li conserva, e
+l'informazione sul caso originale non esiste più. Il minuscolo è l'unica
+ricostruzione sensata, ed è quella che il sistema si aspetta.
+
+## `vfs_init` riconosce il filesystem della root invece di assumerlo
+
+Prima c'era solo `fat_mount()`. Avviando da ext2 quella chiamata fallisce
+e il sistema ripiegava sul floppy — che durante un avvio da disco non c'è.
+Il sintomo era «shell non trovata», a diversi passi dalla causa vera. Ora
+passa da `vol_identifica()`.
+
+## Perché non un lettore ext2 dentro Stage 2
+
+Era l'altra strada, e va detto perché non è stata presa. Stage 2 è
+**assembly puro**, 1095 byte (`bootloader/stage2/loader.asm`; i `.c` in
+quella cartella non li compila nessuno). Un lettore ext2 lì dentro sono
+~350 righe di NASM a 16 bit — superblocco, descrittori, inode, indiretti,
+ricerca per nome — e **Stage 2 stesso resterebbe agganciato alla mappa**,
+perché va trovato senza saper leggere niente.
+
+La lista di intervalli costa ~80 righe, è indipendente dal filesystem e
+non introduce codice nel percorso più difficile da verificare del sistema.
+Il prezzo è che il patto LILO resta: ricopiare kernel o Stage 2 obbliga a
+rilanciare `install`.
+
+## Verifica
+
+- **Avvio da ext2 senza floppy**: `ver` mostra 0.141, `ls /` mostra
+  `boot/ bin/ lib/ dev/`, `mount` dice `/ hd0p1 ext2 lettura/scrittura`.
+  Marker seriale `SDKPJK`. `e2fsck -fn` sul volume avviabile: **esito 0**.
+- L'installatore ha riportato `kernel 289 settori in 2 intervalli` — cioè
+  esattamente i due tratti previsti dal formato.
+- **Regressione FAT32**: stessa procedura su un disco FAT32,
+  `kernel 289 settori in 1 intervallo`, avvio senza floppy riuscito,
+  `fsck.vfat` esito 0.
+- **Regressione floppy**: avvio pulito, nessun errore nel log.
+
+---
+
+# SESSIONE 2026-07-31 (n+6) — Nomi lunghi ext2
+
+Kernel a **0.139** → **0.140**. Un nome di **255 caratteri** si crea, si
+elenca, si digita e si apre. `VfsDirEntry` non tronca più a 16 byte.
+
+## Non era una struttura: erano sei tetti in fila
+
+`VfsDirEntry.nome[16]` era il più visibile, non l'unico. Alzarlo da solo
+avrebbe spostato il taglio di un passo, e il nome sarebbe morto poco più
+avanti. La catena, dal disco alla tastiera:
+
+| dove | era | ora | cosa tagliava |
+|---|---|---|---|
+| `Ext2DirEntry.nome` | 60 | 256 | il nome letto dal driver |
+| `VfsDirEntry.nome` | 16 | 256 | il nome consegnato al VFS |
+| `DIRENT_NAME_MAX` (ABI syscall) | 13 | 256 | il nome consegnato a userland |
+| `VFS_PATH_MAX` / percorsi syscall | 128 / 256 | 320 | il percorso da aprire |
+| `MAX_ARG_LEN` (sys_spawn) | 128 | 320 | l'argomento passato al programma |
+| `KBD_LINE_MAX` | 256 | 512 | la riga digitata |
+
+Il numero è 256 = 255 caratteri + NUL, cioè il massimo di ext2. Su FAT i
+nomi restano 8.3: il campo è largo per il filesystem più generoso.
+
+**Un nome troncato non è un nome accorciato: è un nome che non apre
+niente.** È la ragione per cui non aveva senso fermarsi a metà strada.
+
+## I due tetti che tagliavano IN SILENZIO
+
+Sono i più istruttivi, perché nessuno dei due dava un errore.
+
+**`MAX_ARG_LEN` in `sys_spawn`.** Un argomento più lungo di 127 byte
+faceva uscire dal ciclo di copia, e il programma partiva **con gli
+argomenti raccolti fino a lì**: `cp <lungo> <dest>` diventava `cp`, che
+stampa il proprio uso. L'utente conclude che il file non esiste. Ora un
+argomento illeggibile o troppo lungo **ferma lo spawn** con EINVAL e una
+riga di log che dice quale.
+
+**`KBD_LINE_MAX`.** Una riga più lunga di 256 byte veniva consegnata
+tagliata — ma **l'eco a schermo era completo**, perché lo fa il TTY mentre
+si digita. Si vedeva il comando giusto e ne veniva eseguito un altro.
+Alzato a 512, che è il tetto vero: `IPC_MSG_MAX_DATA`. Oltre, il payload
+verrebbe troncato dal kernel senza che nessuna delle due sponde se ne
+accorga.
+
+## Il blocco per chiamata ora è una costante condivisa
+
+`DirEntry` è passata da 20 a 264 byte, quindi il numero di voci per
+chiamata è diventato il numero che moltiplica: `READDIR_MAX_BATCH` è
+sceso da 64 a 16 (4,2 KB di stack kernel invece di 17).
+
+Ma abbassare quel tetto rendeva sbagliato un idioma diffuso: `ls`,
+`delete` e `install` chiedevano 32 voci e si fermavano appena ne
+ricevevano meno di 32 — con il tetto a 16 si sarebbero fermati alla prima
+pagina, mostrando mezza directory. Ora `libc.h` espone
+**`LISTDIR_MAX_BATCH`** e i quattro chiamanti usano quello: "ne ho
+ricevute meno di quante ne ho chieste, quindi sono finite" torna a essere
+sempre vero.
+
+## Verifica
+
+- File con nomi da **255** e **200** caratteri creati da Linux: `ls` in
+  EX-OS li mostra **interi**, e `cp` li apre e ne legge il contenuto —
+  quello da 255 con un comando di 276 caratteri.
+- Directory con nome da **117 caratteri creata da EX-OS**: `debugfs` da
+  Linux conferma il nome esatto, `e2fsck -fn` esito **0**.
+- Regressione FAT: `ls /bin`, `mkdir`, `cp`, `delete`, `rmdir` sul floppy;
+  poi `fdisk` + `mkfs -t fat32` + `mount` + `cp` su disco. `fsck.vfat`
+  esito 0, avvio da floppy senza errori nel log.
+
+## Cosa resta troncato, e va detto
+
+Sopra i 511 caratteri una riga di comando non si può digitare: è il limite
+di un singolo messaggio IPC. Un nome da 255 ci sta con abbondanza, due
+percorsi lunghi nello stesso comando no. Superarlo richiederebbe di
+spezzare la riga su più messaggi, cioè un protocollo diverso fra tastiera
+e shell — non un numero più grande.
+
+---
+
 # SESSIONE 2026-07-31 (n+5) — Troncamento a una dimensione qualunque
 
 Kernel a **0.138** → **0.139**. `ext2_truncate()` accetta qualunque

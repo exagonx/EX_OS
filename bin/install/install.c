@@ -32,6 +32,18 @@
  * di altri file. Vedi kernel/boot/bootinst.c.
  *
  * -----------------------------------------------------------------------
+ * I NOMI SI CREANO IN MINUSCOLO, E SU ext2 NON E' UN DETTAGLIO
+ *
+ * Il kernel cerca "/bin/sh", "/boot/kernel.cfg", "/dev/kbd.drv": tutto
+ * minuscolo. Su FAT non importa — il driver mette in maiuscolo sia cio'
+ * che scrive sia cio' che cerca, quindi "BIN" e "bin" sono la stessa
+ * directory. Su ext2 sono due directory diverse, e un sistema installato
+ * in "BIN" non troverebbe la propria shell.
+ *
+ * Creare in minuscolo funziona su entrambi: su FAT il driver converte da
+ * solo, su ext2 il nome resta quello che il kernel cerchera'.
+ *
+ * -----------------------------------------------------------------------
  * COSA NON FA
  *
  * Non partiziona e non formatta. Sono due operazioni che distruggono dati
@@ -61,6 +73,18 @@ static const char *spiega(int e)
         case 30: return "montato in sola lettura";
         default: return "errore";
     }
+}
+
+/* Da FAT12 i nomi arrivano SEMPRE in maiuscolo: e' come il formato li
+ * conserva, e l'informazione sul caso originale non esiste piu'. Copiarli
+ * cosi' com'e' su ext2 — dove il caso conta — produrrebbe "/bin/SH" mentre
+ * il kernel cerca "/bin/sh". Il minuscolo e' l'unica ricostruzione
+ * sensata, ed e' quella che il sistema si aspetta. */
+static void minuscolo(char *s)
+{
+    int i;
+    for (i = 0; s[i]; i++)
+        if (s[i] >= 'A' && s[i] <= 'Z') s[i] = (char)(s[i] - 'A' + 'a');
 }
 
 /* Concatena "punto" + "/" + "resto" senza sforare. */
@@ -142,7 +166,7 @@ static void crea_dir(const char *p)
 /* Copia tutto il contenuto di una directory del volume di avvio. */
 static void copia_dir(const char *sorgente, const char *punto, const char *dest)
 {
-    DirEntry voci[32];
+    DirEntry voci[LISTDIR_MAX_BATCH];
     char     pdest[PERC_MAX];
     unsigned int start = 0;
     int n;
@@ -150,7 +174,7 @@ static void copia_dir(const char *sorgente, const char *punto, const char *dest)
     unisci(pdest, punto, dest);
     crea_dir(pdest);
 
-    while ((n = listdir_from(sorgente, voci, 32, start)) > 0) {
+    while ((n = listdir_from(sorgente, voci, LISTDIR_MAX_BATCH, start)) > 0) {
         int i;
         for (i = 0; i < n; i++) {
             char da[PERC_MAX], a[PERC_MAX];
@@ -160,10 +184,11 @@ static void copia_dir(const char *sorgente, const char *punto, const char *dest)
 
             unisci(da, sorgente, voci[i].name);
             unisci(a,  pdest,    voci[i].name);
+            minuscolo(a + strlen(pdest));   /* solo il NOME, non il punto */
             copia(da, a);
         }
         start += (unsigned int)n;
-        if (n < 32) break;
+        if (n < LISTDIR_MAX_BATCH) break;
     }
 }
 
@@ -188,29 +213,29 @@ int main(int argc, char **argv)
 
     /* --- 1. i due file dell'avvio, PER PRIMI (vedi in testa al file) --- */
     printf("Avvio (copiati per primi: devono restare contigui)\n");
-    unisci(p, argv[1], "BOOT");
+    unisci(p, argv[1], "boot");
     crea_dir(p);
 
-    unisci(q, p, "STAGE2.BIN");
+    unisci(q, p, "stage2.bin");
     if (copia("/LOADER.BIN", q) < 0) {
         printf("\nInstallazione interrotta: senza Stage 2 il disco non parte.\n");
         return 1;
     }
 
-    unisci(q, p, "KERNEL.BIN");
+    unisci(q, p, "kernel.bin");
     if (copia("/KERNEL.BIN", q) < 0) {
         printf("\nInstallazione interrotta: senza kernel il disco non parte.\n");
         return 1;
     }
 
-    unisci(q, p, "KERNEL.CFG");
+    unisci(q, p, "kernel.cfg");
     copia("/boot/kernel.cfg", q);
 
     /* --- 2. il resto del sistema --- */
     printf("\nSistema\n");
-    copia_dir("/bin", argv[1], "BIN");
-    copia_dir("/lib", argv[1], "LIB");
-    copia_dir("/dev", argv[1], "DEV");
+    copia_dir("/bin", argv[1], "bin");
+    copia_dir("/lib", argv[1], "lib");
+    copia_dir("/dev", argv[1], "dev");
 
     /* --- 3. l'avvio vero e proprio --- */
     printf("\nSettori di avvio\n");
@@ -226,7 +251,12 @@ int main(int argc, char **argv)
            info.disco, info.voce);
     printf("  + settore di avvio della partizione\n");
     printf("    stage2: LBA %u, %u settori\n", info.s2_lba, info.s2_cnt);
-    printf("    kernel: LBA %u, %u settori\n", info.k_lba,  info.k_cnt);
+    printf("    kernel: %u settori in %u intervall%s, dal LBA %u\n",
+           info.k_cnt, info.k_next, (info.k_next == 1) ? "o" : "i", info.k_lba);
+    if (info.k_next > 1) {
+        printf("            (su ext2 il blocco di puntatori sta in mezzo ai\n");
+        printf("             dati: il file e' contiguo a tratti, non in blocco)\n");
+    }
 
     printf("\n");
     if (errori > 0) {

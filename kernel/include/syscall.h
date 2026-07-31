@@ -143,7 +143,19 @@ typedef struct {
 /* =============================================================================
  * Struttura voce di directory (per sys_readdir)
  * ============================================================================= */
-#define DIRENT_NAME_MAX 13   /* "NOME8.EXT3" + NUL, formato 8.3 */
+/* =============================================================================
+ * 256 = 255 caratteri + NUL, cioe' il massimo che ext2 ammette.
+ *
+ * Era 13 ("NOME8.EXT3" + NUL) perche' l'unico filesystem era FAT12, dove
+ * un nome piu' lungo NON PUO' esistere. Con ext2 esiste, e una struttura
+ * che non lo contiene non "tronca un caso limite": rende irraggiungibili
+ * dei file, perche' il nome troncato non apre niente.
+ *
+ * Il prezzo e' che DirEntry passa da 20 a 264 byte, e chi ne chiede un
+ * blocco paga 264 byte a voce. Per questo il tetto per chiamata
+ * (READDIR_MAX_BATCH) e' sceso da 64 a 16: e' il numero che moltiplica.
+ * ============================================================================= */
+#define DIRENT_NAME_MAX 256
 
 typedef struct {
     char     name[DIRENT_NAME_MAX];
@@ -313,7 +325,8 @@ typedef struct {
 /* Esito dell'installazione dell'avvio (per sys_bootinstall) */
 typedef struct {
     uint32_t s2_lba, s2_cnt;
-    uint32_t k_lba,  k_cnt;
+    uint32_t k_lba,  k_cnt;     /* primo intervallo, e settori TOTALI */
+    uint32_t k_next;            /* in quanti intervalli e' spezzato il kernel */
     uint32_t disco;
     uint32_t voce;
 } BootInstallInfo;
