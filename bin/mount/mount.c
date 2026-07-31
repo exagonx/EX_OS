@@ -63,9 +63,18 @@ static void elenca(void)
     while ((n = mountinfo(m, 4, start)) > 0) {
         int i;
         for (i = 0; i < n; i++) {
-            printf("%-24s %-12s FAT%-8u %s\n",
-                   m[i].punto, m[i].dev, m[i].fs,
-                   m[i].sola_lettura ? "sola lettura" : "lettura/scrittura");
+            /* Il campo `fs` non e' piu' solo la larghezza di una FAT: il
+             * valore 2 e' ext2. Stampare "FAT2" sarebbe un filesystem che
+             * non esiste. */
+            if (m[i].fs == 2) {
+                printf("%-24s %-12s %-11s %s\n",
+                       m[i].punto, m[i].dev, "ext2",
+                       m[i].sola_lettura ? "sola lettura" : "lettura/scrittura");
+            } else {
+                printf("%-24s %-12s FAT%-8u %s\n",
+                       m[i].punto, m[i].dev, m[i].fs,
+                       m[i].sola_lettura ? "sola lettura" : "lettura/scrittura");
+            }
         }
         start += (unsigned int)n;
         if (n < 4) break;
@@ -126,8 +135,35 @@ int main(int argc, char **argv)
                        argv[a], argv[a + 1], spiega(r), r);
                 return 1;
             }
-            printf("montato %s su %s (%s)\n", argv[a], argv[a + 1],
-                   flag ? "sola lettura" : "lettura/scrittura");
+            /* Cosa e' successo DAVVERO, non cosa si era chiesto. Il
+             * kernel puo' imporre la sola lettura da solo — lo fa su
+             * ext2, che il driver non sa scrivere — e riferire il flag
+             * richiesto direbbe "lettura/scrittura" su un volume dove la
+             * prima scrittura fallira'. */
+            {
+                MountInfo    m[4];
+                unsigned int start = 0;
+                int          n, i, detto = 0;
+
+                while (!detto && (n = mountinfo(m, 4, start)) > 0) {
+                    for (i = 0; i < n; i++) {
+                        if (strcmp(m[i].punto, argv[a + 1]) != 0) continue;
+                        printf("montato %s su %s (%s)\n", argv[a], argv[a + 1],
+                               m[i].sola_lettura ? "sola lettura"
+                                                 : "lettura/scrittura");
+                        detto = 1;
+                        break;
+                    }
+                    start += (unsigned int)n;
+                    if (n < 4) break;
+                }
+
+                /* Il montaggio e' riuscito: se non lo si e' ritrovato
+                 * nell'elenco e' un problema di mountinfo, non del
+                 * montaggio, e non va fatto sembrare un errore. */
+                if (!detto)
+                    printf("montato %s su %s\n", argv[a], argv[a + 1]);
+            }
             return 0;
         }
     }

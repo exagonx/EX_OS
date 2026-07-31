@@ -2,6 +2,148 @@
 
 ---
 
+# SESSIONE 2026-07-31 (n+3) — ext2
+
+Kernel a **0.136** → **0.137**. EX-OS **crea** un ext2 e lo **legge**.
+
+```
+mkfs -t ext2 -L dati hd0p1
+mount hd0p1 /e
+ls /e
+```
+
+Scritto **dalla specifica**, non portato.
+
+## Perché non un porting, visto che le licenze lo permettevano
+
+La licenza non c'entrava: EX-OS è GPL-2.0-or-later, `libext2fs` è LGPL-2.0,
+`mke2fs` e il driver ext2 di Linux sono GPL-2.0. Si poteva copiare.
+
+Il problema era ingegneristico. `fs/ext2/` di Linux **non è un modulo che
+legge ext2**: è un modulo che *traduce* ext2 nel VFS di Linux, cucito
+addosso a `buffer_head`, alla page cache e a `struct super_block`.
+Portarlo significa portare quel VFS, cioè un pezzo di Linux più grande di
+EX-OS. e2fsprogs trascina `libext2fs` + `libcom_err` + `libuuid` +
+`libblkid`, `open`/`pread`/`ioctl` e allocazione dinamica ovunque.
+
+Il formato invece è documentato, e la documentazione non è coperta da
+quelle licenze. Sono ~600 righe per il formattatore e ~500 per il driver:
+meno del porting, e si capisce ogni byte — che con un porting non succede.
+
+## Le sei cose che e2fsck pretende e la specifica non dice
+
+Sono quelle che un formattatore scritto "leggendo le struct" sbaglia:
+
+1. **`i_blocks` è in unità da 512 byte**, non in blocchi del filesystem.
+   Una directory da un blocco da 1024 ha `i_blocks = 2`.
+2. **I bit di riempimento delle bitmap**, oltre la fine reale del gruppo,
+   devono essere a **uno**. A zero si dichiarano liberi blocchi che non
+   esistono.
+3. Gli **inode riservati 1..10** vanno marcati usati anche se non
+   descrivono niente. `s_first_ino` vale 11 proprio per quello.
+4. **`/lost+found` deve esistere.** Senza, e2fsck si offre di crearlo — e
+   un filesystem appena formattato che fa già proporre una riparazione è
+   un filesystem su cui, il giorno che il problema è vero, nessuno
+   guarderà più.
+5. **`i_links_count` della radice è 3, non 2**: le voci che puntano alla
+   radice sono `.` dentro di sé, `..` dentro di sé (la radice è padre di
+   sé stessa) e `..` dentro `lost+found`.
+6. La somma dei contatori liberi dei descrittori deve combaciare
+   **esattamente** con quella nel superblocco.
+
+## L'errore che ha trovato il compilatore
+
+`-Warray-bounds` ha segnalato una scrittura all'offset 1280 di un buffer
+da 1024. L'inode 11 (`lost+found`) **non sta nello stesso blocco della
+tabella** dell'inode 2 (la radice): con inode da 128 byte in blocchi da
+1024 ce ne stanno **otto** per blocco, quindi l'11 è nel secondo blocco
+all'offset 256.
+
+Scritto com'era, `lost+found` sarebbe rimasto senza inode e 256 byte
+sarebbero finiti oltre il buffer.
+
+## Il driver rifiuta invece di provarci
+
+ext2 dichiara le funzionalità in tre insiemi, e la differenza fra i tre è
+precisamente cosa fare quando non le si conosce: `compat` si ignora,
+`ro_compat` impone la sola lettura, **`incompat` impone di NON montare**.
+
+La terza è la ragione del rifiuto: una funzionalità incompatibile cambia
+il significato dei campi che già si sanno leggere. Un volume con extent
+(ext4) ha `i_block` che **non contiene numeri di blocco**: leggerlo "come
+se" restituisce dati presi da posizioni arbitrarie del disco, in silenzio.
+
+Essendo in sola lettura, di `ro_compat` non ci importa niente.
+
+## Le tre trappole che rendono un driver "funziona solo sui miei volumi"
+
+1. La **dimensione del blocco** non è fissa: `1024 << s_log_block_size`.
+   `mkfs` scrive sempre 1024, ma mke2fs usa 4096 sui volumi grandi.
+2. **`s_first_data_block`** vale 1 con blocchi da 1024 e **0** con blocchi
+   più grandi. Cambia dove comincia *ogni* gruppo.
+3. La **dimensione dell'inode** è 128 solo in revisione 0. In revisione 1
+   la dice `s_inode_size`, e su ext2 moderni è spesso **256**.
+
+Per questo il test decisivo è stato su un volume fatto da `mke2fs` con
+blocchi da 4096 e inode da 256 — cioè la configurazione che il nostro
+formattatore non produce mai.
+
+## Sola lettura è una scelta, non un lavoro lasciato a metà
+
+Un ext2 scrivibile richiede allocatore di blocchi e inode, aggiornamento
+coerente di due bitmap e tre contatori a ogni operazione, e una risposta a
+cosa succede se la corrente va via a metà. **Leggere richiede di capire il
+formato; scrivere richiede di non romperlo mai.** Farli insieme significa
+scoprire gli errori del primo dentro i danni del secondo.
+
+`vfs_mount()` impone `sola_lettura = 1` sugli ext2 **qualunque cosa abbia
+chiesto il chiamante**. Così una `mkdir` fallisce con EROFS — che l'utente
+capisce — invece di arrivare a un driver che quella funzione non ce l'ha e
+fallire con un errore generico a tre livelli di distanza.
+
+## Due bug trovati integrando
+
+**`sys_mountinfo` chiamava `fat_tipo(m->mnt)` su un montaggio ext2**:
+l'handle appartiene al driver del montaggio, e passarlo a fat.c legge la
+sua tabella a un indice che lì descrive tutt'altro volume. Il tipo va
+scelto *prima* di chiamare chiunque.
+
+**`/bin/mount` riferiva il flag richiesto, non il risultato**: diceva
+"lettura/scrittura" su un ext2 che il kernel aveva appena forzato in sola
+lettura. Ora interroga `mountinfo` e dice cosa è successo davvero.
+
+C'è anche una trappola dentro `ext2_readdir`: leggere l'inode di una voce
+riusa il buffer globale, quindi il blocco della directory va **riletto**
+prima di guardare la voce successiva. Senza, si scorrono i byte di una
+tabella di inode credendo che siano voci di directory.
+
+## Verifica
+
+**Formattatore**: `e2fsck -fn` esito **0** su un ext2 creato da EX-OS su
+una partizione da 299 MB (38 gruppi, 19152 inode). Poi Linux ci ha creato
+una directory e scritto due file — incluso uno da 127 KB che richiede
+blocchi indiretti — ed e2fsck è rimasto a 0. `dumpe2fs` conferma
+etichetta, UUID (versione 4, variante DCE), `filetype sparse_super`,
+revisione 1.
+
+**Driver**: montato in EX-OS un ext2 *scritto da Linux*, percorsi a tre
+livelli risolti (`/e/prova/dentro`), scrittura rifiutata con EROFS. Il
+file da 127268 byte copiato su floppy e confrontato con `cmp`:
+**identico**.
+
+**La prova che conta**: un volume di `mke2fs -b 4096 -I 256`, cioè blocchi
+da 4096, `s_first_data_block = 0` e inode da 256 — nessuna delle tre cose
+che il nostro formattatore produce. Montato, elencato, e un file da 131368
+byte letto e confrontato: **identico**.
+
+## Cosa manca
+
+La scrittura. E `VfsDirEntry.nome` è di 16 byte mentre ext2 arriva a 255:
+i nomi lunghi vengono troncati, ed è un limite della struttura che
+attraversa la syscall, non del driver.
+
+---
+
 # SESSIONE 2026-07-31 (n+2) — Formattazione, e il ciclo si chiude
 
 Kernel a **0.135** → **0.136**. Da un disco vergine a un volume montato

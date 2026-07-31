@@ -60,6 +60,7 @@ static unsigned int in_mb(unsigned int lo, unsigned int hi)
 static const char *nome_fs(unsigned int t)
 {
     switch (t) {
+        case 2:   return "ext2";
         case 12:  return "FAT12";
         case 16:  return "FAT16";
         case 32:  return "FAT32";
@@ -180,6 +181,13 @@ static void mostra(unsigned int idx, const DiskInfo *d)
             printf("        %u cluster da %u settori%s\n",
                    p->fs_n_cluster, p->fs_sett_per_clu,
                    p->fs_incoerente ? "  << CAMPI INCOERENTI col tipo dedotto >>" : "");
+        } else if (p->fs_tipo == 2) {
+            /* Su ext2 il conto e' di BLOCCHI, non di cluster: sono la
+             * stessa idea con un altro nome, ma stampare "cluster" su un
+             * ext2 farebbe cercare all'utente un campo che li' non esiste. */
+            printf("        %u blocchi da %u settori%s\n",
+                   p->fs_n_cluster, p->fs_sett_per_clu,
+                   p->fs_incoerente ? "  << dimensione di blocco non gestita >>" : "");
         }
     }
     printf("  'L' = partizione logica. Il numero e' quello di fdisk: 1-4 sono\n");

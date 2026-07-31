@@ -122,6 +122,49 @@ int vol_identifica(int blkdev, VolumeInfo *out)
         return -1;
     }
 
+    /* --- ext2? -------------------------------------------------------
+     * Va provato PRIMA della FAT, e non e' indifferente: il settore 0 di
+     * un ext2 e' il record di avvio, cioe' byte qualunque, e nulla vieta
+     * che finisca per 0x55AA e che i campi letti come BPB sembrino
+     * plausibili. Il superblocco ext2 invece sta all'offset 1024 con un
+     * numero magico a due byte: e' un'identificazione, non un indizio.
+     *
+     * Qui ci si ferma al magico e ai pochi campi che servono a dire
+     * "quanto e' grande": tutto il resto — funzionalita' incompatibili,
+     * coerenza, revisione — lo controlla ext2_mount(), che e' il punto in
+     * cui si decide se il volume e' USABILE. Duplicare quei controlli
+     * significherebbe averne due elenchi che divergono. */
+    {
+        uint8_t sb[512];
+
+        if (blk_read(blkdev, 2, 1, sb) == 0 &&
+            le16(sb + 56) == 0xEF53) {
+            uint32_t log_bs = le32(sb + 24);
+
+            out->tipo         = VOL_FS_EXT2;
+            out->byts_per_sec = 512;
+            out->sett_per_clu = (log_bs <= 6u) ? ((1024u << log_bs) / 512u) : 0;
+            out->tot_settori  = (uint32_t)n_settori;
+            out->n_cluster    = le32(sb + 4);       /* blocchi, non cluster */
+
+            /* L'etichetta ext2 sta nel superblocco, in chiaro, e conserva
+             * le minuscole: non e' il campo a lunghezza fissa di FAT e non
+             * va passata da etichetta(), che toglie gli spazi finali di un
+             * formato diverso. */
+            {
+                uint32_t k;
+                for (k = 0; k < 11u; k++) out->etichetta[k] = (char)sb[120 + k];
+                out->etichetta[11] = '\0';
+            }
+
+            /* Un blocco che non e' 1024/2048/4096 non e' un ext2 che
+             * qualcuno sappia leggere: si segnala come incoerente invece
+             * di offrire un volume che poi non si monta. */
+            if (log_bs > 2u) out->incoerente = 1;
+            return 0;
+        }
+    }
+
     /* La firma 0x55AA e' necessaria ma NON sufficiente: la controlliamo
      * per scartare subito i casi banali, e poi verifichiamo comunque
      * tutti i campi. Un settore dati qualunque puo' finire con 55 AA per

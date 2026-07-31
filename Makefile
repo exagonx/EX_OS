@@ -269,18 +269,25 @@ fdisk: dirs $(FDISK_BIN)
 # Formattatore FAT16/FAT32. Scrive dentro una partizione tramite
 # SYS_BLKWRITE, che accetta solo dispositivi di tipo partizione: la tabella
 # delle partizioni resta irraggiungibile da qui. Stesso schema di /bin/ls.
+# Due sorgenti: mkfs.c (contorno + ramo FAT) e ext2.c (ramo ext2). Sono
+# separati perche' i due formati non hanno niente in comune, non per
+# dimensione del file.
 MKFS_SRC   := bin/mkfs/mkfs.c
+MKFS_EXT2  := bin/mkfs/ext2.c
+MKFS_HDR   := bin/mkfs/ext2.h
 MKFS_BIN   := $(BUILD_BIN)/mkfs
 MKFS_LD    := bin/mkfs/mkfs.ld
 
-$(MKFS_BIN): $(MKFS_SRC) $(MKFS_LD) $(LIBC_SRC) $(LIBC_START)
+$(MKFS_BIN): $(MKFS_SRC) $(MKFS_EXT2) $(MKFS_HDR) $(MKFS_LD) $(LIBC_SRC) $(LIBC_START)
 	@echo "=== Compilazione /bin/mkfs ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -c $(MKFS_SRC) -o $(BUILD_OBJ)/mkfs_main.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                -o $(BUILD_OBJ)/mkfs_libc.o
-	$(CC) -m32 -c $(LIBC_START)                        -o $(BUILD_OBJ)/mkfs_start.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I bin/mkfs -c $(MKFS_SRC)  -o $(BUILD_OBJ)/mkfs_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I bin/mkfs -c $(MKFS_EXT2) -o $(BUILD_OBJ)/mkfs_ext2.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                             -o $(BUILD_OBJ)/mkfs_libc.o
+	$(CC) -m32 -c $(LIBC_START)                                     -o $(BUILD_OBJ)/mkfs_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib -T $(MKFS_LD) \
-	    $(BUILD_OBJ)/mkfs_start.o $(BUILD_OBJ)/mkfs_main.o $(BUILD_OBJ)/mkfs_libc.o -o $@
+	    $(BUILD_OBJ)/mkfs_start.o $(BUILD_OBJ)/mkfs_main.o \
+	    $(BUILD_OBJ)/mkfs_ext2.o  $(BUILD_OBJ)/mkfs_libc.o -o $@
 	@echo "[OK] mkfs compilato: $@"
 
 .PHONY: mkfs
@@ -630,6 +637,7 @@ KERNEL_C_SRC   := $(KERNEL_DIR)/arch/x86/gdt.c \
                   $(KERNEL_DIR)/syscall/syscall_impl.c \
                   $(KERNEL_DIR)/fs/fat12.c \
                   $(KERNEL_DIR)/fs/fat.c \
+                  $(KERNEL_DIR)/fs/ext2.c \
                   $(KERNEL_DIR)/fs/vfs.c \
                   $(KERNEL_DIR)/boot/bootinst.c \
                   $(KERNEL_DIR)/block/ata.c \

@@ -79,6 +79,7 @@
 #include "vfs.h"
 #include "fat12.h"
 #include "fat.h"
+#include "ext2.h"
 #include "vol.h"
 #include "blk.h"
 #include "syscall.h"
@@ -376,8 +377,8 @@ int vfs_mount(const char *dev, const char *punto, int sola_lettura)
 
     if (vol_identifica(blkdev, &vi) != 0) return ERR(EIO);
     if (vi.tipo != VOL_FS_FAT12 && vi.tipo != VOL_FS_FAT16 &&
-        vi.tipo != VOL_FS_FAT32) {
-        klog(LOG_ERROR, "VFS: '%s' non contiene un FAT riconoscibile", dev);
+        vi.tipo != VOL_FS_FAT32 && vi.tipo != VOL_FS_EXT2) {
+        klog(LOG_ERROR, "VFS: '%s' non contiene un filesystem riconoscibile", dev);
         return ERR(EINVAL);
     }
     if (vi.incoerente) {
@@ -385,8 +386,24 @@ int vfs_mount(const char *dev, const char *punto, int sola_lettura)
         return ERR(EINVAL);
     }
 
-    mnt = fat_mount(blkdev);
-    if (mnt < 0) return ERR(EIO);
+    if (vi.tipo == VOL_FS_EXT2) {
+        mnt = ext2_mount(blkdev);
+        if (mnt < 0) return ERR(EIO);
+
+        /* ext2 si monta SEMPRE in sola lettura, qualunque cosa abbia
+         * chiesto il chiamante: il driver non sa scrivere. Imporlo qui e
+         * non fidarsi del flag e' cio' che fa fallire una `mkdir` con
+         * EROFS — che l'utente capisce — invece di lasciarla arrivare a un
+         * driver che non ha la funzione e fallisce con un errore generico
+         * a tre livelli di distanza. */
+        sola_lettura = 1;
+        g_mnt[slot].tipo = VFS_FS_EXT2;
+    } else {
+        mnt = fat_mount(blkdev);
+        if (mnt < 0) return ERR(EIO);
+
+        g_mnt[slot].tipo = VFS_FS_FAT;
+    }
 
     /* Dichiara al livello a blocchi che questo dispositivo e' in uso: da
      * qui in poi blk_rescan() rifiutera' di rileggere la tabella del suo
@@ -396,15 +413,17 @@ int vfs_mount(const char *dev, const char *punto, int sola_lettura)
 
     g_mnt[slot].usato        = 1;
     v_copia(g_mnt[slot].punto, punto, VFS_PUNTO_MAX);
-    g_mnt[slot].tipo         = VFS_FS_FAT;
     g_mnt[slot].sola_lettura = sola_lettura ? 1 : 0;
     g_mnt[slot].mnt          = mnt;
     g_mnt[slot].blkdev       = blkdev;
     v_copia(g_mnt[slot].dev, dev, BLK_NOME_MAX);
 
-    klog(LOG_INFO, "VFS: montato %s su %s (FAT%d, %s)",
-         dev, punto, fat_tipo(mnt),
-         g_mnt[slot].sola_lettura ? "sola lettura" : "lettura/scrittura");
+    if (g_mnt[slot].tipo == VFS_FS_EXT2)
+        klog(LOG_INFO, "VFS: montato %s su %s (ext2, sola lettura)", dev, punto);
+    else
+        klog(LOG_INFO, "VFS: montato %s su %s (FAT%d, %s)",
+             dev, punto, fat_tipo(mnt),
+             g_mnt[slot].sola_lettura ? "sola lettura" : "lettura/scrittura");
     return 0;
 }
 
@@ -427,7 +446,9 @@ int vfs_umount(const char *punto)
             if (g_file[k].usato && g_file[k].im == i) return ERR(EBUSY);
         }
 
-        fat_umount(g_mnt[i].mnt);
+        if (g_mnt[i].tipo == VFS_FS_EXT2) ext2_umount(g_mnt[i].mnt);
+        else                              fat_umount(g_mnt[i].mnt);
+
         if (g_mnt[i].blkdev >= 0) blk_rilascia(g_mnt[i].blkdev);
         g_mnt[i].usato = 0;
         klog(LOG_INFO, "VFS: smontato %s", punto);
@@ -472,6 +493,15 @@ int vfs_open(const char *abs, uint32_t flags)
         int h = fat12_open(interno, flags);
         if (h < 0) return ERR(ENOENT);
         g_file[slot].h12 = h;
+    } else if (g_mnt[im].tipo == VFS_FS_EXT2) {
+        Ext2DirEntry e;
+
+        /* Nessun O_CREAT e nessun O_TRUNC da gestire: il montaggio e'
+         * forzato in sola lettura, quindi il controllo EROFS in testa a
+         * questa funzione ha gia' respinto ogni flag di scrittura. */
+        if (ext2_stat(g_mnt[im].mnt, interno, &e) != 0) return ERR(ENOENT);
+        if (e.is_dir) return ERR(EISDIR);
+        g_file[slot].h12 = -1;
     } else {
         FatDirEntry e;
 
@@ -503,6 +533,10 @@ int vfs_read(int h, void *buf, uint32_t size, uint32_t offset)
 
     if (g_mnt[g_file[h].im].tipo == VFS_FS_FAT12FD)
         return fat12_read(g_file[h].h12, buf, size, offset);
+
+    if (g_mnt[g_file[h].im].tipo == VFS_FS_EXT2)
+        return ext2_read(g_mnt[g_file[h].im].mnt, g_file[h].interno,
+                         buf, size, offset);
 
     return fat_read(g_mnt[g_file[h].im].mnt, g_file[h].interno,
                     buf, size, offset);
@@ -566,6 +600,12 @@ int vfs_stat(const char *abs, VfsStat *st)
         st->dimensione   = f.size;
         st->is_dir       = (f.attr & FAT12_ATTR_DIRECTORY) ? 1 : 0;
         st->sola_lettura = (f.attr & FAT12_ATTR_READONLY)  ? 1 : 0;
+    } else if (g_mnt[im].tipo == VFS_FS_EXT2) {
+        Ext2DirEntry e;
+        if (ext2_stat(g_mnt[im].mnt, interno, &e) != 0) return ERR(ENOENT);
+        st->dimensione   = e.dimensione;
+        st->is_dir       = e.is_dir;
+        st->sola_lettura = 1;
     } else {
         FatDirEntry e;
         if (fat_stat(g_mnt[im].mnt, interno, &e) != 0) return ERR(ENOENT);
@@ -634,6 +674,32 @@ int vfs_readdir(const char *abs, VfsDirEntry *out, uint32_t max,
                 }
                 s_fs += n;
                 if (n < cap) break;
+            }
+        } else if (g_mnt[im].tipo == VFS_FS_EXT2) {
+            while (scritti < max) {
+                Ext2DirEntry tmp[4];       /* 4 e non 8: le voci sono piu' grosse */
+                uint32_t cap = max - scritti, j;
+                int      n;
+
+                if (cap > 4) cap = 4;
+                n = ext2_readdir(g_mnt[im].mnt, interno, tmp, cap, s_fs);
+                if (n < 0) {
+                    if (scritti == 0) return ERR(ENOENT);
+                    break;
+                }
+                for (j = 0; j < (uint32_t)n; j++) {
+                    /* I nomi ext2 arrivano a 255 byte, VfsDirEntry ne
+                     * tiene 16: v_copia tronca. E' una perdita vera, ed e'
+                     * limitata dal formato della struttura che attraversa
+                     * la syscall, non dal driver. */
+                    v_copia(out[scritti].nome, tmp[j].nome,
+                            sizeof(out[scritti].nome));
+                    out[scritti].dimensione = tmp[j].dimensione;
+                    out[scritti].is_dir     = tmp[j].is_dir;
+                    scritti++;
+                }
+                s_fs += (uint32_t)n;
+                if ((uint32_t)n < cap) break;
             }
         } else {
             while (scritti < max) {

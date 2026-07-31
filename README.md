@@ -302,11 +302,12 @@ sul disco e irraggiungibile.
 `fdisk` non formatta. Una partizione appena creata contiene i byte che c'erano
 prima in quei settori: non è vuota, è non inizializzata.
 
-### /bin/mkfs — formattatore FAT16/FAT32
+### /bin/mkfs — formattatore FAT16/FAT32/ext2
 
 ```
 mkfs -t fat32 -L ETICHETTA hd0p1
 mkfs -t fat16 hd0p2
+mkfs -t ext2  -L dati hd0p3
 ```
 
 La partizione **non dev'essere montata**: sopra un volume montato c'è una
@@ -332,6 +333,29 @@ si monta, sembra funzionare e restituisce file vuoti.
 settore 0 non appartiene a nessuna partizione. Non esiste una coppia
 (nome, LBA) che lo raggiunga. Se il byte di tipo nella tabella contraddice il
 filesystem creato, `mkfs` lo segnala e dice come correggerlo con `fdisk`.
+
+### ext2 — creazione e lettura
+
+`mkfs -t ext2` crea un ext2 revisione 1 (`filetype`, `sparse_super`) con
+blocchi da 1024. È scritto **dalla specifica**, non portato da e2fsprogs né dal
+driver di Linux: quest'ultimo non è un modulo che legge ext2, è un modulo che
+*traduce* ext2 nel VFS di Linux, e portarlo significherebbe portare quel VFS.
+
+`kernel/fs/ext2.c` lo legge, in **sola lettura**. Non è una fase incompiuta:
+leggere richiede di capire il formato, scrivere richiede di non romperlo mai —
+sono due lavori, e farli insieme significa scoprire gli errori del primo dentro
+i danni del secondo. Un ext2 si monta sempre in sola lettura qualunque cosa si
+chieda, così una `mkdir` fallisce con EROFS invece di arrivare a un driver che
+quella funzione non ce l'ha.
+
+Il driver legge anche i volumi fatti da `mke2fs`: la dimensione del blocco
+(1024/2048/4096), `s_first_data_block` (1 o 0 a seconda) e la dimensione
+dell'inode (128 o 256) vengono tutte dal superblocco, mai date per scontate.
+
+Rifiuta invece di provarci quando trova una funzionalità **incompat** che non
+conosce — un volume ext4 con extent ha `i_block` che non contiene numeri di
+blocco, e leggerlo "come se" restituirebbe dati presi a caso dal disco senza
+che nulla lo segnali.
 
 ---
 

@@ -7,10 +7,16 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  * =============================================================================
  *
- * Crea un filesystem FAT16 o FAT32 dentro una partizione.
+ * Crea un filesystem dentro una partizione.
  *
  *   mkfs -t fat32 -L DATI hd0p1
  *   mkfs -t fat16 hd0p2
+ *   mkfs -t ext2  hd0p3
+ *
+ * Qui c'e' il contorno — argomenti, ricognizione del dispositivo,
+ * conferma, spiegazione degli errori — e il ramo FAT. Il ramo ext2 sta in
+ * bin/mkfs/ext2.c, che e' un formato senza niente in comune con questo e
+ * merita un file suo.
  *
  * -----------------------------------------------------------------------
  * PERCHE' STA IN USERSPACE E bootinst.c NO
@@ -68,6 +74,7 @@
  * riconosce che uno che mente.
  * ============================================================================= */
 #include "libc.h"
+#include "ext2.h"
 
 /* =============================================================================
  * Identità del programma
@@ -575,8 +582,13 @@ static void controlla_tipo_mbr(const char *nome, unsigned int tipo_fs)
 
     if (diskinfo(disco, &d) < 0 || !d.presente) return;
 
-    atteso_a = (tipo_fs == 32) ? 0x0C : 0x06;
-    atteso_b = (tipo_fs == 32) ? 0x0B : 0x0E;
+    if (tipo_fs == 2) {                     /* ext2 */
+        atteso_a = 0x83; atteso_b = 0x83;
+    } else if (tipo_fs == 32) {
+        atteso_a = 0x0C; atteso_b = 0x0B;
+    } else {
+        atteso_a = 0x06; atteso_b = 0x0E;
+    }
 
     for (i = 0; i < d.n_part; i++) {
         if (d.part[i].numero != numero) continue;
@@ -585,7 +597,9 @@ static void controlla_tipo_mbr(const char *nome, unsigned int tipo_fs)
 
         printf("\nNOTA: nella tabella delle partizioni %s e' di tipo 0x%02X,\n",
                nome, d.part[i].tipo);
-        printf("che non corrisponde a FAT%u. Il byte di tipo e' solo un\n", tipo_fs);
+        if (tipo_fs == 2) printf("che non corrisponde a ext2 (0x83). ");
+        else              printf("che non corrisponde a FAT%u. ", tipo_fs);
+        printf("Il byte di tipo e' solo un\n");
         printf("suggerimento e non impedisce niente, ma un suggerimento\n");
         printf("sbagliato manda fuori strada chi guarda il disco da un altro\n");
         printf("sistema. Correggilo con:  fdisk hd%u  poi  t  %u  %02X\n",
@@ -599,87 +613,117 @@ static void controlla_tipo_mbr(const char *nome, unsigned int tipo_fs)
  * ============================================================================= */
 static void uso(void)
 {
-    printf("uso: mkfs -t fat16|fat32 [-L ETICHETTA] <partizione>\n\n");
+    printf("uso: mkfs -t fat16|fat32|ext2 [-L ETICHETTA] <partizione>\n\n");
     printf("  mkfs -t fat32 hd0p1\n");
-    printf("  mkfs -t fat16 -L DATI hd0p2\n\n");
+    printf("  mkfs -t fat16 -L DATI hd0p2\n");
+    printf("  mkfs -t ext2  -L SISTEMA hd0p3\n\n");
     printf("La partizione NON dev'essere montata. `disk` elenca i\n");
-    printf("dispositivi, `fdisk` crea le partizioni.\n");
+    printf("dispositivi, `fdisk` crea le partizioni.\n\n");
+    printf("Nota: EX-OS sa MONTARE solo i volumi FAT. Un ext2 creato qui e'\n");
+    printf("valido e leggibile da Linux, ma il driver di lettura ext2 non\n");
+    printf("c'e' ancora.\n");
 }
 
-int main(int argc, char **argv)
+/* Chiede conferma prima di distruggere. Ritorna 1 se l'utente ha
+ * confermato. */
+static int conferma(const char *dev)
 {
-    Geo          g;
-    char         etichetta[12];
-    char         risposta[16];
-    /* Azzerata subito: piu' avanti il primo byte a NUL e' cio' che
-     * distingue "nessuna -L" da un'etichetta data. Su una variabile
-     * automatica non inizializzata quel byte e' spazzatura. */
-    const char  *dev = 0;
-    unsigned int tipo = 0, primo = 0, settori = 0, volid;
-    int          i, r;
+    char risposta[16];
+    int  r;
 
-    etichetta[0] = '\0';
+    printf("\nTUTTO IL CONTENUTO DI %s VERRA' PERSO.\n", dev);
+    printf("Scrivere? (scrivi `si` per confermare): ");
 
-    /* --- argomenti --- */
-    for (i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "-t") == 0) {
-            if (++i >= argc) { uso(); return 1; }
-            if      (strcmp(argv[i], "fat16") == 0) tipo = 16;
-            else if (strcmp(argv[i], "fat32") == 0) tipo = 32;
-            else if (strcmp(argv[i], "ext2")  == 0) {
-                printf("mkfs: ext2 non e' ancora implementato.\n");
-                return 1;
-            } else {
-                printf("mkfs: tipo '%s' sconosciuto. Sono fat16 e fat32.\n",
-                       argv[i]);
-                return 1;
-            }
-        } else if (strcmp(argv[i], "-L") == 0) {
-            if (++i >= argc) { uso(); return 1; }
-            {
-                int k;
-                for (k = 0; k < 11; k++) {
-                    char c = argv[i][k];
-                    if (c == '\0') break;
-                    etichetta[k] = maiuscola(c);
-                }
-                for (; k < 11; k++) etichetta[k] = ' ';
-                etichetta[11] = '\0';
-            }
-        } else if (argv[i][0] == '-') {
-            printf("mkfs: opzione '%s' sconosciuta.\n\n", argv[i]);
-            uso();
-            return 1;
-        } else {
-            dev = argv[i];
-        }
+    r = (int)read(0, risposta, sizeof(risposta) - 1);
+    if (r <= 0) { printf("\nAnnullato.\n"); return 0; }
+    risposta[r] = '\0';
+    while (r > 0 && (risposta[r - 1] == '\n' || risposta[r - 1] == '\r'))
+        risposta[--r] = '\0';
+
+    if (strcmp(risposta, "si") != 0) {
+        printf("Annullato. La partizione non e' stata toccata.\n");
+        return 0;
+    }
+    return 1;
+}
+
+/* Il commento finale sull'esito, condiviso dai due rami. */
+static void spiega_fallimento(const char *dev, int r)
+{
+    printf("\nFormattazione fallita (errore %d).\n", r);
+
+    switch (-r) {
+        case 16:
+            printf("%s e' MONTATA. Il kernel rifiuta l'accesso grezzo a una\n", dev);
+            printf("partizione montata: sopra c'e' una cache write-back, e\n");
+            printf("scriverci sotto significa che il primo sync ci ricopre i\n");
+            printf("settori vecchi. Smontala con `umount`.\n");
+            break;
+        case 1:
+            printf("%s non e' una partizione.\n", dev);
+            break;
+        case 5:
+            printf("Errore di I/O: il disco non ha accettato la scrittura.\n");
+            break;
+        default:
+            break;
     }
 
-    if (dev == 0 || tipo == 0) { uso(); return 1; }
-
-    if (etichetta[0] == '\0') {
-        const char *pre = "NO NAME    ";
-        for (i = 0; i < 11; i++) etichetta[i] = pre[i];
-        etichetta[11] = '\0';
+    if (toccato) {
+        printf("\nIl volume ora NON e' riconoscibile: le strutture del\n");
+        printf("filesystem precedente sono state azzerate per prime, di\n");
+        printf("proposito. Rilancia mkfs quando hai risolto.\n");
+    } else {
+        printf("\nNessuna scrittura e' andata a segno: %s e' esattamente\n", dev);
+        printf("com'era prima.\n");
     }
+}
 
-    printf("%s %s — formattatore FAT di EX-OS\n\n", MKFS_NAME, MKFS_VERSION);
+/* =============================================================================
+ * I due rami: FAT e ext2
+ *
+ * Sono separati perche' le due geometrie non hanno niente in comune, e
+ * fondere il calcolo in una struttura sola darebbe una decina di campi
+ * validi solo per meta' dei casi — il genere di struttura in cui prima o
+ * poi si legge un campo che per quel filesystem non significa niente.
+ *
+ * Cio' che condividono e' il contorno, ed e' condiviso davvero: la
+ * ricerca del dispositivo, la conferma, la spiegazione dell'errore, la
+ * nota sul byte di tipo nella tabella delle partizioni.
+ * ============================================================================= */
+static int fai_fat(const char *dev, unsigned int tipo, unsigned int primo,
+                   unsigned int settori, const char *etichetta_utente)
+{
+    Geo  g;
+    char et[12];
+    int  i, r;
 
-    if (trova(dev, &primo, &settori) != 0) return 1;
-    if (scegli(&g, tipo, settori) != 0)    return 1;
+    /* L'etichetta FAT e' di 11 caratteri, in maiuscolo, riempita di spazi:
+     * non e' una stringa terminata da NUL ma un campo a lunghezza fissa
+     * dentro una voce di directory. */
+    for (i = 0; i < 11; i++) {
+        char c = etichetta_utente[i];
+        if (c == '\0') break;
+        et[i] = maiuscola(c);
+    }
+    for (; i < 11; i++) et[i] = ' ';
+    et[11] = '\0';
 
-    /* --- cio' che si sta per fare, in numeri --- */
+    if (scegli(&g, tipo, settori) != 0) return 1;
+
     printf("Partizione %s\n", dev);
     printf("  primo settore assoluto : %u\n", primo);
     printf("  dimensione             : %u settori (%u MB)\n",
            settori, in_mb(settori));
     printf("\nFilesystem FAT%u\n", g.tipo);
+
     if (g.spc * SETT_BYTE >= 1024u)
         printf("  settori per cluster    : %u  (%u KB per cluster)\n",
                g.spc, g.spc * SETT_BYTE / 1024u);
     else
         printf("  settori per cluster    : %u  (%u byte per cluster)\n",
                g.spc, g.spc * SETT_BYTE);
+
     printf("  settori riservati      : %u\n", g.riservati);
     printf("  tabelle FAT            : %u da %u settori\n", N_FAT, g.fat_sett);
     if (g.tipo == 16)
@@ -698,57 +742,18 @@ int main(int argc, char **argv)
                CLUSTER_MIN_FAT16, CLUSTER_MAX_FAT16);
     else
         printf("    (FAT32 richiede almeno %u)\n", CLUSTER_MIN_FAT32);
-    printf("  etichetta              : '%s'\n", etichetta);
+    printf("  etichetta              : '%s'\n", et);
 
-    printf("\nTUTTO IL CONTENUTO DI %s VERRA' PERSO.\n", dev);
-    printf("Scrivere? (scrivi `si` per confermare): ");
-
-    r = (int)read(0, risposta, sizeof(risposta) - 1);
-    if (r <= 0) { printf("\nAnnullato.\n"); return 1; }
-    risposta[r] = '\0';
-    while (r > 0 && (risposta[r - 1] == '\n' || risposta[r - 1] == '\r'))
-        risposta[--r] = '\0';
-
-    if (strcmp(risposta, "si") != 0) {
-        printf("Annullato. La partizione non e' stata toccata.\n");
-        return 1;
-    }
+    if (!conferma(dev)) return 1;
 
     printf("\n");
-    volid = uptime_ms();
-    if (volid == 0) volid = 0x45584F53u;    /* "EXOS", se il tempo e' fermo */
-
-    r = scrivi_tutto(dev, &g, primo, etichetta, volid);
-
-    if (r < 0) {
-        printf("\nFormattazione fallita (errore %d).\n", r);
-        switch (-r) {
-            case 16:
-                printf("%s e' MONTATA. Il kernel rifiuta l'accesso grezzo a una\n",
-                       dev);
-                printf("partizione montata: sopra c'e' una cache write-back, e\n");
-                printf("scriverci sotto significa che il primo sync ci ricopre i\n");
-                printf("settori vecchi. Smontala con `umount`.\n");
-                break;
-            case 1:
-                printf("%s non e' una partizione.\n", dev);
-                break;
-            case 5:
-                printf("Errore di I/O: il disco non ha accettato la scrittura.\n");
-                break;
-            default:
-                break;
-        }
-        if (toccato) {
-            printf("\nIl volume ora NON e' riconoscibile: il settore di avvio\n");
-            printf("vecchio e' stato azzerato per primo, di proposito. Rilancia\n");
-            printf("mkfs quando hai risolto.\n");
-        } else {
-            printf("\nNessuna scrittura e' andata a segno: %s e' esattamente\n", dev);
-            printf("com'era prima.\n");
-        }
-        return 1;
+    {
+        unsigned int volid = uptime_ms();
+        if (volid == 0) volid = 0x45584F53u;    /* "EXOS", se il tempo e' fermo */
+        r = scrivi_tutto(dev, &g, primo, et, volid);
     }
+
+    if (r < 0) { spiega_fallimento(dev, r); return 1; }
 
     printf("\nFilesystem FAT%u creato su %s.\n", g.tipo, dev);
     controlla_tipo_mbr(dev, g.tipo);
@@ -756,4 +761,97 @@ int main(int argc, char **argv)
     printf("\nOra puoi montarlo:\n");
     printf("  mount %s /disk\n", dev);
     return 0;
+}
+
+static int fai_ext2(const char *dev, unsigned int primo, unsigned int settori,
+                    const char *etichetta_utente)
+{
+    Ext2Geo g;
+    char    et[17];
+    int     i, r;
+
+    /* L'etichetta ext2 e' di 16 byte e conserva le minuscole: e' un campo
+     * del superblocco, non una voce di directory in 8.3. */
+    for (i = 0; i < 16; i++) {
+        char c = etichetta_utente[i];
+        if (c == '\0') break;
+        et[i] = c;
+    }
+    for (; i < 16; i++) et[i] = '\0';
+    et[16] = '\0';
+
+    if (ext2_piano(&g, settori) != 0) return 1;
+
+    printf("Partizione %s\n", dev);
+    printf("  primo settore assoluto : %u\n", primo);
+    printf("  dimensione             : %u settori (%u MB)\n",
+           settori, in_mb(settori));
+
+    ext2_mostra(&g);
+    printf("  etichetta              : '%s'\n", et);
+
+    printf("\nATTENZIONE: EX-OS non sa ancora MONTARE un ext2. Il volume sara'\n");
+    printf("valido e leggibile da Linux, ma `mount` qui fallira' finche' non\n");
+    printf("ci sara' il driver di lettura.\n");
+
+    if (!conferma(dev)) return 1;
+
+    printf("\n");
+    {
+        unsigned int seme = uptime_ms();
+        r = ext2_scrivi(dev, &g, et, seme, &toccato);
+    }
+
+    if (r < 0) { spiega_fallimento(dev, r); return 1; }
+
+    printf("\nFilesystem ext2 creato su %s.\n", dev);
+    controlla_tipo_mbr(dev, 2);
+
+    printf("\nVerificalo da Linux con:  e2fsck -fn <immagine>\n");
+    return 0;
+}
+
+int main(int argc, char **argv)
+{
+    const char  *dev = 0;
+    const char  *etichetta = "";
+    unsigned int tipo = 0, primo = 0, settori = 0;
+    int          i;
+
+    for (i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-t") == 0) {
+            if (++i >= argc) { uso(); return 1; }
+            if      (strcmp(argv[i], "fat16") == 0) tipo = 16;
+            else if (strcmp(argv[i], "fat32") == 0) tipo = 32;
+            else if (strcmp(argv[i], "ext2")  == 0) tipo = 2;
+            else {
+                printf("mkfs: tipo '%s' sconosciuto. Sono fat16, fat32 e ext2.\n",
+                       argv[i]);
+                return 1;
+            }
+        } else if (strcmp(argv[i], "-L") == 0) {
+            if (++i >= argc) { uso(); return 1; }
+            etichetta = argv[i];
+        } else if (argv[i][0] == '-') {
+            printf("mkfs: opzione '%s' sconosciuta.\n\n", argv[i]);
+            uso();
+            return 1;
+        } else {
+            dev = argv[i];
+        }
+    }
+
+    if (dev == 0 || tipo == 0) { uso(); return 1; }
+
+    printf("%s %s — formattatore di EX-OS\n\n", MKFS_NAME, MKFS_VERSION);
+
+    if (trova(dev, &primo, &settori) != 0) return 1;
+
+    if (tipo == 2) {
+        if (etichetta[0] == '\0') etichetta = "";
+        return fai_ext2(dev, primo, settori, etichetta);
+    }
+
+    if (etichetta[0] == '\0') etichetta = "NO NAME";
+    return fai_fat(dev, tipo, primo, settori, etichetta);
 }

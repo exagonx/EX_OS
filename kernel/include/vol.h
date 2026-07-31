@@ -17,6 +17,7 @@
 #include "kernel.h"
 
 #define VOL_FS_SCONOSCIUTO  0
+#define VOL_FS_EXT2         2
 #define VOL_FS_FAT12        12
 #define VOL_FS_FAT16        16
 #define VOL_FS_FAT32        32

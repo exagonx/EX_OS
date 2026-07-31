@@ -1689,8 +1689,14 @@ int32_t sys_mountinfo(InterruptFrame *frame)
         o = &batch[scritti];
         kstrcpy(o->punto, m->punto, MOUNTINFO_PUNTO_MAX);
         kstrcpy(o->dev,   m->dev,   BLKINFO_NOME_MAX);
-        o->fs           = (m->tipo == VFS_FS_FAT12FD) ? 12
-                                                      : (uint32_t)fat_tipo(m->mnt);
+        /* L'handle `mnt` appartiene al driver del montaggio: passarlo a
+         * fat_tipo() quando il montaggio e' ext2 significa leggere la
+         * tabella dei montaggi di fat.c a un indice che li' descrive
+         * tutt'altro volume — o niente. Il tipo va scelto PRIMA di
+         * chiamare chiunque. */
+        if      (m->tipo == VFS_FS_FAT12FD) o->fs = 12;
+        else if (m->tipo == VFS_FS_EXT2)    o->fs = 2;
+        else                                o->fs = (uint32_t)fat_tipo(m->mnt);
         o->sola_lettura = m->sola_lettura;
         scritti++;
     }
