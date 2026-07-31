@@ -54,6 +54,8 @@
 #define SYS_MOUNTINFO   193    /* elenca i montaggi attivi (vedi MountInfo) */
 #define SYS_BOOTINSTALL 194    /* installa MBR + settore di avvio (vedi bootinst.h) */
 #define SYS_PARTWRITE   195    /* riscrive la tabella delle partizioni (vedi PartTabella) */
+#define SYS_BLKREAD     196    /* legge settori da una partizione NON montata */
+#define SYS_BLKWRITE    197    /* scrive settori in una partizione NON montata */
 #define SYS_REBOOT       88    /* spegne, riavvia o ferma il sistema */
 
 /* Numero totale syscall supportate */
@@ -347,6 +349,46 @@ typedef struct {
 } PartTabella;
 
 /* =============================================================================
+ * Accesso ai settori grezzi di una partizione (sys_blkread / sys_blkwrite)
+ *
+ * Serve a /bin/mkfs: un formattatore scrive strutture — BPB, tabelle FAT,
+ * directory radice — che nessun filesystem montato sa produrre, perche' il
+ * filesystem e' proprio cio' che sta creando.
+ *
+ * PERCHE' QUI LA CONCLUSIONE E' OPPOSTA A QUELLA DI bootinst.c. Li' la
+ * logica sta nel kernel perche' l'installatore scrive FUORI da ogni
+ * filesystem, nel settore 0, dove un errore rende irraggiungibile un disco
+ * intero. Un formattatore invece scrive solo DENTRO una partizione, cioe'
+ * dentro una finestra che il livello a blocchi fa gia' rispettare: non
+ * c'e' niente da proteggere che blk_write() non protegga.
+ *
+ * Le quattro condizioni, e cosa impedisce ognuna:
+ *
+ *   solo BLK_TIPO_PART   il disco intero e il floppy non sono nominabili.
+ *                        E' cio' che rende il settore 0 — la tabella delle
+ *                        partizioni — IRRAGGIUNGIBILE da userspace: non
+ *                        esiste un dispositivo che lo contenga e sia
+ *                        accettato qui.
+ *   non in uso           una partizione montata ha una cache write-back
+ *                        sopra (vedi fat.c): scriverci sotto significa che
+ *                        il primo fat_sync() ripristina i vecchi settori
+ *                        sopra i nuovi. In lettura darebbe dati che non
+ *                        corrispondono a quelli che il filesystem crede
+ *                        di avere.
+ *   non in sola lettura  lo stesso vincolo dei montaggi.
+ *   n <= BLKIO_MAX_SETT  limita il lavoro per chiamata. Il kernel copia un
+ *                        settore per volta con un buffer di 512 byte, non
+ *                        n settori insieme: il costo sullo stack kernel non
+ *                        cresce col numero richiesto.
+ *
+ * ebx = nome*  ("hd0p1")   ecx = lba RELATIVO   edx = n settori
+ * esi = buf*   (n * 512 byte)
+ *
+ * Ritorna il numero di settori trasferiti, o un errno negativo.
+ * ============================================================================= */
+#define BLKIO_MAX_SETT      64      /* 32 KB per chiamata */
+
+/* =============================================================================
  * Struttura parametri mmap (passata come puntatore in EBX)
  * ============================================================================= */
 typedef struct {
@@ -408,6 +450,8 @@ int32_t sys_umount(InterruptFrame *f);
 int32_t sys_mountinfo(InterruptFrame *f);
 int32_t sys_bootinstall(InterruptFrame *f);
 int32_t sys_partwrite(InterruptFrame *f);
+int32_t sys_blkread(InterruptFrame *f);
+int32_t sys_blkwrite(InterruptFrame *f);
 int32_t sys_reboot(InterruptFrame *f);
 int32_t sys_ipc_send(InterruptFrame *f);
 int32_t sys_ipc_recv(InterruptFrame *f);

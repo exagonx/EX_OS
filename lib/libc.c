@@ -61,6 +61,8 @@ typedef int             ssize_t;
 #define SYS_MOUNTINFO   193
 #define SYS_BOOTINSTALL 194
 #define SYS_PARTWRITE   195
+#define SYS_BLKREAD     196
+#define SYS_BLKWRITE    197
 #define SYS_CHDIR       12
 #define SYS_READDIR     141
 #define SYS_IPC_SEND     220
@@ -795,6 +797,16 @@ int partwrite(unsigned int disco, PartTabella *tab)
 {
     return (int)_syscall3(SYS_PARTWRITE, disco, (uint32_t)tab,
                           (uint32_t)sizeof(PartTabella));
+}
+
+int blkread(const char *dev, unsigned int lba, unsigned int n, void *buf)
+{
+    return (int)_syscall4(SYS_BLKREAD, (uint32_t)dev, lba, n, (uint32_t)buf);
+}
+
+int blkwrite(const char *dev, unsigned int lba, unsigned int n, const void *buf)
+{
+    return (int)_syscall4(SYS_BLKWRITE, (uint32_t)dev, lba, n, (uint32_t)buf);
 }
 
 /* =============================================================================

@@ -318,6 +318,36 @@ typedef struct {
 
 int partwrite(unsigned int disco, PartTabella *tab);
 
+/* =============================================================================
+ * Settori grezzi di una partizione
+ *
+ * Serve a scrivere un filesystem dentro una partizione: le strutture di un
+ * volume — settore di avvio, tabelle FAT, directory radice — nessun
+ * filesystem montato sa produrle, perche' il filesystem e' proprio cio' che
+ * si sta creando.
+ *
+ * Il kernel accetta SOLO nomi di partizione ("hd0p1"), mai un disco intero
+ * ("hd0") ne' il floppy. Non e' una limitazione arbitraria: e' cio' che
+ * rende la tabella delle partizioni irraggiungibile da qui. Il settore 0
+ * non appartiene a nessuna partizione, quindi non esiste una coppia
+ * (nome, lba) che lo raggiunga.
+ *
+ * Rifiuta anche una partizione MONTATA: sopra c'e' una cache write-back, e
+ * scriverci sotto significa che il primo sync ci ricopre i settori vecchi.
+ *
+ * `lba` e' RELATIVO alla partizione: 0 e' il suo primo settore, non quello
+ * del disco. Ogni accesso fuori dalla finestra viene rifiutato.
+ *
+ * Al massimo BLKIO_MAX_SETT settori per chiamata. Ritornano quanti ne hanno
+ * trasferiti, o un errno negativo: -1 (EPERM) non e' una partizione,
+ * -16 (EBUSY) e' montata, -2 (ENOENT) non esiste, -22 (EINVAL) fuori
+ * finestra o n fuori scala.
+ * ============================================================================= */
+#define BLKIO_MAX_SETT      64      /* 32 KB per chiamata */
+
+int blkread (const char *dev, unsigned int lba, unsigned int n, void *buf);
+int blkwrite(const char *dev, unsigned int lba, unsigned int n, const void *buf);
+
 
 
 

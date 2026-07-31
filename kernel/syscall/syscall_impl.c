@@ -1802,6 +1802,124 @@ int32_t sys_partwrite(InterruptFrame *frame)
 }
 
 /* =============================================================================
+ * SYS_BLKREAD (196) / SYS_BLKWRITE (197) -- Settori grezzi di una partizione
+ *
+ * Le condizioni e il perche' stanno in kernel/include/syscall.h, sopra
+ * BLKIO_MAX_SETT. Qui c'e' il controllo, in un punto solo per entrambe:
+ * scriverlo due volte significherebbe che un giorno le due divergono, e la
+ * lettura permette cio' che la scrittura nega o viceversa.
+ *
+ * Ritorna l'indice del dispositivo, o un errno negativo.
+ * ============================================================================= */
+static int32_t blkio_apri(const char *unome, uint32_t lba, uint32_t n,
+                          const void *ubuf, int per_scrittura, int *out_dev)
+{
+    const BlkDev *b;
+    char          knome[BLKINFO_NOME_MAX];
+    int           dev;
+
+    if (n == 0 || n > BLKIO_MAX_SETT)                     return ERR(EINVAL);
+    if (!syscall_verify_str(unome, BLKINFO_NOME_MAX))     return ERR(EFAULT);
+    if (!syscall_verify_ptr(ubuf, n * 512u))              return ERR(EFAULT);
+
+    kstrcpy(knome, unome, sizeof(knome));
+
+    dev = blk_trova(knome);
+    if (dev < 0) return ERR(ENOENT);
+
+    b = blk_get(dev);
+    if (b == NULL) return ERR(ENODEV);
+
+    /* Solo le partizioni. E' questa riga — non un permesso, non un
+     * controllo sull'LBA — che rende la tabella delle partizioni
+     * irraggiungibile da userspace: il settore 0 sta fuori da ogni
+     * finestra di tipo PART, e i dispositivi che lo contengono non sono
+     * nominabili qui. */
+    if (b->tipo != BLK_TIPO_PART) {
+        klog(LOG_ERROR, "BLKIO: '%s' non e' una partizione: rifiutato", knome);
+        return ERR(EPERM);
+    }
+
+    /* Una partizione montata ha una cache write-back sopra: scriverci
+     * sotto vuol dire che il primo sync la ricopre con i settori vecchi,
+     * e leggerla da' dati che non sono quelli che il filesystem crede di
+     * avere. In entrambi i casi il danno e' silenzioso. */
+    if (blk_occupato(dev)) {
+        klog(LOG_ERROR, "BLKIO: '%s' e' montato: accesso grezzo rifiutato", knome);
+        return ERR(EBUSY);
+    }
+
+    if (per_scrittura && b->sola_lettura) return ERR(EROFS);
+
+    /* Il limite della finestra lo fa rispettare blk_read/blk_write. Qui si
+     * anticipa solo per restituire l'errore giusto invece di un -1. */
+    if (lba + n < lba || lba + n > b->settori) return ERR(EINVAL);
+
+    *out_dev = dev;
+    return 0;
+}
+
+int32_t sys_blkread(InterruptFrame *frame)
+{
+    const char *unome = (const char *)frame->ebx;
+    uint32_t    lba   = frame->ecx;
+    uint32_t    n     = frame->edx;
+    uint8_t    *ubuf  = (uint8_t *)frame->esi;
+    uint8_t     sett[512];
+    int32_t     r;
+    int         dev;
+    uint32_t    k, i;
+
+    r = blkio_apri(unome, lba, n, ubuf, 0, &dev);
+    if (r != 0) return r;
+
+    /* Un settore per volta: il buffer di rimbalzo resta 512 byte
+     * qualunque sia n, quindi il costo sullo stack kernel non dipende da
+     * cio' che chiede il processo. */
+    for (k = 0; k < n; k++) {
+        if (blk_read(dev, lba + k, 1, sett) != 0) {
+            klog(LOG_ERROR, "BLKIO: lettura fallita a lba %u", lba + k);
+            return (k > 0) ? (int32_t)k : ERR(EIO);
+        }
+        for (i = 0; i < 512; i++) ubuf[k * 512 + i] = sett[i];
+    }
+
+    return (int32_t)n;
+}
+
+int32_t sys_blkwrite(InterruptFrame *frame)
+{
+    const char *unome = (const char *)frame->ebx;
+    uint32_t    lba   = frame->ecx;
+    uint32_t    n     = frame->edx;
+    const uint8_t *ubuf = (const uint8_t *)frame->esi;
+    uint8_t     sett[512];
+    int32_t     r;
+    int         dev;
+    uint32_t    k, i;
+
+    r = blkio_apri(unome, lba, n, ubuf, 1, &dev);
+    if (r != 0) return r;
+
+    for (k = 0; k < n; k++) {
+        /* La copia in memoria kernel PRIMA della scrittura non e' una
+         * cortesia: il buffer utente resta scrivibile dal processo per
+         * tutta la durata della chiamata, e passarlo direttamente al
+         * driver significherebbe scrivere su disco byte che possono
+         * cambiare mentre li si scrive. */
+        for (i = 0; i < 512; i++) sett[i] = ubuf[k * 512 + i];
+
+        if (blk_write(dev, lba + k, 1, sett) != 0) {
+            klog(LOG_ERROR, "BLKIO: scrittura fallita a lba %u", lba + k);
+            return (k > 0) ? (int32_t)k : ERR(EIO);
+        }
+    }
+
+    blk_flush(dev);
+    return (int32_t)n;
+}
+
+/* =============================================================================
  * SYS_REBOOT (88) -- Spegne, riavvia o ferma il sistema
  *
  * ebx = comando: EXOS_RB_POWEROFF / EXOS_RB_RESTART / EXOS_RB_HALT

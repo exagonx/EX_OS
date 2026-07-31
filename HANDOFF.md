@@ -2,6 +2,284 @@
 
 ---
 
+# SESSIONE 2026-07-31 (n+2) — Formattazione, e il ciclo si chiude
+
+Kernel a **0.135** → **0.136**. Da un disco vergine a un volume montato
+**senza uscire da EX-OS**:
+
+```
+fdisk hd0                       crea le partizioni
+mkfs -t fat32 -L DATI hd0p1     ci scrive un filesystem
+mount hd0p1 /disk               montalo
+install /disk                   rendilo avviabile
+```
+
+Resta ext2, che è un lavoro a sé.
+
+## `mkfs` in userspace, `bootinst` nel kernel: stessa domanda, risposte opposte
+
+Vale la pena scriverlo perché la contraddizione è solo apparente e prima o
+poi qualcuno la solleverà.
+
+`bootinst.c` sta nel kernel perché scrive nel **settore 0**, fuori da ogni
+filesystem, dove un errore rende irraggiungibile un disco intero. Lì non
+esiste un controllo in userspace che un programma non possa semplicemente
+non usare: basta non usare `/bin/install`.
+
+Un formattatore scrive solo **dentro** una partizione, cioè dentro una
+finestra che `blk.c` fa già rispettare su ogni singolo accesso. Non c'è
+niente da proteggere che `blk_write()` non protegga già, e mettere 500
+righe di generazione di tabelle nel kernel per una garanzia che il kernel
+offre gratis sarebbe pagare due volte.
+
+## Perché la tabella delle partizioni è irraggiungibile da `mkfs`
+
+Non per una regola, **per costruzione**: `SYS_BLKREAD`/`SYS_BLKWRITE`
+accettano solo dispositivi di tipo `BLK_TIPO_PART`. Il settore 0 non
+appartiene a nessuna partizione, quindi non esiste una coppia (nome, LBA)
+che lo raggiunga. Non c'è un controllo sull'LBA da aggirare perché non
+c'è un controllo sull'LBA.
+
+Le altre tre condizioni: partizione non montata (sopra c'è una cache
+write-back, scriverci sotto vuol dire che il primo `sync` ci ricopre i
+settori vecchi), non in sola lettura, al massimo `BLKIO_MAX_SETT` settori
+per chiamata. Il kernel copia **un settore per volta** con un buffer di
+512 byte: il costo sullo stack kernel non cresce con quanto chiede il
+processo.
+
+## Il numero di cluster, che è tutto
+
+Il tipo di un volume FAT **non è scritto da nessuna parte**. La stringa
+`"FAT16   "` nel settore di avvio è decorativa, e `vol.c` giustamente non
+la guarda: il tipo si deduce dal numero di cluster dell'area dati.
+
+Ne discende che un formattatore che sceglie male i settori per cluster
+produce un volume che **dice FAT16 e cade nella banda FAT12**. Il nostro
+driver lo leggerebbe in un modo, Linux in un altro, e nessuno dei due
+segnalerebbe niente finché i dati non sono già rovinati.
+
+Per questo `mkfs` ricalcola il conteggio, lo **riverifica** contro le
+soglie prima di scrivere un byte, e lo **mostra** accanto alla soglia. Le
+costanti stanno in `mkfs.c` accanto a un commento che dice che devono
+restare uguali a quelle di `vol.c`.
+
+## L'ordine di scrittura protegge da un'interruzione
+
+Il settore di avvio vecchio si azzera **per primo**, quello nuovo si
+scrive **per ultimo**. In mezzo il volume non è riconoscibile da nessuno.
+
+L'ordine opposto sembra equivalente e non lo è: una formattazione
+interrotta lascerebbe un settore di avvio che descrive il filesystem
+**vecchio** sopra tabelle FAT già azzerate. Il volume verrebbe montato,
+sembrerebbe funzionante e restituirebbe file vuoti. Meglio un volume che
+nessuno riconosce che uno che mente.
+
+## L'errore che ha trovato fsck.vfat
+
+`BPB_BkBootSec` sta all'offset **50**, non 52. A 52 cominciano 12 byte
+riservati. Scritto a 52 — l'errore facile, e l'avevo fatto — il campo
+vero resta a zero: il volume **dichiara di non avere copia del settore di
+avvio**, e ogni strumento di verifica lo segnala.
+
+Non l'avrebbe trovato nessun test scritto da chi ha scritto il
+formattatore: il nostro driver non guarda quel campo, quindi montare e
+rileggere sarebbe andato benissimo. È il motivo per cui la verifica vera
+è `fsck.vfat`, non `mount`.
+
+Corretto anche il conteggio dei cluster liberi in FSInfo: scrivevo
+0xFFFFFFFF ("sconosciuto"), che è legale ma è rumore, perché al momento
+della formattazione il numero è esatto e non stimato. Un volume che nasce
+con una segnalazione addosso è un volume in cui la segnalazione **vera**,
+il giorno che arriva, passa inosservata.
+
+Nota su chi mantiene quel campo dopo: `fat.c` non lo aggiorna quando
+alloca cluster, e lo rimette a "sconosciuto". È la cosa giusta — meglio
+"non lo so" di un numero stantìo — e infatti `fsck.vfat` lo segnala senza
+considerarlo un errore.
+
+## Un messaggio d'errore che mentiva
+
+`mkfs` diceva sempre «il volume ora NON è riconoscibile, il settore di
+avvio vecchio è stato azzerato per primo». Vero quasi sempre — ma non nel
+caso più probabile: quando la partizione è **montata** il kernel rifiuta
+la primissima scrittura, quindi sul volume non è successo niente.
+
+Il messaggio mandava a cercare un danno inesistente su una partizione che
+può essere la root del sistema che sta girando. Ora `mkfs` tiene un flag
+`toccato`, alzato solo dopo la prima scrittura riuscita, e nell'altro caso
+dice che il volume è esattamente com'era.
+
+## Verifica
+
+Disco vergine da 512 MB, partizionato e formattato **da dentro EX-OS**.
+
+- `fsck.vfat -n` su entrambi i volumi: **esito 0**, nessun errore, sia
+  appena formattati sia dopo che EX-OS ci ha scritto dentro;
+- `mdir` legge le etichette `PRIMA` e `SECONDA`;
+- montati entrambi contemporaneamente (`/a` FAT32, `/b` FAT16), creata una
+  directory, copiati due file, riletti con `ls`, smontati;
+- i file scritti da EX-OS estratti con `mcopy` e confrontati con `cmp`:
+  **identici byte per byte** agli originali.
+
+FAT32 su 200 MB: 1 settore per cluster, FAT da 3175 settori, 403218
+cluster. FAT16 su 311 MB: 16 settori per cluster, FAT da 156 settori,
+39786 cluster. Entrambe le dimensioni di cluster sono quelle delle tabelle
+della specifica Microsoft — un volume formattato con valori diversi
+funziona, ma smette di somigliare a ciò che ogni altro sistema si aspetta.
+
+## Cosa NON fa
+
+Niente FAT12 (il floppy si formatta altrove), niente etichette lunghe,
+niente allineamento della FAT a un confine di cluster.
+
+`mkfs -t ext2` risponde «non ancora implementato», di proposito: è già
+nell'elenco delle opzioni perché è il prossimo passo, e un'opzione che
+manca è meno chiara di una che dice quando arriverà.
+
+---
+
+# SESSIONE 2026-07-31 (n+1) — Partizionamento
+
+Kernel a **0.134** → **0.135**. EX-OS **inizializza un disco rigido
+vergine**: fino a ieri un disco nuovo andava partizionato altrove e poi
+portato qui.
+
+```
+fdisk hd1
+```
+
+Restano da fare il formattatore (`mkfs` FAT16/FAT32) e poi ext2. Senza
+formattatore il ciclo non si chiude ancora: `fdisk` crea le partizioni,
+`mount` fallisce finché non c'è un filesystem dentro.
+
+## Le due invarianti si incastrano
+
+`bootinst.c` riscrive **solo i byte 0..445** dell'MBR e non tocca mai la
+tabella. `mbr_scrivi()` fa l'esatto complementare: **solo i byte
+446..511**, e rilegge dal disco il codice di avvio per rimetterlo al suo
+posto.
+
+Ne discende una proprietà che vale la pena sapere: **`fdisk` e `install`
+si possono dare in qualunque ordine**. Partizionare non cancella l'avvio,
+installare l'avvio non cancella la tabella.
+
+⚠️ **Unica eccezione, ed è deliberata**: se il settore 0 non ha la firma
+0x55AA, `mbr_scrivi()` **azzera** i 446 byte. Aggiungere la firma
+significa dire al BIOS di eseguire quei byte, che fino a un attimo prima
+nessuno eseguiva; lasciarli com'erano vorrebbe dire far saltare la
+macchina dentro il contenuto casuale di un disco mai inizializzato.
+
+## Un solo elenco di controlli, non due
+
+`mbr_valida()` è stata estratta da `mbr_leggi()` e ora la chiamano in
+due: la **lettura** su ciò che trova sul disco, la **scrittura** sulla
+proposta.
+
+Non è fattorizzazione per eleganza. Due elenchi separati — uno per
+leggere, uno per scrivere — divergono, ed è questione di tempo; il giorno
+che divergono la scrittura accetta una tabella che la lettura segnala
+come rotta, cioè il partizionatore produce dischi che il sistema stesso
+critica.
+
+Due controlli nuovi che valgono anche in lettura: `PT_PROB_SETTORE0`
+(partizione che comincia dall'LBA 0, cioè che contiene l'MBR che la
+descrive) e il limite dei 32 bit dell'MBR, sull'ultimo settore e non
+sulla somma — una partizione che arriva esattamente in fondo è legittima.
+
+## Il contatore degli usi, e perché non è una domanda al VFS
+
+`BlkDev` ha un campo `in_uso`: `vfs_mount()` lo incrementa, `vfs_umount()`
+lo decrementa, `blk_rescan()` lo consulta per rifiutare.
+
+La strada ovvia sarebbe stata far chiedere al livello a blocchi «VFS, hai
+per caso montato questo?». Ma così il livello a blocchi dovrebbe
+conoscere i filesystem, **e conoscerli tutti, uno per uno**, man mano che
+arrivano: il giorno che esiste ext2 servirebbe una domanda in più, e il
+giorno che qualcuno la dimentica il rescan ripartiziona sotto un volume
+montato senza accorgersene.
+
+Col contatore la dipendenza va nel verso giusto — chi usa dichiara di
+usare — e un filesystem nuovo non può sbagliare per omissione: se non
+acquisisce, non ha nemmeno un dispositivo su cui lavorare.
+
+Acquisita anche la root in `vfs_init()`: senza quella riga il disco da
+cui EX-OS sta girando risulterebbe libero, e ripartizionarlo sarebbe
+permesso.
+
+## `blk_rescan()` NON compatta l'array
+
+Gli indici dei dispositivi a blocchi sono tenuti dai montaggi attivi
+(`VfsMount.blkdev`). Se rimuovere `hd0p1` facesse scalare di uno tutti
+quelli dopo, un filesystem montato su `hd1p1` si troverebbe a leggere da
+un'altra partizione **senza che nulla lo segnali**.
+
+Gli slot liberati restano vuoti con `usato = 0` e vengono riusati.
+Conseguenza da sapere: `g_n` è il massimo indice mai usato, non il numero
+di dispositivi vivi, e **chiunque scorra l'array deve saltare le voci con
+`usato == 0`**. `blk_get()` ora ritorna NULL su quelle voci e
+`blk_trova()` le salta.
+
+## La porta d'ingresso è una sola
+
+`blk_ripartiziona()` (in `blk.c`, non in `mbr.c`) fa nell'ordine:
+rifiuta se una partizione del disco è in uso — **prima** di toccare il
+disco, non dopo — scrive, rilegge.
+
+Sta lì perché `mbr_scrivi()` sa scrivere una tabella ma non sa niente dei
+dispositivi che quella tabella descrive. Lasciare al chiamante il compito
+di ricordarsi il rescan è un contratto che regge finché qualcuno non se
+ne dimentica, e chi se ne dimentica lascia in memoria finestre che sul
+disco non esistono più: il livello a blocchi smette di essere una
+protezione e diventa il modo per scrivere nel posto sbagliato.
+
+## Perché `/bin/fdisk` e non `/bin/disk` che cresce
+
+`disk` è dichiarato in sola lettura in testa al proprio sorgente, ed è
+una proprietà che serve: è il comando che si lancia senza pensarci su un
+disco a cui si tiene. Un programma che a seconda degli argomenti guarda
+**oppure** riscrive la tabella perde quella garanzia per tutti gli usi,
+non solo per quello nuovo.
+
+Divisione dei compiti: in `fdisk` le **politiche** (allineamento a 1 MiB,
+primo settore utile 2048, valori predefiniti, tipi proponibili); nel
+kernel le **regole** (niente sovrapposizioni, niente oltre la fine, né
+GPT né partizioni montate). I controlli nel programma servono a dare
+l'errore mentre l'utente sta ancora componendo la tabella, non alla `w`
+quando pensa di aver finito — non sostituiscono quelli del kernel.
+
+## Verifica
+
+Disco vergine da 256 MB, settore 0 tutto a zero.
+
+I 64 byte della tabella scritti da EX-OS sono risultati **identici byte
+per byte** a quelli che `sfdisk` di Linux scrive per la stessa tabella,
+campi CHS compresi (geometria 255×63, saturazione 0xFE 0xFF 0xFF sopra il
+cilindro 1023). `fdisk -l` da Linux rilegge le partizioni esatte.
+
+Verificato inoltre:
+
+- area di avvio azzerata quando la firma non c'era;
+- area di avvio 0..445 **intatta** ripartizionando un disco che ce
+  l'aveva già (motivo riconoscibile scritto prima, riletto identico dopo);
+- `w` su un disco con una partizione montata: rifiutato con -16, e la
+  tabella sul disco **non modificata**;
+- dispositivi `hd1p1`/`hd1p2` disponibili subito dopo la `w`, senza
+  riavviare.
+
+## Cosa NON fa
+
+Non formatta. Una partizione appena creata contiene i byte che c'erano
+prima in quei settori: non è vuota, è non inizializzata.
+
+Non gestisce le partizioni **logiche** e non scrive EBR. Le mostra, ma la
+voce estesa che le contiene è bloccata sia in `fdisk` sia nel kernel:
+spostarla lascerebbe la catena di EBR viva sul disco e irraggiungibile,
+senza che niente lo dica.
+
+Non converte da e verso GPT: un disco GPT viene riconosciuto e rifiutato.
+
+---
+
 # SESSIONE 2026-07-31 (n) — Installatore e avvio da disco rigido
 
 Kernel a **0.133** → **0.134**. Punto 6, l'ultimo del piano: **EX-OS si

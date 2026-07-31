@@ -100,6 +100,8 @@ void syscall_init(void)
     syscall_table[SYS_MOUNTINFO]   = sys_mountinfo;
     syscall_table[SYS_BOOTINSTALL] = sys_bootinstall;
     syscall_table[SYS_PARTWRITE]   = sys_partwrite;
+    syscall_table[SYS_BLKREAD]     = sys_blkread;
+    syscall_table[SYS_BLKWRITE]    = sys_blkwrite;
     syscall_table[SYS_REBOOT]      = sys_reboot;
     syscall_table[SYS_IPC_SEND]     = sys_ipc_send;
     syscall_table[SYS_IPC_RECV]     = sys_ipc_recv;

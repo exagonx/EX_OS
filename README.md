@@ -257,6 +257,84 @@ riga in inserimento e riporta al prompt.
 
 ---
 
+## Inizializzare un disco rigido: /bin/fdisk e /bin/mkfs
+
+Il ciclo completo, da disco vergine a volume montato:
+
+```
+disk                        cosa vede il sistema
+fdisk hd0                   crea le partizioni
+mkfs -t fat32 -L DATI hd0p1 ci scrive dentro un filesystem
+mount hd0p1 /disk           montalo
+install /disk               (facoltativo) rendilo avviabile
+```
+
+### /bin/fdisk — partizionatore MBR
+
+```
+fdisk            elenca i dischi
+fdisk hd0        apre la sessione sul disco 0
+
+  p  mostra tabella e spazio libero    a  commuta il flag avviabile
+  n  crea una partizione               w  SCRIVE (chiede conferma)
+  d  cancella una partizione           q  esce senza scrivere
+  t  cambia il tipo
+```
+
+**Niente tocca il disco fino a `w`.** Una tabella scritta un pezzo alla volta
+passa per stati in cui le partizioni si sovrappongono; se la macchina si
+spegne lì in mezzo, resta sbagliata.
+
+È un programma separato da `disk`, che resta in **sola lettura**: è il comando
+che si lancia senza pensarci su un disco a cui si tiene, e un programma che a
+seconda degli argomenti guarda *oppure* riscrive perde quella garanzia per
+tutti gli usi.
+
+Le **politiche** stanno in `fdisk` (allineamento a 1 MiB, primo settore utile
+2048, valori predefiniti). Le **regole** stanno nel kernel e non si aggirano:
+niente sovrapposizioni, niente partizioni oltre la fine del disco, niente
+scrittura su un disco GPT o su una partizione montata.
+
+Non gestisce le partizioni **logiche** e non scrive EBR: le mostra, ma la voce
+estesa che le contiene è bloccata — spostarla lascerebbe la loro catena viva
+sul disco e irraggiungibile.
+
+`fdisk` non formatta. Una partizione appena creata contiene i byte che c'erano
+prima in quei settori: non è vuota, è non inizializzata.
+
+### /bin/mkfs — formattatore FAT16/FAT32
+
+```
+mkfs -t fat32 -L ETICHETTA hd0p1
+mkfs -t fat16 hd0p2
+```
+
+La partizione **non dev'essere montata**: sopra un volume montato c'è una
+cache write-back, e scriverci sotto significa che il primo `sync` ci ricopre i
+settori vecchi.
+
+Il numero che conta è il **conteggio dei cluster**, e `mkfs` lo mostra accanto
+alla soglia. Il tipo di un volume FAT non è scritto da nessuna parte: la
+stringa `"FAT16   "` nel settore di avvio è decorativa, e il tipo si deduce dal
+numero di cluster dell'area dati (< 4085 → FAT12, < 65525 → FAT16, oltre →
+FAT32). Un formattatore che sceglie male i settori per cluster produce un
+volume che *dice* FAT16 e *cade* nella banda FAT12, e nessuno se ne accorge
+finché i dati non sono già rovinati.
+
+Il settore di avvio vecchio viene azzerato **per primo** e quello nuovo scritto
+**per ultimo**: in mezzo il volume non è riconoscibile da nessuno. L'ordine
+opposto lascerebbe, su una formattazione interrotta, un settore di avvio che
+descrive il filesystem vecchio sopra tabelle FAT già azzerate — un volume che
+si monta, sembra funzionare e restituisce file vuoti.
+
+`mkfs` non tocca la tabella delle partizioni, e non per scelta: le syscall
+`SYS_BLKREAD`/`SYS_BLKWRITE` accettano solo nomi di **partizione**, e il
+settore 0 non appartiene a nessuna partizione. Non esiste una coppia
+(nome, LBA) che lo raggiunga. Se il byte di tipo nella tabella contraddice il
+filesystem creato, `mkfs` lo segnala e dice come correggerlo con `fdisk`.
+
+---
+
 ## Arresto e spegnimento
 
 | Comando shell | Effetto |

@@ -245,6 +245,47 @@ $(DISK_BIN): $(DISK_SRC) $(DISK_LD) $(LIBC_SRC) $(LIBC_START)
 .PHONY: disk
 disk: dirs $(DISK_BIN)
 
+# --- Programma utente /bin/fdisk ----------------------------------------------
+# Partizionatore MBR interattivo. SCRIVE: a differenza di /bin/disk, che
+# resta in sola lettura di proposito. Stesso schema di /bin/ls.
+FDISK_SRC  := bin/fdisk/fdisk.c
+FDISK_BIN  := $(BUILD_BIN)/fdisk
+FDISK_LD   := bin/fdisk/fdisk.ld
+
+$(FDISK_BIN): $(FDISK_SRC) $(FDISK_LD) $(LIBC_SRC) $(LIBC_START)
+	@echo "=== Compilazione /bin/fdisk ==="
+	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -c $(FDISK_SRC) -o $(BUILD_OBJ)/fdisk_main.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                 -o $(BUILD_OBJ)/fdisk_libc.o
+	$(CC) -m32 -c $(LIBC_START)                         -o $(BUILD_OBJ)/fdisk_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib -T $(FDISK_LD) \
+	    $(BUILD_OBJ)/fdisk_start.o $(BUILD_OBJ)/fdisk_main.o $(BUILD_OBJ)/fdisk_libc.o -o $@
+	@echo "[OK] fdisk compilato: $@"
+
+.PHONY: fdisk
+fdisk: dirs $(FDISK_BIN)
+
+# --- Programma utente /bin/mkfs -----------------------------------------------
+# Formattatore FAT16/FAT32. Scrive dentro una partizione tramite
+# SYS_BLKWRITE, che accetta solo dispositivi di tipo partizione: la tabella
+# delle partizioni resta irraggiungibile da qui. Stesso schema di /bin/ls.
+MKFS_SRC   := bin/mkfs/mkfs.c
+MKFS_BIN   := $(BUILD_BIN)/mkfs
+MKFS_LD    := bin/mkfs/mkfs.ld
+
+$(MKFS_BIN): $(MKFS_SRC) $(MKFS_LD) $(LIBC_SRC) $(LIBC_START)
+	@echo "=== Compilazione /bin/mkfs ==="
+	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -c $(MKFS_SRC) -o $(BUILD_OBJ)/mkfs_main.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                -o $(BUILD_OBJ)/mkfs_libc.o
+	$(CC) -m32 -c $(LIBC_START)                        -o $(BUILD_OBJ)/mkfs_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib -T $(MKFS_LD) \
+	    $(BUILD_OBJ)/mkfs_start.o $(BUILD_OBJ)/mkfs_main.o $(BUILD_OBJ)/mkfs_libc.o -o $@
+	@echo "[OK] mkfs compilato: $@"
+
+.PHONY: mkfs
+mkfs: dirs $(MKFS_BIN)
+
 .PHONY: stack
 stack: dirs $(STACK_BIN)
 
@@ -471,7 +512,7 @@ $(KBD_DRV_OUT): $(KBD_DRV_SRC) $(KBD_DRV_PROTO) $(KBD_DRV_LD) $(LIBC_SRC) $(LIBC
 kbd_drv: dirs $(KBD_DRV_OUT)
 
 .PHONY: all
-all: dirs stage1 stage2 kernel shell hello ls mem stack disk mount_prog cp_prog install_prog textline mkdir_prog rmdir_prog delete_prog libc floppy_drv kbd_drv floppy
+all: dirs stage1 stage2 kernel shell hello ls mem stack disk fdisk mkfs mount_prog cp_prog install_prog textline mkdir_prog rmdir_prog delete_prog libc floppy_drv kbd_drv floppy
 	@echo ""
 	@echo "============================================"
 	@echo " EX-OS build completata!"
