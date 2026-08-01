@@ -553,38 +553,30 @@ int drv_write(const void *buf, size_t n)
 
     if (!buf || n == 0) return 0;
 
-    /* Gestione sequenze ANSI minimali */
+    /* =====================================================================
+     * Nessuna interpretazione qui: i byte vanno a vga_putchar così come
+     * sono, e le sequenze ANSI le riconosce il suo parser.
+     *
+     * Fino a luglio 2026 questa funzione ne aveva uno PROPRIO, che
+     * intercettava ESC[<n>m prima che i byte arrivassero al VGA. Erano
+     * due parser sulla stessa strada, e i problemi erano tre:
+     *
+     *   - lavorava sul buffer di una singola write(), quindi una
+     *     sequenza spezzata a metà fra due chiamate gli sfuggiva;
+     *   - conosceva solo il colore, e per cursore e cancellazioni
+     *     lasciava passare i byte a vga_putchar — che li scartava. È il
+     *     motivo per cui il comando `cls` della shell non ha mai
+     *     cancellato niente: emetteva ESC[2J ESC[H e nessuno dei due
+     *     parser li implementava;
+     *   - aveva una tabella colori tutta sua, diversa da quella di
+     *     vga.c, e vinceva la sua (vedi il commento sui CLR_* in
+     *     bin/sh/shell.c).
+     *
+     * Con un parser solo, in vga.c, tutte e tre le cose si sistemano
+     * insieme e /bin/gfedit ha un terminale su cui disegnare.
+     * ===================================================================== */
     for (i = 0; i < n; i++) {
-        char c = src[i];
-
-        /* ESC[ ... m : sequenza colore ANSI */
-        if (c == '\x1B' && i + 1 < n && src[i+1] == '[') {
-            /* Parsing minimale: ESC[Xm dove X è un numero colore */
-            uint32_t j = i + 2;
-            uint32_t param = 0;
-            while (j < n && src[j] >= '0' && src[j] <= '9') {
-                param = param * 10 + (uint32_t)(src[j] - '0');
-                j++;
-            }
-            if (j < n && src[j] == 'm') {
-                /* Imposta colore */
-                switch (param) {
-                    case 0:  vga_setcolor(VGA_COLOR_WHITE,      VGA_COLOR_BLACK); break;
-                    case 30: vga_setcolor(VGA_COLOR_BLACK,      VGA_COLOR_BLACK); break;
-                    case 31: vga_setcolor(VGA_COLOR_LIGHT_RED,  VGA_COLOR_BLACK); break;
-                    case 32: vga_setcolor(VGA_COLOR_LIGHT_GREEN,VGA_COLOR_BLACK); break;
-                    case 33: vga_setcolor(VGA_COLOR_YELLOW,     VGA_COLOR_BLACK); break;
-                    case 34: vga_setcolor(VGA_COLOR_LIGHT_BLUE, VGA_COLOR_BLACK); break;
-                    case 35: vga_setcolor(VGA_COLOR_LIGHT_MAGENTA,VGA_COLOR_BLACK);break;
-                    case 36: vga_setcolor(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK); break;
-                    case 37: vga_setcolor(VGA_COLOR_WHITE,      VGA_COLOR_BLACK); break;
-                }
-                i = j;  /* Salta sequenza ANSI */
-                continue;
-            }
-        }
-
-        vga_putchar(c);
+        vga_putchar(src[i]);
     }
 
     return (int)n;
@@ -607,13 +599,29 @@ int drv_ioctl(int cmd, void *arg)
             return 0;
         }
         case TTY_IOCTL_SETRAW: {
-            /* Modalità raw: no echo, no line discipline */
-            klog(LOG_DEBUG, "TTY: modalita' raw attivata");
+            /* =============================================================
+             * Modalità raw dal lato USCITA.
+             *
+             * L'ingresso non passa di qui: eco e line discipline vivono
+             * nel driver /dev/kbd.drv, e chi vuole i tasti singoli glielo
+             * chiede direttamente via IPC (KBD_MSG_SETMODE, vedi
+             * drivers/kbd/kbd_proto.h). Il TTY non ha voce in capitolo e
+             * fingere di averla — restituendo 0 senza fare nulla, come
+             * faceva prima — dava per buona una richiesta che nessuno
+             * eseguiva.
+             *
+             * Ciò che invece è affare del TTY è lo specchio seriale: per
+             * un programma a schermo intero va spento, o ogni ridisegno
+             * costa l'attesa del THR carattere per carattere. Il perché
+             * in dettaglio è in vga_set_serial_mirror().
+             * ============================================================= */
+            vga_set_serial_mirror(0);
+            klog(LOG_DEBUG, "TTY: uscita in modalita' raw (specchio seriale spento)");
             return 0;
         }
         case TTY_IOCTL_SETCOOKED: {
-            /* Modalità cooked: echo e line discipline abilitati */
-            klog(LOG_DEBUG, "TTY: modalita' cooked attivata");
+            vga_set_serial_mirror(1);
+            klog(LOG_DEBUG, "TTY: uscita in modalita' cooked (specchio seriale acceso)");
             return 0;
         }
         case TTY_IOCTL_CLEAR: {

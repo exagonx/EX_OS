@@ -341,6 +341,52 @@ $(TEXTLINE_BIN): $(TEXTLINE_SRC) $(TEXTLINE_LD) $(LIBC_SRC) $(LIBC_START)
 .PHONY: textline
 textline: dirs $(TEXTLINE_BIN)
 
+# --- Programma utente /bin/gfedit ---------------------------------------------
+# Editor di testo a schermo intero, riscrittura per EX-OS di GF_TEXTEDITOR.
+#
+# Unico programma utente compilato da PIU' unita' di traduzione: sono 3000
+# righe divise per compito (terminale, buffer, disco, sintassi, interfaccia,
+# editing, avvio) e tenerle in un file solo renderebbe illeggibile ognuna.
+# Lo schema di link resta quello di tutti gli altri — start.S, gli oggetti
+# del programma, la libc del progetto — solo con piu' oggetti in mezzo.
+#
+# -I drivers/kbd serve per kbd_proto.h: l'editor parla DIRETTAMENTE al
+# servizio tastiera via IPC per avere i tasti uno per uno invece che una
+# riga alla volta, ed e' quell'header il contratto fra le due parti. E' lo
+# stesso motivo per cui la stessa -I sta gia' nelle CFLAGS del kernel (la
+# usa il TTY, che di quel servizio e' l'altro cliente).
+GFEDIT_DIR  := bin/gfedit
+GFEDIT_SRC  := $(GFEDIT_DIR)/gf_main.c   \
+               $(GFEDIT_DIR)/gf_term.c   \
+               $(GFEDIT_DIR)/gf_buffer.c \
+               $(GFEDIT_DIR)/gf_fileio.c \
+               $(GFEDIT_DIR)/gf_syntax.c \
+               $(GFEDIT_DIR)/gf_ui.c     \
+               $(GFEDIT_DIR)/gf_edit.c
+GFEDIT_HDR  := $(GFEDIT_DIR)/gfedit.h drivers/kbd/kbd_proto.h lib/include/libc.h
+GFEDIT_OBJ  := $(patsubst $(GFEDIT_DIR)/%.c,$(BUILD_OBJ)/gfedit_%.o,$(GFEDIT_SRC))
+GFEDIT_BIN  := $(BUILD_BIN)/gfedit
+GFEDIT_LD   := $(GFEDIT_DIR)/gfedit.ld
+
+$(BUILD_OBJ)/gfedit_%.o: $(GFEDIT_DIR)/%.c $(GFEDIT_HDR)
+	@mkdir -p $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I $(GFEDIT_DIR) -I drivers/kbd -c $< -o $@
+
+$(GFEDIT_BIN): $(GFEDIT_OBJ) $(GFEDIT_LD) $(LIBC_SRC) $(LIBC_START)
+	@echo "=== Compilazione /bin/gfedit ==="
+	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC) -o $(BUILD_OBJ)/gfedit_libc.o
+	$(CC) -m32 -c $(LIBC_START)         -o $(BUILD_OBJ)/gfedit_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib -T $(GFEDIT_LD) \
+	    $(BUILD_OBJ)/gfedit_start.o \
+	    $(GFEDIT_OBJ)               \
+	    $(BUILD_OBJ)/gfedit_libc.o  \
+	    -o $@
+	@echo "[OK] gfedit compilato: $@"
+
+.PHONY: gfedit
+gfedit: dirs $(GFEDIT_BIN)
+
 # --- Programma utente /bin/install --------------------------------------------
 INSTALL_SRC := bin/install/install.c
 INSTALL_BIN := $(BUILD_BIN)/install
@@ -538,7 +584,7 @@ $(KBD_DRV_OUT): $(KBD_DRV_SRC) $(KBD_DRV_PROTO) $(KBD_DRV_LD) $(LIBC_SRC) $(LIBC
 kbd_drv: dirs $(KBD_DRV_OUT)
 
 .PHONY: all
-all: dirs stage1 stage2 kernel shell hello ls mem stack disk fdisk mkfs trunc mount_prog cp_prog install_prog textline mkdir_prog rmdir_prog delete_prog libc floppy_drv kbd_drv floppy
+all: dirs stage1 stage2 kernel shell hello ls mem stack disk fdisk mkfs trunc mount_prog cp_prog install_prog textline gfedit mkdir_prog rmdir_prog delete_prog libc floppy_drv kbd_drv floppy
 	@echo ""
 	@echo "============================================"
 	@echo " EX-OS build completata!"

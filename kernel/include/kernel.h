@@ -134,6 +134,9 @@ void vga_putchar(char c);
 void vga_puts(const char *s);
 void vga_setcolor(uint8_t fg, uint8_t bg);
 void vga_puts_at(const char *s, uint8_t row, uint8_t col);
+void vga_gotoxy(uint8_t row, uint8_t col);
+void vga_show_cursor(int on);
+void vga_set_serial_mirror(int on);
 
 /* arch/x86/gdt.c */
 void gdt_install(void);

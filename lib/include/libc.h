@@ -58,6 +58,40 @@ ssize_t write(int fd, const void *buf, size_t n);
 int     getpid(void);
 int     chdir(const char *path);
 
+/* =============================================================================
+ * Controllo del terminale
+ *
+ * Costanti DUPLICATE A MANO da drivers/tty/tty.h (stessa convenzione di
+ * DirEntry e MemInfo): quell'header include kernel.h e non è
+ * compilabile in ring3.
+ *
+ * TTY_IOCTL_SETRAW riguarda l'USCITA, non l'ingresso: spegne lo
+ * specchio seriale, che a 38400 baud costa un'attesa per carattere e
+ * rende impraticabile ridisegnare lo schermo. Per ricevere i tasti uno
+ * per uno invece che una riga alla volta si parla direttamente al
+ * servizio "kbd" via IPC (KBD_MSG_SETMODE, vedi
+ * drivers/kbd/kbd_proto.h): la line discipline vive lì, non qui.
+ *
+ * Chi accende SETRAW deve rimettere SETCOOKED prima di uscire.
+ * ============================================================================= */
+#define TTY_IOCTL_GETSIZE    0x01
+#define TTY_IOCTL_SETRAW     0x02
+#define TTY_IOCTL_SETCOOKED  0x03
+#define TTY_IOCTL_CLEAR      0x04
+#define TTY_IOCTL_SETCOLOR   0x05
+
+typedef struct {
+    unsigned short rows;
+    unsigned short cols;
+    unsigned short xpixel;
+    unsigned short ypixel;
+} TtyWinSize;
+
+int     ioctl(int fd, unsigned int request, void *arg);
+int     tty_getsize(TtyWinSize *ws);
+int     tty_raw(int on);       /* 1 = raw, 0 = cooked */
+int     tty_clear(void);
+
 /* Crea una directory. Nessun parametro 'mode': FAT12 non ha permessi.
  * Ritorna 0, o un errno negativo — in particolare -17 (EEXIST) se il nome
  * e' gia' occupato e -38 (ENOSYS) se il percorso richiederebbe piu' di un

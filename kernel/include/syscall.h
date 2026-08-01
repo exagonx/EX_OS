@@ -89,6 +89,7 @@
 #define ENODEV      19      /* dispositivo assente */
 #define EFBIG       27      /* file troppo grande per l'operazione */
 #define ESPIPE      29      /* qui: file frammentato, non mappabile a un intervallo */
+#define ENOTTY      25      /* ioctl su un descrittore che non è un terminale */
 
 /* Syscall IPC — comunicazione kernel-mediata tra task ring3 */
 #define SYS_IPC_SEND     220

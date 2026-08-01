@@ -164,6 +164,33 @@ static unsigned g_reader_pid = 0;
 static unsigned g_reader_max = KBD_LINE_MAX;
 
 /* =============================================================================
+ * Modalità raw — vedi il commento esteso in kbd_proto.h
+ *
+ * Le due modalità condividono la traduzione degli scancode fino ai
+ * modificatori, poi divergono del tutto: in cooked il risultato è un
+ * carattere che entra in g_line (con eco e Backspace), in raw è un
+ * evento che entra in g_keys così com'è.
+ *
+ * Il ring degli eventi è piccolo di proposito. Il type-ahead di una
+ * console a righe ha senso — si digita il comando successivo mentre il
+ * precedente lavora — mentre trentadue tasti accumulati davanti a un
+ * editor che non li ha ancora letti sono già una raffica che l'utente
+ * non ha voluto: meglio perderne la coda che ripeterla a schermo dopo
+ * secondi. Serve solo a coprire la finestra fra un READKEY e il
+ * successivo.
+ * ============================================================================= */
+#define KBD_KEYRING_SIZE    32
+
+static unsigned char g_raw = 0;          /* 0 = cooked, 1 = raw */
+static unsigned g_keys[KBD_KEYRING_SIZE];
+static unsigned g_khead = 0, g_ktail = 0, g_kcount = 0;
+
+/* Client in attesa di un tasto (0 = nessuno). Distinto da g_reader_pid:
+ * sono due protocolli diversi e tenerli separati evita di consegnare una
+ * riga a chi aveva chiesto un tasto. */
+static unsigned g_keyreader_pid = 0;
+
+/* =============================================================================
  * Eco a video — passa dal TTY del kernel via fd 1, non da accessi
  * diretti alla memoria VGA (che in ring3 non è mappata).
  * ============================================================================= */
@@ -246,6 +273,168 @@ static void try_serve_reader(void)
         printf("kbd: consegna a PID %u fallita, client sparito\n", g_reader_pid);
     }
     g_reader_pid = 0;
+}
+
+/* =============================================================================
+ * Ring degli eventi tasto (modalità raw)
+ * ============================================================================= */
+static void key_put(unsigned key)
+{
+    if (g_kcount >= KBD_KEYRING_SIZE) return;   /* raffica: si perde la coda */
+
+    g_keys[g_ktail] = key;
+    g_ktail = (g_ktail + 1) % KBD_KEYRING_SIZE;
+    g_kcount++;
+}
+
+/* =============================================================================
+ * try_serve_keyreader — gemello di try_serve_reader per la modalità raw.
+ *
+ * Il fallimento della consegna qui vale più che nel caso a righe: se il
+ * programma a schermo intero è morto senza rimettere la console in
+ * cooked, questo è il momento in cui ce ne accorgiamo, ed è l'ultimo
+ * utile per non lasciare la tastiera muta. Vedi kbd_proto.h.
+ * ============================================================================= */
+static void kbd_set_mode(unsigned mode);
+
+static void try_serve_keyreader(void)
+{
+    unsigned key;
+
+    if (g_keyreader_pid == 0 || g_kcount == 0) return;
+
+    key = g_keys[g_khead];
+    g_khead = (g_khead + 1) % KBD_KEYRING_SIZE;
+    g_kcount--;
+
+    if (ipc_send(g_keyreader_pid, KBD_MSG_KEY, &key, sizeof(key)) < 0) {
+        printf("kbd: consegna tasto a PID %u fallita, torno in cooked\n",
+               g_keyreader_pid);
+        g_keyreader_pid = 0;
+        kbd_set_mode(KBD_MODE_COOKED);
+        return;
+    }
+    g_keyreader_pid = 0;
+}
+
+/* =============================================================================
+ * kbd_set_mode — passa fra riga e tasto singolo.
+ *
+ * Butta via lo stato di input accumulato in ENTRAMBE le direzioni: la
+ * riga a metà e il type-ahead sono testo raccolto con la line discipline
+ * cooked, gli eventi in coda sono tasti raccolti senza; consegnare gli
+ * uni con le regole degli altri darebbe input inventato.
+ * ============================================================================= */
+static void kbd_set_mode(unsigned mode)
+{
+    unsigned char nuovo = (mode == KBD_MODE_RAW) ? 1 : 0;
+
+    if (nuovo == g_raw) return;
+
+    g_raw       = nuovo;
+    g_line_len  = 0;
+    g_rhead = g_rtail = g_rcount = g_rlines = 0;
+    g_khead = g_ktail = g_kcount = 0;
+    g_e0        = 0;
+
+    /* I modificatori NON si azzerano: sono stato fisico della tastiera,
+     * non input accumulato. Se l'utente tiene premuto Shift mentre il
+     * programma cambia modalità, Shift è ancora premuto. */
+}
+
+/* =============================================================================
+ * Traduzione degli scancode in eventi tasto (solo modalità raw)
+ *
+ * Ritorna il codice base (>0) o 0 se lo scancode non produce un evento.
+ * I modificatori li aggiunge il chiamante: qui si guarda solo il tasto.
+ * ============================================================================= */
+
+/* Tasti di navigazione, sia nella versione estesa (0xE0 + codice, i
+ * tasti dedicati) sia in quella del tastierino numerico (stesso codice
+ * senza prefisso, quando NumLock è spento). Il tastierino manda gli
+ * stessi scancode perché è da lì che quei tasti vengono storicamente:
+ * il blocco dedicato è un'aggiunta dell'AT esteso.
+ *
+ * Fuori da questa tabella restano di proposito 0x4A e 0x4E — sul
+ * tastierino sono '-' e '+', e sc_normal li mappa già come tali. */
+static unsigned kbd_nav_key(unsigned char sc)
+{
+    switch (sc) {
+        case 0x47: return KBD_K_HOME;
+        case 0x48: return KBD_K_UP;
+        case 0x49: return KBD_K_PGUP;
+        case 0x4B: return KBD_K_LEFT;
+        case 0x4D: return KBD_K_RIGHT;
+        case 0x4F: return KBD_K_END;
+        case 0x50: return KBD_K_DOWN;
+        case 0x51: return KBD_K_PGDN;
+        case 0x52: return KBD_K_INS;
+        case 0x53: return KBD_K_DEL;
+        default:   return 0;
+    }
+}
+
+static unsigned kbd_func_key(unsigned char sc)
+{
+    if (sc >= 0x3B && sc <= 0x44) return KBD_K_F((unsigned)(sc - 0x3B) + 1u);
+    if (sc == 0x57)               return KBD_K_F(11);
+    if (sc == 0x58)               return KBD_K_F(12);
+    return 0;
+}
+
+/* Modificatori correnti in forma di maschera, da comporre con il codice base. */
+static unsigned kbd_mods(void)
+{
+    unsigned m = 0;
+    if (g_shift) m |= KBD_MOD_SHIFT;
+    if (g_ctrl)  m |= KBD_MOD_CTRL;
+    if (g_alt)   m |= KBD_MOD_ALT;
+    return m;
+}
+
+/* =============================================================================
+ * kbd_raw_scancode — percorso raw, chiamato al posto della line discipline.
+ *
+ * Il prefisso 0xE0 e i rilasci sono già stati consumati dal chiamante:
+ * qui arriva una pressione, con g_e0 che dice se era estesa.
+ * ============================================================================= */
+static void kbd_raw_scancode(unsigned char sc, unsigned char esteso)
+{
+    unsigned base;
+    char     ascii;
+
+    /* Tasti estesi: solo navigazione. Il tastierino in versione estesa
+     * manda anche 0x35 ('/') e 0x1C (Invio), che sono caratteri normali
+     * e cadono giù nel percorso ASCII. */
+    if (esteso) {
+        base = kbd_nav_key(sc);
+        if (base == 0) {
+            if (sc == 0x35) base = '/';
+            else if (sc == 0x1C) base = '\n';
+            else return;
+        }
+        key_put(base | kbd_mods());
+        return;
+    }
+
+    base = kbd_func_key(sc);
+    if (base != 0) { key_put(base | kbd_mods()); return; }
+
+    /* Navigazione dal tastierino (NumLock spento): sc_normal ha 0 per
+     * questi codici, quindi non si sta rubando nessun carattere. */
+    base = kbd_nav_key(sc);
+    if (base != 0) { key_put(base | kbd_mods()); return; }
+
+    if (sc >= 128) return;
+
+    ascii = (char)(g_shift ? sc_shift[sc] : sc_normal[sc]);
+    if (g_caps && ascii >= 'a' && ascii <= 'z')      ascii = (char)(ascii - 32);
+    else if (g_caps && ascii >= 'A' && ascii <= 'Z') ascii = (char)(ascii + 32);
+
+    if (ascii == 0) return;
+
+    /* Nessuna trasformazione Ctrl: il modificatore viaggia a parte. */
+    key_put((unsigned)(unsigned char)ascii | kbd_mods());
 }
 
 /* =============================================================================
@@ -418,6 +607,9 @@ static void kbd_process_scancode(unsigned char sc)
     if (g_e0) {
         char seq[3];
         g_e0 = 0;
+
+        if (g_raw) { kbd_raw_scancode(sc, 1); return; }
+
         seq[0] = '\x1B';
         seq[1] = '[';
         switch (sc) {
@@ -447,6 +639,10 @@ static void kbd_process_scancode(unsigned char sc)
         kbd_set_leds(g_leds);
         return;
     }
+
+    /* Da qui in giù i due modelli divergono: la modalità raw non ha una
+     * riga in costruzione, quindi non ha né eco né Backspace da gestire. */
+    if (g_raw) { kbd_raw_scancode(sc, 0); return; }
 
     if (sc >= 128) return;
 
@@ -695,11 +891,51 @@ int main(int argc, char **argv)
             meta.type == IPC_TYPE_IRQ_NOTIFY) {
             kbd_drain();
             try_serve_reader();
+            try_serve_keyreader();
+            continue;
+        }
+
+        if (meta.type == KBD_MSG_SETMODE) {
+            unsigned mode = KBD_MODE_COOKED;
+            if (meta.len >= sizeof(unsigned)) {
+                memcpy(&mode, payload, sizeof(unsigned));
+                kbd_set_mode(mode);
+            }
+            /* Chi torna in cooked lascia dietro di sé un'eventuale
+             * READKEY mai soddisfatta: la si dimentica qui, altrimenti
+             * il primo tasto della sessione successiva finirebbe a un
+             * destinatario che non lo aspetta più. */
+            if (!g_raw) g_keyreader_pid = 0;
+            continue;
+        }
+
+        if (meta.type == KBD_MSG_READKEY) {
+            if (!g_raw) {
+                /* In cooked non ci sono eventi da consegnare. Non si
+                 * risponde: il client resterebbe comunque bloccato in
+                 * ipc_recv, ma inventargli un tasto sarebbe peggio. */
+                printf("kbd: READKEY da PID %u in modalita' cooked, ignorata\n",
+                       meta.sender_pid);
+                continue;
+            }
+            g_keyreader_pid = meta.sender_pid;
+            try_serve_keyreader();   /* potrebbe esserci già un tasto pronto */
             continue;
         }
 
         if (meta.type == KBD_MSG_READLINE) {
             unsigned max = KBD_LINE_MAX;
+
+            /* Una richiesta di riga mentre siamo in raw significa che il
+             * programma a schermo intero non c'è più — è la shell che
+             * ha ripreso il prompt. Vedi kbd_proto.h: è la seconda delle
+             * due reti di sicurezza contro una console lasciata muta. */
+            if (g_raw) {
+                printf("kbd: READLINE in modalita' raw, ripristino cooked\n");
+                kbd_set_mode(KBD_MODE_COOKED);
+                g_keyreader_pid = 0;
+            }
+
             if (meta.len >= sizeof(unsigned)) {
                 memcpy(&max, payload, sizeof(unsigned));
             }

@@ -293,13 +293,23 @@ static void print_uint(uint32_t v)
 
 /* =============================================================================
  * Colori ANSI (il driver TTY li interpreta)
+ *
+ * Codici della serie 90-97 (versione CHIARA) e non 30-37: il prompt è
+ * sempre stato di colori vivaci, ma li otteneva per un equivoco. Il TTY
+ * aveva un proprio parser ANSI che mappava 31 su LIGHT_RED, 32 su
+ * LIGHT_GREEN e così via — cioè trattava la serie scura come se fosse
+ * quella chiara. Da agosto 2026 quel parser doppio non c'è più (le
+ * sequenze le interpreta solo vga.c, che è l'unico a saper fare anche
+ * cursore e cancellazioni), e vga.c rispetta lo standard: 32 è verde
+ * scuro. Chiedere 92 significa chiedere davvero ciò che si vedeva
+ * prima.
  * ============================================================================= */
 #define CLR_RESET   "\x1B[0m"
-#define CLR_RED     "\x1B[31m"
-#define CLR_GREEN   "\x1B[32m"
-#define CLR_YELLOW  "\x1B[33m"
-#define CLR_CYAN    "\x1B[36m"
-#define CLR_WHITE   "\x1B[37m"
+#define CLR_RED     "\x1B[91m"
+#define CLR_GREEN   "\x1B[92m"
+#define CLR_YELLOW  "\x1B[93m"
+#define CLR_CYAN    "\x1B[96m"
+#define CLR_WHITE   "\x1B[97m"
 
 /* =============================================================================
  * Variabili d'ambiente della shell (array semplice chiave=valore)

@@ -74,6 +74,23 @@ typedef int             ssize_t;
 #define SYS_IOPORT_BIND   225
 #define SYS_IOPORT_IN     226
 #define SYS_IOPORT_OUT    227
+#define SYS_IOCTL         54
+
+/* Comandi ioctl del terminale — devono restare identici a
+ * drivers/tty/tty.h e a lib/include/libc.h (stessa convenzione di
+ * DirEntry qui sotto: questo file non include il proprio header). */
+#define TTY_IOCTL_GETSIZE    0x01
+#define TTY_IOCTL_SETRAW     0x02
+#define TTY_IOCTL_SETCOOKED  0x03
+#define TTY_IOCTL_CLEAR      0x04
+#define TTY_IOCTL_SETCOLOR   0x05
+
+typedef struct {
+    uint16_t rows;
+    uint16_t cols;
+    uint16_t xpixel;
+    uint16_t ypixel;
+} TtyWinSize;
 
 /* Voce di directory — deve restare identica a kernel/include/syscall.h
  * (DirEntry) e a lib/include/libc.h: attraversa l'ABI della syscall. */
@@ -679,6 +696,33 @@ ssize_t write(int fd, const void *buf, size_t n)
 int getpid(void)
 {
     return _syscall1(SYS_GETPID, 0);
+}
+
+/* =============================================================================
+ * ioctl — comandi al terminale. Vedi i TTY_IOCTL_* in lib/include/libc.h.
+ *
+ * 'arg' è un puntatore per TTY_IOCTL_GETSIZE e un VALORE per gli altri:
+ * è la convenzione dell'ioctl di Unix, dove il terzo argomento è
+ * genericamente una parola e ogni comando decide come leggerla.
+ * ============================================================================= */
+int ioctl(int fd, unsigned int request, void *arg)
+{
+    return _syscall3(SYS_IOCTL, (uint32_t)fd, request, (uint32_t)arg);
+}
+
+int tty_getsize(TtyWinSize *ws)
+{
+    return ioctl(1, TTY_IOCTL_GETSIZE, ws);
+}
+
+int tty_raw(int on)
+{
+    return ioctl(1, on ? TTY_IOCTL_SETRAW : TTY_IOCTL_SETCOOKED, (void *)0);
+}
+
+int tty_clear(void)
+{
+    return ioctl(1, TTY_IOCTL_CLEAR, (void *)0);
 }
 
 int chdir(const char *path)

@@ -30,6 +30,7 @@ Un crash di un driver o di un programma non può abbattere il sistema.
 │   ├── ls           ← Elenco directory
 │   ├── hello        ← Programma di esempio
 │   ├── textline     ← Editor di testo lineare (stile edlin)
+│   ├── gfedit       ← Editor a schermo intero (stile MS-DOS EDIT)
 │   ├── mkdir        ← Crea directory
 │   ├── rmdir        ← Cancella directory vuote
 │   └── delete       ← Cancella file (con jolly ? e *)
@@ -240,9 +241,10 @@ dove. Un modello mirato come `tmp*` non la chiede.
 
 ## /bin/textline — editor di testo lineare
 
-Modello edlin: si opera per numero di riga, non con un cursore. È la scelta
-obbligata finché il TTY consegna il testo una riga alla volta e non esiste una
-modalità raw.
+Modello edlin: si opera per numero di riga, non con un cursore. Resta il modo
+più rapido di correggere una riga sola, e l'unico che funziona anche quando
+`/dev/kbd.drv` non è disponibile e la console è servita dalla tastiera
+in-kernel di ripiego.
 
 ```
 textline <file>              apre il file per l'editing
@@ -254,6 +256,49 @@ textline <file> -c:<file2>   copia <file> in <file2>
 Comandi: `h`/`help`, `l`, `lNN`, `lNN,MM`, `lp…` (a pagine), `m`, `mNN`, `n`,
 `dNN`, `cNN,MM`, `w` (salva), `e` (salva ed esce), `q` (esce). ESC annulla la
 riga in inserimento e riporta al prompt.
+
+---
+
+## /bin/gfedit — editor a schermo intero
+
+Riscrittura per EX-OS di **GF_TEXTEDITOR**, l'editor ncurses+pthread dello
+stesso autore (sorgenti originali in `gftexteditor/`). Non è un porting: di
+ncurses, dei thread, di stdio POSIX e di una `free()` vera EX-OS non ha
+niente. Quello che resta uguale è il programma — menu a tendina in stile
+MS-DOS EDIT, otto aree aperte insieme, find/replace, annullamento,
+evidenziazione sintattica.
+
+```
+gfedit                apre un'area vuota
+gfedit <file> [...]   apre fino a 8 file
+gfedit -h             elenco delle scorciatoie
+```
+
+| | |
+|---|---|
+| Movimento | frecce, Home/Fine, Ctrl+Home/Fine, PagSu/PagGiu, Ctrl+G (vai a riga) |
+| Selezione | Shift+movimento, Ctrl+A, ESC per abbandonarla |
+| Modifica | Ins, Ctrl+Z, Ctrl+X/C/V |
+| File | Ctrl+N, Ctrl+O, F2 o Ctrl+S, Ctrl+W, Alt+X |
+| Ricerca | Ctrl+F, F3, Shift+F3, Ctrl+H |
+| Aree | F6, Shift+F6, Alt+1…Alt+8 |
+| Menu | F10 o ESC, oppure Alt+F M C O A |
+
+Linguaggi evidenziati: C, C++, BASIC, assembly, riconosciuti dall'estensione e
+cambiabili da *Opzioni → Linguaggio*.
+
+**Limiti, e perché sono lì.** 512 righe per file, 200 caratteri per riga, 8
+aree. Le righe sono slot a lunghezza fissa perché la `free()` di EX-OS è un
+no-op dichiarato (allocatore a bump su `sbrk`): con stringhe riallocate ogni
+tasto premuto perderebbe per sempre la memoria della riga precedente. Un file
+più grande dei limiti viene caricato **in parte**, la barra di stato lo dice, e
+il salvataggio su quel file resta bloccato — per non cancellare la parte mai
+letta. *Salva con nome* su un file diverso è invece permesso.
+
+**Serve `/dev/kbd.drv`.** Un editor a schermo intero ha bisogno dei tasti uno
+per uno, e la modalità raw vive nel driver tastiera. Senza quel servizio
+gfedit non parte e rimanda a textline, invece di mostrare un'interfaccia che
+non risponderebbe.
 
 ---
 

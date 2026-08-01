@@ -36,6 +36,7 @@ extern void vga_putchar(char c);
 #include "fat.h"
 #include "vfs.h"
 #include "bootinst.h"
+#include "tty.h"       /* TTY_IOCTL_*: comandi nativi del terminale (sys_ioctl) */
 extern Process g_process_pool[MAX_PROCESSES];
 
 /* Directory di lavoro corrente (globale, semplificazione per ora) */
@@ -535,22 +536,64 @@ int32_t sys_ioctl(InterruptFrame *frame)
     uint32_t request = frame->ecx;
     uint32_t arg     = frame->edx;
     Process *proc    = proc_get_current();
+    int      is_tty;
+
+    extern int drv_ioctl(int cmd, void *arg);
 
     if (fd < 0 || fd >= MAX_FD)          return ERR(EBADF);
     if (proc->fds[fd].type == FD_UNUSED) return ERR(EBADF);
 
-    /* Per ora: solo stdout/stderr supportano TIOCGWINSZ (dimensioni terminale) */
-    if ((proc->fds[fd].type == FD_STDOUT ||
-         proc->fds[fd].type == FD_STDERR) && request == 0x5413) {
-        /* TIOCGWINSZ: ritorna 25 righe, 80 colonne */
+    /* I tre descrittori standard sono tutti la console: non c'è ancora
+     * un concetto di terminale distinto dal TTY del kernel. */
+    is_tty = (proc->fds[fd].type == FD_STDIN  ||
+              proc->fds[fd].type == FD_STDOUT ||
+              proc->fds[fd].type == FD_STDERR);
+
+    if (!is_tty) {
+        klog(LOG_DEBUG, "SYSCALL ioctl(fd=%d, req=0x%x): non è un terminale", fd, request);
+        return ERR(ENOTTY);
+    }
+
+    /* TIOCGWINSZ di Linux, tenuta perché qualcuno potrebbe già usarla.
+     * La forma nativa è TTY_IOCTL_GETSIZE qui sotto. */
+    if (request == 0x5413) {
         uint16_t *winsize = (uint16_t *)arg;
-        if (syscall_verify_ptr(winsize, 8)) {
-            winsize[0] = 25;   /* ws_row */
-            winsize[1] = 80;   /* ws_col */
-            winsize[2] = 640;  /* ws_xpixel */
-            winsize[3] = 400;  /* ws_ypixel */
-            return 0;
-        }
+        if (!syscall_verify_ptr(winsize, 8)) return ERR(EFAULT);
+        winsize[0] = 25;   /* ws_row */
+        winsize[1] = 80;   /* ws_col */
+        winsize[2] = 640;  /* ws_xpixel */
+        winsize[3] = 400;  /* ws_ypixel */
+        return 0;
+    }
+
+    /* =====================================================================
+     * Comandi nativi del TTY (drivers/tty/tty.h), finora irraggiungibili.
+     *
+     * drv_ioctl li implementava già tutti e cinque, ma questa syscall
+     * rispondeva ENOSYS a chiunque: il driver aveva le funzioni e nessuna
+     * porta d'ingresso. La porta serve a /bin/gfedit, che deve poter
+     * spegnere lo specchio seriale prima di mettersi a ridisegnare
+     * schermate intere (vedi TTY_IOCTL_SETRAW in tty.c).
+     *
+     * L'unico comando che riceve un PUNTATORE è GETSIZE; gli altri
+     * portano un valore. Verificare l'argomento come puntatore anche per
+     * quelli rifiuterebbe un legittimo SETCOLOR con un attributo che per
+     * caso non è un indirizzo valido.
+     * ===================================================================== */
+    switch (request) {
+        case TTY_IOCTL_GETSIZE:
+            if (!syscall_verify_ptr((void *)arg, sizeof(TtyWinSize)))
+                return ERR(EFAULT);
+            return drv_ioctl((int)request, (void *)arg) == 0 ? 0 : ERR(EINVAL);
+
+        case TTY_IOCTL_SETRAW:
+        case TTY_IOCTL_SETCOOKED:
+        case TTY_IOCTL_CLEAR:
+        case TTY_IOCTL_SETCOLOR:
+            return drv_ioctl((int)request, (void *)arg) == 0 ? 0 : ERR(EINVAL);
+
+        default:
+            break;
     }
 
     klog(LOG_DEBUG, "SYSCALL ioctl(fd=%d, req=0x%x, arg=0x%x) non implementato",

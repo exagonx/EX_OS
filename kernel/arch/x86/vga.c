@@ -34,13 +34,26 @@ static uint8_t vga_col     = 0;     /* Colonna corrente (0-79) */
 static uint8_t vga_color   = 0;     /* Colore corrente (attributo) */
 static volatile uint16_t *vga_buf = (volatile uint16_t *)0xB8000;
 
-/* Parser minimale per sequenze ANSI SGR: ESC [ <param>[;<param>...] m
- * (le uniche sequenze che la shell genera per i colori del prompt). */
+/* Parser per sequenze ANSI CSI: ESC [ [?] <param>[;<param>...] <finale>
+ *
+ * Nato minimale per il solo SGR (ESC[...m, i colori del prompt della
+ * shell). Da agosto 2026 copre anche posizionamento del cursore e
+ * cancellazioni, perché senza quelli un programma a schermo intero non
+ * può esistere: /bin/gfedit disegna passando di qui, e nient'altro in
+ * ring3 può raggiungere la memoria VGA (che nello spazio utente non è
+ * mappata). Vedi drivers/tty/tty.c, che è la porta d'ingresso.
+ *
+ * I terminatori non riconosciuti restano scartati in silenzio: meglio
+ * ignorare una sequenza che stamparne i parametri come testo. */
 typedef enum { ANSI_NONE, ANSI_ESC, ANSI_CSI } AnsiState;
 static AnsiState ansi_state           = ANSI_NONE;
 static int       ansi_params[4]       = {0,0,0,0};
 static uint8_t   ansi_param_count     = 0;
 static uint8_t   ansi_cur_param_empty = 1;
+static uint8_t   ansi_private         = 0;  /* '?' subito dopo il '[' */
+
+/* Specchio seriale dell'output: vedi vga_set_serial_mirror(). */
+static uint8_t   serial_mirror        = 1;
 
 /* =============================================================================
  * Console seriale di debug (COM1, 38400 8N1)
@@ -64,6 +77,8 @@ static void serial_init(void)
 static void serial_putchar(char c)
 {
     uint32_t spin = 0;
+
+    if (!serial_mirror) return;
 
     /* Attende che il THR sia libero, con guardia per non bloccare il kernel
      * se la seriale non esiste (hardware reale senza COM1). */
@@ -149,6 +164,182 @@ static void vga_update_cursor(void)
     port_outb(VGA_DATA_PORT, (uint8_t)((pos >> 8) & 0xFF));
     port_outb(VGA_CTRL_PORT, VGA_CURSOR_LOW);
     port_outb(VGA_DATA_PORT, (uint8_t)(pos & 0xFF));
+}
+
+/* =============================================================================
+ * vga_show_cursor — Accende o spegne il cursore hardware
+ *
+ * Bit 5 del registro CRTC 0x0A (Cursor Start): 1 = cursore NASCOSTO. Il
+ * resto del registro è la riga di scansione iniziale del glifo e va
+ * conservata, altrimenti il cursore riappare di forma diversa.
+ *
+ * Serve a chi ridisegna schermate intere: senza, il cursore rincorre
+ * ogni carattere scritto e lascia una scia sfarfallante.
+ * ============================================================================= */
+void vga_show_cursor(int on)
+{
+    uint8_t start;
+
+    port_outb(VGA_CTRL_PORT, 0x0A);
+    start = port_inb(VGA_DATA_PORT);
+
+    if (on) start = (uint8_t)(start & ~0x20);
+    else    start = (uint8_t)(start |  0x20);
+
+    port_outb(VGA_CTRL_PORT, 0x0A);
+    port_outb(VGA_DATA_PORT, start);
+}
+
+/* =============================================================================
+ * vga_gotoxy — Posiziona il cursore logico (0-based, come le altre API)
+ *
+ * Le coordinate fuori schermo vengono AGGANCIATE al bordo invece che
+ * rifiutate: una sequenza ANSI arriva da un programma utente, e un
+ * parametro sbagliato non deve poter scrivere fuori dai 4000 byte della
+ * memoria video.
+ * ============================================================================= */
+void vga_gotoxy(uint8_t row, uint8_t col)
+{
+    if (row >= VGA_ROWS) row = VGA_ROWS - 1;
+    if (col >= VGA_COLS) col = VGA_COLS - 1;
+
+    vga_row = row;
+    vga_col = col;
+    vga_update_cursor();
+}
+
+/* =============================================================================
+ * vga_set_serial_mirror — Accende/spegne la copia su COM1 dell'output
+ *
+ * Lo specchio seriale (vedi serial_putchar) esiste per avere il log di
+ * boot completo anche dopo lo scroll. Per un programma a schermo intero
+ * è invece un danno doppio: il log si riempie di sequenze di controllo
+ * illeggibili, e soprattutto ogni carattere costa l'attesa del THR — a
+ * 38400 baud sono ~260 µs, che moltiplicati per le 2000 celle di una
+ * schermata fanno mezzo secondo di ridisegno. In QEMU non si nota
+ * (senza una seriale collegata port_inb torna 0xFF e il THR sembra
+ * sempre libero); su hardware reale l'editor sarebbe inusabile.
+ *
+ * Lo spegne drv_ioctl(TTY_IOCTL_SETRAW) e lo riaccende SETCOOKED.
+ * ============================================================================= */
+void vga_set_serial_mirror(int on)
+{
+    serial_mirror = on ? 1 : 0;
+}
+
+/* =============================================================================
+ * Cancellazioni — le celle azzerate prendono il colore CORRENTE, non il
+ * nero: è il comportamento ANSI, e permette di dipingere uno sfondo
+ * (barra dei menu, riquadro di un dialogo) con una sola ESC[K.
+ * ============================================================================= */
+static void vga_erase_cells(uint32_t da, uint32_t a)
+{
+    uint16_t blank = vga_make_entry(' ', vga_color);
+
+    if (a > VGA_TOTAL) a = VGA_TOTAL;
+    while (da < a) vga_buf[da++] = blank;
+}
+
+/* =============================================================================
+ * ansi_param — Parametro idx della sequenza corrente, o 'def' se assente.
+ *
+ * Uno zero esplicito è indistinguibile da un parametro vuoto (il parser
+ * accumula su un accumulatore azzerato), ed è giusto così: per le
+ * sequenze di movimento lo standard ANSI fa già valere 0 come 1, e per
+ * quelle di cancellazione il valore predefinito È zero.
+ * ============================================================================= */
+static int ansi_param(uint8_t idx, int def)
+{
+    if (idx >= ansi_param_count) return def;
+    return ansi_params[idx];
+}
+
+/* =============================================================================
+ * ansi_apply_csi — Applica una sequenza CSI diversa da SGR
+ *
+ * Coperte: CUU/CUD/CUF/CUB (movimento relativo), CUP/HVP (posizione
+ * assoluta), ED (cancella schermo), EL (cancella riga), e la privata
+ * DECTCEM (ESC[?25h/l, cursore visibile).
+ * ============================================================================= */
+static void ansi_apply_csi(char finale)
+{
+    int n;
+
+    if (ansi_private) {
+        /* Sequenze private DEC: qui serve solo il cursore. */
+        if ((finale == 'h' || finale == 'l') && ansi_param(0, 0) == 25) {
+            vga_show_cursor(finale == 'h');
+        }
+        return;
+    }
+
+    switch (finale) {
+        case 'A':   /* CUU — su */
+            n = ansi_param(0, 1); if (n < 1) n = 1;
+            vga_row = (uint8_t)((vga_row > n) ? (vga_row - n) : 0);
+            break;
+
+        case 'B':   /* CUD — giù */
+            n = ansi_param(0, 1); if (n < 1) n = 1;
+            n += vga_row;
+            vga_row = (uint8_t)((n >= VGA_ROWS) ? (VGA_ROWS - 1) : n);
+            break;
+
+        case 'C':   /* CUF — avanti */
+            n = ansi_param(0, 1); if (n < 1) n = 1;
+            n += vga_col;
+            vga_col = (uint8_t)((n >= VGA_COLS) ? (VGA_COLS - 1) : n);
+            break;
+
+        case 'D':   /* CUB — indietro */
+            n = ansi_param(0, 1); if (n < 1) n = 1;
+            vga_col = (uint8_t)((vga_col > n) ? (vga_col - n) : 0);
+            break;
+
+        case 'H':   /* CUP */
+        case 'f': { /* HVP — sinonimo */
+            int riga = ansi_param(0, 1);
+            int col  = ansi_param(1, 1);
+            if (riga < 1) riga = 1;
+            if (col  < 1) col  = 1;
+            /* I parametri ANSI sono 1-based, lo stato interno 0-based. */
+            vga_gotoxy((uint8_t)(riga - 1), (uint8_t)(col - 1));
+            return;         /* vga_gotoxy ha già aggiornato il cursore */
+        }
+
+        case 'J': { /* ED — cancella nello schermo */
+            uint32_t pos = (uint32_t)vga_row * VGA_COLS + vga_col;
+            switch (ansi_param(0, 0)) {
+                case 0: vga_erase_cells(pos, VGA_TOTAL); break;
+                case 1: vga_erase_cells(0, pos + 1);     break;
+                case 2:
+                default:
+                    vga_erase_cells(0, VGA_TOTAL);
+                    /* ESC[2J non muove il cursore: chi vuole anche
+                     * l'angolo scrive ESC[2J ESC[H, come da standard.
+                     * vga_clear() invece azzera la posizione, ed è per
+                     * questo che non la si richiama qui. */
+                    break;
+            }
+            break;
+        }
+
+        case 'K': { /* EL — cancella nella riga */
+            uint32_t inizio = (uint32_t)vga_row * VGA_COLS;
+            switch (ansi_param(0, 0)) {
+                case 0: vga_erase_cells(inizio + vga_col, inizio + VGA_COLS); break;
+                case 1: vga_erase_cells(inizio, inizio + vga_col + 1);        break;
+                case 2:
+                default: vga_erase_cells(inizio, inizio + VGA_COLS);          break;
+            }
+            break;
+        }
+
+        default:
+            return;     /* terminatore non gestito: sequenza scartata */
+    }
+
+    vga_update_cursor();
 }
 
 /* =============================================================================
@@ -241,12 +432,19 @@ void vga_putchar(char c)
             ansi_param_count     = 0;
             ansi_params[0]       = 0;
             ansi_cur_param_empty = 1;
+            ansi_private         = 0;
             return;
         }
         /* Sequenza non riconosciuta (non CSI): scarta e riprendi */
         ansi_state = ANSI_NONE;
         /* continua a processare 'c' normalmente sotto */
     } else if (ansi_state == ANSI_CSI) {
+        /* '?' introduce le sequenze private DEC, e può stare solo in
+         * testa ai parametri: ESC[?25l. */
+        if (c == '?' && ansi_param_count == 0 && ansi_cur_param_empty) {
+            ansi_private = 1;
+            return;
+        }
         if (c >= '0' && c <= '9') {
             if (ansi_param_count < 4) {
                 ansi_params[ansi_param_count] =
@@ -263,19 +461,17 @@ void vga_putchar(char c)
             ansi_cur_param_empty = 1;
             return;
         }
-        if (c == 'm') {
+        /* Qualunque lettera chiude la sequenza. La normalizzazione del
+         * conteggio dei parametri è la stessa per tutti i terminatori:
+         * l'ultimo accumulatore conta come parametro se ha ricevuto
+         * cifre, oppure se era preceduto da un ';' (ESC[1; ha due
+         * parametri, il secondo vuoto). */
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) {
             if (!ansi_cur_param_empty || ansi_param_count > 0) {
                 ansi_param_count++;
             }
-            ansi_apply_sgr();
-            ansi_state = ANSI_NONE;
-            return;
-        }
-        /* Altri terminatori CSI (es. 'H', 'J' per cursore/clear) non
-         * supportati: consumiamo la sequenza e torniamo a NONE senza
-         * stampare nulla, per evitare di mostrare i parametri come
-         * testo letterale. */
-        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) {
+            if (c == 'm' && !ansi_private) ansi_apply_sgr();
+            else                           ansi_apply_csi(c);
             ansi_state = ANSI_NONE;
             return;
         }
