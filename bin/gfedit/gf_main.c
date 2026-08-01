@@ -214,13 +214,26 @@ int main(int argc, char **argv)
      * se il servizio tastiera non c'è, l'editor non deve nemmeno
      * allocare — si esce dicendo perché, invece di riempire lo schermo
      * di un'interfaccia che non risponderebbe a un tasto. */
-    if (gf_term_init() != 0) {
-        printf("%s: il servizio tastiera '%s' non e' disponibile.\n",
-               GF_NAME, KBD_SERVICE_NAME);
-        printf("Un editor a schermo intero ha bisogno dei tasti uno per uno,\n");
-        printf("e la tastiera in-kernel di ripiego consegna solo righe intere.\n");
-        printf("Usa /bin/textline, che e' fatto apposta per quel modello.\n");
-        return 1;
+    {
+        int r = gf_term_init();
+
+        if (r == -2) {
+            printf("%s: non posso girare in background.\n", GF_NAME);
+            printf("Prendo la tastiera per intero, e da '&' la ruberei alla\n");
+            printf("shell, che resterebbe bloccata senza piu' un prompt.\n");
+            printf("Lancialo in primo piano, oppure aprilo su un'altra\n");
+            printf("console con Alt+F2..F4.\n");
+            return 1;
+        }
+
+        if (r != 0) {
+            printf("%s: il servizio tastiera '%s' non e' disponibile.\n",
+                   GF_NAME, KBD_SERVICE_NAME);
+            printf("Un editor a schermo intero ha bisogno dei tasti uno per uno,\n");
+            printf("e la tastiera in-kernel di ripiego consegna solo righe intere.\n");
+            printf("Usa /bin/textline, che e' fatto apposta per quel modello.\n");
+            return 1;
+        }
     }
 
     ed = gf_costruttore();

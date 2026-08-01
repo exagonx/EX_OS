@@ -231,6 +231,7 @@ typedef struct {
     unsigned int totale;
     unsigned int mia;
     unsigned int visibile;
+    unsigned int fg;
 } ConsoleInfo;
 
 /* =============================================================================

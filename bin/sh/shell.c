@@ -88,6 +88,10 @@ typedef uint32_t        size_t;
 #define EXOS_RB_HALT      2
 #define SYS_CHDIR       12
 #define SYS_STAT        106
+#define SYS_CONSOLE_SETFG 232   /* dichiara il processo in primo piano */
+
+/* Opzioni di waitpid — identiche a kernel/include/syscall.h */
+#define WNOHANG         0x0001
 
 /* stdin=0, stdout=1, stderr=2 */
 #define STDIN   0
@@ -169,12 +173,28 @@ static int sh_spawn(const char *path, int argc, char **argv)
     return syscall3(SYS_SPAWN, (uint32_t)path, (uint32_t)argc, (uint32_t)argv);
 }
 
-/* sh_waitpid — attende la terminazione del processo `pid`. Se `status`
- * non e' NULL, ci scrive il codice di uscita del figlio. Ritorna il PID
- * raccolto, o un errno negativo. */
-static int sh_waitpid(int pid, int32_t *status)
+/* sh_waitpid — attende la terminazione di `pid`.
+ *
+ * Tre argomenti e non due: il terzo (le opzioni) viaggia in EDX, e un
+ * wrapper a due registri ci lascerebbe dentro un valore qualunque che il
+ * kernel interpreterebbe come WNOHANG. Con options=0 il comportamento e'
+ * quello di sempre — si aspetta.
+ *
+ * Ritorna il PID raccolto, 0 con WNOHANG se non e' ancora finito nulla,
+ * o un errno negativo: -10 (ECHILD) se quel figlio non esiste piu'. */
+static int sh_waitpid(int pid, int32_t *status, uint32_t options)
 {
-    return syscall2(SYS_WAITPID, (uint32_t)pid, (uint32_t)status);
+    return syscall3(SYS_WAITPID, (uint32_t)pid, (uint32_t)status, options);
+}
+
+/* Dichiara chi possiede la tastiera su questa console. La shell la
+ * chiama con il proprio PID quando torna al prompt e con quello del
+ * figlio quando ne aspetta uno in primo piano: e' cio' che impedisce a
+ * un job in background di rubarle l'input (vedi la guardia su stdin in
+ * sys_read). */
+static void sh_setfg(int pid)
+{
+    syscall1(SYS_CONSOLE_SETFG, (uint32_t)pid);
 }
 
 static int sh_chdir(const char *path)
@@ -411,7 +431,7 @@ static void env_init(void)
  * lettura sarebbe indistinguibile da un'interfaccia bloccata.
  *
  * Silenzioso significa: niente banner d'avvio. NON significa niente
- * prompt e niente output dei comandi — quello è "l'output normale" che va
+ * prompt e niente output dei comandi - quello è "l'output normale" che va
  * mostrato sempre.
  * ============================================================================= */
 static int g_verbose_boot = 1;
@@ -475,25 +495,30 @@ static void cmd_help(void)
     print(CLR_CYAN);
     println("Comandi disponibili:");
     print(CLR_WHITE);
-    println("  help              — questo messaggio");
-    println("  echo [testo]      — stampa testo");
-    println("  cls / clear       — pulisce lo schermo");
-    println("  pwd               — directory corrente");
-    println("  cd [dir]          — cambia directory");
-    println("  ls                — elenca file (root dir)");
-    println("  cat [file]        — mostra contenuto file");
-    println("  [programma]       — esegue come task autonomo (la shell attende la fine)");
-    println("  exec [programma]  — SOSTITUISCE la shell con l'ELF (non torna)");
-    println("  env               — mostra variabili d'ambiente");
-    println("  export K=V        — imposta variabile d'ambiente");
-    println("  uname             — informazioni sistema (riga singola)");
-    println("  ver / version     — nome, versione, autore e licenza");
-    println("  pid               — mostra PID del processo corrente");
-    println("  sleep [ms]        — attende N millisecondi");
-    println("  reboot            — riavvia il sistema");
-    println("  halt              — ferma il sistema (non spegne)");
-    println("  poweroff/shutdown — ferma e spegne dopo 3 secondi");
-    println("  exit [codice]     — termina la shell");
+    println("  help              - questo messaggio");
+    println("  echo [testo]      - stampa testo");
+    println("  cls / clear       - pulisce lo schermo");
+    println("  pwd               - directory corrente");
+    println("  cd [dir]          - cambia directory");
+    println("  ls                - elenca file (root dir)");
+    println("  cat [file]        - mostra contenuto file");
+    println("  [programma]       - esegue come task autonomo (la shell attende la fine)");
+    println("  exec [programma]  - SOSTITUISCE la shell con l'ELF (non torna)");
+    println("  env               - mostra variabili d'ambiente");
+    println("  export K=V        - imposta variabile d'ambiente");
+    println("  uname             - informazioni sistema (riga singola)");
+    println("  ver / version     - nome, versione, autore e licenza");
+    println("  pid               - mostra PID del processo corrente");
+    println("  sleep [ms]        - attende N millisecondi");
+    println("  jobs              - elenca i processi lanciati con '&'");
+    println("  fg [n]            - riporta in primo piano il job n (l'ultimo se omesso)");
+    println("");
+    println("  comando &         - esegue in background e torna subito al prompt");
+    println("  Alt+F1..F4        - passa da una console virtuale all'altra");
+    println("  reboot            - riavvia il sistema");
+    println("  halt              - ferma il sistema (non spegne)");
+    println("  poweroff/shutdown - ferma e spegne dopo 3 secondi");
+    println("  exit [codice]     - termina la shell");
 }
 
 static void cmd_echo(int argc, char *argv[])
@@ -592,10 +617,10 @@ static void cmd_uname(void)
     print(CLR_GREEN);
     print(osname);
     print(CLR_WHITE);
-    print(" version "); print(osver); print(" (x86 32-bit) — ");
+    print(" version "); print(osver); print(" (x86 32-bit) - ");
     print("Copyright (C) 2025 "); print(author);
     print(" <exagonx@hotmail.com>\n");
-    println("Licenza: GNU GPL v2 — Software Libero");
+    println("Licenza: GNU GPL v2 - Software Libero");
 }
 
 static void cmd_pid(void)
@@ -620,14 +645,209 @@ static void cmd_sleep(int argc, char *argv[])
     );
 }
 
+/* =============================================================================
+ * JOB CONTROL
+ *
+ * `comando &` non aspetta e ridà subito il prompt; `jobs` elenca ciò che
+ * sta ancora girando; `fg [n]` riporta un job in primo piano e ne aspetta
+ * la fine.
+ *
+ * Non c'è `bg`, e non è una dimenticanza: `bg` riprende un processo
+ * SOSPESO, e per sospenderlo servirebbe un Ctrl+Z — cioè i segnali, che
+ * EX-OS non ha. Un job qui o gira o è finito, non esiste lo stato in
+ * mezzo.
+ *
+ * DOVE FINISCE L'OUTPUT. Un job in background scrive sulla stessa
+ * console della shell, quindi le sue righe si mescolano al prompt. È il
+ * comportamento di qualunque shell Unix, e la via d'uscita è la stessa:
+ * se il programma ha bisogno dello schermo tutto per sé, si lancia su
+ * un'altra console con Alt+Fn invece che con '&'.
+ *
+ * L'INPUT invece è protetto: sys_read su stdin restituisce la fine
+ * dell'input a chi non è in primo piano. Senza, un job in background che
+ * legge sostituirebbe la shell come lettore della tastiera e il prompt
+ * non riceverebbe mai più una riga (vedi la guardia in sys_read).
+ * ============================================================================= */
+#define JOBS_MAX    8
+#define JOB_CMD_LEN 48
+
+typedef struct {
+    int  in_use;
+    int  pid;
+    int  numero;                /* numero mostrato da 'jobs', 1-based */
+    char cmd[JOB_CMD_LEN];
+} Job;
+
+static Job g_jobs[JOBS_MAX];
+static int g_job_seq = 0;
+
+static void job_aggiungi(int pid, const char *cmd)
+{
+    int i;
+
+    for (i = 0; i < JOBS_MAX; i++) {
+        if (g_jobs[i].in_use) continue;
+
+        g_jobs[i].in_use = 1;
+        g_jobs[i].pid    = pid;
+        g_jobs[i].numero = ++g_job_seq;
+        sh_strcpy(g_jobs[i].cmd, cmd, JOB_CMD_LEN);
+
+        print("[");
+        print_uint((uint32_t)g_jobs[i].numero);
+        print("] ");
+        print_uint((uint32_t)pid);
+        print("\n");
+        return;
+    }
+
+    printerr("jobs: tabella piena, il processo gira ma non e' elencato");
+}
+
+/* Cerca un job per numero. Con numero <= 0 restituisce il piu' recente,
+ * che e' quello che 'fg' senza argomenti deve riprendere. */
+static Job *job_trova(int numero)
+{
+    int i;
+    Job *scelto = NULL;
+
+    for (i = 0; i < JOBS_MAX; i++) {
+        if (!g_jobs[i].in_use) continue;
+        if (numero > 0) {
+            if (g_jobs[i].numero == numero) return &g_jobs[i];
+            continue;
+        }
+        if (!scelto || g_jobs[i].numero > scelto->numero) scelto = &g_jobs[i];
+    }
+    return scelto;
+}
+
+/* Raccoglie i job finiti e li annuncia. Chiamata a ogni prompt: è così
+ * che si scopre che un job è terminato senza doverlo chiedere, ed è anche
+ * l'unico modo di liberare lo slot di processo — un figlio terminato
+ * resta ZOMBIE finché il padre non lo raccoglie (il reaper di init si
+ * occupa solo degli orfani). */
+static void job_raccogli(void)
+{
+    int i;
+
+    for (i = 0; i < JOBS_MAX; i++) {
+        int32_t status = 0;
+        int     r;
+
+        if (!g_jobs[i].in_use) continue;
+
+        r = sh_waitpid(g_jobs[i].pid, &status, WNOHANG);
+
+        if (r == 0) continue;            /* ancora in esecuzione */
+
+        if (r > 0) {
+            print("[");
+            print_uint((uint32_t)g_jobs[i].numero);
+            print("] terminato: ");
+            print(g_jobs[i].cmd);
+            print(" (codice ");
+            print_uint((uint32_t)status);
+            print(")\n");
+        } else {
+            /* -ECHILD: qualcun altro l'ha gia' raccolto, o non e' mai
+             * esistito. Lo slot va liberato comunque, o resterebbe a
+             * mentire in 'jobs' per sempre. */
+            print("[");
+            print_uint((uint32_t)g_jobs[i].numero);
+            print("] sparito: ");
+            print(g_jobs[i].cmd);
+            print("\n");
+        }
+        g_jobs[i].in_use = 0;
+    }
+}
+
+static void cmd_jobs(void)
+{
+    int i, trovati = 0;
+
+    job_raccogli();
+
+    for (i = 0; i < JOBS_MAX; i++) {
+        if (!g_jobs[i].in_use) continue;
+        trovati++;
+        print("[");
+        print_uint((uint32_t)g_jobs[i].numero);
+        print("] PID ");
+        print_uint((uint32_t)g_jobs[i].pid);
+        print("  ");
+        print(g_jobs[i].cmd);
+        print("\n");
+    }
+
+    if (trovati == 0) print("Nessun job in esecuzione.\n");
+}
+
+static void cmd_fg(int argc, char *argv[])
+{
+    int     numero = 0;
+    Job    *j;
+    int32_t status = 0;
+    int     r;
+
+    job_raccogli();
+
+    if (argc >= 2) {
+        const char *p = argv[1];
+        if (*p == '%') p++;              /* si accetta anche "fg %2" */
+        while (*p >= '0' && *p <= '9') numero = numero * 10 + (*p++ - '0');
+        if (numero == 0) { printerr("fg: uso: fg [numero]"); return; }
+    }
+
+    j = job_trova(numero);
+    if (!j) {
+        printerr(argc >= 2 ? "fg: nessun job con quel numero"
+                           : "fg: nessun job in esecuzione");
+        return;
+    }
+
+    print(j->cmd);
+    print("\n");
+
+    /* La tastiera passa al job: da qui in poi e' lui a poter leggere da
+     * stdin, e la shell — che comunque sta per bloccarsi in waitpid —
+     * smette di essere il lettore legittimo. */
+    sh_setfg(j->pid);
+    r = sh_waitpid(j->pid, &status, 0);
+    sh_setfg(sh_getpid());
+
+    if (r < 0) printerr("fg: quel processo non esiste piu'");
+    j->in_use = 0;
+}
+
 /* 320 come PERCORSO_MAX del kernel: qui si compone "<PATH>/<comando>", e
  * un buffer piu' corto taglierebbe percorsi che la syscall accetterebbe. */
 #define PATH_MAX_SH 320
 
-static void run_program(const char *prog, int argc, char *argv[])
+/* Lancia il figlio e ne aspetta la fine, oppure lo mette fra i job.
+ *
+ * In primo piano la tastiera passa al figlio per tutta la durata: e'
+ * quello che permette a un programma interattivo di leggere da stdin
+ * mentre la shell e' ferma in waitpid. Al ritorno la si riprende. */
+static void avvia_figlio(int pid, int background, const char *cmdline)
+{
+    int32_t status;
+
+    if (background) {
+        job_aggiungi(pid, cmdline);
+        return;
+    }
+
+    sh_setfg(pid);
+    sh_waitpid(pid, &status, 0);
+    sh_setfg(sh_getpid());
+}
+
+static void run_program(const char *prog, int argc, char *argv[],
+                        int background, const char *cmdline)
 {
     char path[PATH_MAX_SH];
-    int32_t status;
 
     if (prog[0] != '/') {
         const char *path_env = env_get("PATH");
@@ -653,7 +873,7 @@ static void run_program(const char *prog, int argc, char *argv[])
 
             int pid = sh_spawn(path, spawn_argc, spawn_argv);
             if (pid > 0) {
-                sh_waitpid(pid, &status);
+                avvia_figlio(pid, background, cmdline);
                 return;
             }
         }
@@ -670,7 +890,7 @@ static void run_program(const char *prog, int argc, char *argv[])
 
         int pid = sh_spawn(prog, spawn_argc, spawn_argv);
         if (pid > 0) {
-            sh_waitpid(pid, &status);
+            avvia_figlio(pid, background, cmdline);
         } else {
             print("exec: ");
             print(prog);
@@ -817,7 +1037,7 @@ static void print_banner(void)
     print(CLR_CYAN);
     println("  ============================================");
     print("   "); print(osname);
-    print(" — Extensible Operating System v"); print(osver); print("\n");
+    print(" - Extensible Operating System v"); print(osver); print("\n");
     print("   Copyright (C) 2025 "); print(author); print("\n");
     println("   <exagonx@hotmail.com>");
     println("   Licenza: GNU GPL v2");
@@ -838,9 +1058,16 @@ void _start(void)
     char *argv[MAX_ARGS];
     int   argc;
     int   n;
+    int   background;
+    char  cmdline[JOB_CMD_LEN];
 
     /* Inizializza variabili d'ambiente */
     env_init();
+
+    /* Da subito la tastiera e' della shell: finche' nessuno dichiara il
+     * primo piano, sys_read lascia leggere chiunque — e il primo job
+     * lanciato con '&' potrebbe rubarle l'input. */
+    sh_setfg(sh_getpid());
 
     /* Deve venire dopo env_init: entrambe passano da SYS_GETENV, ma
      * verboseboot non è una variabile d'ambiente e non finisce in g_env. */
@@ -851,6 +1078,11 @@ void _start(void)
 
     /* Loop principale della shell */
     for (;;) {
+        /* Job finiti nel frattempo: annunciati qui, prima del prompt,
+         * come fa qualunque shell. E' anche il momento in cui il loro
+         * slot di processo viene liberato. */
+        job_raccogli();
+
         /* Prompt */
         print_prompt();
 
@@ -869,6 +1101,29 @@ void _start(void)
         }
 
         if (n == 0) continue;   /* Riga vuota */
+
+        /* =================================================================
+         * '&' finale: esecuzione in background.
+         *
+         * Si accetta sia "comando &" sia "comando&". La riga viene
+         * copiata PRIMA di essere spezzata da parse_line, che ci pianta
+         * dentro dei terminatori: serve intera per l'elenco di 'jobs',
+         * dove leggere "hello" e' molto piu' utile che leggere un PID.
+         * ================================================================= */
+        {
+            int k = n - 1;
+            while (k >= 0 && (line[k] == ' ' || line[k] == '\t')) k--;
+            if (k >= 0 && line[k] == '&') {
+                background = 1;
+                line[k] = '\0';
+                n = k;
+                while (n > 0 && (line[n-1] == ' ' || line[n-1] == '\t')) line[--n] = '\0';
+                if (n == 0) continue;   /* solo una '&' */
+            } else {
+                background = 0;
+            }
+        }
+        sh_strcpy(cmdline, line, sizeof(cmdline));
 
         /* Parsing */
         argc = parse_line(line, argv, MAX_ARGS);
@@ -889,6 +1144,8 @@ void _start(void)
         if (sh_strcmp(cmd, "ver")   == 0) { cmd_version();        continue; }
         if (sh_strcmp(cmd, "version") == 0) { cmd_version();      continue; }
         if (sh_strcmp(cmd, "pid")   == 0) { cmd_pid();            continue; }
+        if (sh_strcmp(cmd, "jobs")  == 0) { cmd_jobs();           continue; }
+        if (sh_strcmp(cmd, "fg")    == 0) { cmd_fg(argc, argv);   continue; }
         if (sh_strcmp(cmd, "sleep") == 0) { cmd_sleep(argc,argv); continue; }
         if (sh_strcmp(cmd, "cat")   == 0) { cmd_cat(argc, argv);  continue; }
         if (sh_strcmp(cmd, "exec")  == 0) { cmd_exec(argc, argv); continue; }
@@ -903,7 +1160,7 @@ void _start(void)
         }
 
         /* Comando non built-in: cerca nel PATH e tenta exec */
-        run_program(cmd, argc, argv);
+        run_program(cmd, argc, argv, background, cmdline);
     }
 
     sh_exit(0);

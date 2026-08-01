@@ -60,7 +60,7 @@
 #define SYS_REBOOT       88    /* spegne, riavvia o ferma il sistema */
 
 /* Numero totale syscall supportate */
-#define SYSCALL_COUNT   232     /* deve coprire il numero syscall più alto (SYS_CONSOLE_INFO=231) + 1 */
+#define SYSCALL_COUNT   233     /* deve coprire il numero syscall più alto (SYS_CONSOLE_SETFG=232) + 1 */
 
 /* =============================================================================
  * Codici errno
@@ -91,6 +91,7 @@
 #define ESPIPE      29      /* qui: file frammentato, non mappabile a un intervallo */
 #define ENOTTY      25      /* ioctl su un descrittore che non è un terminale */
 #define ETIMEDOUT   110     /* attesa scaduta senza che l'evento arrivasse */
+#define ECHILD      10      /* waitpid: nessun figlio corrispondente */
 
 /* Syscall IPC — comunicazione kernel-mediata tra task ring3 */
 #define SYS_IPC_SEND     220
@@ -124,12 +125,19 @@
 #define SYS_CONSOLE_SWITCH 229  /* porta in primo piano la console ebx */
 #define SYS_CONSOLE_WRITE  230  /* scrive su una console specifica */
 #define SYS_CONSOLE_INFO   231  /* quante sono, qual e' la mia, qual e' visibile */
+#define SYS_CONSOLE_SETFG  232  /* dichiara il processo in primo piano (job control) */
+
+/* Opzioni di sys_waitpid (terzo argomento, edx). Un chiamante che
+ * passa solo due registri lascia in edx un valore qualunque: tutti i
+ * wrapper devono usare la forma a tre argomenti con options=0. */
+#define WNOHANG     0x0001  /* non bloccare se nessun figlio e' finito */
 
 /* DUPLICATA A MANO in lib/include/libc.h e lib/libc.c. */
 typedef struct {
     uint32_t totale;    /* quante console esistono */
     uint32_t mia;       /* quella del processo chiamante */
     uint32_t visibile;  /* quella attualmente a video */
+    uint32_t fg;        /* PID in primo piano sulla console del chiamante */
 } ConsoleInfo;
 
 /* Converti errno in valore di ritorno negativo */
@@ -505,6 +513,7 @@ int32_t sys_time(InterruptFrame *f);
 int32_t sys_console_switch(InterruptFrame *f);
 int32_t sys_console_write(InterruptFrame *f);
 int32_t sys_console_info(InterruptFrame *f);
+int32_t sys_console_setfg(InterruptFrame *f);
 int32_t sys_ipc_register(InterruptFrame *f);
 int32_t sys_ipc_lookup(InterruptFrame *f);
 int32_t sys_irq_bind(InterruptFrame *f);

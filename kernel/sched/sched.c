@@ -11,6 +11,7 @@
 
 #include "kernel.h"
 #include "sched.h"
+#include "vga.h"   /* VGA_N_CONSOLE: una tabella di primo piano per console */
 #include "pmm.h"
 #include "ipc.h"
 #include "paging.h"
@@ -693,6 +694,23 @@ void sched_unblock_locked(uint32_t pid)
     }
 }
 
+/* =============================================================================
+ * Primo piano per console — vedi il commento in sched.h
+ * ============================================================================= */
+static uint32_t g_console_fg[VGA_N_CONSOLE];
+
+uint32_t sched_console_fg(uint32_t console)
+{
+    if (console >= VGA_N_CONSOLE) return 0;
+    return g_console_fg[console];
+}
+
+void sched_set_console_fg(uint32_t console, uint32_t pid)
+{
+    if (console >= VGA_N_CONSOLE) return;
+    g_console_fg[console] = pid;
+}
+
 void sched_unblock(uint32_t pid)
 {
     interrupts_disable();
@@ -727,6 +745,15 @@ void proc_exit(int32_t exit_code)
          g_current->pid, g_current->name, exit_code);
 
     g_current->exit_code = exit_code;
+    /* Se se ne va il processo in primo piano della sua console, il posto
+     * torna libero. Senza, un programma terminato per un fault
+     * lascerebbe la console con un primo piano che non esiste piu': la
+     * shell tornerebbe al prompt e leggerebbe la fine dell'input a ogni
+     * tentativo, cioe' un prompt vivo che non accetta piu' un comando. */
+    if (sched_console_fg(g_current->console) == g_current->pid) {
+        sched_set_console_fg(g_current->console, 0);
+    }
+
     g_current->state     = PROC_ZOMBIE;
     g_proc_count--;
 

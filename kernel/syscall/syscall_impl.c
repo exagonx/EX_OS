@@ -225,6 +225,33 @@ int32_t sys_read(InterruptFrame *frame)
      * quindi le sue funzioni sono simboli globali del kernel). */
     if (proc->fds[fd].type == FD_STDIN) {
         extern int drv_read(void *buf, size_t n);
+        uint32_t fg = sched_console_fg(proc->console);
+
+        /* =================================================================
+         * JOB CONTROL: la tastiera e' di chi sta in primo piano.
+         *
+         * Un processo lanciato con '&' che prova a leggere trova la fine
+         * dell'input, e si comporta di conseguenza — di solito esce. Non
+         * e' una restrizione arbitraria: il driver tastiera serve
+         * l'ULTIMO che ha chiesto una riga, quindi senza questo controllo
+         * un job in background sostituirebbe la shell come lettore, e la
+         * shell resterebbe bloccata per sempre in attesa di una riga che
+         * nessuno le consegnerebbe piu'. Il prompt sparirebbe e la
+         * console con lui.
+         *
+         * Unix in questo caso ferma il processo con SIGTTIN e lo lascia
+         * riprendibile con 'fg'. Qui non ci sono segnali: la fine
+         * dell'input e' l'unica risposta possibile, ed e' comunque
+         * un'informazione vera — quel programma, in background, input non
+         * ne avra' mai.
+         *
+         * fg == 0 significa "nessuno ha dichiarato il primo piano": legge
+         * chi vuole, che e' il comportamento di prima dei job. Serve
+         * perche' il sistema funzioni anche prima che una shell abbia
+         * detto la sua.
+         * ================================================================= */
+        if (fg != 0 && fg != proc->pid) return 0;
+
         int32_t n = drv_read(buf, count);
         return n;
     }
@@ -367,6 +394,7 @@ int32_t sys_waitpid(InterruptFrame *frame)
 {
     int32_t   pid_wait = (int32_t)frame->ebx;
     int32_t  *status   = (int32_t *)frame->ecx;
+    uint32_t  options  = frame->edx;
     Process  *current  = proc_get_current();
     uint32_t  i;
 
@@ -375,11 +403,16 @@ int32_t sys_waitpid(InterruptFrame *frame)
 
     /* Cerca un figlio ZOMBIE */
     for (;;) {
+        uint32_t figli_vivi = 0;
+
         for (i = 0; i < MAX_PROCESSES; i++) {
             Process *p = &g_process_pool[i];
-            if (p->state != PROC_ZOMBIE)              continue;
-            if (p->ppid  != current->pid)             continue;
+
+            if (p->state == PROC_UNUSED)  continue;
+            if (p->ppid  != current->pid) continue;
             if (pid_wait != -1 && (int32_t)p->pid != pid_wait) continue;
+
+            if (p->state != PROC_ZOMBIE) { figli_vivi++; continue; }
 
             int32_t  child_exit = p->exit_code;
             uint32_t child_pid  = p->pid;
@@ -392,10 +425,45 @@ int32_t sys_waitpid(InterruptFrame *frame)
             return (int32_t)child_pid;
         }
 
-        /* Nessun figlio zombie: blocca il processo e riprova */
+        /* =================================================================
+         * Nessuno zombie da raccogliere. Tre casi diversi, e prima ce
+         * n'era uno solo — si bloccava e basta.
+         *
+         * ECHILD: non esiste nemmeno un figlio VIVO che corrisponda alla
+         * richiesta. Bloccarsi qui significherebbe aspettare per sempre
+         * un evento che non puo' accadere, e ci si arriva facilmente:
+         * basta un 'fg' su un job gia' terminato e raccolto. Prima la
+         * shell ci moriva dentro.
+         *
+         * WNOHANG: il chiamante ha detto che non vuole aspettare. Serve a
+         * 'jobs', che deve poter dire quali sono finiti senza fermarsi
+         * sul primo ancora in esecuzione.
+         * ================================================================= */
+        if (figli_vivi == 0)        return ERR(ECHILD);
+        if (options & WNOHANG)      return 0;
+
         sched_block(PROC_BLOCKED);
         /* Svegliato da proc_exit di un figlio → riprova */
     }
+}
+
+/* =============================================================================
+ * SYS_CONSOLE_SETFG (232) -- Dichiara il processo in primo piano
+ *
+ * ebx = pid (0 = nessuno)
+ *
+ * Lo chiama la shell: se stessa quando torna al prompt, il figlio quando
+ * ne aspetta uno in primo piano. Vale per la console DEL CHIAMANTE — non
+ * si puo' toccare il primo piano di una console altrui, che sarebbe un
+ * modo per rubare la tastiera a un'altra shell.
+ * ============================================================================= */
+int32_t sys_console_setfg(InterruptFrame *frame)
+{
+    uint32_t pid  = frame->ebx;
+    Process *proc = proc_get_current();
+
+    sched_set_console_fg(proc->console, pid);
+    return 0;
 }
 
 /* Riferimento al pool PCB globale (definito in sched.c) */
@@ -680,6 +748,7 @@ int32_t sys_console_info(InterruptFrame *frame)
     out->totale   = VGA_N_CONSOLE;
     out->mia      = proc->console;
     out->visibile = vga_visible_console();
+    out->fg       = sched_console_fg(proc->console);
     return 0;
 }
 

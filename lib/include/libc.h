@@ -159,6 +159,16 @@ typedef struct {
     unsigned int totale;    /* quante console esistono */
     unsigned int mia;       /* quella del processo chiamante */
     unsigned int visibile;  /* quella attualmente a video */
+
+    /* PID in primo piano sulla console del chiamante, 0 se nessuno.
+     *
+     * Serve a chi prende la tastiera parlando DIRETTAMENTE al servizio
+     * 'kbd' via IPC — la modalita' raw di /bin/gfedit — perche' quella
+     * strada non passa da sys_read e la guardia del kernel non la vede.
+     * Un programma del genere deve controllare da se' di essere in primo
+     * piano: se lo lanciassero con '&' ruberebbe i tasti alla shell, che
+     * resterebbe bloccata in attesa di una riga che non arriverebbe mai. */
+    unsigned int fg;
 } ConsoleInfo;
 
 int console_info(ConsoleInfo *ci);

@@ -239,6 +239,45 @@ dove. Un modello mirato come `tmp*` non la chiede.
 
 ---
 
+## Job control: `&`, `jobs`, `fg`
+
+```
+comando &     esegue in background e torna subito al prompt
+jobs          elenca i job ancora in esecuzione
+fg [n]        riporta in primo piano il job n (l'ultimo se omesso)
+```
+
+Un job terminato viene annunciato al prompt successivo — `[1] terminato: tsleep
+(codice 0)` — ed è anche il momento in cui il suo slot di processo viene
+liberato: un figlio resta `ZOMBIE` finché il padre non lo raccoglie (il reaper di
+init si occupa solo degli orfani).
+
+**Non c'è `bg`**, e non è una dimenticanza: `bg` riprende un processo *sospeso*, e
+per sospenderlo servirebbe un Ctrl+Z — cioè i segnali, che EX-OS non ha. Un job
+qui o gira o è finito, non esiste lo stato in mezzo.
+
+**L'output si mescola.** Un job in background scrive sulla stessa console della
+shell, quindi le sue righe finiscono in mezzo al prompt e a ciò che stai
+digitando. È il comportamento di qualunque shell Unix; se il programma ha bisogno
+dello schermo tutto per sé, si lancia su un'altra console con Alt+Fn invece che
+con `&`.
+
+**L'input invece è protetto**, e serviva davvero. Il driver tastiera serve
+l'*ultimo* che ha chiesto una riga: senza difese, un job in background che legge
+`stdin` sostituirebbe la shell come lettore e il prompt non riceverebbe mai più
+un comando — la console morirebbe. Due meccanismi lo impediscono:
+
+1. `sys_read` su `stdin` restituisce la **fine dell'input** a chi non è il
+   processo in primo piano della propria console. La shell dichiara il primo
+   piano con `SYS_CONSOLE_SETFG` (sé stessa al prompt, il figlio quando lo
+   aspetta). Unix qui userebbe `SIGTTIN`; senza segnali, l'EOF è l'unica risposta
+   possibile — ed è comunque vera, quel programma input non ne avrà mai.
+2. Chi prende la tastiera parlando **direttamente** al servizio `kbd` via IPC —
+   la modalità raw di `gfedit` — non passa da `sys_read`, quindi controlla da sé
+   `ConsoleInfo.fg` e si rifiuta di partire in background, spiegando perché.
+
+---
+
 ## Console virtuali — Alt+F1 … Alt+F4
 
 Quattro schermi indipendenti, uno solo visibile per volta, ognuno con la propria

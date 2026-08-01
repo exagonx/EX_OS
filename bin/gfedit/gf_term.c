@@ -333,8 +333,29 @@ int gf_term_init(void)
     /* Su quale console stiamo girando. Serve al driver per sapere a chi
      * appartengono le nostre richieste di tasti: se sbagliassimo,
      * l'editor su una console leggerebbe i tasti battuti su un'altra. */
-    if (console_info(&ci) == 0) mia_console = ci.mia;
-    else                        mia_console = 0;
+    if (console_info(&ci) == 0) {
+        mia_console = ci.mia;
+
+        /* =================================================================
+         * L'editor deve essere in PRIMO PIANO, e lo verifica da solo.
+         *
+         * La modalita' raw si ottiene parlando direttamente al servizio
+         * 'kbd' via IPC, e quella strada NON passa da sys_read: la
+         * guardia che il kernel mette sullo stdin dei processi in
+         * background qui non arriva. Lanciato con '&', l'editor
+         * diventerebbe l'ultimo ad aver chiesto un tasto — e il driver
+         * serve l'ultimo — quindi ruberebbe la tastiera alla shell, che
+         * resterebbe bloccata in attesa di una riga che non arriverebbe
+         * mai. Il prompt sparirebbe e la console con lui.
+         *
+         * ci.fg == 0 significa che nessuno ha dichiarato il primo piano
+         * (nessuna shell in mezzo): si procede, perche' in quel caso non
+         * c'e' nessuno a cui rubare niente.
+         * ================================================================= */
+        if (ci.fg != 0 && ci.fg != (unsigned)getpid()) return -2;
+    } else {
+        mia_console = 0;
+    }
 
     if (pid <= 0) {
         /* Senza il driver ring3 la console è servita dalla tastiera

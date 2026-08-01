@@ -52,7 +52,7 @@
 #include "kbd_proto.h"
 
 #define GF_NAME     "GF Edit"
-#define GF_VERSION  "0.002"
+#define GF_VERSION  "0.003"
 #define GF_AUTHOR   "Graziano Falcone"
 #define GF_EMAIL    "exagonx@hotmail.com"
 #define GF_LICENSE  "GPL 2.0"

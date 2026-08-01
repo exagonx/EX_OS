@@ -266,6 +266,26 @@ void     sched_tick(void);              /* Chiamato ogni IRQ0 (100Hz) */
 void     sched_yield(void);             /* Cede volontariamente la CPU */
 void     sched_block(ProcState reason); /* Blocca il processo corrente */
 void     sched_unblock(uint32_t pid);   /* Sblocca un processo */
+
+/* =============================================================================
+ * Processo in PRIMO PIANO su una console
+ *
+ * È il job control: su ogni console un solo processo per volta possiede
+ * la tastiera, e gli altri — quelli lanciati con '&' — leggono da stdin
+ * la fine dell'input invece di rubargli i tasti.
+ *
+ * Senza questa nozione il driver tastiera farebbe l'unica cosa che sa
+ * fare, cioè servire l'ultimo che ha chiesto: un programma in
+ * background che legge stdin sostituirebbe la shell come lettore, e la
+ * shell resterebbe bloccata per sempre in attesa di una riga che nessuno
+ * le consegnerà più. Il prompt sparirebbe e la console con lui.
+ *
+ * 0 significa "nessuno dichiarato": in quel caso legge chi vuole, che è
+ * il comportamento di prima che i job esistessero — necessario perché il
+ * sistema funzioni anche prima che una shell abbia detto la sua.
+ * ============================================================================= */
+uint32_t sched_console_fg(uint32_t console);
+void     sched_set_console_fg(uint32_t console, uint32_t pid);
 void     sched_unblock_locked(uint32_t pid); /* Come sopra, ma il chiamante deve già avere cli attivo (uso da contesto IRQ, es. ipc.c) */
 void     sched_sleep(uint32_t ms);      /* Dorme per ms millisecondi */
 
