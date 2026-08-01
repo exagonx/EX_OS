@@ -92,6 +92,7 @@
 #define ENOTTY      25      /* ioctl su un descrittore che non è un terminale */
 #define ETIMEDOUT   110     /* attesa scaduta senza che l'evento arrivasse */
 #define ECHILD      10      /* waitpid: nessun figlio corrispondente */
+#define ENOMEDIUM   123     /* il lettore c'e', il disco dentro no */
 
 /* Syscall IPC — comunicazione kernel-mediata tra task ring3 */
 #define SYS_IPC_SEND     220
@@ -338,8 +339,12 @@ typedef struct {
 #define BLKINFO_NOME_MAX    12
 
 typedef struct {
-    char     nome[BLKINFO_NOME_MAX];  /* "fd0", "hd0", "hd0p1" */
-    uint32_t tipo;                    /* 1 floppy, 2 disco intero, 3 partizione */
+    char     nome[BLKINFO_NOME_MAX];  /* "fd0", "hd0", "hd0p1", "cd0" */
+    /* 1 floppy, 2 disco intero, 3 partizione, 4 lettore CD/DVD.
+     * Su un lettore `settori` vale zero finche' il supporto non e' stato
+     * sondato o se il vassoio e' vuoto: la lunghezza e' del disco
+     * inserito, non del dispositivo. */
+    uint32_t tipo;
     uint32_t sola_lettura;
     uint32_t primo_lo, primo_hi;      /* LBA di partenza nel supporto */
     uint32_t settori_lo, settori_hi;  /* lunghezza della finestra */

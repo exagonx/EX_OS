@@ -80,6 +80,7 @@
 #include "fat12.h"
 #include "fat.h"
 #include "ext2.h"
+#include "iso9660.h"
 #include "vol.h"
 #include "blk.h"
 #include "syscall.h"
@@ -371,6 +372,20 @@ int vfs_mount(const char *dev, const char *punto, int sola_lettura)
     blkdev = blk_trova(dev);
     if (blkdev < 0) return ERR(ENOENT);
 
+    /* Un supporto rimovibile va sondato PRIMA di guardarci dentro: finche'
+     * nessuno lo chiede, la finestra di un lettore ottico e' di zero
+     * settori e ogni lettura verrebbe respinta come "fuori finestra" —
+     * cioe' un disco perfettamente valido risulterebbe non montabile.
+     *
+     * ENOMEDIUM e non EIO: "non c'e' il disco" e' una cosa che l'utente
+     * puo' rimediare, "errore di I/O" no, e confonderle significa mandare
+     * qualcuno a cercare un guasto che non c'e'. */
+    {
+        int s = blk_supporto(blkdev);
+        if (s == 0)  return ERR(ENOMEDIUM);
+        if (s <  0)  return ERR(EIO);
+    }
+
     /* Il nome non deve esistere gia' (punto 4): montarci sopra
      * nasconderebbe dei file senza dirlo. */
     if (vfs_stat(punto, &st) == 0) {
@@ -399,7 +414,8 @@ int vfs_mount(const char *dev, const char *punto, int sola_lettura)
 
     if (vol_identifica(blkdev, &vi) != 0) return ERR(EIO);
     if (vi.tipo != VOL_FS_FAT12 && vi.tipo != VOL_FS_FAT16 &&
-        vi.tipo != VOL_FS_FAT32 && vi.tipo != VOL_FS_EXT2) {
+        vi.tipo != VOL_FS_FAT32 && vi.tipo != VOL_FS_EXT2 &&
+        vi.tipo != VOL_FS_ISO9660) {
         klog(LOG_ERROR, "VFS: '%s' non contiene un filesystem riconoscibile", dev);
         return ERR(EINVAL);
     }
@@ -408,7 +424,18 @@ int vfs_mount(const char *dev, const char *punto, int sola_lettura)
         return ERR(EINVAL);
     }
 
-    if (vi.tipo == VOL_FS_EXT2) {
+    if (vi.tipo == VOL_FS_ISO9660) {
+        mnt = iso_mount(blkdev);
+        if (mnt < 0) return ERR(EIO);
+
+        g_mnt[slot].tipo = VFS_FS_ISO;
+
+        /* La sola lettura NON e' una scelta del montaggio: e' una
+         * proprieta' del formato (vedi kernel/include/iso9660.h). Si
+         * impone qui, cosi' `mount cd0 /cdrom` senza -r non consegna un
+         * montaggio che accetta scritture per poi perderle. */
+        sola_lettura = 1;
+    } else if (vi.tipo == VOL_FS_EXT2) {
         mnt = ext2_mount(blkdev);
         if (mnt < 0) return ERR(EIO);
 
@@ -433,7 +460,10 @@ int vfs_mount(const char *dev, const char *punto, int sola_lettura)
     g_mnt[slot].blkdev       = blkdev;
     v_copia(g_mnt[slot].dev, dev, BLK_NOME_MAX);
 
-    if (g_mnt[slot].tipo == VFS_FS_EXT2)
+    if (g_mnt[slot].tipo == VFS_FS_ISO)
+        klog(LOG_INFO, "VFS: montato %s su %s (ISO 9660%s, sola lettura): '%s'",
+             dev, punto, iso_joliet(mnt) ? "/Joliet" : "", iso_etichetta(mnt));
+    else if (g_mnt[slot].tipo == VFS_FS_EXT2)
         klog(LOG_INFO, "VFS: montato %s su %s (ext2, %s)", dev, punto,
              g_mnt[slot].sola_lettura ? "sola lettura" : "lettura/scrittura");
     else
@@ -462,8 +492,9 @@ int vfs_umount(const char *punto)
             if (g_file[k].usato && g_file[k].im == i) return ERR(EBUSY);
         }
 
-        if (g_mnt[i].tipo == VFS_FS_EXT2) ext2_umount(g_mnt[i].mnt);
-        else                              fat_umount(g_mnt[i].mnt);
+        if      (g_mnt[i].tipo == VFS_FS_ISO)  iso_umount (g_mnt[i].mnt);
+        else if (g_mnt[i].tipo == VFS_FS_EXT2) ext2_umount(g_mnt[i].mnt);
+        else                                   fat_umount (g_mnt[i].mnt);
 
         if (g_mnt[i].blkdev >= 0) blk_rilascia(g_mnt[i].blkdev);
         g_mnt[i].usato = 0;
@@ -509,6 +540,15 @@ int vfs_open(const char *abs, uint32_t flags)
         int h = fat12_open(interno, flags);
         if (h < 0) return ERR(ENOENT);
         g_file[slot].h12 = h;
+    } else if (g_mnt[im].tipo == VFS_FS_ISO) {
+        IsoDirEntry e;
+
+        /* Nessun ramo O_CREAT: su ISO non si crea niente, e il montaggio
+         * e' gia' stato dichiarato in sola lettura piu' sopra — quindi qui
+         * ci si arriva solo in lettura. */
+        if (iso_stat(g_mnt[im].mnt, interno, &e) != 0) return ERR(ENOENT);
+        if (e.is_dir) return ERR(EISDIR);
+        g_file[slot].h12 = -1;
     } else if (g_mnt[im].tipo == VFS_FS_EXT2) {
         Ext2DirEntry e;
 
@@ -558,6 +598,10 @@ int vfs_read(int h, void *buf, uint32_t size, uint32_t offset)
     if (g_mnt[g_file[h].im].tipo == VFS_FS_FAT12FD)
         return fat12_read(g_file[h].h12, buf, size, offset);
 
+    if (g_mnt[g_file[h].im].tipo == VFS_FS_ISO)
+        return iso_read(g_mnt[g_file[h].im].mnt, g_file[h].interno,
+                        buf, size, offset);
+
     if (g_mnt[g_file[h].im].tipo == VFS_FS_EXT2)
         return ext2_read(g_mnt[g_file[h].im].mnt, g_file[h].interno,
                          buf, size, offset);
@@ -577,6 +621,13 @@ int vfs_write(int h, const void *buf, uint32_t size, uint32_t offset)
     if (h < 0 || h >= VFS_MAX_OPEN || !g_file[h].usato) return ERR(EBADF);
     im = g_file[h].im;
     if (g_mnt[im].sola_lettura) return ERR(EROFS);
+
+    /* Ridondante finche' il montaggio ISO resta in sola lettura per
+     * forza — ed e' li' apposta: senza, un montaggio ISO che per un
+     * difetto arrivasse qui con sola_lettura a 0 finirebbe nel ramo FAT
+     * per esclusione, cioe' scriverebbe su un volume ottico attraverso il
+     * driver sbagliato. */
+    if (g_mnt[im].tipo == VFS_FS_ISO) return ERR(EROFS);
 
     if (g_mnt[im].tipo == VFS_FS_FAT12FD)
         return fat12_write(g_file[h].h12, buf, size);
@@ -629,6 +680,12 @@ int vfs_stat(const char *abs, VfsStat *st)
         st->dimensione   = f.size;
         st->is_dir       = (f.attr & FAT12_ATTR_DIRECTORY) ? 1 : 0;
         st->sola_lettura = (f.attr & FAT12_ATTR_READONLY)  ? 1 : 0;
+    } else if (g_mnt[im].tipo == VFS_FS_ISO) {
+        IsoDirEntry e;
+        if (iso_stat(g_mnt[im].mnt, interno, &e) != 0) return ERR(ENOENT);
+        st->dimensione   = e.dimensione;
+        st->is_dir       = e.is_dir;
+        st->sola_lettura = 1;
     } else if (g_mnt[im].tipo == VFS_FS_EXT2) {
         Ext2DirEntry e;
         if (ext2_stat(g_mnt[im].mnt, interno, &e) != 0) return ERR(ENOENT);
@@ -704,6 +761,28 @@ int vfs_readdir(const char *abs, VfsDirEntry *out, uint32_t max,
                 s_fs += n;
                 if (n < cap) break;
             }
+        } else if (g_mnt[im].tipo == VFS_FS_ISO) {
+            while (scritti < max) {
+                IsoDirEntry tmp[4];        /* 4 e non 8: i nomi Joliet sono lunghi */
+                uint32_t cap = max - scritti, j;
+                int      n;
+
+                if (cap > 4) cap = 4;
+                n = iso_readdir(g_mnt[im].mnt, interno, tmp, cap, s_fs);
+                if (n < 0) {
+                    if (scritti == 0) return ERR(ENOENT);
+                    break;
+                }
+                for (j = 0; j < (uint32_t)n; j++) {
+                    v_copia(out[scritti].nome, tmp[j].nome,
+                            sizeof(out[scritti].nome));
+                    out[scritti].dimensione = tmp[j].dimensione;
+                    out[scritti].is_dir     = tmp[j].is_dir;
+                    scritti++;
+                }
+                s_fs += (uint32_t)n;
+                if ((uint32_t)n < cap) break;
+            }
         } else if (g_mnt[im].tipo == VFS_FS_EXT2) {
             while (scritti < max) {
                 Ext2DirEntry tmp[4];       /* 4 e non 8: le voci sono piu' grosse */
@@ -771,6 +850,7 @@ static int modifica(const char *abs, int quale)
     im = instrada(abs, interno, sizeof(interno));
     if (im < 0) return ERR(ENOENT);
     if (g_mnt[im].sola_lettura) return ERR(EROFS);
+    if (g_mnt[im].tipo == VFS_FS_ISO) return ERR(EROFS);   /* vedi vfs_write */
 
     /* La radice di un montaggio non si crea ne' si cancella. */
     if (e_radice(interno)) return ERR(EBUSY);
@@ -831,6 +911,7 @@ int vfs_truncate(const char *abs, uint32_t nuova_dim)
     im = instrada(abs, interno, sizeof(interno));
     if (im < 0) return ERR(ENOENT);
     if (g_mnt[im].sola_lettura) return ERR(EROFS);
+    if (g_mnt[im].tipo == VFS_FS_ISO) return ERR(EROFS);   /* vedi vfs_write */
     if (e_radice(interno))      return ERR(EISDIR);
 
     /* Una directory non si tronca: le sue dimensioni le decide il driver

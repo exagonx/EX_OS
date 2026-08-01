@@ -34,6 +34,7 @@
 #define E_BUSY     16
 #define E_MFILE    24
 #define E_ROFS     30
+#define E_NOMEDIUM 123  /* il lettore c'e', il disco dentro no */
 
 static const char *spiega(int err)
 {
@@ -45,6 +46,7 @@ static const char *spiega(int err)
         case E_BUSY:  return "punto o dispositivo gia' in uso, oppure file aperti";
         case E_MFILE: return "nessuno slot di montaggio libero";
         case E_ROFS:  return "filesystem in sola lettura";
+        case E_NOMEDIUM: return "nessun disco nel lettore";
         default:      return "errore";
     }
 }
@@ -63,12 +65,13 @@ static void elenca(void)
     while ((n = mountinfo(m, 4, start)) > 0) {
         int i;
         for (i = 0; i < n; i++) {
-            /* Il campo `fs` non e' piu' solo la larghezza di una FAT: il
-             * valore 2 e' ext2. Stampare "FAT2" sarebbe un filesystem che
-             * non esiste. */
-            if (m[i].fs == 2) {
+            /* Il campo `fs` non e' piu' solo la larghezza di una FAT: 2 e'
+             * ext2 e 9 e' ISO 9660. Stampare "FAT2" o "FAT9" sarebbe un
+             * filesystem che non esiste. */
+            if (m[i].fs == 2 || m[i].fs == 9) {
                 printf("%-24s %-12s %-11s %s\n",
-                       m[i].punto, m[i].dev, "ext2",
+                       m[i].punto, m[i].dev,
+                       (m[i].fs == 2) ? "ext2" : "ISO 9660",
                        m[i].sola_lettura ? "sola lettura" : "lettura/scrittura");
             } else {
                 printf("%-24s %-12s FAT%-8u %s\n",

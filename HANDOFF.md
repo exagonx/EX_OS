@@ -2,6 +2,209 @@
 
 ---
 
+# SESSIONE 2026-08-01 — CD/DVD: driver ATAPI, ISO 9660, automount
+
+Kernel a **0.144** → **0.145**. Un CD dati si monta, si elenca e si legge;
+la riga `[mount] /cdrom = cd0` lo monta all'avvio. E il default di
+`verboseboot` è passato da **1 a 0**: l'avvio è silenzioso salvo richiesta.
+
+```
+disk                    il lettore compare come cd0
+mount cd0 /cdrom
+ls /cdrom
+umount /cdrom
+```
+
+## `verboseboot` — il default si è invertito, e i casi dubbi lo seguono
+
+Il valore predefinito è 0 e vale in tutti i casi dubbi: voce assente, file
+mancante, valore non numerico. Solo un NUMERO diverso da zero fa parlare
+il sistema — `verboseboot = si` non è un sì, è un refuso, e un refuso non
+deve decidere niente. È la stessa regola di prima, girata: il controllo
+«è davvero un numero?» resta perché `cfg_atoi()` si ferma al primo
+carattere non numerico e ritorna 0, quindi senza di lui un errore di
+battitura sceglierebbe al posto dell'utente.
+
+Cambiati insieme: `cfg.c` (default e ramo della chiave), `cfg.h`,
+`boot/kernel.cfg`, la regola del Makefile che genera un `kernel.cfg` di
+default, README.
+
+## Il lettore sta sullo stesso bus del disco, ma non prende comandi ATA
+
+Un dispositivo ATAPI vive sui canali IDE e ne usa i registri, ma vuole un
+**pacchetto** di 12 byte — un comando SCSI — consegnato attraverso il
+registro dati. Il registro che su un disco contiene l'LBA, qui contiene
+quanti byte il dispositivo consegna per ogni DRQ.
+
+Per questo `kernel/block/atapi.c` non è una variante di `ata_rw()` con un
+comando diverso, e per questo gli helper di temporizzazione di `ata.c`
+(ritardo di 400 ns, attese ancorate al PIT, selezione dell'unità) sono
+stati **esportati** invece che duplicati: cambiano i comandi, non il bus.
+Una seconda copia delle regole di attesa è una copia che un giorno diverge
+— la lezione è già in testa a `ata_rw()`.
+
+`ata_attendi_drq()` si è sdoppiata in una variante **muta**: su ATAPI un
+ERR è spesso «vassoio vuoto», cioè una risposta, e stamparlo come errore
+riempirebbe il log a ogni sondaggio.
+
+### Il ciclo della fase dati è l'unico punto dove ci si blocca davvero
+
+Un ATAPI non dice in anticipo quanti byte manda: consegna una raffica per
+volta e prima di ognuna scrive in LBA1/LBA2 quanti byte contiene *quella*.
+Tre regole ne discendono, e tutte e tre sono nel codice con il perché:
+
+1. non si conta «quanti DRQ mi aspetto»: si cicla finché il dispositivo
+   abbassa DRQ con BSY basso;
+2. il conteggio della raffica va riletto ogni volta — un lettore può
+   spezzare 2048 byte in due da 1024 e ha ragione lui;
+3. i byte che eccedono il buffer del chiamante vanno letti e **buttati**.
+   Fermarsi a metà lascia il dispositivo in attesa e il canale
+   inutilizzabile per chiunque altro, disco rigido accanto compreso.
+
+## 2048 contro 512: la traduzione sta in un punto solo
+
+`blk_read()` traduce, e nessun altro lo sa. Un blocco vale quattro
+settori: chiedere il settore 3 significa chiedere il blocco 0 e prenderne
+l'ultimo quarto — senza traduzione si leggerebbe il blocco 3, 6 KB più in
+là, **senza alcun errore**. Le richieste allineate (quasi tutte, perché
+ISO 9660 lavora a blocchi) vanno dritte al dispositivo; solo le code
+disallineate passano dal buffer di appoggio.
+
+## La capacità è del disco, non del lettore
+
+È la differenza che ha richiesto una funzione nuova, `blk_supporto()`. Per
+un disco rigido la lunghezza è una proprietà del dispositivo, nota una
+volta per tutte al rilevamento; per un lettore no: esiste solo finché c'è
+un disco dentro, e cambia a ogni inserimento. Un `cd0` con zero settori
+non è rotto — è vuoto, o non ancora sondato.
+
+`blk_supporto()` sonda e aggiorna la finestra; su un dispositivo non
+rimovibile risponde 1 senza toccare niente, così chi chiama non deve
+sapere che tipo ha in mano. La chiamano `vfs_mount()` (prima di
+identificare il volume) e `blk_read()` (se la finestra è ancora a zero),
+ed è per questo che un disco inserito dopo l'avvio si legge senza doverlo
+annunciare.
+
+**Il vassoio all'avvio non viene sondato.** Un lettore può metterci
+secondi a dichiararsi pronto, e pagarli a ogni accensione per un supporto
+che magari nessuno leggerà non ha senso.
+
+## ⚠️ Il caso che ha richiesto un giro di debug: «disco inserito, non lo vede»
+
+Inserendo un'immagine a caldo (`change ide1-cd0 file.iso` dal monitor
+QEMU) il montaggio continuava a rispondere `-123` (ENOMEDIUM). Il log
+strumentato ha detto perché:
+
+```
+sense k=2 asc=0x3a ascq=0x00      <- MEDIUM NOT PRESENT
+sense k=2 asc=0x3a ascq=0x00
+```
+
+**Un lettore appena rifornito risponde con lo stato di un attimo prima**,
+per un comando o due, e solo dopo ammette il cambio con UNIT ATTENTION.
+In più, in emulazione l'immagine viene inserita lasciando il vassoio
+*aperto*, e un vassoio aperto risponde «nessun supporto» anche con un
+disco dentro. Alcuni lettori distinguono i due casi con ASCQ 0x02 («tray
+open»), ma non tutti — QEMU risponde 0x00 in entrambi — e fidarsi di un
+campo facoltativo significa funzionare su un lettore su due.
+
+La risposta è in `atapi_supporto()`: alla prima «assenza» si chiude il
+vassoio (una volta sola, come fa Linux all'apertura di un lettore), poi si
+insiste ancora due volte a 250 ms prima di crederci. Il prezzo, dichiarato
+nel codice: montare su un lettore lasciato aperto e vuoto lo chiude, e
+«vassoio vuoto» costa qualche decimo di secondo invece di essere
+immediato. Meglio questo di un disco inserito che il sistema non vede.
+
+## ISO 9660: due alberi, non due viste
+
+Un disco con nomi lunghi contiene **due strutture di directory complete**
+che puntano agli stessi dati: quella ISO (`LEGGIMI.TXT;1`) e quella Joliet
+(nomi veri in UCS-2). Si sceglie Joliet quando c'è — altrimenti si mostra
+all'utente `LEGGIM~1.TXT` al posto di ciò che ha scritto — e si dice quale
+si è scelta.
+
+Le trappole del formato, tutte silenziose (nessuna dà errore, tutte danno
+dati sbagliati), sono elencate in testa a `kernel/fs/iso9660.c`. Le due
+che costano di più:
+
+- **i numeri sono scritti due volte**, little e big endian di seguito: un
+  campo a 32 bit occupa 8 byte, e sbagliare di quattro l'offset del campo
+  dopo legge la metà big endian del precedente;
+- **un byte di lunghezza a zero non è la fine della directory**, è
+  riempimento fino al blocco successivo. Trattarlo come fine tronca
+  l'elenco al primo blocco pieno: su una directory con molti file
+  spariscono quelli dopo i primi 2 KB.
+
+Sola lettura per proprietà del formato, non per limite del driver: ISO
+9660 non ha bitmap di liberi né voci riutilizzabili. Non esiste
+«aggiungere un file», esiste rifare l'immagine. `vfs_write`, `modifica()`
+e `vfs_truncate` hanno comunque un rifiuto esplicito per ISO, ridondante
+finché il montaggio resta forzato in sola lettura — serve a impedire che
+un domani un montaggio ISO finisca nel ramo FAT *per esclusione*.
+
+## Automount: un lettore vuoto non è un problema
+
+`[mount] /cdrom = cd0` è **attiva** nella configurazione predefinita, e
+può restarlo su qualunque macchina. Il PASSO 13d distingue: `ENOMEDIUM` e
+«lettore assente» sono INFO e «montaggio saltato», tutto il resto resta
+`[WARN]`. Senza la distinzione, ogni accensione senza CD avrebbe messo una
+riga fra i *problemi durante l'inizializzazione* dell'avvio silenzioso —
+cioè esattamente il rumore costante che quel registro esiste per evitare.
+
+## Come si prova senza masterizzare niente
+
+`tools/mkiso.py` (versionato) costruisce un'immagine di cui si conosce
+ogni byte: PVD, SVD Joliet, una sottodirectory e un file da 5280 byte
+— più di due blocchi — con ogni riga numerata, così un salto di blocco si
+vede subito.
+
+```bash
+python3 tools/mkiso.py /tmp/test.iso                    # con Joliet
+python3 tools/mkiso.py /tmp/solo-iso.iso --senza-joliet
+
+EXOS_QEMU_EXTRA="-cdrom /tmp/test.iso" \
+  python3 tools/qemu_drive.py "mount" "ls /cdrom" "cat /cdrom/hello.txt"
+```
+
+## Verifica
+
+- **Automount con disco**: `[PASSO 13d] 1 montaggi su 1 riusciti`,
+  `VFS: montato cd0 su /cdrom (ISO 9660/Joliet, sola lettura)`.
+  `ls /cdrom` → `Leggimi importante.txt`, `documenti/`, `hello.txt`.
+- **Automount senza disco**: nessun `[WARN]`, solo
+  `'cd0' su '/cdrom': nessun disco nel lettore, montaggio saltato`.
+- **Nomi ISO puri** (immagine `--senza-joliet`): `docs/`, `hello.txt`,
+  `leggimi.txt` — `;1` tolto, minuscole, sottodirectory raggiungibile.
+- **File su più blocchi**: `cat /cdrom/documenti/note-lunghe.txt` rende
+  tutte e 120 le righe, dalla 0000 alla 0119, senza salti ai confini.
+- **Cambio a caldo**: inserimento → `mount` riuscito; espulsione →
+  `-123`; inserimento di un'immagine DIVERSA → montata, e `ls` mostra il
+  contenuto NUOVO (la capacità e i nomi in cache erano stati invalidati).
+- **Scrittura respinta**: `mkdir /cdrom/prova` → `-30` (EROFS).
+- **Avvio silenzioso**: schermata con la sola riga di identità e il
+  prompt, nessun banner, nessun problema segnalato.
+- **Regressione floppy**: avvio normale, `/` su `fd0` FAT12 in
+  lettura/scrittura.
+
+## File toccati
+
+- **nuovi**: `kernel/block/atapi.c`, `kernel/include/atapi.h`,
+  `kernel/fs/iso9660.c`, `kernel/include/iso9660.h`, `tools/mkiso.py`
+- `kernel/block/ata.c` + `ata.h` — helper esportati, `IDENTIFY PACKET`
+  per il modello del lettore, `ata_attendi_drq_muto`, `ata_attesa_ms`
+- `kernel/block/blk.c` + `blk.h` — `cd0`, `BLK_TIPO_CDROM`,
+  `blk_supporto`, traduzione 2048/512
+- `kernel/block/vol.c` + `vol.h` — riconoscimento ISO (firma al blocco 16)
+- `kernel/fs/vfs.c` + `vfs.h` — `VFS_FS_ISO`, sola lettura imposta
+- `kernel/kernel_main.c` — `atapi_init` al PASSO 13a, PASSO 13d gentile
+- `kernel/syscall/syscall_impl.c`, `kernel/include/syscall.h` — `ENOMEDIUM`,
+  `fs = 9` in `MountInfo`, documentazione di `BlkInfo.tipo`
+- `kernel/fs/cfg.c` + `cfg.h`, `boot/kernel.cfg`, `Makefile`, `README.md`
+  — `verboseboot`, sezione `[mount]`, sorgenti nuovi
+- `bin/mount/mount.c`, `bin/disk/disk.c` — ISO 9660 e `cd0` nell'elenco
+
+---
+
 # SESSIONE 2026-07-31 (n+7) — Avvio da ext2
 
 Kernel a **0.140** → **0.141**. **EX-OS si installa su ext2 e ci si

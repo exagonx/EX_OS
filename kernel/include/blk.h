@@ -43,6 +43,7 @@
 #define BLK_TIPO_FLOPPY     1
 #define BLK_TIPO_DISCO      2   /* disco ATA intero */
 #define BLK_TIPO_PART       3   /* partizione: finestra su un disco ATA */
+#define BLK_TIPO_CDROM      4   /* lettore ottico ATAPI: vedi blk_supporto */
 
 typedef struct {
     char     nome[BLK_NOME_MAX];  /* "fd0", "hd0", "hd0p1" */
@@ -55,10 +56,35 @@ typedef struct {
     uint64_t settori;             /* lunghezza della finestra */
 } BlkDev;
 
-/* Registra i dispositivi trovati. Va chiamata DOPO ata_init() e dopo
- * fat12_init(), perche' interroga entrambi. Ritorna quanti ne ha
- * registrati. */
+/* Registra i dispositivi trovati. Va chiamata DOPO ata_init(),
+ * atapi_init() e fat12_init(), perche' li interroga tutti e tre. Ritorna
+ * quanti ne ha registrati. */
 int  blk_init(void);
+
+/* =============================================================================
+ * SUPPORTI RIMOVIBILI — la finestra di un CD la decide il disco inserito
+ *
+ * Per un disco rigido la lunghezza e' una proprieta' del DISPOSITIVO,
+ * nota una volta per tutte al rilevamento. Per un lettore ottico no: e'
+ * una proprieta' del SUPPORTO, cambia a ogni inserimento e non esiste
+ * quando il vassoio e' vuoto.
+ *
+ * blk_supporto() e' il punto in cui quella differenza viene assorbita:
+ * sonda il lettore, e se c'e' un disco aggiorna la finestra con la sua
+ * capacita' vera. Un dispositivo NON rimovibile risponde sempre 1 senza
+ * toccare niente, cosi' chi chiama non deve sapere che tipo ha in mano.
+ *
+ * Va chiamata prima di montare e prima di identificare un volume: senza,
+ * un lettore con un disco appena inserito ha ancora una finestra di zero
+ * settori, e ogni lettura verrebbe rifiutata come "fuori finestra".
+ *
+ * Ritorna 1 se c'e' un supporto leggibile, 0 se non c'e', <0 se il
+ * dispositivo non risponde.
+ * ============================================================================= */
+int  blk_supporto(int i);
+
+/* 1 se il dispositivo e' a supporto rimovibile (oggi: solo i CD/DVD). */
+int  blk_rimovibile(int i);
 
 int  blk_conta(void);
 const BlkDev *blk_get(int i);

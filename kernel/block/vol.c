@@ -114,6 +114,54 @@ int vol_identifica(int blkdev, VolumeInfo *out)
         n_settori = b->settori;
     }
 
+    /* --- ISO 9660? -----------------------------------------------------
+     * Va provato PER PRIMO, e per una ragione pratica: su un lettore
+     * ottico il settore 0 non e' un settore di avvio ne' un superblocco,
+     * e leggerlo per primo significa cominciare da byte che non
+     * significano niente.
+     *
+     * La firma sta al blocco 16 (settore 64 da 512 byte), offset 1, ed e'
+     * un'identificazione vera e propria: cinque caratteri in una posizione
+     * fissa, non un indizio come lo e' 0x55AA.
+     *
+     * Non e' riservato ai lettori: un'immagine ISO scritta dentro una
+     * partizione o su una chiavetta si riconosce allo stesso modo, ed e'
+     * giusto che si monti. */
+    {
+        uint8_t pvd[512];
+
+        if (n_settori > 64u && blk_read(blkdev, 64, 1, pvd) == 0 &&
+            pvd[1] == 'C' && pvd[2] == 'D' && pvd[3] == '0' &&
+            pvd[4] == '0' && pvd[5] == '1') {
+            uint32_t k;
+
+            out->tipo         = VOL_FS_ISO9660;
+            out->byts_per_sec = 2048;
+            out->sett_per_clu = 4;              /* 2048 / 512 */
+            out->tot_settori  = (uint32_t)n_settori;
+
+            /* Il PVD e' il descrittore di tipo 1: se qui c'e' un altro
+             * tipo, i campi letti sotto non sono i suoi. Con il solo
+             * riconoscimento fatto, chi monta leggera' comunque tutta la
+             * catena dei descrittori (vedi iso_mount). */
+            if (pvd[0] == 1) {
+                out->n_cluster = le32(pvd + 80);    /* blocchi del volume */
+
+                /* L'etichetta ISO e' di 32 caratteri e qui ce ne stanno
+                 * 11: si tronca. Il nome completo lo mostra `mount`,
+                 * che lo chiede al driver invece che a questa struttura. */
+                for (k = 0; k < 11u; k++) out->etichetta[k] = (char)pvd[40 + k];
+                out->etichetta[11] = '\0';
+                for (k = 11u; k > 0u && (out->etichetta[k - 1] == ' ' ||
+                                         out->etichetta[k - 1] == '\0'); k--) {
+                    out->etichetta[k - 1] = '\0';
+                }
+            }
+
+            return 0;
+        }
+    }
+
     /* Settore 0 RELATIVO al dispositivo: e' il livello a blocchi a
      * tradurlo nell'assoluto giusto. Che questo funzioni e' anche la
      * prova che la finestra della partizione e' calcolata bene. */

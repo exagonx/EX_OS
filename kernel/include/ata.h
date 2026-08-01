@@ -51,7 +51,7 @@
 /* Tipo di unita' trovata */
 #define ATA_TYPE_NONE       0   /* niente su questo slot */
 #define ATA_TYPE_ATA        1   /* disco rigido */
-#define ATA_TYPE_ATAPI      2   /* CD/DVD: riconosciuto ma non gestito */
+#define ATA_TYPE_ATAPI      2   /* CD/DVD: vedi kernel/block/atapi.c */
 #define ATA_TYPE_UNKNOWN    3   /* firma non riconosciuta */
 
 typedef struct {
@@ -91,5 +91,78 @@ int  ata_write(int indice, uint64_t lba, uint32_t n, const void *buf);
 /* Svuota la cache di scrittura del disco. Da chiamare prima di spegnere e
  * dopo qualunque modifica alla tabella delle partizioni. */
 int  ata_flush(int indice);
+
+/* =============================================================================
+ * IL BUS CONDIVISO CON I LETTORI OTTICI
+ *
+ * Da qui in giu' c'e' cio' che kernel/block/atapi.c usa di ata.c. Un
+ * lettore CD sta sugli STESSI canali, con gli STESSI registri e le stesse
+ * due trappole di temporizzazione (il ritardo di 400 ns dopo la selezione,
+ * l'attesa ancorata al PIT e non alla velocita' della CPU).
+ *
+ * Sono esportate invece di essere duplicate perche' una seconda copia
+ * delle regole di attesa e' una copia che un giorno diverge: la lezione e'
+ * gia' scritta in testa a ata_rw(), dove due funzioni quasi identiche
+ * avevano fatto sopravvivere a lungo un baco corretto solo in una delle
+ * due. ATAPI cambia i COMANDI, non il bus.
+ * ============================================================================= */
+
+/* Porte dei due canali */
+#define ATA_PRIMARY_IO      0x1F0
+#define ATA_PRIMARY_CTRL    0x3F6
+#define ATA_SECONDARY_IO    0x170
+#define ATA_SECONDARY_CTRL  0x376
+
+/* Offset dal registro base. Sul ramo ATAPI LBA1/LBA2 non contengono un
+ * indirizzo: sono il conteggio dei byte che il dispositivo consegna per
+ * ogni DRQ. */
+#define ATA_REG_DATA        0
+#define ATA_REG_ERROR       1
+#define ATA_REG_FEATURES    1
+#define ATA_REG_SECCOUNT    2
+#define ATA_REG_LBA0        3
+#define ATA_REG_LBA1        4
+#define ATA_REG_LBA2        5
+#define ATA_REG_DRIVE       6
+#define ATA_REG_STATUS      7
+#define ATA_REG_COMMAND     7
+
+/* Bit del registro di stato */
+#define ATA_SR_BSY          0x80
+#define ATA_SR_DRDY         0x40
+#define ATA_SR_DF           0x20
+#define ATA_SR_DRQ          0x08
+#define ATA_SR_ERR          0x01
+
+/* Bit del registro di controllo */
+#define ATA_CTRL_NIEN       0x02
+#define ATA_CTRL_SRST       0x04
+
+uint16_t ata_base_io  (int canale);
+uint16_t ata_base_ctrl(int canale);
+
+/* Ritardo di ~400 ns: quattro letture dello stato ALTERNATO. */
+void ata_ritardo(int canale);
+
+/* Seleziona master/slave, con il ritardo obbligatorio. */
+void ata_seleziona(int canale, int unita, uint8_t testa_o_lba);
+
+/* Aspetta che BSY si abbassi entro una scadenza REALE (millisecondi).
+ * Ritorna lo stato letto, o -1 su timeout o bus flottante. */
+int  ata_attendi_non_bsy(int canale, uint32_t timeout_ms);
+
+/* Aspetta DRQ. Ritorna 0, -1 su timeout o bus assente.
+ *
+ * La variante MUTA esiste per ATAPI, dove un errore del dispositivo e'
+ * flusso normale e non un guasto: "vassoio vuoto" arriva come ERR, e
+ * stamparlo come errore riempirebbe il log a ogni sondaggio del lettore.
+ * Ritorna 0, -1 (timeout o bus assente) oppure -2 se il dispositivo ha
+ * alzato ERR/DF, con lo stato in `stato_out` se non e' NULL. */
+int  ata_attendi_drq(int canale, uint32_t timeout_ms);
+int  ata_attendi_drq_muto(int canale, uint32_t timeout_ms, uint8_t *stato_out);
+
+/* Attesa in millisecondi ancorata al PIT (g_ticks), non a un conteggio di
+ * cicli: e' la lezione gia' pagata tre volte in questo progetto. */
+void ata_attesa_ms(uint32_t ms);
 
 #endif /* ATA_H */

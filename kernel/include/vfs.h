@@ -34,9 +34,10 @@
 #define VFS_PUNTO_MAX   24
 #define VFS_PATH_MAX    320
 
-#define VFS_FS_FAT12FD  1   /* kernel/fs/fat12.c — il floppy di avvio */
-#define VFS_FS_FAT      2   /* kernel/fs/fat.c   — FAT12/16/32 su blocchi */
-#define VFS_FS_EXT2     3   /* kernel/fs/ext2.c  — ext2, SOLA LETTURA */
+#define VFS_FS_FAT12FD  1   /* kernel/fs/fat12.c   — il floppy di avvio */
+#define VFS_FS_FAT      2   /* kernel/fs/fat.c     — FAT12/16/32 su blocchi */
+#define VFS_FS_EXT2     3   /* kernel/fs/ext2.c    — ext2 */
+#define VFS_FS_ISO      4   /* kernel/fs/iso9660.c — CD/DVD, SOLA LETTURA */
 
 /* Voce di directory neutra: le syscall non devono conoscere il layout
  * 8.3 di FAT, altrimenti aggiungere un filesystem non-FAT costringerebbe

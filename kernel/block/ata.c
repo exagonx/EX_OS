@@ -53,36 +53,9 @@
 #include "ata.h"
 #include "sched.h"      /* g_ticks */
 
-/* =============================================================================
- * Porte
- * ============================================================================= */
-#define ATA_PRIMARY_IO      0x1F0
-#define ATA_PRIMARY_CTRL    0x3F6
-#define ATA_SECONDARY_IO    0x170
-#define ATA_SECONDARY_CTRL  0x376
-
-/* Offset dal registro base */
-#define ATA_REG_DATA        0
-#define ATA_REG_ERROR       1
-#define ATA_REG_FEATURES    1
-#define ATA_REG_SECCOUNT    2
-#define ATA_REG_LBA0        3
-#define ATA_REG_LBA1        4
-#define ATA_REG_LBA2        5
-#define ATA_REG_DRIVE       6
-#define ATA_REG_STATUS      7
-#define ATA_REG_COMMAND     7
-
-/* Bit del registro di stato */
-#define ATA_SR_BSY          0x80
-#define ATA_SR_DRDY         0x40
-#define ATA_SR_DF           0x20
-#define ATA_SR_DRQ          0x08
-#define ATA_SR_ERR          0x01
-
-/* Bit del registro di controllo */
-#define ATA_CTRL_NIEN       0x02
-#define ATA_CTRL_SRST       0x04
+/* Le porte, gli offset dei registri e i bit di stato stanno in ata.h:
+ * sono lo stesso bus che usa kernel/block/atapi.c, e una seconda copia
+ * sarebbe una copia da tenere allineata a mano. */
 
 /* Comandi */
 #define ATA_CMD_READ_PIO        0x20
@@ -92,6 +65,7 @@
 #define ATA_CMD_FLUSH           0xE7
 #define ATA_CMD_FLUSH_EXT       0xEA
 #define ATA_CMD_IDENTIFY        0xEC
+#define ATA_CMD_IDENTIFY_PACKET 0xA1    /* IDENTIFY per i dispositivi ATAPI */
 #define ATA_CMD_READ_NATIVE     0xF8
 #define ATA_CMD_READ_NATIVE_EXT 0x27
 
@@ -114,29 +88,45 @@ static int       g_trovati = 0;
  * Helper di basso livello
  * ============================================================================= */
 
-static uint16_t base_io(int canale)
+uint16_t ata_base_io(int canale)
 {
     return (canale == 0) ? ATA_PRIMARY_IO : ATA_SECONDARY_IO;
 }
 
-static uint16_t base_ctrl(int canale)
+uint16_t ata_base_ctrl(int canale)
 {
     return (canale == 0) ? ATA_PRIMARY_CTRL : ATA_SECONDARY_CTRL;
 }
+
+/* Nomi brevi per l'uso interno: il resto del file era gia' scritto cosi'
+ * e rinominare ogni chiamata avrebbe sporcato un diff che deve restare
+ * leggibile. */
+#define base_io(c)      ata_base_io(c)
+#define base_ctrl(c)    ata_base_ctrl(c)
+#define ata_400ns(c)    ata_ritardo(c)
 
 /* Ritardo di ~400 ns: quattro letture dello stato ALTERNATO.
  * Va letto 0x3F6 e non 0x1F7 perche' lo stato alternato non ha effetti
  * collaterali, mentre leggere il registro di stato normale azzera
  * l'interrupt pendente. */
-static void ata_400ns(int canale)
+void ata_ritardo(int canale)
 {
-    uint16_t c = base_ctrl(canale);
+    uint16_t c = ata_base_ctrl(canale);
     port_inb(c); port_inb(c); port_inb(c); port_inb(c);
+}
+
+/* Attesa in millisecondi ancorata al PIT. Serve ai lettori ottici, che
+ * dopo l'inserimento di un disco rispondono "non ancora pronto" per
+ * qualche secondo e vanno risondati a intervalli, non a raffica. */
+void ata_attesa_ms(uint32_t ms)
+{
+    uint32_t fine = g_ticks + (ms + 9) / 10;
+    while (g_ticks < fine) { /* il PIT avanza sotto interrupt */ }
 }
 
 /* Aspetta che BSY si abbassi, entro una scadenza REALE.
  * Ritorna lo stato letto, o -1 su timeout. */
-static int ata_attendi_non_bsy(int canale, uint32_t timeout_ms)
+int ata_attendi_non_bsy(int canale, uint32_t timeout_ms)
 {
     uint16_t io    = base_io(canale);
     uint32_t scad  = g_ticks + (timeout_ms + 9) / 10;
@@ -158,9 +148,12 @@ static int ata_attendi_non_bsy(int canale, uint32_t timeout_ms)
     }
 }
 
-/* Aspetta DRQ (dati pronti) dopo che BSY si e' abbassato.
- * Ritorna 0, -1 su errore o timeout. */
-static int ata_attendi_drq(int canale, uint32_t timeout_ms)
+/* Aspetta DRQ (dati pronti) dopo che BSY si e' abbassato, SENZA stampare
+ * nulla. Ritorna 0, -1 su timeout o bus assente, -2 se il dispositivo ha
+ * alzato ERR/DF. Vedi ata.h per il motivo per cui la variante muta e'
+ * quella di base: su ATAPI un ERR e' spesso "vassoio vuoto", cioe' una
+ * risposta, non un guasto. */
+int ata_attendi_drq_muto(int canale, uint32_t timeout_ms, uint8_t *stato_out)
 {
     uint16_t io   = base_io(canale);
     uint32_t scad = g_ticks + (timeout_ms + 9) / 10;
@@ -168,31 +161,42 @@ static int ata_attendi_drq(int canale, uint32_t timeout_ms)
     for (;;) {
         uint8_t st = port_inb(io + ATA_REG_STATUS);
 
+        if (stato_out) *stato_out = st;
+
         if (st == 0xFF) return -1;
 
         /* ERR e DF vanno controllati PRIMA di DRQ: un comando fallito
          * puo' non alzare mai DRQ, e aspettarlo significherebbe restare
          * fino al timeout invece di riportare subito l'errore vero. */
-        if (st & (ATA_SR_ERR | ATA_SR_DF)) {
-            uint8_t err = port_inb(io + ATA_REG_ERROR);
-            klog(LOG_ERROR, "ATA: errore canale %d (stato=0x%02x errore=0x%02x)",
-                 canale, st, err);
-            return -1;
-        }
+        if (st & (ATA_SR_ERR | ATA_SR_DF)) return -2;
 
         if (!(st & ATA_SR_BSY) && (st & ATA_SR_DRQ)) return 0;
 
-        if (g_ticks >= scad) {
-            klog(LOG_ERROR, "ATA: timeout DRQ sul canale %d (stato=0x%02x)",
-                 canale, st);
-            return -1;
-        }
+        if (g_ticks >= scad) return -1;
     }
+}
+
+int ata_attendi_drq(int canale, uint32_t timeout_ms)
+{
+    uint8_t st = 0;
+    int     r  = ata_attendi_drq_muto(canale, timeout_ms, &st);
+
+    if (r == -2) {
+        uint8_t err = port_inb(base_io(canale) + ATA_REG_ERROR);
+        klog(LOG_ERROR, "ATA: errore canale %d (stato=0x%02x errore=0x%02x)",
+             canale, st, err);
+        return -1;
+    }
+    if (r == -1 && st != 0xFF) {
+        klog(LOG_ERROR, "ATA: timeout DRQ sul canale %d (stato=0x%02x)",
+             canale, st);
+    }
+    return (r < 0) ? -1 : 0;
 }
 
 /* Seleziona master/slave. Il ritardo dopo la selezione non e' opzionale:
  * i registri dell'unita' appena selezionata non sono validi prima. */
-static void ata_seleziona(int canale, int unita, uint8_t testa_o_lba)
+void ata_seleziona(int canale, int unita, uint8_t testa_o_lba)
 {
     uint16_t io = base_io(canale);
     port_outb(io + ATA_REG_DRIVE,
@@ -328,8 +332,37 @@ static void ata_rileva(int idx, int canale, int unita)
     if (cl == 0x14 && ch == 0xEB) {
         d->presente = 1;
         d->tipo     = ATA_TYPE_ATAPI;
-        klog(LOG_INFO, "ATA: canale %d %s: dispositivo ATAPI (non gestito)",
-             canale, unita ? "slave" : "master");
+
+        /* IDENTIFY PACKET DEVICE: le stringhe stanno nelle stesse parole
+         * di IDENTIFY, ma il comando e' un altro perche' l'unita' ha
+         * appena RIFIUTATO quello normale. Senza questo passaggio il
+         * lettore comparirebbe in `disk` come una riga vuota, e un
+         * dispositivo senza nome e' indistinguibile da uno non
+         * riconosciuto.
+         *
+         * Un fallimento qui non toglie il dispositivo: resta un ATAPI, e
+         * lo si dira' senza il modello. La capacita' NON si chiede qui —
+         * un lettore la conosce solo quando ha un disco dentro, e la
+         * risposta cambia a ogni inserimento: la chiede atapi.c, ogni
+         * volta che serve. */
+        port_outb(io + ATA_REG_SECCOUNT, 0);
+        port_outb(io + ATA_REG_LBA0, 0);
+        port_outb(io + ATA_REG_LBA1, 0);
+        port_outb(io + ATA_REG_LBA2, 0);
+        port_outb(io + ATA_REG_COMMAND, ATA_CMD_IDENTIFY_PACKET);
+        ata_400ns(canale);
+
+        if (ata_attendi_drq_muto(canale, ATA_TMO_IDENT_MS, NULL) == 0) {
+            for (i = 0; i < 256; i++) id[i] = port_inw(io + ATA_REG_DATA);
+
+            ata_stringa(id, 27, 20, d->modello);
+            ata_stringa(id, 10, 10, d->seriale);
+            ata_stringa(id, 23,  4, d->firmware);
+        }
+
+        klog(LOG_INFO, "ATA: canale %d %s: lettore ottico ATAPI%s%s",
+             canale, unita ? "slave" : "master",
+             d->modello[0] ? " " : "", d->modello);
         return;
     }
     if (cl != 0x00 || ch != 0x00) {

@@ -223,6 +223,60 @@ Fix:
 - **Non testato su hardware reale da me** (nessun Pentium II/QEMU/VBox
   disponibile in questo ambiente) — da verificare alla prossima build.
 
+### ✅ CD/DVD — kernel/block/atapi.c + kernel/fs/iso9660.c (2026-08-01, 0.145)
+
+Un lettore ottico sta sugli STESSI canali IDE del disco e ne usa gli
+STESSI registri, ma non prende comandi ATA: prende un PACCHETTO di 12 byte
+(un comando SCSI) consegnato attraverso il registro dati. Il registro che
+su un disco contiene l'LBA, qui contiene quanti byte il dispositivo
+consegna per ogni DRQ.
+
+Conseguenze sull'organizzazione del codice:
+
+- gli helper di temporizzazione di `ata.c` (ritardo di 400 ns, attese
+  ancorate al PIT, selezione dell'unita') sono stati **esportati** in
+  `ata.h` invece che duplicati: cambiano i comandi, non il bus;
+- `ata_attendi_drq()` ha una variante **muta** (`ata_attendi_drq_muto`):
+  su ATAPI un ERR e' spesso "vassoio vuoto", cioe' una risposta e non un
+  guasto, e stamparlo riempirebbe il log a ogni sondaggio;
+- la fase dati NON si conta a settori come su ATA: il dispositivo consegna
+  raffiche di lunghezza variabile, dichiarata in LBA1/LBA2 prima di
+  ognuna. Si cicla finche' DRQ si abbassa, e i byte in eccesso vanno letti
+  e buttati — fermarsi a meta' lascia il canale inutilizzabile anche per
+  il disco rigido che ci sta accanto.
+
+**Il blocco e' da 2048 byte**: la traduzione da/verso i settori da 512 sta
+solo in `blk_read()` (`cd_read`). Chiedere il settore 3 significa chiedere
+il blocco 0 e prenderne l'ultimo quarto; senza traduzione si leggerebbe il
+blocco 3, 6 KB piu' in la', senza alcun errore.
+
+**La capacita' e' del SUPPORTO, non del dispositivo** — da qui
+`blk_supporto()` (blk.h), che sonda e aggiorna la finestra e su un
+dispositivo non rimovibile risponde 1 senza toccare niente. Un `cd0` con
+zero settori e' un lettore vuoto o non ancora sondato, non un guasto.
+
+⚠️ **Il caso che non si indovina**: un lettore appena rifornito risponde
+MEDIUM NOT PRESENT (sense 2 / ASC 0x3A) ancora per un comando o due prima
+di ammettere il cambio con UNIT ATTENTION; e un vassoio APERTO da' la
+stessa risposta anche con un disco dentro. Non tutti i lettori
+distinguono i due casi con ASCQ 0x02 — QEMU risponde 0x00 in entrambi.
+`atapi_supporto()` quindi chiude il vassoio una volta sola (come Linux
+all'apertura di un lettore) e insiste altre due volte a 250 ms prima di
+dichiarare l'assenza.
+
+`kernel/fs/iso9660.c` e' in sola lettura per proprieta' del FORMATO: ISO
+9660 non ha bitmap di liberi ne' voci riutilizzabili. Preferisce l'albero
+**Joliet** quando c'e' (i nomi veri, in UCS-2) al posto dei nomi ISO
+maiuscoli e troncati: sono due catene di directory separate che puntano
+agli stessi dati, non due viste della stessa. Trappole del formato
+elencate in testa al file; le due che costano di piu' sono i numeri
+scritti due volte (little **e** big endian di seguito: un campo a 32 bit
+occupa 8 byte) e il byte di lunghezza a zero, che significa "salta al
+blocco successivo" e NON "fine della directory".
+
+Prova senza masterizzare: `tools/mkiso.py` (con `--senza-joliet` per il
+ramo dei nomi ISO puri).
+
 ### ✅ Avvio da disco e installatore — kernel/boot/bootinst.c (2026-07-31, 0.134)
 
 ⚠️ **L'INSTALLAZIONE DELL'AVVIO STA NEL KERNEL, E NON E' PIGRIZIA.** E' il

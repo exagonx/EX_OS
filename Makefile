@@ -704,9 +704,11 @@ KERNEL_C_SRC   := $(KERNEL_DIR)/arch/x86/gdt.c \
                   $(KERNEL_DIR)/fs/fat12.c \
                   $(KERNEL_DIR)/fs/fat.c \
                   $(KERNEL_DIR)/fs/ext2.c \
+                  $(KERNEL_DIR)/fs/iso9660.c \
                   $(KERNEL_DIR)/fs/vfs.c \
                   $(KERNEL_DIR)/boot/bootinst.c \
                   $(KERNEL_DIR)/block/ata.c \
+                  $(KERNEL_DIR)/block/atapi.c \
                   $(KERNEL_DIR)/block/mbr.c \
                   $(KERNEL_DIR)/block/vol.c \
                   $(KERNEL_DIR)/block/blk.c \
@@ -915,7 +917,7 @@ $(KERNEL_DIR)/../boot/kernel.cfg:
 	@mkdir -p boot
 	@printf "# EX-OS Kernel Configuration\n" > boot/kernel.cfg
 	@printf "# Copyright (C) 2025 Graziano Falcone\n\n" >> boot/kernel.cfg
-	@printf "[kernel]\nloglevel=3\ntimer_hz=100\nverboseboot=1\n\n" >> boot/kernel.cfg
+	@printf "[kernel]\nloglevel=3\ntimer_hz=100\nverboseboot=0\n\n" >> boot/kernel.cfg
 	@printf "[env]\nPATH=/bin:/dev\nHOME=/\nTERM=vga\n\n" >> boot/kernel.cfg
 	@printf "[boot]\nshell=/bin/sh\nmodules=kbd\n\n" >> boot/kernel.cfg
 	@printf "[modules]\nkbd=/dev/kbd.drv\n" >> boot/kernel.cfg

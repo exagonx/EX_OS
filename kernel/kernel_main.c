@@ -21,6 +21,7 @@
 #include "syscall.h"
 #include "fat12.h"
 #include "ata.h"
+#include "atapi.h"
 #include "blk.h"
 #include "vol.h"
 #include "fat.h"
@@ -291,10 +292,22 @@ klog(LOG_INFO, "[PASSO 11] Syscall OK");
     klog(LOG_INFO, "[PASSO 13a] Rilevamento dischi ATA/IDE...");
     {
         int n_dischi = ata_init();
+        int n_cd;
+
         klog(LOG_INFO, "[PASSO 13a] ATA: %d disco/dischi rigidi", n_dischi);
 
-        /* Il livello a blocchi va DOPO ata_init (legge le tabelle delle
-         * partizioni) e dopo fat12_init (registra fd0). */
+        /* I lettori ottici li ha gia' RICONOSCIUTI ata_init: qui si
+         * prendono in carico. Non si sonda il vassoio — un lettore con un
+         * disco dentro puo' metterci secondi a dichiararsi pronto, e
+         * pagarli a ogni avvio per un supporto che magari nessuno legge
+         * non ha senso. Vedi atapi_init(). */
+        n_cd = atapi_init();
+        if (n_cd > 0)
+            klog(LOG_INFO, "[PASSO 13a] ATAPI: %d lettore/i CD-DVD", n_cd);
+
+        /* Il livello a blocchi va DOPO ata_init e atapi_init (legge le
+         * tabelle delle partizioni e registra i lettori) e dopo
+         * fat12_init (registra fd0). */
         blk_init();
     }
 
@@ -329,7 +342,7 @@ KernelConfig *cfg = cfg_load();
      * inutilizzabile per colpa di un disco che non serve ad avviare.
      * ========================================================================= */
     if (cfg->mount_count > 0) {
-        uint32_t i, fatti = 0;
+        uint32_t i, fatti = 0, saltati = 0;
 
         klog(LOG_INFO, "[PASSO 13d] Montaggi automatici: %u da applicare",
              cfg->mount_count);
@@ -353,15 +366,39 @@ KernelConfig *cfg = cfg_load();
             }
 
             r = vfs_mount(dev, cfg->mounts[i].punto, ro);
-            if (r != 0)
-                klog(LOG_WARN, "[PASSO 13d] '%s' su '%s' non montato (errore %d)",
-                     cfg->mounts[i].dev, cfg->mounts[i].punto, r);
-            else
-                fatti++;
+            if (r == 0) { fatti++; continue; }
+
+            /* UN LETTORE VUOTO NON E' UN PROBLEMA, ed e' l'unico caso in
+             * cui questo passo tace invece di avvisare.
+             *
+             * La differenza conta per davvero da quando [mount] puo'
+             * contenere un CD: un avvio senza disco nel lettore e' la
+             * condizione NORMALE, e segnalarla con un [WARN] metterebbe a
+             * ogni accensione una riga fra i "problemi durante
+             * l'inizializzazione" dell'avvio silenzioso — cioe' l'esatto
+             * rumore costante che quel registro esiste per evitare. Lo
+             * stesso vale per un lettore che non c'e' affatto: una
+             * configurazione che prevede il CD deve poter girare su una
+             * macchina che non ce l'ha.
+             *
+             * Ogni altro fallimento resta un avviso: un disco rigido
+             * elencato qui e non montabile e' una cosa da sapere. */
+            if (r == ERR(ENOMEDIUM) ||
+                (r == ERR(ENOENT) && dev[0] == 'c' && dev[1] == 'd')) {
+                klog(LOG_INFO, "[PASSO 13d] '%s' su '%s': %s, montaggio saltato",
+                     cfg->mounts[i].dev, cfg->mounts[i].punto,
+                     (r == ERR(ENOMEDIUM)) ? "nessun disco nel lettore"
+                                           : "lettore assente");
+                saltati++;
+                continue;
+            }
+
+            klog(LOG_WARN, "[PASSO 13d] '%s' su '%s' non montato (errore %d)",
+                 cfg->mounts[i].dev, cfg->mounts[i].punto, r);
         }
 
-        klog(LOG_INFO, "[PASSO 13d] %u montaggi su %u riusciti",
-             fatti, cfg->mount_count);
+        klog(LOG_INFO, "[PASSO 13d] %u montaggi su %u riusciti (%u saltati)",
+             fatti, cfg->mount_count, saltati);
     }
 
     /* =========================================================================

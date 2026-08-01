@@ -567,6 +567,86 @@ che nulla lo segnali.
 
 ---
 
+## CD e DVD — driver ATAPI e ISO 9660
+
+```
+disk                    il lettore compare come cd0
+mount cd0 /cdrom        montaggio manuale (sempre in sola lettura)
+ls /cdrom
+umount /cdrom           prima di espellere il disco
+```
+
+E in `/boot/kernel.cfg`, per averlo **montato all'avvio**:
+
+```ini
+[mount]
+/cdrom = cd0
+```
+
+La riga è attiva nella configurazione predefinita, e può restarlo su qualunque
+macchina: un lettore vuoto — o assente — non produce un avviso, solo un
+"montaggio saltato" nel log. Un CD assente all'accensione è la condizione
+normale, non un problema, e segnalarlo come tale metterebbe una riga fra i
+*problemi durante l'inizializzazione* a ogni accensione.
+
+### Le tre cose che un lettore non ha in comune con un disco
+
+**Il blocco è da 2048 byte, non da 512.** La traduzione sta in un punto solo,
+`kernel/block/blk.c`: il resto del sistema chiede settori da 512 come per
+qualunque disco. Le richieste allineate — cioè quasi tutte, perché ISO 9660
+lavora a blocchi — vanno dritte al dispositivo senza copie intermedie.
+
+**La capacità appartiene al disco, non al lettore.** Un `cd0` con zero settori
+non è un lettore rotto: è un lettore vuoto, o che nessuno ha ancora sondato. La
+finestra viene riempita da `blk_supporto()` quando serve, e azzerata quando il
+disco esce.
+
+**Gli errori sono a due livelli.** Il bit ERR dice solo "CHECK CONDITION": il
+motivo sta nei dati di *sense*, che vanno chiesti con un secondo comando. Senza
+leggerli, «non c'è il disco», «il disco è appena stato cambiato» e «il disco è
+illeggibile» sono la stessa cosa — e le prime due non sono errori.
+
+Un disco **inserito a sistema avviato** si monta senza riavviare. Un lettore
+appena rifornito però risponde ancora "supporto assente" per un comando o due, e
+in emulazione il vassoio resta *aperto*: il driver insiste qualche volta e lo
+chiude una volta sola, come fa Linux. La conseguenza va detta — montare su un
+lettore lasciato aperto e vuoto lo chiude.
+
+### ISO 9660, e perché Joliet vince quando c'è
+
+Un disco masterizzato con nomi lunghi contiene **due alberi completi**: quello
+ISO 9660, con i nomi maiuscoli, troncati e con il numero di versione
+(`LEGGIMI.TXT;1`), e quello Joliet, con i nomi veri in UCS-2. Non sono due viste
+della stessa struttura: sono due catene di directory separate che puntano agli
+stessi dati. `kernel/fs/iso9660.c` sceglie Joliet quando c'è, e dice quale ha
+scelto; senza, i nomi che si vedono non sono quelli che l'utente ha scritto.
+
+Sui nomi ISO toglie il `;1` e il punto finale — sono formato, non nome — e li
+mostra in minuscolo; il confronto è insensibile alle maiuscole, altrimenti ciò
+che `ls` mostra non sarebbe digitabile.
+
+**Sola lettura, e non per pigrizia**: ISO 9660 non ha bitmap di spazio libero né
+voci riutilizzabili. Non esiste "aggiungere un file", esiste rifare l'immagine.
+Ogni scrittura è respinta con `-30` (EROFS) prima di toccare il volume.
+
+**Rock Ridge non è gestito** — l'estensione Unix annidata nei campi di sistema
+dei record. Un disco che la usa resta leggibile: si vedono i nomi ISO o Joliet,
+che ci sono comunque.
+
+### Provare senza masterizzare niente
+
+`tools/mkiso.py` costruisce un'immagine di prova di cui si conosce ogni byte —
+utile proprio perché, quando il driver legge un nome sbagliato, si sa cosa c'era
+scritto:
+
+```bash
+python3 tools/mkiso.py /tmp/test.iso                  # con Joliet
+python3 tools/mkiso.py /tmp/solo-iso.iso --senza-joliet
+qemu-system-i386 -fda dist/floppy.img -m 32M -boot a -cdrom /tmp/test.iso
+```
+
+---
+
 ## Arresto e spegnimento
 
 | Comando shell | Effetto |
@@ -604,8 +684,13 @@ L'incremento è manuale e deliberato.
 
 ```ini
 [kernel]
-verboseboot = 1    # 1 = log e banner (default), 0 = solo output normale
+verboseboot = 0    # 0 = solo output normale (default), 1 = log e banner
 ```
+
+**Il default è `0` dalla 0.142** (prima era `1`): un sistema che si avvia
+mostra il proprio nome, non i propri passi di inizializzazione. Vale in tutti
+i casi dubbi — voce assente, file mancante, valore non numerico — e solo un
+numero diverso da zero fa parlare il sistema.
 
 Con `0`: schermo pulito, una riga di identità, prompt. I messaggi dei PASSI
 1-13 vengono emessi lo stesso — sono stampati prima che il file di

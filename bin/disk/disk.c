@@ -61,6 +61,7 @@ static const char *nome_fs(unsigned int t)
 {
     switch (t) {
         case 2:   return "ext2";
+        case 9:   return "ISO 9660";
         case 12:  return "FAT12";
         case 16:  return "FAT16";
         case 32:  return "FAT32";
@@ -100,17 +101,32 @@ static void stampa_problemi(unsigned int pb)
                "      e il primo filesystem che ci scrive cancella la tabella\n");
 }
 
-static void mostra(unsigned int idx, const DiskInfo *d)
+/* `idx` e' lo SLOT ATA (0-3) ed e' anche il numero di un DISCO: il livello
+ * a blocchi chiama hd2 il disco nello slot 2. I lettori no — sono
+ * numerati a parte (cd0, cd1) nell'ordine in cui compaiono — e chiamare
+ * "hd2" un CD manderebbe a cercare un disco rigido che non esiste, con un
+ * nome che per giunta non si puo' montare. */
+static void mostra(unsigned int idx, unsigned int n_cd, const DiskInfo *d)
 {
     unsigned int i;
 
     printf("\n");
-    printf("hd%u  canale %s, %s\n", idx,
+    if (d->tipo == 2) printf("cd%u  (slot ATA %u)", n_cd, idx);
+    else              printf("hd%u", idx);
+    printf("  canale %s, %s\n",
            d->canale ? "secondario" : "primario",
            d->unita  ? "slave" : "master");
 
     if (d->tipo == 2) {
-        printf("  Dispositivo ATAPI (CD/DVD): non gestito.\n");
+        printf("  Lettore ottico ATAPI (CD/DVD)\n");
+        if (d->modello[0]) printf("  Modello       : %s\n", d->modello);
+        if (d->firmware[0]) printf("  Firmware      : %s\n", d->firmware);
+        /* La capacita' NON si stampa qui, e non e' una dimenticanza: un
+         * lettore non ne ha una: ce l'ha il disco che c'e' dentro adesso.
+         * La si vede nella riga di cd0 fra i dispositivi a blocchi, dopo
+         * che qualcuno ha sondato il supporto (per esempio montandolo). */
+        printf("  Si monta come dispositivo a blocchi 'cd%u' (ISO 9660,\n", n_cd);
+        printf("  sola lettura): mount cd%u /cdrom\n", n_cd);
         return;
     }
     if (d->tipo != 1) {
@@ -201,6 +217,7 @@ int main(int argc, char **argv)
 {
     DiskInfo     d;
     unsigned int i;
+    unsigned int n_cd = 0;
     int          trovati = 0;
 
     (void)argc; (void)argv;
@@ -213,8 +230,13 @@ int main(int argc, char **argv)
             return 1;
         }
         if (!d.presente) continue;
-        trovati++;
-        mostra(i, &d);
+
+        /* I lettori si contano a parte, nello stesso ordine in cui li
+         * numera il livello a blocchi: primo canale prima, master prima
+         * dello slave. */
+        if (d.tipo != 2) trovati++;
+        mostra(i, n_cd, &d);
+        if (d.tipo == 2) n_cd++;
     }
 
     /* --- Dispositivi a blocchi ---------------------------------------
@@ -240,7 +262,8 @@ int main(int argc, char **argv)
             for (k = 0; k < n; k++) {
                 const char *t = (b[k].tipo == 1) ? "floppy"
                               : (b[k].tipo == 2) ? "disco"
-                              : (b[k].tipo == 3) ? "partizione" : "?";
+                              : (b[k].tipo == 3) ? "partizione"
+                              : (b[k].tipo == 4) ? "CD/DVD" : "?";
                 printf("  %-8s%-12s%12u%12u%10u%s\n",
                        b[k].nome, t, b[k].primo_lo, b[k].settori_lo,
                        in_mb(b[k].settori_lo, b[k].settori_hi),
@@ -249,6 +272,9 @@ int main(int argc, char **argv)
             start += (unsigned int)n;
             if (n < 8) break;
         }
+        printf("  Un cd0 con zero settori non e' un lettore rotto: e' un lettore\n");
+        printf("  che nessuno ha ancora sondato, o con il vassoio vuoto. La sua\n");
+        printf("  lunghezza appartiene al disco inserito, non al dispositivo.\n");
         printf("  Ogni accesso e' relativo al dispositivo e viene RIFIUTATO se\n");
         printf("  esce dalla sua finestra: e' cio' che impedisce a un filesystem\n");
         printf("  di toccare un'altra partizione o la tabella delle partizioni.\n");

@@ -1925,6 +1925,7 @@ int32_t sys_mountinfo(InterruptFrame *frame)
          * chiamare chiunque. */
         if      (m->tipo == VFS_FS_FAT12FD) o->fs = 12;
         else if (m->tipo == VFS_FS_EXT2)    o->fs = 2;
+        else if (m->tipo == VFS_FS_ISO)     o->fs = VOL_FS_ISO9660;
         else                                o->fs = (uint32_t)fat_tipo(m->mnt);
         o->sola_lettura = m->sola_lettura;
         scritti++;

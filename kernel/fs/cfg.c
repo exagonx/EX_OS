@@ -117,23 +117,25 @@ static void cfg_apply_key(KernelConfig *cfg, const char *section,
             return;
         }
         if (cfg_strcmp(key, "verboseboot") == 0) {
-            /* Il valore predefinito è 1 e resta 1 in tutti i casi dubbi:
-             * SOLO uno zero esplicito zittisce il sistema.
+            /* Il valore predefinito è 0 (agosto 2026: prima era 1) e resta
+             * 0 in tutti i casi dubbi: SOLO un numero diverso da zero fa
+             * parlare il sistema.
              *
-             * CORRETTO (luglio 2026): prima c'era
-             *     verbose_boot = (cfg_atoi(value) != 0) ? 1 : 0;
-             * con un commento che affermava "un refuso dà comunque un boot
-             * verboso". Non era vero: cfg_atoi() si ferma al primo
-             * carattere non numerico e ritorna 0, quindi
-             * `verboseboot = si` — o un valore vuoto, o qualunque errore
-             * di battitura — zittiva il sistema. L'esatto contrario del
-             * comportamento sicuro che il commento prometteva.
+             * IL VALORE DEV'ESSERE UN NUMERO, e il controllo non è una
+             * formalità. cfg_atoi() si ferma al primo carattere non
+             * numerico e ritorna 0, quindi senza il controllo
+             * `verboseboot = si` varrebbe zero — cioè un refuso deciderebbe
+             * il comportamento invece di essere ignorato. La regola vale in
+             * entrambe le direzioni ed è la ragione per cui questa riga non
+             * è un semplice `cfg_atoi(value) != 0`: un valore non numerico
+             * non è né vero né falso, è un errore, e la risposta a un
+             * errore è il default.
              *
-             * Ora si controlla che il valore sia davvero un numero prima
-             * di considerarlo uno zero. */
-            cfg->verbose_boot = 1;
-            if (value[0] >= '0' && value[0] <= '9' && cfg_atoi(value) == 0) {
-                cfg->verbose_boot = 0;
+             * Il default è impostato in cfg_load() PRIMA di leggere il
+             * file, così vale anche se il file manca o è illeggibile. */
+            cfg->verbose_boot = 0;
+            if (value[0] >= '0' && value[0] <= '9' && cfg_atoi(value) != 0) {
+                cfg->verbose_boot = 1;
             }
             return;
         }
@@ -269,7 +271,7 @@ KernelConfig *cfg_load(void)
     }
     g_config.loglevel     = 3;
     g_config.timer_hz     = 100;
-    g_config.verbose_boot = 1;   /* default: il sistema parla. Vedi cfg.h */
+    g_config.verbose_boot = 0;   /* default: avvio silenzioso. Vedi cfg.h */
     cfg_strcpy(g_config.shell_path, "/bin/sh", sizeof(g_config.shell_path));
 
     /* Identità disponibile anche se il file manca o è illeggibile: le

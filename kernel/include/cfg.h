@@ -45,12 +45,18 @@ typedef struct {
     uint32_t    loglevel;
     uint32_t    timer_hz;
 
-    /* verboseboot: 1 = mostra il log di avvio e i banner (default),
-     * 0 = avvio silenzioso, solo l'output dei programmi.
-     * Il default è 1 e viene impostato da cfg_load() PRIMA di leggere il
-     * file: se /boot/kernel.cfg manca o è illeggibile, il sistema deve
-     * parlare, non tacere — un boot muto che nasconde un fallimento è
-     * peggio di un boot rumoroso. */
+    /* verboseboot: 1 = mostra il log di avvio e i banner,
+     * 0 = avvio silenzioso, solo l'output dei programmi (DEFAULT dalla
+     * 0.142; fino alla 0.141 il default era 1).
+     *
+     * Il default viene impostato da cfg_load() PRIMA di leggere il file,
+     * quindi vale anche se /boot/kernel.cfg manca o è illeggibile.
+     *
+     * Silenzioso NON vuol dire muto sui problemi: con 0 il livello di log
+     * scende a WARN, gli ERROR restano incondizionati e gli avvisi già
+     * emessi vengono riproposti dopo la pulizia dello schermo (PASSO 13c
+     * di kernel_main.c). Un avvio che nasconde un fallimento sarebbe
+     * peggio di uno rumoroso; qui non succede. */
     uint32_t    verbose_boot;
 
     /* [boot] */

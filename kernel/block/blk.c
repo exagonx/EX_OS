@@ -13,6 +13,7 @@
 #include "kernel.h"
 #include "blk.h"
 #include "ata.h"
+#include "atapi.h"
 #include "mbr.h"
 #include "fat12.h"
 #include "syscall.h"    /* ERR() e i codici errno, per blk_rescan */
@@ -151,6 +152,38 @@ int blk_init(void)
             b->sola_lettura = 0;
             b->primo        = 0;
             b->settori      = 2880;    /* 1.44 MB */
+        }
+    }
+
+    /* --- Lettori ottici ATAPI ---
+     *
+     * Vengono PRIMA dei dischi e senza sondare il vassoio: la finestra
+     * resta a zero settori finche' qualcuno non chiede blk_supporto().
+     * Registrare un lettore vuoto e' giusto — il dispositivo esiste, lo si
+     * puo' nominare in [mount] e ci si puo' infilare un disco dopo — e
+     * sondarlo qui costerebbe qualche secondo di avvio per ogni lettore,
+     * ogni volta, anche a chi non lo usera'. */
+    {
+        int n_cd = 0;
+
+        for (d = 0; d < ATA_MAX_DEVICES; d++) {
+            BlkDev *b;
+
+            if (!atapi_e_lettore(d)) continue;
+
+            b = nuovo();
+            if (b == NULL) break;
+
+            nome_componi(b->nome, "cd", n_cd, 0, 0);
+            b->usato        = 1;
+            b->tipo         = BLK_TIPO_CDROM;
+            b->disco        = (uint8_t)d;
+            /* Sola lettura per costruzione, non per configurazione: vedi
+             * kernel/include/atapi.h — masterizzare non e' scrivere. */
+            b->sola_lettura = 1;
+            b->primo        = 0;
+            b->settori      = 0;
+            n_cd++;
         }
     }
 
@@ -323,6 +356,50 @@ int blk_per_partizione(int disco, int numero)
 }
 
 /* =============================================================================
+ * Supporti rimovibili
+ *
+ * Vedi blk.h per il perche' questa funzione esiste. Qui c'e' l'unica cosa
+ * che vale la pena aggiungere: la finestra di un lettore viene AZZERATA
+ * quando il disco non c'e' piu'. Lasciarla al valore del disco precedente
+ * significherebbe accettare letture su un supporto che non e' piu' li' —
+ * e il livello a blocchi le tradurrebbe senza obiezioni, perche' per lui
+ * sarebbero dentro la finestra.
+ * ============================================================================= */
+int blk_rimovibile(int i)
+{
+    const BlkDev *b = blk_get(i);
+    return (b != NULL && b->tipo == BLK_TIPO_CDROM) ? 1 : 0;
+}
+
+int blk_supporto(int i)
+{
+    uint32_t blocchi = 0, dim = 0;
+    int      r;
+
+    if (i < 0 || i >= g_n || !g_dev[i].usato) return ERR(ENODEV);
+
+    /* Un dispositivo fisso ha sempre il suo supporto: e' il disco stesso. */
+    if (g_dev[i].tipo != BLK_TIPO_CDROM) return 1;
+
+    r = atapi_supporto(g_dev[i].disco);
+    if (r != 1) {
+        g_dev[i].settori = 0;
+        return (r < 0) ? -1 : 0;
+    }
+
+    if (atapi_capacita(g_dev[i].disco, &blocchi, &dim) != 0 || blocchi == 0) {
+        g_dev[i].settori = 0;
+        return 0;
+    }
+
+    /* La finestra e' in settori da 512, come per ogni altro dispositivo:
+     * la conversione dai blocchi da 2048 sta qui e in blk_read, e da
+     * nessun'altra parte. */
+    g_dev[i].settori = (uint64_t)blocchi * (ATAPI_DIM_BLOCCO / 512u);
+    return 1;
+}
+
+/* =============================================================================
  * Traduzione e CONTROLLO DELLA FINESTRA
  *
  * Unico punto in cui un LBA relativo diventa assoluto. Il controllo di
@@ -352,13 +429,82 @@ static int traduci(int i, uint64_t lba, uint32_t n, uint64_t *assoluto)
     return 0;
 }
 
+/* =============================================================================
+ * IL LETTORE OTTICO LEGGE A 2048 BYTE, IL RESTO DEL KERNEL A 512
+ *
+ * Questa e' l'unica funzione che conosce la differenza, ed e' voluto: il
+ * filesystem ISO 9660, `mount`, `disk` e chiunque altro chiedono settori
+ * da 512 come per qualunque disco, e non hanno un caso particolare da
+ * ricordarsi.
+ *
+ * Un blocco vale QUATTRO settori. Chiedere il settore 3 significa
+ * chiedere il blocco 0 e prenderne l'ultimo quarto: senza la traduzione
+ * si leggerebbe il blocco 3, cioe' 6 KB piu' in la', senza alcun errore.
+ *
+ * Le richieste allineate — che sono la quasi totalita', perche' ISO 9660
+ * lavora per blocchi da 2048 — vanno dritte al dispositivo senza copie
+ * intermedie. Solo le code disallineate passano dal buffer di appoggio.
+ * ============================================================================= */
+#define CD_SETT_PER_BLOCCO  (ATAPI_DIM_BLOCCO / 512u)
+
+static uint8_t g_cd_buf[ATAPI_DIM_BLOCCO];
+
+static void copia(uint8_t *dst, const uint8_t *src, uint32_t n)
+{
+    while (n--) *dst++ = *src++;
+}
+
+static int cd_read(const BlkDev *b, uint64_t lba, uint32_t n, uint8_t *p)
+{
+    while (n > 0) {
+        uint32_t off = (uint32_t)(lba % CD_SETT_PER_BLOCCO);
+        uint32_t blk = (uint32_t)(lba / CD_SETT_PER_BLOCCO);
+
+        if (off == 0 && n >= CD_SETT_PER_BLOCCO) {
+            uint32_t blocchi = n / CD_SETT_PER_BLOCCO;
+
+            if (atapi_read(b->disco, blk, blocchi, p) != 0) return -1;
+
+            p   += blocchi * ATAPI_DIM_BLOCCO;
+            lba += (uint64_t)blocchi * CD_SETT_PER_BLOCCO;
+            n   -= blocchi * CD_SETT_PER_BLOCCO;
+        } else {
+            uint32_t quanti = CD_SETT_PER_BLOCCO - off;
+
+            if (quanti > n) quanti = n;
+
+            if (atapi_read(b->disco, blk, 1, g_cd_buf) != 0) return -1;
+
+            copia(p, g_cd_buf + off * 512u, quanti * 512u);
+
+            p   += quanti * 512u;
+            lba += quanti;
+            n   -= quanti;
+        }
+    }
+
+    return 0;
+}
+
 int blk_read(int i, uint64_t lba, uint32_t n, void *buf)
 {
     const BlkDev *b = blk_get(i);
     uint64_t      abs;
     uint32_t      k;
 
+    /* Un lettore che non e' mai stato sondato ha una finestra di zero
+     * settori, e traduci() rifiuterebbe qualunque richiesta. Sondarlo QUI
+     * significa che un disco inserito dopo l'avvio si legge senza dover
+     * ricordarsi di annunciarlo — e se il vassoio e' vuoto la richiesta
+     * viene rifiutata comunque, un attimo dopo. */
+    if (b != NULL && b->tipo == BLK_TIPO_CDROM && b->settori == 0) {
+        blk_supporto(i);
+        b = blk_get(i);
+    }
+
     if (traduci(i, lba, n, &abs) != 0) return -1;
+
+    if (b->tipo == BLK_TIPO_CDROM) return cd_read(b, abs, n, (uint8_t *)buf);
 
     if (b->tipo == BLK_TIPO_FLOPPY) {
         uint8_t *p = (uint8_t *)buf;
@@ -401,5 +547,10 @@ int blk_flush(int i)
 
     if (b == NULL || !b->usato) return -1;
     if (b->tipo == BLK_TIPO_FLOPPY) return fat12_sync();
+
+    /* Un lettore ottico non ha niente da riversare: non ci si scrive.
+     * Mandargli un FLUSH CACHE ATA sarebbe un comando che non conosce. */
+    if (b->tipo == BLK_TIPO_CDROM) return 0;
+
     return ata_flush(b->disco);
 }
