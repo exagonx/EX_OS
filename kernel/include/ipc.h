@@ -49,6 +49,11 @@ int32_t ipc_send(uint32_t dest_pid, uint32_t type,
  * Ritorna 0 su successo. */
 int32_t ipc_recv(IpcMessage *out, void *buf, uint32_t buf_len);
 
+/* Come ipc_recv, ma rinuncia dopo timeout_ms e ritorna -ETIMEDOUT.
+ * timeout_ms == 0 = attesa senza scadenza (identica a ipc_recv). */
+int32_t ipc_recv_timeout(IpcMessage *out, void *buf, uint32_t buf_len,
+                         uint32_t timeout_ms);
+
 /* Registra il processo chiamante come fornitore del servizio 'name'.
  * Un solo processo alla volta può registrare un dato nome. */
 int32_t ipc_register(const char *name);

@@ -76,9 +76,24 @@
 #define KBD_SERVICE_NAME    "kbd"
 
 /* client -> kbd: "dammi una riga".
- * Payload: uint32_t = numero massimo di byte accettati nella risposta.
- * Un payload assente o più corto di 4 byte equivale a KBD_LINE_MAX. */
+ * Payload: KbdReadLine. Un payload più corto di 4 byte equivale a
+ * KBD_LINE_MAX sulla console 0. */
 #define KBD_MSG_READLINE    1u
+
+/* Payload di KBD_MSG_READLINE.
+ *
+ * Il campo 'console' è arrivato con le console virtuali: il driver
+ * tiene un lettore in attesa PER CONSOLE e serve solo quello della
+ * console in primo piano, così le shell delle altre restano ferme al
+ * proprio prompt invece di rubarsi i tasti a vicenda.
+ *
+ * Chi manda meno di 8 byte finisce sulla console 0 — è la sola
+ * interpretazione possibile per un client che non sa che esistano, e
+ * mantiene compatibile un eventuale chiamante vecchio. */
+typedef struct {
+    unsigned int max;       /* byte massimi accettati nella risposta */
+    unsigned int console;   /* console del processo che sta leggendo */
+} KbdReadLine;
 
 /* kbd -> client: riga completa, terminatore '\n' incluso.
  * Payload: i byte della riga. len = lunghezza effettiva (può essere 1,
@@ -97,19 +112,45 @@
  * errore che parlava d'altro. */
 #define KBD_LINE_MAX        512
 
+/* Quante console virtuali esistono. DEVE restare uguale a VGA_N_CONSOLE
+ * in kernel/include/vga.h: il driver tiene uno stato di input per
+ * ciascuna, e se le due costanti divergessero le console in eccesso
+ * finirebbero tutte sull'indice 0 — cioè si ruberebbero i tasti a
+ * vicenda. Non si può includere vga.h da qui: questo header deve
+ * restare privo di dipendenze (vedi la nota in testa al file). */
+#define KBD_N_CONSOLE       4
+
+/* Alt+F1..F12 commutano fra le console. Il driver li intercetta PRIMA
+ * di qualunque altra elaborazione e non li consegna a nessuno: sono un
+ * comando all'interfaccia, non input per il programma in esecuzione —
+ * altrimenti basterebbe un editor che usa Alt+F per il menu File per
+ * rendere impossibile cambiare schermo. */
+#define KBD_ALT_FN_COMMUTA  1
+
 /* =============================================================================
  * Messaggi della modalità raw
  * ============================================================================= */
 
-/* client -> kbd: sceglie la modalità della console.
- * Payload: uint32_t, KBD_MODE_COOKED o KBD_MODE_RAW. Un payload assente
- * o più corto di 4 byte viene ignorato (la modalità non cambia).
+/* client -> kbd: sceglie la modalità della PROPRIA console.
+ * Payload: KbdSetMode. Un payload più corto di 4 byte viene ignorato
+ * (la modalità non cambia); uno di soli 4 byte vale per la console 0.
+ *
+ * La modalità è per console e non globale: mentre un editor a schermo
+ * intero tiene la console 2 in raw, la shell della console 1 deve
+ * continuare a ricevere righe intere con l'eco e il Backspace.
  *
  * Il cambio di modalità BUTTA VIA la riga in costruzione e il type-ahead
- * accumulato: sono testo raccolto con regole che non valgono più. */
+ * accumulato di quella console: sono testo raccolto con regole che non
+ * valgono più. */
 #define KBD_MSG_SETMODE     3u
 
-/* client -> kbd: "dammi il prossimo tasto". Nessun payload.
+typedef struct {
+    unsigned int modo;      /* KBD_MODE_COOKED o KBD_MODE_RAW */
+    unsigned int console;
+} KbdSetMode;
+
+/* client -> kbd: "dammi il prossimo tasto".
+ * Payload: uint32_t con la console del richiedente (assente = 0).
  * Valida solo in raw: in cooked il driver risponde con un rifiuto
  * silenzioso (nessun messaggio) perché non ha eventi da consegnare. */
 #define KBD_MSG_READKEY     4u

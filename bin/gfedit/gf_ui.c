@@ -231,7 +231,7 @@ static void disegna_stato(GfEdit *self)
 {
     GfTab *t = gf_corrente(self);
     char   buf[GF_COLS + 1];
-    int    secondi = (int)(uptime_ms() / 1000u);
+    char   ora[16];
 
     gf_term_riempi(GF_ROW_STATUS, 0, GF_COLS, ' ', CP_STATO);
 
@@ -240,11 +240,16 @@ static void disegna_stato(GfEdit *self)
            t->modified ? " *" : "");
     gf_term_scrivi(GF_ROW_STATUS, 0, buf, CP_STATO);
 
-    gf_fmt(buf, sizeof(buf), "Ri %d/%d  Col %d  %s  %s  %d:%02d ",
+    /* L'ora del giorno vera, dall'orologio CMOS. Avanza da sola perché
+     * il ciclo principale non aspetta piu' un tasto all'infinito: si
+     * risveglia comunque a intervalli e ridisegna (vedi gf_run). */
+    gf_ora(ora, sizeof(ora));
+
+    gf_fmt(buf, sizeof(buf), "Ri %d/%d  Col %d  %s  %s  %s ",
            t->cursor_row + 1, t->num_lines, t->cursor_col + 1,
            t->insert_mode ? "INS" : "SOV",
            (self->opz.developing && t->lingua != GF_LANG_NONE) ? "SYN" : "   ",
-           secondi / 60, secondi % 60);
+           ora);
     {
         /* Allineata a destra. La colonna di partenza va agganciata a
          * zero: con una stringa più lunga dello schermo sarebbe

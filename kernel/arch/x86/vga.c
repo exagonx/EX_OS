@@ -7,6 +7,36 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  * This file is part of EX-OS, distributed under the GNU GPL v2.
  * See the LICENSE file in the project root for the full license text.
+ * =============================================================================
+ *
+ * VGA in modo testo, e le CONSOLE VIRTUALI.
+ *
+ * Fino ad agosto 2026 qui c'era un solo schermo: le variabili vga_row,
+ * vga_col e vga_color erano globali, e chiunque scrivesse finiva sugli
+ * stessi 4000 byte a 0xB8000. Bastava finché un programma alla volta
+ * teneva la console — che è esattamente il motivo per cui la shell
+ * aspettava in waitpid() e non c'era modo di tornare al prompt senza
+ * chiudere il programma in esecuzione.
+ *
+ * Ora ci sono VGA_N_CONSOLE schermi indipendenti. Ognuno ha il proprio
+ * buffer da 4000 byte, il proprio cursore, il proprio colore e il
+ * proprio stato del parser ANSI; uno solo per volta è VISIBILE, cioè
+ * copiato nella memoria video vera. Scrivere su una console nascosta è
+ * legittimo e non si vede: il programma continua a lavorare e ritrova
+ * il proprio schermo intatto quando ci si torna sopra.
+ *
+ * Perché lo stato del parser ANSI è per-console e non globale: due
+ * programmi su due console diverse possono avere ciascuno una sequenza
+ * di escape a metà nello stesso istante — uno preemptato dopo aver
+ * scritto "ESC[" e l'altro schedulato subito dopo. Con un parser solo,
+ * i parametri del secondo verrebbero attribuiti alla sequenza del primo.
+ *
+ * Chi decide su quale console finisce una scrittura è il CHIAMANTE, che
+ * la passa come parametro: sys_write usa proc->console. Non c'è una
+ * variabile globale "console corrente" proprio perché il kernel è
+ * preemptabile — il timer può interrompere una scrittura a metà e dare
+ * la CPU a un processo di un'altra console, che quella variabile la
+ * troverebbe cambiata sotto i piedi.
  * ============================================================================= */
 
 #include "kernel.h"
@@ -27,37 +57,53 @@
 #define VGA_CURSOR_LOW  0x0F    /* Registro posizione cursore (byte basso) */
 
 /* =============================================================================
- * Stato interno
+ * Stato di una console
  * ============================================================================= */
-static uint8_t vga_row     = 0;     /* Riga corrente (0-24) */
-static uint8_t vga_col     = 0;     /* Colonna corrente (0-79) */
-static uint8_t vga_color   = 0;     /* Colore corrente (attributo) */
-static volatile uint16_t *vga_buf = (volatile uint16_t *)0xB8000;
-
-/* Parser per sequenze ANSI CSI: ESC [ [?] <param>[;<param>...] <finale>
- *
- * Nato minimale per il solo SGR (ESC[...m, i colori del prompt della
- * shell). Da agosto 2026 copre anche posizionamento del cursore e
- * cancellazioni, perché senza quelli un programma a schermo intero non
- * può esistere: /bin/gfedit disegna passando di qui, e nient'altro in
- * ring3 può raggiungere la memoria VGA (che nello spazio utente non è
- * mappata). Vedi drivers/tty/tty.c, che è la porta d'ingresso.
- *
- * I terminatori non riconosciuti restano scartati in silenzio: meglio
- * ignorare una sequenza che stamparne i parametri come testo. */
 typedef enum { ANSI_NONE, ANSI_ESC, ANSI_CSI } AnsiState;
-static AnsiState ansi_state           = ANSI_NONE;
-static int       ansi_params[4]       = {0,0,0,0};
-static uint8_t   ansi_param_count     = 0;
-static uint8_t   ansi_cur_param_empty = 1;
-static uint8_t   ansi_private         = 0;  /* '?' subito dopo il '[' */
+
+typedef struct {
+    uint16_t  cella[VGA_TOTAL];   /* carattere + attributo, come in memoria video */
+    uint8_t   row, col;
+    uint8_t   colore;
+    uint8_t   cursore_on;
+
+    /* Parser CSI: ESC [ [?] <param>[;<param>...] <finale>
+     *
+     * Nato minimale per il solo SGR (i colori del prompt della shell).
+     * Da agosto 2026 copre anche posizionamento del cursore e
+     * cancellazioni, perché senza quelli un programma a schermo intero
+     * non può esistere: /bin/gfedit disegna passando di qui, e
+     * nient'altro in ring3 può raggiungere la memoria VGA (che nello
+     * spazio utente non è mappata). */
+    AnsiState state;
+    int       params[4];
+    uint8_t   param_count;
+    uint8_t   cur_param_empty;
+    uint8_t   privata;            /* '?' subito dopo il '[' */
+} Console;
+
+static Console  g_console[VGA_N_CONSOLE];
+static uint32_t g_visibile = 0;
+static volatile uint16_t *vga_buf = VGA_BASE;
 
 /* Specchio seriale dell'output: vedi vga_set_serial_mirror(). */
-static uint8_t   serial_mirror        = 1;
+static uint8_t serial_mirror = 1;
+
+static Console *cons(uint32_t n)
+{
+    if (n >= VGA_N_CONSOLE) n = 0;
+    return &g_console[n];
+}
+
+/* La console 0 è quella di SISTEMA: ci finiscono i messaggi del kernel
+ * (klog, kprintf) e tutto ciò che viene scritto prima che esista un
+ * processo. Le API storiche senza numero di console lavorano su questa,
+ * così ogni chiamante già esistente continua a comportarsi come prima. */
+#define SISTEMA (&g_console[0])
 
 /* =============================================================================
  * Console seriale di debug (COM1, 38400 8N1)
- * Specchia tutto l'output che passa da vga_putchar sulla porta seriale, così
+ * Specchia l'output della console di sistema sulla porta seriale, così
  * il log completo di boot resta leggibile anche dopo lo scroll dello schermo
  * (QEMU: -serial file:log.txt). Nessun effetto sul comportamento del kernel.
  * ============================================================================= */
@@ -113,25 +159,125 @@ static const uint8_t ansi_to_vga[8] = {
 };
 
 /* =============================================================================
+ * Riversamento sulla memoria video
+ *
+ * Una console scrive SEMPRE nel proprio buffer; sulla memoria video ci
+ * finisce solo se è quella visibile. È tutta qui la differenza fra uno
+ * schermo in primo piano e uno che continua a lavorare in disparte.
+ * ============================================================================= */
+static inline int e_visibile(const Console *c)
+{
+    return c == &g_console[g_visibile];
+}
+
+static inline void riversa_cella(const Console *c, uint32_t i)
+{
+    if (e_visibile(c) && i < VGA_TOTAL) vga_buf[i] = c->cella[i];
+}
+
+static void riversa_tutto(const Console *c)
+{
+    uint32_t i;
+
+    if (!e_visibile(c)) return;
+    for (i = 0; i < VGA_TOTAL; i++) vga_buf[i] = c->cella[i];
+}
+
+/* =============================================================================
+ * vga_update_cursor — Aggiorna la posizione del cursore hardware
+ *
+ * Il cursore è uno solo — è hardware — quindi lo muove solo la console
+ * visibile. Le altre tengono il proprio in c->row/c->col e se lo
+ * ritrovano quando tornano in primo piano.
+ * ============================================================================= */
+static void vga_update_cursor(const Console *c)
+{
+    uint16_t pos;
+
+    if (!e_visibile(c)) return;
+
+    pos = (uint16_t)(c->row * VGA_COLS + c->col);
+    port_outb(VGA_CTRL_PORT, VGA_CURSOR_HIGH);
+    port_outb(VGA_DATA_PORT, (uint8_t)((pos >> 8) & 0xFF));
+    port_outb(VGA_CTRL_PORT, VGA_CURSOR_LOW);
+    port_outb(VGA_DATA_PORT, (uint8_t)(pos & 0xFF));
+}
+
+/* =============================================================================
+ * cursore_hw — Accende o spegne il cursore hardware
+ *
+ * Bit 5 del registro CRTC 0x0A (Cursor Start): 1 = cursore NASCOSTO. Il
+ * resto del registro è la riga di scansione iniziale del glifo e va
+ * conservata, altrimenti il cursore riappare di forma diversa.
+ * ============================================================================= */
+static void cursore_hw(int on)
+{
+    uint8_t start;
+
+    port_outb(VGA_CTRL_PORT, 0x0A);
+    start = port_inb(VGA_DATA_PORT);
+
+    if (on) start = (uint8_t)(start & ~0x20);
+    else    start = (uint8_t)(start |  0x20);
+
+    port_outb(VGA_CTRL_PORT, 0x0A);
+    port_outb(VGA_DATA_PORT, start);
+}
+
+/* =============================================================================
+ * Cancellazioni — le celle azzerate prendono il colore CORRENTE della
+ * console, non il nero: è il comportamento ANSI, e permette di dipingere
+ * uno sfondo (barra dei menu, riquadro di un dialogo) con una sola ESC[K.
+ * ============================================================================= */
+static void erase_cells(Console *c, uint32_t da, uint32_t a)
+{
+    uint16_t blank = vga_make_entry(' ', c->colore);
+
+    if (a > VGA_TOTAL) a = VGA_TOTAL;
+    while (da < a) c->cella[da++] = blank;
+
+    riversa_tutto(c);
+}
+
+/* =============================================================================
+ * vga_scroll — Scrolla la console di una riga verso l'alto
+ * ============================================================================= */
+static void vga_scroll(Console *c)
+{
+    uint16_t blank = vga_make_entry(' ', c->colore);
+    uint32_t i;
+
+    for (i = 0; i < (VGA_ROWS - 1) * VGA_COLS; i++) {
+        c->cella[i] = c->cella[i + VGA_COLS];
+    }
+    for (i = (VGA_ROWS - 1) * VGA_COLS; i < VGA_TOTAL; i++) {
+        c->cella[i] = blank;
+    }
+
+    c->row = VGA_ROWS - 1;
+    riversa_tutto(c);
+}
+
+/* =============================================================================
  * ansi_apply_sgr — Applica i parametri SGR raccolti (ESC[...m) al colore
  * corrente. Supporta i codici standard 0/1/30-37/39/40-47/49 e
  * l'estensione bright 90-97; altri codici (underline ecc.) sono ignorati
  * perché non rappresentabili nell'attributo VGA testuale.
  * ============================================================================= */
-static void ansi_apply_sgr(void)
+static void ansi_apply_sgr(Console *c)
 {
-    uint8_t fg = vga_color & 0x0F;
-    uint8_t bg = (vga_color >> 4) & 0x0F;
+    uint8_t fg = c->colore & 0x0F;
+    uint8_t bg = (c->colore >> 4) & 0x0F;
     uint8_t i;
 
-    if (ansi_param_count == 0) {
+    if (c->param_count == 0) {
         /* ESC[m senza parametri equivale a ESC[0m: reset */
         fg = VGA_COLOR_WHITE;
         bg = VGA_COLOR_BLACK;
     }
 
-    for (i = 0; i < ansi_param_count; i++) {
-        int p = ansi_params[i];
+    for (i = 0; i < c->param_count; i++) {
+        int p = c->params[i];
         if (p == 0) {
             fg = VGA_COLOR_WHITE;
             bg = VGA_COLOR_BLACK;
@@ -150,94 +296,7 @@ static void ansi_apply_sgr(void)
         }
     }
 
-    vga_color = vga_make_color(fg, bg);
-}
-
-/* =============================================================================
- * vga_update_cursor — Aggiorna la posizione del cursore hardware
- * ============================================================================= */
-static void vga_update_cursor(void)
-{
-    uint16_t pos = (uint16_t)(vga_row * VGA_COLS + vga_col);
-
-    port_outb(VGA_CTRL_PORT, VGA_CURSOR_HIGH);
-    port_outb(VGA_DATA_PORT, (uint8_t)((pos >> 8) & 0xFF));
-    port_outb(VGA_CTRL_PORT, VGA_CURSOR_LOW);
-    port_outb(VGA_DATA_PORT, (uint8_t)(pos & 0xFF));
-}
-
-/* =============================================================================
- * vga_show_cursor — Accende o spegne il cursore hardware
- *
- * Bit 5 del registro CRTC 0x0A (Cursor Start): 1 = cursore NASCOSTO. Il
- * resto del registro è la riga di scansione iniziale del glifo e va
- * conservata, altrimenti il cursore riappare di forma diversa.
- *
- * Serve a chi ridisegna schermate intere: senza, il cursore rincorre
- * ogni carattere scritto e lascia una scia sfarfallante.
- * ============================================================================= */
-void vga_show_cursor(int on)
-{
-    uint8_t start;
-
-    port_outb(VGA_CTRL_PORT, 0x0A);
-    start = port_inb(VGA_DATA_PORT);
-
-    if (on) start = (uint8_t)(start & ~0x20);
-    else    start = (uint8_t)(start |  0x20);
-
-    port_outb(VGA_CTRL_PORT, 0x0A);
-    port_outb(VGA_DATA_PORT, start);
-}
-
-/* =============================================================================
- * vga_gotoxy — Posiziona il cursore logico (0-based, come le altre API)
- *
- * Le coordinate fuori schermo vengono AGGANCIATE al bordo invece che
- * rifiutate: una sequenza ANSI arriva da un programma utente, e un
- * parametro sbagliato non deve poter scrivere fuori dai 4000 byte della
- * memoria video.
- * ============================================================================= */
-void vga_gotoxy(uint8_t row, uint8_t col)
-{
-    if (row >= VGA_ROWS) row = VGA_ROWS - 1;
-    if (col >= VGA_COLS) col = VGA_COLS - 1;
-
-    vga_row = row;
-    vga_col = col;
-    vga_update_cursor();
-}
-
-/* =============================================================================
- * vga_set_serial_mirror — Accende/spegne la copia su COM1 dell'output
- *
- * Lo specchio seriale (vedi serial_putchar) esiste per avere il log di
- * boot completo anche dopo lo scroll. Per un programma a schermo intero
- * è invece un danno doppio: il log si riempie di sequenze di controllo
- * illeggibili, e soprattutto ogni carattere costa l'attesa del THR — a
- * 38400 baud sono ~260 µs, che moltiplicati per le 2000 celle di una
- * schermata fanno mezzo secondo di ridisegno. In QEMU non si nota
- * (senza una seriale collegata port_inb torna 0xFF e il THR sembra
- * sempre libero); su hardware reale l'editor sarebbe inusabile.
- *
- * Lo spegne drv_ioctl(TTY_IOCTL_SETRAW) e lo riaccende SETCOOKED.
- * ============================================================================= */
-void vga_set_serial_mirror(int on)
-{
-    serial_mirror = on ? 1 : 0;
-}
-
-/* =============================================================================
- * Cancellazioni — le celle azzerate prendono il colore CORRENTE, non il
- * nero: è il comportamento ANSI, e permette di dipingere uno sfondo
- * (barra dei menu, riquadro di un dialogo) con una sola ESC[K.
- * ============================================================================= */
-static void vga_erase_cells(uint32_t da, uint32_t a)
-{
-    uint16_t blank = vga_make_entry(' ', vga_color);
-
-    if (a > VGA_TOTAL) a = VGA_TOTAL;
-    while (da < a) vga_buf[da++] = blank;
+    c->colore = vga_make_color(fg, bg);
 }
 
 /* =============================================================================
@@ -248,10 +307,10 @@ static void vga_erase_cells(uint32_t da, uint32_t a)
  * sequenze di movimento lo standard ANSI fa già valere 0 come 1, e per
  * quelle di cancellazione il valore predefinito È zero.
  * ============================================================================= */
-static int ansi_param(uint8_t idx, int def)
+static int ansi_param(const Console *c, uint8_t idx, int def)
 {
-    if (idx >= ansi_param_count) return def;
-    return ansi_params[idx];
+    if (idx >= c->param_count) return def;
+    return c->params[idx];
 }
 
 /* =============================================================================
@@ -261,76 +320,81 @@ static int ansi_param(uint8_t idx, int def)
  * assoluta), ED (cancella schermo), EL (cancella riga), e la privata
  * DECTCEM (ESC[?25h/l, cursore visibile).
  * ============================================================================= */
-static void ansi_apply_csi(char finale)
+static void ansi_apply_csi(Console *c, char finale)
 {
     int n;
 
-    if (ansi_private) {
+    if (c->privata) {
         /* Sequenze private DEC: qui serve solo il cursore. */
-        if ((finale == 'h' || finale == 'l') && ansi_param(0, 0) == 25) {
-            vga_show_cursor(finale == 'h');
+        if ((finale == 'h' || finale == 'l') && ansi_param(c, 0, 0) == 25) {
+            c->cursore_on = (finale == 'h');
+            if (e_visibile(c)) cursore_hw(c->cursore_on);
         }
         return;
     }
 
     switch (finale) {
         case 'A':   /* CUU — su */
-            n = ansi_param(0, 1); if (n < 1) n = 1;
-            vga_row = (uint8_t)((vga_row > n) ? (vga_row - n) : 0);
+            n = ansi_param(c, 0, 1); if (n < 1) n = 1;
+            c->row = (uint8_t)((c->row > n) ? (c->row - n) : 0);
             break;
 
         case 'B':   /* CUD — giù */
-            n = ansi_param(0, 1); if (n < 1) n = 1;
-            n += vga_row;
-            vga_row = (uint8_t)((n >= VGA_ROWS) ? (VGA_ROWS - 1) : n);
+            n = ansi_param(c, 0, 1); if (n < 1) n = 1;
+            n += c->row;
+            c->row = (uint8_t)((n >= VGA_ROWS) ? (VGA_ROWS - 1) : n);
             break;
 
         case 'C':   /* CUF — avanti */
-            n = ansi_param(0, 1); if (n < 1) n = 1;
-            n += vga_col;
-            vga_col = (uint8_t)((n >= VGA_COLS) ? (VGA_COLS - 1) : n);
+            n = ansi_param(c, 0, 1); if (n < 1) n = 1;
+            n += c->col;
+            c->col = (uint8_t)((n >= VGA_COLS) ? (VGA_COLS - 1) : n);
             break;
 
         case 'D':   /* CUB — indietro */
-            n = ansi_param(0, 1); if (n < 1) n = 1;
-            vga_col = (uint8_t)((vga_col > n) ? (vga_col - n) : 0);
+            n = ansi_param(c, 0, 1); if (n < 1) n = 1;
+            c->col = (uint8_t)((c->col > n) ? (c->col - n) : 0);
             break;
 
         case 'H':   /* CUP */
         case 'f': { /* HVP — sinonimo */
-            int riga = ansi_param(0, 1);
-            int col  = ansi_param(1, 1);
+            int riga = ansi_param(c, 0, 1);
+            int col  = ansi_param(c, 1, 1);
             if (riga < 1) riga = 1;
             if (col  < 1) col  = 1;
-            /* I parametri ANSI sono 1-based, lo stato interno 0-based. */
-            vga_gotoxy((uint8_t)(riga - 1), (uint8_t)(col - 1));
-            return;         /* vga_gotoxy ha già aggiornato il cursore */
+            /* I parametri ANSI sono 1-based, lo stato interno 0-based.
+             * Fuori schermo si aggancia al bordo invece di rifiutare: la
+             * sequenza arriva da un programma utente, e un parametro
+             * sbagliato non deve poter scrivere fuori dal buffer. */
+            if (riga > VGA_ROWS) riga = VGA_ROWS;
+            if (col  > VGA_COLS) col  = VGA_COLS;
+            c->row = (uint8_t)(riga - 1);
+            c->col = (uint8_t)(col - 1);
+            break;
         }
 
         case 'J': { /* ED — cancella nello schermo */
-            uint32_t pos = (uint32_t)vga_row * VGA_COLS + vga_col;
-            switch (ansi_param(0, 0)) {
-                case 0: vga_erase_cells(pos, VGA_TOTAL); break;
-                case 1: vga_erase_cells(0, pos + 1);     break;
+            uint32_t pos = (uint32_t)c->row * VGA_COLS + c->col;
+            switch (ansi_param(c, 0, 0)) {
+                case 0: erase_cells(c, pos, VGA_TOTAL); break;
+                case 1: erase_cells(c, 0, pos + 1);     break;
                 case 2:
                 default:
-                    vga_erase_cells(0, VGA_TOTAL);
+                    erase_cells(c, 0, VGA_TOTAL);
                     /* ESC[2J non muove il cursore: chi vuole anche
-                     * l'angolo scrive ESC[2J ESC[H, come da standard.
-                     * vga_clear() invece azzera la posizione, ed è per
-                     * questo che non la si richiama qui. */
+                     * l'angolo scrive ESC[2J ESC[H, come da standard. */
                     break;
             }
             break;
         }
 
         case 'K': { /* EL — cancella nella riga */
-            uint32_t inizio = (uint32_t)vga_row * VGA_COLS;
-            switch (ansi_param(0, 0)) {
-                case 0: vga_erase_cells(inizio + vga_col, inizio + VGA_COLS); break;
-                case 1: vga_erase_cells(inizio, inizio + vga_col + 1);        break;
+            uint32_t inizio = (uint32_t)c->row * VGA_COLS;
+            switch (ansi_param(c, 0, 0)) {
+                case 0: erase_cells(c, inizio + c->col, inizio + VGA_COLS); break;
+                case 1: erase_cells(c, inizio, inizio + c->col + 1);        break;
                 case 2:
-                default: vga_erase_cells(inizio, inizio + VGA_COLS);          break;
+                default: erase_cells(c, inizio, inizio + VGA_COLS);         break;
             }
             break;
         }
@@ -339,126 +403,55 @@ static void ansi_apply_csi(char finale)
             return;     /* terminatore non gestito: sequenza scartata */
     }
 
-    vga_update_cursor();
+    vga_update_cursor(c);
 }
 
 /* =============================================================================
- * vga_scroll — Scrolla lo schermo di una riga verso l'alto
+ * putchar_su — il vero motore di scrittura, su una console qualunque
  * ============================================================================= */
-static void vga_scroll(void)
+static void putchar_su(Console *c, char ch)
 {
-    uint16_t blank = vga_make_entry(' ', vga_color);
-    uint32_t i;
-
-    /* Sposta tutte le righe su di una */
-    for (i = 0; i < (VGA_ROWS - 1) * VGA_COLS; i++) {
-        vga_buf[i] = vga_buf[i + VGA_COLS];
-    }
-
-    /* Pulisce l'ultima riga */
-    for (i = (VGA_ROWS - 1) * VGA_COLS; i < VGA_TOTAL; i++) {
-        vga_buf[i] = blank;
-    }
-
-    /* Cursore sull'ultima riga */
-    vga_row = VGA_ROWS - 1;
-}
-
-/* =============================================================================
- * vga_init — Inizializza il driver VGA
- * ============================================================================= */
-void vga_init(void)
-{
-    serial_init();
-
-    /* Colore default: testo bianco su sfondo nero */
-    vga_color = vga_make_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-    vga_row = 0;
-    vga_col = 0;
-
-    /* Abilita cursore hardware (shape: linea solida, righe 14-15) */
-    port_outb(VGA_CTRL_PORT, 0x0A);
-    port_outb(VGA_DATA_PORT, (port_inb(VGA_DATA_PORT) & 0xC0) | 14);
-    port_outb(VGA_CTRL_PORT, 0x0B);
-    port_outb(VGA_DATA_PORT, (port_inb(VGA_DATA_PORT) & 0xE0) | 15);
-
-    vga_clear();
-}
-
-/* =============================================================================
- * vga_clear — Pulisce lo schermo
- * ============================================================================= */
-void vga_clear(void)
-{
-    uint16_t blank = vga_make_entry(' ', vga_color);
-    uint32_t i;
-
-    for (i = 0; i < VGA_TOTAL; i++) {
-        vga_buf[i] = blank;
-    }
-
-    vga_row = 0;
-    vga_col = 0;
-    vga_update_cursor();
-}
-
-/* =============================================================================
- * vga_setcolor — Imposta colore corrente
- * ============================================================================= */
-void vga_setcolor(uint8_t fg, uint8_t bg)
-{
-    vga_color = vga_make_color(fg, bg);
-}
-
-/* =============================================================================
- * vga_putchar — Scrive un carattere nella posizione corrente
- * ============================================================================= */
-void vga_putchar(char c)
-{
-    serial_putchar(c);
-
-    /* Parser sequenze ANSI ESC[...m: intercetta i caratteri della
-     * sequenza prima che finiscano stampati come testo letterale
-     * (era il bug per cui il prompt mostrava "<-[32m" invece di
-     * applicare il colore verde). */
-    if (ansi_state == ANSI_NONE) {
-        if (c == '\x1B') {
-            ansi_state = ANSI_ESC;
+    /* Parser sequenze ANSI: intercetta i caratteri della sequenza prima
+     * che finiscano stampati come testo letterale (era il bug per cui il
+     * prompt mostrava "<-[32m" invece di applicare il colore verde). */
+    if (c->state == ANSI_NONE) {
+        if (ch == '\x1B') {
+            c->state = ANSI_ESC;
             return;
         }
-    } else if (ansi_state == ANSI_ESC) {
-        if (c == '[') {
-            ansi_state           = ANSI_CSI;
-            ansi_param_count     = 0;
-            ansi_params[0]       = 0;
-            ansi_cur_param_empty = 1;
-            ansi_private         = 0;
+    } else if (c->state == ANSI_ESC) {
+        if (ch == '[') {
+            c->state           = ANSI_CSI;
+            c->param_count     = 0;
+            c->params[0]       = 0;
+            c->cur_param_empty = 1;
+            c->privata         = 0;
             return;
         }
         /* Sequenza non riconosciuta (non CSI): scarta e riprendi */
-        ansi_state = ANSI_NONE;
-        /* continua a processare 'c' normalmente sotto */
-    } else if (ansi_state == ANSI_CSI) {
+        c->state = ANSI_NONE;
+        /* continua a processare 'ch' normalmente sotto */
+    } else if (c->state == ANSI_CSI) {
         /* '?' introduce le sequenze private DEC, e può stare solo in
          * testa ai parametri: ESC[?25l. */
-        if (c == '?' && ansi_param_count == 0 && ansi_cur_param_empty) {
-            ansi_private = 1;
+        if (ch == '?' && c->param_count == 0 && c->cur_param_empty) {
+            c->privata = 1;
             return;
         }
-        if (c >= '0' && c <= '9') {
-            if (ansi_param_count < 4) {
-                ansi_params[ansi_param_count] =
-                    ansi_params[ansi_param_count] * 10 + (c - '0');
-                ansi_cur_param_empty = 0;
+        if (ch >= '0' && ch <= '9') {
+            if (c->param_count < 4) {
+                c->params[c->param_count] =
+                    c->params[c->param_count] * 10 + (ch - '0');
+                c->cur_param_empty = 0;
             }
             return;
         }
-        if (c == ';') {
-            if (ansi_param_count < 3) {
-                ansi_param_count++;
-                ansi_params[ansi_param_count] = 0;
+        if (ch == ';') {
+            if (c->param_count < 3) {
+                c->param_count++;
+                c->params[c->param_count] = 0;
             }
-            ansi_cur_param_empty = 1;
+            c->cur_param_empty = 1;
             return;
         }
         /* Qualunque lettera chiude la sequenza. La normalizzazione del
@@ -466,89 +459,234 @@ void vga_putchar(char c)
          * l'ultimo accumulatore conta come parametro se ha ricevuto
          * cifre, oppure se era preceduto da un ';' (ESC[1; ha due
          * parametri, il secondo vuoto). */
-        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) {
-            if (!ansi_cur_param_empty || ansi_param_count > 0) {
-                ansi_param_count++;
+        if ((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z')) {
+            if (!c->cur_param_empty || c->param_count > 0) {
+                c->param_count++;
             }
-            if (c == 'm' && !ansi_private) ansi_apply_sgr();
-            else                           ansi_apply_csi(c);
-            ansi_state = ANSI_NONE;
+            if (ch == 'm' && !c->privata) ansi_apply_sgr(c);
+            else                          ansi_apply_csi(c, ch);
+            c->state = ANSI_NONE;
             return;
         }
         return;  /* Parametro malformato: continua a scartare */
     }
 
-    switch (c) {
+    switch (ch) {
         case '\n':  /* Newline */
-            vga_col = 0;
-            vga_row++;
+            c->col = 0;
+            c->row++;
             break;
 
         case '\r':  /* Carriage return */
-            vga_col = 0;
+            c->col = 0;
             break;
 
         case '\t':  /* Tab: allinea alla prossima tabulazione di 8 */
-            vga_col = (uint8_t)((vga_col + 8) & ~7);
-            if (vga_col >= VGA_COLS) {
-                vga_col = 0;
-                vga_row++;
+            c->col = (uint8_t)((c->col + 8) & ~7);
+            if (c->col >= VGA_COLS) {
+                c->col = 0;
+                c->row++;
             }
             break;
 
         case '\b':  /* Backspace */
-            if (vga_col > 0) {
-                vga_col--;
-                vga_buf[vga_row * VGA_COLS + vga_col] =
-                    vga_make_entry(' ', vga_color);
+            if (c->col > 0) {
+                uint32_t i;
+                c->col--;
+                i = (uint32_t)c->row * VGA_COLS + c->col;
+                c->cella[i] = vga_make_entry(' ', c->colore);
+                riversa_cella(c, i);
             }
             break;
 
-        default:    /* Carattere normale */
-            vga_buf[vga_row * VGA_COLS + vga_col] =
-                vga_make_entry(c, vga_color);
-            vga_col++;
+        default: {  /* Carattere normale */
+            uint32_t i = (uint32_t)c->row * VGA_COLS + c->col;
+            c->cella[i] = vga_make_entry(ch, c->colore);
+            riversa_cella(c, i);
+            c->col++;
 
-            if (vga_col >= VGA_COLS) {
-                vga_col = 0;
-                vga_row++;
+            if (c->col >= VGA_COLS) {
+                c->col = 0;
+                c->row++;
             }
             break;
+        }
     }
 
     /* Scrolla se necessario */
-    if (vga_row >= VGA_ROWS) {
-        vga_scroll();
+    if (c->row >= VGA_ROWS) {
+        vga_scroll(c);
     }
 
-    vga_update_cursor();
+    vga_update_cursor(c);
 }
 
 /* =============================================================================
- * vga_puts — Scrive una stringa ASCIIZ
+ * API PUBBLICA
+ *
+ * Le funzioni senza numero di console lavorano sulla console di SISTEMA
+ * (la 0): sono quelle che il kernel usava già prima che ne esistesse più
+ * d'una, e continuano a comportarsi esattamente come allora.
  * ============================================================================= */
+
+void vga_init(void)
+{
+    uint32_t n, i;
+
+    serial_init();
+
+    for (n = 0; n < VGA_N_CONSOLE; n++) {
+        Console *c = &g_console[n];
+        c->colore     = vga_make_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        c->row        = 0;
+        c->col        = 0;
+        c->cursore_on = 1;
+        c->state      = ANSI_NONE;
+        for (i = 0; i < VGA_TOTAL; i++) {
+            c->cella[i] = vga_make_entry(' ', c->colore);
+        }
+    }
+
+    g_visibile = 0;
+
+    /* Abilita cursore hardware (shape: linea solida, righe 14-15) */
+    port_outb(VGA_CTRL_PORT, 0x0A);
+    port_outb(VGA_DATA_PORT, (port_inb(VGA_DATA_PORT) & 0xC0) | 14);
+    port_outb(VGA_CTRL_PORT, 0x0B);
+    port_outb(VGA_DATA_PORT, (port_inb(VGA_DATA_PORT) & 0xE0) | 15);
+
+    riversa_tutto(SISTEMA);
+    vga_update_cursor(SISTEMA);
+}
+
+void vga_putchar(char c)
+{
+    /* Lo specchio seriale segue la console di SISTEMA e non quella
+     * visibile: serve ad avere il log di boot completo, e il log di boot
+     * è quello che passa di qui. */
+    serial_putchar(c);
+    putchar_su(SISTEMA, c);
+}
+
+void vga_putchar_su(uint32_t n, char c)
+{
+    Console *cs = cons(n);
+
+    if (cs == SISTEMA) serial_putchar(c);
+    putchar_su(cs, c);
+}
+
 void vga_puts(const char *s)
 {
-    while (*s) {
-        vga_putchar(*s++);
-    }
+    while (*s) vga_putchar(*s++);
 }
 
-/* =============================================================================
- * vga_puts_at — Scrive una stringa a una posizione specifica
- * Non aggiorna il cursore corrente
- * ============================================================================= */
+/* Scrive una stringa a una posizione specifica della console di
+ * sistema, senza spostarne il cursore. */
 void vga_puts_at(const char *s, uint8_t row, uint8_t col)
 {
-    while (*s && col < VGA_COLS) {
-        vga_buf[row * VGA_COLS + col] = vga_make_entry(*s, vga_color);
+    Console *c = SISTEMA;
+
+    while (*s && col < VGA_COLS && row < VGA_ROWS) {
+        uint32_t i = (uint32_t)row * VGA_COLS + col;
+        c->cella[i] = vga_make_entry(*s, c->colore);
+        riversa_cella(c, i);
         col++;
         s++;
     }
 }
 
+void vga_clear(void)          { vga_clear_su(0); }
+void vga_setcolor(uint8_t fg, uint8_t bg) { vga_setcolor_su(0, fg, bg); }
+
+void vga_clear_su(uint32_t n)
+{
+    Console *c = cons(n);
+    uint16_t blank = vga_make_entry(' ', c->colore);
+    uint32_t i;
+
+    for (i = 0; i < VGA_TOTAL; i++) c->cella[i] = blank;
+
+    c->row = 0;
+    c->col = 0;
+    riversa_tutto(c);
+    vga_update_cursor(c);
+}
+
+void vga_setcolor_su(uint32_t n, uint8_t fg, uint8_t bg)
+{
+    cons(n)->colore = vga_make_color(fg, bg);
+}
+
+void vga_gotoxy(uint8_t row, uint8_t col)
+{
+    Console *c = SISTEMA;
+
+    if (row >= VGA_ROWS) row = VGA_ROWS - 1;
+    if (col >= VGA_COLS) col = VGA_COLS - 1;
+
+    c->row = row;
+    c->col = col;
+    vga_update_cursor(c);
+}
+
+void vga_show_cursor(int on)
+{
+    SISTEMA->cursore_on = on ? 1 : 0;
+    if (g_visibile == 0) cursore_hw(on);
+}
+
+uint8_t vga_get_row(void) { return SISTEMA->row; }
+uint8_t vga_get_col(void) { return SISTEMA->col; }
+
 /* =============================================================================
- * vga_get_row / vga_get_col — Lettura posizione cursore corrente
+ * vga_set_serial_mirror — Accende/spegne la copia su COM1 dell'output
+ *
+ * Lo specchio seriale esiste per avere il log di boot completo anche
+ * dopo lo scroll. Per un programma a schermo intero è invece un danno
+ * doppio: il log si riempie di sequenze di controllo illeggibili, e
+ * soprattutto ogni carattere costa l'attesa del THR — a 38400 baud sono
+ * ~260 µs, che moltiplicati per le 2000 celle di una schermata fanno
+ * mezzo secondo di ridisegno. In QEMU non si nota (senza una seriale
+ * collegata port_inb torna 0xFF e il THR sembra sempre libero); su
+ * hardware reale l'editor sarebbe inusabile.
+ *
+ * Lo spegne drv_ioctl(TTY_IOCTL_SETRAW) e lo riaccende SETCOOKED.
  * ============================================================================= */
-uint8_t vga_get_row(void) { return vga_row; }
-uint8_t vga_get_col(void) { return vga_col; }
+void vga_set_serial_mirror(int on)
+{
+    serial_mirror = on ? 1 : 0;
+}
+
+/* =============================================================================
+ * vga_switch_console — Porta in primo piano la console n
+ *
+ * Il buffer della console che entra viene riversato per intero sulla
+ * memoria video, e il cursore hardware prende la posizione e la
+ * visibilità che quella console si era tenuta da parte. Chi esce non
+ * viene toccato: continua a scrivere nel proprio buffer come se niente
+ * fosse, ed è esattamente questo che permette a un programma di
+ * restare in vita mentre si lavora altrove.
+ *
+ * Ritorna 0, o -1 se il numero non esiste.
+ * ============================================================================= */
+int vga_switch_console(uint32_t n)
+{
+    Console *c;
+
+    if (n >= VGA_N_CONSOLE) return -1;
+    if (n == g_visibile)    return 0;
+
+    g_visibile = n;
+    c = &g_console[n];
+
+    riversa_tutto(c);
+    cursore_hw(c->cursore_on);
+    vga_update_cursor(c);
+    return 0;
+}
+
+uint32_t vga_visible_console(void)
+{
+    return g_visibile;
+}

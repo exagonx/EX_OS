@@ -146,57 +146,88 @@ static unsigned char g_caps  = 0;
 static unsigned char g_e0    = 0;   /* prefisso tasto esteso 0xE0 */
 static unsigned char g_leds  = 0;   /* bit0=Scroll, bit1=Num, bit2=Caps */
 
-/* Buffer di riga in costruzione (line discipline "cooked") */
-static char     g_line[KBD_LINE_MAX];
-static unsigned g_line_len = 0;
-
-/* Ring buffer delle righe già completate ma non ancora richieste da
- * nessuno (type-ahead: l'utente digita mentre il client sta ancora
- * eseguendo il comando precedente). Contiene i byte delle righe, '\n'
- * incluso; g_rlines conta quanti '\n' ci sono, cioè quante righe
- * complete sono disponibili. */
-#define KBD_RING_SIZE   1024
-static char     g_ring[KBD_RING_SIZE];
-static unsigned g_rhead = 0, g_rtail = 0, g_rcount = 0, g_rlines = 0;
-
-/* Client attualmente in attesa di una riga (0 = nessuno) */
-static unsigned g_reader_pid = 0;
-static unsigned g_reader_max = KBD_LINE_MAX;
-
 /* =============================================================================
- * Modalità raw — vedi il commento esteso in kbd_proto.h
+ * Stato di input, UNO PER CONSOLE
  *
- * Le due modalità condividono la traduzione degli scancode fino ai
- * modificatori, poi divergono del tutto: in cooked il risultato è un
- * carattere che entra in g_line (con eco e Backspace), in raw è un
- * evento che entra in g_keys così com'è.
+ * Con le console virtuali il driver non serve più "la console": ne
+ * serve quattro, di cui una sola in primo piano. Tutto ciò che riguarda
+ * il testo digitato — la riga in costruzione, il type-ahead, chi sta
+ * aspettando, la modalità — appartiene a una console precisa, e tenerlo
+ * in variabili globali significherebbe che la shell della console 2
+ * riceve i tasti battuti sulla console 1.
  *
- * Il ring degli eventi è piccolo di proposito. Il type-ahead di una
- * console a righe ha senso — si digita il comando successivo mentre il
- * precedente lavora — mentre trentadue tasti accumulati davanti a un
- * editor che non li ha ancora letti sono già una raffica che l'utente
- * non ha voluto: meglio perderne la coda che ripeterla a schermo dopo
- * secondi. Serve solo a coprire la finestra fra un READKEY e il
- * successivo.
+ * Restano globali soltanto i modificatori (Shift, Ctrl, Alt, CapsLock):
+ * quelli sono stato FISICO della tastiera, non input accumulato, e la
+ * tastiera è una sola.
  * ============================================================================= */
-#define KBD_KEYRING_SIZE    32
+#define KBD_RING_SIZE   512     /* type-ahead per console, in byte */
+#define KBD_KEYRING_SIZE 32     /* eventi tasto in coda, per console */
 
-static unsigned char g_raw = 0;          /* 0 = cooked, 1 = raw */
-static unsigned g_keys[KBD_KEYRING_SIZE];
-static unsigned g_khead = 0, g_ktail = 0, g_kcount = 0;
+typedef struct {
+    /* Riga in costruzione (line discipline "cooked") */
+    char     line[KBD_LINE_MAX];
+    unsigned line_len;
 
-/* Client in attesa di un tasto (0 = nessuno). Distinto da g_reader_pid:
- * sono due protocolli diversi e tenerli separati evita di consegnare una
- * riga a chi aveva chiesto un tasto. */
-static unsigned g_keyreader_pid = 0;
+    /* Ring delle righe già completate ma non ancora richieste da nessuno
+     * (type-ahead: l'utente digita mentre il client sta ancora eseguendo
+     * il comando precedente). Contiene i byte delle righe, '\n' incluso;
+     * rlines conta quanti '\n' ci sono, cioè quante righe complete sono
+     * disponibili. */
+    char     ring[KBD_RING_SIZE];
+    unsigned rhead, rtail, rcount, rlines;
+
+    /* Client in attesa di una RIGA (0 = nessuno) */
+    unsigned reader_pid;
+    unsigned reader_max;
+
+    /* =====================================================================
+     * Modalità raw — vedi il commento esteso in kbd_proto.h
+     *
+     * Le due modalità condividono la traduzione degli scancode fino ai
+     * modificatori, poi divergono del tutto: in cooked il risultato è un
+     * carattere che entra in line (con eco e Backspace), in raw è un
+     * evento che entra in keys così com'è.
+     *
+     * Il ring degli eventi è piccolo di proposito. Il type-ahead di una
+     * console a righe ha senso — si digita il comando successivo mentre
+     * il precedente lavora — mentre trentadue tasti accumulati davanti a
+     * un editor che non li ha ancora letti sono già una raffica che
+     * l'utente non ha voluto: meglio perderne la coda che ripeterla a
+     * schermo dopo secondi. Serve solo a coprire la finestra fra un
+     * READKEY e il successivo.
+     * ===================================================================== */
+    unsigned char raw;
+    unsigned keys[KBD_KEYRING_SIZE];
+    unsigned khead, ktail, kcount;
+
+    /* Client in attesa di un TASTO. Distinto da reader_pid: sono due
+     * protocolli diversi e tenerli separati evita di consegnare una riga
+     * a chi aveva chiesto un tasto. */
+    unsigned keyreader_pid;
+} ConsoleIn;
+
+static ConsoleIn g_c[KBD_N_CONSOLE];
+
+/* Console in primo piano. È la sola che riceve i tasti: le altre hanno
+ * i propri lettori in attesa, fermi finché non tornano davanti. */
+static unsigned g_attiva = 0;
 
 /* =============================================================================
- * Eco a video — passa dal TTY del kernel via fd 1, non da accessi
- * diretti alla memoria VGA (che in ring3 non è mappata).
+ * Eco a video — sulla console di chi sta digitando, non su quella del
+ * driver.
+ *
+ * Prima era una write(1, ...), che finiva sullo stdout del processo kbd
+ * — cioè sulla console 0. Con una console sola coincidevano; con
+ * quattro, l'eco dei tasti battuti sulla console 2 sarebbe comparso
+ * sulla 0, e la 2 sarebbe rimasta muta mentre l'utente digitava.
+ *
+ * console_write() e' la syscall che esiste apposta per questo caso:
+ * scrivere su una console che non e' la propria. Vedi SYS_CONSOLE_WRITE
+ * in kernel/include/syscall.h.
  * ============================================================================= */
 static void echo(const char *s, unsigned n)
 {
-    write(1, s, n);
+    console_write(g_attiva, s, n);
 }
 
 static void echo_char(char c)
@@ -207,7 +238,7 @@ static void echo_char(char c)
 /* =============================================================================
  * Ring buffer delle righe complete
  * ============================================================================= */
-static void ring_put_line(const char *s, unsigned len)
+static void ring_put_line(ConsoleIn *c, const char *s, unsigned len)
 {
     unsigned i;
 
@@ -216,75 +247,76 @@ static void ring_put_line(const char *s, unsigned len)
      * mentirebbe a ring_take_line, che consumerebbe anche la riga
      * successiva credendola la stessa. Meglio perdere la riga in
      * overflow che disallineare il buffer. */
-    if (len + 1 > KBD_RING_SIZE - g_rcount) return;
+    if (len + 1 > KBD_RING_SIZE - c->rcount) return;
 
     for (i = 0; i < len; i++) {
-        g_ring[g_rtail] = s[i];
-        g_rtail = (g_rtail + 1) % KBD_RING_SIZE;
-        g_rcount++;
+        c->ring[c->rtail] = s[i];
+        c->rtail = (c->rtail + 1) % KBD_RING_SIZE;
+        c->rcount++;
     }
-    g_ring[g_rtail] = '\n';
-    g_rtail = (g_rtail + 1) % KBD_RING_SIZE;
-    g_rcount++;
-    g_rlines++;
+    c->ring[c->rtail] = '\n';
+    c->rtail = (c->rtail + 1) % KBD_RING_SIZE;
+    c->rcount++;
+    c->rlines++;
 }
 
 /* Estrae la prossima riga completa. Copia al più 'max' byte in out; i
  * byte eccedenti vengono comunque consumati dal ring (la riga non resta
  * a metà). Ritorna il numero di byte copiati. */
-static unsigned ring_take_line(char *out, unsigned max)
+static unsigned ring_take_line(ConsoleIn *c, char *out, unsigned max)
 {
     unsigned n = 0;
 
-    if (g_rlines == 0) return 0;
+    if (c->rlines == 0) return 0;
 
-    while (g_rcount > 0) {
-        char c = g_ring[g_rhead];
-        g_rhead = (g_rhead + 1) % KBD_RING_SIZE;
-        g_rcount--;
-        if (n < max) out[n++] = c;
-        if (c == '\n') break;
+    while (c->rcount > 0) {
+        char ch = c->ring[c->rhead];
+        c->rhead = (c->rhead + 1) % KBD_RING_SIZE;
+        c->rcount--;
+        if (n < max) out[n++] = ch;
+        if (ch == '\n') break;
     }
-    g_rlines--;
+    c->rlines--;
     return n;
 }
 
 /* =============================================================================
- * try_serve_reader — consegna una riga al client in attesa, se ce n'è
- * una pronta. Chiamata sia quando arriva una richiesta (potrebbe esserci
- * già type-ahead in coda) sia quando una riga si completa (il client
- * potrebbe essere già in attesa da prima).
+ * try_serve_reader — consegna una riga al client in attesa su una
+ * console, se ce n'è una pronta. Chiamata sia quando arriva una
+ * richiesta (potrebbe esserci già type-ahead in coda) sia quando una
+ * riga si completa (il client potrebbe essere già in attesa da prima).
  * ============================================================================= */
-static void try_serve_reader(void)
+static void try_serve_reader(unsigned n)
 {
-    char     out[KBD_LINE_MAX];
-    unsigned max = g_reader_max;
-    unsigned len;
+    ConsoleIn *c = &g_c[n];
+    char       out[KBD_LINE_MAX];
+    unsigned   max = c->reader_max;
+    unsigned   len;
 
-    if (g_reader_pid == 0 || g_rlines == 0) return;
+    if (c->reader_pid == 0 || c->rlines == 0) return;
 
     if (max > sizeof(out)) max = sizeof(out);
-    len = ring_take_line(out, max);
+    len = ring_take_line(c, out, max);
 
-    if (ipc_send(g_reader_pid, KBD_MSG_LINE, out, len) < 0) {
+    if (ipc_send(c->reader_pid, KBD_MSG_LINE, out, len) < 0) {
         /* Client sparito fra la richiesta e la risposta (terminato, o
          * ucciso da un fault): la riga è persa, ma il driver resta vivo
          * e pronto per il prossimo. */
-        printf("kbd: consegna a PID %u fallita, client sparito\n", g_reader_pid);
+        printf("kbd: consegna a PID %u fallita, client sparito\n", c->reader_pid);
     }
-    g_reader_pid = 0;
+    c->reader_pid = 0;
 }
 
 /* =============================================================================
  * Ring degli eventi tasto (modalità raw)
  * ============================================================================= */
-static void key_put(unsigned key)
+static void key_put(ConsoleIn *c, unsigned key)
 {
-    if (g_kcount >= KBD_KEYRING_SIZE) return;   /* raffica: si perde la coda */
+    if (c->kcount >= KBD_KEYRING_SIZE) return;   /* raffica: si perde la coda */
 
-    g_keys[g_ktail] = key;
-    g_ktail = (g_ktail + 1) % KBD_KEYRING_SIZE;
-    g_kcount++;
+    c->keys[c->ktail] = key;
+    c->ktail = (c->ktail + 1) % KBD_KEYRING_SIZE;
+    c->kcount++;
 }
 
 /* =============================================================================
@@ -293,53 +325,88 @@ static void key_put(unsigned key)
  * Il fallimento della consegna qui vale più che nel caso a righe: se il
  * programma a schermo intero è morto senza rimettere la console in
  * cooked, questo è il momento in cui ce ne accorgiamo, ed è l'ultimo
- * utile per non lasciare la tastiera muta. Vedi kbd_proto.h.
+ * utile per non lasciare quella console muta. Vedi kbd_proto.h.
  * ============================================================================= */
-static void kbd_set_mode(unsigned mode);
+static void kbd_set_mode(unsigned n, unsigned mode);
 
-static void try_serve_keyreader(void)
+static void try_serve_keyreader(unsigned n)
 {
-    unsigned key;
+    ConsoleIn *c = &g_c[n];
+    unsigned   key;
 
-    if (g_keyreader_pid == 0 || g_kcount == 0) return;
+    if (c->keyreader_pid == 0 || c->kcount == 0) return;
 
-    key = g_keys[g_khead];
-    g_khead = (g_khead + 1) % KBD_KEYRING_SIZE;
-    g_kcount--;
+    key = c->keys[c->khead];
+    c->khead = (c->khead + 1) % KBD_KEYRING_SIZE;
+    c->kcount--;
 
-    if (ipc_send(g_keyreader_pid, KBD_MSG_KEY, &key, sizeof(key)) < 0) {
-        printf("kbd: consegna tasto a PID %u fallita, torno in cooked\n",
-               g_keyreader_pid);
-        g_keyreader_pid = 0;
-        kbd_set_mode(KBD_MODE_COOKED);
+    if (ipc_send(c->keyreader_pid, KBD_MSG_KEY, &key, sizeof(key)) < 0) {
+        printf("kbd: consegna tasto a PID %u fallita, console %u torna cooked\n",
+               c->keyreader_pid, n);
+        c->keyreader_pid = 0;
+        kbd_set_mode(n, KBD_MODE_COOKED);
         return;
     }
-    g_keyreader_pid = 0;
+    c->keyreader_pid = 0;
 }
 
 /* =============================================================================
- * kbd_set_mode — passa fra riga e tasto singolo.
+ * kbd_set_mode — passa fra riga e tasto singolo, su una console.
  *
  * Butta via lo stato di input accumulato in ENTRAMBE le direzioni: la
  * riga a metà e il type-ahead sono testo raccolto con la line discipline
  * cooked, gli eventi in coda sono tasti raccolti senza; consegnare gli
  * uni con le regole degli altri darebbe input inventato.
  * ============================================================================= */
-static void kbd_set_mode(unsigned mode)
+static void kbd_set_mode(unsigned n, unsigned mode)
 {
+    ConsoleIn    *c     = &g_c[n];
     unsigned char nuovo = (mode == KBD_MODE_RAW) ? 1 : 0;
 
-    if (nuovo == g_raw) return;
+    if (nuovo == c->raw) return;
 
-    g_raw       = nuovo;
-    g_line_len  = 0;
-    g_rhead = g_rtail = g_rcount = g_rlines = 0;
-    g_khead = g_ktail = g_kcount = 0;
+    c->raw      = nuovo;
+    c->line_len = 0;
+    c->rhead = c->rtail = c->rcount = c->rlines = 0;
+    c->khead = c->ktail = c->kcount = 0;
     g_e0        = 0;
 
     /* I modificatori NON si azzerano: sono stato fisico della tastiera,
      * non input accumulato. Se l'utente tiene premuto Shift mentre il
      * programma cambia modalità, Shift è ancora premuto. */
+}
+
+/* =============================================================================
+ * kbd_commuta — Alt+Fn: porta in primo piano un'altra console
+ *
+ * Due cose insieme, e devono restare insieme: si dice al kernel di
+ * mostrare l'altro schermo, e si sposta il proprio 'g_attiva' perché i
+ * tasti successivi vadano a chi ora è davanti. Se le due divergessero,
+ * si vedrebbe una console e si scriverebbe su un'altra.
+ *
+ * Il tasto NON viene consegnato a nessuno: è un comando all'interfaccia,
+ * non input per il programma in esecuzione. Vedi KBD_ALT_FN_COMMUTA in
+ * kbd_proto.h.
+ *
+ * Chi stava aspettando sulla console che entra viene servito subito, se
+ * ha del type-ahead in coda: potrebbe aver chiesto una riga molto prima
+ * ed essere rimasto fermo tutto il tempo in cui era nascosto.
+ * ============================================================================= */
+static void kbd_commuta(unsigned n)
+{
+    if (n >= KBD_N_CONSOLE || n == g_attiva) return;
+
+    if (console_switch(n) < 0) return;
+
+    g_attiva = n;
+
+    /* I modificatori restano premuti fisicamente (l'utente sta ancora
+     * tenendo giù Alt), ma un prefisso di tasto esteso a metà appartiene
+     * alla sequenza appena consumata e non va portato di là. */
+    g_e0 = 0;
+
+    try_serve_reader(g_attiva);
+    try_serve_keyreader(g_attiva);
 }
 
 /* =============================================================================
@@ -400,8 +467,9 @@ static unsigned kbd_mods(void)
  * ============================================================================= */
 static void kbd_raw_scancode(unsigned char sc, unsigned char esteso)
 {
-    unsigned base;
-    char     ascii;
+    ConsoleIn *c = &g_c[g_attiva];
+    unsigned   base;
+    char       ascii;
 
     /* Tasti estesi: solo navigazione. Il tastierino in versione estesa
      * manda anche 0x35 ('/') e 0x1C (Invio), che sono caratteri normali
@@ -413,17 +481,17 @@ static void kbd_raw_scancode(unsigned char sc, unsigned char esteso)
             else if (sc == 0x1C) base = '\n';
             else return;
         }
-        key_put(base | kbd_mods());
+        key_put(c, base | kbd_mods());
         return;
     }
 
     base = kbd_func_key(sc);
-    if (base != 0) { key_put(base | kbd_mods()); return; }
+    if (base != 0) { key_put(c, base | kbd_mods()); return; }
 
     /* Navigazione dal tastierino (NumLock spento): sc_normal ha 0 per
      * questi codici, quindi non si sta rubando nessun carattere. */
     base = kbd_nav_key(sc);
-    if (base != 0) { key_put(base | kbd_mods()); return; }
+    if (base != 0) { key_put(c, base | kbd_mods()); return; }
 
     if (sc >= 128) return;
 
@@ -434,7 +502,7 @@ static void kbd_raw_scancode(unsigned char sc, unsigned char esteso)
     if (ascii == 0) return;
 
     /* Nessuna trasformazione Ctrl: il modificatore viaggia a parte. */
-    key_put((unsigned)(unsigned char)ascii | kbd_mods());
+    key_put(c, (unsigned)(unsigned char)ascii | kbd_mods());
 }
 
 /* =============================================================================
@@ -583,7 +651,8 @@ static void kbd_set_leds(unsigned char leds)
  * ============================================================================= */
 static void kbd_process_scancode(unsigned char sc)
 {
-    char ascii;
+    ConsoleIn *c = &g_c[g_attiva];
+    char       ascii;
 
     /* Prefisso tasto esteso */
     if (sc == 0xE0) {
@@ -601,6 +670,24 @@ static void kbd_process_scancode(unsigned char sc)
         return;
     }
 
+    /* =====================================================================
+     * Alt+F1..F4 — COMMUTAZIONE DI CONSOLE
+     *
+     * Prima di ogni altra cosa, e senza consegnare il tasto a nessuno.
+     * Deve valere in cooked come in raw, e deve valere anche mentre un
+     * programma a schermo intero ha la console: se lo lasciassimo
+     * passare, basterebbe un editor che usa Alt+F per il menu File per
+     * rendere impossibile cambiare schermo — cioe' proprio nel caso in
+     * cui serve di piu'.
+     * ===================================================================== */
+    if (KBD_ALT_FN_COMMUTA && g_alt && !g_e0) {
+        unsigned n = kbd_func_key(sc);
+        if (n >= KBD_K_F1 && n < KBD_K_F1 + KBD_N_CONSOLE) {
+            kbd_commuta(n - KBD_K_F1);
+            return;
+        }
+    }
+
     /* Tasti estesi: consegnati come sequenze ANSI, esattamente come
      * faceva il TTY in-kernel. Non passano dal buffer di riga: un
      * cursore non è testo editabile. */
@@ -608,7 +695,7 @@ static void kbd_process_scancode(unsigned char sc)
         char seq[3];
         g_e0 = 0;
 
-        if (g_raw) { kbd_raw_scancode(sc, 1); return; }
+        if (c->raw) { kbd_raw_scancode(sc, 1); return; }
 
         seq[0] = '\x1B';
         seq[1] = '[';
@@ -621,10 +708,10 @@ static void kbd_process_scancode(unsigned char sc)
             case 0x4F: seq[2] = 'F'; break;   /* End */
             default:   return;                /* tasto esteso non mappato */
         }
-        if (g_line_len + 3 < KBD_LINE_MAX) {
-            g_line[g_line_len++] = seq[0];
-            g_line[g_line_len++] = seq[1];
-            g_line[g_line_len++] = seq[2];
+        if (c->line_len + 3 < KBD_LINE_MAX) {
+            c->line[c->line_len++] = seq[0];
+            c->line[c->line_len++] = seq[1];
+            c->line[c->line_len++] = seq[2];
         }
         return;
     }
@@ -642,7 +729,7 @@ static void kbd_process_scancode(unsigned char sc)
 
     /* Da qui in giù i due modelli divergono: la modalità raw non ha una
      * riga in costruzione, quindi non ha né eco né Backspace da gestire. */
-    if (g_raw) { kbd_raw_scancode(sc, 0); return; }
+    if (c->raw) { kbd_raw_scancode(sc, 0); return; }
 
     if (sc >= 128) return;
 
@@ -662,8 +749,8 @@ static void kbd_process_scancode(unsigned char sc)
      * proprio per questo che la riga non viene consegnata carattere per
      * carattere (vedi il commento sulla line discipline in tty.c). */
     if (ascii == '\b') {
-        if (g_line_len > 0) {
-            g_line_len--;
+        if (c->line_len > 0) {
+            c->line_len--;
             echo("\b \b", 3);
         }
         return;
@@ -671,8 +758,8 @@ static void kbd_process_scancode(unsigned char sc)
 
     if (ascii == '\n' || ascii == '\r') {
         echo_char('\n');
-        ring_put_line(g_line, g_line_len);
-        g_line_len = 0;
+        ring_put_line(c, c->line, c->line_len);
+        c->line_len = 0;
         return;
     }
 
@@ -689,8 +776,8 @@ static void kbd_process_scancode(unsigned char sc)
         echo_char(ascii);
     }
 
-    if (g_line_len < KBD_LINE_MAX - 1) {
-        g_line[g_line_len++] = ascii;
+    if (c->line_len < KBD_LINE_MAX - 1) {
+        c->line[c->line_len++] = ascii;
     }
     /* Riga piena: il carattere è già stato ecoato ma non viene
      * accumulato. Limite ereditato dal TTY in-kernel, non una
@@ -890,75 +977,107 @@ int main(int argc, char **argv)
         if (meta.sender_pid == IPC_SENDER_KERNEL &&
             meta.type == IPC_TYPE_IRQ_NOTIFY) {
             kbd_drain();
-            try_serve_reader();
-            try_serve_keyreader();
+            /* Solo la console in primo piano riceve input, quindi solo
+             * lei puo' avere qualcosa di nuovo da consegnare. */
+            try_serve_reader(g_attiva);
+            try_serve_keyreader(g_attiva);
             continue;
         }
 
         if (meta.type == KBD_MSG_SETMODE) {
-            unsigned mode = KBD_MODE_COOKED;
+            KbdSetMode m;
+
+            m.modo    = KBD_MODE_COOKED;
+            m.console = 0;
+
             if (meta.len >= sizeof(unsigned)) {
-                memcpy(&mode, payload, sizeof(unsigned));
-                kbd_set_mode(mode);
+                memcpy(&m.modo, payload, sizeof(unsigned));
+                if (meta.len >= sizeof(KbdSetMode)) {
+                    memcpy(&m.console, payload + sizeof(unsigned), sizeof(unsigned));
+                }
+                if (m.console >= KBD_N_CONSOLE) m.console = 0;
+                kbd_set_mode(m.console, m.modo);
+
+                /* Chi torna in cooked lascia dietro di sé un'eventuale
+                 * READKEY mai soddisfatta: la si dimentica qui,
+                 * altrimenti il primo tasto della sessione successiva
+                 * finirebbe a un destinatario che non lo aspetta più. */
+                if (!g_c[m.console].raw) g_c[m.console].keyreader_pid = 0;
             }
-            /* Chi torna in cooked lascia dietro di sé un'eventuale
-             * READKEY mai soddisfatta: la si dimentica qui, altrimenti
-             * il primo tasto della sessione successiva finirebbe a un
-             * destinatario che non lo aspetta più. */
-            if (!g_raw) g_keyreader_pid = 0;
             continue;
         }
 
         if (meta.type == KBD_MSG_READKEY) {
-            if (!g_raw) {
+            unsigned n = 0;
+
+            if (meta.len >= sizeof(unsigned)) memcpy(&n, payload, sizeof(unsigned));
+            if (n >= KBD_N_CONSOLE) n = 0;
+
+            if (!g_c[n].raw) {
                 /* In cooked non ci sono eventi da consegnare. Non si
                  * risponde: il client resterebbe comunque bloccato in
                  * ipc_recv, ma inventargli un tasto sarebbe peggio. */
-                printf("kbd: READKEY da PID %u in modalita' cooked, ignorata\n",
-                       meta.sender_pid);
+                printf("kbd: READKEY da PID %u su console %u in cooked, ignorata\n",
+                       meta.sender_pid, n);
                 continue;
             }
-            g_keyreader_pid = meta.sender_pid;
-            try_serve_keyreader();   /* potrebbe esserci già un tasto pronto */
+
+            g_c[n].keyreader_pid = meta.sender_pid;
+
+            /* Servito solo se e' la console in primo piano. Sulle altre
+             * la richiesta resta pendente e verra' onorata alla
+             * commutazione: e' cosi' che un editor su una console
+             * nascosta se ne sta fermo invece di rubare i tasti a chi
+             * sta davvero digitando. */
+            if (n == g_attiva) try_serve_keyreader(n);
             continue;
         }
 
         if (meta.type == KBD_MSG_READLINE) {
-            unsigned max = KBD_LINE_MAX;
+            KbdReadLine r;
 
-            /* Una richiesta di riga mentre siamo in raw significa che il
-             * programma a schermo intero non c'è più — è la shell che
-             * ha ripreso il prompt. Vedi kbd_proto.h: è la seconda delle
-             * due reti di sicurezza contro una console lasciata muta. */
-            if (g_raw) {
-                printf("kbd: READLINE in modalita' raw, ripristino cooked\n");
-                kbd_set_mode(KBD_MODE_COOKED);
-                g_keyreader_pid = 0;
-            }
+            r.max     = KBD_LINE_MAX;
+            r.console = 0;
 
             if (meta.len >= sizeof(unsigned)) {
-                memcpy(&max, payload, sizeof(unsigned));
+                memcpy(&r.max, payload, sizeof(unsigned));
+                if (meta.len >= sizeof(KbdReadLine)) {
+                    memcpy(&r.console, payload + sizeof(unsigned), sizeof(unsigned));
+                }
             }
-            if (max == 0 || max > KBD_LINE_MAX) max = KBD_LINE_MAX;
+            if (r.max == 0 || r.max > KBD_LINE_MAX) r.max = KBD_LINE_MAX;
+            if (r.console >= KBD_N_CONSOLE) r.console = 0;
 
-            /* Un solo lettore alla volta: la console è una sola. Se
-             * arriva una richiesta mentre un'altra è pendente, la nuova
-             * sostituisce la vecchia — il client precedente resterebbe
-             * comunque bloccato in ipc_recv, ma è una situazione che
-             * oggi non si verifica (solo il TTY del kernel chiede righe,
-             * e lo fa in modo sincrono per conto di un processo alla
-             * volta). Segnalata perché diventerà reale il giorno in cui
-             * ci saranno più terminali. */
-            if (g_reader_pid != 0 && g_reader_pid != meta.sender_pid) {
-                printf("kbd: richiesta da PID %u sostituisce quella di PID %u\n",
-                       meta.sender_pid, g_reader_pid);
+            /* Una richiesta di riga mentre quella console e' in raw
+             * significa che il programma a schermo intero non c'e' piu' —
+             * e' la shell che ha ripreso il prompt. Vedi kbd_proto.h: e'
+             * la seconda delle due reti di sicurezza contro una console
+             * lasciata muta. */
+            if (g_c[r.console].raw) {
+                printf("kbd: READLINE su console %u in raw, ripristino cooked\n",
+                       r.console);
+                kbd_set_mode(r.console, KBD_MODE_COOKED);
+                g_c[r.console].keyreader_pid = 0;
             }
-            g_reader_pid = meta.sender_pid;
-            g_reader_max = max;
+
+            /* Un solo lettore per console. Se ne arriva un secondo, il
+             * nuovo sostituisce il vecchio — che resterebbe comunque
+             * bloccato in ipc_recv. Segnalato perche' e' una situazione
+             * che non dovrebbe capitare: su ogni console c'e' una shell
+             * sola, e legge in modo sincrono. */
+            if (g_c[r.console].reader_pid != 0 &&
+                g_c[r.console].reader_pid != meta.sender_pid) {
+                printf("kbd: su console %u la richiesta di PID %u sostituisce "
+                       "quella di PID %u\n",
+                       r.console, meta.sender_pid, g_c[r.console].reader_pid);
+            }
+            g_c[r.console].reader_pid = meta.sender_pid;
+            g_c[r.console].reader_max = r.max;
 
             /* Potrebbe esserci già type-ahead pronto: non aspettare un
-             * altro tasto per consegnarlo. */
-            try_serve_reader();
+             * altro tasto per consegnarlo. Ma solo se e' la console in
+             * primo piano — sulle altre la richiesta resta in attesa. */
+            if (r.console == g_attiva) try_serve_reader(r.console);
             continue;
         }
 

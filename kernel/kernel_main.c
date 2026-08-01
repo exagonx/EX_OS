@@ -546,27 +546,66 @@ KernelConfig *cfg = cfg_load();
              "ripiego sull'handler IRQ1 in-kernel");
     }
 
-    klog(LOG_INFO, "[PASSO 15] Avvio shell: %s", cfg->shell_path);
+    /* =========================================================================
+     * PASSO 15: una shell per CONSOLE VIRTUALE
+     *
+     * Erano una sola, e la console pure. Con VGA_N_CONSOLE schermi
+     * indipendenti ne serve una per ciascuno: e' il modello di Linux
+     * (una getty per terminale) ed e' cio' che rende utile Alt+Fn —
+     * passare alla console 2 deve dare un prompt pronto, non uno schermo
+     * vuoto che non risponde.
+     *
+     * La console 0 e' anche quella di SISTEMA, dove il kernel stampa i
+     * propri messaggi: la sua shell li vede scorrere accanto al prompt,
+     * esattamente come prima che esistessero le altre.
+     *
+     * Se il caricamento di una fallisce non si abortisce il resto: una
+     * console senza shell e' uno schermo inerte, quattro console senza
+     * shell sono un sistema morto. Con almeno una viva si puo' ancora
+     * lavorare e capire cosa e' andato storto.
+     * ========================================================================= */
+    klog(LOG_INFO, "[PASSO 15] Avvio di %u shell (una per console): %s",
+         (unsigned)VGA_N_CONSOLE, cfg->shell_path);
     {
-        Process      *shell_proc;
-        ElfLoadResult elf_res;
+        uint32_t n;
+        uint32_t avviate = 0;
 
-        /* proc_create con entry=0 crea il processo in stato BLOCKED:
-         * non viene schedulato finché non chiamiamo proc_set_ready().
-         * Questo ci permette di fare elf_load() con interrupt ABILITATI
-         * (il driver FDC ne ha bisogno per i delay basati su g_ticks),
-         * senza il rischio che lo scheduler salti a entry=0 prima che
-         * l'ELF sia caricato. */
-        shell_proc = proc_create("shell", 0, PRIO_NORMAL, 0);
-        if (shell_proc == NULL) {
-            klog(LOG_ERROR, "[PASSO 15] Impossibile creare processo shell!");
-        } else {
+        for (n = 0; n < VGA_N_CONSOLE; n++) {
+            Process      *shell_proc;
+            ElfLoadResult elf_res;
+            char          nome[16];
+
+            /* "sh0", "sh1", ... — il nome compare in `ps` e nei messaggi
+             * dello scheduler, e distinguerle serve. */
+            nome[0] = 's'; nome[1] = 'h';
+            nome[2] = (char)('0' + n);
+            nome[3] = '\0';
+
+            /* proc_create con entry=0 crea il processo in stato BLOCKED:
+             * non viene schedulato finché non chiamiamo proc_set_ready().
+             * Questo ci permette di fare elf_load() con interrupt ABILITATI
+             * (il driver FDC ne ha bisogno per i delay basati su g_ticks),
+             * senza il rischio che lo scheduler salti a entry=0 prima che
+             * l'ELF sia caricato. */
+            shell_proc = proc_create(nome, 0, PRIO_NORMAL, 0);
+            if (shell_proc == NULL) {
+                klog(LOG_ERROR, "[PASSO 15] Impossibile creare la shell "
+                     "della console %u!", n);
+                continue;
+            }
+
+            /* Il legame fra processo e schermo. Da qui in poi ogni
+             * write(1,...) di questa shell — e di tutto ciò che lancerà,
+             * perché sys_spawn lo eredita — finisce su questa console. */
+            shell_proc->console = n;
+
             if (elf_load(cfg->shell_path, shell_proc, &elf_res) == 0) {
                 proc_set_entry(shell_proc, elf_res.entry_point, elf_res.user_stack_top);
                 proc_set_ready(shell_proc);   /* ora è schedulabile */
-                klog(LOG_INFO, "[PASSO 15] Shell '%s' caricata: "
-                     "entry=0x%08x stack=0x%08x",
-                     cfg->shell_path,
+                avviate++;
+                klog(LOG_INFO, "[PASSO 15] Console %u: shell '%s' caricata "
+                     "(PID %u, entry=0x%08x stack=0x%08x)",
+                     n, cfg->shell_path, shell_proc->pid,
                      elf_res.entry_point, elf_res.user_stack_top);
             } else {
                 /* NON dire "non trovata": elf_load fallisce per almeno una
@@ -577,14 +616,19 @@ KernelConfig *cfg = cfg_load();
                  * meno probabile, e sul Pentium II ha mandato la diagnosi
                  * fuori strada: il file c'era eccome, era la lettura del
                  * cilindro 10 a fallire. */
-                klog(LOG_WARN, "[PASSO 15] caricamento di '%s' fallito "
-                     "(causa nella riga ELF: qui sopra) — avvio senza shell",
-                     cfg->shell_path);
+                klog(LOG_WARN, "[PASSO 15] Console %u: caricamento di '%s' "
+                     "fallito (causa nella riga ELF: qui sopra)",
+                     n, cfg->shell_path);
                 /* Stesso motivo del PASSO 14b: rilascia tutte le risorse
                  * del PCB scratch, non lasciarlo ZOMBIE non raccoglibile. */
                 proc_kill(shell_proc->pid);
                 proc_reap_zombie(shell_proc);
             }
+        }
+
+        if (avviate == 0) {
+            klog(LOG_ERROR, "[PASSO 15] Nessuna shell avviata — "
+                 "il sistema resta senza console");
         }
     }
 

@@ -20,10 +20,13 @@
  *                         ombra per ridisegnare solo ciò che cambia
  *   pthread           ->  niente thread. L'evidenziazione sintattica è
  *                         sincrona (si calcola solo per le 21 righe
- *                         visibili, quindi costa poco), l'orologio
- *                         diventa l'uptime aggiornato a ogni tasto e
- *                         l'autosalvataggio si misura sull'uptime
- *                         invece che su un thread che conta i secondi
+ *                         visibili, quindi costa poco); l'orologio e
+ *                         l'autosalvataggio, che nell'originale avevano
+ *                         un thread dedicato a contare i secondi, qui
+ *                         vivono nel ciclo principale — che non aspetta
+ *                         piu' un tasto all'infinito ma si risveglia da
+ *                         solo ogni GF_TICK_MS (vedi ipc_recv_timeout
+ *                         in lib/include/libc.h)
  *   stdio POSIX       ->  open/read/write/listdir della libc di EX-OS
  *   malloc/realloc/   ->  la free() di EX-OS è un no-op dichiarato
  *   free intensivi        (allocatore a bump su sbrk, vedi lib/libc.c).
@@ -49,7 +52,7 @@
 #include "kbd_proto.h"
 
 #define GF_NAME     "GF Edit"
-#define GF_VERSION  "0.001"
+#define GF_VERSION  "0.002"
 #define GF_AUTHOR   "Graziano Falcone"
 #define GF_EMAIL    "exagonx@hotmail.com"
 #define GF_LICENSE  "GPL 2.0"
@@ -103,6 +106,13 @@
 #define GF_FIND_MAX     64
 #define GF_MAX_MATCHES  512
 #define GF_DEFAULT_TAB  4
+
+/* Ogni quanto il ciclo principale si risveglia da solo, anche senza
+ * tasti premuti: e' il passo con cui avanzano l'orologio nella barra di
+ * stato e il conto dell'autosalvataggio. Mezzo secondo non fa mai
+ * saltare un secondo a video e costa nulla — fra un risveglio e l'altro
+ * il processo e' BLOCKED e non consuma un tick di CPU. */
+#define GF_TICK_MS      500
 
 /* =============================================================================
  * Attributo di colore: un byte VGA, sfondo nei bit alti
@@ -353,7 +363,17 @@ void     gf_term_riempi(int r, int c, int n, char ch, unsigned char attr);
 void     gf_term_riquadro(int r, int c, int h, int w, unsigned char attr);
 void     gf_term_cursore(int r, int c, int visibile);
 void     gf_term_flush(void);
-unsigned gf_getkey(void);
+
+/* Valori che gf_getkey_timeout ritorna al posto di un tasto. Stanno
+ * sopra KBD_KEY_MASK, quindi non possono collidere con un codice vero. */
+#define GF_KEY_SCADUTA  0xF0000000u   /* scadenza passata, nessun tasto */
+#define GF_KEY_ERRORE   0xF0000001u   /* il servizio tastiera non risponde */
+
+unsigned gf_getkey(void);                        /* attesa senza scadenza */
+unsigned gf_getkey_timeout(unsigned timeout_ms); /* 0 = senza scadenza */
+
+void     gf_ora(char *buf, int size);    /* "HH:MM:SS", o "--:--:--" */
+void     gf_data(char *buf, int size);   /* "GG/MM/AAAA" */
 
 /* Piccole utilità di formattazione: la libc di EX-OS non ha snprintf, e
  * costruire le barre di stato concatenando a mano sarebbe illeggibile.

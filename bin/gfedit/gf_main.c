@@ -53,8 +53,21 @@ void gf_run(GfEdit *self)
 
         gf_disegna(self);
 
-        key = gf_getkey();
-        if (key == 0) {
+        /* =================================================================
+         * Attesa con scadenza, non attesa e basta.
+         *
+         * Con una ipc_recv senza scadenza l'editor restava fermo finche'
+         * l'utente non premeva qualcosa, e la barra di stato — orologio
+         * compreso — si aggiornava solo in quell'istante. Mezzo secondo
+         * e' abbastanza fitto perche' i secondi non saltino mai e
+         * abbastanza rado da costare nulla: fra un risveglio e l'altro
+         * il processo e' BLOCKED e non consuma un tick.
+         * ================================================================= */
+        key = gf_getkey_timeout(GF_TICK_MS);
+
+        if (key == GF_KEY_SCADUTA) continue;   /* si ridisegna e si riaspetta */
+
+        if (key == GF_KEY_ERRORE) {
             /* Il servizio tastiera non risponde più: continuare
              * significherebbe un ciclo a vuoto con lo schermo pieno e
              * nessun modo di uscire. */

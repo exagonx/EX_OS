@@ -239,6 +239,53 @@ dove. Un modello mirato come `tmp*` non la chiede.
 
 ---
 
+## Console virtuali — Alt+F1 … Alt+F4
+
+Quattro schermi indipendenti, uno solo visibile per volta, ognuno con la propria
+shell avviata al boot. **Alt+F1..F4** commuta: il programma che stava girando
+non viene sospeso né chiuso, continua a lavorare e a disegnare nel proprio
+buffer, e si ritrova lo schermo intatto quando ci si torna sopra.
+
+È la risposta alla domanda "come lancio un'altra cosa senza chiudere questa":
+apri `gfedit` sulla console 2, premi Alt+F3, hai un prompt pulito, e Alt+F2 ti
+riporta all'editor esattamente dove l'avevi lasciato.
+
+| | |
+|---|---|
+| Console 0 (Alt+F1) | è anche la console di **sistema**: i messaggi del kernel (`klog`) escono qui, accanto al prompt. Le altre restano pulite. |
+| Ereditarietà | un programma nasce sulla console del padre (`sys_spawn`), quindi resta dove è stato lanciato |
+| Tastiera | i tasti vanno **solo** alla console in primo piano; le shell delle altre restano ferme al proprio prompt con la richiesta di lettura pendente |
+| Modalità raw | è **per console**: mentre gfedit tiene la 2 in raw, la shell della 1 continua a ricevere righe intere con eco e Backspace |
+
+Alt+Fn è intercettato dal driver tastiera **prima** di qualunque altra
+elaborazione e non viene consegnato a nessuno: è un comando all'interfaccia, non
+input per il programma in esecuzione. Senza quella precedenza basterebbe un
+editor che usa Alt+F per il menu File per rendere impossibile cambiare schermo —
+cioè proprio nel caso in cui serve di più.
+
+Costo: 4 KB di BSS del kernel per console (il buffer di schermo) più un processo
+shell da ~14 KB. Il numero è `VGA_N_CONSOLE` in `kernel/include/vga.h`, e deve
+restare uguale a `KBD_N_CONSOLE` in `drivers/kbd/kbd_proto.h`.
+
+---
+
+## Data e ora
+
+`time_now()` legge l'orologio CMOS della macchina (MC146818, porte 0x70/0x71) e
+restituisce data e ora vere — quelle che l'orologio a batteria continua a contare
+a macchina spenta. Da non confondere con `uptime_ms()`, che misura *durate* e non
+sa che ora sia.
+
+Ritorna `-ENODEV` se l'orologio non risponde o consegna una data impossibile
+(succede su hardware vecchio con la batteria del CMOS scarica): in quel caso il
+chiamante deve dire "ora ignota" invece di mostrare un orario inventato — gfedit
+scrive `--:--:--`.
+
+⚠️ In QEMU il RTC parte in **UTC**, non in ora locale. Per vedere l'ora del fuso
+serve `-rtc base=localtime` fra i `QEMU_FLAGS` del Makefile.
+
+---
+
 ## /bin/textline — editor di testo lineare
 
 Modello edlin: si opera per numero di riga, non con un cursore. Resta il modo
@@ -283,6 +330,11 @@ gfedit -h             elenco delle scorciatoie
 | Ricerca | Ctrl+F, F3, Shift+F3, Ctrl+H |
 | Aree | F6, Shift+F6, Alt+1…Alt+8 |
 | Menu | F10 o ESC, oppure Alt+F M C O A |
+
+La barra di stato mostra l'ora del giorno vera, che **avanza da sola** anche a
+tastiera ferma: il ciclo principale non aspetta più un tasto all'infinito ma si
+risveglia ogni mezzo secondo (`ipc_recv_timeout`). Fra un risveglio e l'altro il
+processo è `BLOCKED` e non consuma un tick di CPU.
 
 Linguaggi evidenziati: C, C++, BASIC, assembly, riconosciuti dall'estensione e
 cambiabili da *Opzioni → Linguaggio*.

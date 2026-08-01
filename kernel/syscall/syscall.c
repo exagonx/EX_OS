@@ -112,6 +112,11 @@ void syscall_init(void)
     syscall_table[SYS_IOPORT_BIND]  = sys_ioport_bind;
     syscall_table[SYS_IOPORT_IN]    = sys_ioport_in;
     syscall_table[SYS_IOPORT_OUT]   = sys_ioport_out;
+    syscall_table[SYS_IPC_RECV_TMO] = sys_ipc_recv_tmo;
+    syscall_table[SYS_TIME]         = sys_time;
+    syscall_table[SYS_CONSOLE_SWITCH] = sys_console_switch;
+    syscall_table[SYS_CONSOLE_WRITE]  = sys_console_write;
+    syscall_table[SYS_CONSOLE_INFO]   = sys_console_info;
 
     for (i = 0; i < SYSCALL_COUNT; i++) if (syscall_table[i]) count++;
     klog(LOG_INFO, "SYSCALL: %u syscall registrate (int 0x80)", count);

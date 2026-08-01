@@ -393,7 +393,7 @@ void tty_set_input_source(int src)
 static int tty_read_ipc(char *dst, uint32_t n)
 {
     IpcMessage meta;
-    uint32_t   req_max = n;
+    KbdReadLine richiesta;
     int32_t    r;
 
     if (proc_get_current() == NULL) {
@@ -427,9 +427,16 @@ static int tty_read_ipc(char *dst, uint32_t n)
         }
     }
 
-    if (req_max > KBD_LINE_MAX) req_max = KBD_LINE_MAX;
+    richiesta.max = n;
+    if (richiesta.max > KBD_LINE_MAX) richiesta.max = KBD_LINE_MAX;
 
-    r = ipc_send(g_kbd_pid, KBD_MSG_READLINE, &req_max, sizeof(req_max));
+    /* La console di chi ha chiamato read(0), non quella visibile: il
+     * driver deve sapere a quale schermo appartiene questa richiesta,
+     * perché serve solo chi sta sulla console in primo piano e mette
+     * gli altri in attesa. Vedi drivers/kbd/kbd.c. */
+    richiesta.console = proc_get_current()->console;
+
+    r = ipc_send(g_kbd_pid, KBD_MSG_READLINE, &richiesta, sizeof(richiesta));
     if (r < 0) {
         /* -ESRCH: il driver è morto. Riprendiamoci la tastiera, così un
          * crash del driver degrada la console invece di spegnerla. */
@@ -624,15 +631,12 @@ int drv_ioctl(int cmd, void *arg)
             klog(LOG_DEBUG, "TTY: uscita in modalita' cooked (specchio seriale acceso)");
             return 0;
         }
-        case TTY_IOCTL_CLEAR: {
-            vga_clear();
-            return 0;
-        }
-        case TTY_IOCTL_SETCOLOR: {
-            uint32_t color = (uint32_t)(uintptr_t)arg;
-            vga_setcolor((uint8_t)(color & 0xF), (uint8_t)((color >> 4) & 0xF));
-            return 0;
-        }
+        /* TTY_IOCTL_CLEAR e TTY_IOCTL_SETCOLOR non passano piu' di qui:
+         * riguardano UNA console precisa — quella del processo che
+         * chiama — e sys_ioctl li risolve da solo, perche' e' li' che il
+         * numero di console e' noto. Questa funzione riceve soltanto
+         * (comando, argomento) e non ha modo di sapere per conto di chi
+         * sta lavorando. */
     }
     return -1;
 }

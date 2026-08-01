@@ -692,6 +692,7 @@ KERNEL_C_SRC   := $(KERNEL_DIR)/arch/x86/gdt.c \
                   $(KERNEL_DIR)/arch/x86/idt.c \
                   $(KERNEL_DIR)/arch/x86/isr.c \
                   $(KERNEL_DIR)/arch/x86/vga.c \
+                  $(KERNEL_DIR)/arch/x86/rtc.c \
                   $(KERNEL_DIR)/arch/x86/kprintf.c \
                   $(KERNEL_DIR)/mm/pmm.c \
                   $(KERNEL_DIR)/mm/paging.c \

@@ -136,7 +136,46 @@ int32_t ipc_send(uint32_t dest_pid, uint32_t type,
  * ============================================================================= */
 int32_t ipc_recv(IpcMessage *out, void *buf, uint32_t buf_len)
 {
+    return ipc_recv_timeout(out, buf, buf_len, 0);
+}
+
+/* =============================================================================
+ * ipc_recv_timeout — come ipc_recv, ma rinuncia dopo timeout_ms
+ *
+ * timeout_ms == 0 significa "aspetta per sempre", cioè esattamente la
+ * ipc_recv di prima. Con una scadenza ritorna -ETIMEDOUT se allo
+ * scadere non è arrivato niente.
+ *
+ * A COSA SERVE. Senza, un programma interattivo di EX-OS non può fare
+ * NULLA mentre aspetta un tasto: resta fermo in ipc_recv finché
+ * qualcuno non preme qualcosa. È il motivo per cui l'orologio di
+ * /bin/gfedit avanzava solo alla pressione di un tasto — l'editor non
+ * aveva modo di riprendere il controllo allo scadere di un secondo.
+ * Con la scadenza il ciclo diventa quello di qualunque interfaccia:
+ * aspetta un evento O il prossimo tick di lavoro, quello che arriva
+ * prima.
+ *
+ * ATTENZIONE alla finestra fra l'armare la scadenza e il bloccarsi: le
+ * interrupt restano DISABILITATE fino dentro sched_block(). Riabilitarle
+ * prima aprirebbe la stessa "lost wakeup" già documentata in
+ * drivers/tty/tty.c — il tick potrebbe trovare il processo ancora
+ * RUNNING, non svegliarlo, e subito dopo sched_block() lo metterebbe a
+ * dormire su una sveglia già consumata.
+ * ============================================================================= */
+int32_t ipc_recv_timeout(IpcMessage *out, void *buf, uint32_t buf_len,
+                         uint32_t timeout_ms)
+{
     Process *self = proc_get_current();
+    uint32_t scadenza = 0;
+
+    if (timeout_ms > 0) {
+        /* ms -> tick, arrotondando per eccesso: il PIT è a 100Hz e una
+         * scadenza sotto i 10 ms non è rappresentabile. */
+        uint32_t ticks = (timeout_ms + 9) / 10;
+        if (ticks == 0) ticks = 1;
+        scadenza = g_ticks + ticks;
+        if (scadenza == 0) scadenza = 1;   /* 0 significa "nessuna scadenza" */
+    }
 
     for (;;) {
         interrupts_disable();
@@ -159,17 +198,29 @@ int32_t ipc_recv(IpcMessage *out, void *buf, uint32_t buf_len)
 
             self->ipc_head = (self->ipc_head + 1) % IPC_MAILBOX_DEPTH;
             self->ipc_count--;
+            self->block_until = 0;
 
             interrupts_enable();
             return 0;
         }
 
-        /* Mailbox vuota: blocca finché ipc_send non consegna qualcosa.
-         * sched_block() gestisce internamente cli/sti e il context
-         * switch — al ritorno da qui la condizione va ricontrollata
-         * (potremmo essere stati svegliati da un risveglio spurio). */
-        interrupts_enable();
-        sched_block(PROC_BLOCKED);
+        /* Scadenza superata e mailbox ancora vuota: si rinuncia. Il
+         * controllo sta QUI e non nello scheduler perché è il
+         * chiamante — non il tick — a sapere che cosa stava aspettando
+         * e quindi se l'attesa sia davvero fallita. */
+        if (scadenza != 0 && g_ticks >= scadenza) {
+            self->block_until = 0;
+            interrupts_enable();
+            return ERR(ETIMEDOUT);
+        }
+
+        /* Mailbox vuota: blocca finché ipc_send non consegna qualcosa,
+         * o finché il tick non fa scattare la scadenza. sched_block()
+         * gestisce internamente cli/sti e il context switch — al ritorno
+         * da qui la condizione va ricontrollata (potremmo essere stati
+         * svegliati da un risveglio spurio, o proprio dalla scadenza). */
+        self->block_until = scadenza;
+        sched_block(PROC_BLOCKED);   /* con le interrupt ancora disabilitate */
     }
 }
 

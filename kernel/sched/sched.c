@@ -544,14 +544,57 @@ static void sched_irq0_handler(InterruptFrame *frame)
 
     if (g_current == NULL) return;
 
-    /* Sveglia processi in sleep */
+    /* =====================================================================
+     * Sveglia i processi in sleep
+     *
+     * BUG CORRETTO (agosto 2026): qui c'era la sola assegnazione
+     *     p->state = PROC_READY;
+     * senza runq_add(). Ma sched_block() toglie il processo dalla run
+     * queue con runq_remove(), che azzera next/prev, e sched_pick_next()
+     * scandisce SOLO la run queue: un processo marcato READY ma non
+     * reinserito non viene più scelto da nessuno.
+     *
+     * L'effetto era che sleep(), usleep() e sched_sleep() non tornavano
+     * MAI. E non moriva solo il chiamante: la shell lo attende in
+     * waitpid(), quindi un programma che dormiva un istante si portava
+     * dietro tutta la console, che restava a ecoare i tasti senza
+     * eseguire più niente.
+     *
+     * Non se n'era accorto nessuno perché in pratica nessuno dormiva:
+     * le attese del driver tastiera erano già state riscritte su
+     * sched_yield() a giugno (vedi il commento sulle attese a scadenza
+     * reale in drivers/kbd/kbd.c), e l'unica sched_sleep() rimasta —
+     * quella di tty_read_ipc() mentre cerca il servizio 'kbd' — sta in
+     * un ciclo che alla prima iterazione trova già il PID e non arriva
+     * mai a dormire.
+     *
+     * Tutte le ALTRE transizioni a PROC_READY di questo file
+     * (proc_create, proc_set_ready, sched_unblock_locked) chiamano già
+     * runq_add: questa era l'unica a non farlo.
+     * ===================================================================== */
     {
         uint32_t i;
         for (i = 0; i < MAX_PROCESSES; i++) {
             Process *p = &g_process_pool[i];
             if (p->state == PROC_SLEEPING && g_ticks >= p->sleep_until) {
                 p->state = PROC_READY;
+                runq_add(p);
                 klog(LOG_DEBUG, "SCHED: PID %u svegliato dal sleep", p->pid);
+            }
+
+            /* Attesa con scadenza: il processo aspetta un evento, non il
+             * tempo. Qui non gli si consegna niente — lo si rimette solo
+             * in condizione di girare, così ricontrolla la propria
+             * condizione, la trova ancora falsa e decide da sé di
+             * rinunciare. Chi lo sveglia davvero (ipc_send) azzera
+             * block_until, quindi una scadenza rimasta indietro non può
+             * far scattare un risveglio spurio su un'attesa successiva. */
+            if (p->state == PROC_BLOCKED && p->block_until != 0 &&
+                g_ticks >= p->block_until) {
+                p->block_until = 0;
+                p->state       = PROC_READY;
+                runq_add(p);
+                klog(LOG_DEBUG, "SCHED: PID %u svegliato per scadenza", p->pid);
             }
         }
     }
@@ -637,6 +680,11 @@ void sched_unblock_locked(uint32_t pid)
     for (i = 0; i < MAX_PROCESSES; i++) {
         if (g_process_pool[i].pid   == pid &&
             g_process_pool[i].state == PROC_BLOCKED) {
+            /* L'evento è arrivato: la scadenza non serve più. Lasciarla
+             * armata farebbe scattare il risveglio per timeout sulla
+             * PROSSIMA attesa di questo processo, che scadrebbe subito
+             * per un ritardo appartenuto a quella precedente. */
+            g_process_pool[i].block_until = 0;
             g_process_pool[i].state = PROC_READY;
             runq_add(&g_process_pool[i]);
             klog(LOG_DEBUG, "SCHED: PID %u sbloccato", pid);

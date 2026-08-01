@@ -74,6 +74,11 @@ typedef int             ssize_t;
 #define SYS_IOPORT_BIND   225
 #define SYS_IOPORT_IN     226
 #define SYS_IOPORT_OUT    227
+#define SYS_IPC_RECV_TMO  228
+#define SYS_TIME           13
+#define SYS_CONSOLE_SWITCH 229
+#define SYS_CONSOLE_WRITE  230
+#define SYS_CONSOLE_INFO   231
 #define SYS_IOCTL         54
 
 /* Comandi ioctl del terminale — devono restare identici a
@@ -213,6 +218,20 @@ typedef struct {
     unsigned int  len;
     unsigned char data[IPC_MSG_MAX_DATA];
 } IpcMessage;
+
+/* Data e ora — deve restare identica a kernel/include/rtc.h (RtcTime)
+ * e a lib/include/libc.h: attraversa l'ABI della syscall. */
+typedef struct {
+    unsigned int anno, mese, giorno, ora, minuto, secondo;
+} RtcTime;
+
+/* Console virtuali — deve restare identica a kernel/include/syscall.h
+ * (ConsoleInfo) e a lib/include/libc.h. */
+typedef struct {
+    unsigned int totale;
+    unsigned int mia;
+    unsigned int visibile;
+} ConsoleInfo;
 
 /* =============================================================================
  * Syscall wrappers
@@ -874,6 +893,33 @@ int ipc_recv(IpcMessage *out_meta, void *buf, unsigned int buf_len)
 {
     return (int)_syscall3(SYS_IPC_RECV, (uint32_t)out_meta,
                            (uint32_t)buf, buf_len);
+}
+
+int ipc_recv_timeout(IpcMessage *out_meta, void *buf, unsigned int buf_len,
+                     unsigned int timeout_ms)
+{
+    return (int)_syscall4(SYS_IPC_RECV_TMO, (uint32_t)out_meta,
+                           (uint32_t)buf, buf_len, timeout_ms);
+}
+
+int time_now(RtcTime *t)
+{
+    return (int)_syscall1(SYS_TIME, (uint32_t)t);
+}
+
+int console_switch(unsigned int n)
+{
+    return (int)_syscall1(SYS_CONSOLE_SWITCH, n);
+}
+
+int console_write(unsigned int n, const void *buf, unsigned int len)
+{
+    return (int)_syscall3(SYS_CONSOLE_WRITE, n, (uint32_t)buf, len);
+}
+
+int console_info(ConsoleInfo *ci)
+{
+    return (int)_syscall1(SYS_CONSOLE_INFO, (uint32_t)ci);
 }
 
 int ipc_register(const char *name)

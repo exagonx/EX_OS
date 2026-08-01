@@ -307,16 +307,34 @@ void gf_term_cursore(int r, int c, int visibile)
 /* =============================================================================
  * INGRESSO — dialogo diretto con il servizio "kbd"
  * ============================================================================= */
-static int kbd_pid = -1;
+static int      kbd_pid = -1;
+static unsigned mia_console = 0;
 
+/* La modalità della tastiera è PER CONSOLE, quindi va detto al driver
+ * quale: mentre l'editor tiene la propria in raw, la shell di un'altra
+ * console deve continuare a ricevere righe intere con l'eco e il
+ * Backspace. Vedi KbdSetMode in drivers/kbd/kbd_proto.h. */
 static void kbd_modo(unsigned modo)
 {
-    if (kbd_pid > 0) ipc_send((unsigned)kbd_pid, KBD_MSG_SETMODE, &modo, sizeof(modo));
+    KbdSetMode m;
+
+    if (kbd_pid <= 0) return;
+
+    m.modo    = modo;
+    m.console = mia_console;
+    ipc_send((unsigned)kbd_pid, KBD_MSG_SETMODE, &m, sizeof(m));
 }
 
 int gf_term_init(void)
 {
-    int pid = ipc_lookup(KBD_SERVICE_NAME);
+    int          pid = ipc_lookup(KBD_SERVICE_NAME);
+    ConsoleInfo  ci;
+
+    /* Su quale console stiamo girando. Serve al driver per sapere a chi
+     * appartengono le nostre richieste di tasti: se sbagliassimo,
+     * l'editor su una console leggerebbe i tasti battuti su un'altra. */
+    if (console_info(&ci) == 0) mia_console = ci.mia;
+    else                        mia_console = 0;
 
     if (pid <= 0) {
         /* Senza il driver ring3 la console è servita dalla tastiera
@@ -360,18 +378,90 @@ void gf_term_fine(void)
  * ============================================================================= */
 unsigned gf_getkey(void)
 {
+    return gf_getkey_timeout(0);
+}
+
+/* =============================================================================
+ * gf_getkey_timeout — un tasto, o GF_KEY_SCADUTA se non arriva in tempo
+ *
+ * timeout_ms == 0 aspetta per sempre, ed è quello che vogliono i
+ * dialoghi: lì non c'è niente da aggiornare mentre si aspetta.
+ *
+ * Il ciclo principale invece usa una scadenza, ed è l'unico modo di
+ * avere un orologio che avanza: senza, l'editor resta fermo dentro
+ * ipc_recv finché l'utente non preme un tasto, e la barra di stato si
+ * aggiorna solo in quell'istante. Vedi ipc_recv_timeout in
+ * lib/include/libc.h.
+ *
+ * LA RICHIESTA PENDENTE NON SI ANNULLA. Se la scadenza passa, il driver
+ * ha comunque la nostra READKEY in coda e ci consegnerà il prossimo
+ * tasto appena premuto: la richiesta successiva ne creerebbe una
+ * seconda, e il primo tasto arriverebbe doppio. Da qui
+ * 'richiesta_pendente', che tiene il conto di quante ne abbiamo in giro
+ * e non ne manda una nuova finché quella vecchia non è stata onorata.
+ * ============================================================================= */
+static int richiesta_pendente = 0;
+
+unsigned gf_getkey_timeout(unsigned timeout_ms)
+{
     IpcMessage meta;
     unsigned   key = 0;
 
-    if (kbd_pid <= 0) return 0;
+    if (kbd_pid <= 0) return GF_KEY_ERRORE;
 
-    if (ipc_send((unsigned)kbd_pid, KBD_MSG_READKEY, (void *)0, 0) < 0) return 0;
+    if (!richiesta_pendente) {
+        if (ipc_send((unsigned)kbd_pid, KBD_MSG_READKEY,
+                     &mia_console, sizeof(mia_console)) < 0)
+            return GF_KEY_ERRORE;
+        richiesta_pendente = 1;
+    }
 
     for (;;) {
-        if (ipc_recv(&meta, &key, sizeof(key)) < 0) return 0;
-        if (meta.type == KBD_MSG_KEY && meta.len >= sizeof(key)) return key;
+        int r = ipc_recv_timeout(&meta, &key, sizeof(key), timeout_ms);
+
+        if (r == -110) return GF_KEY_SCADUTA;    /* ETIMEDOUT */
+        if (r < 0)     return GF_KEY_ERRORE;
+
+        if (meta.type == KBD_MSG_KEY && meta.len >= sizeof(key)) {
+            richiesta_pendente = 0;
+            return key;
+        }
         /* messaggio estraneo: si torna in attesa di quello giusto */
     }
+}
+
+/* =============================================================================
+ * gf_ora — l'ora del giorno, formattata
+ *
+ * Scrive "HH:MM:SS" in buf, o "--:--:--" se l'orologio non risponde.
+ * Il trattino non è un ripiego elegante: è l'unica cosa onesta da
+ * mostrare quando il CMOS ha la batteria scarica e consegna una data
+ * impossibile, invece di un orario inventato che sembra vero.
+ * ============================================================================= */
+void gf_ora(char *buf, int size)
+{
+    RtcTime t;
+
+    if (time_now(&t) != 0) {
+        gf_strlcpy(buf, "--:--:--", size);
+        return;
+    }
+
+    gf_fmt(buf, size, "%02d:%02d:%02d",
+           (int)t.ora, (int)t.minuto, (int)t.secondo);
+}
+
+void gf_data(char *buf, int size)
+{
+    RtcTime t;
+
+    if (time_now(&t) != 0) {
+        gf_strlcpy(buf, "--/--/----", size);
+        return;
+    }
+
+    gf_fmt(buf, size, "%02d/%02d/%d",
+           (int)t.giorno, (int)t.mese, (int)t.anno);
 }
 
 /* =============================================================================

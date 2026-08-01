@@ -111,6 +111,60 @@ void    sched_yield(void);
 void    usleep(unsigned int us);
 void    sleep(unsigned int sec);
 
+/* =============================================================================
+ * Data e ora dall'orologio CMOS della macchina.
+ *
+ * DUPLICATA A MANO da kernel/include/rtc.h e lib/libc.c (stessa
+ * convenzione di DirEntry e MemInfo): le tre copie devono restare
+ * identiche.
+ *
+ * Diversa da uptime_ms(), che misura DURATE e non sa che ora sia. Qui
+ * c'e' l'ora del giorno vera, quella che l'orologio a batteria continua
+ * a contare anche a macchina spenta.
+ *
+ * time_now() ritorna 0, oppure -19 (ENODEV) se l'orologio non risponde
+ * o consegna una data impossibile — succede su hardware vecchio con la
+ * batteria del CMOS scarica. In quel caso *t non viene toccata: un
+ * programma deve poter dire "ora ignota" invece di mostrare il 47 del
+ * mese 93.
+ * ============================================================================= */
+typedef struct {
+    unsigned int anno;      /* 4 cifre, es. 2026 */
+    unsigned int mese;      /* 1-12 */
+    unsigned int giorno;    /* 1-31 */
+    unsigned int ora;       /* 0-23 */
+    unsigned int minuto;    /* 0-59 */
+    unsigned int secondo;   /* 0-59 */
+} RtcTime;
+
+int time_now(RtcTime *t);
+
+/* =============================================================================
+ * Console virtuali
+ *
+ * Quattro schermi indipendenti, uno solo visibile per volta. Ogni
+ * processo ne ha una — la eredita dal padre — e write(1, ...) finisce
+ * sempre lì: un programma che gira su una console nascosta continua a
+ * disegnare nel proprio buffer e si ritrova lo schermo intatto quando
+ * l'utente ci torna sopra con Alt+F1..F4.
+ *
+ * La commutazione la fa il DRIVER TASTIERA quando riconosce Alt+Fn: un
+ * normale programma non ha motivo di chiamare console_switch(), e
+ * console_write() serve solo a chi deve scrivere su una console che non
+ * e' la propria — cioe' al driver tastiera, per l'eco dei tasti.
+ *
+ * Struttura DUPLICATA A MANO da kernel/include/syscall.h e lib/libc.c.
+ * ============================================================================= */
+typedef struct {
+    unsigned int totale;    /* quante console esistono */
+    unsigned int mia;       /* quella del processo chiamante */
+    unsigned int visibile;  /* quella attualmente a video */
+} ConsoleInfo;
+
+int console_info(ConsoleInfo *ci);
+int console_switch(unsigned int n);
+int console_write(unsigned int n, const void *buf, unsigned int len);
+
 /* Millisecondi dall'avvio. Serve a dare una scadenza REALE a un'attesa
  * senza contare iterazioni (che dipende dalla velocita' della CPU) e senza
  * dormire a passi (che non puo' scendere sotto il tick da 10 ms).
@@ -488,6 +542,28 @@ int     ipc_send(unsigned int dest_pid, unsigned int type,
  * vuota. out_meta (opzionale) riceve sender_pid/type/len; buf riceve il
  * payload fino a buf_len byte. Ritorna 0 su successo. */
 int     ipc_recv(IpcMessage *out_meta, void *buf, unsigned int buf_len);
+
+/* =============================================================================
+ * Come ipc_recv, ma rinuncia dopo timeout_ms e ritorna -110 (ETIMEDOUT).
+ * timeout_ms == 0 = attesa senza scadenza, cioè esattamente ipc_recv.
+ *
+ * È la primitiva che permette a un programma interattivo di fare
+ * qualcosa MENTRE aspetta. Senza, chi attende un tasto resta fermo
+ * finché non lo si preme: nessun orologio che avanza, nessun
+ * autosalvataggio a tempo, nessun aggiornamento di stato. Il ciclo
+ * tipico e' quello di qualunque interfaccia —
+ *
+ *   for (;;) {
+ *       disegna();
+ *       if (ipc_recv_timeout(&meta, buf, sizeof buf, 500) == 0) gestisci(buf);
+ *       // scaduta: si torna a disegnare, e l'orologio e' avanzato
+ *   }
+ *
+ * La scadenza e' arrotondata per eccesso al tick del PIT (10 ms): non
+ * ha senso chiederne una piu' fine di cosi'.
+ * ============================================================================= */
+int     ipc_recv_timeout(IpcMessage *out_meta, void *buf, unsigned int buf_len,
+                         unsigned int timeout_ms);
 
 /* Registra il chiamante come fornitore del servizio 'name' (es. "tty",
  * "floppy"). Ritorna 0 su successo, <0 se il nome è già in uso. */

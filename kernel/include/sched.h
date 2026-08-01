@@ -188,6 +188,19 @@ typedef struct Process {
     /* --- File descriptors --- */
     FileDescriptor  fds[MAX_FD];
 
+    /* Console virtuale di appartenenza (0..VGA_N_CONSOLE-1).
+     *
+     * È il terminale del processo: dove finisce ciò che scrive su stdout
+     * e da dove arriva ciò che legge da stdin. Si eredita dal padre in
+     * sys_spawn, così un programma lanciato dalla shell della console 2
+     * resta sulla console 2 — e continua a girare, e a scrivere sul
+     * proprio schermo, anche mentre se ne guarda un'altra.
+     *
+     * Zero è la console di sistema, quella dei messaggi del kernel: è
+     * anche il valore giusto per un processo creato prima che esistesse
+     * un padre da cui ereditare. */
+    uint32_t        console;
+
     /* --- Environment --- */
     char            env[MAX_ENV_VARS][ENV_VAR_LEN];
     uint32_t        env_count;
@@ -195,6 +208,14 @@ typedef struct Process {
     /* --- Timing --- */
     uint32_t        ticks_total;            /* Tick CPU totali consumati */
     uint32_t        sleep_until;            /* Tick di risveglio (PROC_SLEEPING) */
+
+    /* Scadenza di un'attesa BLOCCANTE con timeout (0 = attesa senza
+     * scadenza, il comportamento storico). Diversa da sleep_until, che
+     * dice "svegliami e basta": qui il processo aspetta un EVENTO e la
+     * scadenza è solo il limite oltre il quale rinuncia. Chi si sveglia
+     * per scadenza lo scopre ricontrollando la propria condizione e
+     * trovandola ancora falsa — vedi ipc_recv_timeout in kernel/ipc/ipc.c. */
+    uint32_t        block_until;
     uint32_t        created_tick;           /* Tick alla creazione */
 
     /* --- Lista scheduler --- */

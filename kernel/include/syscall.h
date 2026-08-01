@@ -60,7 +60,7 @@
 #define SYS_REBOOT       88    /* spegne, riavvia o ferma il sistema */
 
 /* Numero totale syscall supportate */
-#define SYSCALL_COUNT   228     /* deve coprire il numero syscall più alto (SYS_IOPORT_OUT=227) + 1 */
+#define SYSCALL_COUNT   232     /* deve coprire il numero syscall più alto (SYS_CONSOLE_INFO=231) + 1 */
 
 /* =============================================================================
  * Codici errno
@@ -90,6 +90,7 @@
 #define EFBIG       27      /* file troppo grande per l'operazione */
 #define ESPIPE      29      /* qui: file frammentato, non mappabile a un intervallo */
 #define ENOTTY      25      /* ioctl su un descrittore che non è un terminale */
+#define ETIMEDOUT   110     /* attesa scaduta senza che l'evento arrivasse */
 
 /* Syscall IPC — comunicazione kernel-mediata tra task ring3 */
 #define SYS_IPC_SEND     220
@@ -102,6 +103,34 @@
 #define SYS_IOPORT_BIND   225   /* richiede un range di porte I/O in whitelist */
 #define SYS_IOPORT_IN     226   /* legge un byte da una porta nel proprio range */
 #define SYS_IOPORT_OUT    227   /* scrive un byte su una porta nel proprio range */
+
+/* Numero SEPARATO invece di un quarto argomento su SYS_IPC_RECV: quella
+ * passa tre registri, e leggerne un quarto significherebbe interpretare
+ * come scadenza il contenuto di ESI lasciato lì da chi ha usato il
+ * wrapper a tre argomenti. Un numero nuovo non ha ambiguità. */
+#define SYS_IPC_RECV_TMO  228   /* ipc_recv con scadenza (vedi ipc_recv_timeout) */
+
+#define SYS_TIME           13   /* data e ora dall'orologio CMOS (vedi RtcTime) */
+
+/* =============================================================================
+ * Console virtuali (vedi kernel/arch/x86/vga.c)
+ *
+ * SYS_CONSOLE_WRITE esiste per UN solo cliente: il driver tastiera, che
+ * deve fare l'eco dei tasti sulla console di chi sta digitando e non
+ * sulla propria. Ogni altro programma scrive con write(1, ...) e
+ * finisce sulla console che gli assegna il kernel, senza poter toccare
+ * quelle altrui.
+ * ============================================================================= */
+#define SYS_CONSOLE_SWITCH 229  /* porta in primo piano la console ebx */
+#define SYS_CONSOLE_WRITE  230  /* scrive su una console specifica */
+#define SYS_CONSOLE_INFO   231  /* quante sono, qual e' la mia, qual e' visibile */
+
+/* DUPLICATA A MANO in lib/include/libc.h e lib/libc.c. */
+typedef struct {
+    uint32_t totale;    /* quante console esistono */
+    uint32_t mia;       /* quella del processo chiamante */
+    uint32_t visibile;  /* quella attualmente a video */
+} ConsoleInfo;
 
 /* Converti errno in valore di ritorno negativo */
 #define ERR(e)      (-(int32_t)(e))
@@ -471,6 +500,11 @@ int32_t sys_truncate(InterruptFrame *f);
 int32_t sys_reboot(InterruptFrame *f);
 int32_t sys_ipc_send(InterruptFrame *f);
 int32_t sys_ipc_recv(InterruptFrame *f);
+int32_t sys_ipc_recv_tmo(InterruptFrame *f);
+int32_t sys_time(InterruptFrame *f);
+int32_t sys_console_switch(InterruptFrame *f);
+int32_t sys_console_write(InterruptFrame *f);
+int32_t sys_console_info(InterruptFrame *f);
 int32_t sys_ipc_register(InterruptFrame *f);
 int32_t sys_ipc_lookup(InterruptFrame *f);
 int32_t sys_irq_bind(InterruptFrame *f);

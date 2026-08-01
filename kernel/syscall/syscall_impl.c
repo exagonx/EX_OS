@@ -36,6 +36,8 @@ extern void vga_putchar(char c);
 #include "fat.h"
 #include "vfs.h"
 #include "bootinst.h"
+#include "rtc.h"       /* RtcTime, rtc_read: data e ora (SYS_TIME) */
+#include "vga.h"       /* VGA_N_CONSOLE e le console virtuali */
 #include "tty.h"       /* TTY_IOCTL_*: comandi nativi del terminale (sys_ioctl) */
 extern Process g_process_pool[MAX_PROCESSES];
 
@@ -258,11 +260,14 @@ int32_t sys_write(InterruptFrame *frame)
     if (!syscall_verify_ptr(buf, count))      return ERR(EFAULT);
     if (proc->fds[fd].type == FD_UNUSED)     return ERR(EBADF);
 
-    /* stdout / stderr: scrivi su VGA */
+    /* stdout / stderr: scrivi sulla console DEL PROCESSO, non su quella
+     * visibile. Un programma che gira su una console nascosta continua a
+     * disegnare nel proprio buffer e si ritrova lo schermo intatto
+     * quando l'utente ci torna sopra con Alt+Fn. */
     if (proc->fds[fd].type == FD_STDOUT ||
         proc->fds[fd].type == FD_STDERR) {
         for (i = 0; i < count; i++) {
-            vga_putchar(buf[i]);
+            vga_putchar_su(proc->console, buf[i]);
         }
         return (int32_t)count;
     }
@@ -586,10 +591,24 @@ int32_t sys_ioctl(InterruptFrame *frame)
                 return ERR(EFAULT);
             return drv_ioctl((int)request, (void *)arg) == 0 ? 0 : ERR(EINVAL);
 
+        /* Questi due riguardano UNA console precisa — quella del
+         * chiamante — e vengono risolti qui invece che in drv_ioctl:
+         * quella riceve solo (comando, argomento) e non ha modo di
+         * sapere per conto di chi sta lavorando. Passarle il numero
+         * attraverso una variabile condivisa sarebbe una corsa, perché
+         * fra l'impostarla e la chiamata il timer può dare la CPU a un
+         * processo di un'altra console. */
+        case TTY_IOCTL_CLEAR:
+            vga_clear_su(proc->console);
+            return 0;
+
+        case TTY_IOCTL_SETCOLOR:
+            vga_setcolor_su(proc->console, (uint8_t)(arg & 0xF),
+                            (uint8_t)((arg >> 4) & 0xF));
+            return 0;
+
         case TTY_IOCTL_SETRAW:
         case TTY_IOCTL_SETCOOKED:
-        case TTY_IOCTL_CLEAR:
-        case TTY_IOCTL_SETCOLOR:
             return drv_ioctl((int)request, (void *)arg) == 0 ? 0 : ERR(EINVAL);
 
         default:
@@ -599,6 +618,69 @@ int32_t sys_ioctl(InterruptFrame *frame)
     klog(LOG_DEBUG, "SYSCALL ioctl(fd=%d, req=0x%x, arg=0x%x) non implementato",
          fd, request, arg);
     return ERR(ENOSYS);
+}
+
+/* =============================================================================
+ * SYS_CONSOLE_SWITCH (229) -- Porta in primo piano una console
+ *
+ * ebx = numero della console
+ *
+ * Non serve nessun permesso: la commutazione è un gesto dell'UTENTE, e
+ * l'unico programma che la esegue è il driver tastiera quando riconosce
+ * Alt+Fn. Il processo che chiama non cambia console — cambia solo cosa
+ * si vede.
+ * ============================================================================= */
+int32_t sys_console_switch(InterruptFrame *frame)
+{
+    uint32_t n = frame->ebx;
+
+    if (vga_switch_console(n) != 0) return ERR(EINVAL);
+    return 0;
+}
+
+/* =============================================================================
+ * SYS_CONSOLE_WRITE (230) -- Scrive su una console specifica
+ *
+ * ebx = numero della console
+ * ecx = buf*
+ * edx = lunghezza
+ *
+ * Esiste per il driver tastiera, che deve ecoare i tasti sulla console
+ * di chi sta digitando — non sulla propria, che è la 0. Un normale
+ * write(1, ...) non basterebbe: finisce sempre sulla console del
+ * processo che scrive.
+ * ============================================================================= */
+int32_t sys_console_write(InterruptFrame *frame)
+{
+    uint32_t    n     = frame->ebx;
+    const char *buf   = (const char *)frame->ecx;
+    uint32_t    count = frame->edx;
+    uint32_t    i;
+
+    if (n >= VGA_N_CONSOLE)                  return ERR(EINVAL);
+    if (count == 0)                          return 0;
+    if (!syscall_verify_ptr((void *)buf, count)) return ERR(EFAULT);
+
+    for (i = 0; i < count; i++) vga_putchar_su(n, buf[i]);
+    return (int32_t)count;
+}
+
+/* =============================================================================
+ * SYS_CONSOLE_INFO (231) -- Quante console, la mia, quella visibile
+ *
+ * ebx = ConsoleInfo*
+ * ============================================================================= */
+int32_t sys_console_info(InterruptFrame *frame)
+{
+    ConsoleInfo *out  = (ConsoleInfo *)frame->ebx;
+    Process     *proc = proc_get_current();
+
+    if (!syscall_verify_ptr(out, sizeof(ConsoleInfo))) return ERR(EFAULT);
+
+    out->totale   = VGA_N_CONSOLE;
+    out->mia      = proc->console;
+    out->visibile = vga_visible_console();
+    return 0;
 }
 
 /* =============================================================================
@@ -801,6 +883,13 @@ Process *child = proc_create(kpath, 0, PRIO_NORMAL, 0);
 
 if (!child) {
 return ERR(ENOMEM); }
+
+    /* Il figlio nasce sulla console del padre: un programma lanciato dal
+     * prompt della console 2 deve scrivere sulla 2, non su quella che si
+     * sta guardando in questo istante. È ciò che gli permette di
+     * continuare a lavorare — e a disegnare sul proprio schermo — mentre
+     * l'utente e' passato altrove con Alt+Fn. */
+    child->console = parent->console;
 
 if (elf_load(kpath, child, &res) != 0) {
 
@@ -2118,6 +2207,60 @@ int32_t sys_ipc_recv(InterruptFrame *frame)
         *out_meta = kmeta;
     }
     return ret;
+}
+
+/* =============================================================================
+ * SYS_IPC_RECV_TMO (228) -- ipc_recv con scadenza
+ *
+ * ebx = IpcMessage* (uscita, opzionale)
+ * ecx = buf*
+ * edx = buf_len
+ * esi = timeout in millisecondi (0 = attesa senza scadenza)
+ *
+ * Ritorna 0, -ETIMEDOUT se la scadenza è passata a mailbox vuota, o un
+ * altro errno negativo.
+ * ============================================================================= */
+int32_t sys_ipc_recv_tmo(InterruptFrame *frame)
+{
+    IpcMessage *out_meta   = (IpcMessage *)frame->ebx;
+    void       *buf        = (void *)frame->ecx;
+    uint32_t    buf_len    = frame->edx;
+    uint32_t    timeout_ms = frame->esi;
+
+    if (out_meta != NULL && !syscall_verify_ptr(out_meta, sizeof(IpcMessage))) {
+        return ERR(EFAULT);
+    }
+    if (buf != NULL && buf_len > 0 && !syscall_verify_ptr(buf, buf_len)) {
+        return ERR(EFAULT);
+    }
+
+    IpcMessage kmeta;
+    int32_t ret = ipc_recv_timeout(&kmeta, buf, buf_len, timeout_ms);
+    if (ret == 0 && out_meta != NULL) {
+        *out_meta = kmeta;
+    }
+    return ret;
+}
+
+/* =============================================================================
+ * SYS_TIME (13) -- Data e ora dall'orologio CMOS
+ *
+ * ebx = RtcTime*
+ *
+ * Ritorna 0, -EFAULT se il puntatore non è valido, -ENODEV se
+ * l'orologio non risponde o dà una data impossibile.
+ * ============================================================================= */
+int32_t sys_time(InterruptFrame *frame)
+{
+    RtcTime *out = (RtcTime *)frame->ebx;
+
+    if (!syscall_verify_ptr(out, sizeof(RtcTime))) return ERR(EFAULT);
+
+    RtcTime t;
+    if (rtc_read(&t) != 0) return ERR(ENODEV);
+
+    *out = t;
+    return 0;
 }
 
 /* =============================================================================
