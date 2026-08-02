@@ -14,6 +14,7 @@
 #include "gdt.h"
 #include "idt.h"
 #include "isr.h"
+#include "fpu.h"
 #include "pmm.h"
 #include "paging.h"
 #include "kmalloc.h"
@@ -196,6 +197,20 @@ klog(LOG_INFO, "[PASSO 6] IDT OK");
     klog(LOG_INFO, "[PASSO 7] Installazione ISR...");
     isr_install();
 klog(LOG_INFO, "[PASSO 7] ISR OK");
+
+    /* =========================================================================
+     * PASSO 7b: FPU — coprocessore matematico x87
+     *
+     * Dopo l'IDT e non prima: il rilevamento imposta CR0.NE=1, cioe' "gli
+     * errori di virgola mobile arrivano come eccezione #MF", e #MF ha
+     * senso solo con un gate installato.
+     *
+     * E' un passo "b" per non rinumerare i tredici che seguono, che
+     * compaiono nei log e nella documentazione.
+     * ========================================================================= */
+    klog(LOG_INFO, "[PASSO 7b] Inizializzazione FPU x87...");
+    fpu_init();
+klog(LOG_INFO, "[PASSO 7b] FPU %s", fpu_present() ? "OK" : "ASSENTE (x87 disabilitata)");
 
     /* =========================================================================
      * PASSO 8: Memory Manager (PLACEHOLDER — Fase 1c)

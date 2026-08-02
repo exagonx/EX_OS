@@ -1222,13 +1222,38 @@ int32_t sys_stat(InterruptFrame *frame)
 {
     const char *path = (const char *)frame->ebx;
     Stat       *st   = (Stat *)frame->ecx;
+    char        abs[PERCORSO_MAX];
+    VfsStat     vs;
+    int32_t     r;
 
-    if (!syscall_verify_str(path, PERCORSO_MAX))      return ERR(EFAULT);
-    if (!syscall_verify_ptr(st, sizeof(Stat))) return ERR(EFAULT);
+    if (!syscall_verify_str(path, PERCORSO_MAX)) return ERR(EFAULT);
+    if (!syscall_verify_ptr(st, sizeof(Stat)))   return ERR(EFAULT);
 
-    /* TODO Fase 3: cerccare file nel FAT12 e riempire Stat */
-    klog(LOG_DEBUG, "SYSCALL stat('%s') -- FAT12 non ancora implementato", path);
-    return ERR(ENOSYS);
+    if (resolve_path(path, abs, sizeof(abs)) != 0) return ERR(EINVAL);
+
+    r = vfs_stat(abs, &vs);
+    if (r != 0) return r;
+
+    /* I campi di Stat hanno i nomi di FAT12 perche' li' e' nata, ma il
+     * dato arriva dal VFS e vale su qualunque filesystem montato.
+     *
+     * st_first_clus resta 0 e non e' una dimenticanza: e' un numero che
+     * ha senso solo dentro una FAT, e i driver ext2 e ISO non hanno
+     * niente da metterci. Un valore inventato sarebbe peggio di uno
+     * assente — qualcuno prima o poi lo userebbe come se contasse.
+     *
+     * Gli attributi usano le convenzioni FAT (0x10 directory, 0x01 sola
+     * lettura) perche' sono quelle che i programmi gia' interpretano. */
+    st->st_size       = vs.dimensione;
+    st->st_first_clus = 0;
+    st->st_attr       = (uint16_t)((vs.is_dir       ? 0x10 : 0x00) |
+                                   (vs.sola_lettura ? 0x01 : 0x00));
+    st->st_date       = 0;
+    st->st_time       = 0;
+
+    klog(LOG_DEBUG, "SYSCALL stat('%s') -> %u byte%s", abs, vs.dimensione,
+         vs.is_dir ? " (directory)" : "");
+    return 0;
 }
 
 /* =============================================================================
@@ -1256,11 +1281,30 @@ int32_t sys_lseek(InterruptFrame *frame)
             new_off = (uint32_t)offset;
             break;
         case 1: /* SEEK_CUR */
+            /* Un offset negativo non deve poter scendere sotto zero: su
+             * interi senza segno diventerebbe una posizione enorme, e la
+             * lettura successiva fallirebbe con un errore che non
+             * assomiglia alla causa. */
+            if (offset < 0 && (uint32_t)(-offset) > proc->fds[fd].offset)
+                return ERR(EINVAL);
             new_off = proc->fds[fd].offset + (uint32_t)offset;
             break;
-        case 2: /* SEEK_END */
-            /* TODO Fase 3: serve dimensione file dal FAT12 */
-            return ERR(ENOSYS);
+        case 2: {
+            /* SEEK_END — la dimensione si chiede al VFS, che la sa per
+             * ogni filesystem montato. E' il posizionamento con cui ogni
+             * programma misura un file prima di leggerlo, e finche'
+             * rispondeva ENOSYS nessuna libc poteva offrire un ftell()
+             * sulla fine. */
+            VfsStat vs;
+            int32_t r = vfs_fstat((int)proc->fds[fd].inode, &vs);
+
+            if (r != 0) return r;
+            if (offset < 0 && (uint32_t)(-offset) > vs.dimensione)
+                return ERR(EINVAL);
+
+            new_off = vs.dimensione + (uint32_t)offset;
+            break;
+        }
         default:
             return ERR(EINVAL);
     }

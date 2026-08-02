@@ -1,35 +1,50 @@
 #!/usr/bin/env python3
-"""Costruisce un'immagine ISO 9660 di prova per il driver CD/DVD di EX-OS.
+"""Costruisce un'immagine ISO 9660 (+ Joliet) per EX-OS.
 
-Perche' esiste: sull'ambiente di sviluppo non c'e' genisoimage/xorriso, e
-serviva comunque un'immagine di cui si conosce ogni byte — cosi' quando il
-driver legge un nome sbagliato si sa esattamente cosa c'era scritto.
+Due modi d'uso:
 
-Cosa produce:
-  - un descrittore primario (PVD) con i nomi ISO 9660 classici, maiuscoli
-    e con il numero di versione (LEGGIMI.TXT;1);
-  - un descrittore supplementare Joliet, con GLI STESSI file ma nomi
-    lunghi in UCS-2 — e' la struttura che il driver deve preferire;
-  - una sottodirectory, per provare la risoluzione a piu' livelli;
-  - un file piu' grande di un blocco, per provare la lettura oltre i
-    2048 byte (che e' il caso in cui un driver che ignora l'offset si
-    accorge di essere sbagliato).
+    python3 tools/mkiso.py uscita.iso --da build/iso [--etichetta "EXOS TOOLS"]
+    python3 tools/mkiso.py uscita.iso --prova [--senza-joliet]
 
-Uso:  python3 tools/mkiso.py /percorso/uscita.iso [--senza-joliet]
+Il primo prende un albero di directory e ne fa un CD: e' quello che usa
+`make iso` per il disco degli strumenti. Il secondo genera un'immagine
+sintetica di collaudo del driver, di cui si conosce ogni byte — utile
+proprio perche', quando il driver legge un nome sbagliato, si sa cosa
+c'era scritto.
 
-Con --senza-joliet l'immagine ha il solo albero ISO 9660: serve a provare
-il ramo dei nomi maiuscoli con il numero di versione, che e' quello che il
-driver usa sui dischi piu' vecchi e che senza questa opzione non verrebbe
-mai eseguito.
+PERCHE' NON genisoimage. Sull'ambiente di sviluppo non c'e' (ne'
+xorriso), e per collaudare un driver appena scritto avere un generatore
+di cui si controlla ogni campo vale piu' di uno che fa tutto: quando la
+lettura sbaglia, si sa da che parte guardare.
+
+I DUE ALBERI. Un CD con nomi lunghi contiene DUE strutture di directory
+complete che puntano agli STESSI dati: quella ISO 9660, con i nomi
+maiuscoli in 8.3 e il numero di versione (`LEGGIMI.TXT;1`), e quella
+Joliet, con i nomi veri in UCS-2. Non sono due viste della stessa
+struttura, e questo generatore le costruisce entrambe: i blocchi dei file
+sono condivisi, le directory no.
 """
 
+import os
 import struct
 import sys
 
 BLOCCO = 2048
 
+# I primi 16 blocchi (32 KB) sono l'area di sistema: ISO 9660 non li
+# guarda affatto, ed e' li' che un disco avviabile mette il proprio
+# settore di avvio.
+PRIMO_DESCRITTORE = 16
+
+
+# =============================================================================
+# Campi del formato
+# =============================================================================
 
 def both16(v):
+    """Un intero a 16 bit scritto DUE volte, little e big endian di
+    seguito. Occupa 4 byte: e' la convenzione di ISO 9660, ed e' il primo
+    punto in cui si sbagliano gli offset dei campi successivi."""
     return struct.pack("<H", v) + struct.pack(">H", v)
 
 
@@ -52,7 +67,7 @@ def rec_dir(nome_bytes, extent, dim, is_dir):
     pad = ln % 2
     rec = bytearray()
     rec.append(ln + pad)
-    rec.append(0)                       # lunghezza attributi estesi
+    rec.append(0)                       # lunghezza degli attributi estesi
     rec += both32(extent)
     rec += both32(dim)
     rec += data7()
@@ -66,43 +81,218 @@ def rec_dir(nome_bytes, extent, dim, is_dir):
     return bytes(rec)
 
 
-def nome_iso(n):
-    return n.encode("ascii")
+def lunghezza_rec(nome_bytes):
+    ln = 33 + len(nome_bytes)
+    return ln + (ln % 2)
 
 
-def nome_joliet(n):
-    return n.encode("utf-16-be")
+def blocchi_per(n_byte):
+    return (n_byte + BLOCCO - 1) // BLOCCO if n_byte else 1
 
 
-def contenuto_dir(voci, extent_self, dim_self, extent_padre, dim_padre):
-    """voci = [(nome_bytes, extent, dim, is_dir)] gia' ordinate."""
+# =============================================================================
+# Nomi
+# =============================================================================
+
+VALIDI_ISO = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")
+
+
+def pulisci_iso(pezzo, quanti):
+    fuori = "".join(c if c.upper() in VALIDI_ISO else "_" for c in pezzo.upper())
+    return fuori[:quanti]
+
+
+def nome_iso(nome, is_dir, usati):
+    """Nome in forma ISO 9660 livello 1: 8.3 maiuscolo, `;1` sui file.
+
+    Si resta al livello 1 di proposito: i nomi veri li porta Joliet, e un
+    nome corto e conservativo e' leggibile anche dai lettori piu' vecchi.
+    Le collisioni prodotte dal troncamento si risolvono con un contatore —
+    due file distinti che diventassero lo stesso nome sarebbero un file
+    solo, cioe' un file perso in silenzio.
+    """
+    if is_dir:
+        base, ext = pulisci_iso(nome, 8), ""
+    else:
+        radice, punto, coda = nome.rpartition(".")
+        if not punto:
+            radice, coda = nome, ""
+        base, ext = pulisci_iso(radice, 8), pulisci_iso(coda, 3)
+
+    if not base:
+        base = "_"
+
+    def componi(b):
+        n = b if not ext else b + "." + ext
+        return n if is_dir else n + ";1"
+
+    finale = componi(base)
+    contatore = 1
+    while finale in usati:
+        coda_num = "~%d" % contatore
+        finale = componi(base[:8 - len(coda_num)] + coda_num)
+        contatore += 1
+
+    usati.add(finale)
+    return finale.encode("ascii")
+
+
+def nome_joliet(nome, is_dir):
+    """Joliet conserva il nome vero, in UCS-2 big endian. Il `;1` sui file
+    c'e' anche qui: e' parte del formato, non del nome, e i lettori lo
+    tolgono — compreso kernel/fs/iso9660.c."""
+    testo = nome if is_dir else nome + ";1"
+    return testo.encode("utf-16-be")
+
+
+# =============================================================================
+# L'albero
+# =============================================================================
+
+class Voce:
+    def __init__(self, nome, percorso=None, is_dir=False):
+        self.nome = nome
+        self.percorso = percorso        # None per le directory sintetiche
+        self.is_dir = is_dir
+        self.figli = []
+        self.dati = b""
+        self.dim = 0
+        self.extent = 0                 # blocco dei dati (file) o della dir
+        self.dim_iso = 0                # dimensione della directory, albero ISO
+        self.dim_jol = 0                # idem, albero Joliet
+        self.extent_iso = 0
+        self.extent_jol = 0
+        self.numero = 0                 # numero nella tabella dei percorsi
+        self.n_iso = b""
+        self.n_jol = b""
+
+    def __repr__(self):
+        return "<%s %s>" % ("dir" if self.is_dir else "file", self.nome)
+
+
+def leggi_albero(radice_fs):
+    radice = Voce("", is_dir=True)
+
+    def scendi(voce, percorso):
+        for nome in sorted(os.listdir(percorso)):
+            pieno = os.path.join(percorso, nome)
+            if os.path.isdir(pieno):
+                d = Voce(nome, pieno, is_dir=True)
+                voce.figli.append(d)
+                scendi(d, pieno)
+            elif os.path.isfile(pieno):
+                f = Voce(nome, pieno, is_dir=False)
+                with open(pieno, "rb") as fh:
+                    f.dati = fh.read()
+                f.dim = len(f.dati)
+                voce.figli.append(f)
+
+    scendi(radice, radice_fs)
+    return radice
+
+
+def assegna_nomi(voce):
+    """I nomi ISO vanno resi unici DENTRO ogni directory, non nell'intero
+    volume: e' la stessa regola di qualunque filesystem."""
+    usati = set()
+    for f in voce.figli:
+        f.n_iso = nome_iso(f.nome, f.is_dir, usati)
+        f.n_jol = nome_joliet(f.nome, f.is_dir)
+        if f.is_dir:
+            assegna_nomi(f)
+
+
+def misura_directory(voce, joliet):
+    """Quanti byte occupa il contenuto di una directory.
+
+    Il conto DEVE tenere conto della regola che un record non attraversa
+    mai il confine di un blocco: quando non ci sta, il resto del blocco e'
+    riempimento. Ignorarlo qui darebbe una dimensione piu' piccola del
+    vero, e le ultime voci finirebbero fuori dalla directory dichiarata.
+    """
+    n = lunghezza_rec(b"\x00") + lunghezza_rec(b"\x01")   # "." e ".."
+    for f in voce.figli:
+        r = lunghezza_rec(f.n_jol if joliet else f.n_iso)
+        if n % BLOCCO + r > BLOCCO:
+            n += BLOCCO - (n % BLOCCO)
+        n += r
+    return n
+
+
+def tutte_le_directory(radice):
+    """Directory in ordine di livello (radice, poi i suoi figli, ...): e'
+    l'ordine che la tabella dei percorsi richiede."""
+    fuori = [radice]
+    i = 0
+    while i < len(fuori):
+        for f in fuori[i].figli:
+            if f.is_dir:
+                fuori.append(f)
+        i += 1
+    return fuori
+
+
+def tabella_percorsi(dirs, big, joliet):
     out = bytearray()
-    out += rec_dir(b"\x00", extent_self, dim_self, True)
-    out += rec_dir(b"\x01", extent_padre, dim_padre, True)
-    for nome, ext, dim, isdir in voci:
-        r = rec_dir(nome, ext, dim, isdir)
-        # Un record non attraversa mai il confine del blocco: se non ci
-        # sta, si riempie di zeri fino al blocco successivo.
-        if len(out) % BLOCCO + len(r) > BLOCCO:
-            out += b"\x00" * (BLOCCO - len(out) % BLOCCO)
-        out += r
+    for d in dirs:
+        nome = b"\x00" if d is dirs[0] else (d.n_jol if joliet else d.n_iso)
+        extent = d.extent_jol if joliet else d.extent_iso
+        out.append(len(nome))
+        out.append(0)                                   # attributi estesi
+        out += struct.pack(">I" if big else "<I", extent)
+        out += struct.pack(">H" if big else "<H", d.numero_padre)
+        out += nome
+        if len(nome) % 2:
+            out.append(0)
     return bytes(out)
 
 
-def descrittore(tipo, etichetta, blocchi_volume, root_rec, joliet=False,
-                pt_dim=0, pt_le=0, pt_be=0):
+def contenuto_directory(voce, padre, joliet):
+    """Scrive i record di una directory: "." e ".." per primi, poi i figli
+    con il riempimento di fine blocco dove serve."""
+    ext_self = voce.extent_jol if joliet else voce.extent_iso
+    dim_self = voce.dim_jol if joliet else voce.dim_iso
+    ext_padre = padre.extent_jol if joliet else padre.extent_iso
+    dim_padre = padre.dim_jol if joliet else padre.dim_iso
+
+    out = bytearray()
+    out += rec_dir(b"\x00", ext_self, dim_self, True)
+    out += rec_dir(b"\x01", ext_padre, dim_padre, True)
+
+    for f in voce.figli:
+        nome = f.n_jol if joliet else f.n_iso
+        if f.is_dir:
+            ext = f.extent_jol if joliet else f.extent_iso
+            dim = f.dim_jol if joliet else f.dim_iso
+        else:
+            ext, dim = f.extent, f.dim
+        r = rec_dir(nome, ext, dim, f.is_dir)
+        if len(out) % BLOCCO + len(r) > BLOCCO:
+            out += b"\x00" * (BLOCCO - len(out) % BLOCCO)
+        out += r
+
+    return bytes(out)
+
+
+# =============================================================================
+# Descrittori di volume
+# =============================================================================
+
+def descrittore(tipo, etichetta, blocchi_volume, root_rec, joliet,
+                pt_dim, pt_le, pt_be):
     d = bytearray(b"\x00" * BLOCCO)
     d[0] = tipo
     d[1:6] = b"CD001"
     d[6] = 1
     d[7] = 0
+
     ident = etichetta.encode("utf-16-be") if joliet else etichetta.encode("ascii")
     riempi = b"\x00 " if joliet else b" "
-    d[8:40] = (b"\x00 " * 16) if joliet else (b" " * 32)      # system id
-    d[40:72] = (ident + riempi * 32)[:32]                     # volume id
+    d[8:40] = (b"\x00 " * 16) if joliet else (b" " * 32)     # identificatore di sistema
+    d[40:72] = (ident + riempi * 32)[:32]                    # etichetta del volume
     d[80:88] = both32(blocchi_volume)
     if joliet:
-        d[88:91] = b"%/E"                                     # UCS-2 livello 3
+        d[88:91] = b"%/E"                                    # UCS-2 livello 3
     d[120:124] = both16(1)
     d[124:128] = both16(1)
     d[128:132] = both16(BLOCCO)
@@ -120,125 +310,230 @@ def descrittore(tipo, etichetta, blocchi_volume, root_rec, joliet=False,
     return bytes(d)
 
 
-def tabella_percorsi(voci, big):
-    """voci = [(nome_bytes, extent, numero_padre)] — la radice per prima."""
-    out = bytearray()
-    for nome, extent, padre in voci:
-        out.append(len(nome))
-        out.append(0)
-        out += struct.pack(">I" if big else "<I", extent)
-        out += struct.pack(">H" if big else "<H", padre)
-        out += nome
-        if len(nome) % 2:
-            out.append(0)
-    return bytes(out)
+def terminatore():
+    t = bytearray(b"\x00" * BLOCCO)
+    t[0] = 255
+    t[1:6] = b"CD001"
+    t[6] = 1
+    return bytes(t)
 
 
-def main():
-    argomenti = [a for a in sys.argv[1:] if not a.startswith("--")]
-    joliet = "--senza-joliet" not in sys.argv[1:]
-    uscita = argomenti[0] if argomenti else "/tmp/exos-test.iso"
+# =============================================================================
+# Costruzione
+# =============================================================================
 
-    # --- Contenuto dei file -------------------------------------------
-    leggimi = ("EX-OS: prova del driver CD/DVD.\r\n"
-               "Se leggi questa riga, ISO 9660 funziona.\r\n").encode("ascii")
-    hello = b"ciao dal CD\r\n"
-    # Piu' di un blocco: il driver deve leggere anche oltre i 2048 byte,
-    # e ogni riga dice il proprio numero, cosi' un salto si vede subito.
-    note = b"".join(("riga %04d di prova, offset oltre il blocco\r\n" % i).encode()
-                    for i in range(120))
+def costruisci(radice, etichetta, joliet):
+    assegna_nomi(radice)
 
-    # --- Assegnazione dei blocchi -------------------------------------
-    b_pvd, b_svd, b_term = 16, 17, 18
-    b_pt_le, b_pt_be = 19, 20
-    b_root_iso, b_docs_iso = 21, 22
-    b_root_jol, b_docs_jol = 23, 24
-    b_leggimi, b_hello, b_note = 25, 26, 27
+    dirs = tutte_le_directory(radice)
 
-    def n_blocchi(dati):
-        return (len(dati) + BLOCCO - 1) // BLOCCO
+    # Numerazione per la tabella dei percorsi: la radice e' 1, e ogni
+    # directory conosce il numero del proprio padre.
+    radice.numero = 1
+    radice.numero_padre = 1
+    for i, d in enumerate(dirs, start=1):
+        d.numero = i
+    for d in dirs:
+        for f in d.figli:
+            if f.is_dir:
+                f.numero_padre = d.numero
 
-    b_note = b_hello + n_blocchi(hello)
-    fine = b_note + n_blocchi(note)
-    totale = fine
+    for d in dirs:
+        d.dim_iso = misura_directory(d, joliet=False)
+        d.dim_jol = misura_directory(d, joliet=True) if joliet else 0
 
-    # --- Directory ISO -------------------------------------------------
-    voci_root_iso = sorted([
-        (nome_iso("DOCS"), b_docs_iso, BLOCCO, True),
-        (nome_iso("HELLO.TXT;1"), b_hello, len(hello), False),
-        (nome_iso("LEGGIMI.TXT;1"), b_leggimi, len(leggimi), False),
-    ])
-    voci_docs_iso = [(nome_iso("NOTE.TXT;1"), b_note, len(note), False)]
+    # --- Assegnazione dei blocchi ------------------------------------
+    # L'ordine e' libero purche' coerente; questo tiene vicini i metadati
+    # e mette i dati in fondo, cosi' un'immagine e' leggibile anche
+    # guardandola con un editor esadecimale.
+    blocco = PRIMO_DESCRITTORE
+    b_pvd = blocco; blocco += 1
+    b_svd = None
+    if joliet:
+        b_svd = blocco; blocco += 1
+    b_term = blocco; blocco += 1
 
-    root_iso = contenuto_dir(voci_root_iso, b_root_iso, BLOCCO,
-                             b_root_iso, BLOCCO)
-    docs_iso = contenuto_dir(voci_docs_iso, b_docs_iso, BLOCCO,
-                             b_root_iso, BLOCCO)
+    pt_iso_le = tabella_percorsi(dirs, big=False, joliet=False)
+    pt_iso_be = tabella_percorsi(dirs, big=True,  joliet=False)
 
-    # --- Directory Joliet: stessi dati, nomi veri ----------------------
-    voci_root_jol = sorted([
-        (nome_joliet("documenti"), b_docs_jol, BLOCCO, True),
-        (nome_joliet("hello.txt;1"), b_hello, len(hello), False),
-        (nome_joliet("Leggimi importante.txt;1"), b_leggimi, len(leggimi), False),
-    ])
-    voci_docs_jol = [(nome_joliet("note-lunghe.txt;1"), b_note, len(note), False)]
+    b_pt_iso_le = blocco; blocco += blocchi_per(len(pt_iso_le))
+    b_pt_iso_be = blocco; blocco += blocchi_per(len(pt_iso_be))
 
-    root_jol = contenuto_dir(voci_root_jol, b_root_jol, BLOCCO,
-                             b_root_jol, BLOCCO)
-    docs_jol = contenuto_dir(voci_docs_jol, b_docs_jol, BLOCCO,
-                             b_root_jol, BLOCCO)
+    b_pt_jol_le = b_pt_jol_be = 0
+    if joliet:
+        b_pt_jol_le = blocco; blocco += blocchi_per(len(pt_iso_le))
+        b_pt_jol_be = blocco; blocco += blocchi_per(len(pt_iso_be))
 
-    pt = [(b"\x00", b_root_iso, 1), (nome_iso("DOCS"), b_docs_iso, 1)]
-    pt_le = tabella_percorsi(pt, big=False)
-    pt_be = tabella_percorsi(pt, big=True)
+    for d in dirs:
+        d.extent_iso = blocco
+        blocco += blocchi_per(d.dim_iso)
+    if joliet:
+        for d in dirs:
+            d.extent_jol = blocco
+            blocco += blocchi_per(d.dim_jol)
 
-    rec_root_iso = rec_dir(b"\x00", b_root_iso, BLOCCO, True)
-    rec_root_jol = rec_dir(b"\x00", b_root_jol, BLOCCO, True)
+    # I file: un blocco intero anche quando sono vuoti, cosi' nessun
+    # extent cade fuori dal volume dichiarato — un file da zero byte non
+    # si legge mai, ma il suo record punta comunque da qualche parte.
+    cima = [blocco]
 
-    pvd = descrittore(1, "EXOS TEST CD", totale, rec_root_iso, joliet=False,
-                      pt_dim=len(pt_le), pt_le=b_pt_le, pt_be=b_pt_be)
-    svd = descrittore(2, "EXOS TEST CD", totale, rec_root_jol, joliet=True,
-                      pt_dim=len(pt_le), pt_le=b_pt_le, pt_be=b_pt_be)
+    def scorri_file(voce):
+        for f in voce.figli:
+            if f.is_dir:
+                scorri_file(f)
+            else:
+                f.extent = cima[0]
+                cima[0] += blocchi_per(f.dim)
 
-    term = bytearray(b"\x00" * BLOCCO)
-    term[0] = 255
-    term[1:6] = b"CD001"
-    term[6] = 1
+    scorri_file(radice)
+    totale = cima[0]
 
-    # --- Scrittura -----------------------------------------------------
+    # Le tabelle dei percorsi Joliet vanno ricalcolate: contengono gli
+    # extent, che ora si conoscono.
+    if joliet:
+        pt_jol_le = tabella_percorsi(dirs, big=False, joliet=True)
+        pt_jol_be = tabella_percorsi(dirs, big=True,  joliet=True)
+    pt_iso_le = tabella_percorsi(dirs, big=False, joliet=False)
+    pt_iso_be = tabella_percorsi(dirs, big=True,  joliet=False)
+
+    # --- Scrittura ----------------------------------------------------
     img = bytearray(b"\x00" * (totale * BLOCCO))
 
-    def metti(blocco, dati):
-        img[blocco * BLOCCO:blocco * BLOCCO + len(dati)] = dati
+    def metti(b, dati):
+        img[b * BLOCCO:b * BLOCCO + len(dati)] = dati
 
-    metti(b_pvd, pvd)
+    rec_root_iso = rec_dir(b"\x00", radice.extent_iso, radice.dim_iso, True)
+    metti(b_pvd, descrittore(1, etichetta, totale, rec_root_iso, False,
+                             len(pt_iso_le), b_pt_iso_le, b_pt_iso_be))
     if joliet:
-        metti(b_svd, svd)
-        metti(b_term, bytes(term))
+        rec_root_jol = rec_dir(b"\x00", radice.extent_jol, radice.dim_jol, True)
+        metti(b_svd, descrittore(2, etichetta, totale, rec_root_jol, True,
+                                 len(pt_jol_le), b_pt_jol_le, b_pt_jol_be))
+        metti(b_pt_jol_le, pt_jol_le)
+        metti(b_pt_jol_be, pt_jol_be)
+
+    metti(b_term, terminatore())
+    metti(b_pt_iso_le, pt_iso_le)
+    metti(b_pt_iso_be, pt_iso_be)
+
+    def scrivi_dirs(voce, padre):
+        metti(voce.extent_iso, contenuto_directory(voce, padre, joliet=False))
+        if joliet:
+            metti(voce.extent_jol, contenuto_directory(voce, padre, joliet=True))
+        for f in voce.figli:
+            if f.is_dir:
+                scrivi_dirs(f, voce)
+
+    scrivi_dirs(radice, radice)
+
+    def scrivi_file(voce):
+        for f in voce.figli:
+            if f.is_dir:
+                scrivi_file(f)
+            elif f.dim:
+                metti(f.extent, f.dati)
+
+    scrivi_file(radice)
+    return bytes(img), totale
+
+
+# =============================================================================
+# Immagine sintetica di collaudo
+# =============================================================================
+
+def albero_di_prova():
+    radice = Voce("", is_dir=True)
+
+    leggimi = Voce("Leggimi importante.txt", is_dir=False)
+    leggimi.dati = ("EX-OS: prova del driver CD/DVD.\r\n"
+                    "Se leggi questa riga, ISO 9660 funziona.\r\n").encode()
+    leggimi.dim = len(leggimi.dati)
+
+    hello = Voce("hello.txt", is_dir=False)
+    hello.dati = b"ciao dal CD\r\n"
+    hello.dim = len(hello.dati)
+
+    # Piu' di due blocchi, con ogni riga numerata: un salto ai confini di
+    # blocco si vede subito invece di nascondersi in mezzo a testo uguale.
+    note = Voce("note-lunghe.txt", is_dir=False)
+    note.dati = b"".join(
+        ("riga %04d di prova, offset oltre il blocco\r\n" % i).encode()
+        for i in range(120))
+    note.dim = len(note.dati)
+
+    docs = Voce("documenti", is_dir=True)
+    docs.figli = [note]
+
+    radice.figli = [leggimi, docs, hello]
+    return radice
+
+
+# =============================================================================
+def main():
+    uscita = None
+    da = None
+    etichetta = "EXOS"
+    joliet = True
+    prova = False
+
+    argv = sys.argv[1:]
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--da" and i + 1 < len(argv):
+            da = argv[i + 1]; i += 2
+        elif a == "--etichetta" and i + 1 < len(argv):
+            etichetta = argv[i + 1]; i += 2
+        elif a == "--senza-joliet":
+            joliet = False; i += 1
+        elif a == "--prova":
+            prova = True; i += 1
+        elif a.startswith("--"):
+            print("mkiso: opzione sconosciuta: %s" % a)
+            return 1
+        else:
+            uscita = a; i += 1
+
+    if uscita is None:
+        uscita = "/tmp/exos.iso"
+
+    if prova:
+        radice = albero_di_prova()
+        if etichetta == "EXOS":
+            etichetta = "EXOS TEST CD"
+    elif da:
+        if not os.path.isdir(da):
+            print("mkiso: '%s' non e' una directory" % da)
+            return 1
+        radice = leggi_albero(da)
+        if not radice.figli:
+            print("mkiso: '%s' e' vuota: non c'e' niente da masterizzare" % da)
+            return 1
     else:
-        # Senza la SVD il terminatore prende il suo posto: la catena dei
-        # descrittori non ammette buchi, e un blocco di zeri in mezzo
-        # sarebbe una firma mancante invece che una fine.
-        metti(b_svd, bytes(term))
-    metti(b_pt_le, pt_le)
-    metti(b_pt_be, pt_be)
-    metti(b_root_iso, root_iso)
-    metti(b_docs_iso, docs_iso)
-    metti(b_root_jol, root_jol)
-    metti(b_docs_jol, docs_jol)
-    metti(b_leggimi, leggimi)
-    metti(b_hello, hello)
-    metti(b_note, note)
+        print(__doc__)
+        return 1
+
+    img, totale = costruisci(radice, etichetta, joliet)
 
     with open(uscita, "wb") as fh:
         fh.write(img)
 
-    print("scritto %s: %d blocchi (%d byte)" % (uscita, totale, len(img)))
-    print("  /leggimi.txt          %d byte   (Joliet: 'Leggimi importante.txt')"
-          % len(leggimi))
-    print("  /hello.txt            %d byte" % len(hello))
-    print("  /docs/note.txt        %d byte   (Joliet: '/documenti/note-lunghe.txt')"
-          % len(note))
+    def conta(voce):
+        f = d = 0
+        for v in voce.figli:
+            if v.is_dir:
+                d += 1
+                sf, sd = conta(v)
+                f += sf
+                d += sd
+            else:
+                f += 1
+        return f, d
+
+    n_file, n_dir = conta(radice)
+    print("mkiso: %s — %d file, %d directory, %d blocchi (%d KB), nomi %s"
+          % (uscita, n_file, n_dir, totale, totale * BLOCCO // 1024,
+             "Joliet + ISO 9660" if joliet else "solo ISO 9660"))
     return 0
 
 

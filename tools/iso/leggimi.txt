@@ -1,0 +1,66 @@
+EX-OS -- CD degli strumenti
+===========================
+
+Questo disco NON serve ad avviare il sistema: EX-OS si avvia dal floppy o
+dal disco rigido su cui e' installato. Qui ci sono gli strumenti
+opzionali, cioe' le cose che non stanno in 1.44 MB e che non servono a
+tutti.
+
+Come si monta
+-------------
+
+    mount cd0 /cdrom        se non e' gia' montato all'avvio
+    ls /cdrom
+    umount /cdrom           prima di espellere il disco
+
+Il montaggio automatico e' gia' previsto in /boot/kernel.cfg:
+
+    [mount]
+    /cdrom = cd0
+
+Un lettore vuoto non e' un problema e non produce avvisi: se il disco non
+c'e' all'accensione, il montaggio viene semplicemente saltato.
+
+Il disco e' SEMPRE in sola lettura. Non e' una scelta di configurazione:
+ISO 9660 non ha una mappa dello spazio libero, quindi non esiste
+"aggiungere un file" -- esiste rifare l'immagine. Chi compila su EX-OS
+legge da qui e scrive altrove.
+
+
+Cosa c'e' dentro
+----------------
+
+/exos/include/      gli header della libc di EX-OS: stdio.h, stdlib.h,
+                    string.h, ctype.h, errno.h, setjmp.h, unistd.h e
+                    libc.h, che e' quello che li contiene davvero.
+
+/exos/libc.c        la libc stessa, in un file solo. Un programma
+                    compilato su EX-OS la compila insieme al proprio
+                    sorgente: non c'e' ancora un archivio libc.a ne' il
+                    link dinamico per i programmi normali.
+
+/exos/start.S       il pezzo di avvio che chiama main() con argc e argv.
+                    Va linkato per primo.
+
+/doc/               la documentazione del progetto e il testo della
+                    licenza.
+
+
+Cosa NON c'e' ancora
+--------------------
+
+/bin/ e' vuota di proposito: e' il posto del compilatore. Il primo che
+ci arrivera' e' TCC -- si porta dietro assemblatore e linker, gira in
+pochi MB e chiede alla libreria una frazione di cio' che chiede GCC.
+
+Fino ad allora i programmi di EX-OS si compilano da un'altra macchina,
+con il cross-compilatore descritto in /doc/README.md.
+
+
+Licenza
+-------
+
+EX-OS e' distribuito secondo la GNU General Public License versione 2 o
+successiva. Il testo completo e' in /doc/gpl-2.0.txt.
+
+Copyright (C) 2025 Graziano Falcone <exagonx@hotmail.com>

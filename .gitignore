@@ -1,1 +1,24 @@
 .claude/
+
+# =============================================================================
+# L'albero dei sorgenti GCC
+#
+# Sono 692 MB di codice di terzi, sotto GPLv3, che cambiano a ogni
+# aggiornamento upstream: dentro la cronologia di questo repository non ci
+# devono stare — la renderebbero impraticabile da clonare e la
+# riempirebbero di modifiche che non sono nostre.
+#
+# ⚠️ Le modifiche di EX-OS a quell'albero NON sono qui dentro: stanno in
+# tools/gcc-exos/, che e' tracciata, e si riapplicano a un albero pulito
+# con `python3 tools/gcc-exos/applica.py <percorso-gcc>`.
+# =============================================================================
+gcc/
+
+# =============================================================================
+# Il disco avviabile
+#
+# Mezzo gigabyte rigenerato da `make hd` a ogni cambiamento dei binari: e'
+# un artefatto, non un sorgente. Il floppy resta tracciato perche' e'
+# l'immagine che si distribuisce ed e' 1.4 MB; questo no.
+# =============================================================================
+dist/hd.img

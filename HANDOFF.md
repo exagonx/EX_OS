@@ -2,6 +2,515 @@
 
 ---
 
+# SESSIONE 2026-08-02 (b) — La virgola mobile, e due bug che solo lei ha fatto uscire
+
+Kernel a **0.146** → **0.147**. `/bin/libctest` passa **78 prove su 78**
+dentro EX-OS (erano 41).
+
+La sessione doveva aggiungere alla libc cio' che manca a un compilatore
+ospitato — virgola mobile, `sscanf`, data e ora, `stat` — e ha finito per
+scoprire che **due dei tre "difetti della libc" non erano nella libc**.
+
+## Perche' la FPU e' un problema del kernel
+
+`strtod` non e' un lusso: un compilatore deve leggere i letterali numerici
+dei sorgenti che compila, e una `strtod` che ritorna zero non da' un
+errore — da' un programma compilato con la costante sbagliata.
+
+Ma il primo programma che tocca l'x87 su un kernel che non l'ha
+inizializzata prende un'eccezione, e — molto peggio, perche' silenzioso —
+**due processi che fanno conti si sovrascrivono i registri a vicenda**.
+Da qui `kernel/arch/x86/fpu.c`, il **PASSO 7b**, e 108 byte di stato nel
+PCB salvati e ripristinati a ogni cambio di contesto. Le scelte (dov'e' il
+passo, perche' salvataggio sempre e non switch pigro, perche' zero non e'
+uno stato valido per `FRSTOR`) stanno per esteso in
+`kernel/include/fpu.h` e in `KERNEL_CORE_NOTES.md`.
+
+La prova che conta e' in `libctest`: un prodotto ripetuto venti volte con
+un `sched_yield()` in mezzo a ogni moltiplicazione. Se nessuno salvasse i
+registri, al ritorno il valore sarebbe di qualcun altro. Da' 1048576.
+
+## 🐛 Il file temporaneo che conteneva un ELF
+
+`fseek(f, 0, SEEK_END); ftell(f)` su un file da 29 byte rispondeva
+**31640**, e il primo `fgetc()` dopo un `fseek` all'inizio ritornava
+**0x7F**. Cioe' la dimensione, e la prima lettera, di `/bin/libctest`.
+
+Non era `FILE*`. **`vfs_open()` prenotava lo slot di `g_file[]` troppo
+tardi**: sceglieva quello libero, poi parlava con il driver del
+filesystem, e solo alla fine lo marcava `usato`. In mezzo c'e' una lettura
+di directory, che e' un messaggio IPC a un driver in ring3, che e' un
+punto di riscadenzamento. Il PASSO 15 stava caricando lo stesso ELF per le
+altre tre console: due `open` diversi, un solo slot.
+
+L'altra meta' del danno la vedeva il caricatore, e sembrava un problema
+del tutto scollegato: al primo `fclose()` del programma si trovava
+l'handle chiuso sotto i piedi — «ELF: impossibile leggere program headers»
+su due console su quattro, **a ogni avvio, da prima di questa sessione**.
+
+`fat12_open()` aveva lo stesso difetto un piano piu' sotto. Corretti
+tutti e due: prenotazione immediata, e un `..._fallito()` che la disfa su
+ogni uscita d'errore — senza, dopo `VFS_MAX_OPEN` aperture fallite non si
+aprirebbe piu' niente.
+
+La regola, che vale per ogni tabella condivisa di questo kernel:
+**si prenota prima di bloccarsi, non dopo.**
+
+## 🐛 `strtod("2.5e-2") == 0.025` era falso, e strtod aveva ragione
+
+L'ultima prova rossa. La diagnostica ha stampato i bit dei due operandi:
+`3F9999999999999A` da entrambe le parti. Identici, e il confronto falso.
+
+Il colpevole e' `FLDT` nel codice generato: su x87 GCC valuta le costanti
+in virgola mobile alla **precisione del coprocessore**, 64 bit di
+mantissa, mentre `strtod` ritorna un `double` a 53. Sono due numeri
+diversi per costruzione, e 0.025 e' l'unico valore di quella sezione a
+non essere rappresentabile esattamente — tutti gli altri (1.5, 7.75,
+1024.0) passavano, il che rendeva il difetto ancora piu' convincente.
+
+Il rimedio e' mettere il valore atteso in una variabile `double`, che
+forza l'arrotondamento a 53 bit. E' scritto nel codice della prova perche'
+la stessa trappola aspetta chiunque confronti virgole mobili in un
+programma di EX-OS.
+
+## Il resto della libreria
+
+- **Virgola mobile**: `strtod`/`strtof`/`strtold`, `ldexp`, `strtoll`,
+  `strtoull`. La mantissa si accumula in `double` cifra per cifra e si
+  scala per una potenza di dieci esatta (`10^22` e' l'ultima che lo e');
+  per gli esponenti negativi si **divide** invece di moltiplicare per la
+  reciproca, che sarebbe un errore in piu'. Non e' correttamente
+  arrotondata a mezzo ULP, ed e' dichiarato in testa alla sezione.
+- **`sscanf`/`vsscanf`**: larghezze, `%n`, soppressione `%*`, `%lf`.
+- **Data e ora**: `time`, `localtime`, `gmtime`, `mktime`,
+  `gettimeofday` sopra `SYS_TIME` (13), che c'era gia'. Senza fuso:
+  `localtime` e `gmtime` danno la stessa ora, perche' il sistema non sa
+  in quale fuso si trova e inventarne uno sarebbe peggio.
+- **`stat`/`fstat`** nella forma POSIX, sopra le syscall rese vere nella
+  sessione precedente.
+- **Header nuovi**: `math.h`, `inttypes.h`, `assert.h`, `fcntl.h`,
+  `time.h`, `sys/stat.h`, `sys/time.h`. `LIBC_HDR` nel Makefile ora
+  prende anche `lib/include/sys/*.h`, altrimenti il CD si porterebbe
+  dietro copie vecchie di quelli.
+- `/bin/mkfs` non dice piu' «EX-OS non sa ancora MONTARE un ext2»: era
+  vero nel 0.12x e manda a cercare un driver che c'e'.
+
+## Verifica
+
+- **`/bin/libctest`: 78 su 78**, sia avviato come shell su tutte e quattro
+  le console (`[boot] shell = /bin/libctest`, il caso che scatenava la
+  corsa) sia lanciato dal prompt.
+- **Nessun `[WARN]` di caricamento ELF all'avvio**: prima ne comparivano
+  due su quattro console.
+- Regressione floppy: `ls`, `mem`, `mount`, `mkdir`, `cp`, `ls`,
+  `delete`, `rmdir` — tutti corretti, su piu' avvii consecutivi.
+- Regressione **ISO**: automount di `/cdrom`, `ls /cdrom`,
+  `cat /cdrom/leggimi.txt`.
+- Regressione **ext2** su `dist/hd.img`: `mount hd0p1 /disk`, `mkdir`,
+  `cp`, `ls`, `delete`, `rmdir`, `umount` — e **`e2fsck -fn` esito 0**
+  sulla partizione estratta.
+- Build pulita, nessun warning nuovo (resta il solito `LOAD segment with
+  RWX permissions`).
+
+## Cosa resta
+
+- ⚠️ **Osservato una volta e non riprodotto**: in un avvio le quattro
+  shell hanno chiesto tutte la riga sulla **console 0** («kbd: su console
+  0 la richiesta di PID 5 sostituisce quella di PID 4»), lasciando i
+  comandi senza risposta visibile. Sette avvii successivi con la stessa
+  immagine hanno sempre dato `PID 4→console 0 … PID 7→console 3`,
+  compresa una diagnostica temporanea nel driver kbd. Se ricapita, il
+  punto da guardare e' `richiesta.console` in `tty_read_ipc()`
+  (`drivers/tty/tty.c`) contro il `console` del PCB.
+- `make hd` / `tools/mkhd.sh` (disco avviabile da 512 MB) non e'
+  documentato ne' qui ne' nel README: e' arrivato con la sessione del
+  cross-compilatore e non ha mai avuto la sua riga.
+- I tre difetti del bersaglio `i386-exos` gia' annotati (tipi in
+  `exos.h`, indirizzo di caricamento, unwind tables): costano un rebuild
+  di GCC e conviene farli insieme.
+- Il passo grosso resta TCC in `tools/tcc/` e poi in `/bin` del CD.
+
+## File toccati
+
+- **nuovi**: `kernel/arch/x86/fpu.c`, `kernel/include/fpu.h`,
+  `lib/include/{math,inttypes,assert,fcntl,time}.h`,
+  `lib/include/sys/{stat,time}.h`
+- `kernel/fs/vfs.c` — prenotazione dello slot in `vfs_open`, `apri_fallito`
+- `kernel/fs/fat12.c` — stesso rimedio in `fat12_open`
+- `kernel/sched/sched.c` + `sched.h` — `fpu_state` nel PCB, salvataggio
+  e ripristino in `sched_switch_to`
+- `kernel/kernel_main.c` — PASSO 7b
+- `kernel/include/version.h` — 0.147
+- `lib/libc.c` + `lib/include/libc.h` — virgola mobile, `sscanf`, tempo,
+  `stat`
+- `bin/libctest/libctest.c` — sezioni «Virgola mobile», «sscanf e tempo»,
+  «stat»
+- `bin/mkfs/mkfs.c` — avviso ext2 obsoleto
+- `Makefile` — `LIBC_HDR` con `sys/`, regola di `/bin/libctest`
+- `README.md`, `KERNEL_CORE_NOTES.md`
+
+---
+
+# SESSIONE 2026-08-02 — Gli header parlano la lingua del compilatore
+
+Kernel **invariato a 0.146**: sotto `kernel/` non e' stato toccato niente,
+e la regola di versionamento chiede l'incremento solo per il kernel.
+
+Il presupposto di questa sessione e' il lavoro immediatamente precedente:
+esiste un **cross-compilatore `i386-exos`** (`i386-exos-gcc (GCC) 17.0.0`,
+con `libgcc.a` per il bersaglio), il cui port vive in `tools/gcc-exos/` ed
+e' documentato per esteso in `tools/gcc-exos/leggimi.md`. `i386-exos-gcc
+programma.c -o programma` produce un binario che parte dentro EX-OS senza
+una sola opzione sulla riga di comando.
+
+E qui e' saltato fuori che **i nostri header non erano pronti per un
+compilatore che non fosse il gcc di sistema**.
+
+## size_t era una promessa che solo un compilatore manteneva
+
+`libc.h` dichiarava i tipi fondamentali da se':
+
+```c
+typedef unsigned int    size_t;
+```
+
+Vero per il `gcc` di sistema con `-m32`. **Falso** per il bersaglio
+`i386-exos`, dove `__SIZE_TYPE__` e' `long unsigned int` — stessa
+larghezza, tipo diverso. Basta un sorgente che includa `<stddef.h>`
+accanto ai nostri header perche' non compili piu':
+
+```
+error: conflicting types for 'size_t'; have 'long unsigned int'
+note:  previous declaration of 'size_t' with type 'unsigned int'
+```
+
+Cioe' quasi tutto il codice di terzi — a cominciare da quello del
+compilatore che si vuole portare dentro EX-OS, che e' il motivo per cui il
+cross esiste.
+
+Ora `size_t`, `ptrdiff_t` e `NULL` vengono da `#include <stddef.h>`, che
+**non e' un header della libreria ma del compilatore**: lo fornisce anche
+in modalita' freestanding, quindi si include senza `-I` e anche dentro
+`lib/libc.c`, che il Makefile compila di proposito senza `-I lib/include`.
+`ssize_t`, `intptr_t` e `uintptr_t` in `<stddef.h>` non ci sono e vengono
+dalle macro predefinite `__PTRDIFF_TYPE__`, `__INTPTR_TYPE__`,
+`__UINTPTR_TYPE__`.
+
+Il principio, che vale per tutto cio' che verra' dopo: **un tipo lo
+dichiara il compilatore, non noi.** Un typedef scritto a mano non e' una
+descrizione, e' una seconda opinione — e vale finche' non cambia
+compilatore.
+
+Il blocco dei tipi e' ripetuto in `lib/libc.c`, che resta autosufficiente:
+e' la stessa convenzione gia' usata per `DirEntry`, `MemInfo` e i numeri di
+syscall, e va tenuta allineata a mano.
+
+## Un `main()` dichiarato in un header vieta `int main(void)`
+
+`libc.h` conteneva `int main(int argc, char **argv);`. Un prototipo in un
+header incluso da tutti rende **errore di compilazione** l'altra forma
+ammessa dallo standard, `int main(void)` — quella con cui e' scritto quasi
+ogni programma di esempio, di prova e di configure:
+
+```
+error: conflicting types for 'main'; have 'int(void)'
+```
+
+Tolto. L'unico che ha bisogno di quel prototipo e' `lib/libc.c`, che se lo
+dichiara da se' prima di `_libc_start`; i due argomenti in piu' che passa a
+un `main(void)` la convenzione cdecl li ignora.
+
+## `<stdint.h>` non esisteva sul bersaglio
+
+Sondando gli header del cross: `<stdbool.h>`, `<stdarg.h>`, `<float.h>` e
+`<limits.h>` ci sono (li installa GCC), **`<stdint.h>` no** — perche'
+`gcc/config.gcc` non imposta `use_gcc_stdint` per il nostro caso. Mancano
+anche `<time.h>`, `<fcntl.h>` e `<sys/types.h>`, che sono roba di libc e
+non di compilatore.
+
+Nuovo `lib/include/stdint.h`. **Non e' una facciata come gli altri**: gli
+altri rimandano a `libc.h` perche' li' ci sono le funzioni, qui ci sono
+tipi, e i tipi li sa il compilatore. Ogni riga chiede a lui —
+`__INT32_TYPE__`, `__UINT32_MAX__`, `__INT64_C()` — e non scrive
+`unsigned int` sperando di indovinare. Larghezze esatte, `least`, `fast`,
+`intmax_t`, tutti i limiti (compresi `SIZE_MAX`, `PTRDIFF_MAX`, `WCHAR_*`,
+`WINT_*`, `SIG_ATOMIC_*`) e le macro `INTn_C()`.
+
+Il rimedio costa zero rebuild di GCC: `prepara-cross.sh` copia gli header
+di `lib/include` nell'albero del bersaglio, quindi basta che il file
+esista.
+
+⚠️ **Sul bersaglio `int32_t` e' `long int`, non `int`.** Corretto (32 bit
+in entrambi i casi) ma inconsueto: `i386-linux` dichiara `INT32_TYPE "int"`
+e il nostro `exos.h` non dichiara niente, quindi GCC ripiega su `"long
+int"`. Stessa radice di `__SIZE_TYPE__`. Non fa danni ora che gli header
+chiedono al compilatore, ma si vede negli avvisi (`long` dove ci si aspetta
+`int`).
+
+## Il CD si rifaceva solo per `libc.h`
+
+`LIBC_HDR` nel Makefile nominava un file solo, mentre la regola del CD
+copia `lib/include/*.h`. Con gli header standard aggiunti in agosto,
+cambiarne uno non rifaceva l'immagine: sul CD sarebbero finiti header
+vecchi, consegnati proprio a chi compila **dentro** EX-OS e non ha modo di
+accorgersene. Ora e' `$(wildcard lib/include/*.h)`.
+
+## Verifica
+
+- `make all` pulita, zero warning nuovi (restano i soliti `LOAD segment
+  with RWX permissions`, preesistenti).
+- **I binari in albero non cambiano.** Il `gcc` di sistema con `-m32`
+  predefinisce `__SIZE_TYPE__ unsigned int` e `__PTRDIFF_TYPE__ int`,
+  cioe' esattamente i tipi che prima erano scritti a mano: la modifica e'
+  a costo zero da questa parte e serve solo dall'altra.
+- Col cross: un programma che include `<stddef.h>`, `<stdarg.h>`,
+  `<limits.h>`, `<stdint.h>` e i nostri header insieme, con `int main(void)`,
+  compila con `-Wall -Wextra` e zero diagnostica. Prima falliva su due
+  errori.
+- `stdint.h` provato con **17 `_Static_assert`** (larghezze, limiti,
+  `INT64_C(1) << 40`, `sizeof(intptr_t) == sizeof(void *)`), superati sia
+  dal cross sia dal gcc di sistema a 32 bit.
+- `prova.c` ricompilato col cross, `prepara-cross.sh` rilanciato, `make
+  floppy` e `make iso` rifatti — il CD ora porta 16 file invece di 15.
+
+Non e' stato rieseguito `/bin/libctest` dentro EX-OS: la shell e'
+interattiva. Il codice generato per i programmi di `/bin` e' pero'
+identico, per la ragione detta sopra.
+
+## Cosa resta
+
+- **`exos.h`: dire al bersaglio i tipi giusti** — `SIZE_TYPE "unsigned
+  int"`, `PTRDIFF_TYPE "int"`, `INT32_TYPE "int"` come fa `i386-linux`.
+  Conviene farlo insieme ai due difetti gia' annotati in
+  `tools/gcc-exos/leggimi.md` (indirizzo di caricamento `0x08000000` e
+  `-fno-asynchronous-unwind-tables`), perche' tutti e tre costano un
+  rebuild di GCC: le specs sono compilate dentro il driver.
+- `<time.h>`, `<fcntl.h>`, `<sys/types.h>`: header di libc che non
+  esistono. Servono quando arrivera' un programma che li include davvero —
+  scriverli prima vuol dire indovinare quali `typedef` gli servono.
+- Il passo grosso resta quello di sempre: TCC in `tools/tcc/` e poi in
+  `/bin` del CD, o il cross usato per compilare su una macchina di
+  sviluppo.
+
+## File toccati
+
+- **nuovo**: `lib/include/stdint.h`
+- `lib/include/libc.h` — tipi dal compilatore, via `<stddef.h>`; tolto il
+  prototipo di `main()`
+- `lib/libc.c` — stesso blocco di tipi, allineato
+- `Makefile` — `LIBC_HDR` a wildcard
+- `dist/floppy.img`, `dist/exos-tools.iso` — rifatti
+
+---
+
+# SESSIONE 2026-08-01 (b) — Libc ospitata e CD degli strumenti
+
+Kernel a **0.145** → **0.146**. Obiettivo dichiarato: portare TCC dentro
+EX-OS (e piu' avanti valutare GCC), distribuito sul CD degli strumenti e
+non sul floppy. Questa sessione fa il pezzo che nessuna delle due strade
+puo' evitare: la **libc**.
+
+`/bin/libctest` prova tutto DENTRO EX-OS e passa **41 prove su 41**.
+
+## Il problema non era stdio: era che free() non esisteva
+
+`free()` era una funzione vuota con un TODO al posto del corpo, e
+`malloc()` chiamava `sbrk` a ogni allocazione. Sui programmi di /bin non
+si vedeva — allocano poche volte e poi escono, e il processo si porta via
+tutto — ma nessun compilatore sopravvive a questo: un parser alloca e
+libera in ciclo, e senza riuso cresce fino a esaurire lo spazio pur non
+tenendo mai in mano piu' di qualche KB.
+
+C'era di peggio, e silenzioso: `realloc()` copiava `size` byte dal blocco
+vecchio **senza conoscerne la dimensione**. Ingrandire leggeva oltre la
+fine. Su un heap che cresceva e basta erano byte non ancora scritti, e il
+difetto non si manifestava; su un heap con riuso sarebbe stato il dato di
+qualcun altro copiato dentro il proprio.
+
+Ora: lista di blocchi in ordine di INDIRIZZO (usati e liberi insieme),
+primo adatto, spezzatura con avanzo minimo, e fusione con il vicino
+precedente e successivo. La lista e' in ordine di indirizzo e non "solo i
+liberi" perche' la fusione ha bisogno dei vicini FISICI; con una lista dei
+soli liberi servirebbero i tag di confine — stessa memoria, piu' modi di
+sbagliare.
+
+Prezzo dichiarato nel codice: 16 byte di intestazione per blocco e ricerca
+lineare. Su centinaia di migliaia di oggetti piccoli si sentira', e il
+rimedio (liste per taglia) si aggiunge sopra senza cambiare il contratto.
+
+**La prova che conta**: 2000 `malloc`/`free` in ciclo non spostano
+`sbrk(0)` di un byte.
+
+## stdio, e perche' NON e' il line buffering di Unix
+
+`putchar()` faceva una syscall per carattere e `printf()` lo chiamava per
+ognuno: ottanta cambi di contesto per una riga.
+
+Ora c'e' il FILE* completo e un solo formattatore per printf/fprintf/
+sprintf/snprintf. Ma la politica di buffering e' diversa da Unix, di
+proposito: **stdout e stderr si svuotano alla fine di ogni chiamata**.
+
+Con il line buffering, tutto cio' che non finisce con '\n' resterebbe nel
+buffer: il prompt della shell sparirebbe fino alla riga dopo, e gfedit
+mostrerebbe l'ultima riga incompleta solo al tasto successivo. Unix se la
+cava perche' leggere da stdin svuota stdout — ma **gfedit non legge da
+stdin**, parla via IPC con il servizio kbd, quindi quella convenzione non
+lo salverebbe. Svuotare a fine chiamata toglie la classe di problemi e
+tiene quasi tutto il guadagno (una syscall per printf invece di ottanta).
+Verificato con uno screenshot di gfedit: disegna correttamente.
+
+`exit()` svuota tutti i flussi. Senza, un programma che scrive un file e
+esce senza `fclose()` lo troverebbe monco — l'ultimo pezzo nel buffer di
+un processo che non esiste piu'.
+
+## Due syscall rispondevano ENOSYS da sempre
+
+`SYS_STAT` non era **mai stata scritta** (TODO dalla Fase 3) e
+`SYS_LSEEK` non sapeva fare SEEK_END. Senza quelle due nessun FILE* puo'
+offrire `ftell()` sulla fine, cioe' il modo con cui ogni programma misura
+un file prima di leggerlo.
+
+Ora passano dal VFS e valgono su ogni filesystem montato. Per SEEK_END
+serviva la dimensione di un file **gia' aperto**: e' nato `vfs_fstat()`,
+che parte dall'handle e non dal percorso — ripassare dal percorso darebbe
+la dimensione sbagliata su un file rinominato mentre e' aperto. Il corpo
+di `vfs_stat` e' stato estratto in `stat_interno()` cosi' i due condividono
+la scelta del driver invece di averne due copie.
+
+Corretto anche `SEEK_CUR` con offset negativo: sotto zero diventava una
+posizione enorme su interi senza segno.
+
+## errno si AGGIUNGE, non sostituisce
+
+Su Unix una syscall fallita ritorna -1 e mette il motivo in errno. Qui le
+funzioni ritornano l'errore negativo (-2 = ENOENT, -30 = EROFS) e tutti i
+programmi stampano quel numero. Cambiare convenzione voleva dire
+riscrivere ogni chiamante per guadagnare zero: `< 0` resta il test giusto
+in entrambi i mondi, e -EIO dice piu' di -1.
+
+Quindi errno viene impostato **in piu'** (helper `err_reg`), e ci sono
+`strerror()` e `perror()` per chi vuole un messaggio.
+
+## Il resto della libreria
+
+setjmp/longjmp in assembly — non si possono scrivere in C: salvare
+esattamente i registri che la convenzione dichiara conservati e' proprio
+cio' che il compilatore ha il permesso di riorganizzare. Poi strtol,
+strtoul, qsort (shell sort: niente ricorsione, niente caso peggiore
+sull'input gia' ordinato), bsearch, strstr, strdup, strtok, strspn,
+strcspn, memchr, strncat, ctype, e i wrapper lseek/stat/sbrk/fsize.
+
+`sbrk` e' esposto perche' newlib e picolibc chiedono esattamente quella
+funzione, e nient'altro, per far girare il proprio malloc: il giorno che
+si decide di portarne una, il gancio c'e'.
+
+Intestazioni con i nomi standard (`<stdio.h>`, `<stdlib.h>`, `<string.h>`,
+`<ctype.h>`, `<errno.h>`, `<setjmp.h>`, `<unistd.h>`) che rimandano a
+libc.h: facciate sottili di proposito, perche' due elenchi della stessa
+funzione divergono e la divergenza si manifesta come prototipo sbagliato,
+non come errore di compilazione.
+
+## ⚠️ I binari erano raddoppiati, e il rimedio vale per sempre
+
+Ogni programma di /bin compila `lib/libc.c` dentro di se'. Con lo stdio
+nuovo `ls` e' passato da 12 a 25 KB, e 17 programmi × 13 KB sono 220 KB su
+un floppy da 1.44 MB.
+
+`-ffunction-sections -fdata-sections` in `CFLAGS_USER` e `--gc-sections`
+su tutti i link dei programmi utente: il linker butta le funzioni che
+nessuno raggiunge. `ls` e' tornato a **10 KB** — meno di prima che la
+libreria crescesse — e il floppy ha **897 KB liberi**, contro i 909 di
+partenza, con in piu' tutta la libc nuova e /bin/libctest.
+
+I linker script raccoglievano gia' `.text.*` / `.rodata.*` / `.data.*` /
+`.bss.*` e dichiarano `ENTRY(_start)`, che e' la radice della raccolta:
+non e' servito toccarli.
+
+## Verifica
+
+- `/bin/libctest`: **41 prove su 41** dentro EX-OS — riuso dei blocchi,
+  fusione, heap stabile su 2000 cicli, realloc che conserva, ampiezza e
+  precisione di printf, interi a 64 bit, snprintf che tronca e riporta la
+  lunghezza vera, fopen/fgets/ftell/fseek/ungetc/feof, dimensione del file
+  su disco, longjmp da dodici livelli di stack, strtol/qsort/bsearch/
+  strtok/ctype, errno.
+- Regressione: `ls`, `mem`, `mount`, `mkdir`, `rmdir`, `cp`, `delete`,
+  `trunc`, `ls /cdrom` — tutti invariati. `gfedit` disegna correttamente
+  (screenshot).
+- Build pulita, zero warning nuovi.
+
+## `make iso` — il CD degli strumenti (fatto nella stessa sessione)
+
+```bash
+make iso        # dist/exos-tools.iso
+make run-iso    # QEMU con il CD gia' inserito
+```
+
+`tools/mkiso.py` e' passato da "immagine di prova a contenuto fisso" a
+masterizzatore vero: prende un albero di directory e costruisce
+**entrambi** gli alberi del formato — ISO 9660 (8.3 maiuscoli con `;1`) e
+Joliet (nomi veri in UCS-2) — condividendo i blocchi dei file. Gestisce
+sottodirectory annidate, directory su piu' blocchi, tabelle dei percorsi
+per tutti e due gli alberi, e le collisioni del troncamento a 8.3 con un
+contatore (due file distinti che diventassero lo stesso nome sarebbero un
+file perso in silenzio).
+
+Il modo di prova resta, con `--prova`: serve a collaudare il driver con
+un'immagine di cui si conosce ogni byte.
+
+Contenuto attuale del disco (`tools/iso/leggimi.txt` + il Makefile):
+
+```
+/leggimi.txt          cos'e' questo disco e come si monta
+/exos/include/        gli header della libc
+/exos/libc.c          la libc in un file solo
+/exos/start.S         il pezzo di avvio che chiama main()
+/doc/                 README, note sul kernel, licenza
+/bin/                 vuota: e' il posto del compilatore
+```
+
+`/exos/` non e' documentazione: e' cio' che serve per COMPILARE su EX-OS,
+ed e' il motivo per cui questo disco esiste prima di TCC. Il CD **non**
+fa parte di `make all`: il floppy e' l'artefatto principale e chi compila
+il sistema non deve aspettare un CD che magari non usera'.
+
+⚠️ Conseguenza del supporto, da tenere presente quando arrivera' il
+compilatore: il CD e' in sola lettura, quindi header e librerie si
+leggono da li' ma l'OUTPUT deve andare altrove — un EX-OS installato su
+ext2, o il floppy. Compilare avendo come unica scrittura il floppy e'
+possibile ma stretto.
+
+Provato in QEMU: `ls /cdrom`, `ls /cdrom/exos/include`, `ls /cdrom/doc`,
+`cat /cdrom/leggimi.txt` e `cp /cdrom/exos/include/stdio.h /copia.h` —
+1615 byte copiati dal CD al floppy, cioe' esattamente la dimensione del
+file.
+
+## Prossimo passo
+
+I sorgenti di TCC in `tools/tcc/` (versione consigliata: 0.9.27, C99
+puro, backend i386 collaudato), da mettere poi in `/bin` del CD. Quando la
+libc verra' spezzata in un archivio vero (`libc.a`, un file per area) gli
+header standard prenderanno il proprio contenuto e ogni programma
+smettera' di ricompilarsela.
+
+## File toccati
+
+- **nuovi**: `bin/libctest/libctest.c` + `.ld`, `lib/include/{stdio,stdlib,
+  string,ctype,errno,setjmp,unistd}.h`
+- `lib/libc.c` — allocatore, stdio, formattatore, setjmp, conversioni,
+  ctype, errno (da 997 a ~2200 righe)
+- `lib/include/libc.h` — dichiarazioni, `FILE` opaco, `jmp_buf`, `Stat`
+- `kernel/syscall/syscall_impl.c` — `sys_stat` implementata, `SEEK_END`
+- `kernel/fs/vfs.c` + `vfs.h` — `vfs_fstat`, `stat_interno`
+- `Makefile` — `-ffunction-sections`/`--gc-sections`, `LIBC_HDR`,
+  regola di `/bin/libctest`, target `iso` e `run-iso`
+- `tools/mkiso.py` — riscritto: da immagine di prova a masterizzatore di
+  un albero di directory, con entrambi gli alberi del formato
+- `tools/iso/leggimi.txt` — il testo che si trova sul CD
+- `kernel/include/version.h`, `README.md`, `KERNEL_CORE_NOTES.md`
+
+---
+
 # SESSIONE 2026-08-01 — CD/DVD: driver ATAPI, ISO 9660, automount
 
 Kernel a **0.144** → **0.145**. Un CD dati si monta, si elenca e si legge;

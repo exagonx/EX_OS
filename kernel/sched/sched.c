@@ -244,6 +244,13 @@ Process *proc_create(const char *name, uint32_t entry_point,
     /* Nome */
     str_copy(proc->name, name, PROCESS_NAME_LEN);
 
+    /* Stato x87 di partenza. pcb_alloc ha azzerato il PCB, e zero NON e'
+     * uno stato valido per FRSTOR: la parola di controllo a zero smaschera
+     * tutte le eccezioni di virgola mobile e i tag dicono che tutti gli
+     * otto registri contengono un valore buono. Il primo processo a
+     * toccare la FPU prenderebbe un'eccezione senza aver fatto niente. */
+    fpu_init_state(proc->fpu_state);
+
     /* Priorità e quantum */
     if (priority > PRIO_MAX) priority = PRIO_NORMAL;
     proc->priority      = priority;
@@ -514,6 +521,22 @@ static void sched_switch_to(Process *next)
 
     klog(LOG_DEBUG, "SCHED: switch PID %u → PID %u (tick=%u)",
          prev->pid, next->pid, g_ticks);
+
+    /* Coprocessore x87: lo stato NON e' nei registri che salva
+     * context_switch, quindi va spostato qui, in C, prima di cambiare
+     * stack. Salvare sempre invece di usare lo switch pigro (CR0.TS piu'
+     * un handler di #NM che ripristina solo a chi la FPU la usa davvero)
+     * e' una scelta: a 100 tick al secondo sono ~200 cicli ogni 10 ms,
+     * cioe' niente, e in cambio non c'e' un proprietario della FPU da
+     * tenere aggiornato quando un processo muore — che e' il modo in cui
+     * lo switch pigro si sbaglia.
+     *
+     * L'ordine conta: FNSAVE azzera la FPU dopo aver salvato, quindi il
+     * ripristino del prossimo deve venire dopo il salvataggio del
+     * precedente. Chi torna qui piu' tardi trova il proprio stato gia'
+     * ricaricato da chi lo ha risvegliato. */
+    fpu_save(prev->fpu_state);
+    fpu_restore(next->fpu_state);
 
     /* Context switch ASM: salva ESP di prev, carica ESP di next */
     context_switch(&prev->kernel_esp,

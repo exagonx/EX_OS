@@ -14,6 +14,7 @@
 
 #include "kernel.h"
 #include "paging.h"
+#include "fpu.h"    /* FPU_STATE_SIZE: il PCB porta lo stato del coprocessore */
 
 /* =============================================================================
  * IPC — message passing kernel-mediato
@@ -168,6 +169,18 @@ typedef struct Process {
     /* --- Contesto CPU --- */
     CpuContext      ctx;                    /* Stato registri salvato */
     uint32_t        kernel_esp;             /* ESP kernel (per context switch) */
+
+    /* Stato del coprocessore x87 (agosto 2026).
+     *
+     * Non sta in CpuContext perche' quello descrive lo stack costruito da
+     * pushad/pushfd, che l'assembly di context_switch legge e scrive per
+     * posizione: infilarci 108 byte vorrebbe dire rifare quei conti. Qui
+     * e' un campo a se', salvato e ripristinato in C da sched_switch_to.
+     *
+     * Allineato a 16 byte per non dover ripensare a nulla il giorno che
+     * FNSAVE lasciasse il posto a FXSAVE, che l'allineamento lo PRETENDE.
+     * Vedi kernel/include/fpu.h per il guasto che tutto questo evita. */
+    uint8_t         fpu_state[FPU_STATE_SIZE] ALIGNED(16);
 
     /* --- Stack --- */
     uint32_t        kernel_stack_base;      /* Indirizzo base stack kernel */

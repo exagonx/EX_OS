@@ -515,6 +515,18 @@ static int e_radice(const char *interno)
     return interno[0] == '/' && interno[1] == '\0';
 }
 
+/* Rilascia lo slot prenotato da vfs_open e riporta l'errore al chiamante.
+ * Esiste perche' la prenotazione avviene PRIMA di parlare con il driver
+ * (vedi il commento in vfs_open) e ogni uscita anticipata da li' in poi
+ * deve disfarla: uno slot prenotato e mai liberato e' un descrittore
+ * perso per sempre, e dopo VFS_MAX_OPEN aperture fallite non si apre
+ * piu' niente. */
+static int apri_fallito(int slot, int err)
+{
+    g_file[slot].usato = 0;
+    return err;
+}
+
 int vfs_open(const char *abs, uint32_t flags)
 {
     char interno[VFS_PATH_MAX];
@@ -536,9 +548,36 @@ int vfs_open(const char *abs, uint32_t flags)
     }
     if (slot < 0) return ERR(EMFILE);
 
+    /* ⚠️ LO SLOT SI PRENOTA QUI, non a fine funzione.
+     *
+     * Ogni ramo qui sotto parla con un driver, e i driver di EX-OS
+     * stanno in ring3: una lettura di directory e' un messaggio IPC e
+     * quindi un punto di riscadenzamento. Marcando `usato` solo alla
+     * fine, fra la scelta dello slot e il suo riempimento c'e' una
+     * finestra in cui un ALTRO processo entra qui, trova lo stesso slot
+     * ancora libero e lo prende: due handle diversi, lo stesso slot, e
+     * chi arriva secondo sovrascrive il file del primo.
+     *
+     * Non e' teoria: e' il guasto per cui un programma che leggeva un
+     * proprio file temporaneo si e' ritrovato a leggere il binario ELF
+     * che un'altra console stava caricando nello stesso istante —
+     * fseek(SEEK_END) rispondeva la dimensione dell'ELF e fgetc()
+     * ritornava 0x7F. L'altra meta' del danno la vedeva il caricatore,
+     * che al primo close() del vicino si trovava l'handle chiuso sotto i
+     * piedi ("impossibile leggere program headers").
+     *
+     * Il campo `im` e `interno` vanno riempiti insieme a `usato`, perche'
+     * chi scorre la tabella (vfs_umount, che cerca file aperti su un
+     * montaggio) guarda esattamente quei due campi e ha il diritto di
+     * trovarli coerenti. */
+    g_file[slot].usato = 1;
+    g_file[slot].im    = im;
+    g_file[slot].h12   = -1;
+    v_copia(g_file[slot].interno, interno, VFS_PATH_MAX);
+
     if (g_mnt[im].tipo == VFS_FS_FAT12FD) {
         int h = fat12_open(interno, flags);
-        if (h < 0) return ERR(ENOENT);
+        if (h < 0) return apri_fallito(slot, ERR(ENOENT));
         g_file[slot].h12 = h;
     } else if (g_mnt[im].tipo == VFS_FS_ISO) {
         IsoDirEntry e;
@@ -546,48 +585,47 @@ int vfs_open(const char *abs, uint32_t flags)
         /* Nessun ramo O_CREAT: su ISO non si crea niente, e il montaggio
          * e' gia' stato dichiarato in sola lettura piu' sopra — quindi qui
          * ci si arriva solo in lettura. */
-        if (iso_stat(g_mnt[im].mnt, interno, &e) != 0) return ERR(ENOENT);
-        if (e.is_dir) return ERR(EISDIR);
-        g_file[slot].h12 = -1;
+        if (iso_stat(g_mnt[im].mnt, interno, &e) != 0)
+            return apri_fallito(slot, ERR(ENOENT));
+        if (e.is_dir) return apri_fallito(slot, ERR(EISDIR));
     } else if (g_mnt[im].tipo == VFS_FS_EXT2) {
         Ext2DirEntry e;
 
         if (ext2_stat(g_mnt[im].mnt, interno, &e) != 0) {
-            if (!(flags & O_CREAT)) return ERR(ENOENT);
+            if (!(flags & O_CREAT)) return apri_fallito(slot, ERR(ENOENT));
             {
                 int r = ext2_create(g_mnt[im].mnt, interno);
-                if (r == -2) return ERR(EEXIST);
-                if (r != 0)  return ERR(EIO);
+                if (r == -2) return apri_fallito(slot, ERR(EEXIST));
+                if (r != 0)  return apri_fallito(slot, ERR(EIO));
             }
-            if (ext2_stat(g_mnt[im].mnt, interno, &e) != 0) return ERR(EIO);
+            if (ext2_stat(g_mnt[im].mnt, interno, &e) != 0)
+                return apri_fallito(slot, ERR(EIO));
         } else if (flags & O_TRUNC) {
-            if (ext2_truncate(g_mnt[im].mnt, interno, 0) != 0) return ERR(EIO);
+            if (ext2_truncate(g_mnt[im].mnt, interno, 0) != 0)
+                return apri_fallito(slot, ERR(EIO));
         }
 
-        if (e.is_dir) return ERR(EISDIR);
-        g_file[slot].h12 = -1;
+        if (e.is_dir) return apri_fallito(slot, ERR(EISDIR));
     } else {
         FatDirEntry e;
 
         if (fat_stat(g_mnt[im].mnt, interno, &e) != 0) {
-            if (!(flags & O_CREAT)) return ERR(ENOENT);
+            if (!(flags & O_CREAT)) return apri_fallito(slot, ERR(ENOENT));
             {
                 int r = fat_create(g_mnt[im].mnt, interno);
-                if (r == -2) return ERR(EEXIST);
-                if (r != 0)  return ERR(EIO);
+                if (r == -2) return apri_fallito(slot, ERR(EEXIST));
+                if (r != 0)  return apri_fallito(slot, ERR(EIO));
             }
-            if (fat_stat(g_mnt[im].mnt, interno, &e) != 0) return ERR(EIO);
+            if (fat_stat(g_mnt[im].mnt, interno, &e) != 0)
+                return apri_fallito(slot, ERR(EIO));
         } else if (flags & O_TRUNC) {
-            if (fat_truncate(g_mnt[im].mnt, interno, 0) != 0) return ERR(EIO);
+            if (fat_truncate(g_mnt[im].mnt, interno, 0) != 0)
+                return apri_fallito(slot, ERR(EIO));
         }
 
-        if (e.is_dir) return ERR(EISDIR);
-        g_file[slot].h12 = -1;
+        if (e.is_dir) return apri_fallito(slot, ERR(EISDIR));
     }
 
-    g_file[slot].usato = 1;
-    g_file[slot].im    = im;
-    v_copia(g_file[slot].interno, interno, VFS_PATH_MAX);
     return slot;
 }
 
@@ -654,16 +692,13 @@ int vfs_close(int h)
     return 0;
 }
 
-int vfs_stat(const char *abs, VfsStat *st)
+/* Il corpo di vfs_stat, a partire da un montaggio e da un percorso GIA'
+ * instradato. Esiste separato perche' lo usano in due — vfs_stat, che
+ * parte da un percorso, e vfs_fstat, che parte da un handle — e due copie
+ * della stessa scelta di driver sarebbero due copie da tenere allineate
+ * ogni volta che si aggiunge un filesystem. */
+static int stat_interno(int im, const char *interno, VfsStat *st)
 {
-    char interno[VFS_PATH_MAX];
-    int  im;
-
-    if (abs == NULL || st == NULL) return ERR(EINVAL);
-
-    im = instrada(abs, interno, sizeof(interno));
-    if (im < 0) return ERR(ENOENT);
-
     /* La radice di un filesystem non ha una voce di directory da
      * interrogare: fat12_stat("/") e fat_stat("/") falliscono entrambe.
      * Vale per "/" e per ogni punto di montaggio. */
@@ -701,6 +736,30 @@ int vfs_stat(const char *abs, VfsStat *st)
     }
 
     return 0;
+}
+
+int vfs_stat(const char *abs, VfsStat *st)
+{
+    char interno[VFS_PATH_MAX];
+    int  im;
+
+    if (abs == NULL || st == NULL) return ERR(EINVAL);
+
+    im = instrada(abs, interno, sizeof(interno));
+    if (im < 0) return ERR(ENOENT);
+
+    return stat_interno(im, interno, st);
+}
+
+int vfs_fstat(int h, VfsStat *st)
+{
+    if (h < 0 || h >= VFS_MAX_OPEN || !g_file[h].usato) return ERR(EBADF);
+    if (st == NULL) return ERR(EINVAL);
+
+    /* Il percorso interno e' quello con cui il file e' stato aperto, e il
+     * montaggio quello su cui l'handle vive: nessuno dei due va
+     * ricalcolato, o si rischierebbe di guardare un altro volume. */
+    return stat_interno(g_file[h].im, g_file[h].interno, st);
 }
 
 int vfs_readdir(const char *abs, VfsDirEntry *out, uint32_t max,

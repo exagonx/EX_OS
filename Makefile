@@ -112,14 +112,23 @@ SHELL_SRC   := bin/sh/shell.c
 SHELL_BIN   := $(BUILD_BIN)/sh
 SHELL_LD    := bin/sh/shell.ld
 
+# -ffunction-sections / -fdata-sections mettono ogni funzione e ogni dato
+# nella propria sezione, e il link con --gc-sections butta quelle che
+# nessuno raggiunge. Serve da quando la libc ha stdio, allocatore e
+# conversioni: senza, OGNI programma di /bin si porta dentro l'intera
+# libreria — `ls` cresceva da 12 a 25 KB per funzioni che non chiama, e su
+# un floppy da 1.44 MB quel raddoppio si sente. I linker script
+# raccoglievano gia' .text.* / .rodata.* / .data.* / .bss.*, quindi non e'
+# servito toccarli.
 CFLAGS_USER := -m32 -ffreestanding -fno-builtin -fno-stack-protector \
-               -fno-pic -fno-pie -Wall -O2 -std=c11 -nostdlib
+               -fno-pic -fno-pie -Wall -O2 -std=c11 -nostdlib \
+               -ffunction-sections -fdata-sections
 
 $(SHELL_BIN): $(SHELL_SRC) $(SHELL_LD)
 	@echo "=== Compilazione Shell utente /bin/sh ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -c $(SHELL_SRC) -o $(BUILD_OBJ)/shell.o
-	$(LD) -m $(CROSS_LD_EMU) -nostdlib -T $(SHELL_LD) $(BUILD_OBJ)/shell.o -o $@
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(SHELL_LD) $(BUILD_OBJ)/shell.o -o $@
 	@echo "[OK] Shell compilata: $@"
 
 .PHONY: shell
@@ -134,7 +143,7 @@ $(HELLO_BIN): $(HELLO_SRC) $(HELLO_LD)
 	@echo "=== Compilazione /bin/hello ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -c $(HELLO_SRC) -o $(BUILD_OBJ)/hello.o
-	$(LD) -m $(CROSS_LD_EMU) -nostdlib -T $(HELLO_LD) $(BUILD_OBJ)/hello.o -o $@
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(HELLO_LD) $(BUILD_OBJ)/hello.o -o $@
 	@echo "[OK] hello compilato: $@"
 
 .PHONY: hello
@@ -149,6 +158,16 @@ hello: dirs $(HELLO_BIN)
 # ricompilato quando si modificava lib/libc.c, e sul floppy finiva un
 # binario vecchio (un fix a printf() sembrava "non avere effetto").
 LIBC_SRC   := lib/libc.c
+# Gli header sono una dipendenza vera: modificarli cambia i prototipi e i
+# tipi visti da ogni programma. Senza questa riga, cambiare libc.h non
+# ricompilava niente — la stessa trappola gia' documentata per version.h.
+#
+# E' un wildcard e non l'elenco di libc.h soltanto, perche' da agosto 2026
+# in lib/include ci sono anche gli header con i nomi standard (<stdio.h>,
+# <stdint.h>...). Il CD degli strumenti li copia TUTTI con lib/include/*.h:
+# nominarne uno solo qui vorrebbe dire un CD che non si rifa' quando cambia
+# uno degli altri, cioe' header vecchi consegnati a chi compila su EX-OS.
+LIBC_HDR   := $(wildcard lib/include/*.h) $(wildcard lib/include/sys/*.h)
 LIBC_SO    := $(BUILD_LIB)/libc.so
 LIBC_LD    := lib/libc.ld
 LIBC_START := lib/start.S
@@ -173,7 +192,7 @@ $(LS_BIN): $(LS_SRC) $(LS_LD) $(LIBC_SRC) $(LS_START)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(LS_SRC)   -o $(BUILD_OBJ)/ls_main.o
 	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                -o $(BUILD_OBJ)/ls_libc.o
 	$(CC) -m32 -c $(LS_START)                          -o $(BUILD_OBJ)/ls_start.o
-	$(LD) -m $(CROSS_LD_EMU) -nostdlib -T $(LS_LD) \
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(LS_LD) \
 	    $(BUILD_OBJ)/ls_start.o \
 	    $(BUILD_OBJ)/ls_main.o  \
 	    $(BUILD_OBJ)/ls_libc.o  \
@@ -199,7 +218,7 @@ $(MEM_BIN): $(MEM_SRC) $(MEM_LD) $(LIBC_SRC) $(MEM_START)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(MEM_SRC)  -o $(BUILD_OBJ)/mem_main.o
 	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                -o $(BUILD_OBJ)/mem_libc.o
 	$(CC) -m32 -c $(MEM_START)                         -o $(BUILD_OBJ)/mem_start.o
-	$(LD) -m $(CROSS_LD_EMU) -nostdlib -T $(MEM_LD) \
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(MEM_LD) \
 	    $(BUILD_OBJ)/mem_start.o \
 	    $(BUILD_OBJ)/mem_main.o  \
 	    $(BUILD_OBJ)/mem_libc.o  \
@@ -219,12 +238,39 @@ $(STACK_BIN): $(STACK_SRC) $(STACK_LD) $(LIBC_SRC) $(LIBC_START)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(STACK_SRC) -o $(BUILD_OBJ)/stack_main.o
 	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                 -o $(BUILD_OBJ)/stack_libc.o
 	$(CC) -m32 -c $(LIBC_START)                         -o $(BUILD_OBJ)/stack_start.o
-	$(LD) -m $(CROSS_LD_EMU) -nostdlib -T $(STACK_LD) \
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(STACK_LD) \
 	    $(BUILD_OBJ)/stack_start.o \
 	    $(BUILD_OBJ)/stack_main.o  \
 	    $(BUILD_OBJ)/stack_libc.o  \
 	    -o $@
 	@echo "[OK] stack compilato: $@"
+
+# --- Programma utente /bin/libctest -------------------------------------------
+# Prova la libc DENTRO EX-OS: allocatore, flussi bufferizzati, printf,
+# setjmp/longjmp, conversioni. Esce con 0 se tutto passa, quindi vale anche
+# come prova automatica e non solo come stampa da guardare.
+#
+# Perche' sta nel floppy e non fra gli strumenti opzionali: e' la rete di
+# sicurezza della libreria su cui verranno costruiti gli altri programmi,
+# e deve poter girare sulla macchina che ha il problema — che magari e'
+# proprio quella senza lettore CD.
+LIBCTEST_SRC := bin/libctest/libctest.c
+LIBCTEST_BIN := $(BUILD_BIN)/libctest
+LIBCTEST_LD  := bin/libctest/libctest.ld
+
+$(LIBCTEST_BIN): $(LIBCTEST_SRC) $(LIBCTEST_LD) $(LIBC_SRC) $(LIBC_START) $(LIBC_HDR)
+	@echo "=== Compilazione /bin/libctest ==="
+	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -c $(LIBCTEST_SRC) -o $(BUILD_OBJ)/libctest_main.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                    -o $(BUILD_OBJ)/libctest_libc.o
+	$(CC) -m32 -c $(LIBC_START)                            -o $(BUILD_OBJ)/libctest_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(LIBCTEST_LD) \
+	    $(BUILD_OBJ)/libctest_start.o $(BUILD_OBJ)/libctest_main.o \
+	    $(BUILD_OBJ)/libctest_libc.o -o $@
+	@echo "[OK] libctest compilato: $@"
+
+.PHONY: libctest
+libctest: dirs $(LIBCTEST_BIN)
 
 # --- Programma utente /bin/disk -----------------------------------------------
 # Mostra dischi e partizioni. SOLA LETTURA. Stesso schema di /bin/ls.
@@ -238,7 +284,7 @@ $(DISK_BIN): $(DISK_SRC) $(DISK_LD) $(LIBC_SRC) $(LIBC_START)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(DISK_SRC) -o $(BUILD_OBJ)/disk_main.o
 	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                -o $(BUILD_OBJ)/disk_libc.o
 	$(CC) -m32 -c $(LIBC_START)                        -o $(BUILD_OBJ)/disk_start.o
-	$(LD) -m $(CROSS_LD_EMU) -nostdlib -T $(DISK_LD) \
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(DISK_LD) \
 	    $(BUILD_OBJ)/disk_start.o $(BUILD_OBJ)/disk_main.o $(BUILD_OBJ)/disk_libc.o -o $@
 	@echo "[OK] disk compilato: $@"
 
@@ -258,7 +304,7 @@ $(FDISK_BIN): $(FDISK_SRC) $(FDISK_LD) $(LIBC_SRC) $(LIBC_START)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(FDISK_SRC) -o $(BUILD_OBJ)/fdisk_main.o
 	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                 -o $(BUILD_OBJ)/fdisk_libc.o
 	$(CC) -m32 -c $(LIBC_START)                         -o $(BUILD_OBJ)/fdisk_start.o
-	$(LD) -m $(CROSS_LD_EMU) -nostdlib -T $(FDISK_LD) \
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(FDISK_LD) \
 	    $(BUILD_OBJ)/fdisk_start.o $(BUILD_OBJ)/fdisk_main.o $(BUILD_OBJ)/fdisk_libc.o -o $@
 	@echo "[OK] fdisk compilato: $@"
 
@@ -285,7 +331,7 @@ $(MKFS_BIN): $(MKFS_SRC) $(MKFS_EXT2) $(MKFS_HDR) $(MKFS_LD) $(LIBC_SRC) $(LIBC_
 	$(CC) $(CFLAGS_USER) -I lib/include -I bin/mkfs -c $(MKFS_EXT2) -o $(BUILD_OBJ)/mkfs_ext2.o
 	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                             -o $(BUILD_OBJ)/mkfs_libc.o
 	$(CC) -m32 -c $(LIBC_START)                                     -o $(BUILD_OBJ)/mkfs_start.o
-	$(LD) -m $(CROSS_LD_EMU) -nostdlib -T $(MKFS_LD) \
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(MKFS_LD) \
 	    $(BUILD_OBJ)/mkfs_start.o $(BUILD_OBJ)/mkfs_main.o \
 	    $(BUILD_OBJ)/mkfs_ext2.o  $(BUILD_OBJ)/mkfs_libc.o -o $@
 	@echo "[OK] mkfs compilato: $@"
@@ -305,7 +351,7 @@ $(TRUNC_BIN): $(TRUNC_SRC) $(TRUNC_LD) $(LIBC_SRC) $(LIBC_START)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(TRUNC_SRC) -o $(BUILD_OBJ)/trunc_main.o
 	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                 -o $(BUILD_OBJ)/trunc_libc.o
 	$(CC) -m32 -c $(LIBC_START)                         -o $(BUILD_OBJ)/trunc_start.o
-	$(LD) -m $(CROSS_LD_EMU) -nostdlib -T $(TRUNC_LD) \
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(TRUNC_LD) \
 	    $(BUILD_OBJ)/trunc_start.o $(BUILD_OBJ)/trunc_main.o $(BUILD_OBJ)/trunc_libc.o -o $@
 	@echo "[OK] trunc compilato: $@"
 
@@ -331,7 +377,7 @@ $(TEXTLINE_BIN): $(TEXTLINE_SRC) $(TEXTLINE_LD) $(LIBC_SRC) $(LIBC_START)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(TEXTLINE_SRC) -o $(BUILD_OBJ)/textline_main.o
 	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                    -o $(BUILD_OBJ)/textline_libc.o
 	$(CC) -m32 -c $(LIBC_START)                            -o $(BUILD_OBJ)/textline_start.o
-	$(LD) -m $(CROSS_LD_EMU) -nostdlib -T $(TEXTLINE_LD) \
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(TEXTLINE_LD) \
 	    $(BUILD_OBJ)/textline_start.o \
 	    $(BUILD_OBJ)/textline_main.o  \
 	    $(BUILD_OBJ)/textline_libc.o  \
@@ -377,7 +423,7 @@ $(GFEDIT_BIN): $(GFEDIT_OBJ) $(GFEDIT_LD) $(LIBC_SRC) $(LIBC_START)
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC) -o $(BUILD_OBJ)/gfedit_libc.o
 	$(CC) -m32 -c $(LIBC_START)         -o $(BUILD_OBJ)/gfedit_start.o
-	$(LD) -m $(CROSS_LD_EMU) -nostdlib -T $(GFEDIT_LD) \
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(GFEDIT_LD) \
 	    $(BUILD_OBJ)/gfedit_start.o \
 	    $(GFEDIT_OBJ)               \
 	    $(BUILD_OBJ)/gfedit_libc.o  \
@@ -398,7 +444,7 @@ $(INSTALL_BIN): $(INSTALL_SRC) $(INSTALL_LD) $(LIBC_SRC) $(LIBC_START)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(INSTALL_SRC) -o $(BUILD_OBJ)/install_main.o
 	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                   -o $(BUILD_OBJ)/install_libc.o
 	$(CC) -m32 -c $(LIBC_START)                           -o $(BUILD_OBJ)/install_start.o
-	$(LD) -m $(CROSS_LD_EMU) -nostdlib -T $(INSTALL_LD) \
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(INSTALL_LD) \
 	    $(BUILD_OBJ)/install_start.o \
 	    $(BUILD_OBJ)/install_main.o  \
 	    $(BUILD_OBJ)/install_libc.o  \
@@ -419,7 +465,7 @@ $(CP_BIN): $(CP_SRC) $(CP_LD) $(LIBC_SRC) $(LIBC_START)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(CP_SRC) -o $(BUILD_OBJ)/cp_main.o
 	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)              -o $(BUILD_OBJ)/cp_libc.o
 	$(CC) -m32 -c $(LIBC_START)                      -o $(BUILD_OBJ)/cp_start.o
-	$(LD) -m $(CROSS_LD_EMU) -nostdlib -T $(CP_LD) \
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(CP_LD) \
 	    $(BUILD_OBJ)/cp_start.o \
 	    $(BUILD_OBJ)/cp_main.o  \
 	    $(BUILD_OBJ)/cp_libc.o  \
@@ -444,7 +490,7 @@ $(MOUNT_BIN): $(MOUNT_SRC) $(MOUNT_LD) $(LIBC_SRC) $(LIBC_START)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(MOUNT_SRC) -o $(BUILD_OBJ)/mount_main.o
 	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                 -o $(BUILD_OBJ)/mount_libc.o
 	$(CC) -m32 -c $(LIBC_START)                         -o $(BUILD_OBJ)/mount_start.o
-	$(LD) -m $(CROSS_LD_EMU) -nostdlib -T $(MOUNT_LD) \
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(MOUNT_LD) \
 	    $(BUILD_OBJ)/mount_start.o \
 	    $(BUILD_OBJ)/mount_main.o  \
 	    $(BUILD_OBJ)/mount_libc.o  \
@@ -465,7 +511,7 @@ $(MKDIR_BIN): $(MKDIR_SRC) $(MKDIR_LD) $(LIBC_SRC) $(LIBC_START)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(MKDIR_SRC) -o $(BUILD_OBJ)/mkdir_main.o
 	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                 -o $(BUILD_OBJ)/mkdir_libc.o
 	$(CC) -m32 -c $(LIBC_START)                         -o $(BUILD_OBJ)/mkdir_start.o
-	$(LD) -m $(CROSS_LD_EMU) -nostdlib -T $(MKDIR_LD) \
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(MKDIR_LD) \
 	    $(BUILD_OBJ)/mkdir_start.o \
 	    $(BUILD_OBJ)/mkdir_main.o  \
 	    $(BUILD_OBJ)/mkdir_libc.o  \
@@ -486,7 +532,7 @@ $(RMDIR_BIN): $(RMDIR_SRC) $(RMDIR_LD) $(LIBC_SRC) $(LIBC_START)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(RMDIR_SRC) -o $(BUILD_OBJ)/rmdir_main.o
 	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                 -o $(BUILD_OBJ)/rmdir_libc.o
 	$(CC) -m32 -c $(LIBC_START)                         -o $(BUILD_OBJ)/rmdir_start.o
-	$(LD) -m $(CROSS_LD_EMU) -nostdlib -T $(RMDIR_LD) \
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(RMDIR_LD) \
 	    $(BUILD_OBJ)/rmdir_start.o \
 	    $(BUILD_OBJ)/rmdir_main.o  \
 	    $(BUILD_OBJ)/rmdir_libc.o  \
@@ -507,7 +553,7 @@ $(DELETE_BIN): $(DELETE_SRC) $(DELETE_LD) $(LIBC_SRC) $(LIBC_START)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(DELETE_SRC) -o $(BUILD_OBJ)/delete_main.o
 	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                  -o $(BUILD_OBJ)/delete_libc.o
 	$(CC) -m32 -c $(LIBC_START)                          -o $(BUILD_OBJ)/delete_start.o
-	$(LD) -m $(CROSS_LD_EMU) -nostdlib -T $(DELETE_LD) \
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(DELETE_LD) \
 	    $(BUILD_OBJ)/delete_start.o \
 	    $(BUILD_OBJ)/delete_main.o  \
 	    $(BUILD_OBJ)/delete_libc.o  \
@@ -573,7 +619,7 @@ $(KBD_DRV_OUT): $(KBD_DRV_SRC) $(KBD_DRV_PROTO) $(KBD_DRV_LD) $(LIBC_SRC) $(LIBC
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/kbd -c $(KBD_DRV_SRC) -o $(BUILD_DRIVERS)/kbd_main.o
 	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)   -o $(BUILD_DRIVERS)/kbd_libc.o
 	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_DRIVERS)/kbd_start.o
-	$(LD) -m $(CROSS_LD_EMU) -nostdlib -T $(KBD_DRV_LD) \
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(KBD_DRV_LD) \
 	    $(BUILD_DRIVERS)/kbd_start.o \
 	    $(BUILD_DRIVERS)/kbd_main.o  \
 	    $(BUILD_DRIVERS)/kbd_libc.o  \
@@ -584,7 +630,7 @@ $(KBD_DRV_OUT): $(KBD_DRV_SRC) $(KBD_DRV_PROTO) $(KBD_DRV_LD) $(LIBC_SRC) $(LIBC
 kbd_drv: dirs $(KBD_DRV_OUT)
 
 .PHONY: all
-all: dirs stage1 stage2 kernel shell hello ls mem stack disk fdisk mkfs trunc mount_prog cp_prog install_prog textline gfedit mkdir_prog rmdir_prog delete_prog libc floppy_drv kbd_drv floppy
+all: dirs stage1 stage2 kernel shell hello ls mem stack disk libctest fdisk mkfs trunc mount_prog cp_prog install_prog textline gfedit mkdir_prog rmdir_prog delete_prog libc floppy_drv kbd_drv floppy
 	@echo ""
 	@echo "============================================"
 	@echo " EX-OS build completata!"
@@ -691,6 +737,7 @@ $(BUILD_KERNEL)/boothd_bin.o: $(BOOTHD_C)
 KERNEL_C_SRC   := $(KERNEL_DIR)/arch/x86/gdt.c \
                   $(KERNEL_DIR)/arch/x86/idt.c \
                   $(KERNEL_DIR)/arch/x86/isr.c \
+                  $(KERNEL_DIR)/arch/x86/fpu.c \
                   $(KERNEL_DIR)/arch/x86/vga.c \
                   $(KERNEL_DIR)/arch/x86/rtc.c \
                   $(KERNEL_DIR)/arch/x86/kprintf.c \
@@ -789,6 +836,92 @@ floppy: $(STAGE1_BIN) $(STAGE2_BIN) $(KERNEL_BIN)
 
 .PHONY: img
 img: floppy
+
+# =============================================================================
+# CD DEGLI STRUMENTI
+#
+# Un secondo supporto, separato dal floppy e volutamente NON avviabile:
+# ci va cio' che in 1.44 MB non entra e che non serve a tutti. Il primo
+# inquilino previsto e' TCC, in /bin.
+#
+# PERCHE' UN CD E NON UN FLOPPY PIU' GRANDE. Il floppy e' il supporto di
+# avvio e deve restare quello collaudato; gli strumenti cambiano spesso,
+# pesano e non devono poter rompere l'avvio. Il CD e' anche in sola
+# lettura per costruzione, il che e' esattamente cio' che si vuole da un
+# disco di strumenti: nessuno puo' modificarli per sbaglio.
+#
+# L'immagine si costruisce con tools/mkiso.py (niente genisoimage in
+# questo ambiente) e porta sia i nomi ISO 9660 sia quelli Joliet, cosi'
+# `ls /cdrom` mostra i nomi veri.
+#
+# NON fa parte di `make all`: il floppy e' l'artefatto principale, e chi
+# compila il sistema non deve aspettare un CD che magari non usera'.
+# =============================================================================
+ISO_ROOT    := $(BUILD_DIR)/iso
+ISO_IMG     := $(DIST_DIR)/exos-tools.iso
+ISO_LEGGIMI := $(TOOLS_DIR)/iso/leggimi.txt
+ISO_MKISO   := $(TOOLS_DIR)/mkiso.py
+
+$(ISO_IMG): $(ISO_MKISO) $(ISO_LEGGIMI) $(LIBC_SRC) $(LIBC_HDR) $(LIBC_START) \
+            README.md gpl-2.0.txt
+	@echo "=== Creazione CD degli strumenti ==="
+	@mkdir -p $(DIST_DIR)
+	@rm -rf $(ISO_ROOT)
+	@mkdir -p $(ISO_ROOT)/exos/include $(ISO_ROOT)/doc $(ISO_ROOT)/bin
+	@cp $(ISO_LEGGIMI) $(ISO_ROOT)/leggimi.txt
+	@cp -r lib/include/. $(ISO_ROOT)/exos/include/
+	@cp $(LIBC_SRC) $(LIBC_START) $(ISO_ROOT)/exos/
+	@cp README.md KERNEL_CORE_NOTES.md $(ISO_ROOT)/doc/
+	@cp gpl-2.0.txt $(ISO_ROOT)/doc/
+	@# /bin resta vuota finche' non arriva TCC: una directory senza voci
+	@# non e' rappresentabile in modo utile, quindi si dichiara a parole.
+	@printf 'Qui arrivera il compilatore: vedi /leggimi.txt\n' \
+	    > $(ISO_ROOT)/bin/leggimi.txt
+	@python3 $(ISO_MKISO) $(ISO_IMG) --da $(ISO_ROOT) --etichetta "EXOS TOOLS"
+	@echo "[OK] CD degli strumenti: $(ISO_IMG)"
+
+.PHONY: iso
+iso: $(ISO_IMG)
+
+# Prova il CD degli strumenti dentro QEMU, montato su /cdrom.
+.PHONY: run-iso
+run-iso: $(FLOPPY_IMG) $(ISO_IMG)
+	@echo "=== Avvio QEMU con il CD degli strumenti ==="
+	$(QEMU) $(QEMU_FLAGS) -cdrom $(ISO_IMG)
+
+# =============================================================================
+# DISCO AVVIABILE
+#
+# Il terzo supporto, e il primo su cui EX-OS ha spazio per crescere: 511 MB
+# contro gli 897 KB liberi del floppy. Serve per gli strumenti che sul
+# floppy non entrano, e per la ragione che il CD non puo' coprire — su un
+# CD si legge e basta, mentre l'OUTPUT di una compilazione deve poter
+# essere scritto da qualche parte.
+#
+# NON fa parte di `make all`, per la stessa ragione del CD: costruirlo
+# richiede un giro completo in QEMU (formattazione e installazione le fa
+# EX-OS stesso, vedi tools/mkhd.sh) e chi compila il sistema non deve
+# aspettarlo.
+# =============================================================================
+HD_IMG := $(DIST_DIR)/hd.img
+
+.PHONY: hd
+hd: $(FLOPPY_IMG)
+	@chmod +x $(TOOLS_DIR)/mkhd.sh
+	@$(TOOLS_DIR)/mkhd.sh
+
+# -boot c e nessun floppy: e' il punto della prova. Lasciare il floppy
+# attaccato proverebbe una cosa diversa da quella voluta — un sistema che
+# parte davvero da disco, non uno che ci ripiega sopra.
+.PHONY: run-hd
+run-hd: $(HD_IMG)
+	@echo "=== Avvio QEMU dal disco (senza floppy) ==="
+	$(QEMU) -drive file=$(HD_IMG),format=raw,if=ide \
+		-m 32M -boot c -no-reboot -no-shutdown
+
+$(HD_IMG):
+	@echo "$(HD_IMG) non esiste: lancia 'make hd'." >&2
+	@false
 
 # =============================================================================
 # ESECUZIONE E DEBUG
@@ -943,9 +1076,16 @@ help:
 	@echo "  make kernel       — Kernel ELF + flat binary"
 	@echo "  make floppy       — Solo immagine floppy"
 	@echo ""
+	@echo "Supporti:"
+	@echo "  make floppy       — Immagine di avvio dist/floppy.img"
+	@echo "  make iso          — CD degli strumenti dist/exos-tools.iso"
+	@echo "  make hd           — Disco avviabile dist/hd.img (512 MB, ext2)"
+	@echo "  make run-hd       — Avvia dal disco, SENZA floppy"
+	@echo ""
 	@echo "Test e debug:"
 	@echo "  make run          — Avvia con QEMU"
 	@echo "  make run-serial   — Avvia con output seriale su terminale"
+	@echo "  make run-iso      — Avvia con il CD degli strumenti inserito"
 	@echo "  make debug        — Avvia QEMU + GDB stub (porta 1234)"
 	@echo "  make debug-vga    — Avvia QEMU + monitor interattivo"
 	@echo ""

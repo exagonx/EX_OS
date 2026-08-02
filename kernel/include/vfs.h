@@ -91,6 +91,15 @@ int  vfs_read   (int h, void *buf, uint32_t size, uint32_t offset);
 int  vfs_write  (int h, const void *buf, uint32_t size, uint32_t offset);
 int  vfs_close  (int h);
 int  vfs_stat   (const char *abs, VfsStat *st);
+
+/* Come vfs_stat ma su un file GIA' APERTO.
+ *
+ * Serve a lseek(SEEK_END), che deve sapere quanto e' lungo il file e non
+ * ha in mano un percorso: ha un handle. Ripassare dal percorso non era
+ * un'alternativa — il descrittore lo conserva, ma un file rinominato o
+ * cancellato mentre e' aperto darebbe la dimensione sbagliata o nessuna,
+ * e la posizione di scrittura verrebbe calcolata su quel numero. */
+int  vfs_fstat  (int h, VfsStat *st);
 int  vfs_readdir(const char *abs, VfsDirEntry *out, uint32_t max,
                  uint32_t *count, uint32_t start);
 int  vfs_mkdir  (const char *abs);

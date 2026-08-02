@@ -790,9 +790,14 @@ static int fai_ext2(const char *dev, unsigned int primo, unsigned int settori,
     ext2_mostra(&g);
     printf("  etichetta              : '%s'\n", et);
 
-    printf("\nATTENZIONE: EX-OS non sa ancora MONTARE un ext2. Il volume sara'\n");
-    printf("valido e leggibile da Linux, ma `mount` qui fallira' finche' non\n");
-    printf("ci sara' il driver di lettura.\n");
+    /* L'avviso che stava qui — "EX-OS non sa ancora MONTARE un ext2" —
+     * era vero quando questo formattatore e' nato e ha smesso di esserlo
+     * con il driver ext2 (0.13x). Un messaggio che descrive una
+     * limitazione superata non e' innocuo: manda a cercare un driver che
+     * c'e', e fa dubitare di un `mount` che invece funziona. */
+    printf("\nIl volume sara' leggibile e scrivibile da EX-OS (`mount %s <punto>`)\n",
+           dev);
+    printf("e da Linux: e' un ext2 revisione 1 senza estensioni.\n");
 
     if (!conferma(dev)) return 1;
 

@@ -36,9 +36,11 @@
  *
  * È una stringa e non un numero di proposito: un float non rappresenta
  * 0.001 in modo esatto, e stamparlo richiederebbe aritmetica in virgola
- * mobile che questo kernel non usa (niente FPU inizializzata, niente
- * softfloat). Incrementarla è un'operazione manuale e deliberata: chi
- * tocca il kernel aggiorna la riga qui sotto.
+ * mobile che questo kernel non usa. Dal 2026-08-02 la FPU viene
+ * inizializzata e il suo stato salvato a ogni cambio di contesto (vedi
+ * kernel/include/fpu.h), ma è per i programmi ring3: il kernel resta
+ * senza virgola mobile e senza softfloat. Incrementarla è un'operazione
+ * manuale e deliberata: chi tocca il kernel aggiorna la riga qui sotto.
  * ---------------------------------------------------------------------------
  * ============================================================================= */
 
@@ -50,7 +52,7 @@
 #define EXOS_LONGNAME   "Extensible Operating System"
 
 /* ▲ INCREMENTARE DI 0.001 A OGNI MODIFICA DEL KERNEL ▲ */
-#define EXOS_VERSION    "0.145"
+#define EXOS_VERSION    "0.147"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

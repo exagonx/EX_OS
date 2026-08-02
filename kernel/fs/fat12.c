@@ -1959,6 +1959,14 @@ int fat12_rmdir(const char *path)
     return -2;   /* ENOENT */
 }
 
+/* Rilascia lo slot prenotato da fat12_open e riporta l'errore: stesso
+ * motivo e stessa forma di apri_fallito() nel VFS. */
+static int fat12_open_fallito(int slot, int err)
+{
+    g_open_files[slot].used = 0;
+    return err;
+}
+
 int fat12_open(const char *path, uint32_t flags)
 {
     char     name83[11];
@@ -1972,12 +1980,22 @@ int fat12_open(const char *path, uint32_t flags)
     }
     if (slot == MAX_OPEN_FILES) return -24;  /* EMFILE */
 
-    if (fat12_split_path(path, &dir_cluster, name83) != 0) return -2;
-
+    /* ⚠️ Prenotazione IMMEDIATA dello slot, prima di qualunque accesso al
+     * supporto. Da qui in giu' si legge dal floppy, e leggere dal floppy
+     * significa un messaggio IPC al driver in ring3, cioe' un punto in
+     * cui lo scheduler puo' dare la CPU a qualcun altro. Se `used`
+     * venisse marcato solo al successo, un secondo processo entrato in
+     * quella finestra troverebbe lo stesso slot libero e i due file
+     * finirebbero nello stesso descrittore. Vedi il commento lungo in
+     * vfs_open(): il guasto e' lo stesso, un piano piu' in su. */
+    g_open_files[slot].used          = 1;
     g_open_files[slot].is_root_entry = 0;
     g_open_files[slot].root_index    = 0;
     g_open_files[slot].dir_lba       = 0;
     g_open_files[slot].dir_slot      = 0;
+
+    if (fat12_split_path(path, &dir_cluster, name83) != 0)
+        return fat12_open_fallito(slot, -2);
 
     /* --- file nella ROOT ---------------------------------------------- */
     if (dir_cluster == 0) {
@@ -1997,21 +2015,19 @@ int fat12_open(const char *path, uint32_t flags)
                 if (entries[i].ext[j] != (uint8_t)name83[8 + j]) match = 0;
             if (!match) continue;
 
-            g_open_files[slot].used          = 1;
             g_open_files[slot].entry         = entries[i];
             g_open_files[slot].is_root_entry = 1;
             g_open_files[slot].root_index    = i;   /* indice VERO, non dedotto */
 
             if (flags & 0x0200) {                   /* O_TRUNC */
-                if (fat12_apply_trunc(slot) != 0) {
-                    g_open_files[slot].used = 0;
-                    return -5;
-                }
+                if (fat12_apply_trunc(slot) != 0)
+                    return fat12_open_fallito(slot, -5);
             }
             return slot;
         }
 
-        if (!(flags & 0x0040)) return -2;           /* niente O_CREAT → ENOENT */
+        /* niente O_CREAT → ENOENT */
+        if (!(flags & 0x0040)) return fat12_open_fallito(slot, -2);
 
         for (i = 0; i < ROOT_ENTRY_COUNT; i++) {
             if (entries[i].name[0] == 0x00 || (uint8_t)entries[i].name[0] == 0xE5) {
@@ -2025,14 +2041,13 @@ int fat12_open(const char *path, uint32_t flags)
                 entries[i].date          = 0;
                 g_root_dirty = 1;
 
-                g_open_files[slot].used          = 1;
                 g_open_files[slot].entry         = entries[i];
                 g_open_files[slot].is_root_entry = 1;
                 g_open_files[slot].root_index    = i;
                 return slot;
             }
         }
-        return -28;   /* ENOSPC: root dir piena */
+        return fat12_open_fallito(slot, -28);   /* ENOSPC: root dir piena */
     }
 
     /* --- file in una SOTTODIRECTORY ------------------------------------ */
@@ -2042,26 +2057,23 @@ int fat12_open(const char *path, uint32_t flags)
         Fat12DirEntry e;
 
         if (fat12_dir_scan(dir_cluster, name83, &lba, &dslot, &e) == 0) {
-            g_open_files[slot].used     = 1;
             g_open_files[slot].entry    = e;
             g_open_files[slot].dir_lba  = lba;
             g_open_files[slot].dir_slot = dslot;
 
             if (flags & 0x0200) {                   /* O_TRUNC */
-                if (fat12_apply_trunc(slot) != 0) {
-                    g_open_files[slot].used = 0;
-                    return -5;
-                }
+                if (fat12_apply_trunc(slot) != 0)
+                    return fat12_open_fallito(slot, -5);
             }
             return slot;
         }
 
-        if (!(flags & 0x0040)) return -2;
+        if (!(flags & 0x0040)) return fat12_open_fallito(slot, -2);
 
         /* Creazione dentro la directory richiesta, non nella root. */
         if (fat12_dir_scan(dir_cluster, NULL, &lba, &dslot, NULL) != 0) {
             klog(LOG_ERROR, "FAT12: nessuno slot libero nella directory di '%s'", path);
-            return -28;
+            return fat12_open_fallito(slot, -28);
         }
 
         {
@@ -2069,7 +2081,8 @@ int fat12_open(const char *path, uint32_t flags)
             Fat12DirEntry *entries = (Fat12DirEntry *)buf;
             uint8_t        j;
 
-            if (fat12_read_sector(lba, buf) != 0) return -5;
+            if (fat12_read_sector(lba, buf) != 0)
+                return fat12_open_fallito(slot, -5);
 
             for (j = 0; j < 8; j++) entries[dslot].name[j] = (uint8_t)name83[j];
             for (j = 0; j < 3; j++) entries[dslot].ext[j]  = (uint8_t)name83[8 + j];
@@ -2079,9 +2092,9 @@ int fat12_open(const char *path, uint32_t flags)
             entries[dslot].time          = 0;
             entries[dslot].date          = 0;
 
-            if (fat12_write_sector(lba, buf) != 0) return -5;
+            if (fat12_write_sector(lba, buf) != 0)
+                return fat12_open_fallito(slot, -5);
 
-            g_open_files[slot].used     = 1;
             g_open_files[slot].entry    = entries[dslot];
             g_open_files[slot].dir_lba  = lba;
             g_open_files[slot].dir_slot = dslot;
