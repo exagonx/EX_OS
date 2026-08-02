@@ -17,9 +17,14 @@
  *
  * ⚠️ I PERMESSI SONO UNA FINZIONE. EX-OS non ha utenti, gruppi ne'
  * permessi: st_mode li riporta ricostruiti dall'unico attributo che il
- * filesystem tiene davvero, quello di sola lettura. chmod() e umask()
- * NON esistono — dichiararle vorrebbe dire promettere che cambiano
- * qualcosa.
+ * filesystem tiene davvero, quello di sola lettura.
+ *
+ * chmod(), fchmod() e umask() ESISTONO ma non cambiano niente, e fino ad
+ * agosto 2026 non esistevano affatto — per non promettere qualcosa che non
+ * succede. Le ha fatte entrare bfd, che chiude ogni file eseguibile che
+ * produce con umask/chmod: l'alternativa era rattoppare i sorgenti di
+ * terzi uno per uno, a ogni loro rilascio. Il nome c'e', il commento dice
+ * forte che e' inerte — la stessa convenzione di O_EXCL in <fcntl.h>.
  * ============================================================================= */
 
 #ifndef EXOS_SYS_STAT_H

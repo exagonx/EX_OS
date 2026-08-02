@@ -1,1 +1,1 @@
-Qui arrivera il compilatore: vedi /leggimi.txt
+as e ld nativi per EX-OS (binutils 2.44)

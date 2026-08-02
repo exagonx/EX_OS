@@ -21,6 +21,12 @@ typedef struct {
     uint32_t user_stack_top;    /* Top stack utente (allineato 16 byte) */
 } ElfLoadResult;
 
+/* Carica l'eseguibile SU RICHIESTA: i segmenti si annotano e le pagine
+ * arrivano al primo accesso. E' il modo giusto per i programmi. */
 int elf_load(const char *path, Process *proc, ElfLoadResult *result);
+
+/* Carica tutto in RAM subito. Serve a chi non puo' permettersi di
+ * dipendere dal filesystem mentre gira — i driver. Vedi elf.c. */
+int elf_load_residente(const char *path, Process *proc, ElfLoadResult *result);
 
 #endif /* ELF_H */

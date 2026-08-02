@@ -223,6 +223,208 @@ Fix:
 - **Non testato su hardware reale da me** (nessun Pentium II/QEMU/VBox
   disponibile in questo ambiente) — da verificare alla prossima build.
 
+### ✅ Scrittura FAT12 alla posizione giusta (2026-08-02, 0.153)
+
+Due difetti che erano li' da sempre e che **si vedono solo tornando
+indietro** in un file. Fino ad agosto 2026 ogni programma di EX-OS
+scriveva dall'inizio alla fine; il primo che non lo fa e' `as` di
+binutils, che scrive le sezioni e poi si riposiziona a zero per
+l'intestazione ELF.
+
+1. **`vfs_write_nl` non passava l'offset a `fat12_write`** — «fat12 tiene
+   la propria posizione» — e quella scriveva sempre da
+   `entry->file_size`, cioe' in coda. Il file usciva con i pezzi giusti
+   nell'ordine di scrittura e il magic `\x7fELF` a offset 240.
+   ⚠️ Su ext2 e FAT16/32 non succedeva: li' l'offset arrivava gia'.
+2. **`if (nuovo || in == 0)` azzerava il settore intero.** `in == 0`
+   significa «scrivo dall'inizio del settore», non «il settore e' vuoto»:
+   i 52 byte dell'intestazione ELF cancellavano i 460 di sezioni che gli
+   stavano dietro. La condizione giusta e' «il settore sta oltre la fine
+   attuale del file».
+
+⚠️ Resta scoperto il caso del **buco**: una scrittura che comincia oltre
+la fine del file lascia i byte in mezzo come stavano sul disco invece di
+farli leggere come zeri.
+
+### ✅ dup/dup2/fcntl, e i file che nessuno chiudeva (2026-08-02, 0.151)
+
+`VfsFile` ha un **conteggio dei riferimenti** (`rif`): `vfs_close` scala e
+chiude davvero solo l'ultima volta, `vfs_dup` incrementa. E' quello che
+mancava alla 0.150 — sta scritto nella sezione qui sotto — e senza non si
+poteva avere `dup()`. Sopra ci stanno tre syscall con i numeri di Linux:
+**41 `dup`**, **63 `dup2`**, **55 `fcntl`** (`F_DUPFD`, `F_GETFD`,
+`F_SETFD`, `F_GETFL`, `F_SETFL`).
+
+Le chiede il codice di terzi: `ar`, `objcopy` e `arsup` di binutils fanno
+tutti `fd = dup(fd)` per tenere aperto un file oltre la `close()` di chi
+possedeva l'originale.
+
+⚠️ **I due descrittori condividono il FILE, non la POSIZIONE**, e su POSIX
+condividerebbero anche quella. L'offset sta in `FileDescriptor`, non in un
+oggetto «file aperto» intermedio; metterlo in comune vorrebbe dire
+spostarlo in `VfsFile` e quindi cambiare `vfs_read`/`vfs_write` e la
+gestione della posizione di `fat12.c`, che la tiene per conto suo. Il
+giorno che arrivera' una pipe, questa e' la prima cosa da sistemare.
+
+⚠️ **`dup2` e' l'unico modo di sostituire stdin/stdout/stderr**: `close()`
+su 0, 1 e 2 e' rifiutata apposta — lascerebbe il processo senza uscita —
+mentre chi arriva da `dup2` il rimpiazzo ce l'ha gia'.
+
+🐛 **I descrittori aperti alla terminazione non venivano chiusi da
+nessuno.** `proc_reap_zombie` chiudeva `exe_handle` e basta: uno slot del
+VFS perso per ogni file lasciato aperto, e dopo `VFS_MAX_OPEN` volte un
+`open()` che risponde `EMFILE` senza che nessuno stia tenendo aperto
+niente. Ora si chiudono li' — e non in `sys_exit`, perche' **un processo
+terminato da un fault non passa da `sys_exit`**, e sono proprio quelli che
+i file li lasciano aperti.
+
+### ✅ spawn con ambiente e redirezioni (2026-08-02, 0.150)
+
+Serve al driver di un compilatore: `xgcc` non compila niente, lancia `cc1`,
+`as` e `ld` e ne raccoglie l'uscita. Mancavano tre cose, e ora ci sono:
+
+- **redirezione dei descrittori**: il figlio puo' nascere con un fd
+  qualunque agganciato a un file. Per **percorso**, non per descrittore
+  gia' aperto del padre — passare un fd vorrebbe dire due processi sullo
+  stesso handle VFS, cioe' un conteggio di riferimenti che non c'e' e una
+  `close()` che sfila il file da sotto all'altro. Basta a `gcc`; non basta
+  alle pipe, che infatti non ci sono.
+- **ambiente per processo**: `envp` viaggia come `argv`, copiato sullo
+  stack del figlio. `environ`, `putenv`, `setenv`, `unsetenv` in libc.
+- **`MAX_FD` da 16 a 32**, `VFS_MAX_OPEN` da 48 a 64.
+
+⚠️ **L'estensione passa da un blocco con una PAROLA MAGICA in ESI, non da
+due argomenti in piu'.** La forma storica e' `spawn(percorso, argc, argv)`
+e in giro ci sono binari — anche gia' installati su un disco — che la
+chiamano con tre registri: per loro ESI contiene spazzatura. Leggerlo come
+puntatore significherebbe che un programma vecchio, su un kernel nuovo,
+apre file a caso. Con la magia, o il blocco e' quello giusto o non esiste.
+
+⚠️ **Due macro con il nome sbagliato, e il test che le ha trovate.** In
+`lib/libc.c` c'erano `S_ISDIR`/`S_ISREG` definite sull'**attributo FAT**
+(`& 0x10`) mentre le stesse macro, nello stesso file piu' sotto, andavano
+definite sul `st_mode` POSIX. Nessuno le usava, finche' `opendir()` non ha
+scritto la riga piu' naturale del mondo — `S_ISDIR(st.st_mode)` — e si e'
+presa la prima: `0040755 & 0x10` fa zero, quindi `opendir("/")` rispondeva
+«non e' una directory». Per l'attributo FAT esiste `EXOS_ATTR_DIR()`, che
+si chiama come cio' che fa.
+
+### ✅ Caricamento su richiesta + il lucchetto del VFS (2026-08-02, 0.149)
+
+`elf_load` non copia piu' i segmenti in RAM: annota dove vivono nel file
+(`Process.vma`), tiene l'eseguibile **aperto** (`Process.exe_handle`) e le
+pagine arrivano al primo accesso, da `pf_carica_da_file()` nel gestore di
+page fault. Un binario con **8 MB di `.rodata`** parte occupando 36 KB e
+sale a 8 MB solo se lo si legge tutto — verificato byte per byte.
+
+Il costo d'avvio smette di dipendere dalla dimensione del binario. Senza
+questo, ospitare un compilatore vuol dire impegnare decine di MB prima
+della prima istruzione.
+
+⚠️ **I driver si caricano RESIDENTI** (`elf_load_residente`). Un driver che
+serve il filesystem e che venisse paginato *da* quel filesystem dovrebbe
+servire la propria lettura mentre e' fermo ad aspettarla. Sono due file da
+~15 KB: non c'e' niente da risparmiare e c'e' un blocco da evitare.
+
+Il gestore di #PF **riaccende gli interrupt** per la sola `vfs_read` (il
+gate e' un interrupt gate, e leggere dal disco richiede il timer) e
+ripristina lo stato di prima. Il buffer di lettura sta sullo stack kernel,
+non e' uno statico: due processi possono essere qui dentro insieme.
+
+#### Le tre cose che sono venute fuori facendolo funzionare
+
+1. **I driver di filesystem non sono rientranti.** ext2 lavora su cinque
+   buffer globali, e quella separazione presuppone un'operazione alla
+   volta. Con il fault-in gli intrecci sono diventati la norma (al PASSO
+   15 il kernel carica la shell della console 1 mentre quella della 0 gia'
+   gira e fa fault), e il sintomo non diceva "concorrenza":
+   `EXT2: blocco 0 fuori dal volume`, poi `ATA: timeout DRQ`. Rimedio: un
+   lucchetto nel VFS, un'operazione per volta.
+2. ⚠️ **Chi tiene il lucchetto non deve poter faultare.** Una `read()` il
+   cui buffer cade in una pagina non ancora presente fa scrivere il driver
+   dentro quella pagina, con il lucchetto in mano: il fault chiama il VFS
+   e aspetta se stesso. `vm_precarica_utente()` porta in RAM le pagine del
+   buffer PRIMA di entrare nel VFS (chiamata da `sys_read`/`sys_write`).
+   Stessa trappola, versione interna: tre punti del VFS chiamavano il
+   *guscio pubblico* `vfs_stat` invece dell'implementazione — un lucchetto
+   preso due volte dallo stesso processo.
+3. ⚠️ **Inversione di priorita', e il sistema si fermava senza dire
+   niente.** La prima versione dell'attesa cedeva la CPU in un ciclo.
+   `kernel_main` gira nel contesto del task **IDLE**: al PASSO 15 e' il
+   processo meno prioritario a tenere il lucchetto mentre carica le shell.
+   Appena una shell diventa eseguibile e comincia a cedere-e-riprovare a
+   priorita' NORMAL, l'idle non viene piu' scelto — non finisce, non
+   rilascia, e tutti riprovano per sempre. Schermo fermo al banner, zero
+   messaggi, intermittente. Ora chi aspetta si **blocca** (esce dalla coda
+   dei pronti) e viene svegliato al rilascio.
+
+`VFS_MAX_OPEN` e' passato da 24 a 48 e `MAX_OPEN_FILES` di fat12 da 16 a
+48: ogni processo tiene ora aperto il proprio eseguibile per tutta la
+vita, quindi il tetto non conta piu' i soli file aperti dai programmi.
+
+### 🐛 Un processo non poteva crescere oltre 4 MB, con qualunque RAM (2026-08-02, 0.148)
+
+Il sintomo: un programma che cresce lo heap 1 MB per volta arriva a 4 MB e
+la macchina va in **kernel panic**, `PAGE FAULT (KERNEL)` all'indirizzo
+`0x00800000` — cioe' esattamente il vecchio `USER_SPACE_BASE`. Con 32 MB o
+con 4 GB installati non cambiava niente: il tetto non era la RAM.
+
+**La causa, in due righe che si ignoravano a vicenda.**
+`paging_create_directory()` copia nella PD di un processo solo le PDE sotto
+`USER_SPACE_BASE`; il mapping identita' di TUTTA la RAM vive nelle PDE
+successive della sola `kernel_page_directory`. Ma `sys_sbrk`, `sys_mmap`,
+`elf_load` e `pf_cresci_stack` azzeravano e riempivano le pagine appena
+allocate **dereferenziandone l'indirizzo fisico**, mentre era caricato il
+CR3 dell'utente. Finche' il PMM (next-fit dal basso) consegnava pagine
+sotto la soglia funzionava; la prima oltre era un fault in ring0.
+
+**Il rimedio, in tre pezzi.**
+
+1. **Finestra di rimappatura fisica** (`paging_finestra_apri/chiudi`,
+   `paging_azzera_fisica`). Una PTE dentro `kernel_page_table_low` — la
+   tabella statica installata in PDE[0], quindi presente in *ogni* spazio
+   di indirizzamento — che il kernel ripunta alla pagina fisica che deve
+   toccare. E' il `kmap_atomic`/fixmap di Linux ridotto all'osso. Due
+   regole, entrambe nel codice: interrupt spenti mentre e' aperta (e'
+   una risorsa sola), e mai tenuta aperta attraverso una chiamata che si
+   blocca — in `elf_load` fra una pagina e l'altra c'e' una `vfs_read`,
+   che e' IPC verso un driver in ring3. Aprirla due volte e' `kpanic`:
+   sarebbe corruzione silenziosa.
+2. **Fascia kernel esplicita** (`pmm_alloc_page_kernel`,
+   `pmm_alloc_pages_kernel`). Tutto cio' che il kernel raggiunge al
+   proprio indirizzo fisico — heap di kmalloc, stack kernel, page
+   directory e page table, immagini dei driver — viene ora allocato
+   sotto `USER_SPACE_BASE` per costruzione, non per fortuna.
+   `USER_SPACE_BASE` e' salita da 8 a 64 MB: 64 processi × 128 KB di
+   stack kernel fanno 8 MB tondi, cioe' la vecchia soglia intera.
+3. ⚠️ **`pmm_alloc_page()` serve la fascia per ULTIMA.** Senza questa
+   preferenza il primo programma affamato consuma la fascia dal basso e
+   subito dopo il kernel non trova una pagina per una page table. Visto
+   davvero, ed e' il guasto piu' ingannevole dei tre: *«fascia kernel
+   esaurita: 111913 pagine libere altrove»*, con 437 MB liberi.
+
+⚠️ **Il caso in cui sbagliare costa di piu' e si diagnostica di meno** e'
+lo **stack kernel** di un processo: lo usa la CPU al suo indirizzo fisico
+(TSS.ESP0) nell'istante in cui arriva un interrupt mentre gira quel
+processo. Sopra la soglia, il fault avverrebbe durante la commutazione di
+stack — e il gestore, per gestirlo, avrebbe bisogno dello stesso stack.
+Triplo fault, riavvio, nessuna riga di log.
+
+Il driver dei moduli (`dynlink.c`, `drvmgr.c`) resta l'eccezione
+dichiarata: rilocando `R_386_COPY` legge da una pagina e scrive in
+un'altra nello stesso istante, e la finestra e' una sola. Le immagini dei
+driver stanno percio' nella fascia kernel — sono due, di ~15 KB.
+
+**Verifica**: 300 MB allocati e riletti byte per byte su una macchina da
+512 MB (prima: 4 MB), due volte di fila, con la memoria libera che torna
+al valore esatto di partenza. Su 32 MB il programma arriva a 29 MB e
+fallisce con un ENOMEM pulito invece che con un panic.
+
+**Cosa NON risolve**: il caricatore ELF resta *eager* — nessun demand
+paging da file — quindi far partire un binario da 40 MB significa
+impegnare 40 MB prima che esegua. E' il prossimo pezzo sulla strada di un
+compilatore ospitato.
+
 ### 🐛 Lo slot di un file aperto si prenotava troppo tardi (2026-08-02, 0.147)
 
 `vfs_open()` sceglieva lo slot libero in `g_file[]`, poi parlava con il

@@ -84,6 +84,7 @@
 #include "vol.h"
 #include "blk.h"
 #include "syscall.h"
+#include "sched.h"    /* proc_get_current, sched_yield: il lucchetto del VFS */
 
 /* Il kernel non ha una libreria di stringhe condivisa: ogni file definisce
  * i propri helper statici (vedi cfg_strcmp in fs/cfg.c, str_equal in
@@ -111,13 +112,155 @@ static void v_copia(char *dst, const char *src, uint32_t max)
 static VfsMount g_mnt[VFS_MAX_MOUNT];
 
 typedef struct {
-    uint8_t usato;
-    int     im;                      /* indice nella tabella di montaggio */
-    int     h12;                     /* handle fat12.c, -1 sugli altri */
-    char    interno[VFS_PATH_MAX];   /* percorso dentro il filesystem */
+    uint8_t  usato;
+    /* Quanti descrittori di processo puntano a questo slot.
+     *
+     * Vale 1 per ogni apertura normale e cresce solo con vfs_dup(). Serve
+     * perche' dup() consegna DUE fd sullo stesso file: senza il conteggio,
+     * la prima close() chiuderebbe il file sotto i piedi all'altro — ed e'
+     * esattamente il motivo per cui, fino alla 0.150, la redirezione dei
+     * descrittori di sys_spawn si faceva per PERCORSO e non per fd.
+     *
+     * 16 bit: un fd per slot per processo, quindi il massimo teorico e'
+     * MAX_FD * numero di processi, molto sotto i 65535. */
+    uint16_t rif;
+    int      im;                     /* indice nella tabella di montaggio */
+    int      h12;                    /* handle fat12.c, -1 sugli altri */
+    char     interno[VFS_PATH_MAX];  /* percorso dentro il filesystem */
 } VfsFile;
 
 static VfsFile g_file[VFS_MAX_OPEN];
+
+/* =============================================================================
+ * UN'OPERAZIONE PER VOLTA — il lucchetto del VFS
+ *
+ * PERCHE' ESISTE, e perche' e' arrivato solo con il caricamento su
+ * richiesta. I driver di filesystem NON sono rientranti: ext2 lavora su
+ * cinque buffer globali (uno per genere di blocco: dati, indiretti, inode,
+ * bitmap, descrittori) e quella separazione, che basta a impedire a una
+ * funzione di pestare i piedi a un'altra, presuppone **un'operazione alla
+ * volta**. Due ext2_read intrecciate si scambiano i buffer sotto il naso.
+ *
+ * Prima le occasioni di intreccio erano rare e nessuno le aveva viste. Con
+ * il fault-in sono diventate la norma: al PASSO 15 il kernel carica la
+ * shell della console 1 mentre quella della console 0 sta gia' girando e
+ * fa fault sulla propria prima pagina. Il sintomo era
+ *
+ *     EXT2: blocco 0 fuori dal volume (523264)
+ *     PF: PID 4, lettura della pagina 0x08000000 fallita (-1)
+ *     ATA: timeout DRQ sul canale 0
+ *
+ * cioe' un numero di blocco calcolato con l'inode di qualcun altro, e un
+ * controller lasciato a meta' comando. Nessuna delle tre righe dice
+ * "concorrenza".
+ *
+ * COM'E' FATTO. Un solo detentore per volta, identificato dal PID; chi
+ * trova occupato cede la CPU e riprova. Non e' una coda: chi aspetta non
+ * ha diritto di precedenza sull'ordine di arrivo, e va benissimo, perche'
+ * le operazioni durano quanto un accesso al disco e nessuno resta fuori a
+ * lungo. Fuori da un contesto di processo (l'avvio, prima che lo
+ * scheduler parta) il lucchetto e' sempre libero: non c'e' nessun altro.
+ *
+ * ⚠️ CHI LO PRENDE NON DEVE POTER FAULTARE. Se un driver scrivesse dentro
+ * un buffer utente non ancora presente, il page fault chiamerebbe il VFS
+ * per leggere la pagina dal file e resterebbe fermo su questo lucchetto,
+ * che e' gia' suo: un blocco permanente, e nel punto meno sospettabile.
+ * Per questo le syscall che consegnano un buffer utente ai driver lo
+ * fanno "precaricare" PRIMA di entrare qui — vedi vm_precarica_utente()
+ * in paging.c e i suoi chiamanti in syscall_impl.c.
+ * ============================================================================= */
+/* Le implementazioni senza lucchetto, dichiarate qui perche' qualcuna
+ * viene usata da un'altra prima di essere definita. */
+static int vfs_stat_nl(const char *abs, VfsStat *st);
+
+static uint32_t g_fs_detentore = 0;   /* 0 = libero; altrimenti PID o sentinella */
+
+/* `chi` non serve al funzionamento: e' il nome dell'operazione, e sta qui
+ * perche' quando un lucchetto si inceppa la prima domanda e' "chi lo
+ * tiene e cosa sta facendo". Costa un puntatore. */
+static const char *g_fs_chi = "?";
+
+#define FS_SENZA_PROCESSO   0xFFFFFFFFu
+
+/* Chi aspetta viene BLOCCATO, non lasciato a girare.
+ *
+ * ⚠️ E' LA DIFFERENZA FRA FUNZIONARE E NO, non un'ottimizzazione. La
+ * prima versione cedeva la CPU in un ciclo (sched_yield) e il sistema si
+ * fermava all'avvio da ext2, in modo intermittente: kernel_main gira nel
+ * contesto del task IDLE, quindi al PASSO 15 e' il processo a priorita'
+ * piu' bassa a tenere il lucchetto mentre carica le shell. Appena una
+ * shell diventa eseguibile e comincia a cedere-e-riprovare a priorita'
+ * NORMAL, l'idle non viene piu' scelto: non finisce la lettura, non
+ * rilascia, e le shell riprovano per sempre. Inversione di priorita' da
+ * manuale — con il sintomo peggiore, cioe' nessun messaggio e uno schermo
+ * fermo al banner.
+ *
+ * Bloccando, chi aspetta ESCE dalla coda dei pronti: l'idle torna a essere
+ * l'unico eseguibile, finisce, e sveglia tutti. */
+static uint32_t g_fs_attesa[MAX_PROCESSES];
+static uint32_t g_fs_n_attesa = 0;
+
+static void fs_prendi_n(const char *chi)
+{
+    Process *p  = proc_get_current();
+    uint32_t io = (p != NULL) ? p->pid : FS_SENZA_PROCESSO;
+
+    for (;;) {
+        interrupts_disable();
+
+        if (g_fs_detentore == 0) {
+            g_fs_detentore = io;
+            g_fs_chi       = chi;
+            interrupts_enable();
+            return;
+        }
+
+        /* Fuori da un contesto di processo non c'e' nessuno da bloccare —
+         * ed e' anche il caso in cui non puo' esserci contesa: l'avvio,
+         * prima che lo scheduler parta. */
+        if (p == NULL) { interrupts_enable(); return; }
+
+        /* Il task idle non si blocca MAI: lo scheduler lo vuole sempre
+         * eseguibile. Non e' un caso teorico — kernel_main gira proprio
+         * li' dentro — ma quando l'idle vuole il lucchetto nessun altro
+         * processo esiste ancora, quindi qui non ci arriva. Se un domani
+         * ci arrivasse, cedere e riprovare e' l'unica cosa che puo' fare. */
+        if (p->priority == PRIO_IDLE) {
+            interrupts_enable();
+            sched_yield();
+            continue;
+        }
+
+        /* In coda e a dormire. La registrazione e il blocco avvengono con
+         * le interrupt gia' spente e sched_block() le riabilita al
+         * risveglio: e' la stessa precauzione contro il "lost wakeup"
+         * documentata in drivers/tty/tty.c — registrarsi e bloccarsi
+         * devono essere indivisibili rispetto a chi rilascia. */
+        if (g_fs_n_attesa < MAX_PROCESSES) {
+            g_fs_attesa[g_fs_n_attesa++] = io;
+        }
+        sched_block(PROC_BLOCKED);
+    }
+}
+
+static void fs_rilascia(void)
+{
+    uint32_t i, n;
+
+    interrupts_disable();
+
+    g_fs_detentore = 0;
+    g_fs_chi       = "?";
+
+    /* Si sveglia chi aspetta e si rifa' la gara: chi arriva primo prende.
+     * Nessuna coda di precedenza — le operazioni durano quanto un accesso
+     * al disco e nessuno resta indietro a lungo. */
+    n = g_fs_n_attesa;
+    g_fs_n_attesa = 0;
+    for (i = 0; i < n; i++) sched_unblock_locked(g_fs_attesa[i]);
+
+    interrupts_enable();
+}
 
 /* =============================================================================
  * Instradamento
@@ -345,7 +488,7 @@ const VfsMount *vfs_get(int i)
     return NULL;
 }
 
-int vfs_mount(const char *dev, const char *punto, int sola_lettura)
+static int vfs_mount_nl(const char *dev, const char *punto, int sola_lettura)
 {
     int        blkdev, slot = -1, i, mnt;
     VolumeInfo vi;
@@ -388,7 +531,7 @@ int vfs_mount(const char *dev, const char *punto, int sola_lettura)
 
     /* Il nome non deve esistere gia' (punto 4): montarci sopra
      * nasconderebbe dei file senza dirlo. */
-    if (vfs_stat(punto, &st) == 0) {
+    if (vfs_stat_nl(punto, &st) == 0) {
         klog(LOG_ERROR, "VFS: '%s' esiste gia': montaggio rifiutato", punto);
         return ERR(EEXIST);
     }
@@ -405,7 +548,7 @@ int vfs_mount(const char *dev, const char *punto, int sola_lettura)
         if (l == 0) { padre[0] = '/'; padre[1] = '\0'; }
 
         if (!(padre[0] == '/' && padre[1] == '\0')) {
-            if (vfs_stat(padre, &st) != 0 || !st.is_dir) {
+            if (vfs_stat_nl(padre, &st) != 0 || !st.is_dir) {
                 klog(LOG_ERROR, "VFS: '%s' non esiste: montaggio rifiutato", padre);
                 return ERR(ENOENT);
             }
@@ -473,7 +616,7 @@ int vfs_mount(const char *dev, const char *punto, int sola_lettura)
     return 0;
 }
 
-int vfs_umount(const char *punto)
+static int vfs_umount_nl(const char *punto)
 {
     int i, k;
 
@@ -524,10 +667,11 @@ static int e_radice(const char *interno)
 static int apri_fallito(int slot, int err)
 {
     g_file[slot].usato = 0;
+    g_file[slot].rif   = 0;
     return err;
 }
 
-int vfs_open(const char *abs, uint32_t flags)
+static int vfs_open_nl(const char *abs, uint32_t flags)
 {
     char interno[VFS_PATH_MAX];
     int  im, slot = -1, i;
@@ -571,6 +715,7 @@ int vfs_open(const char *abs, uint32_t flags)
      * montaggio) guarda esattamente quei due campi e ha il diritto di
      * trovarli coerenti. */
     g_file[slot].usato = 1;
+    g_file[slot].rif   = 1;
     g_file[slot].im    = im;
     g_file[slot].h12   = -1;
     v_copia(g_file[slot].interno, interno, VFS_PATH_MAX);
@@ -629,7 +774,7 @@ int vfs_open(const char *abs, uint32_t flags)
     return slot;
 }
 
-int vfs_read(int h, void *buf, uint32_t size, uint32_t offset)
+static int vfs_read_nl(int h, void *buf, uint32_t size, uint32_t offset)
 {
     if (h < 0 || h >= VFS_MAX_OPEN || !g_file[h].usato) return ERR(EBADF);
 
@@ -652,7 +797,7 @@ int vfs_read(int h, void *buf, uint32_t size, uint32_t offset)
  * la propria posizione interna nell'handle, e cambiarlo qui vorrebbe dire
  * toccare il driver del floppy — proprio quello che non si vuole toccare.
  * fat.c invece e' senza stato per file e l'offset gli serve. */
-int vfs_write(int h, const void *buf, uint32_t size, uint32_t offset)
+static int vfs_write_nl(int h, const void *buf, uint32_t size, uint32_t offset)
 {
     int im;
 
@@ -668,7 +813,7 @@ int vfs_write(int h, const void *buf, uint32_t size, uint32_t offset)
     if (g_mnt[im].tipo == VFS_FS_ISO) return ERR(EROFS);
 
     if (g_mnt[im].tipo == VFS_FS_FAT12FD)
-        return fat12_write(g_file[h].h12, buf, size);
+        return fat12_write(g_file[h].h12, buf, size, offset);
 
     if (g_mnt[im].tipo == VFS_FS_EXT2) {
         int n = ext2_write(g_mnt[im].mnt, g_file[h].interno, buf, size, offset);
@@ -681,15 +826,34 @@ int vfs_write(int h, const void *buf, uint32_t size, uint32_t offset)
     }
 }
 
-int vfs_close(int h)
+static int vfs_close_nl(int h)
 {
     if (h < 0 || h >= VFS_MAX_OPEN || !g_file[h].usato) return ERR(EBADF);
+
+    /* Il file si chiude davvero quando se ne va l'ULTIMO descrittore.
+     * Finche' ne resta uno, questa close() e' solo la rinuncia di chi la
+     * chiama: il driver non ne sa niente e lo slot non torna libero. */
+    if (g_file[h].rif > 1) {
+        g_file[h].rif--;
+        return 0;
+    }
 
     if (g_mnt[g_file[h].im].tipo == VFS_FS_FAT12FD)
         fat12_close(g_file[h].h12);
 
     g_file[h].usato = 0;
+    g_file[h].rif   = 0;
     return 0;
+}
+
+/* Un descrittore in piu' sullo stesso file. Ritorna `h`, o EBADF. */
+static int vfs_dup_nl(int h)
+{
+    if (h < 0 || h >= VFS_MAX_OPEN || !g_file[h].usato) return ERR(EBADF);
+    if (g_file[h].rif == 0xFFFF) return ERR(EMFILE);
+
+    g_file[h].rif++;
+    return h;
 }
 
 /* Il corpo di vfs_stat, a partire da un montaggio e da un percorso GIA'
@@ -738,7 +902,7 @@ static int stat_interno(int im, const char *interno, VfsStat *st)
     return 0;
 }
 
-int vfs_stat(const char *abs, VfsStat *st)
+static int vfs_stat_nl(const char *abs, VfsStat *st)
 {
     char interno[VFS_PATH_MAX];
     int  im;
@@ -751,7 +915,7 @@ int vfs_stat(const char *abs, VfsStat *st)
     return stat_interno(im, interno, st);
 }
 
-int vfs_fstat(int h, VfsStat *st)
+static int vfs_fstat_nl(int h, VfsStat *st)
 {
     if (h < 0 || h >= VFS_MAX_OPEN || !g_file[h].usato) return ERR(EBADF);
     if (st == NULL) return ERR(EINVAL);
@@ -762,7 +926,7 @@ int vfs_fstat(int h, VfsStat *st)
     return stat_interno(g_file[h].im, g_file[h].interno, st);
 }
 
-int vfs_readdir(const char *abs, VfsDirEntry *out, uint32_t max,
+static int vfs_readdir_nl(const char *abs, VfsDirEntry *out, uint32_t max,
                 uint32_t *count, uint32_t start)
 {
     char     interno[VFS_PATH_MAX];
@@ -955,11 +1119,13 @@ static int modifica(const char *abs, int quale)
     }
 }
 
-int vfs_mkdir (const char *abs) { return modifica(abs, 0); }
-int vfs_rmdir (const char *abs) { return modifica(abs, 1); }
-int vfs_unlink(const char *abs) { return modifica(abs, 2); }
+/* Le tre passano tutte da `modifica`, quindi il lucchetto sta qui e non
+ * dentro: un solo punto da guardare per sapere che sono serializzate. */
+int vfs_mkdir (const char *abs) { int r; fs_prendi_n("mkdir"); r = modifica(abs, 0); fs_rilascia(); return r; }
+int vfs_rmdir (const char *abs) { int r; fs_prendi_n("rmdir"); r = modifica(abs, 1); fs_rilascia(); return r; }
+int vfs_unlink(const char *abs) { int r; fs_prendi_n("unlink"); r = modifica(abs, 2); fs_rilascia(); return r; }
 
-int vfs_truncate(const char *abs, uint32_t nuova_dim)
+static int vfs_truncate_nl(const char *abs, uint32_t nuova_dim)
 {
     char    interno[VFS_PATH_MAX];
     int     im;
@@ -976,7 +1142,7 @@ int vfs_truncate(const char *abs, uint32_t nuova_dim)
     /* Una directory non si tronca: le sue dimensioni le decide il driver
      * aggiungendo o togliendo voci, e tagliarla a meta' renderebbe
      * irraggiungibili i file che ci stanno dentro senza cancellarli. */
-    if (vfs_stat(abs, &st) != 0) return ERR(ENOENT);
+    if (vfs_stat_nl(abs, &st) != 0) return ERR(ENOENT);
     if (st.is_dir)               return ERR(EISDIR);
 
     if (g_mnt[im].tipo == VFS_FS_FAT12FD) {
@@ -994,7 +1160,7 @@ int vfs_truncate(const char *abs, uint32_t nuova_dim)
          ? ERR(EIO) : 0;
 }
 
-void vfs_sync(void)
+static void vfs_sync_nl(void)
 {
     int i;
 
@@ -1008,4 +1174,71 @@ void vfs_sync(void)
         if (g_mnt[i].tipo == VFS_FS_FAT)  fat_sync(g_mnt[i].mnt);
         if (g_mnt[i].tipo == VFS_FS_EXT2) ext2_sync(g_mnt[i].mnt);
     }
+}
+
+/* =============================================================================
+ * I gusci pubblici — prendono il lucchetto, chiamano l'implementazione,
+ * lo rilasciano. Sono qui in fondo e non sparsi nel file perche' l'unica
+ * cosa che aggiungono e' quella, e vederli in fila rende evidente che non
+ * ne manchi uno. Vedi il commento su fs_prendi() per il perche'.
+ * ============================================================================= */
+int vfs_mount(const char *dev, const char *punto, int sola_lettura)
+{
+    int r; fs_prendi_n("mount"); r = vfs_mount_nl(dev, punto, sola_lettura); fs_rilascia(); return r;
+}
+
+int vfs_umount(const char *punto)
+{
+    int r; fs_prendi_n("umount"); r = vfs_umount_nl(punto); fs_rilascia(); return r;
+}
+
+int vfs_open(const char *abs, uint32_t flags)
+{
+    int r; fs_prendi_n("open"); r = vfs_open_nl(abs, flags); fs_rilascia(); return r;
+}
+
+int vfs_read(int h, void *buf, uint32_t size, uint32_t offset)
+{
+    int r; fs_prendi_n("read"); r = vfs_read_nl(h, buf, size, offset); fs_rilascia(); return r;
+}
+
+int vfs_write(int h, const void *buf, uint32_t size, uint32_t offset)
+{
+    int r; fs_prendi_n("write"); r = vfs_write_nl(h, buf, size, offset); fs_rilascia(); return r;
+}
+
+int vfs_close(int h)
+{
+    int r; fs_prendi_n("close"); r = vfs_close_nl(h); fs_rilascia(); return r;
+}
+
+int vfs_dup(int h)
+{
+    int r; fs_prendi_n("dup"); r = vfs_dup_nl(h); fs_rilascia(); return r;
+}
+
+int vfs_stat(const char *abs, VfsStat *st)
+{
+    int r; fs_prendi_n("stat"); r = vfs_stat_nl(abs, st); fs_rilascia(); return r;
+}
+
+int vfs_fstat(int h, VfsStat *st)
+{
+    int r; fs_prendi_n("fstat"); r = vfs_fstat_nl(h, st); fs_rilascia(); return r;
+}
+
+int vfs_readdir(const char *abs, VfsDirEntry *out, uint32_t max,
+                uint32_t *count, uint32_t start)
+{
+    int r; fs_prendi_n("readdir"); r = vfs_readdir_nl(abs, out, max, count, start); fs_rilascia(); return r;
+}
+
+int vfs_truncate(const char *abs, uint32_t nuova_dim)
+{
+    int r; fs_prendi_n("truncate"); r = vfs_truncate_nl(abs, nuova_dim); fs_rilascia(); return r;
+}
+
+void vfs_sync(void)
+{
+    fs_prendi_n("sync"); vfs_sync_nl(); fs_rilascia();
 }

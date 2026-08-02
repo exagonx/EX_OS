@@ -44,6 +44,22 @@
  * solo, su ext2 il nome resta quello che il kernel cerchera'.
  *
  * -----------------------------------------------------------------------
+ * REINSTALLARE SOSTITUISCE (dal 0.148)
+ *
+ * Ogni file viene riscritto anche se sulla destinazione ce n'e' gia' uno,
+ * kernel compreso, e riletto per controllarne la dimensione. Prima i file
+ * esistenti venivano saltati: aggiornare un sistema gia' installato
+ * copiava solo i file nuovi e lasciava indietro il kernel, mentre la mappa
+ * dei settori veniva riscritta per quello vecchio. Il disco ripartiva con
+ * la versione di prima e l'installatore diceva "completata".
+ *
+ * Le directory no: esistono o non esistono, e ricrearle non vuol dire
+ * niente. Quel che c'e' dentro e non fa parte del sistema resta dov'e' —
+ * `install` aggiorna, non azzera il volume.
+ *
+ * Nel resoconto: '+' creato, '~' sostituito, '!' errore.
+ *
+ * -----------------------------------------------------------------------
  * COSA NON FA
  *
  * Non partiziona e non formatta. Sono due operazioni che distruggono dati
@@ -98,19 +114,35 @@ static void unisci(char *out, const char *a, const char *b)
     out[i] = '\0';
 }
 
-/* Copia un file. Ritorna 0, o <0. Non sovrascrive: se la destinazione
- * esiste gia' la considera fatta e va avanti — reinstallare sopra
- * un'installazione precedente non deve fallire a meta'. */
+/* Copia un file, SOSTITUENDO la destinazione se esiste. Ritorna 0, o <0.
+ *
+ * ⚠️ FINO AL 0.148 QUESTA FUNZIONE NON SOVRASCRIVEVA: se la destinazione
+ * c'era gia', la considerava fatta e andava avanti. Sembrava prudenza —
+ * "reinstallare sopra non deve fallire a meta'" — ed era invece il difetto
+ * peggiore che un installatore possa avere: `install` su un sistema gia'
+ * installato aggiornava i file NUOVI e lasciava indietro tutti gli altri,
+ * kernel compreso. Il disco continuava ad avviare la versione vecchia
+ * mentre l'installatore stampava "Installazione completata", e la mappa
+ * dei settori veniva riscritta per quel kernel vecchio — cioe' il
+ * risultato piu' convincente possibile di un aggiornamento che non e'
+ * avvenuto.
+ *
+ * Ora si riscrive sempre. Un installatore che salta i file esistenti non
+ * e' un installatore: e' una copia condizionale.
+ *
+ * La verifica finale sulla dimensione non e' pignoleria: e' cio' che
+ * distingue "riscritto" da "riscritto a meta'" quando il volume si riempie
+ * o il supporto ha un settore che non risponde — e senza, un kernel
+ * troncato si scoprirebbe al riavvio successivo, che e' il momento in cui
+ * non si puo' piu' fare niente. */
 static int copia(const char *da, const char *a)
 {
     int fs, fd, n, tot = 0;
+    int esisteva;
 
     fd = open(a, O_RDONLY);
-    if (fd >= 0) {
-        close(fd);
-        printf("  = %s (gia' presente)\n", a);
-        return 0;
-    }
+    esisteva = (fd >= 0);
+    if (esisteva) close(fd);
 
     fs = open(da, O_RDONLY);
     if (fs < 0) {
@@ -147,14 +179,36 @@ static int copia(const char *da, const char *a)
 
     if (n < 0) { printf("  ! %s: lettura interrotta\n", da); errori++; return n; }
 
-    printf("  + %s  (%d byte)\n", a, tot);
+    /* Rilettura di controllo: la destinazione deve esistere e avere
+     * esattamente i byte che ci abbiamo scritto. */
+    {
+        int  v = open(a, O_RDONLY);
+        long dim;
+
+        if (v < 0) {
+            printf("  ! %s: riscritto ma non rileggibile: %s\n", a, spiega(v));
+            errori++;
+            return v;
+        }
+        dim = fsize(v);
+        close(v);
+
+        if (dim != (long)tot) {
+            printf("  ! %s: scritti %d byte, sul volume ce ne sono %ld\n",
+                   a, tot, dim);
+            errori++;
+            return -1;
+        }
+    }
+
+    printf("  %c %s  (%d byte)\n", esisteva ? '~' : '+', a, tot);
     return 0;
 }
 
 /* Crea una directory ignorando "esiste gia'". */
 static void crea_dir(const char *p)
 {
-    int r = mkdir(p);
+    int r = mkdir(p, 0755);
     if (r == 0)        printf("  + %s/\n", p);
     else if (r == -17) printf("  = %s/ (gia' presente)\n", p);
     else {
@@ -209,7 +263,8 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    printf("Installazione di EX-OS in %s\n\n", argv[1]);
+    printf("Installazione di EX-OS in %s\n", argv[1]);
+    printf("  +  creato    ~  sostituito    !  errore\n\n");
 
     /* --- 1. i due file dell'avvio, PER PRIMI (vedi in testa al file) --- */
     printf("Avvio (copiati per primi: devono restare contigui)\n");

@@ -42,11 +42,47 @@ typedef __PTRDIFF_TYPE__    ssize_t;
 typedef __INTPTR_TYPE__     intptr_t;
 typedef __UINTPTR_TYPE__    uintptr_t;
 
+/* =============================================================================
+ * I nomi POSIX dei tipi — <sys/types.h>
+ *
+ * Non aggiungono niente: sono gli stessi interi che le funzioni qui sotto
+ * usano gia' in chiaro (lseek() prende un `long`, waitpid() ritorna un
+ * `int`). Ci sono perche' il codice di terzi li SCRIVE — `off_t pos;`,
+ * `pid_t figlio;` — e senza non compila la prima riga, non perche' EX-OS
+ * distingua qualcosa in piu'.
+ *
+ * ⚠️ Le larghezze sono quelle che il kernel usa davvero, non quelle che
+ * userebbe un sistema piu' grande: off_t e' `long`, cioe' 32 bit con
+ * segno, quindi 2 GB per file — lo stesso limite che ha lseek(), che e'
+ * la syscall sotto. Dichiararlo a 64 bit non renderebbe piu' grandi i
+ * file: renderebbe solo silenziosa la troncatura al confine col kernel.
+ * ============================================================================= */
+typedef int                 pid_t;
+typedef long                off_t;
+typedef unsigned int        mode_t;
+typedef unsigned int        dev_t;
+typedef unsigned int        ino_t;
+typedef unsigned int        nlink_t;
+typedef unsigned int        blksize_t;
+typedef unsigned int        blkcnt_t;
+typedef unsigned int        useconds_t;
+/* EX-OS non ha utenti ne' gruppi: questi due esistono perche' struct stat
+ * ha i campi (a zero) e chi li stampa deve poterli dichiarare. */
+typedef unsigned int        uid_t;
+typedef unsigned int        gid_t;
+
 /* Stringa */
 size_t  strlen(const char *s);
 char   *strcpy(char *dst, const char *src);
 char   *strncpy(char *dst, const char *src, size_t n);
 int     strcmp(const char *a, const char *b);
+/* Confronto che ignora maiuscole e minuscole. Non e' del C standard —
+ * <strings.h>, POSIX — ma lo chiama tutto il codice di terzi. */
+int     strcasecmp(const char *a, const char *b);
+/* Nella locale "C" l'ordine di collazione e' quello dei byte: strcoll e'
+ * strcmp. C'e' perche' chi ordina nomi per l'utente scrive strcoll. */
+int     strcoll(const char *a, const char *b);
+int     strncasecmp(const char *a, const char *b, size_t n);
 int     strncmp(const char *a, const char *b, size_t n);
 char   *strcat(char *dst, const char *src);
 char   *strchr(const char *s, int c);
@@ -60,6 +96,32 @@ int     memcmp(const void *a, const void *b, size_t n);
 
 char   *strncat(char *dst, const char *src, size_t n);
 char   *strstr(const char *fieno, const char *ago);
+char   *strpbrk(const char *s, const char *accetta);
+
+/* =============================================================================
+ * Multibyte e caratteri larghi — <wchar.h>
+ *
+ * Nella locale "C", l'unica che EX-OS ha, un byte E' un carattere: queste
+ * sono promozioni, non conversioni, e MB_CUR_MAX vale 1 per costruzione.
+ * ⚠️ mbstowcs e mbrtowc non falliscono MAI — vedi lib/libc.c e <wchar.h>,
+ * dove sta anche il perche' non c'e' nessuna wcslen.
+ *
+ * wchar_t lo dichiara il compilatore in <stddef.h>, incluso qui sopra.
+ * ============================================================================= */
+typedef int wint_t;
+#define WEOF        ((wint_t)-1)
+#define MB_CUR_MAX  1
+
+/* Lo stato di una conversione multibyte: e' una struttura perche' lo
+ * standard vuole un tipo completo da dichiarare e azzerare, ma non c'e'
+ * niente da ricordare — non c'e' nessuna conversione da fare. */
+typedef struct {
+    int __nulla;
+} mbstate_t;
+
+size_t  mbstowcs(wchar_t *dst, const char *src, size_t n);
+size_t  mbrtowc(wchar_t *dst, const char *src, size_t n, mbstate_t *stato);
+size_t  wcstombs(char *dst, const wchar_t *src, size_t n);
 char   *strdup(const char *s);
 char   *strtok(char *s, const char *sep);
 size_t  strspn(const char *s, const char *accetta);
@@ -75,7 +137,7 @@ void   *memchr(const void *s, int c, size_t n);
  * portarsi dietro il numero — perror() e strerror(errno).
  * ============================================================================= */
 extern int  errno;
-const char *strerror(int err);
+char *strerror(int err);
 void        perror(const char *msg);
 
 /* =============================================================================
@@ -88,12 +150,39 @@ void        perror(const char *msg);
  * ============================================================================= */
 typedef struct _FILE FILE;
 
+/* ⚠️ EOF NON C'ERA, e il valore c'era da sempre: fgetc() e compagne
+ * ritornano -1 dal principio, ma il NOME mancava, quindi lo scriveva solo
+ * chi aveva letto questo header. Il codice di terzi scrive `!= EOF` e
+ * basta: senza la macro non compila, e — peggio — un `#if EOF != -1`, che
+ * e' come safe-ctype.h di libiberty verifica di poter lavorare, vede uno
+ * zero al posto di un nome sconosciuto e conclude che la libc e' sbagliata.
+ *
+ * Deve restare -1 anche il giorno che si cambiasse qualcos'altro: mezza
+ * libc di terzi presume EOF == -1 per poterlo mescolare con i codici di
+ * errore negativi. */
+#define EOF (-1)
+
+/* Le costanti che <stdio.h> deve avere, con i valori VERI di questa libc:
+ * BUFSIZ e' la dimensione del buffer di un flusso aperto con fopen,
+ * FOPEN_MAX il numero di flussi che exit() sa svuotare, L_tmpnam la
+ * lunghezza del nome che compone tmpnam(). Un valore inventato qui sarebbe
+ * peggio dell'assenza: chi dimensiona un proprio buffer su BUFSIZ si
+ * aspetta che sia quello che serve, non un numero decorativo. */
+#define BUFSIZ          4096
+#define FOPEN_MAX       16
+#define FILENAME_MAX    256
+#define L_tmpnam        64
+#define TMP_MAX         32      /* tentativi di mkstemp prima di arrendersi */
+
 extern FILE *stdin;
 extern FILE *stdout;
 extern FILE *stderr;
 
 FILE   *fopen(const char *path, const char *modo);
 FILE   *fdopen(int fd, const char *modo);
+/* Riapre un flusso esistente su un altro file tenendo lo stesso FILE*.
+ * ⚠️ Il NUMERO del descrittore cambia — vedi lib/libc.c. */
+FILE   *freopen(const char *path, const char *modo, FILE *f);
 int     fclose(FILE *f);
 int     fflush(FILE *f);            /* NULL = tutti i flussi */
 size_t  fread(void *ptr, size_t dim, size_t n, FILE *f);
@@ -120,11 +209,18 @@ int     getchar(void);
  * fine riga. Ritorna NULL sulla riga vuota. */
 char   *gets(char *buf, int max);
 
-/* Lettura formattata. C'e' solo la versione su stringa: vedi lib/libc.c
- * per il perche' fscanf/scanf non ci sono. Ritorna il numero di
- * conversioni riuscite, 0 se la prima non e' andata, -1 se l'ingresso era
- * gia' finito — tre casi da distinguere tutti. */
+/* Lettura formattata. Ritorna il numero di conversioni riuscite, 0 se la
+ * prima non e' andata, -1 se l'ingresso era gia' finito — tre casi da
+ * distinguere tutti. */
 int     sscanf(const char *s, const char *fmt, ...);
+/* fscanf legge una FINESTRA di 1024 byte dal flusso, ci passa sopra lo
+ * stesso scanner di sscanf e riporta indietro il flusso di quanto non ha
+ * consumato. ⚠️ Una conversione che avrebbe bisogno di piu' di 1024 byte
+ * si ferma li'; su un flusso non posizionabile (la console) si legge una
+ * riga e il resto si perde. Vedi lib/libc.c. */
+int     fscanf(FILE *f, const char *fmt, ...);
+int     scanf(const char *fmt, ...);
+int     vfscanf(FILE *f, const char *fmt, __builtin_va_list args);
 int     vsscanf(const char *s, const char *fmt, __builtin_va_list args);
 
 /* Corpo di assert(): la macro sta in <assert.h>, che deve espanderla li'
@@ -171,6 +267,9 @@ double  strtod(const char *s, char **fine);
 float   strtof(const char *s, char **fine);
 long double strtold(const char *s, char **fine);
 double  ldexp(double x, int e);
+double  fabs(double v);
+double  atof(const char *s);
+double  frexp(double x, int *e);   /* l'inversa: mantissa in [0.5,1) ed esponente */
 
 /* Le "variabili d'ambiente" di EX-OS sono la sezione [env] di
  * /boot/kernel.cfg: getenv() e' la facciata POSIX su getconf() (vedi piu'
@@ -178,6 +277,16 @@ double  ldexp(double x, int e);
  * Nel codice nuovo si preferisca getconf(). */
 char   *getenv(const char *nome);
 void    exit(int code);
+/* ⚠️ _exit NON svuota i buffer e NON chiama gli handler di atexit: e'
+ * l'uscita di chi ha perso fiducia nel proprio stato. Un file aperto in
+ * scrittura resta monco — vedi lib/libc.c. */
+void    _exit(int code);
+
+/* I due nomi che <stdlib.h> da' allo stato di uscita. Valgono quello che
+ * gia' vale: la shell di EX-OS legge 0 come riuscita e diverso da zero
+ * come errore, come tutti. */
+#define EXIT_SUCCESS 0
+#define EXIT_FAILURE 1
 void    abort(void);
 void   *malloc(size_t size);
 void    free(void *ptr);
@@ -275,7 +384,9 @@ int     tty_clear(void);
  * Ritorna 0, o un errno negativo — in particolare -17 (EEXIST) se il nome
  * e' gia' occupato e -38 (ENOSYS) se il percorso richiederebbe piu' di un
  * livello di annidamento, che questo FAT12 non risolve. */
-int     mkdir(const char *path);
+/* ⚠️ Il secondo argomento si IGNORA: EX-OS non ha permessi. C'e' per la
+ * firma di POSIX, che ogni programma portato da un Unix scrive. */
+int     mkdir(const char *path, mode_t modo);
 
 /* Cancella una directory VUOTA. Ritorna 0, o un errno negativo:
  * -2 non trovata, -20 non e' una directory, -39 non vuota. */
@@ -287,6 +398,10 @@ int     rmdir(const char *path);
 int     unlink(const char *path);
 int     remove(const char *path);   /* unlink() col nome del C standard */
 char   *getcwd(char *buf, size_t size);
+/* Il percorso in forma canonica: assoluto, senza "." ne' ".." ne' doppi
+ * '/', e il file deve ESISTERE. ⚠️ Non segue collegamenti simbolici
+ * perche' EX-OS non ne ha. Con `resolved` NULL alloca con malloc. */
+char   *realpath(const char *path, char *resolved);
 void    sched_yield(void);
 void    usleep(unsigned int us);
 void    sleep(unsigned int sec);
@@ -357,6 +472,25 @@ time_t     time(time_t *t);
 struct tm *gmtime(const time_t *t);      /* risultato in una struttura STATICA */
 struct tm *localtime(const time_t *t);   /* identica a gmtime: vedi sopra */
 int        gettimeofday(struct timeval *tv, void *fuso);
+
+/* Formatta una data secondo `fmt`. Ritorna i caratteri scritti (NUL
+ * escluso), o 0 se non ci stavano — nel qual caso il contenuto di `buf`
+ * non e' utilizzabile, come dice lo standard.
+ *
+ * ⚠️ NON HA TUTTE LE CONVERSIONI, e quelle che non ha le ricopia alla
+ * lettera invece di ingoiarle. %z e %Z dicono sempre +0000 e UTC: EX-OS
+ * non ha fusi orari. Vedi lib/libc.c per l'elenco di cosa c'e'. */
+size_t     strftime(char *buf, size_t max, const char *fmt, const struct tm *tm);
+
+/* La data in venticinque caratteri e un a capo: "Sun Aug  2 17:04:05 2026\n".
+ * ⚠️ Il risultato sta in un buffer STATICO, sovrascritto dalla chiamata
+ * dopo — come gmtime e localtime. */
+char      *asctime(const struct tm *tm);
+char      *ctime(const time_t *t);
+
+/* ⚠️ utime NON CAMBIA NIENTE: nessun filesystem di EX-OS sa riscrivere le
+ * date di un file. Ritorna 0 se il file c'e'. Vedi lib/libc.c. */
+int        utime(const char *path, const void *tempi);
 
 /* =============================================================================
  * Console virtuali
@@ -691,6 +825,41 @@ int truncate(const char *path, unsigned int size);
 #define O_CREAT     0x40
 #define O_TRUNC     0x200
 #define O_APPEND    0x400
+#define O_NONBLOCK  0x800
+#define O_ACCMODE   3
+
+/* =============================================================================
+ * Un secondo descrittore sullo stesso file — dup, dup2, fcntl
+ *
+ * ⚠️ CONDIVIDONO IL FILE, NON LA POSIZIONE. Su POSIX due fd duplicati
+ * hanno un offset SOLO: una read() da uno sposta anche l'altro. Qui no —
+ * la posizione sta nel descrittore del processo, e ognuno tiene la sua.
+ * Quello che condividono e' il file aperto: finche' ne resta uno, il file
+ * non si chiude, che e' il motivo per cui dup() esiste.
+ *
+ * Chi legge da un fd duplicato faccia una lseek() esplicita invece di dare
+ * per scontato di ripartire da dove stava l'altro. Il perche' della scelta
+ * sta in kernel/syscall/syscall_impl.c, sopra fd_duplica().
+ *
+ * dup2() e' anche l'unico modo di sostituire stdin/stdout/stderr: close()
+ * su 0, 1 o 2 e' rifiutata apposta, perche' lascerebbe il processo senza
+ * uscita, mentre chi arriva da dup2 il rimpiazzo ce l'ha gia'.
+ * ============================================================================= */
+#define F_DUPFD     0
+#define F_GETFD     1
+#define F_SETFD     2
+#define F_GETFL     3
+#define F_SETFL     4
+
+/* C'e' per chi lo scrive (`fcntl(fd, F_SETFD, FD_CLOEXEC)` e' in ogni
+ * programma POSIX), non perche' faccia qualcosa: spawn() non eredita i
+ * descrittori del padre, quindi non esiste il momento in cui un fd
+ * sopravvive a un exec. F_GETFD risponde sempre 0. */
+#define FD_CLOEXEC  1
+
+int dup(int fd);
+int dup2(int vecchio, int nuovo);
+int fcntl(int fd, int cmd, ...);
 
 /* =============================================================================
  * Posizionamento e informazioni sui file
@@ -764,7 +933,20 @@ long    lseek(int fd, long offset, int whence);
 /* stat() riempie la struttura POSIX; statraw() da' i campi grezzi del
  * filesystem (attributi FAT, primo cluster, data e ora codificate) a chi
  * ne ha bisogno davvero — mkfs, fdisk, un ls che mostri gli attributi. */
+/* ⚠️ chmod, fchmod e umask NON CAMBIANO NIENTE: EX-OS non ha permessi, e
+ * l'unico bit che i filesystem tengono davvero — la sola lettura di FAT —
+ * non ha una syscall che lo scriva. Ci sono perche' il codice di terzi le
+ * chiama (bfd le usa a ogni file eseguibile che produce) e rattoppare i
+ * sorgenti altrui sarebbe peggio. Vedi lib/libc.c per il ragionamento, ed
+ * e' la stessa convenzione di O_EXCL in <fcntl.h>. */
+int     chmod(const char *path, mode_t modo);
+int     fchmod(int fd, mode_t modo);
+mode_t  umask(mode_t maschera);
+
 int     stat(const char *path, struct stat *st);
+/* Identica a stat: EX-OS non ha collegamenti simbolici, quindi non c'e'
+ * niente da non seguire. C'e' perche' il codice di terzi la nomina. */
+int     lstat(const char *path, struct stat *st);
 int     statraw(const char *path, Stat *st);
 
 /* fstat() lavora su un file APERTO. Non c'e' una syscall per farlo: la
@@ -802,6 +984,257 @@ typedef struct {
  * path: NULL/""/"/" per la root, "/NOME" per una subdirectory.
  * Ritorna il numero di entry scritte in buf (>=0), o <0 in caso di errore. */
 int     listdir(const char *path, DirEntry *buf, int max);
+
+/* =============================================================================
+ * I NOMI DEGLI ERRORI
+ *
+ * I numeri c'erano dal principio — le syscall li ritornano negativi e
+ * strerror() li traduce — ma i NOMI no, e senza quelli non compila una
+ * riga di codice di terzi: `if (errno == ENOENT)` e' in ogni programma
+ * scritto per POSIX, a cominciare da quelli che si vogliono portare qui.
+ *
+ * I valori sono quelli di Linux, come il resto della numerazione delle
+ * syscall, e devono restare allineati alla tabella di strerror() in
+ * lib/libc.c e ai codici del kernel.
+ * ============================================================================= */
+#define EPERM         1
+#define ENOENT        2
+#define ESRCH         3
+#define EINTR         4
+#define EIO           5
+#define ENXIO         6
+#define E2BIG         7
+#define ENOEXEC       8
+#define EBADF         9
+#define ECHILD       10
+#define EAGAIN       11
+#define ENOMEM       12
+#define EACCES       13
+#define EFAULT       14
+#define EBUSY        16
+#define EEXIST       17
+#define EXDEV        18
+#define ENODEV       19
+#define ENOTDIR      20
+#define EISDIR       21
+#define EINVAL       22
+#define ENFILE       23
+#define EMFILE       24
+#define ENOTTY       25
+#define EFBIG        27
+#define ENOSPC       28
+#define ESPIPE       29
+#define EROFS        30
+#define EMLINK       31
+#define EPIPE        32
+/* Nessuna funzione di EX-OS ritorna EDOM: non c'e' una libm che possa
+ * ricevere un argomento fuori dominio. C'e' perche' il codice di terzi lo
+ * usa come "questo valore non ha senso qui" — libctf ci segnala una
+ * chiave di hash impossibile — e senza il nome non compila. */
+#define EDOM         33
+#define ERANGE       34
+#define ENAMETOOLONG 36
+#define ENOSYS       38
+#define ENOTEMPTY    39
+#define ELOOP        40
+/* Sequenza multibyte non convertibile: la ritorna wcstombs quando un
+ * carattere largo non ci sta in un byte. Vedi <wchar.h>. */
+#define EILSEQ        84
+#define ETIMEDOUT   110
+#define ENOMEDIUM   123
+
+/* =============================================================================
+ * PROCESSI — spawn con ambiente e redirezioni
+ *
+ * ⚠️ SpawnAzione/SpawnExtra sono duplicate da kernel/include/syscall.h (la
+ * stessa convenzione di DirEntry, MemInfo e i numeri di syscall): le due
+ * copie DEVONO restare identiche, perche' e' la struttura che attraversa
+ * la syscall. La magia esiste per non far leggere ESI ai programmi
+ * compilati per la vecchia forma a tre argomenti — vedi il commento nel
+ * kernel.
+ * ============================================================================= */
+#define SPAWN_EXTRA_MAGIA    0x53504E58u
+#define SPAWN_MAX_AZIONI     4
+#define SPAWN_RED_PATH_MAX   128
+
+typedef struct {
+    unsigned int fd;
+    unsigned int flags;
+    char         percorso[SPAWN_RED_PATH_MAX];
+} SpawnAzione;
+
+typedef struct {
+    unsigned int magia;
+    char       **envp;
+    unsigned int n_azioni;
+    SpawnAzione  azioni[SPAWN_MAX_AZIONI];
+} SpawnExtra;
+
+/* La forma comoda per chi chiama: percorso invece di buffer a lunghezza
+ * fissa, e nessuna magia da ricordare. */
+typedef struct {
+    int         fd;             /* descrittore del figlio da sostituire */
+    int         flags;          /* O_WRONLY | O_CREAT | O_TRUNC, ... */
+    const char *percorso;
+} SpawnRedir;
+
+/* Lancia `path` e ritorna il PID del figlio, o un errno negativo. Non
+ * aspetta: per quello c'e' waitpid(). spawn() passa l'ambiente corrente e
+ * nessuna redirezione. */
+int     spawn(const char *path, char *const argv[]);
+int     spawn_ex(const char *path, char *const argv[], char *const envp[],
+                 const SpawnRedir *redir, int n_redir);
+int     waitpid(int pid, int *stato, int opzioni);
+int     wait(int *stato);
+
+/* =============================================================================
+ * Lo stato di un figlio — <sys/wait.h>
+ *
+ * ⚠️ NON E' LA CODIFICA DI UNIX, e la differenza va detta perche' e'
+ * invisibile finche' non fa danno. Su Unix `*stato` impacchetta due cose
+ * in un intero — codice di uscita negli otto bit ALTI, numero del segnale
+ * negli otto bassi — perche' un processo puo' finire in due modi. Qui il
+ * modo e' uno solo: EX-OS non consegna segnali, quindi il kernel scrive il
+ * codice di uscita e basta.
+ *
+ * Le macro ci sono lo stesso perche' il codice di terzi le scrive sempre —
+ * `if (WIFEXITED(s) && WEXITSTATUS(s) != 0)` e' la forma canonica — e
+ * dicono la verita' di questo sistema: si esce sempre "normalmente",
+ * nessuno muore mai di segnale. Chi legge `*stato` direttamente (la shell
+ * di EX-OS lo fa) ci trova il codice, non il codice spostato di otto bit.
+ * ============================================================================= */
+#define WNOHANG         0x0001
+#define WUNTRACED       0x0002
+
+#define WIFEXITED(s)    ((void)(s), 1)
+#define WEXITSTATUS(s)  ((s) & 0xFF)
+#define WIFSIGNALED(s)  ((void)(s), 0)
+#define WTERMSIG(s)     ((void)(s), 0)
+#define WIFSTOPPED(s)   ((void)(s), 0)
+#define WSTOPSIG(s)     ((void)(s), 0)
+#define WCOREDUMP(s)    ((void)(s), 0)
+
+/* =============================================================================
+ * AMBIENTE
+ *
+ * environ e' quello che il padre ha passato. getenv() ripiega sulla
+ * sezione [env] di /boot/kernel.cfg per le chiavi che non trova: senza
+ * quel ripiego il primo processo — che il padre non ce l'ha — resterebbe
+ * senza PATH. Vedi il commento in lib/libc.c.
+ * ============================================================================= */
+extern char **environ;
+
+int     putenv(char *voce);          /* la voce ENTRA nell'ambiente, senza copia */
+int     setenv(const char *nome, const char *valore, int sovrascrivi);
+int     unsetenv(const char *nome);
+
+/* =============================================================================
+ * DIRECTORY nella forma POSIX (sopra listdir)
+ * ============================================================================= */
+#define DT_UNKNOWN  0
+#define DT_REG      8
+#define DT_DIR      4
+
+struct dirent {
+    unsigned int  d_ino;
+    unsigned char d_type;
+    char          d_name[DIRENT_NAME_MAX];
+};
+
+typedef struct __dir DIR;
+
+DIR           *opendir(const char *path);
+struct dirent *readdir(DIR *d);
+void           rewinddir(DIR *d);
+int            closedir(DIR *d);
+
+/* =============================================================================
+ * File temporanei, interrogazioni, rinomina
+ * ============================================================================= */
+#define F_OK    0
+#define X_OK    1
+#define W_OK    2
+#define R_OK    4
+
+char   *tmpnam(char *buf);
+int     mkstemp(char *modello);      /* il modello finisce per XXXXXX */
+/* ⚠️ mktemp NON crea il file: da' solo il nome, e fra il nome e l'uso ci
+ * puo' entrare qualcun altro. E' cosi' su ogni Unix — si usi mkstemp. */
+char   *mktemp(char *modello);
+FILE   *tmpfile(void);
+int     access(const char *path, int modo);
+int     isatty(int fd);
+int     rename(const char *da, const char *a);   /* ⚠️ copia+cancella, non atomica */
+int     atexit(void (*fn)(void));
+
+/* =============================================================================
+ * SEGNALI — ci sono i nomi, non c'e' la consegna. Vedi lib/libc.c.
+ * ============================================================================= */
+#define SIGHUP   1
+#define SIGINT   2
+#define SIGQUIT  3
+#define SIGILL   4
+#define SIGABRT  6
+#define SIGFPE   8
+#define SIGKILL  9
+#define SIGSEGV 11
+#define SIGPIPE 13
+#define SIGALRM 14
+#define SIGTERM 15
+#define SIG_MAX 32
+
+#define SIG_DFL ((void (*)(int))0)
+#define SIG_IGN ((void (*)(int))1)
+#define SIG_ERR ((void (*)(int))-1)
+
+void  (*signal(int sig, void (*gestore)(int)))(int);
+int     raise(int sig);
+char *strsignal(int sig);
+
+/* =============================================================================
+ * Localizzazione (solo "C") e interrogazioni sul sistema
+ * ============================================================================= */
+#define LC_ALL       0
+#define LC_COLLATE   1
+#define LC_CTYPE     2
+#define LC_MONETARY  3
+#define LC_NUMERIC   4
+#define LC_TIME      5
+#define LC_MESSAGES  6
+
+char   *setlocale(int categoria, const char *nome);
+
+#define _SC_ARG_MAX             0
+#define _SC_OPEN_MAX            4
+#define _SC_PAGESIZE            30
+#define _SC_CLK_TCK             2
+#define _SC_NPROCESSORS_ONLN    84
+
+long    sysconf(int nome);
+
+/* pathconf: gli stessi limiti, ma riferiti a un file.
+ * ⚠️ NON dipendono dal percorso: su EX-OS convivono quattro filesystem
+ * con limiti diversi, e si risponde il massimo del piu' generoso — la
+ * risposta prudente per chi dimensiona un buffer, quella sbagliata per
+ * chi verifica se un nome ci sta. Vedi lib/libc.c. */
+#define _PC_LINK_MAX            0
+#define _PC_NAME_MAX            3
+#define _PC_PATH_MAX            4
+#define _PC_CHOWN_RESTRICTED    6
+#define _PC_NO_TRUNC            7
+
+long    pathconf(const char *path, int nome);
+long    fpathconf(int fd, int nome);
+
+typedef long clock_t;
+
+struct tms {
+    clock_t tms_utime, tms_stime, tms_cutime, tms_cstime;
+};
+
+clock_t times(struct tms *t);
+clock_t clock(void);
+#define CLOCKS_PER_SEC  100
 
 /* Come listdir, ma parte dalla 'start'-esima voce. Serve per percorrere
  * una directory piu' grande del buffer: il kernel limita comunque quante

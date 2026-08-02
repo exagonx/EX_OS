@@ -11,7 +11,7 @@
  *
  * <math.h> — quel poco che c'e'.
  *
- * ⚠️ QUESTA NON E' UNA LIBM. Ci sono ldexp e le costanti; non ci sono
+ * ⚠️ QUESTA NON E' UNA LIBM. Ci sono ldexp, frexp e le costanti; non ci sono
  * sqrt, sin, cos, log, exp, pow ne' il resto. La dichiarazione di
  * funzioni inesistenti sarebbe peggio dell'assenza: il programma
  * compilerebbe e fallirebbe al link, a valle di tutto il lavoro, con un
@@ -48,9 +48,14 @@
 #define M_SQRT2     1.41421356237309504880
 #define M_SQRT1_2   0.70710678118654752440
 
-/* x * 2^e. E' l'unica funzione di math.h che EX-OS implementa, ed e'
- * anche l'unica che TCC chiama: gli serve per i letterali esadecimali in
- * virgola mobile del C99 (0x1.8p3), che converte da se'. */
+/* Le due sole funzioni di math.h che EX-OS implementa, e non e' un caso
+ * che siano una l'inversa dell'altra: nessuna delle due CALCOLA qualcosa —
+ * scompongono e ricompongono un numero in virgola mobile, che e' cio' di
+ * cui ha bisogno chi lo converte da un formato a un altro. ldexp la chiama
+ * TCC per i letterali esadecimali del C99 (0x1.8p3); frexp la chiede
+ * floatformat.c di libiberty, che converte fra i formati IEEE dei diversi
+ * bersagli di binutils. */
 double ldexp(double x, int e);
+double frexp(double x, int *e);
 
 #endif /* EXOS_MATH_H */

@@ -451,7 +451,16 @@ static int dl_load_so(const char *path, Process *proc,
 
         uint32_t pg;
         for (pg = 0; pg < n_pages; pg++) {
-            uint32_t phys = pmm_alloc_page();
+            /* ⚠️ FASCIA KERNEL, e qui e' una scelta diversa da elf_load.
+             *
+             * Il rilocatore qui sotto non copia dall'inizio alla fine: sui
+             * simboli R_386_COPY legge da una pagina e scrive in un'altra
+             * NELLO STESSO ISTANTE, e la finestra di rimappatura e' una
+             * sola. Tenere l'immagine di un driver dove il kernel la
+             * indirizza direttamente e' il modo onesto di dirlo — e costa
+             * poco: i driver sono due, di una quindicina di KB l'uno,
+             * caricati una volta all'avvio. */
+            uint32_t phys = pmm_alloc_page_kernel();
             if (phys == 0) goto cleanup;
 
             /* Azzera pagina */

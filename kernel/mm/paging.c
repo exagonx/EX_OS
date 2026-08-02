@@ -15,6 +15,7 @@
 #include "paging.h"
 #include "idt.h"
 #include "sched.h"
+#include "vfs.h"   /* vfs_read: le pagine mancanti arrivano dall'eseguibile */
 
 /* =============================================================================
  * Struttura Page Directory Entry (PDE) — formato hardware x86
@@ -72,6 +73,105 @@ static int g_paging_enabled = 0;
 static PDE *g_current_pd = NULL;
 
 /* =============================================================================
+ * FINESTRA DI RIMAPPATURA FISICA
+ *
+ * IL PROBLEMA. Il kernel deve scrivere dentro pagine che appartengono a un
+ * ALTRO spazio di indirizzamento: i segmenti di un ELF che sta caricando
+ * per un figlio, la pagina appena data a chi ha chiamato sbrk. Finora lo
+ * faceva dereferenziando l'indirizzo FISICO, che funziona solo finche'
+ * quella pagina e' mappata per identita' nel CR3 corrente. Ma la PD di un
+ * processo copia dalla PD del kernel soltanto le PDE sotto
+ * USER_SPACE_BASE: la prima pagina fisica allocata oltre quella soglia
+ * dava un page fault in ring0, cioe' un kernel panic, e con esso un tetto
+ * a quanto puo' crescere un processo — indipendente da quanta RAM c'e'.
+ *
+ * LA FINESTRA. Una pagina virtuale dentro kernel_page_table_low, la
+ * tabella statica installata in PDE[0] e copiata per valore in ogni PD:
+ * riscriverne una PTE ha effetto in TUTTI gli spazi di indirizzamento, che
+ * qui e' esattamente cio' che serve. Il kernel la punta alla pagina fisica
+ * che gli serve, lavora, e la richiude. E' il kmap_atomic/fixmap di Linux
+ * per la highmem, ridotto all'osso.
+ *
+ * DUE REGOLE, e sono entrambe obbligatorie:
+ *
+ *   1. Gli interrupt restano SPENTI mentre la finestra e' aperta. La
+ *      finestra e' una risorsa sola: una preemption in mezzo e un altro
+ *      contesto la ripunta sotto i piedi del primo, che continua a
+ *      scrivere all'indirizzo di prima credendo di scrivere altrove.
+ *
+ *   2. Non si tiene aperta attraverso una chiamata che puo' bloccarsi.
+ *      In elf_load fra una pagina e l'altra c'e' una vfs_read, che e' un
+ *      messaggio IPC a un driver in ring3: la finestra si apre e si
+ *      chiude intorno alla singola copia, mai intorno al ciclo.
+ *
+ * La pagina fisica omonima e' riservata nel PMM (pmm_init): il suo
+ * contenuto non e' affidabile, perche' la PTE che la descrive viene
+ * riscritta di continuo.
+ * ============================================================================= */
+static int      g_finestra_aperta = 0;
+static uint32_t g_finestra_eflags = 0;
+
+void *paging_finestra_apri(uint32_t phys)
+{
+    uint32_t eflags;
+
+    __asm__ volatile ("pushf; pop %0" : "=r"(eflags));
+    __asm__ volatile ("cli");
+
+    /* Aprire una finestra gia' aperta significa che due percorsi di codice
+     * la stanno usando insieme, e il primo dei due scrivera' nel posto
+     * sbagliato senza accorgersene. E' un errore di programmazione del
+     * kernel, non una condizione d'errore da riportare: meglio fermarsi
+     * qui che consegnare dati corrotti a un processo. */
+    if (g_finestra_aperta) {
+        kpanic("PAGING: finestra di rimappatura aperta due volte");
+    }
+
+    g_finestra_aperta = 1;
+    g_finestra_eflags = eflags;
+
+    kernel_page_table_low[PT_INDEX(PAGING_FINESTRA_VIRT)] =
+        (phys & 0xFFFFF000) | PG_PRESENT | PG_WRITABLE;   /* mai PG_USER */
+
+    __asm__ volatile ("invlpg (%0)" : : "r"(PAGING_FINESTRA_VIRT) : "memory");
+
+    return (void *)(PAGING_FINESTRA_VIRT + (phys & 0xFFF));
+}
+
+void paging_finestra_chiudi(void)
+{
+    if (!g_finestra_aperta) return;
+
+    /* Si lascia NON PRESENTE invece di rimettere l'identita': se qualcuno
+     * conserva il puntatore e lo usa dopo, deve prendere un fault subito e
+     * rumorosamente, non leggere di nascosto una pagina che nel frattempo
+     * e' di qualcun altro. */
+    kernel_page_table_low[PT_INDEX(PAGING_FINESTRA_VIRT)] = 0;
+    __asm__ volatile ("invlpg (%0)" : : "r"(PAGING_FINESTRA_VIRT) : "memory");
+
+    g_finestra_aperta = 0;
+
+    /* Ripristina lo stato degli interrupt di CHI HA APERTO, che non e'
+     * detto fosse "abilitati": questa funzione viene chiamata anche da
+     * dentro sezioni gia' critiche. */
+    if (g_finestra_eflags & (1u << 9)) __asm__ volatile ("sti");
+}
+
+/* Azzeramento di una pagina fisica qualunque: e' il caso d'uso piu'
+ * frequente (ogni pagina nuova consegnata a un processo va azzerata, se no
+ * il processo vede i resti di chi c'era prima) e merita di non far
+ * ripetere apri/chiudi a ogni chiamante. */
+void paging_azzera_fisica(uint32_t phys)
+{
+    uint8_t  *p = (uint8_t *)paging_finestra_apri(phys & 0xFFFFF000);
+    uint32_t  n = PAGE_SIZE;
+
+    while (n--) *p++ = 0;
+
+    paging_finestra_chiudi();
+}
+
+/* =============================================================================
  * paging_map_page — Mappa una pagina virtuale → fisica in una Page Directory
  *
  * pd:         Page Directory del processo (o kernel_page_directory)
@@ -98,8 +198,14 @@ int paging_map_page(PDE *pd, uint32_t virt_addr, uint32_t phys_addr, uint32_t fl
         /* Page Table già esistente: usa quella */
         pt = (PTE *)PG_ADDR(pd[pd_idx]);
     } else {
-        /* Page Table non esiste: alloca una nuova pagina dal PMM */
-        uint32_t pt_phys = pmm_alloc_page();
+        /* Page Table non esiste: alloca una nuova pagina dal PMM.
+         *
+         * Dalla FASCIA KERNEL: questa tabella verra' letta e scritta al
+         * proprio indirizzo fisico (qui sotto, e in paging_get_physical,
+         * e in paging_destroy_directory) mentre e' caricato il CR3 di un
+         * processo qualunque. Una page table sopra USER_SPACE_BASE
+         * sarebbe irraggiungibile proprio nei momenti in cui serve. */
+        uint32_t pt_phys = pmm_alloc_page_kernel();
         if (pt_phys == 0) {
             klog(LOG_ERROR, "PAGING: OOM durante map_page virt=0x%08x", virt_addr);
             return -1;
@@ -330,7 +436,10 @@ void paging_init(void)
  * ============================================================================= */
 PDE *paging_create_directory(void)
 {
-    uint32_t phys = pmm_alloc_page();
+    /* Fascia kernel, per la stessa ragione delle page table: la PD di un
+     * processo viene letta e modificata al proprio indirizzo fisico anche
+     * mentre gira un ALTRO processo (sys_spawn, elf_load). */
+    uint32_t phys = pmm_alloc_page_kernel();
     PDE     *pd;
     uint32_t i;
 
@@ -529,12 +638,9 @@ static int pf_cresci_stack(Process *p, InterruptFrame *frame,
         }
 
         /* Azzerare e' obbligatorio, non igiene: senza, il processo
-         * vedrebbe nel proprio stack i resti di un altro processo. */
-        {
-            uint8_t *z = (uint8_t *)phys;
-            uint32_t n = PAGE_SIZE;
-            while (n--) *z++ = 0;
-        }
+         * vedrebbe nel proprio stack i resti di un altro processo.
+         * Attraverso la finestra, perche' la pagina puo' stare ovunque. */
+        paging_azzera_fisica(phys);
 
         if (paging_map_page(p->page_directory, ind, phys,
                             PG_PRESENT | PG_WRITABLE | PG_USER) != 0) {
@@ -557,6 +663,143 @@ static int pf_cresci_stack(Process *p, InterruptFrame *frame,
          from_user ? "ring3" : "ring0");
 
     return 1;
+}
+
+/* =============================================================================
+ * pf_carica_da_file — la pagina che manca sta nell'eseguibile
+ *
+ * E' la seconda meta' del caricamento su richiesta (la prima e' in elf.c):
+ * il processo tocca un indirizzo che appartiene a un segmento annotato ma
+ * non ancora presente in RAM, e qui lo si va a prendere dal file.
+ *
+ * Ritorna 1 se la pagina e' stata portata dentro (l'iret rieseguira'
+ * l'istruzione che ha faultato), 0 in ogni caso dubbio — e "caso dubbio"
+ * comprende "non e' un indirizzo di un segmento", perche' allora il fault
+ * e' un errore vero e va diagnosticato dal chiamante.
+ *
+ * ⚠️ GLI INTERRUPT SI RIACCENDONO PER LA LETTURA. Il gate di #PF e' un
+ * interrupt gate, quindi qui dentro IF e' spento; ma leggere dal disco
+ * significa parlare con un driver e aspettare il timer, e con IF spento
+ * l'attesa non finirebbe mai. Si riaccendono per la sola vfs_read e si
+ * ripristina lo stato di prima — lo stesso schema di fdc_delay_ms in
+ * fat12.c. La conseguenza da avere presente e' che il processo puo'
+ * essere sospeso QUI DENTRO: e' legittimo (siamo nel suo contesto, sul
+ * suo stack kernel) ed e' il motivo per cui, al ritorno, si ricontrolla
+ * che la pagina non sia arrivata nel frattempo.
+ *
+ * Il buffer di lettura sta sullo STACK KERNEL e non e' uno statico: due
+ * processi possono trovarsi qui insieme, uno fermo in attesa del disco e
+ * l'altro appena entrato, e un buffer condiviso significherebbe il
+ * contenuto di una pagina scritto dentro quella di un altro processo.
+ * ============================================================================= */
+static int pf_carica_da_file(Process *p, uint32_t fault_addr)
+{
+    uint32_t pagina = fault_addr & 0xFFFFF000;
+    ProcVma *v      = NULL;
+    uint32_t i, phys, letti = 0, da_leggere = 0, off_file = 0;
+    uint8_t  buf[PAGE_SIZE];
+
+    if (p == NULL || p->exe_handle < 0 || p->page_directory == NULL) return 0;
+
+    for (i = 0; i < p->n_vma; i++) {
+        if (pagina >= p->vma[i].vstart && pagina < p->vma[i].vend) {
+            v = &p->vma[i];
+            break;
+        }
+    }
+    if (v == NULL) return 0;
+
+    /* Quanti byte di QUESTA pagina vengono dal file. Oltre file_fine c'e'
+     * il BSS: non e' un errore e non si legge niente, si lascia azzerato.
+     * E' il caso di ogni programma — l'ultima pagina dei dati e' quasi
+     * sempre mezza file e mezza BSS. */
+    if (pagina < v->file_fine) {
+        da_leggere = v->file_fine - pagina;
+        if (da_leggere > PAGE_SIZE) da_leggere = PAGE_SIZE;
+        off_file = v->file_off + (pagina - v->vstart);
+    }
+
+    if (da_leggere > 0) {
+        uint32_t eflags;
+        int      n;
+
+        __asm__ volatile ("pushf; pop %0" : "=r"(eflags));
+        __asm__ volatile ("sti");
+        n = vfs_read(p->exe_handle, buf, da_leggere, off_file);
+        if (!(eflags & (1u << 9))) __asm__ volatile ("cli");
+
+        if (n < 0) {
+            klog(LOG_ERROR, "PF: PID %u, lettura della pagina 0x%08x "
+                 "dall'eseguibile fallita (%d)", p->pid, pagina, n);
+            return 0;
+        }
+        letti = (uint32_t)n;
+    }
+
+    /* Mentre si aspettava il disco il processo era sospeso: se un altro
+     * percorso ha gia' mappato questa pagina, mapparla di nuovo
+     * perderebbe la prima (e la sua pagina fisica, per sempre). */
+    if (paging_get_physical(p->page_directory, pagina) != 0) return 1;
+
+    phys = pmm_alloc_page();
+    if (phys == 0) {
+        klog(LOG_ERROR, "PF: RAM esaurita caricando 0x%08x per PID %u",
+             pagina, p->pid);
+        return 0;
+    }
+
+    {
+        uint8_t *dst = (uint8_t *)paging_finestra_apri(phys);
+        uint32_t k;
+
+        for (k = 0; k < letti; k++)     dst[k] = buf[k];
+        for (; k < PAGE_SIZE; k++)      dst[k] = 0;
+
+        paging_finestra_chiudi();
+    }
+
+    if (paging_map_page(p->page_directory, pagina, phys, v->pg_flags) != 0) {
+        pmm_free_page(phys);
+        klog(LOG_ERROR, "PF: mapping fallito per 0x%08x (PID %u)", pagina, p->pid);
+        return 0;
+    }
+
+    return 1;
+}
+
+/* =============================================================================
+ * vm_precarica_utente — porta in RAM le pagine di un buffer PRIMA che sia
+ * un driver a toccarlo.
+ *
+ * Serve a una cosa sola, ma indispensabile: rompere il ciclo fra il
+ * lucchetto del VFS e il fault-in. Una read() il cui buffer cade in una
+ * pagina non ancora presente farebbe scrivere il driver dentro quella
+ * pagina, con il lucchetto gia' in mano; il page fault chiamerebbe il VFS
+ * per andarla a prendere e resterebbe fermo sul lucchetto di se stesso.
+ *
+ * Chiamarla PRIMA di entrare nel VFS toglie il caso: qui il lucchetto non
+ * ce l'ha nessuno, e le pagine arrivano con la strada libera.
+ *
+ * Riguarda solo le pagine dell'ESEGUIBILE: heap e mmap sono gia' in RAM
+ * quando vengono consegnati, e lo stack cresce da un fault che non tocca
+ * il filesystem. Gli errori si ignorano di proposito — se la pagina non
+ * si puo' caricare lo scoprira' l'accesso vero, con la sua diagnostica.
+ * ============================================================================= */
+void vm_precarica_utente(uint32_t addr, uint32_t len)
+{
+    Process *p = proc_get_current();
+    uint32_t pag, fine;
+
+    if (p == NULL || p->exe_handle < 0 || p->n_vma == 0 || len == 0) return;
+
+    fine = addr + len;
+    if (fine < addr) return;   /* somma che gira: non e' un buffer valido */
+
+    for (pag = addr & 0xFFFFF000; pag < fine; pag += PAGE_SIZE) {
+        if (paging_get_physical(p->page_directory, pag) == 0) {
+            pf_carica_da_file(p, pag);
+        }
+    }
 }
 
 void page_fault_handler(InterruptFrame *frame)
@@ -584,6 +827,16 @@ void page_fault_handler(InterruptFrame *frame)
 
         if (pf_cresci_stack(p, frame, fault_addr, err, from_user)) {
             return;   /* l'iret rieseguira' l'istruzione che ha faultato */
+        }
+
+        /* CARICAMENTO SU RICHIESTA — dopo lo stack e prima della
+         * diagnostica, e anche qui per entrambi i livelli: un fault ring0
+         * su un puntatore che il programma ha passato a una syscall (una
+         * stringa in .rodata mai letta prima) e' legittimo quanto uno
+         * ring3, ed e' cio' che permette a syscall_verify_str di
+         * dereferenziare senza sapere niente di paginazione. */
+        if (!(err & 0x1) && pf_carica_da_file(p, fault_addr)) {
+            return;
         }
     }
 

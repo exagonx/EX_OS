@@ -28,6 +28,32 @@ typedef uint32_t PTE;
 #define PG_DIRTY        (1 << 6)
 #define PG_GLOBAL       (1 << 8)
 
+/* =============================================================================
+ * FINESTRA DI RIMAPPATURA FISICA
+ *
+ * Una pagina virtuale sola, dentro la fascia mappata in OGNI page
+ * directory, che il kernel ripunta alla pagina fisica che deve leggere o
+ * scrivere. Serve per toccare memoria di un ALTRO spazio di
+ * indirizzamento — le pagine di un processo che si sta creando, o quelle
+ * appena allocate a chi ha chiamato sbrk — senza dipendere dal fatto che
+ * quell'indirizzo fisico sia mappato nel CR3 corrente. Vedi paging.c per
+ * il perche' e per le due regole d'uso.
+ *
+ * paging_finestra_apri ritorna un puntatore all'indirizzo fisico chiesto
+ * (offset dentro la pagina compreso) e DISABILITA gli interrupt fino
+ * alla chiusura: la finestra e' una risorsa sola.
+ * ============================================================================= */
+#define PAGING_FINESTRA_VIRT    0x003FF000u  /* ultima pagina dei primi 4 MB */
+#define PAGING_FINESTRA_FISICA  0x003FF000u  /* la sua identita', riservata */
+
+/* Porta in RAM le pagine dell'eseguibile che coprono un buffer utente,
+ * prima di consegnarlo a un driver. Vedi paging.c. */
+void     vm_precarica_utente(uint32_t addr, uint32_t len);
+
+void    *paging_finestra_apri(uint32_t phys);
+void     paging_finestra_chiudi(void);
+void     paging_azzera_fisica(uint32_t phys);
+
 void     paging_init(void);
 int      paging_map_page(PDE *pd, uint32_t virt, uint32_t phys, uint32_t flags);
 void     paging_unmap_page(PDE *pd, uint32_t virt);

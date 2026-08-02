@@ -52,7 +52,7 @@
 #define EXOS_LONGNAME   "Extensible Operating System"
 
 /* ▲ INCREMENTARE DI 0.001 A OGNI MODIFICA DEL KERNEL ▲ */
-#define EXOS_VERSION    "0.147"
+#define EXOS_VERSION    "0.153"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

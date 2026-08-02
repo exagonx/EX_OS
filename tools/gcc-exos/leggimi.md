@@ -105,14 +105,20 @@ da soli al link.
 Il risultato è che `i386-exos-gcc programma.c -o programma` basta: niente
 `-ffreestanding`, niente `-m32`, niente script di link scritto a mano.
 
-## I binutils sono wrapper, per ora
+## I binutils: non sono più wrapper (dal 0.150)
 
-Non c'è un binutils compilato per `i386-exos`, e per ora non serve: il
-formato di uscita è ELF32 i386, esattamente quello che l'`as` e l'`ld` di
-sistema producono con `--32` e `-m elf_i386`. I wrapper esistono perché
-GCC cerca i propri strumenti col nome del bersaglio davanti
-(`i386-exos-as`). Il giorno che servirà un binutils vero, otto file di tre
-righe lasciano il posto ai binari e nient'altro cambia.
+Erano otto script di tre righe attorno agli strumenti di sistema forzati a
+32 bit, e bastavano: il formato di uscita è ELF32 i386, esattamente quello
+che l'`as` e l'`ld` di sistema producono con `--32` e `-m elf_i386`.
+
+Ora ci sono i binutils **veri** per `i386-exos`, e si costruiscono con
+`tools/binutils-exos/prepara-binutils.sh` — quattro righe di modifica in
+quattro file, documentate in `tools/binutils-exos/leggimi.md`. I wrapper
+restano come ripiego, e `prepara-cross.sh` **non li reinstalla sopra i
+binari** se li trova già.
+
+Detto com'era previsto qui: *«otto file di tre righe lasciano il posto ai
+binari e nient'altro cambia»*. È andata proprio così.
 
 ## Licenze
 
@@ -170,19 +176,26 @@ Prerequisiti da non dimenticare: `flex`, `bison`, `gperf`, `texinfo`, `m4`.
 L'albero è un checkout del trunk e, a differenza di un tarball di rilascio,
 non contiene i file generati (`gengtype-lex.cc` e i parser).
 
-## Cosa resta da sistemare nel bersaglio
+## I tre difetti del bersaglio, corretti insieme (0.150)
 
-Difetti noti, nessuno dei quali impedisce di compilare ed eseguire:
+Erano annotati qui come noti, e costavano tutti e tre un rebuild di GCC —
+le specs e i tipi sono compilati dentro il driver e dentro cc1, quindi
+tanto valeva farli in un colpo solo.
 
-- **L'indirizzo di caricamento è `0x08048000`**, il default di `ld`, non
-  lo `0x08000000` che `exos.h` dichiara a parole e che usano gli script di
-  link di `/bin`. Il caricatore del kernel accetta qualunque `PT_LOAD`
-  dentro `[USER_SPACE_BASE, USER_SPACE_END)`, quindi funziona lo stesso —
-  ma le specs devono dire ciò che fanno. Rimedio: `-Ttext-segment=0x08000000`
-  in `LINK_SPEC`.
-- **`.eh_frame` c'è ancora**, 5,6 KB per binario. `DWARF2_UNWIND_INFO 0`
-  toglie l'unwind delle eccezioni, non le tabelle asincrone: serve
-  `-fno-asynchronous-unwind-tables` in `CC1_SPEC`.
-
-Entrambi vivono in `exos.h`, quindi correggerli comporta ricompilare GCC:
-le specs sono compilate dentro il driver.
+- **Indirizzo di caricamento**: era `0x08048000`, il default storico di
+  `ld`, mentre `exos.h` dichiarava a parole `0x08000000` e gli script di
+  link di `/bin` usano quello. Ora `LINK_SPEC` passa
+  `-Ttext-segment=0x08000000`. Il caricatore del kernel accettava
+  entrambi, quindi non si vedeva: si vedeva solo che due binari dello
+  stesso programma — uno dal cross, uno dal Makefile — stavano a indirizzi
+  diversi, il che rende inconfrontabili due disassemblati.
+- **`.eh_frame`**: 5,6 KB per binario. `DWARF2_UNWIND_INFO 0` toglie
+  l'unwind delle *eccezioni*, non le tabelle *asincrone* — sono due cose
+  diverse che si chiamano quasi uguale. Ora `CC1_SPEC` passa
+  `-fno-asynchronous-unwind-tables`.
+- **I tipi fondamentali**: il bersaglio prendeva i predefiniti, cioè
+  `long unsigned int` per `size_t` e `long int` per `int32_t` — larghezze
+  giuste, tipi diversi da quelli del `gcc` di sistema con `-m32`. Ora
+  `exos.h` dichiara `SIZE_TYPE`, `PTRDIFF_TYPE`, `INT32_TYPE` e
+  `UINT32_TYPE` come fa `i386-linux`, che è il bersaglio con cui EX-OS
+  condivide l'ABI.

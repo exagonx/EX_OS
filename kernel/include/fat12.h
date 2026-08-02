@@ -47,7 +47,10 @@ typedef struct {
 int  fat12_init(uint8_t drive);
 int  fat12_open(const char *path, uint32_t flags);
 int  fat12_read(int handle, void *buf, uint32_t size, uint32_t offset);
-int  fat12_write(int handle, const void *buf, uint32_t size);
+/* ⚠️ `offset` e' arrivato ad agosto 2026, e prima non c'era: la scrittura
+ * si accodava SEMPRE alla fine del file, qualunque cosa avesse fatto
+ * lseek(). Vedi il commento in fat12_write(). */
+int  fat12_write(int handle, const void *buf, uint32_t size, uint32_t offset);
 int  fat12_close(int handle);
 int  fat12_stat(const char *path, Fat12Stat *st);
 /* Elenca una directory a partire dalla 'start'-esima voce valida.

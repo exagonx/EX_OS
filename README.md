@@ -8,12 +8,19 @@
 
 ## Che cos'è EX-OS
 
-EX-OS è un sistema operativo baremental scritto in C e ASM per architettura
-x86 32-bit. Gira da floppy da 1.44MB formattato FAT12. L'obiettivo è un
-sistema estensibile: il kernel è piccolo e read-only in RAM convenzionale,
-tutto il resto (driver, shell, programmi) gira in RAM estesa in spazio protetto.
+EX-OS è un sistema operativo baremetal scritto in C e ASM per architettura
+x86 32-bit. Gira da floppy da 1.44MB formattato FAT12, da disco rigido
+(FAT16/32 o ext2) e legge CD/DVD. L'obiettivo è un sistema estensibile: il
+kernel è piccolo e read-only in RAM convenzionale, tutto il resto (driver,
+shell, programmi) gira in RAM estesa in spazio protetto.
 
 Un crash di un driver o di un programma non può abbattere il sistema.
+
+**Da agosto 2026 EX-OS ospita codice di terzi**: GNU binutils 2.44 —
+`as` e `ld` — è compilato *per* EX-OS e ci gira dentro, e un programma
+assemblato e collegato qui è identico byte per byte a uno prodotto dal
+cross-compilatore su Linux. Vedi
+[La catena di compilazione dentro EX-OS](#la-catena-di-compilazione-dentro-ex-os).
 
 ---
 
@@ -42,6 +49,10 @@ Un crash di un driver o di un programma non può abbattere il sistema.
 
 Il TTY non compare in `/dev`: `drivers/tty/tty.c` è compilato **dentro** il
 kernel (possiede la VGA), e per l'input fa da client del servizio `kbd`.
+
+Quello che in 1.44 MB non entra sta sul **CD degli strumenti**
+(`make iso`): `as` e `ld` nativi in `/bin`, gli header e il sorgente della
+libc in `/exos`, la documentazione in `/doc`.
 
 ---
 
@@ -74,11 +85,20 @@ Lo script `install_crosscompiler.sh` installa automaticamente:
 ```bash
 make all          # Compila tutto + crea dist/floppy.img
 make run          # Avvia con QEMU (32MB RAM)
+make iso          # CD degli strumenti (as, ld, header, doc)
+make run-iso      # QEMU con il CD montato su /cdrom
+make hd           # Disco rigido avviabile (formattato da EX-OS stesso)
+make run-hd       # QEMU dal disco, senza floppy
 make debug        # QEMU + GDB stub porta 1234
 make verify       # Verifica struttura floppy
 make clean        # Rimuove build/
 make distclean    # Rimuove build/ e dist/
 ```
+
+`make iso` include `as` e `ld` nativi se li trova in
+`$(BINUTILS_NATIVI)` (default `~/exos-native/build-nativi`); se non ci
+sono lo dice e fa il CD lo stesso. Come costruirli:
+`tools/binutils-exos/leggimi.md`.
 
 ### Log di boot completo via seriale
 
@@ -145,6 +165,42 @@ RAM ESTESA > 1MB — Tutto il resto (protetto, isolato)
   Librerie (/lib/)    — shared, mappate in ogni processo
 ```
 
+### Le pagine di un programma arrivano quando servono
+
+Dalla 0.149 il caricatore ELF non copia i segmenti in RAM: annota dove
+vivono nel file, tiene l'eseguibile aperto e le pagine arrivano al primo
+accesso, dal gestore di page fault. Un binario con **8 MB di dati
+costanti** parte occupando 36 KB e sale a 8 MB solo se lo si legge tutto.
+
+Il costo di avvio non dipende piu' dalla dimensione del binario — che e'
+la condizione per far girare qui dentro un compilatore, dove `cc1` da solo
+sono decine di MB.
+
+I **driver** fanno eccezione e si caricano tutti in RAM: un driver che
+serve il filesystem, paginato da quel filesystem, dovrebbe servire la
+propria lettura mentre e' fermo ad aspettarla.
+
+Conseguenza da sapere: **l'eseguibile resta aperto finche' il processo
+vive**, e le pagine caricate non vengono mai buttate via (manca lo
+sfratto, e con esso il file di scambio).
+
+### La fascia kernel, e la finestra di rimappatura
+
+La page directory di un processo copia dalla PD del kernel solo le PDE
+**sotto `USER_SPACE_BASE` (64 MB)**. Quella fascia è l'unica memoria che il
+kernel può rileggere al proprio indirizzo fisico mentre gira un processo,
+ed è dove il PMM è obbligato a mettere ciò che il kernel indirizza così:
+heap di `kmalloc`, stack kernel dei processi, page directory e page table,
+immagini dei driver in corso di rilocazione (`pmm_alloc_page_kernel()`).
+
+Le pagine dei processi invece stanno **ovunque in RAM**: il kernel le tocca
+attraverso una pagina virtuale che ripunta al volo alla pagina fisica che
+gli serve — `paging_finestra_apri()`, il `kmap_atomic` dei kernel grandi
+ridotto all'osso. Senza, un processo poteva crescere solo finché il PMM
+consegnava pagine sotto la soglia: **4 MB, e poi kernel panic**, con
+qualunque quantità di RAM installata. Ora un processo arriva a occupare la
+RAM disponibile (provato: 300 MB su una macchina da 512).
+
 ---
 
 ## Syscall interface (int 0x80, stile Linux)
@@ -157,6 +213,9 @@ RAM ESTESA > 1MB — Tutto il resto (protetto, isolato)
 |   5 | open         | path*      | flags     | mode    |
 |   6 | close        | fd         | —         | —       |
 |  11 | exec         | path*      | argv**    | envp**  |
+|  41 | dup          | fd         | —         | —       |
+|  63 | dup2         | vecchio    | nuovo     | —       |
+|  55 | fcntl        | fd         | cmd       | arg     |
 |  20 | getpid       | —          | —         | —       |
 |  45 | sbrk         | increment  | —         | —       |
 |  54 | ioctl        | fd         | request   | arg     |
@@ -418,6 +477,19 @@ comporre quella mappa.
 ⚠️ Il prezzo è lo stesso patto di LILO: **ricopiare kernel o Stage 2 obbliga a
 rilanciare `install`.**
 
+### `install` sostituisce, e verifica (dal 0.148)
+
+Rilanciarlo su un sistema già installato **riscrive ogni file**, kernel
+compreso, e rilegge ognuno per confrontarne la dimensione. Nel resoconto `+`
+è creato, `~` sostituito, `!` errore.
+
+Fino alla 0.147 i file già presenti venivano saltati: un aggiornamento
+copiava solo i file nuovi, lasciava il kernel vecchio e poi riscriveva la
+mappa dei settori *per quello* — il disco ripartiva con la versione di
+prima e l'installatore diceva «completata». Le directory continuano a non
+essere ricreate, e ciò che sul volume non fa parte del sistema resta dov'è:
+`install` aggiorna, non azzera.
+
 Per il kernel la mappa è una **lista** di intervalli, non uno solo. Su ext2 un
 file non è quasi mai contiguo, e non per frammentazione: il blocco di
 *puntatori* viene allocato in mezzo ai dati, perché serve prima del tredicesimo
@@ -648,6 +720,30 @@ due numeri diversi per costruzione. Il valore atteso va messo in una variabile
 l'orologio CMOS — senza fuso orario, perché il sistema non sa in quale si trova:
 `localtime` e `gmtime` danno la stessa ora. `stat`/`fstat` nella forma POSIX.
 
+### Processi: spawn con ambiente e redirezioni
+
+`spawn()` lancia un programma e ritorna il PID; `waitpid()` ne raccoglie
+l'esito. Non c'è `fork()`, ed è una scelta: duplicare uno spazio di
+indirizzamento per buttarlo via alla `exec` successiva, su un sistema senza
+copy-on-write, sarebbe la cosa più costosa che si possa fare.
+
+```c
+SpawnRedir r = { 1, O_WRONLY | O_CREAT | O_TRUNC, "/uscita.txt" };
+int pid = spawn_ex("/bin/hello", argv, environ, &r, 1);
+waitpid(pid, &stato, 0);
+```
+
+La redirezione è **per percorso**, non per descrittore già aperto del
+padre: il figlio apre il proprio file. Passare un fd significherebbe due
+processi sullo stesso handle VFS, cioè un conteggio di riferimenti che non
+c'è e una `close()` che sfila il file da sotto all'altro. Basta a un driver
+di compilatore; non basta alle pipe, che infatti non ci sono ancora.
+
+L'ambiente si eredita per copia (`environ`, `putenv`, `setenv`,
+`unsetenv`). `getenv()` ripiega sulla sezione `[env]` di `kernel.cfg` per
+le chiavi che non trova: senza quel ripiego il primo processo — che un
+padre non ce l'ha — resterebbe senza `PATH`.
+
 ### Intestazioni con i nomi standard
 
 `<stdio.h>`, `<stdlib.h>`, `<string.h>`, `<ctype.h>`, `<errno.h>`, `<setjmp.h>`,
@@ -667,10 +763,120 @@ binari erano raddoppiati (`ls`: 12 → 25 KB). `-ffunction-sections`
 ha più spazio libero di quanto ne avesse all'inizio.
 
 ```
-libctest        78 prove: allocatore, formattazione, flussi, salti non
+libctest       171 prove: allocatore, formattazione, flussi, salti non
                 locali, conversioni, errno, virgola mobile, sscanf,
-                data e ora, stat — tutte dentro EX-OS
+                data e ora, stat, ambiente, directory, temporanei,
+                descrittori duplicati, interfacce per il codice di terzi,
+                spawn con redirezione — tutte dentro EX-OS
 ```
+
+### Descrittori duplicati: `dup`, `dup2`, `fcntl`
+
+Dalla 0.151 gli handle aperti del VFS hanno un **conteggio dei
+riferimenti**: `close()` chiude davvero solo l'ultima volta. È ciò che
+rende possibile `dup()`, cioè tenere un file aperto oltre la `close()` di
+chi possedeva il descrittore originale — il gesto che fanno `ar`,
+`objcopy` e `arsup` di binutils.
+
+`dup2()` è anche l'unico modo di sostituire `stdin`/`stdout`/`stderr`:
+`close()` su 0, 1 e 2 è rifiutata apposta, perché lascerebbe il processo
+senza uscita, mentre chi arriva da `dup2` il rimpiazzo ce l'ha già.
+
+> ⚠️ **I due descrittori condividono il file, non la posizione.** Su POSIX
+> una `read()` da uno dei due sposta anche l'altro; qui l'offset sta nel
+> descrittore del processo, non in un oggetto «file aperto» intermedio, e
+> ognuno tiene il suo. Chi legge da un fd duplicato faccia una `lseek()`
+> esplicita. È la prima cosa da sistemare il giorno che arriveranno le
+> pipe.
+
+---
+
+## La catena di compilazione dentro EX-OS
+
+**GNU binutils 2.44 gira nativamente su EX-OS.** `as` e `ld` sono
+compilati **per** `i386-exos`, non per la macchina che li ha costruiti:
+
+```
+ex-os:/> /cdrom/bin/as --version
+GNU assembler (GNU Binutils) 2.44
+This assembler was configured for a target of `i386-exos'.
+
+ex-os:/> /cdrom/bin/as -o /prova.o /cdrom/prova.s
+ex-os:/> /cdrom/bin/ld -o /prova /prova.o
+ex-os:/> /prova
+Assemblato e collegato dentro EX-OS.
+```
+
+L'oggetto prodotto qui dentro è **identico byte per byte** a quello che
+produce il cross su Linux. I due strumenti stanno sul CD degli strumenti
+(`make iso`, ~1,4 MB l'uno dopo lo strip); il sorgente di prova è
+`/cdrom/prova.s`.
+
+### Perché è il collaudo che conta
+
+`libctest` chiama le funzioni che **sappiamo** di avere. binutils chiama
+quelle che gli servono, e non ha nessun riguardo: le ha chieste una alla
+volta, ognuna fermando la compilazione, e l'elenco è la misura di quanto
+mancava a una libc «ospitata» vera —
+
+| | |
+|---|---|
+| processi | `dup`, `dup2`, `fcntl`, `_exit` |
+| file | `realpath`, `lstat`, `freopen`, `mktemp`, `pathconf`, `utime` |
+| stringhe | `strcasecmp`, `strncasecmp`, `strcoll`, `strpbrk` |
+| formato | `fscanf`, `scanf`, `strftime`, `asctime`, `ctime` |
+| numeri | `frexp`, `atof`, `fabs` |
+| caratteri larghi | `mbstowcs`, `mbrtowc`, `wcstombs` |
+| permessi (inerti) | `chmod`, `fchmod`, `umask` |
+| header | `<sys/types.h>` `<strings.h>` `<wchar.h>` `<sys/param.h>` `<limits.h>` `<memory.h>` `<utime.h>` |
+
+più due che non erano funzioni: **`EOF`** — il valore c'era dal principio,
+mancava il *nome*, e `safe-ctype.h` verifica di poter lavorare con
+`#if EOF != -1`, che senza la macro vede zero e conclude che la libc è
+sbagliata — e **`strerror` che tornava `const char *`**, più sicuro e
+incompatibile con la firma dello standard.
+
+### `pex-exos.c`: lanciare un programma senza `fork`
+
+`libiberty` compila sempre un `pex-*.c` — «lancia un programma e
+aspettalo» — e per tutto ciò che non è Windows o MSDOS sceglie
+`pex-unix.c`, costruito su `fork()`. EX-OS non ha `fork`, e non è una
+mancanza da colmare: duplicare uno spazio di indirizzamento per buttarlo
+via un'istruzione dopo è esattamente ciò che `spawn_ex()` evita.
+
+`tools/binutils-exos/pex-exos.c` è il rimpiazzo, modellato su
+`pex-msdos.c`: un «descrittore» è un indice in una tabella di **nomi**,
+perché è il nome ciò che serve a `spawn_ex`. I tre `NULL` nella tabella
+`funcs` (pipe, fdopenr, fdopenw) **sono la dichiarazione che questo
+sistema non ha pipe**, e `pex-common.c` se ne accorge da solo e passa alla
+modalità a file temporanei.
+
+### Tre trappole, che costano un'ora a testa
+
+- **`-std=gnu17`.** GCC 17 compila in C23, dove una dichiarazione
+  implicita è un **errore**. binutils 2.44 presume l'indulgenza di C17.
+- **`export ac_cv_tls=`** (stringa vuota, non `none`). La prova che il
+  configure fa per le variabili thread-local è una **compilazione**:
+  `i386-exos-gcc` accetta `_Thread_local` senza fiatare, perché è il
+  compilatore a saper emettere gli accessi via `%gs` ed è il *sistema* a
+  non avere un thread pointer. Il risultato è un `as` che si compila
+  benissimo e muore alla terza istruzione di `bfd_init`. Con `none` la
+  macro non viene definita affatto e binutils non compila: serve
+  **definita a vuoto**.
+- **`sys-include`.** GCC installa un proprio `<limits.h>` e ne esistono
+  due versioni; quella che fa `#include_next` — cioè che prende anche la
+  nostra — viene generata solo se, al momento di costruire GCC, un
+  `limits.h` di sistema c'era già, e GCC lo cerca in
+  `$prefisso/i386-exos/sys-include`.
+
+Ricetta completa in **`tools/binutils-exos/leggimi.md`**.
+
+### Cosa manca per il compilatore
+
+`as` traduce e `ld` collega; manca il pezzo che trasforma il C in
+assembly. In ordine: **GMP, MPFR, MPC** per il bersaglio (`cc1` ci si
+linka), il sottoinsieme di **libstdc++** che serve a codice compilato
+`-fno-exceptions -fno-rtti`, e infine **`cc1`** stesso.
 
 ---
 
@@ -927,6 +1133,8 @@ girano in ring0 e vanno riscritti contro il modello sopra.
 - [x] **Fase 3**  — TTY driver + FAT12 R/W kernel + ELF loader
 - [x] **Fase 4**  — Shell utente + cfg reader
 - [~] **Fase 5**  — Driver in userspace (ring3): tastiera fatta, floppy da fare
+- [~] **Fase 6**  — Sistema ospitante: libc POSIX, `as` e `ld` nativi fatti;
+                    compilatore da fare
 
 **Stato Fase 4 (luglio 2026)**: la shell parte come primo processo ring3, legge
 `/boot/kernel.cfg`, ed esegue programmi esterni (`hello`, `ls`, `cat`) come task
@@ -944,6 +1152,31 @@ Il driver floppy è ancora un modulo ET_DYN kernel-space e l'accesso al floppy
 resta servito dal FAT12/FDC interno al kernel. Analisi e passi necessari in
 `KERNEL_CORE_NOTES.md`, punto 5; dettagli di progetto e trappole in
 `HANDOFF.md`.
+
+**Stato Fase 6 (2 agosto 2026)**: la libc è cresciuta fino a reggere codice
+scritto per POSIX, e la prova è che **binutils 2.44 gira dentro EX-OS**.
+Portarlo ha scoperto tre difetti del kernel che nessun programma di EX-OS
+poteva mostrare, perché tutti scrivevano un file dall'inizio alla fine:
+
+- i descrittori ancora aperti alla terminazione non li chiudeva nessuno —
+  uno slot VFS perso per file, ed `EMFILE` dopo 64 volte;
+- sul **floppy** la scrittura ignorava la posizione del descrittore e si
+  accodava sempre in fondo (su ext2 e FAT16/32 no: lì l'offset arrivava);
+- scrivere all'**inizio** di un settore lo azzerava per intero, cancellando
+  i byte che c'erano dietro.
+
+Tutti e tre invisibili finché nessuno torna indietro in un file. Un
+qualunque scrittore di ELF lo fa.
+
+**Cosa manca ancora**, in ordine di quanto darà fastidio:
+
+| | |
+|---|---|
+| **pipe** | e con esse una posizione condivisa fra descrittori duplicati |
+| **`SYS_RENAME`** | oggi `rename()` copia e cancella: va bene per un temporaneo, non per un file grosso |
+| **DMA per il disco** | oggi 0,75 MB/s in PIO |
+| **thread pointer (TLS)** | il compilatore sa emettere `%gs:0`, il sistema non ha dove puntarlo |
+| **GMP, MPFR, MPC, `cc1`** | il compilatore ospitato |
 
 ---
 

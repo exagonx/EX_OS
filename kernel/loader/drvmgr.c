@@ -298,7 +298,10 @@ static int drvmgr_load_driver(const char *name, const char *path,
 
     /* Alloca memoria contigua per il driver */
     uint32_t pages = total_size / PAGE_SIZE;
-    uint32_t phys_base = pmm_alloc_pages(pages);
+    /* Fascia kernel: l'immagine del modulo viene rilocata dal kernel al
+     * proprio indirizzo fisico (load_base qui sotto). Stessa ragione di
+     * dynlink.c. */
+    uint32_t phys_base = pmm_alloc_pages_kernel(pages);
     if (phys_base == 0) {
         klog(LOG_ERROR, "DRVMGR: OOM allocando %u pagine per driver", pages);
         goto cleanup;

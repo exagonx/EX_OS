@@ -2,6 +2,1012 @@
 
 ---
 
+# SESSIONE 2026-08-02 (g) — Binutils nativi: quello che chiede il codice che non abbiamo scritto noi
+
+Kernel a **0.150** → **0.153**. `/bin/libctest` passa **171 prove su 171**.
+
+**Un programma assemblato, collegato ed eseguito dentro EX-OS**, da GNU
+binutils 2.44 compilato per `i386-exos`:
+
+```
+ex-os:/> /cdrom/bin/as -o /prova.o /cdrom/prova.s
+ex-os:/> /cdrom/bin/ld -o /prova /prova.o
+ex-os:/> /prova
+Assemblato e collegato dentro EX-OS.
+```
+
+L'oggetto prodotto qui dentro e' **identico byte per byte** a quello che
+produce il cross sulla macchina Linux.
+
+Il passo 1 della lista era «binutils veri»; questa sessione fa il passo
+successivo di quella riga, quello annotato in
+`tools/binutils-exos/leggimi.md`: **binutils NATIVI**,
+`--host=i386-exos`, cioe' `as` e `ld` compilati per girare dentro EX-OS.
+
+E' anche cio' per cui erano stati fatti: fino a ieri la libc era provata
+solo dal nostro `libctest`, che chiama le funzioni che sappiamo di avere.
+Binutils chiama quelle che gli servono, e non ha nessun riguardo.
+
+## ⚠️ Il compilatore installato non aveva le modifiche della sessione (f)
+
+Prima di tutto il resto. La sessione (f) ha scritto in `exos.h`
+l'indirizzo di caricamento, `-fno-asynchronous-unwind-tables` e i quattro
+tipi fondamentali — e **non ha ricostruito GCC**. `~/exos-cross` conteneva
+ancora il compilatore di mezzogiorno: `size_t` era `long unsigned int`,
+nelle specs non c'era `-Ttext-segment`, e `tools/gcc-exos/prova.c` — il
+programma che quelle modifiche le verifica — **non compilava**.
+
+Le tre correzioni sono ora in vigore davvero, verificate sul binario:
+
+- `__SIZE_TYPE__ unsigned int`, `__INT32_TYPE__ int` (`prova.c` compila);
+- `LOAD 0x08000000` in `readelf -l`;
+- **zero sezioni `.eh_frame`**.
+
+⚠️ Il terzo ha avuto una coda: `.eh_frame` restava anche con il
+compilatore nuovo, 8 KB per binario, e non veniva da GCC —
+veniva da **`libc.a`**, che `prepara-cross.sh` compila con il `gcc` di
+sistema, cioe' con un compilatore a cui nessuno aveva detto niente. Le
+regole di `Makefile` non lo mostravano perche' li' sono i linker script a
+buttare via `.eh_frame`. Due strade per la stessa libreria che producono
+binari diversi: `prova` e' passato da 43 KB a 35 KB.
+
+## Il conteggio dei riferimenti che mancava — dup, dup2, fcntl
+
+La prima cosa che ha chiesto il codice di terzi. `ar`, `objcopy` e
+`arsup` di binutils fanno tutti e tre lo stesso gesto — `fd = dup(fd)`
+prima di chiudere l'oggetto BFD che possiede l'originale — per tenere un
+file aperto oltre la `close()` di qualcun altro.
+
+Non si poteva fare, e la sessione (e) lo aveva gia' scritto: «passare un
+fd vorrebbe dire due processi sullo stesso handle VFS, cioe' un conteggio
+di riferimenti che non c'e'». Ora c'e', ed e' quattro righe in `vfs.c`:
+`VfsFile` ha un campo `rif`, `vfs_close` scala e chiude davvero solo
+l'ultima volta, `vfs_dup` incrementa.
+
+Sopra ci stanno tre syscall con i numeri di Linux: **41 dup**, **63
+dup2**, **55 fcntl** (`F_DUPFD`, `F_GETFD`, `F_SETFD`, `F_GETFL`,
+`F_SETFL`).
+
+⚠️ **La posizione non e' condivisa, e su POSIX lo sarebbe.** L'offset sta
+nel descrittore del processo, non in un oggetto «file aperto» intermedio:
+due fd duplicati condividono il file — che e' cio' che serve perche' resti
+aperto — ma ognuno ricorda dove era arrivato. Metterlo in comune vorrebbe
+dire spostarlo dentro `VfsFile`, quindi cambiare la firma di
+`vfs_read`/`vfs_write` e la gestione della posizione di `fat12.c`, che la
+tiene per conto suo. Binutils non se ne accorge (in `rename.c` fa un
+`lseek(SEEK_SET)` esplicito prima di leggere); una pipe se ne accorgerebbe.
+
+`dup2` e' anche l'unico modo di sostituire stdin/stdout/stderr: `close()`
+su 0, 1 e 2 e' rifiutata apposta — lascerebbe il processo senza uscita —
+mentre chi arriva da `dup2` il rimpiazzo ce l'ha gia' pronto.
+
+## 🐛 I file aperti alla terminazione non venivano chiusi da nessuno
+
+Trovato guardando dove mettere il conteggio dei riferimenti.
+`proc_reap_zombie` chiudeva `exe_handle` e basta: i descrittori che il
+processo aveva ancora aperti restavano occupati **per sempre**. Il conto
+arriva dopo `VFS_MAX_OPEN` volte, con un `open()` che risponde `EMFILE`
+mentre nessuno sta tenendo aperto niente.
+
+Si vedeva poco finche' i programmi aprivano un file per volta e lo
+chiudevano. Un compilatore ne tiene aperti sei o sette, e ogni invocazione
+che finisce male ne perde altrettanti. La chiusura sta in
+`proc_reap_zombie` e non in `sys_exit` di proposito: **un processo
+terminato da un fault non passa da `sys_exit`**, e sono proprio quelli che
+i file li lasciano aperti.
+
+## pex-exos.c — lanciare un programma senza fork
+
+`libiberty` compila sempre un `pex-*.c`, e per tutto cio' che non e'
+Windows o MSDOS sceglie `pex-unix.c`, che e' costruito su `fork()`.
+
+`tools/binutils-exos/pex-exos.c` e' il rimpiazzo, ed e' il passo 5 della
+lista della sessione (e), arrivato prima del previsto perche' senza non
+compila `libiberty`. Il modello non e' `pex-unix.c` ma **`pex-msdos.c`**:
+un «descrittore» e' un indice in una tabella di NOMI, perche' e' il nome
+cio' che serve a `spawn_ex`. La differenza rispetto a MSDOS e' che qui il
+figlio gira davvero in parallelo — `exec_child` ritorna un PID e `wait`
+chiama `waitpid`.
+
+⚠️ **I tre NULL nella tabella `funcs` — pipe, fdopenr, fdopenw — non sono
+un "da fare": sono la dichiarazione che questo sistema non ha pipe**, ed
+e' cosi' che `pex-common.c` lo viene a sapere. Se ne accorge da solo e
+passa alla modalita' a file temporanei, che sapeva gia' fare. Piu' lento,
+identico nel risultato.
+
+`PEX_STDERR_TO_STDOUT` risponde `ENOSYS` invece di fingere: «l'errore va
+dove va l'uscita» e' una `dup2` nel figlio, cioe' due descrittori sullo
+stesso file con una posizione sola, e per percorso diventerebbero due
+aperture che si riscrivono sopra.
+
+`applica.py` ora installa il file e lo aggancia in tre punti —
+`libiberty/configure`, `configure.ac` e `Makefile.in`. ⚠️ **Si tocca
+`configure`, non solo `configure.ac`**: il primo e' il prodotto di
+autoconf ed e' quello che gira davvero. E ci vuole una **regola esplicita**
+nel `Makefile.in`, perche' la regola implicita di libiberty per i `.c` e'
+`false` — apposta — e senza si fallisce con un messaggio che dice solo
+«false».
+
+## Quello che mancava alla libc, in ordine di scoperta
+
+Ognuna di queste ha fermato la compilazione di binutils una volta.
+L'ordine e' quello vero, e vale la pena tenerlo: e' l'ordine in cui le
+chiedera' il prossimo sorgente esterno.
+
+| Cosa | Chi la chiedeva | Nota |
+|---|---|---|
+| `<sys/types.h>` | 102 inclusioni non condizionate | `pid_t`, `off_t`, `mode_t`… |
+| `dup`, `dup2`, `fcntl` | `libiberty/filedescriptor.c`, `ar`, `objcopy` | vedi sopra |
+| `frexp` | `libiberty/floatformat.c` | l'inversa di `ldexp` |
+| **`EOF`** | `libiberty/safe-ctype.h` | il valore c'era, il **nome** no |
+| `mktemp`, `freopen`, `lstat` | `choose-temp.c`, `fopen_unlocked.c`, `unlink-if-ordinary.c` | |
+| `strerror` → `char *` | `libiberty/xstrerror.c` | era `const char *` |
+| `strcasecmp`, `strncasecmp` | `bfd/archures.c` | + `<strings.h>` |
+| `_exit` | `bfd/bfd.c` | esce senza svuotare niente |
+| `chmod`, `fchmod`, `umask` | `bfd/opncls.c` | ⚠️ **non fanno niente** |
+| `strpbrk` | `gas/config/tc-i386.c` | |
+| `strftime` | `gas/listing.c` | sottoinsieme, dichiarato |
+| `<wchar.h>`, `mbstowcs` | `gas/read.c` | un byte = un carattere |
+| `<sys/param.h>`, `EDOM` | `libctf` | `MIN`, `MAX`, `roundup` |
+| `ctime`, `asctime` | `binutils/bucomm.c` | forma fissa, buffer statico |
+| **`mkdir` a due argomenti** | `binutils/bucomm.c` | ⚠️ cambio di firma |
+| `strcoll` | `binutils/nm.c` | nella locale "C" e' `strcmp` |
+| `mbrtowc`, `MB_CUR_MAX` | `binutils/readelf.c` | |
+| `utime`, `<utime.h>` | `binutils/rename.c` | ⚠️ **non fa niente** |
+| `atof`, `fabs` | `binutils/stabs.c`, `gprof` | |
+| `<memory.h>` | `binutils/testsuite` | nome vecchio di `<string.h>` |
+| `fscanf`, `scanf`, `vfscanf` | `gprof/corefile.c` | finestra di 1024 byte |
+| `realpath`, `<limits.h>` | `libiberty/lrealpath.c`, `ld` | vedi sotto |
+
+Quattro meritano una riga in piu':
+
+⚠️ **`EOF` non c'era.** Il valore c'era dal principio — `fgetc()` ritorna
+-1 — ma il nome lo scriveva solo chi aveva letto `libc.h`. Il codice di
+terzi scrive `!= EOF` e basta; e `safe-ctype.h` fa di peggio, verifica di
+poter lavorare con `#if EOF != -1`, che con la macro assente vede uno zero
+e conclude che la libc e' sbagliata.
+
+⚠️ **`strerror` tornava `const char *`.** Piu' sicuro, e **incompatibile**:
+lo standard dichiara `char *`, e chi ridichiara la funzione — `xstrerror.c`
+lo fa — non compila piu'. Nessun cast serve: in C un letterale di stringa
+ha tipo `char[]`. Stessa cosa per `strsignal`.
+
+⚠️ **`mkdir` ora prende due argomenti.** Era `mkdir(const char *)` — piu'
+onesta, perche' EX-OS non ha permessi da applicare, e **incompatibile**:
+`mkdir(nome, 0755)` non compilava, ed e' cio' che scrive ogni programma
+portato da un Unix. I due chiamanti interni (`bin/mkdir`, `bin/install`)
+sono stati aggiornati; il secondo argomento si ignora, e sta scritto.
+
+⚠️ **`chmod`, `fchmod`, `umask` e `utime` non cambiano niente**, e fino a ieri non
+esistevano proprio: `<sys/stat.h>` diceva che dichiararle «vorrebbe dire
+promettere che cambiano qualcosa». Le ha fatte entrare bfd, che chiude
+ogni eseguibile che produce con `umask(0); umask(m); chmod(...)`.
+L'alternativa era rattoppare i sorgenti di terzi a ogni loro rilascio. Il
+nome c'e', il commento dice forte che e' inerte — la stessa convenzione
+gia' usata per `O_EXCL` in `<fcntl.h>`. `umask` e' l'unica a dire il vero:
+ritorna 0, cioe' «non maschero niente». `utime` ritorna successo di
+proposito: `objcopy` e `strip` la chiamano per conservare la data
+dell'originale e stampano un avviso a ogni fallimento, e un avviso per
+file su un'operazione che non e' andata storta e' solo rumore.
+
+## ⚠️ Due trappole della catena, che costano un'ora a testa
+
+**`-std=gnu17` va passato a mano.** GCC 17 compila in C23, dove una
+dichiarazione implicita e' un **errore** e non un avviso. binutils 2.44 e'
+pieno di codice che presume l'indulgenza di C17, e senza quel flag si
+passa il tempo a rincorrere errori che non sono difetti. Con il flag, gli
+errori che restano sono quelli veri — ed e' cosi' che l'elenco qui sopra
+e' venuto fuori pulito.
+
+**Il configure va rifatto ogni volta che la libc cresce.** `libiberty`
+compila una **propria** copia delle funzioni che l'ospite non ha
+(`strcasecmp.o`, `strdup.o`…) in base a cio' che il configure ha trovato
+il giorno in cui e' girato. Se poi la libc quella funzione ce l'ha, il
+link di `as-new` finisce con
+
+```
+multiple definition of `strcasecmp'
+```
+
+⚠️ e non basterebbe cambiare l'ordine delle librerie, perche' **`libc.a` e'
+un solo oggetto**: quando il linker lo tira dentro per una `printf`, si
+porta dietro tutto quello che c'e'. Il giorno che la libc verra' spezzata
+in un archivio vero — un file per area, come `lib/include/unistd.h` gia'
+prevede — questo problema sparisce da solo.
+
+## 🐛 `ld` rifiutava di collegare: una funzione che non ritorna niente
+
+Con `as` funzionante, la catena si ferma un passo dopo:
+
+```
+/cdrom/bin/as -o /prova.o /cdrom/prova.s      -> PROVA.O, 652 byte  ✔
+/cdrom/bin/ld -o /prova /prova.o
+    ld: input file '/prova.o' is the same as output file
+```
+
+`ld` confronta il file di uscita con quelli di ingresso passando da
+`lrealpath()` di libiberty, che prova quattro strade — `realpath` con un
+limite noto, `canonicalize_file_name`, `realpath` con `pathconf`, quella di
+Windows — e se il sistema non ne offre **nessuna** ⚠️ **cade in fondo alla
+funzione senza ritornare niente**. Non e' un errore che si vede: e' un
+valore di ritorno che vale quel che resta in EAX, uguale per due chiamate
+consecutive, quindi due file qualunque risultano lo stesso file.
+
+Il rimedio e' dare al sistema la funzione che manca: `realpath()` — che
+qui e' piu' semplice che altrove, perche' non ci sono collegamenti
+simbolici da seguire (⚠️ il `..` si risolve sulla stringa, e senza
+collegamenti le due cose coincidono sempre).
+
+## ⚠️ E il nostro `<limits.h>` non lo includeva nessuno
+
+`lrealpath` prende la prima strada solo se `PATH_MAX` esiste. Aggiunto
+`lib/include/limits.h`, il programma di prova continuava a non vederlo, e
+la ragione e' istruttiva: **GCC installa un proprio `<limits.h>`**, lo
+trova per primo, e ne esistono due versioni. Quella che fa
+`#include_next <limits.h>` — cioe' che prende anche il nostro — viene
+generata **solo se, al momento di costruire GCC, un `limits.h` di sistema
+c'era gia'**; altrimenti si installa la versione «sotto non c'e'
+nessuno», che lo schermerebbe per sempre.
+
+E GCC quel file lo cerca in `$prefisso/i386-exos/**sys-include**`, non in
+`include/`. `prepara-cross.sh` ora crea il collegamento — e' la
+disposizione standard di una cross-toolchain — e la coppia
+`rm gcc/stmp-int-hdrs && make all-gcc install-gcc` rigenera l'header
+giusto in un paio di minuti, senza ricostruire `cc1`.
+
+## 🐛 Il primo binario di terzi che gira qui dentro, e come e' morto
+
+`as` compilato, messo sul CD degli strumenti, lanciato:
+
+```
+[FAULT] PID 9 '/cdrom/bin/as': page fault a 0x00000000 (lettura, EIP=0x0804fbe3)
+```
+
+Tre istruzioni dentro `bfd_init`:
+
+```
+ 804fbe3:  65 8b 1d 00 00 00 00    mov %gs:0x0,%ebx
+```
+
+**Variabili thread-local.** `bfd` dichiara `static TLS bfd_error_type
+bfd_error`, e il compilatore emette l'accesso attraverso `%gs` — che su
+EX-OS non punta a niente, perche' un thread pointer non c'e'.
+
+⚠️ **La prova che il configure fa per il TLS e' una COMPILAZIONE, non
+un'esecuzione.** `i386-exos-gcc` accetta `_Thread_local` senza fiatare: e'
+il compilatore a saperlo fare, ed e' il sistema a non avere dove metterlo.
+Nessun errore, nessun avviso, un binario che si costruisce benissimo e
+muore alla terza istruzione della prima funzione che chiama.
+
+Il rimedio non tocca i sorgenti: `export ac_cv_tls=` — la variabile di
+cache gia' impostata perche' la prova non giri, con la stringa **vuota**.
+
+⚠️ E' vuota e non `none`, e la differenza costa una ricostruzione: con
+`none` il configure non definisce affatto la macro `TLS`, e binutils 2.44
+**non ha un ripiego** — `bfd.c` scrive `static TLS bfd_error_type
+bfd_error;` senza guardia e non compila piu' (`unknown type name 'TLS'`).
+Con la stringa vuota la macro c'e' e non vale niente, quindi `static TLS
+x` diventa `static x`.
+
+⚠️ E va **esportata**, perche' deve valere anche durante il `make`: il
+configure di primo livello non configura `bfd`, lo fa il make quando ci
+arriva. Metterla solo davanti al primo comando non ha alcun effetto, e il
+sintomo e' identico a non averla messa — la build riesce e il binario
+muore in `bfd_init`. Si controlla con `grep TLS bfd/config.h`. `bfd` usa allora variabili statiche normali, che su un sistema dove
+un processo ha un filo solo sono la stessa identica cosa.
+
+Il giorno che serviranno i thread veri, la strada e' l'altra: `PT_TLS` nel
+caricatore ELF, un blocco per processo e una voce di GDT per `%gs`
+aggiornata a ogni cambio di contesto. E' una sessione di lavoro per conto
+suo, ed e' annotata qui perche' e' la prima volta che il sistema incontra
+il proprio limite invece di un difetto.
+
+## 🐛 Due difetti di FAT12 che si vedono solo TORNANDO INDIETRO
+
+Con `as` funzionante e `ld` che finalmente leggeva il file, l'oggetto
+prodotto dentro EX-OS restava sbagliato — in due modi diversi, uno dopo
+l'altro, e sono **il pezzo di kernel di questa sessione**.
+
+Nessuno dei due e' un difetto nuovo: sono li' da sempre e non si potevano
+vedere, perche' fino a ieri ogni programma di EX-OS scriveva un file
+dall'inizio alla fine. **Un qualunque scrittore di ELF no**: bfd scrive le
+sezioni, poi si riposiziona a zero e ci mette l'intestazione.
+
+**1. L'offset del descrittore non arrivava a fat12_write.**
+
+```c
+if (g_mnt[im].tipo == VFS_FS_FAT12FD)
+    return fat12_write(g_file[h].h12, buf, size);   /* niente offset */
+```
+
+`vfs_write_nl` non lo passava — «fat12 tiene la propria posizione» — e
+`fat12_write` scriveva sempre da `entry->file_size`, cioe' in coda,
+qualunque cosa avesse fatto `lseek()`. Il risultato era un file con tutti
+i pezzi giusti nell'ordine di scrittura e il magic `\x7fELF` a **offset
+240**:
+
+```
+ld: /prova.o: file format not recognized
+```
+
+⚠️ **Su ext2 e FAT16/32 non succedeva**: li' l'offset il VFS lo passava
+gia'. Era un difetto del solo supporto di avvio, cioe' di quello su cui si
+prova tutto.
+
+**2. Scrivere all'inizio di un settore lo azzerava per intero.**
+
+```c
+if (nuovo || in == 0) {
+    for (i = 0; i < BYTES_PER_SECTOR; i++) sector_buf[i] = 0;
+}
+```
+
+`in == 0` vuol dire «scrivo dall'inizio del settore», **non** «il settore
+e' vuoto» — e le due cose coincidono solo se si scrive in coda. Con
+l'offset finalmente onorato, i 52 byte dell'intestazione ELF scritti per
+ultimi azzeravano i 460 byte di sezioni che stavano nello stesso settore:
+
+```
+ld: /prova.o: local symbol at index 4 (>= sh_info of 4)
+```
+
+cioe' un oggetto con le intestazioni giuste e il contenuto a zero. La
+condizione giusta e' «questo settore sta oltre la fine attuale del file»,
+non «comincio da capo».
+
+⚠️ **Resta un caso non coperto, ed e' scritto nel codice**: un BUCO — una
+scrittura che comincia oltre la fine del file — lascia i byte in mezzo
+come stavano sul disco invece di farli leggere come zeri. Nessun programma
+lo fa oggi.
+
+## Metodo: `make -k` invece di un errore per volta
+
+Ogni giro di «correggi, ricompila la libc, rifa' il sysroot, riparti» costa
+dieci minuti. `make -k` non si ferma al primo errore e li raccoglie tutti:
+la prima volta, su `libiberty`, ne ha dati nove in un colpo invece di uno.
+Da riusare per il prossimo pacchetto.
+
+## Verifica
+
+- `/bin/libctest`: **171 su 171** (erano 114), con quattro sezioni nuove —
+  descrittori duplicati, interfacce per il codice di terzi, `frexp`,
+  confronti senza maiuscole.
+- **La catena intera dentro EX-OS**: `as` assembla, `ld` collega, il
+  binario gira. L'oggetto e' identico byte per byte a quello del cross.
+- `make all` senza errori; nessuna regressione nei programmi esistenti.
+- Regressione floppy: `mkdir`, `cp` (7007 byte), `delete`, `rmdir`.
+  Avvio pulito: zero `[WARN]`, zero `[ERROR]`.
+- Binutils nativi costruiti per intero: `as`, `ld`, `ar`, `nm`, `objdump`,
+  `strip`, `gprof`. `as` e `ld` sono sul CD degli strumenti, strippati da
+  7,3 a 1,4 MB.
+
+## File toccati
+
+- `kernel/fs/vfs.c`, `kernel/include/vfs.h` — `rif`, `vfs_dup`
+- `kernel/syscall/syscall_impl.c` — `sys_dup`, `sys_dup2`, `sys_fcntl`
+- `kernel/syscall/syscall.c`, `kernel/include/syscall.h` — i tre numeri, i `F_*`
+- `kernel/sched/sched.c` — i descrittori chiusi alla raccolta
+- `kernel/fs/fat12.c`, `kernel/include/fat12.h`, `kernel/fs/vfs.c` —
+  l'offset in `fat12_write`, e il settore che non si azzera piu'
+- `kernel/include/version.h` — 0.153
+- `lib/libc.c`, `lib/include/libc.h` — tutta la tabella qui sopra
+- **nuovi**: `lib/include/{strings.h,wchar.h,memory.h,utime.h}`,
+  `lib/include/sys/{types.h,param.h}`
+- `lib/include/{fcntl.h,math.h,stdint.h}`, `lib/include/sys/stat.h` — i commenti
+- `bin/libctest/libctest.c` — 114 → 171 prove
+- `bin/mkdir/mkdir.c`, `bin/install/install.c` — `mkdir` a due argomenti
+- **nuovo**: `tools/binutils-exos/pex-exos.c`
+- `tools/binutils-exos/applica.py` — i file nostri, tre agganci in libiberty
+- `tools/gcc-exos/prepara-cross.sh` — `-fno-asynchronous-unwind-tables`,
+  il collegamento `sys-include`
+- `Makefile` — `as` e `ld` nativi sul CD degli strumenti (`BINUTILS_NATIVI`)
+- **nuovi**: `tools/iso/prova.s`, `lib/include/limits.h`
+- `README.md`, `tools/binutils-exos/leggimi.md`
+
+---
+
+# SESSIONE 2026-08-02 (f) — Binutils veri, e i tre difetti del bersaglio
+
+Kernel **invariato a 0.150**: sotto `kernel/` non e' stato toccato niente.
+Questa sessione lavora sulla catena di compilazione — il passo 1 della
+lista lasciata dalla sessione (e).
+
+## Non sono piu' wrapper
+
+`i386-exos-as` e `i386-exos-ld` erano otto script di tre righe attorno agli
+strumenti di sistema forzati a 32 bit. Ora sono **binutils 2.44 compilati
+per il bersaglio**: `as`, `ld`, `ar`, `ranlib`, `nm`, `objcopy`, `objdump`,
+`strip`, `readelf`, `addr2line`.
+
+Il port vive in `tools/binutils-exos/`, con la stessa convenzione di
+`gcc-exos/`: i sorgenti di terzi non entrano nel repository, la parte
+nostra si'.
+
+```
+applica.py             quattro righe in quattro file
+prepara-binutils.sh    configure + make + install + verifica
+leggimi.md             il perche', e il passo successivo
+```
+
+Le quattro modifiche dicono due cose sole: **`exos` e' un sistema
+operativo** (`config.sub`) e **per lui il formato e' ELF32 i386**
+(`bfd/config.bfd`, `gas/configure.tgt`, `ld/configure.tgt`). Non serve
+altro, ed e' interessante perche' spiega dove sta davvero la differenza fra
+`elf` ed `exos`: nel **compilatore** — indirizzo di caricamento, `crt0.o`,
+`-lc` aggiunto da solo — non negli strumenti che manipolano gli oggetti.
+
+**Che il driver li usi davvero** si vede con `gcc -v`:
+
+```
+.../i386-exos/bin/as -o /tmp/ccKeg9q7.o /tmp/cc0kRJOo.s
+```
+
+e `ld` ha finalmente `elf_i386` come emulazione predefinita, invece di
+dipendere dal `-m elf_i386` che gli passa GCC.
+
+## 🐛 Due difetti in `applica.py`, trovati dalla sua stessa prova
+
+Due delle quattro modifiche sono **inserimenti**: il testo di partenza
+resta dentro quello di arrivo. Il controllo di idempotenza — «il testo
+nuovo c'e' gia'?» — non bastava, perche' trovava anche quello vecchio:
+
+- riapplicare **duplicava** la riga (`| exos*` due volte in `config.sub`);
+- la rimozione successiva ne toglieva **una sola**, lasciando l'albero
+  modificato mentre lo script diceva di averlo pulito.
+
+Ora ogni modifica porta un **marcatore**: una stringa che esiste solo nello
+stato applicato. C'e' → non fare niente; non c'e' → applica. Vale in
+entrambi i versi e non dipende da come e' fatta la sostituzione.
+
+Provato: applica → riapplica (`0 modificati, 4 gia' a posto`) → togli
+(`config.sub` rifiuta di nuovo `exos`) → riapplica.
+
+⚠️ Aggiunta una protezione a `prepara-cross.sh`, che si rilancia quasi
+sempre per aggiornare gli header: **non reinstalla i wrapper sopra i
+binari** se li trova gia'. Senza, un aggiornamento di routine avrebbe fatto
+tornare `ld` a non conoscere la propria emulazione, senza che nessuno
+avesse toccato niente.
+
+## I tre difetti del bersaglio, corretti insieme
+
+Erano annotati come noti in `tools/gcc-exos/leggimi.md` e costavano tutti e
+tre un rebuild di GCC — le specs e i tipi sono compilati dentro il driver e
+dentro `cc1` — quindi tanto valeva farli in un colpo solo.
+
+- **Indirizzo di caricamento**: `LINK_SPEC` passa ora
+  `-Ttext-segment=0x08000000`. Era `0x08048000`, il default storico di
+  `ld`, mentre `exos.h` dichiarava a parole `0x08000000`. Il caricatore del
+  kernel accetta entrambi, quindi non si vedeva: si vedeva solo che due
+  binari dello stesso programma — uno dal cross, uno dal Makefile — stavano
+  a indirizzi diversi, il che rende inconfrontabili due disassemblati.
+- **`.eh_frame`**, 5,6 KB per binario. ⚠️ `DWARF2_UNWIND_INFO 0` toglie
+  l'unwind delle **eccezioni**, non le tabelle **asincrone**: sono due cose
+  diverse che si chiamano quasi uguale, ed e' il motivo per cui il difetto
+  era sopravvissuto a una correzione che sembrava averlo risolto. Ora
+  `CC1_SPEC` passa `-fno-asynchronous-unwind-tables`.
+- **I tipi fondamentali**: il bersaglio prendeva i predefiniti, cioe'
+  `long unsigned int` per `size_t` e `long int` per `int32_t`. Larghezze
+  giuste, **tipi diversi** da quelli del `gcc` di sistema con `-m32`. Ora
+  `exos.h` dichiara `SIZE_TYPE`, `PTRDIFF_TYPE`, `INT32_TYPE` e
+  `UINT32_TYPE` come `i386-linux`, che e' il bersaglio con cui EX-OS
+  condivide l'ABI.
+
+`tools/gcc-exos/prova.c` verifica ora i tipi **in compilazione**, con
+`_Static_assert` e `_Generic`: non la larghezza — quella era gia' giusta —
+ma il tipo. Se qualcuno cambia quelle righe di `exos.h`, il programma
+smette di compilare, che e' il momento in cui accorgersene costa meno.
+
+## File toccati
+
+- **nuovi**: `tools/binutils-exos/{applica.py,prepara-binutils.sh,leggimi.md}`
+- `tools/gcc-exos/exos.h` — `-Ttext-segment`, `-fno-asynchronous-unwind-tables`,
+  i quattro tipi
+- `tools/gcc-exos/prepara-cross.sh` — non sovrascrive i binutils veri
+- `tools/gcc-exos/leggimi.md` — i wrapper non sono piu' la regola, i tre
+  difetti non sono piu' aperti
+- `tools/gcc-exos/prova.c` — gli `_Static_assert` sui tipi
+
+---
+
+# SESSIONE 2026-08-02 (e) — Quello che serve a un driver di compilatore
+
+Kernel a **0.149** → **0.150**. `/bin/libctest` passa **114 prove su 114**,
+sia con root su floppy sia con root su ext2.
+
+L'obiettivo dichiarato e' GCC ospitato. Questa sessione fa i due pezzi che
+stanno dentro EX-OS e che vengono prima di tutto il resto: senza, avere
+`cc1` sul disco non servirebbe a niente.
+
+## Il pezzo che conta: lanciare un figlio e prenderne l'uscita
+
+`xgcc` non compila niente. Lancia `cc1`, poi `as`, poi `ld`, e ne raccoglie
+l'esito. Mancavano tre cose:
+
+- **Redirezione dei descrittori.** `sys_spawn` ora accetta fino a quattro
+  azioni «il descrittore N del figlio e' questo file». Per **percorso**,
+  non per fd gia' aperto del padre: passare un fd vorrebbe dire due
+  processi sullo stesso handle VFS, cioe' un conteggio di riferimenti che
+  non c'e' e una `close()` che sfila il file da sotto all'altro. Basta a
+  `gcc`; non basta alle pipe, che infatti non ci sono ancora.
+- **Ambiente per processo.** `envp` viaggia come `argv` — copiato sullo
+  stack del figlio — e in libc ci sono `environ`, `putenv`, `setenv`,
+  `unsetenv`. GCC si configura cosi': `TMPDIR`, `GCC_EXEC_PREFIX`,
+  `COMPILER_PATH`, `LIBRARY_PATH`.
+- **Tetti piu' alti.** `MAX_FD` da 16 a 32 (un compilatore tiene aperti
+  sorgente, uscita, la catena degli header e un paio di temporanei),
+  `VFS_MAX_OPEN` da 48 a 64.
+
+La prova che vale piu' di tutte, dentro `libctest`: lancia `/bin/hello`
+con **stdout rediretto su un file**, aspetta con `waitpid`, riapre il file
+e ci trova quello che hello stampa. Sono spawn, redirezione e attesa
+verificati insieme, che e' esattamente cio' che fara' il driver di GCC.
+
+## ⚠️ L'estensione passa da una parola magica, non da due argomenti in piu'
+
+La forma storica e' `spawn(percorso, argc, argv)`, tre registri. In giro
+ci sono binari — anche gia' installati su un disco — che la chiamano cosi',
+e per loro ESI contiene spazzatura: leggerlo come puntatore vorrebbe dire
+che un programma vecchio, il giorno che gira su un kernel nuovo, apre file
+a caso o non parte.
+
+Percio' ESI punta a una struttura che comincia con `SPAWN_EXTRA_MAGIA`. Se
+non e' leggibile o la magia non combacia, il kernel fa finta che non ci
+sia. La probabilita' che spazzatura casuale sia insieme un puntatore
+valido e la magia giusta e' quella di indovinare 32 bit.
+
+## Il resto della libc che GCC e binutils chiamano davvero
+
+`opendir`/`readdir`/`closedir`/`rewinddir` (sopra `listdir`, paginata),
+`mkstemp`/`tmpnam`/`tmpfile`, `access`, `isatty` (sopra `ioctl`, che gia'
+rispondeva ENOTTY a tutto cio' che non e' la console: era gia' la domanda
+giusta), `atexit` con `exit()` che ora chiama gli handler all'indietro,
+`signal`/`raise`/`strsignal`, `setlocale` (solo la locale "C", detto),
+`sysconf`, `times`/`clock`, e **i nomi degli errori**: `ENOENT`, `EINVAL`,
+`ENOTDIR`… c'erano i numeri dal principio, ma senza i nomi non compila una
+riga di codice scritto per POSIX.
+
+Header nuovi: `<dirent.h>`, `<signal.h>`, `<locale.h>`, `<sys/wait.h>`,
+`<sys/times.h>`.
+
+⚠️ **`rename()` copia e cancella**, e sta scritto nel codice: il VFS non ha
+una rinomina, che nei driver significa aggiungere una voce di directory e
+toglierne un'altra senza lasciare il file irraggiungibile in mezzo. Per i
+temporanei di un compilatore va bene; per un file grosso no. Una
+`SYS_RENAME` vera resta da fare.
+
+## ⚠️ Due macro con il nome sbagliato, trovate dal test al primo giro
+
+In `lib/libc.c` c'erano
+
+```c
+#define S_ISDIR(attr)   (((attr) & 0x10) != 0)
+```
+
+cioe' le macro standard definite sull'**attributo FAT**, mentre lo stesso
+file, piu' sotto, le voleva sul `st_mode` POSIX. Nessuno le usava, finche'
+`opendir()` non ha scritto la riga piu' naturale del mondo,
+`S_ISDIR(st.st_mode)`, e si e' presa la prima: `0040755 & 0x10` fa zero,
+quindi `opendir("/")` rispondeva «non e' una directory». Tolte: per
+l'attributo FAT c'e' gia' `EXOS_ATTR_DIR()`, che si chiama come cio' che fa.
+
+Nota di metodo: la prova `isatty su un file` apriva `/KERNEL.BIN`, che
+esiste sul floppy e **non** su un sistema installato su ext2 — falliva li'
+per il motivo sbagliato. Ora le prove si creano da sole i file che usano.
+
+## Verifica
+
+- `/bin/libctest`: **114 su 114**, su floppy **e** su root ext2 (il secondo
+  caso ha trovato la prova che dipendeva dal supporto).
+- Regressione floppy: `ls`, `mkdir`, `cp`, `delete`, `rmdir`.
+- Regressione ext2: `mount`, `mkdir`, `cp`, `delete`, `rmdir`, `install`,
+  **`e2fsck -fn` esito 0**, avvio da ext2 senza floppy con 0.150.
+- CD: `ls /cdrom`. Memoria: `bigmem` 300 MB su macchina da 512.
+- Zero `[WARN]`/`[ERROR]` all'avvio, nessun panic. Floppy: 854 KB liberi.
+
+## Cosa resta per GCC, in ordine
+
+1. **binutils veri per `i386-exos`**: oggi `i386-exos-as` e `-ld` sono
+   wrapper di tre righe sugli strumenti di sistema. Chiedono poco oltre la
+   libc: e' il pezzo piu' abbordabile della catena esterna.
+2. **GMP, MPFR, MPC per il bersaglio**: `cc1` ci si linka
+   (`GMPLIBS = -lmpc -lmpfr -lgmp`). Tre `configure` da portare.
+3. **Il sottoinsieme di libstdc++**: `cc1` e' C++, ma GCC compila i propri
+   sorgenti con `-fno-exceptions -fno-rtti` (verificato nel Makefile della
+   build), quindi niente unwinder: restano `operator new`/`delete`,
+   `__cxa_atexit` e i contenitori che usa davvero.
+4. **Costruire e installare `cc1`** (~35-45 MB per i386) su ext2, e
+   sistemare insieme i tre difetti gia' annotati in `exos.h` — indirizzo di
+   caricamento, `-fno-asynchronous-unwind-tables`, tipi — perche' costano
+   un rebuild di GCC.
+5. **`pex-exos.c`** al posto di `pex-unix.c` in libiberty: spawn + waitpid
+   + file temporanei invece di fork/pipe. Ora c'e' tutto quello che gli
+   serve.
+6. Da fare quando dara' fastidio: `SYS_RENAME` vera, le pipe, e il **DMA**
+   (vedi la sessione (d): il disco va a 0,75 MB/s).
+
+## File toccati
+
+- `kernel/include/syscall.h` — `SpawnExtra`/`SpawnAzione` e la magia
+- `kernel/syscall/syscall_impl.c` — `sys_spawn` con ambiente e redirezioni
+- `kernel/include/sched.h` — `MAX_FD` 32
+- `kernel/include/vfs.h`, `kernel/fs/fat12.c` — handle a 64
+- `lib/start.S` — envp come terzo argomento
+- `lib/libc.c` — ambiente, spawn/waitpid, dirent, temporanei, access,
+  isatty, rename, atexit, segnali, locale, sysconf, times; tolte le due
+  macro ambigue
+- `lib/include/libc.h` — dichiarazioni e **i nomi degli errno**
+- **nuovi**: `lib/include/{dirent,signal,locale}.h`,
+  `lib/include/sys/{wait,times}.h`
+- `bin/libctest/libctest.c` — quattro sezioni nuove (41 → 114 prove)
+- `kernel/include/version.h` — 0.150
+- `README.md`, `KERNEL_CORE_NOTES.md`
+
+---
+
+# SESSIONE 2026-08-02 (d) — Le pagine arrivano quando servono
+
+Kernel a **0.148** → **0.149**. I segmenti di un eseguibile non si copiano
+piu' in RAM al momento dello spawn: si annota dove vivono nel file e le
+pagine arrivano al primo accesso. Un binario con **8 MB di `.rodata`**
+parte occupando **36 KB**.
+
+```
+bigbin: binario da 8 MB di .rodata
+  memoria usata all'avvio        : 2756 KB
+  dopo aver letto 3 byte su 8 MB : 2792 KB  (+36 KB)
+  dopo aver letto tutti gli 8 MB : 10972 KB  (+8216 KB)
+  esito                          : tutti gli 8 MB corretti
+```
+
+E' il pezzo che mancava per far partire un compilatore: `cc1` strippato,
+per i386, sara' 35-45 MB, e con il caricamento residente andavano
+impegnati tutti prima della prima istruzione.
+
+## `install` non aggiornava niente, e diceva "completata"
+
+Segnalato durante il beta testing, ed era il difetto peggiore che un
+installatore possa avere. `copia()` saltava i file gia' presenti: su un
+sistema gia' installato copiava solo i file NUOVI e lasciava indietro
+tutti gli altri, **kernel compreso**. Poi riscriveva la mappa dei settori
+per quel kernel vecchio — cioe' produceva il risultato piu' convincente
+possibile di un aggiornamento che non era avvenuto.
+
+Ora ogni file viene riscritto e **riletto** per confrontarne la
+dimensione: senza quel controllo un kernel troncato si scoprirebbe al
+riavvio, che e' il momento in cui non si puo' piu' fare niente. Nel
+resoconto `+` e' creato, `~` sostituito, `!` errore. Le directory no:
+esistono o non esistono. Quel che c'e' sul volume e non fa parte del
+sistema resta dov'e' — `install` aggiorna, non azzera.
+
+## Come funziona il caricamento su richiesta
+
+`elf_carica()` ha due modi. **Su richiesta** annota i PT_LOAD in
+`Process.vma` (fino a quattro; oltre, carica tutto in RAM invece di
+mappare a meta') e tiene l'eseguibile aperto in `Process.exe_handle` per
+tutta la vita del processo. `pf_carica_da_file()` nel gestore di page
+fault legge la pagina che manca e la mappa. Oltre `file_fine` c'e' il BSS:
+niente da leggere, pagina azzerata e via.
+
+⚠️ **I driver si caricano RESIDENTI** (`elf_load_residente`). Un driver che
+serve il filesystem, paginato *da* quel filesystem, dovrebbe servire la
+propria lettura mentre e' fermo ad aspettarla.
+
+Il gestore di #PF riaccende gli interrupt per la sola `vfs_read` — il gate
+e' un interrupt gate e leggere dal disco richiede il timer — e il buffer
+di lettura sta sullo stack kernel: due processi possono essere li' dentro
+insieme.
+
+## Le tre cose che sono venute fuori facendolo funzionare
+
+Nessuna delle tre si vedeva prima, e nessuna assomigliava alla propria
+causa. Sono il vero contenuto di questa sessione.
+
+**1. I driver di filesystem non sono rientranti.** ext2 lavora su cinque
+buffer globali; la separazione per genere di blocco basta a impedire a una
+funzione di pestare i piedi a un'altra, ma presuppone **un'operazione alla
+volta**. Con il fault-in gli intrecci sono diventati la norma: al PASSO 15
+il kernel carica la shell della console 1 mentre quella della 0 gia' gira
+e fa fault. Il sintomo:
+
+```
+EXT2: blocco 0 fuori dal volume (523264)
+PF: PID 4, lettura della pagina 0x08000000 fallita (-1)
+ATA: timeout DRQ sul canale 0 (stato=0x50)
+```
+
+cioe' un numero di blocco calcolato con l'inode di qualcun altro e un
+controller lasciato a meta' comando. Rimedio: un lucchetto nel VFS.
+
+**2. Chi tiene il lucchetto non deve poter faultare.** Una `read()` il cui
+buffer cade in una pagina non ancora presente fa scrivere il driver dentro
+quella pagina con il lucchetto in mano: il page fault chiama il VFS e
+aspetta se stesso. `vm_precarica_utente()` porta in RAM le pagine del
+buffer PRIMA di entrare nel VFS. Stessa trappola in versione interna: tre
+punti del VFS chiamavano il **guscio pubblico** `vfs_stat` invece
+dell'implementazione — lo stesso processo prendeva il lucchetto due volte
+(`DIAG fs: PID 8 aspetta, tiene 8`).
+
+**3. ⚠️ Inversione di priorita', e il sistema si fermava senza dire
+niente.** La prima attesa cedeva la CPU in un ciclo. Ma `kernel_main` gira
+nel contesto del task **IDLE**: al PASSO 15 e' il processo meno prioritario
+a tenere il lucchetto mentre carica le shell. Appena una shell diventa
+eseguibile e comincia a cedere-e-riprovare a priorita' NORMAL, l'idle non
+viene piu' scelto: non finisce la lettura, non rilascia, e le shell
+riprovano per sempre. Schermo fermo al banner, **zero messaggi**, e
+intermittente. La diagnosi e' arrivata dal monitor di QEMU: `CR2` fisso a
+`0x08000000`, `CR3` che cambiava a ogni campione, EIP dentro
+`context_switch` — tutti a faultare sulla stessa pagina senza avanzare.
+
+Ora chi aspetta si **blocca** ed esce dalla coda dei pronti; l'idle torna
+a essere l'unico eseguibile, finisce, e sveglia tutti al rilascio.
+
+## E il difetto del Makefile che nascondeva tutto
+
+Aggiungendo campi a `struct Process` le quattro shell hanno cominciato a
+chiedere la riga tutte sulla console 0, con `kbd: la richiesta di PID 5
+sostituisce quella di PID 4` e i comandi digitati che sparivano senza
+errori. Sembrava un difetto delle console virtuali: era `tty.o`, che ha
+una regola propria nel Makefile e **non aveva le dipendenze dagli header**
+(non fa parte di `KERNEL_C_OBJ`, quindi la `-include` dei `.d` non lo
+copriva). Continuava a leggere `Process.console` all'offset vecchio.
+
+⚠️ **Questo spiega anche l'anomalia annotata come "osservata una volta e
+non riprodotta" nella sessione (b)**: era lo stesso oggetto stantio, dopo
+che la sessione della FPU aveva aggiunto `fpu_state` al PCB. Non era
+intermittente: dipendeva da quando `tty.o` era stato ricompilato l'ultima
+volta.
+
+## Verifica
+
+- **8 MB di `.rodata`, tre byte letti → +36 KB**; letti tutti → +8216 KB,
+  ogni byte corretto (il contenuto e' `(i*7+3) % 251`, verificabile senza
+  copie). Provato sia con root su floppy sia con root su ext2.
+- `/bin/libctest`: **78 su 78**, zero `[WARN]`/`[ERROR]`.
+- **Avvio da ext2 senza floppy: tre volte di fila, zero problemi** — e'
+  il caso che falliva prima del lucchetto e si bloccava prima del blocco.
+- `install` su un sistema gia' installato: tutti i file `~ sostituito`,
+  kernel compreso, `e2fsck -fn` **esito 0**, e il disco riavvia con il
+  kernel nuovo (0.149 dopo che il precedente era 0.148).
+- Regressione floppy (`ls`, `mkdir`, `cp`, `delete`, `rmdir`, `hello`,
+  12 spawn di fila per gli handle), ext2 (`mount`/`mkdir`/`cp`/`delete`/
+  `rmdir`/`umount`), CD (`ls /cdrom`), memoria (`bigmem`: 300 MB su una
+  macchina da 512).
+
+## Cosa resta
+
+- **Il file dei binari resta aperto per tutta la vita del processo.** E'
+  un handle VFS per processo: da qui l'aumento di `VFS_MAX_OPEN` a 48. Con
+  molti processi contemporanei il tetto va rialzato ancora, o l'handle va
+  condiviso fra i processi che eseguono lo stesso file.
+- **Nessuna pagina viene mai buttata via.** Una pagina caricata resta fino
+  alla morte del processo: manca il rovescio del demand paging, cioe' lo
+  sfratto (e con esso il pagefile). Serve quando la RAM finisce davvero,
+  non prima.
+- **Il lucchetto e' unico per tutto il VFS.** Due dischi diversi si
+  aspettano a vicenda anche se non hanno niente in comune. Un lucchetto
+  per montaggio si aggiunge quando dara' fastidio.
+
+### 📌 DA FARE: DMA per l'ATA (misurato, non stimato)
+
+Il disco va a **0,75 MB/s**: 8 MB di `/bin/bigbin` letti da ext2 in
+**10,6 secondi**, cioe' ~1,3 ms per ogni richiesta da 1 KB. `ata.c` e' PIO
+puro — `port_inw` 256 volte per settore piu' un'attesa DRQ a polling
+attivo — e in QEMU ogni accesso a porta e' un VM exit: circa mille uscite
+per KB. Con il caricamento su richiesta quel costo si paga a ogni pagina.
+
+Il **floppy il DMA ce l'ha gia'** (canale ISA 2, `fat12.c`): li' non c'e'
+niente da guadagnare. Il lavoro e' il **bus-master DMA PCI** per ATA/ATAPI.
+
+⚠️ Il terreno e' piu' favorevole di quanto sembri: **nessun chiamante di
+`ata_read`/`blk_read` passa memoria utente**. Sono tutti buffer statici del
+kernel (i cinque di ext2, quelli di FAT, `mbr.c`, `vol.c`) e perfino
+`sys_blkread` rimbalza gia' su un buffer kernel da 512 byte. Stanno tutti
+nella fascia identity-mapped, quindi l'indirizzo fisico di una voce PRD e'
+`(uint32_t)buf` senza traduzioni. L'unico caso da gestire e' un buffer che
+cade a cavallo di un confine di 64 KB: due voci PRD invece di una.
+
+Manca invece **tutta l'enumerazione PCI** (nel kernel non c'e' una riga:
+niente 0xCF8/0xCFC), che serve per trovare BAR4 del controller IDE.
+
+A strati, ognuno fermabile:
+
+1. PCI in sola lettura: trova classe 0x01 sottoclasse 0x01, legge BAR4 e
+   il bit Bus Master. Nessun cambio di comportamento, solo una riga di log.
+2. Lettura in DMA con completamento a polling sul bit 2 dello stato
+   bus-master. **Ricaduta automatica su PIO** se manca il controller, se
+   IDENTIFY (parole 49/63/88) non dichiara DMA, se il buffer non e'
+   mappabile, o al primo errore — con una riga di log una volta sola.
+3. Scrittura in DMA.
+4. Completamento a **interrupt** (IRQ 14/15) invece del polling: chi ha
+   faultato si blocca e la CPU va a qualcun altro. Con il demand paging e'
+   il pezzo che conta quanto la velocita' pura.
+5. ATAPI in DMA (opzionale).
+
+Piu' un interruttore in `kernel.cfg` (`[kernel] atadma = 0`) per spegnerlo
+su una macchina dove desse problemi, senza ricompilare.
+
+⚠️ Il DMA **non toglie il costo per richiesta**, e su ext2 con blocchi da
+1 KB le richieste sono tante e piccole. Per avvicinarsi al massimo serve
+anche leggere di piu' per volta (una pagina intera in un comando, o una
+cache di blocchi): e' un lavoro distinto, che moltiplica il primo.
+- Poi il resto della strada per il compilatore ospitato, che il kernel non
+  puo' dare: spawn con redirezione dei descrittori, environment per
+  processo, `opendir`/`rename`/`mkstemp`/`isatty`, binutils per il
+  bersaglio, GMP/MPFR/MPC, il sottoinsieme di libstdc++.
+
+## File toccati
+
+- `kernel/loader/elf.c` + `elf.h` — `elf_carica` a due modi,
+  `elf_load_residente`, handle tenuto aperto
+- `kernel/include/sched.h` — `ProcVma`, `vma[]`, `n_vma`, `exe_handle`
+- `kernel/mm/paging.c` + `paging.h` — `pf_carica_da_file`,
+  `vm_precarica_utente`
+- `kernel/fs/vfs.c` — lucchetto con attesa bloccante, gusci pubblici,
+  tre rientri tolti
+- `kernel/sched/sched.c` — `exe_handle` inizializzato e chiuso in
+  `proc_reap_zombie`
+- `kernel/kernel_main.c` — driver residenti
+- `kernel/include/vfs.h`, `kernel/fs/fat12.c` — tetti degli handle a 48
+- `kernel/syscall/syscall_impl.c` — precarica dei buffer in read/write
+- `bin/install/install.c` — sostituisce e verifica
+- `Makefile` — dipendenze dagli header per `tty.o`
+- `kernel/include/version.h` — 0.149
+- `README.md`, `KERNEL_CORE_NOTES.md`
+
+---
+
+# SESSIONE 2026-08-02 (c) — Il tetto dei 4 MB per processo
+
+Kernel a **0.147** → **0.148**. Un processo passa da **4 MB** a **300 MB**
+di memoria, provati e riletti byte per byte.
+
+## Il numero che non dipendeva dalla RAM
+
+La domanda era «cosa manca per ospitare GCC su EX-OS», e la prima risposta
+non riguardava GCC. Un programma che cresce lo heap 1 MB per volta:
+
+```
+bigmem:  4 MB ok  (sbrk=0x08457000)
+
+╔══════════════════════════════════════════════╗
+║            PAGE FAULT (KERNEL)               ║
+║  Indirizzo : 0x00800000   Accesso: scrittura ║
+╚══════════════════════════════════════════════╝
+```
+
+`0x00800000` era `USER_SPACE_BASE`. Con 32 MB installati o con 4 GB il
+programma moriva alla stessa cifra, perche' il limite non era la memoria
+disponibile: era **quanta memoria fisica il kernel riesce a toccare mentre
+gira un processo**. `cc1` ne chiede dieci volte tanto.
+
+## Le due righe che si ignoravano a vicenda
+
+`paging_create_directory()` copia nella page directory di un processo solo
+le PDE **sotto `USER_SPACE_BASE`**; il mapping identita' di tutta la RAM
+sta nelle PDE successive della sola `kernel_page_directory`. Intanto
+`sys_sbrk`, `sys_mmap`, `elf_load` e la crescita dello stack riempivano le
+pagine appena allocate **al loro indirizzo fisico**, con il CR3
+dell'utente caricato. Finche' il PMM consegnava pagine sotto la soglia
+funzionava tutto; la prima oltre era un fault in ring0.
+
+Il commento in `paging.c` diceva gia' «mappare qui tutta la RAM elimina
+l'intera classe di bug»: era vero per la PD del kernel, e la copia verso
+le PD dei processi si fermava a due PDE.
+
+## Il rimedio, e i tre modi in cui poteva restare rotto
+
+**1. La finestra di rimappatura fisica.** Una PTE dentro
+`kernel_page_table_low` — la tabella statica in PDE[0], presente in *ogni*
+spazio di indirizzamento — che il kernel ripunta alla pagina fisica che
+deve toccare, e richiude. `paging_finestra_apri/chiudi`,
+`paging_azzera_fisica`. Due regole obbligatorie, scritte nel codice:
+interrupt spenti mentre e' aperta, e **mai aperta attraverso una chiamata
+che si blocca** — in `elf_load` fra una pagina e l'altra c'e' una
+`vfs_read`, cioe' IPC verso un driver in ring3. Aprirla due volte e'
+`kpanic`: l'alternativa sarebbe scrivere nel posto sbagliato in silenzio.
+
+**2. La fascia kernel, dichiarata invece che sperata.**
+`pmm_alloc_page_kernel()` per tutto cio' che il kernel raggiunge
+fisicamente: heap di kmalloc, stack kernel, page directory e page table,
+immagini dei driver. `USER_SPACE_BASE` da 8 a 64 MB, perche' 64 processi ×
+128 KB di stack kernel sono 8 MB tondi — la vecchia soglia intera occupata
+da un solo genere di allocazione.
+
+**3. ⚠️ E poi la fascia se la mangiavano le pagine utente.** Al primo giro
+con 512 MB il programma e' arrivato a 72 MB e si e' fermato con:
+
+```
+PMM: fascia kernel esaurita (0x0-0x04000000): 111913 pagine libere altrove
+```
+
+`pmm_alloc_page()` partiva da 1 MB e consumava la fascia dal basso: il
+programma cresceva e il kernel restava senza una pagina per una page
+table, con 437 MB liberi. Ora le pagine utente prendono la fascia **per
+ultima**, e su una macchina piccola — dove la RAM ci sta tutta dentro — il
+ripiego e' immediato, che e' il comportamento giusto: li' non c'e' niente
+da preservare.
+
+⚠️ L'eccezione dichiarata resta il caricatore dei moduli (`dynlink.c`,
+`drvmgr.c`): rilocando `R_386_COPY` legge da una pagina e scrive in
+un'altra nello stesso istante, e la finestra e' una sola. Le immagini dei
+driver stanno nella fascia kernel — sono due, di ~15 KB.
+
+## Verifica
+
+- **300 MB** allocati e riletti byte per byte su una macchina da 512 MB
+  (prima: 4 MB), **due volte di fila**, con `mem` che torna a
+  `3132 KB usati` esatti dopo ogni uscita: alloca e libera entrambi
+  corretti attraverso il confine della fascia.
+- Su 32 MB il programma arriva a **29 MB** e fallisce con un ENOMEM
+  pulito, prompt vivo, invece che con un panic a 4.
+- `/bin/libctest`: **78 su 78**, zero `[WARN]`/`[ERROR]` all'avvio.
+- Floppy: `mem`, `ls`, `mkdir`, `cp`, `ls`, `delete`, `rmdir`, `hello`.
+- ext2 su `hd0p1`: `mount`, `mkdir`, `cp` (58 KB), `ls`, `delete`,
+  `rmdir`, `umount` — **`e2fsck -fn` esito 0**.
+- CD: automount `/cdrom` e `ls /cdrom`.
+- **Avvio da ext2 senza floppy con il kernel nuovo**: `install /disk`
+  rifatto (321 settori in 3 intervalli), `ver` mostra 0.148, root su
+  `hd0p1`, zero problemi nel log, e2fsck 0 dopo l'installazione.
+
+Il programma di prova non e' entrato in `/bin` (non e' un target di
+`make`, e il floppy e' stretto). E' venti righe, si ricompila col cross:
+
+```c
+/* i386-exos-gcc bigmem.c -o bigmem ; mcopy -i floppy.img -o bigmem ::/bin/bigmem */
+#include <stdio.h>
+#include <stdlib.h>
+int main(void) {
+    int mb;
+    printf("heap iniziale sbrk(0)=%p\n", sbrk(0));
+    for (mb = 1; mb <= 300; mb++) {
+        char *p = (char *)malloc(1024 * 1024); int i;
+        if (!p) { printf("malloc fallita a %d MB\n", mb); return 1; }
+        for (i = 0; i < 1024*1024; i += 4096) p[i] = (char)mb;
+        for (i = 0; i < 1024*1024; i += 4096)
+            if (p[i] != (char)mb) { printf("CORRUZIONE a %d MB\n", mb); return 2; }
+        if (mb % 20 == 0) printf("%3d MB ok (sbrk=%p)\n", mb, sbrk(0));
+    }
+    printf("%d MB allocati e verificati\n", mb - 1);
+    return 0;
+}
+```
+
+## Cosa resta, in ordine
+
+- **Demand paging da file.** Il caricatore ELF e' *eager*: un binario da
+  40 MB impegna 40 MB prima di eseguire un'istruzione. `cc1` strippato,
+  per i386, sara' 35-45 MB. La finestra serve gia' allo scopo — la pagina
+  da riempire e' quella di un altro spazio di indirizzamento.
+- **Higher-half.** La fascia da 64 MB e' un compromesso: e' memoria che
+  l'utente non puo' usare, e va rialzata a ogni crescita del sistema. La
+  soluzione definitiva e' il kernel a `0xC0000000` con la RAM mappata
+  sopra e le PDE alte **condivise per puntatore** invece che copiate —
+  `USER_SPACE_END` gia' vale `0xC0000000`, il layout lo prevede. Il costo
+  e' l'avvio: PD provvisoria con doppio mapping e salto lungo dopo
+  `mov cr0`.
+- Poi il resto della strada per un compilatore ospitato, che il kernel non
+  puo' dare: spawn con redirezione dei descrittori, environment per
+  processo, `opendir`/`rename`/`mkstemp`/`isatty`, binutils per il
+  bersaglio, GMP/MPFR/MPC, il sottoinsieme di libstdc++.
+
+## File toccati
+
+- `kernel/include/kernel.h` — `USER_SPACE_BASE` 8 → 64 MB, con il perche'
+- `kernel/mm/paging.c` + `paging.h` — la finestra; PD e page table dalla
+  fascia kernel; crescita stack via finestra
+- `kernel/mm/pmm.c` + `pmm.h` — `pmm_alloc_page[s]_kernel`, preferenza
+  fuori fascia in `pmm_alloc_page`, riserva della pagina della finestra
+- `kernel/mm/kmalloc.c` — heap kernel dalla fascia
+- `kernel/sched/sched.c` — stack kernel dalla fascia, in un colpo solo
+- `kernel/loader/elf.c` — azzeramento e copia dei segmenti via finestra
+- `kernel/syscall/syscall_impl.c` — `sbrk`, `mmap`, copia di argv nel
+  figlio via finestra
+- `kernel/loader/dynlink.c`, `drvmgr.c` — immagini dei driver in fascia
+- `kernel/include/version.h` — 0.148
+- `README.md`, `KERNEL_CORE_NOTES.md`
+
+---
+
 # SESSIONE 2026-08-02 (b) — La virgola mobile, e due bug che solo lei ha fatto uscire
 
 Kernel a **0.146** → **0.147**. `/bin/libctest` passa **78 prove su 78**
@@ -114,14 +1120,15 @@ programma di EX-OS.
 
 ## Cosa resta
 
-- ⚠️ **Osservato una volta e non riprodotto**: in un avvio le quattro
-  shell hanno chiesto tutte la riga sulla **console 0** («kbd: su console
-  0 la richiesta di PID 5 sostituisce quella di PID 4»), lasciando i
-  comandi senza risposta visibile. Sette avvii successivi con la stessa
-  immagine hanno sempre dato `PID 4→console 0 … PID 7→console 3`,
-  compresa una diagnostica temporanea nel driver kbd. Se ricapita, il
-  punto da guardare e' `richiesta.console` in `tty_read_ipc()`
-  (`drivers/tty/tty.c`) contro il `console` del PCB.
+- ✅ **RISOLTO nella sessione (d)** — era annotato qui come «osservato una
+  volta e non riprodotto»: in un avvio le quattro shell hanno chiesto
+  tutte la riga sulla **console 0** («kbd: su console 0 la richiesta di
+  PID 5 sostituisce quella di PID 4»), lasciando i comandi senza risposta.
+  Non era intermittente e non era delle console virtuali: `tty.o` ha una
+  regola propria nel Makefile e non aveva le dipendenze dagli header,
+  quindi dopo l'aggiunta di `fpu_state` a `struct Process` continuava a
+  leggere `console` all'offset vecchio. Dipendeva da quando `tty.o` era
+  stato ricompilato l'ultima volta.
 - `make hd` / `tools/mkhd.sh` (disco avviabile da 512 MB) non e'
   documentato ne' qui ne' nel README: e' arrivato con la sessione del
   cross-compilatore e non ha mai avuto la sua riga.

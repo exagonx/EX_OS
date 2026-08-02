@@ -90,7 +90,10 @@ static uint8_t g_root_dirty = 0;
  * l'entry aggiornata nella root dir quando il file vive lì (necessario
  * per fat12_write che aggiorna first_cluster/file_size).
  * ============================================================================= */
-#define MAX_OPEN_FILES   16
+/* Deve stare al passo di VFS_MAX_OPEN: sul floppy ogni handle VFS ne
+ * consuma uno di questi, e con il caricamento su richiesta gli eseguibili
+ * restano aperti quanto i processi che li usano. */
+#define MAX_OPEN_FILES   64
 
 typedef struct {
     uint8_t        used;
@@ -2160,7 +2163,7 @@ int fat12_read(int handle, void *buf, uint32_t size, uint32_t offset)
 /* =============================================================================
  * fat12_write — Scrive N byte su un file
  * ============================================================================= */
-int fat12_write(int handle, const void *buf, uint32_t size)
+int fat12_write(int handle, const void *buf, uint32_t size, uint32_t offset)
 {
     Fat12DirEntry  *entry;
     const uint8_t  *src = (const uint8_t *)buf;
@@ -2200,13 +2203,32 @@ int fat12_write(int handle, const void *buf, uint32_t size)
      * file: /bin/textline è il primo. Stessa storia della scrittura FDC
      * corretta poco sopra.
      *
-     * Ora la scrittura è un vero append: parte da entry->file_size,
-     * percorre la catena dei cluster fino a quello che contiene quella
-     * posizione (allocandone di nuovi quando serve) e scrive con
-     * read-modify-write sui settori riempiti solo in parte.
+     * Ora la scrittura parte da una POSIZIONE data, percorre la catena
+     * dei cluster fino a quello che la contiene (allocandone di nuovi
+     * quando serve) e scrive con read-modify-write sui settori riempiti
+     * solo in parte.
+     *
+     * ⚠️ SECONDA CORREZIONE (agosto 2026): la posizione era
+     * `entry->file_size`, cioe' SEMPRE la fine del file, e l'offset del
+     * descrittore non arrivava fin qui — vfs_write_nl non lo passava,
+     * "tanto fat12 tiene la propria posizione". Per un programma che
+     * scrive dall'inizio alla fine e' lo stesso numero, e per anni non si
+     * e' visto niente.
+     *
+     * Si vede al primo programma che TORNA INDIETRO. Un qualunque
+     * scrittore di ELF lo fa — bfd scrive le sezioni, poi si riposiziona
+     * a zero e ci mette l'intestazione — e il risultato sul floppy era un
+     * oggetto con dentro tutti i pezzi giusti nell'ordine di scrittura e
+     * il magic `\x7fELF` a offset 240:
+     *
+     *     /cdrom/bin/ld: /prova.o: file format not recognized
+     *
+     * cioe' il primo `as` nativo che assemblava benissimo e produceva un
+     * file che nessuno sapeva rileggere. Su ext2 e FAT16/32 non succedeva:
+     * li' l'offset il VFS lo passava gia'.
      * ========================================================================= */
     {
-        uint32_t pos = entry->file_size;   /* si accoda sempre alla fine */
+        uint32_t pos = offset;
 
         while (written < size) {
             uint32_t off  = pos + written;
@@ -2238,11 +2260,35 @@ int fat12_write(int handle, const void *buf, uint32_t size)
             if (chunk > size - written) chunk = size - written;
 
             /* Se non si riempie il settore intero bisogna conservare ciò
-             * che c'era: leggerlo prima. Per un cluster appena allocato
-             * non c'è nulla da conservare e il contenuto sul disco è
-             * spazzatura, quindi si azzera. */
+             * che c'era: leggerlo prima. Per un settore che sta OLTRE la
+             * fine attuale del file non c'è nulla da conservare — quel che
+             * c'è sul disco è spazzatura di un file cancellato — e si
+             * azzera.
+             *
+             * ⚠️ LA CONDIZIONE ERA `nuovo || in == 0`, ed è il secondo
+             * difetto che si vede solo tornando indietro: scrivere 52 byte
+             * all'inizio di un settore che ne conteneva già 512 azzerava
+             * gli altri 460. bfd fa esattamente questo — scrive le
+             * sezioni, poi si riposiziona a zero e ci mette
+             * l'intestazione ELF — e il risultato era un oggetto con
+             * l'intestazione giusta e il contenuto delle sezioni a zero:
+             *
+             *     ld: /prova.o: local symbol at index 4 (>= sh_info of 4)
+             *
+             * `in == 0` significa "scrivo dall'inizio del settore", non
+             * "il settore è vuoto". Le due cose coincidevano finché si
+             * scriveva solo in coda.
+             *
+             * ⚠️ RESTA UN CASO NON COPERTO: un BUCO, cioè una scrittura
+             * che comincia oltre la fine del file lasciando indietro dei
+             * byte mai scritti. Quelli restano com'erano sul disco invece
+             * di leggersi come zeri. Nessun programma lo fa oggi (as e ld
+             * scrivono tutto e poi riscrivono l'intestazione); il giorno
+             * che servisse, il posto è questo. */
             if (chunk < BYTES_PER_SECTOR) {
-                if (nuovo || in == 0) {
+                uint32_t inizio_settore = off - in;
+
+                if (nuovo || inizio_settore >= entry->file_size) {
                     for (i = 0; i < BYTES_PER_SECTOR; i++) sector_buf[i] = 0;
                 } else if (fat12_read_sector(lba, sector_buf) != 0) {
                     return -5;
@@ -2257,7 +2303,11 @@ int fat12_write(int handle, const void *buf, uint32_t size)
         }
 
 fine_scrittura:
-        entry->file_size = pos + written;
+        /* Il file cresce solo se si e' scritto OLTRE la fine. Riscrivere
+         * in mezzo non lo accorcia: e' la differenza fra una scrittura e
+         * un troncamento, e prima non si poneva perche' si scriveva solo
+         * in coda. */
+        if (pos + written > entry->file_size) entry->file_size = pos + written;
     }
 
     /* Rendi persistente la entry aggiornata (dimensione e primo cluster),

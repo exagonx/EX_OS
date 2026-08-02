@@ -29,12 +29,17 @@
 #define O_BINARY    0
 #define O_TEXT      0
 
-/* Costanti che POSIX mette qui e che EX-OS non ha: O_EXCL, O_NONBLOCK,
- * O_SYNC. Valgono zero perche' un programma che le chiede non deve
- * fallire a compilare, ma ⚠️ NON FANNO NIENTE — in particolare O_EXCL
- * non protegge da una creazione concorrente. */
+/* Costanti che POSIX mette qui e che EX-OS non ha: O_EXCL e O_SYNC.
+ * Valgono zero perche' un programma che le chiede non deve fallire a
+ * compilare, ma ⚠️ NON FANNO NIENTE — in particolare O_EXCL non protegge
+ * da una creazione concorrente.
+ *
+ * O_NONBLOCK sta in libc.h insieme agli altri flag di open() e vale 0x800,
+ * il bit vero: da quando c'e' fcntl(F_GETFL/F_SETFL) il valore torna
+ * indietro a chi lo ha messo, e uno zero avrebbe fatto sparire il flag
+ * fra l'andata e il ritorno. ⚠️ Neanche lui fa qualcosa: nessuna
+ * operazione di EX-OS ritorna EAGAIN, il flag si ricorda e basta. */
 #define O_EXCL      0
-#define O_NONBLOCK  0
 #define O_SYNC      0
 
 #endif /* EXOS_FCNTL_H */

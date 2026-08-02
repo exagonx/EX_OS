@@ -30,7 +30,11 @@
 #include "blk.h"
 
 #define VFS_MAX_MOUNT   6
-#define VFS_MAX_OPEN    24
+/* 48 e non 24 (0.149): con il caricamento su richiesta OGNI processo
+ * tiene aperto il proprio eseguibile per tutta la vita, quindi il tetto
+ * non conta piu' i soli file aperti dai programmi ma anche i programmi
+ * stessi — quattro shell e i loro figli ci arrivavano vicino. */
+#define VFS_MAX_OPEN    64
 #define VFS_PUNTO_MAX   24
 #define VFS_PATH_MAX    320
 
@@ -91,6 +95,12 @@ int  vfs_read   (int h, void *buf, uint32_t size, uint32_t offset);
 int  vfs_write  (int h, const void *buf, uint32_t size, uint32_t offset);
 int  vfs_close  (int h);
 int  vfs_stat   (const char *abs, VfsStat *st);
+
+/* Dichiara un descrittore in piu' sullo stesso file aperto: ritorna `h`
+ * stesso, non un handle nuovo. Ci vuole una vfs_close() per ognuno, e solo
+ * l'ultima arriva al driver — vedi il conteggio dei riferimenti in vfs.c.
+ * E' cio' che rende possibile dup()/dup2(). */
+int  vfs_dup    (int h);
 
 /* Come vfs_stat ma su un file GIA' APERTO.
  *

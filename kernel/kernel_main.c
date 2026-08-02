@@ -539,7 +539,11 @@ KernelConfig *cfg = cfg_load();
             }
 
             ElfLoadResult drv_res;
-            if (elf_load(cfg->modules[di].path, drv_proc, &drv_res) == 0) {
+            /* RESIDENTE, non su richiesta: un driver che serve il
+             * filesystem e che venisse paginato da quel filesystem
+             * dovrebbe servire la propria lettura mentre e' fermo ad
+             * aspettarla. Vedi elf.c. */
+            if (elf_load_residente(cfg->modules[di].path, drv_proc, &drv_res) == 0) {
                 proc_set_entry(drv_proc, drv_res.entry_point, drv_res.user_stack_top);
                 proc_set_ready(drv_proc);
                 klog(LOG_INFO, "[PASSO 14b] Driver '%s' (%s) avviato: PID=%u entry=0x%08x",

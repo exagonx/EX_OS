@@ -46,15 +46,41 @@ Cosa c'e' dentro
                     licenza.
 
 
+/bin/               as e ld: l'assemblatore e il linker di binutils 2.44,
+                    compilati PER EX-OS e non per la macchina che li ha
+                    costruiti. Sono il primo codice di terzi che gira
+                    qui dentro.
+
+                        /cdrom/bin/as --version
+                        /cdrom/bin/as -o prova.o prova.s
+                        /cdrom/bin/ld -o prova prova.o
+
+                    Se la directory contiene solo un leggimi, il CD e'
+                    stato costruito senza: vedi
+                    tools/binutils-exos/leggimi.md nel repository.
+
+/prova.s            il programma piu' piccolo che dimostra la catena
+                    intera, da sorgente a processo:
+
+                        /cdrom/bin/as -o /prova.o /cdrom/prova.s
+                        /cdrom/bin/ld -o /prova /prova.o
+                        /prova
+
+                    L'uscita va scritta FUORI dal CD -- qui sulla radice
+                    del floppy -- perche' un ISO 9660 e' in sola lettura
+                    per costruzione.
+
+
 Cosa NON c'e' ancora
 --------------------
 
-/bin/ e' vuota di proposito: e' il posto del compilatore. Il primo che
-ci arrivera' e' TCC -- si porta dietro assemblatore e linker, gira in
-pochi MB e chiede alla libreria una frazione di cio' che chiede GCC.
+Il COMPILATORE. as e ld traducono e collegano, ma non c'e' ancora niente
+che trasformi un sorgente C in assembly: per quello serve cc1, che si
+porta dietro GMP, MPFR, MPC e un pezzo di libstdc++.
 
 Fino ad allora i programmi di EX-OS si compilano da un'altra macchina,
-con il cross-compilatore descritto in /doc/README.md.
+con il cross-compilatore descritto in /doc/README.md -- oppure si scrive
+in assembly e si usano gli strumenti qui accanto.
 
 
 Licenza

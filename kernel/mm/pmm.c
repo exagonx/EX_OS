@@ -11,6 +11,7 @@
 
 #include "kernel.h"
 #include "pmm.h"
+#include "paging.h"   /* PAGING_FINESTRA_FISICA: la pagina da non allocare mai */
 
 /* =============================================================================
  * Costanti
@@ -32,6 +33,16 @@ static uint32_t  g_free_pages   = 0;    /* Pagine libere correnti */
 static uint32_t  g_used_pages   = 0;    /* Pagine usate correnti */
 static uint32_t  g_bitmap_size  = 0;    /* Dimensione bitmap in byte */
 static uint32_t  g_last_alloc   = 0;    /* Ultima pagina allocata (hint next-fit) */
+static uint32_t  g_last_alloc_k = 0;    /* Hint separato per la fascia kernel:
+                                         * condividerlo con quello generale
+                                         * farebbe ripartire ogni ricerca
+                                         * kernel da dove l'ha lasciata una
+                                         * allocazione utente, cioe' quasi
+                                         * sempre fuori fascia. */
+
+/* Prima pagina FUORI dalla fascia kernel (definita piu' sotto, insieme
+ * alle allocazioni di fascia: qui serve solo la firma). */
+static uint32_t pmm_limite_kernel(void);
 
 /* =============================================================================
  * Macro bitmap
@@ -219,7 +230,13 @@ void pmm_init(BootInfo *info)
     /* BootInfo (0xC000-0xC0FF) — FIX BUG #3: era 0xB000 */
     pmm_mark_used(0x0000C000, PAGE_SIZE);
 
-    g_last_alloc = addr_to_page(0x00100000); /* Hint: inizia dalla RAM estesa */
+    /* La pagina della finestra di rimappatura fisica non deve essere
+     * allocata a nessuno: il kernel ne riscrive la PTE a piacere, quindi
+     * il suo contenuto non e' affidabile. Vedi paging_finestra_apri(). */
+    pmm_mark_used(PAGING_FINESTRA_FISICA, PAGE_SIZE);
+
+    g_last_alloc   = addr_to_page(0x00100000); /* Hint: inizia dalla RAM estesa */
+    g_last_alloc_k = addr_to_page(0x00100000);
 
     /* -------------------------------------------------------------------------
      * Passo 6: Statistiche finali
@@ -239,6 +256,19 @@ void pmm_init(BootInfo *info)
  * Algoritmo: next-fit con hint g_last_alloc per velocità.
  * Cerca la prima pagina libera a partire dall'ultima allocazione.
  *
+ * ⚠️ SERVE LA FASCIA KERNEL PER ULTIMA, e non e' un dettaglio di
+ * efficienza. La fascia (0 → USER_SPACE_BASE) e' l'unica memoria che il
+ * kernel puo' rileggere mentre gira un processo, ma nessuno ne vieta l'uso
+ * a una pagina utente: senza questa preferenza, il primo programma che
+ * chiede memoria la consuma dal basso, si prende tutta la fascia e poi il
+ * kernel non trova piu' una pagina per una page table. Successo apparente
+ * del programma, fallimento del kernel poco dopo — con 437 MB liberi.
+ * (Visto: 72 MB di heap su una macchina da 512 MB.)
+ *
+ * Su una macchina piccola, dove la RAM sta tutta dentro la fascia, il
+ * ripiego e' immediato e il comportamento torna quello di prima: e' giusto
+ * cosi', li' non c'e' niente da preservare.
+ *
  * Ritorna: indirizzo fisico della pagina (allineato a 4KB)
  *          0 se non ci sono pagine libere (OUT OF MEMORY)
  * ============================================================================= */
@@ -246,14 +276,15 @@ uint32_t pmm_alloc_page(void)
 {
     uint32_t i;
     uint32_t start;
+    uint32_t fascia = pmm_limite_kernel();   /* prima pagina fuori fascia */
 
     if (g_free_pages == 0) {
         klog(LOG_ERROR, "PMM: OUT OF MEMORY! Nessuna pagina fisica libera.");
         return 0;
     }
 
-    /* Cerca dal hint g_last_alloc in poi (next-fit) */
-    start = g_last_alloc;
+    /* Cerca dal hint g_last_alloc in poi (next-fit), mai sotto la fascia */
+    start = (g_last_alloc < fascia) ? fascia : g_last_alloc;
 
     for (i = start; i < g_total_pages; i++) {
         if (!BITMAP_TEST(i)) {
@@ -265,8 +296,8 @@ uint32_t pmm_alloc_page(void)
         }
     }
 
-    /* Wrap-around: cerca dall'inizio se non trovato */
-    for (i = 0; i < start; i++) {
+    /* Wrap-around, sempre sopra la fascia */
+    for (i = fascia; i < start; i++) {
         if (!BITMAP_TEST(i)) {
             BITMAP_SET(i);
             g_free_pages--;
@@ -276,7 +307,121 @@ uint32_t pmm_alloc_page(void)
         }
     }
 
+    /* Ultima risorsa: la fascia kernel. Meglio consegnarla che rispondere
+     * "memoria esaurita" mentre c'e' — su una macchina piccola e' l'unica
+     * memoria che esista. */
+    for (i = 0; i < fascia; i++) {
+        if (!BITMAP_TEST(i)) {
+            BITMAP_SET(i);
+            g_free_pages--;
+            g_used_pages++;
+            return page_to_addr(i);
+        }
+    }
+
     klog(LOG_ERROR, "PMM: OUT OF MEMORY (bitmap corrotta?)");
+    return 0;
+}
+
+/* =============================================================================
+ * LA FASCIA KERNEL — pmm_alloc_page_kernel / pmm_alloc_pages_kernel
+ *
+ * PERCHE' ESISTONO. La page directory di un processo copia dalla PD del
+ * kernel solo le PDE che stanno SOTTO USER_SPACE_BASE
+ * (paging_create_directory). Tutto cio' che il kernel raggiunge
+ * dereferenziando un indirizzo FISICO — lo heap di kmalloc, gli stack
+ * kernel dei processi, le page directory e le page table — deve quindi
+ * vivere sotto quella soglia, altrimenti diventa invisibile non appena e'
+ * caricato il CR3 di un processo.
+ *
+ * Il guasto, quando capita, non assomiglia alla causa: uno stack kernel
+ * allocato sopra la soglia manda in page fault la CPU mentre commuta lo
+ * stack all'ingresso di un interrupt — cioe' prima che qualunque
+ * istruzione del kernel possa dire cosa e' successo.
+ *
+ * Le pagine dell'UTENTE (segmenti ELF, sbrk, mmap, stack ring3) non hanno
+ * questo vincolo: il kernel le tocca attraverso la finestra di
+ * rimappatura (vedi paging_finestra_apri), non al loro indirizzo fisico.
+ * Per quelle si continua a usare pmm_alloc_page(), che pesca da tutta la
+ * RAM — ed e' importante che sia cosi', se no la fascia kernel diventa il
+ * tetto della memoria di sistema.
+ * ============================================================================= */
+
+/* Ultima pagina + 1 della fascia kernel. Se la RAM e' meno di
+ * USER_SPACE_BASE, il limite e' la RAM. */
+static uint32_t pmm_limite_kernel(void)
+{
+    uint32_t limite = addr_to_page(USER_SPACE_BASE);
+    return (limite > g_total_pages) ? g_total_pages : limite;
+}
+
+uint32_t pmm_alloc_page_kernel(void)
+{
+    uint32_t limite = pmm_limite_kernel();
+    uint32_t i;
+
+    for (i = g_last_alloc_k; i < limite; i++) {
+        if (!BITMAP_TEST(i)) {
+            BITMAP_SET(i);
+            g_free_pages--;
+            g_used_pages++;
+            g_last_alloc_k = i + 1;
+            return page_to_addr(i);
+        }
+    }
+
+    /* Wrap-around dentro la sola fascia kernel */
+    for (i = 0; i < g_last_alloc_k && i < limite; i++) {
+        if (!BITMAP_TEST(i)) {
+            BITMAP_SET(i);
+            g_free_pages--;
+            g_used_pages++;
+            g_last_alloc_k = i + 1;
+            return page_to_addr(i);
+        }
+    }
+
+    /* Messaggio esplicito: "la RAM e' finita" e "la fascia kernel e'
+     * finita" sono due guasti diversi, e confonderli manda a cercare
+     * memoria che c'e'. */
+    klog(LOG_ERROR, "PMM: fascia kernel esaurita (0x0-0x%08x): %u pagine "
+         "libere altrove, ma il kernel non potrebbe rileggerle",
+         USER_SPACE_BASE, g_free_pages);
+    return 0;
+}
+
+uint32_t pmm_alloc_pages_kernel(uint32_t count)
+{
+    uint32_t limite = pmm_limite_kernel();
+    uint32_t i, j, consecutive;
+
+    if (count == 0) return 0;
+    if (count == 1) return pmm_alloc_page_kernel();
+    if (limite < count) return 0;
+
+    for (i = 0; i <= limite - count; i++) {
+        if (BITMAP_TEST(i)) continue;
+
+        consecutive = 1;
+        for (j = i + 1; j < i + count && j < limite; j++) {
+            if (BITMAP_TEST(j)) break;
+            consecutive++;
+        }
+
+        if (consecutive == count) {
+            for (j = i; j < i + count; j++) {
+                BITMAP_SET(j);
+                g_free_pages--;
+                g_used_pages++;
+            }
+            return page_to_addr(i);
+        }
+
+        i = j;
+    }
+
+    klog(LOG_ERROR, "PMM: %u pagine contigue non disponibili nella fascia "
+         "kernel (0x0-0x%08x)", count, USER_SPACE_BASE);
     return 0;
 }
 

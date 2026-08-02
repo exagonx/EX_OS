@@ -21,11 +21,10 @@
  * sperare.
  *
  * E' la stessa scelta fatta in libc.h per size_t, per la stessa ragione:
- * un tipo scritto a mano vale finché non cambia compilatore. Sul gcc di
- * sistema con -m32 int32_t e' `int`; sul bersaglio i386-exos e' `long
- * int`. Stessa larghezza, stesso codice generato, ma un typedef scritto a
- * mano ne avrebbe contraddetto uno dei due — e il conflitto si vede solo
- * quando il primo sorgente di terzi include davvero questo header.
+ * un tipo scritto a mano vale finché non cambia compilatore. Un typedef
+ * scritto qui a mano avrebbe contraddetto il compilatore il giorno che i
+ * due non fossero piu' d'accordo — e il conflitto si vede solo quando il
+ * primo sorgente di terzi include davvero questo header.
  *
  * PERCHE' ESISTE, dato che GCC un <stdint.h> ce l'ha. Il bersaglio
  * i386-exos non se lo installa: gcc/config.gcc non imposta
@@ -34,13 +33,16 @@
  * GCC: prepara-cross.sh copia tutti gli header di lib/include nell'albero
  * del bersaglio, quindi basta che il file esista.
  *
- * ⚠️ SUL BERSAGLIO int32_t E' `long int`, NON `int`. E' corretto (32 bit
- * in entrambi i casi) ma inconsueto: i386-linux dichiara INT32_TYPE "int",
- * il nostro gcc/config/i386/exos.h non dichiara niente e GCC ripiega su
- * "long int". Si vede in due punti: gli avvisi del compilatore parlano di
- * `long` dove ci si aspetta `int`, e %d di printf riceve un `long`
- * (innocuo qui — cdecl passa 32 bit in entrambi i casi). Il rimedio vero
- * e' in exos.h, e costa un rebuild di GCC: vedi tools/gcc-exos/leggimi.md.
+ * I TIPI COINCIDONO CON QUELLI DEL GCC DI SISTEMA A 32 BIT, e non e' un
+ * caso: gcc/config/i386/exos.h dichiara SIZE_TYPE, PTRDIFF_TYPE,
+ * INT32_TYPE e UINT32_TYPE come li dichiara i386-linux, cioe' il bersaglio
+ * con cui EX-OS condivide l'ABI. Senza quelle righe GCC ripiegava sui
+ * predefiniti — `long int` per int32_t, `long unsigned int` per size_t —
+ * con la larghezza giusta ma il TIPO diverso da quello che vede lo stesso
+ * sorgente compilato con `gcc -m32`, e la differenza usciva come avvisi su
+ * `long` dove ci si aspetta `int`. La verifica sta in
+ * tools/gcc-exos/prova.c, con _Static_assert e _Generic: se qualcuno tocca
+ * quelle righe di exos.h, il programma smette di compilare.
  * ============================================================================= */
 
 #ifndef EXOS_STDINT_H

@@ -89,7 +89,36 @@ typedef struct PACKED {
 #define KERNEL_PHYS_BASE    0x00100000  /* 1MB: inizio kernel */
 #define KERNEL_HEAP_BASE    0x00400000  /* 4MB: inizio heap kernel */
 #define KERNEL_HEAP_SIZE    0x00400000  /* 4MB: dimensione heap kernel */
-#define USER_SPACE_BASE     0x00800000  /* 8MB: inizio spazio utente */
+
+/* =============================================================================
+ * USER_SPACE_BASE — il confine, e perche' vale 64 MB e non 8
+ *
+ * Questa costante dice DUE cose che sembrano una sola:
+ *
+ *   1. dove comincia lo spazio utente;
+ *   2. quanta memoria il kernel vede in OGNI spazio di indirizzamento,
+ *      perche' paging_create_directory() copia nella page directory di un
+ *      processo esattamente le PDE che stanno sotto questa soglia.
+ *
+ * Il punto 2 e' quello che conta: tutto cio' che il kernel raggiunge al
+ * proprio indirizzo FISICO — lo heap di kmalloc, gli stack kernel dei
+ * processi, le page directory e le page table, l'immagine di un driver in
+ * corso di rilocazione — deve stare sotto questa riga, o diventa
+ * invisibile appena e' caricato il CR3 di un processo. E' il PMM a
+ * garantirlo, con pmm_alloc_page_kernel().
+ *
+ * Era 8 MB, ed era stretto in modo non evidente: 64 processi × 128 KB di
+ * stack kernel fanno 8 MB tondi, cioe' la soglia intera occupata da un
+ * solo genere di allocazione. 64 MB danno margine a tutti e restano
+ * lontani dal punto in cui i programmi vengono caricati (0x08000000).
+ *
+ * ⚠️ Alzarla ancora non e' gratis: ogni MB in piu' e' un MB che l'utente
+ * non puo' usare e che nessun processo puo' mappare. La strada per
+ * togliere del tutto il vincolo e' un'altra — il kernel nella zona alta
+ * (higher-half), con la RAM mappata sopra 0xC0000000 e le PDE condivise
+ * per puntatore invece che copiate.
+ * ============================================================================= */
+#define USER_SPACE_BASE     0x04000000  /* 64MB: inizio spazio utente */
 #define USER_SPACE_END      0xC0000000  /* 3GB: fine spazio utente */
 
 /*

@@ -19,6 +19,14 @@
 void     pmm_init(BootInfo *info);
 uint32_t pmm_alloc_page(void);
 uint32_t pmm_alloc_pages(uint32_t count);
+
+/* Allocazione nella FASCIA KERNEL (sotto USER_SPACE_BASE): obbligatoria per
+ * tutto cio' che il kernel raggiunge al proprio indirizzo FISICO — heap di
+ * kmalloc, stack kernel, page directory e page table. Vedi il commento in
+ * pmm.c. Per le pagine dell'utente si usa pmm_alloc_page(), che pesca da
+ * tutta la RAM. */
+uint32_t pmm_alloc_page_kernel(void);
+uint32_t pmm_alloc_pages_kernel(uint32_t count);
 void     pmm_free_page(uint32_t addr);
 void     pmm_free_pages(uint32_t addr, uint32_t count);
 uint32_t pmm_get_free_pages(void);

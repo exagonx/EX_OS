@@ -70,6 +70,9 @@ void syscall_init(void)
     syscall_table[SYS_WRITE]       = sys_write;
     syscall_table[SYS_OPEN]        = sys_open;
     syscall_table[SYS_CLOSE]       = sys_close;
+    syscall_table[SYS_DUP]         = sys_dup;
+    syscall_table[SYS_DUP2]        = sys_dup2;
+    syscall_table[SYS_FCNTL]       = sys_fcntl;
     syscall_table[SYS_WAITPID]     = sys_waitpid;
     syscall_table[SYS_GETPID]      = sys_getpid;
     syscall_table[SYS_GETPPID]     = sys_getppid;

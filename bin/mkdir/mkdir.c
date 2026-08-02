@@ -81,7 +81,7 @@ int main(int argc, char **argv)
     }
 
     for (i = 1; i < argc; i++) {
-        int r = mkdir(argv[i]);
+        int r = mkdir(argv[i], 0755);
 
         if (r == 0) {
             printf("mkdir: creata '%s'\n", argv[i]);

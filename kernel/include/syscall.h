@@ -58,6 +58,9 @@
 #define SYS_BLKWRITE    197    /* scrive settori in una partizione NON montata */
 #define SYS_TRUNCATE     92    /* cambia la dimensione di un file (vedi sys_truncate) */
 #define SYS_REBOOT       88    /* spegne, riavvia o ferma il sistema */
+#define SYS_DUP          41    /* un secondo descrittore sullo stesso file */
+#define SYS_DUP2         63    /* come dup, ma su un numero scelto dal chiamante */
+#define SYS_FCNTL        55    /* interroga/modifica un descrittore (vedi sys_fcntl) */
 
 /* Numero totale syscall supportate */
 #define SYSCALL_COUNT   233     /* deve coprire il numero syscall più alto (SYS_CONSOLE_SETFG=232) + 1 */
@@ -154,6 +157,27 @@ typedef struct {
 #define O_TRUNC     0x0200
 #define O_APPEND    0x0400
 #define O_NONBLOCK  0x0800
+
+/* =============================================================================
+ * Comandi di sys_fcntl
+ *
+ * I numeri sono quelli di Linux, come tutto il resto della numerazione.
+ *
+ * ⚠️ FD_CLOEXEC NON HA NIENTE DA CHIUDERE. In EX-OS spawn() non eredita i
+ * descrittori del padre — il figlio riceve i suoi da SpawnAzione, per
+ * percorso — quindi non esiste il momento in cui un fd "sopravvive a un
+ * exec". F_GETFD risponde sempre 0 e F_SETFD accetta e dimentica: sono
+ * li' perche' il codice di terzi li chiama a coppie (leggi i flag,
+ * riscrivili con FD_CLOEXEC in piu') e vuole due successi, non perche'
+ * cambino qualcosa.
+ * ============================================================================= */
+#define F_DUPFD     0   /* duplica su un numero >= arg */
+#define F_GETFD     1   /* sempre 0; serve a dire "questo fd esiste" */
+#define F_SETFD     2   /* accettata e ignorata: vedi sopra */
+#define F_GETFL     3   /* i flag passati a open() */
+#define F_SETFL     4   /* solo O_APPEND e O_NONBLOCK sono modificabili */
+
+#define FD_CLOEXEC  1
 
 /* =============================================================================
  * Flag per sys_mmap
@@ -477,6 +501,9 @@ int32_t sys_read(InterruptFrame *f);
 int32_t sys_write(InterruptFrame *f);
 int32_t sys_open(InterruptFrame *f);
 int32_t sys_close(InterruptFrame *f);
+int32_t sys_dup(InterruptFrame *f);
+int32_t sys_dup2(InterruptFrame *f);
+int32_t sys_fcntl(InterruptFrame *f);
 int32_t sys_waitpid(InterruptFrame *f);
 int32_t sys_getpid(InterruptFrame *f);
 int32_t sys_getppid(InterruptFrame *f);
@@ -525,6 +552,53 @@ int32_t sys_irq_bind(InterruptFrame *f);
 int32_t sys_ioport_bind(InterruptFrame *f);
 int32_t sys_ioport_in(InterruptFrame *f);
 int32_t sys_ioport_out(InterruptFrame *f);
+
+/* =============================================================================
+ * SYS_SPAWN — il blocco EXTRA (ambiente e redirezioni)
+ *
+ * PERCHE' UN BLOCCO E NON DUE ARGOMENTI IN PIU'. La forma storica della
+ * syscall e' spawn(percorso, argc, argv) e ci sono in giro programmi —
+ * compresi quelli gia' installati su un disco — che la chiamano con tre
+ * registri soli. ESI ed EDI, per loro, contengono spazzatura: leggerli
+ * come puntatori significherebbe che un binario vecchio, il giorno che
+ * lo si esegue su un kernel nuovo, apre file a caso o non parte.
+ *
+ * Percio' l'estensione passa da UN puntatore in ESI a una struttura che
+ * comincia con una parola magica. Se ESI non e' leggibile o la magia non
+ * combacia, il kernel fa finta che non ci sia: la vecchia forma continua
+ * a funzionare esattamente come prima, e la probabilita' che spazzatura
+ * casuale sia insieme un puntatore valido e la magia giusta e' quella di
+ * indovinare 32 bit.
+ *
+ * L'AMBIENTE si eredita per copia, come argv: le stringhe finiscono sullo
+ * stack del figlio. Non c'e' un ambiente "del sistema" che i processi
+ * condividono — quello di /boot/kernel.cfg resta consultabile con
+ * SYS_GETENV ed e' il ripiego di getenv() per le chiavi che il padre non
+ * ha passato.
+ *
+ * LE REDIREZIONI sono per PERCORSO e non per descrittore aperto, ed e' una
+ * scelta: passare un fd del padre vorrebbe dire due processi sullo stesso
+ * handle VFS, cioe' un conteggio di riferimenti che oggi non c'e' e una
+ * chiusura che sfila il file da sotto i piedi all'altro. Il figlio apre
+ * il proprio. Basta a `gcc`, che redirige l'uscita di cc1 su un file
+ * temporaneo; non basta alle pipe, che infatti non ci sono ancora.
+ * ============================================================================= */
+#define SPAWN_EXTRA_MAGIA    0x53504E58u   /* 'SPNX' */
+#define SPAWN_MAX_AZIONI     4
+#define SPAWN_RED_PATH_MAX   128
+
+typedef struct {
+    uint32_t fd;                          /* descrittore del FIGLIO da sostituire */
+    uint32_t flags;                       /* O_RDONLY/O_WRONLY/O_CREAT/... */
+    char     percorso[SPAWN_RED_PATH_MAX];
+} SpawnAzione;
+
+typedef struct {
+    uint32_t    magia;                    /* SPAWN_EXTRA_MAGIA, o il blocco e' ignorato */
+    char      **envp;                     /* NULL-terminato; NULL = nessun ambiente */
+    uint32_t    n_azioni;
+    SpawnAzione azioni[SPAWN_MAX_AZIONI];
+} SpawnExtra;
 
 /* Verifica indirizzo utente (evita accessi kernel da ring3) */
 int     syscall_verify_ptr(const void *ptr, uint32_t size);

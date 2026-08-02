@@ -66,8 +66,16 @@ along with GCC; see the file COPYING3.  If not see
    compila e si linka tutto dentro un binario statico.  Dichiararlo qui
    evita che il driver provi a linkare dinamicamente e fallisca in un
    punto che non assomiglia alla causa.  */
+/* ⚠️ -Ttext-segment E' PARTE DEL CONTRATTO, non una preferenza.  Senza,
+   `ld` carica dove vuole lui — 0x08048000, il default storico di Linux —
+   mentre gli script di link di /bin dicono 0x08000000.  Il caricatore del
+   kernel accetta entrambi (verifica solo che il PT_LOAD stia dentro lo
+   spazio utente), quindi il difetto non si vedeva: si vedeva soltanto che
+   un binario prodotto dal cross e uno prodotto dal Makefile stavano a
+   indirizzi diversi, il che rende inconfrontabili due disassemblati dello
+   stesso programma.  Le specs devono dire cio' che fanno.  */
 #undef  LINK_SPEC
-#define LINK_SPEC "-m elf_i386 -static -e _start %{shared:%eEX-OS non supporta le librerie condivise per i programmi}"
+#define LINK_SPEC "-m elf_i386 -static -e _start -Ttext-segment=0x08000000 %{shared:%eEX-OS non supporta le librerie condivise per i programmi}"
 
 /* Il file di avvio: chiama main() con argc e argv e poi exit().  E' il
    lib/start.S di EX-OS, installato come crt0.o.  */
@@ -85,8 +93,14 @@ along with GCC; see the file COPYING3.  If not see
 
 /* I programmi utente sono statici e non rilocabili: vedi la nota in testa
    al file.  */
+/* ⚠️ DUE COSE DIVERSE CHE SI CHIAMANO UGUALE.  DWARF2_UNWIND_INFO 0 (qui
+   sotto) toglie l'unwind delle ECCEZIONI; le tabelle ASINCRONE — quelle
+   che servono a un debugger per srotolare lo stack in un punto qualunque —
+   GCC le emette lo stesso, ed erano 5,6 KB di .eh_frame in ogni binario.
+   Su un floppy da 1.44 MB con venti programmi sono 110 KB di peso morto.
+   Si tolgono da qui, non da li'.  */
 #undef  CC1_SPEC
-#define CC1_SPEC "%{!fpic:%{!fPIC:%{!fpie:%{!fPIE:-fno-pic}}}}"
+#define CC1_SPEC "%{!fpic:%{!fPIC:%{!fpie:%{!fPIE:-fno-pic}}}} %{!fasynchronous-unwind-tables:-fno-asynchronous-unwind-tables}"
 
 /* EX-OS non ha ancora un gestore di eccezioni ne' unwind delle chiamate:
    le tabelle .eh_frame sarebbero peso morto in ogni binario, su un floppy
@@ -99,3 +113,37 @@ along with GCC; see the file COPYING3.  If not see
    segmento di codice.  */
 #undef  TARGET_ASM_FILE_END
 #define TARGET_ASM_FILE_END file_end_indicate_exec_stack
+
+/* =============================================================================
+   I TIPI FONDAMENTALI — dirli qui, o li indovina qualcun altro
+
+   ⚠️ Senza queste righe il bersaglio prendeva i valori predefiniti, che per
+   un ELF a 32 bit generico sono `long unsigned int` per size_t e `long int`
+   per int32_t.  Sono larghezze GIUSTE — 32 bit entrambe — ma tipi
+   DIVERSI da quelli del gcc di sistema con -m32, che usa `unsigned int` e
+   `int`.  La differenza non e' accademica:
+
+     - un sorgente che includa <stddef.h> accanto a un header che dichiari
+       size_t a mano non compila piu' («conflicting types for 'size_t'»);
+     - `int32_t` diventa `long int`, e ogni printf("%d", un_int32) diventa
+       un avviso, in un progetto che compila con -Wall -Wextra.
+
+   i386-linux dichiara esattamente questi tre, ed e' il bersaglio con cui
+   EX-OS condivide l'ABI: allinearsi a lui e' la scelta che non sorprende
+   nessuno.  UINT32_TYPE segue INT32_TYPE, e INTPTR/UINTPTR seguono
+   PTRDIFF/SIZE da newlib-stdint.h — quindi si sistemano da soli.
+
+   Vanno DOPO newlib-stdint.h nella catena di tm_file, ed e' cosi': exos.h
+   e' l'ultimo (vedi il caso i[34567]86-*-exos* in config.gcc).
+   ============================================================================= */
+#undef  SIZE_TYPE
+#define SIZE_TYPE      "unsigned int"
+
+#undef  PTRDIFF_TYPE
+#define PTRDIFF_TYPE   "int"
+
+#undef  INT32_TYPE
+#define INT32_TYPE     "int"
+
+#undef  UINT32_TYPE
+#define UINT32_TYPE    "unsigned int"

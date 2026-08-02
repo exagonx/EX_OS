@@ -145,6 +145,42 @@ RAM ESTESA > 1MB — Tutto il resto (protetto, isolato)
   Librerie (/lib/)    — shared, mappate in ogni processo
 ```
 
+### Le pagine di un programma arrivano quando servono
+
+Dalla 0.149 il caricatore ELF non copia i segmenti in RAM: annota dove
+vivono nel file, tiene l'eseguibile aperto e le pagine arrivano al primo
+accesso, dal gestore di page fault. Un binario con **8 MB di dati
+costanti** parte occupando 36 KB e sale a 8 MB solo se lo si legge tutto.
+
+Il costo di avvio non dipende piu' dalla dimensione del binario — che e'
+la condizione per far girare qui dentro un compilatore, dove `cc1` da solo
+sono decine di MB.
+
+I **driver** fanno eccezione e si caricano tutti in RAM: un driver che
+serve il filesystem, paginato da quel filesystem, dovrebbe servire la
+propria lettura mentre e' fermo ad aspettarla.
+
+Conseguenza da sapere: **l'eseguibile resta aperto finche' il processo
+vive**, e le pagine caricate non vengono mai buttate via (manca lo
+sfratto, e con esso il file di scambio).
+
+### La fascia kernel, e la finestra di rimappatura
+
+La page directory di un processo copia dalla PD del kernel solo le PDE
+**sotto `USER_SPACE_BASE` (64 MB)**. Quella fascia è l'unica memoria che il
+kernel può rileggere al proprio indirizzo fisico mentre gira un processo,
+ed è dove il PMM è obbligato a mettere ciò che il kernel indirizza così:
+heap di `kmalloc`, stack kernel dei processi, page directory e page table,
+immagini dei driver in corso di rilocazione (`pmm_alloc_page_kernel()`).
+
+Le pagine dei processi invece stanno **ovunque in RAM**: il kernel le tocca
+attraverso una pagina virtuale che ripunta al volo alla pagina fisica che
+gli serve — `paging_finestra_apri()`, il `kmap_atomic` dei kernel grandi
+ridotto all'osso. Senza, un processo poteva crescere solo finché il PMM
+consegnava pagine sotto la soglia: **4 MB, e poi kernel panic**, con
+qualunque quantità di RAM installata. Ora un processo arriva a occupare la
+RAM disponibile (provato: 300 MB su una macchina da 512).
+
 ---
 
 ## Syscall interface (int 0x80, stile Linux)
@@ -157,6 +193,9 @@ RAM ESTESA > 1MB — Tutto il resto (protetto, isolato)
 |   5 | open         | path*      | flags     | mode    |
 |   6 | close        | fd         | —         | —       |
 |  11 | exec         | path*      | argv**    | envp**  |
+|  41 | dup          | fd         | —         | —       |
+|  63 | dup2         | vecchio    | nuovo     | —       |
+|  55 | fcntl        | fd         | cmd       | arg     |
 |  20 | getpid       | —          | —         | —       |
 |  45 | sbrk         | increment  | —         | —       |
 |  54 | ioctl        | fd         | request   | arg     |
@@ -418,6 +457,19 @@ comporre quella mappa.
 ⚠️ Il prezzo è lo stesso patto di LILO: **ricopiare kernel o Stage 2 obbliga a
 rilanciare `install`.**
 
+### `install` sostituisce, e verifica (dal 0.148)
+
+Rilanciarlo su un sistema già installato **riscrive ogni file**, kernel
+compreso, e rilegge ognuno per confrontarne la dimensione. Nel resoconto `+`
+è creato, `~` sostituito, `!` errore.
+
+Fino alla 0.147 i file già presenti venivano saltati: un aggiornamento
+copiava solo i file nuovi, lasciava il kernel vecchio e poi riscriveva la
+mappa dei settori *per quello* — il disco ripartiva con la versione di
+prima e l'installatore diceva «completata». Le directory continuano a non
+essere ricreate, e ciò che sul volume non fa parte del sistema resta dov'è:
+`install` aggiorna, non azzera.
+
 Per il kernel la mappa è una **lista** di intervalli, non uno solo. Su ext2 un
 file non è quasi mai contiguo, e non per frammentazione: il blocco di
 *puntatori* viene allocato in mezzo ai dati, perché serve prima del tredicesimo
@@ -648,6 +700,30 @@ due numeri diversi per costruzione. Il valore atteso va messo in una variabile
 l'orologio CMOS — senza fuso orario, perché il sistema non sa in quale si trova:
 `localtime` e `gmtime` danno la stessa ora. `stat`/`fstat` nella forma POSIX.
 
+### Processi: spawn con ambiente e redirezioni
+
+`spawn()` lancia un programma e ritorna il PID; `waitpid()` ne raccoglie
+l'esito. Non c'è `fork()`, ed è una scelta: duplicare uno spazio di
+indirizzamento per buttarlo via alla `exec` successiva, su un sistema senza
+copy-on-write, sarebbe la cosa più costosa che si possa fare.
+
+```c
+SpawnRedir r = { 1, O_WRONLY | O_CREAT | O_TRUNC, "/uscita.txt" };
+int pid = spawn_ex("/bin/hello", argv, environ, &r, 1);
+waitpid(pid, &stato, 0);
+```
+
+La redirezione è **per percorso**, non per descrittore già aperto del
+padre: il figlio apre il proprio file. Passare un fd significherebbe due
+processi sullo stesso handle VFS, cioè un conteggio di riferimenti che non
+c'è e una `close()` che sfila il file da sotto all'altro. Basta a un driver
+di compilatore; non basta alle pipe, che infatti non ci sono ancora.
+
+L'ambiente si eredita per copia (`environ`, `putenv`, `setenv`,
+`unsetenv`). `getenv()` ripiega sulla sezione `[env]` di `kernel.cfg` per
+le chiavi che non trova: senza quel ripiego il primo processo — che un
+padre non ce l'ha — resterebbe senza `PATH`.
+
 ### Intestazioni con i nomi standard
 
 `<stdio.h>`, `<stdlib.h>`, `<string.h>`, `<ctype.h>`, `<errno.h>`, `<setjmp.h>`,
@@ -667,10 +743,35 @@ binari erano raddoppiati (`ls`: 12 → 25 KB). `-ffunction-sections`
 ha più spazio libero di quanto ne avesse all'inizio.
 
 ```
-libctest        78 prove: allocatore, formattazione, flussi, salti non
+libctest       171 prove: allocatore, formattazione, flussi, salti non
                 locali, conversioni, errno, virgola mobile, sscanf,
-                data e ora, stat — tutte dentro EX-OS
+                data e ora, stat, ambiente, directory, temporanei,
+                descrittori duplicati, interfacce per il codice di terzi,
+                spawn con redirezione — tutte dentro EX-OS
 ```
+
+### Il collaudo che conta: binutils
+
+Fino ad agosto 2026 la libc era provata solo da `libctest`, che chiama le
+funzioni che **sappiamo** di avere. **binutils 2.44 compilato per
+`i386-exos`** chiama quelle che gli servono, e le ha chieste una alla
+volta: `dup`/`dup2`/`fcntl`, `EOF` (il valore c'era, mancava il *nome*),
+`frexp`, `strftime`, `strcasecmp`, `realpath`, `mbstowcs`, `fscanf`,
+`chmod`/`umask` — più gli header `<sys/types.h>`, `<strings.h>`,
+`<wchar.h>`, `<sys/param.h>`, `<limits.h>`.
+
+Il risultato è che `as` e `ld` **girano dentro EX-OS**:
+
+```
+ex-os:/> /cdrom/bin/as -o /prova.o /cdrom/prova.s
+ex-os:/> /cdrom/bin/ld -o /prova /prova.o
+ex-os:/> /prova
+Assemblato e collegato dentro EX-OS.
+```
+
+L'oggetto prodotto qui dentro è identico byte per byte a quello che
+produce il cross su Linux. I due strumenti stanno sul CD degli strumenti
+(`make iso`); come costruirli è in `tools/binutils-exos/leggimi.md`.
 
 ---
 

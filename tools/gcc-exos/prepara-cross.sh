@@ -12,11 +12,16 @@
 #
 #     tools/gcc-exos/prepara-cross.sh [prefisso]      (default: ~/exos-cross)
 #
-# COSA SONO I WRAPPER DEI BINUTILS. Non c'e' un binutils compilato per
-# i386-exos, e per ora non serve: il formato di uscita e' ELF32 i386,
+# COSA SONO I WRAPPER DEI BINUTILS. Sono il RIPIEGO, da quando esiste
+# tools/binutils-exos/prepara-binutils.sh: se i binutils veri per
+# i386-exos sono gia' installati, questo script li lascia stare e li usa.
+#
+# Il ripiego funziona perche' il formato di uscita e' ELF32 i386,
 # esattamente quello che l'`as` e l'`ld` di sistema producono con --32 e
-# -m elf_i386. I wrapper esistono perche' senza di loro quegli strumenti
-# lavorerebbero a 64 bit, che e' il loro default.
+# -m elf_i386; i wrapper esistono perche' senza di loro quegli strumenti
+# lavorerebbero a 64 bit, che e' il loro default. Basta per compilare SU
+# Linux PER EX-OS, e non basta per il passo dopo — un binutils NATIVO si
+# costruisce solo a partire da uno cross.
 #
 # ⚠️ VANNO INSTALLATI IN DUE POSTI, e non e' una ridondanza:
 #
@@ -74,10 +79,23 @@ mkdir -p "$PREFISSO/bin" "$PREFISSO/i386-exos/bin" \
 # Due copie per ogni strumento: col nome prefissato dove guarda l'utente, e
 # col nome semplice dove guarda GCC. Vedi il commento in testa allo script:
 # senza la seconda, GCC ripiega in silenzio sull'assemblatore di sistema.
+#
+# ⚠️ UN WRAPPER NON SOVRASCRIVE MAI UN BINUTILS VERO.
+#
+# Dal momento in cui tools/binutils-exos/prepara-binutils.sh installa gli
+# strumenti compilati per il bersaglio, rilanciare questo script per
+# aggiornare gli HEADER (che e' il motivo per cui lo si rilancia quasi
+# sempre) rimetterebbe i wrapper sopra i binari — e il sintomo sarebbe un
+# `ld` che di colpo non conosce piu' l'emulazione predefinita, senza che
+# nessuno abbia toccato niente. Qui si guarda cosa c'e' prima di scrivere.
 crea_wrapper() {
     nome="$1"
     comando="$2"
     for dest in "$PREFISSO/bin/i386-exos-$nome" "$PREFISSO/i386-exos/bin/$nome"; do
+        if [ -x "$dest" ] && ! head -1 "$dest" | grep -q '^#!'; then
+            echo "  = $nome: c'e' gia' il binutils vero, wrapper non installato"
+            continue
+        fi
         cat > "$dest" <<EOF
 #!/bin/sh
 # Wrapper generato da tools/gcc-exos/prepara-cross.sh: gli strumenti di
@@ -99,7 +117,7 @@ crea_wrapper nm      "nm"
 
 # Contati in i386-exos/bin: in bin/ ci sono anche i binari di GCC, se il
 # compilatore e' gia' installato, e sommarli direbbe un numero senza senso.
-echo "[OK] binutils: $(ls "$PREFISSO/i386-exos/bin" | wc -l) wrapper, in due copie"
+echo "[OK] binutils: $(ls "$PREFISSO/i386-exos/bin" | wc -l) strumenti, in due copie"
 echo "               (bin/i386-exos-* per l'utente, i386-exos/bin/* per GCC)"
 
 # --- Ambiente del bersaglio --------------------------------------------------
@@ -107,7 +125,16 @@ echo "               (bin/i386-exos-* per l'utente, i386-exos/bin/* per GCC)"
 # e finche' il cross non esiste e' l'unico modo di averli. Dopo, si
 # rigenerano con il cross stesso lanciando di nuovo questo script.
 CC="${CC:-gcc}"
+# ⚠️ -fno-asynchronous-unwind-tables NON e' un dettaglio di ottimizzazione.
+# Il bersaglio lo passa da solo (CC1_SPEC in exos.h), ma questi due file li
+# compila il gcc DI SISTEMA, che invece le tabelle asincrone le emette: il
+# risultato era una libc.a con dentro .eh_frame, e quindi 8 KB di .eh_frame
+# in ogni binario collegato con il cross — 8 KB che i programmi costruiti
+# dal Makefile non hanno, perche' li' sono i linker script a buttarli via.
+# Due strade per la stessa libreria che producono binari diversi sono
+# esattamente cio' che rende inconfrontabili due disassemblati.
 CFLAGS="-m32 -ffreestanding -fno-builtin -fno-stack-protector -fno-pic -fno-pie \
+        -fno-asynchronous-unwind-tables \
         -Wall -O2 -std=c11 -ffunction-sections -fdata-sections"
 
 $CC -m32 -c lib/start.S -o "$PREFISSO/i386-exos/lib/crt0.o"
@@ -119,6 +146,21 @@ rm -f "$PREFISSO/i386-exos/lib/libc.o"
 # non i soli file di primo livello — un <sys/stat.h> mancante si
 # manifesta molto dopo, quando un sorgente di terzi non compila.
 cp -r lib/include/. "$PREFISSO/i386-exos/include/"
+
+# ⚠️ E LO STESSO ALBERO ANCHE COME sys-include, che non e' un doppione.
+#
+# GCC cerca gli header DI SISTEMA in $prefisso/i386-exos/sys-include (e'
+# CROSS_SYSTEM_HEADER_DIR nel suo Makefile, che per un cross con
+# --with-newlib punta li'), non in include/. Da quel percorso dipende una
+# cosa sola ma importante: se ci trova un <limits.h>, GCC installa il
+# PROPRIO limits.h nella forma che fa `#include_next` — cioe' che prende
+# anche il nostro — invece della forma "non c'e' nessun sistema sotto",
+# che lo schermerebbe per sempre.
+#
+# Il sintomo, senza questo collegamento, e' che PATH_MAX non esiste per
+# nessun programma: il nostro <limits.h> c'e', e' installato, e non lo
+# include nessuno.
+ln -sfn include "$PREFISSO/i386-exos/sys-include"
 
 echo "[OK] crt0.o, libc.a e $(ls lib/include/*.h | wc -l) header installati"
 echo ""

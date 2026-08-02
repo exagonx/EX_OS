@@ -100,7 +100,10 @@ static KHeapBlock *heap_expand(uint32_t pages)
     uint32_t     size_bytes;
     KHeapBlock  *new_block;
 
-    phys = pmm_alloc_pages(pages);
+    /* Fascia kernel: i blocchi dello heap si usano al loro indirizzo
+     * fisico (new_block qui sotto), quindi devono restare raggiungibili
+     * anche quando gira un processo con la propria page directory. */
+    phys = pmm_alloc_pages_kernel(pages);
     if (phys == 0) {
         klog(LOG_ERROR, "KMALLOC: PMM OOM durante espansione heap (%u pagine)", pages);
         return NULL;

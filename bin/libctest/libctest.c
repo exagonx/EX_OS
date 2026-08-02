@@ -302,6 +302,216 @@ static void prova_resto(void)
 
     esito("memchr", memchr("abcdef", 'd', 6) != NULL &&
                     memchr("abcdef", 'z', 6) == NULL);
+
+    esito("strcasecmp",  strcasecmp("Gatto", "gATTO") == 0 &&
+                         strcasecmp("gatto", "gatti") != 0);
+    esito("strncasecmp", strncasecmp("GATTOne", "gattoni", 5) == 0 &&
+                         strncasecmp("gatto", "cane", 1) != 0);
+    esito("strpbrk",     strpbrk("nome.sez,uno", ".,") != NULL &&
+                         *strpbrk("nome.sez,uno", ".,") == '.' &&
+                         strpbrk("niente", ".,") == NULL);
+}
+
+/* =============================================================================
+ * Quello che chiede il codice di terzi
+ *
+ * Non e' una sezione di comodo: sono le funzioni che NON avevamo e che
+ * hanno fermato la compilazione di binutils una alla volta. Provarle qui
+ * costa meno che riscoprirle al prossimo sorgente esterno.
+ * ============================================================================= */
+static void prova_terzi(void)
+{
+    printf("\nInterfacce per il codice di terzi:\n");
+
+    /* EOF: il valore c'era, il nome no. */
+    esito("EOF vale -1", EOF == -1);
+
+    /* strftime, sulla data che si conosce a memoria. */
+    {
+        struct tm t;
+        char      buf[64];
+        size_t    n;
+
+        t.tm_sec = 5; t.tm_min = 4; t.tm_hour = 13;
+        t.tm_mday = 2; t.tm_mon = 7; t.tm_year = 126;   /* 2 agosto 2026 */
+        t.tm_wday = 0; t.tm_yday = 213; t.tm_isdst = 0;
+
+        n = strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S%z", &t);
+        esito("strftime data completa",
+              n > 0 && strcmp(buf, "2026-08-02T13:04:05+0000") == 0);
+
+        strftime(buf, sizeof(buf), "%a %b %e %p", &t);
+        esito("strftime nomi e ora", strcmp(buf, "Sun Aug  2 PM") == 0);
+
+        strftime(buf, sizeof(buf), "%%%V", &t);
+        esito("strftime ricopia cio' che non sa", strcmp(buf, "%%V") == 0);
+
+        esito("strftime dice 0 se non ci sta",
+              strftime(buf, 4, "%Y-%m-%d", &t) == 0);
+    }
+
+    /* frexp/ldexp stanno nella sezione della virgola mobile. Qui i file. */
+    {
+        const char *nome = "/terzi.tmp";
+        struct stat st;
+        FILE       *f;
+
+        unlink(nome);
+
+        f = fopen(nome, "w");
+        esito("apre un file da riaprire", f != NULL);
+        if (f != NULL) {
+            fputs("primo", f);
+
+            /* freopen: lo stesso FILE*, un altro file. */
+            esito("freopen cambia file sotto lo stesso FILE*",
+                  freopen("/terzi2.tmp", "w", f) == f);
+            fputs("secondo", f);
+            fclose(f);
+
+            f = fopen(nome, "r");
+            if (f != NULL) {
+                char riga[32] = { 0 };
+                fgets(riga, sizeof(riga), f);
+                fclose(f);
+                esito("il primo file ha quel che ci era stato scritto",
+                      strcmp(riga, "primo") == 0);
+            } else {
+                esito("il primo file ha quel che ci era stato scritto", 0);
+            }
+
+            f = fopen("/terzi2.tmp", "r");
+            if (f != NULL) {
+                char riga[32] = { 0 };
+                fgets(riga, sizeof(riga), f);
+                fclose(f);
+                esito("il secondo ha quel che e' venuto dopo",
+                      strcmp(riga, "secondo") == 0);
+            } else {
+                esito("il secondo ha quel che e' venuto dopo", 0);
+            }
+        }
+
+        /* lstat: identica a stat, perche' non ci sono collegamenti. */
+        esito("lstat come stat",
+              lstat(nome, &st) == 0 && S_ISREG(st.st_mode));
+        esito("lstat su un nome assente fallisce",
+              lstat("/non-esiste-di-sicuro", &st) != 0);
+
+        /* ⚠️ chmod e umask non cambiano niente: si prova che RISPONDANO,
+         * che e' tutto cio' che promettono. */
+        esito("umask non maschera niente", umask(022) == 0);
+        esito("chmod accetta un file che c'e'", chmod(nome, 0644) == 0);
+        esito("chmod fallisce su un nome assente",
+              chmod("/non-esiste-di-sicuro", 0644) != 0);
+
+        unlink(nome);
+        unlink("/terzi2.tmp");
+    }
+
+    /* mktemp: da' un nome e non crea niente — e' il suo difetto, ed e'
+     * quello che si verifica. */
+    {
+        char modello[] = "/mkXXXXXX";
+
+        esito("mktemp riempie il modello",
+              mktemp(modello) == modello && modello[3] != 'X');
+        esito("e NON crea il file", access(modello, F_OK) != 0);
+    }
+
+    /* fscanf: la prova che conta e' che il flusso resti dove la scansione
+     * si e' fermata, perche' e' li' che una finestra letta e non
+     * riportata indietro si vedrebbe. */
+    {
+        const char *nome = "/scan.tmp";
+        FILE       *f = fopen(nome, "w");
+
+        if (f != NULL) {
+            fputs("42 abc 3.5\nresto della riga\n", f);
+            fclose(f);
+        }
+
+        f = fopen(nome, "r");
+        esito("apre il file da leggere", f != NULL);
+        if (f != NULL) {
+            int   n = 0;
+            char  parola[16] = { 0 };
+            char  riga[32] = { 0 };
+
+            esito("fscanf legge un intero e una parola",
+                  fscanf(f, "%d %15s", &n, parola) == 2 &&
+                  n == 42 && strcmp(parola, "abc") == 0);
+
+            /* Se la finestra non fosse riportata indietro, qui si
+             * leggerebbe la fine del file invece del resto della riga. */
+            fgets(riga, sizeof(riga), f);
+            esito("il flusso e' rimasto dove doveva",
+                  strstr(riga, "3.5") != NULL);
+
+            fclose(f);
+        }
+        unlink(nome);
+    }
+
+    /* realpath: la prova che conta e' che due percorsi DIVERSI dello
+     * stesso file diano la stessa risposta, e che due file diversi diano
+     * risposte diverse — e' quello che `ld` usa per non collegare un file
+     * su se stesso. */
+    {
+        const char *nome = "/reale.tmp";
+        char        a[320], b[320];
+        int         fd = open(nome, O_WRONLY | O_CREAT | O_TRUNC);
+
+        if (fd >= 0) close(fd);
+
+        esito("realpath su un percorso gia' assoluto",
+              realpath(nome, a) == a && strcmp(a, nome) == 0);
+        esito("realpath toglie i '.' e i doppi '/'",
+              realpath("//./reale.tmp", b) == b && strcmp(b, nome) == 0);
+        esito("realpath risolve il '..'",
+              realpath("/bin/../reale.tmp", b) == b && strcmp(b, nome) == 0);
+        esito("il '..' sulla radice resta la radice",
+              realpath("/../..", b) == b && strcmp(b, "/") == 0);
+        esito("realpath su un nome assente fallisce",
+              realpath("/non-esiste-di-sicuro", b) == NULL);
+
+        /* Due file diversi non devono dare la stessa risposta: e' il caso
+         * in cui ld rifiutava di collegare. */
+        {
+            char *dinamico = realpath(nome, NULL);
+            esito("realpath alloca da se' con NULL",
+                  dinamico != NULL && strcmp(dinamico, nome) == 0);
+            esito("due file diversi, due percorsi diversi",
+                  dinamico != NULL && strcmp(dinamico, "/") != 0);
+            free(dinamico);
+        }
+
+        unlink(nome);
+    }
+
+    /* Le ultime arrivate, una riga a testa. */
+    esito("strcoll come strcmp", strcoll("abc", "abd") < 0 &&
+                                 strcoll("abc", "abc") == 0);
+    esito("atof",  atof("3.5") == 3.5);
+    esito("fabs",  fabs(-2.25) == 2.25 && fabs(2.25) == 2.25);
+    esito("mbrtowc un byte per volta", mbrtowc(NULL, "A", 1, NULL) == 1);
+    esito("MB_CUR_MAX vale 1",         MB_CUR_MAX == 1);
+
+    {
+        time_t adesso = time(NULL);
+        char  *s = ctime(&adesso);
+        /* "Sun Aug  2 17:04:05 2026\n": 25 caratteri, sempre. */
+        esito("ctime da' 25 caratteri e un a capo",
+              s != NULL && strlen(s) == 25 && s[24] == '\n');
+    }
+
+    /* mkdir prende due argomenti da agosto 2026; il secondo si ignora. */
+    {
+        const char *d = "/duearg.dir";
+        rmdir(d);
+        esito("mkdir con i permessi", mkdir(d, 0755) == 0);
+        rmdir(d);
+    }
 }
 
 /* =============================================================================
@@ -408,6 +618,23 @@ static void prova_virgola(void)
         esito("x87 attraverso lo switch", acc == 1048576.0);
     }
 
+    /* frexp e ldexp sono una l'inversa dell'altra: la prova che vale e'
+     * il giro completo, non i due pezzi separati. */
+    {
+        int    e = 12345;
+        double m = frexp(48.0, &e);
+
+        esito("frexp mantissa in [0.5,1)", m == 0.75);
+        esito("frexp esponente",           e == 6);
+        esito("frexp/ldexp si annullano",  ldexp(m, e) == 48.0);
+
+        m = frexp(-0.125, &e);
+        esito("frexp tiene il segno",      m == -0.5 && e == -2);
+
+        m = frexp(0.0, &e);
+        esito("frexp di zero",             m == 0.0 && e == 0);
+    }
+
     esito("strtoull 64 bit",     strtoull("12345678901", NULL, 10) == 12345678901ULL);
     esito("strtoll negativo",    strtoll("-9000000000", NULL, 10) == -9000000000LL);
     esito("strtoull esadecimale", strtoull("0xFFFFFFFF", NULL, 16) == 4294967295ULL);
@@ -497,6 +724,255 @@ static void prova_stat(void)
     unlink(nome);
 }
 
+/* =============================================================================
+ * Ambiente, directory, temporanei — cio' che serve a un compilatore
+ * ospitato, provato dentro EX-OS
+ * ============================================================================= */
+static void prova_ambiente(void)
+{
+    printf("\nAmbiente:\n");
+
+    /* PATH arriva dalla sezione [env] di kernel.cfg attraverso il ripiego
+     * di getenv(): e' la prova che la vecchia strada non si e' rotta. */
+    esito("getenv trova PATH",        getenv("PATH") != NULL);
+    esito("getenv su chiave assente", getenv("NON_ESISTE_DI_SICURO") == NULL);
+
+    esito("setenv crea",     setenv("PROVA_EXOS", "uno", 1) == 0);
+    esito("getenv rilegge",  getenv("PROVA_EXOS") != NULL &&
+                             strcmp(getenv("PROVA_EXOS"), "uno") == 0);
+
+    esito("setenv senza sovrascrivere lascia stare",
+          setenv("PROVA_EXOS", "due", 0) == 0 &&
+          strcmp(getenv("PROVA_EXOS"), "uno") == 0);
+
+    esito("setenv sovrascrive",
+          setenv("PROVA_EXOS", "due", 1) == 0 &&
+          strcmp(getenv("PROVA_EXOS"), "due") == 0);
+
+    esito("unsetenv toglie",
+          unsetenv("PROVA_EXOS") == 0 && getenv("PROVA_EXOS") == NULL);
+
+    /* environ resta percorribile dopo le modifiche */
+    {
+        int n = 0;
+        if (environ != NULL) while (environ[n] != NULL) n++;
+        esito("environ e' una lista valida", n >= 0 && n < 1000);
+    }
+}
+
+static void prova_directory(void)
+{
+    DIR           *d;
+    struct dirent *v;
+    int            trovati = 0, trovata_bin = 0;
+
+    printf("\nDirectory:\n");
+
+    d = opendir("/");
+    if (d == NULL) { esito("opendir /", 0); return; }
+    esito("opendir /", 1);
+
+    while ((v = readdir(d)) != NULL) {
+        trovati++;
+        if (strcmp(v->d_name, "BIN") == 0 || strcmp(v->d_name, "bin") == 0) {
+            trovata_bin = 1;
+            esito("readdir marca bin come directory", v->d_type == DT_DIR);
+        }
+    }
+    esito("readdir elenca la root", trovati > 0);
+    esito("readdir trova bin",      trovata_bin);
+
+    /* rewinddir deve far ricominciare: se non lo facesse, il secondo giro
+     * darebbe zero voci e sembrerebbe una directory vuota. */
+    rewinddir(d);
+    esito("rewinddir ricomincia", readdir(d) != NULL);
+
+    esito("closedir",  closedir(d) == 0);
+    {
+        /* Stessa ragione: un file che ci mettiamo noi. */
+        const char *tmp = "/opendir.tmp";
+        int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC);
+        if (fd >= 0) close(fd);
+        esito("opendir su un file fallisce", opendir(tmp) == NULL);
+        unlink(tmp);
+    }
+    esito("opendir su un nome assente fallisce", opendir("/nonesiste") == NULL);
+}
+
+static void prova_temporanei(void)
+{
+    char modello[] = "/tmpXXXXXX";
+    int  fd;
+
+    printf("\nFile temporanei e interrogazioni:\n");
+
+    fd = mkstemp(modello);
+    esito("mkstemp apre", fd >= 0);
+    if (fd >= 0) {
+        esito("mkstemp ha riempito il modello",
+              modello[4] != 'X' && modello[9] != 'X');
+        esito("il temporaneo si scrive", write(fd, "x", 1) == 1);
+        close(fd);
+        esito("access lo trova",       access(modello, F_OK) == 0);
+
+        /* rename: copia e cancella, ma il risultato dev'essere quello */
+        esito("rename sposta",         rename(modello, "/rinominato.tmp") == 0);
+        esito("il vecchio nome non c'e' piu'", access(modello, F_OK) != 0);
+        esito("il nuovo nome c'e'",    access("/rinominato.tmp", F_OK) == 0);
+        unlink("/rinominato.tmp");
+    }
+
+    esito("access su un nome assente fallisce",
+          access("/non-esiste-di-sicuro", F_OK) != 0);
+
+    esito("isatty su stdout",      isatty(1) == 1);
+    {
+        /* Un file CREATO QUI, non uno che si spera esista: /KERNEL.BIN c'e'
+         * sul floppy e non su un sistema installato su ext2, e la prova
+         * falliva li' per il motivo sbagliato. */
+        const char *tmp = "/isatty.tmp";
+        int f2 = open(tmp, O_WRONLY | O_CREAT | O_TRUNC);
+        esito("isatty su un file no", f2 >= 0 && isatty(f2) == 0);
+        if (f2 >= 0) close(f2);
+        unlink(tmp);
+    }
+
+    esito("sysconf pagina",   sysconf(_SC_PAGESIZE) == 4096);
+    esito("sysconf sconosciuta fallisce", sysconf(9999) == -1);
+    esito("setlocale C",      setlocale(LC_ALL, "C") != NULL);
+    esito("setlocale altro no", setlocale(LC_ALL, "it_IT.UTF-8") == NULL);
+    esito("strsignal",        strsignal(SIGSEGV) != NULL);
+}
+
+/* =============================================================================
+ * dup, dup2, fcntl
+ *
+ * La prova che conta e' l'ULTIMA: quella che il file resta aperto dopo che
+ * si e' chiuso il primo dei due descrittori. E' il gesto che fanno `ar`,
+ * `objcopy` e `arsup` di binutils — `fd = dup(fd)` per sopravvivere alla
+ * close() di chi possedeva l'originale — ed e' il motivo per cui dup()
+ * esiste in EX-OS. Senza il conteggio dei riferimenti nel VFS, la prima
+ * close() chiuderebbe il file sotto i piedi all'altro fd, e la lettura che
+ * viene dopo risponderebbe EBADF.
+ * ============================================================================= */
+static void prova_dup(void)
+{
+    const char *nome = "/dup.tmp";
+    int         a, b, n;
+    char        buf[8];
+
+    printf("\nDescrittori duplicati:\n");
+
+    unlink(nome);
+
+    a = open(nome, O_RDWR | O_CREAT | O_TRUNC);
+    esito("apre il file di prova", a >= 0);
+    if (a < 0) return;
+
+    write(a, "ABCDEF", 6);
+
+    b = dup(a);
+    esito("dup da' un descrittore diverso", b >= 0 && b != a);
+
+    /* ⚠️ La posizione NON e' condivisa: qui si legge da capo perche' `b`
+     * parte da dove stava `a` (in coda) e ci si posiziona a mano. Su un
+     * sistema POSIX questa lseek spostererebbe anche `a`. */
+    esito("lseek sul duplicato",   lseek(b, 0, SEEK_SET) == 0);
+    n = (int)read(b, buf, 3);
+    esito("si legge dal duplicato", n == 3 && buf[0] == 'A');
+
+    /* Il punto di tutto: chiudo il primo, il file deve restare aperto. */
+    close(a);
+    esito("il file resta aperto dopo la close del primo",
+          lseek(b, 0, SEEK_SET) == 0 && read(b, buf, 1) == 1 && buf[0] == 'A');
+
+    /* dup2 su un numero scelto: quello vecchio, se occupato, si chiude. */
+    {
+        int c = open(nome, O_RDONLY);
+        esito("apre un secondo descrittore", c >= 0);
+        if (c >= 0) {
+            esito("dup2 mette il file dove dico", dup2(b, c) == c);
+            esito("e il descrittore ci legge dentro",
+                  lseek(c, 0, SEEK_SET) == 0 && read(c, buf, 1) == 1);
+            close(c);
+        }
+    }
+
+    esito("dup2 di un fd su se stesso non fa niente", dup2(b, b) == b);
+    esito("dup di un fd chiuso fallisce",             dup(a) < 0);
+
+    /* fcntl */
+    esito("F_GETFD su un fd valido", fcntl(b, F_GETFD) == 0);
+    esito("F_SETFD accetta",         fcntl(b, F_SETFD, FD_CLOEXEC) == 0);
+    esito("F_GETFL rida' i flag di open",
+          (fcntl(b, F_GETFL) & O_ACCMODE) == O_RDWR);
+    {
+        int d = fcntl(b, F_DUPFD, 5);
+        esito("F_DUPFD duplica da un numero in su", d >= 5);
+        if (d >= 0) close(d);
+    }
+    esito("fcntl su un fd chiuso fallisce", fcntl(a, F_GETFD) < 0);
+    esito("un comando sconosciuto fallisce", fcntl(b, 999) < 0);
+
+    close(b);
+    unlink(nome);
+}
+
+/* =============================================================================
+ * LA PROVA CHE SERVE AL COMPILATORE: lanciare un figlio e prenderne
+ * l'uscita.
+ *
+ * E' quello che fa `gcc` con cc1, as e ld — e finche' non funziona, avere
+ * un compilatore sul disco non serve a niente. Si lancia /bin/hello con
+ * stdout rediretto su un file, si aspetta che finisca, e si rilegge il
+ * file: se dentro c'e' cio' che hello stampa, allora spawn, redirezione e
+ * waitpid funzionano tutti e tre.
+ * ============================================================================= */
+static void prova_spawn(void)
+{
+    const char *uscita = "/uscita.txt";
+    SpawnRedir  red;
+    char       *argv[2];
+    int         pid, stato = 0;
+
+    printf("\nProcessi:\n");
+
+    unlink(uscita);
+
+    argv[0] = (char *)"/bin/hello";
+    argv[1] = NULL;
+
+    red.fd       = 1;                               /* stdout del figlio */
+    red.flags    = O_WRONLY | O_CREAT | O_TRUNC;
+    red.percorso = uscita;
+
+    pid = spawn_ex("/bin/hello", argv, environ, &red, 1);
+    esito("spawn con redirezione", pid > 0);
+    if (pid <= 0) return;
+
+    esito("waitpid raccoglie il figlio", waitpid(pid, &stato, 0) == pid);
+
+    {
+        FILE *f = fopen(uscita, "r");
+        char  riga[128];
+        int   letto = 0;
+
+        if (f != NULL) {
+            letto = (fgets(riga, sizeof(riga), f) != NULL);
+            fclose(f);
+        }
+        esito("l'uscita del figlio e' finita nel file", letto);
+        esito("e il contenuto e' quello giusto",
+              letto && strstr(riga, "Ciao") != NULL);
+    }
+
+    unlink(uscita);
+
+    /* Un figlio che non esiste deve fallire, non restare appeso. */
+    esito("spawn di un programma assente fallisce",
+          spawn("/bin/non-esiste-di-sicuro", argv) < 0);
+}
+
 int main(int argc, char **argv)
 {
     (void)argc; (void)argv;
@@ -512,6 +988,12 @@ int main(int argc, char **argv)
     prova_virgola();
     prova_sscanf();
     prova_stat();
+    prova_ambiente();
+    prova_directory();
+    prova_temporanei();
+    prova_terzi();
+    prova_dup();
+    prova_spawn();
 
     printf("\n%d prove superate, %d fallite\n", passati, falliti);
     return (falliti == 0) ? 0 : 1;

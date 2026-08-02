@@ -795,10 +795,26 @@ $(BUILD_KERNEL)/%.o: $(KERNEL_DIR)/%.c
 # rinominare un header fa fallire make con "No rule to make target".
 -include $(KERNEL_C_OBJ:.o=.d)
 
+# ⚠️ IL TTY AVEVA LA REGOLA MA NON LE DIPENDENZE (corretto 0.149)
+#
+# Questa regola nomina il solo .c, e tty.o non fa parte di KERNEL_C_OBJ:
+# la -include qui sopra non lo copriva. Modificare un header non lo
+# ricompilava — ed e' la stessa trappola gia' documentata per version.h,
+# ricomparsa in un posto che l'elenco non toccava.
+#
+# Il guasto che ne e' seguito e' istruttivo perche' non assomiglia a un
+# problema di build: aggiungendo campi a `struct Process` in sched.h,
+# tty.o ha continuato a leggere `console` all'OFFSET VECCHIO. Tutte e
+# quattro le shell chiedevano la riga sulla console 0, il driver tastiera
+# annunciava «la richiesta di PID 5 sostituisce quella di PID 4», e i
+# comandi digitati sparivano senza errori. Sembrava un difetto delle
+# console virtuali; era un oggetto compilato contro un'altra struttura.
 $(BUILD_KERNEL)/tty.o: drivers/tty/tty.c
 	@echo "[..] Compilo TTY inline: $<"
 	@mkdir -p $(BUILD_KERNEL)
-	$(CC) $(CFLAGS) -I drivers/tty -c $< -o $@
+	$(CC) $(CFLAGS) -I drivers/tty -MMD -MP -c $< -o $@
+
+-include $(BUILD_KERNEL)/tty.d
 
 # FIX BUG #1: Due step distinti:
 #   1. Link ELF32 (kernel.elf) — per GDB, simboli di debug, analisi
@@ -859,24 +875,54 @@ img: floppy
 # =============================================================================
 ISO_ROOT    := $(BUILD_DIR)/iso
 ISO_IMG     := $(DIST_DIR)/exos-tools.iso
+# Dove la build dei binutils nativi ha lasciato as-new e ld-new. Fuori dal
+# repository di proposito: sono binari di 7 MB costruiti da sorgenti di
+# terzi. Si sovrascrive dalla riga di comando se sta altrove:
+#     make iso BINUTILS_NATIVI=~/altro/build
+BINUTILS_NATIVI ?= $(HOME)/exos-native/build-nativi
 ISO_LEGGIMI := $(TOOLS_DIR)/iso/leggimi.txt
 ISO_MKISO   := $(TOOLS_DIR)/mkiso.py
 
-$(ISO_IMG): $(ISO_MKISO) $(ISO_LEGGIMI) $(LIBC_SRC) $(LIBC_HDR) $(LIBC_START) \
+$(ISO_IMG): $(ISO_MKISO) $(ISO_LEGGIMI) $(TOOLS_DIR)/iso/prova.s \
+            $(LIBC_SRC) $(LIBC_HDR) $(LIBC_START) \
             README.md gpl-2.0.txt
 	@echo "=== Creazione CD degli strumenti ==="
 	@mkdir -p $(DIST_DIR)
 	@rm -rf $(ISO_ROOT)
 	@mkdir -p $(ISO_ROOT)/exos/include $(ISO_ROOT)/doc $(ISO_ROOT)/bin
 	@cp $(ISO_LEGGIMI) $(ISO_ROOT)/leggimi.txt
+	@cp $(TOOLS_DIR)/iso/prova.s $(ISO_ROOT)/prova.s
 	@cp -r lib/include/. $(ISO_ROOT)/exos/include/
 	@cp $(LIBC_SRC) $(LIBC_START) $(ISO_ROOT)/exos/
 	@cp README.md KERNEL_CORE_NOTES.md $(ISO_ROOT)/doc/
 	@cp gpl-2.0.txt $(ISO_ROOT)/doc/
-	@# /bin resta vuota finche' non arriva TCC: una directory senza voci
-	@# non e' rappresentabile in modo utile, quindi si dichiara a parole.
-	@printf 'Qui arrivera il compilatore: vedi /leggimi.txt\n' \
-	    > $(ISO_ROOT)/bin/leggimi.txt
+	@# I binutils NATIVI, se ci sono. Non stanno nel repository — sono
+	@# 7 MB l'uno e si costruiscono da sorgenti di terzi (vedi
+	@# tools/binutils-exos/leggimi.md) — quindi si copiano da dove li ha
+	@# messi la build, e se non ci sono il CD si fa lo stesso.
+	@#
+	@# ⚠️ NON e' un ripiego silenzioso: il messaggio dice quale delle due
+	@# cose e' successa, perche' un CD senza `as` e uno con `as` si
+	@# distinguono solo provandoli, e la differenza va detta qui.
+	@# Si TOLGONO i simboli di debug: sono i cinque sesti del file (7,3 MB
+	@# contro 1,4) e non li legge nessuno — il caricatore di EX-OS mappa
+	@# solo i segmenti PT_LOAD, e un debugger che li usi qui non c'e'.
+	@if [ -x "$(BINUTILS_NATIVI)/gas/as-new" ]; then \
+	    if command -v i386-exos-strip >/dev/null 2>&1; then \
+	        i386-exos-strip -o $(ISO_ROOT)/bin/as $(BINUTILS_NATIVI)/gas/as-new; \
+	        i386-exos-strip -o $(ISO_ROOT)/bin/ld $(BINUTILS_NATIVI)/ld/ld-new; \
+	    else \
+	        cp $(BINUTILS_NATIVI)/gas/as-new $(ISO_ROOT)/bin/as; \
+	        cp $(BINUTILS_NATIVI)/ld/ld-new  $(ISO_ROOT)/bin/ld; \
+	    fi; \
+	    printf 'as e ld nativi per EX-OS (binutils 2.44)\n' \
+	        > $(ISO_ROOT)/bin/leggimi.txt; \
+	    echo "     binutils nativi inclusi da $(BINUTILS_NATIVI)"; \
+	else \
+	    printf 'Qui arrivera il compilatore: vedi /leggimi.txt\n' \
+	        > $(ISO_ROOT)/bin/leggimi.txt; \
+	    echo "     binutils nativi assenti ($(BINUTILS_NATIVI)): CD senza /bin"; \
+	fi
 	@python3 $(ISO_MKISO) $(ISO_IMG) --da $(ISO_ROOT) --etichetta "EXOS TOOLS"
 	@echo "[OK] CD degli strumenti: $(ISO_IMG)"
 

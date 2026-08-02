@@ -258,6 +258,10 @@ int32_t sys_read(InterruptFrame *frame)
 
     /* file FAT12 */
     if (proc->fds[fd].type == FD_FILE) {
+        /* Il driver scrivera' dentro `buf`: le sue pagine devono essere
+         * gia' in RAM, o il fault avverrebbe con il lucchetto del VFS in
+         * mano. Vedi vm_precarica_utente(). */
+        vm_precarica_utente((uint32_t)buf, count);
         int32_t n = vfs_read((int)proc->fds[fd].inode, buf, count, proc->fds[fd].offset);
         if (n >= 0) proc->fds[fd].offset += (uint32_t)n;
         return n;
@@ -301,6 +305,9 @@ int32_t sys_write(InterruptFrame *frame)
 
     /* file FAT12 */
     if (proc->fds[fd].type == FD_FILE) {
+        /* Stessa ragione di sys_read, dall'altro verso: il driver LEGGE
+         * da `buf`, e una pagina assente farebbe faultare lui. */
+        vm_precarica_utente((uint32_t)buf, count);
         int32_t n = vfs_write((int)proc->fds[fd].inode, buf, count,
                               proc->fds[fd].offset);
         if (n >= 0) proc->fds[fd].offset += (uint32_t)n;
@@ -375,6 +382,128 @@ int32_t sys_close(InterruptFrame *frame)
     proc->fds[fd].driver_data = NULL;
 
     return 0;
+}
+
+/* =============================================================================
+ * SYS_DUP (41) / SYS_DUP2 (63) / SYS_FCNTL (55)
+ *
+ * PERCHE' ESISTONO. Sono la prima cosa che ha chiesto del codice di terzi
+ * vero: `ar`, `objcopy` e `arsup` di binutils fanno tutti e tre lo stesso
+ * gesto — `fd = dup(fd)` prima di chiudere l'oggetto BFD che possiede
+ * l'originale — per tenere il file aperto oltre la close() di qualcun
+ * altro. Senza dup() quel file si chiude e il rinomina finale scrive in un
+ * descrittore morto.
+ *
+ * ⚠️ LA POSIZIONE NON E' CONDIVISA, e su POSIX invece lo sarebbe.
+ *
+ * Qui l'offset sta nel descrittore del processo (FileDescriptor.offset),
+ * non in un oggetto "file aperto" intermedio: due fd duplicati condividono
+ * il FILE — cioe' l'handle VFS, che e' quel che serve perche' resti aperto
+ * — ma ognuno si ricorda dove era arrivato. Su Linux una read() da uno dei
+ * due sposta anche l'altro.
+ *
+ * Non e' una svista: metterlo in comune vorrebbe dire spostare l'offset
+ * dentro VfsFile, e quindi cambiare la firma di vfs_read/vfs_write e la
+ * gestione della posizione di fat12.c, che la tiene per conto suo
+ * nell'handle. Il codice che ci gira sopra oggi non se ne accorge —
+ * binutils, nell'unico punto in cui legge da un fd duplicato, fa prima un
+ * lseek(SEEK_SET) esplicito (rename.c: simple_copy). Il giorno che
+ * arrivera' una pipe, o una shell che scrive in append da due fd, questa
+ * diventera' la cosa da sistemare per prima.
+ * ============================================================================= */
+
+/* Il corpo comune: mette in `nuovo` una copia del descrittore `vecchio`.
+ * Chiude cio' che c'era in `nuovo`, come vuole dup2. */
+static int32_t fd_duplica(Process *proc, int vecchio, int nuovo)
+{
+    if (vecchio < 0 || vecchio >= MAX_FD || nuovo < 0 || nuovo >= MAX_FD)
+        return ERR(EBADF);
+    if (proc->fds[vecchio].type == FD_UNUSED) return ERR(EBADF);
+    if (vecchio == nuovo) return nuovo;
+
+    /* Il riferimento in piu' si prende PRIMA di chiudere il vecchio
+     * contenuto di `nuovo`: se i due fd guardassero lo stesso file, farlo
+     * al contrario lo chiuderebbe e il dup successivo troverebbe un handle
+     * morto. */
+    if (proc->fds[vecchio].type == FD_FILE) {
+        int r = vfs_dup((int)proc->fds[vecchio].inode);
+        if (r < 0) return (int32_t)r;
+    }
+
+    /* Qui `nuovo` puo' essere 0, 1 o 2: e' il caso della redirezione, ed e'
+     * l'unico modo di farla. sys_close li rifiuta apposta, perche' un
+     * programma che chiude stdout e basta resterebbe senza uscita; chi
+     * arriva da dup2 una sostituzione ce l'ha gia' pronta. */
+    if (proc->fds[nuovo].type == FD_FILE)
+        vfs_close((int)proc->fds[nuovo].inode);
+
+    proc->fds[nuovo] = proc->fds[vecchio];
+    return nuovo;
+}
+
+int32_t sys_dup(InterruptFrame *frame)
+{
+    Process *proc = proc_get_current();
+    int      fd   = (int)frame->ebx;
+    int      libero;
+
+    if (fd < 0 || fd >= MAX_FD || proc->fds[fd].type == FD_UNUSED)
+        return ERR(EBADF);
+
+    libero = find_free_fd(proc);
+    if (libero < 0) return ERR(EMFILE);
+
+    return fd_duplica(proc, fd, libero);
+}
+
+int32_t sys_dup2(InterruptFrame *frame)
+{
+    Process *proc = proc_get_current();
+
+    return fd_duplica(proc, (int)frame->ebx, (int)frame->ecx);
+}
+
+int32_t sys_fcntl(InterruptFrame *frame)
+{
+    Process *proc = proc_get_current();
+    int      fd   = (int)frame->ebx;
+    uint32_t cmd  = frame->ecx;
+    uint32_t arg  = frame->edx;
+
+    if (fd < 0 || fd >= MAX_FD || proc->fds[fd].type == FD_UNUSED)
+        return ERR(EBADF);
+
+    switch (cmd) {
+    case F_DUPFD: {
+        /* "il piu' basso libero da `arg` in su", che non e' find_free_fd:
+         * chi lo chiede vuole stare SOPRA i descrittori standard. */
+        int i;
+        if (arg >= (uint32_t)MAX_FD) return ERR(EINVAL);
+        for (i = (int)arg; i < MAX_FD; i++) {
+            if (proc->fds[i].type == FD_UNUSED)
+                return fd_duplica(proc, fd, i);
+        }
+        return ERR(EMFILE);
+    }
+
+    /* Vedi il commento su FD_CLOEXEC in syscall.h: qui non c'e' niente da
+     * ricordare, perche' non c'e' un exec che erediti descrittori. */
+    case F_GETFD:  return 0;
+    case F_SETFD:  return 0;
+
+    case F_GETFL:  return (int32_t)proc->fds[fd].flags;
+
+    case F_SETFL:
+        /* La modalita' di accesso di un file aperto non si cambia: e' cio'
+         * che dice POSIX, e qui sarebbe anche una bugia — il driver ha
+         * gia' aperto il file come gli e' stato chiesto. */
+        proc->fds[fd].flags = (proc->fds[fd].flags & ~(O_APPEND | O_NONBLOCK))
+                            | (arg & (O_APPEND | O_NONBLOCK));
+        return 0;
+
+    default:
+        return ERR(EINVAL);
+    }
 }
 
 /* proc_reap_zombie e' definita in kernel/sched/sched.c (accede al pool PCB
@@ -543,12 +672,8 @@ int32_t sys_mmap(InterruptFrame *frame)
             return ERR(ENOMEM);
         }
 
-        /* Azzera la pagina appena allocata */
-        {
-            uint8_t *pg = (uint8_t *)phys;
-            uint32_t n  = PAGE_SIZE;
-            while (n--) *pg++ = 0;
-        }
+        /* Azzera la pagina appena allocata (via finestra: vedi sys_sbrk) */
+        paging_azzera_fisica(phys);
 
         if (paging_map_page(proc->page_directory,
                              vaddr + i * PAGE_SIZE,
@@ -836,6 +961,8 @@ int32_t sys_exec(InterruptFrame *frame)
  * ebx = path*   (percorso ELF, stringa in user space)
  * ecx = argc    (numero argomenti, incluso argv[0])
  * edx = argv*   (char** in user space, NULL-terminato; NULL = usa solo path)
+ * esi = SpawnExtra* (ambiente e redirezioni; ignorato se la magia non
+ *                    combacia — vedi kernel/include/syscall.h per il perche')
  *
  * Stack utente iniziale del figlio (visto da _start in lib/start.S):
  *   [esp+0]  = 0        (fake return address -- _start non ritorna)
@@ -856,6 +983,7 @@ int32_t sys_exec(InterruptFrame *frame)
  * Ritorna: PID del figlio (>0), errno negativo in caso di errore
  * ============================================================================= */
 #define MAX_SPAWN_ARGS  16
+#define MAX_SPAWN_ENV   32     /* variabili d'ambiente ereditate da un figlio */
 
 /* Un argomento e' quasi sempre un PERCORSO, quindi il tetto e' lo stesso.
  * Era 128, e con i nomi 8.3 bastava; da quando un nome ext2 puo' essere di
@@ -875,9 +1003,14 @@ static int spawn_write_user(PDE *pd, uint32_t user_virt,
         uint32_t off   = user_virt & 0xFFF;
         uint32_t avail = PAGE_SIZE - off;
         uint32_t chunk = (len < avail) ? len : avail;
-        uint8_t *dst = (uint8_t *)phys;
+        /* La pagina di destinazione appartiene al FIGLIO, che non e' il
+         * processo in esecuzione: si raggiunge dalla finestra, non dal suo
+         * indirizzo fisico. Una pagina per volta, cosi' la finestra resta
+         * aperta il tempo di una copia dentro un solo confine di pagina. */
+        uint8_t *dst = (uint8_t *)paging_finestra_apri(phys);
         uint32_t k;
         for (k = 0; k < chunk; k++) dst[k] = s[k];
+        paging_finestra_chiudi();
         s        += chunk;
         user_virt += chunk;
         len      -= chunk;
@@ -943,8 +1076,60 @@ int32_t sys_spawn(InterruptFrame *frame)
     }
     kargv[real_argc] = NULL;
 
-    klog(LOG_INFO, "SYSCALL spawn('%s') argc=%u PID_parent=%u",
-         kpath, real_argc, parent->pid);
+    /* --- Blocco EXTRA: ambiente e redirezioni ------------------------------
+     *
+     * Si legge ESI solo se e' un puntatore valido E la magia combacia. Un
+     * programma compilato per la forma a tre argomenti ci lascia
+     * spazzatura, e trattarla come una struttura significherebbe aprirgli
+     * file a caso. Vedi il commento in syscall.h. */
+    SpawnExtra *uex = (SpawnExtra *)frame->esi;
+    SpawnExtra  kex;
+    int         ha_extra = 0;
+
+    if (uex != NULL && syscall_verify_ptr(uex, sizeof(SpawnExtra)) &&
+        uex->magia == SPAWN_EXTRA_MAGIA) {
+        uint32_t bi;
+        const uint8_t *src = (const uint8_t *)uex;
+        uint8_t       *dst = (uint8_t *)&kex;
+
+        for (bi = 0; bi < sizeof(SpawnExtra); bi++) dst[bi] = src[bi];
+        if (kex.n_azioni > SPAWN_MAX_AZIONI) kex.n_azioni = SPAWN_MAX_AZIONI;
+        ha_extra = 1;
+    }
+
+    /* Ambiente: stesse regole degli argomenti — copiato in kernel space
+     * PRIMA di creare il figlio, cosi' un puntatore illeggibile ferma lo
+     * spawn invece di lasciare il processo a meta'. */
+    static char kenv[MAX_SPAWN_ENV][MAX_ARG_LEN];
+    char       *kenvp[MAX_SPAWN_ENV + 1];
+    uint32_t    real_envc = 0;
+
+    if (ha_extra && kex.envp != NULL) {
+        for (i = 0; i < MAX_SPAWN_ENV; i++) {
+            const char *uv;
+
+            if (!syscall_verify_ptr(&kex.envp[i], sizeof(char *))) break;
+            uv = kex.envp[i];
+            if (uv == NULL) break;
+            if (!syscall_verify_str(uv, MAX_ARG_LEN)) {
+                klog(LOG_ERROR, "SYSCALL spawn('%s'): variabile d'ambiente %u "
+                                "illeggibile", kpath, i);
+                return ERR(EINVAL);
+            }
+            {
+                uint32_t ei;
+                for (ei = 0; ei < MAX_ARG_LEN - 1 && uv[ei]; ei++)
+                    kenv[real_envc][ei] = uv[ei];
+                kenv[real_envc][ei] = '\0';
+            }
+            kenvp[real_envc] = kenv[real_envc];
+            real_envc++;
+        }
+    }
+    kenvp[real_envc] = NULL;
+
+    klog(LOG_INFO, "SYSCALL spawn('%s') argc=%u envc=%u PID_parent=%u",
+         kpath, real_argc, real_envc, parent->pid);
 
     /* --- Crea figlio in stato BLOCKED, carica ELF -------------------------- */
 
@@ -983,7 +1168,24 @@ if (elf_load(kpath, child, &res) != 0) {
 
 uint32_t usp       = res.user_stack_top;
     uint32_t arg_ptrs[MAX_SPAWN_ARGS + 1];
+    uint32_t env_ptrs[MAX_SPAWN_ENV + 1];
+    uint32_t envv_uptr;
     PDE     *cpd       = child->page_directory;
+
+    /* 0. Stringhe dell'ambiente, sopra quelle di argv: l'ordine fra i due
+     *    gruppi non conta, contano i puntatori. */
+    for (i = 0; i < real_envc; i++) {
+        uint32_t len = 0;
+        while (kenvp[i][len]) len++;
+        len++;
+        usp -= len;
+        if (spawn_write_user(cpd, usp, kenvp[i], len) != 0) {
+            klog(LOG_ERROR, "SYSCALL spawn: stack non mappato per envp[%u]", i);
+            goto spawn_fail;
+        }
+        env_ptrs[i] = usp;
+    }
+    env_ptrs[real_envc] = 0;
 
     /* 1. Stringhe argv (partendo dal top e scendendo) */
     for (i = 0; i < real_argc; i++) {
@@ -1010,12 +1212,72 @@ uint32_t usp       = res.user_stack_top;
             goto spawn_fail;
     }
 
-    /* 4. Frame C: [fake_ret=0, argc, argv_ptr] */
-    usp -= 12;
+    /* 3b. Array di puntatori envp[] (NULL-terminato) */
+    usp &= ~3u;
+    usp -= (real_envc + 1) * sizeof(uint32_t);
+    envv_uptr = usp;
+    for (i = 0; i <= real_envc; i++) {
+        if (spawn_write_user(cpd, usp + i*4, &env_ptrs[i], 4) != 0)
+            goto spawn_fail;
+    }
+
+    /* 4. Frame C: [fake_ret=0, argc, argv_ptr, envp_ptr]
+     *
+     * Il terzo argomento e' nuovo (0.150) e non rompe niente: un _start
+     * che ne legge due lo ignora. */
+    usp -= 16;
     { uint32_t z = 0;
       spawn_write_user(cpd, usp+0,  &z,          4);
       spawn_write_user(cpd, usp+4,  &real_argc,  4);
-      spawn_write_user(cpd, usp+8,  &argv_uptr,  4); }
+      spawn_write_user(cpd, usp+8,  &argv_uptr,  4);
+      spawn_write_user(cpd, usp+12, &envv_uptr,  4); }
+
+    /* --- Redirezioni: il figlio apre i propri file -------------------------
+     *
+     * Si fa QUI, dopo che l'ELF e' stato caricato e prima di rendere il
+     * figlio schedulabile: un processo non deve mai partire con una
+     * redirezione applicata a meta'. */
+    if (ha_extra) {
+        uint32_t k;
+
+        for (k = 0; k < kex.n_azioni; k++) {
+            SpawnAzione *az = &kex.azioni[k];
+            char         abs[PERCORSO_MAX];
+            int          h;
+
+            if (az->fd >= MAX_FD) {
+                klog(LOG_ERROR, "SYSCALL spawn: redirezione su fd %u fuori range",
+                     az->fd);
+                goto spawn_fail;
+            }
+
+            /* Il percorso e' gia' in kernel space, ma nessuno garantisce
+             * che sia terminato. */
+            az->percorso[SPAWN_RED_PATH_MAX - 1] = '\0';
+
+            if (resolve_path(az->percorso, abs, sizeof(abs)) != 0) {
+                klog(LOG_ERROR, "SYSCALL spawn: percorso di redirezione non "
+                     "valido: '%s'", az->percorso);
+                goto spawn_fail;
+            }
+
+            h = vfs_open(abs, az->flags);
+            if (h < 0) {
+                klog(LOG_ERROR, "SYSCALL spawn: redirezione di fd %u su '%s' "
+                     "fallita (%d)", az->fd, abs, h);
+                goto spawn_fail;
+            }
+
+            child->fds[az->fd].type        = FD_FILE;
+            child->fds[az->fd].flags       = az->flags;
+            child->fds[az->fd].offset      = 0;
+            child->fds[az->fd].inode       = (uint32_t)h;
+            child->fds[az->fd].driver_data = NULL;
+
+            klog(LOG_INFO, "SYSCALL spawn: fd %u del figlio -> '%s'",
+                 az->fd, abs);
+        }
+    }
 
 proc_set_entry(child, res.entry_point, usp);
 
@@ -1105,8 +1367,13 @@ int32_t sys_sbrk(InterruptFrame *frame)
                 }
                 return ERR(ENOMEM);
             }
-            /* Azzera la pagina */
-            { uint8_t *p = (uint8_t *)phys; uint32_t n = PAGE_SIZE; while (n--) *p++ = 0; }
+            /* Azzera la pagina attraverso la finestra di rimappatura: la
+             * pagina appena allocata puo' stare ovunque in RAM, e qui e'
+             * caricato il CR3 del processo chiamante, che mappa per
+             * identita' solo la fascia kernel. Scriverci all'indirizzo
+             * fisico e' esattamente il page fault in ring0 che questa
+             * finestra esiste per evitare. */
+            paging_azzera_fisica(phys);
 
             if (paging_map_page(proc->page_directory, vaddr, phys, pg_flags) != 0) {
                 pmm_free_page(phys);

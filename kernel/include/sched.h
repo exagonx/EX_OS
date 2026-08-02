@@ -40,7 +40,11 @@ typedef struct IpcMessage {
  * Costanti scheduler
  * ============================================================================= */
 #define MAX_PROCESSES       64      /* Massimo numero processi simultanei */
-#define MAX_FD              16      /* File descriptor per processo */
+/* 32 e non 16 (0.150): un compilatore tiene aperti insieme il sorgente,
+ * l'uscita, gli header della catena di inclusione e uno o due file
+ * temporanei, e 16 e' un tetto che si tocca senza fare niente di strano.
+ * Costa 16 FileDescriptor in piu' per PCB. */
+#define MAX_FD              32      /* File descriptor per processo */
 #define KERNEL_STACK_SIZE   131072  /* 128KB stack kernel per processo — RAM estesa via PMM */
 /* =============================================================================
  * STACK UTENTE A CRESCITA SU FAULT (kernel 0.124)
@@ -151,6 +155,26 @@ typedef struct {
 } FileDescriptor;
 
 /* =============================================================================
+ * ProcVma — un segmento dell'eseguibile, mappato su richiesta
+ *
+ * Quattro segmenti bastano con abbondanza: un ELF prodotto da GCC ne ha
+ * due o tre (testo, dati di sola lettura, dati+BSS). Se un giorno ne
+ * arrivasse uno con piu' PT_LOAD di cosi', elf_load carica in RAM tutto
+ * quanto invece di mappare a meta': meglio lento che sbagliato.
+ * ============================================================================= */
+#define PROC_MAX_VMA    4
+
+typedef struct {
+    uint32_t vstart;    /* prima pagina del segmento (allineata) */
+    uint32_t vend;      /* prima pagina DOPO il segmento (esclusa) */
+    uint32_t file_off;  /* offset nel file che corrisponde a vstart */
+    uint32_t file_fine; /* indirizzo virtuale dove finiscono i byte del
+                         * file: da qui a vend e' BSS, cioe' solo zeri e
+                         * niente da leggere */
+    uint32_t pg_flags;  /* PG_PRESENT | PG_USER | eventuale PG_WRITABLE */
+} ProcVma;
+
+/* =============================================================================
  * Process Control Block (PCB)
  * ============================================================================= */
 typedef struct Process {
@@ -197,6 +221,25 @@ typedef struct Process {
     PDE            *page_directory;         /* Page Directory processo */
     uint32_t        heap_start;             /* Inizio heap utente */
     uint32_t        heap_end;               /* Fine heap utente corrente */
+
+    /* --- Segmenti caricati SU RICHIESTA dall'eseguibile ---
+     *
+     * Il caricatore non copia piu' i segmenti in RAM al momento dello
+     * spawn: annota qui dove ciascuno vive nel file, e le pagine arrivano
+     * una alla volta quando il processo le tocca (page_fault_handler ->
+     * pf_carica_da_file). Un programma di cui si esegue un decimo occupa
+     * un decimo della memoria, e il tempo di avvio non dipende piu' dalla
+     * dimensione del binario ma da quanto ne serve subito.
+     *
+     * exe_handle e' l'eseguibile tenuto APERTO per tutta la vita del
+     * processo: senza, non ci sarebbe da dove leggere le pagine mancanti.
+     * Si chiude in proc_reap_zombie e all'inizio di un nuovo elf_load
+     * (exec sostituisce l'immagine). Vale -1 per i processi che
+     * un'immagine su file non ce l'hanno: idle, init, e i driver, che si
+     * caricano tutti in RAM apposta (vedi elf_load_residente). */
+    ProcVma         vma[PROC_MAX_VMA];
+    uint32_t        n_vma;
+    int             exe_handle;
 
     /* --- File descriptors --- */
     FileDescriptor  fds[MAX_FD];

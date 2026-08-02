@@ -157,7 +157,32 @@ static int elf_verify_header(const Elf32Header *hdr)
  *
  * Ritorna: 0 = successo, -1 = errore
  * ============================================================================= */
-int elf_load(const char *path, Process *proc, ElfLoadResult *result)
+/* =============================================================================
+ * CARICAMENTO SU RICHIESTA (dal 0.149)
+ *
+ * elf_carica() ha due modi, e la differenza sta tutta nel Passo 5.
+ *
+ *   RESIDENTE  — il comportamento storico: ogni pagina di ogni PT_LOAD
+ *                viene allocata e riempita subito, il file si chiude e
+ *                dell'eseguibile non resta traccia.
+ *
+ *   SU RICHIESTA — si annota soltanto DOVE ogni segmento vive nel file
+ *                (proc->vma) e si tiene l'eseguibile aperto. Le pagine
+ *                arrivano una per volta quando il processo le tocca, da
+ *                pf_carica_da_file(). Il costo d'avvio smette di dipendere
+ *                dalla dimensione del binario: un programma da 40 MB di
+ *                cui si esegue una funzione occupa le pagine di quella
+ *                funzione. Senza questo, ospitare un compilatore vuol dire
+ *                impegnare decine di MB prima della prima istruzione.
+ *
+ * ⚠️ I DRIVER SI CARICANO RESIDENTI, e non e' prudenza generica: un driver
+ * che serve il filesystem, paginato DA quel filesystem, dovrebbe servire la
+ * propria lettura mentre e' fermo in attesa di quella lettura. Si blocca, e
+ * con lui il sistema. Sono due file da ~15 KB: non c'e' niente da
+ * risparmiare e c'e' un blocco da evitare.
+ * ============================================================================= */
+static int elf_carica(const char *path, Process *proc, ElfLoadResult *result,
+                      int residente)
 {
     int           handle;
     Elf32Header   hdr;
@@ -167,6 +192,14 @@ int elf_load(const char *path, Process *proc, ElfLoadResult *result)
     int           ret = -1;
 
     klog(LOG_INFO, "ELF: caricamento '%s'...", path);
+
+    /* exec sostituisce l'immagine: l'eseguibile di prima non serve piu' e
+     * il suo handle non deve restare aperto per sempre. */
+    if (proc != NULL && proc->exe_handle >= 0) {
+        vfs_close(proc->exe_handle);
+        proc->exe_handle = -1;
+    }
+    if (proc != NULL) proc->n_vma = 0;
 
     /* ==========================================================================
      * Passo 1: Apri il file ELF dal FAT12
@@ -223,6 +256,21 @@ seg_buf = (uint8_t *)kmalloc(PAGE_SIZE);
      * Passo 5: Processa ogni PT_LOAD
      * ========================================================================== */
 
+    /* Piu' segmenti di quanti il PCB ne sappia annotare: si carica tutto in
+     * RAM invece di mappare i primi e dimenticare gli altri. Un binario
+     * mappato a meta' non da' errore — da' un salto nel vuoto quando il
+     * programma arriva nel pezzo che manca. */
+    if (!residente) {
+        uint32_t n_load = 0;
+        for (i = 0; i < hdr.e_phnum; i++)
+            if (phdrs[i].p_type == PT_LOAD && phdrs[i].p_memsz != 0) n_load++;
+        if (n_load > PROC_MAX_VMA) {
+            klog(LOG_WARN, "ELF: '%s' ha %u segmenti (max %u su richiesta): "
+                 "caricamento residente", path, n_load, (unsigned)PROC_MAX_VMA);
+            residente = 1;
+        }
+    }
+
 for (i = 0; i < hdr.e_phnum; i++) {
         Elf32Phdr *ph = &phdrs[i];
 
@@ -245,6 +293,28 @@ for (i = 0; i < hdr.e_phnum; i++) {
         uint32_t pg_flags = PG_PRESENT | PG_USER;
         if (ph->p_flags & PF_W) pg_flags |= PG_WRITABLE;
 
+        /* --- SU RICHIESTA: si annota e basta ------------------------------
+         *
+         * file_off e' l'offset che corrisponde a vstart, non a p_vaddr: il
+         * segmento comincia quasi sempre a meta' pagina, e la parte prima
+         * di p_vaddr appartiene al file quanto il resto (e' il contenuto
+         * che sta nella stessa pagina). Sottrarre lo scarto e' cio' che
+         * rende l'offset calcolabile con una sola somma a ogni fault. */
+        if (!residente) {
+            ProcVma *v = &proc->vma[proc->n_vma++];
+
+            v->vstart    = vstart;
+            v->vend      = vend;
+            v->file_off  = ph->p_offset - (ph->p_vaddr - vstart);
+            v->file_fine = ph->p_vaddr + ph->p_filesz;
+            v->pg_flags  = pg_flags;
+
+            klog(LOG_INFO, "ELF: segmento su richiesta 0x%08x-0x%08x "
+                 "(%u pagine, file@0x%x, dati fino a 0x%08x)",
+                 vstart, vend, pages, v->file_off, v->file_fine);
+            continue;
+        }
+
 /* Alloca e mappa le pagine */
         uint32_t pg;
         for (pg = 0; pg < pages; pg++) {
@@ -254,12 +324,12 @@ for (i = 0; i < hdr.e_phnum; i++) {
                 goto cleanup;
             }
 
-            /* Azzera la pagina */
-            {
-                uint8_t *p = (uint8_t *)phys;
-                uint32_t n = PAGE_SIZE;
-                while (n--) *p++ = 0;
-            }
+            /* Azzera la pagina. Attraverso la finestra di rimappatura:
+             * qui gira ancora il processo CHIAMANTE (la shell che ha
+             * fatto spawn), la cui page directory mappa per identita'
+             * solo la fascia kernel — e questa pagina puo' stare
+             * ovunque in RAM. Vedi paging_finestra_apri(). */
+            paging_azzera_fisica(phys);
 
             uint32_t vpage = vstart + pg * PAGE_SIZE;
             if (paging_map_page(proc->page_directory, vpage, phys, pg_flags) != 0) {
@@ -306,11 +376,19 @@ if (n <= 0) {
                     uint32_t take     = (uint32_t)n - written;
                     if (take > avail) take = avail;
 
-                    uint8_t *dst_ptr = (uint8_t *)(phys_dst - page_off);
+                    /* Finestra aperta e chiusa intorno alla SINGOLA
+                     * copia, mai intorno al ciclo: fra un giro e l'altro
+                     * c'e' la vfs_read qui sopra, che si blocca in IPC
+                     * verso un driver in ring3 — e una finestra tenuta
+                     * aperta attraverso un blocco e' una finestra che
+                     * qualcun altro ripunta sotto i piedi. */
+                    uint8_t *dst_ptr = (uint8_t *)paging_finestra_apri(
+                                           phys_dst - page_off);
                     uint32_t k;
                     for (k = 0; k < take; k++) {
                         dst_ptr[page_off + k] = seg_buf[written + k];
                     }
+                    paging_finestra_chiudi();
                     written += take;
                 }
 
@@ -355,12 +433,8 @@ if (n <= 0) {
                 klog(LOG_ERROR, "ELF: OOM allocando stack utente");
                 goto cleanup;
             }
-            /* Azzera */
-            {
-                uint8_t *p = (uint8_t *)phys;
-                uint32_t n = PAGE_SIZE;
-                while (n--) *p++ = 0;
-            }
+            /* Azzera (via finestra: vedi sopra) */
+            paging_azzera_fisica(phys);
 
             uint32_t vpage = stack_base + pg * PAGE_SIZE;
             if (paging_map_page(proc->page_directory, vpage, phys,
@@ -402,8 +476,30 @@ if (n <= 0) {
     ret = 0;
 
 cleanup:
-    vfs_close(handle);
+    /* L'handle si chiude SOLO se il caricamento e' residente o se e'
+     * fallito. Su richiesta resta aperto per tutta la vita del processo:
+     * e' l'unica sorgente da cui le pagine mancanti possono arrivare, e
+     * chiuderlo qui vorrebbe dire un processo che si ferma al primo fault
+     * con "handle non valido". Lo chiude proc_reap_zombie. */
+    if (ret == 0 && !residente) {
+        proc->exe_handle = handle;
+    } else {
+        vfs_close(handle);
+        if (proc != NULL) proc->n_vma = 0;
+    }
     if (phdrs)   kfree(phdrs);
     if (seg_buf) kfree(seg_buf);
     return ret;
+}
+
+/* Le due porte d'ingresso. Vedi il commento su elf_carica per quale usare
+ * quando: i programmi normali su richiesta, i driver residenti. */
+int elf_load(const char *path, Process *proc, ElfLoadResult *result)
+{
+    return elf_carica(path, proc, result, 0);
+}
+
+int elf_load_residente(const char *path, Process *proc, ElfLoadResult *result)
+{
+    return elf_carica(path, proc, result, 1);
 }

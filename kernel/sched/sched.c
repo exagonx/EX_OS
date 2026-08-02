@@ -19,6 +19,7 @@
 #include "gdt.h"
 #include "idt.h"
 #include "isr.h"
+#include "vfs.h"   /* vfs_close: l'eseguibile aperto per il caricamento su richiesta */
 
 /* =============================================================================
  * Variabili globali scheduler
@@ -244,6 +245,12 @@ Process *proc_create(const char *name, uint32_t entry_point,
     /* Nome */
     str_copy(proc->name, name, PROCESS_NAME_LEN);
 
+    /* Nessuna immagine su file finche' non ne carica una elf_load: -1 e
+     * non 0, perche' 0 e' un handle VFS legittimo e chiuderlo per errore
+     * chiuderebbe il file di qualcun altro. */
+    proc->exe_handle = -1;
+    proc->n_vma      = 0;
+
     /* Stato x87 di partenza. pcb_alloc ha azzerato il PCB, e zero NON e'
      * uno stato valido per FRSTOR: la parola di controllo a zero smaschera
      * tutte le eccezioni di virgola mobile e i tag dicono che tutti gli
@@ -257,36 +264,27 @@ Process *proc_create(const char *name, uint32_t entry_point,
     proc->quantum       = quantum_table[priority];
     proc->quantum_total = quantum_table[priority];
 
-    /* Allocazione stack kernel in RAM estesa: 128KB = 32 pagine PMM
-     * contigue, mappate con identity mapping nella page directory del
-     * kernel (paging_init mappa identità solo fino a _kernel_end; gli
-     * stack allocati dinamicamente stanno oltre quel limite). */
+    /* Allocazione stack kernel: 128KB = 32 pagine PMM contigue, mappate
+     * con identity mapping nella page directory del kernel.
+     *
+     * ⚠️ DALLA FASCIA KERNEL, e questo e' il caso in cui sbagliare costa
+     * di piu' di tutti. Lo stack kernel di un processo viene usato dalla
+     * CPU al suo indirizzo fisico (e' quello che finisce in TSS.ESP0)
+     * nell'istante esatto in cui arriva un interrupt mentre gira QUEL
+     * processo, cioe' con la SUA page directory caricata. Uno stack
+     * allocato sopra USER_SPACE_BASE non sarebbe mappato li' dentro: il
+     * page fault avverrebbe durante la commutazione di stack, prima che
+     * una sola istruzione del kernel possa dire cosa e' successo — e il
+     * fault handler, per gestirlo, avrebbe bisogno dello stesso stack.
+     * Triplo fault, macchina che si riavvia, nessuna diagnostica.
+     *
+     * pmm_alloc_pages_kernel fa in un colpo la ricerca di pagine contigue
+     * che prima si faceva a mano allocando e ributtando. */
 
 {
         uint32_t npages = KERNEL_STACK_SIZE / PAGE_SIZE;
-        uint32_t base   = pmm_alloc_page();
-        int      contig = (base != 0);
 
-if (contig) {
-            uint32_t prev = base;
-            for (uint32_t pi = 1; pi < npages && contig; pi++) {
-                uint32_t p = pmm_alloc_page();
-                if (p == 0 || p != prev + PAGE_SIZE) {
-                    contig = 0;
-                    if (p) pmm_free_page(p);
-                } else {
-                    prev = p;
-                }
-            }
-            if (!contig) {
-                /* Libera quanto allocato finora */
-                for (uint32_t pj = 0; pj < npages; pj++) {
-                    uint32_t pa = base + pj * PAGE_SIZE;
-                    if (pa <= prev) pmm_free_page(pa);
-                }
-            }
-        }
-        kstack = contig ? base : 0;
+        kstack = pmm_alloc_pages_kernel(npages);
 
 if (kstack) {
             PDE *kpd = paging_get_kernel_directory();
@@ -848,6 +846,42 @@ void proc_reap_zombie(Process *p)
 {
     uint32_t child_pid  = p->pid;
     int32_t  child_code = p->exit_code;
+
+    /* L'eseguibile tenuto aperto per il caricamento su richiesta. Va
+     * chiuso qui e non prima: finche' il processo esiste puo' faultare su
+     * una pagina che non ha ancora toccato, e la sorgente e' quella. Un
+     * handle non chiuso e' uno slot del VFS perso per sempre — dopo
+     * VFS_MAX_OPEN processi terminati non si aprirebbe piu' niente. */
+    if (p->exe_handle >= 0) {
+        vfs_close(p->exe_handle);
+        p->exe_handle = -1;
+    }
+    p->n_vma = 0;
+
+    /* E i file che il processo aveva ancora aperti.
+     *
+     * Non lo faceva nessuno: chi usciva senza chiudere — un programma che
+     * termina per un errore, o semplicemente uno che si fida dell'uscita —
+     * lasciava lo slot VFS occupato per sempre. Il conto arriva dopo
+     * VFS_MAX_OPEN volte, con un `open()` che risponde EMFILE senza che
+     * nessuno stia tenendo aperto niente, e non e' un guasto su cui sia
+     * facile risalire alla causa.
+     *
+     * Si vedeva poco finche' i programmi aprivano un file per volta e lo
+     * chiudevano; un compilatore ne tiene aperti sei o sette, e ogni
+     * invocazione che finisce male ne perde altrettanti.
+     *
+     * Qui e non in sys_exit: un processo terminato da un fault non passa
+     * da sys_exit, e sono proprio quelli che i file li lasciano aperti. */
+    {
+        int fd;
+        for (fd = 0; fd < MAX_FD; fd++) {
+            if (p->fds[fd].type == FD_FILE) {
+                vfs_close((int)p->fds[fd].inode);
+                p->fds[fd].type = FD_UNUSED;
+            }
+        }
+    }
 
     if (p->page_directory && p->page_directory != paging_get_kernel_directory()) {
         paging_destroy_directory(p->page_directory);
