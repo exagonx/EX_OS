@@ -31,7 +31,14 @@
 
 typedef struct IpcMessage {
     uint32_t sender_pid;
-    uint32_t type;                  /* significato definito dal servizio */
+    /* ⚠️ `tipo` e non `type`: la copia di questa struttura in
+     * lib/include/libc.h ha dovuto cambiare nome perche' `type` e' una
+     * parola che il codice di terzi definisce come macro (openlibm lo fa),
+     * e un header pubblico non puo' permetterselo. Le due copie devono
+     * restare identiche — e' la convenzione di questo progetto — quindi il
+     * nome cambia anche qui, dove non servirebbe. Vedi il commento esteso
+     * in libc.h. */
+    uint32_t tipo;                  /* significato definito dal servizio */
     uint32_t len;                   /* byte validi in data[] */
     uint8_t  data[IPC_MSG_MAX_DATA];
 } IpcMessage;
@@ -73,6 +80,23 @@ typedef struct IpcMessage {
  * ============================================================================= */
 #define USER_STACK_MAX      262144  /* 256KB riservati (spazio, non RAM) */
 #define USER_STACK_INIT     8192    /* 8KB impegnati al caricamento */
+
+/* =============================================================================
+ * Blocco TLS — le variabili __thread di un processo
+ *
+ * TLS_TCB_SIZE: quanto sta SOPRA il thread pointer. L'ABI di i386 chiede
+ * che a `tp + 0` ci sia un puntatore a `tp` stesso; il resto del TCB e'
+ * roba della libreria dei thread, che qui non c'e'. Otto byte invece di
+ * quattro per lasciare il blocco allineato a 8, che e' l'allineamento
+ * naturale di un `double` in una variabile thread-local.
+ *
+ * TLS_MAX: un tetto dichiarato invece di un'allocazione che cresce a
+ * sorpresa. 64 KB sono due ordini di grandezza sopra a cio' che usa il
+ * codice reale — bfd ne dichiara una manciata di byte — e un binario che
+ * ne chiede di piu' quasi certamente ha un program header sbagliato.
+ * ============================================================================= */
+#define TLS_TCB_SIZE        8
+#define TLS_MAX             65536
 #define USER_STACK_SLACK    32      /* margine sotto ESP: caso peggiore pusha */
 #define PROCESS_NAME_LEN    32      /* Lunghezza massima nome processo */
 #define MAX_ENV_VARS        32      /* Variabili d'ambiente per processo */
@@ -144,6 +168,13 @@ typedef enum {
     FD_STDERR   = 3,    /* 2: standard error */
     FD_FILE     = 4,    /* file FAT12 */
     FD_DRIVER   = 5,    /* device driver */
+    /* Le due estremita' di una pipe. ⚠️ SONO DUE TIPI E NON UNO CON UN
+     * FLAG: la direzione non e' un dettaglio del descrittore, e' cio' che
+     * decide se una read blocca o e' un errore. Tenerle distinte fa
+     * sbagliare il compilatore invece del programma. `inode` contiene
+     * l'handle della pipe (vedi kernel/include/pipe.h). */
+    FD_PIPE_R   = 6,    /* estremita' di LETTURA  */
+    FD_PIPE_W   = 7,    /* estremita' di SCRITTURA */
 } FDType;
 
 typedef struct {
@@ -221,6 +252,73 @@ typedef struct Process {
     PDE            *page_directory;         /* Page Directory processo */
     uint32_t        heap_start;             /* Inizio heap utente */
     uint32_t        heap_end;               /* Fine heap utente corrente */
+    /* =========================================================================
+     * heap_max — IL TETTO, e perche' prima non c'era (kernel 0.156)
+     *
+     * heap_end cresceva finche' il PMM aveva pagine da dare: l'unico
+     * limite era la RAM FISICA, non lo spazio di indirizzamento. Su una
+     * macchina piccola non si notava — la memoria finiva prima — ma la
+     * cosa che stava sopra lo heap non era il vuoto:
+     *
+     *      heap_start ... heap_end -->        <-- tls_base   riserva stack
+     *      0x08xxxxxx                          ~0xBFFB....   0xBFFC0000
+     *
+     * ⚠️ E paging_map_page() SOVRASCRIVE una PTE gia' presente senza dire
+     * niente (vedi kernel/mm/paging.c). Uno sbrk che avesse superato
+     * tls_base avrebbe rimappato il blocco TLS su pagine nuove azzerate:
+     * il thread pointer sarebbe diventato zero e ogni variabile __thread
+     * avrebbe cominciato a leggere memoria altrui — in silenzio, senza un
+     * fault, senza un log. Piu' sopra c'e' la riserva dello stack, dove il
+     * danno sarebbe stato lo stesso al contrario: pagine gia' mappate dove
+     * page_fault_handler si aspetta di poterle mappare lui.
+     *
+     * Ora il confine e' esplicito e sta nel PCB: una pagina di guardia
+     * sotto il blocco TLS se c'e', sotto la riserva dello stack se non
+     * c'e'. Chi lo supera si prende ENOMEM, che e' un errore che malloc()
+     * sa gia' trattare.
+     *
+     * Vale 0 solo per un processo il cui spazio di indirizzamento non e'
+     * stato preparato da elf_load: in quel caso lo heap NON si apre
+     * affatto, invece di indovinare un indirizzo. Vedi sys_sbrk.
+     * ========================================================================= */
+    uint32_t        heap_max;               /* Tetto invalicabile dello heap */
+
+    /* =========================================================================
+     * IL THREAD POINTER — dove vivono le variabili __thread
+     *
+     * Vale 0 per chi non ne ha, che e' quasi tutto: un processo di EX-OS ha
+     * un filo solo, quindi una variabile thread-local e' una variabile
+     * globale con un nome piu' lungo. Serve al CODICE DI TERZI, che le usa
+     * e le fa usare al compilatore senza chiedere il permesso — bfd
+     * dichiara `static TLS bfd_error_type bfd_error` e GCC emette
+     * `mov %gs:0x0, %ebx`.
+     *
+     * MODELLO local-exec, VARIANTE II (quella di i386):
+     *
+     *      indirizzi bassi                          indirizzi alti
+     *      +----------------------+-------------------+
+     *      |  blocco TLS (memsz)  |  TCB (8 byte)     |
+     *      +----------------------+-------------------+
+     *      ^ tls_base             ^ tls_tp
+     *
+     * `tls_tp` e' cio' che finisce nella base del descrittore GDT_TLS_SEL,
+     * quindi `%gs:0` legge la prima parola del TCB — che per convenzione
+     * contiene tls_tp stesso, ed e' l'unica cosa che ci sia dentro. Le
+     * variabili stanno a offset NEGATIVI da li', risolti da `ld` al momento
+     * del link (rilocazioni R_386_TLS_LE): a runtime non c'e' niente da
+     * rilocare, ed e' il motivo per cui questo modello costa cosi' poco.
+     *
+     * ⚠️ NON C'E' IL TLS DINAMICO. __tls_get_addr, i modelli general-dynamic
+     * e local-dynamic e le variabili __thread dentro una libreria condivisa
+     * NON funzionano. Servono a chi carica codice a runtime; qui i binari
+     * sono statici, e il giorno che non lo fossero questo e' il punto da
+     * cui ripartire.
+     * ========================================================================= */
+    uint32_t        tls_tp;                 /* Thread pointer (0 = nessun TLS) */
+    uint32_t        tls_base;               /* Prima pagina del blocco, per il log */
+    /* ⚠️ Il blocco NON si libera a mano: sta nella page directory del
+     * processo, e paging_destroy_directory() se lo porta via insieme a
+     * tutto il resto quando il processo viene riassorbito. */
 
     /* --- Segmenti caricati SU RICHIESTA dall'eseguibile ---
      *

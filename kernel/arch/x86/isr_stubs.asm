@@ -123,18 +123,41 @@ isr128:
 ; =============================================================================
 ; isr_common_stub — Routine comune per tutte le eccezioni CPU
 ; =============================================================================
+; =============================================================================
+; ⚠️ GS NON SI TOCCA — e' il thread pointer del processo
+;
+; Questi tre stub salvavano DS e poi caricavano il selettore dati del kernel
+; in DS, ES, FS **e GS**; all'uscita rimettevano in tutti e quattro il DS
+; salvato. Su un ritorno a ring3 quello significa GS = 0x23, cioe' il
+; selettore dati utente qualunque cosa il processo ci avesse messo.
+;
+; Da agosto 2026 un processo ci tiene il descrittore TLS (0x33), la cui base
+; e' il suo thread pointer. Se il primo tick di timer glielo riscrive, ogni
+; accesso a una variabile __thread finisce a leggere da un altro segmento —
+; ed e' un guasto che compare a caso, perche' dipende da quando arriva
+; l'interrupt.
+;
+; La soluzione e' non toccarlo affatto: **il kernel non usa GS**. Non c'e'
+; una riga di codice kernel che dereferenzi %gs — niente percpu, niente
+; stack canary — quindi lasciarlo con il valore dell'utente non espone
+; nulla. E il valore che l'utente ci puo' mettere e' comunque limitato da
+; una regola della CPU: `mov gs, ax` con un selettore piu' privilegiato di
+; CPL solleva #GP al momento del caricamento, non dopo.
+;
+; ES e FS restano allineati a DS: non li usa nessuno, e cambiarli sarebbe
+; rumore in un diff che ha gia' una ragione sola.
+; =============================================================================
 isr_common_stub:
     ; Salva tutti i registri general-purpose
     pushad
 
-    ; Salva DS e imposta segmento dati kernel
+    ; Salva DS e imposta segmento dati kernel (GS no: vedi sopra)
     mov ax, ds
     push eax                ; Salva DS originale
     mov ax, 0x10            ; Kernel data segment selector
     mov ds, ax
     mov es, ax
     mov fs, ax
-    mov gs, ax
 
     ; Chiama handler C: isr_handler(InterruptFrame *frame)
     ; ESP punta alla struttura InterruptFrame
@@ -147,7 +170,6 @@ isr_common_stub:
     mov ds, ax
     mov es, ax
     mov fs, ax
-    mov gs, ax
 
     ; Ripristina registri general-purpose
     popad
@@ -170,7 +192,6 @@ irq_common_stub:
     mov ds, ax
     mov es, ax
     mov fs, ax
-    mov gs, ax
 
     ; Chiama handler C: irq_handler(InterruptFrame *frame)
     push esp
@@ -181,7 +202,6 @@ irq_common_stub:
     mov ds, ax
     mov es, ax
     mov fs, ax
-    mov gs, ax
 
     popad
     add esp, 8
@@ -208,7 +228,6 @@ syscall_stub:
     mov ds, ax
     mov es, ax
     mov fs, ax
-    mov gs, ax
 
     ; Chiama handler C syscall
     push esp
@@ -223,7 +242,6 @@ syscall_stub:
     mov ds, ax
     mov es, ax
     mov fs, ax
-    mov gs, ax
 
     popad
     add esp, 8

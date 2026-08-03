@@ -975,7 +975,7 @@ int main(int argc, char **argv)
         if (ipc_recv(&meta, payload, sizeof(payload)) < 0) continue;
 
         if (meta.sender_pid == IPC_SENDER_KERNEL &&
-            meta.type == IPC_TYPE_IRQ_NOTIFY) {
+            meta.tipo == IPC_TYPE_IRQ_NOTIFY) {
             kbd_drain();
             /* Solo la console in primo piano riceve input, quindi solo
              * lei puo' avere qualcosa di nuovo da consegnare. */
@@ -984,7 +984,7 @@ int main(int argc, char **argv)
             continue;
         }
 
-        if (meta.type == KBD_MSG_SETMODE) {
+        if (meta.tipo == KBD_MSG_SETMODE) {
             KbdSetMode m;
 
             m.modo    = KBD_MODE_COOKED;
@@ -1007,7 +1007,7 @@ int main(int argc, char **argv)
             continue;
         }
 
-        if (meta.type == KBD_MSG_READKEY) {
+        if (meta.tipo == KBD_MSG_READKEY) {
             unsigned n = 0;
 
             if (meta.len >= sizeof(unsigned)) memcpy(&n, payload, sizeof(unsigned));
@@ -1033,7 +1033,7 @@ int main(int argc, char **argv)
             continue;
         }
 
-        if (meta.type == KBD_MSG_READLINE) {
+        if (meta.tipo == KBD_MSG_READLINE) {
             KbdReadLine r;
 
             r.max     = KBD_LINE_MAX;
@@ -1082,7 +1082,7 @@ int main(int argc, char **argv)
         }
 
         printf("kbd: messaggio ignoto type=%u da PID %u\n",
-               meta.type, meta.sender_pid);
+               meta.tipo, meta.sender_pid);
     }
 
     /* non raggiunto */

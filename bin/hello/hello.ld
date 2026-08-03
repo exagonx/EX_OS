@@ -36,6 +36,11 @@ SECTIONS
         *(.rodata.*)
     }
 
+    /* Immagine di partenza delle variabili __thread: vanno tenute adiacenti
+     * e in quest'ordine. Vedi bin/libctest/libctest.ld per il perche'. */
+    .tdata : { *(.tdata) *(.tdata.*) }
+    .tbss  : { *(.tbss)  *(.tbss.*) *(.tcommon) }
+
     .data : {
         *(.data)
         *(.data.*)

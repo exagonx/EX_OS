@@ -2,6 +2,1600 @@
 
 ---
 
+# SESSIONE 2026-08-03 (o) — Le pipe, e uno zombie che tratteneva un tubo
+
+Kernel **0.160**. `/bin/libctest` passa **265 prove su 265** (erano 239).
+
+Le quattro funzioni POSIX che mancavano a GCC per girare come programma
+ospite: `getpagesize`, `getrusage`, `mmap`/`munmap`, `pipe`.
+
+## Le tre facili, e cosa dichiarano di non saper fare
+
+| Funzione | ⚠️ Il limite, dichiarato |
+|---|---|
+| `getpagesize` | nessuno: 4096 |
+| `getrusage` | ⚠️ **non e' una misura**: `ru_utime` e' il tempo TRASCORSO dall'avvio, non il tempo di CPU del processo — EX-OS non tiene contabilita' per processo. Tutto il resto e' zero |
+| `mmap` | ⚠️ **solo memoria anonima**: `fd != -1` da' `ENODEV` |
+
+⚠️ **`getrusage` riporta un limite superiore, non zero**, ed e' una scelta:
+zero secco sarebbe altrettanto falso e meno utile. Cosi' due chiamate
+successive danno numeri che crescono e una differenza fra due istanti resta
+leggibile. Chi ci costruisce sopra un profilo — `gcc -ftime-report` —
+ottterra' per ogni passaggio lo stesso tempo. Il giorno che servisse
+davvero, la contabilita' va nello scheduler.
+
+⚠️ **`mmap` di un file si rifiuta invece di consegnare zeri.** Servirebbero
+le pagine sporche e il momento in cui riscriverle, cioe' un pezzo di
+gestore della memoria che non c'e'. Una mmap che finge darebbe un programma
+che legge dati sbagliati senza che niente lo segnali.
+
+⚠️ E ritorna **`MAP_FAILED`, cioe' `(void *)-1`, non `NULL`**: e' la
+convenzione di POSIX ed e' il modo classico di sbagliare a usarla.
+
+### Un difetto trovato strada facendo: `munmap` non abbassava il confine
+
+`sys_munmap` liberava le pagine fisiche ma lasciava `heap_end` dov'era.
+Ogni ciclo mmap/munmap si mangiava un pezzo di **spazio di
+indirizzamento** che non tornava piu' — e `ggc-page.cc` di GCC fa
+esattamente quel ciclo, migliaia di volte, su ogni file che compila.
+
+Non e' una perdita di memoria fisica, e infatti non si vedeva: si vedrebbe
+solo dopo molto lavoro, come una `mmap` che comincia a fallire con dello
+spazio apparentemente libero. Ora, se la zona smappata e' in cima, il
+confine torna giu' — solo la cima, come per `sbrk`: un buco in mezzo resta
+un buco, perche' `heap_end` e' un confine e non una mappa.
+
+### ⚠️ E una prova mia mal specificata
+
+`ma una coda si tiene` asseriva `dopo_free >= base`. Falso: il blocco da
+2 MB si **fonde con la coda libera che c'era gia' prima** di `base`, quindi
+comincia piu' in basso e restituire fin sotto `base` e' corretto. Ora la
+prova dice quello che quella frase significa davvero: **una malloc da 1 KB
+subito dopo non deve toccare il kernel.**
+
+## Le pipe
+
+`kernel/ipc/pipe.c`: buffer circolare da 4 KB, conteggio separato di
+lettori e scrittori, attesa con la stessa disciplina anti-risveglio-perduto
+del driver tastiera.
+
+⚠️ **`FD_PIPE_R` e `FD_PIPE_W` sono due TIPI, non uno con un flag.** La
+direzione non e' un dettaglio del descrittore: e' cio' che decide se una
+`read` blocca o e' un errore. Tenerle distinte fa sbagliare il compilatore
+invece del programma.
+
+Le prove che contano non sono il giro di andata e ritorno:
+
+```
+[ok]  chiusa la scrittura, read da' 0 (fine dei dati)
+[ok]  senza lettori, write da' EPIPE
+[ok]  leggere dall'estremita' sbagliata fallisce
+```
+
+⚠️ **Vuota con scrittori vivi = aspetta; vuota senza scrittori = 0.** E'
+tutta qui la ragione per cui il conteggio degli scrittori esiste: senza,
+una pipe non e' distinguibile da un blocco eterno.
+
+⚠️ **Niente SIGPIPE**: EX-OS non ha i segnali, quindi si vede solo il
+`-EPIPE`. Chi non guarda il valore di ritorno di `write()` non se ne
+accorge. Limite dichiarato.
+
+⚠️ **Niente garanzia di atomicita' di POSIX**: la scrittura puo' essere
+parziale anche sotto `PIPE_BUF`. Con un filo per processo garantirla
+costerebbe complessita' per nessun beneficio misurabile.
+
+### L'eredita' dei descrittori, senza cui le pipe non servono
+
+`SpawnRedir` con `percorso` **NULL** passa al figlio un descrittore del
+padre invece di aprire un file. E' quello che rende possibile
+`cmd1 | cmd2`.
+
+⚠️ **La magia di `SpawnExtra` e' passata da `'SPNX'` a `'SPNY'`** perche' e'
+cambiata la disposizione di `SpawnAzione`. Un binario compilato per la
+forma vecchia verrebbe letto storto, e **una redirezione letta storta
+scrive nel file sbagliato**: con la magia nuova il kernel non riconosce il
+blocco e lo ignora, che e' il modo meno dannoso di sbagliare.
+
+⚠️ **Il padre deve chiudere l'estremita' che ha passato.** Se non lo fa, la
+pipe conta ancora uno scrittore vivo — lui — e chi legge aspettera' per
+sempre. E' l'errore classico con le pipe e qui non c'e' niente che lo
+segnali.
+
+## ⚠️ LO STALLO CHE HA RIVELATO UN DIFETTO DI PROGETTO
+
+Il caso a due processi si bloccava. Strumentando invece di ipotizzare, la
+traccia diceva tutto:
+
+```
+TRACCIA pipe0: scritti 19 byte, sveglio PID 8
+TRACCIA pipe0: scritti 1 byte, sveglio PID 0
+TRACCIA pipe0: PID 8 si blocca in lettura (scrittori=1)      <- e poi piu' niente
+```
+
+Il figlio aveva scritto ed era uscito, ma **`scrittori` era ancora 1**.
+Perche' i descrittori si chiudevano in `proc_reap_zombie()`, che gira solo
+quando il padre chiama `waitpid()` — e il padre era bloccato nella `read`.
+
+```
+il figlio esce                 -> ZOMBIE, fd ancora contati
+il padre e' fermo nella read   -> non arrivera' mai a waitpid()
+nessuno chiama reap            -> nessuno decrementa
+```
+
+Due processi fermi ad aspettarsi a vicenda, senza nessun errore.
+
+⚠️ **E' il motivo per cui su Unix i descrittori si chiudono in `do_exit()`
+e non in `wait()`: uno zombie non deve trattenere risorse di I/O, solo il
+proprio codice di uscita.** Con i soli file non si notava — uno zombie che
+tiene un file per qualche millisecondo non da' fastidio a nessuno. Con una
+pipe e' uno stallo.
+
+Spostato in `proc_chiudi_fd()`, chiamata da `proc_exit()` **e** da
+`proc_kill()` (che copre la morte per fault). In `proc_reap_zombie` resta
+una spazzata di sicurezza: la funzione e' idempotente.
+
+⚠️ **Servono le varianti `_locked`**: `proc_exit`/`proc_kill` girano gia'
+sotto `cli`, e `interrupts_disable/enable` in questo kernel sono `cli`/`sti`
+**grezzi, senza contatore di annidamento** — chiamare la versione pubblica
+da li' farebbe `sti` a meta' di un'operazione non atomica. E' la stessa
+ragione per cui esiste `sched_unblock_locked()`.
+
+### E un difetto che ci avevo messo io
+
+La prima stesura di `pipe.c` spostava gli indici dell'anello **fuori** dalla
+sezione critica:
+
+  - in scrittura, alzare `quanti` prima di copiare espone al lettore
+    memoria non ancora scritta;
+  - in lettura, avanzare `testa` prima di copiare via lascia uno scrittore
+    libero di sovrascrivere quei byte.
+
+Nessuno dei due da' un errore: danno byte sbagliati, ogni tanto, sotto
+carico. Da qui il **buffer di rimbalzo**, che separa i due vincoli — la
+memoria utente si tocca solo a interrupt abilitati (puo' faultare),
+l'anello solo a interrupt disabilitati (dev'essere coerente).
+
+## File toccati
+
+| File | Cosa |
+|---|---|
+| `kernel/ipc/pipe.c`, `kernel/include/pipe.h` | **nuovi** |
+| `kernel/sched/sched.c` | `proc_chiudi_fd()` alla morte, non al reap |
+| `kernel/syscall/syscall_impl.c` | `sys_pipe`, pipe in read/write/close/dup, eredita' in spawn, `munmap` che abbassa il confine |
+| `kernel/include/sched.h` | `FD_PIPE_R`, `FD_PIPE_W` |
+| `kernel/include/syscall.h` | `SYS_PIPE`, `SPAWN_AZ_*`, magia `'SPNY'`, `EAGAIN`/`ENFILE` |
+| `lib/libc.c`, `lib/include/libc.h` | `pipe`, `mmap`/`munmap`, `getrusage`, `getpagesize`, `SpawnRedir.fd_padre` |
+| `tools/gcc-exos/prepara-cc1.sh` | **nuovo** — il canadian cross |
+| `bin/libctest/libctest.c` | +26 prove (239 → 265) |
+| `lib/include/libc.h`, `lib/libc.c` | `struct stat` con i tipi di POSIX |
+
+## Verso `cc1`: la prima risposta precotta
+
+Il canadian cross si configura con
+`--build=x86_64-pc-linux-gnu --host=i386-exos --target=i386-exos`, e la
+prima cosa che ha chiesto e' stata:
+
+```
+configure: error: unknown endianness
+```
+
+⚠️ **Non e' un'incognita: e' un difetto della prova.** i386 e'
+little-endian. Il test prova quattro strade e l'ultima — quella che cerca
+una stringa magica dentro l'oggetto — **non compila in C++**:
+
+```
+error: narrowing conversion of '35283' from 'int' to 'short int'
+```
+
+Da qui `ac_cv_c_bigendian=no`, che va **esportata** o le sotto-configure
+lanciate da `make` non la vedono. La regola per le prossime: prima si
+stabilisce il fatto, poi lo si scrive — non si mette una risposta per far
+passare la compilazione.
+
+## ⚠️ E UN DIFETTO VERO: `struct stat` AVEVA I TIPI SBAGLIATI
+
+Dopo 526 oggetti, `libcpp/files.cc`:
+
+```
+error: invalid conversion from 'unsigned int*' to 'off_t*' {aka 'long int*'}
+```
+
+cioe' `&file->st.st_size` passato dove serve un `off_t *`. La nostra
+`struct stat` dichiarava **tutti** i campi `unsigned int` invece dei tipi
+di POSIX.
+
+⚠️ **Sul nostro bersaglio hanno la stessa larghezza, quindi i VALORI erano
+corretti** e in un anno nessuno se n'era accorto. Il tipo si vede solo
+quando qualcuno prende l'**indirizzo** di un campo — ed e' esattamente
+quello che fa il preprocessore di GCC, per dire al lettore quanti byte ha
+letto davvero.
+
+Corretto: `dev_t`, `ino_t`, `mode_t`, `nlink_t`, `uid_t`, `gid_t`,
+`off_t`. Piu' due campi che mancavano del tutto: `st_blksize` e
+`st_blocks`.
+
+⚠️ **`st_blksize` vale 512 e non 4096**: e' il SETTORE, che e' l'unita'
+vera di tutti i filesystem di EX-OS. Chi dimensiona un buffer su quel
+numero deve ricevere qualcosa che corrisponde a come si legge davvero.
+
+⚠️ **`st_size` ora e' SEGNATO** (`off_t` e' `long`), quindi il tetto e'
+2 GB e non 4. E' lo stesso limite che ha gia' `lseek()`, che e' la syscall
+sotto: dichiararlo senza segno non renderebbe piu' grandi i file,
+renderebbe solo silenziosa la troncatura al confine col kernel.
+
+La prova nuova e' scritta per fallire **in compilazione** se il tipo
+regredisce:
+
+```c
+struct stat s;
+off_t *punta = &s.st_size;   /* se st_size torna unsigned int, non compila */
+```
+
+E' il genere di prova che vale piu' di un confronto di valori: quello
+sarebbe passato anche prima.
+
+---
+
+# SESSIONE 2026-08-03 (n) — libstdc++ gira dentro EX-OS
+
+Kernel **invariato a 0.157**. `/bin/libctest` passa **239 prove su 239**.
+
+## La libreria standard del C++ risponde
+
+```
+ex-os:/> /cdrom/bin/provacpp
+La libreria standard del C++ dentro EX-OS
+
+  vector+sort : 1 3 5 7 9
+  string      : "std::string concatenata" (23 caratteri)
+  cerchio     : area = 12566 (x1000)
+  quadrato    : area = 9000 (x1000)
+  eccezione   : lanciata e ripresa
+  out_of_range : presa da dentro la libreria
+
+La libreria standard risponde.
+```
+
+`libstdc++.a` **25 MB** e `libsupc++.a` **1 MB** in
+`~/exos-cross/i386-exos/lib`. E `provacpp` ora si costruisce con **una riga
+sola**:
+
+```sh
+i386-exos-g++ -O2 -o provacpp prova-cpp.cpp
+```
+
+Fino a ieri serviva compilare con `g++` e collegare con `gcc`, perche'
+`-lstdc++` non esisteva. L'ultima cosa che distingueva questo bersaglio da
+uno qualunque e' sparita.
+
+## ⚠️ Le eccezioni funzionano, e non era scontato
+
+E' il pezzo che ha bisogno di piu' cose insieme: `__cxa_throw`, lo
+svolgimento dello stack, le tabelle `.eh_frame`, i descrittori di tipo. Lo
+svolgimento **legge a runtime le tabelle prodotte dal collegatore e le
+percorre**: e' l'unica parte del C++ che pretende che il programma caricato
+in memoria sia esattamente come il collegatore l'ha descritto.
+
+Con il caricamento su richiesta di EX-OS (le pagine arrivano al primo
+accesso, sessione (d)) e' anche una prova indiretta che quel meccanismo e'
+corretto. E la seconda prova — `vector::at(10)` che lancia `out_of_range`
+da dentro la libreria — attraversa piu' livelli di stack, che e' dove lo
+svolgimento fa il suo lavoro invece di essere un salto.
+
+⚠️ Le eccezioni si abilitano **da sole**: `-fno-exceptions -fno-rtti` non
+serve piu' e non e' piu' nella riga di costruzione.
+
+## Cos'e' servito, in ordine
+
+Undici tentativi di build. Ogni volta la libstdc++ ha chiesto una cosa e si
+e' fermata; l'elenco completo sta nelle sessioni (l) e (m). In sintesi:
+
+| Passo | Cosa mancava |
+|---|---|
+| 1 | `os/newlib` al posto di `os/generic` (patch in `applica.py`) |
+| 2 | `memalign` e famiglia |
+| 3 | ~20 nomi di `<cstdlib>`/`<cstdio>` (`div`, `rand`, `mblen`, `system`, …) |
+| 4 | **`extern "C"` in `libc.h` e `math.h`** — la riga che mancava da sempre |
+| 5 | `sleep()` che ritorna `unsigned int` invece di `void` |
+| 6 | 40 codici errno, le costanti `DT_*` e `S_IF*` |
+| 7 | `mktime`, `localeconv`, `sig_atomic_t` |
+| 8 | le sei macro di confronto C99 e la famiglia `<inttypes.h>` |
+| 9 | **`nearbyintl`, che a openlibm manca**, e `HAVE_STRTOLD` |
+
+⚠️ **Nessuno di questi si e' scoperto leggendo la documentazione**: si sono
+scoperti uno alla volta, e ogni volta il messaggio d'errore indicava un
+punto diverso dalla causa. I due casi peggiori — `memalign` che segnalava
+l'assenza di `extern "C"`, e `cbrt` che segnalava l'assenza di
+`nearbyintl` — sono descritti per esteso nelle sessioni (m) e (l).
+
+## Cosa resta per `cc1`
+
+`libstdc++` c'e'. Restano, in ordine:
+
+1. i quattro nomi che GCC usa sull'ospite e che la libc non ha:
+   `getrusage`, `getpagesize`, `mmap`, `pipe` (i primi due facili, `mmap`
+   ha il ripiego `malloc` in `ggc-page.cc`, `pipe` non serve);
+2. il **canadian cross** vero e proprio
+   (`--build=x86_64-linux --host=i386-exos --target=i386-exos`);
+3. ⚠️ **lo spazio**: `cc1` per x86-64 spogliato e' 50 MB, per i386 sara'
+   sui 25-30. Ci sta su un CD, non su un floppy, e vuole una macchina con
+   abbastanza RAM — il tetto dello heap della sessione (k) e la
+   restituzione della memoria della sessione (l) servono a quello.
+
+## File toccati
+
+| File | Cosa |
+|---|---|
+| `tools/gcc-exos/applica.py` | `HAVE_STRTOLD` accanto a `os_include_dir` |
+| `tools/openlibm-exos/nearbyintl-exos.c` | **nuovo** — la funzione che manca a openlibm |
+| `tools/openlibm-exos/prepara-libm.sh` | la compila e la infila in `libm.a` |
+| `lib/include/math.h` | le sei macro di confronto, `float_t`/`double_t`, `nearbyintl` |
+| `lib/include/inttypes.h` | `intmax_t`, `imaxdiv_t`, `imaxdiv`, `strtoimax`/`strtoumax` |
+| `lib/include/libc.h` | `sig_atomic_t` |
+| `lib/libc.c` | la famiglia `imax*` |
+| `tools/iso/prova-cpp.cpp` | riscritto: usa libstdc++ per intero |
+| `tools/iso/prova-mat.c` | la prova di `nearbyintl`, che guarda INEXACT |
+| `Makefile` | `provacpp` con una riga sola, se `libstdc++.a` c'e' |
+
+## Comandi
+
+```sh
+# libstdc++ per il bersaglio (GCC gia' costruito):
+rm -rf ~/gcc-build-cxx/i386-exos/libstdc++-v3     # ⚠️ la cache di configure
+cd ~/gcc-build-cxx
+make -j1 all-target-libstdc++-v3 && make -j1 install-target-libstdc++-v3
+
+make iso
+EXOS_QEMU_EXTRA="-cdrom dist/exos-tools.iso" \
+    python3 tools/qemu_drive.py "/cdrom/bin/provacpp@10"
+```
+
+---
+
+# SESSIONE 2026-08-03 (m) — Il C++ gira, e la riga che mancava da sempre
+
+Kernel **invariato a 0.157**: e' tutto libc e header. `/bin/libctest`
+passa **239 prove su 239**.
+
+## Il C++ gira dentro EX-OS
+
+```
+ex-os:/> /cdrom/bin/provacpp
+C++ dentro EX-OS
+
+  cerchio  area = 12566 (x1000)
+  quadrato area = 9000 (x1000)
+
+  template: massimo(3, 7) = 7, massimo(2.5, 1.5) = 2500
+  la libc risponde anche da C++ (29 caratteri)
+
+Il C++ gira.
+```
+
+Classi, ereditarieta', funzioni virtuali (con vtable), template, e la libc
+di EX-OS chiamata da C++. Sorgente in `tools/iso/prova-cpp.cpp`, sul CD sia
+compilato (`/bin/provacpp`) sia in sorgente.
+
+⚠️ **Si compila con `g++` e si collega con `gcc`**, ed e' la descrizione
+esatta di dove siamo: `g++` in fase di collegamento chiede `-lstdc++`, che
+per i386-exos non c'e' ancora; `gcc` no. Quello che il programma usa lo
+risolve tutto il compilatore e non ha bisogno di una libreria a runtime.
+
+⚠️ **Niente distruttore virtuale**, ed e' il confine esatto: un
+`virtual ~Forma()` fa emettere anche il *deleting destructor* (`D0`), che
+chiama `operator delete` — cioe' libsupc++:
+
+```
+undefined reference to `operator delete(void*, unsigned int)'
+```
+
+Non e' un errore del programma: e' la prova che il pezzo mancante e' quello
+che si sta costruendo.
+
+## ⚠️ LA RIGA CHE MANCAVA DA SEMPRE — `extern "C"`
+
+**Nessuno dei nostri header aveva la guardia `#ifdef __cplusplus extern "C" {`.**
+
+Il C++ decora i nomi delle funzioni con i tipi degli argomenti — `printf`
+diventa `_Z6printfPKcz` — perche' gli serve per il sovraccarico. La nostra
+`libc.a` e' compilata da un compilatore C e dentro ha il nome nudo. Senza
+la guardia, **ogni programma C++ chiamava simboli che nell'archivio non
+esistono e non sono mai esistiti.**
+
+⚠️ **E il sintomo era fuorviante.** Non e' arrivato al collegamento: e'
+arrivato prima, in compilazione, perche' la libstdc++ dichiara per conto
+suo alcune funzioni della libc con `extern "C"` esplicito
+(`libsupc++/new_opa.cc` lo fa con `memalign`). Il messaggio dice una cosa
+che sembra assurda:
+
+```
+error: conflicting declaration of 'void* memalign(size_t, size_t)'
+       with 'C' linkage
+```
+
+cioe' «questa dichiarazione e' in conflitto con se stessa». La causa e' che
+la NOSTRA era in C++ e la loro in C: due funzioni diverse con lo stesso
+nome. Ho perso tempo a cercare il problema in `memalign`, che non c'entrava
+niente.
+
+Aggiunta a `libc.h` e `math.h` — gli unici due header del progetto che
+dichiarano funzioni proprie (gli altri sono facciate che includono
+`libc.h`). Verificato che un programma C++ ora si collega davvero, non solo
+compila:
+
+```
+$ i386-exos-nm provacpp | grep -E ' T (printf|strcpy|sqrt)$'
+08002b80 T printf
+08008490 T sqrt
+08001760 T strcpy
+```
+
+## ⚠️ `sleep()` ritornava `void`, e POSIX dice `unsigned int`
+
+Non e' una finezza. Il modo canonico di usarla e'
+
+```c
+while ((secs = sleep(secs))) { }
+```
+
+cioe' «riprova finche' non hai finito davvero», ed e' esattamente cio' che
+scrive `src/c++11/thread.cc` della libstdc++. Con un ritorno `void` quella
+riga non compila:
+
+```
+error: void value not ignored as it ought to be
+```
+
+⚠️ Su EX-OS il valore e' **sempre 0**, e non e' una bugia: non ci sono
+segnali che possano interrompere il sonno, quindi la dormita e' sempre
+completa. **La firma dice la verita' sul contratto, il valore dice la
+verita' su questo sistema.** Stessa correzione per `usleep`, che ora
+ritorna `int`.
+
+## I nomi che servono a essere nominati, non a essere ritornati
+
+Tre gruppi di costanti aggiunti per lo stesso motivo, e vale la pena
+capirlo una volta sola:
+
+| Gruppo | Chi le chiede | EX-OS le usa? |
+|---|---|---|
+| 40 codici errno di rete e IPC (`ECONNRESET`, `ENOLCK`, …) | `std::errc` in `<system_error>` | **mai** |
+| `DT_FIFO`, `DT_CHR`, `DT_BLK`, `DT_LNK`, `DT_SOCK`, `DT_WHT` | `std::filesystem::file_type` | **mai** |
+| `S_IFLNK`, `S_IFSOCK`, `S_ISBLK()`, … e i bit dei permessi | idem | **mai** |
+
+⚠️ **Un nome mancante e' un errore di compilazione, non un ramo morto.**
+La libstdc++ scrive `case DT_LNK:` in uno switch: le serve la costante, non
+il comportamento. Ritornare sempre 0 da `S_ISLNK()` e' la risposta
+**giusta** — su EX-OS un collegamento simbolico non esiste, quindi «questo
+file e' un collegamento?» ha davvero risposta no. E' diverso dal caso in
+cui non si sapesse rispondere.
+
+⚠️ **I valori sono quelli di Linux e non vanno reinventati**: il giorno che
+EX-OS avesse i collegamenti simbolici, `S_IFLNK` dovra' valere `0120000`
+come ovunque, o ogni programma portato di la' leggerebbe il tipo sbagliato.
+
+⚠️ `EWOULDBLOCK` **e'** `EAGAIN` e `ENOTSUP` **e'** `EOPNOTSUPP`, stesso
+numero, come su Linux: dargli valori propri romperebbe ogni
+`if (errno == EAGAIN || errno == EWOULDBLOCK)`.
+
+## Altre due, e nessuna delle due era nota
+
+**`mktime` non esisteva** — ma il README diceva di si'. Ora c'e', e
+⚠️ **normalizza la struttura che riceve**, che e' meta' del suo lavoro:
+`tm_mon = 12` diventa gennaio dell'anno dopo, `tm_sec = 90` diventa un
+minuto e mezzo. Per questo il parametro non e' `const`.
+
+**`localeconv` e `struct lconv`.** ⚠️ I campi non specificati valgono
+**127** (`CHAR_MAX`), non zero: 127 significa «questa locale non lo dice»,
+zero significa «zero cifre». Un programma che formatta denaro leggendo
+`frac_digits` stamperebbe, con lo zero, importi senza decimali credendo che
+sia la regola locale. E' l'errore classico di chi riempie questa struttura
+a memoria.
+
+## Come si e' lavorato, e come NON si e' lavorato
+
+⚠️ **Dopo il primo errore non si e' andati a tentativi.** L'elenco di cio'
+che la libstdc++ pretende e' stato estratto dai suoi header:
+
+```sh
+grep -rhoE '^\s*using ::[a-zA-Z_][a-zA-Z0-9_]*;' cstring cstdio cstdlib ... \
+  | sed 's/.*using :://;s/;//' | sort -u
+```
+
+225 nomi, di cui ~150 `wchar_t` che **non servono**: `_GLIBCXX_USE_WCHAR_T`
+risulta spento nella nostra configurazione. Lo stesso metodo per le
+costanti: si e' letto `bits/error_constants.h` e `src/filesystem/*` e si e'
+fatto il diff con i nostri header, invece di aspettare l'errore
+successivo.
+
+⚠️ **Il diff con `grep -w` da' falsi negativi**: `mktime` risultava
+presente perche' comparivano in un COMMENTO di `time.h` che diceva che non
+c'era. Il controllo giusto e' su `^#define NOME` o sulla forma di una
+dichiarazione.
+
+## ⚠️ LA TRAPPOLA PIU' COSTOSA — sei macro mancanti, 136 errori lontanissimi
+
+A un certo punto `std.cc` (il modulo `import std;` del C++23) ha prodotto
+**136 errori** tutti della forma:
+
+```
+error: 'trunc' has not been declared in 'std'
+error: 'strtoll' has not been declared in 'std'
+error: 'vsnprintf' has not been declared in 'std'
+```
+
+⚠️ **Tutte quelle funzioni ESISTONO nella nostra libc.** Il messaggio non
+dice «manca `trunc`»: dice «manca `std::trunc`», ed e' un'altra cosa. La
+libstdc++ mette una funzione in `namespace std` solo se il suo configure
+ha stabilito che l'header di provenienza e' conforme al C99, e quel
+verdetto sta in `_GLIBCXX_USE_C99`, che era **spento**.
+
+La causa vera, dentro `config.log`:
+
+```
+conftest.cpp:39: error: 'isgreater' was not declared in this scope
+conftest.cpp:40: error: 'isgreaterequal' was not declared in this scope
+...
+```
+
+Sei macro di confronto del C99 che non avevamo. Il configure compila **un
+solo** programma che le usa tutte, e **una sola assenza fa dichiarare non
+conforme l'header intero** — con cui la libreria rinuncia a esportare
+decine di funzioni che invece ci sono.
+
+⚠️ **Non sono sinonimi di `<`, `<=`, `>`, `>=`.** Con un operando NaN danno
+la stessa risposta (falso) ma non lo stesso effetto: l'operatore solleva
+l'eccezione "invalid" dell'x87, queste macro no. E' l'unica ragione per cui
+esistono, e sono `__builtin_*`: le fa il compilatore, quindi **non serve
+`-lm`**.
+
+Stessa storia per `<inttypes.h>`, dove mancavano `imaxdiv`, `strtoumax` e
+`intmax_t`: il commento nel file diceva «nessuno li ha ancora chiesti».
+Adesso li chiede la libstdc++.
+
+## ⚠️ E LA CACHE DI configure ANDAVA BUTTATA
+
+Aggiunte le macro, il build **falliva ancora allo stesso modo**. Il motivo:
+`config.log` e `config.h` di libstdc++ erano del configure di ORE prima,
+con `glibcxx_cv_c99_math_cxx98=no` gia' deciso e messo in cache. Le
+funzioni nuove nella libc non cambiavano niente, perche' nessuno le stava
+piu' cercando.
+
+```sh
+rm -rf ~/gcc-build-cxx/i386-exos/libstdc++-v3
+make -j1 all-target-libstdc++-v3      # riconfigura SOLO libstdc++
+```
+
+⚠️ **Si cancella la directory di build di libstdc++, NON si rilancia il
+configure di primo livello**: quello rigenererebbe i file di GCC e
+farebbe ricompilare l'intero compilatore, che a `-j1` sono ore. E' la
+lezione della sessione (k), applicata.
+
+Dopo: `_GLIBCXX_USE_C99` passa da `#undef` a `1`, e i 136 errori spariscono
+tutti insieme.
+
+## ⚠️ `nearbyintl` MANCA A openlibm 0.8.7 — e costa cara
+
+`src/s_nearbyint.c` genera le funzioni da una macro:
+
+```c
+DECL(double, nearbyint, rint)
+DECL(float, nearbyintf, rintf)
+```
+
+e la terza riga — `DECL(long double, nearbyintl, rintl)` — **non c'e'**.
+`rintl` invece c'e', ed e' pure in assembly x87 (`i387/s_rintl.S`): manca
+solo l'involucro. Non e' una nostra configurazione sbagliata, e' una lacuna
+a monte.
+
+Costa cara per il motivo di sempre: il configure della libstdc++ compila
+**un solo** programma che usa tutte le funzioni C99 di `<math.h>`, e una
+sola assenza fa dichiarare non conforme l'header intero. L'errore che si
+vede poi e' `std.cc: 'cbrt' has not been declared in 'std'` — cioe' «manca
+`cbrt`» quando `cbrt` c'e' e a mancare e' `nearbyintl`.
+
+Aggiunta in `tools/openlibm-exos/nearbyintl-exos.c` e infilata
+**nell'archivio** da `prepara-libm.sh`, non nella libc: cosi' resta vero che
+«se e' dichiarata in `math.h` sta in `libm.a` e vuole `-lm`».
+
+⚠️ **La differenza fra `rintl` e `nearbyintl` e' UNA SOLA**: danno lo stesso
+numero, ma `rintl` alza il flag INEXACT quando l'argomento non era gia'
+intero e `nearbyintl` no. Per questo la prova in `prova-mat.c` **non
+confronta solo i valori** — legge la status word dell'x87 con `fnstsw` e
+guarda il bit 5. Confrontare i numeri proverebbe la meta' sbagliata.
+
+```
+ex-os:/> /cdrom/bin/provamat
+    nearbyintl(2.5)=2  nearbyintl(-2.5)=-2  nearbyintl(3.7)=4
+    stesso risultato: si
+    rintl alza INEXACT: si   nearbyintl: no
+```
+
+### ⚠️ Il difetto che ci ho messo dentro io, e come si e' visto
+
+La prima versione ritornava **zero** per ogni argomento. Il motivo:
+
+```c
+r = rintl(x);
+__asm__ ("fldenv %0" : : "m" (env));   /* <-- qui il valore sparisce */
+return r;
+```
+
+`fldenv` ripristina anche la **tag word**, cioe' quali registri dell'x87
+risultano occupati. Un `long double` restituito da una funzione sta in
+`st(0)`, e GCC lo tiene volentieri li' invece di scriverlo in memoria: al
+`fldenv` quel registro viene rimarcato come **vuoto** e il valore sparisce.
+
+Nessun errore, nessun avviso: solo `nearbyintl(2.5) == 0`. Il rimedio e'
+forzare il risultato in memoria prima:
+
+```c
+__asm__ __volatile__ ("" : "+m" (r));   /* da qui `r` sta in memoria */
+```
+
+Si controlla nel disassemblato che ci sia una `fstpt` **prima** della
+`fldenv`. E' cio' che fa anche FreeBSD, dove il valore passa per una
+variabile prima di `fesetenv()`.
+
+### ⚠️ E un errore di conduzione: due membri omonimi in un archivio
+
+Per provare in fretta la correzione ho ricompilato l'oggetto a mano
+chiamandolo `nbl.o` e l'ho aggiunto con `ar rcs`. Ma `prepara-libm.sh` lo
+inserisce come `nearbyintl-exos.o`: **in `libm.a` sono finite due
+definizioni di `nearbyintl`**, una vecchia e una nuova, e il collegatore
+prendeva quella che trovava per prima.
+
+`ar` sostituisce per NOME DEL MEMBRO, non per simbolo definito. Il risultato
+e' stato mezz'ora passata a cercare un difetto nella FPU di EX-OS che non
+c'era: lo stesso identico binario dava i valori giusti su Linux e zeri
+dentro EX-OS, il che sembrava — e non era — un problema del sistema. La
+diagnosi vera e' arrivata da un programmino che stampava control word,
+status word e tag word: **identiche sulle due macchine**, quindi il
+sospetto era mal riposto.
+
+Rifatto con lo script, che ricostruisce l'archivio da zero, i valori sono
+corretti su entrambe.
+
+## Progressione, per dare la misura
+
+Oggetti compilati prima di fermarsi, tentativo per tentativo. Il conteggio
+riparte a ogni directory:
+
+```
+3  →  25  →  28  →  47  →  22 (src/c++11)  →  37  →  26  →  153+ (0 errori)
+```
+
+`libsupc++` e `src/c++11` complete, `src/c++17` in corso.
+
+## File toccati
+
+| File | Cosa |
+|---|---|
+| `lib/include/libc.h` | **`extern "C"`**, 40 errno, `DT_*`, `S_IF*`/`S_IS*`/permessi, `mktime`, `localeconv`, `sleep`/`usleep` |
+| `lib/include/math.h` | `extern "C"`, le sei macro di confronto C99, `float_t`/`double_t` |
+| `lib/include/inttypes.h` | `intmax_t`, `imaxdiv_t`, `imaxdiv`, `strtoimax`/`strtoumax` |
+| `lib/libc.c` | `mktime`, `localeconv`, `sleep`/`usleep` con il ritorno giusto, la famiglia `imax*` |
+| `tools/iso/prova-cpp.cpp` | **nuovo** — il C++ sul CD |
+| `Makefile`, `tools/iso/leggimi.txt` | `provacpp` sul CD se `i386-exos-g++` c'e' |
+| `bin/libctest/libctest.c` | +14 prove (225 → 239) |
+
+---
+
+# SESSIONE 2026-08-03 (l) — La memoria torna al kernel, e due difetti che si tenevano nascosti a vicenda
+
+Kernel **0.157**. `/bin/libctest` passa **210 prove su 210** (erano 194).
+
+## Il punto di partenza
+
+`free()` non chiamava **mai** `sbrk` con un incremento negativo. Un blocco
+liberato tornava disponibile per il **processo**, non per il **sistema**: un
+programma che alloca a picchi — cioe' qualunque compilatore, che costruisce
+e butta un albero di sintassi per funzione — teneva il picco massimo fino
+alla propria uscita. Con `cc1` e `as` che girano di seguito sulla stessa
+macchina, il primo affamava il secondo pur avendo gia' finito.
+
+Ora la coda dello heap si restituisce. Solo la coda: `sbrk` sposta un
+confine e non sa bucare il mezzo.
+
+```
+Crescita dello heap:
+  [ok]     2 MB fanno salire il confine
+  [ok]     e la free lo fa riscendere
+  [ok]     ma una coda si tiene
+  [ok]     e si rialloca senza danni
+```
+
+⚠️ **La prova guarda `sbrk(0)`, non `malloc()`.** Che `malloc` riesca lo
+sapevamo gia': la lista dei blocchi liberi bastava a quello. La domanda e'
+se il **confine** si e' abbassato, ed e' l'unica cosa che distingue
+«memoria riusabile» da «memoria restituita».
+
+## ⚠️ I DUE DIFETTI CHE SI TENEVANO NASCOSTI A VICENDA
+
+Nessuno dei due si vedeva finche' `sbrk` negativa non veniva usata. E il
+primo impediva di accorgersi del secondo.
+
+### 1. La libc chiedeva byte, il kernel dava pagine
+
+`heap_estendi()` chiamava `sbrk(2 MB + 16)`. Il kernel **non** sposta il
+confine dei byte chiesti: lo sposta di **pagine intere** (`ALIGN_UP` in
+`sys_sbrk`). Quindi il confine saliva di 2 MB + 4096 e la libc si segnava
+un blocco di 2 MB + 16: **gli ultimi 4080 byte esistevano, erano del
+processo, ed erano invisibili all'allocatore.**
+
+Fino a ieri era solo uno spreco — fino a una pagina per ogni estensione,
+che nessuno notava perche' un blocco che non e' in nessuna lista non fa
+danni, occupa e basta. Da oggi era un impedimento: il controllo «questo
+blocco e' davvero in cima al break?» **non poteva mai riuscire**, perche'
+fra la fine del blocco e il confine c'era sempre quel residuo. La prima
+versione di `heap_restituisci()` non restituiva niente, e non diceva
+perche'. Rimedio: `heap_estendi` chiede a pagine intere.
+
+### 2. `sbrk` negativa buttava via una pagina viva
+
+```c
+pages = ALIGN_UP(shrink, PAGE_SIZE) / PAGE_SIZE;   /* <- ALIGN_UP */
+for (i = 0; i < pages; i++) {
+    uint32_t va = new_end + i * PAGE_SIZE;         /* <- da new_end */
+    ...libera...
+}
+```
+
+Con `heap_end = 0x9000` e `sbrk(-0x800)`: `new_end = 0x8800`, `pages = 1`,
+e si libera la pagina che contiene `0x8800` — cioe' `0x8000-0x8FFF`. **Ma
+`0x8000-0x87FF` sono ancora del chiamante.**
+
+⚠️ Non dava nessun errore: dava byte che sparivano dallo heap di un
+processo che li stava usando. Non si notava perche' **nessuno chiamava mai
+`sbrk` con un incremento negativo** — e la prima cosa che lo avrebbe fatto
+era proprio la `free()` di questa sessione.
+
+Corretto arrotondando per **difetto**: si restituisce meno di quanto
+chiesto, mai una pagina che serve ancora. `heap_end` resta multiplo di
+pagina, come lo e' sempre stato crescendo.
+
+## Le tre condizioni di `heap_restituisci()`
+
+| Condizione | Cosa evita |
+|---|---|
+| arrotonda a pagine intere | che il kernel butti la pagina del nuovo confine |
+| `sbrk(0)` per verificare la cima | di restituire memoria di qualcun altro (una `mmap`) |
+| tiene 64 KB, soglia 64 KB | due syscall a giro in un ciclo alloca/libera |
+
+⚠️ **`heap_ultimo` non e' «l'ultimo blocco prima del break»**: e' l'ultimo
+blocco *della nostra lista*. Fra la sua fine e il confine puo' esserci roba
+di qualcun altro, e restituirla sarebbe buttare via memoria che non ci
+appartiene. Da qui il controllo esplicito con `sbrk(0)`.
+
+⚠️ **Il controllo di taglia viene PRIMA di `sbrk(0)`**, ed e' voluto: e'
+aritmetica pura, quindi la `free()` normale — quella che non restituisce
+niente — non paga nessuna syscall. Rimettere il conto dopo annullerebbe il
+guadagno che l'allocatore era andato a prendere.
+
+⚠️ **L'intestazione resta dov'e'** e il blocco continua a esistere, solo
+piu' corto. Sfilarlo dalla lista avrebbe voluto dire scriverci dentro dopo
+averlo smappato.
+
+## Quello che chiedeva la libstdc++
+
+Il primo tentativo di costruire libsupc++ si e' fermato su nomi che i suoi
+header `<cstdlib>`, `<cstring>`, `<cstdio>` dichiarano con `using ::`,
+**senza chiedersi se qualcuno li usera'**: se il nome non esiste, l'header
+non compila e con lui non compila niente.
+
+⚠️ **NON SI E' ANDATI A TENTATIVI.** Dopo il primo errore l'elenco e' stato
+estratto dagli header stessi e confrontato con i nostri:
+
+```sh
+grep -rhoE '^\s*using ::[a-zA-Z_][a-zA-Z0-9_]*;' cstring cstdio cstdlib ... \
+  | sed 's/.*using :://;s/;//' | sort -u
+```
+
+225 nomi, di cui **~150 sono `wchar_t`** (`wcs*`, `isw*`, `tow*`) e non
+servono: `_GLIBCXX_USE_WCHAR_T` risulta **spento** nella nostra
+configurazione, quindi quegli header non vengono nemmeno compilati. Restano
+questi, aggiunti tutti in un colpo invece che uno per giro di build:
+
+| Aggiunto | Nota |
+|---|---|
+| `div_t`, `ldiv_t`, `lldiv_t`, `div`, `ldiv`, `lldiv` | ⚠️ troncamento verso **zero**: `div(-7,2)` = (-3, -1) |
+| `llabs`, `atoll` | |
+| `rand`, `srand`, `RAND_MAX` | ⚠️ LCG del K&R — **non** e' casuale, non per chiavi |
+| `mblen`, `mbtowc`, `wctomb` | ⚠️ ritornano `int`, non `size_t` come le `mbr*` |
+| `strxfrm` | ⚠️ ritorna la lunghezza dell'**originale**, non del copiato |
+| `fpos_t`, `fgetpos`, `fsetpos` | ⚠️ ritornano 0/-1, non la posizione |
+| `setbuf`, `setvbuf` | ⚠️ **setvbuf dice di no** invece di fingere |
+| `vscanf`, `_Exit`, `at_quick_exit`, `quick_exit` | |
+| `difftime`, `struct timespec`, `timespec_get` | ⚠️ `timespec_get` ritorna **`base`**, non 0 |
+| `system` | ⚠️ **ritorna sempre -1 con ENOSYS** |
+
+### ⚠️ `lldiv` non poteva usare l'operatore `/`
+
+Sull'i386 una divisione fra due interi a 64 bit **non e' un'istruzione**:
+il compilatore la trasforma in una chiamata a `__divmoddi4` di libgcc, e i
+programmi di EX-OS si linkano con `-nostdlib` e **senza libgcc**.
+
+```
+ld: libc.o: in function `lldiv':
+    undefined reference to `__divmoddi4'
+```
+
+L'errore non e' a runtime, e' **al link**, su qualunque programma che
+includa la funzione — anche senza chiamarla mai. Da qui `u64_divmod()`, la
+divisione a spostamenti (la `div64` che gia' c'era per la printf divide per
+una base piccola e tiene il resto in 32 bit: non bastava).
+
+⚠️ Il resto prende il segno del **dividendo**, non del divisore, e il
+troncamento e' verso zero: `lldiv(-9000000000, 7)` da' `(-1285714285, -5)`.
+Con la divisione fatta a mano quella regola va riprodotta a mano.
+
+### ⚠️ Le due funzioni che dicono di no invece di fingere
+
+**`system()`** ritorna sempre -1 con `ENOSYS`, e non e' un segnaposto:
+`/bin/sh` ha un `_start(void)` e legge solo dal terminale, quindi non c'e'
+niente a cui passare la stringa. `system(NULL)` ritorna 0, che e' il modo
+corretto di dire «non c'e' un interprete».
+
+**`setvbuf()`** ritorna diverso da zero. La bufferizzazione di EX-OS non e'
+regolabile — i buffer stanno dentro la struttura `FILE`, non allocati a
+parte. Un programma che chiede `_IONBF` e riceve 0 andrebbe avanti convinto
+che ogni `putc` sia gia' arrivato: su un log di debug e' la differenza fra
+vedere l'ultima riga prima di un crash e non vederla.
+
+⚠️ **`system()` c'e' ma non esegue niente, e lo dice.** Non e' un
+segnaposto: e' la risposta giusta finche' `/bin/sh` non sa accettare un
+comando sulla riga di argomenti — oggi ha un `_start(void)` e legge solo
+dal terminale, quindi non c'e' niente a cui passare la stringa. Ritornare 0
+fingendo di aver eseguito sarebbe peggio di non esserci: il chiamante
+andrebbe avanti convinto che il comando sia stato fatto. `system(NULL)`
+ritorna 0, che e' il modo corretto di dire «non c'e' un interprete».
+
+## ⚠️ Una trappola nella conduzione, non nel codice
+
+Il primo build di libstdc++ e' stato lanciato cosi':
+
+```sh
+make -j1 all-target-libstdc++-v3 > log 2>&1; echo "exit=$?"
+```
+
+Il task e' stato riportato **completato con exit 0** — ma quello era
+l'exit code dell'`echo`, non di `make`. La build era **fallita**. In un
+comando in background, l'ultimo comando della catena e' quello che
+determina l'esito: niente dopo il `make`, o l'errore diventa invisibile.
+
+## File toccati
+
+| File | Cosa |
+|---|---|
+| `lib/libc.c` | `heap_restituisci()`, `heap_estendi` a pagine, `div`/`ldiv`, `rand`/`srand`, `mblen`/`mbtowc`/`wctomb`, `system` |
+| `lib/include/libc.h` | i prototipi, `div_t`/`ldiv_t`, `RAND_MAX` |
+| `kernel/syscall/syscall_impl.c` | `sbrk` negativa: arrotondamento per difetto |
+| `kernel/include/version.h` | 0.156 → 0.157 |
+| `bin/libctest/libctest.c` | +12 prove (194 → 210) |
+
+---
+
+# SESSIONE 2026-08-03 (k) — Lo heap aveva un tetto solo per finta
+
+Kernel **0.156**. `/bin/libctest` passa **194 prove su 194** (erano 188).
+Nessuna funzione nuova: e' un confine che mancava.
+
+## Cosa andava storto
+
+`sys_sbrk` cresceva finche' `pmm_alloc_page()` aveva pagine da dare.
+L'unico limite era la **RAM fisica**, non lo spazio di indirizzamento — e
+sopra lo heap non c'e' il vuoto:
+
+```
+heap_start ....... heap_end -->        <-- tls_base    riserva stack
+0x0800c000                              0xbffbd000     0xbffbf000
+```
+
+E `paging_map_page()` (`kernel/mm/paging.c`) **sovrascrive una PTE gia'
+presente senza dire niente**. ⚠️ Uno heap che avesse superato `tls_base`
+avrebbe rimappato **il blocco TLS del processo stesso** su pagine nuove
+azzerate: il thread pointer sarebbe andato a zero e ogni variabile
+`__thread` avrebbe cominciato a leggere memoria altrui. **Senza un fault,
+senza un log, senza niente.** Piu' sopra c'e' la riserva dello stack, dove
+il danno sarebbe stato lo stesso al contrario: pagine gia' mappate proprio
+dove `page_fault_handler` conta di poterle mappare lui.
+
+## ⚠️ Due cose che avevo detto e che il codice ha smentito
+
+**«Lo heap parte da `USER_SPACE_BASE` (64 MB) e sbatte contro il testo del
+programma a 128 MB».** Falso: `elf.c` (Passo 7) fa gia' partire lo heap
+**subito dopo l'ultimo segmento caricato**. Il limite di 64 MB non e' mai
+esistito per un processo caricato da `elf_load` — e sono tutti.
+
+Quello che esisteva davvero era il **ripiego** dentro `sys_sbrk`:
+
+```c
+if (proc->heap_start == 0) {
+    proc->heap_start = USER_SPACE_BASE;   /* 0x04000000 */
+    proc->heap_end   = USER_SPACE_BASE;
+}
+```
+
+Quello si', partiva **sotto** l'immagine del programma. Oggi non ci arriva
+nessuno, ma era una risposta plausibile e sbagliata che aspettava il primo
+processo costruito in un altro modo. Ora non c'e' piu': chi non ha uno
+spazio di indirizzamento preparato da `elf_load` **non ha uno heap**, e
+`sbrk` glielo dice con `ENOMEM` invece di indovinare un indirizzo.
+
+## Il tetto
+
+Nuovo campo `Process.heap_max`, calcolato in `elf.c` **dopo** il blocco
+TLS e lo stack, perche' dipende da entrambi:
+
+```c
+uint32_t soffitto = proc->tls_base ? proc->tls_base : proc->user_stack_limit;
+proc->heap_max = soffitto - PAGE_SIZE;      /* una pagina di guardia */
+```
+
+Verificato al caricamento, con `verboseboot = 1`:
+
+```
+ELF: TLS 0xbffbd000-0xbffbe000, tp=0xbffbd014 (memsz=20 filesz=20 align=4)
+ELF: heap utente 0x0800c000, tetto 0xbffbc000 (2943 MB)     <- libctest, con TLS
+ELF: heap utente 0x08005000, tetto 0xbffbe000 (2943 MB)     <- la shell, senza
+```
+
+Il confine e' controllato in **tutte e due** le vie per cui lo spazio di un
+processo cresce:
+
+| Dove | Cosa cambia |
+|---|---|
+| `sys_sbrk` | controllo **prima** di allocare, `ENOMEM` |
+| `sys_mmap` senza `MAP_FIXED` | stesso tetto: anche questa via alza `heap_end` |
+| `sys_mmap` con `MAP_FIXED` | rifiuta sopra il tetto con `EINVAL` |
+
+⚠️ **Il controllo sta prima del ciclo, non dentro.** Fermarsi a meta'
+lascerebbe `heap_end` avanzato di un valore che il chiamante non ha mai
+visto — e la richiesta e' atomica: o cresce tutta o non cresce.
+
+⚠️ **`MAP_FIXED` non puo' piu' prendersi la zona alta.** Su POSIX
+`MAP_FIXED` sostituisce cio' che trova, e va bene finche' si tratta di
+roba del processo. Il blocco TLS e la riserva dello stack non lo sono: il
+kernel ci tiene degli invarianti sopra. Rimpiazzarli non da' un errore, da'
+un processo che legge variabili `__thread` altrui o uno stack che smette di
+crescere.
+
+⚠️ **Il confronto e' scritto per non traboccare**: `heap_max - heap_end`
+a sinistra invece di `heap_end + n` a destra. `heap_end` e' gia' vicino a
+3 GB e la somma su 32 bit gira; la sottrazione no, perche'
+`heap_max >= heap_end` per costruzione.
+
+## ⚠️ La prova non raggiunge il tetto, e non puo'
+
+Fra lo heap e la riserva dello stack ci sono **2943 MB**, mentre QEMU qui
+ha **32 MB**: la memoria fisica finisce molto prima dello spazio di
+indirizzamento. Il tetto serve alla macchina che di RAM ne ha abbastanza —
+quella su cui un giorno girera' `cc1`.
+
+Quello che `prova_tetto_heap()` prova e' l'altra meta', ed e' altrettanto
+importante: che un `sbrk` **rifiutato lasci il processo esattamente com'era**.
+
+```
+Crescita dello heap:
+  [ok]     sbrk(0) da' la cima dell'heap
+[ERROR] PMM: OUT OF MEMORY! Nessuna pagina fisica libera.
+  [ok]     sbrk finisce per rifiutare, invece di crescere all'infinito
+  [ok]     sbrk negativo restituisce la memoria
+  [ok]     e lo heap torna dov'era
+  [ok]     le variabili __thread sono intatte
+  [ok]     l'heap funziona ancora dopo il rifiuto
+```
+
+L'`[ERROR]` del PMM e' **voluto**: la prova cresce apposta finche' la RAM
+finisce. Le due righe che contano sono le ultime due — il vicino di sopra
+(il blocco TLS) e' intatto, e l'heap funziona ancora.
+
+⚠️ La prova **restituisce** la memoria con `sbrk` negativo, e non e'
+pulizia facoltativa: `free()` non chiama mai `sbrk` con un incremento
+negativo, quindi senza quella riga il processo terrebbe tutta la RAM libera
+del sistema fino alla propria uscita e le prove successive non
+troverebbero piu' niente.
+
+## File toccati
+
+| File | Cosa |
+|---|---|
+| `kernel/include/sched.h` | `Process.heap_max` |
+| `kernel/loader/elf.c` | calcolo del tetto (Passo 7) |
+| `kernel/syscall/syscall_impl.c` | `sys_sbrk`, `sys_mmap`; via il ripiego |
+| `kernel/mm/paging.c` | documentato il contratto di `paging_map_page` |
+| `kernel/include/version.h` | 0.155 → 0.156 |
+| `bin/libctest/libctest.c` | `prova_tetto_heap()`, +6 prove (188 → 194) |
+
+## Cosa resta aperto qui
+
+`free()` non restituisce mai memoria al kernel: `sbrk` negativo esiste ed
+e' provato, ma l'allocatore non lo chiama. Un processo che alloca a picchi
+tiene la RAM fino all'uscita. Per `cc1` — che alloca a ondate e libera fra
+una funzione e l'altra — questo conta, e va affrontato prima del porting,
+non dopo.
+
+---
+
+# SESSIONE 2026-08-03 (j) — Una libm vera, e il prezzo di una parola
+
+Kernel **0.155**: l'unica modifica sotto `kernel/` e' un **rinomino**, e non
+cambia il comportamento di niente. `/bin/libctest` passa **188 prove su
+188** (erano 182). E' il passo 3 della lista della sessione (e): la libm che
+serve alla libstdc++, che serve a `cc1plus`.
+
+## La matematica risponde, dentro EX-OS
+
+```
+ex-os:/> /cdrom/bin/provamat
+openlibm dentro EX-OS
+
+sin(pi/2)=1000 cos(0)=1000 pow(2,10)=1024000 log(e)=1000 sqrt(16)=4000
+atan2(1,1)=785 hypot(3,4)=5000 isnan(0/0.)=1
+sinf(pi/2)=1000  sinl(pi/2)=1000  exp2(10)=1024000
+
+La libm risponde.
+```
+
+⚠️ **I valori sono moltiplicati per mille e stampati come interi**: la
+`printf` di EX-OS non formatta i `double` (non c'e' `%f`), e mostrarli in
+virgola mobile avrebbe provato la printf invece della libm — fallendo per
+un motivo che con la matematica non c'entra. Quindi `pow(2,10)` si legge
+1024000 = 1024,000 e `atan2(1,1)` = 785 = 0,785 = π/4.
+
+Il sorgente e' `tools/iso/prova-mat.c` e finisce sul CD degli strumenti sia
+compilato (`/bin/provamat`) sia come sorgente (`/prova-mat.c`), come
+`prova-mp.c`. Le varianti `f` e `l` sono provate a parte perche' **non sono
+scorciatoie: sono implementazioni distinte**, e senza provarle non si sa se
+ci sono davvero.
+
+## ⚠️ Perche' una libm DI TERZI, dopo aver scritto per un anno che non ce n'era una
+
+Fino a ieri `lib/include/math.h` dichiarava tre funzioni e diceva che una
+libm non c'era, con la motivazione che vale ancora oggi parola per parola:
+
+> «una `sqrt` quasi giusta e' peggio di nessuna `sqrt`: sbaglia in
+> silenzio».
+
+**Quel ragionamento non e' cambiato — e' cambiata la conseguenza.** La
+risposta coerente a "non so scrivere `sin` con l'errore giusto" non era
+scriverne una mediocre: era **portarne una vera**. Quello che c'e' dietro i
+nomi ora e' **openlibm 0.8.7**, cioe' la `msun` di FreeBSD in versione
+autonoma (licenza MIT/BSD): l'implementazione di riferimento del settore,
+con trent'anni di correzioni sugli arrotondamenti, e con una directory
+`i387` che usa le istruzioni dell'x87 dove convengono.
+
+**Chi la chiede: la libstdc++.** Il suo `<cmath>` scrive `using ::sin;` per
+circa centottanta nomi, e quei nomi devono ESISTERE o la libreria non
+compila. Senza libm non c'e' libstdc++, e senza libstdc++ non c'e'
+`cc1plus`.
+
+## Il nuovo `<math.h>`: 184 prototipi, e nessuno inventato
+
+`lib/include/math.h` e' stato riscritto (283 righe). ⚠️ **Le dichiarazioni
+sono state RICAVATE dai simboli davvero definiti in `libm.a`**, non copiate
+da uno standard: se una funzione e' dichiarata li', esiste. E' la stessa
+regola di sempre, applicata a un elenco piu' lungo.
+
+⚠️ **Chi usa queste funzioni deve linkare `-lm`.** Le eccezioni sono
+`sqrt`, `fabs`, `ldexp` e `frexp`, che stanno nella libc.
+
+⚠️ **`sqrt` resta nella libc e la doppia definizione NON e' un problema.**
+`libm.a` definisce `sqrt` (`i387/e_sqrt.S`) e la nostra libc pure — la
+versione a due istruzioni con il controllo di `EDOM`. Provato **in
+entrambi gli ordini di collegamento**: vince sempre quella della libc,
+perche' `libc.o` viene tirato dentro comunque (printf, crt0) e a quel punto
+il simbolo e' gia' risolto, quindi `e_sqrt.S.o` non entra. Non c'e'
+"multiple definition". La conseguenza utile e' che i programmi di EX-OS
+usano `sqrt` **senza `-lm`**, che e' cio' che fa `/bin/libctest`.
+
+## ⚠️ `ARCH=i387` e `OS=Linux`, e nessuno dei due e' una bugia
+
+`tools/openlibm-exos/prepara-libm.sh` costruisce con:
+
+```sh
+make ARCH=i387 OS=Linux USEGCC=1 \
+     CC=i386-exos-gcc AR=i386-exos-ar RANLIB=i386-exos-ranlib libopenlibm.a
+```
+
+`ARCH` sceglie le implementazioni in assembly x87 — che e' il coprocessore
+che EX-OS ha e inizializza (`kernel/include/fpu.h`). `OS` serve solo a
+openlibm per decidere il formato della libreria e i flag: "Linux" significa
+"ELF con le convenzioni di sempre", che e' esattamente il nostro caso. Non
+c'e' un `OS=exos` da aggiungere perche' non ci sarebbe niente da metterci
+dentro di diverso.
+
+Lo script **verifica** invece di fidarsi: controlla che diciannove nomi
+siano davvero in archivio, e poi **collega un programma che li usa**. Un
+archivio con dentro meta' delle funzioni si distingue in un modo solo:
+provandolo.
+
+## ⚠️ LA TRAPPOLA DELLA SESSIONE — `type` e' una parola che non ci appartiene
+
+openlibm compilava e si fermava su:
+
+```
+error: two or more data types in declaration specifiers
+```
+
+dentro **il nostro** `libc.h`. La causa: openlibm fa, in `src/math_private.h`,
+
+```c
+#define type float
+```
+
+come parte di un meccanismo di generazione, e la nostra `IpcMessage`
+aveva un campo che si chiamava `type`. Dopo il `#define`, quel campo
+diventava `float float`.
+
+⚠️ **La colpa non e' di openlibm.** Un header pubblico non puo' usare come
+nome di campo una parola cosi' comune da essere un candidato ovvio a
+diventare macro nel codice di chiunque: `type`, `min`, `max`, `index`. Il
+rimedio corretto e' cambiare il nostro nome, non chiedere a mezzo mondo di
+non usare il loro.
+
+Rinominato `type` → **`tipo`** in tutte e quattro le copie:
+
+| File | Cosa |
+|---|---|
+| `lib/include/libc.h` | `IpcMessage.tipo` (la copia utente) |
+| `kernel/include/sched.h` | `IpcMessage.tipo` (la copia kernel) |
+| `kernel/include/ipc.h` | il parametro di `ipc_send` |
+| `kernel/ipc/ipc.c` | gli usi |
+
+Le due copie della struttura **devono restare identiche** — e' la
+convenzione del progetto — quindi il nome cambia anche nel kernel, dove
+non servirebbe. Da qui il 0.155: e' un rinomino, non un cambio di
+comportamento.
+
+## Allocazione allineata: `memalign`, `aligned_alloc`, `posix_memalign`
+
+Chiesta dalla libstdc++: dal C++17 un tipo con allineamento superiore a
+quello naturale non passa piu' per `operator new(size_t)` ma per la
+variante allineata, che in `libsupc++/new_opa.cc` e' un involucro attorno a
+`memalign()`. **Se `memalign` non c'e', la libstdc++ ne mette una che
+ignora l'allineamento richiesto** — cioe' sbaglia in silenzio.
+
+Come si fa con il nostro heap, dove i blocchi sono allineati a otto e
+l'intestazione ne occupa sedici: si chiede a `malloc` un blocco abbastanza
+grande da contenere il risultato ovunque cada l'allineamento, poi lo si
+**spezza in due** mettendo una vera intestazione subito prima
+dell'indirizzo allineato.
+
+```
+prima:   [hdr b][........... dati grezzi ...........]
+dopo:    [hdr b][avanzo][hdr n][ dati allineati ....]
+           ^libero               ^ e' questo che si restituisce
+```
+
+⚠️ **La conseguenza che conta: il puntatore restituito si libera con
+`free()`**, non con una free speciale. Ha davanti a se' un'intestazione
+normale, agganciata alla lista in ordine di indirizzo come tutte, quindi
+per `free()` e' un blocco qualunque e la fusione con i vicini funziona
+senza sapere nulla di tutto questo. La testa resta come blocco **libero**
+invece di essere sprecata: su una richiesta con allineamento 4096 sono
+fino a quattro KB che tornano disponibili.
+
+⚠️ `posix_memalign` **ritorna** il codice di errore e non lo mette in
+`errno`: e' l'eccezione della famiglia, ed e' il modo classico di
+sbagliare a usarla.
+
+## ⚠️ La seconda trappola — `.gitignore` si era mangiato roba nostra
+
+Aggiungendo `openlibm-*/` per tenere fuori i sorgenti di terzi, la regola
+si e' portata via anche **`tools/openlibm-exos/`**, cioe' lo script che
+costruisce la libm. Un pattern git senza slash iniziale combacia a
+**qualunque profondita'**.
+
+```
+$ git check-ignore -v tools/openlibm-exos/prepara-libm.sh
+.gitignore:52:openlibm-*/	tools/openlibm-exos/prepara-libm.sh
+```
+
+⚠️ **Una directory ignorata per sbaglio non da' nessun errore**: da' un
+repository che al prossimo clone non ha piu' quello script, e nessuno se ne
+accorge finche' non serve. Corretto ancorando alla radice **tutti** i
+pacchetti di terzi — `/gcc/`, `/make/`, `/sed/`, `/awk/`, `/grep/`,
+`/coreutils/`, `/openlibm/`, `/openlibm-*/` — perche' il problema non era
+di openlibm, era della forma dei pattern.
+
+## File toccati
+
+| File | Cosa |
+|---|---|
+| `tools/openlibm-exos/prepara-libm.sh` | **nuovo** — costruisce e verifica openlibm |
+| `tools/iso/prova-mat.c` | **nuovo** — `/bin/provamat` sul CD |
+| `Makefile` | il CD porta `provamat` se `libm.a` c'e' nel sysroot |
+| `lib/include/math.h` | riscritto: 184 prototipi ricavati da `libm.a` |
+| `lib/libc.c` | `memalign`, `aligned_alloc`, `posix_memalign` |
+| `lib/include/libc.h` | i tre prototipi, e `IpcMessage.tipo` |
+| `kernel/include/sched.h`, `kernel/include/ipc.h`, `kernel/ipc/ipc.c` | `type` → `tipo` |
+| `kernel/include/version.h` | 0.154 → 0.155 |
+| `bin/libctest/libctest.c` | +6 prove (182 → 188) |
+| `.gitignore` | openlibm, e **tutti** i pattern ancorati alla radice |
+| `tools/gcc-exos/applica.py` | libstdc++: `os/generic` invece di `os/newlib` |
+| `tools/iso/leggimi.txt` | la voce di `/bin/provamat` |
+
+## Comandi
+
+```sh
+# openlibm NON si scarica da qui, come tutto il codice di terzi:
+wget https://github.com/JuliaMath/openlibm/archive/refs/tags/v0.8.7.tar.gz
+tar xf v0.8.7.tar.gz -C ~/exos-native
+
+tools/openlibm-exos/prepara-libm.sh          # -> ~/exos-cross/i386-exos/lib/libm.a
+
+make all && make floppy
+python3 tools/qemu_drive.py "libctest@25"    # atteso: 188 prove superate, 0 fallite
+
+make iso                                     # il CD prende /bin/provamat
+EXOS_QEMU_EXTRA="-cdrom dist/exos-tools.iso" \
+    python3 tools/qemu_drive.py "/cdrom/bin/provamat@8"
+```
+
+## Cosa viene dopo — libstdc++, e la riga che ho gia' preparato
+
+Il passo successivo e' **libstdc++ per `i386-exos`**, e la modifica che
+serve e' gia' in `tools/gcc-exos/applica.py`.
+
+⚠️ **`--with-newlib` per la libstdc++ non vuol dire "usa newlib"**: vuol
+dire "NON sei su glibc, non fare i test di collegamento, prendi questa
+tabella di risposte" (`libstdc++-v3/configure.ac`, il ramo a riga ~341).
+La tabella e' quasi tutta giusta anche per noi — le funzioni `f` della
+matematica ci sono ora, `strtof` c'e', `hypot` c'e'. **Una riga e'
+sbagliata**, ed e' `os_include_dir="os/newlib"`: quella directory contiene
+un `ctype_base.h` scritto sui **macro interni di newlib** (`_U`, `_L`,
+`_N`, la tabella `_ctype_`), che nella nostra `<ctype.h>` non esistono e
+non esisteranno — sono un dettaglio di implementazione di quella libc, non
+un'interfaccia. `os/generic` invece non chiede niente a nessuno.
+
+Quindi si cambia **quella riga sola**, in `configure` e in `configure.ac`
+insieme (il primo e' quello che gira, il secondo quello da cui il primo si
+rigenera):
+
+```sh
+  if test "x${with_newlib}" = "xyes"; then
+    case "${host}" in
+      *-exos*) os_include_dir="os/generic" ;;
+      *)       os_include_dir="os/newlib"  ;;
+    esac
+```
+
+⚠️ E **`--enable-clocale=generic` sulla riga di configure**, perche'
+`--with-newlib` porta il modello di locale a `newlib`, che tira dentro
+`config/locale/newlib/ctype_members.cc` — stesso problema del
+`ctype_base.h` di sopra.
+
+⚠️ **Riconfigurare in una directory di build gia' fatta ricompila TUTTO
+GCC.** `config.status` rigenera i file e make li vede piu' recenti dei
+propri oggetti: sono ore, a `-j1`. Vale la pena mettere in conto la spesa
+prima, non scoprirla dopo.
+
+---
+
+# SESSIONE 2026-08-02 (i) — GMP, MPFR e MPC per EX-OS
+
+Kernel **invariato a 0.154**: sotto `kernel/` non e' stato toccato niente.
+`/bin/libctest` passa **182 prove su 182**. E' il passo 2 della lista della
+sessione (e), quello che aspettava il thread pointer.
+
+## Le tre librerie girano dentro EX-OS
+
+```
+ex-os:/> /cdrom/bin/provamp
+GMP 6.3.0, MPFR 4.2.1, MPC 1.3.1 — dentro EX-OS
+
+GMP   2^128 = 340282366920938463463374607431768211456
+MPFR  pi     = 3.1415926535897932384626433832795028841971693993751e0
+MPC   sqrt(i)= (7.0710678118654752440e-1 7.0710678118654752440e-1)
+
+Tutte e tre le librerie rispondono.
+```
+
+Sono il codice di terzi **piu' pesante** che EX-OS abbia ospitato: 4,6 MB
+di archivi, aritmetica a precisione arbitraria, allocazioni continue.
+`libgmp.a` 838 KB, `libmpfr.a` 2,99 MB, `libmpc.a` 764 KB, tutte in
+`~/exos-cross/i386-exos/lib`.
+
+⚠️ Nell'ordine `-lmpc -lmpfr -lgmp` e non l'inverso: `ld` scorre gli
+archivi da sinistra a destra e non torna indietro.
+
+## Quanto e' costato: tre funzioni e una macro
+
+Dopo binutils la libc regge quasi tutto. Le tre librerie hanno chiesto:
+
+| Cosa | Chi | Nota |
+|---|---|---|
+| `isascii`, `toascii`, `isblank` | `printf/doprnt.c` di GMP | POSIX, non C |
+| `sqrt` | `src/eta.c` di MPC | ⚠️ vedi sotto |
+| `_STDIO_H` | `gmp.h` | ⚠️ una macro, non una funzione |
+
+⚠️ **`sqrt` entra in `<math.h>` senza contraddire quello che c'e' scritto
+sopra.** L'header dice, e continua a dire, che qui non c'e' una libm,
+perche' «una sqrt quasi giusta e' peggio di nessuna sqrt». Questa non e'
+quasi giusta: e' `fsqrt` dell'x87, **una delle cinque operazioni che
+l'IEEE 754 obbliga a essere correttamente arrotondate** (le altre quattro
+sono +, -, *, /). Non c'e' un'approssimazione da giudicare, c'e'
+un'istruzione da chiamare — ed e' il motivo per cui entra lei e non
+entrano `log`, `exp`, `sin`. Su argomento negativo l'x87 da' NaN e noi
+impostiamo `EDOM`.
+
+⚠️ **`_STDIO_H` non e' la nostra guardia: e' una bandiera per gli altri.**
+`gmp.h` dichiara le funzioni che prendono un `FILE *` — `mpz_inp_str`,
+`mpz_out_str` — solo se riconosce che `<stdio.h>` e' gia' stato incluso, e
+lo capisce annusando **quindici macro note, una per libc storica**:
+`_STDIO_H` per glibc, `__DEFINED_FILE` per musl, `_FILE_DEFINED` per
+Microsoft… La nostra guardia si chiama `EXOS_STDIO_H` e non e' in elenco,
+quindi gmp.h le ometteva in silenzio e i suoi stessi sorgenti non
+compilavano:
+
+```
+gmp.h:884: error: implicit declaration of function '__gmpz_inp_str'
+```
+
+cioe' una libreria che non compila se stessa perche' non riconosce la libc
+sotto. Ora `<stdio.h>` definisce anche `_STDIO_H`, ed e' onesto:
+quel contratto lo rispettiamo davvero.
+
+## ⚠️ Un binario di EX-OS parte anche su Linux, e la cosa ha ingannato GMP
+
+GMP compila dei generatori di tabelle (`gen-fac`, `gen-fib`, `gen-bases`…)
+che devono girare sulla macchina che compila, e per scegliere il
+compilatore fa la prova piu' ragionevole del mondo: ne compila uno e lo
+**esegue**. La prova e' riuscita **con il cross-compilatore**.
+
+Non e' un caso: un binario per EX-OS e' un ELF32 i386 statico, Linux lo
+carica senza obiezioni, e le syscall di EX-OS hanno i numeri di Linux —
+`SYS_WRITE` e' 4 di qua e di la' — quindi anche la `printf` funziona. Il
+programma parte, stampa, sembra tutto a posto.
+
+Quello che non combacia sono `argc` e `argv`, che EX-OS passa a modo suo:
+
+```
+./gen-fac 32 0 >fac_table.h
+Usage: gen-fac limbbits nailbits
+```
+
+un generatore che non vede i propri argomenti e si rifiuta di generare.
+Il rimedio e' `CC_FOR_BUILD=gcc` esplicito. **Da ricordare per ogni
+pacchetto che costruisce strumenti per se stesso** — GCC e' pieno di
+questi.
+
+## 🐛 Un difetto di GCC 17, che non e' nostro
+
+Con `--host=i386-pc-exos` GMP compila tutto con `-march=i386 -mtune=i386`,
+e su quella strada il compilatore emette una rotazione a 16 bit scritta con
+il nome del registro a 32:
+
+```
+/tmp/ccRgZogI.s:325: Error: incorrect register `%eax' used with `w' suffix
+```
+
+Si riproduce in tre righe, senza GMP di mezzo:
+
+```c
+unsigned int scambia(unsigned int v) {
+    return ((v & 0xFF) << 24) | ((v & 0xFF00) << 8)
+         | ((v >> 8) & 0xFF00) | (v >> 24);
+}
+```
+
+```
+$ i386-exos-gcc -O2 -march=i386 -mtune=i386 -S -o - scambia.c
+        rolw    $8, %eax        <- deve essere %ax
+        roll    $16, %eax
+        rolw    $8, %eax
+```
+
+La causa e' in `gcc/config/i386/i386.md`, `bswaphisi2_lowpart`: la seconda
+alternativa stampa `rol{w}\t{$8, %0|...}` con `%0` invece di `%w0`. Si
+prende solo quando `bswap` non c'e' (386) **e** la messa a punto preferisce
+`rolw` a `xchgb` (`!TARGET_USE_XCHGB`, cioe' tutto tranne il Pentium 4).
+Non dipende dal nostro bersaglio: e' un difetto a monte, in questo
+snapshot (GCC 17.0.0 20260801).
+
+⚠️ **Non e' la prima volta che lo incontriamo**, e la risposta era gia'
+scritta nell'albero: `tools/gcc-exos/applica.py` mette
+`with_arch=${with_arch:-i486}` nella voce `i[34567]86-*-exos*` di
+`config.gcc`, con il commento «con -march=i386 la libgcc NON COMPILA», che
+e' lo stesso difetto trovato costruendo libgcc. Il bersaglio i386-exos ha
+gia' i486 come architettura predefinita; a scavalcarla e' stato il TRIPLO
+HOST di GMP, che dicendo `i386-pc-exos` si e' portato dietro il proprio
+`-march=i386`.
+
+**Non l'abbiamo corretto**, e la ragione e' che non serve: si costruisce con
+`--host=i486-pc-exos`, e non e' un ripiego per aggirare il difetto —
+⚠️ **486 e' il minimo che EX-OS gia' richiede per conto suo**,
+`kernel/mm/paging.c` usa `invlpg`, che e' 486+. Con i486 c'e' `bswap`, e la
+strada rotta non si percorre nemmeno.
+
+## Gli strumenti
+
+```
+tools/gcclibs-exos/applica.py             una riga in config.sub, per tutte e tre
+tools/gcclibs-exos/prepara-gcclibs.sh     configure + make + install + verifica
+tools/iso/prova-mp.c                      la prova, che finisce sul CD
+```
+
+⚠️ **Il file da toccare non e' lo stesso nei tre alberi**, e non e' sempre
+`config.sub`: GMP ha `configfsf.sub` (il suo `config.sub` e' un involucro
+che gestisce i nomi di CPU e delega il resto), MPFR ha `config.sub`, MPC
+`build-aux/config.sub`. E nemmeno la riga e' la stessa, perche' le tre
+versioni hanno terminatori diversi nell'elenco dei sistemi ammessi.
+
+La verifica dello script non si fida del codice di uscita: **collega**
+`tools/iso/prova-mp.c` contro tutte e tre. Un archivio presente ma con
+simboli irrisolti non si distingue in nessun altro modo.
+
+## Verifica
+
+- `/bin/libctest`: **182 su 182** (erano 177), con `sqrt` esatta sui
+  quadrati perfetti, `isascii`/`toascii`/`isblank`.
+- `/cdrom/bin/provamp` dentro EX-OS: 2^128, pi a 50 cifre e la radice di i,
+  tutti giusti.
+- `make iso` include `provamp` da solo se le tre librerie sono nel sysroot,
+  e lo dice quando non ci sono.
+- Nessuna regressione; il kernel non e' stato toccato.
+
+## Cosa resta per il compilatore
+
+1. **Il sottoinsieme di libstdc++**: `cc1` e' C++, ma GCC compila i propri
+   sorgenti con `-fno-exceptions -fno-rtti`, quindi niente unwinder:
+   restano `operator new`/`delete`, `__cxa_atexit` e i contenitori che usa
+   davvero.
+2. **Costruire e installare `cc1`** su ext2 (~35-45 MB per i386).
+3. `pex-exos.c` e' gia' pronto dalla sessione (g): il driver di GCC lancia
+   i propri figli attraverso quello.
+
+## File toccati
+
+- `lib/libc.c`, `lib/include/libc.h` — `sqrt`, `isascii`, `toascii`,
+  `isblank`, `EDOM`
+- `lib/include/math.h` — `sqrt` e il perche' non contraddice l'header
+- `lib/include/stdio.h` — `_STDIO_H`, la bandiera per il codice di terzi
+- `bin/libctest/libctest.c` — 177 → 182 prove
+- **nuovi**: `tools/gcclibs-exos/{applica.py,prepara-gcclibs.sh}`,
+  `tools/iso/prova-mp.c`
+- `Makefile` — `provamp` sul CD se le librerie ci sono (`CROSS_SYSROOT`)
+
+---
+
+# SESSIONE 2026-08-02 (h) — Il thread pointer
+
+Kernel a **0.153** → **0.154**. `/bin/libctest` passa **177 prove su 177**.
+
+La sessione (g) aveva chiuso con un limite invece che con un difetto: `as`
+moriva su `mov %gs:0x0,%ebx` perche' EX-OS non aveva un thread pointer, e
+il rimedio era disattivare il TLS in ogni pacchetto che si porta. Ora c'e',
+e quel rimedio non serve piu'.
+
+## Perche' farlo, dato che qui i fili sono uno per processo
+
+Non serve a EX-OS: una variabile `__thread` con un filo solo e' una
+variabile globale con un nome piu' lungo. **Serve perche' il modo in cui
+mancava era il peggiore possibile.**
+
+La prova che ogni configure fa per il TLS e' una **compilazione**, e il
+compilatore la supera sempre: sa emettere gli accessi via `%gs` da
+vent'anni, ed e' il SISTEMA a non avere dove puntarli. Nessun errore,
+nessun avviso, un binario che si costruisce benissimo e muore alla terza
+istruzione della prima funzione. Il prossimo a chiederlo era MPFR, che
+usa `__thread` per la propria cache.
+
+## Com'e' fatto: local-exec, variante II
+
+    indirizzi bassi                          indirizzi alti
+    +----------------------+-------------------+
+    |  blocco TLS (memsz)  |  TCB (8 byte)     |
+    +----------------------+-------------------+
+    ^ tls_base             ^ tp
+
+Il TCB comincia con un puntatore a **se stesso**: e' la convenzione ABI, ed
+e' cio' che rende `mov %gs:0x0,%ebx` una lettura del thread pointer invece
+che di una variabile qualunque. Le variabili stanno a offset **negativi**
+da `tp`, gia' risolti da `ld` al link (rilocazioni `R_386_TLS_LE`): **a
+runtime non c'e' niente da rilocare**, ed e' il motivo per cui questo
+modello costa cosi' poco.
+
+Cinque pezzi, nessuno grande:
+
+| Dove | Cosa |
+|---|---|
+| `gdt.c` | un settimo descrittore, `0x33`: User Data con una base che cambia |
+| `gdt.c` | `gdt_set_tls_base()`, che riscrive solo i tre pezzi della base |
+| `sched.c` | la chiama a ogni switch, accanto a `gdt_set_kernel_stack` |
+| `context_switch.asm` | i due trampolini caricano `0x33` in GS invece di `0x23` |
+| `elf.c` | `PT_TLS`: una copia per processo, sotto lo stack, con la guardia |
+
+⚠️ **Con base zero il descrittore e' indistinguibile da `0x23`.** I
+processi senza variabili thread-local non pagano niente: nessuna pagina in
+piu', nessun ramo in piu' nel caricatore, e un `%gs:0` legge l'indirizzo
+lineare 0 come prima.
+
+## ⚠️ Il pezzo che non era ovvio: gli stub degli interrupt
+
+Tutto quanto sopra non sarebbe bastato. I tre stub — eccezioni, IRQ,
+syscall — salvavano **solo DS**, caricavano il selettore dati del kernel in
+DS, ES, FS *e GS*, e all'uscita rimettevano in tutti e quattro il DS
+salvato. Su un ritorno a ring3 significa **GS = 0x23**, qualunque cosa il
+processo ci avesse messo.
+
+Il primo tick di timer avrebbe cancellato il thread pointer. E il guasto
+sarebbe comparso **a caso**, perche' dipende da quando arriva l'interrupt:
+il genere di difetto che si insegue per giorni.
+
+La soluzione e' non toccarlo: **il kernel non usa GS**. Non c'e' una riga
+che dereferenzi `%gs` — niente percpu, niente stack canary — quindi
+lasciarlo con il valore dell'utente non espone niente, e in cambio
+`context_switch`, che GS lo salva e lo ripristina gia', diventa da solo il
+meccanismo che lo rende per-processo.
+
+Il valore che un programma ci puo' mettere e' comunque limitato da una
+regola della CPU: `mov gs, ax` con un selettore piu' privilegiato di CPL
+solleva #GP al momento del **caricamento**, non dopo.
+
+## ⚠️ E i linker script: due righe in diciotto file
+
+`.tdata` e `.tbss` non sono sezioni normali — insieme sono l'immagine di
+partenza che il caricatore copia — e nei linker script di EX-OS non le
+nominava nessuno. Senza,
+
+    .tdata : { *(.tdata) *(.tdata.*) }
+    .tbss  : { *(.tbss)  *(.tbss.*) *(.tcommon) }
+
+`ld` le sistema dove capita e il segmento `PT_TLS` puo' non essere generato
+affatto: il programma compila, si collega, e legge una variabile
+thread-local che sta da un'altra parte. Aggiunte a tutti e diciotto,
+non solo a quelli che oggi ne hanno bisogno: un programma che comincia a
+usare `__thread` non deve rompersi in silenzio.
+
+## Una pagina di guardia fra stack e TLS
+
+Il blocco sta sotto la riserva dello stack, con una pagina non mappata in
+mezzo. Non e' un vezzo: senza, una ricorsione infinita scenderebbe dallo
+stack **dentro** il blocco TLS — che e' mappato, quindi non fault — e
+invece di terminare il processo con «stack esaurito» ne corromperebbe le
+variabili in silenzio.
+
+## Cosa NON c'e'
+
+⚠️ **Il TLS dinamico.** `__tls_get_addr`, i modelli general-dynamic e
+local-dynamic, le variabili `__thread` dentro una libreria condivisa: non
+funzionano. Servono a chi carica codice a runtime, e qui i binari sono
+statici. Il giorno che non lo fossero, il punto da cui ripartire e'
+`elf.c`, accanto a `PT_TLS`.
+
+E non ci sono i **thread**: questo e' il pezzo che serve ad averli, non
+loro. Il blocco e' uno per processo perche' i fili sono uno per processo.
+
+## Verifica
+
+- `/bin/libctest`: **177 su 177**, sei prove nuove. Quella che conta e' la
+  terza: il valore sopravvive a **venti** `sched_yield()`, cioe' al
+  meccanismo che riscrive la base del descrittore ad ogni switch.
+- `.tbss` azzerata, `.tdata` con il valore che sta nel file.
+- **binutils ricostruito senza `ac_cv_tls`**, cioe' con `bfd` che usa
+  davvero `_Thread_local`: `as` e `ld` girano, la catena
+  assembla-collega-esegui e' quella di prima.
+- Avvio pulito, nessuna regressione.
+
+## File toccati
+
+- `kernel/include/kernel.h` — `GDT_TLS_SEL`
+- `kernel/arch/x86/gdt.c`, `kernel/include/gdt.h` — descrittore 6 e
+  `gdt_set_tls_base()`
+- `kernel/arch/x86/isr_stubs.asm` — GS non si tocca piu'
+- `kernel/sched/context_switch.asm` — i due trampolini caricano `0x33`
+- `kernel/sched/sched.c` — la base del TLS a ogni switch
+- `kernel/include/sched.h` — `Process.tls_tp`/`tls_base`, `TLS_TCB_SIZE`,
+  `TLS_MAX`
+- `kernel/loader/elf.c` — `PT_TLS`
+- `bin/*/*.ld` (18 file) — `.tdata` e `.tbss`
+- `bin/libctest/libctest.c` — 171 → 177 prove
+- `kernel/include/version.h` — 0.154
+
+---
+
 # SESSIONE 2026-08-02 (g) — Binutils nativi: quello che chiede il codice che non abbiamo scritto noi
 
 Kernel a **0.150** → **0.153**. `/bin/libctest` passa **171 prove su 171**.
@@ -301,6 +1895,9 @@ caricatore ELF, un blocco per processo e una voce di GDT per `%gs`
 aggiornata a ogni cambio di contesto. E' una sessione di lavoro per conto
 suo, ed e' annotata qui perche' e' la prima volta che il sistema incontra
 il proprio limite invece di un difetto.
+
+**→ Fatto nella sessione (h)**, il giorno stesso: dalla 0.154 il thread
+pointer c'e' e `ac_cv_tls` non serve piu'.
 
 ## 🐛 Due difetti di FAT12 che si vedono solo TORNANDO INDIETRO
 

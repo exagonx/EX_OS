@@ -8,12 +8,19 @@
 
 ## Che cos'è EX-OS
 
-EX-OS è un sistema operativo baremental scritto in C e ASM per architettura
-x86 32-bit. Gira da floppy da 1.44MB formattato FAT12. L'obiettivo è un
-sistema estensibile: il kernel è piccolo e read-only in RAM convenzionale,
-tutto il resto (driver, shell, programmi) gira in RAM estesa in spazio protetto.
+EX-OS è un sistema operativo baremetal scritto in C e ASM per architettura
+x86 32-bit. Gira da floppy da 1.44MB formattato FAT12, da disco rigido
+(FAT16/32 o ext2) e legge CD/DVD. L'obiettivo è un sistema estensibile: il
+kernel è piccolo e read-only in RAM convenzionale, tutto il resto (driver,
+shell, programmi) gira in RAM estesa in spazio protetto.
 
 Un crash di un driver o di un programma non può abbattere il sistema.
+
+**Da agosto 2026 EX-OS ospita codice di terzi**: GNU binutils 2.44 —
+`as` e `ld` — è compilato *per* EX-OS e ci gira dentro, e un programma
+assemblato e collegato qui è identico byte per byte a uno prodotto dal
+cross-compilatore su Linux. Vedi
+[La catena di compilazione dentro EX-OS](#la-catena-di-compilazione-dentro-ex-os).
 
 ---
 
@@ -33,7 +40,9 @@ Un crash di un driver o di un programma non può abbattere il sistema.
 │   ├── gfedit       ← Editor a schermo intero (stile MS-DOS EDIT)
 │   ├── mkdir        ← Crea directory
 │   ├── rmdir        ← Cancella directory vuote
-│   └── delete       ← Cancella file (con jolly ? e *)
+│   ├── delete       ← Cancella file (con jolly ? e *)
+│   ├── rename       ← Cambia il nome di un file (non sposta: vedi sotto)
+│   └── chkdsk       ← Controlla e ripara un volume FAT12/16/32
 ├── lib/             ← Shared libraries (Fase 4b)
 └── dev/
     ├── kbd.drv      ← Driver tastiera PS/2 (processo ring3)
@@ -42,6 +51,10 @@ Un crash di un driver o di un programma non può abbattere il sistema.
 
 Il TTY non compare in `/dev`: `drivers/tty/tty.c` è compilato **dentro** il
 kernel (possiede la VGA), e per l'input fa da client del servizio `kbd`.
+
+Quello che in 1.44 MB non entra sta sul **CD degli strumenti**
+(`make iso`): `as` e `ld` nativi in `/bin`, gli header e il sorgente della
+libc in `/exos`, la documentazione in `/doc`.
 
 ---
 
@@ -74,11 +87,20 @@ Lo script `install_crosscompiler.sh` installa automaticamente:
 ```bash
 make all          # Compila tutto + crea dist/floppy.img
 make run          # Avvia con QEMU (32MB RAM)
+make iso          # CD degli strumenti (as, ld, header, doc)
+make run-iso      # QEMU con il CD montato su /cdrom
+make hd           # Disco rigido avviabile (formattato da EX-OS stesso)
+make run-hd       # QEMU dal disco, senza floppy
 make debug        # QEMU + GDB stub porta 1234
 make verify       # Verifica struttura floppy
 make clean        # Rimuove build/
 make distclean    # Rimuove build/ e dist/
 ```
+
+`make iso` include `as` e `ld` nativi se li trova in
+`$(BINUTILS_NATIVI)` (default `~/exos-native/build-nativi`); se non ci
+sono lo dice e fa il CD lo stesso. Come costruirli:
+`tools/binutils-exos/leggimi.md`.
 
 ### Log di boot completo via seriale
 
@@ -163,6 +185,64 @@ propria lettura mentre e' fermo ad aspettarla.
 Conseguenza da sapere: **l'eseguibile resta aperto finche' il processo
 vive**, e le pagine caricate non vengono mai buttate via (manca lo
 sfratto, e con esso il file di scambio).
+
+### Il thread pointer: variabili `__thread`
+
+Dalla 0.154 il caricatore riconosce `PT_TLS` e ne fa una copia per
+processo, sotto la riserva dello stack con una pagina di guardia in mezzo.
+Il descrittore GDT numero 6 (selettore `0x33`, quello che i processi
+tengono in `GS`) è User Data con una **base che cambia**: lo scheduler la
+riscrive a ogni switch con il thread pointer del processo entrante.
+
+È il modello **local-exec**, quello dei binari statici: gli offset delle
+variabili li risolve `ld` al link, quindi a runtime non c'è niente da
+rilocare. Con base zero il descrittore è indistinguibile da `0x23`, perciò
+chi non usa `__thread` non paga niente.
+
+> ⚠️ Non c'è il TLS **dinamico** (`__tls_get_addr`, variabili
+> thread-local dentro una libreria condivisa): serve a chi carica codice a
+> runtime, e qui i binari sono statici. E non ci sono i thread: questo è il
+> pezzo che serve ad averli, non loro.
+
+Perché farlo, se un processo ha un filo solo e una variabile `__thread` è
+una globale con un nome più lungo? Perché il modo in cui *mancava* era il
+peggiore possibile: la prova che ogni `configure` fa per il TLS è una
+**compilazione**, e il compilatore la supera sempre — sa emettere gli
+accessi via `%gs` da vent'anni, ed è il sistema a non avere dove puntarli.
+Nessun errore, nessun avviso, un binario che si costruisce benissimo e
+muore alla terza istruzione della prima funzione che chiama.
+
+### Lo spazio di un processo, e il tetto dello heap
+
+```
+0x08000000  testo, dati, bss del programma
+            heap ---->                             (sbrk, mmap senza MAP_FIXED)
+0xbffbc000  heap_max — il tetto
+0xbffbd000  pagina di guardia
+0xbffbd000  blocco TLS, se il programma ne ha uno
+0xbffbf000  riserva dello stack (256 KB)   <---- lo stack cresce all'ingiù
+0xbffff000  cima dello stack
+```
+
+Lo heap comincia **subito dopo l'ultimo segmento caricato**, non a un
+indirizzo fisso. Dalla 0.156 ha anche un **tetto**: una pagina di guardia
+sotto il blocco TLS se c'è, sotto la riserva dello stack se non c'è.
+
+Prima non ce l'aveva, e l'unico limite era la RAM fisica. Sembra
+innocuo — la memoria finisce prima — ma sopra lo heap non c'è il vuoto, e
+`paging_map_page()` **sovrascrive una PTE già presente senza dire niente**.
+
+> ⚠️ Uno heap abbastanza grande avrebbe rimappato **il blocco TLS del
+> processo stesso** su pagine nuove azzerate: il thread pointer a zero, e
+> ogni variabile `__thread` a leggere memoria altrui. Senza un fault, senza
+> un log. Ora chi supera il confine si prende `ENOMEM`, che è un errore che
+> `malloc()` sa già trattare.
+
+Il controllo sta **prima** di allocare, non dentro il ciclo: fermarsi a
+metà lascerebbe lo heap avanzato di un valore che il chiamante non ha mai
+visto. E `mmap` rispetta lo stesso confine, `MAP_FIXED` compreso — il
+blocco TLS e la riserva dello stack non sono roba che un processo possa
+farsi rimpiazzare, perché il kernel ci tiene degli invarianti sopra.
 
 ### La fascia kernel, e la finestra di rimappatura
 
@@ -457,7 +537,7 @@ comporre quella mappa.
 ⚠️ Il prezzo è lo stesso patto di LILO: **ricopiare kernel o Stage 2 obbliga a
 rilanciare `install`.**
 
-### `install` sostituisce, e verifica (dal 0.148)
+### `install` verifica prima di sostituire (dal 0.161)
 
 Rilanciarlo su un sistema già installato **riscrive ogni file**, kernel
 compreso, e rilegge ognuno per confrontarne la dimensione. Nel resoconto `+`
@@ -469,6 +549,48 @@ mappa dei settori *per quello* — il disco ripartiva con la versione di
 prima e l'installatore diceva «completata». Le directory continuano a non
 essere ricreate, e ciò che sul volume non fa parte del sistema resta dov'è:
 `install` aggiorna, non azzera.
+
+**E fino alla 0.160 distruggeva prima di sapere se ce l'avrebbe fatta.**
+Apriva `/boot/kernel.bin` con `O_TRUNC`, ci scriveva il kernel nuovo, e
+*poi* chiedeva la mappa dei settori. Su FAT — dove la mappa ammette **un
+solo intervallo** — un kernel cresciuto di qualche KB non entrava più nel
+buco lasciato dal vecchio, finiva in due tratti, `bootinstall` rifiutava
+giustamente:
+
+```
+! installazione dell'avvio fallita: file frammentato (errore -29)
+```
+
+…ma a quel punto il sistema che funzionava non c'era più, il settore di
+avvio puntava ancora alla mappa vecchia, e **il disco non ripartiva**. Su
+ext2 non si vedeva: lì la mappa regge 12 intervalli.
+
+Ora i file nuovi si scrivono **con nomi temporanei mentre i vecchi sono
+ancora al loro posto** — quindi finiscono nella coda libera, contigua. Poi
+si chiede al kernel se sono mappabili. Solo se la risposta è sì si cancella
+e si rinomina:
+
+```
+Avvio (scritti a parte e verificati prima di sostituire)
+  = verifica: 585 settori in 1 intervallo — si puo' sostituire
+  ~ /disk/boot/stage2.bin  (verificato, poi sostituito)
+  ~ /disk/boot/kernel.bin  (verificato, poi sostituito)
+```
+
+Lo scenario che distruggeva il disco ora **riesce**. Quando invece non si
+può fare, si legge `Il sistema gia' installato NON e' stato toccato` e il
+disco resta avviabile.
+
+> ⚠️ **È servita una primitiva che mancava.** Lo scambio non si poteva
+> fare: `rename()` era copia+cancella, quindi riallocava i blocchi e
+> mandava a monte la verifica appena fatta. Vedi *La rinomina che non
+> sposta i dati* più avanti.
+
+**`kernel.cfg` non si sovrascrive più.** È l'unico file dell'installatore
+che appartiene a chi usa il sistema e non al sistema: montaggi automatici,
+`verboseboot`, shell, variabili d'ambiente. Un aggiornamento non deve
+riportarli indietro in silenzio. Se manca si installa, se c'è si lascia e
+lo si dice.
 
 Per il kernel la mappa è una **lista** di intervalli, non uno solo. Su ext2 un
 file non è quasi mai contiguo, e non per frammentazione: il blocco di
@@ -485,6 +607,66 @@ trovato da 512 byte di codice, quindi la sua mappa deve stare in sei byte.
 
 Su FAT la lista ha una voce sola: il formato è lo stesso per i due filesystem,
 così Stage 2 non deve sapere da dove sta caricando.
+
+### `chkdsk` — controllo e riparazione di un volume FAT
+
+```
+chkdsk <partizione>       controlla e riferisce, non scrive un settore
+chkdsk -r <partizione>    controlla e corregge
+```
+
+Controlla, in quest'ordine — ogni passo si fida solo di quelli già fatti:
+il BPB e la coerenza dei suoi numeri, le copie della FAT, le catene di
+cluster percorrendo tutte le directory (condivisi, catene fuori dal volume,
+anelli), la dimensione dichiarata di ogni file contro quella della sua
+catena, i nomi lunghi, `.` e `..`, e i cluster perduti.
+
+```
+tipo FAT32 — 130556 cluster da 8 settori, 2 FAT da 1021 settori
+= FAT[0] = 0xffffff8, FAT[1] = 0xfffffff
+= le 2 copie sono identiche
+! 3 cluster risultano occupati ma nessun file li nomina (12 KB)
+```
+
+> ⚠️ **Lavora solo su una partizione smontata**, e non è un fastidio da
+> aggirare: sopra un volume montato c'è una cache write-back, metà delle
+> modifiche recenti sta in RAM. Un controllore che leggesse i settori
+> grezzi segnalerebbe incoerenze inventate, e riparando riscriverebbe
+> settori che il primo `sync` ricoprirebbe.
+
+> ⚠️ **Senza `-r` non scrive un solo settore.** Un controllore che ripara
+> di sua iniziativa trasforma un volume danneggiato in un volume
+> danneggiato *diversamente*, senza che nessuno abbia visto com'era.
+
+Alcune scelte che non sono ovvie:
+
+- **il tipo si ricava dal numero di cluster**, non dalla stringa
+  `"FAT16   "` nel settore di avvio: quella è decorativa e nessuno la
+  verifica mai, quindi su un volume malandato è proprio un campo di cui non
+  fidarsi;
+- **FAT12 si legge con due settori in mano**: una voce occupa dodici bit e
+  può cominciare nell'ultimo byte di un settore. In scrittura, se è a
+  cavallo, **rinuncia e lo dice** invece di scrivere mezzo valore — sarebbe
+  un danno nuovo causato dallo strumento che doveva ripararne uno;
+- **su FAT32 i quattro bit alti di una voce non sono nostri**: si
+  conservano;
+- **la dimensione si confronta con un intervallo**, non con un numero: un
+  file di N byte occupa `ceil(N/cluster)` cluster, e pretendere
+  l'uguaglianza esatta segnalerebbe come guasto quasi ogni file;
+- **i cluster condivisi non si riparano da soli**: quale dei due file abbia
+  diritto ai dati non è deducibile, e ripararli d'ufficio significherebbe
+  scegliere a caso quale rovinare;
+- **i perduti si liberano, non si raccolgono in `FOUND.000`**: sarebbe una
+  collezione di frammenti senza nome né struttura, che occupa lo stesso
+  spazio che si voleva recuperare.
+
+Sui **nomi lunghi**: una fila di voci finte precede quella 8.3, in ordine
+rovesciato, legata a essa da un solo checksum.
+
+> ⚠️ Chi rinomina toccando solo la voce 8.3 — e **`rename` di EX-OS fa
+> esattamente questo** — lascia il nome lungo a nominare un file che non è
+> più quello. Non è un caso di scuola: è un difetto che questo sistema sa
+> produrre, ed è il motivo per cui il controllo serve qui.
 
 ### I nomi si creano in minuscolo
 
@@ -693,6 +875,74 @@ le costanti a 64 bit di mantissa, il `double` ne ha 53: il confronto avviene fra
 due numeri diversi per costruzione. Il valore atteso va messo in una variabile
 `double`, che forza l'arrotondamento.
 
+### La libm: openlibm, e perché una di terzi
+
+Fino ad agosto 2026 `<math.h>` dichiarava tre funzioni e diceva che una libm
+non c'era, con questa motivazione:
+
+> «una `sqrt` quasi giusta è peggio di nessuna `sqrt`: sbaglia in silenzio».
+
+**Il ragionamento non è cambiato — è cambiata la conseguenza.** La risposta
+coerente a "non so scrivere `sin` con l'errore giusto" non era scriverne una
+mediocre: era **portarne una vera**. Dietro i nomi c'è **openlibm 0.8.7**,
+cioè la `msun` di FreeBSD in versione autonoma (MIT/BSD), con trent'anni di
+correzioni sugli arrotondamenti e una directory `i387` che usa le istruzioni
+dell'x87 dove convengono. Si costruisce con
+`tools/openlibm-exos/prepara-libm.sh`; i sorgenti non stanno nel repository,
+come per GCC e binutils.
+
+```
+ex-os:/> /cdrom/bin/provamat
+openlibm dentro EX-OS
+
+sin(pi/2)=1000 cos(0)=1000 pow(2,10)=1024000 log(e)=1000 sqrt(16)=4000
+atan2(1,1)=785 hypot(3,4)=5000 isnan(0/0.)=1
+sinf(pi/2)=1000  sinl(pi/2)=1000  exp2(10)=1024000
+```
+
+I valori sono moltiplicati per mille e stampati come interi — la `printf`
+di EX-OS non formatta i `double`, e mostrarli in virgola mobile avrebbe
+provato la printf invece della libm. Quindi `atan2(1,1)` = 785 = 0,785 =
+π/4.
+
+I 184 prototipi in `lib/include/math.h` sono **ricavati dai simboli davvero
+definiti in `libm.a`**, non copiati da uno standard: se una funzione è
+dichiarata lì, esiste.
+
+> ⚠️ **Chi usa queste funzioni deve linkare `-lm`.** Le eccezioni sono
+> `sqrt`, `fabs`, `ldexp` e `frexp`, che stanno nella libc. `sqrt` è
+> `fsqrt` dell'x87, cioè **una delle cinque operazioni che l'IEEE 754
+> obbliga a essere correttamente arrotondate**: non c'è
+> un'approssimazione da giudicare, c'è un'istruzione da chiamare. La
+> definisce anche `libm.a`, ma vince sempre quella della libc — `libc.o`
+> entra comunque nel link (printf, crt0) e a quel punto il simbolo è già
+> risolto. Nessun "multiple definition", e `sqrt` si usa senza `-lm`.
+
+Chi la chiede davvero è **libstdc++**: il suo `<cmath>` scrive `using
+::sin;` per circa centottanta nomi, e quei nomi devono esistere o la
+libreria non compila.
+
+### Allocazione allineata
+
+`memalign`, `aligned_alloc`, `posix_memalign`. Dal C++17 un tipo con
+allineamento superiore a quello naturale non passa più per `operator
+new(size_t)` ma per la variante allineata, che nella libstdc++ è un
+involucro attorno a `memalign()` — e se `memalign` non c'è, la libreria ne
+mette una che **ignora l'allineamento richiesto**.
+
+L'allineamento si ottiene ritagliando: si chiede a `malloc` un blocco
+abbastanza grande, poi lo si **spezza in due** mettendo una vera
+intestazione subito prima dell'indirizzo allineato, e la testa resta come
+blocco libero invece di essere sprecata.
+
+> ⚠️ **Il puntatore restituito si libera con `free()`**, non con una free
+> speciale: per l'heap è un blocco come tutti gli altri, e la fusione con i
+> vicini funziona senza sapere nulla di tutto questo.
+
+> ⚠️ `posix_memalign` **ritorna** il codice di errore e non lo mette in
+> `errno`. È l'eccezione della famiglia, ed è il modo classico di sbagliare
+> a usarla.
+
 ### Lettura formattata, data e ora, stat
 
 `sscanf`/`vsscanf` con larghezze, `%n`, soppressione e `%lf`. `time`,
@@ -743,35 +993,321 @@ binari erano raddoppiati (`ls`: 12 → 25 KB). `-ffunction-sections`
 ha più spazio libero di quanto ne avesse all'inizio.
 
 ```
-libctest       171 prove: allocatore, formattazione, flussi, salti non
-                locali, conversioni, errno, virgola mobile, sscanf,
-                data e ora, stat, ambiente, directory, temporanei,
-                descrittori duplicati, interfacce per il codice di terzi,
-                spawn con redirezione — tutte dentro EX-OS
+libctest       270 prove: allocatore (compresa l'allocazione allineata e
+                la crescita dello heap fino al rifiuto), formattazione,
+                flussi, salti non locali, conversioni, errno, virgola
+                mobile, sscanf, data e ora, stat, ambiente, directory,
+                temporanei, descrittori duplicati, variabili __thread,
+                interfacce per il codice di terzi, spawn con
+                redirezione — tutte dentro EX-OS
 ```
 
-### Il collaudo che conta: binutils
+### Le pipe
 
-Fino ad agosto 2026 la libc era provata solo da `libctest`, che chiama le
-funzioni che **sappiamo** di avere. **binutils 2.44 compilato per
-`i386-exos`** chiama quelle che gli servono, e le ha chieste una alla
-volta: `dup`/`dup2`/`fcntl`, `EOF` (il valore c'era, mancava il *nome*),
-`frexp`, `strftime`, `strcasecmp`, `realpath`, `mbstowcs`, `fscanf`,
-`chmod`/`umask` — più gli header `<sys/types.h>`, `<strings.h>`,
-`<wchar.h>`, `<sys/param.h>`, `<limits.h>`.
+`pipe()` dà due descrittori collegati da un buffer circolare di 4 KB nel
+kernel. Le regole che contano sono tutte di confine:
 
-Il risultato è che `as` e `ld` **girano dentro EX-OS**:
+> ⚠️ **Vuota con uno scrittore vivo = aspetta; vuota senza scrittori = 0.**
+> È tutta qui la ragione per cui il conteggio degli scrittori esiste: senza,
+> una pipe non è distinguibile da un blocco eterno. E scrivere quando non
+> c'è più nessun lettore dà `EPIPE`, non un'attesa.
+
+> ⚠️ **Niente `SIGPIPE`**: EX-OS non ha i segnali, quindi si vede solo il
+> valore di ritorno. Chi non guarda quello di `write()` non se ne accorge.
+> E **niente garanzia di atomicità**: la scrittura può essere parziale
+> anche sotto `PIPE_BUF`.
+
+`FD_PIPE_R` e `FD_PIPE_W` sono due **tipi** di descrittore, non uno con un
+flag: la direzione non è un dettaglio, è ciò che decide se una `read`
+blocca o è un errore.
+
+Per collegare due processi serve passare un'estremità al figlio, e lo si fa
+con `SpawnRedir` a `percorso` NULL — l'**eredità dei descrittori**, che è la
+sola aggiunta che rende le pipe utili fuori da un singolo processo:
+
+```c
+int p[2]; pipe(p);
+SpawnRedir a = { 1, 0, NULL, p[1] };   /* stdout del figlio = scrittura */
+spawn_ex("/bin/cmd", argv, environ, &a, 1);
+close(p[1]);                            /* ⚠️ indispensabile */
+```
+
+> ⚠️ **Il padre deve chiudere l'estremità che ha passato.** Se non lo fa, la
+> pipe conta ancora uno scrittore vivo — lui — e chi legge aspetterà per
+> sempre. È l'errore classico con le pipe, e qui non c'è niente che lo
+> segnali.
+
+**Un difetto di progetto che le pipe hanno fatto emergere.** I descrittori
+si chiudevano in `proc_reap_zombie()`, cioè quando il genitore chiama
+`waitpid()`. Con i soli file passava inosservato; con una pipe è uno
+stallo: il figlio esce, i suoi fd restano contati, il padre è bloccato
+nella `read` e non arriverà mai al `waitpid`. Due processi ad aspettarsi a
+vicenda, nessun errore. Ora si chiudono alla morte del processo — è il
+motivo per cui su Unix stanno in `do_exit()` e non in `wait()`: uno zombie
+non deve trattenere risorse di I/O, solo il proprio codice di uscita.
+
+### La rinomina che non sposta i dati
+
+`rename()` era **copia+cancella**: costava quanto il file e **rialloca i
+blocchi**. Portava il nome di un'altra cosa, e la differenza non era
+accademica — è ciò che rendeva impossibile a `install` verificare la mappa
+dei settori del kernel prima di dargli il nome definitivo.
+
+Dalla 0.161 è una syscall vera (`vfs_rename`, implementata su tutti e tre i
+driver: `fat.c`, `ext2.c`, `fat12.c`) che riscrive la voce di directory e
+basta. **I blocchi non si spostano**: è la garanzia su cui si regge
+l'installatore. C'è anche il comando:
 
 ```
+ex-os:/> rename /r1.bin /r2.bin
+/r1.bin -> /r2.bin
+```
+
+> ⚠️ **Si chiama `rename` e non `mv`, di proposito.** `mv` su Unix
+> rinomina *e sposta*, e quando sposta fra filesystem copia e cancella —
+> un'operazione completamente diversa sotto lo stesso nome. Qui i dati non
+> si muovono mai, e il nome dice cosa fa.
+
+> ⚠️ **Due differenze da POSIX, dichiarate:** solo nella **stessa
+> directory** (ENOSYS), e **non sostituisce** la destinazione (EEXIST).
+> Attraversare directory sarebbe una copia più una cancellazione;
+> sostituire vuol dire cancellare un file che il chiamante non ha nominato
+> come vittima.
+
+In `ext2_rename` **si aggiunge prima e si toglie dopo**: in mezzo il file
+ha due nomi, che è riparabile; nell'ordine opposto non ne avrebbe nessuno e
+l'inode resterebbe allocato e irraggiungibile.
+
+> ⚠️ **`fat12.c` risponde in errno, gli altri due no.** Lì `-2` significa
+> `ENOENT`, in `fat.c` ed `ext2.c` significa «esiste già». Mescolare le due
+> convenzioni fa dire «esiste già» a una rinomina di un file inesistente —
+> ed è successo, alla prima prova con un nome sbagliato.
+
+### `getrusage`, `getpagesize`, `mmap`
+
+Le tre funzioni che GCC usa come programma ospite, ognuna con il proprio
+limite dichiarato.
+
+> ⚠️ **`getrusage` non è una misura.** EX-OS non tiene contabilità per
+> processo: lo scheduler assegna quanti e non misura consumi. `ru_utime`
+> riporta il tempo **trascorso dall'avvio** — un limite superiore onesto —
+> e tutto il resto è zero. Chi ci costruisce sopra un profilo
+> (`gcc -ftime-report`) otterrà per ogni passaggio lo stesso tempo.
+
+> ⚠️ **`mmap` mappa solo memoria anonima**: con `fd != -1` dà `ENODEV`.
+> Mappare un file richiederebbe le pagine sporche e il momento in cui
+> riscriverle; una mmap che finge consegnando zeri darebbe un programma che
+> legge dati sbagliati senza che niente lo segnali. E ritorna
+> **`MAP_FAILED`, non `NULL`**.
+
+`munmap` **riporta giù il confine** se la zona smappata era in cima: prima
+le pagine fisiche tornavano al PMM ma lo spazio di indirizzamento no, e il
+garbage collector di GCC fa quel ciclo migliaia di volte per file
+compilato.
+
+### Descrittori duplicati: `dup`, `dup2`, `fcntl`
+
+Dalla 0.151 gli handle aperti del VFS hanno un **conteggio dei
+riferimenti**: `close()` chiude davvero solo l'ultima volta. È ciò che
+rende possibile `dup()`, cioè tenere un file aperto oltre la `close()` di
+chi possedeva il descrittore originale — il gesto che fanno `ar`,
+`objcopy` e `arsup` di binutils.
+
+`dup2()` è anche l'unico modo di sostituire `stdin`/`stdout`/`stderr`:
+`close()` su 0, 1 e 2 è rifiutata apposta, perché lascerebbe il processo
+senza uscita, mentre chi arriva da `dup2` il rimpiazzo ce l'ha già.
+
+> ⚠️ **I due descrittori condividono il file, non la posizione.** Su POSIX
+> una `read()` da uno dei due sposta anche l'altro; qui l'offset sta nel
+> descrittore del processo, non in un oggetto «file aperto» intermedio, e
+> ognuno tiene il suo. Chi legge da un fd duplicato faccia una `lseek()`
+> esplicita. È la prima cosa da sistemare il giorno che arriveranno le
+> pipe.
+
+---
+
+## La catena di compilazione dentro EX-OS
+
+**GNU binutils 2.44 gira nativamente su EX-OS.** `as` e `ld` sono
+compilati **per** `i386-exos`, non per la macchina che li ha costruiti:
+
+```
+ex-os:/> /cdrom/bin/as --version
+GNU assembler (GNU Binutils) 2.44
+This assembler was configured for a target of `i386-exos'.
+
 ex-os:/> /cdrom/bin/as -o /prova.o /cdrom/prova.s
 ex-os:/> /cdrom/bin/ld -o /prova /prova.o
 ex-os:/> /prova
 Assemblato e collegato dentro EX-OS.
 ```
 
-L'oggetto prodotto qui dentro è identico byte per byte a quello che
+L'oggetto prodotto qui dentro è **identico byte per byte** a quello che
 produce il cross su Linux. I due strumenti stanno sul CD degli strumenti
-(`make iso`); come costruirli è in `tools/binutils-exos/leggimi.md`.
+(`make iso`, ~1,4 MB l'uno dopo lo strip); il sorgente di prova è
+`/cdrom/prova.s`.
+
+### Perché è il collaudo che conta
+
+`libctest` chiama le funzioni che **sappiamo** di avere. binutils chiama
+quelle che gli servono, e non ha nessun riguardo: le ha chieste una alla
+volta, ognuna fermando la compilazione, e l'elenco è la misura di quanto
+mancava a una libc «ospitata» vera —
+
+| | |
+|---|---|
+| processi | `dup`, `dup2`, `fcntl`, `_exit` |
+| file | `realpath`, `lstat`, `freopen`, `mktemp`, `pathconf`, `utime` |
+| stringhe | `strcasecmp`, `strncasecmp`, `strcoll`, `strpbrk` |
+| formato | `fscanf`, `scanf`, `strftime`, `asctime`, `ctime` |
+| numeri | `frexp`, `atof`, `fabs` |
+| caratteri larghi | `mbstowcs`, `mbrtowc`, `wcstombs` |
+| permessi (inerti) | `chmod`, `fchmod`, `umask` |
+| header | `<sys/types.h>` `<strings.h>` `<wchar.h>` `<sys/param.h>` `<limits.h>` `<memory.h>` `<utime.h>` |
+
+più due che non erano funzioni: **`EOF`** — il valore c'era dal principio,
+mancava il *nome*, e `safe-ctype.h` verifica di poter lavorare con
+`#if EOF != -1`, che senza la macro vede zero e conclude che la libc è
+sbagliata — e **`strerror` che tornava `const char *`**, più sicuro e
+incompatibile con la firma dello standard.
+
+### `pex-exos.c`: lanciare un programma senza `fork`
+
+`libiberty` compila sempre un `pex-*.c` — «lancia un programma e
+aspettalo» — e per tutto ciò che non è Windows o MSDOS sceglie
+`pex-unix.c`, costruito su `fork()`. EX-OS non ha `fork`, e non è una
+mancanza da colmare: duplicare uno spazio di indirizzamento per buttarlo
+via un'istruzione dopo è esattamente ciò che `spawn_ex()` evita.
+
+`tools/binutils-exos/pex-exos.c` è il rimpiazzo, modellato su
+`pex-msdos.c`: un «descrittore» è un indice in una tabella di **nomi**,
+perché è il nome ciò che serve a `spawn_ex`. I tre `NULL` nella tabella
+`funcs` (pipe, fdopenr, fdopenw) **sono la dichiarazione che questo
+sistema non ha pipe**, e `pex-common.c` se ne accorge da solo e passa alla
+modalità a file temporanei.
+
+### Tre trappole, che costano un'ora a testa
+
+- **`-std=gnu17`.** GCC 17 compila in C23, dove una dichiarazione
+  implicita è un **errore**. binutils 2.44 presume l'indulgenza di C17.
+- **`export ac_cv_tls=`** (stringa vuota, non `none`). La prova che il
+  configure fa per le variabili thread-local è una **compilazione**:
+  `i386-exos-gcc` accetta `_Thread_local` senza fiatare, perché è il
+  compilatore a saper emettere gli accessi via `%gs` ed è il *sistema* a
+  non avere un thread pointer. Il risultato è un `as` che si compila
+  benissimo e muore alla terza istruzione di `bfd_init`. Con `none` la
+  macro non viene definita affatto e binutils non compila: serve
+  **definita a vuoto**.
+- **`sys-include`.** GCC installa un proprio `<limits.h>` e ne esistono
+  due versioni; quella che fa `#include_next` — cioè che prende anche la
+  nostra — viene generata solo se, al momento di costruire GCC, un
+  `limits.h` di sistema c'era già, e GCC lo cerca in
+  `$prefisso/i386-exos/sys-include`.
+
+Ricetta completa in **`tools/binutils-exos/leggimi.md`**.
+
+### GMP, MPFR e MPC
+
+Le tre librerie a cui `cc1` si linka girano anche loro dentro EX-OS — sono
+il codice di terzi più pesante che il sistema abbia ospitato, 4,6 MB di
+archivi di aritmetica a precisione arbitraria:
+
+```
+ex-os:/> /cdrom/bin/provamp
+GMP 6.3.0, MPFR 4.2.1, MPC 1.3.1 — dentro EX-OS
+
+GMP   2^128 = 340282366920938463463374607431768211456
+MPFR  pi     = 3.1415926535897932384626433832795028841971693993751e0
+MPC   sqrt(i)= (7.0710678118654752440e-1 7.0710678118654752440e-1)
+```
+
+Costruirle è `tools/gcclibs-exos/prepara-gcclibs.sh`. Due cose non ovvie,
+entrambe documentate lì:
+
+- **`CC_FOR_BUILD=gcc` esplicito.** GMP sceglie il compilatore per i propri
+  generatori di tabelle compilandone uno e *eseguendolo* — e la prova
+  riesce con il cross, perché un binario di EX-OS è un ELF32 statico che
+  Linux carica, con syscall che hanno i numeri di Linux. Parte, stampa,
+  sembra a posto; non combaciano `argc` e `argv`, e il generatore si
+  rifiuta di generare.
+- **`--host=i486-pc-exos`, non i386.** Non è un ripiego: 486 è il minimo
+  che EX-OS già richiede per conto suo (`invlpg` in `kernel/mm/paging.c`).
+  Con `i386` si finisce su un difetto di GCC 17 che emette `rolw $8, %eax`
+  — rotazione a 16 bit con il registro a 32 — e l'assemblatore rifiuta.
+
+### La libreria standard del C++ gira
+
+```
+ex-os:/> /cdrom/bin/provacpp
+La libreria standard del C++ dentro EX-OS
+
+  vector+sort : 1 3 5 7 9
+  string      : "std::string concatenata" (23 caratteri)
+  cerchio     : area = 12566 (x1000)
+  quadrato    : area = 9000 (x1000)
+  eccezione   : lanciata e ripresa
+  out_of_range : presa da dentro la libreria
+```
+
+**libstdc++ 25 MB e libsupc++ 1 MB** compilate per `i386-exos`. Il
+programma si costruisce con una riga sola, con `g++`, come su qualunque
+altro bersaglio:
+
+```sh
+i386-exos-g++ -O2 -o provacpp prova-cpp.cpp
+```
+
+> ⚠️ **Le eccezioni funzionano, e non era scontato.** Sono il pezzo che ha
+> bisogno di più cose insieme: `__cxa_throw`, lo svolgimento dello stack,
+> le tabelle `.eh_frame`, i descrittori di tipo. Lo svolgimento **legge a
+> runtime le tabelle prodotte dal collegatore e le percorre**: è l'unica
+> parte del C++ che pretende che il programma caricato in memoria sia
+> esattamente come il collegatore l'ha descritto — quindi è anche una prova
+> indiretta che il caricamento su richiesta di EX-OS è corretto.
+
+**La riga che mancava da sempre: `extern "C"`.** Nessuno degli header di
+EX-OS aveva la guardia `#ifdef __cplusplus`. Il C++ decora i nomi con i
+tipi degli argomenti — `printf` diventa `_Z6printfPKcz` — mentre `libc.a` è
+compilata da un compilatore C e dentro ha il nome nudo: **ogni programma
+C++ chiamava simboli che nell'archivio non esistono.**
+
+Il sintomo era fuorviante, perché arrivava in compilazione e non al link:
+la libstdc++ dichiara alcune funzioni della libc con `extern "C"` esplicito,
+e il messaggio diceva `conflicting declaration of 'void* memalign(...)'
+with 'C' linkage` — cioè «questa dichiarazione è in conflitto con se
+stessa».
+
+### I nomi che servono a essere nominati
+
+Perché la libstdc++ compili, la libc deve *dichiarare* molte cose che
+EX-OS non farà mai: 40 codici errno di rete e IPC, le costanti `DT_*` per
+FIFO, socket e collegamenti simbolici, i `S_IF*`/`S_IS*` corrispondenti.
+
+> ⚠️ **Un nome mancante è un errore di compilazione, non un ramo morto.**
+> `<system_error>` costruisce `std::errc` da quell'elenco e `<filesystem>`
+> scrive `case DT_LNK:` in uno switch: serve la costante, non il
+> comportamento. Ritornare sempre 0 da `S_ISLNK()` è la risposta **giusta**
+> — su EX-OS un collegamento simbolico non esiste, quindi «questo file è un
+> collegamento?» ha davvero risposta no.
+
+I valori sono quelli di Linux e non vanno reinventati: il giorno che i
+collegamenti simbolici arrivassero, `S_IFLNK` dovrà valere `0120000` come
+ovunque.
+
+### Cosa manca per il compilatore
+
+`as` traduce, `ld` collega, le tre librerie di calcolo ci sono, la libm c'è
+e **libstdc++ gira**. Resta **`cc1`**, e per arrivarci servono:
+
+1. quattro nomi che GCC usa sull'ospite e che la libc non ha —
+   `getrusage`, `getpagesize`, `mmap`, `pipe` (i primi due facili, `mmap`
+   ha il ripiego `malloc` in `ggc-page.cc`, `pipe` non serve);
+2. il **canadian cross**
+   (`--build=x86_64-linux --host=i386-exos --target=i386-exos`);
+3. ⚠️ **lo spazio**: `cc1` per x86-64 spogliato è 50 MB, per i386 sarà sui
+   25-30. Ci sta su un CD, non su un floppy, e vuole una macchina con
+   abbastanza RAM — il tetto dello heap e la restituzione della memoria al
+   kernel servono a quello.
 
 ---
 
@@ -1028,6 +1564,8 @@ girano in ring0 e vanno riscritti contro il modello sopra.
 - [x] **Fase 3**  — TTY driver + FAT12 R/W kernel + ELF loader
 - [x] **Fase 4**  — Shell utente + cfg reader
 - [~] **Fase 5**  — Driver in userspace (ring3): tastiera fatta, floppy da fare
+- [~] **Fase 6**  — Sistema ospitante: libc POSIX, `as` e `ld` nativi fatti;
+                    compilatore da fare
 
 **Stato Fase 4 (luglio 2026)**: la shell parte come primo processo ring3, legge
 `/boot/kernel.cfg`, ed esegue programmi esterni (`hello`, `ls`, `cat`) come task
@@ -1045,6 +1583,32 @@ Il driver floppy è ancora un modulo ET_DYN kernel-space e l'accesso al floppy
 resta servito dal FAT12/FDC interno al kernel. Analisi e passi necessari in
 `KERNEL_CORE_NOTES.md`, punto 5; dettagli di progetto e trappole in
 `HANDOFF.md`.
+
+**Stato Fase 6 (2 agosto 2026)**: la libc è cresciuta fino a reggere codice
+scritto per POSIX, e la prova è che **binutils 2.44 gira dentro EX-OS**.
+Portarlo ha scoperto tre difetti del kernel che nessun programma di EX-OS
+poteva mostrare, perché tutti scrivevano un file dall'inizio alla fine:
+
+- i descrittori ancora aperti alla terminazione non li chiudeva nessuno —
+  uno slot VFS perso per file, ed `EMFILE` dopo 64 volte;
+- sul **floppy** la scrittura ignorava la posizione del descrittore e si
+  accodava sempre in fondo (su ext2 e FAT16/32 no: lì l'offset arrivava);
+- scrivere all'**inizio** di un settore lo azzerava per intero, cancellando
+  i byte che c'erano dietro.
+
+Tutti e tre invisibili finché nessuno torna indietro in un file. Un
+qualunque scrittore di ELF lo fa.
+
+**Cosa manca ancora**, in ordine di quanto darà fastidio:
+
+| | |
+|---|---|
+| **`cc1` ospitato** | libstdc++ e le librerie di calcolo ci sono; restano `<sys/un.h>` e il canadian cross |
+| **posizione condivisa fra fd duplicati** | `dup()` funziona, ma i due descrittori tengono ognuno il proprio offset |
+| **chkdsk per ext2** | strumento a sé: bitmap, conteggi dei collegamenti, `..` — controlli diversi da quelli di FAT |
+| **exFAT** | ⚠️ non esiste come filesystem: prima va implementato, poi ha senso un chkdsk |
+| **`rename` fra directory** | oggi ENOSYS: sarebbe una copia più una cancellazione, cioè un'altra operazione |
+| **DMA per il disco** | oggi 0,75 MB/s in PIO |
 
 ---
 

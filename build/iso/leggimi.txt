@@ -59,6 +59,47 @@ Cosa c'e' dentro
                     stato costruito senza: vedi
                     tools/binutils-exos/leggimi.md nel repository.
 
+/bin/provamp        GMP, MPFR e MPC compilate per EX-OS, provate tutte
+                    e tre in un colpo: 2^128, pi greco a 50 cifre e la
+                    radice quadrata di i. Sono le librerie a cui si lega
+                    il compilatore, e sono il codice di terzi piu' pesante
+                    che il sistema ospiti.
+
+/prova-mp.c         il sorgente di quel programma.
+
+/bin/provamat       la libm -- openlibm, cioe' la msun di FreeBSD --
+                    compilata per EX-OS: sin, cos, pow, log, atan2, hypot
+                    e le varianti a singola ed estesa precisione.
+
+                    I risultati sono moltiplicati per mille e stampati
+                    come interi, perche' la printf di EX-OS non formatta
+                    i double: stamparli in virgola mobile avrebbe provato
+                    la printf invece della libm.
+
+                    Chi usa queste funzioni deve linkare -lm. Fanno
+                    eccezione sqrt, fabs, ldexp e frexp, che stanno nella
+                    libc.
+
+/prova-mat.c        il sorgente di quel programma.
+
+/bin/provacpp       la LIBRERIA STANDARD DEL C++ dentro EX-OS:
+                    std::vector con std::sort, std::string, polimorfismo
+                    con distruttore virtuale su heap, e le eccezioni --
+                    comprese quelle lanciate da dentro la libreria
+                    (vector::at che da' out_of_range).
+
+                    Si costruisce con una riga sola e con g++, come su
+                    qualunque altro bersaglio:
+
+                        i386-exos-g++ -O2 -o provacpp prova-cpp.cpp
+
+                    Le eccezioni sono il pezzo che ha bisogno di piu' cose
+                    insieme: __cxa_throw, lo svolgimento dello stack, le
+                    tabelle .eh_frame. Se quella riga stampa, la meta'
+                    bassa di libstdc++ funziona per intero.
+
+/prova-cpp.cpp      il sorgente di quel programma.
+
 /prova.s            il programma piu' piccolo che dimostra la catena
                     intera, da sorgente a processo:
 
@@ -74,9 +115,14 @@ Cosa c'e' dentro
 Cosa NON c'e' ancora
 --------------------
 
-Il COMPILATORE. as e ld traducono e collegano, ma non c'e' ancora niente
-che trasformi un sorgente C in assembly: per quello serve cc1, che si
-porta dietro GMP, MPFR, MPC e un pezzo di libstdc++.
+Il COMPILATORE. as e ld traducono e collegano, le tre librerie di calcolo
+ci sono, la libm c'e' e la libreria standard del C++ gira -- ma non c'e'
+ancora niente che trasformi un sorgente C in assembly. Per quello serve
+cc1.
+
+Manca poco: quattro funzioni POSIX che GCC usa sull'ospite, il canadian
+cross, e una macchina con abbastanza RAM (cc1 spogliato sara' sui 25-30
+MB, quindi CD e non floppy). Vedi /doc/README.md.
 
 Fino ad allora i programmi di EX-OS si compilano da un'altra macchina,
 con il cross-compilatore descritto in /doc/README.md -- oppure si scrive

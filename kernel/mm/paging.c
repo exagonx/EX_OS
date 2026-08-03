@@ -182,6 +182,25 @@ void paging_azzera_fisica(uint32_t phys)
  * Se la Page Table per questo indirizzo non esiste ancora, ne alloca una
  * nuova dal PMM.
  *
+ * ⚠️ SOVRASCRIVE UNA PTE GIA' PRESENTE SENZA DIRE NIENTE, e non e' una
+ * dimenticanza: e' il contratto. Chi chiama sa gia' che quella pagina e'
+ * sua, e un rifiuto qui costringerebbe ogni chiamante a distinguere fra
+ * "non era mappata" e "era mappata e va bene cosi'".
+ *
+ * IL PREZZO, e va conosciuto: la vecchia pagina fisica NON viene
+ * liberata (chi la teneva la perde e resta occupata per sempre), e
+ * soprattutto NON c'E' NESSUN SEGNALE. Un errore di calcolo
+ * nell'indirizzo non da' un fault ne' un log: da' due oggetti diversi
+ * allo stesso indirizzo virtuale, e il guasto salta fuori molto dopo,
+ * altrove.
+ *
+ * ⚠️ PERCIO' IL CONFINE LO METTE CHI CHIAMA. Le due vie per cui lo spazio
+ * di un processo cresce — sys_sbrk e sys_mmap — controllano
+ * `proc->heap_max` PRIMA di allocare (kernel 0.156). Prima non lo
+ * facevano, e uno heap abbastanza grande avrebbe rimappato il blocco TLS
+ * del processo stesso proprio in questo modo, in silenzio. Vedi il
+ * commento su heap_max in kernel/include/sched.h.
+ *
  * Ritorna: 0 = successo, -1 = errore (OOM)
  * ============================================================================= */
 int paging_map_page(PDE *pd, uint32_t virt_addr, uint32_t phys_addr, uint32_t flags)

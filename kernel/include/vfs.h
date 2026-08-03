@@ -115,6 +115,10 @@ int  vfs_readdir(const char *abs, VfsDirEntry *out, uint32_t max,
 int  vfs_mkdir  (const char *abs);
 int  vfs_rmdir  (const char *abs);
 int  vfs_unlink (const char *abs);
+/* Rinomina NELLA STESSA DIRECTORY e nello stesso montaggio, senza spostare
+ * i dati. ENOSYS per tutto il resto, EEXIST se la destinazione c'e' gia'.
+ * Vedi il commento esteso in kernel/fs/vfs.c. */
+int  vfs_rename (const char *da, const char *a);
 
 /* Cambia la dimensione di un file. Allungare crea un buco che si legge
  * come zeri; accorciare libera i blocchi in coda. Il floppy (fat12.c) non

@@ -1561,11 +1561,91 @@ int fat_mkdir(int mnt, const char *percorso)
         scrivi16(v + 32 + 24, FAT_DATA_IGNOTA);
     }
 
-    if (voce_nuova(m, percorso, FAT_ATTR_DIR, nuovo, &pos) != 0) {
-        catena_libera(m, nuovo);        /* non lasciare un cluster orfano */
-        return -1;
+    {
+        int r = voce_nuova(m, percorso, FAT_ATTR_DIR, nuovo, &pos);
+        if (r != 0) {
+            catena_libera(m, nuovo);    /* non lasciare un cluster orfano */
+            /* ⚠️ IL -2 VA PROPAGATO, e prima si perdeva. voce_nuova
+             * distingue "esiste gia'" (-2) da "errore" (-1), e il VFS
+             * traduce il primo in EEXIST e il secondo in EIO; schiacciando
+             * tutto a -1, una mkdir su una directory che c'e' gia'
+             * rispondeva "errore di I/O".
+             *
+             * Non e' cosmetico: chi installa vede tre righe di errore di
+             * I/O su un disco perfettamente sano e crede che il supporto
+             * stia cedendo. E' esattamente cio' che faceva `install` a
+             * ogni reinstallazione su FAT. */
+            return r;
+        }
     }
 
+    return 0;
+}
+
+/* =============================================================================
+ * fat_rename — cambia il NOME di una voce, senza spostare i dati
+ *
+ * ⚠️ SOLO NELLA STESSA DIRECTORY. Attraversare directory vorrebbe dire
+ * togliere una voce e aggiungerne un'altra altrove, cioe' un momento in
+ * cui il file non e' raggiungibile da nessun nome: senza journal, una
+ * caduta di corrente li' in mezzo lo perde. Il caso che serve — e l'unico
+ * che si concede — e' rinominare sul posto. Si ritorna -3 per il resto,
+ * cosi' il VFS puo' dire ENOSYS invece di fingere un errore generico.
+ *
+ * ⚠️ PERCHE' ESISTE, ed e' il punto: i dati NON SI SPOSTANO. Si riscrivono
+ * undici byte dentro la voce di directory e basta. E' cio' che permette a
+ * `install` di scrivere il kernel nuovo con un nome temporaneo, verificare
+ * che sia mappabile in un solo tratto, e solo allora dargli il nome
+ * definitivo — con la certezza che la mappa appena verificata resta
+ * valida. La rename() della libc, che copia e cancella, non lo permette:
+ * ricopiando rifarebbe l'allocazione e la verifica non varrebbe piu'.
+ *
+ * ⚠️ NON tocca il nome lungo (LFN). Se la voce ne aveva uno, quei
+ * frammenti restano e continuano a nominare il file con il nome vecchio.
+ * Per i file di sistema — 8.3 puri — non succede; per gli altri e' un
+ * limite dichiarato, non un caso da scoprire.
+ * ============================================================================= */
+int fat_rename(int mnt, const char *da, const char *a)
+{
+    FatMount   *m;
+    char        pad_da[FAT_PERCORSO_MAX], nom_da[FAT_NOME_MAX];
+    char        pad_a[FAT_PERCORSO_MAX],  nom_a[FAT_NOME_MAX];
+    uint8_t     n83[11], voce[32], *v;
+    PosVoce     pos;
+    FatDirEntry gia;
+    int         i;
+
+    if (mnt < 0 || mnt >= FAT_MAX_MOUNT || !g_mnt[mnt].usato) return -1;
+    m = &g_mnt[mnt];
+
+    if (percorso_dividi(da, pad_da, sizeof(pad_da),
+                        nom_da, sizeof(nom_da)) != 0) return -1;
+    if (percorso_dividi(a,  pad_a,  sizeof(pad_a),
+                        nom_a,  sizeof(nom_a))  != 0) return -1;
+
+    /* Stessa directory, confronto byte per byte: i due percorsi arrivano
+     * gia' normalizzati dal VFS. */
+    for (i = 0; pad_da[i] || pad_a[i]; i++) {
+        if (pad_da[i] != pad_a[i]) return -3;
+    }
+
+    if (nome_a_83(nom_a, n83) != 0) return -1;
+
+    /* La destinazione non deve esistere: due voci con lo stesso nome
+     * renderebbero il file precedente irraggiungibile e i suoi cluster non
+     * piu' liberabili. Chi vuole sostituire cancella prima. */
+    if (fat_stat(mnt, a, &gia) == 0) return -2;
+
+    if (risolvi(m, da, voce, NULL, &pos) != 0) return -1;
+    if (pos.lba == 0) return -1;
+
+    v = voce_mut(m, &pos);
+    if (v == NULL) return -1;
+
+    for (i = 0; i < 11; i++) v[i] = n83[i];
+
+    klog(LOG_DEBUG, "FAT: rinominato '%s' in '%s' (voce a LBA %u idx %u)",
+         da, a, pos.lba, pos.idx);
     return 0;
 }
 

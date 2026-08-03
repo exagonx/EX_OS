@@ -60,7 +60,7 @@ void ipc_notify_irq(uint32_t dest_pid, uint8_t irq_num)
     if (dest->ipc_count < IPC_MAILBOX_DEPTH) {
         IpcMessage *slot = &dest->ipc_mailbox[dest->ipc_tail];
         slot->sender_pid = IPC_SENDER_KERNEL;
-        slot->type       = IPC_TYPE_IRQ_NOTIFY;
+        slot->tipo       = IPC_TYPE_IRQ_NOTIFY;
         slot->len        = sizeof(uint32_t);
         *(uint32_t *)slot->data = (uint32_t)irq_num;
         dest->ipc_tail   = (dest->ipc_tail + 1) % IPC_MAILBOX_DEPTH;
@@ -76,7 +76,7 @@ void ipc_notify_irq(uint32_t dest_pid, uint8_t irq_num)
 /* =============================================================================
  * ipc_send — consegna un messaggio a dest_pid
  * ============================================================================= */
-int32_t ipc_send(uint32_t dest_pid, uint32_t type,
+int32_t ipc_send(uint32_t dest_pid, uint32_t tipo,
                   const void *data, uint32_t len)
 {
     if (len > IPC_MSG_MAX_DATA) len = IPC_MSG_MAX_DATA;
@@ -96,7 +96,7 @@ int32_t ipc_send(uint32_t dest_pid, uint32_t type,
         if (dest->ipc_count < IPC_MAILBOX_DEPTH) {
             IpcMessage *slot = &dest->ipc_mailbox[dest->ipc_tail];
             slot->sender_pid = sender_pid;
-            slot->type       = type;
+            slot->tipo       = tipo;
             slot->len        = len;
             if (len > 0 && data != NULL) {
                 const uint8_t *src = (const uint8_t *)data;
@@ -185,7 +185,7 @@ int32_t ipc_recv_timeout(IpcMessage *out, void *buf, uint32_t buf_len,
 
             if (out) {
                 out->sender_pid = slot->sender_pid;
-                out->type       = slot->type;
+                out->tipo       = slot->tipo;
                 out->len        = slot->len;
             }
 

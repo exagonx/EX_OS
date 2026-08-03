@@ -1125,6 +1125,82 @@ int vfs_mkdir (const char *abs) { int r; fs_prendi_n("mkdir"); r = modifica(abs,
 int vfs_rmdir (const char *abs) { int r; fs_prendi_n("rmdir"); r = modifica(abs, 1); fs_rilascia(); return r; }
 int vfs_unlink(const char *abs) { int r; fs_prendi_n("unlink"); r = modifica(abs, 2); fs_rilascia(); return r; }
 
+/* =============================================================================
+ * vfs_rename — cambia il NOME di un file senza spostarne i dati
+ *
+ * ⚠️ SOLO NELLA STESSA DIRECTORY E NELLO STESSO MONTAGGIO. Tutto il resto
+ * e' ENOSYS, dichiarato: attraversare un montaggio non e' una rinomina, e'
+ * una copia seguita da una cancellazione — cioe' un'altra operazione, con
+ * un altro costo e un altro modo di fallire. Farla passare per rinomina
+ * darebbe a chi chiama la garanzia sbagliata.
+ *
+ * ⚠️ E LA GARANZIA E' PROPRIO IL PUNTO: I DATI NON SI SPOSTANO. Si
+ * riscrive la voce di directory, i blocchi restano dove sono. E' cio' che
+ * permette a `install` di scrivere il kernel con un nome temporaneo,
+ * chiedere al kernel se e' mappabile in un solo tratto, e solo allora
+ * dargli il nome definitivo — sapendo che la mappa appena verificata vale
+ * ancora. La rename() che copia e cancella non lo permette: ricopiando
+ * rifarebbe l'allocazione, e la verifica non varrebbe piu' niente.
+ *
+ * ⚠️ NON SI SOVRASCRIVE LA DESTINAZIONE (EEXIST). Su POSIX rename()
+ * sostituisce; qui no, perche' sostituire vuol dire cancellare un file che
+ * l'utente non ha nominato come vittima. Chi vuole sostituire cancella
+ * prima, e cosi' la perdita e' una scelta.
+ *
+ * ⚠️ fat12.c (il floppy di avvio) NON ce l'ha, ed e' voluto: e' la strada
+ * collaudata che non si tocca senza una ragione forte, e li' la rinomina
+ * non serve a nessuno. Vedi la stessa scelta per vfs_truncate.
+ * ============================================================================= */
+static int vfs_rename_nl(const char *da, const char *a)
+{
+    char int_da[VFS_PATH_MAX], int_a[VFS_PATH_MAX];
+    int  im_da, im_a, r;
+
+    if (da == NULL || a == NULL) return ERR(EINVAL);
+
+    im_da = instrada(da, int_da, sizeof(int_da));
+    im_a  = instrada(a,  int_a,  sizeof(int_a));
+    if (im_da < 0 || im_a < 0) return ERR(ENOENT);
+
+    /* Due montaggi diversi: non e' una rinomina. */
+    if (im_da != im_a) return ERR(ENOSYS);
+
+    if (g_mnt[im_da].sola_lettura)          return ERR(EROFS);
+    if (g_mnt[im_da].tipo == VFS_FS_ISO)    return ERR(EROFS);
+    if (e_radice(int_da) || e_radice(int_a)) return ERR(EBUSY);
+
+    /* ⚠️ Anche il floppy di avvio, e qui la deroga alla regola «fat12.c
+     * non si tocca» e' motivata: prima della 0.161 rename() era
+     * copia+cancella e funzionava ovunque. Sostituirla con la syscall
+     * senza dare a fat12 la sua rinomina avrebbe tolto una funzione che
+     * c'era — una regressione introdotta da una correzione. */
+    /* ⚠️ fat12.c RISPONDE GIA' IN errno, e non va tradotto. Gli altri due
+     * driver usano la convenzione -1/-2/-3; mescolarle fa dire «esiste
+     * gia'» a una rinomina di un file inesistente, perche' -2 vuol dire
+     * ENOENT di qua e EEXIST di la'. Stessa scelta di modifica(), che i
+     * ritorni di fat12 li rigira tali e quali. */
+    if (g_mnt[im_da].tipo == VFS_FS_FAT12FD)
+        return fat12_rename(int_da, int_a);
+
+    if (g_mnt[im_da].tipo == VFS_FS_EXT2)
+        r = ext2_rename(g_mnt[im_da].mnt, int_da, int_a);
+    else
+        r = fat_rename(g_mnt[im_da].mnt, int_da, int_a);
+
+    if (r == -2) return ERR(EEXIST);
+    if (r == -3) return ERR(ENOSYS);   /* directory diverse */
+    return (r != 0) ? ERR(EIO) : 0;
+}
+
+int vfs_rename(const char *da, const char *a)
+{
+    int r;
+    fs_prendi_n("rename");
+    r = vfs_rename_nl(da, a);
+    fs_rilascia();
+    return r;
+}
+
 static int vfs_truncate_nl(const char *abs, uint32_t nuova_dim)
 {
     char    interno[VFS_PATH_MAX];

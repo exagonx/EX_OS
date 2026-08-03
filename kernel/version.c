@@ -36,3 +36,8 @@ const char g_os_version[] =
 const char g_os_version_short[] =
     EXOS_NAME " " EXOS_VERSION " (" EXOS_LONGNAME ") - "
     EXOS_COPYRIGHT " " EXOS_AUTHOR " - " EXOS_LICENSE;
+
+
+
+
+

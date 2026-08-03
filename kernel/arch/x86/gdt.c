@@ -81,7 +81,7 @@ typedef struct PACKED {
 /* =============================================================================
  * Dati GDT (statici, allocati nel kernel .data)
  * ============================================================================= */
-#define GDT_ENTRIES 6
+#define GDT_ENTRIES 7
 
 static GDTDescriptor    gdt_table[GDT_ENTRIES] ALIGNED(8);
 static GDTRegister      gdt_reg;
@@ -166,6 +166,24 @@ void gdt_install(void)
      * Base = indirizzo fisico del nostro TSS
      * Limit = sizeof(TSS) - 1
      */
+    /*
+     * Descrittore 6: TLS — selettore 0x30 | 0x03 = 0x33
+     *
+     * Identico a User Data (access 0xF2, granularita' 0xCF) tranne per la
+     * BASE, che qui vale zero e viene riscritta a ogni cambio di contesto
+     * con il thread pointer del processo che sta per girare. E' il
+     * meccanismo con cui `mov %gs:0x0, %ebx` — l'accesso a una variabile
+     * __thread nel modello local-exec — legge dal blocco TLS di CHI sta
+     * girando invece che da un indirizzo fisso.
+     *
+     * ⚠️ CON BASE ZERO E' INDISTINGUIBILE DA 0x23, ed e' voluto: i
+     * processi senza variabili thread-local non pagano niente e non serve
+     * un selettore diverso per loro. Un %gs:0 in quel caso legge
+     * l'indirizzo lineare 0, che non e' mappato — esattamente come prima
+     * che questo descrittore esistesse.
+     */
+    gdt_set_descriptor(6, 0x00000000, 0xFFFFFFFF, 0xF2, 0xCF);
+
     uint32_t tss_base  = (uint32_t)&kernel_tss;
     uint32_t tss_limit = (uint32_t)sizeof(TSS) - 1;
     gdt_set_descriptor(5, tss_base, tss_limit, 0x89, 0x00);
@@ -204,4 +222,28 @@ void gdt_install(void)
 void gdt_set_kernel_stack(uint32_t stack_top)
 {
     kernel_tss.esp0 = stack_top;
+}
+
+/* =============================================================================
+ * gdt_set_tls_base — Sposta il descrittore TLS sul processo che sta per girare
+ *
+ * Chiamata dallo scheduler a ogni cambio di contesto, accanto a
+ * gdt_set_kernel_stack: sono le due cose che dipendono dal processo e non
+ * stanno nei registri.
+ *
+ * ⚠️ NON SERVE RICARICARE GS. Il selettore che i processi tengono in GS e'
+ * sempre lo stesso (0x33); quello che cambia e' il descrittore a cui punta.
+ * La CPU rilegge la GDT quando il registro segmento viene caricato, e la
+ * parte nascosta (base e limite) resta quella letta allora — ma il
+ * processo entrante GS lo ricarica comunque, perche' il suo valore viene
+ * ripristinato da context_switch (`pop gs`) subito dopo. E' quel pop a
+ * rendere effettiva la base nuova.
+ * ============================================================================= */
+void gdt_set_tls_base(uint32_t base)
+{
+    /* Riscrive solo i tre pezzi della base, lasciando access e granularita'
+     * come li ha messi gdt_install. */
+    gdt_table[6].base_low    = (uint16_t)(base & 0xFFFF);
+    gdt_table[6].base_mid    = (uint8_t)((base >> 16) & 0xFF);
+    gdt_table[6].base_high   = (uint8_t)((base >> 24) & 0xFF);
 }

@@ -443,7 +443,7 @@ unsigned gf_getkey_timeout(unsigned timeout_ms)
         if (r == -110) return GF_KEY_SCADUTA;    /* ETIMEDOUT */
         if (r < 0)     return GF_KEY_ERRORE;
 
-        if (meta.type == KBD_MSG_KEY && meta.len >= sizeof(key)) {
+        if (meta.tipo == KBD_MSG_KEY && meta.len >= sizeof(key)) {
             richiesta_pendente = 0;
             return key;
         }

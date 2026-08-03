@@ -14,6 +14,7 @@
 #include "vga.h"   /* VGA_N_CONSOLE: una tabella di primo piano per console */
 #include "pmm.h"
 #include "ipc.h"
+#include "pipe.h"
 #include "paging.h"
 #include "kmalloc.h"
 #include "gdt.h"
@@ -119,6 +120,62 @@ static void runq_remove(Process *proc)
     }
     proc->next = NULL;
     proc->prev = NULL;
+}
+
+/* =============================================================================
+ * proc_chiudi_fd — rilascia i descrittori di un processo che sta morendo
+ *
+ * ⚠️ SI CHIAMA QUANDO IL PROCESSO MUORE, NON QUANDO IL PADRE LO RACCOGLIE,
+ * e la differenza non e' teorica.
+ *
+ * Fino alla 0.158 i descrittori si chiudevano in proc_reap_zombie(), cioe'
+ * quando il genitore faceva waitpid(). Con i soli file passava
+ * inosservato: uno zombie che tiene aperto un file per qualche
+ * millisecondo non da' fastidio a nessuno.
+ *
+ * Con le pipe e' uno STALLO. Il caso e' esattamente `cmd1 | cmd2`:
+ *
+ *     il figlio scrive, poi esce            -> ZOMBIE
+ *     i suoi fd restano contati              -> la pipe crede di avere
+ *                                               ancora uno scrittore
+ *     il padre e' bloccato nella read        -> non arrivera' mai a
+ *                                               waitpid()
+ *     nessuno chiama proc_reap_zombie()      -> nessuno decrementa
+ *
+ * Due processi fermi ad aspettarsi a vicenda, senza nessun errore. E' il
+ * motivo per cui su Unix i descrittori si chiudono in do_exit() e non in
+ * wait(): uno zombie non deve trattenere risorse di I/O, solo il proprio
+ * codice di uscita.
+ *
+ * ⚠️ PRESUPPONE `cli`: la chiamano proc_exit() e proc_kill(), che girano
+ * entrambe in sezione critica. Da qui le varianti _locked delle chiusure
+ * di pipe — vedi kernel/include/pipe.h.
+ *
+ * ⚠️ E' IDEMPOTENTE (rimette FD_UNUSED), cosi' la spazzata di sicurezza
+ * che resta in proc_reap_zombie() non chiude niente due volte.
+ * ============================================================================= */
+static void proc_chiudi_fd(Process *p)
+{
+    int fd;
+
+    for (fd = 0; fd < MAX_FD; fd++) {
+        switch (p->fds[fd].type) {
+            case FD_FILE:
+                vfs_close((int)p->fds[fd].inode);
+                break;
+            case FD_PIPE_R:
+                pipe_chiudi_lettore_locked((int)p->fds[fd].inode);
+                break;
+            case FD_PIPE_W:
+                pipe_chiudi_scrittore_locked((int)p->fds[fd].inode);
+                break;
+            default:
+                continue;   /* stdin/stdout/stderr e i driver: niente da fare */
+        }
+        p->fds[fd].type        = FD_UNUSED;
+        p->fds[fd].inode       = 0;
+        p->fds[fd].driver_data = NULL;
+    }
 }
 
 /* Copia stringa (no libc) */
@@ -517,6 +574,13 @@ static void sched_switch_to(Process *next)
     /* Aggiorna ESP0 nel TSS (stack kernel per ring3→ring0 transition) */
     gdt_set_kernel_stack(next->kernel_stack_top);
 
+    /* E il thread pointer: il descrittore che i processi tengono in GS
+     * punta al blocco TLS di CHI sta per girare. Zero per chi non ne ha —
+     * vedi Process.tls_tp e gdt_set_tls_base(). Va fatto qui, accanto
+     * all'ESP0, perche' sono le due sole cose che dipendono dal processo e
+     * non viaggiano nei registri salvati da context_switch. */
+    gdt_set_tls_base(next->tls_tp);
+
     klog(LOG_DEBUG, "SCHED: switch PID %u → PID %u (tick=%u)",
          prev->pid, next->pid, g_ticks);
 
@@ -775,6 +839,10 @@ void proc_exit(int32_t exit_code)
         sched_set_console_fg(g_current->console, 0);
     }
 
+    /* I descrittori vanno via ADESSO, non al waitpid del padre: vedi
+     * proc_chiudi_fd(). Con una pipe aperta, ritardarlo e' uno stallo. */
+    proc_chiudi_fd(g_current);
+
     g_current->state     = PROC_ZOMBIE;
     g_proc_count--;
 
@@ -873,15 +941,15 @@ void proc_reap_zombie(Process *p)
      *
      * Qui e non in sys_exit: un processo terminato da un fault non passa
      * da sys_exit, e sono proprio quelli che i file li lasciano aperti. */
-    {
-        int fd;
-        for (fd = 0; fd < MAX_FD; fd++) {
-            if (p->fds[fd].type == FD_FILE) {
-                vfs_close((int)p->fds[fd].inode);
-                p->fds[fd].type = FD_UNUSED;
-            }
-        }
-    }
+    /* ⚠️ SPAZZATA DI SICUREZZA, non la chiusura vera. I descrittori li
+     * rilascia proc_chiudi_fd() nel momento in cui il processo muore
+     * (proc_exit / proc_kill), perche' con una pipe aperta aspettare il
+     * waitpid del padre e' uno stallo — vedi il commento su
+     * proc_chiudi_fd(). Qui resta il giro di controllo per un processo
+     * arrivato a ZOMBIE per una strada che un giorno dimenticasse di
+     * chiamarla: proc_chiudi_fd e' idempotente, quindi non costa niente
+     * e non chiude niente due volte. */
+    proc_chiudi_fd(p);
 
     if (p->page_directory && p->page_directory != paging_get_kernel_directory()) {
         paging_destroy_directory(p->page_directory);
@@ -923,6 +991,10 @@ void proc_kill(uint32_t pid)
             g_process_pool[i].state != PROC_ZOMBIE) {
 
             klog(LOG_INFO, "SCHED: kill PID %u", pid);
+            /* Anche qui, e per lo stesso motivo di proc_exit(): un
+             * processo ucciso da un fault non passa da sys_exit, ed e'
+             * proprio quello che lascerebbe una pipe aperta per sempre. */
+            proc_chiudi_fd(&g_process_pool[i]);
             g_process_pool[i].state = PROC_ZOMBIE;
             runq_remove(&g_process_pool[i]);
             g_proc_count--;

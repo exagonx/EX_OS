@@ -1,5 +1,72 @@
 # EX-OS — Sottoinsieme "solo kernel"
 
+## ⚠️ `paging_map_page()` sovrascrive in silenzio — il confine lo mette chi chiama
+
+E' il contratto, non una dimenticanza: chi chiama sa gia' che quella pagina
+e' sua, e un rifiuto costringerebbe ogni chiamante a distinguere fra "non
+era mappata" e "era mappata e va bene cosi'". Ma il prezzo va conosciuto:
+la vecchia pagina fisica **non viene liberata**, e soprattutto **non c'e'
+nessun segnale**. Un errore di calcolo nell'indirizzo non da' un fault ne'
+un log: da' due oggetti diversi allo stesso indirizzo virtuale, e il
+guasto salta fuori molto dopo, altrove.
+
+**Perche' conta (kernel 0.156).** Lo spazio di un processo e' fatto cosi':
+
+```
+0x08000000  testo, dati, bss
+            heap ---->
+            heap_max          <- il tetto
+            pagina di guardia
+            blocco TLS (se c'e')
+            riserva dello stack (256 KB)   <---- lo stack cresce all'ingiu'
+0xbffff000  cima dello stack
+```
+
+Fino alla 0.155 `sys_sbrk` cresceva finche' il PMM aveva pagine: l'unico
+limite era la RAM fisica, non lo spazio di indirizzamento. Uno heap
+abbastanza grande avrebbe rimappato **il blocco TLS del processo stesso**
+su pagine azzerate — thread pointer a zero, ogni variabile `__thread` a
+leggere memoria altrui, in silenzio.
+
+Ora il confine e' esplicito in `Process.heap_max` (calcolato in `elf.c`,
+Passo 7) e lo controllano **tutte e due** le vie di crescita, `sys_sbrk` e
+`sys_mmap`. Chi aggiunge una terza via deve controllarlo anche lei: qui non
+c'e' niente che glielo ricordi.
+
+⚠️ **Il ripiego `heap_start = USER_SPACE_BASE` in `sys_sbrk` non c'e'
+piu'.** Era una risposta plausibile e sbagliata: `USER_SPACE_BASE` e'
+`0x04000000`, cioe' **sotto** l'indirizzo a cui vengono caricati i
+programmi. Chi non ha uno spazio di indirizzamento preparato da `elf_load`
+non ha uno heap, e `sbrk` glielo dice con `ENOMEM` invece di indovinare.
+
+## ⚠️ Nomi nelle strutture pubbliche: `tipo` e non `type` (dal 2026-08-03)
+
+`IpcMessage` aveva un campo `type`. Portando **openlibm** il codice si e'
+fermato su un errore dentro **il nostro** `libc.h`:
+
+```
+error: two or more data types in declaration specifiers
+```
+
+perche' openlibm fa `#define type float` in `src/math_private.h` — dopo di
+che quel campo diventa `float float`.
+
+⚠️ **La colpa non e' di openlibm.** Un header che il codice di terzi include
+non puo' usare come nome di campo una parola cosi' comune da essere un
+candidato ovvio a diventare macro nel codice di chiunque: `type`, `min`,
+`max`, `index`, `near`, `far`. Il rimedio corretto e' cambiare il nostro
+nome, non chiedere a mezzo mondo di non usare il loro.
+
+Rinominato `type` → **`tipo`** in `lib/include/libc.h`,
+`kernel/include/sched.h`, `kernel/include/ipc.h` e `kernel/ipc/ipc.c`
+(kernel 0.155). Le due copie di `IpcMessage` **devono restare identiche** —
+e' la convenzione del progetto — quindi il nome cambia anche nel kernel,
+dove non servirebbe.
+
+⚠️ **La regola vale solo per cio' che finisce in `lib/include/`.** I campi
+`type` di `FileDescriptor` (`kernel/include/sched.h`) e della mappa E820
+restano come sono: quelle strutture non le vede nessun compilatore esterno.
+
 ## ⚠️ Ambiente di compilazione — Debian 13, GCC 14 (dal 2026-07-31)
 
 I sorgenti sono passati da WSL/Windows 11 a **Debian 13 (trixie)**, dove il
@@ -222,6 +289,38 @@ Fix:
   solo `fdc_seek` "defined but not used", preesistente, non collegato).
 - **Non testato su hardware reale da me** (nessun Pentium II/QEMU/VBox
   disponibile in questo ambiente) — da verificare alla prossima build.
+
+### ✅ Il thread pointer — variabili `__thread` (2026-08-02, 0.154)
+
+Modello **local-exec, variante II** (quella di i386), che e' quello dei
+binari statici. Il caricatore trova `PT_TLS`, ne fa una copia per processo
+sotto la riserva dello stack (con una **pagina di guardia** in mezzo), e ci
+mette in coda un TCB di 8 byte che comincia con un puntatore a se stesso —
+la convenzione ABI che rende `mov %gs:0x0,%ebx` una lettura del thread
+pointer. Le variabili stanno a offset negativi da li', gia' risolti da `ld`
+(`R_386_TLS_LE`): a runtime non c'e' niente da rilocare.
+
+Il descrittore GDT numero 6 (selettore `0x33`) e' User Data con una base
+che cambia: `gdt_set_tls_base()` la riscrive a ogni switch, accanto a
+`gdt_set_kernel_stack()`. ⚠️ **Con base zero e' indistinguibile da `0x23`**,
+quindi i processi senza variabili thread-local non pagano niente.
+
+⚠️ **Gli stub degli interrupt non toccano piu' GS.** Salvavano solo DS e
+all'uscita rimettevano quel valore anche in ES, FS e GS: il primo tick di
+timer avrebbe cancellato il thread pointer, e il guasto sarebbe comparso a
+caso. Il kernel non usa GS — niente percpu, niente stack canary — quindi
+lasciarlo con il valore dell'utente non espone niente, e `context_switch`,
+che GS lo salva e ripristina gia', diventa da solo il meccanismo che lo
+rende per-processo.
+
+⚠️ **`.tdata` e `.tbss` vanno nominate nei linker script**, tutti e
+diciotto: senza, `ld` le sistema dove capita e `PT_TLS` puo' non essere
+generato affatto — il programma compila, si collega e legge una variabile
+che sta da un'altra parte.
+
+⚠️ **Non c'e' il TLS dinamico** (`__tls_get_addr`, general-dynamic,
+local-dynamic, `__thread` dentro una libreria condivisa): serve a chi
+carica codice a runtime, e qui i binari sono statici.
 
 ### ✅ Scrittura FAT12 alla posizione giusta (2026-08-02, 0.153)
 

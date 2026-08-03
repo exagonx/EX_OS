@@ -17,4 +17,8 @@
 void gdt_install(void);
 void gdt_set_kernel_stack(uint32_t stack_top);
 
+/* Sposta il descrittore TLS (selettore GDT_TLS_SEL) sul thread pointer del
+ * processo che sta per girare. Zero per chi non ha variabili __thread. */
+void gdt_set_tls_base(uint32_t base);
+
 #endif

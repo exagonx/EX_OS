@@ -83,6 +83,13 @@ proc_entry_stub_user:
     mov ds, ax
     mov es, ax
     mov fs, ax
+
+    ; GS non e' 0x23 come gli altri: e' il descrittore TLS (0x30|RPL3), la
+    ; cui BASE lo scheduler riscrive a ogni cambio di contesto con il thread
+    ; pointer del processo. Per chi non ha variabili __thread quella base
+    ; vale zero, e allora questo selettore e' indistinguibile da 0x23.
+    ; Vedi gdt_set_tls_base() e Process.tls_tp.
+    mov ax, 0x33
     mov gs, ax
 
     push dword 0x23          ; User SS
@@ -131,6 +138,8 @@ sched_enter_usermode:
     mov ds, dx
     mov es, dx
     mov fs, dx
+    ; GS = descrittore TLS: vedi proc_entry_stub_user qui sopra
+    mov dx, 0x33
     mov gs, dx
     ; SS lo imposta iret
 

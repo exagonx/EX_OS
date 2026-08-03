@@ -141,7 +141,53 @@ static int voce_primaria(const uint8_t *mbr, uint64_t primo)
     return -1;
 }
 
-int boot_installa(const char *punto, BootInstEsito *esito)
+/* =============================================================================
+ * boot_installa_ex — la versione con i nomi e la sola verifica
+ *
+ * ⚠️ `solo_verifica` E' IL MOTIVO PER CUI QUESTA FUNZIONE ESISTE. Calcola
+ * la mappa dei settori e la riporta in `esito`, ma NON scrive niente: ne'
+ * l'MBR ne' il settore di avvio. Serve a `install` per sapere se il kernel
+ * appena copiato e' mappabile PRIMA di cancellare quello che funzionava.
+ *
+ * Fino alla 0.160 questa domanda non si poteva fare, e l'installatore
+ * doveva scoprirlo dopo aver distrutto: copiava sopra il kernel vecchio,
+ * poi chiedeva la mappa, e se il nuovo era frammentato si ritrovava con un
+ * disco che non partiva e nessuna via di ritorno. Su FAT, dove la mappa
+ * ammette UN SOLO intervallo, bastava un kernel cresciuto di qualche KB.
+ *
+ * `nome_s2` e `nome_k` sono i NOMI SENZA DIRECTORY, in minuscolo
+ * ("stage2.bin", "kernel.new"): la directory e' sempre /boot, e il ramo
+ * FAT li mette in maiuscolo per conto suo. NULL vale come i nomi
+ * predefiniti.
+ * ============================================================================= */
+static void maiuscolo_in(char *dst, uint32_t max, const char *pre, const char *nome)
+{
+    uint32_t i = 0, j;
+
+    for (j = 0; pre[j] && i + 1 < max; j++) dst[i++] = pre[j];
+    for (j = 0; nome[j] && i + 1 < max; j++) {
+        char c = nome[j];
+        dst[i++] = (c >= 'a' && c <= 'z') ? (char)(c - 'a' + 'A') : c;
+    }
+    dst[i] = '\0';
+}
+
+static void unisci_in(char *dst, uint32_t max, const char *pre, const char *nome)
+{
+    uint32_t i = 0, j;
+
+    for (j = 0; pre[j] && i + 1 < max; j++) dst[i++] = pre[j];
+    for (j = 0; nome[j] && i + 1 < max; j++) dst[i++] = nome[j];
+    dst[i] = '\0';
+}
+
+int boot_installa_ex(const char *punto, const char *nome_s2, const char *nome_k,
+                     int solo_verifica, BootInstEsito *esito)
+{
+    char p_s2[64], p_k[64];
+
+    if (nome_s2 == NULL) nome_s2 = "stage2.bin";
+    if (nome_k  == NULL) nome_k  = "kernel.bin";
 {
     const VfsMount *vm = NULL;
     const BlkDev   *part;
@@ -199,11 +245,19 @@ int boot_installa(const char *punto, BootInstEsito *esito)
      * da 512 byte di codice, quindi la sua mappa deve stare in sei byte.
      * Vedi il commento esteso in bootloader/stage1hd/boothd.asm. */
     if (e_ext2) {
+        unisci_in(p_s2, sizeof(p_s2), "/boot/", nome_s2);
+        unisci_in(p_k,  sizeof(p_k),  "/boot/", nome_k);
+    } else {
+        maiuscolo_in(p_s2, sizeof(p_s2), "/BOOT/", nome_s2);
+        maiuscolo_in(p_k,  sizeof(p_k),  "/BOOT/", nome_k);
+    }
+
+    if (e_ext2) {
         uint32_t s2_lba1[2], s2_cnt1[2], s2_n = 0;
         Ext2DirEntry e;
         int r;
 
-        r = ext2_estensioni(fsmnt, "/boot/stage2.bin", s2_lba1, s2_cnt1, 2, &s2_n);
+        r = ext2_estensioni(fsmnt, p_s2, s2_lba1, s2_cnt1, 2, &s2_n);
         if (r != 0 || s2_n != 1) {
             klog(LOG_ERROR, "INSTALL: /boot/stage2.bin mancante o spezzato "
                             "in %u intervalli: il settore di avvio ne legge uno",
@@ -213,7 +267,7 @@ int boot_installa(const char *punto, BootInstEsito *esito)
         s2_rel = s2_lba1[0];
         s2_cnt = s2_cnt1[0];
 
-        r = ext2_estensioni(fsmnt, "/boot/kernel.bin", k_lba, k_cnt,
+        r = ext2_estensioni(fsmnt, p_k, k_lba, k_cnt,
                             K_MAX_EXT, &k_next);
         if (r == -2) {
             klog(LOG_ERROR, "INSTALL: /boot/kernel.bin e' spezzato in piu' di "
@@ -222,15 +276,15 @@ int boot_installa(const char *punto, BootInstEsito *esito)
         }
         if (r != 0) { klog(LOG_ERROR, "INSTALL: /boot/kernel.bin mancante"); return ERR(ENOENT); }
 
-        if (ext2_stat(fsmnt, "/boot/kernel.bin", &e) != 0) return ERR(EIO);
+        if (ext2_stat(fsmnt, p_k, &e) != 0) return ERR(EIO);
         k_byte = e.dimensione;
     } else {
         uint32_t k_rel, k_sett;
-        int r = fat_estensione(fsmnt, "/BOOT/STAGE2.BIN", &s2_rel, &s2_cnt);
+        int r = fat_estensione(fsmnt, p_s2, &s2_rel, &s2_cnt);
         if (r == -2) { klog(LOG_ERROR, "INSTALL: /BOOT/STAGE2.BIN e' frammentato"); return ERR(ESPIPE); }
         if (r != 0)  { klog(LOG_ERROR, "INSTALL: /BOOT/STAGE2.BIN mancante"); return ERR(ENOENT); }
 
-        r = fat_estensione(fsmnt, "/BOOT/KERNEL.BIN", &k_rel, &k_sett);
+        r = fat_estensione(fsmnt, p_k, &k_rel, &k_sett);
         if (r == -2) { klog(LOG_ERROR, "INSTALL: /BOOT/KERNEL.BIN e' frammentato"); return ERR(ESPIPE); }
         if (r != 0)  { klog(LOG_ERROR, "INSTALL: /BOOT/KERNEL.BIN mancante"); return ERR(ENOENT); }
 
@@ -247,7 +301,7 @@ int boot_installa(const char *punto, BootInstEsito *esito)
          * fine dell'immagine. */
         {
             FatDirEntry e;
-            if (fat_stat(fsmnt, "/BOOT/KERNEL.BIN", &e) != 0) return ERR(EIO);
+            if (fat_stat(fsmnt, p_k, &e) != 0) return ERR(EIO);
             k_byte = e.dimensione;
         }
     }
@@ -276,6 +330,19 @@ int boot_installa(const char *punto, BootInstEsito *esito)
     esito->k_cnt  = k_tot;
     esito->k_next = k_next;
     esito->disco  = part->disco;
+
+    /* ⚠️ QUI FINISCE LA VERIFICA E COMINCIA LA SCRITTURA. Chi ha chiesto
+     * `solo_verifica` esce ADESSO, con `esito` riempito e il disco intatto
+     * esattamente com'era: nessun MBR toccato, nessun settore di avvio
+     * riscritto. E' cio' che permette a `install` di sapere prima se il
+     * kernel appena copiato e' mappabile, invece di scoprirlo dopo aver
+     * cancellato quello che funzionava. */
+    if (solo_verifica) {
+        klog(LOG_INFO, "INSTALL (verifica): stage2 LBA %u x%u, kernel %u "
+             "settori in %u intervalli — niente scritto",
+             esito->s2_lba, s2_cnt, k_tot, k_next);
+        return 0;
+    }
 
     /* --- 3. settore di avvio della partizione --- */
 
@@ -360,4 +427,11 @@ int boot_installa(const char *punto, BootInstEsito *esito)
                    "stage2 LBA %u x%u, kernel %u settori in %u intervalli",
          part->disco, ivoce + 1, esito->s2_lba, s2_cnt, k_tot, k_next);
     return 0;
+}
+}
+
+/* La forma di sempre: nomi predefiniti e installazione vera. */
+int boot_installa(const char *punto, BootInstEsito *esito)
+{
+    return boot_installa_ex(punto, NULL, NULL, 0, esito);
 }

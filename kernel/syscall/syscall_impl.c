@@ -17,6 +17,7 @@
 #include "paging.h"
 #include "kmalloc.h"
 #include "ipc.h"
+#include "pipe.h"
 #include "isr.h"
 
 /* Forward: funzioni VGA per sys_write su fd=1/2 */
@@ -256,6 +257,17 @@ int32_t sys_read(InterruptFrame *frame)
         return n;
     }
 
+    /* Estremita' di lettura di una pipe. ⚠️ Puo' BLOCCARE: se la pipe e'
+     * vuota e c'e' ancora uno scrittore, si aspetta. Ritorna 0 solo
+     * quando non c'e' piu' nessuno che possa scrivere. Vedi
+     * kernel/ipc/pipe.c. */
+    if (proc->fds[fd].type == FD_PIPE_R) {
+        return pipe_leggi((int)proc->fds[fd].inode, buf, count);
+    }
+
+    /* ⚠️ Leggere dall'estremita' SBAGLIATA e' un errore, non un'attesa. */
+    if (proc->fds[fd].type == FD_PIPE_W) return ERR(EBADF);
+
     /* file FAT12 */
     if (proc->fds[fd].type == FD_FILE) {
         /* Il driver scrivera' dentro `buf`: le sue pagine devono essere
@@ -302,6 +314,17 @@ int32_t sys_write(InterruptFrame *frame)
         }
         return (int32_t)count;
     }
+
+    /* Estremita' di scrittura di una pipe. ⚠️ Puo' BLOCCARE se il buffer
+     * e' pieno, e ritorna -EPIPE se non c'e' piu' nessun lettore. La
+     * scrittura puo' essere PARZIALE: il chiamante deve guardare il
+     * valore di ritorno e richiamare. Vedi kernel/ipc/pipe.c. */
+    if (proc->fds[fd].type == FD_PIPE_W) {
+        return pipe_scrivi((int)proc->fds[fd].inode, buf, count);
+    }
+
+    /* ⚠️ Scrivere sull'estremita' SBAGLIATA e' un errore. */
+    if (proc->fds[fd].type == FD_PIPE_R) return ERR(EBADF);
 
     /* file FAT12 */
     if (proc->fds[fd].type == FD_FILE) {
@@ -375,6 +398,13 @@ int32_t sys_close(InterruptFrame *frame)
         vfs_close((int)proc->fds[fd].inode);
     }
 
+    /* ⚠️ CHIUDERE UN'ESTREMITA' DI PIPE NON E' SOLO CONTABILITA': e' anche
+     * cio' che sveglia chi dorme dall'altra parte. Senza, `cmd1 | cmd2`
+     * con cmd1 che finisce lascia cmd2 fermo per sempre ad aspettare byte
+     * che nessuno scrivera'. Vedi kernel/ipc/pipe.c. */
+    if (proc->fds[fd].type == FD_PIPE_R) pipe_chiudi_lettore((int)proc->fds[fd].inode);
+    if (proc->fds[fd].type == FD_PIPE_W) pipe_chiudi_scrittore((int)proc->fds[fd].inode);
+
     proc->fds[fd].type        = FD_UNUSED;
     proc->fds[fd].flags       = 0;
     proc->fds[fd].offset      = 0;
@@ -429,6 +459,14 @@ static int32_t fd_duplica(Process *proc, int vecchio, int nuovo)
         int r = vfs_dup((int)proc->fds[vecchio].inode);
         if (r < 0) return (int32_t)r;
     }
+    /* Le pipe hanno il loro conteggio, uno per estremita': duplicare un
+     * descrittore di pipe senza incrementarlo farebbe credere alla pipe di
+     * avere meno estremita' aperte di quante ne ha, e la prima close()
+     * annuncerebbe la fine dei dati a chi legge. */
+    if (proc->fds[vecchio].type == FD_PIPE_R)
+        pipe_apri_lettore((int)proc->fds[vecchio].inode);
+    if (proc->fds[vecchio].type == FD_PIPE_W)
+        pipe_apri_scrittore((int)proc->fds[vecchio].inode);
 
     /* Qui `nuovo` puo' essere 0, 1 o 2: e' il caso della redirezione, ed e'
      * l'unico modo di farla. sys_close li rifiuta apposta, perche' un
@@ -436,9 +474,73 @@ static int32_t fd_duplica(Process *proc, int vecchio, int nuovo)
      * arriva da dup2 una sostituzione ce l'ha gia' pronta. */
     if (proc->fds[nuovo].type == FD_FILE)
         vfs_close((int)proc->fds[nuovo].inode);
+    if (proc->fds[nuovo].type == FD_PIPE_R)
+        pipe_chiudi_lettore((int)proc->fds[nuovo].inode);
+    if (proc->fds[nuovo].type == FD_PIPE_W)
+        pipe_chiudi_scrittore((int)proc->fds[nuovo].inode);
 
     proc->fds[nuovo] = proc->fds[vecchio];
     return nuovo;
+}
+
+/* =============================================================================
+ * SYS_PIPE (42) — due descrittori collegati
+ *
+ * ebx = int fd[2]*, dove finiscono lettura (fd[0]) e scrittura (fd[1]).
+ *
+ * ⚠️ I DUE DESCRITTORI SI ASSEGNANO INSIEME O NON SI ASSEGNANO. Se il
+ * secondo non si trova, il primo va restituito: lasciarne uno appeso
+ * consumerebbe un posto in tabella e terrebbe viva una pipe che nessuno
+ * puo' piu' usare.
+ *
+ * ⚠️ E SI SCRIVONO NELLA MEMORIA UTENTE PER ULTIMI, dopo che tutto il
+ * resto e' riuscito: un fallimento a meta' lascerebbe il chiamante con un
+ * numero valido e uno no, senza modo di sapere quale.
+ * ============================================================================= */
+int32_t sys_pipe(InterruptFrame *frame)
+{
+    int32_t *ufd  = (int32_t *)frame->ebx;
+    Process *proc = proc_get_current();
+    int      h, r = -1, w = -1;
+
+    if (!syscall_verify_ptr(ufd, 2 * sizeof(int32_t))) return ERR(EFAULT);
+
+    h = pipe_crea();
+    if (h < 0) return (int32_t)h;
+
+    r = find_free_fd(proc);
+    if (r < 0) {
+        pipe_chiudi_lettore(h);
+        pipe_chiudi_scrittore(h);
+        return ERR(EMFILE);
+    }
+    /* Si occupa subito il posto, o find_free_fd lo ridarebbe una seconda
+     * volta per l'estremita' di scrittura. */
+    proc->fds[r].type        = FD_PIPE_R;
+    proc->fds[r].flags       = O_RDONLY;
+    proc->fds[r].offset      = 0;
+    proc->fds[r].inode       = (uint32_t)h;
+    proc->fds[r].driver_data = NULL;
+
+    w = find_free_fd(proc);
+    if (w < 0) {
+        proc->fds[r].type = FD_UNUSED;
+        pipe_chiudi_lettore(h);
+        pipe_chiudi_scrittore(h);
+        return ERR(EMFILE);
+    }
+    proc->fds[w].type        = FD_PIPE_W;
+    proc->fds[w].flags       = O_WRONLY;
+    proc->fds[w].offset      = 0;
+    proc->fds[w].inode       = (uint32_t)h;
+    proc->fds[w].driver_data = NULL;
+
+    ufd[0] = r;
+    ufd[1] = w;
+
+    klog(LOG_DEBUG, "SYSCALL pipe: PID %u -> fd %d (lettura) e %d (scrittura), "
+         "pipe %d", proc->pid, r, w, h);
+    return 0;
 }
 
 int32_t sys_dup(InterruptFrame *frame)
@@ -644,13 +746,49 @@ int32_t sys_mmap(InterruptFrame *frame)
 
     /* Determina indirizzo virtuale */
     if (p->flags & MAP_FIXED) {
+        uint32_t fine;
+
         vaddr = p->addr & 0xFFFFF000;
         if (vaddr < USER_SPACE_BASE || vaddr >= USER_SPACE_END)
             return ERR(EINVAL);
+
+        if (pages > (USER_SPACE_END - vaddr) / PAGE_SIZE) return ERR(EINVAL);
+        fine = vaddr + pages * PAGE_SIZE;
+
+        /* ⚠️ MAP_FIXED NON PUO' PRENDERSI LA ZONA DEL KERNEL (0.156).
+         *
+         * Su POSIX MAP_FIXED sostituisce cio' che trova, e va bene finche'
+         * si tratta di roba del processo. Il blocco TLS e la riserva dello
+         * stack non lo sono: il kernel ci tiene degli invarianti sopra —
+         * tls_tp punta dentro il primo, e page_fault_handler conta di
+         * poter mappare lui le pagine della seconda. Rimpiazzarli non da'
+         * un errore, da' un processo che legge variabili __thread altrui o
+         * uno stack che smette di crescere. Chi lo chiede si sbaglia, e
+         * qui glielo si dice invece di ubbidire. */
+        if (proc->heap_max != 0 && fine > proc->heap_max) {
+            klog(LOG_WARN, "SYSCALL mmap: PID %u chiede MAP_FIXED a "
+                 "0x%08x-0x%08x, oltre il tetto 0x%08x",
+                 proc->pid, vaddr, fine, proc->heap_max);
+            return ERR(EINVAL);
+        }
     } else {
         /* Alloca nel heap utente (cresce verso l'alto) */
         vaddr = ALIGN_UP(proc->heap_end, PAGE_SIZE);
         if (vaddr < USER_SPACE_BASE) vaddr = USER_SPACE_BASE;
+
+        /* Lo stesso tetto di sbrk, e per la stessa ragione: questa via
+         * fa crescere heap_end, quindi senza controllo mmap scavalcherebbe
+         * il confine che sbrk rispetta. Vedi kernel/include/sched.h. */
+        if (proc->heap_max == 0) {
+            klog(LOG_ERROR, "SYSCALL mmap: PID %u non ha uno heap", proc->pid);
+            return ERR(ENOMEM);
+        }
+        if (vaddr > proc->heap_max ||
+            pages > (proc->heap_max - vaddr) / PAGE_SIZE) {
+            klog(LOG_WARN, "SYSCALL mmap: PID %u chiede %u pagine a 0x%08x, "
+                 "il tetto e' 0x%08x", proc->pid, pages, vaddr, proc->heap_max);
+            return ERR(ENOMEM);
+        }
     }
 
     /* Flag pagine */
@@ -715,6 +853,26 @@ int32_t sys_munmap(InterruptFrame *frame)
         uint32_t phys = paging_get_physical(proc->page_directory, va);
         if (phys) pmm_free_page(phys);
         paging_unmap_page(proc->page_directory, va);
+    }
+
+    /* ⚠️ SE LA ZONA ERA IN CIMA, IL CONFINE TORNA GIU' (kernel 0.158).
+     *
+     * Prima non succedeva mai: le pagine fisiche tornavano al PMM ma
+     * heap_end restava dov'era. Ogni ciclo mmap/munmap si mangiava un
+     * pezzo di SPAZIO DI INDIRIZZAMENTO che non tornava piu' — e il
+     * garbage collector di GCC (ggc-page.cc) fa esattamente quel ciclo,
+     * migliaia di volte, su ogni file che compila.
+     *
+     * Non e' una perdita di memoria fisica, e infatti non si vedeva: si
+     * vedrebbe solo dopo molto lavoro, come una mmap che comincia a
+     * fallire con dello spazio apparentemente libero.
+     *
+     * Solo la CIMA si puo' recuperare, come per sbrk: un buco in mezzo
+     * resta un buco, perche' heap_end e' un confine e non una mappa. */
+    if (addr + pages * PAGE_SIZE == proc->heap_end &&
+        addr >= proc->heap_start) {
+        proc->heap_end = addr;
+        klog(LOG_DEBUG, "SYSCALL munmap: confine riportato a 0x%08x", addr);
     }
 
     klog(LOG_DEBUG, "SYSCALL munmap: %u pagine da 0x%08x", pages, addr);
@@ -1251,6 +1409,56 @@ uint32_t usp       = res.user_stack_top;
                 goto spawn_fail;
             }
 
+            /* =========================================================
+             * EREDITA' DI UN DESCRITTORE — e' cio' che rende usabili le
+             * pipe fra due processi.
+             *
+             * ⚠️ SI COPIA IL DESCRITTORE E SI PRENDE UN RIFERIMENTO IN
+             * PIU'. Copiarlo e basta darebbe due processi che credono di
+             * possedere lo stesso oggetto: il primo che chiude lo
+             * chiuderebbe anche all'altro. Per i file e' il conteggio del
+             * VFS, per le pipe quello delle estremita'.
+             *
+             * ⚠️ NON si eredita FD_DRIVER: `driver_data` e' un puntatore
+             * a stato che appartiene al processo che ha aperto il device,
+             * e passarlo a un altro vorrebbe dire due processi sullo
+             * stesso stato privato. Si rifiuta invece di provarci.
+             * ========================================================= */
+            if (az->tipo == SPAWN_AZ_FD) {
+                int pf = (int)az->fd_padre;
+
+                if (pf < 0 || pf >= MAX_FD ||
+                    parent->fds[pf].type == FD_UNUSED) {
+                    klog(LOG_ERROR, "SYSCALL spawn: fd %d del padre non valido",
+                         pf);
+                    goto spawn_fail;
+                }
+                if (parent->fds[pf].type == FD_DRIVER) {
+                    klog(LOG_ERROR, "SYSCALL spawn: un fd di driver non si "
+                         "eredita (fd %d)", pf);
+                    goto spawn_fail;
+                }
+
+                if (parent->fds[pf].type == FD_FILE) {
+                    int r = vfs_dup((int)parent->fds[pf].inode);
+                    if (r < 0) {
+                        klog(LOG_ERROR, "SYSCALL spawn: vfs_dup del fd %d "
+                             "fallita (%d)", pf, r);
+                        goto spawn_fail;
+                    }
+                } else if (parent->fds[pf].type == FD_PIPE_R) {
+                    pipe_apri_lettore((int)parent->fds[pf].inode);
+                } else if (parent->fds[pf].type == FD_PIPE_W) {
+                    pipe_apri_scrittore((int)parent->fds[pf].inode);
+                }
+
+                child->fds[az->fd] = parent->fds[pf];
+
+                klog(LOG_INFO, "SYSCALL spawn: fd %u del figlio = fd %d del "
+                     "padre (tipo %d)", az->fd, pf, (int)parent->fds[pf].type);
+                continue;
+            }
+
             /* Il percorso e' gia' in kernel space, ma nessuno garantisce
              * che sia terminato. */
             az->percorso[SPAWN_RED_PATH_MAX - 1] = '\0';
@@ -1335,10 +1543,24 @@ int32_t sys_sbrk(InterruptFrame *frame)
     uint32_t  old_end;
     uint32_t  pages, i, pg_flags;
 
-    /* Inizializza heap utente se non ancora fatto */
-    if (proc->heap_start == 0) {
-        proc->heap_start = USER_SPACE_BASE;
-        proc->heap_end   = USER_SPACE_BASE;
+    /* ⚠️ NIENTE RIPIEGO SU USER_SPACE_BASE (kernel 0.156).
+     *
+     * Qui c'era: se heap_start e' 0, si parte da USER_SPACE_BASE. Era una
+     * risposta plausibile e sbagliata. USER_SPACE_BASE vale 0x04000000,
+     * cioe' SOTTO l'indirizzo a cui vengono caricati i programmi
+     * (0x08000000): uno heap che fosse partito di li' avrebbe raggiunto il
+     * TESTO DEL PROCESSO STESSO dopo 64 MB, e paging_map_page() lo avrebbe
+     * rimappato in silenzio. Il processo sarebbe poi saltato dentro
+     * memoria azzerata.
+     *
+     * Oggi non ci arriva nessuno — elf_load imposta sempre heap_start — ma
+     * un ripiego che indovina un indirizzo e' una trappola che aspetta il
+     * primo processo costruito in un altro modo. Chi non ha uno spazio di
+     * indirizzamento preparato non ha uno heap, e lo dice. */
+    if (proc->heap_start == 0 || proc->heap_max == 0) {
+        klog(LOG_ERROR, "SYSCALL sbrk: PID %u non ha uno heap "
+             "(spazio di indirizzamento non preparato da elf_load)", proc->pid);
+        return ERR(ENOMEM);
     }
 
     old_end = proc->heap_end;
@@ -1352,6 +1574,23 @@ int32_t sys_sbrk(InterruptFrame *frame)
          * senza passare per sys_mmap che richiederebbe un frame valido. */
         pages    = ALIGN_UP((uint32_t)incr, PAGE_SIZE) / PAGE_SIZE;
         pg_flags = PG_PRESENT | PG_WRITABLE | PG_USER;
+
+        /* IL TETTO. Si controlla PRIMA di allocare, non a meta' del ciclo:
+         * fermarsi dopo aver mappato mezza richiesta lascerebbe heap_end
+         * avanzato di un valore che il chiamante non ha mai visto.
+         *
+         * ⚠️ Il confronto e' scritto per NON traboccare: `pages` arriva da
+         * un int32_t positivo, quindi al piu' 2^19 pagine, ma heap_end e'
+         * gia' vicino a 3 GB e la somma su 32 bit puo' girare. Con la
+         * sottrazione a sinistra non gira, perche' heap_max >= heap_end
+         * per costruzione. */
+        if (proc->heap_end > proc->heap_max ||
+            pages > (proc->heap_max - proc->heap_end) / PAGE_SIZE) {
+            klog(LOG_WARN, "SYSCALL sbrk: PID %u chiede %d byte a 0x%08x, "
+                 "il tetto e' 0x%08x", proc->pid, incr,
+                 proc->heap_end, proc->heap_max);
+            return ERR(ENOMEM);
+        }
 
         for (i = 0; i < pages; i++) {
             uint32_t vaddr = proc->heap_end + i * PAGE_SIZE;
@@ -1393,10 +1632,38 @@ int32_t sys_sbrk(InterruptFrame *frame)
     } else {
         /* Riduzione: libera pagine direttamente (stessa ragione: no frame mutation) */
         uint32_t shrink = (uint32_t)(-incr);
-        uint32_t new_end = proc->heap_end - shrink;
-        if (new_end < proc->heap_start) return ERR(EINVAL);
+        uint32_t new_end;
 
-        pages = ALIGN_UP(shrink, PAGE_SIZE) / PAGE_SIZE;
+        /* ⚠️ SI ARROTONDA PER DIFETTO A PAGINE INTERE (kernel 0.157), e
+         * non e' pignoleria: prima si faceva ALIGN_UP e si liberava a
+         * partire da new_end, cioe' si buttava via LA PAGINA CHE CONTIENE
+         * new_end — quella dove i byte sotto il nuovo confine sono ancora
+         * vivi.
+         *
+         *      heap_end = 0x9000, sbrk(-0x800)  ->  new_end = 0x8800
+         *      pages = ALIGN_UP(0x800)/0x1000 = 1
+         *      libera la pagina di 0x8800, cioe' 0x8000-0x8FFF
+         *      ma 0x8000-0x87FF sono ancora del chiamante
+         *
+         * Non dava nessun errore: dava byte che sparivano dallo heap di un
+         * processo che li stava usando. Non si notava perche' nessuno
+         * chiamava sbrk con un incremento negativo — ora la free() della
+         * libc lo fa (vedi heap_restituisci in lib/libc.c).
+         *
+         * Arrotondare per DIFETTO e non per eccesso e' la scelta
+         * conservativa: si restituisce meno di quanto chiesto, mai una
+         * pagina che serve ancora. heap_end resta multiplo di pagina, come
+         * lo e' sempre stato crescendo. */
+        shrink &= ~(PAGE_SIZE - 1u);
+        if (shrink == 0) return (int32_t)old_end;   /* niente da restituire */
+
+        /* ⚠️ Scritto per non traboccare: `shrink > heap_end - heap_start`
+         * invece di `heap_end - shrink < heap_start`, che gira quando la
+         * richiesta e' piu' grande dello heap intero. */
+        if (shrink > proc->heap_end - proc->heap_start) return ERR(EINVAL);
+        new_end = proc->heap_end - shrink;
+
+        pages = shrink / PAGE_SIZE;
         for (i = 0; i < pages; i++) {
             uint32_t va   = new_end + i * PAGE_SIZE;
             uint32_t phys = paging_get_physical(proc->page_directory, va);
@@ -1772,6 +2039,37 @@ int32_t sys_unlink(InterruptFrame *frame)
 
     r = vfs_unlink(abs);
     klog(LOG_INFO, "SYSCALL unlink('%s') -> %d", abs, r);
+    return (int32_t)r;
+}
+
+/* =============================================================================
+ * SYS_RENAME (38) -- rinomina SENZA spostare i dati
+ *
+ * ebx = vecchio percorso, ecx = nuovo percorso.
+ *
+ * ⚠️ NON E' LA rename() DI POSIX, e le due differenze vanno sapute:
+ *   - solo NELLA STESSA DIRECTORY e nello stesso montaggio (ENOSYS);
+ *   - NON sostituisce la destinazione (EEXIST).
+ *
+ * Vedi vfs_rename in kernel/fs/vfs.c per il perche' di entrambe. La
+ * garanzia che invece si da', e che serve a `install`, e' che i blocchi
+ * del file non si spostano: una mappa dei settori calcolata prima della
+ * rinomina vale ancora dopo.
+ * ============================================================================= */
+int32_t sys_rename(InterruptFrame *frame)
+{
+    const char *u_da = (const char *)frame->ebx;
+    const char *u_a  = (const char *)frame->ecx;
+    char        abs_da[PERCORSO_MAX], abs_a[PERCORSO_MAX];
+    int         r;
+
+    if (!syscall_verify_str(u_da, PERCORSO_MAX)) return ERR(EFAULT);
+    if (!syscall_verify_str(u_a,  PERCORSO_MAX)) return ERR(EFAULT);
+    if (resolve_path(u_da, abs_da, sizeof(abs_da)) != 0) return ERR(EINVAL);
+    if (resolve_path(u_a,  abs_a,  sizeof(abs_a))  != 0) return ERR(EINVAL);
+
+    r = vfs_rename(abs_da, abs_a);
+    klog(LOG_INFO, "SYSCALL rename('%s' -> '%s') -> %d", abs_da, abs_a, r);
     return (int32_t)r;
 }
 
@@ -2273,9 +2571,37 @@ int32_t sys_bootinstall(InterruptFrame *frame)
 
     kstrcpy(kpunto, punto, sizeof(kpunto));
 
-    klog(LOG_INFO, "SYSCALL bootinstall('%s')", kpunto);
+    /* ⚠️ ESI PORTA LA MODALITA', e vale 0 per chi non lo imposta.
+     *
+     * Il quarto registro invece di un numero di syscall nuovo: la
+     * struttura in uscita e il percorso in ingresso sono gli stessi, e
+     * cambia solo se si scrive o no. Un programma compilato per la forma
+     * a tre argomenti lascia in ESI un valore qualunque — per questo si
+     * accetta SOLO il valore 1 come "verifica", e qualunque altra cosa
+     * vale "installa", che e' il comportamento di prima. */
+    {
+        int verifica = (frame->esi == BOOTINST_VERIFICA) ? 1 : 0;
+        const char *n_s2 = NULL, *n_k = NULL;
+        char k_s2[64], k_k[64];
 
-    r = (int32_t)boot_installa(kpunto, &e);
+        /* ecx+edx sono gia' presi: i nomi alternativi viaggiano in EDI
+         * come una coppia di stringhe consecutive, o NULL per i nomi
+         * predefiniti. */
+        if (frame->edi != 0) {
+            const char *u = (const char *)frame->edi;
+            if (!syscall_verify_str(u, sizeof(k_s2))) return ERR(EFAULT);
+            kstrcpy(k_s2, u, sizeof(k_s2));
+            u += kstrlen(k_s2) + 1;
+            if (!syscall_verify_str(u, sizeof(k_k))) return ERR(EFAULT);
+            kstrcpy(k_k, u, sizeof(k_k));
+            n_s2 = k_s2; n_k = k_k;
+        }
+
+        klog(LOG_INFO, "SYSCALL bootinstall('%s')%s", kpunto,
+             verifica ? " [sola verifica]" : "");
+
+        r = (int32_t)boot_installa_ex(kpunto, n_s2, n_k, verifica, &e);
+    }
     if (r != 0) return r;
 
     uinfo->s2_lba = e.s2_lba; uinfo->s2_cnt = e.s2_cnt;

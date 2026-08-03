@@ -61,6 +61,8 @@
 #define SYS_DUP          41    /* un secondo descrittore sullo stesso file */
 #define SYS_DUP2         63    /* come dup, ma su un numero scelto dal chiamante */
 #define SYS_FCNTL        55    /* interroga/modifica un descrittore (vedi sys_fcntl) */
+#define SYS_PIPE         42    /* due descrittori collegati (vedi kernel/ipc/pipe.c) */
+#define SYS_RENAME       38    /* rinomina SENZA spostare i dati (vedi vfs_rename) */
 
 /* Numero totale syscall supportate */
 #define SYSCALL_COUNT   233     /* deve coprire il numero syscall più alto (SYS_CONSOLE_SETFG=232) + 1 */
@@ -96,6 +98,8 @@
 #define ETIMEDOUT   110     /* attesa scaduta senza che l'evento arrivasse */
 #define ECHILD      10      /* waitpid: nessun figlio corrispondente */
 #define ENOMEDIUM   123     /* il lettore c'e', il disco dentro no */
+#define EAGAIN      11      /* riprova: qui, nessun processo a cui bloccarsi */
+#define ENFILE      23      /* limite di SISTEMA (non del processo) raggiunto */
 
 /* Syscall IPC — comunicazione kernel-mediata tra task ring3 */
 #define SYS_IPC_SEND     220
@@ -502,6 +506,8 @@ int32_t sys_write(InterruptFrame *f);
 int32_t sys_open(InterruptFrame *f);
 int32_t sys_close(InterruptFrame *f);
 int32_t sys_dup(InterruptFrame *f);
+int32_t sys_pipe(InterruptFrame *f);
+int32_t sys_rename(InterruptFrame *f);
 int32_t sys_dup2(InterruptFrame *f);
 int32_t sys_fcntl(InterruptFrame *f);
 int32_t sys_waitpid(InterruptFrame *f);
@@ -583,13 +589,24 @@ int32_t sys_ioport_out(InterruptFrame *f);
  * il proprio. Basta a `gcc`, che redirige l'uscita di cc1 su un file
  * temporaneo; non basta alle pipe, che infatti non ci sono ancora.
  * ============================================================================= */
-#define SPAWN_EXTRA_MAGIA    0x53504E58u   /* 'SPNX' */
+/* ⚠️ 'SPNY' E NON PIU' 'SPNX' (agosto 2026): e' cambiata la disposizione
+ * di SpawnAzione, che ha due campi in piu'. Un binario compilato per la
+ * forma vecchia verrebbe letto storto, e una redirezione letta storta
+ * scrive nel file sbagliato. Con la magia nuova il kernel non riconosce il
+ * blocco e lo ignora, che e' il modo meno dannoso di sbagliare. */
+#define SPAWN_EXTRA_MAGIA    0x53504E59u   /* 'SPNY' */
 #define SPAWN_MAX_AZIONI     4
 #define SPAWN_RED_PATH_MAX   128
 
+/* Le due cose che si possono fare a un descrittore del figlio. */
+#define SPAWN_AZ_FILE   0   /* apri `percorso` e mettilo su `fd` */
+#define SPAWN_AZ_FD     1   /* ⚠️ dai al figlio il descrittore `fd_padre` DEL PADRE */
+
 typedef struct {
+    uint32_t tipo;                        /* SPAWN_AZ_FILE / SPAWN_AZ_FD */
     uint32_t fd;                          /* descrittore del FIGLIO da sostituire */
     uint32_t flags;                       /* O_RDONLY/O_WRONLY/O_CREAT/... */
+    int32_t  fd_padre;                    /* SPAWN_AZ_FD: quale fd del padre */
     char     percorso[SPAWN_RED_PATH_MAX];
 } SpawnAzione;
 

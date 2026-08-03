@@ -71,6 +71,8 @@ void syscall_init(void)
     syscall_table[SYS_OPEN]        = sys_open;
     syscall_table[SYS_CLOSE]       = sys_close;
     syscall_table[SYS_DUP]         = sys_dup;
+    syscall_table[SYS_PIPE]        = sys_pipe;
+    syscall_table[SYS_RENAME]      = sys_rename;
     syscall_table[SYS_DUP2]        = sys_dup2;
     syscall_table[SYS_FCNTL]       = sys_fcntl;
     syscall_table[SYS_WAITPID]     = sys_waitpid;

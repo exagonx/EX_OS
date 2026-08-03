@@ -140,6 +140,16 @@ typedef struct PACKED {
 #define GDT_USER_DATA_SEL   0x20
 #define GDT_TSS_SEL         0x28
 
+/* Il segmento che i processi tengono in GS: identico a User Data tranne
+ * per la BASE, che vale il thread pointer del processo corrente e viene
+ * riscritta a ogni cambio di contesto (gdt_set_tls_base). E' cosi' che
+ * `mov %gs:0x0, %ebx` — l'istruzione con cui il codice compilato accede a
+ * una variabile __thread — trova qualcosa invece di leggere da zero.
+ *
+ * Per un processo SENZA variabili thread-local la base vale 0, e allora
+ * questo selettore e' indistinguibile da 0x23. */
+#define GDT_TLS_SEL         0x30
+
 /* =============================================================================
  * Livelli di log
  * ============================================================================= */

@@ -64,7 +64,6 @@ compilava **su** Linux **per** EX-OS. Tre cose cambiano:
 
 ```bash
 cd ~/exos-native/build-nativi
-export ac_cv_tls=              # ⚠️ VUOTA, non "none", ed export: vedi sotto
 CC="i386-exos-gcc -std=gnu17" ../binutils-2.44/configure \
     --build=x86_64-pc-linux-gnu --host=i386-exos --target=i386-exos \
     --prefix=/usr --disable-nls --disable-werror \
@@ -74,48 +73,32 @@ CC="i386-exos-gcc -std=gnu17" ../binutils-2.44/configure \
 make -j2                      # ⚠️ -j2, non -j$(nproc): 4 GB di RAM
 ```
 
-⚠️ **`ac_cv_tls=none` non è opzionale, ed è la cosa meno ovvia di tutta
-la riga.** La prova che il configure fa per le variabili thread-local è
-una **compilazione**, non un'esecuzione: `i386-exos-gcc` accetta
-`_Thread_local` senza fiatare, perché il compilatore sa emettere gli
-accessi via `%gs` — è il SISTEMA a non avere un thread pointer. Il
-risultato è un `as` che si compila benissimo e muore alla terza
-istruzione di `bfd_init`:
+### Il TLS: risolto dalla 0.154, e vale la pena sapere com'era
+
+Fino al kernel 0.153 questo configure andava lanciato con
+`export ac_cv_tls=` (stringa **vuota**, non `none`), e senza `as` moriva
+alla terza istruzione di `bfd_init`:
 
 ```
 [FAULT] PID 9 '/cdrom/bin/as': page fault a 0x00000000 (lettura, EIP=0x0804fbe3)
  804fbe3:  65 8b 1d 00 00 00 00    mov %gs:0x0,%ebx
 ```
 
-Con `ac_cv_tls` già impostata la prova non gira e si prende il valore che
-le diamo noi. ⚠️ **Il valore è la stringa VUOTA, non `none`**, e la
-differenza non è un dettaglio: con `none` il configure non definisce
-affatto la macro `TLS`, e binutils 2.44 **non ha un ripiego** — `bfd.c`
-scrive `static TLS bfd_error_type bfd_error;` senza guardia, e non
-compila più:
+`bfd` dichiara `static TLS bfd_error_type bfd_error` e il compilatore
+emette l'accesso attraverso `%gs`, che su EX-OS non puntava a niente.
 
-```
-bfd/bfd.c:802:8: error: unknown type name 'TLS'
-```
+⚠️ **La trappola era che la prova del configure è una COMPILAZIONE**, non
+un'esecuzione: `i386-exos-gcc` accetta `_Thread_local` senza fiatare,
+perché è il compilatore a saper emettere quegli accessi ed è il *sistema* a
+non avere dove puntarli. Nessun errore, nessun avviso, un binario che si
+costruisce benissimo e muore appena parte.
 
-Con la stringa vuota la macro viene definita **a niente**, quindi
-`static TLS x` diventa `static x`: variabili statiche normali, che su un
-sistema dove un processo ha un filo solo sono la stessa identica cosa.
-
-⚠️ **Va ESPORTATA, e deve valere anche durante il `make`.** Il configure
-di primo livello non configura `bfd`: lo fa il `make`, che lancia i
-sub-configure quando ci arriva. Metterla solo davanti al primo comando —
-`ac_cv_tls=none ../configure` — non ha alcun effetto su `bfd/config.h`, e
-il sintomo è identico a non averla messa affatto: la build riesce e il
-binario muore in `bfd_init`. Si controlla così:
-
-```bash
-grep TLS bfd/config.h        # deve dire "#define TLS" e basta, senza valore
-```
-
-Il giorno che EX-OS avrà i thread, la strada è l'altra: `PT_TLS` nel
-caricatore, un blocco per processo e una voce di GDT per `%gs` aggiornata
-al cambio di contesto.
+Dalla **0.154 EX-OS ha un thread pointer** (modello local-exec, vedi
+`README.md`), quindi non serve più disattivare niente: `bfd` usa
+`_Thread_local` davvero e funziona. Chi dovesse tornare su un kernel
+precedente ricordi che il valore giusto era la stringa **vuota** e non
+`none` — con `none` la macro non viene definita affatto, e binutils 2.44
+non ha un ripiego (`bfd.c:802: unknown type name 'TLS'`).
 
 ⚠️ **`-std=gnu17` non è un vezzo.** GCC 17 compila in C23, dove una
 dichiarazione implicita è un **errore**, non un avviso — e binutils 2.44 è

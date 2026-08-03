@@ -71,6 +71,39 @@ typedef unsigned int        useconds_t;
 typedef unsigned int        uid_t;
 typedef unsigned int        gid_t;
 
+/* =============================================================================
+ * ⚠️ DA QUI IN GIU' E' TUTTO extern "C" QUANDO CI PASSA UN COMPILATORE C++
+ *
+ * PERCHE' SERVE, ed e' meno ovvio di quanto sembri. Il C++ decora i nomi
+ * delle funzioni con i tipi degli argomenti — `printf` diventa
+ * `_Z6printfPKcz` — perche' gli serve per il sovraccarico. La nostra
+ * libc.a e' compilata da un compilatore C e dentro ha `printf`, il nome
+ * nudo. Senza questa guardia un programma C++ che include questo header
+ * chiama un simbolo che nell'archivio NON C'E':
+ *
+ *     undefined reference to `printf(char const*, ...)'
+ *
+ * ⚠️ E NON E' SOLO UN PROBLEMA DI COLLEGAMENTO. La libstdc++ dichiara per
+ * conto suo alcune funzioni della libc con `extern "C"` esplicito —
+ * libsupc++/new_opa.cc lo fa con memalign — e allora l'errore arriva
+ * prima, in compilazione, e dice una cosa che sembra assurda:
+ *
+ *     error: conflicting declaration of 'void* memalign(size_t, size_t)'
+ *            with 'C' linkage
+ *
+ * cioe' «questa dichiarazione e' in conflitto con se stessa». La causa e'
+ * che la NOSTRA era in C++ e la loro in C: due funzioni diverse con lo
+ * stesso nome. E' stato il primo sintomo, ed e' un sintomo fuorviante.
+ *
+ * La guardia si chiude in fondo al file. Non racchiude i `typedef` e le
+ * macro qui sopra perche' non ne hanno bisogno — i tipi non hanno
+ * collegamento — ma tenerli fuori non costa niente e rende evidente che
+ * la regola riguarda le FUNZIONI.
+ * ============================================================================= */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Stringa */
 size_t  strlen(const char *s);
 char   *strcpy(char *dst, const char *src);
@@ -82,6 +115,12 @@ int     strcasecmp(const char *a, const char *b);
 /* Nella locale "C" l'ordine di collazione e' quello dei byte: strcoll e'
  * strcmp. C'e' perche' chi ordina nomi per l'utente scrive strcoll. */
 int     strcoll(const char *a, const char *b);
+/* ⚠️ La trasformazione che rende strcmp equivalente a strcoll. Nella
+ * locale "C" i due gia' coincidono, quindi qui e' una COPIA — e il valore
+ * di ritorno e' la lunghezza della stringa d'origine, non quella copiata:
+ * chi passa un buffer troppo corto lo scopre confrontando, come dice lo
+ * standard, invece di ritrovarsi un risultato troncato che sembra buono. */
+size_t  strxfrm(char *dst, const char *src, size_t n);
 int     strncasecmp(const char *a, const char *b, size_t n);
 int     strncmp(const char *a, const char *b, size_t n);
 char   *strcat(char *dst, const char *src);
@@ -122,6 +161,13 @@ typedef struct {
 size_t  mbstowcs(wchar_t *dst, const char *src, size_t n);
 size_t  mbrtowc(wchar_t *dst, const char *src, size_t n, mbstate_t *stato);
 size_t  wcstombs(char *dst, const wchar_t *src, size_t n);
+
+/* Le tre versioni a carattere singolo. Le chiede <cstdlib> della libstdc++,
+ * che fa `using ::mblen;` e `using ::mbtowc;` senza guardare se servono a
+ * qualcuno: se il nome non esiste, la libreria non compila. */
+int     mblen(const char *s, size_t n);
+int     mbtowc(wchar_t *dst, const char *src, size_t n);
+int     wctomb(char *dst, wchar_t c);
 char   *strdup(const char *s);
 char   *strtok(char *s, const char *sep);
 size_t  strspn(const char *s, const char *accetta);
@@ -202,6 +248,42 @@ int     ferror(FILE *f);
 void    clearerr(FILE *f);
 int     fileno(FILE *f);
 
+/* =============================================================================
+ * fpos_t, fgetpos, fsetpos — la posizione come oggetto opaco
+ *
+ * Sono ftell/fseek con un'altra faccia, e su EX-OS non aggiungono niente:
+ * esistono perche' esistono in <cstdio> della libstdc++, e perche' su un
+ * sistema con codifiche a stato variabile la posizione non e' un numero.
+ * Qui lo e', e fpos_t e' un long — ma resta OPACO per contratto: chi ci
+ * fa aritmetica sopra scrive codice che altrove non compila.
+ * ============================================================================= */
+typedef long fpos_t;
+int     fgetpos(FILE *f, fpos_t *pos);
+int     fsetpos(FILE *f, const fpos_t *pos);
+
+/* =============================================================================
+ * setbuf, setvbuf — ⚠️ CI SONO MA NON CAMBIANO NIENTE
+ *
+ * La politica di bufferizzazione di EX-OS e' decisa e documentata (4 KB
+ * sui file, svuotamento a fine chiamata su stdout/stderr — vedi
+ * lib/libc.c), e non e' regolabile a runtime: i buffer sono dentro la
+ * struttura FILE, non allocati a parte, quindi non c'e' niente da
+ * sostituire.
+ *
+ * ⚠️ setvbuf RITORNA DIVERSO DA ZERO, cioe' «non l'ho fatto», invece di
+ * fingere. Un programma che chiede di non bufferizzare e riceve 0 andrebbe
+ * avanti convinto che ogni putc sia arrivato a destinazione. setbuf non
+ * ritorna niente per definizione, e quindi non puo' dirlo: e' il motivo
+ * per cui lo standard stesso raccomanda setvbuf.
+ * ============================================================================= */
+#define _IOFBF 0
+#define _IOLBF 1
+#define _IONBF 2
+void    setbuf(FILE *f, char *buf);
+int     setvbuf(FILE *f, char *buf, int modo, size_t dim);
+
+int     vscanf(const char *fmt, __builtin_va_list args);
+
 int     putchar(int c);
 int     puts(const char *s);
 int     getchar(void);
@@ -247,6 +329,41 @@ unsigned long long strtoull(const char *s, char **fine, int base);
 int     abs(int v);
 long    labs(long v);
 
+/* Quoziente e resto in un colpo solo. Il tipo lo pretende <cstdlib> della
+ * libstdc++, che ne dichiara le funzioni inline sopra: senza `ldiv_t` non
+ * compila l'header, prima ancora che qualcuno chiami qualcosa. */
+typedef struct { int  quot; int  rem; } div_t;
+typedef struct { long quot; long rem; } ldiv_t;
+typedef struct { long long quot; long long rem; } lldiv_t;
+div_t   div(int num, int den);
+ldiv_t  ldiv(long num, long den);
+lldiv_t lldiv(long long num, long long den);
+long long llabs(long long v);
+long long atoll(const char *s);
+
+/* =============================================================================
+ * Numeri pseudocasuali
+ *
+ * ⚠️ NON SONO CASUALI E NON VANNO USATI DOVE CONTA. E' un generatore
+ * congruenziale lineare, quello dell'esempio del K&R: si ripete, e da un
+ * seme noto da' sempre la stessa sequenza. Va bene per mescolare, per
+ * scegliere un ripiego, per una prova; non va bene per una chiave, per un
+ * identificativo che deve essere imprevedibile, per niente che qualcuno
+ * possa avere interesse a indovinare. Il giorno che servisse quello,
+ * servira' una sorgente di entropia vera, che il kernel non ha.
+ * ============================================================================= */
+#define RAND_MAX 32767
+int     rand(void);
+void    srand(unsigned int seme);
+
+/* ⚠️ system() ESISTE MA NON ESEGUE NIENTE, e lo dice: ritorna -1 con
+ * ENOSYS. Non c'e' una shell che accetti un comando sulla riga di
+ * argomenti — /bin/sh ha un `_start(void)` e legge solo dal terminale — e
+ * fingere di aver eseguito sarebbe il genere di bugia che questo progetto
+ * rifiuta. La forma system(NULL) ritorna 0, che e' il modo corretto di
+ * dire «non c'e' un interprete di comandi». */
+int     system(const char *comando);
+
 /* =============================================================================
  * Virgola mobile
  *
@@ -268,6 +385,9 @@ float   strtof(const char *s, char **fine);
 long double strtold(const char *s, char **fine);
 double  ldexp(double x, int e);
 double  fabs(double v);
+/* ⚠️ L'unica funzione di libm che c'e': e' `fsqrt` dell'x87, quindi
+ * correttamente arrotondata. Vedi <math.h>. */
+double  sqrt(double x);
 double  atof(const char *s);
 double  frexp(double x, int *e);   /* l'inversa: mantissa in [0.5,1) ed esponente */
 
@@ -281,6 +401,22 @@ void    exit(int code);
  * l'uscita di chi ha perso fiducia nel proprio stato. Un file aperto in
  * scrittura resta monco — vedi lib/libc.c. */
 void    _exit(int code);
+/* Lo stesso di _exit con il nome che gli da' il C99. Un nome in piu' per
+ * la stessa cosa, e c'e' perche' <cstdlib> lo dichiara. */
+void    _Exit(int code);
+
+/* =============================================================================
+ * quick_exit, at_quick_exit
+ *
+ * Una seconda lista di funzioni di uscita, separata da quella di atexit().
+ * ⚠️ LA DIFFERENZA CHE CONTA: quick_exit NON svuota i flussi e NON chiama
+ * gli handler di atexit — chiama solo i propri, poi _Exit. Serve a chi
+ * vuole terminare in fretta senza rinunciare del tutto a ripulire, e
+ * confonderla con exit() significa perdere l'ultima scrittura di ogni file
+ * aperto.
+ * ============================================================================= */
+int     at_quick_exit(void (*fn)(void));
+void    quick_exit(int code);
 
 /* I due nomi che <stdlib.h> da' allo stato di uscita. Valgono quello che
  * gia' vale: la shell di EX-OS legge 0 come riuscita e diverso da zero
@@ -292,6 +428,28 @@ void   *malloc(size_t size);
 void    free(void *ptr);
 void   *calloc(size_t nmemb, size_t size);
 void   *realloc(void *ptr, size_t size);
+
+/* -----------------------------------------------------------------------
+ * Allocazione ALLINEATA.
+ *
+ * malloc() garantisce otto byte, che bastano per un double e per qualunque
+ * tipo scalare del bersaglio. Non bastano per `alignas(16)` e simili, e
+ * dal C++17 il compilatore per quei tipi non chiama piu' `operator new`
+ * ma la sua variante allineata — che nella libstdc++ e' costruita sopra
+ * memalign(). Senza queste tre funzioni la libreria standard del C++ si
+ * costruisce lo stesso, ma con una versione che ARROTONDA e restituisce
+ * memoria non allineata: sbaglia in silenzio, che e' il caso che questo
+ * progetto rifiuta.
+ *
+ * ⚠️ IL PUNTATORE RESTITUITO SI LIBERA CON free(), non con una free
+ * speciale: l'allineamento si ottiene spezzando un blocco dell'heap e
+ * mettendo una vera intestazione davanti al risultato, quindi per free()
+ * e' un blocco come tutti gli altri. Vedi lib/libc.c.
+ * ----------------------------------------------------------------------- */
+void   *memalign(size_t allineamento, size_t size);
+void   *aligned_alloc(size_t allineamento, size_t size);
+int     posix_memalign(void **risultato, size_t allineamento, size_t size);
+
 void    qsort(void *base, size_t n, size_t dim,
               int (*cmp)(const void *, const void *));
 void   *bsearch(const void *chiave, const void *base, size_t n, size_t dim,
@@ -310,6 +468,12 @@ int     isgraph(int c);
 int     ispunct(int c);
 int     iscntrl(int c);
 int     tolower(int c);
+/* POSIX, non C standard (isblank e' C99): le chiama il codice di terzi —
+ * isascii la printf di GMP. Nella locale "C" ASCII e' tutto cio' che sta
+ * sotto il 128, quindi non e' un'approssimazione. */
+int     isascii(int c);
+int     toascii(int c);
+int     isblank(int c);
 int     toupper(int c);
 
 /* =============================================================================
@@ -403,8 +567,33 @@ char   *getcwd(char *buf, size_t size);
  * perche' EX-OS non ne ha. Con `resolved` NULL alloca con malloc. */
 char   *realpath(const char *path, char *resolved);
 void    sched_yield(void);
-void    usleep(unsigned int us);
-void    sleep(unsigned int sec);
+
+/* =============================================================================
+ * ⚠️ sleep RITORNA unsigned int, E NON void — corretto ad agosto 2026
+ *
+ * POSIX dice che sleep() ritorna **i secondi che restavano da dormire**
+ * quando un segnale l'ha interrotta, e 0 se ha dormito tutto. Non e' una
+ * finezza: il modo canonico di usarla e'
+ *
+ *     while ((secs = sleep(secs))) { }
+ *
+ * cioe' «riprova finche' non hai finito davvero» — ed e' esattamente cio'
+ * che scrive src/c++11/thread.cc della libstdc++. Con una sleep che
+ * ritorna void quella riga non compila:
+ *
+ *     error: void value not ignored as it ought to be
+ *
+ * ⚠️ SU EX-OS IL VALORE E' SEMPRE 0, e non e' una bugia: non ci sono
+ * segnali che possano interrompere il sonno, quindi la dormita e' sempre
+ * completa. La firma dice la verita' sul contratto; il valore dice la
+ * verita' su questo sistema.
+ *
+ * usleep ritorna int per la stessa ragione (0, o -1 con errno): e' quello
+ * che dice POSIX, e chi controlla il ritorno non deve scoprire qui che
+ * non c'e'.
+ * ============================================================================= */
+int             usleep(unsigned int us);
+unsigned int    sleep(unsigned int sec);
 
 /* =============================================================================
  * Data e ora dall'orologio CMOS della macchina.
@@ -471,7 +660,33 @@ struct timeval {
 time_t     time(time_t *t);
 struct tm *gmtime(const time_t *t);      /* risultato in una struttura STATICA */
 struct tm *localtime(const time_t *t);   /* identica a gmtime: vedi sopra */
+/* ⚠️ L'INVERSA DI gmtime, E NORMALIZZA LA STRUTTURA CHE RICEVE — per
+ * questo il parametro non e' const. Un tm_mon a 12 diventa gennaio
+ * dell'anno dopo, un tm_sec a 90 diventa un minuto e mezzo: e' cosi' che
+ * si fa aritmetica sulle date. tm_wday e tm_yday in ingresso vengono
+ * IGNORATI e riscritti. Interpreta i campi come UTC, perche' EX-OS non sa
+ * in che fuso si trova. */
+time_t     mktime(struct tm *tm);
 int        gettimeofday(struct timeval *tv, void *fuso);
+
+/* La differenza fra due istanti, in secondi. Su EX-OS time_t e' un intero
+ * di secondi e la sottrazione basterebbe: c'e' perche' lo standard non
+ * garantisce che time_t sia aritmetico, e chi scrive difftime scrive
+ * codice che vale anche altrove. */
+double     difftime(time_t fine, time_t inizio);
+
+/* ⚠️ LA RISOLUZIONE VERA E' 10 ms, il tick del PIT: tv_nsec e' sempre un
+ * multiplo di 10 000 000. La struttura ha i nanosecondi perche' cosi' e'
+ * fatta, non perche' li sappiamo misurare. */
+struct timespec {
+    long tv_sec;
+    long tv_nsec;
+};
+#define TIME_UTC 1
+/* Ritorna `base` se ha funzionato, 0 se no — e non e' la solita
+ * convenzione 0/-1: e' quella di timespec_get, ed e' un modo classico di
+ * sbagliare a usarla. */
+int        timespec_get(struct timespec *ts, int base);
 
 /* Formatta una data secondo `fmt`. Ritorna i caratteri scritti (NUL
  * escluso), o 0 se non ci stavano — nel qual caso il contenuto di `buf`
@@ -727,6 +942,14 @@ typedef struct {
 
 int bootinstall(const char *punto, BootInstallInfo *info);
 
+/* ⚠️ CALCOLA LA MAPPA E NON SCRIVE NIENTE. Serve a sapere se due file
+ * sarebbero mappabili PRIMA di cancellare quelli che funzionano: su FAT la
+ * mappa ammette un solo intervallo, e un kernel cresciuto di qualche KB
+ * puo' non entrarci piu'. I nomi sono senza directory e minuscoli (la
+ * directory e' sempre /boot), NULL per quelli predefiniti. */
+int bootverify(const char *punto, const char *nome_s2, const char *nome_k,
+               BootInstallInfo *info);
+
 /* =============================================================================
  * Scrittura della tabella delle partizioni
  *
@@ -914,14 +1137,86 @@ typedef struct {
 #define S_ISDIR(m)  (((m) & S_IFMT) == S_IFDIR)
 #define S_ISREG(m)  (((m) & S_IFMT) == S_IFREG)
 
+/* =============================================================================
+ * ⚠️ I TIPI DI FILE CHE EX-OS NON HA
+ *
+ * FIFO, dispositivi a caratteri e a blocchi, collegamenti simbolici,
+ * socket. stat() non metterà mai uno di questi in st_mode, e le macro
+ * S_IS*() corrispondenti ritorneranno sempre 0.
+ *
+ * Ci sono per lo stesso motivo dei codici errno della rete e delle
+ * costanti DT_*: **servono a essere nominati**. La <filesystem> del C++17
+ * costruisce `std::filesystem::file_type` con uno switch su tutti — e un
+ * nome mancante è un errore di compilazione, non un ramo morto.
+ *
+ * ⚠️ Ritornare sempre 0 è la risposta GIUSTA, non un ripiego: su EX-OS un
+ * collegamento simbolico non esiste, quindi «questo file è un
+ * collegamento?» ha davvero risposta no. È diverso dal caso in cui non si
+ * sapesse rispondere.
+ *
+ * I valori sono quelli di Linux e non vanno reinventati: il giorno che i
+ * collegamenti simbolici arrivassero, S_IFLNK dovrà valere 0120000 come
+ * ovunque.
+ * ============================================================================= */
+#define S_IFIFO     0010000
+#define S_IFCHR     0020000
+#define S_IFBLK     0060000
+#define S_IFLNK     0120000
+#define S_IFSOCK    0140000
+#define S_ISFIFO(m) (((m) & S_IFMT) == S_IFIFO)
+#define S_ISCHR(m)  (((m) & S_IFMT) == S_IFCHR)
+#define S_ISBLK(m)  (((m) & S_IFMT) == S_IFBLK)
+#define S_ISLNK(m)  (((m) & S_IFMT) == S_IFLNK)
+#define S_ISSOCK(m) (((m) & S_IFMT) == S_IFSOCK)
+
+/* I bit dei permessi. ⚠️ EX-OS NON HA PERMESSI VERI: st_mode li ricostruisce
+ * dall'attributo di sola lettura di FAT (vedi sopra), e chmod() è inerte.
+ * Questi nomi servono a leggere quei bit e a scrivere codice portabile —
+ * `if (st.st_mode & S_IWUSR)` risponde davvero «è scrivibile?». */
+#define S_IRWXU     0000700
+#define S_IRUSR     0000400
+#define S_IWUSR     0000200
+#define S_IXUSR     0000100
+#define S_IRWXG     0000070
+#define S_IRGRP     0000040
+#define S_IWGRP     0000020
+#define S_IXGRP     0000010
+#define S_IRWXO     0000007
+#define S_IROTH     0000004
+#define S_IWOTH     0000002
+#define S_IXOTH     0000001
+#define S_ISUID     0004000
+#define S_ISGID     0002000
+#define S_ISVTX     0001000
+
+/* ⚠️ I CAMPI HANNO I TIPI DI POSIX, NON `unsigned int`, e la differenza
+ * non e' cosmetica.
+ *
+ * Fino ad agosto 2026 erano tutti `unsigned int`. Sul nostro bersaglio
+ * hanno la stessa larghezza dei tipi giusti, quindi i VALORI erano
+ * corretti e nessuno se ne era accorto — ma il tipo si vede appena
+ * qualcuno prende l'INDIRIZZO di un campo:
+ *
+ *     libcpp/files.cc:803: error: invalid conversion from 'unsigned int*'
+ *                          to 'off_t*' {aka 'long int*'}
+ *
+ * cioe' `&st.st_size` passato dove serve un `off_t *`. E' il preprocessore
+ * di GCC, che lo fa per dire al lettore quanti byte ha letto davvero.
+ *
+ * ⚠️ `st_size` E' SEGNATO (`off_t` e' `long`), quindi il tetto e' 2 GB e
+ * non 4. E' lo stesso limite che ha gia' `lseek()`, che e' la syscall
+ * sotto: dichiararlo senza segno non renderebbe piu' grandi i file,
+ * renderebbe solo silenziosa la troncatura al confine col kernel. */
 struct stat {
-    unsigned int    st_dev;     /* sempre 0: EX-OS non numera i volumi */
-    unsigned int    st_ino;     /* primo cluster/inode, 0 dove non si applica */
-    unsigned int    st_mode;    /* tipo | permessi ricostruiti */
-    unsigned int    st_nlink;   /* sempre 1 */
-    unsigned int    st_uid;     /* sempre 0: non ci sono utenti */
-    unsigned int    st_gid;     /* sempre 0 */
-    unsigned int    st_size;
+    dev_t           st_dev;     /* sempre 0: EX-OS non numera i volumi */
+    ino_t           st_ino;     /* primo cluster/inode, 0 dove non si applica */
+    mode_t          st_mode;    /* tipo | permessi ricostruiti */
+    nlink_t         st_nlink;   /* sempre 1 */
+    uid_t           st_uid;     /* sempre 0: non ci sono utenti */
+    gid_t           st_gid;     /* sempre 0 */
+    off_t           st_size;
+    blksize_t       st_blksize; /* 512: il settore, l'unita' vera dei nostri fs */
+    blkcnt_t        st_blocks;  /* settori da 512 occupati, arrotondati per eccesso */
     time_t          st_atime;   /* = st_mtime: non si tiene l'ultimo accesso */
     time_t          st_mtime;
     time_t          st_ctime;   /* = st_mtime */
@@ -1044,6 +1339,75 @@ int     listdir(const char *path, DirEntry *buf, int max);
 #define ENOMEDIUM   123
 
 /* =============================================================================
+ * ⚠️ I NOMI CHE EX-OS NON RITORNERA' MAI
+ *
+ * Tutto quello che segue riguarda cose che questo sistema NON HA: socket,
+ * rete, blocchi sui file, code di messaggi. Nessuna syscall di EX-OS
+ * ritornera' mai uno di questi numeri, e non e' previsto che accada.
+ *
+ * CI SONO PERCHE' SERVONO A ESSERE NOMINATI, non a essere ritornati. La
+ * libstdc++ costruisce l'enumerazione `std::errc` da questo elenco
+ * (bits/error_constants.h): ogni nome mancante e' un errore di
+ * compilazione, e senza `std::errc` non c'e' <system_error>, che sta sotto
+ * a mezza libreria standard. Lo stesso vale per il codice di terzi che
+ * scrive `case EWOULDBLOCK:` in uno switch: gli serve la costante, non il
+ * comportamento.
+ *
+ * I valori sono quelli di Linux, come tutto il resto della numerazione.
+ * ⚠️ Se un giorno EX-OS avra' i socket, questi numeri sono gia' quelli
+ * giusti e non vanno rinumerati — e' il motivo per cui si copiano invece
+ * di inventarli.
+ * ============================================================================= */
+#define EDEADLK          35
+#define ENOLCK           37
+#define ENOMSG           42
+#define ENOTSOCK         88
+#define EDESTADDRREQ     89
+#define EMSGSIZE         90
+#define EPROTOTYPE       91
+#define ENOPROTOOPT      92
+#define EPROTONOSUPPORT  93
+#define EOPNOTSUPP       95
+#define EAFNOSUPPORT     97
+#define EADDRINUSE       98
+#define EADDRNOTAVAIL    99
+#define ENETDOWN        100
+#define ENETUNREACH     101
+#define ENETRESET       102
+#define ECONNABORTED    103
+#define ECONNRESET      104
+#define ENOBUFS         105
+#define EISCONN         106
+#define ENOTCONN        107
+#define ECONNREFUSED    111
+#define EHOSTUNREACH    113
+#define EALREADY        114
+#define EINPROGRESS     115
+/* ⚠️ Su Linux EWOULDBLOCK E' EAGAIN, stesso numero: sono due nomi per la
+ * stessa condizione. Definirlo con un valore proprio romperebbe ogni
+ * `if (errno == EAGAIN || errno == EWOULDBLOCK)` — che e' il modo in cui
+ * il codice portabile si difende dai sistemi dove invece differiscono. */
+#define EWOULDBLOCK     EAGAIN
+
+/* Il resto di cio' che <system_error> nomina: code di messaggi System V,
+ * flussi STREAMS, mutex robusti. Stessa regola dei precedenti — servono a
+ * essere nominati, non a essere ritornati. */
+#define EIDRM            43
+#define ETXTBSY          26
+#define EOVERFLOW        75
+#define ENOTSUP     EOPNOTSUPP   /* due nomi per la stessa cosa, come su Linux */
+#define ECANCELED       125
+#define EOWNERDEAD      130
+#define ENOTRECOVERABLE 131
+#define ENODATA          61
+#define ENOSR            63
+#define ENOSTR           60
+#define ETIME            62
+#define EBADMSG          74
+#define ENOLINK          67
+#define EPROTO           71
+
+/* =============================================================================
  * PROCESSI — spawn con ambiente e redirezioni
  *
  * ⚠️ SpawnAzione/SpawnExtra sono duplicate da kernel/include/syscall.h (la
@@ -1053,13 +1417,25 @@ int     listdir(const char *path, DirEntry *buf, int max);
  * compilati per la vecchia forma a tre argomenti — vedi il commento nel
  * kernel.
  * ============================================================================= */
-#define SPAWN_EXTRA_MAGIA    0x53504E58u
+/* ⚠️ LA MAGIA E' CAMBIATA DA 0x53504E58 A 0x53504E59 (agosto 2026) perche'
+ * e' cambiata la DISPOSIZIONE di SpawnAzione: ha due campi in piu'. Un
+ * binario vecchio che passasse la struttura vecchia verrebbe letto storto,
+ * e con una redirezione letta storta si scrive nel file sbagliato. Con la
+ * magia nuova il kernel non la riconosce e la ignora, che e' l'errore
+ * meno dannoso possibile. */
+#define SPAWN_EXTRA_MAGIA    0x53504E59u
 #define SPAWN_MAX_AZIONI     4
 #define SPAWN_RED_PATH_MAX   128
 
+/* Le due cose che si possono fare a un descrittore del figlio. */
+#define SPAWN_AZ_FILE   0   /* apri `percorso` e mettilo su `fd` */
+#define SPAWN_AZ_FD     1   /* dai al figlio il MIO descrittore `fd_padre` */
+
 typedef struct {
-    unsigned int fd;
-    unsigned int flags;
+    unsigned int tipo;          /* SPAWN_AZ_FILE oppure SPAWN_AZ_FD */
+    unsigned int fd;            /* il descrittore NEL FIGLIO */
+    unsigned int flags;         /* SPAWN_AZ_FILE: i flag di open */
+    int          fd_padre;      /* SPAWN_AZ_FD: quale descrittore del padre */
     char         percorso[SPAWN_RED_PATH_MAX];
 } SpawnAzione;
 
@@ -1071,16 +1447,56 @@ typedef struct {
 } SpawnExtra;
 
 /* La forma comoda per chi chiama: percorso invece di buffer a lunghezza
- * fissa, e nessuna magia da ricordare. */
+ * fissa, e nessuna magia da ricordare.
+ *
+ * ⚠️ CON `percorso` NON NULL il figlio APRE quel file; con `percorso`
+ * NULL riceve invece il descrittore `fd_padre` di chi lo lancia — ed e'
+ * cosi' che si costruisce `cmd1 | cmd2`:
+ *
+ *     int p[2]; pipe(p);
+ *     SpawnRedir a = { 1, 0, NULL, p[1] };   // stdout del figlio = scrittura
+ *     spawn_ex("/bin/cmd1", argv, environ, &a, 1);
+ *     close(p[1]);                            // ⚠️ vedi sotto
+ *
+ * ⚠️ IL PADRE DEVE CHIUDERE L'ESTREMITA' CHE HA PASSATO. Se non lo fa, la
+ * pipe conta ancora uno scrittore vivo — lui — e chi legge non vedra' mai
+ * la fine dei dati: aspettera' per sempre byte che nessuno scrivera'. E'
+ * l'errore classico con le pipe, e qui non c'e' niente che lo segnali. */
 typedef struct {
     int         fd;             /* descrittore del figlio da sostituire */
     int         flags;          /* O_WRONLY | O_CREAT | O_TRUNC, ... */
-    const char *percorso;
+    const char *percorso;       /* NULL = passa un descrittore, vedi sotto */
+    int         fd_padre;       /* usato solo se `percorso` e' NULL */
 } SpawnRedir;
 
 /* Lancia `path` e ritorna il PID del figlio, o un errno negativo. Non
  * aspetta: per quello c'e' waitpid(). spawn() passa l'ambiente corrente e
  * nessuna redirezione. */
+/* =============================================================================
+ * pipe — un tubo di byte, e le tre regole che lo fanno funzionare
+ *
+ * `fd[0]` legge, `fd[1]` scrive. Ritorna 0, o -1 con errno.
+ *
+ * ⚠️ 1. LEGGERE DA UNA PIPE VUOTA CON UNO SCRITTORE VIVO BLOCCA, non
+ *       ritorna 0. Zero significa «non arrivera' piu' niente», e si ha
+ *       solo quando l'ultima estremita' di scrittura e' stata chiusa.
+ *
+ * ⚠️ 2. SCRIVERE SENZA PIU' LETTORI da -1 con EPIPE. Su Unix arriverebbe
+ *       anche SIGPIPE, che EX-OS non ha: chi non guarda il valore di
+ *       ritorno di write() non se ne accorge.
+ *
+ * ⚠️ 3. LA SCRITTURA PUO' ESSERE PARZIALE. write() ritorna quanti byte ha
+ *       preso, e su un buffer da 4 KB una scrittura piu' grande ne prende
+ *       una parte: il chiamante deve richiamare. Non c'e' la garanzia di
+ *       atomicita' di POSIX per le scritture sotto PIPE_BUF.
+ *
+ * PER COLLEGARE DUE PROCESSI serve passare un'estremita' al figlio, e lo
+ * si fa con SpawnRedir a `percorso` NULL — vedi il suo commento piu'
+ * avanti. ⚠️ E il padre DEVE chiudere l'estremita' che ha passato, o chi
+ * legge non vedra' mai la fine dei dati.
+ * ============================================================================= */
+int     pipe(int fd[2]);
+
 int     spawn(const char *path, char *const argv[]);
 int     spawn_ex(const char *path, char *const argv[], char *const envp[],
                  const SpawnRedir *redir, int n_redir);
@@ -1131,9 +1547,30 @@ int     unsetenv(const char *nome);
 /* =============================================================================
  * DIRECTORY nella forma POSIX (sopra listdir)
  * ============================================================================= */
-#define DT_UNKNOWN  0
-#define DT_REG      8
-#define DT_DIR      4
+/* I tipi di voce di directory, con i valori di Linux.
+ *
+ * ⚠️ EX-OS NE RITORNA SOLO TRE: DT_DIR, DT_REG e DT_UNKNOWN. Gli altri
+ * quattro riguardano cose che questo sistema non ha — FIFO, dispositivi a
+ * caratteri e a blocchi, collegamenti simbolici, socket — e nessuna
+ * readdir() ne restituira' mai uno.
+ *
+ * Ci sono per lo stesso motivo dei codici errno della rete: **servono a
+ * essere nominati**. La <filesystem> del C++17 fa `case DT_LNK:` in uno
+ * switch (libstdc++-v3/src/filesystem/dir-common.h), e un nome mancante e'
+ * un errore di compilazione — non un ramo che non verra' mai preso.
+ *
+ * ⚠️ I valori sono quelli di Linux e non vanno reinventati: il giorno che
+ * EX-OS avesse i collegamenti simbolici, DT_LNK dovra' valere 10 come
+ * ovunque, o ogni programma portato di la' leggerebbe il tipo sbagliato. */
+#define DT_UNKNOWN   0
+#define DT_FIFO      1
+#define DT_CHR       2
+#define DT_DIR       4
+#define DT_BLK       6
+#define DT_REG       8
+#define DT_LNK      10
+#define DT_SOCK     12
+#define DT_WHT      14
 
 struct dirent {
     unsigned int  d_ino;
@@ -1164,7 +1601,12 @@ char   *mktemp(char *modello);
 FILE   *tmpfile(void);
 int     access(const char *path, int modo);
 int     isatty(int fd);
-int     rename(const char *da, const char *a);   /* ⚠️ copia+cancella, non atomica */
+/* Cambia il NOME di un file senza spostarne i dati (dalla 0.161: prima
+ * copiava e cancellava). ⚠️ DUE DIFFERENZE DA POSIX: solo nella STESSA
+ * directory e nello stesso montaggio (ENOSYS per il resto), e NON
+ * sostituisce la destinazione (EEXIST). La garanzia in cambio e' che i
+ * blocchi non si spostano — vedi lib/libc.c. */
+int     rename(const char *da, const char *a);
 int     atexit(void (*fn)(void));
 
 /* =============================================================================
@@ -1182,6 +1624,19 @@ int     atexit(void (*fn)(void));
 #define SIGALRM 14
 #define SIGTERM 15
 #define SIG_MAX 32
+
+/* ⚠️ Il tipo su cui si puo' scrivere e leggere ATOMICAMENTE rispetto a un
+ * gestore di segnale — l'unica cosa che lo standard C permette di toccare
+ * da dentro un handler, insieme alle funzioni async-signal-safe.
+ *
+ * Su i386 un `int` allineato si legge e si scrive con una sola istruzione,
+ * quindi `int` e' la risposta giusta e non un ripiego. `volatile` NON fa
+ * parte del typedef, come su ogni altro sistema: lo mette chi dichiara la
+ * variabile (`static volatile sig_atomic_t flag;`), perche' e' la variabile
+ * a dover essere volatile, non il tipo.
+ *
+ * C'e' perche' <csignal> della libstdc++ fa `using ::sig_atomic_t;`. */
+typedef int sig_atomic_t;
 
 #define SIG_DFL ((void (*)(int))0)
 #define SIG_IGN ((void (*)(int))1)
@@ -1204,6 +1659,48 @@ char *strsignal(int sig);
 
 char   *setlocale(int categoria, const char *nome);
 
+/* =============================================================================
+ * struct lconv, localeconv — le convenzioni numeriche della locale
+ *
+ * Esiste solo la locale "C", quindi i valori sono quelli che lo standard
+ * prescrive per lei: il punto come separatore decimale e **tutto il resto
+ * vuoto**. ⚠️ I campi non impostati valgono `CHAR_MAX`, che significa
+ * «questa locale non lo specifica» — NON zero, che vorrebbe dire «zero
+ * cifre». E' la distinzione su cui sbaglia chi la implementa a memoria, e
+ * un programma che raggruppa le migliaia leggendo `grouping` la vede
+ * subito: con zero stamperebbe gruppi vuoti all'infinito.
+ * ============================================================================= */
+struct lconv {
+    char *decimal_point;
+    char *thousands_sep;
+    char *grouping;
+    char *int_curr_symbol;
+    char *currency_symbol;
+    char *mon_decimal_point;
+    char *mon_thousands_sep;
+    char *mon_grouping;
+    char *positive_sign;
+    char *negative_sign;
+    char  int_frac_digits;
+    char  frac_digits;
+    char  p_cs_precedes;
+    char  p_sep_by_space;
+    char  n_cs_precedes;
+    char  n_sep_by_space;
+    char  p_sign_posn;
+    char  n_sign_posn;
+    char  int_p_cs_precedes;
+    char  int_p_sep_by_space;
+    char  int_n_cs_precedes;
+    char  int_n_sep_by_space;
+    char  int_p_sign_posn;
+    char  int_n_sign_posn;
+};
+
+/* ⚠️ Ritorna un puntatore a una struttura STATICA che non va modificata:
+ * e' l'interfaccia dello standard, non una scorciatoia. */
+struct lconv *localeconv(void);
+
 #define _SC_ARG_MAX             0
 #define _SC_OPEN_MAX            4
 #define _SC_PAGESIZE            30
@@ -1211,6 +1708,43 @@ char   *setlocale(int categoria, const char *nome);
 #define _SC_NPROCESSORS_ONLN    84
 
 long    sysconf(int nome);
+
+/* La dimensione della pagina, con il nome che le da' BSD. E' `sysconf
+ * (_SC_PAGESIZE)` scritto piu' corto, e c'e' perche' il codice di terzi
+ * usa l'uno o l'altro senza criterio — ggc-page.cc di GCC usa questo. */
+int     getpagesize(void);
+
+/* =============================================================================
+ * mmap, munmap — memoria a pagine dal kernel
+ *
+ * ⚠️ SOLO MEMORIA ANONIMA. EX-OS non sa mappare un file: `fd` deve essere
+ * -1 e `flags` deve contenere MAP_ANONYMOUS, altrimenti si prende ENODEV.
+ * Mappare un file vorrebbe dire pagine sporche da riscrivere al momento
+ * giusto, cioe' un pezzo di gestore della memoria che non c'e' — e una
+ * mmap che finge di mappare un file consegnando zeri sarebbe il genere di
+ * bugia che questo progetto rifiuta.
+ *
+ * ⚠️ SU FALLIMENTO RITORNA MAP_FAILED, cioe' (void *)-1, NON NULL. E' la
+ * convenzione di POSIX, ed e' il modo classico di sbagliare a usarla:
+ * `if (p == NULL)` non si accorge di niente.
+ *
+ * Chi ha solo bisogno di memoria usi malloc: questa serve a chi vuole
+ * pagine intere e allineate, per esempio un garbage collector che ragiona
+ * per pagine — ggc-page.cc di GCC fa esattamente cosi'.
+ * ============================================================================= */
+#define PROT_NONE       0x0
+#define PROT_READ       0x1
+#define PROT_WRITE      0x2
+#define PROT_EXEC       0x4
+#define MAP_SHARED      0x01
+#define MAP_PRIVATE     0x02
+#define MAP_FIXED       0x10
+#define MAP_ANONYMOUS   0x20
+#define MAP_ANON        MAP_ANONYMOUS
+#define MAP_FAILED      ((void *)-1)
+
+void   *mmap(void *addr, size_t lung, int prot, int flags, int fd, long off);
+int     munmap(void *addr, size_t lung);
 
 /* pathconf: gli stessi limiti, ma riferiti a un file.
  * ⚠️ NON dipendono dal percorso: su EX-OS convivono quattro filesystem
@@ -1234,6 +1768,50 @@ struct tms {
 
 clock_t times(struct tms *t);
 clock_t clock(void);
+
+/* =============================================================================
+ * getrusage — quanto ha consumato il processo
+ *
+ * ⚠️ EX-OS NON HA CONTABILITA' PER PROCESSO. Non c'e' un contatore di tick
+ * spesi in modo utente e in modo kernel: lo scheduler assegna quanti e non
+ * misura consumi. Quindi:
+ *
+ *   - `ru_utime` riporta il tempo TRASCORSO dall'avvio del sistema, non il
+ *     tempo di CPU di questo processo. E' un limite superiore onesto, non
+ *     una misura;
+ *   - `ru_stime` e tutti gli altri campi valgono ZERO.
+ *
+ * Si dichiara perche' GCC la chiama con -ftime-report e perche' `times()`
+ * da sola non basta a chi si aspetta questa forma. ⚠️ Chi ci costruisce
+ * sopra un profilo otterra' numeri privi di significato: e' scritto qui,
+ * ed e' scritto anche in lib/libc.c sopra l'implementazione.
+ *
+ * La struttura ha tutti i campi di POSIX anche se ne riempiamo due: chi
+ * legge `ru_maxrss` deve poterlo scrivere senza che il codice non compili.
+ * ============================================================================= */
+#define RUSAGE_SELF      0
+#define RUSAGE_CHILDREN (-1)
+
+struct rusage {
+    struct timeval ru_utime;    /* tempo in modo utente   — vedi sopra */
+    struct timeval ru_stime;    /* tempo in modo kernel   — sempre 0 */
+    long ru_maxrss;             /* tutti i campi seguenti sono 0 */
+    long ru_ixrss;
+    long ru_idrss;
+    long ru_isrss;
+    long ru_minflt;
+    long ru_majflt;
+    long ru_nswap;
+    long ru_inblock;
+    long ru_oublock;
+    long ru_msgsnd;
+    long ru_msgrcv;
+    long ru_nsignals;
+    long ru_nvcsw;
+    long ru_nivcsw;
+};
+
+int getrusage(int chi, struct rusage *uso);
 #define CLOCKS_PER_SEC  100
 
 /* Come listdir, ma parte dalla 'start'-esima voce. Serve per percorrere
@@ -1279,7 +1857,24 @@ void    _libc_start(int argc, char **argv);  /* richiamata da _start naked */
 
 typedef struct {
     unsigned int  sender_pid;
-    unsigned int  type;
+    /* ⚠️ IL CAMPO SI CHIAMA `tipo` E NON `type`, e non e' un vezzo linguistico.
+     *
+     * `type` e' una parola che il codice di terzi definisce come MACRO. Non e'
+     * un caso limite: openlibm scrive `#define type float` in cima a
+     * s_lroundf.c e poi include gli header di sistema, e a quel punto questa
+     * riga diventa `unsigned int float` — un errore che il compilatore segnala
+     * SULLA DEFINIZIONE DELLA MACRO, in un file di terzi, senza nominare mai
+     * il nostro header:
+     *
+     *     src/s_lroundf.c:4:25: error: two or more data types in declaration
+     *          4 | #define type            float
+     *
+     * Un header pubblico e' incluso da codice che non conosciamo, quindi non
+     * puo' usare parole comuni come nomi di campo. Le altre della stessa
+     * famiglia — `class`, `new`, `delete`, `template` — qui non ci sono, ed e'
+     * stato verificato: le userebbe il C++ come parole chiave, e libstdc++
+     * include questo file. */
+    unsigned int  tipo;
     unsigned int  len;
     unsigned char data[IPC_MSG_MAX_DATA];
 } IpcMessage;
@@ -1287,7 +1882,7 @@ typedef struct {
 /* Invia un messaggio a dest_pid. data può essere NULL se len=0.
  * Ritorna 0 su successo, <0 su errore (-ESRCH se dest_pid non esiste,
  * -EBUSY se la mailbox del destinatario resta piena troppo a lungo). */
-int     ipc_send(unsigned int dest_pid, unsigned int type,
+int     ipc_send(unsigned int dest_pid, unsigned int tipo,
                   const void *data, unsigned int len);
 
 /* Riceve il prossimo messaggio nella propria mailbox, bloccando se
@@ -1376,5 +1971,9 @@ int     osversion(char *buf, size_t size);
  * silenzioso. In caso di errore di lettura ritorna 1 — un programma muto
  * per un problema di configurazione è indistinguibile da uno bloccato. */
 int     verboseboot(void);
+
+#ifdef __cplusplus
+}   /* extern "C" — aperto molto piu' sopra, vedi il commento li' */
+#endif
 
 #endif /* LIBC_H */

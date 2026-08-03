@@ -456,14 +456,14 @@ static int tty_read_ipc(char *dst, uint32_t n)
         r = ipc_recv(&meta, dst, n);
         if (r < 0) return r;
 
-        if (meta.type == KBD_MSG_LINE && meta.sender_pid == g_kbd_pid) {
+        if (meta.tipo == KBD_MSG_LINE && meta.sender_pid == g_kbd_pid) {
             uint32_t len = meta.len;
             if (len > n) len = n;   /* ipc_recv ha già troncato la copia */
             return (int)len;
         }
 
         klog(LOG_WARN, "TTY: messaggio inatteso in attesa di una riga "
-             "(type=%u da PID %u), ignorato", meta.type, meta.sender_pid);
+             "(type=%u da PID %u), ignorato", meta.tipo, meta.sender_pid);
     }
 }
 

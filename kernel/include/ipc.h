@@ -39,7 +39,7 @@
  * piena, blocca il chiamante finché non si libera spazio (o il
  * destinatario termina, nel qual caso ritorna errore).
  * Ritorna 0 su successo, <0 su errore (ESRCH se dest_pid non esiste). */
-int32_t ipc_send(uint32_t dest_pid, uint32_t type,
+int32_t ipc_send(uint32_t dest_pid, uint32_t tipo,
                   const void *data, uint32_t len);
 
 /* Riceve il prossimo messaggio nella mailbox del chiamante. Blocca se

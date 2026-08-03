@@ -61,6 +61,10 @@ int  fat12_readdir_path(const char *path, Fat12DirEntry *out_buf,
                          uint32_t start);
 void fat12_format_name(const Fat12DirEntry *entry, char *out /* >= 13 byte */);
 int  fat12_delete(const char *path);
+/* Cambia il NOME senza spostare i dati. ⚠️ SOLO nella stessa directory
+ * (-3), destinazione che non deve esistere (-2): stesse regole di fat.c ed
+ * ext2.c. Vedi il commento esteso in kernel/fs/fat12.c. */
+int  fat12_rename(const char *da, const char *a);
 
 /* Crea una directory. Solo nella root: il driver risolve i percorsi a un
  * solo livello, quindi una directory più in profondità sarebbe corretta

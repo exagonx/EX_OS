@@ -65,12 +65,42 @@ typedef __UINTPTR_TYPE__    uintptr_t;
 typedef int                 pid_t;
 typedef long                off_t;
 typedef unsigned int        mode_t;
+/* ⚠️ Gli altri tipi di POSIX che compaiono in `struct stat`. Duplicati da
+ * lib/include/libc.h e devono restare identici: quella struttura la
+ * riempiamo noi e la legge il chiamante, e un tipo diverso fra le due
+ * copie non da' un errore — da' campi letti storti. */
+typedef unsigned int        dev_t;
+typedef unsigned int        ino_t;
+typedef unsigned int        nlink_t;
+typedef unsigned int        uid_t;
+typedef unsigned int        gid_t;
+typedef unsigned int        blksize_t;
+typedef unsigned int        blkcnt_t;
 
 /* Lo stato di una conversione multibyte. Duplicato da lib/include/libc.h,
  * come gli altri tipi: questo file non include il proprio header. */
 typedef struct {
     int __nulla;
 } mbstate_t;
+
+/* Quoziente e resto. Anche questi duplicati da lib/include/libc.h: i
+ * campi si chiamano `quot` e `rem` perche' lo dice lo standard C, e un
+ * programma di terzi li nomina per esteso. */
+typedef struct { int  quot; int  rem; } div_t;
+typedef struct { long quot; long rem; } ldiv_t;
+typedef struct { long long quot; long long rem; } lldiv_t;
+
+/* Duplicati da lib/include/inttypes.h. ⚠️ intmax_t E' `long long` su questo
+ * bersaglio: e' il tipo intero piu' grande che ha, e lo standard dice che
+ * intmax_t dev'essere quello. */
+typedef long long           intmax_t;
+typedef unsigned long long  uintmax_t;
+typedef struct { intmax_t quot; intmax_t rem; } imaxdiv_t;
+
+/* La posizione in un flusso come oggetto opaco. Duplicato da
+ * lib/include/libc.h: qui e' un long, ma il contratto e' che nessuno ci
+ * faccia aritmetica sopra. */
+typedef long fpos_t;
 
 /* Duplicato da lib/include/libc.h, come tutto il resto: questo file non
  * include il proprio header. Deve restare -1. */
@@ -214,6 +244,8 @@ typedef struct {
 #define SYS_DUP           41
 #define SYS_DUP2          63
 #define SYS_FCNTL         55
+#define SYS_PIPE          42
+#define SYS_RENAME        38
 
 /* Comandi ioctl del terminale — devono restare identici a
  * drivers/tty/tty.h e a lib/include/libc.h (stessa convenzione di
@@ -267,6 +299,7 @@ typedef struct {
 #define ENOTEMPTY    39
 #define ENAMETOOLONG 36
 #define EILSEQ       84
+#define EDOM         33
 
 /* La lunghezza massima di un percorso: VFS_PATH_MAX del kernel, e le due
  * devono restare uguali. Duplicata anche in <limits.h> e <sys/param.h>. */
@@ -278,13 +311,19 @@ typedef struct {
 /* spawn con ambiente e redirezioni — duplicate da kernel/include/syscall.h
  * e da lib/include/libc.h. La magia impedisce al kernel di leggere ESI
  * quando lo chiama un programma compilato per la vecchia forma. */
-#define SPAWN_EXTRA_MAGIA    0x53504E58u
+/* ⚠️ La magia e' 0x53504E59 e non piu' ...58: e' cambiata la disposizione
+ * di SpawnAzione. Vedi lib/include/libc.h. */
+#define SPAWN_EXTRA_MAGIA    0x53504E59u
 #define SPAWN_MAX_AZIONI     4
 #define SPAWN_RED_PATH_MAX   128
+#define SPAWN_AZ_FILE   0
+#define SPAWN_AZ_FD     1
 
 typedef struct {
+    unsigned int tipo;
     unsigned int fd;
     unsigned int flags;
+    int          fd_padre;
     char         percorso[SPAWN_RED_PATH_MAX];
 } SpawnAzione;
 
@@ -298,7 +337,8 @@ typedef struct {
 typedef struct {
     int         fd;
     int         flags;
-    const char *percorso;
+    const char *percorso;   /* NULL = passa il descrittore `fd_padre` */
+    int         fd_padre;
 } SpawnRedir;
 
 int spawn_ex(const char *path, char *const argv[], char *const envp[],
@@ -475,7 +515,7 @@ typedef struct {
 #define IPC_MSG_MAX_DATA 512
 typedef struct {
     unsigned int  sender_pid;
-    unsigned int  type;
+    unsigned int  tipo;      /* si chiama cosi' anche in libc.h: vedi li' */
     unsigned int  len;
     unsigned char data[IPC_MSG_MAX_DATA];
 } IpcMessage;
@@ -514,6 +554,83 @@ struct timeval {
     long tv_usec;
 };
 
+/* I parametri di mmap, duplicati da kernel/include/syscall.h: e' l'ABI
+ * della syscall, e cambiarla vuol dire cambiare il kernel. */
+typedef struct {
+    uint32_t    addr;
+    uint32_t    length;
+    uint32_t    prot;
+    uint32_t    flags;
+    int32_t     fd;
+    uint32_t    offset;
+} MmapParams;
+
+#define MAP_ANONYMOUS   0x20
+#define MAP_FAILED      ((void *)-1)
+#define RUSAGE_SELF      0
+#define RUSAGE_CHILDREN (-1)
+
+/* Duplicata da lib/include/libc.h. ⚠️ Solo `ru_utime` e `ru_stime` vengono
+ * riempiti, e il primo con un limite superiore invece che una misura: vedi
+ * getrusage() piu' avanti. */
+struct rusage {
+    struct timeval ru_utime;
+    struct timeval ru_stime;
+    long ru_maxrss;
+    long ru_ixrss;
+    long ru_idrss;
+    long ru_isrss;
+    long ru_minflt;
+    long ru_majflt;
+    long ru_nswap;
+    long ru_inblock;
+    long ru_oublock;
+    long ru_msgsnd;
+    long ru_msgrcv;
+    long ru_nsignals;
+    long ru_nvcsw;
+    long ru_nivcsw;
+};
+
+/* Duplicata da lib/include/libc.h come tutto il resto. ⚠️ La risoluzione
+ * vera e' 10 ms: tv_nsec e' sempre un multiplo di 10 000 000. */
+struct timespec {
+    long tv_sec;
+    long tv_nsec;
+};
+#define TIME_UTC 1
+
+/* Le convenzioni numeriche della locale. Duplicata da lib/include/libc.h:
+ * ⚠️ l'ORDINE DEI CAMPI deve combaciare riga per riga, non solo i nomi —
+ * qui e' il chiamante a leggere la struttura che noi riempiamo, e due
+ * disposizioni diverse darebbero campi scambiati senza nessun errore. */
+struct lconv {
+    char *decimal_point;
+    char *thousands_sep;
+    char *grouping;
+    char *int_curr_symbol;
+    char *currency_symbol;
+    char *mon_decimal_point;
+    char *mon_thousands_sep;
+    char *mon_grouping;
+    char *positive_sign;
+    char *negative_sign;
+    char  int_frac_digits;
+    char  frac_digits;
+    char  p_cs_precedes;
+    char  p_sep_by_space;
+    char  n_cs_precedes;
+    char  n_sep_by_space;
+    char  p_sign_posn;
+    char  n_sign_posn;
+    char  int_p_cs_precedes;
+    char  int_p_sep_by_space;
+    char  int_n_cs_precedes;
+    char  int_n_sep_by_space;
+    char  int_p_sign_posn;
+    char  int_n_sign_posn;
+};
+
 /* Attributi FAT e forma POSIX di stat: duplicati da lib/include/libc.h e
  * da lib/include/sys/stat.h. Il perche' dei due tipi affiancati sta
  * nell'header; qui basta sapere che devono restare identici. */
@@ -529,14 +646,19 @@ struct timeval {
 #define S_ISDIR(m)  (((m) & S_IFMT) == S_IFDIR)
 #define S_ISREG(m)  (((m) & S_IFMT) == S_IFREG)
 
+/* ⚠️ I TIPI DI POSIX, non `unsigned int`: deve combaciare CAMPO PER CAMPO
+ * e TIPO PER TIPO con lib/include/libc.h. Il motivo per cui i tipi contano
+ * anche quando la larghezza e' la stessa sta spiegato li'. */
 struct stat {
-    unsigned int    st_dev;
-    unsigned int    st_ino;
-    unsigned int    st_mode;
-    unsigned int    st_nlink;
-    unsigned int    st_uid;
-    unsigned int    st_gid;
-    unsigned int    st_size;
+    dev_t           st_dev;
+    ino_t           st_ino;
+    mode_t          st_mode;
+    nlink_t         st_nlink;
+    uid_t           st_uid;
+    gid_t           st_gid;
+    off_t           st_size;
+    blksize_t       st_blksize;
+    blkcnt_t        st_blocks;
     time_t          st_atime;
     time_t          st_mtime;
     time_t          st_ctime;
@@ -554,6 +676,21 @@ typedef struct {
 /* =============================================================================
  * Syscall wrappers
  * ============================================================================= */
+
+/* Cinque argomenti: EDI e' il quinto. Serve a SYS_BOOTINSTALL, che deve
+ * passare percorso, struttura, dimensione, modalita' e i nomi alternativi
+ * — e non si e' voluto un numero di syscall nuovo per una variante che
+ * cambia solo se scrive o no. */
+static inline int32_t _syscall5(uint32_t n, uint32_t a, uint32_t b, uint32_t c,
+                                uint32_t d, uint32_t e)
+{
+    int32_t r;
+    __asm__ volatile("int $0x80"
+        : "=a"(r)
+        : "a"(n), "b"(a), "c"(b), "d"(c), "S"(d), "D"(e)
+        : "memory");
+    return r;
+}
 
 static inline int32_t _syscall4(uint32_t n, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
 {
@@ -656,6 +793,25 @@ int strcoll(const char *a, const char *b)
     return strcmp(a, b);
 }
 
+/* La trasformazione che rende strcmp equivalente a strcoll. Nella locale
+ * "C" i due gia' coincidono, quindi qui e' una copia.
+ *
+ * ⚠️ RITORNA LA LUNGHEZZA DELL'ORIGINALE, non quella copiata, ed e' cio'
+ * che permette al chiamante di accorgersi che il buffer era corto: se il
+ * valore di ritorno e' >= n, il contenuto di dst non e' utilizzabile. Con
+ * la lunghezza copiata non ci sarebbe modo di distinguere una copia
+ * completa da una troncata. */
+size_t strxfrm(char *dst, const char *src, size_t n)
+{
+    size_t len = strlen(src);
+    size_t i;
+
+    for (i = 0; i < n && i < len; i++) dst[i] = src[i];
+    if (n > 0 && i < n) dst[i] = '\0';
+
+    return len;
+}
+
 /* Il primo carattere di `s` che compare in `accetta`, o NULL. E' strcspn
  * che ritorna un puntatore invece di una lunghezza — e infatti le due si
  * usano nello stesso posto: gas ci cerca il primo separatore dentro il
@@ -748,6 +904,49 @@ size_t wcstombs(char *dst, const wchar_t *src, size_t n)
     }
     if (i < n) dst[i] = '\0';
     return i;
+}
+
+/* =============================================================================
+ * mblen, mbtowc, wctomb — le tre a carattere singolo
+ *
+ * Nella locale "C" un byte E' un carattere, quindi non c'e' niente da
+ * convertire: contano fino a uno e promuovono. Esistono perche' <cstdlib>
+ * della libstdc++ fa `using ::mblen;` e `using ::mbtowc;` senza chiedersi
+ * se qualcuno le chiamera' — se il nome non c'e', l'header non compila.
+ *
+ * ⚠️ IL VALORE DI RITORNO E' int E NON size_t, al contrario delle `mbr*`
+ * di sopra: le due famiglie hanno convenzioni diverse e mescolarle e' il
+ * modo classico di sbagliare. Qui -1 e' errore, 0 e' il NUL, 1 e' un
+ * carattere. La chiamata con `s == NULL` chiede «questa codifica ha uno
+ * stato?» e la risposta e' 0, cioe' no.
+ * ============================================================================= */
+int mblen(const char *s, size_t n)
+{
+    if (s == NULL) return 0;            /* la codifica non ha stato */
+    if (n == 0)    return -1;
+    return (*s == '\0') ? 0 : 1;
+}
+
+int mbtowc(wchar_t *dst, const char *src, size_t n)
+{
+    if (src == NULL) return 0;
+    if (n == 0)      return -1;
+
+    if (dst != NULL) *dst = (wchar_t)(unsigned char)*src;
+    return (*src == '\0') ? 0 : 1;
+}
+
+int wctomb(char *dst, wchar_t c)
+{
+    if (dst == NULL) return 0;
+
+    /* Stessa regola di wcstombs: sopra 255 si FALLISCE invece di
+     * troncare, perche' un troncamento silenzioso e' un carattere
+     * sbagliato che sembra giusto. */
+    if ((unsigned long)c > 0xFF) { errno = EILSEQ; return -1; }
+
+    *dst = (char)(unsigned char)c;
+    return 1;
 }
 
 char *strchr(const char *s, int c)
@@ -1309,6 +1508,72 @@ void rewind(FILE *f)
 {
     fseek(f, 0, 0);
     clearerr(f);
+}
+
+/* =============================================================================
+ * fgetpos, fsetpos — ftell/fseek con un'altra faccia
+ *
+ * Su EX-OS non aggiungono niente: la posizione E' un numero. Esistono
+ * perche' su un sistema con codifiche a stato variabile non lo sarebbe, e
+ * perche' <cstdio> della libstdc++ le dichiara. ⚠️ Ritornano 0/-1, non la
+ * posizione: chi le confonde con ftell legge sempre "inizio del file".
+ * ============================================================================= */
+int fgetpos(FILE *f, fpos_t *pos)
+{
+    long p;
+
+    if (f == NULL || pos == NULL) { errno = EINVAL; return -1; }
+
+    p = ftell(f);
+    if (p < 0) return -1;
+
+    *pos = (fpos_t)p;
+    return 0;
+}
+
+int fsetpos(FILE *f, const fpos_t *pos)
+{
+    if (f == NULL || pos == NULL) { errno = EINVAL; return -1; }
+    return fseek(f, (long)*pos, 0 /* SEEK_SET */);
+}
+
+/* =============================================================================
+ * setbuf, setvbuf — ⚠️ CI SONO MA NON CAMBIANO NIENTE
+ *
+ * La politica di bufferizzazione di EX-OS e' decisa e documentata piu'
+ * sopra (4 KB sui file, svuotamento a fine chiamata su stdout/stderr), e
+ * non e' regolabile: i buffer stanno DENTRO la struttura FILE, non
+ * allocati a parte, quindi non c'e' niente da sostituire.
+ *
+ * ⚠️ setvbuf RITORNA DIVERSO DA ZERO — «non l'ho fatto» — invece di
+ * fingere. Un programma che chiede _IONBF e riceve 0 andrebbe avanti
+ * convinto che ogni putc sia gia' arrivato a destinazione, e su un log di
+ * debug quella e' esattamente la differenza fra vedere l'ultima riga prima
+ * di un crash e non vederla.
+ *
+ * L'unico caso che si accetta e' la richiesta che gia' descrive cio' che
+ * facciamo: _IOFBF con dimensione uguale alla nostra. Dire di no a quella
+ * sarebbe rifiutare di aver fatto cio' che si e' fatto.
+ * ============================================================================= */
+int setvbuf(FILE *f, char *buf, int modo, size_t dim)
+{
+    (void)buf;
+
+    if (f == NULL) { errno = EINVAL; return -1; }
+
+    if (modo == 0 /* _IOFBF */ && dim == FILE_BUF_SIZE) return 0;
+
+    errno = ENOSYS;
+    return -1;
+}
+
+/* ⚠️ Non ritorna niente per definizione, quindi NON PUO' dire che non ha
+ * funzionato. E' il motivo per cui lo standard stesso raccomanda setvbuf,
+ * ed e' il motivo per cui qui non fa proprio niente invece di provarci. */
+void setbuf(FILE *f, char *buf)
+{
+    (void)f;
+    (void)buf;
 }
 
 /* =============================================================================
@@ -2024,6 +2289,13 @@ int scanf(const char *fmt, ...)
     return n;
 }
 
+/* scanf con la lista di argomenti gia' pronta: e' vfscanf su stdin, e c'e'
+ * perche' <cstdio> la dichiara. */
+int vscanf(const char *fmt, __builtin_va_list args)
+{
+    return vfscanf(stdin, fmt, args);
+}
+
 int sscanf(const char *s, const char *fmt, ...)
 {
     __builtin_va_list args;
@@ -2106,6 +2378,51 @@ void _exit(int code)
     for (;;) {}
 }
 
+/* Lo stesso, con il nome del C99. */
+void _Exit(int code)
+{
+    _syscall1(SYS_EXIT, (uint32_t)code);
+    for (;;) {}
+}
+
+/* =============================================================================
+ * quick_exit, at_quick_exit — la seconda lista
+ *
+ * ⚠️ LA LISTA E' SEPARATA DA QUELLA DI atexit, e deve restarlo: sono due
+ * insiemi di funzioni con due scopi diversi. Chi si registra con atexit
+ * conta di poter scrivere su un file; chi si registra qui sa che i flussi
+ * NON verranno svuotati e deve limitarsi a cio' che si puo' fare in
+ * fretta. Fonderle vorrebbe dire chiamare gli handler di atexit senza il
+ * fflush che si aspettano.
+ * ============================================================================= */
+#define QUICK_EXIT_MAX 32
+static void (*g_quick_exit[QUICK_EXIT_MAX])(void);
+static int    g_quick_exit_n = 0;
+
+int at_quick_exit(void (*fn)(void))
+{
+    if (fn == NULL || g_quick_exit_n >= QUICK_EXIT_MAX) return -1;
+    g_quick_exit[g_quick_exit_n++] = fn;
+    return 0;
+}
+
+void quick_exit(int code)
+{
+    /* All'indietro come atexit, e con la stessa guardia contro un handler
+     * che richiami quick_exit. */
+    static int dentro = 0;
+
+    if (!dentro) {
+        dentro = 1;
+        while (g_quick_exit_n > 0) g_quick_exit[--g_quick_exit_n]();
+    }
+
+    /* ⚠️ NIENTE fflush: e' la differenza con exit(), ed e' il punto della
+     * funzione. Un file aperto in scrittura resta monco, e chi chiama
+     * quick_exit lo sa. */
+    _Exit(code);
+}
+
 void abort(void)
 {
     /* Causa un fault intenzionale */
@@ -2144,6 +2461,14 @@ void abort(void)
  * ripetuta in coda a ogni blocco) per risalire al precedente — stessa
  * memoria, piu' modi di sbagliare.
  *
+ * E DALLA 0.157 LA MEMORIA TORNA ANCHE AL KERNEL. Fino ad allora free()
+ * non chiamava mai sbrk con un incremento negativo: un blocco liberato
+ * tornava disponibile per il processo ma non per il sistema, e un
+ * programma che alloca a picchi teneva il picco massimo fino alla propria
+ * uscita. Ora la coda dello heap si restituisce — solo la coda, perche'
+ * sbrk sposta un confine e non sa bucare il mezzo. Vedi
+ * heap_restituisci().
+ *
  * IL PREZZO, dichiarato: l'intestazione e' di 16 byte per blocco, e la
  * ricerca e' lineare. Su un compilatore che alloca centinaia di migliaia
  * di oggetti piccoli l'intestazione pesa e la ricerca rallenta; il rimedio
@@ -2154,6 +2479,17 @@ void abort(void)
 #define HEAP_ALLINEA    8u
 #define HEAP_MIN_SBRK   (64u * 1024u)   /* si chiede memoria a blocchi grossi */
 #define HEAP_MIN_SPEZZA 32u             /* avanzo sotto il quale non si spezza */
+#define HEAP_PAGINA     4096u           /* la pagina del bersaglio */
+/* La coda libera che NON si restituisce mai, e la soglia sotto la quale
+ * non vale la pena di una syscall. Vedi heap_restituisci(). */
+#define HEAP_TRATTIENI  (64u * 1024u)
+#define HEAP_MIN_RESO   (64u * 1024u)
+
+/* sbrk() e' definita molto piu' in basso, insieme agli altri involucri
+ * delle syscall, ma l'allocatore la usa: qui serve la dichiarazione, o il
+ * compilatore ne inventa una che ritorna int e il puntatore arriva
+ * troncato. */
+void *sbrk(int incr);
 
 typedef struct Blocco {
     struct Blocco *prec;    /* vicino precedente in ordine di INDIRIZZO */
@@ -2183,6 +2519,23 @@ static Blocco *heap_estendi(size_t utile)
     int32_t base;
 
     if (quanto < HEAP_MIN_SBRK) quanto = HEAP_MIN_SBRK;
+
+    /* ⚠️ SI CHIEDE A PAGINE INTERE, e prima non si faceva.
+     *
+     * Il kernel non sposta il confine dei byte chiesti: sposta di PAGINE
+     * INTERE (sys_sbrk fa ALIGN_UP). Chiedendo 2 MB + 16 byte, il confine
+     * saliva di 2 MB + 4096 e la libc si segnava un blocco di 2 MB + 16:
+     * gli ultimi 4080 byte esistevano, erano del processo, ed erano
+     * INVISIBILI all'allocatore. Uno spreco fino a una pagina per ogni
+     * estensione — che nessuno notava, perche' un blocco che non e' in
+     * nessuna lista non fa danni, occupa e basta.
+     *
+     * Da quando c'e' heap_restituisci() il difetto smette di essere solo
+     * uno spreco e diventa un impedimento: il controllo «questo blocco e'
+     * davvero in cima al break?» non poteva mai riuscire, perche' fra la
+     * fine del blocco e il confine c'era sempre quel residuo. La memoria
+     * non tornava indietro mai, e senza dire perche'. */
+    quanto = (quanto + (HEAP_PAGINA - 1u)) & ~(size_t)(HEAP_PAGINA - 1u);
 
     /* sbrk(0) ritorna la cima attuale; sbrk(n) la sposta e ritorna la
      * VECCHIA cima, che e' l'inizio della memoria appena ottenuta. */
@@ -2283,6 +2636,71 @@ static void heap_fondi_con_succ(Blocco *b)
     else         heap_ultimo = b;
 }
 
+/* =============================================================================
+ * heap_restituisci — la memoria torna al kernel
+ *
+ * PERCHE' ESISTE. Fino ad agosto 2026 free() non chiamava MAI sbrk con un
+ * incremento negativo: la memoria tornava disponibile per il processo, ma
+ * non per il sistema. Un programma che allocasse a picchi — cioe'
+ * qualunque compilatore: un albero di sintassi per funzione, buttato e
+ * ricostruito — teneva il picco massimo fino alla propria uscita. Con un
+ * cc1 e un `as` che girano di seguito sulla stessa macchina, il primo
+ * affamava il secondo pur avendo gia' finito.
+ *
+ * COME. Solo la CODA dello heap si puo' restituire, perche' sbrk sposta un
+ * confine e non ha un modo di bucare il mezzo. Quindi: se l'ultimo blocco
+ * della lista e' libero e abbastanza grande, se ne restituisce l'eccesso.
+ *
+ * ⚠️ TRE CONDIZIONI, E OGNUNA EVITA UN GUASTO DIVERSO:
+ *
+ *   1. SI ARROTONDA A PAGINE INTERE. Il kernel libera pagine, non byte, e
+ *      un residuo restituirebbe la pagina che contiene il nuovo confine —
+ *      cioe' byte ancora vivi. Dalla 0.157 il kernel arrotonda per difetto
+ *      per conto suo, ma chi chiama non deve appoggiarsi a quello.
+ *
+ *   2. SI CONTROLLA CHE IL BLOCCO SIA DAVVERO IN CIMA AL break, con
+ *      sbrk(0). heap_ultimo e' l'ultimo blocco DELLA NOSTRA LISTA, che non
+ *      e' la stessa cosa: fra la sua fine e il confine puo' esserci roba
+ *      di qualcun altro (una mmap, per esempio) e restituirla sarebbe
+ *      buttare via memoria che non ci appartiene.
+ *
+ *   3. SI TIENE SEMPRE UNA CODA (HEAP_TRATTIENI) e non si scende sotto
+ *      HEAP_MIN_RESO. Senza, un ciclo che alloca e libera la stessa
+ *      dimensione farebbe due syscall a giro: restituire e richiedere,
+ *      all'infinito. E' lo stesso motivo per cui glibc ha M_TRIM_THRESHOLD.
+ *
+ * ⚠️ IL CONTROLLO DI TAGLIA VIENE PRIMA DI sbrk(0), ed e' voluto: e'
+ * aritmetica pura, quindi la free() normale — quella che non restituisce
+ * niente — non paga nessuna syscall. Rimettere il conto dopo la sbrk(0)
+ * annullerebbe il guadagno che l'allocatore nuovo era andato a prendere.
+ * ============================================================================= */
+static void heap_restituisci(void)
+{
+    Blocco *b = heap_ultimo;
+    char   *cima;
+    size_t  totale, quanto;
+
+    if (b == NULL || !b->libero) return;
+
+    totale = BLOCCO_HDR + b->dim;       /* i byte che il blocco occupa */
+    if (totale <= HEAP_TRATTIENI) return;
+
+    quanto  = totale - HEAP_TRATTIENI;
+    quanto &= ~(size_t)(HEAP_PAGINA - 1u);
+    if (quanto < HEAP_MIN_RESO) return;
+
+    cima = (char *)sbrk(0);
+    if (cima == (char *)-1) return;
+    if ((char *)b + totale != cima) return;
+
+    if (sbrk(-(int)quanto) == (void *)-1) return;
+
+    /* L'intestazione resta dov'e' — sta SOTTO la parte restituita — e il
+     * blocco continua a esistere, solo piu' corto. Sfilarlo dalla lista
+     * avrebbe voluto dire scrivere in `b` dopo averlo smappato. */
+    b->dim -= quanto;
+}
+
 void free(void *ptr)
 {
     Blocco *b;
@@ -2300,6 +2718,12 @@ void free(void *ptr)
     b->libero = 1;
     heap_fondi_con_succ(b);
     if (b->prec) heap_fondi_con_succ(b->prec);
+
+    /* Si prova a restituire solo se questa free ha toccato la CODA: negli
+     * altri casi non c'e' niente da restituire e il controllo sarebbe
+     * lavoro sprecato a ogni free. Dopo le fusioni il blocco in coda puo'
+     * essere `b` oppure il suo predecessore, se b ci si e' fuso dentro. */
+    if (heap_ultimo != NULL && heap_ultimo->libero) heap_restituisci();
 }
 
 void *calloc(size_t nmemb, size_t size)
@@ -2358,6 +2782,133 @@ void *realloc(void *ptr, size_t size)
     memcpy(nuovo, ptr, copia);
     free(ptr);
     return nuovo;
+}
+
+/* =============================================================================
+ * ALLOCAZIONE ALLINEATA — memalign, aligned_alloc, posix_memalign
+ *
+ * CHI LE CHIEDE: la libstdc++. Dal C++17 un tipo con allineamento
+ * superiore a quello naturale non passa piu' per `operator new(size_t)`
+ * ma per `operator new(size_t, align_val_t)`, e l'implementazione di
+ * quella nella libreria standard e' un involucro attorno a memalign()
+ * (libsupc++/new_opa.cc). Se memalign non c'e', la libstdc++ ne mette una
+ * che ignora l'allineamento richiesto.
+ *
+ * COME SI FA CON QUESTO HEAP, dove i blocchi sono allineati a otto e
+ * l'intestazione ne occupa sedici. Il trucco e' UNO SOLO: si chiede a
+ * malloc un blocco abbastanza grande da contenere il risultato ovunque
+ * cada l'allineamento, poi lo si SPEZZA IN DUE mettendo una vera
+ * intestazione subito prima dell'indirizzo allineato.
+ *
+ *   prima:   [hdr b][........... dati grezzi ...........]
+ *   dopo:    [hdr b][avanzo][hdr n][ dati allineati ....]
+ *              ^libero              ^ e' questo che si restituisce
+ *
+ * ⚠️ LA CONSEGUENZA CHE CONTA: il puntatore restituito ha davanti a se'
+ * un'intestazione normale, agganciata alla lista in ordine di indirizzo
+ * come tutte. Quindi free() lo tratta come un blocco qualunque, e la
+ * fusione con i vicini funziona senza sapere nulla di tutto questo. Non
+ * serve una `aligned_free`, e chi passa il puntatore a una free() ignara
+ * — per esempio codice di terzi — non rompe niente.
+ *
+ * La testa resta come blocco LIBERO invece di essere sprecata: su una
+ * richiesta con allineamento 4096 sono fino a quattro KB che tornano
+ * disponibili invece di restare in ostaggio del blocco allineato.
+ * ============================================================================= */
+
+void *memalign(size_t allineamento, size_t size)
+{
+    Blocco   *b, *nuovo;
+    void     *grezzo;
+    uintptr_t indirizzo;
+    size_t    utile, offset, dim_orig;
+
+    /* Deve essere una potenza di due: e' cio' che dicono sia POSIX sia il
+     * C11, ed e' anche l'unica ipotesi sotto cui la maschera qui sotto
+     * ha senso. */
+    if (allineamento == 0 || (allineamento & (allineamento - 1u)) != 0) {
+        errno = EINVAL;
+        return NULL;
+    }
+
+    /* Fino a otto byte non c'e' niente da fare: malloc gia' li garantisce. */
+    if (allineamento <= HEAP_ALLINEA) return malloc(size);
+
+    if (size == 0) size = 1;
+    utile = heap_allinea(size);
+    if (utile < size) return NULL;              /* trabocco */
+
+    /* Il margine e' `allineamento` (quanto al piu' si deve avanzare) piu'
+     * un'intestazione (quella che va messa davanti al risultato). */
+    if (utile + allineamento + BLOCCO_HDR < utile) return NULL;
+    grezzo = malloc(utile + allineamento + BLOCCO_HDR);
+    if (grezzo == NULL) return NULL;
+
+    if (((uintptr_t)grezzo & (allineamento - 1u)) == 0) {
+        /* Gia' allineato per caso: succede spesso con allineamenti di 16
+         * su un heap allineato a 8. Non si spezza niente. */
+        return grezzo;
+    }
+
+    b        = DATI_BLOCCO(grezzo);
+    dim_orig = b->dim;
+
+    /* Il primo indirizzo allineato che lasci spazio a un'intestazione. */
+    indirizzo = ((uintptr_t)grezzo + BLOCCO_HDR + allineamento - 1u)
+                & ~(uintptr_t)(allineamento - 1u);
+
+    nuovo  = (Blocco *)(indirizzo - BLOCCO_HDR);
+    offset = (size_t)((char *)nuovo - (char *)grezzo);
+
+    nuovo->dim    = dim_orig - offset - BLOCCO_HDR;
+    nuovo->libero = 0;
+    nuovo->prec   = b;
+    nuovo->succ   = b->succ;
+
+    if (b->succ) b->succ->prec = nuovo;
+    else         heap_ultimo = nuovo;
+
+    b->succ   = nuovo;
+    b->dim    = offset;
+    b->libero = 1;
+    if (b->prec) heap_fondi_con_succ(b->prec);
+
+    /* La coda in eccesso torna all'heap, se ne vale la pena. */
+    heap_spezza(nuovo, utile);
+
+    return BLOCCO_DATI(nuovo);
+}
+
+/* Il C11 pretende che `size` sia un multiplo di `allineamento`. Qui non si
+ * fa rispettare: rifiutare renderebbe la funzione inutilizzabile come
+ * ripiego di memalign, che e' l'uso che ne fa la libstdc++, e concedere in
+ * piu' non rompe nessun programma corretto. */
+void *aligned_alloc(size_t allineamento, size_t size)
+{
+    return memalign(allineamento, size);
+}
+
+/* ⚠️ NON IMPOSTA errno E NON RITORNA -1: posix_memalign e' l'eccezione
+ * che RITORNA il codice di errore. Trattarla come le altre e' l'errore
+ * classico su questa funzione. */
+int posix_memalign(void **risultato, size_t allineamento, size_t size)
+{
+    void *p;
+
+    if (risultato == NULL) return EINVAL;
+
+    /* In piu' rispetto a memalign: POSIX chiede che l'allineamento sia
+     * anche un multiplo di sizeof(void *). */
+    if (allineamento < sizeof(void *) ||
+        (allineamento & (allineamento - 1u)) != 0) {
+        return EINVAL;
+    }
+
+    p = memalign(allineamento, size);
+    if (p == NULL) return ENOMEM;
+
+    *risultato = p;
+    return 0;
 }
 
 /* =============================================================================
@@ -2626,6 +3177,24 @@ int spawn(const char *path, char *const argv[])
     return spawn_ex(path, argv, environ, NULL, 0);
 }
 
+/* =============================================================================
+ * pipe — le tre regole stanno in lib/include/libc.h, qui c'e' la chiamata.
+ *
+ * ⚠️ IL KERNEL SCRIVE I DUE NUMERI NELL'ARRAY, non li ritorna: il valore
+ * di ritorno e' solo riuscito/fallito. Chi si aspetta il descrittore come
+ * da open() legge zero e crede di aver ricevuto stdin.
+ * ============================================================================= */
+int pipe(int fd[2])
+{
+    int32_t r;
+
+    if (fd == NULL) { errno = EFAULT; return -1; }
+
+    r = _syscall1(SYS_PIPE, (uint32_t)(uintptr_t)fd);
+    if (r < 0) { errno = -r; return -1; }
+    return 0;
+}
+
 int spawn_ex(const char *path, char *const argv[], char *const envp[],
              const SpawnRedir *redir, int n_redir)
 {
@@ -2646,11 +3215,22 @@ int spawn_ex(const char *path, char *const argv[], char *const envp[],
     for (i = 0; i < n_redir; i++) {
         size_t j;
 
-        ex.azioni[i].fd    = (unsigned)redir[i].fd;
-        ex.azioni[i].flags = (unsigned)redir[i].flags;
-        for (j = 0; j + 1 < SPAWN_RED_PATH_MAX && redir[i].percorso[j]; j++)
-            ex.azioni[i].percorso[j] = redir[i].percorso[j];
-        ex.azioni[i].percorso[j] = '\0';
+        ex.azioni[i].fd       = (unsigned)redir[i].fd;
+        ex.azioni[i].flags    = (unsigned)redir[i].flags;
+        ex.azioni[i].fd_padre = redir[i].fd_padre;
+
+        /* `percorso` NULL vuol dire «passa il mio descrittore», ed e' il
+         * modo in cui si costruisce una pipe fra due processi. Vedi il
+         * commento su SpawnRedir in lib/include/libc.h. */
+        if (redir[i].percorso == NULL) {
+            ex.azioni[i].tipo        = SPAWN_AZ_FD;
+            ex.azioni[i].percorso[0] = '\0';
+        } else {
+            ex.azioni[i].tipo = SPAWN_AZ_FILE;
+            for (j = 0; j + 1 < SPAWN_RED_PATH_MAX && redir[i].percorso[j]; j++)
+                ex.azioni[i].percorso[j] = redir[i].percorso[j];
+            ex.azioni[i].percorso[j] = '\0';
+        }
         ex.n_azioni++;
     }
 
@@ -2955,50 +3535,39 @@ int isatty(int fd)
 }
 
 /* =============================================================================
- * rename — ⚠️ NON e' atomica, e va saputo
+ * rename — cambia il NOME, e dalla 0.161 NON copia piu' i dati
  *
- * Il VFS non ha un'operazione di rinomina: servirebbe nei driver (ext2 e
- * FAT), dove significa aggiungere una voce di directory e toglierne
- * un'altra senza lasciare il file irraggiungibile in mezzo. Finche' non
- * c'e', qui si copia e si cancella.
+ * ⚠️ FINO ALLA 0.160 QUESTA FUNZIONE ERA UNA COPIA SEGUITA DA UNA
+ * CANCELLAZIONE, e portava il nome di un'altra cosa. Le conseguenze non
+ * erano teoriche:
+ *   - costava quanto il file, mentre una rinomina vera non muove niente;
+ *   - RIALLOCAVA i blocchi, quindi un file contiguo poteva tornare
+ *     frammentato — ed e' proprio cio' che rendeva impossibile a
+ *     `install` verificare la mappa dei settori prima di dare al kernel
+ *     il suo nome definitivo.
  *
- * Le due differenze da tenere presenti: costa quanto il file (una rename
- * vera non muove dati) e non e' indivisibile — un'interruzione a meta'
- * lascia entrambi i nomi. Per i file temporanei di un compilatore va
- * bene; per rinominare un archivio da mezzo giga no.
+ * Ora e' la syscall SYS_RENAME, che riscrive la voce di directory e basta.
+ * ⚠️ I BLOCCHI NON SI SPOSTANO: e' la garanzia su cui si regge
+ * l'installatore.
+ *
+ * ⚠️ DUE DIFFERENZE DA POSIX, dichiarate:
+ *   - solo NELLA STESSA DIRECTORY e nello stesso montaggio, ENOSYS per il
+ *     resto. Attraversare un montaggio non e' una rinomina: e' una copia
+ *     piu' una cancellazione, cioe' un'altra operazione con un altro
+ *     costo e un altro modo di fallire;
+ *   - NON sostituisce la destinazione: EEXIST. Sostituire vuol dire
+ *     cancellare un file che il chiamante non ha nominato come vittima.
+ *     Chi vuole sostituire cancella prima, e la perdita e' una scelta.
  * ============================================================================= */
 int rename(const char *da, const char *a)
 {
-    int   fs, fd, n;
-    char *buf;
+    int32_t r;
 
     if (da == NULL || a == NULL) { errno = EINVAL; return -1; }
 
-    fs = open(da, O_RDONLY);
-    if (fs < 0) return -1;
-
-    fd = open(a, O_WRONLY | O_CREAT | O_TRUNC);
-    if (fd < 0) { close(fs); return -1; }
-
-    buf = (char *)malloc(4096);
-    if (buf == NULL) { close(fs); close(fd); errno = ENOMEM; return -1; }
-
-    while ((n = (int)read(fs, buf, 4096)) > 0) {
-        int scritti = 0;
-        while (scritti < n) {
-            int w = (int)write(fd, buf + scritti, (unsigned)(n - scritti));
-            if (w <= 0) { free(buf); close(fs); close(fd); errno = EIO; return -1; }
-            scritti += w;
-        }
-    }
-
-    free(buf);
-    close(fs);
-    close(fd);
-
-    if (n < 0) { errno = EIO; return -1; }
-
-    return unlink(da);
+    r = _syscall2(SYS_RENAME, (uint32_t)(uintptr_t)da, (uint32_t)(uintptr_t)a);
+    if (r < 0) { errno = -r; return -1; }
+    return 0;
 }
 
 /* =============================================================================
@@ -3088,6 +3657,62 @@ char *setlocale(int categoria, const char *nome)
 }
 
 /* =============================================================================
+ * localeconv — le convenzioni della locale "C", e sono quasi tutte vuote
+ *
+ * ⚠️ I CAMPI NON SPECIFICATI VALGONO 127 (CHAR_MAX) E NON ZERO. Non e' un
+ * dettaglio: 127 significa «questa locale non lo dice», zero significa
+ * «zero cifre». Un programma che formatta una somma di denaro leggendo
+ * frac_digits stamperebbe, con lo zero, importi senza decimali credendo
+ * che sia la regola locale. E' l'errore classico di chi riempie questa
+ * struttura a memoria.
+ *
+ * La struttura e' `static` e non `const` solo perche' localeconv() deve
+ * ritornare un `struct lconv *` non costante, come dice lo standard. Non
+ * va modificata da nessuno.
+ * ============================================================================= */
+struct lconv *localeconv(void)
+{
+    static char vuota[] = "";
+    static char punto[] = ".";
+    static struct lconv c_locale;
+    static int  pronta = 0;
+
+    if (!pronta) {
+        /* L'unico campo che la locale "C" specifica davvero. */
+        c_locale.decimal_point     = punto;
+
+        c_locale.thousands_sep     = vuota;
+        c_locale.grouping          = vuota;
+        c_locale.int_curr_symbol   = vuota;
+        c_locale.currency_symbol   = vuota;
+        c_locale.mon_decimal_point = vuota;
+        c_locale.mon_thousands_sep = vuota;
+        c_locale.mon_grouping      = vuota;
+        c_locale.positive_sign     = vuota;
+        c_locale.negative_sign     = vuota;
+
+        c_locale.int_frac_digits    = 127;      /* CHAR_MAX: non specificato */
+        c_locale.frac_digits        = 127;
+        c_locale.p_cs_precedes      = 127;
+        c_locale.p_sep_by_space     = 127;
+        c_locale.n_cs_precedes      = 127;
+        c_locale.n_sep_by_space     = 127;
+        c_locale.p_sign_posn        = 127;
+        c_locale.n_sign_posn        = 127;
+        c_locale.int_p_cs_precedes  = 127;
+        c_locale.int_p_sep_by_space = 127;
+        c_locale.int_n_cs_precedes  = 127;
+        c_locale.int_n_sep_by_space = 127;
+        c_locale.int_p_sign_posn    = 127;
+        c_locale.int_n_sign_posn    = 127;
+
+        pronta = 1;
+    }
+
+    return &c_locale;
+}
+
+/* =============================================================================
  * Interrogazioni sul sistema
  * ============================================================================= */
 long sysconf(int nome)
@@ -3152,6 +3777,103 @@ clock_t clock(void)
 }
 
 /* =============================================================================
+ * getrusage — ⚠️ RIPORTA UN LIMITE SUPERIORE, NON UNA MISURA
+ *
+ * EX-OS non tiene contabilita' per processo: lo scheduler assegna quanti e
+ * non misura consumi. Quindi `ru_utime` riporta il tempo TRASCORSO
+ * dall'avvio del sistema — che e' certamente >= al tempo di CPU di questo
+ * processo, quindi non e' un numero inventato — e tutto il resto vale zero.
+ *
+ * ⚠️ CHI CI COSTRUISCE SOPRA UN PROFILO OTTERRA' NUMERI PRIVI DI
+ * SIGNIFICATO. E' il caso di `gcc -ftime-report`, che stampera' per ogni
+ * passaggio lo stesso tempo. Si dichiara comunque perche' senza di lei GCC
+ * non si collega, e perche' zero secco su tutto sarebbe altrettanto falso
+ * e meno utile: almeno cosi' due chiamate successive danno numeri che
+ * crescono, e una differenza fra due istanti resta leggibile.
+ *
+ * Il giorno che servisse davvero, la contabilita' va nello scheduler
+ * (kernel/sched/sched.c): un contatore di tick per processo aggiornato a
+ * ogni cambio di contesto, e una syscall per leggerlo.
+ * ============================================================================= */
+int getrusage(int chi, struct rusage *uso)
+{
+    unsigned int ms;
+
+    if (uso == NULL) { errno = EFAULT; return -1; }
+    if (chi != RUSAGE_SELF && chi != RUSAGE_CHILDREN) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    memset(uso, 0, sizeof(*uso));
+
+    /* Per i figli non si sa proprio niente: zero e' l'unica risposta
+     * onesta, e non e' un ripiego — RUSAGE_CHILDREN chiede i consumi dei
+     * figli TERMINATI E RACCOLTI, che qui nessuno registra. */
+    if (chi == RUSAGE_CHILDREN) return 0;
+
+    ms = uptime_ms();
+    uso->ru_utime.tv_sec  = (long)(ms / 1000u);
+    uso->ru_utime.tv_usec = (long)((ms % 1000u) * 1000u);
+    return 0;
+}
+
+int getpagesize(void)
+{
+    return 4096;
+}
+
+/* =============================================================================
+ * mmap, munmap
+ *
+ * ⚠️ SOLO MEMORIA ANONIMA, e il rifiuto e' esplicito. EX-OS non sa mappare
+ * un file: servirebbero le pagine sporche e il momento in cui riscriverle,
+ * cioe' un pezzo di gestore della memoria che non c'e'. Una mmap che
+ * fingesse di mappare un file consegnando zeri darebbe un programma che
+ * legge dati sbagliati senza che niente lo segnali.
+ *
+ * ⚠️ SU FALLIMENTO RITORNA MAP_FAILED, cioe' (void *)-1, NON NULL: e' la
+ * convenzione di POSIX ed e' il modo classico di sbagliare a usarla.
+ * ============================================================================= */
+void *mmap(void *addr, size_t lung, int prot, int flags, int fd, long off)
+{
+    MmapParams p;
+    int32_t    r;
+
+    if (lung == 0) { errno = EINVAL; return MAP_FAILED; }
+
+    if (fd != -1 || !(flags & MAP_ANONYMOUS)) {
+        /* ENODEV e non ENOSYS: la syscall c'e', e' il TIPO di mappatura
+         * che non e' supportato — ed e' quello che dice POSIX per una
+         * mmap su un oggetto che non si puo' mappare. */
+        errno = ENODEV;
+        return MAP_FAILED;
+    }
+
+    p.addr   = (uint32_t)(uintptr_t)addr;
+    p.length = (uint32_t)lung;
+    p.prot   = (uint32_t)prot;
+    p.flags  = (uint32_t)flags;
+    p.fd     = -1;
+    p.offset = (uint32_t)off;
+
+    r = _syscall1(SYS_MMAP, (uint32_t)(uintptr_t)&p);
+    if (r <= 0) {
+        errno = (r < 0) ? -r : ENOMEM;
+        return MAP_FAILED;
+    }
+    return (void *)(uintptr_t)r;
+}
+
+int munmap(void *addr, size_t lung)
+{
+    int32_t r = _syscall2(SYS_MUNMAP, (uint32_t)(uintptr_t)addr,
+                          (uint32_t)lung);
+    if (r < 0) { errno = -r; return -1; }
+    return 0;
+}
+
+/* =============================================================================
  * _libc_start — chiamata da lib/start.S dopo aver letto argc/argv
  *               dallo stack iniziale costruito da sys_spawn.
  *
@@ -3182,17 +3904,35 @@ void sched_yield(void)
     _syscall1(SYS_SCHED_YIELD, 0);
 }
 
-void usleep(unsigned int us)
+/* ⚠️ Ritorna int e non void: e' quello che dice POSIX, e chi controlla il
+ * valore non deve scoprire qui che non c'e'. Su EX-OS non fallisce mai —
+ * non ci sono segnali che possano interromperla. */
+int usleep(unsigned int us)
 {
     /* Converti microsecondi in millisecondi (arrotondando) */
     uint32_t ms = (us + 999) / 1000;
     if (ms == 0) ms = 1;
     _syscall1(SYS_SLEEP, ms);
+    return 0;
 }
 
-void sleep(unsigned int sec)
+/* =============================================================================
+ * ⚠️ RITORNA SEMPRE 0, ED E' LA RISPOSTA VERA
+ *
+ * POSIX dice che sleep() ritorna i secondi che RESTAVANO da dormire quando
+ * un segnale l'ha interrotta. Su EX-OS non esistono segnali che possano
+ * interrompere una dormita, quindi la dormita e' sempre completa e il
+ * residuo e' sempre zero.
+ *
+ * La firma dev'essere quella giusta comunque, perche' il modo canonico di
+ * usare questa funzione e' `while ((secs = sleep(secs))) {}` — che con un
+ * ritorno void non compila nemmeno. E' cosi' che si e' scoperto: la
+ * libstdc++ lo scrive in src/c++11/thread.cc.
+ * ============================================================================= */
+unsigned int sleep(unsigned int sec)
 {
     _syscall1(SYS_SLEEP, sec * 1000);
+    return 0;
 }
 
 /* Millisecondi dall'avvio. Avanza a scatti di 10 (PIT a 100Hz) e torna a
@@ -3245,8 +3985,46 @@ int mountinfo(MountInfo *buf, unsigned int max, unsigned int start)
 
 int bootinstall(const char *punto, BootInstallInfo *info)
 {
-    return (int)_syscall3(SYS_BOOTINSTALL, (uint32_t)punto, (uint32_t)info,
-                          (uint32_t)sizeof(BootInstallInfo));
+    return (int)_syscall5(SYS_BOOTINSTALL, (uint32_t)punto, (uint32_t)info,
+                          (uint32_t)sizeof(BootInstallInfo), 0, 0);
+}
+
+/* =============================================================================
+ * bootverify — «questi due file sarebbero mappabili?»
+ *
+ * ⚠️ NON SCRIVE NIENTE: ne' l'MBR ne' il settore di avvio. Calcola la mappa
+ * dei settori dei due file indicati e la riporta in `info`, esattamente
+ * come farebbe bootinstall — ma il disco resta com'era.
+ *
+ * E' cio' che permette a `install` di chiedere PRIMA se il kernel appena
+ * copiato sta in un solo tratto (su FAT) o in pochi (su ext2), mentre
+ * quello vecchio e' ancora al suo posto e il sistema installato funziona
+ * ancora. Senza, l'unico modo di saperlo era provarci dopo aver
+ * cancellato.
+ *
+ * `nome_s2` e `nome_k` sono i NOMI SENZA DIRECTORY e in minuscolo — la
+ * directory e' sempre /boot — oppure NULL per "stage2.bin" e "kernel.bin".
+ * ============================================================================= */
+int bootverify(const char *punto, const char *nome_s2, const char *nome_k,
+               BootInstallInfo *info)
+{
+    /* I due nomi viaggiano come stringhe CONSECUTIVE in un solo buffer:
+     * la syscall legge la prima, salta il terminatore e legge la seconda.
+     * Un registro solo invece di due, e nessun numero di syscall nuovo. */
+    char nomi[128];
+    uint32_t i = 0, j;
+
+    if (nome_s2 == NULL) nome_s2 = "stage2.bin";
+    if (nome_k  == NULL) nome_k  = "kernel.bin";
+
+    for (j = 0; nome_s2[j] && i < sizeof(nomi) - 2; j++) nomi[i++] = nome_s2[j];
+    nomi[i++] = '\0';
+    for (j = 0; nome_k[j] && i < sizeof(nomi) - 1; j++) nomi[i++] = nome_k[j];
+    nomi[i] = '\0';
+
+    return (int)_syscall5(SYS_BOOTINSTALL, (uint32_t)punto, (uint32_t)info,
+                          (uint32_t)sizeof(BootInstallInfo),
+                          1u /* BOOTINST_VERIFICA */, (uint32_t)(uintptr_t)nomi);
 }
 
 int partwrite(unsigned int disco, PartTabella *tab)
@@ -3273,10 +4051,10 @@ int truncate(const char *path, unsigned int size)
 /* =============================================================================
  * IPC — wrapper userspace, vedi libc.h per la documentazione API.
  * ============================================================================= */
-int ipc_send(unsigned int dest_pid, unsigned int type,
+int ipc_send(unsigned int dest_pid, unsigned int tipo,
               const void *data, unsigned int len)
 {
-    return (int)_syscall4(SYS_IPC_SEND, dest_pid, type,
+    return (int)_syscall4(SYS_IPC_SEND, dest_pid, tipo,
                            (uint32_t)data, len);
 }
 
@@ -3415,6 +4193,57 @@ struct tm *gmtime(const time_t *t)
 struct tm *localtime(const time_t *t)
 {
     return gmtime(t);   /* nessun fuso orario: vedi il commento in testa */
+}
+
+/* =============================================================================
+ * mktime — l'inversa di gmtime
+ *
+ * ⚠️ NORMALIZZA LA STRUTTURA CHE RICEVE, e non e' un effetto collaterale:
+ * e' meta' del suo lavoro. Chi vuole «il primo del mese prossimo» scrive
+ * `tm.tm_mon += 1` e chiama mktime, che accetta un mese 12 e lo trasforma
+ * in gennaio dell'anno dopo. Da qui il fatto che il parametro NON e'
+ * const: i campi tornano indietro corretti, tm_wday e tm_yday compresi —
+ * quelli in ingresso vengono IGNORATI, come dice lo standard.
+ *
+ * ⚠️ NESSUN FUSO ORARIO: mktime interpreta i campi come UTC, perche' su
+ * EX-OS localtime e gmtime sono la stessa funzione (il sistema non sa in
+ * che fuso si trova). Su un sistema con i fusi questa e' la differenza fra
+ * mktime e timegm, e qui non c'e'.
+ * ============================================================================= */
+time_t mktime(struct tm *tm)
+{
+    long anno, mese, giorni, secondi;
+
+    if (tm == NULL) return (time_t)-1;
+
+    /* I mesi si normalizzano per primi, perche' da quanti giorni ha un
+     * mese dipende tutto il resto. La divisione dev'essere EUCLIDEA: con
+     * quella del C, un tm_mon negativo darebbe un anno sbagliato. */
+    anno = (long)tm->tm_year + 1900L;
+    mese = (long)tm->tm_mon;
+    anno += mese / 12L;
+    mese %= 12L;
+    if (mese < 0) { mese += 12L; anno -= 1L; }
+
+    /* Giorno, ora, minuto e secondo possono essere fuori intervallo quanto
+     * vogliono: si sommano tutti in secondi e ci pensa la conversione
+     * inversa a rimetterli a posto. E' il motivo per cui `tm.tm_sec += 90`
+     * e' un modo legittimo di dire "novanta secondi dopo". */
+    giorni  = giorni_da_civile(anno, (unsigned)mese + 1u, 1u)
+              + (long)tm->tm_mday - 1L;
+    secondi = giorni * 86400L
+              + (long)tm->tm_hour * 3600L
+              + (long)tm->tm_min * 60L
+              + (long)tm->tm_sec;
+
+    /* La struttura torna indietro normalizzata: e' cio' per cui la si
+     * passa non-const. */
+    {
+        time_t      quando = (time_t)secondi;
+        struct tm  *rifatto = gmtime(&quando);
+        if (rifatto != NULL && rifatto != tm) *tm = *rifatto;
+        return quando;
+    }
 }
 
 /* asctime e ctime — la data in venticinque caratteri e una riga a capo.
@@ -3679,6 +4508,37 @@ int gettimeofday(struct timeval *tv, void *fuso)
      * non ha. */
     tv->tv_usec = (long)((uptime_ms() % 1000u) * 1000u);
     return 0;
+}
+
+/* La differenza fra due istanti. Su EX-OS time_t e' un intero di secondi e
+ * la sottrazione basterebbe: c'e' perche' lo standard non garantisce che
+ * time_t sia aritmetico, e chi scrive difftime scrive codice che vale
+ * anche altrove. */
+double difftime(time_t fine, time_t inizio)
+{
+    return (double)fine - (double)inizio;
+}
+
+/* ⚠️ RITORNA `base` SE HA FUNZIONATO E 0 SE NO — non e' la convenzione
+ * 0/-1 di tutto il resto, e' quella che lo standard da' a questa
+ * funzione. Confonderle significa leggere "riuscito" quando l'orologio non
+ * ha risposto.
+ *
+ * ⚠️ La risoluzione vera resta 10 ms, il tick del PIT: tv_nsec e' sempre
+ * un multiplo di 10 000 000. La struttura ha i nanosecondi perche' cosi'
+ * e' fatta, non perche' li sappiamo misurare. */
+int timespec_get(struct timespec *ts, int base)
+{
+    time_t adesso;
+
+    if (ts == NULL || base != TIME_UTC) return 0;
+
+    adesso = time(NULL);
+    if (adesso == (time_t)-1) return 0;     /* l'orologio non risponde */
+
+    ts->tv_sec  = (long)adesso;
+    ts->tv_nsec = (long)((uptime_ms() % 1000u) * 1000000u);
+    return base;
 }
 
 int console_switch(unsigned int n)
@@ -4084,7 +4944,12 @@ static void stat_da_grezzo(const Stat *g, struct stat *st)
     st->st_nlink = 1;
     st->st_uid   = 0;
     st->st_gid   = 0;
-    st->st_size  = g->st_size;
+    st->st_size  = (off_t)g->st_size;
+    /* ⚠️ 512 e non 4096: e' il SETTORE, che e' l'unita' vera di tutti i
+     * filesystem di EX-OS. Chi dimensiona un buffer su st_blksize deve
+     * ricevere un numero che corrisponde a come si legge davvero. */
+    st->st_blksize = 512;
+    st->st_blocks  = (blkcnt_t)((g->st_size + 511u) / 512u);
 
     if (EXOS_ATTR_DIR(g->st_attr))          st->st_mode = S_IFDIR | 0755u;
     else if (EXOS_ATTR_RDONLY(g->st_attr))  st->st_mode = S_IFREG | 0555u;
@@ -4147,7 +5012,9 @@ int fstat(int fd, struct stat *st)
     st->st_nlink = 1;
     st->st_uid   = 0;
     st->st_gid   = 0;
-    st->st_size  = (unsigned int)dim;
+    st->st_size  = (off_t)dim;
+    st->st_blksize = 512;
+    st->st_blocks  = (blkcnt_t)((dim + 511) / 512);
     st->st_atime = 0;
     st->st_mtime = 0;
     st->st_ctime = 0;
@@ -4240,6 +5107,15 @@ int isalpha(int c)  { return islower(c) || isupper(c); }
 int isalnum(int c)  { return isalpha(c) || isdigit(c); }
 int isspace(int c)  { return c == ' ' || (c >= '\t' && c <= '\r'); }
 int isprint(int c)  { return c >= 32 && c < 127; }
+
+/* isascii e toascii non sono del C standard — sono di POSIX, e da POSIX
+ * 2008 sono pure deprecate — ma il codice di terzi le chiama lo stesso:
+ * la printf di GMP le usa per decidere se un carattere si puo' stampare.
+ * Nella locale "C", l'unica che EX-OS ha, "ASCII" e "sotto il 128" sono
+ * la stessa cosa. isblank invece e' del C99 e mancava per svista. */
+int isascii(int c) { return (unsigned)c < 128; }
+int toascii(int c) { return c & 0x7F; }
+int isblank(int c) { return c == ' ' || c == '\t'; }
 int isgraph(int c)  { return c > 32 && c < 127; }
 int ispunct(int c)  { return isgraph(c) && !isalnum(c); }
 int iscntrl(int c)  { return (c >= 0 && c < 32) || c == 127; }
@@ -4406,6 +5282,181 @@ long atol(const char *s) { return strtol(s, NULL, 10); }
 int  abs(int v)          { return (v < 0) ? -v : v; }
 long labs(long v)        { return (v < 0) ? -v : v; }
 
+/* =============================================================================
+ * div, ldiv — quoziente e resto insieme
+ *
+ * ⚠️ IL TRONCAMENTO E' VERSO LO ZERO, non verso il basso: div(-7, 2) da'
+ * quot = -3 e rem = -1, non -4 e +1. E' quello che dice lo standard C dal
+ * C99, ed e' anche quello che fa `idiv` dell'x86, quindi qui l'operatore
+ * del C basta e non c'e' niente da correggere. Su una macchina dove non
+ * fosse cosi', queste due funzioni sarebbero il posto in cui rimediare —
+ * e' per questo che esistono invece di essere due divisioni scritte a
+ * mano dal chiamante.
+ * ============================================================================= */
+div_t div(int num, int den)
+{
+    div_t r;
+    r.quot = num / den;
+    r.rem  = num % den;
+    return r;
+}
+
+ldiv_t ldiv(long num, long den)
+{
+    ldiv_t r;
+    r.quot = num / den;
+    r.rem  = num % den;
+    return r;
+}
+
+long long llabs(long long v) { return (v < 0) ? -v : v; }
+
+/* =============================================================================
+ * lldiv — e la divisione a 64 bit che il compilatore non puo' fare
+ *
+ * ⚠️ QUI NON SI PUO' SCRIVERE `num / den`. Sull'i386 una divisione fra due
+ * interi a 64 bit non e' un'istruzione: il compilatore la trasforma in una
+ * chiamata a `__divmoddi4` di libgcc, e i programmi di EX-OS si linkano
+ * con -nostdlib e SENZA libgcc. L'errore non sarebbe a runtime, sarebbe al
+ * link — «undefined reference to __divmoddi4» — su qualunque programma che
+ * includa questa funzione, anche senza chiamarla mai.
+ *
+ * E' la stessa ragione per cui la printf ha la sua div64 (vedi piu'
+ * sopra); quella pero' divide per una BASE PICCOLA e tiene il resto in 32
+ * bit, quindi non serve qui. Questa e' la versione completa, a
+ * spostamenti: un bit per giro, dal piu' alto.
+ *
+ * ⚠️ DIVISIONE PER ZERO: l'hardware solleverebbe #DE, qui non c'e' niente
+ * che possa sollevare niente. Si ritorna quot = 0 e rem = num, che e' un
+ * risultato falso ma prevedibile — e resta un difetto del chiamante. Non
+ * si finge un errore in errno: lo standard dice che e' comportamento
+ * indefinito, e inventare una convenzione che nessun altro ha renderebbe
+ * il codice che ci si appoggia non portabile.
+ * ============================================================================= */
+static unsigned long long u64_divmod(unsigned long long n, unsigned long long d,
+                                     unsigned long long *resto)
+{
+    unsigned long long q = 0, r = 0;
+    int i;
+
+    if (d == 0) { if (resto) *resto = n; return 0; }
+
+    for (i = 63; i >= 0; i--) {
+        r = (r << 1) | ((n >> i) & 1ull);
+        if (r >= d) { r -= d; q |= (1ull << i); }
+    }
+    if (resto) *resto = r;
+    return q;
+}
+
+/* Il valore assoluto di un long long come unsigned, senza traboccare sul
+ * minimo: -LLONG_MIN non ci sta in un long long, e scriverlo cosi' e'
+ * comportamento indefinito che su i386 di solito funziona — finche' un
+ * giorno non funziona. */
+static unsigned long long ll_assoluto(long long v)
+{
+    return (v < 0) ? (unsigned long long)(-(v + 1)) + 1ull
+                   : (unsigned long long)v;
+}
+
+lldiv_t lldiv(long long num, long long den)
+{
+    lldiv_t  r;
+    unsigned long long q, resto;
+    int      neg_q = ((num < 0) != (den < 0));
+
+    q = u64_divmod(ll_assoluto(num), ll_assoluto(den), &resto);
+
+    /* ⚠️ Il troncamento e' verso lo ZERO e il resto prende il segno del
+     * DIVIDENDO — non del divisore. lldiv(-9000000000, 7) da'
+     * (-1285714285, -5), non (-1285714286, +2). E' cio' che dice lo
+     * standard C dal C99, ed e' anche cio' che fa `idiv` dell'x86: qui va
+     * riprodotto a mano perche' la divisione la stiamo facendo noi. */
+    r.quot = neg_q ? -(long long)q : (long long)q;
+    r.rem  = (num < 0) ? -(long long)resto : (long long)resto;
+    return r;
+}
+
+long long atoll(const char *s) { return strtoll(s, NULL, 10); }
+
+/* =============================================================================
+ * La famiglia <inttypes.h>: intmax_t e' `long long` su questo bersaglio
+ *
+ * Sono gli stessi calcoli delle `ll*`, con i nomi che usa chi scrive
+ * codice indipendente dalla larghezza dei tipi. ⚠️ imaxdiv NON puo' usare
+ * l'operatore `/` per la stessa ragione di lldiv: la divisione a 64 bit
+ * diventa una chiamata a libgcc, che non colleghiamo.
+ * ============================================================================= */
+intmax_t imaxabs(intmax_t v) { return (v < 0) ? -v : v; }
+
+imaxdiv_t imaxdiv(intmax_t num, intmax_t den)
+{
+    imaxdiv_t r;
+    lldiv_t   l = lldiv((long long)num, (long long)den);
+    r.quot = (intmax_t)l.quot;
+    r.rem  = (intmax_t)l.rem;
+    return r;
+}
+
+intmax_t strtoimax(const char *s, char **fine, int base)
+{
+    return (intmax_t)strtoll(s, fine, base);
+}
+
+uintmax_t strtoumax(const char *s, char **fine, int base)
+{
+    return (uintmax_t)strtoull(s, fine, base);
+}
+
+/* =============================================================================
+ * rand, srand
+ *
+ * Il generatore congruenziale lineare dell'esempio del K&R, con le
+ * costanti di POSIX. ⚠️ NON E' CASUALE: si ripete, e da un seme noto da'
+ * sempre la stessa sequenza. Va bene per mescolare o per una prova; non va
+ * bene per una chiave ne' per un identificativo che qualcuno abbia
+ * interesse a indovinare. Il giorno che servisse quello servira' una
+ * sorgente di entropia vera, che il kernel non ha.
+ *
+ * Il seme parte da 1 e non dall'orologio, come dice lo standard: un
+ * programma che non chiama srand deve vedere sempre la stessa sequenza,
+ * o le sue prove non si ripetono.
+ * ============================================================================= */
+static unsigned long rand_seme = 1;
+
+void srand(unsigned int seme) { rand_seme = seme; }
+
+int rand(void)
+{
+    rand_seme = rand_seme * 1103515245ul + 12345ul;
+    /* Si scartano i bit bassi: in un LCG sono i meno casuali di tutti —
+     * il bit 0 alterna e basta. */
+    return (int)((rand_seme >> 16) & 0x7FFF);
+}
+
+/* =============================================================================
+ * system — c'e' il nome, non c'e' l'interprete
+ *
+ * ⚠️ RITORNA SEMPRE -1 CON ENOSYS, e non e' un segnaposto da riempire piu'
+ * avanti: e' la risposta giusta finche' /bin/sh non sa accettare un
+ * comando sulla riga di argomenti. Oggi ha un `_start(void)` e legge solo
+ * dal terminale, quindi non c'e' niente a cui passare la stringa.
+ * Eseguire "qualcosa di simile" o ritornare 0 fingendo di aver eseguito
+ * sarebbe peggio di non esserci: il chiamante andrebbe avanti convinto che
+ * il comando sia stato fatto.
+ *
+ * system(NULL) chiede «esiste un interprete?» e la risposta e' 0, cioe'
+ * no. Quella e' una risposta vera, e infatti e' l'unica che si da'.
+ *
+ * C'e' perche' <cstdlib> della libstdc++ fa `using ::system;`.
+ * ============================================================================= */
+int system(const char *comando)
+{
+    if (comando == NULL) return 0;      /* nessun interprete disponibile */
+    errno = ENOSYS;
+    return -1;
+}
+
 /* atof e' strtod senza il puntatore alla fine, e fabs e' abs in virgola
  * mobile. Nessuna delle due aggiunge niente a quello che c'e' gia': ci
  * sono perche' il codice di terzi le nomina — stabs.c di binutils la
@@ -4552,6 +5603,38 @@ double ldexp(double x, int e)
         if (n) p *= p;
     }
     return (e < 0) ? (x / f) : (x * f);
+}
+
+/* =============================================================================
+ * sqrt — l'unica funzione di libm che si puo' scrivere senza scendere a patti
+ *
+ * <math.h> dice, e continua a dire, che qui non c'e' una libm: una sqrt
+ * "quasi giusta" sarebbe peggio di nessuna sqrt, perche' sbaglia in
+ * silenzio. Questa non e' quasi giusta — e' **esatta**.
+ *
+ * `fsqrt` dell'x87 e' una delle cinque operazioni che l'IEEE 754 obbliga a
+ * essere correttamente arrotondate (le altre quattro sono +, -, *, /):
+ * il risultato e' il numero rappresentabile piu' vicino alla radice vera,
+ * a mezzo ULP. Non c'e' un'approssimazione da giudicare, c'e' un'istruzione
+ * da chiamare — ed e' il motivo per cui questa entra e log, exp, sin non
+ * entrano.
+ *
+ * ⚠️ SU ARGOMENTO NEGATIVO l'x87 solleva l'eccezione "operazione non
+ * valida" e produce un NaN. Il kernel inizializza la FPU con le eccezioni
+ * mascherate, quindi il NaN esce e basta; qui si imposta anche errno, che
+ * e' cio' che si aspetta chi scrive codice per POSIX.
+ *
+ * La chiede MPC, che stima con la sqrt in doppia precisione quanti bit
+ * servono prima di lavorare in precisione arbitraria.
+ * ============================================================================= */
+double sqrt(double x)
+{
+    double r;
+
+    if (x < 0.0) { errno = EDOM; }
+
+    __asm__ ("fsqrt" : "=t" (r) : "0" (x));
+    return r;
 }
 
 /* L'inversa di ldexp: separa x in mantissa (in [0.5, 1) ) ed esponente.

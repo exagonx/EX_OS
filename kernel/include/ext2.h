@@ -92,6 +92,10 @@ int  ext2_create  (int mnt, const char *percorso);
 int  ext2_mkdir   (int mnt, const char *percorso);
 int  ext2_rmdir   (int mnt, const char *percorso);
 int  ext2_unlink  (int mnt, const char *percorso);
+/* Cambia il NOME di una voce senza spostare i dati. ⚠️ SOLO nella stessa
+ * directory: -3 se differiscono, -2 se la destinazione esiste gia'. Vedi
+ * il commento esteso in kernel/fs/ext2.c. */
+int  ext2_rename  (int mnt, const char *da, const char *a);
 int  ext2_write   (int mnt, const char *percorso, const void *buf,
                    uint32_t size, uint32_t offset);
 int  ext2_truncate(int mnt, const char *percorso, uint32_t nuova_dim);

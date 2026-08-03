@@ -358,6 +358,49 @@ $(TRUNC_BIN): $(TRUNC_SRC) $(TRUNC_LD) $(LIBC_SRC) $(LIBC_START)
 .PHONY: trunc
 trunc: dirs $(TRUNC_BIN)
 
+# --- Programma utente /bin/chkdsk ---------------------------------------------
+# Controllo e riparazione di un volume FAT12/16/32. Lavora sui SETTORI
+# GREZZI di una partizione NON montata (blkread/blkwrite): sopra un volume
+# montato c'e' una cache write-back, e un controllo li' non direbbe niente
+# di vero. Stesso schema di /bin/trunc.
+CHKDSK_SRC := bin/chkdsk/chkdsk.c
+CHKDSK_BIN := $(BUILD_BIN)/chkdsk
+CHKDSK_LD  := bin/chkdsk/chkdsk.ld
+
+$(CHKDSK_BIN): $(CHKDSK_SRC) $(CHKDSK_LD) $(LIBC_SRC) $(LIBC_START)
+	@echo "=== Compilazione /bin/chkdsk ==="
+	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -c $(CHKDSK_SRC) -o $(BUILD_OBJ)/chkdsk_main.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                  -o $(BUILD_OBJ)/chkdsk_libc.o
+	$(CC) -m32 -c $(LIBC_START)                          -o $(BUILD_OBJ)/chkdsk_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(CHKDSK_LD) \
+	    $(BUILD_OBJ)/chkdsk_start.o $(BUILD_OBJ)/chkdsk_main.o $(BUILD_OBJ)/chkdsk_libc.o -o $@
+	@echo "[OK] chkdsk compilato: $@"
+
+.PHONY: chkdsk
+chkdsk: dirs $(CHKDSK_BIN)
+
+# --- Programma utente /bin/rename ---------------------------------------------
+# Cambia il nome di un file (SYS_RENAME). ⚠️ NON si chiama `mv` di
+# proposito: mv su Unix sposta anche fra filesystem, copiando e
+# cancellando; qui i dati non si muovono mai. Il nome dice cosa fa.
+RENAME_SRC := bin/rename/rename.c
+RENAME_BIN := $(BUILD_BIN)/rename
+RENAME_LD  := bin/rename/rename.ld
+
+$(RENAME_BIN): $(RENAME_SRC) $(RENAME_LD) $(LIBC_SRC) $(LIBC_START)
+	@echo "=== Compilazione /bin/rename ==="
+	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -c $(RENAME_SRC) -o $(BUILD_OBJ)/rename_main.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                  -o $(BUILD_OBJ)/rename_libc.o
+	$(CC) -m32 -c $(LIBC_START)                          -o $(BUILD_OBJ)/rename_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(RENAME_LD) \
+	    $(BUILD_OBJ)/rename_start.o $(BUILD_OBJ)/rename_main.o $(BUILD_OBJ)/rename_libc.o -o $@
+	@echo "[OK] rename compilato: $@"
+
+.PHONY: rename
+rename: dirs $(RENAME_BIN)
+
 .PHONY: stack
 stack: dirs $(STACK_BIN)
 
@@ -630,7 +673,7 @@ $(KBD_DRV_OUT): $(KBD_DRV_SRC) $(KBD_DRV_PROTO) $(KBD_DRV_LD) $(LIBC_SRC) $(LIBC
 kbd_drv: dirs $(KBD_DRV_OUT)
 
 .PHONY: all
-all: dirs stage1 stage2 kernel shell hello ls mem stack disk libctest fdisk mkfs trunc mount_prog cp_prog install_prog textline gfedit mkdir_prog rmdir_prog delete_prog libc floppy_drv kbd_drv floppy
+all: dirs stage1 stage2 kernel shell hello ls mem stack disk libctest fdisk mkfs trunc chkdsk rename mount_prog cp_prog install_prog textline gfedit mkdir_prog rmdir_prog delete_prog libc floppy_drv kbd_drv floppy
 	@echo ""
 	@echo "============================================"
 	@echo " EX-OS build completata!"
@@ -746,6 +789,7 @@ KERNEL_C_SRC   := $(KERNEL_DIR)/arch/x86/gdt.c \
                   $(KERNEL_DIR)/mm/kmalloc.c \
                   $(KERNEL_DIR)/sched/sched.c \
                   $(KERNEL_DIR)/ipc/ipc.c \
+                  $(KERNEL_DIR)/ipc/pipe.c \
                   $(KERNEL_DIR)/syscall/syscall.c \
                   $(KERNEL_DIR)/syscall/syscall_impl.c \
                   $(KERNEL_DIR)/fs/fat12.c \
@@ -880,10 +924,15 @@ ISO_IMG     := $(DIST_DIR)/exos-tools.iso
 # terzi. Si sovrascrive dalla riga di comando se sta altrove:
 #     make iso BINUTILS_NATIVI=~/altro/build
 BINUTILS_NATIVI ?= $(HOME)/exos-native/build-nativi
+# Il sysroot del bersaglio, dove tools/gcclibs-exos/prepara-gcclibs.sh
+# installa GMP, MPFR e MPC. Se ci sono, il CD porta anche /bin/provamp.
+CROSS_SYSROOT   ?= $(HOME)/exos-cross/i386-exos
 ISO_LEGGIMI := $(TOOLS_DIR)/iso/leggimi.txt
 ISO_MKISO   := $(TOOLS_DIR)/mkiso.py
 
 $(ISO_IMG): $(ISO_MKISO) $(ISO_LEGGIMI) $(TOOLS_DIR)/iso/prova.s \
+            $(TOOLS_DIR)/iso/prova-mp.c $(TOOLS_DIR)/iso/prova-mat.c \
+            $(TOOLS_DIR)/iso/prova-cpp.cpp \
             $(LIBC_SRC) $(LIBC_HDR) $(LIBC_START) \
             README.md gpl-2.0.txt
 	@echo "=== Creazione CD degli strumenti ==="
@@ -892,10 +941,18 @@ $(ISO_IMG): $(ISO_MKISO) $(ISO_LEGGIMI) $(TOOLS_DIR)/iso/prova.s \
 	@mkdir -p $(ISO_ROOT)/exos/include $(ISO_ROOT)/doc $(ISO_ROOT)/bin
 	@cp $(ISO_LEGGIMI) $(ISO_ROOT)/leggimi.txt
 	@cp $(TOOLS_DIR)/iso/prova.s $(ISO_ROOT)/prova.s
+	@cp $(TOOLS_DIR)/iso/prova-mp.c $(ISO_ROOT)/prova-mp.c
+	@cp $(TOOLS_DIR)/iso/prova-mat.c $(ISO_ROOT)/prova-mat.c
+	@cp $(TOOLS_DIR)/iso/prova-cpp.cpp $(ISO_ROOT)/prova-cpp.cpp
 	@cp -r lib/include/. $(ISO_ROOT)/exos/include/
 	@cp $(LIBC_SRC) $(LIBC_START) $(ISO_ROOT)/exos/
 	@cp README.md KERNEL_CORE_NOTES.md $(ISO_ROOT)/doc/
 	@cp gpl-2.0.txt $(ISO_ROOT)/doc/
+	@# provacpp si costruisce con UNA RIGA e con g++, come su qualunque
+	@# altro bersaglio: libstdc++ per i386-exos c'e' (dal 3 agosto 2026,
+	@# vedi HANDOFF). Prima serviva compilare con g++ e collegare con gcc,
+	@# perche' -lstdc++ non esisteva.
+	@#
 	@# I binutils NATIVI, se ci sono. Non stanno nel repository — sono
 	@# 7 MB l'uno e si costruiscono da sorgenti di terzi (vedi
 	@# tools/binutils-exos/leggimi.md) — quindi si copiano da dove li ha
@@ -918,6 +975,33 @@ $(ISO_IMG): $(ISO_MKISO) $(ISO_LEGGIMI) $(TOOLS_DIR)/iso/prova.s \
 	    printf 'as e ld nativi per EX-OS (binutils 2.44)\n' \
 	        > $(ISO_ROOT)/bin/leggimi.txt; \
 	    echo "     binutils nativi inclusi da $(BINUTILS_NATIVI)"; \
+	    if [ -f $(CROSS_SYSROOT)/lib/libmpc.a ]; then \
+	        i386-exos-gcc -O2 -o $(ISO_ROOT)/bin/provamp.tmp \
+	            $(TOOLS_DIR)/iso/prova-mp.c -lmpc -lmpfr -lgmp && \
+	        i386-exos-strip -o $(ISO_ROOT)/bin/provamp $(ISO_ROOT)/bin/provamp.tmp && \
+	        rm -f $(ISO_ROOT)/bin/provamp.tmp && \
+	        echo "     provamp: GMP + MPFR + MPC"; \
+	    else \
+	        echo "     GMP/MPFR/MPC assenti dal sysroot: niente provamp"; \
+	    fi; \
+	    if [ -f $(CROSS_SYSROOT)/lib/libm.a ]; then \
+	        i386-exos-gcc -O2 -o $(ISO_ROOT)/bin/provamat.tmp \
+	            $(TOOLS_DIR)/iso/prova-mat.c -lm && \
+	        i386-exos-strip -o $(ISO_ROOT)/bin/provamat $(ISO_ROOT)/bin/provamat.tmp && \
+	        rm -f $(ISO_ROOT)/bin/provamat.tmp && \
+	        echo "     provamat: openlibm"; \
+	    else \
+	        echo "     libm assente dal sysroot: niente provamat"; \
+	    fi; \
+	    if [ -f $(CROSS_SYSROOT)/lib/libstdc++.a ]; then \
+	        i386-exos-g++ -O2 -o $(ISO_ROOT)/bin/provacpp.tmp \
+	            $(TOOLS_DIR)/iso/prova-cpp.cpp -lm && \
+	        i386-exos-strip -o $(ISO_ROOT)/bin/provacpp $(ISO_ROOT)/bin/provacpp.tmp && \
+	        rm -f $(ISO_ROOT)/bin/provacpp.tmp && \
+	        echo "     provacpp: libstdc++ (contenitori, string, eccezioni)"; \
+	    else \
+	        echo "     libstdc++ assente dal sysroot: niente provacpp"; \
+	    fi; \
 	else \
 	    printf 'Qui arrivera il compilatore: vedi /leggimi.txt\n' \
 	        > $(ISO_ROOT)/bin/leggimi.txt; \

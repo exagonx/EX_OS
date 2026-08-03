@@ -123,8 +123,37 @@
 #define SCNuMAX     "llu"
 #define SCNxMAX     "llx"
 
-/* imaxdiv_t e imaxabs/strtoimax non ci sono: nessuno li ha ancora chiesti,
- * e dichiararli senza implementarli sposterebbe l'errore dal punto in cui
- * si usano al link. Stessa regola di <math.h>. */
+/* =============================================================================
+ * Gli interi piu' larghi della macchina
+ *
+ * ⚠️ SU EX-OS `intmax_t` E' `long long`, cioe' 64 bit. Non e' una scelta:
+ * e' il tipo intero piu' grande che il bersaglio abbia, e lo standard dice
+ * che intmax_t dev'essere quello.
+ *
+ * Fino ad agosto 2026 qui c'era scritto che imaxabs, imaxdiv e strtoimax
+ * non c'erano perche' «nessuno li ha ancora chiesti». Adesso li chiede la
+ * libstdc++: il suo configure compila un programma che li usa tutti per
+ * decidere se `<inttypes.h>` e' conforme al C99, e una sola assenza fa
+ * dichiarare non conforme l'header intero.
+ * ============================================================================= */
+typedef long long           intmax_t;
+typedef unsigned long long  uintmax_t;
+
+typedef struct { intmax_t quot; intmax_t rem; } imaxdiv_t;
+
+/* ⚠️ extern "C" come in libc.h e math.h: senza, un programma C++ cerca
+ * `_Z7imaxabsx` e in libc.a non c'e'. Vedi il commento esteso in libc.h. */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+intmax_t  imaxabs(intmax_t v);
+imaxdiv_t imaxdiv(intmax_t num, intmax_t den);
+intmax_t  strtoimax(const char *s, char **fine, int base);
+uintmax_t strtoumax(const char *s, char **fine, int base);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* EXOS_INTTYPES_H */

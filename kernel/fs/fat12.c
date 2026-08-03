@@ -2568,3 +2568,114 @@ int fat12_delete(const char *path)
         return 0;
     }
 }
+
+/* =============================================================================
+ * fat12_rename — cambia il NOME di una voce, senza spostare i dati
+ *
+ * ⚠️ PERCHE' ANCHE QUI, sul driver che «non si tocca senza una ragione
+ * forte». La ragione forte c'e': fino alla 0.160 la rename() della libc
+ * era copia+cancella e funzionava su qualunque volume, floppy compreso.
+ * Sostituendola con la syscall — che riscrive la voce di directory e non
+ * muove i dati — il floppy sarebbe rimasto senza rename, cioe' una
+ * regressione introdotta da una correzione. Meglio implementarla che
+ * lasciare un ripiego che copia di nascosto: quel ripiego rimetterebbe in
+ * piedi proprio il comportamento che `install` non puo' permettersi.
+ *
+ * ⚠️ I RITORNI SONO CODICI errno, NON la convenzione -1/-2/-3 di fat.c e
+ * ext2.c. Questo driver ha sempre risposto cosi' — fat12_delete ritorna -2
+ * per "non trovato" e -21 per "e' una directory" — e il VFS li rigira al
+ * chiamante senza tradurli. Mescolare le due convenzioni e' esattamente
+ * l'errore che ha fatto rispondere «esiste gia'» a una rinomina di un file
+ * che non esisteva: -2 vuol dire ENOENT qui e EEXIST la'.
+ *
+ *   0    riuscita
+ *   -2   ENOENT   il file di partenza non c'e'
+ *   -17  EEXIST   la destinazione c'e' gia'
+ *   -38  ENOSYS   directory diverse: questo non e' uno spostamento
+ *
+ * ⚠️ NIENTE fat12_sync() qui, come per fat12_delete: la sincronizzazione
+ * avviene all'uscita del processo. Vedi il commento esteso li'.
+ * ============================================================================= */
+int fat12_rename(const char *da, const char *a)
+{
+    char     n_da[11], n_a[11];
+    uint16_t d_da = 0, d_a = 0;
+    uint8_t  j;
+
+    if (!g_initialized) return -1;
+
+    if (fat12_split_path(da, &d_da, n_da) != 0) return -2;   /* ENOENT */
+    if (fat12_split_path(a,  &d_a,  n_a)  != 0) return -2;
+
+    /* Directory diverse: non e' una rinomina. */
+    if (d_da != d_a) return -38;                              /* ENOSYS */
+
+    /* --- la destinazione non deve esistere --- */
+    if (d_a == 0) {
+        Fat12DirEntry *root = (Fat12DirEntry *)g_root_dir;
+        uint32_t i;
+
+        for (i = 0; i < ROOT_ENTRY_COUNT; i++) {
+            uint8_t match = 1;
+
+            if (root[i].name[0] == 0x00) break;
+            if ((uint8_t)root[i].name[0] == 0xE5) continue;
+            if (root[i].attr & FAT12_ATTR_VOLUME) continue;
+
+            for (j = 0; j < 8 && match; j++)
+                if (root[i].name[j] != (uint8_t)n_a[j]) match = 0;
+            for (j = 0; j < 3 && match; j++)
+                if (root[i].ext[j] != (uint8_t)n_a[8 + j]) match = 0;
+            if (match) return -17;                            /* EEXIST */
+        }
+    } else {
+        uint16_t lba; uint32_t slot; Fat12DirEntry e;
+        if (fat12_dir_scan(d_a, n_a, &lba, &slot, &e) == 0) return -17;
+    }
+
+    /* --- si riscrive il nome dentro la voce, e basta --- */
+    if (d_da == 0) {
+        Fat12DirEntry *root = (Fat12DirEntry *)g_root_dir;
+        uint32_t i;
+
+        for (i = 0; i < ROOT_ENTRY_COUNT; i++) {
+            uint8_t match = 1;
+
+            if (root[i].name[0] == 0x00) break;
+            if ((uint8_t)root[i].name[0] == 0xE5) continue;
+            if (root[i].attr & FAT12_ATTR_VOLUME) continue;
+
+            for (j = 0; j < 8 && match; j++)
+                if (root[i].name[j] != (uint8_t)n_da[j]) match = 0;
+            for (j = 0; j < 3 && match; j++)
+                if (root[i].ext[j] != (uint8_t)n_da[8 + j]) match = 0;
+            if (!match) continue;
+
+            for (j = 0; j < 8; j++) root[i].name[j] = n_a[j];
+            for (j = 0; j < 3; j++) root[i].ext[j]  = n_a[8 + j];
+            g_root_dirty = 1;
+
+            klog(LOG_DEBUG, "FAT12: rinominato '%s' in '%s'", da, a);
+            return 0;
+        }
+        return -2;
+    }
+
+    {
+        uint16_t       lba;
+        uint32_t       slot;
+        Fat12DirEntry  e;
+        uint8_t        buf[BYTES_PER_SECTOR];
+        Fat12DirEntry *entries = (Fat12DirEntry *)buf;
+
+        if (fat12_dir_scan(d_da, n_da, &lba, &slot, &e) != 0) return -2;
+
+        if (fat12_read_sector(lba, buf) != 0) return -5;
+        for (j = 0; j < 8; j++) entries[slot].name[j] = n_a[j];
+        for (j = 0; j < 3; j++) entries[slot].ext[j]  = n_a[8 + j];
+        if (fat12_write_sector(lba, buf) != 0) return -5;
+
+        klog(LOG_DEBUG, "FAT12: rinominato '%s' in '%s'", da, a);
+        return 0;
+    }
+}

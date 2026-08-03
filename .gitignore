@@ -11,8 +11,61 @@
 # ⚠️ Le modifiche di EX-OS a quell'albero NON sono qui dentro: stanno in
 # tools/gcc-exos/, che e' tracciata, e si riapplicano a un albero pulito
 # con `python3 tools/gcc-exos/applica.py <percorso-gcc>`.
+#
+# ⚠️ ANCORATO ALLA RADICE con lo slash iniziale, come tutti i pacchetti di
+# terzi qui sotto: senza, `gcc/` combacerebbe anche con una directory
+# `gcc/` annidata dentro qualcosa di nostro.
 # =============================================================================
-gcc/
+/gcc/
+
+# =============================================================================
+# La userland di terzi: make, sed, awk, grep, coreutils
+#
+# Stessa ragione dell'albero di GCC qui sopra, e stessa regola: sono
+# sorgenti di terzi con le LORO licenze — GPLv3 per tutti e cinque — che
+# non devono entrare nella cronologia di questo repository. Chi clona
+# EX-OS non deve scaricare 30 MB di codice che non e' suo e che puo'
+# prendere da chi lo mantiene.
+#
+# ⚠️ Quando serviranno delle modifiche per farli girare qui, NON andranno
+# scritte dentro questi alberi: andranno in tools/<pacchetto>-exos/, che
+# e' tracciata, esattamente come tools/gcc-exos/ e tools/binutils-exos/.
+# La regola vale anche al contrario — se un giorno una di queste directory
+# comparisse in un diff, vuol dire che qualcuno ha modificato un albero di
+# terzi invece di registrare la modifica dove si riapplica da sola.
+#
+# ⚠️ Sono CHECKOUT git, non tarball: sed, awk, grep e coreutils non hanno
+# il `configure` generato, e vogliono un `./bootstrap` (autoreconf piu'
+# l'importazione di gnulib) sulla macchina Linux prima di poter essere
+# configurati per EX-OS.
+# =============================================================================
+#
+# ⚠️ ANCORATI ALLA RADICE con lo slash iniziale: senza, `make/` combacia a
+# qualunque profondita' e un giorno si porterebbe via una directory
+# nostra che per caso si chiama cosi'. Vedi openlibm qui sotto, dove e'
+# successo davvero.
+/make/
+/sed/
+/awk/
+/grep/
+/coreutils/
+
+# openlibm — la libm che <cmath> pretende
+#
+# Non e' scritta da noi ed e' voluto: <math.h> di EX-OS dice che una "sqrt
+# quasi giusta e' peggio di nessuna sqrt", e la conseguenza coerente e'
+# portare un'implementazione vera invece di improvvisarne una. openlibm e'
+# la msun di FreeBSD in versione autonoma (MIT/BSD), cioe' quella di
+# riferimento. Serve a libstdc++, che dichiara ~180 nomi di <cmath>.
+#
+# ⚠️ ANCORATI ALLA RADICE con lo slash iniziale. Senza, `openlibm-*/`
+# combacia a QUALUNQUE profondita' e si porta via anche
+# tools/openlibm-exos/, che e' roba nostra e deve stare nella cronologia.
+# Una directory ignorata per sbaglio non da' nessun errore: da' un
+# repository che al prossimo clone non ha piu' lo script che costruisce la
+# libm.
+/openlibm/
+/openlibm-*/
 
 # =============================================================================
 # Il disco avviabile

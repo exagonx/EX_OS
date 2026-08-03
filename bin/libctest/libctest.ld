@@ -34,6 +34,22 @@ SECTIONS
         *(.rodata.*)
     }
 
+    /* =========================================================================
+     * Le variabili __thread — .tdata e .tbss
+     *
+     * Non sono sezioni normali: insieme formano l'IMMAGINE DI PARTENZA che
+     * il caricatore copia in un blocco per processo (vedi PT_TLS in
+     * kernel/loader/elf.c). Vanno tenute ADIACENTI e in quest'ordine,
+     * perche' il modello local-exec di i386 indirizza le variabili con
+     * offset negativi da un unico thread pointer.
+     *
+     * ⚠️ Senza queste due righe `ld` le sistema dove capita e il segmento
+     * PT_TLS puo' non essere generato affatto: il programma compila, si
+     * collega e legge una variabile thread-local che sta da un'altra parte.
+     * ========================================================================= */
+    .tdata : { *(.tdata) *(.tdata.*) }
+    .tbss  : { *(.tbss)  *(.tbss.*) *(.tcommon) }
+
     .data : {
         *(.data)
         *(.data.*)

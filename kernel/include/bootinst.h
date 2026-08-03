@@ -34,6 +34,23 @@ typedef struct {
  *
  * Ritorna 0, o un errno negativo. In particolare -ESPIPE se uno dei due
  * file e' frammentato. */
+/* Valore di ESI per SYS_BOOTINSTALL: 1 = calcola la mappa e NON scrivere.
+ * ⚠️ Solo questo valore esatto significa verifica: un programma compilato
+ * per la forma a tre argomenti lascia in ESI spazzatura, e qualunque altra
+ * cosa deve valere "installa", cioe' il comportamento di prima. */
+#define BOOTINST_VERIFICA   1u
+
 int boot_installa(const char *punto, BootInstEsito *esito);
+
+/* La stessa cosa, ma su NOMI DATI (senza directory, minuscoli: la
+ * directory e' sempre /boot) e con la possibilita' di fermarsi PRIMA di
+ * scrivere.
+ *
+ * ⚠️ `solo_verifica` non tocca niente: calcola la mappa, la mette in
+ * `esito` e torna. Serve a `install` per sapere se il kernel appena
+ * copiato e' mappabile mentre quello vecchio e' ancora al suo posto —
+ * vedi il commento esteso in kernel/boot/bootinst.c. */
+int boot_installa_ex(const char *punto, const char *nome_s2, const char *nome_k,
+                     int solo_verifica, BootInstEsito *esito);
 
 #endif /* BOOTINST_H */

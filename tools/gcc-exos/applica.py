@@ -90,11 +90,177 @@ MODIFICHE = [
         "\t;;\n"
         "i[34567]86-*-elf*)",
     ),
+
+    # =========================================================================
+    # pex-exos.c anche QUI: GCC ha la PROPRIA copia di libiberty
+    #
+    # Non e' la stessa di binutils, e non basta averla sistemata la'. E qui
+    # conta di piu': `pex` e' il modo in cui il DRIVER lancia i propri
+    # figli — cc1, as, ld — quindi senza, un gcc ospitato non compila
+    # niente, non fallisce a meta': non arriva a cominciare.
+    #
+    # Il file e' lo stesso, e sta in tools/binutils-exos/ perche' e' li'
+    # che e' nato. Il perche' esteso — spawn_ex al posto di fork, i tre
+    # NULL che dichiarano l'assenza delle pipe — sta in testa a quel file.
+    # =========================================================================
+    (
+        "libiberty/configure",
+        "     *)\t\t\t\tpexecute=pex-unix   ;;\n",
+        "     *-*-exos*)\t\t\tpexecute=pex-exos   ;;\n"
+        "     *)\t\t\t\tpexecute=pex-unix   ;;\n",
+    ),
+    (
+        "libiberty/configure.ac",
+        "     *)\t\t\t\tpexecute=pex-unix   ;;\n",
+        "     *-*-exos*)\t\t\tpexecute=pex-exos   ;;\n"
+        "     *)\t\t\t\tpexecute=pex-unix   ;;\n",
+    ),
+    # ⚠️ La regola di compilazione va scritta a mano: la regola implicita
+    # di libiberty per i .c e' `false`, apposta, perche' ogni oggetto deve
+    # dichiarare le proprie dipendenze. Senza questa, il build fallisce con
+    # un messaggio che dice solo "false".
+    (
+        "libiberty/Makefile.in",
+        "./pex-unix.$(objext): $(srcdir)/pex-unix.c",
+        "./pex-exos.$(objext): $(srcdir)/pex-exos.c config.h $(INCDIR)/ansidecl.h \\\n"
+        "\t$(INCDIR)/libiberty.h $(srcdir)/pex-common.h\n"
+        "\tif [ x\"$(PICFLAG)\" != x ]; then \\\n"
+        "\t  $(COMPILE.c) $(PICFLAG) $(srcdir)/pex-exos.c -o pic/$@; \\\n"
+        "\telse true; fi\n"
+        "\tif [ x\"$(NOASANFLAG)\" != x ]; then \\\n"
+        "\t  $(COMPILE.c) $(PICFLAG) $(NOASANFLAG) $(srcdir)/pex-exos.c -o noasan/$@; \\\n"
+        "\telse true; fi\n"
+        "\t$(COMPILE.c) $(srcdir)/pex-exos.c $(OUTPUT_OPTION)\n"
+        "\n"
+        "./pex-unix.$(objext): $(srcdir)/pex-unix.c",
+    ),
+
+    # =========================================================================
+    # libstdc++: os/generic invece di os/newlib
+    #
+    # Il cross si configura con --with-newlib, e per la libstdc++ quel
+    # flag non vuol dire "usa newlib": vuol dire "NON sei su glibc, non
+    # fare i test di collegamento, prendi questa tabella di risposte". La
+    # tabella e' quasi tutta giusta anche per noi — le funzioni `f` della
+    # matematica ci sono (openlibm), strtof c'e', hypot c'e'.
+    #
+    # UNA RIGA E' SBAGLIATA, ed e' os_include_dir. `os/newlib` contiene un
+    # ctype_base.h scritto sui MACRO INTERNI di newlib (_U, _L, _N, e la
+    # tabella `_ctype_`), che nella nostra <ctype.h> non esistono e non
+    # esisteranno: sono un dettaglio di implementazione di quella libc,
+    # non un'interfaccia. `os/generic` invece non chiede niente a nessuno,
+    # definisce le sue maschere da se' e funziona con qualunque libc.
+    #
+    # Il resto del ramo --with-newlib resta valido, quindi si cambia solo
+    # questa riga invece di aggiungere un ramo intero: meno superficie di
+    # contatto con l'upstream, meno cose che scadono.
+    #
+    # ⚠️ CONFIGURE E CONFIGURE.AC INSIEME. Il primo e' quello che gira, il
+    # secondo e' quello da cui il primo si rigenera: cambiarne uno solo
+    # significa che al prossimo autoreconf la modifica sparisce (o
+    # ricompare) senza che nessuno l'abbia chiesto.
+    #
+    # NOTA: il modello di locale va scelto a mano con --enable-clocale=
+    # generic, perche' --with-newlib lo porta a `newlib` e quello tira
+    # dentro config/locale/newlib/ctype_members.cc, che ha lo stesso
+    # problema del ctype_base.h di sopra.
+    # =========================================================================
+    # =========================================================================
+    # fixincludes NON si costruisce per un ospite EX-OS
+    #
+    # ⚠️ NON E' UN RIPIEGO PER FARLO COMPILARE: e' che quel programma non ha
+    # niente da fare qui. fixincludes esiste per CORREGGERE GLI HEADER DI
+    # SISTEMA rotti dell'ospite — i vecchi <sys/*.h> di SunOS, HP-UX,
+    # IRIX — riscrivendoli in una copia privata di GCC. EX-OS si configura
+    # con --without-headers: header di sistema da correggere non ce ne
+    # sono, e infatti gcc/configure.ac mette gia' STMP_FIXINC='' quando
+    # glielo si dice.
+    #
+    # Resta pero' che il Makefile di primo livello lo COSTRUISCE lo stesso,
+    # perche' `fixincludes` sta in host_tools e nessuna opzione lo toglie
+    # da li'. E fixincl.c usa fork():
+    #
+    #     fixincl.c:816: error: implicit declaration of function 'fork'
+    #
+    # fork() su EX-OS non c'e' e non ci sara' — duplicare uno spazio di
+    # indirizzamento per buttarlo via alla exec successiva, senza
+    # copy-on-write, e' la cosa piu' costosa che si possa fare (vedi il
+    # commento su spawn in lib/include/libc.h). Quindi si toglie la
+    # directory dall'elenco, che e' la risposta giusta e non un aggiramento.
+    # =========================================================================
+    (
+        "configure",
+        '# Don\'t compile the bundled readline/libreadline.a if --with-system-readline\n'
+        '# is provided.\n'
+        'if test x$with_system_readline = xyes ; then\n'
+        '  noconfigdirs="$noconfigdirs readline"\n'
+        'fi\n',
+        '# Don\'t compile the bundled readline/libreadline.a if --with-system-readline\n'
+        '# is provided.\n'
+        'if test x$with_system_readline = xyes ; then\n'
+        '  noconfigdirs="$noconfigdirs readline"\n'
+        'fi\n'
+        '\n'
+        '# EX-OS: niente fixincludes (usa fork, e non c\'e\' niente da correggere).\n'
+        'case "${host}" in\n'
+        '  *-exos*) noconfigdirs="$noconfigdirs fixincludes" ;;\n'
+        'esac\n',
+    ),
+    (
+        "configure.ac",
+        '# Don\'t compile the bundled readline/libreadline.a if --with-system-readline\n'
+        '# is provided.\n'
+        'if test x$with_system_readline = xyes ; then\n'
+        '  noconfigdirs="$noconfigdirs readline"\n'
+        'fi\n',
+        '# Don\'t compile the bundled readline/libreadline.a if --with-system-readline\n'
+        '# is provided.\n'
+        'if test x$with_system_readline = xyes ; then\n'
+        '  noconfigdirs="$noconfigdirs readline"\n'
+        'fi\n'
+        '\n'
+        '# EX-OS: niente fixincludes (usa fork, e non c\'e\' niente da correggere).\n'
+        'case "${host}" in\n'
+        '  *-exos*) noconfigdirs="$noconfigdirs fixincludes" ;;\n'
+        'esac\n',
+    ),
+    (
+        "libstdc++-v3/configure",
+        '  if test "x${with_newlib}" = "xyes"; then\n'
+        '    os_include_dir="os/newlib"\n',
+        '  if test "x${with_newlib}" = "xyes"; then\n'
+        '    case "${host}" in\n'
+        '      *-exos*)\n'
+        '        os_include_dir="os/generic"\n'
+        '        $as_echo "#define HAVE_STRTOLD 1" >>confdefs.h\n'
+        '        ;;\n'
+        '      *) os_include_dir="os/newlib" ;;\n'
+        '    esac\n',
+    ),
+    (
+        "libstdc++-v3/configure.ac",
+        '  if test "x${with_newlib}" = "xyes"; then\n'
+        '    os_include_dir="os/newlib"\n',
+        '  if test "x${with_newlib}" = "xyes"; then\n'
+        '    case "${host}" in\n'
+        '      *-exos*)\n'
+        '        os_include_dir="os/generic"\n'
+        '        AC_DEFINE(HAVE_STRTOLD)\n'
+        '        ;;\n'
+        '      *) os_include_dir="os/newlib" ;;\n'
+        '    esac\n',
+    ),
 ]
 
 # File nuovi: (sorgente in questa directory, destinazione nell'albero GCC)
+#
+# pex-exos.c non sta qui ma in tools/binutils-exos/: e' nato per binutils,
+# ed e' lo STESSO file. Copiarlo in due posti vorrebbe dire due copie da
+# tenere allineate a mano — che e' esattamente il genere di cosa che si
+# scopre rotta sei mesi dopo.
 NUOVI = [
     ("exos.h", "gcc/config/i386/exos.h"),
+    ("../binutils-exos/pex-exos.c", "libiberty/pex-exos.c"),
 ]
 
 def marca_modifica(percorso):
@@ -222,12 +388,27 @@ Fatto. Per costruire il cross-compilatore:
                                              # build la riempie all'ultimo link
     PATH=$HOME/exos-cross/bin:$PATH %s/configure \\
         --target=i386-exos --prefix=$HOME/exos-cross \\
-        --enable-languages=c --without-headers --with-newlib \\
+        --enable-languages=c,c++ --without-headers --with-newlib \\
         --disable-nls --disable-shared --disable-threads \\
         --disable-libssp --disable-libgomp --disable-libquadmath \\
-        --disable-libatomic --disable-libvtv --disable-libstdcxx \\
-        --disable-bootstrap
-    make -j$(nproc) all-gcc && make install-gcc
+        --disable-libatomic --disable-libvtv --disable-bootstrap \\
+        --enable-clocale=generic --disable-libstdcxx-pch
+    make -j1 all-gcc && make -j1 install-gcc
+    make -j1 all-target-libgcc && make -j1 install-target-libgcc
+    make -j1 all-target-libstdc++-v3 && make -j1 install-target-libstdc++-v3
+
+⚠️ -j1 E NON -j$(nproc): la macchina di sviluppo ha 4 GB, e i file
+gimple-match-*.cc di GCC arrivano a 1,5 GB di picco CIASCUNO. Con -j2 il
+sistema va in OOM a meta' strada, cioe' dopo un'ora di lavoro buttata.
+
+⚠️ --enable-clocale=generic E' OBBLIGATORIO. Senza, --with-newlib porta il
+modello di locale a `newlib`, che tira dentro
+config/locale/newlib/ctype_members.cc — scritto sui macro interni di
+newlib, che la nostra libc non ha e non avra'.
+
+⚠️ PRIMA della libstdc++ ci vuole libm nel sysroot: il suo <cmath> scrive
+`using ::sin;` per centottanta nomi e quei nomi devono esistere. Si
+prepara con tools/openlibm-exos/prepara-libm.sh.
 
 I wrapper dei binutils (i386-exos-as, -ld, ...) e l'ambiente del bersaglio
 (crt0.o, libc.a, header) si preparano con tools/gcc-exos/prepara-cross.sh.

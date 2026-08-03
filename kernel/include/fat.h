@@ -85,6 +85,12 @@ int  fat_create  (int mnt, const char *percorso);
 int  fat_mkdir   (int mnt, const char *percorso);
 int  fat_rmdir   (int mnt, const char *percorso);
 int  fat_unlink  (int mnt, const char *percorso);
+/* Cambia il NOME di una voce senza spostare i dati. ⚠️ SOLO nella stessa
+ * directory: -3 se le due directory differiscono, -2 se la destinazione
+ * esiste gia'. Vedi il commento esteso in kernel/fs/fat.c — e' cio' che
+ * permette a `install` di verificare la mappa PRIMA di dare al kernel il
+ * suo nome definitivo. */
+int  fat_rename  (int mnt, const char *da, const char *a);
 int  fat_write   (int mnt, const char *percorso, const void *buf,
                   uint32_t size, uint32_t offset);
 int  fat_truncate(int mnt, const char *percorso, uint32_t nuova_dim);

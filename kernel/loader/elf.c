@@ -52,6 +52,7 @@
 #define PT_NOTE         4
 #define PT_SHLIB        5
 #define PT_PHDR         6
+#define PT_TLS          7   /* Immagine di partenza delle variabili __thread */
 
 /* Flag Program Header (p_flags) */
 #define PF_X            0x1     /* Execute */
@@ -455,6 +456,139 @@ if (n <= 0) {
     }
 
     /* ==========================================================================
+     * Passo 6b: il blocco TLS, se il programma ne ha uno
+     *
+     * PT_TLS non e' un segmento da caricare: e' l'IMMAGINE DI PARTENZA
+     * delle variabili __thread. Il caricatore ne fa una copia per processo
+     * e ci punta il thread pointer; il segmento originale non viene mai
+     * mappato ne' usato direttamente.
+     *
+     * DISPOSIZIONE (variante II di i386, modello local-exec):
+     *
+     *      +----------------------+-------------------+
+     *      |  blocco TLS (memsz)  |  TCB (8 byte)     |
+     *      +----------------------+-------------------+
+     *      ^ tls_base             ^ tp = tls_tp
+     *
+     * Il TCB comincia con un puntatore a SE STESSO: e' la convenzione ABI,
+     * ed e' cio' che rende `mov %gs:0x0, %ebx` — la prima istruzione che
+     * emette GCC per accedere a una variabile thread-local — una lettura
+     * del thread pointer invece che di una variabile qualunque. Le
+     * variabili stanno a offset NEGATIVI da tp, gia' risolti da `ld`.
+     *
+     * DOVE: sotto la riserva dello stack, con una pagina di guardia in
+     * mezzo. ⚠️ La guardia non e' un vezzo: senza, una ricorsione infinita
+     * scenderebbe dallo stack dentro il blocco TLS — che e' mappato — e
+     * invece di terminare il processo con "stack esaurito" ne
+     * corromperebbe le variabili in silenzio.
+     * ========================================================================== */
+    {
+        Elf32Phdr *tls = NULL;
+
+        for (i = 0; i < hdr.e_phnum; i++) {
+            if (phdrs[i].p_type == PT_TLS && phdrs[i].p_memsz != 0) {
+                tls = &phdrs[i];
+                break;
+            }
+        }
+
+        if (tls != NULL) {
+            uint32_t align   = (tls->p_align < 4) ? 4 : tls->p_align;
+            uint32_t dim_tls = ALIGN_UP(tls->p_memsz, align);
+            uint32_t totale  = ALIGN_UP(dim_tls + TLS_TCB_SIZE, PAGE_SIZE);
+            uint32_t guardia = proc->user_stack_limit - PAGE_SIZE;
+            uint32_t base    = ALIGN_DOWN(guardia - totale, PAGE_SIZE);
+            uint32_t tp      = base + dim_tls;
+            uint32_t pg;
+
+            if (dim_tls > TLS_MAX) {
+                klog(LOG_ERROR, "ELF: blocco TLS di %u byte, massimo %u",
+                     dim_tls, (unsigned)TLS_MAX);
+                goto cleanup;
+            }
+
+            for (pg = 0; pg < totale / PAGE_SIZE; pg++) {
+                uint32_t phys = pmm_alloc_page();
+                if (phys == 0) {
+                    klog(LOG_ERROR, "ELF: OOM allocando il blocco TLS");
+                    goto cleanup;
+                }
+                /* Azzerata: e' la parte .tbss, e ci si appoggia anche per i
+                 * byte fra p_filesz e p_memsz. */
+                paging_azzera_fisica(phys);
+                if (paging_map_page(proc->page_directory, base + pg * PAGE_SIZE,
+                                    phys, PG_PRESENT | PG_WRITABLE | PG_USER) != 0) {
+                    pmm_free_page(phys);
+                    goto cleanup;
+                }
+            }
+
+            /* L'immagine iniziale (.tdata) si legge dal file: qui non si
+             * puo' fare altrimenti, perche' con il caricamento su richiesta
+             * il segmento non e' in RAM da nessuna parte. */
+            if (tls->p_filesz > 0) {
+                uint32_t rimasti = tls->p_filesz;
+                uint32_t off     = tls->p_offset;
+                uint32_t vaddr   = base;
+
+                while (rimasti > 0) {
+                    uint32_t quanti = (rimasti > PAGE_SIZE) ? PAGE_SIZE : rimasti;
+                    int      n = vfs_read(handle, seg_buf, quanti, off);
+                    uint32_t k, scritti = 0;
+
+                    if (n <= 0) {
+                        klog(LOG_ERROR, "ELF: lettura dell'immagine TLS fallita");
+                        goto cleanup;
+                    }
+
+                    while (scritti < (uint32_t)n) {
+                        uint32_t page_off = (vaddr + scritti) % PAGE_SIZE;
+                        uint32_t take     = PAGE_SIZE - page_off;
+                        uint32_t phys_dst;
+                        uint8_t *dst;
+
+                        if (take > (uint32_t)n - scritti) take = (uint32_t)n - scritti;
+
+                        phys_dst = paging_get_physical(proc->page_directory,
+                                                       vaddr + scritti);
+                        if (phys_dst == 0) goto cleanup;
+
+                        dst = (uint8_t *)paging_finestra_apri(phys_dst - page_off);
+                        for (k = 0; k < take; k++) dst[page_off + k] = seg_buf[scritti + k];
+                        paging_finestra_chiudi();
+
+                        scritti += take;
+                    }
+
+                    off     += (uint32_t)n;
+                    vaddr   += (uint32_t)n;
+                    rimasti -= (uint32_t)n;
+                }
+            }
+
+            /* Il puntatore a se stesso in testa al TCB. */
+            {
+                uint32_t phys_tcb = paging_get_physical(proc->page_directory, tp);
+                uint32_t off_tcb  = tp % PAGE_SIZE;
+                uint32_t *tcb;
+
+                if (phys_tcb == 0) goto cleanup;
+                tcb = (uint32_t *)paging_finestra_apri(phys_tcb - off_tcb);
+                tcb[off_tcb / 4] = tp;
+                paging_finestra_chiudi();
+            }
+
+            proc->tls_base = base;
+            proc->tls_tp   = tp;
+
+            klog(LOG_INFO, "ELF: TLS 0x%08x-0x%08x, tp=0x%08x "
+                 "(memsz=%u filesz=%u align=%u)",
+                 base, base + totale, tp,
+                 tls->p_memsz, tls->p_filesz, tls->p_align);
+        }
+    }
+
+    /* ==========================================================================
      * Passo 7: Aggiorna heap del processo
      * ========================================================================== */
     {
@@ -467,7 +601,27 @@ if (n <= 0) {
         }
         proc->heap_start = heap_start;
         proc->heap_end   = heap_start;
-        klog(LOG_INFO, "ELF: heap utente inizia a 0x%08x", heap_start);
+
+        /* IL TETTO (kernel 0.156). Sopra lo heap non c'e' il vuoto: c'e'
+         * il blocco TLS, e sopra quello la riserva dello stack. Senza un
+         * confine, sbrk cresceva finche' il PMM aveva pagine — e
+         * paging_map_page() sovrascrive in silenzio, quindi il danno
+         * sarebbe stato il TLS rimappato su pagine azzerate invece di un
+         * errore. Vedi il commento in kernel/include/sched.h.
+         *
+         * Una pagina di guardia sotto il primo oggetto che c'e' davvero:
+         * il blocco TLS se il programma ne ha uno, altrimenti la riserva
+         * dello stack. La guardia non e' mappata da nessuno, quindi un
+         * accesso li' dentro e' un fault e non una corruzione. */
+        {
+            uint32_t soffitto = proc->tls_base ? proc->tls_base
+                                               : proc->user_stack_limit;
+            proc->heap_max = (soffitto > PAGE_SIZE) ? soffitto - PAGE_SIZE : 0;
+        }
+
+        klog(LOG_INFO, "ELF: heap utente 0x%08x, tetto 0x%08x (%u MB)",
+             heap_start, proc->heap_max,
+             (proc->heap_max - heap_start) / (1024u * 1024u));
     }
 
     /* Successo */

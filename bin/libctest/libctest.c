@@ -29,6 +29,14 @@
  * ============================================================================= */
 
 #include "libc.h"
+/* intmax_t, imaxdiv_t e la loro famiglia stanno qui e non in libc.h:
+ * <inttypes.h> e' l'header che li definisce, e provarli significa anche
+ * provare che quell'header sia includibile per conto suo. */
+#include "inttypes.h"
+/* Le macro di confronto del C99 (isgreater e compagnia): senza di loro la
+ * libstdc++ dichiara <math.h> non conforme e rinuncia a mettere in std::
+ * decine di funzioni. Vedi lib/include/math.h. */
+#include "math.h"
 
 static int passati = 0;
 static int falliti = 0;
@@ -100,6 +108,55 @@ static void prova_allocatore(void)
     free(a);
 
     esito("free(NULL) non fa danni", (free(NULL), 1));
+
+    /* -----------------------------------------------------------------
+     * Allocazione allineata.
+     *
+     * Non basta guardare che l'indirizzo sia allineato: il punto delicato
+     * e' che il blocco restituito e' stato RITAGLIATO dentro un altro, e
+     * quindi free() deve poterlo trattare come un blocco qualunque. Se la
+     * lista dell'heap restasse inconsistente il danno non si vedrebbe
+     * qui — si vedrebbe alla malloc successiva, consegnando due volte lo
+     * stesso indirizzo.
+     * ----------------------------------------------------------------- */
+    ok = 1;
+    for (i = 3; i <= 12; i++) {          /* da 8 a 4096 byte */
+        size_t all = (size_t)1 << i;
+        void  *p   = memalign(all, 100);
+        if (p == NULL || ((uintptr_t)p & (all - 1u)) != 0) { ok = 0; break; }
+        memset(p, 0xAA, 100);            /* si deve poter scrivere davvero */
+        free(p);
+    }
+    esito("memalign allinea da 8 a 4096", ok);
+
+    /* L'heap deve restare sano dopo un ciclo di memalign/free: se la
+     * lista fosse rotta, questa malloc restituirebbe un indirizzo gia'
+     * in uso o NULL. */
+    a = (char *)memalign(256, 300);
+    b = (char *)malloc(300);
+    ok = (a != NULL && b != NULL && (a + 300 <= b || b + 300 <= a));
+    esito("l'heap resta sano dopo memalign", ok);
+    free(a);
+    free(b);
+
+    a = NULL;
+    ok = (posix_memalign((void **)&a, 64, 200) == 0) &&
+         a != NULL && ((uintptr_t)a & 63u) == 0;
+    esito("posix_memalign ritorna 0 e allinea", ok);
+    free(a);
+
+    /* ⚠️ posix_memalign RITORNA il codice di errore, non lo mette in
+     * errno: e' l'eccezione della famiglia, ed e' il modo classico di
+     * sbagliare a usarla. */
+    esito("posix_memalign rifiuta un allineamento non potenza di due",
+          posix_memalign((void **)&a, 24, 200) == EINVAL);
+
+    a = (char *)aligned_alloc(128, 256);
+    esito("aligned_alloc allinea", a != NULL && ((uintptr_t)a & 127u) == 0);
+    free(a);
+
+    esito("memalign rifiuta un allineamento non potenza di due",
+          memalign(48, 100) == NULL);
 }
 
 /* =============================================================================
@@ -203,6 +260,28 @@ static void prova_stdio(void)
         long n  = (fd >= 0) ? fsize(fd) : -1;
         if (fd >= 0) close(fd);
         esito("il file su disco ha la dimensione attesa", n == 29);
+    }
+
+    /* fgetpos/fsetpos: ⚠️ ritornano 0/-1, non la posizione — chi li
+     * confonde con ftell legge sempre "inizio del file". */
+    {
+        FILE  *f = fopen(nome, "r");
+        fpos_t p;
+        int    c1 = 0, c2 = 0;
+        int    ok = 0;
+
+        if (f != NULL) {
+            (void)fgetc(f);
+            (void)fgetc(f);
+            ok = (fgetpos(f, &p) == 0);
+            c1 = fgetc(f);
+            (void)fgetc(f);
+            ok = ok && (fsetpos(f, &p) == 0);
+            c2 = fgetc(f);
+            fclose(f);
+        }
+        esito("fgetpos e fsetpos tornano allo stesso punto",
+              ok && c1 == c2 && c1 != EOF);
     }
 
     unlink(nome);
@@ -490,6 +569,9 @@ static void prova_terzi(void)
     }
 
     /* Le ultime arrivate, una riga a testa. */
+    esito("isascii e toascii",
+          isascii('A') && !isascii(200) && toascii('A' + 128) == 'A');
+    esito("isblank", isblank(' ') && isblank('\t') && !isblank('x'));
     esito("strcoll come strcmp", strcoll("abc", "abd") < 0 &&
                                  strcoll("abc", "abc") == 0);
     esito("atof",  atof("3.5") == 3.5);
@@ -635,9 +717,56 @@ static void prova_virgola(void)
         esito("frexp di zero",             m == 0.0 && e == 0);
     }
 
+    /* sqrt e' `fsqrt` dell'x87, quindi correttamente arrotondata: sui
+     * quadrati perfetti il risultato dev'essere ESATTO, non "vicino". */
+    esito("sqrt esatta sui quadrati",
+          sqrt(4.0) == 2.0 && sqrt(16.0) == 4.0 && sqrt(0.25) == 0.5);
+    esito("sqrt di zero e uno", sqrt(0.0) == 0.0 && sqrt(1.0) == 1.0);
+    {
+        /* 2 non e' un quadrato: si controlla che il quadrato del
+         * risultato ritorni a 2 entro un ULP, che e' quanto si puo'
+         * chiedere. */
+        double r = sqrt(2.0);
+        double d = r * r - 2.0;
+        esito("sqrt di 2", (d < 1e-15) && (d > -1e-15));
+    }
+
     esito("strtoull 64 bit",     strtoull("12345678901", NULL, 10) == 12345678901ULL);
     esito("strtoll negativo",    strtoll("-9000000000", NULL, 10) == -9000000000LL);
     esito("strtoull esadecimale", strtoull("0xFFFFFFFF", NULL, 16) == 4294967295ULL);
+
+    /* -----------------------------------------------------------------
+     * I confronti che non sollevano eccezioni.
+     *
+     * ⚠️ NON SONO SINONIMI DI <, <=, >, >=. Con un operando NaN danno la
+     * stessa RISPOSTA degli operatori (falso) ma non lo stesso EFFETTO:
+     * l'operatore solleva "invalid" sull'x87, questi no. E' l'unica
+     * ragione per cui esistono.
+     *
+     * La prova che conta e' l'ultima: `isunordered` deve dire di si' su
+     * un NaN, e tutti gli altri di no — compreso `islessgreater`, dove
+     * l'errore tipico e' scriverlo come `a != b` (che su NaN e' VERO).
+     * ----------------------------------------------------------------- */
+    {
+        double uno = 1.0, due = 2.0;
+        double nan_ = 0.0 / 0.0;
+
+        esito("isgreater",      isgreater(due, uno) && !isgreater(uno, due));
+        esito("isgreaterequal", isgreaterequal(uno, uno) &&
+                                !isgreaterequal(uno, due));
+        esito("isless",         isless(uno, due) && !isless(due, uno));
+        esito("islessequal",    islessequal(uno, uno) && !islessequal(due, uno));
+        esito("islessgreater",  islessgreater(uno, due) &&
+                                !islessgreater(uno, uno));
+
+        esito("isunordered dice si' sul NaN", isunordered(nan_, uno));
+        esito("e tutti gli altri dicono no",
+              !isgreater(nan_, uno) && !isless(nan_, uno) &&
+              !isgreaterequal(nan_, uno) && !islessequal(nan_, uno) &&
+              !islessgreater(nan_, uno));
+        esito("mentre due numeri veri sono ordinati",
+              !isunordered(uno, due));
+    }
 }
 
 /* =============================================================================
@@ -822,6 +951,54 @@ static void prova_temporanei(void)
         unlink("/rinominato.tmp");
     }
 
+    /* -----------------------------------------------------------------
+     * rename — ⚠️ DALLA 0.161 NON COPIA PIU'.
+     *
+     * Prima era copia+cancella: costava quanto il file e RIALLOCAVA i
+     * blocchi. Ora e' una syscall che riscrive la voce di directory, e la
+     * garanzia che da' — i dati non si spostano — e' cio' su cui si regge
+     * `install`, che verifica la mappa dei settori del kernel prima di
+     * dargli il nome definitivo.
+     *
+     * ⚠️ Due differenze da POSIX, ed e' giusto provarle: NON sostituisce
+     * la destinazione (EEXIST) e NON attraversa directory (ENOSYS).
+     * ----------------------------------------------------------------- */
+    {
+        const char *a = "/rin-a.tmp", *b = "/rin-b.tmp";
+        FILE *f;
+        char  riga[64];
+        int   ok;
+
+        unlink(a); unlink(b);
+
+        f = fopen(a, "w");
+        if (f) { fputs("contenuto che non deve muoversi\n", f); fclose(f); }
+
+        esito("rename riesce", rename(a, b) == 0);
+        esito("il vecchio nome non c'e' piu'", access(a, F_OK) != 0);
+
+        riga[0] = '\0';
+        f = fopen(b, "r");
+        ok = (f != NULL) && (fgets(riga, sizeof(riga), f) != NULL);
+        if (f) fclose(f);
+        esito("e il contenuto e' quello di prima",
+              ok && strstr(riga, "non deve muoversi") != NULL);
+
+        /* ⚠️ Non sovrascrive: chi vuole sostituire cancella prima, cosi'
+         * la perdita e' una scelta e non un effetto collaterale. */
+        f = fopen(a, "w");
+        if (f) { fputs("altro\n", f); fclose(f); }
+        esito("rename NON sostituisce la destinazione",
+              rename(a, b) != 0 && errno == EEXIST);
+
+        /* ⚠️ Non attraversa directory: sarebbe una copia piu' una
+         * cancellazione, cioe' un'altra operazione. */
+        esito("rename fra directory diverse da ENOSYS",
+              rename(a, "/bin/rin-a.tmp") != 0 && errno == ENOSYS);
+
+        unlink(a); unlink(b);
+    }
+
     esito("access su un nome assente fallisce",
           access("/non-esiste-di-sicuro", F_OK) != 0);
 
@@ -837,11 +1014,407 @@ static void prova_temporanei(void)
         unlink(tmp);
     }
 
+    /* -----------------------------------------------------------------
+     * Quello che <cstdlib> della libstdc++ pretende che esista.
+     * ----------------------------------------------------------------- */
+    {
+        div_t  d  = div(-7, 2);
+        ldiv_t ld = ldiv(100L, 7L);
+        wchar_t w = 0;
+        char    b = 0;
+        int     i, dentro = 1, diversi = 0, primo;
+
+        /* ⚠️ Il troncamento e' verso lo ZERO: -3 e -1, non -4 e +1. */
+        esito("div tronca verso zero", d.quot == -3 && d.rem == -1);
+        esito("ldiv",  ld.quot == 14 && ld.rem == 2);
+
+        esito("mblen conta un byte",   mblen("abc", 3) == 1);
+        esito("mblen sul NUL da' 0",   mblen("", 1) == 0);
+        esito("mbtowc promuove",       mbtowc(&w, "Z", 1) == 1 && w == (wchar_t)'Z');
+        esito("wctomb converte",       wctomb(&b, (wchar_t)'Q') == 1 && b == 'Q');
+        esito("wctomb rifiuta sopra 255", wctomb(&b, (wchar_t)0x1F600) == -1);
+
+        srand(12345);
+        primo = rand();
+        for (i = 0; i < 200; i++) {
+            int r = rand();
+            if (r < 0 || r > RAND_MAX) dentro = 0;
+            if (r != primo) diversi = 1;
+        }
+        esito("rand resta dentro RAND_MAX", dentro);
+        esito("rand non da' sempre lo stesso", diversi);
+
+        /* Lo stesso seme deve dare la stessa sequenza: e' cio' che rende
+         * ripetibile una prova che usa rand. */
+        srand(12345);
+        esito("srand ripete la sequenza", rand() == primo);
+
+        /* ⚠️ system() esiste ma non esegue: -1 con ENOSYS, e system(NULL)
+         * risponde 0 perche' un interprete di comandi non c'e' davvero. */
+        esito("system(NULL) dice che non c'e' una shell", system(NULL) == 0);
+        esito("system rifiuta invece di fingere",
+              system("echo ciao") == -1 && errno == ENOSYS);
+
+        esito("atoll", atoll("-9000000000") == -9000000000LL);
+        esito("imaxabs", imaxabs((intmax_t)-9000000000LL) == 9000000000LL);
+        {
+            imaxdiv_t im = imaxdiv((intmax_t)-9000000000LL, (intmax_t)7);
+            esito("imaxdiv", im.quot == -1285714285LL && im.rem == -5LL);
+        }
+        esito("strtoimax", strtoimax("-9000000000", NULL, 10) == -9000000000LL);
+        esito("strtoumax", strtoumax("18000000000", NULL, 10) == 18000000000ULL);
+        esito("llabs", llabs(-9000000000LL) == 9000000000LL);
+        {
+            lldiv_t l = lldiv(-9000000000LL, 7LL);
+            esito("lldiv", l.quot == -1285714285LL && l.rem == -5LL);
+        }
+
+        /* ⚠️ strxfrm ritorna la lunghezza dell'ORIGINALE, non di quanto ha
+         * copiato: e' l'unico modo che il chiamante ha di accorgersi che
+         * il buffer era corto. */
+        {
+            char corto[4];
+            esito("strxfrm dice la lunghezza vera",
+                  strxfrm(corto, "abcdefgh", sizeof(corto)) == 8);
+        }
+
+        esito("difftime", difftime((time_t)100, (time_t)40) == 60.0);
+        {
+            struct timespec ts;
+            /* ⚠️ Ritorna `base`, non 0: e' la convenzione di questa
+             * funzione e non quella di tutte le altre. */
+            esito("timespec_get ritorna TIME_UTC",
+                  timespec_get(&ts, TIME_UTC) == TIME_UTC);
+            esito("timespec_get rifiuta una base sconosciuta",
+                  timespec_get(&ts, 99) == 0);
+        }
+
+        /* ⚠️ setvbuf dice di NO invece di fingere: la bufferizzazione di
+         * EX-OS non e' regolabile, e rispondere 0 farebbe credere a un
+         * programma che il suo _IONBF sia stato accolto. */
+        esito("setvbuf rifiuta cio' che non sa fare",
+              setvbuf(stdout, NULL, _IONBF, 0) != 0);
+
+        /* ⚠️ localeconv: i campi non specificati valgono 127 (CHAR_MAX) e
+         * NON zero. Zero vorrebbe dire "zero cifre decimali", 127 vuol
+         * dire "questa locale non lo dice" — e' la distinzione su cui
+         * sbaglia chi riempie la struttura a memoria. */
+        {
+            struct lconv *lc = localeconv();
+            esito("localeconv da' il punto decimale",
+                  lc != NULL && strcmp(lc->decimal_point, ".") == 0);
+            esito("e i campi non specificati valgono 127, non 0",
+                  lc != NULL && lc->frac_digits == 127 &&
+                  lc->grouping[0] == '\0');
+        }
+
+        /* mktime: l'inversa di gmtime, e ⚠️ NORMALIZZA la struttura. */
+        {
+            struct tm t;
+            time_t    q;
+
+            /* 2000-01-01 00:00:00 UTC = 946684800 */
+            t.tm_year = 100; t.tm_mon = 0;  t.tm_mday = 1;
+            t.tm_hour = 0;   t.tm_min = 0;  t.tm_sec  = 0;
+            t.tm_isdst = 0;  t.tm_wday = 99; t.tm_yday = 99;
+            q = mktime(&t);
+            esito("mktime da' l'istante giusto", q == (time_t)946684800);
+            /* Il 2000-01-01 era un sabato: tm_wday = 6. Il valore assurdo
+             * messo sopra dev'essere stato ignorato e riscritto. */
+            esito("e riscrive tm_wday che aveva ignorato", t.tm_wday == 6);
+
+            /* Il mese 12 e' gennaio dell'anno dopo: e' cosi' che si fa
+             * aritmetica sulle date. */
+            t.tm_year = 100; t.tm_mon = 12; t.tm_mday = 1;
+            t.tm_hour = 0;   t.tm_min = 0;  t.tm_sec  = 0;
+            (void)mktime(&t);
+            esito("mktime normalizza il mese 12 in gennaio dell'anno dopo",
+                  t.tm_mon == 0 && t.tm_year == 101);
+
+            /* E l'andata e ritorno con gmtime deve chiudere il giro. */
+            {
+                time_t     adesso = (time_t)1234567890;
+                struct tm *g = gmtime(&adesso);
+                struct tm  copia = *g;
+                esito("gmtime e mktime sono l'una l'inversa dell'altra",
+                      mktime(&copia) == adesso);
+            }
+        }
+    }
+
+    /* ⚠️ sleep RITORNA unsigned int — i secondi che restavano da dormire
+     * quando un segnale l'ha interrotta. Su EX-OS non ci sono segnali che
+     * possano interromperla, quindi e' sempre 0: la firma dice la verita'
+     * sul contratto, il valore dice la verita' su questo sistema. Con un
+     * ritorno void il `while ((s = sleep(s))) {}` della libstdc++ non
+     * compilava nemmeno. */
+    /* ⚠️ I CAMPI DI struct stat HANNO I TIPI DI POSIX, non `unsigned int`.
+     * Sul nostro bersaglio hanno la stessa larghezza, quindi i VALORI
+     * erano corretti anche prima e nessuno se ne era accorto — il tipo si
+     * vede solo quando qualcuno prende l'INDIRIZZO di un campo, ed e'
+     * quello che fa libcpp di GCC con &st.st_size. Qui si controlla che
+     * `off_t *` sia il tipo giusto: se st_size tornasse `unsigned int`,
+     * questa riga non compilerebbe. */
+    {
+        struct stat s;
+        off_t      *punta = &s.st_size;
+        int         ok = (stat("/bin/hello", &s) == 0);
+
+        *punta = *punta;    /* usa il puntatore: e' il controllo di tipo */
+        esito("stat riesce su /bin/hello", ok);
+        esito("st_size e' un off_t e non e' zero", ok && s.st_size > 0);
+        esito("st_blksize e' il settore", ok && s.st_blksize == 512);
+        esito("st_blocks copre st_size",
+              ok && (blkcnt_t)s.st_blocks * 512 >= (blkcnt_t)s.st_size);
+    }
+
+    esito("sleep(0) ritorna 0, non void",      sleep(0) == 0);
+    esito("usleep ritorna 0 e non fallisce",   usleep(1000) == 0);
+
+    /* -----------------------------------------------------------------
+     * Le funzioni che chiede GCC quando gira come programma ospite.
+     * ----------------------------------------------------------------- */
+    {
+        struct rusage u;
+        void  *p;
+
+        esito("getpagesize",  getpagesize() == 4096);
+        esito("e combacia con sysconf",
+              getpagesize() == (int)sysconf(_SC_PAGESIZE));
+
+        /* ⚠️ ru_utime e' un LIMITE SUPERIORE (il tempo trascorso dall'avvio),
+         * non il tempo di CPU di questo processo: EX-OS non tiene
+         * contabilita' per processo. Si prova che la chiamata riesca e che
+         * i campi che non sappiamo riempire siano davvero azzerati. */
+        esito("getrusage riesce", getrusage(RUSAGE_SELF, &u) == 0);
+        esito("e azzera cio' che non sa",
+              u.ru_stime.tv_sec == 0 && u.ru_maxrss == 0 && u.ru_majflt == 0);
+        esito("getrusage rifiuta un `chi` sconosciuto",
+              getrusage(42, &u) == -1 && errno == EINVAL);
+
+        /* ⚠️ mmap ritorna MAP_FAILED, cioe' (void*)-1, NON NULL. */
+        p = mmap(NULL, 3 * 4096, PROT_READ | PROT_WRITE,
+                 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        esito("mmap anonima riesce", p != MAP_FAILED);
+        if (p != MAP_FAILED) {
+            esito("ed e' allineata alla pagina",
+                  ((uintptr_t)p & 4095u) == 0);
+            memset(p, 0x9C, 3 * 4096);      /* dev'essere scrivibile davvero */
+            esito("e si scrive fino in fondo",
+                  ((unsigned char *)p)[3 * 4096 - 1] == 0x9C);
+            esito("munmap riesce", munmap(p, 3 * 4096) == 0);
+        }
+
+        /* ⚠️ Mappare un FILE non si puo', e si dice invece di consegnare
+         * zeri: una mmap che finge darebbe un programma che legge dati
+         * sbagliati senza che niente lo segnali. */
+        esito("mmap di un file e' rifiutata",
+              mmap(NULL, 4096, PROT_READ, MAP_PRIVATE, 1, 0) == MAP_FAILED &&
+              errno == ENODEV);
+    }
+
     esito("sysconf pagina",   sysconf(_SC_PAGESIZE) == 4096);
     esito("sysconf sconosciuta fallisce", sysconf(9999) == -1);
     esito("setlocale C",      setlocale(LC_ALL, "C") != NULL);
     esito("setlocale altro no", setlocale(LC_ALL, "it_IT.UTF-8") == NULL);
     esito("strsignal",        strsignal(SIGSEGV) != NULL);
+}
+
+/* =============================================================================
+ * Variabili __thread — il thread pointer
+ *
+ * EX-OS ha un filo per processo, quindi una variabile thread-local e' una
+ * variabile globale con un nome piu' lungo: qui non si prova che siano
+ * SEPARATE fra fili — non ci sono fili — si prova che **esistano**, cioe'
+ * che `%gs:0` punti al blocco TLS del processo invece che a zero.
+ *
+ * E' esattamente cio' su cui e' morto il primo `as` nativo:
+ *
+ *     [FAULT] page fault a 0x00000000 (lettura, EIP=...)
+ *      mov %gs:0x0,%ebx      <- bfd_init, terza istruzione
+ *
+ * La prova che conta e' la terza: il valore deve sopravvivere a
+ * sched_yield(). Il descrittore GDT del TLS e' UNO SOLO per tutto il
+ * sistema e la sua base la riscrive lo scheduler a ogni cambio di
+ * contesto; se qualcuno se ne dimenticasse — o se un interrupt
+ * ricaricasse GS con il selettore dati normale, come facevano gli stub
+ * fino ad agosto 2026 — la lettura dopo lo switch tornerebbe da un
+ * indirizzo diverso.
+ * ============================================================================= */
+static __thread int  tls_contatore = 1234;
+static __thread char tls_testo[16] = "thread";
+
+static void prova_tls(void)
+{
+    printf("\nVariabili __thread:\n");
+
+    /* .tdata: il valore iniziale arriva dall'immagine nel file. */
+    esito("il valore iniziale c'e'", tls_contatore == 1234);
+    esito("e anche quello di una stringa", strcmp(tls_testo, "thread") == 0);
+
+    tls_contatore += 1;
+    esito("si scrive", tls_contatore == 1235);
+
+    {
+        int i;
+        for (i = 0; i < 20; i++) {
+            tls_contatore++;
+            sched_yield();
+        }
+        esito("sopravvive al cambio di contesto", tls_contatore == 1255);
+    }
+
+    /* .tbss: quello che non ha valore iniziale dev'essere azzerato, come
+     * ogni altra variabile statica. */
+    {
+        static __thread int  vuoto;
+        static __thread char buffer[32];
+        int i, tutti_zero = 1;
+
+        for (i = 0; i < 32; i++) if (buffer[i] != 0) tutti_zero = 0;
+        esito("la parte .tbss e' azzerata", vuoto == 0 && tutti_zero);
+    }
+
+    /* L'indirizzo di una variabile thread-local sta nel blocco del
+     * processo, non nel segmento dati: deve essere ben lontano da dove
+     * vive il resto. */
+    esito("l'indirizzo non e' zero", &tls_contatore != NULL);
+}
+
+/* =============================================================================
+ * IL TETTO DELLO HEAP (kernel 0.156)
+ *
+ * Sta QUI, dopo prova_tls, e non insieme al resto dell'allocatore: la
+ * prova ha bisogno di `tls_contatore`, perche' il danno che il tetto
+ * impedisce e' proprio quello.
+ *
+ * COSA ANDAVA STORTO. Fino alla 0.155 sys_sbrk cresceva finche' il PMM
+ * aveva pagine da dare: l'unico limite era la RAM FISICA, non lo spazio
+ * di indirizzamento. Ma sopra lo heap non c'e' il vuoto — c'e' il blocco
+ * TLS del processo, e sopra quello la riserva dello stack. E
+ * paging_map_page() sovrascrive una PTE gia' presente SENZA DIRE NIENTE.
+ * Uno heap abbastanza grande avrebbe rimappato il proprio blocco TLS su
+ * pagine nuove azzerate: il thread pointer sarebbe andato a zero e ogni
+ * variabile __thread avrebbe cominciato a leggere memoria altrui, senza
+ * un fault e senza un log.
+ *
+ * ⚠️ QUESTA PROVA NON RAGGIUNGE IL TETTO, E NON PUO'. Fra lo heap e la
+ * riserva dello stack ci sono quasi 3 GB, mentre QEMU qui ha 32 MB: la
+ * memoria fisica finisce molto prima dello spazio di indirizzamento. Il
+ * tetto serve alla macchina che di RAM ne ha abbastanza — quella su cui
+ * un giorno girera' cc1.
+ *
+ * Quello che si prova qui e' l'altra meta', ed e' altrettanto importante:
+ * che un sbrk RIFIUTATO lasci il processo esattamente com'era. Un rifiuto
+ * a meta' strada — con qualche pagina gia' mappata e heap_end avanzato di
+ * un valore che il chiamante non ha mai visto — sarebbe peggio del
+ * difetto che sostituisce.
+ * ============================================================================= */
+static void prova_tetto_heap(void)
+{
+    void *prima;
+    long  totale = 0;
+    int   passi  = 0;
+    int   rifiutato = 0;
+    char *p;
+    /* ⚠️ Si legge PRIMA, invece di confrontare con 1234: prova_tls()
+     * incrementa il contatore, e un valore atteso scritto a mano qui
+     * diventerebbe falso il giorno che quella prova cambia di un giro. */
+    int   tls_prima = tls_contatore;
+
+    printf("\nCrescita dello heap:\n");
+
+    prima = sbrk(0);
+    esito("sbrk(0) da' la cima dell'heap", prima != (void *)-1);
+
+    /* Si cresce a blocchi da 1 MB finche' il kernel dice di no. Il tetto
+     * di 64 passi non e' prudenza: e' per non restare in un ciclo se un
+     * giorno sbrk smettesse di fallire. */
+    while (passi < 64) {
+        if (sbrk(1024 * 1024) == (void *)-1) { rifiutato = 1; break; }
+        totale += 1024 * 1024;
+        passi++;
+    }
+    esito("sbrk finisce per rifiutare, invece di crescere all'infinito",
+          rifiutato);
+
+    /* ⚠️ SI RESTITUISCE TUTTO, e non e' pulizia facoltativa: free() non
+     * chiama mai sbrk con un incremento negativo, quindi senza questa riga
+     * il processo terrebbe tutta la RAM libera del sistema fino alla
+     * propria uscita, e le prove successive non troverebbero piu' niente. */
+    if (totale > 0) esito("sbrk negativo restituisce la memoria",
+                          sbrk(-(int)totale) != (void *)-1);
+
+    esito("e lo heap torna dov'era", sbrk(0) == prima);
+
+    /* Le due prove che dicono se il rifiuto ha toccato cio' che sta
+     * SOPRA lo heap. La prima e' il blocco TLS, che e' il vicino piu'
+     * prossimo; la seconda e' lo stack, dove vivono queste variabili. */
+    esito("le variabili __thread sono intatte",
+          tls_contatore == tls_prima && strcmp(tls_testo, "thread") == 0);
+
+    p = (char *)malloc(64 * 1024);
+    if (p != NULL) memset(p, 0x5A, 64 * 1024);
+    esito("l'heap funziona ancora dopo il rifiuto", p != NULL);
+    free(p);
+
+    /* -----------------------------------------------------------------
+     * LA MEMORIA TORNA AL KERNEL (0.157)
+     *
+     * Fino alla 0.156 free() non chiamava mai sbrk con un incremento
+     * negativo: un blocco liberato tornava disponibile per il PROCESSO,
+     * non per il SISTEMA. Un compilatore, che costruisce e butta un
+     * albero di sintassi per funzione, teneva il picco massimo fino
+     * all'uscita — e il processo dopo trovava la macchina piena.
+     *
+     * ⚠️ LA PROVA GUARDA sbrk(0), NON malloc(). Che malloc riesca lo
+     * sapevamo gia': la lista dei blocchi liberi bastava a quello. La
+     * domanda e' se il CONFINE si e' abbassato, ed e' l'unica cosa che
+     * distingue "memoria riusabile" da "memoria restituita".
+     * ----------------------------------------------------------------- */
+    {
+        void *base, *dopo_alloc, *dopo_free;
+        char *grosso;
+
+        base   = sbrk(0);
+        grosso = (char *)malloc(2 * 1024 * 1024);
+        if (grosso != NULL) memset(grosso, 0x33, 2 * 1024 * 1024);
+        dopo_alloc = sbrk(0);
+        esito("2 MB fanno salire il confine",
+              grosso != NULL && dopo_alloc > base);
+
+        free(grosso);
+        dopo_free = sbrk(0);
+        esito("e la free lo fa riscendere", dopo_free < dopo_alloc);
+
+        /* ⚠️ NON si controlla `dopo_free >= base`, e la prima versione di
+         * questa prova lo faceva SBAGLIANDO. Il blocco da 2 MB si fonde
+         * con la coda libera che c'era gia' prima di `base`, quindi
+         * comincia PIU' IN BASSO di dove stava il confine quando l'abbiamo
+         * campionato: restituire fin sotto `base` e' corretto, non un
+         * difetto.
+         *
+         * Quello che «una coda si tiene» vuol dire davvero e' questo: una
+         * piccola allocazione subito dopo NON deve toccare il kernel. Se
+         * la coda fosse stata restituita tutta, questa malloc farebbe una
+         * sbrk e il confine si muoverebbe. */
+        {
+            void *prima_piccola = sbrk(0);
+            char *piccolo = (char *)malloc(1024);
+            esito("ma una coda si tiene (nessuna syscall per 1 KB)",
+                  piccolo != NULL && sbrk(0) == prima_piccola);
+            free(piccolo);
+        }
+
+        /* E dopo aver restituito, l'heap deve essere ancora sano: se il
+         * blocco in coda fosse rimasto con una dimensione che non
+         * corrisponde piu' alla memoria mappata, la prima scrittura qui
+         * dentro sarebbe un page fault. */
+        grosso = (char *)malloc(128 * 1024);
+        if (grosso != NULL) memset(grosso, 0x77, 128 * 1024);
+        esito("e si rialloca senza danni", grosso != NULL);
+        free(grosso);
+    }
 }
 
 /* =============================================================================
@@ -945,6 +1518,7 @@ static void prova_spawn(void)
     red.fd       = 1;                               /* stdout del figlio */
     red.flags    = O_WRONLY | O_CREAT | O_TRUNC;
     red.percorso = uscita;
+    red.fd_padre = -1;                              /* non si eredita niente */
 
     pid = spawn_ex("/bin/hello", argv, environ, &red, 1);
     esito("spawn con redirezione", pid > 0);
@@ -973,6 +1547,113 @@ static void prova_spawn(void)
           spawn("/bin/non-esiste-di-sicuro", argv) < 0);
 }
 
+/* =============================================================================
+ * Le pipe
+ *
+ * ⚠️ LE PROVE CHE CONTANO SONO QUELLE DI CONFINE, non il giro di andata e
+ * ritorno. Una pipe che trasporta byte quando tutto va bene e' facile;
+ * quella che serve e' quella che sa distinguere «aspetta» da «e' finita»,
+ * e che non lascia nessuno bloccato per sempre quando l'altro sparisce.
+ *
+ * Qui si provano, in ordine:
+ *   1. il giro di andata e ritorno dentro UN processo (il caso facile);
+ *   2. ⚠️ la fine dei dati: chiusa la scrittura, read deve dare 0;
+ *   3. ⚠️ EPIPE: chiuso il lettore, write deve fallire e non aspettare;
+ *   4. ⚠️ due processi veri, con l'estremita' ereditata da spawn.
+ * ============================================================================= */
+static void prova_pipe(void)
+{
+    int  p[2];
+    char buf[64];
+    int  n;
+
+    printf("\nPipe:\n");
+
+    esito("pipe() riesce", pipe(p) == 0);
+    esito("e da' due descrittori diversi e validi",
+          p[0] >= 3 && p[1] >= 3 && p[0] != p[1]);
+
+    /* 1. Andata e ritorno. */
+    n = (int)write(p[1], "in un tubo", 10);
+    esito("si scrive nel tubo", n == 10);
+    memset(buf, 0, sizeof(buf));
+    n = (int)read(p[0], buf, sizeof(buf));
+    esito("e si rilegge dall'altra parte",
+          n == 10 && memcmp(buf, "in un tubo", 10) == 0);
+
+    /* ⚠️ Leggere dall'estremita' di scrittura, o scrivere in quella di
+     * lettura, e' un errore e non un'attesa: la direzione e' parte del
+     * descrittore. */
+    esito("leggere dall'estremita' sbagliata fallisce",
+          read(p[1], buf, 1) < 0);
+    esito("scrivere in quella sbagliata fallisce",
+          write(p[0], "x", 1) < 0);
+
+    /* 2. ⚠️ FINE DEI DATI. Chiusa l'ultima scrittura, una read su pipe
+     * vuota deve dare 0 — non bloccare. Questa e' la prova che il
+     * conteggio degli scrittori esiste e funziona: senza, il processo
+     * resterebbe qui per sempre e la prova non stamperebbe mai. */
+    close(p[1]);
+    n = (int)read(p[0], buf, sizeof(buf));
+    esito("chiusa la scrittura, read da' 0 (fine dei dati)", n == 0);
+    close(p[0]);
+
+    /* 3. ⚠️ EPIPE. Chiuso il lettore, una write deve FALLIRE: quei byte
+     * non li leggera' nessuno. Su Unix arriverebbe anche SIGPIPE, che
+     * EX-OS non ha. */
+    esito("una seconda pipe si apre", pipe(p) == 0);
+    close(p[0]);
+    esito("senza lettori, write da' EPIPE",
+          write(p[1], "nessuno legge", 13) < 0 && errno == EPIPE);
+    close(p[1]);
+
+    /* 4. ⚠️ DUE PROCESSI VERI. E' il caso per cui le pipe esistono, e
+     * quello che non funzionerebbe senza l'eredita' dei descrittori:
+     * si lancia /bin/hello con stdout attaccato alla pipe e si legge
+     * qui quello che stampa.
+     *
+     * ⚠️ IL PADRE CHIUDE SUBITO LA SUA COPIA DELL'ESTREMITA' DI
+     * SCRITTURA. Se non lo facesse, la pipe conterebbe ancora uno
+     * scrittore vivo — lui — e la read qui sotto non finirebbe mai. */
+    {
+        SpawnRedir red;
+        char      *argv[2];
+        int        pid, stato = 0, tot = 0;
+
+        argv[0] = (char *)"/bin/hello";
+        argv[1] = NULL;
+
+        if (pipe(p) != 0) { esito("pipe fra due processi", 0); return; }
+
+        red.fd       = 1;        /* stdout del figlio */
+        red.flags    = 0;
+        red.percorso = NULL;     /* NULL = eredita un descrittore */
+        red.fd_padre = p[1];     /* ...questo */
+
+        pid = spawn_ex("/bin/hello", argv, environ, &red, 1);
+        esito("spawn con un'estremita' di pipe ereditata", pid > 0);
+
+        close(p[1]);             /* ⚠️ indispensabile: vedi sopra */
+
+        if (pid > 0) {
+            memset(buf, 0, sizeof(buf));
+            for (;;) {
+                n = (int)read(p[0], buf + tot,
+                              (int)sizeof(buf) - 1 - tot);
+                if (n <= 0) break;
+                tot += n;
+                if (tot >= (int)sizeof(buf) - 1) break;
+            }
+            esito("si legge cio' che il figlio ha stampato",
+                  tot > 0 && strstr(buf, "Ciao") != NULL);
+            esito("e la lettura finisce da sola quando il figlio esce",
+                  n == 0);
+            waitpid(pid, &stato, 0);
+        }
+        close(p[0]);
+    }
+}
+
 int main(int argc, char **argv)
 {
     (void)argc; (void)argv;
@@ -992,8 +1673,11 @@ int main(int argc, char **argv)
     prova_directory();
     prova_temporanei();
     prova_terzi();
+    prova_tls();
+    prova_tetto_heap();   /* DOPO prova_tls: usa le sue variabili __thread */
     prova_dup();
     prova_spawn();
+    prova_pipe();
 
     printf("\n%d prove superate, %d fallite\n", passati, falliti);
     return (falliti == 0) ? 0 : 1;

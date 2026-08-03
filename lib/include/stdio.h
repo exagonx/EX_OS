@@ -34,4 +34,29 @@
 
 #include "libc.h"
 
+/* =============================================================================
+ * ⚠️ _STDIO_H NON E' LA NOSTRA GUARDIA: E' UNA BANDIERA PER GLI ALTRI
+ *
+ * La guardia di questo file e' EXOS_STDIO_H, qui sopra. `_STDIO_H` e' il
+ * nome che usa la glibc, e c'e' perche' del codice di terzi lo ANNUSA per
+ * sapere se <stdio.h> e' gia' stato incluso — non potendo dipendere da un
+ * nome nostro che non conosce.
+ *
+ * Il caso reale: gmp.h dichiara le funzioni che prendono un `FILE *`
+ * (mpz_inp_str, mpz_out_str…) solo se trova una di quindici macro note,
+ * una per libc storica — _STDIO_H per glibc, __DEFINED_FILE per musl,
+ * _FILE_DEFINED per Microsoft… Senza, le omette in silenzio, e i suoi
+ * stessi sorgenti non compilano:
+ *
+ *     gmp.h:884: error: implicit declaration of function '__gmpz_inp_str'
+ *
+ * cioe' una libreria che non compila se stessa perche' non riconosce la
+ * libc sotto. Dichiararsi con il nome della glibc e' la cosa onesta: la
+ * nostra <stdio.h> quel contratto lo rispetta davvero — FILE, fopen,
+ * fprintf e il resto ci sono.
+ * ============================================================================= */
+#ifndef _STDIO_H
+#define _STDIO_H 1
+#endif
+
 #endif /* EXOS_STDIO_H */

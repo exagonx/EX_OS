@@ -1728,6 +1728,70 @@ int ext2_unlink(int mnt, const char *percorso)
     return super_aggiorna(m);
 }
 
+/* =============================================================================
+ * ext2_rename — cambia il NOME di una voce, senza spostare i dati
+ *
+ * ⚠️ SOLO NELLA STESSA DIRECTORY (-3 altrimenti). Attraversare directory
+ * significherebbe anche aggiornare ".." per le directory e il conteggio
+ * dei collegamenti di due padri: piu' cose che devono riuscire tutte, in
+ * un filesystem senza journal. Il caso che serve e' rinominare sul posto.
+ *
+ * ⚠️ SI AGGIUNGE PRIMA E SI TOGLIE DOPO, e l'ordine e' l'unica cosa che
+ * conta davvero qui. Fra le due operazioni il file ha DUE nomi: se la
+ * corrente cade in quel momento, si ritrova con un nome di troppo — un
+ * fastidio, riparabile. Nell'ordine opposto, in quella stessa finestra non
+ * ne avrebbe NESSUNO: l'inode resterebbe allocato e irraggiungibile, cioe'
+ * dati persi che occupano spazio.
+ *
+ * ⚠️ IL CONTEGGIO DEI COLLEGAMENTI NON SI TOCCA: si aggiunge un nome e se
+ * ne toglie un altro, quindi alla fine sono sempre uno. Incrementarlo e
+ * decrementarlo "per simmetria" darebbe lo stesso risultato solo se
+ * entrambe le operazioni riuscissero.
+ *
+ * Il senso di tutto questo sta in `install`: i dati non si spostano,
+ * quindi la mappa dei settori verificata prima della rinomina resta valida
+ * dopo. Vedi kernel/fs/fat.c per la versione FAT e lo stesso ragionamento.
+ * ============================================================================= */
+int ext2_rename(int mnt, const char *da, const char *a)
+{
+    Ext2Mount  *m = prendi(mnt);
+    char        pad_da[EXT2_PERCORSO_MAX], pad_a[EXT2_PERCORSO_MAX];
+    const char *nom_da, *nom_a;
+    uint8_t     pino[128], vino[128];
+    uint32_t    len_da, len_a, pnum, num, tipo;
+    int         i;
+
+    if (m == NULL) return -1;
+
+    len_da = separa(da, pad_da, EXT2_PERCORSO_MAX, &nom_da);
+    len_a  = separa(a,  pad_a,  EXT2_PERCORSO_MAX, &nom_a);
+    if (len_da == 0 || len_a == 0) return -1;
+
+    for (i = 0; pad_da[i] || pad_a[i]; i++) {
+        if (pad_da[i] != pad_a[i]) return -3;
+    }
+
+    pnum = risolvi(m, mnt, pad_da, pino);
+    if (pnum == 0) return -1;
+    if ((le16(pino) & MODE_TIPO) != MODE_DIR) return -1;
+
+    /* La destinazione non deve esistere: chi vuole sostituire cancella
+     * prima, cosi' la perdita e' una scelta e non un effetto collaterale. */
+    if (cerca_voce(m, mnt, pino, nom_a, len_a) != 0) return -2;
+
+    num = cerca_voce(m, mnt, pino, nom_da, len_da);
+    if (num == 0) return -1;
+
+    if (leggi_inode(m, num, vino) != 0) return -1;
+    tipo = ((le16(vino) & MODE_TIPO) == MODE_DIR) ? DIRTIPO_DIR : DIRTIPO_FILE;
+
+    if (dir_aggiungi(m, mnt, pnum, pino, nom_a, len_a, num, tipo) != 0) return -1;
+    if (dir_rimuovi(m, mnt, pino, nom_da, len_da) == 0) return -1;
+
+    if (scrivi_inode(m, pnum, pino) != 0) return -1;
+    return super_aggiorna(m);
+}
+
 int ext2_rmdir(int mnt, const char *percorso)
 {
     Ext2Mount *m = prendi(mnt);

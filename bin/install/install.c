@@ -205,6 +205,67 @@ static int copia(const char *da, const char *a)
     return 0;
 }
 
+/* =============================================================================
+ * pulisci_temporanei — toglie i .new rimasti da un tentativo annullato
+ *
+ * ⚠️ SI CHIAMA SU OGNI USCITA ANTICIPATA. Un `.new` dimenticato occupa
+ * spazio e, cosa peggiore, al tentativo successivo la copia lo troverebbe
+ * gia' esistente: non un errore, ma il segno che qualcosa era andato male
+ * e nessuno ha ripulito. Meglio non lasciarne.
+ * ============================================================================= */
+static void pulisci_temporanei(const char *punto)
+{
+    char b[PERC_MAX], q[PERC_MAX];
+
+    unisci(b, punto, "boot");
+    unisci(q, b, "stage2.new"); unlink(q);
+    unisci(q, b, "kernel.new"); unlink(q);
+}
+
+/* =============================================================================
+ * sostituisci — «<nome>.new» prende il posto di «<nome>.bin»
+ *
+ * ⚠️ E' L'UNICO PUNTO IN CUI SI TOCCA IL SISTEMA GIA' INSTALLATO, e ci si
+ * arriva solo dopo che la verifica ha detto di si'.
+ *
+ * L'ordine e' cancella-poi-rinomina e non il contrario, perche' rename()
+ * su EX-OS NON sostituisce la destinazione: darebbe EEXIST. Fra le due
+ * operazioni c'e' un istante in cui il nome definitivo non esiste — ma il
+ * contenuto e' salvo sotto il nome temporaneo, quindi il peggio che possa
+ * capitare e' un disco da cui rilanciare l'installazione, non dati persi.
+ *
+ * ⚠️ E LA RINOMINA NON SPOSTA I DATI: e' la ragione per cui la mappa
+ * verificata un attimo fa vale ancora. Una rename che copiasse
+ * riallocherebbe i blocchi e la verifica non varrebbe piu' niente — era
+ * cosi' fino alla 0.160, vedi lib/libc.c.
+ * ============================================================================= */
+static int sostituisci(const char *dir_boot, const char *base)
+{
+    char vecchio[PERC_MAX], nuovo[PERC_MAX], nb[64], nn[64];
+    int  i, j;
+
+    for (i = 0; base[i] && i < 50; i++) { nb[i] = base[i]; nn[i] = base[i]; }
+    for (j = 0; ".bin"[j]; j++) nb[i + j] = ".bin"[j];
+    nb[i + j] = '\0';
+    for (j = 0; ".new"[j]; j++) nn[i + j] = ".new"[j];
+    nn[i + j] = '\0';
+
+    unisci(vecchio, dir_boot, nb);
+    unisci(nuovo,   dir_boot, nn);
+
+    unlink(vecchio);          /* se non c'era, non importa */
+
+    if (rename(nuovo, vecchio) != 0) {
+        printf("  ! %s: rinomina fallita (errno %d)\n", vecchio, errno);
+        printf("    il contenuto e' ancora in %s\n", nuovo);
+        errori++;
+        return -1;
+    }
+
+    printf("  ~ %s  (verificato, poi sostituito)\n", vecchio);
+    return 0;
+}
+
 /* Crea una directory ignorando "esiste gia'". */
 static void crea_dir(const char *p)
 {
@@ -266,25 +327,96 @@ int main(int argc, char **argv)
     printf("Installazione di EX-OS in %s\n", argv[1]);
     printf("  +  creato    ~  sostituito    !  errore\n\n");
 
-    /* --- 1. i due file dell'avvio, PER PRIMI (vedi in testa al file) --- */
-    printf("Avvio (copiati per primi: devono restare contigui)\n");
+    /* =====================================================================
+     * 1. I DUE FILE DELL'AVVIO — e qui l'ordine e' tutto
+     *
+     * ⚠️ SI SCRIVONO PRIMA CON UN NOME TEMPORANEO, poi si verifica, e solo
+     * alla fine prendono il nome definitivo. Fino alla 0.160 si copiava
+     * direttamente sopra i vecchi, e la verifica arrivava dopo: se il
+     * kernel nuovo risultava frammentato — cosa che su FAT succede appena
+     * cresce di qualche KB, perche' li' la mappa ammette UN SOLO
+     * intervallo — l'installatore lo diceva
+     *
+     *     ! installazione dell'avvio fallita: file frammentato
+     *
+     * ma quello che funzionava era gia' stato cancellato, il settore di
+     * avvio puntava ancora alla mappa vecchia, e il disco non ripartiva
+     * piu'. Nessuna via di ritorno.
+     *
+     * Ora: i vecchi restano intatti mentre si scrivono i nuovi (che quindi
+     * finiscono nello spazio libero in coda, contiguo), si chiede al
+     * kernel se sono mappabili, e SOLO SE la risposta e' si' si cancella e
+     * si rinomina. ⚠️ La rinomina non sposta i dati (vedi vfs_rename), per
+     * questo la mappa appena verificata vale ancora dopo.
+     *
+     * Se la verifica dice di no, si cancellano i temporanei e si esce: il
+     * disco e' esattamente come prima, e continua a partire.
+     * ===================================================================== */
+    printf("Avvio (scritti a parte e verificati prima di sostituire)\n");
     unisci(p, argv[1], "boot");
     crea_dir(p);
 
-    unisci(q, p, "stage2.bin");
+    unisci(q, p, "stage2.new");
     if (copia("/LOADER.BIN", q) < 0) {
         printf("\nInstallazione interrotta: senza Stage 2 il disco non parte.\n");
+        printf("Il sistema gia' installato NON e' stato toccato.\n");
+        pulisci_temporanei(argv[1]);
         return 1;
     }
 
-    unisci(q, p, "kernel.bin");
+    unisci(q, p, "kernel.new");
     if (copia("/KERNEL.BIN", q) < 0) {
         printf("\nInstallazione interrotta: senza kernel il disco non parte.\n");
+        printf("Il sistema gia' installato NON e' stato toccato.\n");
+        pulisci_temporanei(argv[1]);
         return 1;
     }
 
+    /* --- 1b. la verifica, mentre i vecchi sono ancora al loro posto --- */
+    {
+        BootInstallInfo prova;
+        int v = bootverify(argv[1], "stage2.new", "kernel.new", &prova);
+
+        if (v != 0) {
+            printf("\n  ! i file nuovi non sono mappabili: %s (errore %d)\n",
+                   spiega(v), v);
+            printf("\nAggiornamento ANNULLATO. Il disco e' rimasto com'era e\n");
+            printf("continua a partire con il sistema di prima.\n\n");
+            if (v == -29) {
+                printf("Il volume non ha abbastanza spazio LIBERO CONTIGUO per\n");
+                printf("il kernel. Su FAT la mappa dell'avvio ammette un solo\n");
+                printf("intervallo: serve un volume meno frammentato, oppure\n");
+                printf("riformattare e installare da capo.\n");
+            }
+            pulisci_temporanei(argv[1]);
+            return 1;
+        }
+        printf("  = verifica: %u settori in %u intervall%s — si puo' sostituire\n",
+               prova.k_cnt, prova.k_next, (prova.k_next == 1) ? "o" : "i");
+    }
+
+    /* --- 1c. lo scambio: da qui in poi si tocca il sistema installato --- */
+    if (sostituisci(p, "stage2") < 0 || sostituisci(p, "kernel") < 0) {
+        printf("\nInstallazione interrotta durante la sostituzione.\n");
+        return 1;
+    }
+
+    /* ⚠️ kernel.cfg NON si sovrascrive se c'e' gia': e' l'unico file di
+     * tutto l'installatore che appartiene a chi usa il sistema e non al
+     * sistema. Ci stanno dentro i montaggi automatici, verboseboot, la
+     * shell, le variabili d'ambiente — cose che l'utente ha cambiato di
+     * proposito e che un aggiornamento non deve riportare indietro in
+     * silenzio. Se manca si installa, se c'e' si lascia e lo si dice. */
     unisci(q, p, "kernel.cfg");
-    copia("/boot/kernel.cfg", q);
+    {
+        int f = open(q, O_RDONLY);
+        if (f >= 0) {
+            close(f);
+            printf("  = %s  (gia' presente: la tua configurazione resta)\n", q);
+        } else {
+            copia("/boot/kernel.cfg", q);
+        }
+    }
 
     /* --- 2. il resto del sistema --- */
     printf("\nSistema\n");
