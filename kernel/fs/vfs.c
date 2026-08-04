@@ -461,6 +461,62 @@ void vfs_init(uint8_t boot_drive)
                         "non e' montabile: ripiego sul floppy", boot_drive);
     }
 
+    /* =====================================================================
+     * AVVIATI DA CD? — l'emulazione floppy di El Torito
+     *
+     * ⚠️ IL DRIVE DI AVVIO NON LO DICE. Con El Torito in emulazione floppy
+     * il BIOS presenta il CD come l'unita' 0x00: dal numero, un avvio da
+     * CD e uno da floppy vero sono indistinguibili.
+     *
+     * Il segnale vero e' un altro: **fat12_init ha fallito**. Quel driver
+     * programma il controller floppy alle porte hardware, e dietro
+     * l'emulazione non c'e' nessun controller — il "floppy" esiste solo
+     * attraverso l'INT 13h del BIOS, che in modo protetto non si puo'
+     * chiamare. Quindi stage1 e stage2 (modo reale) leggono benissimo, e
+     * il kernel non legge niente.
+     *
+     * ⚠️ NON E' UN'EURISTICA: "il controller non risponde" e' esattamente
+     * la condizione dell'avvio da CD, e nel caso di un floppy vero rotto
+     * la risposta giusta e' comunque cercare altrove invece di fermarsi.
+     *
+     * Il floppy emulato serve solo a portare in memoria stage2 e il
+     * kernel; da qui in avanti si legge dal CD, che e' un ATAPI vero e che
+     * i driver di questo sistema sanno gia' leggere.
+     * ===================================================================== */
+    if (!fat12_pronto()) {
+        int n = blk_conta(), i2;
+
+        for (i2 = 0; i2 < n; i2++) {
+            const BlkDev *d = blk_get(i2);
+            int mnt;
+
+            if (d == NULL || d->tipo != BLK_TIPO_CDROM) continue;
+
+            mnt = iso_mount(i2);
+            if (mnt < 0) continue;
+
+            /* La root non si smonta mai: si rivendica il dispositivo. */
+            blk_acquisisci(i2);
+
+            g_mnt[0].tipo         = VFS_FS_ISO;
+            g_mnt[0].mnt          = mnt;
+            g_mnt[0].blkdev       = i2;
+            /* ⚠️ SOLA LETTURA, e non e' una scelta: un ISO 9660 non si
+             * scrive. Dichiararlo qui fa rifiutare ogni modifica con EROFS
+             * PRIMA di toccare il filesystem, invece di lasciarla fallire
+             * piu' in basso in un punto qualunque. */
+            g_mnt[0].sola_lettura = 1;
+            v_copia(g_mnt[0].dev, d->nome, BLK_NOME_MAX);
+
+            klog(LOG_INFO, "VFS: root '/' su %s (ISO 9660, avvio da CD per "
+                           "emulazione floppy)", g_mnt[0].dev);
+            return;
+        }
+
+        klog(LOG_ERROR, "VFS: nessun floppy e nessun CD leggibile: la root "
+                        "restera' vuota");
+    }
+
     /* Montaggio 0: la root sul floppy, via fat12.c (punto 1). */
     g_mnt[0].tipo   = VFS_FS_FAT12FD;
     g_mnt[0].mnt    = -1;

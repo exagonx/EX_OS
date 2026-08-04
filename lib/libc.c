@@ -235,6 +235,11 @@ typedef struct {
 #define SYS_IOPORT_BIND   225
 #define SYS_IOPORT_IN     226
 #define SYS_IOPORT_OUT    227
+#define SYS_IOPORT_IN16   233
+#define SYS_IOPORT_OUT16  234
+#define SYS_IOPORT_IN32   235
+#define SYS_IOPORT_OUT32  236
+#define SYS_IRQ_DONE      237
 #define SYS_IPC_RECV_TMO  228
 #define SYS_TIME           13
 #define SYS_CONSOLE_SWITCH 229
@@ -512,12 +517,15 @@ typedef struct {
 
 /* Messaggio IPC — deve restare identico a kernel/include/sched.h
  * (IpcMessage) e a lib/include/libc.h: attraversa l'ABI della syscall. */
-#define IPC_MSG_MAX_DATA 512
+/* 1536 = un frame Ethernet intero; il perche' e' in kernel/include/sched.h.
+ * Qui non c'e' data[]: ipc_recv scrive il payload nel buffer separato che
+ * gli si passa, e questa struttura porta solo l'intestazione. Vedi il
+ * commento in libc.h. */
+#define IPC_MSG_MAX_DATA 1536
 typedef struct {
     unsigned int  sender_pid;
     unsigned int  tipo;      /* si chiama cosi' anche in libc.h: vedi li' */
     unsigned int  len;
-    unsigned char data[IPC_MSG_MAX_DATA];
 } IpcMessage;
 
 /* Data e ora — deve restare identica a kernel/include/rtc.h (RtcTime)
@@ -2623,17 +2631,49 @@ void *malloc(size_t size)
  * adiacenti. L'adiacenza va CONTROLLATA e non data per scontata: due
  * chiamate a sbrk possono restituire aree separate, e fondere un buco
  * consegnerebbe al chiamante memoria che non gli appartiene. */
-static void heap_fondi_con_succ(Blocco *b)
+/* Assorbe in `b` il vicino successivo, se e' libero e adiacente. NON
+ * guarda se `b` stesso e' libero.
+ *
+ * ⚠️ ESISTE PERCHE' realloc DEVE POTER ALLUNGARE UN BLOCCO ALLOCATO, e
+ * prima non poteva. Il ramo "il vicino e' libero, mi allungo sul posto
+ * senza copiare" chiamava heap_fondi_con_succ(), che comincia rifiutando
+ * i blocchi non liberi: quindi non fondeva niente, la heap_spezza()
+ * successiva vedeva `dim` invariato e rinunciava anche lei, e realloc
+ * restituiva il puntatore dichiarando una dimensione che il blocco non
+ * aveva mai avuto.
+ *
+ * Il guasto non si vedeva li'. Il chiamante scriveva i byte che gli erano
+ * stati promessi, sfondando nell'intestazione del blocco successivo, e il
+ * danno usciva alla malloc DOPO — che seguiva un puntatore fatto dei dati
+ * dell'utente. Su cc1 e' uscito come `succ == 3`; nella prova che ora sta
+ * in libctest esce come un fault all'indirizzo 0xa7a6a5a4, che sono
+ * esattamente i byte di riempimento del test.
+ *
+ * La separazione in due funzioni non e' cosmetica: il controllo su
+ * `b->libero` SERVE agli altri chiamanti. free() e memalign() chiamano
+ * heap_fondi_con_succ(b->prec) senza sapere se il predecessore sia
+ * libero, e fondere un blocco allocato col suo vicino consegnerebbe due
+ * volte la stessa memoria. Quel controllo resta nel guscio; qui sotto
+ * c'e' solo la fusione, per chi ha gia' stabilito che si puo' fare. */
+static void heap_assorbi_succ(Blocco *b)
 {
     Blocco *s = b->succ;
 
-    if (s == NULL || !s->libero || !b->libero) return;
+    if (s == NULL || !s->libero) return;
     if ((char *)b + BLOCCO_HDR + b->dim != (char *)s) return;
 
     b->dim += BLOCCO_HDR + s->dim;
     b->succ = s->succ;
     if (s->succ) s->succ->prec = b;
     else         heap_ultimo = b;
+}
+
+/* Fonde due blocchi LIBERI e adiacenti. E' la versione da usare quando
+ * non si sa in che stato sia `b` — cioe' quasi sempre. */
+static void heap_fondi_con_succ(Blocco *b)
+{
+    if (!b->libero) return;
+    heap_assorbi_succ(b);
 }
 
 /* =============================================================================
@@ -2767,7 +2807,11 @@ void *realloc(void *ptr, size_t size)
     if (b->succ && b->succ->libero &&
         (char *)b + BLOCCO_HDR + b->dim == (char *)b->succ &&
         b->dim + BLOCCO_HDR + b->succ->dim >= heap_allinea(size)) {
-        heap_fondi_con_succ(b);
+        /* heap_assorbi_succ e non heap_fondi_con_succ: `b` e' ALLOCATO, e
+         * la versione con guscio rifiuterebbe di fondere lasciando il
+         * blocco della dimensione di prima. Vedi il commento esteso su
+         * heap_assorbi_succ. */
+        heap_assorbi_succ(b);
         heap_spezza(b, heap_allinea(size));
         return ptr;
     }
@@ -4589,6 +4633,34 @@ int ioport_out(unsigned int port, unsigned int value)
     return (int)_syscall2(SYS_IOPORT_OUT, port, value);
 }
 
+/* Accessi a 16 e 32 bit. Il perche' servano (bus PCI, porta dati NE2000)
+ * e perche' ioport_in32 passi il valore da un puntatore invece che dal
+ * ritorno stanno in libc.h. */
+int ioport_in16(unsigned int port)
+{
+    return (int)_syscall1(SYS_IOPORT_IN16, port);
+}
+
+int ioport_out16(unsigned int port, unsigned int value)
+{
+    return (int)_syscall2(SYS_IOPORT_OUT16, port, value);
+}
+
+int ioport_in32(unsigned int port, unsigned int *out)
+{
+    return (int)_syscall2(SYS_IOPORT_IN32, port, (unsigned int)out);
+}
+
+int ioport_out32(unsigned int port, unsigned int value)
+{
+    return (int)_syscall2(SYS_IOPORT_OUT32, port, value);
+}
+
+int irq_done(unsigned int irq)
+{
+    return (int)_syscall1(SYS_IRQ_DONE, irq);
+}
+
 /* =============================================================================
  * Configurazione e identita' del sistema — vedi libc.h per il contratto
  * ============================================================================= */
@@ -5462,6 +5534,32 @@ int system(const char *comando)
  * sono perche' il codice di terzi le nomina — stabs.c di binutils la
  * prima, gprof la seconda. */
 double atof(const char *s)  { return strtod(s, NULL); }
+
+/* =============================================================================
+ * ⚠️ QUATTRO FUNZIONI `weak`, E IL MOTIVO SI VEDE SOLO LINKANDO cc1
+ *
+ * fabs, sqrt, ldexp e frexp esistono qui perche' il codice di terzi le
+ * nomina e perche' quando sono state scritte openlibm non c'era. Adesso
+ * c'e', e le definisce anche lui: un programma che linka libc.a E libm.a
+ * — cc1 lo fa, per via di MPFR e MPC — trova due definizioni dello stesso
+ * simbolo e il link fallisce.
+ *
+ *     ld: libc.a(libc.o): in function `fabs':
+ *         multiple definition of `fabs';
+ *         libm.a(s_fabs.c.o): first defined here
+ *
+ * Toglierle da qui non si puo': i programmi di EX-OS linkano solo libc, e
+ * resterebbero senza. Marcarle `weak` risolve entrambi i casi con una
+ * regola sola — chi linka anche libm prende la versione di openlibm, che
+ * e' quella giusta (arrotondamenti IEEE, casi limite, denormali); chi
+ * linka solo libc prende queste, che bastano a quello che fanno.
+ *
+ * ⚠️ NON E' UNA SCELTA FRA DUE VERSIONI EQUIVALENTI. Quella di openlibm e'
+ * migliore: frexp qui perde precisione sui denormali (lo dice il suo
+ * commento), ldexp fa moltiplicazioni ripetute invece di toccare
+ * l'esponente. `weak` significa proprio «se c'e' di meglio, usa quello».
+ * ============================================================================= */
+__attribute__((weak))
 double fabs(double v)       { return (v < 0.0) ? -v : v; }
 
 /* =============================================================================
@@ -5592,6 +5690,7 @@ long double strtold(const char *s, char **fine)
 /* x * 2^e, per esponenziazione binaria: log2(e) moltiplicazioni invece di
  * e. L'ultima elevazione al quadrato si salta di proposito — servirebbe
  * solo a traboccare a infinito un valore che poi non verrebbe usato. */
+__attribute__((weak))   /* vedi la nota su fabs */
 double ldexp(double x, int e)
 {
     double f = 1.0, p = 2.0;
@@ -5627,6 +5726,7 @@ double ldexp(double x, int e)
  * La chiede MPC, che stima con la sqrt in doppia precisione quanti bit
  * servono prima di lavorare in precisione arbitraria.
  * ============================================================================= */
+__attribute__((weak))   /* vedi la nota su fabs */
 double sqrt(double x)
 {
     double r;
@@ -5651,6 +5751,7 @@ double sqrt(double x)
  * moltiplicato fino a rientrare nell'intervallo, e i bit gia' persi nella
  * rappresentazione denormale non tornano indietro. Zero, infiniti e NaN
  * escono come sono, con esponente 0, che e' cio' che dice lo standard. */
+__attribute__((weak))   /* vedi la nota su fabs */
 double frexp(double x, int *e)
 {
     int n = 0;

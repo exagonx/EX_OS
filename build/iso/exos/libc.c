@@ -235,6 +235,11 @@ typedef struct {
 #define SYS_IOPORT_BIND   225
 #define SYS_IOPORT_IN     226
 #define SYS_IOPORT_OUT    227
+#define SYS_IOPORT_IN16   233
+#define SYS_IOPORT_OUT16  234
+#define SYS_IOPORT_IN32   235
+#define SYS_IOPORT_OUT32  236
+#define SYS_IRQ_DONE      237
 #define SYS_IPC_RECV_TMO  228
 #define SYS_TIME           13
 #define SYS_CONSOLE_SWITCH 229
@@ -512,12 +517,15 @@ typedef struct {
 
 /* Messaggio IPC — deve restare identico a kernel/include/sched.h
  * (IpcMessage) e a lib/include/libc.h: attraversa l'ABI della syscall. */
-#define IPC_MSG_MAX_DATA 512
+/* 1536 = un frame Ethernet intero; il perche' e' in kernel/include/sched.h.
+ * Qui non c'e' data[]: ipc_recv scrive il payload nel buffer separato che
+ * gli si passa, e questa struttura porta solo l'intestazione. Vedi il
+ * commento in libc.h. */
+#define IPC_MSG_MAX_DATA 1536
 typedef struct {
     unsigned int  sender_pid;
     unsigned int  tipo;      /* si chiama cosi' anche in libc.h: vedi li' */
     unsigned int  len;
-    unsigned char data[IPC_MSG_MAX_DATA];
 } IpcMessage;
 
 /* Data e ora — deve restare identica a kernel/include/rtc.h (RtcTime)
@@ -4589,6 +4597,34 @@ int ioport_out(unsigned int port, unsigned int value)
     return (int)_syscall2(SYS_IOPORT_OUT, port, value);
 }
 
+/* Accessi a 16 e 32 bit. Il perche' servano (bus PCI, porta dati NE2000)
+ * e perche' ioport_in32 passi il valore da un puntatore invece che dal
+ * ritorno stanno in libc.h. */
+int ioport_in16(unsigned int port)
+{
+    return (int)_syscall1(SYS_IOPORT_IN16, port);
+}
+
+int ioport_out16(unsigned int port, unsigned int value)
+{
+    return (int)_syscall2(SYS_IOPORT_OUT16, port, value);
+}
+
+int ioport_in32(unsigned int port, unsigned int *out)
+{
+    return (int)_syscall2(SYS_IOPORT_IN32, port, (unsigned int)out);
+}
+
+int ioport_out32(unsigned int port, unsigned int value)
+{
+    return (int)_syscall2(SYS_IOPORT_OUT32, port, value);
+}
+
+int irq_done(unsigned int irq)
+{
+    return (int)_syscall1(SYS_IRQ_DONE, irq);
+}
+
 /* =============================================================================
  * Configurazione e identita' del sistema — vedi libc.h per il contratto
  * ============================================================================= */
@@ -5462,6 +5498,32 @@ int system(const char *comando)
  * sono perche' il codice di terzi le nomina — stabs.c di binutils la
  * prima, gprof la seconda. */
 double atof(const char *s)  { return strtod(s, NULL); }
+
+/* =============================================================================
+ * ⚠️ QUATTRO FUNZIONI `weak`, E IL MOTIVO SI VEDE SOLO LINKANDO cc1
+ *
+ * fabs, sqrt, ldexp e frexp esistono qui perche' il codice di terzi le
+ * nomina e perche' quando sono state scritte openlibm non c'era. Adesso
+ * c'e', e le definisce anche lui: un programma che linka libc.a E libm.a
+ * — cc1 lo fa, per via di MPFR e MPC — trova due definizioni dello stesso
+ * simbolo e il link fallisce.
+ *
+ *     ld: libc.a(libc.o): in function `fabs':
+ *         multiple definition of `fabs';
+ *         libm.a(s_fabs.c.o): first defined here
+ *
+ * Toglierle da qui non si puo': i programmi di EX-OS linkano solo libc, e
+ * resterebbero senza. Marcarle `weak` risolve entrambi i casi con una
+ * regola sola — chi linka anche libm prende la versione di openlibm, che
+ * e' quella giusta (arrotondamenti IEEE, casi limite, denormali); chi
+ * linka solo libc prende queste, che bastano a quello che fanno.
+ *
+ * ⚠️ NON E' UNA SCELTA FRA DUE VERSIONI EQUIVALENTI. Quella di openlibm e'
+ * migliore: frexp qui perde precisione sui denormali (lo dice il suo
+ * commento), ldexp fa moltiplicazioni ripetute invece di toccare
+ * l'esponente. `weak` significa proprio «se c'e' di meglio, usa quello».
+ * ============================================================================= */
+__attribute__((weak))
 double fabs(double v)       { return (v < 0.0) ? -v : v; }
 
 /* =============================================================================
@@ -5592,6 +5654,7 @@ long double strtold(const char *s, char **fine)
 /* x * 2^e, per esponenziazione binaria: log2(e) moltiplicazioni invece di
  * e. L'ultima elevazione al quadrato si salta di proposito — servirebbe
  * solo a traboccare a infinito un valore che poi non verrebbe usato. */
+__attribute__((weak))   /* vedi la nota su fabs */
 double ldexp(double x, int e)
 {
     double f = 1.0, p = 2.0;
@@ -5627,6 +5690,7 @@ double ldexp(double x, int e)
  * La chiede MPC, che stima con la sqrt in doppia precisione quanti bit
  * servono prima di lavorare in precisione arbitraria.
  * ============================================================================= */
+__attribute__((weak))   /* vedi la nota su fabs */
 double sqrt(double x)
 {
     double r;
@@ -5651,6 +5715,7 @@ double sqrt(double x)
  * moltiplicato fino a rientrare nell'intervallo, e i bit gia' persi nella
  * rappresentazione denormale non tornano indietro. Zero, infiniti e NaN
  * escono come sono, con esponente 0, che e' cio' che dice lo standard. */
+__attribute__((weak))   /* vedi la nota su fabs */
 double frexp(double x, int *e)
 {
     int n = 0;

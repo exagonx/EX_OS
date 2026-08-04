@@ -65,7 +65,7 @@
 #define SYS_RENAME       38    /* rinomina SENZA spostare i dati (vedi vfs_rename) */
 
 /* Numero totale syscall supportate */
-#define SYSCALL_COUNT   233     /* deve coprire il numero syscall più alto (SYS_CONSOLE_SETFG=232) + 1 */
+#define SYSCALL_COUNT   238     /* deve coprire il numero syscall più alto (SYS_IRQ_DONE=237) + 1 */
 
 /* =============================================================================
  * Codici errno
@@ -134,6 +134,59 @@
 #define SYS_CONSOLE_WRITE  230  /* scrive su una console specifica */
 #define SYS_CONSOLE_INFO   231  /* quante sono, qual e' la mia, qual e' visibile */
 #define SYS_CONSOLE_SETFG  232  /* dichiara il processo in primo piano (job control) */
+
+/* =============================================================================
+ * Accessi I/O a 16 e 32 bit — servono al bus PCI, non sono un lusso
+ *
+ * ⚠️ IL BYTE NON BASTA, E NON E' UNA QUESTIONE DI COMODITA'.
+ *
+ * Il meccanismo di configurazione PCI #1 usa due registri: CONFIG_ADDRESS
+ * (0xCF8) e CONFIG_DATA (0xCFC). La specifica PCI dice che CONFIG_ADDRESS
+ * va scritto con UN accesso a 32 bit: un accesso a byte o a word verso
+ * 0xCF8..0xCFB NON viene interpretato dal ponte come ciclo di
+ * configurazione, viene passato al bus come normale I/O. Scrivere
+ * l'indirizzo in quattro byte separati quindi non "funziona piu' piano":
+ * non funziona, e su molti chipset 0xCF9 e' il registro di reset — quattro
+ * outb in fila hanno buone probabilita' di riavviare la macchina invece di
+ * leggere un dispositivo.
+ *
+ * Servono anche i 16 bit: la porta dati di una NE2000 si legge a word, e
+ * leggerla a byte dimezza il throughput e sfasa il puntatore interno.
+ *
+ * PERCHE' QUATTRO NUMERI E NON UN ARGOMENTO "AMPIEZZA". Stesso motivo di
+ * SYS_IPC_RECV_TMO: SYS_IOPORT_IN oggi legge solo EBX, e chi la chiama
+ * lascia in ECX quel che c'era prima. Aggiungere li' l'ampiezza vorrebbe
+ * dire che un binario gia' installato, il giorno che gira su un kernel
+ * nuovo, esegue una lettura a 32 bit dove ne voleva una a 8. Un numero
+ * nuovo non ha ambiguita'.
+ *
+ * ⚠️ IN32 RESTITUISCE IL VALORE FUORI BANDA, LE ALTRE NO. Una lettura di
+ * configurazione PCI che vale 0xFFFFFFFF ("nessun dispositivo") e' un
+ * risultato legittimo e frequente; come int32_t e' -1, cioe'
+ * indistinguibile da un errore. Percio' SYS_IOPORT_IN32 scrive il valore
+ * in un puntatore utente e ritorna 0/-errno. IN16 non ha il problema
+ * (0..65535 sta tutto nei positivi) e ritorna il valore direttamente.
+ * ============================================================================= */
+#define SYS_IOPORT_IN16   233   /* legge una word da una porta nel proprio range */
+#define SYS_IOPORT_OUT16  234   /* scrive una word su una porta nel proprio range */
+#define SYS_IOPORT_IN32   235   /* legge una dword; il valore esce da un puntatore */
+#define SYS_IOPORT_OUT32  236   /* scrive una dword su una porta nel proprio range */
+
+/* =============================================================================
+ * SYS_IRQ_DONE — «ho servito l'interrupt, riapri la linea»
+ *
+ * Obbligatoria per ogni driver ring3 che ha chiamato SYS_IRQ_BIND: il
+ * dispatcher maschera l'IRQ nel PIC PRIMA di consegnare la notifica, e
+ * senza questa chiamata la linea resta chiusa per sempre.
+ *
+ * Il perché per esteso sta in kernel/arch/x86/isr.c. In breve: un driver
+ * ring3 non gira dentro l'interrupt, e su un IRQ a livello — tutti quelli
+ * PCI — la scheda tiene la linea alta finché non le si azzera il registro
+ * di stato. Senza mascheramento l'interrupt riparte subito dopo l'iret e
+ * il processo driver non riceve mai la CPU per andare ad azzerarlo: la
+ * tempesta non finisce da sola.
+ * ============================================================================= */
+#define SYS_IRQ_DONE      237   /* ebx = irq; riapre la linea mascherata */
 
 /* Opzioni di sys_waitpid (terzo argomento, edx). Un chiamante che
  * passa solo due registri lascia in edx un valore qualunque: tutti i
@@ -558,6 +611,11 @@ int32_t sys_irq_bind(InterruptFrame *f);
 int32_t sys_ioport_bind(InterruptFrame *f);
 int32_t sys_ioport_in(InterruptFrame *f);
 int32_t sys_ioport_out(InterruptFrame *f);
+int32_t sys_ioport_in16(InterruptFrame *f);
+int32_t sys_ioport_out16(InterruptFrame *f);
+int32_t sys_ioport_in32(InterruptFrame *f);
+int32_t sys_ioport_out32(InterruptFrame *f);
+int32_t sys_irq_done(InterruptFrame *f);
 
 /* =============================================================================
  * SYS_SPAWN — il blocco EXTRA (ambiente e redirezioni)

@@ -977,6 +977,22 @@ int main(int argc, char **argv)
         if (meta.sender_pid == IPC_SENDER_KERNEL &&
             meta.tipo == IPC_TYPE_IRQ_NOTIFY) {
             kbd_drain();
+
+            /* ⚠️ RIAPRIRE LA LINEA, E FARLO DOPO AVER SVUOTATO IL KBC.
+             *
+             * Da agosto 2026 il kernel MASCHERA l'IRQ prima di consegnare
+             * la notifica (vedi kernel/arch/x86/isr.c): senza questa
+             * chiamata la tastiera funzionerebbe per un tasto solo e poi
+             * resterebbe muta per sempre.
+             *
+             * L'ordine conta. Se si riaprisse prima di kbd_drain(), il
+             * byte sarebbe ancora nel buffer di uscita del KBC e su una
+             * macchina dove OBF tiene alta la linea l'interrupt
+             * ripartirebbe subito — cioe' esattamente la tempesta che il
+             * mascheramento serve a evitare. Prima si svuota, poi si
+             * riapre. */
+            irq_done(KBD_IRQ);
+
             /* Solo la console in primo piano riceve input, quindi solo
              * lei puo' avere qualcosa di nuovo da consegnare. */
             try_serve_reader(g_attiva);

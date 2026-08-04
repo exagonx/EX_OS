@@ -2901,7 +2901,26 @@ int32_t sys_ipc_recv(InterruptFrame *frame)
     void       *buf      = (void *)frame->ecx;
     uint32_t    buf_len  = frame->edx;
 
-    if (out_meta != NULL && !syscall_verify_ptr(out_meta, sizeof(IpcMessage))) {
+    /* =========================================================================
+     * ⚠️ SI VERIFICA E SI COPIA SOLO L'INTESTAZIONE, NON TUTTA LA STRUTTURA.
+     *
+     * Prima qui c'era `*out_meta = kmeta;`, che copiava nello spazio utente
+     * l'intera IpcMessage — array data[] compreso — obbligando la copia
+     * userspace della struttura a essere grande uguale. Erano 512 byte di
+     * traffico a ogni ricezione per un campo che nessun chiamante legge:
+     * il payload arriva nel buffer separato passato in ECX.
+     *
+     * Da quando il limite dei messaggi è salito a 1536 (un frame Ethernet
+     * intero) quella copia sarebbe diventata di 1.5 KB, pagata da ogni
+     * driver a ogni messaggio. Ora la IpcMessage dello spazio utente ha i
+     * soli tre campi di intestazione, e la verifica del puntatore misura
+     * quello che davvero scriviamo: verificare 1548 byte per scriverne 12
+     * rifiuterebbe una struttura perfettamente valida vicino alla fine
+     * dello spazio utente.
+     * ========================================================================= */
+    const uint32_t META_LEN = 3 * sizeof(uint32_t);
+
+    if (out_meta != NULL && !syscall_verify_ptr(out_meta, META_LEN)) {
         return ERR(EFAULT);
     }
     if (buf != NULL && buf_len > 0 && !syscall_verify_ptr(buf, buf_len)) {
@@ -2911,7 +2930,9 @@ int32_t sys_ipc_recv(InterruptFrame *frame)
     IpcMessage kmeta;
     int32_t ret = ipc_recv(&kmeta, buf, buf_len);
     if (ret == 0 && out_meta != NULL) {
-        *out_meta = kmeta;
+        out_meta->sender_pid = kmeta.sender_pid;
+        out_meta->tipo       = kmeta.tipo;
+        out_meta->len        = kmeta.len;
     }
     return ret;
 }
@@ -2934,7 +2955,10 @@ int32_t sys_ipc_recv_tmo(InterruptFrame *frame)
     uint32_t    buf_len    = frame->edx;
     uint32_t    timeout_ms = frame->esi;
 
-    if (out_meta != NULL && !syscall_verify_ptr(out_meta, sizeof(IpcMessage))) {
+    /* Solo l'intestazione, come in sys_ipc_recv: il perché è là. */
+    const uint32_t META_LEN = 3 * sizeof(uint32_t);
+
+    if (out_meta != NULL && !syscall_verify_ptr(out_meta, META_LEN)) {
         return ERR(EFAULT);
     }
     if (buf != NULL && buf_len > 0 && !syscall_verify_ptr(buf, buf_len)) {
@@ -2944,7 +2968,9 @@ int32_t sys_ipc_recv_tmo(InterruptFrame *frame)
     IpcMessage kmeta;
     int32_t ret = ipc_recv_timeout(&kmeta, buf, buf_len, timeout_ms);
     if (ret == 0 && out_meta != NULL) {
-        *out_meta = kmeta;
+        out_meta->sender_pid = kmeta.sender_pid;
+        out_meta->tipo       = kmeta.tipo;
+        out_meta->len        = kmeta.len;
     }
     return ret;
 }
@@ -3109,4 +3135,117 @@ int32_t sys_ioport_out(InterruptFrame *frame)
 
     port_outb(port, value);
     return 0;
+}
+
+/* =============================================================================
+ * Accessi I/O a 16 e 32 bit (SYS_IOPORT_IN16/OUT16/IN32/OUT32)
+ *
+ * Il perché servano — e perché siano quattro numeri di syscall invece di
+ * un argomento "ampiezza" — sta in kernel/include/syscall.h.
+ *
+ * ⚠️ QUI IL CONTROLLO DEL RANGE DEVE COPRIRE TUTTI I BYTE TOCCATI.
+ * ioport_allowed() verifica UNA porta. Una out32 su 0xCF8 scrive su
+ * 0xCF8..0xCFB: se ci si limitasse a controllare la prima, un processo
+ * che ha rivendicato la sola 0xCF8 potrebbe scrivere su 0xCF9 — che su
+ * molti chipset e' il registro di reset della piattaforma. Il controllo
+ * si fa quindi su base e ultimo byte, e siccome il range e' contiguo,
+ * questi due bastano a coprire anche quelli in mezzo.
+ *
+ * ⚠️ ALLINEAMENTO OBBLIGATORIO. Un accesso a 32 bit su una porta non
+ * multipla di 4 viene spezzato dal chipset in due cicli, e sul bus PCI
+ * il secondo non e' piu' un ciclo di configurazione: il risultato e'
+ * silenziosamente sbagliato. Meglio -EINVAL subito che un dispositivo
+ * enumerato con dati inventati.
+ * ============================================================================= */
+
+/* Vero se TUTTI i byte da 'port' a 'port+ampiezza-1' sono nel range del
+ * processo. Ritorna falso anche in caso di traboccamento a 0x10000. */
+static int ioport_allowed_range(Process *p, uint32_t port, uint32_t ampiezza)
+{
+    if (port + ampiezza > 0x10000) return 0;
+    return ioport_allowed(p, (uint16_t)port) &&
+           ioport_allowed(p, (uint16_t)(port + ampiezza - 1));
+}
+
+/* Parte comune ai quattro: controlla allineamento e permessi, e registra
+ * il rifiuto una volta sola invece che in quattro punti diversi. */
+static int32_t ioport_prepara(uint32_t port, uint32_t ampiezza, const char *chi)
+{
+    Process *self = proc_get_current();
+
+    if (port & (ampiezza - 1)) return ERR(EINVAL);
+
+    if (!ioport_allowed_range(self, port, ampiezza)) {
+        klog(LOG_WARN, "SYSCALL %s: PID %u negato accesso a 0x%x (%u byte)",
+             chi, self->pid, port, ampiezza);
+        return ERR(EPERM);
+    }
+    return 0;
+}
+
+/* ebx = porta. Ritorna 0..65535, oppure un errore negativo. */
+int32_t sys_ioport_in16(InterruptFrame *frame)
+{
+    uint32_t port = frame->ebx;
+    int32_t  err  = ioport_prepara(port, 2, "ioport_in16");
+
+    if (err != 0) return err;
+    return (int32_t)port_inw((uint16_t)port);
+}
+
+/* ebx = porta, ecx = valore (0..65535) */
+int32_t sys_ioport_out16(InterruptFrame *frame)
+{
+    uint32_t port = frame->ebx;
+    int32_t  err  = ioport_prepara(port, 2, "ioport_out16");
+
+    if (err != 0) return err;
+    port_outw((uint16_t)port, (uint16_t)frame->ecx);
+    return 0;
+}
+
+/* ebx = porta, ecx = uint32_t* dove scrivere il valore letto.
+ * Ritorna 0 su successo: il valore NON passa dal ritorno perché
+ * 0xFFFFFFFF è una risposta legittima del bus PCI e sarebbe
+ * indistinguibile da -1. */
+int32_t sys_ioport_in32(InterruptFrame *frame)
+{
+    uint32_t  port = frame->ebx;
+    uint32_t *dst  = (uint32_t *)frame->ecx;
+    int32_t   err  = ioport_prepara(port, 4, "ioport_in32");
+
+    if (err != 0) return err;
+    if (!syscall_verify_ptr(dst, sizeof(uint32_t))) return ERR(EFAULT);
+
+    *dst = port_inl((uint16_t)port);
+    return 0;
+}
+
+/* ebx = porta, ecx = valore a 32 bit */
+int32_t sys_ioport_out32(InterruptFrame *frame)
+{
+    uint32_t port = frame->ebx;
+    int32_t  err  = ioport_prepara(port, 4, "ioport_out32");
+
+    if (err != 0) return err;
+    port_outl((uint16_t)port, frame->ecx);
+    return 0;
+}
+
+/* =============================================================================
+ * SYS_IRQ_DONE (237) -- «ho servito l'interrupt, riapri la linea»
+ *
+ * ebx = numero IRQ
+ *
+ * Il dispatcher maschera l'IRQ nel PIC prima di consegnare la notifica al
+ * driver ring3; questa è la contropartita. Il perché per esteso sta in
+ * kernel/arch/x86/isr.c, sopra pic_mask_irq().
+ *
+ * Nessun log qui: su una scheda di rete carica passerebbe di qui una volta
+ * per pacchetto, e riempire il log seriale di righe identiche significa
+ * seppellire quelle che servono davvero.
+ * ============================================================================= */
+int32_t sys_irq_done(InterruptFrame *frame)
+{
+    return irq_done_process((uint8_t)frame->ebx, proc_get_current()->pid);
 }

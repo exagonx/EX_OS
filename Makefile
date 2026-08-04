@@ -68,7 +68,28 @@ BUILD_STAGE1  := $(BUILD_DIR)/stage1
 BUILD_STAGE2  := $(BUILD_DIR)/stage2
 BUILD_KERNEL  := $(BUILD_DIR)/kernel
 BUILD_DRIVERS := $(BUILD_DIR)/drivers
+# Driver che NON vanno sul floppy ma solo sul CD EX-OS. La separazione è
+# una directory e non un filtro nella regola del floppy perché
+# tools/mkfloppy.sh prende tutto quello che trova in build/drivers/: un
+# elenco di esclusioni lì dentro sarebbe una lista da ricordarsi di
+# aggiornare ogni volta, e il floppy si riempirebbe il giorno che
+# qualcuno se ne dimentica.
+BUILD_DRIVERS_CD := $(BUILD_DIR)/drivers-cd
 BUILD_BIN     := $(BUILD_DIR)/bin
+# Programmi che vanno solo sul CD, stessa ragione di BUILD_DRIVERS_CD.
+BUILD_BIN_CD  := $(BUILD_DIR)/bin-cd
+
+# --- Header di protocollo condivisi -------------------------------------------
+# ⚠️ DEFINITI QUI E NON ACCANTO ALLA REGOLA CHE LI PRODUCE. Le prerequisite
+# di una regola vengono espanse quando make LEGGE la riga: una variabile
+# definita piu' sotto risulta vuota, la dipendenza sparisce senza un
+# errore, e modificare il protocollo smette di ricompilare i client. Ci
+# sono gia' cascato con questi due — netdetect e nettest includono
+# pci_proto.h e net_proto.h ma le loro regole stanno prima di quelle dei
+# driver che li definivano.
+PCI_DRV_PROTO := drivers/pci/pci_proto.h
+NET_PROTO     := drivers/net/net_proto.h
+IP_PROTO      := drivers/net/ip_proto.h
 BUILD_OBJ     := $(BUILD_DIR)/obj
 BUILD_LIB     := $(BUILD_DIR)/lib
 
@@ -401,6 +422,109 @@ $(RENAME_BIN): $(RENAME_SRC) $(RENAME_LD) $(LIBC_SRC) $(LIBC_START)
 .PHONY: rename
 rename: dirs $(RENAME_BIN)
 
+# --- Programma /bin/netdetect (solo CD) ---------------------------------------
+# Riconosce le schede di rete chiedendo al server PCI e dice quale driver
+# serve. Va in $(BUILD_BIN_CD) e non in $(BUILD_BIN): sul floppy ci
+# starebbe (ce ne sono 731 KB liberi), ma il floppy serve ad avviare e a
+# installare, e uno strumento di rete senza i driver di rete — che sul
+# floppy non ci stanno — non servirebbe a niente una volta li'.
+NETDETECT_SRC := bin/netdetect/netdetect.c
+NETDETECT_BIN := $(BUILD_BIN_CD)/netdetect
+NETDETECT_LD  := bin/netdetect/netdetect.ld
+
+$(NETDETECT_BIN): $(NETDETECT_SRC) $(NETDETECT_LD) $(PCI_DRV_PROTO) $(NET_PROTO) $(LIBC_SRC) $(LIBC_START)
+	@echo "=== Compilazione /bin/netdetect ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/pci -I drivers/net -c $(NETDETECT_SRC) -o $(BUILD_OBJ)/netdetect_main.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                  -o $(BUILD_OBJ)/netdetect_libc.o
+	$(CC) -m32 -c $(LIBC_START)                          -o $(BUILD_OBJ)/netdetect_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(NETDETECT_LD) \
+	    $(BUILD_OBJ)/netdetect_start.o $(BUILD_OBJ)/netdetect_main.o $(BUILD_OBJ)/netdetect_libc.o -o $@
+	@echo "[OK] netdetect compilato: $@"
+
+.PHONY: netdetect
+netdetect: dirs $(NETDETECT_BIN)
+
+# --- Programma /bin/nettest (solo CD) -----------------------------------------
+# Prova un driver di rete mandando un frame vero. Usa ARP e non ping
+# perche' ARP e' il primo scambio possibile senza avere uno stack: se
+# arriva la risposta, scheda, driver e IPC funzionano in entrambi i sensi.
+NETTEST_SRC := bin/nettest/nettest.c
+NETTEST_BIN := $(BUILD_BIN_CD)/nettest
+NETTEST_LD  := bin/nettest/nettest.ld
+
+$(NETTEST_BIN): $(NETTEST_SRC) $(NETTEST_LD) $(NET_PROTO) $(LIBC_SRC) $(LIBC_START)
+	@echo "=== Compilazione /bin/nettest ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -c $(NETTEST_SRC) -o $(BUILD_OBJ)/nettest_main.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                 -o $(BUILD_OBJ)/nettest_libc.o
+	$(CC) -m32 -c $(LIBC_START)                         -o $(BUILD_OBJ)/nettest_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(NETTEST_LD) \
+	    $(BUILD_OBJ)/nettest_start.o $(BUILD_OBJ)/nettest_main.o $(BUILD_OBJ)/nettest_libc.o -o $@
+	@echo "[OK] nettest compilato: $@"
+
+.PHONY: nettest
+nettest: dirs $(NETTEST_BIN)
+
+# --- /bin/ping e /bin/ipcfg (solo CD) -----------------------------------------
+# Client sottili dello stack IP: non conoscono ICMP ne' ARP, mandano un
+# messaggio a /dev/ip.drv e stampano la risposta. Il protocollo sta tutto
+# nello stack, che e' un processo a se'.
+PING_SRC  := bin/ping/ping.c
+PING_BIN  := $(BUILD_BIN_CD)/ping
+PING_LD   := bin/ping/ping.ld
+
+$(PING_BIN): $(PING_SRC) $(PING_LD) $(IP_PROTO) $(LIBC_SRC) $(LIBC_START)
+	@echo "=== Compilazione /bin/ping ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -c $(PING_SRC) -o $(BUILD_OBJ)/ping_main.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                -o $(BUILD_OBJ)/ping_libc.o
+	$(CC) -m32 -c $(LIBC_START)                        -o $(BUILD_OBJ)/ping_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(PING_LD) \
+	    $(BUILD_OBJ)/ping_start.o $(BUILD_OBJ)/ping_main.o $(BUILD_OBJ)/ping_libc.o -o $@
+	@echo "[OK] ping compilato: $@"
+
+.PHONY: ping
+ping: dirs $(PING_BIN)
+
+IPCFG_SRC := bin/ipcfg/ipcfg.c
+IPCFG_BIN := $(BUILD_BIN_CD)/ipcfg
+IPCFG_LD  := bin/ipcfg/ipcfg.ld
+
+$(IPCFG_BIN): $(IPCFG_SRC) $(IPCFG_LD) $(IP_PROTO) $(LIBC_SRC) $(LIBC_START)
+	@echo "=== Compilazione /bin/ipcfg ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -c $(IPCFG_SRC) -o $(BUILD_OBJ)/ipcfg_main.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                 -o $(BUILD_OBJ)/ipcfg_libc.o
+	$(CC) -m32 -c $(LIBC_START)                         -o $(BUILD_OBJ)/ipcfg_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(IPCFG_LD) \
+	    $(BUILD_OBJ)/ipcfg_start.o $(BUILD_OBJ)/ipcfg_main.o $(BUILD_OBJ)/ipcfg_libc.o -o $@
+	@echo "[OK] ipcfg compilato: $@"
+
+.PHONY: ipcfg
+ipcfg: dirs $(IPCFG_BIN)
+
+# --- /bin/dhcp (solo CD) ------------------------------------------------------
+# Client DHCP. E' un PROGRAMMA e non un pezzo dello stack: DHCP sta sopra
+# UDP come un client DNS, e un errore qui fa fallire un comando invece di
+# spegnere la rete.
+DHCP_SRC := bin/dhcp/dhcp.c
+DHCP_BIN := $(BUILD_BIN_CD)/dhcp
+DHCP_LD  := bin/dhcp/dhcp.ld
+
+$(DHCP_BIN): $(DHCP_SRC) $(DHCP_LD) $(IP_PROTO) $(LIBC_SRC) $(LIBC_START)
+	@echo "=== Compilazione /bin/dhcp ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -c $(DHCP_SRC) -o $(BUILD_OBJ)/dhcp_main.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                -o $(BUILD_OBJ)/dhcp_libc.o
+	$(CC) -m32 -c $(LIBC_START)                        -o $(BUILD_OBJ)/dhcp_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(DHCP_LD) \
+	    $(BUILD_OBJ)/dhcp_start.o $(BUILD_OBJ)/dhcp_main.o $(BUILD_OBJ)/dhcp_libc.o -o $@
+	@echo "[OK] dhcp compilato: $@"
+
+.PHONY: dhcp
+dhcp: dirs $(DHCP_BIN)
+
 .PHONY: stack
 stack: dirs $(STACK_BIN)
 
@@ -672,8 +796,86 @@ $(KBD_DRV_OUT): $(KBD_DRV_SRC) $(KBD_DRV_PROTO) $(KBD_DRV_LD) $(LIBC_SRC) $(LIBC
 .PHONY: kbd_drv
 kbd_drv: dirs $(KBD_DRV_OUT)
 
+# --- Server ring3: pci.drv ---------------------------------------------------
+# Enumerazione del bus PCI in userspace. Stesso schema di kbd.drv.
+#
+# NON entra nel floppy: ci sta, ma il floppy serve ad avviare e a
+# installare, e il PCI serve alla rete — che sul floppy non ci starebbe
+# comunque. Va sul CD EX-OS (target iso-exos), che è la sua destinazione
+# dichiarata. Vedi la regola $(ISOX_ROOT) più sotto.
+PCI_DRV_SRC   := drivers/pci/pci.c
+PCI_DRV_OUT   := $(BUILD_DRIVERS_CD)/pci.drv
+PCI_DRV_LD    := drivers/pci/pci.ld
+
+$(PCI_DRV_OUT): $(PCI_DRV_SRC) $(PCI_DRV_PROTO) $(PCI_DRV_LD) $(LIBC_SRC) $(LIBC_START)
+	@echo "=== Compilazione server ring3 pci.drv ==="
+	@mkdir -p $(BUILD_DRIVERS_CD)
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/pci -c $(PCI_DRV_SRC) -o $(BUILD_DRIVERS_CD)/pci_main.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)   -o $(BUILD_DRIVERS_CD)/pci_libc.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_DRIVERS_CD)/pci_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(PCI_DRV_LD) \
+	    $(BUILD_DRIVERS_CD)/pci_start.o \
+	    $(BUILD_DRIVERS_CD)/pci_main.o  \
+	    $(BUILD_DRIVERS_CD)/pci_libc.o  \
+	    -o $@
+	@echo "[OK] pci.drv compilato: $@"
+
+.PHONY: pci_drv
+pci_drv: dirs $(PCI_DRV_OUT)
+
+# --- Driver ring3: ne2k.drv (solo CD) ----------------------------------------
+# NE2000/DP8390. Sta in userspace perche' la RAM dei pacchetti e' SULLA
+# scheda e ci si arriva da una porta di I/O: nessun DMA verso la memoria
+# di sistema, quindi nessuna necessita' che il kernel sappia di indirizzi
+# fisici o pagine bloccate.
+NE2K_DRV_SRC   := drivers/ne2k/ne2k.c
+NE2K_DRV_OUT   := $(BUILD_DRIVERS_CD)/ne2k.drv
+NE2K_DRV_LD    := drivers/ne2k/ne2k.ld
+
+$(NE2K_DRV_OUT): $(NE2K_DRV_SRC) $(NET_PROTO) $(PCI_DRV_PROTO) $(NE2K_DRV_LD) $(LIBC_SRC) $(LIBC_START)
+	@echo "=== Compilazione driver ring3 ne2k.drv ==="
+	@mkdir -p $(BUILD_DRIVERS_CD)
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/pci -I drivers/net -c $(NE2K_DRV_SRC) -o $(BUILD_DRIVERS_CD)/ne2k_main.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)   -o $(BUILD_DRIVERS_CD)/ne2k_libc.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_DRIVERS_CD)/ne2k_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(NE2K_DRV_LD) \
+	    $(BUILD_DRIVERS_CD)/ne2k_start.o \
+	    $(BUILD_DRIVERS_CD)/ne2k_main.o  \
+	    $(BUILD_DRIVERS_CD)/ne2k_libc.o  \
+	    -o $@
+	@echo "[OK] ne2k.drv compilato: $@"
+
+.PHONY: ne2k_drv
+ne2k_drv: dirs $(NE2K_DRV_OUT)
+
+# --- Stack IPv4 ring3: ip.drv (solo CD) ---------------------------------------
+# ARP + IPv4 + ICMP in un PROCESSO A SE'. Non tocca porte: parla col driver
+# di scheda via IPC come qualunque altro programma. Sta fuori dal driver
+# perche' questi protocolli sono uguali su ogni scheda, hanno tempi propri
+# (scadenze ARP, attese di risposta) che il driver non deve gestire, e
+# perche' se sbaglia lo stack si riavvia lo stack — la scheda resta accesa.
+IP_DRV_SRC := drivers/ip/ip.c
+IP_DRV_OUT := $(BUILD_DRIVERS_CD)/ip.drv
+IP_DRV_LD  := drivers/ip/ip.ld
+
+$(IP_DRV_OUT): $(IP_DRV_SRC) $(NET_PROTO) $(IP_PROTO) $(IP_DRV_LD) $(LIBC_SRC) $(LIBC_START)
+	@echo "=== Compilazione stack ring3 ip.drv ==="
+	@mkdir -p $(BUILD_DRIVERS_CD)
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -c $(IP_DRV_SRC) -o $(BUILD_DRIVERS_CD)/ip_main.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)   -o $(BUILD_DRIVERS_CD)/ip_libc.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_DRIVERS_CD)/ip_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(IP_DRV_LD) \
+	    $(BUILD_DRIVERS_CD)/ip_start.o \
+	    $(BUILD_DRIVERS_CD)/ip_main.o  \
+	    $(BUILD_DRIVERS_CD)/ip_libc.o  \
+	    -o $@
+	@echo "[OK] ip.drv compilato: $@"
+
+.PHONY: ip_drv
+ip_drv: dirs $(IP_DRV_OUT)
+
 .PHONY: all
-all: dirs stage1 stage2 kernel shell hello ls mem stack disk libctest fdisk mkfs trunc chkdsk rename mount_prog cp_prog install_prog textline gfedit mkdir_prog rmdir_prog delete_prog libc floppy_drv kbd_drv floppy
+all: dirs stage1 stage2 kernel shell hello ls mem stack disk libctest fdisk mkfs trunc chkdsk rename mount_prog cp_prog install_prog textline gfedit mkdir_prog rmdir_prog delete_prog libc floppy_drv kbd_drv pci_drv ne2k_drv ip_drv netdetect nettest ping ipcfg dhcp floppy
 	@echo ""
 	@echo "============================================"
 	@echo " EX-OS build completata!"
@@ -927,10 +1129,19 @@ BINUTILS_NATIVI ?= $(HOME)/exos-native/build-nativi
 # Il sysroot del bersaglio, dove tools/gcclibs-exos/prepara-gcclibs.sh
 # installa GMP, MPFR e MPC. Se ci sono, il CD porta anche /bin/provamp.
 CROSS_SYSROOT   ?= $(HOME)/exos-cross/i386-exos
+
+# Dove il canadian cross ha lasciato cc1, xgcc e cpp. Si preferisce
+# l'albero costruito con --enable-checking=release; se non c'e' si ripiega
+# su quello con i controlli di sviluppo, DICENDOLO — un cc1 di 40 MB e uno
+# di 25 si comportano allo stesso modo e si distinguono solo dal peso, che
+# e' esattamente cio' che conta su una macchina piccola.
+GCC_NATIVO_REL  ?= $(HOME)/gcc-build-rel/gcc
+GCC_NATIVO_CHK  ?= $(HOME)/gcc-build-canadian/gcc
 ISO_LEGGIMI := $(TOOLS_DIR)/iso/leggimi.txt
 ISO_MKISO   := $(TOOLS_DIR)/mkiso.py
 
 $(ISO_IMG): $(ISO_MKISO) $(ISO_LEGGIMI) $(TOOLS_DIR)/iso/prova.s \
+                $(TOOLS_DIR)/iso/prova-cc1.c \
             $(TOOLS_DIR)/iso/prova-mp.c $(TOOLS_DIR)/iso/prova-mat.c \
             $(TOOLS_DIR)/iso/prova-cpp.cpp \
             $(LIBC_SRC) $(LIBC_HDR) $(LIBC_START) \
@@ -1007,11 +1218,96 @@ $(ISO_IMG): $(ISO_MKISO) $(ISO_LEGGIMI) $(TOOLS_DIR)/iso/prova.s \
 	        > $(ISO_ROOT)/bin/leggimi.txt; \
 	    echo "     binutils nativi assenti ($(BINUTILS_NATIVI)): CD senza /bin"; \
 	fi
+	@# --- GCC nativo: cc1, il driver e il preprocessore ---------------------
+	@# Stessa regola dei binutils: non stanno nel repository, si copiano da
+	@# dove li ha lasciati il canadian cross, e se non ci sono il CD si fa
+	@# lo stesso dicendo che mancano.
+	@#
+	@# ⚠️ SI DICE QUANTO PESANO. cc1 e' il file piu' grande che EX-OS abbia
+	@# mai dovuto caricare, e la differenza fra l'albero `release` e quello
+	@# con i controlli di sviluppo si vede solo in megabyte. Stamparlo qui
+	@# evita di dover andare a misurare il CD per sapere quale dei due c'e'.
+	@set -e; \
+	G=""; \
+	if [ -x "$(GCC_NATIVO_REL)/cc1" ]; then G="$(GCC_NATIVO_REL)"; M="release"; \
+	elif [ -x "$(GCC_NATIVO_CHK)/cc1" ]; then G="$(GCC_NATIVO_CHK)"; M="controlli di sviluppo"; \
+	fi; \
+	if [ -n "$$G" ]; then \
+	    for b in cc1 cpp xgcc collect2; do \
+	        [ -x "$$G/$$b" ] || continue; \
+	        i386-exos-strip -o $(ISO_ROOT)/bin/$$b "$$G/$$b"; \
+	    done; \
+	    if [ -f $(ISO_ROOT)/bin/xgcc ]; then \
+	        mv $(ISO_ROOT)/bin/xgcc $(ISO_ROOT)/bin/gcc; \
+	    fi; \
+	    echo "     GCC nativo incluso da $$G ($$M):"; \
+	    for b in cc1 cpp gcc collect2; do \
+	        [ -f $(ISO_ROOT)/bin/$$b ] || continue; \
+	        echo "       $$b  $$(du -h $(ISO_ROOT)/bin/$$b | cut -f1)"; \
+	    done; \
+	else \
+	    echo "     GCC nativo assente: si costruisce con tools/gcc-exos/prepara-cc1.sh"; \
+	fi
+	@cp $(TOOLS_DIR)/iso/prova-cc1.c $(ISO_ROOT)/prova-cc1.c
 	@python3 $(ISO_MKISO) $(ISO_IMG) --da $(ISO_ROOT) --etichetta "EXOS TOOLS"
 	@echo "[OK] CD degli strumenti: $(ISO_IMG)"
 
 .PHONY: iso
 iso: $(ISO_IMG)
+
+# =============================================================================
+# IL CD DI EX-OS — avviabile, con il sistema sopra
+#
+# ⚠️ E' UN DISCO DIVERSO da exos-tools.iso. Quello e' il CD di SVILUPPO:
+# GCC, as, ld, le librerie di calcolo, i sorgenti — roba di terzi portata
+# qui. Questo porta solo cio' che e' nato in questo progetto: il sistema,
+# i driver, gli strumenti.
+#
+# ⚠️ AVVIABILE PER EMULAZIONE FLOPPY. Dentro c'e' dist/floppy.img come
+# immagine di avvio El Torito: il BIOS la presenta come A:, stage1 e
+# stage2 la leggono con l'INT 13h — che e' proprio cio' che il BIOS emula —
+# e caricano il kernel. Il percorso di avvio collaudato non cambia.
+#
+# ⚠️ POI IL KERNEL PASSA AL CD, e deve. In modo protetto l'INT 13h non si
+# puo' chiamare, e dietro l'emulazione non c'e' nessun controller floppy:
+# fat12_init fallisce, e quel fallimento e' il segnale che vfs_init usa
+# per montare come root il lettore ATAPI. Da qui la conseguenza che decide
+# il contenuto di questo disco: il sistema che gira e' QUELLO SUL CD, non
+# quello dentro boot.img. I due devono contenere le stesse cose, o si
+# avvia una versione e se ne esegue un'altra.
+# =============================================================================
+ISOX_ROOT := $(BUILD_DIR)/iso-exos
+ISOX_IMG  := $(DIST_DIR)/exos.iso
+
+$(ISOX_IMG): $(FLOPPY_IMG) $(PCI_DRV_OUT) $(NE2K_DRV_OUT) $(IP_DRV_OUT) $(NETDETECT_BIN) $(NETTEST_BIN) $(PING_BIN) $(IPCFG_BIN) $(DHCP_BIN) $(ISO_MKISO) README.md gpl-2.0.txt boot/kernel.cfg
+	@echo "=== Creazione CD di EX-OS (avviabile) ==="
+	@mkdir -p $(DIST_DIR)
+	@rm -rf $(ISOX_ROOT)
+	@mkdir -p $(ISOX_ROOT)/bin $(ISOX_ROOT)/lib $(ISOX_ROOT)/dev \
+	          $(ISOX_ROOT)/boot $(ISOX_ROOT)/doc
+	@cp $(BUILD_BIN)/* $(ISOX_ROOT)/bin/ 2>/dev/null || true
+	@cp $(BUILD_BIN)/mount $(ISOX_ROOT)/bin/umount 2>/dev/null || true
+	@# Programmi che esistono solo sul CD, vedi BUILD_BIN_CD in testa.
+	@cp $(BUILD_BIN_CD)/* $(ISOX_ROOT)/bin/ 2>/dev/null || true
+	@cp $(BUILD_LIB)/* $(ISOX_ROOT)/lib/ 2>/dev/null || true
+	@cp $(BUILD_DRIVERS)/*.drv $(ISOX_ROOT)/dev/ 2>/dev/null || true
+	@# I driver che sul floppy non ci stanno (o non ci servono): il CD è
+	@# la loro unica destinazione, vedi BUILD_DRIVERS_CD in testa.
+	@cp $(BUILD_DRIVERS_CD)/*.drv $(ISOX_ROOT)/dev/ 2>/dev/null || true
+	@cp boot/kernel.cfg $(ISOX_ROOT)/boot/kernel.cfg
+	@cp README.md HANDOFF.md KERNEL_CORE_NOTES.md gpl-2.0.txt $(ISOX_ROOT)/doc/
+	@# ⚠️ Anche il kernel e stage2 sulla radice: non servono ad avviare —
+	@# quelli usati stanno dentro boot.img — ma servono a `install`, che
+	@# li cerca li' per copiarli su un disco rigido.
+	@cp $(STAGE2_BIN) $(ISOX_ROOT)/LOADER.BIN
+	@cp $(KERNEL_BIN) $(ISOX_ROOT)/KERNEL.BIN
+	@python3 $(ISO_MKISO) $(ISOX_IMG) --da $(ISOX_ROOT) \
+	    --avvio $(FLOPPY_IMG) --etichetta "EXOS"
+	@echo "[OK] CD di EX-OS: $(ISOX_IMG)"
+	@echo "     Provalo senza floppy:  qemu-system-i386 -cdrom $(ISOX_IMG) -boot d -m 32M"
+
+.PHONY: iso-exos
+iso-exos: $(ISOX_IMG)
 
 # Prova il CD degli strumenti dentro QEMU, montato su /cdrom.
 .PHONY: run-iso
@@ -1154,7 +1450,9 @@ dirs:
 	           $(BUILD_KERNEL)/loader \
 	           $(BUILD_KERNEL)/syscall \
 	           $(BUILD_DRIVERS) \
+	           $(BUILD_DRIVERS_CD) \
 	           $(BUILD_BIN) \
+	           $(BUILD_BIN_CD) \
 	           $(BUILD_OBJ) \
 	           $(BUILD_LIB) \
 	           $(DIST_DIR)

@@ -27,6 +27,11 @@ void irq_handler(InterruptFrame *frame);
 
 /* Binding IRQ hardware <-> driver ring3 (vedi ipc.h per la consegna) */
 int32_t irq_bind_process(uint8_t irq, uint32_t pid);
+/* Riapre la linea dopo che il driver ha servito l'interrupt. Obbligatoria:
+ * il dispatcher maschera l'IRQ prima di notificare il driver ring3 (vedi
+ * il commento in isr.c — senza, un IRQ a livello come quelli PCI blocca
+ * la macchina). */
+int32_t irq_done_process(uint8_t irq, uint32_t pid);
 void    irq_unbind_process(uint32_t pid);
 
 #endif /* ISR_H */

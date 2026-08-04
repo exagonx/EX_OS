@@ -9,8 +9,15 @@ import sys
 import time
 
 IMG = os.environ.get("EXOS_IMG", "dist/floppy.img")
-MON = "/tmp/exos/mon.sock"
-SER = "/tmp/exos/serial.txt"
+
+# EXOS_ISTANZA distingue piu' macchine avviate insieme. Serve a provare la
+# rete: con una sola macchina si puo' vedere solo la meta' del lavoro dello
+# stack — quella in cui siamo noi a chiedere. Rispondere a un ARP o a un
+# ping in arrivo richiede qualcuno che li mandi, e lo slirp di QEMU non lo
+# fa mai. Due EX-OS su una rete a socket se li mandano a vicenda.
+ISTANZA = os.environ.get("EXOS_ISTANZA", "")
+MON = "/tmp/exos/mon%s.sock" % ISTANZA
+SER = "/tmp/exos/serial%s.txt" % ISTANZA
 
 KEYMAP = {
     " ": "spc",
@@ -30,6 +37,10 @@ KEYMAP = {
     # proprio sul tastierino (kp_multiply); '?' e' shift+slash.
     "*": "kp_multiply",
     "?": "shift-slash",
+    # '&' serve a lanciare in background, cioe' a provare qualunque
+    # servizio: senza, un driver che gira come server non si puo'
+    # nemmeno avviare da qui.
+    "&": "shift-7",
 }
 
 
@@ -99,15 +110,46 @@ def main():
     supporto = ([] if senza_floppy
                 else ["-drive", "file=%s,format=raw,if=floppy" % IMG])
 
+    # EXOS_CDROM=<iso> avvia DAL CD (El Torito, emulazione floppy). Serve da
+    # quando il CD di EX-OS e' avviabile: senza, l'unico modo di provarlo
+    # era uno script a parte, e uno script a parte non ha la mappa dei
+    # tasti — le maiuscole vanno mandate come "shift-x" e chi lo rifa' a
+    # mano se ne dimentica, con il risultato che "-L" arriva come "-".
+    cdrom = os.environ.get("EXOS_CDROM")
+
+    # EXOS_NET_SOCKET="listen:PORTA" oppure "connect:PORTA" mette la scheda
+    # su una LAN virtuale condivisa con un'altra istanza di QEMU, senza NAT
+    # e senza gateway: due macchine e un cavo, che e' esattamente cio' che
+    # serve per provare le risposte.
+    peer = os.environ.get("EXOS_NET_SOCKET")
+    rete = []
+    if peer:
+        modo, _, porta = peer.partition(":")
+        # ⚠️ IL MAC VA DATO DIVERSO A OGNI ISTANZA. QEMU ne assegna uno
+        # predefinito uguale per tutti, e due host con lo stesso indirizzo
+        # sulla stessa LAN fanno passare un test ARP che non prova niente:
+        # qualunque risposta sembra quella giusta. EXOS_MAC lo distingue.
+        mac = os.environ.get("EXOS_MAC")
+        dev = "ne2k_pci,netdev=n0" + (",mac=" + mac if mac else "")
+        rete = ["-netdev", "socket,id=n0,%s=:%s" % (
+                    "listen" if modo == "listen" else "connect", porta),
+                "-device", dev]
+
     qemu = subprocess.Popen([
         "qemu-system-i386",
     ] + supporto + [
-        "-m", "32M", "-boot", "c" if senza_floppy else "a",
+        # EXOS_RAM: 32 MB bastano a tutto il sistema, ma non a caricare cc1
+        # — che da solo pesa 40 MB. Il caricamento ELF e' a richiesta,
+        # quindi non serve che ci stia tutto insieme, ma serve spazio per
+        # le pagine che tocca davvero mentre lavora.
+        "-m", os.environ.get("EXOS_RAM", "32M"),
+        "-boot", "d" if cdrom else ("c" if senza_floppy else "a"),
         "-display", "none",
         "-serial", "file:%s" % SER,
         "-monitor", "unix:%s,server,nowait" % MON,
         "-no-reboot",
-    ] + (os.environ.get("EXOS_QEMU_EXTRA", "").split() if os.environ.get("EXOS_QEMU_EXTRA") else []), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    ] + rete + (["-cdrom", cdrom] if cdrom else [])
+      + (os.environ.get("EXOS_QEMU_EXTRA", "").split() if os.environ.get("EXOS_QEMU_EXTRA") else []), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     try:
         mon = Monitor(MON)
@@ -146,6 +188,13 @@ def main():
         print(mon.cmd("info pic", settle=0.6))
         print("=== info registers ===")
         print(mon.cmd("info registers", settle=0.6))
+
+        # EXOS_ATTESA_FINALE tiene viva la macchina dopo l'ultimo comando:
+        # serve all'istanza che fa da CONTROPARTE, che deve restare accesa
+        # mentre l'altra la interroga.
+        finale = float(os.environ.get("EXOS_ATTESA_FINALE", "0"))
+        if finale > 0:
+            time.sleep(finale)
 
         with open(SER, "r", errors="replace") as fh:
             fh.seek(mark)

@@ -97,6 +97,28 @@ int32_t irq_bind_process(uint8_t irq, uint32_t pid)
     return 0;
 }
 
+/* =============================================================================
+ * irq_done_process — il driver ha servito l'interrupt, si può riaprire
+ *
+ * Contropartita del mascheramento in irq_dispatch(): finché il driver non
+ * chiama questa, la linea resta chiusa. Il perché sta nel commento lungo
+ * là sotto, e si riassume in una riga — un driver ring3 non può azzerare
+ * il registro di stato della scheda mentre l'interrupt è in corso, perché
+ * in quel momento non sta girando.
+ *
+ * Si verifica il proprietario: senza il controllo, un processo qualunque
+ * potrebbe riaprire un IRQ che un altro driver sta ancora servendo, cioè
+ * riaccendere la tempesta che il mascheramento serve a evitare.
+ * ============================================================================= */
+int32_t irq_done_process(uint8_t irq, uint32_t pid)
+{
+    if (irq >= 16) return ERR(EINVAL);
+    if (irq_owner_pid[irq] != pid) return ERR(EPERM);
+
+    pic_unmask_irq(irq);
+    return 0;
+}
+
 /* irq_unbind_process — rilascia il claim (chiamata alla terminazione) */
 void irq_unbind_process(uint32_t pid)
 {
@@ -329,6 +351,37 @@ void irq_handler(InterruptFrame *frame)
     if (irq < 16 && irq_handlers[irq] != NULL) {
         irq_handlers[irq](frame);
     } else if (irq < 16 && irq_owner_pid[irq] != 0) {
+        /* =====================================================================
+         * ⚠️ SI MASCHERA PRIMA DI NOTIFICARE, E SENZA QUESTO IL PCI BLOCCA
+         * LA MACCHINA.
+         *
+         * Un driver ring3 non gira dentro l'interrupt: riceve un messaggio
+         * e verrà schedulato più tardi. Fra il nostro `iret` e il momento
+         * in cui quel processo tocca davvero la scheda passano dei tick.
+         *
+         * Su un IRQ A FRONTE (la tastiera PS/2, IRQ1) non è un problema:
+         * ogni byte produce un fronte, il PIC lo latcha una volta sola e
+         * basta. Su un IRQ A LIVELLO — e tutti gli interrupt PCI lo sono —
+         * il dispositivo tiene la linea alta finché non gli si azzera il
+         * registro di stato. L'EOI qui sopra riabilita subito il PIC, la
+         * linea è ancora alta, e l'interrupt riparte immediatamente dopo
+         * l'iret. Il risultato non è "qualche interrupt di troppo": è che
+         * il processo driver non riceve MAI la CPU per andare ad azzerare
+         * quel registro, quindi la tempesta non finisce da sola. Sistema
+         * fermo, senza panic e senza niente da leggere.
+         *
+         * Mascherare qui e riaprire su richiesta del driver (SYS_IRQ_DONE)
+         * è la stessa disciplina degli "interrupt in un thread": la linea
+         * resta chiusa esattamente per il tempo in cui nessuno può ancora
+         * servirla.
+         *
+         * Vale anche per la tastiera, che ora deve chiamare irq_done(). Una
+         * regola sola per tutti i driver è meglio di due modi di
+         * rivendicare un IRQ di cui uno è quello sbagliato di default —
+         * e un tasto premuto mentre l'IRQ è mascherato non si perde: il
+         * fronte resta nell'IRR del PIC e viene consegnato alla riapertura.
+         * ===================================================================== */
+        pic_mask_irq((uint8_t)irq);
         ipc_notify_irq(irq_owner_pid[irq], irq);
     } else {
         /* IRQ non gestito: log a livello debug (non panic) */

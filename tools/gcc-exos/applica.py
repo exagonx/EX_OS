@@ -224,6 +224,82 @@ MODIFICHE = [
         '  *-exos*) noconfigdirs="$noconfigdirs fixincludes" ;;\n'
         'esac\n',
     ),
+    # =========================================================================
+    # Il sink SARIF su socket: EX-OS non ha socket
+    #
+    # ⚠️ NON E' UN AGGIRAMENTO PER FAR COMPILARE. GCC puo' spedire le sue
+    # diagnostiche a un processo in ascolto su un socket di dominio Unix
+    # (variabile EXPERIMENTAL_SARIF_SOCKET). EX-OS non ha socket — ne' di
+    # dominio Unix ne' di rete — quindi qui non c'e' niente a cui
+    # connettersi, e la funzione non potrebbe riuscire nemmeno se
+    # compilasse.
+    #
+    # La strada alternativa sarebbe stata dichiarare socket()/connect() in
+    # <sys/socket.h> e farli fallire a runtime. Si e' scartata: un header
+    # che dichiara i socket fa credere a OGNI configure successivo che
+    # questo sistema li abbia, e da li' in poi ogni pacchetto costruisce
+    # percorsi di rete che poi non funzionano. Il danno di un header che
+    # mente e' molto piu' grande di quello che ripara.
+    #
+    #   sarif-sink.cc:34: fatal error: sys/un.h: No such file or directory
+    #
+    # Due punti: gli #include, e il corpo della funzione che li usa. Il
+    # resto del file — la struttura sarif_socket_sink, che scrive su un fd
+    # gia' aperto — compila senza problemi, quindi non si tocca.
+    # =========================================================================
+    (
+        "gcc/diagnostics/sarif-sink.cc",
+        "#else\n"
+        "#include <sys/un.h>\n"
+        "#include <sys/socket.h>\n"
+        "#endif\n",
+        "#elif defined(__exos__)\n"
+        "/* EX-OS non ha socket: si dichiara solo la struttura che serve a\n"
+        "   far compilare il resto del file.  Vedi tools/gcc-exos/applica.py.  */\n"
+        "#define AF_UNIX 1\n"
+        "struct sockaddr_un {\n"
+        "  unsigned short sun_family;\n"
+        "  char sun_path[108];\n"
+        "};\n"
+        "#else\n"
+        "#include <sys/un.h>\n"
+        "#include <sys/socket.h>\n"
+        "#endif\n",
+    ),
+    (
+        "gcc/diagnostics/sarif-sink.cc",
+        "  const char * const env_var_name = \"EXPERIMENTAL_SARIF_SOCKET\";\n"
+        "  const char * const socket_name = getenv (env_var_name);\n"
+        "  if (!socket_name)\n"
+        "    return;\n",
+        "  const char * const env_var_name = \"EXPERIMENTAL_SARIF_SOCKET\";\n"
+        "  const char * const socket_name = getenv (env_var_name);\n"
+        "  if (!socket_name)\n"
+        "    return;\n"
+        "\n"
+        "#ifdef __exos__\n"
+        "  /* ⚠️ SI DICE, NON SI IGNORA. Chi ha impostato la variabile si\n"
+        "     aspetta le diagnostiche da qualche parte: tacere gliele farebbe\n"
+        "     cercare in un socket che nessuno riempira' mai.  */\n"
+        "  fatal_error (UNKNOWN_LOCATION,\n"
+        "               \"%qs: EX-OS non ha socket di dominio Unix\",\n"
+        "               env_var_name);\n"
+        "#else\n",
+    ),
+    # ⚠️ E l'#endif che chiude il ramo aperto qui sopra. Va in una voce a
+    # parte perche' sta 30 righe piu' giu' — e senza, il file non compila
+    # con un errore ("unterminated #else") che punta al posto giusto ma
+    # non dice quale delle due modifiche l'ha causato.
+    (
+        "gcc/diagnostics/sarif-sink.cc",
+        "  sink_->update_printer ();\n"
+        "  dc.add_sink (std::move (sink_));\n"
+        "}",
+        "  sink_->update_printer ();\n"
+        "  dc.add_sink (std::move (sink_));\n"
+        "#endif\n"
+        "}",
+    ),
     (
         "libstdc++-v3/configure",
         '  if test "x${with_newlib}" = "xyes"; then\n'
@@ -275,12 +351,33 @@ def marca_modifica(percorso):
     if "Modificato per EX-OS" in testo:
         return
 
-    riga = ("# Modificato per EX-OS (bersaglio i386-exos) il %s.\n"
-            "# Le modifiche sono descritte in tools/gcc-exos/ del progetto EX-OS.\n"
-            % time.strftime("%Y-%m-%d"))
+    data = time.strftime("%Y-%m-%d")
+
+    # ⚠️ IL COMMENTO VA SCRITTO NELLA LINGUA DEL FILE. Fino ad agosto 2026
+    # questa funzione metteva sempre due righe che cominciano con '#',
+    # perche' tutti i file toccati erano script di shell, Makefile o
+    # configure. Alla prima patch su un file C++ il risultato e' stato:
+    #
+    #     sarif-sink.cc:1:3: error: invalid preprocessing directive #Modificato
+    #
+    # cioe' la marcatura richiesta dalla GPLv3 che impedisce al file di
+    # compilare. Un '#' a inizio riga non e' un commento ovunque: in C e'
+    # una direttiva del preprocessore.
+    if os.path.splitext(percorso)[1] in (".c", ".cc", ".cpp", ".h", ".hh"):
+        riga = ("/* Modificato per EX-OS (bersaglio i386-exos) il %s.\n"
+                "   Le modifiche sono descritte in tools/gcc-exos/ del progetto "
+                "EX-OS.  */\n" % data)
+        dove = 0            # un commento prima di tutto e' sempre lecito
+    else:
+        riga = ("# Modificato per EX-OS (bersaglio i386-exos) il %s.\n"
+                "# Le modifiche sono descritte in tools/gcc-exos/ del progetto EX-OS.\n"
+                % data)
+        # Sotto lo shebang, se c'e': quello deve restare la prima riga o il
+        # file smette di essere eseguibile.
+        righe0 = testo.splitlines(keepends=True)
+        dove = 1 if righe0 and righe0[0].startswith("#!") else 0
 
     righe = testo.splitlines(keepends=True)
-    dove = 1 if righe and righe[0].startswith("#!") else 0
     righe.insert(dove, riga)
 
     open(percorso, "w", encoding="utf-8", errors="surrogateescape").writelines(righe)

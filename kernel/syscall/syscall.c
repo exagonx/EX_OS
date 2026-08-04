@@ -117,6 +117,11 @@ void syscall_init(void)
     syscall_table[SYS_IOPORT_BIND]  = sys_ioport_bind;
     syscall_table[SYS_IOPORT_IN]    = sys_ioport_in;
     syscall_table[SYS_IOPORT_OUT]   = sys_ioport_out;
+    syscall_table[SYS_IOPORT_IN16]  = sys_ioport_in16;
+    syscall_table[SYS_IOPORT_OUT16] = sys_ioport_out16;
+    syscall_table[SYS_IOPORT_IN32]  = sys_ioport_in32;
+    syscall_table[SYS_IOPORT_OUT32] = sys_ioport_out32;
+    syscall_table[SYS_IRQ_DONE]     = sys_irq_done;
     syscall_table[SYS_IPC_RECV_TMO] = sys_ipc_recv_tmo;
     syscall_table[SYS_TIME]         = sys_time;
     syscall_table[SYS_CONSOLE_SWITCH] = sys_console_switch;

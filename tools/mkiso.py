@@ -322,7 +322,100 @@ def terminatore():
 # Costruzione
 # =============================================================================
 
-def costruisci(radice, etichetta, joliet):
+# =============================================================================
+# EL TORITO — il CD che si avvia
+#
+# ⚠️ PER EMULAZIONE FLOPPY, ed e' la forma piu' semplice che esista: il BIOS
+# legge l'immagine del floppy dal CD, la presenta al sistema come l'unita'
+# A: e da quel momento non sa piu' di essere un CD. Il percorso di avvio
+# gia' collaudato — stage1, stage2, FAT12 — NON CAMBIA DI UNA RIGA.
+#
+# L'alternativa ("no emulation") avrebbe voluto dire un settore di avvio
+# nuovo che sa leggere ISO 9660 con i servizi INT 13h estesi: un secondo
+# bootloader da scrivere e da mantenere, per arrivare allo stesso punto.
+# E' la ragione per cui i CD di Windows 98 facevano cosi'.
+#
+# Servono due cose, e nessuna delle due sta dentro il filesystem:
+#
+#   1. un DESCRITTORE DI AVVIO subito dopo il descrittore primario, che
+#      dice soltanto dove sta il catalogo;
+#   2. il CATALOGO, un blocco con due voci da 32 byte — una che dichiara
+#      "questo catalogo e' valido" e una che dice dove sta l'immagine e
+#      come va emulata.
+#
+# ⚠️ IL BLOCCO DELL'IMMAGINE E' UN EXTENT COME UN ALTRO, ma il BIOS lo
+# raggiunge SENZA passare per la directory: legge il numero dal catalogo e
+# basta. Per questo l'immagine puo' anche non comparire fra i file — qui
+# si sceglie di farla comparire lo stesso, perche' un CD in cui l'avvio e'
+# invisibile e' un CD che nessuno sa piu' rifare.
+# =============================================================================
+
+BOOT_MEDIA_FLOPPY_144 = 0x02        # 0=nessuna, 1=1.2MB, 2=1.44MB, 3=2.88MB
+
+
+def descrittore_avvio(blocco_catalogo):
+    """Il Boot Record Volume Descriptor: tipo 0, e dentro solo un numero."""
+    d = bytearray(BLOCCO)
+    d[0] = 0
+    d[1:6] = b"CD001"
+    d[6] = 1
+    # L'identificativo DEVE essere esattamente questa stringa, riempita di
+    # zeri fino a 32 byte: e' cio' che il BIOS confronta per decidere che
+    # questo descrittore lo riguarda.
+    ident = b"EL TORITO SPECIFICATION"
+    d[7:7 + len(ident)] = ident
+    # 7+32 = 39 .. 71 sono riservati (zeri), poi il puntatore al catalogo.
+    d[71:75] = struct.pack("<I", blocco_catalogo)
+    return bytes(d)
+
+
+def catalogo_avvio(blocco_immagine):
+    """Le due voci da 32 byte: validazione e voce iniziale."""
+    c = bytearray(BLOCCO)
+
+    # --- voce di validazione ---
+    v = bytearray(32)
+    v[0] = 0x01                     # intestazione
+    v[1] = 0x00                     # piattaforma: 80x86
+    # ⚠️ L'IDENTIFICATIVO OCCUPA 24 BYTE ESATTI, e si riempie di zeri.
+    # Assegnare a una fetta di bytearray una sequenza piu' corta la
+    # ACCORCIA — non la riempie — e la voce di validazione finirebbe di 31
+    # byte invece di 32, spostando tutto cio' che segue.
+    v[4:28] = b"EX-OS".ljust(24, b"\x00")
+    v[30] = 0x55
+    v[31] = 0xAA
+
+    # ⚠️ IL CHECKSUM E' SU PAROLE DA 16 BIT E LA SOMMA DEVE FARE ZERO.
+    # Non e' una firma decorativa: un BIOS che non la trova a zero salta
+    # l'avvio senza dire niente, e il disco sembra semplicemente non
+    # avviabile. Si calcola con i due byte del checksum a zero e si scrive
+    # il complemento.
+    somma = 0
+    for i in range(0, 32, 2):
+        somma = (somma + v[i] + (v[i + 1] << 8)) & 0xFFFF
+    checksum = (-somma) & 0xFFFF
+    v[28] = checksum & 0xFF
+    v[29] = (checksum >> 8) & 0xFF
+    c[0:32] = v
+
+    # --- voce iniziale: dove sta l'immagine e come si emula ---
+    e = bytearray(32)
+    e[0] = 0x88                     # avviabile
+    e[1] = BOOT_MEDIA_FLOPPY_144
+    # e[2:4] segmento di caricamento: 0 = il valore convenzionale 0x7C0
+    # e[4]   tipo di sistema: si prende dalla tabella delle partizioni
+    #        dell'immagine, e un floppy non ne ha: 0
+    # ⚠️ IL CONTEGGIO DEI SETTORI VALE 1 IN EMULAZIONE, e non e' un errore:
+    # non dice quanti settori caricare — li decide il tipo di supporto —
+    # ma quanti "settori virtuali" il BIOS deve leggere per avviare.
+    e[6:8] = struct.pack("<H", 1)
+    e[8:12] = struct.pack("<I", blocco_immagine)
+    c[32:64] = e
+
+    return bytes(c)
+
+
+def costruisci(radice, etichetta, joliet, avvio=None):
     assegna_nomi(radice)
 
     dirs = tutte_le_directory(radice)
@@ -348,10 +441,21 @@ def costruisci(radice, etichetta, joliet):
     # guardandola con un editor esadecimale.
     blocco = PRIMO_DESCRITTORE
     b_pvd = blocco; blocco += 1
+    # ⚠️ IL DESCRITTORE DI AVVIO VA SUBITO DOPO IL PRIMARIO. Il BIOS scorre
+    # i descrittori in ordine e si ferma al terminatore: metterlo dopo di
+    # quello lo renderebbe invisibile, e il disco sembrerebbe non
+    # avviabile senza nessun messaggio.
+    b_boot = None
+    if avvio is not None:
+        b_boot = blocco; blocco += 1
     b_svd = None
     if joliet:
         b_svd = blocco; blocco += 1
     b_term = blocco; blocco += 1
+
+    b_catalogo = None
+    if avvio is not None:
+        b_catalogo = blocco; blocco += 1
 
     pt_iso_le = tabella_percorsi(dirs, big=False, joliet=False)
     pt_iso_be = tabella_percorsi(dirs, big=True,  joliet=False)
@@ -416,6 +520,10 @@ def costruisci(radice, etichetta, joliet):
     metti(b_pt_iso_le, pt_iso_le)
     metti(b_pt_iso_be, pt_iso_be)
 
+    if avvio is not None:
+        metti(b_boot, descrittore_avvio(b_catalogo))
+        metti(b_catalogo, catalogo_avvio(avvio.extent))
+
     def scrivi_dirs(voce, padre):
         metti(voce.extent_iso, contenuto_directory(voce, padre, joliet=False))
         if joliet:
@@ -475,6 +583,7 @@ def main():
     etichetta = "EXOS"
     joliet = True
     prova = False
+    avvio_file = None
 
     argv = sys.argv[1:]
     i = 0
@@ -486,6 +595,8 @@ def main():
             etichetta = argv[i + 1]; i += 2
         elif a == "--senza-joliet":
             joliet = False; i += 1
+        elif a == "--avvio" and i + 1 < len(argv):
+            avvio_file = argv[i + 1]; i += 2
         elif a == "--prova":
             prova = True; i += 1
         elif a.startswith("--"):
@@ -513,7 +624,28 @@ def main():
         print(__doc__)
         return 1
 
-    img, totale = costruisci(radice, etichetta, joliet)
+    # ⚠️ L'IMMAGINE DI AVVIO ENTRA COME UN FILE NORMALE, e non e' un
+    # dettaglio estetico: il BIOS la raggiunge dal catalogo senza passare
+    # per la directory, quindi tecnicamente potrebbe restare invisibile.
+    # Un CD in cui l'avvio non si vede pero' e' un CD che nessuno sa piu'
+    # rifare ne' verificare — e chi lo apre su un altro sistema non trova
+    # traccia di come parta.
+    avvio = None
+    if avvio_file:
+        if not os.path.isfile(avvio_file):
+            print("mkiso: immagine di avvio '%s' non trovata" % avvio_file)
+            return 1
+        dati = open(avvio_file, "rb").read()
+        if len(dati) != 1474560:
+            print("mkiso: '%s' e' di %d byte: l'emulazione floppy vuole "
+                  "esattamente 1474560 (1.44 MB)" % (avvio_file, len(dati)))
+            return 1
+        avvio = Voce("boot.img", is_dir=False)
+        avvio.dati = dati
+        avvio.dim = len(dati)
+        radice.figli.append(avvio)
+
+    img, totale = costruisci(radice, etichetta, joliet, avvio)
 
     with open(uscita, "wb") as fh:
         fh.write(img)

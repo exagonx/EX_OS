@@ -285,7 +285,32 @@ void pic_send_eoi(uint8_t irq)
 
 /* =============================================================================
  * pic_mask_irq / pic_unmask_irq — Abilita/disabilita singoli IRQ
+ *
+ * ⚠️ GLI IRQ 8-15 NON ARRIVANO ALLA CPU DA SOLI: PASSANO DA IRQ2.
+ *
+ * I due 8259 sono in cascata. Lo slave non ha un piedino verso la CPU:
+ * quando ha un interrupt da consegnare alza la linea INT del MASTER, che
+ * la vede come IRQ2. Se IRQ2 è mascherato nel master, tutto quello che
+ * arriva dallo slave — IRQ8..IRQ15 — resta fuori, per quanto lo si
+ * sblocchi nel registro dello slave.
+ *
+ * Ed è esattamente quello che succedeva fino ad agosto 2026: isr_install()
+ * maschera tutto, ogni driver sblocca il proprio IRQ, e per gli IRQ bassi
+ * (tastiera 1, timer 0, floppy 6) funzionava. Il primo IRQ alto è arrivato
+ * con la scheda di rete su IRQ11, e non è arrivato affatto: il driver
+ * riceveva ZERO notifiche e la rete andava lo stesso, perché il driver
+ * guarda la scheda anche a scadenza. Un guasto che non rompe niente e
+ * rallenta tutto è il tipo peggiore — l'ho trovato solo mettendo un
+ * contatore delle notifiche accanto a uno dei risvegli a scadenza, e
+ * leggendo `notifiche IRQ 0, battiti 131`.
+ *
+ * Percio' sbloccare un IRQ >= 8 sblocca anche IRQ2. E mascherarlo NON lo
+ * rimaschera: IRQ2 non è una linea di nessuno, è la strada per otto
+ * dispositivi, e chiuderla perché uno di loro ha finito toglierebbe
+ * l'interrupt agli altri sette.
  * ============================================================================= */
+#define PIC_CASCATA 2   /* la linea del master a cui è appeso lo slave */
+
 void pic_mask_irq(uint8_t irq)
 {
     uint16_t port;
@@ -305,6 +330,7 @@ void pic_unmask_irq(uint8_t irq)
 {
     uint16_t port;
     uint8_t  mask;
+    int      dallo_slave = (irq >= 8);
 
     if (irq < 8) {
         port = 0x21;
@@ -314,4 +340,12 @@ void pic_unmask_irq(uint8_t irq)
     }
     mask = port_inb(port) & (uint8_t)~(1 << irq);
     port_outb(port, mask);
+
+    /* La cascata si apre DOPO, non prima: fra le due scritture il master
+     * potrebbe lasciar passare un interrupt dello slave che nello slave è
+     * ancora mascherato, e il PIC lo consegnerebbe come IRQ7 spurio. */
+    if (dallo_slave) {
+        mask = port_inb(0x21) & (uint8_t)~(1 << PIC_CASCATA);
+        port_outb(0x21, mask);
+    }
 }

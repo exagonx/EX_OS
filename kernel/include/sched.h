@@ -25,7 +25,34 @@
  * un altro processo direttamente. Definita qui (non in ipc.h) per
  * evitare un include circolare con Process, che contiene la mailbox.
  * ============================================================================= */
-#define IPC_MSG_MAX_DATA    512     /* payload max — copre un settore FAT12 */
+/* =============================================================================
+ * ⚠️ 1536 E NON 512: UN FRAME ETHERNET NON SI PUO' SPEZZARE A META'
+ *
+ * Fino ad agosto 2026 il limite era 512 byte, scelto perché copre un
+ * settore FAT12. Un frame Ethernet arriva a 1514 byte (1500 di payload +
+ * 14 di intestazione), e un driver di rete deve poterlo consegnare
+ * INTERO: quello che entra dal cavo lo decide chi sta dall'altra parte,
+ * non noi.
+ *
+ * L'alternativa era spezzare i frame in quattro messaggi con un numero
+ * di sequenza. Sarebbe stato più economico in RAM e molto peggio in
+ * tutto il resto: la mailbox è profonda 4, quindi un frame solo la
+ * riempirebbe, e basterebbe un secondo mittente che si intromette per
+ * lasciare mezzo frame in attesa di un pezzo che non arriva mai. La
+ * logica di riassemblaggio finirebbe in ogni client del driver di rete —
+ * cioè scritta più volte, e ogni volta in modo un po' diverso.
+ *
+ * IL COSTO, DETTO PER INTERO: la mailbox sta dentro il PCB, quindi
+ * 64 processi x 4 messaggi x 1536 byte = 384 KB di BSS del kernel,
+ * contro i 128 di prima. Sono 256 KB in più, azzerati all'avvio e mai
+ * scritti su disco (il BSS non sta in kernel.bin).
+ *
+ * E NON LO PAGA LO SPAZIO UTENTE: sys_ipc_recv copia nella IpcMessage
+ * del chiamante SOLO i tre campi di intestazione, mai l'array. La copia
+ * userspace della struttura (lib/include/libc.h) è infatti di 12 byte
+ * e non ha nessun data[] — vedi il commento lì.
+ * ============================================================================= */
+#define IPC_MSG_MAX_DATA    1536    /* payload max — copre un frame Ethernet */
 #define IPC_MAILBOX_DEPTH   4       /* messaggi in coda per processo */
 #define IPC_NAME_LEN        16      /* nome servizio, es. "tty", "floppy" */
 

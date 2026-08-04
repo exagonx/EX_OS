@@ -60,6 +60,11 @@ int  fat12_readdir_path(const char *path, Fat12DirEntry *out_buf,
                          uint32_t max_entries, uint32_t *count_out,
                          uint32_t start);
 void fat12_format_name(const Fat12DirEntry *entry, char *out /* >= 13 byte */);
+/* 1 se il controller floppy ha risposto e il filesystem e' montato.
+ * ⚠️ Un fallimento e' il segnale di un avvio da CD per emulazione
+ * floppy: vedi il commento in kernel/fs/fat12.c. */
+int  fat12_pronto(void);
+
 int  fat12_delete(const char *path);
 /* Cambia il NOME senza spostare i dati. ⚠️ SOLO nella stessa directory
  * (-3), destinazione che non deve esistere (-2): stesse regole di fat.c ed

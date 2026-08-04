@@ -1852,7 +1852,10 @@ void    _libc_start(int argc, char **argv);  /* richiamata da _start naked */
  * conoscere direttamente la memoria del destinatario: il kernel copia i
  * dati attraverso un buffer intermedio (vedi kernel/ipc/ipc.c).
  * ============================================================================= */
-#define IPC_MSG_MAX_DATA    512
+/* Payload massimo di un messaggio. Vale 1536 e non 512 perché un frame
+ * Ethernet arriva a 1514 byte e un driver di rete deve poterlo
+ * consegnare intero — il perché per esteso sta in kernel/include/sched.h. */
+#define IPC_MSG_MAX_DATA    1536
 #define IPC_NAME_LEN        16
 
 typedef struct {
@@ -1876,7 +1879,19 @@ typedef struct {
      * include questo file. */
     unsigned int  tipo;
     unsigned int  len;
-    unsigned char data[IPC_MSG_MAX_DATA];
+    /* ⚠️ QUI NON C'E' NESSUN data[], E NON E' UNA DIMENTICANZA.
+     *
+     * Questa struttura serve solo a ricevere l'INTESTAZIONE di un
+     * messaggio: ipc_recv scrive il payload nel buffer separato che gli
+     * si passa, e non ha mai scritto niente qui dentro. Fino ad agosto
+     * 2026 c'era comunque un array di 512 byte, copiato dal kernel per
+     * intero a ogni ricezione — 512 byte di traffico e di stack per un
+     * campo che nessuno leggeva.
+     *
+     * Toglierlo è servito a poter alzare il limite dei messaggi a 1536
+     * senza che ogni driver si portasse 1.5 KB di stack in più per
+     * niente. Il costo del frame Ethernet lo paga la mailbox nel kernel,
+     * dove serve, e non chi la legge. */
 } IpcMessage;
 
 /* Invia un messaggio a dest_pid. data può essere NULL se len=0.
@@ -1938,6 +1953,20 @@ int     ipc_lookup(const char *name);
  * già rivendicato da un altro processo vivo. */
 int     irq_bind(unsigned int irq);
 
+/* ⚠️ OBBLIGATORIA DOPO OGNI NOTIFICA DI IRQ. Il kernel maschera la linea
+ * PRIMA di consegnare la notifica, e finché non si chiama questa resta
+ * chiusa: il driver riceverebbe un solo interrupt e poi silenzio.
+ *
+ * Non è burocrazia. Un driver ring3 non gira dentro l'interrupt: fra la
+ * notifica e il momento in cui tocca la scheda passano dei tick. Su un
+ * IRQ a livello — tutti quelli PCI — la scheda tiene la linea alta finché
+ * non le si azzera il registro di stato, quindi senza mascheramento
+ * l'interrupt riparte subito e il processo driver non riceve mai la CPU
+ * per andare ad azzerarlo. La macchina si ferma.
+ *
+ * Si chiama DOPO aver azzerato lo stato della scheda, mai prima. */
+int     irq_done(unsigned int irq);
+
 /* Richiede accesso a un range di porte I/O [base, base+count).
  * Sovrascrive un'eventuale bind precedente. Ritorna 0 su successo. */
 int     ioport_bind(unsigned int base, unsigned int count);
@@ -1946,6 +1975,36 @@ int     ioport_bind(unsigned int base, unsigned int count);
  * se la porta non è stata dichiarata con ioport_bind(). */
 int     ioport_in(unsigned int port);
 int     ioport_out(unsigned int port, unsigned int value);
+
+/* -----------------------------------------------------------------------------
+ * Accessi a 16 e 32 bit
+ *
+ * Non sono una comodità: il registro CONFIG_ADDRESS del bus PCI (0xCF8)
+ * DEVE essere scritto con un singolo accesso a 32 bit, altrimenti il
+ * ponte non lo interpreta come ciclo di configurazione — e siccome
+ * 0xCF9 è il registro di reset di molti chipset, scriverlo a byte tende
+ * a riavviare la macchina. La porta dati di una NE2000 vuole i 16 bit.
+ *
+ * ⚠️ ioport_in32 NON restituisce il valore letto. Una configurazione PCI
+ * che vale 0xFFFFFFFF significa «nessun dispositivo», ed è un risultato
+ * normale: come int sarebbe -1, cioè indistinguibile da un errore. Il
+ * valore esce quindi dal puntatore, e il ritorno dice solo se è andata:
+ *
+ *     unsigned int v;
+ *     if (ioport_in32(0xCFC, &v) == 0) usa(v);
+ *
+ * ioport_in16 non ha il problema (0..65535 sta nei positivi) e
+ * restituisce il valore direttamente.
+ *
+ * La porta deve essere allineata all'ampiezza (multipla di 2 o di 4):
+ * un accesso disallineato viene spezzato dal chipset in due cicli e sul
+ * bus PCI il secondo non è più un ciclo di configurazione. Il kernel
+ * risponde -EINVAL invece di leggere dati inventati.
+ * --------------------------------------------------------------------------- */
+int     ioport_in16(unsigned int port);
+int     ioport_out16(unsigned int port, unsigned int value);
+int     ioport_in32(unsigned int port, unsigned int *out);
+int     ioport_out32(unsigned int port, unsigned int value);
 
 /* =============================================================================
  * Configurazione e identità del sistema

@@ -1537,6 +1537,229 @@ I client trovano il servizio con `ipc_lookup("kbd")` e dialogano via
 `ipc_send`/`ipc_recv`. Riferimento completo: `drivers/kbd/kbd.c` e il
 protocollo in `drivers/kbd/kbd_proto.h`.
 
+### Accessi I/O a 16 e 32 bit
+
+Oltre a `ioport_in`/`ioport_out`, che lavorano a byte, un driver ha:
+
+```c
+int ioport_in16 (unsigned int porta);                    /* 0..65535, o -errno */
+int ioport_out16(unsigned int porta, unsigned int val);
+int ioport_in32 (unsigned int porta, unsigned int *out); /* 0, o -errno        */
+int ioport_out32(unsigned int porta, unsigned int val);
+```
+
+Non sono una comodità. Il registro CONFIG_ADDRESS del bus PCI (0xCF8) **deve**
+essere scritto con un singolo accesso a 32 bit: uno a byte o a word non viene
+riconosciuto dal ponte come ciclo di configurazione, e siccome 0xCF9 è il
+registro di reset di molti chipset, scriverlo a pezzi tende a riavviare la
+macchina.
+
+⚠️ `ioport_in32` **non restituisce il valore letto**: `0xFFFFFFFF` («nessun
+dispositivo») come `int` sarebbe `-1`, indistinguibile da un errore. Il valore
+esce dal puntatore. `ioport_in16` non ha il problema e lo restituisce.
+
+La porta deve essere allineata all'ampiezza, altrimenti `-EINVAL`: un accesso
+disallineato viene spezzato dal chipset in due cicli e sul bus PCI il secondo
+non è più un ciclo di configurazione.
+
+### Il bus PCI: `/dev/pci.drv` e `/bin/netdetect`
+
+L'enumerazione PCI è un **processo ring3**, non codice del kernel: legge
+tabelle scritte da BIOS e firmware di terzi, e un ciclo che non termina su un
+ponte mal formato dev'essere un processo da rilanciare, non una macchina
+bloccata.
+
+```
+/dev/pci.drv -l          elenca i dispositivi ed esce
+/dev/pci.drv &           registra il servizio "pci" e serve i client
+netdetect                schede di rete presenti e driver di ciascuna
+netdetect -t             tabella dei modelli riconosciuti
+```
+
+Esempio (VirtualBox con la scheda predefinita):
+
+```
+ex-os:/> /dev/pci.drv &
+[1] 8
+pci: servizio 'pci' attivo, 8 dispositivi
+ex-os:/> netdetect
+00:04.0  1022:2000  AMD PCnet-PCI II / FAST III (Am79C970/C973)
+           porte I/O da 0xc140, IRQ 11
+           driver: /dev/pcnet.drv
+```
+
+Il protocollo è in `drivers/pci/pci_proto.h`. Il server espone lettura della
+configurazione e `PCI_MSG_ABILITA`/`DISABILITA` sui bit I/O, memoria e bus
+master; **non** una scrittura di configurazione generica, perché riprogrammare
+i BAR di un dispositivo che il kernel sta usando (per esempio il controller
+ATA) toglierebbe il disco da sotto i piedi a chi di quella scrittura non sa
+nulla.
+
+Entrambi vivono **solo sul CD di EX-OS** (`make iso-exos`): il floppy serve ad
+avviare e a installare, e gli strumenti di rete senza i driver di rete — che
+sul floppy non ci starebbero — non servirebbero a niente una volta lì.
+
+### Interrupt: `irq_bind` e `irq_done` vanno in coppia
+
+```c
+irq_bind(11);                    /* da qui gli IRQ arrivano come IPC */
+...
+/* alla notifica: */
+servi_la_scheda();               /* azzera lo stato del dispositivo */
+irq_done(11);                    /* SOLO ADESSO si riapre la linea */
+```
+
+⚠️ `irq_done()` non è facoltativa. Il kernel **maschera** l'IRQ nel PIC
+prima di consegnare la notifica, e senza questa chiamata la linea resta
+chiusa: il driver riceve un interrupt e poi silenzio.
+
+Il motivo è che un driver ring3 non gira dentro l'interrupt: fra la
+notifica e il momento in cui tocca la scheda passano dei tick. Su un IRQ
+**a livello** — tutti quelli PCI — il dispositivo tiene la linea alta
+finché non gli si azzera il registro di stato, quindi senza mascheramento
+l'interrupt riparte subito dopo l'`iret` e il processo driver non riceve
+mai la CPU per andare ad azzerarlo. La macchina si ferma, senza panic.
+
+L'ordine conta: prima si serve il dispositivo, poi si riapre. Riaprire con
+la linea ancora alta rimette in piedi la tempesta.
+
+### Rete: `/dev/ne2k.drv` e `/bin/nettest`
+
+Il primo driver di rete guida la famiglia NE2000/DP8390 — RTL8029 su PCI e
+cloni Winbond/VIA/KTI. Sta in userspace perché quella scheda **non fa DMA
+verso la memoria di sistema**: la RAM dei pacchetti è sulla scheda e ci si
+arriva da una porta di I/O, quindi il kernel non deve sapere niente di
+indirizzi fisici o pagine bloccate.
+
+```
+ex-os:/> /dev/pci.drv &
+ex-os:/> netdetect -c              # sceglie e avvia il driver giusto
+ex-os:/> nettest -a 10.0.2.2
+chi ha 10.0.2.2? lo chiede 52:54:00:12:34:56 (10.0.2.15)
+
+  64 byte  52:55:0a:00:02:02 -> 52:54:00:12:34:56  ARP (0x0806)
+      ARP risposta: 10.0.2.2 e' 52:55:0a:00:02:02, cerca 10.0.2.15
+
+Risposta ricevuta: 10.0.2.2 ha indirizzo 52:55:0a:00:02:02
+```
+
+`nettest` usa **ARP e non ping** di proposito: ARP è il primo scambio
+possibile senza avere uno stack, e una risposta dimostra in un colpo solo
+che la scheda trasmette, che il frame arriva, che la scheda riceve e che
+la catena driver → IPC → programma consegna i byte giusti. Se ARP
+funziona, a `ping` manca solo software.
+
+Il protocollo (`drivers/net/net_proto.h`) è quello di **ogni** driver di
+rete, non della NE2000: il PCnet parlerà la stessa lingua. Due scelte che
+valgono per tutti:
+
+- **Il driver non spinge mai un frame non richiesto.** `ipc_send` blocca
+  se la mailbox del destinatario è piena, e driver e stack che si spingono
+  dati a vicenda finiscono fermi ognuno dentro la propria `ipc_send`. Si
+  usa domanda e risposta (`NET_MSG_RICEVI`), come il driver di tastiera.
+- **Un battito ogni 250 ms.** `ipc_notify_irq` non blocca: se la mailbox
+  del driver è piena quando arriva l'interrupt, la notifica viene
+  scartata e la linea resterebbe mascherata per sempre. La scadenza
+  sull'attesa fa sì che una notifica persa costi un ritardo, non
+  un'interfaccia morta.
+
+⚠️ Una NE2000 **ISA** non si cerca da sola: per riconoscerla bisognerebbe
+scrivere sulla sua porta di reset, e se lì c'è un'altra scheda le si
+scrive addosso. Va dichiarata: `/dev/ne2k.drv -p 0x300 -q 3`.
+
+### Lo stack IPv4: `/dev/ip.drv`, `ping`, `ipcfg`
+
+ARP, IPv4 e ICMP stanno in un **processo a sé**, non nel driver:
+
+```
+ping ──IPC──> ip.drv ──IPC──> ne2k.drv ──porte I/O──> scheda
+```
+
+Tre ragioni, tutte pratiche: questi protocolli sono uguali su qualunque
+scheda (metterli nel driver vorrebbe dire riscriverli per la PCnet); lo
+stack ha dei **tempi** — scadenze ARP, attese di risposta — mentre il
+driver deve solo rispondere all'hardware; e se sbaglia lo stack si riavvia
+lo stack, mentre la scheda resta accesa e configurata.
+
+```
+ex-os:/> /dev/pci.drv &
+ex-os:/> netdetect -c
+ex-os:/> /dev/ip.drv &
+ip: indirizzo  10.0.2.15
+    maschera   255.255.255.0
+    gateway    10.0.2.2
+ip: servizio 'ip' attivo
+
+ex-os:/> ping 8.8.8.8 -n 3
+  60 byte da 8.8.8.8: seq=1 ttl=255 tempo=70 ms
+  60 byte da 8.8.8.8: seq=2 ttl=255 tempo=50 ms
+  60 byte da 8.8.8.8: seq=3 ttl=255 tempo=60 ms
+
+3 inviati, 3 ricevuti, 0% persi
+tempi: minimo 50 ms, medio 60 ms, massimo 70 ms
+```
+
+`ipcfg` mostra indirizzo e **contatori**, `ipcfg -r` la tabella ARP.
+I contatori sono metà del programma: quando la rete non va, la domanda
+non è «va o non va» ma dove si ferma, e `IP ricevuti` a zero, `scartati`
+che salgono o `somme errate` che salgono indicano tre punti diversi.
+
+Cosa lo stack **non** fa, detto subito:
+
+- **non frammenta e non riassembla** — un datagramma più grande della MTU
+  viene rifiutato, uno in arrivo che è un frammento viene contato e
+  scartato;
+- **nessuna tabella di routing** — c'è una rete locale e un gateway;
+- **niente DHCP** — l'indirizzo si dichiara (`ip.drv -a … -m … -g …` o
+  `ipcfg -a …`);
+- **una richiesta echo per volta** — `ping` è sequenziale per natura.
+
+⚠️ `ping` distingue **tre** esiti, non due: risposta ricevuta; nessuna
+risposta all'**ARP** (a quell'indirizzo non c'è nessuno — non si è nemmeno
+usciti dal cavo); nessuna risposta all'**echo** (il pacchetto è partito, il
+problema è più in là). Un unico «non raggiungibile» costringerebbe a
+rifare la diagnosi da capo ogni volta.
+
+⚠️ Un tempo di `<10 ms` non è uno zero: `uptime_ms()` conta i tick del PIT
+a 100 Hz, quindi avanza a scatti di 10 ms. Scrivere «0 ms» dichiarerebbe
+una precisione che non c'è.
+
+### UDP e DHCP
+
+Lo stack fa anche UDP. Non ci sono prese né descrittori: si apre una
+**porta**, e da quel momento i datagrammi per quella porta sono di chi
+l'ha aperta. Basta a un client DHCP e a un futuro risolutore DNS; una vera
+API a prese si costruirà sopra questa, non al posto suo.
+
+```
+ex-os:/> dhcp
+dhcp: cerco un server (52:54:00:12:34:56)...
+dhcp: offerta di 192.168.76.9: 192.168.76.30
+
+  indirizzo  192.168.76.30
+  maschera   255.255.255.0
+  gateway    192.168.76.9
+  DNS        192.168.76.3
+  concessione 86400 s
+
+dhcp: configurato.
+```
+
+`dhcp` è un **programma**, non un pezzo dello stack: DHCP sta sopra UDP
+come un client DNS, e un errore lì dentro fa fallire un comando invece di
+spegnere la rete. `dhcp -n` chiede e stampa senza applicare.
+
+⚠️ **Non rinnova la concessione.** Quando scade, va rilanciato. Il rinnovo
+vuole un processo che resti acceso a metà del tempo di scadenza, cioè un
+programma diverso da questo — che deve poter essere lanciato a mano e
+finire.
+
+⚠️ Un datagramma per una porta aperta ma senza nessuno in attesa viene
+**scartato e contato** (`ipcfg` lo mostra). UDP perde pacchetti per
+definizione, e una coda che cresce mentre nessuno legge è un modo lento di
+finire la memoria per colpa di chi manda. Chi aspetta un datagramma deve
+prenotarne la ricezione **prima** di mandare la richiesta.
+
 ### Interfaccia `drv_*` (modello precedente, kernel-space)
 
 ```c
@@ -1603,9 +1826,12 @@ qualunque scrittore di ELF lo fa.
 
 | | |
 |---|---|
-| **`cc1` ospitato** | libstdc++ e le librerie di calcolo ci sono; restano `<sys/un.h>` e il canadian cross |
+| **`cc1` funzionante** | ⚠️ **si carica e parte** dentro EX-OS (41 MB, caricamento a richiesta), ma non arriva ancora a compilare: ogni fault va inseguito nella libc — il primo era in `realloc`. In ricostruzione con `--enable-checking=release` per ridurne la mole |
 | **posizione condivisa fra fd duplicati** | `dup()` funziona, ma i due descrittori tengono ognuno il proprio offset |
-| **chkdsk per ext2** | strumento a sé: bitmap, conteggi dei collegamenti, `..` — controlli diversi da quelli di FAT |
+| **TCP** | ARP, IPv4, ICMP e UDP ci sono; prima di TCP serve la tabella delle operazioni in sospeso — oggi lo stack ne serve una per volta |
+| **risolutore DNS** | l'indirizzo del server ce l'abbiamo (lo dà il DHCP), manca chi lo usi |
+| **rinnovo DHCP** | `dhcp` prende la concessione e finisce; il rinnovo vuole un processo che resti acceso |
+| **driver PCnet (Am79C973)** | ha DMA vero verso la memoria di sistema: serve prima la rivendicazione del bus mastering nel kernel |
 | **exFAT** | ⚠️ non esiste come filesystem: prima va implementato, poi ha senso un chkdsk |
 | **`rename` fra directory** | oggi ENOSYS: sarebbe una copia più una cancellazione, cioè un'altra operazione |
 | **DMA per il disco** | oggi 0,75 MB/s in PIO |

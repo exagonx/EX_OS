@@ -69,6 +69,31 @@
 #
 # ⚠️ -j1 E NON -j$(nproc): vedi tools/gcc-exos/applica.py. Su 4 GB di RAM i
 # file gimple-match-*.cc arrivano a 1,5 GB di picco ciascuno.
+#
+# -----------------------------------------------------------------------------
+# ⚠️ --enable-checking=release, E NON E' UN'OTTIMIZZAZIONE PRUDENZIALE
+#
+# Senza questa opzione, un albero configurato con --disable-bootstrap eredita
+# il default di stage1: --enable-checking=yes,types,extra. Sono i controlli
+# di coerenza interni che GCC usa per sviluppare SE STESSO — verifiche di
+# tipo su ogni accesso agli alberi, invarianti sul GC, assert ovunque. Non
+# servono a chi compila un programma: servono a chi modifica GCC.
+#
+# Il prezzo si vede solo quando si prova a metterlo su una macchina vera:
+# il cc1 costruito con quei controlli pesa 39,6 MB spogliato dei simboli,
+# e EX-OS gira su 32 MB di RAM. Il caricamento ELF e' a richiesta, quindi
+# non deve starci tutto insieme — ma ogni pagina toccata arriva dal disco
+# a 0,75 MB/s in PIO, e 40 MB di codice sono 40 MB da leggere.
+#
+# `release` non toglie gli assert utili: lascia i controlli che segnalano
+# un compilatore rotto e toglie quelli che servono a chi lo sta scrivendo.
+# E' cio' con cui e' costruito il GCC di qualunque distribuzione.
+#
+# ⚠️ NON SI PUO' AGGIUNGERE A UN ALBERO GIA' CONFIGURATO. L'opzione cambia
+# delle macro incluse dappertutto: gli oggetti gia' compilati sono
+# incompatibili con quelli nuovi e il Makefile non se ne accorge. Va usata
+# una directory di build NUOVA — che e' anche il motivo per cui questo
+# script prende la directory come argomento.
 # =============================================================================
 
 set -e
@@ -123,7 +148,7 @@ export ac_cv_c_bigendian=no
     --disable-libssp --disable-libgomp --disable-libquadmath \
     --disable-libatomic --disable-libvtv --disable-libstdcxx \
     --disable-bootstrap --disable-lto --disable-plugin \
-    --disable-fixincludes \
+    --disable-fixincludes --enable-checking=release \
     --with-gmp="$SYSROOT" --with-mpfr="$SYSROOT" --with-mpc="$SYSROOT"
 
 echo

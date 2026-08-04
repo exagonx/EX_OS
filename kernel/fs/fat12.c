@@ -2679,3 +2679,18 @@ int fat12_rename(const char *da, const char *a)
         return 0;
     }
 }
+
+/* =============================================================================
+ * fat12_pronto — c'e' davvero un floppy sotto?
+ *
+ * ⚠️ SERVE A DISTINGUERE UN AVVIO DA CD DA UNO DA FLOPPY, e non c'e' altro
+ * modo. Con l'emulazione El Torito il BIOS presenta il CD come l'unita'
+ * 0x00: dal numero del drive i due casi sono identici. Ma questo driver
+ * programma il controller alle porte hardware, e dietro l'emulazione un
+ * controller non c'e': fat12_init fallisce, e quel fallimento E' il
+ * segnale. Vedi vfs_init() in kernel/fs/vfs.c.
+ * ============================================================================= */
+int fat12_pronto(void)
+{
+    return g_initialized ? 1 : 0;
+}

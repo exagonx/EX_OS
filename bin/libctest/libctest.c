@@ -101,6 +101,58 @@ static void prova_allocatore(void)
           b != NULL && strcmp(b, "contenuto") == 0);
     free(b);
 
+    /* -----------------------------------------------------------------
+     * ⚠️ realloc CHE ALLUNGA SUL POSTO — la prova che ha fatto cadere cc1
+     *
+     * Quando il vicino successivo e' libero e adiacente, realloc puo'
+     * ingrandire il blocco senza copiare. E' il caso frequente di un
+     * buffer che raddoppia mentre nessun altro alloca in mezzo, ed e'
+     * anche quello che nell'agosto 2026 NON funzionava: la fusione veniva
+     * chiesta a una funzione che rifiuta di lavorare sui blocchi
+     * allocati, quindi non faceva niente, e realloc restituiva il
+     * puntatore dichiarando una dimensione che il blocco non aveva.
+     *
+     * Il danno non si vedeva subito: si vedeva alla malloc successiva,
+     * che consegnava memoria sovrapposta a quella appena "ingrandita".
+     * Su cc1 usciva come un puntatore di lista che valeva 3.
+     *
+     * Per questo la prova NON si limita a guardare che realloc ritorni
+     * non-NULL: scrive tutto il blocco, ne alloca un altro, lo riempie, e
+     * poi RILEGGE il primo. Se i due si sovrappongono, il primo non e'
+     * piu' quello che ci si era scritto.
+     * ----------------------------------------------------------------- */
+    {
+        char *g1, *g2, *g3;
+        int   j;
+
+        g1 = (char *)malloc(64);
+        g2 = (char *)malloc(64);
+        ok = (g1 != NULL && g2 != NULL);
+
+        if (ok) {
+            for (j = 0; j < 64; j++) g1[j] = (char)(j + 1);
+            free(g2);                       /* libero e adiacente a g1 */
+
+            g1 = (char *)realloc(g1, 120);  /* deve allungarsi sul posto */
+            ok = (g1 != NULL);
+        }
+
+        if (ok) {
+            for (j = 0; j < 120; j++) g1[j] = (char)(0xA0 + (j & 0x0F));
+
+            g3 = (char *)malloc(64);        /* non deve sovrapporsi a g1 */
+            ok = (g3 != NULL);
+            if (ok) {
+                for (j = 0; j < 64; j++) g3[j] = 0x5A;
+                for (j = 0; j < 120; j++)
+                    if (g1[j] != (char)(0xA0 + (j & 0x0F))) { ok = 0; break; }
+                free(g3);
+            }
+            free(g1);
+        }
+        esito("realloc che allunga sul posto da' davvero i byte chiesti", ok);
+    }
+
     a = (char *)calloc(64, 4);
     ok = (a != NULL);
     for (i = 0; ok && i < 64 * 4; i++) if (a[i] != 0) ok = 0;
@@ -973,6 +1025,18 @@ static void prova_temporanei(void)
 
         f = fopen(a, "w");
         if (f) { fputs("contenuto che non deve muoversi\n", f); fclose(f); }
+
+        /* ⚠️ SU UNA RADICE IN SOLA LETTURA QUESTE PROVE NON SI POSSONO
+         * FARE, e non e' un fallimento: avviando da CD la root e' un ISO
+         * 9660, che non si scrive. Segnalarlo come guasto insegnerebbe a
+         * ignorare le righe rosse — e la risposta EROFS e' proprio quella
+         * giusta. Si distingue il caso invece di pretendere un mondo che
+         * non c'e'. */
+        if (f == NULL && errno == EROFS) {
+            printf("  = radice in sola lettura (avvio da CD): prove di "
+                   "rename saltate\n");
+            return;
+        }
 
         esito("rename riesce", rename(a, b) == 0);
         esito("il vecchio nome non c'e' piu'", access(a, F_OK) != 0);

@@ -2,6 +2,1011 @@
 
 ---
 
+# SESSIONE 2026-08-04 (u) — cc1 gira, e trovando un difetto in realloc
+
+Kernel **0.166**. `/bin/libctest` passa **271 prove su 271** (una nuova).
+
+Tre cose: `cc1` è stato **eseguito** dentro EX-OS, ha trovato un difetto
+grave nel nostro allocatore, e lo stack ha guadagnato **UDP e DHCP**.
+
+## ⛔ realloc RESTITUIVA BLOCCHI MAI INGRANDITI
+
+Questo è il difetto più grave trovato finora nella libc, ed era invisibile
+finché non è arrivato un programma che alloca sul serio.
+
+Nel ramo di `realloc` che allunga sul posto:
+
+```c
+heap_fondi_con_succ(b);          /* b è ALLOCATO */
+heap_spezza(b, heap_allinea(size));
+return ptr;                      /* «ecco i tuoi byte» */
+```
+
+`heap_fondi_con_succ()` comincia con `if (... || !b->libero) return;` — su
+un blocco allocato **non fa niente**. Poi `heap_spezza()` vede `b->dim`
+ancora piccolo e rinuncia anche lei. `realloc` restituisce il puntatore
+dichiarando una dimensione che il blocco **non ha mai avuto**: chi scrive
+sfonda nell'intestazione del blocco successivo.
+
+Il danno non si vede lì: si vede alla `malloc` DOPO, che segue un
+puntatore fatto dei dati dell'utente.
+
+### Come è saltato fuori
+
+`cc1 --version` dentro EX-OS moriva con
+
+```
+page fault a 0x0000000f (protezione, lettura, EIP=0x0a0c5307)
+```
+
+`addr2line` sull'eseguibile non spogliato: **`heap_fondi_con_succ`**, cioè
+codice nostro. Il disassemblato dice `mov 0xc(%edx),%ecx` con `%edx` =
+`b->succ`, e un fault a `0x0f` significa `succ == 3`. Un puntatore di lista
+che vale 3 è un valore scritto da qualcun altro.
+
+### La prova prima della correzione
+
+In `libctest`: alloca due blocchi adiacenti, libera il secondo, fa
+`realloc` del primo a 120 byte, lo riempie, alloca un terzo blocco e
+**rilegge il primo**. Con il difetto, il programma cade con
+
+```
+page fault a 0xa7a6a5a4
+```
+
+— che sono **i byte di riempimento del test** (`a4 a5 a6 a7`) letti come
+puntatore. Difficile avere una dimostrazione più diretta.
+
+### La correzione
+
+`heap_fondi_con_succ()` è stata divisa in due:
+
+- **`heap_assorbi_succ(b)`** — assorbe il vicino se è libero e adiacente,
+  senza guardare lo stato di `b`. È quella che serve a `realloc`.
+- **`heap_fondi_con_succ(b)`** — il guscio con il controllo su `b->libero`.
+
+⚠️ Il controllo **serve** agli altri chiamanti: `free()` e `memalign()`
+chiamano `heap_fondi_con_succ(b->prec)` senza sapere se il predecessore
+sia libero, e fondere un blocco allocato col suo vicino consegnerebbe due
+volte la stessa memoria. Togliere il controllo dappertutto avrebbe
+sostituito un difetto con uno peggiore.
+
+## cc1 SI CARICA ED ESEGUE
+
+41 MB di ELF, caricati e avviati. Il caricamento a richiesta
+(`kernel/loader/elf.c`) regge: il processo è partito, è arrivato dentro il
+proprio codice a `0x0a0c53xx` e ha fatto lavorare l'allocatore fino a
+romperlo. La dimensione non è stata il limite; il limite è stato la libc.
+
+Il CD degli strumenti ora porta `cc1`, `gcc` (il driver), `cpp` e
+`collect2`, e la regola **stampa quanto pesano**: la differenza fra
+l'albero `release` e quello con i controlli di sviluppo si vede solo in
+megabyte, e andarla a misurare sul CD ogni volta è tempo perso.
+
+⚠️ Il build con `--enable-checking=release` è **in corso** in
+`~/gcc-build-rel` (directory nuova: l'opzione cambia macro incluse
+dappertutto e non si può aggiungere a un albero già configurato). Quando
+finisce, la regola del CD lo preferisce da sola.
+
+## UDP
+
+Nello stack, con tre scelte che vanno lette prima di toccarlo:
+
+- **Si aprono porte, non prese.** Nessun descrittore: il client dice quale
+  porta vuole. Basta a DHCP e a un futuro risolutore DNS; una vera API a
+  prese si costruirà sopra questa, non al posto suo.
+- **Niente coda.** Se arriva un datagramma per una porta aperta e nessuno
+  sta aspettando, si scarta e si conta. UDP perde pacchetti per
+  definizione; una coda che cresce mentre nessuno legge è un modo lento di
+  finire la memoria per colpa di chi manda.
+- **L'attesa dell'ARP serve a due operazioni, non a una.** Un ping e un
+  datagramma UDP verso un indirizzo sconosciuto hanno lo stesso problema e
+  la stessa soluzione: la macchina a stati è una sola, con un campo che
+  dice cosa fare quando l'ARP arriva.
+
+⚠️ **La somma di controllo UDP copre una pseudo-intestazione** di dodici
+byte che non viaggia sul cavo (sorgente, destinazione, protocollo,
+lunghezza). E il risultato 0 va scritto come `0xFFFF`: in UDP lo zero
+significa «somma non calcolata», quindi una somma che venisse davvero zero
+spegnerebbe il controllo invece di superarlo.
+
+⚠️ **Somma a zero in arrivo si accetta**: su IPv4 il controllo è
+facoltativo, e rifiutare quei datagrammi farebbe sparire traffico
+legittimo.
+
+## Broadcast
+
+Serviva a DHCP e mancava del tutto: in uscita per non fare ARP verso
+«tutti», in entrata per **accettare pacchetti non indirizzati a noi**.
+Senza il secondo, un client DHCP non riceverebbe mai la risposta — il
+server la manda in broadcast proprio perché un indirizzo non ce l'abbiamo
+ancora.
+
+## `/bin/dhcp`
+
+È un **programma**, non un pezzo dello stack: DHCP sta sopra UDP come un
+client DNS, e un errore lì dentro spegnerebbe la rete invece di far
+fallire un comando.
+
+⚠️ **Parte azzerando l'indirizzo**, perché un client DHCP deve mandare con
+sorgente 0.0.0.0 — è l'unico modo di dire «non ho un indirizzo, è per
+questo che sto chiedendo». La configurazione precedente viene salvata e
+**rimessa se la negoziazione fallisce**: altrimenti il comando che doveva
+dare un indirizzo lo toglie.
+
+⚠️ **Alza il bit di broadcast** nel campo `flags`: l'indirizzo che il
+server sta per darci non ce l'abbiamo, e non risponderemmo a un ARP per
+quell'indirizzo.
+
+⚠️ **Controlla `xid` e `chaddr`** su ogni risposta. Le risposte agli altri
+client arrivano anche a noi perché sono in broadcast: prendere la prima
+che passa significherebbe configurarsi con l'indirizzo di qualcun altro.
+
+Non rinnova la concessione, non rilascia, prende la prima offerta. Tutto
+detto nel file.
+
+### Una corsa trovata leggendo i contatori
+
+La prima versione mandava il DISCOVER, aspettava la conferma di invio, e
+**solo poi** chiedeva un datagramma. In quella finestra la risposta arriva
+già — su rete emulata torna in microsecondi — e lo stack, che non tiene
+code, la buttava. Non si vedeva come un guasto: si vedeva come un DHCP che
+ci mette tre secondi in più, perché la ritrasmissione andava a buon fine.
+
+L'ho trovato guardando `ipcfg`: **3 datagrammi inviati dove ne bastavano
+2**. Ora la prenotazione si fa PRIMA dell'invio, e i due messaggi (esito e
+dato) si accettano in qualunque ordine — aspettare esplicitamente l'esito
+avrebbe scartato il datagramma se arrivava per primo, cioè lo stesso
+guasto spostato di due righe. Dopo: **2 inviati, 2 ricevuti**.
+
+## Verificato in QEMU
+
+```
+cc1 dentro EX-OS      41 MB caricati, processo avviato
+                      (poi il fault che ha svelato realloc)
+
+dhcp su rete DIVERSA dai valori predefiniti:
+  -netdev user,net=192.168.76.0/24,host=192.168.76.9,dhcpstart=192.168.76.30
+  -> indirizzo 192.168.76.30, maschera 255.255.255.0,
+     gateway 192.168.76.9, DNS 192.168.76.3, concessione 86400 s
+  -> ping 192.168.76.9: 2 su 2
+  -> UDP inviati 2, ricevuti 2, senza porta 0
+
+libctest             271/271
+```
+
+⚠️ **La prima prova DHCP non provava niente**, e me ne sono accorto solo
+guardandola: girava sulla rete predefinita di QEMU, che assegna
+**10.0.2.15** — cioè esattamente l'indirizzo che lo stack ha già scritto
+nel codice. Un risultato indistinguibile da «non è successo niente». È lo
+stesso errore dei due MAC uguali della sessione scorsa: un test che non
+può fallire non è un test.
+
+## Prossimo passo
+
+TCP, e prima di TCP la tabella delle operazioni in sospeso. Poi un
+risolutore DNS — l'indirizzo del server ce l'abbiamo già, lo mette il
+DHCP. E il rinnovo della concessione, che è un processo che resta acceso e
+quindi un programma diverso da `dhcp`.
+
+## File nuovi e modificati
+
+- `bin/dhcp/dhcp.c`, `dhcp.ld` — nuovi
+- `tools/iso/prova-cc1.c` — nuovo (il sorgente minimo per provare cc1)
+- `lib/libc.c` — **`heap_assorbi_succ`**, `realloc` corretta
+- `bin/libctest/libctest.c` — la prova che riproduce il difetto
+- `drivers/net/ip_proto.h` — messaggi e strutture UDP, `dns` in `IpConfig`
+- `drivers/ip/ip.c` — UDP, broadcast, macchina a stati generalizzata
+- `bin/ipcfg/ipcfg.c` — DNS e contatori UDP
+- `tools/gcc-exos/prepara-cc1.sh` — `--enable-checking=release`
+- `tools/qemu_drive.py` — `EXOS_RAM`
+- `Makefile` — GCC nativo sul CD degli strumenti, target `dhcp`
+- `kernel/include/version.h` — 0.165 -> 0.166
+
+---
+
+# SESSIONE 2026-08-04 (t) — ARP, IP, ICMP: EX-OS fa ping
+
+Kernel **0.165**. `/bin/libctest` passa **270 prove su 270**.
+
+```
+ex-os:/> ping 8.8.8.8 -n 3
+  60 byte da 8.8.8.8: seq=1 ttl=255 tempo=70 ms
+  60 byte da 8.8.8.8: seq=2 ttl=255 tempo=50 ms
+  60 byte da 8.8.8.8: seq=3 ttl=255 tempo=60 ms
+3 inviati, 3 ricevuti, 0% persi
+```
+
+## ⛔ IL DIFETTO PRINCIPALE: IRQ2 NON E' MAI STATO SBLOCCATO
+
+**Nessun IRQ fra 8 e 15 ha mai potuto raggiungere la CPU in tutta la
+storia di EX-OS.** I due 8259 sono in cascata: lo slave non ha un piedino
+verso la CPU, alza la linea INT del master che la vede come **IRQ2**. Se
+IRQ2 è mascherato nel master, tutto ciò che arriva dallo slave resta
+fuori, per quanto lo si sblocchi nel registro dello slave.
+
+`isr_install()` maschera tutto, e ogni driver poi sblocca il proprio IRQ.
+Per gli IRQ bassi — timer 0, tastiera 1, floppy 6 — funzionava. Il primo
+IRQ alto è arrivato adesso, con la scheda di rete su IRQ11.
+
+### Come è saltato fuori: un numero che tornava sempre uguale
+
+Il ping funzionava. Ma verso 8.8.8.8 misurava **esattamente 250 ms**, tre
+volte di fila — e 250 è **esattamente** `PERIODO_MS`, il battito di
+riserva del driver NE2000. Un numero troppo tondo per essere un tempo di
+rete.
+
+Due prove, in ordine:
+
+1. `ping -c 3 8.8.8.8` **dall'host**: 46-115 ms. Quindi i 250 non erano il
+   tempo vero.
+2. Ricompilato il driver con `PERIODO_MS 500`: l'RTT è diventato
+   **esattamente 500 ms**. Il tempo misurato seguiva il battito, cioè non
+   era la rete: era il polling.
+
+A quel punto ho aggiunto due contatori al driver — `notifiche_irq` e
+`battiti` — e la risposta è stata immediata:
+
+```
+notifiche IRQ  0
+battiti        131
+```
+
+Zero interrupt. La rete andava **solo per sondaggio**, perché il driver
+guarda la scheda anche a scadenza e dopo ogni richiesta di un client. Un
+guasto che non rompe niente e rallenta tutto è il tipo peggiore: senza
+quei due numeri accanto, non c'era modo di distinguerlo.
+
+⚠️ **La conferma era già nei log e non l'avevo letta.** Nel dump `info
+pic` di due sessioni fa c'era `pic0: imr=bc` — bit 2 a uno, IRQ2
+mascherato — e `irr=04`, cioè la cascata che chiedeva attenzione senza
+ottenerla. Avevo guardato l'IOAPIC (che qui non si usa) e lasciato perdere.
+
+### La correzione
+
+`pic_unmask_irq()` sblocca anche IRQ2 quando l'IRQ è ≥ 8. E
+`pic_mask_irq()` **non** lo rimaschera: IRQ2 non è la linea di nessuno, è
+la strada per otto dispositivi, e chiuderla perché uno ha finito
+toglierebbe l'interrupt agli altri sette.
+
+L'ordine conta: prima si sblocca nello slave, poi la cascata. Fra le due
+scritture il master lascerebbe passare un interrupt che nello slave è
+ancora mascherato, e il PIC lo consegnerebbe come IRQ7 spurio.
+
+Dopo: `notifiche IRQ 7`, e l'RTT verso 8.8.8.8 è **50-70 ms** — dentro i
+46-115 misurati dall'host.
+
+### ⚠️ E la mia "prova" della sessione scorsa era sbagliata
+
+Avevo scritto che l'IRQ funzionava, «provato ricompilando il driver con il
+battito a 60 secondi». Il ragionamento non teneva: in quel test `nettest`
+manda `NET_MSG_RICEVI` e il driver, alla fine di **ogni** richiesta di un
+client, guarda comunque la scheda. Era la richiesta di nettest a far
+raccogliere il frame, non l'interrupt. Il battito escluso non bastava a
+isolare la causa: bisognava contare le notifiche.
+
+## Lo stack: `/dev/ip.drv`
+
+ARP + IPv4 + ICMP in un **processo a sé**, come concordato. Non tocca
+nessuna porta: parla col driver via IPC come qualunque programma.
+
+Perché fuori dal driver: questi protocolli sono uguali su ogni scheda
+(dentro il driver andrebbero riscritti per la PCnet); lo stack ha dei
+**tempi** — scadenze ARP, attese di risposta — mentre il driver deve solo
+rispondere all'hardware; e se sbaglia lo stack si riavvia lo stack, la
+scheda resta accesa.
+
+Punti che valgono la riga in più:
+
+- **Il ciclo non si ferma mai su una singola attesa.** La tentazione è
+  «manda la richiesta, aspetta la risposta»: qui non si può, perché dalla
+  stessa mailbox arrivano frame, richieste dei client e conferme di invio.
+  Fermarsi sul ping lascia in coda tutto il resto, e con la mailbox
+  profonda 4 basta poco perché il driver si blocchi dentro `ipc_send`
+  verso di noi. Un ciclo solo, scadenza breve, stato in una struttura.
+- **Si tiene sempre una `NET_MSG_RICEVI` in volo**, e si riarma *prima* di
+  guardare il frame ricevuto. Il driver non spinge di sua iniziativa: se
+  non si richiede subito, i frame restano nella sua coda e la rete sembra
+  funzionare per un pacchetto e poi fermarsi.
+- **Il ripiegamento della somma di controllo è un ciclo, non una riga.**
+  `s = (s & 0xFFFF) + (s >> 16)` una volta sola è giusto quasi sempre, e
+  quel «quasi» è un pacchetto ogni tanto buttato dall'altra parte.
+- **La somma ICMP copre intestazione *e* dati**, quella IP solo
+  l'intestazione. Confonderle è l'errore più comune del mestiere: il
+  pacchetto parte, sembra giusto, e sparisce.
+- **Si impara anche dalle richieste ARP altrui**, non solo dalle risposte:
+  chi ci chiede chi siamo ci sta dicendo il proprio indirizzo, e quasi
+  sempre subito dopo gli dovremo rispondere.
+- **Due errori distinti**: fermi all'ARP → `-EHOSTUNREACH` (non si è
+  usciti dal cavo); echo senza risposta → `-ETIMEDOUT`. Un unico «non
+  raggiungibile» costringerebbe a rifare la diagnosi da capo.
+
+Cosa **non** fa, scritto in `ip_proto.h`: non frammenta e non riassembla
+(i frammenti in arrivo si contano e si scartano), nessuna tabella di
+routing, niente DHCP, una richiesta echo per volta.
+
+## `/bin/ping` e `/bin/ipcfg`
+
+`ping` **non sa cos'è ICMP**: manda un messaggio a `ip.drv` e stampa la
+risposta. Deve restare così — quando arriveranno UDP e TCP, i loro client
+saranno altrettanto ignoranti.
+
+⚠️ **`ping` non stampa mai «0 ms».** `uptime_ms()` conta i tick del PIT a
+100 Hz: avanza a scatti di 10 ms, e una risposta locale che torna in 300
+microsecondi cade nello stesso tick della partenza. Scrivere «0 ms»
+dichiarerebbe una misura che non è stata fatta; si scrive `<10 ms`, e se
+tutte le risposte sono sotto il tick la riga delle statistiche lo dice
+invece di stampare tre zeri.
+
+`ipcfg` mostra indirizzo, **contatori** e (`-r`) la tabella ARP. I
+contatori sono metà del programma: `IP ricevuti` a zero, `scartati` che
+salgono e `somme errate` che salgono indicano tre punti diversi in cui
+cercare.
+
+## Provato anche il verso opposto: due EX-OS che si pingano
+
+Rispondere a un ARP o a un ping **in arrivo** non era verificabile con lo
+slirp di QEMU, che verso l'ospite non origina mai niente. Ho esteso
+`tools/qemu_drive.py` con `EXOS_ISTANZA`, `EXOS_NET_SOCKET` e `EXOS_MAC`:
+due macchine EX-OS su una LAN a socket, senza NAT e senza gateway.
+
+```
+B: ping 10.0.0.1 -n 3
+   60 byte da 10.0.0.1: seq=1 ttl=64 tempo=10 ms   (3 su 3)
+   tabella ARP di B:  10.0.0.1 -> 52:54:00:aa:aa:01
+```
+
+⚠️ **`ttl=64` è la prova.** È il TTL che imposta il nostro stack; lo slirp
+usa 255. Quelle risposte le ha composte `rispondi_echo` sulla macchina A,
+e l'ARP l'ha risolto `arp_rispondi`.
+
+⚠️ **`EXOS_MAC` non è un dettaglio.** Il primo tentativo aveva le due
+macchine con lo **stesso** MAC (QEMU ne assegna uno predefinito uguale per
+tutti): il test passava, ma con due host identici sulla stessa LAN
+qualunque risposta ARP sembra quella giusta — non provava niente. Rifatto
+con indirizzi distinti.
+
+## Un errore di misura, per non rifarlo
+
+La prima lettura dei contatori della macchina A era tutta a zero. Non era
+un guasto: avevo mandato `ipcfg` **prima** che l'altra macchina esistesse.
+Un contatore letto nel momento sbagliato è un dato falso che sembra vero.
+
+## Prossimo passo
+
+UDP, poi TCP. E il client DHCP, che toglie di mezzo gli indirizzi
+dichiarati a mano. Prima di TCP conviene però la tabella delle operazioni
+in sospeso: oggi lo stack ne serve una per volta, che basta a `ping` e
+non basta a niente altro.
+
+## File nuovi e modificati
+
+- `drivers/ip/ip.c`, `ip.ld` — nuovi (lo stack)
+- `drivers/net/ip_proto.h` — nuovo (protocollo verso i client)
+- `bin/ping/ping.c`, `bin/ipcfg/ipcfg.c` + linker script — nuovi
+- `kernel/arch/x86/idt.c` — **`pic_unmask_irq` sblocca la cascata IRQ2**
+- `drivers/net/net_proto.h` — contatori `notifiche_irq` e `battiti`
+- `drivers/ne2k/ne2k.c` — li incrementa
+- `bin/nettest/nettest.c` — li stampa
+- `tools/qemu_drive.py` — `EXOS_ISTANZA`, `EXOS_NET_SOCKET`, `EXOS_MAC`,
+  `EXOS_ATTESA_FINALE`
+- `Makefile` — `ip_drv`, `ping`, `ipcfg`
+- `kernel/include/version.h` — 0.164 -> 0.165
+
+---
+
+# SESSIONE 2026-08-04 (s) — La rete risponde, e cc1 esiste
+
+Kernel **0.164**. `/bin/libctest` passa **270 prove su 270**.
+
+Due traguardi in una sessione: EX-OS **manda e riceve frame Ethernet**, e
+il compilatore C vero e proprio (`cc1`) **è stato linkato** per i386-exos.
+
+## `cc1` c'è — e il difetto che lo bloccava era in libc
+
+Il build canadian cross era arrivato in fondo: tutti gli oggetti
+compilati, e poi il **link finale** fallito su tre simboli definiti due
+volte fra la nostra `libc.a` e `libm.a` (openlibm).
+
+Invece di correggere il primo e rilanciare, ho chiesto al linker
+l'elenco completo — `nm` su entrambe le librerie e `comm -12` — e sono
+**quattro**, non tre: `fabs`, `sqrt`, `ldexp`, `frexp`. Il quarto non era
+ancora arrivato all'errore solo perché il link si era fermato prima. È la
+stessa lezione di libstdc++: prendere l'elenco, non l'errore.
+
+La correzione: `__attribute__((weak))` sulle quattro in `lib/libc.c`.
+Toglierle non si poteva — i programmi di EX-OS linkano solo libc — e
+`weak` risolve entrambi i casi con una regola sola: **chi linka anche
+libm prende la versione di openlibm**, che è quella giusta (la nostra
+`frexp` perde precisione sui denormali, la nostra `ldexp` fa
+moltiplicazioni ripetute invece di toccare l'esponente).
+
+```
+cc1: ET_EXEC, Intel 80386, entry 0x8034fb0
+     421 MB con i simboli, 40 MB spogliato (text 41 MB)
+```
+
+⚠️ **40 MB non entrano in 32 MB di RAM.** Il build ha
+`--enable-checking=yes,types,extra` (il default di stage1 senza
+bootstrap), che è la ragione principale della dimensione: rifarlo con
+`--enable-checking=release` è il prossimo passo di quel filone, prima
+ancora di provare a eseguirlo.
+
+## Il difetto del kernel che bloccava qualunque driver PCI
+
+Prima di poter scrivere un driver di rete è saltato fuori un problema che
+la tastiera non aveva mai fatto emergere.
+
+`irq_dispatch()` manda l'EOI al PIC **prima** dell'handler (correzione di
+luglio 2026, per il deadlock di IRQ0), poi notifica il driver ring3 via
+IPC. Su un IRQ **a fronte** come la tastiera va bene: ogni byte è un
+fronte, il PIC lo latcha e basta.
+
+Su un IRQ **a livello** — e tutti gli interrupt PCI lo sono — la scheda
+tiene la linea alta finché non le si azzera il registro di stato. Ma il
+driver è un processo: fra la notifica e il momento in cui tocca la scheda
+passano dei tick. Quindi l'interrupt riparte subito dopo l'`iret`, e il
+processo driver **non riceve mai la CPU** per andare ad azzerare quel
+registro. Non è "qualche interrupt di troppo": è la macchina ferma, senza
+panic e senza niente da leggere.
+
+Soluzione, la stessa degli "interrupt in un thread":
+
+- `irq_dispatch()` **maschera** l'IRQ nel PIC prima di notificare;
+- nuova **`SYS_IRQ_DONE` (237)**: il driver riapre la linea dopo aver
+  servito la scheda. Verifica il proprietario — senza, un processo
+  qualunque potrebbe riaprire un IRQ che un altro sta ancora servendo.
+
+⚠️ Vale per **tutti** i driver ring3, tastiera compresa: `kbd.drv` ora
+chiama `irq_done(1)` dopo `kbd_drain()`, in quest'ordine (riaprire prima
+di svuotare il KBC rimetterebbe in piedi la tempesta). Una regola sola per
+tutti è meglio di due modi di rivendicare un IRQ di cui uno è quello
+sbagliato di default. Un tasto premuto mentre l'IRQ è mascherato non si
+perde: il fronte resta nell'IRR del PIC.
+
+## Il messaggio IPC è passato da 512 a 1536 byte
+
+Un frame Ethernet arriva a 1514 byte e un driver deve poterlo consegnare
+**intero**: quello che entra dal cavo lo decide chi sta dall'altra parte.
+
+L'alternativa era spezzarlo in quattro messaggi con un numero di
+sequenza. Più economica in RAM e peggiore in tutto il resto: la mailbox è
+profonda 4, quindi **un frame solo la riempirebbe**, e basta un secondo
+mittente che si intromette per lasciare mezzo frame in attesa di un pezzo
+che non arriva. E la logica di riassemblaggio finirebbe in ogni client.
+
+Il costo, per intero: 64 processi × 4 messaggi × 1536 = **384 KB di BSS**
+contro 128. Verificato: `kernel.bin` resta 180584 byte (il BSS non sta nel
+file), BSS da 701 KB a 964 KB.
+
+**E non lo paga lo spazio utente.** `sys_ipc_recv` copiava nella
+`IpcMessage` del chiamante l'**intera** struttura, `data[]` compreso — 512
+byte a ogni ricezione per un campo che nessuno legge, visto che il payload
+arriva nel buffer separato. Ora copia i tre campi di intestazione, la
+`IpcMessage` di `libc.h` **non ha più `data[]`** ed è di 12 byte, e la
+verifica del puntatore misura quello che si scrive davvero (verificarne
+1548 per scriverne 12 rifiuterebbe una struttura valida vicino alla fine
+dello spazio utente).
+
+## `/dev/ne2k.drv` — il primo driver di rete
+
+NE2000/DP8390: la RTL8029 su PCI e i cloni Winbond/VIA/KTI.
+
+**Perché proprio questa scheda, che nessuno produce più**: perché non ha
+DMA verso la memoria di sistema. La RAM dei pacchetti sta *sulla scheda* e
+ci si arriva da una porta di I/O — il "DMA remoto", che di DMA ha solo il
+nome. Quindi il driver può girare in ring3 **oggi**, senza che il kernel
+sappia di indirizzi fisici, pagine bloccate o bus mastering. La PCnet, che
+il DMA vero ce l'ha, dovrà aspettare quella parte.
+
+Dettagli che valgono la riga in più:
+
+- **PROM a 16 bit**: ogni byte esce duplicato dentro una parola, quindi il
+  MAC sta nei byte pari e la firma `0x57 0x57` a 28 e 30. Se non combacia
+  si stampa **cosa si è letto**, perché è l'unico dato che permette di
+  aggiungere un clone con firma diversa.
+- **BNRY resta una pagina indietro rispetto a CURR**: se coincidessero la
+  scheda leggerebbe l'anello come vuoto invece che pieno.
+- **`prossima` si controlla prima di usarla**: è un byte scritto dalla
+  scheda, e se finisce fuori intervallo scriverlo in BNRY manda l'anello
+  in uno stato da cui non esce, con il ciclo di lettura che gira a vuoto.
+- **Si azzera il bit di ISR *prima* di svuotare l'anello**: un pacchetto
+  che arriva durante la lettura rialza PRX, e azzerarlo dopo cancellerebbe
+  la segnalazione di un pacchetto non ancora letto.
+- **Riempimento a 60 byte in trasmissione**: una richiesta ARP è lunga 42,
+  e sotto i 60 uno switch scarta il frame senza dire niente — cioè la
+  prima cosa che si prova a fare non funzionerebbe. Lo fa il driver perché
+  è un vincolo del mezzo, non di chi compone il pacchetto.
+- **Trabocco (OVW) → reinizializzazione completa.** La procedura ufficiale
+  è di undici passi con un ramo che dipende da una trasmissione in corso:
+  è il punto dove i driver NE2000 sbagliano, perché si esegue di rado e
+  quindi si prova di rado. Un trabocco significa che i pacchetti li
+  abbiamo già persi: serve tornare a uno stato noto, e la
+  reinizializzazione è la strada più battuta del file.
+
+### Due scelte di protocollo che valgono per ogni driver futuro
+
+**Il driver non spinge mai un frame non richiesto.** `ipc_send` blocca il
+mittente se la mailbox del destinatario è piena (profonda 4): se il driver
+spinge frame verso uno stack che intanto gli sta mandando un pacchetto da
+trasmettere, si arriva allo stato in cui **ognuno dei due è fermo dentro
+`ipc_send`** ad aspettare che l'altro svuoti. Nessuno torna mai a
+`ipc_recv`. Quindi domanda e risposta, come `kbd.drv`.
+
+**Il battito.** `ipc_notify_irq` non blocca: se la mailbox del driver è
+piena quando arriva l'interrupt, la notifica viene **scartata** — e la
+linea resterebbe mascherata per sempre. Perciò l'attesa ha una scadenza
+(250 ms): senza messaggi si guarda comunque la scheda e si riapre la
+linea. Una notifica persa costa un ritardo, non un'interfaccia morta.
+
+⚠️ **Le schede ISA non si sondano.** Per riconoscerne una bisogna scrivere
+sulla sua porta di reset, e se a quell'indirizzo c'è un'altra scheda le si
+è appena scritto addosso — la lista dei "soliti indirizzi" (0x300, 0x280,
+0x320…) è esattamente la lista di quelli che si contendevano tutte le
+schede ISA. L'indirizzo va dichiarato: `-p 0x300 -q 3`.
+
+## `/bin/nettest` — ARP, non ping
+
+ARP è il primo scambio possibile **senza avere uno stack**: sta subito
+sopra Ethernet, niente IP, niente checksum. Una risposta che arriva
+dimostra in un colpo solo che la scheda trasmette, che il frame arriva a
+destinazione, che la scheda riceve e che la catena driver → IPC →
+programma consegna i byte giusti. Se ARP funziona, a `ping` manca solo
+software; se ARP non funziona, `ping` non direbbe **dove** si è rotto.
+
+## Verificato in QEMU
+
+```
+/dev/pci.drv &  +  netdetect -c
+    -> sceglie la NE2000, avvia /dev/ne2k.drv, e ASPETTA che il servizio
+       'rete0' compaia nel registro IPC prima di dire che è andata bene
+
+nettest -a 10.0.2.2
+    chi ha 10.0.2.2? lo chiede 52:54:00:12:34:56 (10.0.2.15)
+    64 byte  52:55:0a:00:02:02 -> 52:54:00:12:34:56  ARP (0x0806)
+        ARP risposta: 10.0.2.2 e' 52:55:0a:00:02:02, cerca 10.0.2.15
+
+nettest -c   ->  inviati 2, ricevuti 2, tutti gli errori a zero
+libctest     ->  270/270, tastiera funzionante con la nuova disciplina IRQ
+```
+
+**Che l'IRQ funzioni davvero è stato provato, non supposto.** Il test ARP
+da solo non lo dimostra: il driver guarda la scheda anche dopo ogni
+richiesta di un client, quindi il frame sarebbe arrivato lo stesso. Ho
+allora ricompilato il driver con il battito a **60 secondi** e rifatto la
+prova: la risposta è arrivata subito. Con il battito escluso e il polling
+post-richiesta che avviene prima che il frame torni, l'unica cosa che può
+averla consegnata è l'interrupt.
+
+## Due difetti trovati e corretti in corsa
+
+1. **`netdetect` prometteva un driver che non c'è.** Diceva «2 schede, 2
+   con un driver disponibile» leggendo solo la propria tabella, mentre
+   `/dev/pcnet.drv` non esiste. Ora fa `stat()` sul file e distingue tre
+   casi: driver presente, driver nominato ma assente dal supporto, scheda
+   sconosciuta. Sono tre guasti diversi e vengono confusi ogni volta che
+   non si può guardare.
+2. **`PCI_DRV_PROTO` e `NET_PROTO` erano definiti nel Makefile DOPO le
+   regole che li usavano.** Le prerequisite si espandono quando make legge
+   la riga: una variabile definita più sotto risulta vuota, la dipendenza
+   sparisce senza errore, e **modificare un protocollo smetteva di
+   ricompilare i client**. Spostate in testa; verificato che ora un
+   `touch` sui due header ricompila tutti e quattro i programmi.
+
+## Prossimo passo
+
+Lo stack: ARP (tabella e timer), IP, ICMP, con `ping` come primo
+traguardo — in un **processo autonomo**, come concordato. Il driver è
+pronto a servirlo: `NET_MSG_RICEVI` blocca finché non c'è un frame, e
+`NET_MSG_INVIA` conferma l'invio.
+
+## File nuovi e modificati
+
+- `drivers/ne2k/ne2k.c`, `ne2k.ld` — nuovi
+- `drivers/net/net_proto.h` — nuovo (protocollo di **ogni** driver di rete)
+- `bin/nettest/nettest.c`, `nettest.ld` — nuovi
+- `kernel/arch/x86/isr.c` — maschera prima di notificare, `irq_done_process`
+- `kernel/include/isr.h`, `syscall.h` (`SYS_IRQ_DONE`, `SYSCALL_COUNT` 238),
+  `syscall_impl.c` (`sys_irq_done`, copia della sola intestazione IPC),
+  `syscall.c`
+- `kernel/include/sched.h` — `IPC_MSG_MAX_DATA` 512 -> 1536
+- `lib/libc.c` — `irq_done`, le quattro funzioni `weak`, `IpcMessage` senza
+  `data[]`; `lib/include/libc.h` idem
+- `drivers/kbd/kbd.c` — `irq_done(1)` dopo `kbd_drain()`
+- `bin/netdetect/netdetect.c` — `-c`, verifica dell'esistenza del driver
+- `Makefile` — `ne2k_drv`, `nettest`, header di protocollo spostati in testa
+- `kernel/include/version.h` — 0.163 -> 0.164
+
+---
+
+# SESSIONE 2026-08-03 (r) — Il bus PCI si enumera da userspace
+
+Kernel **0.163**. `/bin/libctest` passa **270 prove su 270** (nessuna regressione).
+
+Primo passo del piano di rete concordato: il server PCI. Non tocca il
+kernel per quello che fa — enumerare — ma **ha richiesto quattro syscall
+nuove** per poterlo fare, e la ragione merita di essere letta prima di
+riaprire il file.
+
+## Il byte non bastava: SYS_IOPORT_IN16/OUT16/IN32/OUT32
+
+Nella sessione precedente avevo scritto che il server PCI si poteva fare
+«senza modifiche al kernel, perché `ioport_bind` accetta 0xCF8». La
+`bind` sì; **le `in`/`out` no**, ed erano solo a 8 bit.
+
+Il meccanismo di configurazione PCI #1 vuole che CONFIG_ADDRESS (0xCF8)
+sia scritto con **un solo accesso a 32 bit**. Non è una preferenza di
+stile: un accesso a byte o a word verso 0xCF8..0xCFB non viene
+interpretato dal ponte come ciclo di configurazione e finisce sul bus
+come normale I/O. E siccome **0xCF9 è il registro di reset** di molti
+chipset, scrivere l'indirizzo in quattro `outb` non «funziona piano»:
+riavvia la macchina.
+
+Quindi quattro numeri di syscall nuovi (233-236), non un argomento
+"ampiezza" su quelli esistenti — stessa ragione già scritta per
+`SYS_IPC_RECV_TMO`: `SYS_IOPORT_IN` oggi legge solo EBX, e un binario
+già installato lascia in ECX quel che c'era prima. Un numero nuovo non
+ha ambiguità; un argomento in più farebbe leggere a 32 bit dove si
+voleva un byte, il giorno che quel binario gira su un kernel nuovo.
+
+Tre dettagli che erano facili da sbagliare:
+
+- **Il controllo del range copre tutti i byte toccati.** `ioport_allowed()`
+  verifica UNA porta; una `out32` su 0xCF8 scrive fino a 0xCFB. Senza il
+  controllo esteso, un processo che ha rivendicato la sola 0xCF8 poteva
+  scrivere su 0xCF9, cioè resettare la piattaforma.
+- **Allineamento obbligatorio** (`-EINVAL` altrimenti): un accesso a 32
+  bit disallineato viene spezzato in due cicli e il secondo non è più un
+  ciclo di configurazione — il risultato è silenziosamente sbagliato.
+- **`ioport_in32` non restituisce il valore letto.** `0xFFFFFFFF` è la
+  risposta *normale* di uno slot vuoto, e come `int32_t` è `-1`:
+  indistinguibile da un errore. Il valore esce da un puntatore, il
+  ritorno dice solo se è andata. `in16` non ha il problema e restituisce
+  il valore direttamente.
+
+## `/dev/pci.drv` — il server
+
+`drivers/pci/pci.c`, ~470 righe, stesso schema di `kbd.drv`: ET_EXEC
+statico, nessuna istruzione privilegiata, un solo punto di attesa
+(`ipc_recv`). Rivendica 0xCF8..0xCFF e nient'altro.
+
+Due modi:
+
+```
+/dev/pci.drv         registra il servizio "pci" e serve i client
+/dev/pci.drv -l      enumera, stampa, esce
+```
+
+Il secondo modo esiste per **non scrivere un `lspci` separato**: una
+seconda copia dell'enumerazione diverge dalla prima e poi si passa il
+tempo a chiedersi quale delle due dice il vero.
+
+### Due cose che il server NON fa, di proposito
+
+**Non c'è una scrittura di configurazione generica.** La simmetria
+suggerirebbe `LEGGI`/`SCRIVI` su un offset qualunque. Leggere non può
+rompere niente; scrivere sì, e non solo il dispositivo di chi scrive: i
+BAR dicono al ponte dove risponde ogni scheda, e riprogrammare quelli
+del controller ATA significa togliere il disco da sotto i piedi al
+kernel, che di quella scrittura non sa nulla. L'unica scrittura esposta
+è `PCI_MSG_ABILITA`/`DISABILITA`, che tocca **solo** il registro comando
+e **solo** tre bit (I/O, memoria, bus master), e solo su dispositivi che
+il server ha effettivamente enumerato.
+
+⚠️ `PCI_MSG_DISABILITA` non è la coppia decorativa di `ABILITA`: è il
+pezzo che rende possibile far ripartire un driver. Una scheda lasciata
+bus master da un processo morto continua a scrivere nei buffer che il
+kernel ha già liberato, e il danno arriva minuti dopo in un punto
+qualunque della memoria.
+
+**Non misura la dimensione delle finestre BAR.** Si misura in un modo
+solo — scrivere `0xFFFFFFFF` nel BAR, rileggere, riscrivere l'originale
+— e per il tempo fra le due scritture il dispositivo decodifica un
+indirizzo assurdo. Farlo in enumerazione vuol dire farlo su *ogni*
+dispositivo, ATA compreso, mentre il kernel lo sta usando. Un server di
+enumerazione non deve scrivere sull'hardware di nessuno; la dimensione
+la sa già chi la usa (una NE2000 ha 32 registri perché è una NE2000, non
+perché gliel'ha detto il bus).
+
+### Dettagli dell'enumerazione che valgono la riga in più
+
+- **Mappa dei bus già visitati** (`g_bus_visto`, 256 bit): un ponte
+  PCI-PCI dichiara il bus secondario in un byte, e niente impedisce a
+  quel byte di puntare al bus da cui si è arrivati. Dentro il kernel
+  sarebbe una macchina bloccata; qui è un processo da rilanciare — che è
+  poi il motivo per cui sta in userspace.
+- **Funzioni 1..7 solo se il bit multifunzione è alzato**: su un
+  dispositivo a funzione singola le altre sette sono alias della zero, e
+  leggerle comunque annuncia otto volte la stessa scheda.
+- **Un ponte ha due BAR, non sei**: leggerne sei significa interpretare
+  come indirizzi i numeri di bus e le finestre di inoltro, che stanno lì.
+- **BAR di memoria a 64 bit**: occupa due voci, la seconda è la metà
+  alta dell'indirizzo. Saltarla evita di annunciare un dispositivo a
+  mezzo puntatore.
+- **Si scende dai ponti invece di provare tutti i 256 bus**: la forza
+  bruta, su una macchina con più host bridge, annuncia dispositivi non
+  raggiungibili.
+
+## `/bin/netdetect` — quale driver assegnare
+
+Client del server, tabella `venditore:dispositivo -> driver`. È una
+tabella e non una catena di `if` perché è un **dato**: aggiungere una
+scheda è una riga in un punto solo, e l'elenco si può stampare
+(`netdetect -t`) senza riscriverlo a mano — cioè senza che le due
+versioni prima o poi si contraddicano.
+
+Distingue tre casi, che sono davvero diversi: driver disponibile;
+modello noto ma driver da scrivere; scheda sconosciuta (e dice quale
+numero manca in tabella).
+
+⚠️ **Non carica niente, per ora.** «Quale driver assegnare» ha due metà,
+riconoscere e caricare: c'è solo la prima, perché nessuno dei driver
+nominati esiste ancora e un `-c` sarebbe codice mai eseguito nemmeno una
+volta, spedito sul CD con l'aria di funzionare. Arriva col primo driver
+di scheda.
+
+⚠️ **Le NE2000 ISA non si vedono da qui** e non è un difetto: non hanno
+spazio di configurazione, si trovano sondando le porte tipiche (0x300,
+0x280, 0x320...). È un mestiere diverso — provare hardware che potrebbe
+non esserci — e va nel driver NE2000, non in un programma che si fida
+del bus.
+
+Nel client c'è anche una guardia che vale per **ogni** futuro client
+IPC: `ipc_recv` consegna il prossimo messaggio della mailbox, non «la
+risposta alla mia domanda». Si controlla `sender_pid` e si usa la
+versione con scadenza, altrimenti un server che muore fra domanda e
+risposta lascia il client fermo per sempre.
+
+## Verificato in QEMU
+
+```
+/dev/pci.drv -l                 6 dispositivi, host bridge/ISA/IDE/VGA/e1000
++ -device pcnet -device ne2k_pci  8 dispositivi:
+    00:04.0  1022:2000  Ethernet  IRQ 11   -> AMD PCnet (la scheda di VirtualBox)
+    00:05.0  10ec:8029  Ethernet  IRQ 10   -> RTL8029, NE2000 PCI
+
+/dev/pci.drv &                  "servizio 'pci' attivo, 8 dispositivi"
+netdetect                       3 schede, 2 con un driver disponibile
+/dev/pci.drv & (seconda volta)  "ipc_register('pci') fallita (-17) — esco"
+                                 il primo continua a servire
+netdetect (senza server)        dice come avviarlo, non un numero
+libctest                        270/270, nessuna regressione
+```
+
+## Due errori miei di questa sessione, per non rifarli
+
+1. **Ho provato il CD con il floppy ancora attaccato.** `EXOS_CDROM=` da
+   solo non basta: senza `EXOS_NO_FLOPPY=1` la radice è il floppy, e
+   `/dev/pci.drv` «non esiste» perché sul floppy davvero non c'è. Ho
+   perso un giro a dubitare del generatore ISO, che era corretto. La
+   riga da cercare nel log è `VFS: root '/' su ...`.
+2. **Trattino lungo UTF-8 in una tabella allineata con `%-44s`**:
+   `printf` conta byte, non colonne, e le righe con `—` si sfalsavano di
+   due caratteri. Nei dati incolonnati solo ASCII.
+
+## Dove va il codice nuovo, e perché non sul floppy
+
+`build/drivers-cd/` e `build/bin-cd/`: due directory di sosta per
+quello che finisce **solo sul CD di EX-OS**. Sul floppy ci starebbe
+(ce ne sono 731 KB liberi), ma il floppy serve ad avviare e a
+installare, e uno strumento di rete senza i driver di rete — che sul
+floppy non ci staranno mai — non servirebbe a niente una volta lì.
+
+La separazione è una directory e non un filtro nella regola del floppy
+perché `tools/mkfloppy.sh` prende tutto quello che trova in
+`build/drivers/`: un elenco di esclusioni lì dentro sarebbe una lista da
+ricordarsi di aggiornare, e il floppy si riempirebbe il giorno che
+qualcuno se ne dimentica.
+
+## Prossimo passo
+
+`/dev/ne2k.drv`. La NE2000 **non è bus master** (l'accesso alla RAM
+della scheda passa dalle porte, non dal DMA), quindi non serve ancora la
+rivendicazione DMA nel kernel: si può scrivere subito, e poi ARP + IP +
+ICMP con `ping` come primo traguardo. La `PCI_MSG_ABILITA` col bit bus
+master serve invece a `pcnet.drv`, che viene dopo.
+
+## File nuovi e modificati
+
+- `drivers/pci/pci.c`, `pci_proto.h`, `pci.ld` — nuovi
+- `bin/netdetect/netdetect.c`, `netdetect.ld` — nuovi
+- `kernel/include/syscall.h` — 4 syscall nuove, `SYSCALL_COUNT` 233 -> 237
+- `kernel/syscall/syscall_impl.c` — `ioport_allowed_range`, `ioport_prepara`,
+  le quattro implementazioni
+- `kernel/syscall/syscall.c` — registrazione
+- `lib/libc.c`, `lib/include/libc.h` — `ioport_in16/out16/in32/out32`
+- `Makefile` — `BUILD_DRIVERS_CD`, `BUILD_BIN_CD`, target `pci_drv` e
+  `netdetect`, copia sul CD
+- `tools/qemu_drive.py` — `&` nella mappa dei tasti (shift-7)
+- `kernel/include/version.h` — 0.162 -> 0.163
+
+---
+
+# SESSIONE 2026-08-03 (p) — install non distrugge piu', rename vera, chkdsk
+
+Kernel **0.161**. `/bin/libctest` passa **270 prove su 270**.
+
+## install distruggeva prima di sapere se ce la faceva
+
+Apriva `/boot/kernel.bin` con `O_TRUNC`, ci scriveva il kernel nuovo, e
+*poi* chiedeva la mappa dei settori. Su FAT — dove la mappa ammette **un
+solo intervallo** — un kernel cresciuto di qualche KB non entrava piu' nel
+buco del vecchio, finiva in due tratti, e `bootinstall` rifiutava. A quel
+punto il sistema funzionante non c'era piu' e **il disco non ripartiva**.
+
+⚠️ Su ext2 non si vedeva: li' la mappa regge 12 intervalli. Quattro prove
+su ext2 passavano tutte, ed e' per questo che il difetto era rimasto.
+
+Ora si scrive con nomi temporanei mentre i vecchi sono al loro posto (i
+nuovi finiscono nella coda libera, **contigua**), si verifica con
+`boot_installa_ex(..., solo_verifica)`, e solo allora si scambia. Lo
+scenario che distruggeva il disco ora **riesce**.
+
+`kernel.cfg` non si sovrascrive piu': e' l'unico file dell'installatore
+che appartiene a chi usa il sistema.
+
+`fat_mkdir` schiacciava `-2` a `-1` → «errore di I/O» invece di «esiste
+gia'» su ogni reinstallazione.
+
+## rename: la primitiva che mancava
+
+`rename()` era **copia+cancella**: riallocava i blocchi, quindi mandava a
+monte qualunque verifica fatta prima. Ora e' `vfs_rename` su tutti e tre i
+driver — riscrive la voce di directory, **i dati non si spostano**. Piu' il
+comando `/bin/rename`.
+
+⚠️ Solo stessa directory (ENOSYS) e non sostituisce (EEXIST). In
+`ext2_rename` si **aggiunge prima e si toglie dopo**: in mezzo il file ha
+due nomi, riparabile; al contrario non ne avrebbe nessuno.
+
+⚠️ **`fat12.c` risponde in errno, gli altri due no**: li' `-2` e' ENOENT,
+in `fat.c`/`ext2.c` e' «esiste gia'». Mescolarle faceva dire «esiste gia'»
+a una rinomina di un file inesistente.
+
+## /bin/chkdsk — FAT12/16/32 ed ext2
+
+Un solo programma con due **motori** (`riconosce`/`apri`/`controlla`) che
+sonda il volume: chi ha un disco malandato spesso non sa che filesystem ci
+sia, e a volte il volume e' rotto *proprio* nei campi che lo direbbero.
+
+⚠️ Solo su partizione **smontata** (sopra una montata c'e' una cache
+write-back) e **senza `-r` non scrive un settore**.
+
+Tre difetti miei, tutti trovati provando **prima sul volume sano**:
+
+1. **`..` che punta alla root vale ZERO anche su FAT32** (dove la root un
+   cluster ce l'ha): confrontarlo col numero vero segnalava come guasta
+   ogni directory di primo livello di ogni volume sano;
+2. **buffer globale condiviso dalla ricorsione** in ext2: scendendo in una
+   sottodirectory il blocco del padre veniva sovrascritto → `rec_len 0` su
+   dischi perfetti;
+3. **le copie di riserva del superblocco** non appartengono a nessun inode:
+   26 blocchi di differenza su un volume appena formattato.
+
+⚠️ La riparazione delle bitmap ext2 **non parte se c'e' un solo punto di
+incertezza** (`e2_incerto`): riscrivere avendo saltato un inode significa
+dichiarare liberi i suoi blocchi. Per questo si e' dovuto implementare il
+**triplo indiretto**: senza, la riparazione non era onesta.
+
+## ⚠️ La marcatura GPLv3 impediva a un file di compilare
+
+`applica.py` scriveva la nota richiesta dalla GPLv3 §5(a) sempre con `#`.
+Ha funzionato finche' ogni file toccato era shell/make/configure. Al primo
+file **C++**:
+
+```
+sarif-sink.cc:1:3: error: invalid preprocessing directive #Modificato
+```
+
+Ora la sintassi si sceglie dall'estensione. Non era emerso prima perche'
+`pex-exos.c` e' **copiato**, non modificato, quindi non passa da li'.
+
+---
+
+# SESSIONE 2026-08-03 (q) — El Torito, e il CD che si avvia e poi si ferma
+
+## Il CD avviabile per emulazione floppy funziona
+
+`tools/mkiso.py --avvio dist/floppy.img` scrive il descrittore di avvio e
+il catalogo El Torito. Provato: **il kernel parte da CD senza floppy
+collegato**.
+
+⚠️ **Il checksum del catalogo e' su parole da 16 bit e la somma deve fare
+zero.** Un BIOS che non lo trova a zero **salta l'avvio senza dire
+niente**, e il disco sembra semplicemente non avviabile.
+
+⚠️ Assegnare a una fetta di `bytearray` una sequenza piu' corta la
+**ACCORCIA**: l'identificativo da 24 byte va riempito, o la voce di
+validazione finisce di 31 byte e sposta tutto cio' che segue.
+
+## ⚠️ MA IL KERNEL NON PUO' LEGGERE IL FLOPPY EMULATO
+
+```
+[WARN] [PASSO 13] FAT12 init fallita — filesystem non disponibile
+```
+
+`fat12_read_sector` chiama **`fdc_rw_sector`**: programma il controller
+floppy alle porte hardware. Con El Torito il floppy **esiste solo
+attraverso l'INT 13h del BIOS**: dietro non c'e' nessun controller.
+
+| | |
+|---|---|
+| stage1, stage2 | ✅ modo reale, usano INT 13h — che e' proprio cio' che il BIOS emula |
+| il kernel | ❌ modo protetto, parla al controller: trova porte vuote |
+
+Non e' aggirabile senza v86 o rientri in modo reale.
+
+**La risposta e' montare il CD come radice**: il CD e' un ATAPI vero, e i
+driver ATAPI + ISO 9660 + automount ci sono gia'. Il floppy emulato serve
+solo a portare in memoria stage2 e il kernel, poi non serve piu'.
+
+⚠️ Richiede di togliere l'inchiodatura del montaggio 0, che oggi e' voluta
+(`kernel/fs/vfs.c`: «IL MONTAGGIO 0 E' LA ROOT SUL FLOPPY, E NON SI PUO'
+SMONTARE») per garantire che l'avvio da floppy resti quello collaudato.
+
+## ✅ RISOLTO NELLA STESSA SESSIONE — kernel 0.162
+
+`vfs_init()` ora ripiega sul CD quando `fat12_pronto()` dice di no, e monta
+l'ISO 9660 come radice **in sola lettura** (un ISO non si scrive:
+dichiararlo fa rifiutare le modifiche con EROFS *prima* di toccare il
+filesystem).
+
+⚠️ **Il segnale non e' il numero del drive**, che con l'emulazione vale
+0x00 come un floppy vero: e' il fallimento di `fat12_init`. Non e'
+un'euristica — «il controller non risponde» E' la condizione dell'avvio da
+CD, e con un floppy guasto cercare altrove resta comunque giusto.
+
+Nuovo target `make iso-exos` → `dist/exos.iso` (2876 KB, avviabile).
+
+⚠️ Nel Makefile sta scritta la conseguenza che decide il contenuto: **il
+sistema che gira e' quello sul CD, non quello dentro `boot.img`**. I due
+devono contenere le stesse cose, o si avvia una versione e se ne esegue
+un'altra.
+
+### Il giro completo, provato
+
+```
+avvio da CD (nessun floppy)  ->  mkfs -t ext2 hd0p1  ->  mount  ->
+install /disk  ->  "verifica: 353 settori in 2 intervalli"  ->
+riavvio dal disco: Versione 0.162
+```
+
+⚠️ **Il CD serve a installare**: la radice in sola lettura non e' un limite
+da aggirare con un disco RAM, e' il punto di partenza. Gli strumenti che
+scrivono (`fdisk`, `mkfs`, `chkdsk`) lavorano sui settori grezzi di
+partizioni NON montate, quindi non hanno bisogno di una radice scrivibile;
+`install` legge dal CD e scrive sul disco montato.
+
+⚠️ Due prove di `libctest` fallivano da CD: e' stata corretta **la prova**,
+non il codice — `EROFS` era la risposta giusta, e segnalarla come guasto
+insegna a ignorare le righe rosse.
+
+`tools/qemu_drive.py` ha ora `EXOS_CDROM=<iso>` per avviare da CD. Serve
+perche' uno script ad-hoc non ha la mappa dei tasti: le maiuscole vanno
+mandate come `shift-x`, e senza, `-L` arriva come `-`.
+
+## Piano di rete concordato
+
+Due CD: **sviluppo** (`exos-tools.iso`, con GCC e i porting) ed **EX-OS**
+(roba propria, avviabile). Driver in **userspace come server**, riavviabili
+dopo un crash.
+
+⚠️ **Il kernel deve poter FERMARE la scheda**, non solo assegnarle il DMA:
+alla morte del proprietario azzera **Bus Master Enable** nel registro
+comando PCI — una scrittura, indipendente dal dispositivo — *poi* libera la
+memoria, *poi* l'IRQ. Senza, un bus master continua a scrivere in RAM
+liberata.
+
+⚠️ Userspace da' **riavviabilita', non contenimento**: senza IOMMU un
+processo che programma un bus master puo' far scrivere ovunque.
+
+⚠️ **NE2000 non e' un bus master** — si programma a porte — quindi il suo
+driver ring3 funziona **oggi**, senza modifiche al kernel: e' il banco su
+cui collaudare ARP/IP/ICMP prima di affrontare il DMA del PCnet.
+VirtualBox pero' non offre NE2000 (QEMU si').
+
+---
+
 # SESSIONE 2026-08-03 (o) — Le pipe, e uno zombie che tratteneva un tubo
 
 Kernel **0.160**. `/bin/libctest` passa **265 prove su 265** (erano 239).
