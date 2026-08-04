@@ -1,5 +1,6 @@
 # EX-OS — Extensible Operating System
 
+**Version:** 0.175
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit, FAT12 1.44MB floppy
@@ -88,6 +89,7 @@ exercised by forcing the slow path in QEMU, not on a physical 486.
 | `ls`: `-h`, `-a`, `-d`, `-mc`, `-md`, `-p` | tested |
 | `install -a`: lists the changed files and offers to update them | tested |
 | `hwconfig`: analyses the machine and writes kernel.cfg and autoexec.sh | tested |
+| Keyboard layouts: `us it fr de es uk`, with AltGr | `us`/`it` tested |
 | Arguments with spaces between quotes (`cp "my file.txt"`) | tested |
 | `help helpconfig`: how to bring drivers up, with the current state | tested |
 | Backspace no longer eats the prompt nor leaves invisible characters | tested |
@@ -1807,6 +1809,12 @@ written in `kernel.cfg`.
 It is a string and not a number because the kernel does not use floating
 point. The increment is manual and deliberate.
 
+⚠️ **The «Version» line at the top of these two READMEs comes from there
+too**, and is not copied by hand: `make leggimi-versione` rewrites it from
+`version.h`, and `make verify` fails if the two disagree. A copied number
+goes stale the next day, and a README declaring a wrong version is worse
+than one not declaring it at all.
+
 ---
 
 ## Quiet boot
@@ -1849,6 +1857,72 @@ ex-os:/>
 ---
 
 ## Driver interface
+
+### Keyboard layout: `keymap`
+
+```ini
+[kernel]
+keymap = it        # us it fr de es uk
+```
+
+```
+keymap            which one is active, and which are available
+keymap it         switch to the Italian one, right now
+keymap -p         print the line to put in kernel.cfg
+```
+
+`/dev/kbd.drv` reads it at startup, **before registering** — that is,
+before anyone can type: reading it later would leave a window in which the
+first keys are translated with the wrong layout, and those are exactly the
+autoexec's. An unknown name stops nothing: the driver says so and keeps
+`us`, because a keyboard struck dumb by a typo in the configuration is a
+system you cannot even use to fix that typo.
+
+⚠️ **Each layout is FOUR tables, not two**: plain, Shift, AltGr,
+AltGr+Shift. It looks like a luxury until you try to write a function — on
+an Italian keyboard the braces are **only** on AltGr+Shift:
+
+```
+@  AltGr+ò        [  AltGr+è        {  AltGr+Shift+è
+#  AltGr+à        ]  AltGr++        }  AltGr+Shift++
+```
+
+A layout that stops at three tables gives a keyboard that cannot open a
+block, and this system ships an editor and a C compiler.
+
+⚠️ **Accented letters are code page 437 bytes**: `à` is 0x85, not UTF-8.
+It is the only byte the VGA draws. Declared consequence: those same bytes
+end up in file names, and whoever reads those files on Linux sees
+different characters. It is not a defect of the table: it is that EX-OS has
+no system encoding, and choosing one is a bigger decision than a keyboard
+layout.
+
+⚠️ **There are no dead keys.** On a French or German keyboard `^` and `¨`
+write themselves instead of waiting for the vowel. Making them work means
+one more state in the driver and a combination table per layout; for now it
+is declared that they are absent, rather than made to look broken.
+
+**Two defects found by testing it**, both far from where they were looked
+for:
+
+| | |
+|---|---|
+| the shell threw the accents away | `riga_modifica` accepted `k >= 32 && k < 127`, that is «ASCII only». Invisible for as long as the keyboard was American: with the Italian one the `ò` arrived from the driver and the shell dropped it, and the key looked broken |
+| AltGr did not exist | `e0 38` ended up in the extended-key block — the one that delivers the cursors' ANSI sequences — and left through its `default: return` before reaching the code that handled it. The code was there and it was right: it was just after |
+
+⚠️ **`us` and `it` are verified key by key** in QEMU, by sending the
+*physical* key and looking at which character comes out. The others are
+written from the known layout and tested only where they move with respect
+to US: they are usable, but whoever has that keyboard in front of them and
+finds a wrong key has found a real defect, not a limitation.
+
+⚠️ **If you pick the wrong layout, the way out is a reboot.** There is no
+command typeable under all of them: among QWERTY variants the letters do
+not move, but on AZERTY `a` and `m` change place and `keymap it` typed
+blind comes out as `keyq,p`. The hot change, though, is **not permanent**:
+reboot and you get back the one in `kernel.cfg`. That is why `keymap`
+writes to no file — the one that writes it is `hwconfig`, which keeps
+whatever it finds.
 
 ### `hwconfig` — configuring without reading anything
 

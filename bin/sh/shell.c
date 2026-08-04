@@ -632,6 +632,7 @@ static void cmd_help(void)
     println("  fg [n]            - riporta in primo piano il job n (l'ultimo se omesso)");
     println("");
     print(CLR_CYAN);
+    println("  keymap [it|fr|..] - disposizione della tastiera (senza nome: la mostra)");
     println("  source <file.sh>  - esegue uno script in questa shell (anche `nome.sh`)");
     println("                      !silenced nello script nasconde i comandi, non l'output");
     println("  help helpconfig   - come si installano e configurano i driver");
@@ -1705,8 +1706,20 @@ static int riga_modifica(char *buf, int max)
             return 0;
         }
 
-        /* Carattere stampabile: si inserisce dove sta il cursore. */
-        if (k >= 32u && k < 127u && len < max - 1) {
+        /* =================================================================
+         * Carattere stampabile: si inserisce dove sta il cursore.
+         *
+         * ⚠️ ANCHE SOPRA 127, e senza questo le disposizioni non inglesi
+         * non servono a niente. Questo filtro diceva `k < 127`, cioe'
+         * «solo ASCII», ed era invisibile finche' la tastiera e' stata
+         * americana. Con la disposizione italiana la `ò` (0x95 nella code
+         * page 437) arrivava dal driver e la shell la buttava via: il
+         * tasto sembrava rotto, e il difetto stava tre livelli piu' su di
+         * dove lo si cercava.
+         *
+         * 0x7F resta fuori: e' DEL, e un glifo sensato non ce l'ha.
+         * ================================================================= */
+        if (k >= 32u && k != 127u && k < 256u && len < max - 1) {
             int i;
             int in_coda = (cur == len);
 

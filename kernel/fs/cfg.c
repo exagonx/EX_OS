@@ -116,6 +116,15 @@ static void cfg_apply_key(KernelConfig *cfg, const char *section,
             cfg->timer_hz = (uint32_t)cfg_atoi(value);
             return;
         }
+        /* ⚠️ IL KERNEL NON LA CONTROLLA E NON LA USA. La stringa viene
+         * solo conservata e riconsegnata a chi la chiede: chi sa quali
+         * disposizioni esistono e' il driver di tastiera, e duplicare
+         * quell'elenco qui darebbe due liste che divergono. Un nome
+         * sbagliato lo segnala il driver, che ha di che segnalarlo. */
+        if (cfg_strcmp(key, "keymap") == 0) {
+            cfg_strcpy(cfg->keymap, value, sizeof(cfg->keymap));
+            return;
+        }
         if (cfg_strcmp(key, "verboseboot") == 0) {
             /* Il valore predefinito è 0 (agosto 2026: prima era 1) e resta
              * 0 in tutti i casi dubbi: SOLO un numero diverso da zero fa
@@ -272,6 +281,7 @@ KernelConfig *cfg_load(void)
     g_config.loglevel     = 3;
     g_config.timer_hz     = 100;
     g_config.verbose_boot = 0;   /* default: avvio silenzioso. Vedi cfg.h */
+    g_config.keymap[0]    = '\0'; /* nessuna: il driver tiene la sua */
     cfg_strcpy(g_config.shell_path, "/bin/sh", sizeof(g_config.shell_path));
 
     /* Identità disponibile anche se il file manca o è illeggibile: le
@@ -447,6 +457,9 @@ const char *cfg_get_option(const char *key)
     }
     if (cfg_strcmp(key, "shell") == 0) {
         return cfg->shell_path;
+    }
+    if (cfg_strcmp(key, "keymap") == 0) {
+        return cfg->keymap[0] ? cfg->keymap : NULL;
     }
     return NULL;
 }

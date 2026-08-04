@@ -118,6 +118,22 @@ class Monitor:
         time.sleep(settle)
         return self.drain()
 
+    def tasti(self, nomi):
+        """Manda TASTI FISICI per nome QEMU, senza passare dalla KEYMAP.
+
+        ⚠️ SERVE A PROVARE LE DISPOSIZIONI, e non si puo' fare altrimenti.
+        typeline() traduce un CARATTERE nel tasto che lo produce su una
+        tastiera americana: e' esattamente il presupposto che una prova
+        sulle disposizioni deve mettere in discussione. Qui si nomina il
+        tasto fisico — `semicolon`, `altgr-bracket_left` — e si guarda
+        quale carattere ne esce, che e' la domanda vera.
+        """
+        for n in nomi:
+            self.sock.sendall(("sendkey %s\n" % n).encode())
+            time.sleep(0.08)
+        time.sleep(0.05)
+        self.drain()
+
     def typeline(self, text, invio=True):
         """Manda 'text' carattere per carattere, poi Invio.
 
@@ -225,7 +241,12 @@ def main():
             wait = float(delay) if delay else 4.0
             print("--- invio %r (attesa %.1fs%s)"
                   % (cmd, wait, "" if invio else ", senza Invio"))
-            mon.typeline(cmd, invio)
+            # `key:nome1,nome2` manda TASTI FISICI invece di caratteri:
+            # e' l'unico modo di provare una disposizione di tastiera.
+            if cmd.startswith("key:"):
+                mon.tasti(cmd[4:].split(","))
+            else:
+                mon.typeline(cmd, invio)
             time.sleep(wait)
 
         print("=== info pic ===")

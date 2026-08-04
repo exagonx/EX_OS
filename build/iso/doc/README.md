@@ -1,5 +1,6 @@
 # EX-OS — Extensible Operating System
 
+**Versione:** 0.175
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 32-bit, floppy FAT12 1.44MB
@@ -1803,6 +1804,12 @@ kernel inietta in `[env]` e che **non** vanno scritte in `kernel.cfg`.
 
 È una stringa e non un numero perché il kernel non usa la virgola mobile.
 L'incremento è manuale e deliberato.
+
+⚠️ **Anche la riga «Versione» in cima a questi due leggimi viene da lì**, e
+non è copiata a mano: `make leggimi-versione` la riscrive da `version.h`, e
+`make verify` fallisce se le due divergono. Un numero copiato invecchia il
+giorno dopo, e un leggimi che dichiara una versione sbagliata è peggio di
+uno che non la dichiara affatto.
 
 ---
 

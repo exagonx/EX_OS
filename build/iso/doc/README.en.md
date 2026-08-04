@@ -1,5 +1,6 @@
 # EX-OS — Extensible Operating System
 
+**Version:** 0.175
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit, FAT12 1.44MB floppy
@@ -1806,6 +1807,12 @@ written in `kernel.cfg`.
 
 It is a string and not a number because the kernel does not use floating
 point. The increment is manual and deliberate.
+
+⚠️ **The «Version» line at the top of these two READMEs comes from there
+too**, and is not copied by hand: `make leggimi-versione` rewrites it from
+`version.h`, and `make verify` fails if the two disagree. A copied number
+goes stale the next day, and a README declaring a wrong version is worse
+than one not declaring it at all.
 
 ---
 

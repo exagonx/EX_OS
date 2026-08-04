@@ -52,6 +52,7 @@
 
 #include "libc.h"
 #include "pci_proto.h"
+#include "kbd_proto.h"
 
 #define PERC_MAX    256
 #define RIGHE_MAX   64
@@ -64,6 +65,7 @@ typedef struct {
     char cd_nome[BLKINFO_NOME_MAX];
 
     int  kbd;                       /* /dev/kbd.drv esiste */
+    char keymap[KBD_MAP_NOME_MAX];  /* la disposizione in uso */
 
     int  rete;                      /* c'e' una scheda Ethernet sul PCI */
     int  rete_ignota;               /* c'e' ma non si e' potuto chiedere */
@@ -292,6 +294,44 @@ static void cerca_rete(void)
     g_t.rete_ignota = 1;
 }
 
+/* La disposizione della tastiera.
+ *
+ * ⚠️ SI CHIEDE, NON SI DECIDE. hwconfig riscrive kernel.cfg per intero:
+ * senza questa domanda, una macchina configurata `keymap = it` si
+ * ritroverebbe `us` dopo un hwconfig — cioe' il programma che serve a
+ * togliere fatica avrebbe rotto in silenzio l'unica impostazione che si
+ * nota subito digitando.
+ *
+ * La verita' e' nel DRIVER, non nel file: se qualcuno ha dato `keymap fr`
+ * a macchina accesa e poi lancia hwconfig, la sua intenzione e' 'fr'.
+ * Il file e' solo il ripiego per quando il driver non c'e'. */
+static void cerca_keymap(void)
+{
+    int           pid = ipc_lookup(KBD_SERVICE_NAME);
+    IpcMessage    meta;
+    unsigned char buf[IPC_MSG_MAX_DATA];
+    KbdMapInfo    info;
+    int           i;
+
+    strncpy(g_t.keymap, "us", sizeof(g_t.keymap) - 1);
+
+    if (pid > 0 && ipc_send(pid, KBD_MSG_GETMAP, NULL, 0) >= 0) {
+        for (i = 0; i < 8; i++) {
+            if (ipc_recv_timeout(&meta, buf, sizeof(buf), 2000) < 0) break;
+            if ((int)meta.sender_pid != pid) continue;
+            if (meta.tipo != KBD_MSG_MAPINFO || meta.len < sizeof(info)) break;
+
+            memcpy(&info, buf, sizeof(info));
+            strncpy(g_t.keymap, info.attiva, sizeof(g_t.keymap) - 1);
+            return;
+        }
+    }
+
+    /* Nessun driver: si tiene quello che dice la configurazione attuale. */
+    if (getconf("keymap", g_t.keymap, sizeof(g_t.keymap)) < 0)
+        strncpy(g_t.keymap, "us", sizeof(g_t.keymap) - 1);
+}
+
 static void esamina(const char *bersaglio)
 {
     memset(&g_t, 0, sizeof(g_t));
@@ -300,6 +340,7 @@ static void esamina(const char *bersaglio)
     trova_radice(bersaglio);
 
     g_t.kbd = (access("/dev/kbd.drv", F_OK) == 0);
+    cerca_keymap();
     cerca_volumi();
     cerca_rete();
 }
@@ -324,7 +365,9 @@ static void mostra(void)
 
     printf("Cosa c'e' in questa macchina\n\n");
 
-    printf("  tastiera   %s\n", g_t.kbd
+    printf("  tastiera   disposizione '%s'%s\n", g_t.keymap,
+           g_t.kbd ? "" : " (senza driver vale solo 'us')");
+    printf("             %s\n", g_t.kbd
            ? "/dev/kbd.drv — si carica all'avvio, serve alle frecce e a gfedit"
            : "assente: la console usera' la tastiera interna di ripiego");
 
@@ -427,13 +470,23 @@ static void componi_kernel_cfg(char *out, unsigned int max)
         "timer_hz    = 100\n"
         "# 0 = avvio silenzioso, 1 = mostra il log di avvio.\n"
         "# Errori e avvisi restano visibili in entrambi i casi.\n"
-        "verboseboot = 0\n"
-        "\n"
-        "[boot]\n"
-        "shell       = /bin/sh\n", max - 1);
+        "verboseboot = 0\n", max - 1);
+
+    /* ⚠️ SI RISCRIVE LA DISPOSIZIONE TROVATA, non 'us'. Questo file lo
+     * sostituiamo per intero: senza questa riga una macchina configurata
+     * in italiano tornerebbe americana dopo un hwconfig, e il programma
+     * che serve a togliere fatica avrebbe rotto in silenzio l'unica
+     * impostazione che si nota subito digitando. */
+    snprintf(riga, sizeof(riga),
+             "\n# Disposizione della tastiera: us it fr de es uk.\n"
+             "# Si cambia a caldo con `keymap`; `keymap -p` ristampa questa riga.\n"
+             "keymap      = %s\n"
+             "\n[boot]\nshell       = /bin/sh\n", g_t.keymap);
+    strncat(out, riga, max - 1 - strlen(out));
 
     if (g_t.kbd)
         strncat(out, "modules     = kbd\n", max - 1 - strlen(out));
+
 
     strncat(out, "\n[env]\nPATH        = /bin:/dev\nHOME        = /\n"
                  "TERM        = vga\n", max - 1 - strlen(out));

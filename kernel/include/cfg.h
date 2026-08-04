@@ -60,6 +60,11 @@ typedef struct {
     uint32_t    verbose_boot;
 
     /* [boot] */
+    /* Disposizione della tastiera: la legge /dev/kbd.drv all'avvio con
+     * SYS_GETENV. Sta in [kernel] e non in [env] perche' e' una scelta di
+     * sistema, non una variabile che i programmi ereditano. */
+    char        keymap[CFG_NAME_LEN];
+
     char        shell_path[CFG_PATH_LEN];
     char        modules_list[CFG_PATH_LEN];
 

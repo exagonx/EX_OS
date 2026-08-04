@@ -96,39 +96,45 @@
  * registro, falsa per il self-test 0xAA. Vedi il commento là. */
 
 /* =============================================================================
- * Mappa scancode set 1 → ASCII (US QWERTY)
+ * Disposizione della tastiera
+ *
+ * Le tabelle stanno in keymaps.h, una per disposizione. Qui si tiene solo
+ * QUALE e' attiva: il resto del driver indicizza sempre allo stesso modo,
+ * perche' l'indice e' il tasto fisico e quello non cambia.
+ *
+ * ⚠️ SI PARTE DA `us` E NON DA NIENTE. Se la voce in kernel.cfg manca o
+ * nomina una disposizione sconosciuta, la tastiera deve comunque scrivere:
+ * una tastiera muta perche' la configurazione ha un refuso e' un sistema
+ * che non si puo' nemmeno usare per correggere quel refuso.
  * ============================================================================= */
-static const unsigned char sc_normal[128] = {
-    0,   27,  '1','2','3','4','5','6','7','8',
-    '9','0', '-','=','\b','\t','q','w','e','r',
-    't', 'y','u','i','o','p','[',']','\n', 0,
-    'a', 's','d','f','g','h','j','k','l',';',
-    '\'','`', 0, '\\','z','x','c','v','b','n',
-    'm', ',','.','/', 0, '*', 0, ' ', 0,  0,
-    0,   0,  0,  0,  0,  0,  0,  0,  0,  0,
-    0,   0,  0,  0,  0,  0,  '-',0,  0,  0,
-    '+', 0,  0,  0,  0,  0,  0,  0,  0,  0,
-    0,   0,  0,  0,  0,  0,  0,  0,  0,  0,
-    0,   0,  0,  0,  0,  0,  0,  0,  0,  0,
-    0,   0,  0,  0,  0,  0,  0,  0,  0,  0,
-    0,   0,  0,  0,  0,  0,  0,  0
-};
+#include "keymaps.h"
 
-static const unsigned char sc_shift[128] = {
-    0,   27,  '!','@','#','$','%','^','&','*',
-    '(',')', '_','+','\b','\t','Q','W','E','R',
-    'T', 'Y','U','I','O','P','{','}','\n', 0,
-    'A', 'S','D','F','G','H','J','K','L',':',
-    '"', '~', 0, '|','Z','X','C','V','B','N',
-    'M', '<','>','?', 0, '*', 0, ' ', 0,  0,
-    0,   0,  0,  0,  0,  0,  0,  0,  0,  0,
-    0,   0,  0,  0,  0,  0,  '-',0,  0,  0,
-    '+', 0,  0,  0,  0,  0,  0,  0,  0,  0,
-    0,   0,  0,  0,  0,  0,  0,  0,  0,  0,
-    0,   0,  0,  0,  0,  0,  0,  0,  0,  0,
-    0,   0,  0,  0,  0,  0,  0,  0,  0,  0,
-    0,   0,  0,  0,  0,  0,  0,  0
-};
+static const Keymap *g_map = &g_keymaps[0];   /* us */
+
+
+static int keymap_scegli(const char *nome)
+{
+    int i;
+
+    if (nome == NULL || nome[0] == '\0') return -1;
+
+    for (i = 0; i < KEYMAP_N; i++) {
+        const char *a = g_keymaps[i].nome, *b = nome;
+
+        while (*a && *b) {
+            char x = *a, y = *b;
+
+            if (y >= 'A' && y <= 'Z') y = (char)(y + 32);
+            if (x != y) break;
+            a++; b++;
+        }
+        if (*a == '\0' && (*b == '\0' || *b == '\n' || *b == ' ')) {
+            g_map = &g_keymaps[i];
+            return i;
+        }
+    }
+    return -1;
+}
 
 /* =============================================================================
  * Stato del driver
@@ -142,6 +148,40 @@ static const unsigned char sc_shift[128] = {
 static unsigned char g_shift = 0;
 static unsigned char g_ctrl  = 0;
 static unsigned char g_alt   = 0;
+static unsigned char g_altgr = 0;   /* Alt di DESTRA: e0 38 */
+
+/* Dallo scancode al carattere, secondo la disposizione attiva.
+ *
+ * ⚠️ UN PUNTO SOLO PER LE DUE MODALITA'. Cooked e raw traducono lo stesso
+ * tasto e devono ottenere lo stesso carattere: due copie di questa
+ * funzione darebbero un editor a schermo intero che scrive le graffe e una
+ * shell che non le scrive, o il contrario — e nessuno dei due sintomi
+ * suggerirebbe la causa.
+ *
+ * ⚠️ L'ORDINE DELLE TABELLE NON E' ARBITRARIO: si prova la piu' specifica
+ * per prima, AltGr+Shift, poi AltGr, poi Shift, poi il tasto nudo. Una
+ * casella vuota nella tabella specifica NON e' un tasto muto: e' «qui non
+ * c'e' niente di speciale», e si ricade su quella sotto. Senza, AltGr+A
+ * smetterebbe di scrivere una A. */
+static char traduci(unsigned char sc)
+{
+    char a = 0;
+
+    if (sc >= KEYMAP_N_TASTI) return 0;
+
+    if (g_altgr && g_shift) a = (char)g_map->altgr_sh[sc];
+    if (!a && g_altgr)      a = (char)g_map->altgr[sc];
+    if (!a && g_shift)      a = (char)g_map->shift[sc];
+    if (!a && !g_altgr)     a = (char)g_map->normale[sc];
+
+    /* Il tasto in piu' delle tastiere a 102 tasti, che nelle tabelle non
+     * c'e' perche' sta fuori dalle righe: vedi keymaps.h. */
+    if (!a && sc == KEYMAP_TASTO_102)
+        a = (char)keymap_102(g_map, g_shift, g_altgr);
+
+    return a;
+}
+
 static unsigned char g_caps  = 0;
 static unsigned char g_e0    = 0;   /* prefisso tasto esteso 0xE0 */
 static unsigned char g_leds  = 0;   /* bit0=Scroll, bit1=Num, bit2=Caps */
@@ -287,7 +327,13 @@ static int eco_visibile(char c)
 {
     unsigned char u = (unsigned char)c;
 
-    return (u >= 32 && u < 127);
+    /* ⚠️ ANCHE SOPRA 127, da quando ci sono le disposizioni non inglesi.
+     * La `à` e' il byte 0x85 e la VGA le disegna un glifo vero, largo una
+     * colonna come tutti gli altri: escluderla la renderebbe un carattere
+     * invisibile dentro il comando — cioe' esattamente il difetto che
+     * questa funzione esiste per chiudere. 0x7F (DEL) resta fuori: quello
+     * un glifo sensato non ce l'ha. */
+    return (u >= 32 && u != 127);
 }
 
 /* =============================================================================
@@ -551,7 +597,7 @@ static void kbd_raw_scancode(unsigned char sc, unsigned char esteso)
 
     if (sc >= 128) return;
 
-    ascii = (char)(g_shift ? sc_shift[sc] : sc_normal[sc]);
+    ascii = traduci(sc);
     if (g_caps && ascii >= 'a' && ascii <= 'z')      ascii = (char)(ascii - 32);
     else if (g_caps && ascii >= 'A' && ascii <= 'Z') ascii = (char)(ascii + 32);
 
@@ -719,12 +765,32 @@ static void kbd_process_scancode(unsigned char sc)
     /* Key release (bit 7) */
     if (sc & 0x80) {
         unsigned char key = (unsigned char)(sc & 0x7F);
+        unsigned char era_e0 = g_e0;
+
         g_e0 = 0;
         if (key == 0x2A || key == 0x36) g_shift = 0;
         if (key == 0x1D)                g_ctrl  = 0;
-        if (key == 0x38)                g_alt   = 0;
+        /* ⚠️ E0 38 E' AltGr, 38 DA SOLO E' Alt SINISTRO, e vanno tenuti
+         * separati: Alt sinistro commuta le console, AltGr scrive le
+         * graffe. Confonderli darebbe una tastiera su cui AltGr+Shift+e`
+         * cambia schermo invece di aprire un blocco. */
+        if (key == 0x38) { if (era_e0) g_altgr = 0; else g_alt = 0; }
         return;
     }
+
+    /* =====================================================================
+     * ⚠️ AltGr VA RICONOSCIUTO QUI, PRIMA DEI TASTI ESTESI
+     *
+     * AltGr e' `e0 38`, cioe' arriva con il prefisso dei tasti estesi. Il
+     * blocco piu' sotto tratta quel prefisso come «tasto di movimento» e
+     * lo consegna come sequenza ANSI o lo scarta: 0x38 finiva nel suo
+     * `default: return` e il modificatore non veniva mai visto.
+     *
+     * Il sintomo era che su una tastiera italiana le parentesi quadre e
+     * le graffe non si scrivevano — cioe' che AltGr non esisteva — mentre
+     * il codice che lo gestiva c'era ed era giusto: stava solo dopo.
+     * ===================================================================== */
+    if (g_e0 && sc == 0x38) { g_altgr = 1; g_e0 = 0; return; }
 
     /* =====================================================================
      * Alt+F1..F4 — COMMUTAZIONE DI CONSOLE
@@ -778,6 +844,8 @@ static void kbd_process_scancode(unsigned char sc)
     /* Modificatori */
     if (sc == 0x2A || sc == 0x36) { g_shift = 1; return; }
     if (sc == 0x1D)               { g_ctrl  = 1; return; }
+    /* 0x38 senza prefisso e' l'Alt SINISTRO: commuta le console. Quello
+     * di destra e' stato preso qui sopra. */
     if (sc == 0x38)               { g_alt   = 1; return; }
     if (sc == 0x3A) {
         g_caps = (unsigned char)(g_caps ^ 1);
@@ -792,7 +860,7 @@ static void kbd_process_scancode(unsigned char sc)
 
     if (sc >= 128) return;
 
-    ascii = (char)(g_shift ? sc_shift[sc] : sc_normal[sc]);
+    ascii = traduci(sc);
 
     /* CapsLock inverte il caso delle sole lettere */
     if (g_caps && ascii >= 'a' && ascii <= 'z') ascii = (char)(ascii - 32);
@@ -994,10 +1062,37 @@ int main(int argc, char **argv)
 {
     IpcMessage    meta;
     unsigned char payload[64];
-    int           rc;
+    int           rc, i;
+    char          scelta[KBD_MAP_NOME_MAX];
 
-    (void)argc;
-    (void)argv;
+    /* =====================================================================
+     * La disposizione: prima kernel.cfg, poi la riga di comando.
+     *
+     *     [kernel]
+     *     keymap = it
+     *
+     * ⚠️ SI LEGGE LA CONFIGURAZIONE PRIMA DI REGISTRARSI, cioe' prima che
+     * qualcuno possa digitare. Farlo dopo darebbe una finestra — corta,
+     * ma reale — in cui i primi tasti battuti vengono tradotti con la
+     * disposizione sbagliata, e sono proprio i tasti dell'autoexec.
+     *
+     * ⚠️ UN NOME SCONOSCIUTO NON E' FATALE. Si dice e si tiene `us`: una
+     * tastiera muta perche' la configurazione ha un refuso e' un sistema
+     * che non si puo' usare nemmeno per correggere quel refuso.
+     * ===================================================================== */
+    scelta[0] = '\0';
+    if (getconf("keymap", scelta, sizeof(scelta)) < 0) scelta[0] = '\0';
+
+    for (i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-k") == 0 && i + 1 < argc) {
+            strncpy(scelta, argv[++i], sizeof(scelta) - 1);
+            scelta[sizeof(scelta) - 1] = '\0';
+        }
+    }
+
+    if (scelta[0] != '\0' && keymap_scegli(scelta) < 0)
+        printf("kbd: disposizione '%s' sconosciuta, uso '%s'. "
+               "`keymap` le elenca.\n", scelta, g_map->nome);
 
     rc = ipc_register(KBD_SERVICE_NAME);
     if (rc < 0) {
@@ -1090,6 +1185,52 @@ int main(int argc, char **argv)
                  * finirebbe a un destinatario che non lo aspetta più. */
                 if (!g_c[m.console].raw) g_c[m.console].keyreader_pid = 0;
             }
+            continue;
+        }
+
+        /* =================================================================
+         * Disposizione della tastiera
+         *
+         * ⚠️ SI RISPONDE SEMPRE, anche a una richiesta sbagliata. Chi
+         * chiede resta fermo in ipc_recv finche' non gli si risponde, e
+         * un `keymap xx` con un refuso non deve piantare il programma che
+         * doveva segnalare il refuso.
+         * ================================================================= */
+        if (meta.tipo == KBD_MSG_SETMAP || meta.tipo == KBD_MSG_GETMAP) {
+            KbdMapInfo info;
+            int        i, off = 0;
+
+            memset(&info, 0, sizeof(info));
+            info.esito = 0;
+
+            if (meta.tipo == KBD_MSG_SETMAP) {
+                KbdSetMap s;
+
+                memset(&s, 0, sizeof(s));
+                if (meta.len >= sizeof(s)) memcpy(&s, payload, sizeof(s));
+                s.nome[KBD_MAP_NOME_MAX - 1] = '\0';
+
+                if (keymap_scegli(s.nome) < 0) info.esito = -EINVAL;
+                else printf("kbd: disposizione '%s' (%s)\n",
+                            g_map->nome, g_map->descrizione);
+            }
+
+            strncpy(info.attiva, g_map->nome, sizeof(info.attiva) - 1);
+            strncpy(info.descrizione, g_map->descrizione,
+                    sizeof(info.descrizione) - 1);
+            info.n = (unsigned int)KEYMAP_N;
+
+            for (i = 0; i < KEYMAP_N; i++) {
+                const char *s = g_keymaps[i].nome;
+
+                if (off > 0 && off < (int)sizeof(info.elenco) - 1)
+                    info.elenco[off++] = ' ';
+                while (*s && off < (int)sizeof(info.elenco) - 1)
+                    info.elenco[off++] = *s++;
+            }
+            info.elenco[off] = '\0';
+
+            ipc_send(meta.sender_pid, KBD_MSG_MAPINFO, &info, sizeof(info));
             continue;
         }
 

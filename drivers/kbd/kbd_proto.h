@@ -163,6 +163,42 @@ typedef struct {
 #define KBD_MODE_RAW        1u
 
 /* =============================================================================
+ * DISPOSIZIONE DELLA TASTIERA
+ *
+ * client -> kbd: KBD_MSG_SETMAP con il nome ("it", "fr", ...) come stringa
+ * dentro KbdSetMap. Risposta: KBD_MSG_MAPINFO con quella attiva.
+ *
+ * client -> kbd: KBD_MSG_GETMAP senza payload, per sapere e basta.
+ * Risposta: KBD_MSG_MAPINFO, dove `n` e' quante ce ne sono e `elenco`
+ * le contiene tutte separate da uno spazio.
+ *
+ * ⚠️ SI CAMBIA A CALDO, e non e' un vezzo. La disposizione si sceglie in
+ * kernel.cfg, ma chi si accorge di averla sbagliata se ne accorge
+ * DIGITANDO — e a quel punto deve poterla correggere senza riavviare, con
+ * una tastiera che nel frattempo scrive i caratteri sbagliati. `keymap it`
+ * si compone di caratteri che stanno nello stesso posto su tutte le
+ * disposizioni latine, apposta.
+ * ============================================================================= */
+#define KBD_MSG_SETMAP      6u
+#define KBD_MSG_GETMAP      7u
+#define KBD_MSG_MAPINFO     8u
+
+#define KBD_MAP_NOME_MAX    8
+#define KBD_MAP_ELENCO_MAX  128
+
+typedef struct {
+    char nome[KBD_MAP_NOME_MAX];
+} KbdSetMap;
+
+typedef struct {
+    int  esito;                             /* 0 = fatto, <0 = -errno */
+    char attiva[KBD_MAP_NOME_MAX];
+    char descrizione[40];
+    unsigned int n;                         /* quante ne conosce */
+    char elenco[KBD_MAP_ELENCO_MAX];        /* "us it fr de es uk" */
+} KbdMapInfo;
+
+/* =============================================================================
  * Codifica di un evento tasto (uint32_t)
  *
  *   bit  0..15   codice base: un carattere ASCII (1..127) oppure uno dei

@@ -115,7 +115,7 @@ BUILD_BIN_CD  := $(BUILD_DIR)/bin-cd
 # kernel (kernel/block/atapi.c, kernel/fs/iso9660.c), perche' il kernel
 # deve poterci montare la radice prima che esista un processo.
 # =============================================================================
-PROGRAMMI_FLOPPY := shell hello ls mem stack disk libctest fdisk mkfs trunc chkdsk rename mount_prog cp_prog install_prog textline gfedit mkdir_prog rmdir_prog delete_prog hwconfig libc floppy_drv kbd_drv
+PROGRAMMI_FLOPPY := shell hello ls mem stack disk libctest fdisk mkfs trunc chkdsk rename mount_prog cp_prog install_prog textline gfedit mkdir_prog rmdir_prog delete_prog hwconfig keymap libc floppy_drv kbd_drv
 
 # I driver che sul floppy NON devono comparire. Serve a `make verify`.
 DRIVER_SOLO_CD := pci.drv ne2k.drv pcnet.drv ip.drv
@@ -412,7 +412,7 @@ HWCONFIG_LD  := bin/hwconfig/hwconfig.ld
 $(HWCONFIG_BIN): $(HWCONFIG_SRC) $(PCI_DRV_PROTO) $(HWCONFIG_LD) $(LIBC_SRC) $(LIBC_START)
 	@echo "=== Compilazione /bin/hwconfig ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/pci -c $(HWCONFIG_SRC) -o $(BUILD_OBJ)/hwconfig_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/pci -I drivers/kbd -c $(HWCONFIG_SRC) -o $(BUILD_OBJ)/hwconfig_main.o
 	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)  -o $(BUILD_OBJ)/hwconfig_libc.o
 	$(CC) -m32 -c $(LIBC_START)          -o $(BUILD_OBJ)/hwconfig_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(HWCONFIG_LD) \
@@ -422,6 +422,27 @@ $(HWCONFIG_BIN): $(HWCONFIG_SRC) $(PCI_DRV_PROTO) $(HWCONFIG_LD) $(LIBC_SRC) $(L
 
 .PHONY: hwconfig
 hwconfig: dirs $(HWCONFIG_BIN)
+
+# --- /bin/keymap: sceglie la disposizione della tastiera ---------------------
+# Sul FLOPPY, e non e' negoziabile: chi ha la disposizione sbagliata se ne
+# accorge digitando, e in quel momento ha una tastiera che scrive i
+# caratteri sbagliati. Il comando che rimedia deve esserci sempre.
+KEYMAP_BIN := $(BUILD_BIN)/keymap
+KEYMAP_LD  := bin/keymap/keymap.ld
+
+$(KEYMAP_BIN): bin/keymap/keymap.c drivers/kbd/kbd_proto.h $(KEYMAP_LD) $(LIBC_SRC) $(LIBC_START)
+	@echo "=== Compilazione /bin/keymap ==="
+	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/kbd -c bin/keymap/keymap.c -o $(BUILD_OBJ)/keymap_main.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)  -o $(BUILD_OBJ)/keymap_libc.o
+	$(CC) -m32 -c $(LIBC_START)          -o $(BUILD_OBJ)/keymap_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(KEYMAP_LD) \
+	    $(BUILD_OBJ)/keymap_start.o $(BUILD_OBJ)/keymap_main.o \
+	    $(BUILD_OBJ)/keymap_libc.o -o $@
+	@echo "[OK] keymap compilato: $@"
+
+.PHONY: keymap
+keymap: dirs $(KEYMAP_BIN)
 
 .PHONY: mkfs
 mkfs: dirs $(MKFS_BIN)
@@ -1667,6 +1688,17 @@ verify: $(FLOPPY_IMG)
 	    exit 1; \
 	fi; \
 	echo "[OK] nessun driver da CD sul floppy"
+	@# La versione dichiarata nei leggimi deve essere quella di version.h.
+	@set -e; \
+	for f in README.md README.en.md; do \
+	    d=$$(sed -n 's/^\*\*Versione\?:\*\* //p' $$f | head -1); \
+	    if [ "$$d" != "$(VERSIONE)" ]; then \
+	        echo "!! $$f dichiara la versione '$$d', version.h dice '$(VERSIONE)'"; \
+	        echo "   si sistema con:  make leggimi-versione"; \
+	        exit 1; \
+	    fi; \
+	done; \
+	echo "[OK] leggimi allineati alla versione $(VERSIONE)"
 	@echo "Contenuto floppy:"
 	@mdir -i $(FLOPPY_IMG) -/ ::
 	@echo ""
@@ -1675,6 +1707,27 @@ verify: $(FLOPPY_IMG)
 	@echo ""
 	@echo "Firma boot sector (byte 510-511):"
 	@dd if=$(FLOPPY_IMG) bs=1 skip=510 count=2 status=none | od -A n -t x1
+
+# =============================================================================
+# La versione nei due leggimi
+#
+# ⚠️ E' UN NUMERO COPIATO, e i numeri copiati invecchiano. EXOS_VERSION si
+# incrementa a ogni modifica del kernel, e i leggimi non vengono
+# ricompilati da niente: senza questa regola la riga "Versione:" resta
+# quella del giorno in cui e' stata scritta, e un leggimi che dichiara una
+# versione sbagliata e' peggio di uno che non la dichiara.
+#
+# `verify` lo CONTROLLA e fallisce dicendo cosa lanciare; `leggimi-versione`
+# lo sistema. La stessa forma del controllo sui driver del floppy: la
+# regola non si affida alla memoria di chi la deve rispettare.
+# =============================================================================
+VERSIONE := $(shell sed -n 's/^#define EXOS_VERSION *"\(.*\)".*/\1/p' kernel/include/version.h)
+
+.PHONY: leggimi-versione
+leggimi-versione:
+	@sed -i 's/^\*\*Versione:\*\* .*/**Versione:** $(VERSIONE)/' README.md
+	@sed -i 's/^\*\*Version:\*\* .*/**Version:** $(VERSIONE)/'   README.en.md
+	@echo "[OK] leggimi allineati alla versione $(VERSIONE)"
 
 .PHONY: disasm-stage1
 disasm-stage1: $(STAGE1_BIN)
