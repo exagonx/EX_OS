@@ -41,6 +41,37 @@ KEYMAP = {
     # servizio: senza, un driver che gira come server non si puo'
     # nemmeno avviare da qui.
     "&": "shift-7",
+    # I tasti di movimento: servono a provare la cronologia della shell.
+    "\x01": "up",
+    "\x02": "down",
+    "\x03": "left",
+    "\x04": "right",
+    # Il resto della punteggiatura ASCII. Manca ancora qualcosa? Si
+    # aggiunge QUI: un carattere non mappato fa cadere questo script con
+    # un'eccezione a meta' prova, e la prova sembra fallita quando invece
+    # non e' mai partita. E' successo con '~', cercando l'alias 8.3 di un
+    # nome lungo — il sistema rispondeva benissimo, era il pilota a non
+    # saper digitare.
+    "`": "grave_accent",
+    "~": "shift-grave_accent",
+    "!": "shift-1",
+    "@": "shift-2",
+    "#": "shift-3",
+    "$": "shift-4",
+    "%": "shift-5",
+    "^": "shift-6",
+    "(": "shift-9",
+    ")": "shift-0",
+    "+": "shift-equal",
+    "[": "bracket_left",
+    "]": "bracket_right",
+    "{": "shift-bracket_left",
+    "}": "shift-bracket_right",
+    "\\": "backslash",
+    "|": "shift-backslash",
+    "<": "shift-comma",
+    ">": "shift-dot",
+    '"': "shift-apostrophe",
 }
 
 
@@ -87,12 +118,19 @@ class Monitor:
         time.sleep(settle)
         return self.drain()
 
-    def typeline(self, text):
-        """Manda 'text' carattere per carattere, poi Invio."""
+    def typeline(self, text, invio=True):
+        """Manda 'text' carattere per carattere, poi Invio.
+
+        ⚠️ `invio=False` serve a provare la MODIFICA della riga: frecce,
+        Home, Backspace. Senza, ogni gruppo di tasti finisce con un Invio
+        che manda in esecuzione la riga a meta', e le frecce del gruppo
+        successivo agiscono su una riga vuota — cioe' non si prova niente.
+        """
         for ch in text:
             self.sock.sendall(("sendkey %s\n" % keyname(ch)).encode())
             time.sleep(0.05)
-        self.sock.sendall(b"sendkey ret\n")
+        if invio:
+            self.sock.sendall(b"sendkey ret\n")
         time.sleep(0.05)
         self.drain()
 
@@ -177,11 +215,17 @@ def main():
         # Sintassi argomenti: "comando" oppure "comando@attesa_secondi"
         # (attesa 0 = type-ahead: manda il comando successivo senza
         # aspettare che il precedente finisca).
+        # Sintassi: "comando@secondi". Una 'n' davanti ai secondi
+        # ("cmd@n2") manda i tasti SENZA Invio — vedi typeline().
         for arg in sys.argv[1:] or ["help"]:
             cmd, _, delay = arg.partition("@")
+            invio = not delay.startswith("n")
+            if not invio:
+                delay = delay[1:]
             wait = float(delay) if delay else 4.0
-            print("--- invio comando: %r (attesa %.1fs)" % (cmd, wait))
-            mon.typeline(cmd)
+            print("--- invio %r (attesa %.1fs%s)"
+                  % (cmd, wait, "" if invio else ", senza Invio"))
+            mon.typeline(cmd, invio)
             time.sleep(wait)
 
         print("=== info pic ===")

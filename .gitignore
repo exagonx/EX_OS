@@ -68,6 +68,31 @@
 /openlibm-*/
 
 # =============================================================================
+# OpenSSL — TLS, per HTTPS e SFTP
+#
+# 146 MB di sorgenti di terzi (Apache 2.0), stessa regola di GCC e della
+# userland qui sopra: non entrano nella cronologia di questo repository, e
+# le modifiche per farlo girare su EX-OS NON vanno scritte dentro questo
+# albero — vanno in tools/openssl-exos/, che e' tracciata.
+#
+# ⚠️ NOTA PER CHI CI METTERA' MANO. OpenSSL da' per scontate cose che
+# EX-OS non ha: socket BSD, fork, thread, /dev/urandom, variabili
+# d'ambiente, un filesystem con permessi. Il porting passa quasi tutto dal
+# suo strato di astrazione (crypto/bio/ e i file *_local.h di quella
+# zona), non dalla crittografia — che e' C portabile e compila. Il
+# problema non e' RSA: e' tutto quello che ci sta intorno.
+#
+# ⚠️ E SERVE UNA SORGENTE DI CASUALITA' VERA prima che abbia senso. Le
+# chiavi di sessione di TLS nascono da li': con uptime_ms() e il PID —
+# gli unici numeri "variabili" che EX-OS ha oggi — si otterrebbe un TLS
+# che SEMBRA sicuro e non lo e', che e' peggio di non averlo.
+#
+# ⚠️ ANCORATO ALLA RADICE, come tutti gli altri: senza, `openssl/`
+# combacerebbe anche con una directory annidata dentro roba nostra.
+# =============================================================================
+/openssl/
+
+# =============================================================================
 # Il disco avviabile
 #
 # Mezzo gigabyte rigenerato da `make hd` a ogni cambiamento dei binari: e'

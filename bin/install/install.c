@@ -279,6 +279,99 @@ static void crea_dir(const char *p)
 }
 
 /* Copia tutto il contenuto di una directory del volume di avvio. */
+/* =============================================================================
+ * MODO AGGIORNAMENTO — `install -a`
+ *
+ * Confronta quello che c'e' sul volume con quello che c'e' sul supporto e
+ * ricopia SOLO cio' che e' cambiato. Un'installazione completa riscrive
+ * tutto ed e' quello che deve fare; un aggiornamento su un floppy o su un
+ * disco lento non ha motivo di riscrivere trenta file identici.
+ *
+ * ⚠️ LA REGOLA E' "SORGENTE PIU' NUOVA", NON "DATE DIVERSE", e la
+ * differenza e' quella fra uno strumento utile e uno inutile.
+ *
+ * Copiare un file NON ne conserva la data: quello scritto adesso ha l'ora
+ * di adesso, non quella che aveva sul CD. Con la regola ingenua — «le
+ * date differiscono, quindi aggiorna» — ogni file risulterebbe da
+ * aggiornare a OGNI esecuzione, per sempre, anche subito dopo averlo
+ * appena copiato. Confrontando invece se la sorgente e' PIU' NUOVA della
+ * destinazione, un file appena copiato resta a posto finche' sul supporto
+ * non ne arriva davvero uno piu' recente.
+ *
+ * ⚠️ LA DIMENSIONE SI CONFRONTA COMUNQUE, e viene prima: un file
+ * ricopiato a meta' per un disco pieno ha la stessa data e una
+ * dimensione diversa. E' anzi il caso che conta di piu', perche' e'
+ * l'unico in cui il volume e' rotto senza che nessuno l'abbia detto.
+ *
+ * ⚠️ SE UNA DELLE DUE DATE MANCA si guarda solo la dimensione. Zero
+ * significa «questo volume non tiene le date» (ISO 9660 masterizzati
+ * male, volumi montati da altri sistemi): trattarlo come "1970" farebbe
+ * sembrare la destinazione vecchissima e proporrebbe di riscrivere tutto.
+ * ============================================================================= */
+#define STATO_UGUALE    0
+#define STATO_MANCANTE  1
+#define STATO_DIVERSO   2
+
+static int confronta(const char *da, const char *a)
+{
+    struct stat s, d;
+
+    if (stat(a, &d) != 0) return STATO_MANCANTE;
+    if (stat(da, &s) != 0) return STATO_UGUALE;   /* non c'e' nulla da copiare */
+
+    if (s.st_size != d.st_size) return STATO_DIVERSO;
+
+    /* Date assenti da una delle due parti: la dimensione ha gia' detto
+     * quello che si poteva dire. */
+    if (s.st_mtime == 0 || d.st_mtime == 0) return STATO_UGUALE;
+
+    return (s.st_mtime > d.st_mtime) ? STATO_DIVERSO : STATO_UGUALE;
+}
+
+/* Percorre una directory confrontando. Se `applica` e' 0 conta soltanto e
+ * stampa; se e' 1 copia quello che serve. */
+static int scorri_confronto(const char *sorgente, const char *punto,
+                            const char *dest, int applica, int *mancanti)
+{
+    DirEntry     voci[LISTDIR_MAX_BATCH];
+    char         pdest[PERC_MAX];
+    unsigned int start = 0;
+    int          n, da_fare = 0;
+
+    unisci(pdest, punto, dest);
+    if (applica) crea_dir(pdest);
+
+    while ((n = listdir_from(sorgente, voci, LISTDIR_MAX_BATCH, start)) > 0) {
+        int i;
+
+        for (i = 0; i < n; i++) {
+            char da[PERC_MAX], a[PERC_MAX];
+            int  st;
+
+            if (voci[i].is_dir) continue;
+            if (voci[i].name[0] == '.') continue;
+
+            unisci(da, sorgente, voci[i].name);
+            unisci(a,  pdest,    voci[i].name);
+            minuscolo(a + strlen(pdest));
+
+            st = confronta(da, a);
+            if (st == STATO_UGUALE) continue;
+
+            da_fare++;
+            if (st == STATO_MANCANTE && mancanti) (*mancanti)++;
+
+            if (applica) copia(da, a);
+            else printf("  %s %s\n", (st == STATO_MANCANTE) ? "+" : "~", a);
+        }
+
+        start += (unsigned int)n;
+        if (n < LISTDIR_MAX_BATCH) break;
+    }
+
+    return da_fare;
+}
+
 static void copia_dir(const char *sorgente, const char *punto, const char *dest)
 {
     DirEntry voci[LISTDIR_MAX_BATCH];
@@ -312,19 +405,87 @@ int main(int argc, char **argv)
     char            p[PERC_MAX], q[PERC_MAX];
     BootInstallInfo info;
     int             r;
+    int             aggiorna = 0;
 
-    if (argc != 2) {
-        printf("uso: install <punto di montaggio>\n\n");
+    if (argc < 2 || argc > 3) {
+        printf("uso: install [-a] <punto di montaggio>\n\n");
+        printf("Senza -a: installazione completa, riscrive tutto.\n");
+        printf("Con  -a: aggiorna solo i file cambiati, e prima li elenca.\n\n");
         printf("Il volume dev'essere gia' montato in lettura/scrittura:\n");
         printf("  disk                 elenca i dispositivi\n");
         printf("  mount hd0p1 /disk    monta\n");
-        printf("  install /disk        installa\n\n");
+        printf("  install /disk        installa\n");
+        printf("  install -a /disk     aggiorna\n\n");
         printf("Non partiziona e non formatta: sono operazioni distruttive\n");
         printf("e vanno fatte di proposito, non come effetto collaterale.\n");
         return 1;
     }
 
-    printf("Installazione di EX-OS in %s\n", argv[1]);
+    if (argc == 3) {
+        if (strcmp(argv[1], "-a") != 0) {
+            printf("install: opzione '%s' sconosciuta.\n", argv[1]);
+            return 1;
+        }
+        aggiorna = 1;
+        argv[1]  = argv[2];
+    }
+
+    /* =====================================================================
+     * MODO AGGIORNAMENTO: prima si guarda, poi si chiede, poi si scrive.
+     *
+     * ⚠️ L'ELENCO VIENE PRIMA DELLA DOMANDA, e non e' cortesia: "aggiorno
+     * 3 file?" e "aggiorno 47 file?" sono due decisioni diverse, e chi
+     * risponde deve poter vedere QUALI prima di dire di si'. Un
+     * aggiornamento che tocca tutto quando ci si aspettava un ritocco e'
+     * il momento in cui ci si accorge di aver montato il volume sbagliato.
+     * ===================================================================== */
+    if (aggiorna) {
+        int da_fare = 0, mancanti = 0;
+
+        printf("Confronto di %s con il supporto di avvio\n", argv[1]);
+        printf("  +  da creare    ~  da sostituire\n\n");
+
+        da_fare += scorri_confronto("/bin", argv[1], "bin", 0, &mancanti);
+        da_fare += scorri_confronto("/lib", argv[1], "lib", 0, &mancanti);
+        da_fare += scorri_confronto("/dev", argv[1], "dev", 0, &mancanti);
+
+        {
+            char kdest[PERC_MAX];
+            int  st;
+
+            unisci(kdest, argv[1], "boot");
+            unisci(kdest, kdest, "kernel.bin");
+            st = confronta("/KERNEL.BIN", kdest);
+            if (st != STATO_UGUALE) {
+                printf("  %s %s\n", (st == STATO_MANCANTE) ? "+" : "~", kdest);
+                da_fare++;
+            }
+        }
+
+        if (da_fare == 0) {
+            printf("Niente da aggiornare: il volume ha gia' tutto.\n");
+            return 0;
+        }
+
+        printf("\n%d file da aggiornare (%d nuovi).\n", da_fare, mancanti);
+        printf("Procedo? [si/no] ");
+
+        {
+            char risposta[16];
+            int  n = (int)read(0, risposta, sizeof(risposta) - 1);
+
+            if (n < 0) n = 0;
+            risposta[n] = '\0';
+            if (risposta[0] != 's' && risposta[0] != 'S') {
+                printf("Annullato: niente e' stato scritto.\n");
+                return 0;
+            }
+        }
+        printf("\n");
+    }
+
+    printf(aggiorna ? "Aggiornamento di EX-OS in %s\n"
+                    : "Installazione di EX-OS in %s\n", argv[1]);
     printf("  +  creato    ~  sostituito    !  errore\n\n");
 
     /* =====================================================================
@@ -420,9 +581,15 @@ int main(int argc, char **argv)
 
     /* --- 2. il resto del sistema --- */
     printf("\nSistema\n");
-    copia_dir("/bin", argv[1], "bin");
-    copia_dir("/lib", argv[1], "lib");
-    copia_dir("/dev", argv[1], "dev");
+    if (aggiorna) {
+        scorri_confronto("/bin", argv[1], "bin", 1, 0);
+        scorri_confronto("/lib", argv[1], "lib", 1, 0);
+        scorri_confronto("/dev", argv[1], "dev", 1, 0);
+    } else {
+        copia_dir("/bin", argv[1], "bin");
+        copia_dir("/lib", argv[1], "lib");
+        copia_dir("/dev", argv[1], "dev");
+    }
 
     /* --- 3. l'avvio vero e proprio --- */
     printf("\nSettori di avvio\n");

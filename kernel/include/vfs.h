@@ -58,6 +58,24 @@ typedef struct {
     uint32_t dimensione;
     uint8_t  is_dir;
     uint8_t  sola_lettura;
+
+/* ⚠️ DATA E ORA IN FORMATO FAT SU TUTTI I FILESYSTEM, e non e' pigrizia.
+ * E' il formato che attraversa gia' la syscall (Stat.st_date/st_time in
+ * kernel/include/syscall.h) e che la libc sa gia' convertire in time_t.
+ * Farne passare uno diverso vorrebbe dire due conversioni invece di una,
+ * e due occasioni di sbagliare il fuso o l'anno di partenza.
+ *
+ *   data  bit 15-9 anno-1980, 8-5 mese, 4-0 giorno
+ *   ora   bit 15-11 ore, 10-5 minuti, 4-0 secondi/2
+ *
+ * ⚠️ ZERO SIGNIFICA «NON LA SO», non «1 gennaio 1980». La libc lo tratta
+ * cosi' (vedi stat_da_grezzo) e i programmi stampano dei trattini: un
+ * 1980 inventato sembrerebbe una data vera.
+ *
+ * ⚠️ IL LIMITE E' 1980-2107. Un file ext2 datato prima del 1980 esce con
+ * data zero invece che con un anno negativo. */
+    uint16_t data;
+    uint16_t ora;
 } VfsStat;
 
 typedef struct {

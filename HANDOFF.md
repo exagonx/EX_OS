@@ -2,6 +2,955 @@
 
 ---
 
+# SESSIONE 2026-08-04 (ac) — GCC compila, e la virgola mobile nella printf
+
+Kernel **0.175**. `/bin/libctest` passa **273 prove su 273**.
+
+## ⛔ IL DIFETTO PRINCIPALE: I COSTRUTTORI GLOBALI NON VENIVANO MAI CHIAMATI
+
+`cc1` moriva in `et_splay()` con un puntatore nullo. Sembrava un difetto
+di GCC. Era il **nostro codice di avvio**.
+
+In C++ un oggetto globale ha un costruttore che deve girare **prima di
+`main`**; il compilatore ne mette il puntatore in `.init_array` e sta al
+runtime percorrerla. `_libc_start` non lo faceva. `cc1` ne ha **57**:
+
+```
+[ 4] .init_array  INIT_ARRAY  0a1be000  0000e4   (228 byte = 57 voci)
+```
+
+Fra quei 57, `static object_allocator<et_occ> et_occurrences` — il pool
+della foresta ET. Mai costruito, `allocate()` restituiva NULL.
+
+⚠️ **Non si era mai visto** perché i programmi di EX-OS sono in C e la
+prova di libstdc++ costruisce i propri oggetti *dentro* `main`.
+
+Corretto in `_libc_start` (`.preinit_array` + `.init_array`) e in `exit()`
+(`.fini_array`, **all'indietro** come dice la specifica, e **dopo** gli
+handler di `atexit` — uno di quelli può usare un oggetto globale).
+
+I simboli sono `weak`: i nostri linker script non li definiscono, e un
+weak non definito vale zero, quindi il ciclo non gira. Dichiararli forti
+farebbe fallire il link di ogni programma di EX-OS.
+
+**Risultato**: `cc1` compila `int main(void){return 0;}` e produce
+assembly vero.
+
+## `printf` in virgola mobile
+
+`%f`, `%e`, `%g` e maiuscole, con larghezza, precisione, flag e `L`.
+
+Validato estraendo il motore e confrontandolo con glibc: **390 confronti
+identici su 399**; i 9 restanti compaiono solo oltre le 18 cifre
+significative.
+
+⚠️ **18 è un numero MISURATO**: fino a 18 nessuna discordanza, a 19 la
+prima, a 22 cinque. Oltre si stampano zeri — un `double` porta 17 cifre di
+informazione, il resto è l'espansione del valore *binario*.
+
+Due difetti trovati proprio da quel confronto:
+
+- **arrotondamento**: `%.0f` di 2.5 dava 3, lo standard dice 2
+  (arrotondamento **al pari**). Arrotondare sempre verso l'alto accumula,
+  su una colonna di valori, un errore che cresce col numero di righe.
+- **cifre inventate**: `1234567890123456.0` con `%.6f` dava `...000012` su
+  un valore **esatto** — chiedevo 22 cifre a un numero che ne porta 16.
+
+## ⛔ `time_t` a 64 bit, e un orologio che tornava indietro
+
+Il rapporto dei tempi di `cc1` dava `phase setup: 18446744070.44` — 2⁶⁴
+meno qualcosa, cioè un intervallo **negativo**. Due cause, entrambe
+nostre.
+
+**1. `gettimeofday` mescolava due orologi**: secondi dal CMOS, microsecondi
+dal contatore dei tick. Indipendenti, e la coppia poteva **tornare
+indietro**. Ora scorrono dalla stessa sorgente, ancorata una volta all'ora
+reale. Prezzo dichiarato: non insegue più una correzione dell'ora.
+
+**2. `time_t` era a 32 bit.** GCC calcola
+`tv.tv_sec * 1000000000 + tv.tv_usec * 1000`, e a 32 bit quella
+moltiplicazione **trabocca prima di essere allargata**. Non è codice di
+GCC da correggere: è codice giusto su un `time_t` giusto. (Risolve anche
+il 2038, che nel 2026 non è una scadenza da scriversi in partenza.)
+
+## ⚠️ E UN ERRORE MIO CHE COSTA ORE
+
+Cambiato `time_t`, ho **solo rilinkato** `cc1`. Gli oggetti già compilati
+credevano `struct timeval` di 8 byte; la nuova `libc.a` ne scrive 12.
+`gettimeofday` corrompeva lo stack del chiamante e `cc1` si bloccava
+**senza dire niente**.
+
+**Cambiare un tipo in un header pubblico è un cambio di ABI: rilinkare non
+basta, va ricompilato tutto.** Ricostruzione di GCC in corso.
+
+⚠️ `as` e `ld` nativi **non** sono toccati: sono già linkati con la libc
+vecchia e sono autoconsistenti. Verificato — assemblano e producono un
+oggetto di 652 byte. Ma il giorno che si ricostruiscono, vanno
+ricompilati, non rilinkati.
+
+## Due difetti minori, trovati verificando
+
+- **`ls <file>` diceva «impossibile leggere»** su un file che c'era:
+  `listdir()` fallisce su tutto ciò che non è una directory. Ci sono
+  cascato io stesso — per un momento ho creduto che `as` non avesse
+  scritto niente. Ora `ls` ripiega su `stat()` e mostra la voce singola.
+- **I file creati da EX-OS non avevano data**: `fat12.c` scriveva
+  `date = 0, time = 0`. Non dava fastidio finché nessuno le guardava; da
+  quando c'è `ls -d`, ogni file appena scritto mostrava dei trattini —
+  che significano «questo volume non tiene le date», falso su un FAT12.
+  ⚠️ Se il CMOS non risponde si lascia zero: una data inventata sarebbe
+  peggio, perché zero vuol dire «non la so» e 1980 sembra un fatto.
+
+## File modificati
+
+- `lib/libc.c` — costruttori/distruttori globali, motore in virgola
+  mobile, `gettimeofday` monotona
+- `lib/include/libc.h` — `time_t` a 64 bit, `struct timeval`
+- `bin/libctest/libctest.c` — 21 verifiche di `printf` in virgola mobile
+- `bin/ls/ls.c` — il file singolo
+- `kernel/fs/fat12.c` — data e ora di creazione
+- `Makefile` — il CD degli strumenti dipende dai binari che impacchetta
+- `kernel/include/version.h` — 0.174 -> 0.175
+
+---
+
+# SESSIONE 2026-08-04 (ab) — autoexec, e una corsa che rendeva inutili gli script
+
+Kernel **0.174**. `/bin/libctest` passa **271 prove su 271**.
+
+## `/boot/autoexec.sh`
+
+Una riga = un comando, eseguito **esattamente come se fosse digitato**.
+
+⚠️ **Il dispatch dei comandi è stato ESTRATTO dal ciclo principale della
+shell**, e non per eleganza: serviva un secondo chiamante. L'autoexec deve
+eseguire i comandi con gli stessi built-in, le stesse virgolette e lo
+stesso `&`. Scrivere un secondo interprete accanto al primo avrebbe
+significato due comportamenti che divergono al primo comando aggiunto da
+una parte sola.
+
+⚠️ **Solo la shell della console 0.** EX-OS avvia una shell per ognuna
+delle quattro console: senza il controllo l'autoexec girerebbe quattro
+volte, e `/dev/pci.drv &` diventerebbe quattro processi che si contendono
+lo stesso servizio, con tre che falliscono a ogni avvio.
+
+⚠️ **La condizione è «la console», non «sono la prima shell»**, ed è
+deliberato: un autoexec che lancia `sh` non deve rilanciare l'autoexec. Con
+la seconda formulazione sarebbe un ciclo infinito di processi.
+
+⚠️ **La via d'uscita esiste prima di servire**: `autoexec=0` in
+`kernel.cfg`, e soprattutto le altre tre console che partono pulite. La
+seconda non richiede di poter modificare niente — ed è quella che conta,
+perché il file da correggere sta sul supporto che non si raggiunge più.
+
+## ⛔ La corsa che rendeva inutile qualunque script
+
+Prima prova dell'autoexec:
+
+```
+autoexec> /dev/ip.drv &
+autoexec> dhcp
+Il servizio 'ip' non e' attivo.
+```
+
+Un servizio lanciato con `&` **esiste come processo molto prima di essere
+registrato**: deve trovare l'hardware, inizializzarlo, e solo allora
+chiamare `ipc_register()`. Fra i due momenti passano decine di
+millisecondi — e uno script lancia il comando successivo subito.
+
+Era **generale**, non di questo script: qualunque riga che avvia un
+servizio e lo usa subito falliva. `netdetect -c` non ne soffriva solo
+perché aspetta già per conto suo.
+
+La correzione sta in `rete_richiedi()`, non nell'autoexec: aspetta fino a
+2 secondi che il nome compaia nel registro. Così vale per **tutti** i
+client — un `sleep` nello script avrebbe corretto un caso e lasciato in
+piedi il difetto.
+
+Dopo: DHCP completa dall'autoexec, DNS 10.0.2.3 configurato, e `ping` e
+`host` funzionano senza toccare niente dopo l'avvio.
+
+## File nuovi e modificati
+
+- `boot/autoexec.sh` — nuovo, accende la rete
+- `bin/sh/shell.c` — `esegui_riga()` estratta, `esegui_autoexec()`
+- `lib/rete.c` — `rete_richiedi()` aspetta un servizio che sta partendo
+- `bin/ftp/ftp.c` — `rifiutato()` spostata prima del primo uso
+- `Makefile` — l'autoexec sul CD
+- `kernel/include/version.h` — 0.173 -> 0.174
+
+---
+
+# SESSIONE 2026-08-04 (aa) — Client FTP: il primo programma sopra TCP
+
+Kernel **0.173**. `/bin/libctest` passa **271 prove su 271**.
+
+## La prova che conta: andata e ritorno, byte identici
+
+```
+ftp 10.0.2.2 -p 2131 get grande.txt /disco/giu.bin   -> 4053 byte
+ftp 10.0.2.2 -p 2131 put /disco/giu.bin ritorno.txt  -> 4053 byte
+cmp grande.txt ritorno.txt                           -> IDENTICI
+```
+
+Un file scaricato su EX-OS, scritto su ext2, riletto, rimandato su, e
+byte-identico sull'host. ⚠️ **La sola dimensione non avrebbe provato
+niente**: 4053 byte possono essere 4053 byte nell'ordine sbagliato. Il
+confronto dimostra insieme la ricezione TCP (ordine e riassemblaggio),
+l'invio, la scrittura ext2 e il client in entrambi i versi.
+
+## Scelte del client
+
+⚠️ **Solo modo passivo**, per la ragione detta in `ip_proto.h`: il modo
+attivo vuole che il *client* si metta in ascolto, e il nostro TCP non sa
+farlo. Non è un ripiego — il modo attivo non funziona dietro un NAT.
+
+⚠️ **Le risposte FTP possono essere su più righe.** La regola è il
+**trattino** dopo il codice: `220-Benvenuto` continua, `220 Pronto`
+chiude. Leggere solo la prima riga significa trovarsi le successive in
+testa alla risposta del comando *dopo*, e da lì in avanti ogni codice
+letto è quello sbagliato.
+
+⚠️ **Del `PASV` si cercano i numeri, non si segue un formato.** Il testo
+fra il codice e la parentesi cambia da server a server («Entering Passive
+Mode», «=», tradotto): affidarsi alle parole vorrebbe dire funzionare con
+un server e non col successivo.
+
+⚠️ **Se il `PASV` annuncia un indirizzo diverso da quello a cui siamo
+connessi, si usa quello vero.** Un server dietro NAT annuncia il proprio
+indirizzo privato, irraggiungibile da fuori: la porta è l'informazione
+utile.
+
+⚠️ **La password in chiaro si dice all'accesso**, una volta. È il
+protocollo, non il programma.
+
+## Due difetti trovati provando
+
+1. **Il client proseguiva su un `550`.** Controllava solo che non ci
+   fosse un errore di *trasporto*: su «file inesistente» apriva il file
+   locale, non leggeva niente e annunciava «0 byte» — cioè dichiarava
+   riuscito un trasferimento mai avvenuto, **lasciando in giro un file
+   vuoto al posto di quello vero**. Ora un codice ≥ 400 è un rifiuto.
+2. **Il server di prova raddoppiava i percorsi**: `sicuro()` riceveva un
+   percorso già assoluto e ci rifaceva sopra `join(RADICE, ...)`. Il
+   client riceveva un `550` corretto per un file che c'era. Difetto dello
+   scaffolding, ma uno scaffolding sbagliato fa fallire prove buone.
+
+## Un errore di misura, di nuovo
+
+La prima prova FTP è girata **senza `EXOS_NO_FLOPPY=1`**: radice sul
+floppy, e niente `/dev/pci.drv`. ⚠️ Le istruzioni della catena di rete
+introdotte nella sessione (w) hanno però detto esattamente cosa mancava e
+quale fosse il primo passo — è la prima volta che quel meccanismo mi ha
+fatto risparmiare tempo invece di costarne.
+
+## File nuovi e modificati
+
+- `bin/ftp/ftp.c`, `ftp.ld` — nuovi
+- `tools/ftpserver-prova.py` — nuovo (scaffolding, **non** un server FTP)
+- `Makefile` — target `ftp`
+- `kernel/include/version.h` — 0.172 -> 0.173
+
+---
+
+# SESSIONE 2026-08-04 (z) — TCP
+
+Kernel **0.172**. `/bin/libctest` passa **271 prove su 271**.
+
+```
+ex-os:/> tcptest example.com 80
+connessione a 172.66.147.243:80 ...
+connessa (id 1)
+mandati 18 byte
+HTTP/1.1 403 Forbidden
+Server: cloudflare
+--- ricevuti 408 byte ---
+```
+
+DNS → ARP → IP → TCP, dati in entrambi i versi attraverso il NAT di QEMU.
+Il 403 è **HTTP**, non TCP: `GET / HTTP/1.0` senza `Host` viene rifiutato
+da Cloudflare (`error code: 1003`). Quella risposta è la prova che il
+trasporto funziona — 408 byte riassemblati **nell'ordine giusto**.
+
+## Scopo dichiarato: solo connessioni in uscita
+
+Manca il ramo `LISTEN`/`SYN_RECEIVED`, che è circa metà del lavoro e serve
+a fare da **server**. La ragione è che il primo cliente di questo TCP è un
+client FTP in modo **passivo** (`PASV`), che apre lui stesso anche la
+connessione dati; il modo attivo richiederebbe l'ascolto e **non funziona
+comunque dietro un NAT** come quello di QEMU.
+
+Si fa la metà che serve, e si scrive che è metà.
+
+## I punti che vale la pena aver scritto
+
+⚠️ **I numeri di sequenza si confrontano con la sottrazione, mai con `<`.**
+Sono a 32 bit e si avvolgono: `a < b` su due valori a cavallo
+dell'avvolgimento dà la risposta rovesciata. Succede una volta ogni 4 GB
+trasmessi — cioè raramente, e sempre quando la connessione è carica. La
+forma giusta è `(int32_t)(a - b) < 0`, che resta corretta perché la
+*differenza* è piccola anche quando i due valori sono lontanissimi.
+
+⚠️ **L'intestazione TCP può essere più lunga di 20 byte.** Le opzioni
+(MSS, timestamp, SACK permitted) stanno lì, e il campo `data offset` dice
+quanto. Non ne leggiamo nessuna, ma vanno **saltate**: senza, i primi byte
+di dati sarebbero le opzioni interpretate come contenuto.
+
+⚠️ **Il FIN va dopo i dati in coda.** Il suo numero di sequenza è quello
+che segue l'ultimo byte accodato, non `snd_nxt` corrente: chiudere mentre
+c'è ancora roba da mandare deve chiudere *dopo* averla mandata.
+
+⚠️ **Non si conferma quello che non si può tenere.** Se il buffer di
+ricezione è pieno si rimanda l'ACK vecchio: confermare dati che poi si
+buttano vorrebbe dire che il mittente li considera consegnati e non li
+ritrasmette mai più.
+
+⚠️ **`IP_MSG_TCP_APRI` può rispondere `-EAGAIN`**, e non è un fallimento:
+significa che lo stack ha appena chiesto l'ARP del prossimo salto. La
+macchina a stati di TCP ha già i suoi tempi; infilarci dentro anche
+l'attesa dell'ARP vorrebbe dire due scadenze annidate sulla stessa
+connessione. Il client riprova dopo 200 ms e trova la tabella piena.
+
+⚠️ **`IP_MSG_TCP_INVIA` può accettare MENO byte di quelli offerti**, e il
+valore restituito è quanti ne sono entrati. Rifiutare tutto quando il
+buffer è quasi pieno obbligherebbe il client a ritentare l'intero blocco;
+accettarli tutti vorrebbe dire scrivere oltre il buffer.
+
+⚠️ **Si risponde a `IP_MSG_TCP_RICEVI` anche con zero byte**, quando la
+connessione è finita. Altrimenti un client resterebbe fermo ad aspettare
+dati da una connessione già chiusa — e «i dati sono finiti» è proprio
+l'informazione che gli serve.
+
+⚠️ **Solo chi ha aperto la connessione può usarla.** L'identificativo è un
+numero piccolo e indovinabile: senza il controllo del proprietario, un
+processo qualunque potrebbe leggere i dati di un altro.
+
+**Niente TIME_WAIT**, ed è una decisione: aspettare due minuti per un
+segmento in ritardo terrebbe occupata una delle quattro connessioni per
+tutto quel tempo, e su questo sistema quel prezzo è più alto del rischio.
+
+## Cosa non fa, tutto in `ip_proto.h`
+
+- **Niente riordino**: un segmento fuori sequenza si scarta e si
+  riconferma. Corretto ma non efficiente — tenere i pezzi vuole una lista
+  con le sue scadenze, ed è il posto dove un TCP giovane prende i bug
+  peggiori.
+- **Niente controllo di congestione**: nessuno slow start, nessuna
+  congestion window.
+- **RTO fisso** che raddoppia da 600 ms. Misurarlo davvero (Karn,
+  Jacobson) è il passo dopo, non questo.
+- **Niente SACK, window scaling, timestamp.**
+
+## Refactoring che ha reso possibile il resto
+
+`udp_prepara_somma()` aveva `IP_PROTO_UDP` scritto dentro. Ora il
+protocollo è un **parametro** (`pseudo_somma`): UDP e TCP usano la stessa
+pseudo-intestazione salvo quel byte, e duplicare la funzione avrebbe
+significato due posti dove sbagliare la stessa cosa — nel punto preciso in
+cui un errore **non si vede**, perché il pacchetto parte, sembra giusto, e
+l'altro lo butta.
+
+## Verificato
+
+```
+tcptest 10.0.2.2 8099    server HTTP locale: 214 byte, risposta completa
+tcptest example.com 80   DNS + NAT + Internet: 408 byte da Cloudflare
+libctest                 271/271
+```
+
+## Prossimo passo
+
+Il **client FTP**, che ora è un programma normale: `USER`/`PASS`, `PASV`,
+`LIST`, `RETR`, `STOR`. Poi TLS — e quello resta un progetto di mesi, non
+una libreria da aggiungere.
+
+## File nuovi e modificati
+
+- `bin/tcptest/tcptest.c`, `tcptest.ld` — nuovi
+- `drivers/net/ip_proto.h` — protocollo TCP verso i client
+- `drivers/ip/ip.c` — il motore TCP, `pseudo_somma` generica, `metti32`/`prendi32`
+- `Makefile` — target `tcptest`
+- `kernel/include/version.h` — 0.171 -> 0.172
+
+---
+
+# SESSIONE 2026-08-04 (y) — SSE, e cc1 comincia a compilare
+
+Kernel **0.171**. `/bin/libctest` passa **271 prove su 271**.
+
+## ⛔ SSE NON ERA MAI STATO ACCESO, ed era il muro contro cui moriva cc1
+
+```
+[FAULT] cc1: eccezione 6 (#UD Invalid Opcode) a EIP=0x09a8fe44
+```
+
+`addr2line` → `search_line_sse2()` di `libcpp/lex.cc`. Il disassemblato:
+
+```
+9a8fe44:  66 0f 6f 28    movdqa (%eax),%xmm5
+```
+
+`movdqa` è SSE2. Il `#UD` non vuol dire «istruzione inesistente»: vuol
+dire che **CR4.OSFXSR non era impostato**, cioè che il sistema operativo
+non aveva mai dichiarato alla CPU di saper salvare i registri XMM. Il
+kernel gestiva solo x87 (`fnsave`/`frstor`, 108 byte).
+
+### Cosa serviva davvero, e cosa no
+
+⚠️ **MMX non aveva bisogno di niente**, ed è il punto meno ovvio. I
+registri MM0-MM7 sono **alias** di ST0-ST7 (usano le mantisse a 64 bit):
+`FNSAVE` e `FXSAVE` li salvavano già, perché è la stessa memoria fisica.
+Nessun bit di CR4, nessuna area in più. MMX funzionava dal kernel 0.144,
+da quando la FPU viene inizializzata — semplicemente nessuno l'aveva
+verificato.
+
+**SSE invece serve due bit e un formato diverso:**
+
+| | |
+|---|---|
+| `CR4.OSFXSR` (9) | dice alla CPU che sappiamo salvare con FXSAVE |
+| `CR4.OSXMMEXCPT` (10) | dice che sappiamo gestire l'eccezione #XF |
+| `FXSAVE`/`FXRSTOR` | 512 byte, x87 **e** XMM insieme |
+
+⚠️ **Servono `FXSR` E `SSE`, che in CPUID sono bit distinti** — proprio
+perché esistono CPU con l'uno e non con l'altro. Accendere OSFXSR senza
+FXSAVE vorrebbe dire promettere alla CPU un salvataggio che non sappiamo
+fare.
+
+⚠️ **Senza OSXMMEXCPT un errore SIMD arriva come #UD**, cioè come
+«istruzione inesistente» su un'istruzione che esiste benissimo: la
+diagnosi peggiore possibile.
+
+⚠️ **MXCSR va scritta a mano nel modello pulito.** `FNINIT` azzera l'x87
+ma non tocca MXCSR, e `FXRSTOR` **rifiuta con #GP** un'area il cui MXCSR
+abbia bit riservati accesi. Se il modello uscisse da memoria mai scritta,
+ogni processo nuovo morirebbe al primo cambio di contesto.
+
+⚠️ **FXSAVE pretende l'allineamento a 16.** Il campo `fpu_state` del PCB
+era già `ALIGNED(16)`: un indirizzo disallineato non è lento, è una #GP
+**dentro il cambio di contesto**.
+
+### Tutto a tempo di esecuzione, mai di compilazione
+
+Lo stesso `kernel.bin` deve partire su un 486 senza CPUID e su una
+macchina con SSE3. Una `#ifdef` produrrebbe due kernel diversi, e quello
+con SSE morirebbe alla prima istruzione sul 486.
+
+⚠️ **L'ordine delle domande è obbligato**: non si può chiedere a CPUID se
+CPUID esiste (lo si scopre col bit ID di EFLAGS), e non si può chiedere la
+foglia 1 senza aver prima chiesto alla foglia 0 fin dove si arriva — su
+una CPU che si ferma a 0, leggere la 1 restituisce numeri plausibili e
+falsi.
+
+Le due vie di salvataggio **non sono intercambiabili**: FNSAVE scrive 108
+byte in un formato, FXSAVE 512 in un altro. La scelta è fatta una volta
+all'avvio e non cambia mai, quindi nessun processo può salvare in un
+formato ed essere ripristinato nell'altro.
+
+```
+[INFO] FPU: x87 presente, salvataggio con FXSAVE (512 byte per processo)
+[INFO] CPU: cpuid mmx sse sse2 sse3 cmov
+```
+
+### Il prezzo, misurato
+
+| | prima | dopo |
+|---|---|---|
+| `kernel.bin` | 180584 | **184680** (+4 KB) |
+| BSS | 964 KB | **990 KB** (+26 KB) |
+
+I 26 KB sono `(512-108) × 64 processi`. Il BSS non sta nel file.
+
+⚠️ **E QUI VA CORRETTA UNA PREMESSA**: il kernel **non gira nei 640 KB di
+memoria convenzionale**, e non l'ha mai fatto. Viene caricato a
+`0x00100000` — 1 MB, cioè memoria **estesa** — e il PMM lo dichiara:
+
+```
+PMM: kernel+bitmap protetti: 0x00100000 - 0x00224000
+```
+
+Occupa da 1 MB a ~2,1 MB. La memoria convenzionale sotto i 640 KB la usano
+solo stage1 e stage2 durante l'avvio, in modo reale, prima del passaggio a
+32 bit. Contenere la dimensione resta giusto; il limite dei 640 KB non è
+il vincolo che lo misura.
+
+## cc1 adesso compila (e cade più avanti)
+
+Con SSE acceso, `cc1 /cdrom/prova-cc1.c -o /prova.s` **arriva a lavorare**:
+
+```
+ calcola main
+Analyzing compilation unit
+[FAULT] page fault a 0x00000004 ... EIP=0x0827f9ad
+```
+
+Le prime due righe sono di cc1: ha **letto il sorgente, riconosciuto le
+due funzioni e iniziato l'analisi**. Il fault è in `et_splay()` di
+`gcc/et-forest.cc` — la foresta ET che GCC usa per l'albero dei
+dominatori — chiamata con un puntatore nullo.
+
+⚠️ **Non è memoria**: identico con 256 MB e con 512 MB. È qualcosa che
+restituisce NULL e non dovrebbe, quasi certamente ancora nella nostra
+libc. È il prossimo filo da tirare.
+
+## File modificati
+
+- `kernel/arch/x86/entry.asm` — `read_cr4`/`write_cr4`, `cpuid_*`
+- `kernel/arch/x86/fpu.c` — rilevamento, CR4, FXSAVE/FXRSTOR
+- `kernel/include/fpu.h` — `FPU_STATE_SIZE` 108 -> 512, `CpuCapacita`
+- `kernel/include/kernel.h` — dichiarazioni
+- `kernel/include/version.h` — 0.170 -> 0.171
+
+---
+
+# SESSIONE 2026-08-04 (x) — Nomi lunghi su FAT, e due allarmi che non lo erano
+
+Kernel **0.170**. `/bin/libctest` passa **271 prove su 271**.
+
+## L'avvio da CD non era rotto: era rumoroso
+
+Segnalato come guasto:
+
+```
+[WARN]  FAT12: READ LBA=1 fallita, ritento (2/5)
+[ERROR] FAT12: errore FDC READ LBA=1 ...
+[WARN]  [PASSO 13d] 'cd0' su '/cdrom' non montato (errore -16)
+```
+
+Il sistema **si avviava correttamente** — `VFS: root '/' su cd0`, versione
+giusta, shell al prompt. Erano due difetti di **segnalazione**, e vale la
+pena averli sistemati lo stesso: dieci righe rosse a ogni avvio riuscito
+insegnano a non leggere il registro.
+
+**Causa 1: FAT12 serve anche da SONDA.** `vfs_init()` decide di montare il
+CD come radice proprio quando `fat12_init()` fallisce — dietro
+l'emulazione floppy di El Torito non c'è nessun controller, e quel
+fallimento *è il segnale*. Ma la macchina dei ritentativi (giusta per un
+floppy vero che sbaglia una lettura, e che registra ogni tentativo perché
+un disco che funziona solo grazie ai ritentativi sta per morire)
+produceva 5 ERROR e 4 WARN per una condizione normale.
+
+Aggiunta `fat12_sonda()`: un tentativo, in silenzio. Se il drive non c'è,
+non ci sarà nemmeno al terzo, e il recalibrate fra uno e l'altro costa
+mezzo secondo per niente.
+
+**Causa 2: `-16` è `EBUSY`, cioè un successo.** Avviando dal CD, `vfs_init`
+lo monta come radice e poi `[mount]` di `kernel.cfg` prova a montarlo di
+nuovo su `/cdrom`. Ora: `'cd0' e' gia' montato altrove (e' la radice):
+'/cdrom' non serve`.
+
+Risultato: **avvio da CD con zero ERROR e zero WARN**, avvio da floppy
+invariato.
+
+## Nomi lunghi su FAT (VFAT), in lettura
+
+`fat.c` saltava tutte le voci con attributo `0x0F`. Un file creato da
+Windows o da Linux come `appunti di riunione.txt` compariva come
+`APPUNT~1.TXT` — e siccome anche la **ricerca** usava solo l'8.3, quello
+era anche l'unico nome con cui si poteva aprire.
+
+Ora le catene LFN si accumulano e si compongono. `FAT_NOME_MAX` da 13 a
+256, che è anche il massimo di `VfsDirEntry`: i due numeri combaciano di
+proposito, così nessun nome si perde nel passaggio fra i livelli.
+
+⚠️ **La somma di controllo non è facoltativa.** Ogni voce LFN porta la
+somma del nome 8.3 a cui appartiene, e serve a riconoscere le catene
+**orfane**: un sistema che non conosce i nomi lunghi può cancellare la
+voce 8.3 lasciando indietro i frammenti, e attaccarli al primo 8.3 che
+capita darebbe a un file il nome di un altro.
+
+⚠️ **Si confronta col nome lungo se c'è, altrimenti con l'8.3 — e se il
+lungo non combacia si riprova con l'8.3.** Confrontare solo col lungo
+renderebbe impossibile aprire un file col suo alias corto, che è un nome
+legittimo.
+
+⚠️ **L'azzeramento dell'accumulatore va fatto anche sulle voci SALTATE
+dalla paginazione**, o il nome lungo di una voce saltata resterebbe
+attaccato alla successiva — in una directory paginata, un file col nome
+di un altro.
+
+**Solo lettura**, e detto: creare un nome lungo vorrebbe dire allocare più
+voci consecutive e inventare un alias unico (`NOME~1`, `NOME~2`…).
+**Solo ASCII**: sopra `0x7F` diventa `?`, perché inventare una traduzione
+qui significherebbe scegliere una codifica per tutto il sistema.
+
+Provato con un FAT32 scritto da `mtools`: `ls` mostra i nomi veri, e
+`cat` funziona sia col nome lungo sia con `UNNOME~1.DAT`.
+
+## `mkfs` sceglie dalla dimensione
+
+`-t` è ora facoltativo: fino a 2 GB FAT16, oltre FAT32. Non è una soglia
+tonda — FAT16 arriva a 65524 cluster, che con i 32 KB per cluster che
+`scegli()` usa al massimo fanno poco più di 2 GB. Sotto, FAT16 è
+preferibile: tabella metà più piccola e root a dimensione fissa.
+
+⚠️ **ext2 non entra mai nella scelta automatica**: è un formato che si
+chiede, non uno in cui si finisce.
+
+Corretta anche una nota ormai falsa nell'aiuto, che diceva «il driver di
+lettura ext2 non c'è ancora».
+
+Provato su due dischi veri: 511 MB → FAT16, 6143 MB → FAT32.
+
+## ⚠️ MI ERO SBAGLIATO SULLE VIRGOLETTE
+
+Avevo scritto che «la shell non gestisce gli spazi negli argomenti».
+**Non è vero**: `parse_line()` gestisce le virgolette doppie da prima di
+questa sessione. Non avevo provato — avevo dedotto dal fallimento di
+`cat /disco/appunti di riunione.txt`, che senza virgolette deve fallire.
+
+Quello che davvero mancava è che **nessuno lo diceva**: non era in `help`
+né nel README. Una funzione che c'è e non si sa che c'è vale quanto una
+che non c'è.
+
+Aggiunti: apici singoli (identici ai doppi — qui non c'è nessuna
+espansione da cui proteggersi, quindi non avrebbero niente da
+distinguere), la segnalazione di una virgoletta non chiusa (prima
+l'argomento si prendeva fino a fine riga in silenzio) e l'avviso quando
+gli argomenti superano il sedicesimo (prima sparivano, e un comando che
+riceve metà dei suoi argomenti fa qualcosa di diverso senza fallire).
+
+## Un buco nell'attrezzatura, non nel codice
+
+La prova dell'alias 8.3 è caduta con `ValueError: carattere non mappato:
+'~'`. Non era il sistema: era il pilota QEMU che non sapeva digitare `~`.
+⚠️ **Un carattere non mappato fa cadere lo script a metà prova, e la prova
+sembra fallita quando invece non è mai partita.** Completata la mappa con
+tutta la punteggiatura ASCII.
+
+## Verificato
+
+```
+avvio da CD          0 ERROR, 0 WARN, radice su cd0
+avvio da floppy      invariato
+mkfs hd0p1           511 MB -> FAT16 ; 6143 MB -> FAT32
+ls /disco (FAT32)    nomi lunghi veri
+cat "<nome lungo>"   funziona
+cat UNNOME~1.DAT     funziona (alias 8.3)
+cat '<nome lungo>'   funziona (apici singoli)
+cat "senza chiusura  "sh: manca la virgoletta di chiusura"
+libctest             271/271
+```
+
+## File modificati
+
+- `kernel/fs/fat12.c`, `kernel/include/fat12.h` — `fat12_sonda()`
+- `kernel/kernel_main.c` — sonda invece di init, `EBUSY` non è un guasto
+- `kernel/fs/fat.c`, `kernel/include/fat.h` — VFAT in lettura
+- `bin/mkfs/mkfs.c` — scelta automatica, aiuto aggiornato
+- `bin/sh/shell.c` — apici singoli, riga malformata, `help`
+- `tools/qemu_drive.py` — punteggiatura completa nella mappa dei tasti
+- `kernel/include/version.h` — 0.169 -> 0.170
+
+---
+
+# SESSIONE 2026-08-04 (w) — `ls` cresce, e il floppy si costruiva vecchio
+
+Kernel **0.168**. `/bin/libctest` passa **271 prove su 271**.
+
+## ⛔ IL DIFETTO DA RICORDARE: `make -j` COSTRUIVA IL FLOPPY CON I BINARI VECCHI
+
+```
+floppy: $(STAGE1_BIN) $(STAGE2_BIN) $(KERNEL_BIN)
+```
+
+`mkfloppy.sh` copia quello che **trova** in `build/bin` nel momento in cui
+parte, e questa regola non dipendeva da nessuno dei programmi. Con
+`make -j2` niente le impediva di partire mentre `ls`, `chkdsk` e gli altri
+si stavano ancora compilando: **l'immagine veniva costruita con i binari
+di prima**, e la prova successiva girava su codice che non era quello
+appena scritto.
+
+Con `-j1` funzionava — ma solo per l'ordine in cui stanno scritte le
+prerequisite di `all`, cioè per caso.
+
+⚠️ **Non dava nessun errore: dava un risultato sbagliato che sembrava
+giusto.** L'ho trovato perché una correzione all'impaginazione di `ls`
+«non funzionava», e confrontando le date:
+
+```
+10:58:03  bin/ls/ls.c
+10:58:07  build/bin/ls
+10:58:03  dist/floppy.img     <- l'immagine e' PIU' VECCHIA del binario
+```
+
+Corretto con `PROGRAMMI_FLOPPY`, l'elenco di tutto ciò che finisce
+nell'immagine, come prerequisita di `floppy`.
+
+⚠️ **E la variabile è definita in TESTA al Makefile**, non accanto alla
+regola: le prerequisite si espandono quando make legge la riga, e una
+variabile definita più sotto risulta vuota. È lo stesso errore di
+`PCI_DRV_PROTO`/`NET_PROTO` di ieri — l'ho rifatto e me ne sono accorto
+solo rileggendo il `grep`. Vale la pena controllarlo ogni volta che si
+aggiunge una lista di prerequisite.
+
+## Le date arrivano davvero dal filesystem
+
+Il `-d` chiesto («dimensione, data e ora») non poteva funzionare: `sys_stat`
+scriveva `st_date = 0` e `st_time = 0` **fissi**. Il VFS non trasportava le
+date affatto.
+
+Il lato utente era già pronto — `stat_da_grezzo()` in libc converte data
+FAT → `time_t` e sa già che zero significa «il volume non la tiene».
+Mancava solo il kernel. Ora `VfsStat` porta `data` e `ora`, e i quattro
+driver le riempiono:
+
+| | |
+|---|---|
+| FAT12 | `Fat12Stat` le aveva già, bastava passarle |
+| FAT16/32 | byte 22-25 della voce di directory, formato nativo |
+| ext2 | da `i_mtime` (offset 16 dell'inode), con conversione |
+| ISO 9660 | dai sette byte all'offset 18 del record |
+
+**Formato FAT su tutti**, e non per pigrizia: è quello che attraversa già
+la syscall (`Stat.st_date`) e che la libc sa già convertire. Farne passare
+un altro vorrebbe dire due conversioni invece di una.
+
+⚠️ **Zero significa «non la so», non «1 gennaio 1980».** Il limite del
+formato è 1980-2107: un file ext2 più vecchio esce senza data invece che
+con un anno sbagliato.
+
+⚠️ **L'offset ISO l'avevo sbagliato di uno**: avevo scritto «sette byte
+dall'offset 17» e poi indicizzato `rec[18-1]`. Se ne è accorto il test —
+tutte le date del CD uscivano a trattini.
+
+⚠️ **`mkiso.py` scriveva una data fissa** (2026-08-01 12:00) in ogni
+record. Ora scrive quella vera di costruzione: un CD i cui file dichiarano
+tutti la stessa data inventata non è neutro, `ls -d` la mostra e chi
+guarda ci crede.
+
+## `ls`: sei opzioni
+
+```
+-h / -help / --help    l'aiuto
+-mc                    a colonne
+-d                     dettagli: dimensione, data, ora
+-md                    dettagliato stile dir, con gli attributi
+-a                     mostra i nomi che cominciano con un punto
+-p                     una pagina per volta
+```
+
+Scelte che vale la pena aver scritto:
+
+- **`-d` qui significa «dettagli»**, non il `-d` di POSIX. L'aiuto lo
+  dichiara: chi arriva da Unix si aspetta l'altra cosa e non deve
+  scoprirlo per tentativi.
+- **Un'opzione sconosciuta viene rifiutata**, non ignorata. Un `ls -l`
+  ignorato in silenzio stampa qualcosa di plausibile e fa credere che
+  l'opzione esista.
+- ⚠️ **La pausa dell'impaginazione sta PRIMA della riga successiva, non
+  dopo la ventitreesima.** Contando le righe stampate ci si ferma a
+  schermo pieno anche quando quella era l'ultima voce — e si chiede
+  «Invio per continuare» per continuare con niente.
+- **Se `stat()` fallisce la voce si stampa lo stesso**, con i trattini.
+  Farla sparire perché non se ne conoscono i dettagli farebbe pensare che
+  il file non ci sia.
+- **Senza `-a` si nascondono i nomi col punto**, `.` e `..` compresi: è un
+  cambiamento rispetto a prima. E su un CD non compaiono comunque, perché
+  il driver ISO non li consegna (sono record con nome `0x00`/`0x01`).
+- **Il bit «nascosto» di FAT si vede con `-md` ma non nasconde**: guardarlo
+  costerebbe una `statraw()` per ogni voce anche quando si stampano solo i
+  nomi. Una regola sola per tutti i filesystem è meglio di due regole
+  diverse secondo il volume e l'opzione.
+- **La directory vuota e quella con soli nomi nascosti si distinguono**:
+  «(vuota, o solo nomi nascosti: prova `ls -a`)».
+
+## I comandi di rete dicono cosa manca, e a che punto sei
+
+`lib/rete.c`: la catena di rete è quattro anelli, e ognuno serve al
+successivo. Prima ogni comando se n'era scritta nel proprio codice una
+parte — `ping` elencava tre passi, `nettest` due, `host` uno — e **nessuno
+diceva a che punto fosse arrivato**.
+
+Ora la catena si **controlla**, non si recita:
+
+```
+ex-os:/> ping 1.1.1.1
+Il servizio 'ip' non e' attivo.
+
+Stato della catena di rete:
+
+  [ok]     bus PCI          /dev/pci.drv &
+  [manca]  scheda di rete   netdetect -c
+  [manca]  stack IP         /dev/ip.drv &
+  [manca]  indirizzo        dhcp
+
+Il prossimo passo e':
+
+    netdetect -c
+
+Se `netdetect -c` non trova niente, `netdetect` da solo
+elenca le schede viste e dice quale driver servirebbe.
+```
+
+⚠️ **Si indica UN passo solo.** Elencare tutti i comandi mancanti sembra
+più utile e non lo è: ognuno serve al successivo, quindi lanciarli tutti
+insieme fa fallire quelli dopo il primo per un motivo diverso da quello
+vero, e chi legge insegue l'errore sbagliato.
+
+L'ultimo anello non è un servizio ma una **configurazione**: si controlla
+chiedendo allo stack se ha un indirizzo diverso da zero, con una scadenza
+breve — questa funzione viene chiamata quando qualcosa già non va, e
+un'attesa senza scadenza trasformerebbe «lo stack è impallato» in «il
+comando che doveva spiegartelo è impallato anche lui».
+
+## Verificato
+
+```
+ls -h / -mc / -d / -md / -a / -p    tutte, su FAT12 e su ISO 9660
+ls -l                              rifiutata, con il rimando a -h
+ls -a /bin                         . e .. compaiono su FAT12
+ls -md /                           D---- sulle directory, date vere
+ls -md /dev (da CD)                ----R, date vere del CD
+impaginazione                      si ferma a meta', riprende con Invio,
+                                   e NON si ferma dopo l'ultima riga
+catena di rete                     provata a tre stadi diversi
+libctest                           271/271
+```
+
+## GCC
+
+Build `release` a **334 oggetti su ~557**. Ancora niente `cc1`.
+
+## File nuovi e modificati
+
+- `lib/rete.c`, `lib/include/rete.h` — nuovi
+- `bin/ls/ls.c` — riscritto
+- `kernel/include/vfs.h`, `fat.h`, `ext2.h`, `iso9660.h` — `data`/`ora`
+- `kernel/fs/vfs.c`, `fat.c`, `ext2.c`, `iso9660.c` — le riempiono
+- `kernel/syscall/syscall_impl.c` — `sys_stat` le consegna
+- `tools/mkiso.py` — data vera di costruzione
+- `bin/ping,ipcfg,nettest,netdetect,dhcp,host` — usano `rete_richiedi()`
+- `Makefile` — **`PROGRAMMI_FLOPPY`**, `rete.o` nei client
+- `kernel/include/version.h` — 0.167 -> 0.168
+
+---
+
+# SESSIONE 2026-08-04 (v) — I nomi: `ping www.google.com`
+
+Kernel **0.167**. `/bin/libctest` passa **271 prove su 271**.
+
+```
+ex-os:/> host one.one.one.one
+one.one.one.one ha indirizzo 1.0.0.1  (risposta da 10.0.2.3)
+
+ex-os:/> ping www.google.com -n 2
+ping www.google.com (142.251.151.119) con 32 byte di dati
+  60 byte da 142.251.151.119: seq=1 ttl=255 tempo=50 ms
+2 inviati, 2 ricevuti, 0% persi
+```
+
+## Il risolutore è un modulo, non un servizio
+
+`lib/dns.c` + `lib/include/dns.h`, compilato dentro i programmi che ne
+hanno bisogno.
+
+**Non dentro lo stack**, per la stessa ragione di DHCP: DNS è un
+protocollo applicativo che sta sopra UDP, e l'analisi di una risposta
+scritta da un server di cui non sappiamo niente non deve stare nel
+processo che deve restare acceso. Un errore lì spegne la rete; qui fa
+fallire un comando.
+
+**E nemmeno un servizio a sé**, perché non ha stato da conservare fra una
+richiesta e l'altra. Una cache ci starebbe — ma ci starebbe anche senza un
+processo dedicato, e un processo in più va avviato, sorvegliato e
+riavviato. Quando servirà una cache condivisa si farà un servizio.
+
+## ⚠️ La compressione dei nomi è il punto pericoloso del file
+
+In una risposta DNS un nome può finire con un **puntatore** a un punto
+precedente del messaggio (due byte con i bit alti a 1), per non ripetere
+`www.esempio.it` in ogni record.
+
+Quel puntatore lo scrive il server, e niente gli impedisce di farlo
+puntare a sé stesso o in avanti. Un lettore ingenuo entra in un ciclo
+infinito — e siccome questo codice gira dentro il programma di chi ha
+chiesto, il ciclo se lo prende lui.
+
+Qui: i puntatori si seguono **solo per leggere** un nome, con un tetto ai
+salti; per **saltare** un nome non si seguono affatto, perché un puntatore
+chiude sempre il nome e i suoi due byte sono tutto quello che serve
+contare.
+
+Altre due scelte dichiarate nel file:
+
+- **I CNAME si saltano invece di seguirli.** Un server che risponde con un
+  alias mette quasi sempre anche il record A finale nella stessa risposta:
+  prenderlo di lì costa un giro di ciclo, seguire la catena vorrebbe dire
+  fare altre domande. Se il record A non c'è, si dice che il nome non si
+  risolve — che è vero *per questo risolutore*.
+- **Un indirizzo in cifre non fa partire nessuna domanda.** `host 10.0.2.2`
+  risponde da solo e lo dice («era già un indirizzo, nessuna domanda
+  fatta»): una risposta che esiste già non va chiesta, e chiederla sarebbe
+  solo un modo in più di poter fallire.
+
+## Il parser degli indirizzi stava in cinque copie
+
+`ip_da_stringa()` sta ora in `lib/dns.c` e la usano `ping`, `ipcfg` e
+`nettest`. Cinque copie della stessa funzione erano cinque occasioni di
+accettare `999.1.2.3` in modo diverso — la versione condivisa rifiuta sia
+i valori sopra 255 sia le cifre in eccesso, senza lasciar traboccare
+niente.
+
+⚠️ Aggiungere `dns.o` a `ipcfg` e `nettest` non costa: si compila con
+`-ffunction-sections` e si linka con `--gc-sections`, quindi il risolutore
+inutilizzato non entra nel binario.
+
+## `ping` stampa nome **e** indirizzo
+
+`ping www.google.com (142.251.151.119)`. Senza l'indirizzo, davanti a una
+risposta inattesa non si distingue un guasto del DNS da uno della rete.
+
+E la risoluzione avviene **prima** del controllo sullo stack IP, di
+proposito: `dns_risolvi()` ha bisogno dello stack anche lui, e i suoi
+messaggi sono più precisi — sa distinguere «lo stack non c'è» da «non c'è
+un DNS configurato».
+
+## Verificato
+
+```
+host one.one.one.one       -> 1.0.0.1 (risposta da 10.0.2.3)
+ping www.google.com        -> risolve e risponde, 2 su 2
+host 10.0.2.2              -> nessuna domanda fatta
+host qualcosa.it (senza DHCP) -> "nessun server DNS configurato. Lo mette il DHCP"
+host www.esempio.invalid   -> "non esiste"
+ping nonesiste.invalid     -> "non esiste (il DNS dice di no)"
+libctest                   -> 271/271
+```
+
+I tre casi di errore sono stati provati apposta: un risolutore che
+funziona solo quando tutto va bene non dice mai dove si è fermato.
+
+## Nota sul build di GCC
+
+⚠️ **Non ho rilinkato il `cc1` esistente con la libc corretta.** Il
+`realloc` è a posto in `lib/libc.c` e nella `libc.a` del sysroot, ma il
+binario già costruito se la porta dentro linkata. Rilinkarlo adesso
+significherebbe un secondo link pesante mentre il build `release` gira, su
+una macchina con **1 GB disponibile su 3**: il rischio è far cadere il
+build in corso. Il `cc1` che uscirà da `~/gcc-build-rel` avrà già la
+correzione.
+
+Avanzamento: 73 oggetti su ~557.
+
+## Prossimo passo
+
+TCP, e prima la tabella delle operazioni in sospeso — oggi lo stack ne
+serve una per volta, che basta a `ping` e a `dhcp` e non basterà a niente
+altro. Poi il rinnovo della concessione DHCP, che vuole un processo che
+resti acceso.
+
+## File nuovi e modificati
+
+- `lib/dns.c`, `lib/include/dns.h` — nuovi
+- `bin/host/host.c`, `host.ld` — nuovi
+- `bin/ping/ping.c` — accetta i nomi
+- `bin/ipcfg/ipcfg.c`, `bin/nettest/nettest.c` — usano `ip_da_stringa`
+- `Makefile` — `host`, `dns.o` nei client
+- `kernel/include/version.h` — 0.166 -> 0.167
+
+---
+
 # SESSIONE 2026-08-04 (u) — cc1 gira, e trovando un difetto in realloc
 
 Kernel **0.166**. `/bin/libctest` passa **271 prove su 271** (una nuova).

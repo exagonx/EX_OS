@@ -153,6 +153,58 @@ static void prova_allocatore(void)
         esito("realloc che allunga sul posto da' davvero i byte chiesti", ok);
     }
 
+    /* -----------------------------------------------------------------
+     * printf in virgola mobile.
+     *
+     * ⚠️ I VALORI ATTESI SONO QUELLI DI glibc, verificati uno per uno sul
+     * lato Linux: una printf che stampa "quasi" il numero giusto e' come
+     * una sqrt quasi giusta — peggio di una che non c'e', perche' nessuno
+     * va a controllarla.
+     *
+     * `2.5 -> "2"` non e' un errore di trascrizione: e' l'arrotondamento
+     * AL PARI che lo standard prescrive, ed e' il caso che la prima
+     * stesura sbagliava.
+     * ----------------------------------------------------------------- */
+    {
+        static const struct { const char *fmt; double v; const char *atteso; } pf[] = {
+            { "%f",      1.0,              "1.000000"      },
+            { "%f",     -1.5,             "-1.500000"      },
+            { "%.2f",    3.14159,          "3.14"          },
+            { "%.0f",    2.5,              "2"             },  /* al pari */
+            { "%.0f",    3.5,              "4"             },  /* al pari */
+            { "%.0f",    0.5,              "0"             },  /* al pari */
+            { "%.3f",    0.0005,           "0.001"         },
+            { "%e",      1234.5,           "1.234500e+03"  },
+            { "%.2e",    0.000123,         "1.23e-04"      },
+            { "%g",      100000.0,         "100000"        },
+            { "%g",      1000000.0,        "1e+06"         },
+            { "%g",      0.0001,           "0.0001"        },
+            { "%g",      0.00001,          "1e-05"         },
+            { "%.3g",    3.14159,          "3.14"          },
+            { "%8.2f",   3.5,              "    3.50"      },
+            { "%-8.2f",  3.5,              "3.50    "      },
+            { "%08.2f", -3.5,             "-0003.50"       },
+            { "%+.2f",   3.5,              "+3.50"         },
+            { "%f",      0.0,              "0.000000"      },
+        };
+        char pbuf[64];
+        unsigned int k;
+
+        ok = 1;
+        for (k = 0; k < sizeof(pf) / sizeof(pf[0]); k++) {
+            snprintf(pbuf, sizeof(pbuf), pf[k].fmt, pf[k].v);
+            if (strcmp(pbuf, pf[k].atteso) != 0) {
+                printf("    %s di %g -> \"%s\", atteso \"%s\"\n",
+                       pf[k].fmt, pf[k].v, pbuf, pf[k].atteso);
+                ok = 0;
+            }
+        }
+        esito("printf in virgola mobile (%f, %e, %g)", ok);
+
+        snprintf(pbuf, sizeof(pbuf), "%f %f %f", 1.0/0.0, -1.0/0.0, 0.0/0.0);
+        esito("printf: inf e nan", strcmp(pbuf, "inf -inf nan") == 0);
+    }
+
     a = (char *)calloc(64, 4);
     ok = (a != NULL);
     for (i = 0; ok && i < 64 * 4; i++) if (a[i] != 0) ok = 0;
@@ -1001,6 +1053,37 @@ static void prova_temporanei(void)
         esito("il vecchio nome non c'e' piu'", access(modello, F_OK) != 0);
         esito("il nuovo nome c'e'",    access("/rinominato.tmp", F_OK) == 0);
         unlink("/rinominato.tmp");
+    }
+
+    /* -----------------------------------------------------------------
+     * tmpnam segue TMPDIR
+     *
+     * ⚠️ SI PROVA SU UN NOME, NON SU UN FILE. La directory di prova non
+     * esiste, e non deve: qui la domanda e' "dove ha deciso di metterlo",
+     * non "riesce a crearlo". Creare davvero vorrebbe dire un volume
+     * scrivibile montato, cioe' un'altra prova che fallisce per un altro
+     * motivo — ed e' esattamente il tipo di prova che, quando diventa
+     * rossa, non dice niente.
+     * ----------------------------------------------------------------- */
+    {
+        char *n1, *n2;
+
+        setenv("TMPDIR", "/disco", 1);
+        n1 = tmpnam(NULL);
+        esito("tmpnam segue TMPDIR",
+              n1 != NULL && strncmp(n1, "/disco/t", 8) == 0);
+
+        /* Una barra finale non deve raddoppiarsi: il nome che finisce in
+         * un messaggio d'errore dev'essere ridigitabile. */
+        setenv("TMPDIR", "/disco/", 1);
+        n2 = tmpnam(NULL);
+        esito("tmpnam non raddoppia la barra",
+              n2 != NULL && strncmp(n2, "/disco/t", 8) == 0);
+
+        unsetenv("TMPDIR");
+        n1 = tmpnam(NULL);
+        esito("senza TMPDIR il temporaneo sta nella radice",
+              n1 != NULL && n1[0] == '/' && n1[1] == 't');
     }
 
     /* -----------------------------------------------------------------

@@ -240,6 +240,17 @@ typedef struct {
 #define SYS_IOPORT_IN32   235
 #define SYS_IOPORT_OUT32  236
 #define SYS_IRQ_DONE      237
+#define SYS_DMA_ALLOC     239
+
+/* ⚠️ DEVE RESTARE IDENTICA a DmaZona in kernel/include/syscall.h e in
+ * lib/include/libc.h. La riempie il kernel scrivendo nella memoria del
+ * processo: due definizioni che divergono danno un indirizzo fisico letto
+ * dal campo sbagliato, cioe' una scheda che fa DMA dove capita. */
+typedef struct {
+    unsigned int byte;
+    unsigned int virt;
+    unsigned int fisico;
+} DmaZona;
 #define SYS_IPC_RECV_TMO  228
 #define SYS_TIME           13
 #define SYS_CONSOLE_SWITCH 229
@@ -372,6 +383,7 @@ int         unlink(const char *path);
 char *strsignal(int sig);
 char       *strdup(const char *s);
 int         tolower(int c);     /* strcasecmp, molto piu' su di dove sta */
+char       *getenv(const char *chiave);   /* tmp_componi legge TMPDIR */
 
 /* Modi di access() */
 #define F_OK    0
@@ -543,7 +555,25 @@ typedef struct {
  * allargarlo adesso cambierebbe la dimensione di ogni struttura che lo
  * contiene. Il posto in cui cambiarlo e' questo, e va cambiato anche
  * nell'header. */
-typedef long time_t;
+/* =============================================================================
+ * ⚠️ 64 BIT E NON 32, dal kernel 0.175 — e non e' solo il 2038
+ *
+ * Un `time_t` a 32 bit con segno finisce il 19 gennaio 2038. Su un sistema
+ * scritto nel 2026 sarebbe una scadenza scritta in partenza, ed e' la
+ * ragione per cui i Linux a 32 bit sono passati a time64.
+ *
+ * Ma il difetto che l'ha reso urgente e' un altro, ed e' aritmetico. GCC
+ * misura il tempo cosi' (gcc/timevar.cc):
+ *
+ *     now->wall = tv.tv_sec * 1000000000 + tv.tv_usec * 1000;
+ *
+ * Con tv_sec a 32 bit quella moltiplicazione TRABOCCA prima di essere
+ * allargata — 1,7 miliardi per un miliardo non ci sta — e il rapporto dei
+ * tempi di cc1 usciva con fasi da 18446744071 secondi, cioe' differenze
+ * negative lette come senza segno. Non e' codice di GCC da correggere: e'
+ * codice giusto su un time_t giusto.
+ * ============================================================================= */
+typedef long long time_t;
 
 struct tm {
     int tm_sec;     /* 0..60 (il 60 e' il secondo intercalare) */
@@ -1618,13 +1648,26 @@ void setbuf(FILE *f, char *buf)
  * una sola e le altre tre restano sbagliate. Qui la destinazione e' una
  * struttura `Uscita` e il resto e' condiviso.
  *
- * ⚠️ NIENTE VIRGOLA MOBILE. %f, %e e %g consumano il loro argomento (un
- * double, otto byte) e stampano "<float>". Consumarlo NON e' un dettaglio:
- * saltarlo disallineerebbe tutti gli argomenti successivi, e la stampa
- * dopo un %f diventerebbe spazzatura invece di un buco. EX-OS non salva lo
- * stato della FPU nel cambio di contesto (vedi kernel/sched/sched.c):
- * finche' e' cosi', un programma che usa i double non ha solo una printf
- * incompleta, ha un problema piu' grosso.
+ * LA VIRGOLA MOBILE C'E' da agosto 2026: %f, %e, %g e %a con le loro
+ * maiuscole. Prima consumavano l'argomento e stampavano "<float>" —
+ * bastava finche' nessuno stampava numeri, e il primo a farlo e' stato
+ * cc1, il cui rapporto dei tempi usciva cosi':
+ *
+ *     phase setup : <float> (<float>%)   985k
+ *
+ * ⚠️ LE CIFRE SIGNIFICATIVE SI FERMANO A 19, E OLTRE SI STAMPANO ZERI.
+ * Un `double` porta al massimo 17 cifre decimali di informazione, il
+ * `long double` a 80 bit ne porta 19: quello che c'e' oltre non e' un
+ * dato dell'utente, e' l'espansione esatta del valore BINARIO. glibc la
+ * stampa (con un'aritmetica a precisione arbitraria), noi no:
+ *
+ *     printf("%.30f", 0.1)
+ *       glibc  0.100000000000000005551115123126
+ *       EX-OS  0.100000000000000000000000000000
+ *
+ * Le prime 17 cifre coincidono, che e' tutto cio' che 0.1 contiene. La
+ * differenza si vede solo chiedendo piu' cifre di quante il numero ne
+ * abbia, e allora e' bene che si veda.
  *
  * I NUMERI A 64 BIT sono formattati con una divisione fatta a mano
  * (div64_10 e simili). Non e' pedanteria: dividere un uint64_t sull'i386
@@ -1632,6 +1675,329 @@ void setbuf(FILE *f, char *buf)
  * si linkano con -nostdlib e SENZA libgcc — l'errore sarebbe al link, non
  * a runtime.
  * ============================================================================= */
+
+
+/* =============================================================================
+ * Conversione di un `long double` in cifre decimali
+ *
+ * ⚠️ SI SCALA CON UNA TABELLA DI POTENZE, NON DIVIDENDO PER 10 IN CICLO.
+ * Portare 1e300 nell'intervallo [0.1, 1) dividendo per dieci vuol dire
+ * TRECENTO divisioni, e ognuna arrotonda: l'errore si accumula e le
+ * ultime cifre escono sbagliate. Con la tabella (1e1, 1e2, 1e4, ... 1e256)
+ * bastano nove moltiplicazioni, cioe' nove arrotondamenti invece di
+ * trecento.
+ *
+ * ⚠️ SI LAVORA IN `long double`. Su i386 e' l'x87 a 80 bit, con 64 bit di
+ * mantissa: 19 cifre decimali. Fare gli stessi conti in `double` ne
+ * lascerebbe 15-16, cioe' meno di quante ne ha il numero da stampare, e
+ * l'ultima cifra di un %.17g uscirebbe sbagliata.
+ * ============================================================================= */
+#define CIFRE_MAX  24       /* capienza del buffer, riporto compreso */
+
+/* ⚠️ DICIOTTO, ED E' UN NUMERO MISURATO NON STIMATO. Oltre questa soglia
+ * le cifre che escono dalla scalatura non sono piu' quelle del numero: la
+ * moltiplicazione per le potenze di dieci arrotonda, e l'errore affiora
+ * proprio in coda. Provato confrontando ld_cifre() con glibc su una
+ * dozzina di valori: fino a 18 nessuna discordanza, a 19 la prima, a 22
+ * cinque.
+ *
+ * Il caso che l'ha fatto vedere: 1234567890123456.0 con %.6f dava
+ * "1234567890123456.000012" — dodici millesimi comparsi dal nulla su un
+ * valore ESATTO, perche' si chiedevano 22 cifre a un numero che ne porta
+ * 16. Oltre la soglia si stampano zeri, che e' l'unica cosa vera che si
+ * puo' dire. */
+#define CIFRE_UTILI 18
+
+static const long double g_pot10[] = {
+    1e1L, 1e2L, 1e4L, 1e8L, 1e16L, 1e32L, 1e64L, 1e128L, 1e256L
+};
+
+/* Scompone v > 0 in cifre[] ed esponente: v = 0.d1d2d3... * 10^(*exp10).
+ * Produce esattamente `quante` cifre (<= CIFRE_MAX), gia' arrotondate. */
+static void ld_cifre(long double v, char *cifre, int quante, int *exp10)
+{
+    int e = 0, i;
+
+    if (quante > CIFRE_MAX) quante = CIFRE_MAX;
+
+    /* Scala verso il basso: v >= 1 */
+    if (v >= 1.0L) {
+        for (i = 8; i >= 0; i--) {
+            while (v >= g_pot10[i]) { v /= g_pot10[i]; e += (1 << i); }
+        }
+    }
+    /* Scala verso l'alto: v < 0.1 */
+    else {
+        for (i = 8; i >= 0; i--) {
+            while (v * g_pot10[i] < 1.0L && v != 0.0L) {
+                v *= g_pot10[i];
+                e -= (1 << i);
+            }
+        }
+    }
+
+    /* ⚠️ LA SCALATURA PUO' SBAGLIARE DI UNO per l'arrotondamento
+     * dell'ultima moltiplicazione: si corregge dopo, guardando il valore
+     * vero invece di fidarsi del conto. */
+    while (v >= 1.0L) { v /= 10.0L; e++; }
+    while (v < 0.1L && v != 0.0L) { v *= 10.0L; e--; }
+
+    /* Estrazione: una cifra in piu' di quelle chieste, per arrotondare. */
+    for (i = 0; i < quante + 1 && i < CIFRE_MAX; i++) {
+        int d;
+
+        v *= 10.0L;
+        d = (int)v;
+        if (d < 0) d = 0;
+        if (d > 9) d = 9;
+        cifre[i] = (char)('0' + d);
+        v -= (long double)d;
+    }
+
+    /* =====================================================================
+     * ⚠️ ARROTONDAMENTO AL PARI, non "mezzo verso l'alto".
+     *
+     * Con la regola ingenua (>= 5 sale) 2.5 con %.0f darebbe 3, e lo
+     * standard dice 2: il modo di arrotondamento predefinito e' "al piu'
+     * vicino, e a parita' al PARI". Non e' pedanteria — sommare una
+     * colonna di valori arrotondati sempre verso l'alto accumula un
+     * errore che cresce col numero di righe, mentre al pari gli scarti
+     * si compensano.
+     *
+     * La parita' si guarda solo quando il resto e' ESATTAMENTE mezzo:
+     * cifra di guardia '5' e niente dopo. Se dopo c'e' qualcosa — anche
+     * un solo bit — il valore e' sopra la meta' e sale comunque.
+     * `v` qui e' proprio quel resto.
+     * ===================================================================== */
+    if (i > quante &&
+        (cifre[quante] > '5' ||
+         (cifre[quante] == '5' &&
+          (v != 0.0L || (quante > 0 && ((cifre[quante-1] - '0') & 1)))))) {
+        int k = quante - 1;
+
+        while (k >= 0) {
+            if (cifre[k] != '9') { cifre[k]++; break; }
+            cifre[k] = '0';
+            k--;
+        }
+        /* Riporto uscito in testa: 999 -> 1000, e l'esponente sale. */
+        if (k < 0) {
+            for (k = quante - 1; k > 0; k--) cifre[k] = cifre[k-1];
+            cifre[0] = '1';
+            e++;
+        }
+    }
+
+    cifre[quante] = '\0';
+    *exp10 = e;
+}
+
+/* Vero per NaN: e' l'unico valore diverso da se stesso. */
+static int ld_e_nan(long double v) { return v != v; }
+
+static int ld_e_inf(long double v)
+{
+    return v > 1.7976931348623157e308L || v < -1.7976931348623157e308L;
+}
+
+/* Compone la rappresentazione di v in `out` secondo `conv` ('f','e','g'),
+ * precisione `prec`, e i flag. Ritorna la lunghezza. `out` deve avere
+ * almeno 512 byte. */
+static int ld_formatta(char *out, long double v, char conv, int prec,
+                       int alt, int maiuscolo)
+{
+    char cifre[CIFRE_MAX + 2];
+    int  n = 0;
+    int  negativo = 0;
+
+    if (v < 0.0L) { negativo = 1; v = -v; }
+
+    if (ld_e_nan(v)) {
+        const char *s = maiuscolo ? "NAN" : "nan";
+        while (*s) out[n++] = *s++;
+        out[n] = '\0';
+        return n;   /* il segno di un NaN non significa niente: non si stampa */
+    }
+    if (ld_e_inf(v)) {
+        const char *s = maiuscolo ? "INF" : "inf";
+        if (negativo) out[n++] = '-';
+        while (*s) out[n++] = *s++;
+        out[n] = '\0';
+        return n;
+    }
+
+    if (prec < 0) prec = 6;
+
+    /* --- %g: decide fra %e e %f, poi toglie gli zeri finali --- */
+    if (conv == 'g') {
+        int p = (prec == 0) ? 1 : prec;
+        int e;
+
+        if (v == 0.0L) e = 0;
+        else {
+            int volute = (p > CIFRE_UTILI) ? CIFRE_UTILI : p;
+            ld_cifre(v, cifre, volute, &e);
+            e = e - 1;
+        }
+
+        /* La regola dello standard: notazione scientifica se l'esponente
+         * e' sotto -4 o non minore della precisione. */
+        if (e < -4 || e >= p) {
+            n = ld_formatta(out, negativo ? -v : v, 'e', p - 1, alt, maiuscolo);
+        } else {
+            n = ld_formatta(out, negativo ? -v : v, 'f', p - 1 - e, alt, maiuscolo);
+        }
+
+        if (!alt) {
+            /* Zeri finali e punto orfano: %g li toglie, a meno di '#'. */
+            int punto = -1, fine = n, k;
+
+            for (k = 0; k < n; k++) if (out[k] == '.') { punto = k; break; }
+            if (punto >= 0) {
+                for (k = 0; k < n; k++)
+                    if (out[k] == 'e' || out[k] == 'E') { fine = k; break; }
+                k = fine - 1;
+                while (k > punto && out[k] == '0') k--;
+                if (k == punto) k--;
+                if (fine < n) {
+                    int j, d = fine - (k + 1);
+                    for (j = fine; j < n; j++) out[j - d] = out[j];
+                    n -= d;
+                } else {
+                    n = k + 1;
+                }
+                out[n] = '\0';
+            }
+        }
+        return n;
+    }
+
+    if (negativo) out[n++] = '-';
+
+    /* --- %e --- */
+    if (conv == 'e') {
+        int e, k, ae, sig = CIFRE_MAX;
+
+        if (v == 0.0L) {
+            for (k = 0; k < CIFRE_MAX; k++) cifre[k] = '0';
+            cifre[CIFRE_MAX] = '\0';
+            e = 1;
+        } else {
+            int volute = prec + 1;
+
+            if (volute > CIFRE_UTILI) volute = CIFRE_UTILI;
+            ld_cifre(v, cifre, volute, &e);
+            sig = volute;
+        }
+        ae = e - 1;
+
+        out[n++] = cifre[0];
+        if (prec > 0 || alt) out[n++] = '.';
+        for (k = 0; k < prec; k++) out[n++] = (k + 1 < sig) ? cifre[k+1] : '0';
+
+        out[n++] = maiuscolo ? 'E' : 'e';
+        out[n++] = (ae < 0) ? '-' : '+';
+        if (ae < 0) ae = -ae;
+        /* ⚠️ ALMENO DUE CIFRE DI ESPONENTE, come dice lo standard: "1e+5"
+         * e' sbagliato, va scritto "1e+05". */
+        if (ae >= 100) {
+            out[n++] = (char)('0' + ae / 100);
+            out[n++] = (char)('0' + (ae / 10) % 10);
+            out[n++] = (char)('0' + ae % 10);
+        } else {
+            out[n++] = (char)('0' + ae / 10);
+            out[n++] = (char)('0' + ae % 10);
+        }
+        out[n] = '\0';
+        return n;
+    }
+
+    /* --- %f --- */
+    {
+        int e, k, sig;
+
+        if (v == 0.0L) {
+            out[n++] = '0';
+            if (prec > 0 || alt) {
+                out[n++] = '.';
+                for (k = 0; k < prec; k++) out[n++] = '0';
+            }
+            out[n] = '\0';
+            return n;
+        }
+
+        /* Cifre significative utili: quelle prima della virgola piu' la
+         * precisione, limitate a quante il numero ne contiene davvero. */
+        ld_cifre(v, cifre, CIFRE_UTILI, &e);
+        sig = CIFRE_UTILI;
+
+        /* ⚠️ RIESTRAZIONE CON L'ARROTONDAMENTO AL POSTO GIUSTO. La prima
+         * chiamata serviva solo a sapere l'esponente: arrotondare a 22
+         * cifre e poi troncare a `prec` darebbe 2.4999... -> 2.4 invece
+         * di 2.5. Ora si chiede esattamente il numero di cifre che
+         * finiranno stampate. */
+        {
+            int volute = e + prec;
+
+            if (volute < 0) volute = 0;
+            if (volute > CIFRE_UTILI) volute = CIFRE_UTILI;
+            if (volute == 0) {
+                /* Il numero e' interamente sotto la precisione chiesta:
+                 * resta zero, ma va deciso se arrotonda a 1 nell'ultima
+                 * posizione. */
+                long double resto = v;
+                int         sale;
+
+                ld_cifre(v, cifre, 1, &e);
+                sig = 1;
+
+                /* Stessa regola del pari: la cifra implicita davanti e'
+                 * uno zero, che e' pari — quindi 0.5 con %.0f resta 0.
+                 * Serve pero' sapere se dopo il '5' c'era altro, e
+                 * ld_cifre non lo dice: si riguarda il valore originale
+                 * contro mezzo nell'ultima posizione utile. */
+                sale = 0;
+                if (e + prec == 0) {
+                    long double meta = 0.5L;
+                    int k;
+
+                    for (k = 0; k < prec; k++) meta /= 10.0L;
+                    if (resto > meta) sale = 1;
+                }
+
+                if (sale) {
+                    cifre[0] = '1';
+                    e = -prec + 1;
+                } else if (e + prec <= 0) {
+                    cifre[0] = '0';
+                    e = 1;
+                }
+            } else {
+                ld_cifre(v, cifre, volute, &e);
+                sig = volute;
+            }
+        }
+
+        if (e <= 0) {
+            out[n++] = '0';
+        } else {
+            for (k = 0; k < e; k++)
+                out[n++] = (k < sig) ? cifre[k] : '0';
+        }
+
+        if (prec > 0 || alt) {
+            out[n++] = '.';
+            for (k = 0; k < prec; k++) {
+                int idx = e + k;
+
+                if (idx < 0 || idx >= sig) out[n++] = '0';
+                else                       out[n++] = cifre[idx];
+            }
+        }
+        out[n] = '\0';
+        return n;
+    }
+}
 
 typedef struct {
     FILE   *f;      /* destinazione a flusso... */
@@ -1698,7 +2064,7 @@ static int formatta(Uscita *u, const char *fmt, __builtin_va_list args)
     while (*fmt) {
         int  sinistra = 0, zeri = 0, segno = 0, spazio = 0, alt = 0;
         int  ampiezza = 0, precisione = -1;
-        int  lungo = 0;             /* 1 = long, 2 = long long */
+        int  lungo = 0;             /* 1 = long, 2 = long long, 3 = long double */
         char spec;
 
         if (*fmt != '%') { u_car(u, *fmt++); continue; }
@@ -1738,6 +2104,10 @@ static int formatta(Uscita *u, const char *fmt, __builtin_va_list args)
             if      (*fmt == 'l') { lungo++;  fmt++; }
             else if (*fmt == 'h') { fmt++; }        /* h/hh: promossi a int */
             else if (*fmt == 'z') { lungo = 1; fmt++; }
+            /* 'L' vale solo per la virgola mobile: dice `long double`.
+             * Si usa lo stesso contatore perche' i due insiemi di
+             * conversioni non si sovrappongono — %Ld non esiste. */
+            else if (*fmt == 'L') { lungo = 3; fmt++; }
             else break;
         }
 
@@ -1853,11 +2223,51 @@ static int formatta(Uscita *u, const char *fmt, __builtin_va_list args)
                 break;
             }
             case 'f': case 'F': case 'e': case 'E': case 'g': case 'G': {
-                /* Vedi la nota in testa: l'argomento va CONSUMATO comunque,
-                 * o tutto quello che segue slitta. */
-                const char *s = "<float>";
-                (void)__builtin_va_arg(args, double);
-                while (*s) u_car(u, *s++);
+                char        num[512];
+                long double v;
+                char        conv;
+                int         maiuscolo = (spec >= 'A' && spec <= 'Z');
+                int         len, pad, i, salta_segno = 0;
+
+                /* ⚠️ UN `float` PASSATO A UNA FUNZIONE VARIADICA ARRIVA
+                 * COME `double`: e' la promozione automatica del C, e
+                 * leggerlo come float darebbe quattro byte al posto di
+                 * otto disallineando tutto il resto. Solo 'L' cambia
+                 * davvero il tipo sullo stack. */
+                if (lungo == 3) v = __builtin_va_arg(args, long double);
+                else            v = (long double)__builtin_va_arg(args, double);
+
+                conv = (char)(maiuscolo ? spec - 'A' + 'a' : spec);
+
+                len = ld_formatta(num, v, conv, precisione, alt, maiuscolo);
+
+                /* Segno esplicito: ld_formatta mette solo il '-'. */
+                if (num[0] != '-' && (segno || spazio)) {
+                    for (i = len; i >= 0; i--) num[i + 1] = num[i];
+                    num[0] = segno ? '+' : ' ';
+                    len++;
+                }
+
+                /* ⚠️ GLI ZERI DI RIEMPIMENTO VANNO DOPO IL SEGNO, non
+                 * prima: "%+08.2f" di 3.5 e' "+0003.50", non "0000+3.5".
+                 * E non si usano su inf e nan, dove riempirebbero di zeri
+                 * una parola. */
+                if (num[0] == '-' || num[0] == '+' || num[0] == ' ') salta_segno = 1;
+
+                pad = ampiezza - len;
+                if (pad < 0) pad = 0;
+
+                if (sinistra) {
+                    for (i = 0; i < len; i++) u_car(u, num[i]);
+                    u_ripeti(u, ' ', pad);
+                } else if (zeri && !ld_e_nan(v) && !ld_e_inf(v)) {
+                    if (salta_segno) u_car(u, num[0]);
+                    u_ripeti(u, '0', pad);
+                    for (i = salta_segno; i < len; i++) u_car(u, num[i]);
+                } else {
+                    u_ripeti(u, ' ', pad);
+                    for (i = 0; i < len; i++) u_car(u, num[i]);
+                }
                 break;
             }
             case '%':
@@ -2349,6 +2759,9 @@ int atexit(void (*fn)(void))
     return 0;
 }
 
+/* Definita in fondo, accanto a _libc_start: qui serve solo il nome. */
+void _libc_distruttori(void);
+
 void exit(int code)
 {
     /* All'indietro, come pretende lo standard: l'ultima registrata e' la
@@ -2357,6 +2770,12 @@ void exit(int code)
     if (!g_in_uscita) {
         g_in_uscita = 1;
         while (g_atexit_n > 0) g_atexit[--g_atexit_n]();
+
+        /* ⚠️ I DISTRUTTORI GLOBALI DOPO gli atexit, non prima. Un
+         * handler registrato con atexit() puo' usare un oggetto globale;
+         * distruggerlo prima gli lascerebbe in mano un oggetto morto.
+         * Vedi _libc_distruttori() in fondo al file. */
+        _libc_distruttori();
     }
 
     /* I BUFFER VANNO SVUOTATI QUI, e non e' una cortesia: un programma che
@@ -3396,16 +3815,51 @@ int closedir(DIR *d)
  * open() ha in mezzo una finestra in cui qualcun altro puo' creare quel
  * nome. Qui la finestra resta (manca O_EXCL nel kernel), ma il nome e' gia'
  * improbabile da indovinare e il file viene creato subito.
+ *
+ * -----------------------------------------------------------------------------
+ * ⚠️ LA DIRECTORY VIENE DA `TMPDIR`, E SENZA E' LA RADICE
+ *
+ * Qui c'era un `#define TMP_PREFISSO "/tmp"` che NESSUNO USAVA: il nome si
+ * componeva sempre come "/t....tmp", cioe' nella radice. Innocuo finche' la
+ * radice e' il floppy, che si scrive.
+ *
+ * Non lo e' piu' da quando EX-OS si avvia da CD: li' la radice e' in sola
+ * lettura, ogni temporaneo fallisce con EROFS, e a fallire non e' il
+ * programma che lo ha chiesto — e' il DRIVER del compilatore, che i
+ * temporanei li usa per passare il .s da cc1 ad as. Il sintomo sarebbe
+ * "gcc non funziona sul CD", che e' la descrizione piu' inutile possibile
+ * del problema.
+ *
+ * `TMPDIR` e' la stessa variabile che legge choose_tmpdir() di libiberty
+ * (vedi gcc/libiberty/make-temp-file.c): impostarla una volta serve al
+ * nostro mkstemp E al codice di terzi, che altrimenti sceglierebbero due
+ * posti diversi.
+ *
+ *     export TMPDIR=/disco        (un volume montato in scrittura)
+ *
+ * La radice resta il ripiego perche' e' l'unico posto che esiste di
+ * sicuro: una directory /tmp qui non la crea nessuno all'avvio.
  * ============================================================================= */
-#define TMP_PREFISSO  "/tmp"
 
 static unsigned g_tmp_contatore = 0;
 
 static void tmp_componi(char *dst, size_t max)
 {
-    unsigned pid = (unsigned)getpid();
-    unsigned ms  = (unsigned)uptime_ms();
-    snprintf(dst, max, "/t%x%x%x.tmp", pid, ms, ++g_tmp_contatore);
+    unsigned    pid = (unsigned)getpid();
+    unsigned    ms  = (unsigned)uptime_ms();
+    const char *dir = getenv("TMPDIR");
+    size_t      n;
+
+    if (dir == NULL || dir[0] == '\0') dir = "";
+
+    /* Una barra finale di troppo darebbe "/disco//t1.tmp": non e' un
+     * errore per il VFS, ma il nome che l'utente vede in un messaggio
+     * d'errore deve essere quello che puo' ridigitare. */
+    n = strlen(dir);
+    while (n > 0 && dir[n - 1] == '/') n--;
+
+    snprintf(dst, max, "%.*s/t%x%x%x.tmp",
+             (int)n, dir, pid, ms, ++g_tmp_contatore);
 }
 
 char *tmpnam(char *buf)
@@ -3930,6 +4384,91 @@ int munmap(void *addr, size_t lung)
  * ============================================================================= */
 int main(int argc, char **argv);
 
+/* =============================================================================
+ * ⛔ I COSTRUTTORI GLOBALI, che fino ad agosto 2026 NON VENIVANO CHIAMATI
+ *
+ * In C++ un oggetto dichiarato a livello di file ha un costruttore che
+ * deve girare PRIMA di main(). Il compilatore mette il puntatore a quella
+ * funzione nella sezione `.init_array`, e sta al codice di avvio
+ * percorrerla. La nostra non lo faceva: ogni oggetto globale di ogni
+ * programma C++ restava con i byte che si trovava.
+ *
+ * NON SI VEDEVA, ed e' il motivo per cui e' rimasto li' tanto: i
+ * programmi di EX-OS sono in C e non hanno costruttori globali, e la
+ * prova di libstdc++ (bin/iso/prova-cpp.cpp) costruisce i propri oggetti
+ * DENTRO main. Il primo programma vero a inciamparci e' stato cc1, che
+ * ne ha 57:
+ *
+ *     [ 4] .init_array  INIT_ARRAY  0a1be000  0000e4  (228 byte = 57 voci)
+ *
+ * Fra quei 57 c'e' `static object_allocator<et_occ> et_occurrences`, il
+ * pool da cui la foresta ET prende i nodi. Mai costruito, allocate()
+ * restituiva NULL, e cc1 moriva con un fault a 0x00000004 dentro
+ * et_splay() — cioe' `occ->parent` su un puntatore nullo. Il guasto
+ * sembrava un difetto di GCC ed era il nostro codice di avvio.
+ *
+ * ⚠️ I SIMBOLI SONO `weak` PERCHE' POSSONO NON ESISTERE. Li definisce il
+ * linker script, e i nostri (bin/<prog>/<prog>.ld) non lo fanno — non
+ * serve, quei programmi non hanno costruttori. Un simbolo weak non
+ * definito vale zero, i due estremi coincidono e il ciclo non gira
+ * nemmeno una volta. Dichiararli forti farebbe fallire il link di ogni
+ * programma di EX-OS.
+ *
+ * ⚠️ L'ORDINE E' QUELLO DELL'ARRAY, IN AVANTI. Per .init_array e'
+ * l'ordine giusto; per .fini_array la specifica dice ALL'INDIETRO, e
+ * distruggere nell'ordine di costruzione invece che al contrario
+ * significa distruggere un oggetto mentre un altro, costruito dopo, lo
+ * sta ancora usando.
+ *
+ * ⚠️ .preinit_array PRIMA DI TUTTO. Ci finiscono le funzioni che devono
+ * girare prima di qualunque costruttore — le usa il codice di
+ * strumentazione. Sono quasi sempre zero, e costano tre righe.
+ * ============================================================================= */
+/* ⚠️ QUESTO BLOCCO STA PRIMA DI __attribute__((weak, noreturn)), e non e'
+ * indifferente: quell'attributo appartiene a _libc_start, ed e' scritto
+ * sulla riga PRECEDENTE alla funzione. Infilando del codice in mezzo —
+ * come ho fatto alla prima stesura — l'attributo si attacca alla prima
+ * dichiarazione che trova (il typedef qui sotto, con tanto di avviso
+ * «weak attribute ignored») e _libc_start perde sia weak sia noreturn,
+ * in silenzio. */
+typedef void (*FunzioneInit)(void);
+
+extern FunzioneInit __preinit_array_start[] __attribute__((weak));
+extern FunzioneInit __preinit_array_end[]   __attribute__((weak));
+extern FunzioneInit __init_array_start[]    __attribute__((weak));
+extern FunzioneInit __init_array_end[]      __attribute__((weak));
+extern FunzioneInit __fini_array_start[]    __attribute__((weak));
+extern FunzioneInit __fini_array_end[]      __attribute__((weak));
+
+static void esegui_costruttori(void)
+{
+    FunzioneInit *p;
+
+    for (p = __preinit_array_start; p != __preinit_array_end; p++)
+        if (*p) (*p)();
+
+    for (p = __init_array_start; p != __init_array_end; p++)
+        if (*p) (*p)();
+}
+
+/* Chiamata da exit(). Vedi il commento sopra: all'indietro, non in
+ * avanti. */
+void _libc_distruttori(void)
+{
+    FunzioneInit *p;
+
+    /* &a[0] e non a: confrontare due array direttamente e' un confronto
+     * fra indirizzi che il compilatore segnala, perche' quasi sempre chi
+     * lo scrive voleva confrontare il CONTENUTO. Qui gli indirizzi sono
+     * proprio quello che serve. */
+    if (&__fini_array_start[0] == &__fini_array_end[0]) return;
+
+    for (p = __fini_array_end; p != __fini_array_start; ) {
+        p--;
+        if (*p) (*p)();
+    }
+}
+
 __attribute__((weak, noreturn))
 void _libc_start(int argc, char **argv, char **envp)
 {
@@ -3938,6 +4477,11 @@ void _libc_start(int argc, char **argv, char **envp)
      * kernel — e in quel caso getenv() ripiega sulla sezione [env] di
      * /boot/kernel.cfg: vedi getenv(). */
     environ = envp;
+
+    /* ⚠️ DOPO environ E PRIMA DI main. Un costruttore globale puo'
+     * chiamare getenv(); farlo girare prima che environ sia impostato
+     * gli darebbe un ambiente vuoto invece di quello vero. */
+    esegui_costruttori();
 
     exit(main(argc, argv));
     for (;;);
@@ -4539,18 +5083,58 @@ size_t strftime(char *buf, size_t max, const char *fmt, const struct tm *tm)
     return n;
 }
 
+/* =============================================================================
+ * ⛔ SECONDI E MICROSECONDI DALLA STESSA SORGENTE, e prima no
+ *
+ * La prima versione prendeva `tv_sec` da time() — cioe' dall'orologio
+ * CMOS — e `tv_usec` da uptime_ms() % 1000, cioe' dal contatore dei tick
+ * del PIT. Sono due orologi INDIPENDENTI, che non avanzano insieme: la
+ * coppia poteva TORNARE INDIETRO ogni volta che i millisecondi si
+ * avvolgevano prima che il secondo del CMOS scattasse.
+ *
+ * Un orologio che torna indietro non da' un errore: da' intervalli
+ * NEGATIVI a chi sottrae due istanti. GCC li sottrae, e il rapporto dei
+ * tempi di cc1 usciva cosi':
+ *
+ *     phase setup : 18446744070.44 (100%)
+ *
+ * che e' 2^64 nanosecondi meno tre secondi, cioe' un -3.3 letto come
+ * senza segno.
+ *
+ * ⚠️ ORA IL TEMPO SCORRE TUTTO DA uptime_ms(), ancorato UNA VOLTA alla
+ * lettura iniziale del CMOS. La conseguenza dichiarata: se qualcuno
+ * corregge l'orologio di sistema mentre un programma gira, gettimeofday
+ * non se ne accorge. E' il prezzo giusto — un orologio che non torna mai
+ * indietro vale piu' di uno che insegue l'ora esatta a scatti.
+ * ============================================================================= */
+static long         g_tod_base_sec = 0;
+static unsigned int g_tod_base_ms  = 0;
+static int          g_tod_pronto   = 0;
+
 int gettimeofday(struct timeval *tv, void *fuso)
 {
+    unsigned int ora_ms, trascorsi;
+
     (void)fuso;         /* obsoleto anche su POSIX */
     if (tv == NULL) return -1;
 
-    tv->tv_sec = (long)time(NULL);
-    /* I microsecondi vengono dal contatore dei tick, che avanza a scatti
-     * di 10 ms: le ultime quattro cifre sono sempre zero. Meglio di zero
-     * secco, perche' chi misura un intervallo breve almeno vede qualcosa
-     * muoversi; peggio di un vero orologio ad alta risoluzione, che EX-OS
-     * non ha. */
-    tv->tv_usec = (long)((uptime_ms() % 1000u) * 1000u);
+    ora_ms = uptime_ms();
+
+    if (!g_tod_pronto) {
+        g_tod_base_sec = (long)time(NULL);
+        g_tod_base_ms  = ora_ms;
+        g_tod_pronto   = 1;
+    }
+
+    trascorsi = ora_ms - g_tod_base_ms;   /* corretto anche all'avvolgimento */
+
+    tv->tv_sec  = g_tod_base_sec + (long)(trascorsi / 1000u);
+    /* ⚠️ La risoluzione vera resta 10 ms: il PIT batte a 100 Hz e le
+     * ultime quattro cifre dei microsecondi sono sempre zero. Meglio di
+     * zero secco — chi misura un intervallo breve vede almeno qualcosa
+     * muoversi — ma non e' un orologio ad alta risoluzione, e EX-OS non
+     * ne ha uno. */
+    tv->tv_usec = (long)((trascorsi % 1000u) * 1000u);
     return 0;
 }
 
@@ -4659,6 +5243,11 @@ int ioport_out32(unsigned int port, unsigned int value)
 int irq_done(unsigned int irq)
 {
     return (int)_syscall1(SYS_IRQ_DONE, irq);
+}
+
+int dma_alloc(DmaZona *z)
+{
+    return (int)_syscall1(SYS_DMA_ALLOC, (unsigned int)z);
 }
 
 /* =============================================================================

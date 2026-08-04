@@ -45,6 +45,10 @@ typedef struct {
 
 /* Interfaccia pubblica */
 int  fat12_init(uint8_t drive);
+/* Come fat12_init ma SILENZIOSA e senza ritentativi: risponde alla sola
+ * domanda «c'e' un floppy?». Se riesce il driver e' gia' pronto. Vedi il
+ * commento su g_sondaggio in fat12.c. */
+int  fat12_sonda(uint8_t drive);
 int  fat12_open(const char *path, uint32_t flags);
 int  fat12_read(int handle, void *buf, uint32_t size, uint32_t offset);
 /* ⚠️ `offset` e' arrivato ad agosto 2026, e prima non c'era: la scrittura

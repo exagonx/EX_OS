@@ -95,6 +95,33 @@ static char     g_line_buf[TTY_LINE_MAX];
 static uint32_t g_line_len = 0;
 
 /* =============================================================================
+ * Colonne davvero disegnate per la riga in corso, e quali caratteri le
+ * occupano.
+ *
+ * ⚠️ NON COINCIDONO CON g_line_len, E CONFONDERLE MANGIA IL PROMPT. Vale
+ * qui la stessa storia di drivers/kbd/kbd.c: un Backspace che cancella
+ * "una colonna per ogni carattere nel buffer" cancella anche cio' che sta
+ * PRIMA della riga — cioe' il prompt, che non e' nostro. Qui il difetto
+ * arrivava dall'altro lato: si ecoava anche quando la riga era piena e il
+ * carattere non veniva accumulato, e si ecoavano i caratteri di controllo
+ * come glifi casuali della code page 437.
+ * ============================================================================= */
+static uint8_t  g_line_vis[TTY_LINE_MAX];
+static uint32_t g_line_col = 0;
+
+/* Questo carattere occupa esattamente una colonna? Unico punto in cui si
+ * decide cosa va sullo schermo, cosi' il Backspace non puo' rispondere in
+ * modo diverso. Il tab e' escluso: avanza fino alla prossima tabulazione,
+ * un numero di colonne che dipende da dove comincia il prompt, e disegnare
+ * qualcosa che non si sa disfare e' esattamente il difetto da chiudere. */
+static int tty_eco_visibile(char c)
+{
+    uint8_t u = (uint8_t)c;
+
+    return (u >= 32 && u < 127);
+}
+
+/* =============================================================================
  * Scancodes PS/2 → ASCII (tastiera US QWERTY, solo tasti principali)
  *
  * Layout: scancode → ASCII (non-shifted)
@@ -249,18 +276,24 @@ static void kbd_irq1_handler(InterruptFrame *frame)
          * stato consegnato a drv_read), quindi la cancellazione funziona
          * sempre, indipendentemente da quanto e' rapida la lettura. */
         if (g_line_len > 0) {
-            g_line_len--;
-            vga_putchar('\b');
-            vga_putchar(' ');
-            vga_putchar('\b');
+            if (g_line_vis[--g_line_len]) {
+                g_line_col--;
+                vga_putchar('\b');
+                vga_putchar(' ');
+                vga_putchar('\b');
+            }
         }
+
+        /* Arrivati al limite la riga si azzera del tutto: cio' che resta e'
+         * invisibile, non cancellabile a vista, e finirebbe dentro il
+         * comando che si sta per battere. Chi cancella fino in fondo deve
+         * trovare una riga vuota davvero. */
+        if (g_line_col == 0) g_line_len = 0;
         return;
     }
 
-    /* Echo a video */
-    vga_putchar(ascii);
-
     if (ascii == '\n' || ascii == '\r') {
+        vga_putchar('\n');
         /* Riga confermata: copia tutto il buffer di riga nel ring buffer
          * in un solo colpo, poi il terminatore di riga. */
         uint32_t i;
@@ -269,6 +302,7 @@ static void kbd_irq1_handler(InterruptFrame *frame)
         }
         ring_buf_put('\n');
         g_line_len = 0;
+        g_line_col = 0;
 
         /* Sblocca processo in attesa di input */
         if (g_waiting_pid != 0) {
@@ -278,14 +312,18 @@ static void kbd_irq1_handler(InterruptFrame *frame)
         return;
     }
 
-    /* Carattere normale: accumula nel buffer di riga (se c'e' spazio) */
-    if (g_line_len < TTY_LINE_MAX - 1) {
-        g_line_buf[g_line_len++] = ascii;
+    /* ⚠️ PRIMA SI DECIDE SE IL CARATTERE ENTRA, POI LO SI ECOA. L'ordine
+     * inverso lascia sullo schermo caratteri che nel buffer non ci sono:
+     * si esegue meno di quello che si legge. A riga piena si rifiuta. */
+    if (g_line_len >= TTY_LINE_MAX - 1) return;
+
+    g_line_vis[g_line_len]   = (uint8_t)tty_eco_visibile(ascii);
+    g_line_buf[g_line_len++] = ascii;
+
+    if (g_line_vis[g_line_len - 1]) {
+        g_line_col++;
+        vga_putchar(ascii);
     }
-    /* Nota: se la riga e' piena, il carattere viene "ignorato" a livello
-     * di editing ma e' comunque gia' stato fatto l'echo a video sopra;
-     * si potrebbe migliorare suonando un beep o bloccando l'echo stesso
-     * in una fase futura. */
 }
 
 /* =============================================================================
@@ -311,6 +349,7 @@ int drv_init(void)
     g_shift = g_ctrl = g_caps = g_e0 = 0;
     g_waiting_pid = 0;
     g_line_len = 0;
+    g_line_col = 0;
     g_input_src = TTY_INPUT_NONE;
     g_kbd_pid   = 0;
 
@@ -347,6 +386,7 @@ void tty_set_input_source(int src)
         g_input_buf.tail  = 0;
         g_input_buf.count = 0;
         g_line_len        = 0;
+        g_line_col        = 0;
         g_waiting_pid     = 0;
         g_shift = g_ctrl = g_caps = g_e0 = 0;
 

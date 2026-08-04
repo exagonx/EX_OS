@@ -16,6 +16,7 @@
  *
  * Comandi built-in:
  *   help      — mostra i comandi disponibili
+ *   helpconfig— come si installano e configurano i driver
  *   echo      — stampa argomenti
  *   cls/clear — pulisce lo schermo
  *   pwd       — directory corrente
@@ -72,6 +73,10 @@ typedef uint32_t        size_t;
 #define SYS_WRITE       4
 #define SYS_OPEN        5
 #define SYS_CLOSE       6
+#define SYS_CONSOLE_INFO 231
+#define SYS_IPC_SEND     220
+#define SYS_IPC_RECV_TMO 228
+#define SYS_IPC_LOOKUP   223
 #define SYS_WAITPID     7
 #define SYS_GETPID      20
 #define SYS_EXEC        11
@@ -93,6 +98,15 @@ typedef uint32_t        size_t;
 /* Opzioni di waitpid — identiche a kernel/include/syscall.h */
 #define WNOHANG         0x0001
 
+/* I nomi dei servizi, per `helpconfig`: si chiede al registro IPC chi c'e'
+ * gia'. Sono header di soli #define e struct, senza dipendenze — il nome
+ * si prende da li' e non si ricopia, cosi' rinominare un servizio non
+ * lascia indietro una stringa in questo file. */
+#include "kbd_proto.h"
+#include "pci_proto.h"
+#include "net_proto.h"
+#include "ip_proto.h"
+
 /* stdin=0, stdout=1, stderr=2 */
 #define STDIN   0
 #define STDOUT  1
@@ -101,6 +115,18 @@ typedef uint32_t        size_t;
 /* =============================================================================
  * Wrapper syscall inline ASM (stile Linux x86)
  * ============================================================================= */
+
+/* ⚠️ DEVE RESTARE IDENTICA a ConsoleInfo in lib/include/libc.h e in
+ * kernel/include/vga.h: attraversa l'ABI della syscall. La shell non
+ * include libc.h (si compila da sola, vedi il commento in testa), quindi
+ * la struttura si ripete qui — stessa convenzione dei numeri di syscall
+ * duplicati poco sopra. */
+typedef struct {
+    uint32_t totale;
+    uint32_t mia;
+    uint32_t visibile;
+    uint32_t fg;
+} ConsoleInfo;
 
 static inline int32_t syscall1(uint32_t num, uint32_t a)
 {
@@ -138,6 +164,21 @@ static inline int32_t syscall3(uint32_t num, uint32_t a, uint32_t b, uint32_t c)
     return ret;
 }
 
+/* ESI come quarto argomento: e' la stessa convenzione di lib/libc.c, e la
+ * usa SYS_IPC_RECV_TMO per la scadenza. */
+static inline int32_t syscall4(uint32_t num, uint32_t a, uint32_t b,
+                               uint32_t c, uint32_t d)
+{
+    int32_t ret;
+    __asm__ volatile (
+        "int $0x80"
+        : "=a"(ret)
+        : "a"(num), "b"(a), "c"(b), "d"(c), "S"(d)
+        : "memory"
+    );
+    return ret;
+}
+
 /* =============================================================================
  * Funzioni syscall user-friendly
  * ============================================================================= */
@@ -152,6 +193,36 @@ static void sh_exit(int code)
 static int sh_write(int fd, const char *buf, uint32_t n)
 {
     return syscall3(SYS_WRITE, (uint32_t)fd, (uint32_t)buf, n);
+}
+
+/* Messaggio IPC: solo l'intestazione, come in lib/include/libc.h — il
+ * payload arriva nel buffer separato. Ripetuta qui perche' la shell non
+ * include libc.h, stessa convenzione dei numeri di syscall. */
+typedef struct {
+    uint32_t sender_pid;
+    uint32_t tipo;
+    uint32_t len;
+} ShIpcMsg;
+
+static int sh_ipc_lookup(const char *nome)
+{
+    return (int)syscall1(SYS_IPC_LOOKUP, (uint32_t)nome);
+}
+
+static int sh_ipc_send(int pid, uint32_t tipo, const void *dati, uint32_t len)
+{
+    return (int)syscall4(SYS_IPC_SEND, (uint32_t)pid, tipo,
+                         (uint32_t)dati, len);
+}
+
+static int sh_ipc_recv(ShIpcMsg *m, void *buf, uint32_t len, uint32_t ms)
+{
+    return (int)syscall4(SYS_IPC_RECV_TMO, (uint32_t)m, (uint32_t)buf, len, ms);
+}
+
+static int sh_console_info(ConsoleInfo *ci)
+{
+    return (int)syscall2(SYS_CONSOLE_INFO, (uint32_t)ci, (uint32_t)sizeof(*ci));
 }
 
 static int sh_read(int fd, char *buf, uint32_t n)
@@ -449,8 +520,27 @@ static void verbose_init(void)
 
 /* =============================================================================
  * Parsing della riga di comando
- * Divide la stringa in argv[] separando per spazi.
- * Ritorna argc.
+ *
+ * Divide la stringa in argv[] separando per spazi, tenendo insieme cio'
+ * che sta fra virgolette:
+ *
+ *     cp "appunti di riunione.txt" /disco     due argomenti, non quattro
+ *
+ * ⚠️ APICI SINGOLI E DOPPI FANNO LA STESSA COSA, e non e' una
+ * semplificazione affrettata. Su una shell Unix la differenza esiste
+ * perche' fra virgolette doppie $VAR viene espansa e fra apici singoli no.
+ * Qui NON c'e' nessuna espansione — ne' di variabili ne' di caratteri
+ * jolly — quindi le due forme non avrebbero niente da distinguere.
+ * Accettarle entrambe e trattarle uguale e' onesto; accettarne una sola
+ * costringerebbe a ricordare quale.
+ *
+ * ⚠️ UNA VIRGOLETTA NON CHIUSA VIENE SEGNALATA. Prima l'argomento si
+ * prendeva fino a fine riga in silenzio: `cp "prova /disco` diventava un
+ * solo argomento chiamato "prova /disco" e il comando falliva lamentando
+ * un file inesistente dal nome assurdo. Il difetto era nella riga, non
+ * nel file, e va detto li'.
+ *
+ * Ritorna argc, oppure -1 se la riga e' malformata.
  * ============================================================================= */
 #define MAX_ARGS    16
 /* 512, cioe' quanto il driver di tastiera puo' consegnare in un messaggio
@@ -470,12 +560,22 @@ static int parse_line(char *line, char *argv[], int max_args)
         while (*p == ' ' || *p == '\t') p++;
         if (!*p) break;
 
-        /* Gestione stringa tra virgolette */
-        if (*p == '"') {
-            p++;
+        if (*p == '"' || *p == '\'') {
+            char chiusura = *p++;
+
             argv[argc++] = p;
-            while (*p && *p != '"') p++;
-            if (*p) *p++ = '\0';
+            while (*p && *p != chiusura) p++;
+
+            if (*p) {
+                *p++ = '\0';
+            } else {
+                print(CLR_YELLOW);
+                print("sh: manca la ");
+                print(chiusura == '"' ? "virgoletta" : "apice");
+                println(" di chiusura");
+                print(CLR_RESET);
+                return -1;
+            }
         } else {
             argv[argc++] = p;
             while (*p && *p != ' ' && *p != '\t') p++;
@@ -483,8 +583,26 @@ static int parse_line(char *line, char *argv[], int max_args)
         }
     }
 
+    /* ⚠️ SI AVVISA QUANDO GLI ARGOMENTI NON CI STANNO TUTTI. Prima quelli
+     * oltre il sedicesimo sparivano senza dire niente, e un comando che
+     * riceve meta' dei suoi argomenti fa qualcosa di diverso da quello
+     * chiesto — non fallisce, il che e' peggio. */
+    if (argc == max_args) {
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p) {
+            print(CLR_YELLOW);
+            println("sh: troppi argomenti, gli ultimi sono stati ignorati");
+            print(CLR_RESET);
+        }
+    }
+
     return argc;
 }
+
+/* Definita piu' in basso (il motore degli script sta vicino all'autoexec,
+ * che e' il suo primo utente), ma serve al dispatch dei built-in qui
+ * sopra. In un file solo l'ordine non puo' accontentare tutti. */
+static int esegui_script(const char *nome, const char *etichetta);
 
 /* =============================================================================
  * Comandi built-in
@@ -513,12 +631,186 @@ static void cmd_help(void)
     println("  jobs              - elenca i processi lanciati con '&'");
     println("  fg [n]            - riporta in primo piano il job n (l'ultimo se omesso)");
     println("");
+    print(CLR_CYAN);
+    println("  source <file.sh>  - esegue uno script in questa shell (anche `nome.sh`)");
+    println("                      !silenced nello script nasconde i comandi, non l'output");
+    println("  help helpconfig   - come si installano e configurano i driver");
+    print(CLR_WHITE);
+    println("");
+    println("");
+    println("  \"con spazi\"      - un nome con spazi va fra virgolette:");
+    println("                      cp \"appunti di riunione.txt\" /disco");
+    println("                      gli apici singoli fanno la stessa cosa");
+    println("");
     println("  comando &         - esegue in background e torna subito al prompt");
     println("  Alt+F1..F4        - passa da una console virtuale all'altra");
     println("  reboot            - riavvia il sistema");
     println("  halt              - ferma il sistema (non spegne)");
     println("  poweroff/shutdown - ferma e spegne dopo 3 secondi");
     println("  exit [codice]     - termina la shell");
+}
+
+/* =============================================================================
+ * helpconfig — come si accendono i driver
+ *
+ * ⚠️ MOSTRA LO STATO, NON SOLO LE ISTRUZIONI. Un elenco di comandi da dare
+ * lo si trova gia' nel leggimi; quello che al prompt non si sa e' a che
+ * punto si e' arrivati. Chiedere al registro IPC chi c'e' costa una
+ * syscall per servizio e trasforma "ecco la procedura" in "sei qui".
+ *
+ * ⚠️ SI IMPAGINA A MANO. Lo schermo e' 80x25 e questo testo e' piu' lungo:
+ * senza pause le prime pagine scorrerebbero via, cioe' proprio quelle che
+ * spiegano da dove si comincia. Le pause stanno dove il discorso cambia
+ * argomento, non ogni N righe: una pagina che si interrompe a meta' di un
+ * elenco e' peggio di una piu' corta.
+ * ============================================================================= */
+
+/* Aspetta Invio. Ritorna 0 se si vuole smettere ('q'), 1 per continuare.
+ *
+ * ⚠️ LEGGE UNA RIGA, NON UN TASTO. La modalita' raw della tastiera
+ * appartiene alla modifica della riga di comando; qui basta una lettura
+ * normale, e il driver ci torna da solo (vedi kbd_proto.h). Una lettura
+ * fallita — nessun servizio tastiera — vale "continua": meglio far
+ * scorrere il testo che bloccare la shell su una pausa che nessuno puo'
+ * sbloccare. */
+static int hc_pausa(void)
+{
+    char riga[8];
+    int  n;
+
+    print(CLR_CYAN);
+    print("  -- Invio per continuare, q per smettere --");
+    print(CLR_WHITE);
+
+    n = sh_read(STDIN, riga, sizeof(riga) - 1);
+    print("\n");
+    if (n <= 0) return 1;
+
+    return (riga[0] != 'q' && riga[0] != 'Q');
+}
+
+/* Una riga di stato: "[ok] nome" oppure "[manca] nome". */
+static void hc_stato(const char *servizio, const char *descrizione)
+{
+    int c = sh_ipc_lookup(servizio);
+
+    print(c > 0 ? CLR_GREEN : CLR_YELLOW);
+    print(c > 0 ? "  [ok]    " : "  [manca] ");
+    print(CLR_WHITE);
+    println(descrizione);
+}
+
+static void cmd_helpconfig(void)
+{
+    print(CLR_CYAN);
+    println("Installare e configurare i driver");
+    print(CLR_WHITE);
+    println("");
+    print(CLR_GREEN);
+    println("  Se non vuoi leggere il resto: `hwconfig` guarda cosa c'e' nella");
+    println("  macchina e scrive kernel.cfg e autoexec.sh da solo. Mostra tutto");
+    println("  prima di chiedere, e mette da parte i file di adesso.");
+    print(CLR_WHITE);
+    println("");
+    println("Un driver di EX-OS e' un programma come gli altri: sta in /dev,");
+    println("si lancia dal prompt e gira in ring3. Se si pianta si rilancia,");
+    println("e il resto del sistema non se ne accorge.");
+    println("");
+    println("  /dev/pci.drv &      lo lancia e lo lascia acceso ('&')");
+    println("  jobs                mostra che e' ancora vivo");
+    println("");
+    print(CLR_YELLOW);
+    println("  I driver di rete stanno SOLO sul CD di EX-OS, non sul floppy:");
+    print(CLR_WHITE);
+    println("  in 1.44 MB non ci stanno. Con il floppy da solo i comandi di");
+    println("  rete ci sono ma non trovano niente da accendere.");
+    println("");
+    if (!hc_pausa()) return;
+
+    print(CLR_CYAN);
+    println("A che punto sei adesso");
+    print(CLR_WHITE);
+    println("");
+    hc_stato(PCI_SERVIZIO,   "bus PCI          /dev/pci.drv &");
+    hc_stato(NET_SERVIZIO_0, "scheda di rete   netdetect -c");
+    hc_stato(IP_SERVIZIO,    "stack IP         /dev/ip.drv &");
+    hc_stato(KBD_SERVICE_NAME, "tastiera         [modules] in /boot/kernel.cfg");
+    println("");
+    print(CLR_YELLOW);
+    println("  Vanno accesi IN QUEST'ORDINE: ognuno serve al successivo.");
+    print(CLR_WHITE);
+    println("  Lanciarli tutti insieme fa fallire quelli dopo il primo per");
+    println("  un motivo diverso da quello vero.");
+    println("");
+    println("  L'indirizzo IP non e' un servizio: si vede con 'ipcfg'.");
+    println("");
+    if (!hc_pausa()) return;
+
+    print(CLR_CYAN);
+    println("La rete, dal bus all'indirizzo");
+    print(CLR_WHITE);
+    println("");
+    println("  /dev/pci.drv &      1. enumera il bus PCI");
+    println("  netdetect -c        2. riconosce la scheda e avvia il driver");
+    println("  /dev/ip.drv &       3. ARP, IPv4, ICMP, UDP, TCP");
+    println("  dhcp                4. chiede indirizzo, maschera, gateway, DNS");
+    println("");
+    println("Senza un server DHCP l'indirizzo si mette a mano:");
+    println("");
+    println("  ipcfg -a 192.168.1.10 -m 255.255.255.0 -g 192.168.1.1");
+    println("");
+    println("Poi 'ping 8.8.8.8' e 'ftp 10.0.2.2 ls' funzionano.");
+    println("");
+    if (!hc_pausa()) return;
+
+    print(CLR_CYAN);
+    println("Quando non funziona");
+    print(CLR_WHITE);
+    println("");
+    println("  netdetect           quali schede ci sono e quale driver vuole");
+    println("                      ognuna. Se non compare niente, il bus PCI");
+    println("                      non e' acceso oppure la scheda non c'e'.");
+    println("  nettest -a IP       prova ARP: se risponde, la scheda");
+    println("                      trasmette E riceve, e a ping manca solo");
+    println("                      software.");
+    println("  ipcfg               indirizzo e contatori. 'IP ricevuti' a");
+    println("                      zero, 'scartati' o 'somme errate' che");
+    println("                      salgono indicano tre punti diversi.");
+    println("  ipcfg -r            tabella ARP: chi si e' fatto vedere.");
+    println("");
+    print(CLR_YELLOW);
+    println("  Una NE2000 ISA non si trova da sola: va dichiarata.");
+    print(CLR_WHITE);
+    println("  Cercarla vorrebbe dire scrivere sulla sua porta di reset, e");
+    println("  se li' c'e' un'altra scheda le si scrive addosso.");
+    println("");
+    println("  /dev/ne2k.drv -p 0x300 -q 3");
+    println("");
+    if (!hc_pausa()) return;
+
+    print(CLR_CYAN);
+    println("Farlo fare all'avvio");
+    print(CLR_WHITE);
+    println("");
+    println("/boot/autoexec.sh: una riga = un comando, come se fosse");
+    println("digitato. '#' commenta, '@' esegue senza stampare.");
+    println("");
+    println("  /dev/pci.drv &");
+    println("  netdetect -c");
+    println("  /dev/ip.drv &");
+    println("  dhcp");
+    println("");
+    println("Lo esegue solo la shell della prima console.");
+    println("");
+    print(CLR_YELLOW);
+    println("  Se un comando dell'autoexec si blocca: Alt+F2 da' sempre una");
+    println("  shell pulita, e 'autoexec=0' in /boot/kernel.cfg lo salta.");
+    print(CLR_WHITE);
+    println("");
+    println("La tastiera segue un'altra strada: e' un driver di avvio, e si");
+    println("dichiara nella sezione [modules] di /boot/kernel.cfg. Senza,");
+    println("il kernel serve la console con la tastiera interna di ripiego");
+    println("e si perde la modalita' raw (niente frecce, niente gfedit).");
 }
 
 static void cmd_echo(int argc, char *argv[])
@@ -1047,6 +1339,566 @@ static void print_banner(void)
 }
 
 /* =============================================================================
+ * Esegue UNA riga, come se fosse stata digitata.
+ *
+ * ⚠️ ESTRATTA DAL CICLO PRINCIPALE, e non per eleganza: serviva un secondo
+ * chiamante. L'autoexec deve eseguire i comandi ESATTAMENTE come li
+ * esegue chi li digita — stessi built-in, stesse virgolette, stesso '&'
+ * per il background. Riscrivere un secondo interprete accanto al primo
+ * avrebbe significato due comportamenti che divergono al primo comando
+ * che si aggiunge da una parte sola.
+ *
+ * Ritorna 0 normalmente, -1 se il comando era `exit`.
+ * ============================================================================= */
+static int esegui_riga(char *line, int n)
+{
+    char *argv[MAX_ARGS];
+    int   argc;
+    int   background;
+    char  cmdline[JOB_CMD_LEN];
+
+    if (n <= 0) return 0;
+
+    /* =================================================================
+     * '&' finale: esecuzione in background.
+     *
+     * Si accetta sia "comando &" sia "comando&". La riga viene
+     * copiata PRIMA di essere spezzata da parse_line, che ci pianta
+     * dentro dei terminatori: serve intera per l'elenco di 'jobs',
+     * dove leggere "hello" e' molto piu' utile che leggere un PID.
+     * ================================================================= */
+    {
+        int k = n - 1;
+        while (k >= 0 && (line[k] == ' ' || line[k] == '\t')) k--;
+        if (k >= 0 && line[k] == '&') {
+            background = 1;
+            line[k] = '\0';
+            n = k;
+            while (n > 0 && (line[n-1] == ' ' || line[n-1] == '\t')) line[--n] = '\0';
+            if (n == 0) return 0;   /* solo una '&' */
+        } else {
+            background = 0;
+        }
+    }
+    sh_strcpy(cmdline, line, sizeof(cmdline));
+
+    /* Parsing */
+    argc = parse_line(line, argv, MAX_ARGS);
+    if (argc <= 0) return 0;    /* vuota, oppure malformata (l'ha gia' detto) */
+
+    /* Dispatch comandi built-in */
+    const char *cmd = argv[0];
+
+    /* ⚠️ UNO SCRIPT SI ESEGUE, NON SI LANCIA. `source` non e' un
+     * eseguibile: i comandi devono girare in QUESTA shell, altrimenti un
+     * `cd` o un `export` dentro lo script sparirebbero insieme al
+     * processo figlio — che e' il motivo per cui `source` esiste anche
+     * sulle shell vere. */
+    if (sh_strcmp(cmd, "source") == 0) {
+        if (argc < 2) { printerr("uso: source <file.sh>"); return 0; }
+        return esegui_script(argv[1], argv[1]);
+    }
+
+    /* ⚠️ UN NOME CHE FINISCE IN .sh E' UNO SCRIPT, e si decide QUI e non
+     * dopo che la spawn e' fallita. Il ripiego sull'errore sembra piu'
+     * tollerante ed e' peggio: la spawn fallisce per molti motivi — file
+     * assente, ELF corrotto, memoria finita — e trattarli tutti come
+     * "sara' uno script" trasforma un errore preciso in un secondo errore
+     * che parla d'altro.
+     *
+     * Il prezzo dichiarato: un eseguibile ELF chiamato `qualcosa.sh` non
+     * si lancia piu' per nome. E' un nome che nessuno da' a un binario. */
+    {
+        int l = 0;
+        while (cmd[l]) l++;
+        if (l > 3 && cmd[l-3] == '.' && cmd[l-2] == 's' && cmd[l-1] == 'h')
+            return esegui_script(cmd, cmd);
+    }
+
+    /* `help helpconfig` e `helpconfig` da solo fanno la stessa cosa: chi
+     * ha letto la riga nell'aiuto prova l'una, chi se l'e' sentita dire
+     * prova l'altra, e far fallire la seconda sarebbe gratuito. */
+    if (sh_strcmp(cmd, "helpconfig") == 0) { cmd_helpconfig(); return 0; }
+    if (sh_strcmp(cmd, "help")  == 0) {
+        if (argc >= 2 && sh_strcmp(argv[1], "helpconfig") == 0) cmd_helpconfig();
+        else                                                    cmd_help();
+        return 0;
+    }
+    if (sh_strcmp(cmd, "echo")  == 0) { cmd_echo(argc,argv);  return 0; }
+    if (sh_strcmp(cmd, "cls")   == 0 ||
+        sh_strcmp(cmd, "clear") == 0) { cmd_cls();            return 0; }
+    if (sh_strcmp(cmd, "pwd")   == 0) { cmd_pwd();            return 0; }
+    if (sh_strcmp(cmd, "cd")    == 0) { cmd_cd(argc, argv);   return 0; }
+    if (sh_strcmp(cmd, "env")   == 0) { cmd_env();            return 0; }
+    if (sh_strcmp(cmd, "export")== 0) { cmd_export(argc,argv);return 0; }
+    if (sh_strcmp(cmd, "uname") == 0) { cmd_uname();          return 0; }
+    if (sh_strcmp(cmd, "ver")   == 0) { cmd_version();        return 0; }
+    if (sh_strcmp(cmd, "version") == 0) { cmd_version();      return 0; }
+    if (sh_strcmp(cmd, "pid")   == 0) { cmd_pid();            return 0; }
+    if (sh_strcmp(cmd, "jobs")  == 0) { cmd_jobs();           return 0; }
+    if (sh_strcmp(cmd, "fg")    == 0) { cmd_fg(argc, argv);   return 0; }
+    if (sh_strcmp(cmd, "sleep") == 0) { cmd_sleep(argc,argv); return 0; }
+    if (sh_strcmp(cmd, "cat")   == 0) { cmd_cat(argc, argv);  return 0; }
+    if (sh_strcmp(cmd, "exec")  == 0) { cmd_exec(argc, argv); return 0; }
+    if (sh_strcmp(cmd, "reboot")== 0) { cmd_reboot();         return 0; }
+    if (sh_strcmp(cmd, "halt")  == 0) { cmd_halt();           return 0; }
+    if (sh_strcmp(cmd, "poweroff") == 0) { cmd_poweroff();    return 0; }
+    if (sh_strcmp(cmd, "shutdown") == 0) { cmd_poweroff();    return 0; }
+
+    if (sh_strcmp(cmd, "exit")  == 0) {
+        int code = (argc >= 2) ? (int)(*argv[1] - '0') : 0;
+        sh_exit(code);
+    }
+
+    /* Comando non built-in: cerca nel PATH e tenta exec */
+    run_program(cmd, argc, argv, background, cmdline);
+    return 0;
+}
+
+
+/* =============================================================================
+ * CRONOLOGIA E MODIFICA DELLA RIGA
+ *
+ * Le frecce non arrivano in modalita' cooked: li' il driver di tastiera
+ * assembla la riga e la consegna su Invio, e i tasti di movimento non
+ * hanno modo di attraversare un flusso di testo. Per averli bisogna
+ * passare in RAW e prendersi la disciplina di riga — eco, backspace,
+ * cursore — che prima faceva il driver.
+ *
+ * ⚠️ SE LA MODALITA' RAW NON E' DISPONIBILE SI TORNA A LEGGERE RIGHE.
+ * Il servizio 'kbd' potrebbe non essere avviato (kernel.cfg senza la voce
+ * [modules], o driver morto). Una shell che in quel caso non accetta piu'
+ * comandi sarebbe un sistema inutilizzabile per una funzione di comodo:
+ * si ripiega su sh_read() e si perde solo la cronologia.
+ *
+ * ⚠️ IL DRIVER TORNA IN COOKED DA SOLO quando qualcuno chiede una riga
+ * (vedi drivers/kbd/kbd_proto.h): succede ogni volta che un programma
+ * lanciato da qui legge da stdin. Percio' la modalita' si riafferma a
+ * OGNI prompt invece di impostarla una volta all'avvio — ed e' anche cio'
+ * che rende la cosa autoriparante se un job in background la cambia.
+ *
+ * ⚠️ IL RIDISEGNO USA SOLO BACKSPACE, non '\r' e nessuna sequenza di
+ * controllo. Il TTY di EX-OS non ha un linguaggio di posizionamento del
+ * cursore: l'unica cosa su cui si puo' contare e' che un backspace
+ * indietreggi di uno. Conseguenza dichiarata: se la riga supera la
+ * larghezza dello schermo e va a capo, il ridisegno non torna indietro
+ * oltre il capo e la modifica si vede male. La riga resta corretta —
+ * quello che si legge e' cio' che si eseguira'.
+ * ============================================================================= */
+#include "kbd_proto.h"
+
+#define CRONOLOGIA_N   24
+
+static char g_storia[CRONOLOGIA_N][MAX_LINE];
+static int  g_storia_n = 0;     /* quante righe valide */
+static int  g_storia_p = 0;     /* prossima posizione di scrittura */
+
+static int  g_kbd_pid = -1;     /* -1 = non ancora cercato, 0 = assente */
+
+/* Aggiunge una riga alla cronologia.
+ *
+ * ⚠️ NON SI REGISTRANO LE RIGHE VUOTE NE' I DOPPIONI CONSECUTIVI: chi
+ * ripete lo stesso comando dieci volte non vuole dieci voci da
+ * riattraversare con la freccia. */
+static void storia_aggiungi(const char *riga)
+{
+    int prec;
+
+    if (riga[0] == '\0') return;
+
+    prec = (g_storia_p - 1 + CRONOLOGIA_N) % CRONOLOGIA_N;
+    if (g_storia_n > 0 && sh_strcmp(g_storia[prec], riga) == 0) return;
+
+    sh_strcpy(g_storia[g_storia_p], riga, MAX_LINE);
+    g_storia_p = (g_storia_p + 1) % CRONOLOGIA_N;
+    if (g_storia_n < CRONOLOGIA_N) g_storia_n++;
+}
+
+/* La riga a `indietro` passi dal fondo (1 = l'ultima). NULL se non c'e'. */
+static const char *storia_leggi(int indietro)
+{
+    int i;
+
+    if (indietro < 1 || indietro > g_storia_n) return 0;
+    i = (g_storia_p - indietro + CRONOLOGIA_N * 2) % CRONOLOGIA_N;
+    return g_storia[i];
+}
+
+static int kbd_trova(void)
+{
+    if (g_kbd_pid < 0) {
+        int p = sh_ipc_lookup(KBD_SERVICE_NAME);
+        g_kbd_pid = (p > 0) ? p : 0;
+    }
+    return g_kbd_pid;
+}
+
+static void kbd_modo(unsigned int modo)
+{
+    KbdSetMode  m;
+    ConsoleInfo ci;
+
+    if (kbd_trova() <= 0) return;
+
+    m.modo    = modo;
+    m.console = (sh_console_info(&ci) == 0) ? ci.mia : 0;
+    sh_ipc_send(g_kbd_pid, KBD_MSG_SETMODE, &m, sizeof(m));
+}
+
+/* Il prossimo tasto, o 0 se non arriva (driver tornato in cooked, o
+ * servizio sparito). */
+static unsigned int kbd_tasto(void)
+{
+    ShIpcMsg     meta;
+    unsigned int payload = 0;
+    unsigned int console = 0;
+    ConsoleInfo  ci;
+    int          i;
+
+    if (kbd_trova() <= 0) return 0;
+    if (sh_console_info(&ci) == 0) console = ci.mia;
+
+    /* =====================================================================
+     * ⚠️ SI RIPROVA ALL'INFINITO, RIAFFERMANDO OGNI VOLTA LA MODALITA'.
+     *
+     * La prima stesura aspettava due secondi e poi rinunciava. Sembrava
+     * prudente ed era sbagliato per il motivo piu' semplice: una persona
+     * che si ferma tre secondi a pensare perdeva la modalita' raw, e la
+     * riga successiva tornava senza cronologia e con le frecce che
+     * arrivavano come sequenze di escape stampate alla lettera.
+     *
+     * La scadenza serve, ma non per rinunciare: serve per RIAFFERMARE la
+     * modalita'. In cooked il driver ignora le READKEY in silenzio, e
+     * senza questo giro la shell resterebbe ferma per sempre. Cosi'
+     * invece si ripara da sola ogni due secondi — che e' esattamente
+     * quello che occorre quando un programma appena terminato ha
+     * riportato il driver in cooked.
+     *
+     * Si rinuncia solo se il servizio non accetta piu' messaggi, cioe' se
+     * e' morto davvero.
+     * ===================================================================== */
+    for (;;) {
+        if (sh_ipc_send(g_kbd_pid, KBD_MSG_READKEY, &console, sizeof(console)) < 0)
+            return 0;
+
+        for (i = 0; i < 4; i++) {
+            if (sh_ipc_recv(&meta, &payload, sizeof(payload), 2000) < 0) break;
+            if ((int)meta.sender_pid != g_kbd_pid) continue;
+            if (meta.tipo != KBD_MSG_KEY) continue;
+            return payload;
+        }
+
+        kbd_modo(KBD_MODE_RAW);
+    }
+}
+
+/* Ridisegna la riga: torna all'inizio con dei backspace, riscrive, e
+ * cancella la coda di quella vecchia se si e' accorciata. */
+static void riga_ridisegna(const char *buf, int len, int cur,
+                           int vecchia_len, int vecchia_cur)
+{
+    int i;
+
+    for (i = 0; i < vecchia_cur; i++) sh_write(STDOUT, "\b", 1);
+    if (len > 0) sh_write(STDOUT, buf, (uint32_t)len);
+    for (i = len; i < vecchia_len; i++) sh_write(STDOUT, " ", 1);
+    for (i = (len > vecchia_len ? len : vecchia_len); i > cur; i--)
+        sh_write(STDOUT, "\b", 1);
+}
+
+/* Legge una riga con cronologia e modifica. Ritorna la lunghezza, o -1
+ * se la modalita' raw non e' utilizzabile (il chiamante ripiega). */
+static int riga_modifica(char *buf, int max)
+{
+    int len = 0, cur = 0, sfoglia = 0;
+    char salvata[MAX_LINE];
+
+    salvata[0] = '\0';
+    buf[0] = '\0';
+
+    /* ⚠️ SOLO LA CONSOLE IN PRIMO PIANO PRENDE I TASTI. Senza questo
+     * controllo tutte e quattro le shell chiedevano la modalita' raw e si
+     * contendevano la tastiera: le tre non visibili scadevano, ripiegavano
+     * su una lettura di riga, e quella riportava il driver in cooked —
+     * togliendola proprio a chi stava scrivendo. Il registro si riempiva
+     * di "READLINE su console N in raw, ripristino cooked" a ogni tasto.
+     *
+     * Chi non e' visibile si mette semplicemente in attesa di una riga,
+     * come ha sempre fatto: nessuno gli sta scrivendo. */
+    {
+        ConsoleInfo ci;
+
+        if (sh_console_info(&ci) != 0 || ci.mia != ci.visibile) return -1;
+    }
+
+    kbd_modo(KBD_MODE_RAW);
+    if (g_kbd_pid <= 0) return -1;
+
+    for (;;) {
+        unsigned int ev = kbd_tasto();
+        unsigned int k  = ev & KBD_KEY_MASK;
+        int vl = len, vc = cur;
+
+        if (ev == 0) return -1;         /* il driver non risponde: si ripiega */
+
+        if (k == '\n' || k == '\r') {
+            sh_write(STDOUT, "\n", 1);
+            buf[len] = '\0';
+            return len;
+        }
+
+        if (k == '\b' || k == 127u) {
+            if (cur > 0) {
+                int i;
+                for (i = cur - 1; i < len - 1; i++) buf[i] = buf[i+1];
+                len--; cur--;
+                riga_ridisegna(buf, len, cur, vl, vc);
+            }
+            continue;
+        }
+
+        if (k == KBD_K_DEL) {
+            if (cur < len) {
+                int i;
+                for (i = cur; i < len - 1; i++) buf[i] = buf[i+1];
+                len--;
+                riga_ridisegna(buf, len, cur, vl, vc);
+            }
+            continue;
+        }
+
+        if (k == KBD_K_LEFT)  { if (cur > 0)   { cur--; sh_write(STDOUT, "\b", 1); } continue; }
+        if (k == KBD_K_RIGHT) { if (cur < len) { sh_write(STDOUT, buf + cur, 1); cur++; } continue; }
+        if (k == KBD_K_HOME)  { riga_ridisegna(buf, len, 0, vl, vc);   cur = 0;   continue; }
+        if (k == KBD_K_END)   { riga_ridisegna(buf, len, len, vl, vc); cur = len; continue; }
+
+        if (k == KBD_K_UP || k == KBD_K_DOWN) {
+            const char *s;
+            int nuovo = (k == KBD_K_UP) ? sfoglia + 1 : sfoglia - 1;
+
+            if (nuovo > g_storia_n) continue;   /* piu' indietro non si va */
+            if (nuovo < 0) continue;
+
+            /* ⚠️ LA RIGA IN CORSO SI SALVA alla prima freccia in su e si
+             * rimette scendendo fino in fondo: chi ha scritto meta'
+             * comando e va a cercarne uno vecchio non deve perderlo. */
+            if (sfoglia == 0 && nuovo > 0) {
+                buf[len] = '\0';
+                sh_strcpy(salvata, buf, sizeof(salvata));
+            }
+
+            s = (nuovo == 0) ? salvata : storia_leggi(nuovo);
+            if (s == 0) continue;
+
+            sh_strcpy(buf, s, (uint32_t)max);
+            len = 0; while (buf[len]) len++;
+            cur = len;
+            sfoglia = nuovo;
+            riga_ridisegna(buf, len, cur, vl, vc);
+            continue;
+        }
+
+        /* Ctrl+C: si abbandona la riga e se ne comincia una nuova. */
+        if ((ev & KBD_MOD_CTRL) && (k == 'c' || k == 'C')) {
+            sh_write(STDOUT, "^C\n", 3);
+            buf[0] = '\0';
+            return 0;
+        }
+
+        /* Carattere stampabile: si inserisce dove sta il cursore. */
+        if (k >= 32u && k < 127u && len < max - 1) {
+            int i;
+            int in_coda = (cur == len);
+
+            for (i = len; i > cur; i--) buf[i] = buf[i-1];
+            buf[cur] = (char)k;
+            len++; cur++;
+
+            /* ⚠️ IN CODA SI SCRIVE UN CARATTERE SOLO. Ridisegnare tutta la
+             * riga a ogni tasto funziona ma fa lampeggiare lo schermo e
+             * su una console lenta si vede: il caso normale — si scrive
+             * in fondo — non ha niente da ridisegnare. */
+            if (in_coda) sh_write(STDOUT, buf + cur - 1, 1);
+            else         riga_ridisegna(buf, len, cur, vl, vc);
+        }
+    }
+}
+
+/* =============================================================================
+ * AUTOEXEC — comandi eseguiti all'avvio
+ *
+ * Il file predefinito e' /boot/autoexec.sh; il nome si cambia con la
+ * chiave `autoexec` di /boot/kernel.cfg, e `autoexec=0` lo disattiva.
+ *
+ * Formato: una riga = un comando, come se fosse digitato. Le righe vuote
+ * e quelle che cominciano con '#' si saltano. Una riga che comincia con
+ * '@' viene eseguita SENZA essere stampata, come nell'autoexec del DOS.
+ *
+ * -----------------------------------------------------------------------------
+ * !silenced — l'`echo off` di autoexec.bat
+ *
+ *     !silenced      da qui in poi i comandi non si vedono piu'
+ *     !verbose       si tornano a vedere
+ *
+ * ⚠️ ZITTISCE IL COMANDO, NON IL SUO RISULTATO. E' la distinzione che
+ * rende l'opzione utile: quello che un comando stampa e' il motivo per
+ * cui lo si e' messo nello script, mentre la riga di comando la si e'
+ * gia' scritta e riletterla non aggiunge niente. Uno script che accende
+ * la rete deve far vedere l'indirizzo ottenuto, non "dhcp".
+ *
+ * ⚠️ VALE DA DOVE STA IN POI, non per tutto il file. Cosi' si puo'
+ * zittire la parte rumorosa e lasciar vedere quella che interessa,
+ * invece di dover scegliere una volta sola per l'intero script. La riga
+ * della direttiva non si stampa mai, in nessuno dei due modi.
+ *
+ * ⚠️ E' DIVERSO DA '@', e i due convivono: '@' zittisce UNA riga,
+ * `!silenced` cambia lo stato. Chi ha un solo comando da nascondere non
+ * deve ricordarsi di riaccendere.
+ *
+ * -----------------------------------------------------------------------------
+ * ⚠️ SOLO LA PRIMA CONSOLE
+ *
+ * EX-OS avvia una shell per ognuna delle quattro console virtuali. Senza
+ * questo controllo l'autoexec girerebbe QUATTRO VOLTE — e per comandi
+ * come `/dev/pci.drv &` significherebbe quattro processi che si
+ * contendono lo stesso servizio, con tre che falliscono e un registro
+ * pieno di errori a ogni avvio.
+ *
+ * -----------------------------------------------------------------------------
+ * ⚠️ LA VIA D'USCITA DEVE ESISTERE PRIMA DI SERVIRE
+ *
+ * Un autoexec con dentro un comando che si blocca renderebbe il sistema
+ * inutilizzabile, e il file per correggerlo sta sul disco che non si
+ * riesce piu' a raggiungere. Percio':
+ *
+ *   - `autoexec=0` in kernel.cfg lo salta, e kernel.cfg si puo'
+ *     modificare da un'altra macchina montando il supporto;
+ *   - le altre tre console NON lo eseguono, quindi Alt+F2 da' sempre una
+ *     shell pulita anche mentre la prima e' impegnata.
+ *
+ * Il secondo punto e' quello che conta davvero: non richiede di poter
+ * modificare niente.
+ *
+ * ⚠️ NON C'E' RICORSIONE. Un autoexec che lancia `sh` non rilancia
+ * l'autoexec, perche' la seconda shell non e' sulla console 0 — ma se
+ * qualcuno cambiasse quel controllo, un autoexec che lancia sh sarebbe un
+ * ciclo infinito di processi. E' il motivo per cui la condizione e' "la
+ * console" e non "sono la prima shell".
+ * ============================================================================= */
+#define AUTOEXEC_PREDEFINITO  "/boot/autoexec.sh"
+
+/* ⚠️ UNO SCRIPT PUO' LANCIARNE UN ALTRO, MA NON ALL'INFINITO. Due file
+ * che si chiamano a vicenda sono un ciclo che riempie lo stack e ferma la
+ * shell senza dire perche'. Quattro livelli bastano a qualunque uso
+ * ragionevole e rendono il ciclo un messaggio invece di un blocco. */
+#define SCRIPT_ANNIDAMENTO_MAX  4
+
+static int g_script_livello = 0;
+
+/* Esegue un file di comandi. `etichetta` e' il prefisso mostrato davanti
+ * a ogni riga eseguita; NULL usa il nome del file.
+ * Ritorna 0, oppure -1 se lo script ha chiesto `exit`. */
+static int esegui_script(const char *nome, const char *etichetta)
+{
+    char        buf[2048];
+    char        riga[MAX_LINE];
+    int         fd, letti, i, r = 0;
+    int         zitto_sempre = 0;
+
+    if (g_script_livello >= SCRIPT_ANNIDAMENTO_MAX) {
+        printerr("sh: script annidati troppo in profondita'");
+        return 0;
+    }
+
+    fd = syscall3(SYS_OPEN, (uint32_t)nome, 0, 0);
+    if (fd < 0) return 0;           /* non c'e': non e' un errore */
+
+    letti = (int)sh_read(fd, buf, sizeof(buf) - 1);
+    syscall1(SYS_CLOSE, (uint32_t)fd);
+    if (letti <= 0) return 0;
+    buf[letti] = '\0';
+
+    if (etichetta == 0) etichetta = nome;
+    g_script_livello++;
+
+    /* ⚠️ SI LEGGE TUTTO IN UNA VOLTA, e il limite e' dichiarato: 2 KB.
+     * Un autoexec e' un elenco di comandi, non un programma; leggerlo a
+     * pezzi vorrebbe dire gestire una riga spezzata a meta' fra due
+     * letture, che e' complicazione per un caso che non si presenta. Un
+     * file piu' lungo viene TRONCATO, e lo si dice. */
+    if (letti == (int)sizeof(buf) - 1)
+        println("sh: script piu' lungo di 2 KB, il resto e' stato ignorato");
+
+    i = 0;
+    while (i < letti) {
+        int n = 0, zitto = 0;
+
+        while (i < letti && buf[i] != '\n' && n < MAX_LINE - 1) riga[n++] = buf[i++];
+        while (i < letti && buf[i] != '\n') i++;    /* riga troppo lunga: si scarta la coda */
+        if (i < letti) i++;                        /* salta il newline */
+
+        while (n > 0 && (riga[n-1] == '\r' || riga[n-1] == ' ' ||
+                         riga[n-1] == '\t')) n--;
+        riga[n] = '\0';
+
+        {
+            int s = 0;
+            while (s < n && (riga[s] == ' ' || riga[s] == '\t')) s++;
+            if (s > 0) { int k; for (k = 0; k <= n - s; k++) riga[k] = riga[k+s]; n -= s; }
+        }
+
+        if (n == 0 || riga[0] == '#') continue;
+
+        /* Direttive: cambiano lo stato e non sono comandi. Non si
+         * stampano mai — stampare "!silenced" sarebbe l'unica riga
+         * visibile di uno script che si e' appena zittito. */
+        if (riga[0] == '!') {
+            if (sh_strcmp(riga, "!silenced") == 0) { zitto_sempre = 1; continue; }
+            if (sh_strcmp(riga, "!verbose")  == 0) { zitto_sempre = 0; continue; }
+            printerr("sh: direttiva sconosciuta (valgono !silenced e !verbose)");
+            continue;
+        }
+
+        if (riga[0] == '@') {
+            zitto = 1;
+            { int k; for (k = 0; k < n; k++) riga[k] = riga[k+1]; n--; }
+            if (n == 0) continue;
+        }
+
+        if (!zitto && !zitto_sempre) {
+            print(CLR_CYAN);
+            print(etichetta);
+            print("> ");
+            print(CLR_RESET);
+            println(riga);
+        }
+
+        r = esegui_riga(riga, n);
+        if (r < 0) break;           /* `exit` dentro lo script */
+    }
+
+    g_script_livello--;
+    return (r < 0) ? -1 : 0;
+}
+
+static void esegui_autoexec(void)
+{
+    char        nome[128];
+    ConsoleInfo ci;
+
+    /* Solo la console 0: vedi il commento qui sopra. */
+    if (sh_console_info(&ci) != 0 || ci.mia != 0) return;
+
+    if (sh_getenv_kernel("autoexec", nome, sizeof(nome)) < 0) {
+        sh_strcpy(nome, AUTOEXEC_PREDEFINITO, sizeof(nome));
+    } else if (nome[0] == '0' && nome[1] == '\0') {
+        return;                     /* disattivato di proposito */
+    }
+
+    esegui_script(nome, "autoexec");
+}
+
+/* =============================================================================
  * main — Entry point della shell
  *
  * Questa è la funzione chiamata dall'ELF loader quando sched_enter_usermode
@@ -1054,12 +1906,8 @@ static void print_banner(void)
  * ============================================================================= */
 void _start(void)
 {
-    char  line[MAX_LINE];
-    char *argv[MAX_ARGS];
-    int   argc;
-    int   n;
-    int   background;
-    char  cmdline[JOB_CMD_LEN];
+    char line[MAX_LINE];
+    int  n;
 
     /* Inizializza variabili d'ambiente */
     env_init();
@@ -1076,6 +1924,10 @@ void _start(void)
     /* Banner, solo se richiesto dalla configurazione */
     if (g_verbose_boot) print_banner();
 
+    /* I comandi di /boot/autoexec.sh, se c'e'. Dopo il banner, cosi' quel
+     * che stampano si legge sotto e non in mezzo. */
+    esegui_autoexec();
+
     /* Loop principale della shell */
     for (;;) {
         /* Job finiti nel frattempo: annunciati qui, prima del prompt,
@@ -1086,11 +1938,17 @@ void _start(void)
         /* Prompt */
         print_prompt();
 
-        /* Leggi riga da stdin (tastiera, bloccante) */
-        n = sh_read(STDIN, line, MAX_LINE - 1);
-        if (n <= 0) {
-            sh_yield();
-            continue;
+        /* ⚠️ PRIMA LA MODIFICA CON CRONOLOGIA, POI IL RIPIEGO. Se il
+         * servizio 'kbd' non risponde riga_modifica() ritorna -1 e si
+         * legge come si e' sempre fatto: si perde la cronologia, non la
+         * shell. */
+        n = riga_modifica(line, MAX_LINE);
+        if (n < 0) {
+            n = sh_read(STDIN, line, MAX_LINE - 1);
+            if (n <= 0) {
+                sh_yield();
+                continue;
+            }
         }
         line[n] = '\0';
 
@@ -1102,65 +1960,11 @@ void _start(void)
 
         if (n == 0) continue;   /* Riga vuota */
 
-        /* =================================================================
-         * '&' finale: esecuzione in background.
-         *
-         * Si accetta sia "comando &" sia "comando&". La riga viene
-         * copiata PRIMA di essere spezzata da parse_line, che ci pianta
-         * dentro dei terminatori: serve intera per l'elenco di 'jobs',
-         * dove leggere "hello" e' molto piu' utile che leggere un PID.
-         * ================================================================= */
-        {
-            int k = n - 1;
-            while (k >= 0 && (line[k] == ' ' || line[k] == '\t')) k--;
-            if (k >= 0 && line[k] == '&') {
-                background = 1;
-                line[k] = '\0';
-                n = k;
-                while (n > 0 && (line[n-1] == ' ' || line[n-1] == '\t')) line[--n] = '\0';
-                if (n == 0) continue;   /* solo una '&' */
-            } else {
-                background = 0;
-            }
-        }
-        sh_strcpy(cmdline, line, sizeof(cmdline));
+        /* Nella cronologia va la riga COME DIGITATA, prima che
+         * esegui_riga() la spezzi piantandoci dentro i terminatori. */
+        storia_aggiungi(line);
 
-        /* Parsing */
-        argc = parse_line(line, argv, MAX_ARGS);
-        if (argc == 0) continue;
-
-        /* Dispatch comandi built-in */
-        const char *cmd = argv[0];
-
-        if (sh_strcmp(cmd, "help")  == 0) { cmd_help();           continue; }
-        if (sh_strcmp(cmd, "echo")  == 0) { cmd_echo(argc,argv);  continue; }
-        if (sh_strcmp(cmd, "cls")   == 0 ||
-            sh_strcmp(cmd, "clear") == 0) { cmd_cls();            continue; }
-        if (sh_strcmp(cmd, "pwd")   == 0) { cmd_pwd();            continue; }
-        if (sh_strcmp(cmd, "cd")    == 0) { cmd_cd(argc, argv);   continue; }
-        if (sh_strcmp(cmd, "env")   == 0) { cmd_env();            continue; }
-        if (sh_strcmp(cmd, "export")== 0) { cmd_export(argc,argv);continue; }
-        if (sh_strcmp(cmd, "uname") == 0) { cmd_uname();          continue; }
-        if (sh_strcmp(cmd, "ver")   == 0) { cmd_version();        continue; }
-        if (sh_strcmp(cmd, "version") == 0) { cmd_version();      continue; }
-        if (sh_strcmp(cmd, "pid")   == 0) { cmd_pid();            continue; }
-        if (sh_strcmp(cmd, "jobs")  == 0) { cmd_jobs();           continue; }
-        if (sh_strcmp(cmd, "fg")    == 0) { cmd_fg(argc, argv);   continue; }
-        if (sh_strcmp(cmd, "sleep") == 0) { cmd_sleep(argc,argv); continue; }
-        if (sh_strcmp(cmd, "cat")   == 0) { cmd_cat(argc, argv);  continue; }
-        if (sh_strcmp(cmd, "exec")  == 0) { cmd_exec(argc, argv); continue; }
-        if (sh_strcmp(cmd, "reboot")== 0) { cmd_reboot();         continue; }
-        if (sh_strcmp(cmd, "halt")  == 0) { cmd_halt();           continue; }
-        if (sh_strcmp(cmd, "poweroff") == 0) { cmd_poweroff();    continue; }
-        if (sh_strcmp(cmd, "shutdown") == 0) { cmd_poweroff();    continue; }
-
-        if (sh_strcmp(cmd, "exit")  == 0) {
-            int code = (argc >= 2) ? (int)(*argv[1] - '0') : 0;
-            sh_exit(code);
-        }
-
-        /* Comando non built-in: cerca nel PATH e tenta exec */
-        run_program(cmd, argc, argv, background, cmdline);
+        if (esegui_riga(line, n) < 0) break;
     }
 
     sh_exit(0);

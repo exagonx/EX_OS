@@ -43,22 +43,10 @@
 
 #include "libc.h"
 #include "ip_proto.h"
+#include "dns.h"
+#include "rete.h"
 
 static int pid_ip = 0;
-
-static int leggi_ip(const char *s, unsigned char *out)
-{
-    int i, v, cifre;
-
-    for (i = 0; i < 4; i++) {
-        v = 0; cifre = 0;
-        while (*s >= '0' && *s <= '9') { v = v * 10 + (*s - '0'); s++; cifre++; }
-        if (cifre == 0 || v > 255) return 0;
-        out[i] = (unsigned char)v;
-        if (i < 3) { if (*s != '.') return 0; s++; }
-    }
-    return (*s == '\0');
-}
 
 static void stampa_ip(const unsigned char *p)
 {
@@ -102,7 +90,7 @@ static const char *spiega(int codice)
 
 static void uso(void)
 {
-    printf("uso: ping INDIRIZZO [-n QUANTI] [-w MS] [-l BYTE]\n\n");
+    printf("uso: ping NOME|INDIRIZZO [-n QUANTI] [-w MS] [-l BYTE]\n\n");
     printf("  -n  quante richieste mandare (predefinito 4)\n");
     printf("  -w  quanto aspettare ciascuna risposta, in ms (predefinito 2000)\n");
     printf("  -l  byte di riempimento dopo l'intestazione ICMP (predefinito 32)\n");
@@ -110,16 +98,38 @@ static void uso(void)
 
 int main(int argc, char **argv)
 {
-    unsigned char ip[4], buf[IPC_MSG_MAX_DATA];
+    unsigned char ip[4], ip_str[4], buf[IPC_MSG_MAX_DATA];
     unsigned int  len;
     int  quanti = 4, timeout = 2000, carico = 32;
     int  i, inviati = 0, ricevuti = 0;
     unsigned int min = 0xFFFFFFFFu, max = 0, somma = 0;
 
     if (argc < 2) { uso(); return 1; }
-    if (!leggi_ip(argv[1], ip)) {
-        printf("ping: '%s' non e' un indirizzo IPv4.\n", argv[1]);
-        return 1;
+
+    /* ⚠️ SI RISOLVE PRIMA DI CONTROLLARE LO STACK IP, e non e' un ordine
+     * casuale: dns_risolvi() ha bisogno dello stack anche lui, e i suoi
+     * messaggi d'errore sono piu' precisi dei nostri — sa distinguere
+     * «lo stack non c'e'» da «non c'e' un DNS configurato». */
+    {
+        int r = dns_risolvi(argv[1], ip);
+
+        if (r != 0) {
+            if (r == -ENOENT)
+                printf("ping: '%s' non esiste (il DNS dice di no).\n", argv[1]);
+            else if (r == -ENETDOWN) {
+                printf("ping: '%s' e' un nome e non c'e' un DNS configurato.\n",
+                       argv[1]);
+                rete_istruzioni();
+            } else if (r == -ENODEV) {
+                printf("ping: lo stack IP non e' attivo.\n");
+                rete_istruzioni();
+            }
+            else if (r == -ETIMEDOUT)
+                printf("ping: il server DNS non risponde.\n");
+            else
+                printf("ping: non riesco a risolvere '%s'.\n", argv[1]);
+            return 1;
+        }
     }
 
     for (i = 2; i < argc; i++) {
@@ -133,17 +143,15 @@ int main(int argc, char **argv)
     if (carico  < 0)    carico  = 0;
     if (carico  > 1024) carico  = 1024;
 
-    pid_ip = ipc_lookup(IP_SERVIZIO);
-    if (pid_ip <= 0) {
-        printf("ping: lo stack IP non e' attivo.\n");
-        printf("      Avvia nell'ordine:\n\n");
-        printf("        /dev/pci.drv &\n");
-        printf("        netdetect -c\n");
-        printf("        /dev/ip.drv &\n");
-        return 1;
-    }
+    pid_ip = rete_richiedi(IP_SERVIZIO);
+    if (pid_ip <= 0) return 1;
 
-    printf("ping "); stampa_ip(ip);
+    printf("ping ");
+    /* Se era un nome, si stampano tutti e due: chi legge deve poter dire
+     * se il guasto e' nel DNS (indirizzo inatteso) o nella rete. */
+    if (!ip_da_stringa(argv[1], ip_str)) printf("%s (", argv[1]);
+    stampa_ip(ip);
+    if (!ip_da_stringa(argv[1], ip_str)) printf(")");
     printf(" con %d byte di dati\n\n", carico);
 
     for (i = 1; i <= quanti; i++) {

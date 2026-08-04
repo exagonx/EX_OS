@@ -39,6 +39,8 @@
 
 #include "libc.h"
 #include "net_proto.h"
+#include "dns.h"
+#include "rete.h"
 
 #define ETH_TIPO_ARP   0x0806
 #define ETH_TIPO_IP    0x0800
@@ -104,19 +106,6 @@ static void stampa_ip(const unsigned char *p)
 /* "10.0.2.2" -> quattro byte. Ritorna 0 se la stringa non e' un
  * indirizzo: dirlo e' meglio che accettare "pippo" come 0.0.0.0 e poi
  * far cercare all'utente perche' nessuno risponde. */
-static int leggi_ip(const char *s, unsigned char *out)
-{
-    int i, v, cifre;
-
-    for (i = 0; i < 4; i++) {
-        v = 0; cifre = 0;
-        while (*s >= '0' && *s <= '9') { v = v * 10 + (*s - '0'); s++; cifre++; }
-        if (cifre == 0 || v > 255) return 0;
-        out[i] = (unsigned char)v;
-        if (i < 3) { if (*s != '.') return 0; s++; }
-    }
-    return (*s == '\0');
-}
 
 /* --------------------------------------------------------------------------
  * ARP
@@ -287,14 +276,8 @@ static int contatori(void)
 
 int main(int argc, char **argv)
 {
-    pid_rete = ipc_lookup(NET_SERVIZIO_0);
-    if (pid_rete <= 0) {
-        printf("nettest: il servizio '%s' non e' attivo.\n", NET_SERVIZIO_0);
-        printf("         Avvia prima il bus e poi la scheda:\n\n");
-        printf("           /dev/pci.drv &\n");
-        printf("           /dev/ne2k.drv &\n");
-        return 1;
-    }
+    pid_rete = rete_richiedi(NET_SERVIZIO_0);
+    if (pid_rete <= 0) return 1;
 
     if (argc == 1) {
         NetStato s;
@@ -315,7 +298,7 @@ int main(int argc, char **argv)
     if (strcmp(argv[1], "-a") == 0 && argc == 3) {
         unsigned char ip[4];
 
-        if (!leggi_ip(argv[2], ip)) {
+        if (!ip_da_stringa(argv[2], ip)) {
             printf("nettest: '%s' non e' un indirizzo IPv4.\n", argv[2]);
             return 1;
         }

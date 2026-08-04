@@ -72,6 +72,7 @@
 #define IP_TTL          64
 #define IP_PROTO_ICMP   1
 #define IP_PROTO_UDP    17
+#define IP_PROTO_TCP    6
 
 #define ICMP_ECHO_RISP  0
 #define ICMP_ECHO_RICH  8
@@ -217,6 +218,20 @@ static void metti16(unsigned char *p, unsigned int v)
 static unsigned int prendi16(const unsigned char *p)
 {
     return ((unsigned int)p[0] << 8) | p[1];
+}
+
+static void metti32(unsigned char *p, unsigned int v)
+{
+    p[0] = (unsigned char)((v >> 24) & 0xFF);
+    p[1] = (unsigned char)((v >> 16) & 0xFF);
+    p[2] = (unsigned char)((v >> 8)  & 0xFF);
+    p[3] = (unsigned char)(v & 0xFF);
+}
+
+static unsigned int prendi32(const unsigned char *p)
+{
+    return ((unsigned int)p[0] << 24) | ((unsigned int)p[1] << 16) |
+           ((unsigned int)p[2] << 8)  | p[3];
 }
 
 /* Somma di controllo di Internet: somma a 16 bit in complemento a uno,
@@ -517,23 +532,35 @@ static int udp_cerca(unsigned int porta)
  * cucire due somme parziali vuol dire gestire a mano il byte dispari di
  * mezzo — che e' il punto preciso in cui queste implementazioni sbagliano.
  * ============================================================================= */
+/* ⚠️ IL PROTOCOLLO E' UN PARAMETRO, e prima era scritto dentro. UDP e TCP
+ * usano la STESSA pseudo-intestazione salvo quel byte: duplicare la
+ * funzione avrebbe significato due posti dove sbagliare la stessa cosa,
+ * e la somma di controllo e' precisamente il punto in cui un errore non
+ * si vede — il pacchetto parte, sembra giusto, e l'altro lo butta. */
+static unsigned char g_somma_buf[12 + 4 + NET_FRAME_MAX];
+
+static unsigned int pseudo_somma(const unsigned char *src, const unsigned char *dst,
+                                 unsigned int protocollo,
+                                 const unsigned char *seg, unsigned int len)
+{
+    if (len > sizeof(g_somma_buf) - 12u) return 0xFFFF;
+
+    memcpy(g_somma_buf, src, 4);
+    memcpy(g_somma_buf + 4, dst, 4);
+    g_somma_buf[8] = 0;
+    g_somma_buf[9] = (unsigned char)protocollo;
+    metti16(g_somma_buf + 10, len);
+    memcpy(g_somma_buf + 12, seg, len);
+
+    return somma_controllo(g_somma_buf, 12 + len);
+}
+
 static unsigned int udp_prepara_somma(const unsigned char *src,
                                       const unsigned char *dst,
                                       const unsigned char *udp,
                                       unsigned int len_udp)
 {
-    static unsigned char buf[12 + 8 + UDP_CARICO_MAX];
-
-    if (len_udp > 8 + UDP_CARICO_MAX) return 0xFFFF;
-
-    memcpy(buf, src, 4);
-    memcpy(buf + 4, dst, 4);
-    buf[8]  = 0;
-    buf[9]  = IP_PROTO_UDP;
-    metti16(buf + 10, len_udp);
-    memcpy(buf + 12, udp, len_udp);
-
-    return somma_controllo(buf, 12 + len_udp);
+    return pseudo_somma(src, dst, IP_PROTO_UDP, udp, len_udp);
 }
 
 /* Da scrivere nel campo di un datagramma in partenza (che deve avere il
@@ -645,6 +672,622 @@ static void tratta_udp(const unsigned char *f, unsigned int ihl, unsigned int to
     }
 }
 
+/* Dichiarate qui perche' il TCP sta PRIMA di loro nel file: spostarlo
+ * dopo vorrebbe dire metterlo dopo tratta_ip(), che lo chiama. */
+static void rispondi_esito(unsigned int client, int codice);
+static int  prossimo_salto(const unsigned char *dest, unsigned char *hop);
+
+/* =============================================================================
+ * TCP — connessioni in uscita
+ *
+ * Cosa NON fa (riordino, congestione, SACK, RTO misurato) sta scritto in
+ * drivers/net/ip_proto.h, insieme al perche'. Qui c'e' la macchina.
+ *
+ * -----------------------------------------------------------------------------
+ * ⚠️ I NUMERI DI SEQUENZA SI CONFRONTANO CON LA SOTTRAZIONE, MAI CON `<`
+ *
+ * Sono a 32 bit e si avvolgono. `a < b` su due numeri a cavallo
+ * dell'avvolgimento da' la risposta rovesciata, e succede una volta ogni
+ * 4 GB trasmessi — cioe' raramente, e sempre quando la connessione e'
+ * carica. La forma giusta e' `(int32_t)(a - b) < 0`, che resta corretta
+ * perche' la differenza e' piccola anche quando i due valori sono
+ * lontanissimi.
+ * ============================================================================= */
+
+#define TCP_FIN   0x01
+#define TCP_SYN   0x02
+#define TCP_RST   0x04
+#define TCP_PSH   0x08
+#define TCP_ACK   0x10
+
+/* Buffer per connessione. 4 KB per verso: due connessioni FTP ne usano
+ * 16 KB in tutto, che su un processo ring3 e' poco. Non e' la finestra
+ * ideale per una rete veloce, ed e' il numero da alzare quando lo sara'. */
+#define TCP_BUF        4096
+#define TCP_MSS        1400    /* sotto i 1460 tipici: lascia margine, e
+                                  non frammentiamo comunque */
+#define TCP_RTO_MS     600     /* primo intervallo di ritrasmissione */
+#define TCP_TENTATIVI  6       /* poi si dichiara persa la connessione */
+#define TCP_APERTURA_MS 5000   /* attesa predefinita per il collegamento */
+
+/* Stati interni. Sono piu' di quelli che vede un client (IP_TCP_*) perche'
+ * la chiusura ordinata di TCP ha piu' passi di quanti ne interessino a
+ * chi usa la connessione. */
+#define S_LIBERA     0
+#define S_SYN_INVIA  1   /* SYN mandato, aspetto SYN+ACK */
+#define S_APERTA     2
+#define S_FIN_MIO    3   /* ho mandato FIN, aspetto che lo confermi */
+#define S_FIN_SUO    4   /* lui ha mandato FIN, io posso ancora scrivere */
+#define S_ULTIMO_ACK 5   /* entrambi i FIN mandati, aspetto l'ultimo ACK */
+#define S_MORTA      6   /* finita o azzerata: resta finche' il client legge */
+
+typedef struct {
+    int           stato;
+    unsigned char ip[4];
+    unsigned char mac[6];        /* prossimo salto, risolto all'apertura */
+    unsigned int  porta_loc, porta_rem;
+
+    unsigned int  snd_una;       /* piu' vecchio non confermato */
+    unsigned int  snd_nxt;       /* prossimo da mandare */
+    unsigned int  rcv_nxt;       /* prossimo atteso */
+    unsigned int  fin_seq;       /* numero di sequenza del nostro FIN */
+    unsigned int  finestra;      /* quella annunciata dall'altro */
+
+    unsigned char tx[TCP_BUF];
+    unsigned int  tx_len;        /* byte in coda, confermati compresi */
+    unsigned char rx[TCP_BUF];
+    unsigned int  rx_len;
+
+    unsigned int  rto_scade;
+    unsigned int  rto_ms;
+    unsigned int  tentativi;
+
+    unsigned int  proprietario;  /* chi l'ha aperta */
+    unsigned int  attesa_pid;    /* chi aspetta una risposta */
+    unsigned int  attesa_tipo;   /* IP_MSG_TCP_APRI o IP_MSG_TCP_RICEVI */
+    unsigned int  attesa_scade;
+} Conn;
+
+static Conn         g_tcp[IP_TCP_CONNESSIONI];
+static unsigned int g_tcp_porta = 49152;   /* fascia effimera, come UDP */
+
+/* Vero se a precede b nello spazio circolare dei numeri di sequenza. */
+static int seq_prima(unsigned int a, unsigned int b)
+{
+    return (int)(a - b) < 0;
+}
+
+static Conn *tcp_da_id(unsigned int id, unsigned int cliente)
+{
+    Conn *c;
+
+    if (id == 0 || id > IP_TCP_CONNESSIONI) return NULL;
+    c = &g_tcp[id - 1];
+    if (c->stato == S_LIBERA) return NULL;
+    /* ⚠️ Solo chi l'ha aperta puo' usarla: un identificativo e' un numero
+     * piccolo e indovinabile, e senza questo controllo un processo
+     * qualunque potrebbe leggere i dati di un altro. */
+    if (c->proprietario != cliente) return NULL;
+    return c;
+}
+
+static unsigned int tcp_id(const Conn *c)
+{
+    return (unsigned int)(c - g_tcp) + 1u;
+}
+
+/* Traduce lo stato interno in quello che il client puo' capire. */
+static unsigned int tcp_stato_pubblico(const Conn *c)
+{
+    switch (c->stato) {
+    case S_SYN_INVIA:  return IP_TCP_IN_APERTURA;
+    case S_APERTA:     return IP_TCP_APERTA;
+    case S_FIN_MIO:
+    case S_FIN_SUO:
+    case S_ULTIMO_ACK: return IP_TCP_IN_CHIUSURA;
+    case S_MORTA:      return (c->rx_len > 0) ? IP_TCP_IN_CHIUSURA : IP_TCP_CHIUSA;
+    default:           return IP_TCP_CHIUSA;
+    }
+}
+
+/* =============================================================================
+ * Composizione e invio di un segmento
+ * ============================================================================= */
+static void tcp_manda(Conn *c, unsigned int flag,
+                      const unsigned char *dati, unsigned int n)
+{
+    unsigned char seg[20 + TCP_MSS];
+    unsigned char f[NET_FRAME_MAX];
+    unsigned int  len, tot;
+
+    if (n > TCP_MSS) n = TCP_MSS;
+
+    metti16(seg,     c->porta_loc);
+    metti16(seg + 2, c->porta_rem);
+    metti32(seg + 4, c->snd_nxt);
+    metti32(seg + 8, (flag & TCP_ACK) ? c->rcv_nxt : 0u);
+    seg[12] = 5 << 4;                       /* 20 byte di intestazione */
+    seg[13] = (unsigned char)flag;
+    /* La finestra che annunciamo e' lo spazio libero nel buffer di
+     * ricezione: dichiararne di piu' vorrebbe dire invitare l'altro a
+     * mandare dati che poi butteremmo. */
+    metti16(seg + 14, TCP_BUF - c->rx_len);
+    metti16(seg + 16, 0);                   /* somma: dopo */
+    metti16(seg + 18, 0);                   /* puntatore urgente */
+
+    if (n) memcpy(seg + 20, dati, n);
+    tot = 20u + n;
+
+    metti16(seg + 16, pseudo_somma(g_cfg.ip, c->ip, IP_PROTO_TCP, seg, tot));
+
+    len = componi_ip(f, c->mac, c->ip, IP_PROTO_TCP, seg, tot);
+    if (len == 0) return;
+
+    manda_frame(f, len);
+    g_st.ip_inviati++;
+}
+
+/* Manda quello che c'e' in coda e non e' ancora partito. */
+static void tcp_spingi(Conn *c)
+{
+    unsigned int inviati = c->snd_nxt - c->snd_una;
+    unsigned int restanti;
+
+    if (c->stato != S_APERTA && c->stato != S_FIN_SUO) return;
+    if (c->tx_len <= inviati) return;
+
+    restanti = c->tx_len - inviati;
+
+    /* ⚠️ NON SI SUPERA LA FINESTRA DELL'ALTRO. Mandare oltre significa
+     * mandare dati che il destinatario dichiara di non poter accettare:
+     * li butta, noi li ritrasmettiamo, e la connessione si trascina. */
+    if (restanti > c->finestra - inviati) {
+        if (c->finestra <= inviati) return;
+        restanti = c->finestra - inviati;
+    }
+
+    while (restanti > 0) {
+        unsigned int q = (restanti > TCP_MSS) ? TCP_MSS : restanti;
+
+        tcp_manda(c, TCP_ACK | TCP_PSH, c->tx + inviati, q);
+        c->snd_nxt += q;
+        inviati    += q;
+        restanti   -= q;
+    }
+
+    if (c->rto_scade == 0) {
+        c->rto_ms    = TCP_RTO_MS;
+        c->rto_scade = uptime_ms() + c->rto_ms;
+        c->tentativi = 0;
+    }
+}
+
+/* Toglie dalla coda i byte che l'altro ha confermato. */
+static void tcp_conferma(Conn *c, unsigned int ack)
+{
+    unsigned int quanti;
+
+    if (!seq_prima(c->snd_una, ack)) return;    /* niente di nuovo */
+
+    quanti = ack - c->snd_una;
+    if (quanti > c->tx_len) quanti = c->tx_len;
+
+    if (quanti > 0 && c->tx_len > quanti)
+        memmove(c->tx, c->tx + quanti, c->tx_len - quanti);
+    c->tx_len -= quanti;
+    c->snd_una = ack;
+
+    /* Tutto confermato: niente piu' da ritrasmettere. */
+    if (c->snd_una == c->snd_nxt) {
+        c->rto_scade = 0;
+        c->tentativi = 0;
+    } else {
+        c->rto_ms    = TCP_RTO_MS;
+        c->rto_scade = uptime_ms() + c->rto_ms;
+        c->tentativi = 0;
+    }
+}
+
+static void tcp_chiudi_dura(Conn *c, int codice)
+{
+    if (c->attesa_pid != 0) {
+        IpEsito e;
+
+        e.codice = codice;
+        ipc_send(c->attesa_pid, IP_MSG_ESITO, &e, sizeof(e));
+        c->attesa_pid = 0;
+    }
+    c->stato     = S_MORTA;
+    c->rto_scade = 0;
+}
+
+/* Consegna al client che sta aspettando, se c'e' qualcosa da consegnare. */
+static void tcp_consegna(Conn *c)
+{
+    static unsigned char msg[sizeof(IpTcpDati) + TCP_BUF];
+    IpTcpDati            d;
+    unsigned int         n;
+
+    if (c->attesa_pid == 0 || c->attesa_tipo != IP_MSG_TCP_RICEVI) return;
+
+    /* ⚠️ ANCHE A ZERO BYTE SI RISPONDE, se la connessione e' finita.
+     * Altrimenti un client fermo su IP_MSG_TCP_RICEVI aspetterebbe dati
+     * che non arriveranno mai da una connessione gia' chiusa — e la fine
+     * dei dati e' proprio l'informazione che gli serve. */
+    if (c->rx_len == 0 && c->stato != S_MORTA && c->stato != S_FIN_SUO &&
+        c->stato != S_ULTIMO_ACK) return;
+
+    n = c->rx_len;
+    if (n > TCP_BUF) n = TCP_BUF;
+
+    d.id  = tcp_id(c);
+    d.len = n;
+    memcpy(msg, &d, sizeof(d));
+    if (n) memcpy(msg + sizeof(d), c->rx, n);
+
+    ipc_send(c->attesa_pid, IP_MSG_TCP_DATI, msg, sizeof(d) + n);
+    c->attesa_pid = 0;
+
+    c->rx_len = 0;
+}
+
+/* =============================================================================
+ * Arrivo di un segmento
+ * ============================================================================= */
+static void tratta_tcp(const unsigned char *f, unsigned int ihl, unsigned int tot)
+{
+    const unsigned char *ip  = f + 14;
+    const unsigned char *seg = f + 14 + ihl;
+    unsigned int len_seg = tot - ihl;
+    unsigned int porta_loc, porta_rem, off, flag, n, i;
+    unsigned int seq, ack, finestra;
+    Conn        *c = NULL;
+
+    if (len_seg < 20) { g_st.scartati++; return; }
+
+    if (pseudo_somma(ip + 12, ip + 16, IP_PROTO_TCP, seg, len_seg) != 0) {
+        g_st.checksum_errati++;
+        return;
+    }
+
+    porta_rem = prendi16(seg);
+    porta_loc = prendi16(seg + 2);
+    seq       = prendi32(seg + 4);
+    ack       = prendi32(seg + 8);
+    off       = (unsigned int)(seg[12] >> 4) * 4u;
+    flag      = seg[13];
+    finestra  = prendi16(seg + 14);
+
+    /* ⚠️ L'INTESTAZIONE PUO' ESSERE PIU' LUNGA DI 20 BYTE: le opzioni
+     * (MSS, timestamp, SACK permitted) stanno li'. Non ne leggiamo
+     * nessuna, ma bisogna SALTARLE, o i primi byte di dati sarebbero le
+     * opzioni interpretate come contenuto. */
+    if (off < 20u || off > len_seg) { g_st.scartati++; return; }
+    n = len_seg - off;
+
+    for (i = 0; i < IP_TCP_CONNESSIONI; i++) {
+        Conn *k = &g_tcp[i];
+
+        if (k->stato == S_LIBERA || k->stato == S_MORTA) continue;
+        if (k->porta_loc != porta_loc || k->porta_rem != porta_rem) continue;
+        if (!ip_uguali(k->ip, ip + 12)) continue;
+        c = k;
+        break;
+    }
+
+    /* Segmento per una connessione che non esiste. Non si risponde con un
+     * RST: sarebbe la cosa giusta su un vero stack, ma qui significherebbe
+     * comporre un segmento senza avere una connessione da cui prendere gli
+     * indirizzi, e il caso che conta — un ritardatario di una connessione
+     * appena chiusa — non merita quel codice. */
+    if (c == NULL) { g_st.scartati++; return; }
+
+    if (flag & TCP_RST) { tcp_chiudi_dura(c, -ECONNRESET); return; }
+
+    c->finestra = finestra;
+
+    /* --- apertura: aspettavamo SYN+ACK --- */
+    if (c->stato == S_SYN_INVIA) {
+        if (!(flag & TCP_SYN) || !(flag & TCP_ACK)) return;
+        if (ack != c->snd_nxt) return;      /* non conferma il nostro SYN */
+
+        c->rcv_nxt = seq + 1u;
+        c->snd_una = ack;
+        c->stato   = S_APERTA;
+        c->rto_scade = 0;
+
+        tcp_manda(c, TCP_ACK, NULL, 0);     /* terzo passo della stretta */
+
+        if (c->attesa_pid != 0 && c->attesa_tipo == IP_MSG_TCP_APRI) {
+            IpEsito e;
+
+            e.codice = (int)tcp_id(c);
+            ipc_send(c->attesa_pid, IP_MSG_ESITO, &e, sizeof(e));
+            c->attesa_pid = 0;
+        }
+        return;
+    }
+
+    if (flag & TCP_ACK) tcp_conferma(c, ack);
+
+    /* --- dati --- */
+    if (n > 0) {
+        if (seq != c->rcv_nxt) {
+            /* ⚠️ FUORI SEQUENZA: SI SCARTA E SI RICONFERMA. Non si tiene
+             * da parte (vedi ip_proto.h). Il duplicato di ACK dice
+             * all'altro dove siamo rimasti, e lui ritrasmettera'. */
+            tcp_manda(c, TCP_ACK, NULL, 0);
+        } else if (c->rx_len + n > TCP_BUF) {
+            /* Il buffer e' pieno: non si conferma quello che non si puo'
+             * tenere, o l'altro lo considererebbe consegnato. */
+            tcp_manda(c, TCP_ACK, NULL, 0);
+        } else {
+            memcpy(c->rx + c->rx_len, seg + off, n);
+            c->rx_len  += n;
+            c->rcv_nxt += n;
+            tcp_manda(c, TCP_ACK, NULL, 0);
+        }
+    }
+
+    /* --- FIN --- */
+    if ((flag & TCP_FIN) && seq + n == c->rcv_nxt) {
+        c->rcv_nxt++;
+        tcp_manda(c, TCP_ACK, NULL, 0);
+
+        if (c->stato == S_APERTA)      c->stato = S_FIN_SUO;
+        else if (c->stato == S_FIN_MIO) {
+            /* Chiusi entrambi i versi. Niente TIME_WAIT: aspettare due
+             * minuti per un segmento in ritardo terrebbe occupata una
+             * delle quattro connessioni per tutto quel tempo, e su questo
+             * sistema quel prezzo e' piu' alto del rischio. */
+            c->stato = S_MORTA;
+            c->rto_scade = 0;
+        }
+    }
+
+    /* Il nostro FIN e' stato confermato? */
+    if ((c->stato == S_FIN_MIO || c->stato == S_ULTIMO_ACK) &&
+        !seq_prima(c->snd_una, c->fin_seq + 1u)) {
+        c->stato = (c->stato == S_ULTIMO_ACK) ? S_MORTA : c->stato;
+        c->rto_scade = 0;
+    }
+
+    tcp_spingi(c);
+    tcp_consegna(c);
+}
+
+/* =============================================================================
+ * Scadenze: ritrasmissione e attese dei client
+ * ============================================================================= */
+static void tcp_scadenze(void)
+{
+    unsigned int ora = uptime_ms();
+    unsigned int i;
+
+    for (i = 0; i < IP_TCP_CONNESSIONI; i++) {
+        Conn *c = &g_tcp[i];
+
+        if (c->stato == S_LIBERA) continue;
+
+        /* Attesa del client scaduta (apertura che non si completa). */
+        if (c->attesa_pid != 0 && c->attesa_scade != 0 &&
+            (int)(ora - c->attesa_scade) >= 0) {
+            IpEsito e;
+
+            e.codice = -ETIMEDOUT;
+            ipc_send(c->attesa_pid, IP_MSG_ESITO, &e, sizeof(e));
+            c->attesa_pid = 0;
+            if (c->stato == S_SYN_INVIA) { c->stato = S_MORTA; c->rto_scade = 0; }
+            continue;
+        }
+
+        if (c->rto_scade == 0 || (int)(ora - c->rto_scade) < 0) continue;
+
+        if (++c->tentativi > TCP_TENTATIVI) {
+            tcp_chiudi_dura(c, -ETIMEDOUT);
+            continue;
+        }
+
+        /* ⚠️ L'INTERVALLO RADDOPPIA. Ritrasmettere sempre allo stesso
+         * ritmo su una rete che non risponde significa aggiungere
+         * traffico a una rete gia' in difficolta'. */
+        c->rto_ms   *= 2u;
+        c->rto_scade = ora + c->rto_ms;
+
+        if (c->stato == S_SYN_INVIA) {
+            c->snd_nxt = c->snd_una;
+            tcp_manda(c, TCP_SYN, NULL, 0);
+            c->snd_nxt = c->snd_una + 1u;
+        } else if (c->stato == S_FIN_MIO || c->stato == S_ULTIMO_ACK) {
+            c->snd_nxt = c->fin_seq;
+            tcp_manda(c, TCP_ACK | TCP_FIN, NULL, 0);
+            c->snd_nxt = c->fin_seq + 1u;
+        } else {
+            /* Si riparte dal primo non confermato: e' la ritrasmissione
+             * "go-back-N", l'unica possibile senza SACK. */
+            c->snd_nxt = c->snd_una;
+            tcp_spingi(c);
+        }
+    }
+}
+
+/* =============================================================================
+ * Richieste dei client
+ * ============================================================================= */
+static void tcp_apri(unsigned int cliente, const IpTcpApri *a)
+{
+    unsigned char hop[4];
+    VoceArp      *v;
+    Conn         *c = NULL;
+    unsigned int  i;
+
+    for (i = 0; i < IP_TCP_CONNESSIONI; i++) {
+        /* Una connessione MORTA si riusa solo se il suo cliente ha gia'
+         * letto tutto: buttare via dati non ancora consegnati sarebbe
+         * perderli in silenzio. */
+        if (g_tcp[i].stato == S_LIBERA ||
+            (g_tcp[i].stato == S_MORTA && g_tcp[i].rx_len == 0 &&
+             g_tcp[i].attesa_pid == 0)) {
+            c = &g_tcp[i];
+            break;
+        }
+    }
+    if (c == NULL) { rispondi_esito(cliente, -ENFILE); return; }
+
+    if (prossimo_salto(a->ip, hop) != 0) {
+        rispondi_esito(cliente, -ENETUNREACH);
+        return;
+    }
+
+    /* ⚠️ SERVE IL MAC SUBITO. La macchina a stati di TCP ha gia' i suoi
+     * tempi; infilarci dentro anche l'attesa di un ARP vorrebbe dire due
+     * scadenze annidate sulla stessa connessione. Se il MAC non c'e' si
+     * chiede e si rifiuta con -EAGAIN: il client riprova fra un istante e
+     * a quel punto la tabella ARP e' piena. Un client FTP lo fa senza
+     * accorgersene; scriverlo qui costerebbe molto di piu'. */
+    v = arp_cerca(hop);
+    if (v == NULL) {
+        arp_chiedi(hop);
+        rispondi_esito(cliente, -EAGAIN);
+        return;
+    }
+
+    memset(c, 0, sizeof(*c));
+    memcpy(c->ip, a->ip, 4);
+    memcpy(c->mac, v->mac, 6);
+    c->porta_rem = a->porta;
+
+    /* Porta locale effimera, saltando quelle gia' in uso. */
+    for (i = 0; i < 1024u; i++) {
+        unsigned int p = g_tcp_porta++;
+        unsigned int j, libera = 1;
+
+        if (g_tcp_porta > 65535u) g_tcp_porta = 49152u;
+        for (j = 0; j < IP_TCP_CONNESSIONI; j++)
+            if (g_tcp[j].stato != S_LIBERA && &g_tcp[j] != c &&
+                g_tcp[j].porta_loc == p) libera = 0;
+        if (libera) { c->porta_loc = p; break; }
+    }
+    if (c->porta_loc == 0) { c->stato = S_LIBERA; rispondi_esito(cliente, -ENFILE); return; }
+
+    /* ⚠️ IL NUMERO DI SEQUENZA INIZIALE NON DEV'ESSERE PREVEDIBILE, ma
+     * qui non c'e' una sorgente di casualita': si mescolano il tempo
+     * trascorso e la porta, che e' meglio di zero e non e' sicurezza.
+     * Con TLS sopra, l'attaccante che potrebbe indovinarlo ha comunque
+     * bisogno di ben altro. */
+    c->snd_una  = (uptime_ms() << 8) ^ (c->porta_loc << 16) ^ 0x45584F53u;
+    c->snd_nxt  = c->snd_una;
+    c->finestra = 1024;          /* provvisoria: la vera arriva col SYN+ACK */
+    c->proprietario = cliente;
+
+    c->stato    = S_SYN_INVIA;
+    tcp_manda(c, TCP_SYN, NULL, 0);
+    c->snd_nxt  = c->snd_una + 1u;
+
+    c->rto_ms    = TCP_RTO_MS;
+    c->rto_scade = uptime_ms() + c->rto_ms;
+    c->tentativi = 0;
+
+    /* Non si risponde adesso: la risposta e' l'esito della stretta di
+     * mano, e arriva quando arriva. */
+    c->attesa_pid   = cliente;
+    c->attesa_tipo  = IP_MSG_TCP_APRI;
+    c->attesa_scade = uptime_ms() +
+                      (a->timeout_ms ? a->timeout_ms : TCP_APERTURA_MS);
+}
+
+static void tcp_invia(unsigned int cliente, const unsigned char *payload,
+                      unsigned int len_msg)
+{
+    IpTcpDati    d;
+    Conn        *c;
+    unsigned int n, spazio;
+
+    if (len_msg < sizeof(d)) { rispondi_esito(cliente, -EINVAL); return; }
+    memcpy(&d, payload, sizeof(d));
+
+    c = tcp_da_id(d.id, cliente);
+    if (c == NULL) { rispondi_esito(cliente, -EBADF); return; }
+    if (c->stato != S_APERTA && c->stato != S_FIN_SUO) {
+        rispondi_esito(cliente, -ENOTCONN);
+        return;
+    }
+
+    n = len_msg - sizeof(d);
+    if (n > d.len) n = d.len;
+
+    /* ⚠️ SI ACCETTA QUELLO CHE CI STA E SI DICE QUANTO. Rifiutare tutto
+     * quando il buffer e' quasi pieno obbligherebbe il client a
+     * ritentare l'intero blocco; accettarlo tutto vorrebbe dire scrivere
+     * oltre il buffer. Il numero restituito e' quanti byte sono davvero
+     * entrati, ed e' compito di chi scrive guardarlo. */
+    spazio = TCP_BUF - c->tx_len;
+    if (n > spazio) n = spazio;
+
+    if (n > 0) {
+        memcpy(c->tx + c->tx_len, payload + sizeof(d), n);
+        c->tx_len += n;
+        tcp_spingi(c);
+    }
+
+    rispondi_esito(cliente, (int)n);
+}
+
+static void tcp_ricevi(unsigned int cliente, const IpTcpRif *r)
+{
+    Conn *c = tcp_da_id(r->id, cliente);
+
+    if (c == NULL) { rispondi_esito(cliente, -EBADF); return; }
+
+    c->attesa_pid   = cliente;
+    c->attesa_tipo  = IP_MSG_TCP_RICEVI;
+    c->attesa_scade = 0;            /* nessuna scadenza: si aspettano i dati */
+    tcp_consegna(c);
+}
+
+static void tcp_chiudi(unsigned int cliente, const IpTcpRif *r)
+{
+    Conn *c = tcp_da_id(r->id, cliente);
+
+    if (c == NULL) { rispondi_esito(cliente, -EBADF); return; }
+
+    if (c->stato == S_APERTA || c->stato == S_FIN_SUO) {
+        /* Il FIN va DOPO i dati in coda: il suo numero di sequenza e'
+         * quello che segue l'ultimo byte accodato, non quello attuale. */
+        c->fin_seq = c->snd_una + c->tx_len;
+        c->snd_nxt = c->fin_seq;
+        tcp_manda(c, TCP_ACK | TCP_FIN, NULL, 0);
+        c->snd_nxt = c->fin_seq + 1u;
+
+        c->stato     = (c->stato == S_FIN_SUO) ? S_ULTIMO_ACK : S_FIN_MIO;
+        c->rto_ms    = TCP_RTO_MS;
+        c->rto_scade = uptime_ms() + c->rto_ms;
+        c->tentativi = 0;
+    } else {
+        c->stato = S_MORTA;
+    }
+
+    rispondi_esito(cliente, 0);
+}
+
+static void tcp_info(unsigned int cliente, const IpTcpRif *r)
+{
+    Conn      *c = tcp_da_id(r->id, cliente);
+    IpTcpInfo  info;
+
+    memset(&info, 0, sizeof(info));
+    if (c == NULL) { info.stato = IP_TCP_CHIUSA; }
+    else {
+        info.id         = tcp_id(c);
+        info.stato      = tcp_stato_pubblico(c);
+        info.in_coda_rx = c->rx_len;
+        info.in_coda_tx = c->tx_len;
+        memcpy(info.ip, c->ip, 4);
+        info.porta      = c->porta_rem;
+    }
+    ipc_send(cliente, IP_MSG_TCP_INFO, &info, sizeof(info));
+}
+
 static void tratta_ip(const unsigned char *f, unsigned int len)
 {
     unsigned int ihl, tot, frag, len_icmp;
@@ -680,6 +1323,7 @@ static void tratta_ip(const unsigned char *f, unsigned int len)
     g_st.ip_ricevuti++;
 
     if (ip[9] == IP_PROTO_UDP) { tratta_udp(f, ihl, tot); return; }
+    if (ip[9] == IP_PROTO_TCP) { tratta_tcp(f, ihl, tot); return; }
     if (ip[9] != IP_PROTO_ICMP) return;   /* nient'altro, per ora */
 
     len_icmp = tot - ihl;
@@ -794,6 +1438,8 @@ static void esegui_operazione(void)
 
 static void controlla_scadenze(void)
 {
+    tcp_scadenze();
+
     unsigned int ora = uptime_ms();
 
     if (g_att.stato == ATT_NULLA) return;
@@ -1154,6 +1800,36 @@ static void servi(void)
                 case IP_MSG_UDP_INVIA:
                     udp_invia(meta.sender_pid, payload, meta.len);
                     break;
+
+                case IP_MSG_TCP_APRI: {
+                    IpTcpApri a;
+
+                    if (meta.len >= sizeof(a)) {
+                        memcpy(&a, payload, sizeof(a));
+                        tcp_apri(meta.sender_pid, &a);
+                    } else rispondi_esito(meta.sender_pid, -EINVAL);
+                    break;
+                }
+
+                case IP_MSG_TCP_INVIA:
+                    tcp_invia(meta.sender_pid, payload, meta.len);
+                    break;
+
+                case IP_MSG_TCP_RICEVI:
+                case IP_MSG_TCP_CHIUDI:
+                case IP_MSG_TCP_STATO: {
+                    IpTcpRif r;
+
+                    if (meta.len < sizeof(r)) {
+                        rispondi_esito(meta.sender_pid, -EINVAL);
+                        break;
+                    }
+                    memcpy(&r, payload, sizeof(r));
+                    if (meta.tipo == IP_MSG_TCP_RICEVI)      tcp_ricevi(meta.sender_pid, &r);
+                    else if (meta.tipo == IP_MSG_TCP_CHIUDI) tcp_chiudi(meta.sender_pid, &r);
+                    else                                     tcp_info(meta.sender_pid, &r);
+                    break;
+                }
 
                 case IP_MSG_UDP_RICEVI: {
                     IpUdpApri a;

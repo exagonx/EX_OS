@@ -193,6 +193,15 @@ void        idt_flush(uint32_t idtr_ptr);
 void        tss_flush(uint16_t tss_selector);
 uint32_t    read_cr0(void);
 void        write_cr0(uint32_t val);
+/* CR4 non esiste sul 386: chi la tocca deve prima sapere che la CPU la
+ * ha. La discriminante e' CPUID, che a sua volta esiste solo dal 486
+ * tardo in poi — vedi fpu_init() in kernel/arch/x86/fpu.c. */
+uint32_t    read_cr4(void);
+int         cpuid_disponibile(void);
+uint32_t    cpuid_max(void);
+uint32_t    cpuid_edx1(void);
+uint32_t    cpuid_ecx1(void);
+void        write_cr4(uint32_t val);
 uint32_t    read_cr2(void);
 uint32_t    read_cr3(void);
 void        write_cr3(uint32_t val);

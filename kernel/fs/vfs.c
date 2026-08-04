@@ -926,6 +926,10 @@ static int stat_interno(int im, const char *interno, VfsStat *st)
         st->dimensione   = 0;
         st->is_dir       = 1;
         st->sola_lettura = g_mnt[im].sola_lettura;
+        /* La radice non ha una voce di directory, quindi non ha nemmeno
+         * una data: zero, che vuol dire «non la so». */
+        st->data = 0;
+        st->ora  = 0;
         return 0;
     }
 
@@ -935,24 +939,32 @@ static int stat_interno(int im, const char *interno, VfsStat *st)
         st->dimensione   = f.size;
         st->is_dir       = (f.attr & FAT12_ATTR_DIRECTORY) ? 1 : 0;
         st->sola_lettura = (f.attr & FAT12_ATTR_READONLY)  ? 1 : 0;
+        st->data         = f.date;
+        st->ora          = f.time;
     } else if (g_mnt[im].tipo == VFS_FS_ISO) {
         IsoDirEntry e;
         if (iso_stat(g_mnt[im].mnt, interno, &e) != 0) return ERR(ENOENT);
         st->dimensione   = e.dimensione;
         st->is_dir       = e.is_dir;
         st->sola_lettura = 1;
+        st->data         = e.data;
+        st->ora          = e.ora;
     } else if (g_mnt[im].tipo == VFS_FS_EXT2) {
         Ext2DirEntry e;
         if (ext2_stat(g_mnt[im].mnt, interno, &e) != 0) return ERR(ENOENT);
         st->dimensione   = e.dimensione;
         st->is_dir       = e.is_dir;
         st->sola_lettura = 1;
+        st->data         = e.data;
+        st->ora          = e.ora;
     } else {
         FatDirEntry e;
         if (fat_stat(g_mnt[im].mnt, interno, &e) != 0) return ERR(ENOENT);
         st->dimensione   = e.dimensione;
         st->is_dir       = e.is_dir;
         st->sola_lettura = 1;
+        st->data         = e.data;
+        st->ora          = e.ora;
     }
 
     return 0;

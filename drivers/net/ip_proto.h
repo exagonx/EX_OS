@@ -66,6 +66,11 @@
 #define IP_MSG_UDP_CHIUDI  6   /* IpUdpApri           -> IP_MSG_ESITO */
 #define IP_MSG_UDP_INVIA   7   /* IpUdpInvia + dati   -> IP_MSG_ESITO */
 #define IP_MSG_UDP_RICEVI  8   /* IpUdpApri           -> IP_MSG_UDP_DATI */
+#define IP_MSG_TCP_APRI    9   /* IpTcpApri  -> IP_MSG_ESITO (id, o -errno) */
+#define IP_MSG_TCP_INVIA  10   /* IpTcpRif + dati -> IP_MSG_ESITO (byte presi) */
+#define IP_MSG_TCP_RICEVI 11   /* IpTcpRif   -> IP_MSG_TCP_DATI */
+#define IP_MSG_TCP_CHIUDI 12   /* IpTcpRif   -> IP_MSG_ESITO */
+#define IP_MSG_TCP_STATO  13   /* IpTcpRif   -> IP_MSG_TCP_INFO */
 
 /* --- Risposte (stack -> client) ----------------------------------------- */
 #define IP_MSG_ESITO     128
@@ -73,6 +78,8 @@
 #define IP_MSG_ECHO_R    130
 #define IP_MSG_ARP_R     131
 #define IP_MSG_UDP_DATI  132   /* IpUdpDati + dati */
+#define IP_MSG_TCP_DATI  133   /* IpTcpDati + dati */
+#define IP_MSG_TCP_INFO  134   /* IpTcpInfo */
 
 /* Quante voci tiene la tabella ARP. Sedici bastano a una rete locale
  * piccola; oltre, si butta la più vecchia. Una tabella che cresce senza
@@ -190,7 +197,96 @@ typedef struct {
     unsigned int  len;            /* byte di dati che seguono */
 } IpUdpDati;
 
-/* Risposta generica */
+/* =============================================================================
+ * TCP
+ *
+ * -----------------------------------------------------------------------------
+ * ⚠️ SOLO CONNESSIONI IN USCITA, E NON E' UNA MANCANZA CASUALE
+ *
+ * Si puo' aprire una connessione verso qualcuno; non si puo' METTERSI IN
+ * ASCOLTO. Manca quindi tutto il ramo LISTEN/SYN_RECEIVED della macchina
+ * a stati, che e' circa la meta' del lavoro e serve a fare da SERVER.
+ *
+ * La ragione e' che il primo cliente di questo TCP e' un client FTP, e un
+ * client FTP in modo PASSIVO (PASV) apre lui stesso anche la connessione
+ * dati. Il modo ATTIVO — quello in cui il server si ricollega al client —
+ * richiederebbe l'ascolto, e non funziona comunque dietro un NAT come
+ * quello di QEMU. Si fa la meta' che serve, e si dice che e' meta'.
+ *
+ * -----------------------------------------------------------------------------
+ * ⚠️ COSA MANCA, DETTO SUBITO
+ *
+ *   - NIENTE RIORDINO. Un segmento che arriva fuori sequenza viene
+ *     SCARTATO, non tenuto da parte: chi l'ha mandato lo ritrasmettera'.
+ *     E' corretto ma non efficiente, e su una rete che perde molto si
+ *     vede. Tenere i pezzi vuole una lista con le sue scadenze, ed e' il
+ *     posto dove un TCP giovane prende i bug peggiori.
+ *   - NIENTE CONTROLLO DI CONGESTIONE. Non c'e' slow start, non c'e'
+ *     congestion window: si manda quello che la finestra dell'altro
+ *     consente. Su una rete locale non cambia niente; su Internet
+ *     significa essere maleducati sotto perdita.
+ *   - NIENTE SACK, niente window scaling, niente timestamp.
+ *   - RTO FISSO. Non si misura il tempo di andata e ritorno: si ritrasmette
+ *     a intervalli raddoppianti da un valore di partenza. Misurarlo
+ *     davvero (Karn, Jacobson) e' il passo successivo, non questo.
+ *
+ * -----------------------------------------------------------------------------
+ * ⚠️ ANCHE QUI NIENTE VIENE SPINTO
+ *
+ * Stessa regola di UDP e dei frame: lo stack risponde a un
+ * IP_MSG_TCP_RICEVI pendente e non manda dati di sua iniziativa. Un
+ * client che vuole leggere prenota, e la prenotazione si consuma a ogni
+ * consegna.
+ * ============================================================================= */
+
+/* Quante connessioni insieme. Quattro bastano a un client FTP (una di
+ * controllo e una dati) con margine; ognuna costa i suoi due buffer. */
+#define IP_TCP_CONNESSIONI  4
+
+/* Stati visibili a un client. Sono meno di quelli veri della macchina a
+ * stati: a chi usa la connessione interessa sapere se puo' scrivere, se
+ * deve solo leggere, o se e' finita. */
+#define IP_TCP_CHIUSA       0
+#define IP_TCP_IN_APERTURA  1
+#define IP_TCP_APERTA       2
+#define IP_TCP_IN_CHIUSURA  3
+#define IP_TCP_RESET        4   /* l'altro ha rifiutato o interrotto */
+
+typedef struct {
+    unsigned char ip[4];
+    unsigned int  porta;
+    unsigned int  timeout_ms;    /* per la sola apertura; 0 = predefinito */
+} IpTcpApri;
+
+/* Identifica una connessione aperta. `id` e' quello restituito da
+ * IP_MSG_TCP_APRI. */
+typedef struct {
+    unsigned int id;
+} IpTcpRif;
+
+/* Intestazione di IP_MSG_TCP_INVIA e di IP_MSG_TCP_DATI: i byte seguono
+ * nello stesso messaggio. */
+typedef struct {
+    unsigned int id;
+    unsigned int len;
+} IpTcpDati;
+
+typedef struct {
+    unsigned int  id;
+    unsigned int  stato;         /* IP_TCP_* */
+    unsigned int  in_coda_rx;    /* byte gia' arrivati e non ancora letti */
+    unsigned int  in_coda_tx;    /* byte accettati e non ancora confermati */
+    unsigned char ip[4];
+    unsigned int  porta;
+} IpTcpInfo;
+
+/* Risposta generica.
+ *
+ * ⚠️ `codice` PORTA ANCHE VALORI POSITIVI, non solo 0 o -errno: per
+ * IP_MSG_TCP_APRI e' l'identificativo della connessione, per
+ * IP_MSG_TCP_INVIA e' il numero di byte accettati (che puo' essere meno
+ * di quelli offerti, se il buffer di trasmissione e' quasi pieno). Chi
+ * chiama deve guardare il segno prima del valore. */
 typedef struct {
     int codice;
 } IpEsito;

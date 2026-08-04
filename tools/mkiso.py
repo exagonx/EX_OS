@@ -27,6 +27,7 @@ sono condivisi, le directory no.
 
 import os
 import struct
+import time
 import sys
 
 BLOCCO = 2048
@@ -52,12 +53,30 @@ def both32(v):
     return struct.pack("<I", v) + struct.pack(">I", v)
 
 
-def data7(anno=2026, mese=8, giorno=1, ora=12, minuto=0, secondo=0):
-    return bytes([anno - 1900, mese, giorno, ora, minuto, secondo, 0])
+# ⚠️ LA DATA E' QUELLA VERA DI COSTRUZIONE, e prima era fissa al
+# 2026-08-01 12:00. Un CD i cui file dichiarano tutti la stessa data
+# inventata non e' neutro: `ls -d` la mostra, e chi guarda crede che quel
+# disco sia di agosto anche quando l'ha masterizzato ieri. Meglio un dato
+# vero che uno plausibile.
+#
+# L'orario e' quello LOCALE con offset di fuso a zero, perche' EX-OS non
+# sa in che fuso si trova (vedi il commento su localtime in libc.h): una
+# conversione a UTC produrrebbe un'ora che nessuno dei due sistemi
+# rimetterebbe a posto.
+_COSTRUZIONE = time.localtime()
 
 
-def data17():
-    return b"2026080112000000" + bytes([0])
+def data7(t=None):
+    t = t or _COSTRUZIONE
+    return bytes([t.tm_year - 1900, t.tm_mon, t.tm_mday,
+                  t.tm_hour, t.tm_min, t.tm_sec, 0])
+
+
+def data17(t=None):
+    t = t or _COSTRUZIONE
+    return ("%04d%02d%02d%02d%02d%02d00" % (t.tm_year, t.tm_mon, t.tm_mday,
+                                            t.tm_hour, t.tm_min,
+                                            t.tm_sec)).encode() + bytes([0])
 
 
 def rec_dir(nome_bytes, extent, dim, is_dir):

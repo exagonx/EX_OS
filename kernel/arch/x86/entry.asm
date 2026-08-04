@@ -187,6 +187,76 @@ write_cr0:
     mov cr0, eax
     ret
 
+; --- Registro CR4 -------------------------------------------------------------
+; ⚠️ CR4 NON ESISTE SUL 386 E SUI PRIMI 486. Chi chiama deve gia' sapere
+; che la CPU ce l'ha: qui non si puo' controllare, perche' l'istruzione
+; stessa e' quella che mancherebbe. La discriminante e' CPUID, e CPUID a
+; sua volta si rileva col bit ID di EFLAGS (vedi sotto).
+global read_cr4
+read_cr4:
+    mov eax, cr4
+    ret
+
+global write_cr4
+write_cr4:
+    mov eax, [esp+4]
+    mov cr4, eax
+    ret
+
+; --- CPUID --------------------------------------------------------------------
+; cpuid_disponibile(): 1 se la CPU ha CPUID, 0 altrimenti.
+;
+; ⚠️ NON SI PUO' CHIEDERE A CPUID SE CPUID ESISTE. L'unico modo e' provare
+; a invertire il bit 21 (ID) di EFLAGS: sul 386 e sui 486 piu' vecchi quel
+; bit non si lascia cambiare. E' il test che usa ogni sistema che debba
+; girare anche su quelle macchine.
+global cpuid_disponibile
+cpuid_disponibile:
+    pushfd                          ; salva EFLAGS originali
+    pushfd                          ; copia su cui lavorare
+    xor dword [esp], 0x00200000     ; inverte il bit ID
+    popfd                           ; prova a rimetterlo in EFLAGS
+    pushfd
+    pop eax                         ; rileggi: il bit e' cambiato davvero?
+    xor eax, [esp]                  ; confronta con l'originale
+    popfd                           ; ripristina EFLAGS come li abbiamo trovati
+    and eax, 0x00200000
+    shr eax, 21
+    ret
+
+; cpuid_edx1() / cpuid_ecx1(): i registri EDX ed ECX della funzione 1.
+; EDX bit 23 = MMX, 24 = FXSR, 25 = SSE, 26 = SSE2.  ECX bit 0 = SSE3.
+;
+; EBX va salvato: e' callee-saved nella nostra ABI e CPUID lo distrugge.
+global cpuid_edx1
+cpuid_edx1:
+    push ebx
+    mov eax, 1
+    cpuid
+    mov eax, edx
+    pop ebx
+    ret
+
+global cpuid_ecx1
+cpuid_ecx1:
+    push ebx
+    mov eax, 1
+    cpuid
+    mov eax, ecx
+    pop ebx
+    ret
+
+; cpuid_max(): la funzione piu' alta supportata (foglia 0, EAX). Serve a
+; sapere se la foglia 1 si puo' chiedere: su una CPU che si ferma a 0,
+; leggere la 1 restituisce valori di un'altra foglia.
+global cpuid_max
+cpuid_max:
+    push ebx
+    xor eax, eax
+    cpuid
+    pop ebx
+    ret
+
 ; --- Registro CR2 (indirizzo Page Fault) --------------------------------------
 global read_cr2
 read_cr2:

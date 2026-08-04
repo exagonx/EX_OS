@@ -38,6 +38,11 @@ typedef struct {
     uint32_t dimensione;
     uint32_t inode;
     uint8_t  is_dir;
+    /* Convertite dal i_mtime dell'inode, che e' un tempo Unix. Vedi
+     * VfsStat in vfs.h: il formato FAT e' quello che attraversa la
+     * syscall, quindi la conversione si fa una volta sola, qui. */
+    uint16_t data;
+    uint16_t ora;
 } Ext2DirEntry;
 
 /* Monta il volume sul dispositivo a blocchi `blkdev`.

@@ -1185,6 +1185,54 @@ const char *ext2_etichetta(int mnt)
 /* =============================================================================
  * Operazioni
  * ============================================================================= */
+/* =============================================================================
+ * Da tempo Unix a data e ora in formato FAT
+ *
+ * ⚠️ NON E' UNA CONVERSIONE APPROSSIMATA: l'algoritmo dei giorni civili e'
+ * quello esatto, bisestili compresi (regola dei 400 anni). L'unica perdita
+ * e' sui secondi, che in FAT hanno risoluzione di due — e' il formato di
+ * destinazione a essere fatto cosi'.
+ *
+ * ⚠️ PRIMA DEL 1980 SI RESTITUISCE ZERO, che significa «non la so». Un
+ * anno negativo scritto nei sette bit dell'anno diventerebbe una data del
+ * futuro, cioe' una bugia invece di un'assenza.
+ * ============================================================================= */
+static void data_fat_da_unix(uint32_t t, uint16_t *data, uint16_t *ora)
+{
+    uint32_t giorni = t / 86400u;
+    uint32_t resto  = t % 86400u;
+    uint32_t anno, mese, giorno;
+    int32_t  era, doe, yoe, doy, mp;
+
+    *data = 0;
+    *ora  = 0;
+    if (t == 0) return;
+
+    /* Giorni dal 1970-01-01 -> data civile. Si sposta l'origine al
+     * 0000-03-01 perche' cosi' il 29 febbraio finisce in fondo all'anno e
+     * il conto dei mesi diventa una formula invece di una tabella. */
+    {
+        int32_t z = (int32_t)giorni + 719468;
+
+        era = (z >= 0 ? z : z - 146096) / 146097;
+        doe = z - era * 146097;
+        yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+        doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        mp  = (5 * doy + 2) / 153;
+
+        giorno = (uint32_t)(doy - (153 * mp + 2) / 5 + 1);
+        mese   = (uint32_t)(mp < 10 ? mp + 3 : mp - 9);
+        anno   = (uint32_t)(yoe + era * 400 + (mese <= 2 ? 1 : 0));
+    }
+
+    if (anno < 1980u || anno > 2107u) return;
+
+    *data = (uint16_t)(((anno - 1980u) << 9) | (mese << 5) | giorno);
+    *ora  = (uint16_t)(((resto / 3600u) << 11) |
+                       (((resto / 60u) % 60u) << 5) |
+                       ((resto % 60u) / 2u));
+}
+
 int ext2_stat(int mnt, const char *percorso, Ext2DirEntry *out)
 {
     Ext2Mount *m = prendi(mnt);
@@ -1200,6 +1248,8 @@ int ext2_stat(int mnt, const char *percorso, Ext2DirEntry *out)
     out->inode       = ino;
     out->dimensione  = le32(inode + 4);
     out->is_dir      = ((le16(inode) & MODE_TIPO) == MODE_DIR) ? 1 : 0;
+    /* i_mtime sta all'offset 16 dell'inode ed e' un tempo Unix. */
+    data_fat_da_unix(le32(inode + 16), &out->data, &out->ora);
     return 0;
 }
 

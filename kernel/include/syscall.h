@@ -65,7 +65,7 @@
 #define SYS_RENAME       38    /* rinomina SENZA spostare i dati (vedi vfs_rename) */
 
 /* Numero totale syscall supportate */
-#define SYSCALL_COUNT   238     /* deve coprire il numero syscall più alto (SYS_IRQ_DONE=237) + 1 */
+#define SYSCALL_COUNT   240     /* deve coprire il numero syscall più alto (SYS_DMA_ALLOC=239) + 1 */
 
 /* =============================================================================
  * Codici errno
@@ -187,6 +187,51 @@
  * tempesta non finisce da sola.
  * ============================================================================= */
 #define SYS_IRQ_DONE      237   /* ebx = irq; riapre la linea mascherata */
+
+/* =============================================================================
+ * SYS_DMA_ALLOC — memoria che una scheda puo' leggere e scrivere da sola
+ *
+ * ebx = puntatore a DmaZona: in `byte` quanti ne servono, in uscita
+ * `virt` (l'indirizzo con cui la vede il processo) e `fisico` (quello da
+ * scrivere nei registri della scheda).
+ *
+ * -----------------------------------------------------------------------------
+ * ⚠️ PERCHE' NON BASTA malloc()
+ *
+ * Un bus master come il PCnet non passa dalla MMU: legge e scrive la RAM
+ * agli indirizzi FISICI che gli si sono dati. Un blocco di malloc ha un
+ * indirizzo virtuale, e le sue pagine possono stare ovunque e sparse. Dare
+ * alla scheda l'indirizzo virtuale significa farle scrivere in un punto a
+ * caso della memoria fisica — e il punto a caso, su una macchina piccola,
+ * e' spesso il kernel.
+ *
+ * Servono due cose che malloc non da':
+ *   - CONTIGUITA' fisica, perche' un anello di descrittori la scheda lo
+ *     percorre sommando, non seguendo tabelle di pagine;
+ *   - l'indirizzo FISICO, che il processo da solo non ha modo di sapere.
+ *
+ * ⚠️ SOLO A CHI HA GIA' UNA FINESTRA DI PORTE I/O. Non e' una difesa
+ * rigorosa — e' il modo di dire che questa syscall serve ai driver.
+ * Memoria fisicamente contigua e non liberabile e' la risorsa piu' scarsa
+ * che ci sia: darla a chiunque la chieda significa che il primo programma
+ * distratto la finisce.
+ *
+ * ⚠️ NON SI PUO' LIBERARE, e la si riprende solo quando il processo muore.
+ * Un driver la chiede una volta all'avvio e la tiene per sempre; una
+ * dma_free servirebbe a un caso che non esiste, e costerebbe il problema
+ * vero — sapere se la scheda ha smesso davvero di scriverci dentro.
+ * ============================================================================= */
+#define SYS_DMA_ALLOC     239   /* ebx = DmaZona*; memoria per un bus master */
+
+/* Quanta ne puo' avere un processo, in pagine. 64 = 256 KB: gli anelli di
+ * una scheda di rete con i loro buffer stanno in molto meno. */
+#define DMA_PAGINE_MAX    64
+
+typedef struct {
+    uint32_t byte;      /* in:  quanti byte servono */
+    uint32_t virt;      /* out: indirizzo nel processo */
+    uint32_t fisico;    /* out: indirizzo da dare alla scheda */
+} DmaZona;
 
 /* Opzioni di sys_waitpid (terzo argomento, edx). Un chiamante che
  * passa solo due registri lascia in edx un valore qualunque: tutti i
@@ -616,6 +661,7 @@ int32_t sys_ioport_out16(InterruptFrame *f);
 int32_t sys_ioport_in32(InterruptFrame *f);
 int32_t sys_ioport_out32(InterruptFrame *f);
 int32_t sys_irq_done(InterruptFrame *f);
+int32_t sys_dma_alloc(InterruptFrame *f);
 
 /* =============================================================================
  * SYS_SPAWN — il blocco EXTRA (ambiente e redirezioni)

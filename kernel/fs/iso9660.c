@@ -257,6 +257,46 @@ static int dir_scorri(IsoMount *m, uint32_t extent, uint32_t dim,
 
             if (!nome_da_record(rec, m->joliet, nome)) continue;
 
+            /* =========================================================
+             * Data e ora del record: sette byte a partire dall'offset 18,
+             * subito dopo la lunghezza dei dati e prima dei flag.
+             *
+             *   18 anni dal 1900   19 mese   20 giorno
+             *   21 ore   22 minuti   23 secondi   24 fuso (quarti d'ora)
+             *
+             * ⚠️ IL FUSO SI IGNORA DI PROPOSITO. EX-OS non sa in che fuso
+             * si trova — localtime() e gmtime() fanno la stessa cosa, e lo
+             * dice il commento in libc.h — quindi spostare l'ora di
+             * qualche quarto d'ora non la renderebbe piu' giusta, la
+             * renderebbe diversa da quella che il CD dichiara.
+             *
+             * ⚠️ SI CONTROLLA CHE LA DATA SIA PLAUSIBILE. Sono byte scritti
+             * da chi ha masterizzato il disco, e un mese 0 o 13 e' comune
+             * sui CD prodotti male: la data va a zero, che significa «non
+             * la so», invece di finire nel formato FAT come un valore che
+             * sembra vero.
+             * ========================================================= */
+            {
+                uint32_t anno   = 1900u + rec[18];
+                uint32_t mese   = rec[19];
+                uint32_t giorno = rec[20];
+                uint32_t ore    = rec[21];
+                uint32_t minuti = rec[22];
+                uint32_t sec    = rec[23];
+
+                voce.data = 0;
+                voce.ora  = 0;
+
+                if (mese >= 1u && mese <= 12u && giorno >= 1u && giorno <= 31u &&
+                    ore < 24u && minuti < 60u && sec < 60u &&
+                    anno >= 1980u && anno <= 2107u) {
+                    voce.data = (uint16_t)(((anno - 1980u) << 9) |
+                                           (mese << 5) | giorno);
+                    voce.ora  = (uint16_t)((ore << 11) | (minuti << 5) |
+                                           (sec / 2u));
+                }
+            }
+
             voce.is_dir     = (rec[25] & REC_DIRECTORY) ? 1 : 0;
             voce.dimensione = le32(rec + 10);
             /* Trappola 2: i dati cominciano DOPO gli attributi estesi. */

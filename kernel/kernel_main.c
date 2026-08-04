@@ -277,9 +277,18 @@ klog(LOG_INFO, "[PASSO 11] Syscall OK");
      * raggiungibile. Montarlo richiedera' di separare "inizializza l'FDC"
      * da "monta la root", che oggi fat12_init fa insieme. */
     if (info->boot_drive < 0x80) {
-        klog(LOG_INFO, "[PASSO 13] Inizializzazione FAT12 kernel driver...");
-        if (fat12_init(info->boot_drive) != 0) {
-            klog(LOG_WARN, "[PASSO 13] FAT12 init fallita — filesystem non disponibile");
+        /* ⚠️ SI SONDA, NON SI INIZIALIZZA A FORZA. Il fallimento qui NON e'
+         * un guasto: e' il segnale che vfs_init() usa per montare il CD
+         * come radice (dietro l'emulazione floppy di El Torito non c'e'
+         * nessun controller). Trattarlo come un errore riempiva il
+         * registro di un avvio riuscito di righe rosse — vedi il commento
+         * su g_sondaggio in kernel/fs/fat12.c.
+         *
+         * Se la sonda riesce, il driver E' gia' inizializzato: non si
+         * richiama fat12_init, che rifarebbe il reset del controller. */
+        klog(LOG_INFO, "[PASSO 13] Sondaggio del floppy...");
+        if (fat12_sonda(info->boot_drive) != 0) {
+            klog(LOG_INFO, "[PASSO 13] nessun floppy: si prosegue senza");
         } else {
             klog(LOG_INFO, "[PASSO 13] FAT12 OK (drive=0x%02x)", info->boot_drive);
         }
@@ -404,6 +413,25 @@ KernelConfig *cfg = cfg_load();
                      cfg->mounts[i].dev, cfg->mounts[i].punto,
                      (r == ERR(ENOMEDIUM)) ? "nessun disco nel lettore"
                                            : "lettore assente");
+                saltati++;
+                continue;
+            }
+
+            /* ⚠️ GIA' MONTATO NON E' UN GUASTO, ED ERA IL CASO PIU' COMUNE
+             * DI TUTTI: avviando dal CD, vfs_init() monta cd0 come RADICE,
+             * e poi questo passo prova a montarlo di nuovo su /cdrom
+             * perche' cosi' dice kernel.cfg. Il -EBUSY che ne usciva
+             * veniva stampato come «non montato (errore -16)», cioe' un
+             * avvio perfettamente riuscito che si annunciava con un
+             * avviso — ed era la prima riga che saltava all'occhio a chi
+             * andava a cercare un problema che non c'era.
+             *
+             * Il disco c'e' ed e' raggiungibile: semplicemente lo e' da un
+             * altro punto. Va detto cosi'. */
+            if (r == ERR(EBUSY)) {
+                klog(LOG_INFO, "[PASSO 13d] '%s' e' gia' montato altrove "
+                     "(e' la radice): '%s' non serve",
+                     cfg->mounts[i].dev, cfg->mounts[i].punto);
                 saltati++;
                 continue;
             }

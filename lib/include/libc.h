@@ -636,7 +636,25 @@ int time_now(RtcTime *t);
  *
  * time_t e' `long`: a 32 bit con segno arriva al 2038.
  * ============================================================================= */
-typedef long time_t;
+/* =============================================================================
+ * ⚠️ 64 BIT E NON 32, dal kernel 0.175 — e non e' solo il 2038
+ *
+ * Un `time_t` a 32 bit con segno finisce il 19 gennaio 2038. Su un sistema
+ * scritto nel 2026 sarebbe una scadenza scritta in partenza, ed e' la
+ * ragione per cui i Linux a 32 bit sono passati a time64.
+ *
+ * Ma il difetto che l'ha reso urgente e' un altro, ed e' aritmetico. GCC
+ * misura il tempo cosi' (gcc/timevar.cc):
+ *
+ *     now->wall = tv.tv_sec * 1000000000 + tv.tv_usec * 1000;
+ *
+ * Con tv_sec a 32 bit quella moltiplicazione TRABOCCA prima di essere
+ * allargata — 1,7 miliardi per un miliardo non ci sta — e il rapporto dei
+ * tempi di cc1 usciva con fasi da 18446744071 secondi, cioe' differenze
+ * negative lette come senza segno. Non e' codice di GCC da correggere: e'
+ * codice giusto su un time_t giusto.
+ * ============================================================================= */
+typedef long long time_t;
 
 struct tm {
     int tm_sec;     /* 0..60 */
@@ -651,8 +669,9 @@ struct tm {
 };
 
 struct timeval {
-    long tv_sec;
-    long tv_usec;   /* risoluzione vera: 10 ms, il tick del PIT */
+    /* time_t, non long: vedi il commento sulla sua definizione. */
+    time_t tv_sec;
+    long   tv_usec;   /* risoluzione vera: 10 ms, il tick del PIT */
 };
 
 /* Ritorna (time_t)-1 se l'orologio non risponde: zero significherebbe il
@@ -1966,6 +1985,22 @@ int     irq_bind(unsigned int irq);
  *
  * Si chiama DOPO aver azzerato lo stato della scheda, mai prima. */
 int     irq_done(unsigned int irq);
+
+/* =============================================================================
+ * Memoria per un bus master — vedi kernel/include/syscall.h per il perche'
+ *
+ * ⚠️ DEVE RESTARE IDENTICA a DmaZona in kernel/include/syscall.h: la
+ * struttura la riempie il kernel scrivendo nella memoria del processo, e
+ * due definizioni che divergono danno un indirizzo fisico letto dal campo
+ * sbagliato — cioe' una scheda che fa DMA dove capita.
+ * ============================================================================= */
+typedef struct {
+    unsigned int byte;      /* in:  quanti byte servono */
+    unsigned int virt;      /* out: indirizzo nel processo */
+    unsigned int fisico;    /* out: indirizzo da dare alla scheda */
+} DmaZona;
+
+int     dma_alloc(DmaZona *z);
 
 /* Richiede accesso a un range di porte I/O [base, base+count).
  * Sovrascrive un'eventuale bind precedente. Ritorna 0 su successo. */

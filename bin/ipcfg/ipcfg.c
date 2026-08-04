@@ -38,22 +38,11 @@
 
 #include "libc.h"
 #include "ip_proto.h"
+#include "dns.h"
+#include "rete.h"
 
 static int pid_ip = 0;
 
-static int leggi_ip(const char *s, unsigned char *out)
-{
-    int i, v, cifre;
-
-    for (i = 0; i < 4; i++) {
-        v = 0; cifre = 0;
-        while (*s >= '0' && *s <= '9') { v = v * 10 + (*s - '0'); s++; cifre++; }
-        if (cifre == 0 || v > 255) return 0;
-        out[i] = (unsigned char)v;
-        if (i < 3) { if (*s != '.') return 0; s++; }
-    }
-    return (*s == '\0');
-}
 
 static void stampa_ip(const unsigned char *p)
 {
@@ -158,12 +147,8 @@ int main(int argc, char **argv)
     IpEsito       e;
     int           i, cambia = 0;
 
-    pid_ip = ipc_lookup(IP_SERVIZIO);
-    if (pid_ip <= 0) {
-        printf("ipcfg: lo stack IP non e' attivo.\n");
-        printf("       Avvialo con  /dev/ip.drv &\n");
-        return 1;
-    }
+    pid_ip = rete_richiedi(IP_SERVIZIO);
+    if (pid_ip <= 0) return 1;
 
     if (argc == 1) return mostra_stato();
     if (argc == 2 && strcmp(argv[1], "-r") == 0) return mostra_arp();
@@ -181,13 +166,13 @@ int main(int argc, char **argv)
 
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-a") == 0 && i + 1 < argc) {
-            if (!leggi_ip(argv[++i], c.ip)) goto malformato;
+            if (!ip_da_stringa(argv[++i], c.ip)) goto malformato;
             cambia = 1;
         } else if (strcmp(argv[i], "-m") == 0 && i + 1 < argc) {
-            if (!leggi_ip(argv[++i], c.maschera)) goto malformato;
+            if (!ip_da_stringa(argv[++i], c.maschera)) goto malformato;
             cambia = 1;
         } else if (strcmp(argv[i], "-g") == 0 && i + 1 < argc) {
-            if (!leggi_ip(argv[++i], c.gateway)) goto malformato;
+            if (!ip_da_stringa(argv[++i], c.gateway)) goto malformato;
             cambia = 1;
         } else {
             printf("uso: ipcfg                     indirizzo e contatori\n");

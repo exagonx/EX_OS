@@ -949,6 +949,122 @@ static char su_maiuscolo(char c)
 
 /* Confronta un nome utente con il nome 8.3 di una voce, senza distinguere
  * maiuscole e minuscole. */
+/* =============================================================================
+ * NOMI LUNGHI (VFAT)
+ *
+ * Un nome piu' lungo di 8.3 non sta in una voce di directory: sta in una
+ * CATENA di voci con attributo 0x0F, ognuna da 13 caratteri UTF-16,
+ * scritte PRIMA della voce 8.3 e in ordine INVERSO. La voce con il bit
+ * 0x40 nell'ordinale e' l'ultima del nome, cioe' la prima che si incontra
+ * leggendo la directory in avanti.
+ *
+ * Fino ad agosto 2026 questo driver le saltava tutte: un file creato da
+ * Windows o da Linux come "appunti di riunione.txt" compariva come
+ * APPUNT~1.TXT — e siccome anche la RICERCA usava solo l'8.3, quello era
+ * anche l'unico nome con cui si poteva aprire.
+ *
+ * ⚠️ LA SOMMA DI CONTROLLO NON E' FACOLTATIVA. Ogni voce LFN porta la
+ * somma del nome 8.3 a cui appartiene. Serve a riconoscere le catene
+ * ORFANE: un sistema che non conosce i nomi lunghi puo' cancellare la
+ * voce 8.3 lasciando indietro le sue LFN, e attaccare quei frammenti al
+ * primo nome 8.3 che capita darebbe a un file il nome di un altro. Se la
+ * somma non combacia, il nome lungo si butta e resta l'8.3.
+ *
+ * ⚠️ SOLO LETTURA. Creare un file con un nome lungo vorrebbe dire
+ * allocare piu' voci consecutive e inventare un alias 8.3 unico
+ * (NOME~1, NOME~2...): e' un'altra cosa, e non c'e'. Un file creato da
+ * EX-OS ha un nome 8.3, e si vede.
+ *
+ * ⚠️ SOLO ASCII. I caratteri sopra 0x7F diventano '?'. EX-OS non ha una
+ * tabella di caratteri: inventare una traduzione qui vorrebbe dire
+ * scegliere una codifica per tutto il sistema, che e' una decisione
+ * diversa e piu' grande di questo file.
+ * ============================================================================= */
+typedef struct {
+    char     nome[FAT_NOME_MAX];
+    uint8_t  checksum;
+    uint8_t  valido;        /* la catena e' completa */
+    uint8_t  attesa;        /* prossimo ordinale atteso, 0 = nessuna catena */
+} Lfn;
+
+static void lfn_azzera(Lfn *l)
+{
+    l->nome[0] = '\0';
+    l->valido  = 0;
+    l->attesa  = 0;
+}
+
+/* La somma di controllo del nome 8.3, come la calcola la specifica. */
+static uint8_t somma83(const uint8_t *v)
+{
+    uint8_t s = 0;
+    int     i;
+
+    for (i = 0; i < 11; i++)
+        s = (uint8_t)(((s & 1u) ? 0x80u : 0u) + (s >> 1) + v[i]);
+    return s;
+}
+
+static void lfn_raccogli(Lfn *l, const uint8_t *v)
+{
+    /* Le posizioni dei 13 caratteri dentro la voce: non sono contigui,
+     * perche' il layout deve lasciare al loro posto attributo, somma e
+     * primo cluster della voce 8.3 che stanno negli stessi offset. */
+    static const uint8_t off[13] = { 1, 3, 5, 7, 9, 14, 16, 18, 20, 22, 24, 28, 30 };
+    uint32_t ord = (uint32_t)(v[0] & 0x1Fu);
+    uint32_t base, i;
+
+    /* Voce cancellata, o ordinale fuori dai 20 possibili: la catena non
+     * vale piu' niente. */
+    if (v[0] == 0xE5u || ord == 0u || ord > 20u) { lfn_azzera(l); return; }
+
+    if (v[0] & 0x40u) {                 /* ultima del nome = prima che vediamo */
+        for (i = 0; i < FAT_NOME_MAX; i++) l->nome[i] = '\0';
+        l->checksum = v[13];
+        l->attesa   = (uint8_t)ord;
+        l->valido   = 0;
+    } else if (l->attesa == 0u || ord != l->attesa || v[13] != l->checksum) {
+        /* Frammento che non continua la catena che stavamo leggendo. */
+        lfn_azzera(l);
+        return;
+    }
+
+    base = (ord - 1u) * 13u;
+    for (i = 0; i < 13u; i++) {
+        uint16_t c = (uint16_t)(v[off[i]] | ((uint16_t)v[off[i] + 1] << 8));
+
+        if (base + i >= FAT_NOME_MAX - 1u) break;
+        if (c == 0u || c == 0xFFFFu) break;     /* riempimento di fine nome */
+        l->nome[base + i] = (c < 0x80u) ? (char)c : '?';
+    }
+
+    l->attesa = (uint8_t)(ord - 1u);
+    if (l->attesa == 0u) l->valido = 1;
+}
+
+/* Il nome lungo che appartiene a questa voce 8.3, oppure NULL. */
+static const char *lfn_per(const Lfn *l, const uint8_t *v83)
+{
+    if (!l->valido) return NULL;
+    if (l->checksum != somma83(v83)) return NULL;   /* catena orfana */
+    if (l->nome[0] == '\0') return NULL;
+    return l->nome;
+}
+
+/* Confronto di due nomi senza distinzione fra maiuscole e minuscole: e' la
+ * regola di FAT, e vale anche per i nomi lunghi. */
+static int nomi_uguali(const char *a, const char *b)
+{
+    while (*a && *b) {
+        char x = *a++, y = *b++;
+
+        if (x >= 'a' && x <= 'z') x = (char)(x - 'a' + 'A');
+        if (y >= 'a' && y <= 'z') y = (char)(y - 'a' + 'A');
+        if (x != y) return 0;
+    }
+    return *a == '\0' && *b == '\0';
+}
+
 static int nome_uguale(const char *utente, const uint8_t *v)
 {
     char n[FAT_NOME_MAX];
@@ -993,6 +1109,7 @@ static int risolvi(const FatMount *m, const char *percorso,
         char comp[FAT_NOME_MAX];
         int  n = 0;
         DirIter it;
+        Lfn     lfn;
         int     esito;
         int     trovato = 0;
 
@@ -1003,14 +1120,31 @@ static int risolvi(const FatMount *m, const char *percorso,
         if (n == 0) break;
 
         dir_apri(&it, m, clus);
+        lfn_azzera(&lfn);
 
         while ((esito = dir_prossima(&it, voce)) == 1) {
-            /* Le voci di nome lungo sono frammenti, non file: vanno
-             * saltate o comparirebbero come nomi spazzatura. */
-            if ((voce[11] & FAT_ATTR_LFN) == FAT_ATTR_LFN) continue;
-            if (voce[11] & FAT_ATTR_VOLID) continue;
+            const char *lungo;
+            int         combacia;
 
-            if (nome_uguale(comp, voce)) {
+            /* Le voci di nome lungo sono FRAMMENTI, non file: si
+             * accumulano, e il nome che ne esce vale per la voce 8.3 che
+             * viene subito dopo. */
+            if ((voce[11] & FAT_ATTR_LFN) == FAT_ATTR_LFN) {
+                lfn_raccogli(&lfn, voce);
+                continue;
+            }
+            if (voce[11] & FAT_ATTR_VOLID) { lfn_azzera(&lfn); continue; }
+
+            /* ⚠️ SI CONFRONTA COL NOME LUNGO SE C'E', ALTRIMENTI CON L'8.3.
+             * Confrontare solo col lungo renderebbe impossibile aprire un
+             * file col suo alias corto, che e' un nome legittimo e che i
+             * programmi vecchi usano. */
+            lungo    = lfn_per(&lfn, voce);
+            combacia = lungo ? nomi_uguali(comp, lungo) : nome_uguale(comp, voce);
+            if (!combacia && lungo) combacia = nome_uguale(comp, voce);
+            lfn_azzera(&lfn);
+
+            if (combacia) {
                 /* dir_prossima ha gia' incrementato l'indice: la voce
                  * appena restituita sta in quella precedente. Serve per
                  * poterla RISCRIVERE (dimensione, primo cluster,
@@ -1064,14 +1198,27 @@ static int risolvi(const FatMount *m, const char *percorso,
 /* =============================================================================
  * API pubblica
  * ============================================================================= */
-static void riempi(FatDirEntry *o, const FatMount *m, const uint8_t *v)
+static void riempi(FatDirEntry *o, const FatMount *m, const uint8_t *v,
+                   const char *lungo)
 {
-    nome_da_83(v, o->nome);
+    if (lungo != NULL) {
+        uint32_t k = 0;
+
+        while (k < FAT_NOME_MAX - 1u && lungo[k]) { o->nome[k] = lungo[k]; k++; }
+        o->nome[k] = '\0';
+    } else {
+        nome_da_83(v, o->nome);
+    }
     o->attributi     = v[11];
     o->is_dir        = (v[11] & FAT_ATTR_DIR) ? 1 : 0;
     o->dimensione    = le32(v + 28);
     o->primo_cluster = (uint32_t)le16(v + 26);
     if (m->tipo == 32) o->primo_cluster |= ((uint32_t)le16(v + 20)) << 16;
+    /* Ora e data di ultima scrittura: byte 22-23 e 24-25 della voce, gia'
+     * nel formato che attraversa la syscall. Qui non c'e' niente da
+     * convertire — e' FAT che ha dato il formato a tutti gli altri. */
+    o->ora  = le16(v + 22);
+    o->data = le16(v + 24);
 }
 
 int fat_readdir(int mnt, const char *percorso, FatDirEntry *out,
@@ -1081,6 +1228,7 @@ int fat_readdir(int mnt, const char *percorso, FatDirEntry *out,
     uint32_t  clus;
     DirIter   it;
     uint8_t   voce[32];
+    Lfn       lfn;
     uint32_t  visti = 0, scritti = 0;
     int       esito;
 
@@ -1093,13 +1241,27 @@ int fat_readdir(int mnt, const char *percorso, FatDirEntry *out,
 
     dir_apri(&it, m, clus);
 
+    lfn_azzera(&lfn);
+
     while (scritti < max && (esito = dir_prossima(&it, voce)) == 1) {
-        if ((voce[11] & FAT_ATTR_LFN) == FAT_ATTR_LFN) continue;
-        if (voce[11] & FAT_ATTR_VOLID) continue;
+        const char *lungo;
 
-        if (visti++ < start) continue;
+        if ((voce[11] & FAT_ATTR_LFN) == FAT_ATTR_LFN) {
+            lfn_raccogli(&lfn, voce);
+            continue;
+        }
+        if (voce[11] & FAT_ATTR_VOLID) { lfn_azzera(&lfn); continue; }
 
-        riempi(&out[scritti], m, voce);
+        lungo = lfn_per(&lfn, voce);
+
+        /* ⚠️ L'AZZERAMENTO VA FATTO ANCHE QUANDO SI SALTA LA VOCE per la
+         * paginazione: altrimenti il nome lungo di una voce saltata
+         * resterebbe attaccato alla successiva, che in una directory
+         * paginata significa un file con il nome di un altro. */
+        if (visti++ < start) { lfn_azzera(&lfn); continue; }
+
+        riempi(&out[scritti], m, voce, lungo);
+        lfn_azzera(&lfn);
         scritti++;
     }
 
@@ -1118,7 +1280,11 @@ int fat_stat(int mnt, const char *percorso, FatDirEntry *out)
     if (risolvi(m, percorso, voce, NULL, NULL) != 0) return -1;
     if (voce[0] == 0) return -1;    /* era la root, non un file */
 
-    if (out) riempi(out, m, voce);
+    /* NULL e non il nome lungo: risolvi() non lo riporta indietro, e
+     * nessuno lo legge da qui — vfs.c usa fat_stat per dimensione e tipo,
+     * il nome ce l'ha gia' chi ha chiesto. Riportarlo vorrebbe dire far
+     * tornare a risolvi() un dato che serve a un solo chiamante. */
+    if (out) riempi(out, m, voce, NULL);
     return 0;
 }
 

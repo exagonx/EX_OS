@@ -58,6 +58,10 @@ typedef struct {
     uint32_t dimensione;
     uint32_t extent;        /* primo blocco dei dati: un file e' contiguo */
     uint8_t  is_dir;
+    /* Dai sette byte di data del record di directory. Vedi VfsStat in
+     * vfs.h per il formato. */
+    uint16_t data;
+    uint16_t ora;
 } IsoDirEntry;
 
 /* Monta il volume sul dispositivo a blocchi `blkdev` (tipicamente un

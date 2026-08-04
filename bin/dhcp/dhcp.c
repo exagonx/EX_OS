@@ -62,6 +62,7 @@
 
 #include "libc.h"
 #include "ip_proto.h"
+#include "rete.h"
 
 /* Porte fissate dalla specifica: non si scelgono. */
 #define PORTA_CLIENT   68
@@ -362,12 +363,8 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    pid_ip = ipc_lookup(IP_SERVIZIO);
-    if (pid_ip <= 0) {
-        printf("dhcp: lo stack IP non e' attivo.\n");
-        printf("      Avvialo con  /dev/ip.drv &\n");
-        return 1;
-    }
+    pid_ip = rete_richiedi(IP_SERVIZIO);
+    if (pid_ip <= 0) return 1;
 
     if (leggi_stato(&s) != 0) {
         printf("dhcp: lo stack non risponde.\n");

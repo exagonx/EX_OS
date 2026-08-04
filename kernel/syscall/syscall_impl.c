@@ -1782,8 +1782,11 @@ int32_t sys_stat(InterruptFrame *frame)
     st->st_first_clus = 0;
     st->st_attr       = (uint16_t)((vs.is_dir       ? 0x10 : 0x00) |
                                    (vs.sola_lettura ? 0x01 : 0x00));
-    st->st_date       = 0;
-    st->st_time       = 0;
+    /* Dal 0.168 la data arriva davvero dal filesystem. Zero continua a
+     * significare «questo volume non la tiene» — la libc lo sa e stampa
+     * dei trattini invece di inventare il 1980. */
+    st->st_date       = vs.data;
+    st->st_time       = vs.ora;
 
     klog(LOG_DEBUG, "SYSCALL stat('%s') -> %u byte%s", abs, vs.dimensione,
          vs.is_dir ? " (directory)" : "");
@@ -3248,4 +3251,72 @@ int32_t sys_ioport_out32(InterruptFrame *frame)
 int32_t sys_irq_done(InterruptFrame *frame)
 {
     return irq_done_process((uint8_t)frame->ebx, proc_get_current()->pid);
+}
+
+/* =============================================================================
+ * SYS_DMA_ALLOC (239) — memoria per un bus master
+ *
+ * Il perche' sta in kernel/include/syscall.h, accanto alla definizione di
+ * DmaZona. Qui restano le due decisioni che si vedono solo nel codice.
+ * ============================================================================= */
+int32_t sys_dma_alloc(InterruptFrame *frame)
+{
+    DmaZona  *z    = (DmaZona *)frame->ebx;
+    Process  *proc = proc_get_current();
+    uint32_t  pagine, fisico, vaddr, i;
+
+    if (!syscall_verify_ptr(z, sizeof(DmaZona))) return ERR(EFAULT);
+    if (z->byte == 0) return ERR(EINVAL);
+
+    /* Solo i driver: vedi il commento sulla syscall. */
+    if (proc->io_port_count == 0) {
+        klog(LOG_WARN, "SYSCALL dma_alloc: PID %u non ha porte I/O, "
+             "non e' un driver", proc->pid);
+        return ERR(EPERM);
+    }
+
+    pagine = ALIGN_UP(z->byte, PAGE_SIZE) / PAGE_SIZE;
+    if (pagine > DMA_PAGINE_MAX) return ERR(ENOMEM);
+
+    /* ⚠️ pmm_alloc_pages E NON pmm_alloc_page IN CICLO. Sono le uniche
+     * pagine del sistema che devono essere contigue FISICAMENTE: la
+     * scheda percorre un anello di descrittori sommando all'indirizzo di
+     * partenza, senza tabelle di pagine di mezzo. Allocarle una per una
+     * darebbe pagine sparse, e la scheda scriverebbe nella RAM di
+     * qualcun altro a partire dalla seconda. */
+    fisico = pmm_alloc_pages(pagine);
+    if (fisico == 0) return ERR(ENOMEM);
+
+    if (proc->heap_max == 0) { pmm_free_pages(fisico, pagine); return ERR(ENOMEM); }
+
+    vaddr = ALIGN_UP(proc->heap_end, PAGE_SIZE);
+    if (vaddr < USER_SPACE_BASE) vaddr = USER_SPACE_BASE;
+    if (vaddr > proc->heap_max ||
+        pagine > (proc->heap_max - vaddr) / PAGE_SIZE) {
+        pmm_free_pages(fisico, pagine);
+        return ERR(ENOMEM);
+    }
+
+    for (i = 0; i < pagine; i++) {
+        paging_azzera_fisica(fisico + i * PAGE_SIZE);
+        if (paging_map_page(proc->page_directory,
+                            vaddr + i * PAGE_SIZE,
+                            fisico + i * PAGE_SIZE,
+                            PG_PRESENT | PG_USER | PG_WRITABLE) != 0) {
+            uint32_t j;
+            for (j = 0; j < i; j++)
+                paging_unmap_page(proc->page_directory, vaddr + j * PAGE_SIZE);
+            pmm_free_pages(fisico, pagine);
+            return ERR(ENOMEM);
+        }
+    }
+
+    proc->heap_end = vaddr + pagine * PAGE_SIZE;
+
+    z->virt   = vaddr;
+    z->fisico = fisico;
+
+    klog(LOG_INFO, "SYSCALL dma_alloc: PID %u, %u pagine, virt 0x%08x "
+         "fisico 0x%08x", proc->pid, pagine, vaddr, fisico);
+    return 0;
 }

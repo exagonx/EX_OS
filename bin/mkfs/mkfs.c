@@ -88,6 +88,11 @@
 #define SETT_BYTE       512u
 #define SETT_PER_MB     2048u
 
+/* 2 GB in settori da 512 byte. E' il tetto di FAT16 con i cluster piu'
+ * grandi che scegli() e' disposto a usare (64 settori = 32 KB x 65524
+ * cluster), non un numero tondo scelto per comodita'. */
+#define LIMITE_FAT16_SETTORI  4194304u
+
 /* Le soglie che DEFINISCONO il tipo di un volume FAT. Non sono una
  * convenzione di questo programma: sono la regola, e kernel/block/vol.c
  * usa esattamente le stesse per dedurre il tipo di cio' che trova. Se qui
@@ -613,15 +618,20 @@ static void controlla_tipo_mbr(const char *nome, unsigned int tipo_fs)
  * ============================================================================= */
 static void uso(void)
 {
-    printf("uso: mkfs -t fat16|fat32|ext2 [-L ETICHETTA] <partizione>\n\n");
+    printf("uso: mkfs [-t fat16|fat32|ext2] [-L ETICHETTA] <partizione>\n\n");
+    printf("  mkfs hd0p1                 sceglie dalla dimensione\n");
     printf("  mkfs -t fat32 hd0p1\n");
     printf("  mkfs -t fat16 -L DATI hd0p2\n");
     printf("  mkfs -t ext2  -L SISTEMA hd0p3\n\n");
+    printf("SENZA -t: fino a 2 GB FAT16, oltre FAT32. Non e' una soglia\n");
+    printf("arbitraria — FAT16 arriva a 65524 cluster, che con cluster da\n");
+    printf("32 KB fanno poco piu' di 2 GB. ext2 non entra mai nella scelta\n");
+    printf("automatica: e' un formato che si chiede, non uno in cui si\n");
+    printf("finisce.\n\n");
     printf("La partizione NON dev'essere montata. `disk` elenca i\n");
     printf("dispositivi, `fdisk` crea le partizioni.\n\n");
-    printf("Nota: EX-OS sa MONTARE solo i volumi FAT. Un ext2 creato qui e'\n");
-    printf("valido e leggibile da Linux, ma il driver di lettura ext2 non\n");
-    printf("c'e' ancora.\n");
+    printf("EX-OS monta FAT12, FAT16, FAT32, ext2 e ISO 9660. `chkdsk`\n");
+    printf("controlla e ripara i volumi FAT e ext2.\n");
 }
 
 /* Chiede conferma prima di distruggere. Ritorna 1 se l'utente ha
@@ -846,11 +856,36 @@ int main(int argc, char **argv)
         }
     }
 
-    if (dev == 0 || tipo == 0) { uso(); return 1; }
+    if (dev == 0) { uso(); return 1; }
 
     printf("%s %s — formattatore di EX-OS\n\n", MKFS_NAME, MKFS_VERSION);
 
     if (trova(dev, &primo, &settori) != 0) return 1;
+
+    /* =====================================================================
+     * SENZA -t SI SCEGLIE DALLA DIMENSIONE, e il confine non e' arbitrario:
+     * e' il limite del formato.
+     *
+     * FAT16 arriva a 65524 cluster. Con i 64 settori per cluster che
+     * scegli() usa al massimo — 32 KB — fanno poco piu' di 2 GB: oltre,
+     * FAT16 non ci sta e basta. Sotto, e' preferibile a FAT32 perche' ha
+     * una tabella meta' piu' piccola e una root directory a dimensione
+     * fissa, cioe' meno settori da leggere per fare la stessa cosa.
+     *
+     * ⚠️ SI DICE COSA SI E' SCELTO E PERCHE'. Un formattatore che decide in
+     * silenzio lascia chi guarda a chiedersi, sei mesi dopo, perche' quel
+     * volume sia FAT32 e quell'altro FAT16.
+     *
+     * ext2 non entra mai nella scelta automatica: e' un formato che si
+     * chiede, non uno in cui si finisce. Chi lo vuole scrive -t ext2.
+     * ===================================================================== */
+    if (tipo == 0) {
+        tipo = (settori <= LIMITE_FAT16_SETTORI) ? 16u : 32u;
+        printf("Nessun -t indicato: %u settori (%u MB) -> FAT%u\n",
+               settori, settori / SETT_PER_MB, tipo);
+        printf("  (FAT16 arriva a 65524 cluster, cioe' ~2 GB con cluster da\n");
+        printf("   32 KB: oltre non ci sta. Per ext2 serve -t ext2.)\n\n");
+    }
 
     if (tipo == 2) {
         if (etichetta[0] == '\0') etichetta = "";

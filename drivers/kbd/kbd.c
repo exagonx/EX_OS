@@ -168,6 +168,34 @@ typedef struct {
     char     line[KBD_LINE_MAX];
     unsigned line_len;
 
+    /* Per ogni carattere del buffer: l'abbiamo disegnato o no?
+     *
+     * ⚠️ NON SI PUO' RICAVARE DAL CARATTERE. Le frecce entrano nella riga
+     * come sequenza ANSI "ESC [ A": due dei tre byte sono stampabili, e
+     * nessuno dei tre e' stato ecoato. Chiederlo al carattere darebbe due
+     * colonne da cancellare che non esistono — di nuovo il prompt. */
+    unsigned char vis[KBD_LINE_MAX];
+
+    /* =====================================================================
+     * QUANTE COLONNE DI SCHERMO ABBIAMO DAVVERO DISEGNATO PER QUESTA RIGA
+     *
+     * ⚠️ NON E' line_len, E CONFONDERLE MANGIA IL PROMPT.
+     *
+     * Un carattere di controllo — ESC, Ctrl+lettera — entra nel buffer di
+     * riga ma NON viene ecoato (lo si spiega piu' sotto). Il Backspace
+     * lavorava su line_len ed emetteva "\b \b" per ognuno: due ESC
+     * battuti per sbaglio, due Backspace, e i due caratteri cancellati
+     * erano gli ultimi del PROMPT, che non appartiene a noi.
+     *
+     * E' successo davvero, ed e' visibile nel registro seriale: al prompt
+     * di textline restava "^H ^H^H ^H" e l'asterisco spariva.
+     *
+     * Con questo contatore il Backspace cancella una colonna solo se
+     * quella colonna l'abbiamo scritta noi. Il prompt e' fuori portata
+     * per costruzione, non per un controllo in piu'.
+     * ===================================================================== */
+    unsigned line_col;
+
     /* Ring delle righe già completate ma non ancora richieste da nessuno
      * (type-ahead: l'utente digita mentre il client sta ancora eseguendo
      * il comando precedente). Contiene i byte delle righe, '\n' incluso;
@@ -233,6 +261,33 @@ static void echo(const char *s, unsigned n)
 static void echo_char(char c)
 {
     echo(&c, 1);
+}
+
+/* =============================================================================
+ * eco_visibile — questo carattere occupa esattamente una colonna?
+ *
+ * E' l'unico posto in cui si decide che cosa finisce sullo schermo, ed e'
+ * la stessa domanda che il Backspace deve rifare al contrario. Tenerla in
+ * una funzione sola e' la ragione per cui le due risposte non possono
+ * divergere: quando divergono, si cancella il prompt.
+ *
+ * ⚠️ I CARATTERI DI CONTROLLO NON SI ECOANO MA SI ACCUMULANO. ESC,
+ * Ctrl+lettera e simili entrano nel buffer di riga — /bin/textline usa
+ * ESC per annullare la riga in inserimento e deve riceverlo — ma la VGA
+ * li renderebbe come glifi casuali della code page 437.
+ *
+ * ⚠️ IL TAB NON SI ECOA PIU'. Prima si', "perche' a video ha un effetto
+ * sensato": vero finche' non si preme Backspace. Un tab avanza fino alla
+ * prossima tabulazione, cioe' di un numero di colonne che dipende da dove
+ * comincia il prompt — e questo driver la colonna assoluta non la sa.
+ * Disegnare qualcosa che non si sa disfare e' precisamente il difetto che
+ * questa funzione esiste per chiudere.
+ * ============================================================================= */
+static int eco_visibile(char c)
+{
+    unsigned char u = (unsigned char)c;
+
+    return (u >= 32 && u < 127);
 }
 
 /* =============================================================================
@@ -367,6 +422,7 @@ static void kbd_set_mode(unsigned n, unsigned mode)
 
     c->raw      = nuovo;
     c->line_len = 0;
+    c->line_col = 0;
     c->rhead = c->rtail = c->rcount = c->rlines = 0;
     c->khead = c->ktail = c->kcount = 0;
     g_e0        = 0;
@@ -709,8 +765,11 @@ static void kbd_process_scancode(unsigned char sc)
             default:   return;                /* tasto esteso non mappato */
         }
         if (c->line_len + 3 < KBD_LINE_MAX) {
+            c->vis[c->line_len]  = 0;
             c->line[c->line_len++] = seq[0];
+            c->vis[c->line_len]  = 0;
             c->line[c->line_len++] = seq[1];
+            c->vis[c->line_len]  = 0;
             c->line[c->line_len++] = seq[2];
         }
         return;
@@ -749,10 +808,25 @@ static void kbd_process_scancode(unsigned char sc)
      * proprio per questo che la riga non viene consegnata carattere per
      * carattere (vedi il commento sulla line discipline in tty.c). */
     if (ascii == '\b') {
+        /* Si toglie UN carattere dal fondo del buffer, e si cancella una
+         * colonna solo se quel carattere era stato ecoato. */
         if (c->line_len > 0) {
-            c->line_len--;
-            echo("\b \b", 3);
+            if (c->vis[--c->line_len]) {
+                c->line_col--;
+                echo("\b \b", 3);
+            }
         }
+
+        /* =================================================================
+         * ARRIVATI AL LIMITE, LA RIGA SI AZZERA DEL TUTTO.
+         *
+         * Se non resta piu' niente di visibile, quello che eventualmente
+         * sopravvive nel buffer sono caratteri di controllo: invisibili,
+         * non cancellabili a vista, e pronti a finire dentro il comando
+         * che si sta per battere. Chi cancella fino in fondo si aspetta
+         * una riga vuota, e deve trovarla vuota davvero.
+         * ================================================================= */
+        if (c->line_col == 0) c->line_len = 0;
         return;
     }
 
@@ -760,28 +834,24 @@ static void kbd_process_scancode(unsigned char sc)
         echo_char('\n');
         ring_put_line(c, c->line, c->line_len);
         c->line_len = 0;
+        c->line_col = 0;
         return;
     }
 
-    /* Eco solo dei caratteri stampabili.
-     *
-     * I caratteri di controllo (ESC, Ctrl+lettera, ...) finiscono
-     * regolarmente nel buffer di riga — un programma che li aspetta deve
-     * riceverli — ma NON vengono ecoati: la VGA li renderebbe come glifi
-     * casuali della code page 437, sporcando lo schermo. Il caso concreto
-     * è ESC, che /bin/textline usa per annullare una riga: senza questo
-     * filtro l'utente vedrebbe comparire una freccia al posto di niente.
-     * Il tab resta ecoato perché a video ha un effetto sensato. */
-    if ((unsigned char)ascii >= 32 || ascii == '\t') {
+    /* ⚠️ SI DECIDE PRIMA SE IL CARATTERE ENTRA, POI LO SI ECOA.
+     * L'ordine inverso — ecoare e poi accorgersi che la riga e' piena —
+     * lascia sullo schermo caratteri che nel buffer non ci sono: si
+     * esegue meno di quello che si legge, e il Backspace non ritrova piu'
+     * il conto. A riga piena il carattere si rifiuta e basta. */
+    if (c->line_len >= KBD_LINE_MAX - 1) return;
+
+    c->vis[c->line_len]    = (unsigned char)eco_visibile(ascii);
+    c->line[c->line_len++] = ascii;
+
+    if (c->vis[c->line_len - 1]) {
+        c->line_col++;
         echo_char(ascii);
     }
-
-    if (c->line_len < KBD_LINE_MAX - 1) {
-        c->line[c->line_len++] = ascii;
-    }
-    /* Riga piena: il carattere è già stato ecoato ma non viene
-     * accumulato. Limite ereditato dal TTY in-kernel, non una
-     * regressione di questa migrazione. */
 }
 
 /* =============================================================================

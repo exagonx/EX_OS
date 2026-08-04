@@ -21,7 +21,17 @@
 
 #define FAT_MAX_MOUNT       4
 #define FAT_MAX_OPEN        16
-#define FAT_NOME_MAX        13      /* "NOME8.EXT" + NUL */
+/* ⚠️ 256 E NON 13, da agosto 2026. Valeva "NOME8.EXT" + NUL perche' il
+ * driver leggeva solo i nomi 8.3 e SALTAVA le voci di nome lungo: un file
+ * chiamato "appunti di riunione.txt" da Windows o da Linux compariva come
+ * APPUNT~1.TXT, e con quel nome andava aperto.
+ *
+ * Ora le voci LFN si leggono e si compongono. 255 caratteri e' il massimo
+ * che la specifica VFAT consente (20 voci da 13 caratteri fanno 260, ma il
+ * limite dichiarato e' 255), ed e' anche il massimo di VfsDirEntry: i due
+ * numeri combaciano di proposito, cosi' nessun nome si perde nel passaggio
+ * da un livello all'altro. */
+#define FAT_NOME_MAX        256
 /* Allineato a VFS_PATH_MAX: il VFS passa qui il percorso interno al
  * volume, e un buffer piu' corto lo troncherebbe silenziosamente. I nomi
  * FAT restano 8.3 — e' la PROFONDITA' che puo' crescere. */
@@ -42,6 +52,11 @@ typedef struct {
     uint32_t primo_cluster;
     uint8_t  attributi;
     uint8_t  is_dir;
+    /* Formato FAT, che qui e' anche quello nativo. Vedi VfsStat in vfs.h
+     * per il perche' sia il formato usato ovunque, e per il significato
+     * dello zero. */
+    uint16_t data;
+    uint16_t ora;
 } FatDirEntry;
 
 /* Monta il filesystem sul dispositivo a blocchi `blkdev`.

@@ -87,9 +87,52 @@ BUILD_BIN_CD  := $(BUILD_DIR)/bin-cd
 # sono gia' cascato con questi due — netdetect e nettest includono
 # pci_proto.h e net_proto.h ma le loro regole stanno prima di quelle dei
 # driver che li definivano.
+# Tutto cio' che finisce dentro l'immagine floppy. Serve come PREREQUISITA
+# della regola `floppy`, quindi va definita QUI e non accanto a quella
+# regola: le prerequisite si espandono quando make legge la riga, e una
+# variabile definita piu' sotto risulterebbe vuota — che e' esattamente il
+# difetto che questa riga esiste per chiudere.
+#
+# =============================================================================
+# ⚠️ COSA VA SUL FLOPPY, E COSA NO
+#
+# Il floppy porta il SISTEMA: avviarsi, preparare un disco, installarsi,
+# leggere e scrivere file. Partizionatore (fdisk), formattatore (mkfs),
+# controllore (chkdsk), montaggio, installatore, editor. Il driver del
+# floppy e quello della tastiera, che servono a partire.
+#
+# ⚠️ I DRIVER AGGIUNTIVI NON CI VANNO — vanno sul CD di EX-OS. Rete
+# (pci, ne2k, pcnet, ip) e tutto cio' che verra' dopo si costruiscono in
+# $(BUILD_DRIVERS_CD), che il floppy non guarda nemmeno.
+#
+# Non e' una preferenza: in 1.44 MB non ci stanno, e il modo in cui non ci
+# stanno e' il peggiore. mcopy fallisce a meta' dell'elenco, l'immagine
+# resta priva di qualche file scelto dall'ordine alfabetico, e il sistema
+# si avvia fino al punto in cui gli serve quello che manca. Per questo
+# `make verify` controlla la regola invece di fidarsi.
+#
+# Il CD-ROM non ha un driver in /dev: ATAPI e ISO 9660 stanno DENTRO il
+# kernel (kernel/block/atapi.c, kernel/fs/iso9660.c), perche' il kernel
+# deve poterci montare la radice prima che esista un processo.
+# =============================================================================
+PROGRAMMI_FLOPPY := shell hello ls mem stack disk libctest fdisk mkfs trunc chkdsk rename mount_prog cp_prog install_prog textline gfedit mkdir_prog rmdir_prog delete_prog hwconfig libc floppy_drv kbd_drv
+
+# I driver che sul floppy NON devono comparire. Serve a `make verify`.
+DRIVER_SOLO_CD := pci.drv ne2k.drv pcnet.drv ip.drv
+
 PCI_DRV_PROTO := drivers/pci/pci_proto.h
 NET_PROTO     := drivers/net/net_proto.h
 IP_PROTO      := drivers/net/ip_proto.h
+# Risolutore DNS: e' un MODULO compilato dentro i programmi, non un
+# servizio — DNS sta sopra UDP come DHCP, e un errore li' dentro deve far
+# fallire un comando, non spegnere la rete. Vedi lib/include/dns.h.
+DNS_SRC       := lib/dns.c
+DNS_HDR       := lib/include/dns.h
+# «Cosa manca per accendere la rete», in un posto solo: prima ogni comando
+# se n'era scritta una versione, e chi si fermava a meta' leggeva
+# istruzioni diverse a seconda del comando con cui ci aveva provato.
+RETE_SRC      := lib/rete.c
+RETE_HDR      := lib/include/rete.h
 BUILD_OBJ     := $(BUILD_DIR)/obj
 BUILD_LIB     := $(BUILD_DIR)/lib
 
@@ -148,7 +191,7 @@ CFLAGS_USER := -m32 -ffreestanding -fno-builtin -fno-stack-protector \
 $(SHELL_BIN): $(SHELL_SRC) $(SHELL_LD)
 	@echo "=== Compilazione Shell utente /bin/sh ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -c $(SHELL_SRC) -o $(BUILD_OBJ)/shell.o
+	$(CC) $(CFLAGS_USER) -I drivers/kbd -I drivers/pci -I drivers/net -c $(SHELL_SRC) -o $(BUILD_OBJ)/shell.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(SHELL_LD) $(BUILD_OBJ)/shell.o -o $@
 	@echo "[OK] Shell compilata: $@"
 
@@ -357,6 +400,29 @@ $(MKFS_BIN): $(MKFS_SRC) $(MKFS_EXT2) $(MKFS_HDR) $(MKFS_LD) $(LIBC_SRC) $(LIBC_
 	    $(BUILD_OBJ)/mkfs_ext2.o  $(BUILD_OBJ)/mkfs_libc.o -o $@
 	@echo "[OK] mkfs compilato: $@"
 
+# --- /bin/hwconfig: guarda la macchina e scrive la configurazione ------------
+# Sta sul FLOPPY perche' e' uno strumento di sistema come fdisk e install:
+# serve proprio quando si prepara una macchina, cioe' quando il CD magari
+# non c'e' ancora. Senza /dev/pci.drv (che sta sul CD) configura montaggi e
+# moduli e dice che la parte di rete non ha potuto verificarla.
+HWCONFIG_SRC := bin/hwconfig/hwconfig.c
+HWCONFIG_BIN := $(BUILD_BIN)/hwconfig
+HWCONFIG_LD  := bin/hwconfig/hwconfig.ld
+
+$(HWCONFIG_BIN): $(HWCONFIG_SRC) $(PCI_DRV_PROTO) $(HWCONFIG_LD) $(LIBC_SRC) $(LIBC_START)
+	@echo "=== Compilazione /bin/hwconfig ==="
+	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/pci -c $(HWCONFIG_SRC) -o $(BUILD_OBJ)/hwconfig_main.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)  -o $(BUILD_OBJ)/hwconfig_libc.o
+	$(CC) -m32 -c $(LIBC_START)          -o $(BUILD_OBJ)/hwconfig_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(HWCONFIG_LD) \
+	    $(BUILD_OBJ)/hwconfig_start.o $(BUILD_OBJ)/hwconfig_main.o \
+	    $(BUILD_OBJ)/hwconfig_libc.o -o $@
+	@echo "[OK] hwconfig compilato: $@"
+
+.PHONY: hwconfig
+hwconfig: dirs $(HWCONFIG_BIN)
+
 .PHONY: mkfs
 mkfs: dirs $(MKFS_BIN)
 
@@ -432,14 +498,15 @@ NETDETECT_SRC := bin/netdetect/netdetect.c
 NETDETECT_BIN := $(BUILD_BIN_CD)/netdetect
 NETDETECT_LD  := bin/netdetect/netdetect.ld
 
-$(NETDETECT_BIN): $(NETDETECT_SRC) $(NETDETECT_LD) $(PCI_DRV_PROTO) $(NET_PROTO) $(LIBC_SRC) $(LIBC_START)
+$(NETDETECT_BIN): $(NETDETECT_SRC) $(NETDETECT_LD) $(PCI_DRV_PROTO) $(NET_PROTO) $(RETE_SRC) $(RETE_HDR) $(LIBC_SRC) $(LIBC_START)
 	@echo "=== Compilazione /bin/netdetect ==="
 	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/pci -I drivers/net -c $(NETDETECT_SRC) -o $(BUILD_OBJ)/netdetect_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(NETDETECT_SRC) -o $(BUILD_OBJ)/netdetect_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(RETE_SRC) -o $(BUILD_OBJ)/netdetect_rete.o
 	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                  -o $(BUILD_OBJ)/netdetect_libc.o
 	$(CC) -m32 -c $(LIBC_START)                          -o $(BUILD_OBJ)/netdetect_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(NETDETECT_LD) \
-	    $(BUILD_OBJ)/netdetect_start.o $(BUILD_OBJ)/netdetect_main.o $(BUILD_OBJ)/netdetect_libc.o -o $@
+	    $(BUILD_OBJ)/netdetect_start.o $(BUILD_OBJ)/netdetect_main.o $(BUILD_OBJ)/netdetect_rete.o $(BUILD_OBJ)/netdetect_libc.o -o $@
 	@echo "[OK] netdetect compilato: $@"
 
 .PHONY: netdetect
@@ -453,14 +520,16 @@ NETTEST_SRC := bin/nettest/nettest.c
 NETTEST_BIN := $(BUILD_BIN_CD)/nettest
 NETTEST_LD  := bin/nettest/nettest.ld
 
-$(NETTEST_BIN): $(NETTEST_SRC) $(NETTEST_LD) $(NET_PROTO) $(LIBC_SRC) $(LIBC_START)
+$(NETTEST_BIN): $(NETTEST_SRC) $(NETTEST_LD) $(NET_PROTO) $(DNS_SRC) $(DNS_HDR) $(RETE_SRC) $(RETE_HDR) $(LIBC_SRC) $(LIBC_START)
 	@echo "=== Compilazione /bin/nettest ==="
 	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -c $(NETTEST_SRC) -o $(BUILD_OBJ)/nettest_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(NETTEST_SRC) -o $(BUILD_OBJ)/nettest_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(RETE_SRC) -o $(BUILD_OBJ)/nettest_rete.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(DNS_SRC)     -o $(BUILD_OBJ)/nettest_dns.o
 	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                 -o $(BUILD_OBJ)/nettest_libc.o
 	$(CC) -m32 -c $(LIBC_START)                         -o $(BUILD_OBJ)/nettest_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(NETTEST_LD) \
-	    $(BUILD_OBJ)/nettest_start.o $(BUILD_OBJ)/nettest_main.o $(BUILD_OBJ)/nettest_libc.o -o $@
+	    $(BUILD_OBJ)/nettest_start.o $(BUILD_OBJ)/nettest_main.o $(BUILD_OBJ)/nettest_dns.o $(BUILD_OBJ)/nettest_rete.o $(BUILD_OBJ)/nettest_libc.o -o $@
 	@echo "[OK] nettest compilato: $@"
 
 .PHONY: nettest
@@ -474,14 +543,16 @@ PING_SRC  := bin/ping/ping.c
 PING_BIN  := $(BUILD_BIN_CD)/ping
 PING_LD   := bin/ping/ping.ld
 
-$(PING_BIN): $(PING_SRC) $(PING_LD) $(IP_PROTO) $(LIBC_SRC) $(LIBC_START)
+$(PING_BIN): $(PING_SRC) $(PING_LD) $(IP_PROTO) $(DNS_SRC) $(DNS_HDR) $(RETE_SRC) $(RETE_HDR) $(LIBC_SRC) $(LIBC_START)
 	@echo "=== Compilazione /bin/ping ==="
 	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -c $(PING_SRC) -o $(BUILD_OBJ)/ping_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(PING_SRC) -o $(BUILD_OBJ)/ping_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(RETE_SRC) -o $(BUILD_OBJ)/ping_rete.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(DNS_SRC)  -o $(BUILD_OBJ)/ping_dns.o
 	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                -o $(BUILD_OBJ)/ping_libc.o
 	$(CC) -m32 -c $(LIBC_START)                        -o $(BUILD_OBJ)/ping_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(PING_LD) \
-	    $(BUILD_OBJ)/ping_start.o $(BUILD_OBJ)/ping_main.o $(BUILD_OBJ)/ping_libc.o -o $@
+	    $(BUILD_OBJ)/ping_start.o $(BUILD_OBJ)/ping_main.o $(BUILD_OBJ)/ping_dns.o $(BUILD_OBJ)/ping_rete.o $(BUILD_OBJ)/ping_libc.o -o $@
 	@echo "[OK] ping compilato: $@"
 
 .PHONY: ping
@@ -491,14 +562,16 @@ IPCFG_SRC := bin/ipcfg/ipcfg.c
 IPCFG_BIN := $(BUILD_BIN_CD)/ipcfg
 IPCFG_LD  := bin/ipcfg/ipcfg.ld
 
-$(IPCFG_BIN): $(IPCFG_SRC) $(IPCFG_LD) $(IP_PROTO) $(LIBC_SRC) $(LIBC_START)
+$(IPCFG_BIN): $(IPCFG_SRC) $(IPCFG_LD) $(IP_PROTO) $(DNS_SRC) $(DNS_HDR) $(RETE_SRC) $(RETE_HDR) $(LIBC_SRC) $(LIBC_START)
 	@echo "=== Compilazione /bin/ipcfg ==="
 	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -c $(IPCFG_SRC) -o $(BUILD_OBJ)/ipcfg_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(IPCFG_SRC) -o $(BUILD_OBJ)/ipcfg_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(RETE_SRC) -o $(BUILD_OBJ)/ipcfg_rete.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(DNS_SRC)   -o $(BUILD_OBJ)/ipcfg_dns.o
 	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                 -o $(BUILD_OBJ)/ipcfg_libc.o
 	$(CC) -m32 -c $(LIBC_START)                         -o $(BUILD_OBJ)/ipcfg_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(IPCFG_LD) \
-	    $(BUILD_OBJ)/ipcfg_start.o $(BUILD_OBJ)/ipcfg_main.o $(BUILD_OBJ)/ipcfg_libc.o -o $@
+	    $(BUILD_OBJ)/ipcfg_start.o $(BUILD_OBJ)/ipcfg_main.o $(BUILD_OBJ)/ipcfg_dns.o $(BUILD_OBJ)/ipcfg_rete.o $(BUILD_OBJ)/ipcfg_libc.o -o $@
 	@echo "[OK] ipcfg compilato: $@"
 
 .PHONY: ipcfg
@@ -512,18 +585,88 @@ DHCP_SRC := bin/dhcp/dhcp.c
 DHCP_BIN := $(BUILD_BIN_CD)/dhcp
 DHCP_LD  := bin/dhcp/dhcp.ld
 
-$(DHCP_BIN): $(DHCP_SRC) $(DHCP_LD) $(IP_PROTO) $(LIBC_SRC) $(LIBC_START)
+$(DHCP_BIN): $(DHCP_SRC) $(DHCP_LD) $(IP_PROTO) $(RETE_SRC) $(RETE_HDR) $(LIBC_SRC) $(LIBC_START)
 	@echo "=== Compilazione /bin/dhcp ==="
 	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -c $(DHCP_SRC) -o $(BUILD_OBJ)/dhcp_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(DHCP_SRC) -o $(BUILD_OBJ)/dhcp_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(RETE_SRC) -o $(BUILD_OBJ)/dhcp_rete.o
 	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                -o $(BUILD_OBJ)/dhcp_libc.o
 	$(CC) -m32 -c $(LIBC_START)                        -o $(BUILD_OBJ)/dhcp_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(DHCP_LD) \
-	    $(BUILD_OBJ)/dhcp_start.o $(BUILD_OBJ)/dhcp_main.o $(BUILD_OBJ)/dhcp_libc.o -o $@
+	    $(BUILD_OBJ)/dhcp_start.o $(BUILD_OBJ)/dhcp_main.o $(BUILD_OBJ)/dhcp_rete.o $(BUILD_OBJ)/dhcp_libc.o -o $@
 	@echo "[OK] dhcp compilato: $@"
 
 .PHONY: dhcp
 dhcp: dirs $(DHCP_BIN)
+
+# --- /bin/host (solo CD) ------------------------------------------------------
+# Interroga il DNS. Esiste per poter provare il risolutore DA SOLO: quando
+# `ping nome` non funziona, la domanda e' se sia rotto il ping o il DNS.
+HOST_SRC := bin/host/host.c
+HOST_BIN := $(BUILD_BIN_CD)/host
+HOST_LD  := bin/host/host.ld
+
+$(HOST_BIN): $(HOST_SRC) $(HOST_LD) $(IP_PROTO) $(DNS_SRC) $(DNS_HDR) $(RETE_SRC) $(RETE_HDR) $(LIBC_SRC) $(LIBC_START)
+	@echo "=== Compilazione /bin/host ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(HOST_SRC) -o $(BUILD_OBJ)/host_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(RETE_SRC) -o $(BUILD_OBJ)/host_rete.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(DNS_SRC)  -o $(BUILD_OBJ)/host_dns.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                -o $(BUILD_OBJ)/host_libc.o
+	$(CC) -m32 -c $(LIBC_START)                        -o $(BUILD_OBJ)/host_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(HOST_LD) \
+	    $(BUILD_OBJ)/host_start.o $(BUILD_OBJ)/host_main.o $(BUILD_OBJ)/host_dns.o $(BUILD_OBJ)/host_rete.o $(BUILD_OBJ)/host_libc.o -o $@
+	@echo "[OK] host compilato: $@"
+
+.PHONY: host
+host: dirs $(HOST_BIN)
+
+# --- /bin/tcptest (solo CD) ---------------------------------------------------
+# Sta a TCP come nettest sta al driver: prova UN livello per volta. Quando
+# il client FTP non funzionera', la domanda sara' se sia rotto FTP o TCP.
+TCPTEST_SRC := bin/tcptest/tcptest.c
+TCPTEST_BIN := $(BUILD_BIN_CD)/tcptest
+TCPTEST_LD  := bin/tcptest/tcptest.ld
+
+$(TCPTEST_BIN): $(TCPTEST_SRC) $(TCPTEST_LD) $(IP_PROTO) $(DNS_SRC) $(DNS_HDR) $(RETE_SRC) $(RETE_HDR) $(LIBC_SRC) $(LIBC_START)
+	@echo "=== Compilazione /bin/tcptest ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(TCPTEST_SRC) -o $(BUILD_OBJ)/tcptest_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(DNS_SRC)  -o $(BUILD_OBJ)/tcptest_dns.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(RETE_SRC) -o $(BUILD_OBJ)/tcptest_rete.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                -o $(BUILD_OBJ)/tcptest_libc.o
+	$(CC) -m32 -c $(LIBC_START)                        -o $(BUILD_OBJ)/tcptest_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(TCPTEST_LD) \
+	    $(BUILD_OBJ)/tcptest_start.o $(BUILD_OBJ)/tcptest_main.o $(BUILD_OBJ)/tcptest_dns.o \
+	    $(BUILD_OBJ)/tcptest_rete.o $(BUILD_OBJ)/tcptest_libc.o -o $@
+	@echo "[OK] tcptest compilato: $@"
+
+.PHONY: tcptest
+tcptest: dirs $(TCPTEST_BIN)
+
+# --- /bin/ftp (solo CD) -------------------------------------------------------
+# Client FTP, modo PASSIVO soltanto: il modo attivo vuole che il client si
+# metta in ASCOLTO, e il nostro TCP non sa farlo (ne' funzionerebbe dietro
+# un NAT). Vedi drivers/net/ip_proto.h.
+FTP_SRC := bin/ftp/ftp.c
+FTP_BIN := $(BUILD_BIN_CD)/ftp
+FTP_LD  := bin/ftp/ftp.ld
+
+$(FTP_BIN): $(FTP_SRC) $(FTP_LD) $(IP_PROTO) $(DNS_SRC) $(DNS_HDR) $(RETE_SRC) $(RETE_HDR) $(LIBC_SRC) $(LIBC_START)
+	@echo "=== Compilazione /bin/ftp ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(FTP_SRC)  -o $(BUILD_OBJ)/ftp_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(DNS_SRC)  -o $(BUILD_OBJ)/ftp_dns.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(RETE_SRC) -o $(BUILD_OBJ)/ftp_rete.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                -o $(BUILD_OBJ)/ftp_libc.o
+	$(CC) -m32 -c $(LIBC_START)                        -o $(BUILD_OBJ)/ftp_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(FTP_LD) \
+	    $(BUILD_OBJ)/ftp_start.o $(BUILD_OBJ)/ftp_main.o $(BUILD_OBJ)/ftp_dns.o \
+	    $(BUILD_OBJ)/ftp_rete.o $(BUILD_OBJ)/ftp_libc.o -o $@
+	@echo "[OK] ftp compilato: $@"
+
+.PHONY: ftp
+ftp: dirs $(FTP_BIN)
 
 .PHONY: stack
 stack: dirs $(STACK_BIN)
@@ -848,6 +991,33 @@ $(NE2K_DRV_OUT): $(NE2K_DRV_SRC) $(NET_PROTO) $(PCI_DRV_PROTO) $(NE2K_DRV_LD) $(
 .PHONY: ne2k_drv
 ne2k_drv: dirs $(NE2K_DRV_OUT)
 
+# --- Driver ring3: pcnet.drv (solo CD) ---------------------------------------
+# AMD PCnet-PCI II / FAST III (Am79C970/C973). A differenza del ne2k questa
+# scheda e' un BUS MASTER: legge e scrive la RAM di sistema da sola, agli
+# indirizzi FISICI che le si danno. Da qui le due cose che il ne2k non
+# chiedeva — il bit bus master nel comando PCI (via /dev/pci.drv) e
+# SYS_DMA_ALLOC nel kernel, che e' l'unico modo di avere memoria
+# fisicamente contigua di cui si conosca l'indirizzo fisico.
+PCNET_DRV_SRC  := drivers/pcnet/pcnet.c
+PCNET_DRV_OUT  := $(BUILD_DRIVERS_CD)/pcnet.drv
+PCNET_DRV_LD   := drivers/pcnet/pcnet.ld
+
+$(PCNET_DRV_OUT): $(PCNET_DRV_SRC) $(NET_PROTO) $(PCI_DRV_PROTO) $(PCNET_DRV_LD) $(LIBC_SRC) $(LIBC_START)
+	@echo "=== Compilazione driver ring3 pcnet.drv ==="
+	@mkdir -p $(BUILD_DRIVERS_CD)
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/pci -I drivers/net -c $(PCNET_DRV_SRC) -o $(BUILD_DRIVERS_CD)/pcnet_main.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)   -o $(BUILD_DRIVERS_CD)/pcnet_libc.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_DRIVERS_CD)/pcnet_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(PCNET_DRV_LD) \
+	    $(BUILD_DRIVERS_CD)/pcnet_start.o \
+	    $(BUILD_DRIVERS_CD)/pcnet_main.o  \
+	    $(BUILD_DRIVERS_CD)/pcnet_libc.o  \
+	    -o $@
+	@echo "[OK] pcnet.drv compilato: $@"
+
+.PHONY: pcnet_drv
+pcnet_drv: dirs $(PCNET_DRV_OUT)
+
 # --- Stack IPv4 ring3: ip.drv (solo CD) ---------------------------------------
 # ARP + IPv4 + ICMP in un PROCESSO A SE'. Non tocca porte: parla col driver
 # di scheda via IPC come qualunque altro programma. Sta fuori dal driver
@@ -875,7 +1045,7 @@ $(IP_DRV_OUT): $(IP_DRV_SRC) $(NET_PROTO) $(IP_PROTO) $(IP_DRV_LD) $(LIBC_SRC) $
 ip_drv: dirs $(IP_DRV_OUT)
 
 .PHONY: all
-all: dirs stage1 stage2 kernel shell hello ls mem stack disk libctest fdisk mkfs trunc chkdsk rename mount_prog cp_prog install_prog textline gfedit mkdir_prog rmdir_prog delete_prog libc floppy_drv kbd_drv pci_drv ne2k_drv ip_drv netdetect nettest ping ipcfg dhcp floppy
+all: dirs stage1 stage2 kernel $(PROGRAMMI_FLOPPY) pci_drv ne2k_drv ip_drv netdetect nettest ping ipcfg dhcp host tcptest ftp floppy
 	@echo ""
 	@echo "============================================"
 	@echo " EX-OS build completata!"
@@ -1091,10 +1261,28 @@ $(KERNEL_BIN): $(KERNEL_ELF)
 # =============================================================================
 
 .PHONY: floppy
-floppy: $(STAGE1_BIN) $(STAGE2_BIN) $(KERNEL_BIN)
+# ⚠️ IL FLOPPY DIPENDE DA TUTTO CIO' CHE CI FINISCE DENTRO, e fino ad
+# agosto 2026 dipendeva solo da stage1, stage2 e kernel.
+#
+# mkfloppy.sh copia quello che TROVA in build/bin nel momento in cui parte.
+# Con `make -j` niente impediva a questa regola di partire mentre i
+# programmi si stavano ancora compilando: l'immagine veniva costruita con i
+# binari VECCHI, e la prova successiva girava su codice che non era quello
+# appena scritto. Non dava nessun errore — dava un risultato sbagliato che
+# sembrava giusto, e l'ho scoperto solo confrontando le date di
+# dist/floppy.img e build/bin/ls: l'immagine era piu' VECCHIA del binario.
+#
+# Con -j1 funzionava per l'ordine in cui stanno scritte le prerequisite di
+# `all`, cioe' per caso.
+floppy: $(STAGE1_BIN) $(STAGE2_BIN) $(KERNEL_BIN) $(PROGRAMMI_FLOPPY)
 	@echo "=== Creazione Immagine Floppy FAT12 1.44MB ==="
 	@chmod +x $(TOOLS_DIR)/mkfloppy.sh
 	@$(TOOLS_DIR)/mkfloppy.sh
+	@# ⚠️ SI DICE QUANTO SPAZIO RESTA. E' il numero che avvisa PRIMA che
+	@# l'immagine smetta di contenere tutto, invece di scoprirlo da un
+	@# sistema che si avvia e non trova un file.
+	@echo "     spazio libero sul floppy: $$(mdir -i $(FLOPPY_IMG) :: 2>/dev/null | \
+	    tail -1 | tr -dc '0-9') byte"
 
 .PHONY: img
 img: floppy
@@ -1135,21 +1323,39 @@ CROSS_SYSROOT   ?= $(HOME)/exos-cross/i386-exos
 # su quello con i controlli di sviluppo, DICENDOLO — un cc1 di 40 MB e uno
 # di 25 si comportano allo stesso modo e si distinguono solo dal peso, che
 # e' esattamente cio' che conta su una macchina piccola.
+# Dove sta la cross toolchain i386-exos. Si puo' sovrascrivere da riga
+# di comando: make iso EXOS_CROSS=/altro/percorso
+EXOS_CROSS ?= $(HOME)/exos-cross
+
 GCC_NATIVO_REL  ?= $(HOME)/gcc-build-rel/gcc
 GCC_NATIVO_CHK  ?= $(HOME)/gcc-build-canadian/gcc
 ISO_LEGGIMI := $(TOOLS_DIR)/iso/leggimi.txt
 ISO_MKISO   := $(TOOLS_DIR)/mkiso.py
 
-$(ISO_IMG): $(ISO_MKISO) $(ISO_LEGGIMI) $(TOOLS_DIR)/iso/prova.s \
+# ⚠️ IL CD DIPENDE ANCHE DAI BINARI CHE IMPACCHETTA, e all'inizio no.
+# binutils e GCC nativi stanno FUORI da questo albero (in $(HOME)), quindi
+# make non poteva accorgersi che erano cambiati: dopo aver rilinkato cc1,
+# `make iso` diceva che era tutto aggiornato e il CD continuava a portare
+# la versione di ore prima. Ci sono cascato due volte in un giorno — la
+# prima col floppy, vedi PROGRAMMI_FLOPPY.
+#
+# $(wildcard ...) e non il percorso nudo: se quei binari non ci sono, la
+# lista e' vuota e il CD si fa lo stesso (dicendo che mancano), invece di
+# fallire con "nessuna regola per costruire".
+BINARI_ESTERNI := $(wildcard $(GCC_NATIVO_REL)/cc1) $(wildcard $(GCC_NATIVO_CHK)/cc1) \
+                  $(wildcard $(BINUTILS_NATIVI)/gas/as-new) \
+                  $(wildcard $(BINUTILS_NATIVI)/ld/ld-new)
+
+$(ISO_IMG): $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_LEGGIMI) $(TOOLS_DIR)/iso/prova.s \
                 $(TOOLS_DIR)/iso/prova-cc1.c \
             $(TOOLS_DIR)/iso/prova-mp.c $(TOOLS_DIR)/iso/prova-mat.c \
             $(TOOLS_DIR)/iso/prova-cpp.cpp \
             $(LIBC_SRC) $(LIBC_HDR) $(LIBC_START) \
-            README.md gpl-2.0.txt
+            README.md README.en.md gpl-2.0.txt
 	@echo "=== Creazione CD degli strumenti ==="
 	@mkdir -p $(DIST_DIR)
 	@rm -rf $(ISO_ROOT)
-	@mkdir -p $(ISO_ROOT)/exos/include $(ISO_ROOT)/doc $(ISO_ROOT)/bin
+	@mkdir -p $(ISO_ROOT)/exos/include $(ISO_ROOT)/exos/lib $(ISO_ROOT)/doc $(ISO_ROOT)/bin
 	@cp $(ISO_LEGGIMI) $(ISO_ROOT)/leggimi.txt
 	@cp $(TOOLS_DIR)/iso/prova.s $(ISO_ROOT)/prova.s
 	@cp $(TOOLS_DIR)/iso/prova-mp.c $(ISO_ROOT)/prova-mp.c
@@ -1157,7 +1363,34 @@ $(ISO_IMG): $(ISO_MKISO) $(ISO_LEGGIMI) $(TOOLS_DIR)/iso/prova.s \
 	@cp $(TOOLS_DIR)/iso/prova-cpp.cpp $(ISO_ROOT)/prova-cpp.cpp
 	@cp -r lib/include/. $(ISO_ROOT)/exos/include/
 	@cp $(LIBC_SRC) $(LIBC_START) $(ISO_ROOT)/exos/
-	@cp README.md KERNEL_CORE_NOTES.md $(ISO_ROOT)/doc/
+	@# --- Runtime del BERSAGLIO: quello che serve a COLLEGARE, non a compilare
+	@#
+	@# ⚠️ SONO OGGETTI i386-exos, NON DELLA MACCHINA CHE COSTRUISCE. Vengono
+	@# dalla cross toolchain, ma sono gia' codice di EX-OS: `ld` nativo li
+	@# legge qui dentro esattamente come li legge il cross su Linux.
+	@#
+	@# ⚠️ SENZA QUESTI IL DRIVER ARRIVA A META'. `gcc -c` ha bisogno solo di
+	@# cpp, cc1 e as; `gcc -o programma` ha bisogno anche di crt0, di
+	@# libgcc.a e di libc.a — e senza si ottiene un errore di `ld` su simboli
+	@# che non c'entrano niente con il sorgente che si stava compilando.
+	@set -e; \
+	R=""; \
+	for d in $(EXOS_CROSS) $(HOME)/exos-cross; do \
+	    [ -f "$$d/i386-exos/lib/crt0.o" ] && R="$$d" && break; \
+	done; \
+	if [ -n "$$R" ]; then \
+	    cp "$$R"/i386-exos/lib/crt0.o "$$R"/i386-exos/lib/libc.a $(ISO_ROOT)/exos/lib/ 2>/dev/null || true; \
+	    for f in libm.a; do \
+	        [ -f "$$R/i386-exos/lib/$$f" ] && cp "$$R/i386-exos/lib/$$f" $(ISO_ROOT)/exos/lib/; \
+	    done; \
+	    for f in libgcc.a crti.o crtn.o crtbegin.o crtend.o; do \
+	        [ -f "$$R"/lib/gcc/i386-exos/*/$$f ] && cp "$$R"/lib/gcc/i386-exos/*/$$f $(ISO_ROOT)/exos/lib/ || true; \
+	    done; \
+	    echo "     runtime del bersaglio da $$R: $$(ls $(ISO_ROOT)/exos/lib | tr '\n' ' ')"; \
+	else \
+	    echo "     runtime del bersaglio assente: /exos/lib vuota, gcc potra' solo compilare (-c)"; \
+	fi
+	@cp README.md README.en.md KERNEL_CORE_NOTES.md $(ISO_ROOT)/doc/
 	@cp gpl-2.0.txt $(ISO_ROOT)/doc/
 	@# provacpp si costruisce con UNA RIGA e con g++, come su qualunque
 	@# altro bersaglio: libstdc++ per i386-exos c'e' (dal 3 agosto 2026,
@@ -1249,6 +1482,16 @@ $(ISO_IMG): $(ISO_MKISO) $(ISO_LEGGIMI) $(TOOLS_DIR)/iso/prova.s \
 	    echo "     GCC nativo assente: si costruisce con tools/gcc-exos/prepara-cc1.sh"; \
 	fi
 	@cp $(TOOLS_DIR)/iso/prova-cc1.c $(ISO_ROOT)/prova-cc1.c
+	@cp $(TOOLS_DIR)/iso/prova-gcc.c $(ISO_ROOT)/prova-gcc.c
+	@# L'assembly di prova-gcc.c lo produce il CROSS, e ci va per due motivi:
+	@# permette di provare la meta' "assembla e collega" senza aspettare cc1,
+	@# e da' il termine di paragone — il .s che cc1 dovra' produrre uguale.
+	@# Si rigenera a ogni `make iso`, cosi' non puo' divergere dal .c.
+	@if command -v i386-exos-gcc >/dev/null 2>&1; then \
+	    i386-exos-gcc -O2 -S -I lib/include -o $(ISO_ROOT)/prova-gcc.s \
+	        $(TOOLS_DIR)/iso/prova-gcc.c 2>/dev/null && \
+	    echo "     prova-gcc.s generato dal cross (termine di paragone per cc1)"; \
+	fi
 	@python3 $(ISO_MKISO) $(ISO_IMG) --da $(ISO_ROOT) --etichetta "EXOS TOOLS"
 	@echo "[OK] CD degli strumenti: $(ISO_IMG)"
 
@@ -1279,7 +1522,7 @@ iso: $(ISO_IMG)
 ISOX_ROOT := $(BUILD_DIR)/iso-exos
 ISOX_IMG  := $(DIST_DIR)/exos.iso
 
-$(ISOX_IMG): $(FLOPPY_IMG) $(PCI_DRV_OUT) $(NE2K_DRV_OUT) $(IP_DRV_OUT) $(NETDETECT_BIN) $(NETTEST_BIN) $(PING_BIN) $(IPCFG_BIN) $(DHCP_BIN) $(ISO_MKISO) README.md gpl-2.0.txt boot/kernel.cfg
+$(ISOX_IMG): $(FLOPPY_IMG) boot/autoexec.sh $(PCI_DRV_OUT) $(NE2K_DRV_OUT) $(PCNET_DRV_OUT) $(IP_DRV_OUT) $(NETDETECT_BIN) $(NETTEST_BIN) $(PING_BIN) $(IPCFG_BIN) $(DHCP_BIN) $(HOST_BIN) $(TCPTEST_BIN) $(FTP_BIN) $(ISO_MKISO) README.md README.en.md gpl-2.0.txt boot/kernel.cfg
 	@echo "=== Creazione CD di EX-OS (avviabile) ==="
 	@mkdir -p $(DIST_DIR)
 	@rm -rf $(ISOX_ROOT)
@@ -1295,7 +1538,10 @@ $(ISOX_IMG): $(FLOPPY_IMG) $(PCI_DRV_OUT) $(NE2K_DRV_OUT) $(IP_DRV_OUT) $(NETDET
 	@# la loro unica destinazione, vedi BUILD_DRIVERS_CD in testa.
 	@cp $(BUILD_DRIVERS_CD)/*.drv $(ISOX_ROOT)/dev/ 2>/dev/null || true
 	@cp boot/kernel.cfg $(ISOX_ROOT)/boot/kernel.cfg
-	@cp README.md HANDOFF.md KERNEL_CORE_NOTES.md gpl-2.0.txt $(ISOX_ROOT)/doc/
+	@# L'autoexec: accende la rete da solo. Vedi il file per la via
+	@# d'uscita se un comando qui dentro si blocca.
+	@cp boot/autoexec.sh $(ISOX_ROOT)/boot/autoexec.sh
+	@cp README.md README.en.md HANDOFF.md KERNEL_CORE_NOTES.md gpl-2.0.txt $(ISOX_ROOT)/doc/
 	@# ⚠️ Anche il kernel e stage2 sulla radice: non servono ad avviare —
 	@# quelli usati stanno dentro boot.img — ma servono a `install`, che
 	@# li cerca li' per copiarli su un disco rigido.
@@ -1402,6 +1648,25 @@ debug-vga: $(FLOPPY_IMG)
 .PHONY: verify
 verify: $(FLOPPY_IMG)
 	@echo "=== Verifica Immagine Floppy ==="
+	@# ⚠️ SI CONTROLLA CHE I DRIVER AGGIUNTIVI NON CI SIANO FINITI.
+	@# La regola — sul floppy solo il sistema, i driver in piu' sul CD —
+	@# fin qui era una convenzione, cioe' una cosa che si rispetta finche'
+	@# ci si ricorda. Il modo di violarla e' aggiungere una voce a
+	@# PROGRAMMI_FLOPPY per comodita' durante una prova e lasciarcela.
+	@set -e; \
+	trovati=""; \
+	for d in $(DRIVER_SOLO_CD); do \
+	    if mdir -i $(FLOPPY_IMG) ::/dev 2>/dev/null | \
+	       grep -qi "^$$(echo $$d | cut -d. -f1) *drv"; then \
+	        trovati="$$trovati $$d"; \
+	    fi; \
+	done; \
+	if [ -n "$$trovati" ]; then \
+	    echo "!! sul floppy ci sono driver che vanno solo sul CD:$$trovati"; \
+	    echo "   vedi il commento su PROGRAMMI_FLOPPY nel Makefile"; \
+	    exit 1; \
+	fi; \
+	echo "[OK] nessun driver da CD sul floppy"
 	@echo "Contenuto floppy:"
 	@mdir -i $(FLOPPY_IMG) -/ ::
 	@echo ""

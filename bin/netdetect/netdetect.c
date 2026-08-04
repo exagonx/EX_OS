@@ -61,6 +61,7 @@
 #include "libc.h"
 #include "pci_proto.h"
 #include "net_proto.h"
+#include "rete.h"
 
 /* -----------------------------------------------------------------------------
  * Modelli riconosciuti.
@@ -278,13 +279,8 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    pid_pci = ipc_lookup(PCI_SERVIZIO);
-    if (pid_pci <= 0) {
-        printf("netdetect: il servizio '%s' non e' attivo.\n", PCI_SERVIZIO);
-        printf("           Avvialo cosi', e poi riprova:\n\n");
-        printf("             /dev/pci.drv &\n");
-        return 1;
-    }
+    pid_pci = rete_richiedi(PCI_SERVIZIO);
+    if (pid_pci <= 0) return 1;
 
     for (;;) {
         esito = chiedi(pid_pci, n, &d);

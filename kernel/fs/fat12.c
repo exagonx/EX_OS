@@ -11,6 +11,7 @@
 
 #include "kernel.h"
 #include "fat12.h"
+#include "rtc.h"
 #include "kmalloc.h"
 #include "sched.h"
 #include "isr.h"    /* irq_register_handler: sincronizzazione su IRQ6 */
@@ -331,6 +332,62 @@ static volatile uint8_t g_fdc_irq = 0;
  * traccia sbagliata credendo di sapere dove siamo.
  * ============================================================================= */
 static int g_fdc_cyl = -1;
+
+/* =============================================================================
+ * ⚠️ MODO SONDAGGIO: «c'e' un floppy?» NON E' UN GUASTO
+ *
+ * Questo driver serve anche da SONDA. vfs_init() decide di montare il CD
+ * come radice proprio quando fat12_init() fallisce: dietro l'emulazione
+ * floppy di El Torito non c'e' nessun controller, e quel fallimento e' il
+ * segnale — non un errore.
+ *
+ * Il problema e' cosa si vedeva mentre lo diceva. La macchina dei
+ * ritentativi qui sotto e' giusta per un floppy VERO che sbaglia una
+ * lettura, e registra ogni tentativo perche' un disco che funziona solo
+ * grazie ai ritentativi sta per morire. Ma su una macchina senza floppy
+ * produceva cinque ERROR e quattro WARN a ogni avvio da CD, per una
+ * condizione perfettamente normale — e chi legge il registro di un avvio
+ * riuscito trovava dieci righe rosse.
+ *
+ * Con g_sondaggio alzato si fa UN tentativo e si tace: se il drive non
+ * c'e', non ci sara' nemmeno al terzo tentativo, e il recalibrate fra uno
+ * e l'altro costa mezzo secondo per niente.
+ * ============================================================================= */
+static int g_sondaggio = 0;
+
+/* =============================================================================
+ * ⚠️ DATA E ORA DI CREAZIONE, e prima erano zero
+ *
+ * Ogni file creato da EX-OS nasceva con data e ora a zero. Non dava
+ * fastidio finche' nessuno le guardava; da quando `ls -d` le mostra, ogni
+ * file appena scritto compariva con dei trattini al posto della data — e
+ * quei trattini significano «questo volume non tiene le date», che di un
+ * FAT12 e' falso.
+ *
+ * ⚠️ SE L'OROLOGIO NON RISPONDE SI LASCIA ZERO. Su hardware vecchio col
+ * CMOS scarico rtc_read() fallisce: mettere una data inventata sarebbe
+ * peggio di non metterne nessuna, perche' zero vuol dire «non la so» e
+ * 1980 sembra un fatto.
+ * ============================================================================= */
+/* ⚠️ RITORNA I DUE VALORI IN UNA STRUTTURA, non attraverso puntatori ai
+ * campi della voce di directory: quella e' PACKED, e prendere l'indirizzo
+ * di un suo membro da' un puntatore che l'architettura non garantisce
+ * allineato. Su i386 funzionerebbe; il giorno che questo codice girasse
+ * altrove sarebbe un fault, e il compilatore lo dice. */
+typedef struct { uint16_t data, ora; } Fat12Istante;
+
+static Fat12Istante fat12_ora_corrente(void)
+{
+    Fat12Istante r = { 0, 0 };
+    RtcTime      t;
+
+    if (rtc_read(&t) != 0) return r;
+    if (t.anno < 1980u || t.anno > 2107u) return r;
+
+    r.data = (uint16_t)(((t.anno - 1980u) << 9) | (t.mese << 5) | t.giorno);
+    r.ora  = (uint16_t)((t.ora << 11) | (t.minuto << 5) | (t.secondo / 2u));
+    return r;
+}
 
 static void fdc_irq6_handler(InterruptFrame *frame)
 {
@@ -787,7 +844,8 @@ static int fdc_rw_sector_once(uint16_t lba, uint8_t *buf, int write)
      * lettura distingue subito "il controller non funziona" da "la testina
      * non si posiziona", che sono guasti diversi. */
     if (st0 & 0xC0) {
-        klog(LOG_ERROR, "FAT12: errore FDC %s LBA=%u (C=%u H=%u S=%u) "
+        klog(g_sondaggio ? LOG_DEBUG : LOG_ERROR,
+             "FAT12: errore FDC %s LBA=%u (C=%u H=%u S=%u) "
              "ST0=0x%02x ST1=0x%02x ST2=0x%02x",
              write ? "WRITE" : "READ", lba, cyl, head, sec, st0, st1, st2);
         g_fdc_cyl = -1;
@@ -843,7 +901,9 @@ static int fdc_rw_sector(uint16_t lba, uint8_t *buf, int write)
 {
     int tentativo;
 
-    for (tentativo = 0; tentativo < FDC_MAX_TENTATIVI; tentativo++) {
+    int massimo = g_sondaggio ? 1 : FDC_MAX_TENTATIVI;
+
+    for (tentativo = 0; tentativo < massimo; tentativo++) {
         if (tentativo > 0) {
             klog(LOG_WARN, "FAT12: %s LBA=%u fallita, ritento (%d/%d)",
                  write ? "WRITE" : "READ", lba, tentativo + 1, FDC_MAX_TENTATIVI);
@@ -865,8 +925,10 @@ static int fdc_rw_sector(uint16_t lba, uint8_t *buf, int write)
         }
     }
 
-    klog(LOG_ERROR, "FAT12: %s LBA=%u fallita dopo %d tentativi — rinuncio",
-         write ? "WRITE" : "READ", lba, FDC_MAX_TENTATIVI);
+    if (!g_sondaggio) {
+        klog(LOG_ERROR, "FAT12: %s LBA=%u fallita dopo %d tentativi — rinuncio",
+             write ? "WRITE" : "READ", lba, FDC_MAX_TENTATIVI);
+    }
     return -1;
 }
 
@@ -1078,6 +1140,37 @@ static int fat12_flush_root(void)
 /* =============================================================================
  * fat12_init — Inizializza il driver FAT12 kernel-side
  * ============================================================================= */
+/* =============================================================================
+ * fat12_sonda — «c'e' un floppy in questo drive?»
+ *
+ * Fa esattamente quello che fa fat12_init, ma in silenzio e senza
+ * ritentativi. Serve a chi deve DECIDERE, non a chi deve usare il disco:
+ * kernel_main la chiama prima di inizializzare davvero, cosi' su una
+ * macchina senza floppy — o dietro l'emulazione El Torito di un CD
+ * avviabile — l'avvio non stampa dieci righe rosse per una condizione
+ * normale.
+ *
+ * ⚠️ SE RIESCE, IL DRIVER RESTA INIZIALIZZATO e non serve richiamare
+ * fat12_init: la sonda E' l'inizializzazione, solo zitta. Chiamarla due
+ * volte funzionerebbe ma rifarebbe il reset del controller per niente.
+ * ============================================================================= */
+int fat12_sonda(uint8_t drive)
+{
+    int r;
+
+    g_sondaggio = 1;
+    r = fat12_init(drive);
+    g_sondaggio = 0;
+
+    /* Il caso riuscito lo annuncia gia' fat12_init: qui si parla solo
+     * quando la risposta e' "non c'e'", che altrimenti nessuno direbbe. */
+    if (r != 0) {
+        klog(LOG_INFO, "FAT12: nessun floppy nel drive 0x%02x "
+             "(normale se si avvia da CD o da disco)", drive);
+    }
+    return r;
+}
+
 int fat12_init(uint8_t drive)
 {
     uint32_t i;
@@ -1090,7 +1183,7 @@ int fat12_init(uint8_t drive)
     irq_register_handler(6, fdc_irq6_handler);
     pic_unmask_irq(6);  /* IRQ6 = floppy */
 
-    klog(LOG_INFO, "FAT12: inizializzazione driver kernel...");
+    if (!g_sondaggio) klog(LOG_INFO, "FAT12: inizializzazione driver kernel...");
 
     g_drive = drive;
     g_initialized = 0;
@@ -1184,11 +1277,12 @@ int fat12_init(uint8_t drive)
     fdc_recalibrate();
 
     /* Leggi FAT1 in RAM */
-    klog(LOG_INFO, "FAT12: caricamento FAT in RAM...");
+    if (!g_sondaggio) klog(LOG_INFO, "FAT12: caricamento FAT in RAM...");
     for (i = 0; i < SECTORS_PER_FAT; i++) {
         if (fat12_read_sector((uint16_t)(FAT1_LBA + i),
                                g_fat + i * BYTES_PER_SECTOR) != 0) {
-            klog(LOG_ERROR, "FAT12: errore lettura FAT settore %u", i);
+            klog(g_sondaggio ? LOG_DEBUG : LOG_ERROR,
+                 "FAT12: errore lettura FAT settore %u", i);
             return -1;
         }
     }
@@ -1803,8 +1897,8 @@ int fat12_mkdir(const char *path)
                 root[i].attr          = FAT12_ATTR_DIRECTORY;
                 root[i].first_cluster = nuovo;
                 root[i].file_size     = 0;   /* le directory hanno size 0 */
-                root[i].time          = 0;
-                root[i].date          = 0;
+                { Fat12Istante ist = fat12_ora_corrente();
+                  root[i].date = ist.data; root[i].time = ist.ora; }
                 g_root_dirty = 1;
 
                 /* Sincronizza subito: la cache è write-back, e una
@@ -2040,8 +2134,8 @@ int fat12_open(const char *path, uint32_t flags)
                 entries[i].attr          = 0x20;    /* Archive */
                 entries[i].first_cluster = 0;
                 entries[i].file_size     = 0;
-                entries[i].time          = 0;
-                entries[i].date          = 0;
+                { Fat12Istante ist = fat12_ora_corrente();
+                  entries[i].date = ist.data; entries[i].time = ist.ora; }
                 g_root_dirty = 1;
 
                 g_open_files[slot].entry         = entries[i];
@@ -2092,8 +2186,8 @@ int fat12_open(const char *path, uint32_t flags)
             entries[dslot].attr          = 0x20;
             entries[dslot].first_cluster = 0;
             entries[dslot].file_size     = 0;
-            entries[dslot].time          = 0;
-            entries[dslot].date          = 0;
+            { Fat12Istante ist = fat12_ora_corrente();
+              entries[dslot].date = ist.data; entries[dslot].time = ist.ora; }
 
             if (fat12_write_sector(lba, buf) != 0)
                 return fat12_open_fallito(slot, -5);
