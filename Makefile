@@ -689,6 +689,30 @@ $(FTP_BIN): $(FTP_SRC) $(FTP_LD) $(IP_PROTO) $(DNS_SRC) $(DNS_HDR) $(RETE_SRC) $
 .PHONY: ftp
 ftp: dirs $(FTP_BIN)
 
+# --- /bin/telnet: sessione interattiva su TCP (solo CD) ----------------------
+# Sta con gli altri strumenti di rete. A differenza di ftp ha bisogno anche
+# del servizio TASTIERA, perche' una sessione interattiva vuole i tasti uno
+# per uno: aspetta rete e tastiera sulla stessa cassetta postale IPC.
+TELNET_SRC := bin/telnet/telnet.c
+TELNET_BIN := $(BUILD_BIN_CD)/telnet
+TELNET_LD  := bin/telnet/telnet.ld
+
+$(TELNET_BIN): $(TELNET_SRC) $(TELNET_LD) $(IP_PROTO) drivers/kbd/kbd_proto.h $(DNS_SRC) $(DNS_HDR) $(RETE_SRC) $(RETE_HDR) $(LIBC_SRC) $(LIBC_START)
+	@echo "=== Compilazione /bin/telnet ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -I drivers/kbd -c $(TELNET_SRC) -o $(BUILD_OBJ)/telnet_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(DNS_SRC)  -o $(BUILD_OBJ)/telnet_dns.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(RETE_SRC) -o $(BUILD_OBJ)/telnet_rete.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                -o $(BUILD_OBJ)/telnet_libc.o
+	$(CC) -m32 -c $(LIBC_START)                        -o $(BUILD_OBJ)/telnet_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(TELNET_LD) \
+	    $(BUILD_OBJ)/telnet_start.o $(BUILD_OBJ)/telnet_main.o $(BUILD_OBJ)/telnet_dns.o \
+	    $(BUILD_OBJ)/telnet_rete.o $(BUILD_OBJ)/telnet_libc.o -o $@
+	@echo "[OK] telnet compilato: $@"
+
+.PHONY: telnet
+telnet: dirs $(TELNET_BIN)
+
 .PHONY: stack
 stack: dirs $(STACK_BIN)
 
@@ -1066,7 +1090,7 @@ $(IP_DRV_OUT): $(IP_DRV_SRC) $(NET_PROTO) $(IP_PROTO) $(IP_DRV_LD) $(LIBC_SRC) $
 ip_drv: dirs $(IP_DRV_OUT)
 
 .PHONY: all
-all: dirs stage1 stage2 kernel $(PROGRAMMI_FLOPPY) pci_drv ne2k_drv ip_drv netdetect nettest ping ipcfg dhcp host tcptest ftp floppy
+all: dirs stage1 stage2 kernel $(PROGRAMMI_FLOPPY) pci_drv ne2k_drv ip_drv netdetect nettest ping ipcfg dhcp host tcptest ftp telnet floppy
 	@echo ""
 	@echo "============================================"
 	@echo " EX-OS build completata!"
@@ -1543,7 +1567,7 @@ iso: $(ISO_IMG)
 ISOX_ROOT := $(BUILD_DIR)/iso-exos
 ISOX_IMG  := $(DIST_DIR)/exos.iso
 
-$(ISOX_IMG): $(FLOPPY_IMG) boot/autoexec.sh $(PCI_DRV_OUT) $(NE2K_DRV_OUT) $(PCNET_DRV_OUT) $(IP_DRV_OUT) $(NETDETECT_BIN) $(NETTEST_BIN) $(PING_BIN) $(IPCFG_BIN) $(DHCP_BIN) $(HOST_BIN) $(TCPTEST_BIN) $(FTP_BIN) $(ISO_MKISO) README.md README.en.md gpl-2.0.txt boot/kernel.cfg
+$(ISOX_IMG): $(FLOPPY_IMG) boot/autoexec.sh $(PCI_DRV_OUT) $(NE2K_DRV_OUT) $(PCNET_DRV_OUT) $(IP_DRV_OUT) $(NETDETECT_BIN) $(NETTEST_BIN) $(PING_BIN) $(IPCFG_BIN) $(DHCP_BIN) $(HOST_BIN) $(TCPTEST_BIN) $(FTP_BIN) $(TELNET_BIN) $(ISO_MKISO) README.md README.en.md gpl-2.0.txt boot/kernel.cfg
 	@echo "=== Creazione CD di EX-OS (avviabile) ==="
 	@mkdir -p $(DIST_DIR)
 	@rm -rf $(ISOX_ROOT)

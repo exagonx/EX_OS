@@ -47,6 +47,7 @@ quella sull'hardware o sul caso reale — non è ancora stata fatta.
 | Risolutore DNS in libc, record A (`host`) | testato |
 | TCP: apertura attiva, invio, ricezione, chiusura (`tcptest`) | testato |
 | Client FTP passivo, `get`/`put`/`ls`/`cd` (`ftp`) | testato |
+| Client Telnet interattivo con negoziazione delle opzioni (`telnet`) | testato |
 | Configurazione a mano e tabella ARP (`ipcfg`, `ipcfg -r`) | testato |
 | Rinnovo della concessione DHCP | da fare |
 | Riordino dei segmenti TCP fuori sequenza | da fare |
@@ -2677,6 +2678,77 @@ già.
 Per provarlo senza un server vero c'è `tools/ftpserver-prova.py` — ⚠️ che
 **non è un server FTP**: fa entrare chiunque e serve una directory sola,
 va lanciato su localhost per il tempo di una prova.
+
+### `telnet` — sessione interattiva
+
+```
+telnet nome-o-indirizzo [porta]      si esce con Ctrl+]
+```
+
+⚠️ **Telnet manda tutto in chiaro, password compresa.** Non è un difetto
+del programma, è il protocollo: chiunque stia sul percorso legge nome
+utente, password e tutto quello che si scrive dopo. Il client lo dice una
+volta all'avvio invece di lasciarlo intendere. L'alternativa si chiamerà
+SSH quando ci sarà TLS — non «telnet con una toppa».
+
+**Come fa a sentire la rete e la tastiera insieme.** Non c'è `select()` e
+non ci sono i thread, ma c'è una cosa migliore per questo caso: in EX-OS
+tutto passa dalla stessa cassetta postale. Si *prenota* una ricezione allo
+stack IP (`IP_MSG_TCP_RICEVI`), si *prenota* un tasto al servizio tastiera
+(`KBD_MSG_READKEY`), e poi si aspetta con un solo `ipc_recv_timeout()`
+guardando **chi** ha risposto. Le due prenotazioni si riarmano
+indipendentemente: se il server tace si continua a ricevere tasti, se
+nessuno digita si continua a ricevere dati.
+
+⚠️ **La scadenza serve anche quando non scade niente**: la modalità raw
+della tastiera se ne va da sola ogni volta che qualcun altro chiede una
+riga, e senza un risveglio periodico che la riafferma il programma
+resterebbe in attesa di un tasto che il driver non consegnerà mai.
+
+**La negoziazione delle opzioni non si può saltare.** Telnet intreccia ai
+dati dei comandi che cominciano con il byte 255 (IAC). Un client che li
+ignorasse stamperebbe caratteri di controllo e — molto peggio —
+lascerebbe il server ad *aspettare*: parecchi server non mandano nemmeno
+il `login:` finché non hanno finito di negoziare.
+
+| | |
+|---|---|
+| **rifiuta tutto quello che non sa fare** | al `DO` di un'opzione sconosciuta si risponde `WONT`, al `WILL` si risponde `DONT`. Il silenzio non è un rifiuto: è un server che aspetta |
+| **non risponde mai a una risposta** | due implementazioni educate che replicano sempre si rimpallano la stessa opzione all'infinito. Si tiene lo stato di ciò che si è già concesso |
+| accettate | `ECHO` e `SGA` dal server, `TTYPE` e `NAWS` verso il server |
+| `IAC IAC` | è un byte 255 nei dati, non un comando |
+
+Lo stato del riconoscimento è **statico e non locale**, e conta: una
+sequenza IAC può essere spezzata fra due segmenti — TCP consegna byte,
+non messaggi — e uno stato azzerato a ogni chiamata farebbe stampare metà
+comando e rispondere all'altra metà come se fosse un comando diverso.
+
+Due traduzioni della tastiera che non sono ovvie:
+
+- **Invio è `CR LF`**, non un solo `LF`: il terminale virtuale di telnet
+  vuole che un CR sia sempre seguito da LF o NUL, e i server che applicano
+  la regola alla lettera con un LF solo non fanno niente.
+- **Backspace si manda come `0x7F`**, non come lo `0x08` che il tasto
+  produce qui: sui sistemi Unix il carattere di cancellazione predefinito
+  è DEL, e mandando `0x08` la riga non si accorcia e compare `^H` — che
+  sembra un difetto della tastiera mentre è una convenzione dall'altra
+  parte.
+
+Per provarlo senza esporre una shell c'è `tools/telnetserver-prova.py` —
+⚠️ che **non è un server telnet**: fa l'eco e risponde a comandi finti.
+Serve perché mettere in ascolto un `telnetd` vero, che dà una shell senza
+cifratura, sarebbe una pessima idea su qualunque macchina. La prova vista
+dal suo lato:
+
+```
+  <- DO ECHO
+  <- DO SGA
+  <- WILL TTYPE
+  <- WILL NAWS
+  <- schermo: 80x25
+  <- terminale: 'EXOS'
+  riga: 'ciao mondo'
+```
 
 ### Risoluzione dei nomi: `host`, e `ping` per nome
 

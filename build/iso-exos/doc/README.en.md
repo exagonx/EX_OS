@@ -47,6 +47,7 @@ the one on real hardware or on the real case — has not been done yet.
 | DNS resolver in libc, A records (`host`) | tested |
 | TCP: active open, send, receive, close (`tcptest`) | tested |
 | Passive-mode FTP client, `get`/`put`/`ls`/`cd` (`ftp`) | tested |
+| Interactive Telnet client with option negotiation (`telnet`) | tested |
 | Manual configuration and ARP table (`ipcfg`, `ipcfg -r`) | tested |
 | DHCP lease renewal | to do |
 | Reassembly of out-of-order TCP segments | to do |
@@ -2673,6 +2674,76 @@ the useful information; the address we already know.
 To try it without a real server there is `tools/ftpserver-prova.py` — ⚠️
 which **is not an FTP server**: it lets anyone in and serves a single
 directory, and is meant to be run on localhost for the length of a test.
+
+### `telnet` — an interactive session
+
+```
+telnet name-or-address [port]        Ctrl+] to leave
+```
+
+⚠️ **Telnet sends everything in the clear, password included.** It is not a
+defect of the program, it is the protocol: anyone on the path reads the
+user name, the password and everything typed afterwards. The client says so
+once at startup instead of leaving it to be inferred. The alternative will
+be called SSH when there is TLS — not «telnet with a patch».
+
+**How it listens to the network and the keyboard at once.** There is no
+`select()` and there are no threads, but there is something better for this
+case: in EX-OS everything comes through the same mailbox. You *book* a
+receive from the IP stack (`IP_MSG_TCP_RICEVI`), you *book* a key from the
+keyboard service (`KBD_MSG_READKEY`), and then you wait with a single
+`ipc_recv_timeout()` and look at **who** answered. The two bookings re-arm
+independently: if the server is quiet you keep receiving keys, if nobody
+types you keep receiving data.
+
+⚠️ **The timeout matters even when nothing times out**: the keyboard's raw
+mode goes away by itself whenever somebody else asks for a line, and
+without a periodic wake-up that reasserts it the program would sit waiting
+for a key the driver will never deliver.
+
+**Option negotiation cannot be skipped.** Telnet interleaves commands
+starting with byte 255 (IAC) into the data. A client that ignored them
+would print control characters and — far worse — would leave the server
+*waiting*: many servers do not even send the `login:` until negotiation is
+done.
+
+| | |
+|---|---|
+| **refuse everything you cannot do** | to a `DO` for an unknown option answer `WONT`, to a `WILL` answer `DONT`. Silence is not a refusal: it is a server waiting |
+| **never answer an answer** | two polite implementations that always reply bounce the same option back and forth forever. The state of what has already been granted is kept |
+| accepted | `ECHO` and `SGA` from the server, `TTYPE` and `NAWS` towards it |
+| `IAC IAC` | is a 255 byte in the data, not a command |
+
+The parser state is **static, not local**, and that matters: an IAC
+sequence can be split across two segments — TCP delivers bytes, not
+messages — and a state reset on every call would print half a command and
+answer the other half as if it were a different one.
+
+Two keyboard translations that are not obvious:
+
+- **Enter is `CR LF`**, not a bare `LF`: telnet's network virtual terminal
+  wants a CR always followed by LF or NUL, and servers that apply the rule
+  literally do nothing with a lone LF.
+- **Backspace is sent as `0x7F`**, not as the `0x08` the key produces here:
+  on Unix systems the default erase character is DEL, and sending `0x08`
+  leaves the line unchanged and prints `^H` — which looks like a keyboard
+  defect while it is a convention on the other side.
+
+To try it without exposing a shell there is `tools/telnetserver-prova.py` —
+⚠️ which **is not a telnet server**: it echoes and answers made-up
+commands. It exists because putting a real `telnetd`, which hands out a
+shell with no encryption, on a listening port would be a bad idea on any
+machine. The test as seen from its side:
+
+```
+  <- DO ECHO
+  <- DO SGA
+  <- WILL TTYPE
+  <- WILL NAWS
+  <- schermo: 80x25
+  <- terminale: 'EXOS'
+  riga: 'ciao mondo'
+```
 
 ### Name resolution: `host`, and `ping` by name
 
