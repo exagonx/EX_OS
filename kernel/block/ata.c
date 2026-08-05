@@ -509,7 +509,6 @@ static int ata_rw(int indice, uint64_t lba, uint32_t n, void *buf, int scrivi)
     while (n > 0) {
         uint32_t blocco = n;
         uint32_t max    = usa48 ? ATA_MAX_N48 : ATA_MAX_N28;
-        uint32_t i;
         int      st;
 
         if (blocco > max) blocco = max;
@@ -558,19 +557,17 @@ static int ata_rw(int indice, uint64_t lba, uint32_t n, void *buf, int scrivi)
         for (s = 0; s < blocco; s++) {
             if (ata_attendi_drq(canale, ATA_TMO_DRQ_MS) < 0) return -1;
 
-            if (scrivi) {
-                for (i = 0; i < ATA_SECTOR_SIZE / 2; i++) {
-                    uint16_t w = (uint16_t)p[0] | ((uint16_t)p[1] << 8);
-                    port_outw(io + ATA_REG_DATA, w);
-                    p += 2;
-                }
-            } else {
-                for (i = 0; i < ATA_SECTOR_SIZE / 2; i++) {
-                    uint16_t w = port_inw(io + ATA_REG_DATA);
-                    *p++ = (uint8_t)(w & 0xFF);
-                    *p++ = (uint8_t)((w >> 8) & 0xFF);
-                }
-            }
+            /* ⚠️ UNA ISTRUZIONE, NON UN CICLO. Fino ad agosto 2026 qui
+             * c'era un ciclo che chiamava port_inw 256 volte per settore:
+             * duemila istruzioni per 512 byte, ed e' da li' che venivano
+             * gli 0,75 MB/s misurati — non dal controller e non dal disco.
+             *
+             * L'ordine dei byte in memoria e' lo stesso che il ciclo
+             * componeva a mano (basso, poi alto): su x86 `rep insw` fa
+             * esattamente quello, quindi i dati sul disco non cambiano. */
+            if (scrivi) port_outsw(io + ATA_REG_DATA, p, ATA_SECTOR_SIZE / 2);
+            else        port_insw (io + ATA_REG_DATA, p, ATA_SECTOR_SIZE / 2);
+            p += ATA_SECTOR_SIZE;
         }
 
         /* Dopo una scrittura il dispositivo puo' restare occupato: va

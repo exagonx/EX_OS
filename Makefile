@@ -1385,8 +1385,12 @@ OPENSSL_BUILD ?= $(HOME)/openssl-build-exos
 # FreeBASIC per EX-OS: lo costruisce tools/freebasic-exos/prepara-fb.sh
 FB_NATIVO     ?= $(HOME)/fb-build-exos
 
-GCC_NATIVO_REL  ?= $(HOME)/gcc-build-rel/gcc
-GCC_NATIVO_CHK  ?= $(HOME)/gcc-build-canadian/gcc
+# ⚠️ DUE CANDIDATI, IN ORDINE: prima la build con C++ (cc1 E cc1plus), poi
+# quella con il solo C. Serve mentre la prima si costruisce — sono ore a
+# -j1 — cosi' il CD continua a portare un compilatore funzionante invece
+# di restare senza.
+GCC_NATIVO_REL  ?= $(HOME)/gcc-build-cpp/gcc
+GCC_NATIVO_CHK  ?= $(HOME)/gcc-build-rel/gcc
 ISO_LEGGIMI := $(TOOLS_DIR)/iso/leggimi.txt
 ISO_MKISO   := $(TOOLS_DIR)/mkiso.py
 
@@ -1536,7 +1540,7 @@ $(ISO_IMG): $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_LEGGIMI) $(TOOLS_DIR)/iso/prova
 	elif [ -x "$(GCC_NATIVO_CHK)/cc1" ]; then G="$(GCC_NATIVO_CHK)"; M="controlli di sviluppo"; \
 	fi; \
 	if [ -n "$$G" ]; then \
-	    for b in cc1 cpp xgcc collect2; do \
+	    for b in cc1 cc1plus cpp xgcc collect2; do \
 	        [ -x "$$G/$$b" ] || continue; \
 	        i386-exos-strip -o $(ISO_ROOT)/bin/$$b "$$G/$$b"; \
 	    done; \
@@ -1544,7 +1548,7 @@ $(ISO_IMG): $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_LEGGIMI) $(TOOLS_DIR)/iso/prova
 	        mv $(ISO_ROOT)/bin/xgcc $(ISO_ROOT)/bin/gcc; \
 	    fi; \
 	    echo "     GCC nativo incluso da $$G ($$M):"; \
-	    for b in cc1 cpp gcc collect2; do \
+	    for b in cc1 cc1plus cpp gcc collect2; do \
 	        [ -f $(ISO_ROOT)/bin/$$b ] || continue; \
 	        echo "       $$b  $$(du -h $(ISO_ROOT)/bin/$$b | cut -f1)"; \
 	    done; \

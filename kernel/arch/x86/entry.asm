@@ -321,6 +321,48 @@ port_outw:
     out dx, ax
     ret
 
+; --- I/O port: BLOCCHI di word (rep insw / rep outsw) -------------------------
+;
+; ⚠️ QUESTE DUE RIGHE DI ASSEMBLY VALGONO PIU' DI TUTTO IL RESTO DEL
+; DRIVER DEL DISCO, e il perche' si vede solo contando.
+;
+; Prima il trasferimento di un settore era un ciclo C che chiamava
+; port_inw 256 volte: 256 CALL, 256 RET, e in mezzo il montaggio a mano
+; dei due byte di ogni parola. Duemila e passa istruzioni per 512 byte —
+; ed e' da li' che venivano gli 0,75 MB/s misurati, non dal controller e
+; non dal disco.
+;
+; `rep insw` fa lo stesso lavoro con UNA istruzione. L'ordine dei byte in
+; memoria e' identico a quello che il ciclo componeva a mano (basso, poi
+; alto): su x86 e' cosi' per costruzione, quindi i dati sul disco non
+; cambiano di una virgola.
+;
+; ⚠️ IL BUFFER DEVE ESSERE GIA' PRESENTE IN RAM. rep insw non e'
+; interrompibile a meta' in modo utile: se la pagina di destinazione non
+; c'e', il fault avviene DENTRO il trasferimento. Per le letture verso un
+; buffer utente ci pensa vm_precarica_utente() prima di entrare nel VFS.
+global port_insw
+port_insw:                      ; (uint16_t porta, void *dst, uint32_t n_word)
+    push edi
+    mov dx,  [esp+8]
+    mov edi, [esp+12]
+    mov ecx, [esp+16]
+    cld
+    rep insw
+    pop edi
+    ret
+
+global port_outsw
+port_outsw:                     ; (uint16_t porta, const void *src, uint32_t n_word)
+    push esi
+    mov dx,  [esp+8]
+    mov esi, [esp+12]
+    mov ecx, [esp+16]
+    cld
+    rep outsw
+    pop esi
+    ret
+
 ; --- I/O port: dword ----------------------------------------------------------
 global port_inl
 port_inl:

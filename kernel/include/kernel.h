@@ -211,6 +211,10 @@ uint32_t    read_eflags(void);
 uint8_t     port_inb(uint16_t port);
 void        port_outb(uint16_t port, uint8_t val);
 uint16_t    port_inw(uint16_t port);
+/* Trasferimenti a blocchi: `rep insw` / `rep outsw`. Vedi il commento in
+ * kernel/arch/x86/entry.asm — e' li' che sta la ragione per cui esistono. */
+void        port_insw(uint16_t port, void *dst, uint32_t n_word);
+void        port_outsw(uint16_t port, const void *src, uint32_t n_word);
 void        port_outw(uint16_t port, uint16_t val);
 uint32_t    port_inl(uint16_t port);
 void        port_outl(uint16_t port, uint32_t val);

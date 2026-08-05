@@ -193,11 +193,25 @@ static int atapi_comando(int indice, const uint8_t *cdb, void *buf,
          * ciclo infinito. */
         if (n == 0) break;
 
-        for (i = 0; (uint32_t)i < n; i += 2) {
+        /* ⚠️ LA VIA VELOCE VALE SOLO SE LA RAFFICA CI STA TUTTA. `rep insw`
+         * scrive e basta: non sa saltare i byte in eccesso. Quando la
+         * raffica supera il buffer si torna al ciclo, che legge tutto e
+         * butta il di piu' — il trasferimento va SEMPRE consumato per
+         * intero, o il canale resta inutilizzabile.
+         *
+         * Il caso normale e' il primo, ed e' quello che conta: e' da qui
+         * che passa ogni byte letto dal CD, compresi i 34 MB di cc1. */
+        if ((uint32_t)(n & ~1u) > 0 && tot + (uint32_t)(n & ~1u) <= max) {
+            port_insw(io + ATA_REG_DATA, p + tot, (uint32_t)(n & ~1u) / 2);
+            tot += (uint32_t)(n & ~1u);
+            i = (int)(n & ~1u);
+        } else {
+            i = 0;
+        }
+
+        for (; (uint32_t)i < n; i += 2) {
             uint16_t w = port_inw(io + ATA_REG_DATA);
 
-            /* L'eccesso si legge e si butta: il trasferimento va SEMPRE
-             * consumato tutto, o il canale resta inutilizzabile. */
             if (tot     < max) p[tot]     = (uint8_t)(w & 0xFF);
             if (tot + 1 < max) p[tot + 1] = (uint8_t)((w >> 8) & 0xFF);
             tot += 2;

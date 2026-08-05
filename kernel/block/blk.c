@@ -26,6 +26,11 @@
 static BlkDev g_dev[BLK_MAX_DEV];
 static int    g_n = 0;
 
+/* Dichiarata qui perche' la usano blk_rescan() e blk_ripartiziona(), che
+ * stanno prima della cache. L'implementazione, e il perche' esista, sono
+ * piu' avanti, sopra blk_read(). */
+static void cache_svuota(int disco);
+
 /* Copia un nome corto senza dipendere da una libreria di stringhe. */
 static void nome_copia(char *dst, const char *src)
 {
@@ -213,6 +218,11 @@ int blk_init(void)
 
 int blk_rescan(int disco)
 {
+    /* ⚠️ PRIMA DI TUTTO: il disco puo' essere stato ripartizionato o
+     * sostituito, e i settori che abbiamo in cache sarebbero di un
+     * contenuto che non esiste piu'. */
+    cache_svuota(disco);
+
     const AtaDevice *a;
     int              i, n;
 
@@ -252,6 +262,9 @@ int blk_rescan(int disco)
 int blk_ripartiziona(int disco, const Partizione *voci, int n,
                      uint32_t *problemi)
 {
+    /* Stessa ragione di blk_rescan(): la mappa cambia sotto i piedi. */
+    cache_svuota(disco);
+
     int i, r;
 
     if (problemi) *problemi = 0;
@@ -486,6 +499,102 @@ static int cd_read(const BlkDev *b, uint64_t lba, uint32_t n, uint8_t *p)
     return 0;
 }
 
+
+/* =============================================================================
+ * LA CACHE DEI SETTORI — e perche' i metadati la vogliono e i file no
+ *
+ * ⚠️ IL COSTO NON E' IL TRASFERIMENTO, SONO I COMANDI. ext2 legge un
+ * blocco per volta (1024 byte = 2 settori), e per ognuno c'e' un comando
+ * ATA con la sua attesa di BSY e DRQ. Aprire un file vuol dire rileggere
+ * il superblocco, i descrittori di gruppo e la tabella degli inode — gli
+ * STESSI settori, decine di volte. E' li' che se ne va il tempo, non nel
+ * `rep insw`.
+ *
+ * ⚠️ SI CACHEGGIANO SOLO LE RICHIESTE PICCOLE, e la ragione e' che una
+ * cache si puo' rovinare da sola: `cc1` pesa 34 MB, e farlo passare di
+ * qui sfratterebbe ogni settore utile per riempirla di dati che nessuno
+ * rileggera' mai. Sopra CACHE_MAX_N settori si va dritti al disco senza
+ * toccare niente — i file grandi si leggono in sequenza una volta sola,
+ * i metadati si rileggono sempre.
+ *
+ * ⚠️ E' WRITE-THROUGH, non write-back. Una scrittura va sul disco SUBITO e
+ * poi aggiorna la copia in cache. Cosi' `blk_flush` e `vfs_sync`
+ * continuano a voler dire quello che hanno sempre voluto dire, e uno
+ * spegnimento brutale non perde niente che non fosse gia' perso. Il
+ * write-back sarebbe piu' veloce e sarebbe un'altra promessa.
+ *
+ * ⚠️ LA CHIAVE E' (disco fisico, LBA ASSOLUTO), presa DOPO traduci(): due
+ * partizioni dello stesso disco hanno LBA relativi che si sovrappongono, e
+ * usare quelli darebbe a una i settori dell'altra.
+ * ============================================================================= */
+#define CACHE_VOCI   128        /* 128 x 512 B = 64 KB */
+#define CACHE_MAX_N  8          /* fino a 4 KB per richiesta */
+
+typedef struct {
+    int      disco;             /* -1 = voce libera */
+    uint64_t lba;
+    uint32_t uso;               /* per l'LRU: piu' alto = usato piu' di recente */
+    uint8_t  dati[512];
+} VoceCache;
+
+static VoceCache g_cache[CACHE_VOCI];
+static uint32_t  g_cache_orologio = 0;
+static int       g_cache_pronta   = 0;
+
+static void cache_init(void)
+{
+    int k;
+    for (k = 0; k < CACHE_VOCI; k++) g_cache[k].disco = -1;
+    g_cache_pronta = 1;
+}
+
+static VoceCache *cache_trova(int disco, uint64_t lba)
+{
+    int k;
+    for (k = 0; k < CACHE_VOCI; k++) {
+        if (g_cache[k].disco == disco && g_cache[k].lba == lba) return &g_cache[k];
+    }
+    return NULL;
+}
+
+/* La voce da sacrificare: una libera se c'e', altrimenti la meno usata di
+ * recente. La scansione e' lineare su 128 voci — a fronte di un comando
+ * ATA da millisecondi, cercare non costa niente. */
+static VoceCache *cache_slot(void)
+{
+    int k, migliore = 0;
+    for (k = 0; k < CACHE_VOCI; k++) {
+        if (g_cache[k].disco < 0) return &g_cache[k];
+        if (g_cache[k].uso < g_cache[migliore].uso) migliore = k;
+    }
+    return &g_cache[migliore];
+}
+
+static void cache_metti(int disco, uint64_t lba, const uint8_t *dati)
+{
+    VoceCache *v = cache_trova(disco, lba);
+
+    if (v == NULL) {
+        v = cache_slot();
+        v->disco = disco;
+        v->lba   = lba;
+    }
+    copia(v->dati, dati, 512u);
+    v->uso = ++g_cache_orologio;
+}
+
+/* ⚠️ VA CHIAMATA QUANDO IL CONTENUTO DEL DISCO CAMBIA SOTTO I PIEDI: una
+ * ripartizionatura, una formattazione, un disco estratto e rimesso. Senza,
+ * si continuerebbe a servire i settori di prima — e il difetto si vedrebbe
+ * come un filesystem "corrotto" appena creato. */
+static void cache_svuota(int disco)
+{
+    int k;
+    for (k = 0; k < CACHE_VOCI; k++) {
+        if (disco < 0 || g_cache[k].disco == disco) g_cache[k].disco = -1;
+    }
+}
+
 int blk_read(int i, uint64_t lba, uint32_t n, void *buf)
 {
     const BlkDev *b = blk_get(i);
@@ -514,6 +623,29 @@ int blk_read(int i, uint64_t lba, uint32_t n, void *buf)
         return 0;
     }
 
+    /* --- la cache, solo per le richieste piccole: vedi il commento sopra --- */
+    if (!g_cache_pronta) cache_init();
+
+    if (n <= CACHE_MAX_N) {
+        uint8_t *p = (uint8_t *)buf;
+        uint32_t tutti = 1;
+
+        for (k = 0; k < n; k++) {
+            VoceCache *v = cache_trova(b->disco, abs + k);
+            if (v == NULL) { tutti = 0; break; }
+            copia(p + k * 512u, v->dati, 512u);
+            v->uso = ++g_cache_orologio;
+        }
+        if (tutti) return 0;
+
+        /* Anche un solo settore mancante costa comunque un comando: tanto
+         * vale rileggere tutta la corsa in una volta e riempire la cache
+         * con tutto quello che passa. */
+        if (ata_read(b->disco, abs, n, buf) != 0) return -1;
+        for (k = 0; k < n; k++) cache_metti(b->disco, abs + k, p + k * 512u);
+        return 0;
+    }
+
     return ata_read(b->disco, abs, n, buf);
 }
 
@@ -538,7 +670,23 @@ int blk_write(int i, uint64_t lba, uint32_t n, const void *buf)
         return 0;
     }
 
-    return ata_write(b->disco, abs, n, buf);
+    if (ata_write(b->disco, abs, n, buf) != 0) return -1;
+
+    /* Write-through: la copia in cache si aggiorna DOPO che il disco ha
+     * accettato. Si aggiorna solo cio' che era gia' in cache — una
+     * scrittura di dati non deve sfrattare i metadati per far posto a se'
+     * stessa. */
+    if (g_cache_pronta && n <= CACHE_MAX_N) {
+        const uint8_t *p = (const uint8_t *)buf;
+        for (k = 0; k < n; k++) {
+            VoceCache *v = cache_trova(b->disco, abs + k);
+            if (v != NULL) {
+                copia(v->dati, p + k * 512u, 512u);
+                v->uso = ++g_cache_orologio;
+            }
+        }
+    }
+    return 0;
 }
 
 int blk_flush(int i)

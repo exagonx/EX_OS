@@ -100,6 +100,12 @@ set -e
 
 BUILD="${1:-$HOME/gcc-build-canadian}"
 SORGENTI="${2:-$(cd "$(dirname "$0")/../.." && pwd)/gcc}"
+# ⚠️ I LINGUAGGI SONO UN ARGOMENTO, e il default sono DUE: `c,c++`.
+# Con il solo `c` si ottiene cc1 e basta, cioe' un sistema che compila C e
+# non C++ — e il buco non si vede finche' qualcuno non prova a compilare un
+# .cpp dentro EX-OS e scopre che cc1plus non esiste. La libstdc++ per il
+# bersaglio c'e' gia' nel sysroot: manca solo il compilatore che la usi.
+LINGUE="${3:-c,c++}"
 PREFISSO="$HOME/exos-cross"
 SYSROOT="$PREFISSO/i386-exos"
 
@@ -131,6 +137,7 @@ echo "=== canadian cross di GCC per EX-OS ==="
 echo "  build    : x86_64-pc-linux-gnu (questa macchina)"
 echo "  host     : i386-exos           (dove girera' cc1)"
 echo "  target   : i386-exos           (per chi produrra' codice)"
+echo "  lingue   : $LINGUE"
 echo "  build dir: $BUILD"
 
 mkdir -p "$BUILD"
@@ -143,7 +150,7 @@ export ac_cv_c_bigendian=no
 "$SORGENTI/configure" \
     --build=x86_64-pc-linux-gnu --host=i386-exos --target=i386-exos \
     --prefix=/exos --with-sysroot= \
-    --enable-languages=c --without-headers --with-newlib \
+    --enable-languages="$LINGUE" --without-headers --with-newlib \
     --disable-nls --disable-shared --disable-threads \
     --disable-libssp --disable-libgomp --disable-libquadmath \
     --disable-libatomic --disable-libvtv --disable-libstdcxx \
@@ -158,4 +165,4 @@ echo "    cd $BUILD"
 echo "    export ac_cv_c_bigendian=no"
 echo "    make -j1 all-gcc          # ⚠️ -j1: 4 GB di RAM, vedi applica.py"
 echo
-echo "Il risultato e' gcc/cc1 (e gcc/xgcc, il driver), eseguibili SU EX-OS."
+echo "Il risultato e' gcc/cc1, gcc/cc1plus e gcc/xgcc, eseguibili SU EX-OS."
