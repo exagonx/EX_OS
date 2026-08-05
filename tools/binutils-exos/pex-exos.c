@@ -342,7 +342,13 @@ pex_exos_exec_child (struct pex_obj *obj, int flags, const char *executable,
 
   if (pid < 0)
     {
-      *err = -pid;		/* le syscall di EX-OS ritornano -errno */
+      /* ⚠️ ERA `*err = -pid`, CON IL COMMENTO «le syscall ritornano -errno».
+	 Vero per le syscall NUDE, falso per spawn_ex() della libc, che passa
+	 da err_reg(): quella ritorna -1 e mette errno. Quindi -pid valeva 1,
+	 cioe' EPERM, e QUALUNQUE fallimento — un cc1 non trovato, per dire —
+	 usciva come «operazione non permessa». Il messaggio mandava a cercare
+	 permessi che su EX-OS non esistono nemmeno. */
+      *err = errno;
       *errmsg = "spawn";
       return (pid_t) -1;
     }

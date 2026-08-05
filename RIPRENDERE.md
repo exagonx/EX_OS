@@ -122,3 +122,103 @@ valore calcolato a mano (`385 & 0x7F` più `'E'`).
   una sola chiamata lo svuota. La via giusta è ChaCha20 in kernel per
   espandere il seme (vettori di prova in RFC 8439), non allargare il
   serbatoio.
+
+## Grafica VESA — analizzata, non iniziata (5 agosto 2026)
+
+Richiesta messa da parte dall'utente, che vuole studiarla. Qui resta il
+ragionamento, per non rifarlo.
+
+**Si può fare, e non serve un driver per scheda.** Da VBE 2.0 in poi S3
+Trio, Mystique, i740 e successive espongono tutte un *linear framebuffer*
+dalla stessa interfaccia; gli emulatori la implementano tutti. Un driver
+solo.
+
+Il lavoro si divide in tre, e **uno solo tocca il kernel**:
+
+1. **`stage2`**, in modo reale: `INT 10h` si può chiamare solo lì. Sceglie
+   il modo e lascia indirizzo e geometria in una struttura. Non è né
+   kernel né userspace — è codice di avvio, che il BIOS lo chiama già.
+2. **Kernel, ~50 righe**: portare avanti quella struttura, e una syscall
+   che **mappi il framebuffer** nello spazio di un processo. Il precedente
+   giusto è `SYS_DMA_ALLOC`. Nessun font, nessun disegno.
+3. **`/dev/vesa.drv`, ring3**: tutto il resto. Non gli servono nemmeno le
+   porte I/O — dopo il mode set basta il framebuffer mappato.
+
+⚠️ **Il limite da accettare in partenza**: la risoluzione si sceglie
+all'avvio. Cambiarla a runtime vuole un monitor v8086 o un emulatore di
+modo reale nel kernel.
+
+⚠️ **La decisione da prendere PRIMA di scrivere codice**: oggi `klog` e i
+panici li stampa il kernel con `vga_putchar_su`. Se la console diventa un
+servizio userspace, un panico — o la morte del driver stesso — non ha più
+dove scrivere, e il sintomo è **uno schermo fermo senza spiegazione**. Le
+due uscite oneste: un disegnatore di testo minimo nel kernel per i soli
+klog e panici, oppure la console di emergenza che resta in modo testo.
+
+Il lavoro grosso non è il mode set — sono venti righe — è che il testo in
+modo grafico va disegnato: font, blit, scorrimento, cursore. Tutto ciò che
+oggi passa da `vga_putchar_su`.
+
+1024x768x32 sono 3 MB di framebuffer da mappare (1,5 MB a 16 bit), su un
+sistema che punta a girare in 32 MB.
+
+## I percorsi /exos — a meta', con tre fatti in mano (5 agosto, sera)
+
+Il CD ora ha l'albero che il driver cerca davvero. Non e' una scelta
+nostra: si legge dal binario, `strings gcc/cc1 | grep /exos`.
+
+    /exos/libexec/gcc/i386-exos/17.0.0/   cc1, cc1plus, collect2
+    /exos/lib/gcc/i386-exos/17.0.0/       libgcc.a, crt*.o, include/
+    /exos/i386-exos/include               header di sistema del bersaglio
+    /exos/include                         la libc
+    /exos/include/c++/17.0.0[/i386-exos]  libstdc++
+    /exos/i386-exos/bin/                  as, ld
+
+⚠️ cc1 e cc1plus NON stanno piu' in /bin: tenerli in due posti raddoppiava
+il CD (190 MB invece di 118). Le prove dirette vanno fatte col percorso
+lungo, /cdrom/exos/libexec/gcc/i386-exos/17.0.0/cc1.
+
+**Tre cose imparate provando, in ordine:**
+
+1. `gcc` lanciato da `/` muore con «Cannot create temporary file in ./».
+   Gli serve una directory scrivibile: `cd /src` prima, oppure TMPDIR.
+2. Poi: «cannot execute 'cc1': spawn: operazione non permessa». Il
+   permesso non c'entra — era un DIFETTO in tools/binutils-exos/pex-exos.c,
+   ora corretto: faceva `*err = -pid` credendo che spawn_ex ritornasse
+   -errno, mentre quella ritorna -1 e mette errno. Quindi -pid valeva 1,
+   cioe' EPERM, e ogni fallimento usciva come «non permesso».
+   ⚠️ La correzione ha effetto solo dopo aver ricostruito GCC (libiberty).
+3. Il `-B` puntava alla directory sbagliata: cc1 sta sotto **libexec**, non
+   sotto lib/gcc. La prossima prova va fatta con entrambi:
+
+       cd /src
+       gcc -B/cdrom/exos/libexec/gcc/i386-exos/17.0.0/ \
+           -B/cdrom/exos/lib/gcc/i386-exos/17.0.0/ -O2 -o inc inc.c
+
+⚠️ I percorsi compilati dentro sono ASSOLUTI (/exos/...): combaciano quando
+il CD e' la radice o quando l'albero viene installato sul disco. Montato su
+/cdrom serve il -B, e questa e' la ragione per cui esiste.
+
+### Dove si e' fermata, col -B giusto
+
+    cc1: error: missing filename after '-o'
+
+⚠️ E' UN PASSO AVANTI, non lo stesso muro: cc1 viene TROVATO ed ESEGUITO
+— il -B su libexec era la chiave. A cadere adesso e' l'argomento: il
+driver lancia `cc1 ... -o <temporaneo>.s` e quel nome arriva VUOTO.
+
+Due sospetti, in ordine di probabilita':
+
+1. il nome temporaneo. Da `/` il driver diceva «Cannot create temporary
+   file in ./»; da `/src` non lo dice piu', ma potrebbe produrre una
+   stringa vuota invece di fallire — e il driver la passa lo stesso.
+   Da guardare: make_temp_file / choose_tmpdir in libiberty, e se
+   TMPDIR aiuta (`TMPDIR=/src`).
+2. il passaggio degli argomenti in pex-exos.c. Meno probabile: se troncasse
+   argv mancherebbero anche gli altri argomenti, e invece cc1 ha letto
+   tutto il resto della riga.
+
+⚠️ Prima di ricostruire GCC per la correzione di `*err = errno`, conviene
+sapere quale dei due e': la ricostruzione e' di ore e serve comunque, ma
+se il difetto e' il numero 1 sta in libiberty ed entra nello stesso giro.
+

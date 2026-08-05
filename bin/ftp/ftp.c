@@ -483,6 +483,13 @@ static void aiuto(void)
     printf("  pwd                dove siamo sul server\n");
     printf("  get remoto [loc]   scarica\n");
     printf("  put locale [rem]   invia\n");
+    printf("  mkdir directory    crea una directory sul server\n");
+    printf("  rmdir directory    la toglie (deve essere vuota)\n");
+    printf("  delete file        cancella un file sul server\n");
+    printf("  rename vec nuovo   rinomina\n");
+    printf("  binary | ascii     modo di trasferimento (parte in binario)\n");
+    printf("  size file          quanto e' grande\n");
+    printf("  syst               che sistema e'\n");
     printf("  bye                chiude ed esce\n");
 }
 
@@ -504,6 +511,60 @@ static int pezzi(char *riga, char *out[], int max)
     return n;
 }
 
+/* =============================================================================
+ * I comandi che cambiano qualcosa sul server
+ *
+ * ⚠️ SI GUARDA IL CODICE DI RISPOSTA, non si stampa e basta. Un server che
+ * rifiuta MKD risponde con un 5xx e una riga di testo: senza questo
+ * controllo il programma direbbe «fatto» a un comando fallito, e chi lo
+ * usa in uno script non avrebbe modo di accorgersene. La regola FTP e'
+ * semplice — 2xx e' riuscito, 3xx vuole un seguito, 4xx e 5xx sono
+ * fallimenti — e vale per tutti allo stesso modo.
+ * ============================================================================= */
+static int riuscito(const char *cosa, int codice)
+{
+    if (codice < 0) {
+        printf("ftp: %s: il server non risponde\n", cosa);
+        return -1;
+    }
+    if (codice >= 200 && codice < 300) return 0;
+
+    /* Il testo del server e' gia' stato stampato da risposta(): qui si
+     * aggiunge solo la riga che dice CHE COSA non e' riuscito. */
+    printf("ftp: %s non riuscito (%d)\n", cosa, codice);
+    return -1;
+}
+
+/* RENAME e' l'unico in due tempi: RNFR nomina l'originale e il server
+ * risponde 350 «e adesso dimmi il nuovo»; RNTO lo completa.
+ *
+ * ⚠️ SE RNFR NON DA' 350 NON SI MANDA RNTO. Mandarlo lo stesso lascerebbe
+ * il server con un rinomino a meta' — e su alcuni server il RNTO
+ * successivo si attaccherebbe a un RNFR di prima, rinominando un file che
+ * non c'entra. */
+static int cmd_rinomina(const char *da, const char *a)
+{
+    int c = comando("RNFR", da, 1);
+
+    if (c < 300 || c >= 400) return riuscito("rename", c);
+    return riuscito("rename", comando("RNTO", a, 1));
+}
+
+/* ⚠️ IL TIPO DI TRASFERIMENTO E' UNO STATO DEL SERVER, non un'opzione del
+ * comando: vale finche' non lo si cambia. Il programma parte in binario
+ * (vedi TYPE I dopo il login), che e' l'unica scelta sensata come
+ * predefinita — in ASCII il server converte i fine riga, e un eseguibile
+ * scaricato cosi' arriva corrotto in modo silenzioso.
+ *
+ * `ascii` serve per i file di testo scambiati con sistemi che hanno una
+ * convenzione di riga diversa dalla nostra; per tutto il resto, binario. */
+static int cmd_tipo(const char *tipo, const char *nome)
+{
+    if (riuscito("type", comando("TYPE", tipo, 0)) != 0) return -1;
+    printf("modo di trasferimento: %s\n", nome);
+    return 0;
+}
+
 static int esegui(int n, char *a[])
 {
     if (n == 0) return 0;
@@ -519,6 +580,44 @@ static int esegui(int n, char *a[])
         if (n < 2) { printf("uso: put locale [remoto]\n"); return 0; }
         return cmd_put(a[1], n > 2 ? a[2] : NULL);
     }
+    if (strcmp(a[0], "mkdir") == 0) {
+        if (n < 2) { printf("uso: mkdir directory\n"); return 0; }
+        riuscito("mkdir", comando("MKD", a[1], 1));
+        return 0;
+    }
+    if (strcmp(a[0], "rmdir") == 0) {
+        if (n < 2) { printf("uso: rmdir directory\n"); return 0; }
+        riuscito("rmdir", comando("RMD", a[1], 1));
+        return 0;
+    }
+    /* `delete` e `del`: il primo e' il nome storico dei client FTP, il
+     * secondo quello che viene in mente a chi arriva da EX-OS, dove il
+     * comando si chiama cosi'. */
+    if (strcmp(a[0], "delete") == 0 || strcmp(a[0], "del") == 0) {
+        if (n < 2) { printf("uso: delete file\n"); return 0; }
+        riuscito("delete", comando("DELE", a[1], 1));
+        return 0;
+    }
+    if (strcmp(a[0], "rename") == 0) {
+        if (n < 3) { printf("uso: rename vecchio nuovo\n"); return 0; }
+        cmd_rinomina(a[1], a[2]);
+        return 0;
+    }
+    if (strcmp(a[0], "binary") == 0 || strcmp(a[0], "bin") == 0) {
+        cmd_tipo("I", "binario");
+        return 0;
+    }
+    if (strcmp(a[0], "ascii") == 0) {
+        cmd_tipo("A", "testo (ASCII)");
+        return 0;
+    }
+    if (strcmp(a[0], "size") == 0) {
+        if (n < 2) { printf("uso: size file\n"); return 0; }
+        riuscito("size", comando("SIZE", a[1], 1));
+        return 0;
+    }
+    if (strcmp(a[0], "syst") == 0)  { comando("SYST", "", 1); return 0; }
+    if (strcmp(a[0], "noop") == 0)  { comando("NOOP", "", 1); return 0; }
     if (strcmp(a[0], "help") == 0 || strcmp(a[0], "?") == 0) { aiuto(); return 0; }
     if (strcmp(a[0], "bye") == 0 || strcmp(a[0], "quit") == 0) return -1;
 

@@ -14,7 +14,8 @@ chiunque una directory in lettura E SCRITTURA.
 
     python3 tools/ftpserver-prova.py [directory] [porta]
 
-Comandi serviti: USER PASS SYST TYPE PWD CWD PASV LIST NLST RETR STOR QUIT.
+Comandi serviti: USER PASS SYST TYPE PWD CWD PASV LIST NLST RETR STOR
+MKD RMD DELE RNFR RNTO SIZE NOOP QUIT.
 Solo modo PASSIVO, che e' l'unico che il client di EX-OS usa (vedi
 drivers/net/ip_proto.h: il nostro TCP non sa mettersi in ascolto).
 """
@@ -58,6 +59,7 @@ def elenco(percorso):
 
 def servi(conn, addr):
     cwd = RADICE
+    rinomina_da = None   # fra RNFR e RNTO, vedi sotto
     dati_srv = None
     f = conn.makefile("rwb", buffering=0)
 
@@ -96,6 +98,59 @@ def servi(conn, addr):
                 rispondi("250 Directory cambiata")
             else:
                 rispondi("550 Non esiste")
+        # ⚠️ QUESTI SEI SERVONO A PROVARE IL CLIENT, e senza di loro le
+        # sue funzioni nuove non si possono collaudare affatto: il server
+        # risponderebbe "500 comando sconosciuto" e non si distinguerebbe
+        # un client rotto da un server che non sa rispondere.
+        elif cmd == "MKD":
+            n = sicuro(cwd, arg)
+            try:
+                os.mkdir(n)
+                rispondi('257 "%s" creata' % arg)
+            except OSError as e:
+                rispondi("550 %s" % e.strerror)
+        elif cmd == "RMD":
+            n = sicuro(cwd, arg)
+            try:
+                os.rmdir(n)
+                rispondi("250 Rimossa")
+            except OSError as e:
+                rispondi("550 %s" % e.strerror)
+        elif cmd == "DELE":
+            n = sicuro(cwd, arg)
+            try:
+                os.remove(n)
+                rispondi("250 Cancellato")
+            except OSError as e:
+                rispondi("550 %s" % e.strerror)
+        elif cmd == "RNFR":
+            n = sicuro(cwd, arg)
+            if os.path.exists(n):
+                rinomina_da = n
+                # ⚠️ 350 e non 250: "ho capito, ora dimmi il nuovo nome".
+                # Un 2xx qui farebbe credere al client di aver finito.
+                rispondi("350 E adesso RNTO")
+            else:
+                rinomina_da = None
+                rispondi("550 Non esiste")
+        elif cmd == "RNTO":
+            if rinomina_da is None:
+                rispondi("503 Prima RNFR")
+            else:
+                try:
+                    os.rename(rinomina_da, sicuro(cwd, arg))
+                    rispondi("250 Rinominato")
+                except OSError as e:
+                    rispondi("550 %s" % e.strerror)
+                rinomina_da = None
+        elif cmd == "SIZE":
+            n = sicuro(cwd, arg)
+            if os.path.isfile(n):
+                rispondi("213 %d" % os.path.getsize(n))
+            else:
+                rispondi("550 Non e' un file")
+        elif cmd == "NOOP":
+            rispondi("200 Eccomi")
         elif cmd == "PASV":
             dati_srv = socket.socket()
             dati_srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

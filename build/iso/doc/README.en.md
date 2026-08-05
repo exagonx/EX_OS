@@ -2,7 +2,7 @@
 
 [🇮🇹 Italiano](README.md) · **🇬🇧 English**
 
-**Version:** 0.175
+**Version:** 0.176
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit, FAT12 1.44MB floppy
@@ -108,6 +108,7 @@ exercised by forcing the slow path in QEMU, not on a physical 486.
 | `gettimeofday` monotonic, anchored to the clock exactly once | tested |
 | 64-bit `time_t` | tested |
 | Temporary files follow `TMPDIR`, no longer only the root | tested |
+| 128-sector disk cache: `cc1` from 19.61 s to 10.19 s | measured |
 | 276 automated checks in `libctest` | tested |
 
 ### Compilation chain
@@ -2420,6 +2421,67 @@ backwards**. A clock that goes backwards does not give an error, it gives
 negative intervals to whoever subtracts two instants. The declared price: if
 someone corrects the system time while a program is running, `gettimeofday`
 does not notice — a clock that never goes backwards is worth more.
+
+### The sector cache: the compiler runs twice as fast
+
+The hard disk has a 128-sector (64 KB) cache in `kernel/block/blk.c`. The
+gain, measured by changing **a single constant** and rebuilding:
+
+| `cc1` compiling | time |
+|---|---|
+| without cache | **19.61 s** |
+| with cache | **10.19 s** |
+
+⚠️ **On a sequential 35 MB copy it changes nothing** (~80-100 s either
+way), and that difference is what a cache is actually for. To reach each
+4 KB page of a large file, ext2 first reads the **indirect blocks** that
+say where that page lives: small requests, always the same ones, and that
+is the work the cache removes. The data itself passes once and has nothing
+to reuse.
+
+Hence an oddity that looks like a measurement error and is not: `cc1`
+**from the CD** ran faster than the same `cc1` from the hard disk without
+a cache. Not because the CD is fast — because ISO 9660 has no indirect
+blocks to chase and reads 2 KB per command instead of 1 KB. With the cache
+the hard disk draws level with the CD.
+
+Three decisions, and why:
+
+- **Only requests up to 8 sectors.** A cache can ruin itself: pushing
+  `cc1`'s 34 MB through it would evict every useful sector to make room
+  for data nobody will ever read again.
+- **Write-through, not write-back.** A write goes to disk *immediately*,
+  then updates the copy. That way `vfs_sync` keeps meaning what it has
+  always meant, and a brutal power-off loses nothing that was not already
+  lost. Write-back would be faster and would be **a different promise**.
+- **The key is (physical disk, absolute LBA)**, taken *after* partition
+  translation: relative LBAs of two partitions on the same disk overlap,
+  and using those would hand one partition the other's sectors.
+
+⚠️ **It is flushed on `blk_rescan` and `blk_ripartiziona`.** Without that,
+after a `mkfs` the old sectors would still be served, and the symptom
+would be "a freshly created filesystem is corrupt".
+
+### ⚠️ `rep insw` instead of 256 calls per sector
+
+A sector's PIO transfer used to be a C loop calling `port_inw` **256
+times** — and `port_inw` is a real function, not a macro: 256 `call`s and
+as many `ret`s, plus assembling both bytes of every word by hand. Over two
+thousand instructions for 512 bytes. It is now **one** instruction, in
+`ata.c` and in `atapi.c`.
+
+⚠️ In ATAPI the fast path applies **only if the burst fits the buffer**:
+`rep insw` just writes, it cannot skip the excess bytes, and a burst must
+*always* be consumed in full or the channel is left unusable. When it
+overflows, the slow loop takes over.
+
+⚠️ On its own this change **does not show up in the measurements**, which
+is useful information: the cost of the disk is not the transfer, it is the
+commands. That 35 MB copy is ~17,000 ATAPI commands plus ~35,000 ATA ones,
+each with its own `BSY`/`DRQ` wait. The missing lever is coalescing
+contiguous requests — and that is also what will make bus-master DMA worth
+having, since today it would cut the cost of the part that already does
+not weigh.
 
 ### `/boot/autoexec.sh` — commands at startup
 

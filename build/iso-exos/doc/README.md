@@ -1,12 +1,14 @@
 # EX-OS — Extensible Operating System
 
-**Versione:** 0.175
+**🇮🇹 Italiano** · [🇬🇧 English](README.en.md)
+
+**Versione:** 0.176
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 32-bit, floppy FAT12 1.44MB
 
-*Questo è il documento in italiano. La versione inglese è
-[README.en.md](README.en.md); le due si aggiornano insieme.*
+*Le due versioni si aggiornano insieme: quello che c'è in una c'è
+nell'altra.*
 
 ---
 
@@ -107,6 +109,7 @@ SSE; è stato provato forzando la via lenta in QEMU, non su un 486 fisico.
 | `gettimeofday` monotòno, ancorato una volta sola all'orologio | testato |
 | `time_t` a 64 bit | testato |
 | I file temporanei seguono `TMPDIR`, non più solo la radice | testato |
+| Cache del disco da 128 settori: `cc1` da 19,61 s a 10,19 s | misurato |
 | 276 prove automatiche in `libctest` | testato |
 
 ### Catena di compilazione
@@ -2423,6 +2426,67 @@ dal contatore dei tick: due orologi indipendenti, e la coppia poteva
 intervalli negativi a chi sottrae due istanti. Il prezzo dichiarato: se
 qualcuno corregge l'ora di sistema mentre un programma gira, `gettimeofday`
 non se ne accorge — un orologio che non torna mai indietro vale di più.
+
+### La cache dei settori: il compilatore va il doppio
+
+Il disco rigido ha una cache di 128 settori (64 KB) in `kernel/block/blk.c`.
+Il guadagno, misurato cambiando **una sola costante** e ricostruendo:
+
+| `cc1` che compila | tempo |
+|---|---|
+| senza cache | **19,61 s** |
+| con cache | **10,19 s** |
+
+⚠️ **Sulla copia sequenziale da 35 MB non cambia niente** (~80-100 s in
+entrambi i casi), e la differenza spiega a cosa serve davvero una cache.
+Per arrivare a ogni pagina da 4 KB di un file grande, ext2 legge prima i
+**blocchi indiretti** che dicono dove sta quella pagina: richieste piccole
+e sempre le stesse, ed è lì che la cache toglie lavoro. I dati veri
+passano una volta sola e non hanno niente da riusare.
+
+Ne segue una stranezza che sembra un errore di misura e non lo è: `cc1`
+**dal CD** girava più veloce dello stesso `cc1` dal disco rigido senza
+cache. Non perché il CD sia veloce — perché ISO 9660 non ha blocchi
+indiretti da inseguire e legge 2 KB per comando invece di 1 KB. Con la
+cache il disco rigido pareggia il CD.
+
+Tre scelte, e il perché:
+
+- **Solo richieste fino a 8 settori.** Una cache si rovina da sola: farci
+  passare i 34 MB di `cc1` sfratterebbe ogni settore utile per riempirla
+  di dati che nessuno rileggerà mai.
+- **Write-through, non write-back.** La scrittura va sul disco *subito*,
+  poi aggiorna la copia. Così `vfs_sync` continua a voler dire quello che
+  ha sempre voluto dire, e uno spegnimento brutale non perde niente che
+  non fosse già perso. Il write-back sarebbe più veloce e sarebbe **un'altra
+  promessa**.
+- **La chiave è (disco fisico, LBA assoluto)**, presa *dopo* la traduzione
+  di partizione: gli LBA relativi di due partizioni dello stesso disco si
+  sovrappongono, e usare quelli darebbe a una i settori dell'altra.
+
+⚠️ **Si svuota su `blk_rescan` e `blk_ripartiziona`.** Senza, dopo un
+`mkfs` si servirebbero i settori di prima, e il sintomo sarebbe «un
+filesystem corrotto appena creato».
+
+### ⚠️ `rep insw` invece di 256 chiamate a settore
+
+Il trasferimento PIO di un settore era un ciclo C che chiamava `port_inw`
+**256 volte** — e `port_inw` è una funzione vera, non una macro: 256
+`call` e altrettante `ret`, più il montaggio a mano dei due byte di ogni
+parola. Duemila e passa istruzioni per 512 byte. Ora è **una** istruzione,
+in `ata.c` e in `atapi.c`.
+
+⚠️ In ATAPI la via veloce vale **solo se la raffica ci sta nel buffer**:
+`rep insw` scrive e basta, non sa saltare i byte in eccesso, e una raffica
+va *sempre* consumata tutta o il canale resta inutilizzabile. Quando
+sborda si torna al ciclo lento.
+
+⚠️ Da solo questo cambiamento **non si vede nelle misure**, ed è
+un'informazione utile: il costo del disco non è il trasferimento, sono i
+comandi. Quella copia da 35 MB sono ~17.000 comandi ATAPI più ~35.000 ATA,
+ognuno con la sua attesa di `BSY` e `DRQ`. La leva che manca è
+raggruppare le richieste contigue — e sarà anche ciò che renderà sensato
+il DMA bus-master, che oggi ridurrebbe il costo del pezzo che già non pesa.
 
 ### `/boot/autoexec.sh` — comandi all'avvio
 

@@ -1412,7 +1412,7 @@ BINARI_ESTERNI := $(wildcard $(GCC_NATIVO_REL)/cc1) $(wildcard $(GCC_NATIVO_CHK)
                   $(wildcard $(FB_NATIVO)/fbc)
 
 $(ISO_IMG): $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_LEGGIMI) $(TOOLS_DIR)/iso/prova.s \
-                $(TOOLS_DIR)/iso/prova-cc1.c \
+                $(TOOLS_DIR)/iso/prova-cc1.c $(TOOLS_DIR)/iso/prova-cpp1.cpp \
             $(TOOLS_DIR)/iso/prova-mp.c $(TOOLS_DIR)/iso/prova-mat.c \
             $(TOOLS_DIR)/iso/prova-cpp.cpp \
             $(LIBC_SRC) $(LIBC_HDR) $(LIBC_START) \
@@ -1540,7 +1540,7 @@ $(ISO_IMG): $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_LEGGIMI) $(TOOLS_DIR)/iso/prova
 	elif [ -x "$(GCC_NATIVO_CHK)/cc1" ]; then G="$(GCC_NATIVO_CHK)"; M="controlli di sviluppo"; \
 	fi; \
 	if [ -n "$$G" ]; then \
-	    for b in cc1 cc1plus cpp xgcc collect2; do \
+	    for b in cpp xgcc; do \
 	        [ -x "$$G/$$b" ] || continue; \
 	        i386-exos-strip -o $(ISO_ROOT)/bin/$$b "$$G/$$b"; \
 	    done; \
@@ -1548,14 +1548,62 @@ $(ISO_IMG): $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_LEGGIMI) $(TOOLS_DIR)/iso/prova
 	        mv $(ISO_ROOT)/bin/xgcc $(ISO_ROOT)/bin/gcc; \
 	    fi; \
 	    echo "     GCC nativo incluso da $$G ($$M):"; \
-	    for b in cc1 cc1plus cpp gcc collect2; do \
+	    for b in cpp gcc; do \
 	        [ -f $(ISO_ROOT)/bin/$$b ] || continue; \
 	        echo "       $$b  $$(du -h $(ISO_ROOT)/bin/$$b | cut -f1)"; \
 	    done; \
 	else \
 	    echo "     GCC nativo assente: si costruisce con tools/gcc-exos/prepara-cc1.sh"; \
 	fi
+	@# --- L'ALBERO /exos: i percorsi che il driver ha COMPILATI DENTRO ----
+	@#
+	@# ⚠️ QUESTA DISPOSIZIONE NON E' UNA SCELTA NOSTRA, e' quella che xgcc
+	@# cerca a runtime perche' e' stato configurato con --prefix=/exos.
+	@# Si legge dal binario stesso (`strings gcc/cc1 | grep /exos`):
+	@#
+	@#   /exos/libexec/gcc/i386-exos/17.0.0/     cc1, cc1plus, collect2
+	@#   /exos/lib/gcc/i386-exos/17.0.0/         libgcc.a, crt*.o, specs
+	@#   /exos/lib/gcc/i386-exos/17.0.0/include  gli header DEL COMPILATORE
+	@#                                           (stddef.h, stdarg.h: senza
+	@#                                           questi non compila niente)
+	@#   /exos/i386-exos/include                 header di sistema del bersaglio
+	@#   /exos/include                           la nostra libc
+	@#   /exos/include/c++/17.0.0[/i386-exos]    libstdc++
+	@#   /exos/i386-exos/bin/                    as, ld
+	@#
+	@# ⚠️ SONO PERCORSI ASSOLUTI: valgono quando il CD e' la radice, oppure
+	@# quando questo albero viene INSTALLATO su /exos del disco rigido.
+	@# Montando il CD su /cdrom non combaciano, e al driver va detto con
+	@# -B/cdrom/exos/lib/gcc/i386-exos/17.0.0/ — vedi /leggimi.txt.
+	@set -e; \
+	G=""; \
+	if [ -x "$(GCC_NATIVO_REL)/cc1" ]; then G="$(GCC_NATIVO_REL)"; \
+	elif [ -x "$(GCC_NATIVO_CHK)/cc1" ]; then G="$(GCC_NATIVO_CHK)"; fi; \
+	if [ -n "$$G" ]; then \
+	    V=$$(basename $$(ls -d $(EXOS_CROSS)/lib/gcc/i386-exos/*/ | head -1)); \
+	    LG=$(ISO_ROOT)/exos/lib/gcc/i386-exos/$$V; \
+	    mkdir -p $(ISO_ROOT)/exos/libexec/gcc/i386-exos/$$V $$LG \
+	             $(ISO_ROOT)/exos/i386-exos/include $(ISO_ROOT)/exos/i386-exos/bin; \
+	    for b in cc1 cc1plus collect2; do \
+	        [ -x "$$G/$$b" ] && i386-exos-strip -o \
+	            $(ISO_ROOT)/exos/libexec/gcc/i386-exos/$$V/$$b "$$G/$$b"; \
+	    done; \
+	    cp $(EXOS_CROSS)/lib/gcc/i386-exos/$$V/libgcc.a $$LG/ 2>/dev/null || true; \
+	    for o in crtbegin.o crtend.o crti.o crtn.o; do \
+	        cp $(EXOS_CROSS)/lib/gcc/i386-exos/$$V/$$o $$LG/ 2>/dev/null || true; \
+	    done; \
+	    cp -r $(EXOS_CROSS)/lib/gcc/i386-exos/$$V/include $$LG/ 2>/dev/null || true; \
+	    cp -r $(EXOS_CROSS)/i386-exos/include/c++ $(ISO_ROOT)/exos/include/ 2>/dev/null || true; \
+	    for b in as ld; do \
+	        [ -f $(ISO_ROOT)/bin/$$b ] && cp $(ISO_ROOT)/bin/$$b $(ISO_ROOT)/exos/i386-exos/bin/; \
+	    done; \
+	    echo "     albero /exos: libexec+lib/gcc+include/c++ ($$(du -sh $(ISO_ROOT)/exos | cut -f1))"; \
+	fi
 	@cp $(TOOLS_DIR)/iso/prova-cc1.c $(ISO_ROOT)/prova-cc1.c
+	@# Il gemello C++ di prova-cc1.c: senza #include, per la stessa ragione
+	@# scritta in testa a quel file. Serve a provare cc1plus DENTRO EX-OS —
+	@# provacpp qui accanto e' compilato su Linux e dimostra un'altra cosa.
+	@cp $(TOOLS_DIR)/iso/prova-cpp1.cpp $(ISO_ROOT)/prova-cpp1.cpp
 	@cp $(TOOLS_DIR)/iso/prova-gcc.c $(ISO_ROOT)/prova-gcc.c
 	@cp $(TOOLS_DIR)/iso/prova-ssl.c $(ISO_ROOT)/prova-ssl.c
 	@# --- OpenSSL: la libreria e il programma che la prova -----------------
@@ -1664,6 +1712,79 @@ $(ISOX_IMG): $(FLOPPY_IMG) boot/autoexec.sh $(PCI_DRV_OUT) $(NE2K_DRV_OUT) $(PCN
 	    --avvio $(FLOPPY_IMG) --etichetta "EXOS"
 	@echo "[OK] CD di EX-OS: $(ISOX_IMG)"
 	@echo "     Provalo senza floppy:  qemu-system-i386 -cdrom $(ISOX_IMG) -boot d -m 32M"
+
+# =============================================================================
+# IL CD IN PEZZI — perche' un file solo non ci sta piu'
+#
+# dist/exos-tools.iso e' cresciuto oltre i 50 MB, e sopra quella soglia le
+# piattaforme di hosting cominciano ad avvisare (sopra i 100 MB rifiutano).
+# Continuera' a crescere: cc1plus da solo vale una trentina di megabyte.
+#
+# ⚠️ NON SERVE A METTERLO IN GIT — DA GIT E' USCITO. Spezzare toglieva
+# l'avviso dei 50 MB e lasciava intatto il guasto vero: un artefatto che
+# cambia a ogni ricostruzione lascia una copia nuova e INTERA in ogni
+# commit, per sempre. Le due ISO sono in .gitignore, e li' c'e' scritto
+# perche'.
+#
+# Questi pezzi servono a PUBBLICARE il CD fuori dalla cronologia: allegato
+# a un rilascio, messo su un disco, mandato a qualcuno. E' la stessa cosa
+# che si fa con dist/hd.img, solo che il CD non ci sta in un pezzo solo.
+#
+#     make iso-parti     -> dist/parti/exos-tools.zip + .z01, .z02, ...
+#     make iso-unisci    -> ricompone dist/exos-tools.iso e ne verifica la
+#                           sha256, cosi' un pezzo mancante si vede subito
+#
+# La dimensione dei pezzi si cambia:  make iso-parti ISO_PARTE=45m
+# =============================================================================
+ISO_PARTI  := $(DIST_DIR)/parti
+ISO_PARTE  ?= 20m
+
+.PHONY: iso-parti
+iso-parti: $(ISO_IMG)
+	@echo "=== CD degli strumenti in pezzi da $(ISO_PARTE) ==="
+	@rm -rf $(ISO_PARTI)
+	@mkdir -p $(ISO_PARTI)
+	@# ⚠️ -j (junk paths): senza, dentro lo zip finirebbe "dist/exos-tools.iso"
+	@# e chi lo apre si ritrova una directory che non si aspetta.
+	@zip -q -s $(ISO_PARTE) -j $(ISO_PARTI)/exos-tools.zip $(ISO_IMG)
+	@# ⚠️ sha256sum DA DENTRO dist/, cosi' il percorso nel file e' relativo
+	@# e `sha256sum -c` lo ritrova. Con il percorso completo la verifica
+	@# fallirebbe su qualunque macchina che non sia questa.
+	@cd $(DIST_DIR) && sha256sum exos-tools.iso > parti/exos-tools.sha256
+	@printf '%s\n' \
+	  'Il CD degli strumenti di EX-OS, spezzato per stare sotto i 50 MB.' \
+	  '' \
+	  'Per rimetterlo insieme servono TUTTI i pezzi nella stessa directory:' \
+	  'i .z01, .z02, ... e il .zip, che e'"'"' l'"'"'ULTIMO, non il primo.' \
+	  '' \
+	  'Linux/macOS:' \
+	  '    zip -s 0 exos-tools.zip --out intero.zip' \
+	  '    unzip intero.zip' \
+	  '    sha256sum -c exos-tools.sha256' \
+	  '' \
+	  'Windows: 7-Zip e WinRAR aprono direttamente exos-tools.zip' \
+	  'trovando i pezzi accanto.' \
+	  '' \
+	  'Oppure, dal repository:  make iso-unisci' \
+	  > $(ISO_PARTI)/LEGGIMI.txt
+	@echo "     $$(ls $(ISO_PARTI) | wc -l) file:"
+	@ls -la $(ISO_PARTI) | awk 'NR>3 {printf "       %-24s %8.1f MB\n", $$9, $$5/1048576}'
+	@echo "[OK] pezzi in $(ISO_PARTI)"
+
+.PHONY: iso-unisci
+iso-unisci:
+	@echo "=== Ricomposizione del CD degli strumenti ==="
+	@if [ ! -f $(ISO_PARTI)/exos-tools.zip ]; then \
+	    echo "  ! manca $(ISO_PARTI)/exos-tools.zip" >&2; exit 1; \
+	fi
+	@cd $(ISO_PARTI) && zip -q -s 0 exos-tools.zip --out intero.zip
+	@cd $(ISO_PARTI) && unzip -o -q intero.zip -d ..
+	@rm -f $(ISO_PARTI)/intero.zip
+	@# ⚠️ LA VERIFICA NON E' UNA FORMALITA': uno zip spezzato a cui manca un
+	@# pezzo di mezzo si ricompone SENZA errore e da' un ISO troncato, che
+	@# si monta e poi non trova i file.
+	@cd $(DIST_DIR) && sha256sum -c parti/exos-tools.sha256
+	@echo "[OK] $(ISO_IMG) ricomposto e verificato"
 
 .PHONY: iso-exos
 iso-exos: $(ISOX_IMG)
@@ -1941,6 +2062,8 @@ help:
 	@echo "  make debug-vga    — Avvia QEMU + monitor interattivo"
 	@echo ""
 	@echo "Analisi:"
+	@echo "  make iso-parti    — CD degli strumenti spezzato in pezzi da 20 MB"
+	@echo "  make iso-unisci   — Ricompone il CD dai pezzi e ne verifica la sha256"
 	@echo "  make verify       — Verifica struttura floppy"
 	@echo "  make abi          — Il bersaglio e' allineato alla libc di adesso?"
 	@echo "  make disasm-stage1— Disassembla boot sector"

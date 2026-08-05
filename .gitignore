@@ -126,3 +126,39 @@ dist/hd.img
 # combacerebbe anche con una directory annidata dentro roba nostra.
 # =============================================================================
 /FreeBASIC-1.07.3-source-bootstrap/
+
+# =============================================================================
+# LE ISO NON SI PUBBLICANO — nessuna delle due, e nemmeno a pezzi
+#
+# dist/exos-tools.iso e' 58 MB e cresce a ogni ricostruzione; dist/exos.iso
+# e' il CD avviabile del sistema. Sono entrambe ARTEFATTI: si rifanno con
+# `make iso` e `make iso-exos`.
+#
+# ⚠️ IL PROBLEMA NON ERA LA DIMENSIONE, ERA LA CRONOLOGIA. Spezzare l'ISO
+# in archivi piu' piccoli toglieva l'avviso dei 50 MB e lasciava intatto il
+# guasto vero: un artefatto che cambia a ogni ricostruzione lascia una copia
+# nuova e INTERA in ogni commit, per sempre. exos-tools.iso c'era gia' otto
+# volte. Compressa o spezzata, sarebbe stata la nona.
+#
+# Il floppy invece RESTA tracciato, e non e' un'incoerenza: e' 1,4 MB, e'
+# l'immagine che si distribuisce ed e' cio' che serve per avviare il
+# sistema senza costruire niente. La regola non e' «niente binari», e'
+# «niente artefatti che crescono».
+#
+# ⚠️ CHI CLONA NON TROVA PIU' GLI STRUMENTI PRONTI — cc1, as, ld, fbc,
+# libcrypto — e questo va detto: sono codice di terzi che costa ore di
+# ricostruzione. Le ricette ci sono tutte (tools/gcc-exos/leggimi.md,
+# tools/binutils-exos/, tools/freebasic-exos/leggimi.md), e per chi non le
+# vuole eseguire il CD si allega a un rilascio, non alla cronologia:
+# `make iso-parti` lo prepara gia' spezzato per il caricamento.
+#
+# ⚠️ LE COPIE GIA' IN CRONOLOGIA RESTANO, ED E' UNA SCELTA. Gli otto
+# commit che contengono exos-tools.iso non si toccano: chi passa di li'
+# trova un CD funzionante da scaricare, e vale come dimostrazione. Toglierli
+# vorrebbe dire riscrivere la cronologia (git filter-repo), cioe' cambiare
+# ogni hash del repository — un prezzo alto per recuperare spazio che e'
+# gia' stato speso. Questa regola vale da qui in avanti.
+# =============================================================================
+/dist/exos-tools.iso
+/dist/exos.iso
+/dist/parti/
