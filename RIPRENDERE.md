@@ -222,3 +222,70 @@ Due sospetti, in ordine di probabilita':
 sapere quale dei due e': la ricostruzione e' di ore e serve comunque, ma
 se il difetto e' il numero 1 sta in libiberty ed entra nello stesso giro.
 
+### Il driver dentro l'albero: mezzo passo avanti, e la prova che manca
+
+`-v` ha detto la cosa decisiva: il driver si calcola il prefisso **da dove
+sta lui**. Lanciato come `/cdrom/bin/gcc` cercava gli header in
+`/cdrom/bin/../lib/gcc/...` = `/cdrom/lib/gcc/`, che non esiste — da cui
+«no include path in which to search for stdio.h». Il `-o` invece c'era
+eccome (`-o ./ccGnR16b.s`): il «missing filename after -o» di prima veniva
+da altro e va riguardato a parte.
+
+Percio' il CD ora mette il driver DENTRO l'albero, in `/exos/bin/gcc`.
+
+⚠️ MA COSI' NON TROVA PIU' cc1: «cannot execute 'cc1': spawn: operazione
+non permessa» — che e' il messaggio mascherato dal difetto gia' corretto in
+pex-exos.c (non ancora ricostruito). I file ci sono tutti, verificato:
+
+    build/iso/exos/bin/gcc
+    build/iso/exos/libexec/gcc/i386-exos/17.0.0/{cc1,cc1plus,collect2}
+
+E con `-B/cdrom/exos/libexec/gcc/i386-exos/17.0.0/` cc1 **parte davvero**.
+Quindi il percorso e' leggibile e il binario e' buono: a non funzionare e'
+la RILOCAZIONE del prefisso, non l'albero.
+
+**Il prossimo passo, in ordine e senza ricostruire niente:**
+
+1. `/cdrom/exos/bin/gcc -v -c inc.c` e leggere `COMPILER_PATH` e
+   `-iprefix`: dicono quale prefisso ha calcolato. Se e' `/cdrom/exos`
+   allora il problema e' altrove; se e' altro, la rilocazione non scatta.
+2. Provare `/cdrom/exos/bin/gcc -B/cdrom/exos/libexec/gcc/i386-exos/17.0.0/
+   -O2 -o inc inc.c`: unisce le due meta' che funzionano separatamente —
+   header dalla rilocazione, cc1 dal -B.
+3. Solo dopo, la ricostruzione di GCC: porta la correzione di pex-exos.c
+   (`*err = errno`) e finalmente un messaggio vero al posto di EPERM.
+
+### ⚠️ Il vero indizio: il difetto segue `-o`, non i percorsi
+
+Provata la combinazione «rilocazione per gli header + -B per cc1»:
+
+    /cdrom/exos/bin/gcc -B/cdrom/exos/libexec/gcc/i386-exos/17.0.0/ \
+        -O2 -o inc inc.c
+    -> cc1: error: missing filename after '-o'
+
+Ma la corsa con `-v` e SENZA `-o` aveva mostrato una riga PERFETTA:
+
+    cc1 ... -dumpbase inc.c ... -o ./ccGnR16b.s
+
+Quindi cc1 si trova, si esegue, e il nome temporaneo si genera. **Il
+difetto compare quando l'utente passa `-o`**, cioe' quando il driver deve
+creare PIU' di un file temporaneo (.s e poi .o): il secondo nome esce
+vuoto.
+
+⚠️ NON E' UN PROBLEMA DI PERCORSI, e cercarlo li' e' tempo perso. Sta nella
+generazione dei nomi temporanei — `make_temp_file` in libiberty — che gia'
+si era fatta notare da `/` con «Cannot create temporary file in ./».
+
+**La prova successiva, corta e decisiva:**
+
+    cd /src
+    /cdrom/exos/bin/gcc -B/cdrom/exos/libexec/gcc/i386-exos/17.0.0/ \
+        -O2 -c inc.c
+
+Se produce `inc.o`, allora la compilazione col driver FUNZIONA e resta
+solo la catena a piu' stadi; il link si fa a mano con ld, come gia' si fa
+per FreeBASIC. Se fallisce anche quella, il difetto e' piu' a monte.
+
+E la ricostruzione di GCC serve comunque: senza la correzione di
+pex-exos.c ogni errore continua a uscire come EPERM.
+

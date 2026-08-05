@@ -1570,6 +1570,14 @@ $(ISO_IMG): $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_LEGGIMI) $(TOOLS_DIR)/iso/prova
 	@#   /exos/include                           la nostra libc
 	@#   /exos/include/c++/17.0.0[/i386-exos]    libstdc++
 	@#   /exos/i386-exos/bin/                    as, ld
+	@#   /exos/bin/                              il driver STESSO
+	@#
+	@# ⚠️ IL DRIVER VA DENTRO L'ALBERO, ed e' la chiave di tutto: GCC si
+	@# calcola il prefisso da DOVE STA LUI. Lanciato come /cdrom/bin/gcc
+	@# cerca gli header in /cdrom/bin/../lib/gcc/... = /cdrom/lib/gcc/, che
+	@# non esiste, e risponde «no include path in which to search for
+	@# stdio.h». Lanciato come /cdrom/exos/bin/gcc il prefisso diventa
+	@# /cdrom/exos e TUTTO l'albero torna al suo posto — senza nessun -B.
 	@#
 	@# ⚠️ SONO PERCORSI ASSOLUTI: valgono quando il CD e' la radice, oppure
 	@# quando questo albero viene INSTALLATO su /exos del disco rigido.
@@ -1594,6 +1602,10 @@ $(ISO_IMG): $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_LEGGIMI) $(TOOLS_DIR)/iso/prova
 	    done; \
 	    cp -r $(EXOS_CROSS)/lib/gcc/i386-exos/$$V/include $$LG/ 2>/dev/null || true; \
 	    cp -r $(EXOS_CROSS)/i386-exos/include/c++ $(ISO_ROOT)/exos/include/ 2>/dev/null || true; \
+	    mkdir -p $(ISO_ROOT)/exos/bin; \
+	    for b in gcc cpp; do \
+	        [ -f $(ISO_ROOT)/bin/$$b ] && cp $(ISO_ROOT)/bin/$$b $(ISO_ROOT)/exos/bin/; \
+	    done; \
 	    for b in as ld; do \
 	        [ -f $(ISO_ROOT)/bin/$$b ] && cp $(ISO_ROOT)/bin/$$b $(ISO_ROOT)/exos/i386-exos/bin/; \
 	    done; \
