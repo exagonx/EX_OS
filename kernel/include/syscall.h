@@ -65,7 +65,7 @@
 #define SYS_RENAME       38    /* rinomina SENZA spostare i dati (vedi vfs_rename) */
 
 /* Numero totale syscall supportate */
-#define SYSCALL_COUNT   240     /* deve coprire il numero syscall più alto (SYS_DMA_ALLOC=239) + 1 */
+#define SYSCALL_COUNT   241     /* deve coprire il numero syscall più alto (SYS_RANDOM=240) + 1 */
 
 /* =============================================================================
  * Codici errno
@@ -222,6 +222,24 @@
  * vero — sapere se la scheda ha smesso davvero di scriverci dentro.
  * ============================================================================= */
 #define SYS_DMA_ALLOC     239   /* ebx = DmaZona*; memoria per un bus master */
+
+/* =============================================================================
+ * SYS_RANDOM — byte imprevedibili
+ *
+ * ebx = buffer, ecx = quanti byte. Ritorna quanti ne ha scritti, oppure
+ * -EAGAIN se il sistema non ne ha ancora raccolti abbastanza.
+ *
+ * ⚠️ NON RIEMPIE MAI CON QUELLO CHE HA. E' la proprieta' che rende questa
+ * syscall utilizzabile per una chiave: un generatore che risponde comunque
+ * non da' modo a chi chiama di accorgersi che i byte sono deboli, perche'
+ * ci sono e sembrano buoni. Qui, se non ce n'e' abbastanza, si torna
+ * -EAGAIN e la decisione la prende il programma.
+ *
+ * ⚠️ E NON E' UN GENERATORE. Il kernel raccoglie entropia e la consegna;
+ * l'espansione crittografica la fa chi ha un DRBG vero. Il perche' per
+ * esteso sta in kernel/arch/x86/entropia.c.
+ * ============================================================================= */
+#define SYS_RANDOM        240   /* ebx = buf, ecx = len */
 
 /* Quanta ne puo' avere un processo, in pagine. 64 = 256 KB: gli anelli di
  * una scheda di rete con i loro buffer stanno in molto meno. */
@@ -662,6 +680,7 @@ int32_t sys_ioport_in32(InterruptFrame *f);
 int32_t sys_ioport_out32(InterruptFrame *f);
 int32_t sys_irq_done(InterruptFrame *f);
 int32_t sys_dma_alloc(InterruptFrame *f);
+int32_t sys_random(InterruptFrame *f);
 
 /* =============================================================================
  * SYS_SPAWN — il blocco EXTRA (ambiente e redirezioni)

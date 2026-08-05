@@ -1032,6 +1032,153 @@ static void prova_directory(void)
     esito("opendir su un nome assente fallisce", opendir("/nonesiste") == NULL);
 }
 
+/* =============================================================================
+ * Entropia
+ *
+ * ⚠️ NON SI PUO' PROVARE CHE DEI BYTE SIANO CASUALI, e pretenderlo
+ * sarebbe la prova sbagliata: qualunque sequenza fissa passa un test
+ * statistico se e' abbastanza corta, e qualunque sequenza vera lo
+ * fallisce ogni tanto. Quello che si puo' provare — e che coglie i
+ * difetti veri — e' molto piu' modesto:
+ *
+ *   - che i byte non siano TUTTI UGUALI (il difetto di un buffer mai
+ *     scritto, o di un RDRAND che fallisce senza dirlo);
+ *   - che due chiamate diano risultati DIVERSI (il difetto di un
+ *     serbatoio che non si consuma);
+ *   - che il contratto sia rispettato: getentropy riempie tutto o
+ *     fallisce, e sopra 256 byte rifiuta.
+ * ============================================================================= */
+/* ⚠️ fclose SUI FLUSSI STANDARD DEVE RIUSCIRE, e non e' pignoleria: il
+ * kernel rifiuta close(0/1/2) di proposito, e finche' fclose riportava
+ * quel rifiuto ogni programma che ne guarda l'esito moriva alla fine del
+ * proprio lavoro. Ci e' cascato cc1. */
+/* ⚠️ QUI SI GUARDA IL VALORE, non solo che la chiamata riesca. GCC
+ * calcola `tv_sec * 1000000000 + tv_usec * 1000` e poi VERIFICA che la
+ * somma dei tempi delle fasi non superi il totale: con un orologio che
+ * salta, quel controllo fallisce e cc1 muore con un internal compiler
+ * error DOPO aver fatto tutto il lavoro. E' successo. */
+static void prova_orologio(void)
+{
+    struct timeval a, b, c;
+    long long      na, nb;
+    int            i;
+
+    printf("\nOrologio:\n");
+
+    /* ⚠️ SI STAMPA IN DUE META' DA 32 BIT invece che con %lld: se il
+     * difetto fosse nella printf, un %lld rotto mostrerebbe un numero
+     * sbagliato e manderebbe a cercare il guasto nell'orologio. Due
+     * interi non possono mentire su questo. */
+    {
+        time_t adesso = time(NULL);
+
+        printf("  time()  = %u (alto %u)\n",
+               (unsigned)(adesso & 0xFFFFFFFFu),
+               (unsigned)((unsigned long long)adesso >> 32));
+        esito("time() e' plausibile (2020-2100)",
+              adesso > (time_t)1577836800 && adesso < (time_t)4102444800LL);
+    }
+
+    esito("gettimeofday riesce", gettimeofday(&a, NULL) == 0);
+    printf("  tv_sec  = %u (alto %u)  tv_usec = %u\n",
+           (unsigned)((unsigned long long)a.tv_sec & 0xFFFFFFFFu),
+           (unsigned)((unsigned long long)a.tv_sec >> 32),
+           (unsigned)a.tv_usec);
+
+    /* Fra il 2020 e il 2100, altrimenti non e' un orologio: e' un numero. */
+    esito("tv_sec e' plausibile (2020-2100)",
+          (long long)a.tv_sec > 1577836800LL && (long long)a.tv_sec < 4102444800LL);
+    esito("tv_usec sta sotto il milione", a.tv_usec >= 0 && a.tv_usec < 1000000);
+
+    /* Non deve MAI tornare indietro, e va provato piu' volte: un salto
+     * ogni tanto e' peggio di uno sempre, perche' passa le prove corte. */
+    gettimeofday(&b, NULL);
+    for (i = 0; i < 200; i++) {
+        gettimeofday(&c, NULL);
+        na = (long long)b.tv_sec * 1000000LL + b.tv_usec;
+        nb = (long long)c.tv_sec * 1000000LL + c.tv_usec;
+        if (nb < na) break;
+        b = c;
+    }
+    esito("non torna mai indietro in 200 letture", i == 200);
+
+    /* E il prodotto che fa GCC deve restare sensato. */
+    na = (long long)a.tv_sec * 1000000000LL + (long long)a.tv_usec * 1000LL;
+    esito("tv_sec*1e9 + tv_usec*1e3 non trabocca", na > 0);
+}
+
+static void prova_chiusura_standard(void)
+{
+    printf("\nFlussi standard:\n");
+
+    esito("fclose(stdout) riesce", fclose(stdout) == 0);
+    /* E dopo si deve poter ancora scrivere: il descrittore non e' stato
+     * chiuso davvero, ed e' il punto. */
+    printf("  (questa riga esce dopo fclose(stdout))\n");
+    esito("si scrive ancora dopo fclose(stdout)", 1);
+    esito("fclose(stderr) riesce", fclose(stderr) == 0);
+}
+
+static void prova_entropia(void)
+{
+    unsigned char a[32], b[32], grande[300];
+    int i, uguali, tutti_uguali;
+
+    printf("\nEntropia:\n");
+
+    memset(a, 0, sizeof(a));
+    memset(b, 0, sizeof(b));
+
+    if (getentropy(a, sizeof(a)) != 0) {
+        /* Non e' un fallimento della prova: su una macchina appena
+         * accesa senza RDRAND e senza nessuno che digiti puo' davvero non
+         * essercene. Va DETTO, non nascosto. */
+        printf("  [--]     getentropy: non abbastanza entropia (errno %d)\n", errno);
+        printf("           Non e' un difetto: batti qualche tasto e rilancia.\n");
+        return;
+    }
+    esito("getentropy riempie", 1);
+
+    tutti_uguali = 1;
+    for (i = 1; i < (int)sizeof(a); i++) if (a[i] != a[0]) tutti_uguali = 0;
+    esito("i byte non sono tutti uguali", !tutti_uguali);
+
+    esito("sopra 256 byte rifiuta", getentropy(grande, sizeof(grande)) != 0);
+
+    /* =====================================================================
+     * ⚠️ LA SECONDA CHIAMATA PUO' LEGITTIMAMENTE FALLIRE, e la prima
+     * stesura di questa prova non lo prevedeva: dava per scontato che
+     * l'entropia fosse infinita.
+     *
+     * Non lo e', ed e' il punto di tutto il meccanismo. Trentadue byte
+     * sono 256 bit, cioe' tutto il serbatoio: chiederne altri trentadue
+     * subito dopo trova la casa vuota, e la risposta giusta e' -EAGAIN.
+     * Un sistema che avesse risposto comunque avrebbe passato la prova
+     * sbagliata.
+     *
+     * Quindi qui si accetta ENTRAMBI gli esiti, ma NON un terzo: se
+     * riesce, i byte devono essere diversi dai primi.
+     * ===================================================================== */
+    if (getentropy(b, sizeof(b)) == 0) {
+        uguali = 1;
+        for (i = 0; i < (int)sizeof(a); i++) if (a[i] != b[i]) uguali = 0;
+        esito("la seconda presa da byte diversi dalla prima", !uguali);
+    } else {
+        esito("il serbatoio vuoto si dichiara invece di inventare",
+              errno == EAGAIN);
+    }
+
+    /* getrandom: forma Linux. Stessa storia — o ritorna dei byte, o
+     * dichiara che non ce ne sono. Quello che non deve fare e' ritornare
+     * zero byte fingendo di averne dati. */
+    {
+        int n = (int)getrandom(a, 16, 0);
+
+        esito("getrandom o serve o dichiara",
+              (n > 0 && n <= 16) || (n < 0 && errno == EAGAIN));
+    }
+}
+
 static void prova_temporanei(void)
 {
     char modello[] = "/tmpXXXXXX";
@@ -1818,6 +1965,9 @@ int main(int argc, char **argv)
     prova_stat();
     prova_ambiente();
     prova_directory();
+    prova_orologio();
+    prova_chiusura_standard();
+    prova_entropia();
     prova_temporanei();
     prova_terzi();
     prova_tls();

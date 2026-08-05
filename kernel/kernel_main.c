@@ -15,6 +15,7 @@
 #include "idt.h"
 #include "isr.h"
 #include "fpu.h"
+#include "entropia.h"
 #include "pmm.h"
 #include "paging.h"
 #include "kmalloc.h"
@@ -210,6 +211,10 @@ klog(LOG_INFO, "[PASSO 7] ISR OK");
      * ========================================================================= */
     klog(LOG_INFO, "[PASSO 7b] Inizializzazione FPU x87...");
     fpu_init();
+
+    /* Dopo fpu_init, che e' chi interroga la CPU: entropia_init ha
+     * bisogno di sapere se c'e' RDRAND, e quel bit lo scopre CPUID. */
+    entropia_init();
 klog(LOG_INFO, "[PASSO 7b] FPU %s", fpu_present() ? "OK" : "ASSENTE (x87 disabilitata)");
 
     /* =========================================================================

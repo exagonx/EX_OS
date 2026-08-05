@@ -707,6 +707,19 @@ struct timespec {
  * sbagliare a usarla. */
 int        timespec_get(struct timespec *ts, int base);
 
+/* ⚠️ La risoluzione vera e' 10 ms, non un nanosecondo: sotto c'e' il
+ * timer a 100 Hz. Si arrotonda per ECCESSO, cosi' una richiesta piu'
+ * corta di un tick dorme davvero invece di tornare subito. */
+int        nanosleep(const struct timespec *req, struct timespec *rem);
+
+/* ⚠️ Tutte e quattro tornano 0, e non significa «root»: significa che su
+ * EX-OS non esiste la domanda. Serve a OPENSSL_issetugid(), che chiede
+ * «giro con privilegi non miei?» — e qui la risposta onesta e' no. */
+int        getuid(void);
+int        geteuid(void);
+int        getgid(void);
+int        getegid(void);
+
 /* Formatta una data secondo `fmt`. Ritorna i caratteri scritti (NUL
  * escluso), o 0 se non ci stavano — nel qual caso il contenuto di `buf`
  * non e' utilizzabile, come dice lo standard.
@@ -2001,6 +2014,25 @@ typedef struct {
 } DmaZona;
 
 int     dma_alloc(DmaZona *z);
+
+/* =============================================================================
+ * Byte imprevedibili
+ *
+ * getentropy() riempie TUTTO il buffer o fallisce (0 / -1, firma OpenBSD);
+ * getrandom() ritorna quanti byte ha scritto (firma Linux).
+ *
+ * ⚠️ ENTRAMBE POSSONO FALLIRE CON EAGAIN, e non e' un caso da ignorare:
+ * significa che il sistema non ha ancora raccolto abbastanza
+ * imprevedibilita'. La risposta giusta e' dirlo a chi usa il programma e
+ * chiedergli di battere qualcosa sulla tastiera — non riprovare in ciclo
+ * stretto, che non aggiunge entropia, e tanto meno proseguire con quello
+ * che c'e'.
+ *
+ * Il perche' per esteso sta in kernel/arch/x86/entropia.c: il kernel
+ * raccoglie entropia e non genera numeri casuali.
+ * ============================================================================= */
+int     getentropy(void *buf, size_t len);
+ssize_t getrandom(void *buf, size_t len, unsigned int flags);
 
 /* Richiede accesso a un range di porte I/O [base, base+count).
  * Sovrascrive un'eventuale bind precedente. Ritorna 0 su successo. */

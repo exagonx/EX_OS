@@ -1198,6 +1198,7 @@ KERNEL_C_SRC   := $(KERNEL_DIR)/arch/x86/gdt.c \
                   $(KERNEL_DIR)/arch/x86/idt.c \
                   $(KERNEL_DIR)/arch/x86/isr.c \
                   $(KERNEL_DIR)/arch/x86/fpu.c \
+                  $(KERNEL_DIR)/arch/x86/entropia.c \
                   $(KERNEL_DIR)/arch/x86/vga.c \
                   $(KERNEL_DIR)/arch/x86/rtc.c \
                   $(KERNEL_DIR)/arch/x86/kprintf.c \
@@ -1372,6 +1373,9 @@ CROSS_SYSROOT   ?= $(HOME)/exos-cross/i386-exos
 # di comando: make iso EXOS_CROSS=/altro/percorso
 EXOS_CROSS ?= $(HOME)/exos-cross
 
+# Dove prepara-openssl.sh ha lasciato libcrypto.a.
+OPENSSL_BUILD ?= $(HOME)/openssl-build-exos
+
 GCC_NATIVO_REL  ?= $(HOME)/gcc-build-rel/gcc
 GCC_NATIVO_CHK  ?= $(HOME)/gcc-build-canadian/gcc
 ISO_LEGGIMI := $(TOOLS_DIR)/iso/leggimi.txt
@@ -1528,6 +1532,26 @@ $(ISO_IMG): $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_LEGGIMI) $(TOOLS_DIR)/iso/prova
 	fi
 	@cp $(TOOLS_DIR)/iso/prova-cc1.c $(ISO_ROOT)/prova-cc1.c
 	@cp $(TOOLS_DIR)/iso/prova-gcc.c $(ISO_ROOT)/prova-gcc.c
+	@cp $(TOOLS_DIR)/iso/prova-ssl.c $(ISO_ROOT)/prova-ssl.c
+	@# --- OpenSSL: la libreria e il programma che la prova -----------------
+	@# Come per GCC e binutils: i sorgenti non stanno nel repository e la
+	@# libreria si costruisce a parte (tools/openssl-exos/). Se c'e', il CD
+	@# porta libcrypto.a in /exos/lib e il programma di prova in /bin.
+	@if [ -f "$(OPENSSL_BUILD)/libcrypto.a" ]; then \
+	    cp "$(OPENSSL_BUILD)/libcrypto.a" $(ISO_ROOT)/exos/lib/; \
+	    mkdir -p $(ISO_ROOT)/exos/include/openssl; \
+	    cp -r "$(OPENSSL_BUILD)/include/openssl/." $(ISO_ROOT)/exos/include/openssl/ 2>/dev/null || true; \
+	    cp -r openssl/include/openssl/. $(ISO_ROOT)/exos/include/openssl/ 2>/dev/null || true; \
+	    if command -v i386-exos-gcc >/dev/null 2>&1; then \
+	        i386-exos-gcc -O2 -I "$(OPENSSL_BUILD)/include" -I openssl/include \
+	            -o $(ISO_ROOT)/bin/provassl $(TOOLS_DIR)/iso/prova-ssl.c \
+	            "$(OPENSSL_BUILD)/libcrypto.a" 2>/dev/null && \
+	        i386-exos-strip $(ISO_ROOT)/bin/provassl && \
+	        echo "     OpenSSL: libcrypto.a e /bin/provassl ($$(du -h $(ISO_ROOT)/bin/provassl | cut -f1))"; \
+	    fi; \
+	else \
+	    echo "     OpenSSL assente: si costruisce con tools/openssl-exos/prepara-openssl.sh"; \
+	fi
 	@# L'assembly di prova-gcc.c lo produce il CROSS, e ci va per due motivi:
 	@# permette di provare la meta' "assembla e collega" senza aspettare cc1,
 	@# e da' il termine di paragone — il .s che cc1 dovra' produrre uguale.

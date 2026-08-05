@@ -241,6 +241,7 @@ typedef struct {
 #define SYS_IOPORT_OUT32  236
 #define SYS_IRQ_DONE      237
 #define SYS_DMA_ALLOC     239
+#define SYS_RANDOM        240
 
 /* ⚠️ DEVE RESTARE IDENTICA a DmaZona in kernel/include/syscall.h e in
  * lib/include/libc.h. La riempie il kernel scrivendo nella memoria del
@@ -298,6 +299,7 @@ typedef struct {
 #define EIO           5
 #define EBADF         9
 #define ECHILD       10
+#define EAGAIN       11
 #define ENOMEM       12
 #define EACCES       13
 #define EFAULT       14
@@ -1487,7 +1489,32 @@ int fclose(FILE *f)
     if (f == NULL) return -1;
 
     if (scarica(f) != 0) r = -1;
-    if (_syscall1(SYS_CLOSE, (uint32_t)f->fd) < 0) r = -1;
+
+    /* =====================================================================
+     * ⚠️ SU stdin, stdout E stderr SI SVUOTA E BASTA — NON SI CHIUDE.
+     *
+     * Il kernel rifiuta close() sui descrittori 0, 1 e 2 di proposito:
+     * lascerebbe il processo senza un posto dove dire che qualcosa e'
+     * andato storto (vedi kernel/syscall/syscall_impl.c). La conseguenza
+     * era che fclose(stdout) tornava -1, e i programmi scritti bene —
+     * quelli che l'esito lo GUARDANO — lo trattavano come un guasto.
+     *
+     * Ci e' cascato `cc1`, che alla fine di ogni compilazione fa
+     *
+     *     if (ferror (stdout) || fclose (stdout))
+     *         fatal_error (input_location, "%s: %m", "stdout");
+     *
+     * e moriva con «cc1: fatal error: stdout: descrittore non valido»
+     * DOPO aver fatto tutto il lavoro. Il sintomo non nominava la causa in
+     * nessun modo: sembrava un difetto del compilatore.
+     *
+     * Chi chiama fclose(stdout) alla fine del programma sta dicendo «ho
+     * finito, svuota»: quello si puo' fare, e riesce. Il descrittore resta
+     * aperto, che e' esattamente cio' che il kernel vuole garantire.
+     * ===================================================================== */
+    if (f->fd > 2) {
+        if (_syscall1(SYS_CLOSE, (uint32_t)f->fd) < 0) r = -1;
+    }
 
     dimentica_flusso(f);
 
@@ -4517,6 +4544,76 @@ int usleep(unsigned int us)
  * ritorno void non compila nemmeno. E' cosi' che si e' scoperto: la
  * libstdc++ lo scrive in src/c++11/thread.cc.
  * ============================================================================= */
+/* =============================================================================
+ * nanosleep — la firma POSIX sopra un orologio che non ha i nanosecondi
+ *
+ * ⚠️ LA RISOLUZIONE VERA E' 10 ms, non un nanosecondo, e vale la pena
+ * dirlo qui invece di lasciarlo scoprire a chi misura: sotto c'e'
+ * SYS_SLEEP, che conta i tick del PIT a 100 Hz. Il nome della funzione
+ * promette mille volte piu' di quello che la macchina puo' dare.
+ *
+ * ⚠️ SI ARROTONDA PER ECCESSO, e non e' un dettaglio: chi chiede di
+ * dormire un microsecondo si aspetta di dormire ALMENO un microsecondo.
+ * Arrotondando per difetto, una richiesta piu' corta di un tick
+ * diventerebbe un ritorno immediato — cioe' un ciclo di attesa che non
+ * aspetta, che e' il modo di trasformare una pausa in un consumo di CPU
+ * al cento per cento.
+ *
+ * `rem` si azzera: qui non ci sono i segnali, quindi una dormita non puo'
+ * essere interrotta e non resta mai niente da recuperare.
+ * ============================================================================= */
+/* =============================================================================
+ * Identita' del processo: uid, gid — e perche' sono tutti zero
+ *
+ * EX-OS non ha utenti. Non c'e' un login, non c'e' un proprietario dei
+ * file, non c'e' setuid: ogni processo ha gli stessi diritti di ogni
+ * altro, e la separazione che conta e' quella fra spazi di
+ * indirizzamento, non fra persone.
+ *
+ * ⚠️ ZERO NON VUOL DIRE «ROOT», VUOL DIRE «NON C'E' QUESTA DOMANDA». La
+ * distinzione conta per l'unico uso serio che ne fa il codice di terzi:
+ *
+ *     OPENSSL_issetugid() = getuid() != geteuid() || getgid() != getegid()
+ *
+ * cioe' «sto girando con privilegi che non sono di chi mi ha lanciato?».
+ * Su EX-OS la risposta e' NO, sempre e onestamente, perche' non esiste un
+ * meccanismo che possa dare privilegi diversi. Restituendo lo stesso
+ * valore da tutte e quattro, quella domanda riceve la risposta giusta —
+ * non una finta.
+ *
+ * ⚠️ IL GIORNO CHE GLI UTENTI ARRIVASSERO, QUESTE VANNO RIFATTE PRIMA DI
+ * TUTTO IL RESTO. Un sistema con i privilegi e una issetugid() che dice
+ * sempre no e' un sistema che si fida delle variabili d'ambiente di
+ * chiunque.
+ * ============================================================================= */
+int getuid(void)  { return 0; }
+int geteuid(void) { return 0; }
+int getgid(void)  { return 0; }
+int getegid(void) { return 0; }
+
+int nanosleep(const struct timespec *req, struct timespec *rem)
+{
+    unsigned long long ms;
+
+    if (req == NULL || req->tv_nsec < 0 || req->tv_nsec >= 1000000000L) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    ms  = (unsigned long long)req->tv_sec * 1000ULL;
+    ms += ((unsigned long long)req->tv_nsec + 999999ULL) / 1000000ULL;
+
+    if (rem) { rem->tv_sec = 0; rem->tv_nsec = 0; }
+
+    while (ms > 0) {
+        unsigned int fetta = (ms > 1000000ULL) ? 1000000u : (unsigned int)ms;
+
+        _syscall1(SYS_SLEEP, fetta);
+        ms -= fetta;
+    }
+    return 0;
+}
+
 unsigned int sleep(unsigned int sec)
 {
     _syscall1(SYS_SLEEP, sec * 1000);
@@ -5248,6 +5345,57 @@ int irq_done(unsigned int irq)
 int dma_alloc(DmaZona *z)
 {
     return (int)_syscall1(SYS_DMA_ALLOC, (unsigned int)z);
+}
+
+/* =============================================================================
+ * Byte imprevedibili — vedi kernel/arch/x86/entropia.c per il perche'
+ *
+ * ⚠️ getentropy() E' IL NOME CHE CONTA, e non e' una scelta estetica:
+ * OpenSSL lo cerca come simbolo DEBOLE prima di qualunque altra cosa
+ * (providers/implementations/rands/seeding/rand_unix.c). Fornirlo con
+ * questa firma esatta e' quello che permette di configurare OpenSSL per
+ * EX-OS senza toccarne una riga.
+ *
+ * ⚠️ RITORNA 0 O -1, NON IL NUMERO DI BYTE. E' la firma di OpenBSD, che
+ * e' quella che i chiamanti si aspettano: getentropy() o riempie TUTTO il
+ * buffer o fallisce. Un riempimento parziale silenzioso qui sarebbe una
+ * chiave meta' prevedibile.
+ * ============================================================================= */
+int getentropy(void *buf, size_t len)
+{
+    unsigned char *p = (unsigned char *)buf;
+    size_t         fatti = 0;
+
+    /* Il limite di OpenBSD, e vale la pena tenerlo: chi chiede piu' di
+     * 256 byte di entropia vera sta usando l'attrezzo sbagliato — quello
+     * che gli serve e' un DRBG seminato con questi. */
+    if (len > 256) { errno = EIO; return -1; }
+
+    while (fatti < len) {
+        int n = (int)_syscall2(SYS_RANDOM, (unsigned int)(p + fatti),
+                               (unsigned int)(len - fatti));
+
+        if (n <= 0) {
+            errno = (n == -EAGAIN) ? EAGAIN : EIO;
+            return -1;
+        }
+        fatti += (size_t)n;
+    }
+    return 0;
+}
+
+/* La forma Linux: ritorna quanti byte ha scritto. `flags` si ignora —
+ * qui non esiste la distinzione fra /dev/random e /dev/urandom, perche'
+ * non esiste un generatore che continui a macinare: c'e' un serbatoio,
+ * e quando e' vuoto lo si dice. */
+ssize_t getrandom(void *buf, size_t len, unsigned int flags)
+{
+    int n;
+
+    (void)flags;
+    n = (int)_syscall2(SYS_RANDOM, (unsigned int)buf, (unsigned int)len);
+    if (n < 0) { errno = -n; return -1; }
+    return (ssize_t)n;
 }
 
 /* =============================================================================

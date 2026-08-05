@@ -12,6 +12,7 @@
 #include "kernel.h"
 #include "idt.h"
 #include "syscall.h"
+#include "entropia.h"
 #include "sched.h"
 #include "pmm.h"
 #include "paging.h"
@@ -3259,6 +3260,46 @@ int32_t sys_irq_done(InterruptFrame *frame)
  * Il perche' sta in kernel/include/syscall.h, accanto alla definizione di
  * DmaZona. Qui restano le due decisioni che si vedono solo nel codice.
  * ============================================================================= */
+/* =============================================================================
+ * SYS_RANDOM (240) — vedi kernel/include/syscall.h per il contratto
+ * ============================================================================= */
+int32_t sys_random(InterruptFrame *frame)
+{
+    uint8_t *buf = (uint8_t *)frame->ebx;
+    uint32_t len = frame->ecx;
+    uint32_t fatti = 0;
+
+    if (len == 0) return 0;
+
+    /* ⚠️ IL PUNTATORE SI VERIFICA UNA VOLTA SOLA, PER TUTTA LA LUNGHEZZA.
+     * entropia_preleva serve al massimo 32 byte per volta e una richiesta
+     * piu' grande si compone di piu' prelievi, ma ogni scrittura resta
+     * dentro l'intervallo gia' controllato qui: ricontrollarlo a ogni
+     * giro non aggiungerebbe sicurezza, e dimenticarsene una volta la
+     * toglierebbe tutta. */
+    if (!syscall_verify_ptr(buf, len)) return ERR(EFAULT);
+
+    while (fatti < len) {
+        uint32_t chiedo = len - fatti;
+        int      n;
+
+        if (chiedo > 32u) chiedo = 32u;
+
+        n = entropia_preleva(buf + fatti, chiedo);
+        if (n <= 0) {
+            /* Niente entropia: se non se n'e' consegnata nemmeno un po'
+             * si riporta l'errore, altrimenti si dice quanto si e'
+             * fatto — un riempimento parziale e' onesto, uno silenzioso
+             * no. */
+            return (fatti > 0) ? (int32_t)fatti : ERR(EAGAIN);
+        }
+
+        fatti += (uint32_t)n;
+    }
+
+    return (int32_t)fatti;
+}
+
 int32_t sys_dma_alloc(InterruptFrame *frame)
 {
     DmaZona  *z    = (DmaZona *)frame->ebx;

@@ -13,6 +13,7 @@
 #include "vga.h"
 #include "idt.h"
 #include "isr.h"
+#include "entropia.h"
 #include "ipc.h"
 #include "syscall.h"
 
@@ -294,6 +295,13 @@ void isr_handler(InterruptFrame *frame)
 void irq_handler(InterruptFrame *frame)
 {
     uint8_t irq = (uint8_t)(frame->int_no - 32);
+
+    /* ⚠️ PRIMA DI TUTTO IL RESTO, e non e' una preferenza estetica: quello
+     * che vale come entropia e' l'ISTANTE in cui l'interrupt e' arrivato,
+     * e ogni riga eseguita prima di leggerlo aggiunge un ritardo
+     * prevedibile che lo appiattisce. La funzione ignora da sola il timer
+     * — vedi kernel/arch/x86/entropia.c. */
+    entropia_evento(irq);
 
     /* Gestisci IRQ spurio dal master PIC (IRQ7) */
     if (irq == 7) {
