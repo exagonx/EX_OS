@@ -452,7 +452,14 @@ static void env_set(const char *key, const char *value)
  * (file assente, sezione incompleta): servono a far partire la shell in
  * uno stato sensato, non a duplicare la configurazione. */
 static const char *const ENV_INHERITED[][2] = {
-    { "PATH",   "/bin:/dev"        },
+    /* ⚠️ /cdrom/bin C'E' APPOSTA: e' dove stanno gli strumenti di
+     * sviluppo (as, ld, cc1, fbc), che sul floppy non ci stanno. Da
+     * quando spawn() cerca nel PATH (vedi lib/libc.c), e' anche cio' che
+     * permette a un compilatore di trovare il proprio assemblatore
+     * chiamandolo "as" e basta, come fa su qualunque altro sistema.
+     * Un lettore vuoto non e' un problema: la voce semplicemente non
+     * combacia con niente. */
+    { "PATH",   "/bin:/dev:/cdrom/bin" },
     { "HOME",   "/"                },
     { "TERM",   "vga"              },
     { "OSNAME", "EX-OS"            },
@@ -506,6 +513,14 @@ static void env_init(void)
  * mostrato sempre.
  * ============================================================================= */
 static int g_verbose_boot = 1;
+
+/* Il codice di uscita dell'ultimo comando in primo piano.
+ *
+ * ⚠️ SERVE A `sh -c`, che deve RIPORTARLO al proprio padre: senza, la
+ * system() della libc direbbe «riuscito» a qualunque comando, compresi
+ * quelli falliti — e chi la chiama non avrebbe modo di accorgersene.
+ * E' anche la meta' del lavoro che servira' a `$?`, quando ci sara'. */
+static int g_ultimo_stato = 0;
 
 static void verbose_init(void)
 {
@@ -1133,7 +1148,13 @@ static void avvia_figlio(int pid, int background, const char *cmdline)
     }
 
     sh_setfg(pid);
-    sh_waitpid(pid, &status, 0);
+    if (sh_waitpid(pid, &status, 0) >= 0) {
+        /* ⚠️ `status` E' GIA' IL CODICE DI USCITA, non l'intero impacchettato
+         * di Unix: EX-OS non consegna segnali, quindi il modo di finire e'
+         * uno solo e il kernel ci scrive il numero e basta. Vedi il
+         * commento su waitpid in lib/include/libc.h. */
+        g_ultimo_stato = (int)status;
+    }
     sh_setfg(sh_getpid());
 }
 
@@ -1172,6 +1193,10 @@ static void run_program(const char *prog, int argc, char *argv[],
         }
         print("exec: comando non trovato: ");
         printerr(prog);
+        /* 127 e' la convenzione di ogni shell per «non trovato», e conta
+         * davvero da quando esiste `sh -c`: chi chiama system() distingue
+         * cosi' un comando fallito da un comando che non c'e'. */
+        g_ultimo_stato = 127;
     } else {
         char *spawn_argv[32];
         int   spawn_argc = 0;
@@ -1912,18 +1937,60 @@ static void esegui_autoexec(void)
 }
 
 /* =============================================================================
- * main — Entry point della shell
+ * shell_main — la shell, con i suoi argomenti
  *
- * Questa è la funzione chiamata dall'ELF loader quando sched_enter_usermode
- * salta all'entry point del binario /bin/sh.
+ * La chiama _start in bin/sh/start.S, che è ciò che l'ELF loader salta.
+ *
+ * ⚠️ FINO AD AGOSTO 2026 QUESTA ERA `void _start(void)` E NON VEDEVA argv.
+ * Sembrava una mancanza innocua — la shell la lancia il kernel, senza
+ * argomenti — ed era invece il tappo di una fila intera: senza `sh -c`
+ * non si possono scrivere system() e popen() nella libc, e senza QUELLE
+ * non gira la runtime di FreeBASIC. Il perché del file assembly sta in
+ * testa a start.S.
+ *
+ * Tre modi d'uso:
+ *
+ *     sh                    interattiva: banner, autoexec, prompt
+ *     sh -c "comando"       esegue una riga ed esce con il SUO codice
+ *     sh script.sh          esegue lo script ed esce
+ *
+ * ⚠️ `-c` NON stampa il banner e NON esegue l'autoexec, e non è un
+ * dettaglio estetico: chi la chiama è un programma che legge l'output del
+ * comando, e il banner glielo sporcherebbe.
  * ============================================================================= */
-void _start(void)
+int shell_main(int argc, char **argv)
 {
     char line[MAX_LINE];
     int  n;
 
     /* Inizializza variabili d'ambiente */
     env_init();
+
+    if (argc >= 2 && sh_strcmp(argv[1], "-c") == 0) {
+        if (argc < 3) {
+            printerr("sh: -c vuole un comando");
+            sh_exit(2);
+        }
+        /* ⚠️ SI COPIA: esegui_riga() spezza la riga piantandoci dentro dei
+         * terminatori, e argv[2] sta nello stack costruito da sys_spawn —
+         * non è roba nostra da modificare. */
+        sh_strcpy(line, argv[2], MAX_LINE);
+        n = 0;
+        while (line[n] != '\0' && n < MAX_LINE - 1) n++;
+
+        /* La tastiera è già nostra: senza, un comando interattivo lanciato
+         * da qui non riuscirebbe a leggere una riga. */
+        sh_setfg(sh_getpid());
+        esegui_riga(line, n);
+        sh_exit(g_ultimo_stato);
+    }
+
+    /* Un argomento che non è un'opzione è il nome di uno script. */
+    if (argc >= 2 && argv[1][0] != '-') {
+        sh_setfg(sh_getpid());
+        esegui_script(argv[1], NULL);
+        sh_exit(g_ultimo_stato);
+    }
 
     /* Da subito la tastiera e' della shell: finche' nessuno dichiara il
      * primo piano, sys_read lascia leggere chiunque — e il primo job
@@ -1981,4 +2048,5 @@ void _start(void)
     }
 
     sh_exit(0);
+    return 0;   /* non raggiunto: sh_exit non ritorna */
 }

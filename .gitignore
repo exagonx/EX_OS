@@ -100,3 +100,29 @@
 # l'immagine che si distribuisce ed e' 1.4 MB; questo no.
 # =============================================================================
 dist/hd.img
+
+# =============================================================================
+# Il messaggio del prossimo commit
+#
+# gitupdate.sh legge da qui il titolo e il corpo del commit da fare, e a
+# push riuscito lo sposta in .git/ultimo-messaggio-commit.txt. E' un file
+# di lavoro, non un sorgente: `git add .` non lo deve raccogliere.
+# =============================================================================
+/messaggio-commit.txt
+
+# =============================================================================
+# FreeBASIC — l'albero dei sorgenti con il bootstrap
+#
+# 146 MB di codice di terzi (GPL v2 il compilatore, LGPL v2.1 la runtime)
+# che si scaricano da freebasic.net: stessa regola di /gcc/ e degli altri
+# pacchetti qui sopra — nella cronologia di questo repository non ci
+# devono stare.
+#
+# ⚠️ Cio' che sara' NOSTRO — il bersaglio exos per fbc e la runtime
+# portata — andra' in tools/freebasic-exos/, che e' tracciata, come per
+# GCC sta in tools/gcc-exos/.
+#
+# ⚠️ ANCORATO ALLA RADICE, come tutti gli altri: senza lo slash iniziale
+# combacerebbe anche con una directory annidata dentro roba nostra.
+# =============================================================================
+/FreeBASIC-1.07.3-source-bootstrap/

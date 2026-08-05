@@ -173,6 +173,7 @@ endef
 
 # --- Shell utente (/bin/sh) ---------------------------------------------------
 SHELL_SRC   := bin/sh/shell.c
+SHELL_START := bin/sh/start.S
 SHELL_BIN   := $(BUILD_BIN)/sh
 SHELL_LD    := bin/sh/shell.ld
 
@@ -188,11 +189,17 @@ CFLAGS_USER := -m32 -ffreestanding -fno-builtin -fno-stack-protector \
                -fno-pic -fno-pie -Wall -O2 -std=c11 -nostdlib \
                -ffunction-sections -fdata-sections
 
-$(SHELL_BIN): $(SHELL_SRC) $(SHELL_LD)
+# ⚠️ start.S NON E' OPZIONALE E NON E' lib/start.S. La shell non collega
+# la libc — parla col kernel attraverso i propri involucri sh_* — quindi
+# non puo' usare l'ingresso comune, che chiama _libc_start. Questo prende
+# argc e argv dallo stack e li passa a shell_main: senza, `sh -c` non
+# esiste, e senza quello non esistono system() e popen() nella libc.
+$(SHELL_BIN): $(SHELL_SRC) $(SHELL_START) $(SHELL_LD)
 	@echo "=== Compilazione Shell utente /bin/sh ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I drivers/kbd -I drivers/pci -I drivers/net -c $(SHELL_SRC) -o $(BUILD_OBJ)/shell.o
-	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(SHELL_LD) $(BUILD_OBJ)/shell.o -o $@
+	$(CC) -m32 -c $(SHELL_START) -o $(BUILD_OBJ)/sh_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(SHELL_LD) $(BUILD_OBJ)/sh_start.o $(BUILD_OBJ)/shell.o -o $@
 	@echo "[OK] Shell compilata: $@"
 
 .PHONY: shell
@@ -1375,6 +1382,8 @@ EXOS_CROSS ?= $(HOME)/exos-cross
 
 # Dove prepara-openssl.sh ha lasciato libcrypto.a.
 OPENSSL_BUILD ?= $(HOME)/openssl-build-exos
+# FreeBASIC per EX-OS: lo costruisce tools/freebasic-exos/prepara-fb.sh
+FB_NATIVO     ?= $(HOME)/fb-build-exos
 
 GCC_NATIVO_REL  ?= $(HOME)/gcc-build-rel/gcc
 GCC_NATIVO_CHK  ?= $(HOME)/gcc-build-canadian/gcc
@@ -1393,7 +1402,10 @@ ISO_MKISO   := $(TOOLS_DIR)/mkiso.py
 # fallire con "nessuna regola per costruire".
 BINARI_ESTERNI := $(wildcard $(GCC_NATIVO_REL)/cc1) $(wildcard $(GCC_NATIVO_CHK)/cc1) \
                   $(wildcard $(BINUTILS_NATIVI)/gas/as-new) \
-                  $(wildcard $(BINUTILS_NATIVI)/ld/ld-new)
+                  $(wildcard $(BINUTILS_NATIVI)/ld/ld-new) \
+                  $(wildcard $(OPENSSL_BUILD)/libcrypto.a) \
+                  $(wildcard $(EXOS_CROSS)/i386-exos/lib/libc.a) \
+                  $(wildcard $(FB_NATIVO)/fbc)
 
 $(ISO_IMG): $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_LEGGIMI) $(TOOLS_DIR)/iso/prova.s \
                 $(TOOLS_DIR)/iso/prova-cc1.c \
@@ -1402,6 +1414,15 @@ $(ISO_IMG): $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_LEGGIMI) $(TOOLS_DIR)/iso/prova
             $(LIBC_SRC) $(LIBC_HDR) $(LIBC_START) \
             README.md README.en.md gpl-2.0.txt
 	@echo "=== Creazione CD degli strumenti ==="
+	@# ⚠️ IL CONTROLLO CHE SAREBBE SERVITO. Qui dentro finiscono binari
+	@# per i386-exos costruiti FUORI da questo Makefile (cc1, as, ld,
+	@# libcrypto): se la libc ha cambiato un tipo dopo che sono stati
+	@# costruiti, si collegano lo stesso e si rompono a caso — vedi
+	@# tools/ricostruisci-bersaglio.sh per il caso vero. E' un AVVISO e
+	@# non un errore: un CD con dentro roba vecchia si fa comunque, purche'
+	@# chi lo fa lo sappia.
+	@tools/ricostruisci-bersaglio.sh --verifica || \
+	    echo "     ⚠️  vedi sopra: il CD conterra' binari con l'ABI vecchia"
 	@mkdir -p $(DIST_DIR)
 	@rm -rf $(ISO_ROOT)
 	@mkdir -p $(ISO_ROOT)/exos/include $(ISO_ROOT)/exos/lib $(ISO_ROOT)/doc $(ISO_ROOT)/bin
@@ -1551,6 +1572,25 @@ $(ISO_IMG): $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_LEGGIMI) $(TOOLS_DIR)/iso/prova
 	    fi; \
 	else \
 	    echo "     OpenSSL assente: si costruisce con tools/openssl-exos/prepara-openssl.sh"; \
+	fi
+	@# --- FreeBASIC: il compilatore e la sua runtime ----------------------
+	@# Stessa regola di GCC, binutils e OpenSSL: non sta nel repository, si
+	@# copia da dove l'ha lasciato tools/freebasic-exos/prepara-fb.sh, e se
+	@# non c'e' il CD si fa lo stesso dicendo che manca.
+	@#
+	@# ⚠️ libfb.a VA SUL CD INSIEME A fbc, non e' un di piu': fbc traduce il
+	@# .bas in assembly e poi CHIAMA as e ld, e il link di un programma
+	@# FreeBASIC vuole quella libreria. Senza, si ottiene un compilatore che
+	@# compila e non riesce a produrre un eseguibile — e il messaggio parla
+	@# di simboli che non c'entrano con il sorgente.
+	@if [ -x "$(FB_NATIVO)/fbc" ]; then \
+	    cp "$(FB_NATIVO)/fbc" $(ISO_ROOT)/bin/fbc; \
+	    [ -f "$(FB_NATIVO)/libfb.a" ] && cp "$(FB_NATIVO)/libfb.a" $(ISO_ROOT)/exos/lib/; \
+	    [ -f "$(FB_NATIVO)/fbrt0.o" ] && cp "$(FB_NATIVO)/fbrt0.o" $(ISO_ROOT)/exos/lib/; \
+	    cp $(TOOLS_DIR)/iso/prova-fb.bas $(ISO_ROOT)/prova-fb.bas; \
+	    echo "     FreeBASIC: /bin/fbc ($$(du -h $(ISO_ROOT)/bin/fbc | cut -f1)) e libfb.a"; \
+	else \
+	    echo "     FreeBASIC assente: si costruisce con tools/freebasic-exos/prepara-fb.sh"; \
 	fi
 	@# L'assembly di prova-gcc.c lo produce il CROSS, e ci va per due motivi:
 	@# permette di provare la meta' "assembla e collega" senza aspettare cc1,
@@ -1777,6 +1817,19 @@ leggimi-versione:
 	@sed -i 's/^\*\*Version:\*\* .*/**Version:** $(VERSIONE)/'   README.en.md
 	@echo "[OK] leggimi allineati alla versione $(VERSIONE)"
 
+# =============================================================================
+# ABI — il bersaglio e' allineato alla libc di adesso?
+#
+# I binari per i386-exos costruiti fuori da qui (cc1, as, ld, gmp, mpfr,
+# mpc, libm, libstdc++, libcrypto) non hanno modo di accorgersi che un
+# tipo della libc e' cambiato: si collegano lo stesso. Il come e il
+# perche' — con il caso vero che e' costato due giorni — stanno in testa a
+# tools/ricostruisci-bersaglio.sh.
+# =============================================================================
+.PHONY: abi
+abi:
+	@tools/ricostruisci-bersaglio.sh --verifica
+
 .PHONY: disasm-stage1
 disasm-stage1: $(STAGE1_BIN)
 	@echo "=== Disassembly Stage 1 ==="
@@ -1885,6 +1938,7 @@ help:
 	@echo ""
 	@echo "Analisi:"
 	@echo "  make verify       — Verifica struttura floppy"
+	@echo "  make abi          — Il bersaglio e' allineato alla libc di adesso?"
 	@echo "  make disasm-stage1— Disassembla boot sector"
 	@echo "  make disasm-kernel— Disassembla kernel (usa kernel.elf)"
 	@echo "  make symbols      — Mostra simboli kernel"

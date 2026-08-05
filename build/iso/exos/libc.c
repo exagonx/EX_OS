@@ -76,6 +76,11 @@ typedef unsigned int        uid_t;
 typedef unsigned int        gid_t;
 typedef unsigned int        blksize_t;
 typedef unsigned int        blkcnt_t;
+/* ⚠️ wint_t, duplicato da lib/include/libc.h e da tenere identico. Ci
+ * vuole perche' wchar_t arriva da <stddef.h> — che e' del compilatore —
+ * ma wint_t no: quello e' della libreria, e le isw* e tow* lo prendono
+ * come argomento. */
+typedef int                 wint_t;
 
 /* Lo stato di una conversione multibyte. Duplicato da lib/include/libc.h,
  * come gli altri tipi: questo file non include il proprio header. */
@@ -318,6 +323,7 @@ typedef struct {
 #define ENAMETOOLONG 36
 #define EILSEQ       84
 #define EDOM         33
+#define EOVERFLOW    75
 
 /* La lunghezza massima di un percorso: VFS_PATH_MAX del kernel, e le due
  * devono restare uguali. Duplicata anche in <limits.h> e <sys/param.h>. */
@@ -589,9 +595,29 @@ struct tm {
     int tm_isdst;   /* sempre 0: EX-OS non conosce l'ora legale */
 };
 
+/* ⚠️ tv_sec E' time_t, NON long, E QUESTA RIGA E' COSTATA CARA.
+ *
+ * Quando time_t e' passato a 64 bit questa struttura e' rimasta indietro:
+ * lib/include/libc.h diceva 16 byte con un tv_sec da 8, questo file
+ * scriveva 8 byte con un tv_sec da 4. La libc e il suo stesso header non
+ * erano d'accordo sulla struttura che si scambiano.
+ *
+ * Il sintomo non nominava niente di tutto questo. gettimeofday() tornava
+ * un tv_sec con la meta' bassa GIUSTA e la meta' alta piena di tv_usec,
+ * cioe' un orologio grande un milione di volte il dovuto. `cc1` ci
+ * calcolava sopra i tempi delle fasi, il suo autocontrollo trovava che la
+ * somma delle parti superava il totale, e moriva con
+ *
+ *     internal compiler error: in validate_phases, at timevar.cc:553
+ *
+ * DOPO aver compilato — lasciando un .s con dentro solo l'intestazione.
+ * Sembrava un difetto di GCC.
+ *
+ * La prova che lo coglie sta in bin/libctest: stampa le due meta' da 32
+ * bit separate, perche' un %lld rotto avrebbe potuto mentire pure lui. */
 struct timeval {
-    long tv_sec;
-    long tv_usec;
+    time_t tv_sec;
+    long   tv_usec;
 };
 
 /* I parametri di mmap, duplicati da kernel/include/syscall.h: e' l'ABI
@@ -3685,13 +3711,73 @@ int pipe(int fd[2])
     return 0;
 }
 
+/* =============================================================================
+ * LA RICERCA NEL PATH — perche' sta qui e non nella shell
+ *
+ * ⚠️ UN NOME SENZA BARRE SI CERCA NEL PATH, come fa execvp() su Unix. Fino
+ * ad agosto 2026 non succedeva: spawn("as", ...) chiedeva al kernel il
+ * file "/as", che non esiste, e l'errore diceva proprio quello — un
+ * percorso che nessuno aveva scritto.
+ *
+ * L'ha fatto entrare fbc, il compilatore FreeBASIC, che lancia
+ * l'assemblatore chiamandolo "as" e basta; ma la regola vale per ogni
+ * programma di terzi portato qui — il driver di GCC fa lo stesso, e
+ * anche `make`. La shell la sua ricerca ce l'aveva gia', per conto suo:
+ * il punto e' che un PROGRAMMA non ha una shell dietro, e non deve
+ * doversene scrivere una.
+ *
+ * ⚠️ SOLO SE NON C'E' NEMMENO UNA BARRA. "./prog" e "/bin/prog" restano
+ * percorsi e si usano come sono: e' la regola di execvp, ed evita che un
+ * "bin/prog" relativo venga cercato in giro per il sistema.
+ * ============================================================================= */
+static int spawn_cerca_path(const char *nome, char *dst, size_t dim)
+{
+    const char *p = getenv("PATH");
+    size_t      i;
+
+    if (p == NULL || *p == '\0') p = "/bin";
+
+    while (*p) {
+        i = 0;
+        while (*p && *p != ':' && i + 1 < dim) dst[i++] = *p++;
+        while (*p && *p != ':') p++;            /* voce troppo lunga: si scarta */
+        if (*p == ':') p++;
+        if (i == 0) continue;
+
+        if (dst[i - 1] != '/' && i + 1 < dim) dst[i++] = '/';
+        {
+            size_t j = 0;
+            while (nome[j] && i + 1 < dim) dst[i++] = nome[j++];
+        }
+        dst[i] = '\0';
+
+        /* X_OK: il file dev'esserci ed essere eseguibile. Su EX-OS i
+         * permessi sono una finzione (vedi <sys/stat.h>), quindi in
+         * pratica risponde «c'e' ed e' un file»: e' comunque il controllo
+         * giusto da scrivere, e diventera' vero da solo il giorno che i
+         * permessi ci saranno. */
+        if (access(dst, X_OK) == 0) return 0;
+    }
+
+    return -1;
+}
+
 int spawn_ex(const char *path, char *const argv[], char *const envp[],
              const SpawnRedir *redir, int n_redir)
 {
     SpawnExtra ex;
+    char       trovato[PERCORSO_MAX];
     int        argc = 0, i;
 
     if (path == NULL) { errno = EINVAL; return -1; }
+
+    if (strchr(path, '/') == NULL) {
+        if (spawn_cerca_path(path, trovato, sizeof trovato) != 0) {
+            errno = ENOENT;
+            return -1;
+        }
+        path = trovato;
+    }
 
     if (argv != NULL) while (argv[argc] != NULL) argc++;
 
@@ -6244,26 +6330,142 @@ int rand(void)
 }
 
 /* =============================================================================
- * system — c'e' il nome, non c'e' l'interprete
+ * system e popen — un comando lo esegue la shell, non noi
  *
- * ⚠️ RITORNA SEMPRE -1 CON ENOSYS, e non e' un segnaposto da riempire piu'
- * avanti: e' la risposta giusta finche' /bin/sh non sa accettare un
- * comando sulla riga di argomenti. Oggi ha un `_start(void)` e legge solo
- * dal terminale, quindi non c'e' niente a cui passare la stringa.
- * Eseguire "qualcosa di simile" o ritornare 0 fingendo di aver eseguito
- * sarebbe peggio di non esserci: il chiamante andrebbe avanti convinto che
- * il comando sia stato fatto.
+ * ⚠️ FINO AD AGOSTO 2026 system() RITORNAVA -1 CON ENOSYS, e la nota che
+ * c'era qui diceva perche': /bin/sh aveva un `_start(void)`, non vedeva i
+ * propri argomenti, e non c'era niente a cui passare la stringa. Adesso
+ * la shell accetta `-c` (vedi bin/sh/start.S, scritto apposta), quindi si
+ * puo' fare la cosa giusta.
  *
- * system(NULL) chiede «esiste un interprete?» e la risposta e' 0, cioe'
- * no. Quella e' una risposta vera, e infatti e' l'unica che si da'.
+ * ⚠️ E LA COSA GIUSTA E' PASSARE DALLA SHELL, non spezzare il comando qui.
+ * Una stringa di comando puo' contenere virgolette, redirezioni, pipe e
+ * variabili: chi sa interpretarle e' la shell, e ne abbiamo una. Una
+ * seconda mezza implementazione dentro la libc divergerebbe dalla prima
+ * il giorno stesso, e la differenza si vedrebbe come un comando che
+ * funziona dal prompt e non da un programma.
  *
- * C'e' perche' <cstdlib> della libstdc++ fa `using ::system;`.
+ * Il codice di uscita e' quello del comando: la shell lo riporta con
+ * `sh_exit(g_ultimo_stato)`, e 127 vuol dire «non trovato», come
+ * dappertutto.
  * ============================================================================= */
+
+#define SHELL_PERCORSO "/bin/sh"
+
 int system(const char *comando)
 {
-    if (comando == NULL) return 0;      /* nessun interprete disponibile */
-    errno = ENOSYS;
-    return -1;
+    char *argv[4];
+    int   pid, stato;
+
+    /* system(NULL) chiede «esiste un interprete?». Adesso la risposta e'
+     * si', e va data guardando se il file c'e' davvero: su un sistema
+     * avviato da un supporto senza /bin/sh sarebbe no. */
+    if (comando == NULL) return (access(SHELL_PERCORSO, X_OK) == 0);
+
+    argv[0] = (char *)SHELL_PERCORSO;
+    argv[1] = (char *)"-c";
+    argv[2] = (char *)comando;
+    argv[3] = NULL;
+
+    pid = spawn(SHELL_PERCORSO, argv);
+    if (pid < 0) { errno = -pid; return -1; }
+
+    if (waitpid(pid, &stato, 0) < 0) return -1;
+    return stato;
+}
+
+/* -----------------------------------------------------------------------------
+ * popen / pclose
+ *
+ * ⚠️ UNA SOLA DIREZIONE PER VOLTA, e "r+" non esiste: servirebbero due
+ * pipe e un processo che non si blocchi a riempirne una mentre l'altro
+ * aspetta sull'altra. E' un problema vero (lo stallo classico delle
+ * coprocessi), non una svista: chi ne ha bisogno usi pipe() e spawn_ex()
+ * e decida lui l'ordine delle letture.
+ *
+ * ⚠️ IL PADRE CHIUDE SUBITO L'ESTREMITA' CHE HA PASSATO AL FIGLIO. Se non
+ * lo facesse, la pipe conterebbe ancora uno scrittore vivo — lui — e la
+ * lettura non vedrebbe mai la fine dei dati: aspetterebbe per sempre byte
+ * che nessuno scrivera'. E' l'errore classico con le pipe, ed e' scritto
+ * anche in testa a pipe() in lib/include/libc.h.
+ * --------------------------------------------------------------------------- */
+
+/* Il PID del figlio, indicizzato per descrittore: pclose() deve sapere chi
+ * aspettare, e FILE non ha un posto dove tenerlo.
+ *
+ * ⚠️ E' UNA TABELLA PICCOLA E FISSA (MAX_FD voci come il kernel): un
+ * processo che apra piu' pipe di cosi' ha gia' finito i descrittori. */
+#define POPEN_MAX_FD 32
+static int g_popen_pid[POPEN_MAX_FD];
+
+FILE *popen(const char *comando, const char *modo)
+{
+    char       *argv[4];
+    SpawnRedir  redir;
+    int         p[2], pid, fd_mio, fd_suo;
+    int         lettura;
+    FILE       *f;
+
+    if (comando == NULL || modo == NULL) { errno = EINVAL; return NULL; }
+
+    if      (modo[0] == 'r') lettura = 1;
+    else if (modo[0] == 'w') lettura = 0;
+    else                     { errno = EINVAL; return NULL; }
+
+    if (pipe(p) != 0) return NULL;
+
+    if (lettura) {
+        fd_mio = p[0];              /* noi leggiamo cio' che il figlio stampa */
+        fd_suo = p[1];
+        redir.fd = 1;               /* il suo stdout */
+    } else {
+        fd_mio = p[1];              /* noi scriviamo, lui legge */
+        fd_suo = p[0];
+        redir.fd = 0;               /* il suo stdin */
+    }
+    redir.flags    = 0;
+    redir.percorso = NULL;          /* NULL = passa un descrittore gia' aperto */
+    redir.fd_padre = fd_suo;
+
+    argv[0] = (char *)SHELL_PERCORSO;
+    argv[1] = (char *)"-c";
+    argv[2] = (char *)comando;
+    argv[3] = NULL;
+
+    pid = spawn_ex(SHELL_PERCORSO, argv, NULL, &redir, 1);
+
+    /* Subito, sia se e' andata sia se no: vedi il ⚠️ qui sopra. */
+    close(fd_suo);
+
+    if (pid < 0) { close(fd_mio); errno = -pid; return NULL; }
+
+    f = fdopen(fd_mio, lettura ? "r" : "w");
+    if (f == NULL) { close(fd_mio); return NULL; }
+
+    if (fd_mio >= 0 && fd_mio < POPEN_MAX_FD) g_popen_pid[fd_mio] = pid;
+    return f;
+}
+
+int pclose(FILE *f)
+{
+    int fd, pid, stato;
+
+    if (f == NULL) { errno = EINVAL; return -1; }
+
+    fd = fileno(f);
+    pid = (fd >= 0 && fd < POPEN_MAX_FD) ? g_popen_pid[fd] : 0;
+    if (fd >= 0 && fd < POPEN_MAX_FD) g_popen_pid[fd] = 0;
+
+    /* ⚠️ PRIMA SI CHIUDE, POI SI ASPETTA. Al contrario, un figlio che
+     * scrive piu' di quanto sta nella pipe resterebbe fermo sulla write
+     * con noi fermi ad aspettarlo: uno stallo perfetto, e per giunta
+     * intermittente, perche' si vede solo quando l'output supera il
+     * buffer. */
+    fclose(f);
+
+    if (pid <= 0) { errno = ECHILD; return -1; }
+    if (waitpid(pid, &stato, 0) < 0) return -1;
+    return stato;
 }
 
 /* atof e' strtod senza il puntatore alla fine, e fabs e' abs in virgola
@@ -6624,4 +6826,337 @@ void perror(const char *msg)
     }
     fputs(strerror(errno), stderr);
     fputc('\n', stderr);
+}
+
+/* =============================================================================
+ * Caratteri larghi — <wchar.h> e <wctype.h>
+ *
+ * ⚠️ FINO AD AGOSTO 2026 QUI NON C'ERA NIENTE, E C'ERA UNA RAGIONE.
+ * <wchar.h> diceva a chiare lettere «nessuna funzione»: EX-OS lavora a
+ * byte, la console e' una VGA con una code page a 8 bit e l'unica locale
+ * e' "C". Le ha fatte entrare la RUNTIME DI FREEBASIC, che di caratteri
+ * larghi ha un tipo di dato intero (WSTRING) e non se ne puo' fare a
+ * meno: senza queste, meta' di src/rtlib non compila.
+ *
+ * ⚠️ LA CODIFICA E' LATIN-1, cioe' un wchar_t E' un byte esteso a 32 bit.
+ * Non e' UTF-32 e non fa finta di esserlo: sopra 255 la conversione verso
+ * i byte FALLISCE invece di troncare (vedi wcstombs e wctomb qui sopra),
+ * perche' un troncamento silenzioso e' un carattere sbagliato che sembra
+ * giusto. Chi vuole Unicode vero deve prima decidere in che codifica
+ * stanno i nomi di file gia' scritti sui volumi — quella e' la parte
+ * difficile, non queste funzioni.
+ *
+ * Le funzioni isw* e tow* seguono la locale "C" e quindi non convertono niente sopra
+ * il 127, esattamente come le loro sorelle strette in <ctype.h>.
+ * ============================================================================= */
+
+size_t wcslen(const wchar_t *s)
+{
+    const wchar_t *p = s;
+    while (*p) p++;
+    return (size_t)(p - s);
+}
+
+wchar_t *wcschr(const wchar_t *s, wchar_t c)
+{
+    for (; *s; s++) if (*s == c) return (wchar_t *)s;
+    return (c == 0) ? (wchar_t *)s : NULL;
+}
+
+wchar_t *wcsrchr(const wchar_t *s, wchar_t c)
+{
+    const wchar_t *ultimo = NULL;
+    for (;; s++) {
+        if (*s == c) ultimo = s;
+        if (*s == 0) break;
+    }
+    return (wchar_t *)ultimo;
+}
+
+int wcscmp(const wchar_t *a, const wchar_t *b)
+{
+    while (*a && *a == *b) { a++; b++; }
+    /* Il confronto e' fra valori SENZA segno: wchar_t su i386 e' `int`,
+     * e un carattere sopra 0x7FFFFFFF non esiste, ma la regola giusta e'
+     * comunque quella dello standard. */
+    return (*a < *b) ? -1 : (*a > *b) ? 1 : 0;
+}
+
+int wcsncmp(const wchar_t *a, const wchar_t *b, size_t n)
+{
+    while (n && *a && *a == *b) { a++; b++; n--; }
+    if (n == 0) return 0;
+    return (*a < *b) ? -1 : (*a > *b) ? 1 : 0;
+}
+
+wchar_t *wcscpy(wchar_t *dst, const wchar_t *src)
+{
+    wchar_t *d = dst;
+    while ((*d++ = *src++) != 0) { }
+    return dst;
+}
+
+wchar_t *wcsncpy(wchar_t *dst, const wchar_t *src, size_t n)
+{
+    wchar_t *d = dst;
+    while (n && (*d = *src) != 0) { d++; src++; n--; }
+    /* Riempimento con zeri fino a n: e' lo standard, ed e' anche la parte
+     * che tutti dimenticano. */
+    while (n--) *d++ = 0;
+    return dst;
+}
+
+wchar_t *wcscat(wchar_t *dst, const wchar_t *src)
+{
+    wchar_t *d = dst;
+    while (*d) d++;
+    while ((*d++ = *src++) != 0) { }
+    return dst;
+}
+
+wchar_t *wcsncat(wchar_t *dst, const wchar_t *src, size_t n)
+{
+    wchar_t *d = dst;
+    while (*d) d++;
+    while (n && *src) { *d++ = *src++; n--; }
+    *d = 0;
+    return dst;
+}
+
+wchar_t *wcsstr(const wchar_t *ago, const wchar_t *pagliaio)
+{
+    size_t n;
+
+    if (*pagliaio == 0) return (wchar_t *)ago;
+    n = wcslen(pagliaio);
+    for (; *ago; ago++)
+        if (wcsncmp(ago, pagliaio, n) == 0) return (wchar_t *)ago;
+    return NULL;
+}
+
+size_t wcsspn(const wchar_t *s, const wchar_t *ammessi)
+{
+    const wchar_t *p = s;
+    for (; *p; p++) if (wcschr(ammessi, *p) == NULL) break;
+    return (size_t)(p - s);
+}
+
+size_t wcscspn(const wchar_t *s, const wchar_t *rifiutati)
+{
+    const wchar_t *p = s;
+    for (; *p; p++) if (wcschr(rifiutati, *p) != NULL) break;
+    return (size_t)(p - s);
+}
+
+wchar_t *wcspbrk(const wchar_t *s, const wchar_t *cercati)
+{
+    for (; *s; s++) if (wcschr(cercati, *s) != NULL) return (wchar_t *)s;
+    return NULL;
+}
+
+wchar_t *wmemchr(const wchar_t *s, wchar_t c, size_t n)
+{
+    for (; n--; s++) if (*s == c) return (wchar_t *)s;
+    return NULL;
+}
+
+int wmemcmp(const wchar_t *a, const wchar_t *b, size_t n)
+{
+    for (; n--; a++, b++)
+        if (*a != *b) return (*a < *b) ? -1 : 1;
+    return 0;
+}
+
+wchar_t *wmemcpy(wchar_t *dst, const wchar_t *src, size_t n)
+{
+    wchar_t *d = dst;
+    while (n--) *d++ = *src++;
+    return dst;
+}
+
+/* ⚠️ Copia all'indietro quando le due zone si sovrappongono e la
+ * destinazione sta dopo l'origine: e' l'unica differenza da wmemcpy, ed
+ * e' tutta la ragione per cui questa funzione esiste. Il ciclo e' scritto
+ * qui invece di appoggiarsi a memmove() perche' questo file e'
+ * autosufficiente e memmove e' definita piu' sotto. */
+wchar_t *wmemmove(wchar_t *dst, const wchar_t *src, size_t n)
+{
+    if (dst < src) {
+        wchar_t *d = dst;
+        while (n--) *d++ = *src++;
+    } else if (dst > src) {
+        wchar_t       *d = dst + n;
+        const wchar_t *s = src + n;
+        while (n--) *--d = *--s;
+    }
+    return dst;
+}
+
+wchar_t *wmemset(wchar_t *dst, wchar_t c, size_t n)
+{
+    wchar_t *d = dst;
+    while (n--) *d++ = c;
+    return dst;
+}
+
+/* --- Classificazione, locale "C" -------------------------------------------
+ *
+ * ⚠️ SOPRA IL 127 RISPONDONO SEMPRE NO (e tow* non convertono). Non e'
+ * una semplificazione: nella locale "C" e' proprio cosi', ed e' l'unica
+ * locale che EX-OS ha. Delegano alle <ctype.h> strette, cosi' la
+ * definizione di «lettera» e' UNA SOLA in tutta la libc. */
+
+int iswalnum(wint_t c)  { return (c < 128) ? isalnum((int)c)  : 0; }
+int iswalpha(wint_t c)  { return (c < 128) ? isalpha((int)c)  : 0; }
+int iswblank(wint_t c)  { return (c == L' ' || c == L'\t'); }
+int iswcntrl(wint_t c)  { return (c < 128) ? iscntrl((int)c)  : 0; }
+int iswdigit(wint_t c)  { return (c < 128) ? isdigit((int)c)  : 0; }
+int iswgraph(wint_t c)  { return (c < 128) ? isgraph((int)c)  : 0; }
+int iswlower(wint_t c)  { return (c < 128) ? islower((int)c)  : 0; }
+int iswprint(wint_t c)  { return (c < 128) ? isprint((int)c)  : 0; }
+int iswpunct(wint_t c)  { return (c < 128) ? ispunct((int)c)  : 0; }
+int iswspace(wint_t c)  { return (c < 128) ? isspace((int)c)  : 0; }
+int iswupper(wint_t c)  { return (c < 128) ? isupper((int)c)  : 0; }
+int iswxdigit(wint_t c) { return (c < 128) ? isxdigit((int)c) : 0; }
+
+wint_t towlower(wint_t c) { return (c < 128) ? (wint_t)tolower((int)c) : c; }
+wint_t towupper(wint_t c) { return (c < 128) ? (wint_t)toupper((int)c) : c; }
+
+/* --- Numeri ----------------------------------------------------------------
+ *
+ * ⚠️ PASSANO DALLA VERSIONE STRETTA, e non e' pigrizia: un numero e'
+ * fatto di cifre, segni, punti e 'e' — tutti sotto il 128 — quindi
+ * restringere la stringa e chiamare strtol() da' esattamente lo stesso
+ * risultato, con UNA sola implementazione da tenere giusta invece di due.
+ * Il carattere sopra 255 ferma la copia: li' il numero e' finito
+ * comunque, e `fine` viene riportato al punto giusto dell'originale. */
+
+#define WNUM_MAX 128
+
+static size_t w_restringi(const wchar_t *s, char *buf, size_t dim)
+{
+    size_t i = 0;
+    while (s[i] != 0 && i < dim - 1 && (unsigned long)s[i] <= 0xFF) {
+        buf[i] = (char)(unsigned char)s[i];
+        i++;
+    }
+    buf[i] = '\0';
+    return i;
+}
+
+long wcstol(const wchar_t *s, wchar_t **fine, int base)
+{
+    char buf[WNUM_MAX], *f = NULL;
+    long v;
+    size_t n = w_restringi(s, buf, sizeof buf);
+    v = strtol(buf, &f, base);
+    if (fine) *fine = (wchar_t *)s + (f ? (size_t)(f - buf) : n);
+    return v;
+}
+
+unsigned long wcstoul(const wchar_t *s, wchar_t **fine, int base)
+{
+    char buf[WNUM_MAX], *f = NULL;
+    unsigned long v;
+    size_t n = w_restringi(s, buf, sizeof buf);
+    v = strtoul(buf, &f, base);
+    if (fine) *fine = (wchar_t *)s + (f ? (size_t)(f - buf) : n);
+    return v;
+}
+
+long long wcstoll(const wchar_t *s, wchar_t **fine, int base)
+{
+    char buf[WNUM_MAX], *f = NULL;
+    long long v;
+    size_t n = w_restringi(s, buf, sizeof buf);
+    v = strtoll(buf, &f, base);
+    if (fine) *fine = (wchar_t *)s + (f ? (size_t)(f - buf) : n);
+    return v;
+}
+
+unsigned long long wcstoull(const wchar_t *s, wchar_t **fine, int base)
+{
+    char buf[WNUM_MAX], *f = NULL;
+    unsigned long long v;
+    size_t n = w_restringi(s, buf, sizeof buf);
+    v = strtoull(buf, &f, base);
+    if (fine) *fine = (wchar_t *)s + (f ? (size_t)(f - buf) : n);
+    return v;
+}
+
+double wcstod(const wchar_t *s, wchar_t **fine)
+{
+    char buf[WNUM_MAX], *f = NULL;
+    double v;
+    size_t n = w_restringi(s, buf, sizeof buf);
+    v = strtod(buf, &f);
+    if (fine) *fine = (wchar_t *)s + (f ? (size_t)(f - buf) : n);
+    return v;
+}
+
+/* --- Formattazione ---------------------------------------------------------
+ *
+ * ⚠️ %ls E %lc NON SONO SUPPORTATE, e la funzione lo DICE tornando -1 con
+ * EILSEQ invece di stampare qualcosa di sbagliato.
+ *
+ * Il perche': qui si restringe il formato, si chiama vsnprintf() — cioe'
+ * l'UNICA implementazione di printf che EX-OS ha, gia' collaudata — e si
+ * riallarga il risultato. Funziona per ogni conversione i cui ARGOMENTI
+ * sono stretti (%d, %u, %x, %g, %s...). Per %ls e %lc l'argomento e'
+ * largo, e restringerlo vorrebbe dire camminare da soli sui varargs: si
+ * riscriverebbe printf da capo per due conversioni che nessuno qui usa.
+ * FreeBASIC, che e' chi ha portato queste funzioni dentro EX-OS, chiama
+ * swprintf solo con %d, %u, %o, %lld, %llu, %llo e %g.
+ * ============================================================================= */
+
+int vswprintf(wchar_t *buf, size_t dim, const wchar_t *fmt, __builtin_va_list ap)
+{
+    char stretto[1024], fmt_stretto[256];
+    int  n, i;
+
+    for (i = 0; fmt[i] != 0; i++) {
+        if ((size_t)i >= sizeof fmt_stretto - 1) { errno = EOVERFLOW; return -1; }
+        if ((unsigned long)fmt[i] > 0xFF)        { errno = EILSEQ;    return -1; }
+        /* Il rifiuto esplicito di %ls / %lc: vedi il commento sopra. */
+        if (fmt[i] == L'%') {
+            const wchar_t *p = &fmt[i] + 1;
+            while (*p && wcschr(L"-+ #0123456789.*hljzt", *p) != NULL) {
+                if (*p == L'l' && (p[1] == L's' || p[1] == L'c')) {
+                    errno = EILSEQ;
+                    return -1;
+                }
+                p++;
+            }
+        }
+        fmt_stretto[i] = (char)(unsigned char)fmt[i];
+    }
+    fmt_stretto[i] = '\0';
+
+    n = vsnprintf(stretto, sizeof stretto, fmt_stretto, ap);
+    if (n < 0) return -1;
+
+    /* ⚠️ swprintf NON e' snprintf: quando non ci sta, torna -1 (contenuto
+     * del buffer indeterminato), NON la lunghezza che sarebbe servita.
+     * Sono due contratti diversi, e chi li confonde scrive un ciclo di
+     * riallocazione che non termina mai. */
+    if (dim == 0) return -1;
+    if ((size_t)n >= dim) { buf[0] = 0; return -1; }
+
+    for (i = 0; i < n; i++) buf[i] = (wchar_t)(unsigned char)stretto[i];
+    buf[n] = 0;
+    return n;
+}
+
+int swprintf(wchar_t *buf, size_t dim, const wchar_t *fmt, ...)
+{
+    __builtin_va_list ap;
+    int               n;
+
+    /* __builtin_va_* e non <stdarg.h>: e' la convenzione di tutto questo
+     * file, che non include header di libreria. Il tipo e' lo stesso che
+     * <stdarg.h> chiama va_list, quindi il prototipo in wchar.h combacia. */
+    __builtin_va_start(ap, fmt);
+    n = vswprintf(buf, dim, fmt, ap);
+    __builtin_va_end(ap);
+    return n;
 }

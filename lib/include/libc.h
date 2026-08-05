@@ -356,13 +356,27 @@ long long atoll(const char *s);
 int     rand(void);
 void    srand(unsigned int seme);
 
-/* ⚠️ system() ESISTE MA NON ESEGUE NIENTE, e lo dice: ritorna -1 con
- * ENOSYS. Non c'e' una shell che accetti un comando sulla riga di
- * argomenti — /bin/sh ha un `_start(void)` e legge solo dal terminale — e
- * fingere di aver eseguito sarebbe il genere di bugia che questo progetto
- * rifiuta. La forma system(NULL) ritorna 0, che e' il modo corretto di
- * dire «non c'e' un interprete di comandi». */
+/* Esegue `comando` con `/bin/sh -c` e ritorna il SUO codice di uscita;
+ * 127 vuol dire «comando non trovato», come in ogni shell. system(NULL)
+ * risponde se un interprete c'e'.
+ *
+ * ⚠️ FINO AD AGOSTO 2026 RITORNAVA -1 CON ENOSYS, perche' /bin/sh aveva un
+ * `_start(void)` e non vedeva i propri argomenti. Adesso li vede (vedi
+ * bin/sh/start.S) e il comando lo interpreta la shell — non una seconda
+ * mezza implementazione qui dentro, che divergerebbe dalla prima il giorno
+ * stesso. */
 int     system(const char *comando);
+
+/* Un comando come flusso: "r" per leggere cio' che stampa, "w" per
+ * scrivergli sullo stdin. pclose() aspetta il figlio e ne ritorna il
+ * codice di uscita.
+ *
+ * ⚠️ UNA DIREZIONE PER VOLTA: "r+" non c'e'. Servirebbero due pipe, e
+ * con due pipe si finisce nello stallo classico dei coprocessi — uno
+ * fermo a riempire una mentre l'altro aspetta sull'altra. Chi ne ha
+ * bisogno usi pipe() e spawn_ex() e decida lui l'ordine delle letture. */
+FILE   *popen(const char *comando, const char *modo);
+int     pclose(FILE *f);
 
 /* =============================================================================
  * Virgola mobile
@@ -425,6 +439,23 @@ void    quick_exit(int code);
 #define EXIT_FAILURE 1
 void    abort(void);
 void   *malloc(size_t size);
+
+/* ⚠️ alloca() NON E' UNA FUNZIONE E NON PUO' ESSERLO: prende spazio sullo
+ * STACK DI CHI LA CHIAMA, quindi deve essere il compilatore a emetterla
+ * dentro quel frame. Una vera funzione libererebbe il proprio frame
+ * uscendo, restituendo un puntatore a memoria appena riciclata — e il
+ * guasto si vedrebbe altrove, molto dopo.
+ *
+ * ⚠️ NON SI LIBERA e sparisce da sola al `return`. Dentro un ciclo lo
+ * stack cresce a ogni giro senza tornare indietro, ed EX-OS lo fa
+ * crescere a richiesta fino a un tetto: un alloca() in un ciclo lungo si
+ * manifesta come un page fault, non come un malloc che ritorna NULL.
+ *
+ * C'e' perche' la runtime di FreeBASIC la usa in una trentina di file per
+ * i descrittori temporanei di stringa. */
+#ifndef alloca
+#define alloca(n) __builtin_alloca(n)
+#endif
 void    free(void *ptr);
 void   *calloc(size_t nmemb, size_t size);
 void   *realloc(void *ptr, size_t size);
@@ -1656,6 +1687,11 @@ int     atexit(void (*fn)(void));
 #define SIGALRM 14
 #define SIGTERM 15
 #define SIG_MAX 32
+/* ⚠️ NSIG e' lo STESSO numero di SIG_MAX con il nome che usa il codice di
+ * terzi: e' quello con cui si dimensiona una tabella di gestori, e
+ * src/rtlib/signals.c di FreeBASIC fa esattamente `sigTb[NSIG]`. Due nomi
+ * per una cosa sola non e' bello, ma inventarne un terzo lo sarebbe meno. */
+#define NSIG    SIG_MAX
 
 /* ⚠️ Il tipo su cui si puo' scrivere e leggere ATOMICAMENTE rispetto a un
  * gestore di segnale — l'unica cosa che lo standard C permette di toccare

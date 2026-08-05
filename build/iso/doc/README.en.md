@@ -1,12 +1,13 @@
 # EX-OS — Extensible Operating System
 
+[🇮🇹 Italiano](README.md) · **🇬🇧 English**
+
 **Version:** 0.175
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit, FAT12 1.44MB floppy
 
-*This is the English version. The Italian original is [README.md](README.md);
-the two are kept in step.*
+*The two versions are kept in step: what is in one is in the other.*
 
 ---
 
