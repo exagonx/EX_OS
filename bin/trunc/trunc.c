@@ -41,18 +41,8 @@
  * ============================================================================= */
 #define TR_VERSION  "0.001"
 
-static const char *spiega(int e)
-{
-    switch (-e) {
-        case 2:  return "non trovato";
-        case 5:  return "errore di I/O";
-        case 21: return "e' una directory";
-        case 22: return "percorso non valido";
-        case 30: return "montato in sola lettura";
-        case 38: return "il filesystem non sa troncare";
-        default: return "errore";
-    }
-}
+/* ⚠️ QUI C'ERA UNA TABELLA DEI CODICI FATTA IN CASA: truncate() adesso
+ * rende -1 e mette il motivo in errno, e strerror() lo dice gia'. */
 
 /* Numero decimale, con suffisso K o M facoltativo. Ritorna 0 e mette 1 in
  * *ok se il testo non e' un numero: senza distinguerli, "trunc file pippo"
@@ -135,7 +125,7 @@ int main(int argc, char **argv)
 
     r = truncate(argv[1], nuova);
     if (r != 0) {
-        printf("trunc: %s: %s (errore %d)\n", argv[1], spiega(r), r);
+        printf("trunc: %s: %s\n", argv[1], strerror(errno));
         return 1;
     }
 

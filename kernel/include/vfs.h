@@ -56,6 +56,12 @@ typedef struct {
 
 typedef struct {
     uint32_t dimensione;
+
+/* Identita' dell'oggetto, unica IN TUTTO IL SISTEMA e non solo dentro il
+ * suo volume: ci sta dentro anche il montaggio. Vedi stat_interno() in
+ * vfs.c per come si compone e per cosa ci si e' fatto male senza. */
+    uint32_t ident;
+
     uint8_t  is_dir;
     uint8_t  sola_lettura;
 

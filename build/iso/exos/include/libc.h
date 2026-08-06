@@ -1152,8 +1152,14 @@ int fcntl(int fd, int cmd, ...);
  *
  * st_attr usa le convenzioni FAT su TUTTI i filesystem, perche' sono
  * quelle che i programmi gia' interpretano: 0x10 directory, 0x01 sola
- * lettura. st_first_clus vale 0 fuori da una FAT — un numero di cluster
- * inventato sarebbe peggio di uno assente.
+ * lettura.
+ *
+ * st_ident e' l'IDENTITA' dell'oggetto: due percorsi danno lo stesso
+ * numero se e solo se sono lo stesso file o la stessa directory, su
+ * qualunque filesystem e attraverso i montaggi. Si chiamava
+ * st_first_clus e valeva 0 fuori da FAT — con le conseguenze raccontate
+ * sopra stat_interno() in kernel/fs/vfs.c. E' anche cio' che finisce in
+ * st_ino di `struct stat`.
  * ============================================================================= */
 #define SEEK_SET    0
 #define SEEK_CUR    1
@@ -1161,7 +1167,7 @@ int fcntl(int fd, int cmd, ...);
 
 typedef struct {
     unsigned int    st_size;
-    unsigned int    st_first_clus;
+    unsigned int    st_ident;
     unsigned short  st_attr;
     unsigned short  st_date;
     unsigned short  st_time;

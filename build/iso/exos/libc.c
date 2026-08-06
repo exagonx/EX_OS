@@ -138,17 +138,37 @@ void    abort(void);
 static int cifra_valore(int c);
 
 /* =============================================================================
- * errno — e perche' NON cambia il valore di ritorno di nessuna funzione
+ * errno — e perche' le funzioni POSIX ritornano -1, non -errno
  *
- * Su Unix una syscall fallita ritorna -1 e mette il motivo in errno. Su
- * EX-OS le funzioni ritornano l'errore NEGATIVO direttamente (-2 = ENOENT,
- * -30 = EROFS...), e tutti i programmi di /bin stampano quel numero.
+ * ⚠️ QUESTA REGOLA E' STATA ROVESCIATA AD AGOSTO 2026, e vale la pena
+ * lasciare scritto sia cosa diceva prima sia perche' non reggeva.
  *
- * Cambiare convenzione avrebbe voluto dire riscrivere ogni chiamante per
- * guadagnare zero: `< 0` resta il test giusto in entrambi i mondi, e un
- * -EIO e' piu' informativo di un -1. Quindi errno viene IMPOSTATO in piu',
- * non al posto del ritorno: chi vuole un messaggio usa strerror(errno),
- * chi vuole il codice ce l'ha gia' in mano.
+ * Diceva: su Unix una syscall fallita ritorna -1 e mette il motivo in
+ * errno; qui ritorna l'errore NEGATIVO (-2 = ENOENT, -30 = EROFS), tutti i
+ * programmi di /bin stampano quel numero, `< 0` resta il test giusto in
+ * entrambi i mondi e un -EIO dice piu' di un -1.
+ *
+ * Il ragionamento e' onesto e vale finche' TUTTI i chiamanti sono nostri.
+ * Non lo sono piu'. Il codice di terzi non scrive `< 0`: scrive
+ * `!= -1`, perche' e' cio' che lo standard promette. Da libcpp, il
+ * preprocessore di GCC:
+ *
+ *     file->fd = open (file->path, O_RDONLY | O_BINARY, 0666);
+ *     if (file->fd != -1)
+ *         { fstat (file->fd, &file->st); ... }
+ *
+ * Con un open() che rende -2 per «non esiste», quel test passa. cc1
+ * proseguiva credendo di avere un descrittore, faceva fstat(-2) —
+ * che fallisce con EBADF — e moriva con «fatal error: stdio.h:
+ * descrittore non valido» su un header che semplicemente non stava in
+ * QUELLA directory e stava benissimo nella successiva. Il messaggio
+ * accusava il file sbagliato con l'errore sbagliato.
+ *
+ * Percio': le funzioni con un nome POSIX (open, read, write, close,
+ * waitpid...) ritornano -1 e basta, e il codice sta in errno. Le funzioni
+ * NOSTRE — quelle che non esistono altrove, come listdir_from() o
+ * mount() — tengono il -errno, perche' li' nessuno arriva con
+ * un'aspettativa da standard e il numero e' piu' informativo.
  * ============================================================================= */
 int errno = 0;
 
@@ -158,7 +178,7 @@ int errno = 0;
  * 0x10 = directory, 0x01 = sola lettura. */
 typedef struct {
     uint32_t    st_size;
-    uint32_t    st_first_clus;
+    uint32_t    st_ident;
     uint16_t    st_attr;
     uint16_t    st_date;
     uint16_t    st_time;
@@ -806,11 +826,47 @@ char *strcpy(char *dst, const char *src)
     return dst;
 }
 
+/* =============================================================================
+ * strncpy — e il post-decremento che azzerava tutta la memoria
+ *
+ * ⚠️ QUI C'ERA UN DIFETTO CHE SI VEDEVA SOLO NEL CASO PER CUI strncpy
+ * ESISTE, cioe' quando la sorgente NON ci sta in n. Le due righe erano:
+ *
+ *     while (n-- && (*d++ = *src++));
+ *     while (n--) *d++ = '\0';
+ *
+ * Con una sorgente piu' corta di n il conto torna. Con una sorgente lunga
+ * almeno n, il primo ciclo esce perche' `n--` VALE 0 — ma il
+ * post-decremento scatta lo stesso, e n e' un size_t: da 0 passa a
+ * SIZE_MAX. Il secondo ciclo si mette allora a scrivere zeri per quattro
+ * miliardi di byte, e si ferma solo quando incontra una pagina non
+ * mappata.
+ *
+ * Il sintomo non somigliava alla causa: dentro EX-OS usciva come
+ *
+ *     [FAULT] PID 12 '/cdrom/exos/libexec/gcc/i386-ex': page fault a
+ *             0x0813b000 (pagina assente, scrittura, EIP=0x080aeef0)
+ *
+ * — collect2 che muore scrivendo esattamente al confine del proprio heap,
+ * cioe' l'aspetto di un allocatore rotto. L'allocatore non c'entrava
+ * niente: era questa funzione che gli passava sopra.
+ *
+ * ⚠️ La gemella larga, wcsncpy() piu' in basso, era gia' scritta bene —
+ * `while (n && ...)` con il decremento DENTRO il corpo. Vale la pena
+ * saperlo: quando due funzioni fanno la stessa cosa su tipi diversi, la
+ * differenza fra le due e' il posto dove guardare per primo.
+ * ============================================================================= */
 char *strncpy(char *dst, const char *src, size_t n)
 {
     char *d = dst;
-    while (n-- && (*d++ = *src++));
-    while (n--) *d++ = '\0';
+
+    while (n > 0 && *src) { *d++ = *src++; n--; }
+
+    /* Il riempimento con zeri fino a n e' lo standard, ed e' anche la
+     * parte che tutti dimenticano — compreso il caso n == 0, in cui NON
+     * si scrive niente e nemmeno il terminatore. */
+    while (n > 0) { *d++ = '\0'; n--; }
+
     return dst;
 }
 
@@ -820,6 +876,14 @@ int strcmp(const char *a, const char *b)
     return (unsigned char)*a - (unsigned char)*b;
 }
 
+/* ⚠️ QUI IL TRABOCCO DI `n` E' VOLUTO, ed e' l'opposto del difetto che
+ * strncpy aveva poco piu' sopra: uscire dal ciclo con `n` passato a
+ * SIZE_MAX significa «li ho confrontati tutti e n, ed erano uguali», ed e'
+ * proprio cio' che il confronto con (size_t)-1 riconosce. La differenza
+ * con strncpy e' che li' `n` veniva RIUSATO da un secondo ciclo, qui no.
+ *
+ * La stessa funzione, copiata, sta in kernel/fs/cfg.c e in bin/sh/shell.c,
+ * che non possono usare la libc: se si tocca una, si toccano tutte e tre. */
 int strncmp(const char *a, const char *b, size_t n)
 {
     while (n-- && *a && *b && *a == *b) { a++; b++; }
@@ -3431,15 +3495,15 @@ int posix_memalign(void **risultato, size_t allineamento, size_t size)
  * Funzioni di utilità aggiuntive
  * ============================================================================= */
 
-/* Registra l'errore in errno LASCIANDO il valore di ritorno com'era.
+/* Il ritorno di una funzione POSIX: il codice va in errno, il chiamante
+ * riceve -1. E' il punto in cui si applica la regola dichiarata in testa al
+ * file — chi vuole il numero usa errno, chi vuole un messaggio strerror().
  *
- * E' il punto in cui si applica la regola dichiarata in testa al file:
- * errno si aggiunge, non sostituisce. I programmi che stampano il numero
- * negativo continuano a funzionare parola per parola; chi vuole un
- * messaggio ha perror() e strerror(errno). */
-static int32_t err_reg(int32_t r)
+ * ⚠️ SOLO PER LE FUNZIONI CON UN NOME POSIX. Le nostre continuano a
+ * ritornare -errno: vedi il commento in testa al file. */
+static int32_t err_posix(int32_t r)
 {
-    if (r < 0) errno = -r;
+    if (r < 0) { errno = -r; return -1; }
     return r;
 }
 
@@ -3457,12 +3521,12 @@ int open(const char *path, int flags, ...)
         (void)__builtin_va_arg(args, int);   /* mode_t, ignorato */
         __builtin_va_end(args);
     }
-    return err_reg(_syscall3(SYS_OPEN, (uint32_t)path, (uint32_t)flags, 0));
+    return err_posix(_syscall3(SYS_OPEN, (uint32_t)path, (uint32_t)flags, 0));
 }
 
 int close(int fd)
 {
-    return err_reg(_syscall1(SYS_CLOSE, (uint32_t)fd));
+    return err_posix(_syscall1(SYS_CLOSE, (uint32_t)fd));
 }
 
 /* dup/dup2/fcntl — vedi il commento esteso in kernel/syscall/syscall_impl.c.
@@ -3473,12 +3537,12 @@ int close(int fd)
  * una lseek() esplicita invece di dare per scontato di ripartire da capo. */
 int dup(int fd)
 {
-    return (int)err_reg(_syscall1(SYS_DUP, (uint32_t)fd));
+    return (int)err_posix(_syscall1(SYS_DUP, (uint32_t)fd));
 }
 
 int dup2(int vecchio, int nuovo)
 {
-    return (int)err_reg(_syscall2(SYS_DUP2, (uint32_t)vecchio, (uint32_t)nuovo));
+    return (int)err_posix(_syscall2(SYS_DUP2, (uint32_t)vecchio, (uint32_t)nuovo));
 }
 
 int fcntl(int fd, int cmd, ...)
@@ -3494,17 +3558,17 @@ int fcntl(int fd, int cmd, ...)
     arg = __builtin_va_arg(ap, uint32_t);
     __builtin_va_end(ap);
 
-    return (int)err_reg(_syscall3(SYS_FCNTL, (uint32_t)fd, (uint32_t)cmd, arg));
+    return (int)err_posix(_syscall3(SYS_FCNTL, (uint32_t)fd, (uint32_t)cmd, arg));
 }
 
 ssize_t read(int fd, void *buf, size_t n)
 {
-    return err_reg(_syscall3(SYS_READ, (uint32_t)fd, (uint32_t)buf, n));
+    return err_posix(_syscall3(SYS_READ, (uint32_t)fd, (uint32_t)buf, n));
 }
 
 ssize_t write(int fd, const void *buf, size_t n)
 {
-    return err_reg(_syscall3(SYS_WRITE, (uint32_t)fd, (uint32_t)buf, n));
+    return err_posix(_syscall3(SYS_WRITE, (uint32_t)fd, (uint32_t)buf, n));
 }
 
 int getpid(void)
@@ -3541,7 +3605,7 @@ int tty_clear(void)
 
 int chdir(const char *path)
 {
-    return err_reg(_syscall1(SYS_CHDIR, (uint32_t)path));
+    return err_posix(_syscall1(SYS_CHDIR, (uint32_t)path));
 }
 
 char *getcwd(char *buf, size_t size)
@@ -3810,13 +3874,13 @@ int spawn_ex(const char *path, char *const argv[], char *const envp[],
         ex.n_azioni++;
     }
 
-    return err_reg(_syscall4(SYS_SPAWN, (uint32_t)path, (uint32_t)argc,
+    return err_posix(_syscall4(SYS_SPAWN, (uint32_t)path, (uint32_t)argc,
                              (uint32_t)argv, (uint32_t)&ex));
 }
 
 int waitpid(int pid, int *stato, int opzioni)
 {
-    return err_reg(_syscall3(SYS_WAITPID, (uint32_t)pid,
+    return err_posix(_syscall3(SYS_WAITPID, (uint32_t)pid,
                              (uint32_t)stato, (uint32_t)opzioni));
 }
 
@@ -4816,7 +4880,7 @@ int blkwrite(const char *dev, unsigned int lba, unsigned int n, const void *buf)
 
 int truncate(const char *path, unsigned int size)
 {
-    return (int)err_reg(_syscall2(SYS_TRUNCATE, (uint32_t)path, size));
+    return (int)err_posix(_syscall2(SYS_TRUNCATE, (uint32_t)path, size));
 }
 
 /* =============================================================================
@@ -5497,17 +5561,17 @@ ssize_t getrandom(void *buf, size_t len, unsigned int flags)
 int mkdir(const char *path, mode_t modo)
 {
     (void)modo;
-    return (int)err_reg(_syscall1(SYS_MKDIR, (uint32_t)path));
+    return (int)err_posix(_syscall1(SYS_MKDIR, (uint32_t)path));
 }
 
 int rmdir(const char *path)
 {
-    return (int)err_reg(_syscall1(SYS_RMDIR, (uint32_t)path));
+    return (int)err_posix(_syscall1(SYS_RMDIR, (uint32_t)path));
 }
 
 int unlink(const char *path)
 {
-    return (int)err_reg(_syscall1(SYS_UNLINK, (uint32_t)path));
+    return (int)err_posix(_syscall1(SYS_UNLINK, (uint32_t)path));
 }
 
 /* remove() e' unlink() con il nome che usa il C standard. Sui sistemi
@@ -5534,7 +5598,7 @@ int remove(const char *path)
  * ============================================================================= */
 int execv(const char *path, char *const argv[])
 {
-    return err_reg(_syscall3(SYS_EXEC, (uint32_t)path, (uint32_t)argv, 0));
+    return err_posix(_syscall3(SYS_EXEC, (uint32_t)path, (uint32_t)argv, 0));
 }
 
 int execvp(const char *file, char *const argv[])
@@ -5834,8 +5898,13 @@ static void stat_da_grezzo(const Stat *g, struct stat *st)
     unsigned minuto = ((unsigned)(g->st_time >> 5) & 0x3Fu);
     unsigned sec    = ((unsigned)g->st_time & 0x1Fu) * 2u;
 
+    /* ⚠️ st_dev RESTA 0, ED E' CORRETTO QUI: l'identita' del volume e'
+     * gia' dentro st_ident (il VFS ci mette il montaggio nei bit alti —
+     * vedi stat_interno in kernel/fs/vfs.c). Due st_ino uguali con
+     * st_dev uguale significano «lo stesso file», ed e' esattamente cio'
+     * che chiede chi confronta due percorsi. */
     st->st_dev   = 0;
-    st->st_ino   = g->st_first_clus;
+    st->st_ino   = g->st_ident;
     st->st_nlink = 1;
     st->st_uid   = 0;
     st->st_gid   = 0;
@@ -5893,14 +5962,28 @@ int fstat(int fd, struct stat *st)
 {
     long dim;
 
-    if (st == NULL) { errno = 14; return -14; }   /* EFAULT */
+    /* ⚠️ ERA `return -14`, cioe' -EFAULT: l'ultima funzione POSIX rimasta
+     * con la convenzione vecchia, sfuggita alla conversione di agosto 2026
+     * perche' non passa da err_posix(). Vedi il commento su errno in testa
+     * al file per cosa e' costato altrove. `fsize` invece rendeva gia' -1,
+     * quindi il ramo sotto era corretto per caso. */
+    if (st == NULL) { errno = EFAULT; return -1; }
 
     dim = fsize(fd);
-    if (dim < 0) return (int)dim;
+    if (dim < 0) return -1;
 
     /* Tutto il resto e' quello che si puo' dire di un descrittore senza
      * una syscall fstat: la dimensione e' vera, il tipo e' un'ipotesi
-     * ragionevole, i tempi non ci sono. Dichiarato nell'header. */
+     * ragionevole, i tempi non ci sono. Dichiarato nell'header.
+     *
+     * ⚠️ st_ino RESTA 0 QUI, e a differenza di stat() non e' una svista
+     * riparata: un descrittore non porta con se' il percorso, e senza
+     * quello il VFS non sa dire di quale oggetto si tratti. Chi confronta
+     * due FILE per identita' — e' cio' che il difetto di stat() aveva
+     * insegnato a temere — deve passare da stat() sul percorso, dove
+     * l'identita' e' vera (st_ident, vedi kernel/fs/vfs.c). Il giorno che
+     * servisse davvero, la strada e' una syscall SYS_FSTAT che chieda al
+     * VFS l'ident dell'handle: c'e' gia', e' solo da esporre. */
     st->st_dev   = 0;
     st->st_ino   = 0;
     st->st_mode  = S_IFREG | 0644u;
@@ -6368,7 +6451,9 @@ int system(const char *comando)
     argv[3] = NULL;
 
     pid = spawn(SHELL_PERCORSO, argv);
-    if (pid < 0) { errno = -pid; return -1; }
+    /* spawn() ha gia' messo il codice in errno e reso -1: qui non c'e'
+     * piu' niente da tradurre. */
+    if (pid < 0) return -1;
 
     if (waitpid(pid, &stato, 0) < 0) return -1;
     return stato;
@@ -6437,7 +6522,7 @@ FILE *popen(const char *comando, const char *modo)
     /* Subito, sia se e' andata sia se no: vedi il ⚠️ qui sopra. */
     close(fd_suo);
 
-    if (pid < 0) { close(fd_mio); errno = -pid; return NULL; }
+    if (pid < 0) { int e = errno; close(fd_mio); errno = e; return NULL; }
 
     f = fdopen(fd_mio, lettura ? "r" : "w");
     if (f == NULL) { close(fd_mio); return NULL; }
@@ -6792,6 +6877,7 @@ char *strerror(int err)
         case 3:   return "processo inesistente";
         case 4:   return "interrotto";
         case 5:   return "errore di I/O";
+        case 7:   return "riga di comando troppo lunga";
         case 9:   return "descrittore non valido";
         case 10:  return "nessun figlio";
         case 12:  return "memoria esaurita";

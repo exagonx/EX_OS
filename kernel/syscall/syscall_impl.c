@@ -104,59 +104,103 @@ static void kstrcpy(char *dst, const char *src, uint32_t max)
  * quindi era lecito aspettarsi che i percorsi relativi funzionassero.
  *
  * Gestisce anche "." e "..", perché `cd ..` è la prima cosa che si prova.
- * Il ".." risale di un solo livello ed è sufficiente: FAT12 qui supporta
- * un solo livello di sottodirectory (vedi fat12_find_path).
+ *
+ * ⚠️ IL ".." SI RISOLVE OVUNQUE, NON SOLO IN TESTA E NON SOLO NEI PERCORSI
+ * RELATIVI (corretto ad agosto 2026). Prima un percorso assoluto veniva
+ * copiato tale e quale — «si usa così com'è» — e uno relativo capiva un
+ * ".." solo se stava all'inizio, perché FAT12 aveva un livello solo di
+ * sottodirectory e tanto bastava.
+ *
+ * Non basta più, e il conto l'ha pagato GCC: i suoi percorsi di ricerca
+ * hanno il ".." NEL MEZZO, e per costruzione — sono scritti dentro il
+ * binario come /exos/lib/gcc/i386-exos/17.0.0/../../../../i386-exos/include,
+ * cioè "risali dalla mia directory fino al prefisso, poi riscendi". È così
+ * che un compilatore trova le proprie cose dopo essere stato spostato.
+ * Consegnati al VFS senza normalizzarli, quei percorsi cercano una
+ * directory che si chiama davvero ".." dentro 17.0.0/, non la trovano, e
+ * cc1 conclude che la directory non esiste: la scarta in silenzio, le
+ * scarta tutte, e risponde «no include path in which to search for
+ * stdio.h». Un messaggio che parla di header mentre il difetto è nel
+ * percorso.
  *
  * Ritorna 0, o <0 se il risultato non entra nel buffer.
  * ============================================================================= */
+
+/* Riscrive `p` — che deve essere assoluto — in forma canonica: via le barre
+ * ripetute, via le componenti ".", e ogni ".." cancella quella prima. Un
+ * ".." di troppo si ferma alla radice, come su Unix, invece di uscirne. */
+static void path_normalizza(char *p)
+{
+    const char *in  = p + 1;    /* la barra iniziale resta dov'è */
+    char       *out = p + 1;
+
+    while (*in != '\0') {
+        const char *fine;
+        uint32_t    len, k;
+        int         ultimo;
+
+        while (*in == '/') in++;
+        if (*in == '\0') break;
+
+        fine = in;
+        while (*fine != '\0' && *fine != '/') fine++;
+        len = (uint32_t)(fine - in);
+
+        /* ⚠️ SI GUARDA SE SIAMO ALL'ULTIMA COMPONENTE PRIMA DI SCRIVERE: la
+         * barra che si aggiunge qui sotto finisce esattamente sopra il byte
+         * che `fine` sta indicando, e se quello era il terminatore lo si
+         * perderebbe — con il ciclo che prosegue oltre la fine della
+         * stringa. Scrittura e lettura corrono sullo stesso buffer. */
+        ultimo = (*fine == '\0');
+
+        if (len == 1 && in[0] == '.') {
+            /* "." non muove niente */
+        } else if (len == 2 && in[0] == '.' && in[1] == '.') {
+            if (out > p + 1) {
+                out--;                                   /* la barra */
+                while (out > p + 1 && out[-1] != '/') out--;
+            }
+        } else {
+            for (k = 0; k < len; k++) out[k] = in[k];
+            out += len;
+            *out++ = '/';
+        }
+
+        if (ultimo) break;
+        in = fine;
+    }
+
+    /* Via la barra finale, tranne quando il percorso È la radice. */
+    if (out > p + 1) out--;
+    *out = '\0';
+}
+
 static int32_t resolve_path(const char *in, char *out, uint32_t max)
 {
     uint32_t i = 0, j = 0;
 
     if (in == NULL || out == NULL || max < 2) return ERR(EINVAL);
 
-    /* Percorso assoluto: si usa così com'è */
     if (in[0] == '/') {
-        kstrcpy(out, in, max);
-        return 0;
+        out[i++] = '/';
+        in++;
+    } else {
+        /* Relativo: parte dalla directory corrente.
+         *
+         * Lo slash separatore si aggiunge solo se non c'è già: con cwd "/"
+         * ce l'abbiamo, con "/boot" no. Senza questo controllo si
+         * otterrebbe "//kernel.cfg" oppure "/bootkernel.cfg" — e la prima
+         * delle due la ripulirebbe path_normalizza, la seconda no. */
+        while (g_cwd[j] && i < max - 1) out[i++] = g_cwd[j++];
+        if (i > 0 && out[i - 1] != '/' && i < max - 1) out[i++] = '/';
     }
-
-    /* Relativo: parte dalla directory corrente */
-    while (g_cwd[j] && i < max - 1) out[i++] = g_cwd[j++];
-
-    /* "." = la directory corrente stessa */
-    if (in[0] == '.' && in[1] == '\0') {
-        out[i] = '\0';
-        return 0;
-    }
-
-    /* ".." = risale di un livello, tagliando l'ultima componente */
-    if (in[0] == '.' && in[1] == '.' && (in[2] == '\0' || in[2] == '/')) {
-        while (i > 1 && out[i - 1] != '/') i--;   /* togli il nome */
-        if (i > 1) i--;                            /* togli lo slash */
-        out[i] = '\0';
-        if (out[0] == '\0') kstrcpy(out, "/", max);
-
-        if (in[2] == '\0') return 0;
-        /* "../qualcosa": prosegui con il resto */
-        in += 3;
-        j = i;
-        if (j > 0 && out[j - 1] != '/' && j < max - 1) out[j++] = '/';
-        i = j;
-        while (*in && i < max - 1) out[i++] = *in++;
-        out[i] = '\0';
-        return 0;
-    }
-
-    /* Aggiungi lo slash separatore solo se non c'è già: con cwd "/" ce
-     * l'abbiamo, con "/boot" no. Senza questo controllo si otterrebbe
-     * "//kernel.cfg" oppure "/bootkernel.cfg". */
-    if (i > 0 && out[i - 1] != '/' && i < max - 1) out[i++] = '/';
 
     while (*in && i < max - 1) out[i++] = *in++;
     out[i] = '\0';
 
     if (*in != '\0') return ERR(EINVAL);   /* percorso troppo lungo */
+
+    path_normalizza(out);
     return 0;
 }
 
@@ -1141,13 +1185,71 @@ int32_t sys_exec(InterruptFrame *frame)
  *
  * Ritorna: PID del figlio (>0), errno negativo in caso di errore
  * ============================================================================= */
-#define MAX_SPAWN_ARGS  16
+/* ⚠️ ERA 16, ED E' COSTATO DUE GIORNI. Il driver di GCC lancia cc1 con
+ * DICIASSETTE argomenti — li si conta da `gcc -v`:
+ *
+ *   cc1 -quiet -v inc.c -fno-pic -fno-asynchronous-unwind-tables -quiet
+ *       -dumpbase inc.c -dumpbase-ext .c -mtune=i386 -march=i486 -O2
+ *       -version -o /tmp/ccXXXXXX.s
+ *
+ * A sedici il taglio cadeva ESATTAMENTE fra `-o` e il nome del file, e cc1
+ * rispondeva «missing filename after '-o'» — un messaggio che manda a
+ * cercare il difetto nella generazione dei nomi temporanei, dove non c'era.
+ * Sessantaquattro tiene una riga di link di collect2, che e' la piu' lunga
+ * che si veda in una compilazione, e resta lontana dai 4096 di Linux
+ * perche' ogni argomento qui costa MAX_ARG_LEN byte di buffer.
+ *
+ * ⚠️ E SOPRATTUTTO: adesso il troncamento NON esiste piu'. Chi supera il
+ * tetto riceve E2BIG e un klog che dice quanti ne ha passati. Un comando
+ * accorciato di nascosto e' il difetto peggiore che questa syscall possa
+ * produrre, perche' l'errore lo dichiara il PROGRAMMA LANCIATO, parlando
+ * dei propri argomenti, e nessuno pensa piu' al kernel. */
+#define MAX_SPAWN_ARGS  64
 #define MAX_SPAWN_ENV   32     /* variabili d'ambiente ereditate da un figlio */
 
 /* Un argomento e' quasi sempre un PERCORSO, quindi il tetto e' lo stesso.
  * Era 128, e con i nomi 8.3 bastava; da quando un nome ext2 puo' essere di
  * 255 byte, 128 taglia percorsi del tutto legittimi. */
 #define MAX_ARG_LEN    PERCORSO_MAX
+
+/* Le stringhe di argv e dell'ambiente stanno in un'ARENA sullo heap, non
+ * sullo stack del kernel.
+ *
+ * ⚠️ E' il tetto che conta davvero, ed e' sui BYTE TOTALI, non sul numero
+ * di argomenti: sessantaquattro buffer da MAX_ARG_LEN l'uno sarebbero venti
+ * kilobyte di stack a ogni spawn, per una riga di comando che quasi sempre
+ * ne occupa trecento. Impacchettate, quattro kilobyte tengono la riga di
+ * link piu' lunga che collect2 sappia produrre.
+ *
+ * ⚠️ PERCHE' PROPRIO QUATTRO, e non di piu': queste stringhe finiscono
+ * sullo stack UTENTE del figlio, e di quello elf_load ne impegna
+ * USER_STACK_INIT — oggi ottomila byte. Un'arena grande quanto lo stack
+ * iniziale lo riempirebbe tutto, e il fallimento arriverebbe non qui ma
+ * dentro spawn_write_user, come «stack non mappato per argv[n]»: un
+ * messaggio che parla di paginazione mentre il difetto e' un tetto. Meta'
+ * dello stack iniziale lascia margine al programma per partire.
+ *
+ * ⚠️ E NON E' PIU' `static`: l'ambiente lo era, e due processi che facevano
+ * spawn insieme si sovrascrivevano le variabili a vicenda — elf_load legge
+ * dal disco, quindi fra il riempimento del buffer e il suo uso il processo
+ * si blocca di sicuro. Non si e' mai visto perche' finora a lanciare
+ * programmi era quasi sempre la sola shell. */
+#define SPAWN_ARENA_BYTES  (USER_STACK_INIT / 2)
+
+/* Copia `s` nell'arena e ne ritorna il puntatore, o NULL se non ci sta piu'. */
+static char *spawn_arena_dup(char *arena, uint32_t *uso, const char *s)
+{
+    uint32_t len = 0, k;
+    char    *dst;
+
+    while (s[len]) len++;
+    if (*uso + len + 1 > SPAWN_ARENA_BYTES) return NULL;
+
+    dst = arena + *uso;
+    for (k = 0; k <= len; k++) dst[k] = s[k];
+    *uso += len + 1;
+    return dst;
+}
 
 /* Scrive `len` byte da `src` all'indirizzo virtuale `user_virt` nella PD `pd`,
  * usando l'indirizzo fisico (identity-mapped) per ogni pagina — nessun switch CR3.
@@ -1195,12 +1297,29 @@ int32_t sys_spawn(InterruptFrame *frame)
       kstrcpy(kpath, abs, sizeof(kpath)); }
 
     /* --- Copia argv in kernel space ---------------------------------------- */
-    char  kbufs[MAX_SPAWN_ARGS][MAX_ARG_LEN];
-    char *kargv[MAX_SPAWN_ARGS + 1];
+    char    *arena = (char *)kmalloc(SPAWN_ARENA_BYTES);
+    uint32_t arena_uso = 0;
+    char    *kargv[MAX_SPAWN_ARGS + 1];
     uint32_t i, real_argc = 0;
 
+    if (arena == NULL) {
+        klog(LOG_ERROR, "SYSCALL spawn('%s'): heap esaurito per gli argomenti",
+             kpath);
+        return ERR(ENOMEM);
+    }
+
     if (uargv && argc > 0) {
-        if (argc > MAX_SPAWN_ARGS) argc = MAX_SPAWN_ARGS;
+        /* ⚠️ TROPPI ARGOMENTI E' UN ERRORE, non un motivo per accorciare la
+         * riga. Il taglio silenzioso c'e' stato fino ad agosto 2026 e ha
+         * fatto rispondere a cc1 «missing filename after '-o'»: chi legge
+         * quel messaggio cerca il difetto nel programma lanciato, che aveva
+         * ragione — a mentire era il kernel. */
+        if (argc > MAX_SPAWN_ARGS) {
+            klog(LOG_ERROR, "SYSCALL spawn('%s'): %u argomenti, il tetto e' %u",
+                 kpath, argc, (uint32_t)MAX_SPAWN_ARGS);
+            kfree(arena);
+            return ERR(E2BIG);
+        }
         for (i = 0; i < argc; i++) {
             if (!syscall_verify_ptr(&uargv[i], sizeof(char*))) break;
             const char *ua = uargv[i];
@@ -1214,12 +1333,17 @@ int32_t sys_spawn(InterruptFrame *frame)
                 klog(LOG_ERROR, "SYSCALL spawn('%s'): argomento %u illeggibile "
                                 "o piu' lungo di %u byte", kpath, i,
                                 MAX_ARG_LEN - 1u);
+                kfree(arena);
                 return ERR(EINVAL);
             }
-            uint32_t ai;
-            for (ai = 0; ai < MAX_ARG_LEN-1 && ua[ai]; ai++) kbufs[i][ai] = ua[ai];
-            kbufs[i][ai] = '\0';
-            kargv[i] = kbufs[i];
+            kargv[i] = spawn_arena_dup(arena, &arena_uso, ua);
+            if (kargv[i] == NULL) {
+                klog(LOG_ERROR, "SYSCALL spawn('%s'): riga di comando oltre "
+                                "%u byte all'argomento %u", kpath,
+                     (uint32_t)SPAWN_ARENA_BYTES, i);
+                kfree(arena);
+                return ERR(E2BIG);
+            }
             real_argc++;
         }
     }
@@ -1227,10 +1351,8 @@ int32_t sys_spawn(InterruptFrame *frame)
         /* argv[0] = basename del path */
         const char *bn = kpath;
         for (const char *p = kpath; *p; p++) if (*p == '/') bn = p+1;
-        uint32_t ai;
-        for (ai = 0; ai < MAX_ARG_LEN-1 && bn[ai]; ai++) kbufs[0][ai] = bn[ai];
-        kbufs[0][ai] = '\0';
-        kargv[0] = kbufs[0];
+        kargv[0] = spawn_arena_dup(arena, &arena_uso, bn);
+        if (kargv[0] == NULL) { kfree(arena); return ERR(E2BIG); }
         real_argc = 1;
     }
     kargv[real_argc] = NULL;
@@ -1258,8 +1380,8 @@ int32_t sys_spawn(InterruptFrame *frame)
 
     /* Ambiente: stesse regole degli argomenti — copiato in kernel space
      * PRIMA di creare il figlio, cosi' un puntatore illeggibile ferma lo
-     * spawn invece di lasciare il processo a meta'. */
-    static char kenv[MAX_SPAWN_ENV][MAX_ARG_LEN];
+     * spawn invece di lasciare il processo a meta'. Divide l'arena con
+     * argv: e' la riga di comando INTERA a dover stare in un tetto. */
     char       *kenvp[MAX_SPAWN_ENV + 1];
     uint32_t    real_envc = 0;
 
@@ -1273,15 +1395,17 @@ int32_t sys_spawn(InterruptFrame *frame)
             if (!syscall_verify_str(uv, MAX_ARG_LEN)) {
                 klog(LOG_ERROR, "SYSCALL spawn('%s'): variabile d'ambiente %u "
                                 "illeggibile", kpath, i);
+                kfree(arena);
                 return ERR(EINVAL);
             }
-            {
-                uint32_t ei;
-                for (ei = 0; ei < MAX_ARG_LEN - 1 && uv[ei]; ei++)
-                    kenv[real_envc][ei] = uv[ei];
-                kenv[real_envc][ei] = '\0';
+            kenvp[real_envc] = spawn_arena_dup(arena, &arena_uso, uv);
+            if (kenvp[real_envc] == NULL) {
+                klog(LOG_ERROR, "SYSCALL spawn('%s'): ambiente oltre %u byte "
+                                "alla variabile %u", kpath,
+                     (uint32_t)SPAWN_ARENA_BYTES, i);
+                kfree(arena);
+                return ERR(E2BIG);
             }
-            kenvp[real_envc] = kenv[real_envc];
             real_envc++;
         }
     }
@@ -1295,6 +1419,7 @@ int32_t sys_spawn(InterruptFrame *frame)
 Process *child = proc_create(kpath, 0, PRIO_NORMAL, 0);
 
 if (!child) {
+kfree(arena);
 return ERR(ENOMEM); }
 
     /* Il figlio nasce sulla console del padre: un programma lanciato dal
@@ -1314,6 +1439,7 @@ if (elf_load(kpath, child, &res) != 0) {
         proc_kill(child->pid);
         proc_reap_zombie(child);
         klog(LOG_ERROR, "SYSCALL spawn: ELF load fallito per '%s'", kpath);
+        kfree(arena);
         return ERR(ENOENT);
     }
 
@@ -1494,9 +1620,11 @@ proc_set_ready(child);
 
 klog(LOG_INFO, "SYSCALL spawn: PID %u (entry=0x%08x usp=0x%08x) parent=%u",
          child->pid, res.entry_point, usp, parent->pid);
+    kfree(arena);
     return (int32_t)child->pid;
 
 spawn_fail:
+    kfree(arena);
     /* FIX BUG #5: rendiamo il cleanup atomico disabilitando gli interrupt
      * per tutta la durata. proc_kill → ZOMBIE, proc_reap_zombie → UNUSED.
      * Nessun IRQ0 può far scansionare il reaper di init tra i due passi,
@@ -1672,6 +1800,17 @@ int32_t sys_sbrk(InterruptFrame *frame)
             paging_unmap_page(proc->page_directory, va);
         }
         proc->heap_end = new_end;
+
+        /* ⚠️ LO HEAP CHE SI RESTRINGE SI DICE, e a LOG_INFO, non a DEBUG.
+         * E' un evento raro — solo heap_restituisci() della libc lo
+         * provoca — e smappa pagine sotto i piedi di un processo vivo: se
+         * qualcosa la' dentro era ancora in uso, il fault arriva dopo, in
+         * un punto che con sbrk non sembra avere niente a che fare. Averlo
+         * nel registro subito sopra il fault e' la differenza fra vedere
+         * il nesso e cercarlo. */
+        klog(LOG_INFO, "SYSCALL sbrk: PID %u RESTITUISCE %u KB, "
+             "heap 0x%08x -> 0x%08x", proc->pid, shrink / 1024u,
+             old_end, new_end);
     }
 
     klog(LOG_DEBUG, "SYSCALL sbrk(%d): heap 0x%08x -> 0x%08x",
@@ -1772,15 +1911,16 @@ int32_t sys_stat(InterruptFrame *frame)
     /* I campi di Stat hanno i nomi di FAT12 perche' li' e' nata, ma il
      * dato arriva dal VFS e vale su qualunque filesystem montato.
      *
-     * st_first_clus resta 0 e non e' una dimenticanza: e' un numero che
-     * ha senso solo dentro una FAT, e i driver ext2 e ISO non hanno
-     * niente da metterci. Un valore inventato sarebbe peggio di uno
-     * assente — qualcuno prima o poi lo userebbe come se contasse.
+     * ⚠️ QUI st_first_clus RESTAVA 0 «per non inventare un numero», e la
+     * motivazione si e' rivelata sbagliata al primo programma che quel
+     * numero l'ha letto davvero: il ragionamento per esteso, e cosa e'
+     * costato, stanno sopra stat_interno() in kernel/fs/vfs.c. Adesso e'
+     * st_ident e il VFS lo compone per tutti i filesystem.
      *
      * Gli attributi usano le convenzioni FAT (0x10 directory, 0x01 sola
      * lettura) perche' sono quelle che i programmi gia' interpretano. */
     st->st_size       = vs.dimensione;
-    st->st_first_clus = 0;
+    st->st_ident      = vs.ident;
     st->st_attr       = (uint16_t)((vs.is_dir       ? 0x10 : 0x00) |
                                    (vs.sola_lettura ? 0x01 : 0x00));
     /* Dal 0.168 la data arriva davvero dal filesystem. Zero continua a

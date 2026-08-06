@@ -100,6 +100,7 @@
 #define ENOMEDIUM   123     /* il lettore c'e', il disco dentro no */
 #define EAGAIN      11      /* riprova: qui, nessun processo a cui bloccarsi */
 #define ENFILE      23      /* limite di SISTEMA (non del processo) raggiunto */
+#define E2BIG        7      /* troppi argomenti, o riga di comando troppo lunga */
 
 /* Syscall IPC — comunicazione kernel-mediata tra task ring3 */
 #define SYS_IPC_SEND     220
@@ -317,7 +318,12 @@ typedef struct {
  * ============================================================================= */
 typedef struct {
     uint32_t    st_size;        /* Dimensione file */
-    uint32_t    st_first_clus;  /* Primo cluster FAT12 */
+    /* Identita' del file: due percorsi danno lo STESSO numero se e solo se
+     * sono lo stesso oggetto. Si chiamava st_first_clus e valeva sempre 0
+     * fuori da FAT12; e' diventato st_ident ad agosto 2026 — la stessa
+     * parola nella stessa posizione, quindi nessuna ABI cambia. Il perche'
+     * sta in stat_interno(), kernel/fs/vfs.c. */
+    uint32_t    st_ident;
     uint16_t    st_attr;        /* Attributi FAT12 */
     uint16_t    st_date;        /* Data modifica */
     uint16_t    st_time;        /* Ora modifica */

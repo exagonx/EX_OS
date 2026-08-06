@@ -27,20 +27,10 @@
 
 static char buf[BLOCCO];
 
-static const char *spiega(int err)
-{
-    switch (-err) {
-        case 2:  return "non trovato";
-        case 5:  return "errore di I/O";
-        case 17: return "esiste gia'";
-        case 21: return "e' una directory";
-        case 22: return "percorso o nome non valido";
-        case 24: return "troppi file aperti";
-        case 28: return "spazio esaurito";
-        case 30: return "filesystem in sola lettura";
-        default: return "errore";
-    }
-}
+/* ⚠️ QUI C'ERA UNA TABELLA DEI CODICI FATTA IN CASA, tolta ad agosto 2026
+ * insieme al -errno di ritorno: open() e read() adesso rendono -1 e mettono
+ * il motivo in errno, come su Unix, e strerror() lo dice gia' — nella
+ * stessa lingua e senza una seconda tabella da tenere allineata. */
 
 int main(int argc, char **argv)
 {
@@ -64,14 +54,14 @@ int main(int argc, char **argv)
 
     fs = open(argv[1], O_RDONLY);
     if (fs < 0) {
-        printf("cp: %s: %s (errore %d)\n", argv[1], spiega(fs), fs);
+        printf("cp: %s: %s\n", argv[1], strerror(errno));
         return 1;
     }
 
     fd = open(argv[2], O_WRONLY | O_CREAT | O_TRUNC);
     if (fd < 0) {
         close(fs);
-        printf("cp: %s: %s (errore %d)\n", argv[2], spiega(fd), fd);
+        printf("cp: %s: %s\n", argv[2], strerror(errno));
         return 1;
     }
 
@@ -85,7 +75,7 @@ int main(int argc, char **argv)
             int w = (int)write(fd, buf + scritti, (unsigned int)(n - scritti));
             if (w <= 0) {
                 printf("cp: scrittura fallita dopo %d byte", tot + scritti);
-                if (w < 0) printf(": %s (errore %d)", spiega(w), w);
+                if (w < 0) printf(": %s", strerror(errno));
                 printf("\n");
                 close(fs); close(fd);
                 return 1;
@@ -99,7 +89,7 @@ int main(int argc, char **argv)
     close(fd);
 
     if (n < 0) {
-        printf("cp: lettura fallita dopo %d byte (errore %d)\n", tot, n);
+        printf("cp: lettura fallita dopo %d byte: %s\n", tot, strerror(errno));
         return 1;
     }
 

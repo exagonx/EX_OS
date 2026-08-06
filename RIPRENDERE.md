@@ -1,4 +1,4 @@
-# Dove riprendere — 5 agosto 2026
+# Dove riprendere — 6 agosto 2026
 
 Appunti su un lavoro a metà. Non è documentazione: è lo stato di ciò che
 sta girando adesso e di ciò che si è appena capito.
@@ -97,21 +97,317 @@ FreeBASIC**:
 - `<wchar.h>` e `<wctype.h>` veri: 26 funzioni, codifica Latin-1
   dichiarata (non UTF-32 finto).
 
-## La catena in C è chiusa, e provata
+## La catena in C con cc1 a mano è chiusa, e provata
 
 `cc1 /src/prova.c -O2 -o /src/prova.s` dentro EX-OS produce **1113 byte**,
 gli stessi che produce il `cc1` del cross sullo stesso sorgente con lo
 stesso nome di file. Poi `as` → `ld` → esecuzione, **uscita 70**, che è il
 valore calcolato a mano (`385 & 0x7F` più `'E'`).
 
-## Il prossimo passo
+## Gli header: FATTI (6 agosto, notte)
 
-1. Gli **header**: `--prefix=/exos` e la catena di `-isystem`, che
-   finora è stata evitata di proposito (`prova-cc1.c` non ha un solo
-   `#include`, così una prova fallita risponde a una domanda sola).
-2. Poi i linguaggi oltre il C. `c++` ha già `libstdc++.a` nel sysroot e
-   `provacpp` gira; **Ada** vuole `gnat1` e un `libgnat` — e vuole un
-   compilatore Ada già funzionante per costruirsi, che è il vero ostacolo.
+    cd /src
+    /cdrom/exos/bin/gcc -B/cdrom/exos/libexec/gcc/i386-exos/17.0.0/ \
+        -O2 -c inc.c
+    -> inc.o, 872 byte, uscita 0
+
+`inc.c` ha `#include <stdio.h>` e `<string.h>`, e il driver li trova DA
+SOLO — nessun `-I`. Ci sono voluti quattro difetti del sistema, non di GCC:
+il racconto sta piu' avanti, in «Perche' non funzionava».
+
+⚠️ Il `-B` serve ancora, e serve su **libexec**: i percorsi compilati
+dentro sono assoluti (`/exos/...`) e combaciano solo se il CD e' la radice
+o se l'albero e' installato su `/exos` del disco.
+
+## LA CATENA INTERA FUNZIONA — un comando solo (6 agosto)
+
+    cd /src
+    /cdrom/exos/bin/gcc -B/cdrom/exos/libexec/gcc/i386-exos/17.0.0/ \
+        -O2 -o pg pg.c
+    -> pg, 63324 byte, uscita 0
+
+    /src/pg
+    La catena intera dentro EX-OS
+      somma dei quadrati 1..10 : 385   (atteso 385)
+      lunghezza del nome       : 5     (atteso 5)
+      divisione a 64 bit       : 64   (atteso 64)
+    Compilato, assemblato e collegato qui dentro.
+
+`pg.c` e' `tools/iso/prova-gcc.c`: `#include <stdio.h>` e `<string.h>`,
+`printf` con `%lld`, `memcpy` dalla libc, una divisione a 64 bit che chiama
+`__divdi3` in libgcc, e una struttura restituita per valore. **I numeri
+sono noti in anticipo** — non «sembra giusto».
+
+Il driver ha lanciato da solo cc1, `as`, `collect2` e `ld`, ha trovato gli
+header senza un `-I`, e ha collegato con crt0, libc e libgcc. Ci sono
+voluti cinque difetti del sistema (nessuno in GCC), raccontati qui sotto.
+
+## Il page fault della catena a piu' stadi: CHIUSO — era strncpy
+
+Il sintomo:
+
+    /cdrom/exos/bin/gcc -B/cdrom/exos/libexec/gcc/i386-exos/17.0.0/ \
+        -O2 -o pg pg.c
+    [FAULT] PID 12 '/cdrom/exos/libexec/gcc/i386-ex': page fault a
+            0x0813b000 (pagina assente, scrittura, EIP=0x080aeef0)
+
+**La causa era in `strncpy` della nostra libc**, e non c'entrava niente
+con l'allocatore, con sbrk o con i percorsi:
+
+    while (n-- && (*d++ = *src++));
+    while (n--) *d++ = '\0';
+
+Con una sorgente piu' corta di n il conto torna. Con una sorgente lunga
+almeno n — cioe' **il caso per cui strncpy esiste** — il primo ciclo esce
+perche' `n--` VALE 0, ma il post-decremento scatta lo stesso: n e' un
+size_t e passa a SIZE_MAX. Il secondo ciclo si mette a scrivere zeri per
+quattro miliardi di byte e si ferma solo sulla prima pagina non mappata.
+
+⚠️ **La gemella larga `wcsncpy` era gia' scritta bene** (`while (n && ...)`
+con il decremento dentro il corpo). Quando due funzioni fanno la stessa
+cosa su tipi diversi, la differenza fra le due e' il primo posto dove
+guardare.
+
+Provato prima sull'ospite con ASan (`stack-buffer-overflow` sulla versione
+vecchia, pulito sulla nuova), poi in `libctest` con quattro prove nuove —
+compresa una **sentinella dopo il buffer**, senza la quale un riempimento
+che sfora di poco resterebbe verde.
+
+### Come si e' arrivati: la strumentazione, non il ragionamento
+
+⚠️ Due sospetti scritti qui ieri erano **entrambi sbagliati**
+(`heap_restituisci`, `sys_sbrk` negativo), e leggere il codice non li
+smontava: sulla carta erano a posto. A chiudere la partita in una corsa
+sola sono stati due klog aggiunti al kernel, che adesso restano:
+
+1. **La mappa del processo sotto il page fault** (`kernel/mm/paging.c`):
+   heap, stack e VMA, con `<-- QUI` sulla VMA che contiene l'indirizzo.
+   Il nome del processo sta in PROCESS_NAME_LEN byte e i percorsi lunghi
+   ci si troncano dentro — `/cdrom/exos/libexec/gcc/i386-ex` puo' essere
+   cc1 come collect2 — mentre le VMA si confrontano con `readelf -l` e non
+   lasciano dubbi: era collect2.
+2. **`sbrk` che restituisce pagine** lo dice a LOG_INFO
+   (`kernel/syscall/syscall_impl.c`): e' raro e smappa memoria sotto i
+   piedi di un processo vivo.
+
+Poi il colpo decisivo, che non costa niente e va ricordato:
+
+    i386-exos-nm -n <binario> | awk 'strtonum("0x"$1) <= 0x080aeef0' | tail -3
+    -> 080aeea0 T strncpy
+
+**L'EIP del fault, cercato nella tavola dei simboli.** Dice in quale
+funzione si e' rotto, che e' la domanda a cui tutto il resto girava
+intorno.
+
+## IL C++ GIRA DENTRO EX-OS (6 agosto)
+
+    cd /src
+    /cdrom/exos/bin/g++ -B/cdrom/exos/libexec/gcc/i386-exos/17.0.0/ \
+        -O2 -o pp pp.cpp
+    -> pp, 1 266 568 byte, uscita 0
+
+    /src/pp
+    La libreria standard del C++ dentro EX-OS
+
+      vector+sort : 1 3 5 7 9
+      string      : "std::string concatenata" (23 caratteri)
+      cerchio     : area = 12566 (x1000)
+      quadrato    : area = 9000 (x1000)
+      eccezione   : lanciata e ripresa
+      out_of_range : presa da dentro la libreria
+
+    La libreria standard risponde.
+
+`pp.cpp` e' `tools/iso/prova-cpp.cpp`. Non e' un «hello world in C++»:
+contenitori con `<algorithm>`, `std::string` (cioe' `operator new` sopra la
+nostra malloc), polimorfismo con distruttore virtuale, e **le eccezioni** —
+compresa una lanciata da dentro libstdc++ e ripresa attraverso piu' livelli
+di stack, che e' il pezzo che ha bisogno del maggior numero di cose
+funzionanti insieme.
+
+⚠️ Resta sul disco un `ccHm016b.s` da 4096 byte: il driver **non cancella
+il proprio file temporaneo**. Da guardare — non fa danno subito, ma una
+directory di lavoro che si riempie a ogni compilazione lo fara'.
+
+### I due pezzi che mancavano sul CD
+
+`g++` non c'era proprio: il Makefile copiava `cpp` e `xgcc`, non `xg++`.
+
+⚠️ **Il nome del driver non e' un'etichetta**: lo stesso binario decide da
+COME E' STATO CHIAMATO se compilare in C o in C++, quale cc1 lanciare e se
+collegare libstdc++. Con il solo `gcc` sul CD, cc1plus c'era e non
+esisteva un modo di arrivarci.
+
+Messo `g++`, la catena e' arrivata fino in fondo e si e' fermata al **link**:
+
+    ld: cannot find -lstdc++
+    ld: have you installed the static version of the stdc++ library ?
+
+Gli header C++ erano sul CD, la LIBRERIA no. E' l'errore piu' tardi che
+potesse uscire — dopo che cc1plus ha compilato e as ha assemblato — e dice
+una cosa sola: `libstdc++.a` (24 MB) va in `/exos/lib`, accanto a libc.a e
+libgcc.a, dove ld guarda gia'.
+
+⚠️ **E anche `xg++` andava ricollegato**: quando ho forzato il rilink dopo
+la correzione di `strncpy` avevo cancellato `cc1 cc1plus collect2 xgcc cpp`
+e NON `xg++`, che e' rimasto indietro di una versione. La prova con il
+driver vecchio sarebbe stata inconcludente comunque. Il controllo che lo
+smaschera e' la data del binario contro quella di `$SYSROOT/lib/libc.a` —
+non quella della copia sul CD, che `make iso` rifa' ogni volta.
+
+## Una prova che misurava la macchina, non il sistema (6 agosto)
+
+`libctest` falliva su «sbrk finisce per rifiutare»... **a 512 MB**, e
+passava a 64. Cresceva di 1 MB per 64 volte e pretendeva un rifiuto: su una
+macchina piccola a fallire era la RAM, su una grande i 64 MB ci stavano e la
+prova diventava rossa su un sistema perfettamente sano.
+
+E non poteva funzionare: il tetto vero e' `heap_max`, a quasi 3 GB da
+heap_start. A 1 MB per volta non lo si raggiunge nemmeno in 64 passi.
+
+Ora il tetto si prova con **una richiesta piu' grande dello spazio di
+indirizzamento** (`sbrk(0x7FFF0000)`), che dev'essere rifiutata su
+qualunque macchina. La crescita a blocchi resta come **misura stampata**,
+non come verdetto:
+
+    64 MB  -> (cresciuto di 60 MB, poi la RAM e' finita)     294/0
+    512 MB -> (cresciuto di 64 MB, senza esaurire la RAM)    294/0
+
+⚠️ **Una prova che dipende dall'ambiente e' peggio di una prova assente**:
+la sua riga rossa fa cercare un difetto che non c'e'. Se una prova ha
+bisogno di una macchina particolare, deve dirlo o non essere una prova.
+
+## Tutti i binari del bersaglio sono allineati (6 agosto)
+
+Dopo la correzione di `strncpy` sono stati ricollegati **tutti**, e il
+controllo e' la data contro `$SYSROOT/lib/libc.a`:
+
+    cc1  cc1plus  collect2  xgcc  xg++  cpp      (gcc-build-cpp, rilink forzato)
+    as-new  ld-new                                (exos-native/build-nativi)
+    fbc                                           (prepara-fb.sh, ricostruito)
+
+⚠️ **Non guardare la data della copia sul CD**: `make iso` la rifa' a ogni
+giro e risulta sempre fresca, anche quando il binario sorgente e' vecchio
+di giorni. E' cosi' che `xg++` e' passato inosservato.
+
+## ⚠️ `make iso` interrotto lascia l'albero a meta', e non si ripara da solo
+
+Una corsa di `make iso` uccisa a meta' lascia `build/iso/` monco — comincia
+con `rm -rf $(ISO_ROOT)` e ricostruisce. Il guaio e' il giro dopo:
+
+    make iso
+    make: Nessuna operazione da eseguire per «iso».
+
+perche' `dist/exos-tools.iso` risulta piu' recente dei suoi prerequisiti.
+L'ISO in `dist/` e' giusta e l'albero in `build/` no, e make non se ne
+accorge. Siccome `build/` e' tracciato da git, la cosa si vede come una
+frana di file cancellati.
+
+    rm -f dist/exos-tools.iso && make iso    <- l'unico modo di riallinearli
+
+Da tenere presente ogni volta che una prova viene interrotta.
+
+## FreeBASIC ha lib e header come il C, e ora ce li ha davvero (6 agosto)
+
+Mancava un pezzo intero: **i .bi di FreeBASIC non stavano sul CD**. C'erano
+fbc e libfb.a, quindi un `.bas` senza `#include` compilava — ed e' proprio
+cio' che `prova-fb.bas` prova, di proposito. Con un `#include` non si
+andava da nessuna parte, e nessuno se n'era accorto perche' nessuna prova
+lo chiedeva.
+
+### FreeBASIC vuole il layout Unix, e lo dice il suo makefile
+
+Prevede due disposizioni. La nostra fbc usa la **non-standalone**:
+
+    <prefisso>/bin/fbc
+    <prefisso>/include/freebasic/        i .bi
+    <prefisso>/lib/freebasic/<target>/   libfb.a, fbrt0.o
+
+Non e' dedotto dai sorgenti, si legge dal comportamento: con fbc in /bin,
+`fbc -v` stampava `assembling: /cdrom/bin/../bin/as`. **Il prefisso e' la
+directory dell'eseguibile meno `bin`**, ricalcolata ogni volta.
+
+⚠️ **Ed e' la differenza vera con GCC**: i percorsi di GCC sono COMPILATI
+DENTRO (`--prefix=/exos`, dodici stringhe dentro cc1) e per spostarli
+servono GCC_EXEC_PREFIX o `-B`. FreeBASIC e' rilocabile per costruzione.
+Percio' fbc e' passato da `/bin` a **`/exos/bin`**: da li' trova i propri
+inc e lib da solo, ovunque sia montato il CD.
+
+### Dei 31 MB di inc/ se ne copiano 452 KB
+
+Il resto sono binding ad allegro, GTK, SDL, X11, zlib — librerie che su
+EX-OS non esistono. ⚠️ **Peggio di un header assente e' un header che
+promette**: compilerebbe e il link fallirebbe con simboli mai visti. Si
+copia cio' che corrisponde a cio' che c'e': `crt.bi` e `crt/` (che mappano
+sulla nostra libc), `fb*.bi` e `fbc-int/` (la runtime).
+
+### Provato: la ricerca degli header FUNZIONA
+
+`tools/iso/prova-fb2.bas` e' il gemello di `prova-fb.bas` CON `#include
+"crt.bi"`, sulla falsariga della coppia prova-cc1.c / prova-gcc.c. Dentro
+EX-OS:
+
+    /cdrom/exos/bin/fbc -v f2.bas
+    compiling:    f2.bas -o f2.asm (main module)     <- l'include e' stato TROVATO
+    assembling:   as --32 --strip-local-absolute "f2.asm" -o "f2.o"
+
+    f2.bas   2945      il sorgente con #include "crt.bi"
+    f2.asm   4010      fbc ha compilato
+    f2.o     2516      as ha assemblato
+    [1] terminato: fbc -v f2.bas (codice 1)     <- cade al link
+
+Nessuna opzione, nessun `-i`: fbc ha risolto
+`/cdrom/exos/include/freebasic/crt.bi` da solo. Il sorgente e' verificato
+prima su Linux (uscita 0, valori attesi 5/385/36), cosi' un errore di
+sintassi non si confonde con un difetto di EX-OS.
+
+⚠️ **Il link resta quello di sempre**: fbc crede di produrre per Linux e
+affida il link a `gcc` con opzioni Linux — vedi
+`tools/freebasic-exos/leggimi.md`. Non c'entra con la disposizione delle
+directory: e' il passo che mancava gia' prima.
+
+⚠️ **Un dettaglio da sistemare**: fbc cerca `as` in `<prefisso>/bin/as`,
+cioe' `/exos/bin/as`, dove non c'e' — GCC lo vuole in
+`/exos/i386-exos/bin/`. Ripiega sul nome nudo e il PATH lo trova, quindi
+funziona, ma per coincidenza. I due strumenti si aspettano `as` in due
+posti diversi e uno dei due va accontentato per davvero.
+
+### E il prefisso? `/usr` o `/exos`
+
+La struttura che si voleva c'e' gia': `/exos/bin`, `/exos/lib`,
+`/exos/include` **sono** la disposizione Unix, con un prefisso diverso dal
+solito. Rinominare `/exos` in `/usr` e' una decisione separata e non
+gratuita: GCC ha il prefisso compilato dentro, quindi vuole configure e
+ricostruzione da capo — ore — mentre FreeBASIC seguirebbe da solo. Il
+guadagno e' la familiarita', il costo e' quello. Non e' stato fatto.
+
+⚠️ E se si fa: e' `include/`, non `inc/`. `inc/` e' la disposizione
+standalone di FreeBASIC, che non e' quella che usiamo.
+
+## Il prossimo passo (6 agosto)
+
+1. **Il file temporaneo non cancellato**: dopo `g++ -o pp pp.cpp` resta
+   `ccHm016b.s` da 4096 byte in `/src`. Il driver lo crea e non lo toglie.
+
+   ⚠️ **Il primo sospetto e' gia' escluso**: `exit()` della nostra libc gli
+   atexit li chiama davvero (`while (g_atexit_n > 0) g_atexit[--g_atexit_n]()`,
+   verificato), il driver esce con 0, e `delete_temp_files` di gcc.cc si
+   registra proprio con atexit. Quindi la via d'uscita e' quella giusta.
+
+   Il fatto che separa i due casi: **la catena C non lascia niente, quella
+   C++ si**. La differenza sta in cio' che gira in piu' — collect2 — o nel
+   fatto che il nome finisca in una tabella diversa. Da guardare li', non
+   nella libc.
+2. **Togliere il `-B`.** I percorsi compilati dentro sono assoluti
+   (`/exos/...`): il `-B` serve solo perche' il CD e' montato su `/cdrom`.
+   Installando l'albero su `/exos` del disco rigido dovrebbe sparire — mai
+   provato.
+3. Poi i linguaggi oltre il C. **Ada** vuole `gnat1` e un `libgnat` — e
+   vuole un compilatore Ada già funzionante per costruirsi, che è il vero
+   ostacolo.
+
+*(`fbc` ricollegato e `fstat()` convertita a -1 il 6 agosto: erano i punti
+3 e 4 di questo elenco.)*
 
 ## Rimasto indietro di proposito
 
@@ -162,7 +458,7 @@ oggi passa da `vga_putchar_su`.
 1024x768x32 sono 3 MB di framebuffer da mappare (1,5 MB a 16 bit), su un
 sistema che punta a girare in 32 MB.
 
-## I percorsi /exos — a meta', con tre fatti in mano (5 agosto, sera)
+## I percorsi /exos — chiusi (6 agosto, notte)
 
 Il CD ora ha l'albero che il driver cerca davvero. Non e' una scelta
 nostra: si legge dal binario, `strings gcc/cc1 | grep /exos`.
@@ -184,10 +480,12 @@ lungo, /cdrom/exos/libexec/gcc/i386-exos/17.0.0/cc1.
    Gli serve una directory scrivibile: `cd /src` prima, oppure TMPDIR.
 2. Poi: «cannot execute 'cc1': spawn: operazione non permessa». Il
    permesso non c'entra — era un DIFETTO in tools/binutils-exos/pex-exos.c,
-   ora corretto: faceva `*err = -pid` credendo che spawn_ex ritornasse
-   -errno, mentre quella ritorna -1 e mette errno. Quindi -pid valeva 1,
-   cioe' EPERM, e ogni fallimento usciva come «non permesso».
-   ⚠️ La correzione ha effetto solo dopo aver ricostruito GCC (libiberty).
+   ora corretto: leggeva l'errore da `-pid` invece che da errno.
+   ⚠️ Questa nota diceva anche «spawn_ex ritorna -1 e mette errno»: era
+   FALSO quando e' stata scritta — ritornava -errno — ed e' diventato vero
+   solo il 6 agosto, con il terzo difetto qui sotto. Il messaggio EPERM
+   nasceva proprio da quel malinteso.
+   ⚠️ La correzione ha effetto solo dopo aver ricollegato GCC (libiberty).
 3. Il `-B` puntava alla directory sbagliata: cc1 sta sotto **libexec**, non
    sotto lib/gcc. La prossima prova va fatta con entrambi:
 
@@ -199,93 +497,119 @@ lungo, /cdrom/exos/libexec/gcc/i386-exos/17.0.0/cc1.
 il CD e' la radice o quando l'albero viene installato sul disco. Montato su
 /cdrom serve il -B, e questa e' la ragione per cui esiste.
 
-### Dove si e' fermata, col -B giusto
+### Perche' non funzionava: QUATTRO difetti, uno dietro l'altro
 
-    cc1: error: missing filename after '-o'
+⚠️ **Nessuno dei due sospetti scritti qui sopra era quello giusto**, e la
+pista «e' `-o`, e' `make_temp_file`» era sbagliata: `gcc -c` senza `-o`
+falliva identico. Quello che c'era sotto erano quattro difetti in fila,
+ognuno nascosto dal precedente, e ognuno con un messaggio che accusava
+qualcun altro.
 
-⚠️ E' UN PASSO AVANTI, non lo stesso muro: cc1 viene TROVATO ed ESEGUITO
-— il -B su libexec era la chiave. A cadere adesso e' l'argomento: il
-driver lancia `cc1 ... -o <temporaneo>.s` e quel nome arriva VUOTO.
+**1. Il kernel troncava gli argomenti a 16, in silenzio.**
+`MAX_SPAWN_ARGS` valeva 16. Il driver lancia cc1 con DICIASSETTE argomenti
+(diciotto con `-v`) e il taglio cadeva esattamente fra `-o` e il nome del
+file:
 
-Due sospetti, in ordine di probabilita':
+    cc1 -quiet -v -iprefix <p> inc.c -fno-pic -fno-asynchronous-unwind-tables
+        -quiet -dumpbase inc.c -dumpbase-ext .c -mtune=i386 -march=i486
+        -O2 -version -o ./ccXXXXXX.s
+                        ^ il sedicesimo
 
-1. il nome temporaneo. Da `/` il driver diceva «Cannot create temporary
-   file in ./»; da `/src` non lo dice piu', ma potrebbe produrre una
-   stringa vuota invece di fallire — e il driver la passa lo stesso.
-   Da guardare: make_temp_file / choose_tmpdir in libiberty, e se
-   TMPDIR aiuta (`TMPDIR=/src`).
-2. il passaggio degli argomenti in pex-exos.c. Meno probabile: se troncasse
-   argv mancherebbero anche gli altri argomenti, e invece cc1 ha letto
-   tutto il resto della riga.
+Da cui «missing filename after '-o'», che manda a cercare il difetto nella
+generazione dei nomi temporanei — dove non c'era.
+Ora il tetto e' 64, le stringhe stanno in un'arena sullo heap invece che
+sullo stack del kernel, e **superarlo e' un errore (E2BIG) con un klog**:
+un comando accorciato di nascosto e' il difetto peggiore che quella
+syscall possa produrre. Stesso tetto anche in `bin/sh` (era 16 pure li').
 
-⚠️ Prima di ricostruire GCC per la correzione di `*err = errno`, conviene
-sapere quale dei due e': la ricostruzione e' di ore e serve comunque, ma
-se il difetto e' il numero 1 sta in libiberty ed entra nello stesso giro.
+**2. Il kernel non risolveva `..` dentro un percorso assoluto.**
+`resolve_path` copiava un percorso assoluto «così com'è». I percorsi di
+ricerca di GCC hanno il `..` NEL MEZZO per costruzione —
+`/exos/lib/gcc/i386-exos/17.0.0/../../../../i386-exos/include` — perche' e'
+cosi' che un compilatore ritrova le proprie cose dopo essere stato spostato.
+Il VFS cercava una directory chiamata davvero `..`, non la trovava, cc1
+scartava in silenzio ogni directory e rispondeva «no include path in which
+to search for stdio.h».
+Ora c'e' `path_normalizza()`: `.`, `..` e le barre doppie si risolvono
+ovunque, in assoluti e relativi. Diciannove casi provati su Linux con ASan
+prima di metterla nel kernel.
 
-### Il driver dentro l'albero: mezzo passo avanti, e la prova che manca
+**3. La libc rendeva `-errno` invece di `-1`.**
+`open()` su un file assente rendeva `-2`. Il codice di terzi non scrive
+`< 0`, scrive `!= -1`, perche' e' cio' che lo standard promette:
 
-`-v` ha detto la cosa decisiva: il driver si calcola il prefisso **da dove
-sta lui**. Lanciato come `/cdrom/bin/gcc` cercava gli header in
-`/cdrom/bin/../lib/gcc/...` = `/cdrom/lib/gcc/`, che non esiste — da cui
-«no include path in which to search for stdio.h». Il `-o` invece c'era
-eccome (`-o ./ccGnR16b.s`): il «missing filename after -o» di prima veniva
-da altro e va riguardato a parte.
+    file->fd = open (file->path, O_RDONLY, 0666);   /* libcpp/files.cc */
+    if (file->fd != -1)
+        { fstat (file->fd, &file->st); ... }
 
-Percio' il CD ora mette il driver DENTRO l'albero, in `/exos/bin/gcc`.
+cc1 proseguiva con «descrittore» -2, faceva `fstat(-2)` — EBADF — e moriva
+con «fatal error: stdio.h: descrittore non valido» su un header che
+semplicemente stava nella directory successiva.
+Ora le funzioni con un **nome POSIX** rendono -1 e parlano per errno
+(`err_posix` in lib/libc.c); quelle **nostre** tengono il -errno, dove
+nessuno arriva con un'aspettativa da standard. Aggiornati `cp`, `trunc` e
+`install`, che stampavano il numero.
 
-⚠️ MA COSI' NON TROVA PIU' cc1: «cannot execute 'cc1': spawn: operazione
-non permessa» — che e' il messaggio mascherato dal difetto gia' corretto in
-pex-exos.c (non ancora ricostruito). I file ci sono tutti, verificato:
+**4. `stat()` dava a ogni file la stessa identita'.**
+`st_first_clus` era 0 sempre, «per non inventare un numero», e la libc ci
+costruiva sopra `st_ino`. Ma `remove_duplicates()` di GCC confronta
+st_dev/st_ino per togliere le directory ripetute dalla lista degli include:
+con st_ino tutti uguali ha concluso che le sue sei directory erano una
+sola.
 
-    build/iso/exos/bin/gcc
-    build/iso/exos/libexec/gcc/i386-exos/17.0.0/{cc1,cc1plus,collect2}
+    ignoring duplicate directory ".../i386-exos/include"
+    #include <...> search starts here:
+     /cdrom/exos/lib/gcc/i386-exos/17.0.0/include
+    End of search list.
 
-E con `-B/cdrom/exos/libexec/gcc/i386-exos/17.0.0/` cc1 **parte davvero**.
-Quindi il percorso e' leggibile e il binario e' buono: a non funzionare e'
-la RILOCAZIONE del prefisso, non l'albero.
+Ne ha tenuta una — quella degli header del compilatore — e buttata proprio
+quella con la libc.
+Ora il campo si chiama `st_ident` (stessa parola, stessa posizione: nessuna
+ABI cambia) e il VFS lo compone come montaggio nei 4 bit alti +
+inode/extent/cluster negli altri 28. Vedi `stat_interno()` in
+kernel/fs/vfs.c.
 
-**Il prossimo passo, in ordine e senza ricostruire niente:**
+⚠️ **E un quinto, corretto per strada**: `pex-exos.c` girava a spawn_ex
+l'`env` NULL che `pex_run()` passa sempre. Su Unix quel NULL vuol dire
+«eredita» (execv invece di execve); qui voleva dire «ambiente vuoto». GCC
+parla ai propri stadi PROPRIO per variabili d'ambiente — GCC_EXEC_PREFIX,
+COMPILER_PATH, LIBRARY_PATH, TMPDIR — quindi senza quelle non poteva
+funzionare niente di quello che viene dopo cc1.
 
-1. `/cdrom/exos/bin/gcc -v -c inc.c` e leggere `COMPILER_PATH` e
-   `-iprefix`: dicono quale prefisso ha calcolato. Se e' `/cdrom/exos`
-   allora il problema e' altrove; se e' altro, la rilocazione non scatta.
-2. Provare `/cdrom/exos/bin/gcc -B/cdrom/exos/libexec/gcc/i386-exos/17.0.0/
-   -O2 -o inc inc.c`: unisce le due meta' che funzionano separatamente —
-   header dalla rilocazione, cc1 dal -B.
-3. Solo dopo, la ricostruzione di GCC: porta la correzione di pex-exos.c
-   (`*err = errno`) e finalmente un messaggio vero al posto di EPERM.
+### Cosa ha richiesto, e cosa NO
 
-### ⚠️ Il vero indizio: il difetto segue `-o`, non i percorsi
+Nessuno di questi cambia un tipo condiviso: l'impronta ABI e' rimasta
+identica e i binari del bersaglio si **RICOLLEGANO**, non si ricostruiscono.
 
-Provata la combinazione «rilocazione per gli header + -B per cc1»:
+    tools/ricostruisci-bersaglio.sh libc     # ~1 minuto
+    make -C ~/gcc-build-cpp -j2 all-gcc      # ~5 minuti: rilink di cc1
+    make && make floppy && make iso
 
-    /cdrom/exos/bin/gcc -B/cdrom/exos/libexec/gcc/i386-exos/17.0.0/ \
-        -O2 -o inc inc.c
-    -> cc1: error: missing filename after '-o'
+⚠️ `make iso` vuole il cross nel PATH:
+`PATH=$HOME/exos-cross/bin:$PATH make iso`.
 
-Ma la corsa con `-v` e SENZA `-o` aveva mostrato una riga PERFETTA:
+### La prova che le correzioni non hanno rotto niente
 
-    cc1 ... -dumpbase inc.c ... -o ./ccGnR16b.s
+    libctest      ->  290 prove superate, 0 fallite
 
-Quindi cc1 si trova, si esegue, e il nome temporaneo si genera. **Il
-difetto compare quando l'utente passa `-o`**, cioe' quando il driver deve
-creare PIU' di un file temporaneo (.s e poi .o): il secondo nome esce
-vuoto.
+⚠️ Due erano **gia'** rosse prima di stanotte, e non per un difetto del
+sistema: `system()` ha imparato a passare da `/bin/sh -c` il 5 agosto, e le
+prove continuavano a pretendere ENOSYS. Ora dicono la verita'. Una suite
+che fallisce su un sistema che funziona smette di essere creduta, ed e' il
+modo piu' rapido di perdere una rete di sicurezza.
 
-⚠️ NON E' UN PROBLEMA DI PERCORSI, e cercarlo li' e' tempo perso. Sta nella
-generazione dei nomi temporanei — `make_temp_file` in libiberty — che gia'
-si era fatta notare da `/` con «Cannot create temporary file in ./».
+⚠️ Per lanciarla mentre gira gia' un'altra macchina serve
+`EXOS_ISTANZA=<n>`: senza, le due condividono `/tmp/exos/serial.txt` e la
+seconda cancella l'output della prima da sotto a QEMU — che continua a
+scrivere su un file scollegato, e il risultato e' un file vuoto senza
+nessun errore.
 
-**La prova successiva, corta e decisiva:**
+### La libc adesso sta in DUE posti sul CD
 
-    cd /src
-    /cdrom/exos/bin/gcc -B/cdrom/exos/libexec/gcc/i386-exos/17.0.0/ \
-        -O2 -c inc.c
-
-Se produce `inc.o`, allora la compilazione col driver FUNZIONA e resta
-solo la catena a piu' stadi; il link si fa a mano con ld, come gia' si fa
-per FreeBASIC. Se fallisce anche quella, il difetto e' piu' a monte.
-
-E la ricostruzione di GCC serve comunque: senza la correzione di
-pex-exos.c ogni errore continua a uscire come EPERM.
+`/exos/include` c'era gia'. Adesso c'e' anche `/exos/i386-exos/include`,
+che e' **TOOL_INCLUDE_DIR** — «un altro posto dove potrebbero stare gli
+header del sistema bersaglio», gcc/cppdefault.cc — ed e' l'unico dei due
+che la rilocazione con `-iprefix` sappia raggiungere. Finche' e' rimasta
+una directory vuota, `gcc -c` rispondeva «no include path» con gli header
+a due passi. Sono 26 file di testo.
 

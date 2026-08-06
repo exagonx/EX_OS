@@ -464,6 +464,46 @@ static void prova_resto(void)
     esito("strstr", strstr("il gatto beve", "gatto") != NULL &&
                     strstr("il gatto beve", "cane") == NULL);
 
+    /* =====================================================================
+     * strncpy — le tre prove che servono, e la terza e' quella vera
+     *
+     * ⚠️ IL CASO CHE CONTA E' LA SORGENTE CHE NON CI STA. Con una
+     * sorgente piu' corta di n va bene anche un'implementazione rotta:
+     * e' quando NON entra che si vede se il conteggio regge. La versione
+     * fino ad agosto 2026 usciva dal primo ciclo con n gia' passato per
+     * zero — cioe' SIZE_MAX — e il riempimento di zeri proseguiva finche'
+     * non trovava una pagina non mappata. Dentro EX-OS si vedeva come un
+     * page fault di collect2 al confine del proprio heap, e sembrava un
+     * difetto dell'allocatore.
+     *
+     * La sentinella dopo il buffer e' li' per questo: senza, un
+     * riempimento che sfora di poco passerebbe inosservato: il primo
+     * ciclo copia i byte giusti e la prova sarebbe verde lo stesso.
+     * ===================================================================== */
+    {
+        struct { char buf[8]; char guardia[8]; } z;
+        int i;
+
+        for (i = 0; i < 8; i++) z.guardia[i] = (char)0x7E;
+
+        memset(z.buf, 0x7E, sizeof z.buf);
+        strncpy(z.buf, "abc", 8);
+        esito("strncpy copia e riempie di zeri",
+              memcmp(z.buf, "abc\0\0\0\0\0", 8) == 0);
+
+        memset(z.buf, 0x7E, sizeof z.buf);
+        strncpy(z.buf, "abcdefghij", 4);
+        esito("strncpy tronca e NON termina",
+              memcmp(z.buf, "abcd", 4) == 0 && z.buf[4] == 0x7E);
+
+        esito("strncpy non scrive oltre n (la sorgente non ci sta)",
+              memcmp(z.guardia, "\x7E\x7E\x7E\x7E\x7E\x7E\x7E\x7E", 8) == 0);
+
+        memset(z.buf, 0x7E, sizeof z.buf);
+        strncpy(z.buf, "abc", 0);
+        esito("strncpy con n zero non scrive niente", z.buf[0] == 0x7E);
+    }
+
     {
         char *d = strdup("duplicata");
         esito("strdup", d != NULL && strcmp(d, "duplicata") == 0);
@@ -1343,11 +1383,15 @@ static void prova_temporanei(void)
         srand(12345);
         esito("srand ripete la sequenza", rand() == primo);
 
-        /* ⚠️ system() esiste ma non esegue: -1 con ENOSYS, e system(NULL)
-         * risponde 0 perche' un interprete di comandi non c'e' davvero. */
-        esito("system(NULL) dice che non c'e' una shell", system(NULL) == 0);
-        esito("system rifiuta invece di fingere",
-              system("echo ciao") == -1 && errno == ENOSYS);
+        /* ⚠️ QUESTE DUE PROVE DICEVANO IL CONTRARIO fino ad agosto 2026:
+         * «system() esiste ma non esegue, -1 con ENOSYS», e system(NULL)
+         * doveva rispondere 0. Era vero, ed e' smesso di esserlo il giorno
+         * che system() ha imparato a passare da /bin/sh -c (serviva a
+         * FreeBASIC). Le prove sono rimaste indietro e fallivano su un
+         * sistema che funzionava — il modo piu' rapido perche' una
+         * suite di prove smetta di essere creduta. */
+        esito("system(NULL) dice che una shell c'e'", system(NULL) != 0);
+        esito("system esegue davvero", system("echo ciao") == 0);
 
         esito("atoll", atoll("-9000000000") == -9000000000LL);
         esito("imaxabs", imaxabs((intmax_t)-9000000000LL) == 9000000000LL);
@@ -1621,16 +1665,36 @@ static void prova_tetto_heap(void)
     prima = sbrk(0);
     esito("sbrk(0) da' la cima dell'heap", prima != (void *)-1);
 
-    /* Si cresce a blocchi da 1 MB finche' il kernel dice di no. Il tetto
-     * di 64 passi non e' prudenza: e' per non restare in un ciclo se un
-     * giorno sbrk smettesse di fallire. */
+    /* ⚠️ IL TETTO SI PROVA CON UNA RICHIESTA ENORME, NON CRESCENDO A 1 MB.
+     *
+     * Qui c'era un ciclo che chiedeva 1 MB per 64 volte e pretendeva un
+     * rifiuto. Passava — su una macchina da 64 MB, dove a fallire era la
+     * RAM. Con `EXOS_RAM=512M` i 64 MB ci stanno tutti, il rifiuto non
+     * arriva e la prova diventava rossa su un sistema perfettamente sano:
+     * misurava quanto e' grande la macchina, non se sbrk ha un tetto.
+     *
+     * E non poteva essere altrimenti: il tetto vero e' `heap_max`, che sta
+     * a quasi 3 GB da heap_start (vedi Process.heap_max in sched.h). A
+     * 1 MB per volta non lo si raggiunge nemmeno con 64 passi.
+     *
+     * Una richiesta piu' grande dello spazio di indirizzamento invece
+     * dev'essere rifiutata su QUALUNQUE macchina, con qualunque RAM: e' la
+     * proprieta' che si voleva provare, ed e' vera indipendentemente da
+     * dove gira la prova. */
+    esito("sbrk rifiuta una richiesta piu' grande dello spazio",
+          sbrk(0x7FFF0000) == (void *)-1);
+
+    /* La crescita a blocchi resta, ma come MISURA e non come verdetto: se
+     * il rifiuto arriva dice che la RAM e' finita — vero su una macchina
+     * piccola, falso su una grande — e in entrambi i casi cio' che conta
+     * e' che il sistema regga, cosa che provano le righe qui sotto. */
     while (passi < 64) {
         if (sbrk(1024 * 1024) == (void *)-1) { rifiutato = 1; break; }
         totale += 1024 * 1024;
         passi++;
     }
-    esito("sbrk finisce per rifiutare, invece di crescere all'infinito",
-          rifiutato);
+    printf("           (cresciuto di %d MB%s)\n", passi,
+           rifiutato ? ", poi la RAM e' finita" : ", senza esaurire la RAM");
 
     /* ⚠️ SI RESTITUISCE TUTTO, e non e' pulizia facoltativa: free() non
      * chiama mai sbrk con un incremento negativo, quindi senza questa riga
@@ -1649,7 +1713,7 @@ static void prova_tetto_heap(void)
 
     p = (char *)malloc(64 * 1024);
     if (p != NULL) memset(p, 0x5A, 64 * 1024);
-    esito("l'heap funziona ancora dopo il rifiuto", p != NULL);
+    esito("l'heap funziona ancora dopo aver preso e restituito", p != NULL);
     free(p);
 
     /* -----------------------------------------------------------------

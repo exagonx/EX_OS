@@ -85,8 +85,27 @@ sorgenti `.bas` del compilatore (entry `_start`, `0x08000000`, niente PIE,
 ```bash
 # i sorgenti: pacchetto source-bootstrap da freebasic.net, in ./FreeBASIC-*/
 tools/freebasic-exos/prepara-fb.sh            # -> ~/fb-build-exos
-make iso                                      # -> /bin/fbc sul CD
+make iso                                      # -> /exos/bin/fbc sul CD
 ```
+
+⚠️ **fbc STA IN /exos/bin, NON IN /bin** (dal 6 agosto 2026), e non e' una
+questione di ordine: fbc calcola il proprio prefisso come *directory
+dell'eseguibile meno `bin`*, e da li' cerca
+
+    <prefisso>/include/freebasic/        i .bi
+    <prefisso>/lib/freebasic/<target>/   libfb.a, fbrt0.o
+
+Da `/bin` il prefisso sarebbe `/` e non troverebbe niente. Da `/exos/bin`
+trova tutto da solo, ovunque sia montato il CD — cosa che a GCC riesce solo
+con `GCC_EXEC_PREFIX` o `-B`, perche' li' i percorsi sono compilati dentro.
+
+⚠️ **Dei 31 MB di `inc/` ne vanno sul CD 452 KB**: `crt.bi`, `crt/`,
+`fb*.bi`, `fbc-int/`. Il resto sono binding ad allegro, GTK, SDL, X11,
+zlib — librerie che su EX-OS non esistono, e un header che promette e' peggio
+di un header assente: compila, e il link fallisce con simboli mai visti.
+
+La prova che l'albero e' a posto e' `tools/iso/prova-fb2.bas`, il gemello
+di `prova-fb.bas` **con** un `#include`.
 
 `applica.py <albero-fb>` mette il bersaglio dentro l'albero (e `--togli`
 lo riporta com'era); `prepara-fb.sh` lo chiama da solo.

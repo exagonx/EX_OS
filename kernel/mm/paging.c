@@ -882,6 +882,49 @@ void page_fault_handler(InterruptFrame *frame)
         klog(LOG_ERROR, "PF: PID %u '%s' terminato per fault a 0x%08x EIP=0x%08x (%s/%s)",
              p ? p->pid : 0, p ? p->name : "?", fault_addr, frame->eip, reason, access);
 
+        /* =====================================================================
+         * LA MAPPA DEL PROCESSO, subito sotto il fault
+         *
+         * ⚠️ SERVE A DIRE *DOVE* E' CADUTO, e senza costa una serata. Il
+         * nome sta in PROCESS_NAME_LEN byte e i percorsi lunghi ci si
+         * troncano dentro: '/cdrom/exos/libexec/gcc/i386-ex' puo' essere
+         * cc1 come collect2, che stanno nella stessa directory. Restava
+         * da dedurre l'identita' dagli indirizzi confrontandoli a mano con
+         * `readelf -l` — cioe' da indovinare, con una prova per ipotesi.
+         *
+         * Heap e VMA il kernel li ha gia' in mano: stampandoli, un fault
+         * si classifica leggendo, in una corsa sola. Sopra heap_end e
+         * sotto heap_max e' lo heap che sbrk non ha mai mappato; dentro
+         * una VMA e' il caricamento su richiesta che ha rinunciato; fuori
+         * da tutto e' un puntatore sbagliato.
+         * ===================================================================== */
+        if (p != NULL) {
+            uint32_t i;
+
+            klog(LOG_ERROR, "PF:   heap 0x%08x..0x%08x (tetto 0x%08x), "
+                 "stack 0x%08x..0x%08x",
+                 p->heap_start, p->heap_end, p->heap_max,
+                 p->user_stack_limit, p->user_stack_top);
+
+            for (i = 0; i < p->n_vma; i++) {
+                klog(LOG_ERROR, "PF:   vma[%u] 0x%08x..0x%08x  file+0x%x, "
+                     "byte del file fino a 0x%08x%s",
+                     i, p->vma[i].vstart, p->vma[i].vend, p->vma[i].file_off,
+                     p->vma[i].file_fine,
+                     (fault_addr >= p->vma[i].vstart &&
+                      fault_addr <  p->vma[i].vend) ? "   <-- QUI" : "");
+            }
+
+            if (fault_addr >= p->heap_start && fault_addr < p->heap_max) {
+                klog(LOG_ERROR, "PF:   l'indirizzo e' nello HEAP, %s heap_end: "
+                     "%s", (fault_addr < p->heap_end) ? "SOTTO" : "SOPRA",
+                     (fault_addr < p->heap_end)
+                       ? "pagina persa sotto il confine (smappata da un sbrk "
+                         "negativo?)"
+                       : "il programma ha scritto oltre cio' che ha chiesto");
+            }
+        }
+
         /* proc_exit() non ritorna: fa il context switch verso il
          * prossimo processo pronto da qui stesso, esattamente come fa
          * sys_exit() per un'uscita volontaria. */

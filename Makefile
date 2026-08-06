@@ -1384,6 +1384,9 @@ EXOS_CROSS ?= $(HOME)/exos-cross
 OPENSSL_BUILD ?= $(HOME)/openssl-build-exos
 # FreeBASIC per EX-OS: lo costruisce tools/freebasic-exos/prepara-fb.sh
 FB_NATIVO     ?= $(HOME)/fb-build-exos
+# I .bi stanno nell'albero dei sorgenti, non nella directory di build: sono
+# file di FreeBASIC che nessuno compila, si copiano e basta.
+FB_SORGENTI   ?= FreeBASIC-1.07.3-source-bootstrap
 
 # ⚠️ DUE CANDIDATI, IN ORDINE: prima la build con C++ (cc1 E cc1plus), poi
 # quella con il solo C. Serve mentre la prima si costruisce — sono ore a
@@ -1534,21 +1537,29 @@ $(ISO_IMG): $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_LEGGIMI) $(TOOLS_DIR)/iso/prova
 	@# mai dovuto caricare, e la differenza fra l'albero `release` e quello
 	@# con i controlli di sviluppo si vede solo in megabyte. Stamparlo qui
 	@# evita di dover andare a misurare il CD per sapere quale dei due c'e'.
+	@# ⚠️ IL NOME DEL DRIVER NON E' UN'ETICHETTA: xg++ diventa `g++` e non
+	@# `gcc` perche' il driver decide DA COME E' STATO CHIAMATO se compilare
+	@# in C o in C++, quale cc1 lanciare e se collegare libstdc++. Lo stesso
+	@# binario sotto due nomi fa due mestieri; copiarne uno solo vorrebbe
+	@# dire avere cc1plus sul CD e nessun modo di arrivarci.
 	@set -e; \
 	G=""; \
 	if [ -x "$(GCC_NATIVO_REL)/cc1" ]; then G="$(GCC_NATIVO_REL)"; M="release"; \
 	elif [ -x "$(GCC_NATIVO_CHK)/cc1" ]; then G="$(GCC_NATIVO_CHK)"; M="controlli di sviluppo"; \
 	fi; \
 	if [ -n "$$G" ]; then \
-	    for b in cpp xgcc; do \
+	    for b in cpp xgcc xg++; do \
 	        [ -x "$$G/$$b" ] || continue; \
 	        i386-exos-strip -o $(ISO_ROOT)/bin/$$b "$$G/$$b"; \
 	    done; \
 	    if [ -f $(ISO_ROOT)/bin/xgcc ]; then \
 	        mv $(ISO_ROOT)/bin/xgcc $(ISO_ROOT)/bin/gcc; \
 	    fi; \
+	    if [ -f $(ISO_ROOT)/bin/xg++ ]; then \
+	        mv $(ISO_ROOT)/bin/xg++ $(ISO_ROOT)/bin/g++; \
+	    fi; \
 	    echo "     GCC nativo incluso da $$G ($$M):"; \
-	    for b in cpp gcc; do \
+	    for b in cpp gcc g++; do \
 	        [ -f $(ISO_ROOT)/bin/$$b ] || continue; \
 	        echo "       $$b  $$(du -h $(ISO_ROOT)/bin/$$b | cut -f1)"; \
 	    done; \
@@ -1567,6 +1578,8 @@ $(ISO_IMG): $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_LEGGIMI) $(TOOLS_DIR)/iso/prova
 	@#                                           (stddef.h, stdarg.h: senza
 	@#                                           questi non compila niente)
 	@#   /exos/i386-exos/include                 header di sistema del bersaglio
+	@#                                           (LA LIBC, vedi sotto: e' QUI
+	@#                                           che cc1 la cerca da solo)
 	@#   /exos/include                           la nostra libc
 	@#   /exos/include/c++/17.0.0[/i386-exos]    libstdc++
 	@#   /exos/i386-exos/bin/                    as, ld
@@ -1578,6 +1591,29 @@ $(ISO_IMG): $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_LEGGIMI) $(TOOLS_DIR)/iso/prova
 	@# non esiste, e risponde «no include path in which to search for
 	@# stdio.h». Lanciato come /cdrom/exos/bin/gcc il prefisso diventa
 	@# /cdrom/exos e TUTTO l'albero torna al suo posto — senza nessun -B.
+	@#
+	@# ⚠️ E libstdc++.a VA ACCANTO A libc.a in /exos/lib, non fra gli header.
+	@# Gli header C++ da soli fanno arrivare `g++` fino in fondo — cc1plus
+	@# compila, as assembla, collect2 chiama ld — e li' cade con
+	@#
+	@#     ld: cannot find -lstdc++
+	@#     ld: have you installed the static version of the stdc++ library ?
+	@#
+	@# cioe' un errore di LINK dopo una compilazione riuscita, che e' il
+	@# momento piu' tardi in cui potesse uscire. Sono 24 MB e vanno messi
+	@# dove ld guarda gia' per libc.a e libgcc.a.
+	@#
+	@# ⚠️ LA LIBC STA IN DUE POSTI, E NON E' UNO SPRECO. In /exos/include
+	@# perche' e' li' che la mette il prefisso e che il leggimi dice di
+	@# cercarla con -I; e in /exos/i386-exos/include perche' e' li' che cc1
+	@# la cerca DA SOLO, senza che nessuno glielo dica. Quel percorso e'
+	@# TOOL_INCLUDE_DIR, «un altro posto dove potrebbero stare gli header
+	@# del sistema bersaglio» (gcc/cppdefault.cc), ed e' l'unico dei due
+	@# che la rilocazione con -iprefix sa raggiungere. Finche' e' rimasto
+	@# una directory vuota, `gcc -c` dentro EX-OS rispondeva «no include
+	@# path in which to search for stdio.h» con gli header a due passi di
+	@# distanza. Sono quaranta file di testo: pesano meno del messaggio
+	@# d'errore che facevano stampare.
 	@#
 	@# ⚠️ SONO PERCORSI ASSOLUTI: valgono quando il CD e' la radice, oppure
 	@# quando questo albero viene INSTALLATO su /exos del disco rigido.
@@ -1602,13 +1638,15 @@ $(ISO_IMG): $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_LEGGIMI) $(TOOLS_DIR)/iso/prova
 	    done; \
 	    cp -r $(EXOS_CROSS)/lib/gcc/i386-exos/$$V/include $$LG/ 2>/dev/null || true; \
 	    cp -r $(EXOS_CROSS)/i386-exos/include/c++ $(ISO_ROOT)/exos/include/ 2>/dev/null || true; \
+	    cp $(CROSS_SYSROOT)/lib/libstdc++.a $(ISO_ROOT)/exos/lib/ 2>/dev/null || true; \
 	    mkdir -p $(ISO_ROOT)/exos/bin; \
-	    for b in gcc cpp; do \
+	    for b in gcc g++ cpp; do \
 	        [ -f $(ISO_ROOT)/bin/$$b ] && cp $(ISO_ROOT)/bin/$$b $(ISO_ROOT)/exos/bin/; \
 	    done; \
 	    for b in as ld; do \
 	        [ -f $(ISO_ROOT)/bin/$$b ] && cp $(ISO_ROOT)/bin/$$b $(ISO_ROOT)/exos/i386-exos/bin/; \
 	    done; \
+	    cp -r lib/include/. $(ISO_ROOT)/exos/i386-exos/include/; \
 	    echo "     albero /exos: libexec+lib/gcc+include/c++ ($$(du -sh $(ISO_ROOT)/exos | cut -f1))"; \
 	fi
 	@cp $(TOOLS_DIR)/iso/prova-cc1.c $(ISO_ROOT)/prova-cc1.c
@@ -1647,12 +1685,51 @@ $(ISO_IMG): $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_LEGGIMI) $(TOOLS_DIR)/iso/prova
 	@# FreeBASIC vuole quella libreria. Senza, si ottiene un compilatore che
 	@# compila e non riesce a produrre un eseguibile — e il messaggio parla
 	@# di simboli che non c'entrano con il sorgente.
+	@#
+	@# ⚠️ FreeBASIC VUOLE LA STESSA STRUTTURA DEL C, e la vuole per conto
+	@# proprio: non e' una scelta di stile. Il suo makefile prevede due
+	@# disposizioni e la nostra fbc usa quella «non-standalone»:
+	@#
+	@#     <prefisso>/bin/fbc
+	@#     <prefisso>/include/freebasic/       i .bi
+	@#     <prefisso>/lib/freebasic/<target>/  libfb.a, fbrt0.o
+	@#
+	@# Si legge dal comportamento, non dai sorgenti: con fbc in /bin, `fbc -v`
+	@# stampa «assembling: /cdrom/bin/../bin/as». Il prefisso e' la directory
+	@# dell'eseguibile MENO bin — esattamente come GCC, ma calcolato ogni
+	@# volta invece che compilato dentro.
+	@#
+	@# ⚠️ E' PER QUESTO CHE fbc STA IN /exos/bin E NON PIU' IN /bin. Da /bin
+	@# il prefisso sarebbe `/` e cerchierebbe /include/freebasic e
+	@# /lib/freebasic: non li troverebbe e non lo direbbe chiaramente. Da
+	@# /exos/bin trova tutto da solo, ovunque sia montato il CD — che e' la
+	@# cosa che a GCC riesce solo con GCC_EXEC_PREFIX o con -B.
+	@#
+	@# ⚠️ DEI 31 MB DI inc/ SE NE COPIANO 452 KB, e la scelta e' voluta: il
+	@# resto sono binding ad allegro, GTK, SDL, X11, zlib — librerie che su
+	@# EX-OS non ci sono. Portarli darebbe header che compilano e link che
+	@# falliscono con simboli mai visti; peggio di un file assente e' un
+	@# file che promette. Si copia cio' che corrisponde a cio' che c'e':
+	@# crt.bi e crt/ (che mappano sulla nostra libc), fb*.bi e fbc-int/
+	@# (la runtime di FreeBASIC).
 	@if [ -x "$(FB_NATIVO)/fbc" ]; then \
-	    cp "$(FB_NATIVO)/fbc" $(ISO_ROOT)/bin/fbc; \
-	    [ -f "$(FB_NATIVO)/libfb.a" ] && cp "$(FB_NATIVO)/libfb.a" $(ISO_ROOT)/exos/lib/; \
-	    [ -f "$(FB_NATIVO)/fbrt0.o" ] && cp "$(FB_NATIVO)/fbrt0.o" $(ISO_ROOT)/exos/lib/; \
+	    FBT=linux-x86; \
+	    FBL=$(ISO_ROOT)/exos/lib/freebasic/$$FBT; \
+	    FBI=$(ISO_ROOT)/exos/include/freebasic; \
+	    mkdir -p $(ISO_ROOT)/exos/bin $$FBL $$FBI; \
+	    cp "$(FB_NATIVO)/fbc" $(ISO_ROOT)/exos/bin/fbc; \
+	    [ -f "$(FB_NATIVO)/libfb.a" ] && cp "$(FB_NATIVO)/libfb.a" $$FBL/; \
+	    [ -f "$(FB_NATIVO)/fbrt0.o" ] && cp "$(FB_NATIVO)/fbrt0.o" $$FBL/; \
+	    for i in crt.bi fbgfx.bi fbio.bi fbthread.bi; do \
+	        cp $(FB_SORGENTI)/inc/$$i $$FBI/ 2>/dev/null || true; \
+	    done; \
+	    for d in crt fbc-int; do \
+	        cp -r $(FB_SORGENTI)/inc/$$d $$FBI/ 2>/dev/null || true; \
+	    done; \
 	    cp $(TOOLS_DIR)/iso/prova-fb.bas $(ISO_ROOT)/prova-fb.bas; \
-	    echo "     FreeBASIC: /bin/fbc ($$(du -h $(ISO_ROOT)/bin/fbc | cut -f1)) e libfb.a"; \
+	    cp $(TOOLS_DIR)/iso/prova-fb2.bas $(ISO_ROOT)/prova-fb2.bas; \
+	    echo "     FreeBASIC: /exos/bin/fbc ($$(du -h $(ISO_ROOT)/exos/bin/fbc | cut -f1)),"; \
+	    echo "                lib/freebasic/$$FBT e include/freebasic ($$(du -sh $$FBI | cut -f1))"; \
 	else \
 	    echo "     FreeBASIC assente: si costruisce con tools/freebasic-exos/prepara-fb.sh"; \
 	fi

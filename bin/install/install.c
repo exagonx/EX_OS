@@ -74,6 +74,11 @@
 static char buf[BLOCCO];
 static int  errori = 0;
 
+/* ⚠️ SOLO PER bootverify() e bootinstall(), che sono FUNZIONI NOSTRE e
+ * rendono ancora -errno. Le funzioni POSIX qui sotto — open(), mkdir() —
+ * dal agosto 2026 rendono -1 e parlano per errno: quelle usano strerror(),
+ * e mescolare le due convenzioni in una tabella sola darebbe messaggi
+ * giusti per meta' delle chiamate. */
 static const char *spiega(int e)
 {
     switch (-e) {
@@ -146,7 +151,7 @@ static int copia(const char *da, const char *a)
 
     fs = open(da, O_RDONLY);
     if (fs < 0) {
-        printf("  ! %s: %s\n", da, spiega(fs));
+        printf("  ! %s: %s\n", da, strerror(errno));
         errori++;
         return fs;
     }
@@ -154,7 +159,7 @@ static int copia(const char *da, const char *a)
     fd = open(a, O_WRONLY | O_CREAT | O_TRUNC);
     if (fd < 0) {
         close(fs);
-        printf("  ! %s: %s\n", a, spiega(fd));
+        printf("  ! %s: %s\n", a, strerror(errno));
         errori++;
         return fd;
     }
@@ -186,7 +191,8 @@ static int copia(const char *da, const char *a)
         long dim;
 
         if (v < 0) {
-            printf("  ! %s: riscritto ma non rileggibile: %s\n", a, spiega(v));
+            printf("  ! %s: riscritto ma non rileggibile: %s\n", a,
+                   strerror(errno));
             errori++;
             return v;
         }
@@ -270,10 +276,10 @@ static int sostituisci(const char *dir_boot, const char *base)
 static void crea_dir(const char *p)
 {
     int r = mkdir(p, 0755);
-    if (r == 0)        printf("  + %s/\n", p);
-    else if (r == -17) printf("  = %s/ (gia' presente)\n", p);
+    if (r == 0)                 printf("  + %s/\n", p);
+    else if (errno == EEXIST)   printf("  = %s/ (gia' presente)\n", p);
     else {
-        printf("  ! %s/: %s\n", p, spiega(r));
+        printf("  ! %s/: %s\n", p, strerror(errno));
         errori++;
     }
 }

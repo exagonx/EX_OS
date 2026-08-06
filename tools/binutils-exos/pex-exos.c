@@ -335,7 +335,22 @@ pex_exos_exec_child (struct pex_obj *obj, int flags, const char *executable,
 	da_lanciare = cercato;
     }
 
-  pid = spawn_ex (da_lanciare, argv, env, red, n);
+  /* ⚠️ `env` NULL VUOL DIRE «EREDITA», NON «NESSUN AMBIENTE». pex_run()
+     passa sempre NULL — solo pex_run_in_environment() mette qualcosa — e su
+     Unix quel NULL fa scegliere execv() al posto di execve(), cioe' il
+     figlio si tiene l'ambiente del padre. Girando NULL a spawn_ex() il
+     figlio partiva invece con l'ambiente VUOTO, e nessuno lo diceva.
+
+     Il prezzo si vedeva tutto in GCC, che parla ai propri stadi PROPRIO
+     per variabili d'ambiente: GCC_EXEC_PREFIX (dove il driver e' stato
+     davvero installato, che e' cio' su cui cc1 riloca gli header di
+     sistema), COMPILER_PATH e LIBRARY_PATH per collect2, TMPDIR per i
+     file intermedi. Senza, cc1 cercava gli header dove GCC era stato
+     CONFIGURATO — /exos/... — invece che dove sta adesso, non trovava
+     niente, e rispondeva «no include path in which to search for
+     stdio.h»: un messaggio che parla di percorsi mentre il difetto e'
+     l'ambiente. */
+  pid = spawn_ex (da_lanciare, argv, env != NULL ? env : environ, red, n);
 
   if (cercato != NULL)
     free (cercato);

@@ -1,5 +1,29 @@
 # EX-OS — Sottoinsieme "solo kernel"
 
+## Che cosa e' questo kernel: un **minikernel**
+
+Non microkernel — memoria virtuale, scheduler, VFS (FAT12/16/32, ext2,
+ISO 9660), caricatore ELF e cache dei blocchi stanno qui dentro. Non
+monolitico — i driver di dispositivo sono processi ring3 che parlano per
+IPC e non eseguono istruzioni privilegiate.
+
+⚠️ **La parola non e' una classificazione, e' un vincolo.** «Monolitico
+ibrido» descriverebbe la stessa architettura senza chiedere niente a
+nessuno; *minikernel* chiede di restare piccoli, ed e' la ragione per cui
+i driver sono finiti fuori uno dopo l'altro.
+
+    build/kernel.bin      184 KB      ~30 000 righe di C e ASM
+
+**La domanda da farsi prima di aggiungere codice qui:** puo' essere un
+processo ring3? Quasi sempre si'. Il kernel serve per cio' che richiede il
+privilegio o l'arbitraggio fra processi — paginazione, scheduling,
+mediazione dell'hardware, confini fra spazi di indirizzamento — e per il
+resto c'e' `drivers/`. Il precedente da guardare quando si e' in dubbio e'
+l'enumerazione PCI: legge tabelle scritte da firmware di terzi, quindi un
+ciclo che non termina dev'essere **un processo da rilanciare, non una
+macchina da riavviare**.
+
+
 ## ⚠️ `paging_map_page()` sovrascrive in silenzio — il confine lo mette chi chiama
 
 E' il contratto, non una dimenticanza: chi chiama sa gia' che quella pagina

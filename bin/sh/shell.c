@@ -557,7 +557,12 @@ static void verbose_init(void)
  *
  * Ritorna argc, oppure -1 se la riga e' malformata.
  * ============================================================================= */
-#define MAX_ARGS    16
+/* Lo stesso tetto di MAX_SPAWN_ARGS nel kernel, e devono restare uguali:
+ * uno piu' basso qui farebbe sparire argomenti che la syscall avrebbe
+ * accettato, e la riga digitata a mano non potrebbe mai arrivare dove
+ * arriva quella costruita da un programma. Sono 64 puntatori sullo stack
+ * della shell, cioe' niente. */
+#define MAX_ARGS    64
 /* 512, cioe' quanto il driver di tastiera puo' consegnare in un messaggio
  * (KBD_LINE_MAX). Era 256: bastava con i nomi 8.3, non basta piu' da
  * quando un nome ext2 puo' essere di 255 byte, perche' `cp <lungo> <dest>`

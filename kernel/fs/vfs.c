@@ -917,6 +917,57 @@ static int vfs_dup_nl(int h)
  * parte da un percorso, e vfs_fstat, che parte da un handle — e due copie
  * della stessa scelta di driver sarebbero due copie da tenere allineate
  * ogni volta che si aggiunge un filesystem. */
+/* =============================================================================
+ * L'IDENTITA' DI UN FILE — perche' non poteva restare zero
+ *
+ * `ident` risponde a una domanda sola: due percorsi diversi indicano lo
+ * stesso oggetto? Fino ad agosto 2026 la risposta era «zero», per tutti,
+ * con una motivazione scritta e in apparenza prudente: un numero di
+ * cluster ha senso solo dentro una FAT, e inventarne uno sarebbe peggio
+ * che non darlo.
+ *
+ * ⚠️ NON ERA PRUDENTE, ERA UNA RISPOSTA SBAGLIATA DETTA CON SICUREZZA.
+ * Chi legge stat() non trova un campo «assente»: trova un numero, e il
+ * numero diceva che OGNI file del sistema e' lo stesso file. Il conto
+ * l'ha pagato GCC. Il suo remove_duplicates() confronta st_dev/st_ino per
+ * togliere dalla lista degli include le directory ripetute — un percorso
+ * puo' arrivarci due volte per strade diverse — e con st_ino tutti uguali
+ * ha concluso che le sue SEI directory di ricerca erano una sola:
+ *
+ *     ignoring duplicate directory ".../i386-exos/include"
+ *     #include <...> search starts here:
+ *      /cdrom/exos/lib/gcc/i386-exos/17.0.0/include
+ *     End of search list.
+ *
+ * Ne ha tenuta una — quella con gli header del compilatore — e buttata
+ * proprio quella con la libc. `#include <stdio.h>` rispondeva «file o
+ * directory inesistente» con stdio.h presente e leggibile due directory
+ * piu' in la'.
+ *
+ * La composizione: il montaggio nei quattro bit alti, l'identificatore
+ * del filesystem negli altri ventotto. Cosi' il numero e' unico in tutto
+ * il sistema e non solo dentro un volume — due file sullo stesso inode di
+ * due dischi diversi non si confondono, e non serve un st_dev separato
+ * che vorrebbe dire allargare Stat e ricostruire ogni binario.
+ *
+ * Ogni driver ce l'ha gia', un numero buono: ext2 l'inode, ISO 9660
+ * l'extent (i file sono contigui, quindi il primo blocco identifica), FAT
+ * il primo cluster.
+ *
+ * ⚠️ IL +1 SERVE ALLE RADICI. Un punto di montaggio non ha una voce di
+ * directory da interrogare, quindi prende lo zero del proprio volume; con
+ * gli altri traslati di uno, nessun file puo' finirci sopra — e su FAT un
+ * file VUOTO ha davvero primo cluster 0.
+ *
+ * ⚠️ IL LIMITE, detto: su FAT due file vuoti hanno lo stesso primo
+ * cluster e quindi la stessa identita'. Per le DIRECTORY — l'unico caso
+ * che a qualcuno interessi davvero — non succede: una directory FAT ha
+ * sempre almeno il cluster di "." e "..". Su ext2 e ISO l'identita' e'
+ * esatta anche per i file.
+ * ============================================================================= */
+#define VFS_IDENT(im, n)   ((((uint32_t)(im) & 0xFu) << 28) | \
+                            ((uint32_t)(n) & 0x0FFFFFFFu))
+
 static int stat_interno(int im, const char *interno, VfsStat *st)
 {
     /* La radice di un filesystem non ha una voce di directory da
@@ -924,6 +975,7 @@ static int stat_interno(int im, const char *interno, VfsStat *st)
      * Vale per "/" e per ogni punto di montaggio. */
     if (e_radice(interno)) {
         st->dimensione   = 0;
+        st->ident        = VFS_IDENT(im, 0);
         st->is_dir       = 1;
         st->sola_lettura = g_mnt[im].sola_lettura;
         /* La radice non ha una voce di directory, quindi non ha nemmeno
@@ -937,6 +989,7 @@ static int stat_interno(int im, const char *interno, VfsStat *st)
         Fat12Stat f;
         if (fat12_stat(interno, &f) != 0) return ERR(ENOENT);
         st->dimensione   = f.size;
+        st->ident        = VFS_IDENT(im, (uint32_t)f.first_cluster + 1u);
         st->is_dir       = (f.attr & FAT12_ATTR_DIRECTORY) ? 1 : 0;
         st->sola_lettura = (f.attr & FAT12_ATTR_READONLY)  ? 1 : 0;
         st->data         = f.date;
@@ -945,6 +998,7 @@ static int stat_interno(int im, const char *interno, VfsStat *st)
         IsoDirEntry e;
         if (iso_stat(g_mnt[im].mnt, interno, &e) != 0) return ERR(ENOENT);
         st->dimensione   = e.dimensione;
+        st->ident        = VFS_IDENT(im, e.extent + 1u);
         st->is_dir       = e.is_dir;
         st->sola_lettura = 1;
         st->data         = e.data;
@@ -953,6 +1007,7 @@ static int stat_interno(int im, const char *interno, VfsStat *st)
         Ext2DirEntry e;
         if (ext2_stat(g_mnt[im].mnt, interno, &e) != 0) return ERR(ENOENT);
         st->dimensione   = e.dimensione;
+        st->ident        = VFS_IDENT(im, e.inode + 1u);
         st->is_dir       = e.is_dir;
         st->sola_lettura = 1;
         st->data         = e.data;
@@ -961,6 +1016,7 @@ static int stat_interno(int im, const char *interno, VfsStat *st)
         FatDirEntry e;
         if (fat_stat(g_mnt[im].mnt, interno, &e) != 0) return ERR(ENOENT);
         st->dimensione   = e.dimensione;
+        st->ident        = VFS_IDENT(im, e.primo_cluster + 1u);
         st->is_dir       = e.is_dir;
         st->sola_lettura = 1;
         st->data         = e.data;

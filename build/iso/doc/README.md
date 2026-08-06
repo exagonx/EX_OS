@@ -22,11 +22,44 @@ shell, programmi) gira in RAM estesa in spazio protetto.
 
 Un crash di un driver o di un programma non può abbattere il sistema.
 
-**Da agosto 2026 EX-OS ospita codice di terzi**: GNU binutils 2.44 —
-`as` e `ld` — è compilato *per* EX-OS e ci gira dentro, e un programma
-assemblato e collegato qui è identico byte per byte a uno prodotto dal
-cross-compilatore su Linux. Ci gira anche **`cc1`**, il compilatore C di
-GCC, che qui compila sorgenti C e ne produce l'assembly. Vedi
+### Il kernel è un **minikernel**
+
+Non è un microkernel e non è monolitico, e vale la pena dire perché nessuna
+delle due parole va bene.
+
+**Microkernel no**: dentro il kernel ci sono la memoria virtuale, lo
+scheduler, il VFS con FAT12/16/32, ext2 e ISO 9660, il caricatore ELF e la
+cache dei blocchi. Un microkernel vero quelli li mette fuori, e questo non
+lo fa — con 30 000 righe e 66 syscall sarebbe una descrizione lusinghiera e
+falsa.
+
+**Monolitico no**: i driver di dispositivo — tastiera, floppy, PCI, NE2000,
+PCnet, tty, IP — sono **processi ring3**, eseguibili ELF come quelli di
+`/bin`, che parlano per IPC e non eseguono una sola istruzione
+privilegiata. Il kernel media ogni accesso all'hardware e controlla i
+permessi a ogni chiamata; un driver che muore lo si rilancia.
+
+«Monolitico ibrido» sarebbe corretto e non servirebbe a niente: è
+un'etichetta che descrive e basta. **Minikernel** dice la stessa cosa e in
+più contiene un impegno — *restare piccolo* — che è la ragione per cui
+questa architettura è stata scelta. Oggi il numero è:
+
+    build/kernel.bin      184 KB      ~30 000 righe di C e ASM
+
+Il numero è qui perché un impegno senza una misura è un'intenzione. Chi
+aggiunge codice al kernel dovrebbe prima chiedersi se non possa essere un
+processo ring3 — è quasi sempre la risposta giusta, ed è come sono nati
+tutti i driver.
+
+**Da agosto 2026 EX-OS ospita codice di terzi, e da solo**: GNU binutils
+2.44 — `as` e `ld` — è compilato *per* EX-OS e ci gira dentro, e un
+programma assemblato e collegato qui è identico byte per byte a uno
+prodotto dal cross-compilatore su Linux.
+
+Dal 6 agosto **la catena è chiusa**: `gcc` gira dentro EX-OS, trova i
+propri header senza che nessuno glielo dica, e concatena da sé cc1, `as`,
+`collect2` e `ld` fino a un eseguibile che parte. Lo stesso vale per
+**`g++`** — contenitori, `std::string` ed eccezioni comprese. Vedi
 [La catena di compilazione dentro EX-OS](#la-catena-di-compilazione-dentro-ex-os).
 
 ---
@@ -117,10 +150,14 @@ SSE; è stato provato forzando la via lenta in QEMU, non su un 486 fisico.
 | | |
 |---|---|
 | `as` e `ld` (binutils 2.44) nativi | testato |
-| `cc1`: compila C e produce assembly dentro EX-OS | testato prima del cambio di ABI, da riprovare |
+| `cc1`: compila C e produce assembly dentro EX-OS | testato |
 | Runtime del bersaglio sul CD (`crt0.o`, `libc.a`, `libgcc.a`) | testato |
 | `as` + `ld` collegano un programma C vero con gli archivi | testato |
-| `gcc` come programma di guida, che concatena cc1 → as → ld | da fare |
+| **`gcc` come programma di guida, che concatena cc1 → as → collect2 → ld** | **testato** |
+| **`gcc` trova gli header di sistema da solo, senza `-I`** | **testato** |
+| **`g++`: la stessa catena in C++, con libstdc++ ed eccezioni** | **testato** |
+| FreeBASIC: `fbc` trova i propri `.bi` da solo | testato |
+| FreeBASIC: link finale (fbc emette opzioni Linux) | da fare a mano |
 | TLS/SSL come libreria userspace (porting OpenSSL) | da fare |
 
 ---
@@ -1338,6 +1375,91 @@ senza uscita, mentre chi arriva da `dup2` il rimpiazzo ce l'ha già.
 ---
 
 ## La catena di compilazione dentro EX-OS
+
+### La catena intera, con un comando solo (6 agosto 2026)
+
+```
+ex-os:/> mount hd0p1 /src
+ex-os:/> cd /src
+ex-os:/src> /cdrom/exos/bin/gcc -B/cdrom/exos/libexec/gcc/i386-exos/17.0.0/ \
+                -O2 -o pg pg.c
+ex-os:/src> /src/pg
+La catena intera dentro EX-OS
+
+  somma dei quadrati 1..10 : 385   (atteso 385)
+  lunghezza del nome       : 5     (atteso 5)
+  divisione a 64 bit       : 64    (atteso 64)
+
+Compilato, assemblato e collegato qui dentro.
+```
+
+`pg.c` è `tools/iso/prova-gcc.c`: `#include <stdio.h>` e `<string.h>`,
+`printf` con `%lld`, `memcpy` dalla libc, una divisione a 64 bit che chiama
+`__divdi3` in libgcc, una struttura restituita per valore. **I valori sono
+noti in anticipo** — 385 è la somma dei quadrati da 1 a 10 — perché un
+programma che stampa un numero senza che nessuno sappia quale fosse quello
+giusto è una prova che non prova niente.
+
+Il driver ha lanciato da sé cc1, `as`, `collect2` e `ld`, e ha trovato gli
+header **senza un solo `-I`**.
+
+### E lo stesso in C++
+
+```
+ex-os:/src> /cdrom/exos/bin/g++ -B/cdrom/exos/libexec/gcc/i386-exos/17.0.0/ \
+                -O2 -o pp pp.cpp
+ex-os:/src> /src/pp
+La libreria standard del C++ dentro EX-OS
+
+  vector+sort  : 1 3 5 7 9
+  string       : "std::string concatenata" (23 caratteri)
+  cerchio      : area = 12566 (x1000)
+  quadrato     : area = 9000 (x1000)
+  eccezione    : lanciata e ripresa
+  out_of_range : presa da dentro la libreria
+
+La libreria standard risponde.
+```
+
+Contenitori con `<algorithm>`, `std::string` (cioè `operator new` sopra la
+nostra `malloc`), polimorfismo con distruttore virtuale, e **le eccezioni**
+— compresa una lanciata da dentro libstdc++ e ripresa attraverso più
+livelli di stack, che è il pezzo che ha bisogno del maggior numero di cose
+funzionanti insieme.
+
+⚠️ **Il `-B` serve perché il CD è montato su `/cdrom`.** I percorsi che GCC
+ha compilati dentro sono assoluti (`/exos/...`) e combaciano quando il CD è
+la radice, o quando l'albero viene installato su `/exos` del disco.
+
+### L'albero `/exos`, e perché è fatto così
+
+Non è una scelta di stile: è ciò che i binari cercano a runtime, e si legge
+da loro (`strings gcc/cc1 | grep /exos`).
+
+```
+/exos/bin/                            gcc, g++, cpp, fbc
+/exos/libexec/gcc/i386-exos/17.0.0/   cc1, cc1plus, collect2
+/exos/lib/gcc/i386-exos/17.0.0/       libgcc.a, crt*.o, include/
+/exos/lib/                            libc.a, libm.a, libstdc++.a, libcrypto.a
+/exos/lib/freebasic/linux-x86/        libfb.a, fbrt0.o
+/exos/include/                        la libc
+/exos/include/c++/17.0.0/             libstdc++
+/exos/include/freebasic/              i .bi di FreeBASIC
+/exos/i386-exos/include/              la libc, dove cc1 la cerca da solo
+/exos/i386-exos/bin/                  as, ld
+```
+
+⚠️ **La libc sta in due posti e non è uno spreco.** In `/exos/include`
+perché è lì che la mette il prefisso; in `/exos/i386-exos/include` perché
+quello è `TOOL_INCLUDE_DIR` — «un altro posto dove potrebbero stare gli
+header del sistema bersaglio», `gcc/cppdefault.cc` — ed è l'unico dei due
+che la rilocazione con `-iprefix` sappia raggiungere.
+
+⚠️ **FreeBASIC vuole la stessa struttura, e se la calcola da solo.** Il suo
+prefisso è la directory dell'eseguibile meno `bin`, ricalcolata a ogni
+avvio: da `/exos/bin/fbc` trova `include/freebasic` e
+`lib/freebasic/<target>` ovunque sia montato il CD — che è la cosa che a
+GCC riesce solo con `GCC_EXEC_PREFIX` o con `-B`.
 
 **GNU binutils 2.44 gira nativamente su EX-OS.** `as` e `ld` sono
 compilati **per** `i386-exos`, non per la macchina che li ha costruiti:
