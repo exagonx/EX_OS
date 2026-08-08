@@ -44,9 +44,14 @@ static void uso(void)
 
 /* Traduce l'errore del kernel in una spiegazione utile. Un numero e basta
  * non direbbe niente a chi lo legge sullo schermo. */
+/* ⚠️ PRENDE errno, NON IL VALORE DI RITORNO (agosto 2026). unlink(),
+ * mkdir() e rmdir() rendono -1 come vuole POSIX, e `switch (-err)` su
+ * quel -1 finiva sempre nel ramo predefinito stampando «errore -1»: un
+ * messaggio che non dice niente proprio quando serve. Il codice vero sta
+ * in errno. Vedi il commento su errno in testa a lib/libc.c. */
 static void spiega_errore(const char *nome, int err)
 {
-    switch (-err) {
+    switch (err) {
         case E_EXIST:
             printf("mkdir: '%s' esiste gia'\n", nome);
             break;
@@ -65,7 +70,7 @@ static void spiega_errore(const char *nome, int err)
             printf("mkdir: nome '%s' non valido\n", nome);
             break;
         default:
-            printf("mkdir: '%s' non creata (errore %d)\n", nome, err);
+            printf("mkdir: '%s': %s\n", nome, strerror(errno));
             break;
     }
 }
@@ -86,7 +91,7 @@ int main(int argc, char **argv)
         if (r == 0) {
             printf("mkdir: creata '%s'\n", argv[i]);
         } else {
-            spiega_errore(argv[i], r);
+            spiega_errore(argv[i], errno);
             falliti++;
         }
     }

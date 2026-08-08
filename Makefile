@@ -836,7 +836,6 @@ $(CP_BIN): $(CP_SRC) $(CP_LD) $(LIBC_SRC) $(LIBC_START)
 
 .PHONY: cp_prog
 cp_prog: dirs $(CP_BIN)
-
 # --- Programma utente /bin/mount ----------------------------------------------
 # Un solo binario per mount e umount: il comportamento dipende da argv[0],
 # e su un floppy da 1.44 MB due binari che condividono tutto tranne tre
@@ -1592,6 +1591,16 @@ $(ISO_IMG): $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_LEGGIMI) $(TOOLS_DIR)/iso/prova
 	@# stdio.h». Lanciato come /cdrom/exos/bin/gcc il prefisso diventa
 	@# /cdrom/exos e TUTTO l'albero torna al suo posto — senza nessun -B.
 	@#
+	@# ⚠️ as e ld FINISCONO IN DUE POSTI, perche' i due compilatori li
+	@# cercano in due posti diversi e finora uno dei due funzionava per
+	@# ripiego. GCC li vuole in <prefisso>/i386-exos/bin/ — e' il
+	@# gcc_tooldir del suo configure; FreeBASIC in <prefisso>/bin/, perche'
+	@# calcola il prefisso come «directory dell'eseguibile meno bin».
+	@# Con la sola copia sotto i386-exos, fbc non trovava `as`, ripiegava
+	@# sul nome nudo e lo faceva cercare al PATH: funzionava, ma per
+	@# coincidenza — e una coincidenza smette di funzionare il giorno che
+	@# il PATH cambia, senza che nessuno colleghi le due cose.
+	@#
 	@# ⚠️ E libstdc++.a VA ACCANTO A libc.a in /exos/lib, non fra gli header.
 	@# Gli header C++ da soli fanno arrivare `g++` fino in fondo — cc1plus
 	@# compila, as assembla, collect2 chiama ld — e li' cade con
@@ -1644,7 +1653,9 @@ $(ISO_IMG): $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_LEGGIMI) $(TOOLS_DIR)/iso/prova
 	        [ -f $(ISO_ROOT)/bin/$$b ] && cp $(ISO_ROOT)/bin/$$b $(ISO_ROOT)/exos/bin/; \
 	    done; \
 	    for b in as ld; do \
-	        [ -f $(ISO_ROOT)/bin/$$b ] && cp $(ISO_ROOT)/bin/$$b $(ISO_ROOT)/exos/i386-exos/bin/; \
+	        [ -f $(ISO_ROOT)/bin/$$b ] || continue; \
+	        cp $(ISO_ROOT)/bin/$$b $(ISO_ROOT)/exos/i386-exos/bin/; \
+	        cp $(ISO_ROOT)/bin/$$b $(ISO_ROOT)/exos/bin/; \
 	    done; \
 	    cp -r lib/include/. $(ISO_ROOT)/exos/i386-exos/include/; \
 	    echo "     albero /exos: libexec+lib/gcc+include/c++ ($$(du -sh $(ISO_ROOT)/exos | cut -f1))"; \

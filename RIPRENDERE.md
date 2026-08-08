@@ -115,9 +115,35 @@ valore calcolato a mano (`385 & 0x7F` più `'E'`).
 SOLO — nessun `-I`. Ci sono voluti quattro difetti del sistema, non di GCC:
 il racconto sta piu' avanti, in «Perche' non funzionava».
 
-⚠️ Il `-B` serve ancora, e serve su **libexec**: i percorsi compilati
-dentro sono assoluti (`/exos/...`) e combaciano solo se il CD e' la radice
-o se l'albero e' installato su `/exos` del disco.
+⚠️ Allora il `-B` serviva, su **libexec**. Dal 6 agosto non piu': vedi
+«Il -B non serve piu'» piu' sopra.
+
+## IL `-B` NON SERVE PIU' (6 agosto, sera)
+
+    cd /src
+    /cdrom/exos/bin/gcc -O2 -o nb pg.c      <- nessuna opzione di percorso
+    /src/nb
+    somma dei quadrati 1..10 : 385   (atteso 385)
+    ...
+    -> nb, 63324 byte: IDENTICO al pg prodotto col -B
+
+Il `-B` era la stampella per una rilocazione che non funzionava. Il driver
+ricalcola il proprio prefisso da dove sta lui e lo passa ai figli in
+`GCC_EXEC_PREFIX` — ma quell'ambiente non arrivava, perche' `pex-exos.c`
+girava a spawn_ex l'env NULL di pex_run() come «nessun ambiente» invece che
+come «eredita».
+
+⚠️ **Non e' stato tolto: e' sparito.** Le cinque correzioni servivano tutte
+allo stesso scopo senza che si vedesse — l'ambiente, il `..` nei percorsi,
+st_ino che distingue le directory, il -1 al posto di -errno, gli argomenti
+non troncati — e il `-B` ha smesso di servire da solo. Era il sintomo, non
+la malattia.
+
+⚠️ **Il piano per provarlo era un altro, e piu' costoso**: installare
+l'albero /exos (140 MB) sul disco rigido, per far combaciare i percorsi
+assoluti. Sarebbe stato inutile: bastava riprovare senza `-B` dopo le
+correzioni. **Prima di costruire un banco di prova, riprovare il caso
+semplice** — il difetto potrebbe essere gia' chiuso da un'altra parte.
 
 ## LA CATENA INTERA FUNZIONA — un comando solo (6 agosto)
 
@@ -366,11 +392,17 @@ affida il link a `gcc` con opzioni Linux — vedi
 `tools/freebasic-exos/leggimi.md`. Non c'entra con la disposizione delle
 directory: e' il passo che mancava gia' prima.
 
-⚠️ **Un dettaglio da sistemare**: fbc cerca `as` in `<prefisso>/bin/as`,
-cioe' `/exos/bin/as`, dove non c'e' — GCC lo vuole in
-`/exos/i386-exos/bin/`. Ripiega sul nome nudo e il PATH lo trova, quindi
-funziona, ma per coincidenza. I due strumenti si aspettano `as` in due
-posti diversi e uno dei due va accontentato per davvero.
+### `as` e `ld` stanno in due posti, e adesso di proposito
+
+fbc cerca `as` in `<prefisso>/bin/as` — cioe' `/exos/bin/as` — mentre GCC
+lo vuole in `/exos/i386-exos/bin/`, che e' il `gcc_tooldir` del suo
+configure. Con la sola copia sotto i386-exos, fbc non lo trovava, ripiegava
+sul nome nudo e lo faceva cercare al PATH.
+
+⚠️ **Funzionava, ma per coincidenza** — e una coincidenza smette di
+funzionare il giorno che il PATH cambia, senza che nessuno colleghi le due
+cose. Ora `make iso` li copia in entrambi i posti: 2,9 MB in piu' sul CD
+per togliere di mezzo un ripiego silenzioso.
 
 ### E il prefisso? `/usr` o `/exos`
 
@@ -384,30 +416,83 @@ guadagno e' la familiarita', il costo e' quello. Non e' stato fatto.
 ⚠️ E se si fa: e' `include/`, non `inc/`. `inc/` e' la disposizione
 standalone di FreeBASIC, che non e' quella che usiamo.
 
+## ⚠️ Il progetto sta dentro ~/MEGA/, e MEGAsync ci mette le mani
+
+Durante il lavoro del 6 agosto i file sotto `build/iso/` sono spariti da
+sotto le mani piu' volte: 869 header di libstdc++ riscritti a ogni
+`make iso` sono esattamente cio' su cui un client di sincronizzazione si
+accanisce. Sommato al fatto che un `make iso` interrotto non si ripara da
+solo, ha bruciato diverse corse di prova.
+
+Il dubbio serio non e' pero' che CANCELLI: e' che **RIPRISTINI**. Un
+binario vecchio risorto dentro un'immagine gia' dichiarata buona renderebbe
+falsa una prova passata, e nel modo peggiore — silenziosamente.
+
+**La verifica, fatta a MEGAsync spento** (e da rifare cosi' ogni volta che
+il dubbio si ripresenta):
+
+1. **I build dir stanno FUORI da ~/MEGA** (`~/gcc-build-cpp`,
+   `~/exos-native`, `~/fb-build-exos`, `~/exos-cross`): i binari veri non
+   sono mai stati a rischio. Il rischio era confinato al repository.
+2. **I sorgenti**: ogni correzione e' ancora al suo posto (strncpy,
+   err_posix, path_normalizza, MAX_SPAWN_ARGS, VFS_IDENT, l'env di
+   pex-exos, la mappa nel page fault, le prove nuove).
+3. **I binari spediti**: ⚠️ sul CD sono SPOGLIATI DEI SIMBOLI, quindi
+   cercarci dentro `strncpy` per nome non funziona. Si strippa il binario
+   sorgente allo stesso modo e si confronta byte per byte:
+
+       i386-exos-strip -o /tmp/x ~/gcc-build-cpp/gcc/cc1
+       cmp /tmp/x build/iso/exos/libexec/.../cc1
+
+   cc1, cc1plus, collect2, gcc, g++, as, ld, fbc: tutti identici.
+4. **L'ISO contro l'albero**, letta a mano dal descrittore Joliet e
+   confrontata con sha256: 13 file campione, tutti uguali.
+   ⚠️ I nomi nell'ISO portano il suffisso di versione `;1`: un confronto
+   per nome esatto non trova NIENTE e sembra un CD vuoto.
+5. **Il floppy**: KERNEL.BIN identico a `build/kernel.bin`, e i 14 file di
+   `/BIN` identici a `build/bin/`.
+6. **Le due prove decisive rifatte**: libctest 294/0, e la catena C con un
+   `delete pg` davanti — cosi' l'eseguibile e' ricostruito da zero e non
+   riletto.
+
+**Nessun risultato era falso.** Ma il controllo va rifatto, non dato per
+scontato, ogni volta che si lavora con la sincronizzazione accesa.
+
+## Il file temporaneo di g++: NON era un difetto (6 agosto)
+
+Dopo `g++ -o pp pp.cpp` restava `ccHm016b.s` in `/src`, e sembrava che il
+driver non cancellasse i propri temporanei. **Non e' cosi'**: ripulita la
+directory dai `cc*.s` e rifatta una compilazione RIUSCITA, non resta
+niente. Il driver pulisce.
+
+⚠️ **Il residuo veniva dalla corsa FALLITA** — quella morta su «cannot find
+-lstdc++» perche' libstdc++.a non era ancora sul CD. Era rimasto li' e la
+compilazione successiva, che creava un temporaneo con un nome diverso, lo
+lasciava in vista: sembrava suo.
+
+⚠️ **La lezione e' sul metodo, non su GCC**: la prova iniziale guardava una
+directory che conteneva gia' i rifiuti di un tentativo precedente. Una
+prova che non parte da uno stato noto misura anche il passato. Il `delete
+cc*.s` prima del comando, e un `ls` a confermare, sono costati due righe.
+
+Resta da guardare, se un giorno da' fastidio: sulla via del FALLIMENTO il
+temporaneo sopravvive, e secondo gcc.cc non dovrebbe — `record_temp_file`
+lo mette in entrambe le code, `always_delete_queue` e `failure_delete_queue`.
+
 ## Il prossimo passo (6 agosto)
 
-1. **Il file temporaneo non cancellato**: dopo `g++ -o pp pp.cpp` resta
-   `ccHm016b.s` da 4096 byte in `/src`. Il driver lo crea e non lo toglie.
-
-   ⚠️ **Il primo sospetto e' gia' escluso**: `exit()` della nostra libc gli
-   atexit li chiama davvero (`while (g_atexit_n > 0) g_atexit[--g_atexit_n]()`,
-   verificato), il driver esce con 0, e `delete_temp_files` di gcc.cc si
-   registra proprio con atexit. Quindi la via d'uscita e' quella giusta.
-
-   Il fatto che separa i due casi: **la catena C non lascia niente, quella
-   C++ si**. La differenza sta in cio' che gira in piu' — collect2 — o nel
-   fatto che il nome finisca in una tabella diversa. Da guardare li', non
-   nella libc.
-2. **Togliere il `-B`.** I percorsi compilati dentro sono assoluti
-   (`/exos/...`): il `-B` serve solo perche' il CD e' montato su `/cdrom`.
-   Installando l'albero su `/exos` del disco rigido dovrebbe sparire — mai
-   provato.
-3. Poi i linguaggi oltre il C. **Ada** vuole `gnat1` e un `libgnat` — e
+1. **Il link finale di FreeBASIC.** `fbc` compila e assembla da solo
+   (provato: f2.asm, f2.o), ma crede di produrre per Linux e passa opzioni
+   Linux a `gcc`. E' l'ultimo terzo che manca perche' anche il BASIC sia
+   una catena chiusa come C e C++.
+2. Poi i linguaggi oltre il C. **Ada** vuole `gnat1` e un `libgnat` — e
    vuole un compilatore Ada già funzionante per costruirsi, che è il vero
    ostacolo.
 
-*(`fbc` ricollegato e `fstat()` convertita a -1 il 6 agosto: erano i punti
-3 e 4 di questo elenco.)*
+*(Chiusi il 6 agosto, erano in questo elenco: `fbc` ricollegato, `fstat()`
+convertita a -1, il file temporaneo di g++ — che non era un difetto —
+`as`/`ld` messi dove entrambi i compilatori li cercano, e il `-B`, sparito
+da solo.)*
 
 ## Rimasto indietro di proposito
 

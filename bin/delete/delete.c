@@ -160,9 +160,14 @@ static void unisci(char *out, int max, const char *dir, const char *nome)
     out[i] = '\0';
 }
 
+/* ⚠️ PRENDE errno, NON IL VALORE DI RITORNO (agosto 2026). unlink(),
+ * mkdir() e rmdir() rendono -1 come vuole POSIX, e `switch (-err)` su
+ * quel -1 finiva sempre nel ramo predefinito stampando «errore -1»: un
+ * messaggio che non dice niente proprio quando serve. Il codice vero sta
+ * in errno. Vedi il commento su errno in testa a lib/libc.c. */
 static void spiega_errore(const char *nome, int err)
 {
-    switch (-err) {
+    switch (err) {
         case E_ISDIR:
             printf("delete: '%s' e' una directory — usa rmdir\n", nome);
             break;
@@ -173,7 +178,7 @@ static void spiega_errore(const char *nome, int err)
             printf("delete: '%s' non e' un nome valido\n", nome);
             break;
         default:
-            printf("delete: '%s' non cancellato (errore %d)\n", nome, err);
+            printf("delete: '%s': %s\n", nome, strerror(errno));
             break;
     }
 }
@@ -255,7 +260,7 @@ static int elabora(const char *arg)
             printf("delete: cancellato '%s'\n", completo);
             return 0;
         }
-        spiega_errore(completo, r);
+        spiega_errore(completo, errno);
         return 1;
     }
 
@@ -317,7 +322,7 @@ static int elabora(const char *arg)
             printf("delete: cancellato '%s'\n", completo);
             cancellati++;
         } else {
-            spiega_errore(completo, r);
+            spiega_errore(completo, errno);
             falliti++;
         }
     }

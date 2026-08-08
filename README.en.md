@@ -1384,8 +1384,7 @@ replacement in hand.
 ```
 ex-os:/> mount hd0p1 /src
 ex-os:/> cd /src
-ex-os:/src> /cdrom/exos/bin/gcc -B/cdrom/exos/libexec/gcc/i386-exos/17.0.0/ \
-                -O2 -o pg pg.c
+ex-os:/src> /cdrom/exos/bin/gcc -O2 -o pg pg.c
 ex-os:/src> /src/pg
 La catena intera dentro EX-OS
 
@@ -1408,8 +1407,7 @@ headers with **not one `-I`**.
 ### And the same in C++
 
 ```
-ex-os:/src> /cdrom/exos/bin/g++ -B/cdrom/exos/libexec/gcc/i386-exos/17.0.0/ \
-                -O2 -o pp pp.cpp
+ex-os:/src> /cdrom/exos/bin/g++ -O2 -o pp pp.cpp
 ex-os:/src> /src/pp
 La libreria standard del C++ dentro EX-OS
 
@@ -1429,9 +1427,17 @@ of our `malloc`), polymorphism with a virtual destructor, and **exceptions**
 frames, which is the piece that needs the largest number of things working
 at once.
 
-⚠️ **The `-B` is needed because the CD is mounted on `/cdrom`.** The paths
-GCC has compiled into it are absolute (`/exos/...`) and match when the CD is
-the root, or when the tree is installed on `/exos` of the hard disk.
+⚠️ **No `-B`, and until 6 August 2026 one was needed.** The paths GCC has
+compiled into it are absolute (`/exos/...`) and do not match with the CD
+mounted on `/cdrom`: the driver has to *relocate*, that is, recompute its
+own prefix from where it sits. It could not, and `-B` was the crutch.
+
+It can now that the environment actually reaches the child process — it is
+`GCC_EXEC_PREFIX` that carries the relocated prefix, and `pex-exos.c` was
+handing `spawn_ex` an empty environment. The other four fixes served the
+same end: `..` resolving inside paths, `st_ino` telling directories apart,
+`-1` instead of `-errno`, and arguments no longer being truncated. **The
+`-B` disappeared as a consequence, not as a goal.**
 
 ### The `/exos` tree, and why it looks like this
 

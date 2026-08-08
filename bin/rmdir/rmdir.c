@@ -43,9 +43,14 @@ static void uso(void)
 }
 
 /* Un numero da solo non direbbe niente a chi legge lo schermo. */
+/* ⚠️ PRENDE errno, NON IL VALORE DI RITORNO (agosto 2026). unlink(),
+ * mkdir() e rmdir() rendono -1 come vuole POSIX, e `switch (-err)` su
+ * quel -1 finiva sempre nel ramo predefinito stampando «errore -1»: un
+ * messaggio che non dice niente proprio quando serve. Il codice vero sta
+ * in errno. Vedi il commento su errno in testa a lib/libc.c. */
 static void spiega_errore(const char *nome, int err)
 {
-    switch (-err) {
+    switch (err) {
         case E_NOTEMPTY:
             printf("rmdir: '%s' non e' vuota — cancella prima il suo "
                    "contenuto\n", nome);
@@ -64,7 +69,7 @@ static void spiega_errore(const char *nome, int err)
             printf("rmdir: '%s' non e' un nome valido da cancellare\n", nome);
             break;
         default:
-            printf("rmdir: '%s' non cancellata (errore %d)\n", nome, err);
+            printf("rmdir: '%s': %s\n", nome, strerror(errno));
             break;
     }
 }
@@ -85,7 +90,7 @@ int main(int argc, char **argv)
         if (r == 0) {
             printf("rmdir: cancellata '%s'\n", argv[i]);
         } else {
-            spiega_errore(argv[i], r);
+            spiega_errore(argv[i], errno);
             falliti++;
         }
     }

@@ -1381,8 +1381,7 @@ senza uscita, mentre chi arriva da `dup2` il rimpiazzo ce l'ha già.
 ```
 ex-os:/> mount hd0p1 /src
 ex-os:/> cd /src
-ex-os:/src> /cdrom/exos/bin/gcc -B/cdrom/exos/libexec/gcc/i386-exos/17.0.0/ \
-                -O2 -o pg pg.c
+ex-os:/src> /cdrom/exos/bin/gcc -O2 -o pg pg.c
 ex-os:/src> /src/pg
 La catena intera dentro EX-OS
 
@@ -1406,8 +1405,7 @@ header **senza un solo `-I`**.
 ### E lo stesso in C++
 
 ```
-ex-os:/src> /cdrom/exos/bin/g++ -B/cdrom/exos/libexec/gcc/i386-exos/17.0.0/ \
-                -O2 -o pp pp.cpp
+ex-os:/src> /cdrom/exos/bin/g++ -O2 -o pp pp.cpp
 ex-os:/src> /src/pp
 La libreria standard del C++ dentro EX-OS
 
@@ -1427,9 +1425,17 @@ nostra `malloc`), polimorfismo con distruttore virtuale, e **le eccezioni**
 livelli di stack, che è il pezzo che ha bisogno del maggior numero di cose
 funzionanti insieme.
 
-⚠️ **Il `-B` serve perché il CD è montato su `/cdrom`.** I percorsi che GCC
-ha compilati dentro sono assoluti (`/exos/...`) e combaciano quando il CD è
-la radice, o quando l'albero viene installato su `/exos` del disco.
+⚠️ **Nessun `-B`, e fino al 6 agosto 2026 serviva.** I percorsi che GCC ha
+compilati dentro sono assoluti (`/exos/...`) e con il CD montato su
+`/cdrom` non combaciano: il driver deve *rilocarsi*, cioè ricalcolare il
+proprio prefisso da dove sta lui. Non ci riusciva, e il `-B` era la stampella.
+
+Ci riesce da quando l'ambiente arriva davvero al processo figlio — è
+`GCC_EXEC_PREFIX` a portare il prefisso rilocato, e `pex-exos.c` girava a
+`spawn_ex` un ambiente vuoto. Le altre quattro correzioni servivano allo
+stesso scopo: `..` che si risolve nei percorsi, `st_ino` che distingue le
+directory, `-1` invece di `-errno`, e gli argomenti che non vengono
+troncati. **Il `-B` è sparito come conseguenza, non come obiettivo.**
 
 ### L'albero `/exos`, e perché è fatto così
 
