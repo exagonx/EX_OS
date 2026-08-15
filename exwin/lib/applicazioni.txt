@@ -1,0 +1,12 @@
+# L'elenco delle applicazioni grafiche di EX-OS.
+#
+# ! AGGIUNGERE UN'APPLICAZIONE E' UNA RIGA, NON UNA RICOMPILAZIONE. Il program
+# manager legge questo file all'avvio: un elenco compilato dentro il binario
+# vorrebbe dire rifare il program manager per ogni applicazione nuova, e chi
+# installa un programma non ha i sorgenti.
+#
+# Una riga per applicazione:   nome mostrato | percorso dell'eseguibile
+# Le righe che cominciano con # e quelle vuote si saltano.
+File manager   | /exwin/bin/filemgr
+Editor         | /exwin/bin/edit
+Terminale      | /exwin/bin/term

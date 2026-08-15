@@ -1,0 +1,747 @@
+===============================================================================
+  /boot/help.txt - il testo che `help` sfoglia
+===============================================================================
+
+  Un blocco comincia con una riga tipo   [ls]   in prima colonna.
+  Piu' nomi fra le quadre sono sinonimi:  [poweroff shutdown]
+  La prima riga non vuota del blocco e' il sommario che compare
+  nell'indice: tienila corta, ci sono 80 colonne in tutto.
+
+  Questo preambolo non appartiene a nessun blocco e non si vede da
+  `help`. Si legge con `help -t`, oppure aprendo il file.
+
+===============================================================================
+
+[help]
+l'aiuto: questo
+
+  help              l'indice: tutti i comandi e a che servono
+  help ls           il blocco di 'ls', e solo quello
+  help -t           tutto il file di seguito, senza sfogliare
+
+Mentre sfogli:
+
+  su / giu          una riga
+  PgSu / PgGiu      una pagina  (anche la barra spaziatrice)
+  Inizio / Fine     in cima, in fondo
+  q  oppure Esc     esci
+
+Il testo sta in /boot/help.txt e non dentro i programmi. Per
+documentare un comando nuovo si aggiunge un blocco a quel file: non si
+ricompila niente.
+
+Senza il servizio tastiera - o lanciando `help &` - il testo esce di
+seguito come da `cat`, perche' sfogliare vuol dire ricevere i tasti uno
+per uno e quella strada passa dal driver.
+
+[sh shell riga]
+la sintassi della riga di comando
+
+Piu' comandi su una riga:
+
+  uno ; due                 esegui il secondo comunque
+  uno && due                esegui il secondo solo se il primo e' riuscito
+  uno || due                esegui il secondo solo se il primo e' fallito
+  comando &                 in background (vedi `jobs`)
+
+Dove va l'output:
+
+  comando > file            scrive sul file, buttando via cio' che c'era
+  comando >> file           accoda in fondo
+  comando < file            legge dal file invece che dalla tastiera
+  comando 2> file           gli ERRORI sul file
+  comando > f 2>&1          errori dove va l'output (l'ordine conta)
+
+  uno | due                 l'uscita del primo diventa l'ingresso del secondo
+
+Le virgolette tengono insieme cio' che contiene spazi, e si possono usare
+anche in mezzo a una parola:
+
+  cp "appunti di ieri.txt" /disco
+  gcc -D 'NOME="EX-OS"' prog.c
+
+I caratteri jolly li espande la shell, prima di lanciare il comando:
+
+  rm *.o                    tutti gli oggetti
+  gcc -c sorgenti/*.c       il modello vale nell'ultimo pezzo del percorso
+  cp "*.o" altrove          fra virgolette NON si espande: e' un nome
+
+!! DISTINGUE MAIUSCOLO E MINUSCOLO. Su FAT i nomi tornano in maiuscolo,
+quindi li' serve `*.O` e non `*.o`. Su ext2 i nomi restano come li hai
+scritti. Il confronto insensibile al caso l'ha `delete`, non la shell:
+`rm *` deve prendere esattamente cio' che c'e' scritto.
+
+!! Se non corrisponde niente il modello passa com'e', come su ogni shell
+POSIX: `rm -f *.o` in una directory gia' pulita non e' un errore.
+
+!! COSA NON C'E', detto: niente $VARIABILE dentro una riga, niente
+sostituzione con i backtick, niente for/if.
+
+[echo]
+stampa quello che gli si scrive dopo
+
+  echo ciao mondo
+  echo $PATH               le variabili vengono espanse
+
+[cls clear]
+pulisce lo schermo
+
+  cls
+  clear                    lo stesso comando
+
+[pwd]
+dice in quale directory sei
+
+[cd]
+cambia directory
+
+  cd /boot
+  cd ..                    la directory superiore
+  cd                       torna a HOME (vedi `help env`)
+
+[ls dir]
+elenca i file
+
+  ls                       la directory corrente
+  ls /boot                 una qualunque
+
+Modi di visualizzazione - l'ultimo indicato vince:
+
+  -mc     a colonne: solo i nomi, il piu' compatto
+  -d      dettagli: dimensione, data e ora
+  -md     dettagliato stile dir: aggiunge gli attributi
+
+Senza nessuno dei tre: nome e dimensione.
+
+Altre opzioni:
+
+  -a      mostra anche i nomi che cominciano con un punto
+  -p      una pagina per volta (Invio avanza, q smette)
+
+Su un CD `.` e `..` non compaiono comunque: ISO 9660 non li consegna.
+
+[cat]
+mostra il contenuto di un file
+
+  cat /boot/kernel.cfg
+
+Per un file lungo conviene `textline`, che si ferma a ogni pagina.
+
+[cp]
+copia file e directory
+
+  cp origine destinazione
+  cp file1 file2 /disco            piu' file in una directory
+  cp -r /origine /disco/copia      anche le sottodirectory
+
+Se la destinazione esiste gia', chiede conferma: `s` sovrascrive, `n`
+salta, `t` risponde di si' per tutti i file che restano.
+
+[xcp]
+copia un file solo, senza fronzoli
+
+  xcp sorgente destinazione
+
+Serve dove `cp` non arriva: e' minimo per costruzione, e non chiede
+niente.
+
+[delete del]
+cancella file
+
+  delete appunti.txt
+  delete *.tmp                     accetta i modelli con * e ?
+  delete cc*.s prova?.o            piu' modelli insieme
+
+[rename ren]
+cambia nome a un file
+
+  rename vecchio.txt nuovo.txt
+
+[rm]
+cancella file, con i nomi e i modi di POSIX
+
+  rm appunti.txt
+  rm -f file-che-forse-non-c-e     non e' un errore se manca
+  rm -r cartella                   scende dentro e la svuota
+
+!! NON espande * e ?. `rm *.o` cancella un file che si chiama davvero
+`*.o`. Per i modelli c'e' `delete`, che li fa e lo dichiara.
+
+!! Senza -r una directory e' un errore ANCHE con -f: «non lamentarti se
+non c'e'» e «cancella qualunque cosa» sono due richieste diverse.
+
+Serve perche' i makefile scrivono `rm`, non `delete`, e `rm -f` su un file
+assente deve TACERE — se no ogni ricetta di pulizia ferma la costruzione.
+
+[mv]
+sposta o rinomina un file
+
+  mv vecchio.txt nuovo.txt         nella stessa directory: e' un rename
+  mv prog.o oggetti/               fra directory: copia e cancella
+  mv a.o b.o c.o oggetti/          piu' file dentro una directory
+
+Nella stessa directory e' atomico (riscrive la voce, i dati non si
+muovono). Fra directory diverse copia e poi cancella: se la copia
+fallisce, l'originale c'e' ancora.
+
+Una directory non si sposta: per quella c'e' `xcp` e poi `rm -r`.
+
+Il gemello per chi digita al prompt e' `rename`, che dichiara di NON
+attraversare le directory.
+
+[mkdir]
+crea directory
+
+  mkdir lavoro
+  mkdir uno due tre                piu' di una per volta
+  mkdir -p a/b/c                   crea anche i livelli intermedi
+
+Con -p una directory che esiste gia' NON e' un errore, e non si stampa
+niente. E' quello che i makefile si aspettano: creano le proprie directory
+degli oggetti a ogni esecuzione, e la seconda volta ci sono gia'.
+
+Senza -p si crea un livello solo, e «esiste gia'» e' un errore.
+
+[rmdir]
+elimina directory vuote
+
+  rmdir lavoro
+
+Una directory che contiene ancora qualcosa non viene toccata: prima si
+svuota con `delete`.
+
+[trunc]
+taglia un file a una lunghezza precisa
+
+  trunc file.dat 4096
+
+Accorcia o allunga: allungando, la parte nuova e' fatta di zeri.
+
+[textline]
+mostra e modifica un file riga per riga
+
+  textline file.txt
+
+Lavora per numeri di riga, e si ferma a ogni pagina: Invio continua, q
+smette. Per modificare davvero un testo c'e' `gfedit`.
+
+[gfedit]
+editor di testo a schermo intero
+
+  gfedit                   apre un'area vuota
+  gfedit file.c            apre un file
+  gfedit a.c b.c           piu' file insieme
+
+Dentro l'editor: F1 aiuto, F10 menu, Alt+X per uscire.
+
+Non gira in background: prende la tastiera per intero, e da `&` la
+ruberebbe alla shell. Aprilo in primo piano, o su un'altra console con
+Alt+F2..F4.
+
+[exec]
+sostituisce la shell con un programma
+
+  exec /bin/ls
+
+Non torna: al posto della shell resta il programma. Diverso da
+lanciarlo normalmente, che la shell aspetta e poi riprende il prompt.
+
+[env]
+mostra le variabili d'ambiente
+
+Arrivano dalla sezione [env] di /boot/kernel.cfg. Le principali:
+
+  PATH      dove si cercano i comandi
+  HOME      la directory di `cd` senza argomenti
+  TERM      il tipo di terminale dichiarato ai programmi
+  TMPDIR    dove i programmi mettono i file di passaggio
+
+[export set]
+imposta una variabile d'ambiente
+
+  export PATH=/bin:/dev:/cdrom/bin
+
+Vale fino allo spegnimento. Per renderla permanente si scrive in
+[env] di /boot/kernel.cfg - vedi /boot/kernel.txt.
+
+[source]
+esegue uno script in questa shell
+
+  source prova.sh
+  prova.sh                 un nome che finisce in .sh basta da solo
+
+`!silenced` dentro lo script nasconde i comandi, non il loro output.
+
+[jobs]
+elenca i programmi lanciati con '&'
+
+Un comando seguito da `&` parte e restituisce subito il prompt. `jobs`
+dice quali sono ancora vivi.
+
+[fg]
+riporta in primo piano un programma di background
+
+  fg                       l'ultimo
+  fg 2                     quello numero 2 secondo `jobs`
+
+[sleep]
+aspetta un po'
+
+  sleep 500                mezzo secondo, in millisecondi
+
+[pid]
+dice il PID del processo corrente
+
+[stack ps]
+elenca i processi
+
+Per ognuno: PID, nome, stato e la memoria che occupa. E' il `ps` di
+EX-OS, e il nome viene dal fatto che mostra anche stack e heap.
+
+[mem]
+quanta memoria c'e' e quanta se ne usa
+
+Convenzionale, superiore ed estesa, con il totale in pagine.
+
+[uname]
+che sistema e' questo, come lo chiede uno script
+
+  uname                    EX-OS
+  uname -m                 i686          l'architettura
+  uname -r                 la versione
+  uname -a                 tutto insieme
+
+!! DICE UNA PAROLA, NON UNA FRASE, ed e' il punto. Fino ad agosto 2026 era
+un built-in della shell e stampava «EX-OS version 0.176 (x86 32-bit) -
+Copyright...»: bello da leggere, e inservibile per un makefile, che scrive
+`ifeq ($(shell uname),Linux)` e confronta con una parola.
+
+Adesso e' un programma, /bin/uname, e il built-in non c'e' piu': `uname`
+non puo' rispondere due cose diverse a seconda di chi lo chiama. La frase
+per le persone e' `ver`.
+
+!! Il nome del sistema e' FISSO, non viene da OSNAME di kernel.cfg. OSNAME
+e' un nome da mostrare («EX OS», con lo spazio); `uname -s` e' un token che
+gli script confrontano e tagliano. E se venisse da un file, cambiarlo
+cambierebbe di nascosto il ramo che ogni makefile del disco imbocca.
+Versione e nome macchina vengono dall'ambiente: quelli e' giusto cambiarli.
+
+[ver version]
+nome, versione, autore e licenza
+
+La versione la tiene il kernel, non un file di configurazione: `ver` e
+`uname` non possono dire cose diverse.
+
+[keymap]
+la disposizione della tastiera
+
+  keymap                   dice qual e' quella attiva
+  keymap it                la cambia adesso
+  keymap -p                stampa la riga da mettere in kernel.cfg
+
+Disposizioni: us it fr de es uk.
+
+Un cambio fatto qui vale fino allo spegnimento. Per renderlo
+permanente serve la riga in /boot/kernel.cfg - o `hwconfig`, che la
+scrive da solo.
+
+[disk]
+elenca i dischi e le loro partizioni
+
+Dice anche cosa NON torna: firme mancanti, partizioni che si
+sovrappongono, catene di logiche rotte. Le anomalie sono la parte
+importante - un disco che sembra a posto e non lo e' e' il modo
+classico di perdere dei dati.
+
+[fdisk]
+crea e cancella partizioni
+
+  fdisk hd0
+
+Interattivo. Non tocca i dischi GPT: la loro tabella MBR e' protettiva
+e riscriverla renderebbe il disco irraggiungibile.
+
+[mkfs]
+formatta una partizione
+
+  mkfs hd0p1                       FAT, scelto dalla dimensione
+  mkfs -t ext2 -L dati hd0p1       ext2 con un'etichetta
+
+  -t   fat16, fat32 oppure ext2
+  -L   l'etichetta del volume
+
+CHIEDE CONFERMA, e vuole `si` per esteso. Il comando che scrivi dopo,
+se non hai risposto, viene mangiato come risposta: e' il modo piu'
+rapido di far fallire il montaggio successivo con un errore che sembra
+tutt'altro.
+
+[mount umount]
+monta e smonta un volume
+
+  mount                            elenca i montaggi
+  mount hd0p1 /disco               monta
+  mount cd0 /cdrom                 un CD (sempre in sola lettura)
+  umount /disco                    smonta - prima di espellere un CD
+
+Il punto di montaggio non deve esistere gia': lo crea il VFS.
+
+I montaggi automatici all'avvio stanno nella sezione [mount] di
+/boot/kernel.cfg, spiegata in /boot/kernel.txt.
+
+[chkdsk]
+controlla un filesystem
+
+  chkdsk hd0p1                     guarda e riferisce
+  chkdsk -r hd0p1                  ripara quello che sa riparare
+
+[install]
+installa EX-OS su un disco, o gli strumenti dal CD
+
+  install /disco                   il sistema: riscrive tutto
+  install -a /disco                aggiorna solo i file cambiati
+  install -tools                   gli strumenti di sviluppo dal CD
+
+Il disco dev'essere gia' partizionato (`fdisk`) e formattato (`mkfs`),
+e montato dove lo si indica.
+
+Copia il sistema, scrive l'MBR e il settore di avvio della partizione,
+e chiede a `hwconfig` quali driver servono su questa macchina - non li
+riversa tutti: floppy.drv non si carica affatto, e il driver di una
+scheda di rete che non c'e' sarebbe solo un file in piu'.
+
+!! La mappa dei settori del kernel vale finche' quel file non si sposta.
+Ricopiare kernel o stage2 sul disco a mano OBBLIGA a rilanciare
+`install`, o il disco riparte con la versione di prima.
+
+`install -tools` e' un'altra cosa e sta su un altro supporto: gli
+strumenti vengono dal CD tools, non dal supporto di avvio. E' /bin/toolinst
+sotto un altro nome - vedi `help toolinst`.
+
+[hwconfig]
+guarda la macchina e scrive la configurazione
+
+  hwconfig                         scrive kernel.cfg e autoexec.sh
+  hwconfig -n                      dice cosa farebbe, senza scrivere
+
+Mostra tutto prima di chiedere, e i file di adesso finiscono in
+kernel.cfg.bak e autoexec.sh.bak. E' la via breve al posto di scrivere
+kernel.cfg a mano.
+
+[cmp]
+confronta due file byte per byte
+
+  cmp uno due                      dice dove differiscono
+  cmp -s uno due                   non stampa niente: parla l'uscita
+  cmp -l uno due                   elenca TUTTE le differenze
+
+  uscita:  0 uguali   1 diversi   2 errore (file mancante...)
+
+!! IL SILENZIO E' IL RISULTATO BUONO. Due file uguali non fanno stampare
+niente: e' il contratto di POSIX, ed e' cio' che rende usabile
+`cmp -s a b || cp a b` dentro un makefile - il modo classico di non
+ritoccare la data di un file che non e' cambiato.
+
+!! Il codice di uscita distingue TRE casi, non due: «diversi» (1) e «non ho
+potuto guardare» (2) sono cose diverse. Uno script che tratta un file
+mancante come «diverso» ricopia allegramente sopra un errore.
+
+Confrontare le dimensioni non basta: due file possono pesare uguale e
+differire. E' il motivo per cui questo comando esiste - serviva a dire se
+due generazioni del compilatore davano lo stesso binario.
+
+[hwinfo]
+inventario dell'hardware, per chi deve scrivere un driver
+
+  hwinfo                           scrive /hwinfo.txt e ripete a video
+  hwinfo /disk/hw.txt              lo scrive dove dici tu
+  hwinfo -n                        stampa e basta, non scrive niente
+  hwinfo -s                        solo l'elenco di cio' che manca di driver
+
+-s restringe il CONTENUTO, non spegne la scrittura: il file lo scrive lo
+stesso, col solo elenco dentro. Per guardare senza scrivere niente: -n.
+
+Diverso da `hwconfig`, che chiede «come accendo questa macchina». Questo
+chiede «cosa devo scrivere per pilotare questa scheda», e raccoglie i dati
+che servono a farlo: gli identificatori su cui agganciarsi, la classe, i
+BAR con lo spazio in cui rispondono, l'IRQ, e cosa il BIOS ha gia' acceso
+nel registro comando. In fondo elenca i dispositivi senza driver.
+
+Vuole /dev/pci.drv (sta sul CD di EX-OS) e se non lo trova lo avvia da
+solo. Senza, la parte PCI resta vuota e il rapporto lo dice.
+
+Guarda e basta: non sonda niente scrivendo. Le schede ISA, i dischi ATA e
+le porte seriali percio' non compaiono, e il rapporto spiega in fondo il
+perche' di ognuna - sondarle vorrebbe dire scrivere su porte che il kernel
+sta usando in quel momento.
+
+Dal CD la radice e' in sola lettura: `hwinfo /disk/hw.txt` su un disco
+montato, oppure `hwinfo -n`.
+
+[toolinst]
+installa gli strumenti di sviluppo dal CD
+
+Lo stesso programma si raggiunge come `install -tools`.
+
+  toolinst                         nel sistema in esecuzione
+  toolinst /disco                  nel sistema montato in /disco
+  toolinst -a                      AGGIORNA: solo cio' che e' cambiato
+  toolinst -n                      dice cosa farebbe, non copia niente
+  toolinst -y                      installa tutto senza chiedere
+  toolinst -g base,cpp             solo questi gruppi
+
+Con -a si rilancia dopo aver rifatto il CD: confronta quello che c'e' sul
+disco con quello che c'e' sul CD, elenca le differenze e chiede prima di
+toccare qualcosa. Chi non e' cambiato non viene riscritto.
+
+!! -a GUARDA IL CONTENUTO, NON LE DATE. Sul CD ogni file porta la data di
+costruzione dell'ISO, non la propria: dopo un `make iso` le date direbbero
+che e' cambiato tutto. Leggere i file costa qualche minuto ed e' l'unica
+risposta vera.
+
+Chiede il CD degli strumenti montato (`mount cd0 /cdrom`). Cosa c'e'
+sopra e cosa si puo' scegliere lo dichiara il CD stesso, in
+/cdrom/exos/strumenti.txt: i gruppi, da cosa dipendono e quanto pesano.
+Un CD vecchio senza quel file si installa lo stesso, con un catalogo di
+scorta.
+
+Copia l'albero INTERO conservandone la forma, e non e' un dettaglio:
+gcc e fbc calcolano il proprio prefisso da dove sta il loro binario e
+da li' cercano cc1, as, ld e gli header. Binari sciolti in /bin non
+funzionano, e il messaggio che ne esce parla di header mancanti.
+
+In kernel.cfg scrive due cose:
+
+  PATH      ci mette la bin degli strumenti, PRIMA delle voci /cdrom
+  TMPDIR    dove i compilatori mettono i file di passaggio
+
+L'ordine nel PATH non e' un dettaglio: in coda, `gcc` avrebbe continuato
+a risolversi sul compilatore del CD, e togliendo il CD un sistema
+"installato" avrebbe smesso di compilare.
+
+Senza TMPDIR quei file finiscono nella directory corrente, e da una
+radice in sola lettura non ci finiscono affatto: ne esce "Cannot create
+temporary file in ./", che parla di un file temporaneo e manda a
+cercare il guasto in GCC.
+
+Vuole un volume ext2. Su FAT i nomi lunghi si scrivono troncati alla
+forma 8.3, l'albero ne e' pieno (bits/stdc++.h, libstdc++.a), la copia
+riesce e il compilatore non trova piu' header che sul disco ci sono con
+un altro nome.
+
+[helpconfig]
+come si accendono i driver
+
+  helpconfig
+  help helpconfig                  lo stesso
+
+Mostra anche a che punto sei: per ogni servizio dice se e' gia' vivo o
+se manca. Lo sa chiedendo al registro IPC, quindi non e' un elenco di
+istruzioni ma lo stato della macchina.
+
+[netdetect]
+elenca le schede di rete e il driver che vogliono
+
+[ipcfg]
+indirizzo IP e contatori dell'interfaccia
+
+  ipcfg                            come sta adesso
+
+[dhcp]
+chiede un indirizzo alla rete e lo applica
+
+[ping]
+prova se un host risponde
+
+  ping 10.0.2.2
+  ping esempio.it -n 4             quante volte
+  ping host -w 500 -l 64           attesa in ms, byte per pacchetto
+
+[host]
+il nome di un host in indirizzo, e viceversa
+
+  host esempio.it
+
+[telnet]
+apre una sessione su un host
+
+  telnet 10.0.2.2
+  telnet host 2323                 su una porta diversa
+
+[ftp]
+trasferisce file
+
+  ftp 10.0.2.2
+
+Dentro: `get remoto [locale]` scarica, `put locale [remoto]` invia.
+
+[nettest tcptest]
+prove dello stack di rete
+
+  nettest                          stato dell'interfaccia
+  tcptest host porta               apre una connessione e riferisce
+
+[gcc g++]
+il compilatore C e C++
+
+  gcc -o prog prog.c               compila e collega
+  g++ -o prog prog.cpp             C++
+
+Serve il CD degli strumenti, o `install -tools` per averli sul disco.
+Dal CD senza installarli il comando e' /cdrom/exos/bin/gcc.
+
+!! NON copiare gcc in /bin e non lanciarlo da un'altra directory. Calcola
+i propri percorsi da dove sta il suo binario: da /bin cercherebbe
+/libexec/gcc/... e risponderebbe "cannot execute cc1", oppure che non
+trova stdio.h. Va lanciato da dove sta, o messo nel PATH con la sua bin.
+
+[make]
+costruisce un programma da un makefile
+
+  make                             il primo bersaglio del makefile
+  make pulisci                     un bersaglio preciso
+  make -f altro.mk                 un makefile con un altro nome
+  make -j2                         due comandi insieme
+
+E' GNU make 4.2. Serve il CD degli strumenti (gruppo «Costruzione» di
+`install -tools`), che porta anche `ar`, `ranlib`, `nm`, `strip`,
+`objcopy` e `objdump`.
+
+Un esempio da provare sta in /cdrom/prova-make: si copia in una directory
+scrivibile (il CD non lo e'), si lancia `make`, e `./prova` deve dire 385.
+
+!! Meglio su ext2 che su FAT. Su FAT i nomi tornano in maiuscolo, e un
+makefile che nomina `main.c` non riconosce piu' il `MAIN.C` che gli
+arriva da un carattere jolly.
+
+!! `make --output-sync` non c'e' e lo dice invece di ignorarlo: vuole i
+lock di record di fcntl, che EX-OS non ha. Tutto il resto c'e'.
+
+[ar ranlib nm strip objcopy objdump]
+gli strumenti che manipolano oggetti e librerie
+
+  ar rcs libmia.a a.o b.o          crea una libreria dagli oggetti
+  ranlib libmia.a                  ci scrive dentro l'indice
+  nm libmia.a                      elenca i simboli
+  strip prog                       toglie i simboli di debug
+  objdump -d prog                  disassembla
+
+Sono i binutils veri (2.44), compilati per EX-OS. Stanno sul CD degli
+strumenti insieme ad `as` e `ld`.
+
+!! `ar` e `ranlib` sono due file distinti e non uno con due nomi: EX-OS
+non ha i collegamenti.
+
+[fbc freebasic basic]
+il compilatore FreeBASIC
+
+  fbc prog.bas                     compila e collega -> prog
+  fbc prog.bas -x prog             lo stesso, col nome detto a mano
+
+Serve il CD degli strumenti, o `install -tools` per averli sul disco.
+Dal CD senza installarli il comando e' /cdrom/exos/bin/fbc.
+
+!! -o NON E' QUELLO DI gcc. In FreeBASIC:
+
+  -o <file>    il nome dell'OGGETTO (.o)
+  -x <file>    il nome dell'ESEGUIBILE
+
+`fbc prog.bas -o prog` lascia sul disco un ELF rilocabile, e lanciandolo
+si ottiene "non e' un programma eseguibile". Non e' un difetto: e' che le
+due lettere vogliono dire un'altra cosa.
+
+Un `#include "crt.bi"` funziona: da li' si chiamano le funzioni della
+libc di EX-OS (strlen, fopen, time...) come da C.
+
+!! I TIPI SONO I NOSTRI, non quelli di Linux. time_t e' di 8 byte,
+CLOCKS_PER_SEC vale 100, BUFSIZ 4096. Chi porta codice scritto per Linux
+controlli quei numeri invece di darli per scontati.
+
+!! E non c'e' tutto: si dichiara solo cio' che la libc ha davvero. Niente
+getw, _toupper, gmtime_r, O_CLOEXEC. Un header che promette e' peggio di
+un header assente.
+
+ld avvisa "missing .note.GNU-stack" e "fbextra.x contains output
+sections": nessuno dei due e' un errore, il programma si collega e parte.
+
+[libctest]
+la prova della libreria C
+
+Centinaia di controlli su stringhe, memoria, file, tempo e matematica.
+Stampa quante ne passano e quante no: se una riga e' rossa su un
+sistema che funziona, e' la prova a essere sbagliata, e va corretta
+subito - una suite di cui non ci si fida non serve a niente.
+
+[login]
+chiede chi sei prima di dare la shell
+
+Non si lancia a mano: lo avvia il kernel al posto della shell, se
+/boot/kernel.cfg ha la riga `login = /bin/login` nella sezione [boot].
+
+Al primo avvio non c'e' nessun utente: si entra senza password e la
+prima cosa che si fa e' crearne uno. Non ci si puo' chiudere fuori.
+
+Gli utenti stanno in /boot/utenti come  nome:sale:impronta, dove
+l'impronta e' lo SHA-256 di "sale:password": la password non tocca il
+disco. Il file pero' non e' protetto - EX-OS non ha ancora i permessi -
+quindi l'accesso separa gli utenti, non resiste a chi ha gia' un
+programma in esecuzione sulla macchina.
+
+`exit` dalla shell torna al prompt d'accesso.
+
+[reboot]
+riavvia il sistema
+
+[halt]
+ferma il sistema senza spegnerlo
+
+[poweroff shutdown]
+ferma e spegne dopo tre secondi
+
+[exit]
+termina la shell
+
+  exit
+  exit 2                           con un codice di uscita
+
+Con `login` acceso si torna al prompt d'accesso; senza, quella console
+resta ferma fino al riavvio.
+
+[console]
+quattro schermi sulla stessa macchina
+
+  Alt+F1 .. Alt+F4                 si passa dall'uno all'altro
+
+Ognuno ha la sua shell e i suoi programmi. La tastiera va a quello
+visibile: un programma su una console nascosta resta fermo invece di
+rubare i tasti a chi sta scrivendo.
+
+[background]
+lanciare un comando e riprendere subito il prompt
+
+  ping 10.0.2.2 &                  parte e torna il prompt
+  jobs                             quali sono ancora vivi
+  fg                               riprenderlo in primo piano
+
+Un programma in background che prova a leggere dalla tastiera trova la
+fine dell'input, e di solito esce: la tastiera e' di chi sta in primo
+piano.
+
+[virgolette]
+nomi di file con spazi dentro
+
+  cp "appunti di riunione.txt" /disco
+  cp 'appunti di riunione.txt' /disco
+
+Apici singoli e doppi fanno la stessa cosa.
+
+[file]
+dove sta cosa
+
+  /bin        i programmi
+  /dev        i driver: sono programmi anche loro
+  /lib        le librerie condivise
+  /boot       kernel.cfg, kernel.txt, help.txt, utenti
+  /cdrom      il CD, se c'e' (montato all'avvio)
+
+/boot/kernel.cfg e' la configurazione; /boot/kernel.txt spiega ogni
+sua voce una per una.

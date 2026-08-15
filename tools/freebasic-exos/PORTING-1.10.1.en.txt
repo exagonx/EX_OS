@@ -1,0 +1,289 @@
+===============================================================================
+  PORTING FreeBASIC 1.10.1 TO EX-OS — the procedure, step by step
+  (Italian version: PORTING-1.10.1.it.txt)
+===============================================================================
+
+  This file is the HOW. For the WHAT and the WHY of every single source
+  change, read MODIFICHE-FBC.en.md in the same directory: it lists all 25
+  modifications one by one, with the reason for each.
+
+  Everything below has been executed and verified on 12 August 2026.
+  Nothing here is a plan; it is a transcript of what worked.
+
+===============================================================================
+  0. WHAT YOU NEED BEFORE YOU START
+===============================================================================
+
+  On the Linux host:
+
+    - the FreeBASIC 1.10.1 "source-bootstrap" package, unpacked
+      !! NOT the binary distribution. If the tree has bin/ and include/
+         but no src/compiler/, you have the wrong package.
+    - the i386-exos cross toolchain in ~/exos-cross  (gcc, as, ld, ar)
+    - a host fbc (1.10.1 recommended) to build the cross compiler
+
+  Inside EX-OS, on the tools CD:
+
+    - /exos/bin/fbc        the already working FreeBASIC 1.07.3
+    - /exos/bin/gcc        the native GCC
+    - /bin/make            GNU make
+    - /exos/lib/           crt0.o, libc.a, libm.a, libgcc.a
+
+  !! AND AN ext2 DISK. On FAT the file names come back in UPPERCASE and
+     the makefile patterns stop matching them: `$(wildcard *.c)` yields
+     MAIN.C, `$(filter-out main.c,...)` no longer removes it, and `main`
+     ends up twice in the link. On a floppy it is worse: the FAT12 driver
+     only accepts directories in the root, so src/compiler/ cannot exist
+     at all.
+
+       mkfs -t ext2 -L fb hd0p1      !! ERASES THE VOLUME. Answer `si`.
+       mount hd0p1 /src
+
+===============================================================================
+  1. APPLY THE PORT TO THE SOURCES (on the host)
+===============================================================================
+
+  Two layers, two scripts. Both are idempotent and reversible.
+
+    python3 tools/freebasic-exos/applica.py            <1.10.1-tree>
+    python3 tools/freebasic-exos/bersaglio-exos-110.py <1.10.1-tree>
+
+  Expected output:
+
+    3 file modificati        (the runtime layer, src/rtlib/)
+    25 modifiche applicate   (the compiler target)
+
+  !! PICK THE SCRIPT THAT MATCHES THE RELEASE. bersaglio-exos.py is for
+     1.07.3, bersaglio-exos-110.py is for 1.10.1. On the wrong tree the
+     anchors would match IN PART, and a half-modified tree is worse than
+     an untouched one — the first one still compiles.
+     The script checks version.mk and refuses, but do not rely on that.
+
+  To undo:  add --togli to either script.
+
+  !! IF A SCRIPT STOPS SAYING "trovato 0 volte invece di 1", upstream has
+     rewritten those lines. That is the safety net doing its job: fix the
+     anchor in the script, never force the substitution. Inside a COMPILER
+     a substitution landing in the wrong place does not raise an error —
+     it produces generated code different from what you believe you asked
+     for, and you find out much further downstream.
+
+===============================================================================
+  2. CROSS-BUILD ON LINUX (optional, but do it first)
+===============================================================================
+
+  This is the fast way to find out whether the port compiles at all. It
+  takes minutes; building inside EX-OS takes hours.
+
+  2.1  Build a host compiler that knows the exos target
+
+         cd <1.10.1-tree>
+         make compiler -j2
+
+       Check it took:
+
+         ./bin/fbc -target exos -r prova.bas
+
+       and that the .asm is 32-bit x86 with `.type ... , @function`.
+
+  2.2  Check the unwind decision held
+
+       This is the one that breaks silently, so test it explicitly:
+
+         ./bin/fbc -target linux-x86 -e -r u.bas -o u_linux.asm
+         ./bin/fbc -target exos      -e -r u.bas -o u_exos.asm
+         grep -c '\.cfi_' u_linux.asm     -> 14   (unchanged)
+         grep -c '\.cfi_' u_exos.asm      ->  0
+         as --32 u_exos.asm -o /dev/null  -> must succeed
+
+       !! IF u_exos.asm CONTAINS ANY .cfi_ AT ALL, THE PORT IS WRONG.
+          There are THREE unwind sites in emit_x86.bas, not two, and the
+          third one lives inside the body of the epilogue. Missing it
+          produces `.cfi_restore` without a preceding `.cfi_startproc`,
+          which is not "a bit of extra CFI" — it is assembly that DOES
+          NOT ASSEMBLE:
+
+            u_exos.asm:26: Error: CFI instruction used without previous
+                                  .cfi_startproc
+
+  2.3  Cross-build the runtime and the compiler for exos
+
+       See tools/freebasic-exos/prepara-fb.sh for the full recipe.
+       Verify the result is ELF 32-bit i386, static, with no undefined
+       symbols — do not trust the exit code alone.
+
+===============================================================================
+  3. BUILD IT INSIDE EX-OS
+===============================================================================
+
+  3.1  Get the sources onto an ext2 disk
+
+         mount hd0p1 /src
+         export PATH=/bin:/cdrom/exos/bin:/cdrom/bin
+         cp -r /cdrom/freebasic-nuovo /src/fb
+         cd /src/fb
+
+  3.2  The runtime
+
+         make TARGET_OS=exos TARGET_ARCH=x86 DISABLE_MT=1 \
+              CFLAGS="-O2 -DDISABLE_FFI" rtlib
+
+       Result: lib/freebasic/exos-x86/libfb.a, about 576 KB.
+       430 files, roughly two and a half hours under QEMU without KVM.
+
+  3.3  The compiler
+
+         make TARGET_OS=exos TARGET_ARCH=x86 DISABLE_MT=1 compiler
+
+       Result: bin/fbc, about 1.9 MB. 145 .bas files.
+
+  !! THE VARIABLE IS TARGET_OS, NOT TARGET. `TARGET` does exist, but the
+     makefile reads it as a GNU-style triplet and looks it up in a table
+     that has no `exos`: you get BUILD_PREFIX=exos- (meaning exos-gcc and
+     exos-ar, which do not exist) and an EMPTY TARGET_OS. With TARGET_OS
+     empty the runtime is looked for in src/rtlib/ alone, src/rtlib/exos/
+     is skipped, and the link fails on functions unrelated to the file it
+     was compiling.
+
+  !! TARGET_ARCH=x86 MATTERS JUST AS MUCH. Inside EX-OS the makefile
+     derives the architecture from `uname -m`, and our answer is not among
+     the ones it recognises.
+
+  !! DISABLE_MT=1 IS NOT AN OPTIMISATION. Without it the makefile also
+     builds libfbmt.a: another 427 files, nearly three hours, for a
+     runtime with threads EX-OS does not have. The makefile has the flag
+     on purpose — it already uses it for Xbox.
+
+  !! -DDISABLE_FFI IS NEEDED. src/rtlib/thread_call.c includes <ffi.h> to
+     build calls whose signature is decided at run time. There is no
+     libffi on EX-OS; the define reduces that file to a stub, exactly as
+     the makefile does by itself for Xbox and DOS.
+
+===============================================================================
+  4. GIVE THE NEW COMPILER A COMPLETE PREFIX
+===============================================================================
+
+  !! THIS IS THE STEP THAT IS EASY TO MISS, AND IT STAYS INVISIBLE UNTIL
+     YOU TRY TO USE THE COMPILER YOU JUST BUILT.
+
+  fbc derives its prefix from the path it was launched from:
+  /src/fb/bin/fbc gives /src/fb/. It then expects to find, under that
+  prefix, THREE things — not two:
+
+      <prefix>/bin/                  the compiler itself
+      <prefix>/lib/                  crt0.o libc.a libm.a libgcc.a
+      <prefix>/lib/freebasic/exos-x86/   libfb.a fbrt0.o fbextra.x
+      <prefix>/include/freebasic/    crt.bi file.bi ... crt/ fbc-int/
+
+  The source tree provides only the third. The other two must be built:
+
+      cp /cdrom/exos/lib/crt0.o   /src/fb/lib/
+      cp /cdrom/exos/lib/libc.a   /src/fb/lib/
+      cp /cdrom/exos/lib/libm.a   /src/fb/lib/
+      cp /cdrom/exos/lib/libgcc.a /src/fb/lib/
+
+      mkdir -p /src/fb/include/freebasic
+      cp /src/fb/inc/*.bi          /src/fb/include/freebasic
+      cp -r /src/fb/inc/crt        /src/fb/include/freebasic/crt
+      cp -r /src/fb/inc/fbc-int    /src/fb/include/freebasic/fbc-int
+
+  !! COPY THE HEADERS FROM THE 1.10.1 TREE (/src/fb/inc), NOT FROM THE
+     INSTALLED 1.07 (/cdrom/exos/include/freebasic). A 1.10.1 compiler
+     built from 1.10.1 sources must use 1.10.1 headers.
+
+  Why this is invisible at first: the FIRST build uses the INSTALLED fbc
+  1.07.3, whose prefix is /cdrom/exos/ and which therefore finds its own
+  headers and libraries. Everything works. The defect only surfaces when
+  you build with the compiler you just produced, and then it says:
+
+      src/compiler/fbc.bas(13) error 23: File not found, "file.bi"
+
+  — an error that names a header while the real problem is an incomplete
+  prefix.
+
+===============================================================================
+  5. CLOSE THE FIXED POINT
+===============================================================================
+
+  A self-hosting compiler is only proven when two consecutive generations
+  produce the SAME binary. Three generations are involved:
+
+      gen1   built by the installed fbc 1.07.3
+      gen2   built by gen1        <- first generation with 1.10.1 semantics
+      gen3   built by gen2
+      fixed point closed when gen2 and gen3 are byte-identical
+
+  gen1 and gen2 will DIFFER in size, and that is correct: gen1 was
+  produced by a 1.07 code generator, gen2 by a 1.10.1 one.
+
+      cp bin/fbc bin/fbc-gen1
+      rm -r src/compiler/obj
+      make TARGET_OS=exos TARGET_ARCH=x86 DISABLE_MT=1 \
+           FBC=/src/fb/bin/fbc-gen1 compiler
+      cp bin/fbc bin/fbc-gen2
+
+      rm -r src/compiler/obj
+      make TARGET_OS=exos TARGET_ARCH=x86 DISABLE_MT=1 \
+           FBC=/src/fb/bin/fbc-gen2 compiler
+      cp bin/fbc bin/fbc-gen3
+
+      cmp bin/fbc-gen2 bin/fbc-gen3
+
+  Silence from `cmp` means the fixed point is closed.
+
+  !! COMPARING SIZES IS NOT ENOUGH. Two binaries can weigh the same and
+     differ, and that is exactly the case a fixed point must rule out.
+     EX-OS has /bin/cmp for this; it was written for this.
+
+  !! USE FBC= WITH AN ABSOLUTE PATH. The makefile's default is `fbc`,
+     which resolves through PATH to the INSTALLED 1.07.3 — so a run that
+     you believe is generation 2 would silently be generation 1 again,
+     and the comparison would "succeed" while proving nothing.
+
+  !! rm -r src/compiler/obj BETWEEN GENERATIONS. Without it make reuses
+     the objects of the previous generation and only relinks: the result
+     is a binary that mixes two compilers' output, and it compares equal
+     to neither.
+
+===============================================================================
+  6. WHAT TO CHECK BEFORE BELIEVING IT WORKED
+===============================================================================
+
+  Do not trust exit codes. Check the artefacts:
+
+      bin/fbc -version
+          -> FreeBASIC Compiler - Version 1.10.1, built for exos-x86
+
+      bin/fbc prova.bas -x prova110
+      ./prova110
+          -> must print the expected numbers. The test program on the CD
+             prints 385, the sum of the squares from 1 to 10 — a value
+             you can check by hand. A compiler that produces a binary
+             which starts and prints the wrong number is a far more
+             common failure than one that does not link.
+
+  Two linker warnings appear and neither is a defect of the port:
+
+      fbextra.x contains output sections; did you forget -T?
+      cpudetect.o: missing .note.GNU-stack section
+
+  The second is why prepara-fb.sh passes `-z noexecstack` by hand when
+  cross-linking: x86/cpudetect.s is a third-party file with no GNU-stack
+  note, and without the flag the linker infers an executable stack for
+  the whole binary.
+
+===============================================================================
+  7. IF YOU ARE PORTING A RELEASE NEWER THAN 1.10.1
+===============================================================================
+
+  Write a third script. Do not add `if` branches to an existing one: old
+  and new anchors resemble each other enough to match in the wrong place,
+  and two separate files can be read as a diff against each other, which
+  is how you see what actually changed between releases.
+
+  Measured from 1.07.3 to 1.10.1: of the 26 compiler anchors, 14 still
+  matched and 11 had to be re-written; one became unnecessary and one new
+  site appeared. The runtime layer's 3 anchors all still matched.
+
+  Start by running the existing script and reading which anchors it
+  refuses. That list IS the work.

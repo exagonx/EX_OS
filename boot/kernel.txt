@@ -1,0 +1,380 @@
+===============================================================================
+                    /boot/kernel.txt - le impostazioni di EX-OS
+===============================================================================
+
+Questo file spiega ogni voce di /boot/kernel.cfg: cosa fa, quali valori
+accetta, e cosa succede se manca o se e' scritta male.
+
+IL KERNEL NON LEGGE QUESTO FILE. E' documentazione, e puo' crescere quanto
+serve. Il file che il kernel legge e' /boot/kernel.cfg, e quello ha un tetto.
+
+-------------------------------------------------------------------------------
+IL TETTO DI 8191 BYTE - perche' questo file esiste
+-------------------------------------------------------------------------------
+
+Il kernel legge kernel.cfg in un buffer da 8192 byte e si ferma li'. Se il
+file e' piu' lungo, il kernel lo dice:
+
+    [ERROR] CFG: /boot/kernel.cfg supera 8191 byte: LETTO SOLO L'INIZIO
+
+Il sintomo di uno sforamento e' cattivo: le sezioni finali - [modules],
+cioe' il driver di tastiera - spariscono, e la macchina si presenta senza
+tastiera senza che il collegamento sia ovvio.
+
+SI MISURA IN BYTE, NON IN CARATTERI, e la differenza ha gia' ingannato
+tre volte in un'ora: con gli accenti UTF-8 un carattere pesa due byte, e
+contare i caratteri da' un numero piu' basso di quanto il file pesi
+davvero. Si guarda la dimensione sul disco:
+
+    ls -l boot/kernel.cfg
+
+Dal 10 agosto 2026 kernel.cfg e questo file sono di SOLO ASCII, e la
+trappola non c'e' piu'. Non e' solo per il conto: lo schermo di EX-OS e'
+in code page 437 e non conosce UTF-8, quindi un file con accenti veri
+letto con `cat` sulla macchina mostra glifi casuali al loro posto. Sono
+file da leggere e modificare li' dentro: si scrive  e'  al posto di  e.
+
+Fino al 10 agosto 2026 le spiegazioni stavano dentro kernel.cfg, ed erano
+arrivate a 8116 byte su 8191: 75 byte di margine, cioe' due righe di
+commento. Da qui la separazione - le impostazioni di la', le spiegazioni
+qui.
+
+-------------------------------------------------------------------------------
+FORMATO
+-------------------------------------------------------------------------------
+
+Formato INI:
+
+    [sezione]
+    chiave = valore
+    # commento
+
+Gli spazi attorno all'uguale sono facoltativi. Le sezioni sono cinque:
+[kernel], [env], [boot], [modules], [mount].
+
+Una chiave sconosciuta viene ignorata in silenzio; una sezione sconosciuta
+pure. Il file si puo' leggere anche in MAIUSCOLO (KERNEL.CFG): su FAT12 il
+nome e' insensibile alle maiuscole, e il kernel prova entrambe le forme.
+
+Se il file manca del tutto, il kernel lo dice con un [WARN] e parte con i
+valori predefiniti - che bastano ad avere un sistema utilizzabile.
+
+
+===============================================================================
+[kernel]
+===============================================================================
+
+-------------------------------------------------------------------------------
+loglevel = 3
+-------------------------------------------------------------------------------
+
+Quanto parla il kernel. Piu' alto, piu' dettagli.
+
+Un LOG_ERROR viene stampato SEMPRE, qualunque sia loglevel. Un errore che
+sparisce perche' qualcuno ha abbassato una soglia sarebbe il difetto
+peggiore che questa voce possa produrre.
+
+-------------------------------------------------------------------------------
+timer_hz = 100
+-------------------------------------------------------------------------------
+
+Frequenza dell'interruzione di temporizzazione, in hertz. E' il battito su
+cui lo scheduler cambia processo.
+
+-------------------------------------------------------------------------------
+verboseboot = 0
+-------------------------------------------------------------------------------
+
+1 mostra il log di avvio e i banner di kernel e shell; 0 (predefinito)
+avvia in silenzio - resta solo la riga di identita' del sistema e l'output
+normale dei programmi.
+
+IL DEFAULT E' CAMBIATO nella 0.142: era 1, ora e' 0. Un sistema che si avvia
+mostra il proprio nome, non i propri passi di inizializzazione; il log
+resta a un `verboseboot = 1` di distanza, e sulla seriale c'e' comunque
+tutto.
+
+Il valore predefinito vale in TUTTI i casi dubbi: voce assente, valore
+vuoto, valore non numerico. Solo un NUMERO diverso da zero fa parlare il
+sistema - `verboseboot = si` non e' un si', e' un refuso, e un refuso non
+deve decidere niente. Il default e' impostato prima ancora di leggere il
+file, quindi vale anche se il file manca o e' illeggibile.
+
+COSA NON VIENE NASCOSTO CON 0: avvisi ed errori. Un boot muto che nasconde
+un fallimento sarebbe peggio di un boot rumoroso. Nel dettaglio:
+
+  - un LOG_ERROR viene stampato sempre, qualunque sia loglevel;
+  - ogni ERROR/WARN e' registrato mentre viene emesso e riproposto dopo la
+    pulizia dello schermo, cosi' i problemi dei PASSI 1-13 non spariscono
+    insieme al log di avvio;
+  - la console seriale riceve comunque tutto, filtro incluso.
+
+I messaggi dei PASSI 1-13 vengono emessi comunque, perche' sono stampati
+PRIMA che questo file sia leggibile (serve FAT12, che parte al PASSO 13).
+Con verboseboot=0 il kernel li cancella dallo schermo al PASSO 13c invece
+di sopprimerli - vedi kernel_main.c.
+
+-------------------------------------------------------------------------------
+keymap = us
+-------------------------------------------------------------------------------
+
+Disposizione della tastiera: us, it, fr, de, es, uk.
+La legge /dev/kbd.drv all'avvio; senza questa voce resta 'us'.
+
+IL KERNEL NON LA CONTROLLA E NON LA USA. La stringa viene solo conservata
+e riconsegnata a chi la chiede: chi sa quali disposizioni esistono e' il
+driver di tastiera, e duplicare quell'elenco nel kernel darebbe due liste
+che divergono.
+
+Un nome sconosciuto non ferma niente: il driver lo dice e tiene 'us'. Una
+tastiera muta perche' questa riga ha un refuso sarebbe un sistema che non
+si puo' usare nemmeno per correggere il refuso.
+
+Si cambia anche a macchina accesa con `keymap it`, e in quel caso vale
+fino allo spegnimento: `keymap -p` stampa la riga da rimettere nel .cfg.
+
+-------------------------------------------------------------------------------
+svga = 800x600            (assente per default)
+-------------------------------------------------------------------------------
+
+La risoluzione della console grafica. Assente significa console di testo
+80x25, che e' la condizione normale.
+
+Come keymap, il kernel la conserva e basta: chi la usa e' /dev/svga.drv e
+chi la impone e' Stage 2, in modo reale, prima che il kernel esista. Da qui
+il limite da accettare in partenza: LA RISOLUZIONE SI SCEGLIE ALL'AVVIO.
+Cambiarla vuol dire riscrivere questa riga e riavviare.
+
+Non si scrive a mano - la scrive il driver:
+
+    /dev/svga.drv              dice com'e' configurata adesso
+    /dev/svga.drv 800x600      la cambia (serve un riavvio)
+    /dev/svga.drv testo        torna alla console di testo 80x25
+    /dev/svga.drv -n <modo>    dice cosa farebbe, senza scrivere
+    /dev/svga.drv -i           la sonda dei driver (vedi hwconfig -d)
+
+Al PASSO 13b il kernel confronta questa voce con il modo in cui l'avvio e'
+partito davvero, e se non combaciano lo dice. Sono due cose diverse - cosa
+e' scritto e cosa e' successo - e un disallineamento vuol dire che qualcuno
+ha modificato il file senza riavviare.
+
+
+===============================================================================
+[env] - variabili d'ambiente ereditate dai processi utente
+===============================================================================
+
+La shell le legge con SYS_GETENV all'avvio, e da li' scendono a tutto cio'
+che viene lanciato.
+
+OSNAME, OSVER e AUTHOR NON VANNO MESSI QUI: sono iniettati dal kernel a
+partire da kernel/include/version.h, che e' la fonte unica di verita', e un
+valore scritto nel .cfg verrebbe comunque sovrascritto.
+
+La ragione e' che `ver` legge la variabile globale del kernel mentre
+`uname` ed `env` leggono l'ambiente: se le due sorgenti potessero
+divergere, il sistema riporterebbe versioni diverse di se' stesso a seconda
+del comando. In piu' la versione si incrementa a ogni modifica del kernel,
+e kernel.cfg - che vive sul floppy e non viene ricompilato - non puo'
+esserne la fonte.
+
+-------------------------------------------------------------------------------
+PATH = /bin:/dev:/cdrom/exos/bin:/cdrom/bin
+-------------------------------------------------------------------------------
+
+Dove si cercano i comandi.
+
+/cdrom/bin e' dove stanno as e ld, e i programmi di prova del CD. Da quando
+spawn() cerca nel PATH (vedi lib/libc.c), e' anche cio' che permette a un
+compilatore di trovare il proprio assemblatore chiamandolo "as" e basta,
+come su qualunque altro sistema.
+
+/cdrom/exos/bin e' dove stanno i COMPILATORI, e viene prima apposta.
+
+L'ORDINE DI QUESTE DUE VOCI E' UNA CORREZIONE, NON UN CAPRICCIO. gcc, g++ e
+cpp calcolano il proprio prefisso da dove sta il loro binario - <dir>/.. -
+e da li' cercano cc1, gli header e le librerie. Da /cdrom/bin il prefisso
+diventa /cdrom, dove libexec/ e lib/gcc/ non esistono, e ne esce
+
+    gcc: fatal error: cannot execute 'cc1': file o directory inesistente
+
+Fino al 10 agosto 2026 sul CD c'era una copia di gcc anche in /cdrom/bin, e
+siccome quella voce veniva per prima era SEMPRE quella a rispondere: il
+compilatore risultava rotto anche su una macchina dove era installato e
+funzionante. Adesso quelle copie non ci sono piu' e questa voce punta alla
+bin dell'albero, che e' l'unica da cui il driver ritrova le proprie cose.
+
+Un lettore vuoto non e' un problema: la voce non combacia con niente e la
+ricerca prosegue.
+
+Dopo `install -tools` la bin degli strumenti installati viene inserita
+PRIMA delle voci /cdrom: quello che sta sul disco deve vincere su quello
+che sta su un supporto che potrebbe essere assente o vecchio.
+
+-------------------------------------------------------------------------------
+HOME = /              la directory di partenza
+TERM = vga            il tipo di terminale dichiarato ai programmi
+-------------------------------------------------------------------------------
+
+
+===============================================================================
+[boot]
+===============================================================================
+
+-------------------------------------------------------------------------------
+shell = /bin/sh
+-------------------------------------------------------------------------------
+
+Il primo programma utente, lanciato quando il sistema e' pronto.
+
+-------------------------------------------------------------------------------
+login = /bin/login            (commentata per default)
+-------------------------------------------------------------------------------
+
+Se presente, viene lanciato AL POSTO della shell. Chiede utente e
+password, e a quel punto e' login a lanciare la shell.
+
+`exit` torna al prompt d'accesso per costruzione: login e' un ciclo che
+rilancia la shell, non c'e' nessun caso speciale da nessuna parte.
+
+Gli utenti stanno in /boot/utenti, una riga per utente:
+
+    nome:sale:impronta
+
+dove impronta e' lo SHA-256 di "sale:password". La password non tocca mai
+il disco.
+
+AL PRIMO AVVIO, senza il file utenti, login entra senza chiedere niente e
+OBBLIGA a creare un utente. Non ci si puo' chiudere fuori dal proprio
+sistema per aver attivato questa riga su una macchina senza utenti.
+
+PERCHE' E' COMMENTATA. Non perche' non funzioni: il giro completo - creazione
+del primo utente, accesso, shell, `exit` che torna al prompt, password
+sbagliata e utente inesistente entrambi respinti con lo stesso messaggio -
+e' stato provato il 10 agosto 2026. E' spenta perche' accenderla mette una
+richiesta di password davanti a OGNI avvio, comprese le prove automatiche,
+che si aspettano di trovare un prompt di shell. Si accende togliendo il
+cancelletto; il file utenti se lo crea da solo al primo giro.
+
+-------------------------------------------------------------------------------
+modules = kbd
+-------------------------------------------------------------------------------
+
+L'elenco, separato da virgole, dei moduli da caricare. I percorsi stanno
+nella sezione [modules]: qui ci sono solo i nomi, ed e' questa riga a
+decidere quali di quelli elencati la' vengono effettivamente caricati.
+
+
+===============================================================================
+[modules] - i driver in ring3
+===============================================================================
+
+    kbd = /dev/kbd.drv
+
+I moduli elencati qui sono caricati al PASSO 14b di kernel_main come
+PROCESSI RING3 AUTONOMI (elf_load + proc_set_ready), non come moduli
+kernel-space. Devono quindi essere eseguibili ET_EXEC statici, come i
+programmi di /bin.
+
+/dev/svga.drv NON va qui: e' uno strumento che si lancia a mano per
+cambiare la risoluzione, non un processo da tenere vivo. Metterlo in
+questa sezione lo farebbe partire a ogni avvio senza argomenti - cioe' per
+non fare niente.
+
+-------------------------------------------------------------------------------
+Storia di questa sezione (luglio 2026) - perche' non c'e' piu' 'tty' e non c'e'
+ancora 'floppy'
+-------------------------------------------------------------------------------
+
+  tty     Non e' mai esistito un /dev/tty.drv: drivers/tty/tty.c e' compilato
+          DENTRO il kernel (vedi $(BUILD_KERNEL)/tty.o nel Makefile) e
+          inizializzato al PASSO 14. La voce era rimasta qui da una fase
+          precedente e produceva a ogni boot un [WARN] "non caricato" del
+          tutto fuorviante.
+
+  floppy  drivers/floppy/floppy.c e' ancora un modulo ET_DYN scritto contro
+          i simboli del kernel (port_inb/outb diretti, klog,
+          irq_register_handler): elf_load lo rifiuta con "tipo non
+          supportato (type=3)" e comunque prenderebbe #GP in ring3.
+          L'accesso al floppy resta fatto dal FAT12/FDC interno al kernel.
+          Va rimesso qui solo dopo averlo riscritto contro l'API syscall,
+          come e' stato fatto per kbd.
+
+  kbd     Primo driver realmente migrato a ring3: usa SYS_IOPORT_*,
+          SYS_IRQ_BIND e SYS_IPC_* e non chiama un solo simbolo del
+          kernel. Vedi drivers/kbd/kbd.c.
+
+
+===============================================================================
+[mount] - i montaggi automatici
+===============================================================================
+
+Applicati al PASSO 13d - dopo il rilevamento dei dischi (13a) e la lettura
+di kernel.cfg (13b), perche' prima di allora i dispositivi non esistono
+ancora.
+
+La forma e'
+
+    punto = dispositivo
+
+con il PUNTO a sinistra: e' lui la chiave, e due dispositivi sullo stesso
+punto sarebbero un conflitto.
+
+Nomi dei dispositivi, come li elenca `disk`:
+
+    fd0      il floppy
+    hd0      il primo disco ATA, intero
+    hd0p1    la sua prima partizione
+    cd0      il primo lettore CD/DVD
+
+La numerazione delle partizioni e' quella di fdisk: 1-4 sono gli slot delle
+primarie anche se qualcuno e' vuoto, le logiche partono da 5. Un disco con
+gli slot 1 e 3 occupati da' quindi hd0p1 e hd0p3, non p1 e p2.
+
+Il punto di montaggio NON deve esistere sul floppy: e' virtuale, e compare
+nell'elenco della root perche' lo aggiunge il VFS. Montare su un nome gia'
+esistente viene rifiutato invece di nasconderlo in silenzio.
+
+Un montaggio che fallisce non ferma l'avvio: viene segnalato con un [WARN]
+e il sistema prosegue. Un disco assente o cambiato non deve rendere il
+sistema non avviabile.
+
+I montaggi sono in LETTURA/SCRITTURA. Per montare senza permettere
+modifiche si aggiunge ",ro" al dispositivo:
+
+    /dati = hd0p2,ro
+
+-------------------------------------------------------------------------------
+IL CD/DVD: perche' la sua riga e' ATTIVA e le altre no
+-------------------------------------------------------------------------------
+
+    /cdrom = cd0
+
+`cd0` e' il primo lettore ottico. Il filesystem viene riconosciuto come
+tutti gli altri - ISO 9660, con i nomi lunghi Joliet se il disco li ha - e
+il montaggio e' SEMPRE in sola lettura: non e' una scelta di kernel.cfg, e'
+una proprieta' del formato (vedi kernel/include/iso9660.h).
+
+La riga puo' restare attiva su qualunque macchina, e questa e' la differenza
+con /disk: un lettore vuoto, o un lettore che non c'e' affatto, NON produce
+un avviso. Il PASSO 13d lo segnala come "montaggio saltato" e prosegue,
+perche' un CD assente all'accensione e' la condizione normale, non un
+problema. Un disco rigido elencato li' e non montabile resta invece un
+[WARN]: quello e' da sapere.
+
+Il disco NON viene sondato all'avvio se non e' elencato qui: un lettore puo'
+metterci secondi a dichiararsi pronto, e quel tempo lo si paga solo se
+serve. Un disco inserito DOPO l'avvio si monta a mano:
+
+    mount cd0 /cdrom
+    umount /cdrom          <- prima di espellerlo
+
+-------------------------------------------------------------------------------
+Il disco rigido
+-------------------------------------------------------------------------------
+
+    # /disk = hd0p1
+
+Commentata perche' dipende dal disco presente. Provata funzionante il
+2026-07-31 su un disco con hd0p1 FAT12: togliendo il cancelletto il
+montaggio avviene al PASSO 13d, e se il disco non c'e' compare un [WARN] e
+l'avvio prosegue.

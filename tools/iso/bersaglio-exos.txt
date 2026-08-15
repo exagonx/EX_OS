@@ -1,0 +1,60 @@
+QUESTO ALBERO E' LA VERSIONE INSTALLATA.
+
+Versione: @VERSIONE@
+
+/exos/bin/fbc viene da qui, e dentro EX-OS ha chiuso il PUNTO FISSO: due
+generazioni di seguito danno lo stesso binario, verificato byte per byte
+con /bin/cmp.
+
+
+PER RICOSTRUIRLO QUI DENTRO
+---------------------------
+
+Serve un disco ext2. Su FAT i nomi tornano in MAIUSCOLO e i modelli del
+makefile non li riconoscono piu'; sul floppy e' peggio, perche' il driver
+FAT12 accetta directory solo nella radice e src/compiler/ non puo' esistere.
+
+  mount hd0p1 /src
+  export PATH=/bin:/cdrom/exos/bin:/cdrom/bin
+  cp -r /cdrom/freebasic /src/fb
+  cd /src/fb
+
+  make TARGET_OS=exos TARGET_ARCH=x86 DISABLE_MT=1 CFLAGS="-O2 -DDISABLE_FFI" rtlib
+  make TARGET_OS=exos TARGET_ARCH=x86 DISABLE_MT=1 compiler
+
+
+!! LA VARIABILE E' TARGET_OS, NON TARGET
+
+TARGET esiste, ma il makefile lo legge come triplet in stile GNU e lo cerca
+in una tabella dove exos non c'e': lascia TARGET_OS VUOTO e mette
+BUILD_PREFIX=exos-, cioe' exos-gcc ed exos-ar che non esistono. Con
+TARGET_OS vuoto la runtime si cerca nella sola src/rtlib/, si salta
+src/rtlib/exos/, e il link fallisce su funzioni che non c'entrano con il
+file in compilazione.
+
+!! DISABLE_MT=1 NON E' UN'OTTIMIZZAZIONE
+
+Senza, si costruisce anche libfbmt.a: altri 427 file, quasi tre ore, per una
+runtime con i thread che EX-OS non ha.
+
+!! -DDISABLE_FFI SERVE
+
+src/rtlib/thread_call.c include <ffi.h>; libffi su EX-OS non c'e', e il
+define riduce quel file a uno stub — come il makefile fa da se' per DOS.
+
+
+LA PROCEDURA PER ESTESO
+-----------------------
+
+Con tutte le trappole, compreso il PREFISSO COMPLETO che serve al
+compilatore appena costruito — tre parti, non due: bin/, lib/ e
+include/freebasic/ — sta qui accanto:
+
+  PORTING-@VERSIONE@.it.txt     italiano
+  PORTING-@VERSIONE@.en.txt     inglese
+
+E cosa e' stato cambiato nei sorgenti di FreeBASIC, e perche', una modifica
+per volta:
+
+  MODIFICHE-FBC.md              italiano
+  MODIFICHE-FBC.en.md           inglese

@@ -1,0 +1,189 @@
+EX-OS -- CD degli strumenti
+===========================
+
+Questo disco NON serve ad avviare il sistema: EX-OS si avvia dal floppy o
+dal disco rigido su cui e' installato. Qui ci sono gli strumenti
+opzionali, cioe' le cose che non stanno in 1.44 MB e che non servono a
+tutti.
+
+Come si monta
+-------------
+
+    mount cd0 /cdrom        se non e' gia' montato all'avvio
+    ls /cdrom
+    umount /cdrom           prima di espellere il disco
+
+Il montaggio automatico e' gia' previsto in /boot/kernel.cfg:
+
+    [mount]
+    /cdrom = cd0
+
+Un lettore vuoto non e' un problema e non produce avvisi: se il disco non
+c'e' all'accensione, il montaggio viene semplicemente saltato.
+
+Il disco e' SEMPRE in sola lettura. Non e' una scelta di configurazione:
+ISO 9660 non ha una mappa dello spazio libero, quindi non esiste
+"aggiungere un file" -- esiste rifare l'immagine. Chi compila su EX-OS
+legge da qui e scrive altrove.
+
+
+Installarlo su disco: `toolinst`
+--------------------------------
+
+    mount cd0 /cdrom
+    mount hd0p1 /disco          il disco su cui installare, in ext2
+    toolinst /disco
+
+`toolinst` copia l'albero /exos sul disco, chiede quali linguaggi si
+vogliono (il C e' obbligatorio, C++, FreeBASIC e OpenSSL si scelgono) e
+aggiunge /exos/bin al PATH in /boot/kernel.cfg del disco bersaglio. Al
+riavvio i compilatori si chiamano per nome:
+
+    gcc -o prog prog.c
+    fbc prog.bas
+
+    toolinst -n /disco          mostra cosa farebbe, senza copiare
+    toolinst -p /tools          altro percorso invece di /exos
+
+! IL DISCO BERSAGLIO DEV'ESSERE ext2. Su FAT la scrittura dei nomi
+lunghi non c'e' ancora, e l'albero e' pieno di nomi che l'8.3 non regge
+(bits/stdc++.h, libstdc++.a): la copia riuscirebbe, e poi il compilatore
+non troverebbe piu' i propri header -- che sul disco ci sono, con un
+altro nome. `toolinst` se ne accorge e lo dice prima di partire.
+
+    mkfs -t ext2 -L strumenti hd0p1
+
+
+! Copiare i binari a mano NON basta
+------------------------------------
+
+Sia il driver di GCC sia `fbc` calcolano dove stanno le proprie cose da
+DOVE STA IL LORO BINARIO -- <la mia directory>/.. -- e non dal PATH. Si
+vede nella traccia di `fbc -v`:
+
+    assembling: /cdrom/exos/bin/../bin/as --32 ...
+                /cdrom/exos/bin/../lib/gcc/i386-exos/17.0.0/libgcc.a
+
+Percio':
+
+    /cdrom/bin/gcc -c prova.c        -> cannot execute 'cc1'
+    /cdrom/exos/bin/gcc -c prova.c   -> compila
+
+Stesso binario, stesso PATH, stessa riga di comando: cambia solo da dove
+e' lanciato. Copiare gcc, as e ld in /bin e aggiungere una voce al PATH
+da' un compilatore che parte e non trova niente, con messaggi che parlano
+di header mancanti mentre il difetto e' nel percorso.
+
+L'albero va copiato INTERO e con la sua forma. E' quello che fa
+`toolinst`; a mano si fa con `cp -r /cdrom/exos /disco/exos`.
+
+
+Cosa c'e' dentro
+----------------
+
+/exos/include/      gli header della libc di EX-OS: stdio.h, stdlib.h,
+                    string.h, ctype.h, errno.h, setjmp.h, unistd.h e
+                    libc.h, che e' quello che li contiene davvero.
+
+/exos/libc.c        la libc stessa, in un file solo. Un programma
+                    compilato su EX-OS la compila insieme al proprio
+                    sorgente: non c'e' ancora un archivio libc.a ne' il
+                    link dinamico per i programmi normali.
+
+/exos/start.S       il pezzo di avvio che chiama main() con argc e argv.
+                    Va linkato per primo.
+
+/doc/               la documentazione del progetto e il testo della
+                    licenza.
+
+
+/bin/               as e ld: l'assemblatore e il linker di binutils 2.44,
+                    compilati PER EX-OS e non per la macchina che li ha
+                    costruiti. Sono il primo codice di terzi che gira
+                    qui dentro.
+
+                        /cdrom/bin/as --version
+                        /cdrom/bin/as -o prova.o prova.s
+                        /cdrom/bin/ld -o prova prova.o
+
+                    Se la directory contiene solo un leggimi, il CD e'
+                    stato costruito senza: vedi
+                    tools/binutils-exos/leggimi.md nel repository.
+
+/bin/provamp        GMP, MPFR e MPC compilate per EX-OS, provate tutte
+                    e tre in un colpo: 2^128, pi greco a 50 cifre e la
+                    radice quadrata di i. Sono le librerie a cui si lega
+                    il compilatore, e sono il codice di terzi piu' pesante
+                    che il sistema ospiti.
+
+/prova-mp.c         il sorgente di quel programma.
+
+/bin/provamat       la libm -- openlibm, cioe' la msun di FreeBSD --
+                    compilata per EX-OS: sin, cos, pow, log, atan2, hypot
+                    e le varianti a singola ed estesa precisione.
+
+                    I risultati sono moltiplicati per mille e stampati
+                    come interi, perche' la printf di EX-OS non formatta
+                    i double: stamparli in virgola mobile avrebbe provato
+                    la printf invece della libm.
+
+                    Chi usa queste funzioni deve linkare -lm. Fanno
+                    eccezione sqrt, fabs, ldexp e frexp, che stanno nella
+                    libc.
+
+/prova-mat.c        il sorgente di quel programma.
+
+/bin/provacpp       la LIBRERIA STANDARD DEL C++ dentro EX-OS:
+                    std::vector con std::sort, std::string, polimorfismo
+                    con distruttore virtuale su heap, e le eccezioni --
+                    comprese quelle lanciate da dentro la libreria
+                    (vector::at che da' out_of_range).
+
+                    Si costruisce con una riga sola e con g++, come su
+                    qualunque altro bersaglio:
+
+                        i386-exos-g++ -O2 -o provacpp prova-cpp.cpp
+
+                    Le eccezioni sono il pezzo che ha bisogno di piu' cose
+                    insieme: __cxa_throw, lo svolgimento dello stack, le
+                    tabelle .eh_frame. Se quella riga stampa, la meta'
+                    bassa di libstdc++ funziona per intero.
+
+/prova-cpp.cpp      il sorgente di quel programma.
+
+/prova.s            il programma piu' piccolo che dimostra la catena
+                    intera, da sorgente a processo:
+
+                        /cdrom/bin/as -o /prova.o /cdrom/prova.s
+                        /cdrom/bin/ld -o /prova /prova.o
+                        /prova
+
+                    L'uscita va scritta FUORI dal CD -- qui sulla radice
+                    del floppy -- perche' un ISO 9660 e' in sola lettura
+                    per costruzione.
+
+
+Cosa NON c'e' ancora
+--------------------
+
+Il COMPILATORE. as e ld traducono e collegano, le tre librerie di calcolo
+ci sono, la libm c'e' e la libreria standard del C++ gira -- ma non c'e'
+ancora niente che trasformi un sorgente C in assembly. Per quello serve
+cc1.
+
+Manca poco: quattro funzioni POSIX che GCC usa sull'ospite, il canadian
+cross, e una macchina con abbastanza RAM (cc1 spogliato sara' sui 25-30
+MB, quindi CD e non floppy). Vedi /doc/README.md.
+
+Fino ad allora i programmi di EX-OS si compilano da un'altra macchina,
+con il cross-compilatore descritto in /doc/README.md -- oppure si scrive
+in assembly e si usano gli strumenti qui accanto.
+
+
+Licenza
+-------
+
+EX-OS e' distribuito secondo la GNU General Public License versione 2 o
+successiva. Il testo completo e' in /doc/gpl-2.0.txt.
+
+Copyright (C) 2025 Graziano Falcone <exagonx@hotmail.com>
