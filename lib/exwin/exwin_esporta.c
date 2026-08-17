@@ -60,6 +60,7 @@ static const char *const g_nomi[] = {
     "ex_riquadro_disegna",
     "ex_scrivi",
     "ex_aggiorna",
+    "ex_pixmap",
     "ex_immagine",
 
     /* la lista a scorrimento */
@@ -106,6 +107,7 @@ static void *const g_indirizzi[] = {
     (void *)ex_riquadro_disegna,
     (void *)ex_scrivi,
     (void *)ex_aggiorna,
+    (void *)ex_pixmap,
     (void *)ex_immagine,
 
     (void *)ex_lista_svuota,

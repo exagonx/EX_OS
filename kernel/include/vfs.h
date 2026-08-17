@@ -51,6 +51,11 @@ int vfs_chown(const char *abs, uint32_t uid, uint32_t gid);
  * propri permessi non toglie niente a nessuno. */
 int vfs_chmod(const char *abs, uint32_t modo);
 
+/* Si puo' eseguire? La chiama il caricatore ELF prima di aprire. 0 se si',
+ * -EACCES se no. Vedi vfs.c: e' anche cio' che rende il varco *.drv una
+ * barriera invece di una definizione. */
+int vfs_eseguibile(const char *abs);
+
 int vfs_radice_ext2(void);
 
 /* L'identita' del processo che sta chiedendo. Senza processo corrente — cioe'

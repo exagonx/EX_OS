@@ -411,6 +411,52 @@ void ex_riempi(ExFinestra f, int x, int y, int w, int h, unsigned int c)
             punto(r, x + i, y + j, c);
 }
 
+/* =============================================================================
+ * ex_pixmap — posare un rettangolo di pixel gia' pronti
+ *
+ * ! SENZA QUESTA, UN'IMMAGINE SI DISEGNAVA UN PIXEL PER CHIAMATA. Il lettore
+ * BMP faceva `ex_riempi(f, x+i, y+j, 1, 1, c)`: per un'immagine 800x600 sono
+ * 480000 chiamate di funzione, ognuna con il suo controllo dei limiti — e
+ * attraverso i ponti della libreria condivisa, ognuna anche un salto
+ * indiretto. Qui i limiti si controllano una volta e si copia per righe.
+ *
+ * ! I PIXEL SONO ARGB A 32 BIT, come dappertutto nel toolkit: chi decodifica
+ * un formato produce quello, e non deve sapere com'e' fatto lo schermo. La
+ * conversione a 16 o 24 bit la fa il server, in un posto solo.
+ *
+ * `passo` e' quanti pixel c'e' fra l'inizio di una riga e l'inizio della
+ * successiva: serve a posare un RITAGLIO di un'immagine piu' grande senza
+ * doverla ricopiare.
+ * ============================================================================= */
+void ex_pixmap(ExFinestra f, int x, int y, int w, int h,
+               const unsigned int *px, unsigned int passo)
+{
+    Oggetto *r = radice(f);
+    int j, i;
+
+    if (!r || !r->pix || !px || w <= 0 || h <= 0) return;
+    if (passo == 0) passo = (unsigned int)w;
+
+    /* Il ritaglio si fa QUI e non nel ciclo: un confronto per pixel su
+     * mezzo milione di pixel e' mezzo milione di confronti. */
+    for (j = 0; j < h; j++) {
+        int ry = y + j;
+        const unsigned int *src;
+        unsigned int *dst;
+
+        if (ry < 0 || ry >= r->h) continue;
+
+        src = px + (unsigned int)j * passo;
+        dst = r->pix + (unsigned int)ry * r->passo_px;
+
+        for (i = 0; i < w; i++) {
+            int rx = x + i;
+            if (rx < 0 || rx >= r->w) continue;
+            dst[rx] = src[i];
+        }
+    }
+}
+
 void ex_riquadro_disegna(ExFinestra f, int x, int y, int w, int h, unsigned int c)
 {
     ex_riempi(f, x, y, w, 1, c);
@@ -791,7 +837,14 @@ static int server_trova(void)
      * USB col servizio PCI: un'applicazione avviata insieme al server non
      * deve fallire per una corsa persa di qualche millisecondo. */
     for (attesa = 0; attesa < 30; attesa++) {
-        g_server = ipc_lookup(WIN_SERVIZIO);
+        char nome[32];
+
+        /* ! LO STESSO NOME CHE USA IL SERVER PER REGISTRARSI, calcolato dalla
+         * stessa funzione: se le due parti lo componessero ognuna per conto
+         * suo, un giorno divergerebbero e il client cercherebbe un servizio
+         * che nessuno ha registrato. */
+        win_nome_servizio(nome, sizeof(nome));
+        g_server = ipc_lookup(nome);
         if (g_server >= 0) return 1;
         usleep(100000);
     }

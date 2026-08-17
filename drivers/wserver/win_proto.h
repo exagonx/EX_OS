@@ -47,6 +47,41 @@
  * nome, non per PID, cosi' un server che riparte si ritrova da solo. */
 #define WIN_SERVIZIO        "wserver"
 
+/* =============================================================================
+ * ! IL NOME DEL SERVIZIO E' PER UTENTE, dal 17 agosto 2026.
+ *
+ * root registra `wserver`; chiunque altro `<uid>:wserver`. Non e' una
+ * complicazione: e' la regola del kernel — un processo non root puo'
+ * registrare solo nomi che cominciano col proprio uid — e senza di essa un
+ * utente potrebbe prendersi il nome `wserver` e ricevere le finestre di tutti
+ * gli altri.
+ *
+ * ! ED E' COSI' CHE LA GRAFICA DIVENTA MULTIUTENTE. Ogni utente ha il suo
+ * server, sulla sua console, e non vede quello degli altri: non perche' glielo
+ * si impedisca con un controllo in piu', ma perche' non ne conosce il nome.
+ *
+ * La stessa funzione la usano il server per registrarsi e il toolkit per
+ * cercarlo: se divergessero, il client cercherebbe un nome che nessuno ha.
+ * ============================================================================= */
+static inline void win_nome_servizio(char *out, unsigned int max)
+{
+    unsigned int uid = (unsigned int)getuid();
+    unsigned int i = 0, l = 0, k;
+    char rov[12];
+
+    if (uid != 0) {
+        unsigned int v = uid;
+
+        if (v == 0) rov[l++] = '0';
+        while (v > 0) { rov[l++] = (char)('0' + (v % 10u)); v /= 10u; }
+        for (k = 0; k < l && i + 1 < max; k++) out[i++] = rov[l - 1 - k];
+        if (i + 1 < max) out[i++] = ':';
+    }
+
+    for (k = 0; WIN_SERVIZIO[k] && i + 1 < max; k++) out[i++] = WIN_SERVIZIO[k];
+    out[i] = '\0';
+}
+
 /* Il nome della zona condivisa di una finestra: "win" piu' il numero. Lo
  * costruiscono tutt'e due i lati con win_nome_zona(). */
 #define WIN_ZONA_PREFISSO   "win"

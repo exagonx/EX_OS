@@ -80,6 +80,67 @@ int main(int argc, char **argv, char **envp);
 void     exit(int codice);
 char  ***__environ_dove(void);
 void     __libc_distruttori_registra(void (*f)(void));
+void     __libc_canarino_avvia(void);
+unsigned int uptime_ms(void);
+int      getpid(void);
+
+/* =============================================================================
+ * IL CANARINO DELLO STACK — e perche' sta QUI e non nella libc condivisa
+ *
+ * ! __stack_chk_guard E' UNA VARIABILE, E LE VARIABILI NON PASSANO DAI PONTI.
+ * E' la stessa trappola di errno: il compilatore la nomina direttamente in
+ * ogni funzione protetta, e se stesse nella libreria condivisa ogni programma
+ * ne avrebbe una PROPRIA, non inizializzata — cioe' un canarino con un valore
+ * costante scritto nel binario, che chi riscrive lo stack rimette a posto.
+ *
+ * Il canarino appartiene al PROGRAMMA, come `main` e i costruttori globali. Sta
+ * in questo file per la stessa ragione per cui ci sta _libc_start.
+ *
+ * ! SERVE PERCHE' SU QUESTO HARDWARE NON C'E' IL BIT NX, e non ci sara'
+ * nemmeno col Pentium MMX: il non-execute arriva con PAE e in pratica solo dai
+ * Pentium 4 in poi. Una pagina di dati resta eseguibile, quindi uno stack
+ * riscritto e' codice che parte. Il canarino non impedisce l'overflow: lo fa
+ * ACCORGERE, e costa qualche istruzione per funzione senza chiedere niente al
+ * processore.
+ *
+ * ! IL VALORE NON E' UNA COSTANTE. Si compone all'avvio da cio' che il sistema
+ * ha di variabile — i millisecondi dall'accensione e il PID. Non e' casualita'
+ * crittografica: su questa macchina non c'e' una sorgente di entropia, ed e'
+ * scritto qui perche' non lo si creda.
+ *
+ * ! E IL BYTE BASSO E' ZERO, di proposito: e' la convenzione di ogni
+ * implementazione, e ferma gli overflow fatti con le funzioni di stringa —
+ * una strcpy() si arresta sullo zero e non riesce a ricopiare il canarino
+ * oltre di se'.
+ * ============================================================================= */
+unsigned long __stack_chk_guard = 0x00AA55C3ul;
+
+void __libc_canarino_avvia(void)
+{
+    unsigned long v = (unsigned long)uptime_ms();
+
+    v ^= ((unsigned long)getpid() << 16);
+    v  = (v << 8) ^ 0x5A3C0000ul;
+    __stack_chk_guard = v & ~0xFFul;
+}
+
+void __stack_chk_fail(void)
+{
+    /* ! NON SI TORNA, E NON SI PROVA A RIPARARE. Se il canarino e' rotto,
+     * l'indirizzo di ritorno accanto a lui puo' essere gia' quello di chi
+     * attacca: qualunque cosa si faccia dopo — perfino una printf, che passa
+     * per puntatori a funzione — potrebbe essere la sua. Si scrive col
+     * numero di syscall a mano e si esce. */
+    static const char m[] =
+        "\n*** stack rotto: una scrittura e' andata oltre un buffer locale.\n"
+        "    Il programma viene fermato qui: proseguire vorrebbe dire tornare\n"
+        "    a un indirizzo che non e' piu' quello giusto.\n";
+
+    __asm__ volatile ("int $0x80" :: "a"(4), "b"(2), "c"(m), "d"(sizeof(m) - 1)
+                      : "memory");
+    __asm__ volatile ("int $0x80" :: "a"(1), "b"(134) : "memory");
+    for (;;) { }
+}
 
 /* =============================================================================
  * ! IL GANCIO CHE AGGANCIA LA libc CONDIVISA, e perche' e' weak.
@@ -187,6 +248,12 @@ void _libc_start(int argc, char **argv, char **envp)
      * chiamata passa per un puntatore che prima di questa riga vale zero.
      * Staticamente non fa niente. */
     __libc_ponti_avvia();
+
+    /* ! IL CANARINO SI COMPONE PRIMA DI QUALUNQUE FUNZIONE CHE LO USI. Una
+     * funzione protetta chiamata prima di questa riga confronterebbe il valore
+     * iniziale con quello iniziale — passerebbe sempre, e la difesa non ci
+     * sarebbe. Vedi __libc_canarino_avvia() in libc.c. */
+    __libc_canarino_avvia();
 
     /* ! E SUBITO DOPO, CHI DISTRUGGERA' GLI OGGETTI GLOBALI. exit() sta nella
      * libreria e non puo' trovare il __fini_array di questo programma: glielo

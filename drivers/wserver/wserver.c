@@ -79,6 +79,10 @@ static unsigned int g_n_ordine = 0;
 static unsigned int g_prossimo_id = 1;
 static unsigned int g_verboso = 0;
 
+/* Il nome con cui ci si registra: «wserver» per root, «<uid>:wserver» per
+ * chiunque altro. Vedi win_nome_servizio() in win_proto.h. */
+static char g_servizio[32];
+
 /* Lo schermo */
 static unsigned char *g_fb = 0;
 static unsigned int g_fb_passo = 0, g_fb_w = 0, g_fb_h = 0, g_fb_bit = 0;
@@ -102,6 +106,93 @@ static int g_tr_dx = 0, g_tr_dy = 0;
  * ! ED E' IL GENERE DI DIFETTO CHE LA PROVA COMODA NON VEDE. Provando a mano,
  * in primo piano, andava. */
 static unsigned int g_sporco = 1;
+
+
+/* =============================================================================
+ * MMX NEL COMPOSITORE — otto byte per volta invece di quattro
+ *
+ * ! IL COMPOSITORE E' L'UNICO POSTO DEL SISTEMA DOVE LA LARGHEZZA DELLA COPIA
+ * SI VEDE. A 800x600x32 un fotogramma sono 1,83 MB scritti nel framebuffer, e
+ * si riscrive tutto a ogni cambiamento: e' gia' stato il difetto che teneva il
+ * server occupato tanto da far scadere le richieste dei client. Ovunque altro
+ * in EX-OS si copiano decine di byte e non conta niente.
+ *
+ * ! I REGISTRI MMX SONO QUELLI DELL'x87, e per questo si puo' fare: il kernel
+ * salva lo stato FPU al cambio di contesto (fnsave/fxsave, con commutazione
+ * pigra via CR0_TS), quindi copre anche MMX. Senza quel salvataggio, due
+ * processi che usassero MMX si calpesterebbero i registri a vicenda.
+ *
+ * ! E SI CHIAMA emms ALLA FINE DI OGNI GIRO. Dopo un'istruzione MMX i registri
+ * x87 restano marcati «in uso»: la prima istruzione in virgola mobile che
+ * arriva dopo — anche in un ALTRO processo, se lo scheduler entra prima —
+ * trova uno stack che non e' suo. E' l'errore classico di MMX, e non da'
+ * nessun sintomo finche' qualcuno non usa la virgola mobile.
+ *
+ * ! SI CONTROLLA A RUNTIME E SI RIPIEGA. La CPU di base dichiarata ha MMX, ma
+ * un Pentium liscio no: senza il controllo, su quella macchina il server
+ * morirebbe con un'istruzione non valida invece di andare piu' piano.
+ * ============================================================================= */
+static int g_mmx = 0;
+
+static int mmx_c_e(void)
+{
+    unsigned int a = 0, b = 0, c = 0, d = 0;
+
+    /* CPUID funzione 1: il bit 23 di EDX dice MMX. Che CPUID stessa esista e'
+     * garantito dalla CPU di base (Pentium): sotto quella non si arriva
+     * nemmeno qui, perche' il resto del sistema e' compilato per lei. */
+    __asm__ __volatile__("cpuid"
+                         : "=a"(a), "=b"(b), "=c"(c), "=d"(d)
+                         : "a"(1));
+    return (d & (1u << 23)) != 0;
+}
+
+/* Riempie `n` pixel a 32 bit col colore `c`. */
+static void mmx_riempi32(unsigned int *d, unsigned int n, unsigned int c)
+{
+    unsigned int coppie = n >> 1;
+
+    if (coppie) {
+        __asm__ __volatile__(
+            "movd      %2, %%mm0\n\t"
+            "punpckldq %%mm0, %%mm0\n\t"   /* mm0 = colore:colore */
+            "1:\n\t"
+            "movq      %%mm0, (%0)\n\t"
+            "addl      $8, %0\n\t"
+            "decl      %1\n\t"
+            "jnz       1b\n\t"
+            "emms"
+            : "+r"(d), "+r"(coppie)
+            : "rm"(c)
+            : "memory", "cc");
+    }
+
+    /* Il pixel dispari in coda, se c'e'. */
+    if (n & 1u) *d = c;
+}
+
+/* Copia `n` pixel a 32 bit. */
+static void mmx_copia32(unsigned int *d, const unsigned int *s, unsigned int n)
+{
+    unsigned int coppie = n >> 1;
+
+    if (coppie) {
+        __asm__ __volatile__(
+            "1:\n\t"
+            "movq      (%1), %%mm0\n\t"
+            "movq      %%mm0, (%0)\n\t"
+            "addl      $8, %0\n\t"
+            "addl      $8, %1\n\t"
+            "decl      %2\n\t"
+            "jnz       1b\n\t"
+            "emms"
+            : "+r"(d), "+r"(s), "+r"(coppie)
+            :
+            : "memory", "cc");
+    }
+
+    if (n & 1u) *d = *s;
+}
 
 /* -----------------------------------------------------------------------------
  * Lo schermo, un pixel per volta
@@ -150,6 +241,8 @@ static void riempi(unsigned int x, unsigned int y, unsigned int w,
 
         for (j = 0; j < h; j++) {
             unsigned int *p = (unsigned int *)(g_fb + (y + j) * g_fb_passo + x * 4);
+
+            if (g_mmx) { mmx_riempi32(p, w, c); continue; }
             for (i = 0; i < w; i++) p[i] = c;
         }
         return;
@@ -237,6 +330,8 @@ static void componi(void)
                 unsigned int *d = (unsigned int *)(g_fb + (f->y + j) * g_fb_passo
                                                    + f->x * 4);
                 const unsigned int *sr = src + j * f->w;
+
+                if (g_mmx) { mmx_copia32(d, sr, ww); continue; }
                 for (i = 0; i < ww; i++) d[i] = sr[i];
             }
         } else {
@@ -913,21 +1008,54 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    m.fisico = v.fisico;
-    m.byte   = v.passo * v.altezza;
-    if (mmio_map(&m) != 0) {
-        log_seriale("wserver: mmio_map del framebuffer rifiutata");
-        printf("wserver: mmio_map del framebuffer rifiutata.\n");
-        printf("         L'eseguibile dev'essere caricato da un file .drv\n");
+    /* =====================================================================
+     * ! SI CHIEDE fb_map(), NON PIU' mmio_map(), dal 17 agosto 2026.
+     *
+     * mmio_map mappa un indirizzo fisico QUALUNQUE scelto da chi chiama, e per
+     * questo e' riservata a root: con i registri di un dispositivo si arriva
+     * al DMA, e col DMA a tutta la RAM. Finche' bastava chiamarsi `.drv` per
+     * ottenerla, un utente normale che eseguiva un driver possedeva la
+     * macchina — i permessi sui file accanto a una porta che non chiedeva
+     * niente.
+     *
+     * fb_map non prende argomenti: il framebuffer lo sa il kernel. Chi chiama
+     * non puo' sbagliare indirizzo e chi attacca non puo' sceglierne uno. E'
+     * anche cio' che permette a QUESTO server di girare senza privilegi —
+     * cioe' alla grafica di esistere in multiutenza.
+     * ===================================================================== */
+    (void)m;
+    g_fb = (unsigned char *)fb_map();
+    if (g_fb == 0) {
+        log_seriale("wserver: fb_map del framebuffer rifiutata");
+        printf("wserver: non riesco a mappare il framebuffer (%s).\n",
+               strerror(errno));
+        printf("         Serve un modo grafico: /dev/svga.drv 800x600\n");
         return 1;
     }
 
-    g_fb       = (unsigned char *)m.virt;
+    /* ! SI GUARDA UNA VOLTA SOLA, ALL'AVVIO. Chiedere CPUID a ogni riga
+     * costerebbe piu' di quanto MMX faccia risparmiare. */
+    g_mmx = mmx_c_e();
+
+    /* ! «-nommx» SPEGNE LA STRADA VELOCE, e non e' un'opzione per curiosi: la
+     * strada di ripiego esiste per le macchine senza MMX, e su una macchina
+     * CON MMX non verrebbe mai eseguita. Un codice che non si esegue mai e' un
+     * codice di cui non si sa se funziona — e questo flag e' anche il modo di
+     * provare che le due strade disegnano lo STESSO schermo, confrontando due
+     * fotografie byte per byte. */
+    for (i = 1; i < argc; i++)
+        if (strcmp(argv[i], "-nommx") == 0) g_mmx = 0;
+
     g_fb_passo = v.passo;
     g_fb_w     = v.larghezza;
     g_fb_h     = v.altezza;
     g_fb_bit   = v.bit;
 
+    /* ! SULLA SERIALE, non con printf: questo processo gira su una console
+     * sua, e un messaggio scritto li' non lo legge nessuno. E' lo stesso
+     * motivo per cui esiste SYS_LOG. */
+    log_seriale(g_mmx ? "wserver: MMX attivo, otto byte per volta"
+                      : "wserver: MMX assente, quattro byte per volta");
     printf("wserver: schermo %ux%u a %u bit, framebuffer fisico 0x%x\n",
            g_fb_w, g_fb_h, g_fb_bit, v.fisico);
     {
@@ -939,9 +1067,11 @@ int main(int argc, char **argv)
         log_seriale(m);
     }
 
-    if (ipc_register(WIN_SERVIZIO) < 0) {
+    win_nome_servizio(g_servizio, sizeof(g_servizio));
+
+    if (ipc_register(g_servizio) < 0) {
         printf("wserver: ipc_register('%s') fallita — ce n'e' gia' uno?\n",
-               WIN_SERVIZIO);
+               g_servizio);
         return 1;
     }
 
@@ -961,7 +1091,7 @@ int main(int argc, char **argv)
     g_px = (int)g_fb_w / 2;
     g_py = (int)g_fb_h / 2;
 
-    printf("wserver: servizio '%s' attivo\n", WIN_SERVIZIO);
+    printf("wserver: servizio '%s' attivo\n", g_servizio);
     log_seriale("wserver: servizio attivo, entro nel ciclo");
 
     /* ! IL CICLO NON ASPETTA A LUNGO SU NIENTE. Ha tre cose da fare — leggere

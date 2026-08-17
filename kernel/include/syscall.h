@@ -94,7 +94,7 @@
  * cioe' sopra qualunque cosa il compilatore avesse messo dopo. Il sintomo era
  * «video_info non risponde», che non somiglia per niente a una scrittura fuori
  * limite. Chi aggiunge una syscall aggiorna anche questo. */
-#define SYSCALL_COUNT   249     /* la piu' alta e' SYS_LIB_APRI = 248 */
+#define SYSCALL_COUNT   250     /* la piu' alta e' SYS_FB_MAP = 249 */
 
 /* =============================================================================
  * Codici errno
@@ -539,6 +539,20 @@ typedef struct {
  * La tabella e' un ExLibTesta — vedi lib/include/exlib.h.
  * ========================================================================== */
 #define SYS_LIB_APRI      248   /* ebx = const char* */
+
+/* ==========================================================================
+ * SYS_FB_MAP (249) — il framebuffer, e SOLO quello
+ *
+ * Rende l'indirizzo virtuale del framebuffer mappato nel processo, o -errno.
+ * Nessun argomento: e' il kernel a sapere dov'e' e quanto e' grande.
+ *
+ * ! E' UNA CAPACITA' STRETTA AL POSTO DI UNA LARGA. mmio_map() mappa un
+ * indirizzo fisico QUALUNQUE ed e' di root; il server grafico non vuole un
+ * indirizzo qualunque, vuole IL framebuffer. Chiedere «mappami quello che sai
+ * tu» toglie a chi chiama la possibilita' di sbagliare e a chi attacca quella
+ * di scegliere — ed e' cosi' che la grafica gira senza privilegi.
+ * ========================================================================== */
+#define SYS_FB_MAP        249
 
 /* La mailbox IPC come sorgente. MAX_FD e' il primo numero che un descrittore
  * vero non puo' avere: vedi sched.h. */
@@ -1036,6 +1050,7 @@ int32_t sys_modo_testo(InterruptFrame *f);
 int32_t sys_video_info(InterruptFrame *f);
 int32_t sys_log(InterruptFrame *f);
 int32_t sys_lib_apri(InterruptFrame *f);
+int32_t sys_fb_map(InterruptFrame *f);
 int32_t sys_getuid(InterruptFrame *f);
 int32_t sys_setuid(InterruptFrame *f);
 int32_t sys_chown(InterruptFrame *f);

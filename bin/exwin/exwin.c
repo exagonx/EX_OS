@@ -52,7 +52,7 @@ int main(int argc, char **argv)
         if (strcmp(argv[i], "-c") == 0 && i + 1 < argc) console = atoi(argv[++i]);
         else if (strcmp(argv[i], "-s") == 0 && i + 1 < argc) sfondo = argv[++i];
         else if (strcmp(argv[i], "-h") == 0) {
-            printf("uso: exwin [-c CONSOLE] [-s IMMAGINE]\n");
+            printf("uso: exwin [-c CONSOLE] [-s IMMAGINE] [opzioni del server]\n");
             printf("  accende server grafico e scrivania su un'altra console.\n");
             return 0;
         }
@@ -94,6 +94,17 @@ int main(int argc, char **argv)
     sv[n++] = "-c";
     sv[n++] = c_arg;
     sv[n++] = "-t";     /* la console e' sua: la tastiera pure */
+
+    /* ! CIO' CHE exwin NON RICONOSCE LO PASSA AL SERVER, invece di rifiutarlo.
+     * Le opzioni del server sono sue e cambiano con lui: elencarle anche qui
+     * vorrebbe dire una seconda verita' accanto a quella vera, e le due
+     * divergono alla prima opzione aggiunta. Cosi' `exwin -nommx` arriva dove
+     * deve senza che questo file sappia cosa voglia dire. */
+    for (i = 1; i < argc && n < (int)(sizeof(sv)/sizeof(sv[0])) - 1; i++) {
+        if (strcmp(argv[i], "-c") == 0) { i++; continue; }
+        if (strcmp(argv[i], "-s") == 0) { i++; continue; }
+        sv[n++] = argv[i];
+    }
     sv[n]   = 0;
 
     if (spawn_ex(sv[0], sv, 0, 0, 0) < 0) {

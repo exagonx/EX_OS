@@ -90,9 +90,9 @@ quattro alloggiamenti** in xhci.drv — dichiarato, non scoperto dopo.
 
 ## Difetti aperti, dichiarati
 
-- il varco dei driver (`*.drv`) **non e' una barriera**: senza proprietari dei
-  file un programma puo' copiarsi in `x.drv`. E' una definizione, non una
-  difesa;
+~~il varco dei driver non e' una barriera~~: **chiuso il 17 agosto 2026**.
+  `/dev` appartiene a root, un utente normale non ci puo' scrivere, e un `.drv`
+  fatto altrove non e' eseguibile se non lo si possiede;
 - il **blocco temporaneo** della memoria condivisa non c'e': serve solo quando
   ci sara' uno swapper, e il conteggio dei riferimenti — la parte che non si
   puo' aggiungere dopo — e' fatto;
@@ -254,6 +254,413 @@ copiare, non da reinventare.
 ! **E OGNI NOME NUOVO VA IN `exwin_esporta.c` E NELLO STUB.** Aggiungere una
 funzione alla libreria e dimenticarsi lo stub da' un simbolo che non si
 risolve — e il messaggio lo dice, col nome, ma solo a chi lo esegue.
+
+# MMX nel compositore (17 agosto 2026)
+
+    [PID 16] wserver: MMX attivo, otto byte per volta
+
+    exwin            -> foto  1.440.015 byte
+    exwin -nommx     -> foto  1.440.015 byte
+    cmp              IDENTICI byte per byte
+
+Le due strade disegnano **esattamente lo stesso schermo**.
+
+## Perche' proprio qui e in nessun altro posto
+
+! **IL COMPOSITORE E' L'UNICO POSTO DEL SISTEMA DOVE LA LARGHEZZA DELLA COPIA
+SI VEDE.** A 800x600x32 un fotogramma sono **1,83 MB** scritti nel framebuffer,
+e si riscrive tutto a ogni cambiamento — e' gia' stato il difetto che teneva il
+server occupato tanto da far scadere le richieste dei client. Ovunque altro in
+EX-OS si copiano decine di byte e non conta niente.
+
+I due cicli caldi sono il riempimento dello sfondo e la copia di ogni finestra:
+prima quattro byte per istruzione, adesso otto.
+
+## Le tre cose che rendono MMX sicuro qui
+
+! **I REGISTRI MMX SONO QUELLI DELL'x87**, e il kernel salva lo stato FPU al
+cambio di contesto (`fnsave`/`fxsave`, con commutazione pigra via `CR0_TS`).
+Senza quel salvataggio — che esiste da agosto per tutt'altra ragione, TCC —
+due processi che usassero MMX si calpesterebbero i registri a vicenda.
+
+! **`emms` ALLA FINE DI OGNI GIRO.** Dopo un'istruzione MMX i registri x87
+restano marcati «in uso»: la prima istruzione in virgola mobile che arriva
+dopo — anche in un ALTRO processo, se lo scheduler entra prima — trova uno
+stack che non e' suo. E' l'errore classico di MMX, e **non da' nessun sintomo
+finche' qualcuno non usa la virgola mobile**.
+
+! **SI CONTROLLA CON CPUID E SI RIPIEGA.** La CPU di base dichiarata ha MMX,
+ma un Pentium liscio no: senza il controllo, su quella macchina il server
+morirebbe con un'istruzione non valida invece di andare piu' piano.
+
+## `-nommx`, e perche' non e' un'opzione per curiosi
+
+! **UN CODICE DI EMERGENZA MAI ESEGUITO E' UN CODICE DI CUI NON SI SA SE
+FUNZIONA.** La strada senza MMX esiste per le macchine che non ce l'hanno, e
+su una macchina con MMX non verrebbe eseguita mai. Il flag la rende
+provabile — ed e' cosi' che si e' potuto confrontare le due fotografie byte per
+byte, che e' l'unica prova che conta per un compositore.
+
+! **E `exwin` PASSA AL SERVER CIO' CHE NON RICONOSCE.** Elencare le opzioni del
+server anche nel lanciatore sarebbe una seconda verita' accanto a quella vera,
+e le due divergono alla prima opzione aggiunta.
+
+## Cosa NON e' stato misurato, e perche'
+
+**Il guadagno in tempo reale.** QEMU traduce le istruzioni con un JIT: un
+cronometro li' dentro non dice niente su un Pentium 133. Quello che si puo'
+affermare e' strutturale — **le scritture in memoria sono dimezzate**, 240.000
+`movq` invece di 480.000 `mov` per un riempimento a schermo intero — e che il
+risultato e' identico.
+
+Il numero vero si prende su ferro, ed e' una delle cose che varra' la pena
+misurare quando ci sara' una macchina d'epoca sotto mano.
+
+## Cosa resta del Pentium MMX
+
+    PSE   pagine da 4 MB per la mappatura del kernel: meno tabelle, meno TLB
+    TSC   misure di tempo precise — servirebbe proprio per misurare MMX
+
+# La CPU di base diventa vera, e il codice smette di essere scrivibile (17 agosto 2026)
+
+    make verifica-cpu
+    [OK] nessuna istruzione oltre il Pentium MMX in 66 file
+
+## No, non gira su 486 — e non girava nemmeno sul Pentium MMX
+
+L'utente ha alzato la CPU di base a **Pentium 133 MMX**. La prima cosa e' stata
+misurare cosa i binari contenessero davvero:
+
+    -march=  i686        (il default di GCC, che nessuno aveva cambiato)
+    cmov                 591 occorrenze nei binari
+
+! **`cmov` E' DEL PENTIUM PRO.** Non ce l'hanno ne' il 486, ne' il Pentium, ne'
+il Pentium MMX. Il sistema **non girava sulla CPU appena dichiarata**: si
+sarebbe fermato con un'eccezione di istruzione non valida al primo programma —
+su ferro vero, non in QEMU, che emula una CPU moderna e non se ne accorge.
+
+! **UN REQUISITO CHE NESSUNO VERIFICA NON E' UN REQUISITO.** Da qui il
+bersaglio `verifica-cpu`, che **rilegge i binari prodotti** invece di
+controllare i flag: controllare i flag direbbe solo che li abbiamo scritti.
+
+## E il bit NX non arriva col Pentium MMX
+
+Va detto perche' la CPU era stata alzata anche per quello: **il non-execute
+richiede PAE (Pentium Pro) e in pratica arriva coi Pentium 4 / Athlon 64**. Sul
+P55C una pagina di dati resta eseguibile per sempre.
+
+Ma **meta' della difesa si poteva avere lo stesso, e non era la CPU**:
+
+    prima:  LOAD ... RWE      un segmento solo: IL CODICE ERA SCRIVIBILE
+    dopo:   LOAD ... R E      il codice
+            LOAD ... RW       i dati
+
+! **ERANO I NOSTRI LINKER SCRIPT.** Il kernel rispettava gia' `PF_W`
+correttamente; erano gli script a mettere `.text` e `.data` nella stessa
+pagina, cosi' il collegatore ne faceva un segmento solo coi permessi
+dell'unione. L'avviso si vedeva a ogni collegamento e nessuno lo leggeva:
+
+    ld: warning: build/bin/sh has a LOAD segment with RWX permissions
+
+64 script corretti con un `. = ALIGN(4096)`. Costo: **+12,9 KB su tutto /bin**.
+
+## Il canarino dello stack
+
+Acceso nei programmi utente (`-fstack-protector-strong`). Non impedisce
+l'overflow: lo fa **accorgere**, e costa qualche istruzione per funzione senza
+chiedere niente al processore — l'unica difesa di questa classe che si possa
+avere qui.
+
+! **IL CANARINO E' UNA VARIABILE, QUINDI STA NEL PROGRAMMA**, non nella libc
+condivisa: e' la stessa trappola di `errno`. Sta in `lib/libc_avvio.c`, accanto
+a `_libc_start`, per la stessa ragione.
+
+! **E SENZA `-mstack-protector-guard=global` NON PARTIVA NIENTE.** Su i386 GCC
+cerca il canarino in `%gs:0x14` — lo slot TLS di Linux — e su EX-OS quel
+segmento non c'e':
+
+    [FAULT] PID 6 'sh2': page fault a 0x00000014 (lettura)
+
+**Il numero lo diceva.** Ed e' arrivato insieme al cambio di architettura senza
+esserne una conseguenza: era la CONVENZIONE su dove sta il canarino. Le due
+cose si somigliano solo perche' capitano nello stesso momento — conviene
+guardare l'indirizzo prima della teoria.
+
+La shell il canarino se lo definisce da se' (non collega la libc), ed e' il
+programma che piu' lo merita: legge righe scritte da una persona e le spezza in
+buffer di lunghezza fissa.
+
+## `memcpy` comparsa dal nulla
+
+Cambiando `-march`, GCC ha deciso che per certe copie conviene **chiamare**
+`memcpy` invece di aprirla in istruzioni, e il kernel si e' fermato su
+`undefined reference to memcpy`. Il codice del kernel non era cambiato di una
+riga.
+
+! **`-ffreestanding` NON VUOL DIRE «nessuna funzione di libreria»**: il
+compilatore resta libero di generare chiamate a `memcpy`, `memmove`, `memset` e
+`memcmp`. Sono le quattro che ogni ambiente freestanding deve fornire, e adesso
+ci sono in `kernel/arch/x86/memfun.c`.
+
+## ! SETTIMA E OTTAVA VOLTA: «un'uscita che non sa di essere scaduta»
+
+ 7. **I programmi non dipendono dal Makefile**, quindi cambiare `CFLAGS` non
+    ricostruisce niente. La costruzione passava e nei binari restavano 273
+    `cmov`. Da qui il **segnaposto dei flag**: il nome del file contiene
+    l'impronta delle opzioni, e cambiarle lo fa sparire.
+ 8. **Il segnaposto viene creato PRIMA dei suoi dipendenti**: una costruzione
+    fallita a meta' lo lascia soddisfatto, e al giro dopo make crede che sia
+    tutto in ordine. Ora la sua ricetta **butta gli oggetti** — cio' che manca
+    non torna a esistere da solo — compresi quelli del kernel, che non stanno
+    in `build/obj` e per questo avevano conservato 207 `cmov` mentre tutti i
+    programmi erano gia' a posto.
+
+## Cosa compra davvero il Pentium MMX, e cosa no
+
+    NO   il bit NX (serve PAE, e in pratica un Pentium 4)
+    SI'  MMX: otto byte per volta nel compositore del server grafico
+    SI'  PSE: pagine da 4 MB per la mappatura del kernel
+    SI'  TSC: misure di tempo precise
+    (gia' usati: CPUID per riconoscere le funzionalita')
+
+Nessuno dei tre e' ancora sfruttato. Il piu' promettente e' **MMX nel
+compositore**: 800x600x32 sono 1,83 MB per fotogramma, e oggi si copiano
+quattro byte per volta.
+
+# Audit di sicurezza del kernel: i permessi erano decorativi (17 agosto 2026)
+
+Chiesto dall'utente subito dopo aver acceso i permessi sui file. La prima cosa
+che l'audit ha detto:
+
+    syscall in tutto:                                    78
+    che guardavano l'uid:                                 1   (setuid)
+    che scavalcavano il filesystem senza chiedere:        6
+
+! **UN CONTROLLO ACCURATO ACCANTO A UNA PORTA CHE NON CHIEDE NIENTE NON E' UN
+CONTROLLO.** `SYS_BLKWRITE` scriveva settori grezzi di una partizione senza
+sapere chi fosse: un utente normale non poteva scrivere `/boot/ombra` passando
+dalla VFS, ma poteva riscrivere il settore che lo contiene — o `/bin/sh`, o
+l'intero filesystem.
+
+! **ED E' LA DOMANDA GIUSTA DA FARSI DOPO OGNI CONTROLLO NUOVO**: non «questo
+controllo e' giusto?», ma **«esiste un'altra strada per ottenere la stessa
+cosa?»**. Qui ce n'erano sei, piu' una settima piu' grave.
+
+## Le sette porte chiuse
+
+    blkread / blkwrite    settori grezzi di una partizione
+    partwrite             la tabella delle partizioni
+    bootinstall           l'MBR e il settore di avvio
+    mount / umount        cosa si vede e da dove
+    reboot                spegnere la macchina
+
+## E l'ottava, che era la piu' grave: il varco dei driver
+
+`is_driver` lo accendeva il caricatore guardando **solo il nome del file**, e i
+driver installati sono 0755. Un utente normale poteva eseguire `/dev/ide.drv`,
+ottenere il varco, e con `ioport_bind` parlare **direttamente al controller del
+disco** — leggere e scrivere qualunque settore senza passare da un solo
+controllo.
+
+Era la stessa forma del difetto di `blkwrite`, un piano piu' sotto.
+
+! **`mmio_map` GIA' SI DIFENDEVA**, e va detto: rifiuta qualunque indirizzo
+sotto il limite della RAM, quindi le tabelle delle pagine non erano mappabili.
+Il pericolo erano le porte I/O.
+
+## La correzione non e' stata solo chiudere: `SYS_FB_MAP`
+
+! **UNA CAPACITA' STRETTA AL POSTO DI UNA LARGA.** `mmio_map()` mappa un
+indirizzo fisico QUALUNQUE scelto da chi chiama, e per questo dev'essere di
+root. Ma il server grafico non vuole un indirizzo qualunque: vuole **il**
+framebuffer, che il kernel conosce gia'.
+
+`fb_map()` non prende argomenti. Chi chiama non puo' sbagliare indirizzo e chi
+attacca non puo' sceglierne uno. **Non serve nessun privilegio.**
+
+! **E HA AVUTO UN EFFETTO CHE NON CERCAVO:** `wserver` non ha piu' bisogno del
+varco dei driver, quindi puo' girare come utente normale. Senza, o il server
+era di root — e ogni utente che vuole le finestre ha bisogno
+dell'amministratore — oppure il varco restava aperto a tutti, e allora i
+permessi sui file non valevano niente.
+
+## I nomi dei servizi IPC, e la grafica per utente
+
+`ipc_register` rifiutava di rubare un nome a un servizio **vivo**, ma non di
+prenderlo prima che nascesse o dopo che era morto. Chi registra `kbd` riceve i
+tasti che tutti gli mandano; chi registra `wserver` riceve le finestre.
+
+! **LA REGOLA E' MECCANICA E NON HA UN ELENCO**: un utente normale puo'
+registrare solo nomi che cominciano col proprio uid — `1000:mio`. Un elenco di
+nomi riservati sarebbe una seconda verita' accanto ai servizi che esistono
+davvero, e le due divergono al primo servizio aggiunto.
+
+! **ED E' COSI' CHE LA GRAFICA DIVENTA MULTIUTENTE.** root registra `wserver`,
+chiunque altro `<uid>:wserver`. Ogni utente ha il suo server, sulla sua
+console, e non vede quello degli altri — non perche' glielo si impedisca con un
+controllo in piu', ma **perche' non ne conosce il nome**. Server e toolkit
+compongono il nome con la stessa funzione: se divergessero, il client
+cercherebbe un servizio che nessuno ha registrato.
+
+## Gli ultimi otto slot di processo sono di root
+
+I processi sono 64 e non c'era nessun limite per utente: un ciclo che fa spawn
+di se' stesso li riempie in un istante, e da quel momento **nessuno puo' piu'
+avviare niente, l'amministratore compreso**.
+
+! **LA RISERVA E' PER root, NON «PER IL SISTEMA»**, e la differenza conta: slot
+tenuti liberi genericamente si riempirebbero al primo processo di sistema che
+parte. Riservarli a chi puo' spegnere e riparare e' l'unica regola che
+garantisce il rimedio.
+
+## Cosa resta aperto, e va detto
+
+! **NIENTE NX: OGNI PAGINA ESEGUIBILE E' ANCHE SCRIVIBILE.** Su i386 senza PAE
+il bit non esiste, e il collegatore lo dice a ogni programma («LOAD segment
+with RWX permissions»). Un overflow di buffer e' direttamente sfruttabile.
+Toglierlo vuol dire PAE, cioe' tabelle delle pagine a tre livelli: un lavoro di
+kernel a se'.
+
+! **SHA-256 SENZA IRROBUSTIMENTO** per le password — gia' dichiarato in
+login.c. E' veloce per costruzione: chi si porta via `/boot/ombra` prova molti
+candidati al secondo. Il sale impedisce le tabelle precalcolate, non la forza
+bruta.
+
+! **NESSUNA QUOTA DI MEMORIA NE' DI DISCO.** Lo heap ha un tetto per processo,
+ma un utente puo' aprire piu' processi; e nessuno gli impedisce di riempire il
+disco.
+
+! **`blkread`/`blkwrite` NON VERIFICANO IL PUNTATORE UTENTE** (le uniche due
+su 78). Adesso sono di root, quindi la gravita' scende, ma un puntatore
+sbagliato di un programma di root fa cadere il kernel invece di dare EFAULT.
+
+! **SU FAT E ISO 9660 I PERMESSI NON ESISTONO**, per costruzione. Montare un
+volume FAT e' montare uno spazio in cui tutti possono tutto — ed e' per questo
+che `mount` e' diventata di root.
+
+## Multiutenza remota e SSH — cosa c'e' e in che ordine va fatto
+
+Chiesto dall'utente insieme all'audit. **L'analisi dice che l'ordine ovvio e'
+sbagliato**: la parte difficile non e' la crittografia, e' l'impianto della
+sessione.
+
+### Cosa c'e' oggi
+
+    TCP            SOLO CLIENTE: nel driver ip c'e' tcp_apri(), cioe' connect.
+                   Non esistono listen ne' accept — niente puo' SERVIRE.
+    pseudo-terminali  non esistono affatto
+    SHA-256        c'e', nella libc (la usa login)
+    cifrari        nessuno
+
+### L'ordine, e perche'
+
+ 1. **`listen` e `accept` nel driver IP.** Senza, non c'e' niente da discutere:
+    nessun servizio puo' accettare una connessione. E' il primo mattone.
+
+ 2. **Uno strato di pseudo-terminali (pty).** ! **E' IL PEZZO CHE SI SOTTOVALUTA
+    SEMPRE.** Una shell remota su una pipe nuda e' esattamente la shell dentro
+    una finestra prima del 14 agosto: niente eco, niente Backspace, niente
+    Ctrl+C, niente misura dello schermo. Quelle cose le fa la *line discipline*,
+    e una pipe non ne ha. Un pty e' una pipe CON una line discipline attaccata,
+    ed e' cio' che rende una connessione una sessione.
+
+    E serve **anche al terminale in finestra**, che oggi ha lo stesso buco
+    dichiarato (`Ctrl+C` impossibile). Un solo lavoro, due difetti chiusi.
+
+ 3. **Un server telnet.** Prova tutto l'impianto — accettare, avviare `login`,
+    scendere con `setuid`, dare la shell, ripulire alla chiusura — **senza
+    crittografia**. Se qualcosa non torna, si vede in chiaro.
+
+ 4. **SSH**, che a quel punto e' «lo stesso impianto piu' la crittografia»:
+    scambio di chiavi, un cifrario, un MAC, le chiavi d'host, il protocollo
+    binario.
+
+! **E SE SI FA SSH, SI SCEGLIE LA STRADA SENZA BIGNUM.** Curve25519 per lo
+scambio e ChaCha20-Poly1305 per il resto sono aritmetica a 32 bit su numeri di
+lunghezza fissa; RSA vuole un modulo esponenziale su interi da 2048 bit, cioe'
+una libreria di grandi numeri da scrivere e mantenere. Con SHA-256 gia' in
+casa, la prima strada e' qualche centinaio di righe di matematica chiusa; la
+seconda e' un sottosistema.
+
+! **E NIENTE SSH PRIMA CHE I PERMESSI SIANO SOLIDI.** Un servizio che accetta
+connessioni da fuori e' la prima cosa che qualcuno prova: ha senso aprirlo
+quando dentro c'e' qualcosa che regge, non prima. L'audit di oggi e' stato il
+primo passo di quel lavoro, non l'ultimo — vedi «cosa resta aperto».
+
+# Il controllo sull'esecuzione, e tre messaggi che mentivano (17 agosto 2026)
+
+    mario, nella sua casa:
+
+    ex-os:/home/mario> cp /bin/hello mio
+    ex-os:/home/mario> /home/mario/mio
+    exec: /home/mario/mio: non hai il permesso di eseguirlo
+          Se il file e' tuo:  chmod 755 /home/mario/mio
+    ex-os:/home/mario> chmod 755 /home/mario/mio
+    ex-os:/home/mario> /home/mario/mio
+    Ciao da /bin/hello!
+
+**Le sette regole dettate il 17 agosto sono tutte vere.**
+
+## `vfs_eseguibile()`, chiamata dal caricatore
+
+! **IL PERMESSO SI CHIEDE PRIMA DI APRIRE.** Aprire e poi rifiutare vorrebbe
+dire aver gia' toccato il filesystem — e su EX-OS aprire un file e' un giro di
+IPC verso un driver in ring 3, cioe' un punto di riscadenzamento. Chiedere
+prima costa una stat e non lascia niente a meta'.
+
+! **ED E' LA RIGA CHE CHIUDE IL DIFETTO DEL VARCO `*.drv`**, dichiarato da
+giorni. Il varco diceva che `mmio_map()` la puo' chiedere solo un eseguibile
+caricato da un file `.drv`, ed era **una definizione, non una difesa**: bastava
+copiarsi in `x.drv`. Adesso `/dev` appartiene a root, un utente normale non ci
+puo' scrivere dentro, e un `.drv` fatto altrove non e' eseguibile se non lo si
+possiede.
+
+! **ESEGUIRE RICHIEDE ANCHE DI LEGGERE, ed e' un limite dichiarato.** Su Unix
+basta il bit x, perche' e' il kernel a leggere il file per conto di exec; qui il
+caricatore apre con `vfs_open`, che chiede il permesso di lettura. Un file 0711
+non parte. Non ne esiste nessuno su EX-OS, e sistemarlo vorrebbe dire un
+percorso di apertura privilegiato: piu' superficie d'attacco di quanta ne
+tolga.
+
+## `/bin/chmod` e `/bin/chown`
+
+Un binario con due nomi, come `id`/`whoami`.
+
+! **ESISTONO PERCHE' SENZA NON C'ERA MODO DI SISTEMARE UN PERMESSO A MANO.** Un
+sistema di permessi senza gli attrezzi per governarli e' un sistema in cui il
+primo errore e' definitivo. E servono davvero: su un disco installato prima di
+oggi tutti i programmi sono 0644.
+
+`chmod` legge l'ottale e lo dice se non lo e' — `755` in decimale sarebbe bit
+sparsi a caso. `chown` accetta il nome o il numero.
+
+## ! TRE MESSAGGI CHE MENTIVANO, E LA CATENA CHE LI PRODUCEVA
+
+Il primo tentativo funzionava e diceva la cosa sbagliata:
+
+    exec: /home/mario/mio: non e' un programma eseguibile
+
+**Lo era.** Mancava il permesso. Il difetto era in tre punti diversi, uno
+dentro l'altro:
+
+ 1. **`sys_spawn` schiacciava ogni motivo in `ENOEXEC`.** Il commento sopra
+    quella riga diceva gia' «SI RENDE IL MOTIVO VERO, non ENOENT per tutto» —
+    il principio era giusto, e con i permessi i motivi veri sono diventati
+    **tre** invece di due. E' lo stesso errore che quel commento denunciava, un
+    caso piu' in la';
+ 2. **la shell non conosceva `EACCES`** e cadeva nel ramo di ENOEXEC;
+ 3. e la prima correzione suggeriva **`ls -l`**, che `ls` di EX-OS non ha: un
+    consiglio che non si puo' seguire e' peggio di nessun consiglio.
+
+Adesso dice il motivo vero e un rimedio che esiste.
+
+## Le prove
+
+    mario, file 0644     rifiutato, con il motivo giusto e il comando per
+                         rimediare
+    dopo chmod 755       parte
+    da floppy (FAT12)    libctest 294 su 294, uid=0, redirezione e grafica
+                         intatte — dove i permessi non ci sono, non mordono
 
 # I permessi mordono: proprietario scritto e controlli attivi (17 agosto 2026)
 

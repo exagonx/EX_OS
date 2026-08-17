@@ -43,6 +43,28 @@ SECTIONS
         *(.rodata.*)
     }
 
+    /* =========================================================================
+     * ! UNA PAGINA NUOVA PRIMA DEI DATI, E NON E' ALLINEAMENTO PER BELLEZZA.
+     *
+     * Il kernel mappa in sola lettura i segmenti senza PF_W e scrivibili gli
+     * altri (kernel/loader/elf.c). Ma se .text e .data stanno nella STESSA
+     * pagina, il collegatore ne fa un segmento solo con i permessi dell'unione
+     * — RWE — e allora IL CODICE DEL PROGRAMMA E' SCRIVIBILE. Un difetto che
+     * permette a un overflow di riscrivere le istruzioni invece che solo i
+     * dati.
+     *
+     * Si vedeva a ogni collegamento, e nessuno lo leggeva:
+     *
+     *     ld: warning: build/bin/sh has a LOAD segment with RWX permissions
+     *
+     * Non e' un limite della CPU: su i386 non c'e' il bit NX, quindi una
+     * pagina di dati resta eseguibile — ma il CODICE si puo' rendere non
+     * scrivibile, ed e' meta' della difesa, disponibile su qualunque
+     * processore. Costa una pagina per programma.
+     * ========================================================================= */
+    . = ALIGN(4096);
+
+
     .data : {
         *(.data)
         *(.data.*)

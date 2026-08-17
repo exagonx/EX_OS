@@ -175,6 +175,19 @@ void ex_scrivi(ExFinestra f, int x, int y, const char *s, unsigned int c);
 void ex_aggiorna(ExFinestra f);     /* «ho finito»: lo dice al server */
 
 /* -----------------------------------------------------------------------------
+ * Posare un rettangolo di pixel gia' pronti, in ARGB a 32 bit.
+ *
+ * ! SENZA, UN'IMMAGINE SI DISEGNA UN PIXEL PER CHIAMATA — e per 800x600 sono
+ * 480000 chiamate, ognuna con il suo controllo dei limiti e, attraverso la
+ * libreria condivisa, anche un salto indiretto.
+ *
+ * `passo` e' quanti pixel ci sono fra l'inizio di una riga e la successiva:
+ * serve a posare un RITAGLIO senza ricopiare. Zero vuol dire «largo quanto w».
+ * --------------------------------------------------------------------------- */
+void ex_pixmap(ExFinestra f, int x, int y, int w, int h,
+               const unsigned int *pixel, unsigned int passo);
+
+/* -----------------------------------------------------------------------------
  * Le immagini
  *
  * ! IL DECODIFICATORE STA QUI, NON NEL SERVER, ed e' una decisione di

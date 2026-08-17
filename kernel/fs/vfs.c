@@ -1603,6 +1603,43 @@ int vfs_chown(const char *abs, uint32_t uid, uint32_t gid)
  * regalare un file — o prendersene uno — sposta della roba fra utenti. Su Unix
  * la regola e' la stessa.
  * ============================================================================= */
+/* =============================================================================
+ * vfs_eseguibile — si puo' ESEGUIRE questo file?
+ *
+ * La chiama il caricatore ELF prima di aprire. Rende 0 se si puo', -EACCES se
+ * no, -ENOENT se il file non c'e'.
+ *
+ * ! SERVE PERCHE' LEGGERE NON E' ESEGUIRE. Senza questo controllo un utente
+ * normale potrebbe lanciare qualunque cosa riesca a leggere — compreso un
+ * programma che l'amministratore ha messo li' per se'. E' l'ultima delle sette
+ * regole a diventare vera.
+ *
+ * ! ED E' QUESTO CHE RENDE IL VARCO `*.drv` UNA BARRIERA. Il varco dice che
+ * mmio_map() e ioport_bind() le puo' chiedere solo un eseguibile caricato da un
+ * file .drv — ed era una definizione, non una difesa: bastava copiarsi in
+ * `x.drv`. Adesso /dev appartiene a root, un utente normale non ci puo'
+ * scrivere dentro, e un .drv fatto altrove non e' eseguibile se non lo si
+ * possiede. Il difetto dichiarato da giorni si chiude qui.
+ *
+ * ! ESEGUIRE RICHIEDE ANCHE DI LEGGERE, ed e' un limite dichiarato. Su Unix
+ * basta il bit x, perche' e' il kernel a leggere il file per conto di exec;
+ * qui il caricatore apre con vfs_open, che chiede il permesso di lettura.
+ * Vuol dire che un file 0711 — eseguibile ma non leggibile — non parte. Non
+ * esiste nessun file cosi' su EX-OS (install fa 0755), e sistemarlo vorrebbe
+ * dire un percorso di apertura privilegiato: piu' superficie d'attacco di
+ * quanta ne tolga.
+ * ============================================================================= */
+int vfs_eseguibile(const char *abs)
+{
+    VfsStat st;
+
+    if (abs == NULL) return ERR(EINVAL);
+    if (vfs_stat(abs, &st) != 0) return ERR(ENOENT);
+    if (st.is_dir) return ERR(EACCES);
+
+    return vfs_permesso(&st, P_ESEGUI) ? 0 : ERR(EACCES);
+}
+
 int vfs_chmod(const char *abs, uint32_t modo)
 {
     char    interno[VFS_PATH_MAX];

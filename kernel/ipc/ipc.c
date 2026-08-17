@@ -255,6 +255,44 @@ int32_t ipc_register(const char *name)
     }
 
     Process *self = proc_get_current();
+
+    /* =========================================================================
+     * ! I NOMI SENZA PREFISSO SONO DI root, dal 17 agosto 2026.
+     *
+     * Il controllo qui sopra impedisce di rubare un nome a un servizio VIVO.
+     * Non impedisce di prenderlo PRIMA che nasca, o dopo che e' morto — e un
+     * processo che registra `kbd` riceve i tasti che tutti gli altri gli
+     * mandano, uno che registra `wserver` riceve le finestre. Su una macchina a
+     * un solo utente non cambia niente; in multiutenza e' il modo piu' diretto
+     * di leggere quello che sta scrivendo un altro.
+     *
+     * ! LA REGOLA E' MECCANICA E NON HA UN ELENCO: un utente normale puo'
+     * registrare solo nomi che cominciano col proprio uid e due punti —
+     * `1000:mio`. Un elenco di nomi riservati sarebbe una seconda verita'
+     * accanto ai servizi che esistono davvero, e le due divergono al primo
+     * servizio aggiunto.
+     * ========================================================================= */
+    if (self != NULL && self->uid != 0) {
+        char atteso[16];
+        uint32_t v = self->uid, l = 0, k;
+        char rov[12];
+
+        if (v == 0) rov[l++] = '0';
+        while (v > 0) { rov[l++] = (char)('0' + (v % 10u)); v /= 10u; }
+        for (k = 0; k < l; k++) atteso[k] = rov[l - 1 - k];
+        atteso[l++] = ':';
+
+        for (k = 0; k < l; k++) {
+            if (name[k] != atteso[k]) {
+                interrupts_enable();
+                klog(LOG_WARN, "ipc_register('%s'): il PID %u (uid %u) puo' "
+                     "registrare solo nomi che cominciano con '%u:'",
+                     name, self->pid, self->uid, self->uid);
+                return ERR(EPERM);
+            }
+        }
+    }
+
     for (uint32_t i = 0; i < IPC_NAME_LEN; i++) {
         self->ipc_service_name[i] = name[i];
         if (name[i] == '\0') break;

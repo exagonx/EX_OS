@@ -784,6 +784,11 @@ int        setuid(unsigned int uid);
 /* Consegna un file a un altro utente. Solo root; su FAT rende -1 con ENOSYS
  * invece di fingere. */
 int        chown(const char *percorso, unsigned int uid, unsigned int gid);
+
+/* Il framebuffer, e SOLO quello. Non serve essere root ne' un driver: e' una
+ * capacita' stretta al posto di mmio_map, che mappa un indirizzo qualunque ed
+ * e' riservata. Rende 0 con errno se non c'e' un framebuffer. */
+void      *fb_map(void);
 int        getuid(void);
 int        geteuid(void);
 int        getgid(void);

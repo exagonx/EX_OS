@@ -42,6 +42,44 @@ extern void vga_putchar(char c);
 #include "rtc.h"       /* RtcTime, rtc_read: data e ora (SYS_TIME) */
 #include "vga.h"       /* VGA_N_CONSOLE e le console virtuali */
 #include "tty.h"       /* TTY_IOCTL_*: comandi nativi del terminale (sys_ioctl) */
+
+/* =============================================================================
+ * ! LE SYSCALL CHE SCAVALCANO IL FILESYSTEM DEVONO CHIEDERE CHI SEI
+ *
+ * Trovato il 17 agosto 2026, subito dopo aver acceso i permessi sui file: in
+ * tutto il kernel c'era UNA SOLA syscall che guardava l'uid, ed era setuid.
+ * Tutte le altre no — comprese quelle che parlano al disco SENZA passare dalla
+ * VFS:
+ *
+ *     blkread / blkwrite   settori grezzi di una partizione
+ *     partwrite            la tabella delle partizioni
+ *     bootinstall          l'MBR e il settore di avvio
+ *     mount / umount       cosa si vede e da dove
+ *     reboot               spegnere la macchina
+ *
+ * ! CON blkwrite APERTA A TUTTI, I PERMESSI SUI FILE SONO UNA DECORAZIONE. Un
+ * utente normale non puo' scrivere /boot/ombra passando dalla VFS — ma puo'
+ * riscrivere il settore che lo contiene, o /bin/sh, o l'intero filesystem. Il
+ * controllo piu' accurato del mondo non serve a niente se accanto c'e' una
+ * porta che non chiede niente.
+ *
+ * ! ED E' LA DOMANDA GIUSTA DA FARSI DOPO OGNI CONTROLLO NUOVO: non «questo
+ * controllo e' giusto», ma «esiste un'altra strada per ottenere la stessa
+ * cosa?». Qui ce n'erano sei.
+ * ============================================================================= */
+static int solo_root(const char *chi)
+{
+    Process *self = proc_get_current();
+
+    /* Senza processo corrente e' il kernel a chiedere, durante l'avvio: passa.
+     * Vedi vfs_uid_corrente(), stessa regola e stessa ragione. */
+    if (self == NULL || self->uid == 0) return 1;
+
+    klog(LOG_WARN, "SYSCALL %s: rifiutata al PID %u (uid %u): serve root",
+         chi, self->pid, self->uid);
+    return 0;
+}
+
 extern Process g_process_pool[MAX_PROCESSES];
 
 /* Directory di lavoro corrente (globale, semplificazione per ora) */
@@ -1204,7 +1242,10 @@ int32_t sys_exec(InterruptFrame *frame)
          * non un guasto — e chi ha chiesto la riceve e la riferisce. */
         klog(rc_elf == ERR(ENOENT) ? LOG_INFO : LOG_ERROR,
              "SYSCALL exec: ELF load fallito per '%s' (err=%d)", kpath, rc_elf);
-        return rc_elf == ERR(ENOENT) ? ERR(ENOENT) : ERR(ENOEXEC);
+        /* Stessi tre motivi di sys_spawn: vedi il commento la'. */
+        if (rc_elf == ERR(ENOENT)) return ERR(ENOENT);
+        if (rc_elf == ERR(EACCES)) return ERR(EACCES);
+        return ERR(ENOEXEC);
     }
 
     /* Libera la vecchia PD (non serve più) */
@@ -1654,8 +1695,17 @@ if (rc_elf != 0) {
          * «non esiste» a proposito di un binario corrotto manda la shell
          * a cercarlo nella voce successiva del PATH, e il suo verdetto
          * finale — «comando non trovato» — indica il posto sbagliato a
-         * chi deve capire cos'e' andato storto. */
-        return rc_elf == ERR(ENOENT) ? ERR(ENOENT) : ERR(ENOEXEC);
+         * chi deve capire cos'e' andato storto.
+         *
+         * ! E DAL 17 AGOSTO 2026 I MOTIVI VERI SONO TRE, non due. Con i
+         * permessi esiste anche EACCES, e schiacciarlo in ENOEXEC faceva
+         * dire alla shell «non e' un programma eseguibile» di un binario
+         * che lo E' — mandando a cercare il difetto nel file invece che
+         * nei permessi. E' lo stesso errore che questo commento
+         * denunciava, un caso piu' in la'. */
+        if (rc_elf == ERR(ENOENT)) return ERR(ENOENT);
+        if (rc_elf == ERR(EACCES)) return ERR(EACCES);
+        return ERR(ENOEXEC);
     }
 
     /* --- Costruisci argc/argv sullo stack del figlio ----------------------- */
@@ -2836,6 +2886,8 @@ int32_t sys_blkinfo(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_mount(InterruptFrame *frame)
 {
+    if (!solo_root("mount")) return ERR(EPERM);
+
     const char *dev   = (const char *)frame->ebx;
     const char *punto = (const char *)frame->ecx;
     uint32_t    flag  = frame->edx;
@@ -2863,6 +2915,8 @@ int32_t sys_mount(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_umount(InterruptFrame *frame)
 {
+    if (!solo_root("umount")) return ERR(EPERM);
+
     const char *punto = (const char *)frame->ebx;
     char kpunto[MOUNTINFO_PUNTO_MAX];
 
@@ -2938,6 +2992,8 @@ int32_t sys_mountinfo(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_bootinstall(InterruptFrame *frame)
 {
+    if (!solo_root("bootinstall")) return ERR(EPERM);
+
     const char      *punto = (const char *)frame->ebx;
     BootInstallInfo *uinfo = (BootInstallInfo *)frame->ecx;
     uint32_t         size  = frame->edx;
@@ -3018,6 +3074,8 @@ int32_t sys_bootinstall(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_partwrite(InterruptFrame *frame)
 {
+    if (!solo_root("partwrite")) return ERR(EPERM);
+
     uint32_t     disco = frame->ebx;
     PartTabella *utab  = (PartTabella *)frame->ecx;
     uint32_t     size  = frame->edx;
@@ -3115,6 +3173,8 @@ static int32_t blkio_apri(const char *unome, uint32_t lba, uint32_t n,
 
 int32_t sys_blkread(InterruptFrame *frame)
 {
+    if (!solo_root("blkread")) return ERR(EPERM);
+
     const char *unome = (const char *)frame->ebx;
     uint32_t    lba   = frame->ecx;
     uint32_t    n     = frame->edx;
@@ -3143,6 +3203,8 @@ int32_t sys_blkread(InterruptFrame *frame)
 
 int32_t sys_blkwrite(InterruptFrame *frame)
 {
+    if (!solo_root("blkwrite")) return ERR(EPERM);
+
     const char *unome = (const char *)frame->ebx;
     uint32_t    lba   = frame->ecx;
     uint32_t    n     = frame->edx;
@@ -3218,6 +3280,8 @@ int32_t sys_truncate(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_reboot(InterruptFrame *frame)
 {
+    if (!solo_root("reboot")) return ERR(EPERM);
+
     uint32_t cmd  = frame->ebx;
     Process *self = proc_get_current();
 
@@ -3462,7 +3526,33 @@ int32_t sys_irq_bind(InterruptFrame *frame)
  * ============================================================================= */
 static int e_un_driver(Process *p, const char *chi)
 {
-    if (p != NULL && p->is_driver) return 1;
+    /* =========================================================================
+     * ! IL NOME NON BASTA: SERVE ANCHE ESSERE root. Aggiunto il 17 agosto 2026,
+     * lo stesso giorno in cui i permessi hanno cominciato a mordere.
+     *
+     * `is_driver` lo accende il caricatore guardando SOLO il nome del file. E
+     * i driver installati sono 0755: un utente normale poteva eseguire
+     * /dev/ide.drv, ottenere il varco, e con ioport_bind parlare direttamente
+     * al controller del disco — cioe' leggere e scrivere qualunque settore
+     * SENZA passare da un solo controllo di permesso.
+     *
+     * ! ERA LA STESSA FORMA DEL DIFETTO DI blkwrite, un piano piu' sotto: un
+     * controllo accurato sui file accanto a una porta che non chiede niente.
+     * La domanda da farsi dopo ogni controllo nuovo non e' «questo e' giusto?»
+     * ma «esiste un'altra strada per ottenere la stessa cosa?».
+     *
+     * ! E LA CONSEGUENZA E' DICHIARATA: un utente normale non puo' avviare il
+     * server grafico con `exwin`. Per quello c'e' SYS_FB_MAP, che mappa SOLO
+     * il framebuffer e non da' nessuna porta — una capacita' stretta al posto
+     * di una larga, che e' il modo giusto di risolvere questo genere di cose.
+     * ========================================================================= */
+    if (p != NULL && p->is_driver && p->uid == 0) return 1;
+
+    if (p != NULL && p->is_driver && p->uid != 0) {
+        klog(LOG_WARN, "SYSCALL %s: PID %u e' un driver ma gira come uid %u — "
+             "il varco dei driver e' di root", chi, p->pid, p->uid);
+        return 0;
+    }
 
     /* Il motivo va detto per intero: «permesso negato» su una syscall che il
      * driver ha appena chiamato manda a cercare il guasto nel driver. Qui il
@@ -3808,6 +3898,75 @@ int32_t sys_modo_testo(InterruptFrame *frame)
  * dell'utente a codice che non se lo aspetta e' il modo di prendersi un page
  * fault dentro una funzione che non c'entra niente.
  * ========================================================================== */
+/* =============================================================================
+ * SYS_FB_MAP (249) — il framebuffer, e SOLO quello
+ *
+ * ! E' UNA CAPACITA' STRETTA AL POSTO DI UNA LARGA, ed e' il punto. mmio_map()
+ * mappa un indirizzo fisico QUALUNQUE scelto da chi chiama, e per questo e'
+ * riservata a root: con i registri di un dispositivo si arriva al DMA, e col
+ * DMA a tutta la RAM. Il server grafico pero' non vuole «un indirizzo
+ * qualunque»: vuole IL framebuffer, che il kernel conosce gia'.
+ *
+ * Chiedere al kernel «mappami quello che sai tu» invece di «mappami questo
+ * indirizzo» toglie a chi chiama la possibilita' di sbagliare e a chi attacca
+ * la possibilita' di scegliere. Non serve nessun privilegio.
+ *
+ * ! ED E' COSI' CHE LA GRAFICA GIRA IN MULTIUTENZA. Senza, o il server e' di
+ * root — e allora ogni utente che vuole le finestre ha bisogno
+ * dell'amministratore — oppure il varco dei driver resta aperto a tutti, e
+ * allora i permessi sui file non valgono niente.
+ *
+ * Rende l'indirizzo virtuale, oppure un -errno.
+ * ========================================================================== */
+int32_t sys_fb_map(InterruptFrame *frame)
+{
+    Process *proc = proc_get_current();
+    uint32_t fisico, passo, larg, alt, bit;
+    uint32_t base, fine, pagine, vaddr, i, byte;
+
+    (void)frame;
+    if (proc == NULL) return ERR(ESRCH);
+
+    vga_info_fb(&fisico, &passo, &larg, &alt, &bit);
+    if (fisico == 0 || passo == 0 || alt == 0) return ERR(ENODEV);
+
+    byte = passo * alt;
+
+    /* ! LA MISURA LA DECIDE IL KERNEL, non chi chiama. Se fosse un parametro,
+     * chiedere piu' byte del framebuffer vorrebbe dire mappare cio' che gli
+     * sta dietro — ed e' esattamente il modo in cui una capacita' stretta
+     * torna a essere larga. */
+    base   = fisico & ~(PAGE_SIZE - 1);
+    fine   = base + ALIGN_UP((fisico - base) + byte, PAGE_SIZE);
+    pagine = (fine - base) / PAGE_SIZE;
+
+    if (fine < base) return ERR(EINVAL);
+    if (proc->heap_max == 0) return ERR(ENOMEM);
+
+    vaddr = ALIGN_UP(proc->heap_end, PAGE_SIZE);
+    if (vaddr < USER_SPACE_BASE) vaddr = USER_SPACE_BASE;
+    if (vaddr > proc->heap_max ||
+        pagine > (proc->heap_max - vaddr) / PAGE_SIZE) return ERR(ENOMEM);
+
+    for (i = 0; i < pagine; i++) {
+        if (paging_map_page(proc->page_directory, vaddr + i * PAGE_SIZE,
+                            base + i * PAGE_SIZE,
+                            PG_PRESENT | PG_USER | PG_WRITABLE) != 0) {
+            uint32_t j;
+            for (j = 0; j < i; j++)
+                paging_unmap_page(proc->page_directory, vaddr + j * PAGE_SIZE);
+            return ERR(ENOMEM);
+        }
+    }
+
+    proc->heap_end = vaddr + pagine * PAGE_SIZE;
+
+    klog(LOG_INFO, "SYSCALL fb_map: PID %u (uid %u) -> 0x%08x, %u KB",
+         proc->pid, proc->uid, vaddr + (fisico - base), byte / 1024u);
+
+    return (int32_t)(vaddr + (fisico - base));
+}
+
 int32_t sys_video_info(InterruptFrame *frame)
 {
     VideoInfo *u = (VideoInfo *)frame->ebx;

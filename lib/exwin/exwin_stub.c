@@ -74,6 +74,8 @@ static struct {
     void        (*riquadro)(ExFinestra, int, int, int, int, unsigned int);
     void        (*scrivi)(ExFinestra, int, int, const char *, unsigned int);
     void        (*aggiorna)(ExFinestra);
+    void        (*pixmap)(ExFinestra, int, int, int, int,
+                          const unsigned int *, unsigned int);
     int         (*immagine)(ExFinestra, const char *, int, int);
     void         (*l_svuota)(ExFinestra);
     int          (*l_aggiungi)(ExFinestra, const char *);
@@ -143,6 +145,9 @@ static void assicura(void)
     P.scrivi         = (void (*)(ExFinestra, int, int, const char *, unsigned int))
                        chiedi(t, "ex_scrivi");
     P.aggiorna       = (void (*)(ExFinestra))              chiedi(t, "ex_aggiorna");
+    P.pixmap         = (void (*)(ExFinestra, int, int, int, int,
+                                 const unsigned int *, unsigned int))
+                       chiedi(t, "ex_pixmap");
     P.immagine       = (int (*)(ExFinestra, const char *, int, int))
                        chiedi(t, "ex_immagine");
     P.l_svuota   = (void (*)(ExFinestra))                     chiedi(t, "ex_lista_svuota");
@@ -218,6 +223,13 @@ void ex_scrivi(ExFinestra f, int x, int y, const char *s, unsigned int c)
 }
 
 void ex_aggiorna(ExFinestra f) { assicura(); P.aggiorna(f); }
+
+void ex_pixmap(ExFinestra f, int x, int y, int w, int h,
+               const unsigned int *px, unsigned int passo)
+{
+    assicura();
+    P.pixmap(f, x, y, w, h, px, passo);
+}
 
 int ex_immagine(ExFinestra f, const char *percorso, int x, int y)
 {

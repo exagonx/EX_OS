@@ -204,6 +204,31 @@ static int elf_carica(const char *path, Process *proc, ElfLoadResult *result,
      * Passo 1: Apri il file ELF dal FAT12
      * ========================================================================== */
 
+/* =========================================================================
+     * ! IL PERMESSO DI ESEGUIRE SI CHIEDE PRIMA DI APRIRE, e l'ordine non e'
+     * indifferente: aprire e poi rifiutare vorrebbe dire aver gia' toccato il
+     * filesystem — e su EX-OS aprire un file e' un giro di IPC verso un driver
+     * in ring 3, cioe' un punto di riscadenzamento. Chiedere prima costa una
+     * stat e non lascia niente a meta'.
+     *
+     * ! ED E' LA RIGA CHE RENDE IL VARCO `*.drv` UNA BARRIERA. Finora era una
+     * definizione — bastava copiarsi in `x.drv` — perche' non c'era niente che
+     * impedisse a un utente di scrivere in /dev. Adesso /dev e' di root, e un
+     * .drv che l'utente si e' fatto altrove non lo esegue se non lo possiede.
+     *
+     * ! ROOT E CHI NON HA UN PROCESSO PASSANO. Il primo processo lo crea il
+     * kernel, quando ancora non c'e' nessuno a cui attribuire la richiesta:
+     * vfs_uid_corrente() rende 0, e la shell d'avvio parte. */
+    {
+        int perm = vfs_eseguibile(path);
+
+        if (perm != 0) {
+            klog(perm == ERR(EACCES) ? LOG_WARN : LOG_INFO,
+                 "ELF: '%s' non eseguibile da questo utente (err=%d)", path, perm);
+            return perm;
+        }
+    }
+
 handle = vfs_open(path, 0x0000);  /* O_RDONLY */
 
 if (handle < 0) {

@@ -78,6 +78,7 @@ typedef uint32_t        size_t;
 #define SYS_IPC_RECV_TMO 228
 #define SYS_IPC_LOOKUP   223
 #define SYS_WAITPID     7
+#define SYS_UPTIME     186
 #define SYS_GETPID      20
 #define SYS_EXEC        11
 #define SYS_SCHED_YIELD 158
@@ -108,6 +109,12 @@ typedef uint32_t        size_t;
  * Senza la seconda, un binario corrotto veniva annunciato come assente. */
 #define SH_ENOENT       2
 #define SH_ENOEXEC      8
+/* ! SERVE DA QUANDO ESISTONO I PERMESSI (17 agosto 2026). Senza, un programma
+ * rifiutato per mancanza del bit x veniva annunciato come «non e' un programma
+ * eseguibile» — che e' falso: lo e', ed e' proprio per questo che ci si prova.
+ * Un messaggio sbagliato manda a cercare il difetto nel binario invece che nei
+ * permessi. */
+#define SH_EACCES      13
 
 /* I nomi dei servizi, per `helpconfig`: si chiede al registro IPC chi c'e'
  * gia'. Sono header di soli #define e struct, senza dipendenze — il nome
@@ -368,6 +375,49 @@ static void sh_setfg(int pid)
  * in lib/include/spawn_abi.h — che non tira dentro la libc e usa solo
  * `unsigned int`, apposta per poter essere inclusa proprio da qui. */
 #include "spawn_abi.h"
+
+/* =============================================================================
+ * IL CANARINO DELLO STACK, QUI E NON NELLA libc
+ *
+ * ! LA SHELL NON COLLEGA LA libc — usa le syscall dirette — quindi non ha ne'
+ * __stack_chk_guard ne' __stack_chk_fail, che il compilatore pretende quando
+ * la protezione e' accesa. Definirli qui costa quindici righe.
+ *
+ * ! ED E' IL PROGRAMMA CHE PIU' LI MERITA: la shell legge una riga scritta da
+ * una persona e la spezza in argomenti dentro buffer di lunghezza fissa. E' il
+ * posto dove un overflow arriva per primo, ed e' anche quello dove conta di
+ * piu' — chi riscrive lo stack della shell riscrive il processo che lancia
+ * tutti gli altri.
+ *
+ * Il valore si compone all'avvio: una costante scritta nel binario la
+ * rimetterebbe a posto chi la riscrive.
+ * ============================================================================= */
+static int sh_write(int fd, const char *buf, uint32_t n);
+static int sh_getpid(void);
+
+unsigned long __stack_chk_guard = 0x00AA55C3ul;
+
+static void canarino_avvia(void)
+{
+    unsigned long v = (unsigned long)syscall1(SYS_UPTIME, 0);
+
+    v ^= ((unsigned long)sh_getpid() << 16);
+    /* Il byte basso resta zero: ferma gli overflow fatti con le funzioni di
+     * stringa, che si arrestano sullo zero. */
+    __stack_chk_guard = ((v << 8) ^ 0x5A3C0000ul) & ~0xFFul;
+}
+
+void __stack_chk_fail(void)
+{
+    static const char m[] =
+        "\n*** sh: stack rotto, una scrittura e' andata oltre un buffer.\n"
+        "    La shell si ferma: proseguire vorrebbe dire tornare a un\n"
+        "    indirizzo che non e' piu' quello giusto.\n";
+
+    sh_write(2, m, (uint32_t)(sizeof(m) - 1));
+    syscall1(SYS_EXIT, 134);
+    for (;;) { }
+}
 
 static int sh_open(const char *path, uint32_t flags)
 {
@@ -1660,8 +1710,18 @@ static void spiega_avvio_fallito(const char *path, int err)
     }
     print("exec: ");
     print(path);
-    printerr(err == -SH_ENOEXEC ? ": non e' un programma eseguibile"
-                                : ": impossibile avviarlo");
+    if (err == -SH_EACCES) {
+        /* ! IL RIMEDIO SI DICE, E DEV'ESSERE UN COMANDO CHE ESISTE. La prima
+         * versione suggeriva `ls -l` per guardare i permessi: `ls` di EX-OS
+         * l'opzione -l non ce l'ha, e un consiglio che non si puo' seguire e'
+         * peggio di nessun consiglio. */
+        printerr(": non hai il permesso di eseguirlo");
+        print("      Se il file e' tuo:  chmod 755 ");
+        printerr(path);
+    } else {
+        printerr(err == -SH_ENOEXEC ? ": non e' un programma eseguibile"
+                                    : ": impossibile avviarlo");
+    }
     g_ultimo_stato = 126;
 }
 

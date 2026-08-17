@@ -64,9 +64,40 @@ static const uint32_t quantum_table[PRIO_MAX + 1] = {
  * ============================================================================= */
 
 /* Alloca un PCB libero dal pool */
+/* =============================================================================
+ * ! GLI ULTIMI SLOT SONO DI root, dal 17 agosto 2026.
+ *
+ * I processi sono 64 in tutto e non c'era nessun limite per utente: un utente
+ * normale poteva riempirli tutti — un ciclo che fa spawn di se' stesso ci mette
+ * un istante — e da quel momento NESSUNO puo' piu' avviare niente,
+ * l'amministratore compreso. Non e' un fastidio: e' un sistema in cui il
+ * rimedio diventa impossibile proprio quando serve.
+ *
+ * ! LA RISERVA E' PER root, NON PER IL SISTEMA, e la differenza conta: un
+ * numero di slot tenuti liberi «per sicurezza» si riempirebbero comunque al
+ * primo processo di sistema che parte. Riservarli a chi puo' spegnere e
+ * riparare e' l'unica regola che garantisce il rimedio.
+ *
+ * Otto su 64: bastano una shell, un `id`, un `kill` e qualche margine.
+ * ============================================================================= */
+#define SLOT_RISERVATI_ROOT   8
+
 static Process *pcb_alloc(void)
 {
-    uint32_t i;
+    uint32_t i, liberi = 0;
+    Process *self = g_current;
+
+    if (self != NULL && self->uid != 0) {
+        for (i = 0; i < MAX_PROCESSES; i++)
+            if (g_process_pool[i].state == PROC_UNUSED) liberi++;
+
+        if (liberi <= SLOT_RISERVATI_ROOT) {
+            klog(LOG_WARN, "SCHED: PID %u (uid %u) rifiutato: restano %u slot, "
+                 "riservati a root", self->pid, self->uid, liberi);
+            return NULL;
+        }
+    }
+
     for (i = 0; i < MAX_PROCESSES; i++) {
         if (g_process_pool[i].state == PROC_UNUSED) {
             /* Azzera il PCB */

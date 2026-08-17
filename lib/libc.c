@@ -233,6 +233,7 @@ typedef struct {
 #define SYS_GETUID      24
 #define SYS_CHOWN      182
 #define SYS_CHMOD       15
+#define SYS_FB_MAP     249
 #define SYS_EXEC        11
 #define SYS_MMAP        90
 #define SYS_MUNMAP      91
@@ -4294,6 +4295,24 @@ int access(const char *path, int modo)
  * un altro utente, e QUELLO su FAT non si puo' fare affatto. E' anche il
  * comportamento di Linux su vfat, e il motivo e' concreto: bfd chiude ogni
  * eseguibile che produce con umask/chmod. */
+/* -----------------------------------------------------------------------------
+ * fb_map — il framebuffer, e solo quello
+ *
+ * ! NON SERVE ESSERE root NE' UN DRIVER, ed e' il punto: mmio_map() mappa un
+ * indirizzo fisico qualunque e per questo e' riservata: con i registri di un
+ * dispositivo si arriva al DMA, e col DMA a tutta la RAM. Qui l'indirizzo lo
+ * sceglie il kernel, non chi chiama — e a chi attacca resta niente da scegliere.
+ *
+ * Rende il puntatore, oppure 0 con errno impostato.
+ * --------------------------------------------------------------------------- */
+void *fb_map(void)
+{
+    int32_t r = _syscall1(SYS_FB_MAP, 0);
+
+    if (r < 0) { errno = -r; return 0; }
+    return (void *)(unsigned int)r;
+}
+
 int chmod(const char *path, mode_t modo)
 {
     int32_t r = _syscall2(SYS_CHMOD, (uint32_t)path, (uint32_t)modo);
