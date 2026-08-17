@@ -72,6 +72,11 @@ typedef long (*ExProcedura)(ExFinestra, unsigned int, unsigned int, long);
 #define EXM_MOUSE_SU    0x0006
 #define EXM_TASTO       0x0007  /* wp = scancode */
 #define EXM_DISTRUGGI   0x0008
+/* ! IL PROGRAMMA DENTRO UN CONTROLLO «terminale» E' USCITO. Arriva una volta
+ * sola, alla finestra che contiene il terminale. Un'applicazione che apre un
+ * terminale e non lo gestisce resta con una finestra viva intorno a una shell
+ * morta: e' quello che succedeva prima che questo messaggio esistesse. */
+#define EXM_TERMFINITO  0x0009
 
 #define EX_X(lp)        ((int)((lp) & 0xFFFF))
 #define EX_Y(lp)        ((int)(((lp) >> 16) & 0xFFFF))

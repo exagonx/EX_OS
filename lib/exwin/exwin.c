@@ -85,6 +85,14 @@ typedef struct {
     unsigned int cx, cy;
     char         riga[TERM_RIGA_MAX];
     unsigned int riga_len;
+    /* 0 = testo normale, 1 = appena visto ESC, 2 = dentro una CSI */
+    int          ansi;
+    /* ! IL PROGRAMMA DENTRO PUO' USCIRE, e prima non lo diceva nessuno: la
+     * finestra restava aperta con dentro una shell morta. `finito` lo segna,
+     * `detto` fa si' che l'applicazione lo senta UNA volta sola — un
+     * EXM_TERMFINITO a ogni giro del ciclo sarebbe un fiume. */
+    int          finito;
+    int          detto;
 } Terminale;
 
 static Terminale g_term[TERM_MAX];
@@ -307,6 +315,39 @@ static void term_scorri(Terminale *t)
 
 static void term_carattere(Terminale *t, char c)
 {
+    /* =========================================================================
+     * ! LE SEQUENZE ANSI SI INGOIANO INTERE, NON UN CARATTERE PER VOLTA.
+     *
+     * Il commento qui sotto diceva che i caratteri di controllo si buttano, ed
+     * era vero e insufficiente: di ESC [ 9 2 m l'unico carattere sotto 0x20 e'
+     * ESC. Il resto sono lettere e cifre normali, che finivano dritte nella
+     * griglia — la prima riga di ogni terminale in finestra era
+     *
+     *     [92mex-os[97m:[96m/[97m>
+     *
+     * cioe' il prompt colorato della shell, letto alla lettera. Sembrava che
+     * la shell mandasse spazzatura, e invece mandava esattamente quello che
+     * manda a qualunque terminale: eravamo noi a non saperlo leggere.
+     *
+     * ! SI INGOIA, NON SI INTERPRETA. Fingere di avere i colori vorrebbe dire
+     * un attributo per cella e un secondo posto in cui decidere come si
+     * disegna il testo. Buttare la sequenza da' un prompt in bianco e nero —
+     * che e' esattamente quello che questa griglia sa fare.
+     * ========================================================================= */
+    if (t->ansi) {
+        /* Una sequenza CSI finisce al primo byte fra '@' e '~': fino a li' ci
+         * sono solo cifre, ';' e '?'. */
+        if (t->ansi == 1) {
+            /* Appena dopo ESC: '[' apre una CSI, qualunque altra cosa e' una
+             * sequenza breve che finisce subito. */
+            t->ansi = (c == '[') ? 2 : 0;
+            return;
+        }
+        if ((unsigned char)c >= '@' && (unsigned char)c <= '~') t->ansi = 0;
+        return;
+    }
+    if (c == 0x1B) { t->ansi = 1; return; }
+
     if (c == '\n') { t->cx = 0; t->cy++; }
     else if (c == '\r') { t->cx = 0; }
     else if (c == '\b') { if (t->cx > 0) t->cx--; t->griglia[t->cy * t->cols + t->cx] = ' '; }
@@ -347,7 +388,15 @@ static int term_leggi(Terminale *t)
         if (!(v[0].revents & POLLIN)) break;
 
         n = (int)read(t->fd_out, buf, sizeof(buf));
-        if (n <= 0) break;
+
+        /* ! read che rende 0 E' LA FINE DEI DATI, cioe' il programma dentro il
+         * terminale se n'e' andato. Fino al 17 agosto 2026 qui si usciva dal
+         * ciclo e basta: la finestra restava aperta con dentro una shell
+         * morta, e chi ci batteva dentro non capiva perche' non rispondesse
+         * piu' niente. Adesso lo si segna, e il ciclo dei messaggi lo dice
+         * all'applicazione UNA volta sola. */
+        if (n == 0) { t->finito = 1; break; }
+        if (n < 0) break;
 
         for (i = 0; i < n; i++) term_carattere(t, buf[i]);
         cambiato = 1;
@@ -850,11 +899,27 @@ int ex_prendi_msg(ExMsg *m)
             {
                 int cambiato = 0;
 
-                for (j = 0; j < TERM_MAX; j++)
-                    if (g_term[j].usato && term_leggi(&g_term[j])) {
+                for (j = 0; j < TERM_MAX; j++) {
+                    if (!g_term[j].usato) continue;
+
+                    if (term_leggi(&g_term[j])) {
                         cambiato = 1;
                         ex_procedura_base(radice_h(g_term[j].ogg), EXM_DISEGNA, 0, 0);
                     }
+
+                    /* ! E SE IL PROGRAMMA DENTRO E' USCITO, SI DICE — una
+                     * volta sola. Si consegna come un messaggio normale, cosi'
+                     * l'applicazione decide lei: chiudere la finestra, dirlo,
+                     * o riaprire un'altra shell. */
+                    if (g_term[j].finito && !g_term[j].detto) {
+                        g_term[j].detto = 1;
+                        m->finestra = radice_h(g_term[j].ogg);
+                        m->msg      = EXM_TERMFINITO;
+                        m->wp       = 0;
+                        m->lp       = 0;
+                        return 1;
+                    }
+                }
                 if (!(v[0].revents & POLLIN)) { if (cambiato) continue; continue; }
             }
         }

@@ -151,7 +151,7 @@ PROGRAMMI_FLOPPY := shell hello ls mem stack disk libctest fdisk mkfs trunc chkd
 # =============================================================================
 PROGRAMMI_CD := netdetect nettest ping ipcfg dhcp host tcptest ftp telnet xcp winprova exwincmd
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
-PROGRAMMI_EXWIN := exwin_so exdlg_so pm filemgr edit
+PROGRAMMI_EXWIN := exwin_so exdlg_so pm filemgr edit term
 
 # I driver, con la stessa regola dei programmi. Quelli di base stanno gia'
 # dentro PROGRAMMI_FLOPPY (floppy_drv, kbd_drv): sul floppy servono a
@@ -1176,12 +1176,36 @@ $(EDIT_BIN): $(EDIT_SRC) $(EDIT_LD) $(EXWIN_STUB) $(EXLIB_SRC) $(EXLIB_HDR) $(EX
 .PHONY: edit
 edit: dirs $(EDIT_BIN)
 
+# --- /exwin/bin/term: il terminale in finestra -------------------------------
+#
+# ! E' QUASI TUTTO NEL TOOLKIT. Il controllo «terminale» apre le due pipe,
+# avvia il programma e disegna la griglia: questo binario e' la finestra che ci
+# sta intorno. Per questo non si collega a exdlg — non apre file.
+TERM_SRC := exwin/bin/term/term.c
+TERM_BIN := $(BUILD_EXWIN_BIN)/term
+TERM_LD  := exwin/bin/term/term.ld
+
+$(TERM_BIN): $(TERM_SRC) $(TERM_LD) $(EXWIN_STUB) $(EXLIB_SRC) $(EXLIB_HDR) \
+             $(EXWIN_HDR) $(WIN_PROTO) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
+	@echo "=== Compilazione /exwin/bin/term ==="
+	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(TERM_SRC) -o $(BUILD_OBJ)/term_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/term_exwin.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/term_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(TERM_LD) \
+	    $(BUILD_OBJ)/term_start.o $(BUILD_OBJ)/term_main.o \
+	    $(BUILD_OBJ)/term_exwin.o $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] term compilato: $@"
+
+.PHONY: term
+term: dirs $(TERM_BIN)
+
 # ! L'ELENCO E' UN FILE E VA COPIATO, non compilato dentro: aggiungere
 # un'applicazione dev'essere una riga, non una ricostruzione.
 # ! LA LIBRERIA CONDIVISA FA PARTE DI CIO' CHE SI INSTALLA, e va messa qui
 # dentro: senza, le applicazioni finirebbero sull'immagine e la libreria no —
 # tre programmi che partono e si fermano subito dicendo che non la trovano.
-EXWIN_OUT := $(PM_BIN) $(FILEMGR_BIN) $(EDIT_BIN) $(EXWIN_SO) $(EXDLG_SO)
+EXWIN_OUT := $(PM_BIN) $(FILEMGR_BIN) $(EDIT_BIN) $(TERM_BIN) $(EXWIN_SO) $(EXDLG_SO)
 
 # --- /bin/testo: rimette lo schermo, si digita alla cieca --------------------
 #

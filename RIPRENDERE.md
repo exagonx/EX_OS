@@ -32,16 +32,13 @@ ordine di nascita:
 
 ### Cose che mancano e si vedono
 
- 1. **`/exwin/bin/term`** — la terza voce del menu punta a un programma che non
-    esiste. Il controllo «terminale» c'e' gia' dentro exwin: e' quasi solo
-    metterci intorno un `main`.
- 2. **Utenti e permessi** — la specifica completa e' nella voce «Utenti,
+ 1. **Utenti e permessi** — la specifica completa e' nella voce «Utenti,
     permessi e installazione a componenti» del 17 agosto: sette regole dettate
     dall'utente, cinque passi in ordine (`uid` nel PCB, proprietari in ext2,
     controlli nella VFS, `install` che crea gli utenti, `login` obbligatorio).
     **La parte dell'installatore e' fatta**; manca tutto il resto. E' il lavoro
     piu' grosso rimasto, e chiude il difetto del varco `*.drv`.
- 3. **I lettori di immagini**: JPG, PNG e ICO. La tabella dove aggiungerli e'
+ 2. **I lettori di immagini**: JPG, PNG e ICO. La tabella dove aggiungerli e'
     gia' in `exwin.c` e il BMP funziona: ognuno e' un lettore piu' una riga, e
     il server non se ne accorge nemmeno.
 
@@ -85,7 +82,7 @@ ordine di nascita:
 ~~Il clic nell'area del client non da' il fuoco~~: **fatto il 14 agosto 2026**,
 era `origine()` che sommava la posizione della finestra sullo schermo.
 
-~~Il file manager~~ e ~~l'editor~~: **fatti**, e l'editor ha fatto trovare
+~~Il file manager~~, ~~l'editor~~ e ~~il terminale~~: **fatti**, e l'editor ha fatto trovare
 quattro difetti vecchi — vedi la voce del 17 agosto 2026.
 
 ~~Le dipendenze del bersaglio `floppy:`~~, ~~l'audit del CD degli strumenti~~,
@@ -210,6 +207,95 @@ una definizione: senza proprietari dei file, un programma puo' copiarsi in
 `x.drv` e ripartire da li'. Con i proprietari, `/dev` appartiene a root e la
 copia non si puo' fare. E' lo stesso lavoro, e chiude un difetto dichiarato da
 giorni.
+
+# PROSSIMO LAVORO — la mappa, non il lavoro (17 agosto 2026)
+
+Il contesto e' finito prima di cominciare. Qui c'e' l'analisi gia' fatta, cosi'
+chi riprende non la rifa'.
+
+## L'ordine deciso, e perche'
+
+ 1. **Il toolkit** (`ex_fuoco()`, lista a scorrimento, area di testo
+    multiriga). E' l'abilitante: quattro applicazioni su quattro si sono
+    disegnate l'elenco a mano, e il fuoco ha gia' morso una volta. Sta tutto
+    dentro `exwin.so`, che e' gia' condivisa — nessun lavoro di infrastruttura.
+ 2. **Utenti e permessi.** La giornata vera, e la specifica e' gia' scritta
+    nella voce «Utenti, permessi e installazione a componenti».
+ 3. **I lettori di immagini**, e vanno in una **libreria nuova**: `eximg.so`.
+    Non dentro `exwin.so` — per la stessa ragione per cui `exdlg` e' separata:
+    una barra delle applicazioni non decodifica JPEG mai, e un decodificatore
+    baseline sono ~1500 righe che pagherebbero tutti. Fetta libera:
+    **0x04C00000** (vedi la mappa in `lib/exwin/exwin.ld`).
+
+## `lib/exwin/exwin.c` in numeri — analisi gia' fatta
+
+    1109 righe
+
+    classi: CL_ETICHETTA CL_FINESTRA CL_INTESTAZIONE CL_PULSANTE
+            CL_RIQUADRO CL_SEPARATORE CL_TERMINALE CL_TESTO
+
+    Oggetto: usato classe id win_id padre h stile titolo proc pix
+             passo_px premuto fuoco cursore
+
+I tre punti da toccare per una classe nuova:
+
+  - `classe_da_nome()` — la stringa diventa un `CL_`;
+  - `disegna_oggetto()` — lo switch che disegna;
+  - `tasto_al_fuoco()` — chi consuma i tasti (oggi solo `CL_TESTO` e
+    `CL_TERMINALE`);
+  - piu' `accetta_fuoco()`, che decide chi puo' avere il fuoco.
+
+! **`ex_fuoco()` E' LA PIU' PICCOLA E VA FATTA PER PRIMA.** `fuoco_metti()`
+esiste gia' ed e' `static`: serve solo esportarla, aggiungerla a
+`exwin_esporta.c` e allo stub. Sblocca subito il dialogo di ExDlg, dove oggi la
+casella si crea per prima **solo** per prendersi il fuoco — e c'e' un commento
+che promette di rimettere le righe in ordine quando questa funzione ci sara'.
+
+! **LA LISTA E L'AREA DI TESTO HANNO BISOGNO DI PIU' STATO DI QUANTO `Oggetto`
+NE ABBIA.** Il terminale ha risolto lo stesso problema con una tabella a parte
+(`g_term[TERM_MAX]`, e `term_di()` che la trova dall'oggetto): e' lo schema da
+copiare, non da reinventare.
+
+! **E OGNI NOME NUOVO VA IN `exwin_esporta.c` E NELLO STUB.** Aggiungere una
+funzione alla libreria e dimenticarsi lo stub da' un simbolo che non si
+risolve — e il messaggio lo dice, col nome, ma solo a chi lo esegue.
+
+# /exwin/bin/term, e il prompt che si leggeva alla lettera (17 agosto 2026)
+
+    term: /bin/sh aperto in una finestra 644x404 (80 colonne per 25 righe)
+
+    la griglia, prima:   [92mex-os[97m:[96m/[97m>
+    dopo:                ex-os:/>
+
+La terza voce del menu esiste. E' quasi tutta nel toolkit — il controllo
+«terminale» apre le due pipe, avvia il programma e disegna la griglia — e
+questo binario e' la finestra che ci sta intorno, di misura **multipla esatta
+della cella**: 80x25 celle da 8x16, cioe' 640x400 di area utile. Una misura
+qualunque lascerebbe una striscia nera che sembra un difetto di disegno e
+invece e' aritmetica.
+
+! **LE SEQUENZE ANSI SI INGOIANO INTERE, NON UN CARATTERE PER VOLTA.** Il
+codice diceva gia' «i caratteri di controllo si buttano», ed era vero e
+insufficiente: di `ESC [ 9 2 m` l'unico carattere sotto 0x20 e' `ESC`. Il resto
+sono lettere e cifre normali, che finivano dritte nella griglia. Sembrava che
+la shell mandasse spazzatura, e invece mandava esattamente quello che manda a
+qualunque terminale: eravamo noi a non saperlo leggere. Adesso c'e' uno stato —
+tre valori — che ingoia la sequenza fino al byte finale.
+
+! **SI INGOIA, NON SI INTERPRETA.** Fingere di avere i colori vorrebbe dire un
+attributo per cella e un secondo posto in cui decidere come si disegna il
+testo. Buttare la sequenza da' un prompt in bianco e nero, che e' esattamente
+quello che questa griglia sa fare.
+
+! **E ADESSO IL TERMINALE SI CHIUDE QUANDO LA SHELL ESCE.** Prima `read` rendeva
+0 e il ciclo usciva in silenzio: la finestra restava aperta intorno a una shell
+morta, accettava i tasti, li mostrava e non rispondeva — sembrava bloccata
+mentre era semplicemente vuota. C'e' un messaggio nuovo, `EXM_TERMFINITO`,
+consegnato **una volta sola** alla finestra che contiene il terminale.
+
+Restano dichiarati: niente `Ctrl+C` (un segnale attraverso una pipe non si
+manda), niente cronologia ne' frecce (le fa la line discipline, e una pipe non
+ne ha), e la finestra non si ridimensiona.
 
 # Utenti, permessi e installazione a componenti — la specifica (17 agosto 2026)
 
