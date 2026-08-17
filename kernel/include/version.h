@@ -52,7 +52,13 @@
 #define EXOS_LONGNAME   "Extensible Operating System"
 
 /* ▲ INCREMENTARE DI 0.001 A OGNI MODIFICA DEL KERNEL ▲ */
-#define EXOS_VERSION    "0.176"
+/* 0.176 -> 0.184: otto modifiche al kernel non ancora contate, dal 14 al 17
+ * agosto 2026 — SYS_VIDEO_INFO, SYS_LOG, SPAWN_F_CONSOLE, il tetto di
+ * mmio_map alzato a 16 MB, SYS_LIB_APRI con kernel/loader/lib.c, la guardia
+ * su `kex` letto senza essere stato riempito, SpawnExtra ridotta a una
+ * definizione sola (lib/include/spawn_abi.h) e il formato ELF salito in
+ * elf.h perche' i lettori sono diventati due. */
+#define EXOS_VERSION    "0.184"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

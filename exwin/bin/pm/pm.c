@@ -276,8 +276,14 @@ int main(int argc, char **argv)
         ExFinestra scr = ex_crea("finestra", "", EX_SFONDO,
                                  0, 0, (int)g_sw, (int)g_sh - BARRA_H, 0, 0, 0);
         if (!scr) {
+            /* ! IL CONSIGLIO E' «exwin», NON IL DRIVER A MANO, e la
+             * differenza non e' comodita': wserver.drv avviato cosi' nasce
+             * sulla console della shell e le contende la tastiera. E' exwin
+             * che lo fa ripartire su una console sua. Un messaggio che
+             * suggerisce il comando sbagliato costa piu' di un messaggio che
+             * non dice niente. */
             printf("pm: il server a finestre non risponde.\n");
-            printf("    Avvialo:  /cdrom/dev/wserver.drv -c 1 &\n");
+            printf("    Avvialo con:  exwin\n");
             return 1;
         }
         ex_riempi(scr, 0, 0, (int)g_sw, (int)g_sh - BARRA_H, EX_BLU);

@@ -76,7 +76,7 @@
  * cioe' sopra qualunque cosa il compilatore avesse messo dopo. Il sintomo era
  * «video_info non risponde», che non somiglia per niente a una scrittura fuori
  * limite. Chi aggiunge una syscall aggiorna anche questo. */
-#define SYSCALL_COUNT   248     /* la piu' alta e' SYS_LOG = 247 */
+#define SYSCALL_COUNT   249     /* la piu' alta e' SYS_LIB_APRI = 248 */
 
 /* =============================================================================
  * Codici errno
@@ -501,6 +501,26 @@ typedef struct {
  * ========================================================================== */
 #define SYS_LOG           247   /* ebx = const char*, ecx = lunghezza */
 #define SYS_LOG_MAX       200
+
+/* ==========================================================================
+ * SYS_LIB_APRI (248) — aggancia una libreria condivisa a questo processo
+ *
+ *     ebx = const char *percorso      es. "/exwin/lib/exwin.so"
+ *     rende l'indirizzo della TABELLA DI ESPORTAZIONE, o un -errno
+ *
+ * ! RENDE UN INDIRIZZO, NON UNA MANIGLIA, e va bene che sia positivo: la
+ * fascia delle librerie e' 0x04000000-0x08000000, quindi il valore non puo'
+ * mai essere confuso con un -errno. Una maniglia vorrebbe una tabella per
+ * processo per tradurla, e non servirebbe a niente: quello che il chiamante
+ * vuole e' proprio l'indirizzo da cui leggere i nomi.
+ *
+ * ! LA LIBRERIA SI CARICA UNA VOLTA SOLA per tutto il sistema; il secondo
+ * processo che la chiede si vede mappare LE STESSE pagine di codice. Vedi
+ * kernel/loader/lib.c per cosa si condivide e cosa no.
+ *
+ * La tabella e' un ExLibTesta — vedi lib/include/exlib.h.
+ * ========================================================================== */
+#define SYS_LIB_APRI      248   /* ebx = const char* */
 
 /* La mailbox IPC come sorgente. MAX_FD e' il primo numero che un descrittore
  * vero non puo' avere: vedi sched.h. */
@@ -997,6 +1017,7 @@ int32_t sys_poll(InterruptFrame *f);
 int32_t sys_modo_testo(InterruptFrame *f);
 int32_t sys_video_info(InterruptFrame *f);
 int32_t sys_log(InterruptFrame *f);
+int32_t sys_lib_apri(InterruptFrame *f);
 int32_t sys_shm_apri(InterruptFrame *f);
 int32_t sys_shm_chiudi(InterruptFrame *f);
 int32_t sys_ioport_bind(InterruptFrame *f);
@@ -1041,58 +1062,11 @@ int32_t sys_random(InterruptFrame *f);
  * il proprio. Basta a `gcc`, che redirige l'uscita di cc1 su un file
  * temporaneo; non basta alle pipe, che infatti non ci sono ancora.
  * ============================================================================= */
-/* ! 'SPNY' E NON PIU' 'SPNX' (agosto 2026): e' cambiata la disposizione
- * di SpawnAzione, che ha due campi in piu'. Un binario compilato per la
- * forma vecchia verrebbe letto storto, e una redirezione letta storta
- * scrive nel file sbagliato. Con la magia nuova il kernel non riconosce il
- * blocco e lo ignora, che e' il modo meno dannoso di sbagliare. */
-/* ! 'SPNZ' DAL 14 AGOSTO 2026: SpawnExtra ha due campi in piu' (flag e
- * console). Stessa ragione del cambio precedente — un blocco compilato per la
- * forma vecchia e' piu' corto, e leggerlo con la disposizione nuova
- * significherebbe prendere per «console» quello che il chiamante non ha
- * nemmeno scritto. Con la magia nuova il kernel non lo riconosce e lo ignora,
- * che e' il modo meno dannoso di sbagliare. */
-#define SPAWN_EXTRA_MAGIA    0x53504E5Au   /* 'SPNZ' */
-
-/* Il figlio nasce sulla console indicata invece che su quella del padre. */
-#define SPAWN_F_CONSOLE      0x00000001u
-#define SPAWN_MAX_AZIONI     4
-#define SPAWN_RED_PATH_MAX   128
-
-/* Le due cose che si possono fare a un descrittore del figlio. */
-#define SPAWN_AZ_FILE   0   /* apri `percorso` e mettilo su `fd` */
-#define SPAWN_AZ_FD     1   /* ! dai al figlio il descrittore `fd_padre` DEL PADRE */
-
-typedef struct {
-    uint32_t tipo;                        /* SPAWN_AZ_FILE / SPAWN_AZ_FD */
-    uint32_t fd;                          /* descrittore del FIGLIO da sostituire */
-    uint32_t flags;                       /* O_RDONLY/O_WRONLY/O_CREAT/... */
-    int32_t  fd_padre;                    /* SPAWN_AZ_FD: quale fd del padre */
-    char     percorso[SPAWN_RED_PATH_MAX];
-} SpawnAzione;
-
-typedef struct {
-    uint32_t    magia;                    /* SPAWN_EXTRA_MAGIA, o il blocco e' ignorato */
-    char      **envp;                     /* NULL-terminato; NULL = nessun ambiente */
-    uint32_t    n_azioni;
-    SpawnAzione azioni[SPAWN_MAX_AZIONI];
-
-    /* ! LA CONSOLE SU CUI NASCE IL FIGLIO — aggiunta il 14 agosto 2026.
-     *
-     * Serve al server grafico: deve poter stare su una console tutta sua,
-     * mentre su un'altra continua a girare una shell, e con Alt+Fn si passa
-     * dall'una all'altra. Senza, il figlio eredita e basta (`child->console =
-     * parent->console`), quindi il server nasce dove gira chi l'ha lanciato —
-     * cioe' addosso alla shell, e i due si contendono lo schermo.
-     *
-     * ! IL VALORE E' GUARDATO SOLO SE IL FLAG C'E', e non e' pedanteria. Se
-     * «console 0» fosse il modo di dire «eredita», un chiamante che azzera la
-     * struttura con memset — cioe' il modo normale di riempirla — chiederebbe
-     * la console 0 senza volerlo. Con il flag, azzerare vuol dire eredita, che
-     * e' il comportamento di sempre. */
-    uint32_t    flag;                     /* SPAWN_F_* */
-    uint32_t    console;                  /* valido solo con SPAWN_F_CONSOLE */
-} SpawnExtra;
+/* ! LA STRUTTURA STA IN UN FILE SOLO dal 17 agosto 2026. Ne esistevano
+ * quattro copie e una e' rimasta indietro: la shell ha perso redirezioni e
+ * ambiente per tre giorni, in silenzio. Vedi lib/include/spawn_abi.h, che
+ * spiega per esteso com'e' andata. */
+#include "spawn_abi.h"
 
 /* Verifica indirizzo utente (evita accessi kernel da ring3) */
 int     syscall_verify_ptr(const void *ptr, uint32_t size);

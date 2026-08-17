@@ -268,9 +268,59 @@ static int trova_id(unsigned int id)
     return -1;
 }
 
+/* =============================================================================
+ * IL FUOCO NON E' L'ORDINE DI DISEGNO — corretto il 17 agosto 2026
+ *
+ * Fino a oggi il tasto andava a `g_ordine[g_n_ordine - 1]`, cioe' alla
+ * finestra disegnata per ultima, con il commento «la finestra in cima, che e'
+ * il fuoco». Era vero finche' l'ordine di disegno dipendeva solo da chi si era
+ * portato davanti.
+ *
+ * Ha smesso di esserlo il 14 agosto, con WIN_ST_SOPRA: in_cima() rimette in
+ * fondo all'ordine — cioe' in cima allo schermo — tutte le finestre «sopra»,
+ * qualunque cosa sia appena salita. E la barra delle applicazioni e' «sopra».
+ *
+ * ! QUINDI DA QUEL GIORNO LA BARRA SI PRENDEVA OGNI TASTO, e nessuna finestra
+ * poteva riceverne uno finche' il program manager era acceso. L'editor
+ * sembrava sordo: non arrivava niente, ne' le lettere ne' Ctrl+S. Il difetto
+ * non era nell'editor ne' in WIN_ST_SOPRA — era in questa funzione, che
+ * decideva DUE cose mentre il suo nome ne prometteva una.
+ *
+ * Adesso il fuoco e' una variabile sua. Chi sale prende il fuoco; le finestre
+ * «sopra» e lo sfondo restano dove devono stare a schermo senza portarselo
+ * via, e lo prendono solo se ci si clicca dentro davvero.
+ * ============================================================================= */
+static int g_fuoco = -1;        /* indice della finestra che riceve i tasti */
+
+/* Chi puo' tenere il fuoco per conto suo, cioe' senza esserci stato messo da
+ * un clic: non lo sfondo (non e' una finestra con cui si parla) e non la barra
+ * (c'e' sempre, e vincerebbe sempre). */
+static int prende_fuoco_da_solo(int idx)
+{
+    return !(g_fin[idx].stile & (WIN_ST_SFONDO | WIN_ST_SOPRA));
+}
+
+/* Il fuoco quando quello di prima se n'e' andato: la finestra normale piu' in
+ * alto. Se non ce n'e' nessuna, nessun fuoco — meglio di uno a caso. */
+static void fuoco_ricalcola(void)
+{
+    int k;
+
+    g_fuoco = -1;
+    for (k = (int)g_n_ordine - 1; k >= 0; k--) {
+        int idx = (int)g_ordine[k];
+        if (g_fin[idx].usata && prende_fuoco_da_solo(idx)) { g_fuoco = idx; return; }
+    }
+}
+
 static void in_cima(int idx)
 {
     unsigned int k, j = 0;
+
+    /* ! IL FUOCO SI DA' QUI, PRIMA DEL RIORDINO, e non si legge dall'ordine
+     * dopo: e' proprio il riordino a mentire. Chi si porta davanti prende i
+     * tasti anche se poi lo schermo lo disegna sotto alla barra. */
+    if (g_fin[idx].usata && !(g_fin[idx].stile & WIN_ST_SFONDO)) g_fuoco = idx;
 
     for (k = 0; k < g_n_ordine; k++)
         if (g_ordine[k] != (unsigned int)idx) g_ordine[j++] = g_ordine[k];
@@ -447,15 +497,18 @@ static void kbd_giro(void)
     }
 }
 
-/* Il tasto va alla finestra in cima, che e' il fuoco. */
+/* Il tasto va alla finestra col FUOCO, che non e' quella disegnata per ultima:
+ * vedi il blocco sopra in_cima(). */
 static void kbd_tasto(unsigned int k)
 {
     g_key_chiesta = 0;
 
     if (g_n_ordine == 0) return;
+    if (g_fuoco < 0 || !g_fin[g_fuoco].usata) fuoco_ricalcola();
+    if (g_fuoco < 0) return;
 
     {
-        Finestra *f = &g_fin[g_ordine[g_n_ordine - 1]];
+        Finestra *f = &g_fin[g_fuoco];
         WinEvento e;
 
         if (!f->usata) return;
@@ -666,6 +719,13 @@ static void distruggi(int idx)
         if (g_ordine[k] != (unsigned int)idx) g_ordine[j++] = g_ordine[k];
     g_n_ordine = j;
     if (g_trascino == idx) g_trascino = -1;
+
+    /* ! CHI SE NE VA SI PORTA VIA IL FUOCO, e va ridato a qualcuno. Senza,
+     * g_fuoco resterebbe l'indice di uno slot azzerato: i tasti finirebbero a
+     * una finestra che non c'e' piu' — cioe' da nessuna parte, e chiudere un
+     * editor renderebbe muto quello rimasto aperto. */
+    if (g_fuoco == idx) fuoco_ricalcola();
+
     g_sporco = 1;
 }
 
@@ -771,6 +831,30 @@ int main(int argc, char **argv)
     VideoInfo v;
     MmioZona  m;
     int i, chiesta = -1;
+
+    /* =========================================================================
+     * ! «-i» SI RISPONDE E SI ESCE, PRIMA DI QUALUNQUE ALTRA COSA.
+     *
+     * `hwconfig -d` sceglie quali driver installare provandoli uno per uno con
+     * `-i`: si aspetta che ognuno dica cosa fa e ritorni. Fino al 17 agosto
+     * 2026 wserver non conosceva quel flag, lo ignorava, e PARTIVA PER DAVVERO
+     * — e un server non esce mai. L'installazione dal CD si fermava li', dopo
+     * aver gia' sostituito kernel e stage2: un disco a meta', e un log che
+     * finiva con «wserver: entro nel ciclo» invece che con un errore.
+     *
+     * Non si e' mai visto installando dal floppy, che nel suo catalogo
+     * wserver.drv non ce l'ha. E' bastato che l'installazione dal CD diventasse
+     * una cosa che si prova.
+     * ========================================================================= */
+    for (i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-i") == 0) {
+            printf("wserver: il server a finestre di EX-OS.\n");
+            printf("         Nessuna periferica propria: usa il framebuffer\n");
+            printf("         che ha impostato Stage 2. Serve solo a chi vuole\n");
+            printf("         l'interfaccia grafica — si avvia con  exwin\n");
+            return 0;
+        }
+    }
 
     /* ! CHI SIAMO E DOVE SIAMO, PRIMA DI DIRE QUALUNQUE COSA. Il primo
      * messaggio con lo schermo citava g_console mentre era ancora zero, e

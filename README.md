@@ -2,7 +2,7 @@
 
 **🇮🇹 Italiano** · [🇬🇧 English](README.en.md)
 
-**Versione:** 0.176
+**Versione:** 0.184
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 32-bit, floppy FAT12 1.44MB
@@ -69,6 +69,192 @@ propri header senza che nessuno glielo dica, e concatena da sé cc1, `as`,
 Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### L'interfaccia grafica: un server a finestre in ring 3
+
+| | |
+|---|---|
+| `/dev/wserver.drv` compone le finestre e muove il puntatore, **in ring 3** | testato |
+| Toolkit **ExWin** in stile Win32, con header per **C, C++ e FreeBASIC** | testato |
+| Controlli: finestra, pulsante, etichetta, casella di testo, riquadro, separatore, intestazione, terminale | testato |
+| `exwin` accende la grafica su una **console sua**: con Alt+F2 ci si va, con Alt+F1 si torna alla shell | testato |
+| Una **shell dentro una finestra**, su due pipe | testato |
+| Sfondo da immagine: oggi BMP, e la tabella dei lettori è già quella giusta per JPG, PNG e ICO | testato |
+
+! **GIRA IN RING 3, ED È IL PUNTO.** Quando il server muore, muore lui: kernel,
+scheduler, console seriale e tastiera restano vivi, e lo schermo si rimette con
+`/bin/testo` — che si digita alla cieca ed è la rete di sicurezza costruita
+apposta *prima* di scrivere il server.
+
+! **NON DISEGNA IL CONTENUTO DELLE FINESTRE, LO COMPONE.** Ogni finestra è una
+zona di memoria condivisa che il client riempie di pixel; il server ci mette
+bordo e barra del titolo, le impila e le copia nel framebuffer. Un client che
+sbaglia a disegnare rovina la propria finestra, non lo schermo. Ed è anche
+perché i decodificatori di immagini stanno nella libreria del client: un
+lettore JPG dentro il server sarebbe un difetto di **tutte** le applicazioni
+insieme.
+
+! **I CLIENT DISEGNANO SEMPRE IN ARGB A 32 BIT** e non sanno com'è fatto lo
+schermo. La conversione a 16, 24 o 32 bit sta in un posto solo. Un toolkit che
+dovesse conoscere il formato dello schermo avrebbe sei strade da provare invece
+di una.
+
+### La scrivania: `/exwin`, barra delle applicazioni e menu di avvio
+
+| | |
+|---|---|
+| `pm` — scrivania, barra in basso, pulsante **Avvio**, menu con le applicazioni | testato |
+| Voci **Esci** (torna alla shell) e **Spegni** nel menu | testato |
+| `/exwin/bin`, `/exwin/lib`, `/exwin/dev` — le applicazioni grafiche **non stanno in `/bin`** | testato |
+| L'elenco delle applicazioni è un **file di testo**, `/exwin/lib/applicazioni.txt` | testato |
+| `filemgr` — file manager: elenco che scorre, directory in cima, apre i file con l'editor | testato |
+| `edit` — editor di testo: frecce, Home/End, PgSu/PgGiù, Canc, clic del mouse, Ctrl+S, Ctrl+Q | testato |
+
+! **LE APPLICAZIONI GRAFICHE NON STANNO IN `/bin`, ED È UNA DECISIONE.** I
+programmi di `/bin` si lanciano da una shell e parlano con un terminale; questi
+vogliono il server a finestre, e lanciati senza non fanno niente. Mescolarli
+vorrebbe dire un `ls /bin` in cui metà dei nomi non si può usare lì dove si sta
+guardando. Stessa ragione per cui i driver stanno in `/dev`.
+
+! **L'ELENCO È UN FILE, NON UNA TABELLA COMPILATA.** Aggiungere
+un'applicazione è una riga. Un elenco dentro il binario vorrebbe dire rifare il
+program manager per ogni applicazione nuova, e **chi installa un programma non
+ha i sorgenti**.
+
+! **UN FILE PIÙ GRANDE DEI LIMITI L'EDITOR LO CARICA IN PARTE E BLOCCA IL
+SALVATAGGIO.** Salvare quello che si è letto vorrebbe dire cancellare il resto
+del file senza averlo mai mostrato: è il modo più silenzioso che un editor
+abbia di distruggere dei dati. Il limite — 512 righe, 200 colonne — è una
+conseguenza dell'allocatore a bump, dove `free()` non restituisce niente.
+
+### Le librerie condivise: `exwin.so`, `exdlg.so`, `libc.so`
+
+| | |
+|---|---|
+| `SYS_LIB_APRI` (248): il kernel mappa una libreria **una volta** e la aggancia a chi la chiede | testato |
+| `.text`/`.rodata` **condivise** fra i processi; `.data`/`.bss` copia privata | testato |
+| Risoluzione **per nome**, non per posizione: si aggiorna la libreria senza ricompilare le applicazioni | testato |
+| `/lib/libc.so` — **322 funzioni**, usata da 39 programmi | testato |
+| `/exwin/lib/exwin.so` — il toolkit; `/exwin/lib/exdlg.so` — i dialoghi Apri/Salva | testato |
+| Gli header non cambiano di una riga, e nemmeno il sorgente delle applicazioni | testato |
+
+```
+    0x04000000   exwin.so    il toolkit
+    0x04400000   exdlg.so    i dialoghi
+    0x04800000   libc.so     la libreria C
+    0x08000000   i programmi
+```
+
+Il risparmio, misurato:
+
+| | prima | dopo |
+|---|---|---|
+| `/bin` in tutto | 850.132 | **608.468** |
+| ISO di EX-OS | 4728 KB | **4252 KB** |
+| `libctest` (testo) | 64.861 | **33.312** |
+| applicazioni grafiche | ~37.000 | **~15.000** |
+
+! **NON È COLLEGAMENTO DINAMICO VERO, ED È DELIBERATO.** Un `.so` con `ld.so`,
+codice PIC, GOT e PLT è la strada standard, ed è mesi di lavoro: caricatore ELF
+da riscrivere, un linker dinamico da scrivere, la libc ricompilata PIC. E ogni
+difetto lì dentro sarebbe un difetto di **tutte** le applicazioni insieme.
+
+Qui la libreria è un ELF normalissimo — `ET_EXEC`, non PIC — collegato a un
+indirizzo **riservato**: sta sempre lì, quindi non c'è niente da rilocare e non
+serve nessuna GOT. Ciò che serviva davvero — aggiornare la libreria senza
+ricompilare le applicazioni — si ottiene con la risoluzione per nome.
+
+! **L'ORDINE DELLA TABELLA NON È PARTE DELL'ABI.** Con una tabella posizionale,
+riordinare le voci romperebbe ogni applicazione già compilata e nessun errore
+lo direbbe: si chiamerebbe semplicemente la funzione sbagliata. Coi nomi si può
+aggiungere, riordinare e riscrivere il corpo di qualunque funzione. Solo
+**togliere** un nome rompe — ed è esattamente il patto di una DLL.
+
+! **LE FUNZIONI SI PASSANO SENZA CONOSCERNE LA FIRMA.** Sono 322: scriverne i
+ponti in C vorrebbe dire copiare 322 firme, ognuna sbagliabile in silenzio. Un
+ponte in assembly è un `jmp` indiretto, che non tocca né gli argomenti né il
+valore di ritorno — `printf: ff 25 c4 25 00 08  jmp *0x80025c4`. È lo stesso
+mestiere di una PLT, e li genera `tools/genlibc.py` leggendo i simboli veri con
+`nm`.
+
+! **LE CINQUE VARIABILI GLOBALI NO.** `errno`, `stdin`, `stdout`, `stderr`,
+`environ`: un programma che scrive `errno = 0` scriverebbe nella **propria**
+copia mentre la libc legge la sua — due variabili con lo stesso nome, e nessun
+errore da nessuna parte. Si esporta l'indirizzo e l'header lo trasforma in una
+lettura: `#define errno (*__errno_dove())`. Il sorgente di chi le usa non
+cambia.
+
+! **E L'AVVIO NON SI PUÒ CONDIVIDERE.** `_libc_start` tocca `main`,
+`__init_array_*` e `__fini_array_*`, che appartengono al binario in cui si
+trovano. Dentro la libreria `main` non esisterebbe nemmeno, e i vettori
+sarebbero quelli della libreria — vuoti: i costruttori globali del programma
+non girerebbero mai, **e nessuno lo direbbe**.
+
+! **`login` E `install` RESTANO STATICI**, ed è una decisione: sono i due
+programmi con cui si entra e con cui si ripara. Se `libc.so` mancasse o fosse
+rotta, un login collegato a lei renderebbe il sistema inaccessibile e non ci
+sarebbe modo di rimediare dall'interno.
+
+### L'installazione a componenti
+
+| | |
+|---|---|
+| `install` mostra i componenti trovati sul supporto e li chiede **uno per uno** | testato |
+| `install -m` sistema minimale, `install -t` tutto: nessuna domanda | testato |
+| `copia_albero()` segue le sottodirectory: un componente non è fatto di un livello solo | testato |
+
+! **IL SISTEMA MINIMALE È UN ELENCO CHIUSO; TUTTO IL RESTO È OPZIONALE.**
+`bin`, `boot`, `lib`, `dev`, `drivers` sono ciò senza cui EX-OS non parte.
+Qualunque **altra** directory nella radice del supporto è un componente, e
+l'installatore la trova da solo.
+
+È il contrario di un elenco scritto dentro l'installatore: aggiungere un
+pacchetto — oggi `/exwin`, domani quello che sarà — vuol dire **metterne la
+directory sul supporto, e basta**. Chi prepara un pacchetto non ha i sorgenti
+dell'installatore.
+
+! **LA SCELTA SI FA PRIMA DI SCRIVERE.** Chiedere «installo anche /exwin?» dopo
+aver già sostituito il kernel vorrebbe dire che rispondere «annulla» non
+annulla più niente.
+
+### Quattro difetti vecchi, e cosa hanno in comune
+
+| | |
+|---|---|
+| Il fuoco della tastiera non era il fuoco: la barra si prendeva ogni tasto | corretto |
+| La shell aveva perso redirezioni e ambiente per tre giorni, in silenzio | corretto |
+| `wserver.drv` non conosceva `-i`: la sonda lo **avviava** e l'installazione dal CD si fermava | corretto |
+| `cat` senza argomenti non leggeva `stdin`, quindi in una pipe non serviva a niente | corretto |
+
+! **IL FUOCO NON ERA IL FUOCO.** Il server mandava il tasto alla finestra
+disegnata per ultima. Vero finché l'ordine di disegno dipendeva solo da chi si
+era portato davanti; falso da quando esiste `WIN_ST_SOPRA`, che tiene la barra
+delle applicazioni sempre in cima. Da quel giorno **nessuna finestra poteva
+ricevere un tasto** col program manager acceso. Il difetto non era nell'editor
+che sembrava sordo, né in `WIN_ST_SOPRA`: era in una funzione che decideva
+**due** cose mentre il suo nome ne prometteva una.
+
+! **UNA MAGIA PROTEGGE DAL DANNO, NON DALLO SFASAMENTO.** Di `SpawnExtra` — la
+struttura che attraversa la syscall `spawn` — c'erano **quattro copie**. Tre
+sono state aggiornate, la quarta (quella della shell) no. Il kernel ha fatto
+esattamente ciò per cui la magia esiste: non ha riconosciuto il blocco e l'ha
+**ignorato** invece di leggerlo storto. Ma «ignorato» vuol dire che per tre
+giorni `hello > file` stampava a video e lasciava il file a zero byte, **senza
+un messaggio**. Un silenzio non si nota.
+
+La correzione non è aggiornare la quarta copia: è **non averne quattro**.
+`lib/include/spawn_abi.h` è la definizione unica, e in fondo ha
+`typedef char spawn_abi_misura_invariata[(sizeof(SpawnExtra) == 596) ? 1 : -1];`
+— un campo aggiunto senza cambiare la magia adesso ferma la **compilazione**.
+
+! **E SEI VOLTE «UN'USCITA CHE NON SA DI ESSERE SCADUTA».** Dipendenze finte
+del bersaglio floppy, `uhci.drv` mancante fra quelle dell'ISO, la risoluzione
+SVGA non prerequisito di Stage 2, le immagini che non dipendevano dal
+`Makefile`, e due volte una variabile del `Makefile` usata come prerequisito
+**prima** di essere definita — dove `make` la espande a stringa vuota. La
+seconda ha fatto credere che 294 prove girassero sulla libc condivisa mentre
+giravano su quella statica. **Un prerequisito scritto con una variabile vuota
+non è un prerequisito debole: non esiste, e nessuno lo dice.**
 
 ### Driver: li sceglie la macchina, non li copia in blocco
 
@@ -712,6 +898,26 @@ Wrapper libc: `getconf()`, `osversion()`, `verboseboot()`.
 2 halt). Sincronizza sempre il filesystem e ferma lo scheduler prima di
 agire — vedi sotto.
 
+
+### Le syscall aggiunte nella 0.184
+
+| EAX | Syscall       | EBX          | ECX       | EDX | A cosa serve |
+|-----|---------------|--------------|-----------|-----|--------------|
+| 246 | video_info    | `VideoInfo*` | —         | —   | dov'è il framebuffer e che forma ha |
+| 247 | log           | `const char*`| lunghezza | —   | una riga sul log del kernel, cioè sulla **seriale** |
+| 248 | lib_apri      | `const char*`| —         | —   | mappa una libreria condivisa e rende la sua tabella |
+
+`log` non è un doppione di `printf`, e la differenza conta: `printf` scrive
+sulla console del processo, e se quella console non è quella a video il
+messaggio non lo legge nessuno — cioè esattamente il caso per cui esiste, un
+server grafico che gira su una console sua. Uno strumento cieco costa più del
+difetto che deve trovare.
+
+`lib_apri` rende un **indirizzo**, non una maniglia, e va bene che sia
+positivo: la fascia delle librerie è 0x04000000-0x08000000, quindi il valore
+non può mai essere confuso con un -errno. Quello che il chiamante vuole è
+proprio l'indirizzo da cui leggere i nomi.
+
 ---
 
 ## /bin/mkdir e /bin/rmdir
@@ -948,6 +1154,57 @@ letta. *Salva con nome* su un file diverso è invece permesso.
 per uno, e la modalità raw vive nel driver tastiera. Senza quel servizio
 gfedit non parte e rimanda a textline, invece di mostrare un'interfaccia che
 non risponderebbe.
+
+---
+
+## L'interfaccia grafica in pratica
+
+```
+exwin                       accende la grafica su una console sua
+                            Alt+F2 ci va, Alt+F1 torna alla shell
+
+/exwin/bin/pm               la scrivania (la avvia exwin da sola)
+/exwin/bin/filemgr [DIR]    il file manager
+/exwin/bin/edit [FILE]      l'editor di testo
+```
+
+Avviata la grafica, la shell **resta viva sulla console 0**: si continua a
+lavorare da lì e con `Alt+F2` si passa alla scrivania.
+
+! **LE APPLICAZIONI SI LANCIANO DALLA CONSOLE DELLA SHELL, POI SI COMMUTA.**
+Battendo il comando *dopo* `Alt+F2` i tasti vanno al server grafico, non alla
+shell — e sembra che il sistema si sia bloccato. È la stessa separazione che
+rende possibile tutto il resto, vista dal lato scomodo.
+
+### L'editor
+
+| tasto | cosa fa |
+|---|---|
+| frecce, Home/End, PgSu/PgGiù | muovono il cursore |
+| Backspace, Canc | cancellano indietro e avanti |
+| Invio | spezza la riga |
+| clic del mouse | posiziona il cursore |
+| Ctrl+S | salva; senza nome apre il dialogo **Salva con nome** |
+| Ctrl+Q | esce; se il testo è modificato avvisa e chiede di nuovo |
+
+I pulsanti sono **Nuovo**, **Apri**, **Salva**, **Salva come**, **Ricarica**.
+«Apri» e «Salva con nome» stanno in `exdlg.so`, la libreria condivisa dei
+dialoghi, che usa anche il file manager.
+
+Manca, dichiarato: annullamento, selezione e appunti. E un dialogo con
+**sì/no**: oggi «vuoi perdere le modifiche?» si chiede facendo premere due
+volte lo stesso pulsante, e si vede che è un ripiego.
+
+### Il file manager
+
+Elenco che scorre, **directory in cima**, pulsanti `Su` e `Apri`, riga di
+stato col percorso. Frecce e Invio oltre al mouse. Premendo «Apri» su un file
+lo passa all'editor, cercandolo in `/exwin/bin` e poi in `/cdrom/exwin/bin`.
+
+! **LE DIRECTORY VENGONO PRIMA, E NON È ESTETICA:** in una directory con cento
+file, quelle in cui si vuole entrare sarebbero sparse in mezzo. È l'unica cosa
+che questo elenco ordina — ordinare i nomi vorrebbe dire un confronto che
+dipende dalla lingua.
 
 ---
 
@@ -1280,6 +1537,60 @@ che nulla lo segnali.
 
 ---
 
+### `install -m` / `install -t` — minimale, oppure con i componenti
+
+```
+install /disk          mostra i componenti e li chiede uno per uno
+install -m /disk       solo il sistema minimale, nessuna domanda
+install -t /disk       sistema e tutti i componenti, nessuna domanda
+```
+
+L'installatore guarda la radice del supporto di avvio e chiama **sistema
+minimale** un elenco chiuso: `bin`, `boot`, `lib`, `dev`, `drivers`. Qualunque
+altra directory è un componente, e viene mostrata e chiesta:
+
+```
+===============================================================
+ COSA INSTALLARE
+===============================================================
+
+Il sistema minimale e' sempre incluso: kernel, /bin, /lib,
+i driver e l'avvio. Senza quello EX-OS non parte.
+
+Su questo supporto ci sono anche 2 componenti in piu':
+
+    /doc
+    /exwin
+
+Installo solo il sistema minimale? [si/no] no
+
+Uno per volta:
+
+  /doc ? [si/no] no
+  /exwin ? [si/no] si
+```
+
+! **AGGIUNGERE UN PACCHETTO NON RICHIEDE DI TOCCARE L'INSTALLATORE:** basta
+metterne la directory sul supporto. Un elenco scritto dentro `install` sarebbe
+una seconda verità accanto al contenuto della directory, e le due divergono al
+primo pacchetto aggiunto o tolto. **Chi prepara un pacchetto non ha i sorgenti
+dell'installatore.**
+
+! **I COMPONENTI SI COPIANO CON TUTTI I LORO LIVELLI.** `/exwin` non contiene
+file, contiene `bin/ lib/ dev/`: copiarlo a un livello solo darebbe una
+directory vuota **e nessun errore**, cioè un'installazione che sembra riuscita.
+
+! **E LA SCELTA SI FA PRIMA DI SCRIVERE**, non a metà strada: chiedere dopo aver
+sostituito il kernel vorrebbe dire che rispondere «annulla» non annulla più
+niente.
+
+Gli script che installano senza nessuno davanti — `tools/mkhd.sh` — usano `-t`.
+Senza il flag l'installatore si fermerebbe su una domanda a cui nessuno
+risponde, e la prova direbbe «l'installazione non è arrivata in fondo»: un
+messaggio che non somiglia alla sua causa.
+
+---
+
 ## La libc: da minimale a ospitata
 
 Fino alla 0.145 `lib/libc.c` era una libreria da programma di servizio: `printf`,
@@ -1602,6 +1913,84 @@ senza uscita, mentre chi arriva da `dup2` il rimpiazzo ce l'ha già.
 > ognuno tiene il suo. Chi legge da un fd duplicato faccia una `lseek()`
 > esplicita. È la prima cosa da sistemare il giorno che arriveranno le
 > pipe.
+
+---
+
+## Scrivere una libreria condivisa
+
+Una libreria di EX-OS è un ELF normalissimo, collegato a un indirizzo
+riservato, il cui **punto d'ingresso non è codice**: è una tabella di nomi.
+
+**Il sorgente della libreria** dichiara cosa esporta:
+
+```c
+#include "exlib.h"
+
+static const char *const nomi[] = { "pippo", "pluto" };
+static void *const dove[]       = { (void *)pippo, (void *)pluto };
+
+EXLIB_TESTA(mia_tabella, nomi, dove);
+```
+
+**Il linker script** la mette alla base della sua fetta:
+
+```
+ENTRY(mia_tabella)
+
+SECTIONS
+{
+    . = 0x04C00000;             /* la prima fetta libera */
+
+    .exlib_testa : { KEEP(*(.exlib_testa)) }
+    .text        : { *(.text) *(.text.*) }
+    .rodata      : { *(.rodata) *(.rodata.*) }
+
+    . = ALIGN(4096);            /* obbligatorio, vedi sotto */
+
+    .data : { *(.data) *(.data.*) }
+    .bss  : { *(.bss) *(.bss.*) *(COMMON) }
+}
+```
+
+**Chi la usa** chiede i nomi che gli servono:
+
+```c
+const ExLibTesta *t = exlib_apri("/lib/mialib.so");
+void (*pippo)(void) = exlib_simbolo(t, "pippo");
+```
+
+Nella pratica non lo fa a mano: si scrive uno **stub** — un file con le stesse
+funzioni della libreria, ognuna un ponte verso il puntatore risolto — e le
+applicazioni si collegano a quello. Il loro sorgente non cambia di una riga.
+Vedi `lib/exwin/exwin_stub.c` come modello.
+
+### Le tre regole che non si possono violare
+
+! **`. = ALIGN(4096)` PRIMA DI `.data`.** Il kernel condivide le pagine di sola
+lettura e ne dà una copia privata di quelle scrivibili, e lavora a **pagine
+intere**. Se la fine di `.rodata` e l'inizio di `.data` stessero nella stessa
+pagina, quella pagina sarebbe scrivibile — cioè copiata per ogni processo — e
+mezza `.rodata` smetterebbe di essere condivisa **senza che nessuno lo dica**.
+
+! **UNA FETTA PER LIBRERIA, ASSEGNATA IN UN POSTO SOLO.** La mappa sta in
+`lib/exwin/exwin.ld`. Due librerie alla stessa base si sovrascriverebbero
+dentro il processo che le usa tutt'e due.
+
+! **SI AGGIUNGE, NON SI TOGLIE.** Aggiungere funzioni, riordinarle e riscriverne
+il corpo è sempre lecito: le applicazioni già compilate continuano a
+funzionare. Togliere un nome le rompe — e lo dicono, con il nome che manca,
+invece di saltare nel vuoto.
+
+### Se la libreria ne usa un'altra
+
+Un programma ha `_start`, e lì c'è un posto naturale in cui agganciare ciò che
+gli serve. **Una libreria non parte**: le sue funzioni vengono chiamate e
+basta. Se ha bisogno di altre librerie, esporta il nome facoltativo
+`__lib_avvio`: `exlib_apri()` lo cerca e lo chiama, ed è l'unico momento in cui
+si sa che la libreria è appena stata mappata.
+
+È così che `exwin.so` ed `exdlg.so` usano `libc.so` senza portarsene dentro una
+copia.
 
 ---
 

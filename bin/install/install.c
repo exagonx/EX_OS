@@ -379,42 +379,244 @@ static int scorri_confronto(const char *sorgente, const char *punto,
 }
 
 /* =============================================================================
- * /exwin — le applicazioni grafiche
+ * ! QUI C'ERA installa_exwin(), tolta il 17 agosto 2026.
  *
- * ! VA INSTALLATO ANCHE LUI, e dimenticarlo non darebbe un errore: darebbe un
- * sistema installato che si avvia, ha la shell, ha i driver, e non ha la
- * scrivania. Chi lo installa se ne accorgerebbe solo digitando `exwin` e
- * vedendo «non trovato».
+ * Era una funzione che sapeva a memoria di /exwin: creava /exwin, copiava
+ * bin/ e lib/, e creava /exwin/dev anche se vuota. Funzionava, e aveva un
+ * difetto di struttura: ogni pacchetto nuovo avrebbe voluto una funzione come
+ * quella, dentro l'installatore, scritta da chi l'installatore ce l'ha in
+ * mano. CHI PREPARA UN PACCHETTO NON HA I SORGENTI DELL'INSTALLATORE.
  *
- * ! LA DIRECTORY PADRE SI CREA PRIMA DELLE FIGLIE. crea_dir() fa una mkdir
- * sola: senza /exwin, la mkdir di /exwin/bin fallisce con ENOENT e la copia
- * finisce nel vuoto — con un messaggio che parla di bin, non di exwin.
- *
- * ! E /exwin/dev SI CREA ANCHE SE E' VUOTA. Oggi non ci sta niente; il giorno
- * che ci sara' un driver grafico, chi lo installa non deve scoprire che la
- * directory non c'e'. Una directory vuota costa un settore.
- * ========================================================================== */
-static void copia_dir(const char *sorgente, const char *punto, const char *dest);
+ * Adesso /exwin non e' un caso speciale: e' una directory nella radice del
+ * supporto che non sta nell'elenco del sistema minimale, quindi
+ * cerca_componenti() la trova, l'installatore la mostra e la chiede, e
+ * copia_albero() la copia con tutti i suoi livelli — /exwin/dev compresa,
+ * vuota o no. Il giorno che ci sara' un altro pacchetto, l'installatore non
+ * andra' toccato.
+ * ============================================================================= */
 
-static void installa_exwin(const char *punto, int aggiorna)
+
+/* -----------------------------------------------------------------------------
+ * copia_albero — come copia_dir, ma SEGUE le sottodirectory
+ *
+ * ! copia_dir SI FERMA A UN LIVELLO, ed e' giusto per /bin e /lib, che di
+ * livelli ne hanno uno. Un componente no: /exwin non contiene file, contiene
+ * bin/ lib/ dev/. Copiarlo con copia_dir darebbe una directory vuota e nessun
+ * errore — il caso peggiore, perche' l'installazione sembrerebbe riuscita.
+ *
+ * ! LA PROFONDITA' E' LIMITATA, e non per prudenza generica: senza limite un
+ * collegamento circolare (o un difetto della VFS) farebbe scendere
+ * l'installatore per sempre, riempiendo il disco di copie annidate.
+ * --------------------------------------------------------------------------- */
+#define ALBERO_LIVELLI_MAX  6
+
+static void copia_albero_ric(const char *sorgente, const char *pdest,
+                             int aggiorna, int livello)
 {
-    char p[PERC_MAX];
+    DirEntry voci[LISTDIR_MAX_BATCH];
+    unsigned int start = 0;
+    int n;
 
-    printf("\nApplicazioni grafiche\n");
+    crea_dir(pdest);
 
-    unisci(p, punto, "exwin");
-    crea_dir(p);
+    while ((n = listdir_from(sorgente, voci, LISTDIR_MAX_BATCH, start)) > 0) {
+        int i;
+        for (i = 0; i < n; i++) {
+            char da[PERC_MAX], a[PERC_MAX];
 
-    if (aggiorna) {
-        scorri_confronto("/exwin/bin", punto, "exwin/bin", 1, 0);
-        scorri_confronto("/exwin/lib", punto, "exwin/lib", 1, 0);
-    } else {
-        copia_dir("/exwin/bin", punto, "exwin/bin");
-        copia_dir("/exwin/lib", punto, "exwin/lib");
+            if (voci[i].name[0] == '.') continue;
+
+            unisci(da, sorgente, voci[i].name);
+            unisci(a,  pdest,    voci[i].name);
+            minuscolo(a + strlen(pdest));
+
+            if (voci[i].is_dir) {
+                if (livello + 1 >= ALBERO_LIVELLI_MAX) {
+                    printf("  ! %s: troppi livelli, non scendo oltre\n", da);
+                    errori++;
+                    continue;
+                }
+                copia_albero_ric(da, a, aggiorna, livello + 1);
+                continue;
+            }
+
+            /* In aggiornamento si tocca solo cio' che e' cambiato: riscrivere
+             * un file identico consuma il disco e allunga l'elenco senza dire
+             * niente di utile. */
+            if (aggiorna && confronta(da, a) == STATO_UGUALE) continue;
+            copia(da, a);
+        }
+        start += (unsigned int)n;
+        if (n < LISTDIR_MAX_BATCH) break;
+    }
+}
+
+static void copia_albero(const char *sorgente, const char *punto,
+                         const char *dest, int aggiorna)
+{
+    char pdest[PERC_MAX];
+
+    unisci(pdest, punto, dest);
+    copia_albero_ric(sorgente, pdest, aggiorna, 0);
+}
+
+/* =============================================================================
+ * I COMPONENTI OPZIONALI — e perche' NON sono un elenco dentro l'installatore
+ *
+ * ! IL SISTEMA MINIMALE E' UN ELENCO CHIUSO; TUTTO IL RESTO E' OPZIONALE. Le
+ * directory qui sotto sono cio' senza cui EX-OS non parte: kernel, programmi
+ * di base, librerie, driver. Qualunque ALTRA directory trovata nella radice
+ * del supporto di avvio e' un componente che si puo' installare o no, e
+ * l'installatore la mostra e la chiede.
+ *
+ * E' il contrario di un elenco scritto qui dentro: aggiungere un pacchetto
+ * nuovo — oggi /exwin, domani quello che sara' — vuol dire metterne la
+ * directory sul supporto, e basta. CHI PREPARA UN PACCHETTO NON HA I SORGENTI
+ * DELL'INSTALLATORE, ed e' la stessa ragione per cui l'elenco delle
+ * applicazioni grafiche e' un file di testo e non una tabella compilata.
+ *
+ * ! I PUNTI DI MONTAGGIO NON SONO COMPONENTI. /cdrom non e' roba da copiare:
+ * e' un altro disco visto da qui, e proporlo vorrebbe dire offrire di
+ * installare il CD dentro il disco.
+ * ============================================================================= */
+#define COMPONENTI_MAX  16
+
+static const char *const DIR_SISTEMA[] = {
+    "bin", "boot", "lib", "dev", "drivers"
+};
+
+static const char *const DIR_NON_COMPONENTI[] = {
+    "cdrom", "tmp", "mnt", "disk", "home", "lost+found"
+};
+
+typedef struct {
+    char nome[DIRENT_NAME_MAX];
+    int  installa;
+} Componente;
+
+static Componente g_comp[COMPONENTI_MAX];
+static int        g_n_comp = 0;
+
+static int in_elenco(const char *nome, const char *const *elenco, int quanti)
+{
+    int i;
+    for (i = 0; i < quanti; i++)
+        if (strcmp(nome, elenco[i]) == 0) return 1;
+    return 0;
+}
+
+static int cerca_componenti(void)
+{
+    DirEntry v[32];
+    int start = 0, n, i;
+
+    g_n_comp = 0;
+
+    while ((n = listdir_from("/", v, 32, start)) > 0) {
+        for (i = 0; i < n && g_n_comp < COMPONENTI_MAX; i++) {
+            char nome[DIRENT_NAME_MAX];
+
+            if (!v[i].is_dir) continue;
+            if (v[i].name[0] == '.') continue;
+
+            strncpy(nome, v[i].name, DIRENT_NAME_MAX - 1);
+            nome[DIRENT_NAME_MAX - 1] = '\0';
+            minuscolo(nome);
+
+            if (in_elenco(nome, DIR_SISTEMA,
+                          (int)(sizeof DIR_SISTEMA / sizeof DIR_SISTEMA[0]))) continue;
+            if (in_elenco(nome, DIR_NON_COMPONENTI,
+                          (int)(sizeof DIR_NON_COMPONENTI / sizeof DIR_NON_COMPONENTI[0]))) continue;
+
+            strcpy(g_comp[g_n_comp].nome, nome);
+            g_comp[g_n_comp].installa = 0;
+            g_n_comp++;
+        }
+        start += n;
+        if (n < 32) break;
+    }
+    return g_n_comp;
+}
+
+/* Legge una riga dalla console. Rende il primo carattere, o 0 se non c'e'. */
+static char chiedi(const char *domanda)
+{
+    char r[16];
+    int  n;
+
+    printf("%s", domanda);
+    n = (int)read(0, r, sizeof(r) - 1);
+    if (n < 0) n = 0;
+    r[n] = '\0';
+    return r[0];
+}
+
+/* `modo`: 0 = chiedi, 1 = minimale senza chiedere, 2 = tutto senza chiedere. */
+static void scegli_componenti(int modo)
+{
+    int i;
+    char c;
+
+    if (cerca_componenti() == 0) {
+        if (modo == 0)
+            printf("\nNon ci sono componenti opzionali su questo supporto:\n"
+                   "si installa il sistema minimale.\n");
+        return;
     }
 
-    unisci(p, punto, "exwin/dev");
-    crea_dir(p);
+    if (modo == 1) return;              /* minimale: nessuno */
+    if (modo == 2) {                    /* tutto: tutti */
+        for (i = 0; i < g_n_comp; i++) g_comp[i].installa = 1;
+        return;
+    }
+
+    printf("\n===============================================================\n");
+    printf(" COSA INSTALLARE\n");
+    printf("===============================================================\n");
+    printf("\nIl sistema minimale e' sempre incluso: kernel, /bin, /lib,\n");
+    printf("i driver e l'avvio. Senza quello EX-OS non parte.\n\n");
+    printf("Su questo supporto ci sono anche %d component%s in piu':\n\n",
+           g_n_comp, (g_n_comp == 1) ? "e" : "i");
+
+    for (i = 0; i < g_n_comp; i++)
+        printf("    /%s\n", g_comp[i].nome);
+
+    c = chiedi("\nInstallo solo il sistema minimale? [si/no] ");
+    if (c == 's' || c == 'S') {
+        printf("\nSistema minimale: nessun componente in piu'.\n");
+        return;
+    }
+
+    printf("\nUno per volta:\n\n");
+    for (i = 0; i < g_n_comp; i++) {
+        char d[96];
+
+        sprintf(d, "  /%s ? [si/no] ", g_comp[i].nome);
+        c = chiedi(d);
+        g_comp[i].installa = (c == 's' || c == 'S');
+    }
+}
+
+static void installa_componenti(const char *punto, int aggiorna)
+{
+    int i, quanti = 0;
+
+    for (i = 0; i < g_n_comp; i++) if (g_comp[i].installa) quanti++;
+    if (quanti == 0) return;
+
+    printf("\nComponenti\n");
+
+    for (i = 0; i < g_n_comp; i++) {
+        char sorgente[PERC_MAX];
+
+        if (!g_comp[i].installa) continue;
+
+        sorgente[0] = '/';
+        strncpy(sorgente + 1, g_comp[i].nome, PERC_MAX - 2);
+        sorgente[PERC_MAX - 1] = '\0';
+
+        copia_albero(sorgente, punto, g_comp[i].nome, aggiorna);
+    }
 }
 
 static void copia_dir(const char *sorgente, const char *punto, const char *dest)
@@ -562,15 +764,21 @@ int main(int argc, char **argv)
     BootInstallInfo info;
     int             r;
     int             aggiorna = 0;
+    /* 0 = chiedi, 1 = solo il minimo, 2 = tutto senza chiedere */
+    int             modo_comp = 0;
 
     if (argc >= 2 && strcmp(argv[1], "-tools") == 0)
         return installa_strumenti(argc, argv);
 
     if (argc < 2 || argc > 3) {
-        printf("uso: install [-a] <punto di montaggio>\n");
+        printf("uso: install [-a|-m|-t] <punto di montaggio>\n");
         printf("     install -tools [opzioni] [punto di montaggio]\n\n");
         printf("Senza -a: installazione completa, riscrive tutto.\n");
-        printf("Con  -a: aggiorna solo i file cambiati, e prima li elenca.\n\n");
+        printf("Con  -a: aggiorna solo i file cambiati, e prima li elenca.\n");
+        printf("Con  -m: sistema MINIMALE, nessun componente, non chiede.\n");
+        printf("Con  -t: sistema e TUTTI i componenti, non chiede.\n\n");
+        printf("Senza -m ne' -t l'installatore mostra i componenti trovati\n");
+        printf("sul supporto e li chiede uno per uno.\n\n");
         printf("Il volume dev'essere gia' montato in lettura/scrittura:\n");
         printf("  disk                 elenca i dispositivi\n");
         printf("  mount hd0p1 /disk    monta\n");
@@ -588,12 +796,14 @@ int main(int argc, char **argv)
     }
 
     if (argc == 3) {
-        if (strcmp(argv[1], "-a") != 0) {
+        if      (strcmp(argv[1], "-a") == 0) aggiorna  = 1;
+        else if (strcmp(argv[1], "-m") == 0) modo_comp = 1;
+        else if (strcmp(argv[1], "-t") == 0) modo_comp = 2;
+        else {
             printf("install: opzione '%s' sconosciuta.\n", argv[1]);
             return 1;
         }
-        aggiorna = 1;
-        argv[1]  = argv[2];
+        argv[1] = argv[2];
     }
 
     /* =====================================================================
@@ -657,8 +867,14 @@ int main(int argc, char **argv)
         printf("\n");
     }
 
-    printf(aggiorna ? "Aggiornamento di EX-OS in %s\n"
-                    : "Installazione di EX-OS in %s\n", argv[1]);
+    /* ! SI SCEGLIE PRIMA DI SCRIVERE, non a meta' strada. Chiedere «installo
+     * anche /exwin?» dopo aver gia' sostituito il kernel vorrebbe dire che
+     * rispondere «annulla» non annulla piu' niente. Qui l'unica cosa fatta e'
+     * guardare cosa c'e' sul supporto. */
+    scegli_componenti(modo_comp);
+
+    printf(aggiorna ? "\nAggiornamento di EX-OS in %s\n"
+                    : "\nInstallazione di EX-OS in %s\n", argv[1]);
     printf("  +  creato    ~  sostituito    !  errore\n\n");
 
     /* =====================================================================
@@ -758,13 +974,16 @@ int main(int argc, char **argv)
         scorri_confronto("/bin", argv[1], "bin", 1, 0);
         scorri_confronto("/lib", argv[1], "lib", 1, 0);
         installa_driver(argv[1]);
-        installa_exwin(argv[1], 1);
     } else {
         copia_dir("/bin", argv[1], "bin");
         copia_dir("/lib", argv[1], "lib");
         installa_driver(argv[1]);
-        installa_exwin(argv[1], 0);
     }
+
+    /* ! I COMPONENTI DOPO IL SISTEMA, e l'ordine conta: se lo spazio finisce,
+     * a mancare dev'essere /exwin, non /bin. Un sistema senza applicazioni
+     * grafiche parte; un sistema senza /bin no. */
+    installa_componenti(argv[1], aggiorna);
 
     /* --- 3. l'avvio vero e proprio --- */
     printf("\nSettori di avvio\n");

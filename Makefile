@@ -151,7 +151,7 @@ PROGRAMMI_FLOPPY := shell hello ls mem stack disk libctest fdisk mkfs trunc chkd
 # =============================================================================
 PROGRAMMI_CD := netdetect nettest ping ipcfg dhcp host tcptest ftp telnet xcp winprova exwincmd
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
-PROGRAMMI_EXWIN := pm filemgr
+PROGRAMMI_EXWIN := exwin_so exdlg_so pm filemgr edit
 
 # I driver, con la stessa regola dei programmi. Quelli di base stanno gia'
 # dentro PROGRAMMI_FLOPPY (floppy_drv, kbd_drv): sul floppy servono a
@@ -253,10 +253,10 @@ CFLAGS_USER := -m32 -ffreestanding -fno-builtin -fno-stack-protector \
 # non puo' usare l'ingresso comune, che chiama _libc_start. Questo prende
 # argc e argv dallo stack e li passa a shell_main: senza, `sh -c` non
 # esiste, e senza quello non esistono system() e popen() nella libc.
-$(SHELL_BIN): $(SHELL_SRC) $(SHELL_START) $(SHELL_LD)
+$(SHELL_BIN): $(SHELL_SRC) $(SHELL_START) $(SHELL_LD) lib/include/spawn_abi.h
 	@echo "=== Compilazione Shell utente /bin/sh ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I drivers/kbd -I drivers/pci -I drivers/net -c $(SHELL_SRC) -o $(BUILD_OBJ)/shell.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/kbd -I drivers/pci -I drivers/net -c $(SHELL_SRC) -o $(BUILD_OBJ)/shell.o
 	$(CC) -m32 -c $(SHELL_START) -o $(BUILD_OBJ)/sh_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(SHELL_LD) $(BUILD_OBJ)/sh_start.o $(BUILD_OBJ)/shell.o -o $@
 	@echo "[OK] Shell compilata: $@"
@@ -302,6 +302,35 @@ LIBC_SO    := $(BUILD_LIB)/libc.so
 LIBC_LD    := lib/libc.ld
 LIBC_START := lib/start.S
 
+# =============================================================================
+# I NOMI DELLA LIBC CONDIVISA — dichiarati QUI, prima di ogni regola che li usa
+#
+# ! STAVANO ACCANTO ALLE LORO REGOLE, seicento righe piu' in basso, e per
+# questo il primo tentativo su /bin/libctest E' PASSATO SENZA RICOLLEGARE
+# NIENTE: make espande l'elenco dei prerequisiti mentre LEGGE il file, quindi
+# li' `$(LIBC_PONTI_OBJ)` valeva stringa vuota. La ricetta era giusta e non e'
+# mai stata eseguita — il binario vecchio e' rimasto, e le 294 prove che
+# credevo di aver fatto sulla libc condivisa le avevo fatte su quella statica.
+#
+# ! E' LA QUINTA VOLTA CHE UN'USCITA NON SA DI ESSERE SCADUTA. Le altre
+# quattro: le dipendenze finte del bersaglio floppy, uhci.drv mancante fra
+# quelle dell'ISO, SVGA non prerequisito di Stage 2, e le immagini che non
+# dipendevano dal Makefile. Un prerequisito scritto con una variabile vuota non
+# e' un prerequisito debole: non esiste, e nessuno lo dice.
+# =============================================================================
+LIBC_AVVIO   := lib/libc_avvio.c
+LIBC_PONTI_C := lib/libc_ponti.c
+GEN_DIR      := $(BUILD_DIR)/gen
+
+LIBC_SO_OBJ  := $(BUILD_OBJ)/libc_per_so.o
+GEN_ESPORTA  := $(GEN_DIR)/libc_esporta.S
+GEN_PONTI    := $(GEN_DIR)/libc_ponti.S
+
+# I quattro oggetti che un programma collega AL POSTO della libc statica:
+# i ponti, il risolutore, l'avvio e il cercatore di simboli.
+LIBC_PONTI_OBJ := $(BUILD_OBJ)/libc_ponti_asm.o $(BUILD_OBJ)/libc_ponti_c.o \
+                  $(BUILD_OBJ)/libc_ponti_avvio.o $(BUILD_OBJ)/libc_ponti_exlib.o
+
 # --- Programma utente /bin/ls --------------------------------------------------
 # A differenza di hello e shell, ls usa la libc del progetto invece di
 # reimplementare le syscall a mano. Il loader ELF del kernel non supporta
@@ -316,16 +345,15 @@ LS_BIN    := $(BUILD_BIN)/ls
 LS_LD     := bin/ls/ls.ld
 LS_START  := $(LIBC_START)
 
-$(LS_BIN): $(LS_SRC) $(LS_LD) $(LIBC_SRC) $(LS_START)
+$(LS_BIN): $(LS_SRC) $(LS_LD) $(LIBC_SRC) $(LS_START) $(LIBC_PONTI_OBJ) $(LIBC_SO)
 	@echo "=== Compilazione /bin/ls ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(LS_SRC)   -o $(BUILD_OBJ)/ls_main.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                -o $(BUILD_OBJ)/ls_libc.o
 	$(CC) -m32 -c $(LS_START)                          -o $(BUILD_OBJ)/ls_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(LS_LD) \
 	    $(BUILD_OBJ)/ls_start.o \
 	    $(BUILD_OBJ)/ls_main.o  \
-	    $(BUILD_OBJ)/ls_libc.o  \
+	    $(LIBC_PONTI_OBJ)  \
 	    -o $@
 	@echo "[OK] ls compilato: $@"
 
@@ -342,16 +370,15 @@ MEM_BIN   := $(BUILD_BIN)/mem
 MEM_LD    := bin/mem/mem.ld
 MEM_START := $(LIBC_START)
 
-$(MEM_BIN): $(MEM_SRC) $(MEM_LD) $(LIBC_SRC) $(MEM_START)
+$(MEM_BIN): $(MEM_SRC) $(MEM_LD) $(LIBC_SRC) $(MEM_START) $(LIBC_PONTI_OBJ) $(LIBC_SO)
 	@echo "=== Compilazione /bin/mem ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(MEM_SRC)  -o $(BUILD_OBJ)/mem_main.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                -o $(BUILD_OBJ)/mem_libc.o
 	$(CC) -m32 -c $(MEM_START)                         -o $(BUILD_OBJ)/mem_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(MEM_LD) \
 	    $(BUILD_OBJ)/mem_start.o \
 	    $(BUILD_OBJ)/mem_main.o  \
-	    $(BUILD_OBJ)/mem_libc.o  \
+	    $(LIBC_PONTI_OBJ)  \
 	    -o $@
 	@echo "[OK] mem compilato: $@"
 
@@ -362,16 +389,15 @@ STACK_SRC   := bin/stack/stack.c
 STACK_BIN   := $(BUILD_BIN)/stack
 STACK_LD    := bin/stack/stack.ld
 
-$(STACK_BIN): $(STACK_SRC) $(STACK_LD) $(LIBC_SRC) $(LIBC_START)
+$(STACK_BIN): $(STACK_SRC) $(STACK_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/stack ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(STACK_SRC) -o $(BUILD_OBJ)/stack_main.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                 -o $(BUILD_OBJ)/stack_libc.o
 	$(CC) -m32 -c $(LIBC_START)                         -o $(BUILD_OBJ)/stack_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(STACK_LD) \
 	    $(BUILD_OBJ)/stack_start.o \
 	    $(BUILD_OBJ)/stack_main.o  \
-	    $(BUILD_OBJ)/stack_libc.o  \
+	    $(LIBC_PONTI_OBJ)  \
 	    -o $@
 	@echo "[OK] stack compilato: $@"
 
@@ -388,15 +414,23 @@ LIBCTEST_SRC := bin/libctest/libctest.c
 LIBCTEST_BIN := $(BUILD_BIN)/libctest
 LIBCTEST_LD  := bin/libctest/libctest.ld
 
-$(LIBCTEST_BIN): $(LIBCTEST_SRC) $(LIBCTEST_LD) $(LIBC_SRC) $(LIBC_START) $(LIBC_HDR)
-	@echo "=== Compilazione /bin/libctest ==="
+# ! COLLEGATO ALLA LIBC CONDIVISA, ed e' la prova che conta piu' di tutte: 294
+# prove che toccano stringhe, stdio, allocatore, directory, pipe e conversioni.
+# Se i ponti sbagliassero anche un solo argomento, qui si vedrebbe — e si
+# vedrebbe COME, invece che come un fault in un programma qualunque.
+#
+# ! E NON SI COLLEGA --gc-sections IN MODO DIVERSO dagli altri: libctest chiama
+# quasi tutta la libc, quindi tiene quasi tutti i ponti. E' il caso peggiore
+# per la dimensione, ed e' giusto misurarlo su di lui.
+$(LIBCTEST_BIN): $(LIBCTEST_SRC) $(LIBCTEST_LD) $(LIBC_PONTI_OBJ) $(LIBC_START) \
+                 $(LIBC_HDR) $(LIBC_SO)
+	@echo "=== Compilazione /bin/libctest (libc CONDIVISA) ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(LIBCTEST_SRC) -o $(BUILD_OBJ)/libctest_main.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                    -o $(BUILD_OBJ)/libctest_libc.o
 	$(CC) -m32 -c $(LIBC_START)                            -o $(BUILD_OBJ)/libctest_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(LIBCTEST_LD) \
 	    $(BUILD_OBJ)/libctest_start.o $(BUILD_OBJ)/libctest_main.o \
-	    $(BUILD_OBJ)/libctest_libc.o -o $@
+	    $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] libctest compilato: $@"
 
 .PHONY: libctest
@@ -408,14 +442,13 @@ DISK_SRC   := bin/disk/disk.c
 DISK_BIN   := $(BUILD_BIN)/disk
 DISK_LD    := bin/disk/disk.ld
 
-$(DISK_BIN): $(DISK_SRC) $(DISK_LD) $(LIBC_SRC) $(LIBC_START)
+$(DISK_BIN): $(DISK_SRC) $(DISK_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/disk ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(DISK_SRC) -o $(BUILD_OBJ)/disk_main.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                -o $(BUILD_OBJ)/disk_libc.o
 	$(CC) -m32 -c $(LIBC_START)                        -o $(BUILD_OBJ)/disk_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(DISK_LD) \
-	    $(BUILD_OBJ)/disk_start.o $(BUILD_OBJ)/disk_main.o $(BUILD_OBJ)/disk_libc.o -o $@
+	    $(BUILD_OBJ)/disk_start.o $(BUILD_OBJ)/disk_main.o $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] disk compilato: $@"
 
 .PHONY: disk
@@ -428,14 +461,13 @@ FDISK_SRC  := bin/fdisk/fdisk.c
 FDISK_BIN  := $(BUILD_BIN)/fdisk
 FDISK_LD   := bin/fdisk/fdisk.ld
 
-$(FDISK_BIN): $(FDISK_SRC) $(FDISK_LD) $(LIBC_SRC) $(LIBC_START)
+$(FDISK_BIN): $(FDISK_SRC) $(FDISK_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/fdisk ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(FDISK_SRC) -o $(BUILD_OBJ)/fdisk_main.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                 -o $(BUILD_OBJ)/fdisk_libc.o
 	$(CC) -m32 -c $(LIBC_START)                         -o $(BUILD_OBJ)/fdisk_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(FDISK_LD) \
-	    $(BUILD_OBJ)/fdisk_start.o $(BUILD_OBJ)/fdisk_main.o $(BUILD_OBJ)/fdisk_libc.o -o $@
+	    $(BUILD_OBJ)/fdisk_start.o $(BUILD_OBJ)/fdisk_main.o $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] fdisk compilato: $@"
 
 .PHONY: fdisk
@@ -454,16 +486,15 @@ MKFS_HDR   := bin/mkfs/ext2.h
 MKFS_BIN   := $(BUILD_BIN)/mkfs
 MKFS_LD    := bin/mkfs/mkfs.ld
 
-$(MKFS_BIN): $(MKFS_SRC) $(MKFS_EXT2) $(MKFS_HDR) $(MKFS_LD) $(LIBC_SRC) $(LIBC_START)
+$(MKFS_BIN): $(MKFS_SRC) $(MKFS_EXT2) $(MKFS_HDR) $(MKFS_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/mkfs ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -I bin/mkfs -c $(MKFS_SRC)  -o $(BUILD_OBJ)/mkfs_main.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I bin/mkfs -c $(MKFS_EXT2) -o $(BUILD_OBJ)/mkfs_ext2.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                             -o $(BUILD_OBJ)/mkfs_libc.o
 	$(CC) -m32 -c $(LIBC_START)                                     -o $(BUILD_OBJ)/mkfs_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(MKFS_LD) \
 	    $(BUILD_OBJ)/mkfs_start.o $(BUILD_OBJ)/mkfs_main.o \
-	    $(BUILD_OBJ)/mkfs_ext2.o  $(BUILD_OBJ)/mkfs_libc.o -o $@
+	    $(BUILD_OBJ)/mkfs_ext2.o  $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] mkfs compilato: $@"
 
 # --- /bin/hwconfig: guarda la macchina e scrive la configurazione ------------
@@ -475,15 +506,14 @@ HWCONFIG_SRC := bin/hwconfig/hwconfig.c
 HWCONFIG_BIN := $(BUILD_BIN)/hwconfig
 HWCONFIG_LD  := bin/hwconfig/hwconfig.ld
 
-$(HWCONFIG_BIN): $(HWCONFIG_SRC) $(PCI_DRV_PROTO) $(HWCONFIG_LD) $(LIBC_SRC) $(LIBC_START)
+$(HWCONFIG_BIN): $(HWCONFIG_SRC) $(PCI_DRV_PROTO) $(HWCONFIG_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/hwconfig ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/pci -I drivers/kbd -c $(HWCONFIG_SRC) -o $(BUILD_OBJ)/hwconfig_main.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)  -o $(BUILD_OBJ)/hwconfig_libc.o
 	$(CC) -m32 -c $(LIBC_START)          -o $(BUILD_OBJ)/hwconfig_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(HWCONFIG_LD) \
 	    $(BUILD_OBJ)/hwconfig_start.o $(BUILD_OBJ)/hwconfig_main.o \
-	    $(BUILD_OBJ)/hwconfig_libc.o -o $@
+	    $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] hwconfig compilato: $@"
 
 .PHONY: hwconfig
@@ -507,15 +537,14 @@ HWINFO_SRC := bin/hwinfo/hwinfo.c
 HWINFO_BIN := $(BUILD_BIN)/hwinfo
 HWINFO_LD  := bin/hwinfo/hwinfo.ld
 
-$(HWINFO_BIN): $(HWINFO_SRC) $(PCI_DRV_PROTO) $(HWINFO_LD) $(LIBC_SRC) $(LIBC_START)
+$(HWINFO_BIN): $(HWINFO_SRC) $(PCI_DRV_PROTO) $(HWINFO_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/hwinfo ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/pci -c $(HWINFO_SRC) -o $(BUILD_OBJ)/hwinfo_main.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)  -o $(BUILD_OBJ)/hwinfo_libc.o
 	$(CC) -m32 -c $(LIBC_START)          -o $(BUILD_OBJ)/hwinfo_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(HWINFO_LD) \
 	    $(BUILD_OBJ)/hwinfo_start.o $(BUILD_OBJ)/hwinfo_main.o \
-	    $(BUILD_OBJ)/hwinfo_libc.o -o $@
+	    $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] hwinfo compilato: $@"
 
 .PHONY: hwinfo
@@ -538,15 +567,14 @@ CMP_SRC := bin/cmp/cmp.c
 CMP_BIN := $(BUILD_BIN)/cmp
 CMP_LD  := bin/cmp/cmp.ld
 
-$(CMP_BIN): $(CMP_SRC) $(CMP_LD) $(LIBC_SRC) $(LIBC_START)
+$(CMP_BIN): $(CMP_SRC) $(CMP_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/cmp ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(CMP_SRC) -o $(BUILD_OBJ)/cmp_main.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)  -o $(BUILD_OBJ)/cmp_libc.o
 	$(CC) -m32 -c $(LIBC_START)          -o $(BUILD_OBJ)/cmp_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(CMP_LD) \
 	    $(BUILD_OBJ)/cmp_start.o $(BUILD_OBJ)/cmp_main.o \
-	    $(BUILD_OBJ)/cmp_libc.o -o $@
+	    $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] cmp compilato: $@"
 
 .PHONY: cmp_prog
@@ -561,15 +589,14 @@ SHMTEST_SRC := bin/shmtest/shmtest.c
 SHMTEST_BIN := $(BUILD_BIN)/shmtest
 SHMTEST_LD  := bin/shmtest/shmtest.ld
 
-$(SHMTEST_BIN): $(SHMTEST_SRC) $(SHMTEST_LD) $(LIBC_SRC) $(LIBC_START)
+$(SHMTEST_BIN): $(SHMTEST_SRC) $(SHMTEST_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/shmtest ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(SHMTEST_SRC) -o $(BUILD_OBJ)/shmtest_main.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)  -o $(BUILD_OBJ)/shmtest_libc.o
 	$(CC) -m32 -c $(LIBC_START)          -o $(BUILD_OBJ)/shmtest_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(SHMTEST_LD) \
 	    $(BUILD_OBJ)/shmtest_start.o $(BUILD_OBJ)/shmtest_main.o \
-	    $(BUILD_OBJ)/shmtest_libc.o -o $@
+	    $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] shmtest compilato: $@"
 
 .PHONY: shmtest
@@ -584,15 +611,14 @@ POLLTEST_SRC := bin/polltest/polltest.c
 POLLTEST_BIN := $(BUILD_BIN)/polltest
 POLLTEST_LD  := bin/polltest/polltest.ld
 
-$(POLLTEST_BIN): $(POLLTEST_SRC) $(POLLTEST_LD) $(LIBC_SRC) $(LIBC_START)
+$(POLLTEST_BIN): $(POLLTEST_SRC) $(POLLTEST_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/polltest ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(POLLTEST_SRC) -o $(BUILD_OBJ)/polltest_main.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)  -o $(BUILD_OBJ)/polltest_libc.o
 	$(CC) -m32 -c $(LIBC_START)          -o $(BUILD_OBJ)/polltest_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(POLLTEST_LD) \
 	    $(BUILD_OBJ)/polltest_start.o $(BUILD_OBJ)/polltest_main.o \
-	    $(BUILD_OBJ)/polltest_libc.o -o $@
+	    $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] polltest compilato: $@"
 
 .PHONY: polltest
@@ -610,15 +636,14 @@ TOOLINST_SRC := bin/toolinst/toolinst.c
 TOOLINST_BIN := $(BUILD_BIN)/toolinst
 TOOLINST_LD  := bin/toolinst/toolinst.ld
 
-$(TOOLINST_BIN): $(TOOLINST_SRC) $(TOOLINST_LD) $(LIBC_SRC) $(LIBC_START)
+$(TOOLINST_BIN): $(TOOLINST_SRC) $(TOOLINST_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/toolinst ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(TOOLINST_SRC) -o $(BUILD_OBJ)/toolinst_main.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)  -o $(BUILD_OBJ)/toolinst_libc.o
 	$(CC) -m32 -c $(LIBC_START)          -o $(BUILD_OBJ)/toolinst_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(TOOLINST_LD) \
 	    $(BUILD_OBJ)/toolinst_start.o $(BUILD_OBJ)/toolinst_main.o \
-	    $(BUILD_OBJ)/toolinst_libc.o -o $@
+	    $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] toolinst compilato: $@"
 
 .PHONY: toolinst
@@ -631,7 +656,7 @@ LOGIN_SRC := bin/login/login.c
 LOGIN_BIN := $(BUILD_BIN)/login
 LOGIN_LD  := bin/login/login.ld
 
-$(LOGIN_BIN): $(LOGIN_SRC) $(KBD_DRV_PROTO) $(LOGIN_LD) $(LIBC_SRC) $(LIBC_START)
+$(LOGIN_BIN): $(LOGIN_SRC) $(KBD_DRV_PROTO) $(LOGIN_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/login ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/kbd -c $(LOGIN_SRC) -o $(BUILD_OBJ)/login_main.o
@@ -652,15 +677,14 @@ HELP_SRC := bin/help/help.c
 HELP_BIN := $(BUILD_BIN)/help
 HELP_LD  := bin/help/help.ld
 
-$(HELP_BIN): $(HELP_SRC) $(KBD_DRV_PROTO) $(HELP_LD) $(LIBC_SRC) $(LIBC_START)
+$(HELP_BIN): $(HELP_SRC) $(KBD_DRV_PROTO) $(HELP_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/help ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/kbd -c $(HELP_SRC) -o $(BUILD_OBJ)/help_main.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)  -o $(BUILD_OBJ)/help_libc.o
 	$(CC) -m32 -c $(LIBC_START)          -o $(BUILD_OBJ)/help_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(HELP_LD) \
 	    $(BUILD_OBJ)/help_start.o $(BUILD_OBJ)/help_main.o \
-	    $(BUILD_OBJ)/help_libc.o -o $@
+	    $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] help compilato: $@"
 
 .PHONY: help_prog
@@ -680,7 +704,7 @@ SVGA_DRV_SRC := drivers/svga/svga.c
 SVGA_DRV_OUT := $(BUILD_DRIVERS)/svga.drv
 SVGA_DRV_LD  := drivers/svga/svga.ld
 
-$(SVGA_DRV_OUT): $(SVGA_DRV_SRC) $(SVGA_DRV_LD) $(LIBC_SRC) $(LIBC_START)
+$(SVGA_DRV_OUT): $(SVGA_DRV_SRC) $(SVGA_DRV_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione driver ring3 svga.drv ==="
 	@mkdir -p $(BUILD_DRIVERS)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(SVGA_DRV_SRC) -o $(BUILD_DRIVERS)/svga_main.o
@@ -708,7 +732,7 @@ VGAPROVA_SRC := drivers/vgaprova/vgaprova.c
 VGAPROVA_OUT := $(BUILD_DRIVERS)/vgaprova.drv
 VGAPROVA_LD  := drivers/vgaprova/vgaprova.ld
 
-$(VGAPROVA_OUT): $(VGAPROVA_SRC) $(VGAPROVA_LD) $(LIBC_SRC) $(LIBC_START)
+$(VGAPROVA_OUT): $(VGAPROVA_SRC) $(VGAPROVA_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione strumento di prova vgaprova.drv ==="
 	@mkdir -p $(BUILD_DRIVERS)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(VGAPROVA_SRC) -o $(BUILD_DRIVERS)/vgaprova_main.o
@@ -735,7 +759,7 @@ MOUSESER_SRC := drivers/mouseser/mouseser.c
 MOUSESER_OUT := $(BUILD_DRIVERS)/mouseser.drv
 MOUSESER_LD  := drivers/mouseser/mouseser.ld
 
-$(MOUSESER_OUT): $(MOUSESER_SRC) $(KBD_DRV_PROTO) $(MOUSESER_LD) $(LIBC_SRC) $(LIBC_START)
+$(MOUSESER_OUT): $(MOUSESER_SRC) $(KBD_DRV_PROTO) $(MOUSESER_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione driver ring3 mouseser.drv ==="
 	@mkdir -p $(BUILD_DRIVERS)
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/kbd -c $(MOUSESER_SRC) -o $(BUILD_DRIVERS)/mouseser_main.o
@@ -768,7 +792,7 @@ UHCI_SRC := drivers/uhci/uhci.c
 UHCI_OUT := $(BUILD_DRIVERS)/uhci.drv
 UHCI_LD  := drivers/uhci/uhci.ld
 
-$(UHCI_OUT): $(UHCI_SRC) $(USB_COMUNE_SRC) $(USB_COMUNE_HDR) $(PCI_DRV_PROTO) $(KBD_DRV_PROTO) $(UHCI_LD) $(LIBC_SRC) $(LIBC_START)
+$(UHCI_OUT): $(UHCI_SRC) $(USB_COMUNE_SRC) $(USB_COMUNE_HDR) $(PCI_DRV_PROTO) $(KBD_DRV_PROTO) $(UHCI_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione driver ring3 uhci.drv ==="
 	@mkdir -p $(BUILD_DRIVERS)
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/pci -I drivers/kbd -I drivers/usb -c $(UHCI_SRC) -o $(BUILD_DRIVERS)/uhci_main.o
@@ -795,7 +819,7 @@ XHCI_SRC := drivers/xhci/xhci.c
 XHCI_OUT := $(BUILD_DRIVERS)/xhci.drv
 XHCI_LD  := drivers/xhci/xhci.ld
 
-$(XHCI_OUT): $(XHCI_SRC) $(USB_COMUNE_SRC) $(USB_COMUNE_HDR) $(PCI_DRV_PROTO) $(KBD_DRV_PROTO) $(XHCI_LD) $(LIBC_SRC) $(LIBC_START)
+$(XHCI_OUT): $(XHCI_SRC) $(USB_COMUNE_SRC) $(USB_COMUNE_HDR) $(PCI_DRV_PROTO) $(KBD_DRV_PROTO) $(XHCI_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione driver ring3 xhci.drv ==="
 	@mkdir -p $(BUILD_DRIVERS)
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/pci -I drivers/kbd -I drivers/usb -c $(XHCI_SRC) -o $(BUILD_DRIVERS)/xhci_main.o
@@ -830,7 +854,7 @@ WIN_PROTO   := drivers/wserver/win_proto.h
 FONT_SRC    := kernel/arch/x86/font8x16.c
 
 $(WSERVER_OUT): $(WSERVER_SRC) $(WIN_PROTO) $(KBD_DRV_PROTO) $(WSERVER_LD) \
-                $(FONT_SRC) $(LIBC_SRC) $(LIBC_START)
+                $(FONT_SRC) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione driver ring3 wserver.drv ==="
 	@mkdir -p $(BUILD_DRIVERS_CD)
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/kbd -I drivers/wserver -c $(WSERVER_SRC) -o $(BUILD_DRIVERS_CD)/wserver_main.o
@@ -859,23 +883,191 @@ EXWIN_SRC := lib/exwin/exwin.c
 # cambia, il C++ non compila piu' e lo si scopre subito.
 EXWIN_HDR := lib/exwin/exwin.h lib/exwin/exwin.hpp lib/exwin/exwin.bi
 
+# ! LE DIRECTORY DI /exwin SI DICHIARANO QUI, PRIMA DI CHI LE USA. Stavano piu'
+# in basso, accanto alle applicazioni, e la libreria condivisa — che viene
+# prima — le trovava VUOTE: con `:=` make espande subito, quindi il link
+# scriveva in «/exwin.so», cioe' nella radice del disco. Non un errore di
+# sintassi: un percorso sbagliato, e il permesso negato come unico indizio.
+BUILD_EXWIN     := $(BUILD_DIR)/exwin
+BUILD_EXWIN_BIN := $(BUILD_EXWIN)/bin
+BUILD_EXWIN_LIB := $(BUILD_EXWIN)/lib
+
+# =============================================================================
+# LA LIBRERIA CONDIVISA — /exwin/lib/exwin.so
+#
+# ! IL TOOLKIT NON SI COLLEGA PIU' DENTRO OGNI APPLICAZIONE. Prima ogni
+# programma grafico si portava 13 KB di exwin.c piu' 4 KB di font: tre
+# applicazioni erano tre copie identiche. Adesso c'e' una libreria sola,
+# caricata una volta dal kernel e mappata in tutti (kernel/loader/lib.c), e
+# nell'applicazione entra soltanto exwin_stub.c — i ponti verso di lei.
+#
+# ! LA LIBRERIA SI PORTA DENTRO LA PROPRIA libc, come una DLL con il CRT
+# statico. Non e' spreco: quella copia sta in un posto solo, mentre prima ce
+# n'era una per applicazione. La libc condivisa e' il passo dopo.
+#
+# ! NIENTE start.S QUI. Una libreria non parte: non ha un _start, il suo punto
+# d'ingresso e' la TABELLA dei nomi. Vedi lib/exwin/exwin.ld.
+# =============================================================================
+EXWIN_ESPORTA := lib/exwin/exwin_esporta.c
+EXWIN_STUB    := lib/exwin/exwin_stub.c
+EXWIN_LD      := lib/exwin/exwin.ld
+EXLIB_SRC     := lib/exlib/exlib.c
+EXLIB_HDR     := lib/include/exlib.h
+
+EXWIN_SO := $(BUILD_EXWIN_LIB)/exwin.so
+
+$(EXWIN_SO): $(EXWIN_SRC) $(EXWIN_ESPORTA) $(EXWIN_HDR) $(EXWIN_LD) \
+             $(EXLIB_HDR) $(WIN_PROTO) $(FONT_SRC) $(LIBC_PONTI_OBJ) $(LIBC_SO)
+	@echo "=== Compilazione libreria condivisa /exwin/lib/exwin.so ==="
+	@mkdir -p $(BUILD_EXWIN_LIB) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_SRC) -o $(BUILD_OBJ)/so_exwin.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_ESPORTA) -o $(BUILD_OBJ)/so_esporta.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I kernel/include -c $(FONT_SRC) -o $(BUILD_OBJ)/so_font.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(EXWIN_LD) \
+	    $(BUILD_OBJ)/so_esporta.o $(BUILD_OBJ)/so_exwin.o \
+	    $(BUILD_OBJ)/so_font.o $(LIBC_PONTI_OBJ) -o $@
+	@# ! LA TABELLA DEVE STARE ESATTAMENTE ALLA BASE. Se una modifica al linker
+	@# script la spostasse, il kernel renderebbe un indirizzo che non e' la
+	@# tabella e ogni applicazione grafica salterebbe nel vuoto: e' il genere di
+	@# guasto che non somiglia alla sua causa, quindi si controlla qui.
+	@# LC_ALL=C perche' readelf traduce le etichette: su un sistema italiano
+	@# «Entry point» diventa «Indirizzo punto d'ingresso» e il controllo non
+	@# trovava niente — passando per un confronto con la stringa vuota, che
+	@# fallisce sempre. Un controllo che dipende dalla lingua non e' un
+	@# controllo.
+	@ent=$$(LC_ALL=C readelf -h $@ | awk '/Entry point/ {print $$4}'); \
+	 if [ "$$ent" != "0x4000000" ]; then \
+	     echo "[ERRORE] la tabella di exwin.so e' a $$ent invece che a 0x4000000"; \
+	     exit 1; \
+	 fi; \
+	 echo "[OK] exwin.so compilata: $@ (tabella a $$ent)"
+
+.PHONY: exwin_so
+exwin_so: dirs $(EXWIN_SO)
+
+# --- /exwin/lib/exdlg.so: i dialoghi, in una libreria a parte ----------------
+#
+# ! SEPARATA DA exwin.so PERCHE' NON TUTTI LA VOGLIONO. La barra delle
+# applicazioni, un orologio, un pannello non aprono file mai: tenerli separati
+# vuol dire che chi non apre file non paga il dialogo. Ed e' la prova che il
+# meccanismo regge con PIU' di una libreria — che era il vero dubbio.
+#
+# ! exdlg USA exwin, e la usa come un'applicazione qualunque: si collega lo
+# STUB, non il toolkit. Portarsene dentro una copia darebbe due tabelle di
+# finestre nello stesso processo, e una finestra creata dall'una sarebbe
+# invisibile all'altra.
+EXDLG_SRC     := lib/exdlg/exdlg.c
+EXDLG_ESPORTA := lib/exdlg/exdlg_esporta.c
+EXDLG_STUB    := lib/exdlg/exdlg_stub.c
+EXDLG_HDR     := lib/exdlg/exdlg.h
+EXDLG_LD      := lib/exdlg/exdlg.ld
+
+EXDLG_SO := $(BUILD_EXWIN_LIB)/exdlg.so
+
+$(EXDLG_SO): $(EXDLG_SRC) $(EXDLG_ESPORTA) $(EXDLG_HDR) $(EXDLG_LD) \
+             $(EXWIN_STUB) $(EXWIN_HDR) $(EXLIB_SRC) $(EXLIB_HDR) \
+             $(LIBC_PONTI_OBJ) $(LIBC_SO)
+	@echo "=== Compilazione libreria condivisa /exwin/lib/exdlg.so ==="
+	@mkdir -p $(BUILD_EXWIN_LIB) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -c $(EXDLG_SRC) -o $(BUILD_OBJ)/sodlg_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -c $(EXDLG_ESPORTA) -o $(BUILD_OBJ)/sodlg_esporta.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -c $(EXWIN_STUB) -o $(BUILD_OBJ)/sodlg_exwin.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(EXDLG_LD) \
+	    $(BUILD_OBJ)/sodlg_esporta.o $(BUILD_OBJ)/sodlg_main.o \
+	    $(BUILD_OBJ)/sodlg_exwin.o $(LIBC_PONTI_OBJ) -o $@
+	@ent=$$(LC_ALL=C readelf -h $@ | awk '/Entry point/ {print $$4}'); \
+	 if [ "$$ent" != "0x4400000" ]; then \
+	     echo "[ERRORE] la tabella di exdlg.so e' a $$ent invece che a 0x4400000"; \
+	     exit 1; \
+	 fi; \
+	 echo "[OK] exdlg.so compilata: $@ (tabella a $$ent)"
+
+.PHONY: exdlg_so
+exdlg_so: dirs $(EXDLG_SO)
+
+# =============================================================================
+# LA LIBC CONDIVISA — /lib/libc.so
+#
+# ! E' IL PEZZO PIU' GROSSO E QUELLO PIU' DELICATO. exwin.so la usano tre
+# programmi; questa la usano TUTTI, shell e init compresi. Per questo si
+# costruisce accanto a quella statica invece che al posto suo: un programma si
+# collega all'una o all'altra, e i due modi convivono. L'interruttore e' il
+# collegamento — $(LIBC_PONTI_OBJ) al posto di $(BUILD_OBJ)/<prog>_libc.o —
+# non un #ifdef sparso nei sorgenti.
+#
+# ! I DUE LATI SI GENERANO DAI SIMBOLI VERI, con tools/genlibc.py: un elenco
+# scritto a mano sarebbe rimasto indietro alla prima funzione aggiunta, e una
+# funzione presente da un lato solo non da' un errore di compilazione — da' un
+# salto a zero al primo programma che la chiama.
+#
+# ! -DEXOS_LIBC_SO toglie l'avvio (lib/libc_avvio.c): dentro la libreria
+# `main` non esiste e il collegamento fallirebbe. Il perche' per esteso sta in
+# cima a quel file.
+# =============================================================================
+
+$(LIBC_SO_OBJ): $(LIBC_SRC) $(LIBC_AVVIO)
+	@mkdir -p $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -DEXOS_LIBC_SO -c $(LIBC_SRC) -o $@
+
+$(GEN_ESPORTA) $(GEN_PONTI): $(LIBC_SO_OBJ) tools/genlibc.py
+	@mkdir -p $(GEN_DIR)
+	python3 tools/genlibc.py $(LIBC_SO_OBJ) $(GEN_DIR)
+
+$(LIBC_SO): $(LIBC_SO_OBJ) $(GEN_ESPORTA) $(LIBC_LD)
+	@echo "=== Compilazione libc condivisa /lib/libc.so ==="
+	@mkdir -p $(BUILD_LIB) $(BUILD_OBJ)
+	$(CC) -m32 -c $(GEN_ESPORTA) -o $(BUILD_OBJ)/libc_esporta.o
+	@# ! SENZA --gc-sections, e sta scritto in lib/libc.ld: una libreria
+	@# condivisa non sa chi la usera' domani.
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib -T $(LIBC_LD) \
+	    $(BUILD_OBJ)/libc_esporta.o $(LIBC_SO_OBJ) -o $@
+	@ent=$$(LC_ALL=C readelf -h $@ | awk '/Entry point/ {print $$4}'); \
+	 if [ "$$ent" != "0x4800000" ]; then \
+	     echo "[ERRORE] la tabella di libc.so e' a $$ent invece che a 0x4800000"; \
+	     exit 1; \
+	 fi; \
+	 echo "[OK] libc.so compilata: $@ (tabella a $$ent)"
+
+$(BUILD_OBJ)/libc_ponti_asm.o: $(GEN_PONTI)
+	@mkdir -p $(BUILD_OBJ)
+	$(CC) -m32 -c $(GEN_PONTI) -o $@
+
+$(BUILD_OBJ)/libc_ponti_c.o: $(LIBC_PONTI_C) $(EXLIB_HDR)
+	@mkdir -p $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -c $(LIBC_PONTI_C) -o $@
+
+$(BUILD_OBJ)/libc_ponti_avvio.o: $(LIBC_AVVIO)
+	@mkdir -p $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -c $(LIBC_AVVIO) -o $@
+
+$(BUILD_OBJ)/libc_ponti_exlib.o: $(EXLIB_SRC) $(EXLIB_HDR)
+	@mkdir -p $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -c $(EXLIB_SRC) -o $@
+
+.PHONY: libc_so libc
+libc_so: dirs $(LIBC_SO)
+
+# ! `libc` RESTA UN BERSAGLIO, e non e' cortesia verso chi lo digita: `all`
+# dipende da lui. Toglierlo insieme alla regola vecchia ha fermato la
+# costruzione con «Nessuna regola per generare l'obiettivo libc» — un
+# messaggio che parla di make e non dice che cosa e' stato tolto.
+libc: dirs $(LIBC_SO)
+
 WINPROVA_SRC := bin/winprova/winprova.c
 WINPROVA_BIN := $(BUILD_BIN_CD)/winprova
 WINPROVA_LD  := bin/winprova/winprova.ld
 
-$(WINPROVA_BIN): $(WINPROVA_SRC) $(WINPROVA_LD) $(EXWIN_SRC) $(EXWIN_HDR) \
-                 $(WIN_PROTO) $(FONT_SRC) $(LIBC_SRC) $(LIBC_START)
+$(WINPROVA_BIN): $(WINPROVA_SRC) $(WINPROVA_LD) $(EXWIN_STUB) $(EXLIB_SRC) $(EXLIB_HDR) $(EXWIN_HDR) \
+                 $(WIN_PROTO) $(FONT_SRC) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/winprova ==="
 	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(WINPROVA_SRC) -o $(BUILD_OBJ)/winprova_main.o
-	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_SRC) -o $(BUILD_OBJ)/winprova_exwin.o
-	$(CC) $(CFLAGS_USER) -I lib/include -I kernel/include -c $(FONT_SRC) -o $(BUILD_OBJ)/winprova_font.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)   -o $(BUILD_OBJ)/winprova_libc.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/winprova_exwin.o
 	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/winprova_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(WINPROVA_LD) \
 	    $(BUILD_OBJ)/winprova_start.o $(BUILD_OBJ)/winprova_main.o \
-	    $(BUILD_OBJ)/winprova_exwin.o $(BUILD_OBJ)/winprova_font.o \
-	    $(BUILD_OBJ)/winprova_libc.o -o $@
+	    $(BUILD_OBJ)/winprova_exwin.o \
+	    $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] winprova compilato: $@"
 
 .PHONY: winprova
@@ -894,29 +1086,23 @@ winprova: dirs $(WINPROVA_BIN)
 #   /exwin/lib    l'elenco delle applicazioni, e cio' che condividono
 #   /exwin/dev    i pezzi grafici che vogliono il varco dei driver
 # =============================================================================
-BUILD_EXWIN     := $(BUILD_DIR)/exwin
-BUILD_EXWIN_BIN := $(BUILD_EXWIN)/bin
-BUILD_EXWIN_LIB := $(BUILD_EXWIN)/lib
-
 EXWIN_APPLIST := exwin/lib/applicazioni.txt
 
 PM_SRC := exwin/bin/pm/pm.c
 PM_BIN := $(BUILD_EXWIN_BIN)/pm
 PM_LD  := exwin/bin/pm/pm.ld
 
-$(PM_BIN): $(PM_SRC) $(PM_LD) $(EXWIN_SRC) $(EXWIN_HDR) $(WIN_PROTO) \
-           $(FONT_SRC) $(LIBC_SRC) $(LIBC_START)
+$(PM_BIN): $(PM_SRC) $(PM_LD) $(EXWIN_STUB) $(EXLIB_SRC) $(EXLIB_HDR) $(EXWIN_HDR) $(WIN_PROTO) \
+           $(FONT_SRC) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /exwin/bin/pm ==="
 	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(PM_SRC) -o $(BUILD_OBJ)/pm_main.o
-	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_SRC) -o $(BUILD_OBJ)/pm_exwin.o
-	$(CC) $(CFLAGS_USER) -I lib/include -I kernel/include -c $(FONT_SRC) -o $(BUILD_OBJ)/pm_font.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)   -o $(BUILD_OBJ)/pm_libc.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/pm_exwin.o
 	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/pm_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(PM_LD) \
 	    $(BUILD_OBJ)/pm_start.o $(BUILD_OBJ)/pm_main.o \
-	    $(BUILD_OBJ)/pm_exwin.o $(BUILD_OBJ)/pm_font.o \
-	    $(BUILD_OBJ)/pm_libc.o -o $@
+	    $(BUILD_OBJ)/pm_exwin.o \
+	    $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] pm compilato: $@"
 
 .PHONY: pm
@@ -931,15 +1117,14 @@ EXWINCMD_SRC := bin/exwin/exwin.c
 EXWINCMD_BIN := $(BUILD_BIN_CD)/exwin
 EXWINCMD_LD  := bin/exwin/exwin.ld
 
-$(EXWINCMD_BIN): $(EXWINCMD_SRC) $(EXWINCMD_LD) $(LIBC_SRC) $(LIBC_START)
+$(EXWINCMD_BIN): $(EXWINCMD_SRC) $(EXWINCMD_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/exwin ==="
 	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(EXWINCMD_SRC) -o $(BUILD_OBJ)/exwincmd_main.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)   -o $(BUILD_OBJ)/exwincmd_libc.o
 	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/exwincmd_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(EXWINCMD_LD) \
 	    $(BUILD_OBJ)/exwincmd_start.o $(BUILD_OBJ)/exwincmd_main.o \
-	    $(BUILD_OBJ)/exwincmd_libc.o -o $@
+	    $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] exwin compilato: $@"
 
 .PHONY: exwincmd
@@ -951,27 +1136,52 @@ FILEMGR_SRC := exwin/bin/filemgr/filemgr.c
 FILEMGR_BIN := $(BUILD_EXWIN_BIN)/filemgr
 FILEMGR_LD  := exwin/bin/filemgr/filemgr.ld
 
-$(FILEMGR_BIN): $(FILEMGR_SRC) $(FILEMGR_LD) $(EXWIN_SRC) $(EXWIN_HDR) \
-                $(WIN_PROTO) $(FONT_SRC) $(LIBC_SRC) $(LIBC_START)
+$(FILEMGR_BIN): $(FILEMGR_SRC) $(FILEMGR_LD) $(EXWIN_STUB) $(EXLIB_SRC) $(EXLIB_HDR) $(EXWIN_HDR) \
+                $(WIN_PROTO) $(FONT_SRC) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /exwin/bin/filemgr ==="
 	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(FILEMGR_SRC) -o $(BUILD_OBJ)/filemgr_main.o
-	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_SRC) -o $(BUILD_OBJ)/filemgr_exwin.o
-	$(CC) $(CFLAGS_USER) -I lib/include -I kernel/include -c $(FONT_SRC) -o $(BUILD_OBJ)/filemgr_font.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)   -o $(BUILD_OBJ)/filemgr_libc.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/filemgr_exwin.o
 	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/filemgr_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(FILEMGR_LD) \
 	    $(BUILD_OBJ)/filemgr_start.o $(BUILD_OBJ)/filemgr_main.o \
-	    $(BUILD_OBJ)/filemgr_exwin.o $(BUILD_OBJ)/filemgr_font.o \
-	    $(BUILD_OBJ)/filemgr_libc.o -o $@
+	    $(BUILD_OBJ)/filemgr_exwin.o \
+	    $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] filemgr compilato: $@"
 
 .PHONY: filemgr
 filemgr: dirs $(FILEMGR_BIN)
 
+# --- /exwin/bin/edit: l'editor di testo grafico ------------------------------
+EDIT_SRC := exwin/bin/edit/edit.c
+EDIT_BIN := $(BUILD_EXWIN_BIN)/edit
+EDIT_LD  := exwin/bin/edit/edit.ld
+
+$(EDIT_BIN): $(EDIT_SRC) $(EDIT_LD) $(EXWIN_STUB) $(EXLIB_SRC) $(EXLIB_HDR) $(EXWIN_HDR) \
+             $(EXDLG_STUB) $(EXDLG_HDR) \
+             $(WIN_PROTO) $(FONT_SRC) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
+	@echo "=== Compilazione /exwin/bin/edit ==="
+	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -I drivers/wserver -I drivers/kbd -c $(EDIT_SRC) -o $(BUILD_OBJ)/edit_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/edit_exwin.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exdlg -c $(EXDLG_STUB) -o $(BUILD_OBJ)/edit_exdlg.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/edit_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(EDIT_LD) \
+	    $(BUILD_OBJ)/edit_start.o $(BUILD_OBJ)/edit_main.o \
+	    $(BUILD_OBJ)/edit_exwin.o \
+	    $(BUILD_OBJ)/edit_exdlg.o \
+	    $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] edit compilato: $@"
+
+.PHONY: edit
+edit: dirs $(EDIT_BIN)
+
 # ! L'ELENCO E' UN FILE E VA COPIATO, non compilato dentro: aggiungere
 # un'applicazione dev'essere una riga, non una ricostruzione.
-EXWIN_OUT := $(PM_BIN) $(FILEMGR_BIN)
+# ! LA LIBRERIA CONDIVISA FA PARTE DI CIO' CHE SI INSTALLA, e va messa qui
+# dentro: senza, le applicazioni finirebbero sull'immagine e la libreria no —
+# tre programmi che partono e si fermano subito dicendo che non la trovano.
+EXWIN_OUT := $(PM_BIN) $(FILEMGR_BIN) $(EDIT_BIN) $(EXWIN_SO) $(EXDLG_SO)
 
 # --- /bin/testo: rimette lo schermo, si digita alla cieca --------------------
 #
@@ -982,15 +1192,14 @@ TESTO_SRC := bin/testo/testo.c
 TESTO_BIN := $(BUILD_BIN)/testo
 TESTO_LD  := bin/testo/testo.ld
 
-$(TESTO_BIN): $(TESTO_SRC) $(TESTO_LD) $(LIBC_SRC) $(LIBC_START)
+$(TESTO_BIN): $(TESTO_SRC) $(TESTO_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/testo ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(TESTO_SRC) -o $(BUILD_OBJ)/testo_main.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)  -o $(BUILD_OBJ)/testo_libc.o
 	$(CC) -m32 -c $(LIBC_START)          -o $(BUILD_OBJ)/testo_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(TESTO_LD) \
 	    $(BUILD_OBJ)/testo_start.o $(BUILD_OBJ)/testo_main.o \
-	    $(BUILD_OBJ)/testo_libc.o -o $@
+	    $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] testo compilato: $@"
 
 .PHONY: testo
@@ -1004,15 +1213,14 @@ MOUSE_SRC := bin/mouse/mouse.c
 MOUSE_BIN := $(BUILD_BIN)/mouse
 MOUSE_LD  := bin/mouse/mouse.ld
 
-$(MOUSE_BIN): $(MOUSE_SRC) $(KBD_DRV_PROTO) $(MOUSE_LD) $(LIBC_SRC) $(LIBC_START)
+$(MOUSE_BIN): $(MOUSE_SRC) $(KBD_DRV_PROTO) $(MOUSE_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/mouse ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/kbd -c $(MOUSE_SRC) -o $(BUILD_OBJ)/mouse_main.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)  -o $(BUILD_OBJ)/mouse_libc.o
 	$(CC) -m32 -c $(LIBC_START)          -o $(BUILD_OBJ)/mouse_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(MOUSE_LD) \
 	    $(BUILD_OBJ)/mouse_start.o $(BUILD_OBJ)/mouse_main.o \
-	    $(BUILD_OBJ)/mouse_libc.o -o $@
+	    $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] mouse compilato: $@"
 
 .PHONY: mouse_prog
@@ -1025,15 +1233,14 @@ mouse_prog: dirs $(MOUSE_BIN)
 KEYMAP_BIN := $(BUILD_BIN)/keymap
 KEYMAP_LD  := bin/keymap/keymap.ld
 
-$(KEYMAP_BIN): bin/keymap/keymap.c drivers/kbd/kbd_proto.h $(KEYMAP_LD) $(LIBC_SRC) $(LIBC_START)
+$(KEYMAP_BIN): bin/keymap/keymap.c drivers/kbd/kbd_proto.h $(KEYMAP_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/keymap ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/kbd -c bin/keymap/keymap.c -o $(BUILD_OBJ)/keymap_main.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)  -o $(BUILD_OBJ)/keymap_libc.o
 	$(CC) -m32 -c $(LIBC_START)          -o $(BUILD_OBJ)/keymap_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(KEYMAP_LD) \
 	    $(BUILD_OBJ)/keymap_start.o $(BUILD_OBJ)/keymap_main.o \
-	    $(BUILD_OBJ)/keymap_libc.o -o $@
+	    $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] keymap compilato: $@"
 
 .PHONY: keymap
@@ -1048,14 +1255,13 @@ TRUNC_SRC  := bin/trunc/trunc.c
 TRUNC_BIN  := $(BUILD_BIN)/trunc
 TRUNC_LD   := bin/trunc/trunc.ld
 
-$(TRUNC_BIN): $(TRUNC_SRC) $(TRUNC_LD) $(LIBC_SRC) $(LIBC_START)
+$(TRUNC_BIN): $(TRUNC_SRC) $(TRUNC_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/trunc ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(TRUNC_SRC) -o $(BUILD_OBJ)/trunc_main.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                 -o $(BUILD_OBJ)/trunc_libc.o
 	$(CC) -m32 -c $(LIBC_START)                         -o $(BUILD_OBJ)/trunc_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(TRUNC_LD) \
-	    $(BUILD_OBJ)/trunc_start.o $(BUILD_OBJ)/trunc_main.o $(BUILD_OBJ)/trunc_libc.o -o $@
+	    $(BUILD_OBJ)/trunc_start.o $(BUILD_OBJ)/trunc_main.o $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] trunc compilato: $@"
 
 .PHONY: trunc
@@ -1070,14 +1276,13 @@ CHKDSK_SRC := bin/chkdsk/chkdsk.c
 CHKDSK_BIN := $(BUILD_BIN)/chkdsk
 CHKDSK_LD  := bin/chkdsk/chkdsk.ld
 
-$(CHKDSK_BIN): $(CHKDSK_SRC) $(CHKDSK_LD) $(LIBC_SRC) $(LIBC_START)
+$(CHKDSK_BIN): $(CHKDSK_SRC) $(CHKDSK_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/chkdsk ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(CHKDSK_SRC) -o $(BUILD_OBJ)/chkdsk_main.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                  -o $(BUILD_OBJ)/chkdsk_libc.o
 	$(CC) -m32 -c $(LIBC_START)                          -o $(BUILD_OBJ)/chkdsk_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(CHKDSK_LD) \
-	    $(BUILD_OBJ)/chkdsk_start.o $(BUILD_OBJ)/chkdsk_main.o $(BUILD_OBJ)/chkdsk_libc.o -o $@
+	    $(BUILD_OBJ)/chkdsk_start.o $(BUILD_OBJ)/chkdsk_main.o $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] chkdsk compilato: $@"
 
 .PHONY: chkdsk
@@ -1091,14 +1296,13 @@ RENAME_SRC := bin/rename/rename.c
 RENAME_BIN := $(BUILD_BIN)/rename
 RENAME_LD  := bin/rename/rename.ld
 
-$(RENAME_BIN): $(RENAME_SRC) $(RENAME_LD) $(LIBC_SRC) $(LIBC_START)
+$(RENAME_BIN): $(RENAME_SRC) $(RENAME_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/rename ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(RENAME_SRC) -o $(BUILD_OBJ)/rename_main.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                  -o $(BUILD_OBJ)/rename_libc.o
 	$(CC) -m32 -c $(LIBC_START)                          -o $(BUILD_OBJ)/rename_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(RENAME_LD) \
-	    $(BUILD_OBJ)/rename_start.o $(BUILD_OBJ)/rename_main.o $(BUILD_OBJ)/rename_libc.o -o $@
+	    $(BUILD_OBJ)/rename_start.o $(BUILD_OBJ)/rename_main.o $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] rename compilato: $@"
 
 .PHONY: rename
@@ -1132,14 +1336,13 @@ RM_SRC := bin/rm/rm.c
 RM_BIN := $(BUILD_BIN)/rm
 RM_LD  := bin/rm/rm.ld
 
-$(RM_BIN): $(RM_SRC) $(RM_LD) $(LIBC_SRC) $(LIBC_START)
+$(RM_BIN): $(RM_SRC) $(RM_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/rm ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(RM_SRC) -o $(BUILD_OBJ)/rm_main.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)              -o $(BUILD_OBJ)/rm_libc.o
 	$(CC) -m32 -c $(LIBC_START)                      -o $(BUILD_OBJ)/rm_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(RM_LD) \
-	    $(BUILD_OBJ)/rm_start.o $(BUILD_OBJ)/rm_main.o $(BUILD_OBJ)/rm_libc.o -o $@
+	    $(BUILD_OBJ)/rm_start.o $(BUILD_OBJ)/rm_main.o $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] rm compilato: $@"
 
 .PHONY: rm_prog
@@ -1162,14 +1365,18 @@ UNAME_SRC := bin/uname/uname.c
 UNAME_BIN := $(BUILD_BIN)/uname
 UNAME_LD  := bin/uname/uname.ld
 
-$(UNAME_BIN): $(UNAME_SRC) $(UNAME_LD) $(LIBC_SRC) $(LIBC_START)
-	@echo "=== Compilazione /bin/uname ==="
+# ! IL PRIMO PROGRAMMA COLLEGATO ALLA LIBC CONDIVISA (17 agosto 2026), ed e'
+# stato scelto piccolo apposta: stampa una riga e finisce. Se l'aggancio a
+# libc.so avesse un difetto, si vedrebbe qui invece che dentro qualcosa di
+# complicato. Al posto di uname_libc.o ci sono i $(LIBC_PONTI_OBJ) — i ponti,
+# il risolutore, l'avvio e il cercatore di simboli.
+$(UNAME_BIN): $(UNAME_SRC) $(UNAME_LD) $(LIBC_PONTI_OBJ) $(LIBC_START) $(LIBC_SO)
+	@echo "=== Compilazione /bin/uname (libc CONDIVISA) ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(UNAME_SRC) -o $(BUILD_OBJ)/uname_main.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                 -o $(BUILD_OBJ)/uname_libc.o
 	$(CC) -m32 -c $(LIBC_START)                         -o $(BUILD_OBJ)/uname_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(UNAME_LD) \
-	    $(BUILD_OBJ)/uname_start.o $(BUILD_OBJ)/uname_main.o $(BUILD_OBJ)/uname_libc.o -o $@
+	    $(BUILD_OBJ)/uname_start.o $(BUILD_OBJ)/uname_main.o $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] uname compilato: $@"
 
 .PHONY: uname_prog
@@ -1179,14 +1386,13 @@ MV_SRC := bin/mv/mv.c
 MV_BIN := $(BUILD_BIN)/mv
 MV_LD  := bin/mv/mv.ld
 
-$(MV_BIN): $(MV_SRC) $(MV_LD) $(LIBC_SRC) $(LIBC_START)
+$(MV_BIN): $(MV_SRC) $(MV_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/mv ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(MV_SRC) -o $(BUILD_OBJ)/mv_main.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)              -o $(BUILD_OBJ)/mv_libc.o
 	$(CC) -m32 -c $(LIBC_START)                      -o $(BUILD_OBJ)/mv_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(MV_LD) \
-	    $(BUILD_OBJ)/mv_start.o $(BUILD_OBJ)/mv_main.o $(BUILD_OBJ)/mv_libc.o -o $@
+	    $(BUILD_OBJ)/mv_start.o $(BUILD_OBJ)/mv_main.o $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] mv compilato: $@"
 
 .PHONY: mv_prog
@@ -1205,15 +1411,14 @@ XCP_SRC := bin/xcp/xcp.c
 XCP_BIN := $(BUILD_BIN_CD)/xcp
 XCP_LD  := bin/xcp/xcp.ld
 
-$(XCP_BIN): $(XCP_SRC) $(XCP_LD) $(LIBC_SRC) $(LIBC_START)
+$(XCP_BIN): $(XCP_SRC) $(XCP_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/xcp ==="
 	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(XCP_SRC) -o $(BUILD_OBJ)/xcp_main.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)              -o $(BUILD_OBJ)/xcp_libc.o
 	$(CC) -m32 -c $(LIBC_START)                      -o $(BUILD_OBJ)/xcp_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(XCP_LD) \
 	    $(BUILD_OBJ)/xcp_start.o $(BUILD_OBJ)/xcp_main.o \
-	    $(BUILD_OBJ)/xcp_libc.o -o $@
+	    $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] xcp compilato: $@"
 
 .PHONY: xcp
@@ -1229,15 +1434,14 @@ NETDETECT_SRC := bin/netdetect/netdetect.c
 NETDETECT_BIN := $(BUILD_BIN_CD)/netdetect
 NETDETECT_LD  := bin/netdetect/netdetect.ld
 
-$(NETDETECT_BIN): $(NETDETECT_SRC) $(NETDETECT_LD) $(PCI_DRV_PROTO) $(NET_PROTO) $(RETE_SRC) $(RETE_HDR) $(LIBC_SRC) $(LIBC_START)
+$(NETDETECT_BIN): $(NETDETECT_SRC) $(NETDETECT_LD) $(PCI_DRV_PROTO) $(NET_PROTO) $(RETE_SRC) $(RETE_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/netdetect ==="
 	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(NETDETECT_SRC) -o $(BUILD_OBJ)/netdetect_main.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(RETE_SRC) -o $(BUILD_OBJ)/netdetect_rete.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                  -o $(BUILD_OBJ)/netdetect_libc.o
 	$(CC) -m32 -c $(LIBC_START)                          -o $(BUILD_OBJ)/netdetect_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(NETDETECT_LD) \
-	    $(BUILD_OBJ)/netdetect_start.o $(BUILD_OBJ)/netdetect_main.o $(BUILD_OBJ)/netdetect_rete.o $(BUILD_OBJ)/netdetect_libc.o -o $@
+	    $(BUILD_OBJ)/netdetect_start.o $(BUILD_OBJ)/netdetect_main.o $(BUILD_OBJ)/netdetect_rete.o $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] netdetect compilato: $@"
 
 .PHONY: netdetect
@@ -1251,16 +1455,15 @@ NETTEST_SRC := bin/nettest/nettest.c
 NETTEST_BIN := $(BUILD_BIN_CD)/nettest
 NETTEST_LD  := bin/nettest/nettest.ld
 
-$(NETTEST_BIN): $(NETTEST_SRC) $(NETTEST_LD) $(NET_PROTO) $(DNS_SRC) $(DNS_HDR) $(RETE_SRC) $(RETE_HDR) $(LIBC_SRC) $(LIBC_START)
+$(NETTEST_BIN): $(NETTEST_SRC) $(NETTEST_LD) $(NET_PROTO) $(DNS_SRC) $(DNS_HDR) $(RETE_SRC) $(RETE_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/nettest ==="
 	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(NETTEST_SRC) -o $(BUILD_OBJ)/nettest_main.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(RETE_SRC) -o $(BUILD_OBJ)/nettest_rete.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(DNS_SRC)     -o $(BUILD_OBJ)/nettest_dns.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                 -o $(BUILD_OBJ)/nettest_libc.o
 	$(CC) -m32 -c $(LIBC_START)                         -o $(BUILD_OBJ)/nettest_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(NETTEST_LD) \
-	    $(BUILD_OBJ)/nettest_start.o $(BUILD_OBJ)/nettest_main.o $(BUILD_OBJ)/nettest_dns.o $(BUILD_OBJ)/nettest_rete.o $(BUILD_OBJ)/nettest_libc.o -o $@
+	    $(BUILD_OBJ)/nettest_start.o $(BUILD_OBJ)/nettest_main.o $(BUILD_OBJ)/nettest_dns.o $(BUILD_OBJ)/nettest_rete.o $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] nettest compilato: $@"
 
 .PHONY: nettest
@@ -1274,16 +1477,15 @@ PING_SRC  := bin/ping/ping.c
 PING_BIN  := $(BUILD_BIN_CD)/ping
 PING_LD   := bin/ping/ping.ld
 
-$(PING_BIN): $(PING_SRC) $(PING_LD) $(IP_PROTO) $(DNS_SRC) $(DNS_HDR) $(RETE_SRC) $(RETE_HDR) $(LIBC_SRC) $(LIBC_START)
+$(PING_BIN): $(PING_SRC) $(PING_LD) $(IP_PROTO) $(DNS_SRC) $(DNS_HDR) $(RETE_SRC) $(RETE_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/ping ==="
 	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(PING_SRC) -o $(BUILD_OBJ)/ping_main.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(RETE_SRC) -o $(BUILD_OBJ)/ping_rete.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(DNS_SRC)  -o $(BUILD_OBJ)/ping_dns.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                -o $(BUILD_OBJ)/ping_libc.o
 	$(CC) -m32 -c $(LIBC_START)                        -o $(BUILD_OBJ)/ping_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(PING_LD) \
-	    $(BUILD_OBJ)/ping_start.o $(BUILD_OBJ)/ping_main.o $(BUILD_OBJ)/ping_dns.o $(BUILD_OBJ)/ping_rete.o $(BUILD_OBJ)/ping_libc.o -o $@
+	    $(BUILD_OBJ)/ping_start.o $(BUILD_OBJ)/ping_main.o $(BUILD_OBJ)/ping_dns.o $(BUILD_OBJ)/ping_rete.o $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] ping compilato: $@"
 
 .PHONY: ping
@@ -1293,16 +1495,15 @@ IPCFG_SRC := bin/ipcfg/ipcfg.c
 IPCFG_BIN := $(BUILD_BIN_CD)/ipcfg
 IPCFG_LD  := bin/ipcfg/ipcfg.ld
 
-$(IPCFG_BIN): $(IPCFG_SRC) $(IPCFG_LD) $(IP_PROTO) $(DNS_SRC) $(DNS_HDR) $(RETE_SRC) $(RETE_HDR) $(LIBC_SRC) $(LIBC_START)
+$(IPCFG_BIN): $(IPCFG_SRC) $(IPCFG_LD) $(IP_PROTO) $(DNS_SRC) $(DNS_HDR) $(RETE_SRC) $(RETE_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/ipcfg ==="
 	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(IPCFG_SRC) -o $(BUILD_OBJ)/ipcfg_main.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(RETE_SRC) -o $(BUILD_OBJ)/ipcfg_rete.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(DNS_SRC)   -o $(BUILD_OBJ)/ipcfg_dns.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                 -o $(BUILD_OBJ)/ipcfg_libc.o
 	$(CC) -m32 -c $(LIBC_START)                         -o $(BUILD_OBJ)/ipcfg_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(IPCFG_LD) \
-	    $(BUILD_OBJ)/ipcfg_start.o $(BUILD_OBJ)/ipcfg_main.o $(BUILD_OBJ)/ipcfg_dns.o $(BUILD_OBJ)/ipcfg_rete.o $(BUILD_OBJ)/ipcfg_libc.o -o $@
+	    $(BUILD_OBJ)/ipcfg_start.o $(BUILD_OBJ)/ipcfg_main.o $(BUILD_OBJ)/ipcfg_dns.o $(BUILD_OBJ)/ipcfg_rete.o $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] ipcfg compilato: $@"
 
 .PHONY: ipcfg
@@ -1316,15 +1517,14 @@ DHCP_SRC := bin/dhcp/dhcp.c
 DHCP_BIN := $(BUILD_BIN_CD)/dhcp
 DHCP_LD  := bin/dhcp/dhcp.ld
 
-$(DHCP_BIN): $(DHCP_SRC) $(DHCP_LD) $(IP_PROTO) $(RETE_SRC) $(RETE_HDR) $(LIBC_SRC) $(LIBC_START)
+$(DHCP_BIN): $(DHCP_SRC) $(DHCP_LD) $(IP_PROTO) $(RETE_SRC) $(RETE_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/dhcp ==="
 	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(DHCP_SRC) -o $(BUILD_OBJ)/dhcp_main.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(RETE_SRC) -o $(BUILD_OBJ)/dhcp_rete.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                -o $(BUILD_OBJ)/dhcp_libc.o
 	$(CC) -m32 -c $(LIBC_START)                        -o $(BUILD_OBJ)/dhcp_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(DHCP_LD) \
-	    $(BUILD_OBJ)/dhcp_start.o $(BUILD_OBJ)/dhcp_main.o $(BUILD_OBJ)/dhcp_rete.o $(BUILD_OBJ)/dhcp_libc.o -o $@
+	    $(BUILD_OBJ)/dhcp_start.o $(BUILD_OBJ)/dhcp_main.o $(BUILD_OBJ)/dhcp_rete.o $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] dhcp compilato: $@"
 
 .PHONY: dhcp
@@ -1337,16 +1537,15 @@ HOST_SRC := bin/host/host.c
 HOST_BIN := $(BUILD_BIN_CD)/host
 HOST_LD  := bin/host/host.ld
 
-$(HOST_BIN): $(HOST_SRC) $(HOST_LD) $(IP_PROTO) $(DNS_SRC) $(DNS_HDR) $(RETE_SRC) $(RETE_HDR) $(LIBC_SRC) $(LIBC_START)
+$(HOST_BIN): $(HOST_SRC) $(HOST_LD) $(IP_PROTO) $(DNS_SRC) $(DNS_HDR) $(RETE_SRC) $(RETE_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/host ==="
 	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(HOST_SRC) -o $(BUILD_OBJ)/host_main.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(RETE_SRC) -o $(BUILD_OBJ)/host_rete.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(DNS_SRC)  -o $(BUILD_OBJ)/host_dns.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                -o $(BUILD_OBJ)/host_libc.o
 	$(CC) -m32 -c $(LIBC_START)                        -o $(BUILD_OBJ)/host_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(HOST_LD) \
-	    $(BUILD_OBJ)/host_start.o $(BUILD_OBJ)/host_main.o $(BUILD_OBJ)/host_dns.o $(BUILD_OBJ)/host_rete.o $(BUILD_OBJ)/host_libc.o -o $@
+	    $(BUILD_OBJ)/host_start.o $(BUILD_OBJ)/host_main.o $(BUILD_OBJ)/host_dns.o $(BUILD_OBJ)/host_rete.o $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] host compilato: $@"
 
 .PHONY: host
@@ -1359,17 +1558,16 @@ TCPTEST_SRC := bin/tcptest/tcptest.c
 TCPTEST_BIN := $(BUILD_BIN_CD)/tcptest
 TCPTEST_LD  := bin/tcptest/tcptest.ld
 
-$(TCPTEST_BIN): $(TCPTEST_SRC) $(TCPTEST_LD) $(IP_PROTO) $(DNS_SRC) $(DNS_HDR) $(RETE_SRC) $(RETE_HDR) $(LIBC_SRC) $(LIBC_START)
+$(TCPTEST_BIN): $(TCPTEST_SRC) $(TCPTEST_LD) $(IP_PROTO) $(DNS_SRC) $(DNS_HDR) $(RETE_SRC) $(RETE_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/tcptest ==="
 	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(TCPTEST_SRC) -o $(BUILD_OBJ)/tcptest_main.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(DNS_SRC)  -o $(BUILD_OBJ)/tcptest_dns.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(RETE_SRC) -o $(BUILD_OBJ)/tcptest_rete.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                -o $(BUILD_OBJ)/tcptest_libc.o
 	$(CC) -m32 -c $(LIBC_START)                        -o $(BUILD_OBJ)/tcptest_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(TCPTEST_LD) \
 	    $(BUILD_OBJ)/tcptest_start.o $(BUILD_OBJ)/tcptest_main.o $(BUILD_OBJ)/tcptest_dns.o \
-	    $(BUILD_OBJ)/tcptest_rete.o $(BUILD_OBJ)/tcptest_libc.o -o $@
+	    $(BUILD_OBJ)/tcptest_rete.o $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] tcptest compilato: $@"
 
 .PHONY: tcptest
@@ -1383,17 +1581,16 @@ FTP_SRC := bin/ftp/ftp.c
 FTP_BIN := $(BUILD_BIN_CD)/ftp
 FTP_LD  := bin/ftp/ftp.ld
 
-$(FTP_BIN): $(FTP_SRC) $(FTP_LD) $(IP_PROTO) $(DNS_SRC) $(DNS_HDR) $(RETE_SRC) $(RETE_HDR) $(LIBC_SRC) $(LIBC_START)
+$(FTP_BIN): $(FTP_SRC) $(FTP_LD) $(IP_PROTO) $(DNS_SRC) $(DNS_HDR) $(RETE_SRC) $(RETE_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/ftp ==="
 	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(FTP_SRC)  -o $(BUILD_OBJ)/ftp_main.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(DNS_SRC)  -o $(BUILD_OBJ)/ftp_dns.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(RETE_SRC) -o $(BUILD_OBJ)/ftp_rete.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                -o $(BUILD_OBJ)/ftp_libc.o
 	$(CC) -m32 -c $(LIBC_START)                        -o $(BUILD_OBJ)/ftp_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(FTP_LD) \
 	    $(BUILD_OBJ)/ftp_start.o $(BUILD_OBJ)/ftp_main.o $(BUILD_OBJ)/ftp_dns.o \
-	    $(BUILD_OBJ)/ftp_rete.o $(BUILD_OBJ)/ftp_libc.o -o $@
+	    $(BUILD_OBJ)/ftp_rete.o $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] ftp compilato: $@"
 
 .PHONY: ftp
@@ -1407,17 +1604,16 @@ TELNET_SRC := bin/telnet/telnet.c
 TELNET_BIN := $(BUILD_BIN_CD)/telnet
 TELNET_LD  := bin/telnet/telnet.ld
 
-$(TELNET_BIN): $(TELNET_SRC) $(TELNET_LD) $(IP_PROTO) drivers/kbd/kbd_proto.h $(DNS_SRC) $(DNS_HDR) $(RETE_SRC) $(RETE_HDR) $(LIBC_SRC) $(LIBC_START)
+$(TELNET_BIN): $(TELNET_SRC) $(TELNET_LD) $(IP_PROTO) drivers/kbd/kbd_proto.h $(DNS_SRC) $(DNS_HDR) $(RETE_SRC) $(RETE_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/telnet ==="
 	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -I drivers/kbd -c $(TELNET_SRC) -o $(BUILD_OBJ)/telnet_main.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(DNS_SRC)  -o $(BUILD_OBJ)/telnet_dns.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(RETE_SRC) -o $(BUILD_OBJ)/telnet_rete.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                -o $(BUILD_OBJ)/telnet_libc.o
 	$(CC) -m32 -c $(LIBC_START)                        -o $(BUILD_OBJ)/telnet_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(TELNET_LD) \
 	    $(BUILD_OBJ)/telnet_start.o $(BUILD_OBJ)/telnet_main.o $(BUILD_OBJ)/telnet_dns.o \
-	    $(BUILD_OBJ)/telnet_rete.o $(BUILD_OBJ)/telnet_libc.o -o $@
+	    $(BUILD_OBJ)/telnet_rete.o $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] telnet compilato: $@"
 
 .PHONY: telnet
@@ -1436,16 +1632,15 @@ TEXTLINE_SRC := bin/textline/textline.c
 TEXTLINE_BIN := $(BUILD_BIN)/textline
 TEXTLINE_LD  := bin/textline/textline.ld
 
-$(TEXTLINE_BIN): $(TEXTLINE_SRC) $(TEXTLINE_LD) $(LIBC_SRC) $(LIBC_START)
+$(TEXTLINE_BIN): $(TEXTLINE_SRC) $(TEXTLINE_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/textline ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(TEXTLINE_SRC) -o $(BUILD_OBJ)/textline_main.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                    -o $(BUILD_OBJ)/textline_libc.o
 	$(CC) -m32 -c $(LIBC_START)                            -o $(BUILD_OBJ)/textline_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(TEXTLINE_LD) \
 	    $(BUILD_OBJ)/textline_start.o \
 	    $(BUILD_OBJ)/textline_main.o  \
-	    $(BUILD_OBJ)/textline_libc.o  \
+	    $(LIBC_PONTI_OBJ)  \
 	    -o $@
 	@echo "[OK] textline compilato: $@"
 
@@ -1483,15 +1678,14 @@ $(BUILD_OBJ)/gfedit_%.o: $(GFEDIT_DIR)/%.c $(GFEDIT_HDR)
 	@mkdir -p $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -I $(GFEDIT_DIR) -I drivers/kbd -c $< -o $@
 
-$(GFEDIT_BIN): $(GFEDIT_OBJ) $(GFEDIT_LD) $(LIBC_SRC) $(LIBC_START)
+$(GFEDIT_BIN): $(GFEDIT_OBJ) $(GFEDIT_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/gfedit ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC) -o $(BUILD_OBJ)/gfedit_libc.o
 	$(CC) -m32 -c $(LIBC_START)         -o $(BUILD_OBJ)/gfedit_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(GFEDIT_LD) \
 	    $(BUILD_OBJ)/gfedit_start.o \
 	    $(GFEDIT_OBJ)               \
-	    $(BUILD_OBJ)/gfedit_libc.o  \
+	    $(LIBC_PONTI_OBJ)  \
 	    -o $@
 	@echo "[OK] gfedit compilato: $@"
 
@@ -1503,7 +1697,7 @@ INSTALL_SRC := bin/install/install.c
 INSTALL_BIN := $(BUILD_BIN)/install
 INSTALL_LD  := bin/install/install.ld
 
-$(INSTALL_BIN): $(INSTALL_SRC) $(INSTALL_LD) $(LIBC_SRC) $(LIBC_START)
+$(INSTALL_BIN): $(INSTALL_SRC) $(INSTALL_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/install ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(INSTALL_SRC) -o $(BUILD_OBJ)/install_main.o
@@ -1524,16 +1718,15 @@ CP_SRC := bin/cp/cp.c
 CP_BIN := $(BUILD_BIN)/cp
 CP_LD  := bin/cp/cp.ld
 
-$(CP_BIN): $(CP_SRC) $(CP_LD) $(LIBC_SRC) $(LIBC_START)
+$(CP_BIN): $(CP_SRC) $(CP_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/cp ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(CP_SRC) -o $(BUILD_OBJ)/cp_main.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)              -o $(BUILD_OBJ)/cp_libc.o
 	$(CC) -m32 -c $(LIBC_START)                      -o $(BUILD_OBJ)/cp_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(CP_LD) \
 	    $(BUILD_OBJ)/cp_start.o \
 	    $(BUILD_OBJ)/cp_main.o  \
-	    $(BUILD_OBJ)/cp_libc.o  \
+	    $(LIBC_PONTI_OBJ)  \
 	    -o $@
 	@echo "[OK] cp compilato: $@"
 
@@ -1548,16 +1741,15 @@ MOUNT_SRC := bin/mount/mount.c
 MOUNT_BIN := $(BUILD_BIN)/mount
 MOUNT_LD  := bin/mount/mount.ld
 
-$(MOUNT_BIN): $(MOUNT_SRC) $(MOUNT_LD) $(LIBC_SRC) $(LIBC_START)
+$(MOUNT_BIN): $(MOUNT_SRC) $(MOUNT_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/mount ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(MOUNT_SRC) -o $(BUILD_OBJ)/mount_main.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                 -o $(BUILD_OBJ)/mount_libc.o
 	$(CC) -m32 -c $(LIBC_START)                         -o $(BUILD_OBJ)/mount_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(MOUNT_LD) \
 	    $(BUILD_OBJ)/mount_start.o \
 	    $(BUILD_OBJ)/mount_main.o  \
-	    $(BUILD_OBJ)/mount_libc.o  \
+	    $(LIBC_PONTI_OBJ)  \
 	    -o $@
 	@echo "[OK] mount compilato: $@"
 
@@ -1569,16 +1761,15 @@ MKDIR_SRC := bin/mkdir/mkdir.c
 MKDIR_BIN := $(BUILD_BIN)/mkdir
 MKDIR_LD  := bin/mkdir/mkdir.ld
 
-$(MKDIR_BIN): $(MKDIR_SRC) $(MKDIR_LD) $(LIBC_SRC) $(LIBC_START)
+$(MKDIR_BIN): $(MKDIR_SRC) $(MKDIR_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/mkdir ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(MKDIR_SRC) -o $(BUILD_OBJ)/mkdir_main.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                 -o $(BUILD_OBJ)/mkdir_libc.o
 	$(CC) -m32 -c $(LIBC_START)                         -o $(BUILD_OBJ)/mkdir_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(MKDIR_LD) \
 	    $(BUILD_OBJ)/mkdir_start.o \
 	    $(BUILD_OBJ)/mkdir_main.o  \
-	    $(BUILD_OBJ)/mkdir_libc.o  \
+	    $(LIBC_PONTI_OBJ)  \
 	    -o $@
 	@echo "[OK] mkdir compilato: $@"
 
@@ -1590,16 +1781,15 @@ RMDIR_SRC := bin/rmdir/rmdir.c
 RMDIR_BIN := $(BUILD_BIN)/rmdir
 RMDIR_LD  := bin/rmdir/rmdir.ld
 
-$(RMDIR_BIN): $(RMDIR_SRC) $(RMDIR_LD) $(LIBC_SRC) $(LIBC_START)
+$(RMDIR_BIN): $(RMDIR_SRC) $(RMDIR_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/rmdir ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(RMDIR_SRC) -o $(BUILD_OBJ)/rmdir_main.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                 -o $(BUILD_OBJ)/rmdir_libc.o
 	$(CC) -m32 -c $(LIBC_START)                         -o $(BUILD_OBJ)/rmdir_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(RMDIR_LD) \
 	    $(BUILD_OBJ)/rmdir_start.o \
 	    $(BUILD_OBJ)/rmdir_main.o  \
-	    $(BUILD_OBJ)/rmdir_libc.o  \
+	    $(LIBC_PONTI_OBJ)  \
 	    -o $@
 	@echo "[OK] rmdir compilato: $@"
 
@@ -1611,38 +1801,31 @@ DELETE_SRC := bin/delete/delete.c
 DELETE_BIN := $(BUILD_BIN)/delete
 DELETE_LD  := bin/delete/delete.ld
 
-$(DELETE_BIN): $(DELETE_SRC) $(DELETE_LD) $(LIBC_SRC) $(LIBC_START)
+$(DELETE_BIN): $(DELETE_SRC) $(DELETE_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione /bin/delete ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(DELETE_SRC) -o $(BUILD_OBJ)/delete_main.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                  -o $(BUILD_OBJ)/delete_libc.o
 	$(CC) -m32 -c $(LIBC_START)                          -o $(BUILD_OBJ)/delete_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(DELETE_LD) \
 	    $(BUILD_OBJ)/delete_start.o \
 	    $(BUILD_OBJ)/delete_main.o  \
-	    $(BUILD_OBJ)/delete_libc.o  \
+	    $(LIBC_PONTI_OBJ)  \
 	    -o $@
 	@echo "[OK] delete compilato: $@"
 
 .PHONY: delete_prog
 delete_prog: dirs $(DELETE_BIN)
 
-# --- Shared library libc.so ---------------------------------------------------
-# (LIBC_SRC/LIBC_SO/LIBC_LD sono definite più in alto, prima della regola di
-#  $(LS_BIN) che le usa come prerequisito.)
-$(LIBC_SO): $(LIBC_SRC) $(LIBC_LD)
-	@echo "=== Compilazione libc.so ==="
-	@mkdir -p $(BUILD_LIB)
-	$(CC) $(CFLAGS_USER) -shared -fPIC -c $(LIBC_SRC) -o $(BUILD_LIB)/libc.o
-	@# -soname: senza, il DT_NEEDED dei programmi che si linkeranno a questa
-	@# libreria conterrebbe il PERCORSO passato a ld ("build/lib/libc.so")
-	@# invece del nome ("libc.so"), e il loader del kernel cercherebbe un
-	@# file inesistente. Verificato con readelf -d.
-	$(LD) -m $(CROSS_LD_EMU) -shared -soname libc.so --allow-shlib-undefined -T $(LIBC_LD) $(BUILD_LIB)/libc.o -o $@
-	@echo "[OK] libc.so compilata: $@"
+# --- libc.so: la regola sta piu' in alto ---------------------------------------
+#
+# ! QUI C'ERA UN TENTATIVO MORTO, tolto il 17 agosto 2026: costruiva libc.so
+# con -shared -fPIC, cioe' un ET_DYN. Il caricatore ELF del kernel accetta solo
+# ET_EXEC (kernel/loader/elf.c), quindi quella libreria non e' mai stata
+# caricata da nessuno: si costruiva, finiva sul floppy, e occupava spazio.
+# Adesso al suo posto c'e' la libc condivisa vera — ET_EXEC a base fissa, con
+# risoluzione per nome — e la regola sta accanto a quelle di exwin.so ed
+# exdlg.so.
 
-.PHONY: libc
-libc: dirs $(LIBC_SO)
 
 # --- Driver ELF: floppy.drv --------------------------------------------------
 FLOPPY_DRV_SRC := drivers/floppy/floppy.c
@@ -1677,7 +1860,7 @@ KBD_DRV_PROTO := drivers/kbd/kbd_proto.h
 KBD_DRV_OUT   := $(BUILD_DRIVERS)/kbd.drv
 KBD_DRV_LD    := drivers/kbd/kbd.ld
 
-$(KBD_DRV_OUT): $(KBD_DRV_SRC) $(KBD_DRV_PROTO) $(KBD_DRV_LD) $(LIBC_SRC) $(LIBC_START)
+$(KBD_DRV_OUT): $(KBD_DRV_SRC) $(KBD_DRV_PROTO) $(KBD_DRV_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione driver ring3 kbd.drv ==="
 	@mkdir -p $(BUILD_DRIVERS)
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/kbd -c $(KBD_DRV_SRC) -o $(BUILD_DRIVERS)/kbd_main.o
@@ -1704,7 +1887,7 @@ PCI_DRV_SRC   := drivers/pci/pci.c
 PCI_DRV_OUT   := $(BUILD_DRIVERS)/pci.drv
 PCI_DRV_LD    := drivers/pci/pci.ld
 
-$(PCI_DRV_OUT): $(PCI_DRV_SRC) $(PCI_DRV_PROTO) $(PCI_DRV_LD) $(LIBC_SRC) $(LIBC_START)
+$(PCI_DRV_OUT): $(PCI_DRV_SRC) $(PCI_DRV_PROTO) $(PCI_DRV_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione server ring3 pci.drv ==="
 	@mkdir -p $(BUILD_DRIVERS_CD)
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/pci -c $(PCI_DRV_SRC) -o $(BUILD_DRIVERS)/pci_main.o
@@ -1729,7 +1912,7 @@ NE2K_DRV_SRC   := drivers/ne2k/ne2k.c
 NE2K_DRV_OUT   := $(BUILD_DRIVERS_CD)/ne2k.drv
 NE2K_DRV_LD    := drivers/ne2k/ne2k.ld
 
-$(NE2K_DRV_OUT): $(NE2K_DRV_SRC) $(NET_PROTO) $(PCI_DRV_PROTO) $(NE2K_DRV_LD) $(LIBC_SRC) $(LIBC_START)
+$(NE2K_DRV_OUT): $(NE2K_DRV_SRC) $(NET_PROTO) $(PCI_DRV_PROTO) $(NE2K_DRV_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione driver ring3 ne2k.drv ==="
 	@mkdir -p $(BUILD_DRIVERS_CD)
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/pci -I drivers/net -c $(NE2K_DRV_SRC) -o $(BUILD_DRIVERS_CD)/ne2k_main.o
@@ -1756,7 +1939,7 @@ PCNET_DRV_SRC  := drivers/pcnet/pcnet.c
 PCNET_DRV_OUT  := $(BUILD_DRIVERS_CD)/pcnet.drv
 PCNET_DRV_LD   := drivers/pcnet/pcnet.ld
 
-$(PCNET_DRV_OUT): $(PCNET_DRV_SRC) $(NET_PROTO) $(PCI_DRV_PROTO) $(PCNET_DRV_LD) $(LIBC_SRC) $(LIBC_START)
+$(PCNET_DRV_OUT): $(PCNET_DRV_SRC) $(NET_PROTO) $(PCI_DRV_PROTO) $(PCNET_DRV_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione driver ring3 pcnet.drv ==="
 	@mkdir -p $(BUILD_DRIVERS_CD)
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/pci -I drivers/net -c $(PCNET_DRV_SRC) -o $(BUILD_DRIVERS_CD)/pcnet_main.o
@@ -1786,7 +1969,7 @@ E1000_DRV_SRC  := drivers/e1000/e1000.c
 E1000_DRV_OUT  := $(BUILD_DRIVERS_CD)/e1000.drv
 E1000_DRV_LD   := drivers/e1000/e1000.ld
 
-$(E1000_DRV_OUT): $(E1000_DRV_SRC) $(NET_PROTO) $(PCI_DRV_PROTO) $(E1000_DRV_LD) $(LIBC_SRC) $(LIBC_START)
+$(E1000_DRV_OUT): $(E1000_DRV_SRC) $(NET_PROTO) $(PCI_DRV_PROTO) $(E1000_DRV_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione driver ring3 e1000.drv ==="
 	@mkdir -p $(BUILD_DRIVERS_CD)
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/pci -I drivers/net -c $(E1000_DRV_SRC) -o $(BUILD_DRIVERS_CD)/e1000_main.o
@@ -1812,7 +1995,7 @@ IP_DRV_SRC := drivers/ip/ip.c
 IP_DRV_OUT := $(BUILD_DRIVERS_CD)/ip.drv
 IP_DRV_LD  := drivers/ip/ip.ld
 
-$(IP_DRV_OUT): $(IP_DRV_SRC) $(NET_PROTO) $(IP_PROTO) $(IP_DRV_LD) $(LIBC_SRC) $(LIBC_START)
+$(IP_DRV_OUT): $(IP_DRV_SRC) $(NET_PROTO) $(IP_PROTO) $(IP_DRV_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
 	@echo "=== Compilazione stack ring3 ip.drv ==="
 	@mkdir -p $(BUILD_DRIVERS_CD)
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -c $(IP_DRV_SRC) -o $(BUILD_DRIVERS_CD)/ip_main.o
@@ -2023,6 +2206,7 @@ KERNEL_C_SRC   := $(KERNEL_DIR)/arch/x86/gdt.c \
                   $(KERNEL_DIR)/block/blk.c \
                   $(KERNEL_DIR)/fs/cfg.c \
                   $(KERNEL_DIR)/loader/elf.c \
+                  $(KERNEL_DIR)/loader/lib.c \
                   $(KERNEL_DIR)/loader/dynlink.c \
                   $(KERNEL_DIR)/loader/drvmgr.c \
                   $(KERNEL_DIR)/arch/x86/power.c \
@@ -2472,7 +2656,7 @@ FB_CD_DOC := $(wildcard $(TOOLS_DIR)/freebasic-exos/MODIFICHE-FBC.md) \
 $(ISO_IMG): Makefile $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_PROVE) \
             $(LIBC_SRC) $(LIBC_HDR) $(LIBC_START) \
             $(EXWIN_HDR) $(EXWIN_SRC) $(WIN_PROTO) \
-            $(ISO_DOC) $(FB_CD_FILE) $(FB_CD_DOC)
+            $(ISO_DOC) $(FB_CD_FILE) $(FB_CD_DOC) $(LIBC_PONTI_OBJ) $(LIBC_SO)
 	@echo "=== Creazione CD degli strumenti ==="
 	@# ! IL CONTROLLO CHE SAREBBE SERVITO. Qui dentro finiscono binari
 	@# per i386-exos costruiti FUORI da questo Makefile (cc1, as, ld,
@@ -2499,7 +2683,7 @@ $(ISO_IMG): Makefile $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_PROVE) \
 	@# fa gia' con libc.c.
 	@cp $(EXWIN_HDR) $(EXWIN_SRC) $(ISO_ROOT)/exos/include/ 2>/dev/null || true
 	@cp $(WIN_PROTO) $(ISO_ROOT)/exos/include/ 2>/dev/null || true
-	@cp $(LIBC_SRC) $(LIBC_START) $(ISO_ROOT)/exos/
+	@cp $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(ISO_ROOT)/exos/
 	@# Il catalogo degli strumenti: lo legge `toolinst` (cioe' anche
 	@# `install -tools`) per sapere cosa c'e' sul CD e cosa si puo'
 	@# scegliere. Sta DENTRO l'albero perche' descrive l'albero: un CD
@@ -3358,6 +3542,10 @@ $(ISOX_IMG): Makefile $(FLOPPY_IMG) boot/autoexec.sh $(DRIVER_SOLO_CD_OUT) \
 	@mkdir -p $(ISOX_ROOT)/exwin/bin $(ISOX_ROOT)/exwin/lib $(ISOX_ROOT)/exwin/dev
 	@cp $(BUILD_EXWIN_BIN)/* $(ISOX_ROOT)/exwin/bin/ 2>/dev/null || true
 	@cp $(EXWIN_APPLIST) $(ISOX_ROOT)/exwin/lib/ 2>/dev/null || true
+	@# ! E LA LIBRERIA CONDIVISA, che senza di lei le applicazioni grafiche
+	@# non partono affatto. E' un file di /exwin/lib come l'elenco, ma non
+	@# viene dai sorgenti: viene da build/, quindi ha una riga sua.
+	@cp $(BUILD_EXWIN_LIB)/*.so $(ISOX_ROOT)/exwin/lib/ 2>/dev/null || true
 	@# La RISERVA dei driver, da cui si installa.
 	@#
 	@# ! È UNA COPIA DI dev/, NON UN'ALTERNATIVA, e le due hanno compiti

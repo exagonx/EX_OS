@@ -112,8 +112,14 @@ int main(int argc, char **argv)
                 EX_TITOLO | EX_BORDO | EX_CHIUDI,
                 80, 60, 360, 220, 0, 0, procedura);
     if (f == 0) {
+        /* ! IL CONSIGLIO E' «exwin», e le due cose che diceva prima erano
+         * tutt'e due sbagliate: il percorso /cdrom/... non esiste quando si
+         * avvia DAL CD (li' la radice e' il CD), e avviare wserver.drv a mano
+         * lo fa nascere sulla console della shell, dove si contende la
+         * tastiera con lei. Chi seguiva questo consiglio non arrivava da
+         * nessuna parte, e dava la colpa al server. */
         printf("winprova: il server a finestre non risponde.\n");
-        printf("          Avvialo:  /cdrom/dev/wserver.drv &\n");
+        printf("          Avvialo con:  exwin\n");
         return 1;
     }
 

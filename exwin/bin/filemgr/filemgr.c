@@ -86,12 +86,53 @@ static void leggi(const char *percorso)
         }
 }
 
+static char g_avviso[96] = "";
+
 static void stato_aggiorna(void)
 {
-    char s[160];
+    char s[200];
 
-    sprintf(s, "%s  -  %u voci", g_dir, g_n);
+    if (g_avviso[0]) sprintf(s, "%s  -  %s", g_dir, g_avviso);
+    else             sprintf(s, "%s  -  %u voci", g_dir, g_n);
     ex_testo_metti(g_stato, s);
+}
+
+/* -----------------------------------------------------------------------------
+ * Aprire un file: lo si passa all'editor
+ *
+ * ! E' L'UNICO MODO DI APRIRE UN FILE, e non e' un ripiego elegante: l'editor
+ * non ha un dialogo «Apri» perche' il toolkit non ha ancora un dialogo modale
+ * con una casella di testo. Finche' e' cosi', chi sceglie il file e' il file
+ * manager e il nome viaggia sulla riga di comando.
+ *
+ * ! SI CERCA IN DUE POSTI, E L'ORDINE CONTA: su un sistema installato l'albero
+ * sta in /exwin, avviando dal CD sta sotto /cdrom. Stessa regola del program
+ * manager, per la stessa ragione.
+ * --------------------------------------------------------------------------- */
+static void apri_file(const char *nome)
+{
+    static const char *editori[2] = {
+        "/exwin/bin/edit", "/cdrom/exwin/bin/edit"
+    };
+    static char percorso[PERC_MAX];
+    char *argv[3];
+    int i;
+
+    strcpy(percorso, g_dir);
+    if (percorso[strlen(percorso) - 1] != '/') strcat(percorso, "/");
+    strncat(percorso, nome, PERC_MAX - strlen(percorso) - 1);
+
+    argv[1] = percorso;
+    argv[2] = 0;
+
+    for (i = 0; i < 2; i++) {
+        argv[0] = (char *)editori[i];
+        if (spawn_ex(editori[i], argv, 0, 0, 0) >= 0) {
+            sprintf(g_avviso, "aperto con l'editor: %s", nome);
+            return;
+        }
+    }
+    strcpy(g_avviso, "l'editor non si trova: /exwin/bin/edit");
 }
 
 /* Entra in una directory, o lo dice se non ci riesce. */
@@ -144,26 +185,34 @@ static void lista_disegna(void)
     }
 }
 
+/* «Apri» e Invio fanno la stessa cosa, e dipende da cosa e' selezionato: si
+ * entra in una directory, si apre un file. Una sola funzione perche' due
+ * strade identiche si scollegano appena una delle due cambia. */
+static void scegli(void)
+{
+    if (g_sel >= g_n) return;
+    if (g_voce[g_sel].dir) entra(g_voce[g_sel].nome);
+    else                   apri_file(g_voce[g_sel].nome);
+}
+
 static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
     case EXM_COMANDO:
+        g_avviso[0] = '\0';
         if (wp == ID_SU)   { entra(".."); break; }
-        if (wp == ID_APRI) {
-            if (g_sel < g_n && g_voce[g_sel].dir) entra(g_voce[g_sel].nome);
-            break;
-        }
+        if (wp == ID_APRI) { scegli(); break; }
         return 0;
 
     case EXM_TASTO:
         /* ! I TASTI SPECIALI STANNO DA 0x100 IN SU, apposta per non poterli
          * confondere con un carattere: il servizio 'kbd' li consegna gia'
          * cosi', e qui non si tocca nessuna mappa di tastiera. */
+        g_avviso[0] = '\0';
         if (wp == 0x0101 /* giu' */) { if (g_sel + 1 < g_n) g_sel++; }
         else if (wp == 0x0100 /* su */) { if (g_sel > 0) g_sel--; }
-        else if ((wp & 0xFFFF) == '\n' || (wp & 0xFFFF) == '\r') {
-            if (g_sel < g_n && g_voce[g_sel].dir) entra(g_voce[g_sel].nome);
-        } else return 0;
+        else if ((wp & 0xFFFF) == '\n' || (wp & 0xFFFF) == '\r') scegli();
+        else return 0;
 
         /* La finestra scorre dietro alla selezione, o si sceglie una riga che
          * non si vede. */

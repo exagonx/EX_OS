@@ -361,32 +361,13 @@ static void sh_setfg(int pid)
 #define O_TRUNC     0x0200
 #define O_APPEND    0x0400
 
-/* ! DEVONO RESTARE IDENTICHE a SpawnAzione/SpawnExtra in
- * kernel/include/syscall.h. La magia esiste apposta per rendere innocuo lo
- * sfasamento: se la disposizione qui e la' divergono, il kernel non
- * riconosce il blocco e lo IGNORA — le redirezioni spariscono invece di
- * scrivere nel file sbagliato. Quando cambia la struttura cambia anche la
- * magia, e chi la cambia deve toccare tutti e due i file. */
-#define SPAWN_EXTRA_MAGIA    0x53504E59u   /* 'SPNY' */
-#define SPAWN_MAX_AZIONI     4
-#define SPAWN_RED_PATH_MAX   128
-#define SPAWN_AZ_FILE        0
-#define SPAWN_AZ_FD          1
-
-typedef struct {
-    uint32_t tipo;
-    uint32_t fd;
-    uint32_t flags;
-    int32_t  fd_padre;
-    char     percorso[SPAWN_RED_PATH_MAX];
-} SpawnAzione;
-
-typedef struct {
-    uint32_t    magia;
-    char      **envp;
-    uint32_t    n_azioni;
-    SpawnAzione azioni[SPAWN_MAX_AZIONI];
-} SpawnExtra;
+/* ! LA STRUTTURA NON SI RICOPIA PIU' QUI DENTRO. Fino al 17 agosto 2026 c'era
+ * una copia, con la raccomandazione di tenerla identica a quella del kernel: e'
+ * rimasta indietro di tre giorni, e in quei tre giorni la shell non ha avuto
+ * ne' redirezioni ne' ambiente, in silenzio. La definizione e' una sola e sta
+ * in lib/include/spawn_abi.h — che non tira dentro la libc e usa solo
+ * `unsigned int`, apposta per poter essere inclusa proprio da qui. */
+#include "spawn_abi.h"
 
 static int sh_open(const char *path, uint32_t flags)
 {
@@ -1803,13 +1784,36 @@ static void cmd_exec(int argc, char *argv[])
     run_program_replace(argv[1], argc - 1, argv + 1);
 }
 
-/* Lettura minimale di un file per cmd_cat */
+/* -----------------------------------------------------------------------------
+ * cat
+ *
+ * ! SENZA NOME DI FILE LEGGE DA stdin, ed e' cio' che lo rende utilizzabile in
+ * una pipe. Prima chiedeva per forza un nome, quindi `hello | cat` rispondeva
+ * «uso: cat [file]» — e sembrava un difetto della pipe, mentre la pipe era
+ * costruita bene: la shell mette un builtin in fondo a una pipeline dentro un
+ * `/bin/sh -c` figlio, che il descrittore 0 ce l'ha giusto. Era cat a non
+ * guardarlo.
+ * --------------------------------------------------------------------------- */
+static int stdin_e_console(void);       /* definita piu' sotto, vedi il ciclo del prompt */
+
 static void cmd_cat(int argc, char *argv[])
 {
     char buf[512];
     int  fd, n;
 
-    if (argc < 2) { printerr("cat: uso: cat [file]"); return; }
+    if (argc < 2) {
+        /* ! MA SOLO SE stdin NON E' LA CONSOLE. Battuto al prompt, un `cat`
+         * senza argomenti si metterebbe a leggere la tastiera per sempre, e
+         * senza Ctrl+C non se ne uscirebbe piu': la console resterebbe muta e
+         * sembrerebbe bloccata. Dietro una pipe quella domanda non esiste,
+         * perche' la pipe finisce. E' la stessa prova che fa riga_modifica(),
+         * e per la stessa ragione. */
+        if (stdin_e_console()) { printerr("cat: uso: cat [file]"); return; }
+
+        while ((n = sh_read(STDIN, buf, sizeof(buf))) > 0)
+            sh_write(STDOUT, buf, (uint32_t)n);
+        return;
+    }
 
     fd = syscall3(SYS_OPEN, (uint32_t)argv[1], 0, 0);
     if (fd < 0) {

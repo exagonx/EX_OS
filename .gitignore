@@ -183,3 +183,4 @@ __pycache__/
 # Lo script che azzera la storia: e uno strumento, non un sorgente
 /azzera-storia.sh
 /messaggio-primo-commit.txt
+/finisci-azzeramento.sh

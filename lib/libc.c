@@ -172,6 +172,10 @@ static int cifra_valore(int c);
  * ============================================================================= */
 int errno = 0;
 
+/* Dichiarata qui e non accanto a __libc_distruttori_registra(): la usa exit(),
+ * che in questo file viene molto prima. */
+static void (*g_distruttori_prog)(void) = 0;
+
 /* Informazioni su un file (SYS_STAT). Duplicata da
  * kernel/include/syscall.h, come le altre strutture che attraversano
  * l'ABI. st_attr usa le convenzioni FAT anche sugli altri filesystem:
@@ -422,29 +426,14 @@ typedef struct {
  * quando lo chiama un programma compilato per la vecchia forma. */
 /* ! La magia e' 0x53504E59 e non piu' ...58: e' cambiata la disposizione
  * di SpawnAzione. Vedi lib/include/libc.h. */
-#define SPAWN_EXTRA_MAGIA    0x53504E5Au   /* 'SPNZ' */
-#define SPAWN_F_CONSOLE      0x00000001u
-#define SPAWN_MAX_AZIONI     4
-#define SPAWN_RED_PATH_MAX   128
-#define SPAWN_AZ_FILE   0
-#define SPAWN_AZ_FD     1
-
-typedef struct {
-    unsigned int tipo;
-    unsigned int fd;
-    unsigned int flags;
-    int          fd_padre;
-    char         percorso[SPAWN_RED_PATH_MAX];
-} SpawnAzione;
-
-typedef struct {
-    unsigned int magia;
-    char       **envp;
-    unsigned int n_azioni;
-    SpawnAzione  azioni[SPAWN_MAX_AZIONI];
-    unsigned int flag;          /* SPAWN_F_* */
-    unsigned int console;       /* valido solo con SPAWN_F_CONSOLE */
-} SpawnExtra;
+/* ! UNA DEFINIZIONE SOLA dal 17 agosto 2026: ce n'erano quattro e una e'
+ * rimasta indietro, costando alla shell redirezioni e ambiente per tre
+ * giorni senza un messaggio. Vedi lib/include/spawn_abi.h.
+ *
+ * ! IL PERCORSO E' RELATIVO E NON PASSA DA -I, perche' libc.c viene compilata
+ * da una ventina di regole del Makefile e non tutte hanno `-I lib/include`.
+ * Scriverlo relativo lo fa trovare a tutte senza toccarne nemmeno una. */
+#include "include/spawn_abi.h"
 
 typedef struct {
     int         fd;
@@ -2962,7 +2951,21 @@ void exit(int code)
          * handler registrato con atexit() puo' usare un oggetto globale;
          * distruggerlo prima gli lascerebbe in mano un oggetto morto.
          * Vedi _libc_distruttori() in fondo al file. */
-        _libc_distruttori();
+        /* ! QUELLO DEL PROGRAMMA SE C'E'. Vedi __libc_distruttori_registra():
+         * dentro la libc condivisa, _libc_distruttori() qui sotto vedrebbe il
+         * __fini_array della LIBRERIA invece che quello del programma. */
+        if (g_distruttori_prog) {
+            g_distruttori_prog();
+        }
+#ifndef EXOS_LIBC_SO
+        /* ! DENTRO LA LIBRERIA QUESTA RIGA NON C'E'. _libc_distruttori() sta in
+         * libc_avvio.c, che la libreria non compila apposta (percorrerebbe il
+         * __fini_array della LIBRERIA invece che quello del programma). Chi si
+         * collega alla libc condivisa registra il suo qui sopra. */
+        else {
+            _libc_distruttori();
+        }
+#endif
     }
 
     /* I BUFFER VANNO SVUOTATI QUI, e non e' una cortesia: un programma che
@@ -4647,144 +4650,6 @@ int munmap(void *addr, size_t lung)
     return 0;
 }
 
-/* =============================================================================
- * _libc_start — chiamata da lib/start.S dopo aver letto argc/argv
- *               dallo stack iniziale costruito da sys_spawn.
- *
- * I programmi che usano la libc implementano main(int argc, char **argv).
- * lib/start.S fornisce _start (weak, assembly puro) che legge argc/argv
- * da [esp+4]/[esp+8] prima di qualunque prolog GCC, poi chiama qui.
- *
- * libc.c non include libc.h (è self-contained): dichiariamo main() qui.
- * Da GCC 14 la chiamata implicita è un errore, non più un warning.
- *
- * ! TRE ARGOMENTI, E IL TERZO E' COSTATO UN PAGE FAULT A 0x00000000.
- *
- * La terza forma di main() — `main(argc, argv, envp)` — non e' nello
- * standard C ma esiste su ogni Unix, e il codice di terzi la usa. GNU make
- * la usa: la PRIMA cosa che fa dopo l'avvio e' scorrere `envp` per portarsi
- * dentro le variabili d'ambiente.
- *
- * Fino ad agosto 2026 qui c'era `main(argc, argv)` e la chiamata passava due
- * argomenti. Un main dichiarato con tre ne trovava due sullo stack e per il
- * terzo leggeva quello che c'era: `make --version` moriva su
- *
- *     [FAULT] page fault a 0x00000000 (protezione, lettura, EIP=0x08000450)
- *
- * cioe' alla seconda istruzione del suo ciclo sull'ambiente, prima di aver
- * stampato una riga.
- *
- * ! E NON ROMPE CHI NE DICHIARA DUE. La convenzione di chiamata di i386 e'
- * cdecl: gli argomenti li mette e li toglie il CHIAMANTE, quindi passarne
- * uno in piu' a una funzione che ne legge due e' esattamente cio' che fa
- * ogni Unix — la libc non sa quale delle due forme il programma abbia
- * scritto, e non ha bisogno di saperlo.
- * ============================================================================= */
-int main(int argc, char **argv, char **envp);
-
-/* =============================================================================
- * ! I COSTRUTTORI GLOBALI, che fino ad agosto 2026 NON VENIVANO CHIAMATI
- *
- * In C++ un oggetto dichiarato a livello di file ha un costruttore che
- * deve girare PRIMA di main(). Il compilatore mette il puntatore a quella
- * funzione nella sezione `.init_array`, e sta al codice di avvio
- * percorrerla. La nostra non lo faceva: ogni oggetto globale di ogni
- * programma C++ restava con i byte che si trovava.
- *
- * NON SI VEDEVA, ed e' il motivo per cui e' rimasto li' tanto: i
- * programmi di EX-OS sono in C e non hanno costruttori globali, e la
- * prova di libstdc++ (bin/iso/prova-cpp.cpp) costruisce i propri oggetti
- * DENTRO main. Il primo programma vero a inciamparci e' stato cc1, che
- * ne ha 57:
- *
- *     [ 4] .init_array  INIT_ARRAY  0a1be000  0000e4  (228 byte = 57 voci)
- *
- * Fra quei 57 c'e' `static object_allocator<et_occ> et_occurrences`, il
- * pool da cui la foresta ET prende i nodi. Mai costruito, allocate()
- * restituiva NULL, e cc1 moriva con un fault a 0x00000004 dentro
- * et_splay() — cioe' `occ->parent` su un puntatore nullo. Il guasto
- * sembrava un difetto di GCC ed era il nostro codice di avvio.
- *
- * ! I SIMBOLI SONO `weak` PERCHE' POSSONO NON ESISTERE. Li definisce il
- * linker script, e i nostri (bin/<prog>/<prog>.ld) non lo fanno — non
- * serve, quei programmi non hanno costruttori. Un simbolo weak non
- * definito vale zero, i due estremi coincidono e il ciclo non gira
- * nemmeno una volta. Dichiararli forti farebbe fallire il link di ogni
- * programma di EX-OS.
- *
- * ! L'ORDINE E' QUELLO DELL'ARRAY, IN AVANTI. Per .init_array e'
- * l'ordine giusto; per .fini_array la specifica dice ALL'INDIETRO, e
- * distruggere nell'ordine di costruzione invece che al contrario
- * significa distruggere un oggetto mentre un altro, costruito dopo, lo
- * sta ancora usando.
- *
- * ! .preinit_array PRIMA DI TUTTO. Ci finiscono le funzioni che devono
- * girare prima di qualunque costruttore — le usa il codice di
- * strumentazione. Sono quasi sempre zero, e costano tre righe.
- * ============================================================================= */
-/* ! QUESTO BLOCCO STA PRIMA DI __attribute__((weak, noreturn)), e non e'
- * indifferente: quell'attributo appartiene a _libc_start, ed e' scritto
- * sulla riga PRECEDENTE alla funzione. Infilando del codice in mezzo —
- * come ho fatto alla prima stesura — l'attributo si attacca alla prima
- * dichiarazione che trova (il typedef qui sotto, con tanto di avviso
- * «weak attribute ignored») e _libc_start perde sia weak sia noreturn,
- * in silenzio. */
-typedef void (*FunzioneInit)(void);
-
-extern FunzioneInit __preinit_array_start[] __attribute__((weak));
-extern FunzioneInit __preinit_array_end[]   __attribute__((weak));
-extern FunzioneInit __init_array_start[]    __attribute__((weak));
-extern FunzioneInit __init_array_end[]      __attribute__((weak));
-extern FunzioneInit __fini_array_start[]    __attribute__((weak));
-extern FunzioneInit __fini_array_end[]      __attribute__((weak));
-
-static void esegui_costruttori(void)
-{
-    FunzioneInit *p;
-
-    for (p = __preinit_array_start; p != __preinit_array_end; p++)
-        if (*p) (*p)();
-
-    for (p = __init_array_start; p != __init_array_end; p++)
-        if (*p) (*p)();
-}
-
-/* Chiamata da exit(). Vedi il commento sopra: all'indietro, non in
- * avanti. */
-void _libc_distruttori(void)
-{
-    FunzioneInit *p;
-
-    /* &a[0] e non a: confrontare due array direttamente e' un confronto
-     * fra indirizzi che il compilatore segnala, perche' quasi sempre chi
-     * lo scrive voleva confrontare il CONTENUTO. Qui gli indirizzi sono
-     * proprio quello che serve. */
-    if (&__fini_array_start[0] == &__fini_array_end[0]) return;
-
-    for (p = __fini_array_end; p != __fini_array_start; ) {
-        p--;
-        if (*p) (*p)();
-    }
-}
-
-__attribute__((weak, noreturn))
-void _libc_start(int argc, char **argv, char **envp)
-{
-    /* L'ambiente del processo e' quello che il padre ha passato. Puo'
-     * essere vuoto — succede al primo processo, che lo spawn lo fa il
-     * kernel — e in quel caso getenv() ripiega sulla sezione [env] di
-     * /boot/kernel.cfg: vedi getenv(). */
-    environ = envp;
-
-    /* ! DOPO environ E PRIMA DI main. Un costruttore globale puo'
-     * chiamare getenv(); farlo girare prima che environ sia impostato
-     * gli darebbe un ambiente vuoto invece di quello vero. */
-    esegui_costruttori();
-
-    exit(main(argc, argv, envp));
-    for (;;);
-}
-
 void sched_yield(void)
 {
     _syscall1(SYS_SCHED_YIELD, 0);
@@ -4872,7 +4737,12 @@ int nanosleep(const struct timespec *req, struct timespec *rem)
     }
 
     ms  = (unsigned long long)req->tv_sec * 1000ULL;
-    ms += ((unsigned long long)req->tv_nsec + 999999ULL) / 1000000ULL;
+    /* ! LA DIVISIONE E' A 32 BIT, e puo' esserlo perche' tv_nsec e' gia' stato
+     * validato sotto il miliardo qui sopra: la somma con 999999 sta in 32 bit
+     * con margine. A 64 bit servirebbe __udivdi3 di libgcc — che in un
+     * programma statico --gc-sections butta via insieme a nanosleep, ma nella
+     * libc CONDIVISA resta, e la libreria non collega libgcc. */
+    ms += ((unsigned int)req->tv_nsec + 999999u) / 1000000u;
 
     if (rem) { rem->tv_sec = 0; rem->tv_nsec = 0; }
 
@@ -5932,6 +5802,47 @@ static char getenv_buf[128];
  * driver di compilatore per dire a cc1 dove sono gli header.
  * ============================================================================= */
 char **environ = NULL;
+
+/* =============================================================================
+ * DOVE STANNO LE CINQUE VARIABILI GLOBALI — accessori per la libc condivisa
+ *
+ * ! UNA FUNZIONE NON PUO' AVVOLGERE UNA VARIABILE. Le 313 funzioni della libc
+ * si raggiungono con un salto indiretto, che non ha bisogno di conoscerne la
+ * firma; `errno`, `stdin`, `stdout`, `stderr` ed `environ` no: un programma
+ * che scrive `errno = 0` scrive nella PROPRIA copia, e la libc leggerebbe la
+ * sua — due variabili con lo stesso nome e nessun errore da nessuna parte.
+ *
+ * La soluzione e' quella di ogni libc vera: si esporta l'INDIRIZZO, e
+ * l'header trasforma il nome in una lettura di quell'indirizzo (vedi le macro
+ * in lib/include/libc.h). Il sorgente di chi le usa non cambia: `errno = 0` e
+ * `if (errno == ENOENT)` continuano a scriversi cosi'.
+ *
+ * ! VALGONO ANCHE COLLEGANDO LA libc STATICAMENTE, e apposta: un solo
+ * comportamento invece di due che divergono. Il costo e' una chiamata in piu'
+ * per accesso, e a errno non ci si accede in un ciclo stretto.
+ * ============================================================================= */
+int    *__errno_dove(void)   { return &errno; }
+FILE  **__stdin_dove(void)   { return &stdin; }
+FILE  **__stdout_dove(void)  { return &stdout; }
+FILE  **__stderr_dove(void)  { return &stderr; }
+char ***__environ_dove(void) { return &environ; }
+
+/* =============================================================================
+ * I DISTRUTTORI GLOBALI SONO DEL PROGRAMMA, NON DELLA LIBRERIA
+ *
+ * ! _libc_distruttori() percorre __fini_array, che e' un vettore del BINARIO
+ * in cui si trova. Dentro la libc condivisa percorrerebbe quello della
+ * LIBRERIA — vuoto — e i distruttori degli oggetti globali del programma non
+ * girerebbero mai. Il programma registra il suo, e exit() chiama quello.
+ *
+ * Collegando staticamente non si registra niente e si chiama quello locale,
+ * che e' lo stesso: il comportamento di sempre.
+ * ============================================================================= */
+void __libc_distruttori_registra(void (*f)(void))
+{
+    g_distruttori_prog = f;
+}
+
 
 /* Copia di environ in heap: nasce alla prima modifica. */
 static char **g_env_mio  = NULL;
@@ -7669,3 +7580,15 @@ void sha256_esa(const void *dati, size_t len, char out[65])
     }
     out[64] = '\0';
 }
+
+/* =============================================================================
+ * ! L'AVVIO E' IN UN FILE A PARTE, E LO SI INCLUDE QUI. Il perche' — e perche'
+ * si include un .c invece di collegarlo — sta scritto in cima a libc_avvio.c.
+ * In breve: quelle funzioni toccano `main` e i vettori dei costruttori, che
+ * appartengono al programma e non alla libreria; e la libc la compilano venti
+ * regole del Makefile, quindi un oggetto in piu' sarebbe stato venti modifiche
+ * e almeno una dimenticanza.
+ * ============================================================================= */
+#ifndef EXOS_LIBC_SO
+#include "libc_avvio.c"
+#endif

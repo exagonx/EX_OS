@@ -1583,7 +1583,15 @@ return ERR(ENOMEM); }
      * grafico, che deve stare su una console sua mentre su un'altra gira una
      * shell. Il flag e' obbligatorio: senza, una struttura azzerata con
      * memset chiederebbe la console 0 invece di dire «eredita». */
-    if ((kex.flag & SPAWN_F_CONSOLE) != 0) {
+    /* ! `kex` VALE QUALCOSA SOLO SE ha_extra, e senza questa condizione si
+     * leggeva spazzatura dello stack. Il sintomo era un avviso assurdo —
+     * «console 2723776 non esiste» — a ogni comando battuto nella shell, e
+     * quell'avviso e' stato la cosa che ha fatto scoprire il difetto grosso:
+     * il blocco della shell veniva RIFIUTATO per via della magia vecchia.
+     * Il danno diretto era nullo (il valore non passa il controllo di
+     * intervallo), ma un campo non inizializzato che ogni tanto ha il bit
+     * giusto acceso e' una console scelta a caso. */
+    if (ha_extra && (kex.flag & SPAWN_F_CONSOLE) != 0) {
         if (kex.console < VGA_N_CONSOLE) child->console = kex.console;
         else klog(LOG_WARN, "SYSCALL spawn: console %u non esiste, eredito la %u",
                   kex.console, parent->console);
@@ -3858,6 +3866,39 @@ int32_t sys_log(InterruptFrame *frame)
         vga_putchar('\n');
     }
     return 0;
+}
+
+/* =============================================================================
+ * SYS_LIB_APRI (248) — aggancia una libreria condivisa
+ *
+ * Il perche' sta in kernel/include/syscall.h e in kernel/loader/lib.c. Qui c'e'
+ * solo il passaggio del confine, che e' sempre lo stesso mestiere: il percorso
+ * si COPIA prima di usarlo.
+ * ========================================================================== */
+int32_t sys_lib_apri(InterruptFrame *frame)
+{
+    const char *u    = (const char *)frame->ebx;
+    Process    *self = proc_get_current();
+    char        perc[128];
+    uint32_t    i;
+    uint32_t    tabella = 0;
+    int32_t     rc;
+
+    if (self == NULL) return ERR(ESRCH);
+    if (!syscall_verify_str(u, sizeof(perc) - 1)) return ERR(EFAULT);
+
+    /* ! COPIATO PRIMA, come per ogni stringa che arriva da ring 3: lasciarlo
+     * la' vorrebbe dire che il processo puo' cambiarlo fra il controllo e
+     * l'uso, e la libreria aperta non sarebbe quella controllata. */
+    for (i = 0; i + 1 < sizeof(perc) && u[i]; i++) perc[i] = u[i];
+    perc[i] = '\0';
+
+    rc = lib_apri(perc, self, &tabella);
+    if (rc != 0) return rc;
+
+    /* La fascia delle librerie sta sotto 0x08000000: il valore e' sempre
+     * positivo e non si puo' confondere con un -errno. */
+    return (int32_t)tabella;
 }
 
 /* =============================================================================

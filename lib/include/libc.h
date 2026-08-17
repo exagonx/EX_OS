@@ -182,7 +182,8 @@ void   *memchr(const void *s, int c, size_t n);
  * resta in mano al chiamante. errno serve a chi vuole un messaggio senza
  * portarsi dietro il numero — perror() e strerror(errno).
  * ============================================================================= */
-extern int  errno;
+#define errno   (*__errno_dove())
+int *__errno_dove(void);
 char *strerror(int err);
 void        perror(const char *msg);
 
@@ -220,9 +221,36 @@ typedef struct _FILE FILE;
 #define L_tmpnam        64
 #define TMP_MAX         32      /* tentativi di mkstemp prima di arrendersi */
 
-extern FILE *stdin;
-extern FILE *stdout;
-extern FILE *stderr;
+/* =============================================================================
+ * ! LE CINQUE VARIABILI GLOBALI SI RAGGIUNGONO CON UN INDIRIZZO, non con un
+ * nome, dal 17 agosto 2026 — cioe' da quando la libc puo' essere una libreria
+ * CONDIVISA.
+ *
+ * Le 313 funzioni della libc si raggiungono con un salto indiretto, che non ha
+ * bisogno di conoscerne la firma. Una variabile no: un programma che scrive
+ * `errno = 0` scriverebbe nella PROPRIA copia mentre la libc legge la sua —
+ * due variabili con lo stesso nome, e nessun errore da nessuna parte.
+ *
+ * E' la soluzione di ogni libc vera. Il sorgente di chi le usa non cambia:
+ * `errno = 0`, `if (errno == ENOENT)`, `fprintf(stderr, ...)` e `environ` si
+ * continuano a scrivere esattamente cosi'.
+ *
+ * ! VALGONO ANCHE COLLEGANDO STATICAMENTE, e apposta: un comportamento solo
+ * invece di due che divergono in silenzio.
+ * ============================================================================= */
+int    *__errno_dove(void);
+FILE  **__stdin_dove(void);
+FILE  **__stdout_dove(void);
+FILE  **__stderr_dove(void);
+char ***__environ_dove(void);
+
+/* Il programma registra i propri distruttori globali: exit(), che sta nella
+ * libreria, non puo' trovarli da se'. Vedi lib/libc.c. */
+void    __libc_distruttori_registra(void (*f)(void));
+
+#define stdin   (*__stdin_dove())
+#define stdout  (*__stdout_dove())
+#define stderr  (*__stderr_dove())
 
 FILE   *fopen(const char *path, const char *modo);
 FILE   *fdopen(int fd, const char *modo);
@@ -1518,37 +1546,10 @@ int     listdir(const char *path, DirEntry *buf, int max);
  * compilati per la vecchia forma a tre argomenti — vedi il commento nel
  * kernel.
  * ============================================================================= */
-/* ! LA MAGIA E' CAMBIATA DA 0x53504E58 A 0x53504E59 (agosto 2026) perche'
- * e' cambiata la DISPOSIZIONE di SpawnAzione: ha due campi in piu'. Un
- * binario vecchio che passasse la struttura vecchia verrebbe letto storto,
- * e con una redirezione letta storta si scrive nel file sbagliato. Con la
- * magia nuova il kernel non la riconosce e la ignora, che e' l'errore
- * meno dannoso possibile. */
-#define SPAWN_EXTRA_MAGIA    0x53504E5Au   /* 'SPNZ' */
-#define SPAWN_F_CONSOLE      0x00000001u
-#define SPAWN_MAX_AZIONI     4
-#define SPAWN_RED_PATH_MAX   128
-
-/* Le due cose che si possono fare a un descrittore del figlio. */
-#define SPAWN_AZ_FILE   0   /* apri `percorso` e mettilo su `fd` */
-#define SPAWN_AZ_FD     1   /* dai al figlio il MIO descrittore `fd_padre` */
-
-typedef struct {
-    unsigned int tipo;          /* SPAWN_AZ_FILE oppure SPAWN_AZ_FD */
-    unsigned int fd;            /* il descrittore NEL FIGLIO */
-    unsigned int flags;         /* SPAWN_AZ_FILE: i flag di open */
-    int          fd_padre;      /* SPAWN_AZ_FD: quale descrittore del padre */
-    char         percorso[SPAWN_RED_PATH_MAX];
-} SpawnAzione;
-
-typedef struct {
-    unsigned int magia;
-    char       **envp;
-    unsigned int n_azioni;
-    SpawnAzione  azioni[SPAWN_MAX_AZIONI];
-    unsigned int flag;          /* SPAWN_F_* */
-    unsigned int console;       /* valido solo con SPAWN_F_CONSOLE */
-} SpawnExtra;
+/* ! UNA DEFINIZIONE SOLA dal 17 agosto 2026: ce n'erano quattro e una e'
+ * rimasta indietro, costando alla shell redirezioni e ambiente per tre
+ * giorni senza un messaggio. Vedi lib/include/spawn_abi.h. */
+#include "spawn_abi.h"
 
 /* La forma comoda per chi chiama: percorso invece di buffer a lunghezza
  * fissa, e nessuna magia da ricordare.
@@ -1658,7 +1659,7 @@ int     wait(int *stato);
  * quel ripiego il primo processo — che il padre non ce l'ha — resterebbe
  * senza PATH. Vedi il commento in lib/libc.c.
  * ============================================================================= */
-extern char **environ;
+#define environ (*__environ_dove())
 
 int     putenv(char *voce);          /* la voce ENTRA nell'ambiente, senza copia */
 int     setenv(const char *nome, const char *valore, int sovrascrivi);

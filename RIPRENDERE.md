@@ -1,4 +1,4 @@
-# DOVE RIPRENDERE — 14 agosto 2026
+# DOVE RIPRENDERE — 17 agosto 2026
 
 ## Lo stato in una riga
 
@@ -12,56 +12,81 @@ seriale e USB — tastiera compresa, hub compresi.
 
 ## COSA E' COMMITTATO
 
-    fb464ad  "Rimettere il modo testo senza BIOS: il gradino 0 e' chiuso"
+    0d3920f  "La scrivania: /exwin, barra delle applicazioni e menu di avvio"
 
-! **QUEL COMMIT CONTIENE PIU' DI QUELLO CHE DICE.** E' stato fatto con
-gitupdate.sh mentre il lavoro proseguiva, e ha portato dentro TUTTI i sorgenti
-nuovi della giornata — shmtest, polltest, testo, mouse, mouseser, uhci,
-vgaprova, shm.c, vga_modo3.c — sotto un messaggio che parla solo del modo
-testo. Il codice era al sicuro; il messaggio non lo descriveva.
+Da li' in poi **non e' stato committato niente**, e nell'albero ci sono, in
+ordine di nascita:
 
-Il resto della giornata sta nel commit successivo, questa volta con un
-messaggio che lo descrive davvero:
+ - **il file manager e l'editor** grafici, piu' i quattro difetti vecchi che
+   hanno fatto trovare (il fuoco della tastiera, le redirezioni della shell,
+   il consiglio sbagliato di winprova, `cat` in una pipe);
+ - **le librerie condivise**: il caricatore nel kernel, `SYS_LIB_APRI`,
+   `exwin.so`, `exdlg.so` e **la libc condivisa** con 39 programmi collegati;
+ - **l'installazione a componenti** (`install -m` / `-t`), e `wserver.drv` che
+   adesso risponde a `-i`;
+ - **il README rifatto** in italiano e inglese, e la versione portata a 0.184.
 
- - gli **hub USB** in uhci.drv;
- - la **dipendenza dell'ISO** che mancava, piu' la guardia
-   `verifica-dipendenze-cd`;
- - i **driver di input spostati sul floppy** (pci, uhci, mouseser);
- - la **ripulitura dei simboli grafici**, questa volta fino in fondo;
- - **le tre immagini che adesso sanno dire quando sono scadute** (floppy, CD
-   di sistema, CD strumenti);
- - **xHCI completo**: un mouse USB guida il puntatore, anche dietro un hub;
- - **la meta' comune dello stack USB**, tirata fuori in `drivers/usb/` e
-   condivisa dai due controller.
-
- - **il gradino 1 e' cominciato**: server a finestre in ring 3, toolkit ExWin
-   con header C, C++ e FreeBASIC, `SYS_VIDEO_INFO`.
-
-L'albero e' pulito.
+`messaggio-commit.txt` e' pronto: il commit lo fa `./gitupdate.sh`.
 
 ## La coda, in ordine
 
- 1. **Il file manager**, poi **l'editor**: sono le due voci del menu che oggi
-    puntano a programmi che non esistono. `/exwin/bin/filemgr` e
-    `/exwin/bin/edit`.
- 2. **Utenti e permessi**, nell'ordine scritto nella voce del 14 agosto: uid
-    nel PCB, proprietari in ext2, controlli nella VFS, `install`, `login`.
-    Chiude anche il difetto del varco `*.drv`.
- 2. **`Ctrl+C` in un terminale in finestra** — oggi non c'e' e non puo'
-    esserci cosi': un segnale attraverso una pipe non si manda. Serve un modo
-    di chiedere al kernel «interrompi quel processo».
- 2. **I lettori di immagini**: JPG, PNG e ICO. La tabella dove aggiungerli e'
+### Cose che mancano e si vedono
+
+ 1. **`/exwin/bin/term`** — la terza voce del menu punta a un programma che non
+    esiste. Il controllo «terminale» c'e' gia' dentro exwin: e' quasi solo
+    metterci intorno un `main`.
+ 2. **Utenti e permessi** — la specifica completa e' nella voce «Utenti,
+    permessi e installazione a componenti» del 17 agosto: sette regole dettate
+    dall'utente, cinque passi in ordine (`uid` nel PCB, proprietari in ext2,
+    controlli nella VFS, `install` che crea gli utenti, `login` obbligatorio).
+    **La parte dell'installatore e' fatta**; manca tutto il resto. E' il lavoro
+    piu' grosso rimasto, e chiude il difetto del varco `*.drv`.
+ 3. **I lettori di immagini**: JPG, PNG e ICO. La tabella dove aggiungerli e'
     gia' in `exwin.c` e il BMP funziona: ognuno e' un lettore piu' una riga, e
     il server non se ne accorge nemmeno.
- 3. **Ridimensionare le finestre**: la zona condivisa ha misura fissa, quindi
+
+### Cose che il toolkit ha gia' chiesto tre volte
+
+ 4. **`ex_fuoco()`** — oggi il fuoco va al primo controllo creato e non si puo'
+    spostare. Ha gia' morso una volta, nel dialogo di ExDlg, dove le chiamate
+    sono in un ordine che non e' quello in cui si leggono.
+ 5. **Una lista a scorrimento** e **un'area di testo multiriga** — file
+    manager, editor e dialogo se li sono disegnati a mano, tre volte.
+ 6. **Un dialogo con «si'/no»** e **finestre modali vere**. ExDlg ha un avviso
+    con un pulsante solo, quindi «vuoi perdere le modifiche?» si chiede facendo
+    premere due volte lo stesso pulsante. E il server non sa cosa sia una
+    finestra modale: il dialogo sta sopra ma i clic sotto arrivano lo stesso.
+
+### Cose che vogliono un pezzo di kernel nuovo
+
+ 7. **`Ctrl+C` in un terminale in finestra** — non c'e' e non puo' esserci
+    cosi': un segnale attraverso una pipe non si manda. Serve un modo di
+    chiedere al kernel «interrompi quel processo».
+ 8. **Ridimensionare le finestre** — la zona condivisa ha misura fissa, quindi
     vuole una stretta di mano ordinata. `WIN_EV_MISURA` e' gia' nel protocollo.
- 4. **La lista delle regioni sporche**: `WIN_MSG_AGGIORNA` porta gia' una
+
+### Rifiniture, quando conviene
+
+ 9. **`login` e `install` sulla libc condivisa** — oggi restano statici
+    apposta: sono i due programmi con cui si entra e con cui si ripara. Prima
+    serve un modo di accorgersi che `/lib/libc.so` manca PRIMA di arrivare al
+    login.
+10. **Risolvere per hash invece che per nome** — altri ~3 KB per programma, col
+    generatore che verifica a costruzione che non ci siano collisioni.
+11. **La lista delle regioni sporche** — `WIN_MSG_AGGIORNA` porta gia' una
     `WinRegione` che oggi si ignora. Ha senso quando le finestre saranno tante
-    abbastanza da farlo pesare — ed e' la struttura piu' facile da sbagliare
-    di un server grafico.
+    abbastanza da farlo pesare, ed e' la struttura piu' facile da sbagliare di
+    un server grafico.
+12. **`-i` ai driver che ancora non ce l'hanno** — `floppy`, `mouseser`, `tty`,
+    `uhci`, `vgaprova`. Oggi non danno problemi perche' escono da soli quando
+    non trovano la periferica; il giorno che uno di loro diventasse un server,
+    bloccherebbe l'installazione come ha fatto `wserver`.
 
 ~~Il clic nell'area del client non da' il fuoco~~: **fatto il 14 agosto 2026**,
 era `origine()` che sommava la posizione della finestra sullo schermo.
+
+~~Il file manager~~ e ~~l'editor~~: **fatti**, e l'editor ha fatto trovare
+quattro difetti vecchi — vedi la voce del 17 agosto 2026.
 
 ~~Le dipendenze del bersaglio `floppy:`~~, ~~l'audit del CD degli strumenti~~,
 ~~xHCI~~, ~~la meta' comune dello stack USB~~, ~~gli hub dietro xHCI~~ e
@@ -185,6 +210,532 @@ una definizione: senza proprietari dei file, un programma puo' copiarsi in
 `x.drv` e ripartire da li'. Con i proprietari, `/dev` appartiene a root e la
 copia non si puo' fare. E' lo stesso lavoro, e chiude un difetto dichiarato da
 giorni.
+
+# Utenti, permessi e installazione a componenti — la specifica (17 agosto 2026)
+
+Dettata dall'utente il 17 agosto. **Fatta la parte dell'installatore**; il
+resto e' progetto, non codice.
+
+## FATTO: l'installazione a componenti
+
+    uso: install [-a|-m|-t] <punto di montaggio>
+
+    -m   sistema MINIMALE, nessun componente, non chiede
+    -t   sistema e TUTTI i componenti, non chiede
+    (senza) mostra i componenti trovati e li chiede uno per uno
+
+! **IL SISTEMA MINIMALE E' UN ELENCO CHIUSO; TUTTO IL RESTO E' OPZIONALE.**
+`bin`, `boot`, `lib`, `dev`, `drivers` sono cio' senza cui EX-OS non parte.
+Qualunque ALTRA directory nella radice del supporto e' un componente:
+l'installatore la trova, la mostra e la chiede.
+
+E' il contrario di un elenco scritto dentro l'installatore. Aggiungere un
+pacchetto — oggi `/exwin`, domani quello che sara' — vuol dire **metterne la
+directory sul supporto, e basta**. Chi prepara un pacchetto non ha i sorgenti
+dell'installatore.
+
+! **`installa_exwin()` E' STATA TOLTA.** Sapeva a memoria di `/exwin`: creava
+la directory, copiava `bin/` e `lib/`, creava `dev/` anche vuota. Funzionava, e
+ogni pacchetto nuovo avrebbe voluto una funzione come quella. Adesso `/exwin`
+non e' un caso speciale.
+
+! **`copia_albero()` SEGUE LE SOTTODIRECTORY**, e `copia_dir()` no. Un
+livello solo va bene per `/bin` e `/lib`; un componente no — `/exwin` non
+contiene file, contiene `bin/ lib/ dev/`. Copiarlo con `copia_dir` avrebbe dato
+una directory vuota **e nessun errore**, che e' il caso peggiore.
+
+! **LA SCELTA SI FA PRIMA DI SCRIVERE.** Chiedere «installo anche /exwin?» dopo
+aver sostituito il kernel vorrebbe dire che rispondere «annulla» non annulla
+piu' niente.
+
+! **E `tools/mkhd.sh` USA `-t`.** Senza il flag l'installatore si fermerebbe su
+una domanda a cui nessuno risponde, per poi dire «l'installazione non e'
+arrivata in fondo» — un messaggio che non somiglia alla sua causa.
+
+## E un difetto che solo questa prova poteva trovare
+
+! **`wserver.drv` NON CONOSCEVA `-i`, E LA SONDA LO AVVIAVA PER DAVVERO.**
+
+`hwconfig -d` sceglie quali driver installare provandoli uno per uno con `-i`:
+si aspetta che ognuno dica cosa fa e ritorni. wserver ignorava il flag e
+partiva — **e un server non esce mai**. L'installazione dal CD si fermava li',
+dopo aver gia' sostituito kernel e stage2: un disco a meta', e un log che
+finiva con «wserver: entro nel ciclo» invece che con un errore.
+
+Non si era mai visto perche' **installando dal floppy quel driver non c'e' nel
+catalogo**. E' bastato che l'installazione dal CD diventasse una cosa che si
+prova.
+
+Restano senza `-i`, e non hanno dato problemi perche' escono da soli quando non
+trovano la periferica: `floppy`, `mouseser`, `tty`, `uhci`, `vgaprova`. Vale la
+pena dargliene uno lo stesso, prima che uno di loro diventi un server.
+
+## Le prove
+
+    mkhd.sh                 disco da 256 MB costruito con `install -t`
+    avvio dal disco         libctest: 289 prove superate, 0 fallite
+                            (289 e non 294: su ext2 cinque prove di FAT non
+                            si fanno)
+    installazione dal CD    mostra /doc e /exwin, li chiede uno per uno
+    scelto solo /exwin      copiato con bin/ dev/ lib/, e /doc NON c'e'
+    grafica dal disco       exwin, pm e filemgr girano sul sistema installato
+
+## DA FARE: utenti e permessi, come li ha dettati l'utente
+
+**Le regole, testuali:**
+
+ 1. **avviando da floppy o da CD** si e' root senza password: serve a poter
+    lanciare l'installazione;
+ 2. **`install`, su ext2, chiede la creazione degli utenti**;
+ 3. **avviando dal disco rigido il login parte automaticamente**, e **senza
+    autenticazione il sistema resta non accessibile**;
+ 4. **su ext2 ogni utente ha la sua directory sotto `/home`**; su un altro
+    filesystem si crea solo la directory di root;
+ 5. **ogni utente ha privilegi diversi** per leggere i file ed eseguire i
+    programmi;
+ 6. **i file e le directory di sistema** (`bin`, `boot`, `lib`, ...) non sono
+    accessibili all'utente normale, che pero' **puo' eseguire una parte delle
+    applicazioni**;
+ 7. **un utente non accede alle directory degli altri utenti**, a meno che non
+    abbia diritti di amministrazione o di root.
+
+**L'ordine di costruzione, e ogni passo dipende dal precedente:**
+
+ 1. **`uid` e `gid` nel PCB**, ereditati allo spawn. Senza, non c'e' un
+    soggetto a cui attribuire un permesso;
+ 2. **proprietario e permessi per file in ext2**. Ci sono gia' nel formato —
+    l'inode ha `i_uid`, `i_gid`, `i_mode`: oggi si scrivono e non si leggono;
+ 3. **i controlli nella VFS**, su open, exec, unlink e rename. E' il punto in
+    cui la regola 6 e la 7 diventano vere;
+ 4. **`install`** che crea root con userid e password e scrive `/boot/utenti`,
+    piu' `/home/<utente>`;
+ 5. **`login`** obbligatorio, avviato da init quando la radice e' ext2.
+
+! **E QUESTO RENDE IL VARCO `*.drv` UNA BARRIERA VERA.** Oggi e' una
+definizione: senza proprietari dei file, un programma puo' copiarsi in `x.drv`
+e ripartire da li' con i privilegi di un driver. Con i proprietari, `/dev`
+appartiene a root e la copia non si puo' fare. E' lo stesso lavoro, e chiude un
+difetto dichiarato da giorni.
+
+! **UNA COSA DA DECIDERE PRIMA DI SCRIVERE IL CODICE**: EX-OS non ha ancora un
+modo di dire «questo programma gira con i privilegi del proprietario» (il bit
+setuid). Senza, `login` non puo' cambiare utente — dovrebbe essere init a
+lanciarlo e init a fare la exec come l'utente scelto. E' la strada piu'
+semplice e non richiede setuid: **init resta root, login chiede le credenziali,
+init lancia la shell con l'uid giusto.**
+
+# La libc condivisa: /lib/libc.so (17 agosto 2026)
+
+    /bin       850.132 -> 608.468 byte     risparmiati 241.664
+    ISO         4728 KB -> 4252 KB
+    libctest     64.861 -> 33.312 di testo, e passa 294 prove su 294
+    uname        11.277 ->  6.108 caricati
+
+    /lib/libc.so   78.424 sul disco, 56.266 di testo — una volta sola
+
+322 funzioni condivise, 39 programmi collegati a lei, piu' `exwin.so` ed
+`exdlg.so`. `login` e `install` restano STATICI, ed e' una decisione: sono i
+due programmi con cui si entra e con cui si ripara. Se `libc.so` mancasse o
+fosse rotta, un login collegato a lei renderebbe il sistema inaccessibile e non
+ci sarebbe modo di rimediare dall'interno.
+
+## Le due cose che la rendono diversa da exwin.so
+
+! **LE FUNZIONI SI PASSANO SENZA CONOSCERNE LA FIRMA.** Sono 322: scrivere a
+mano 322 ponti in C vorrebbe dire copiare 322 firme, e ognuna sbagliabile in
+silenzio. Un ponte in assembly e' un `jmp` indiretto, che non tocca ne' gli
+argomenti ne' il valore di ritorno — li lascia dove sono:
+
+        printf:  ff 25 c4 25 00 08     jmp *0x80025c4
+
+E' lo stesso mestiere di una PLT. Li genera `tools/genlibc.py` leggendo i
+simboli con `nm` dall'oggetto vero, quindi l'elenco non puo' divergere da cio'
+che la libc contiene davvero.
+
+! **LE CINQUE VARIABILI GLOBALI NON SI POSSONO AVVOLGERE.** `errno`, `stdin`,
+`stdout`, `stderr`, `environ`: un programma che scrive `errno = 0` scriverebbe
+nella PROPRIA copia mentre la libc legge la sua — due variabili con lo stesso
+nome, e nessun errore da nessuna parte. Si esporta l'INDIRIZZO e l'header lo
+trasforma in una lettura:
+
+        #define errno (*__errno_dove())
+
+Il sorgente di chi le usa non cambia. Valgono anche collegando staticamente,
+apposta: un comportamento solo invece di due che divergono.
+
+## L'avvio, che non si puo' condividere
+
+`_libc_start` e `_libc_distruttori` toccano `main`, `__init_array_*` e
+`__fini_array_*`, che appartengono al BINARIO in cui si trovano. Dentro la
+libreria `main` non esisterebbe nemmeno (il collegamento fallirebbe), e i
+vettori sarebbero quelli della libreria — vuoti: **i costruttori globali del
+programma non girerebbero mai, e nessuno lo direbbe.**
+
+Stanno in `lib/libc_avvio.c`, e si usano in tre modi con una definizione sola:
+
+ - `lib/libc.c` lo **include** in fondo, quindi i programmi statici non
+   cambiano di una virgola;
+ - `libc.so` lo esclude con `-DEXOS_LIBC_SO`;
+ - lo stub della libc condivisa lo compila per conto suo.
+
+Includere un `.c` e' insolito: la ragione e' che la libc la compilano venti
+regole del Makefile, e un oggetto separato sarebbe stato venti modifiche e
+almeno una dimenticanza.
+
+`exit()` sta nella libreria e non puo' trovare il `__fini_array` del programma:
+il programma glielo **registra** con `__libc_distruttori_registra()`.
+
+## Il gancio delle librerie
+
+Un programma ha `_start`, e li' c'e' un posto naturale in cui agganciare cio'
+che gli serve. **Una libreria non parte**: le sue funzioni vengono chiamate e
+basta. Se `exwin.so` usa la libc condivisa, i suoi ponti li deve riempire
+qualcuno.
+
+`exlib_apri()` cerca il nome facoltativo `__lib_avvio` e lo chiama: e' l'unico
+momento in cui si sa che la libreria e' appena stata mappata. Una libreria che
+non dipende da nessuno — la libc — non lo esporta.
+
+## Difetti trovati
+
+! **DUE VOLTE «UN'USCITA CHE NON SA DI ESSERE SCADUTA», e fanno cinque e sei.**
+
+ 1. `LIBC_PONTI_OBJ` era definita SEIcento righe sotto la regola di
+    `/bin/libctest`. Make espande i prerequisiti mentre LEGGE il file, quindi
+    li' valeva stringa vuota: la ricetta era giusta e non e' mai stata
+    eseguita. **Le 294 prove che credevo di aver fatto sulla libc condivisa le
+    avevo fatte su quella statica** — me ne sono accorto solo guardando se
+    `printf` fosse un ponte o la funzione vera;
+ 2. le regole di `ls` e `mem` avevano `$(LS_START)` invece di `$(LIBC_START)`,
+    quindi la mia sostituzione dei prerequisiti non le ha prese: ricetta nuova,
+    prerequisiti vecchi, binario vecchio.
+
+Le altre quattro: dipendenze finte del bersaglio floppy, `uhci.drv` mancante
+fra quelle dell'ISO, SVGA non prerequisito di Stage 2, immagini non dipendenti
+dal Makefile. **Un prerequisito scritto con una variabile vuota non e' un
+prerequisito debole: non esiste, e nessuno lo dice.**
+
+! **C'ERA GIA' UNA libc.so, ED ERA MORTA.** Una regola vecchia la costruiva con
+`-shared -fPIC`, cioe' un `ET_DYN`. Il caricatore ELF del kernel accetta solo
+`ET_EXEC`: quella libreria non e' mai stata caricata da nessuno — si costruiva,
+finiva sul floppy e occupava spazio. Tolta.
+
+! **`__udivdi3` NELLA LIBC.** `nanosleep` faceva una divisione a 64 bit, che
+chiama un aiuto di libgcc. In un programma statico `--gc-sections` la buttava
+via insieme a nanosleep; nella libreria condivisa — che si collega SENZA
+`--gc-sections`, perche' non sa chi la usera' domani — restava, e la libreria
+non collega libgcc. La divisione e' diventata a 32 bit, e puo' esserlo perche'
+`tv_nsec` e' gia' validato sotto il miliardo due righe sopra.
+
+## Il costo, dichiarato
+
+Ogni programma si porta ~5 KB fissi: i ponti che usa, la tabella dei puntatori
+(1288 byte) e i nomi da risolvere. Per un programma piccolo il guadagno e'
+modesto — `uname` da 11.277 a 6.108 — per uno che usa molta libc e' grande.
+
+I nomi sono un BLOCCO di stringhe una dopo l'altra, non un vettore di
+puntatori: quel vettore sarebbe stato 1288 byte in ogni programma per dire una
+cosa che le stringhe dicono gia' da se'.
+
+Resta da valutare: risolvere per **hash a 4 byte** invece che per nome
+risparmierebbe altri ~3 KB per programma, con il generatore che verifica a
+costruzione che non ci siano collisioni.
+
+# Le librerie condivise: exwin.so ed exdlg.so (17 agosto 2026)
+
+    ex-os:/> exwin
+    ex-os:/> /cdrom/exwin/bin/edit &
+    edit: file nuovo, senza nome
+    (battuto «testo scritto», poi Ctrl+S -> si apre il dialogo, «dlg.txt»)
+
+    ex-os:/> cat /dlg.txt
+    testo scritto
+    ex-os:/> ls /dlg.txt
+    dlg.txt      15        <- 13 caratteri + "\n" + "\n"
+
+    edit      37.940 -> 24.304        exwin.so   26.836   una volta sola
+    filemgr   35.724 -> 22.600        exdlg.so   21.296   una volta sola
+    pm        36.588 -> 22.752
+
+## La strada scelta, e perche' non il collegamento dinamico vero
+
+Un `.so` con `ld.so`, codice PIC, GOT e PLT e' la strada standard, ed e' mesi
+di lavoro: caricatore ELF da riscrivere, un linker dinamico da scrivere, la
+libc ricompilata PIC. E ogni difetto li' dentro sarebbe un difetto di TUTTE le
+applicazioni insieme.
+
+Qui la libreria e' un **ELF normalissimo, ET_EXEC e non PIC, collegato a un
+indirizzo riservato**. Sta sempre li', quindi non c'e' niente da rilocare e non
+serve nessuna GOT. Cio' che serviva davvero — aggiornare la libreria senza
+ricompilare le applicazioni — si ottiene con la **risoluzione per NOME**.
+
+! **L'ORDINE DELLA TABELLA NON E' PARTE DELL'ABI.** Con una tabella posizionale
+riordinare le voci romperebbe ogni applicazione gia' compilata, e nessun errore
+lo direbbe: si chiamerebbe semplicemente la funzione sbagliata. Coi nomi si
+puo' aggiungere, riordinare e riscrivere il corpo di qualunque funzione. Solo
+TOGLIERE un nome rompe — ed e' esattamente il patto di una DLL.
+
+## La mappa degli indirizzi
+
+    0x04000000   exwin.so    il toolkit
+    0x04400000   exdlg.so    i dialoghi
+    0x04800000   libere
+    0x08000000   i programmi
+
+Lo spazio era gia' li', vuoto: i 64 MB fra `USER_SPACE_BASE` e l'indirizzo dei
+programmi. Non tocca ne' lo heap ne' la riserva dello stack. Quattro megabyte a
+libreria, cioe' una page table esatta.
+
+! **LE FETTE SI ASSEGNANO IN UN POSTO SOLO**, in `lib/exwin/exwin.ld`. Due
+librerie alla stessa base si sovrascriverebbero dentro il processo che le usa
+tutt'e due — e exwin+exdlg sono proprio la coppia che si usa insieme.
+
+## Cosa si condivide e cosa no
+
+    .text/.rodata   sola lettura  -> LA STESSA PAGINA FISICA in ogni processo,
+                                     con pmm_ref_inc(), come fa shm.c
+    .data/.bss      scrivibili    -> una copia FRESCA per processo, dall'originale
+
+Condividere anche i dati scrivibili vorrebbe dire che due applicazioni si
+scrivono addosso le variabili: la tabella delle finestre di ExWin sta in `.bss`
+e sarebbe la stessa per tutti.
+
+! **E IL LINKER SCRIPT ALLINEA `.data` A PAGINA.** Se la fine di `.rodata` e
+l'inizio di `.data` stessero nella stessa pagina, quella pagina sarebbe
+scrivibile — cioe' copiata per ogni processo — e mezza `.rodata` smetterebbe di
+essere condivisa **senza che nessuno lo dica**.
+
+## I pezzi
+
+| dove | cosa |
+|---|---|
+| `kernel/loader/lib.c` | la cache, il caricamento, l'aggancio |
+| `SYS_LIB_APRI` (248) | rende l'indirizzo della tabella |
+| `lib/include/exlib.h` | il formato della tabella, `EXLIB_TESTA()` |
+| `lib/exlib/exlib.c` | il risolutore, ~40 righe, senza libc |
+| `lib/exwin/exwin_esporta.c` | i 17 nomi di ExWin |
+| `lib/exwin/exwin_stub.c` | i ponti che entrano nell'applicazione |
+| `lib/exdlg/` | la seconda libreria: `ex_dlg_apri/salva/avviso` |
+
+! **GLI HEADER NON SONO CAMBIATI DI UNA RIGA** — `exwin.h`, `exwin.hpp`,
+`exwin.bi` — e nemmeno il sorgente delle applicazioni. Cambia solo cosa si
+collega, e lo decide il Makefile.
+
+! **LA RISOLUZIONE E' PIGRA.** Non c'e' niente da chiamare prima di `main()`:
+la prima chiamata a una funzione qualunque risolve tutti i nomi in un colpo. Un
+`ex_avvia()` da mettere in cima a ogni main sarebbe una riga che, dimenticata,
+da' un salto a zero invece di un messaggio.
+
+! **exdlg USA exwin COME UN'APPLICAZIONE**, collegandosi allo stub. Portarsene
+dentro una copia darebbe due tabelle di finestre nello stesso processo, e una
+finestra creata dall'una sarebbe invisibile all'altra.
+
+## Due difetti trovati costruendola
+
+**Il link scriveva in `/exwin.so`.** `BUILD_EXWIN_LIB` era definita PIU' IN
+BASSO di dove la usavo, e con `:=` make espande subito: la variabile valeva
+stringa vuota e il percorso diventava la radice del disco. Non un errore di
+sintassi — un permesso negato come unico indizio.
+
+**Il controllo dipendeva dalla lingua.** La verifica che la tabella stia
+davvero a 0x04000000 leggeva `readelf -h | grep 'Entry point'`, e su un sistema
+italiano readelf scrive «Indirizzo punto d'ingresso»: il confronto avveniva con
+la stringa vuota e falliva sempre. Adesso `LC_ALL=C`. Un controllo che dipende
+dalla lingua non e' un controllo.
+
+**Il dialogo sembrava sordo.** ExWin da' il fuoco al PRIMO controllo creato che
+lo accetta, e non ha un modo pubblico di spostarlo: creando prima il pulsante
+«Su», tutto quello che si batteva finiva in un pulsante che i tasti non li usa.
+La casella si crea per prima — e serve un `ex_fuoco()` nel toolkit.
+
+## Quello che manca
+
+ - **la libc condivisa**: e' il pezzo grosso rimasto (62 KB di testo contro i
+   13 di exwin). Il meccanismo adesso e' provato su due librerie, quindi la
+   strada e' aperta — ma un difetto li' dentro sarebbe un difetto di OGNI
+   programma di EX-OS, shell compresa;
+ - **un dialogo con «si'/no»**: ExDlg ne ha uno con un pulsante solo, quindi
+   «vuoi perdere le modifiche?» si chiede facendo premere due volte lo stesso
+   pulsante;
+ - **finestre modali vere**: il server non sa cosa siano, quindi il dialogo sta
+   sopra e prende il fuoco ma non impedisce i clic sotto;
+ - **`ex_fuoco()`** nel toolkit, e **una lista a scorrimento**: e' la TERZA
+   volta che un elenco si disegna a mano.
+
+# L'editor, e tre difetti vecchi che nessuno vedeva (17 agosto 2026)
+
+    edit: /prova.txt non c'e': file nuovo
+    (battuto «ciao dall editor» + Invio, poi Ctrl+S)
+    ex-os:/> cat /prova.txt
+    ciao dall editor
+
+    ex-os:/> ls /prova.txt
+    prova.txt    18        <- 16 caratteri + "\n" + "\n" della riga vuota
+
+`/exwin/bin/edit`: area di testo disegnata a mano, cursore a blocco, frecce,
+Home/End, PgSu/PgGiu, Canc, Backspace, clic del mouse per posizionare il
+cursore, Ctrl+S per salvare, Ctrl+Q per uscire. E il file manager, premendo
+«Apri» su un file, lo lancia — cercandolo in `/exwin/bin` e poi in
+`/cdrom/exwin/bin`, come fa il program manager.
+
+! **UN FILE PIU' GRANDE DEI LIMITI SI CARICA IN PARTE E IL SALVATAGGIO SI
+BLOCCA.** Salvare quello che si e' letto vorrebbe dire cancellare il resto del
+file senza averlo mai mostrato: e' il modo piu' silenzioso che un editor abbia
+di distruggere dei dati. Limiti: 512 righe, 200 colonne, come `/bin/gfedit` e
+per la stessa ragione (`free()` non restituisce niente).
+
+! **IL TAB SI MOSTRA COME UNO SPAZIO E RESTA UN TAB NEL FILE.** Espanderlo
+vorrebbe dire che una colonna sullo schermo non e' piu' un carattere nel testo,
+e allora cursore, clic e lunghezza della riga direbbero tre cose diverse.
+
+Manca, dichiarato: «Apri» e «Salva con nome» (vogliono un dialogo modale con
+una casella di testo, che il toolkit non ha), l'annullamento, la selezione e
+gli appunti.
+
+! **ED E' LA SECONDA APPLICAZIONE CHE SI DISEGNA IL CONTENUTO A MANO.** La
+prima e' l'elenco del file manager. Due volte vuol dire che il pezzo mancante
+e' nel toolkit, non nelle applicazioni: serve una lista a scorrimento e serve
+un'area di testo multiriga.
+
+===============================================================================
+## Il fuoco non era il fuoco: la barra si prendeva ogni tasto
+===============================================================================
+
+L'editor sembrava sordo — ne' lettere ne' Ctrl+S — e tre fotografie dello
+schermo prima, durante e dopo la digitazione erano **identiche**. Non era
+l'editor.
+
+`wserver.c` mandava il tasto a `g_ordine[g_n_ordine - 1]`, con il commento «la
+finestra in cima, che e' il fuoco». Era vero finche' l'ordine di disegno
+dipendeva solo da chi si era portato davanti. Ha smesso di esserlo il 14
+agosto, con `WIN_ST_SOPRA`: `in_cima()` rimette in fondo all'ordine — cioe' in
+cima allo schermo — tutte le finestre «sopra», qualunque cosa sia appena
+salita. E la barra delle applicazioni e' «sopra».
+
+! **QUINDI DA QUEL GIORNO NESSUNA FINESTRA POTEVA RICEVERE UN TASTO** finche'
+il program manager era acceso. Il difetto non era nell'editor ne' in
+`WIN_ST_SOPRA`: era in `in_cima()`, che decideva DUE cose mentre il suo nome ne
+prometteva una.
+
+Adesso il fuoco e' `g_fuoco`, una variabile sua: chi sale lo prende, le
+finestre «sopra» e lo sfondo restano dove devono stare a schermo senza
+portarselo via, e chi muore lo restituisce con `fuoco_ricalcola()`.
+
+! **ERA LA QUARTA VOLTA CON QUESTA FORMA:**
+
+    la tastiera del server   sembrava il modo raw    era il tty del kernel
+    il clic senza fuoco      sembravano gli eventi   era aritmetica
+    il terminale muto        sembravano le pipe      era la shell
+    l'editor sordo           sembrava l'editor       era l'ordine di disegno
+
+===============================================================================
+## La shell aveva perso redirezioni e ambiente da tre giorni
+===============================================================================
+
+Scoperto per caso, da un avviso assurdo nel log a ogni comando battuto:
+
+    [WARN]  SYSCALL spawn: console 2723776 non esiste, eredito la 0
+
+`2723776` e' `0x298000`: spazzatura. Tirando quel filo:
+
+    ex-os:/> hello > /red.txt
+    Ciao da /bin/hello!            <- a video, NON nel file
+    ex-os:/> ls /red.txt
+    red.txt      0                 <- creato dalla shell, e vuoto
+
+Di `SpawnExtra` c'erano **quattro copie**: `kernel/include/syscall.h`,
+`lib/include/libc.h`, `lib/libc.c` e `bin/sh/shell.c`. Il 14 agosto ne sono
+state aggiornate tre — aggiunti `flag` e `console`, magia da `SPNY` a `SPNZ` —
+e la quarta e' rimasta indietro.
+
+! **UNA MAGIA PROTEGGE DAL DANNO, NON DALLO SFASAMENTO.** Ha fatto esattamente
+il suo mestiere: il kernel non ha riconosciuto il blocco e l'ha IGNORATO invece
+di leggerlo storto. Ma «ignorato» vuol dire che per tre giorni la shell non ha
+avuto ne' redirezioni ne' ambiente, **senza un messaggio**. Un silenzio non si
+nota.
+
+La correzione non e' aggiornare la quarta copia: e' **non averne quattro**.
+`lib/include/spawn_abi.h` e' la definizione unica, e usa solo `unsigned int`
+apposta per poter essere inclusa anche da `shell.c`, che non usa la libc e si
+dichiara i tipi da se'. In fondo c'e' un'asserzione sulla misura:
+
+    typedef char spawn_abi_misura_invariata[(sizeof(SpawnExtra) == 596) ? 1 : -1];
+
+Un campo aggiunto senza cambiare la magia adesso ferma la COMPILAZIONE, invece
+di lasciare in giro binari che non si capiscono fra loro.
+
+E nel kernel: `kex` veniva letto anche quando il blocco era stato rifiutato,
+cioe' spazzatura dello stack. Era quello a stampare l'avviso — ed e' l'avviso
+che ha fatto trovare tutto il resto.
+
+===============================================================================
+## Altri due, piu' piccoli
+===============================================================================
+
+**Il consiglio sbagliato.** `winprova` e `pm`, quando il server non risponde,
+dicevano `Avvialo: /cdrom/dev/wserver.drv &`. Due cose sbagliate insieme: quel
+percorso non esiste avviando DAL CD (li' la radice **e'** il CD), e il driver
+avviato a mano nasce sulla console della shell, dove le contende la tastiera.
+Chi seguiva il consiglio non arrivava da nessuna parte e dava la colpa al
+server. Ora dicono `exwin`.
+
+**`cat` in una pipe.** `hello | cat` rispondeva «uso: cat [file]», e sembrava
+un difetto della pipe. La pipe era giusta — la shell mette un builtin in fondo
+a una pipeline dentro un `/bin/sh -c` figlio, che il descrittore 0 ce l'ha
+buono — era `cat` a non guardarlo mai. Adesso senza argomenti legge stdin, **ma
+solo se stdin non e' la console**: battuto al prompt si metterebbe a leggere la
+tastiera per sempre, e senza Ctrl+C non se ne uscirebbe.
+
+===============================================================================
+## Le librerie condivise: la decisione (non ancora costruita)
+===============================================================================
+
+Un'applicazione grafica oggi e' 38 KB, e solo 6 KB sono sue:
+
+| pezzo | testo |
+|---|---|
+| `edit.c` | 6.111 |
+| `exwin.c` | 12.998 |
+| `font8x16` | 4.096 |
+| **`libc.c`** | **62.444** |
+
+**La strada scelta: risoluzione per NOME a caricamento, libreria a base fissa.**
+E' il comportamento delle DLL — si aggiorna la libreria, le applicazioni non si
+toccano — senza dover scrivere un `ld.so`, il codice PIC e le GOT/PLT.
+
+ - lo spazio c'e' gia' ed e' vuoto: **0x04000000–0x08000000**, 64 MB fra
+   `USER_SPACE_BASE` e l'indirizzo dove si caricano i programmi. Niente
+   collisioni con heap ne' stack;
+ - la libreria e' un ELF collegato a quella base, il cui `e_entry` punta a una
+   tabella `{nome, indirizzo}` invece che a del codice;
+ - `.text`/`.rodata` condivise fra i processi in sola lettura (`pmm_ref_inc` +
+   `paging_map_page`, lo stesso meccanismo di `kernel/mm/shm.c`), `.data`/`.bss`
+   private;
+ - l'applicazione si lega a uno stub che risolve i nomi all'avvio. Aggiungere
+   funzioni, riordinarle, riscriverne il corpo: le applicazioni continuano a
+   funzionare. Solo TOGLIERE un nome le rompe, come una DLL;
+ - **gli header non cambiano di una riga**: `exwin.h`, `exwin.hpp`, `exwin.bi`;
+ - la libreria si porta dentro la propria libc statica, come una DLL con il CRT
+   statico. Prima exwin, la libc dopo — deciso il 17 agosto: se il meccanismo
+   ha un difetto, ne risentono tre programmi e non tutto il sistema.
+
+Da fare, nell'ordine: il caricatore nel kernel + la syscall, il risolutore in
+spazio utente, lo stub, la divisione `exwin` / `exdlg` (il dialogo Apri/Salva,
+che serve anche al file manager), il Makefile.
+
+===============================================================================
+## Utenti, login e install: le regole, come le ha dette l'utente
+===============================================================================
+
+ - **avviando da floppy o da CD** l'utente ha privilegi di root, senza
+   password: serve a poter lanciare l'installazione;
+ - **`install` chiede la creazione di un utente root** con userid e password;
+ - **il login e' obbligatorio sempre**, tranne che all'avvio da floppy o CD;
+ - **`install` lo imposta quando trova ext2**: e' ext2 a rendere possibili
+   proprietari e permessi, quindi e' ext2 a far partire il login in automatico;
+ - **su ext2, creando l'utente si creano anche `/home` e `/home/<utente>`**;
+ - **su un altro filesystem si crea solo la directory di root.** FAT12/16/32
+   restano per compatibilita', non sono il sistema installato.
 
 # La scrivania: /exwin, barra e menu di avvio (14 agosto 2026)
 

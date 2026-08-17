@@ -85,12 +85,19 @@ echo "--- Formattazione e installazione DENTRO EX-OS (qualche minuto) ---"
 
 # Il floppy fa da supporto di servizio: ci si avvia, si formatta il disco
 # e ci si installa sopra. Da qui in avanti il floppy non serve piu'.
+#
+# ! `install -t` E NON `install`, dal 17 agosto 2026. Senza il flag
+# l'installatore MOSTRA i componenti opzionali trovati sul supporto e li chiede
+# uno per uno: qui non c'e' nessuno che risponda, e la prova resterebbe ferma
+# per 150 secondi su una domanda per poi dire «l'installazione non e' arrivata
+# in fondo». -t vuol dire «tutto, non chiedere», che e' quello che serve a un
+# disco di prova.
 EXOS_QEMU_EXTRA="-drive file=$IMG,format=raw,if=ide" \
     python3 tools/qemu_drive.py \
         "mkfs -t ext2 -L exos hd0p1@4" \
         "si@180" \
         "mount hd0p1 /disk@10" \
-        "install /disk@150" \
+        "install -t /disk@150" \
     > /tmp/exos-mkhd.log 2>&1
 
 if ! grep -q "Installazione completata" /tmp/exos-mkhd.log; then

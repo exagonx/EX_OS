@@ -128,6 +128,7 @@ void syscall_init(void)
     syscall_table[SYS_MODO_TESTO]   = sys_modo_testo;
     syscall_table[SYS_VIDEO_INFO]   = sys_video_info;
     syscall_table[SYS_LOG]          = sys_log;
+    syscall_table[SYS_LIB_APRI]     = sys_lib_apri;
     syscall_table[SYS_SHM_APRI]     = sys_shm_apri;
     syscall_table[SYS_SHM_CHIUDI]   = sys_shm_chiudi;
     syscall_table[SYS_RANDOM]       = sys_random;

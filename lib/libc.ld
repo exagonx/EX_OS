@@ -1,84 +1,77 @@
 /* =============================================================================
- * lib/libc.ld — Linker script per libc.so (ELF32 shared library)
+ * lib/libc.ld
  * EX-OS — Extensible Operating System
  *
- * FIX BUG #3: file assente dal repository, causava il fallimento di
- * 'make all' (LD non trovava -T lib/libc.ld). Aggiunto il linker script
- * minimo per produrre una shared library ELF32 i386 position-independent.
+ * Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>
  *
- * Note:
- *  - OUTPUT_FORMAT elf32-i386: obbligatorio per cross-toolchain i686-elf.
- *  - Il punto di caricamento è 0: le shared library ELF sono PIC,
- *    l'indirizzo reale è deciso dal dynamic linker (dynlink.c) a runtime.
- *  - PHDRS espliciti: garantisce che il linker emetta i Program Header
- *    corretti (PT_LOAD per .text e .data, PT_DYNAMIC per .dynamic) che
- *    dynlink.c si aspetta di trovare per mappare la libreria.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ * This file is part of EX-OS, distributed under the GNU GPL v2.
+ * See the LICENSE file in the project root for the full license text.
+ * =============================================================================
+ *
+ * Il collegamento della LIBC CONDIVISA
+ *
+ * ! LA BASE E' 0x04800000, la terza fetta della fascia delle librerie. La mappa
+ * completa sta in lib/exwin/exwin.ld: e' li' che si assegnano le fette, in un
+ * posto solo, perche' due librerie alla stessa base si sovrascriverebbero a
+ * vicenda dentro il processo che le usa tutt'e due.
+ *
+ * ! NIENTE --gc-sections QUANDO SI COLLEGA QUESTA. Una libreria condivisa non
+ * sa chi la usera': una funzione che oggi non chiama nessuno la chiamera' il
+ * programma installato domani, e allora dovrebbe esserci senza ricostruire
+ * niente. E' il contrario di un programma, dove buttare cio' che non si usa e'
+ * proprio quello che si vuole.
+ *
+ * ! QUATTRO MEGABYTE BASTANO: 322 funzioni sono circa 70 KB di testo. Il tetto
+ * e' la fetta, non la libreria.
  * ============================================================================= */
 
-OUTPUT_FORMAT("elf32-i386", "elf32-i386", "elf32-i386")
+OUTPUT_FORMAT("elf32-i386")
 OUTPUT_ARCH(i386)
-
-PHDRS
-{
-    text    PT_LOAD FLAGS(5);       /* R+X — codice */
-    data    PT_LOAD FLAGS(6);       /* R+W — dati */
-    dynamic PT_DYNAMIC FLAGS(6);    /* dynamic linking info */
-}
+ENTRY(libc_tabella)
 
 SECTIONS
 {
-    /* Sezione codice (read + execute) */
-    .text 0 :
-    {
-        *(.text.unlikely)
-        *(.text*)
-        *(.gnu.linkonce.t*)
-    } :text
+    . = 0x04800000;
 
-    /* Costanti e dati read-only */
-    .rodata :
-    {
-        *(.rodata*)
-        *(.gnu.linkonce.r*)
-    } :text
+    .exlib_testa : {
+        KEEP(*(.exlib_testa))
+    }
 
-    /* Allinea il confine tra text e data a pagina */
+    .text : {
+        *(.text)
+        *(.text.*)
+    }
+
+    .rodata : {
+        *(.rodata)
+        *(.rodata.*)
+    }
+
+    /* Una pagina nuova prima dei dati scrivibili: il kernel condivide le
+     * pagine di sola lettura e copia quelle scrivibili, e lavora a pagine
+     * intere. Vedi la nota estesa in lib/exwin/exwin.ld. */
     . = ALIGN(4096);
 
-    /* Sezione dati inizializzati (read + write) */
-    .data :
-    {
-        *(.data*)
-        *(.gnu.linkonce.d*)
-    } :data
+    .data : {
+        *(.data)
+        *(.data.*)
+    }
 
-    /* Tabelle di linking dinamico — devono stare nel segmento data */
-    .dynamic :
-    {
-        *(.dynamic)
-    } :data :dynamic
-
-    .got :
-    {
-        *(.got.plt)
-        *(.got)
-    } :data
-
-    /* Dati non inizializzati */
-    .bss :
-    {
-        __bss_start = .;
-        *(.bss*)
+    .bss : {
+        _bss_start = .;
+        *(.bss)
+        *(.bss.*)
         *(COMMON)
-        __bss_end = .;
-    } :data
+        _bss_end = .;
+    }
 
-    /* Scarta sezioni non necessarie nel binario finale */
-    /DISCARD/ :
-    {
+    /DISCARD/ : {
         *(.comment)
         *(.note*)
         *(.eh_frame*)
-        *(.rel.eh_frame*)
+        *(.gnu*)
+        *(.rel*)
+        *(.rela*)
     }
 }
