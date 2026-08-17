@@ -727,6 +727,80 @@ static int apri_fallito(int slot, int err)
     return err;
 }
 
+
+/* =============================================================================
+ * vfs_permesso — l'unico posto in cui si decide se qualcuno puo'
+ *
+ * `voluto` e' la somma dei bit classici: 4 leggere, 2 scrivere, 1 eseguire
+ * (su una directory, ATTRAVERSARE).
+ *
+ * ! «root PASSA» STA SCRITTO QUI E IN NESSUN ALTRO POSTO. Sparso nei singoli
+ * controlli sarebbe la cosa piu' facile da dimenticare in uno di essi — e un
+ * controllo che dimentica root e' un sistema in cui l'amministratore non puo'
+ * riparare niente.
+ *
+ * ! UN FILESYSTEM SENZA PROPRIETARI LASCIA PASSARE TUTTO, e non e' una falla:
+ * su FAT e su ISO 9660 il proprietario non esiste, `modo` vale 0, e non c'e'
+ * niente su cui decidere. Rifiutare li' vorrebbe dire rendere illeggibile un
+ * floppy; fingere un proprietario vorrebbe dire decidere in base a un dato
+ * inventato. Si dice la verita': su quei volumi chiunque puo' fare tutto.
+ *
+ * ! E I TRE GRUPPI SI GUARDANO IN ORDINE, SENZA RIPIEGARE. Se il file e' mio e
+ * i miei bit dicono di no, la risposta e' no — non si prova con «gli altri»
+ * sperando che siano piu' larghi. E' la regola di Unix, e la ragione e' che
+ * altrimenti togliersi un permesso non servirebbe a niente.
+ * ============================================================================= */
+#define P_LEGGI     4u
+#define P_SCRIVI    2u
+#define P_ESEGUI    1u
+
+static int vfs_permesso(const VfsStat *st, uint32_t voluto)
+{
+    uint32_t uid = vfs_uid_corrente();
+    uint32_t bit;
+
+    if (uid == 0) return 1;
+    if (st->modo == 0) return 1;
+
+    if (st->uid == uid)                     bit = ((uint32_t)st->modo >> 6) & 7u;
+    else if (st->gid == vfs_gid_corrente()) bit = ((uint32_t)st->modo >> 3) & 7u;
+    else                                    bit = (uint32_t)st->modo & 7u;
+
+    return (bit & voluto) == voluto;
+}
+
+/* Il permesso su un PERCORSO. Rende 1 se si puo', 0 se no; un percorso che non
+ * esiste rende 1 — a dire che non c'e' non e' compito di questa funzione, e
+ * rispondere «no» qui trasformerebbe un ENOENT in un EACCES, cioe' un «non
+ * c'e'» in un «non ti dico se c'e'». */
+static int permesso_su(const char *abs, uint32_t voluto)
+{
+    VfsStat st;
+
+    if (vfs_stat_nl(abs, &st) != 0) return 1;
+    return vfs_permesso(&st, voluto);
+}
+
+/* Il permesso sulla DIRECTORY che contiene `abs`. Creare, cancellare e
+ * rinominare cambiano l'elenco della directory, non il file: il permesso che
+ * conta e' quello di scrittura sul contenitore. E' anche la regola che
+ * impedisce a un utente di cancellare i file di un altro. */
+static int permesso_sul_padre(const char *abs, uint32_t voluto)
+{
+    char p[VFS_PATH_MAX];
+    int  i;
+
+    for (i = 0; abs[i] && i < VFS_PATH_MAX - 1; i++) p[i] = abs[i];
+    p[i] = '\0';
+
+    while (i > 1 && p[i - 1] != '/') i--;
+    if (i > 1) i--;
+    if (i == 0) i = 1;
+    p[i] = '\0';
+
+    return permesso_su(p, voluto);
+}
+
 static int vfs_open_nl(const char *abs, uint32_t flags)
 {
     char interno[VFS_PATH_MAX];
@@ -741,6 +815,27 @@ static int vfs_open_nl(const char *abs, uint32_t flags)
     if (g_mnt[im].sola_lettura &&
         (flags & (O_WRONLY | O_RDWR | O_CREAT | O_TRUNC | O_APPEND))) {
         return ERR(EROFS);
+    }
+
+    /* =====================================================================
+     * ! E SUBITO DOPO, IL PERMESSO. L'ordine con EROFS non e' indifferente:
+     * un volume in sola lettura e' una proprieta' del VOLUME e vale per
+     * tutti, root compreso, mentre il permesso e' una proprieta' del FILE e
+     * dipende da chi chiede. Dire prima quello che vale per tutti da' il
+     * messaggio piu' utile.
+     *
+     * ! CREARE VUOL DIRE SCRIVERE NELLA DIRECTORY, non nel file — che ancora
+     * non esiste. E' anche la regola che impedisce a un utente di lasciare
+     * file dentro la directory di un altro.
+     * ===================================================================== */
+    {
+        uint32_t voluto = (flags & (O_WRONLY | O_RDWR)) ? P_SCRIVI : P_LEGGI;
+
+        if ((flags & O_CREAT) && !permesso_sul_padre(abs, P_SCRIVI | P_ESEGUI))
+            return ERR(EACCES);
+
+        if (!permesso_su(abs, voluto))
+            return ERR(EACCES);
     }
 
     for (i = 0; i < VFS_MAX_OPEN; i++) {
@@ -795,7 +890,8 @@ static int vfs_open_nl(const char *abs, uint32_t flags)
         if (ext2_stat(g_mnt[im].mnt, interno, &e) != 0) {
             if (!(flags & O_CREAT)) return apri_fallito(slot, ERR(ENOENT));
             {
-                int r = ext2_create(g_mnt[im].mnt, interno);
+                int r = ext2_create(g_mnt[im].mnt, interno,
+                                    vfs_uid_corrente(), vfs_gid_corrente());
                 if (r == -2) return apri_fallito(slot, ERR(EEXIST));
                 if (r != 0)  return apri_fallito(slot, ERR(EIO));
             }
@@ -1012,6 +1108,9 @@ static int stat_interno(int im, const char *interno, VfsStat *st)
         st->sola_lettura = 1;
         st->data         = e.data;
         st->ora          = e.ora;
+        st->modo         = e.modo;
+        st->uid          = e.uid;
+        st->gid          = e.gid;
     } else {
         FatDirEntry e;
         if (fat_stat(g_mnt[im].mnt, interno, &e) != 0) return ERR(ENOENT);
@@ -1021,6 +1120,14 @@ static int stat_interno(int im, const char *interno, VfsStat *st)
         st->sola_lettura = 1;
         st->data         = e.data;
         st->ora          = e.ora;
+
+        /* ! SU FAT IL PROPRIETARIO NON ESISTE, e si dice la verita': tutto e'
+         * di root con permessi pieni. Su quei volumi chiunque puo' fare tutto,
+         * e inventare un proprietario finto vorrebbe dire che un controllo di
+         * permesso deciderebbe in base a un dato che non c'e'. */
+        st->modo = 0;
+        st->uid  = 0;
+        st->gid  = 0;
     }
 
     return 0;
@@ -1212,6 +1319,13 @@ static int modifica(const char *abs, int quale)
     /* La radice di un montaggio non si crea ne' si cancella. */
     if (e_radice(interno)) return ERR(EBUSY);
 
+    /* ! CREARE, CANCELLARE E FARE UNA DIRECTORY CAMBIANO L'ELENCO DEL PADRE,
+     * non il file: il permesso che conta e' scrivere nel CONTENITORE. E' anche
+     * la regola che impedisce a un utente di cancellare i file di un altro —
+     * cancellare non richiede alcun permesso SUL FILE, e chi guardasse li'
+     * lascerebbe cancellare a chiunque un file leggibile da tutti. */
+    if (!permesso_sul_padre(abs, P_SCRIVI | P_ESEGUI)) return ERR(EACCES);
+
     if (g_mnt[im].tipo == VFS_FS_FAT12FD) {
         if (quale == 0) return fat12_mkdir(interno);
         if (quale == 1) return fat12_rmdir(interno);
@@ -1224,7 +1338,8 @@ static int modifica(const char *abs, int quale)
     if (g_mnt[im].tipo == VFS_FS_EXT2) {
         int r;
         if (quale == 0) {
-            r = ext2_mkdir(g_mnt[im].mnt, interno);
+            r = ext2_mkdir(g_mnt[im].mnt, interno,
+                           vfs_uid_corrente(), vfs_gid_corrente());
             if (r == -2) return ERR(EEXIST);
         } else if (quale == 1) {
             r = ext2_rmdir(g_mnt[im].mnt, interno);
@@ -1289,6 +1404,18 @@ static int vfs_rename_nl(const char *da, const char *a)
 {
     char int_da[VFS_PATH_MAX], int_a[VFS_PATH_MAX];
     int  im_da, im_a, r;
+
+    /* ! DUE PADRI, DUE PERMESSI. Rinominare toglie una voce da una directory e
+     * ne mette una in un'altra: chiederne uno solo lascerebbe spostare un file
+     * DENTRO la directory di un altro utente, o FUORI dalla sua. Sono due
+     * scritture, e vanno permesse tutt'e due.
+     *
+     * ! E SI CONTROLLA PRIMA DI TUTTO IL RESTO, prima ancora di sapere se i
+     * percorsi esistono: un controllo fatto a meta' operazione lascerebbe il
+     * primo padre gia' modificato. */
+    if (da == NULL || a == NULL) return ERR(EINVAL);
+    if (!permesso_sul_padre(da, P_SCRIVI | P_ESEGUI) ||
+        !permesso_sul_padre(a,  P_SCRIVI | P_ESEGUI)) return ERR(EACCES);
 
     if (da == NULL || a == NULL) return ERR(EINVAL);
 
@@ -1400,6 +1527,124 @@ int vfs_mount(const char *dev, const char *punto, int sola_lettura)
 int vfs_umount(const char *punto)
 {
     int r; fs_prendi_n("umount"); r = vfs_umount_nl(punto); fs_rilascia(); return r;
+}
+
+/* =============================================================================
+ * vfs_radice_ext2 — la radice e' un filesystem con proprietari e permessi?
+ *
+ * ! E' LA DOMANDA CHE DECIDE SE IL LOGIN E' OBBLIGATORIO. Avviando da floppy o
+ * da CD la radice e' FAT o ISO 9660: due formati che i proprietari non li
+ * hanno, quindi non c'e' nessun utente da autenticare e nessun permesso da
+ * far rispettare — e chiedere una password su un sistema in cui chiunque puo'
+ * riscrivere qualunque file sarebbe una serratura su una porta senza muri.
+ * Serve invece che si possa entrare e installare.
+ *
+ * Su un sistema installato la radice e' ext2, i proprietari ci sono, e da li'
+ * in poi senza autenticazione non si entra.
+ * ============================================================================= */
+/* =============================================================================
+ * CHI STA CHIEDENDO — l'identita' del processo corrente
+ *
+ * ! IL KERNEL PUO' LAVORARE SENZA UN PROCESSO CORRENTE: durante l'avvio, prima
+ * che lo scheduler parta, non c'e' nessuno a cui attribuire un'apertura. In
+ * quel caso si e' root, ed e' la risposta giusta — il kernel che monta la
+ * radice non e' un utente che chiede un favore.
+ * ============================================================================= */
+uint32_t vfs_uid_corrente(void)
+{
+    Process *p = proc_get_current();
+    return p ? p->uid : 0u;
+}
+
+uint32_t vfs_gid_corrente(void)
+{
+    Process *p = proc_get_current();
+    return p ? p->gid : 0u;
+}
+
+/* =============================================================================
+ * vfs_chown — consegnare un file a un altro utente
+ *
+ * ! SOLO root PUO' FARLO, e la ragione non e' prudenza generica: se un utente
+ * potesse regalare i propri file, potrebbe anche regalarli a se' stesso —
+ * cioe' prendersi quelli che trova. E se potesse REGALARLI VIA, potrebbe
+ * riempire il disco e poi intestare tutto a un altro. Su Unix e' la stessa
+ * regola, per le stesse due ragioni.
+ *
+ * ! SU UN FILESYSTEM SENZA PROPRIETARI RENDE ENOSYS, non 0. Rispondere «fatto»
+ * su FAT vorrebbe dire che chi chiama crede di aver consegnato un file che
+ * resta di chiunque: meglio un errore che dice la verita'.
+ * ============================================================================= */
+int vfs_chown(const char *abs, uint32_t uid, uint32_t gid)
+{
+    char interno[VFS_PATH_MAX];
+    int  im, r;
+
+    if (abs == NULL) return ERR(EINVAL);
+    if (vfs_uid_corrente() != 0) return ERR(EPERM);
+
+    fs_prendi_n("chown");
+
+    im = instrada(abs, interno, sizeof(interno));
+    if (im < 0)                          { fs_rilascia(); return ERR(ENOENT); }
+    if (g_mnt[im].sola_lettura)          { fs_rilascia(); return ERR(EROFS);  }
+    if (g_mnt[im].tipo != VFS_FS_EXT2)   { fs_rilascia(); return ERR(ENOSYS); }
+
+    r = ext2_chown(g_mnt[im].mnt, interno, uid, gid);
+    fs_rilascia();
+    return (r == 0) ? 0 : ERR(EIO);
+}
+
+/* =============================================================================
+ * vfs_chmod — cambiare i permessi
+ *
+ * ! LO PUO' FARE IL PROPRIETARIO, NON SOLO root, e la differenza con chown e'
+ * precisa: cambiare i propri permessi non toglie niente a nessuno, mentre
+ * regalare un file — o prendersene uno — sposta della roba fra utenti. Su Unix
+ * la regola e' la stessa.
+ * ============================================================================= */
+int vfs_chmod(const char *abs, uint32_t modo)
+{
+    char    interno[VFS_PATH_MAX];
+    VfsStat st;
+    int     im, r;
+
+    if (abs == NULL) return ERR(EINVAL);
+
+    if (vfs_stat(abs, &st) != 0) return ERR(ENOENT);
+    if (vfs_uid_corrente() != 0 && st.uid != vfs_uid_corrente())
+        return ERR(EPERM);
+
+    fs_prendi_n("chmod");
+
+    im = instrada(abs, interno, sizeof(interno));
+    if (im < 0)                          { fs_rilascia(); return ERR(ENOENT); }
+    if (g_mnt[im].sola_lettura)          { fs_rilascia(); return ERR(EROFS);  }
+
+    /* ! SU UN FILESYSTEM SENZA PERMESSI SI RENDE 0, NON ENOSYS — ed e' il
+     * contrario di quello che fa chown, apposta.
+     *
+     * chown chiede di CONSEGNARE un file a un altro utente: su FAT quel
+     * concetto non esiste affatto, e dire «fatto» sarebbe far credere a chi
+     * chiama che il file ha cambiato padrone. chmod chiede invece di METTERE
+     * dei permessi, e su FAT lo stato che si ottiene — nessuna restrizione —
+     * e' gia' quello del volume: la richiesta e' soddisfatta quanto il
+     * supporto consente. E' anche quello che fa Linux su vfat.
+     *
+     * ! E NON E' UN DETTAGLIO ACCADEMICO: bfd chiude ogni eseguibile che
+     * produce con umask/chmod, e un chmod che fallisce sul floppy vorrebbe
+     * dire binutils che non collega piu' niente dentro EX-OS. E' lo stesso
+     * motivo per cui questa funzione esisteva inerte da un anno. */
+    if (g_mnt[im].tipo != VFS_FS_EXT2)   { fs_rilascia(); return 0; }
+
+    r = ext2_chmod(g_mnt[im].mnt, interno, modo);
+    fs_rilascia();
+    return (r == 0) ? 0 : ERR(EIO);
+}
+
+int vfs_radice_ext2(void)
+{
+    return g_mnt[0].usato && g_mnt[0].tipo == VFS_FS_EXT2;
 }
 
 int vfs_open(const char *abs, uint32_t flags)

@@ -38,18 +38,13 @@ ordine di nascita:
     controlli nella VFS, `install` che crea gli utenti, `login` obbligatorio).
     **La parte dell'installatore e' fatta**; manca tutto il resto. E' il lavoro
     piu' grosso rimasto, e chiude il difetto del varco `*.drv`.
- 2. **I lettori di immagini**: JPG, PNG e ICO. La tabella dove aggiungerli e'
+ 3. **I lettori di immagini**: JPG, PNG e ICO. La tabella dove aggiungerli e'
     gia' in `exwin.c` e il BMP funziona: ognuno e' un lettore piu' una riga, e
     il server non se ne accorge nemmeno.
 
 ### Cose che il toolkit ha gia' chiesto tre volte
 
- 4. **`ex_fuoco()`** — oggi il fuoco va al primo controllo creato e non si puo'
-    spostare. Ha gia' morso una volta, nel dialogo di ExDlg, dove le chiamate
-    sono in un ordine che non e' quello in cui si leggono.
- 5. **Una lista a scorrimento** e **un'area di testo multiriga** — file
-    manager, editor e dialogo se li sono disegnati a mano, tre volte.
- 6. **Un dialogo con «si'/no»** e **finestre modali vere**. ExDlg ha un avviso
+ 4. **Un dialogo con «si'/no»** e **finestre modali vere**. ExDlg ha un avviso
     con un pulsante solo, quindi «vuoi perdere le modifiche?» si chiede facendo
     premere due volte lo stesso pulsante. E il server non sa cosa sia una
     finestra modale: il dialogo sta sopra ma i clic sotto arrivano lo stesso.
@@ -259,6 +254,312 @@ copiare, non da reinventare.
 ! **E OGNI NOME NUOVO VA IN `exwin_esporta.c` E NELLO STUB.** Aggiungere una
 funzione alla libreria e dimenticarsi lo stub da' un simbolo che non si
 risolve — e il messaggio lo dice, col nome, ma solo a chi lo esegue.
+
+# I permessi mordono: proprietario scritto e controlli attivi (17 agosto 2026)
+
+      utente: mario
+      password: ******
+    ex-os:/home/mario> id
+    uid=1000(mario) gid=1000
+    ex-os:/home/mario> hello > mio.txt         <- la casa e' sua
+    ex-os:/home/mario> hello > /bin/x
+    sh: non riesco ad aprire /bin/x            <- RIFIUTATO
+    ex-os:/home/mario> cat /boot/ombra
+    cat: /boot/ombra: file non trovato         <- le impronte sono di root
+
+Le sette regole dettate il 17 agosto sono **tutte vere**, tranne il controllo
+sull'esecuzione — i bit ci sono, il controllo no, e il perche' e' in fondo.
+
+## Il proprietario si scrive
+
+! **CHI CREA E' UN PARAMETRO, NON UNO STATO NASCOSTO.** Un «uid corrente»
+tenuto in una variabile del modulo andrebbe impostato prima di ogni chiamata, e
+la volta che qualcuno se ne dimenticasse il file nascerebbe di root **senza che
+nessuno lo dica**. Un parametro non si puo' dimenticare: lo chiede il
+compilatore.
+
+File 0644, directory 0755. Il bit x su una directory non vuol dire
+«eseguibile», vuol dire **attraversabile**: senza, nessuno potrebbe entrarci
+nemmeno per leggere un file suo.
+
+## `vfs_permesso()` — e «root passa» sta scritto UNA volta
+
+! **SPARSO NEI SINGOLI CONTROLLI SAREBBE LA COSA PIU' FACILE DA DIMENTICARE IN
+UNO DI ESSI** — e un controllo che dimentica root e' un sistema in cui
+l'amministratore non puo' riparare niente.
+
+! **UN FILESYSTEM SENZA PROPRIETARI LASCIA PASSARE TUTTO**, e non e' una falla:
+su FAT `modo` vale 0 e non c'e' niente su cui decidere. Rifiutare li' renderebbe
+illeggibile un floppy; fingere un proprietario vorrebbe dire decidere in base a
+un dato inventato.
+
+! **CREARE, CANCELLARE E RINOMINARE GUARDANO IL PADRE, NON IL FILE.** Cambiano
+l'elenco della directory: chi guardasse i permessi del file lascerebbe
+cancellare a chiunque un file leggibile da tutti. E rinominare ne guarda
+**due** — toglie una voce da una directory e ne mette una in un'altra.
+
+## `chown`, `chmod`, e perche' si comportano diversamente su FAT
+
+`chown` lo puo' fare solo root: se un utente potesse regalare i propri file
+potrebbe anche **prendersi** quelli che trova. `chmod` lo puo' fare il
+proprietario: cambiare i propri permessi non toglie niente a nessuno.
+
+! **SU FAT `chown` RENDE ENOSYS E `chmod` RENDE 0**, ed e' voluto. `chown`
+chiede di CONSEGNARE un file: su FAT quel concetto non esiste, e dire «fatto»
+farebbe credere che il file ha cambiato padrone. `chmod` chiede di METTERE dei
+permessi, e lo stato che si ottiene — nessuna restrizione — e' gia' quello del
+volume.
+
+! **E NON E' ACCADEMICO: la libctest l'ha preso.** Il primo `chmod` rendeva
+ENOSYS su FAT e la prova «chmod accetta un file che c'e'» e' passata da 294 a
+293. Dietro c'e' una ragione concreta: **bfd chiude ogni eseguibile che produce
+con umask/chmod**, ed e' il motivo per cui quella funzione esisteva inerte da
+un anno. Un chmod che fallisce sul floppy vorrebbe dire binutils che non
+collega piu' niente dentro EX-OS.
+
+## Due file per gli utenti, come `/etc/passwd` e `/etc/shadow`
+
+    /boot/utenti   nome:uid:gid          0644, lo legge chiunque
+    /boot/ombra    nome:sale:impronta    0600, solo root
+
+! **CON UN FILE SOLO BISOGNA SCEGLIERE FRA DUE MALI**, e si e' visto subito:
+messo a 0600 per proteggere le impronte, `id` rispondeva `uid=1000(uid1000)` a
+un utente che si chiamava mario — nessuno poteva piu' tradurre un uid in un
+nome. I nomi sono pubblici perche' servono a chiunque; le impronte sono di root
+perche' non servono a nessun altro.
+
+! **E SI SCRIVE PRIMA L'OMBRA, POI I NOMI.** Se fallisce la seconda scrittura
+resta un'impronta senza nome, che non fa entrare nessuno. All'incontrario
+resterebbe **un nome senza impronta**: un conto che esiste e non ha password.
+
+## La casa si crea da root e si consegna
+
+! **E' L'UNICO ORDINE CHE FUNZIONA.** `/home` appartiene a root con 0755: un
+utente normale non ci puo' creare dentro, quindi non puo' farsi la propria
+directory. E se la crea root senza consegnarla, il padrone ha **una casa in cui
+non puo' scrivere**. Creare-e-consegnare e' quello che fa `adduser` su ogni
+Unix, e qui si puo' perche' login in quell'istante e' ancora root.
+
+`/home` e' il contenitore, la casa e' `/home/<utente>`. root fa eccezione con
+`/root`, come su ogni Unix: `/home` puo' essere un volume a parte montato dopo,
+e l'amministratore deve poter entrare anche quando non c'e'.
+
+## Quello che manca, dichiarato
+
+! **IL CONTROLLO SULL'ESECUZIONE NON C'E' ANCORA.** `install` adesso mette
+0755 ai programmi — quindi i bit sono giusti — ma la VFS non li guarda. E'
+deliberato e va in quest'ordine: accendere il controllo su un disco pieno di
+file senza x sarebbe un sistema installato in cui **non parte niente**. Prima i
+bit, poi il controllo.
+
+Manca anche un `chmod` da riga di comando, e un `chown` (oggi si fanno solo da
+programma).
+
+# Utenti e permessi, passo 1: l'identita' esiste (17 agosto 2026)
+
+Avviando **dal disco** (radice ext2):
+
+      Sistema nuovo: non c'e' ancora nessun utente.
+      Creane uno adesso — da qui in poi servira' per entrare.
+      nome utente: root
+      password: *******
+      Utente 'root' creato.
+
+      EX-OS — accesso
+      utente: root
+      password: *******
+    ex-os:/> id
+    uid=0(root) gid=0
+    ex-os:/> cat /boot/utenti
+    root:0:0:27262b2846ff031f:e372ebb9de25c2cab34a...
+
+Avviando **da floppy** (radice FAT12): il prompt arriva subito, `id` dice
+`uid=0(root)`, nessuna password.
+
+Fatti i primi due dei cinque passi, piu' la META' SICURA del terzo.
+**I controlli sui file non ci sono ancora**: c'e' il soggetto a cui
+attribuirli, e adesso anche l'oggetto.
+
+## `uid` e `gid` nel PCB, ereditati
+
+! **SI EREDITANO SEMPRE, E NON C'E' UN FLAG PER CAMBIARLI.** Un processo non
+puo' decidere di nascere con un utente diverso dal proprio: se potesse, i
+permessi si aggirerebbero con uno spawn. Chi cambia utente e' `setuid()`.
+
+! **`setuid()` LA PUO' CHIAMARE SOLO root, E IN UNA DIREZIONE SOLA: SI SCENDE.**
+Non c'e' il bit setuid sui file, quindi non esiste nemmeno il caso legittimo in
+cui servirebbe risalire — e senza quel controllo qualunque processo diventerebbe
+root chiamandola, rendendo i permessi una decorazione.
+
+! **ED E' COSI' CHE `login` CAMBIA UTENTE SENZA setuid SUI FILE.** init resta
+root, avvia login che resta root, login autentica e **scende** con `setuid()`
+prima di lanciare la shell. Da quel momento non puo' piu' tornare su: il
+privilegio si spende, non si presta.
+
+`getuid()` e compagne rendevano **zero fisso**. Era onesto quando non c'erano
+utenti e sarebbe una bugia adesso: un programma che chiede chi e' e si sente
+rispondere «root» si comporta da root.
+
+## Il login e' obbligatorio solo su una radice ext2
+
+    const char *avviare = (cfg->login_path[0] && vfs_radice_ext2())
+                          ? cfg->login_path : cfg->shell_path;
+
+! **E' LA REGOLA DELL'UTENTE, SCRITTA IN CODICE.** Avviando da floppy o da CD
+la radice e' FAT o ISO 9660: nessun proprietario, nessun permesso da far
+rispettare, e chiedere una password su un sistema dove chiunque puo' riscrivere
+qualunque file sarebbe **una serratura su una porta senza muri**. Li' si entra
+da root senza password — che e' anche l'unico modo di poter installare.
+
+`login = /bin/login` in `kernel.cfg` si puo' adesso lasciare acceso sempre.
+
+## `/boot/utenti` porta l'uid
+
+    nome:uid:gid:sale:impronta
+
+Prima era `nome:sale:impronta` e bastava: login autenticava e la shell girava
+comunque da root. Adesso login **scende**, e per scendere deve sapere a chi.
+Il primo utente creato e' root (uid 0); gli altri partono da **1000**, e i
+numeri fra 1 e 999 restano liberi per i conti di servizio.
+
+## `/bin/id` e `/bin/whoami`
+
+! **ESISTONO PERCHE' SENZA NON C'ERA MODO DI GUARDARE L'uid.** Il kernel lo
+teneva, lo ereditava, login ci scendeva: tutto corretto e **completamente
+invisibile**. Un meccanismo che non si puo' osservare e' un meccanismo di cui
+si crede di sapere lo stato — ed e' quello che rende difficili da trovare i
+difetti dei permessi.
+
+! **IL NUMERO VIENE DAL KERNEL, IL NOME DALL'AMBIENTE**, e `id` lo dice quando
+i due non coincidono: `getuid()` non puo' mentire perche' e' una syscall,
+`$USER` lo cambia chiunque con `set`.
+
+## `install` prepara il posto, ma non chiede la password
+
+Su ext2 crea `/home` e `/root` e **dice** che al primo avvio l'accesso sara'
+obbligatorio.
+
+! **L'UTENTE LO CREA `login` AL PRIMO AVVIO, NON L'INSTALLATORE.** Per chiedere
+una password bisogna poterla leggere SENZA MOSTRARLA, cioe' mettere la tastiera
+in modo raw — e install gira mentre la shell possiede quella console. Chiederla
+li' vorrebbe dire contendersi la tastiera con chi ci ha lanciati. login parte da
+solo, ha la console tutta per se', e quel codice ce l'ha gia'.
+
+## Il proprietario si LEGGE, e non si fa ancora rispettare
+
+`ext2_stat()` legge `i_mode`, `i_uid` e `i_gid` agli offset che ext2 usa dal
+1993, e la VFS li porta in `VfsStat`. Su FAT valgono **0**, e non e' un
+ripiego: su quei volumi il proprietario non esiste e chiunque puo' fare tutto —
+inventarne uno finto vorrebbe dire che un controllo deciderebbe in base a un
+dato che non c'e'.
+
+! **LEGGERE E FAR RISPETTARE SONO DUE CAMBIAMENTI, DELIBERATAMENTE SEPARATI.**
+Leggere e' additivo e non puo' rompere niente. Far rispettare puo' **chiudere
+fuori l'utente dal proprio sistema**, e va fatto con le sue prove.
+
+## Cosa manca — i due passi che mordono
+
+ 1. **`vfs_permesso()` e i controlli** su open, exec, unlink e rename. E' il
+    punto in cui le regole 6 e 7 diventano vere: i file di sistema non
+    accessibili all'utente normale, e nessuno nelle directory degli altri.
+    **uid 0 passa dappertutto, e quella riga deve stare in UN posto solo** —
+    sparsa nei singoli controlli sarebbe la cosa piu' facile da dimenticare in
+    uno di essi.
+ 2. **Scrivere il proprietario quando si crea un file.** Oggi ext2 non lo
+    scrive: i campi resterebbero a zero, cioe' tutto di root, e i controlli
+    chiuderebbero fuori chiunque non sia root dal proprio stesso file appena
+    creato. **Questo passo va PRIMA del precedente**, o il primo utente che
+    salva qualcosa non riesce a rileggerlo.
+
+## E un errore che ho fatto io, che vale la pena non rifare
+
+! **HO RICOSTRUITO `build/` MENTRE `mkhd.sh` CI STAVA COPIANDO DENTRO.** Il
+disco e' venuto meta' vecchio e meta' nuovo, e non partiva affatto: nessun
+output sulla seriale, MBR perfetto. Sono due regole gia' scritte, violate
+insieme — «niente build con QEMU acceso» e «due qemu_drive insieme si
+cancellano l'output», perche' condividono `/tmp/exos/serial.txt` senza
+`EXOS_ISTANZA`. Costo: una ricostruzione del disco e mezz'ora a cercare un
+difetto che non c'era.
+
+# Il toolkit smette di farsi copiare: ex_fuoco, lista, area di testo (17 agosto 2026)
+
+    l'elenco comincia a y=67
+    all'apertura:            barra della scelta a  67..82    riga 0
+    dopo tre frecce giu':    barra della scelta a 115..130   riga 3   (67 + 3x16)
+
+    edit /a1.txt, battuto «riga uno» + Invio, «riga due» + Invio, Ctrl+S
+    ls /a1.txt   ->  19 byte  =  "riga uno\n" + "riga due\n" + la riga vuota
+
+Tre controlli nuovi in `exwin.so`, e **tre copie disegnate a mano che
+spariscono**: l'elenco del file manager, quello del dialogo Apri/Salva, e
+l'area dell'editor.
+
+## `ex_fuoco()` — la piu' piccola, e sbloccava le altre due
+
+`fuoco_metti()` esisteva gia' ed era `static`. Bastava esportarla.
+
+! **SENZA, IL FUOCO ANDAVA AL PRIMO CONTROLLO CREATO** che lo accettasse, e per
+spostarlo bisognava creare i controlli **in un ordine che non e' quello in cui
+si leggono**. Nel dialogo di ExDlg la casella del nome si creava prima del
+pulsante «Su» solo per questo, con un commento che prometteva di rimettere le
+righe a posto il giorno che `ex_fuoco()` fosse esistita. E' quel giorno: le
+righe sono tornate in ordine.
+
+## `"lista"` — l'elenco che scorre
+
+Frecce, PgSu/PgGiu, Home/End muovono la scelta e la vista la insegue. Invio e
+il clic arrivano come `EXM_COMANDO` con l'id della lista — **lo stesso
+messaggio di un pulsante premuto**, perche' e' la stessa decisione presa in due
+modi, e chi la riceve non deve imparare un secondo meccanismo.
+
+! **LA LISTA CONSUMA SOLO CIO' CHE SA USARE.** Una lettera passa oltre, ed e'
+quello che permette a un'applicazione di avere una scorciatoia mentre la lista
+ha il fuoco. Un controllo che mangia tutto e' un controllo che si prende
+l'applicazione.
+
+! **IL TESTO SI COPIA DENTRO LA LISTA.** Un vettore passato dal chiamante
+vorrebbe dire che lui lo tiene vivo finche' la lista esiste, e nessuno se ne
+ricorda: cosi' si puo' passare un buffer sullo stack e dimenticarsene.
+
+! **UN CLIC SCEGLIE, NON APRE.** Un clic che entrasse subito in una directory
+renderebbe impossibile scegliere senza aprire.
+
+## `"areatesto"` — l'area multiriga
+
+Un'area non e' una lista con dentro delle righe: ha un cursore che si muove in
+due direzioni, scorre anche in orizzontale, e i tasti la **cambiano** invece di
+limitarsi a sceglierne una riga. Inserimento, Backspace, Canc, Invio che spezza
+la riga, clic che posiziona il cursore: tutto nel controllo.
+
+! **`ex_area_aggiungi()` RENDE 0 QUANDO L'AREA E' PIENA**, e chi carica un file
+deve guardarlo. Caricare mezzo file e poi salvarlo cancellerebbe il resto senza
+averlo mai mostrato — ed e' il modo piu' silenzioso che un editor abbia di
+distruggere dei dati.
+
+! **NON C'E' UNA FUNZIONE CHE RENDA TUTTO IL BUFFER.** Darebbe a chi chiama un
+puntatore dentro la libreria, cioe' un modo di scriverci sopra senza che il
+controllo se ne accorga: e allora il cursore e il numero di righe direbbero una
+cosa e il testo un'altra. Si carica e si rilegge una riga per volta.
+
+## Lo schema, e perche' non e' `Oggetto`
+
+Lista e area tengono lo stato in una **tabella a parte**, trovata dall'oggetto
+— `lista_di()`, `area_di()` — esattamente come faceva gia' il terminale.
+`Oggetto` e' una struttura fissa uguale per tutte le classi: allargarla per la
+lista vorrebbe dire farla pagare anche a un separatore.
+
+E le voci sono **un blocco solo**, chiesto una volta alla creazione: `free()`
+non restituisce niente, quindi allocare e liberare a ogni cambio di directory
+perderebbe memoria per sempre.
+
+## Le prove
+
+    libctest                294 prove superate, 0 fallite
+    la lista                le frecce muovono la barra di 3 righe da 16 px,
+                            misurate sullo schermo
+    l'area                  due righe battute e salvate: 19 byte esatti
+    il dialogo Salva-come   riscritto sulla lista, scrive il file col nome dato
+    filemgr, edit, term     girano tutti sul toolkit nuovo
 
 # /exwin/bin/term, e il prompt che si leggeva alla lettera (17 agosto 2026)
 

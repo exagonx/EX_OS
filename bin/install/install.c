@@ -109,6 +109,13 @@ static void minuscolo(char *s)
 }
 
 /* Concatena "punto" + "/" + "resto" senza sforare. */
+/* Vero se `s` finisce con `coda`. */
+static int finisce_con(const char *s, const char *coda)
+{
+    unsigned int ls = (unsigned int)strlen(s), lc = (unsigned int)strlen(coda);
+    return ls >= lc && strcmp(s + ls - lc, coda) == 0;
+}
+
 static void unisci(char *out, const char *a, const char *b)
 {
     int i = 0, j;
@@ -444,7 +451,14 @@ static void copia_albero_ric(const char *sorgente, const char *pdest,
              * un file identico consuma il disco e allunga l'elenco senza dire
              * niente di utile. */
             if (aggiorna && confronta(da, a) == STATO_UGUALE) continue;
-            copia(da, a);
+
+            /* ! DENTRO UN COMPONENTE I PROGRAMMI STANNO IN bin/, e si
+             * riconoscono dal nome della directory che li contiene: qui non si
+             * sa se siamo in /exwin/bin o in /exwin/lib, ma il percorso lo
+             * dice. Un pacchetto che mette i suoi programmi altrove non li
+             * vedra' marcati — ed e' meglio di marcare eseguibile tutto. */
+            if (copia(da, a) >= 0 && finisce_con(pdest, "/bin"))
+                chmod(a, 0755);
         }
         start += (unsigned int)n;
         if (n < LISTDIR_MAX_BATCH) break;
@@ -619,6 +633,48 @@ static void installa_componenti(const char *punto, int aggiorna)
     }
 }
 
+/* ! LA DOMANDA SI FA AL VOLUME, non al nome del punto di montaggio. ext2 ha
+ * una directory perduta che FAT non ha: /lost+found la crea mkfs, esiste su
+ * ogni volume ext2 e su nessun altro. E' il modo piu' semplice di distinguerli
+ * dall'esterno, e non richiede una syscall nuova.
+ *
+ * ! IL PUNTO E' CHE SU FAT NON SI DEVE CREARE NIENTE. Senza proprietari,
+ * /home sarebbe una directory come le altre e il login una serratura su una
+ * porta senza muri: meglio non prometterlo. */
+static int ext2_montato(const char *punto)
+{
+    char p[PERC_MAX];
+    DirEntry v[4];
+
+    unisci(p, punto, "lost+found");
+    return listdir_from(p, v, 1, 0) >= 0;
+}
+
+/* =============================================================================
+ * ! I PROGRAMMI NASCONO 0644, CIOE' SENZA IL BIT DI ESECUZIONE.
+ *
+ * ext2_create da' 0644 a qualunque file nuovo, ed e' giusto per un file di
+ * testo. Ma un binario copiato qui e' un PROGRAMMA, e senza il bit x il
+ * giorno che la VFS comincera' a controllarlo nessun utente normale potrebbe
+ * eseguire piu' niente — e il difetto sembrerebbe del controllo, mentre
+ * sarebbe di questa copia.
+ *
+ * ! I BIT SI METTONO ADESSO ANCHE SE NESSUNO LI GUARDA ANCORA, e non e'
+ * lavoro sprecato: sono i bit che rendono possibile il controllo dopo. Il
+ * contrario — accendere il controllo su un disco pieno di file senza x —
+ * sarebbe un sistema installato in cui non parte niente.
+ *
+ * 0755: chi lo possiede (root) lo cambia, tutti lo leggono e lo eseguono.
+ * E' quello che ci si aspetta da /bin su qualunque Unix.
+ * ============================================================================= */
+static int e_directory_di_programmi(const char *dest)
+{
+    return strcmp(dest, "bin")       == 0 ||
+           strcmp(dest, "dev")       == 0 ||
+           strcmp(dest, "drivers")   == 0 ||
+           strcmp(dest, "exwin/bin") == 0;
+}
+
 static void copia_dir(const char *sorgente, const char *punto, const char *dest)
 {
     DirEntry voci[LISTDIR_MAX_BATCH];
@@ -640,7 +696,8 @@ static void copia_dir(const char *sorgente, const char *punto, const char *dest)
             unisci(da, sorgente, voci[i].name);
             unisci(a,  pdest,    voci[i].name);
             minuscolo(a + strlen(pdest));   /* solo il NOME, non il punto */
-            copia(da, a);
+            if (copia(da, a) >= 0 && e_directory_di_programmi(dest))
+                chmod(a, 0755);             /* su FAT rende ENOSYS: pazienza */
         }
         start += (unsigned int)n;
         if (n < LISTDIR_MAX_BATCH) break;
@@ -984,6 +1041,41 @@ int main(int argc, char **argv)
      * a mancare dev'essere /exwin, non /bin. Un sistema senza applicazioni
      * grafiche parte; un sistema senza /bin no. */
     installa_componenti(argv[1], aggiorna);
+
+    /* =====================================================================
+     * 2b. GLI UTENTI — solo su ext2, e solo perche' solo li' hanno senso
+     *
+     * ! FAT NON HA I PROPRIETARI, quindi su FAT non si crea niente: /home
+     * sarebbe una directory come le altre, aperta a chiunque, e il login una
+     * serratura su una porta senza muri. Su ext2 i proprietari ci sono, e da
+     * li' in poi l'accesso e' obbligatorio.
+     *
+     * ! L'UTENTE LO CREA `login` AL PRIMO AVVIO, NON QUI, e non e' pigrizia:
+     * per chiedere una password bisogna poterla leggere SENZA MOSTRARLA, cioe'
+     * mettere la tastiera in modo raw — e l'installatore gira mentre la shell
+     * possiede quella console. Chiederla qui vorrebbe dire contendersi la
+     * tastiera con chi ci ha lanciati. login parte da solo, ha la console
+     * tutta per se', e quel codice ce l'ha gia'.
+     *
+     * Quello che si fa qui e' preparare il posto e DIRLO, cosi' chi installa
+     * sa cosa succedera' al riavvio invece di trovarsi una domanda inattesa.
+     * ===================================================================== */
+    if (ext2_montato(argv[1])) {
+        char h[PERC_MAX];
+
+        printf("\nUtenti\n");
+
+        unisci(h, argv[1], "home");
+        crea_dir(h);
+
+        unisci(h, argv[1], "root");
+        crea_dir(h);
+
+        printf("  = questo volume e' ext2: ha i proprietari dei file, quindi\n");
+        printf("    al primo avvio l'accesso sara' OBBLIGATORIO.\n");
+        printf("  = /bin/login chiedera' di creare il primo utente, che sara'\n");
+        printf("    root (uid 0). Da floppy o da CD si entra senza password.\n");
+    }
 
     /* --- 3. l'avvio vero e proprio --- */
     printf("\nSettori di avvio\n");

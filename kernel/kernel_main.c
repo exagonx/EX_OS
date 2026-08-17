@@ -754,8 +754,19 @@ KernelConfig *cfg = cfg_load();
              * cosa sola per console e non la rilancia mai — non ha un
              * init che lo faccia — quindi chi deve tornare indietro deve
              * essere gia' dentro un ciclo suo. */
-            const char *avviare = cfg->login_path[0] ? cfg->login_path
-                                                     : cfg->shell_path;
+            /* ! MA IL LOGIN E' OBBLIGATORIO SOLO SU UNA RADICE ext2, ed e' la
+             * regola dell'utente scritta in codice. Avviando da floppy o da CD
+             * la radice e' FAT o ISO 9660: nessun proprietario, nessun
+             * permesso da far rispettare, e chiedere una password su un
+             * sistema dove chiunque puo' riscrivere qualunque file sarebbe una
+             * serratura su una porta senza muri. Li' si entra da root senza
+             * password — che e' anche l'unico modo di poter INSTALLARE.
+             *
+             * Su un sistema installato la radice e' ext2, e da li' in poi
+             * senza autenticazione non si entra. */
+            const char *avviare = (cfg->login_path[0] && vfs_radice_ext2())
+                                  ? cfg->login_path
+                                  : cfg->shell_path;
             int rc_shell = elf_load(avviare, shell_proc, &elf_res);
             if (rc_shell == 0) {
                 proc_set_entry(shell_proc, elf_res.entry_point, elf_res.user_stack_top);

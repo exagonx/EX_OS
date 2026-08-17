@@ -63,6 +63,7 @@ static struct {
     void        (*titolo)(ExFinestra, const char *);
     void        (*sposta)(ExFinestra, int, int);
     void        (*mostra)(ExFinestra, int);
+    void        (*fuoco)(ExFinestra);
     void        (*testo_metti)(ExFinestra, const char *);
     const char *(*testo_prendi)(ExFinestra);
     int         (*prendi_msg)(ExMsg *);
@@ -74,6 +75,19 @@ static struct {
     void        (*scrivi)(ExFinestra, int, int, const char *, unsigned int);
     void        (*aggiorna)(ExFinestra);
     int         (*immagine)(ExFinestra, const char *, int, int);
+    void         (*l_svuota)(ExFinestra);
+    int          (*l_aggiungi)(ExFinestra, const char *);
+    unsigned int (*l_quante)(ExFinestra);
+    unsigned int (*l_scelta)(ExFinestra);
+    void         (*l_scegli)(ExFinestra, unsigned int);
+    const char  *(*l_testo)(ExFinestra, unsigned int);
+    void         (*a_svuota)(ExFinestra);
+    int          (*a_aggiungi)(ExFinestra, const char *);
+    unsigned int (*a_righe)(ExFinestra);
+    const char  *(*a_riga)(ExFinestra, unsigned int);
+    int          (*a_modificato)(ExFinestra);
+    void         (*a_pulita)(ExFinestra);
+    void         (*a_cursore)(ExFinestra, unsigned int *, unsigned int *);
     void        (*schermo)(unsigned int *, unsigned int *);
 } P;
 
@@ -114,6 +128,7 @@ static void assicura(void)
     P.titolo         = (void (*)(ExFinestra, const char *))chiedi(t, "ex_titolo");
     P.sposta         = (void (*)(ExFinestra, int, int))    chiedi(t, "ex_sposta");
     P.mostra         = (void (*)(ExFinestra, int))         chiedi(t, "ex_mostra");
+    P.fuoco          = (void (*)(ExFinestra))              chiedi(t, "ex_fuoco");
     P.testo_metti    = (void (*)(ExFinestra, const char *))chiedi(t, "ex_testo_metti");
     P.testo_prendi   = (const char *(*)(ExFinestra))       chiedi(t, "ex_testo_prendi");
     P.prendi_msg     = (int (*)(ExMsg *))                  chiedi(t, "ex_prendi_msg");
@@ -130,6 +145,22 @@ static void assicura(void)
     P.aggiorna       = (void (*)(ExFinestra))              chiedi(t, "ex_aggiorna");
     P.immagine       = (int (*)(ExFinestra, const char *, int, int))
                        chiedi(t, "ex_immagine");
+    P.l_svuota   = (void (*)(ExFinestra))                     chiedi(t, "ex_lista_svuota");
+    P.l_aggiungi = (int (*)(ExFinestra, const char *))        chiedi(t, "ex_lista_aggiungi");
+    P.l_quante   = (unsigned int (*)(ExFinestra))             chiedi(t, "ex_lista_quante");
+    P.l_scelta   = (unsigned int (*)(ExFinestra))             chiedi(t, "ex_lista_scelta");
+    P.l_scegli   = (void (*)(ExFinestra, unsigned int))       chiedi(t, "ex_lista_scegli");
+    P.l_testo    = (const char *(*)(ExFinestra, unsigned int))chiedi(t, "ex_lista_testo");
+
+    P.a_svuota     = (void (*)(ExFinestra))                  chiedi(t, "ex_area_svuota");
+    P.a_aggiungi   = (int (*)(ExFinestra, const char *))     chiedi(t, "ex_area_aggiungi");
+    P.a_righe      = (unsigned int (*)(ExFinestra))          chiedi(t, "ex_area_righe");
+    P.a_riga       = (const char *(*)(ExFinestra, unsigned int)) chiedi(t, "ex_area_riga");
+    P.a_modificato = (int (*)(ExFinestra))                   chiedi(t, "ex_area_modificato");
+    P.a_pulita     = (void (*)(ExFinestra))                  chiedi(t, "ex_area_pulita");
+    P.a_cursore    = (void (*)(ExFinestra, unsigned int *, unsigned int *))
+                     chiedi(t, "ex_area_cursore");
+
     P.schermo        = (void (*)(unsigned int *, unsigned int *))
                        chiedi(t, "ex_schermo");
 
@@ -153,6 +184,7 @@ void ex_distruggi(ExFinestra f)            { assicura(); P.distruggi(f); }
 void ex_titolo(ExFinestra f, const char *s){ assicura(); P.titolo(f, s); }
 void ex_sposta(ExFinestra f, int x, int y) { assicura(); P.sposta(f, x, y); }
 void ex_mostra(ExFinestra f, int v)        { assicura(); P.mostra(f, v); }
+void ex_fuoco(ExFinestra f)                { assicura(); P.fuoco(f); }
 
 void ex_testo_metti(ExFinestra f, const char *s) { assicura(); P.testo_metti(f, s); }
 const char *ex_testo_prendi(ExFinestra f)        { assicura(); return P.testo_prendi(f); }
@@ -191,6 +223,37 @@ int ex_immagine(ExFinestra f, const char *percorso, int x, int y)
 {
     assicura();
     return P.immagine(f, percorso, x, y);
+}
+
+void ex_lista_svuota(ExFinestra f)  { assicura(); P.l_svuota(f); }
+unsigned int ex_lista_quante(ExFinestra f)  { assicura(); return P.l_quante(f); }
+unsigned int ex_lista_scelta(ExFinestra f)  { assicura(); return P.l_scelta(f); }
+void ex_lista_scegli(ExFinestra f, unsigned int i) { assicura(); P.l_scegli(f, i); }
+
+int ex_lista_aggiungi(ExFinestra f, const char *s)
+{
+    assicura();
+    return P.l_aggiungi(f, s);
+}
+
+const char *ex_lista_testo(ExFinestra f, unsigned int i)
+{
+    assicura();
+    return P.l_testo(f, i);
+}
+
+void ex_area_svuota(ExFinestra f)          { assicura(); P.a_svuota(f); }
+unsigned int ex_area_righe(ExFinestra f)   { assicura(); return P.a_righe(f); }
+int  ex_area_modificato(ExFinestra f)      { assicura(); return P.a_modificato(f); }
+void ex_area_pulita(ExFinestra f)          { assicura(); P.a_pulita(f); }
+
+int ex_area_aggiungi(ExFinestra f, const char *r) { assicura(); return P.a_aggiungi(f, r); }
+const char *ex_area_riga(ExFinestra f, unsigned int i) { assicura(); return P.a_riga(f, i); }
+
+void ex_area_cursore(ExFinestra f, unsigned int *r, unsigned int *c)
+{
+    assicura();
+    P.a_cursore(f, r, c);
 }
 
 void ex_schermo(unsigned int *l, unsigned int *a) { assicura(); P.schermo(l, a); }

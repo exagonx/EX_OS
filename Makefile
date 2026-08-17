@@ -115,7 +115,7 @@ BUILD_BIN_CD  := $(BUILD_DIR)/bin-cd
 # kernel (kernel/block/atapi.c, kernel/fs/iso9660.c), perche' il kernel
 # deve poterci montare la radice prima che esista un processo.
 # =============================================================================
-PROGRAMMI_FLOPPY := shell hello ls mem stack disk libctest fdisk mkfs trunc chkdsk rename rm_prog mv_prog uname_prog mount_prog cp_prog install_prog textline gfedit mkdir_prog rmdir_prog delete_prog hwconfig hwinfo cmp_prog shmtest polltest toolinst login help_prog keymap libc testo mouse_prog floppy_drv kbd_drv svga_drv vgaprova_drv \
+PROGRAMMI_FLOPPY := shell hello id ls mem stack disk libctest fdisk mkfs trunc chkdsk rename rm_prog mv_prog uname_prog mount_prog cp_prog install_prog textline gfedit mkdir_prog rmdir_prog delete_prog hwconfig hwinfo cmp_prog shmtest polltest toolinst login help_prog keymap libc testo mouse_prog floppy_drv kbd_drv svga_drv vgaprova_drv \
                     pci_drv mouseser_drv uhci_drv xhci_drv
 
 # =============================================================================
@@ -1403,6 +1403,28 @@ $(UNAME_BIN): $(UNAME_SRC) $(UNAME_LD) $(LIBC_PONTI_OBJ) $(LIBC_START) $(LIBC_SO
 	    $(BUILD_OBJ)/uname_start.o $(BUILD_OBJ)/uname_main.o $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] uname compilato: $@"
 
+# --- /bin/id e /bin/whoami: guardare la propria identita' --------------------
+#
+# ! DUE NOMI, UN BINARIO, come su Unix: whoami e' id che guarda argv[0]. E
+# whoami e' un COLLEGAMENTO fatto copiando il file — EX-OS non ha i link — che
+# costa 5 KB e vale la chiarezza di poter battere il nome che tutti conoscono.
+ID_SRC := bin/id/id.c
+ID_BIN := $(BUILD_BIN)/id
+ID_LD  := bin/id/id.ld
+
+$(ID_BIN): $(ID_SRC) $(ID_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START)
+	@echo "=== Compilazione /bin/id (e /bin/whoami) ==="
+	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -c $(ID_SRC) -o $(BUILD_OBJ)/id_main.o
+	$(CC) -m32 -c $(LIBC_START)                      -o $(BUILD_OBJ)/id_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(ID_LD) \
+	    $(BUILD_OBJ)/id_start.o $(BUILD_OBJ)/id_main.o $(LIBC_PONTI_OBJ) -o $@
+	@cp $@ $(BUILD_BIN)/whoami
+	@echo "[OK] id compilato: $@ (e whoami)"
+
+.PHONY: id
+id: dirs $(ID_BIN)
+
 .PHONY: uname_prog
 uname_prog: dirs $(UNAME_BIN)
 
@@ -2353,7 +2375,7 @@ PROGRAMMI_FLOPPY_OUT := $(SHELL_BIN) $(HELLO_BIN) $(LS_BIN) $(MEM_BIN) \
                         $(MKDIR_BIN) $(RMDIR_BIN) $(DELETE_BIN) $(HWCONFIG_BIN) \
                         $(HWINFO_BIN) $(CMP_BIN) $(SHMTEST_BIN) $(POLLTEST_BIN) \
                         $(TOOLINST_BIN) $(LOGIN_BIN) $(HELP_BIN) $(KEYMAP_BIN) \
-                        $(TESTO_BIN) $(MOUSE_BIN) $(LIBC_SO) \
+                        $(TESTO_BIN) $(MOUSE_BIN) $(ID_BIN) $(BUILD_BIN)/whoami $(LIBC_SO) \
                         $(FLOPPY_DRV_OUT) $(KBD_DRV_OUT) $(SVGA_DRV_OUT) \
                         $(VGAPROVA_OUT) $(PCI_DRV_OUT) $(MOUSESER_OUT) \
                         $(UHCI_OUT) $(XHCI_OUT)

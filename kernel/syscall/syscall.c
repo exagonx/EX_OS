@@ -129,6 +129,10 @@ void syscall_init(void)
     syscall_table[SYS_VIDEO_INFO]   = sys_video_info;
     syscall_table[SYS_LOG]          = sys_log;
     syscall_table[SYS_LIB_APRI]     = sys_lib_apri;
+    syscall_table[SYS_GETUID]       = sys_getuid;
+    syscall_table[SYS_SETUID]       = sys_setuid;
+    syscall_table[SYS_CHOWN]        = sys_chown;
+    syscall_table[SYS_CHMOD]        = sys_chmod;
     syscall_table[SYS_SHM_APRI]     = sys_shm_apri;
     syscall_table[SYS_SHM_CHIUDI]   = sys_shm_chiudi;
     syscall_table[SYS_RANDOM]       = sys_random;

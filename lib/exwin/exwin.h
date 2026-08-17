@@ -115,6 +115,9 @@ typedef long (*ExProcedura)(ExFinestra, unsigned int, unsigned int, long);
  *     "riquadro"      cornice con un titolo, per raggruppare
  *     "separatore"    una riga
  *     "intestazione"  una fascia di titolo dentro la finestra
+ *     "lista"         un elenco che scorre, con una riga scelta
+ *     "areatesto"     un'area di testo multiriga, con il cursore
+ *     "terminale"     una griglia di testo con dentro un programma
  *
  * Per una finestra di primo livello: `padre` = 0, `id` = 0, `proc` = la
  * procedura. Per un controllo: `padre` = la finestra, `id` = il numero con cui
@@ -128,6 +131,17 @@ void       ex_distruggi(ExFinestra f);
 void       ex_titolo(ExFinestra f, const char *s);
 void       ex_sposta(ExFinestra f, int x, int y);
 void       ex_mostra(ExFinestra f, int visibile);
+
+/* -----------------------------------------------------------------------------
+ * Il fuoco: chi riceve i tasti dentro una finestra
+ *
+ * ! SENZA QUESTA, IL FUOCO ANDAVA AL PRIMO CONTROLLO CREATO che lo accettasse,
+ * e per spostarlo bisognava creare i controlli in un ordine che non e' quello
+ * in cui si leggono. Chiedere il fuoco per un controllo che non lo accetta —
+ * un'etichetta, un separatore — non e' un errore: e' un no, e le cose restano
+ * come stanno.
+ * --------------------------------------------------------------------------- */
+void        ex_fuoco(ExFinestra controllo);
 
 /* Il testo di un controllo: lo legge una casella, lo cambia un'etichetta. */
 void        ex_testo_metti(ExFinestra f, const char *s);
@@ -177,6 +191,56 @@ void ex_aggiorna(ExFinestra f);     /* «ho finito»: lo dice al server */
  * Rende 1 se l'ha disegnata, 0 se il formato non e' (ancora) riconosciuto.
  * --------------------------------------------------------------------------- */
 int ex_immagine(ExFinestra f, const char *percorso, int x, int y);
+
+/* -----------------------------------------------------------------------------
+ * La lista a scorrimento
+ *
+ * ! TRE APPLICAZIONI SE L'ERANO DISEGNATA A MANO prima che esistesse: l'elenco
+ * del file manager, quello del dialogo Apri/Salva, e l'area dell'editor. Tre
+ * volte vuol dire che il pezzo mancante era nel toolkit.
+ *
+ * Frecce, PgSu/PgGiu, Home/End muovono la scelta e la vista la insegue. Invio
+ * e il clic arrivano all'applicazione come EXM_COMANDO con l'id della lista —
+ * lo stesso messaggio di un pulsante premuto, perche' e' la stessa decisione.
+ *
+ * ! IL TESTO SI COPIA DENTRO LA LISTA. Un vettore passato dal chiamante
+ * vorrebbe dire che lui lo tiene vivo finche' la lista esiste, e nessuno se ne
+ * ricorda: qui si puo' passare un buffer sullo stack e dimenticarsene.
+ * --------------------------------------------------------------------------- */
+void         ex_lista_svuota(ExFinestra lista);
+int          ex_lista_aggiungi(ExFinestra lista, const char *testo);
+unsigned int ex_lista_quante(ExFinestra lista);
+unsigned int ex_lista_scelta(ExFinestra lista);
+void         ex_lista_scegli(ExFinestra lista, unsigned int i);
+const char  *ex_lista_testo(ExFinestra lista, unsigned int i);
+
+/* -----------------------------------------------------------------------------
+ * L'area di testo multiriga
+ *
+ * Un'area non e' una lista con dentro delle righe: ha un cursore che si muove
+ * in due direzioni, scorre anche in orizzontale, e i tasti la CAMBIANO invece
+ * di limitarsi a sceglierne una riga. Frecce, Home/End, PgSu/PgGiu, Backspace,
+ * Canc, Invio e il clic del mouse li gestisce il controllo.
+ *
+ * ! IL TESTO SI CARICA E SI RILEGGE UNA RIGA PER VOLTA, e non c'e' una
+ * funzione che renda tutto il buffer: darebbe a chi chiama un puntatore dentro
+ * la libreria, cioe' un modo di scriverci sopra senza che il controllo se ne
+ * accorga.
+ *
+ * ! ex_area_aggiungi() RENDE 0 QUANDO L'AREA E' PIENA, e chi carica un file
+ * DEVE guardarlo: caricare mezzo file e poi salvarlo cancellerebbe il resto
+ * senza averlo mai mostrato.
+ *
+ * Limiti: 512 righe da 200 colonne. Sono una conseguenza dell'allocatore a
+ * bump, dove free() non restituisce niente.
+ * --------------------------------------------------------------------------- */
+void         ex_area_svuota(ExFinestra area);
+int          ex_area_aggiungi(ExFinestra area, const char *riga);
+unsigned int ex_area_righe(ExFinestra area);
+const char  *ex_area_riga(ExFinestra area, unsigned int i);
+int          ex_area_modificato(ExFinestra area);
+void         ex_area_pulita(ExFinestra area);
+void         ex_area_cursore(ExFinestra area, unsigned int *riga, unsigned int *col);
 
 /* Quanto e' grande lo schermo. 0 se si e' in modo testo. */
 void ex_schermo(unsigned int *larghezza, unsigned int *altezza);

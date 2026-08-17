@@ -43,6 +43,24 @@ typedef struct {
      * syscall, quindi la conversione si fa una volta sola, qui. */
     uint16_t data;
     uint16_t ora;
+
+    /* =========================================================================
+     * IL PROPRIETARIO — dal 17 agosto 2026
+     *
+     * ! I CAMPI C'ERANO GIA' NEL FORMATO e nessuno li guardava. ext2 tiene
+     * i_uid a offset 2 e i_gid a offset 24 dell'inode, i_mode a offset 0: sono
+     * li' dal 1993, e mkfs li scrive. Leggerli non cambia niente per chi non
+     * li usa, e senza di loro un controllo di permesso non ha nulla su cui
+     * decidere.
+     *
+     * ! LEGGERLI NON VUOL DIRE FARLI RISPETTARE, e le due cose sono
+     * deliberatamente separate: leggere e' additivo e non puo' rompere niente,
+     * far rispettare puo' chiudere fuori l'utente dal proprio sistema. La
+     * seconda meta' e' un cambiamento a se', con le sue prove.
+     * ========================================================================= */
+    uint16_t modo;      /* i_mode: tipo nei 4 bit alti, permessi nei 9 bassi */
+    uint16_t uid;
+    uint16_t gid;
 } Ext2DirEntry;
 
 /* Monta il volume sul dispositivo a blocchi `blkdev`.
@@ -93,8 +111,17 @@ int  ext2_read(int mnt, const char *percorso, void *buf,
  * compresi, che e' il caso in cui e' facile buttare via i puntatori ai
  * blocchi che restano. Vedi pota_indiretto() in kernel/fs/ext2.c.
  * ============================================================================= */
-int  ext2_create  (int mnt, const char *percorso);
-int  ext2_mkdir   (int mnt, const char *percorso);
+/* ! IL PROPRIETARIO E' UN PARAMETRO, NON UNO STATO NASCOSTO. Un «uid corrente»
+ * tenuto in una variabile del modulo andrebbe impostato prima di ogni
+ * chiamata, e la volta che qualcuno se ne dimenticasse il file nascerebbe di
+ * root senza che nessuno lo dica. Un parametro non si puo' dimenticare. */
+int  ext2_create  (int mnt, const char *percorso, uint32_t uid, uint32_t gid);
+/* Cambia il proprietario di un file che esiste gia'. Chi puo' farlo lo decide
+ * la VFS, non questo file: qui si sa solo scrivere un inode. */
+int  ext2_chown   (int mnt, const char *percorso, uint32_t uid, uint32_t gid);
+/* Cambia i nove bit di permesso lasciando intatto il TIPO nei quattro alti. */
+int  ext2_chmod   (int mnt, const char *percorso, uint32_t modo);
+int  ext2_mkdir   (int mnt, const char *percorso, uint32_t uid, uint32_t gid);
 int  ext2_rmdir   (int mnt, const char *percorso);
 int  ext2_unlink  (int mnt, const char *percorso);
 /* Cambia il NOME di una voce senza spostare i dati. ! SOLO nella stessa

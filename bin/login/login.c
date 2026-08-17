@@ -32,7 +32,27 @@
  * -----------------------------------------------------------------------------
  * IL FILE DEGLI UTENTI
  *
- *     nome:sale:impronta
+ *     /boot/utenti   nome:uid:gid            0644, lo legge chiunque
+ *     /boot/ombra    nome:sale:impronta      0600, solo root
+ *
+ * ! DUE FILE E NON UNO, ed e' il motivo per cui Unix ha /etc/passwd e
+ * /etc/shadow separati. Con tutto in un file solo bisogna scegliere fra due
+ * mali: leggibile da tutti — e allora chiunque si porta via le impronte e
+ * prova candidati con comodo — oppure leggibile solo da root, e allora
+ * NESSUNO PUO' PIU' TRADURRE UN uid IN UN NOME. Si e' visto subito: `id`
+ * rispondeva «uid=1000(uid1000)» a un utente che si chiamava mario.
+ *
+ * I nomi sono pubblici perche' servono a chiunque; le impronte sono di root
+ * perche' non servono a nessun altro.
+ *
+ * ! L'uid E' NEL FILE, dal 17 agosto 2026. Prima non c'era e non serviva:
+ * login autenticava e basta, e la shell girava comunque da root. Adesso login
+ * SCENDE con setuid() prima di lanciarla, e per scendere deve sapere a chi.
+ *
+ * ! root E' uid 0 PER DEFINIZIONE, e non e' una convenzione di questo file: e'
+ * il numero che vfs_permesso() lascia passare dappertutto. Un utente normale
+ * comincia da 1000, come su ogni Unix, cosi' i numeri bassi restano liberi per
+ * i conti di servizio che un giorno serviranno.
  *
  * `impronta` e' lo SHA-256 di "sale:password" in esadecimale. Il sale rende
  * diverse due impronte di password uguali e impedisce le tabelle
@@ -54,7 +74,8 @@
 #include "libc.h"
 #include "kbd_proto.h"
 
-#define UTENTI     "/boot/utenti"
+#define UTENTI     "/boot/utenti"    /* nome:uid:gid — pubblico */
+#define OMBRA      "/boot/ombra"     /* nome:sale:impronta — di root */
 #define NOME_MAX   32
 #define PASS_MAX   64
 #define RIGA_MAX   192
@@ -225,12 +246,20 @@ static void sale_nuovo(char out[17])
 }
 
 /* Cerca `nome` e ne rende sale e impronta. 0 se trovato. */
-static int trova_utente(const char *nome, char *sale, char *imp)
+/* Cerca `nome` in un file a due punti e rende i pezzi che seguono. `campi` e'
+ * quanti due punti aspettarsi. Rende 0 se trovato.
+ *
+ * ! UNA FUNZIONE SOLA PER TUTT'E DUE I FILE. Hanno la stessa forma — nome,
+ * poi campi separati da due punti — e scriverne due copie vorrebbe dire che
+ * al primo cambiamento di formato una delle due resta indietro. E' successo
+ * gia' una volta oggi, con SpawnExtra. */
+static int cerca_riga(const char *file, const char *nome, int campi,
+                      char *a, unsigned int amax, char *b, unsigned int bmax)
 {
     static char testo[FILE_MAX];
     int  fd, n, i = 0;
 
-    fd = open(UTENTI, O_RDONLY);
+    fd = open(file, O_RDONLY);
     if (fd < 0) return -1;
     n = (int)read(fd, testo, sizeof(testo) - 1);
     close(fd);
@@ -239,26 +268,47 @@ static int trova_utente(const char *nome, char *sale, char *imp)
 
     while (i < n) {
         char riga[RIGA_MAX];
-        int  l = 0, c1 = -1, c2 = -1, k;
+        int  l = 0, k, c[4], nc = 0;
 
         while (i < n && testo[i] != '\n' && l < RIGA_MAX - 1) riga[l++] = testo[i++];
         riga[l] = '\0';
         if (i < n && testo[i] == '\n') i++;
         if (riga[0] == '\0' || riga[0] == '#') continue;
 
-        for (k = 0; riga[k]; k++) {
-            if (riga[k] == ':') { if (c1 < 0) c1 = k; else if (c2 < 0) c2 = k; }
-        }
-        if (c1 < 0 || c2 < 0) continue;      /* riga malformata: si salta */
+        for (k = 0; riga[k]; k++)
+            if (riga[k] == ':' && nc < 4) c[nc++] = k;
+        if (nc < campi) continue;       /* riga malformata: si salta */
 
-        riga[c1] = '\0';
+        riga[c[0]] = '\0';
         if (strcmp(riga, nome) != 0) continue;
-        riga[c2] = '\0';
-        strncpy(sale, riga + c1 + 1, 16); sale[16] = '\0';
-        strncpy(imp,  riga + c2 + 1, 64); imp[64]  = '\0';
+
+        riga[c[1]] = '\0';
+        if (a) { strncpy(a, riga + c[0] + 1, amax - 1); a[amax - 1] = '\0'; }
+        if (b) { strncpy(b, riga + c[1] + 1, bmax - 1); b[bmax - 1] = '\0'; }
         return 0;
     }
     return -1;
+}
+
+/* L'identita' pubblica: uid e gid. La legge chiunque, e serve a `id`. */
+static int trova_utente(const char *nome, char *sale, char *imp,
+                        unsigned int *uid, unsigned int *gid)
+{
+    char su[16], sg[16];
+
+    if (cerca_riga(UTENTI, nome, 2, su, sizeof(su), sg, sizeof(sg)) != 0)
+        return -1;
+
+    if (uid) *uid = (unsigned int)atoi(su);
+    if (gid) *gid = (unsigned int)atoi(sg);
+
+    /* ! LE IMPRONTE STANNO NELL'ALTRO FILE, e chi non e' root non le legge:
+     * cerca_riga rende -1, e chi ha chiamato non riesce ad autenticare. E'
+     * giusto — solo login, che gira da root, deve poterlo fare. */
+    if (sale && imp)
+        return cerca_riga(OMBRA, nome, 2, sale, 17, imp, 65);
+
+    return 0;
 }
 
 static int c_e_qualche_utente(void)
@@ -267,32 +317,82 @@ static int c_e_qualche_utente(void)
     return (stat(UTENTI, &st) == 0 && st.st_size > 0);
 }
 
-/* Aggiunge una riga al file. Rende 0 se ci e' riuscito. */
-static int aggiungi_utente(const char *nome, const char *pass)
+/* Il primo uid libero da 1000 in su. Legge il file e prende il massimo + 1:
+ * riusare un numero gia' speso vorrebbe dire che i file del vecchio
+ * proprietario diventano di quello nuovo, in silenzio. */
+static unsigned int prossimo_uid(void)
 {
-    char sale[17], imp[65], riga[RIGA_MAX];
-    int  fd, l, scritti = 0, w;
+    static char testo[FILE_MAX];
+    unsigned int massimo = 999;
+    int fd, n, i = 0;
 
-    sale_nuovo(sale);
-    impronta_di(sale, pass, imp);
-    l = snprintf(riga, sizeof(riga), "%s:%s:%s\n", nome, sale, imp);
+    fd = open(UTENTI, O_RDONLY);
+    if (fd < 0) return 1000;
+    n = (int)read(fd, testo, sizeof(testo) - 1);
+    close(fd);
+    if (n < 0) n = 0;
+    testo[n] = '\0';
 
-    /* In coda, non riscrivendo: il file puo' gia' avere altri utenti, e
-     * riscriverlo per intero vorrebbe dire poterli perdere tutti per un
-     * errore di scrittura su uno solo. */
-    fd = open(UTENTI, O_WRONLY | O_CREAT | O_APPEND);
+    while (i < n) {
+        int p = i, due = -1;
+
+        while (i < n && testo[i] != '\n') {
+            if (testo[i] == ':' && due < 0) due = i;
+            i++;
+        }
+        if (i < n) i++;
+        if (due > p) {
+            unsigned int u = (unsigned int)atoi(testo + due + 1);
+            if (u > massimo && u < 60000u) massimo = u;
+        }
+    }
+    return massimo + 1;
+}
+
+/* Aggiunge una riga al file. Rende 0 se ci e' riuscito. */
+/* Aggiunge l'utente ai DUE file. Rende 0 se ci e' riuscito.
+ *
+ * ! IN CODA E NON RISCRIVENDO: i file possono gia' avere altri utenti, e
+ * riscriverli per intero vorrebbe dire poterli perdere tutti per un errore di
+ * scrittura su uno solo. */
+static int scrivi_riga(const char *file, const char *riga, unsigned int modo)
+{
+    int fd, l = (int)strlen(riga), scritti = 0, w;
+
+    fd = open(file, O_WRONLY | O_CREAT | O_APPEND);
     if (fd < 0) {
-        printf("login: %s: %s\n", UTENTI, strerror(errno));
+        printf("login: %s: %s\n", file, strerror(errno));
         return -1;
     }
+    chmod(file, modo);
+
     while (scritti < l) {
         w = (int)write(fd, riga + scritti, (unsigned int)(l - scritti));
-        if (w <= 0) { close(fd); printf("login: scrittura interrotta\n"); return -1; }
+        if (w <= 0) { close(fd); return -1; }
         scritti += w;
     }
     close(fd);
     return 0;
 }
+
+static int aggiungi_utente(const char *nome, const char *pass, unsigned int uid)
+{
+    char sale[17], imp[65], riga[RIGA_MAX];
+
+    sale_nuovo(sale);
+    impronta_di(sale, pass, imp);
+
+    /* ! PRIMA L'OMBRA, POI I NOMI, e l'ordine conta: se la seconda scrittura
+     * fallisce resta un'impronta senza nome, che non fa entrare nessuno.
+     * All'incontrario resterebbe un NOME SENZA IMPRONTA — un conto che
+     * esiste e non ha password, cioe' il difetto peggiore possibile. */
+    snprintf(riga, sizeof(riga), "%s:%s:%s\n", nome, sale, imp);
+    if (scrivi_riga(OMBRA, riga, 0600) != 0) return -1;
+
+    snprintf(riga, sizeof(riga), "%s:%u:%u\n", nome, uid, uid);
+    return scrivi_riga(UTENTI, riga, 0644);
+}
+
 
 /* Nomi accettabili: lettere, cifre, '_'. Niente ':' — separa i campi — e
  * niente spazi, che renderebbero ambigua la riga. */
@@ -359,7 +459,13 @@ static void primo_utente(void)
             continue;
         }
 
-        if (aggiungi_utente(nome, p1) == 0) {
+        /* ! IL PRIMO UTENTE E' root, uid 0, E GLI ALTRI PARTONO DA 1000. Non
+         * e' una convenzione di comodo: 0 e' il numero che vfs_permesso()
+         * lascia passare dappertutto, e chi crea il primo conto su una
+         * macchina appena installata deve poterci fare tutto. I numeri fra 1 e
+         * 999 restano liberi per i conti di servizio. */
+        if (aggiungi_utente(nome, p1,
+                            c_e_qualche_utente() ? prossimo_uid() : 0u) == 0) {
             printf("\n  Utente '%s' creato.\n\n", nome);
             return;
         }
@@ -373,7 +479,9 @@ static void primo_utente(void)
  * main
  * ───────────────────────────────────────────────────────────────────────────── */
 
-static void avvia_shell(const char *utente)
+static char g_casa[128];
+
+static void avvia_shell(const char *utente, unsigned int uid, unsigned int gid)
 {
     char *argv[2];
     int   pid, stato;
@@ -384,6 +492,75 @@ static void avvia_shell(const char *utente)
     /* L'utente entra nell'ambiente della shell: da li' lo legge `whoami`,
      * e ci si appoggera' il giorno che i file avranno un proprietario. */
     setenv("USER", utente, 1);
+
+    /* =====================================================================
+     * ! SI SCENDE PRIMA DI LANCIARE, e questo e' il punto di tutto il
+     * meccanismo. EX-OS non ha il bit setuid sui file, quindi un programma non
+     * puo' alzarsi di privilegio: l'unica direzione possibile e' giu'. init
+     * resta root, avvia login che resta root, login autentica e SCENDE, e solo
+     * allora lancia la shell — che eredita l'identita' come eredita la console
+     * e la directory corrente.
+     *
+     * ! E DA QUI NON SI TORNA SU. Quando la shell finisce, questo processo e'
+     * ormai l'utente e non puo' piu' chiedere una password per conto di
+     * nessun altro: e' per questo che il ciclo del login rifa' `exec` di se
+     * stesso invece di rimettersi ad aspettare.
+     * ===================================================================== */
+    /* =====================================================================
+     * ! LA CASA SI CREA DA root E POI SI CONSEGNA, ed e' l'unico ordine che
+     * funziona. /home appartiene a root con 0755: un utente normale non ci
+     * puo' creare dentro, quindi non puo' farsi la propria directory. E se la
+     * crea root senza consegnarla, il padrone ha una casa in cui non puo'
+     * scrivere.
+     *
+     * Creare-e-consegnare e' esattamente quello che fa `adduser` su ogni Unix,
+     * e qui si puo' fare perche' in questo istante siamo ancora root: dopo
+     * setuid() non si potrebbe piu'.
+     *
+     * ! SE ESISTE GIA' NON E' UN ERRORE — e' il caso normale dal secondo
+     * accesso in poi — e nemmeno se il filesystem non ha i proprietari:
+     * chown rende ENOSYS su FAT, e li' non c'e' niente da consegnare.
+     * ===================================================================== */
+    {
+        char casa[128];
+
+        /* ! /home E' IL CONTENITORE, LA CASA E' /home/<utente>. E root fa
+         * eccezione con /root, come su ogni Unix: la sua casa deve stare fuori
+         * da /home perche' /home puo' essere un volume a parte, montato dopo —
+         * e l'amministratore deve poter entrare anche quando non c'e'. Le crea
+         * tutt'e due `install`. */
+        if (uid == 0) snprintf(casa, sizeof(casa), "/root");
+        else          snprintf(casa, sizeof(casa), "/home/%s", utente);
+
+        if (mkdir(casa, 0755) == 0) {
+            if (uid != 0 && chown(casa, uid, gid) != 0 && errno != ENOSYS)
+                printf("login: %s creata ma non consegnata (%s)\n",
+                       casa, strerror(errno));
+        }
+        strncpy(g_casa, casa, sizeof(g_casa) - 1);
+        g_casa[sizeof(g_casa) - 1] = '\0';
+    }
+
+    if (uid != 0 && setuid(uid) != 0) {
+        printf("login: non riesco a scendere all'utente %s (%s)\n",
+               utente, strerror(errno));
+        printf("       la shell NON viene avviata: meglio nessun accesso che\n");
+        printf("       un accesso con i privilegi sbagliati.\n");
+        sleep(3);
+        return;
+    }
+    (void)gid;
+
+    (void)gid;
+
+    /* ! E CI SI ENTRA DOPO ESSERE SCESI, non prima: entrare in una directory
+     * vuole il permesso di attraversarla, e vogliamo che sia l'UTENTE a
+     * poterlo fare — se ci riuscisse solo root, la casa non sarebbe sua. */
+    if (g_casa[0]) {
+        if (chdir(g_casa) == 0) setenv("HOME", g_casa, 1);
+        else printf("login: non riesco a entrare in %s (%s)\n",
+                    g_casa, strerror(errno));
+    }
 
     pid = spawn(g_shell, argv);
     if (pid < 0) {
@@ -399,9 +576,32 @@ int main(int argc, char **argv)
 {
     char nome[NOME_MAX], pass[PASS_MAX];
     char sale[17], imp[65], prova[65];
+    unsigned int uid = 0, gid = 0;
     int  i;
 
     for (i = 1; i < argc; i++) {
+        /* =================================================================
+         * ! «login -a» AGGIUNGE UN UTENTE E BASTA, e sta qui invece che in un
+         * /bin/adduser a parte per una ragione sola: tutto cio' che serve —
+         * leggere una password senza mostrarla, il sale, SHA-256, il formato
+         * del file — e' gia' in questo binario. Un programma separato ne
+         * sarebbe una seconda copia, e due copie della stessa cosa divergono
+         * al primo cambiamento di formato.
+         *
+         * ! LO PUO' FARE SOLO root, e il controllo e' qui e non nel file:
+         * /boot/utenti non e' protetto da permessi finche' non lo si crea con
+         * i permessi giusti, e chiedere il privilegio a chi chiama e' il
+         * controllo che non si puo' aggirare rinominando un file.
+         * ================================================================= */
+        if (strcmp(argv[i], "-a") == 0) {
+            if (getuid() != 0) {
+                printf("login -a: solo root puo' aggiungere un utente.\n");
+                return 1;
+            }
+            prendi_console();
+            primo_utente();
+            return 0;
+        }
         if (argv[i][0] != '-') {
             strncpy(g_shell, argv[i], sizeof(g_shell) - 1);
             g_shell[sizeof(g_shell) - 1] = '\0';
@@ -429,11 +629,11 @@ int main(int argc, char **argv)
             continue;
         }
 
-        if (trova_utente(nome, sale, imp) == 0) {
+        if (trova_utente(nome, sale, imp, &uid, &gid) == 0) {
             impronta_di(sale, pass, prova);
             if (strcmp(prova, imp) == 0) {
                 printf("\n");
-                avvia_shell(nome);
+                avvia_shell(nome, uid, gid);
                 /* La shell e' finita: si ricomincia. E' `exit` che torna
                  * al login, senza che nessuno lo tratti come un caso a
                  * parte. Vedi il commento in testa al file. */

@@ -390,6 +390,27 @@ typedef struct Process {
      * un padre da cui ereditare. */
     uint32_t        console;
 
+    /* =========================================================================
+     * L'IDENTITA' DI CHI STA GIRANDO — uid e gid, dal 17 agosto 2026
+     *
+     * ! SI EREDITANO DAL PADRE, come `console` e `cwd` qui accanto, e per la
+     * stessa ragione: un programma lanciato dalla shell di un utente e' quello
+     * stesso utente. Senza eredita' ogni processo ripartirebbe da root, e i
+     * permessi sarebbero una decorazione.
+     *
+     * ! uid 0 E' root, E PASSA DAPPERTUTTO. Non e' un caso particolare
+     * infilato nei controlli: e' la definizione di root, e sta in UN posto
+     * solo — vfs_permesso() in kernel/fs/vfs.c. Sparso nei singoli controlli
+     * sarebbe la cosa piu' facile da dimenticare in uno di essi.
+     *
+     * ! IL PRIMO PROCESSO NASCE root, E DEVE. E' il kernel a crearlo, non c'e'
+     * nessuno da cui ereditare, e da li' passa o per `login` — che scende a un
+     * utente vero — o direttamente per la shell, quando si avvia da floppy o
+     * da CD e l'installazione dev'essere possibile.
+     * ========================================================================= */
+    uint32_t        uid;
+    uint32_t        gid;
+
 /* =============================================================================
  * La directory corrente — UNA PER PROCESSO
  *

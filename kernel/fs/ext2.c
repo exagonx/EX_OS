@@ -1251,6 +1251,12 @@ int ext2_stat(int mnt, const char *percorso, Ext2DirEntry *out)
     out->is_dir      = ((le16(inode) & MODE_TIPO) == MODE_DIR) ? 1 : 0;
     /* i_mtime sta all'offset 16 dell'inode ed e' un tempo Unix. */
     data_fat_da_unix(le32(inode + 16), &out->data, &out->ora);
+
+    /* ! IL PROPRIETARIO, agli offset che ext2 usa dal 1993. mkfs li scrive
+     * gia': qui si smette solo di ignorarli. */
+    out->modo = le16(inode + 0);
+    out->uid  = le16(inode + 2);
+    out->gid  = le16(inode + 24);
     return 0;
 }
 
@@ -1678,8 +1684,24 @@ static uint32_t unix_ora_corrente(void)
     return giorni * 86400u + t.ora * 3600u + t.minuto * 60u + t.secondo;
 }
 
+/* =============================================================================
+ * ! IL PROPRIETARIO DI CIO' CHE SI CREA, dal 17 agosto 2026.
+ *
+ * Prima `inode_nuovo` azzerava tutto e non ci scriveva sopra: ogni file nato su
+ * EX-OS era di uid 0. Finche' nessuno guardava quei campi non faceva
+ * differenza; nel momento in cui un controllo li guarda, un utente normale non
+ * riuscirebbe a rileggere il file che ha appena scritto — e il difetto
+ * sembrerebbe del controllo, mentre sarebbe qui.
+ *
+ * ! CHI CREA E' UN PARAMETRO, NON UNO STATO NASCOSTO. Un «uid corrente» tenuto
+ * in una variabile del modulo andrebbe impostato prima di ogni chiamata, e la
+ * volta che qualcuno se ne dimenticasse il file nascerebbe di root senza che
+ * nessuno lo dica. Un parametro non si puo' dimenticare: il compilatore lo
+ * chiede.
+ * ============================================================================= */
 static void inode_nuovo(uint8_t *inode, uint32_t modo, uint32_t link,
-                        uint32_t dim, uint32_t blocchi_512)
+                        uint32_t dim, uint32_t blocchi_512,
+                        uint32_t uid, uint32_t gid)
 {
     uint32_t i;
     uint32_t adesso = unix_ora_corrente();
@@ -1687,6 +1709,8 @@ static void inode_nuovo(uint8_t *inode, uint32_t modo, uint32_t link,
     for (i = 0; i < 128u; i++) inode[i] = 0;
 
     p16(inode +  0, modo);
+    p16(inode +  2, uid);       /* i_uid  */
+    p16(inode + 24, gid);       /* i_gid  */
     p32(inode +  4, dim);
     p16(inode + 26, link);
     p32(inode + 28, blocchi_512);
@@ -1698,7 +1722,60 @@ static void inode_nuovo(uint8_t *inode, uint32_t modo, uint32_t link,
     p32(inode + 16, adesso);
 }
 
-int ext2_create(int mnt, const char *percorso)
+/* =============================================================================
+ * ext2_chown — cambiare il proprietario di un file gia' esistente
+ *
+ * ! SENZA QUESTA, «ogni utente ha la sua directory sotto /home» NON SI PUO'
+ * FARE. Chi crea diventa proprietario, e basta: /home appartiene a root con
+ * 0755, quindi un utente normale non ci puo' creare dentro la propria casa —
+ * e se la crea root, il padrone non ci puo' scrivere. Serve qualcuno che crei
+ * e poi consegni, ed e' esattamente quello che fa `adduser` su ogni Unix.
+ *
+ * ! IL CONTROLLO DI CHI PUO' NON STA QUI, sta nella VFS. Questo file sa
+ * scrivere un inode; decidere a chi e' permesso e' una politica, e tenerla in
+ * un posto solo — vfs_permesso() — e' quello che impedisce di dimenticarla in
+ * uno dei chiamanti.
+ * ============================================================================= */
+int ext2_chown(int mnt, const char *percorso, uint32_t uid, uint32_t gid)
+{
+    Ext2Mount *m = prendi(mnt);
+    uint8_t    inode[128];
+    uint32_t   ino;
+
+    if (m == NULL) return -1;
+
+    ino = risolvi(m, mnt, percorso, inode);
+    if (ino == 0) return -1;
+
+    p16(inode +  2, uid);
+    p16(inode + 24, gid);
+
+    if (scrivi_inode(m, ino, inode) != 0) return -1;
+    return super_aggiorna(m);
+}
+
+/* Cambia i nove bit di permesso, lasciando intatti i quattro alti che dicono
+ * il TIPO: sovrascrivere i_mode per intero trasformerebbe una directory in un
+ * file agli occhi di chiunque la legga dopo. */
+int ext2_chmod(int mnt, const char *percorso, uint32_t modo)
+{
+    Ext2Mount *m = prendi(mnt);
+    uint8_t    inode[128];
+    uint32_t   ino, vecchio;
+
+    if (m == NULL) return -1;
+
+    ino = risolvi(m, mnt, percorso, inode);
+    if (ino == 0) return -1;
+
+    vecchio = le16(inode + 0);
+    p16(inode + 0, (vecchio & ~0777u) | (modo & 0777u));
+
+    if (scrivi_inode(m, ino, inode) != 0) return -1;
+    return super_aggiorna(m);
+}
+
+int ext2_create(int mnt, const char *percorso, uint32_t uid, uint32_t gid)
 {
     Ext2Mount *m = prendi(mnt);
     char       padre[EXT2_PERCORSO_MAX];
@@ -1715,7 +1792,11 @@ int ext2_create(int mnt, const char *percorso)
     num = alloca_inode(m, (pnum - 1u) / m->inode_per_gruppo, 0);
     if (num == 0) return -1;
 
-    inode_nuovo(nino, MODE_FILE | 0644u, 1, 0, 0);
+    /* ! 0644: chi lo possiede legge e scrive, gli altri leggono soltanto. E'
+     * il valore che si aspetta chiunque abbia usato un Unix, e vale finche'
+     * non ci sara' una umask — che e' proprio il meccanismo con cui si cambia
+     * questa scelta senza toccare il codice. */
+    inode_nuovo(nino, MODE_FILE | 0644u, 1, 0, 0, uid, gid);
     if (scrivi_inode(m, num, nino) != 0) { libera_inode(m, num, 0); return -1; }
 
     if (dir_aggiungi(m, mnt, pnum, pino, nome, len, num, DIRTIPO_FILE) != 0) {
@@ -1730,7 +1811,7 @@ int ext2_create(int mnt, const char *percorso)
     return super_aggiorna(m);
 }
 
-int ext2_mkdir(int mnt, const char *percorso)
+int ext2_mkdir(int mnt, const char *percorso, uint32_t uid, uint32_t gid)
 {
     Ext2Mount *m = prendi(mnt);
     char       padre[EXT2_PERCORSO_MAX];
@@ -1769,7 +1850,12 @@ int ext2_mkdir(int mnt, const char *percorso)
     }
 
     /* DUE collegamenti: il nome nel padre e il "." dentro di se'. */
-    inode_nuovo(nino, MODE_DIR | 0755u, 2, m->dim_blocco, m->dim_blocco / 512u);
+    /* ! 0755 SU UNA DIRECTORY, e la differenza con 0644 di un file conta: il
+     * bit x su una directory non vuol dire «eseguibile», vuol dire
+     * «attraversabile». Senza, nessuno potrebbe entrarci nemmeno per leggere
+     * un file che gli appartiene. */
+    inode_nuovo(nino, MODE_DIR | 0755u, 2, m->dim_blocco, m->dim_blocco / 512u,
+                uid, gid);
     p32(nino + 40, blk);
 
     if (scrivi_inode(m, num, nino) != 0) {

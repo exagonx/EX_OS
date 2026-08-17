@@ -774,6 +774,16 @@ int        nanosleep(const struct timespec *req, struct timespec *rem);
 /* ! Tutte e quattro tornano 0, e non significa «root»: significa che su
  * EX-OS non esiste la domanda. Serve a OPENSSL_issetugid(), che chiede
  * «giro con privilegi non miei?» — e qui la risposta onesta e' no. */
+/* ! RENDONO L'IDENTITA' VERA dal 17 agosto 2026: prima erano zero fisso, che
+ * era onesto quando non c'erano utenti e sarebbe una bugia adesso.
+ *
+ * setuid() la puo' chiamare solo root e serve a scendere: e' cosi' che `login`
+ * cambia utente senza che esista il bit setuid sui file. Rende 0, o -1 con
+ * errno EPERM. */
+int        setuid(unsigned int uid);
+/* Consegna un file a un altro utente. Solo root; su FAT rende -1 con ENOSYS
+ * invece di fingere. */
+int        chown(const char *percorso, unsigned int uid, unsigned int gid);
 int        getuid(void);
 int        geteuid(void);
 int        getgid(void);

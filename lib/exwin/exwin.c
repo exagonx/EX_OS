@@ -49,6 +49,8 @@ typedef struct {
 #define CL_SEPARATORE   6
 #define CL_INTESTAZIONE 7
 #define CL_TERMINALE    8
+#define CL_LISTA        9
+#define CL_AREA        10
 
 /* =============================================================================
  * IL TERMINALE — una shell dentro una finestra
@@ -97,6 +99,76 @@ typedef struct {
 
 static Terminale g_term[TERM_MAX];
 
+/* =============================================================================
+ * LA LISTA A SCORRIMENTO — CL_LISTA
+ *
+ * ! TRE APPLICAZIONI SE L'ERANO DISEGNATA A MANO prima che esistesse: l'elenco
+ * del file manager, quello del dialogo Apri/Salva, e l'area dell'editor che e'
+ * la stessa cosa con dentro del testo. Tre volte vuol dire che il pezzo
+ * mancante e' nel toolkit, non nelle applicazioni.
+ *
+ * ! LO STATO STA IN UNA TABELLA A PARTE, come per il terminale, e per la
+ * stessa ragione: `Oggetto` e' una struttura fissa uguale per tutte le classi,
+ * e allargarla per la lista vorrebbe dire farla pagare anche a un separatore.
+ * `lista_di()` la trova dall'oggetto, esattamente come `term_di()`.
+ *
+ * ! LE VOCI SONO UN BLOCCO SOLO, non una voce per malloc. free() non
+ * restituisce niente: allocare e liberare a ogni cambio di directory
+ * perderebbe memoria per sempre. Si alloca una volta alla creazione, e si
+ * riusa.
+ * ============================================================================= */
+#define LISTA_MAX        4
+#define LISTA_VOCI_MAX   512
+#define LISTA_TESTO_MAX  64
+#define LISTA_RIGA_H     16
+
+typedef struct {
+    unsigned int usato;
+    ExFinestra   ogg;
+    char        *voci;                  /* LISTA_VOCI_MAX * LISTA_TESTO_MAX */
+    unsigned int n;                     /* quante ce ne sono */
+    unsigned int sel;                   /* quale e' scelta */
+    unsigned int primo;                 /* la prima visibile */
+    unsigned int righe;                 /* quante ne stanno */
+} Lista;
+
+static Lista g_lista[LISTA_MAX];
+
+/* =============================================================================
+ * L'AREA DI TESTO MULTIRIGA — CL_AREA
+ *
+ * ! E' LA TERZA COSA CHE L'EDITOR SI DISEGNAVA DA SE'. Un'area di testo non e'
+ * una lista con dentro delle righe: ha un cursore che si muove in due
+ * direzioni, si scorre anche in orizzontale, e i tasti la CAMBIANO invece di
+ * limitarsi a sceglierne una riga. Ma il grosso — quali righe si vedono, dove
+ * sta il cursore, come si insegue — e' identico in ogni editor mai scritto, e
+ * scriverlo in ogni applicazione e' scriverlo male tre volte.
+ *
+ * ! I LIMITI SONO UNA CONSEGUENZA, NON UNA PIGRIZIA. L'allocatore di EX-OS e'
+ * a bump su sbrk e free() non restituisce niente: righe riallocate a ogni
+ * tasto premuto perderebbero memoria per sempre. 512 righe da 200 colonne sono
+ * un blocco solo, chiesto una volta alla creazione.
+ * ============================================================================= */
+#define AREA_MAX        2
+#define AREA_RIGHE_MAX  512
+#define AREA_COL_MAX    200
+#define AREA_RIGA_H     16
+#define AREA_CAR_W      8
+
+typedef struct {
+    unsigned int usato;
+    ExFinestra   ogg;
+    char        *testo;                 /* AREA_RIGHE_MAX * AREA_COL_MAX */
+    unsigned int n;                     /* quante righe ci sono (>= 1) */
+    unsigned int cx, cy;                /* il cursore */
+    unsigned int top, left;             /* la prima riga e colonna visibili */
+    unsigned int righe, cols;           /* quante ne stanno a video */
+    int          modificato;
+} Area;
+
+static Area g_area[AREA_MAX];
+
+
 static Oggetto g_ogg[OGGETTI_MAX];
 static int     g_server = -1;
 static int     g_uscita = 0;
@@ -110,6 +182,72 @@ static Oggetto *ogg(ExFinestra f)
     if (f == 0 || f > OGGETTI_MAX) return 0;
     if (!g_ogg[f - 1].usato) return 0;
     return &g_ogg[f - 1];
+}
+
+/* Le tre della lista stanno QUI e non accanto alla sua tabella: usano ogg()
+ * e g_ogg, che sono dichiarati poco sopra. */
+/* Le funzioni dell'area, accanto a quelle della lista e per la stessa ragione:
+ * usano ogg() e g_ogg. */
+static Area *area_di(const Oggetto *o)
+{
+    int i;
+    ExFinestra h = (ExFinestra)(o - g_ogg + 1);
+
+    for (i = 0; i < AREA_MAX; i++)
+        if (g_area[i].usato && g_area[i].ogg == h) return &g_area[i];
+    return 0;
+}
+
+static Area *area_da_h(ExFinestra f)
+{
+    Oggetto *o = ogg(f);
+    return o ? area_di(o) : 0;
+}
+
+static char *area_riga(Area *A, unsigned int r)
+{
+    return &A->testo[r * AREA_COL_MAX];
+}
+
+static unsigned int area_lung(Area *A, unsigned int r)
+{
+    return (unsigned int)strlen(area_riga(A, r));
+}
+
+/* La vista insegue il cursore in TUTT'E DUE le direzioni: senza, le frecce
+ * muoverebbero un cursore che non si vede — e chi guarda crede che il tasto
+ * non funzioni. */
+static void area_segui(Area *A)
+{
+    if (A->cy < A->top)                A->top = A->cy;
+    if (A->cy >= A->top + A->righe)    A->top = A->cy - A->righe + 1;
+    if (A->cx < A->left)               A->left = A->cx;
+    if (A->cx >= A->left + A->cols)    A->left = A->cx - A->cols + 1;
+}
+
+static Lista *lista_di(const Oggetto *o)
+{
+    int i;
+    ExFinestra h = (ExFinestra)(o - g_ogg + 1);
+
+    for (i = 0; i < LISTA_MAX; i++)
+        if (g_lista[i].usato && g_lista[i].ogg == h) return &g_lista[i];
+    return 0;
+}
+
+static Lista *lista_da_h(ExFinestra f)
+{
+    Oggetto *o = ogg(f);
+    return o ? lista_di(o) : 0;
+}
+
+/* La vista insegue la scelta: senza, le frecce muoverebbero una riga che non
+ * si vede, e chi guarda crede che il tasto non funzioni. */
+static void lista_segui(Lista *L)
+{
+    if (L->righe == 0) return;
+    if (L->sel < L->primo)                L->primo = L->sel;
+    if (L->sel >= L->primo + L->righe)    L->primo = L->sel - L->righe + 1;
 }
 
 /* La finestra di primo livello a cui un oggetto appartiene: e' li' che
@@ -141,6 +279,8 @@ static unsigned int classe_da_nome(const char *c)
     if (strcmp(c, "separatore")   == 0) return CL_SEPARATORE;
     if (strcmp(c, "intestazione") == 0) return CL_INTESTAZIONE;
     if (strcmp(c, "terminale")    == 0) return CL_TERMINALE;
+    if (strcmp(c, "lista")        == 0) return CL_LISTA;
+    if (strcmp(c, "areatesto")    == 0) return CL_AREA;
     return 0;
 }
 
@@ -191,7 +331,8 @@ static void origine(Oggetto *o, int *ox, int *oy)
 static int accetta_fuoco(const Oggetto *o)
 {
     return o->classe == CL_TESTO || o->classe == CL_PULSANTE ||
-           o->classe == CL_TERMINALE;
+           o->classe == CL_TERMINALE || o->classe == CL_LISTA ||
+           o->classe == CL_AREA;
 }
 
 static void fuoco_metti(ExFinestra f, ExFinestra c)
@@ -202,6 +343,33 @@ static void fuoco_metti(ExFinestra f, ExFinestra c)
     if (!r || !o || !accetta_fuoco(o)) return;
     r->fuoco = c;
     o->cursore = (unsigned int)strlen(o->titolo);
+}
+
+/* =============================================================================
+ * ex_fuoco — dare il fuoco a un controllo, dall'esterno
+ *
+ * ! FINO AL 17 AGOSTO 2026 NON SI POTEVA, e il fuoco andava al PRIMO controllo
+ * creato che lo accettasse. Sembra un dettaglio finche' non morde: nel dialogo
+ * «Apri» di ExDlg la casella del nome si creava prima del pulsante «Su» —
+ * cioe' in un ordine che non e' quello in cui si legge — soltanto per
+ * prendersi il fuoco. Senza quel trucco il dialogo sembrava sordo: tutto
+ * quello che si batteva finiva in un pulsante, che i tasti non li usa.
+ *
+ * ! CHIEDERE IL FUOCO PER UN CONTROLLO CHE NON LO ACCETTA NON E' UN ERRORE, e'
+ * un no: fuoco_metti() lascia le cose come stanno. Un'etichetta col fuoco
+ * sarebbe una finestra che ignora la tastiera senza dirlo, ed e' peggio di una
+ * chiamata che non fa niente.
+ * ============================================================================= */
+void ex_fuoco(ExFinestra f)
+{
+    Oggetto *o = ogg(f);
+
+    if (!o) return;
+
+    /* Si passa la RADICE come prima cosa: il fuoco e' un campo della finestra
+     * di primo livello, non del controllo. Chi chiama ha in mano il controllo
+     * e non deve sapere anche chi sia suo padre. */
+    fuoco_metti(radice_h(f), f);
 }
 
 /* Il prossimo controllo che accetta il fuoco, in ordine di creazione. */
@@ -482,6 +650,87 @@ static void disegna_oggetto(Oggetto *o)
         ex_riempi(o->padre, x, y + 1, o->w, 1, EX_BIANCO);
         break;
 
+    case CL_AREA: {
+        Area *A = area_di(o);
+        Oggetto *r = radice(o->padre);
+        unsigned int k;
+        int col_fuoco;
+
+        ex_riempi(o->padre, x, y, o->w, o->h, EX_BIANCO);
+        col_fuoco = (r && r->fuoco == (ExFinestra)(o - g_ogg + 1));
+        ex_riquadro_disegna(o->padre, x, y, o->w, o->h,
+                            col_fuoco ? EX_BLU : EX_GRIGIO_SC);
+        if (!A) break;
+
+        for (k = 0; k < A->righe && A->top + k < A->n; k++) {
+            const char  *src = area_riga(A, A->top + k);
+            unsigned int l   = (unsigned int)strlen(src);
+            char         vis[AREA_COL_MAX];
+            unsigned int c;
+            int          ry = y + 2 + (int)k * AREA_RIGA_H;
+
+            for (c = 0; c < A->cols && A->left + c < l && c + 1 < sizeof(vis); c++) {
+                char ch = src[A->left + c];
+                /* ! IL TAB SI MOSTRA COME UNO SPAZIO E RESTA UN TAB NEL TESTO.
+                 * Espanderlo vorrebbe dire che una colonna sullo schermo non
+                 * e' piu' un carattere nel testo, e allora cursore, clic e
+                 * lunghezza della riga direbbero tre cose diverse. */
+                vis[c] = (ch == '\t') ? ' ' : ch;
+            }
+            vis[c] = '\0';
+            if (vis[0]) ex_scrivi(o->padre, x + 2, ry, vis, EX_NERO);
+        }
+
+        /* Il cursore: un blocco pieno col carattere ridisegnato sopra in
+         * bianco. Una barretta di un pixel su un font 8x16 si perde. */
+        if (col_fuoco &&
+            A->cy >= A->top && A->cy < A->top + A->righe &&
+            A->cx >= A->left && A->cx < A->left + A->cols) {
+            int cx = x + 2 + (int)(A->cx - A->left) * AREA_CAR_W;
+            int cy = y + 2 + (int)(A->cy - A->top) * AREA_RIGA_H;
+            char sotto[2];
+
+            ex_riempi(o->padre, cx, cy, AREA_CAR_W, AREA_RIGA_H, EX_BLU);
+            sotto[0] = area_riga(A, A->cy)[A->cx];
+            sotto[1] = '\0';
+            if (sotto[0] == '\t') sotto[0] = ' ';
+            if (sotto[0]) ex_scrivi(o->padre, cx, cy, sotto, EX_BIANCO);
+        }
+        break;
+    }
+
+    case CL_LISTA: {
+        Lista *L = lista_di(o);
+        Oggetto *r = radice(o->padre);
+        unsigned int k;
+        int col_fuoco;
+
+        ex_riempi(o->padre, x, y, o->w, o->h, EX_BIANCO);
+
+        /* ! IL BORDO DICE CHI HA I TASTI, come per la casella di testo: senza,
+         * chi guarda non sa se le frecce muoveranno questa lista o un'altra. */
+        col_fuoco = (r && r->fuoco == (ExFinestra)(o - g_ogg + 1));
+        ex_riquadro_disegna(o->padre, x, y, o->w, o->h,
+                            col_fuoco ? EX_BLU : EX_GRIGIO_SC);
+        if (!L) break;
+
+        for (k = 0; k < L->righe && L->primo + k < L->n; k++) {
+            unsigned int v = L->primo + k;
+            int ry = y + 2 + (int)k * LISTA_RIGA_H;
+
+            /* ! LA SCELTA E' UN FONDO, NON UN COLORE DEL TESTO. Su voci di
+             * lunghezza diversa un testo colorato non dice dove finisce la
+             * riga scelta; un fondo si'. */
+            if (v == L->sel)
+                ex_riempi(o->padre, x + 2, ry - 1, o->w - 4, LISTA_RIGA_H,
+                          col_fuoco ? EX_BLU : EX_GRIGIO_SC);
+
+            ex_scrivi(o->padre, x + 4, ry, &L->voci[v * LISTA_TESTO_MAX],
+                      (v == L->sel) ? EX_BIANCO : EX_NERO);
+        }
+        break;
+    }
+
     case CL_TERMINALE: {
         Terminale *t = term_di(o);
         unsigned int r, k;
@@ -584,6 +833,51 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
         Oggetto *r = radice(padre);
         if (r && r->fuoco == 0 && accetta_fuoco(o))
             r->fuoco = (ExFinestra)(i + 1);
+    }
+
+    if (cl == CL_AREA) {
+        Area *A = 0;
+        int j;
+
+        for (j = 0; j < AREA_MAX; j++) if (!g_area[j].usato) { A = &g_area[j]; break; }
+        if (!A) { o->usato = 0; return 0; }
+
+        memset(A, 0, sizeof(*A));
+        A->ogg   = (ExFinestra)(i + 1);
+        A->righe = (unsigned int)(h / AREA_RIGA_H);
+        A->cols  = (unsigned int)((w - 4) / AREA_CAR_W);
+        if (A->righe == 0 || A->cols == 0) { o->usato = 0; return 0; }
+
+        A->testo = (char *)malloc(AREA_RIGHE_MAX * AREA_COL_MAX);
+        if (!A->testo) { o->usato = 0; return 0; }
+
+        memset(A->testo, 0, AREA_RIGHE_MAX * AREA_COL_MAX);
+        A->n = 1;                       /* un'area vuota ha una riga vuota */
+        A->usato = 1;
+        return (ExFinestra)(i + 1);
+    }
+
+    if (cl == CL_LISTA) {
+        Lista *L = 0;
+        int j;
+
+        for (j = 0; j < LISTA_MAX; j++) if (!g_lista[j].usato) { L = &g_lista[j]; break; }
+        if (!L) { o->usato = 0; return 0; }
+
+        memset(L, 0, sizeof(*L));
+        L->ogg   = (ExFinestra)(i + 1);
+        L->righe = (unsigned int)(h / LISTA_RIGA_H);
+
+        /* Una lista alta meno di una riga non e' una lista: meglio dire di no
+         * qui che disegnare zero righe e lasciare chi guarda a chiedersi
+         * perche' l'elenco e' vuoto. */
+        if (L->righe == 0) { o->usato = 0; return 0; }
+
+        L->voci = (char *)malloc(LISTA_VOCI_MAX * LISTA_TESTO_MAX);
+        if (!L->voci) { o->usato = 0; return 0; }
+
+        L->usato = 1;
+        return (ExFinestra)(i + 1);
     }
 
     if (cl == CL_TERMINALE) {
@@ -806,6 +1100,132 @@ static ExFinestra controllo_in(ExFinestra padre, int x, int y)
     return 0;
 }
 
+/* -----------------------------------------------------------------------------
+ * Le modifiche al testo dentro l'area
+ * --------------------------------------------------------------------------- */
+static void area_inserisci(Area *A, char c)
+{
+    char        *r = area_riga(A, A->cy);
+    unsigned int l = area_lung(A, A->cy), i;
+
+    if (l >= AREA_COL_MAX - 1) return;      /* riga piena: si ignora */
+
+    for (i = l + 1; i > A->cx; i--) r[i] = r[i - 1];
+    r[A->cx] = c;
+    A->cx++;
+    A->modificato = 1;
+}
+
+static void area_spezza(Area *A)
+{
+    unsigned int i;
+
+    if (A->n >= AREA_RIGHE_MAX) return;
+
+    for (i = A->n; i > A->cy + 1; i--)
+        strcpy(area_riga(A, i), area_riga(A, i - 1));
+
+    strcpy(area_riga(A, A->cy + 1), area_riga(A, A->cy) + A->cx);
+    area_riga(A, A->cy)[A->cx] = '\0';
+
+    A->n++;
+    A->cy++;
+    A->cx = 0;
+    A->modificato = 1;
+}
+
+/* Toglie il carattere PRIMA del cursore; a inizio riga unisce con quella
+ * sopra, che e' quello che ci si aspetta da un Backspace. */
+static void area_indietro(Area *A)
+{
+    unsigned int i;
+
+    if (A->cx > 0) {
+        char        *r = area_riga(A, A->cy);
+        unsigned int l = area_lung(A, A->cy);
+
+        for (i = A->cx - 1; i < l; i++) r[i] = r[i + 1];
+        A->cx--;
+        A->modificato = 1;
+        return;
+    }
+    if (A->cy == 0) return;
+
+    {
+        unsigned int sopra = area_lung(A, A->cy - 1);
+
+        if (sopra + area_lung(A, A->cy) >= AREA_COL_MAX - 1) return;
+
+        strcat(area_riga(A, A->cy - 1), area_riga(A, A->cy));
+        for (i = A->cy; i + 1 < A->n; i++)
+            strcpy(area_riga(A, i), area_riga(A, i + 1));
+        A->n--;
+        A->cy--;
+        A->cx = sopra;
+        A->modificato = 1;
+    }
+}
+
+/* Toglie il carattere SOTTO il cursore: e' il Backspace della riga dopo. */
+static void area_avanti(Area *A)
+{
+    if (A->cx < area_lung(A, A->cy)) {
+        char        *r = area_riga(A, A->cy);
+        unsigned int i, l = area_lung(A, A->cy);
+
+        for (i = A->cx; i < l; i++) r[i] = r[i + 1];
+        A->modificato = 1;
+        return;
+    }
+    if (A->cy + 1 >= A->n) return;
+
+    A->cy++;
+    A->cx = 0;
+    area_indietro(A);
+}
+
+static int area_tasto(Area *A, unsigned int c)
+{
+    unsigned int passo = A->righe ? A->righe : 1;
+
+    switch (c) {
+    case KBD_K_UP:    if (A->cy > 0) A->cy--;                          break;
+    case KBD_K_DOWN:  if (A->cy + 1 < A->n) A->cy++;                   break;
+    case KBD_K_LEFT:
+        if (A->cx > 0) A->cx--;
+        else if (A->cy > 0) { A->cy--; A->cx = area_lung(A, A->cy); }
+        break;
+    case KBD_K_RIGHT:
+        if (A->cx < area_lung(A, A->cy)) A->cx++;
+        else if (A->cy + 1 < A->n) { A->cy++; A->cx = 0; }
+        break;
+    case KBD_K_HOME:  A->cx = 0;                                       break;
+    case KBD_K_END:   A->cx = area_lung(A, A->cy);                     break;
+    case KBD_K_PGUP:  A->cy = (A->cy > passo) ? A->cy - passo : 0;      break;
+    case KBD_K_PGDN:
+        A->cy += passo;
+        if (A->cy >= A->n) A->cy = A->n - 1;
+        break;
+    case KBD_K_DEL:   area_avanti(A);                                  break;
+    case '\b':        area_indietro(A);                                break;
+    case '\n':
+    case '\r':        area_spezza(A);                                  break;
+    default:
+        /* ! SOLO I CARATTERI STAMPABILI E IL TAB. I tasti speciali stanno da
+         * 0x100 in su apposta per non poterli confondere con un carattere;
+         * infilarne uno nel testo darebbe un file con dentro un valore che
+         * nessun altro programma sa leggere. */
+        if (c == '\t' || (c >= 0x20 && c < 0x7F)) area_inserisci(A, (char)c);
+        else return 0;
+        break;
+    }
+
+    /* Il cursore non puo' stare oltre la fine della riga in cui e' finito. */
+    if (A->cx > area_lung(A, A->cy)) A->cx = area_lung(A, A->cy);
+    area_segui(A);
+    return 1;
+}
+
 /* Rende 1 se il tasto e' stato consumato da un controllo.
  *
  * ! LE COMBINAZIONI CON Ctrl NON SI MANGIANO. Un Ctrl+Q dentro una casella
@@ -831,6 +1251,56 @@ static int tasto_al_fuoco(ExFinestra f, unsigned int k)
     if (o->classe == CL_TERMINALE) {
         Terminale *t = term_di(o);
         return t ? term_tasto(t, c) : 0;
+    }
+
+    /* ! LA LISTA CONSUMA SOLO CIO' CHE SA USARE. Frecce, PgSu/PgGiu, Home/End
+     * e Invio sono suoi; una lettera no — e lasciarla passare e' quello che
+     * permette a un'applicazione di dare una scorciatoia mentre la lista ha il
+     * fuoco. Un controllo che mangia tutto e' un controllo che si prende
+     * l'applicazione. */
+    if (o->classe == CL_AREA) {
+        Area *A = area_di(o);
+        return A ? area_tasto(A, c) : 0;
+    }
+
+    if (o->classe == CL_LISTA) {
+        Lista *L = lista_di(o);
+        unsigned int passo;
+
+        if (!L || L->n == 0) return 0;
+        passo = L->righe ? L->righe : 1;
+
+        switch (c) {
+        case KBD_K_DOWN:  if (L->sel + 1 < L->n) L->sel++;                break;
+        case KBD_K_UP:    if (L->sel > 0) L->sel--;                       break;
+        case KBD_K_HOME:  L->sel = 0;                                     break;
+        case KBD_K_END:   L->sel = L->n - 1;                              break;
+        case KBD_K_PGUP:  L->sel = (L->sel > passo) ? L->sel - passo : 0;  break;
+        case KBD_K_PGDN:
+            L->sel += passo;
+            if (L->sel >= L->n) L->sel = L->n - 1;
+            break;
+
+        /* ! INVIO NON MUOVE NIENTE: DICE CHE SI E' SCELTO. Arriva
+         * all'applicazione come EXM_COMANDO con l'id della lista, cioe' con lo
+         * stesso meccanismo di un pulsante premuto — e chi lo riceve non deve
+         * imparare un secondo modo di sentire le cose. */
+        case '\n':
+        case '\r': {
+            Oggetto *r = radice(o->padre);
+            lista_segui(L);
+            if (r && r->proc)
+                r->proc(radice_h((ExFinestra)(o - g_ogg + 1)),
+                        EXM_COMANDO, o->id, 0);
+            return 1;
+        }
+
+        default:
+            return 0;
+        }
+
+        lista_segui(L);
+        return 1;
     }
 
     if (o->classe != CL_TESTO) return 0;
@@ -967,6 +1437,46 @@ int ex_prendi_msg(ExMsg *m)
                 m->wp  = co->id;
                 return 1;
             }
+
+            /* ! UN CLIC SU UNA LISTA SCEGLIE LA RIGA, e l'applicazione lo
+             * riceve come EXM_COMANDO con l'id della lista — lo stesso
+             * messaggio dell'Invio, perche' sono la stessa decisione presa in
+             * due modi. Chi vuole distinguere «ho scelto» da «ho aperto»
+             * guarda se il comando arriva due volte di fila; oggi il server
+             * non manda il doppio clic. */
+            if (co && co->classe == CL_AREA) {
+                Area *A = area_di(co);
+                int ox, oy;
+
+                if (A) {
+                    unsigned int r, c;
+                    origine(co, &ox, &oy);
+                    r = A->top  + (unsigned int)(((int)e.y - oy - 2) / AREA_RIGA_H);
+                    c = A->left + (unsigned int)(((int)e.x - ox - 2) / AREA_CAR_W);
+                    if (r >= A->n) r = A->n - 1;
+                    A->cy = r;
+                    A->cx = (c > area_lung(A, r)) ? area_lung(A, r) : c;
+                    area_segui(A);
+                }
+                ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                continue;
+            }
+
+            if (co && co->classe == CL_LISTA) {
+                Lista *L = lista_di(co);
+                int ox, oy;
+
+                if (L) {
+                    unsigned int r;
+                    origine(co, &ox, &oy);
+                    r = L->primo + (unsigned int)(((int)e.y - oy - 2) / LISTA_RIGA_H);
+                    if (r < L->n) { L->sel = r; lista_segui(L); }
+                }
+                ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                m->msg = EXM_COMANDO;
+                m->wp  = co->id;
+                return 1;
+            }
             m->msg = EXM_MOUSE_GIU;
             return 1;
         }
@@ -1017,6 +1527,157 @@ long ex_procedura_base(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 }
 
 void ex_esci(int codice) { g_uscita = 1; g_codice = codice; }
+
+/* =============================================================================
+ * L'API DELLA LISTA
+ *
+ * ! LE VOCI SI AGGIUNGONO, NON SI PASSA UN VETTORE. Un vettore vorrebbe dire
+ * che chi chiama lo tiene vivo finche' la lista esiste — e nessuno ricorda di
+ * farlo. Qui il testo si COPIA dentro la lista al momento: il chiamante puo'
+ * usare un buffer sullo stack e dimenticarsene.
+ * ============================================================================= */
+void ex_lista_svuota(ExFinestra f)
+{
+    Lista *L = lista_da_h(f);
+    if (!L) return;
+    L->n = L->sel = L->primo = 0;
+}
+
+/* Rende 1 se la voce c'e' entrata, 0 se la lista e' piena. */
+int ex_lista_aggiungi(ExFinestra f, const char *testo)
+{
+    Lista *L = lista_da_h(f);
+    char *dst;
+
+    if (!L || !testo) return 0;
+
+    /* ! PIENA SI DICE, non si sovrascrive l'ultima. Un elenco che smette in
+     * silenzio di crescere fa credere che la directory abbia meno file di
+     * quanti ne ha. */
+    if (L->n >= LISTA_VOCI_MAX) return 0;
+
+    dst = &L->voci[L->n * LISTA_TESTO_MAX];
+    strncpy(dst, testo, LISTA_TESTO_MAX - 1);
+    dst[LISTA_TESTO_MAX - 1] = '\0';
+    L->n++;
+    return 1;
+}
+
+unsigned int ex_lista_quante(ExFinestra f)
+{
+    Lista *L = lista_da_h(f);
+    return L ? L->n : 0;
+}
+
+/* L'indice della voce scelta. Con la lista vuota rende 0, e ex_lista_quante()
+ * dice che non c'e' niente: chi legge deve guardare prima quella. */
+unsigned int ex_lista_scelta(ExFinestra f)
+{
+    Lista *L = lista_da_h(f);
+    return L ? L->sel : 0;
+}
+
+void ex_lista_scegli(ExFinestra f, unsigned int i)
+{
+    Lista *L = lista_da_h(f);
+    if (!L || i >= L->n) return;
+    L->sel = i;
+    lista_segui(L);
+}
+
+/* Il testo di una voce. Rende "" e non 0 per un indice fuori posto: un
+ * puntatore nullo dentro una printf e' un fault, una stringa vuota e' una riga
+ * vuota — e la differenza si vede subito. */
+const char *ex_lista_testo(ExFinestra f, unsigned int i)
+{
+    Lista *L = lista_da_h(f);
+
+    if (!L || i >= L->n) return "";
+    return &L->voci[i * LISTA_TESTO_MAX];
+}
+
+/* =============================================================================
+ * L'API DELL'AREA DI TESTO
+ *
+ * ! IL TESTO SI CARICA E SI RILEGGE UNA RIGA PER VOLTA, e non c'e' una
+ * funzione che prenda tutto il buffer: darebbe a chi chiama un puntatore
+ * dentro la libreria, cioe' un modo di scriverci sopra senza che il controllo
+ * se ne accorga — e allora il cursore e il numero di righe direbbero una cosa
+ * e il testo un'altra.
+ * ============================================================================= */
+void ex_area_svuota(ExFinestra f)
+{
+    Area *A = area_da_h(f);
+    if (!A) return;
+    memset(A->testo, 0, AREA_RIGHE_MAX * AREA_COL_MAX);
+    A->n = 1;
+    A->cx = A->cy = A->top = A->left = 0;
+    A->modificato = 0;
+}
+
+/* Aggiunge una riga in fondo. Rende 1, o 0 se l'area e' piena — e chi carica
+ * un file DEVE guardarlo: caricare mezzo file e salvarlo cancellerebbe il
+ * resto senza averlo mai mostrato. */
+int ex_area_aggiungi(ExFinestra f, const char *riga)
+{
+    Area *A = area_da_h(f);
+
+    if (!A || !riga) return 0;
+
+    /* La prima riga di un'area vuota c'e' gia' ed e' vuota: si riempie quella
+     * invece di aggiungerne una seconda. */
+    if (A->n == 1 && area_riga(A, 0)[0] == '\0') {
+        strncpy(area_riga(A, 0), riga, AREA_COL_MAX - 1);
+        area_riga(A, 0)[AREA_COL_MAX - 1] = '\0';
+        return 1;
+    }
+
+    if (A->n >= AREA_RIGHE_MAX) return 0;
+
+    strncpy(area_riga(A, A->n), riga, AREA_COL_MAX - 1);
+    area_riga(A, A->n)[AREA_COL_MAX - 1] = '\0';
+    A->n++;
+    return 1;
+}
+
+unsigned int ex_area_righe(ExFinestra f)
+{
+    Area *A = area_da_h(f);
+    return A ? A->n : 0;
+}
+
+const char *ex_area_riga(ExFinestra f, unsigned int i)
+{
+    Area *A = area_da_h(f);
+
+    if (!A || i >= A->n) return "";
+    return area_riga(A, i);
+}
+
+/* 1 se il testo e' cambiato dall'ultimo ex_area_pulita(). Serve a chiedere
+ * «vuoi salvare?» solo quando ha senso chiederlo. */
+int ex_area_modificato(ExFinestra f)
+{
+    Area *A = area_da_h(f);
+    return A ? A->modificato : 0;
+}
+
+void ex_area_pulita(ExFinestra f)
+{
+    Area *A = area_da_h(f);
+    if (A) A->modificato = 0;
+}
+
+/* Dove sta il cursore, contando da 1: e' quello che si scrive in una riga di
+ * stato, e farlo contare da 0 e' l'errore che fa ogni editor scritto in
+ * fretta. */
+void ex_area_cursore(ExFinestra f, unsigned int *riga, unsigned int *col)
+{
+    Area *A = area_da_h(f);
+
+    if (riga) *riga = A ? A->cy + 1 : 0;
+    if (col)  *col  = A ? A->cx + 1 : 0;
+}
 
 void ex_schermo(unsigned int *larghezza, unsigned int *altezza)
 {

@@ -43,6 +43,7 @@ static const char *const g_nomi[] = {
     "ex_titolo",
     "ex_sposta",
     "ex_mostra",
+    "ex_fuoco",
 
     /* il testo di un controllo */
     "ex_testo_metti",
@@ -61,6 +62,23 @@ static const char *const g_nomi[] = {
     "ex_aggiorna",
     "ex_immagine",
 
+    /* la lista a scorrimento */
+    "ex_lista_svuota",
+    "ex_lista_aggiungi",
+    "ex_lista_quante",
+    "ex_lista_scelta",
+    "ex_lista_scegli",
+    "ex_lista_testo",
+
+    /* l'area di testo multiriga */
+    "ex_area_svuota",
+    "ex_area_aggiungi",
+    "ex_area_righe",
+    "ex_area_riga",
+    "ex_area_modificato",
+    "ex_area_pulita",
+    "ex_area_cursore",
+
     /* lo schermo */
     "ex_schermo",
 
@@ -74,6 +92,7 @@ static void *const g_indirizzi[] = {
     (void *)ex_titolo,
     (void *)ex_sposta,
     (void *)ex_mostra,
+    (void *)ex_fuoco,
 
     (void *)ex_testo_metti,
     (void *)ex_testo_prendi,
@@ -88,6 +107,21 @@ static void *const g_indirizzi[] = {
     (void *)ex_scrivi,
     (void *)ex_aggiorna,
     (void *)ex_immagine,
+
+    (void *)ex_lista_svuota,
+    (void *)ex_lista_aggiungi,
+    (void *)ex_lista_quante,
+    (void *)ex_lista_scelta,
+    (void *)ex_lista_scegli,
+    (void *)ex_lista_testo,
+
+    (void *)ex_area_svuota,
+    (void *)ex_area_aggiungi,
+    (void *)ex_area_righe,
+    (void *)ex_area_riga,
+    (void *)ex_area_modificato,
+    (void *)ex_area_pulita,
+    (void *)ex_area_cursore,
 
     (void *)ex_schermo,
 

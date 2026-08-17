@@ -227,6 +227,12 @@ typedef struct {
 #define SYS_SPAWN        2
 #define SYS_WAITPID      7
 #define SYS_GETPID      20
+/* ! I NUMERI SONO DUPLICATI DA kernel/include/syscall.h, come tutti gli altri
+ * qui sopra: libc.c non include quell'header. Sono quelli di Linux. */
+#define SYS_SETUID      23
+#define SYS_GETUID      24
+#define SYS_CHOWN      182
+#define SYS_CHMOD       15
 #define SYS_EXEC        11
 #define SYS_MMAP        90
 #define SYS_MUNMAP      91
@@ -4277,13 +4283,22 @@ int access(const char *path, int modo)
  * umask ritorna 0, ed e' l'unica delle tre a dire una cosa VERA: zero
  * significa "non maschero niente", che e' esattamente cio' che succede.
  * ============================================================================= */
+/* ! DAL 17 AGOSTO 2026 chmod FA QUALCOSA DAVVERO. Era inerte — e il commento
+ * qui sopra spiega perche' esisteva comunque: bfd chiude ogni eseguibile che
+ * produce con umask/chmod, e senza il nome binutils non si collegava. Adesso
+ * c'e' una syscall dietro, e su ext2 i permessi cambiano per davvero.
+ *
+ * ! SU FAT RENDE 0, NON UN ERRORE, e il contrario di chown: chmod chiede di
+ * mettere dei permessi, e su un volume senza permessi lo stato che si ottiene
+ * — nessuna restrizione — e' gia' quello. chown chiede di consegnare un file a
+ * un altro utente, e QUELLO su FAT non si puo' fare affatto. E' anche il
+ * comportamento di Linux su vfat, e il motivo e' concreto: bfd chiude ogni
+ * eseguibile che produce con umask/chmod. */
 int chmod(const char *path, mode_t modo)
 {
-    struct stat st;
+    int32_t r = _syscall2(SYS_CHMOD, (uint32_t)path, (uint32_t)modo);
 
-    (void)modo;
-    /* L'unica parte onesta: se il file non c'e', chmod deve fallire. */
-    if (stat(path, &st) != 0) { errno = ENOENT; return -1; }
+    if (r < 0) { errno = -r; return -1; }
     return 0;
 }
 
@@ -4722,10 +4737,54 @@ int usleep(unsigned int us)
  * sempre no e' un sistema che si fida delle variabili d'ambiente di
  * chiunque.
  * ============================================================================= */
-int getuid(void)  { return 0; }
-int geteuid(void) { return 0; }
-int getgid(void)  { return 0; }
-int getegid(void) { return 0; }
+/* ! DAL 17 AGOSTO 2026 RENDONO L'IDENTITA' VERA, non piu' zero fisso. Prima
+ * era onesto — non c'erano utenti — e adesso sarebbe una bugia: un programma
+ * che chiede chi e' e si sente rispondere «root» si comporterebbe da root.
+ *
+ * ! EFFETTIVO E REALE COINCIDONO, e coincideranno finche' non ci sara' il bit
+ * setuid sui file: e' quel bit a creare la differenza fra «chi sono» e «con
+ * quali diritti sto girando», e senza di lui distinguere due numeri sempre
+ * uguali sarebbe fingere una cosa che non c'e'. */
+int getuid(void)  { return (int)_syscall1(SYS_GETUID, 0); }
+int geteuid(void) { return (int)_syscall1(SYS_GETUID, 0); }
+int getgid(void)  { return (int)_syscall1(SYS_GETUID, 0); }
+int getegid(void) { return (int)_syscall1(SYS_GETUID, 0); }
+
+/* -----------------------------------------------------------------------------
+ * setuid — scendere a un utente, e non si torna su
+ *
+ * ! LA PUO' CHIAMARE SOLO root, e serve a login: init resta root, avvia login
+ * che resta root, login chiede le credenziali e scende con questa prima di
+ * lanciare la shell. Da quel momento non puo' piu' tornare su — il privilegio
+ * si spende, non si presta.
+ *
+ * Rende 0, oppure -1 con errno EPERM se chi chiama non e' root.
+ * --------------------------------------------------------------------------- */
+/* -----------------------------------------------------------------------------
+ * chown — consegnare un file a un altro utente
+ *
+ * ! SOLO root, e non e' prudenza generica: se un utente potesse regalare i
+ * propri file potrebbe anche PRENDERSI quelli che trova, e se potesse
+ * regalarli via potrebbe riempire il disco e poi intestarlo a un altro.
+ *
+ * Su un filesystem senza proprietari — FAT, ISO 9660 — rende -1 con ENOSYS
+ * invece di fingere di aver fatto qualcosa.
+ * --------------------------------------------------------------------------- */
+int chown(const char *percorso, unsigned int uid, unsigned int gid)
+{
+    int32_t r = _syscall3(SYS_CHOWN, (uint32_t)percorso, uid, gid);
+
+    if (r < 0) { errno = -r; return -1; }
+    return 0;
+}
+
+int setuid(unsigned int uid)
+{
+    int32_t r = _syscall2(SYS_SETUID, uid, uid);
+
+    if (r < 0) { errno = -r; return -1; }
+    return 0;
+}
 
 int nanosleep(const struct timespec *req, struct timespec *rem)
 {

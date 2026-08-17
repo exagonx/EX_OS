@@ -1579,6 +1579,13 @@ return ERR(ENOMEM); }
      * l'utente e' passato altrove con Alt+Fn. */
     child->console = parent->console;
 
+    /* ! L'IDENTITA' SI EREDITA SEMPRE, e non c'e' un flag per cambiarla. Un
+     * processo non puo' decidere di nascere con un utente diverso dal proprio:
+     * se potesse, i permessi si aggirerebbero con uno spawn. Chi cambia utente
+     * e' setuid() — e la puo' chiamare solo root. */
+    child->uid = parent->uid;
+    child->gid = parent->gid;
+
     /* ! MA SE IL CHIAMANTE NE HA CHIESTA UNA, VINCE QUELLA. Serve al server
      * grafico, che deve stare su una console sua mentre su un'altra gira una
      * shell. Il flag e' obbligatorio: senza, una struttura azzerata con
@@ -3866,6 +3873,69 @@ int32_t sys_log(InterruptFrame *frame)
         vga_putchar('\n');
     }
     return 0;
+}
+
+/* =============================================================================
+ * SYS_GETUID (24) / SYS_SETUID (23) — l'identita' di chi sta girando
+ *
+ * Il perche' delle regole sta in kernel/include/syscall.h. Qui c'e' il come, e
+ * il come e' due righe di controllo.
+ * ========================================================================== */
+int32_t sys_getuid(InterruptFrame *frame)
+{
+    Process *self = proc_get_current();
+
+    (void)frame;
+    return self ? (int32_t)self->uid : ERR(ESRCH);
+}
+
+int32_t sys_setuid(InterruptFrame *frame)
+{
+    Process *self = proc_get_current();
+    uint32_t uid  = frame->ebx;
+    uint32_t gid  = frame->ecx;
+
+    if (self == NULL) return ERR(ESRCH);
+
+    /* ! SOLO root, E SOLO PER SCENDERE. Senza questa riga qualunque processo
+     * potrebbe diventare root chiamandola, e tutti i controlli sui file
+     * diventerebbero una decorazione. Non c'e' il bit setuid sui file, quindi
+     * non esiste nemmeno il caso legittimo in cui servirebbe risalire. */
+    if (self->uid != 0) return ERR(EPERM);
+
+    self->uid = uid;
+    self->gid = gid;
+
+    klog(LOG_INFO, "SYSCALL setuid: il PID %u scende a uid %u gid %u",
+         self->pid, uid, gid);
+    return 0;
+}
+
+/* =============================================================================
+ * SYS_CHOWN (182) — consegnare un file a un altro utente
+ *
+ * Solo root, e solo su ext2. Il perche' delle due regole sta in vfs_chown().
+ * ========================================================================== */
+int32_t sys_chown(InterruptFrame *frame)
+{
+    const char *path = (const char *)frame->ebx;
+    char        abs[PERCORSO_MAX];
+
+    if (!syscall_verify_str(path, PERCORSO_MAX)) return ERR(EFAULT);
+    if (resolve_path(path, abs, sizeof(abs)) != 0) return ERR(EINVAL);
+
+    return (int32_t)vfs_chown(abs, frame->ecx, frame->edx);
+}
+
+int32_t sys_chmod(InterruptFrame *frame)
+{
+    const char *path = (const char *)frame->ebx;
+    char        abs[PERCORSO_MAX];
+
+    if (!syscall_verify_str(path, PERCORSO_MAX)) return ERR(EFAULT);
+    if (resolve_path(path, abs, sizeof(abs)) != 0) return ERR(EINVAL);
+
+    return (int32_t)vfs_chmod(abs, frame->ecx);
 }
 
 /* =============================================================================

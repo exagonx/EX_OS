@@ -36,7 +36,6 @@
 
 #define DLG_W       420
 #define DLG_H       300
-#define RIGA_H      16
 #define VOCI_MAX    256
 #define PERC_MAX    192
 
@@ -48,14 +47,14 @@
 #define ID_OK       1
 #define ID_ANNULLA  2
 #define ID_SU       3
+#define ID_LISTA    4
 
-typedef struct {
-    char          nome[DIRENT_NAME_MAX];
-    unsigned char dir;
-} Voce;
-
-static Voce         g_voce[VOCI_MAX];
-static unsigned int g_n, g_sel, g_primo;
+/* ! SI TIENE SOLO CIO' CHE LA LISTA NON SA: per ogni voce, se e' una
+ * directory — che e' quello che decide cosa succede all'Invio. Il testo e la
+ * riga scelta li conserva il controllo. */
+static unsigned char g_dir_flag[VOCI_MAX];
+static char          g_voce_nome[VOCI_MAX][DIRENT_NAME_MAX];
+static ExFinestra    g_lista;
 static char         g_dir[PERC_MAX];
 static char         g_nome[DIRENT_NAME_MAX];
 
@@ -71,29 +70,47 @@ static void leggi(void)
 {
     DirEntry v[32];
     int start = 0, n, i;
-    unsigned int d = 0;
+    unsigned int quante = 0, d = 0;
 
-    g_n = 0; g_sel = 0; g_primo = 0;
+    ex_lista_svuota(g_lista);
 
     while ((n = listdir_from(g_dir, v, 32, start)) > 0) {
-        for (i = 0; i < n && g_n < VOCI_MAX; i++) {
+        for (i = 0; i < n && quante < VOCI_MAX; i++) {
             if (v[i].name[0] == '.' && v[i].name[1] == '\0') continue;
-            strncpy(g_voce[g_n].nome, v[i].name, DIRENT_NAME_MAX - 1);
-            g_voce[g_n].nome[DIRENT_NAME_MAX - 1] = '\0';
-            g_voce[g_n].dir = v[i].is_dir;
-            g_n++;
+            strncpy(g_voce_nome[quante], v[i].name, DIRENT_NAME_MAX - 1);
+            g_voce_nome[quante][DIRENT_NAME_MAX - 1] = '\0';
+            g_dir_flag[quante] = v[i].is_dir;
+            quante++;
         }
         start += n;
         if (n < 32) break;
     }
 
-    for (i = 0; i < (int)g_n; i++)
-        if (g_voce[i].dir) {
-            Voce t = g_voce[i];
+    /* Le directory in cima, tenendo l'ordine fra pari: in una directory con
+     * cento file, quelle in cui si vuole entrare sarebbero sparse in mezzo. */
+    for (i = 0; i < (int)quante; i++)
+        if (g_dir_flag[i]) {
+            char nome[DIRENT_NAME_MAX];
             int k;
-            for (k = i; k > (int)d; k--) g_voce[k] = g_voce[k - 1];
-            g_voce[d++] = t;
+
+            strcpy(nome, g_voce_nome[i]);
+            for (k = i; k > (int)d; k--) {
+                strcpy(g_voce_nome[k], g_voce_nome[k - 1]);
+                g_dir_flag[k] = g_dir_flag[k - 1];
+            }
+            strcpy(g_voce_nome[d], nome);
+            g_dir_flag[d] = 1;
+            d++;
         }
+
+    for (i = 0; i < (int)quante; i++) {
+        char riga[80];
+
+        if (g_dir_flag[i]) sprintf(riga, "[%s]", g_voce_nome[i]);
+        else               sprintf(riga, " %s", g_voce_nome[i]);
+
+        ex_lista_aggiungi(g_lista, riga);
+    }
 }
 
 static void entra(const char *nome)
@@ -123,28 +140,13 @@ static void componi(char *out, unsigned int max)
     strncat(out, g_nome, max - l - 1);
 }
 
-static void lista_disegna(void)
+/* ! L'ELENCO NON E' PIU' DISEGNATO A MANO. Fino al 17 agosto 2026 queste
+ * trenta righe disegnavano le voci, la barra della scelta e lo scorrimento —
+ * le stesse trenta che stavano nel file manager e, in forma appena diversa,
+ * nell'editor. Adesso e' il controllo «lista» di ExWin, e qui resta solo il
+ * percorso corrente, che e' roba del dialogo e non dell'elenco. */
+static void percorso_disegna(void)
 {
-    unsigned int i, righe = (unsigned int)(AREA_H / RIGA_H);
-    char riga[96];
-
-    ex_riempi(g_f, AREA_X, AREA_Y, AREA_W, AREA_H, EX_BIANCO);
-    ex_riquadro_disegna(g_f, AREA_X, AREA_Y, AREA_W, AREA_H, EX_GRIGIO_SC);
-
-    for (i = 0; i < righe && g_primo + i < g_n; i++) {
-        unsigned int k = g_primo + i;
-        int y = AREA_Y + 2 + (int)i * RIGA_H;
-
-        if (k == g_sel) ex_riempi(g_f, AREA_X + 2, y - 1, AREA_W - 4, RIGA_H, EX_BLU);
-
-        if (g_voce[k].dir) sprintf(riga, "[%s]", g_voce[k].nome);
-        else               sprintf(riga, " %s", g_voce[k].nome);
-
-        ex_scrivi(g_f, AREA_X + 4, y, riga, (k == g_sel) ? EX_BIANCO : EX_NERO);
-    }
-
-    /* Il percorso corrente, sotto l'elenco: senza, si sceglie un nome senza
-     * sapere in quale directory si e' finiti. */
     ex_riempi(g_f, AREA_X, AREA_Y + AREA_H + 4, AREA_W, 16, EX_GRIGIO);
     ex_scrivi(g_f, AREA_X + 2, AREA_Y + AREA_H + 4, g_dir, EX_NERO);
 }
@@ -152,7 +154,7 @@ static void lista_disegna(void)
 static void ridisegna(void)
 {
     ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
-    lista_disegna();
+    percorso_disegna();
     ex_aggiorna(g_f);
 }
 
@@ -179,14 +181,16 @@ static void conferma(void)
 
 static void scegli(void)
 {
-    if (g_sel >= g_n) return;
+    unsigned int s = ex_lista_scelta(g_lista);
 
-    if (g_voce[g_sel].dir) {
-        entra(g_voce[g_sel].nome);
+    if (s >= ex_lista_quante(g_lista)) return;
+
+    if (g_dir_flag[s]) {
+        entra(g_voce_nome[s]);
         nome_metti("");
         return;
     }
-    nome_metti(g_voce[g_sel].nome);
+    nome_metti(g_voce_nome[s]);
     conferma();
 }
 
@@ -197,47 +201,31 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         if (wp == ID_OK)      { conferma();      break; }
         if (wp == ID_ANNULLA) { g_fatto = 2; return 0; }
         if (wp == ID_SU)      { entra(".."); nome_metti(""); break; }
+
+        /* ! LA LISTA MANDA IL SUO id, come un pulsante. Un clic sceglie e
+         * basta — ci si entra con Invio o con «Apri». Un clic che entrasse
+         * subito renderebbe impossibile scegliere senza aprire. */
+        if (wp == ID_LISTA) {
+            unsigned int s = ex_lista_scelta(g_lista);
+            if (s < ex_lista_quante(g_lista) && !g_dir_flag[s])
+                nome_metti(g_voce_nome[s]);
+            break;
+        }
         return 0;
 
     case EXM_TASTO:
-        if (wp == 0x0101)      { if (g_sel + 1 < g_n) g_sel++; }
-        else if (wp == 0x0100) { if (g_sel > 0) g_sel--; }
-        else if ((wp & 0xFFFF) == '\n' || (wp & 0xFFFF) == '\r') {
-            /* ! INVIO NELLA CASELLA CONFERMA, INVIO SULL'ELENCO ENTRA. Sono la
-             * stessa cosa vista da due posti: si conferma quello che si vede
-             * scritto, e se e' una directory ci si entra. */
-            const char *t = ex_testo_prendi(g_casella);
-            if (t && t[0]) { nome_metti(t); conferma(); }
+        /* ! INVIO: SI CONFERMA QUELLO CHE SI VEDE SCRITTO. Se la casella ha un
+         * nome, quello vince — e' l'unico modo di dare un nome a un file che
+         * ancora non esiste. Se e' vuota, si apre cio' che e' scelto
+         * nell'elenco. Le frecce non arrivano fin qui: le mangia la lista. */
+        if ((wp & 0xFFFF) == '\n' || (wp & 0xFFFF) == '\r') {
+            const char *s = ex_testo_prendi(g_casella);
+            if (s && s[0]) { nome_metti(s); conferma(); }
             else           scegli();
             if (g_fatto) return 0;
-        } else {
-            /* Tutto il resto (le lettere) lo gestisce la casella di testo. */
-            long r = ex_procedura_base(f, msg, wp, lp);
-            ridisegna();
-            return r;
+            break;
         }
-        {
-            unsigned int righe = (unsigned int)(AREA_H / RIGA_H);
-            if (g_sel < g_primo) g_primo = g_sel;
-            if (g_sel >= g_primo + righe) g_primo = g_sel - righe + 1;
-        }
-        break;
-
-    case EXM_MOUSE_GIU: {
-        int y = EX_Y(lp);
-        if (y >= AREA_Y && y < AREA_Y + AREA_H) {
-            unsigned int k = g_primo + (unsigned int)((y - AREA_Y - 2) / RIGA_H);
-            if (k < g_n) {
-                g_sel = k;
-                if (!g_voce[k].dir) nome_metti(g_voce[k].nome);
-            }
-        } else {
-            long r = ex_procedura_base(f, msg, wp, lp);
-            ridisegna();
-            return r;
-        }
-        break;
-    }
+        return ex_procedura_base(f, msg, wp, lp);
 
     case EXM_CHIUDI:
         g_fatto = 2;
@@ -290,27 +278,33 @@ static int dialogo(char *percorso, unsigned int max, int salva)
                   x, y, DLG_W, DLG_H, 0, 0, proc);
     if (g_f == 0) return 0;
 
-    /* ! LA CASELLA SI CREA PER PRIMA, E NON E' L'ORDINE DI CIO' CHE SI VEDE.
-     * ExWin da' il fuoco al PRIMO controllo creato che lo accetta, e non ha
-     * (ancora) un modo pubblico di spostarlo: creando prima il pulsante «Su»,
-     * il fuoco restava li' e tutto quello che si batteva finiva in un pulsante
-     * che i tasti non li usa. Il dialogo sembrava sordo — e chi lo prova pensa
-     * alla tastiera, non all'ordine delle chiamate.
-     *
-     * Quando il toolkit avra' un ex_fuoco(), queste tre righe torneranno
-     * nell'ordine in cui si leggono. */
-    g_casella = ex_crea("testo", "", EX_FIGLIO,
-                        AREA_X + 92, AREA_Y + AREA_H + 22,
-                        AREA_W - 92, 22, g_f, 0, 0);
+    g_lista = ex_crea("lista", "", EX_FIGLIO,
+                      AREA_X, AREA_Y, AREA_W, AREA_H, g_f, ID_LISTA, 0);
+    if (g_lista == 0) { ex_distruggi(g_f); return 0; }
 
     ex_crea("pulsante", "Su", EX_FIGLIO, AREA_X, 2, 44, 20, g_f, ID_SU, 0);
     ex_crea("etichetta", salva ? "Salva come:" : "Nome:", EX_FIGLIO,
             AREA_X, AREA_Y + AREA_H + 26, 90, 16, g_f, 0, 0);
 
+    g_casella = ex_crea("testo", "", EX_FIGLIO,
+                        AREA_X + 92, AREA_Y + AREA_H + 22,
+                        AREA_W - 92, 22, g_f, 0, 0);
+
     ex_crea("pulsante", salva ? "Salva" : "Apri", EX_FIGLIO,
             DLG_W - 180, DLG_H - 32, 80, 24, g_f, ID_OK, 0);
     ex_crea("pulsante", "Annulla", EX_FIGLIO,
             DLG_W - 92, DLG_H - 32, 80, 24, g_f, ID_ANNULLA, 0);
+
+    /* ! IL FUOCO SI CHIEDE, non si ottiene creando i controlli in un ordine
+     * strano. Fino al 17 agosto 2026 la casella si creava PRIMA del pulsante
+     * «Su» soltanto perche' ExWin dava il fuoco al primo controllo che lo
+     * accettava: le righe qui sopra erano in un ordine che non e' quello in
+     * cui si legge, e il commento prometteva di rimetterle a posto il giorno
+     * che ci fosse stata ex_fuoco(). E' quel giorno.
+     *
+     * E il fuoco va alla casella e non al pulsante perche' in un dialogo di
+     * scelta file la prima cosa che si fa e' battere un nome. */
+    ex_fuoco(g_casella);
 
     ex_testo_metti(g_casella, g_nome);
     leggi();

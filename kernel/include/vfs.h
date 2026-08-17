@@ -41,6 +41,22 @@
 #define VFS_FS_FAT12FD  1   /* kernel/fs/fat12.c   — il floppy di avvio */
 #define VFS_FS_FAT      2   /* kernel/fs/fat.c     — FAT12/16/32 su blocchi */
 #define VFS_FS_EXT2     3   /* kernel/fs/ext2.c    — ext2 */
+
+/* 1 se la radice montata e' ext2, cioe' un filesystem che ha i proprietari.
+ * E' la domanda che decide se il login e' obbligatorio: vedi vfs.c. */
+/* Consegna un file a un altro utente. Solo root, e solo su ext2: su un
+ * filesystem senza proprietari rende ENOSYS invece di fingere di aver fatto. */
+int vfs_chown(const char *abs, uint32_t uid, uint32_t gid);
+/* Cambia i permessi. Lo puo' fare il PROPRIETARIO, non solo root: cambiare i
+ * propri permessi non toglie niente a nessuno. */
+int vfs_chmod(const char *abs, uint32_t modo);
+
+int vfs_radice_ext2(void);
+
+/* L'identita' del processo che sta chiedendo. Senza processo corrente — cioe'
+ * durante l'avvio — sono 0: il kernel che monta la radice non e' un utente. */
+uint32_t vfs_uid_corrente(void);
+uint32_t vfs_gid_corrente(void);
 #define VFS_FS_ISO      4   /* kernel/fs/iso9660.c — CD/DVD, SOLA LETTURA */
 
 /* Voce di directory neutra: le syscall non devono conoscere il layout
@@ -91,6 +107,14 @@ typedef struct {
  * data zero invece che con un anno negativo. */
     uint16_t data;
     uint16_t ora;
+
+    /* ! IL PROPRIETARIO, e vale 0 sui filesystem che non ce l'hanno. FAT e ISO
+     * 9660 non hanno proprietari: li' tutto risulta di root con permessi
+     * pieni, che e' la verita' — su quei volumi chiunque puo' fare tutto, e
+     * fingere il contrario sarebbe peggio che dirlo. */
+    uint16_t modo;
+    uint16_t uid;
+    uint16_t gid;
 } VfsStat;
 
 typedef struct {

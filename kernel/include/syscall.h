@@ -27,6 +27,24 @@
 #define SYS_WAITPID     7
 #define SYS_GETPID      20
 #define SYS_GETPPID     64
+
+/* =============================================================================
+ * L'IDENTITA' — getuid/setuid, numeri di Linux
+ *
+ * ! setuid SI PUO' CHIAMARE SOLO DA root, E IN UNA DIREZIONE SOLA: si scende,
+ * non si sale. Un processo che potesse alzarsi da solo renderebbe i permessi
+ * una decorazione — e non c'e' il bit setuid sui file, quindi non esiste
+ * nemmeno il caso legittimo in cui servirebbe risalire.
+ *
+ * ! ED E' COSI' CHE login CAMBIA UTENTE SENZA setuid SUI FILE. init resta
+ * root, avvia login che resta root, login chiede le credenziali e poi scende
+ * con setuid() prima di lanciare la shell: da quel momento non puo' piu'
+ * tornare su. Il privilegio si spende, non si presta.
+ * ============================================================================= */
+#define SYS_GETUID      24      /* rende l'uid del processo */
+#define SYS_CHOWN      182      /* ebx = percorso, ecx = uid, edx = gid */
+#define SYS_CHMOD       15      /* ebx = percorso, ecx = modo */
+#define SYS_SETUID      23      /* ebx = uid, ecx = gid. Solo da root */
 #define SYS_MMAP        90
 #define SYS_MUNMAP      91
 #define SYS_IOCTL       54
@@ -1018,6 +1036,10 @@ int32_t sys_modo_testo(InterruptFrame *f);
 int32_t sys_video_info(InterruptFrame *f);
 int32_t sys_log(InterruptFrame *f);
 int32_t sys_lib_apri(InterruptFrame *f);
+int32_t sys_getuid(InterruptFrame *f);
+int32_t sys_setuid(InterruptFrame *f);
+int32_t sys_chown(InterruptFrame *f);
+int32_t sys_chmod(InterruptFrame *f);
 int32_t sys_shm_apri(InterruptFrame *f);
 int32_t sys_shm_chiudi(InterruptFrame *f);
 int32_t sys_ioport_bind(InterruptFrame *f);
