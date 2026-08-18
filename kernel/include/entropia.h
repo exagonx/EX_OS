@@ -27,4 +27,9 @@ int  entropia_preleva(uint8_t *dst, uint32_t n);
 
 void entropia_stato(uint32_t *bit, uint32_t *eventi, int *rdrand);
 
+/* Raccoglie entropia dal jitter del contatore di cicli, per le macchine che
+ * non hanno RDRAND. Rende i bit che ha stimato — uno ogni otto campioni, ed e'
+ * una stima avara apposta: vedi entropia.c. */
+int entropia_jitter(uint32_t campioni);
+
 #endif /* ENTROPIA_H */

@@ -12,7 +12,7 @@ seriale e USB — tastiera compresa, hub compresi.
 
 ## COSA E' COMMITTATO
 
-    96cde6f  "La matematica di SSH, provata contro gli RFC"
+    c918412  "Tre difetti trovati usando il sistema"
 
 ! **`gitupdate.sh` FA `git add .` E UN COMMIT SOLO**: `messaggio-commit.txt`
 deve coprire tutto quello che si e' fatto dall'ultimo commit, non l'ultima
@@ -30,7 +30,13 @@ pezzo di kernel nuovo, e non e' piu' lavoro di rifinitura.
 
 ### Cose che vogliono un pezzo di kernel nuovo
 
- 1. **Il protocollo SSH**, che e' cio' che resta: la matematica e' fatta e
+ 1. **La firma dello scambio SSH**, che e' l'ultimo passo: il resto del
+    protocollo c'e' e un client vero ci arriva fino in fondo — vedi «Il
+    protocollo SSH: arriva alla firma e li' si ferma». Serve confrontare
+    l'impronta di ogni pezzo dell'hash con quella presa dal traffico: il codice
+    per stamparle e' gia' dietro `-v`, e il segreto condiviso coincide gia'.
+    *(Quello che segue resta la mappa del lavoro.)*
+    **Il protocollo SSH**, che e' cio' che resta: la matematica e' fatta e
     provata (vedi «La matematica di SSH, provata contro gli RFC»), e mancano lo
     scambio delle versioni, il binary packet protocol, KEXINIT,
     curve25519-sha256 con la firma dell'host, userauth «password» e il canale
@@ -262,6 +268,103 @@ copiare, non da reinventare.
 ! **E OGNI NOME NUOVO VA IN `exwin_esporta.c` E NELLO STUB.** Aggiungere una
 funzione alla libreria e dimenticarsi lo stub da' un simbolo che non si
 risolve — e il messaggio lo dice, col nome, ma solo a chi lo esegue.
+
+# Il protocollo SSH: arriva alla firma e li' si ferma (18 agosto 2026)
+
+    ssh -p 2222 root@127.0.0.1     (OpenSSH 10.0 vero, da un'altra macchina)
+
+      debug1: Remote protocol version 2.0, remote software version EXOS_0.1
+      debug1: kex: algorithm: curve25519-sha256
+      debug1: kex: host key algorithm: ssh-ed25519
+      debug1: kex: server->client cipher: chacha20-poly1305@openssh.com
+      debug1: SSH2_MSG_KEX_ECDH_REPLY received
+      debug1: Server host key: ssh-ed25519 SHA256:LK0W1v8davRAWwQgdhQ...
+      ssh_dispatch_run_fatal: incorrect signature          <- QUI SI FERMA
+
+! **IL LAVORO E' A META', E QUESTA VOCE LO DICE PERCHE' LA META' FATTA E'
+GRANDE E QUELLA CHE MANCA E' PICCOLA E PRECISA.** `bin/sshd/sshd.c` sono 1070
+righe: scambio delle versioni, binary packet protocol con
+chacha20-poly1305@openssh.com, KEXINIT, curve25519-sha256, userauth, canale con
+pty-req e shell, e l'inoltro dei byte. Un client vero ci arriva fino alla firma.
+
+## Quello che gia' funziona con OpenSSH dall'altra parte
+
+    la negoziazione     il client sceglie i nostri tre algoritmi
+    la chiave dell'host la legge e ne mostra l'impronta
+    X25519              IL SEGRETO CONDIVISO COINCIDE — verificato rifacendo i
+                        conti fuori, sul traffico catturato: K e' identico da
+                        tutt'e due le parti
+
+! **CHE IL SEGRETO COINCIDA E' LA NOTIZIA PIU' IMPORTANTE**: vuol dire che lo
+scambio di chiavi con un'implementazione vera funziona, e che la matematica
+provata contro i vettori parla davvero con il resto del mondo.
+
+## Quello che manca: l'impronta dello scambio
+
+Il client rifiuta la firma. Non e' la firma in se' — Ed25519 e' provato contro i
+vettori e la firma verifica sul nostro H — ed e' che **il nostro H non e' il
+suo**. Rifacendo i conti da fuori, sul traffico catturato:
+
+    K            coincide
+    V_C V_S      coincidono (39 e 16 byte)
+    I_C I_S      lunghezze giuste (1559 e 156)
+    K_S Q_C Q_S  presi dal filo
+    il totale    1949 byte, ed e' quello che sshd dichiara
+
+...e H differisce lo stesso. Il pezzo che non torna e' uno di quelli, nel
+CONTENUTO e non nella lunghezza — e la prossima cosa da fare e' far stampare a
+sshd l'impronta di ogni pezzo e confrontarla con quella presa dal filo. Il
+codice per farlo e' gia' li', dietro `-v`.
+
+## Due difetti veri trovati per strada, e sono piu' importanti del resto
+
+### getentropy() puo' fallire, e io non guardavo
+
+    sshd: DIAGNOSI privata effimera 0000000000000000000000000000000000000000
+
+! **UNA CHIAVE EFFIMERA DI SOLI ZERI NON DA' NESSUN ERRORE**: lo scambio
+riesce, la sessione parte, e chiunque ascolti puo' rifare gli stessi conti. E'
+il modo peggiore in cui possa rompersi una cosa del genere — **funzionando**.
+
+La libc lo diceva accanto al prototipo: «entrambe possono fallire con EAGAIN, e
+non e' un caso da ignorare». L'ho chiamata senza guardare l'esito. Adesso c'e'
+una `casuale()` che insiste e, se proprio non riesce, **rifiuta di servire**:
+meglio nessuna connessione che una chiave che si puo' indovinare.
+
+### E il kernel non aveva entropia da dare
+
+    Entropia: RDRAND assente, 0 bit all'avvio
+
+! **OGNI INTERRUPT NON-TIMER VALEVA UN BIT E LA SOGLIA ERA 128.** Su una
+macchina senza RDRAND, appena accesa, il serbatoio resta vuoto: un servizio che
+parte all'avvio chiede la sua chiave proprio nel momento peggiore. E nelle prove
+automatiche i comandi arrivano dalla seriale, quindi la tastiera non genera mai
+eventi — il serbatoio non si riempiva **mai**.
+
+Da qui `entropia_jitter()`: misura quanto tempo ci mette la CPU a fare la stessa
+cosa due volte, col contatore di cicli aggiunto ieri. Su una macchina vera quel
+tempo non e' mai identico — cache, predizione dei salti, rinfresco della DRAM.
+
+! **LA STIMA E' DELIBERATAMENTE AVARA: UN BIT OGNI OTTO CAMPIONI.** Contarne di
+piu' sarebbe facile e sarebbe la bugia peggiore che si possa scrivere in un
+sistema: dichiarare entropia che non c'e' vuol dire che qualcuno ci costruira'
+sopra una chiave.
+
+! **E SU QEMU VALE MENO CHE SU FERRO, ma funziona**: l'identita' della macchina
+cambia a ogni avvio, e questo si e' verificato. Il numero vero si misura sul
+Pentium.
+
+## Un errore di metodo, che vale la pena non rifare
+
+Per mezz'ora ho letto l'output di una macchina che credevo nuova e invece era la
+stessa di prima: un QEMU rimasto vivo teneva aperto il file del log, e ogni
+«nuova» esecuzione mostrava la stessa chiave effimera. Ne ho quasi concluso che
+l'entropia fosse deterministica.
+
+! **DUE ESECUZIONI CHE DANNO LO STESSO NUMERO CASUALE SONO O UN DIFETTO GRAVE O
+UNA PROVA CHE NON E' RIPARTITA**, e la seconda e' molto piu' probabile. La
+regola era gia' scritta il 17 agosto — «niente build con QEMU acceso», «due
+qemu_drive insieme si cancellano l'output» — e questa e' la sua terza faccia.
 
 # Tre difetti trovati usando il sistema (18 agosto 2026)
 

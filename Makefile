@@ -169,7 +169,7 @@ PROGRAMMI_FLOPPY := shell hello id chmod ls mem stack disk libctest fdisk mkfs t
 # `make verifica-programmi` — che le due ISO eseguono da sole — confronta
 # le liste con il contenuto di bin/ e si ferma dicendo quali mancano.
 # =============================================================================
-PROGRAMMI_CD := netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp telnet telnetd xcp winprova exwincmd
+PROGRAMMI_CD := netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp telnet telnetd sshd xcp winprova exwincmd
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
 PROGRAMMI_EXWIN := exwin_so exdlg_so eximg_so pm filemgr edit term
 
@@ -1947,6 +1947,36 @@ $(CRYPTTEST_BIN): $(CRYPTTEST_SRC) $(CRYPTTEST_LD) $(EXCRYPT_SRC) $(EXCRYPT_HDR)
 
 .PHONY: crypttest
 crypttest: dirs $(CRYPTTEST_BIN)
+
+# --- /bin/sshd (solo CD) ------------------------------------------------------
+# telnetd con la crittografia in mezzo: accettare, aprire un pty, avviare login
+# e far passare i byte e' lo stesso lavoro gia' provato in chiaro. Quello che
+# cambia sta fra la connessione e i byte, ed e' ExCrypt.
+SSHD_SRC := bin/sshd/sshd.c
+SSHD_BIN := $(BUILD_BIN_CD)/sshd
+SSHD_LD  := bin/sshd/sshd.ld
+
+$(SSHD_BIN): $(SSHD_SRC) $(SSHD_LD) $(IP_PROTO) $(RETE_SRC) $(RETE_HDR) \
+             $(EXCRYPT_SRC) $(EXCRYPT_HDR) \
+             $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/sshd ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/excrypt -I drivers/net -I drivers/pci -c $(SSHD_SRC) -o $(BUILD_OBJ)/sshd_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(RETE_SRC) -o $(BUILD_OBJ)/sshd_rete.o
+	@n=0; for f in $(EXCRYPT_SRC); do \
+	    n=$$((n+1)); \
+	    $(CC) $(CFLAGS_USER) -I lib/include -I lib/excrypt -c $$f -o $(BUILD_OBJ)/sshd_c$$n.o || exit 1; \
+	 done
+	$(CC) -m32 -c $(LIBC_START) -o $(BUILD_OBJ)/sshd_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(SSHD_LD) \
+	    $(BUILD_OBJ)/sshd_start.o $(BUILD_OBJ)/sshd_main.o $(BUILD_OBJ)/sshd_rete.o \
+	    $(BUILD_OBJ)/sshd_c1.o $(BUILD_OBJ)/sshd_c2.o $(BUILD_OBJ)/sshd_c3.o \
+	    $(BUILD_OBJ)/sshd_c4.o $(BUILD_OBJ)/sshd_c5.o $(BUILD_OBJ)/sshd_c6.o \
+	    $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] sshd compilato: $@"
+
+.PHONY: sshd
+sshd: dirs $(SSHD_BIN)
 
 # --- /bin/ftp (solo CD) -------------------------------------------------------
 # Client FTP, modo PASSIVO soltanto: il modo attivo vuole che il client si
@@ -3873,7 +3903,7 @@ ISOX_IMG  := $(DIST_DIR)/exos.iso
 # dimenticano. Le variabili sono definite piu' sopra, accanto alle rispettive
 # regole, e qui sono tutte gia' note perche' questa riga make la legge dopo.
 BINARI_SOLO_CD := $(NETDETECT_BIN) $(NETTEST_BIN) $(PING_BIN) $(IPCFG_BIN) \
-                  $(TCPSERV_BIN) $(TELNETD_BIN) $(CRYPTTEST_BIN) \
+                  $(TCPSERV_BIN) $(TELNETD_BIN) $(CRYPTTEST_BIN) $(SSHD_BIN) \
                   $(DHCP_BIN) $(HOST_BIN) $(TCPTEST_BIN) $(FTP_BIN) \
                   $(TELNET_BIN) $(XCP_BIN) $(WINPROVA_BIN) $(EXWINCMD_BIN)
 # ! QUESTA LISTA E' LA DIPENDENZA DELL'ISO, E VA TENUTA ALLINEATA A

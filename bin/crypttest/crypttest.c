@@ -120,6 +120,37 @@ int main(void)
         }
     }
 
+    /* --- SHA-256 della libc, che usa anche lo scambio di chiavi di SSH ---- */
+    {
+        unsigned char o[32], att[32];
+
+        esa("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", att, 32);
+        sha256((const unsigned char *)"abc", 3, o);
+        esito("SHA-256 della libc (FIPS 180-4)", memcmp(o, att, 32) == 0);
+
+        /* ! UN'IMPRONTA SI PROVA ANCHE SU PIU' DI UN BLOCCO. Con tre byte si
+         * esercita un blocco solo e il riempimento facile: il ciclo sui
+         * blocchi e la lunghezza in coda restano fuori dalla prova. E' proprio
+         * li' che stava il difetto che ha tenuto ferma la firma di SSH. */
+        esa("248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1", att, 32);
+        sha256((const unsigned char *)
+               "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq", 56, o);
+        esito("SHA-256 su 56 byte (due blocchi)", memcmp(o, att, 32) == 0);
+
+        {
+            static unsigned char lungo[1949];
+            unsigned int i;
+
+            for (i = 0; i < sizeof(lungo); i++)
+                lungo[i] = (unsigned char)((i * 7 + i / 251) % 256);
+
+            esa("4642d3ec6c293109ab118c476a0a9099c96a6158775c92515f84a98470b1ec78", att, 32);
+            sha256(lungo, sizeof(lungo), o);
+            esito("SHA-256 su 1949 byte (quanti ne ha lo scambio SSH)",
+                  memcmp(o, att, 32) == 0);
+        }
+    }
+
     /* --- SHA-512, FIPS 180-4 --------------------------------------------- */
     {
         unsigned char o[64], att[64];
@@ -155,6 +186,24 @@ int main(void)
         m[1] ^= 1;
         esito("e cambiando un bit del messaggio, no",
               ed25519_verifica(firma, m, 3, pub_att) != 0);
+    }
+
+    /* --- l'entropia del kernel, che a una sessione cifrata serve prima di
+     *     tutto il resto --- */
+    {
+        unsigned char b[32];
+        int r = getentropy(b, 32);
+
+        if (r == 0) {
+            int i, diversi = 0;
+
+            for (i = 1; i < 32; i++) if (b[i] != b[0]) diversi++;
+            esito("il kernel da' 32 byte imprevedibili", diversi > 20);
+            printf("      primi byte: %02x %02x %02x %02x\n", b[0], b[1], b[2], b[3]);
+        } else {
+            esito("il kernel da' 32 byte imprevedibili", 0);
+            printf("      getentropy rende %d, errno %d\n", r, errno);
+        }
     }
 
     printf("\n%d prove superate, %d fallite\n", passati, falliti);

@@ -67,6 +67,7 @@
  * ============================================================================= */
 
 #include "kernel.h"
+#include "tsc.h"    /* il jitter si misura col contatore di cicli */
 #include "entropia.h"
 #include "fpu.h"
 
@@ -252,6 +253,78 @@ void entropia_evento(uint8_t irq)
  * ciclo svuoterebbe la casa di casualita' continuando a ricevere byte
  * che sembrano nuovi.
  * ============================================================================= */
+/* =============================================================================
+ * IL JITTER DEL TSC — entropia su una macchina che non ne ha
+ *
+ * ! SENZA RDRAND E SENZA TASTIERA IL SERBATOIO RESTA VUOTO PER SEMPRE, e non e'
+ * un'ipotesi: ogni interrupt non-timer vale UN bit, la soglia e' 128, e un
+ * servizio che parte all'avvio li chiede prima che siano arrivati. Il sintomo
+ * era un server ssh che si rifiutava di partire — «non riesco ad avere 32 byte
+ * imprevedibili dal kernel» — su una macchina appena accesa in cui non aveva
+ * ancora premuto un tasto nessuno.
+ *
+ * ! COSA MISURA DAVVERO: quanto tempo ci mette la CPU a fare la STESSA cosa due
+ * volte di fila. Su una macchina vera quel tempo non e' mai identico — la
+ * cache, la predizione dei salti, il rinfresco della DRAM, gli interrupt che
+ * capitano in mezzo — e la differenza fra due misure consecutive del contatore
+ * di cicli porta qualche bit che nessuno puo' prevedere da fuori. E' la stessa
+ * idea del jitterentropy di Linux, ridotta all'osso.
+ *
+ * ! E LA STIMA E' DELIBERATAMENTE AVARA: UN bit ogni otto campioni. Contarne di
+ * piu' sarebbe facile e sarebbe la bugia peggiore che si possa scrivere in un
+ * sistema — dichiarare entropia che non c'e' significa che qualcuno ci
+ * costruira' sopra una chiave. Se la stima e' bassa si aspetta di piu'; se e'
+ * alta si perde tutto senza accorgersene.
+ *
+ * ! SU QEMU VALE MENO CHE SU FERRO, e va detto: li' sotto c'e' un traduttore
+ * che gira su un'altra macchina, e la variabilita' e' quella dell'ospite. Non
+ * e' peggio di niente — che e' cio' che c'era — ma il numero vero si misura
+ * sul Pentium.
+ * ============================================================================= */
+static uint32_t jitter_campione(void)
+{
+    static volatile uint8_t rumore[512];
+    uint64_t t0, t1;
+    uint32_t i, acc = 0;
+
+    if (!tsc_c_e()) return 0;
+
+    t0 = tsc_leggi();
+
+    /* Un po' di lavoro che tocca la memoria: e' quello che rende il tempo
+     * diverso da un giro all'altro. */
+    for (i = 0; i < 64; i++) {
+        rumore[(i * 37) & 511] = (uint8_t)(rumore[(i * 13) & 511] + i);
+        acc += rumore[(i * 7) & 511];
+    }
+
+    t1 = tsc_leggi();
+
+    /* Solo i bit bassi della differenza: quelli alti sono prevedibili quanto
+     * la durata del ciclo qui sopra. */
+    return (uint32_t)(t1 - t0) ^ (acc << 16);
+}
+
+int entropia_jitter(uint32_t campioni)
+{
+    uint32_t i;
+
+    if (!tsc_c_e()) return 0;
+
+    for (i = 0; i < campioni; i++) {
+        uint32_t v = jitter_campione();
+
+        g_pool[g_scritto % POOL_BYTE] ^= (uint8_t)v;
+        g_scritto++;
+        g_pool[g_scritto % POOL_BYTE] ^= (uint8_t)(v >> 8);
+        g_scritto++;
+
+        /* Un bit ogni otto campioni: vedi il commento qui sopra. */
+        if ((i & 7) == 7 && g_bit < POOL_BIT) g_bit++;
+    }
+    return (int)(campioni / 8);
+}
+
 int entropia_preleva(uint8_t *dst, uint32_t n)
 {
     uint32_t i;
@@ -272,6 +345,17 @@ int entropia_preleva(uint8_t *dst, uint32_t n)
             for (k = 0; k < resto; k++) dst[i + k] = (uint8_t)(v >> (k * 8));
         }
         if (i >= n) return (int)n;
+    }
+
+    /* ! PRIMA DI DIRE DI NO SI PROVA A GUADAGNARSELA. Rendere -EAGAIN a chi
+     * chiede la prima chiave di una sessione vuol dire, in pratica, non poter
+     * fare crittografia su una macchina senza RDRAND: il jitter costa qualche
+     * millisecondo e quasi sempre basta. Se non basta nemmeno quello, il no
+     * resta — ed e' un no onesto. */
+    if (g_bit < BIT_MINIMI) {
+        int fatti = entropia_jitter(BIT_MINIMI * 8);
+        klog(LOG_ERROR, "ENTROPIA: jitter tsc=%d, %d bit stimati, ora %u",
+             tsc_c_e(), fatti, g_bit);
     }
 
     if (g_bit < BIT_MINIMI) return -11;        /* -EAGAIN */
