@@ -234,6 +234,9 @@ typedef struct {
 #define SYS_CHOWN      182
 #define SYS_CHMOD       15
 #define SYS_FB_MAP     249
+#define SYS_INTERROMPI 250
+#define SYS_PTY_APRI   251
+#define SYS_PTY_CTL    252
 #define SYS_EXEC        11
 #define SYS_MMAP        90
 #define SYS_MUNMAP      91
@@ -5699,6 +5702,21 @@ int shm_apri(ShmZona *z)
 int shm_chiudi(void *p)
 {
     return (int)_syscall1(SYS_SHM_CHIUDI, (unsigned int)p);
+}
+
+int interrompi(int pid)
+{
+    return (int)_syscall1(SYS_INTERROMPI, (unsigned int)pid);
+}
+
+int pty_apri(int fd[2])
+{
+    return (int)_syscall1(SYS_PTY_APRI, (unsigned int)fd);
+}
+
+int pty_ctl(int fd, unsigned int cmd, unsigned int arg)
+{
+    return (int)_syscall3(SYS_PTY_CTL, (unsigned int)fd, cmd, arg);
 }
 
 /* =============================================================================

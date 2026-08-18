@@ -95,6 +95,8 @@ typedef uint32_t        size_t;
 #define SYS_CHDIR       12
 #define SYS_STAT        106
 #define SYS_CONSOLE_SETFG 232   /* dichiara il processo in primo piano */
+#define SYS_PTY_CTL       252   /* lo stesso, ma per uno pseudo-terminale */
+#define PTY_CTL_FG          1   /* arg = chi Ctrl+C deve interrompere */
 
 /* Opzioni di waitpid — identiche a kernel/include/syscall.h */
 #define WNOHANG         0x0001
@@ -304,9 +306,31 @@ static int sh_waitpid(int pid, int32_t *status, uint32_t options)
  * figlio quando ne aspetta uno in primo piano: e' cio' che impedisce a
  * un job in background di rubarle l'input (vedi la guardia su stdin in
  * sys_read). */
+/* ! IL PRIMO PIANO SI DICHIARA DUE VOLTE, E NON E' UNA RIPETIZIONE: sono due
+ * posti diversi che devono saperlo. La console lo usa per decidere chi puo'
+ * leggere la tastiera; il pty lo usa per sapere CHI INTERROMPERE con Ctrl+C.
+ * Una shell dentro un terminale in finestra ha tutt'e due, una sulla console
+ * di testo ha solo la prima — e pty_ctl su uno stdin che non e' un pty rende
+ * -ENOTTY e non fa niente, che e' esattamente cio' che serve. */
+static int sh_getpid(void);
+
 static void sh_setfg(int pid)
 {
     syscall1(SYS_CONSOLE_SETFG, (uint32_t)pid);
+
+    /* ! AL PTY SI DICE UN ALTRO PROCESSO, MAI SE STESSA, e la differenza fra
+     * le due righe e' tutta qui. Per la console «primo piano» vuol dire chi
+     * puo' leggere la tastiera, e la shell al prompt e' proprio lei. Per il
+     * pty vuol dire CHI MUORE con Ctrl+C: dichiararsi li' significa che un
+     * Ctrl+C battuto al prompt chiude la sessione — provato, e la finestra
+     * restava con l'eco che funzionava e nessuno dall'altra parte.
+     *
+     * Su Unix la shell resta in primo piano e IGNORA il segnale; qui non ci
+     * sono gestori, quindi la stessa idea si ottiene non dichiarandosi. Al
+     * prompt Ctrl+C cancella la riga in corso — lo fa la disciplina — e non
+     * ammazza nessuno. */
+    syscall3(SYS_PTY_CTL, 0, PTY_CTL_FG,
+             (pid == sh_getpid()) ? 0u : (uint32_t)pid);
 }
 
 /* =============================================================================

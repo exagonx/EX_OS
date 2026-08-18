@@ -2320,6 +2320,51 @@ int     modo_testo(void);
 int     shm_apri(ShmZona *z);
 int     shm_chiudi(void *p);
 
+/* -----------------------------------------------------------------------------
+ * interrompi() — «smettila», detto a un altro processo
+ *
+ * Rende 0, oppure -ESRCH (non c'e'), -EPERM (non e' tuo, o e' init), -EINVAL
+ * (sei tu: per uscire c'e' exit).
+ *
+ * ! IL BERSAGLIO ESCE, NON RICEVE NIENTE. Non e' un segnale: non c'e' gestore,
+ * non c'e' maschera, non si puo' ignorare — e il codice di uscita e' 130, come
+ * una shell Unix riporta un Ctrl+C. Un programma non puo' quindi «pulire prima
+ * di andarsene»: quello che ha aperto lo chiude il kernel.
+ * --------------------------------------------------------------------------- */
+int     interrompi(int pid);
+
+/* -----------------------------------------------------------------------------
+ * Pseudo-terminali — una pipe CON una disciplina di linea attaccata
+ *
+ *     int fd[2];
+ *     pty_apri(fd);                  // fd[0] master, fd[1] slave
+ *     SpawnRedir r[3] = { {0,0,NULL,fd[1]}, {1,0,NULL,fd[1]}, {2,0,NULL,fd[1]} };
+ *     spawn_ex("/bin/sh", argv, environ, r, 3);
+ *     close(fd[1]);                  // ! come con le pipe: si chiude il capo dato
+ *
+ * ! CHI SCRIVE NEL MASTER STA BATTENDO TASTI, non stampando: quei byte passano
+ * dalla disciplina, che li accumula in una riga, li fa vedere (l'eco esce dal
+ * master, da leggere e disegnare) e li consegna allo slave solo all'Invio.
+ * Backspace cancella, Ctrl+C interrompe chi e' in primo piano, Ctrl+D a riga
+ * vuota e' la fine dei dati.
+ *
+ * ! IL PRIMO PIANO SI DICHIARA, e finche' nessuno lo fa Ctrl+C non interrompe
+ * nessuno: e' voluto. Il pty potrebbe prendersela con «l'ultimo che ha letto»,
+ * che pero' e' quasi sempre la shell — cioe' la sessione invece del programma.
+ *
+ * Le costanti PTY_* stanno qui sotto e valgono anche per il kernel.
+ * --------------------------------------------------------------------------- */
+#define PTY_CANONICO    0x0001
+#define PTY_ECO         0x0002
+
+#define PTY_CTL_FG              1   /* arg = pid che Ctrl+C deve interrompere */
+#define PTY_CTL_MODO            2   /* arg = PTY_CANONICO | PTY_ECO           */
+#define PTY_CTL_MISURA          3   /* arg = (righe << 16) | colonne          */
+#define PTY_CTL_LEGGI_MISURA    4   /* rende (righe << 16) | colonne          */
+
+int     pty_apri(int fd[2]);
+int     pty_ctl(int fd, unsigned int cmd, unsigned int arg);
+
 /* =============================================================================
  * ASPETTARE PIU' SORGENTI INSIEME — poll() e select()
  *

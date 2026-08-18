@@ -835,6 +835,43 @@ void sched_unblock(uint32_t pid)
     interrupts_enable();
 }
 
+/* Alza il flag e sveglia. Non fa controlli di permesso: quelli stanno in
+ * sys_interrompi, perche' chi chiama da dentro il kernel — la disciplina di
+ * linea di un pty davanti a un Ctrl+C — non ha un uid con cui confrontarsi. */
+int proc_interrompi_locked(uint32_t pid)
+{
+    Process *p = proc_get_by_pid(pid);
+
+    if (p == NULL) return -1;
+
+    p->interrotto = 1;
+    if (p->state == PROC_BLOCKED) sched_unblock_locked(pid);
+    return 0;
+}
+
+/* ! LA VERSIONE CON IL LUCCHETTO ESISTE PERCHE' CHI CHIAMA DA DENTRO IL KERNEL
+ * LO HA GIA' PRESO. La disciplina di linea di un pty gira a interrupt
+ * disabilitati: chiamando la variante che li riabilita alla fine, aprirebbe
+ * una sezione critica a meta' — e il resto della funzione continuerebbe
+ * credendo di averla ancora. E' un difetto che non da' nessun sintomo finche'
+ * un interrupt non capita esattamente li'. */
+int proc_interrompi(uint32_t pid)
+{
+    int r;
+
+    interrupts_disable();
+    r = proc_interrompi_locked(pid);
+    interrupts_enable();
+    return r;
+}
+
+int proc_interrotto(void)
+{
+    Process *p = proc_get_current();
+
+    return (p && p->interrotto) ? 1 : 0;
+}
+
 void sched_sleep(uint32_t ms)
 {
     /* Converti ms in tick (100Hz → 1 tick = 10ms) */

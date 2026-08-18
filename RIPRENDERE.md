@@ -12,7 +12,7 @@ seriale e USB — tastiera compresa, hub compresi.
 
 ## COSA E' COMMITTATO
 
-    e8d3402  "JPEG e ICO: i lettori di immagini sono finiti"
+    53517e2  "Il dialogo diventa una domanda, e il modale morde"
 
 ! **`gitupdate.sh` FA `git add .` E UN COMMIT SOLO**: `messaggio-commit.txt`
 deve coprire tutto quello che si e' fatto dall'ultimo commit, non l'ultima
@@ -30,11 +30,11 @@ pezzo di kernel nuovo, e non e' piu' lavoro di rifinitura.
 
 ### Cose che vogliono un pezzo di kernel nuovo
 
- 1. **I pseudo-terminali (pty), e con loro `Ctrl+C` in un terminale in
-    finestra** — un segnale attraverso una pipe non si manda. **E' il lavoro
-    piu' grosso rimasto**, ed e' lo stesso che serve a una sessione remota: una
-    shell su una pipe nuda non ha eco, ne' Backspace, ne' misura dello schermo.
-    Un solo lavoro, due difetti chiusi. Vedi «Multiutenza remota e SSH».
+ 1. **`listen` e `accept` nel driver IP** — il TCP oggi e' solo cliente, e
+    senza quei due nessun servizio puo' accettare una connessione. E' il primo
+    mattone di una sessione remota, e adesso e' l'unico che manca prima di
+    poterne provare una: i pty ci sono (vedi «I pty, e Ctrl+C che finalmente
+    morde»), quindi dopo `accept` c'e' gia' tutto per un telnet.
  2. **Ridimensionare le finestre** — la zona condivisa ha misura fissa, quindi
     vuole una stretta di mano ordinata. `WIN_EV_MISURA` e' gia' nel protocollo.
 
@@ -250,6 +250,161 @@ copiare, non da reinventare.
 ! **E OGNI NOME NUOVO VA IN `exwin_esporta.c` E NELLO STUB.** Aggiungere una
 funzione alla libreria e dimenticarsi lo stub da' un simbolo che non si
 risolve — e il messaggio lo dice, col nome, ma solo a chi lo esegue.
+
+# I pty, e Ctrl+C che finalmente morde (18 agosto 2026)
+
+    libctest, 316 prove su 316:
+
+        pty_apri() riesce
+        l'eco torna dal master
+        Backspace fa eco «indietro, spazio, indietro»
+        lo slave riceve la riga solo all'Invio
+        l'uscita del programma esce dal master
+        la misura si imposta, e si rilegge
+        in modo grezzo il byte arriva subito
+        una shell parte sullo slave, la si dichiara in primo piano
+        Ctrl+C la interrompe -> uscita 130
+
+    nel terminale in finestra:
+
+        ex-os:/> ^C            <- Ctrl+C al prompt: eco, e la shell VIVE
+        ex-os:/> id
+        uid=0(root) gid=0      <- l'uscita dei comandi si vede, finalmente
+
+E' il lavoro che la coda chiamava «il piu' grosso rimasto», ed era in coda da
+giorni con una riga sola: «un segnale attraverso una pipe non si manda».
+
+## Prima l'interruzione, che era il pezzo mancante
+
+`SYS_INTERROMPI` (250). Prima di oggi Ctrl+C era **il carattere 3 e basta**:
+arrivava nel buffer come una lettera qualunque e nessuno lo guardava.
+
+! **NON E' UN SEGNALE, E NON DIVENTERA' UN SEGNALE PER SBAGLIO.** Chi viene
+interrotto **esce**, con codice 130 — 128 piu' 2, come una shell Unix riporta un
+Ctrl+C — e non c'e' modo di intercettarlo. I segnali veri vogliono lo stack del
+processo riscritto al ritorno da trap per farlo saltare in un gestore e poi
+tornare indietro: e' un sottosistema, e non e' quello che serve per far
+funzionare Ctrl+C.
+
+! **E NON SI MUORE DOVE SI E', MA AL PRIMO POSTO SICURO.** Ammazzare un processo
+mentre e' dentro il kernel — con una pagina mappata a meta', un lucchetto preso,
+un settore in volo — vuol dire lasciare quello stato li' per sempre. Il flag si
+alza, il processo si sveglia, la sua attesa rende `-EINTR`, e chi muore lo fa in
+`syscall_handler`, dopo che la syscall e' finita e prima di tornare in ring 3.
+
+! **I PUNTI DI ATTESA DEVONO SAPERLO, UNO PER UNO.** Svegliare e basta non
+serve: chi dorme in una `read` farebbe un giro del ciclo, troverebbe il buffer
+ancora vuoto e si riaddormenterebbe — senza passare mai dal punto in cui si
+muore. Sono quattro: la pipe in lettura e in scrittura, `ipc_recv`, e la
+tastiera.
+
+! **UN CICLO CHE NON CHIAMA MAI IL KERNEL NON SI FERMA**, ed e' dichiarato.
+Fermarlo vorrebbe dire guardare il flag nel gestore del timer, cioe' terminare
+un processo da dentro un IRQ: `proc_exit()` fa `vfs_sync()`, che aspetta il
+disco.
+
+## Poi il pty, che e' una pipe CON una disciplina di linea
+
+! **E' IL PEZZO CHE SI SOTTOVALUTA SEMPRE.** Una shell su una pipe nuda e'
+esattamente la shell dentro una finestra prima di oggi: niente eco, niente
+Backspace, niente Ctrl+C, niente misura dello schermo. Quelle cose non le fa la
+shell e non le fa il terminale — le fa la disciplina, e una pipe non ne ha.
+
+Le due estremita' non sono simmetriche, e non e' un dettaglio:
+
+    MASTER   lo tiene chi FA il terminale. Ci scrive i tasti battuti e ci legge
+             quello che il programma stampa.
+    SLAVE    lo eredita la shell come stdin/stdout/stderr, e per lei e' un
+             terminale come un altro: non sa di essere dentro un pty.
+
+! **SCRIVERE NEL MASTER VUOL DIRE BATTERE UN TASTO, NON STAMPARE.** Quei byte
+passano dalla disciplina; quelli scritti nello slave sono l'uscita di un
+programma e non li tocca nessuno. Sono due `FDType` distinti apposta: con un
+tipo solo e un flag si potrebbero scambiare, e lo scambio non darebbe un
+errore — darebbe una shell che risponde all'eco di se stessa.
+
+! **L'ECO VA VERSO IL MASTER, NON VERSO LO SCHERMO.** Il kernel non sa che
+aspetto abbia il terminale: mette i caratteri nel tubo di ritorno e chi li legge
+li disegna come vuole. E' la stessa ragione per cui il server a finestre non
+disegna il contenuto delle finestre.
+
+! **CANCELLARE E' TRE CARATTERI, NON UNO**: indietro, uno spazio sopra quello
+che c'era, indietro di nuovo. Mandare solo il Backspace sposta il cursore e
+lascia la lettera dov'era.
+
+! **E FINE DEI DATI E' UNO STATO, NON UN BYTE.** Ctrl+D non si mette nel buffer:
+se ci finisse dentro, un programma lo leggerebbe come carattere 4 e la fine dei
+dati non arriverebbe mai.
+
+## Chi muore con Ctrl+C: la regola che la prima prova ha smentito
+
+Sembrava naturale che il terminale dichiarasse la shell come primo piano. E' la
+prima cosa che ho scritto, e la prima prova l'ha bocciata: **un Ctrl+C battuto
+al prompt chiudeva la sessione**, e nella finestra restava l'eco che funzionava
+con nessuno dall'altra parte a rispondere.
+
+! **SU UNIX LA SHELL RESTA IN PRIMO PIANO E IGNORA IL SEGNALE. Qui non ci sono
+gestori, quindi la stessa idea si ottiene NON DICHIARANDOSI**: al prompt il
+primo piano e' nessuno, Ctrl+C cancella la riga in corso e non ammazza niente;
+quando la shell lancia un programma dichiara lui, e allora Ctrl+C prende lui.
+
+! **E LA DICHIARAZIONE E' DOPPIA, IN UN POSTO SOLO.** `sh_setfg()` lo dice alla
+console — dove «primo piano» vuol dire chi puo' leggere la tastiera — e al pty,
+dove vuol dire chi muore. Sono due significati diversi della stessa parola, e la
+shell li dice insieme perche' cambiano insieme; su uno stdin che non e' un pty
+la seconda chiamata rende `-ENOTTY` e non fa niente.
+
+## Il difetto che il pty ha portato a galla: i figli non ereditavano niente
+
+Battendo `id` nel terminale in finestra si vedeva il prompt tornare e **nessuna
+risposta**: l'uscita finiva sulla console di testo.
+
+! **`proc_create()` METTEVA SEMPRE LE TRE STANDARD ALLA CONSOLE**, e l'eredita'
+dal padre avveniva solo per le redirezioni esplicite. Con le pipe non si vedeva
+— la shell le passa una per una — ma dentro uno pseudo-terminale ci parlerebbe
+soltanto la shell, e ogni programma che lancia scriverebbe da un'altra parte.
+**Un terminale in cui l'output dei comandi non si vede non e' un terminale.**
+
+Adesso le tre standard si ereditano, e le redirezioni esplicite vengono dopo e
+vincono. Un file aperto invece non si eredita: il figlio si ritroverebbe la
+posizione di lettura del padre e un riferimento da chiudere — chi vuole passare
+un file lo fa con una redirezione, che quella strada la percorre per intero.
+
+## Il terminale in finestra dimagrisce
+
+`term_tasto()` era una disciplina di linea scritta dentro un'applicazione
+grafica: teneva una riga sua, la correggeva col Backspace, ne faceva l'eco a
+mano e la spediva all'Invio. **Adesso sono tre righe: manda il byte e basta.**
+Quel lavoro sta nel pty, che lo fa per chiunque — il terminale oggi, un telnet
+domani.
+
+! **E I Ctrl VANNO GUARDATI PRIMA DEL FILTRO.** Il toolkit scarta le
+combinazioni con Ctrl perche' sono scorciatoie dell'applicazione; per un
+terminale sono CARATTERI (Ctrl+C e' il byte 3), e senza quell'eccezione il
+Ctrl+C non sarebbe mai arrivato al pty — tutto il lavoro sulla disciplina
+sarebbe rimasto irraggiungibile proprio da dove serviva.
+
+## Cosa e' provato, e dove
+
+    in libctest      tutta la disciplina, e Ctrl+C che interrompe una shell
+                     dichiarata in primo piano: uscita 130. E' deterministico,
+                     e gira a ogni prova.
+    nella finestra   l'eco, il Backspace, l'uscita dei comandi esterni, e
+                     Ctrl+C al prompt che non ammazza la sessione.
+
+! **L'INTERRUZIONE DI UN PROGRAMMA DENTRO LA FINESTRA NON E' PROVATA A MANO**, e
+va detto: pilotare i tasti dall'esterno perde i primi battuti dopo un cambio di
+console, e una prova che riesce a volte non e' una prova. Il meccanismo sotto e'
+lo stesso che libctest esercita a ogni giro.
+
+## Cosa manca ancora, dichiarato
+
+    frecce e cronologia     no: i tasti oltre il byte non entrano nella riga
+    piu' di un attendente   un pty ha UN lettore per direzione (le pipe hanno
+                            una lista: il giorno che serve si copia da li')
+    un ciclo senza syscall   non si interrompe (vedi sopra)
+    listen/accept in TCP     restano il passo successivo per una sessione
+                             remota: adesso c'e' con cosa farla parlare
 
 # Il dialogo diventa una domanda, e il modale morde (18 agosto 2026)
 

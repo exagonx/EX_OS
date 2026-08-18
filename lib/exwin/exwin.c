@@ -76,7 +76,6 @@ typedef struct {
  * interrompe. Chi la usa deve saperlo.
  * ========================================================================== */
 #define TERM_MAX        4
-#define TERM_RIGA_MAX   128
 
 typedef struct {
     unsigned int usato;
@@ -87,8 +86,9 @@ typedef struct {
     unsigned int cols, righe;
     char        *griglia;
     unsigned int cx, cy;
-    char         riga[TERM_RIGA_MAX];
-    unsigned int riga_len;
+    /* ! LA RIGA IN COSTRUZIONE NON STA PIU' QUI: sta nel pty, dove la tiene la
+     * disciplina di linea. Erano i due campi che facevano di questo controllo
+     * una line discipline scritta a mano — vedi term_tasto(). */
     /* 0 = testo normale, 1 = appena visto ESC, 2 = dentro una CSI */
     int          ansi;
     /* ! IL PROGRAMMA DENTRO PUO' USCIRE, e prima non lo diceva nessuno: la
@@ -622,25 +622,24 @@ static int term_leggi(Terminale *t)
 
 /* Un tasto dentro il terminale: eco nella griglia, e alla shell si manda solo
  * la riga finita. Rende 1 se il tasto e' stato consumato. */
+/* ! IL TASTO SI MANDA E BASTA, E QUESTA FUNZIONE E' DIVENTATA TRE RIGHE.
+ * Prima teneva una riga sua (t->riga), la correggeva col Backspace, ne faceva
+ * l'eco a mano e la spediva tutta insieme all'Invio: era una disciplina di
+ * linea scritta dentro un'applicazione grafica, e per questo la shell lanciata
+ * a mano su una pipe non ne aveva nessuna. Adesso quel lavoro sta nel pty, che
+ * lo fa per chiunque — il terminale in finestra come un futuro telnet.
+ *
+ * ! E L'ECO NON SI DISEGNA PIU' QUI: torna dal master insieme all'uscita del
+ * programma, e la disegna il ciclo che legge. Farlo in tutt'e due i posti
+ * darebbe ogni lettera due volte. */
 static int term_tasto(Terminale *t, unsigned int c)
 {
-    if (c == '\n' || c == '\r') {
-        t->riga[t->riga_len] = '\n';
-        write(t->fd_in, t->riga, t->riga_len + 1);
-        t->riga_len = 0;
-        term_carattere(t, '\n');
-        return 1;
-    }
-    if (c == '\b') {
-        if (t->riga_len > 0) { t->riga_len--; term_carattere(t, '\b'); }
-        return 1;
-    }
-    if (c < 0x20 || c > 0x7E) return 0;
+    unsigned char b;
 
-    if (t->riga_len + 2 < TERM_RIGA_MAX) {
-        t->riga[t->riga_len++] = (char)c;
-        term_carattere(t, (char)c);
-    }
+    if (c > 0xFF) return 0;         /* frecce e compagnia: non ancora */
+
+    b = (unsigned char)(c == '\r' ? '\n' : c);
+    write(t->fd_in, &b, 1);
     return 1;
 }
 
@@ -954,31 +953,51 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
         if (!t->griglia) { o->usato = 0; return 0; }
         memset(t->griglia, ' ', t->cols * t->righe);
 
-        if (pipe(pin) != 0 || pipe(pout) != 0) {
+        /* ! DUE PIPE SONO DIVENTATE UN PTY, ED E' TUTTA LA DIFFERENZA FRA UN
+         * TUBO E UNA SESSIONE. Fino al 18 agosto 2026 qui c'erano `pipe(pin)`
+         * e `pipe(pout)`, e con loro tutto quello che una pipe non sa fare:
+         * l'eco lo doveva rifare il terminale a mano, il Backspace era un byte
+         * come un altro che la shell si ritrovava dentro la riga, e Ctrl+C non
+         * poteva esistere — un segnale attraverso una pipe non si manda.
+         * Adesso in mezzo c'e' la disciplina di linea, e quelle tre cose le fa
+         * il kernel. */
+        if (pty_apri(pin) != 0) {
             free(t->griglia); o->usato = 0; return 0;
         }
+        pout[0] = pin[0];               /* si legge e si scrive lo stesso capo */
 
-        /* Il figlio: stdin dalla nostra pipe, stdout e stderr nella sua. */
-        red[0].fd = 0; red[0].flags = 0; red[0].percorso = 0; red[0].fd_padre = pin[0];
-        red[1].fd = 1; red[1].flags = 0; red[1].percorso = 0; red[1].fd_padre = pout[1];
-        red[2].fd = 2; red[2].flags = 0; red[2].percorso = 0; red[2].fd_padre = pout[1];
+        /* Il figlio: le tre standard sono lo SLAVE, che per lui e' un
+         * terminale come un altro. */
+        red[0].fd = 0; red[0].flags = 0; red[0].percorso = 0; red[0].fd_padre = pin[1];
+        red[1].fd = 1; red[1].flags = 0; red[1].percorso = 0; red[1].fd_padre = pin[1];
+        red[2].fd = 2; red[2].flags = 0; red[2].percorso = 0; red[2].fd_padre = pin[1];
 
         sh_argv[0] = (char *)(titolo && titolo[0] ? titolo : "/bin/sh");
         sh_argv[1] = 0;
 
+        /* La misura la sa il terminale, e va detta PRIMA che il programma
+         * parta: chi disegna a schermo pieno la chiede all'avvio. */
+        pty_ctl(pin[0], PTY_CTL_MISURA,
+                ((unsigned int)t->righe << 16) | (unsigned int)t->cols);
+
         t->pid = spawn_ex(sh_argv[0], sh_argv, 0, red, 3);
 
-        /* ! SI CHIUDONO LE ESTREMITA' PASSATE AL FIGLIO, e non e' pulizia:
-         * finche' le teniamo aperte la pipe conta uno scrittore vivo — noi —
-         * e chi legge non vedra' mai la fine dei dati. E' l'errore classico
-         * con le pipe, ed e' scritto in libc.h accanto a SpawnRedir. */
-        close(pin[0]);
-        close(pout[1]);
+        /* ! SI CHIUDE LO SLAVE, per la stessa ragione delle pipe: finche' lo
+         * teniamo aperto noi, il pty conta un capo vivo dalla parte della
+         * shell e la fine dei dati non arriva mai. */
+        close(pin[1]);
 
-        if (t->pid < 0) { close(pin[1]); close(pout[0]); free(t->griglia);
+        if (t->pid < 0) { close(pin[0]); free(t->griglia);
                           o->usato = 0; return 0; }
 
-        t->fd_in  = pin[1];
+        /* ! NESSUNO E' IN PRIMO PIANO ALL'INIZIO, ED E' VOLUTO. Dichiarare qui
+         * la shell sembra naturale e si e' rivelato sbagliato alla prima
+         * prova: un Ctrl+C battuto al prompt la ammazzava, e la finestra
+         * restava con l'eco che funzionava e nessuno dall'altra parte. Il
+         * primo piano lo dichiara la shell quando lancia qualcosa — vedi
+         * sh_setfg() in bin/sh/shell.c. */
+
+        t->fd_in  = pin[0];
         t->fd_out = pout[0];
         t->usato  = 1;
 
@@ -1299,15 +1318,30 @@ static int tasto_al_fuoco(ExFinestra f, unsigned int k)
 
     if (c == '\t') { fuoco_avanti(f); return 1; }
 
+    o = ogg(r->fuoco);
+
+    /* ! IL TERMINALE VUOLE ANCHE I Ctrl, E VA GUARDATO PRIMA DEL FILTRO. Per
+     * ogni altro controllo un Ctrl+lettera e' una scorciatoia
+     * dell'applicazione e non deve essere mangiata; per un terminale e' un
+     * CARATTERE — Ctrl+C e' il byte 3, Ctrl+D il 4 — e senza questa eccezione
+     * Ctrl+C non arriverebbe mai al pty, cioe' tutto il lavoro sulla
+     * disciplina di linea resterebbe irraggiungibile da qui. */
+    if (o && o->classe == CL_TERMINALE) {
+        Terminale *t = term_di(o);
+
+        if (!t) return 0;
+        if (k & KBD_MOD_CTRL) {
+            unsigned int l = c | 0x20;      /* Ctrl+C e Ctrl+c sono lo stesso */
+
+            if (l >= 'a' && l <= 'z') return term_tasto(t, l - 'a' + 1);
+            return 0;                       /* Ctrl+altro: non e' roba nostra */
+        }
+        return term_tasto(t, c);
+    }
+
     if (k & KBD_MOD_CTRL) return 0;
 
-    o = ogg(r->fuoco);
     if (!o) return 0;
-
-    if (o->classe == CL_TERMINALE) {
-        Terminale *t = term_di(o);
-        return t ? term_tasto(t, c) : 0;
-    }
 
     /* ! LA LISTA CONSUMA SOLO CIO' CHE SA USARE. Frecce, PgSu/PgGiu, Home/End
      * e Invio sono suoi; una lettera no — e lasciarla passare e' quello che

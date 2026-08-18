@@ -20,6 +20,7 @@
 #include "ipc.h"
 #include "shm.h"
 #include "pipe.h"
+#include "pty.h"
 #include "isr.h"
 
 /* Forward: funzioni VGA per sys_write su fd=1/2 */
@@ -385,6 +386,13 @@ int32_t sys_read(InterruptFrame *frame)
     /* ! Leggere dall'estremita' SBAGLIATA e' un errore, non un'attesa. */
     if (proc->fds[fd].type == FD_PIPE_W) return ERR(EBADF);
 
+    /* Le due estremita' di un pty. Sono due strade diverse e non una con un
+     * flag: vedi FD_PTY_M in sched.h. */
+    if (proc->fds[fd].type == FD_PTY_M)
+        return pty_leggi_master((int)proc->fds[fd].inode, buf, count);
+    if (proc->fds[fd].type == FD_PTY_S)
+        return pty_leggi_slave((int)proc->fds[fd].inode, buf, count);
+
     /* file FAT12 */
     if (proc->fds[fd].type == FD_FILE) {
         /* Il driver scrivera' dentro `buf`: le sue pagine devono essere
@@ -442,6 +450,14 @@ int32_t sys_write(InterruptFrame *frame)
 
     /* ! Scrivere sull'estremita' SBAGLIATA e' un errore. */
     if (proc->fds[fd].type == FD_PIPE_R) return ERR(EBADF);
+
+    /* ! SCRIVERE NEL MASTER VUOL DIRE BATTERE UN TASTO, non stampare: quei
+     * byte passano dalla disciplina di linea. Scrivere nello slave e' l'uscita
+     * di un programma, e non viene toccata da nessuno. */
+    if (proc->fds[fd].type == FD_PTY_M)
+        return pty_scrivi_master((int)proc->fds[fd].inode, buf, count);
+    if (proc->fds[fd].type == FD_PTY_S)
+        return pty_scrivi_slave((int)proc->fds[fd].inode, buf, count);
 
     /* file FAT12 */
     if (proc->fds[fd].type == FD_FILE) {
@@ -547,6 +563,8 @@ int32_t sys_close(InterruptFrame *frame)
      * che nessuno scrivera'. Vedi kernel/ipc/pipe.c. */
     if (proc->fds[fd].type == FD_PIPE_R) pipe_chiudi_lettore((int)proc->fds[fd].inode);
     if (proc->fds[fd].type == FD_PIPE_W) pipe_chiudi_scrittore((int)proc->fds[fd].inode);
+    if (proc->fds[fd].type == FD_PTY_M)  pty_chiudi((int)proc->fds[fd].inode, 1);
+    if (proc->fds[fd].type == FD_PTY_S)  pty_chiudi((int)proc->fds[fd].inode, 0);
 
     proc->fds[fd].type        = FD_UNUSED;
     proc->fds[fd].flags       = 0;
@@ -1627,6 +1645,57 @@ return ERR(ENOMEM); }
     child->uid = parent->uid;
     child->gid = parent->gid;
 
+    /* =========================================================================
+     * ! LE TRE STANDARD SI EREDITANO DAL PADRE, e fino al 18 agosto 2026 non
+     * era cosi': proc_create() le metteva sempre alla console, e un figlio
+     * lanciato da una shell che aveva stdout altrove scriveva comunque sullo
+     * schermo. Con le pipe non si vedeva — la shell le passa esplicitamente in
+     * SpawnRedir, un caso per volta — ma un terminale dentro una finestra ha
+     * reso il difetto lampante: `id` battuto li' dentro stampava sulla console
+     * di testo, e nella finestra tornava soltanto il prompt.
+     *
+     * ! ED E' ANCHE CIO' CHE RENDE UTILE UN PTY. Senza questa eredita', dentro
+     * uno pseudo-terminale ci parlerebbe solo la shell: ogni programma che
+     * lancia scriverebbe da un'altra parte. Un terminale in cui l'output dei
+     * comandi non si vede non e' un terminale.
+     *
+     * Le redirezioni esplicite vengono DOPO e vincono: sono una richiesta, e
+     * questa e' solo l'eredita' di chi non ne ha chieste.
+     * ========================================================================= */
+    {
+        int sfd;
+
+        for (sfd = 0; sfd < 3; sfd++) {
+            child->fds[sfd] = parent->fds[sfd];
+
+            /* Un capo condiviso in piu' va contato, o il primo dei due che
+             * chiude convincerebbe l'altro che non c'e' piu' nessuno. */
+            switch (parent->fds[sfd].type) {
+            case FD_PIPE_R: pipe_apri_lettore((int)parent->fds[sfd].inode);   break;
+            case FD_PIPE_W: pipe_apri_scrittore((int)parent->fds[sfd].inode); break;
+            case FD_PTY_M:  pty_apri_riferimento((int)parent->fds[sfd].inode, 1); break;
+            case FD_PTY_S:  pty_apri_riferimento((int)parent->fds[sfd].inode, 0); break;
+
+            /* ! UN FILE APERTO NON SI EREDITA, E VA DETTO. Il figlio si
+             * ritroverebbe la posizione di lettura del padre e un secondo
+             * riferimento nella VFS da chiudere: chi vuole passare un file lo
+             * fa con una redirezione esplicita, che quella strada la percorre
+             * per intero. Qui si torna alla console. */
+            case FD_FILE:
+            case FD_DRIVER:
+                child->fds[sfd].type        = (sfd == 0) ? FD_STDIN :
+                                              (sfd == 1) ? FD_STDOUT : FD_STDERR;
+                child->fds[sfd].inode       = 0;
+                child->fds[sfd].offset      = 0;
+                child->fds[sfd].driver_data = NULL;
+                break;
+
+            default:
+                break;
+            }
+        }
+    }
+
     /* ! MA SE IL CHIAMANTE NE HA CHIESTA UNA, VINCE QUELLA. Serve al server
      * grafico, che deve stare su una console sua mentre su un'altra gira una
      * shell. Il flag e' obbligatorio: senza, una struttura azzerata con
@@ -1842,6 +1911,16 @@ uint32_t usp       = res.user_stack_top;
                     pipe_apri_lettore((int)parent->fds[pf].inode);
                 } else if (parent->fds[pf].type == FD_PIPE_W) {
                     pipe_apri_scrittore((int)parent->fds[pf].inode);
+                } else if (parent->fds[pf].type == FD_PTY_M) {
+                    pty_apri_riferimento((int)parent->fds[pf].inode, 1);
+                } else if (parent->fds[pf].type == FD_PTY_S) {
+                    /* ! IL CONTEGGIO SALE ANCHE QUI, e dimenticarlo sarebbe il
+                     * difetto piu' difficile da vedere di tutto il pty: il
+                     * figlio userebbe lo slave, il padre chiuderebbe il suo, il
+                     * conteggio andrebbe a zero e il master leggerebbe «fine
+                     * dei dati» mentre dall'altra parte una shell viva sta
+                     * ancora scrivendo. */
+                    pty_apri_riferimento((int)parent->fds[pf].inode, 0);
                 }
 
                 child->fds[az->fd] = parent->fds[pf];
@@ -3899,6 +3978,151 @@ int32_t sys_modo_testo(InterruptFrame *frame)
  * fault dentro una funzione che non c'entra niente.
  * ========================================================================== */
 /* =============================================================================
+ * SYS_PTY_APRI (251) -- una coppia master/slave
+ *
+ * ebx = int fd[2]:  fd[0] = master, fd[1] = slave
+ *
+ * ! I DUE DESCRITTORI NASCONO NELLO STESSO PROCESSO, e poi si separano con uno
+ * spawn: il padre tiene il master e da' lo slave al figlio come stdin, stdout e
+ * stderr. E' la stessa forma di pipe(), ed e' voluto — chi sa usare una pipe
+ * sa usare questo senza imparare niente di nuovo.
+ *
+ * ! E CHI TIENE IL MASTER DEVE CHIUDERE LO SLAVE, esattamente come con le pipe.
+ * Se non lo fa, il pty conta ancora un capo aperto dalla parte della shell e
+ * chi legge il master non vedra' mai la fine — aspettera' per sempre l'uscita
+ * di un programma che e' gia' morto.
+ * ============================================================================= */
+int32_t sys_pty_apri(InterruptFrame *frame)
+{
+    int32_t *ufd  = (int32_t *)frame->ebx;
+    Process *proc = proc_get_current();
+    int      h, hs, m = -1, sl = -1;
+    int32_t  r;
+
+    if (!syscall_verify_ptr(ufd, 2 * sizeof(int32_t))) return ERR(EFAULT);
+
+    r = pty_apri(&h, &hs);
+    if (r < 0) return r;
+
+    m = find_free_fd(proc);
+    if (m < 0) { pty_chiudi(h, 1); pty_chiudi(h, 0); return ERR(EMFILE); }
+
+    proc->fds[m].type        = FD_PTY_M;
+    proc->fds[m].flags       = O_RDWR;
+    proc->fds[m].offset      = 0;
+    proc->fds[m].inode       = (uint32_t)h;
+    proc->fds[m].driver_data = NULL;
+
+    sl = find_free_fd(proc);
+    if (sl < 0) {
+        proc->fds[m].type = FD_UNUSED;
+        pty_chiudi(h, 1); pty_chiudi(h, 0);
+        return ERR(EMFILE);
+    }
+    proc->fds[sl].type        = FD_PTY_S;
+    proc->fds[sl].flags       = O_RDWR;
+    proc->fds[sl].offset      = 0;
+    proc->fds[sl].inode       = (uint32_t)h;
+    proc->fds[sl].driver_data = NULL;
+
+    ufd[0] = m;
+    ufd[1] = sl;
+
+    klog(LOG_INFO, "SYSCALL pty_apri() PID=%u -> master %d, slave %d",
+         proc->pid, m, sl);
+    return 0;
+}
+
+/* =============================================================================
+ * SYS_PTY_CTL (252) -- primo piano, modo, misura
+ *
+ * ebx = fd (una delle due estremita'), ecx = comando, edx = argomento
+ *
+ * ! IL PRIMO PIANO LO DICHIARA CHI LANCIA, cioe' la shell, e non lo indovina
+ * il kernel. Il pty potrebbe interrompere «l'ultimo che ha letto», ma quello e'
+ * quasi sempre la shell stessa: un Ctrl+C ammazzerebbe la sessione invece del
+ * programma che sta girando. Senza dichiarazione non si interrompe nessuno —
+ * un Ctrl+C che non morde e' meglio di uno che uccide la cosa sbagliata.
+ *
+ * ! E LA MISURA STA QUI E NON IN UNA VARIABILE D'AMBIENTE, perche' cambia
+ * mentre il programma gira: chi ridimensiona la finestra la scrive nel pty, e
+ * chi disegna a schermo pieno la rilegge. Una variabile la si legge all'avvio
+ * e resta quella di allora.
+ * ============================================================================= */
+int32_t sys_pty_ctl(InterruptFrame *frame)
+{
+    int32_t   fd  = (int32_t)frame->ebx;
+    uint32_t  cmd = frame->ecx;
+    uint32_t  arg = frame->edx;
+    Process  *proc = proc_get_current();
+
+    if (fd < 0 || fd >= MAX_FD) return ERR(EBADF);
+    if (proc->fds[fd].type != FD_PTY_M && proc->fds[fd].type != FD_PTY_S)
+        return ERR(ENOTTY);
+
+    return pty_ctl((int)proc->fds[fd].inode, cmd, arg);
+}
+
+/* =============================================================================
+ * SYS_INTERROMPI (250) -- «smettila», detto da fuori
+ *
+ * ebx = pid
+ *
+ * ! E' IL PEZZO CHE MANCAVA PER Ctrl+C, e per giorni la coda ha detto «serve un
+ * modo di chiedere al kernel: interrompi quel processo». Fino a oggi Ctrl+C era
+ * il CARATTERE 3 e basta: arrivava nel buffer della tastiera come una lettera
+ * qualunque, e il programma che ci girava sopra non se ne accorgeva.
+ *
+ * ! NON E' UN SEGNALE, E NON DIVENTERA' UN SEGNALE PER SBAGLIO. Chi viene
+ * interrotto esce con codice 130 — 128 piu' 2, come riporta una shell Unix per
+ * un Ctrl+C — e non c'e' modo di intercettarlo. I segnali veri vogliono lo
+ * stack del processo riscritto al ritorno da trap per farlo saltare in un
+ * gestore e poi tornare indietro: un sottosistema che si aggiunge il giorno che
+ * serve davvero, non una riga da infilare qui adesso.
+ *
+ * ! SI PUO' INTERROMPERE SOLO CHI E' TUO. La regola e' la stessa dei file: uid
+ * uguale, oppure root. Senza, un utente qualunque fermerebbe i processi di un
+ * altro — e su un sistema dove il server grafico gira come utente normale
+ * vorrebbe dire spegnere la sessione di chi ti sta accanto.
+ *
+ * ! E init NON SI TOCCA. E' il processo che rilancia il login: interromperlo
+ * vorrebbe dire un sistema acceso in cui non si puo' piu' entrare, e nessuno
+ * lo farebbe apposta — succederebbe con un pid sbagliato.
+ * ============================================================================= */
+int32_t sys_interrompi(InterruptFrame *frame)
+{
+    uint32_t  pid  = frame->ebx;
+    Process  *self = proc_get_current();
+    Process  *p;
+
+    if (self == NULL) return ERR(EINVAL);
+
+    /* ! CHI VUOLE FERMARE SE STESSO CHIAMA exit(), e questo rifiuto non e'
+     * pedanteria: interrompersi da soli vorrebbe dire alzare il flag e poi
+     * tornare in ring 3 per morire un istante dopo, cioe' un exit scritto in
+     * un modo che nasconde di esserlo. */
+    if (pid == self->pid) return ERR(EINVAL);
+
+    if (pid <= 1) return ERR(EPERM);        /* init non si tocca */
+
+    p = proc_get_by_pid(pid);
+    if (p == NULL) return ERR(ESRCH);
+
+    if (self->uid != 0 && self->uid != p->uid) return ERR(EPERM);
+
+    /* ! ALZARE IL FLAG E SVEGLIARE STANNO INSIEME IN proc_interrompi(), e non
+     * qui: la disciplina di linea di un pty fa la stessa cosa davanti a un
+     * Ctrl+C, e due copie di questa coppia divergerebbero alla prima
+     * modifica. Senza il risveglio, chi aspetta un tasto resterebbe BLOCKED
+     * col flag alzato — cioe' Ctrl+C funzionerebbe solo battendo qualcos'altro
+     * dopo, che e' il modo piu' sconcertante di funzionare. */
+    proc_interrompi(pid);
+
+    klog(LOG_INFO, "SYSCALL interrompi(%u) da PID %u", pid, self->pid);
+    return 0;
+}
+
+/* =============================================================================
  * SYS_FB_MAP (249) — il framebuffer, e SOLO quello
  *
  * ! E' UNA CAPACITA' STRETTA AL POSTO DI UNA LARGA, ed e' il punto. mmio_map()
@@ -4207,6 +4431,21 @@ static int poll_guarda(Process *self, struct pollfd *v)
             if (tty_input_pronto_locked()) pronto |= POLLIN;
             break;
 
+        /* ! LE DUE ESTREMITA' DEL PTY GUARDANO BUFFER DIVERSI, e sono le
+         * funzioni del pty a saperlo: qui non si sbircia dentro la struttura.
+         * Scrivere e' sempre possibile (il buffer pieno butta l'ultimo
+         * arrivato invece di bloccare, vedi metti() in pty.c), quindi POLLOUT
+         * si concede sempre. */
+        case FD_PTY_M:
+            if (pty_pronto_master((int)d->inode)) pronto |= POLLIN;
+            pronto |= POLLOUT;
+            break;
+
+        case FD_PTY_S:
+            if (pty_pronto_slave((int)d->inode)) pronto |= POLLIN;
+            pronto |= POLLOUT;
+            break;
+
         default:
             /* File normali, stdout, stderr, driver: sempre pronti. Non e' una
              * scorciatoia, e' quello che dice POSIX — una read su un file non
@@ -4254,6 +4493,12 @@ static int poll_registra(Process *self, struct pollfd *v, uint32_t n)
         } else if (d->type == FD_STDIN && (v[i].events & POLLIN)) {
             if (!tty_attesa_registra_locked(self->pid))
                 tutte = 0;
+        } else if (d->type == FD_PTY_M && (v[i].events & POLLIN)) {
+            if (!pty_attesa_registra_locked((int)d->inode, 1, self->pid))
+                tutte = 0;
+        } else if (d->type == FD_PTY_S && (v[i].events & POLLIN)) {
+            if (!pty_attesa_registra_locked((int)d->inode, 0, self->pid))
+                tutte = 0;
         }
     }
 
@@ -4274,6 +4519,8 @@ static void poll_disregistra(Process *self, struct pollfd *v, uint32_t n)
         if      (d->type == FD_PIPE_R) pipe_attesa_togli_locked((int)d->inode, 1, self->pid);
         else if (d->type == FD_PIPE_W) pipe_attesa_togli_locked((int)d->inode, 0, self->pid);
         else if (d->type == FD_STDIN)  tty_attesa_togli_locked(self->pid);
+        else if (d->type == FD_PTY_M)  pty_attesa_togli_locked((int)d->inode, 1, self->pid);
+        else if (d->type == FD_PTY_S)  pty_attesa_togli_locked((int)d->inode, 0, self->pid);
     }
 }
 

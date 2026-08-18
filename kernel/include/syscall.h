@@ -94,7 +94,7 @@
  * cioe' sopra qualunque cosa il compilatore avesse messo dopo. Il sintomo era
  * «video_info non risponde», che non somiglia per niente a una scrittura fuori
  * limite. Chi aggiunge una syscall aggiorna anche questo. */
-#define SYSCALL_COUNT   250     /* la piu' alta e' SYS_FB_MAP = 249 */
+#define SYSCALL_COUNT   253     /* la piu' alta e' SYS_PTY_CTL = 252 */
 
 /* =============================================================================
  * Codici errno
@@ -553,6 +553,29 @@ typedef struct {
  * di scegliere — ed e' cosi' che la grafica gira senza privilegi.
  * ========================================================================== */
 #define SYS_FB_MAP        249
+
+/* -----------------------------------------------------------------------------
+ * SYS_INTERROMPI (250) — «smettila», detto da fuori
+ *
+ * ebx = pid.  Rende 0, oppure -ESRCH / -EPERM / -EINVAL.
+ *
+ * Il bersaglio ESCE con codice 130 (128 + 2, come una shell Unix riporta un
+ * Ctrl+C). Non e' un segnale: non c'e' gestore, non c'e' maschera, non si puo'
+ * ignorare. Vedi il commento esteso su sys_interrompi in syscall_impl.c.
+ * --------------------------------------------------------------------------- */
+#define SYS_INTERROMPI    250   /* ebx = pid */
+
+/* -----------------------------------------------------------------------------
+ * SYS_PTY_APRI (251) / SYS_PTY_CTL (252) — pseudo-terminali
+ *
+ * pty_apri:  ebx = int fd[2] — fd[0] master, fd[1] slave. Stessa forma di
+ *            pipe(), e le stesse regole: chi tiene il master chiude lo slave.
+ * pty_ctl:   ebx = fd, ecx = comando (PTY_CTL_*), edx = argomento.
+ *
+ * Il perche' di tutto sta in kernel/include/pty.h.
+ * --------------------------------------------------------------------------- */
+#define SYS_PTY_APRI      251   /* ebx = int[2] */
+#define SYS_PTY_CTL       252   /* ebx = fd, ecx = cmd, edx = arg */
 
 /* La mailbox IPC come sorgente. MAX_FD e' il primo numero che un descrittore
  * vero non puo' avere: vedi sched.h. */
@@ -1050,6 +1073,9 @@ int32_t sys_modo_testo(InterruptFrame *f);
 int32_t sys_video_info(InterruptFrame *f);
 int32_t sys_log(InterruptFrame *f);
 int32_t sys_lib_apri(InterruptFrame *f);
+int32_t sys_interrompi(InterruptFrame *f);
+int32_t sys_pty_apri(InterruptFrame *f);
+int32_t sys_pty_ctl(InterruptFrame *f);
 int32_t sys_fb_map(InterruptFrame *f);
 int32_t sys_getuid(InterruptFrame *f);
 int32_t sys_setuid(InterruptFrame *f);

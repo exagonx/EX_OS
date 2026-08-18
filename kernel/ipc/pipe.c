@@ -284,6 +284,12 @@ int32_t pipe_leggi(int h, void *buf, uint32_t n)
 
         p->pid_lettore = cur->pid;
         sched_block(PROC_BLOCKED);              /* riabilita IF al risveglio */
+
+        /* ! CHI E' STATO INTERROTTO NON TORNA AD ASPETTARE. Senza questo, il
+         * risveglio di SYS_INTERROMPI farebbe un giro del ciclo, troverebbe la
+         * pipe ancora vuota e si riaddormenterebbe: il processo non tornerebbe
+         * mai in ring 3, cioe' non passerebbe mai dal punto in cui si muore. */
+        if (proc_interrotto()) return ERR(EINTR);
     }
 
     /* Qui: interrupt disabilitati, p valido, p->quanti > 0.
@@ -343,6 +349,7 @@ int32_t pipe_scrivi(int h, const void *buf, uint32_t n)
 
         p->pid_scrittore = cur->pid;
         sched_block(PROC_BLOCKED);
+        if (proc_interrotto()) return ERR(EINTR);   /* vedi pipe_leggi */
     }
 
     /* Qui: interrupt disabilitati, p valido, c'e' spazio.

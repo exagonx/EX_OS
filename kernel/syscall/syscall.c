@@ -13,6 +13,7 @@
 #include "idt.h"
 #include "syscall.h"
 #include "sched.h"
+#include "vfs.h"   /* vfs_sync: chi esce interrotto riversa come chi esce da se' */
 
 static SyscallFn syscall_table[SYSCALL_COUNT];
 
@@ -56,6 +57,34 @@ void syscall_handler(InterruptFrame *frame)
 
     ret = syscall_table[num](frame);
     frame->eax = (uint32_t)ret;
+
+    /* =========================================================================
+     * ! CHI E' STATO INTERROTTO MUORE QUI, E NON DOVE E' STATO INTERROTTO.
+     *
+     * SYS_INTERROMPI alza un flag e sveglia: non tocca il processo. Ammazzarlo
+     * dov'era — dentro il kernel, con una pagina mappata a meta', un lucchetto
+     * preso, un settore in volo — vuol dire lasciare quello stato li' per
+     * sempre. Questo e' il punto sicuro: la syscall e' finita, le sue strutture
+     * sono a posto, e da qui si torna in ring 3.
+     *
+     * ! IL PROCESSO INTERROTTO NON DEVE MAI RIENTRARE IN RING 3, e per questo
+     * il controllo sta qui e non nell'uscita di una singola syscall: qualunque
+     * cosa avesse chiesto — leggere, scrivere, dormire — la risposta e' che non
+     * la finisce.
+     *
+     * ! E UN CICLO CHE NON CHIAMA MAI IL KERNEL NON SI FERMA, ed e' dichiarato.
+     * Un programma che gira senza chiedere niente a nessuno non passa mai di
+     * qui. Fermarlo vorrebbe dire controllare il flag nel gestore del timer,
+     * cioe' terminare un processo da dentro un IRQ — proc_exit() fa vfs_sync(),
+     * che aspetta il disco: la strada per farlo esiste ma e' un lavoro suo.
+     * ========================================================================= */
+    if (proc_interrotto()) {
+        Process *p = proc_get_current();
+
+        klog(LOG_INFO, "SYSCALL: PID %u interrotto, esce", p ? p->pid : 0);
+        vfs_sync();
+        proc_exit(130);         /* 128 + 2, come Unix riporta un Ctrl+C */
+    }
 }
 
 void syscall_init(void)
@@ -130,6 +159,9 @@ void syscall_init(void)
     syscall_table[SYS_LOG]          = sys_log;
     syscall_table[SYS_LIB_APRI]     = sys_lib_apri;
     syscall_table[SYS_FB_MAP]       = sys_fb_map;
+    syscall_table[SYS_INTERROMPI]   = sys_interrompi;
+    syscall_table[SYS_PTY_APRI]     = sys_pty_apri;
+    syscall_table[SYS_PTY_CTL]      = sys_pty_ctl;
     syscall_table[SYS_GETUID]       = sys_getuid;
     syscall_table[SYS_SETUID]       = sys_setuid;
     syscall_table[SYS_CHOWN]        = sys_chown;

@@ -210,6 +210,17 @@ typedef enum {
      * l'handle della pipe (vedi kernel/include/pipe.h). */
     FD_PIPE_R   = 6,    /* estremita' di LETTURA  */
     FD_PIPE_W   = 7,    /* estremita' di SCRITTURA */
+
+    /* Le due estremita' di uno pseudo-terminale. ! ANCHE QUI SONO DUE TIPI E
+     * NON UNO, e la ragione e' piu' forte che per le pipe: master e slave non
+     * differiscono per la direzione ma per COSA SUCCEDE AI BYTE. Quello che si
+     * scrive nel master passa dalla disciplina di linea — eco, Backspace,
+     * Ctrl+C; quello che si scrive nello slave e' l'uscita di un programma e
+     * non viene toccato. Un tipo solo con un flag renderebbe possibile
+     * scambiarli, e lo scambio non darebbe un errore: darebbe una shell che
+     * risponde all'eco di se stessa. `inode` porta l'handle del pty. */
+    FD_PTY_M    = 8,    /* il capo di chi FA il terminale */
+    FD_PTY_S    = 9,    /* il capo che la shell crede un terminale */
 } FDType;
 
 typedef struct {
@@ -411,6 +422,24 @@ typedef struct Process {
     uint32_t        uid;
     uint32_t        gid;
 
+    /* =========================================================================
+     * L'INTERRUZIONE — «smettila», detto da fuori
+     *
+     * ! NON E' UN SEGNALE POSIX, ED E' DICHIARATO. Non c'e' un gestore in
+     * spazio utente, non c'e' una maschera, non si puo' ignorare: chi viene
+     * interrotto ESCE, con codice 130 come una shell Unix riporta un Ctrl+C.
+     * I segnali veri vogliono il ritorno da trap con lo stack del processo
+     * riscritto per farlo saltare in un gestore e poi tornare indietro: e' un
+     * sottosistema, e non e' cio' che serve per far funzionare Ctrl+C.
+     *
+     * ! E NON SI MUORE DOVE SI E', ma al primo posto sicuro. Ammazzare un
+     * processo mentre e' dentro il kernel — con una pagina mappata a meta', un
+     * lucchetto preso, un settore in volo — vuol dire lasciare quello stato li'
+     * per sempre. Il flag si alza, il processo si sveglia, la sua attesa rende
+     * -EINTR, e il controllo lo fa syscall_handler PRIMA di tornare in ring 3.
+     * ========================================================================= */
+    uint32_t        interrotto;
+
 /* =============================================================================
  * La directory corrente — UNA PER PROCESSO
  *
@@ -550,6 +579,16 @@ void     sched_tick(void);              /* Chiamato ogni IRQ0 (100Hz) */
 void     sched_yield(void);             /* Cede volontariamente la CPU */
 void     sched_block(ProcState reason); /* Blocca il processo corrente */
 void     sched_unblock(uint32_t pid);   /* Sblocca un processo */
+
+/* 1 se il processo corrente e' stato interrotto: lo chiamano i punti di
+ * attesa dopo essersi svegliati, per rendere -EINTR invece di riaddormentarsi.
+ * Vedi il campo `interrotto` in Process. */
+int      proc_interrotto(void);
+
+/* Alza il flag di interruzione su `pid` e lo sveglia. Senza controlli di
+ * permesso: li fa chi la chiama da una syscall. */
+int      proc_interrompi(uint32_t pid);
+int      proc_interrompi_locked(uint32_t pid);  /* per chi ha gia' il cli */
 
 /* =============================================================================
  * Processo in PRIMO PIANO su una console

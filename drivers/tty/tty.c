@@ -17,6 +17,7 @@
 #include "ipc.h"
 #include "tty.h"
 #include "kbd_proto.h"
+#include "syscall.h"   /* EINTR: una lettura interrotta lo rende */
 
 /* =============================================================================
  * Due sorgenti di input, una sola interfaccia
@@ -581,6 +582,13 @@ static int tty_read_internal(char *dst, uint32_t n)
             }
             g_waiting_pid = cur->pid;
             sched_block(PROC_BLOCKED);   /* riabilita IF al risveglio */
+
+            /* ! ED E' QUI CHE Ctrl+C DIVENTA VISIBILE. Un programma che
+             * aspetta un tasto sta esattamente in questo punto: senza questa
+             * riga, l'interruzione lo sveglierebbe, lui troverebbe il buffer
+             * vuoto e tornerebbe a dormire — e l'unico modo di vederlo morire
+             * sarebbe battere qualcos'altro. */
+            if (proc_interrotto()) return -EINTR;
         }
 
         char c = ring_buf_get();

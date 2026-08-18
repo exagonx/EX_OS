@@ -2483,6 +2483,7 @@ KERNEL_C_SRC   := $(KERNEL_DIR)/arch/x86/gdt.c \
                   $(KERNEL_DIR)/sched/sched.c \
                   $(KERNEL_DIR)/ipc/ipc.c \
                   $(KERNEL_DIR)/ipc/pipe.c \
+                  $(KERNEL_DIR)/ipc/pty.c \
                   $(KERNEL_DIR)/syscall/syscall.c \
                   $(KERNEL_DIR)/syscall/syscall_impl.c \
                   $(KERNEL_DIR)/fs/fat12.c \

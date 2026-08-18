@@ -2012,6 +2012,160 @@ static void prova_pipe(void)
     }
 }
 
+/* =============================================================================
+ * L'interruzione — «smettila», detto da fuori
+ *
+ * ! IL FIGLIO SI FA BLOCCARE IN UNA LETTURA, ed e' il caso che conta: un
+ * processo fermo dentro il kernel ad aspettare qualcosa che non arrivera' mai.
+ * Interrompere uno che gira e basta sarebbe piu' facile e proverebbe meno —
+ * quello si accorge del flag alla prima syscall, mentre questo va SVEGLIATO,
+ * deve rendere -EINTR dalla sua attesa e morire prima di tornare in ring 3.
+ * ============================================================================= */
+static void prova_interruzione(void)
+{
+    int  p[2];
+    int  pid, stato = 0;
+    char *argv[2];
+    SpawnRedir red;
+
+    printf("\nInterruzione:\n");
+
+    esito("interrompere se stessi e' rifiutato", interrompi(getpid()) == -EINVAL);
+    esito("init non si tocca",                   interrompi(1) == -EPERM);
+    esito("un pid che non esiste da' -ESRCH",    interrompi(60000) == -ESRCH);
+
+    /* Il figlio legge da una pipe in cui non scrivera' nessuno: resta li'
+     * finche' non lo si interrompe. */
+    if (pipe(p) != 0) { esito("pipe per la prova", 0); return; }
+
+    memset(&red, 0, sizeof(red));
+    red.fd       = 0;               /* la pipe diventa il suo stdin */
+    red.percorso = 0;               /* si passa un descrittore, non un file */
+    red.fd_padre = p[0];
+
+    /* ! IL FIGLIO E' UNA SHELL, e non un programma qualunque: e' esattamente
+     * cio' che stara' dall'altra parte di un pty — una shell che aspetta
+     * comandi da un tubo in cui non arriva niente. */
+    argv[0] = "/bin/sh";
+    argv[1] = 0;
+
+    pid = spawn_ex("/bin/sh", argv, environ, &red, 1);
+    esito("il figlio parte", pid > 0);
+    if (pid <= 0) { close(p[0]); close(p[1]); return; }
+
+    /* Gli si da' il tempo di arrivare alla lettura e di bloccarcisi. */
+    usleep(300000);
+
+    esito("interrompere un figlio nostro riesce", interrompi(pid) == 0);
+
+    /* ! E SI ASPETTA CHE MUOIA DAVVERO, che e' l'unica cosa che prova qualcosa.
+     * Se il flag non svegliasse chi dorme, waitpid resterebbe qui per sempre e
+     * la prova si pianterebbe invece di fallire — ed e' il motivo per cui il
+     * figlio e' `cat` su una pipe muta e non un ciclo infinito. */
+    esito("waitpid lo raccoglie", waitpid(pid, &stato, 0) == pid);
+    esito("ed e' uscito con 130 (128 + 2, come un Ctrl+C)", stato == 130);
+
+    close(p[0]);
+    close(p[1]);
+}
+
+/* =============================================================================
+ * Lo pseudo-terminale — la disciplina di linea, che una pipe non ha
+ * ============================================================================= */
+static void prova_pty(void)
+{
+    int  fd[2];
+    char buf[256];
+    int  n;
+
+    printf("\nPseudo-terminali:\n");
+
+    esito("pty_apri() riesce", pty_apri(fd) == 0);
+    esito("e da' due descrittori diversi", fd[0] != fd[1] && fd[0] >= 3);
+
+    /* 1. L'eco: cio' che si batte torna indietro dal master, e NON e' ancora
+     *    arrivato allo slave — la riga non e' finita. */
+    write(fd[0], "ab", 2);
+    n = read(fd[0], buf, sizeof(buf));
+    buf[n > 0 ? n : 0] = '\0';
+    esito("l'eco torna dal master", n == 2 && buf[0] == 'a' && buf[1] == 'b');
+
+    /* 2. Backspace: tre caratteri di eco, e la lettera sparisce dalla riga. */
+    write(fd[0], "\b", 1);
+    n = read(fd[0], buf, sizeof(buf));
+    esito("Backspace fa eco «indietro, spazio, indietro»",
+          n == 3 && buf[0] == '\b' && buf[1] == ' ' && buf[2] == '\b');
+
+    /* 3. L'Invio consegna la riga allo slave, e prima non arriva niente. */
+    write(fd[0], "c\n", 2);
+    n = read(fd[1], buf, sizeof(buf));
+    buf[n > 0 ? n : 0] = '\0';
+    esito("lo slave riceve la riga solo all'Invio",
+          n == 3 && strcmp(buf, "ac\n") == 0);
+
+    /* ! PRIMA SI SVUOTA L'ECO, e la prima stesura di questa prova non lo
+     * faceva: l'eco di «c» e dell'Invio era ancora nel tubo di ritorno, e il
+     * confronto trovava «c\nci» al posto di «ciao». Non era il pty a
+     * sbagliare — era la prova a credere che il master fosse vuoto. */
+    n = read(fd[0], buf, sizeof(buf));
+    esito("l'eco dell'Invio era li' e si legge", n == 2);
+
+    /* 4. Quello che lo slave scrive esce dal master senza essere toccato. */
+    write(fd[1], "ciao", 4);
+    n = read(fd[0], buf, sizeof(buf));
+    buf[n > 0 ? n : 0] = '\0';
+    esito("l'uscita del programma esce dal master", n == 4 && strcmp(buf, "ciao") == 0);
+
+    /* 5. La misura: si scrive e si rilegge. */
+    esito("la misura si imposta",
+          pty_ctl(fd[0], PTY_CTL_MISURA, (24u << 16) | 80u) == 0);
+    esito("e si rilegge",
+          pty_ctl(fd[1], PTY_CTL_LEGGI_MISURA, 0) == (int)((24u << 16) | 80u));
+
+    /* 6. In modo grezzo ogni byte passa subito, senza aspettare l'Invio. */
+    esito("si passa al modo grezzo",
+          pty_ctl(fd[0], PTY_CTL_MODO, PTY_ECO) == 0);
+    write(fd[0], "x", 1);
+    n = read(fd[1], buf, sizeof(buf));
+    esito("e il byte arriva subito allo slave", n == 1 && buf[0] == 'x');
+
+    /* 7. Ctrl+C interrompe chi si e' dichiarato in primo piano. */
+    {
+        int  pid, stato = 0;
+        char *argv[2];
+        SpawnRedir red;
+
+        pty_ctl(fd[0], PTY_CTL_MODO, PTY_CANONICO | PTY_ECO);
+
+        memset(&red, 0, sizeof(red));
+        red.fd       = 0;
+        red.percorso = 0;
+        red.fd_padre = fd[1];
+
+        argv[0] = "/bin/sh";
+        argv[1] = 0;
+
+        pid = spawn_ex("/bin/sh", argv, environ, &red, 1);
+        esito("una shell parte sullo slave", pid > 0);
+
+        if (pid > 0) {
+            usleep(300000);
+            esito("la si dichiara in primo piano",
+                  pty_ctl(fd[0], PTY_CTL_FG, (unsigned int)pid) == 0);
+
+            /* ! IL BYTE 3 NON ARRIVA ALLA SHELL: lo mangia la disciplina, che
+             * interrompe. E' la differenza fra un pty e una pipe, in un byte. */
+            write(fd[0], "\003", 1);
+
+            esito("Ctrl+C la interrompe", waitpid(pid, &stato, 0) == pid);
+            esito("ed e' uscita con 130", stato == 130);
+        }
+    }
+
+    close(fd[0]);
+    close(fd[1]);
+}
+
 int main(int argc, char **argv)
 {
     (void)argc; (void)argv;
@@ -2039,6 +2193,8 @@ int main(int argc, char **argv)
     prova_dup();
     prova_spawn();
     prova_pipe();
+    prova_interruzione();
+    prova_pty();
 
     printf("\n%d prove superate, %d fallite\n", passati, falliti);
     return (falliti == 0) ? 0 : 1;

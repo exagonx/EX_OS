@@ -221,6 +221,12 @@ int32_t ipc_recv_timeout(IpcMessage *out, void *buf, uint32_t buf_len,
          * svegliati da un risveglio spurio, o proprio dalla scadenza). */
         self->block_until = scadenza;
         sched_block(PROC_BLOCKED);   /* con le interrupt ancora disabilitate */
+
+        /* ! CHI E' STATO INTERROTTO SMETTE DI ASPETTARE UN MESSAGGIO. Un
+         * driver o un server passa la vita qui dentro: senza questa riga,
+         * interromperlo non avrebbe nessun effetto visibile finche' qualcuno
+         * non gli scrive — cioe' quasi mai. */
+        if (proc_interrotto()) return ERR(EINTR);
     }
 }
 
