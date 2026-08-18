@@ -559,44 +559,8 @@ static int kex(Sess *s, const unsigned char *vc, unsigned int vc_n,
     k += metti_str(hbuf + k, qs, 32);
     k += metti_mpint(hbuf + k, segreto, 32);
 
-    if (g_verboso) {
-        struct { const char *nome; const unsigned char *d; unsigned int n; } pz[7];
-        unsigned char imp[32];
-        char e[20];
-        int  j, w;
-        unsigned char ks2[64];
-        unsigned int  ks2n = host_blob(ks2);
-
-        pz[0].nome = "V_C"; pz[0].d = vc; pz[0].n = vc_n;
-        pz[1].nome = "V_S"; pz[1].d = (const unsigned char *)VERSIONE; pz[1].n = (unsigned int)strlen(VERSIONE);
-        pz[2].nome = "I_C"; pz[2].d = ic; pz[2].n = ic_n;
-        pz[3].nome = "I_S"; pz[3].d = is; pz[3].n = is_n;
-        pz[4].nome = "K_S"; pz[4].d = ks2; pz[4].n = ks2n;
-        pz[5].nome = "Q_C"; pz[5].d = qc; pz[5].n = 32;
-        pz[6].nome = "Q_S"; pz[6].d = qs; pz[6].n = 32;
-
-        for (w = 0; w < 7; w++) {
-            sha256(pz[w].d, pz[w].n, imp);
-            for (j = 0; j < 8; j++) sprintf(e + j * 2, "%02x", imp[j]);
-            e[16] = '\0';
-            printf("sshd: %s %5u byte  sha256 %s\n", pz[w].nome, pz[w].n, e);
-        }
-    }
-
     sha256(hbuf, k, h);
 
-    if (g_verboso) {
-        char e[80];
-        int  j;
-
-        printf("sshd: H su %u byte: V_C=%u I_C=%u I_S=%u\n", k, vc_n, ic_n, is_n);
-        for (j = 0; j < 16; j++) sprintf(e + j * 2, "%02x", h[j]);
-        e[32] = '\0';
-        printf("sshd: H = %s...\n", e);
-        for (j = 0; j < 8; j++) sprintf(e + j * 2, "%02x", segreto[j]);
-        e[16] = '\0';
-        printf("sshd: K comincia con %s (primo byte %u)\n", e, segreto[0]);
-    }
     free(hbuf);
 
     /* ! L'IDENTIFICATIVO DI SESSIONE E' LA PRIMA IMPRONTA, PER SEMPRE. Non
@@ -832,7 +796,16 @@ static int canale_pronto(Sess *s, unsigned int *righe, unsigned int *colonne)
         p = 1 + 4;                       /* il numero del canale, che e' il nostro */
         tn = prendi32(buf + p); p += 4;
 
+        if (p + tn >= (unsigned int)len) continue;   /* richiesta monca */
         vuole_risposta = buf[p + tn];
+
+        if (g_verboso) {
+            char nome[32];
+            unsigned int q = tn < sizeof(nome) - 1 ? tn : sizeof(nome) - 1;
+
+            memcpy(nome, buf + p, q); nome[q] = '\0';
+            printf("sshd: il canale chiede '%s' (%u byte di richiesta)\n", nome, (unsigned int)len);
+        }
 
         if (tn == 7 && memcmp(buf + p, "pty-req", 7) == 0) {
             unsigned int q = p + tn + 1;
@@ -843,6 +816,14 @@ static int canale_pronto(Sess *s, unsigned int *righe, unsigned int *colonne)
             q += 4 + prendi32(buf + q);         /* il nome del terminale */
             *colonne = prendi32(buf + q); q += 4;
             *righe   = prendi32(buf + q); q += 4;
+
+            /* ! UN TERMINALE DI MISURA ZERO NON ESISTE, e un client che la
+             * manda cosi' non sta mentendo: sta dicendo «non lo so». Succede
+             * quando dall'altra parte non c'e' davvero uno schermo — un
+             * comando pilotato da uno script, per esempio. Prendere quel zero
+             * alla lettera vorrebbe dire una shell che crede di avere zero
+             * righe, e un programma a schermo pieno che divide per zero. */
+            if (*colonne == 0 || *righe == 0) { *colonne = 80; *righe = 24; }
 
             if (vuole_risposta) {
                 n = 0;
@@ -882,6 +863,13 @@ static int canale_pronto(Sess *s, unsigned int *righe, unsigned int *colonne)
  * poll su due sorgenti, l'interruzione alla fine — e' lo stesso lavoro, gia'
  * provato in chiaro.
  * --------------------------------------------------------------------------- */
+/* Rende 1 se il figlio e' finito. Sta in una funzione perche' il ciclo lo
+ * chiede in due punti e la forma «waitpid con WNOHANG» va scritta uguale. */
+static int waitfiglio_finito(int pid, int *stato)
+{
+    return waitpid(pid, stato, WNOHANG) == pid;
+}
+
 static void sessione_dati(Sess *s, const char *shell, unsigned int righe,
                           unsigned int colonne)
 {
@@ -912,12 +900,42 @@ static void sessione_dati(Sess *s, const char *shell, unsigned int righe,
     for (;;) {
         int stato = 0;
 
-        if (waitpid(figlio, &stato, WNOHANG) == figlio) break;
+        /* ! CHI MUORE LASCIA DEI BYTE NEL TUBO, e vanno consegnati prima di
+         * chiudere. Uscendo appena il figlio termina si perde l'ultima cosa
+         * che ha stampato — e l'ultima cosa e' quasi sempre quella che
+         * interessava: la risposta al comando che si e' appena battuto. Il
+         * sintomo era «id» che si vedeva scritto e non rispondeva mai. */
+        if (waitfiglio_finito(figlio, &stato)) {
+            for (;;) {
+                int n = (int)read(fd[0], buf, 512);
+                unsigned int k;
 
+                if (n <= 0) break;
+
+                k = 0;
+                out[k++] = SSH_CHANNEL_DATA;
+                metti32(out + k, (unsigned int)s->canale); k += 4;
+                k += metti_str(out + k, buf, (unsigned int)n);
+                if (pacchetto_manda(s, out, k) != 0) break;
+            }
+            break;
+        }
+
+        /* ! LA LETTURA DALLA RETE SI PRENOTA, E ASPETTARE UN MESSAGGIO SENZA
+         * AVERLA PRENOTATA E' UNO STALLO. Lo stack consegna a chi ha chiesto:
+         * qui si aspettava che la mailbox diventasse pronta, e la mailbox non
+         * poteva diventarlo perche' nessuno aveva chiesto niente. Il sintomo
+         * era una sessione che si apriva, mostrava il prompt e poi non
+         * rispondeva ai tasti — sembrava la shell bloccata, ed era il tubo che
+         * non era stato aperto. telnetd lo faceva; qui, riscrivendo il ciclo,
+         * si era perso.
+         *
+         * Si chiede con una scadenza corta e si tratta il silenzio come «per
+         * ora niente», invece di guardare FD_IPC: cosi' la prenotazione c'e'
+         * sempre e non se ne accumulano due. */
         v[0].fd = fd[0];  v[0].events = POLLIN; v[0].revents = 0;
-        v[1].fd = FD_IPC; v[1].events = POLLIN; v[1].revents = 0;
 
-        if (poll(v, 2, 300) < 0) break;
+        if (poll(v, 1, 60) < 0) break;
 
         /* Dal programma al client. */
         if (v[0].revents & POLLIN) {
@@ -934,13 +952,9 @@ static void sessione_dati(Sess *s, const char *shell, unsigned int righe,
         }
 
         /* Dal client al programma. */
-        if (v[1].revents & POLLIN) {
-            len = pacchetto_ricevi(s, buf, 50);
-            if (len < 0) {
-                /* Nessun pacchetto intero: non e' un errore, si riprova. */
-                if (s->coda_n == 0) continue;
-                break;
-            }
+        {
+            len = pacchetto_ricevi(s, buf, 60);
+            if (len < 0) continue;      /* per ora niente: si rigira */
             if (len < 1) continue;
 
             if (buf[0] == SSH_CHANNEL_DATA) {

@@ -12,7 +12,7 @@ seriale e USB — tastiera compresa, hub compresi.
 
 ## COSA E' COMMITTATO
 
-    c918412  "Tre difetti trovati usando il sistema"
+    3d13299  "Il protocollo SSH: arriva alla firma, e due difetti veri per strada"
 
 ! **`gitupdate.sh` FA `git add .` E UN COMMIT SOLO**: `messaggio-commit.txt`
 deve coprire tutto quello che si e' fatto dall'ultimo commit, non l'ultima
@@ -30,13 +30,11 @@ pezzo di kernel nuovo, e non e' piu' lavoro di rifinitura.
 
 ### Cose che vogliono un pezzo di kernel nuovo
 
- 1. **La firma dello scambio SSH**, che e' l'ultimo passo: il resto del
-    protocollo c'e' e un client vero ci arriva fino in fondo — vedi «Il
-    protocollo SSH: arriva alla firma e li' si ferma». Serve confrontare
-    l'impronta di ogni pezzo dell'hash con quella presa dal traffico: il codice
-    per stamparle e' gia' dietro `-v`, e il segreto condiviso coincide gia'.
-    *(Quello che segue resta la mappa del lavoro.)*
-    **Il protocollo SSH**, che e' cio' che resta: la matematica e' fatta e
+ 1. *(SSH e' fatto: vedi «SSH funziona: una sessione cifrata con un client
+    vero». Quello che resta di quel lavoro e' nella sua voce, sotto «cosa
+    manca»: piu' di una sessione insieme, il rinnovo delle chiavi,
+    l'autenticazione a chiave pubblica.)*
+    Il vecchio piano, che resta la mappa: la matematica e' fatta e
     provata (vedi «La matematica di SSH, provata contro gli RFC»), e mancano lo
     scambio delle versioni, il binary packet protocol, KEXINIT,
     curve25519-sha256 con la firma dell'host, userauth «password» e il canale
@@ -268,6 +266,116 @@ copiare, non da reinventare.
 ! **E OGNI NOME NUOVO VA IN `exwin_esporta.c` E NELLO STUB.** Aggiungere una
 funzione alla libreria e dimenticarsi lo stub da' un simbolo che non si
 risolve — e il messaggio lo dice, col nome, ma solo a chi lo esegue.
+
+# SSH funziona: una sessione cifrata con un client vero (18 agosto 2026)
+
+    ssh -p 2225 root@127.0.0.1        (OpenSSH 10.0, da un'altra macchina)
+
+      Warning: Permanently added '[127.0.0.1]:2225' (ED25519) to known hosts.
+      root@127.0.0.1's password:
+      ex-os:/> id
+      uid=0(root) gid=0
+        root: i controlli sui permessi non si applicano
+      ex-os:/> exit
+
+    e dal lato di EX-OS:
+
+      sshd: chiavi in vigore, da qui si cifra
+      sshd: utente 'root' ammesso al terminale
+      sshd: terminale 80x24, avvio /bin/sh
+
+**Scambio di chiavi, firma dell'host, cifratura, autenticazione, pty, shell,
+comando eseguito e uscita pulita** — con OpenSSH dall'altra parte, non con un
+client scritto da noi.
+
+## I tre difetti che stavano fra il codice e la sessione
+
+### 1. Il driver IP consegnava piu' byte di quanti ne stiano in un messaggio
+
+    tcp_consegna:  n = c->rx_len;  if (n > TCP_BUF) n = TCP_BUF;   /* 4096 */
+    ma IPC_MSG_MAX_DATA e' 1536
+
+! **PER MESI NESSUNO AVEVA MAI RICEVUTO TANTI BYTE IN UNA VOLTA.** telnet manda
+righe, ftp manda comandi, il rimbalzo di tcpserv manda quello che gli arriva:
+tutti sotto il migliaio. L'ha tirato fuori il primo KEXINIT di OpenSSH, che di
+byte ne ha **1570**.
+
+! **E IL SINTOMO ERA PERFIDO: `len` DICEVA LA VERITA'.** Il messaggio annunciava
+1559 byte, ma dentro ce n'erano meno, e chi leggeva copiava la coda **dal
+proprio buffer** — spazzatura. L'inizio dei dati era giusto, la lunghezza era
+giusta, sbagliava solo il fondo. Da fuori sembrava che il client mandasse dati
+diversi da quelli sul cavo, e su SSH questo voleva dire **una firma dello
+scambio che non tornava**: il sospetto cadeva sulla crittografia, che era sana.
+
+! **E QUELLO CHE AVANZA ADESSO RESTA NEL BUFFER**, non si butta: chi legge
+riprenota e lo prende al giro dopo.
+
+### 2. Nel ciclo della sessione non si prenotava la lettura
+
+! **LO STACK CONSEGNA A CHI HA CHIESTO, E QUI SI ASPETTAVA SENZA CHIEDERE.** Il
+ciclo guardava la mailbox con poll() aspettando che diventasse pronta — e non
+poteva diventarlo, perche' nessuno aveva prenotato niente. Il sintomo: la
+sessione si apriva, mostrava il prompt e **non rispondeva ai tasti**. Sembrava
+la shell bloccata, era il tubo mai aperto. `telnetd` lo faceva; riscrivendo il
+ciclo qui, si era perso.
+
+### 3. Chi muore lascia byte nel tubo
+
+! **USCENDO APPENA IL FIGLIO TERMINA SI PERDE L'ULTIMA COSA CHE HA STAMPATO** —
+e l'ultima cosa e' quasi sempre quella che interessava: la risposta al comando
+appena battuto. Si vedeva `id` scritto e mai risposto. Adesso, quando la shell
+finisce, il pty si svuota prima di chiudere.
+
+## Come si e' trovato il primo, che era invisibile
+
+La firma non tornava e tutto sembrava a posto. La strada che ha funzionato:
+
+ 1. **catturare il traffico** (QEMU `filter-dump`) e ricomporre i due flussi TCP
+    dai numeri di sequenza;
+ 2. **rifare i conti da fuori**, in Python, con la stessa formula dell'RFC;
+ 3. quando anche quelli non tornavano, **confrontare i BUFFER invece degli
+    hash**: un hash dice «diverso», un buffer dice **dove**. La composizione di
+    sshd si e' rivelata identica a quella di riferimento, byte per byte;
+ 4. quindi il difetto era nei DATI: far stampare al server l'impronta di ogni
+    pezzo e confrontarla con quella presa dal filo. Sei pezzi su sette
+    coincidevano. **I_C no** — stessa lunghezza, stesso inizio, fondo diverso.
+
+! **UNO SCARTO CHE COMINCIA A META' DI UN BLOCCO E' UN PROBLEMA DI TRASPORTO,
+NON DI CONTENUTO.** Se il client avesse mandato altro, sarebbe stato diverso
+dall'inizio.
+
+## Cosa parla, e cosa no
+
+    kex          curve25519-sha256
+    host key     ssh-ed25519
+    cifrario     chacha20-poly1305@openssh.com
+    auth         password (la verifica la fa login sul pty, non sshd)
+    canale       session, pty-req, shell
+
+! **SI PARLA UNA LINGUA SOLA, ED E' VOLUTO.** Un algoritmo per mestiere: non
+c'e' negoziazione da fare, e se il client non li conosce la connessione finisce
+subito. Offrire piu' scelte vorrebbe dire piu' codice crittografico di cui una
+parte non verrebbe mai eseguita — e un codice crittografico mai eseguito e' il
+posto peggiore dove tenere un difetto.
+
+! **LA PASSWORD NON LA GUARDA sshd.** Il metodo «password» viene accettato e
+poi e' `login`, sul pty, a chiedere e verificare: il formato di `/boot/ombra`,
+il sale, le liste di chi puo' entrare stanno in un posto solo. Due copie
+divergono al primo cambiamento.
+
+! **UN TERMINALE DI MISURA ZERO NON ESISTE**: un client che manda 0x0 sta
+dicendo «non lo so», e prenderlo alla lettera darebbe una shell che crede di
+avere zero righe. Si mette 80x24.
+
+## Cosa manca, dichiarato
+
+    una sessione per volta      come telnetd: servirne piu' d'una vuole uno
+                                spawn per sessione
+    niente rinnovo delle chiavi una sessione lunghissima non le cambia mai
+    niente chiavi pubbliche     solo password; le chiavi vogliono anche il
+                                formato dei file authorized_keys
+    la chiave dell'host sul CD  non si puo' salvare: se ne fa una nuova a ogni
+                                avvio, e il client si lamenta — giustamente
 
 # Il protocollo SSH: arriva alla firma e li' si ferma (18 agosto 2026)
 

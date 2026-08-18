@@ -304,6 +304,12 @@ typedef struct {
     unsigned int timeout_ms;     /* 0 = non aspettare: c'e' o non c'e' */
 } IpTcpAccetta;
 
+/* ! QUANTI BYTE STANNO IN UNA CONSEGNA, e non e' una scelta di comodo: e'
+ * quello che avanza in un messaggio IPC dopo l'intestazione. Consegnarne di
+ * piu' vuol dire dichiarare una lunghezza che nel messaggio non c'e', e chi
+ * legge copia la coda dal proprio buffer — spazzatura che sembra dati. */
+#define IP_TCP_DATI_MAX  (IPC_MSG_MAX_DATA - 16)
+
 /* Intestazione di IP_MSG_TCP_INVIA e di IP_MSG_TCP_DATI: i byte seguono
  * nello stesso messaggio. */
 typedef struct {

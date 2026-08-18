@@ -935,8 +935,26 @@ static void tcp_consegna(Conn *c)
     if (c->rx_len == 0 && c->stato != S_MORTA && c->stato != S_FIN_SUO &&
         c->stato != S_ULTIMO_ACK) return;
 
+    /* ! IN UN MESSAGGIO IPC NON CI STA PIU' DI IPC_MSG_MAX_DATA, e per mesi
+     * qui si e' consegnato fino a TCP_BUF — quattro volte tanto. Il difetto non
+     * si vedeva perche' nessuno aveva mai ricevuto tanti byte in una volta:
+     * telnet manda righe, ftp manda comandi, il rimbalzo di tcpserv manda
+     * quello che gli arriva. L'ha tirato fuori il primo KEXINIT di OpenSSH, che
+     * di byte ne ha 1570.
+     *
+     * ! E IL SINTOMO ERA PERFIDO: `len` diceva la verita' — 1559 byte — ma nel
+     * messaggio ce n'erano meno, e chi leggeva copiava la CODA DAL PROPRIO
+     * BUFFER, cioe' spazzatura. L'inizio dei dati era giusto, la lunghezza era
+     * giusta, e sbagliava solo il fondo: da fuori sembrava che il client
+     * mandasse dati diversi da quelli sul cavo. Su SSH questo voleva dire una
+     * firma dello scambio che non tornava, e il sospetto cadeva sulla
+     * crittografia.
+     *
+     * ! QUELLO CHE AVANZA RESTA NEL BUFFER, non si butta: chi legge riprenota e
+     * lo prende al giro dopo. Buttarlo sarebbe stato piu' semplice e avrebbe
+     * significato perdere silenziosamente meta' di ogni messaggio lungo. */
     n = c->rx_len;
-    if (n > TCP_BUF) n = TCP_BUF;
+    if (n > IP_TCP_DATI_MAX) n = IP_TCP_DATI_MAX;
 
     d.id  = tcp_id(c);
     d.len = n;
@@ -946,7 +964,15 @@ static void tcp_consegna(Conn *c)
     ipc_send(c->attesa_pid, IP_MSG_TCP_DATI, msg, sizeof(d) + n);
     c->attesa_pid = 0;
 
-    c->rx_len = 0;
+    /* Cio' che non e' entrato scorre in testa al buffer. */
+    if (n < c->rx_len) {
+        unsigned int i;
+
+        for (i = 0; i + n < c->rx_len; i++) c->rx[i] = c->rx[i + n];
+        c->rx_len -= n;
+    } else {
+        c->rx_len = 0;
+    }
 }
 
 /* =============================================================================
