@@ -110,6 +110,14 @@ static inline void win_nome_servizio(char *out, unsigned int max)
 #define WIN_MSG_CREATA      0x5781  /* WinCreata */
 #define WIN_MSG_EVENTO      0x5782  /* WinEvento */
 #define WIN_MSG_MISURATA    0x5783  /* WinCreata: «la tua zona e' un'altra» */
+/* ! DOVE STA LA SUA FINESTRA IL CLIENT NON PUO' SAPERLO DA SOLO, e con
+ * WIN_XY_AUTO nemmeno alla nascita: la sceglie il server. E se l'utente la
+ * trascina per la barra del titolo, quel movimento lo conosce solo il server —
+ * il client resterebbe convinto di stare dove e' nato per sempre.
+ *
+ * Non e' un evento per l'applicazione: e' il toolkit che si aggiorna, cosi'
+ * chi chiede «dove sono» ha una risposta vera invece di un ricordo. */
+#define WIN_MSG_POSTA       0x5784  /* WinRegione: x e y, adesso sono queste */
 
 /* --- Gli eventi, che il toolkit gira alla procedura di finestra ---------- */
 #define WIN_EV_MOUSE_GIU    1
@@ -214,6 +222,9 @@ typedef struct {
     unsigned int larghezza;     /* quella concessa, che puo' non essere quella
                                  * chiesta: vedi il commento nel server */
     unsigned int altezza;
+    /* ! DOVE IL SERVER L'HA MESSA. Con WIN_XY_AUTO il client non lo sa e non
+     * ha modo di scoprirlo: la posizione l'ha scelta il server. */
+    unsigned int x, y;
     /* ! IL NUMERO DI GIRO ENTRA NEL NOME DELLA ZONA, ED E' CIO' CHE RENDE IL
      * CAMBIO POSSIBILE. Una zona condivisa non si allarga: si crea quella nuova
      * e si lascia morire la vecchia quando l'ultimo la chiude. Ma finche' il
@@ -234,12 +245,29 @@ typedef struct {
     char         titolo[WIN_TITOLO_LEN];
 } WinTitolo;
 
+/* ! L'EVENTO PORTA L'ORA IN CUI E' NATO, e non e' un di piu' per le
+ * statistiche: senza, il DOPPIO CLIC non si puo' riconoscere onestamente.
+ *
+ * Il toolkit potrebbe guardare l'orologio da se', quando l'evento gli arriva.
+ * Ma fra il primo clic e il secondo il client ha LAVORATO — al primo clic un
+ * file manager legge una directory, e da un CD sono anche tre decimi di
+ * secondo — e quel lavoro si somma all'intervallo. Due clic svelti diventano
+ * cosi' due clic lenti, e il doppio clic non funziona MAI sulla lista dove
+ * serve, funzionando benissimo su una finestra vuota che non fa niente. E'
+ * successo davvero, il 18 agosto 2026, e dai pixel si vedeva solo «non fa
+ * niente».
+ *
+ * L'ora la scrive chi l'evento lo genera, che e' l'unico a saperla. Restano
+ * al toolkit la soglia e l'interpretazione: quanto vicini debbano essere due
+ * clic per contare come uno e' una convenzione dell'interfaccia, non un fatto
+ * dell'hardware. */
 typedef struct {
     unsigned int id;
     unsigned int tipo;          /* WIN_EV_* */
     unsigned int x, y;          /* dentro l'area del client, non sullo schermo */
     unsigned int bottoni;       /* per il mouse */
     unsigned int tasto;         /* scancode, per WIN_EV_TASTO */
+    unsigned int tempo;         /* millisecondi dall'avvio, presi dal SERVER */
 } WinEvento;
 
 /* Il nome della zona condivisa di una finestra: «win», il numero della

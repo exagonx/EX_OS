@@ -127,10 +127,35 @@ def presa_centro(percorso):
     return (x + bw // 2, y + bh // 2)
 
 
+# ! E L'ANGOLO DEL CLIENT SI CHIEDE ALLO STESSO MODO, per la stessa ragione.
+#   Una prova che clicca DENTRO una finestra — su una riga di lista, su un
+#   segno «+» — deve partire dall'angolo in alto a sinistra dell'area del
+#   client: da li' in poi le coordinate dei controlli sono numeri fissi, che
+#   stanno nel sorgente dell'applicazione. La cascata delle finestre sposta
+#   l'angolo, non cio' che c'e' dentro.
+#
+#       python3 tools/misura_finestre.py --client foto.ppm    ->  "77 66"
+def client_angolo(percorso):
+    w, h, px = leggi_ppm(percorso)
+    barra = riquadro(w, h, px, C_BARRA)
+
+    if barra is None:
+        return None
+    bx, by, bw, bh = barra
+    return (bx - 1, by - 1 + BARRA_H)
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print(__doc__)
         sys.exit(1)
+
+    if sys.argv[1] == "--client":
+        c = client_angolo(sys.argv[2])
+        if c is None:
+            sys.exit(1)
+        print("%d %d" % c)
+        sys.exit(0)
 
     if sys.argv[1] == "--presa":
         c = presa_centro(sys.argv[2])

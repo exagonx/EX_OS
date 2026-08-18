@@ -38,12 +38,22 @@ CASA=""
 for i in $(seq 1 5); do CASA="$CASA mon:mouse_move${IFS}-600${IFS}-600@0"; done
 
 # Da (0,0) a (x,y) a passi di dieci. passi_a DX DY
+#
+# ! SI VA IN DIAGONALE FINCHE' SI PUO', POI DIRITTI. Qui c'era «in diagonale per
+# quanto e' ALTO il bersaglio, poi in orizzontale», e sbaglia in silenzio quando
+# il bersaglio e' piu' in basso che a destra: la diagonale supera la x, il resto
+# viene negativo, il ciclo bash gira zero volte e il puntatore finisce decine di
+# pixel piu' in la'. Le prove di questo script hanno tutte dx > dy, quindi non
+# se n'e' mai accorto nessuno; prova_doppioclic.sh, che deve colpire un segno «+»
+# vicino al bordo sinistro, ci ha perso un giro di prove.
 passi_a() {
-    local dx=$1 dy=$2 i
-    local d=$(( dy / 10 ))
+    local dx=$1 dy=$2 i d rx ry
+    d=$(( (dx < dy ? dx : dy) / 10 ))
     for ((i = 0; i < d; i++)); do printf '%s\n' "mon:mouse_move 10 10@0"; done
-    for ((i = 0; i < (dx - d * 10) / 10; i++)); do printf '%s\n' "mon:mouse_move 10 0@0"; done
-    printf '%s\n' "mon:mouse_move $(( dx % 10 )) $(( dy % 10 ))@0"
+    rx=$(( dx - d * 10 )); ry=$(( dy - d * 10 ))
+    for ((i = 10; i <= rx; i += 10)); do printf '%s\n' "mon:mouse_move 10 0@0"; done
+    for ((i = 10; i <= ry; i += 10)); do printf '%s\n' "mon:mouse_move 0 10@0"; done
+    printf '%s\n' "mon:mouse_move $(( rx % 10 )) $(( ry % 10 ))@0"
 }
 
 # --- 1. il terminale, tirato per l'angolo ------------------------------------

@@ -645,21 +645,47 @@ static void comando_cerca(void)
 /* =============================================================================
  * Le scelte
  * ============================================================================= */
-static void scegli_albero(int con_invio)
+/* ! IL SEGNO STA IN UNA COLONNA CHE SI SA CONTARE. La riga la costruisce
+ * albero_mostra(): due spazi per livello, poi «+» o «-», poi uno spazio, poi
+ * il nome. Quindi il segno di un nodo di livello n e' nella colonna 2n, e lo
+ * spazio subito dopo nella 2n+1 — che si accetta anche lui, perche' un bersaglio
+ * di otto pixel si manca. Se albero_mostra() cambiasse indentazione, questa
+ * dovrebbe cambiare con lei: sono le due meta' della stessa convenzione. */
+static int sul_segno(unsigned int nodo, int col)
+{
+    int c;
+
+    if (col < 0 || nodo >= g_nodi) return 0;      /* -1 = venuto da tastiera */
+    c = (int)g_nodo[nodo].liv * 2;
+    return col == c || col == c + 1;
+}
+
+/* `apri` = si e' chiesto di aprire (Invio o doppio clic); `col` = la colonna
+ * del clic dentro la riga, -1 se il comando viene dalla tastiera. */
+static void scegli_albero(int apri, int col)
 {
     unsigned int s = ex_lista_scelta(g_albero);
     char perc[PERC_MAX];
+    int  segno;
 
     if (s >= g_nodi) return;
+
+    segno = sul_segno(s, col);
 
     percorso_nodo((int)s, perc, sizeof(perc));
     vai(perc);
 
-    /* ! IL CLIC MOSTRA, L'INVIO ESPANDE. Sono due desideri diversi e vanno
+    /* ! IL CLIC MOSTRA, L'APERTURA ESPANDE. Sono due desideri diversi e vanno
      * distinti: chi scorre l'albero con le frecce vuole vedere il contenuto
      * cambiare a destra senza che l'albero gli si apra sotto le mani, e chi
-     * batte Invio ha chiesto proprio di scendere. */
-    if (!con_invio) return;
+     * batte Invio o fa doppio clic ha chiesto proprio di scendere.
+     *
+     * ! E IL SEGNO E' LA TERZA VIA, quella che ci si aspetta guardandolo. Un
+     * «+» disegnato accanto a una directory dice «qui sotto c'e' dell'altro»:
+     * chi ce lo vede lo preme, e prima di oggi non succedeva niente — il segno
+     * era un disegno e basta. Premerlo apre SENZA doppio clic, che e' il senso
+     * di averlo messo li'. */
+    if (!apri && !segno) return;
 
     if (g_nodo[s].aperto) albero_chiudi((int)s);
     else                  albero_espandi((int)s);
@@ -667,12 +693,12 @@ static void scegli_albero(int con_invio)
     ex_lista_scegli(g_albero, s);
 }
 
-static void scegli_elenco(int con_invio)
+static void scegli_elenco(int apri)
 {
     char perc[PERC_MAX];
     int  e_dir = 0;
 
-    if (!con_invio) return;
+    if (!apri) return;
     if (!scelta_destra(perc, sizeof(perc), &e_dir)) return;
 
     if (!e_dir) { apri_file(perc); return; }
@@ -717,8 +743,9 @@ static void istruzioni(void)
 {
     ex_dlg_avviso("Istruzioni",
                   "A sinistra l'albero, a destra il contenuto.  Le frecce "
-                  "scelgono, Tab passa da un'area all'altra, Invio espande "
-                  "una directory o apre un file.  F10 apre i menu.  "
+                  "scelgono, Tab passa da un'area all'altra, Invio o doppio "
+                  "clic espande una directory o apre un file.  Il segno + "
+                  "dell'albero si preme con un clic solo.  F10 apre i menu.  "
                   "Copia chiede dove mettere quello che e' scelto a destra; "
                   "Cerca guarda sotto la directory corrente.");
 }
@@ -741,12 +768,14 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
     case EXM_COMANDO:
         g_avviso[0] = '\0';
 
-        /* ! DALLE LISTE ARRIVA ANCHE COME, non solo COSA: lp dice se e'
-         * arrivato dall'Invio o dal clic. Senza, un clic per guardare e un
-         * Invio per entrare sarebbero indistinguibili — e l'albero si
-         * aprirebbe sotto le dita di chi voleva solo dare un'occhiata. */
-        if (wp == ID_ALBERO) { scegli_albero(EX_DA_INVIO(lp)); break; }
-        if (wp == ID_ELENCO) { scegli_elenco(EX_DA_INVIO(lp)); break; }
+        /* ! DALLE LISTE ARRIVA ANCHE COME, non solo COSA: lp dice se si e'
+         * chiesto di APRIRE — Invio o doppio clic — e in quale COLONNA della
+         * riga e' caduto il clic. Senza il primo, un clic per guardare e un
+         * Invio per entrare sarebbero indistinguibili, e l'albero si aprirebbe
+         * sotto le dita di chi voleva solo dare un'occhiata; senza la seconda,
+         * il «+» dell'albero resterebbe un disegno da guardare. */
+        if (wp == ID_ALBERO) { scegli_albero(EX_APRIRE(lp), EX_COL(lp)); break; }
+        if (wp == ID_ELENCO) { scegli_elenco(EX_APRIRE(lp)); break; }
 
         if (wp == ID_APRI)     { scegli_elenco(1); break; }
         if (wp == ID_AGGIORNA) { leggi(g_dir);     break; }

@@ -202,13 +202,27 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         if (wp == ID_ANNULLA) { g_fatto = 2; return 0; }
         if (wp == ID_SU)      { entra(".."); nome_metti(""); break; }
 
-        /* ! LA LISTA MANDA IL SUO id, come un pulsante. Un clic sceglie e
-         * basta — ci si entra con Invio o con «Apri». Un clic che entrasse
-         * subito renderebbe impossibile scegliere senza aprire. */
+        /* ! LA LISTA MANDA IL SUO id, come un pulsante, e lp dice COME. Un clic
+         * semplice sceglie e basta — un clic che entrasse subito renderebbe
+         * impossibile scegliere senza aprire. Invio e DOPPIO CLIC invece
+         * aprono: sono lo stesso gesto detto con due dispositivi diversi, e
+         * EX_APRIRE(lp) li rende indistinguibili apposta.
+         *
+         * ! PRIMA DI OGGI L'INVIO QUI NON FACEVA NIENTE. Con la lista che
+         * aveva i tasti, l'Invio diventava questo EXM_COMANDO — e lp veniva
+         * buttato via. Chi sceglieva una directory e batteva Invio vedeva il
+         * dialogo restare fermo, senza nemmeno un errore: la strada verso il
+         * ramo EXM_TASTO qui sotto era chiusa dalla lista stessa. */
         if (wp == ID_LISTA) {
             unsigned int s = ex_lista_scelta(g_lista);
-            if (s < ex_lista_quante(g_lista) && !g_dir_flag[s])
-                nome_metti(g_voce_nome[s]);
+
+            if (s >= ex_lista_quante(g_lista)) break;
+
+            /* Il nome di una directory non va nella casella: li' ci sta il
+             * nome del FILE, e una directory non e' un nome da confermare. */
+            if (!g_dir_flag[s]) nome_metti(g_voce_nome[s]);
+
+            if (EX_APRIRE(lp)) scegli();
             break;
         }
         return 0;

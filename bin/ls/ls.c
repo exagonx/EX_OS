@@ -54,12 +54,41 @@
  * anche cio' che decide quanto stack usa questo programma. */
 #define BLOCCO LISTDIR_MAX_BATCH
 
-/* La console di EX-OS e' 80x25 e non c'e' una syscall per chiederlo: e' il
- * modo testo standard della VGA, lo stesso numero che sta in
- * bin/gfedit/gfedit.h. Se un giorno ci sara' una console di dimensione
- * variabile, questo e' l'unico punto da cambiare. */
-#define COLONNE_SCHERMO  80
-#define RIGHE_SCHERMO    25
+/* =============================================================================
+ * ! LA CONSOLE E' 80x25, MA UN TERMINALE NO — E DAL 18 AGOSTO 2026 SI CHIEDE.
+ *
+ * Qui c'erano due #define, con accanto scritto che «non c'e' una syscall per
+ * chiederlo». Adesso c'e', e serve davvero: dentro uno pseudo-terminale — una
+ * finestra che si ridimensiona, una sessione SSH o telnet — la misura la sa il
+ * pty. Chi non gliela chiede impagina per 80 colonne dentro una finestra larga
+ * 120: le colonne restano strette a sinistra e mezzo schermo resta vuoto.
+ *
+ * ! E SI RILEGGE A OGNI AVVIO, non una volta per sempre: fra un `ls` e il
+ * successivo la finestra puo' essere cambiata di misura.
+ *
+ * ! FUORI DA UN pty RESTA 80x25, e non e' un ripiego: la console vera di EX-OS
+ * e' quella, e PTY_CTL_LEGGI_MISURA rende -ENOTTY proprio per dire «non sono
+ * un pty». Un valore inventato sarebbe peggio del valore noto.
+ * ============================================================================= */
+static int g_col_schermo = 80;
+static int g_righe_schermo = 25;
+
+#define COLONNE_SCHERMO  g_col_schermo
+#define RIGHE_SCHERMO    g_righe_schermo
+
+static void misura_del_terminale(void)
+{
+    int m = pty_ctl(0, PTY_CTL_LEGGI_MISURA, 0);
+
+    if (m < 0) return;                  /* non e' un pty: la console e' 80x25 */
+
+    /* ! UNA MISURA ASSURDA SI IGNORA. Un terminale di due colonne non e' un
+     * terminale, ed e' il genere di numero che arriva da un client che non lo
+     * sa davvero: dividere per un valore cosi' darebbe una riga per voce e
+     * nessuna colonna. */
+    if ((m & 0xFFFF) >= 20)  g_col_schermo   = m & 0xFFFF;
+    if ((m >> 16)   >= 4)    g_righe_schermo = (int)((unsigned)m >> 16);
+}
 
 /* Modi di visualizzazione. Si escludono a vicenda: vince l'ultimo
  * indicato, che e' il comportamento che ci si aspetta quando si ripete
@@ -365,6 +394,7 @@ int main(int argc, char **argv)
         bersaglio = cwd;
     }
 
+    misura_del_terminale();
     memset(&r, 0, sizeof(r));
 
     /* Prima passata: serve solo alle colonne. Vedi il commento sopra. */

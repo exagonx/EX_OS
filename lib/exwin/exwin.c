@@ -124,6 +124,7 @@ static Terminale g_term[TERM_MAX];
 #define LISTA_VOCI_MAX   512
 #define LISTA_TESTO_MAX  64
 #define LISTA_RIGA_H     16
+#define LISTA_CAR_W       8    /* il passo del carattere: vedi ex_scrivi */
 
 typedef struct {
     unsigned int usato;
@@ -277,6 +278,80 @@ static Menu g_menu[MENU_MAX];
 
 
 static Oggetto g_ogg[OGGETTI_MAX];
+
+/* ! IL CONTROLLO CHE HA PRESO IL BOTTONE GIU' SE LO TIENE FINO AL SU, e non si
+ * ricerca a ogni movimento. Cercandolo sotto il puntatore, chi trascina la
+ * selezione oltre il bordo dell'area la vedrebbe passare al controllo accanto
+ * — e con essa il cursore. Il trascinamento appartiene a chi l'ha cominciato,
+ * che e' la stessa regola che il server applica alle finestre. */
+static ExFinestra g_trascinato = 0;
+
+/* ! LA RIGA SCELTA QUANDO IL DITO E' SCESO, per sapere al rilascio se il
+ * trascinamento l'ha cambiata. Senza, chi sceglie una voce trascinando invece
+ * che cliccando non lo direbbe a nessuno: la lista si vedrebbe cambiare la
+ * barra blu e l'applicazione resterebbe ferma su quella di prima. */
+static unsigned int g_tras_sel = 0;
+
+/* =============================================================================
+ * IL DOPPIO CLIC — riconosciuto qui, non dal server
+ *
+ * ! DUE CLIC SONO UN DOPPIO CLIC SOLO PER CHI LI INTERPRETA. Il server manda
+ * pressioni e rilasci: quanto vicini debbano essere per «contare come uno» e'
+ * una convenzione dell'interfaccia, non un fatto dell'hardware. Metterla nel
+ * server vorrebbe dire un messaggio in piu' per ogni clic in una mailbox
+ * profonda quattro, e una soglia unica imposta a tutti; qui costa due
+ * variabili e un confronto, e ogni programma ne ha una copia sua, perche' i
+ * dati di una libreria condivisa sono per processo (vedi il commento sugli
+ * appunti piu' su).
+ *
+ * ! MA L'OROLOGIO NON E' QUELLO DI QUI, ED E' LA PARTE CHE COSTA. La prima
+ * versione chiamava uptime_ms() al momento in cui l'evento veniva letto, e non
+ * funzionava mai proprio dove serviva: al primo clic su una directory il file
+ * manager LEGGE la directory — da un CD sono anche tre decimi di secondo — e
+ * quel lavoro finiva dentro l'intervallo misurato. Due clic svelti risultavano
+ * lenti, e dai pixel si vedeva solo «il doppio clic non fa niente». L'ora la
+ * scrive il server dentro l'evento, nell'istante in cui il clic e' avvenuto:
+ * vedi WinEvento in win_proto.h. Qui resta la SOGLIA, che e' una convenzione
+ * dell'interfaccia e sta bene dov'e'.
+ *
+ * La risoluzione vera di quell'ora e' il tick del PIT, 10 ms: dentro una
+ * soglia di 400 e' un errore del due e mezzo per cento, irrilevante rispetto
+ * alla mano di chi clicca.
+ *
+ * ! LA DISTANZA CONTA QUANTO IL TEMPO. Due clic rapidi in due punti lontani
+ * sono due decisioni diverse: chi sceglie una voce e subito dopo un'altra non
+ * ha chiesto di aprire niente. Quattro pixel e' quanto si muove un mouse
+ * mentre si preme di nuovo senza volerlo.
+ * ============================================================================= */
+#define DOPPIO_MS       400
+#define DOPPIO_PIX      4
+
+static unsigned int g_clic_ms = 0;
+static int          g_clic_x = 0, g_clic_y = 0;
+static ExFinestra   g_clic_ogg = 0;
+
+static int doppio_clic(ExFinestra c, int x, int y, unsigned int ora)
+{
+    int          dx  = x - g_clic_x;
+    int          dy  = y - g_clic_y;
+    int          si;
+
+    if (dx < 0) dx = -dx;
+    if (dy < 0) dy = -dy;
+
+    si = (g_clic_ogg == c) && (ora - g_clic_ms < DOPPIO_MS) &&
+         (dx <= DOPPIO_PIX) && (dy <= DOPPIO_PIX);
+
+    /* ! DOPO UN DOPPIO SI RICOMINCIA DA CAPO, e non e' pignoleria: senza
+     * azzerare, un terzo clic vicino diventerebbe un secondo doppio clic e un
+     * quarto un terzo — battere velocemente su una directory la aprirebbe piu'
+     * volte di quante se ne sono chieste. */
+    if (si) { g_clic_ogg = 0; g_clic_ms = 0; }
+    else    { g_clic_ogg = c; g_clic_ms = ora; g_clic_x = x; g_clic_y = y; }
+
+    return si;
+}
+
 static int     g_server = -1;
 static int     g_uscita = 0;
 static int     g_codice = 0;
@@ -1657,6 +1732,11 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
         o->h        = (int)r.altezza;
         o->pix      = (unsigned int *)z.virt;
         o->passo_px = r.larghezza;
+
+        /* ! DOVE E' FINITA LO DICE IL SERVER, e con EX_AUTO e' l'unico modo di
+         * saperlo: qui dentro x e y valgono ancora il -1 che si e' chiesto. */
+        o->x = (int)r.x;
+        o->y = (int)r.y;
     }
 
     return (ExFinestra)(i + 1);
@@ -1851,6 +1931,14 @@ static int rimappa(ExFinestra f, const WinCreata *r)
     o->h        = (int)r->altezza;
     o->passo_px = r->passo / 4;
 
+    /* ! ANCHE LA POSIZIONE ARRIVA QUI DENTRO, e va presa. Il server la mette
+     * nella ricevuta della misura perche' ridimensionare dall'angolo puo'
+     * spostare la finestra — se non ci stava piu' nello schermo. Buttandola
+     * via, la finestra saprebbe la misura nuova e la posizione vecchia, che e'
+     * lo stesso ricordo sbagliato che WIN_MSG_POSTA esiste per correggere. */
+    o->x = (int)r->x;
+    o->y = (int)r->y;
+
     if (vecchio) shm_chiudi((void *)vecchio);
 
     /* ! LA BARRA DEI MENU LA ALLARGA IL TOOLKIT, NON L'APPLICAZIONE. E' l'unico
@@ -1867,6 +1955,73 @@ static int rimappa(ExFinestra f, const WinCreata *r)
                 g_ogg[j].w = o->w;
     }
     return 1;
+}
+
+/* =============================================================================
+ * PUNTARE — dove cade il puntatore dentro un'area o una lista
+ *
+ * ! UNA FUNZIONE SOLA PER IL CLIC E PER IL TRASCINAMENTO. Erano lo stesso
+ * calcolo scritto due volte, e la seconda copia sarebbe nata gia' sbagliata:
+ * quella del clic aveva dovuto imparare, il 18 agosto, che origine() rende la
+ * posizione del PADRE e che la propria va sommata. Una copia nuova non lo
+ * saprebbe, e il difetto tornerebbe identico — clic su una riga, scelta di
+ * un'altra.
+ * ============================================================================= */
+static void area_punta(Oggetto *co, int x, int y)
+{
+    Area *A = area_di(co);
+    int   ox, oy;
+    unsigned int r, c;
+
+    if (!A) return;
+
+    origine(co, &ox, &oy);
+    ox += co->x;
+    oy += co->y;
+
+    /* Sopra la prima riga si punta la prima: trascinando all'insu' il cursore
+     * deve fermarsi in cima, non saltare in fondo per un numero negativo che
+     * diventa enorme da senza segno. */
+    r = ((int)y - oy - 2 < 0) ? A->top
+                              : A->top + (unsigned int)(((int)y - oy - 2) / AREA_RIGA_H);
+    c = ((int)x - ox - 2 < 0) ? A->left
+                              : A->left + (unsigned int)(((int)x - ox - 2) / AREA_CAR_W);
+
+    if (r >= A->n) r = A->n - 1;
+    A->cy = r;
+    A->cx = (c > area_lung(A, r)) ? area_lung(A, r) : c;
+    area_segui(A);
+}
+
+static void lista_punta(Oggetto *co, int y)
+{
+    Lista *L = lista_di(co);
+    int    ox, oy;
+    unsigned int r;
+
+    if (!L || L->n == 0) return;
+
+    origine(co, &ox, &oy);
+    oy += co->y;
+    (void)ox;
+
+    r = ((int)y - oy - 2 < 0) ? L->primo
+                              : L->primo + (unsigned int)(((int)y - oy - 2) / LISTA_RIGA_H);
+    if (r < L->n) { L->sel = r; lista_segui(L); }
+}
+
+/* In quale colonna della riga e' caduto il clic. Il testo comincia a +4: e'
+ * dove lo scrive il disegno della lista, e i due posti vanno d'accordo o il
+ * segno «+» dell'albero si preme un carattere piu' in la'. */
+static int lista_colonna(Oggetto *co, int x)
+{
+    int ox, oy, c;
+
+    origine(co, &ox, &oy);
+    ox += co->x;
+
+    c = (x - ox - 4) / LISTA_CAR_W;
+    return (c < 0) ? 0 : c;
 }
 
 static ExFinestra controllo_in(ExFinestra padre, int x, int y)
@@ -2214,8 +2369,10 @@ static int tasto_al_fuoco(ExFinestra f, unsigned int k)
         case '\r': {
             Oggetto *r = radice(o->padre);
             lista_segui(L);
-            /* L'ultimo argomento e' l'1 che EX_DA_INVIO legge: e' l'unico
-             * posto del toolkit che manda un comando venuto da un tasto. */
+            /* L'ultimo argomento e' il bit che EX_APRIRE legge. I bit della
+             * colonna restano a zero, ed e' cio' che fa dire -1 a EX_COL: da
+             * tastiera una colonna non c'e'. E' l'unico posto del toolkit che
+             * manda un comando venuto da un tasto. */
             if (r && r->proc)
                 r->proc(radice_h((ExFinestra)(o - g_ogg + 1)),
                         EXM_COMANDO, o->id, 1);
@@ -2342,6 +2499,21 @@ int ex_prendi_msg(ExMsg *m)
             return 1;
         }
 
+        /* ! LA POSIZIONE NUOVA SI PRENDE E NON SI DICE A NESSUNO: e' il
+         * toolkit che si tiene aggiornato, non una notizia per
+         * l'applicazione. Chi ha trascinato la finestra l'ha gia' vista
+         * muoversi; a chi scrive il programma serve solo che ex_sposta() e
+         * ex_misura() non partano da un ricordo sbagliato. */
+        if (meta.tipo == WIN_MSG_POSTA && meta.len >= sizeof(WinRegione)) {
+            WinRegione r;
+            Oggetto   *o;
+
+            memcpy(&r, buf, sizeof(r));
+            o = ogg(da_win_id(r.id));
+            if (o) { o->x = (int)r.x; o->y = (int)r.y; }
+            continue;
+        }
+
         if (meta.tipo != WIN_MSG_EVENTO || meta.len < sizeof(e)) continue;
 
         memcpy(&e, buf, sizeof(e));
@@ -2384,6 +2556,27 @@ int ex_prendi_msg(ExMsg *m)
             m->msg = EXM_TASTO;
             m->wp  = e.tasto;
             return 1;
+        /* ! IL TRASCINAMENTO VA AL CONTROLLO CHE HA PRESO IL BOTTONE, non a
+         * quello sotto il puntatore, e non sveglia l'applicazione: allargare
+         * una selezione e' lavoro del controllo, e un messaggio per ogni
+         * pixel percorso sarebbe un fiume per chi non lo guarda. */
+        case WIN_EV_MOUSE_MOSSO: {
+            Oggetto *co = ogg(g_trascinato);
+
+            if (co && co->classe == CL_AREA) {
+                area_punta(co, (int)e.x, (int)e.y);
+                ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                continue;
+            }
+            if (co && co->classe == CL_LISTA) {
+                lista_punta(co, (int)e.y);
+                ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                continue;
+            }
+            m->msg = EXM_MOUSE_MOSSO;
+            return 1;
+        }
+
         case WIN_EV_MOUSE_SU:
             /* ! IL PULSANTE TORNA SU QUANDO IL DITO SI ALZA, e non prima: il
              * comando parte gia' alla pressione, ma se il rilievo tornasse
@@ -2401,6 +2594,25 @@ int ex_prendi_msg(ExMsg *m)
                     }
                 if (cambiato) ex_procedura_base(f, EXM_DISEGNA, 0, 0);
             }
+
+            /* ! SCEGLIERE TRASCINANDO E' SCEGLIERE, e va detto all'applicazione
+             * come lo si dice per un clic — ma UNA VOLTA SOLA, al rilascio, e
+             * solo se la riga e' davvero cambiata. Dirlo a ogni riga
+             * attraversata vorrebbe dire, in un file manager, rileggere una
+             * directory per ogni voce sfiorata dal puntatore. */
+            {
+                Oggetto *co = ogg(g_trascinato);
+                Lista   *L  = co ? lista_di(co) : 0;
+
+                g_trascinato = 0;
+                if (L && L->sel != g_tras_sel) {
+                    m->msg = EXM_COMANDO;
+                    m->wp  = co->id;
+                    m->lp  = 0;         /* ne' aperto ne' su una colonna */
+                    return 1;
+                }
+            }
+
             m->msg = EXM_MOUSE_SU;
             return 1;
         case WIN_EV_MOUSE_GIU: {
@@ -2410,6 +2622,7 @@ int ex_prendi_msg(ExMsg *m)
              * guarda l'id del pulsante, non le coordinate. */
             ExFinestra c;
             Oggetto *co;
+            int      doppio;
 
             /* ! IL MENU GUARDA IL CLIC PRIMA DI TUTTI, perche' una tendina
              * aperta COPRE i controlli: un clic dentro la tendina cade sopra
@@ -2429,6 +2642,10 @@ int ex_prendi_msg(ExMsg *m)
 
             c  = controllo_in(f, (int)e.x, (int)e.y);
             co = ogg(c);
+
+            /* Si chiede SEMPRE, anche quando la risposta non serve: e' la
+             * chiamata stessa che si segna il clic per la volta dopo. */
+            doppio = doppio_clic(c, (int)e.x, (int)e.y, e.tempo);
 
             /* ! UN PULSANTE NON SI PRENDE LA TASTIERA, e la differenza si vede
              * usando il file manager: premuto «Su» col mouse, le frecce non
@@ -2454,64 +2671,46 @@ int ex_prendi_msg(ExMsg *m)
              * riceve come EXM_COMANDO con l'id della lista — lo stesso
              * messaggio dell'Invio, perche' sono la stessa decisione presa in
              * due modi. Chi vuole distinguere «ho scelto» da «ho aperto»
-             * guarda se il comando arriva due volte di fila; oggi il server
-             * non manda il doppio clic. */
+             * guarda EX_APRIRE(lp): il doppio clic lo accende come l'Invio. */
             if (co && co->classe == CL_AREA) {
                 Area *A = area_di(co);
-                int ox, oy;
 
-                if (A) {
-                    unsigned int r, c;
+                area_punta(co, (int)e.x, (int)e.y);
 
-                    /* ! origine() RENDE LA POSIZIONE DEL PADRE, NON LA PROPRIA,
-                     * e chi la usa aggiunge la sua: e' cosi' che la usano il
-                     * disegno e la ricerca del controllo sotto il puntatore.
-                     * Qui mancava, e il clic veniva diviso come se l'area
-                     * cominciasse in cima alla finestra — nell'editor
-                     * significava battere su una riga e vederne scelta un'altra
-                     * piu' su, di tante quante ne stanno nello spazio sopra
-                     * l'area. */
-                    origine(co, &ox, &oy);
-                    ox += co->x;
-                    oy += co->y;
+                /* ! IL CLIC POSA L'ANCORA E TOGLIE LA SELEZIONE DI PRIMA, e il
+                 * trascinamento la allarga da li'. E' l'unica sequenza che non
+                 * stupisce: chi clicca ha smesso di essere interessato a cio'
+                 * che aveva scelto prima. */
+                if (A) { A->sel = 1; A->ax = A->cx; A->ay = A->cy; }
 
-                    r = A->top  + (unsigned int)(((int)e.y - oy - 2) / AREA_RIGA_H);
-                    c = A->left + (unsigned int)(((int)e.x - ox - 2) / AREA_CAR_W);
-                    if (r >= A->n) r = A->n - 1;
-                    A->cy = r;
-                    A->cx = (c > area_lung(A, r)) ? area_lung(A, r) : c;
-                    area_segui(A);
-                }
+                g_trascinato = c;
                 ex_procedura_base(f, EXM_DISEGNA, 0, 0);
                 continue;
             }
 
             if (co && co->classe == CL_LISTA) {
-                Lista *L = lista_di(co);
-                int ox, oy;
+                Lista *L;
 
-                if (L) {
-                    unsigned int r;
-
-                    /* Stesso difetto dell'area, e stesso rimedio: senza la
-                     * propria posizione, un clic sul nome di una cartella ne
-                     * sceglieva una piu' in basso di quante righe stanno fra la
-                     * cima della finestra e la lista. */
-                    origine(co, &ox, &oy);
-                    ox += co->x;
-                    oy += co->y;
-                    (void)ox;
-
-                    r = L->primo + (unsigned int)(((int)e.y - oy - 2) / LISTA_RIGA_H);
-                    if (r < L->n) { L->sel = r; lista_segui(L); }
-                }
+                lista_punta(co, (int)e.y);
+                g_trascinato = c;
+                L = lista_di(co);
+                g_tras_sel = L ? L->sel : 0;
                 ex_procedura_base(f, EXM_DISEGNA, 0, 0);
                 m->msg = EXM_COMANDO;
                 m->wp  = co->id;
-                m->lp  = 0;             /* dal clic: vedi EX_DA_INVIO */
+                /* La colonna sta nei bit alti aumentata di uno, il «aprire»
+                 * nel bit zero: vedi EX_COL e EX_APRIRE in exwin.h. */
+                m->lp  = (long)(((lista_colonna(co, (int)e.x) + 1) << 8) |
+                                (doppio ? 1 : 0));
                 return 1;
             }
-            m->msg = EXM_MOUSE_GIU;
+
+            /* ! IL DOPPIO CLIC CHE NESSUN CONTROLLO HA INTERPRETATO ARRIVA
+             * ALL'APPLICAZIONE COM'E'. Sullo sfondo della scrivania, su
+             * un'immagine, su qualunque cosa un programma disegni da se': li'
+             * il toolkit non sa cosa voglia dire, e chi lo sa e' chi ha
+             * disegnato. */
+            m->msg = doppio ? EXM_DOPPIOCLIC : EXM_MOUSE_GIU;
             return 1;
         }
         default:

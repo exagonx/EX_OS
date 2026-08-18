@@ -71,6 +71,11 @@ const EXM_DISTRUGGI = &h0008
 const EXM_TERMFINITO= &h0009
 '' La finestra ha cambiato misura: EX_X(lp) e EX_Y(lp) sono quella nuova.
 const EXM_MISURA    = &h000A
+'' Il puntatore si e' mosso CON UN BOTTONE PREMUTO, e solo allora.
+const EXM_MOUSE_MOSSO = &h000B
+'' Due clic vicini nel tempo e nello spazio. Su una lista non arriva: diventa
+'' EXM_COMANDO con EX_APRIRE(lp) a 1, come l'Invio.
+const EXM_DOPPIOCLIC  = &h000C
 
 '' --- Gli stili ---------------------------------------------------------------
 const EX_TITOLO   = &h0001
@@ -102,6 +107,13 @@ const EX_OMBRA     = &h00000000
 '' Le coordinate impacchettate in lp
 #define EX_X(lp) (cint((lp) and &hFFFF))
 #define EX_Y(lp) (cint(((lp) shr 16) and &hFFFF))
+
+'' Per un EXM_COMANDO che viene da una LISTA: EX_APRIRE dice se si e' chiesto
+'' di aprire (Invio o doppio clic) invece di solo scegliere, EX_COL dice in
+'' quale colonna della riga e' caduto il clic, o -1 se veniva dalla tastiera.
+'' Vedi il commento lungo in exwin.h.
+#define EX_APRIRE(lp) (cint((lp) and 1))
+#define EX_COL(lp) (iif((((lp) shr 8) and &hFFFF) <> 0, cint((((lp) shr 8) and &hFFFF) - 1), -1))
 
 '' --- Creare ------------------------------------------------------------------
 ''

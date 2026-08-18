@@ -318,10 +318,12 @@ sarebbe da correggere in tutti i nodi ogni volta. Il livello, invece, non cambia
 mai — il primo nodo di livello n-1 che si incontra tornando indietro **e' per
 forza** il padre.
 
-! **IL CLIC MOSTRA, L'INVIO ESPANDE**, e per distinguerli e' servito un dato in
-piu' nel protocollo del toolkit: per un EXM_COMANDO che viene da una lista,
-`lp` adesso dice **come** e' arrivato — `EX_DA_INVIO(lp)`. Senza, l'albero si
-sarebbe aperto sotto le dita di chi voleva solo dare un'occhiata.
+! **IL CLIC MOSTRA, L'APERTURA ESPANDE**, e per distinguerli e' servito un dato
+in piu' nel protocollo del toolkit: per un EXM_COMANDO che viene da una lista,
+`lp` dice **come** e' arrivato — `EX_APRIRE(lp)`, che vale 1 per l'Invio e per
+il doppio clic. Senza, l'albero si sarebbe aperto sotto le dita di chi voleva
+solo dare un'occhiata. (Il nome era `EX_DA_INVIO` finche' l'Invio era l'unico
+modo di dire «apri»; col doppio clic sarebbe diventato una bugia.)
 
 Copia file, copia directory ricorsiva e ricerca. La destinazione si chiede con
 un dialogo nuovo, `ex_dlg_riga()` — **non e' ex_dlg_salva con un'altra
@@ -6980,3 +6982,100 @@ Commenti e testi in italiano. Con 4 GB di RAM: GCC si ricostruisce con -j1, il
 resto con -j2. Le prove sui nomi lunghi si fanno su ext2, non su FAT. Due
 qemu_drive.py insieme si cancellano l'output: serve EXOS_ISTANZA. Non
 ricostruire mentre una macchina QEMU e' accesa.
+
+
+# IL DOPPIO CLIC, E IL «+» DELL'ALBERO — 18 agosto 2026
+
+Chiesto: nel dialogo «Apri»/«Salva con nome», una directory scelta deve aprirsi
+con l'Invio o col doppio clic; nel file manager, il doppio clic deve aprire, e
+il segno «+» dell'albero deve rispondere a un clic solo.
+
+## Cosa dice `lp` adesso, per un EXM_COMANDO che viene da una lista
+
+    EX_APRIRE(lp)   1 = si e' chiesto di APRIRE: Invio, oppure doppio clic
+    EX_COL(lp)      la colonna del clic dentro la riga, in caratteri,
+                    oppure -1 se il comando e' arrivato dalla tastiera
+
+! **LA COLONNA SERVE A CHI DISEGNA DENTRO LA RIGA.** Una lista e' testo, e
+un'applicazione ci mette dei segni con un significato suo — il «+» e il «-»
+dell'albero. Senza sapere DOVE e' caduto il clic, quel segno si potrebbe solo
+guardare, mai premere. Il toolkit non sa cosa significhino quei caratteri, e non
+deve saperlo: dice la colonna e basta. Il file manager conta 2 caratteri per
+livello e sa che il segno del nodo di livello n sta nella colonna 2n.
+
+! **DALLA TASTIERA LA COLONNA E' -1, NON ZERO.** Zero e' una colonna vera, la
+prima: confonderla con «non c'e'» vorrebbe dire un Invio che si comporta come un
+clic sul primo carattere — cioe' sul segno, sempre.
+
+## Il doppio clic lo riconosce il TOOLKIT, ma con l'ora del SERVER
+
+Il server manda pressioni e rilasci; quanto vicini debbano essere due clic per
+contare come uno e' una convenzione dell'interfaccia, non un fatto
+dell'hardware. Sta percio' in `exwin.c` (400 ms, 4 pixel), non nel server: cosi'
+non c'e' un messaggio in piu' per ogni clic in una mailbox profonda quattro, e
+ogni programma ne ha una copia sua.
+
+! **MA L'OROLOGIO NON PUO' ESSERE QUELLO DEL CLIENT.** La prima versione
+chiamava `uptime_ms()` quando l'evento veniva LETTO. Fra un clic e l'altro pero'
+il client ha lavorato — al primo clic su una directory il file manager la LEGGE,
+e da un CD sono decimi di secondo — e quel lavoro finiva dentro l'intervallo
+misurato. Adesso `WinEvento` porta il campo `tempo`, scritto dal server
+nell'istante in cui l'evento nasce.
+
+## Il pomeriggio buttato, e cosa lo ha causato
+
+Per due ore la prova ha detto «il doppio clic non fa niente», e i pixel non
+mentivano: le due pressioni arrivavano alla macchina a **quattro secondi** l'una
+dall'altra. La colpa non era del sistema provato ma di `tools/qemu_drive.py`:
+`Monitor.drain()` legge dal socket del monitor finche' non va in **timeout**, e
+il timeout e' di **due secondi**. Ogni `mon.cmd()` costa percio' due secondi
+buoni, qualunque `settle` gli si passi.
+
+Misurato per gradi, e vale la pena tenerlo: strumentando il driver `kbd`, il
+server e il toolkit si e' visto che il pacchetto PS/2 arriva al driver, e da li'
+al server, in **10-30 ms** — la pila di EX-OS non c'entrava niente. `componi()`
+a 800x600 costa **0-20 ms**, non secondi: anche quel sospetto era sbagliato.
+
+Rimedio: `Monitor.rapidi()`, che scrive i comandi uno dietro l'altro **senza
+drenare** in mezzo. Nella sintassi degli argomenti, piu' comandi dentro un
+`mon:` solo separati da «;» passano di li'.
+
+## Cosa c'e' adesso per provarlo
+
+`tools/prova_doppioclic.sh` — due parti, tutte e due misurate nei pixel:
+
+  1. **il file manager**: clic semplice sceglie e non apre; doppio clic apre;
+     clic sul segno apre e richiude;
+  2. **il dialogo «Apri»** dell'editor: clic sceglie, Invio entra, «Su» risale,
+     doppio clic entra di nuovo — e l'elenco del passo 4 e' NUMERICAMENTE
+     identico a quello del passo 2.
+
+`tools/righe_lista.py` conta l'inchiostro riga per riga dentro una lista: riga
+vuota 0, riga con testo qualche centinaio, riga scelta qualche migliaio. Non
+riconosce i glifi e non deve.
+
+`tools/misura_finestre.py --client foto.ppm` da' l'angolo dell'area del client,
+come `--presa` da' la presa: da li' in poi le coordinate dei controlli sono
+numeri fissi che stanno nel sorgente dell'applicazione.
+
+! **UNA TRAPPOLA DA NON RIFARE**: `passi_a` in `prova_ridimensiona.sh` va in
+diagonale per quanto e' ALTO il bersaglio e poi in orizzontale. Con un bersaglio
+piu' in basso che a destra — il segno «+», vicino al bordo sinistro — la
+diagonale supera la x e il resto viene negativo; il ciclo bash gira zero volte e
+il puntatore finisce quaranta pixel piu' in la', dentro il nome invece che sul
+segno. Corretto in tutt'e due gli script.
+
+! **E LA DIRECTORY SU CUI SI PROVA DEVE AVERE DELLE FIGLIE.** L'albero mostra
+solo directory: aprire `/bin` — tanti file, nessuna directory — cambia il segno
+e nient'altro, cioe' qualche decina di pixel che si confondono col rumore.
+`/exwin` ha `bin` e `lib` dentro, e aprirla sposta in giu' tutto il resto.
+
+## Altre due cose sistemate per strada
+
+`rimappa()` in `exwin.c` buttava via la posizione che il server manda dentro
+`WIN_MSG_MISURATA`: la finestra sapeva la misura nuova e la posizione vecchia.
+
+Un trascinamento dentro una lista muoveva la barra della scelta senza dirlo a
+nessuno. Adesso al rilascio parte un EXM_COMANDO, ma **solo se la riga e'
+davvero cambiata**: dirlo a ogni riga attraversata vorrebbe dire, in un file
+manager, rileggere una directory per ogni voce sfiorata dal puntatore.

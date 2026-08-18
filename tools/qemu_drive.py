@@ -118,6 +118,24 @@ class Monitor:
         time.sleep(settle)
         return self.drain()
 
+    def rapidi(self, righe, passo=0.10):
+        """Piu' comandi al monitor uno dietro l'altro, VELOCI DAVVERO.
+
+        ! NON SI DRENA FRA UNO E L'ALTRO, ed e' tutto il punto. drain()
+        legge finche' il socket non va in timeout, e il timeout e' DUE
+        SECONDI: ogni cmd() costa percio' due secondi buoni, qualunque
+        `settle` gli si dia. Per un movimento non importa; per un DOPPIO
+        CLIC e' fatale — le due pressioni arrivano alla macchina a quattro
+        secondi l'una dall'altra, e nessuna soglia sensata le riconoscera'
+        mai come un doppio clic. Costato un pomeriggio: dai pixel si vedeva
+        solo «il doppio clic non funziona», e la colpa era di questo
+        attrezzo, non del sistema provato.
+        """
+        for r in righe:
+            self.sock.sendall((r + "\n").encode())
+            time.sleep(passo)
+        self.drain()
+
     def tasti(self, nomi):
         """Manda TASTI FISICI per nome QEMU, senza passare dalla KEYMAP.
 
@@ -251,8 +269,19 @@ def main():
             # alla shell. Serve a INIETTARE input dall'esterno — `mouse_move
             # 10 5`, `mouse_button 1` — cioe' a provare un driver di input
             # con numeri decisi qui e verificabili la' dentro.
+            # ! PIU' COMANDI IN UN `mon:` SOLO, separati da «;», e servono
+            # davvero: un DOPPIO CLIC e' due pressioni entro qualche decimo
+            # di secondo, e un `mon:` per conto suo ne costa PIU' DI DUE —
+            # non per il `settle`, ma perche' drain() aspetta il timeout del
+            # socket. Dentro un argomento solo si passa da rapidi(), che
+            # scrive e basta: un decimo di secondo l'uno, che e' quanto
+            # separa davvero due clic di una mano.
             if cmd.startswith("mon:"):
-                mon.cmd(cmd[4:], settle=0.25)
+                pezzi = [z.strip() for z in cmd[4:].split(";")]
+                if len(pezzi) == 1:
+                    mon.cmd(pezzi[0], settle=0.25)
+                else:
+                    mon.rapidi(pezzi)
             elif cmd.startswith("foto:"):
                 mon.cmd("screendump " + cmd[5:], settle=0.8)
             elif cmd.startswith("key:"):

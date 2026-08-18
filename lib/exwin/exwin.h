@@ -83,18 +83,54 @@ typedef long (*ExProcedura)(ExFinestra, unsigned int, unsigned int, long);
  * sicuro — ma i controlli sono ancora dove stavano, e rimetterli a posto e'
  * il lavoro dell'applicazione. Vedi ex_misura(). */
 #define EXM_MISURA      0x000A
+/* ! IL PUNTATORE SI E' MOSSO CON UN BOTTONE PREMUTO, e solo allora: un
+ * movimento a mano libera non arriva a nessuno. lp porta le coordinate come
+ * per EXM_MOUSE_GIU. Arriva a chi ha ricevuto il bottone giu' — anche quando
+ * il puntatore e' finito fuori dalla finestra: il trascinamento appartiene a
+ * chi l'ha cominciato. */
+#define EXM_MOUSE_MOSSO 0x000B
+/* ! DUE CLIC VICINI NEL TEMPO E NELLO SPAZIO, sullo stesso punto: e' il
+ * toolkit a riconoscerli, non il server — vedi il commento accanto a
+ * doppio_clic() in exwin.c. lp porta le coordinate come EXM_MOUSE_GIU.
+ *
+ * ! ARRIVA SOLO PER CIO' CHE IL TOOLKIT NON HA GIA' INTERPRETATO. Su una
+ * lista il doppio clic diventa EXM_COMANDO con EX_APRIRE(lp) a 1, che e' la
+ * stessa cosa che dice l'Invio: un'applicazione che gestisce l'Invio ha gia'
+ * il doppio clic senza scrivere una riga. */
+#define EXM_DOPPIOCLIC  0x000C
 
 #define EX_X(lp)        ((int)((lp) & 0xFFFF))
 #define EX_Y(lp)        ((int)(((lp) >> 16) & 0xFFFF))
 
-/* ! PER UN EXM_COMANDO CHE VIENE DA UNA LISTA, lp DICE **COME**: 1 se e'
- * arrivato dall'Invio, 0 dal clic. Sono due desideri diversi e vanno distinti
- * — chi scorre una lista col mouse o con le frecce vuole guardare, chi batte
- * Invio ha chiesto di ENTRARE. Senza questo, un file manager con un albero lo
+/* =============================================================================
+ * ! PER UN EXM_COMANDO CHE VIENE DA UNA LISTA, lp DICE **COME**, e sono due
+ * cose distinte impacchettate insieme.
+ *
+ *   EX_APRIRE(lp)  1 = si e' chiesto di APRIRE: Invio, oppure doppio clic.
+ *                  0 = si e' solo scelto, guardando.
+ *   EX_COL(lp)     la colonna del clic dentro la riga, contata in caratteri,
+ *                  oppure -1 se il comando e' arrivato dalla tastiera.
+ *
+ * ! SCEGLIERE E APRIRE SONO DUE DESIDERI DIVERSI. Chi scorre una lista col
+ * mouse o con le frecce vuole guardare; chi batte Invio o fa doppio clic ha
+ * chiesto di ENTRARE. Senza la distinzione, un file manager con un albero lo
  * aprirebbe sotto le dita di chi voleva solo dare un'occhiata.
  *
- * Per un pulsante lp non vuol dire niente: un pulsante lo si preme e basta. */
-#define EX_DA_INVIO(lp) ((lp) != 0)
+ * ! LA COLONNA SERVE A CHI DISEGNA DENTRO LA RIGA. Una lista e' testo, e
+ * un'applicazione ci puo' mettere dei segni con un significato loro — il «+»
+ * e il «-» dell'albero del file manager. Senza sapere DOVE e' caduto il clic,
+ * quel segno si potrebbe solo guardare, mai premere. Il toolkit non sa cosa
+ * significhino quei caratteri, e non deve saperlo: dice la colonna e basta.
+ *
+ * ! DALLA TASTIERA LA COLONNA NON C'E', e si dice -1 invece di zero: zero e'
+ * una colonna vera, la prima, e confonderla con «non c'e'» vorrebbe dire che
+ * l'Invio si comporta come un clic sul primo carattere della riga.
+ *
+ * Per un pulsante lp non vuol dire niente: un pulsante lo si preme e basta.
+ * ============================================================================= */
+#define EX_APRIRE(lp)   ((int)((lp) & 1))
+#define EX_COL(lp)      ((((lp) >> 8) & 0xFFFF) ? \
+                         (int)((((lp) >> 8) & 0xFFFF) - 1) : -1)
 
 /* --- Gli stili ----------------------------------------------------------- */
 #define EX_TITOLO       0x0001

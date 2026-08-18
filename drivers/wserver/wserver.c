@@ -168,6 +168,26 @@ static int g_fuoco = -1;        /* indice della finestra che riceve i tasti */
 static int g_ridim = -1;                /* indice, -1 = nessuno */
 static unsigned int g_rw = 0, g_rh = 0; /* la misura che si sta scegliendo */
 
+/* =============================================================================
+ * ! IL MOVIMENTO SI MANDA SOLO CON UN BOTTONE PREMUTO, E SOLO A CHI HA PRESO
+ * IL BOTTONE GIU'. Sono due limiti insieme, e ognuno toglie un guaio:
+ *
+ *   - mandare OGNI movimento vorrebbe dire riempire la mailbox di un client
+ *     fermo — e' profonda quattro messaggi — per una cosa che quasi nessuna
+ *     applicazione guarda. Col bottone premuto invece qualcuno sta facendo
+ *     qualcosa apposta, e il flusso finisce quando alza il dito;
+ *   - mandarlo a CHI STA SOTTO IL PUNTATORE vorrebbe dire che chi trascina la
+ *     selezione fuori dalla propria finestra la vede finire in un'altra. Il
+ *     trascinamento appartiene a chi l'ha cominciato, dall'inizio alla fine.
+ *
+ * ! E IL BOTTONE SU VA ALLO STESSO, ANCHE FUORI DALLA SUA FINESTRA. Prima si
+ * mandava solo se il puntatore era ancora sopra una finestra: chi premeva
+ * dentro e rilasciava fuori non riceveva mai il «su», e restava a trascinare
+ * per sempre una selezione che nessuno aveva chiuso.
+ * ============================================================================= */
+static int g_giu_su = -1;               /* chi ha ricevuto il bottone giu' */
+static int g_px_prec = 0, g_py_prec = 0;
+
 /* ! SI RICOMPONE SOLO QUANDO QUALCOSA E' CAMBIATO, e non e' un'ottimizzazione
  * prematura: e' una CORREZIONE. Ricomponendo a ogni giro, 480000 pixel per
  * fotogramma tenevano il processo occupato tanto a lungo che una richiesta di
@@ -709,6 +729,11 @@ static void manda_evento(const Finestra *f, unsigned int tipo,
     e.bottoni = bottoni;
     e.tasto   = tasto;
 
+    /* ! L'ORA SI PRENDE QUI, DOVE L'EVENTO NASCE. Prenderla dove viene letto
+     * misurerebbe anche il tempo che il client ha passato a fare altro: vedi
+     * il commento su WinEvento in win_proto.h. */
+    e.tempo   = uptime_ms();
+
     /* ! SE IL CLIENT NON RACCOGLIE, NON SI INSISTE. La mailbox e' profonda
      * quattro messaggi: un client fermo la riempirebbe, e da li' in poi ogni
      * ipc_send fallirebbe. Un evento perso e' meno grave di un server che si
@@ -842,6 +867,7 @@ static void kbd_tasto(unsigned int k)
         e.x = 0; e.y = 0;
         e.bottoni = 0;
         e.tasto   = k;          /* gia' tradotto: NON e' uno scancode */
+        e.tempo   = uptime_ms();
         (void)ipc_send(f->pid, WIN_MSG_EVENTO, &e, sizeof(e));
     }
 }
@@ -924,8 +950,19 @@ static void mouse_agisci(void)
     int idx;
 
     if (g_trascino >= 0) {
-        if (su) { g_trascino = -1; }
-        else {
+        if (su) {
+            /* ! LA POSIZIONE NUOVA SI DICE AL CLIENT, UNA VOLTA, AL RILASCIO.
+             * Dirla a ogni pixel sarebbe un messaggio per movimento del mouse,
+             * per una cosa che serve solo quando ci si e' fermati. */
+            WinRegione w;
+
+            memset(&w, 0, sizeof(w));
+            w.id = g_fin[g_trascino].id;
+            w.x  = g_fin[g_trascino].x;
+            w.y  = g_fin[g_trascino].y;
+            (void)ipc_send(g_fin[g_trascino].pid, WIN_MSG_POSTA, &w, sizeof(w));
+            g_trascino = -1;
+        } else {
             g_fin[g_trascino].x = (unsigned int)(g_px - g_tr_dx);
             g_fin[g_trascino].y = (unsigned int)(g_py - g_tr_dy);
             g_sporco = 1;
@@ -957,6 +994,26 @@ static void mouse_agisci(void)
             g_ridim = -1;
             ridimensiona(idx2, g_rw, g_rh);
         }
+        g_bottoni_prec = g_bottoni;
+        return;
+    }
+
+    /* Il trascinamento dentro l'area di un client: si consegna a chi ha preso
+     * il bottone giu', finche' non lo rilascia. */
+    if (!giu && !su && (g_bottoni & MOUSE_BTN_SIN) && g_giu_su >= 0 &&
+        (g_px != g_px_prec || g_py != g_py_prec)) {
+        if (g_fin[g_giu_su].usata)
+            manda_evento(&g_fin[g_giu_su], WIN_EV_MOUSE_MOSSO,
+                         g_px, g_py, g_bottoni, 0);
+        g_px_prec = g_px;
+        g_py_prec = g_py;
+    }
+
+    if (su && g_giu_su >= 0) {
+        if (g_fin[g_giu_su].usata)
+            manda_evento(&g_fin[g_giu_su], WIN_EV_MOUSE_SU,
+                         g_px, g_py, g_bottoni, 0);
+        g_giu_su = -1;
         g_bottoni_prec = g_bottoni;
         return;
     }
@@ -996,11 +1053,12 @@ static void mouse_agisci(void)
             g_tr_dx = g_px - (int)g_fin[idx].x;
             g_tr_dy = g_py - (int)g_fin[idx].y;
         } else {
+            g_giu_su  = idx;
+            g_px_prec = g_px;
+            g_py_prec = g_py;
             manda_evento(&g_fin[idx], WIN_EV_MOUSE_GIU, g_px, g_py,
                          g_bottoni, 0);
         }
-    } else if (su && dove == 0) {
-        manda_evento(&g_fin[idx], WIN_EV_MOUSE_SU, g_px, g_py, g_bottoni, 0);
     }
 
     g_bottoni_prec = g_bottoni;
@@ -1101,6 +1159,8 @@ static void crea(unsigned int pid, const WinCrea *c)
     r.byte  = z.byte;
     r.passo = r.larghezza * 4;
     r.giro  = 0;
+    r.x     = g_fin[i].x;
+    r.y     = g_fin[i].y;
 
     if (g_verboso)
         printf("wserver: finestra %u per il PID %u, %ux%u «%s»\n",
@@ -1147,6 +1207,8 @@ static void dire_misura(Finestra *f)
     r.larghezza = f->w;
     r.altezza   = f->h;
     r.giro      = f->giro;
+    r.x         = f->x;
+    r.y         = f->y;
 
     (void)ipc_send(f->pid, WIN_MSG_MISURATA, &r, sizeof(r));
 }
@@ -1231,6 +1293,7 @@ static void distruggi(int idx)
     g_n_ordine = j;
     if (g_trascino == idx) g_trascino = -1;
     if (g_ridim == idx) g_ridim = -1;
+    if (g_giu_su == idx) g_giu_su = -1;
 
     /* ! CHI SE NE VA SI PORTA VIA IL FUOCO, e va ridato a qualcuno. Senza,
      * g_fuoco resterebbe l'indice di uno slot azzerato: i tasti finirebbero a
