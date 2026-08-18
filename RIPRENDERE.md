@@ -12,7 +12,7 @@ seriale e USB — tastiera compresa, hub compresi.
 
 ## COSA E' COMMITTATO
 
-    6520c76  "I pty, e Ctrl+C che finalmente morde"
+    fec9307  "listen e accept: il TCP impara ad aspettare"
 
 ! **`gitupdate.sh` FA `git add .` E UN COMMIT SOLO**: `messaggio-commit.txt`
 deve coprire tutto quello che si e' fatto dall'ultimo commit, non l'ultima
@@ -30,12 +30,16 @@ pezzo di kernel nuovo, e non e' piu' lavoro di rifinitura.
 
 ### Cose che vogliono un pezzo di kernel nuovo
 
- 1. **Un server telnet** — e adesso e' solo assemblaggio: `listen` e `accept`
-    ci sono, i pty ci sono, `login` sa gia' autenticare e scendere con
-    `setuid`. Restano da mettere insieme: accettare, avviare `login` su un pty,
-    dare la shell, ripulire alla chiusura. **Prova tutto l'impianto di una
-    sessione remota senza crittografia** — e se qualcosa non torna, si vede in
-    chiaro.
+ 1. **SSH**, che a questo punto e' «lo stesso impianto piu' la crittografia»:
+    l'impianto della sessione e' provato da `telnetd`, e quello che manca e' la
+    matematica. **Si sceglie la strada senza bignum**: Curve25519 per lo scambio
+    e ChaCha20-Poly1305 per il resto sono aritmetica a 32 bit su numeri di
+    lunghezza fissa, mentre RSA vuole un modulo esponenziale su interi da 2048
+    bit — una libreria di grandi numeri da scrivere e mantenere. Con SHA-256
+    gia' in casa, la prima strada e' qualche centinaio di righe di matematica
+    chiusa; la seconda e' un sottosistema.
+    **E niente SSH prima che i permessi siano solidi**: vedi «cosa resta
+    aperto» nell'audit del 17 agosto.
  2. **Ridimensionare le finestre** — la zona condivisa ha misura fissa, quindi
     vuole una stretta di mano ordinata. `WIN_EV_MISURA` e' gia' nel protocollo.
 
@@ -251,6 +255,136 @@ copiare, non da reinventare.
 ! **E OGNI NOME NUOVO VA IN `exwin_esporta.c` E NELLO STUB.** Aggiungere una
 funzione alla libreria e dimenticarsi lo stub da' un simbolo che non si
 risolve — e il messaggio lo dice, col nome, ma solo a chi lo esegue.
+
+# Una sessione remota vera: telnetd (18 agosto 2026)
+
+    la macchina che serve                    quella che si collega
+
+    telnetd -v                               telnet 10.0.0.1
+    telnetd: in ascolto sulla porta 23,      Connesso.
+             /bin/login
+    telnetd: solo da 10.0.0.0/24
+    telnetd: qualcuno si e' collegato
+             da 10.0.0.2 (connessione 2)
+    telnetd: sessione aperta, /bin/login
+             ha il PID 15
+                                             EX-OS — accesso
+                                             utente: _
+
+    e con la shell diretta (-s):
+                                             ex-os:/> id
+                                             uid=0(root) gid=0
+                                             ex-os:/> uname
+
+    con «da = 192.168.1.0/24» in configurazione:
+    telnetd: rifiutato: 10.0.0.2 non e' fra   Connessione chiusa dal server.
+             gli indirizzi ammessi
+
+! **NON E' UN PEZZO NUOVO: E' L'ASSEMBLAGGIO DI QUATTRO GIA' PROVATI.** listen e
+accept, il pty con la sua disciplina di linea, `login` che autentica e scende
+con `setuid`, e l'interruzione. `telnetd` mette in fila i byte fra una
+connessione e uno pseudo-terminale, e non fa nient'altro — se qualcosa non
+funziona, il difetto e' in uno dei quattro.
+
+! **ED E' IN CHIARO, CON TUTTO QUELLO CHE COMPORTA.** Sta qui perche' PROVA
+L'IMPIANTO — accettare, dare un terminale, autenticare, ripulire — senza la
+crittografia in mezzo: se qualcosa non torna, si vede in chiaro. Su una rete di
+cui non ci si fida non si accende.
+
+## La configurazione: /boot/telnetd.cfg
+
+    porta   = 23
+    shell   = /bin/login        (oppure /bin/sh, che entra senza chiedere)
+    utenti  = root, mario       (vuoto = chiunque abbia una password valida)
+    nega    = root              (vince sulla riga sopra)
+    da      = 10.0.0.0/24       (indirizzi singoli o reti; vuoto = da ovunque)
+
+! **SI RILEGGE A OGNI CONNESSIONE, non solo all'avvio**, e non e' uno spreco: il
+caso che conta e' quello di chi si accorge che sta entrando qualcuno che non
+dovrebbe. Correggere il file e vedere la regola in vigore alla connessione dopo,
+senza fermare il servizio, e' cio' che rende un elenco di permessi utile
+davvero.
+
+! **UNA LISTA VUOTA VUOL DIRE «NESSUN FILTRO», che e' il valore permissivo.**
+L'alternativa — vuoto uguale «nessuno» — sembra piu' prudente e in pratica e'
+peggio: chi accende il servizio senza configurazione si trova un programma che
+rifiuta tutti senza un indizio sul perche', e la prima cosa che fa e' spegnere i
+controlli.
+
+! **E LA RIGA DI COMANDO VINCE SUL FILE.** E' cio' che permette di provare una
+configurazione senza scriverla, e di aprire una porta diversa per un istante
+senza toccare quella di sempre.
+
+## Chi fa rispettare che cosa, e perche' proprio li'
+
+! **GLI INDIRIZZI LI GUARDA telnetd, GLI UTENTI LI GUARDA login.** Quando il
+servitore decide che programma lanciare, un nome utente non e' ancora stato
+battuto: solo `login` sa chi ha bussato. Passargli le liste per argomento
+(`-c`, `-n`) le rende anche visibili in un elenco dei processi — chi guarda vede
+quale regola sta girando. E un domani un server ssh passera' le stesse due liste
+alla stessa funzione.
+
+! **IL CONTROLLO SUGLI UTENTI VIENE DOPO LA PASSWORD, ED E' VOLUTO.** Fatto
+prima direbbe a chi prova quali nomi sono ammessi senza che ne conosca nemmeno
+uno: si vedrebbe la differenza fra «non sei nella lista» e «password sbagliata».
+Cosi' invece chi non e' ammesso paga lo stesso prezzo di chi sbaglia la
+password, e non impara niente.
+
+! **E A CHI VIENE RIFIUTATO PER L'INDIRIZZO NON SI SPIEGA NIENTE**: si chiude e
+basta. Un «non sei nella lista» direbbe che dietro quella porta c'e' qualcosa e
+che il filtro e' per indirizzo. Nel registro locale invece si scrive per esteso.
+
+! **IL CONFRONTO E' SUI BIT PER GLI INDIRIZZI E SUL NOME INTERO PER GLI
+UTENTI.** «10.0.0.7» dentro «10.0.0.70», e «mario» dentro «mariolino», sono veri
+come testo e falsi come identita': un controllo d'accesso che si sbaglia in quel
+verso lascia entrare chi non deve. Ventitre prove a terra coprono proprio quei
+casi, `/0` e `/32` compresi.
+
+## Le due cose che il protocollo telnet obbliga a fare
+
+! **IL CLIENT VA MESSO IN MODO CARATTERE, O SI VEDE DOPPIO.** Appena collegato
+fa l'eco da se' e manda una riga per volta; ma l'eco qui la fa gia' la
+disciplina del pty. Si negoziano ECHO e SUPPRESS GO AHEAD per dirgli «ci penso
+io, mandami i tasti». E si risponde SEMPRE, anche di no: un client che chiede e
+non riceve risposta richiede, e due che si aspettano restano fermi.
+
+! **UN INVIO SUL CAVO E' DUE BYTE, E IL SECONDO NON VA CONSEGNATO.** Il
+protocollo dice che un CR viaggia seguito da LF o da NUL. Passarli tutt'e due
+vuol dire una riga vuota dopo ogni comando — e con NUL, un byte zero all'inizio
+della riga SEGUENTE. Il sintomo era **«comando non trovato: id» su un id battuto
+giusto**, con un carattere invisibile attaccato.
+
+## Il difetto che ha portato a galla: l'autoexec girava due volte
+
+La prima sessione remota ha risposto con «Avvio automatico: accendo la rete...»
+e una fila di `ipc_register` fallite con -17.
+
+! **LA SHELL EREDITA LA CONSOLE DI CHI L'HA LANCIATA**, e l'autoexec si eseguiva
+«solo sulla console 0» — che dentro telnetd e' vera di riflesso. Succedeva anche
+nel terminale in finestra, e li' si era scambiato per rumore dell'avvio.
+
+! **IL CRITERIO GIUSTO E' «HO UN pty», NON «SONO REMOTA»**: l'autoexec e' l'avvio
+DEL SISTEMA, e il sistema si avvia su una console vera. Dentro un pty c'e'
+sempre qualcun altro che quel lavoro l'ha gia' fatto.
+
+## E login impara a lavorare senza tastiera
+
+! **DENTRO UNO PSEUDO-TERMINALE LA TASTIERA NON C'ENTRA.** Il driver kbd serve
+la tastiera FISICA di una console: chiedergli il modo raw da dentro un telnet
+vorrebbe dire spegnere l'eco a chi sta seduto davanti alla macchina, e non a chi
+sta battendo la password dall'altra parte del cavo. Su un pty l'eco la fa la
+disciplina, e si spegne dicendolo a lei — un byte per volta, con l'asterisco
+stampato da login come ha sempre fatto.
+
+## Cosa manca, dichiarato
+
+    una sessione per volta   telnetd ne serve una e poi torna ad accettare.
+                             Servirne piu' d'una vuole uno spawn per sessione,
+                             ed e' un cambiamento suo
+    NAWS                     il ridimensionamento della finestra del client non
+                             si tratta: la misura resta 80x24
+    la crittografia          e' il prossimo lavoro, ed e' «lo stesso impianto
+                             piu' la matematica»: Curve25519 e ChaCha20-Poly1305
 
 # listen e accept: il TCP impara ad aspettare (18 agosto 2026)
 

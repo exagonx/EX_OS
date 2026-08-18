@@ -97,6 +97,7 @@ typedef uint32_t        size_t;
 #define SYS_CONSOLE_SETFG 232   /* dichiara il processo in primo piano */
 #define SYS_PTY_CTL       252   /* lo stesso, ma per uno pseudo-terminale */
 #define PTY_CTL_FG          1   /* arg = chi Ctrl+C deve interrompere */
+#define PTY_CTL_LEGGI_MISURA 4  /* rende la misura, o -ENOTTY se non e' un pty */
 
 /* Opzioni di waitpid — identiche a kernel/include/syscall.h */
 #define WNOHANG         0x0001
@@ -3282,6 +3283,19 @@ static void esegui_autoexec(void)
 
     /* Solo la console 0: vedi il commento qui sopra. */
     if (sh_console_info(&ci) != 0 || ci.mia != 0) return;
+
+    /* ! E MAI DENTRO UNO PSEUDO-TERMINALE, che e' la console 0 di riflesso: una
+     * shell in un terminale in finestra o in una sessione telnet eredita la
+     * console di chi l'ha lanciata, e senza questo controllo rieseguirebbe
+     * l'avvio del sistema — riaccendendo driver gia' accesi. Si e' visto in
+     * tutt'e due i posti: nella finestra e via rete arrivava «Avvio
+     * automatico: accendo la rete...» seguito da una fila di ipc_register
+     * fallite con -17.
+     *
+     * ! IL CRITERIO E' «HO UN pty», NON «SONO REMOTA»: l'autoexec e' l'avvio
+     * DEL SISTEMA, e il sistema si avvia su una console vera. Dentro un pty c'e'
+     * sempre qualcun altro che ha gia' fatto quel lavoro. */
+    if (syscall3(SYS_PTY_CTL, 0, PTY_CTL_LEGGI_MISURA, 0) >= 0) return;
 
     if (sh_getenv_kernel("autoexec", nome, sizeof(nome)) < 0) {
         sh_strcpy(nome, AUTOEXEC_PREDEFINITO, sizeof(nome));

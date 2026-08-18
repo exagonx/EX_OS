@@ -169,7 +169,7 @@ PROGRAMMI_FLOPPY := shell hello id chmod ls mem stack disk libctest fdisk mkfs t
 # `make verifica-programmi` — che le due ISO eseguono da sole — confronta
 # le liste con il contenuto di bin/ e si ferma dicendo quali mancano.
 # =============================================================================
-PROGRAMMI_CD := netdetect nettest ping ipcfg dhcp host tcptest tcpserv ftp telnet xcp winprova exwincmd
+PROGRAMMI_CD := netdetect nettest ping ipcfg dhcp host tcptest tcpserv ftp telnet telnetd xcp winprova exwincmd
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
 PROGRAMMI_EXWIN := exwin_so exdlg_so eximg_so pm filemgr edit term
 
@@ -1885,6 +1885,28 @@ $(TCPSERV_BIN): $(TCPSERV_SRC) $(TCPSERV_LD) $(IP_PROTO) $(RETE_SRC) $(RETE_HDR)
 
 .PHONY: tcpserv
 tcpserv: dirs $(TCPSERV_BIN)
+
+# --- /bin/telnetd (solo CD) ---------------------------------------------------
+# Il servitore: accetta una connessione, apre un pty, ci mette login o la
+# shell, e fa passare i byte. Non e' un pezzo nuovo — e' l'assemblaggio di
+# listen/accept, del pty e di login, che esistono gia' e sono gia' provati.
+TELNETD_SRC := bin/telnetd/telnetd.c
+TELNETD_BIN := $(BUILD_BIN_CD)/telnetd
+TELNETD_LD  := bin/telnetd/telnetd.ld
+
+$(TELNETD_BIN): $(TELNETD_SRC) $(TELNETD_LD) $(IP_PROTO) $(RETE_SRC) $(RETE_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/telnetd ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(TELNETD_SRC) -o $(BUILD_OBJ)/telnetd_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(RETE_SRC) -o $(BUILD_OBJ)/telnetd_rete.o
+	$(CC) -m32 -c $(LIBC_START)                        -o $(BUILD_OBJ)/telnetd_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(TELNETD_LD) \
+	    $(BUILD_OBJ)/telnetd_start.o $(BUILD_OBJ)/telnetd_main.o \
+	    $(BUILD_OBJ)/telnetd_rete.o $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] telnetd compilato: $@"
+
+.PHONY: telnetd
+telnetd: dirs $(TELNETD_BIN)
 
 # --- /bin/ftp (solo CD) -------------------------------------------------------
 # Client FTP, modo PASSIVO soltanto: il modo attivo vuole che il client si
@@ -3811,7 +3833,7 @@ ISOX_IMG  := $(DIST_DIR)/exos.iso
 # dimenticano. Le variabili sono definite piu' sopra, accanto alle rispettive
 # regole, e qui sono tutte gia' note perche' questa riga make la legge dopo.
 BINARI_SOLO_CD := $(NETDETECT_BIN) $(NETTEST_BIN) $(PING_BIN) $(IPCFG_BIN) \
-                  $(TCPSERV_BIN) \
+                  $(TCPSERV_BIN) $(TELNETD_BIN) \
                   $(DHCP_BIN) $(HOST_BIN) $(TCPTEST_BIN) $(FTP_BIN) \
                   $(TELNET_BIN) $(XCP_BIN) $(WINPROVA_BIN) $(EXWINCMD_BIN)
 # ! QUESTA LISTA E' LA DIPENDENZA DELL'ISO, E VA TENUTA ALLINEATA A
@@ -3870,6 +3892,7 @@ $(ISOX_IMG): Makefile $(FLOPPY_IMG) boot/autoexec.sh $(DRIVER_SOLO_CD_OUT) \
              $(EXWIN_OUT) $(EXWIN_APPLIST) $(PROVA_PNG) $(PROVA_ICO) $(PROVA_JPG) \
              $(BINARI_SOLO_CD) $(ISO_MKISO) README.md README.en.md \
              gpl-2.0.txt boot/kernel.cfg boot/kernel.txt boot/help.txt \
+             boot/telnetd.cfg \
              | verifica-programmi verifica-dipendenze-cd
 	@echo "=== Creazione CD di EX-OS (avviabile) ==="
 	@mkdir -p $(DIST_DIR)
@@ -3916,6 +3939,9 @@ $(ISOX_IMG): Makefile $(FLOPPY_IMG) boot/autoexec.sh $(DRIVER_SOLO_CD_OUT) \
 	@cp boot/kernel.txt $(ISOX_ROOT)/boot/kernel.txt
 	@# Il testo che /bin/help sfoglia: senza, `help` non ha niente da dire.
 	@cp boot/help.txt $(ISOX_ROOT)/boot/help.txt
+	@# La configurazione del servitore telnet: porta, shell, chi entra e da
+	@# dove. Va sul CD perche' il servizio si accende da li'.
+	@cp boot/telnetd.cfg $(ISOX_ROOT)/boot/telnetd.cfg
 	@# L'autoexec: accende la rete da solo. Vedi il file per la via
 	@# d'uscita se un comando qui dentro si blocca.
 	@cp boot/autoexec.sh $(ISOX_ROOT)/boot/autoexec.sh

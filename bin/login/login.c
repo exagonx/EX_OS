@@ -161,10 +161,63 @@ static unsigned int kbd_tasto(void)
     }
 }
 
-/* Rende la lunghezza, o -1 se la modalita' raw non e' disponibile. */
+/* -----------------------------------------------------------------------------
+ * ! DENTRO UNO PSEUDO-TERMINALE LA TASTIERA NON C'ENTRA, e questa e' la strada
+ * che permette a login di funzionare su una sessione remota. Il driver kbd
+ * serve la tastiera FISICA di una console: chiedergli il modo raw da dentro un
+ * telnet vorrebbe dire spegnere l'eco a chi sta seduto davanti alla macchina,
+ * e non a chi sta battendo la password dall'altra parte del cavo.
+ *
+ * Su un pty l'eco la fa la disciplina di linea, e si spegne dicendolo a lei.
+ * Rende 1 se stdin e' un pty (e allora il modo e' stato impostato), 0 se no.
+ * --------------------------------------------------------------------------- */
+static int pty_modo(unsigned int modo)
+{
+    return pty_ctl(0, PTY_CTL_MODO, modo) == 0;
+}
+
+static int pty_c_e(void)
+{
+    return pty_ctl(0, PTY_CTL_LEGGI_MISURA, 0) >= 0;
+}
+
+/* La password su un pty: modo grezzo e senza eco, un byte per volta, e
+ * l'asterisco lo stampiamo noi — esattamente come si fa con la tastiera. */
+static int leggi_password_pty(char *dst, int max)
+{
+    int len = 0;
+
+    if (!pty_modo(0)) return -1;        /* grezzo, senza eco */
+
+    for (;;) {
+        unsigned char c;
+        int n = (int)read(0, &c, 1);
+
+        if (n <= 0) { pty_modo(PTY_CANONICO | PTY_ECO); return -1; }
+
+        if (c == '\n' || c == '\r') {
+            printf("\n");
+            dst[len] = '\0';
+            pty_modo(PTY_CANONICO | PTY_ECO);
+            return len;
+        }
+        if (c == '\b' || c == 127u) {
+            if (len > 0) { len--; printf("\b \b"); }
+            continue;
+        }
+        if (c >= 32u && c < 127u && len < max - 1) {
+            dst[len++] = (char)c;
+            printf("*");
+        }
+    }
+}
+
+/* Rende la lunghezza, o -1 se non c'e' modo di leggerla senza mostrarla. */
 static int leggi_password(char *dst, int max)
 {
     int len = 0;
+
+    if (pty_c_e()) return leggi_password_pty(dst, max);
 
     kbd_modo(KBD_MODE_RAW);
     if (g_kbd_pid <= 0) return -1;
@@ -572,6 +625,58 @@ static void avvia_shell(const char *utente, unsigned int uid, unsigned int gid)
     prendi_console();     /* la shell l'aveva presa: se la riprende login */
 }
 
+/* -----------------------------------------------------------------------------
+ * Chi puo' entrare — le liste che arrivano da chi ci ha lanciati
+ *
+ * ! LE FA RISPETTARE login E NON telnetd, perche' e' qui che si sa chi ha
+ * bussato: quando il servitore decide che programma lanciare, un nome utente
+ * non e' ancora stato battuto. E vale per QUALUNQUE chiamante — un domani un
+ * server ssh passera' le stesse due liste alla stessa funzione.
+ *
+ * ! IL CONFRONTO E' SUL NOME INTERO, non su un pezzo: «mario» dentro
+ * «mariolino» e' vero come sottostringa e falso come utente, e un controllo
+ * d'accesso che si sbaglia in quel verso fa entrare chi non deve.
+ *
+ * ! E IL DINIEGO VINCE SUL PERMESSO. Chi scrive due liste che si contraddicono
+ * si aspetta la lettura prudente, ed e' anche l'unica che permette «tutti
+ * tranne root» senza elencare tutti gli altri.
+ * --------------------------------------------------------------------------- */
+static const char *g_concessi = 0;
+static const char *g_negati    = 0;
+
+static int in_lista(const char *lista, const char *nome)
+{
+    const char *p = lista;
+    unsigned int n = (unsigned int)strlen(nome);
+
+    if (lista == 0 || lista[0] == '\0') return 0;
+
+    while (*p) {
+        const char *inizio;
+        unsigned int len;
+
+        while (*p == ' ' || *p == ',' || *p == '\t') p++;
+        if (*p == '\0') break;
+
+        inizio = p;
+        while (*p && *p != ',') p++;
+
+        len = (unsigned int)(p - inizio);
+        while (len > 0 && (inizio[len-1] == ' ' || inizio[len-1] == '\t')) len--;
+
+        if (len == n && strncmp(inizio, nome, n) == 0) return 1;
+    }
+    return 0;
+}
+
+/* Rende 1 se `nome` puo' entrare. Senza liste, chiunque abbia la password. */
+static int utente_ammesso(const char *nome)
+{
+    if (g_negati && in_lista(g_negati, nome)) return 0;
+    if (g_concessi && g_concessi[0]) return in_lista(g_concessi, nome);
+    return 1;
+}
+
 int main(int argc, char **argv)
 {
     char nome[NOME_MAX], pass[PASS_MAX];
@@ -601,6 +706,14 @@ int main(int argc, char **argv)
             prendi_console();
             primo_utente();
             return 0;
+        }
+        if (strcmp(argv[i], "-c") == 0 && i + 1 < argc) {
+            g_concessi = argv[++i];             /* solo questi */
+            continue;
+        }
+        if (strcmp(argv[i], "-n") == 0 && i + 1 < argc) {
+            g_negati = argv[++i];               /* questi mai */
+            continue;
         }
         if (argv[i][0] != '-') {
             strncpy(g_shell, argv[i], sizeof(g_shell) - 1);
@@ -632,6 +745,17 @@ int main(int argc, char **argv)
         if (trova_utente(nome, sale, imp, &uid, &gid) == 0) {
             impronta_di(sale, pass, prova);
             if (strcmp(prova, imp) == 0) {
+                /* ! IL CONTROLLO VIENE DOPO LA PASSWORD, ED E' VOLUTO. Fatto
+                 * prima direbbe a chi prova quali nomi sono ammessi senza che
+                 * ne conosca nemmeno uno: si vedrebbe subito la differenza fra
+                 * «non sei nella lista» e «password sbagliata». Cosi' invece
+                 * chi non e' ammesso paga lo stesso prezzo di chi sbaglia la
+                 * password, e non impara niente. */
+                if (!utente_ammesso(nome)) {
+                    printf("\n  Accesso negato.\n");
+                    sleep(2);
+                    continue;
+                }
                 printf("\n");
                 avvia_shell(nome, uid, gid);
                 /* La shell e' finita: si ricomincia. E' `exit` che torna
