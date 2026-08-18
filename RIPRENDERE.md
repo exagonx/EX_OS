@@ -12,7 +12,7 @@ seriale e USB — tastiera compresa, hub compresi.
 
 ## COSA E' COMMITTATO
 
-    53517e2  "Il dialogo diventa una domanda, e il modale morde"
+    6520c76  "I pty, e Ctrl+C che finalmente morde"
 
 ! **`gitupdate.sh` FA `git add .` E UN COMMIT SOLO**: `messaggio-commit.txt`
 deve coprire tutto quello che si e' fatto dall'ultimo commit, non l'ultima
@@ -30,11 +30,12 @@ pezzo di kernel nuovo, e non e' piu' lavoro di rifinitura.
 
 ### Cose che vogliono un pezzo di kernel nuovo
 
- 1. **`listen` e `accept` nel driver IP** — il TCP oggi e' solo cliente, e
-    senza quei due nessun servizio puo' accettare una connessione. E' il primo
-    mattone di una sessione remota, e adesso e' l'unico che manca prima di
-    poterne provare una: i pty ci sono (vedi «I pty, e Ctrl+C che finalmente
-    morde»), quindi dopo `accept` c'e' gia' tutto per un telnet.
+ 1. **Un server telnet** — e adesso e' solo assemblaggio: `listen` e `accept`
+    ci sono, i pty ci sono, `login` sa gia' autenticare e scendere con
+    `setuid`. Restano da mettere insieme: accettare, avviare `login` su un pty,
+    dare la shell, ripulire alla chiusura. **Prova tutto l'impianto di una
+    sessione remota senza crittografia** — e se qualcosa non torna, si vede in
+    chiaro.
  2. **Ridimensionare le finestre** — la zona condivisa ha misura fissa, quindi
     vuole una stretta di mano ordinata. `WIN_EV_MISURA` e' gia' nel protocollo.
 
@@ -250,6 +251,114 @@ copiare, non da reinventare.
 ! **E OGNI NOME NUOVO VA IN `exwin_esporta.c` E NELLO STUB.** Aggiungere una
 funzione alla libreria e dimenticarsi lo stub da' un simbolo che non si
 risolve — e il messaggio lo dice, col nome, ma solo a chi lo esegue.
+
+# listen e accept: il TCP impara ad aspettare (18 agosto 2026)
+
+    due macchine EX-OS e un cavo virtuale:
+
+      la prima                          la seconda
+      ipcfg -a 10.0.0.1                 ipcfg -a 10.0.0.2
+      tcpserv 7                         tcptest 10.0.0.1 7 ciao-da-exos
+
+      tcpserv: in ascolto sulla porta 7
+      tcpserv: nessuno si e' collegato   <- la scadenza di accetta funziona
+      tcpserv: connessione 2 accettata   <- la stretta di mano passiva e' finita
+      tcpserv: rimbalzati 16 byte
+                                        connessa (id 1)
+                                        mandati 16 byte
+                                        ciao-da-exos   <- tornato indietro
+
+      e sulla stessa macchina:
+      tcpserv: ascolto sulla porta 7 rifiutato (-98):
+               c'e' gia' qualcuno in ascolto li'
+
+! **FINO A IERI IL TCP DI EX-OS SAPEVA SOLO CHIAMARE.** C'era `tcp_apri()`,
+cioe' connect, e nient'altro: nessun programma poteva ASPETTARE una
+connessione, e quindi **nessun servizio di rete poteva esistere** — ne' telnet,
+ne' un giorno ssh. Era il primo mattone, e adesso c'e'.
+
+## L'ascoltatore non e' una connessione
+
+! **OCCUPA UNO SLOT MA NON HA UN ALTRO CAPO**: niente numeri di sequenza, non
+si legge e non si scrive. Sta nella stessa tabella delle connessioni per non
+avere una seconda tabella con le sue regole di vita, e le operazioni che non
+hanno senso lo rifiutano guardando lo stato. Chiuderlo lo libera e basta: non
+c'e' nessuno a cui mandare un FIN, e tenerlo `S_MORTA` come una connessione
+vera terrebbe occupata la porta finche' qualcuno non legge dati che non
+esistono.
+
+! **E LE CONNESSIONI CHE HA GENERATO GLI SOPRAVVIVONO.** Sono gia' loro, non
+sue: chiudere l'ascoltatore vuol dire smettere di accettarne di nuove, non
+buttare giu' chi sta parlando.
+
+## La coda sta dalla parte sbagliata, apposta
+
+! **E' LA CONNESSIONE NATA DA UN SYN A RICORDARE CHI ASCOLTAVA, non
+l'ascoltatore a tenere una lista.** Una coda dentro l'ascoltatore vorrebbe dire
+un vettore con una lunghezza da scegliere, e la scelta sbagliata sarebbe
+silenziosa: le connessioni in eccesso sparirebbero senza che nessuno lo dica.
+Cosi' il limite e' uno solo — la tabella — ed e' lo stesso che si vede gia'
+rifiutando una connessione in uscita.
+
+! **E L'ATTESA DI `accetta` STA SULL'ASCOLTATORE**, non su una connessione:
+quella che arrivera' non esiste ancora, e quando nascera' sara' lei a cercare
+li' chi la stava aspettando.
+
+## Le tre cose che si scoprono scrivendo la stretta di mano passiva
+
+! **IL MAC SI PRENDE DAL FRAME ARRIVATO, E NON SI FA UN ARP.** Chi ci ha appena
+parlato ha per forza un MAC valido — e' il mittente del pacchetto che stiamo
+leggendo. Chiedere un ARP qui vorrebbe dire un'attesa dentro la stretta di
+mano, che e' proprio cio' che `tcp_apri` evita rifiutando con `-EAGAIN`.
+
+! **UN SYN RIPETUTO VUOL DIRE CHE IL NOSTRO SYN+ACK E' ANDATO PERSO**, e va
+rimandato. E' l'unica ritrasmissione che questo lato fa, e senza di lei una
+connessione persa in apertura non si riprende: il cliente ritrasmette, noi
+restiamo zitti, e lui rinuncia.
+
+! **SENZA POSTO SI LASCIA CADERE IL SYN E NON SI RISPONDE NIENTE.** Chi bussa
+lo ritrasmette da se' — e' TCP che lo fa — e se nel frattempo si e' liberato
+uno slot entra al secondo tentativo. Rispondere RST vorrebbe dire dirgli «non
+c'e' nessuno», che e' falso.
+
+## Si consegnano solo connessioni gia' aperte
+
+! **MAI QUELLE A META' STRETTA DI MANO.** Chi riceve un id si aspetta di
+poterci scrivere subito: consegnare una `S_SYN_RICEV` vorrebbe dire un id
+valido su cui la prima scrittura finisce nel vuoto — e il difetto si vedrebbe
+dall'altra parte, non qui. E se il segmento che completa la stretta porta gia'
+dei dati, quelli non si buttano: succede, con un cliente che scrive subito.
+
+## Le connessioni passano da quattro a otto
+
+! **UN ASCOLTATORE OCCUPA UNO SLOT SENZA ESSERE UNA CONNESSIONE**: un servitore
+con due clienti collegati ne usa gia' tre, e con quattro in tutto il primo che
+bussa mentre gli altri parlano si sente rifiutare. Otto per 8 KB di buffer sono
+64 KB.
+
+## `/bin/tcpserv`, e perche' fa l'eco
+
+Sta a `listen`/`accept` come `tcptest` sta a `connect`: quando un servizio di
+rete non funzionera', la domanda sara' se sia rotto il servizio o l'ascolto.
+
+! **UN'ECO PROVA TRE COSE IN UN COLPO SOLO**: che la stretta di mano passiva e'
+finita davvero, che i dati arrivano nel verso giusto, e che la risposta esce
+dalla connessione GIUSTA. Sono esattamente le tre che listen e accept devono
+garantire.
+
+## Dove siamo, sulla strada della sessione remota
+
+    listen e accept       fatti, oggi
+    pty                   fatti, oggi (vedi la voce sopra)
+    un server telnet      il prossimo: accettare, avviare login, scendere con
+                          setuid, dare la shell su un pty, ripulire alla
+                          chiusura. Tutti i pezzi ci sono.
+    ssh                   dopo, ed e' «lo stesso impianto piu' la
+                          crittografia»: Curve25519 e ChaCha20-Poly1305, non
+                          RSA — vedi «Multiutenza remota e SSH»
+
+! **E NIENTE SSH PRIMA CHE I PERMESSI SIANO SOLIDI**, che resta vero e scritto
+li' dal 17 agosto.
 
 # I pty, e Ctrl+C che finalmente morde (18 agosto 2026)
 

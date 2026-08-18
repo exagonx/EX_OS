@@ -72,6 +72,26 @@
 #define IP_MSG_TCP_CHIUDI 12   /* IpTcpRif   -> IP_MSG_ESITO */
 #define IP_MSG_TCP_STATO  13   /* IpTcpRif   -> IP_MSG_TCP_INFO */
 
+/* -----------------------------------------------------------------------------
+ * Il lato SERVITORE — dal 18 agosto 2026
+ *
+ * ! FINO A IERI IL TCP DI EX-OS SAPEVA SOLO CHIAMARE. C'era tcp_apri(), cioe'
+ * connect, e nient'altro: nessun programma poteva ASPETTARE una connessione, e
+ * quindi nessun servizio di rete poteva esistere — ne' telnet, ne' un giorno
+ * ssh. Questi due messaggi sono quel mattone.
+ *
+ * ASCOLTA prende una porta e rende l'id di un ascoltatore, che non e' una
+ * connessione: non ci si legge e non ci si scrive, gli si chiede ACCETTA.
+ * ACCETTA rende l'id di una connessione vera, gia' aperta, da usare come se
+ * fosse uscita da tcp_apri.
+ *
+ * ! SONO DUE MESSAGGI E NON UNO, come su Unix, e la ragione e' che un
+ * ascoltatore serve MOLTE connessioni: se ascolta e accetta fossero la stessa
+ * cosa, ogni cliente in arrivo vorrebbe una porta nuova.
+ * --------------------------------------------------------------------------- */
+#define IP_MSG_TCP_ASCOLTA 14  /* IpTcpAscolta -> IP_MSG_ESITO (id, o -errno) */
+#define IP_MSG_TCP_ACCETTA 15  /* IpTcpAccetta -> IP_MSG_ESITO (id, o -errno) */
+
 /* --- Risposte (stack -> client) ----------------------------------------- */
 #define IP_MSG_ESITO     128
 #define IP_MSG_STATO_R   129
@@ -239,9 +259,14 @@ typedef struct {
  * consegna.
  * ============================================================================= */
 
-/* Quante connessioni insieme. Quattro bastano a un client FTP (una di
- * controllo e una dati) con margine; ognuna costa i suoi due buffer. */
-#define IP_TCP_CONNESSIONI  4
+/* Quante connessioni insieme. Quattro bastavano a un client FTP (una di
+ * controllo e una dati) con margine; ognuna costa i suoi due buffer.
+ *
+ * ! DA OTTO DA QUANDO C'E' L'ASCOLTO, e il motivo e' che un ascoltatore
+ * OCCUPA UNO SLOT senza essere una connessione: un servitore con due clienti
+ * collegati ne usa gia' tre, e con quattro in tutto il primo che bussa mentre
+ * gli altri parlano si sente rifiutare. Otto per 8 KB di buffer sono 64 KB. */
+#define IP_TCP_CONNESSIONI  8
 
 /* Stati visibili a un client. Sono meno di quelli veri della macchina a
  * stati: a chi usa la connessione interessa sapere se puo' scrivere, se
@@ -263,6 +288,21 @@ typedef struct {
 typedef struct {
     unsigned int id;
 } IpTcpRif;
+
+/* La porta su cui mettersi in ascolto. */
+typedef struct {
+    unsigned int porta;
+} IpTcpAscolta;
+
+/* ! LA SCADENZA E' OBBLIGATORIA E NON PUO' ESSERE INFINITA. Un servitore che
+ * aspetta per sempre dentro una singola richiesta IPC e' un servitore che non
+ * puo' fare altro — nemmeno accorgersi che l'utente vuole fermarlo. Chi vuole
+ * aspettare a lungo richiama accetta in un ciclo, ed e' quel ciclo il posto
+ * giusto per guardare anche il resto. */
+typedef struct {
+    unsigned int id;             /* l'ascoltatore */
+    unsigned int timeout_ms;     /* 0 = non aspettare: c'e' o non c'e' */
+} IpTcpAccetta;
 
 /* Intestazione di IP_MSG_TCP_INVIA e di IP_MSG_TCP_DATI: i byte seguono
  * nello stesso messaggio. */

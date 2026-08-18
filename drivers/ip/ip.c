@@ -721,6 +721,13 @@ static int  prossimo_salto(const unsigned char *dest, unsigned char *hop);
 #define S_ULTIMO_ACK 5   /* entrambi i FIN mandati, aspetto l'ultimo ACK */
 #define S_MORTA      6   /* finita o azzerata: resta finche' il client legge */
 
+/* ! L'ASCOLTATORE OCCUPA UNO SLOT MA NON E' UNA CONNESSIONE: non ha un altro
+ * capo, non ha numeri di sequenza, non si legge e non si scrive. Tenerlo nella
+ * stessa tabella evita una seconda tabella con le sue regole di vita — e la
+ * ricerca in tratta_tcp lo salta da sola, perche' non ha porta remota. */
+#define S_ASCOLTA    7   /* aspetta SYN su porta_loc */
+#define S_SYN_RICEV  8   /* SYN ricevuto, SYN+ACK mandato, aspetto l'ACK */
+
 typedef struct {
     int           stato;
     unsigned char ip[4];
@@ -743,6 +750,15 @@ typedef struct {
     unsigned int  tentativi;
 
     unsigned int  proprietario;  /* chi l'ha aperta */
+
+    /* ! LA CONNESSIONE NATA DA UN SYN RICORDA CHI ASCOLTAVA, e non il
+     * contrario: una coda dentro l'ascoltatore vorrebbe dire un vettore con
+     * una lunghezza da scegliere, e la scelta sbagliata sarebbe silenziosa —
+     * le connessioni in eccesso sparirebbero senza che nessuno lo dica. Cosi'
+     * invece il limite e' uno solo, quello della tabella, ed e' lo stesso che
+     * si vede rifiutando una connessione in uscita. */
+    unsigned int  ascoltatore;   /* id dell'ascoltatore che l'ha generata */
+    unsigned int  accettata;     /* 1 dopo che un ACCETTA l'ha consegnata */
     unsigned int  attesa_pid;    /* chi aspetta una risposta */
     unsigned int  attesa_tipo;   /* IP_MSG_TCP_APRI o IP_MSG_TCP_RICEVI */
     unsigned int  attesa_scade;
@@ -780,7 +796,9 @@ static unsigned int tcp_id(const Conn *c)
 static unsigned int tcp_stato_pubblico(const Conn *c)
 {
     switch (c->stato) {
-    case S_SYN_INVIA:  return IP_TCP_IN_APERTURA;
+    case S_SYN_INVIA:
+    case S_SYN_RICEV:  return IP_TCP_IN_APERTURA;
+    case S_ASCOLTA:    return IP_TCP_IN_APERTURA;   /* aspetta qualcuno */
     case S_APERTA:     return IP_TCP_APERTA;
     case S_FIN_MIO:
     case S_FIN_SUO:
@@ -975,6 +993,50 @@ static void tratta_tcp(const unsigned char *f, unsigned int ihl, unsigned int to
         break;
     }
 
+    /* --- nessuna connessione combacia: e' qualcuno che bussa? --- */
+    if (c == NULL && (flag & TCP_SYN) && !(flag & TCP_ACK)) {
+        Conn *asc = NULL, *nuova = NULL;
+
+        for (i = 0; i < IP_TCP_CONNESSIONI; i++)
+            if (g_tcp[i].stato == S_ASCOLTA && g_tcp[i].porta_loc == porta_loc) {
+                asc = &g_tcp[i];
+                break;
+            }
+
+        if (asc == NULL) { g_st.scartati++; return; }
+
+        for (i = 0; i < IP_TCP_CONNESSIONI; i++)
+            if (g_tcp[i].stato == S_LIBERA) { nuova = &g_tcp[i]; break; }
+
+        /* ! SENZA POSTO SI LASCIA CADERE IL SYN, e non si risponde niente: chi
+         * bussa lo ritrasmette da se' — e' TCP che lo fa — e se nel frattempo
+         * si e' liberato uno slot entra al secondo tentativo. Rispondere RST
+         * vorrebbe dire dirgli «non c'e' nessuno», che e' falso. */
+        if (nuova == NULL) { g_st.scartati++; return; }
+
+        memset(nuova, 0, sizeof(*nuova));
+        memcpy(nuova->ip, ip + 12, 4);
+        memcpy(nuova->mac, f + 6, 6);   /* il MAC del mittente, gia' in mano */
+        nuova->porta_loc    = porta_loc;
+        nuova->porta_rem    = porta_rem;
+        nuova->proprietario = asc->proprietario;
+        nuova->ascoltatore  = tcp_id(asc);
+        nuova->rcv_nxt      = seq + 1u;
+        nuova->snd_una      = 1000u + (uptime_ms() & 0xFFFFu);
+        nuova->snd_nxt      = nuova->snd_una;
+        nuova->finestra     = finestra;
+        nuova->stato        = S_SYN_RICEV;
+
+        /* ! IL MAC SI PRENDE DAL FRAME ARRIVATO, E NON SI FA UN ARP. Chi ci ha
+         * appena parlato ha per forza un MAC valido — e' il mittente del
+         * pacchetto che stiamo leggendo. Chiedere un ARP qui vorrebbe dire
+         * un'attesa dentro la stretta di mano, che e' proprio cio' che
+         * tcp_apri evita rifiutando con -EAGAIN. */
+        tcp_manda(nuova, TCP_SYN | TCP_ACK, NULL, 0);
+        nuova->snd_nxt = nuova->snd_una + 1u;   /* il SYN conta uno */
+        return;
+    }
+
     /* Segmento per una connessione che non esiste. Non si risponde con un
      * RST: sarebbe la cosa giusta su un vero stack, ma qui significherebbe
      * comporre un segmento senza avere una connessione da cui prendere gli
@@ -985,6 +1047,59 @@ static void tratta_tcp(const unsigned char *f, unsigned int ihl, unsigned int to
     if (flag & TCP_RST) { tcp_chiudi_dura(c, -ECONNRESET); return; }
 
     c->finestra = finestra;
+
+    /* --- apertura passiva: aspettavamo l'ACK del nostro SYN+ACK --- */
+    if (c->stato == S_SYN_RICEV) {
+        /* ! UN SYN RIPETUTO VUOL DIRE CHE IL NOSTRO SYN+ACK E' ANDATO PERSO, e
+         * va rimandato: e' l'unica ritrasmissione che questo lato fa, e senza
+         * di lei una connessione persa in apertura non si riprende piu' — il
+         * cliente ritrasmette, noi restiamo zitti, e lui rinuncia. */
+        if ((flag & TCP_SYN) && !(flag & TCP_ACK)) {
+            unsigned int salva = c->snd_nxt;
+
+            c->snd_nxt = c->snd_una;
+            tcp_manda(c, TCP_SYN | TCP_ACK, NULL, 0);
+            c->snd_nxt = salva;
+            return;
+        }
+
+        if (!(flag & TCP_ACK)) return;
+        if (ack != c->snd_nxt) return;
+
+        c->snd_una = ack;
+        c->stato   = S_APERTA;
+        c->rto_scade = 0;
+
+        /* ! CHI ASPETTAVA IN ACCETTA VA SVEGLIATO SUBITO. L'attesa e' registrata
+         * sull'ASCOLTATORE, non su questa connessione: quando il cliente ha
+         * chiesto accetta, questa non esisteva ancora. */
+        {
+            Conn *asc = tcp_da_id(c->ascoltatore, c->proprietario);
+
+            if (asc != NULL && asc->attesa_pid != 0 &&
+                asc->attesa_tipo == IP_MSG_TCP_ACCETTA) {
+                IpEsito e;
+
+                e.codice     = (int)tcp_id(c);
+                c->accettata = 1;
+                ipc_send(asc->attesa_pid, IP_MSG_ESITO, &e, sizeof(e));
+                asc->attesa_pid = 0;
+            }
+        }
+
+        /* Se il segmento portava gia' dei dati (succede: un cliente che
+         * scrive subito), non si buttano. */
+        if (n > 0 && seq == c->rcv_nxt) {
+            unsigned int q = (n < TCP_BUF - c->rx_len) ? n : TCP_BUF - c->rx_len;
+
+            memcpy(c->rx + c->rx_len, seg + off, q);
+            c->rx_len  += q;
+            c->rcv_nxt += q;
+            tcp_manda(c, TCP_ACK, NULL, 0);
+            tcp_consegna(c);
+        }
+        return;
+    }
 
     /* --- apertura: aspettavamo SYN+ACK --- */
     if (c->stato == S_SYN_INVIA) {
@@ -1196,6 +1311,87 @@ static void tcp_apri(unsigned int cliente, const IpTcpApri *a)
                       (a->timeout_ms ? a->timeout_ms : TCP_APERTURA_MS);
 }
 
+/* -----------------------------------------------------------------------------
+ * ASCOLTA — mettersi in attesa su una porta
+ *
+ * ! UN ASCOLTATORE NON E' UNA CONNESSIONE, e chi lo riceve non deve poterlo
+ * usare come tale: non ha un altro capo da cui leggere. Ha lo stesso tipo di
+ * identificativo perche' la tabella e' una sola, e tcp_invia/tcp_ricevi lo
+ * rifiutano guardando lo stato.
+ * --------------------------------------------------------------------------- */
+static void tcp_ascolta(unsigned int cliente, const IpTcpAscolta *a)
+{
+    Conn        *c = NULL;
+    unsigned int i;
+
+    if (a->porta == 0 || a->porta > 65535u) {
+        rispondi_esito(cliente, -EINVAL);
+        return;
+    }
+
+    /* ! DUE ASCOLTATORI SULLA STESSA PORTA NON POSSONO ESISTERE, e il secondo
+     * deve saperlo: senza questo controllo il SYN andrebbe al primo che si
+     * trova scorrendo la tabella, cioe' a caso. */
+    for (i = 0; i < IP_TCP_CONNESSIONI; i++)
+        if (g_tcp[i].stato == S_ASCOLTA && g_tcp[i].porta_loc == a->porta) {
+            rispondi_esito(cliente, -EADDRINUSE);
+            return;
+        }
+
+    for (i = 0; i < IP_TCP_CONNESSIONI; i++)
+        if (g_tcp[i].stato == S_LIBERA) { c = &g_tcp[i]; break; }
+
+    if (c == NULL) { rispondi_esito(cliente, -ENFILE); return; }
+
+    memset(c, 0, sizeof(*c));
+    c->stato        = S_ASCOLTA;
+    c->porta_loc    = a->porta;
+    c->proprietario = cliente;
+
+    rispondi_esito(cliente, (int)tcp_id(c));
+}
+
+/* -----------------------------------------------------------------------------
+ * ACCETTA — prendere la prossima connessione gia' aperta
+ *
+ * ! SI CONSEGNANO SOLO CONNESSIONI GIA' APERTE, mai quelle a meta' stretta di
+ * mano. Chi riceve un id si aspetta di poterci scrivere subito; consegnare una
+ * S_SYN_RICEV vorrebbe dire un id valido su cui la prima write finisce nel
+ * vuoto — e il difetto si vedrebbe dall'altra parte, non qui.
+ * --------------------------------------------------------------------------- */
+static void tcp_accetta(unsigned int cliente, const IpTcpAccetta *a)
+{
+    Conn        *asc = tcp_da_id(a->id, cliente);
+    unsigned int i;
+
+    if (asc == NULL || asc->stato != S_ASCOLTA) {
+        rispondi_esito(cliente, -EINVAL);
+        return;
+    }
+
+    for (i = 0; i < IP_TCP_CONNESSIONI; i++) {
+        Conn *c = &g_tcp[i];
+
+        if (c->accettata)                  continue;
+        if (c->ascoltatore != a->id)       continue;
+        if (c->stato != S_APERTA)          continue;
+
+        c->accettata = 1;
+        rispondi_esito(cliente, (int)tcp_id(c));
+        return;
+    }
+
+    /* Niente di pronto: o si dice subito, o si aspetta fino alla scadenza. */
+    if (a->timeout_ms == 0) { rispondi_esito(cliente, -EAGAIN); return; }
+
+    /* ! L'ATTESA STA SULL'ASCOLTATORE, non su una connessione: quella che
+     * arrivera' non esiste ancora, e quando nascera' sara' lei a cercare qui
+     * chi la stava aspettando. */
+    asc->attesa_pid   = cliente;
+    asc->attesa_tipo  = IP_MSG_TCP_ACCETTA;
+    asc->attesa_scade = uptime_ms() + a->timeout_ms;
+}
+
 static void tcp_invia(unsigned int cliente, const unsigned char *payload,
                       unsigned int len_msg)
 {
@@ -1250,6 +1446,23 @@ static void tcp_chiudi(unsigned int cliente, const IpTcpRif *r)
     Conn *c = tcp_da_id(r->id, cliente);
 
     if (c == NULL) { rispondi_esito(cliente, -EBADF); return; }
+
+    /* ! CHIUDERE UN ASCOLTATORE LO LIBERA E BASTA: non c'e' nessuno a cui
+     * mandare un FIN, e lasciarlo S_MORTA come una connessione vera terrebbe
+     * occupata la porta finche' qualcuno non legge dati che non esistono. Le
+     * connessioni che ha generato restano vive: sono gia' loro, non sue. */
+    if (c->stato == S_ASCOLTA) {
+        c->stato = S_LIBERA;
+        if (c->attesa_pid != 0) {
+            IpEsito e;
+
+            e.codice = -ECONNABORTED;
+            ipc_send(c->attesa_pid, IP_MSG_ESITO, &e, sizeof(e));
+            c->attesa_pid = 0;
+        }
+        rispondi_esito(cliente, 0);
+        return;
+    }
 
     if (c->stato == S_APERTA || c->stato == S_FIN_SUO) {
         /* Il FIN va DOPO i dati in coda: il suo numero di sequenza e'
@@ -1807,6 +2020,26 @@ static void servi(void)
                     if (meta.len >= sizeof(a)) {
                         memcpy(&a, payload, sizeof(a));
                         tcp_apri(meta.sender_pid, &a);
+                    } else rispondi_esito(meta.sender_pid, -EINVAL);
+                    break;
+                }
+
+                case IP_MSG_TCP_ASCOLTA: {
+                    IpTcpAscolta a;
+
+                    if (meta.len >= sizeof(a)) {
+                        memcpy(&a, payload, sizeof(a));
+                        tcp_ascolta(meta.sender_pid, &a);
+                    } else rispondi_esito(meta.sender_pid, -EINVAL);
+                    break;
+                }
+
+                case IP_MSG_TCP_ACCETTA: {
+                    IpTcpAccetta a;
+
+                    if (meta.len >= sizeof(a)) {
+                        memcpy(&a, payload, sizeof(a));
+                        tcp_accetta(meta.sender_pid, &a);
                     } else rispondi_esito(meta.sender_pid, -EINVAL);
                     break;
                 }

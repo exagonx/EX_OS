@@ -169,7 +169,7 @@ PROGRAMMI_FLOPPY := shell hello id chmod ls mem stack disk libctest fdisk mkfs t
 # `make verifica-programmi` — che le due ISO eseguono da sole — confronta
 # le liste con il contenuto di bin/ e si ferma dicendo quali mancano.
 # =============================================================================
-PROGRAMMI_CD := netdetect nettest ping ipcfg dhcp host tcptest ftp telnet xcp winprova exwincmd
+PROGRAMMI_CD := netdetect nettest ping ipcfg dhcp host tcptest tcpserv ftp telnet xcp winprova exwincmd
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
 PROGRAMMI_EXWIN := exwin_so exdlg_so eximg_so pm filemgr edit term
 
@@ -1862,6 +1862,29 @@ $(TCPTEST_BIN): $(TCPTEST_SRC) $(TCPTEST_LD) $(IP_PROTO) $(DNS_SRC) $(DNS_HDR) $
 
 .PHONY: tcptest
 tcptest: dirs $(TCPTEST_BIN)
+
+# --- /bin/tcpserv (solo CD) ---------------------------------------------------
+# Sta a listen/accept come tcptest sta a connect: prova il lato che ASPETTA.
+# Rimanda indietro quello che riceve, e un'eco prova in un colpo solo che la
+# stretta di mano passiva e' finita, che i dati arrivano nel verso giusto e che
+# la risposta esce dalla connessione giusta.
+TCPSERV_SRC := bin/tcpserv/tcpserv.c
+TCPSERV_BIN := $(BUILD_BIN_CD)/tcpserv
+TCPSERV_LD  := bin/tcpserv/tcpserv.ld
+
+$(TCPSERV_BIN): $(TCPSERV_SRC) $(TCPSERV_LD) $(IP_PROTO) $(RETE_SRC) $(RETE_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/tcpserv ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(TCPSERV_SRC) -o $(BUILD_OBJ)/tcpserv_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(RETE_SRC) -o $(BUILD_OBJ)/tcpserv_rete.o
+	$(CC) -m32 -c $(LIBC_START)                        -o $(BUILD_OBJ)/tcpserv_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(TCPSERV_LD) \
+	    $(BUILD_OBJ)/tcpserv_start.o $(BUILD_OBJ)/tcpserv_main.o \
+	    $(BUILD_OBJ)/tcpserv_rete.o $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] tcpserv compilato: $@"
+
+.PHONY: tcpserv
+tcpserv: dirs $(TCPSERV_BIN)
 
 # --- /bin/ftp (solo CD) -------------------------------------------------------
 # Client FTP, modo PASSIVO soltanto: il modo attivo vuole che il client si
@@ -3788,6 +3811,7 @@ ISOX_IMG  := $(DIST_DIR)/exos.iso
 # dimenticano. Le variabili sono definite piu' sopra, accanto alle rispettive
 # regole, e qui sono tutte gia' note perche' questa riga make la legge dopo.
 BINARI_SOLO_CD := $(NETDETECT_BIN) $(NETTEST_BIN) $(PING_BIN) $(IPCFG_BIN) \
+                  $(TCPSERV_BIN) \
                   $(DHCP_BIN) $(HOST_BIN) $(TCPTEST_BIN) $(FTP_BIN) \
                   $(TELNET_BIN) $(XCP_BIN) $(WINPROVA_BIN) $(EXWINCMD_BIN)
 # ! QUESTA LISTA E' LA DIPENDENZA DELL'ISO, E VA TENUTA ALLINEATA A
