@@ -12,21 +12,14 @@ seriale e USB — tastiera compresa, hub compresi.
 
 ## COSA E' COMMITTATO
 
-    bdf739d  "SSH funziona: una sessione cifrata con un client vero"
+    c2a1d52  "Il doppio clic, il «+» dell'albero, e un pomeriggio buttato
+              per colpa di un attrezzo"
 
-Nell'albero, non committato, **tre lavori insieme**:
+L'albero e' **pulito**: non c'e' niente in attesa.
 
-  1. **gli attrezzi delle prove**, che fino al 18 agosto vivevano in una
-     directory temporanea — `prova_ssh.sh`, `ssh_client_prova.py`,
-     `analizza_ssh_pcap.py`, `ppm2png.py`;
-  2. **il ridimensionamento delle finestre**, con dentro NAWS di telnet e
-     `window-change` di SSH, e i tre attrezzi che lo provano —
-     `prova_ridimensiona.sh`, `misura_finestre.py`, `prova_telnet.sh` con
-     `telnet_client_prova.py`;
-  3. **il rilievo, i menu a tendina, il file manager a due aree, gli appunti
-     condivisi e le istanze multiple** — e, trovato per strada, **un difetto
-     del kernel**: aprire due volte la stessa libreria condivisa dallo stesso
-     processo le azzerava i dati scrivibili. Vedi la voce in testa.
+! **`gitupdate.sh` FA `git add .` E UN COMMIT SOLO**: `messaggio-commit.txt`
+deve coprire tutto quello che si e' fatto dall'ultimo commit, non l'ultima
+cosa.
 
 ! **UN ATTREZZO CHE STA IN /tmp E' UN ATTREZZO CHE SI RIFA' DA CAPO LA PROSSIMA
 VOLTA.** Quello che ha trovato il difetto della firma — ricomporre i flussi TCP
@@ -34,47 +27,15 @@ da un dump e confrontare i buffer invece degli hash — sarebbe costato un'altra
 mezza giornata a riscriverlo. Vale anche per la ricetta con cui si porta il
 puntatore del mouse dove si vuole: mezz'ora a ritrovarla.
 
-! **`gitupdate.sh` FA `git add .` E UN COMMIT SOLO**: `messaggio-commit.txt`
-deve coprire tutto quello che si e' fatto dall'ultimo commit, non l'ultima
-cosa.
-
-`messaggio-commit.txt` e' pronto: il commit lo fa `./gitupdate.sh`.
-
 ## La coda, in ordine
 
-! **LE SEZIONI IN CIMA SONO VUOTE, TUTTE E TRE**, e vale la pena dirlo invece
-di toglierle: «cose che si vedono», «cose che il toolkit ha chiesto tre volte»
-e «cose che vogliono un pezzo di kernel nuovo» si sono svuotate fra il 17 e il
-18 agosto — i lettori di immagini, il toolkit, i permessi, il dialogo
-«si'/no», le finestre modali, e per ultimo il ridimensionamento, che sembrava
-volere un pezzo di kernel e non ne ha voluto nessuno.
-
-! **QUINDI LA CODA ADESSO E' SOLO RIFINITURE**, e questo e' un fatto da
-guardare in faccia: il prossimo lavoro grosso non e' scritto qui sotto. Va
-scelto da DIREZIONE.md, non pescato dall'elenco.
-
-~~SSH~~: **fatto il 18 agosto 2026** — una sessione cifrata con OpenSSH vero
-dall'altra parte. Cosa ne resta fuori sta nella sua voce, sotto «cosa manca»:
-piu' di una sessione insieme, il rinnovo delle chiavi, l'autenticazione a chiave
-pubblica.
-
-~~Ridimensionare le finestre~~: **fatto il 18 agosto 2026** — la presa
-nell'angolo, il contorno mentre si tira, la zona condivisa nuova con dentro
-quella vecchia, e la misura che arriva fino al pty. NAWS di telnet e
-`window-change` di SSH sono nello stesso lavoro. Vedi la voce in testa.
-
-~~L'aspetto, i menu, il file manager a due aree~~: **fatti il 18 agosto 2026**
-— il rilievo stile Workbench in tutti i controlli e nel telaio, i menu a
-tendina nel toolkit, la selezione con gli appunti in memoria condivisa, e le
-finestre a cascata che permettono di aprire due volte lo stesso programma.
-Vedi la voce in testa, con il difetto del kernel che si e' trovato per strada.
-
-### Cose che vogliono un pezzo di kernel nuovo
-
-! **QUESTA SEZIONE ADESSO E' VUOTA**, e vale la pena dirlo invece di toglierla:
-il ridimensionamento sembrava volere un pezzo di kernel e non ne ha voluto
-nessuno. Una zona condivisa non si allarga, ma non serve che si allarghi: ne
-basta una NUOVA con un nome diverso, e il nome ce l'ha gia' chi lo compone.
+! **LA CODA E' SOLO RIFINITURE**, e questo e' un fatto da guardare in faccia:
+il prossimo lavoro grosso non e' scritto qui sotto. Va scelto da DIREZIONE.md,
+non pescato dall'elenco. Le sezioni che c'erano — «cose che si vedono», «cose
+che il toolkit ha chiesto tre volte», «cose che vogliono un pezzo di kernel
+nuovo» — si sono svuotate fra il 17 e il 18 agosto e sono state tolte: i
+lettori di immagini, il toolkit, i permessi, il dialogo «si'/no», le finestre
+modali, il ridimensionamento, SSH, TSC e PSE.
 
 ### Rifiniture, quando conviene
 
@@ -85,10 +46,16 @@ basta una NUOVA con un nome diverso, e il nome ce l'ha gia' chi lo compone.
  2. **Risolvere per hash invece che per nome** — altri ~3 KB per programma, col
     generatore che verifica a costruzione che non ci siano collisioni.
  3. **La lista delle regioni sporche** — `WIN_MSG_AGGIORNA` porta gia' una
-    `WinRegione` che oggi si ignora. Ha senso quando le finestre saranno tante
-    abbastanza da farlo pesare, ed e' la struttura piu' facile da sbagliare di
-    un server grafico.
- 4. **`-i` ai quattro driver che ancora non ce l'hanno** — `floppy`,
+    `WinRegione` che oggi si ignora. **Misurato il 18 agosto: `componi()` a
+    800x600 costa 0-20 ms**, quindi sotto QEMU non e' un'urgenza — ma il server
+    ridisegna tutto lo schermo per ogni movimento del puntatore, e sul Pentium
+    133 dichiarato quel numero non sara' 20 ms. E' la struttura piu' facile da
+    sbagliare di un server grafico.
+ 4. **L'annullamento nell'editor** — un taglio sbagliato non si rimette a
+    posto. E' quello che manca di piu' ora che c'e' un «Taglia».
+ 5. **`ls -l`** — non c'e'. La libc sa gia' dire proprietario, permessi e
+    misura: manca l'impaginazione.
+ 6. **`-i` ai quattro driver che ancora non ce l'hanno** — `floppy`,
     `mouseser`, `uhci`, `vgaprova`. Gli altri nove ce l'hanno tutti (`pci`,
     `svga`, `kbd`, `xhci` e i cinque del CD); `tty` era in questo elenco per
     sbaglio, non e' un `.drv` ma un pezzo compilato dentro il kernel. Oggi non
@@ -96,54 +63,44 @@ basta una NUOVA con un nome diverso, e il nome ce l'ha gia' chi lo compone.
     giorno che uno di loro diventasse un server, bloccherebbe l'installazione
     come ha fatto `wserver`.
 
-~~Utenti e permessi~~: **fatti il 17 agosto 2026**, tutti e cinque i passi —
-`uid` nel PCB, proprietari scritti in ext2, i controlli nella VFS, `install`
-che prepara il posto e `login` obbligatorio su radice ext2. Vedi le tre voci
-del 17 agosto, e con loro si e' chiuso il varco `*.drv`.
-
-~~Il toolkit che si faceva copiare~~ (`ex_fuoco()`, la lista a scorrimento,
-l'area di testo multiriga): **fatto il 17 agosto 2026**, e con lui sono sparite
-tre copie disegnate a mano.
-
-~~TSC e PSE~~: **fatti il 17 agosto 2026**. Delle tre cose che il Pentium MMX
-comprava non ne resta nessuna da prendere.
-
-~~Il clic nell'area del client non da' il fuoco~~: **fatto il 14 agosto 2026**,
-era `origine()` che sommava la posizione della finestra sullo schermo.
-
-~~Il file manager~~, ~~l'editor~~ e ~~il terminale~~: **fatti**, e l'editor ha fatto trovare
-quattro difetti vecchi — vedi la voce del 17 agosto 2026.
-
-~~Le dipendenze del bersaglio `floppy:`~~, ~~l'audit del CD degli strumenti~~,
-~~xHCI~~, ~~la meta' comune dello stack USB~~, ~~gli hub dietro xHCI~~ e
-~~Evaluate Context~~: **fatte il 13 agosto 2026**, vedi le voci qui sotto.
-
 Restano aperti, sullo stack USB: **piu' di un livello di hub**, **piu' di un
 dispositivo per volta** (lo stesso limite che ha uhci.drv), e **un tetto di
 quattro alloggiamenti** in xhci.drv — dichiarato, non scoperto dopo.
 
 ## Difetti aperti, dichiarati
 
-~~il varco dei driver non e' una barriera~~: **chiuso il 17 agosto 2026**.
-  `/dev` appartiene a root, un utente normale non ci puo' scrivere, e un `.drv`
-  fatto altrove non e' eseguibile se non lo si possiede;
 - il **blocco temporaneo** della memoria condivisa non c'e': serve solo quando
   ci sara' uno swapper, e il conteggio dei riferimenti — la parte che non si
   puo' aggiungere dopo — e' fatto;
 - su ferro vero con una VESA attiva, il ritorno al modo testo puo' non
-  bastare: manca l'interfaccia in modo protetto di VBE 2.0.
+  bastare: manca l'interfaccia in modo protetto di VBE 2.0;
+- niente NX (vuole PAE, cioe' Pentium 4 in avanti: fuori dal bersaglio),
+  SHA-256 senza irrobustimento della chiave, nessuna quota di memoria o disco;
+- **mai provato: un utente NORMALE che avvia la pila grafica.** E' l'unico buco
+  di prova rimasto, e proprio dove morderebbe — `blkread`/`blkwrite` sono stati
+  chiusi a root perche' non validano i puntatori utente.
 
 ## COME SI PROVA QUELLO CHE C'E' (aggiornato il 18 agosto 2026)
 
     make -j2 all && make iso-exos
     python3 tools/qemu_drive.py "libctest@260"     316 prove, e ci sono dentro
-                                                   pty e interruzione
+                                                   pty e interruzione. Da CD
+                                                   (EXOS_NO_FLOPPY=1) sono
+                                                   196 con 15 fallite: manca
+                                                   dove scrivere, non e' una
+                                                   regressione
     tools/prova_ssh.sh                             una sessione SSH vera, con
                                                    OpenSSH dell'ospite — e
                                                    dentro c'e' window-change
     tools/prova_telnet.sh                          telnet vero, e NAWS
     tools/prova_ridimensiona.sh                    le finestre che cambiano
                                                    misura, misurate nei pixel
+    tools/prova_doppioclic.sh                      il doppio clic e il «+»
+                                                   dell'albero, nel file
+                                                   manager e nel dialogo Apri
+    python3 tools/righe_lista.py f.ppm X Y W N     quante righe ha una lista e
+                                                   quale e' scelta, contando
+                                                   l'inchiostro
     python3 tools/misura_finestre.py foto.ppm      quanto e' grande una
                                                    finestra, DENTRO una foto
     EXOS_NO_FLOPPY=1 EXOS_CDROM=dist/exos.iso \
@@ -168,9 +125,133 @@ contro il bordo) e da li' si conta a passi di dieci. Le prove grafiche che
 dipendono da dove si clicca sono ripetibili.
 
 Per guardare una fotografia: `python3 tools/ppm2png.py foto.ppm out.png`. Per
-contarci le finestre: `python3 tools/misura_finestre.py foto.ppm`.
+contarci le finestre: `python3 tools/misura_finestre.py foto.ppm`; `--presa` da'
+la presa d'angolo e `--client` l'angolo dell'area del client, che e' da dove si
+contano le coordinate dei controlli.
+
+! **PIU' COMANDI AL MONITOR DI QEMU DENTRO UN `mon:` SOLO, separati da «;»**,
+quando l'intervallo fra loro conta — un doppio clic. Un `mon:` per conto suo
+costa **piu' di due secondi**: non per il `settle`, ma perche' `Monitor.drain()`
+aspetta il timeout del socket. Ci sono volute due ore per scoprirlo, e nel
+frattempo sembrava un difetto del sistema provato.
 
 ---
+
+# IL DOPPIO CLIC, E IL «+» DELL'ALBERO — 18 agosto 2026
+
+Chiesto: nel dialogo «Apri»/«Salva con nome», una directory scelta deve aprirsi
+con l'Invio o col doppio clic; nel file manager, il doppio clic deve aprire, e
+il segno «+» dell'albero deve rispondere a un clic solo.
+
+## Cosa dice `lp` adesso, per un EXM_COMANDO che viene da una lista
+
+    EX_APRIRE(lp)   1 = si e' chiesto di APRIRE: Invio, oppure doppio clic
+    EX_COL(lp)      la colonna del clic dentro la riga, in caratteri,
+                    oppure -1 se il comando e' arrivato dalla tastiera
+
+! **LA COLONNA SERVE A CHI DISEGNA DENTRO LA RIGA.** Una lista e' testo, e
+un'applicazione ci mette dei segni con un significato suo — il «+» e il «-»
+dell'albero. Senza sapere DOVE e' caduto il clic, quel segno si potrebbe solo
+guardare, mai premere. Il toolkit non sa cosa significhino quei caratteri, e non
+deve saperlo: dice la colonna e basta. Il file manager conta 2 caratteri per
+livello e sa che il segno del nodo di livello n sta nella colonna 2n.
+
+! **DALLA TASTIERA LA COLONNA E' -1, NON ZERO.** Zero e' una colonna vera, la
+prima: confonderla con «non c'e'» vorrebbe dire un Invio che si comporta come un
+clic sul primo carattere — cioe' sul segno, sempre.
+
+## Il doppio clic lo riconosce il TOOLKIT, ma con l'ora del SERVER
+
+Il server manda pressioni e rilasci; quanto vicini debbano essere due clic per
+contare come uno e' una convenzione dell'interfaccia, non un fatto
+dell'hardware. Sta percio' in `exwin.c` (400 ms, 4 pixel), non nel server: cosi'
+non c'e' un messaggio in piu' per ogni clic in una mailbox profonda quattro, e
+ogni programma ne ha una copia sua.
+
+! **MA L'OROLOGIO NON PUO' ESSERE QUELLO DEL CLIENT.** La prima versione
+chiamava `uptime_ms()` quando l'evento veniva LETTO. Fra un clic e l'altro pero'
+il client ha lavorato — al primo clic su una directory il file manager la LEGGE,
+e da un CD sono decimi di secondo — e quel lavoro finiva dentro l'intervallo
+misurato. Adesso `WinEvento` porta il campo `tempo`, scritto dal server
+nell'istante in cui l'evento nasce.
+
+## Il pomeriggio buttato, e cosa lo ha causato
+
+Per due ore la prova ha detto «il doppio clic non fa niente», e i pixel non
+mentivano: le due pressioni arrivavano alla macchina a **quattro secondi** l'una
+dall'altra. La colpa non era del sistema provato ma di `tools/qemu_drive.py`:
+`Monitor.drain()` legge dal socket del monitor finche' non va in **timeout**, e
+il timeout e' di **due secondi**. Ogni `mon.cmd()` costa percio' due secondi
+buoni, qualunque `settle` gli si passi.
+
+Misurato per gradi, e vale la pena tenerlo: strumentando il driver `kbd`, il
+server e il toolkit si e' visto che il pacchetto PS/2 arriva al driver, e da li'
+al server, in **10-30 ms** — la pila di EX-OS non c'entrava niente. `componi()`
+a 800x600 costa **0-20 ms**, non secondi: anche quel sospetto era sbagliato.
+
+Rimedio: `Monitor.rapidi()`, che scrive i comandi uno dietro l'altro **senza
+drenare** in mezzo. Nella sintassi degli argomenti, piu' comandi dentro un
+`mon:` solo separati da «;» passano di li'.
+
+## Cosa c'e' adesso per provarlo
+
+`tools/prova_doppioclic.sh` — due parti, tutte e due misurate nei pixel:
+
+  1. **il file manager**: clic semplice sceglie e non apre; doppio clic apre;
+     clic sul segno apre e richiude;
+  2. **il dialogo «Apri»** dell'editor: clic sceglie, Invio entra, «Su» risale,
+     doppio clic entra di nuovo — e l'elenco del passo 4 e' NUMERICAMENTE
+     identico a quello del passo 2.
+
+`tools/righe_lista.py` conta l'inchiostro riga per riga dentro una lista: riga
+vuota 0, riga con testo qualche centinaio, riga scelta qualche migliaio. Non
+riconosce i glifi e non deve.
+
+`tools/misura_finestre.py --client foto.ppm` da' l'angolo dell'area del client,
+come `--presa` da' la presa: da li' in poi le coordinate dei controlli sono
+numeri fissi che stanno nel sorgente dell'applicazione.
+
+! **UNA TRAPPOLA DA NON RIFARE**: `passi_a` in `prova_ridimensiona.sh` va in
+diagonale per quanto e' ALTO il bersaglio e poi in orizzontale. Con un bersaglio
+piu' in basso che a destra — il segno «+», vicino al bordo sinistro — la
+diagonale supera la x e il resto viene negativo; il ciclo bash gira zero volte e
+il puntatore finisce quaranta pixel piu' in la', dentro il nome invece che sul
+segno. Corretto in tutt'e due gli script.
+
+! **E LA DIRECTORY SU CUI SI PROVA DEVE AVERE DELLE FIGLIE.** L'albero mostra
+solo directory: aprire `/bin` — tanti file, nessuna directory — cambia il segno
+e nient'altro, cioe' qualche decina di pixel che si confondono col rumore.
+`/exwin` ha `bin` e `lib` dentro, e aprirla sposta in giu' tutto il resto.
+
+## Altre due cose sistemate per strada
+
+`rimappa()` in `exwin.c` buttava via la posizione che il server manda dentro
+`WIN_MSG_MISURATA`: la finestra sapeva la misura nuova e la posizione vecchia.
+
+Un trascinamento dentro una lista muoveva la barra della scelta senza dirlo a
+nessuno. Adesso al rilascio parte un EXM_COMANDO, ma **solo se la riga e'
+davvero cambiata**: dirlo a ogni riga attraversata vorrebbe dire, in un file
+manager, rileggere una directory per ogni voce sfiorata dal puntatore.
+
+# I 64 MB: un sospetto vecchio di un giorno, chiuso provandolo (18 agosto 2026)
+
+Stava scritto come «trovato leggendo, MAI VERIFICATO»: `paging_init` mappa per
+identita' tutta la RAM fino a `total_ram` **senza cappare a `USER_SPACE_BASE`**,
+quindi con piu' di 64 MB quella mappatura entra nella fascia utente. Le prove
+girano tutte a 32 MB, percio' non si era mai visto.
+
+Provato: `libctest` a 128 MB e a 32 MB da' **196 superate e 15 fallite in
+tutt'e due i casi**, cifra per cifra — e le 15 sono scritture su un CD in sola
+lettura, non memoria.
+
+! **NON MORDE PERCHE' LA FASCIA UTENTE NON VIENE COPIATA.**
+`paging_create_directory` copia nelle directory dei processi solo le PDE
+`0..PD_INDEX(USER_SPACE_BASE)-1`, cioe' 0..15. Le mappature sopra i 64 MB
+restano nella sola `kernel_page_directory`, che nessun processo utente usa mai.
+
+Resta un'inesattezza, non un difetto: il cappo non c'e'. Metterlo costa una
+riga e toglie una domanda a chi legge — ma non c'e' niente da riparare.
+
 
 # Il rilievo, i menu, e un difetto del kernel vecchio di mesi (18 agosto 2026)
 
@@ -373,9 +454,9 @@ rendeva impossibile dire quale blu fosse quale.
     niente annullamento         un taglio sbagliato non si rimette a posto:
                                 e' quello che manca di piu' ora che c'e' un
                                 «Taglia»
-    la selezione e' a tasti     Shift piu' le frecce; trascinare il puntatore
-                                sul testo no, perche' il server manda giu' e
-                                su ma non il movimento col bottone premuto
+    ~~la selezione e' a tasti~~ FATTO il 18 agosto: il server manda anche il
+                                movimento col bottone premuto (WIN_EV_MOUSE_-
+                                MOSSO), e trascinare sul testo seleziona
     gli appunti sono 4 KB       e solo testo. Un servizio degli appunti con
                                 piu' formati e senza tetto e' un'altra cosa
     niente sposta/cancella      copiare non distrugge niente; le altre si', e
@@ -1472,8 +1553,9 @@ lo stesso che libctest esercita a ogni giro.
     piu' di un attendente   un pty ha UN lettore per direzione (le pipe hanno
                             una lista: il giorno che serve si copia da li')
     un ciclo senza syscall   non si interrompe (vedi sopra)
-    listen/accept in TCP     restano il passo successivo per una sessione
-                             remota: adesso c'e' con cosa farla parlare
+    ~~listen/accept in TCP~~ FATTO lo stesso giorno: vedi la voce «listen e
+                             accept: il TCP impara ad aspettare». E' cosi' che
+                             sshd apre la porta (IP_MSG_TCP_ASCOLTA)
 
 # Il dialogo diventa una domanda, e il modale morde (18 agosto 2026)
 
@@ -3351,6 +3433,10 @@ finestra risponde.
 attraverso una pipe non si puo': finche' non c'e' un modo di chiedere al kernel
 «interrompi quel processo», una shell in finestra non si interrompe. Chi la usa
 deve saperlo.
+
+    ~~SUPERATO~~: sotto il terminale non c'e' piu' una pipe ma un **pty**, e il
+    Ctrl+C ci arriva — `exwin.c` lo lascia passare apposta come byte 3, che e'
+    l'eccezione senza la quale tutto il lavoro sul pty non sarebbe servito.
 
 ! **E UNA PIPE NON E' UN tty**, che e' il motivo per cui l'eco, il Backspace e
 il cursore li fa il controllo. Sono le cose che farebbe la line discipline, e
@@ -6873,209 +6959,3 @@ piu' di 64 MB di RAM quella mappatura si sovrappone allo spazio utente. Non
 verificato: le prove girano a 32 MB.
 
 ---
-
-# STATO AL RESET DEL CONTESTO — 17 agosto 2026
-
-Da leggere per primo riprendendo. Quello che segue non e' ricavabile dal codice
-ne' dalla storia di git.
-
-## Dove sta il lavoro
-
-Committato: fino a ab70029 (MMX nel compositore). In staging e NON committato:
-TSC + impalcatura PSE, con messaggio-commit.txt gia' pronto.
-
-## Il punto esatto da cui ripartire: accendere PSE
-
-Fatto: PG_HUGE, spezza_4mb(), guardie in paging_map_page, paging_unmap_page,
-paging_get_physical. Compila senza avvisi.
-
-Manca solo, in paging_init():
-  - alzare CR4.PSE PRIMA di CR0.PG, e solo se cpu_capacita()->pse;
-  - riempire le PDE 0..N con blocchi da 4 MB al posto di kernel_page_table_low
-    e di paging_map_range_identity;
-  - cappare a USER_SPACE_BASE (0x04000000 = 64 MB, cioe' PDE 0..15).
-
-Perche' PSE conviene: il guadagno e' nel TLB, non nella memoria. Le tabelle in
-meno sono 32 KB su 32 MB: niente. Il punto e' che il Pentium ha 32 voci di TLB
-dati, e un kernel che ne consuma una per ogni 4 KB toccati le esaurisce
-attraversando una struttura di poco piu' di 128 KB.
-
-Verificato che paging_destroy_directory tocca solo da PD_INDEX(USER_SPACE_BASE)
-in su: la fascia kernel non passa mai di li'. Le uniche funzioni che camminano
-su una PDE trattandola come tabella sono quelle tre, e sono tutte in paging.c.
-
-## Sospetto trovato leggendo, MAI VERIFICATO
-
-paging_init mappa per identita' tutta la RAM fino a `total_ram` senza cappare a
-USER_SPACE_BASE. Con piu' di 64 MB di RAM quella mappatura si sovrappone allo
-spazio utente. Le prove girano tutte a 32 MB (EXOS_RAM), quindi non si e' mai
-visto. Provare con EXOS_RAM=128M prima di dichiararlo.
-
-## Memoria virtuale e file di scambio — analisi fatta il 17 agosto
-
-Domanda posta: quando servira' un file di scambio, visto che ci sono
-applicazioni che chiedono piu' RAM di quella disponibile.
-
-VERIFICATO nel codice, non a memoria:
-  - il caricamento ELF E' GIA' SU RICHIESTA, risolto dal page fault. Quindi cc1
-    da 40 MB non deve mai stare tutto in RAM: entrano le pagine che tocca.
-  - i bit PG_ACCESSED e PG_DIRTY sono definiti (paging.h) e MAI USATI.
-  - il PMM conta i riferimenti (pmm_ref_inc) ma non tiene l'elenco di CHI mappa
-    un frame: manca la mappatura inversa.
-  - la RAM di prova e' 32 MB, 30 liberi dopo l'avvio.
-
-Conclusione: lo scambio non serve a «far girare programmi grandi» — quello lo
-fa gia' il caricamento su richiesta. Serve solo per la MEMORIA ANONIMA SPORCA,
-heap e stack, che non ha un file da cui rileggersi. E' li' che GCC consuma.
-
-Passo intermedio che conviene molto prima del file di scambio: BUTTARE VIA LE
-PAGINE PULITE DI CODICE quando la RAM stringe. Sono rileggibili dal file,
-quindi non serve area di scambio, ne' allocatore di slot, ne' codifica «pagina
-su disco» nelle PTE. Serve solo la mappatura inversa e una politica sui bit
-Accessed/Dirty. Meta' dello scambio a un quarto del costo.
-
-Il file di scambio vero serve solo quando l'heap DA SOLO supera la RAM. La
-trappola di quel giorno e' il FISSAGGIO delle pagine: sfrattare una pagina
-mentre un DMA dell'ATA ci scrive dentro e' corruzione silenziosa.
-
-## La strada SSH (richiesta, non iniziata)
-
-L'utente ha escluso telnet: insicuro, obsoleto, deprecato. Concordato che il
-telnet come tappa intermedia NON si spedisce; l'impianto della sessione si
-prova con un servizio locale di prova che non entra in nessuna immagine.
-
-Ordine obbligato:
-  1. listen/accept nel driver IP. Oggi il TCP e' SOLO CLIENT: esiste tcp_apri
-     e basta.
-  2. Lo strato pty, che non esiste. Chiude anche il buco dichiarato del Ctrl+C
-     nel terminale a finestra.
-  3. SSH: Curve25519 + ChaCha20-Poly1305, NON RSA, per non dover scrivere una
-     libreria di interi lunghi. SHA-256 c'e' gia' nella libc.
-
-Chiesto anche l'accesso via SERIALE, che e' molto piu' economico e non richiede
-niente del punto 1.
-
-## Fermo altrove
-
-eximg.so (lettori immagine): inflate.c verificato contro zlib, 16 casi su 16.
-png.c scritto ma MAI COMPILATO NE' COLLEGATO. ICO e JPG non iniziati. Non
-esistono ancora la libreria, il suo linker script (0x04C00000, l'indirizzo e'
-libero e riservato), la tabella di esportazione e lo stub.
-
-Mai provato: un utente NORMALE che avvia la pila grafica. L'installazione da CD
-su disco nuovo invece e' riuscita.
-
-## Difetti dichiarati aperti
-
-Niente NX (richiede PAE, che e' roba da Pentium 4 in avanti). SHA-256 senza
-irrobustimento della chiave. Nessuna quota di memoria o disco. blkread/blkwrite
-non validano i puntatori utente (ora sono solo per root). Manca un dialogo
-si'/no, le finestre modali vere, la lista delle regioni sporche, `ls -l`, e il
-sondaggio -i per floppy, mouseser, tty, uhci, vgaprova.
-
-## Regole di lavoro che non si deducono dal codice
-
-I commit li fa SOLO l'utente, con ./gitupdate.sh. Io preparo
-messaggio-commit.txt e avviso. Mai Co-Authored-By ne' link di sessione: il
-repository e' pubblico. Nessun simbolo grafico da nessuna parte, solo "!".
-Commenti e testi in italiano. Con 4 GB di RAM: GCC si ricostruisce con -j1, il
-resto con -j2. Le prove sui nomi lunghi si fanno su ext2, non su FAT. Due
-qemu_drive.py insieme si cancellano l'output: serve EXOS_ISTANZA. Non
-ricostruire mentre una macchina QEMU e' accesa.
-
-
-# IL DOPPIO CLIC, E IL «+» DELL'ALBERO — 18 agosto 2026
-
-Chiesto: nel dialogo «Apri»/«Salva con nome», una directory scelta deve aprirsi
-con l'Invio o col doppio clic; nel file manager, il doppio clic deve aprire, e
-il segno «+» dell'albero deve rispondere a un clic solo.
-
-## Cosa dice `lp` adesso, per un EXM_COMANDO che viene da una lista
-
-    EX_APRIRE(lp)   1 = si e' chiesto di APRIRE: Invio, oppure doppio clic
-    EX_COL(lp)      la colonna del clic dentro la riga, in caratteri,
-                    oppure -1 se il comando e' arrivato dalla tastiera
-
-! **LA COLONNA SERVE A CHI DISEGNA DENTRO LA RIGA.** Una lista e' testo, e
-un'applicazione ci mette dei segni con un significato suo — il «+» e il «-»
-dell'albero. Senza sapere DOVE e' caduto il clic, quel segno si potrebbe solo
-guardare, mai premere. Il toolkit non sa cosa significhino quei caratteri, e non
-deve saperlo: dice la colonna e basta. Il file manager conta 2 caratteri per
-livello e sa che il segno del nodo di livello n sta nella colonna 2n.
-
-! **DALLA TASTIERA LA COLONNA E' -1, NON ZERO.** Zero e' una colonna vera, la
-prima: confonderla con «non c'e'» vorrebbe dire un Invio che si comporta come un
-clic sul primo carattere — cioe' sul segno, sempre.
-
-## Il doppio clic lo riconosce il TOOLKIT, ma con l'ora del SERVER
-
-Il server manda pressioni e rilasci; quanto vicini debbano essere due clic per
-contare come uno e' una convenzione dell'interfaccia, non un fatto
-dell'hardware. Sta percio' in `exwin.c` (400 ms, 4 pixel), non nel server: cosi'
-non c'e' un messaggio in piu' per ogni clic in una mailbox profonda quattro, e
-ogni programma ne ha una copia sua.
-
-! **MA L'OROLOGIO NON PUO' ESSERE QUELLO DEL CLIENT.** La prima versione
-chiamava `uptime_ms()` quando l'evento veniva LETTO. Fra un clic e l'altro pero'
-il client ha lavorato — al primo clic su una directory il file manager la LEGGE,
-e da un CD sono decimi di secondo — e quel lavoro finiva dentro l'intervallo
-misurato. Adesso `WinEvento` porta il campo `tempo`, scritto dal server
-nell'istante in cui l'evento nasce.
-
-## Il pomeriggio buttato, e cosa lo ha causato
-
-Per due ore la prova ha detto «il doppio clic non fa niente», e i pixel non
-mentivano: le due pressioni arrivavano alla macchina a **quattro secondi** l'una
-dall'altra. La colpa non era del sistema provato ma di `tools/qemu_drive.py`:
-`Monitor.drain()` legge dal socket del monitor finche' non va in **timeout**, e
-il timeout e' di **due secondi**. Ogni `mon.cmd()` costa percio' due secondi
-buoni, qualunque `settle` gli si passi.
-
-Misurato per gradi, e vale la pena tenerlo: strumentando il driver `kbd`, il
-server e il toolkit si e' visto che il pacchetto PS/2 arriva al driver, e da li'
-al server, in **10-30 ms** — la pila di EX-OS non c'entrava niente. `componi()`
-a 800x600 costa **0-20 ms**, non secondi: anche quel sospetto era sbagliato.
-
-Rimedio: `Monitor.rapidi()`, che scrive i comandi uno dietro l'altro **senza
-drenare** in mezzo. Nella sintassi degli argomenti, piu' comandi dentro un
-`mon:` solo separati da «;» passano di li'.
-
-## Cosa c'e' adesso per provarlo
-
-`tools/prova_doppioclic.sh` — due parti, tutte e due misurate nei pixel:
-
-  1. **il file manager**: clic semplice sceglie e non apre; doppio clic apre;
-     clic sul segno apre e richiude;
-  2. **il dialogo «Apri»** dell'editor: clic sceglie, Invio entra, «Su» risale,
-     doppio clic entra di nuovo — e l'elenco del passo 4 e' NUMERICAMENTE
-     identico a quello del passo 2.
-
-`tools/righe_lista.py` conta l'inchiostro riga per riga dentro una lista: riga
-vuota 0, riga con testo qualche centinaio, riga scelta qualche migliaio. Non
-riconosce i glifi e non deve.
-
-`tools/misura_finestre.py --client foto.ppm` da' l'angolo dell'area del client,
-come `--presa` da' la presa: da li' in poi le coordinate dei controlli sono
-numeri fissi che stanno nel sorgente dell'applicazione.
-
-! **UNA TRAPPOLA DA NON RIFARE**: `passi_a` in `prova_ridimensiona.sh` va in
-diagonale per quanto e' ALTO il bersaglio e poi in orizzontale. Con un bersaglio
-piu' in basso che a destra — il segno «+», vicino al bordo sinistro — la
-diagonale supera la x e il resto viene negativo; il ciclo bash gira zero volte e
-il puntatore finisce quaranta pixel piu' in la', dentro il nome invece che sul
-segno. Corretto in tutt'e due gli script.
-
-! **E LA DIRECTORY SU CUI SI PROVA DEVE AVERE DELLE FIGLIE.** L'albero mostra
-solo directory: aprire `/bin` — tanti file, nessuna directory — cambia il segno
-e nient'altro, cioe' qualche decina di pixel che si confondono col rumore.
-`/exwin` ha `bin` e `lib` dentro, e aprirla sposta in giu' tutto il resto.
-
-## Altre due cose sistemate per strada
-
-`rimappa()` in `exwin.c` buttava via la posizione che il server manda dentro
-`WIN_MSG_MISURATA`: la finestra sapeva la misura nuova e la posizione vecchia.
-
-Un trascinamento dentro una lista muoveva la barra della scelta senza dirlo a
-nessuno. Adesso al rilascio parte un EXM_COMANDO, ma **solo se la riga e'
-davvero cambiata**: dirlo a ogni riga attraversata vorrebbe dire, in un file
-manager, rileggere una directory per ogni voce sfiorata dal puntatore.

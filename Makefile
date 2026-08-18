@@ -1007,6 +1007,21 @@ BUILD_EXWIN_LIB := $(BUILD_EXWIN)/lib
 # ! NIENTE start.S QUI. Una libreria non parte: non ha un _start, il suo punto
 # d'ingresso e' la TABELLA dei nomi. Vedi lib/exwin/exwin.ld.
 # =============================================================================
+# ! IL LETTORE DEI FONT E' UN FILE A PARTE MA NON UNA LIBRERIA A PARTE. Ogni
+# programma grafico scrive del testo e carica gia' exwin.so: farne un .so
+# obbligherebbe tutti ad aprirne uno in piu' per centocinquanta righe. Il file
+# resta separato perche' il giorno che arriva qualcosa che COSTA — contorni da
+# rasterizzare, antialiasing, una cache dei glifi — quello andra' fuori, aperto
+# quando serve come eximg. Vedi lib/exfont/exfont.h.
+# I file dei font, che vanno sull'ISO sotto /exwin/font. Sono dati, non
+# sorgenti: il perche' stiano nel repository gia' costruiti sta in
+# exwin/font/leggimi.md.
+FONT_TTF_DIR  := exwin/font
+FONT_TTF      := $(wildcard $(FONT_TTF_DIR)/*.ttf)
+
+EXFONT_SRC    := lib/exfont/exfont.c
+EXFONT_HDR    := lib/exfont/exfont.h
+
 EXWIN_ESPORTA := lib/exwin/exwin_esporta.c
 EXWIN_STUB    := lib/exwin/exwin_stub.c
 EXWIN_LD      := lib/exwin/exwin.ld
@@ -1017,14 +1032,17 @@ EXWIN_SO := $(BUILD_EXWIN_LIB)/exwin.so
 
 $(EXWIN_SO): $(EXWIN_SRC) $(EXWIN_ESPORTA) $(EXWIN_HDR) $(EXWIN_LD) \
              $(EXLIB_HDR) $(WIN_PROTO) $(FONT_SRC) $(EXIMG_HDR) \
+             $(EXFONT_SRC) $(EXFONT_HDR) \
              $(LIBC_PONTI_OBJ) $(LIBC_SO) $(SEGNO_FLAG)
 	@echo "=== Compilazione libreria condivisa /exwin/lib/exwin.so ==="
 	@mkdir -p $(BUILD_EXWIN_LIB) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I drivers/wserver -I drivers/kbd -c $(EXWIN_SRC) -o $(BUILD_OBJ)/so_exwin.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exfont -I lib/eximg -I drivers/wserver -I drivers/kbd -c $(EXWIN_SRC) -o $(BUILD_OBJ)/so_exwin.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_ESPORTA) -o $(BUILD_OBJ)/so_esporta.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exfont -c $(EXFONT_SRC) -o $(BUILD_OBJ)/so_exfont.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I kernel/include -c $(FONT_SRC) -o $(BUILD_OBJ)/so_font.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(EXWIN_LD) \
 	    $(BUILD_OBJ)/so_esporta.o $(BUILD_OBJ)/so_exwin.o \
+	    $(BUILD_OBJ)/so_exfont.o \
 	    $(BUILD_OBJ)/so_font.o $(LIBC_PONTI_OBJ) -o $@
 	@# ! LA TABELLA DEVE STARE ESATTAMENTE ALLA BASE. Se una modifica al linker
 	@# script la spostasse, il kernel renderebbe un indirizzo che non e' la
@@ -3962,6 +3980,7 @@ verifica-dipendenze-cd:
 	echo "[OK] ogni driver del CD e' fra le dipendenze dell'ISO"
 
 $(ISOX_IMG): Makefile $(FLOPPY_IMG) boot/autoexec.sh $(DRIVER_SOLO_CD_OUT) \
+             $(FONT_TTF) $(FONT_TTF_DIR)/LICENSE \
              $(EXWIN_OUT) $(EXWIN_APPLIST) $(PROVA_PNG) $(PROVA_ICO) $(PROVA_JPG) \
              $(BINARI_SOLO_CD) $(ISO_MKISO) README.md README.en.md \
              gpl-2.0.txt boot/kernel.cfg boot/kernel.txt boot/help.txt \
@@ -3990,6 +4009,13 @@ $(ISOX_IMG): Makefile $(FLOPPY_IMG) boot/autoexec.sh $(DRIVER_SOLO_CD_OUT) \
 	@# non partono affatto. E' un file di /exwin/lib come l'elenco, ma non
 	@# viene dai sorgenti: viene da build/, quindi ha una riga sua.
 	@cp $(BUILD_EXWIN_LIB)/*.so $(ISOX_ROOT)/exwin/lib/ 2>/dev/null || true
+	@# ! I FONT, COL LORO LICENSE ACCANTO. La OFL obbliga a spedire il testo
+	@# della licenza insieme ai file: tenerlo nella stessa directory invece
+	@# che in un elenco altrove e' cio' che rende impossibile dimenticarlo
+	@# copiando. Vedi exwin/font/leggimi.md.
+	@mkdir -p $(ISOX_ROOT)/exwin/font
+	@cp $(FONT_TTF) $(ISOX_ROOT)/exwin/font/ 2>/dev/null || true
+	@cp $(FONT_TTF_DIR)/LICENSE $(FONT_TTF_DIR)/AUTHORS $(ISOX_ROOT)/exwin/font/
 	@# Le immagini di prova dei lettori: vedi PROVE_IMG_DIR.
 	@cp $(PROVA_PNG) $(ISOX_ROOT)/exwin/prova.png
 	@cp $(PROVA_ICO) $(ISOX_ROOT)/exwin/prova.ico

@@ -93,6 +93,14 @@ static const char *const g_nomi[] = {
     "ex_incavo",
     "ex_schermo",
 
+    /* I font. In fondo, come vuole la regola: si aggiunge, non si riordina. */
+    "ex_font_apri",
+    "ex_font_chiudi",
+    "ex_font_altezza",
+    "ex_font_base",
+    "ex_larghezza_testo",
+    "ex_scrivi_con",
+
     /* L'avvio della libreria: lo chiama chi la apre, non l'applicazione. */
     "__lib_avvio"
 };
@@ -146,6 +154,13 @@ static void *const g_indirizzi[] = {
     (void *)ex_rilievo,
     (void *)ex_incavo,
     (void *)ex_schermo,
+
+    (void *)ex_font_apri,
+    (void *)ex_font_chiudi,
+    (void *)ex_font_altezza,
+    (void *)ex_font_base,
+    (void *)ex_larghezza_testo,
+    (void *)ex_scrivi_con,
 
     (void *)__libc_ponti_avvia
 };

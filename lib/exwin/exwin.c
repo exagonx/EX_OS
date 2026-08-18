@@ -18,6 +18,7 @@
 #include "exwin.h"
 #include "exlib.h"      /* per aprire eximg.so quando serve davvero */
 #include "eximg.h"      /* solo il tipo e le firme: non ci si collega */
+#include "exfont.h"     /* il lettore dei font: compilato qui dentro */
 
 extern const unsigned char font8x16[256 * 16];
 
@@ -695,22 +696,155 @@ void ex_incavo(ExFinestra f, int x, int y, int w, int h)
     bordo3d(f, x, y, w, h, EX_OMBRA, EX_LUCE);
 }
 
-void ex_scrivi(ExFinestra f, int x, int y, const char *s, unsigned int c)
+/* =============================================================================
+ * I FONT
+ *
+ * ! IL FONT DI SISTEMA E' DESCRITTO DALLA STESSA STRUTTURA DI QUELLI CHE SI
+ * CARICANO, e non e' un vezzo: e' cio' che tiene UNO SOLO il ciclo che accende
+ * i pixel. Con due strade — una per l'8x16 compilato dentro e una per i file —
+ * la seconda nascerebbe copiando la prima, e da quel momento un difetto andrebbe
+ * corretto due volte. Qui l'8x16 e' semplicemente un font a larghezza fissa 8,
+ * alto 16, che sta in memoria invece che su disco.
+ *
+ * ! LA LINEA DI BASE E' 14, ED E' MISURATA DAI GLIFI, non scelta. A, H, X
+ * finiscono alla riga 13; la coda di Q scende alla 14 e le discendenti di g, p,
+ * q, y arrivano alla 15. Serve a chi deve allineare due font diversi sulla
+ * stessa riga di testo — cioe' al browser, il giorno che ne usera' due.
+ *
+ * ! LE LARGHEZZE SONO ZERO PERCHE' IL FONT E' FISSO, e chi legge questa riga
+ * deve poterlo verificare senza fidarsi: exfont_larghezza_car() con `fisso`
+ * rende larg_max e non tocca mai la tabella. Un font non fisso con le larghezze
+ * a zero sarebbe invece un disegno tutto sovrapposto nell'angolo.
+ * ============================================================================= */
+#define FONT_MAX        8
+
+typedef struct {
+    int            usato;
+    unsigned char *dati;        /* il file, che va tenuto vivo: vedi exfont.h */
+    ExFontDati     f;
+} FontAperto;
+
+static FontAperto g_font[FONT_MAX];
+
+static const ExFontDati g_sistema = {
+    16,     /* altezza   */
+    14,     /* base      */
+    0,      /* primo     */
+    256,    /* quanti    */
+    8,      /* larg_max  */
+    1,      /* passo     */
+    1,      /* fisso     */
+    0,      /* larghezze: non si guarda, il font e' fisso */
+    font8x16
+};
+
+/* ! UN MANICO CHE NON VALE PIU' RENDE IL FONT DI SISTEMA, non zero. Chi scrive
+ * un'etichetta con un font che nel frattempo e' stato chiuso vedra' un
+ * carattere diverso da quello che voleva; se rendesse zero non vedrebbe NIENTE,
+ * e una finestra vuota non dice da dove cominciare a cercare. */
+static const ExFontDati *font_di(ExFont h)
 {
-    Oggetto *r = radice(f);
-    unsigned int i;
+    if (h == 0 || h > FONT_MAX) return &g_sistema;
+    if (!g_font[h - 1].usato)   return &g_sistema;
+    return &g_font[h - 1].f;
+}
+
+ExFont ex_font_apri(const char *percorso, int corpo)
+{
+    int            fd, n, k, slot;
+    unsigned char *d;
+    unsigned int   cap = 256u * 1024u;
+
+    if (!percorso) return 0;
+
+    /* ! IL CORPO OGGI SI IGNORA, E VA DETTO INVECE DI TACERLO. I font che
+     * questo toolkit sa leggere da se' sono bitmap: hanno l'altezza che hanno.
+     * Il giorno che un font scalabile passa di qui, il corpo arriva a chi lo
+     * rasterizza — e la firma non cambia. */
+    (void)corpo;
+
+    for (slot = 0; slot < FONT_MAX && g_font[slot].usato; slot++) { }
+    if (slot >= FONT_MAX) return 0;
+
+    fd = open(percorso, O_RDONLY);
+    if (fd < 0) return 0;
+
+    d = (unsigned char *)malloc(cap);
+    if (!d) { close(fd); return 0; }
+
+    n = 0;
+    while ((k = (int)read(fd, d + n, cap - (unsigned int)n)) > 0) {
+        n += k;
+        if ((unsigned int)n >= cap) break;
+    }
+    close(fd);
+
+    if (n <= 0 || !exfont_apri(d, (unsigned int)n, &g_font[slot].f)) {
+        free(d);
+        return 0;
+    }
+
+    g_font[slot].dati  = d;
+    g_font[slot].usato = 1;
+    return (ExFont)(slot + 1);
+}
+
+void ex_font_chiudi(ExFont h)
+{
+    if (h == 0 || h > FONT_MAX) return;
+    if (!g_font[h - 1].usato) return;
+
+    free(g_font[h - 1].dati);
+    memset(&g_font[h - 1], 0, sizeof(g_font[h - 1]));
+}
+
+int ex_font_altezza(ExFont h) { return (int)font_di(h)->altezza; }
+int ex_font_base(ExFont h)    { return (int)font_di(h)->base;    }
+
+int ex_larghezza_testo(ExFont h, const char *s)
+{
+    return (int)exfont_larghezza(font_di(h), s);
+}
+
+/* Quanto e' larga una stringa nel font di sistema. Dentro il toolkit si scrive
+ * spesso, e `ex_larghezza_testo(0, s)` ripetuto trenta volte direbbe meno di
+ * questa. */
+static int larg(const char *s)
+{
+    return (int)exfont_larghezza(&g_sistema, s);
+}
+
+void ex_scrivi_con(ExFinestra f, ExFont h, int x, int y,
+                   const char *s, unsigned int c)
+{
+    const ExFontDati *fo = font_di(h);
+    Oggetto          *r  = radice(f);
+    unsigned int      i;
 
     if (!s) return;
 
     for (i = 0; s[i]; i++) {
-        const unsigned char *g = &font8x16[(unsigned char)s[i] * 16];
-        int rr, b;
+        unsigned char        ch = (unsigned char)s[i];
+        const unsigned char *g  = exfont_glifo(fo, ch);
+        unsigned int         w  = exfont_larghezza_car(fo, ch);
+        unsigned int         rr, b;
 
-        for (rr = 0; rr < 16; rr++)
-            for (b = 0; b < 8; b++)
-                if (g[rr] & (0x80 >> b))
-                    punto(r, x + (int)i * 8 + b, y + rr, c);
+        /* ! UN CODICE CHE IL FONT NON HA AVANZA E BASTA. Saltarlo senza
+         * avanzare stringerebbe la riga proprio dove manca qualcosa, e chi
+         * guarda vedrebbe un testo storto invece di un buco. */
+        if (g) {
+            for (rr = 0; rr < fo->altezza; rr++)
+                for (b = 0; b < w; b++)
+                    if (g[rr * fo->passo + (b >> 3)] & (0x80u >> (b & 7)))
+                        punto(r, x + (int)b, y + (int)rr, c);
+        }
+        x += (int)w;
     }
+}
+
+void ex_scrivi(ExFinestra f, int x, int y, const char *s, unsigned int c)
+{
+    ex_scrivi_con(f, 0, x, y, s, c);
 }
 
 void ex_aggiorna(ExFinestra f)
@@ -949,7 +1083,7 @@ static void menu_geometria(Menu *M)
 
     for (i = 0; i < M->n; i++) {
         M->titolo[i].x = x;
-        M->titolo[i].w = (int)strlen(M->titolo[i].nome) * 8 + 16;
+        M->titolo[i].w = larg(M->titolo[i].nome) + 16;
         x += M->titolo[i].w;
     }
 }
@@ -961,15 +1095,32 @@ static int menu_tendina_w(const MenuTitolo *T)
     unsigned int i;
     int max = 8;
 
+    /* ! SI MISURA IN PIXEL, NON IN CARATTERI, e prima si contavano i
+     * caratteri. Con un font a larghezza fissa le due cose coincidono; con uno
+     * proporzionale no, e una tendina larga «il numero di lettere per otto»
+     * taglierebbe proprio le voci con le lettere larghe. Il conto dei tre
+     * spazi fra la voce e la scorciatoia resta un conto di caratteri, perche'
+     * tre spazi sono tre spazi in qualunque font. */
     for (i = 0; i < T->n; i++) {
         const char *t   = T->voce[i].testo;
         const char *tab = strchr(t, '\t');
-        int l = tab ? (int)(tab - t) + 3 + (int)strlen(tab + 1)
-                    : (int)strlen(t);
+        int l;
+
+        if (tab) {
+            char sinistra[64];
+            unsigned int q = (unsigned int)(tab - t);
+
+            if (q >= sizeof(sinistra)) q = sizeof(sinistra) - 1;
+            memcpy(sinistra, t, q);
+            sinistra[q] = '\0';
+            l = larg(sinistra) + 3 * larg(" ") + larg(tab + 1);
+        } else {
+            l = larg(t);
+        }
 
         if (l > max) max = l;
     }
-    return max * 8 + 20;
+    return max + 20;
 }
 
 static int menu_tendina_h(const MenuTitolo *T)
@@ -1046,7 +1197,7 @@ static void menu_sopra(ExFinestra f)
             memcpy(sinistra, t, l);
             sinistra[l] = '\0';
             ex_scrivi(f, tx + 8, ry, sinistra, colore);
-            ex_scrivi(f, tx + tw - 8 - (int)strlen(tab + 1) * 8, ry,
+            ex_scrivi(f, tx + tw - 8 - larg(tab + 1), ry,
                       tab + 1, colore);
         } else {
             ex_scrivi(f, tx + 8, ry, t, colore);
@@ -1206,7 +1357,7 @@ static void disegna_oggetto(Oggetto *o)
         ex_riempi(o->padre, x, y, o->w, o->h,
                   o->premuto ? EX_GRIGIO_SC : EX_GRIGIO);
         ex_riquadro_disegna(o->padre, x, y, o->w, o->h, EX_NERO);
-        ex_scrivi(o->padre, x + (o->w - (int)strlen(o->titolo) * 8) / 2,
+        ex_scrivi(o->padre, x + (o->w - larg(o->titolo)) / 2,
                   y + (o->h - 16) / 2, o->titolo, EX_NERO);
         break;
 
@@ -1216,7 +1367,11 @@ static void disegna_oggetto(Oggetto *o)
 
     case CL_TESTO: {
         Oggetto *r = radice(o->padre);
-        int col = (int)strlen(o->titolo);
+        /* ! IL CURSORE STA DOPO IL TESTO SCRITTO, e la sua x e' la LARGHEZZA
+         * di quel testo — non il numero di lettere per otto. Con un font
+         * proporzionale la seconda si allontanerebbe dalla prima di piu' a
+         * ogni lettera battuta. */
+        int col = larg(o->titolo);
 
         ex_riempi(o->padre, x, y, o->w, o->h, EX_BIANCO);
         /* ! IL BORDO DICE CHI HA I TASTI. Senza, chi guarda non sa dove
@@ -1227,7 +1382,7 @@ static void disegna_oggetto(Oggetto *o)
         ex_scrivi(o->padre, x + 3, y + (o->h - 16) / 2, o->titolo, EX_NERO);
 
         if (r && r->fuoco == (ExFinestra)(o - g_ogg + 1))
-            ex_riempi(o->padre, x + 3 + col * 8, y + 3, 1, o->h - 6, EX_NERO);
+            ex_riempi(o->padre, x + 3 + col, y + 3, 1, o->h - 6, EX_NERO);
         break;
     }
 
@@ -1238,7 +1393,7 @@ static void disegna_oggetto(Oggetto *o)
         ex_rilievo(o->padre, x + 1, y + 9, o->w - 2, o->h - 10);
         if (o->titolo[0]) {
             ex_riempi(o->padre, x + 6, y + 8,
-                      (int)strlen(o->titolo) * 8 + 6, 2, EX_GRIGIO);
+                      larg(o->titolo) + 6, 2, EX_GRIGIO);
             ex_scrivi(o->padre, x + 9, y, o->titolo, EX_NERO);
         }
         break;

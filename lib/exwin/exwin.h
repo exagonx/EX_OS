@@ -310,6 +310,59 @@ void ex_riquadro_disegna(ExFinestra f, int x, int y, int w, int h, unsigned int 
 void ex_rilievo(ExFinestra f, int x, int y, int w, int h);
 void ex_incavo(ExFinestra f, int x, int y, int w, int h);
 void ex_scrivi(ExFinestra f, int x, int y, const char *s, unsigned int c);
+
+/* =============================================================================
+ * I FONT — piu' di uno, e non solo per il browser
+ *
+ * ! ZERO E' IL FONT DI SISTEMA, e c'e' SEMPRE. E' l'8x16 compilato dentro il
+ * toolkit: non sta in un file, non si puo' chiudere, e non puo' mancare. Un
+ * programma che non chiede niente scrive con quello, cioe' si comporta come
+ * prima che i font esistessero.
+ *
+ * ! E CHI NON TROVA IL SUO FONT NON MUORE: ex_font_apri() rende 0, che e' il
+ * font di sistema. Il testo esce con un carattere diverso da quello voluto e
+ * il programma continua — che e' l'unica risposta ragionevole per una
+ * decorazione. Chi vuole accorgersene guarda il valore.
+ *
+ * ! LA MISURA DI UNA STRINGA SI CHIEDE, NON SI CALCOLA. `strlen(s) * 8` e'
+ * vero solo finche' il font e' quello di sistema: e' il conto che va tolto da
+ * ogni impaginazione, ed e' la ragione per cui questa parte arriva PRIMA del
+ * browser e non dopo.
+ * ============================================================================= */
+typedef unsigned int ExFont;
+
+#define EX_FONT_SISTEMA 0
+
+/* Apre un font e rende il manico, o 0 — che vuol dire «userai il font di
+ * sistema».
+ *
+ * `corpo` e' l'altezza voluta in PIXEL. Zero vuol dire «quella che il font ha
+ * per natura», che per una bitmap e' l'unica possibile.
+ *
+ * ! IL CORPO STA NELLA FIRMA DA SUBITO, ANCHE SE OGGI I FONT SONO BITMAP e
+ * quindi si ignora. E' l'unico parametro che un font scalabile chiede e una
+ * bitmap no: aggiungerlo dopo vorrebbe dire o una seconda funzione accanto a
+ * questa — due modi di fare la stessa cosa, di cui uno sbagliato — o cambiare
+ * la firma quando le applicazioni la useranno gia'. Costa una riga adesso.
+ *
+ * ! E IL FORMATO SI RICONOSCE DAI PRIMI BYTE, non dall'estensione. Un file di
+ * font arriva anche dalla rete, e li' il nome lo sceglie chi sta dall'altra
+ * parte. */
+ExFont ex_font_apri(const char *percorso, int corpo);
+void   ex_font_chiudi(ExFont f);
+
+/* L'interlinea, e la distanza fra la cima e la linea di base. La seconda serve
+ * a chi mette due font diversi sulla stessa riga: si allineano le BASI, non le
+ * cime, o le lettere ballerebbero. */
+int    ex_font_altezza(ExFont f);
+int    ex_font_base(ExFont f);
+
+/* Quanti pixel occupa `s` scritto con quel font. */
+int    ex_larghezza_testo(ExFont f, const char *s);
+
+/* Come ex_scrivi, ma con un font scelto. `ex_scrivi` e' questa con f = 0. */
+void   ex_scrivi_con(ExFinestra w, ExFont f, int x, int y,
+                     const char *s, unsigned int c);
 void ex_aggiorna(ExFinestra f);     /* «ho finito»: lo dice al server */
 
 /* -----------------------------------------------------------------------------

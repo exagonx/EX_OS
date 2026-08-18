@@ -115,6 +115,25 @@ const EX_OMBRA     = &h00000000
 #define EX_APRIRE(lp) (cint((lp) and 1))
 #define EX_COL(lp) (iif((((lp) shr 8) and &hFFFF) <> 0, cint((((lp) shr 8) and &hFFFF) - 1), -1))
 
+'' --- I font ------------------------------------------------------------------
+''
+'' Zero e' il font di sistema, l'8x16 compilato dentro il toolkit: c'e' sempre e
+'' non si puo' chiudere. ex_font_apri rende 0 se non trova il file, e zero e'
+'' proprio il font di sistema — si scrive lo stesso, con un altro carattere.
+const EX_FONT_SISTEMA = 0
+
+'' corpo = altezza voluta in pixel; 0 = quella che il font ha per natura.
+declare function ex_font_apri cdecl alias "ex_font_apri" ( _
+    byval percorso as const zstring ptr, byval corpo as long) as ulong
+declare sub ex_font_chiudi cdecl alias "ex_font_chiudi" (byval f as ulong)
+declare function ex_font_altezza cdecl alias "ex_font_altezza" (byval f as ulong) as long
+declare function ex_font_base cdecl alias "ex_font_base" (byval f as ulong) as long
+declare function ex_larghezza_testo cdecl alias "ex_larghezza_testo" ( _
+    byval f as ulong, byval s as const zstring ptr) as long
+declare sub ex_scrivi_con cdecl alias "ex_scrivi_con" ( _
+    byval w as ulong, byval f as ulong, byval x as long, byval y as long, _
+    byval s as const zstring ptr, byval c as ulong)
+
 '' --- Creare ------------------------------------------------------------------
 ''
 '' Per una finestra di primo livello: padre = 0, id = 0, proc = la procedura.

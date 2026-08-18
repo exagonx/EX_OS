@@ -180,6 +180,21 @@ __pycache__/
 # non un prodotto della costruzione.
 /.svga
 
+# =============================================================================
+# I SORGENTI DEI FONT
+#
+# Ventisei megabyte di file FontForge che per diventare .ttf vogliono
+# FontForge piu' Python. Stessa regola di GCC e della userland qui sopra: i
+# sorgenti di terzi non entrano nella cronologia. Quello che di loro serve —
+# i dodici .ttf costruiti, con LICENSE, AUTHORS e le impronte — sta in
+# exwin/font/, che e' tracciata; il perche' per esteso in exwin/font/leggimi.md.
+#
+# ! I SORGENTI ANDRANNO SULL'ISO DEGLI STRUMENTI, accanto a quelli di GCC,
+# FreeBASIC e SSH: e' quella l'immagine il cui mestiere e' dare tutto il
+# necessario per ricostruire EX-OS da dentro EX-OS. Non e' la cronologia di git.
+# =============================================================================
+/liberation-fonts/
+
 # Lo script che azzera la storia: e uno strumento, non un sorgente
 /azzera-storia.sh
 /messaggio-primo-commit.txt
