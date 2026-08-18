@@ -232,6 +232,49 @@ static long barra_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
     return ex_procedura_base(f, msg, wp, lp);
 }
 
+/* -----------------------------------------------------------------------------
+ * La scrivania si ridisegna da se'
+ *
+ * ! SENZA UNA PROCEDURA, IL RIDISEGNO DI DEFAULT LA RIEMPIE DI GRIGIO. Fino al
+ * 18 agosto 2026 la scrivania si creava con `0` al posto della procedura, e il
+ * colore e l'immagine si mettevano UNA VOLTA subito dopo. Poi bastava un clic
+ * sullo sfondo — che fa riordinare le finestre e quindi chiedere un ridisegno —
+ * perche' ex_procedura_base ripulisse tutto col grigio di una finestra vuota:
+ * la scrivania si cancellava, immagine compresa, e non tornava piu'.
+ *
+ * ! DISEGNARE UNA VOLTA VA BENE FINCHE' NESSUNO CHIEDE DI RIDISEGNARE, ed e' la
+ * forma piu' facile di questo errore: funziona perfettamente finche' non si
+ * tocca niente. Chi possiede dei pixel deve saperli rifare su richiesta.
+ *
+ * ! E SI RILEGGE IL FILE OGNI VOLTA, che e' il prezzo dichiarato: tenere
+ * l'immagine decodificata vorrebbe dire una copia da 1,8 MB in un processo che
+ * la usa quando lo scoprono. Succede quando la scrivania viene scoperta, non a
+ * ogni fotogramma.
+ *
+ * Rende 0 se c'era un'immagine e non si e' potuta leggere.
+ * --------------------------------------------------------------------------- */
+static ExFinestra  g_scr = 0;
+static const char *g_sfondo = 0;
+
+static int scrivania_disegna(void)
+{
+    if (!g_scr) return 1;
+
+    ex_riempi(g_scr, 0, 0, (int)g_sw, (int)g_sh - BARRA_H, EX_BLU);
+    if (g_sfondo && !ex_immagine(g_scr, g_sfondo, 0, 0)) return 0;
+    return 1;
+}
+
+static long scr_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+{
+    /* ! E SI MANDA AL SERVER SUBITO. Disegnare riempie la zona condivisa; e'
+     * ex_aggiorna che dice al server di ricomporla. Senza, la scrivania
+     * sarebbe giusta nella memoria del processo e grigia sullo schermo — che
+     * e' esattamente il difetto di prima, con una causa in piu' da cercare. */
+    if (msg == EXM_DISEGNA) { scrivania_disegna(); ex_aggiorna(f); return 0; }
+    return ex_procedura_base(f, msg, wp, lp);
+}
+
 int main(int argc, char **argv)
 {
     ExMsg m;
@@ -274,7 +317,8 @@ int main(int argc, char **argv)
      * sotto. E' il motivo per cui uno sfondo non e' un caso a parte. */
     {
         ExFinestra scr = ex_crea("finestra", "", EX_SFONDO,
-                                 0, 0, (int)g_sw, (int)g_sh - BARRA_H, 0, 0, 0);
+                                 0, 0, (int)g_sw, (int)g_sh - BARRA_H,
+                                 0, 0, scr_proc);
         if (!scr) {
             /* ! IL CONSIGLIO E' «exwin», NON IL DRIVER A MANO, e la
              * differenza non e' comodita': wserver.drv avviato cosi' nasce
@@ -286,8 +330,10 @@ int main(int argc, char **argv)
             printf("    Avvialo con:  exwin\n");
             return 1;
         }
-        ex_riempi(scr, 0, 0, (int)g_sw, (int)g_sh - BARRA_H, EX_BLU);
-        if (sfondo && !ex_immagine(scr, sfondo, 0, 0)) {
+        g_scr = scr;
+        g_sfondo = sfondo;
+
+        if (!scrivania_disegna()) {
             char msg[160];
             sprintf(msg, "pm: %s: formato non riconosciuto", sfondo);
             log_seriale(msg);

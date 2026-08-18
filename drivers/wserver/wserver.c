@@ -408,6 +408,30 @@ static void fuoco_ricalcola(void)
     }
 }
 
+/* La finestra modale di un processo, se ne ha una aperta, o -1.
+ *
+ * ! SI CERCA DALLA CIMA, cosi' con due dialoghi annidati — «salva?» che apre
+ * «sovrascrivo?» — risponde l'ultimo aperto, che e' quello che sta chiedendo.
+ *
+ * ! E LA RICERCA E' PER PROCESSO E NON PER FINESTRA PADRE, perche' il server
+ * non sa niente di parentele: dal suo punto di vista un'applicazione e' un
+ * pid con delle finestre. Legare il blocco alla parentela vorrebbe dire
+ * portare l'albero delle finestre dentro il protocollo per usarlo qui, e qui
+ * soltanto. */
+static int modale_di(unsigned int pid)
+{
+    int k;
+
+    for (k = (int)g_n_ordine - 1; k >= 0; k--) {
+        int idx = (int)g_ordine[k];
+
+        if (g_fin[idx].usata && (g_fin[idx].stile & WIN_ST_MODALE) &&
+            g_fin[idx].pid == pid)
+            return idx;
+    }
+    return -1;
+}
+
 static void in_cima(int idx)
 {
     unsigned int k, j = 0;
@@ -602,6 +626,17 @@ static void kbd_tasto(unsigned int k)
     if (g_fuoco < 0 || !g_fin[g_fuoco].usata) fuoco_ricalcola();
     if (g_fuoco < 0) return;
 
+    /* ! I TASTI SEGUONO LA STESSA REGOLA DEI CLIC, e dimenticarlo sarebbe il
+     * modo piu' facile di fare un modale finto: si blocca il mouse, si prova
+     * col mouse, sembra fatto — e intanto nel testo dietro si continua a
+     * scrivere. Qui non si buttano: si dirottano alla modale, che e' l'unica
+     * che possa farci qualcosa (Invio, Esc). */
+    {
+        int md = modale_di(g_fin[g_fuoco].pid);
+
+        if (md >= 0) g_fuoco = md;
+    }
+
     {
         Finestra *f = &g_fin[g_fuoco];
         WinEvento e;
@@ -703,6 +738,20 @@ static void mouse_agisci(void)
 
     idx = sotto(g_px, g_py, &dove);
     if (idx < 0) { g_bottoni_prec = g_bottoni; return; }
+
+    /* ! IL CLIC SU UNA FINESTRA BLOCCATA NON SI PERDE IN SILENZIO: porta
+     * davanti la modale. Buttarlo e basta darebbe un'applicazione che non
+     * risponde e nessun indizio sul perche' — e la finestra che aspetta la
+     * risposta potrebbe essere finita sotto un'altra. */
+    {
+        int md = modale_di(g_fin[idx].pid);
+
+        if (md >= 0 && md != idx) {
+            if (giu) { in_cima(md); g_sporco = 1; }
+            g_bottoni_prec = g_bottoni;
+            return;
+        }
+    }
 
     if (giu) {
         in_cima(idx);
@@ -822,6 +871,73 @@ static void distruggi(int idx)
     if (g_fuoco == idx) fuoco_ricalcola();
 
     g_sporco = 1;
+}
+
+/* -----------------------------------------------------------------------------
+ * Le finestre dei client morti
+ *
+ * ! UN'APPLICAZIONE CHE ESCE NON DICE NIENTE AL SERVER, e non c'e' modo di
+ * obbligarla: se muore per un errore non ha nemmeno la possibilita' di dirlo.
+ * La sua finestra resta disegnata dov'era, con dentro l'ultima cosa che aveva
+ * scritto — e chi la guarda ci clicca sopra e non capisce perche' non risponde.
+ * Trovato provando il dialogo modale: dopo Ctrl+Q la shell dice «terminato» e
+ * il rettangolo bianco dell'editor resta sullo schermo.
+ *
+ * ! SI CHIEDE AL KERNEL CHI E' VIVO, NON SI ASPETTA CHE ipc_send FALLISCA.
+ * Aspettare l'errore vuol dire accorgersene solo quando c'e' qualcosa da
+ * mandare, cioe' quando qualcuno clicca sul fantasma: la finestra sparirebbe
+ * al primo clic, che e' PEGGIO di non farla sparire — sembrerebbe che il clic
+ * abbia fatto qualcosa.
+ *
+ * ! GLI ZOMBIE CONTANO COME MORTI. Un processo uscito e non ancora raccolto dal
+ * padre resta nell'elenco: e' li' solo perche' qualcuno legga il suo codice di
+ * uscita, non ha piu' niente sullo schermo da difendere.
+ *
+ * ! E SE L'ELENCO NON CI STA, NON SI RACCOGLIE NIENTE. Un elenco troncato vuol
+ * dire pid vivi che non risultano, cioe' finestre VIVE distrutte: il danno
+ * peggiore possibile qui. Fra il non pulire e il pulire in base a un elenco di
+ * cui non ci si fida, si non pulisce.
+ * --------------------------------------------------------------------------- */
+#define PROC_ZOMBIE     4
+#define PID_TRACCIATI   64
+
+static void raccogli_morti(void)
+{
+    ProcInfo     v[PROCINFO_MAX_BATCH];
+    unsigned int vivi[PID_TRACCIATI];
+    unsigned int n_vivi = 0, start = 0;
+    int n, i, k;
+
+    for (;;) {
+        n = procinfo(v, PROCINFO_MAX_BATCH, start);
+        if (n <= 0) break;
+
+        for (i = 0; i < n; i++) {
+            if (v[i].state == PROC_ZOMBIE) continue;
+            if (n_vivi >= PID_TRACCIATI) return;    /* elenco troncato: basta */
+            vivi[n_vivi++] = v[i].pid;
+        }
+        start += (unsigned int)n;
+        if (n < PROCINFO_MAX_BATCH) break;
+    }
+
+    if (n_vivi == 0) return;        /* non ho saputo niente: non tocco niente */
+
+    for (i = 0; i < FINESTRE_MAX; i++) {
+        int vivo = 0;
+
+        if (!g_fin[i].usata) continue;
+
+        for (k = 0; k < (int)n_vivi; k++)
+            if (vivi[k] == g_fin[i].pid) { vivo = 1; break; }
+
+        if (!vivo) {
+            if (g_verboso)
+                printf("wserver: il pid %u non c'e' piu', tolgo la sua finestra\n",
+                       g_fin[i].pid);
+            distruggi(i);
+        }
+    }
 }
 
 /* Rende 1 se ha servito un messaggio, 0 se la coda era vuota. */
@@ -1100,6 +1216,7 @@ int main(int argc, char **argv)
      * questo diventera' un poll() vero su FD_IPC piu' il mouse, che e'
      * esattamente cio' per cui SYS_POLL esiste. */
     for (;;) {
+        static unsigned int giri = 0;
         int n;
 
         mouse_chiedi();
@@ -1111,6 +1228,13 @@ int main(int argc, char **argv)
          * peggio, farsi rimettere la console in cooked dal servizio 'kbd'.
          * Il tetto c'e' perche' un client impazzito non ci tenga fermi. */
         for (n = 0; n < 16 && servi_messaggio(); n++) { }
+
+        /* ! UNA VOLTA AL SECONDO, NON A OGNI GIRO. Il giro e' di 20 ms e
+         * procinfo e' una syscall che copia una tabella: farla cinquanta volte
+         * al secondo per una cosa che cambia quando un'applicazione si chiude
+         * sarebbe spendere sempre per accorgersi prima di qualcosa che non ha
+         * fretta. */
+        if (++giri >= 50) { giri = 0; raccogli_morti(); }
 
         if (g_sporco && g_visibile) { componi(); g_sporco = 0; }
         usleep(20000);

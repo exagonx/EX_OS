@@ -54,6 +54,21 @@ int ex_dlg_salva(char *percorso, unsigned int max);
  * di stato — che chi guarda un'altra finestra non legge. */
 int ex_dlg_avviso(const char *titolo, const char *testo);
 
+/* Una domanda con due pulsanti: rende 1 per «si'», 0 per «no».
+ *
+ * ! LA RISPOSTA PREDEFINITA E' «NO», E NON E' UNA CORTESIA. Chiudere la
+ * finestra col pulsante di chiusura, premere Esc, o veder morire il dialogo
+ * per qualunque ragione danno tutti 0. Un dialogo che in caso di dubbio
+ * rispondesse «si'» sarebbe un dialogo che cancella il lavoro di qualcuno
+ * quando qualcosa va storto — e queste domande si fanno proprio prima di
+ * perdere qualcosa.
+ *
+ * `si` e `no` sono le scritte dei due pulsanti; passare 0 mette «Si'» e «No».
+ * Servono perche' «Salva / Non salvare» dice all'utente cosa succede, mentre
+ * «Si' / No» lo costringe a ricostruirlo dalla domanda. */
+int ex_dlg_conferma(const char *titolo, const char *testo,
+                    const char *si, const char *no);
+
 #ifdef __cplusplus
 }
 #endif

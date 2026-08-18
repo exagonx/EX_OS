@@ -92,6 +92,14 @@ typedef long (*ExProcedura)(ExFinestra, unsigned int, unsigned int, long);
  * schermo intero — altrimenti l'unico modo di tornare al menu sarebbe
  * spostare quella finestra, e a schermo intero non si potrebbe. */
 #define EX_SOPRA        0x0020
+
+/* ! MODALE: finche' e' aperta, le ALTRE finestre di questo programma non
+ * ricevono ne' clic ne' tasti. Non e' «sta sopra»: una finestra che copre e
+ * basta lascia cliccare quello che si vede intorno, e un «vuoi perdere le
+ * modifiche?» a cui si puo' rispondere continuando a scrivere non sta
+ * chiedendo niente. Il blocco lo fa il server, che e' l'unico a sapere dove
+ * vanno a finire i clic. */
+#define EX_MODALE       0x0040
 #define EX_FIGLIO       0x0100  /* e' un controllo dentro un'altra finestra */
 
 /* --- I colori, in ARGB --------------------------------------------------- */

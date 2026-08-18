@@ -39,6 +39,7 @@ static struct {
     int (*apri)(char *, unsigned int);
     int (*salva)(char *, unsigned int);
     int (*avviso)(const char *, const char *);
+    int (*conferma)(const char *, const char *, const char *, const char *);
 } P;
 
 static void *chiedi(const ExLibTesta *t, const char *nome)
@@ -65,6 +66,8 @@ static void assicura(void)
     P.apri   = (int (*)(char *, unsigned int))        chiedi(t, "ex_dlg_apri");
     P.salva  = (int (*)(char *, unsigned int))        chiedi(t, "ex_dlg_salva");
     P.avviso = (int (*)(const char *, const char *))  chiedi(t, "ex_dlg_avviso");
+    P.conferma = (int (*)(const char *, const char *, const char *,
+                          const char *)) chiedi(t, "ex_dlg_conferma");
 
     P.pronto = 1;
 }
@@ -85,4 +88,11 @@ int ex_dlg_avviso(const char *titolo, const char *testo)
 {
     assicura();
     return P.avviso(titolo, testo);
+}
+
+int ex_dlg_conferma(const char *titolo, const char *testo,
+                    const char *si, const char *no)
+{
+    assicura();
+    return P.conferma(titolo, testo, si, no);
 }

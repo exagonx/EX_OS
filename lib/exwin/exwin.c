@@ -1008,7 +1008,8 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
                 | ((stile & EX_BORDO)  ? WIN_ST_BORDO  : 0)
                 | ((stile & EX_CHIUDI) ? WIN_ST_CHIUDI : 0)
                 | ((stile & EX_SFONDO) ? WIN_ST_SFONDO : 0)
-                | ((stile & EX_SOPRA)  ? WIN_ST_SOPRA  : 0);
+                | ((stile & EX_SOPRA)  ? WIN_ST_SOPRA  : 0)
+                | ((stile & EX_MODALE) ? WIN_ST_MODALE : 0);
         strncpy(c.titolo, o->titolo, WIN_TITOLO_LEN - 1);
 
         if (ipc_send((unsigned int)g_server, WIN_MSG_CREA, &c, sizeof(c)) < 0) {
@@ -1551,8 +1552,21 @@ void ex_smista(const ExMsg *m)
     if (o->proc) {
         if (o->proc(m->finestra, m->msg, m->wp, m->lp) == 0) {
             /* La procedura ha gestito il messaggio: si ridisegna comunque,
-             * perche' quasi sempre l'ha gestito cambiando qualcosa. */
-            ex_procedura_base(m->finestra, EXM_DISEGNA, 0, 0);
+             * perche' quasi sempre l'ha gestito cambiando qualcosa.
+             *
+             * ! E IL RIDISEGNO PASSA DALLA SUA PROCEDURA, NON DALLA BASE.
+             * Fino al 18 agosto 2026 qui c'era ex_procedura_base(), che
+             * riempie la finestra di grigio e ridisegna i controlli: una
+             * finestra che disegna i propri pixel — la scrivania, con il suo
+             * colore e la sua immagine — se li vedeva cancellare al primo
+             * messaggio gestito, e non aveva NESSUN modo di difendersi,
+             * perche' il ridisegno non le veniva nemmeno chiesto. Il sintomo
+             * era «un clic sullo sfondo lo fa diventare grigio».
+             *
+             * Chi non gestisce EXM_DISEGNA ricade sulla base da se', e per
+             * quelle finestre non cambia niente. */
+            if (m->msg != EXM_DISEGNA)
+                o->proc(m->finestra, EXM_DISEGNA, 0, 0);
             return;
         }
     }

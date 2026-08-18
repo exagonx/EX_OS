@@ -86,7 +86,11 @@ int main(int argc, char **argv)
     x = ((int)sw > FIN_W) ? ((int)sw - FIN_W) / 2 : 0;
     y = ((int)sh > FIN_H) ? ((int)sh - FIN_H) / 3 : 0;
 
-    sprintf(titolo, "Terminale — %s", g_prog);
+    /* ! IL TRATTINO E' QUELLO CORTO, ED E' UNA REGOLA NON UN GUSTO. Il font
+     * del server e' a 256 caratteri, uno per byte: una stringa in UTF-8 esce a
+     * schermo come i suoi byte, e il trattino lungo diventava «ZCO». Nei
+     * commenti si scrive come si vuole; in cio' che va a schermo, ASCII. */
+    sprintf(titolo, "Terminale - %s", g_prog);
 
     g_f = ex_crea("finestra", titolo, EX_TITOLO | EX_BORDO | EX_CHIUDI,
                   x, y, FIN_W, FIN_H, 0, 0, proc);

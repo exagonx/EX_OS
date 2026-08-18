@@ -49,8 +49,6 @@
 
 static char g_perc[PERC_MAX] = "";
 static int  g_parziale = 0;     /* letto SOLO IN PARTE: non si salva */
-static int  g_chiedi_uscita = 0;
-static int  g_chiedi_apri = 0;
 static char g_avviso[96] = "";
 
 static ExFinestra g_f, g_area, g_stato;
@@ -136,16 +134,18 @@ static void apri_con_dialogo(void)
 {
     char nuovo[PERC_MAX];
 
-    /* ! IL LAVORO NON SALVATO SI DIFENDE COME ALLA CHIUSURA: il primo «Apri»
-     * avvisa, il secondo procede. Un dialogo con «si'/no» sarebbe piu' chiaro,
-     * ma ExDlg ne ha uno solo con un pulsante solo — e inventare un «ha detto
-     * di si'» che nessuno ha detto e' peggio di chiedere due volte. */
-    if (ex_area_modificato(g_area) && !g_chiedi_apri) {
-        g_chiedi_apri = 1;
-        strcpy(g_avviso, "modificato: premi «Apri» di nuovo per perdere le modifiche");
+    /* ! ADESSO LA DOMANDA E' UNA DOMANDA. Fino al 18 agosto 2026 il primo
+     * «Apri» avvisava e il secondo procedeva, perche' ExDlg aveva un dialogo
+     * solo e con un pulsante solo. Con ex_dlg_conferma() si chiede una volta e
+     * si risponde — e il dialogo e' modale, quindi non si puo' rispondere
+     * continuando a scrivere nel testo. */
+    if (ex_area_modificato(g_area) &&
+        !ex_dlg_conferma("Modifiche non salvate",
+                         "Il testo e' cambiato. Aprire un altro file?",
+                         "Apri lo stesso", "Annulla")) {
+        strcpy(g_avviso, "apertura annullata: il testo e' ancora quello");
         return;
     }
-    g_chiedi_apri = 0;
 
     strncpy(nuovo, g_perc, PERC_MAX - 1);
     nuovo[PERC_MAX - 1] = '\0';
@@ -250,15 +250,19 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
          * Backspace e l'Invio li ha gia' mangiati l'area di testo: se sono
          * arrivate fin qui, non erano per lei. */
         g_avviso[0] = '\0';
-        g_chiedi_uscita = 0;
         c = wp & KBD_KEY_MASK;
 
         if (wp & KBD_MOD_CTRL) {
             if (c == 's' || c == 'S') { salva(); break; }
             if (c == 'q' || c == 'Q') {
-                if (ex_area_modificato(g_area)) {
-                    strcpy(g_avviso, "modificato: Ctrl+Q di nuovo per uscire senza salvare");
-                    g_chiedi_uscita = 1;
+                /* La stessa domanda della chiusura, e non e' una ripetizione
+                 * da togliere: sono due modi di uscire, e devono difendere il
+                 * testo allo stesso modo. */
+                if (ex_area_modificato(g_area) &&
+                    !ex_dlg_conferma("Modifiche non salvate",
+                                     "Il testo e' cambiato. Uscire senza salvare?",
+                                     "Esci", "Torna al testo")) {
+                    strcpy(g_avviso, "non uscito: il testo e' ancora qui");
                     break;
                 }
                 ex_esci(0);
@@ -268,13 +272,15 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         return ex_procedura_base(f, msg, wp, lp);
 
     case EXM_CHIUDI:
-        /* ! UNA DOMANDA SENZA FINESTRA DI DIALOGO. Non c'e' un dialogo con
-         * «si'/no», e chiudere in silenzio un testo modificato e' il modo piu'
-         * facile di perdere il lavoro di qualcuno: la prima chiusura avvisa,
-         * la seconda esce. */
-        if (ex_area_modificato(g_area) && !g_chiedi_uscita) {
-            g_chiedi_uscita = 1;
-            strcpy(g_avviso, "modificato: chiudi di nuovo per uscire senza salvare");
+        /* ! CHIUDERE IN SILENZIO UN TESTO MODIFICATO E' IL MODO PIU' FACILE DI
+         * PERDERE IL LAVORO DI QUALCUNO, e adesso c'e' come chiederlo davvero.
+         * La risposta prudente e' «no»: chiudere il dialogo o battere Esc
+         * lascia l'editor aperto col testo dentro. */
+        if (ex_area_modificato(g_area) &&
+            !ex_dlg_conferma("Modifiche non salvate",
+                             "Il testo e' cambiato. Uscire senza salvare?",
+                             "Esci", "Torna al testo")) {
+            strcpy(g_avviso, "non uscito: il testo e' ancora qui");
             break;
         }
         ex_esci(0);

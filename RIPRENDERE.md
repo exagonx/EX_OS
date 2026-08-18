@@ -12,7 +12,7 @@ seriale e USB — tastiera compresa, hub compresi.
 
 ## COSA E' COMMITTATO
 
-    68fd264  "TSC e PSE accesi, e il PNG entra da una libreria che nessuno paga"
+    e8d3402  "JPEG e ICO: i lettori di immagini sono finiti"
 
 ! **`gitupdate.sh` FA `git add .` E UN COMMIT SOLO**: `messaggio-commit.txt`
 deve coprire tutto quello che si e' fatto dall'ultimo commit, non l'ultima
@@ -22,39 +22,35 @@ cosa.
 
 ## La coda, in ordine
 
-### Cose che mancano e si vedono
-
- 1. *(vuoto: i lettori di immagini sono finiti — BMP, PNG, JPEG e ICO. Vedi
-    «JPEG e ICO: i lettori di immagini sono finiti».)*
-
-### Cose che il toolkit ha gia' chiesto tre volte
-
- 4. **Un dialogo con «si'/no»** e **finestre modali vere**. ExDlg ha un avviso
-    con un pulsante solo, quindi «vuoi perdere le modifiche?» si chiede facendo
-    premere due volte lo stesso pulsante. E il server non sa cosa sia una
-    finestra modale: il dialogo sta sopra ma i clic sotto arrivano lo stesso.
+! **LE DUE SEZIONI IN CIMA SONO VUOTE**, e vale la pena dirlo invece di
+toglierle: «cose che si vedono» e «cose che il toolkit ha chiesto tre volte»
+sono state svuotate il 17 e il 18 agosto — i lettori di immagini, il toolkit, i
+permessi, il dialogo «si'/no» e le finestre modali. Quello che resta vuole un
+pezzo di kernel nuovo, e non e' piu' lavoro di rifinitura.
 
 ### Cose che vogliono un pezzo di kernel nuovo
 
- 7. **`Ctrl+C` in un terminale in finestra** — non c'e' e non puo' esserci
-    cosi': un segnale attraverso una pipe non si manda. Serve un modo di
-    chiedere al kernel «interrompi quel processo».
- 8. **Ridimensionare le finestre** — la zona condivisa ha misura fissa, quindi
+ 1. **I pseudo-terminali (pty), e con loro `Ctrl+C` in un terminale in
+    finestra** — un segnale attraverso una pipe non si manda. **E' il lavoro
+    piu' grosso rimasto**, ed e' lo stesso che serve a una sessione remota: una
+    shell su una pipe nuda non ha eco, ne' Backspace, ne' misura dello schermo.
+    Un solo lavoro, due difetti chiusi. Vedi «Multiutenza remota e SSH».
+ 2. **Ridimensionare le finestre** — la zona condivisa ha misura fissa, quindi
     vuole una stretta di mano ordinata. `WIN_EV_MISURA` e' gia' nel protocollo.
 
 ### Rifiniture, quando conviene
 
- 9. **`login` e `install` sulla libc condivisa** — oggi restano statici
+ 3. **`login` e `install` sulla libc condivisa** — oggi restano statici
     apposta: sono i due programmi con cui si entra e con cui si ripara. Prima
     serve un modo di accorgersi che `/lib/libc.so` manca PRIMA di arrivare al
     login.
-10. **Risolvere per hash invece che per nome** — altri ~3 KB per programma, col
+ 4. **Risolvere per hash invece che per nome** — altri ~3 KB per programma, col
     generatore che verifica a costruzione che non ci siano collisioni.
-11. **La lista delle regioni sporche** — `WIN_MSG_AGGIORNA` porta gia' una
+ 5. **La lista delle regioni sporche** — `WIN_MSG_AGGIORNA` porta gia' una
     `WinRegione` che oggi si ignora. Ha senso quando le finestre saranno tante
     abbastanza da farlo pesare, ed e' la struttura piu' facile da sbagliare di
     un server grafico.
-12. **`-i` ai quattro driver che ancora non ce l'hanno** — `floppy`,
+ 6. **`-i` ai quattro driver che ancora non ce l'hanno** — `floppy`,
     `mouseser`, `uhci`, `vgaprova`. Gli altri nove ce l'hanno tutti (`pci`,
     `svga`, `kbd`, `xhci` e i cinque del CD); `tty` era in questo elenco per
     sbaglio, non e' un `.drv` ma un pezzo compilato dentro il kernel. Oggi non
@@ -254,6 +250,108 @@ copiare, non da reinventare.
 ! **E OGNI NOME NUOVO VA IN `exwin_esporta.c` E NELLO STUB.** Aggiungere una
 funzione alla libreria e dimenticarsi lo stub da' un simbolo che non si
 risolve — e il messaggio lo dice, col nome, ma solo a chi lo esegue.
+
+# Il dialogo diventa una domanda, e il modale morde (18 agosto 2026)
+
+    editor, testo modificato, Ctrl+Q:
+
+        appare «Modifiche non salvate — Uscire senza salvare?»
+        battuti b, c, d col dialogo aperto:
+            la fotografia PRIMA e DOPO e' IDENTICA BYTE PER BYTE
+        clic su «Nuovo» dell'editor dietro:
+            il testo intatto, il dialogo ancora li'
+        Esc   -> l'editor resta, col suo testo
+        Invio -> [3] terminato: /exwin/bin/edit (codice 0)
+
+Fino a ieri «vuoi perdere le modifiche?» si chiedeva facendo premere due volte
+lo stesso pulsante, perche' ExDlg aveva un avviso con un pulsante solo e il
+server non sapeva cosa fosse una finestra modale. Adesso c'e' `ex_dlg_conferma()`
+e c'e' `WIN_ST_MODALE`.
+
+## Modale vuol dire due cose, e una si dimentica sempre
+
+! **NON BASTA STARE SOPRA.** Una finestra che copre e basta lascia cliccare
+quello che si vede intorno, e un dialogo a cui si puo' rispondere continuando a
+scrivere nel testo non sta chiedendo niente. `EX_SOPRA` c'era gia' da giorni: e'
+un'altra cosa.
+
+! **E I TASTI SEGUONO LA STESSA REGOLA DEI CLIC.** Dimenticarlo e' il modo piu'
+facile di fare un modale finto: si blocca il mouse, si prova col mouse, sembra
+fatto — e intanto nel testo dietro si continua a scrivere. La prova che conta e'
+proprio quella: tre lettere battute col dialogo aperto, e le due fotografie
+identiche byte per byte.
+
+I tasti non si buttano, si **dirottano** alla modale: e' lei l'unica che possa
+farci qualcosa (Invio, Esc). E il clic su una finestra bloccata non si perde in
+silenzio: **porta davanti la modale**, cosi' chi ha cliccato vede dove deve
+rispondere invece di trovarsi un'applicazione sorda.
+
+## Modale per l'applicazione, non per lo schermo
+
+! **E' LA DECISIONE CHE CONTA, ed e' scritta nel protocollo.** Blocca solo le
+finestre dello STESSO processo. Un modale di sistema bloccherebbe tutto — e il
+giorno che il client muore col dialogo aperto, lo schermo resta bloccato e non
+c'e' modo di rimediare se non ammazzando il server. Cosi' invece muore il
+client, le sue finestre se ne vanno con lui, e il resto non se n'e' accorto.
+
+! **E LA RICERCA E' PER PROCESSO, NON PER FINESTRA PADRE.** Il server non sa
+niente di parentele: dal suo punto di vista un'applicazione e' un pid con delle
+finestre. Legare il blocco alla parentela vorrebbe dire portare l'albero delle
+finestre dentro il protocollo per usarlo li', e li' soltanto.
+
+## La risposta prudente e' «no»
+
+! **CHIUDERE LA FINESTRA, BATTERE Esc O VEDER MORIRE IL DIALOGO DANNO TUTTI 0.**
+Un dialogo che in caso di dubbio rispondesse «si'» cancellerebbe il lavoro di
+qualcuno quando qualcosa va storto — e queste domande si fanno **proprio prima
+di perdere qualcosa**.
+
+Le scritte dei due pulsanti le sceglie il chiamante: «Esci / Torna al testo»
+dice cosa succede, «Si' / No» costringe a ricostruirlo dalla domanda.
+
+! **E I PULSANTI SI MISURANO SULLA LORO SCRITTA.** La prima prova aveva «Torna
+al testo» che usciva dal riquadro: una misura fissa va bene finche' le scritte
+le sceglie chi ha scritto il dialogo, ma qui le sceglie chi lo chiama, che non
+sa quanto e' largo un pulsante.
+
+## Tre difetti trovati dalle prove, e nessuno era nel lavoro di oggi
+
+**1. Le finestre dei client morti restavano sullo schermo.** Dopo Ctrl+Q la
+shell diceva «terminato» e il rettangolo bianco dell'editor era ancora li'.
+
+! **SI CHIEDE AL KERNEL CHI E' VIVO, NON SI ASPETTA CHE `ipc_send` FALLISCA.**
+Aspettare l'errore vuol dire accorgersene solo quando c'e' qualcosa da mandare,
+cioe' quando qualcuno clicca sul fantasma: la finestra sparirebbe al primo clic,
+che e' **peggio** di non farla sparire — sembrerebbe che il clic abbia fatto
+qualcosa. Il server chiama `procinfo()` una volta al secondo, e gli zombie
+contano come morti. Se l'elenco non ci sta nel buffer non si raccoglie niente:
+un elenco troncato vuol dire distruggere finestre **vive**.
+
+**2. Un clic sullo sfondo cancellava la scrivania**, immagine compresa. La causa
+non era in `pm`: era in `ex_smista()`, che dopo un messaggio gestito ridisegnava
+chiamando `ex_procedura_base()` — che riempie di grigio e ridisegna i controlli.
+
+! **UNA FINESTRA CHE DISEGNA I PROPRI PIXEL NON AVEVA NESSUN MODO DI
+DIFENDERSI**, perche' il ridisegno non le veniva nemmeno chiesto. Adesso passa
+dalla sua procedura; chi non gestisce `EXM_DISEGNA` ricade sulla base da se', e
+per quelle finestre non cambia niente.
+
+! **E LA SCRIVANIA ADESSO HA UNA PROCEDURA.** Disegnava colore e immagine una
+volta sola, subito dopo la creazione: **funziona perfettamente finche' nessuno
+chiede di ridisegnare**, ed e' la forma piu' facile di questo errore. Chi
+possiede dei pixel deve saperli rifare su richiesta.
+
+**3. Il titolo del terminale si leggeva «Terminale ZCO /bin/sh».** Era un
+trattino lungo in UTF-8.
+
+! **IL FONT DEL SERVER HA 256 CARATTERI, UNO PER BYTE**: una stringa UTF-8 non
+viene «resa male», esce come i suoi byte. Da qui `make verifica-testi`, che
+guarda le stringhe delle applicazioni grafiche — non i commenti, dove
+l'italiano si scrive per intero, e non i messaggi per la console di testo, che
+in 45 file usano «» e i trattini lunghi ed e' la convenzione del progetto.
+
+! **E SI E' VISTO GUARDANDO UNA FOTOGRAFIA, NON COMPILANDO.** E' il genere di
+difetto che nessun avviso dara' mai.
 
 # JPEG e ICO: i lettori di immagini sono finiti (18 agosto 2026)
 

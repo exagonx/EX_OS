@@ -123,6 +123,24 @@ static inline void win_nome_servizio(char *out, unsigned int max)
  * spostare quella finestra, e con una a schermo intero non si potrebbe. */
 #define WIN_ST_SOPRA        0x0020
 
+/* ! MODALE VUOL DIRE «FINCHE' CI SONO IO, LE ALTRE DEL MIO PADRONE NON
+ * RISPONDONO». Non basta stare sopra: una finestra che copre e basta lascia
+ * cliccare quello che si vede intorno, e un dialogo «vuoi perdere le
+ * modifiche?» a cui si puo' rispondere continuando a scrivere nel testo non
+ * sta chiedendo niente.
+ *
+ * ! ED E' MODALE PER L'APPLICAZIONE, NON PER LO SCHERMO, che e' la decisione
+ * che conta: blocca solo le finestre dello STESSO processo. Un modale di
+ * sistema bloccherebbe tutto — e il giorno che il client muore con il dialogo
+ * aperto, lo schermo resta bloccato e non c'e' modo di rimediare se non
+ * ammazzando il server. Cosi' invece muore il client, le sue finestre se ne
+ * vanno con lui, e tutto il resto non se n'e' nemmeno accorto.
+ *
+ * Il server non «disabilita» niente: butta i clic destinati alle finestre
+ * bloccate e porta davanti la modale, cosi' chi ha cliccato vede DOVE deve
+ * rispondere invece di trovarsi un'applicazione sorda. */
+#define WIN_ST_MODALE       0x0040
+
 #define WIN_TITOLO_LEN      48
 
 /* -----------------------------------------------------------------------------

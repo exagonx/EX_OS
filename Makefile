@@ -1085,6 +1085,40 @@ $(EXDLG_SO): $(EXDLG_SRC) $(EXDLG_ESPORTA) $(EXDLG_HDR) $(EXDLG_LD) \
 .PHONY: exdlg_so
 exdlg_so: dirs $(EXDLG_SO)
 
+# --- verifica-testi: niente UTF-8 in cio' che va a schermo -------------------
+#
+# ! IL FONT DEL SERVER E' A 256 CARATTERI, UNO PER BYTE. Una stringa scritta in
+# UTF-8 non viene «resa male»: esce come i suoi byte, e un trattino lungo
+# diventa tre caratteri accentati. E' successo nel titolo del terminale, dove
+# «Terminale — /bin/sh» si leggeva «Terminale ZCO /bin/sh» — trovato guardando
+# una fotografia, non compilando.
+#
+# ! SI CONTROLLANO LE STRINGHE, NON I FILE. Nei commenti si scrive in italiano
+# vero, con le virgolette basse e gli accenti, e cosi' dev'essere: sono per chi
+# legge il codice. La regola vale solo per cio' che finisce dentro le
+# virgolette, che e' cio' che finisce a schermo.
+#
+# ! E VALE PER LE APPLICAZIONI GRAFICHE, NON PER TUTTO IL SISTEMA. I messaggi
+# che vanno sulla console di testo e sulla seriale usano «» e i trattini lunghi
+# in 45 file: e' la convenzione del progetto, e la seriale la rende bene. Qui
+# si guarda dove il font e' quello del server a finestre, che di caratteri ne
+# ha 256 e non sa niente di UTF-8 — cioe' dove il difetto si e' visto.
+.PHONY: verifica-testi
+verifica-testi:
+	@fuori=""; \
+	for f in $$(find lib/exwin lib/exdlg lib/eximg exwin/bin \
+	              -name '*.c' -o -name '*.h' 2>/dev/null); do \
+	    if LC_ALL=C grep -nP '^[^*/]*"[^"]*[^\x00-\x7F][^"]*"' $$f >/dev/null 2>&1; then \
+	        fuori="$$fuori $$f"; \
+	    fi; \
+	done; \
+	if [ -n "$$fuori" ]; then \
+	    echo "[ERRORE] stringhe non ASCII in cio' che va a schermo:$$fuori"; \
+	    for f in $$fuori; do LC_ALL=C grep -nP '^[^*/]*"[^"]*[^\x00-\x7F][^"]*"' $$f | head -3; done; \
+	    exit 1; \
+	fi; \
+	echo "[OK] nessuna stringa non ASCII nelle applicazioni grafiche"
+
 # --- L'immagine con cui si prova il lettore PNG ------------------------------
 #
 # ! SENZA UN'IMMAGINE SUL SUPPORTO IL LETTORE NON E' PROVABILE DA DENTRO, e
