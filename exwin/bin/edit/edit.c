@@ -34,10 +34,11 @@
 #define FIN_W       640
 #define FIN_H       420
 
+/* La barra dei menu occupa i primi 20 pixel; l'area comincia sotto. */
+#define MENU_H      20
 #define AREA_X      4
-#define AREA_Y      26
-#define AREA_W      (FIN_W - 8)
-#define AREA_H      368
+#define AREA_Y      (MENU_H + 4)
+#define BASSO       24          /* la riga di stato in fondo */
 
 #define PERC_MAX    192
 
@@ -46,12 +47,22 @@
 #define ID_RICARICA   3
 #define ID_APRI       4
 #define ID_SALVACOME  5
+#define ID_ESCI       6
+
+#define ID_TAGLIA     10
+#define ID_COPIA      11
+#define ID_INCOLLA    12
+#define ID_CANCELLA   13
+#define ID_SELTUTTO   14
+
+#define ID_ISTRUZIONI 20
+#define ID_INFO       21
 
 static char g_perc[PERC_MAX] = "";
 static int  g_parziale = 0;     /* letto SOLO IN PARTE: non si salva */
 static char g_avviso[96] = "";
 
-static ExFinestra g_f, g_area, g_stato;
+static ExFinestra g_f, g_area, g_stato, g_menu;
 
 /* -----------------------------------------------------------------------------
  * Caricare
@@ -226,11 +237,50 @@ static void ridisegna(void)
     ex_aggiorna(g_f);
 }
 
+/* ! UNA SOLA FUNZIONE PER USCIRE, chiamata da tre parti — il menu, Ctrl+Q e il
+ * pulsante di chiusura. Erano tre copie della stessa domanda, e tre copie di
+ * una domanda che difende il lavoro di qualcuno divergono alla prima modifica:
+ * ne resterebbe una che non chiede piu' niente, e nessuno se ne accorgerebbe
+ * finche' non perde un testo. */
+static void esci_se_si_puo(void)
+{
+    if (ex_area_modificato(g_area) &&
+        !ex_dlg_conferma("Modifiche non salvate",
+                         "Il testo e' cambiato. Uscire senza salvare?",
+                         "Esci", "Torna al testo")) {
+        strcpy(g_avviso, "non uscito: il testo e' ancora qui");
+        return;
+    }
+    ex_esci(0);
+}
+
+static void istruzioni(void)
+{
+    ex_dlg_avviso("Istruzioni",
+                  "F10 apre i menu, le frecce li girano, Invio sceglie.  "
+                  "Shift piu' le frecce sceglie il testo; Ctrl+S salva, "
+                  "Ctrl+Q esce.  Gli appunti sono di tutta la scrivania: "
+                  "si copia qui e si incolla in un altro editor.");
+}
+
+static void informazioni(void)
+{
+    ex_dlg_avviso("Informazioni su",
+                  "L'editor di testo di EX-OS, sul toolkit ExWin.  "
+                  "Il testo, il cursore e lo scorrimento sono del controllo "
+                  "areatesto; qui dentro c'e' solo leggere un file, "
+                  "scriverlo e decidere cosa fare quando va storto.");
+}
+
 static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 {
     unsigned int c;
 
     switch (msg) {
+    /* ! IL MENU E I PULSANTI ARRIVANO QUI ALLO STESSO MODO, con lo stesso id.
+     * E' il motivo per cui aggiungere i menu non ha voluto una riga di codice
+     * nuovo qui dentro: una voce di menu E' un pulsante, detto in un altro
+     * posto. */
     case EXM_COMANDO:
         g_avviso[0] = '\0';
         if (wp == ID_SALVA)     { salva();            break; }
@@ -243,6 +293,35 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         }
         if (wp == ID_APRI)      { apri_con_dialogo(); break; }
         if (wp == ID_SALVACOME) { salva_come();       break; }
+        if (wp == ID_ESCI)      { esci_se_si_puo();   break; }
+
+        if (wp == ID_TAGLIA)    {
+            int n = ex_area_taglia(g_area);
+            if (n) sprintf(g_avviso, "tagliati %d byte", n);
+            else   strcpy(g_avviso, "non c'e' niente di scelto");
+            break;
+        }
+        if (wp == ID_COPIA)     {
+            int n = ex_area_copia(g_area);
+            if (n) sprintf(g_avviso, "copiati %d byte", n);
+            else   strcpy(g_avviso, "non c'e' niente di scelto");
+            break;
+        }
+        if (wp == ID_INCOLLA)   {
+            int n = ex_area_incolla(g_area);
+            if (n) sprintf(g_avviso, "incollati %d byte", n);
+            else   strcpy(g_avviso, "gli appunti sono vuoti");
+            break;
+        }
+        if (wp == ID_CANCELLA)  {
+            if (!ex_area_cancella(g_area))
+                strcpy(g_avviso, "non c'e' niente di scelto");
+            break;
+        }
+        if (wp == ID_SELTUTTO)  { ex_area_seleziona_tutto(g_area); break; }
+
+        if (wp == ID_ISTRUZIONI) { istruzioni();  break; }
+        if (wp == ID_INFO)       { informazioni(); break; }
         return 0;
 
     case EXM_TASTO:
@@ -252,39 +331,39 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         g_avviso[0] = '\0';
         c = wp & KBD_KEY_MASK;
 
+        /* ! LE SCORCIATOIE LE ESEGUE L'APPLICAZIONE, NON IL MENU. Il menu le
+         * SCRIVE — e' il tab nel testo della voce — ma non le cattura: un menu
+         * che si prendesse Ctrl+S da solo se lo prenderebbe anche mentre si
+         * scrive dentro una casella di testo, e non c'e' modo di sapere da
+         * dentro il toolkit se in quel momento ha senso. */
         if (wp & KBD_MOD_CTRL) {
-            if (c == 's' || c == 'S') { salva(); break; }
-            if (c == 'q' || c == 'Q') {
-                /* La stessa domanda della chiusura, e non e' una ripetizione
-                 * da togliere: sono due modi di uscire, e devono difendere il
-                 * testo allo stesso modo. */
-                if (ex_area_modificato(g_area) &&
-                    !ex_dlg_conferma("Modifiche non salvate",
-                                     "Il testo e' cambiato. Uscire senza salvare?",
-                                     "Esci", "Torna al testo")) {
-                    strcpy(g_avviso, "non uscito: il testo e' ancora qui");
-                    break;
-                }
-                ex_esci(0);
-                return 0;
-            }
+            if (c == 's' || c == 'S') { salva();               break; }
+            if (c == 'x' || c == 'X') { ex_area_taglia(g_area);  break; }
+            if (c == 'c' || c == 'C') { ex_area_copia(g_area);   break; }
+            if (c == 'v' || c == 'V') { ex_area_incolla(g_area); break; }
+            if (c == 'a' || c == 'A') { ex_area_seleziona_tutto(g_area); break; }
+            if (c == 'q' || c == 'Q') { esci_se_si_puo();      break; }
         }
         return ex_procedura_base(f, msg, wp, lp);
 
     case EXM_CHIUDI:
         /* ! CHIUDERE IN SILENZIO UN TESTO MODIFICATO E' IL MODO PIU' FACILE DI
-         * PERDERE IL LAVORO DI QUALCUNO, e adesso c'e' come chiederlo davvero.
-         * La risposta prudente e' «no»: chiudere il dialogo o battere Esc
-         * lascia l'editor aperto col testo dentro. */
-        if (ex_area_modificato(g_area) &&
-            !ex_dlg_conferma("Modifiche non salvate",
-                             "Il testo e' cambiato. Uscire senza salvare?",
-                             "Esci", "Torna al testo")) {
-            strcpy(g_avviso, "non uscito: il testo e' ancora qui");
-            break;
-        }
-        ex_esci(0);
-        return 0;
+         * PERDERE IL LAVORO DI QUALCUNO. La risposta prudente e' «no»:
+         * chiudere il dialogo o battere Esc lascia l'editor aperto col testo
+         * dentro. */
+        esci_se_si_puo();
+        break;
+
+    /* La finestra ha cambiato misura: l'area di testo prende tutto lo spazio
+     * che resta fra la barra dei menu e la riga di stato. */
+    case EXM_MISURA: {
+        int w = EX_X(lp), h = EX_Y(lp);
+
+        ex_misura(g_area, w - AREA_X * 2, h - AREA_Y - BASSO);
+        ex_sposta(g_stato, 6, h - 22);
+        ex_misura(g_stato, w - 12, 16);
+        break;
+    }
 
     default:
         return ex_procedura_base(f, msg, wp, lp);
@@ -303,33 +382,58 @@ int main(int argc, char **argv)
         g_perc[PERC_MAX - 1] = '\0';
     }
 
-    g_f = ex_crea("finestra", "Editor", EX_TITOLO | EX_BORDO | EX_CHIUDI,
-                  30, 30, FIN_W, FIN_H, 0, 0, proc);
+    /* ! EX_AUTO E EX_RIDIM, e sono due richieste diverse. EX_AUTO dice «mettila
+     * tu», ed e' cio' che permette di aprire due editor senza che il secondo
+     * finisca esattamente sopra il primo; EX_RIDIM dice che la finestra si puo'
+     * tirare per l'angolo, e impegna a rispondere a EXM_MISURA. */
+    g_f = ex_crea("finestra", "Editor",
+                  EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_RIDIM,
+                  EX_AUTO, EX_AUTO, FIN_W, FIN_H, 0, 0, proc);
     if (!g_f) {
         printf("edit: il server a finestre non risponde.\n");
         printf("      Avvialo con:  exwin\n");
         return 1;
     }
 
-    ex_crea("pulsante", "Nuovo",      EX_FIGLIO,   4, 2, 60, 20, g_f, ID_NUOVO,     0);
-    ex_crea("pulsante", "Apri",       EX_FIGLIO,  68, 2, 60, 20, g_f, ID_APRI,      0);
-    ex_crea("pulsante", "Salva",      EX_FIGLIO, 132, 2, 60, 20, g_f, ID_SALVA,     0);
-    ex_crea("pulsante", "Salva come", EX_FIGLIO, 196, 2, 96, 20, g_f, ID_SALVACOME, 0);
-    ex_crea("pulsante", "Ricarica",   EX_FIGLIO, 296, 2, 74, 20, g_f, ID_RICARICA,  0);
+    /* ! I MENU HANNO PRESO IL POSTO DEI CINQUE PULSANTI, e non ci si e'
+     * aggiunti accanto. Una fila di pulsanti che fa le stesse cose di un menu
+     * e' due posti in cui leggere cosa sa fare il programma, e il secondo si
+     * dimentica di crescere: «Taglia» non ci sarebbe mai finito. */
+    g_menu = ex_menu(g_f);
+    ex_menu_voce(g_menu, "File", "Nuovo",            ID_NUOVO);
+    ex_menu_voce(g_menu, "File", "Apri...",          ID_APRI);
+    ex_menu_voce(g_menu, "File", "-",                0);
+    ex_menu_voce(g_menu, "File", "Salva\tCtrl+S",     ID_SALVA);
+    ex_menu_voce(g_menu, "File", "Salva con nome...", ID_SALVACOME);
+    ex_menu_voce(g_menu, "File", "Ricarica",         ID_RICARICA);
+    ex_menu_voce(g_menu, "File", "-",                0);
+    ex_menu_voce(g_menu, "File", "Esci\tCtrl+Q",      ID_ESCI);
+
+    ex_menu_voce(g_menu, "Modifica", "Taglia\tCtrl+X",  ID_TAGLIA);
+    ex_menu_voce(g_menu, "Modifica", "Copia\tCtrl+C",   ID_COPIA);
+    ex_menu_voce(g_menu, "Modifica", "Incolla\tCtrl+V", ID_INCOLLA);
+    ex_menu_voce(g_menu, "Modifica", "-",              0);
+    ex_menu_voce(g_menu, "Modifica", "Cancella\tCanc",  ID_CANCELLA);
+    ex_menu_voce(g_menu, "Modifica", "Seleziona tutto\tCtrl+A", ID_SELTUTTO);
+
+    ex_menu_voce(g_menu, "Info", "Istruzioni",      ID_ISTRUZIONI);
+    ex_menu_voce(g_menu, "Info", "Informazioni su", ID_INFO);
 
     g_area = ex_crea("areatesto", "", EX_FIGLIO,
-                     AREA_X, AREA_Y, AREA_W, AREA_H, g_f, 0, 0);
+                     AREA_X, AREA_Y, FIN_W - AREA_X * 2,
+                     FIN_H - AREA_Y - BASSO, g_f, 0, 0);
     if (!g_area) {
         printf("edit: non riesco a creare l'area di testo\n");
         return 1;
     }
 
     g_stato = ex_crea("etichetta", "", EX_FIGLIO,
-                      6, FIN_H - 22, AREA_W - 4, 16, g_f, 0, 0);
+                      6, FIN_H - 22, FIN_W - 12, 16, g_f, 0, 0);
 
-    /* ! IL FUOCO ALL'AREA, ESPLICITAMENTE: senza andrebbe al pulsante «Nuovo»,
-     * che e' il primo controllo creato che lo accetta, e battere non
-     * scriverebbe niente. */
+    /* ! IL FUOCO ALL'AREA, ESPLICITAMENTE: e' l'unico controllo della finestra
+     * che i tasti se li merita. La barra dei menu il fuoco non lo prende — un
+     * menu che tenesse la tastiera renderebbe muta l'area — e risponde solo a
+     * F10, che a menu chiuso non serve a nessun altro. */
     ex_fuoco(g_area);
 
     if (g_perc[0]) {
@@ -351,12 +455,17 @@ int main(int argc, char **argv)
 /* =============================================================================
  * QUELLO CHE MANCA, DICHIARATO
  *
- * ! NIENTE ANNULLAMENTO, NIENTE SELEZIONE, NIENTE APPUNTI. /bin/gfedit ha
- * l'annullamento, a giornale di operazioni; qui si aggiungera' quando ci sara'
- * un servizio degli appunti, perche' una selezione che non si puo' copiare da
- * nessuna parte serve a poco.
+ * ! NIENTE ANNULLAMENTO. /bin/gfedit ce l'ha, a giornale di operazioni; qui
+ * no, ed e' la cosa che manca di piu' adesso che c'e' un «Taglia» — un taglio
+ * sbagliato non si rimette a posto.
  *
- * ! E MANCA UN DIALOGO CON «SI'/NO». ExDlg ne ha uno con un pulsante solo,
- * quindi «vuoi perdere le modifiche?» si chiede facendo premere due volte lo
- * stesso pulsante. Funziona, e si vede che e' un ripiego.
+ * ! LA SELEZIONE SI FA COI TASTI, NON COL MOUSE. Shift piu' le frecce
+ * funziona; trascinare il puntatore sul testo no, perche' il server manda il
+ * bottone giu' e il bottone su ma non il movimento con il bottone premuto —
+ * WIN_EV_MOUSE_MOSSO e' nel protocollo e nessuno lo manda ancora.
+ *
+ * ! E GLI APPUNTI SONO SOLO TESTO. Una zona condivisa da 4 KB con dentro dei
+ * byte: chi copia mille righe ne ritrova quante ce ne stanno. Un servizio
+ * degli appunti con piu' formati e senza tetto e' un'altra cosa, e la vorra'
+ * il giorno che qualcosa che non sia testo avra' da copiare.
  * ============================================================================= */

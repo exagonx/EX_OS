@@ -68,6 +68,9 @@ const EXM_MOUSE_GIU = &h0005
 const EXM_MOUSE_SU  = &h0006
 const EXM_TASTO     = &h0007
 const EXM_DISTRUGGI = &h0008
+const EXM_TERMFINITO= &h0009
+'' La finestra ha cambiato misura: EX_X(lp) e EX_Y(lp) sono quella nuova.
+const EXM_MISURA    = &h000A
 
 '' --- Gli stili ---------------------------------------------------------------
 const EX_TITOLO   = &h0001
@@ -75,6 +78,14 @@ const EX_BORDO    = &h0002
 const EX_CHIUDI   = &h0004
 const EX_VISIBILE = &h0008
 const EX_SFONDO   = &h0010
+const EX_SOPRA    = &h0020
+const EX_MODALE   = &h0040
+'' Con questo la finestra si puo' tirare per l'angolo. Chi lo mette DEVE
+'' gestire EXM_MISURA: vedi exwin.h.
+const EX_RIDIM    = &h0080
+'' x e y a EX_AUTO: la posizione la sceglie il server, a cascata. Serve a
+'' poter aprire due volte lo stesso programma senza sovrapporlo a se stesso.
+const EX_AUTO     = -1
 const EX_FIGLIO   = &h0100
 
 '' --- I colori, in ARGB -------------------------------------------------------
@@ -84,6 +95,9 @@ const EX_GRIGIO    = &h00C0C0C0
 const EX_GRIGIO_SC = &h00808080
 const EX_BLU       = &h00305A8A
 const EX_ROSSO     = &h00C04040
+'' La luce viene da sopra a sinistra, sempre: vedi ex_rilievo/ex_incavo.
+const EX_LUCE      = &h00FFFFFF
+const EX_OMBRA     = &h00000000
 
 '' Le coordinate impacchettate in lp
 #define EX_X(lp) (cint((lp) and &hFFFF))
@@ -107,7 +121,22 @@ declare function ex_crea cdecl alias "ex_crea" ( _
 declare sub ex_distruggi cdecl alias "ex_distruggi" (byval f as ExFinestra)
 declare sub ex_titolo     cdecl alias "ex_titolo" (byval f as ExFinestra, byval s as const zstring ptr)
 declare sub ex_sposta     cdecl alias "ex_sposta" (byval f as ExFinestra, byval x as long, byval y as long)
+declare sub ex_misura     cdecl alias "ex_misura" (byval f as ExFinestra, byval w as long, byval h as long)
 declare sub ex_mostra     cdecl alias "ex_mostra" (byval f as ExFinestra, byval visibile as long)
+
+'' --- Il rilievo: sporge cio' che si preme, rientra cio' in cui si scrive ----
+declare sub ex_rilievo cdecl alias "ex_rilievo" (byval f as ExFinestra, byval x as long, byval y as long, byval w as long, byval h as long)
+declare sub ex_incavo  cdecl alias "ex_incavo"  (byval f as ExFinestra, byval x as long, byval y as long, byval w as long, byval h as long)
+
+'' --- I menu a tendina -------------------------------------------------------
+'' La scelta arriva come EXM_COMANDO con l'id della voce, come un pulsante.
+'' voce = "-" e' un solco; un tab nel testo allinea a destra la scorciatoia.
+declare function ex_menu      cdecl alias "ex_menu" (byval finestra as ExFinestra) as ExFinestra
+declare function ex_menu_voce cdecl alias "ex_menu_voce" ( _
+    byval menu as ExFinestra, _
+    byval titolo as const zstring ptr, _
+    byval voce as const zstring ptr, _
+    byval id as ulong) as long
 
 declare sub      ex_testo_metti  cdecl alias "ex_testo_metti"  (byval f as ExFinestra, byval s as const zstring ptr)
 declare function ex_testo_prendi cdecl alias "ex_testo_prendi" (byval f as ExFinestra) as const zstring ptr

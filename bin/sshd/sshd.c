@@ -977,6 +977,62 @@ static void sessione_dati(Sess *s, const char *shell, unsigned int righe,
                 continue;
             }
 
+            /* =============================================================
+             * ! LA FINESTRA CAMBIA MISURA ANCHE DOPO, E FINO AL 18 AGOSTO
+             * 2026 QUELLA MISURA NON AVEVA DOVE ANDARE.
+             *
+             * pty-req arriva una volta sola, prima della shell: dice quanto e'
+             * grande il terminale NEL MOMENTO in cui la sessione si apre. Chi
+             * poi allarga la finestra del proprio client manda
+             * «window-change», e chi non lo tratta lascia il pty convinto di
+             * essere ancora 80x24 — con il risultato che un programma a
+             * schermo pieno disegna in un rettangolo che non c'e' piu' e il
+             * testo va a capo dove non deve. Il sintomo non somiglia per
+             * niente a «ho ridimensionato la finestra»: somiglia a un
+             * programma che disegna storto.
+             *
+             * ! RFC 4254 6.7 DICE CHE want_reply E' FALSE, ma si risponde lo
+             * stesso a chi la chiede: un client che aspetta una risposta che
+             * non arriva si ferma, e discutere di chi ha ragione con un
+             * programma che sta aspettando non serve a nessuno.
+             * ============================================================= */
+            if (buf[0] == SSH_CHANNEL_REQUEST && len > 1 + 4 + 4) {
+                unsigned int p = 1 + 4;
+                unsigned int tn = prendi32(buf + p);
+
+                p += 4;
+                if (p + tn >= (unsigned int)len) continue;   /* monca */
+
+                if (tn == 13 && memcmp(buf + p, "window-change", 13) == 0) {
+                    unsigned int q = p + tn + 1;    /* saltato want_reply */
+
+                    if (q + 8 <= (unsigned int)len) {
+                        unsigned int colonne = prendi32(buf + q);
+                        unsigned int righe   = prendi32(buf + q + 4);
+
+                        /* Zero vuol dire «non lo so», come in pty-req: si
+                         * lascia stare invece di dare a un programma una
+                         * geometria in cui dividere per zero. */
+                        if (colonne && righe) {
+                            pty_ctl(fd[0], PTY_CTL_MISURA,
+                                    (righe << 16) | colonne);
+                            if (g_verboso)
+                                printf("sshd: il terminale adesso e' %ux%u\n",
+                                       colonne, righe);
+                        }
+                    }
+                }
+
+                if (buf[p + tn]) {              /* want_reply */
+                    unsigned int k = 0;
+
+                    out[k++] = SSH_CHANNEL_SUCCESS;
+                    metti32(out + k, (unsigned int)s->canale); k += 4;
+                    if (pacchetto_manda(s, out, k) != 0) break;
+                }
+                continue;
+            }
+
             if (buf[0] == SSH_CHANNEL_CLOSE || buf[0] == SSH_DISCONNECT) break;
             if (buf[0] == SSH_CHANNEL_EOF) continue;
         }

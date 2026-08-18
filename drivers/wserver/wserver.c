@@ -47,18 +47,73 @@
 #include "win_proto.h"
 
 #define FINESTRE_MAX    16
-#define BARRA_H         18
-#define BORDO           1
+#define BARRA_H         20
+
+/* =============================================================================
+ * ! IL BORDO E' DI DUE PIXEL, E OGNUNO DEI DUE HA UN MESTIERE. Fino al 18
+ * agosto 2026 era uno solo, di un grigio quasi nero, e una finestra sembrava
+ * un rettangolo ritagliato invece di un oggetto posato sulla scrivania.
+ *
+ *     il pixel di FUORI    sporge: luce sopra e a sinistra, ombra sotto e a
+ *                          destra. E' il telaio che si alza dallo sfondo
+ *     il pixel di DENTRO   rientra, e disegna il buco in cui sta l'area del
+ *                          client: cosi' il contenuto sembra INCASSATO nel
+ *                          telaio invece che appoggiato sopra
+ *
+ * ! LA LUCE VIENE DA SOPRA A SINISTRA, SEMPRE — la stessa convenzione del
+ * toolkit (vedi EX_LUCE in exwin.h). Se il telaio e i controlli dentro la
+ * prendessero da due parti diverse, uno dei due sembrerebbe premuto.
+ * ============================================================================= */
+#define BORDO           2
+
+/* =============================================================================
+ * LA PRESA PER RIDIMENSIONARE — l'angolo in basso a destra
+ *
+ * ! LA PRESA STA DENTRO L'AREA DEL CLIENT, E SE NE PRENDE UN ANGOLO. E' la
+ * cosa scomoda di questa scelta e va detta invece che nascosta: il bordo e'
+ * spesso UN pixel, e un pixel non si acchiappa col mouse. Allargare il bordo
+ * per farci stare una presa vorrebbe dire rifare l'aritmetica della cornice
+ * dappertutto — e sottrarre comunque quello spazio al client, solo su tutti e
+ * quattro i lati invece che in un angolo.
+ *
+ * Quindi la presa si disegna SOPRA i pixel del client, dopo averli copiati, e
+ * la si prende solo alle finestre che hanno chiesto WIN_ST_RIDIM: chi non la
+ * vuole non perde niente.
+ *
+ * ! E SI RIDIMENSIONA A RILASCIO, NON MENTRE SI TRASCINA. Ogni cambio di
+ * misura e' una zona condivisa nuova da creare, riempire e consegnare al
+ * client: farlo a ogni movimento del mouse vorrebbe dire decine di zone al
+ * secondo e altrettanti messaggi a un client che non fa in tempo a leggerli.
+ * Mentre si trascina si disegna il contorno di dove andra' a finire, che e'
+ * quello che facevano tutti quando la memoria costava — e per la stessa
+ * ragione, che qui vale ancora.
+ * ============================================================================= */
+#define PRESA           14      /* il lato del quadrato che si acchiappa */
+#define MIN_W           80      /* sotto questa non e' piu' una finestra */
+#define MIN_H           48
+#define MISURA_TENTATIVI 10     /* quante volte si ripete WIN_MSG_MISURATA */
 
 /* I colori, in ARGB. Sono pochi e stanno qui: una scrivania che cambia
  * aspetto non deve voler dire cercarli sparsi nel file. */
 #define C_SFONDO        0x00204060
-#define C_BARRA_ATT     0x00305A8A
-#define C_BARRA_INA     0x00606060
-#define C_BORDO         0x00101010
+/* ! LA BARRA ATTIVA NON E' DELLO STESSO BLU DI EX_BLU, e dal 18 agosto 2026
+ * nemmeno per un pixel. Erano identici, e la coincidenza costava due cose: una
+ * riga scelta in una lista e la barra del titolo si confondevano a colpo
+ * d'occhio, e — peggio — nessuno guardando una fotografia dello schermo poteva
+ * dire quale blu fosse quale. Le prove che misurano le finestre contando i
+ * pixel (tools/misura_finestre.py) hanno bisogno di un colore che voglia dire
+ * UNA cosa sola. */
+#define C_BARRA_ATT     0x001E4D7D
+#define C_BARRA_INA     0x00808080
+#define C_TELAIO        0x00C0C0C0  /* il grigio del telaio, come il pannello */
+#define C_LUCE          0x00FFFFFF
+#define C_OMBRA         0x00000000
 #define C_TITOLO        0x00FFFFFF
+#define C_TITOLO_INA    0x00E0E0E0
 #define C_CHIUDI        0x00C04040
 #define C_CLIENT        0x00C0C0C0
+#define C_PRESA         0x00404040
+#define C_CONTORNO      0x00FFFF80
 
 extern const unsigned char font8x16[256 * 16];
 
@@ -71,6 +126,13 @@ typedef struct {
     char         titolo[WIN_TITOLO_LEN];
     unsigned int zona_virt;         /* i pixel del client, ARGB */
     unsigned int zona_byte;
+    unsigned int giro;              /* quante volte ha cambiato zona */
+    /* ! LA NOTIZIA DEL CAMBIO SI RIPETE FINCHE' NON ARRIVA, e questo e' il
+     * contatore dei tentativi. Un evento perso e' un clic perso; un
+     * WIN_MSG_MISURATA perso e' una finestra che disegna per sempre in una
+     * zona che nessuno guarda piu' — cioe' un rettangolo congelato che
+     * risponde ai tasti. Sono due cose diverse e vanno trattate diversamente. */
+    unsigned int da_dire;
 } Finestra;
 
 static Finestra g_fin[FINESTRE_MAX];
@@ -78,6 +140,7 @@ static unsigned int g_ordine[FINESTRE_MAX];     /* dal fondo alla cima */
 static unsigned int g_n_ordine = 0;
 static unsigned int g_prossimo_id = 1;
 static unsigned int g_verboso = 0;
+static unsigned int g_cascata = 0;      /* quante finestre ha gia' posato */
 
 /* Il nome con cui ci si registra: «wserver» per root, «<uid>:wserver» per
  * chiunque altro. Vedi win_nome_servizio() in win_proto.h. */
@@ -94,6 +157,16 @@ static unsigned int g_bottoni = 0, g_bottoni_prec = 0;
 /* Il trascinamento in corso */
 static int g_trascino = -1;             /* indice, -1 = nessuno */
 static int g_tr_dx = 0, g_tr_dy = 0;
+
+/* ! IL FUOCO SI DICHIARA QUI E SI GESTISCE PIU' SOTTO, perche' lo guarda anche
+ * il compositore: e' il fuoco a decidere quale barra del titolo si disegna
+ * attiva. Vedi il commento in componi(). */
+static int g_fuoco = -1;        /* indice della finestra che riceve i tasti */
+
+/* Il ridimensionamento in corso: mentre dura si disegna solo il contorno, e la
+ * misura vera si da' al rilascio. Il perche' sta accanto a #define PRESA. */
+static int g_ridim = -1;                /* indice, -1 = nessuno */
+static unsigned int g_rw = 0, g_rh = 0; /* la misura che si sta scegliendo */
 
 /* ! SI RICOMPONE SOLO QUANDO QUALCOSA E' CAMBIATO, e non e' un'ottimizzazione
  * prematura: e' una CORREZIONE. Ricomponendo a ogni giro, 480000 pixel per
@@ -276,29 +349,117 @@ static void scrivi(unsigned int x, unsigned int y, const char *s, unsigned int c
  * si vede come pezzi di finestra che restano sullo schermo dopo che la
  * finestra se n'e' andata. Prima che sia giusto, poi che sia veloce.
  * --------------------------------------------------------------------------- */
+/* =============================================================================
+ * ! GLI ANGOLI APPARTENGONO ALLA LUCE, e non e' un dettaglio da lasciare al
+ * caso: le due righe si incontrano in due angoli, e chi ci arriva per ultimo
+ * decide come si vede lo spigolo. Disegnando prima l'ombra e poi la luce
+ * restano chiari l'angolo in alto a destra e quello in basso a sinistra — che
+ * e' come si vede uno spigolo illuminato da sopra a sinistra. Al contrario si
+ * ottiene un rettangolo che sembra ritagliato male.
+ *
+ * La stessa aritmetica sta in bordo3d() dentro lib/exwin/exwin.c: sono due
+ * processi diversi e non c'e' modo di condividerla, ma e' la stessa regola —
+ * e quando una si tocca va toccata anche l'altra, o telaio e controlli
+ * prenderebbero la luce da due parti.
+ * ============================================================================= */
+static void bordo3d(unsigned int x, unsigned int y, unsigned int w,
+                    unsigned int h, unsigned int sopra, unsigned int sotto)
+{
+    if (w == 0 || h == 0) return;
+
+    riempi(x, y + h - 1, w, 1, sotto);
+    riempi(x + w - 1, y, 1, h, sotto);
+    riempi(x, y, w, 1, sopra);
+    riempi(x, y, 1, h, sopra);
+}
+
+static void rilievo(unsigned int x, unsigned int y, unsigned int w, unsigned int h)
+{
+    bordo3d(x, y, w, h, C_LUCE, C_OMBRA);
+}
+
+static void incavo(unsigned int x, unsigned int y, unsigned int w, unsigned int h)
+{
+    bordo3d(x, y, w, h, C_OMBRA, C_LUCE);
+}
+
 static void cornice(const Finestra *f, unsigned int attiva)
 {
+    unsigned int alta = (f->stile & WIN_ST_TITOLO) ? BARRA_H : 0;
     unsigned int bx = f->x - BORDO;
-    unsigned int by = f->y - BORDO - ((f->stile & WIN_ST_TITOLO) ? BARRA_H : 0);
+    unsigned int by = f->y - BORDO - alta;
     unsigned int bw = f->w + BORDO * 2;
-    unsigned int bh = f->h + BORDO * 2 + ((f->stile & WIN_ST_TITOLO) ? BARRA_H : 0);
+    unsigned int bh = f->h + BORDO * 2 + alta;
 
     if (f->stile & WIN_ST_BORDO) {
-        riempi(bx, by, bw, BORDO, C_BORDO);
-        riempi(bx, by + bh - BORDO, bw, BORDO, C_BORDO);
-        riempi(bx, by, BORDO, bh, C_BORDO);
-        riempi(bx + bw - BORDO, by, BORDO, bh, C_BORDO);
+        /* Il telaio: prima il grigio dappertutto, poi i due anelli. Riempire
+         * tutto e ridisegnarci sopra costa meno che ritagliare quattro strisce
+         * — e i pixel di mezzo li copre comunque la zona del client. */
+        riempi(bx, by, bw, BORDO, C_TELAIO);
+        riempi(bx, by + bh - BORDO, bw, BORDO, C_TELAIO);
+        riempi(bx, by, BORDO, bh, C_TELAIO);
+        riempi(bx + bw - BORDO, by, BORDO, bh, C_TELAIO);
+
+        rilievo(bx, by, bw, bh);                        /* il telaio sporge */
+        incavo(bx + 1, by + 1, bw - 2, bh - 2);         /* il dentro rientra */
     }
 
     if (f->stile & WIN_ST_TITOLO) {
-        riempi(f->x, by + BORDO, f->w, BARRA_H,
-               attiva ? C_BARRA_ATT : C_BARRA_INA);
-        scrivi(f->x + 4, by + BORDO + 1, f->titolo, C_TITOLO);
+        unsigned int ty = f->y - alta;
 
-        if (f->stile & WIN_ST_CHIUDI)
-            riempi(f->x + f->w - BARRA_H + 2, by + BORDO + 2,
-                   BARRA_H - 6, BARRA_H - 6, C_CHIUDI);
+        riempi(f->x, ty, f->w, alta, attiva ? C_BARRA_ATT : C_BARRA_INA);
+        rilievo(f->x, ty, f->w, alta);
+        scrivi(f->x + 5, ty + (alta - 16) / 2, f->titolo,
+               attiva ? C_TITOLO : C_TITOLO_INA);
+
+        /* ! IL PULSANTE DI CHIUSURA E' UN OGGETTO, NON UN QUADRATO ROSSO.
+         * Sporge come un pulsante e ha dentro un quadratino: e' cosi' che si
+         * riconosce come una cosa da premere invece che come una decorazione
+         * della barra. */
+        if (f->stile & WIN_ST_CHIUDI) {
+            unsigned int cx = f->x + f->w - BARRA_H + 1;
+            unsigned int cy = ty + 2;
+            unsigned int cl = BARRA_H - 4;
+
+            riempi(cx, cy, cl, cl, C_TELAIO);
+            rilievo(cx, cy, cl, cl);
+            riempi(cx + 4, cy + 4, cl - 8, cl - 8, C_CHIUDI);
+            incavo(cx + 4, cy + 4, cl - 8, cl - 8);
+        }
     }
+}
+
+/* ! TRE SEGNI IN DIAGONALE, come li fa chiunque, e non un'icona: e' l'unica
+ * forma che si riconosce a 14 pixel di lato senza spiegazioni. */
+static void presa(const Finestra *f)
+{
+    unsigned int bx = f->x + f->w - PRESA;
+    unsigned int by = f->y + f->h - PRESA;
+    unsigned int i, k;
+
+    /* ! ANCHE LA PRESA SPORGE, e per la stessa ragione del pulsante di
+     * chiusura: un disegno sopra i pixel del client sembra una macchia
+     * dell'applicazione, un oggetto in rilievo sembra una cosa da tirare. */
+    riempi(bx, by, PRESA, PRESA, C_TELAIO);
+    rilievo(bx, by, PRESA, PRESA);
+
+    for (k = 0; k < 2; k++) {
+        unsigned int off = 4 + k * 4;
+
+        for (i = 1; i + off < PRESA - 1; i++)
+            px(bx + i + off, by + PRESA - 1 - i, C_PRESA);
+    }
+}
+
+/* Il contorno di dove la finestra andra' a finire. Si disegna per ultimo,
+ * sopra tutto: e' l'unica cosa che deve restare visibile qualunque sia la
+ * finestra che ci sta sotto. */
+static void contorno(unsigned int x, unsigned int y, unsigned int w, unsigned int h)
+{
+    riempi(x, y, w, 1, C_CONTORNO);
+    riempi(x, y + h - 1, w, 1, C_CONTORNO);
+    riempi(x, y, 1, h, C_CONTORNO);
+    riempi(x + w - 1, y, 1, h, C_CONTORNO);
 }
 
 static void componi(void)
@@ -313,7 +474,16 @@ static void componi(void)
 
         if (!f->usata || !(f->stile & WIN_ST_VISIBILE)) continue;
 
-        cornice(f, (k + 1 == g_n_ordine));
+        /* ! «ATTIVA» VUOL DIRE «HA IL FUOCO», NON «E' L'ULTIMA DELLA PILA», e
+         * fino al 18 agosto 2026 qui c'era la seconda. Sembrava la stessa cosa
+         * e non lo era: la barra delle applicazioni ha WIN_ST_SOPRA, quindi
+         * sta SEMPRE in cima — e quindi NESSUNA finestra normale risultava mai
+         * attiva. Le barre del titolo erano tutte grigie, e non si vedeva
+         * quale finestra avrebbe ricevuto i tasti.
+         *
+         * Il fuoco lo sa gia' il server, e lo sa bene: salta lo sfondo e le
+         * finestre «sopra» apposta (vedi prende_fuoco_da_solo). */
+        cornice(f, (int)g_ordine[k] == g_fuoco);
 
         /* ! I PIXEL SI LEGGONO DALLA ZONA DEL CLIENT SENZA FIDARSI DELLA
          * MISURA CHE IL CLIENT CREDE DI AVERE: il ciclo va sui numeri che
@@ -339,6 +509,21 @@ static void componi(void)
                 for (i = 0; i < f->w; i++)
                     px(f->x + i, f->y + j, src[j * f->w + i]);
         }
+
+        /* ! DOPO I PIXEL DEL CLIENT, E QUINDI SOPRA: se si disegnasse con la
+         * cornice, la copia della zona la cancellerebbe subito. E' il prezzo
+         * dichiarato di avere la presa dentro l'area del client. */
+        if (f->stile & WIN_ST_RIDIM) presa(f);
+    }
+
+    /* Il contorno di un ridimensionamento in corso, sopra tutte le finestre. */
+    if (g_ridim >= 0 && g_fin[g_ridim].usata) {
+        const Finestra *f = &g_fin[g_ridim];
+        unsigned int by = f->y - BORDO -
+                          ((f->stile & WIN_ST_TITOLO) ? BARRA_H : 0);
+
+        contorno(f->x - BORDO, by, g_rw + BORDO * 2,
+                 g_rh + BORDO * 2 + ((f->stile & WIN_ST_TITOLO) ? BARRA_H : 0));
     }
 
     /* Il puntatore, una freccia semplice disegnata a mano. */
@@ -385,7 +570,7 @@ static int trova_id(unsigned int id)
  * «sopra» e lo sfondo restano dove devono stare a schermo senza portarselo
  * via, e lo prendono solo se ci si clicca dentro davvero.
  * ============================================================================= */
-static int g_fuoco = -1;        /* indice della finestra che riceve i tasti */
+
 
 /* Chi puo' tenere il fuoco per conto suo, cioe' senza esserci stato messo da
  * un clic: non lo sfondo (non e' una finestra con cui si parla) e non la barra
@@ -486,6 +671,15 @@ static int sotto(int x, int y, unsigned int *dove)
         if (x >= (int)f->x && x < (int)(f->x + f->w) &&
             y >= (int)f->y && y < (int)(f->y + f->h)) {
             *dove = 0;
+
+            /* ! LA PRESA VINCE SUL CLIENT, e per questo la finestra deve
+             * averla chiesta: un angolo dell'area che non consegna piu' i clic
+             * a chi ci ha messo un pulsante sarebbe un difetto, se non fosse
+             * stata l'applicazione stessa a domandarlo. */
+            if ((f->stile & WIN_ST_RIDIM) &&
+                x >= (int)(f->x + f->w - PRESA) &&
+                y >= (int)(f->y + f->h - PRESA)) *dove = 3;
+
             return (int)g_ordine[k];
         }
 
@@ -716,6 +910,10 @@ static void mouse_stato(const MouseStato *s)
     g_bottoni = s->bottoni;
 }
 
+/* Definita fra le richieste dei client: e' la stessa cosa, chiesta col mouse
+ * invece che con un messaggio. */
+static void ridimensiona(int idx, unsigned int nw, unsigned int nh);
+
 static void mouse_agisci(void)
 {
     unsigned int giu = (g_bottoni & MOUSE_BTN_SIN) &&
@@ -731,6 +929,33 @@ static void mouse_agisci(void)
             g_fin[g_trascino].x = (unsigned int)(g_px - g_tr_dx);
             g_fin[g_trascino].y = (unsigned int)(g_py - g_tr_dy);
             g_sporco = 1;
+        }
+        g_bottoni_prec = g_bottoni;
+        return;
+    }
+
+    /* ! MENTRE SI TIRA L'ANGOLO SI MUOVE SOLO UN CONTORNO. La misura vera
+     * arriva al rilascio, e una volta sola: il perche' sta accanto a
+     * #define PRESA. */
+    if (g_ridim >= 0) {
+        int idx2 = g_ridim;
+        int nw = g_px - (int)g_fin[idx2].x + 1;
+        int nh = g_py - (int)g_fin[idx2].y + 1;
+
+        if (nw < MIN_W) nw = MIN_W;
+        if (nh < MIN_H) nh = MIN_H;
+        if (g_fin[idx2].x + (unsigned int)nw > g_fb_w)
+            nw = (int)(g_fb_w - g_fin[idx2].x);
+        if (g_fin[idx2].y + (unsigned int)nh > g_fb_h)
+            nh = (int)(g_fb_h - g_fin[idx2].y);
+
+        if ((unsigned int)nw != g_rw || (unsigned int)nh != g_rh) g_sporco = 1;
+        g_rw = (unsigned int)nw;
+        g_rh = (unsigned int)nh;
+
+        if (su) {
+            g_ridim = -1;
+            ridimensiona(idx2, g_rw, g_rh);
         }
         g_bottoni_prec = g_bottoni;
         return;
@@ -759,6 +984,10 @@ static void mouse_agisci(void)
 
         if (dove == 2) {
             manda_evento(&g_fin[idx], WIN_EV_CHIUDI, g_px, g_py, 0, 0);
+        } else if (dove == 3) {
+            g_ridim = idx;
+            g_rw = g_fin[idx].w;
+            g_rh = g_fin[idx].h;
         } else if (dove == 1) {
             /* ! SOLO LA BARRA TRASCINA, e non tutta la finestra: trascinare
              * dall'area del client vorrebbe dire che un'applicazione non puo'
@@ -805,7 +1034,7 @@ static void crea(unsigned int pid, const WinCrea *c)
     if (r.altezza   > g_fb_h) r.altezza   = g_fb_h;
 
     memset(&z, 0, sizeof(z));
-    win_nome_zona(z.nome, g_prossimo_id);
+    win_nome_zona(z.nome, g_prossimo_id, 0);
     z.byte = r.larghezza * r.altezza * 4;
     z.flag = SHM_CREA;
 
@@ -819,6 +1048,35 @@ static void crea(unsigned int pid, const WinCrea *c)
     g_fin[i].pid       = pid;
     g_fin[i].x         = c->x;
     g_fin[i].y         = c->y;
+
+    /* ! «METTILA TU»: LA CASCATA. Il perche' sta accanto a WIN_XY_AUTO in
+     * win_proto.h — due copie dello stesso programma che nascono nello stesso
+     * punto sembrano una copia sola.
+     *
+     * ! IL PASSO E' L'ALTEZZA DELLA BARRA DEL TITOLO, e non un numero a caso:
+     * e' esattamente quanto serve perche' della finestra di sotto resti
+     * visibile la barra — cioe' il suo nome e il modo di riportarla davanti.
+     * Uno scostamento piu' piccolo darebbe una pila in cui non si legge
+     * nessun titolo, uno piu' grande esaurirebbe lo schermo in tre finestre. */
+    if (c->x == WIN_XY_AUTO || c->y == WIN_XY_AUTO) {
+        unsigned int passo = BARRA_H + BORDO;
+        unsigned int px_ = BORDO + g_cascata * passo;
+        unsigned int py_ = BARRA_H + BORDO + g_cascata * passo;
+
+        /* Quando la prossima non ci starebbe piu' si ricomincia da capo: e'
+         * quello che fa qualunque scrivania, e l'alternativa — finestre con la
+         * barra fuori dallo schermo — e' una finestra che non si sposta piu'. */
+        if (px_ + r.larghezza + BORDO > g_fb_w ||
+            py_ + r.altezza   + BORDO > g_fb_h) {
+            g_cascata = 0;
+            px_ = BORDO;
+            py_ = BARRA_H + BORDO;
+        }
+        g_cascata++;
+
+        g_fin[i].x = px_;
+        g_fin[i].y = py_;
+    }
     g_fin[i].w         = r.larghezza;
     g_fin[i].h         = r.altezza;
     g_fin[i].stile     = c->stile;
@@ -842,12 +1100,121 @@ static void crea(unsigned int pid, const WinCrea *c)
     r.id    = g_fin[i].id;
     r.byte  = z.byte;
     r.passo = r.larghezza * 4;
+    r.giro  = 0;
 
     if (g_verboso)
         printf("wserver: finestra %u per il PID %u, %ux%u «%s»\n",
                r.id, pid, r.larghezza, r.altezza, g_fin[i].titolo);
 
     (void)ipc_send(pid, WIN_MSG_CREATA, &r, sizeof(r));
+}
+
+/* =============================================================================
+ * RIDIMENSIONARE — la sola cosa che una zona condivisa non sa fare da se'
+ *
+ * ! UNA ZONA CONDIVISA NON SI ALLARGA, E QUESTA E' TUTTA LA DIFFICOLTA'. Le
+ * pagine sono mappate in due spazi di indirizzi diversi, a due indirizzi
+ * diversi; allungarle vorrebbe dire trovare spazio libero DOPO di esse in
+ * tutt'e due, il che non si puo' garantire. Quindi non si allarga: si crea la
+ * zona nuova, ci si porta dentro cio' che c'era, e si lascia morire la vecchia
+ * quando l'ultimo dei due l'ha chiusa.
+ *
+ * ! E LA STRETTA DI MANO E' ORDINATA PERCHE' NESSUNO RESTA SENZA PIXEL. La
+ * successione e' questa, e ogni passo ha un perche':
+ *
+ *   1. il server crea la zona nuova (nome col giro successivo) e la riempie;
+ *   2. il server CHIUDE la sua vecchia e comincia a comporre dalla nuova. La
+ *      vecchia non muore: il client la tiene ancora aperta;
+ *   3. il server manda WIN_MSG_MISURATA;
+ *   4. il client apre la nuova, chiude la vecchia — che a questo punto muore —
+ *      si ridisegna e manda WIN_MSG_AGGIORNA con la misura che ha adesso;
+ *   5. quella misura e' la RICEVUTA: il server smette di ripetere il messaggio.
+ *
+ * ! IL PASSO 5 NON E' ZELO. Un evento del mouse perso e' un clic perso; un
+ * WIN_MSG_MISURATA perso e' un client che disegna per sempre dentro una zona
+ * che il server non guarda piu' — una finestra congelata che pero' risponde ai
+ * tasti, cioe' il difetto piu' difficile da leggere che ci sia. E la mailbox e'
+ * profonda quattro messaggi: perderlo non e' un'ipotesi teorica.
+ * ============================================================================= */
+static void dire_misura(Finestra *f)
+{
+    WinCreata r;
+
+    memset(&r, 0, sizeof(r));
+    r.id        = f->id;
+    r.byte      = f->zona_byte;
+    r.passo     = f->w * 4;
+    r.larghezza = f->w;
+    r.altezza   = f->h;
+    r.giro      = f->giro;
+
+    (void)ipc_send(f->pid, WIN_MSG_MISURATA, &r, sizeof(r));
+}
+
+static void ridimensiona(int idx, unsigned int nw, unsigned int nh)
+{
+    Finestra     *f = &g_fin[idx];
+    ShmZona       z;
+    unsigned int *nuovo, *vecchio;
+    unsigned int  cw, ch, i, j;
+
+    if (idx < 0 || !f->usata) return;
+
+    if (nw < MIN_W) nw = MIN_W;
+    if (nh < MIN_H) nh = MIN_H;
+    if (nw > g_fb_w) nw = g_fb_w;
+    if (nh > g_fb_h) nh = g_fb_h;
+    if (nw == f->w && nh == f->h) return;
+
+    memset(&z, 0, sizeof(z));
+    win_nome_zona(z.nome, f->id, f->giro + 1);
+    z.byte = nw * nh * 4;
+    z.flag = SHM_CREA;
+
+    /* ! SE LA ZONA NUOVA NON SI PUO' AVERE NON SUCCEDE NIENTE: la finestra
+     * resta della misura di prima, con i suoi pixel dov'erano. E' l'unico modo
+     * di fallire che non lascia niente a meta'. */
+    if (shm_apri(&z) != 0) {
+        if (g_verboso)
+            printf("wserver: niente zona da %ux%u: la finestra %u resta com'e'\n",
+                   nw, nh, f->id);
+        return;
+    }
+
+    nuovo   = (unsigned int *)z.virt;
+    vecchio = (unsigned int *)f->zona_virt;
+
+    /* ! CIO' CHE C'ERA SI PORTA DIETRO, e il resto prende il colore di
+     * partenza. Il client ridisegnera' tutto appena legge il messaggio, ma fra
+     * il cambio e il suo ridisegno passa qualche fotogramma: senza la copia si
+     * vedrebbe un lampo di grigio a ogni ridimensionamento. */
+    {
+        unsigned int n = nw * nh, k;
+        for (k = 0; k < n; k++) nuovo[k] = C_CLIENT;
+    }
+
+    cw = (nw < f->w) ? nw : f->w;
+    ch = (nh < f->h) ? nh : f->h;
+    if (vecchio)
+        for (j = 0; j < ch; j++)
+            for (i = 0; i < cw; i++)
+                nuovo[j * nw + i] = vecchio[j * f->w + i];
+
+    if (f->zona_virt) shm_chiudi((void *)f->zona_virt);
+
+    f->zona_virt = z.virt;
+    f->zona_byte = z.byte;
+    f->w         = nw;
+    f->h         = nh;
+    f->giro++;
+    f->da_dire   = MISURA_TENTATIVI;
+
+    if (g_verboso)
+        printf("wserver: la finestra %u diventa %ux%u (giro %u)\n",
+               f->id, nw, nh, f->giro);
+
+    dire_misura(f);
+    g_sporco = 1;
 }
 
 static void distruggi(int idx)
@@ -863,6 +1230,7 @@ static void distruggi(int idx)
         if (g_ordine[k] != (unsigned int)idx) g_ordine[j++] = g_ordine[k];
     g_n_ordine = j;
     if (g_trascino == idx) g_trascino = -1;
+    if (g_ridim == idx) g_ridim = -1;
 
     /* ! CHI SE NE VA SI PORTA VIA IL FUOCO, e va ridato a qualcuno. Senza,
      * g_fuoco resterebbe l'indice di uno slot azzerato: i tasti finirebbero a
@@ -998,6 +1366,26 @@ static int servi_messaggio(void)
         break;
     }
 
+    /* ! LA MISURA LA PUO' CHIEDERE ANCHE IL CLIENT, e non solo il mouse:
+     * un'applicazione che carica un documento piu' grande sa quanto spazio le
+     * serve meglio di chi guarda. Passa dalla stessa funzione del
+     * trascinamento — due strade per la stessa cosa vorrebbero dire due modi
+     * di sbagliarla.
+     *
+     * ! E QUI NON SI GUARDA WIN_ST_RIDIM: quel bit dice se il SERVER puo'
+     * cambiare la misura sotto i piedi al client. Chiederla da soli e'
+     * un'altra cosa, e chi la chiede sa gia' come rispondersi. */
+    case WIN_MSG_MISURA: {
+        WinRegione *w = (WinRegione *)buf;
+        int idx;
+        if (meta.len < sizeof(WinRegione)) break;
+        idx = trova_id(w->id);
+        if (idx >= 0 && g_fin[idx].pid == meta.sender_pid &&
+            w->larghezza && w->altezza)
+            ridimensiona(idx, w->larghezza, w->altezza);
+        break;
+    }
+
     case WIN_MSG_TITOLO: {
         WinTitolo *t = (WinTitolo *)buf;
         int idx;
@@ -1020,13 +1408,28 @@ static int servi_messaggio(void)
         break;
     }
 
-    case WIN_MSG_AGGIORNA:
+    case WIN_MSG_AGGIORNA: {
+        WinRegione *w = (WinRegione *)buf;
+        int idx;
+
         g_sporco = 1;
         /* Il client ha finito di disegnare. Componendo a ogni giro non c'e'
          * niente da fare: resta nel protocollo perche' quando ci sara' la
          * lista delle regioni sporche sara' QUESTO il messaggio che la
-         * riempie, e cambiare il protocollo dopo costa piu' che prevederlo. */
+         * riempie, e cambiare il protocollo dopo costa piu' che prevederlo.
+         *
+         * ! MA LA MISURA CHE PORTA DENTRO E' GIA' UTILE OGGI: e' la ricevuta
+         * di WIN_MSG_MISURATA. Un client che disegna dichiarando la misura
+         * NUOVA ha per forza aperto la zona nuova — non c'e' altro modo di
+         * saperla — e quindi il messaggio e' arrivato e non va ripetuto. Non
+         * serve un messaggio in piu' per dire una cosa che si sa gia'. */
+        if (meta.len < sizeof(WinRegione)) break;
+        idx = trova_id(w->id);
+        if (idx >= 0 && g_fin[idx].pid == meta.sender_pid &&
+            w->larghezza == g_fin[idx].w && w->altezza == g_fin[idx].h)
+            g_fin[idx].da_dire = 0;
         break;
+    }
 
     default:
         break;
@@ -1235,6 +1638,22 @@ int main(int argc, char **argv)
          * sarebbe spendere sempre per accorgersi prima di qualcosa che non ha
          * fretta. */
         if (++giri >= 50) { giri = 0; raccogli_morti(); }
+
+        /* ! LA NOTIZIA DEL CAMBIO DI ZONA SI RIPETE FINCHE' NON ARRIVA, ogni
+         * dieci giri — cioe' cinque volte al secondo, non cinquanta: la
+         * mailbox del client la si riempirebbe con la cura stessa. Il perche'
+         * per esteso sta sopra ridimensiona(). */
+        if ((giri % 10) == 0) {
+            for (n = 0; n < FINESTRE_MAX; n++) {
+                if (!g_fin[n].usata || !g_fin[n].da_dire) continue;
+
+                g_fin[n].da_dire--;
+                if (g_fin[n].da_dire) dire_misura(&g_fin[n]);
+                else if (g_verboso)
+                    printf("wserver: la finestra %u non ha mai preso la misura "
+                           "nuova: smetto di dirglielo\n", g_fin[n].id);
+            }
+        }
 
         if (g_sporco && g_visibile) { componi(); g_sporco = 0; }
         usleep(20000);

@@ -402,6 +402,33 @@ int32_t lib_apri(const char *percorso, Process *proc, uint32_t *out_tabella)
              percorso, L->n_pagine, L->tabella);
     }
 
+    /* =========================================================================
+     * ! AGGANCIARE DUE VOLTE LA STESSA LIBRERIA ALLO STESSO PROCESSO GLI
+     * CANCELLA I DATI, e per mesi e' stato un difetto che aspettava.
+     *
+     * aggancia() rimappa OGNI pagina, e per quelle scrivibili prende una copia
+     * FRESCA dell'originale: la seconda chiamata riporta .data e .bss al valore
+     * che avevano quando la libreria e' stata compilata. Per exwin.so vuol dire
+     * la tabella delle finestre AZZERATA — con le finestre ancora vive sullo
+     * schermo e il server che continua a mandarle eventi.
+     *
+     * ! E SUCCEDE SENZA CHE NESSUNO APRA NIENTE DUE VOLTE DI PROPOSITO. Basta
+     * un'applicazione che usi exwin.so ED exdlg.so: exdlg.so a sua volta e'
+     * legata a exwin.so, quindi al primo dialogo il suo stub la apre — ed e' la
+     * seconda volta per quel processo. Il sintomo era una finestra che dopo un
+     * dialogo restava disegnata, riceveva i tasti e non cambiava piu' un pixel:
+     * nessun errore, nessun fault, nessun messaggio.
+     *
+     * ! IL CONTROLLO NON HA BISOGNO DI UN ELENCO NEL PCB: la domanda «ce l'ha
+     * gia'?» la risponde la sua stessa tavola delle pagine. Se l'indirizzo
+     * della tabella di esportazione e' gia' mappato, la libreria e' gia' li'
+     * — e riattaccarla non aggiungerebbe niente.
+     * ========================================================================= */
+    if (paging_get_physical(proc->page_directory, L->tabella) != 0) {
+        *out_tabella = L->tabella;
+        return 0;
+    }
+
     rc = aggancia(L, proc);
     if (rc != 0) return rc;
 

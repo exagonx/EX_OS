@@ -54,6 +54,10 @@
 
 #define OPT_ECHO    1
 #define OPT_SGA     3
+/* ! NAWS E' L'UNICA SOTTONEGOZIAZIONE CHE CI SERVE: e' con quella che un
+ * client dice quanto e' grande la sua finestra, all'inizio e ogni volta che
+ * cambia. RFC 1073. */
+#define OPT_NAWS    31
 
 static int pid_ip = 0;
 static int g_verboso = 0;
@@ -291,7 +295,7 @@ static int tcp_scrivi(int id, const unsigned char *d, unsigned int n)
  * Rende quanti byte ha messo in `fuori`. Le risposte alla negoziazione le
  * scrive direttamente sulla connessione: sono poche e non aspettano.
  * --------------------------------------------------------------------------- */
-static unsigned int filtra(int id, const unsigned char *d, unsigned int n,
+static unsigned int filtra(int id, int pty, const unsigned char *d, unsigned int n,
                            unsigned char *fuori)
 {
     unsigned int i = 0, k = 0;
@@ -331,7 +335,8 @@ static unsigned int filtra(int id, const unsigned char *d, unsigned int n,
             r[0] = IAC;
             if (cmd == DO)        r[1] = (opt == OPT_ECHO || opt == OPT_SGA) ? WILL : WONT;
             else if (cmd == DONT) r[1] = WONT;
-            else if (cmd == WILL) r[1] = (opt == OPT_SGA) ? DO : DONT;
+            else if (cmd == WILL) r[1] = (opt == OPT_SGA ||
+                                          opt == OPT_NAWS) ? DO : DONT;
             else                  r[1] = DONT;
             r[2] = (unsigned char)opt;
 
@@ -341,11 +346,50 @@ static unsigned int filtra(int id, const unsigned char *d, unsigned int n,
         }
 
         if (d[i + 1] == SB) {
-            /* Sottonegoziazione: si salta fino a IAC SE. Non ne serve
-             * nessuna, ma vanno consumate o i loro byte finiscono nel testo. */
+            /* Sottonegoziazione: si legge fino a IAC SE. Vanno consumate
+             * comunque, o i loro byte finiscono nel testo. */
             unsigned int j = i + 2;
 
             while (j + 1 < n && !(d[j] == IAC && d[j + 1] == SE)) j++;
+
+            /* =================================================================
+             * ! LA MISURA DELLA FINESTRA ARRIVA QUI, E FINO AL 18 AGOSTO 2026
+             * FINIVA NEL NULLA. Il pty restava convinto di essere 80x24 per
+             * tutta la sessione: un programma a schermo pieno disegnava dentro
+             * un rettangolo che non c'era piu', e il sintomo — testo che va a
+             * capo dove non deve — non somiglia per niente a «ho
+             * ridimensionato la finestra».
+             *
+             * IAC SB 31 w1 w0 h1 h0 IAC SE, in big endian, e chi manda una
+             * misura con dentro un 255 la scrive IAC IAC: e' il caso raro che
+             * si sbaglia sempre, e qui vale la pena scriverlo perche' una
+             * finestra larga 255 colonne non e' assurda.
+             * ================================================================= */
+            if (i + 2 < n && d[i + 2] == OPT_NAWS) {
+                unsigned char v[4];
+                unsigned int  q = i + 3, c = 0;
+
+                while (q < j && c < 4) {
+                    if (d[q] == IAC && q + 1 < j && d[q + 1] == IAC) q++;
+                    v[c++] = d[q++];
+                }
+
+                if (c == 4) {
+                    unsigned int colonne = ((unsigned int)v[0] << 8) | v[1];
+                    unsigned int righe   = ((unsigned int)v[2] << 8) | v[3];
+
+                    /* Zero vuol dire «non lo so», non «zero»: si lascia stare
+                     * invece di dare a un programma una geometria in cui
+                     * dividere per zero. */
+                    if (colonne && righe) {
+                        pty_ctl(pty, PTY_CTL_MISURA, (righe << 16) | colonne);
+                        if (g_verboso)
+                            printf("telnetd: il terminale adesso e' %ux%u\n",
+                                   colonne, righe);
+                    }
+                }
+            }
+
             i = (j + 1 < n) ? j + 2 : n;
             continue;
         }
@@ -363,7 +407,11 @@ static void sessione(int id, const Config *cfg, int con_login)
     static const unsigned char apertura[] = {
         IAC, WILL, OPT_ECHO,        /* l'eco la fa il nostro pty */
         IAC, WILL, OPT_SGA,         /* niente «vai avanti»: modo carattere */
-        IAC, DO,   OPT_SGA
+        IAC, DO,   OPT_SGA,
+        /* ! LA MISURA SI CHIEDE, NON SI ASPETTA. Un client la manda da se'
+         * solo se qualcuno gli ha detto DO NAWS; senza, resta il valore di
+         * partenza per tutta la sessione. */
+        IAC, DO,   OPT_NAWS
     };
     unsigned char buf[IPC_MSG_MAX_DATA];
     unsigned char pulito[IPC_MSG_MAX_DATA];
@@ -382,8 +430,8 @@ static void sessione(int id, const Config *cfg, int con_login)
     }
 
     /* 80x24 e' la misura che un client telnet si aspetta se nessuno gliene
-     * dice un'altra. Chi ridimensiona la finestra manda NAWS, che non
-     * trattiamo: e' dichiarato. */
+     * dice un'altra. Chi ne ha una vera la manda con NAWS, subito dopo la
+     * negoziazione e a ogni ridimensionamento: vedi filtra(). */
     pty_ctl(fd[0], PTY_CTL_MISURA, (24u << 16) | 80u);
 
     for (i = 0; i < 3; i++) {
@@ -480,7 +528,7 @@ static void sessione(int id, const Config *cfg, int con_login)
                 len = d.len;
                 if (len > sizeof(pulito)) len = sizeof(pulito);
 
-                q = filtra(id, buf + sizeof(d), len, pulito);
+                q = filtra(id, fd[0], buf + sizeof(d), len, pulito);
                 if (q > 0) write(fd[0], pulito, q);
             } else if (meta.tipo == IP_MSG_ESITO) {
                 IpEsito e;

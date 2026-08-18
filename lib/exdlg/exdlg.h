@@ -66,6 +66,19 @@ int ex_dlg_avviso(const char *titolo, const char *testo);
  * `si` e `no` sono le scritte dei due pulsanti; passare 0 mette «Si'» e «No».
  * Servono perche' «Salva / Non salvare» dice all'utente cosa succede, mentre
  * «Si' / No» lo costringe a ricostruirlo dalla domanda. */
+/* -----------------------------------------------------------------------------
+ * Una riga da scrivere
+ *
+ * ! NON E' ex_dlg_salva CON UN'ALTRA ETICHETTA. Quello mostra le directory,
+ * perche' chi salva sceglie DOVE; qui si chiede una parola — un pezzo di nome
+ * da cercare, un'etichetta — e un elenco di file accanto distrarrebbe.
+ *
+ * `valore` entra col testo proposto ed esce con quello battuto. Rende 0 se si
+ * e' annullato, e allora NON e' stato toccato.
+ * --------------------------------------------------------------------------- */
+int ex_dlg_riga(const char *titolo, const char *domanda,
+                char *valore, unsigned int max);
+
 int ex_dlg_conferma(const char *titolo, const char *testo,
                     const char *si, const char *no);
 

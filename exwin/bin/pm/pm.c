@@ -260,7 +260,7 @@ static int scrivania_disegna(void)
 {
     if (!g_scr) return 1;
 
-    ex_riempi(g_scr, 0, 0, (int)g_sw, (int)g_sh - BARRA_H, EX_BLU);
+    ex_riempi(g_scr, 0, 0, (int)g_sw, (int)g_sh - BARRA_H, EX_SCRIVANIA);
     if (g_sfondo && !ex_immagine(g_scr, g_sfondo, 0, 0)) return 0;
     return 1;
 }

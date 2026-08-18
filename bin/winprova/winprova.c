@@ -22,19 +22,74 @@
  * ============================================================================= */
 
 #include "libc.h"
+#include "kbd_proto.h"
 #include "exwin.h"
 
 #define ID_OK       101
 #define ID_ANNULLA  102
 
+#define PASSO       40      /* di quanto cresce a ogni freccia */
+
 static ExFinestra g_etichetta;
+static ExFinestra g_int, g_sep, g_riq, g_t1, g_t2, g_ok, g_ann;
 static unsigned int g_premuti = 0;
+static int g_w = 360, g_h = 220;        /* la misura che la finestra ha ADESSO */
+
+/* =============================================================================
+ * ! LA PROVA DEL RIDIMENSIONAMENTO SI FA A TASTI, NON COL MOUSE, e non e' un
+ * ripiego: i movimenti relativi grandi del monitor di QEMU si perdono per
+ * strada, quindi una prova che dipende da DOVE si clicca non e' ripetibile.
+ * Con le frecce la misura la decide QUESTO file, e quella che arriva indietro
+ * in EXM_MISURA e' quella che il server ha davvero concesso — cioe' un numero
+ * che si confronta, non un'impressione.
+ *
+ * ! E SI SCRIVE SULLA SERIALE, non con printf: un'applicazione grafica gira su
+ * una console che non e' quella della shell, e cio' che stampa li' non lo legge
+ * nessuno da fuori.
+ * ============================================================================= */
+static void rifai_disposizione(int w, int h)
+{
+    ex_misura(g_int, w, 22);
+
+    ex_misura(g_t1, w - 110, 22);
+    ex_misura(g_t2, w - 110, 22);
+
+    ex_misura(g_sep, w - 28, 2);
+
+    ex_misura(g_riq, w - 28, 50);
+    ex_misura(g_etichetta, w - 56, 16);
+
+    ex_sposta(g_ok,  w - 190, h - 42);
+    ex_sposta(g_ann, w - 100, h - 42);
+}
 
 static long procedura(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 {
-    (void)lp;
-
     switch (msg) {
+    /* ! LE FRECCE ARRIVANO QUI ANCHE CON IL FUOCO IN UNA CASELLA, ed e'
+     * voluto: una casella di testo consuma i caratteri stampabili, non i tasti
+     * speciali. Vedi tasto_al_fuoco() in exwin.c. */
+    case EXM_TASTO:
+        switch (wp & KBD_KEY_MASK) {
+        case KBD_K_RIGHT: ex_misura(f, g_w + PASSO, g_h); return 0;
+        case KBD_K_LEFT:  ex_misura(f, g_w - PASSO, g_h); return 0;
+        case KBD_K_DOWN:  ex_misura(f, g_w, g_h + PASSO); return 0;
+        case KBD_K_UP:    ex_misura(f, g_w, g_h - PASSO); return 0;
+        }
+        break;
+
+    case EXM_MISURA: {
+        char riga[80];
+
+        g_w = EX_X(lp);
+        g_h = EX_Y(lp);
+        rifai_disposizione(g_w, g_h);
+
+        sprintf(riga, "winprova: adesso e' %dx%d", g_w, g_h);
+        log_seriale(riga);
+        return 0;
+    }
+
     case EXM_COMANDO:
         g_premuti++;
         if (wp == ID_OK)      ex_testo_metti(g_etichetta, "premuto OK");
@@ -108,9 +163,12 @@ int main(int argc, char **argv)
         }
     }
 
+    /* ! EX_RIDIM SI CHIEDE, e chi lo chiede si impegna a rifare la propria
+     * disposizione in EXM_MISURA. Qui e' anche la prova che quella catena —
+     * presa, zona nuova, messaggio, ridisegno — sia intera. */
     f = ex_crea("finestra", "Prova del toolkit",
-                EX_TITOLO | EX_BORDO | EX_CHIUDI,
-                80, 60, 360, 220, 0, 0, procedura);
+                EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_RIDIM,
+                80, 60, g_w, g_h, 0, 0, procedura);
     if (f == 0) {
         /* ! IL CONSIGLIO E' «exwin», e le due cose che diceva prima erano
          * tutt'e due sbagliate: il percorso /cdrom/... non esiste quando si
@@ -123,28 +181,32 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    ex_crea("intestazione", "Anagrafica", EX_FIGLIO,
-            0, 0, 360, 22, f, 0, 0);
+    g_int = ex_crea("intestazione", "Anagrafica", EX_FIGLIO,
+                    0, 0, g_w, 22, f, 0, 0);
 
     ex_crea("etichetta", "Nome:", EX_FIGLIO,  14,  38,  60, 16, f, 0, 0);
-    ex_crea("testo",     "Graziano", EX_FIGLIO, 80, 34, 250, 22, f, 0, 0);
+    g_t1 = ex_crea("testo", "Graziano", EX_FIGLIO, 80, 34, g_w - 110, 22, f, 0, 0);
 
     ex_crea("etichetta", "Sistema:", EX_FIGLIO, 14,  70,  70, 16, f, 0, 0);
-    ex_crea("testo",     "EX-OS", EX_FIGLIO,   80,  66, 250, 22, f, 0, 0);
+    g_t2 = ex_crea("testo", "EX-OS", EX_FIGLIO,  80,  66, g_w - 110, 22, f, 0, 0);
 
-    ex_crea("separatore", "", EX_FIGLIO, 14, 100, 330, 2, f, 0, 0);
+    g_sep = ex_crea("separatore", "", EX_FIGLIO, 14, 100, g_w - 28, 2, f, 0, 0);
 
-    riq = ex_crea("riquadro", "Esito", EX_FIGLIO, 14, 112, 330, 50, f, 0, 0);
+    riq = ex_crea("riquadro", "Esito", EX_FIGLIO, 14, 112, g_w - 28, 50, f, 0, 0);
+    g_riq = riq;
     g_etichetta = ex_crea("etichetta", "nessun pulsante premuto", EX_FIGLIO,
-                          12, 22, 300, 16, riq, 0, 0);
+                          12, 22, g_w - 56, 16, riq, 0, 0);
 
-    ex_crea("pulsante", "OK",      EX_FIGLIO, 170, 178, 80, 26, f, ID_OK, 0);
-    ex_crea("pulsante", "Annulla", EX_FIGLIO, 260, 178, 80, 26, f, ID_ANNULLA, 0);
+    g_ok  = ex_crea("pulsante", "OK",      EX_FIGLIO,
+                    g_w - 190, g_h - 42, 80, 26, f, ID_OK, 0);
+    g_ann = ex_crea("pulsante", "Annulla", EX_FIGLIO,
+                    g_w - 100, g_h - 42, 80, 26, f, ID_ANNULLA, 0);
 
     /* Il primo disegno: da qui in poi lo rifa' il ciclo dei messaggi. */
     ex_procedura_base(f, EXM_DISEGNA, 0, 0);
 
-    printf("winprova: finestra aperta. Premi un pulsante o chiudi la finestra.\n");
+    printf("winprova: finestra aperta %dx%d. Le frecce la ridimensionano;\n"
+           "          premi un pulsante o chiudi la finestra.\n", g_w, g_h);
 
     while (ex_prendi_msg(&m)) ex_smista(&m);
 

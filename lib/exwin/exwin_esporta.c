@@ -42,6 +42,7 @@ static const char *const g_nomi[] = {
     "ex_distruggi",
     "ex_titolo",
     "ex_sposta",
+    "ex_misura",
     "ex_mostra",
     "ex_fuoco",
 
@@ -81,6 +82,15 @@ static const char *const g_nomi[] = {
     "ex_area_cursore",
 
     /* lo schermo */
+    "ex_area_seleziona_tutto",
+    "ex_area_copia",
+    "ex_area_taglia",
+    "ex_area_incolla",
+    "ex_area_cancella",
+    "ex_menu",
+    "ex_menu_voce",
+    "ex_rilievo",
+    "ex_incavo",
     "ex_schermo",
 
     /* L'avvio della libreria: lo chiama chi la apre, non l'applicazione. */
@@ -92,6 +102,7 @@ static void *const g_indirizzi[] = {
     (void *)ex_distruggi,
     (void *)ex_titolo,
     (void *)ex_sposta,
+    (void *)ex_misura,
     (void *)ex_mostra,
     (void *)ex_fuoco,
 
@@ -125,6 +136,15 @@ static void *const g_indirizzi[] = {
     (void *)ex_area_pulita,
     (void *)ex_area_cursore,
 
+    (void *)ex_area_seleziona_tutto,
+    (void *)ex_area_copia,
+    (void *)ex_area_taglia,
+    (void *)ex_area_incolla,
+    (void *)ex_area_cancella,
+    (void *)ex_menu,
+    (void *)ex_menu_voce,
+    (void *)ex_rilievo,
+    (void *)ex_incavo,
     (void *)ex_schermo,
 
     (void *)__libc_ponti_avvia

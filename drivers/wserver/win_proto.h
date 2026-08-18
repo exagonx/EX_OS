@@ -88,15 +88,28 @@ static inline void win_nome_servizio(char *out, unsigned int max)
 
 /* --- Messaggi dal CLIENT al SERVER --------------------------------------- */
 #define WIN_MSG_CREA        0x5701  /* WinCrea    -> risponde WIN_MSG_CREATA */
-#define WIN_MSG_AGGIORNA    0x5702  /* WinRegione: «ho finito di disegnare»  */
-#define WIN_MSG_SPOSTA      0x5703  /* WinRegione: cambia posizione/misura   */
+#define WIN_MSG_AGGIORNA    0x5702  /* WinRegione: «ho finito di disegnare»,
+                                     * e la misura che ci ha messo dentro e'
+                                     * anche la RICEVUTA di WIN_MSG_MISURATA */
+#define WIN_MSG_SPOSTA      0x5703  /* WinRegione: cambia POSIZIONE          */
 #define WIN_MSG_TITOLO      0x5704  /* WinTitolo                             */
 #define WIN_MSG_DISTRUGGI   0x5705  /* WinRegione (solo il campo id)         */
 #define WIN_MSG_PRIMO       0x5706  /* WinRegione: portami davanti           */
+/* ! LA MISURA HA UN MESSAGGIO SUO, E NON E' UN DOPPIONE DI WIN_MSG_SPOSTA.
+ * Fino a quando le due cose viaggiavano insieme, chiedere una misura nuova
+ * voleva dire anche mandare una posizione — e il client la posizione VERA non
+ * la sa: se l'utente ha trascinato la finestra per la barra del titolo, quel
+ * movimento lo conosce solo il server. Il risultato sarebbe stato una finestra
+ * che, ridimensionandosi, TORNA DA SOLA dove stava quando e' nata. Difetto
+ * trovato rileggendo, non provando: la prova aveva la finestra ferma.
+ *
+ * Usa i soli campi id, larghezza e altezza; x e y si ignorano. */
+#define WIN_MSG_MISURA      0x5707  /* WinRegione: cambia MISURA             */
 
 /* --- Messaggi dal SERVER al CLIENT --------------------------------------- */
 #define WIN_MSG_CREATA      0x5781  /* WinCreata */
 #define WIN_MSG_EVENTO      0x5782  /* WinEvento */
+#define WIN_MSG_MISURATA    0x5783  /* WinCreata: «la tua zona e' un'altra» */
 
 /* --- Gli eventi, che il toolkit gira alla procedura di finestra ---------- */
 #define WIN_EV_MOUSE_GIU    1
@@ -141,6 +154,21 @@ static inline void win_nome_servizio(char *out, unsigned int max)
  * rispondere invece di trovarsi un'applicazione sorda. */
 #define WIN_ST_MODALE       0x0040
 
+/* =============================================================================
+ * ! SI RIDIMENSIONA SOLO CHI L'HA CHIESTO, e non e' prudenza eccessiva: e' la
+ * sola scelta onesta. Cambiare misura a una finestra vuol dire darle una zona
+ * di pixel NUOVA e piu' grande, con dentro quella vecchia in un angolo. Chi
+ * non sa rispondere a WIN_MSG_MISURATA si ritrova meta' finestra col colore di
+ * partenza e i propri controlli fermi dov'erano — cioe' una finestra rotta,
+ * fatta rompere dal server.
+ *
+ * Quindi la presa nell'angolo compare solo se questo bit c'e', e un'applicazione
+ * che non sa rifare la propria disposizione semplicemente non lo mette. E'
+ * l'opposto di quello che farebbe un sistema che ridimensiona tutto e lascia a
+ * ognuno il compito di accorgersene.
+ * ============================================================================= */
+#define WIN_ST_RIDIM        0x0080
+
 #define WIN_TITOLO_LEN      48
 
 /* -----------------------------------------------------------------------------
@@ -152,13 +180,33 @@ static inline void win_nome_servizio(char *out, unsigned int max)
  * leggere la larghezza di una finestra dal campo dell'altezza, cioe' da'
  * numeri plausibili e sbagliati.
  * --------------------------------------------------------------------------- */
+/* =============================================================================
+ * ! «METTILA TU» E' UNA POSIZIONE COME UN'ALTRA, ED E' CIO' CHE PERMETTE DI
+ * APRIRE DUE VOLTE LO STESSO PROGRAMMA.
+ *
+ * Un'applicazione che nasce sempre nello stesso punto va benissimo finche' e'
+ * una sola: la seconda copia si sovrappone alla prima ESATTAMENTE, e chi
+ * guarda crede che non si sia aperta. E' un difetto che non da' nessun
+ * messaggio d'errore — il modo peggiore in cui una cosa puo' non funzionare.
+ *
+ * ! E LA SCELTA LA FA IL SERVER, NON L'APPLICAZIONE, perche' e' l'unico che sa
+ * quante finestre ci sono gia' e quanto e' grande lo schermo. Un programma che
+ * si scostasse da solo — poniamo in base al proprio PID — sceglierebbe alla
+ * cieca, e due programmi DIVERSI ricadrebbero nello stesso punto lo stesso.
+ * ============================================================================= */
+#define WIN_XY_AUTO     0xFFFFFFFFu
+
 typedef struct {
-    unsigned int x, y;
+    unsigned int x, y;          /* WIN_XY_AUTO = «scegli tu» */
     unsigned int larghezza, altezza;
     unsigned int stile;
     char         titolo[WIN_TITOLO_LEN];
 } WinCrea;
 
+/* ! LA STESSA STRUTTURA DICE «ECCO LA TUA FINESTRA» E «ECCO LA TUA FINESTRA
+ * NUOVA», cioe' WIN_MSG_CREATA e WIN_MSG_MISURATA. Sono la stessa notizia detta
+ * due volte nella vita di una finestra, e due strutture diverse vorrebbero dire
+ * due pezzi di codice che mappano una zona condivisa — che divergono. */
 typedef struct {
     unsigned int id;            /* 0 = rifiutata */
     unsigned int byte;          /* quanto e' grande la zona condivisa */
@@ -166,6 +214,13 @@ typedef struct {
     unsigned int larghezza;     /* quella concessa, che puo' non essere quella
                                  * chiesta: vedi il commento nel server */
     unsigned int altezza;
+    /* ! IL NUMERO DI GIRO ENTRA NEL NOME DELLA ZONA, ED E' CIO' CHE RENDE IL
+     * CAMBIO POSSIBILE. Una zona condivisa non si allarga: si crea quella nuova
+     * e si lascia morire la vecchia quando l'ultimo la chiude. Ma finche' il
+     * client tiene aperta «win7», «win7» esiste ancora e ricrearla darebbe la
+     * VECCHIA. Con il giro dentro il nome le due zone convivono per il tempo di
+     * una consegna, e nessuno resta senza pixel in mezzo. */
+    unsigned int giro;
 } WinCreata;
 
 typedef struct {
@@ -187,18 +242,33 @@ typedef struct {
     unsigned int tasto;         /* scancode, per WIN_EV_TASTO */
 } WinEvento;
 
-/* Il nome della zona condivisa di una finestra. Lo compongono tutt'e due i
- * lati con questa, cosi' non ci sono due modi di scriverlo. */
-static void win_nome_zona(char *out, unsigned int id)
+/* Il nome della zona condivisa di una finestra: «win», il numero della
+ * finestra, un punto e il giro — «win7.0», poi «win7.1» dopo il primo
+ * ridimensionamento. Lo compongono tutt'e due i lati con questa, cosi' non ci
+ * sono due modi di scriverlo.
+ *
+ * ! IL GIRO NON E' UN ORNAMENTO: due zone con lo stesso nome sono la STESSA
+ * zona, e chiederne una nuova mentre il client tiene ancora aperta la vecchia
+ * renderebbe la vecchia — con la misura di prima e nessun errore. */
+static void win_nome_zona(char *out, unsigned int id, unsigned int giro)
 {
-    unsigned int i = 0, n = id, cifre = 0, j;
+    unsigned int i = 0, cifre, j, n;
     char rov[12];
 
     out[i++] = 'w'; out[i++] = 'i'; out[i++] = 'n';
 
+    n = id; cifre = 0;
     if (n == 0) rov[cifre++] = '0';
     while (n > 0) { rov[cifre++] = (char)('0' + (n % 10)); n /= 10; }
     for (j = 0; j < cifre; j++) out[i++] = rov[cifre - 1 - j];
+
+    out[i++] = '.';
+
+    n = giro; cifre = 0;
+    if (n == 0) rov[cifre++] = '0';
+    while (n > 0) { rov[cifre++] = (char)('0' + (n % 10)); n /= 10; }
+    for (j = 0; j < cifre; j++) out[i++] = rov[cifre - 1 - j];
+
     out[i] = '\0';
 }
 

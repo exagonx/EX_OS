@@ -62,6 +62,7 @@ static struct {
     void        (*distruggi)(ExFinestra);
     void        (*titolo)(ExFinestra, const char *);
     void        (*sposta)(ExFinestra, int, int);
+    void        (*misura)(ExFinestra, int, int);
     void        (*mostra)(ExFinestra, int);
     void        (*fuoco)(ExFinestra);
     void        (*testo_metti)(ExFinestra, const char *);
@@ -90,6 +91,15 @@ static struct {
     int          (*a_modificato)(ExFinestra);
     void         (*a_pulita)(ExFinestra);
     void         (*a_cursore)(ExFinestra, unsigned int *, unsigned int *);
+    void         (*a_sel_tutto)(ExFinestra);
+    int          (*a_copia)(ExFinestra);
+    int          (*a_taglia)(ExFinestra);
+    int          (*a_incolla)(ExFinestra);
+    int          (*a_cancella)(ExFinestra);
+    ExFinestra  (*menu)(ExFinestra);
+    int         (*menu_voce)(ExFinestra, const char *, const char *, unsigned int);
+    void        (*rilievo)(ExFinestra, int, int, int, int);
+    void        (*incavo)(ExFinestra, int, int, int, int);
     void        (*schermo)(unsigned int *, unsigned int *);
 } P;
 
@@ -129,6 +139,7 @@ static void assicura(void)
     P.distruggi      = (void (*)(ExFinestra))              chiedi(t, "ex_distruggi");
     P.titolo         = (void (*)(ExFinestra, const char *))chiedi(t, "ex_titolo");
     P.sposta         = (void (*)(ExFinestra, int, int))    chiedi(t, "ex_sposta");
+    P.misura         = (void (*)(ExFinestra, int, int))    chiedi(t, "ex_misura");
     P.mostra         = (void (*)(ExFinestra, int))         chiedi(t, "ex_mostra");
     P.fuoco          = (void (*)(ExFinestra))              chiedi(t, "ex_fuoco");
     P.testo_metti    = (void (*)(ExFinestra, const char *))chiedi(t, "ex_testo_metti");
@@ -166,6 +177,18 @@ static void assicura(void)
     P.a_cursore    = (void (*)(ExFinestra, unsigned int *, unsigned int *))
                      chiedi(t, "ex_area_cursore");
 
+    P.a_sel_tutto = (void (*)(ExFinestra))chiedi(t, "ex_area_seleziona_tutto");
+    P.a_copia     = (int (*)(ExFinestra)) chiedi(t, "ex_area_copia");
+    P.a_taglia    = (int (*)(ExFinestra)) chiedi(t, "ex_area_taglia");
+    P.a_incolla   = (int (*)(ExFinestra)) chiedi(t, "ex_area_incolla");
+    P.a_cancella  = (int (*)(ExFinestra)) chiedi(t, "ex_area_cancella");
+    P.menu           = (ExFinestra (*)(ExFinestra))        chiedi(t, "ex_menu");
+    P.menu_voce      = (int (*)(ExFinestra, const char *, const char *, unsigned int))
+                       chiedi(t, "ex_menu_voce");
+    P.rilievo        = (void (*)(ExFinestra, int, int, int, int))
+                       chiedi(t, "ex_rilievo");
+    P.incavo         = (void (*)(ExFinestra, int, int, int, int))
+                       chiedi(t, "ex_incavo");
     P.schermo        = (void (*)(unsigned int *, unsigned int *))
                        chiedi(t, "ex_schermo");
 
@@ -188,6 +211,22 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
 void ex_distruggi(ExFinestra f)            { assicura(); P.distruggi(f); }
 void ex_titolo(ExFinestra f, const char *s){ assicura(); P.titolo(f, s); }
 void ex_sposta(ExFinestra f, int x, int y) { assicura(); P.sposta(f, x, y); }
+void ex_misura(ExFinestra f, int w, int h) { assicura(); P.misura(f, w, h); }
+
+void ex_area_seleziona_tutto(ExFinestra f) { assicura(); P.a_sel_tutto(f); }
+int  ex_area_copia(ExFinestra f)    { assicura(); return P.a_copia(f); }
+int  ex_area_taglia(ExFinestra f)   { assicura(); return P.a_taglia(f); }
+int  ex_area_incolla(ExFinestra f)  { assicura(); return P.a_incolla(f); }
+int  ex_area_cancella(ExFinestra f) { assicura(); return P.a_cancella(f); }
+
+ExFinestra ex_menu(ExFinestra f) { assicura(); return P.menu(f); }
+int ex_menu_voce(ExFinestra m, const char *t, const char *v, unsigned int id)
+{ assicura(); return P.menu_voce(m, t, v, id); }
+
+void ex_rilievo(ExFinestra f, int x, int y, int w, int h)
+{ assicura(); P.rilievo(f, x, y, w, h); }
+void ex_incavo(ExFinestra f, int x, int y, int w, int h)
+{ assicura(); P.incavo(f, x, y, w, h); }
 void ex_mostra(ExFinestra f, int v)        { assicura(); P.mostra(f, v); }
 void ex_fuoco(ExFinestra f)                { assicura(); P.fuoco(f); }
 

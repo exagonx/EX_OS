@@ -335,7 +335,63 @@ static int g_av_fatto;
 static long av_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 {
     if (msg == EXM_COMANDO || msg == EXM_CHIUDI) { g_av_fatto = 1; return 0; }
+
+    /* ! INVIO ED Esc CHIUDONO, e fino al 18 agosto 2026 non lo facevano: questo
+     * dialogo aveva SOLO il pulsante OK, cioe' si chiudeva solo col mouse.
+     * Su un avviso — dove non c'e' niente da decidere — il tasto che si batte
+     * senza guardare e' proprio l'Invio, e non succedeva niente. Le altre due
+     * finestre di ExDlg lo facevano gia': era questa a essere l'eccezione, e
+     * un'eccezione che nessuno aveva scelto. */
+    if (msg == EXM_TASTO) {
+        unsigned int c = wp & 0xFFFF;
+
+        if (c == '\n' || c == '\r' || c == 27) { g_av_fatto = 1; return 0; }
+    }
     return ex_procedura_base(f, msg, wp, lp);
+}
+
+/* =============================================================================
+ * ! UN AVVISO CHE TRONCA IL TESTO E' PEGGIO DI NESSUN AVVISO, e fino al 18
+ * agosto 2026 questo lo troncava: un'etichetta sola, larga quanto la finestra,
+ * e tutto quello che non ci stava spariva. Si e' visto la prima volta che
+ * qualcuno ci ha messo dentro due frasi — le istruzioni di un programma — e
+ * sullo schermo ne e' comparsa mezza, senza nessun segno che ce ne fosse
+ * dell'altra. Chi legge non ha modo di sapere che manca qualcosa.
+ *
+ * ! SI SPEZZA SULLE PAROLE, NON SUI CARATTERI. Tagliare a meta' una parola e'
+ * leggibile ma sembra un difetto; e quando una parola sola e' piu' lunga della
+ * riga si taglia lo stesso, perche' l'alternativa e' farla uscire dal bordo.
+ * ============================================================================= */
+#define AVVISO_W        420
+#define AVVISO_COL      ((AVVISO_W - 24) / 8)    /* caratteri per riga */
+#define AVVISO_RIGHE    6
+
+static unsigned int spezza(const char *t, char righe[][AVVISO_COL + 1],
+                           unsigned int max)
+{
+    unsigned int n = 0, i = 0;
+
+    if (!t) return 0;
+
+    while (t[i] && n < max) {
+        unsigned int q = 0, ultimo = 0;
+
+        while (t[i + q] && q < AVVISO_COL) {
+            if (t[i + q] == ' ') ultimo = q;
+            q++;
+        }
+
+        /* Se il testo continua e c'e' uno spazio dove tagliare, si taglia li'. */
+        if (t[i + q] && ultimo > 0) q = ultimo;
+
+        memcpy(righe[n], t + i, q);
+        righe[n][q] = '\0';
+        n++;
+
+        i += q;
+        while (t[i] == ' ') i++;
+    }
+    return n;
 }
 
 int ex_dlg_avviso(const char *titolo, const char *testo)
@@ -343,20 +399,32 @@ int ex_dlg_avviso(const char *titolo, const char *testo)
     ExFinestra   f;
     ExMsg        m;
     unsigned int sw = 0, sh = 0;
-    int          x, y;
+    int          x, y, alt;
+    char         righe[AVVISO_RIGHE][AVVISO_COL + 1];
+    unsigned int n, k;
+
+    n = spezza(testo, righe, AVVISO_RIGHE);
+    if (n == 0) n = 1;
+
+    /* ! LA FINESTRA SI MISURA SUL TESTO, non il testo sulla finestra. */
+    alt = 24 + (int)n * 16 + 12 + 24 + 16;
 
     ex_schermo(&sw, &sh);
-    x = sw > 360 ? (int)(sw - 360) / 2 : 0;
-    y = sh > 120 ? (int)(sh - 120) / 2 : 0;
+    x = (int)sw > AVVISO_W ? (int)(sw - AVVISO_W) / 2 : 0;
+    y = (int)sh > alt      ? (int)(sh - (unsigned int)alt) / 2 : 0;
 
     g_av_fatto = 0;
     f = ex_crea("finestra", titolo ? titolo : "Avviso",
                 EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_SOPRA | EX_MODALE,
-                x, y, 360, 120, 0, 0, av_proc);
+                x, y, AVVISO_W, alt, 0, 0, av_proc);
     if (f == 0) return 1;
 
-    ex_crea("etichetta", testo ? testo : "", EX_FIGLIO, 12, 24, 336, 16, f, 0, 0);
-    ex_crea("pulsante", "OK", EX_FIGLIO, 140, 64, 80, 24, f, 1, 0);
+    for (k = 0; k < n; k++)
+        ex_crea("etichetta", righe[k], EX_FIGLIO,
+                12, 20 + (int)k * 16, AVVISO_W - 24, 16, f, 0, 0);
+
+    ex_crea("pulsante", "OK", EX_FIGLIO,
+            (AVVISO_W - 80) / 2, alt - 40, 80, 24, f, 1, 0);
 
     ex_procedura_base(f, EXM_DISEGNA, 0, 0);
     ex_aggiorna(f);
@@ -467,4 +535,106 @@ int ex_dlg_conferma(const char *titolo, const char *testo,
 
     ex_distruggi(f);
     return g_cf_fatto == 1;
+}
+
+/* -----------------------------------------------------------------------------
+ * Una riga da scrivere: il dialogo piu' piccolo che serva a qualcosa
+ *
+ * ! NON E' ex_dlg_salva CON UN'ALTRA ETICHETTA. Quello mostra le directory,
+ * perche' chi salva sceglie DOVE; qui si chiede una parola — un pezzo di nome
+ * da cercare, un'etichetta, un numero — e un elenco di file accanto non
+ * aiuterebbe, distrarrebbe.
+ *
+ * ! IL VALORE DI PARTENZA ENTRA ED ESCE DALLO STESSO BUFFER, come in
+ * ex_dlg_apri: chi chiama ci mette quello che propone e ci ritrova quello che
+ * e' stato battuto. Rende 0 se si e' annullato, e allora il buffer NON e'
+ * stato toccato — chi non lo guarda si ritrova il valore di prima, che e'
+ * l'unica cosa che non fa danni.
+ * --------------------------------------------------------------------------- */
+#define ID_RG_OK    1
+#define ID_RG_NO    2
+
+static int        g_rg_fatto;   /* 0 = niente, 1 = ok, 2 = annullato */
+static ExFinestra g_rg_casella;
+
+static long rg_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+{
+    switch (msg) {
+    case EXM_COMANDO:
+        g_rg_fatto = (wp == ID_RG_OK) ? 1 : 2;
+        return 0;
+
+    case EXM_CHIUDI:
+        g_rg_fatto = 2;
+        return 0;
+
+    case EXM_TASTO:
+        /* Invio conferma, Esc annulla. Una casella di testo NON consuma
+         * l'Invio (vedi tasto_al_fuoco in exwin.c) proprio perche' arrivi
+         * qui: e' il tasto con cui si finisce di scrivere. */
+        if ((wp & 0xFFFF) == '\n' || (wp & 0xFFFF) == '\r') g_rg_fatto = 1;
+        else if ((wp & 0xFFFF) == 27)                        g_rg_fatto = 2;
+        return 0;
+
+    default:
+        return ex_procedura_base(f, msg, wp, lp);
+    }
+}
+
+int ex_dlg_riga(const char *titolo, const char *domanda,
+                char *valore, unsigned int max)
+{
+    ExFinestra   f;
+    ExMsg        m;
+    unsigned int sw = 0, sh = 0;
+    int          x, y;
+
+    if (!valore || max == 0) return 0;
+
+    ex_schermo(&sw, &sh);
+    x = sw > 420 ? (int)(sw - 420) / 2 : 0;
+    y = sh > 150 ? (int)(sh - 150) / 2 : 0;
+
+    g_rg_fatto = 0;
+    f = ex_crea("finestra", titolo ? titolo : "Scrivi",
+                EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_SOPRA | EX_MODALE,
+                x, y, 420, 150, 0, 0, rg_proc);
+    if (f == 0) return 0;
+
+    ex_crea("etichetta", domanda ? domanda : "", EX_FIGLIO,
+            12, 28, 396, 16, f, 0, 0);
+
+    g_rg_casella = ex_crea("testo", valore, EX_FIGLIO,
+                           12, 50, 396, 24, f, 0, 0);
+
+    {
+        int ws = larghezza_pulsante("Va bene");
+        int wn = larghezza_pulsante("Annulla");
+        int gap = 12;
+        int x0  = (420 - (ws + gap + wn)) / 2;
+
+        ex_crea("pulsante", "Va bene", EX_FIGLIO, x0, 96, ws, 26, f, ID_RG_OK, 0);
+        ex_crea("pulsante", "Annulla", EX_FIGLIO,
+                x0 + ws + gap, 96, wn, 26, f, ID_RG_NO, 0);
+    }
+
+    /* ! IL FUOCO ALLA CASELLA, o si aprirebbe un dialogo in cui si chiede di
+     * scrivere e battere non scrive niente. */
+    ex_fuoco(g_rg_casella);
+
+    ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+    ex_aggiorna(f);
+
+    while (!g_rg_fatto && ex_prendi_msg(&m)) ex_smista(&m);
+
+    if (g_rg_fatto == 1) {
+        const char *t = ex_testo_prendi(g_rg_casella);
+        unsigned int i = 0;
+
+        if (t) { for (i = 0; i + 1 < max && t[i]; i++) valore[i] = t[i]; }
+        valore[i] = '\0';
+    }
+
+    ex_distruggi(f);
+    return g_rg_fatto == 1;
 }

@@ -1,4 +1,4 @@
-# DOVE RIPRENDERE — 17 agosto 2026
+# DOVE RIPRENDERE — 18 agosto 2026
 
 ## Lo stato in una riga
 
@@ -12,7 +12,27 @@ seriale e USB — tastiera compresa, hub compresi.
 
 ## COSA E' COMMITTATO
 
-    3d13299  "Il protocollo SSH: arriva alla firma, e due difetti veri per strada"
+    bdf739d  "SSH funziona: una sessione cifrata con un client vero"
+
+Nell'albero, non committato, **tre lavori insieme**:
+
+  1. **gli attrezzi delle prove**, che fino al 18 agosto vivevano in una
+     directory temporanea — `prova_ssh.sh`, `ssh_client_prova.py`,
+     `analizza_ssh_pcap.py`, `ppm2png.py`;
+  2. **il ridimensionamento delle finestre**, con dentro NAWS di telnet e
+     `window-change` di SSH, e i tre attrezzi che lo provano —
+     `prova_ridimensiona.sh`, `misura_finestre.py`, `prova_telnet.sh` con
+     `telnet_client_prova.py`;
+  3. **il rilievo, i menu a tendina, il file manager a due aree, gli appunti
+     condivisi e le istanze multiple** — e, trovato per strada, **un difetto
+     del kernel**: aprire due volte la stessa libreria condivisa dallo stesso
+     processo le azzerava i dati scrivibili. Vedi la voce in testa.
+
+! **UN ATTREZZO CHE STA IN /tmp E' UN ATTREZZO CHE SI RIFA' DA CAPO LA PROSSIMA
+VOLTA.** Quello che ha trovato il difetto della firma — ricomporre i flussi TCP
+da un dump e confrontare i buffer invece degli hash — sarebbe costato un'altra
+mezza giornata a riscriverlo. Vale anche per la ricetta con cui si porta il
+puntatore del mouse dove si vuole: mezz'ora a ritrovarla.
 
 ! **`gitupdate.sh` FA `git add .` E UN COMMIT SOLO**: `messaggio-commit.txt`
 deve coprire tutto quello che si e' fatto dall'ultimo commit, non l'ultima
@@ -22,51 +42,53 @@ cosa.
 
 ## La coda, in ordine
 
-! **LE DUE SEZIONI IN CIMA SONO VUOTE**, e vale la pena dirlo invece di
-toglierle: «cose che si vedono» e «cose che il toolkit ha chiesto tre volte»
-sono state svuotate il 17 e il 18 agosto — i lettori di immagini, il toolkit, i
-permessi, il dialogo «si'/no» e le finestre modali. Quello che resta vuole un
-pezzo di kernel nuovo, e non e' piu' lavoro di rifinitura.
+! **LE SEZIONI IN CIMA SONO VUOTE, TUTTE E TRE**, e vale la pena dirlo invece
+di toglierle: «cose che si vedono», «cose che il toolkit ha chiesto tre volte»
+e «cose che vogliono un pezzo di kernel nuovo» si sono svuotate fra il 17 e il
+18 agosto — i lettori di immagini, il toolkit, i permessi, il dialogo
+«si'/no», le finestre modali, e per ultimo il ridimensionamento, che sembrava
+volere un pezzo di kernel e non ne ha voluto nessuno.
+
+! **QUINDI LA CODA ADESSO E' SOLO RIFINITURE**, e questo e' un fatto da
+guardare in faccia: il prossimo lavoro grosso non e' scritto qui sotto. Va
+scelto da DIREZIONE.md, non pescato dall'elenco.
+
+~~SSH~~: **fatto il 18 agosto 2026** — una sessione cifrata con OpenSSH vero
+dall'altra parte. Cosa ne resta fuori sta nella sua voce, sotto «cosa manca»:
+piu' di una sessione insieme, il rinnovo delle chiavi, l'autenticazione a chiave
+pubblica.
+
+~~Ridimensionare le finestre~~: **fatto il 18 agosto 2026** — la presa
+nell'angolo, il contorno mentre si tira, la zona condivisa nuova con dentro
+quella vecchia, e la misura che arriva fino al pty. NAWS di telnet e
+`window-change` di SSH sono nello stesso lavoro. Vedi la voce in testa.
+
+~~L'aspetto, i menu, il file manager a due aree~~: **fatti il 18 agosto 2026**
+— il rilievo stile Workbench in tutti i controlli e nel telaio, i menu a
+tendina nel toolkit, la selezione con gli appunti in memoria condivisa, e le
+finestre a cascata che permettono di aprire due volte lo stesso programma.
+Vedi la voce in testa, con il difetto del kernel che si e' trovato per strada.
 
 ### Cose che vogliono un pezzo di kernel nuovo
 
- 1. *(SSH e' fatto: vedi «SSH funziona: una sessione cifrata con un client
-    vero». Quello che resta di quel lavoro e' nella sua voce, sotto «cosa
-    manca»: piu' di una sessione insieme, il rinnovo delle chiavi,
-    l'autenticazione a chiave pubblica.)*
-    Il vecchio piano, che resta la mappa: la matematica e' fatta e
-    provata (vedi «La matematica di SSH, provata contro gli RFC»), e mancano lo
-    scambio delle versioni, il binary packet protocol, KEXINIT,
-    curve25519-sha256 con la firma dell'host, userauth «password» e il canale
-    con pty-req — dove si riusa `telnetd` quasi per intero.
-    *(Quello che segue resta vero e vale la pena rileggerlo prima di
-    cominciare.)*
-    **SSH**, che a questo punto e' «lo stesso impianto piu' la crittografia»:
-    l'impianto della sessione e' provato da `telnetd`, e quello che manca e' la
-    matematica. **Si sceglie la strada senza bignum**: Curve25519 per lo scambio
-    e ChaCha20-Poly1305 per il resto sono aritmetica a 32 bit su numeri di
-    lunghezza fissa, mentre RSA vuole un modulo esponenziale su interi da 2048
-    bit — una libreria di grandi numeri da scrivere e mantenere. Con SHA-256
-    gia' in casa, la prima strada e' qualche centinaio di righe di matematica
-    chiusa; la seconda e' un sottosistema.
-    **E niente SSH prima che i permessi siano solidi**: vedi «cosa resta
-    aperto» nell'audit del 17 agosto.
- 2. **Ridimensionare le finestre** — la zona condivisa ha misura fissa, quindi
-    vuole una stretta di mano ordinata. `WIN_EV_MISURA` e' gia' nel protocollo.
+! **QUESTA SEZIONE ADESSO E' VUOTA**, e vale la pena dirlo invece di toglierla:
+il ridimensionamento sembrava volere un pezzo di kernel e non ne ha voluto
+nessuno. Una zona condivisa non si allarga, ma non serve che si allarghi: ne
+basta una NUOVA con un nome diverso, e il nome ce l'ha gia' chi lo compone.
 
 ### Rifiniture, quando conviene
 
- 3. **`login` e `install` sulla libc condivisa** — oggi restano statici
+ 1. **`login` e `install` sulla libc condivisa** — oggi restano statici
     apposta: sono i due programmi con cui si entra e con cui si ripara. Prima
     serve un modo di accorgersi che `/lib/libc.so` manca PRIMA di arrivare al
     login.
- 4. **Risolvere per hash invece che per nome** — altri ~3 KB per programma, col
+ 2. **Risolvere per hash invece che per nome** — altri ~3 KB per programma, col
     generatore che verifica a costruzione che non ci siano collisioni.
- 5. **La lista delle regioni sporche** — `WIN_MSG_AGGIORNA` porta gia' una
+ 3. **La lista delle regioni sporche** — `WIN_MSG_AGGIORNA` porta gia' una
     `WinRegione` che oggi si ignora. Ha senso quando le finestre saranno tante
     abbastanza da farlo pesare, ed e' la struttura piu' facile da sbagliare di
     un server grafico.
- 6. **`-i` ai quattro driver che ancora non ce l'hanno** — `floppy`,
+ 4. **`-i` ai quattro driver che ancora non ce l'hanno** — `floppy`,
     `mouseser`, `uhci`, `vgaprova`. Gli altri nove ce l'hanno tutti (`pci`,
     `svga`, `kbd`, `xhci` e i cinque del CD); `tty` era in questo elenco per
     sbaglio, non e' un `.drv` ma un pezzo compilato dentro il kernel. Oggi non
@@ -111,24 +133,415 @@ quattro alloggiamenti** in xhci.drv — dichiarato, non scoperto dopo.
 - su ferro vero con una VESA attiva, il ritorno al modo testo puo' non
   bastare: manca l'interfaccia in modo protetto di VBE 2.0.
 
-## Come si prova quello che c'e'
+## COME SI PROVA QUELLO CHE C'E' (aggiornato il 18 agosto 2026)
 
     make -j2 all && make iso-exos
-    python3 tools/qemu_drive.py "libctest@200" "/bin/polltest@60" "/bin/shmtest@45"
+    python3 tools/qemu_drive.py "libctest@260"     316 prove, e ci sono dentro
+                                                   pty e interruzione
+    tools/prova_ssh.sh                             una sessione SSH vera, con
+                                                   OpenSSH dell'ospite — e
+                                                   dentro c'e' window-change
+    tools/prova_telnet.sh                          telnet vero, e NAWS
+    tools/prova_ridimensiona.sh                    le finestre che cambiano
+                                                   misura, misurate nei pixel
+    python3 tools/misura_finestre.py foto.ppm      quanto e' grande una
+                                                   finestra, DENTRO una foto
+    EXOS_NO_FLOPPY=1 EXOS_CDROM=dist/exos.iso \
+      python3 tools/qemu_drive.py "crypttest@50"   i vettori degli RFC
 
-    # mouse USB dietro un hub
-    EXOS_QEMU_EXTRA="-usb -device usb-hub,port=1 -device usb-mouse,port=1.2 \
-        -drive file=dist/exos.iso,media=cdrom,if=ide,index=2" \
-    python3 tools/qemu_drive.py "/dev/pci.drv &@8" "/dev/uhci.drv &@16" \
-        "mouse -n 3@2" "mon:mouse_move 12 4@1" "mon:mouse_move 12 4@4"
+    # due macchine e un cavo virtuale (listen/accept, telnet)
+    EXOS_ISTANZA=srv EXOS_MAC=52:54:00:12:34:01 EXOS_NET_SOCKET=listen:12345 ...
+    EXOS_ISTANZA=cli EXOS_MAC=52:54:00:12:34:02 EXOS_NET_SOCKET=connect:12345 ...
 
-    # tastiera USB su una macchina senza 8042: prima mettere in kernel.cfg
-    #   modules = kbd, pci, uhci   con pci=/dev/pci.drv e uhci=/dev/uhci.drv
-    EXOS_QEMU_EXTRA="-usb -device usb-kbd" python3 tools/qemu_drive.py "hello@10"
+! **UNA MACCHINA SOLA PER VOLTA, E SI CONTROLLA PRIMA.** Un QEMU rimasto acceso
+tiene il file del log e la porta: si finisce per leggere l'output di un giro
+vecchio credendolo nuovo. Il 18 agosto e' costato mezz'ora — sembrava che
+l'entropia fosse deterministica, e invece era la macchina che non era ripartita.
+`pgrep -a qemu-system` prima di ogni prova, e `tools/prova_ssh.sh` lo fa da se'.
 
-! **Dopo aver toccato un driver del CD**: la guardia `verifica-dipendenze-cd`
-adesso ferma la costruzione se un `.drv` resta fuori dalle dipendenze
-dell'ISO. Se scatta, il rimedio e' aggiungerlo a `DRIVER_SOLO_CD_OUT`.
+! **IL PUNTATORE SI PILOTA, MA A PASSI PICCOLI**, e il 18 agosto qui c'era
+scritto il contrario. Si perdono i movimenti relativi GRANDI: a dieci pixel per
+volta il puntatore arriva dove lo si manda, **al pixel** — misurato. La ricetta
+sta in `tools/prova_ridimensiona.sh` ed e' di due righe: si satura in un angolo
+con qualche `mouse_move -600 -600` (li' il troncamento non fa danno, si sbatte
+contro il bordo) e da li' si conta a passi di dieci. Le prove grafiche che
+dipendono da dove si clicca sono ripetibili.
+
+Per guardare una fotografia: `python3 tools/ppm2png.py foto.ppm out.png`. Per
+contarci le finestre: `python3 tools/misura_finestre.py foto.ppm`.
+
+---
+
+# Il rilievo, i menu, e un difetto del kernel vecchio di mesi (18 agosto 2026)
+
+Tre cose chieste insieme — l'aspetto in rilievo stile Workbench, i menu a
+tendina, il file manager a due aree — e in mezzo, trovato inseguendo un
+sintomo, **il difetto piu' grave di questa giornata**, che non era in nessuna
+delle tre.
+
+## ! IL DIFETTO DEL KERNEL: APRIRE DUE VOLTE UNA LIBRERIA LE AZZERA I DATI
+
+    lib_apri()  ->  aggancia()  ->  per ogni pagina scrivibile: COPIA FRESCA
+
+`aggancia()` rimappa ogni pagina della libreria e, per quelle scrivibili,
+prende una copia nuova dell'originale. Chiamata **due volte sullo stesso
+processo** riporta `.data` e `.bss` al valore che avevano alla compilazione:
+per `exwin.so` vuol dire **la tabella delle finestre azzerata**, con le
+finestre ancora vive sullo schermo e il server che continua a mandare loro gli
+eventi.
+
+! **E NON SERVE CHE QUALCUNO APRA NIENTE DUE VOLTE DI PROPOSITO.** Basta
+un'applicazione che usi `exwin.so` **ed** `exdlg.so`: exdlg.so a sua volta e'
+legata a exwin.so, e al primo dialogo il suo stub la apre — che per quel
+processo e' la seconda volta. Cioe' succedeva a `edit` da sempre, alla prima
+finestra «Apri...».
+
+! **IL SINTOMO NON SOMIGLIAVA A UN DIFETTO DI MEMORIA.** La finestra restava
+disegnata, riceveva i tasti, il programma continuava a girare e a stampare — e
+non cambiava piu' un pixel. Nessun fault, nessun errore, nessun messaggio.
+Quello che si vedeva era «il file manager si e' bloccato dopo la ricerca», e la
+ricerca non c'entrava niente.
+
+Come si e' trovato, ed e' il metodo che vale piu' del difetto:
+
+    1. l'applicazione dice di aver ridisegnato        (log sulla seriale)
+    2. il server non riceve nessun WIN_MSG_AGGIORNA   (log sulla seriale)
+    3. dentro exwin.so, ex_aggiorna() SCARTA il messaggio: radice(f) e' NULL
+    4. la maniglia della finestra e' 1, e la 1 e' libera
+    5. l'ha liberata ex_distruggi() del DIALOGO, che aveva anche lui la 1
+
+Il passo 4 e' quello che ha girato la domanda: se il dialogo ha preso la stessa
+maniglia della finestra principale, le due non stanno guardando la stessa
+tabella. E la tabella e' unica per processo — a meno che qualcuno non l'abbia
+riazzerata.
+
+! **IL RIMEDIO NON HA VOLUTO UN ELENCO NEL PCB.** La domanda «questo processo
+ce l'ha gia'?» la risponde la sua stessa tavola delle pagine: se l'indirizzo
+della tabella di esportazione e' gia' mappato, la libreria e' gia' li'.
+`paging_get_physical()` e tre righe in `lib_apri()`.
+
+! **E VA GUARDATO ANCHE DA UN'ALTRA PARTE**: era anche un modo, per chi
+controlla un percorso di libreria, di **azzerare lo stato di un'altra libreria
+condivisa** dello stesso processo. Non e' il difetto che si stava cercando, ma
+e' quello che valeva la pena chiudere per primo.
+
+## Il rilievo: sporge cio' che si preme, rientra cio' in cui si scrive
+
+! **LA LUCE VIENE DA SOPRA A SINISTRA, SEMPRE**, ed e' l'unica convenzione che
+conta: se due controlli la prendessero da parti diverse, uno dei due
+sembrerebbe premuto senza esserlo. Da qui discende tutto il resto:
+
+| | |
+|---|---|
+| pulsante | sporge; premuto rientra **e la scritta si sposta di un pixel** — solo invertire il rilievo si vede appena |
+| casella, lista, area, terminale | rientrano **sempre**: sono buchi nel pannello, non cose da premere |
+| il fuoco | non cambia il rilievo, aggiunge una riga blu dentro. Un controllo scelto che cambiasse forma sembrerebbe un pulsante |
+| telaio della finestra | due pixel, e ognuno ha un mestiere: quello di fuori sporge dallo sfondo, quello di dentro disegna il buco in cui sta il client |
+| barra del titolo, pulsante di chiusura, presa d'angolo | sporgono: si riconoscono come cose da premere invece che come decorazioni |
+
+! **GLI ANGOLI APPARTENGONO ALLA LUCE**, e va detto perche' e' l'unica cosa che
+si sbaglia scrivendo `bordo3d()`: le due righe si incontrano in due angoli, e
+chi ci arriva per ultimo decide come si vede lo spigolo. Prima l'ombra, poi la
+luce.
+
+! **L'ARITMETICA STA IN DUE POSTI E NON SI PUO' CONDIVIDERE**: `bordo3d()` nel
+server e `bordo3d()` nel toolkit sono due processi diversi. Sono venti righe
+identiche, e quando si tocca una va toccata l'altra — scritto in tutte e due.
+
+## I menu a tendina, e perche' stanno DENTRO la finestra
+
+    ExFinestra mb = ex_menu(finestra);
+    ex_menu_voce(mb, "File", "Salva\tCtrl+S", ID_SALVA);
+    ex_menu_voce(mb, "File", "-", 0);              un solco
+
+! **LA SCELTA ARRIVA COME EXM_COMANDO, con lo stesso id di un pulsante.** Non e'
+pigrizia: premere «Salva» fra i pulsanti e sceglierlo dal menu File sono **la
+stessa decisione presa in due modi**, e chi scrive l'applicazione non deve
+imparare due meccanismi. E' il motivo per cui aggiungere i menu all'editor non
+ha voluto **una riga di codice nuovo** nella sua procedura.
+
+! **LA TENDINA SI DISEGNA NELLA ZONA DI PIXEL DELLA FINESTRA.** Una tendina che
+possa uscire dal bordo dovrebbe essere una FINESTRA a se': una zona di memoria
+condivisa in piu' per ogni menu aperto, un giro di richieste al server ogni
+volta che si preme «File», e la domanda «chi la chiude se il programma muore
+mentre e' aperta?». Dentro la finestra nessuna di queste domande esiste. Il
+prezzo e' dichiarato: una tendina piu' alta della finestra viene tagliata, e
+una troppo a destra si sposta a sinistra invece di uscire.
+
+! **E SI DISEGNA PER ULTIMA.** I figli si disegnano in ordine di creazione e il
+menu si crea per primo: disegnando la tendina insieme alla barra finirebbe
+sotto tutti i controlli che deve coprire.
+
+! **IL MENU NON CATTURA LE SCORCIATOIE.** Le SCRIVE — un tab nel testo della
+voce allinea a destra `Ctrl+S` — e le esegue l'applicazione. Un menu che se le
+prendesse da solo se le prenderebbe anche mentre si scrive in una casella di
+testo, e da dentro il toolkit non c'e' modo di sapere se in quel momento ha
+senso.
+
+Coi tasti: **F10 apre**, le frecce girano fra titoli e voci saltando i solchi,
+Invio sceglie, Esc chiude — e **qualunque altro tasto chiude**, invece di
+sparire nel nulla. A menu chiuso solo F10 e' del menu: un menu che si prendesse
+le frecce sempre renderebbe muta la lista sotto.
+
+## Gli appunti sono di tutta la scrivania, e non potevano essere una variabile
+
+! **I DATI DI UNA LIBRERIA CONDIVISA SONO UNA COPIA PER PROCESSO.** Un buffer
+dentro exwin.so avrebbe dato appunti per applicazione: copiare in un editor e
+incollare nell'altro non avrebbe fatto niente — ed e' la prima cosa che
+qualcuno prova, ora che l'editor si apre due volte. Stanno in una **zona di
+memoria condivisa** (`exappunti`, 4 KB).
+
+! **NON SERVE SAPERE CHI L'HA CREATA**: il kernel consegna pagine azzerate, e
+una zona azzerata ha lunghezza zero, cioe' appunti vuoti. Chiedersi «l'ho
+creata io o mi ci sono attaccato?» sarebbe una domanda in piu' con due risposte
+da tenere d'accordo.
+
+! **E VIVONO FINCHE' C'E' UN'APPLICAZIONE GRAFICA APERTA**: chiuse tutte, la
+zona muore con l'ultima. E' la semantica della memoria condivisa di EX-OS, non
+una scelta di qui.
+
+**Provato**: due editor separati, «appunti condivisi» battuto e copiato in uno,
+incollato nell'altro.
+
+## Il file manager: l'albero non e' un controllo nuovo
+
+! **E' UNA LISTA CON DENTRO L'INDENTAZIONE.** Un «controllo albero» vorrebbe
+dire nodi, figli, un modello da tenere aggiornato e un disegno tutto suo dentro
+`exwin.so` — cioe' un pezzo di toolkit che UNA sola applicazione usa. Qui
+l'albero e' un vettore di nodi **in ordine di visualizzazione**: espandere vuol
+dire infilare i figli subito dopo il padre, chiudere vuol dire toglierli. La
+lista non sa che sia un albero.
+
+! **IL PERCORSO DI UN NODO SI RICOSTRUISCE ALL'INDIETRO**, senza puntatori al
+padre: con l'inserimento e la rimozione in mezzo al vettore un indice del padre
+sarebbe da correggere in tutti i nodi ogni volta. Il livello, invece, non cambia
+mai — il primo nodo di livello n-1 che si incontra tornando indietro **e' per
+forza** il padre.
+
+! **IL CLIC MOSTRA, L'INVIO ESPANDE**, e per distinguerli e' servito un dato in
+piu' nel protocollo del toolkit: per un EXM_COMANDO che viene da una lista,
+`lp` adesso dice **come** e' arrivato — `EX_DA_INVIO(lp)`. Senza, l'albero si
+sarebbe aperto sotto le dita di chi voleva solo dare un'occhiata.
+
+Copia file, copia directory ricorsiva e ricerca. La destinazione si chiede con
+un dialogo nuovo, `ex_dlg_riga()` — **non e' ex_dlg_salva con un'altra
+etichetta**: quello mostra le directory perche' chi salva sceglie DOVE, qui si
+chiede una parola e un elenco di file accanto distrarrebbe.
+
+## Aprire due volte lo stesso programma
+
+! **LA POSIZIONE LA SCEGLIE IL SERVER, NON L'APPLICAZIONE** (`EX_AUTO` come x e
+y). Un programma che nasce sempre nello stesso punto va bene finche' e' uno
+solo: la seconda copia si sovrappone alla prima **esattamente**, e chi guarda
+crede che non si sia aperta — un difetto che non da' nessun messaggio d'errore.
+E la scelta e' del server perche' e' l'unico a sapere quante finestre ci sono
+gia': le mette a cascata, con lo scostamento **uguale all'altezza della barra
+del titolo**, che e' esattamente quanto serve perche' della finestra sotto resti
+visibile il nome.
+
+I processi separati funzionavano gia'; era la sovrapposizione a farli sembrare
+uno solo. **Provato**: due terminali, due editor e un file manager insieme.
+
+## Quattro difetti minori, tutti trovati provando
+
+  1. **la barra del titolo attiva non lo era mai.** «Attiva» voleva dire
+     «ultima della pila», e la barra delle applicazioni ha `WIN_ST_SOPRA`,
+     quindi sta sempre in cima: nessuna finestra normale risultava mai attiva.
+     Adesso vuol dire «ha il fuoco», che e' quello che si voleva dire;
+  2. **ex_dlg_avviso non si chiudeva con Invio.** Aveva solo il pulsante OK,
+     cioe' si chiudeva solo col mouse — e su un avviso, dove non c'e' niente da
+     decidere, il tasto che si batte senza guardare e' proprio l'Invio. Le
+     altre due finestre di ExDlg lo facevano gia': era questa l'eccezione, e
+     nessuno l'aveva scelta;
+  3. **ex_dlg_avviso troncava il testo.** Un'etichetta sola: due frasi
+     diventavano una frase e mezza, senza nessun segno che ci fosse dell'altro.
+     Adesso spezza sulle parole e la finestra si misura sul testo;
+  4. **un nome di file lungo traboccava dallo stack del file manager.** Un
+     `sprintf` su un buffer di 80 byte con un nome che ne puo' avere 255. Non
+     era mai successo perche' i nomi di prova sono corti — che e' il modo in cui
+     questi difetti restano nascosti per mesi.
+
+E una scelta di colore che era anche una scelta di misurabilita': il blu della
+scrivania e quello della barra del titolo erano **lo stesso numero**. A occhio
+confondeva una riga scelta con una barra; e nelle prove che contano i pixel
+rendeva impossibile dire quale blu fosse quale.
+
+## Cosa manca, dichiarato
+
+    niente annullamento         un taglio sbagliato non si rimette a posto:
+                                e' quello che manca di piu' ora che c'e' un
+                                «Taglia»
+    la selezione e' a tasti     Shift piu' le frecce; trascinare il puntatore
+                                sul testo no, perche' il server manda giu' e
+                                su ma non il movimento col bottone premuto
+    gli appunti sono 4 KB       e solo testo. Un servizio degli appunti con
+                                piu' formati e senza tetto e' un'altra cosa
+    niente sposta/cancella      copiare non distrugge niente; le altre si', e
+                                ci vogliono con la domanda giusta davanti
+    la copia non dice a che     il ciclo dei messaggi e' fermo dentro
+    punto e'                    copia_albero(): la finestra non risponde
+    ricerca: 8 livelli, 512     due tetti dichiarati, non scoperti dopo
+    l'albero tiene 128 nodi     e' un vettore, e un vettore ha una fine
+
+---
+
+# Le finestre si ridimensionano, e la misura arriva fino al pty (18 agosto 2026)
+
+    presa nell'angolo -> contorno mentre si tira -> zona condivisa nuova ->
+    WIN_MSG_MISURATA -> il client rimappa -> EXM_MISURA -> ridisegno ->
+    WIN_MSG_AGGIORNA, che e' la ricevuta
+
+Misurato nei pixel del framebuffer, non nel log — sono due processi diversi e
+credere a uno solo non basta:
+
+| | |
+|---|---|
+| il terminale, tirato per la presa | cornice 646x424 -> **525x336**, e la griglia da **256198** pixel neri a **156023**: 80x25 celle diventano 64x19 |
+| mentre si tira si muove solo il contorno | la cornice resta 646x424 e il contorno e' gia' 525x336 — cioe' **esattamente** dove finira' la finestra |
+| una finestra spostata non torna indietro | trascinata in (200,180), allargata coi tasti 360->440: l'angolo resta **(199,161)** |
+| SSH | `sshd: il terminale adesso e' 120x40`, con OpenSSH 10.0p2 dall'altra parte |
+| telnet | `telnetd: il terminale adesso e' 120x40`, col telnet dell'ospite |
+| niente regressioni | libctest **316/316**, filemgr ed edit si aprono e disegnano |
+
+## Una zona condivisa non si allarga, e non serve che si allarghi
+
+! **ERA IN CODA SOTTO «COSE CHE VOGLIONO UN PEZZO DI KERNEL NUOVO», E NON NE HA
+VOLUTO NESSUNO.** Le pagine di una zona condivisa stanno in due spazi di
+indirizzi a due indirizzi diversi: allungarle vorrebbe dire trovare spazio
+libero DOPO di esse in tutt'e due, e non si puo' garantire. Ma la domanda
+giusta non era «come si allarga»: era «chi resta senza pixel, e quando». E la
+risposta e' nessuno, se le due zone convivono per il tempo di una consegna.
+
+    1. il server crea la zona NUOVA e ci copia dentro quella vecchia
+    2. il server chiude la sua vecchia e compone gia' dalla nuova
+       (la vecchia non muore: il client la tiene ancora aperta)
+    3. il server manda WIN_MSG_MISURATA
+    4. il client apre la nuova, chiude la vecchia — che adesso muore —,
+       si ridisegna e manda WIN_MSG_AGGIORNA con la misura che ha ADESSO
+    5. quella misura e' la ricevuta
+
+! **IL NOME DELLA ZONA PORTA DENTRO IL GIRO**, ed e' cio' che rende il passo 4
+possibile: `win7.0`, poi `win7.1`. Due zone con lo stesso nome sono la STESSA
+zona — ricrearne una mentre il client tiene aperta la vecchia renderebbe la
+vecchia, con la misura di prima e **nessun errore**.
+
+! **E LA RICEVUTA NON E' UN MESSAGGIO NUOVO.** `WIN_MSG_AGGIORNA` porta gia' la
+misura che il client crede di avere: se e' quella nuova, ha per forza aperto la
+zona nuova — non c'e' altro modo di saperla. Un messaggio in piu' per dire una
+cosa che si sa gia' e' un messaggio in piu' da tenere sincronizzato per sempre.
+
+! **PERCHE' SI RIPETE.** Un evento del mouse perso e' un clic perso; un
+`WIN_MSG_MISURATA` perso e' un client che disegna **per sempre** dentro una zona
+che il server non guarda piu' — una finestra congelata che pero' risponde ai
+tasti. E la mailbox e' profonda quattro messaggi, quindi non e' un'ipotesi
+teorica. Si ripete cinque volte al secondo finche' la ricevuta non arriva, e
+dopo dieci tentativi si smette dicendolo.
+
+## Si ridimensiona solo chi l'ha chiesto (WIN_ST_RIDIM / EX_RIDIM)
+
+! **NON E' PRUDENZA, E' L'UNICA SCELTA ONESTA.** Una finestra piu' grande ha una
+zona di pixel piu' grande con dentro quella vecchia in un angolo: chi non sa
+rispondere a `EXM_MISURA` si ritrova meta' finestra col colore di partenza e i
+propri controlli fermi dov'erano. Cioe' **una finestra rotta, fatta rompere dal
+server**. Quindi la presa nell'angolo compare solo se l'applicazione l'ha
+chiesta, ed e' l'opposto di quello che farebbe un sistema che ridimensiona tutto
+e lascia a ognuno il compito di accorgersene.
+
+Oggi lo chiedono `term` e `winprova`. `filemgr`, `edit` e `pm` no, e non e' una
+dimenticanza.
+
+## La presa sta dentro l'area del client, e si paga
+
+! **IL BORDO E' SPESSO UN PIXEL, E UN PIXEL NON SI ACCHIAPPA COL MOUSE.**
+Allargare il bordo per farci stare una presa vorrebbe dire rifare l'aritmetica
+della cornice dappertutto — e sottrarre comunque quello spazio al client, solo
+su tutti e quattro i lati invece che in un angolo. Quindi la presa e' un
+quadrato di 14 pixel disegnato **sopra** i pixel del client, dopo averli
+copiati: se si disegnasse insieme alla cornice, la copia della zona la
+cancellerebbe subito.
+
+## Si ridimensiona a RILASCIO, non mentre si trascina
+
+! Ogni cambio di misura e' una zona condivisa da creare, riempire e consegnare.
+Farlo a ogni movimento del mouse vorrebbe dire decine di zone al secondo e
+altrettanti messaggi a un client che non fa in tempo a leggerli. Mentre si tira
+si disegna il contorno di dove andra' a finire — quello che facevano tutti
+quando la memoria costava, e per la stessa ragione, che qui vale ancora.
+
+## Il difetto che ho trovato rileggendo, non provando
+
+! **`ex_misura()` SU UNA FINESTRA MANDAVA ANCHE LA POSIZIONE.** Riusava
+`WIN_MSG_SPOSTA`, che il protocollo descriveva gia' come «cambia
+posizione/misura»: sembrava la strada gia' aperta. Ma **la posizione vera la sa
+solo il server** — se l'utente ha trascinato la finestra per la barra del
+titolo, quel movimento il client non lo sente — e il risultato sarebbe stato una
+finestra che, ridimensionandosi, **torna da sola dove e' nata**.
+
+La prova non l'aveva visto perche' la finestra era ferma dove era nata. Adesso
+la misura ha un messaggio suo, `WIN_MSG_MISURA`, che di x e y non sa niente — e
+la prova trascina la finestra PRIMA di allargarla.
+
+! **E' il genere di difetto che si trova rileggendo cosa SIGNIFICA un
+messaggio**, non guardandolo funzionare.
+
+## Il terminale: le colonne cambiano davvero
+
+Il controllo «terminale» rialloca la griglia e la ricopia **dal fondo**, non
+dalla cima: la riga che interessa e' sempre l'ultima scritta — il prompt, la
+risposta all'ultimo comando — e allineando le griglie in alto quella finirebbe
+fuori dal bordo inferiore appena la finestra si stringe. E' quello che fa xterm.
+
+E la misura nuova va nel **pty**, o l'avrebbe cambiata solo la finestra: un
+programma a schermo pieno la chiede con `PTY_CTL_LEGGI_MISURA`.
+
+! **`term` ARROTONDA ALLA CELLA.** Il font e' 8x16: un'area larga 645 pixel fa
+80 colonne e avanza una striscia nera di 5 pixel, che sembra un difetto di
+disegno e invece e' aritmetica.
+
+## SSH e telnet: la misura aveva dove andare, adesso
+
+Erano tutt'e due dichiarati nel codice — «NAWS, che non trattiamo: e'
+dichiarato» in telnetd, e in sshd `pty-req` era l'unica occasione. Sono lo
+stesso difetto visto da due protocolli:
+
+    sshd      SSH_CHANNEL_REQUEST «window-change» durante la sessione
+              (RFC 4254 6.7). want_reply dovrebbe essere FALSE, ma si risponde
+              lo stesso a chi la chiede: un client che aspetta una risposta che
+              non arriva si ferma
+    telnetd   IAC DO NAWS nell'apertura — LA MISURA SI CHIEDE, non si aspetta:
+              un client la manda solo se qualcuno gliel'ha domandata — e poi
+              IAC SB 31 w1 w0 h1 h0 IAC SE, con IAC IAC per un 255 vero
+
+! **ZERO VUOL DIRE «NON LO SO», NON «ZERO»**, in tutt'e due: si lascia stare
+invece di dare a un programma una geometria in cui dividere per zero.
+
+## Il puntatore SI pilota: la regola di ieri era troppo pessimista
+
+! Il 18 agosto avevo scritto che le prove col mouse non sono ripetibili perche'
+i movimenti relativi del monitor di QEMU si perdono. **Si perdono quelli
+grandi.** A dieci pixel per volta il puntatore arriva dove lo si manda, al
+pixel: la ricetta e' saturare in un angolo con qualche `mouse_move -600 -600`,
+dove il troncamento non fa danno perche' si sbatte contro il bordo, e da li'
+contare a passi di dieci. Sta in `tools/prova_ridimensiona.sh`, ed e' cio' che
+rende provabile la presa nell'angolo — cioe' proprio la parte che senza mouse
+non si tocca.
+
+## Cosa manca, dichiarato
+
+    niente SIGWINCH             un programma dentro un pty non viene svegliato
+                                quando la misura cambia: la rilegge quando gli
+                                pare. La shell lo fa al prompt
+    il testo non rifluisce      stringendo un terminale le righe gia' scritte
+                                restano tagliate dov'erano: rifluirle vorrebbe
+                                dire tenere il testo per righe logiche e non
+                                per celle, cioe' un terminale diverso
+    si tira solo l'angolo       non i lati, e non si sposta il bordo in alto a
+                                sinistra
+    la posizione non torna      il client non sa dove il server ha messo la sua
+    indietro al client          finestra dopo un trascinamento. Oggi non serve
+                                a nessuno; il giorno che servira' e' un evento
+    `ls -mc` impagina a 80      la larghezza se la ricorda a memoria, e adesso
+                                che una c'e' davvero potrebbe chiederla
 
 ---
 
@@ -366,6 +779,10 @@ divergono al primo cambiamento.
 ! **UN TERMINALE DI MISURA ZERO NON ESISTE**: un client che manda 0x0 sta
 dicendo «non lo so», e prenderlo alla lettera darebbe una shell che crede di
 avere zero righe. Si mette 80x24.
+
+! **E LA MISURA CAMBIA ANCHE DOPO**, dal 18 agosto 2026: `window-change` arriva
+durante la sessione e finisce nel pty. Prima `pty-req` era l'unica occasione, e
+chi allargava la finestra restava con una shell convinta di essere 80x24.
 
 ## Cosa manca, dichiarato
 
