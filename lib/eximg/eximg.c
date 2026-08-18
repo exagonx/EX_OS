@@ -67,6 +67,8 @@ static void restituisci(void *tieni)
  * --------------------------------------------------------------------------- */
 static const EximgDecodificatore g_decodificatori[] = {
     eximg_png,
+    eximg_jpg,
+    eximg_ico,
     0
 };
 

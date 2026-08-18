@@ -1093,16 +1093,25 @@ exdlg_so: dirs $(EXDLG_SO)
 # visto lavorare sulla macchina vera: e' un buon cambio.
 #
 # ! IL FILE SI GENERA, NON SI TIENE NEL REPOSITORY. Un PNG committato e' un
-# blob di cui nessuno sa piu' com'e' fatto; questo lo produce tools/mkpng.py da
+# blob di cui nessuno sa piu' com'e' fatto; questo lo produce tools/mkimg.py da
 # una formula, che dice a chi legge sia il pattern sia quali filtri esercita —
 # e accanto scrive i pixel attesi, con cui la foto si confronta byte per byte.
-PROVA_PNG_GEN := tools/mkpng.py
-PROVA_PNG     := $(BUILD_DIR)/prove-png/rgb.png
+PROVA_IMG_GEN := tools/mkimg.py
+PROVE_IMG_DIR := $(BUILD_DIR)/prove-img
+PROVA_PNG     := $(PROVE_IMG_DIR)/rgb.png
+PROVA_ICO     := $(PROVE_IMG_DIR)/icona.ico
+PROVA_JPG     := $(PROVE_IMG_DIR)/jpg444.jpg
 
-$(PROVA_PNG): $(PROVA_PNG_GEN)
-	@mkdir -p $(dir $@)
-	@python3 $(PROVA_PNG_GEN) $(dir $@) >/dev/null
-	@echo "[OK] immagini di prova PNG in $(dir $@)"
+# ! UNA SENTINELLA PERCHE' UN COLPO SOLO PRODUCE OTTO FILE. Scrivere una regola
+# per ciascuno vorrebbe dire lanciare il generatore otto volte, e con `make -j`
+# significa otto processi che scrivono gli stessi file insieme.
+$(PROVE_IMG_DIR)/.fatte: $(PROVA_IMG_GEN)
+	@mkdir -p $(PROVE_IMG_DIR)
+	@python3 $(PROVA_IMG_GEN) $(PROVE_IMG_DIR) >/dev/null
+	@touch $@
+	@echo "[OK] immagini di prova (PNG e ICO) in $(PROVE_IMG_DIR)"
+
+$(PROVA_PNG) $(PROVA_ICO) $(PROVA_JPG): $(PROVE_IMG_DIR)/.fatte
 
 # --- /exwin/lib/eximg.so: i formati d'immagine che costano -------------------
 #
@@ -1118,6 +1127,8 @@ $(PROVA_PNG): $(PROVA_PNG_GEN)
 # un file dalla riga di comando.
 EXIMG_SRC     := lib/eximg/eximg.c
 EXIMG_PNG     := lib/eximg/png.c
+EXIMG_ICO     := lib/eximg/ico.c
+EXIMG_JPG     := lib/eximg/jpg.c
 EXIMG_INFLATE := lib/eximg/inflate.c
 EXIMG_ESPORTA := lib/eximg/eximg_esporta.c
 EXIMG_HDR     := lib/eximg/eximg.h lib/eximg/eximg_interno.h lib/eximg/inflate.h
@@ -1125,18 +1136,23 @@ EXIMG_LD      := lib/eximg/eximg.ld
 
 EXIMG_SO := $(BUILD_EXWIN_LIB)/eximg.so
 
-$(EXIMG_SO): $(EXIMG_SRC) $(EXIMG_PNG) $(EXIMG_INFLATE) $(EXIMG_ESPORTA) \
+$(EXIMG_SO): $(EXIMG_SRC) $(EXIMG_PNG) $(EXIMG_ICO) $(EXIMG_JPG) \
+             $(EXIMG_INFLATE) $(EXIMG_ESPORTA) \
              $(EXIMG_HDR) $(EXIMG_LD) $(EXLIB_SRC) $(EXLIB_HDR) \
              $(LIBC_PONTI_OBJ) $(LIBC_SO) $(SEGNO_FLAG)
 	@echo "=== Compilazione libreria condivisa /exwin/lib/eximg.so ==="
 	@mkdir -p $(BUILD_EXWIN_LIB) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -c $(EXIMG_SRC) -o $(BUILD_OBJ)/soimg_main.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -c $(EXIMG_PNG) -o $(BUILD_OBJ)/soimg_png.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -c $(EXIMG_ICO) -o $(BUILD_OBJ)/soimg_ico.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -c $(EXIMG_JPG) -o $(BUILD_OBJ)/soimg_jpg.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -c $(EXIMG_INFLATE) -o $(BUILD_OBJ)/soimg_inflate.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -c $(EXIMG_ESPORTA) -o $(BUILD_OBJ)/soimg_esporta.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(EXIMG_LD) \
 	    $(BUILD_OBJ)/soimg_esporta.o $(BUILD_OBJ)/soimg_main.o \
-	    $(BUILD_OBJ)/soimg_png.o $(BUILD_OBJ)/soimg_inflate.o \
+	    $(BUILD_OBJ)/soimg_png.o $(BUILD_OBJ)/soimg_ico.o \
+	    $(BUILD_OBJ)/soimg_jpg.o \
+	    $(BUILD_OBJ)/soimg_inflate.o \
 	    $(LIBC_PONTI_OBJ) -o $@
 	@ent=$$(LC_ALL=C readelf -h $@ | awk '/Entry point/ {print $$4}'); \
 	 if [ "$$ent" != "0x4c00000" ]; then \
@@ -3792,7 +3808,7 @@ verifica-dipendenze-cd:
 	echo "[OK] ogni driver del CD e' fra le dipendenze dell'ISO"
 
 $(ISOX_IMG): Makefile $(FLOPPY_IMG) boot/autoexec.sh $(DRIVER_SOLO_CD_OUT) \
-             $(EXWIN_OUT) $(EXWIN_APPLIST) $(PROVA_PNG) \
+             $(EXWIN_OUT) $(EXWIN_APPLIST) $(PROVA_PNG) $(PROVA_ICO) $(PROVA_JPG) \
              $(BINARI_SOLO_CD) $(ISO_MKISO) README.md README.en.md \
              gpl-2.0.txt boot/kernel.cfg boot/kernel.txt boot/help.txt \
              | verifica-programmi verifica-dipendenze-cd
@@ -3819,8 +3835,10 @@ $(ISOX_IMG): Makefile $(FLOPPY_IMG) boot/autoexec.sh $(DRIVER_SOLO_CD_OUT) \
 	@# non partono affatto. E' un file di /exwin/lib come l'elenco, ma non
 	@# viene dai sorgenti: viene da build/, quindi ha una riga sua.
 	@cp $(BUILD_EXWIN_LIB)/*.so $(ISOX_ROOT)/exwin/lib/ 2>/dev/null || true
-	@# L'immagine di prova del lettore PNG: vedi PROVA_PNG.
+	@# Le immagini di prova dei lettori: vedi PROVE_IMG_DIR.
 	@cp $(PROVA_PNG) $(ISOX_ROOT)/exwin/prova.png
+	@cp $(PROVA_ICO) $(ISOX_ROOT)/exwin/prova.ico
+	@cp $(PROVA_JPG) $(ISOX_ROOT)/exwin/prova.jpg
 	@# La RISERVA dei driver, da cui si installa.
 	@#
 	@# ! È UNA COPIA DI dev/, NON UN'ALTERNATIVA, e le due hanno compiti

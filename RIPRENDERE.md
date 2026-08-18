@@ -12,17 +12,11 @@ seriale e USB — tastiera compresa, hub compresi.
 
 ## COSA E' COMMITTATO
 
-    ab70029  "MMX nel compositore: otto byte per volta invece di quattro"
+    68fd264  "TSC e PSE accesi, e il PNG entra da una libreria che nessuno paga"
 
-Da li' in poi nell'albero ci sono **due lavori**:
-
- - il **TSC** calibrato sul canale 2 del PIT e **PSE** acceso sulla fascia
-   kernel — vedi «Il TSC misura e PSE si accende»;
- - **`eximg.so`**, che porta dentro il PNG senza farlo pagare a chi non lo usa
-   — vedi «eximg.so: il PNG entra, e nessuno lo paga».
-
-`gitupdate.sh` fa `git add .` e un commit solo, quindi il messaggio li copre
-tutt'e due.
+! **`gitupdate.sh` FA `git add .` E UN COMMIT SOLO**: `messaggio-commit.txt`
+deve coprire tutto quello che si e' fatto dall'ultimo commit, non l'ultima
+cosa.
 
 `messaggio-commit.txt` e' pronto: il commit lo fa `./gitupdate.sh`.
 
@@ -30,14 +24,8 @@ tutt'e due.
 
 ### Cose che mancano e si vedono
 
- 1. **JPG e ICO**, che sono cio' che resta dei lettori di immagini: il PNG e'
-    fatto e la strada e' aperta — vedi «eximg.so: il PNG entra, e nessuno lo
-    paga». Ognuno e' un file in `lib/eximg/` piu' una riga nella tabella di
-    `eximg.c`: non si tocca nessun header, nessuna applicazione, e il server
-    non se ne accorge nemmeno.
-    **JPG e' il piu' grosso dei due** (~1500 righe: DCT inversa, tabelle di
-    Huffman, sottocampionamento del colore); ICO e' quasi un BMP con
-    un'intestazione davanti.
+ 1. *(vuoto: i lettori di immagini sono finiti — BMP, PNG, JPEG e ICO. Vedi
+    «JPEG e ICO: i lettori di immagini sono finiti».)*
 
 ### Cose che il toolkit ha gia' chiesto tre volte
 
@@ -266,6 +254,151 @@ copiare, non da reinventare.
 ! **E OGNI NOME NUOVO VA IN `exwin_esporta.c` E NELLO STUB.** Aggiungere una
 funzione alla libreria e dimenticarsi lo stub da' un simbolo che non si
 risolve — e il messaggio lo dice, col nome, ma solo a chi lo esegue.
+
+# JPEG e ICO: i lettori di immagini sono finiti (18 agosto 2026)
+
+    a terra, contro i pixel di partenza:
+
+        jpg444.jpg    32x24  4:4:4       scarto max 3, medio 0,58
+        jpg420.jpg    32x24  4:2:0       scarto max 7, medio 1,75
+        jpggrigio.jpg 24x16  un piano    scarto max 1, medio 0,04
+        jpgrst.jpg    32x24  ripartenze  scarto max 3, medio 0,58
+        jpgbordo.jpg  21x13  4:2:0       scarto max 6, medio 1,74
+
+        icona.ico     48x48  3 voci      0 pixel diversi
+        icona4.ico    24x24  4 bit       0 pixel diversi
+        iconapng.ico  64x48  PNG dentro  0 pixel diversi
+
+    in volo, dentro EX-OS, exwin -s /exwin/prova.jpg:
+        scarto max 3, medio 0,58  — GLI STESSI NUMERI
+
+    7.500 file guasti sotto AddressSanitizer + UBSan:  0 guasti
+
+! **GLI STESSI NUMERI A TERRA E IN VOLO NON SONO UNA COINCIDENZA, SONO LA
+PROVA CHE NON C'E' NIENTE DI INDEFINITO.** Lo stesso decodificatore gira su
+x86-64 con GCC e su i386 dentro EX-OS: se ci fosse un trabocco con segno, uno
+spostamento oltre la larghezza o una lettura non allineata, le due macchine non
+darebbero lo stesso scarto fino al centesimo.
+
+## JPEG: il formato che non somiglia agli altri
+
+PNG e BMP hanno i pixel dentro. Un JPEG ha i **coefficienti** di una
+trasformata, quantizzati e poi compressi con Huffman, e per arrivare a un pixel
+bisogna rifare la strada al contrario tutta intera:
+
+    bit -> Huffman -> zigzag -> dequantizza -> IDCT -> YCbCr->RGB
+
+I punti dove si sbaglia, e come si vede quando succede:
+
+! **UN `0xFF` NEI DATI E' SEGUITO DA UNO `0x00` CHE NON ESISTE.** Byte stuffing:
+`0xFF` apre un marcatore, quindi un `0xFF` che fa parte dei dati si scrive
+`FF 00` e il secondo byte va buttato. Chi non lo fa perde l'allineamento dei
+bit al primo `0xFF` — cioe' su quasi ogni foto, e a meta' immagine.
+
+! **I NUMERI NON SONO IN COMPLEMENTO A DUE.** E' il codice EXTEND: con `s` bit,
+i valori col bit alto a zero sono NEGATIVI. Senza quel passaggio meta' delle
+differenze di luminosita' ha il segno sbagliato e l'immagine viene a bande.
+
+! **I PIANI SI ALLOCANO PER MCU INTERE, NON PER LA MISURA DELL'IMMAGINE.** Una
+21x13 in 4:2:0 ha MCU da 16x16: l'ultima colonna e l'ultima riga di blocchi
+escono dal bordo, e sono blocchi che ESISTONO nel file e vanno decodificati.
+Allocare la misura vera vuol dire scrivere fuori proprio sull'ultimo blocco —
+per questo fra le prove c'e' una 21x13.
+
+! **I MARCATORI DI RIPARTENZA AZZERANO IL CONTINUO E BUTTANO I BIT AVANZATI.**
+Ignorarli su un file che li usa da' la foto giusta fino al primo e storta dopo.
+`jpgrst.jpg` rende esattamente gli stessi numeri del file senza: e' cosi' che
+si sa che sono gestiti e non solo saltati.
+
+## L'IDCT, e il trabocco che la scala nascondeva
+
+E' la versione **separabile e diretta**, non la piu' veloce, ed e' una scelta:
+le IDCT veloci (AAN, Loeffler) fanno lo stesso lavoro con un quinto delle
+moltiplicazioni ma non somigliano piu' alla formula — se sbagliano, nessuna
+lettura del codice lo rivela. Sta in una funzione sua: il giorno che un Pentium
+133 vero dicesse che e' troppo lenta, si sostituisce senza toccare altro.
+
+! **LA TABELLA DEI COSENI E' A 4096 E NON A 8192, E IL MOTIVO E' LA SECONDA
+PASSATA.** Le due passate moltiplicano per la tabella una volta ciascuna, quindi
+la scala si applica **due volte**: con 8192 la somma delle colonne esce dai 32
+bit su coefficienti che un file guasto puo' benissimo contenere. Un trabocco con
+segno non e' un numero sbagliato, e' comportamento indefinito. Con 4096 e i
+coefficienti limitati, il margine e' 16 volte sulle righe e 2 sulle colonne —
+**calcolato, non sperato**.
+
+! **E I DUE FATTORI DELLA DEQUANTIZZAZIONE VENGONO TUTT'E DUE DAL FILE**: il
+coefficiente dalla scansione, il passo dalla tabella. 32767 per 65535 sono piu'
+di due miliardi, quindi quel prodotto si fa a 64 bit e si limita subito. E' il
+solo posto del file dove serve una moltiplicazione larga.
+
+! **IL CONTINUO SI ACCUMULA DA UN BLOCCO ALL'ALTRO**, ed e' una somma di
+differenze che nessuno controlla: su un file guasto cresce senza fermarsi.
+Limitarlo costa un confronto e gli toglie l'unico modo che ha di diventare
+enorme.
+
+## Cosa il JPEG non legge, dichiarato
+
+    progressivo (SOF2)    no — non e' una variante, e' una SECONDA decodifica:
+                          i coefficienti stanno sparsi su piu' passate da
+                          ricomporre prima di trasformare alcunche'. Vale piu' o
+                          meno quanto tutto il resto del file
+    aritmetico            no — era brevettato, non si incontra
+    12 bit per campione   no
+    CMYK / Adobe          no — vuole anche la trasformazione dei colori
+    croma interpolato     no: si ripete. Sono i bordi a scaletta che si vedono
+                          negli ingrandimenti, e quando servira' si tocca una
+                          funzione sola
+
+Tutti si rifiutano **per nome**, guardando il marcatore: senza, un progressivo
+arriverebbe alla scansione e i suoi coefficienti parziali verrebbero letti come
+completi — rumore invece di un messaggio che dice cosa fare.
+
+## ICO: un contenitore, non un formato
+
+! **UN `.ico` NON E' UN'IMMAGINE, E' UN ELENCO DI IMMAGINI.** La stessa icona a
+16x16, 32x32 e 48x48, ognuna magari con una profondita' diversa. Prendere la
+prima vorrebbe dire lasciare la scelta all'ordine in cui l'ha scritta il
+programma che l'ha prodotta — cioe' a nessuno. **Si prende la piu' grande, e a
+pari misura quella con piu' colori**: ingrandire una 16x16 si vede,
+rimpicciolire una 48x48 no. Il file di prova ha la voce buona **in mezzo** alle
+altre, che e' l'unico modo di provare che la scelta avviene davvero.
+
+! **E DENTRO NON C'E' UN BMP, C'E' MEZZO BMP**: manca l'intestazione di file (i
+14 byte con `BM`). Passare quei byte al lettore BMP darebbe «non e' mio».
+
+! **L'ALTEZZA DICHIARATA E' IL DOPPIO DI QUELLA VERA.** Il DIB descrive due
+bitmap impilate: i colori, e sotto la maschera di trasparenza a un bit. Chi la
+prende per buona ottiene un'icona alta il doppio con la meta' inferiore piena
+di spazzatura in bianco e nero — e a colpo d'occhio sembra un difetto dei
+filtri, non della misura.
+
+! **E DAL 2007 DENTRO PUO' ESSERCI UN PNG**, che per le icone grandi e' la
+regola: quei byte si passano al lettore che abbiamo gia'. Un formato dentro
+l'altro non e' un caso strano da tollerare.
+
+! **I CONFINI SI CONTROLLANO CON UNA SOTTRAZIONE, NON CON UNA SOMMA.**
+`off + len > n` con due numeri presi dal file puo' traboccare e diventare
+**falso quando dovrebbe essere vero** — cioe' lasciar passare proprio il caso
+che si voleva fermare. Si scrive `len > n - off`.
+
+## Il generatore, e perche' l'encoder JPEG e' scritto in casa
+
+`tools/mkimg.py` (era `mkpng.py`) adesso produce anche gli ICO e i JPEG, e per
+i secondi c'e' dentro un **encoder baseline completo**: DCT diretta dalla
+definizione, tabelle di Huffman standard, byte stuffing, marcatori di
+ripartenza.
+
+! **UN FILE PRODOTTO DA UNA LIBRERIA CHE NON SI LEGGE PROVA CHE I DUE PROGRAMMI
+SI CAPISCONO, NON CHE IL NOSTRO E' GIUSTO.** L'encoder qui scrive esattamente
+quello che dice la specifica e si vede leggendolo; la costruzione delle tabelle
+di Huffman e' la stessa che il lettore fa al contrario con mincode/maxcode, e se
+una delle due sbaglia non si capiscono.
+
+! **E IL CONFRONTO NON PUO' ESSERE «IDENTICO», PERCHE' IL JPEG PERDE.** La
+tabella di quantizzazione si mette **tutta a uno**, cosi' l'unico errore che
+resta e' quello di arrotondamento: quello che si pretende e' che l'immagine
+torni vicina all'originale, e quanto vicina lo dicono i numeri in cima — 0,58
+su 4:4:4, dove il croma non viene buttato via.
 
 # eximg.so: il PNG entra, e nessuno lo paga (17 agosto 2026)
 
