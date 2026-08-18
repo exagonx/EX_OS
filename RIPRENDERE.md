@@ -12,7 +12,7 @@ seriale e USB — tastiera compresa, hub compresi.
 
 ## COSA E' COMMITTATO
 
-    6c3428e  "Una sessione remota vera: telnetd"
+    96cde6f  "La matematica di SSH, provata contro gli RFC"
 
 ! **`gitupdate.sh` FA `git add .` E UN COMMIT SOLO**: `messaggio-commit.txt`
 deve coprire tutto quello che si e' fatto dall'ultimo commit, non l'ultima
@@ -262,6 +262,74 @@ copiare, non da reinventare.
 ! **E OGNI NOME NUOVO VA IN `exwin_esporta.c` E NELLO STUB.** Aggiungere una
 funzione alla libreria e dimenticarsi lo stub da' un simbolo che non si
 risolve — e il messaggio lo dice, col nome, ma solo a chi lo esegue.
+
+# Tre difetti trovati usando il sistema (18 agosto 2026)
+
+Segnalati dall'utente dopo aver provato `exwin` a mano — non da una prova
+automatica, e nessuno dei tre si vedeva dai messaggi.
+
+    prima:  /exwin/bin/edit &
+            edit: il server a finestre non risponde.
+    dopo:   edit: file nuovo, senza nome
+
+## 1. La terza applicazione non partiva, e il messaggio accusava la parte sana
+
+! **`SHM_PER_PROC` VALEVA QUATTRO, E IL SERVER APRE UNA ZONA PER FINESTRA.** Le
+sue finestre sono anche la scrivania e la barra delle applicazioni: due prima
+ancora che l'utente apra qualcosa. Alla terza applicazione `shm_apri()` rendeva
+`-EMFILE`, il server non rispondeva alla richiesta di creazione, e il programma
+diceva **«il server a finestre non risponde»** — un messaggio che accusa la
+parte sana. Chi lo leggeva pensava a un blocco della scrivania.
+
+! **E IL COMMENTO ACCANTO ALLA COSTANTE DICEVA LA COSA SBAGLIATA**: «un client
+grafico ne usa una o due, e per il server il tetto vero e' SHM_MAX_ZONE». La
+prima meta' e' giusta; la seconda no — il tetto per processo lo tocca proprio
+lui. Un limite messo pensando a un uso e poi usato in un altro.
+
+Adesso `SHM_PER_PROC` vale 20 (le finestre del server sono 16, piu' margine) e
+`SHM_MAX_ZONE` 24. Costa 240 byte per PCB, 15 KB su 64 processi; le pagine vere
+si allocano solo quando la zona esiste davvero.
+
+## 2. Il clic sceglieva la riga sbagliata, e di sempre lo stesso scarto
+
+! **`origine()` RENDE LA POSIZIONE DEL PADRE, E CHI LA USA AGGIUNGE LA
+PROPRIA.** Il disegno e la ricerca del controllo sotto il puntatore scrivono
+`ox + o->x`; il clic sulla lista e quello sull'area di testo **non lo
+facevano**. Il risultato: il clic veniva diviso per l'altezza della riga come se
+la lista cominciasse in cima alla finestra, e si sceglieva una riga piu' in
+basso di quante ne stanno nello spazio sopra la lista — nel file manager tre o
+quattro, sempre le stesse.
+
+! **UNO SCARTO COSTANTE E' LA FIRMA DI UN'ORIGINE SBAGLIATA**, e vale la pena
+saperlo riconoscere: se fosse stato un problema di eventi o di scala, lo scarto
+sarebbe cambiato col punto in cui si clicca.
+
+E lo stesso difetto stava nell'area di testo dell'editor: cliccare su una riga
+ne portava il cursore su un'altra.
+
+## 3. Un pulsante si prendeva la tastiera e non la ridava
+
+! **PREMUTO «SU» COL MOUSE, LE FRECCE NON MUOVEVANO PIU' LA SELEZIONE.** Il clic
+dava il fuoco al controllo cliccato — tutti, pulsanti compresi — e un pulsante i
+tasti non li usa: non consuma nemmeno l'Invio. Da li' il fuoco non tornava
+indietro da solo, e la lista restava sorda finche' non ci si cliccava sopra.
+
+! **IL FUOCO VA A CHI SE NE FA QUALCOSA**: una casella, una lista, un'area, un
+terminale. Un pulsante lo si raggiunge con Tab, che e' il modo di chiederlo
+apposta invece di ottenerlo per caso premendolo.
+
+## Cosa e' provato, e cosa no
+
+    la terza applicazione parte      provato: edit apre la sua finestra
+    le frecce dopo un clic           provato: la selezione si muove ancora
+    l'allineamento del clic          NON provato a macchina
+
+! **IL PUNTATORE NON SI PILOTA DALL'ESTERNO IN MODO AFFIDABILE**, e va detto
+invece di far finta: i movimenti relativi grandi del monitor di QEMU si perdono
+per strada — il mouse PS/2 manda pacchetti con delta piccoli — e una prova che
+riesce a volte non e' una prova. La correzione dell'allineamento e' verificata
+per lettura: `origine()` ha tre chiamanti, due aggiungevano la propria posizione
+e due no, e i due che non lo facevano sono esattamente quelli che sbagliavano.
 
 # La matematica di SSH, provata contro gli RFC (18 agosto 2026)
 

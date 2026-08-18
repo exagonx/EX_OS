@@ -1520,7 +1520,17 @@ int ex_prendi_msg(ExMsg *m)
             ExFinestra c = controllo_in(f, (int)e.x, (int)e.y);
             Oggetto *co = ogg(c);
 
-            if (co) fuoco_metti(f, c);      /* il clic da' i tasti */
+            /* ! UN PULSANTE NON SI PRENDE LA TASTIERA, e la differenza si vede
+             * usando il file manager: premuto «Su» col mouse, le frecce non
+             * muovevano piu' la selezione: il fuoco era passato al pulsante,
+             * che i tasti non li usa — non consuma nemmeno l'Invio (vedi
+             * tasto_al_fuoco) — e da li' non tornava indietro da solo.
+             *
+             * ! IL FUOCO VA A CHI SE NE FA QUALCOSA: una casella, una lista,
+             * un'area, un terminale. Un pulsante lo si raggiunge con Tab, che
+             * e' il modo in cui lo si chiede apposta invece di ottenerlo per
+             * caso premendolo. */
+            if (co && co->classe != CL_PULSANTE) fuoco_metti(f, c);
 
             if (co && co->classe == CL_PULSANTE) {
                 m->msg = EXM_COMANDO;
@@ -1540,7 +1550,19 @@ int ex_prendi_msg(ExMsg *m)
 
                 if (A) {
                     unsigned int r, c;
+
+                    /* ! origine() RENDE LA POSIZIONE DEL PADRE, NON LA PROPRIA,
+                     * e chi la usa aggiunge la sua: e' cosi' che la usano il
+                     * disegno e la ricerca del controllo sotto il puntatore.
+                     * Qui mancava, e il clic veniva diviso come se l'area
+                     * cominciasse in cima alla finestra — nell'editor
+                     * significava battere su una riga e vederne scelta un'altra
+                     * piu' su, di tante quante ne stanno nello spazio sopra
+                     * l'area. */
                     origine(co, &ox, &oy);
+                    ox += co->x;
+                    oy += co->y;
+
                     r = A->top  + (unsigned int)(((int)e.y - oy - 2) / AREA_RIGA_H);
                     c = A->left + (unsigned int)(((int)e.x - ox - 2) / AREA_CAR_W);
                     if (r >= A->n) r = A->n - 1;
@@ -1558,7 +1580,16 @@ int ex_prendi_msg(ExMsg *m)
 
                 if (L) {
                     unsigned int r;
+
+                    /* Stesso difetto dell'area, e stesso rimedio: senza la
+                     * propria posizione, un clic sul nome di una cartella ne
+                     * sceglieva una piu' in basso di quante righe stanno fra la
+                     * cima della finestra e la lista. */
                     origine(co, &ox, &oy);
+                    ox += co->x;
+                    oy += co->y;
+                    (void)ox;
+
                     r = L->primo + (unsigned int)(((int)e.y - oy - 2) / LISTA_RIGA_H);
                     if (r < L->n) { L->sel = r; lista_segui(L); }
                 }

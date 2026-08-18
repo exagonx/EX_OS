@@ -73,7 +73,13 @@
 #include "sched.h"
 
 #define SHM_NOME_LEN     16     /* come IPC_NAME_LEN: e' lo stesso genere di nome */
-#define SHM_MAX_ZONE      8     /* zone vive nel sistema */
+/* ! LE ZONE VIVE NEL SISTEMA. Otto bastavano finche' a usarle erano due
+ * programmi che si scambiavano un buffer; con la scrivania sono una per
+ * finestra, e le finestre di una sessione grafica normale — scrivania, barra,
+ * un file manager, un editor, un terminale — sono gia' cinque. Il costo di uno
+ * slot in piu' e' una struttura di poche parole: la memoria vera la occupano le
+ * pagine, che si allocano solo quando la zona esiste davvero. */
+#define SHM_MAX_ZONE     24     /* zone vive nel sistema */
 #define SHM_PAGINE_MAX  512     /* 2 MB per zona: una finestra 640x480x32 ne usa 300 */
 
 /* Flag di shm_apri */

@@ -77,11 +77,24 @@ typedef struct IpcMessage {
  * ============================================================================= */
 #define MAX_PROCESSES       64      /* Massimo numero processi simultanei */
 
-/* Quante zone di memoria condivisa puo' tenere aperte un processo. Quattro
- * perche' un client grafico ne usa una o due (il proprio buffer, e al piu'
- * una coda di eventi); il server ne apre una per client e per lui il tetto
- * vero e' SHM_MAX_ZONE, non questo. */
-#define SHM_PER_PROC        4
+/* Quante zone di memoria condivisa puo' tenere aperte un processo.
+ *
+ * ! QUATTRO ERA UN TETTO CHE IL SERVER A FINESTRE TOCCAVA CON DUE
+ * APPLICAZIONI, e per giorni e' passato per un blocco della scrivania. Il
+ * commento che stava qui diceva che «un client grafico ne usa una o due» e che
+ * per il server il tetto vero e' SHM_MAX_ZONE: la prima meta' e' giusta, la
+ * seconda era sbagliata. Il server apre una zona PER FINESTRA, e le sue
+ * finestre sono anche la scrivania e la barra delle applicazioni — due prima
+ * ancora che l'utente apra qualcosa. Alla terza applicazione shm_apri()
+ * rendeva -EMFILE, il server non rispondeva alla richiesta di creazione, e il
+ * programma diceva «il server a finestre non risponde»: un messaggio che
+ * accusava la parte sana.
+ *
+ * ! IL NUMERO GIUSTO E' QUELLO DELLE FINESTRE DEL SERVER, non uno tondo:
+ * FINESTRE_MAX vale 16 in drivers/wserver/wserver.c, piu' un margine per le
+ * zone che un client apre per conto suo. Costa 12 byte per slot nel PCB —
+ * 240 byte per processo, 15 KB su 64 processi. */
+#define SHM_PER_PROC        20
 /* 32 e non 16 (0.150): un compilatore tiene aperti insieme il sorgente,
  * l'uscita, gli header della catena di inclusione e uno o due file
  * temporanei, e 16 e' un tetto che si tocca senza fare niente di strano.
