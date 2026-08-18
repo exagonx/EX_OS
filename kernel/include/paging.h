@@ -56,6 +56,11 @@ void     paging_azzera_fisica(uint32_t phys);
 
 void     paging_init(void);
 
+/* 1 se la fascia kernel e' descritta con pagine da 4 MB (CR4.PSE acceso).
+ * Lo si puo' chiedere per dirlo in un log: non cambia come si mappa niente,
+ * perche' paging_map_page spezza da sola il blocco che le si para davanti. */
+int      paging_pse_attivo(void);
+
 /* Mappa il framebuffer VESA con identita' nella PD del kernel E lo annota,
  * cosi' ogni PD di processo creata dopo se lo ritrova. Vedi paging.c. */
 int      paging_mappa_framebuffer(uint32_t phys, uint32_t byte);

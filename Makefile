@@ -171,7 +171,7 @@ PROGRAMMI_FLOPPY := shell hello id chmod ls mem stack disk libctest fdisk mkfs t
 # =============================================================================
 PROGRAMMI_CD := netdetect nettest ping ipcfg dhcp host tcptest ftp telnet xcp winprova exwincmd
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
-PROGRAMMI_EXWIN := exwin_so exdlg_so pm filemgr edit term
+PROGRAMMI_EXWIN := exwin_so exdlg_so eximg_so pm filemgr edit term
 
 # I driver, con la stessa regola dei programmi. Quelli di base stanno gia'
 # dentro PROGRAMMI_FLOPPY (floppy_drv, kbd_drv): sul floppy servono a
@@ -1016,10 +1016,11 @@ EXLIB_HDR     := lib/include/exlib.h
 EXWIN_SO := $(BUILD_EXWIN_LIB)/exwin.so
 
 $(EXWIN_SO): $(EXWIN_SRC) $(EXWIN_ESPORTA) $(EXWIN_HDR) $(EXWIN_LD) \
-             $(EXLIB_HDR) $(WIN_PROTO) $(FONT_SRC) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(SEGNO_FLAG)
+             $(EXLIB_HDR) $(WIN_PROTO) $(FONT_SRC) $(EXIMG_HDR) \
+             $(LIBC_PONTI_OBJ) $(LIBC_SO) $(SEGNO_FLAG)
 	@echo "=== Compilazione libreria condivisa /exwin/lib/exwin.so ==="
 	@mkdir -p $(BUILD_EXWIN_LIB) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_SRC) -o $(BUILD_OBJ)/so_exwin.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I drivers/wserver -I drivers/kbd -c $(EXWIN_SRC) -o $(BUILD_OBJ)/so_exwin.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_ESPORTA) -o $(BUILD_OBJ)/so_esporta.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I kernel/include -c $(FONT_SRC) -o $(BUILD_OBJ)/so_font.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(EXWIN_LD) \
@@ -1083,6 +1084,69 @@ $(EXDLG_SO): $(EXDLG_SRC) $(EXDLG_ESPORTA) $(EXDLG_HDR) $(EXDLG_LD) \
 
 .PHONY: exdlg_so
 exdlg_so: dirs $(EXDLG_SO)
+
+# --- L'immagine con cui si prova il lettore PNG ------------------------------
+#
+# ! SENZA UN'IMMAGINE SUL SUPPORTO IL LETTORE NON E' PROVABILE DA DENTRO, e
+# `winprova -s` e' un'opzione che non e' mai stata eseguita per mancanza di un
+# file da darle. 1,6 KB sul CD contro un decodificatore che nessuno ha mai
+# visto lavorare sulla macchina vera: e' un buon cambio.
+#
+# ! IL FILE SI GENERA, NON SI TIENE NEL REPOSITORY. Un PNG committato e' un
+# blob di cui nessuno sa piu' com'e' fatto; questo lo produce tools/mkpng.py da
+# una formula, che dice a chi legge sia il pattern sia quali filtri esercita —
+# e accanto scrive i pixel attesi, con cui la foto si confronta byte per byte.
+PROVA_PNG_GEN := tools/mkpng.py
+PROVA_PNG     := $(BUILD_DIR)/prove-png/rgb.png
+
+$(PROVA_PNG): $(PROVA_PNG_GEN)
+	@mkdir -p $(dir $@)
+	@python3 $(PROVA_PNG_GEN) $(dir $@) >/dev/null
+	@echo "[OK] immagini di prova PNG in $(dir $@)"
+
+# --- /exwin/lib/eximg.so: i formati d'immagine che costano -------------------
+#
+# ! NON SI COLLEGA A NESSUNO, SI APRE QUANDO SERVE. exdlg ha uno stub perche'
+# chi apre file lo sa gia' quando lo si compila; qui no: e' ex_immagine() del
+# toolkit che se ne accorge davanti ai byte di un file, e apre la libreria con
+# exlib_apri_fra(). Per questo non c'e' un eximg_stub.c — non ci sarebbe
+# nessuno a cui darlo.
+#
+# ! E NON DIPENDE DA exwin.so. Un decodificatore prende byte e rende pixel: non
+# sa cosa sia una finestra. Se dipendesse, non si potrebbe usarlo per leggere
+# un'immagine senza avere lo schermo — per esempio in un programma che converte
+# un file dalla riga di comando.
+EXIMG_SRC     := lib/eximg/eximg.c
+EXIMG_PNG     := lib/eximg/png.c
+EXIMG_INFLATE := lib/eximg/inflate.c
+EXIMG_ESPORTA := lib/eximg/eximg_esporta.c
+EXIMG_HDR     := lib/eximg/eximg.h lib/eximg/eximg_interno.h lib/eximg/inflate.h
+EXIMG_LD      := lib/eximg/eximg.ld
+
+EXIMG_SO := $(BUILD_EXWIN_LIB)/eximg.so
+
+$(EXIMG_SO): $(EXIMG_SRC) $(EXIMG_PNG) $(EXIMG_INFLATE) $(EXIMG_ESPORTA) \
+             $(EXIMG_HDR) $(EXIMG_LD) $(EXLIB_SRC) $(EXLIB_HDR) \
+             $(LIBC_PONTI_OBJ) $(LIBC_SO) $(SEGNO_FLAG)
+	@echo "=== Compilazione libreria condivisa /exwin/lib/eximg.so ==="
+	@mkdir -p $(BUILD_EXWIN_LIB) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -c $(EXIMG_SRC) -o $(BUILD_OBJ)/soimg_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -c $(EXIMG_PNG) -o $(BUILD_OBJ)/soimg_png.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -c $(EXIMG_INFLATE) -o $(BUILD_OBJ)/soimg_inflate.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -c $(EXIMG_ESPORTA) -o $(BUILD_OBJ)/soimg_esporta.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(EXIMG_LD) \
+	    $(BUILD_OBJ)/soimg_esporta.o $(BUILD_OBJ)/soimg_main.o \
+	    $(BUILD_OBJ)/soimg_png.o $(BUILD_OBJ)/soimg_inflate.o \
+	    $(LIBC_PONTI_OBJ) -o $@
+	@ent=$$(LC_ALL=C readelf -h $@ | awk '/Entry point/ {print $$4}'); \
+	 if [ "$$ent" != "0x4c00000" ]; then \
+	     echo "[ERRORE] la tabella di eximg.so e' a $$ent invece che a 0x4c00000"; \
+	     exit 1; \
+	 fi; \
+	 echo "[OK] eximg.so compilata: $@ (tabella a $$ent)"
+
+.PHONY: eximg_so
+eximg_so: dirs $(EXIMG_SO)
 
 # =============================================================================
 # LA LIBC CONDIVISA — /lib/libc.so
@@ -1312,7 +1376,8 @@ term: dirs $(TERM_BIN)
 # ! LA LIBRERIA CONDIVISA FA PARTE DI CIO' CHE SI INSTALLA, e va messa qui
 # dentro: senza, le applicazioni finirebbero sull'immagine e la libreria no —
 # tre programmi che partono e si fermano subito dicendo che non la trovano.
-EXWIN_OUT := $(PM_BIN) $(FILEMGR_BIN) $(EDIT_BIN) $(TERM_BIN) $(EXWIN_SO) $(EXDLG_SO)
+EXWIN_OUT := $(PM_BIN) $(FILEMGR_BIN) $(EDIT_BIN) $(TERM_BIN) $(EXWIN_SO) $(EXDLG_SO) \
+             $(EXIMG_SO)
 
 # --- /bin/testo: rimette lo schermo, si digita alla cieca --------------------
 #
@@ -2360,6 +2425,7 @@ KERNEL_C_SRC   := $(KERNEL_DIR)/arch/x86/gdt.c \
                   $(KERNEL_DIR)/arch/x86/rtc.c \
                   $(KERNEL_DIR)/arch/x86/kprintf.c \
                   $(KERNEL_DIR)/arch/x86/memfun.c \
+                  $(KERNEL_DIR)/arch/x86/tsc.c \
                   $(KERNEL_DIR)/mm/pmm.c \
                   $(KERNEL_DIR)/mm/paging.c \
                   $(KERNEL_DIR)/mm/kmalloc.c \
@@ -3726,7 +3792,7 @@ verifica-dipendenze-cd:
 	echo "[OK] ogni driver del CD e' fra le dipendenze dell'ISO"
 
 $(ISOX_IMG): Makefile $(FLOPPY_IMG) boot/autoexec.sh $(DRIVER_SOLO_CD_OUT) \
-             $(EXWIN_OUT) $(EXWIN_APPLIST) \
+             $(EXWIN_OUT) $(EXWIN_APPLIST) $(PROVA_PNG) \
              $(BINARI_SOLO_CD) $(ISO_MKISO) README.md README.en.md \
              gpl-2.0.txt boot/kernel.cfg boot/kernel.txt boot/help.txt \
              | verifica-programmi verifica-dipendenze-cd
@@ -3753,6 +3819,8 @@ $(ISOX_IMG): Makefile $(FLOPPY_IMG) boot/autoexec.sh $(DRIVER_SOLO_CD_OUT) \
 	@# non partono affatto. E' un file di /exwin/lib come l'elenco, ma non
 	@# viene dai sorgenti: viene da build/, quindi ha una riga sua.
 	@cp $(BUILD_EXWIN_LIB)/*.so $(ISOX_ROOT)/exwin/lib/ 2>/dev/null || true
+	@# L'immagine di prova del lettore PNG: vedi PROVA_PNG.
+	@cp $(PROVA_PNG) $(ISOX_ROOT)/exwin/prova.png
 	@# La RISERVA dei driver, da cui si installa.
 	@#
 	@# ! È UNA COPIA DI dev/, NON UN'ALTERNATIVA, e le due hanno compiti

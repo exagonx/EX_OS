@@ -62,6 +62,8 @@ static uint8_t  g_stato_pulito[FPU_STATE_SIZE] ALIGNED(16);
  * puo' arrivare: su una CPU che si ferma a 0, leggere la 1 restituisce i
  * valori di un'altra foglia, cioe' numeri plausibili e falsi.
  * ============================================================================= */
+#define CPUID_EDX_TSC   (1u << 4)
+#define CPUID_EDX_PSE   (1u << 3)
 #define CPUID_EDX_CMOV  (1u << 15)
 #define CPUID_EDX_MMX   (1u << 23)
 #define CPUID_EDX_FXSR  (1u << 24)
@@ -87,6 +89,8 @@ static void rileva_cpu(void)
     edx = cpuid_edx1();
     ecx = cpuid_ecx1();
 
+    g_cpu.tsc  = (edx & CPUID_EDX_TSC)  ? 1 : 0;
+    g_cpu.pse  = (edx & CPUID_EDX_PSE)  ? 1 : 0;
     g_cpu.cmov = (edx & CPUID_EDX_CMOV) ? 1 : 0;
     g_cpu.mmx  = (edx & CPUID_EDX_MMX)  ? 1 : 0;
     g_cpu.fxsr = (edx & CPUID_EDX_FXSR) ? 1 : 0;

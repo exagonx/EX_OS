@@ -16,6 +16,7 @@
 #include "isr.h"
 #include "fpu.h"
 #include "entropia.h"
+#include "tsc.h"
 #include "pmm.h"
 #include "paging.h"
 #include "kmalloc.h"
@@ -225,6 +226,11 @@ klog(LOG_INFO, "[PASSO 7] ISR OK");
     /* Dopo fpu_init, che e' chi interroga la CPU: entropia_init ha
      * bisogno di sapere se c'e' RDRAND, e quel bit lo scopre CPUID. */
     entropia_init();
+
+    /* Anche questa dopo fpu_init, per lo stesso motivo: il bit del TSC lo
+     * legge CPUID. E' qui e non piu' avanti perche' misura per 50 ms col PIT a
+     * polling, e prima che gli interrupt siano attivi nessuno la disturba. */
+    tsc_init();
 klog(LOG_INFO, "[PASSO 7b] FPU %s", fpu_present() ? "OK" : "ASSENTE (x87 disabilitata)");
 
     /* =========================================================================

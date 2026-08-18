@@ -22,7 +22,8 @@
  *     0x04000000   exwin.so    il toolkit
  *     0x04400000   exdlg.so    i dialoghi (Apri/Salva)
  *     0x04800000   libc.so     la libreria C
- *     0x04C00000   libere
+ *     0x04C00000   eximg.so    i formati d'immagine (PNG oggi)
+ *     0x05000000   libere
  *
  * Quattro megabyte a testa: una page table esatta, e nessuna libreria di
  * EX-OS e' lontanamente vicina a riempirla.

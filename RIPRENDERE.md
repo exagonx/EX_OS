@@ -12,19 +12,17 @@ seriale e USB — tastiera compresa, hub compresi.
 
 ## COSA E' COMMITTATO
 
-    0d3920f  "La scrivania: /exwin, barra delle applicazioni e menu di avvio"
+    ab70029  "MMX nel compositore: otto byte per volta invece di quattro"
 
-Da li' in poi **non e' stato committato niente**, e nell'albero ci sono, in
-ordine di nascita:
+Da li' in poi nell'albero ci sono **due lavori**:
 
- - **il file manager e l'editor** grafici, piu' i quattro difetti vecchi che
-   hanno fatto trovare (il fuoco della tastiera, le redirezioni della shell,
-   il consiglio sbagliato di winprova, `cat` in una pipe);
- - **le librerie condivise**: il caricatore nel kernel, `SYS_LIB_APRI`,
-   `exwin.so`, `exdlg.so` e **la libc condivisa** con 39 programmi collegati;
- - **l'installazione a componenti** (`install -m` / `-t`), e `wserver.drv` che
-   adesso risponde a `-i`;
- - **il README rifatto** in italiano e inglese, e la versione portata a 0.184.
+ - il **TSC** calibrato sul canale 2 del PIT e **PSE** acceso sulla fascia
+   kernel — vedi «Il TSC misura e PSE si accende»;
+ - **`eximg.so`**, che porta dentro il PNG senza farlo pagare a chi non lo usa
+   — vedi «eximg.so: il PNG entra, e nessuno lo paga».
+
+`gitupdate.sh` fa `git add .` e un commit solo, quindi il messaggio li copre
+tutt'e due.
 
 `messaggio-commit.txt` e' pronto: il commit lo fa `./gitupdate.sh`.
 
@@ -32,15 +30,14 @@ ordine di nascita:
 
 ### Cose che mancano e si vedono
 
- 1. **Utenti e permessi** — la specifica completa e' nella voce «Utenti,
-    permessi e installazione a componenti» del 17 agosto: sette regole dettate
-    dall'utente, cinque passi in ordine (`uid` nel PCB, proprietari in ext2,
-    controlli nella VFS, `install` che crea gli utenti, `login` obbligatorio).
-    **La parte dell'installatore e' fatta**; manca tutto il resto. E' il lavoro
-    piu' grosso rimasto, e chiude il difetto del varco `*.drv`.
- 3. **I lettori di immagini**: JPG, PNG e ICO. La tabella dove aggiungerli e'
-    gia' in `exwin.c` e il BMP funziona: ognuno e' un lettore piu' una riga, e
-    il server non se ne accorge nemmeno.
+ 1. **JPG e ICO**, che sono cio' che resta dei lettori di immagini: il PNG e'
+    fatto e la strada e' aperta — vedi «eximg.so: il PNG entra, e nessuno lo
+    paga». Ognuno e' un file in `lib/eximg/` piu' una riga nella tabella di
+    `eximg.c`: non si tocca nessun header, nessuna applicazione, e il server
+    non se ne accorge nemmeno.
+    **JPG e' il piu' grosso dei due** (~1500 righe: DCT inversa, tabelle di
+    Huffman, sottocampionamento del colore); ICO e' quasi un BMP con
+    un'intestazione davanti.
 
 ### Cose che il toolkit ha gia' chiesto tre volte
 
@@ -69,10 +66,25 @@ ordine di nascita:
     `WinRegione` che oggi si ignora. Ha senso quando le finestre saranno tante
     abbastanza da farlo pesare, ed e' la struttura piu' facile da sbagliare di
     un server grafico.
-12. **`-i` ai driver che ancora non ce l'hanno** — `floppy`, `mouseser`, `tty`,
-    `uhci`, `vgaprova`. Oggi non danno problemi perche' escono da soli quando
-    non trovano la periferica; il giorno che uno di loro diventasse un server,
-    bloccherebbe l'installazione come ha fatto `wserver`.
+12. **`-i` ai quattro driver che ancora non ce l'hanno** — `floppy`,
+    `mouseser`, `uhci`, `vgaprova`. Gli altri nove ce l'hanno tutti (`pci`,
+    `svga`, `kbd`, `xhci` e i cinque del CD); `tty` era in questo elenco per
+    sbaglio, non e' un `.drv` ma un pezzo compilato dentro il kernel. Oggi non
+    danno problemi perche' escono da soli quando non trovano la periferica; il
+    giorno che uno di loro diventasse un server, bloccherebbe l'installazione
+    come ha fatto `wserver`.
+
+~~Utenti e permessi~~: **fatti il 17 agosto 2026**, tutti e cinque i passi —
+`uid` nel PCB, proprietari scritti in ext2, i controlli nella VFS, `install`
+che prepara il posto e `login` obbligatorio su radice ext2. Vedi le tre voci
+del 17 agosto, e con loro si e' chiuso il varco `*.drv`.
+
+~~Il toolkit che si faceva copiare~~ (`ex_fuoco()`, la lista a scorrimento,
+l'area di testo multiriga): **fatto il 17 agosto 2026**, e con lui sono sparite
+tre copie disegnate a mano.
+
+~~TSC e PSE~~: **fatti il 17 agosto 2026**. Delle tre cose che il Pentium MMX
+comprava non ne resta nessuna da prendere.
 
 ~~Il clic nell'area del client non da' il fuoco~~: **fatto il 14 agosto 2026**,
 era `origine()` che sommava la posizione della finestra sullo schermo.
@@ -255,6 +267,223 @@ copiare, non da reinventare.
 funzione alla libreria e dimenticarsi lo stub da' un simbolo che non si
 risolve — e il messaggio lo dice, col nome, ma solo a chi lo esegue.
 
+# eximg.so: il PNG entra, e nessuno lo paga (17 agosto 2026)
+
+    exwin -s /exwin/prova.png
+
+    l'immagine sullo schermo, confrontata coi pixel attesi:
+        3072 pixel su 3072 IDENTICI
+
+    a terra, i cinque tipi di colore:
+        rgb 64x48  rgba 40x24  grigio 33x17  grigio+alfa 20x20  tavolozza 50x30
+        tutti identici, 0 pixel diversi
+
+    600 file guasti sotto AddressSanitizer + UBSan:  0 guasti
+
+    exwin -s /boot/help.txt
+        pm: /boot/help.txt: formato non riconosciuto   <- e la scrivania parte
+
+`inflate.c` e `png.c` erano scritti da ieri e **non erano collegati a niente**:
+non comparivano nel Makefile e la tabella dei lettori in `exwin.c` era ancora
+`{ leggi_bmp, 0 }`. Adesso c'e' la libreria, ed e' la quarta fetta:
+**0x04C00000**, 17.976 byte.
+
+## Non si collega: si apre quando serve
+
+! **UN PANNELLO, UN OROLOGIO, UNA BARRA DELLE APPLICAZIONI NON DISEGNANO UN PNG
+MAI.** Se il toolkit si collegasse a eximg, la pagherebbero anche loro — ed e'
+esattamente la ragione per cui e' una libreria a parte invece di due funzioni
+dentro `exwin.c`. Per questo `leggi_eximg()` e' **l'ultimo** della tabella e
+apre la libreria con `exlib_apri_fra()` solo davanti a byte che nessun altro ha
+riconosciuto. Aperta una volta, l'indirizzo resta.
+
+! **E PER QUESTO NON C'E' UNO STUB.** exdlg ne ha uno perche' chi apre file lo
+sa quando lo si compila; qui no: se ne accorge `ex_immagine()` guardando i
+primi byte di un file, a programma gia' partito.
+
+! **SE eximg.so NON C'E', NON SI MUORE.** Gli stub di exwin e exdlg gridano e
+muoiono, e li' e' giusto: un programma che chiama `ex_finestra()` senza toolkit
+non puo' fare niente. Qui il programma sa disegnare, sa leggere i BMP, e gli
+manca un formato — farlo morire vorrebbe dire che installare mezza libreria
+grafica spegne applicazioni che funzionerebbero. Si rende 0, che vuol dire
+«questo formato non lo so leggere», ed e' la stessa risposta di un file guasto.
+
+## La memoria: chi decodifica non libera
+
+Un decodificatore ha molte uscite — un pezzo troncato, una profondita' che non
+si sa leggere, un albero di Huffman incoerente — e il PNG ne ha otto.
+
+! **CHIEDERE A OGNI USCITA DI RICORDARSI COSA LIBERARE VUOL DIRE CHE PRIMA O
+POI UNA SE NE DIMENTICA.** Cosi' invece `eximg_memoria()` **annota** ogni
+blocco, e quando la decodifica finisce `eximg_carica()` li restituisce tutti
+tranne quello dei pixel. Il decodificatore non libera niente e non puo'
+sbagliare: non e' lui a farlo.
+
+Il limite e' otto blocchi, dichiarato: il PNG ne chiede tre.
+
+## Le prove, e perche' tre livelli
+
+**A terra**, compilando `lib/eximg/` per Linux: cinque PNG generati da
+`tools/mkpng.py`, uno per tipo di colore, confrontati coi pixel attesi.
+
+! **IL PATTERN NON E' CASUALE, E' UNA FORMULA DEGLI INDICI.** Cosi' i pixel
+attesi si ricavano dalla stessa formula invece che da un secondo
+decodificatore di cui bisognerebbe fidarsi — e «giusto» vuol dire identico,
+non «sembra giusto».
+
+! **E OGNI FILE ESERCITA TUTTI E CINQUE I FILTRI, UNA RIGA PER TIPO A GIRO.**
+Un generatore che scrivesse tutte le righe col filtro 0 produrrebbe un file che
+passa senza aver provato niente: **Paeth e' quello che si sbaglia**, e col
+filtro 0 non viene nemmeno chiamato. Gli IDAT sono spezzati in tre pezzi
+apposta, perche' un decodificatore che li tratta uno per uno legge un flusso
+troncato e con un pezzo solo quel difetto non si vedrebbe.
+
+**Sotto sanitizzatore**, 600 file guastati a mano — troncati, con byte
+cambiati, con le misure in IHDR falsate, con le lunghezze dei pezzi assurde:
+nessun accesso fuori dai limiti, nessun trabocco, nessuna perdita.
+
+! **QUESTO E' IL LIVELLO CHE CONTA DI PIU', E VA DETTO PERCHE'.** Un
+decodificatore di immagini legge **file che arrivano da fuori**: e' la
+superficie d'attacco piu' esposta che ci sia in un'applicazione grafica. E su
+EX-OS non c'e' il bit NX — un trabocco di buffer e' direttamente sfruttabile.
+Provarlo solo con file corretti vorrebbe dire provarlo proprio dove non serve.
+
+**In volo**, dentro EX-OS: `exwin -s /exwin/prova.png`, foto dello schermo, e i
+64x48 pixel confrontati con gli attesi. **3072 su 3072 identici** — e in mezzo
+c'erano l'apertura pigra della libreria, l'inflate, i filtri, `ex_pixmap`, il
+compositore MMX e il framebuffer.
+
+## L'immagine di prova sta sul CD, e si genera
+
+! **SENZA UN'IMMAGINE SUL SUPPORTO IL LETTORE NON E' PROVABILE DA DENTRO**, e
+`winprova -s` era un'opzione che non era mai stata eseguita per mancanza di un
+file da darle. 1,6 KB sul CD.
+
+! **E NON E' COMMITTATA: SI GENERA.** Un PNG nel repository e' un blob di cui
+nessuno sa piu' com'e' fatto; `tools/mkpng.py` lo produce da una formula, che
+dice sia il pattern sia quali filtri esercita — e accanto scrive i pixel
+attesi, con cui la foto si confronta.
+
+## Quello che il PNG non legge, dichiarato
+
+    interlacciamento Adam7      no — sono SETTE immagini da ricomporre, e un
+                                pezzo che si esercita quasi mai e' un pezzo di
+                                cui non si sa se funziona
+    16 bit per canale           no — si troncherebbero a 8 per andare a schermo
+    il canale alfa              letto e ignorato: il server compone finestre
+                                opache, non c'e' niente su cui fondere
+
+# Il TSC misura e PSE si accende (17 agosto 2026)
+
+    [INFO]  TSC: 1896.978 MHz (94848944 cicli in 50 ms)
+    [INFO]  PAGING: PSE attivo — 7 blocchi da 4 MB (0x00400000-0x02000000),
+                    il resto a 4 KB
+    [INFO]  PAGING: spezzamento provato su 0x01c00000 — le traduzioni coincidono
+
+    (qemu) info registers
+    CR0=80000033  CR4=00000610        <- bit 4 = PSE, acceso davvero
+
+    libctest   294 su 294      polltest 13 su 13      shmtest 11 su 11
+    da CD: wserver, MMX, scrivania, tre applicazioni nel menu — nessun fault
+
+Delle tre cose che il Pentium MMX comprava, **due sono adesso in uso**: MMX era
+gia' nel compositore, TSC e PSE arrivano qui. Resta fuori solo il bit NX, che
+non arriva col Pentium MMX e non arrivera' mai.
+
+## Il TSC: 50 millisecondi contro il canale 2 del PIT
+
+Fino a qui l'unico orologio del kernel era `g_ticks`, il PIT a 100 Hz: unita' 10
+millisecondi. Misurare MMX nel compositore con quello dava «0 tick» in entrambi
+i casi.
+
+! **LA CALIBRAZIONE NON PUO' USARE `g_ticks`, ED E' IL PUNTO MENO OVVIO.**
+`tsc_init()` gira durante l'avvio, e in EX-OS l'IRQ0 resta mascherato fino a
+`sched_start()`, che e' l'ultima riga di `kernel_main`. `g_ticks` vale zero e li'
+resterebbe: il ciclo di attesa non finirebbe mai e la macchina si pianterebbe
+all'avvio, **prima di scrivere la riga di log che spiega perche'**.
+
+Si usa il **canale 2** del PIT, l'unico dei tre leggibile senza interrupt: il suo
+piedino di uscita e' nel bit 5 della porta 0x61. Nato per l'altoparlante, serve
+qui da cronometro — e il bit dell'altoparlante va spento a mano, o una macchina
+che l'aveva acceso fischierebbe per 50 ms a ogni avvio.
+
+! **IL NUMERO E' STATO CONTROLLATO CONTRO LA MACCHINA VERA**: 1897,091 MHz
+misurati contro 1895,845 dichiarati dall'host. Errore dello **0,066%** — cioe'
+il numero e' giusto, non soltanto plausibile. Una calibrazione che rende un
+valore verosimile e sbagliato e' peggio di una che non rende niente.
+
+## PSE: la fascia kernel in sedici voci di TLB invece di sedicimila
+
+La fascia kernel e' identita' pura, permessi uguali dappertutto, e non cambia
+mai. Descriverla pagina per pagina vuol dire fino a 16.384 PTE — e soprattutto
+**una voce di TLB per ogni 4 KB toccati**.
+
+! **IL GUADAGNO E' NEL TLB, NON NELLA MEMORIA RISPARMIATA.** Le tabelle in meno
+sono 28 KB su 32 MB: niente. Il punto e' che il Pentium ha **32 voci** di TLB
+per i dati, e un kernel che ne consuma una ogni 4 KB le esaurisce attraversando
+una struttura appena piu' grande di 128 KB. Le pagine da 4 MB hanno un TLB
+separato, dedicato: la fascia kernel smette di competere con i dati del
+processo.
+
+! **I PRIMI 4 MB RESTANO A PAGINE DA 4 KB, SEMPRE.** Dentro c'e' la finestra
+(`PAGING_FINESTRA_VIRT`, l'ultima pagina dei primi 4 MB), che per mestiere cambia
+mappatura una pagina per volta. Un blocco da 4 MB li' verrebbe spezzato al primo
+uso della finestra, cioe' subito: si pagherebbe un'allocazione per tornare
+esattamente dove si era.
+
+! **E VA ACCESO IN CR4 PRIMA DI SCRIVERE LA PRIMA PDE COL BIT 7.** Senza
+CR4.PSE quel bit e' **riservato**, e una PDE riservata non da' errore: la CPU la
+legge come una tabella il cui indirizzo ha bit di troppo. Una mappatura verso
+memoria a caso, silenziosa.
+
+## Il ramo difensivo si esegue a ogni avvio
+
+`spezza_4mb()` riporta un blocco da 4 MB alla tabella equivalente. Esiste perche'
+il giorno che qualcuno chiedesse una pagina sola dentro un blocco,
+`paging_map_page` prenderebbe il campo indirizzo della PDE per un puntatore a
+tabella e **scriverebbe la PTE dentro la memoria mappata** — dentro il kernel
+stesso, se il blocco e' il primo.
+
+Oggi non lo chiama nessuno.
+
+! **QUINDI E' CODICE DI CUI NON SI SAPREBBE SE FUNZIONA**, ed e' la stessa
+ragione per cui il compositore ha `-nommx`. `prova_spezzamento()` lo esegue su un
+blocco vero a ogni avvio: spezza l'ultimo blocco, controlla che quattro
+traduzioni scelte — primo byte, seconda pagina, meta', ultimo byte — dicano
+esattamente quello che dicevano prima, **rimette il blocco e restituisce la
+tabella**. Non lascia niente per terra e costa una pagina presa e resa.
+
+! **E GIRA PRIMA DI CR0.PG, DELIBERATAMENTE.** Con la paginazione ancora spenta
+non c'e' TLB da invalidare e nessuna traduzione in uso: se lo spezzamento fosse
+sbagliato si scopre li', invece di scoprirlo mentre la CPU sta usando quella
+mappa per eseguire la funzione che la sta cambiando.
+
+## I due limiti, dichiarati
+
+! **SPEZZARE UN BLOCCO DOPO L'AVVIO NON SI PROPAGA ALLE PD GIA' CREATE.**
+`paging_create_directory` **copia** le entry sotto `USER_SPACE_BASE`: finche'
+sono puntatori a tabella la tabella e' la stessa e una modifica si vede da
+tutti; un blocco da 4 MB invece **e' il valore stesso**, e chi l'ha gia' copiato
+continua a usarlo. Non morde oggi — la fascia kernel si mappa una volta sola in
+`paging_init`, prima che esista una PD di processo, e nessuno la rimappa — ma
+il giorno che servisse, la strada e' spezzare il blocco **all'avvio**, non dopo.
+
+! **NIENTE `PG_GLOBAL`.** Il bit che tiene una voce nel TLB attraverso un cambio
+di CR3 vuole CR4.PGE, cioe' un Pentium Pro. Sulla CPU dichiarata non c'e', e
+scriverlo senza PGE vorrebbe dire mettere un bit che questa CPU ignora e una
+futura no.
+
+## Cosa non e' stato misurato, e perche'
+
+**Il guadagno in tempo reale**, per la stessa ragione di MMX: QEMU traduce con un
+JIT e non ha il TLB di un Pentium 133. Cio' che si puo' affermare e'
+strutturale — sette voci di TLB al posto di settemila — e che il sistema fa le
+stesse cose: 294 prove della libc, poll, memoria condivisa e la scrivania
+grafica intera.
+
+Il numero vero si prende su ferro. **E adesso c'e' con cosa prenderlo**: e' il
+motivo per cui il TSC e PSE stanno nello stesso lavoro.
+
 # MMX nel compositore (17 agosto 2026)
 
     [PID 16] wserver: MMX attivo, otto byte per volta
@@ -320,6 +549,8 @@ misurare quando ci sara' una macchina d'epoca sotto mano.
 
     PSE   pagine da 4 MB per la mappatura del kernel: meno tabelle, meno TLB
     TSC   misure di tempo precise — servirebbe proprio per misurare MMX
+
+**Fatti tutti e due**, lo stesso giorno: vedi «Il TSC misura e PSE si accende».
 
 # La CPU di base diventa vera, e il codice smette di essere scrivibile (17 agosto 2026)
 
@@ -423,9 +654,9 @@ ci sono in `kernel/arch/x86/memfun.c`.
     SI'  TSC: misure di tempo precise
     (gia' usati: CPUID per riconoscere le funzionalita')
 
-Nessuno dei tre e' ancora sfruttato. Il piu' promettente e' **MMX nel
-compositore**: 800x600x32 sono 1,83 MB per fotogramma, e oggi si copiano
-quattro byte per volta.
+**Tutti e tre sono adesso in uso**, e in quest'ordine: MMX nel compositore,
+poi TSC e PSE insieme. Il bit NX resta l'unica cosa che questa CPU non puo'
+dare.
 
 # Audit di sicurezza del kernel: i permessi erano decorativi (17 agosto 2026)
 
@@ -5163,3 +5394,136 @@ che la rilocazione con `-iprefix` sappia raggiungere. Finche' e' rimasta
 una directory vuota, `gcc -c` rispondeva «no include path» con gli header
 a due passi. Sono 26 file di testo.
 
+
+## 17 agosto 2026 — TSC calibrato, PSE a meta'
+
+TSC: fatto e verificato. `kernel/arch/x86/tsc.c`, calibrato sul canale 2 del PIT
+letto a polling — NON su g_ticks, che durante l'avvio vale zero perche' l'IRQ0
+resta mascherato fino a sched_start(). Misura: 1897,091 MHz contro 1895,845
+dichiarati dall'host, cioe' 0,066% di errore.
+
+PSE: FERMO A META', e lo stato e' sicuro. Fatto: PG_HUGE, spezza_4mb(), e le
+tre guardie nei punti che camminano sulle PDE (map_page, unmap_page,
+get_physical). NON fatto: alzare CR4.PSE e creare le PDE da 4 MB in
+paging_init. Finche' nessuno crea una PDE con PG_HUGE le guardie sono inerti e
+il kernel si comporta esattamente come prima — si puo' restare qui senza rischio.
+
+Da riprendere: in paging_init, se cpu_capacita()->pse, alzare CR4.PSE PRIMA di
+CR0.PG e riempire le PDE 0..N con blocchi da 4 MB al posto di
+kernel_page_table_low e di paging_map_range_identity. Cappare a USER_SPACE_BASE.
+
+! SOSPETTO DA VERIFICARE, trovato leggendo: paging_init mappa per identita'
+tutta la RAM fino a `total_ram` senza cappare a USER_SPACE_BASE (64 MB). Con
+piu' di 64 MB di RAM quella mappatura si sovrappone allo spazio utente. Non
+verificato: le prove girano a 32 MB.
+
+---
+
+# STATO AL RESET DEL CONTESTO — 17 agosto 2026
+
+Da leggere per primo riprendendo. Quello che segue non e' ricavabile dal codice
+ne' dalla storia di git.
+
+## Dove sta il lavoro
+
+Committato: fino a ab70029 (MMX nel compositore). In staging e NON committato:
+TSC + impalcatura PSE, con messaggio-commit.txt gia' pronto.
+
+## Il punto esatto da cui ripartire: accendere PSE
+
+Fatto: PG_HUGE, spezza_4mb(), guardie in paging_map_page, paging_unmap_page,
+paging_get_physical. Compila senza avvisi.
+
+Manca solo, in paging_init():
+  - alzare CR4.PSE PRIMA di CR0.PG, e solo se cpu_capacita()->pse;
+  - riempire le PDE 0..N con blocchi da 4 MB al posto di kernel_page_table_low
+    e di paging_map_range_identity;
+  - cappare a USER_SPACE_BASE (0x04000000 = 64 MB, cioe' PDE 0..15).
+
+Perche' PSE conviene: il guadagno e' nel TLB, non nella memoria. Le tabelle in
+meno sono 32 KB su 32 MB: niente. Il punto e' che il Pentium ha 32 voci di TLB
+dati, e un kernel che ne consuma una per ogni 4 KB toccati le esaurisce
+attraversando una struttura di poco piu' di 128 KB.
+
+Verificato che paging_destroy_directory tocca solo da PD_INDEX(USER_SPACE_BASE)
+in su: la fascia kernel non passa mai di li'. Le uniche funzioni che camminano
+su una PDE trattandola come tabella sono quelle tre, e sono tutte in paging.c.
+
+## Sospetto trovato leggendo, MAI VERIFICATO
+
+paging_init mappa per identita' tutta la RAM fino a `total_ram` senza cappare a
+USER_SPACE_BASE. Con piu' di 64 MB di RAM quella mappatura si sovrappone allo
+spazio utente. Le prove girano tutte a 32 MB (EXOS_RAM), quindi non si e' mai
+visto. Provare con EXOS_RAM=128M prima di dichiararlo.
+
+## Memoria virtuale e file di scambio — analisi fatta il 17 agosto
+
+Domanda posta: quando servira' un file di scambio, visto che ci sono
+applicazioni che chiedono piu' RAM di quella disponibile.
+
+VERIFICATO nel codice, non a memoria:
+  - il caricamento ELF E' GIA' SU RICHIESTA, risolto dal page fault. Quindi cc1
+    da 40 MB non deve mai stare tutto in RAM: entrano le pagine che tocca.
+  - i bit PG_ACCESSED e PG_DIRTY sono definiti (paging.h) e MAI USATI.
+  - il PMM conta i riferimenti (pmm_ref_inc) ma non tiene l'elenco di CHI mappa
+    un frame: manca la mappatura inversa.
+  - la RAM di prova e' 32 MB, 30 liberi dopo l'avvio.
+
+Conclusione: lo scambio non serve a «far girare programmi grandi» — quello lo
+fa gia' il caricamento su richiesta. Serve solo per la MEMORIA ANONIMA SPORCA,
+heap e stack, che non ha un file da cui rileggersi. E' li' che GCC consuma.
+
+Passo intermedio che conviene molto prima del file di scambio: BUTTARE VIA LE
+PAGINE PULITE DI CODICE quando la RAM stringe. Sono rileggibili dal file,
+quindi non serve area di scambio, ne' allocatore di slot, ne' codifica «pagina
+su disco» nelle PTE. Serve solo la mappatura inversa e una politica sui bit
+Accessed/Dirty. Meta' dello scambio a un quarto del costo.
+
+Il file di scambio vero serve solo quando l'heap DA SOLO supera la RAM. La
+trappola di quel giorno e' il FISSAGGIO delle pagine: sfrattare una pagina
+mentre un DMA dell'ATA ci scrive dentro e' corruzione silenziosa.
+
+## La strada SSH (richiesta, non iniziata)
+
+L'utente ha escluso telnet: insicuro, obsoleto, deprecato. Concordato che il
+telnet come tappa intermedia NON si spedisce; l'impianto della sessione si
+prova con un servizio locale di prova che non entra in nessuna immagine.
+
+Ordine obbligato:
+  1. listen/accept nel driver IP. Oggi il TCP e' SOLO CLIENT: esiste tcp_apri
+     e basta.
+  2. Lo strato pty, che non esiste. Chiude anche il buco dichiarato del Ctrl+C
+     nel terminale a finestra.
+  3. SSH: Curve25519 + ChaCha20-Poly1305, NON RSA, per non dover scrivere una
+     libreria di interi lunghi. SHA-256 c'e' gia' nella libc.
+
+Chiesto anche l'accesso via SERIALE, che e' molto piu' economico e non richiede
+niente del punto 1.
+
+## Fermo altrove
+
+eximg.so (lettori immagine): inflate.c verificato contro zlib, 16 casi su 16.
+png.c scritto ma MAI COMPILATO NE' COLLEGATO. ICO e JPG non iniziati. Non
+esistono ancora la libreria, il suo linker script (0x04C00000, l'indirizzo e'
+libero e riservato), la tabella di esportazione e lo stub.
+
+Mai provato: un utente NORMALE che avvia la pila grafica. L'installazione da CD
+su disco nuovo invece e' riuscita.
+
+## Difetti dichiarati aperti
+
+Niente NX (richiede PAE, che e' roba da Pentium 4 in avanti). SHA-256 senza
+irrobustimento della chiave. Nessuna quota di memoria o disco. blkread/blkwrite
+non validano i puntatori utente (ora sono solo per root). Manca un dialogo
+si'/no, le finestre modali vere, la lista delle regioni sporche, `ls -l`, e il
+sondaggio -i per floppy, mouseser, tty, uhci, vgaprova.
+
+## Regole di lavoro che non si deducono dal codice
+
+I commit li fa SOLO l'utente, con ./gitupdate.sh. Io preparo
+messaggio-commit.txt e avviso. Mai Co-Authored-By ne' link di sessione: il
+repository e' pubblico. Nessun simbolo grafico da nessuna parte, solo "!".
+Commenti e testi in italiano. Con 4 GB di RAM: GCC si ricostruisce con -j1, il
+resto con -j2. Le prove sui nomi lunghi si fanno su ext2, non su FAT. Due
+qemu_drive.py insieme si cancellano l'output: serve EXOS_ISTANZA. Non
+ricostruire mentre una macchina QEMU e' accesa.

@@ -84,6 +84,8 @@ int  sse_attivo(void);
  * ============================================================================= */
 typedef struct {
     uint8_t cpuid;      /* la CPU ha l'istruzione CPUID */
+    uint8_t tsc;        /* RDTSC: il contatore di cicli (Pentium in poi) */
+    uint8_t pse;        /* pagine da 4 MB (Pentium in poi) */
     uint8_t fxsr;       /* FXSAVE/FXRSTOR (e quindi lo stato da 512 byte) */
     uint8_t mmx;
     uint8_t sse;

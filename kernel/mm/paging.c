@@ -11,6 +11,7 @@
 
 #include "kernel.h"
 #include "vga.h"
+#include "fpu.h"   /* cpu_capacita(): il bit PSE lo scopre CPUID */
 #include "pmm.h"
 #include "paging.h"
 #include "idt.h"
@@ -27,7 +28,7 @@
  * Bit  4: Cache Disable (CD)
  * Bit  5: Accessed (A)        — settato dalla CPU al primo accesso
  * Bit  6: riservato (0)
- * Bit  7: Page Size (PS)      — 0 = 4KB pages, 1 = 4MB pages (non usato)
+ * Bit  7: Page Size (PS)      — 0 = 4KB pages, 1 = 4MB pages (vedi PSE)
  * Bit  8: riservato
  * Bit  9-11: AVL               — uso OS
  * Bit 12-31: Page Table Base   — indirizzo fisico page table / 4096
@@ -43,11 +44,15 @@ typedef uint32_t PTE;   /* Page Table Entry */
 #define PG_CACHE_DIS    (1 << 4)    /* Cache disabilitata */
 #define PG_ACCESSED     (1 << 5)    /* Acceduta (settata dalla CPU) */
 #define PG_DIRTY        (1 << 6)    /* Modificata (solo PTE) */
-#define PG_HUGE         (1 << 7)    /* 4MB page (solo PDE, non usiamo) */
+#define PG_HUGE         (1 << 7)    /* pagina da 4 MB (solo PDE) — vedi PSE */
 #define PG_GLOBAL       (1 << 8)    /* Non invalidare dal TLB su CR3 switch */
 
 /* Estrae l'indirizzo fisico da un PDE/PTE (maschera i 12 flag bit bassi) */
 #define PG_ADDR(entry)  ((entry) & 0xFFFFF000)
+
+/* Definita piu' avanti, accanto al resto di PSE: serve gia' a paging_map_page,
+ * che nel file viene prima. */
+static int spezza_4mb(PDE *pd, uint32_t pd_idx);
 
 /* Indici nella PD/PT da indirizzo virtuale */
 #define PD_INDEX(vaddr) (((vaddr) >> 22) & 0x3FF)  /* Bit 31-22 */
@@ -213,6 +218,11 @@ int paging_map_page(PDE *pd, uint32_t virt_addr, uint32_t phys_addr, uint32_t fl
     virt_addr &= 0xFFFFF000;
     phys_addr &= 0xFFFFF000;
 
+    /* Una pagina da 4 MB va prima riportata a pagine singole: vedi spezza_4mb. */
+    if ((pd[pd_idx] & PG_PRESENT) && (pd[pd_idx] & PG_HUGE)) {
+        if (spezza_4mb(pd, pd_idx) != 0) return -1;
+    }
+
     if (pd[pd_idx] & PG_PRESENT) {
         /* Page Table già esistente: usa quella */
         pt = (PTE *)PG_ADDR(pd[pd_idx]);
@@ -256,6 +266,185 @@ int paging_map_page(PDE *pd, uint32_t virt_addr, uint32_t phys_addr, uint32_t fl
 }
 
 /* =============================================================================
+ * PSE — pagine da 4 MB per la fascia kernel
+ *
+ * La fascia kernel (0 → USER_SPACE_BASE, cioe' 64 MB) e' mappata per identita'
+ * e non cambia mai: stessi permessi ovunque, kernel e scrivibile. Descriverla
+ * pagina per pagina vuol dire fino a 16.384 PTE sparse in 16 tabelle da 4 KB,
+ * e soprattutto vuol dire che ogni indirizzo del kernel toccato per la prima
+ * volta costa al TLB una voce sua. Con PSE bastano SEDICI voci: una per ogni
+ * blocco da 4 MB.
+ *
+ * ! IL GUADAGNO E' NEL TLB, NON NELLA MEMORIA RISPARMIATA. Le tabelle in meno
+ * sono 32 KB su 32 MB di RAM: niente. Il punto e' che il Pentium ha 32 voci di
+ * TLB per i dati, e un kernel che ne consuma una per ogni 4 KB toccati le
+ * esaurisce attraversando una struttura appena piu' grande di 128 KB. Con le
+ * pagine da 4 MB la fascia kernel occupa 8 voci del TLB dedicato alle pagine
+ * grandi, che e' separato, e smette di competere con i dati del processo.
+ *
+ * ! E VA ABILITATO IN CR4 PRIMA DI SCRIVERE LA PRIMA PDE CON PG_HUGE. Senza
+ * CR4.PSE il bit 7 della PDE e' RISERVATO, e una PDE riservata non da' errore:
+ * la CPU la interpreta come una tabella il cui indirizzo contiene bit di
+ * troppo. Si otterrebbe una mappatura verso memoria a caso, silenziosa.
+ * ============================================================================= */
+#define CR4_PSE         (1u << 4)
+#define PSE_4MB         0x400000u
+
+static int g_pse = 0;
+
+int paging_pse_attivo(void) { return g_pse; }
+
+/* Accende CR4.PSE se la CPU ce l'ha. Va chiamata all'inizio di paging_init,
+ * cioe' mentre CR0.PG e' ancora zero: da quel momento una PDE col bit 7 vuol
+ * dire «blocco da 4 MB» e non piu' «campo riservato». */
+static void pse_abilita(void)
+{
+    const CpuCapacita *cpu = cpu_capacita();
+
+    if (!cpu->pse) {
+        klog(LOG_INFO, "PAGING: PSE assente — la fascia kernel resta a 4 KB");
+        return;
+    }
+
+    write_cr4(read_cr4() | CR4_PSE);
+    g_pse = 1;
+}
+
+/* Mappa per identita' i blocchi da 4 MB INTERAMENTE contenuti in [base, fine),
+ * e rende quanti ne ha mappati. Le code non allineate non le tocca: restano al
+ * chiamante, che le mappa a 4 KB come ha sempre fatto.
+ *
+ * ! CON PSE SPENTO RENDE 0 E NON SCRIVE NIENTE, ed e' cio' che rende la strada
+ * senza PSE quella di prima riga per riga invece di una seconda versione da
+ * mantenere: il chiamante si ritrova l'intero intervallo come coda.
+ *
+ * ! E NON C'E' PG_GLOBAL. Il bit che tiene una voce nel TLB attraverso un
+ * cambio di CR3 vuole CR4.PGE, cioe' un Pentium Pro: sulla CPU dichiarata non
+ * esiste, e metterlo senza PGE vorrebbe dire scrivere un bit che la CPU
+ * ignora — o peggio, che una CPU futura interpreta. Il guadagno qui e' che una
+ * voce copre 4 MB, non che sopravviva al cambio di processo. */
+static uint32_t mappa_blocchi_4mb(PDE *pd, uint32_t base, uint32_t fine,
+                                  uint32_t flags)
+{
+    uint32_t addr, n = 0;
+
+    if (!g_pse) return 0;
+
+    base = ALIGN_UP(base, PSE_4MB);
+
+    for (addr = base; addr + PSE_4MB <= fine; addr += PSE_4MB) {
+        pd[PD_INDEX(addr)] = addr | flags | PG_HUGE;
+        n++;
+    }
+    return n;
+}
+
+/* Trasforma una PDE da 4 MB nella page table equivalente, pagina per pagina.
+ *
+ * ! ESISTE PER NON DOVER FIDARSI DI UN CENSIMENTO. La fascia kernel oggi non
+ * viene rimappata a pagine singole da nessuno — l'ho verificato — ma «oggi» e
+ * «da nessuno» sono affermazioni che scadono al primo pezzo di codice nuovo.
+ * Se un domani qualcuno chiedesse di mappare una pagina sola dentro un blocco
+ * da 4 MB, senza questa funzione paging_map_page prenderebbe il campo
+ * indirizzo della PDE per un puntatore a tabella e scriverebbe la PTE DENTRO
+ * LA MEMORIA MAPPATA — dentro il kernel stesso, se il blocco e' il primo.
+ * Corruzione silenziosa, che si manifesta altrove e molto dopo.
+ *
+ * Cosi' invece la richiesta e' semplicemente piu' lenta la prima volta.
+ *
+ * ! E SPEZZARE UN BLOCCO DELLA PD DEL KERNEL DOPO L'AVVIO NON SI PROPAGA ALLE
+ * PD GIA' CREATE, ed e' un limite dichiarato. paging_create_directory COPIA le
+ * entry sotto USER_SPACE_BASE: finche' sono puntatori a tabella, la tabella e'
+ * la stessa e una modifica si vede da tutti; un blocco da 4 MB invece e' il
+ * valore stesso, e chi l'ha gia' copiato continua a usarlo. Non e' un problema
+ * oggi perche' la fascia kernel si mappa una volta sola in paging_init, prima
+ * che esista una PD di processo, e nessuno la rimappa. Il giorno che servisse,
+ * la strada e' spezzare il blocco all'avvio — non dopo.
+ *
+ * Ritorna 0 se ok, -1 se non c'e' memoria per la tabella. */
+static int spezza_4mb(PDE *pd, uint32_t pd_idx)
+{
+    uint32_t base  = pd[pd_idx] & 0xFFC00000u;      /* 4 MB: 10 bit di indirizzo */
+    uint32_t flags = pd[pd_idx] & 0xFFFu;
+    uint32_t pt_phys, i;
+    PTE     *pt;
+
+    flags &= ~(uint32_t)PG_HUGE;                    /* nelle PTE non esiste */
+
+    pt_phys = pmm_alloc_page_kernel();
+    if (pt_phys == 0) {
+        klog(LOG_ERROR, "PAGING: OOM spezzando la pagina da 4 MB PD[%u]", pd_idx);
+        return -1;
+    }
+
+    pt = (PTE *)pt_phys;
+    for (i = 0; i < 1024; i++) {
+        pt[i] = (base + i * PAGE_SIZE) | flags;
+    }
+
+    pd[pd_idx] = pt_phys | (flags & (PG_PRESENT | PG_WRITABLE | PG_USER));
+
+    /* ! QUI SERVE RICARICARE CR3, NON invlpg. Una voce di TLB per una pagina da
+     * 4 MB copre 4 MB: invalidare il singolo indirizzo che ha provocato lo
+     * spezzamento lascerebbe viva la voce grande per tutto il resto del blocco,
+     * e per quegli indirizzi la CPU continuerebbe a usare la vecchia
+     * traduzione ignorando la tabella appena scritta. */
+    if (g_paging_enabled) write_cr3(read_cr3());
+
+    klog(LOG_DEBUG, "PAGING: PD[%u] da 4 MB spezzata in tabella a 0x%08x",
+         pd_idx, pt_phys);
+    return 0;
+}
+
+/* Spezza un blocco da 4 MB, controlla che la tabella che ne esce traduca
+ * ESATTAMENTE come traduceva il blocco, poi rimette tutto com'era.
+ *
+ * ! ESISTE PERCHE' spezza_4mb IN ESERCIZIO NON GIRA MAI, ed e' la stessa
+ * ragione per cui il compositore ha `-nommx`: un codice di emergenza che non
+ * viene eseguito e' un codice di cui non si sa se funziona. Qui il codice di
+ * emergenza si esegue una volta a ogni avvio, su un blocco vero, e il costo e'
+ * una pagina presa e restituita.
+ *
+ * ! E SI CHIAMA PRIMA DI CR0.PG, DELIBERATAMENTE. Con la paginazione ancora
+ * spenta non c'e' nessun TLB da invalidare e nessuna traduzione in uso: se lo
+ * spezzamento fosse sbagliato, si scopre qui invece di scoprirlo mentre la
+ * CPU sta usando la mappa per eseguire questa stessa funzione. */
+static void prova_spezzamento(PDE *pd, uint32_t base)
+{
+    uint32_t campione[4], prima[4], dopo[4], i;
+    uint32_t pd_idx  = PD_INDEX(base);
+    PDE      salvata = pd[pd_idx];
+
+    campione[0] = base;                      /* il primo byte del blocco    */
+    campione[1] = base + PAGE_SIZE + 0x123;  /* dentro la seconda pagina    */
+    campione[2] = base + PSE_4MB / 2;        /* in mezzo                    */
+    campione[3] = base + PSE_4MB - 1;        /* l'ultimo byte               */
+
+    for (i = 0; i < 4; i++) prima[i] = paging_get_physical(pd, campione[i]);
+
+    if (spezza_4mb(pd, pd_idx) != 0) {
+        klog(LOG_WARN, "PAGING: prova dello spezzamento saltata (niente memoria)");
+        return;
+    }
+
+    for (i = 0; i < 4; i++) dopo[i] = paging_get_physical(pd, campione[i]);
+
+    /* Rimette il blocco e restituisce la tabella: la mappa torna quella
+     * voluta, e la prova non lascia niente per terra. */
+    pmm_free_page(PG_ADDR(pd[pd_idx]));
+    pd[pd_idx] = salvata;
+
+    for (i = 0; i < 4; i++) {
+        if (prima[i] != dopo[i]) {
+            kpanic("PAGING: spezzando un blocco da 4 MB la traduzione cambia");
+        }
+    }
+
+    klog(LOG_INFO, "PAGING: spezzamento provato su 0x%08x — le traduzioni "
+                   "coincidono", base);
+}
+
+/* =============================================================================
  * paging_unmap_page — Rimuove il mapping di una pagina virtuale
  *
  * NON libera la pagina fisica (quello lo fa il chiamante se necessario).
@@ -267,6 +456,14 @@ void paging_unmap_page(PDE *pd, uint32_t virt_addr)
     PTE     *pt;
 
     if (!(pd[pd_idx] & PG_PRESENT)) return; /* PD entry non presente */
+
+    /* Togliere UNA pagina da dentro un blocco da 4 MB vuol dire prima averlo
+     * spezzato: non esiste modo di rendere non presenti 4 KB su 4 MB. Se la
+     * memoria per la tabella non c'e', si preferisce non fare niente piuttosto
+     * che scrivere in un indirizzo che non e' una tabella. */
+    if (pd[pd_idx] & PG_HUGE) {
+        if (spezza_4mb(pd, pd_idx) != 0) return;
+    }
 
     pt = (PTE *)PG_ADDR(pd[pd_idx]);
     pt[pt_idx] = 0;    /* Rimuovi entry */
@@ -289,6 +486,15 @@ uint32_t paging_get_physical(PDE *pd, uint32_t virt_addr)
     PTE     *pt;
 
     if (!(pd[pd_idx] & PG_PRESENT)) return 0;
+
+    /* ! DENTRO UN BLOCCO DA 4 MB LA TRADUZIONE FINISCE QUI, e l'offset non e'
+     * di 12 bit ma di 22: la PDE porta i 10 bit alti dell'indirizzo fisico e
+     * tutto il resto viene dall'indirizzo virtuale. Leggerla come tabella
+     * darebbe un indirizzo fisico verosimile e sbagliato — il caso peggiore,
+     * perche' non somiglia a un guasto. */
+    if (pd[pd_idx] & PG_HUGE) {
+        return (pd[pd_idx] & 0xFFC00000u) | (virt_addr & 0x003FFFFFu);
+    }
 
     pt = (PTE *)PG_ADDR(pd[pd_idx]);
     if (!(pt[pt_idx] & PG_PRESENT)) return 0;
@@ -328,6 +534,10 @@ void paging_init(void)
     uint32_t i;
 
     klog(LOG_INFO, "PAGING: inizializzazione...");
+
+    /* Prima di scrivere qualunque PDE: da qui in poi il bit 7 ha un
+     * significato. Vedi pse_abilita(). */
+    pse_abilita();
 
     /* -------------------------------------------------------------------------
      * Passo 1: Azzera la Page Directory del kernel
@@ -404,13 +614,47 @@ void paging_init(void)
                               PAGE_SIZE);
         if (kend < kend_min) kend = kend_min;
 
+        uint32_t primi  = (kend < PSE_4MB) ? kend : PSE_4MB;
+        uint32_t blocchi, coda;
+
         klog(LOG_INFO, "PAGING: mapping RAM completa 0x%08x - 0x%08x (%u MB)",
              kstart, kend, (kend - kstart) / (1024 * 1024));
 
+        /* ! I PRIMI 4 MB RESTANO A PAGINE DA 4 KB, SEMPRE. Dentro ci sono la
+         * finestra (PAGING_FINESTRA_VIRT, l'ultima pagina dei primi 4 MB), che
+         * per definizione cambia mappatura una pagina per volta, e la tabella
+         * statica kernel_page_table_low che la contiene. Un blocco da 4 MB li'
+         * verrebbe spezzato al primo uso della finestra, cioe' subito: si
+         * pagherebbe l'allocazione per tornare esattamente a dove si era. */
         if (paging_map_range_identity(kernel_page_directory, kstart,
-                                       kend - kstart,
+                                       primi - kstart,
                                        PG_PRESENT | PG_WRITABLE) != 0) {
             kpanic("PAGING: impossibile mappare il kernel!");
+        }
+
+        /* Da 4 MB in su, un blocco per volta finche' ce ne stanno interi. */
+        blocchi = mappa_blocchi_4mb(kernel_page_directory, PSE_4MB, kend,
+                                    PG_PRESENT | PG_WRITABLE);
+        coda    = PSE_4MB + blocchi * PSE_4MB;
+
+        /* Il resto — la coda che non arriva a 4 MB, o tutto quanto se PSE non
+         * c'e' — a pagine singole. */
+        if (kend > coda && kend > PSE_4MB) {
+            if (paging_map_range_identity(kernel_page_directory, coda,
+                                           kend - coda,
+                                           PG_PRESENT | PG_WRITABLE) != 0) {
+                kpanic("PAGING: impossibile mappare il kernel!");
+            }
+        }
+
+        if (blocchi) {
+            klog(LOG_INFO, "PAGING: PSE attivo — %u blocchi da 4 MB "
+                 "(0x%08x-0x%08x), il resto a 4 KB",
+                 blocchi, PSE_4MB, coda);
+
+            /* Sull'ultimo blocco, che e' il meno trafficato. Vedi
+             * prova_spezzamento: gira sempre, e finisce prima di CR0.PG. */
+            prova_spezzamento(kernel_page_directory, coda - PSE_4MB);
         }
     }
 

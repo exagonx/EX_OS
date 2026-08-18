@@ -16,6 +16,8 @@
 #include "kbd_proto.h"
 #include "win_proto.h"
 #include "exwin.h"
+#include "exlib.h"      /* per aprire eximg.so quando serve davvero */
+#include "eximg.h"      /* solo il tipo e le firme: non ci si collega */
 
 extern const unsigned char font8x16[256 * 16];
 
@@ -1796,7 +1798,64 @@ static int leggi_bmp(ExFinestra f, const unsigned char *d, unsigned int n,
     return 1;
 }
 
-static const ExLettore g_lettori[] = { leggi_bmp, 0 };
+/* I formati che costano — PNG oggi, JPG e ICO domani — stanno in eximg.so, e
+ * questa e' la riga che li porta dentro.
+ *
+ * ! SI APRE ALLA PRIMA IMMAGINE CHE NESSUNO HA RICONOSCIUTO, non all'avvio. Un
+ * pannello, un orologio, una barra delle applicazioni non disegnano un PNG
+ * mai: se il toolkit si collegasse alla libreria, la pagherebbero anche loro
+ * — ed e' esattamente la ragione per cui eximg e' una libreria a parte invece
+ * che due funzioni in piu' qui dentro. Aperta una volta, l'indirizzo resta.
+ *
+ * ! E SE eximg.so NON C'E', NON SI MUORE: si rende 0, cioe' «questo formato
+ * non lo so leggere». Gli stub di exwin e exdlg gridano e muoiono, e li' e'
+ * giusto — un programma che chiama ex_finestra() senza toolkit non puo' fare
+ * niente. Qui invece il programma sa disegnare, sa leggere i BMP, e gli manca
+ * un formato: farlo morire vorrebbe dire che installare mezza libreria grafica
+ * spegne applicazioni che funzionerebbero.
+ *
+ * ! IL PERCORSO E' DOPPIO PER LA STESSA RAGIONE DEGLI STUB: su un sistema
+ * installato le librerie stanno in /exwin/lib, avviando dal CD sotto /cdrom. */
+static int leggi_eximg(ExFinestra f, const unsigned char *d, unsigned int n,
+                       int x, int y)
+{
+    static const char *const dove[] = {
+        "/exwin/lib/eximg.so",
+        "/cdrom/exwin/lib/eximg.so"
+    };
+    static int (*carica)(const unsigned char *, unsigned int, EximgBitmap *);
+    static void (*libera)(EximgBitmap *);
+    static int cercata = 0;
+
+    EximgBitmap bm;
+
+    if (!cercata) {
+        const ExLibTesta *t;
+
+        cercata = 1;    /* ! PRIMA DEL TENTATIVO: se la libreria non c'e', non
+                         * si torna a cercarla a ogni immagine. */
+        t = exlib_apri_fra(dove, (int)(sizeof dove / sizeof dove[0]));
+        if (t) {
+            carica = (int (*)(const unsigned char *, unsigned int,
+                              EximgBitmap *))exlib_simbolo(t, "eximg_carica");
+            libera = (void (*)(EximgBitmap *))exlib_simbolo(t, "eximg_libera");
+        }
+    }
+
+    /* Uno dei due senza l'altro vuol dire una eximg.so piu' vecchia di questo
+     * toolkit: si rinuncia al formato invece di chiamare un indirizzo nullo. */
+    if (!carica || !libera) return 0;
+
+    if (!carica(d, n, &bm)) return 0;
+
+    ex_pixmap(f, x, y, (int)bm.larghezza, (int)bm.altezza, bm.px, bm.larghezza);
+    libera(&bm);
+    return 1;
+}
+
+/* ! L'ORDINE CONTA: PRIMA CIO' CHE SI SA FARE IN CASA. leggi_eximg e' l'ultimo
+ * perche' aprire una libreria costa, e non ha senso pagarlo per un BMP. */
+static const ExLettore g_lettori[] = { leggi_bmp, leggi_eximg, 0 };
 
 int ex_immagine(ExFinestra f, const char *percorso, int x, int y)
 {
