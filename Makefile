@@ -169,7 +169,7 @@ PROGRAMMI_FLOPPY := shell hello id chmod ls mem stack disk libctest fdisk mkfs t
 # `make verifica-programmi` — che le due ISO eseguono da sole — confronta
 # le liste con il contenuto di bin/ e si ferma dicendo quali mancano.
 # =============================================================================
-PROGRAMMI_CD := netdetect nettest ping ipcfg dhcp host tcptest tcpserv ftp telnet telnetd xcp winprova exwincmd
+PROGRAMMI_CD := netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp telnet telnetd xcp winprova exwincmd
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
 PROGRAMMI_EXWIN := exwin_so exdlg_so eximg_so pm filemgr edit term
 
@@ -1907,6 +1907,46 @@ $(TELNETD_BIN): $(TELNETD_SRC) $(TELNETD_LD) $(IP_PROTO) $(RETE_SRC) $(RETE_HDR)
 
 .PHONY: telnetd
 telnetd: dirs $(TELNETD_BIN)
+
+# --- ExCrypt: la matematica di una sessione cifrata ----------------------------
+#
+# ! NON E' UNA LIBRERIA CONDIVISA, E NON PER PIGRIZIA: la usano due programmi
+# (crypttest e il servitore ssh), e sono i due che devono funzionare quando il
+# resto non funziona. Una .so in piu' vuol dire un file in piu' da avere al
+# posto giusto perche' una connessione cifrata parta — e il giorno che manca,
+# il messaggio parla di simboli, non di crittografia.
+EXCRYPT_SRC := lib/excrypt/chacha20.c lib/excrypt/poly1305.c \
+               lib/excrypt/fe25519.c lib/excrypt/x25519.c \
+               lib/excrypt/sha512.c lib/excrypt/ed25519.c
+EXCRYPT_HDR := lib/excrypt/excrypt.h lib/excrypt/fe25519.h
+
+# --- /bin/crypttest (solo CD) -------------------------------------------------
+# I vettori degli RFC girati sulla macchina vera: a terra la stessa matematica
+# gira su x86-64, qui su i386 con gli interi a 64 bit emulati.
+CRYPTTEST_SRC := bin/crypttest/crypttest.c
+CRYPTTEST_BIN := $(BUILD_BIN_CD)/crypttest
+CRYPTTEST_LD  := bin/crypttest/crypttest.ld
+
+$(CRYPTTEST_BIN): $(CRYPTTEST_SRC) $(CRYPTTEST_LD) $(EXCRYPT_SRC) $(EXCRYPT_HDR) \
+                  $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/crypttest ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/excrypt -c $(CRYPTTEST_SRC) -o $(BUILD_OBJ)/crypttest_main.o
+	@n=0; for f in $(EXCRYPT_SRC); do \
+	    n=$$((n+1)); \
+	    $(CC) $(CFLAGS_USER) -I lib/include -I lib/excrypt -c $$f -o $(BUILD_OBJ)/crypttest_c$$n.o || exit 1; \
+	 done
+	$(CC) -m32 -c $(LIBC_START) -o $(BUILD_OBJ)/crypttest_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(CRYPTTEST_LD) \
+	    $(BUILD_OBJ)/crypttest_start.o $(BUILD_OBJ)/crypttest_main.o \
+	    $(BUILD_OBJ)/crypttest_c1.o $(BUILD_OBJ)/crypttest_c2.o \
+	    $(BUILD_OBJ)/crypttest_c3.o $(BUILD_OBJ)/crypttest_c4.o \
+	    $(BUILD_OBJ)/crypttest_c5.o $(BUILD_OBJ)/crypttest_c6.o \
+	    $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] crypttest compilato: $@"
+
+.PHONY: crypttest
+crypttest: dirs $(CRYPTTEST_BIN)
 
 # --- /bin/ftp (solo CD) -------------------------------------------------------
 # Client FTP, modo PASSIVO soltanto: il modo attivo vuole che il client si
@@ -3833,7 +3873,7 @@ ISOX_IMG  := $(DIST_DIR)/exos.iso
 # dimenticano. Le variabili sono definite piu' sopra, accanto alle rispettive
 # regole, e qui sono tutte gia' note perche' questa riga make la legge dopo.
 BINARI_SOLO_CD := $(NETDETECT_BIN) $(NETTEST_BIN) $(PING_BIN) $(IPCFG_BIN) \
-                  $(TCPSERV_BIN) $(TELNETD_BIN) \
+                  $(TCPSERV_BIN) $(TELNETD_BIN) $(CRYPTTEST_BIN) \
                   $(DHCP_BIN) $(HOST_BIN) $(TCPTEST_BIN) $(FTP_BIN) \
                   $(TELNET_BIN) $(XCP_BIN) $(WINPROVA_BIN) $(EXWINCMD_BIN)
 # ! QUESTA LISTA E' LA DIPENDENZA DELL'ISO, E VA TENUTA ALLINEATA A

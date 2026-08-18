@@ -12,7 +12,7 @@ seriale e USB — tastiera compresa, hub compresi.
 
 ## COSA E' COMMITTATO
 
-    fec9307  "listen e accept: il TCP impara ad aspettare"
+    6c3428e  "Una sessione remota vera: telnetd"
 
 ! **`gitupdate.sh` FA `git add .` E UN COMMIT SOLO**: `messaggio-commit.txt`
 deve coprire tutto quello che si e' fatto dall'ultimo commit, non l'ultima
@@ -30,7 +30,14 @@ pezzo di kernel nuovo, e non e' piu' lavoro di rifinitura.
 
 ### Cose che vogliono un pezzo di kernel nuovo
 
- 1. **SSH**, che a questo punto e' «lo stesso impianto piu' la crittografia»:
+ 1. **Il protocollo SSH**, che e' cio' che resta: la matematica e' fatta e
+    provata (vedi «La matematica di SSH, provata contro gli RFC»), e mancano lo
+    scambio delle versioni, il binary packet protocol, KEXINIT,
+    curve25519-sha256 con la firma dell'host, userauth «password» e il canale
+    con pty-req — dove si riusa `telnetd` quasi per intero.
+    *(Quello che segue resta vero e vale la pena rileggerlo prima di
+    cominciare.)*
+    **SSH**, che a questo punto e' «lo stesso impianto piu' la crittografia»:
     l'impianto della sessione e' provato da `telnetd`, e quello che manca e' la
     matematica. **Si sceglie la strada senza bignum**: Curve25519 per lo scambio
     e ChaCha20-Poly1305 per il resto sono aritmetica a 32 bit su numeri di
@@ -255,6 +262,127 @@ copiare, non da reinventare.
 ! **E OGNI NOME NUOVO VA IN `exwin_esporta.c` E NELLO STUB.** Aggiungere una
 funzione alla libreria e dimenticarsi lo stub da' un simbolo che non si
 risolve — e il messaggio lo dice, col nome, ma solo a chi lo esegue.
+
+# La matematica di SSH, provata contro gli RFC (18 agosto 2026)
+
+    crypttest — i vettori degli RFC su questa macchina
+
+      ChaCha20 (RFC 8439)                                  ok
+      e due volte riporta al testo                         ok
+      Poly1305 (RFC 8439)                                  ok
+      X25519 (RFC 7748)                                    ok
+      e i due capi arrivano allo stesso segreto            ok
+      un punto di ordine piccolo si fa riconoscere         ok
+      SHA-512 (FIPS 180-4)                                 ok
+      Ed25519: la chiave pubblica (RFC 8032)               ok
+      la firma del messaggio vuoto                         ok
+      e si verifica                                        ok
+      una firma nostra si verifica                         ok
+      e cambiando un bit del messaggio, no                 ok
+
+      12 prove superate, 0 fallite
+
+E le stesse a terra, sotto AddressSanitizer e UBSan.
+
+`lib/excrypt/`, 1180 righe: **la matematica di una sessione cifrata, finita.
+Il protocollo no** — quello e' il prossimo lavoro, e adesso ha su cosa poggiare.
+
+## Perche' questa strada e non RSA
+
+! **E' LA STRADA SENZA GRANDI NUMERI, ED E' UNA SCELTA FATTA UNA VOLTA SOLA.**
+Curve25519 per lo scambio ed Ed25519 per la firma sono aritmetica su numeri di
+lunghezza FISSA, 32 byte, che stanno in vettori di parole. RSA vorrebbe un
+modulo esponenziale su interi da 2048 bit: una libreria di grandi numeri da
+scrivere, provare e mantenere — un sottosistema, non un file.
+
+! **E ChaCha20 AL POSTO DI AES PER UNA RAGIONE CHE RIGUARDA QUESTA MACCHINA.**
+AES veloce vuole le istruzioni AES-NI, che un Pentium non ha; AES in software
+vuole tabelle in memoria, e le tabelle in memoria sono la strada per cui si e'
+scoperto che la cache puo' raccontare la chiave. ChaCha20 e' somme, XOR e
+rotazioni: nessuna tabella, nessun ramo che dipenda dalla chiave.
+
+## I vettori degli RFC non sono «un esempio che funziona»
+
+! **SONO I NUMERI CHE CALCOLA IL RESTO DEL MONDO.** Una crittografia che
+funziona solo con se stessa e' una crittografia con cui non si parla con
+nessuno: la prima connessione da un client vero fallirebbe senza dire perche',
+e non ci sarebbe modo di sapere quale dei cinque pezzi ha torto.
+
+! **E UN ERRORE QUI NON SI VEDE.** Non da' un risultato storto: da' «connessione
+fallita» — oppure, molto peggio, una connessione che funziona e non protegge
+niente. E' il motivo per cui questa e' l'unica parte del sistema in cui le prove
+sono venute prima di qualunque uso.
+
+## Il difetto che il canarino ha trovato, e che a terra era passato
+
+    *** stack rotto: una scrittura e' andata oltre un buffer locale.
+
+Alla PRIMA esecuzione di `crypttest` dentro EX-OS. Era in Poly1305: il bit che
+chiude un blocco veniva scritto sempre, e su un blocco pieno `blocco[16]` cade
+un byte oltre il vettore.
+
+! **A TERRA ERA PASSATO PERCHE' IL BANCO NON GIRAVA SOTTO SANITIZZATORE**, e la
+lezione e' la mia, non del codice: avevo provato i decodificatori di immagini
+con ASan e poi, su codice piu' delicato, mi ero fidato dei valori giusti. **I
+numeri erano tutti esatti** — i vettori passavano — mentre la memoria accanto
+veniva scritta.
+
+! **E L'HA TROVATO IL CANARINO MESSO IL 17 AGOSTO**, quello che allora si era
+detto «non impedisce l'overflow: lo fa ACCORGERE». E' esattamente cio' che ha
+fatto, sul primo codice nuovo abbastanza delicato da meritarselo.
+
+## Le cose che rendono questa matematica sicura, e che si perdono scrivendola «in modo naturale»
+
+! **NESSUN RAMO GUARDA UN SEGRETO.** La scala di Montgomery fa le stesse
+operazioni per ogni bit dello scalare; quale coppia di punti venga scambiata lo
+decide una MASCHERA, non un `if`. Un ramo renderebbe il tempo — o la cache —
+dipendente dalla chiave privata, e da li' si risale un bit per volta.
+
+! **IL CONFRONTO DELLE IMPRONTE NON SI FERMA AL PRIMO BYTE DIVERSO.** Un memcmp
+che esce presto dice, col tempo che impiega, quanti byte erano giusti: chi prova
+indovina l'impronta un byte alla volta invece che tutta insieme — 256 tentativi
+per byte al posto di 2^128.
+
+! **LA CHIAVE DI Poly1305 E' USA E GETTA.** Due messaggi autenticati con lo
+stesso `r` permettono di ricavarlo e di falsificare tutto: la chiave la genera
+ChaCha20 dal contatore zero, una per pacchetto.
+
+! **LO SCALARE SI POTA, E LA FIRMA E' DETERMINISTICA.** I tre bit bassi a zero
+tengono il risultato nel sottogruppo giusto e rendono innocui i punti di ordine
+piccolo mandati apposta; e il numero segreto di ogni firma non si sorteggia, si
+calcola — e' la difesa contro l'errore che ha svelato le chiavi di piu' di un
+sistema famoso.
+
+! **E UN SEGRETO CONDIVISO TUTTO ZERI SI SEGNALA**: vuol dire che il punto
+ricevuto era di ordine piccolo, cioe' che qualcuno sta provando a forzare un
+segreto che conosce gia'. `x25519()` rende -1 e chi chiama deve rifiutare.
+
+## Un difetto mio, e la prova che l'ha smascherato
+
+La verifica delle firme falliva su firme GIUSTE — identiche ai vettori. Non era
+la firma: era `spacchetta()`, che deve rendere il punto **negato**. Il controllo
+di Ed25519 e' «S per la base MENO h per A fa R», e avendo il punto gia' negato
+quella sottrazione diventa una somma — l'unica operazione che si e' scritta.
+
+! **SENZA I CASI NEGATIVI NON L'AVREI VISTO SUBITO.** Le prove non guardano solo
+che una firma buona passi: guardano che una con un bit cambiato — nel messaggio,
+nella firma, nella chiave — NON passi. Una verifica che dicesse sempre «no»
+supererebbe tre prove su quattro.
+
+## Cosa manca per SSH, ed e' il protocollo
+
+    scambio delle versioni      SSH-2.0-... e una riga di testo
+    binary packet protocol      lunghezza, riempimento, e da NEWKEYS in poi
+                                tutto cifrato e autenticato
+    KEXINIT                     la negoziazione degli algoritmi
+    curve25519-sha256           lo scambio, con la firma dell'host sopra
+    userauth                    il metodo «password», che login sa gia' fare
+    canale, pty-req, shell      e li' si riusa telnetd quasi per intero
+
+! **LA MATEMATICA ERA LA META' DIFFICILE DA SBAGLIARE IN SILENZIO**, il
+protocollo e' la meta' lunga: molte strutture, molti campi, e ogni errore da'
+«connessione chiusa» senza dire altro. Ma adesso i pezzi sotto sono provati, e
+quando qualcosa non tornera' si sapra' che non e' li'.
 
 # Una sessione remota vera: telnetd (18 agosto 2026)
 
