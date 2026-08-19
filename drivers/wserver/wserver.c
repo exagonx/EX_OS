@@ -215,7 +215,62 @@ static int g_px_prec = 0, g_py_prec = 0;
  *
  * ! ED E' IL GENERE DI DIFETTO CHE LA PROVA COMODA NON VEDE. Provando a mano,
  * in primo piano, andava. */
-static unsigned int g_sporco = 1;
+/* =============================================================================
+ * QUANTO SCHERMO SI RIFA'
+ *
+ * ! IL PREDEFINITO E' «TUTTO», E VA TENUTO COSI'. Una regione sporca sbagliata
+ * per difetto lascia pixel vecchi sullo schermo — un difetto che non si vede
+ * dove e' stato fatto e che si manifesta come «ogni tanto resta un pezzo di
+ * finestra». Ogni ragione per ricomporre che non sappia dire ESATTAMENTE cosa
+ * ha cambiato dichiara tutto lo schermo, e paga quello che pagava prima.
+ *
+ * ! SI STRINGE UN CASO SOLO, ED E' QUELLO CHE COSTA: il movimento del
+ * puntatore. Il puntatore e' otto pixel per dodici e si muove in continuazione;
+ * ridipingere 800x600 per spostarlo di due pixel era il grosso del lavoro di
+ * questo server. Tutto il resto — una finestra che si aggiorna, una che si
+ * sposta, una che nasce — passa ancora da «tutto», e restringerlo e' un lavoro
+ * a se' che va fatto un caso per volta guardando i pixel.
+ *
+ * ! E LE DUE POSIZIONI VANNO SPORCATE TUTT'E DUE: dove il puntatore ERA (per
+ * cancellarlo) e dove E' (per disegnarlo). Sporcare solo la seconda lascia una
+ * scia — lo stesso difetto che il cursore della console aveva per un'altra
+ * ragione.
+ * ============================================================================= */
+static unsigned int g_sporco = 1;       /* c'e' qualcosa da rifare */
+static unsigned int g_sp_tutto = 1;     /* ...e non si sa cosa: tutto */
+static unsigned int g_sp_x = 0, g_sp_y = 0, g_sp_x1 = 0, g_sp_y1 = 0;
+
+static void sporca_tutto(void)
+{
+    g_sporco = 1;
+    g_sp_tutto = 1;
+}
+
+static void sporca(int x, int y, int w, int h)
+{
+    int x1 = x + w, y1 = y + h;
+
+    if (w <= 0 || h <= 0) return;
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+
+    if (!g_sporco || (!g_sp_tutto && g_sp_x1 == g_sp_x)) {
+        g_sp_x = (unsigned int)x;  g_sp_y = (unsigned int)y;
+        g_sp_x1 = (unsigned int)x1; g_sp_y1 = (unsigned int)y1;
+    } else if (!g_sp_tutto) {
+        if ((unsigned int)x  < g_sp_x)  g_sp_x  = (unsigned int)x;
+        if ((unsigned int)y  < g_sp_y)  g_sp_y  = (unsigned int)y;
+        if ((unsigned int)x1 > g_sp_x1) g_sp_x1 = (unsigned int)x1;
+        if ((unsigned int)y1 > g_sp_y1) g_sp_y1 = (unsigned int)y1;
+    }
+    g_sporco = 1;
+}
+
+/* Il rettangolo del puntatore, con un pixel d'aria intorno. */
+static void sporca_puntatore(int x, int y)
+{
+    sporca(x - 1, y - 1, 8 + 2, 12 + 2);
+}
 
 
 /* =============================================================================
@@ -312,11 +367,51 @@ static void mmx_copia32(unsigned int *d, const unsigned int *s, unsigned int n)
  * non lo sanno. Un toolkit che dovesse conoscere il formato dello schermo
  * avrebbe sei strade da provare invece di una.
  * --------------------------------------------------------------------------- */
+/* =============================================================================
+ * IL RITAGLIO — si ricompone solo cio' che e' cambiato
+ *
+ * ! IL RITAGLIO STA NELLE DUE PRIMITIVE, NON NEI CHIAMANTI, ed e' l'unica
+ * disposizione che non si puo' dimenticare: `px()` e `riempi()` sono le sole
+ * due strade per arrivare al framebuffer, quindi tutto cio' che disegna —
+ * cornici, prese, contorni, il puntatore — eredita il ritaglio senza sapere
+ * che esiste. Metterlo in componi() vorrebbe dire ricordarselo a ogni funzione
+ * nuova, e prima o poi qualcuno non se lo ricorda.
+ *
+ * ! LA COPIA DELLA ZONA DEL CLIENT E' L'ECCEZIONE, e ce l'ha per forza: non
+ * passa dalle primitive perche' copia righe intere con MMX, ed e' proprio
+ * quella la ragione per cui e' veloce. Li' il ritaglio si applica a mano, e
+ * c'e' un commento che lo dice.
+ * ============================================================================= */
+static unsigned int g_clip_x = 0, g_clip_y = 0;
+static unsigned int g_clip_w = 0, g_clip_h = 0;   /* w=0 vuol dire «tutto» */
+
+static void clip_tutto(void)
+{
+    g_clip_x = 0; g_clip_y = 0;
+    g_clip_w = 0; g_clip_h = 0;
+}
+
+static void clip_metti(unsigned int x, unsigned int y,
+                       unsigned int w, unsigned int h)
+{
+    g_clip_x = x; g_clip_y = y;
+    g_clip_w = w; g_clip_h = h;
+}
+
+static int clip_dentro_y(unsigned int y)
+{
+    if (g_clip_w == 0) return 1;
+    return y >= g_clip_y && y < g_clip_y + g_clip_h;
+}
+
 static void px(unsigned int x, unsigned int y, unsigned int c)
 {
     unsigned char *p;
 
     if (x >= g_fb_w || y >= g_fb_h) return;
+    if (g_clip_w != 0 &&
+        (x < g_clip_x || x >= g_clip_x + g_clip_w ||
+         y < g_clip_y || y >= g_clip_y + g_clip_h)) return;
 
     p = g_fb + y * g_fb_passo + x * (g_fb_bit >> 3);
 
@@ -343,6 +438,21 @@ static void riempi(unsigned int x, unsigned int y, unsigned int w,
                    unsigned int h, unsigned int c)
 {
     unsigned int i, j;
+
+    /* Il ritaglio si applica QUI, una volta, e non dentro il ciclo: e' la
+     * stessa ragione per cui il confine dello schermo si taglia qui sopra. */
+    if (g_clip_w != 0) {
+        unsigned int x1 = x + w, y1 = y + h;
+        unsigned int cx1 = g_clip_x + g_clip_w, cy1 = g_clip_y + g_clip_h;
+
+        if (x  < g_clip_x) x = g_clip_x;
+        if (y  < g_clip_y) y = g_clip_y;
+        if (x1 > cx1) x1 = cx1;
+        if (y1 > cy1) y1 = cy1;
+        if (x1 <= x || y1 <= y) return;
+        w = x1 - x;
+        h = y1 - y;
+    }
 
     if (g_fb_bit == 32) {
         if (x >= g_fb_w || y >= g_fb_h) return;
@@ -532,11 +642,35 @@ static void componi(void)
         if (g_fb_bit == 32 && f->x < g_fb_w && f->y < g_fb_h) {
             unsigned int ww = (f->x + f->w > g_fb_w) ? g_fb_w - f->x : f->w;
             unsigned int hh = (f->y + f->h > g_fb_h) ? g_fb_h - f->y : f->h;
+            unsigned int x0 = 0;
 
-            for (j = 0; j < hh; j++) {
-                unsigned int *d = (unsigned int *)(g_fb + (f->y + j) * g_fb_passo
-                                                   + f->x * 4);
-                const unsigned int *sr = src + j * f->w;
+            /* ! QUI IL RITAGLIO SI FA A MANO, e il perche' sta accanto a
+             * clip_metti(): questa copia non passa dalle primitive apposta —
+             * va per righe intere con MMX, ed e' quello che la rende veloce.
+             * Si tagliano le colonne una volta prima del ciclo e le righe
+             * dentro, che e' lo stesso lavoro che farebbe px() ma per riga
+             * invece che per pixel. */
+            if (g_clip_w != 0) {
+                unsigned int cx1 = g_clip_x + g_clip_w;
+                unsigned int fx1 = f->x + ww;
+
+                if (f->x + ww <= g_clip_x || f->x >= cx1) ww = 0;
+                else {
+                    if (f->x < g_clip_x) x0 = g_clip_x - f->x;
+                    if (fx1 > cx1) fx1 = cx1;
+                    ww = fx1 - (f->x + x0);
+                }
+            }
+
+            for (j = 0; ww && j < hh; j++) {
+                unsigned int *d;
+                const unsigned int *sr;
+
+                if (!clip_dentro_y(f->y + j)) continue;
+
+                d  = (unsigned int *)(g_fb + (f->y + j) * g_fb_passo
+                                      + (f->x + x0) * 4);
+                sr = src + j * f->w + x0;
 
                 if (g_mmx) { mmx_copia32(d, sr, ww); continue; }
                 for (i = 0; i < ww; i++) d[i] = sr[i];
@@ -862,7 +996,7 @@ static void kbd_giro(void)
          * framebuffer. Senza questo, Alt+Fn e ritorno lascerebbe lo schermo
          * com'era — cioe' il prompt della shell sopra le finestre — finche'
          * qualcosa non cambia per conto suo. */
-        if (ora && !g_visibile) g_sporco = 1;
+        if (ora && !g_visibile) sporca_tutto();
         g_visibile = ora;
     }
 
@@ -968,7 +1102,13 @@ static void mouse_chiedi(void)
 
 static void mouse_stato(const MouseStato *s)
 {
-    if (s->dx || s->dy || s->bottoni != g_bottoni) g_sporco = 1;
+    /* ! UN CAMBIO DI BOTTONI PUO' CAMBIARE QUALUNQUE COSA — alzare una
+     * finestra, aprire un menu — e quello che cambia lo decidono i client:
+     * qui non si sa, quindi si dichiara tutto. Il movimento invece si sa
+     * esattamente cos'e'. */
+    if (s->bottoni != g_bottoni) sporca_tutto();
+
+    if (s->dx || s->dy) sporca_puntatore(g_px, g_py);   /* dov'era */
 
     g_px += s->dx;
     g_py += s->dy;
@@ -976,6 +1116,8 @@ static void mouse_stato(const MouseStato *s)
     if (g_py < 0) g_py = 0;
     if (g_px >= (int)g_fb_w) g_px = (int)g_fb_w - 1;
     if (g_py >= (int)g_fb_h) g_py = (int)g_fb_h - 1;
+
+    if (s->dx || s->dy) sporca_puntatore(g_px, g_py);   /* e dov'e' */
 
     g_bottoni = s->bottoni;
 }
@@ -1009,7 +1151,7 @@ static void mouse_agisci(void)
         } else {
             g_fin[g_trascino].x = (unsigned int)(g_px - g_tr_dx);
             g_fin[g_trascino].y = (unsigned int)(g_py - g_tr_dy);
-            g_sporco = 1;
+            sporca_tutto();
         }
         g_bottoni_prec = g_bottoni;
         return;
@@ -1030,7 +1172,7 @@ static void mouse_agisci(void)
         if (g_fin[idx2].y + (unsigned int)nh > g_fb_h)
             nh = (int)(g_fb_h - g_fin[idx2].y);
 
-        if ((unsigned int)nw != g_rw || (unsigned int)nh != g_rh) g_sporco = 1;
+        if ((unsigned int)nw != g_rw || (unsigned int)nh != g_rh) sporca_tutto();
         g_rw = (unsigned int)nw;
         g_rh = (unsigned int)nh;
 
@@ -1073,7 +1215,7 @@ static void mouse_agisci(void)
         int md = modale_di(g_fin[idx].pid);
 
         if (md >= 0 && md != idx) {
-            if (giu) { in_cima(md); g_sporco = 1; }
+            if (giu) { in_cima(md); sporca_tutto(); }
             g_bottoni_prec = g_bottoni;
             return;
         }
@@ -1081,7 +1223,7 @@ static void mouse_agisci(void)
 
     if (giu) {
         in_cima(idx);
-        g_sporco = 1;
+        sporca_tutto();
 
         if (dove == 2) {
             manda_evento(&g_fin[idx], WIN_EV_CHIUDI, g_px, g_py, 0, 0);
@@ -1197,7 +1339,7 @@ static void crea(unsigned int pid, const WinCrea *c)
     }
 
     in_cima(i);
-    g_sporco = 1;
+    sporca_tutto();
 
     r.id    = g_fin[i].id;
     r.byte  = z.byte;
@@ -1320,7 +1462,7 @@ static void ridimensiona(int idx, unsigned int nw, unsigned int nh)
                f->id, nw, nh, f->giro);
 
     dire_misura(f);
-    g_sporco = 1;
+    sporca_tutto();
 }
 
 static void distruggi(int idx)
@@ -1345,7 +1487,7 @@ static void distruggi(int idx)
      * editor renderebbe muto quello rimasto aperto. */
     if (g_fuoco == idx) fuoco_ricalcola();
 
-    g_sporco = 1;
+    sporca_tutto();
 }
 
 /* -----------------------------------------------------------------------------
@@ -1468,7 +1610,7 @@ static int servi_messaggio(void)
         if (idx >= 0 && g_fin[idx].pid == meta.sender_pid) {
             g_fin[idx].x = w->x;
             g_fin[idx].y = w->y;
-            g_sporco = 1;
+            sporca_tutto();
         }
         break;
     }
@@ -1501,7 +1643,7 @@ static int servi_messaggio(void)
         if (idx >= 0 && g_fin[idx].pid == meta.sender_pid) {
             memcpy(g_fin[idx].titolo, t->titolo, WIN_TITOLO_LEN);
             g_fin[idx].titolo[WIN_TITOLO_LEN - 1] = '\0';
-            g_sporco = 1;
+            sporca_tutto();
         }
         break;
     }
@@ -1511,7 +1653,7 @@ static int servi_messaggio(void)
         int idx;
         if (meta.len < sizeof(WinRegione)) break;
         idx = trova_id(w->id);
-        if (idx >= 0 && g_fin[idx].pid == meta.sender_pid) { in_cima(idx); g_sporco = 1; }
+        if (idx >= 0 && g_fin[idx].pid == meta.sender_pid) { in_cima(idx); sporca_tutto(); }
         break;
     }
 
@@ -1519,7 +1661,7 @@ static int servi_messaggio(void)
         WinRegione *w = (WinRegione *)buf;
         int idx;
 
-        g_sporco = 1;
+        sporca_tutto();
         /* Il client ha finito di disegnare. Componendo a ogni giro non c'e'
          * niente da fare: resta nel protocollo perche' quando ci sara' la
          * lista delle regioni sporche sara' QUESTO il messaggio che la
@@ -1771,7 +1913,22 @@ int main(int argc, char **argv)
             }
         }
 
-        if (g_sporco && g_visibile) { componi(); g_sporco = 0; }
+        if (g_sporco && g_visibile) {
+            /* ! IL RITAGLIO SI RIMETTE A «TUTTO» SUBITO DOPO, e non e' una
+             * cortesia: qualunque cosa disegni fuori da componi() — e un
+             * giorno ce ne sara' una — troverebbe altrimenti un ritaglio
+             * lasciato li' da un movimento del mouse, e sparirebbe. */
+            if (!g_sp_tutto && g_sp_x1 > g_sp_x && g_sp_y1 > g_sp_y)
+                clip_metti(g_sp_x, g_sp_y, g_sp_x1 - g_sp_x, g_sp_y1 - g_sp_y);
+
+            componi();
+
+            clip_tutto();
+            g_sporco = 0;
+            g_sp_tutto = 0;
+            g_sp_x = g_sp_x1 = 0;
+            g_sp_y = g_sp_y1 = 0;
+        }
         usleep(20000);
     }
 }

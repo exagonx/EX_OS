@@ -12,11 +12,11 @@ seriale e USB — tastiera compresa, hub compresi.
 
 ## COSA E' COMMITTATO
 
-    e342426  "<hr>, i segni delle liste, <pre>, e l'annullamento nell'editor"
+    9d8aea3  "ls -l, e tre difetti trovati facendolo"
 
-In attesa nell'albero: **`ls -l`** (con la chiamata nuova `statperm`), e tre
-difetti — `VfsStat` non inizializzata su ISO e FAT12, `vgaprova` che veniva
-ESEGUITO a ogni installazione, e la scia del cursore sulla console.
+In attesa nell'albero: **le regioni sporche** — il compositore ricompone solo
+cio' che e' cambiato, e per un movimento del puntatore sono 260 pixel invece di
+480.000.
 
 ! **`gitupdate.sh` FA `git add .` E UN COMMIT SOLO**: `messaggio-commit.txt`
 deve coprire tutto quello che si e' fatto dall'ultimo commit, non l'ultima
@@ -126,7 +126,11 @@ prima» e' un fatto solo se si e' guardato prima.
     login.
  2. **Risolvere per hash invece che per nome** — altri ~3 KB per programma, col
     generatore che verifica a costruzione che non ci siano collisioni.
- 3. **La lista delle regioni sporche** — `WIN_MSG_AGGIORNA` porta gia' una
+ 3. ~~La lista delle regioni sporche~~ — **FATTO il 19 agosto**, ma per UN
+    CASO SOLO: il movimento del puntatore. Vedi la sezione qui sotto. Il testo
+    originale della voce diceva:
+
+    **La lista delle regioni sporche** — `WIN_MSG_AGGIORNA` porta gia' una
     `WinRegione` che oggi si ignora. **Misurato il 18 agosto: `componi()` a
     800x600 costa 0-20 ms**, quindi sotto QEMU non e' un'urgenza — ma il server
     ridisegna tutto lo schermo per ogni movimento del puntatore, e sul Pentium
@@ -773,6 +777,54 @@ riga dopo `g_cur_disegnato = 0` diceva «non c'e' nessun cursore da cancellare»
 che a quel punto era vero e inutile: il segno era gia' impresso.
 
 Si cancella PRIMA di far scorrere, mentre e' ancora suo.
+
+### LE REGIONI SPORCHE — un caso solo, e quello che costava
+
+! **IL RITAGLIO STA NELLE DUE PRIMITIVE, NON NEI CHIAMANTI.** `px()` e
+`riempi()` sono le sole due strade per arrivare al framebuffer, quindi tutto
+cio' che disegna — cornici, prese, contorni, il puntatore — eredita il ritaglio
+senza sapere che esiste. Metterlo dentro `componi()` vorrebbe dire ricordarselo
+a ogni funzione nuova, e prima o poi qualcuno non se lo ricorda.
+
+! **LA COPIA DELLA ZONA DEL CLIENT E' L'ECCEZIONE**, e ce l'ha per forza: non
+passa dalle primitive apposta, perche' va per righe intere con MMX ed e' quello
+che la rende veloce. Li' il ritaglio si applica a mano — colonne una volta
+prima del ciclo, righe dentro — e c'e' scritto perche'.
+
+! **IL PREDEFINITO E' «TUTTO», E VA TENUTO COSI'.** Una regione sporca
+sbagliata per difetto lascia pixel vecchi sullo schermo: un difetto che non si
+vede dove e' stato fatto e che si manifesta come «ogni tanto resta un pezzo di
+finestra». Ogni ragione per ricomporre che non sappia dire ESATTAMENTE cosa ha
+cambiato dichiara tutto lo schermo — sono dodici punti, e pagano quello che
+pagavano prima.
+
+! **SI E' STRETTO UN CASO SOLO, ED E' QUELLO CHE COSTA**: il puntatore e' 8x12
+e si muove in continuazione. Tutto il resto — una finestra che si aggiorna, una
+che si sposta, una che nasce — passa ancora da «tutto», e restringerlo e' un
+lavoro a se' da fare un caso per volta guardando i pixel.
+
+! **E LE DUE POSIZIONI VANNO SPORCATE TUTT'E DUE**: dove il puntatore ERA (per
+cancellarlo) e dove E' (per disegnarlo). Sporcare solo la seconda lascia una
+scia — lo stesso difetto che aveva il cursore della console, per un'altra
+ragione.
+
+#### Misurato, non stimato
+
+    ricomposizioni durante il movimento del puntatore
+        29 da   260 pixel
+        17 da   240
+         2 da   117
+        39 da 480.000   (avvio, finestre nuove, pressioni di bottone)
+
+cioe' **260 pixel invece di 480.000**, circa 1850 volte meno, per il caso che
+si ripete a ogni movimento della mano.
+
+! **E LO SCHERMO E' IDENTICO AL PIXEL.** Confronto fra il build di prima e
+quello dopo, stessa scena e stessi movimenti: **32 pixel diversi, tutti dentro
+una cella di carattere sola** — l'ultima cifra dell'orologio. La controprova:
+due esecuzioni dello STESSO build differiscono nella stessa cella (26 pixel),
+perche' fra una foto e l'altra passa un minuto. Fuori da quella cella: **zero
+pixel diversi**.
 
 ## Difetti aperti, dichiarati
 
