@@ -45,24 +45,65 @@ static int ip_pronto(void)
     return g_pid_ip > 0;
 }
 
+/* =============================================================================
+ * ! I MESSAGGI DEGLI ALTRI SI RIMETTONO A POSTO, NON SI BUTTANO. La mailbox e'
+ * una sola per processo: un'applicazione grafica ci riceve gli eventi del
+ * server a finestre insieme alle risposte dello stack. Buttarli vuol dire un
+ * clic dell'utente mangiato mentre si scarica una pagina — e in un browser
+ * capita a ogni immagine.
+ *
+ * ! E SI RIMETTONO ALLA FINE, NON APPENA LETTI, ed e' la trappola di questa
+ * funzione. Lo scaffale della libc si serve PRIMA della coda del kernel:
+ * rimettere e rileggere subito rende lo stesso messaggio all'infinito. Percio'
+ * cio' che non e' nostro si mette da parte qui, e si restituisce tutto insieme
+ * quando si e' finito — nell'ordine in cui era arrivato.
+ *
+ * ! LO SCAFFALE HA QUATTRO POSTI E QUI SE NE TENGONO QUATTRO, apposta: di piu'
+ * non si potrebbero rimettere comunque, e tenerne di piu' vorrebbe dire
+ * scoprire che sono persi solo al momento di restituirli.
+ * ============================================================================= */
+#define DA_PARTE_N  4
+
 static int attendi(unsigned int tipo, unsigned char *buf, unsigned int *len,
                    unsigned int ms)
 {
-    IpcMessage meta;
-    int        i;
+    static IpcMessage    p_meta[DA_PARTE_N];
+    static unsigned char p_dati[DA_PARTE_N][IPC_MSG_MAX_DATA];
+    static unsigned int  p_len[DA_PARTE_N];
 
-    /* ! SI SCARTANO I MESSAGGI DI ALTRI, NON SI RIFIUTANO: la mailbox e' una
-     * sola per processo, e un'applicazione grafica ci riceve anche gli eventi
-     * del server a finestre. Prendere il primo che arriva vorrebbe dire
-     * leggere un clic del mouse come se fosse una risposta dello stack. */
+    IpcMessage meta;
+    int        i, n_parte = 0, esito_r = -1;
+
     for (i = 0; i < 64; i++) {
-        if (ipc_recv_timeout(&meta, buf, IPC_MSG_MAX_DATA, ms) < 0) return -1;
-        if ((int)meta.sender_pid != g_pid_ip) continue;
-        if (meta.tipo != tipo) continue;
-        if (len) *len = meta.len;
-        return 0;
+        if (ipc_recv_timeout(&meta, buf, IPC_MSG_MAX_DATA, ms) < 0) break;
+
+        if ((int)meta.sender_pid == g_pid_ip && meta.tipo == tipo) {
+            if (len) *len = meta.len;
+            esito_r = 0;
+            break;
+        }
+
+        /* ! CIO' CHE VIENE DALLO STACK MA NON E' IL TIPO ATTESO SI BUTTA, e
+         * non si rimette: e' una risposta vecchia alla nostra stessa domanda,
+         * e rimetterla vorrebbe dire ritrovarsela davanti alla prossima. Solo
+         * cio' che viene da ALTRI torna al suo posto. */
+        if ((int)meta.sender_pid == g_pid_ip) continue;
+
+        if (n_parte < DA_PARTE_N) {
+            unsigned int q = meta.len;
+
+            if (q > IPC_MSG_MAX_DATA) q = IPC_MSG_MAX_DATA;
+            p_meta[n_parte] = meta;
+            if (q) memcpy(p_dati[n_parte], buf, q);
+            p_len[n_parte] = q;
+            n_parte++;
+        }
     }
-    return -1;
+
+    for (i = 0; i < n_parte; i++)
+        ipc_rimetti(&p_meta[i], p_dati[i], p_len[i]);
+
+    return esito_r;
 }
 
 static int esito(unsigned int ms)
@@ -101,17 +142,38 @@ static int esito(unsigned int ms)
  * ============================================================================= */
 static void svuota_stack(void)
 {
+    static IpcMessage    p_meta[DA_PARTE_N];
+    static unsigned char p_dati[DA_PARTE_N][IPC_MSG_MAX_DATA];
+    static unsigned int  p_len[DA_PARTE_N];
+
     unsigned char buf[IPC_MSG_MAX_DATA];
     IpcMessage    meta;
-    int           i;
+    int           i, n_parte = 0;
 
     /* ! UN MILLISECONDO, NON ZERO: in questa libc `timeout_ms == 0` vuol dire
      * ATTESA SENZA SCADENZA, cioe' esattamente ipc_recv (vedi libc.h). Scritto
      * zero credendo di dire «non aspettare», questa funzione si e' piantata
      * per sempre alla prima mailbox vuota — e il sintomo era «scarica non
      * risponde piu'», che non somiglia a «ho svuotato la posta». */
-    for (i = 0; i < 32; i++)
-        if (ipc_recv_timeout(&meta, buf, sizeof(buf), 1) < 0) return;
+    for (i = 0; i < 32; i++) {
+        if (ipc_recv_timeout(&meta, buf, sizeof(buf), 1) < 0) break;
+
+        /* Anche qui: cio' che non e' dello stack non e' roba da buttare. */
+        if ((int)meta.sender_pid == g_pid_ip) continue;
+
+        if (n_parte < DA_PARTE_N) {
+            unsigned int q = meta.len;
+
+            if (q > IPC_MSG_MAX_DATA) q = IPC_MSG_MAX_DATA;
+            p_meta[n_parte] = meta;
+            if (q) memcpy(p_dati[n_parte], buf, q);
+            p_len[n_parte] = q;
+            n_parte++;
+        }
+    }
+
+    for (i = 0; i < n_parte; i++)
+        ipc_rimetti(&p_meta[i], p_dati[i], p_len[i]);
 }
 
 static int tcp_leggi(void *st, unsigned char *dst, unsigned int max,
