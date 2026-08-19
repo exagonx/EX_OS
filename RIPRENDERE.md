@@ -131,7 +131,11 @@ piu' fare.
 
 Chiuse il 19 agosto e tolte da questo elenco: l'annullamento nell'editor,
 `ls -l`, `-i` ai driver, e le regioni sporche (per il solo movimento del
-puntatore — vedi la sua sezione).
+puntatore — vedi la sua sezione). Chiusa il 20 agosto: **`su`**, che si chiama
+`sudo` ed e' venuto come questa voce prevedeva — capacita' stretta (`SYS_SU`),
+SHA-256 nel kernel, nessun bit setuid. Il racconto sta nella sezione «`sudo`
+ESEGUE UN COMANDO», e comprende l'unica cosa che la voce non aveva previsto:
+che il kernel non poteva leggere `/boot/ombra`.
 
  1. **`login` e `install` sulla libc condivisa** — **misurato il 19 agosto, e
     la raccomandazione e' DI NON FARLO**, ma la decisione e' di chi possiede il
@@ -149,16 +153,9 @@ puntatore — vedi la sua sezione).
     ! **IL PREREQUISITO SCRITTO IN QUESTA VOCE — «accorgersi che manca» — E'
     FATTO**, e ha trovato dell'altro: vedi la sezione sulla console che non si
     apre.
- 2. ~~**`su`**~~ — **FATTO il 20 agosto, e si chiama `sudo`.** La strada e'
-    stata esattamente quella che questa voce prevedeva: capacita' stretta
-    (`SYS_SU`), SHA-256 dentro il kernel, nessun bit setuid sui file. Vedi la
-    sezione «`sudo` ESEGUE UN COMANDO» piu' sotto — dove c'e' anche l'unica
-    cosa che questa voce non aveva previsto, cioe' che il kernel non poteva
-    leggere `/boot/ombra`.
-
- 3. **Risolvere per hash invece che per nome** — altri ~3 KB per programma, col
+ 2. **Risolvere per hash invece che per nome** — altri ~3 KB per programma, col
     generatore che verifica a costruzione che non ci siano collisioni.
- 4. **Le regioni sporche, gli altri undici casi** — oggi si stringe solo il
+ 3. **Le regioni sporche, gli altri undici casi** — oggi si stringe solo il
     movimento del puntatore; una finestra che si aggiorna, che si sposta o che
     nasce dichiara ancora tutto lo schermo. Ognuno va fatto guardando i pixel,
     perche' una regione sbagliata per difetto lascia roba vecchia a video.

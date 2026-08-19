@@ -58,7 +58,38 @@
  * su `kex` letto senza essere stato riempito, SpawnExtra ridotta a una
  * definizione sola (lib/include/spawn_abi.h) e il formato ELF salito in
  * elf.h perche' i lettori sono diventati due. */
-#define EXOS_VERSION    "0.184"
+
+/* 0.184 -> 0.202: diciotto modifiche al kernel rimaste non contate per
+ * TREDICI commit, dal 17 al 20 agosto 2026. La riga qui sotto era ferma
+ * mentre il kernel cambiava sotto, ed e' proprio il modo in cui un numero di
+ * versione smette di voler dire qualcosa: non si aggiorna quando si aggiorna
+ * il README, si aggiorna quando si tocca il kernel.
+ *
+ *   1  i permessi mordono: ext2 scrive il proprietario, vfs_permesso decide
+ *   2  SYS_CHMOD e SYS_CHOWN
+ *   3  memfun: memcpy e memset a otto byte per volta con MMX
+ *   4  ipc_rimetti: un messaggio letto per sbaglio si rimette a posto
+ *   5  il TSC, con la calibrazione (kernel/arch/x86/tsc.c)
+ *   6  PSE: le pagine da 4 MB per la mappatura del framebuffer
+ *   7  i pty (kernel/ipc/pty.c) e i gruppi di processi
+ *   8  Ctrl+C che morde: il segnale arriva al gruppo in primo piano
+ *   9  tre difetti in sched.h e shm.h trovati usando il sistema
+ *  10  l'entropia (kernel/arch/x86/entropia.c), che e' servita a SSH
+ *  11  aprire due volte una libreria non ne azzera piu' i dati (loader/lib.c)
+ *  12  rename allineato a POSIX: la destinazione si sostituisce
+ *  13  LIB_MAX da 4 a 12 — ed e' una cache di TUTTO il sistema, non per processo
+ *  14  VfsStat non inizializzata: modo, uid e gid restavano quel che c'era
+ *      nello stack sui rami ISO 9660, FAT12 e radice, e vfs_permesso DECIDE
+ *      con modo
+ *  15  SYS_STATPERM (253): modo, uid e gid di un percorso senza aprirlo
+ *  16  la scia del cursore sulla console in modo grafico (arch/x86/vga.c)
+ *  17  il recovery come root quando `login` non si apre (kernel_main.c), e
+ *      sessantotto stringhe del kernel rese ASCII perche' il font della
+ *      console e' indicizzato per BYTE
+ *  18  SYS_SU (254) con SHA-256 dentro il kernel (kernel/crypto/sha256.c), e
+ *      vfs_open_autorita() perche' il kernel non poteva leggere /boot/ombra
+ */
+#define EXOS_VERSION    "0.202"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

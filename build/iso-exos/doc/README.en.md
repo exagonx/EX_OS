@@ -2,7 +2,7 @@
 
 [🇮🇹 Italiano](README.md) · **🇬🇧 English**
 
-**Version:** 0.184
+**Version:** 0.202
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit, FAT12 1.44MB floppy
@@ -68,6 +68,183 @@ for **`g++`** — containers, `std::string` and exceptions included. See
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### Real users: two accounts, `sudo`, and a recovery when login is broken
+
+**tested** — install from scratch on ext2, both accounts asked for and created,
+then boot from the disk: `uid=1000(graziano)`, home `/home/graziano` owned by
+them. `sudo id` returns `uid=0(root)`, and after `exit` from `sudo -s` you are
+back to `uid=1000`.
+
+Accounts used to be created by `login` on first boot, and it created **one**:
+root. From there on you always worked as the administrator, which is how any
+mistake becomes any amount of damage. Now the installer asks for two — root to
+repair, yours to work — and also asks whether yours should be able to do root
+things with its own password.
+
+| | |
+|---|---|
+| `/boot/utenti` | `name:uid:gid`, 0644 |
+| `/boot/ombra` | `name:salt:digest`, 0600 — SHA-256 of `salt:password` |
+| `/boot/amministratori` | one name per line, 0644 |
+| `lib/exuser` | read a password without echo, verify it, add an account |
+| `bin/sudo` | the command |
+| `SYS_SU` (254) | the narrow capability: «become root IF you know the password» |
+
+    sudo <command> [arguments]   runs that command as root
+    sudo -s                      opens a root shell
+    sudo                         does nothing and prints the usage
+
+! **RUNNING A COMMAND AND OPENING A SHELL ARE NOT THE SAME THING SAID TWO
+WAYS.** With `sudo command` the powers last as long as the command and end by
+themselves; with a shell they last until somebody remembers to leave. The
+second one is available — `-s` — but it has to be **asked for**: opening it for
+someone who typed `sudo` and Enter would mean handing the more dangerous of the
+two to somebody who did not ask.
+
+! **THE `sudo` PROGRAM HAS NO POWER OF ITS OWN**, and that is what holds up
+everything else. It is not setuid — the setuid bit on files does not exist in
+EX-OS, on purpose, because it would make every executable carrying it dangerous
+and there is no way to audit them all — and it decides nothing. It reads a
+password, hands it to the kernel, and **the kernel decides**. A `sudo` replaced
+with some other program is just some other program.
+
+! **THE CHECK IS IN THE KERNEL BECAUSE IT COULD NOT BE ANYWHERE ELSE.**
+`/boot/ombra` is 0600 root and must stay that way: if it were readable, anyone
+could carry the digests off and try them at leisure on another machine. So the
+comparison has to be done by somebody who can open that file. It is the same
+reason `su` is setuid root on Unix, and it costs an SHA-256 inside the kernel.
+
+! **AND THE KERNEL COULD NOT OPEN IT.** `SYS_SU` runs in the caller's process,
+uid 1000, and the VFS was looking at the **process's** credentials instead of
+those of whoever was really reading. The fix is `vfs_open_autorita()`: not a
+bit inside `flags` — that would come from `sys_open`, that is from a number the
+user chooses, and guessing it would be enough to read the passwords — and not a
+global state either, which would hold for **every** process while it is on,
+while the VFS reschedules in here. The permission travels as an argument and
+ends with the call.
+
+! **AND A CONSOLE THAT CANNOT OPEN `login` IS NOT PROTECTING ANYTHING**: it is
+a console whose authentication is **corrupt**. Leaving it shut does not defend
+— whoever is standing at the machine boots from CD and mounts the disk in
+thirty seconds — and it removes the only way to repair it from the inside. A
+root shell opens, and says so plainly before it does: «this shell runs as root
+and NOBODY has logged in». It is not a login: it is a broken machine opening up
+to be repaired.
+
+### `ls -l`: permissions and owners are visible
+
+**tested** — and it found two defects, one of them in the kernel.
+
+! **ONE MORE CALL, NOT ONE MORE FIELD IN `Stat`.** Changing a structure that
+programs already pass around means rebuilding everything that uses it, and
+`Stat` is used by anyone who opens a file. `st_uid` and `st_gid` stay zero and
+keep saying so; the truth is asked for by whoever wants it, with `statperm()`
+(`SYS_STATPERM`, 253).
+
+! **THE DATA WAS ALREADY THERE AND WAS NOT COMING OUT**: `VfsStat` has carried
+mode, uid and gid ever since ext2 learned about owners, but `sys_stat` was not
+copying them. What was missing was the transport, not the information.
+
+! **AND `VfsStat` WAS NOT INITIALISED.** On a CD, `ls -l` showed different
+permissions for every file and five-digit owners: `stat_interno()` left mode,
+uid and gid at whatever was on the stack — only the ext2 branch wrote them,
+while ISO 9660, the floppy's FAT12 and the root did not touch them at all. And
+it was not cosmetic: **`vfs_permesso()` decides on `st->modo`**, where zero
+means «this volume has no owners, let it through».
+
+On a volume without owners `ls -l` prints `?????????` and `-`, which is the
+truth: on FAT and on ISO 9660 the owner does not exist.
+
+### The screen is recomposed only where it changed
+
+**tested** — measured with a temporary probe in the compositor loop, not
+estimated:
+
+    recompositions while moving the pointer
+        29 of   260 pixels
+        17 of   240
+         2 of   117
+        39 of 480,000   (startup, new windows, button presses)
+
+that is, **260 pixels instead of 480,000** — roughly 1850 times less — for the
+case that repeats with every movement of the hand.
+
+! **THE CLIPPING LIVES IN THE TWO PRIMITIVES, NOT IN THE CALLERS.** `px()` and
+`riempi()` are the only two roads to the framebuffer, so everything that draws
+— frames, grips, outlines, the pointer — inherits the clipping without knowing
+it exists. Putting it in the callers would mean remembering it in every new
+function, and sooner or later somebody does not.
+
+! **THE CLIENT-AREA COPY IS THE EXCEPTION**, and it has to be: it deliberately
+does not go through the primitives, because it works whole rows at a time with
+MMX and that is what makes it fast. There the clipping is applied by hand.
+
+! **THE DEFAULT IS «EVERYTHING», AND IT MUST STAY THAT WAY.** A dirty region
+that is wrong on the small side leaves old pixels on the screen: a defect that
+does not show where it was made and that turns up as «every so often a piece of
+a window stays behind». Today **one case** is narrowed, the pointer's movement;
+the other eleven still declare the whole screen, and that is stated.
+
+### The browser: tables, lists, `<pre>` and style sheets all the way
+
+**tested** — right-hand edges identical on every row (232, 469, 753), gaps of
+8 px, sum 744 = the width of the area.
+
+! **A COLUMN'S WIDTH IS NOT KNOWN UNTIL EVERY CELL IN THAT COLUMN HAS BEEN
+LOOKED AT**, and it is the only place in the browser that wants **two** passes:
+the rest of the page lays out forwards, one word after another, without going
+back.
+
+! **AND WHILE MEASURING YOU DO NOT ALIGN.** That is the defect the pixels
+found: the default sheet centres `<th>`, so the measuring pass pushed the
+pieces into the middle of the row and the width came back as «half the page»
+instead of «as wide as the word». Alignment decides **where** to put a row,
+measuring asks **how much** it takes. No `colspan`/`rowspan`, no borders:
+stated.
+
+`<hr>` used to be just some air: now it is a line, drawn as a background two
+pixels tall because that is exactly what it is. `<ul>` and `<ol>` have their
+marker, and for `<ol>` the number is counted **among siblings** — two nested
+lists would hand each other their numbers.
+
+! **INSIDE `<pre>`, SPACES AND NEWLINES ARE THE CONTENT**, and that is the
+whole reason the tag exists. The fix belonged in `exhtml.so`, not in the
+browser: the parser collapses any run of whitespace to a single space — which
+is the HTML rule and is right for everything else — and collapsing it there
+means no user of the library, however careful, can ever put it back. The
+information is lost before it reaches them.
+
+From the style sheets, **alignment, the four margins and the background
+colour** are now applied as well; `excss.so` was computing them and the browser
+was throwing them away — three properties out of the eight the library promises,
+discarded by its user, the kind of gap that raises no error at all.
+
+! **ALIGNMENT CANNOT BE APPLIED WHILE WRITING**: to centre something you need
+to know how wide the row is, and you only know that when it is finished. The
+first piece is marked, and at the line break every piece on that row is moved.
+
+! **A BACKGROUND IS NOT A PIECE, IT IS WHAT LIES UNDER THE PIECES.** It lives
+in a list of its own and is drawn before all the text: putting it among the
+pieces would mean painting over words already written, because the order of the
+pieces is the document's and has nothing to do with depth.
+
+### «About», and the clock that was not disappearing
+
+**tested** — and the first diagnosis was wrong, disproved by an A/B.
+
+Every desktop program — browser, file manager, editor — now states its name,
+what it does, the author, and **the memory it is using**: image
+(`_start`→`_bss_end`), heap (`sbrk(0)`) and stack. From the shell, `ver` says
+it. It lives in `lib/exinfo`, because four copies of the same box diverge at
+the first line added.
+
+! **THE CLOCK WAS NOT DISAPPEARING ON THE FIRST CLICK: IT WAS GOING UNDER.** I
+had blamed the window repaint on any unhandled message, and the A/B disproved
+it — two runs identical to the pixel, the only difference being the digit of
+the clock. The real cause was `in_cima()`, which re-raised a window that was
+already on top: the bar is `WIN_ST_SOPRA`, and re-raising it put it **below**
+the others in the same layer.
 
 ### A browser: from the network to the screen
 
@@ -733,6 +910,8 @@ exercised by forcing the slow path in QEMU, not on a physical 486.
 │   └── kernel.cfg   ← Configuration: env, shell, modules
 ├── bin/
 │   ├── sh           ← Shell (static ELF, first process)
+│   ├── login        ← The login (static ELF: it is the program you get in with)
+│   ├── sudo         ← Runs a command as root, if you are entitled to
 │   ├── ls           ← Directory listing
 │   ├── hello        ← Example program
 │   ├── textline     ← Line-oriented text editor (edlin style)
@@ -1061,6 +1240,25 @@ it is meant to find.
 positive: the library band is 0x04000000-0x08000000, so the value can never be
 confused with a negative errno. What the caller wants is precisely the address
 to read the names from.
+
+### Syscalls added between 0.185 and 0.202
+
+| EAX | Syscall     | EBX           | ECX        | EDX | What it is for |
+|-----|-------------|---------------|------------|-----|----------------|
+| 249 | fb_map      | `void**`      | —          | —   | maps the framebuffer: the **narrow** capability that replaced `mmio_map` for the window server |
+| 250 | interrompi  | pid           | signal     | —   | Ctrl+C that bites: the signal reaches the foreground group |
+| 251 | pty_apri    | `int fd[2]`   | —          | —   | a master/slave pair |
+| 252 | pty_ctl     | fd            | command    | arg | window size, raw mode, foreground group |
+| 253 | statperm    | `const char*` | `StatPerm*`| —   | mode, uid and gid of a path **without opening it** |
+| 254 | su          | `const char*` | password   | —   | «become root IF you know the password», and the kernel decides |
+
+! **TWO NARROW CAPABILITIES, AND THE SAME PRINCIPLE.** `fb_map` does one thing
+— map the framebuffer — where `mmio_map` did «map any physical address», which
+a window server does not need and a hostile program needs very much. `su` does
+one thing — become root knowing the password — where the setuid bit on files
+would make every executable carrying it dangerous. A permission that does
+exactly what is needed can be reasoned about; one that does more can only be
+hoped not to be used.
 
 ---
 
