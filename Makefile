@@ -171,7 +171,7 @@ PROGRAMMI_FLOPPY := shell hello id chmod ls mem stack disk libctest fdisk mkfs t
 # =============================================================================
 PROGRAMMI_CD := netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp scarica telnet telnetd sshd xcp winprova exwincmd
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
-PROGRAMMI_EXWIN := exwin_so exdlg_so eximg_so exfont_so pm filemgr edit term fontprova orologio browser
+PROGRAMMI_EXWIN := exwin_so exdlg_so eximg_so exfont_so exhttp_so pm filemgr edit term fontprova orologio browser
 
 # I driver, con la stessa regola dei programmi. Quelli di base stanno gia'
 # dentro PROGRAMMI_FLOPPY (floppy_drv, kbd_drv): sul floppy servono a
@@ -1055,6 +1055,39 @@ $(EXTTF_SO): $(EXTTF_SRC) $(EXTTF_HDR) $(EXTTF_ESPORTA) $(EXTTF_LD) \
 .PHONY: exfont_so
 exfont_so: dirs $(EXTTF_SO)
 
+# =============================================================================
+# /exwin/lib/exhttp.so — la rete, quando gli utenti sono due
+#
+# ! IL CRITERIO E' SEMPRE LO STESSO: una libreria condivisa conviene quando due
+# programmi la usano. Finche' c'era solo `scarica` sarebbe stata macchinario per
+# niente; con il browser sono due, e ognuno si portava la propria copia di
+# http.c, exhttp.c, dns.c e rete.c. Chi non apre un URL — un editor, un
+# orologio, un file manager — non la carica mai.
+# =============================================================================
+EXHTTP_ESPORTA := lib/exhttp/exhttp_esporta.c
+EXHTTP_STUB    := lib/exhttp/exhttp_stub.c
+EXHTTP_LD      := lib/exhttp/exhttp.ld
+EXHTTP_SO      := $(BUILD_EXWIN_LIB)/exhttp.so
+
+$(EXHTTP_SO): $(EXHTTP_SRC) $(EXHTTP_HTTP) $(EXHTTP_HDR) $(EXHTTP_ESPORTA) \
+              $(EXHTTP_LD) $(EXLIB_HDR) $(IP_PROTO) $(DNS_SRC) $(RETE_SRC) \
+              $(LIBC_PONTI_OBJ) $(LIBC_SO) $(SEGNO_FLAG)
+	@echo "=== Compilazione libreria condivisa /exwin/lib/exhttp.so ==="
+	@mkdir -p $(BUILD_EXWIN_LIB) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhttp -I drivers/net -c $(EXHTTP_SRC) -o $(BUILD_OBJ)/sohttp_main.o
+	$(CC) $(CFLAGS_USER) -I lib/exhttp -c $(EXHTTP_HTTP) -o $(BUILD_OBJ)/sohttp_http.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(DNS_SRC)  -o $(BUILD_OBJ)/sohttp_dns.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(RETE_SRC) -o $(BUILD_OBJ)/sohttp_rete.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhttp -c $(EXHTTP_ESPORTA) -o $(BUILD_OBJ)/sohttp_esporta.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(EXHTTP_LD) \
+	    $(BUILD_OBJ)/sohttp_esporta.o $(BUILD_OBJ)/sohttp_main.o \
+	    $(BUILD_OBJ)/sohttp_http.o $(BUILD_OBJ)/sohttp_dns.o \
+	    $(BUILD_OBJ)/sohttp_rete.o $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] exhttp.so compilata: $@"
+
+.PHONY: exhttp_so
+exhttp_so: dirs $(EXHTTP_SO)
+
 EXWIN_ESPORTA := lib/exwin/exwin_esporta.c
 EXWIN_STUB    := lib/exwin/exwin_stub.c
 EXWIN_LD      := lib/exwin/exwin.ld
@@ -1549,17 +1582,15 @@ $(BROWSER_BIN): $(BROWSER_SRC) $(BROWSER_LD) $(EXWIN_STUB) $(EXLIB_SRC) \
 	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exhttp -I lib/exhtml -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_SRC) -o $(BUILD_OBJ)/browser_main.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/browser_exwin.o
-	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhttp -I drivers/net -c $(EXHTTP_SRC) -o $(BUILD_OBJ)/browser_exhttp.o
-	$(CC) $(CFLAGS_USER) -I lib/exhttp -c $(EXHTTP_HTTP) -o $(BUILD_OBJ)/browser_http.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhttp -c $(EXHTTP_STUB) -o $(BUILD_OBJ)/browser_stub.o
+	@# ! html.c RESTA COLLEGATO DENTRO, e non e' una dimenticanza: l'utente e'
+	@# uno solo — questo browser — e il criterio vale in tutt'e due i versi.
 	$(CC) $(CFLAGS_USER) -I lib/exhtml -c lib/exhtml/html.c -o $(BUILD_OBJ)/browser_html.o
-	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(DNS_SRC)  -o $(BUILD_OBJ)/browser_dns.o
-	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(RETE_SRC) -o $(BUILD_OBJ)/browser_rete.o
 	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/browser_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(BROWSER_LD) \
 	    $(BUILD_OBJ)/browser_start.o $(BUILD_OBJ)/browser_main.o \
-	    $(BUILD_OBJ)/browser_exwin.o $(BUILD_OBJ)/browser_exhttp.o \
-	    $(BUILD_OBJ)/browser_http.o $(BUILD_OBJ)/browser_html.o \
-	    $(BUILD_OBJ)/browser_dns.o $(BUILD_OBJ)/browser_rete.o \
+	    $(BUILD_OBJ)/browser_exwin.o $(BUILD_OBJ)/browser_stub.o \
+	    $(BUILD_OBJ)/browser_html.o \
 	    $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] browser compilato: $@"
 
@@ -1572,7 +1603,7 @@ browser: dirs $(BROWSER_BIN)
 # dentro: senza, le applicazioni finirebbero sull'immagine e la libreria no —
 # tre programmi che partono e si fermano subito dicendo che non la trovano.
 EXWIN_OUT := $(PM_BIN) $(FILEMGR_BIN) $(EDIT_BIN) $(TERM_BIN) $(FONTPROVA_BIN) \
-             $(OROLOGIO_BIN) $(BROWSER_BIN) \
+             $(OROLOGIO_BIN) $(BROWSER_BIN) $(EXHTTP_SO) \
              $(EXWIN_SO) $(EXDLG_SO) \
              $(EXTTF_SO) \
              $(EXIMG_SO)
@@ -2167,21 +2198,17 @@ EXHTTP_SRC  := lib/exhttp/exhttp.c
 EXHTTP_HTTP := lib/exhttp/http.c
 EXHTTP_HDR  := lib/exhttp/exhttp.h lib/exhttp/http.h
 
-$(SCARICA_BIN): $(SCARICA_SRC) $(SCARICA_LD) $(EXHTTP_SRC) $(EXHTTP_HTTP) \
-                $(EXHTTP_HDR) $(IP_PROTO) $(DNS_SRC) $(DNS_HDR) $(RETE_SRC) \
-                $(RETE_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+$(SCARICA_BIN): $(SCARICA_SRC) $(SCARICA_LD) $(EXHTTP_STUB) $(EXHTTP_HDR) \
+                $(EXLIB_SRC) $(EXLIB_HDR) \
+                $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione /bin/scarica ==="
 	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhttp -I drivers/net -c $(SCARICA_SRC)  -o $(BUILD_OBJ)/scarica_main.o
-	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhttp -I drivers/net -c $(EXHTTP_SRC)   -o $(BUILD_OBJ)/scarica_exhttp.o
-	$(CC) $(CFLAGS_USER) -I lib/exhttp -c $(EXHTTP_HTTP) -o $(BUILD_OBJ)/scarica_http.o
-	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(DNS_SRC)  -o $(BUILD_OBJ)/scarica_dns.o
-	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(RETE_SRC) -o $(BUILD_OBJ)/scarica_rete.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhttp -c $(EXHTTP_STUB) -o $(BUILD_OBJ)/scarica_stub.o
 	$(CC) -m32 -c $(LIBC_START)                        -o $(BUILD_OBJ)/scarica_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(SCARICA_LD) \
 	    $(BUILD_OBJ)/scarica_start.o $(BUILD_OBJ)/scarica_main.o \
-	    $(BUILD_OBJ)/scarica_exhttp.o $(BUILD_OBJ)/scarica_http.o \
-	    $(BUILD_OBJ)/scarica_dns.o $(BUILD_OBJ)/scarica_rete.o \
+	    $(BUILD_OBJ)/scarica_stub.o \
 	    $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] scarica compilato: $@"
 

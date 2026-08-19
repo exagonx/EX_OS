@@ -69,6 +69,127 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### A browser: from the network to the screen
+
+**tested** — `http://www.google.com` returns 200 and 82550 bytes;
+`http://example.com` renders laid out in `/exwin/bin/browser`, with the heading
+in Liberation Sans Bold at 22 and the body in Serif at 15.
+
+| | |
+|---|---|
+| `lib/exhttp/http.c` | HTTP/1.1 without the network: URL, request, headers, chunked body |
+| `lib/exhttp/exhttp.c` | the TCP transport, redirects |
+| `lib/exhtml/html.c` | from text to tree |
+| `bin/scarica` | fetches a page and prints or saves it |
+| `exwin/bin/browser` | address bar, links, scrolling |
+
+! **THE TRANSPORT IS A PARAMETER, NOT SOMETHING KNOWN.** Today TCP sits under
+HTTP; tomorrow, for `https://`, TLS will. If this code opened the connection
+itself, that day it would have to be rewritten — and it would be the second
+time «read the headers, then the body» gets written.
+
+! **`chunked` IS NOT OPTIONAL.** A server that does not know in advance how long
+the answer will be — that is, any page generated on the fly — does not send
+`Content-Length`: it sends chunks. Without unrolling them you would see the
+hexadecimal length numbers in the middle of the text.
+
+! **HTML IS NOT XML**, and that is the whole difficulty: tags stay open, close in
+the wrong order, half of them are missing. `<ul><li>one<li>two` are two
+siblings and not a staircase; `<b><i>x</b>` closes up to the `<b>`; inside
+`<script>` and `<style>` there **is no markup**, or from the JavaScript's first
+`a < b` onwards the tree is garbage.
+
+! **`https://` IS REFUSED, AND SAYS SO.** TLS is missing: speaking plain HTTP to
+port 443 would give an incomprehensible answer and an unrelated error.
+
+What is **not** there, declared: CSS, tables laid out as tables, images inside
+the text, `https`.
+
+
+### Fonts: TrueType, measured against FreeType
+
+**tested** — six Liberation faces at six sizes inside EX-OS, and the rasterizer
+compared pixel by pixel with FreeType over 1460 glyphs: **bounding box
+identical 1460 out of 1460**, mean difference 0.94 levels out of 255.
+
+| | |
+|---|---|
+| `lib/exfont/exfont.c` | the EXFN bitmap format, inside `exwin.so` |
+| `lib/exfont/ttf.c` | the TrueType container |
+| `lib/exfont/raster.c` | outlines → coverage, in 26.6 integers |
+| `exfont.so` | instance, glyph cache, opened on demand |
+
+! **`strlen(s) * 8` IS THE SUM TO REMOVE BEFORE SOMEONE WRITES ANOTHER ONE ON
+TOP OF IT.** It is true only with the system font: a layout engine born on that
+assumption would have to be rewritten the day a proportional font arrives. That
+is why fonts came **before** the browser.
+
+! **THE ARITHMETIC IS INTEGER.** On the declared Pentium 133 floating point is
+slower, but above all every process that touches the FPU pays a state save at
+every switch — and drawing text is what one does continuously.
+
+! **THERE IS NO 64-BIT DIVISION** in an EX-OS library: it links without libgcc,
+so `__divdi3` is not there and the link fails.
+
+! **THE COMPARISON WITH FreeType FOUND A DEFECT NO HYPOTHESIS WOULD HAVE
+FOUND.** On the first pass identical boxes were 95.4%, and the missing ones had
+a shape: at 16 pixels almost every capital came out one pixel shorter. The scale
+truncated instead of rounding — half a sixty-fourth lost that becomes a whole
+pixel.
+
+What is missing, declared: hinting (which is why the interface still uses the
+8x16), kerning, ligatures, basic plane only, CFF refused on purpose.
+
+
+### `rename` replaces the destination, like POSIX
+
+**tested** on ext2, FAT12 and FAT16.
+
+Up to 0.184 `rename()` returned `EEXIST` if the destination existed. It was a
+declared choice, and it did not hold:
+
+! **«DELETE FIRST» IS NOT EQUIVALENT.** There is only one scheme for saving a
+file without risking losing it: write alongside, then **swap**. If the swap does
+not replace, you have to delete first — and between the deletion and the swap
+**the file does not exist**.
+
+! **AND THAT WINDOW CAN ONLY BE CLOSED IN THE KERNEL.** `vfs_rename` holds the
+filesystem lock for the whole operation: no other process sees the intermediate
+state. In user space that guarantee cannot be had.
+
+! **THE REPLACEMENT LIVES IN THE VFS, BEFORE THE DISPATCH**, so it holds for
+ext2, FAT12 and FAT16/32 without any driver reimplementing it. POSIX rules on
+types: a directory only over an empty directory, a file only over a file. And
+`rename("x","x")` does nothing — without that check the replacement would
+**destroy x**.
+
+
+### The taskbar: the clock, and applications that add themselves
+
+**tested** — the clock advances on its own (06:52 → 06:53 in 75 seconds); the
+«Applicazioni...» menu adds, removes and saves on ext2.
+
+! **THREADS DO NOT EXIST IN EX-OS**, and the clock is a separate **process**.
+And even if they existed, here a process is better: a thread inside the program
+manager would share its message queue, so a busy program manager would be a
+stopped clock.
+
+! **`ex_sveglia()` AND `EXM_TEMPO`**: without them an application cannot do
+anything by itself — the message loop sleeps until an event arrives. It costs no
+extra round: the `poll` already has a 200 ms deadline.
+
+! **AUTOSTART IS A DIRECTIVE, NOT A MARK ON THE ENTRY.** One may want a program
+that starts on its own and does **not** appear in the menu — a panel, a clock —
+or an entry that does not start by itself.
+
+! **`ipc_rimetti()`**: the mailbox is one and the consumers are more than one.
+Whoever waits for an answer from the IP stack scans the messages and used to
+**throw away** the others — in a browser those are the user's clicks. Now they
+are put back, and **at the end**: the shelf is served before the kernel queue,
+so putting one back and re-reading immediately would return the same message
+forever.
+
+
 ### The graphical interface: a window server in ring 3
 
 | | |

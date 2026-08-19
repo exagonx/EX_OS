@@ -70,6 +70,127 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### Un browser: dalla rete allo schermo
+
+**testato** — `http://www.google.com` rende 200 e 82550 byte; `http://example.com`
+si vede impaginato in `/exwin/bin/browser`, con il titolo in Liberation Sans
+Bold a 22 e il corpo in Serif a 15.
+
+| | |
+|---|---|
+| `lib/exhttp/http.c` | HTTP/1.1 senza rete: URL, richiesta, intestazioni, corpo «a pezzi» |
+| `lib/exhttp/exhttp.c` | il trasporto TCP, le redirezioni |
+| `lib/exhtml/html.c` | da testo ad albero |
+| `bin/scarica` | prende una pagina e la stampa o la salva |
+| `exwin/bin/browser` | barra dell'indirizzo, collegamenti, scorrimento |
+
+! **IL TRASPORTO È UN PARAMETRO, NON UNA COSA SAPUTA.** Oggi sotto l'HTTP c'è
+il TCP; domani, per `https://`, ci sarà il TLS. Se il codice aprisse la
+connessione da sé, quel giorno andrebbe riscritto — e sarebbe la seconda volta
+che si scrive «leggi le intestazioni, poi il corpo».
+
+! **`chunked` NON È UN OPZIONALE.** Un server che non sa in anticipo quanto
+sarà lunga la risposta — cioè qualunque pagina generata al momento — non manda
+`Content-Length`: manda i pezzi. Senza saperli srotolare si vedrebbero i numeri
+esadecimali della lunghezza in mezzo al testo.
+
+! **L'HTML NON È XML**, ed è tutta la difficoltà: i tag restano aperti, si
+chiudono nell'ordine sbagliato, ne mancano metà. `<ul><li>uno<li>due` sono due
+fratelli e non una scala; `<b><i>x</b>` chiude fino alla `<b>`; dentro
+`<script>` e `<style>` **non c'è markup**, o dal primo `a < b` del JavaScript in
+poi l'albero è spazzatura.
+
+! **`https://` SI RIFIUTA DICENDOLO.** Manca il TLS: parlare HTTP in chiaro alla
+porta 443 darebbe una risposta incomprensibile e un errore che non c'entra
+niente.
+
+Quello che **non** c'è, dichiarato: CSS, tabelle impaginate come tabelle,
+immagini dentro il testo, `https`.
+
+
+### I font: TrueType, misurato contro FreeType
+
+**testato** — sei facce Liberation a sei corpi dentro EX-OS, e il
+rasterizzatore confrontato pixel per pixel con FreeType su 1460 glifi:
+**riquadro identico 1460 su 1460**, differenza media 0,94 livelli su 255.
+
+| | |
+|---|---|
+| `lib/exfont/exfont.c` | il formato bitmap EXFN, dentro `exwin.so` |
+| `lib/exfont/ttf.c` | il contenitore TrueType |
+| `lib/exfont/raster.c` | contorni → copertura, in interi 26.6 |
+| `exfont.so` | istanza, cache dei glifi, aperta a richiesta |
+
+! **`strlen(s) * 8` È IL CONTO DA TOGLIERE PRIMA CHE QUALCUNO NE SCRIVA UN
+ALTRO SOPRA.** È vero solo col font di sistema: un motore d'impaginazione nato
+su quel presupposto andrebbe riscritto il giorno che arriva un font
+proporzionale. Per questo i font sono arrivati **prima** del browser.
+
+! **L'ARITMETICA È INTERA.** Sul Pentium 133 dichiarato la virgola mobile è più
+lenta, ma soprattutto ogni processo che tocca l'FPU paga un salvataggio dello
+stato a ogni cambio — e disegnare testo è ciò che si fa di continuo.
+
+! **NON ESISTE LA DIVISIONE A 64 BIT** in una libreria di EX-OS: si collega
+senza libgcc, quindi `__divdi3` non c'è e il collegamento fallisce.
+
+! **IL CONFRONTO CON FreeType HA TROVATO UN DIFETTO CHE NESSUNA IPOTESI AVREBBE
+TROVATO.** Alla prima passata i riquadri identici erano il 95,4%, e i mancanti
+avevano una forma: a 16 pixel quasi ogni maiuscola veniva alta un pixel meno.
+La scala troncava invece di arrotondare — mezzo sessantaquattresimo perso che
+diventa un pixel intero.
+
+Cosa manca, dichiarato: hinting (per questo l'interfaccia usa ancora l'8x16),
+crenatura, legature, solo il piano base, CFF rifiutato apposta.
+
+
+### `rename` sostituisce la destinazione, come POSIX
+
+**testato** su ext2, FAT12 e FAT16.
+
+Fino alla 0.184 `rename()` rendeva `EEXIST` se la destinazione esisteva. Era una
+scelta dichiarata, e non reggeva:
+
+! **«CANCELLA PRIMA» NON È EQUIVALENTE.** Lo schema con cui si salva un file
+senza rischiare di perderlo è uno solo: scrivi accanto, poi **scambia**. Se lo
+scambio non sostituisce bisogna cancellare prima — e fra la cancellazione e lo
+scambio **il file non esiste**.
+
+! **E QUELLA FINESTRA SI CHIUDE SOLO NEL KERNEL.** `vfs_rename` tiene il
+lucchetto del filesystem per tutta l'operazione: nessun altro processo vede lo
+stato intermedio. In spazio utente quella garanzia non si può avere.
+
+! **LA SOSTITUZIONE STA NEL VFS, PRIMA DELLO SMISTAMENTO**, quindi vale per
+ext2, FAT12 e FAT16/32 senza che nessun driver la reimplementi. Regole POSIX sui
+tipi: directory solo su directory vuota, file solo su file. E
+`rename("x","x")` non fa niente — senza quel controllo la sostituzione
+**distruggerebbe x**.
+
+
+### La barra: l'ora, e le applicazioni che si aggiungono da sole
+
+**testato** — l'orologio avanza da solo (06:52 → 06:53 in 75 secondi); il menu
+«Applicazioni...» aggiunge, toglie e salva su ext2.
+
+! **I THREAD IN EX-OS NON ESISTONO**, e l'orologio è un **processo** a parte. E
+anche se ci fossero, qui un processo è meglio: un thread dentro il program
+manager ne condividerebbe la coda dei messaggi, quindi un program manager
+occupato sarebbe un orologio fermo.
+
+! **`ex_sveglia()` ED `EXM_TEMPO`**: senza, un'applicazione non può fare niente
+da sé — il ciclo dei messaggi dorme finché non arriva un evento. Non costa un
+giro in più: il `poll` ha già una scadenza di 200 ms.
+
+! **L'AVVIO AUTOMATICO È UNA DIRETTIVA, NON UN SEGNO SULLA VOCE.** Si può volere
+un programma che parte da solo e **non** compare nel menu — un pannello, un
+orologio — oppure una voce che non parte da sola.
+
+! **`ipc_rimetti()`**: la mailbox è una sola e i consumatori sono più d'uno. Chi
+aspetta una risposta dello stack IP scorre i messaggi e prima li **buttava** —
+in un browser sono i clic dell'utente. Ora si rimettono a posto, e **alla
+fine**: lo scaffale si serve prima della coda del kernel, quindi rimettere e
+rileggere subito renderebbe lo stesso messaggio all'infinito.
+
+
 ### L'interfaccia grafica: un server a finestre in ring 3
 
 | | |

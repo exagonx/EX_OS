@@ -12,8 +12,7 @@ seriale e USB — tastiera compresa, hub compresi.
 
 ## COSA E' COMMITTATO
 
-    d316875  "Il TrueType arriva sullo schermo: rasterizzatore, cache,
-              e la fusione col fondo"
+    c206fb2  "I due README imparano gli ultimi sei commit"
 
 L'albero e' **pulito**: non c'e' niente in attesa.
 
@@ -50,12 +49,23 @@ modali, il ridimensionamento, SSH, TSC e PSE.
     800x600 costa 0-20 ms**, quindi sotto QEMU non e' un'urgenza — ma il server
     ridisegna tutto lo schermo per ogni movimento del puntatore, e sul Pentium
     133 dichiarato quel numero non sara' 20 ms. E' la struttura piu' facile da
-    sbagliare di un server grafico.
+    sbagliare di un server grafico. **E dal 19 agosto pesa di piu'**: la
+    fusione del testo antialiasato LEGGE e riscrive i pixel, quindi un
+    ridisegno completo costa piu' di prima.
  4. **L'annullamento nell'editor** — un taglio sbagliato non si rimette a
     posto. E' quello che manca di piu' ora che c'e' un «Taglia».
  5. **`ls -l`** — non c'e'. La libc sa gia' dire proprietario, permessi e
     misura: manca l'impaginazione.
- 6. **`-i` ai quattro driver che ancora non ce l'hanno** — `floppy`,
+ 6. **`exhttp` e `exhtml` come librerie condivise** — il criterio e' sempre
+    stato «una .so conviene quando gli utenti sono DUE», e adesso lo sono:
+    `scarica` e `browser` si portano ciascuno la propria copia di `http.c` e
+    `exhttp.c`. L'indirizzo 0x05400000 e' riservato e la divisione del codice
+    e' gia' quella giusta — http.c non tocca la rete, exhttp.c non conosce il
+    trasporto — quindi e' una regola di Makefile, non una riscrittura.
+ 7. **Le immagini nel browser** — `eximg` legge gia' PNG, JPG e ICO: manca
+    scaricare gli `<img src>` e collocarli. E' la cosa che si VEDE, e usa un
+    pezzo gia' pronto e provato.
+ 8. **`-i` ai quattro driver che ancora non ce l'hanno** — `floppy`,
     `mouseser`, `uhci`, `vgaprova`. Gli altri nove ce l'hanno tutti (`pci`,
     `svga`, `kbd`, `xhci` e i cinque del CD); `tty` era in questo elenco per
     sbaglio, non e' un `.drv` ma un pezzo compilato dentro il kernel. Oggi non
@@ -138,6 +148,113 @@ aspetta il timeout del socket. Ci sono volute due ore per scoprirlo, e nel
 frattempo sembrava un difetto del sistema provato.
 
 ---
+
+# IL BROWSER, E LA STRADA PER ARRIVARCI — 19 agosto 2026
+
+Sette commit, da 601c88e a c206fb2, che sono un arco solo: l'orologio, l'HTTP,
+`ipc_rimetti`, il browser, il `rename` allineato, i README. Qui c'e' solo cio'
+che non si ricava leggendo il codice.
+
+## L'ordine non era negoziabile, e la ragione e' una sola
+
+! **`strlen(s) * 8` E' IL CONTO DA TOGLIERE PRIMA CHE QUALCUNO NE SCRIVA UN
+ALTRO SOPRA.** I font sono venuti prima del browser per questo: un motore
+d'impaginazione nato su quel presupposto andrebbe riscritto il giorno che si
+sceglie un proporzionale — cioe' subito. Nel browser l'impaginazione chiama
+`ex_larghezza_testo`, e funziona identica col bitmap e col TrueType.
+
+! **E `ipc_rimetti` E' VENUTO PRIMA DEL BROWSER PER LA STESSA FORMA DI
+RAGIONE.** La mailbox e' una sola per processo: chi aspetta una risposta dello
+stack IP scorre i messaggi, e prima BUTTAVA quelli degli altri. In un comando
+di console non si nota; in una finestra quei messaggi sono i clic dell'utente.
+
+## Le trappole, che sono la parte che vale
+
+! **`Monitor.drain()` DI qemu_drive COSTA DUE SECONDI A COMANDO**, e non per il
+`settle`: legge dal socket del monitor finche' non va in timeout, e il timeout
+e' di due secondi. Un doppio clic mandato come quattro `mon:` separati arriva a
+quattro secondi di distanza — cioe' non e' un doppio clic, qualunque soglia si
+scelga. Due ore per scoprirlo, e nel frattempo sembrava un difetto del sistema
+provato. Rimedio: piu' comandi dentro un `mon:` solo, separati da «;».
+
+! **`timeout_ms == 0` VUOL DIRE ATTESA SENZA SCADENZA**, non «non aspettare» —
+lo dice libc.h. Scritto zero credendo il contrario, la funzione che svuota la
+posta si e' piantata per sempre alla prima mailbox vuota. Il sintomo era
+«scarica non risponde piu'».
+
+! **UN SISTEMA INSTALLATO NON ARRIVA MAI AL PROMPT DELLA SHELL**: si ferma su
+«nome utente:» finche' non si e' creato il primo utente. `qemu_drive`
+aspettava i marcatori d'avvio, rinunciava dopo novanta secondi e non mandava
+MAI i comandi — e il sintomo era «la macchina non risponde». Adesso c'e'
+`EXOS_MARCA` per scegliere la riga da aspettare. Senza quella riga la prova del
+salvataggio su ext2 non si poteva fare.
+
+! **LO SCAFFALE DI `ipc_rimetti` SI SERVE PRIMA DELLA CODA DEL KERNEL**, quindi
+rimettere un messaggio e rileggere subito rende lo STESSO messaggio
+all'infinito. Cio' che non e' nostro si mette da parte e si restituisce alla
+FINE, nell'ordine di arrivo. E cio' che viene dallo stack ma non e' il tipo
+atteso si butta lo stesso: e' una risposta vecchia alla nostra domanda, e
+rimetterla vorrebbe dire ritrovarsela davanti alla prossima.
+
+## Il pcap che ha chiuso una caccia sbagliata
+
+Il sintomo: la redirezione rendeva «non riesco a connettermi (-104)», cioe'
+ECONNRESET. Ho incolpato prima un messaggio rimasto in mailbox, poi una corsa
+nella chiusura: **sbagliate tutt'e due**.
+
+Trenta secondi di cattura, e il pacchetto 18 diceva tutto: il SYN se ne andava
+a `10.0.2.2:80` invece che a `:8099`. Ricostruendo l'indirizzo assoluto da una
+`Location` relativa mettevo host e percorso e **non la porta**.
+
+! **LA LEZIONE NON E' SUL BUG, E' SUL METODO.** Due ipotesi ragionevoli e
+sbagliate contro trenta secondi di misura. Lo stesso e' successo col
+salvataggio: «non salvato» non diceva niente finche' non ho fatto stampare
+QUALE passo fallisce e con quale errno — «non rinomino (17)», e da li' e' stato
+immediato.
+
+## `rename` e la finestra che solo il kernel puo' chiudere
+
+! **«CANCELLA PRIMA» NON E' EQUIVALENTE A UNO SCAMBIO CHE SOSTITUISCE.** Lo
+schema per salvare senza rischiare di perdere e' uno solo: scrivi accanto, poi
+scambia. Se lo scambio non sostituisce bisogna cancellare prima, e fra le due
+cose il file NON ESISTE. `vfs_rename` tiene il lucchetto del filesystem per
+tutta l'operazione: in spazio utente quella garanzia non si puo' avere.
+
+! **E LA SOSTITUZIONE STA NEL VFS, PRIMA DELLO SMISTAMENTO**, quindi vale per
+ext2, FAT12 e FAT16/32 senza che nessun driver la reimplementi. Su questo mi
+ero sbagliato dicendo che fat12 teneva il comportamento vecchio: avevo guardato
+lo smistamento e non dove stava il blocco. Provato su tutt'e tre.
+
+## Come si prova la catena della rete
+
+    EXOS_QEMU_EXTRA="-netdev user,id=n1 -device ne2k_pci,netdev=n1" \
+    EXOS_NO_FLOPPY=1 EXOS_CDROM=dist/exos.iso \
+    python3 tools/qemu_drive.py "netdetect -c@12" "scarica http://example.com@25"
+
+    cc -o /tmp/httpprova tools/prove/httpprova.c lib/exhttp/http.c -I lib/exhttp
+    cc -o /tmp/htmlprova tools/prove/htmlprova.c lib/exhtml/html.c -I lib/exhtml
+
+39 casi per l'HTTP, 30 per l'HTML, tutti sull'host e tutti contro casi scritti
+a mano — perche' i difetti che contano stanno nei documenti MALFATTI, e quelli
+si scrivono, non si trovano.
+
+## Il giro completo per provare su un disco installato
+
+Serve quando cio' che si prova ha bisogno di un filesystem SCRIVIBILE: da CD
+non c'e' niente di scrivibile, e il floppy e' FAT dove i nomi lunghi sono in
+sola lettura.
+
+    dd if=/dev/zero of=/tmp/exos/hd.img bs=1M count=64
+    fdisk hd0 -> n, Invio, Invio, Invio, 83, w, «si», q
+    mkfs -t ext2 -L SISTEMA hd0p1 -> «si»
+    mount hd0p1 /disco        (il punto di montaggio NON deve esistere)
+    install -t /disco
+    poi si avvia dal disco con EXOS_MARCA="utente:"
+
+! **LE CONFERME VOGLIONO LA PAROLA `si` INTERA**, non «s». E il kernel sul
+disco e' quello installato: cambiando il kernel bisogna RIFARE `install`, non
+basta copiare i binari.
+
 
 # I FONT: DAL BITMAP AL TRUETYPE — 19 agosto 2026
 
