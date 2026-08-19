@@ -135,7 +135,7 @@ BUILD_BIN_CD  := $(BUILD_DIR)/bin-cd
 # kernel (kernel/block/atapi.c, kernel/fs/iso9660.c), perche' il kernel
 # deve poterci montare la radice prima che esista un processo.
 # =============================================================================
-PROGRAMMI_FLOPPY := shell hello id chmod ls mem stack disk libctest fdisk mkfs trunc chkdsk rename rm_prog mv_prog uname_prog mount_prog cp_prog install_prog textline gfedit mkdir_prog rmdir_prog delete_prog hwconfig hwinfo cmp_prog shmtest polltest toolinst login help_prog keymap libc testo mouse_prog floppy_drv kbd_drv svga_drv vgaprova_drv \
+PROGRAMMI_FLOPPY := shell hello id chmod ls mem stack disk libctest fdisk mkfs trunc chkdsk rename rm_prog mv_prog uname_prog mount_prog cp_prog install_prog textline gfedit mkdir_prog rmdir_prog delete_prog hwconfig hwinfo cmp_prog shmtest polltest toolinst login sudo help_prog keymap libc testo mouse_prog floppy_drv kbd_drv svga_drv vgaprova_drv \
                     pci_drv mouseser_drv uhci_drv xhci_drv
 
 # =============================================================================
@@ -777,6 +777,30 @@ toolinst: dirs $(TOOLINST_BIN)
 # --- /bin/login: chiede chi sei e lancia la shell -----------------------------
 # Sistema di base: senza, una macchina con l'autenticazione accesa non si
 # avvia. Va quindi sul floppy insieme alla shell.
+# --- /bin/sudo: fare una cosa da root avendone il diritto --------------------
+#
+# ! NON HA NESSUN PRIVILEGIO, e non deve averne: la porta non e' in questo
+# programma, e' nel kernel (SYS_SU). Sostituire questo file non fa guadagnare
+# niente a nessuno.
+SU_SRC := bin/sudo/sudo.c
+SU_LD  := bin/sudo/sudo.ld
+SU_BIN := $(BUILD_BIN)/sudo
+
+$(SU_BIN): $(SU_SRC) $(EXUSER_SRC) $(EXUSER_HDR) $(SU_LD) \
+           $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/sudo ==="
+	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exuser -I drivers/kbd -c $(SU_SRC) -o $(BUILD_OBJ)/sudo_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exuser -I drivers/kbd -c $(EXUSER_SRC) -o $(BUILD_OBJ)/sudo_user.o
+	$(CC) -m32 -c $(LIBC_START) -o $(BUILD_OBJ)/sudo_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(SU_LD) \
+	    $(BUILD_OBJ)/sudo_start.o $(BUILD_OBJ)/sudo_main.o \
+	    $(BUILD_OBJ)/sudo_user.o $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] sudo compilato: $@"
+
+.PHONY: sudo
+sudo: dirs $(SU_BIN)
+
 LOGIN_SRC := bin/login/login.c
 LOGIN_BIN := $(BUILD_BIN)/login
 LOGIN_LD  := bin/login/login.ld
@@ -2961,6 +2985,7 @@ KERNEL_C_SRC   := $(KERNEL_DIR)/arch/x86/gdt.c \
                   $(KERNEL_DIR)/block/vol.c \
                   $(KERNEL_DIR)/block/blk.c \
                   $(KERNEL_DIR)/fs/cfg.c \
+                  $(KERNEL_DIR)/crypto/sha256.c \
                   $(KERNEL_DIR)/loader/elf.c \
                   $(KERNEL_DIR)/loader/lib.c \
                   $(KERNEL_DIR)/loader/dynlink.c \
@@ -3084,7 +3109,7 @@ PROGRAMMI_FLOPPY_OUT := $(SHELL_BIN) $(HELLO_BIN) $(LS_BIN) $(MEM_BIN) \
                         $(CP_BIN) $(INSTALL_BIN) $(TEXTLINE_BIN) $(GFEDIT_BIN) \
                         $(MKDIR_BIN) $(RMDIR_BIN) $(DELETE_BIN) $(HWCONFIG_BIN) \
                         $(HWINFO_BIN) $(CMP_BIN) $(SHMTEST_BIN) $(POLLTEST_BIN) \
-                        $(TOOLINST_BIN) $(LOGIN_BIN) $(HELP_BIN) $(KEYMAP_BIN) \
+                        $(TOOLINST_BIN) $(LOGIN_BIN) $(SU_BIN) $(HELP_BIN) $(KEYMAP_BIN) \
                         $(TESTO_BIN) $(MOUSE_BIN) $(ID_BIN) $(BUILD_BIN)/whoami $(PERM_BIN) $(BUILD_BIN)/chown $(LIBC_SO) \
                         $(FLOPPY_DRV_OUT) $(KBD_DRV_OUT) $(SVGA_DRV_OUT) \
                         $(VGAPROVA_OUT) $(PCI_DRV_OUT) $(MOUSESER_OUT) \

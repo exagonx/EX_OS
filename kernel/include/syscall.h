@@ -94,7 +94,7 @@
  * cioe' sopra qualunque cosa il compilatore avesse messo dopo. Il sintomo era
  * «video_info non risponde», che non somiglia per niente a una scrittura fuori
  * limite. Chi aggiunge una syscall aggiorna anche questo. */
-#define SYSCALL_COUNT   254     /* la piu' alta e' SYS_STATPERM = 253 */
+#define SYSCALL_COUNT   255     /* la piu' alta e' SYS_SU = 254 */
 
 /* =============================================================================
  * Codici errno
@@ -606,6 +606,30 @@ typedef struct {
     uint16_t gid;
 } StatPerm;
 
+/* =============================================================================
+ * SYS_SU (254) — diventare root provando di sapere una password
+ *
+ * ! E' UNA CAPACITA' STRETTA, NON UNA LARGA, ed e' lo stesso principio con cui
+ * `fb_map` ha sostituito `mmio_map`. L'alternativa classica — il bit setuid sui
+ * file — renderebbe pericoloso OGNI eseguibile che lo porta, e su un sistema
+ * senza NX e senza modo di controllarli tutti sarebbe una porta che non si
+ * richiude. Qui c'e' un solo modo di diventare root: sapere una password.
+ *
+ * ! LA VERIFICA STA NEL KERNEL PERCHE' DEVE STARCI. /boot/ombra e' 0600: un
+ * processo di un utente normale non puo' leggerlo, ed e' esattamente il punto.
+ * Se controllasse `su` bisognerebbe consegnargli qualcosa di quel file, e
+ * allora il file potrebbe anche essere pubblico.
+ *
+ * ! LA REGOLA E' UNA SOLA: DIMOSTRA DI ESSERE X, E SE X PUO' FARE ROOT LO
+ * DIVENTI. X puo' fare root se e' uid 0, oppure se il suo nome sta in
+ * /boot/amministratori. Cosi' «entro come root con la sua password» e «sono un
+ * amministratore e uso la MIA» sono lo stesso meccanismo con due dati diversi,
+ * invece che due strade da tenere d'accordo.
+ *
+ * ebx = nome, ecx = password. Rende 0, oppure -EPERM.
+ * ============================================================================= */
+#define SYS_SU            254
+
 /* La mailbox IPC come sorgente. MAX_FD e' il primo numero che un descrittore
  * vero non puo' avere: vedi sched.h. */
 #define FD_IPC            32
@@ -1106,6 +1130,7 @@ int32_t sys_interrompi(InterruptFrame *f);
 int32_t sys_pty_apri(InterruptFrame *f);
 int32_t sys_pty_ctl(InterruptFrame *f);
 int32_t sys_statperm(InterruptFrame *f);
+int32_t sys_su(InterruptFrame *f);
 int32_t sys_fb_map(InterruptFrame *f);
 int32_t sys_getuid(InterruptFrame *f);
 int32_t sys_setuid(InterruptFrame *f);

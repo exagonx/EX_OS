@@ -1,4 +1,4 @@
-# DOVE RIPRENDERE — 19 agosto 2026
+# DOVE RIPRENDERE — 20 agosto 2026
 
 ## Lo stato in una riga
 
@@ -12,11 +12,12 @@ seriale e USB — tastiera compresa, hub compresi.
 
 ## COSA E' COMMITTATO
 
-    e53ee76  "Una console che non si apre dice perche', e la coda torna a
-              essere una coda"
+    526f62b  "Recovery come root, i due conti li crea l'installatore, e il
+              kernel parla ASCII"
 
-In attesa nell'albero: **il recovery come root**, **i due conti creati
-dall'installatore**, `lib/exuser`, e tutte le stringhe del kernel rese ASCII.
+In attesa nell'albero: **`sudo`**, la syscall `SYS_SU` con **SHA-256 dentro il
+kernel**, `vfs_open_autorita()`, `statperm()`, e la domanda
+sull'amministratore nell'installatore.
 
 ! **`gitupdate.sh` FA `git add .` E UN COMMIT SOLO**: `messaggio-commit.txt`
 deve coprire tutto quello che si e' fatto dall'ultimo commit, non l'ultima
@@ -148,18 +149,12 @@ puntatore — vedi la sua sezione).
     ! **IL PREREQUISITO SCRITTO IN QUESTA VOCE — «accorgersi che manca» — E'
     FATTO**, e ha trovato dell'altro: vedi la sezione sulla console che non si
     apre.
- 2. **`su`** — da quando l'installatore crea un utente normale, serve un modo
-    di alzarsi a root conoscendo la password. **Il meccanismo non c'e':**
-    `setuid` e' riservato a root e SOLO per scendere, e non esiste il bit
-    setuid sui file (vedi `sys_setuid`).
-
-    ! **LA STRADA SCELTA E' UNA CAPACITA' STRETTA, NON UNA LARGA**, che e' lo
-    stesso principio con cui `fb_map` ha sostituito `mmio_map`: una chiamata
-    che dice «diventa root SE sai la password di root», e non il bit setuid
-    sui file — quello renderebbe pericoloso ogni eseguibile che lo porta, e
-    non c'e' modo di controllarli tutti. Costa uno SHA-256 dentro il kernel,
-    che oggi non c'e': ~130 righe, verificabili contro gli stessi vettori
-    degli RFC che usa gia' `crypttest`.
+ 2. ~~**`su`**~~ — **FATTO il 20 agosto, e si chiama `sudo`.** La strada e'
+    stata esattamente quella che questa voce prevedeva: capacita' stretta
+    (`SYS_SU`), SHA-256 dentro il kernel, nessun bit setuid sui file. Vedi la
+    sezione «`sudo` ESEGUE UN COMANDO» piu' sotto — dove c'e' anche l'unica
+    cosa che questa voce non aveva previsto, cioe' che il kernel non poteva
+    leggere `/boot/ombra`.
 
  3. **Risolvere per hash invece che per nome** — altri ~3 KB per programma, col
     generatore che verifica a costruzione che non ci siano collisioni.
@@ -901,10 +896,104 @@ disco e accesso come utente normale — `uid=1000(graziano)`, casa
 `/home/graziano` di sua proprieta', e nessuna richiesta di «primo utente»
 perche' l'archivio c'e' gia'.
 
-! **MANCA `su`**, ed e' la conseguenza diretta: da adesso si lavora da utente
-normale, quindi serve un modo di alzarsi a root conoscendo la password. Vedi la
-voce nella coda. Nel frattempo root si raggiunge con `exit` e un accesso nuovo:
-`login` e' un ciclo, quindi il prompt torna.
+### `sudo` ESEGUE UN COMANDO — e la shell si chiede a parte
+
+Conseguenza diretta dei due conti: da adesso si lavora da utente normale, e
+serve un modo di alzarsi a root conoscendo la password.
+
+    sudo <comando> [argomenti]   esegue quel comando come root
+    sudo -s                      apre una shell di root
+    sudo                         non fa niente e spiega
+
+! **ESEGUIRE UN COMANDO E APRIRE UNA SHELL NON SONO LA STESSA COSA DETTA IN DUE
+MODI**, ed e' il motivo per cui la forma senza argomenti non apre piu' niente.
+Con `sudo comando` i poteri durano quanto il comando e finiscono da soli; con
+una shell durano finche' qualcuno si ricorda di uscire. La seconda si ottiene
+— `-s` — ma bisogna CHIEDERLA. Dare la piu' pericolosa delle due a chi ha
+battuto `sudo` e invio sarebbe il verso sbagliato.
+
+! **CHIEDE LA TUA PASSWORD SE SEI AMMINISTRATORE, QUELLA DI root SE NON LO
+SEI.** L'elenco e' `/boot/amministratori`, un nome per riga, 0644, scritto
+dall'installatore che a fine installazione chiede se il conto principale deve
+poterlo fare. Chi non e' in elenco non e' tagliato fuori: deve pero' sapere la
+password di root, che e' un'altra cosa dal saper la propria.
+
+! **IL PROGRAMMA `sudo` NON HA NESSUN POTERE**, e questa e' la parte che tiene
+in piedi tutto il resto. Non e' setuid — il bit setuid sui file non esiste in
+EX-OS, di proposito — e non decide niente: legge una password, la passa a
+`SYS_SU` (254) e il KERNEL decide. Un `sudo` sostituito con un programma
+qualunque non e' un'escalation, e' un programma qualunque.
+
+! **E LA PASSWORD SI CANCELLA DAL BUFFER SUBITO DOPO L'USO**, prima dello
+`spawn`. Il figlio eredita la memoria del padre solo se qualcuno gliela mette
+in mano, ma un buffer che resta pieno e' un buffer che finisce in un dump.
+
+#### Il difetto che e' saltato fuori: il kernel non poteva leggere `/boot/ombra`
+
+`sudo` con la password GIUSTA rispondeva «non se ne fa niente». La spia messa
+sui punti di uscita di `sys_su` ha detto tutto in tre righe: `/boot/utenti`
+letto (28 byte), `/boot/ombra` **-1**.
+
+! **E IL PERMESSO STAVA FACENDO IL SUO LAVORO.** `/boot/ombra` e' 0600 di
+root, e DEVE restarlo — se fosse leggibile chiunque si porterebbe via le
+impronte e le proverebbe con comodo su un'altra macchina. Ma `sys_su` gira nel
+processo di CHI CHIAMA, uid 1000: il VFS guardava le credenziali del processo,
+non di chi stava davvero leggendo, e diceva no. E' lo stesso identico motivo
+per cui su Unix `su` e' setuid root.
+
+La riparazione e' `vfs_open_autorita()`, in `kernel/fs/vfs.c`: lo stesso
+`apri_nl()` con in piu' un parametro `autorita` che salta il controllo dei
+permessi.
+
+! **NON E' UN BIT DENTRO `flags`, ED E' UNA DIFFERENZA DI SOSTANZA.** Un flag
+arriverebbe da `sys_open`, cioe' da un numero scelto dall'utente: basterebbe
+indovinarlo per leggersi le password. Cosi' invece l'unico modo di ottenere
+l'autorita' e' chiamare un simbolo C che nessuna syscall espone.
+
+! **E NON E' UNO STATO GLOBALE**, che era la prima idea e sarebbe stata la
+peggiore. Una variabile «adesso il kernel ha i poteri» accesa attorno alla
+lettura varrebbe per TUTTI i processi finche' e' accesa, e il VFS qui dentro
+riscadenza — i driver stanno in ring 3, una lettura e' un IPC. Un altro
+processo che entrasse in quella finestra si troverebbe root senza averlo mai
+chiesto. Il permesso viaggia come argomento e finisce con la chiamata.
+
+! **IL CONTROLLO SI FA UNA VOLTA SOLA, ALL'APERTURA.** `vfs_read` non
+ricontrolla — regola di Unix — quindi l'autorita' serve solo attorno a
+`vfs_open` e non attorno alla lettura.
+
+#### L'ambiente del figlio dice root
+
+`id` avvisava: «$USER dice 'graziano', il kernel dice 'root'». Adesso `sudo`
+costruisce l'ambiente del figlio con `spawn_ex`, riscrivendo `USER` e
+`LOGNAME`.
+
+! **`HOME` SI CAMBIA SOLO CON `-s`.** `sudo un-comando` deve poter lavorare sui
+file di chi lo chiama — e' quasi sempre il motivo per cui lo si chiama —
+mentre con `-s` si e' chiesto proprio di andare dall'altra parte. E non e'
+pedanteria: un programma che si fida di `$HOME` scriverebbe i file di root
+dentro la casa dell'utente, di proprieta' di root, e da domani quello non puo'
+piu' cancellarseli.
+
+#### Provato, tutti e cinque i casi
+
+Installazione da zero su ext2 con `graziano` amministratore, poi avvio dal
+disco e accesso come `graziano`:
+
+- `sudo` da solo — stampa l'uso e non apre niente;
+- `sudo id` con la password di graziano — `uid=0(root) gid=0`, e `id` non
+  avvisa piu' di nessuna discordanza;
+- `sudo id` con una password sbagliata — rifiutato;
+- `sudo -s`, poi `id` (root), poi `exit` e di nuovo `id` — `uid=1000`: i
+  poteri finiscono davvero;
+- `trunc /boot/amministratori 0` per togliersi dall'elenco, poi `sudo id` —
+  chiede la password di **root**, rifiuta quella di graziano (e il kernel
+  registra «PID 12 (uid 1000) ha sbagliato la password di 'root'»), accetta
+  quella di root.
+
+! **UNA COSA CHE E' COSTATA MEZZ'ORA DUE VOLTE: `cp /boot/kernel.bin` SUL
+DISCO MONTATO NON BASTAVA.** Il kernel nuovo non partiva e le prove giravano
+su quello vecchio, con i sintomi identici a un difetto non riparato. Il modo
+che funziona e' `install -a /disco` dal CD.
 
 ### TUTTE LE STRINGHE DEL KERNEL SONO ASCII
 
@@ -933,7 +1022,7 @@ resto e' andato storto.
   gli utenti ci sono gia': riusa `primo_utente()` con il suo cartello del primo
   avvio. Il messaggio e' falso, il comportamento e' giusto.
 
-## COME SI PROVA QUELLO CHE C'E' (aggiornato il 19 agosto 2026)
+## COME SI PROVA QUELLO CHE C'E' (aggiornato il 20 agosto 2026)
 
     make -j2 all && make iso-exos
     python3 tools/qemu_drive.py "libctest@260"     316 prove, e ci sono dentro
@@ -953,6 +1042,17 @@ resto e' andato storto.
                                                    manager e nel dialogo Apri
     /exwin/bin/fontprova                           sei facce TrueType a sei
                                                    corpi, dentro EX-OS
+
+Per i conti e `sudo` serve un disco installato, quindi ext2 e non il floppy:
+
+    dd if=/dev/zero of=/tmp/exos/hd.img bs=1M count=64
+    DISCO="-drive file=/tmp/exos/hd.img,format=raw,if=ide,index=0"
+    EXOS_QEMU_EXTRA="$DISCO" EXOS_NO_FLOPPY=1 EXOS_CDROM=dist/exos.iso \
+      python3 tools/qemu_drive.py "fdisk hd0@6" ... "install -t /disco@330" ...
+
+! **PER RIPROVARE CON UN KERNEL NUOVO SU QUEL DISCO SI USA `install -a
+/disco`**, non `cp /boot/kernel.bin`: la copia non fa ripartire il kernel
+nuovo, e le prove girano su quello vecchio senza dirlo.
     python3 tools/righe_lista.py f.ppm X Y W N     quante righe ha una lista e
                                                    quale e' scelta, contando
                                                    l'inchiostro

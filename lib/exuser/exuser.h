@@ -13,7 +13,7 @@
  *
  * ! ADESSO GLI UTENTI SONO TRE, ed e' la condizione che questo sistema chiede
  * prima di condividere qualcosa: `login` che autentica, `install` che crea il
- * primo utente e la password di root, e `su` che verifica per alzarsi. Tutto
+ * primo utente e la password di root, e `sudo` che verifica per alzarsi. Tutto
  * questo codice stava dentro login.c, dove era giusto finche' a usarlo c'era
  * solo lui.
  *
@@ -96,6 +96,25 @@ int  exuser_aggiungi(const char *radice, const char *nome, const char *pass,
  * sta provando i nomi. */
 int  exuser_verifica(const char *radice, const char *nome, const char *pass,
                      unsigned int *uid, unsigned int *gid);
+
+/* -----------------------------------------------------------------------------
+ * Gli amministratori
+ *
+ * ! «PRIVILEGI PARI A root» SI DA' CON UN ELENCO, NON CON UN SECONDO uid 0.
+ * Un altro conto con uid 0 sarebbe root a tutti gli effetti — stesso potere,
+ * stesso numero — e da quel momento nessuno saprebbe piu' dire CHI ha fatto
+ * cosa: nei file, nei log, dappertutto ci sarebbe scritto «0». Un elenco
+ * invece si legge, si toglie una riga, e chi si alza resta se stesso finche'
+ * non chiede.
+ *
+ *     /boot/amministratori    un nome per riga, 0644
+ *
+ * ! IL FILE E' PUBBLICO APPOSTA: sapere CHI puo' diventare root non aiuta a
+ * diventarlo — per quello serve la password — e serve invece a chi amministra
+ * la macchina per sapere a chi ha dato le chiavi.
+ * --------------------------------------------------------------------------- */
+int  exuser_e_amministratore(const char *radice, const char *nome);
+int  exuser_amministratore_aggiungi(const char *radice, const char *nome);
 
 #ifdef __cplusplus
 }

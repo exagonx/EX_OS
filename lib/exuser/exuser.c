@@ -457,6 +457,47 @@ int exuser_aggiungi(const char *radice, const char *nome, const char *pass,
     return aggiungi_utente(radice, nome, pass, uid, gid);
 }
 
+int exuser_e_amministratore(const char *radice, const char *nome)
+{
+    static char testo[2048];
+    char pa[96];
+    int  fd, n, i = 0;
+
+    fd = open(perc(radice, "amministratori", pa, sizeof(pa)), O_RDONLY);
+    if (fd < 0) return 0;
+    n = (int)read(fd, testo, sizeof(testo) - 1);
+    close(fd);
+    if (n < 0) n = 0;
+    testo[n] = '\0';
+
+    while (i < n) {
+        int p = i, l, k;
+
+        while (i < n && testo[i] != '\n') i++;
+        l = i - p;
+        if (i < n) i++;
+        while (l > 0 && (testo[p+l-1] == '\r' || testo[p+l-1] == ' ')) l--;
+        if (l <= 0 || testo[p] == '#') continue;
+
+        for (k = 0; k < l && nome[k]; k++)
+            if (testo[p+k] != nome[k]) break;
+        if (k == l && nome[k] == '\0') return 1;
+    }
+    return 0;
+}
+
+int exuser_amministratore_aggiungi(const char *radice, const char *nome)
+{
+    char pa[96], riga[EXUSER_NOME_MAX + 2];
+
+    if (!exuser_nome_valido(nome)) return -1;
+    if (exuser_e_amministratore(radice, nome)) return 0;   /* c'e' gia' */
+
+    snprintf(riga, sizeof(riga), "%s\n", nome);
+    return scrivi_riga(perc(radice, "amministratori", pa, sizeof(pa)),
+                       riga, 0644);
+}
+
 int exuser_verifica(const char *radice, const char *nome, const char *pass,
                     unsigned int *uid, unsigned int *gid)
 {

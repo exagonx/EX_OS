@@ -1557,6 +1557,36 @@ int main(int argc, char **argv)
                                h, strerror(errno));
 
                     printf("  + %s (uid 1000), casa in %s\n", nome, h);
+
+                    /* =====================================================
+                     * ! «PRIVILEGI PARI A root» SI DA' CON UN ELENCO, NON CON
+                     * UN SECONDO uid 0. Un altro conto con uid 0 sarebbe root
+                     * a tutti gli effetti — stesso potere, stesso numero — e
+                     * da quel momento nessuno saprebbe piu' dire CHI ha fatto
+                     * cosa: nei file e nei log ci sarebbe scritto «0» e
+                     * basta. Un elenco si legge, si toglie una riga, e chi si
+                     * alza resta se stesso finche' non chiede.
+                     *
+                     * ! E SI CHIEDE, NON SI DA' PER SCONTATO: su una macchina
+                     * di casa la risposta e' quasi sempre si', ma su una
+                     * macchina con piu' persone non lo e', e indovinare
+                     * vorrebbe dire darle a qualcuno senza dirglielo.
+                     * ===================================================== */
+                    if (chiedi("\n  Questo utente puo' fare le cose da root con "
+                               "`sudo`,\n  usando la PROPRIA password? "
+                               "[si/no] ") == 's') {
+                        if (exuser_amministratore_aggiungi(argv[1], nome) == 0)
+                            printf("  + %s e' amministratore\n", nome);
+                        else {
+                            printf("  ! non riesco a scrivere "
+                                   "l'elenco degli amministratori\n");
+                            errori++;
+                        }
+                    } else {
+                        printf("  = %s non e' amministratore: `sudo` gli\n"
+                               "    chiedera' la password di root.\n", nome);
+                    }
+
                     fatto_utente = 1;
                 }
             }

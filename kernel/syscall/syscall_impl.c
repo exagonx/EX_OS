@@ -13,6 +13,7 @@
 #include "idt.h"
 #include "syscall.h"
 #include "entropia.h"
+#include "sha256.h"
 #include "sched.h"
 #include "pmm.h"
 #include "paging.h"
@@ -2786,6 +2787,166 @@ int32_t sys_procinfo(InterruptFrame *frame)
     for (i = 0; i < scritti; i++) user_buf[i] = batch[i];
 
     return (int32_t)scritti;
+}
+
+/* =============================================================================
+ * SYS_SU (254) -- diventare root provando di sapere una password
+ *
+ * Il perche' sta in kernel/include/syscall.h. Qui c'e' solo come si verifica.
+ *
+ * ! IL FORMATO DEI DUE FILE E' RIPETUTO QUI, e non si puo' evitare: lo stesso
+ * codice sta in lib/exuser, ma quello gira in ring 3 e questo no. Le due copie
+ * devono restare d'accordo — nome:uid:gid in /boot/utenti, nome:sale:impronta
+ * in /boot/ombra — e chi cambia il formato deve cambiare tutt'e due.
+ * ============================================================================= */
+#define SU_FILE_MAX   8192
+
+/* Un intero senza segno da una stringa. Il kernel non ha atoi. */
+static uint32_t su_numero(const char *s)
+{
+    uint32_t v = 0;
+
+    while (*s >= '0' && *s <= '9') { v = v * 10u + (uint32_t)(*s - '0'); s++; }
+    return v;
+}
+
+/* Legge un file intero in `buf`. Rende i byte letti, <0 se non si apre. */
+static int32_t su_leggi(const char *percorso, char *buf, uint32_t max)
+{
+    int h = vfs_open_autorita(percorso, 0);
+    int n;
+
+    if (h < 0) return -1;
+    n = vfs_read(h, buf, max - 1, 0);
+    vfs_close(h);
+    if (n < 0) n = 0;
+    buf[n] = '\0';
+    return n;
+}
+
+/* Il campo `quale` (0,1,2) della riga che comincia col nome dato. Rende 1 se
+ * l'ha trovato. */
+static int su_campo(const char *testo, int n, const char *nome, int quale,
+                    char *out, uint32_t max)
+{
+    int i = 0;
+
+    while (i < n) {
+        int p = i, c[3], nc = 0, k, l;
+
+        while (i < n && testo[i] != '\n') i++;
+        l = i - p;
+        if (i < n) i++;
+        if (l <= 0 || testo[p] == '#') continue;
+
+        for (k = 0; k < l && nc < 3; k++)
+            if (testo[p + k] == ':') c[nc++] = k;
+        if (nc < 2) continue;
+
+        /* il nome e' il campo 0 */
+        for (k = 0; k < c[0] && nome[k]; k++)
+            if (testo[p + k] != nome[k]) break;
+        if (k != c[0] || nome[k] != '\0') continue;
+
+        {
+            int da = (quale == 0) ? 0 : c[quale - 1] + 1;
+            int a  = (quale >= nc) ? l : c[quale];
+            uint32_t q = 0;
+
+            if (quale == 0) a = c[0];
+            for (k = da; k < a && q + 1 < max; k++) out[q++] = testo[p + k];
+            out[q] = '\0';
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* 1 se il nome sta in /boot/amministratori, una riga per nome. */
+static int su_amministratore(const char *nome)
+{
+    static char testo[1024];
+    int n = su_leggi("/boot/amministratori", testo, sizeof(testo));
+    int i = 0;
+
+    if (n <= 0) return 0;
+
+    while (i < n) {
+        int p = i, l, k;
+
+        while (i < n && testo[i] != '\n') i++;
+        l = i - p;
+        if (i < n) i++;
+        while (l > 0 && (testo[p + l - 1] == '\r' || testo[p + l - 1] == ' ')) l--;
+        if (l <= 0 || testo[p] == '#') continue;
+
+        for (k = 0; k < l && nome[k]; k++)
+            if (testo[p + k] != nome[k]) break;
+        if (k == l && nome[k] == '\0') return 1;
+    }
+    return 0;
+}
+
+int32_t sys_su(InterruptFrame *frame)
+{
+    const char *nome = (const char *)frame->ebx;
+    const char *pass = (const char *)frame->ecx;
+    Process    *self = proc_get_current();
+
+    static char testo[SU_FILE_MAX];
+    char  sale[32], imp[80], misto[160], prova[65], su_[16], sg_[16];
+    int   n;
+    uint32_t i = 0, j;
+
+    if (self == NULL) return ERR(ESRCH);
+    if (!syscall_verify_str(nome, 64) || !syscall_verify_str(pass, 128))
+        return ERR(EFAULT);
+
+    /* --- chi e' costui: uid e gid dal file pubblico --------------------- */
+    n = su_leggi("/boot/utenti", testo, sizeof(testo));
+    if (n <= 0) return ERR(EPERM);
+    if (!su_campo(testo, n, nome, 1, su_, sizeof(su_)) ||
+        !su_campo(testo, n, nome, 2, sg_, sizeof(sg_))) return ERR(EPERM);
+
+    /* --- l'impronta, dal file che solo il kernel e root leggono --------- */
+    n = su_leggi("/boot/ombra", testo, sizeof(testo));
+    if (n <= 0) return ERR(EPERM);
+    if (!su_campo(testo, n, nome, 1, sale, sizeof(sale)) ||
+        !su_campo(testo, n, nome, 2, imp,  sizeof(imp))) return ERR(EPERM);
+
+    /* L'impronta e' SHA-256 di "sale:password", come la scrive lib/exuser. */
+    for (j = 0; sale[j] && i < sizeof(misto) - 2; j++) misto[i++] = sale[j];
+    misto[i++] = ':';
+    for (j = 0; pass[j] && i < sizeof(misto) - 1; j++) misto[i++] = pass[j];
+    misto[i] = '\0';
+    sha256_esa(misto, i, prova);
+
+    for (j = 0; j < 64; j++)
+        if (prova[j] != imp[j]) {
+            klog(LOG_WARN, "SYSCALL su: PID %u (uid %u) ha sbagliato la "
+                 "password di '%s'", self->pid, self->uid, nome);
+            return ERR(EPERM);
+        }
+
+    /* --- puo' fare root? ------------------------------------------------ */
+    {
+        uint32_t uid = su_numero(su_);
+        uint32_t gid = su_numero(sg_);
+
+        if (uid != 0 && !su_amministratore(nome)) {
+            klog(LOG_WARN, "SYSCALL su: '%s' ha dato la password giusta ma non "
+                 "e' amministratore (PID %u)", nome, self->pid);
+            return ERR(EPERM);
+        }
+
+        self->uid = 0;
+        self->gid = 0;
+        (void)uid; (void)gid;
+
+        klog(LOG_INFO, "SYSCALL su: PID %u e' diventato root provando di essere "
+             "'%s'", self->pid, nome);
+    }
+    return 0;
 }
 
 /* =============================================================================

@@ -153,6 +153,12 @@ const VfsMount *vfs_get(int i);
 
 /* --- operazioni sui percorsi: `abs` e' sempre assoluto e gia' risolto --- */
 int  vfs_open   (const char *abs, uint32_t flags);
+
+/* Aprire SENZA controllo dei permessi, perche' non e' un utente a chiedere ma
+ * il kernel per se'. Un solo uso legittimo: `sys_su` che legge `/boot/ombra`
+ * per verificare una password, file che l'utente non puo' e non deve poter
+ * aprire da solo. Ogni altro uso e' quasi certamente un errore. */
+int  vfs_open_autorita(const char *abs, uint32_t flags);
 int  vfs_read   (int h, void *buf, uint32_t size, uint32_t offset);
 int  vfs_write  (int h, const void *buf, uint32_t size, uint32_t offset);
 int  vfs_close  (int h);

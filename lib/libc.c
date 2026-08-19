@@ -238,6 +238,7 @@ typedef struct {
 #define SYS_PTY_APRI   251
 #define SYS_PTY_CTL    252
 #define SYS_STATPERM   253
+#define SYS_SU         254
 #define SYS_EXEC        11
 #define SYS_MMAP        90
 #define SYS_MUNMAP      91
@@ -4883,6 +4884,12 @@ int statperm(const char *path, StatPerm *p)
 
 /* Il perche' di questa funzione — e perche' sta qui e non dentro /bin/id —
  * e' scritto accanto alla sua dichiarazione in libc.h. */
+/* Il perche' della verifica nel kernel sta accanto alla dichiarazione. */
+int diventa_root(const char *nome, const char *password)
+{
+    return _syscall2(SYS_SU, (uint32_t)nome, (uint32_t)password);
+}
+
 int nome_utente(unsigned int uid, char *out, unsigned int max)
 {
     static char testo[4096];

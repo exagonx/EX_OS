@@ -163,6 +163,7 @@ void syscall_init(void)
     syscall_table[SYS_PTY_APRI]     = sys_pty_apri;
     syscall_table[SYS_PTY_CTL]      = sys_pty_ctl;
     syscall_table[SYS_STATPERM]     = sys_statperm;
+    syscall_table[SYS_SU]           = sys_su;
     syscall_table[SYS_GETUID]       = sys_getuid;
     syscall_table[SYS_SETUID]       = sys_setuid;
     syscall_table[SYS_CHOWN]        = sys_chown;

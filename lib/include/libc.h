@@ -1406,6 +1406,32 @@ int     statperm(const char *path, StatPerm *p);
  * ============================================================================= */
 int     nome_utente(unsigned int uid, char *out, unsigned int max);
 
+/* =============================================================================
+ * diventa_root() — diventare root provando di sapere una password
+ *
+ * ! LA VERIFICA LA FA IL KERNEL, e non e' un giro piu' lungo: /boot/ombra e'
+ * 0600, quindi un processo di un utente normale NON PUO' LEGGERLO — ed e'
+ * esattamente il punto. Se controllasse un programma in spazio utente
+ * bisognerebbe consegnargli qualcosa di quel file, e allora il file potrebbe
+ * anche essere pubblico.
+ *
+ * ! ED E' UNA CAPACITA' STRETTA, NON IL BIT setuid SUI FILE: quello renderebbe
+ * pericoloso ogni eseguibile che lo porta. Qui c'e' un solo modo di diventare
+ * root, e passa da una password.
+ *
+ * La regola: DIMOSTRA DI ESSERE `nome`, e se `nome` puo' fare root lo diventi.
+ * `nome` puo' fare root se ha uid 0, oppure se sta in /boot/amministratori.
+ *
+ * Rende 0 se il processo e' diventato root, -EPERM altrimenti — e non dice
+ * quale delle due cose e' andata storta, perche' la differenza serve solo a
+ * chi sta provando i nomi.
+ * ============================================================================= */
+/* ! IL NOME NON E' `su`, ED E' UN CASO ISTRUTTIVO: `su` in una libreria e' tre
+ * lettere buttate in uno spazio di nomi che tutti condividono, e infatti
+ * bin/mkfs/ext2.c aveva gia' una sua `su`. Il compilatore l'ha detto subito —
+ * ma un nome corto in una libreria condivisa e' una collisione che aspetta. */
+int     diventa_root(const char *nome, const char *password);
+
 /* stat() riempie la struttura POSIX; statraw() da' i campi grezzi del
  * filesystem (attributi FAT, primo cluster, data e ora codificate) a chi
  * ne ha bisogno davvero — mkfs, fdisk, un ls che mostri gli attributi. */

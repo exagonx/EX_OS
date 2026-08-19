@@ -801,7 +801,30 @@ static int permesso_sul_padre(const char *abs, uint32_t voluto)
     return permesso_su(p, voluto);
 }
 
-static int vfs_open_nl(const char *abs, uint32_t flags)
+/* =============================================================================
+ * apri_nl — il vero vfs_open, con in piu' UNA domanda: chi sta chiedendo?
+ *
+ * `autorita` a 1 vuol dire «non lo chiede nessuno, lo legge il kernel per se'»
+ * e salta il controllo dei permessi. Serve a un caso solo: verificare una
+ * password. `/boot/ombra` e' 0600 di root — e DEVE restare tale, o chiunque
+ * potrebbe portarsi via le impronte e provarle con comodo — ma allora la
+ * verifica non puo' avvenire nel processo di chi chiede, che non ha il diritto
+ * di leggerlo. E' lo stesso motivo per cui su Unix `su` e' setuid: il confronto
+ * lo fa qualcuno che il file lo puo' aprire.
+ *
+ * ! NON E' UN FLAG, E' UN'ALTRA FUNZIONE, e la differenza e' tutto. Un bit
+ * dentro `flags` arriverebbe da `sys_open`, cioe' da un numero scelto
+ * dall'utente: basterebbe indovinarlo per leggere le password. Cosi' invece
+ * l'unico modo di ottenere l'autorita' e' chiamare un simbolo C che nessuna
+ * syscall espone.
+ *
+ * ! E NON E' UNO STATO GLOBALE. Una variabile «adesso il kernel ha i poteri»
+ * accesa e spenta attorno alla lettura varrebbe per TUTTI i processi finche'
+ * e' accesa, e il VFS qui dentro puo' riscadenzare: un altro processo che
+ * entrasse in quella finestra si troverebbe root senza averlo chiesto. Il
+ * permesso viaggia come argomento, e finisce quando finisce la chiamata.
+ * ============================================================================= */
+static int apri_nl(const char *abs, uint32_t flags, int autorita)
 {
     char interno[VFS_PATH_MAX];
     int  im, slot = -1, i;
@@ -831,11 +854,13 @@ static int vfs_open_nl(const char *abs, uint32_t flags)
     {
         uint32_t voluto = (flags & (O_WRONLY | O_RDWR)) ? P_SCRIVI : P_LEGGI;
 
-        if ((flags & O_CREAT) && !permesso_sul_padre(abs, P_SCRIVI | P_ESEGUI))
-            return ERR(EACCES);
+        if (!autorita) {
+            if ((flags & O_CREAT) && !permesso_sul_padre(abs, P_SCRIVI | P_ESEGUI))
+                return ERR(EACCES);
 
-        if (!permesso_su(abs, voluto))
-            return ERR(EACCES);
+            if (!permesso_su(abs, voluto))
+                return ERR(EACCES);
+        }
     }
 
     for (i = 0; i < VFS_MAX_OPEN; i++) {
@@ -1776,7 +1801,15 @@ int vfs_radice_ext2(void)
 
 int vfs_open(const char *abs, uint32_t flags)
 {
-    int r; fs_prendi_n("open"); r = vfs_open_nl(abs, flags); fs_rilascia(); return r;
+    int r; fs_prendi_n("open"); r = apri_nl(abs, flags, 0); fs_rilascia(); return r;
+}
+
+/* L'apertura senza controllo dei permessi. La usa `sys_su` e nient'altro; se
+ * un giorno la usasse un secondo posto, quel posto va guardato con la stessa
+ * attenzione — qui dentro non c'e' piu' niente che protegga il file. */
+int vfs_open_autorita(const char *abs, uint32_t flags)
+{
+    int r; fs_prendi_n("open"); r = apri_nl(abs, flags, 1); fs_rilascia(); return r;
 }
 
 int vfs_read(int h, void *buf, uint32_t size, uint32_t offset)
