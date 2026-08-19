@@ -12,12 +12,12 @@ seriale e USB — tastiera compresa, hub compresi.
 
 ## COSA E' COMMITTATO
 
-    8d0df68  "La scrivania non butta piu' via l'ambiente, e la cache del
-              browser e' provata"
+    91d6194  "L'installatore non si copia piu' addosso, e la pila grafica
+              non e' dell'utente"
 
-In attesa nell'albero: **l'installatore che copiava la destinazione dentro se
-stessa**, e la prova dell'utente normale sulla pila grafica — che ha trovato
-quello che doveva trovare.
+In attesa nell'albero: **il server a finestre che smette di essere un driver** —
+da `/dev/wserver.drv` a `/exwin/bin/wserver` — cioe' la grafica multiutente che
+era progettata dal 17 agosto e non si poteva raggiungere.
 
 ! **`gitupdate.sh` FA `git add .` E UN COMMIT SOLO**: `messaggio-commit.txt`
 deve coprire tutto quello che si e' fatto dall'ultimo commit, non l'ultima
@@ -364,6 +364,49 @@ coda, e un punto che non esiste.
 Dopo: **zero annidamenti**, e «Installazione completata» senza contatore di
 errori.
 
+### IL SERVER A FINESTRE NON E' UN DRIVER, E ADESSO NON LO SEMBRA PIU'
+
+Il 19 agosto la prova mancante ha dato questo:
+
+    uid=1000(tizio) gid=1000
+    exwin
+    [WARN]  ELF: '/dev/wserver.drv' non eseguibile da questo utente (err=-13)
+
+! **E LA RIPARAZIONE OVVIA ERA QUELLA SBAGLIATA.** Allargare i permessi di
+`wserver.drv` avrebbe dato a chiunque `is_driver`, cioe' `ioport_bind` e
+`dma_alloc`: la capacita' larga al posto di quella stretta, che e' esattamente
+il difetto che il 17 agosto era stato chiuso.
+
+! **IL PUNTO E' CHE QUEL FILE NON AVEVA PIU' MOTIVO DI CHIAMARSI `.drv`.** Si
+chiamava cosi' per una ragione sola — `mmio_map()` e' riservata agli
+eseguibili caricati da un `*.drv` — e dal 17 agosto il framebuffer si mappa con
+`fb_map()`, che non prende argomenti, non da' nessuna porta e **non ha nessuna
+guardia**: e' la capacita' stretta costruita apposta. In `wserver.c` non c'e'
+una sola chiamata a `mmio_map`, `ioport_bind`, `dma_alloc` o `irq_bind`.
+
+Restava solo la confezione: il nome e l'indirizzo di quando serviva. Ed era la
+confezione a tenere la grafica fuori dalla multiutenza — perche' `/dev` e' di
+root, e il nome di servizio PER UTENTE che `win_proto.h` descrive dal 17 agosto
+(«root registra `wserver`, chiunque altro `<uid>:wserver`») descriveva una
+situazione che non si poteva verificare.
+
+    /dev/wserver.drv      ->   /exwin/bin/wserver
+
+! **E NON E' UN SERVIZIO D'AVVIO UNICO**, che era la prima idea e sarebbe stata
+sbagliata: avrebbe dato a tutti gli utenti lo stesso server, buttando via
+proprio l'isolamento che il nome per utente costruisce. Ogni utente si avvia il
+SUO.
+
+Provato: `tizio` (uid 1000) entra, batte `exwin`, e la scrivania si apre —
+wserver mappa il framebuffer, rinasce sulla console 1, pm elenca cinque
+applicazioni. E root dal CD funziona come prima, senza regressioni.
+
+! **IL MAKEFILE HA RIPETUTO UN VECCHIO INCIAMPO**, e vale la pena scriverlo: la
+regola nuova usava `$(BUILD_EXWIN_BIN)` PRIMA che fosse definita, e con `:=`
+make espande subito — quindi il collegamento scriveva in `/wserver`, la radice
+del disco. E' lo stesso errore che il Makefile documenta gia' per `exwin.so`,
+venti righe piu' in la'. Il blocco e' stato spostato sotto le dichiarazioni.
+
 ## Difetti aperti, dichiarati
 
 - il **blocco temporaneo** della memoria condivisa non c'e': serve solo quando
@@ -373,34 +416,9 @@ errori.
   bastare: manca l'interfaccia in modo protetto di VBE 2.0;
 - niente NX (vuole PAE, cioe' Pentium 4 in avanti: fuori dal bersaglio),
   SHA-256 senza irrobustimento della chiave, nessuna quota di memoria o disco;
-- **UN UTENTE NORMALE NON PUO' AVVIARE LA PILA GRAFICA.** Provato il 19 agosto,
-  e non e' piu' un buco di prova: e' un fatto misurato.
-
-      uid=1000(tizio) gid=1000
-      exwin
-      [WARN]  ELF: '/dev/wserver.drv' non eseguibile da questo utente (err=-13)
-      exwin: non riesco ad avviare /dev/wserver.drv
-
-  ! **E NON SI RIPARA ALLARGANDO I PERMESSI DI `wserver.drv`.** `is_driver` —
-  il flag da cui dipendono `ioport_bind`, `dma_alloc` e `mmio_map` — lo decide
-  il NOME dell'eseguibile (`percorso_di_driver` in kernel/loader/elf.c), e
-  l'unica cosa che impedisce a chiunque di farsi un `.drv` e' che `/dev` e' di
-  root. Rendere quel file eseguibile a tutti vuol dire dare l'accesso
-  all'hardware a qualunque utente: si toglierebbe la barriera invece del
-  difetto.
-
-  Le strade vere sono due, e vanno scelte:
-
-    1. **wserver come servizio d'avvio**, lanciato da root — `[modules]` in
-       kernel.cfg fa gia' questo per `kbd` — e `exwin` che si accorge di un
-       server gia' acceso invece di provare a lanciarlo. Oggi quel controllo
-       NON C'E': exwin prova sempre lo spawn. Resta da vedere come passare
-       `-c 1` a un modulo, che oggi prende solo il percorso; e va dichiarato
-       che un server solo serve tutti gli utenti, senza isolamento fra loro.
-    2. Un modo per eseguire con privilegio senza essere root — che EX-OS non
-       ha (niente setuid, `chmod` inerte), quindi sarebbe un meccanismo nuovo.
-
-  La prima e' quella che fanno i sistemi veri, ed e' la piu' piccola.
+- ~~un utente normale non puo' avviare la pila grafica~~ — **RISOLTO il 19
+  agosto**, e la riparazione non e' quella che sembrava. Vedi la sezione «Il
+  server a finestre non e' un driver» qui sopra.
 
 - `login -a` stampa «Sistema nuovo: non c'e' ancora nessun utente» anche quando
   gli utenti ci sono gia': riusa `primo_utente()` con il suo cartello del primo

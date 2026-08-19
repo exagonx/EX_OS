@@ -210,7 +210,7 @@ forever.
 
 | | |
 |---|---|
-| `/dev/wserver.drv` composes windows and moves the pointer, **in ring 3** | tested |
+| `/exwin/bin/wserver` composes windows and moves the pointer, **in ring 3 and unprivileged** | tested |
 | **ExWin** toolkit, Win32-style, with headers for **C, C++ and FreeBASIC** | tested |
 | Controls: window, button, label, text box, group box, separator, header, terminal | tested |
 | `exwin` brings up graphics **on a console of its own**: Alt+F2 goes there, Alt+F1 comes back to the shell | tested |

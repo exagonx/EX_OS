@@ -213,7 +213,7 @@ rileggere subito renderebbe lo stesso messaggio all'infinito.
 
 | | |
 |---|---|
-| `/dev/wserver.drv` compone le finestre e muove il puntatore, **in ring 3** | testato |
+| `/exwin/bin/wserver` compone le finestre e muove il puntatore, **in ring 3 e senza privilegi** | testato |
 | Toolkit **ExWin** in stile Win32, con header per **C, C++ e FreeBASIC** | testato |
 | Controlli: finestra, pulsante, etichetta, casella di testo, riquadro, separatore, intestazione, terminale | testato |
 | `exwin` accende la grafica su una **console sua**: con Alt+F2 ci si va, con Alt+F1 si torna alla shell | testato |

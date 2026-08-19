@@ -69,10 +69,14 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    server = trova("/dev/wserver.drv", "/cdrom/dev/wserver.drv");
+    /* ! NON PIU' /dev/wserver.drv, dal 19 agosto 2026. Il server non e' un
+     * driver: mappa il framebuffer con fb_map(), che non chiede privilegi.
+     * Finche' stava in /dev — che e' di root — un utente normale non poteva
+     * eseguirlo, quindi non poteva avere una scrivania. */
+    server = trova("/exwin/bin/wserver", "/cdrom/exwin/bin/wserver");
     pm     = trova("/exwin/bin/pm",    "/cdrom/exwin/bin/pm");
 
-    if (!server) { printf("exwin: wserver.drv non trovato\n"); return 1; }
+    if (!server) { printf("exwin: /exwin/bin/wserver non trovato\n"); return 1; }
     if (!pm)     { printf("exwin: /exwin/bin/pm non trovato\n"); return 1; }
 
     /* La prossima console dopo la nostra: quella dove gira la shell resta

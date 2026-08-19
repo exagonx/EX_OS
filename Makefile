@@ -171,7 +171,7 @@ PROGRAMMI_FLOPPY := shell hello id chmod ls mem stack disk libctest fdisk mkfs t
 # =============================================================================
 PROGRAMMI_CD := netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp scarica telnet telnetd sshd xcp winprova exwincmd
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
-PROGRAMMI_EXWIN := exwin_so exdlg_so eximg_so exfont_so exhttp_so pm filemgr edit term fontprova orologio browser
+PROGRAMMI_EXWIN := exwin_so exdlg_so eximg_so exfont_so exhttp_so wserver pm filemgr edit term fontprova orologio browser
 
 # I driver, con la stessa regola dei programmi. Quelli di base stanno gia'
 # dentro PROGRAMMI_FLOPPY (floppy_drv, kbd_drv): sul floppy servono a
@@ -181,7 +181,7 @@ PROGRAMMI_EXWIN := exwin_so exdlg_so eximg_so exfont_so exhttp_so pm filemgr edi
 # solo di rimbalzo, perche' la ricetta di exos.iso lo nominava fra le
 # proprie prerequisite. `make all` non lo faceva, e chi costruiva senza
 # passare dalla ISO si ritrovava un driver in meno senza un messaggio.
-DRIVER_CD := ne2k_drv pcnet_drv e1000_drv ip_drv wserver_drv
+DRIVER_CD := ne2k_drv pcnet_drv e1000_drv ip_drv
 
 # I driver che sul floppy NON devono comparire. Serve a `make verify`.
 DRIVER_SOLO_CD := pci.drv ne2k.drv pcnet.drv ip.drv
@@ -197,7 +197,13 @@ DRIVER_SOLO_CD := pci.drv ne2k.drv pcnet.drv ip.drv
 #         HID «boot», hub — compilata dentro uhci.drv e xhci.drv. Non e' un
 #         driver e non lo diventera': non guida nessun hardware, e infatti
 #         non nomina nessun controller.
-NON_DRIVER := net tty usb
+#   wserver  il server a finestre, che driver non e' MAI stato: si chiamava
+#         .drv solo per ottenere mmio_map, e dal 17 agosto 2026 usa fb_map,
+#         che non chiede privilegi. Dal 19 agosto sta in /exwin/bin/wserver
+#         come un programma qualunque — vedi il blocco della sua regola. Il
+#         sorgente resta qui perche' qui sta win_proto.h, cioe' il protocollo
+#         delle finestre, che includono tutti i programmi grafici.
+NON_DRIVER := net tty usb wserver
 
 PCI_DRV_PROTO := drivers/pci/pci_proto.h
 NET_PROTO     := drivers/net/net_proto.h
@@ -936,45 +942,6 @@ $(XHCI_OUT): $(XHCI_SRC) $(USB_COMUNE_SRC) $(USB_COMUNE_HDR) $(PCI_DRV_PROTO) $(
 .PHONY: xhci_drv
 xhci_drv: dirs $(XHCI_OUT)
 
-# --- /dev/wserver.drv: il server a finestre, gradino 1 -----------------------
-#
-# ! SI CHIAMA .drv PER UNA RAGIONE SOLA: mappare il framebuffer. mmio_map() e'
-# riservata agli eseguibili caricati da un file *.drv. Non guida nessuna
-# periferica: il nome e' il lasciapassare, non una descrizione.
-#
-# ! E VA SUL CD, NON SUL FLOPPY, ed e' una scelta di spazio dichiarata: il
-# floppy e' il supporto che deve bastare da solo per AVERE UNA TASTIERA, e li'
-# ci stanno kbd, pci, uhci, xhci e mouseser. Un server grafico non serve a
-# far ripartire una macchina muta — serve dopo.
-WSERVER_SRC := drivers/wserver/wserver.c
-WSERVER_OUT := $(BUILD_DRIVERS_CD)/wserver.drv
-WSERVER_LD  := drivers/wserver/wserver.ld
-WIN_PROTO   := drivers/wserver/win_proto.h
-FONT_SRC    := kernel/arch/x86/font8x16.c
-
-$(WSERVER_OUT): $(WSERVER_SRC) $(WIN_PROTO) $(KBD_DRV_PROTO) $(WSERVER_LD) \
-                $(FONT_SRC) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
-	@echo "=== Compilazione driver ring3 wserver.drv ==="
-	@mkdir -p $(BUILD_DRIVERS_CD)
-	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/kbd -I drivers/wserver -c $(WSERVER_SRC) -o $(BUILD_DRIVERS_CD)/wserver_main.o
-	@# ! LO STESSO CARATTERE DELLA CONSOLE, non una copia sua. Cosi' una
-	@# scritta dentro una finestra e una sulla console di testo hanno la
-	@# stessa forma, ed e' la stessa ragione per cui vga_modo3.c ricarica
-	@# proprio font8x16 quando rimette il modo testo.
-	$(CC) $(CFLAGS_USER) -I lib/include -I kernel/include -c $(FONT_SRC) -o $(BUILD_DRIVERS_CD)/wserver_font.o
-	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)   -o $(BUILD_DRIVERS_CD)/wserver_libc.o
-	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_DRIVERS_CD)/wserver_start.o
-	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(WSERVER_LD) \
-	    $(BUILD_DRIVERS_CD)/wserver_start.o \
-	    $(BUILD_DRIVERS_CD)/wserver_main.o  \
-	    $(BUILD_DRIVERS_CD)/wserver_font.o  \
-	    $(BUILD_DRIVERS_CD)/wserver_libc.o  \
-	    -o $@
-	@echo "[OK] wserver.drv compilato: $@"
-
-.PHONY: wserver_drv
-wserver_drv: dirs $(WSERVER_OUT)
-
 # --- /bin/winprova: la prova del toolkit ExWin -------------------------------
 EXWIN_SRC := lib/exwin/exwin.c
 # ! TRE HEADER PER TRE LINGUAGGI, UNA LIBRERIA SOLA. exwin.hpp e exwin.bi non
@@ -990,6 +957,65 @@ EXWIN_HDR := lib/exwin/exwin.h lib/exwin/exwin.hpp lib/exwin/exwin.bi
 BUILD_EXWIN     := $(BUILD_DIR)/exwin
 BUILD_EXWIN_BIN := $(BUILD_EXWIN)/bin
 BUILD_EXWIN_LIB := $(BUILD_EXWIN)/lib
+
+# ! IL BLOCCO DEL SERVER STA QUI SOTTO E NON PIU' IN ALTO, per la stessa
+# ragione scritta qui sopra: usa $(BUILD_EXWIN_BIN), e con `:=` make espande
+# subito. Messo prima di questa riga, WSERVER_OUT diventava «/wserver» — la
+# radice del disco — e il link falliva con un permesso negato che non diceva
+# niente. E' lo stesso inciampo di exwin.so, due mesi dopo.
+
+# --- /exwin/bin/wserver: il server a finestre, gradino 1 ---------------------
+#
+# ! NON E' PIU' UN DRIVER, E NON DEVE ESSERLO. Si chiamava wserver.drv per una
+# ragione sola — mmio_map() e' riservata agli eseguibili caricati da un *.drv —
+# e dal 17 agosto 2026 quella ragione non c'e' piu': mappa il framebuffer con
+# fb_map(), che non prende argomenti, non da' nessuna porta e non chiede di
+# essere un driver.
+#
+# ! ED E' CIO' CHE RENDE LA GRAFICA MULTIUTENTE DAVVERO. Finche' stava in /dev
+# — che e' di root — un utente normale non poteva eseguirlo, quindi non poteva
+# avere un server: e il nome di servizio PER UTENTE che win_proto.h descrive
+# dal 17 agosto («root registra wserver, chiunque altro <uid>:wserver») era una
+# regola per una situazione che non si poteva verificare. Provato il 19 agosto:
+# «/dev/wserver.drv non eseguibile da questo utente (err=-13)».
+#
+# Restare in /dev con un nome che promette privilegi era anche il rischio
+# opposto: il giorno che qualcuno avesse allargato quei permessi per far
+# funzionare la scrivania, avrebbe dato ioport_bind e dma_alloc a tutti.
+#
+# ! E VA SUL CD, NON SUL FLOPPY, ed e' una scelta di spazio dichiarata: il
+# floppy e' il supporto che deve bastare da solo per AVERE UNA TASTIERA, e li'
+# ci stanno kbd, pci, uhci, xhci e mouseser. Un server grafico non serve a
+# far ripartire una macchina muta — serve dopo.
+WSERVER_SRC := drivers/wserver/wserver.c
+WSERVER_OUT := $(BUILD_EXWIN_BIN)/wserver
+WSERVER_LD  := drivers/wserver/wserver.ld
+WIN_PROTO   := drivers/wserver/win_proto.h
+FONT_SRC    := kernel/arch/x86/font8x16.c
+
+$(WSERVER_OUT): $(WSERVER_SRC) $(WIN_PROTO) $(KBD_DRV_PROTO) $(WSERVER_LD) \
+                $(FONT_SRC) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /exwin/bin/wserver ==="
+	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/kbd -I drivers/wserver -c $(WSERVER_SRC) -o $(BUILD_OBJ)/wserver_main.o
+	@# ! LO STESSO CARATTERE DELLA CONSOLE, non una copia sua. Cosi' una
+	@# scritta dentro una finestra e una sulla console di testo hanno la
+	@# stessa forma, ed e' la stessa ragione per cui vga_modo3.c ricarica
+	@# proprio font8x16 quando rimette il modo testo.
+	$(CC) $(CFLAGS_USER) -I lib/include -I kernel/include -c $(FONT_SRC) -o $(BUILD_OBJ)/wserver_font.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)   -o $(BUILD_OBJ)/wserver_libc.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/wserver_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(WSERVER_LD) \
+	    $(BUILD_OBJ)/wserver_start.o \
+	    $(BUILD_OBJ)/wserver_main.o  \
+	    $(BUILD_OBJ)/wserver_font.o  \
+	    $(BUILD_OBJ)/wserver_libc.o  \
+	    -o $@
+	@echo "[OK] wserver compilato: $@"
+
+.PHONY: wserver
+wserver: dirs $(WSERVER_OUT)
+
 
 # =============================================================================
 # LA LIBRERIA CONDIVISA — /exwin/lib/exwin.so
@@ -4144,7 +4170,7 @@ BINARI_SOLO_CD := $(NETDETECT_BIN) $(NETTEST_BIN) $(PING_BIN) $(IPCFG_BIN) \
 # Il controllo che manca lo fa `verifica-dipendenze-cd` qui sotto.
 DRIVER_SOLO_CD_OUT := $(NE2K_DRV_OUT) $(PCNET_DRV_OUT) \
                       $(E1000_DRV_OUT) \
-                      $(IP_DRV_OUT) $(WSERVER_OUT)
+                      $(IP_DRV_OUT)
 
 # ! verifica-programmi E' UNA PREREQUISITA D'ORDINE (dopo la barra).
 # Cosi' viene eseguita prima di costruire il CD — e ferma tutto se un

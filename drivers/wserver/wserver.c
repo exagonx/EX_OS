@@ -11,8 +11,8 @@
  *
  * Il server a finestre — gradino 1 di DIREZIONE.md
  *
- *     /dev/wserver.drv          compone le finestre, muove il puntatore
- *     /dev/wserver.drv -v       dice tutto quello che fa
+ *     /exwin/bin/wserver        compone le finestre, muove il puntatore
+ *     /exwin/bin/wserver -v     dice tutto quello che fa
  *
  * ! GIRA IN RING 3, ED E' IL PUNTO. La direttiva 2 di DIREZIONE.md dice che
  * la grafica sta in spazio utente: quando questo processo muore, muore lui.
@@ -20,11 +20,28 @@
  * rimette con /bin/testo — che si digita alla cieca ed e' la rete di
  * sicurezza costruita apposta prima di scrivere questo file.
  *
- * ! SI CHIAMA .drv PER UNA RAGIONE SOLA: mappare il framebuffer. mmio_map()
- * e' riservata agli eseguibili caricati da un file *.drv, e il framebuffer e'
- * una finestra di memoria fisica come i registri di una scheda. Non guida
- * nessuna periferica e non registra un servizio di driver: il nome e' il
- * lasciapassare, non una descrizione.
+ * ! NON E' UN DRIVER, E DAL 19 AGOSTO 2026 NON LO SEMBRA NEMMENO PIU'. Si
+ * chiamava /dev/wserver.drv per una ragione sola — mmio_map() e' riservata
+ * agli eseguibili caricati da un file *.drv — e quella ragione e' caduta il 17
+ * agosto, quando il framebuffer ha smesso di passare da mmio_map: adesso c'e'
+ * fb_map(), che non prende argomenti, mappa SOLO il framebuffer e non chiede
+ * nessun privilegio. Questo file non guida nessuna periferica e non registra
+ * un servizio di driver: il nome era un lasciapassare, non una descrizione.
+ *
+ * ! ED E' QUEL NOME CHE TENEVA LA GRAFICA FUORI DALLA MULTIUTENZA. /dev e' di
+ * root, quindi un utente normale non poteva eseguire il server — e il nome di
+ * servizio PER UTENTE qui accanto in win_proto.h («root registra wserver,
+ * chiunque altro <uid>:wserver») descriveva una situazione che non si poteva
+ * verificare. Misurato il 19 agosto, con un utente vero:
+ *
+ *     uid=1000(tizio)
+ *     exwin
+ *     ELF: '/dev/wserver.drv' non eseguibile da questo utente (err=-13)
+ *
+ * ! E LA RIPARAZIONE SBAGLIATA ERA A PORTATA DI MANO: allargare i permessi di
+ * quel file. Avrebbe dato a chiunque `is_driver`, cioe' ioport_bind e
+ * dma_alloc — la capacita' larga al posto di quella stretta. Si e' tolto il
+ * nome, non la barriera.
  *
  * -----------------------------------------------------------------------------
  * ! NON DISEGNA IL CONTENUTO DELLE FINESTRE, LO COMPONE
