@@ -415,6 +415,23 @@ static void vga_scroll(Console *c)
         uint32_t *o = (uint32_t *)(g_fb + riga_px);
         uint32_t  n = alte >> 2, k;
 
+        /* =====================================================================
+         * ! IL CURSORE SI CANCELLA PRIMA DI FAR SCORRERE, non si dichiara
+         * sparito dopo.
+         *
+         * Qui c'era solo `g_cur_disegnato = 0` in fondo, che vuol dire «non c'e'
+         * nessun cursore da cancellare». Ma la copia qui sotto sposta i PIXEL, e
+         * i pixel del cursore erano gia' sullo schermo: salivano insieme al
+         * resto e restavano li' per sempre. Il risultato era un trattino basso
+         * in coda a OGNI riga scorsa — segnalato guardando la console d'avvio,
+         * dove le righe scorrono a decine.
+         *
+         * ! E NON SI RIPARA TOGLIENDO IL CURSORE: quel trattino e' il cursore, e
+         * senza non si vede piu' dove si sta scrivendo. Si ripara cancellandolo
+         * mentre e' ancora suo, cioe' adesso.
+         * ===================================================================== */
+        disegna_cursore(c, 0);
+
         for (k = 0; k < n; k++) d[k] = o[k];
 
         for (i = (g_righe - 1) * g_cols; i < g_totale; i++)

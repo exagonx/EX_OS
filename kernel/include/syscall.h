@@ -94,7 +94,7 @@
  * cioe' sopra qualunque cosa il compilatore avesse messo dopo. Il sintomo era
  * «video_info non risponde», che non somiglia per niente a una scrittura fuori
  * limite. Chi aggiunge una syscall aggiorna anche questo. */
-#define SYSCALL_COUNT   253     /* la piu' alta e' SYS_PTY_CTL = 252 */
+#define SYSCALL_COUNT   254     /* la piu' alta e' SYS_STATPERM = 253 */
 
 /* =============================================================================
  * Codici errno
@@ -576,6 +576,35 @@ typedef struct {
  * --------------------------------------------------------------------------- */
 #define SYS_PTY_APRI      251   /* ebx = int[2] */
 #define SYS_PTY_CTL       252   /* ebx = fd, ecx = cmd, edx = arg */
+
+/* =============================================================================
+ * SYS_STATPERM (253) — proprietario e permessi di un file
+ *
+ * ! E' UNA CHIAMATA IN PIU', NON UN CAMPO IN PIU' A `Stat`, ed e' la stessa
+ * regola gia' scritta accanto a spawn_su_console in libc.h: cambiare una
+ * struttura che i programmi si passano gia' vuol dire ricostruire tutto cio'
+ * che la usa — e `Stat` la usa chiunque apra un file. Un'aggiunta che non
+ * rompe niente costa una chiamata; una che rompe tutto costa un pomeriggio a
+ * chi non sa perche'.
+ *
+ * ! I DATI C'ERANO GIA' E NON USCIVANO. `VfsStat` porta `modo`, `uid` e `gid`
+ * dal luglio in cui ext2 ha imparato i proprietari, ma `sys_stat` non li
+ * copiava: la `Stat` dello spazio utente ha cinque campi e `struct stat`
+ * dichiarava «st_uid sempre 0: non ci sono utenti», che era vero prima di
+ * /bin/login. Mancava il trasporto, non l'informazione.
+ *
+ * ! `modo == 0` VUOL DIRE «QUESTO VOLUME NON HA PROPRIETARI» e non «nessun
+ * permesso»: su FAT non esistono, e il VFS lo dice cosi' (vedi stat_interno).
+ * Chi stampa deve distinguere i due casi, o mostrerebbe `----------` su ogni
+ * file di un floppy.
+ * ============================================================================= */
+#define SYS_STATPERM      253   /* ebx = percorso, ecx = StatPerm*, edx = sizeof */
+
+typedef struct {
+    uint16_t modo;      /* permessi POSIX (0644, 0755...), 0 = non ci sono */
+    uint16_t uid;
+    uint16_t gid;
+} StatPerm;
 
 /* La mailbox IPC come sorgente. MAX_FD e' il primo numero che un descrittore
  * vero non puo' avere: vedi sched.h. */
@@ -1076,6 +1105,7 @@ int32_t sys_lib_apri(InterruptFrame *f);
 int32_t sys_interrompi(InterruptFrame *f);
 int32_t sys_pty_apri(InterruptFrame *f);
 int32_t sys_pty_ctl(InterruptFrame *f);
+int32_t sys_statperm(InterruptFrame *f);
 int32_t sys_fb_map(InterruptFrame *f);
 int32_t sys_getuid(InterruptFrame *f);
 int32_t sys_setuid(InterruptFrame *f);

@@ -28,52 +28,11 @@
 
 #include "libc.h"
 
-/* Cerca il nome corrispondente a un uid in /boot/utenti, che ha la forma
- *
- *     nome:uid:gid
- *
- * ! E' IL FILE PUBBLICO, non quello delle password. Le impronte stanno in
- * /boot/ombra, che e' 0600: se i due non fossero separati, questo programma
- * non riuscirebbe a tradurre un uid in un nome per nessuno tranne root — e
- * infatti prima diceva «uid=1000(uid1000)» a un utente che si chiamava mario.
- *
- * Rende 1 se l'ha trovato. Il file puo' non esserci — su un sistema avviato da
- * floppy non c'e' affatto — e non e' un errore. */
-static int nome_di_uid(unsigned int uid, char *out, unsigned int max)
-{
-    static char testo[4096];
-    int fd, n, i = 0;
-
-    fd = open("/boot/utenti", O_RDONLY, 0);
-    if (fd < 0) return 0;
-    n = (int)read(fd, testo, sizeof(testo) - 1);
-    close(fd);
-    if (n < 0) n = 0;
-    testo[n] = '\0';
-
-    while (i < n) {
-        int p = i, primo = -1, secondo = -1;
-
-        while (i < n && testo[i] != '\n') {
-            if (testo[i] == ':') {
-                if (primo < 0)        primo = i;
-                else if (secondo < 0) secondo = i;
-            }
-            i++;
-        }
-        if (i < n) i++;
-        if (primo < 0 || secondo < 0) continue;
-
-        if ((unsigned int)atoi(testo + primo + 1) == uid) {
-            unsigned int l = (unsigned int)(primo - p);
-            if (l >= max) l = max - 1;
-            memcpy(out, testo + p, l);
-            out[l] = '\0';
-            return 1;
-        }
-    }
-    return 0;
-}
+/* ! LA TRADUZIONE uid -> NOME E' PASSATA NELLA libc il 19 agosto, quando gli
+ * utenti sono diventati due: la vuole anche `ls -l`. Stava qui, ed era giusto
+ * finche' a chiederla c'era solo questo programma — due copie di un parser di
+ * un formato di file divergono al primo campo aggiunto. Vedi nome_utente() in
+ * lib/include/libc.h. */
 
 int main(int argc, char **argv)
 {
@@ -95,7 +54,7 @@ int main(int argc, char **argv)
     if (strcmp(base, "whoami") == 0) solo_nome = 1;
     if (argc >= 2 && strcmp(argv[1], "-n") == 0) solo_nome = 1;
 
-    if (!nome_di_uid(uid, nome, sizeof(nome))) {
+    if (!nome_utente(uid, nome, sizeof(nome))) {
         /* Nessun elenco utenti: e' il caso normale avviando da floppy o da CD,
          * dove si e' root perche' i proprietari non esistono. */
         if (uid == 0) strcpy(nome, "root");

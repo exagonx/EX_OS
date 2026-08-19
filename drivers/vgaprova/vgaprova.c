@@ -80,10 +80,35 @@ static void fuori(unsigned int porta, unsigned int val)
     ioport_out(porta, val);
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
     int rc;
     unsigned int i;
+
+    /* =====================================================================
+     * ! `-i` DICE DI NO, E DEVE DIRLO SENZA TOCCARE NIENTE.
+     *
+     * `hwconfig -d` sonda ogni *.drv del catalogo lanciandolo con `-i`, e
+     * `install` chiama hwconfig. Questo file gli argomenti non li guardava
+     * nemmeno: veniva eseguito PER DAVVERO durante ogni installazione — con
+     * lo schermo commutato in 320x200 nel mezzo — e usciva con 0, che per la
+     * sonda vuol dire «servo qui». Risultato: /dev/vgaprova.drv finiva
+     * installato su ogni sistema, e la console si spegneva mentre si copiava.
+     *
+     * ! E LA RISPOSTA GIUSTA E' NO, non «si'»: questo non e' un driver. Non
+     * guida niente e non serve nessuna periferica — e' una PROVA, che si
+     * lancia a mano per vedere che un programma in ring 3 puo' riprogrammare
+     * la VGA. Un catalogo di driver non deve portarselo dietro.
+     *
+     * E' lo stesso difetto che aveva wserver.drv, e la stessa riparazione.
+     * ===================================================================== */
+    for (i = 1; i < (unsigned int)argc; i++) {
+        if (argv[i][0] != '-' || argv[i][1] != 'i') continue;
+
+        printf("vgaprova: non sono un driver, sono una prova da lanciare a\n");
+        printf("          mano: non installarmi.\n");
+        return 1;
+    }
 
     rc = ioport_bind(PORTA_BASE, PORTE_N);
     if (rc < 0) {

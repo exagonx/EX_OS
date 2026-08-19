@@ -97,6 +97,7 @@ static void misura_del_terminale(void)
 #define MODO_COLONNE    1   /* -mc */
 #define MODO_DETTAGLI   2   /* -d  */
 #define MODO_DIR        3   /* -md */
+#define MODO_LUNGO      4   /* -l  */
 
 /* Attributi in convenzione FAT (vedi Stat in libc.h: valgono su tutti i
  * filesystem, perche' sono quelli che i programmi gia' interpretano). */
@@ -123,6 +124,7 @@ static void aiuto(void)
     printf("Modi di visualizzazione (l'ultimo indicato vince):\n");
     printf("  -mc     a colonne: solo i nomi, il piu' compatto\n");
     printf("  -d      dettagli: dimensione, data e ora\n");
+    printf("  -l      permessi, proprietario, gruppo, misura e data\n");
     printf("  -md     dettagliato stile dir: aggiunge gli attributi\n");
     printf("          (senza nessuno di questi: nome e dimensione)\n\n");
     printf("Altre opzioni:\n");
@@ -236,6 +238,81 @@ static void stampa_semplice(const DirEntry *e)
     else           printf("%-12s %u\n", e->name, e->size);
 }
 
+/* =============================================================================
+ * -l — permessi, proprietario, gruppo, misura, data
+ *
+ * ! I PERMESSI NON VENGONO DA `struct stat`, e non e' un giro piu' lungo:
+ * `st_uid` e `st_gid` li' valgono sempre zero e lo dichiarano — era vero prima
+ * che esistesse /bin/login. La verita' la porta statperm(), che e' una
+ * chiamata a parte apposta per non allargare una struttura che usano tutti.
+ *
+ * ! E «NESSUN PROPRIETARIO» NON E' «NESSUN PERMESSO». Su FAT e su ISO 9660 i
+ * proprietari non esistono, e il VFS lo dice con `modo == 0`. Stampare
+ * `----------` sarebbe falso al contrario: quei volumi sono aperti a chiunque.
+ * Si scrive un `?` al posto dei permessi e `-` al posto dei nomi, cosi' chi
+ * guarda vede subito che la domanda non si applica a quel disco.
+ * ============================================================================= */
+static void permessi(char *out, unsigned short modo, int e_dir)
+{
+    static const char R[] = "rwxrwxrwx";
+    int i;
+
+    out[0] = e_dir ? 'd' : '-';
+    for (i = 0; i < 9; i++)
+        out[i + 1] = (modo & (1u << (8 - i))) ? R[i] : '-';
+    out[10] = '\0';
+}
+
+/* Il nome dell'utente, o il numero se non si sa tradurre. */
+static void chi(char *out, unsigned int max, unsigned int id)
+{
+    if (nome_utente(id, out, max)) return;
+
+    /* Nessun elenco utenti: e' il caso normale da floppy e da CD. Il numero
+     * non e' un ripiego povero — e' il dato vero, senza il nome. */
+    sprintf(out, "%u", id);
+}
+
+static void stampa_lungo(const char *dir, const DirEntry *e)
+{
+    char        percorso[320];
+    char        quando[24];
+    char        perm[12];
+    char        ut[24], gr[24];
+    struct stat st;
+    StatPerm    sp;
+
+    prima_di_stampare();
+    if (g_interrotto) return;
+
+    componi(percorso, sizeof(percorso), dir, e->name);
+
+    if (stat(percorso, &st) != 0) {
+        memset(&st, 0, sizeof(st));
+        st.st_size = (off_t)e->size;
+    }
+    data_ora(quando, sizeof(quando), st.st_mtime);
+
+    if (statperm(percorso, &sp) != 0) { sp.modo = 0; sp.uid = 0; sp.gid = 0; }
+
+    if (sp.modo == 0) {
+        /* Il volume non ha proprietari: si dice, non si inventa. */
+        perm[0] = e->is_dir ? 'd' : '-';
+        memset(perm + 1, '?', 9);
+        perm[10] = '\0';
+        strcpy(ut, "-");
+        strcpy(gr, "-");
+    } else {
+        permessi(perm, sp.modo, e->is_dir);
+        chi(ut, sizeof(ut), sp.uid);
+        chi(gr, sizeof(gr), sp.gid);
+    }
+
+    printf("%s %-8s %-8s ", perm, ut, gr);
+    if (e->is_dir) printf("%10s  %s  %s\n", "<DIR>", quando, e->name);
+    else           printf("%10ld  %s  %s\n", (long)st.st_size, quando, e->name);
+}
+
 static void stampa_dettagli(const char *dir, const DirEntry *e, int con_attributi)
 {
     char        percorso[320];
@@ -339,6 +416,7 @@ static int percorri(const char *dir, Riepilogo *r, int solo_conta, int larghezza
             }
             case MODO_DETTAGLI: stampa_dettagli(dir, &voci[i], 0); break;
             case MODO_DIR:      stampa_dettagli(dir, &voci[i], 1); break;
+            case MODO_LUNGO:    stampa_lungo(dir, &voci[i]);       break;
             default:            stampa_semplice(&voci[i]);         break;
             }
         }
@@ -380,10 +458,12 @@ int main(int argc, char **argv)
         if (strcmp(a, "-mc") == 0) { g_modo = MODO_COLONNE;   continue; }
         if (strcmp(a, "-md") == 0) { g_modo = MODO_DIR;       continue; }
         if (strcmp(a, "-d")  == 0) { g_modo = MODO_DETTAGLI;  continue; }
+        if (strcmp(a, "-l")  == 0) { g_modo = MODO_LUNGO;     continue; }
 
-        /* ! SI RIFIUTA UN'OPZIONE SCONOSCIUTA invece di ignorarla. Un
-         * `ls -l` ignorato in silenzio stampa qualcosa di plausibile e fa
-         * credere che l'opzione esista. */
+        /* ! SI RIFIUTA UN'OPZIONE SCONOSCIUTA invece di ignorarla: ignorata
+         * in silenzio stamperebbe qualcosa di plausibile e farebbe credere
+         * che l'opzione esista. E' cosi' che `-l` si e' fatto notare finche'
+         * non c'era. */
         printf("ls: opzione sconosciuta '%s'\n", a);
         printf("    `ls -h` le elenca tutte.\n");
         return 1;
@@ -456,6 +536,7 @@ int main(int argc, char **argv)
                 case MODO_COLONNE:  printf("%s\n", uno.name);              break;
                 case MODO_DETTAGLI: stampa_dettagli(dir, &uno, 0);         break;
                 case MODO_DIR:      stampa_dettagli(dir, &uno, 1);         break;
+                case MODO_LUNGO:    stampa_lungo(dir, &uno);               break;
                 default:            stampa_semplice(&uno);                 break;
                 }
             }
@@ -476,7 +557,8 @@ int main(int argc, char **argv)
         return 0;
     }
 
-    if (g_modo == MODO_DETTAGLI || g_modo == MODO_DIR)
+    if (g_modo == MODO_DETTAGLI || g_modo == MODO_DIR ||
+        g_modo == MODO_LUNGO)
         printf("\n%u file, %u byte    %u directory\n", r.file, r.byte, r.dir);
 
     return 0;

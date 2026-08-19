@@ -1066,6 +1066,36 @@ static int vfs_dup_nl(int h)
 
 static int stat_interno(int im, const char *interno, VfsStat *st)
 {
+    /* =========================================================================
+     * ! SI AZZERA TUTTO PRIMA, E NON E' PRUDENZA GENERICA.
+     *
+     * Ogni ramo qui sotto riempie i campi che il SUO filesystem conosce, e
+     * lascia stare gli altri. Fino al 19 agosto `modo`, `uid` e `gid` li
+     * scriveva solo il ramo ext2 (e il FAT generico, a zero): sul floppy
+     * FAT12, su ISO 9660 e sulla RADICE restavano quelli che c'erano nello
+     * stack del chiamante — cioe' spazzatura.
+     *
+     * ! E NON ERA UN DIFETTO DI SOLA ESTETICA. `vfs_permesso()` decide con
+     * `st->modo`: zero vuol dire «questo volume non ha proprietari, passa»,
+     * qualunque altra cosa vuol dire «guarda i bit». Con `modo` casuale, il
+     * permesso di leggere un file su un CD o su un floppy si decideva in base
+     * a memoria non inizializzata — a volte si', a volte no, senza che niente
+     * lo facesse notare.
+     *
+     * Si e' visto scrivendo `ls -l`: su un CD mostrava permessi diversi per
+     * ogni file e proprietari con numeri a cinque cifre.
+     *
+     * ! E LA RIPARAZIONE VA QUI, NON NEI DUE RAMI CHE MANCAVANO: azzerare
+     * all'ingresso vuol dire che il PROSSIMO filesystem nasce giusto senza
+     * che nessuno se lo ricordi.
+     * ========================================================================= */
+    if (st) {
+        uint8_t *p = (uint8_t *)st;
+        uint32_t i;
+
+        for (i = 0; i < sizeof(VfsStat); i++) p[i] = 0;
+    }
+
     /* La radice di un filesystem non ha una voce di directory da
      * interrogare: fat12_stat("/") e fat_stat("/") falliscono entrambe.
      * Vale per "/" e per ogni punto di montaggio. */

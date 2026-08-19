@@ -237,6 +237,7 @@ typedef struct {
 #define SYS_INTERROMPI 250
 #define SYS_PTY_APRI   251
 #define SYS_PTY_CTL    252
+#define SYS_STATPERM   253
 #define SYS_EXEC        11
 #define SYS_MMAP        90
 #define SYS_MUNMAP      91
@@ -548,6 +549,15 @@ typedef struct {
     unsigned int kstack_base;
     unsigned int kstack_top;
 } ProcInfo;
+
+/* Proprietario e permessi — deve restare identico a kernel/include/syscall.h
+ * (StatPerm) e a lib/include/libc.h: attraversa l'ABI della syscall, e la
+ * chiamata porta con se' il sizeof proprio per accorgersene. */
+typedef struct {
+    unsigned short modo;
+    unsigned short uid;
+    unsigned short gid;
+} StatPerm;
 
 
 /* Disco + partizioni — deve restare identico a kernel/include/syscall.h
@@ -4861,6 +4871,55 @@ int procinfo(ProcInfo *buf, unsigned int max, unsigned int start)
 {
     return _syscall4(SYS_PROCINFO, (uint32_t)buf, max, start,
                      (uint32_t)sizeof(ProcInfo));
+}
+
+/* La misura viaggia con la chiamata: e' cosi' che il kernel si accorge se
+ * questa copia di StatPerm e' andata fuori sincrono con la sua. */
+int statperm(const char *path, StatPerm *p)
+{
+    return _syscall3(SYS_STATPERM, (uint32_t)path, (uint32_t)p,
+                     (uint32_t)sizeof(StatPerm));
+}
+
+/* Il perche' di questa funzione — e perche' sta qui e non dentro /bin/id —
+ * e' scritto accanto alla sua dichiarazione in libc.h. */
+int nome_utente(unsigned int uid, char *out, unsigned int max)
+{
+    static char testo[4096];
+    int fd, n, i = 0;
+
+    if (!out || max < 2) return 0;
+
+    fd = open("/boot/utenti", O_RDONLY);
+    if (fd < 0) return 0;
+    n = (int)read(fd, testo, sizeof(testo) - 1);
+    close(fd);
+    if (n < 0) n = 0;
+    testo[n] = '\0';
+
+    while (i < n) {
+        int p = i, primo = -1, secondo = -1;
+
+        while (i < n && testo[i] != '\n') {
+            if (testo[i] == ':') {
+                if (primo < 0)        primo = i;
+                else if (secondo < 0) secondo = i;
+            }
+            i++;
+        }
+        if (i < n) i++;
+        if (primo < 0 || secondo < 0) continue;
+
+        if ((unsigned int)atoi(testo + primo + 1) == uid) {
+            unsigned int l = (unsigned int)(primo - p);
+
+            if (l >= max) l = max - 1;
+            memcpy(out, testo + p, l);
+            out[l] = '\0';
+            return 1;
+        }
+    }
+    return 0;
 }
 
 int diskinfo(unsigned int idx, DiskInfo *di)

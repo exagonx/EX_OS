@@ -1362,6 +1362,50 @@ struct stat {
 void   *sbrk(int incr);      /* cima dell'heap; ritorna la posizione VECCHIA */
 long    lseek(int fd, long offset, int whence);
 
+/* =============================================================================
+ * Proprietario e permessi — StatPerm
+ *
+ * ! E' UNA CHIAMATA IN PIU', NON CAMPI IN PIU' A `Stat`, ed e' la stessa regola
+ * scritta accanto a spawn_su_console piu' avanti: cambiare una struttura che i
+ * programmi si passano gia' vuol dire ricostruire tutto cio' che la usa, e
+ * `Stat` la usa chiunque apra un file. Percio' `st_uid` e `st_gid` di
+ * `struct stat` restano a zero e continuano a dire il falso — la verita' la
+ * chiede chi la vuole, con questa.
+ *
+ * ! `modo == 0` VUOL DIRE «QUESTO VOLUME NON HA PROPRIETARI», non «nessun
+ * permesso»: su FAT e su ISO 9660 non esistono, e il VFS lo dichiara cosi'.
+ * Chi stampa i permessi deve distinguere i due casi, o mostrerebbe
+ * `----------` su ogni file di un floppy.
+ *
+ * STRUTTURA DUPLICATA A MANO da kernel/include/syscall.h, come DirEntry e
+ * MemInfo: deve restare identica, e statperm() rende -EINVAL se le due copie
+ * divergono di dimensione.
+ * ============================================================================= */
+typedef struct {
+    unsigned short modo;    /* permessi POSIX (0644, 0755...), 0 = non ci sono */
+    unsigned short uid;
+    unsigned short gid;
+} StatPerm;
+
+int     statperm(const char *path, StatPerm *p);
+
+/* =============================================================================
+ * Dal numero al nome — /boot/utenti
+ *
+ * ! ADESSO GLI UTENTI SONO DUE, ed e' la condizione che questo sistema chiede
+ * prima di condividere qualcosa: la traduzione uid -> nome stava dentro
+ * /bin/id, e con `ls -l` sarebbe diventata una seconda copia dello stesso
+ * parser. Due copie di un formato di file divergono al primo campo aggiunto.
+ *
+ * ! LEGGE IL FILE PUBBLICO, non quello delle password: /boot/utenti e' 0644 e
+ * contiene `nome:uid:gid`; le impronte stanno in /boot/ombra, che e' 0600. Se
+ * i due non fossero separati, tradurre un uid riuscirebbe solo a root.
+ *
+ * Rende 1 se l'ha trovato. Il file puo' non esserci — avviando da floppy o da
+ * CD non c'e' affatto — e non e' un errore: chi chiama mostra il numero.
+ * ============================================================================= */
+int     nome_utente(unsigned int uid, char *out, unsigned int max);
+
 /* stat() riempie la struttura POSIX; statraw() da' i campi grezzi del
  * filesystem (attributi FAT, primo cluster, data e ora codificate) a chi
  * ne ha bisogno davvero — mkfs, fdisk, un ls che mostri gli attributi. */

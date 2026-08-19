@@ -2789,6 +2789,38 @@ int32_t sys_procinfo(InterruptFrame *frame)
 }
 
 /* =============================================================================
+ * SYS_STATPERM (253) -- proprietario e permessi di un file
+ *
+ * Il perche' di una chiamata a parte sta in kernel/include/syscall.h.
+ * ============================================================================= */
+int32_t sys_statperm(InterruptFrame *frame)
+{
+    const char *path = (const char *)frame->ebx;
+    StatPerm   *out  = (StatPerm *)frame->ecx;
+    uint32_t    size = frame->edx;
+    char        abs[PERCORSO_MAX];
+    VfsStat     vs;
+    int32_t     rc;
+
+    /* ! LA MISURA SI CONTROLLA, come in procinfo: e' cosi' che ci si accorge
+     * di una copia della struttura andata fuori sincrono fra kernel e libc,
+     * invece di scriverne un pezzo a caso nello spazio utente. */
+    if (size != sizeof(StatPerm))                   return ERR(EINVAL);
+    if (!syscall_verify_str(path, PERCORSO_MAX))    return ERR(EFAULT);
+    if (!syscall_verify_ptr(out, sizeof(StatPerm))) return ERR(EFAULT);
+
+    if (resolve_path(path, abs, sizeof(abs)) != 0) return ERR(EINVAL);
+
+    rc = vfs_stat(abs, &vs);
+    if (rc != 0) return rc;
+
+    out->modo = vs.modo;
+    out->uid  = vs.uid;
+    out->gid  = vs.gid;
+    return 0;
+}
+
+/* =============================================================================
  * SYS_DISKINFO (189) -- Un disco fisico e la sua tabella delle partizioni
  *
  * ebx = indice unita' ATA (0..3: primario master/slave, secondario m/s)

@@ -12,12 +12,11 @@ seriale e USB — tastiera compresa, hub compresi.
 
 ## COSA E' COMMITTATO
 
-    fa24588  "Le tabelle, l'orologio che spariva, e «Informazioni su» su
-              quattro programmi"
+    e342426  "<hr>, i segni delle liste, <pre>, e l'annullamento nell'editor"
 
-In attesa nell'albero: **`<hr>`, i segni delle liste e `<pre>`** nel browser
-(piu' la conservazione degli spazi in exhtml, che e' dove andava fatta), e
-**l'annullamento nell'editor**.
+In attesa nell'albero: **`ls -l`** (con la chiamata nuova `statperm`), e tre
+difetti — `VfsStat` non inizializzata su ISO e FAT12, `vgaprova` che veniva
+ESEGUITO a ogni installazione, e la scia del cursore sulla console.
 
 ! **`gitupdate.sh` FA `git add .` E UN COMMIT SOLO**: `messaggio-commit.txt`
 deve coprire tutto quello che si e' fatto dall'ultimo commit, non l'ultima
@@ -141,7 +140,11 @@ prima» e' un fatto solo se si e' guardato prima.
     mangia il controllo `areatesto` e all'applicazione non arrivano mai — per
     quella servirebbe che fosse il controllo a segnare i passi. E non c'e' il
     «Ripeti».
- 5. **`ls -l`** — non c'e', ed **e' piu' grosso di quanto diceva questa voce**
+ 5. ~~`ls -l`~~ — **FATTO il 19 agosto**, con la chiamata nuova `statperm()`
+    invece di un campo in piu' a `Stat`. Quello che segue resta come nota
+    storica di com'era la voce, perche' sbagliava:
+
+    ~~**e' piu' grosso di quanto diceva questa voce**~~
     (corretto il 19 agosto). Qui c'era scritto «la libc sa gia' dire
     proprietario, permessi e misura: manca l'impaginazione». **E' falso.**
     `VfsStat` nel kernel ha `modo`, `uid` e `gid` (kernel/include/vfs.h:120),
@@ -158,8 +161,14 @@ prima» e' un fatto solo se si e' guardato prima.
     crescere e' un cambio di ABI che NON avvisa, e va ricostruito il bersaglio
     intero. Serve poi decidere se `ls -l` mostra i numeri o i nomi presi da
     `/boot/utenti`.
- 6. **`-i` ai quattro driver che ancora non ce l'hanno** — `floppy`,
-    `mouseser`, `uhci`, `vgaprova`. Gli altri nove ce l'hanno tutti (`pci`,
+ 6. ~~`-i` ai quattro driver~~ — **la voce era vecchia, verificato il 19
+    agosto**: `mouseser` e `uhci` ce l'hanno gia', completo di sonda e di
+    codice d'uscita. `floppy` NON PUO' averlo — non e' un programma, e' un
+    modulo del kernel senza `main`, e `spawn` lo rifiuta (la sonda infatti
+    fallisce e non lo installa, che e' l'esito giusto). Restava `vgaprova`, e
+    li' c'era di peggio: vedi la sezione qui sotto.
+
+    L'elenco originale diceva: `floppy`, Gli altri nove ce l'hanno tutti (`pci`,
     `svga`, `kbd`, `xhci` e i cinque del CD); `tty` era in questo elenco per
     sbaglio, non e' un `.drv` ma un pezzo compilato dentro il kernel. Oggi non
     danno problemi perche' escono da soli quando non trovano la periferica; il
@@ -693,6 +702,77 @@ butta il piu' vecchio.
 Provato coi pixel: 14990 di testo, 1559 dopo Ctrl+A e Ctrl+X, 14949 dopo
 Ctrl+Z. I 245 pixel di differenza rispetto a prima sono l'evidenziazione della
 selezione, non il testo.
+
+### `ls -l`, E DUE DIFETTI TROVATI SCRIVENDOLO
+
+    statperm(percorso, &p)      modo, uid, gid — SYS_STATPERM (253)
+
+! **UNA CHIAMATA IN PIU', NON UN CAMPO IN PIU' A `Stat`**, che e' la regola gia'
+scritta accanto a `spawn_su_console`: cambiare una struttura che i programmi si
+passano gia' vuol dire ricostruire tutto cio' che la usa, e `Stat` la usa
+chiunque apra un file. `st_uid` e `st_gid` di `struct stat` restano a zero e
+continuano a dichiararlo.
+
+! **E LA TRADUZIONE uid -> NOME E' PASSATA NELLA libc**, perche' adesso gli
+utenti sono due: stava dentro `/bin/id`, e `ls -l` ne avrebbe fatto una seconda
+copia. Due copie di un parser di un formato di file divergono al primo campo
+aggiunto. `nome_utente()`.
+
+#### Il difetto grosso: `VfsStat` non inizializzata
+
+Su un CD `ls -l` mostrava permessi diversi per ogni file e proprietari con
+numeri a cinque cifre. Non era `ls`:
+
+! **`stat_interno()` LASCIAVA `modo`, `uid` E `gid` A QUELLO CHE C'ERA NELLO
+STACK.** Li scriveva solo il ramo ext2 (e il FAT generico, a zero); il ramo
+ISO 9660, quello del floppy FAT12 e la RADICE non li toccavano affatto.
+
+! **E NON ERA ESTETICA: `vfs_permesso()` DECIDE CON `st->modo`.** Zero vuol dire
+«questo volume non ha proprietari, passa»; qualunque altra cosa vuol dire
+«guarda i bit». Con `modo` casuale, **il permesso di leggere un file su un CD o
+su un floppy si decideva in base a memoria non inizializzata** — a volte si', a
+volte no, e niente lo faceva notare.
+
+! **LA RIPARAZIONE VA ALL'INGRESSO, NON NEI DUE RAMI CHE MANCAVANO**: si azzera
+tutta la struttura appena si entra, cosi' il PROSSIMO filesystem nasce giusto
+senza che nessuno debba ricordarselo.
+
+Adesso su ISO si legge `-????????? -  -`, che e' la verita' («questo volume non
+ha proprietari»), e su ext2:
+
+    drwxr-xr-x tizio    tizio    <DIR>   /home/tizio
+    -rw------- root     root     175     /boot/ombra
+
+#### E `vgaprova` veniva ESEGUITO a ogni installazione
+
+`hwconfig -d` sonda ogni `*.drv` del catalogo lanciandolo con `-i`, e `install`
+chiama `hwconfig`. `vgaprova` gli argomenti non li guardava nemmeno: veniva
+eseguito per davvero — con lo schermo commutato in 320x200 nel mezzo — e usciva
+con **0**, che per la sonda vuol dire «servo qui». Risultato:
+`/dev/vgaprova.drv` finiva installato su ogni sistema.
+
+! **E LA RISPOSTA GIUSTA E' NO, NON «SI'»**: quello non e' un driver. Non guida
+niente e non serve nessuna periferica — e' una prova che si lancia a mano.
+Stesso difetto di `wserver.drv`, stessa riparazione.
+
+### LA SCIA DEL CURSORE SULLA CONSOLE
+
+Segnalato cosi': «ogni rigo termina con `_`, non causa problemi ma esteticamente
+non e' gradevole; rimuoverlo causa problemi?».
+
+! **SI', NE CAUSEREBBE: QUEL TRATTINO E' IL CURSORE.** In grafica il cursore e'
+due righe di pixel in fondo alla cella — cioe' un trattino basso — e senza non
+si vede piu' dove si sta scrivendo. Il difetto non era la sua presenza: era che
+ne restava uno su OGNI riga.
+
+Lo scorrimento della console, in grafica, non ridisegna tutto: fa scorrere i
+pixel del framebuffer di una riga di celle, che e' la ragione per cui il
+sistema arriva al prompt subito invece che in decine di secondi. Ma i pixel del
+cursore erano gia' sullo schermo, quindi **salivano insieme al resto** — e la
+riga dopo `g_cur_disegnato = 0` diceva «non c'e' nessun cursore da cancellare»,
+che a quel punto era vero e inutile: il segno era gia' impresso.
+
+Si cancella PRIMA di far scorrere, mentre e' ancora suo.
 
 ## Difetti aperti, dichiarati
 
