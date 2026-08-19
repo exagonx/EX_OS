@@ -1391,10 +1391,40 @@ int vfs_unlink(const char *abs) { int r; fs_prendi_n("unlink"); r = modifica(abs
  * ancora. La rename() che copia e cancella non lo permette: ricopiando
  * rifarebbe l'allocazione, e la verifica non varrebbe piu' niente.
  *
- * ! NON SI SOVRASCRIVE LA DESTINAZIONE (EEXIST). Su POSIX rename()
- * sostituisce; qui no, perche' sostituire vuol dire cancellare un file che
- * l'utente non ha nominato come vittima. Chi vuole sostituire cancella
- * prima, e cosi' la perdita e' una scelta.
+ * ! LA DESTINAZIONE SI SOSTITUISCE, COME SU POSIX — e fino alla 0.184 no.
+ * Qui c'era scritto che sostituire vuol dire cancellare un file «che l'utente
+ * non ha nominato come vittima», e che chi vuole sostituire cancella prima.
+ * Sono cadute tutt'e due:
+ *
+ *   - l'utente LO HA nominato: e' la destinazione. E' cio' che rename
+ *     significa, e ogni programma scritto altrove lo da' per scontato;
+ *
+ *   - «cancella prima» NON e' equivalente, ed e' il punto che conta. Lo
+ *     schema con cui si salva un file senza rischiare di perderlo e' uno
+ *     solo: scrivi accanto, poi SCAMBIA. Se lo scambio non sostituisce,
+ *     bisogna cancellare prima — e fra la cancellazione e lo scambio il file
+ *     NON ESISTE. Chi arriva li' in mezzo non trova niente.
+ *
+ * ! E QUI DENTRO LA FINESTRA NON C'E', che e' la ragione per cui la
+ * sostituzione va fatta nel kernel e non lasciata a chi chiama. vfs_rename
+ * tiene il lucchetto del filesystem per tutta l'operazione: nessun altro
+ * processo puo' vedere lo stato intermedio. In spazio utente quella garanzia
+ * non si puo' avere, per quanto attenti si sia.
+ *
+ * Il difetto che l'ha fatto emergere: il program manager salvava l'elenco
+ * delle applicazioni con scrivi-accanto-e-scambia, e su un sistema installato
+ * falliva SEMPRE — l'elenco c'e' per definizione, quindi lo scambio trovava
+ * sempre la destinazione occupata.
+ *
+ * ! LE REGOLE SUI TIPI SONO QUELLE DI POSIX, e non sono pignoleria: una
+ * directory sostituita da un file lascerebbe i suoi figli senza padre, cioe'
+ * blocchi occupati e irraggiungibili. Una directory si sostituisce solo con
+ * una directory, e solo se e' VUOTA.
+ *
+ * ! E RINOMINARE UN FILE SU SE STESSO NON FA NIENTE, come dice POSIX. Senza
+ * questo controllo la sostituzione lo CANCELLEREBBE prima di rinominarlo:
+ * `rename("x", "x")` distruggerebbe x. E' il caso che sembra assurdo finche'
+ * non lo scrive un programma che costruisce i due nomi separatamente.
  *
  * ! fat12.c (il floppy di avvio) NON ce l'ha, ed e' voluto: e' la strada
  * collaudata che non si tocca senza una ragione forte, e li' la rinomina
@@ -1429,6 +1459,36 @@ static int vfs_rename_nl(const char *da, const char *a)
     if (g_mnt[im_da].sola_lettura)          return ERR(EROFS);
     if (g_mnt[im_da].tipo == VFS_FS_ISO)    return ERR(EROFS);
     if (e_radice(int_da) || e_radice(int_a)) return ERR(EBUSY);
+
+    /* =====================================================================
+     * La destinazione: si toglie di mezzo, con le regole di POSIX.
+     * Vedi il commento in cima per il perche' si fa QUI e non in chi chiama.
+     * ===================================================================== */
+    {
+        VfsStat st_a, st_da;
+
+        /* Stesso nome: non si fa niente e si dice che e' andata bene. Il
+         * confronto e' sul percorso INTERNO, cioe' dopo l'instradamento:
+         * due percorsi scritti diversi possono essere lo stesso file. */
+        if (v_uguale(int_da, int_a)) return 0;
+
+        if (vfs_stat_nl(a, &st_a) == 0) {
+            if (vfs_stat_nl(da, &st_da) != 0) return ERR(ENOENT);
+
+            if (st_a.is_dir && !st_da.is_dir)  return ERR(EISDIR);
+            if (!st_a.is_dir && st_da.is_dir)  return ERR(ENOTDIR);
+
+            /* modifica(a, 1) e' rmdir, modifica(a, 2) e' unlink: sono le
+             * versioni senza lucchetto, e il lucchetto ce l'abbiamo gia'.
+             * rmdir rende ENOTEMPTY da se' se la directory ha dentro
+             * qualcosa, che e' esattamente la regola di POSIX. */
+            {
+                int r_via = modifica(a, st_a.is_dir ? 1 : 2);
+
+                if (r_via != 0) return r_via;
+            }
+        }
+    }
 
     /* ! Anche il floppy di avvio, e qui la deroga alla regola «fat12.c
      * non si tocca» e' motivata: prima della 0.161 rename() era

@@ -246,22 +246,15 @@ static int applicazioni_scrivi(void)
         unlink(tmp);
         return 0;
     }
-    /* ! IL rename DI EX-OS NON SOSTITUISCE, e POSIX invece si'. Con la
-     * destinazione gia' presente rende -EEXIST, e il salvataggio falliva
-     * SEMPRE — su un sistema installato, dove l'elenco c'e' per definizione.
-     * Il messaggio diceva «sola lettura, o permessi mancanti», che erano
-     * tutt'e due false: l'ha smentito il numero, 17, messo li' apposta per
-     * smettere di indovinare.
+    /* ! LO SCAMBIO E' ATOMICO, E NON SI CANCELLA PRIMA. Fino alla 0.184 il
+     * rename di EX-OS non sostituiva, quindi qui bisognava togliere di mezzo
+     * la destinazione — e fra il togliere e lo scambiare l'elenco NON
+     * ESISTEVA. Adesso vfs_rename sostituisce tenendo il lucchetto del
+     * filesystem per tutta l'operazione: quella finestra non c'e' piu', e non
+     * si poteva chiuderla da qui.
      *
-     * ! TOGLIERE PRIMA APRE UNA FINESTRA, E LA SI DICHIARA. Fra unlink e
-     * rename l'elenco non esiste: se la corrente va via li' in mezzo, al
-     * riavvio la scrivania non ha applicazioni. Ma il file NUOVO e' gia'
-     * scritto per intero accanto — `applicazioni.txt.nuo` — quindi si ripara
-     * rinominandolo a mano. E' meno bello di uno scambio atomico e molto
-     * meglio di scrivere in luogo, dove una caduta a meta' lascia un elenco
-     * troncato che nessuno sa di dover riparare. */
-    unlink(g_elenco);
-
+     * Se lo scambio fallisce, il file nuovo resta accanto col suffisso .nuo e
+     * quello vecchio e' intatto: si ripara rinominandolo a mano. */
     if (rename(tmp, g_elenco) != 0) {
         sprintf(g_perche, "non rinomino (%d)", errno);
         return 0;
