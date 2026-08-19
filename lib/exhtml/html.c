@@ -273,6 +273,7 @@ int html_analizza(HtmlDoc *d, const char *t, unsigned int n)
     unsigned int i = 0;
     int          pila[64];
     int          cima = 0;
+    int          pre_liv = 0;       /* dentro quanti <pre> siamo */
 
     if (!d || !d->nodi || !d->arena || !t) return 0;
 
@@ -304,8 +305,15 @@ int html_analizza(HtmlDoc *d, const char *t, unsigned int n)
                 /* ! GLI SPAZI SI RIDUCONO A UNO, ed e' cio' che l'HTML dice di
                  * fare: un documento indentato ha decine di spazi e ritorni a
                  * capo fra un tag e l'altro, che sulla pagina non si vedono.
-                 * Tenerli vorrebbe dire un'impaginazione piena di buchi. */
-                if (spazio(c)) {
+                 * Tenerli vorrebbe dire un'impaginazione piena di buchi.
+                 *
+                 * ! DENTRO <pre> NO, ED E' L'UNICA ECCEZIONE. Li' gli spazi e
+                 * gli a capo SONO il contenuto — e' tutta la ragione per cui
+                 * quel tag esiste. Ridurli qui vorrebbe dire che nessun
+                 * lettore, per quanto attento, potrebbe piu' rimetterli:
+                 * l'informazione e' persa prima di arrivargli. La deve tenere
+                 * chi analizza, perche' e' l'unico che ce l'ha ancora. */
+                if (spazio(c) && pre_liv == 0) {
                     while (i < n && spazio((unsigned char)t[i])) i++;
                     arena_car(d, ' ');
                     qualcosa = 1;
@@ -360,6 +368,8 @@ int html_analizza(HtmlDoc *d, const char *t, unsigned int n)
              * resterebbe aperta per sempre, cioe' tutto il resto della pagina
              * in grassetto. Cosi' invece si chiude fino a lei, e la <i> muore
              * con lei — che e' quello che fanno i browser veri. */
+            if (uguale_min(d->arena + nm, "pre") && pre_liv > 0) pre_liv--;
+
             for (k = cima; k > 0; k--)
                 if (uguale_min(d->arena + d->nodi[pila[k]].nome,
                                d->arena + nm)) { cima = k - 1; break; }
@@ -502,6 +512,8 @@ int html_analizza(HtmlDoc *d, const char *t, unsigned int n)
 
             /* --- si apre, se non e' vuoto --- */
             if (!da_se && !vuoto(d->arena + nm)) {
+                if (uguale_min(d->arena + nm, "pre")) pre_liv++;
+
                 if (cima + 1 < (int)(sizeof(pila) / sizeof(pila[0]))) {
                     pila[++cima] = v;
                 } else {

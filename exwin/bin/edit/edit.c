@@ -55,6 +55,7 @@
 #define ID_INCOLLA    12
 #define ID_CANCELLA   13
 #define ID_SELTUTTO   14
+#define ID_ANNULLA    15
 
 #define ID_ISTRUZIONI 20
 #define ID_INFO       21
@@ -264,6 +265,143 @@ static void istruzioni(void)
                   "si copia qui e si incolla in un altro editor.");
 }
 
+/* =============================================================================
+ * L'ANNULLAMENTO
+ *
+ * ! SI TIENE IL TESTO INTERO, NON LE OPERAZIONI, e per una volta la soluzione
+ * grossolana e' quella giusta. Un elenco di operazioni — «tolti 12 byte a riga
+ * 4 colonna 7» — e' piu' piccolo, ma va tenuto d'accordo con ogni cosa che
+ * modifica il testo: sbagliarne una vuol dire un annullamento che ricostruisce
+ * un testo che non e' mai esistito, cioe' un difetto che si scopre dopo aver
+ * perso del lavoro. L'area sta in 512 righe da 200 colonne, quindi il caso
+ * peggiore e' cento chilobyte: si copia e non si sbaglia.
+ *
+ * ! IL TETTO C'E' SU TUTT'E DUE LE COSE — quanti passi e quanti byte — e
+ * quando si sfora si butta il PIU' VECCHIO. Un annullamento che smette di
+ * funzionare perche' la memoria e' finita sarebbe peggio di uno corto.
+ *
+ * ! QUELLO CHE NON SI ANNULLA, DICHIARATO: la digitazione. I tasti se li
+ * mangia il controllo areatesto e a questo programma non arrivano mai — c'e'
+ * scritto anche accanto a EXM_TASTO qui sotto. Si annullano i tre COMANDI che
+ * modificano il testo — taglia, incolla, cancella — e nient'altro: nemmeno il
+ * caricamento di un file, che ha gia' la sua domanda prima di buttare via il
+ * lavoro. Per la digitazione servirebbe che fosse il controllo areatesto a
+ * segnare i passi, non l'applicazione.
+ *
+ * ! E NON C'E' IL «RIPETI». Annullare un annullamento vuole una seconda pila,
+ * e vuole soprattutto decidere quando si svuota: qui si e' fermata la prima
+ * volta.
+ * ============================================================================= */
+#define ANNULLA_MAX     16
+#define ANNULLA_BYTE    (192u * 1024u)
+
+typedef struct {
+    char        *testo;     /* le righe unite da '\n' */
+    unsigned int byte;
+} Passo;
+
+static Passo        g_passi[ANNULLA_MAX];
+static int          g_passi_n = 0;
+static unsigned int g_passi_byte = 0;
+
+static void passo_libera(int i)
+{
+    if (!g_passi[i].testo) return;
+    free(g_passi[i].testo);
+    g_passi[i].testo = 0;
+    g_passi_byte -= g_passi[i].byte;
+    g_passi[i].byte = 0;
+}
+
+/* Butta il piu' vecchio e fa scorrere gli altri. */
+static void passo_scarta_vecchio(void)
+{
+    int i;
+
+    if (g_passi_n == 0) return;
+    passo_libera(0);
+    for (i = 1; i < g_passi_n; i++) g_passi[i - 1] = g_passi[i];
+    g_passi_n--;
+    g_passi[g_passi_n].testo = 0;
+    g_passi[g_passi_n].byte  = 0;
+}
+
+/* Il testo di adesso, in un blocco solo. Rende 0 se non c'e' memoria. */
+static char *testo_di_adesso(unsigned int *byte)
+{
+    unsigned int n = ex_area_righe(g_area), i, tot = 1;
+    char        *b;
+
+    for (i = 0; i < n; i++) {
+        const char *r = ex_area_riga(g_area, i);
+        unsigned int k = 0;
+
+        while (r && r[k]) k++;
+        tot += k + 1;                       /* la riga piu' il suo a capo */
+    }
+
+    b = (char *)malloc(tot);
+    if (!b) return 0;
+
+    tot = 0;
+    for (i = 0; i < n; i++) {
+        const char *r = ex_area_riga(g_area, i);
+        unsigned int k = 0;
+
+        while (r && r[k]) b[tot++] = r[k++];
+        b[tot++] = '\n';
+    }
+    b[tot] = '\0';
+    *byte = tot;
+    return b;
+}
+
+/* Si chiama PRIMA di ogni cosa che modifica il testo. */
+static void annulla_segna(void)
+{
+    unsigned int byte = 0;
+    char        *t = testo_di_adesso(&byte);
+
+    if (!t) return;             /* senza memoria si rinuncia al passo, non al
+                                 * comando: meglio un annullamento in meno che
+                                 * un'operazione che non si fa */
+
+    if (g_passi_n >= ANNULLA_MAX) passo_scarta_vecchio();
+    while (g_passi_n > 0 && g_passi_byte + byte > ANNULLA_BYTE)
+        passo_scarta_vecchio();
+
+    g_passi[g_passi_n].testo = t;
+    g_passi[g_passi_n].byte  = byte;
+    g_passi_byte += byte;
+    g_passi_n++;
+}
+
+/* Rimette il testo del passo piu' recente. Rende 0 se non c'era niente. */
+static int annulla_fai(void)
+{
+    char        *t;
+    unsigned int i, a;
+    char         riga[512];
+
+    if (g_passi_n == 0) return 0;
+
+    t = g_passi[g_passi_n - 1].testo;
+    ex_area_svuota(g_area);
+
+    i = 0;
+    while (t[i]) {
+        a = 0;
+        while (t[i] && t[i] != '\n' && a < sizeof(riga) - 1) riga[a++] = t[i++];
+        riga[a] = '\0';
+        ex_area_aggiungi(g_area, riga);
+        if (t[i] == '\n') i++;
+    }
+
+    g_passi_n--;
+    passo_libera(g_passi_n);
+    return 1;
+}
+
 static void informazioni(void)
 {
     char t[640];
@@ -299,8 +437,17 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         if (wp == ID_SALVACOME) { salva_come();       break; }
         if (wp == ID_ESCI)      { esci_se_si_puo();   break; }
 
+        if (wp == ID_ANNULLA)   {
+            if (annulla_fai()) strcpy(g_avviso, "annullato");
+            else               strcpy(g_avviso, "non c'e' niente da annullare");
+            break;
+        }
+
         if (wp == ID_TAGLIA)    {
-            int n = ex_area_taglia(g_area);
+            int n;
+
+            annulla_segna();
+            n = ex_area_taglia(g_area);
             if (n) sprintf(g_avviso, "tagliati %d byte", n);
             else   strcpy(g_avviso, "non c'e' niente di scelto");
             break;
@@ -312,12 +459,16 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
             break;
         }
         if (wp == ID_INCOLLA)   {
-            int n = ex_area_incolla(g_area);
+            int n;
+
+            annulla_segna();
+            n = ex_area_incolla(g_area);
             if (n) sprintf(g_avviso, "incollati %d byte", n);
             else   strcpy(g_avviso, "gli appunti sono vuoti");
             break;
         }
         if (wp == ID_CANCELLA)  {
+            annulla_segna();
             if (!ex_area_cancella(g_area))
                 strcpy(g_avviso, "non c'e' niente di scelto");
             break;
@@ -342,9 +493,16 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
          * dentro il toolkit se in quel momento ha senso. */
         if (wp & KBD_MOD_CTRL) {
             if (c == 's' || c == 'S') { salva();               break; }
-            if (c == 'x' || c == 'X') { ex_area_taglia(g_area);  break; }
+            if (c == 'x' || c == 'X') { annulla_segna();
+                                        ex_area_taglia(g_area);  break; }
             if (c == 'c' || c == 'C') { ex_area_copia(g_area);   break; }
-            if (c == 'v' || c == 'V') { ex_area_incolla(g_area); break; }
+            if (c == 'v' || c == 'V') { annulla_segna();
+                                        ex_area_incolla(g_area); break; }
+            if (c == 'z' || c == 'Z') {
+                if (annulla_fai()) strcpy(g_avviso, "annullato");
+                else               strcpy(g_avviso, "non c'e' niente da annullare");
+                break;
+            }
             if (c == 'a' || c == 'A') { ex_area_seleziona_tutto(g_area); break; }
             if (c == 'q' || c == 'Q') { esci_se_si_puo();      break; }
         }
@@ -413,6 +571,8 @@ int main(int argc, char **argv)
     ex_menu_voce(g_menu, "File", "-",                0);
     ex_menu_voce(g_menu, "File", "Esci\tCtrl+Q",      ID_ESCI);
 
+    ex_menu_voce(g_menu, "Modifica", "Annulla\tCtrl+Z", ID_ANNULLA);
+    ex_menu_voce(g_menu, "Modifica", "-",               0);
     ex_menu_voce(g_menu, "Modifica", "Taglia\tCtrl+X",  ID_TAGLIA);
     ex_menu_voce(g_menu, "Modifica", "Copia\tCtrl+C",   ID_COPIA);
     ex_menu_voce(g_menu, "Modifica", "Incolla\tCtrl+V", ID_INCOLLA);

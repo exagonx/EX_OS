@@ -12,12 +12,12 @@ seriale e USB — tastiera compresa, hub compresi.
 
 ## COSA E' COMMITTATO
 
-    25af7b6  "Allineamento, margini e sfondo: le tre proprieta' che excss
-              calcolava a vuoto"
+    fa24588  "Le tabelle, l'orologio che spariva, e «Informazioni su» su
+              quattro programmi"
 
-In attesa nell'albero: **le tabelle impaginate come tabelle**, **l'orologio che
-spariva al primo clic**, e le finestre **«Informazioni su»** su browser, editor,
-file manager e `ver`.
+In attesa nell'albero: **`<hr>`, i segni delle liste e `<pre>`** nel browser
+(piu' la conservazione degli spazi in exhtml, che e' dove andava fatta), e
+**l'annullamento nell'editor**.
 
 ! **`gitupdate.sh` FA `git add .` E UN COMMIT SOLO**: `messaggio-commit.txt`
 deve coprire tutto quello che si e' fatto dall'ultimo commit, non l'ultima
@@ -135,8 +135,12 @@ prima» e' un fatto solo se si e' guardato prima.
     sbagliare di un server grafico. **E dal 19 agosto pesa di piu'**: la
     fusione del testo antialiasato LEGGE e riscrive i pixel, quindi un
     ridisegno completo costa piu' di prima.
- 4. **L'annullamento nell'editor** — un taglio sbagliato non si rimette a
-    posto. E' quello che manca di piu' ora che c'e' un «Taglia».
+ 4. ~~L'annullamento nell'editor~~ — **FATTO il 19 agosto**. Ctrl+Z, sedici
+    passi, e si annullano i tre comandi che modificano il testo: taglia,
+    incolla, cancella. ! **LA DIGITAZIONE NO, ED E' DICHIARATO**: i tasti se li
+    mangia il controllo `areatesto` e all'applicazione non arrivano mai — per
+    quella servirebbe che fosse il controllo a segnare i passi. E non c'e' il
+    «Ripeti».
  5. **`ls -l`** — non c'e', ed **e' piu' grosso di quanto diceva questa voce**
     (corretto il 19 agosto). Qui c'era scritto «la libc sa gia' dire
     proprietario, permessi e misura: manca l'impaginazione». **E' falso.**
@@ -639,6 +643,56 @@ frase, e si e' visto proprio qui.
    espande subito: la shell aveva un prerequisito VUOTO. **Terza volta che
    questo Makefile inciampa nella stessa cosa** — dopo exwin.so e il blocco di
    wserver. Le definizioni adesso stanno in cima, col perche' accanto.
+
+### `<hr>`, LE LISTE E `<pre>` — e uno dei tre stava nel posto sbagliato
+
+`<hr>` era solo uno stacco: adesso e' una riga, disegnata come uno sfondo alto
+due pixel, perche' e' esattamente cio' che e'. `<ul>` e `<ol>` hanno il loro
+segno — e per `<ol>` il numero si conta fra i fratelli, non con un contatore
+globale, o due liste annidate si darebbero i numeri a vicenda.
+
+! **IL SEGNO DI UNA LISTA NON STA NELLA PAGINA**, e un pezzo sa indicare solo
+un punto dell'arena del documento. Si scrive in CODA a quell'arena, dopo il
+segno lasciato da `html_analizza`, e si riparte da quel segno a ogni
+impaginazione — altrimenti la coda crescerebbe di un giro per volta, e la
+pagina si reimpagina a ogni immagine che arriva.
+
+#### `<pre>`: la correzione andava in exhtml, non nel browser
+
+Il primo tentativo l'ho fatto nel browser, e non funzionava: **gli a capo non
+gli arrivavano nemmeno**. `html.c` riduce a uno spazio qualunque sequenza di
+bianchi — che e' la regola dell'HTML e va bene per tutto il resto.
+
+! **DENTRO `<pre>` GLI SPAZI E GLI A CAPO SONO IL CONTENUTO**, ed e' tutta la
+ragione per cui quel tag esiste. Ridurli nel lettore vuol dire che nessun
+utilizzatore, per quanto attento, puo' piu' rimetterli: l'informazione e' persa
+prima di arrivargli. La deve tenere chi analizza, perche' e' l'unico che ce
+l'ha ancora. Quattro casi nuovi in `tools/prove/htmlprova.c` — 31 in tutto, 0
+falliti.
+
+! **E IL DISEGNO SI FERMAVA AL SOLO SPAZIO.** `disegna()` ricopia dall'arena
+«fino allo spazio»: bastava finche' gli a capo non arrivavano fin li'. Dentro
+`<pre>` arrivano, e venivano DISEGNATI — un rettangolino in coda a ogni riga.
+Adesso ci si ferma a qualunque bianco.
+
+Piu' il carattere a larghezza fissa per `<pre>`, `<code>`, `<tt>`, `<kbd>` e
+`<samp>` — con un contatore e non un si'/no, perche' si annidano.
+
+### L'ANNULLAMENTO NELL'EDITOR
+
+! **SI TIENE IL TESTO INTERO, NON LE OPERAZIONI**, e per una volta la soluzione
+grossolana e' quella giusta. Un elenco di operazioni e' piu' piccolo ma va
+tenuto d'accordo con ogni cosa che modifica il testo: sbagliarne una vuol dire
+un annullamento che ricostruisce un testo mai esistito, cioe' un difetto che si
+scopre dopo aver perso del lavoro. L'area sta in 512 righe da 200 colonne, il
+caso peggiore e' cento chilobyte: si copia e non si sbaglia.
+
+Tetto su tutt'e due le cose — sedici passi e 192 KB — e quando si sfora si
+butta il piu' vecchio.
+
+Provato coi pixel: 14990 di testo, 1559 dopo Ctrl+A e Ctrl+X, 14949 dopo
+Ctrl+Z. I 245 pixel di differenza rispetto a prima sono l'evidenziazione della
+selezione, non il testo.
 
 ## Difetti aperti, dichiarati
 

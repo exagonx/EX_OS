@@ -398,7 +398,7 @@ static int riga_w(void)
 #define CORPO_MAX   72
 
 typedef struct {
-    unsigned char neretto, corsivo;
+    unsigned char neretto, corsivo, fisso;
     short         corpo;
     ExFont        f;
 } FontVoce;
@@ -406,13 +406,20 @@ typedef struct {
 static FontVoce g_font[FONT_MAX];
 static int      g_font_n = 0;
 
-static ExFont font_per(int neretto, int corsivo, int corpo)
+/* ! IL CARATTERE A LARGHEZZA FISSA E' UNA FAMIGLIA, NON UN CORPO: dentro <pre>
+ * e <code> gli spazi devono valere quanto le lettere, o l'incolonnamento — che
+ * e' l'unica ragione per cui quel testo e' preformattato — non si vede. */
+static ExFont font_per(int neretto, int corsivo, int fisso, int corpo)
 {
-    static const char *const FACCIA[4] = {
+    static const char *const FACCIA[8] = {
         "/exwin/font/LiberationSerif-Regular.ttf",
         "/exwin/font/LiberationSerif-Bold.ttf",
         "/exwin/font/LiberationSerif-Italic.ttf",
-        "/exwin/font/LiberationSerif-BoldItalic.ttf"
+        "/exwin/font/LiberationSerif-BoldItalic.ttf",
+        "/exwin/font/LiberationMono-Regular.ttf",
+        "/exwin/font/LiberationMono-Bold.ttf",
+        "/exwin/font/LiberationMono-Italic.ttf",
+        "/exwin/font/LiberationMono-BoldItalic.ttf"
     };
     int i, k;
 
@@ -420,14 +427,16 @@ static ExFont font_per(int neretto, int corsivo, int corpo)
     if (corpo > CORPO_MAX) corpo = CORPO_MAX;
     neretto = neretto ? 1 : 0;
     corsivo = corsivo ? 1 : 0;
+    fisso   = fisso   ? 1 : 0;
 
     for (i = 0; i < g_font_n; i++)
         if (g_font[i].neretto == neretto && g_font[i].corsivo == corsivo &&
-            g_font[i].corpo == (short)corpo) return g_font[i].f;
+            g_font[i].fisso == fisso && g_font[i].corpo == (short)corpo)
+            return g_font[i].f;
 
     if (g_font_n >= FONT_MAX) return g_font_testo;
 
-    k = neretto + corsivo * 2;
+    k = neretto + corsivo * 2 + fisso * 4;
     g_font[g_font_n].f = ex_font_apri(FACCIA[k], corpo);
 
     /* ! ex_font_apri RENDE 0 SE IL FILE NON C'E', e zero E' il font di sistema:
@@ -436,9 +445,14 @@ static ExFont font_per(int neretto, int corsivo, int corpo)
      * lenta. */
     g_font[g_font_n].neretto = (unsigned char)neretto;
     g_font[g_font_n].corsivo = (unsigned char)corsivo;
+    g_font[g_font_n].fisso   = (unsigned char)fisso;
     g_font[g_font_n].corpo   = (short)corpo;
     return g_font[g_font_n++].f;
 }
+
+/* Dentro quanti <pre>/<code> siamo: e' un contatore e non un si'/no, perche'
+ * si annidano — <pre> con dentro <code> e' comunissimo. */
+static int g_fisso = 0;
 
 /* Il carattere che tocca allo stile di adesso. */
 static ExFont font_di(const CssStile *st)
@@ -447,8 +461,8 @@ static ExFont font_di(const CssStile *st)
     int corsivo = (st->corsivo == 1);
     int corpo   = (st->corpo == CSS_MISURA_NO) ? 15 : st->corpo;
 
-    if (!neretto && !corsivo && corpo == 15) return g_font_testo;
-    return font_per(neretto, corsivo, corpo);
+    if (!neretto && !corsivo && !g_fisso && corpo == 15) return g_font_testo;
+    return font_per(neretto, corsivo, g_fisso > 0, corpo);
 }
 
 static unsigned int colore_di(const CssStile *st)
@@ -546,12 +560,57 @@ static void parola(const char *t, unsigned int off, int n)
 
 /* Un testo intero, spezzato in parole. Serve al testo dei nodi e al testo di
  * ripiego di un'immagine, che e' la stessa cosa: parole nell'arena. */
+/* =============================================================================
+ * IL TESTO CHE NON VIENE DAL DOCUMENTO
+ *
+ * ! I SEGNI DELLE LISTE NON STANNO NELLA PAGINA, e un pezzo pero' sa indicare
+ * solo un punto dell'arena del documento. Si scrivono percio' IN CODA a
+ * quell'arena, dopo il segno lasciato da html_analizza: e' memoria che il
+ * browser possiede gia' e che nessun altro tocca piu'.
+ *
+ * ! E SI RIPARTE DAL SEGNO A OGNI IMPAGINAZIONE, o la coda crescerebbe di un
+ * giro per volta — e la pagina si reimpagina a ogni immagine che arriva.
+ * ========================================================================== */
+static unsigned int g_arena_doc = 0;    /* dove finisce il testo del documento */
+
+static unsigned int genera(const char *s)
+{
+    unsigned int inizio = g_doc.arena_n, i = 0;
+
+    while (s[i]) i++;
+    if (g_doc.arena_n + i + 1 > ARENA_MAX) return 0;
+
+    for (i = 0; s[i]; i++) g_arena[g_doc.arena_n++] = s[i];
+    g_arena[g_doc.arena_n++] = '\0';
+    return inizio;
+}
+
 static void parole(const char *t, unsigned int base)
 {
     int i = 0;
 
     while (t[i]) {
         int a;
+
+        /* ! DENTRO <pre> LO SPAZIO E' TESTO, e l'a capo pure: e' tutta la
+         * ragione per cui quel tag esiste. Fuori, una sequenza di spazi e di a
+         * capo vale uno spazio solo — che e' la regola dell'HTML. */
+        if (g_fisso > 0) {
+            if (t[i] == '\n') { g_pen_x = riga_x() + 1; a_capo(); i++; continue; }
+            if (t[i] == '\r') { i++; continue; }
+            if (t[i] == ' ' || t[i] == '\t') {
+                int quanti = (t[i] == '\t') ? 8 : 1;
+
+                g_pen_x += quanti * ex_larghezza_testo(font_di(&g_stile_ora), " ");
+                i++;
+                continue;
+            }
+            a = i;
+            while (t[i] && t[i] != ' ' && t[i] != '\t' &&
+                   t[i] != '\n' && t[i] != '\r') i++;
+            parola(t + a, base + (unsigned int)a, i - a);
+            continue;
+        }
 
         while (t[i] == ' ') {
             g_pen_x += ex_larghezza_testo(font_di(&g_stile_ora), " ");
@@ -927,6 +986,27 @@ static void impagina_nodo(int v, const CssStile *ered)
 
         if (uguale(nome, "br")) { g_pen_x = riga_x() + 1; a_capo(); return; }
 
+        /* ! <hr> E' UNA RIGA, non uno stacco piu' grande: finora era solo un
+         * blocco vuoto, cioe' un po' d'aria in mezzo alla pagina — e chi
+         * scrive <hr> vuole vedere il segno che separa. Si disegna come uno
+         * sfondo alto due pixel, perche' e' esattamente cio' che e'. */
+        if (uguale(nome, "hr")) {
+            spazio_blocco(0);
+            if (g_sfondi_n < SFONDI_MAX) {
+                g_sfondi[g_sfondi_n].x = riga_x();
+                g_sfondi[g_sfondi_n].y = g_pen_y + 2;
+                g_sfondi[g_sfondi_n].w = riga_w();
+                g_sfondi[g_sfondi_n].h = 2;
+                g_sfondi[g_sfondi_n].colore = EX_OMBRA;
+                g_sfondi_n++;
+            }
+            g_pen_y += 6;
+            g_riga_h = alt_riga_f(font_di(&mio));
+            g_riga_primo = g_pez_n;
+            spazio_blocco(2);
+            return;
+        }
+
         if (uguale(nome, "img")) {
             const char *src = html_attr(&g_doc, v, "src");
             const char *alt;
@@ -975,6 +1055,46 @@ static void impagina_nodo(int v, const CssStile *ered)
             }
         }
 
+        /* ! IL SEGNO DI UNA VOCE DIPENDE DALLA LISTA CHE LA CONTIENE, e la
+         * lista si trova risalendo: <li> non sa da solo se e' puntato o
+         * numerato. Per <ol> serve anche la POSIZIONE, cioe' quanti <li> lo
+         * precedono fra i fratelli — e si contano li', non con un contatore
+         * globale, o due liste annidate si darebbero i numeri a vicenda. */
+        if (uguale(nome, "li")) {
+            int su = g_doc.nodi[v].padre;
+            int numerata = 0;
+
+            while (su >= 0) {
+                const char *n = html_nome(&g_doc, su);
+
+                if (uguale(n, "ol")) { numerata = 1; break; }
+                if (uguale(n, "ul")) break;
+                su = g_doc.nodi[su].padre;
+            }
+
+            if (numerata) {
+                int  quanti = 1, f2;
+                char seg[16];
+                int  q = 0, cifre[8], nc = 0;
+
+                for (f2 = g_doc.nodi[su].primo_figlio; f2 >= 0 && f2 != v;
+                     f2 = g_doc.nodi[f2].prossimo)
+                    if (g_doc.nodi[f2].tipo == HTML_ELEMENTO &&
+                        uguale(html_nome(&g_doc, f2), "li")) quanti++;
+
+                while (quanti > 0) { cifre[nc++] = quanti % 10; quanti /= 10; }
+                while (nc > 0) seg[q++] = (char)('0' + cifre[--nc]);
+                seg[q++] = '.';
+                seg[q] = '\0';
+                parola(seg, genera(seg), q);
+            } else {
+                /* Un pallino, non un asterisco: e' il segno che ci si aspetta,
+                 * e il carattere c'e' in tutte le facce Liberation. */
+                parola("-", genera("-"), 1);
+            }
+            g_pen_x += ex_larghezza_testo(font_di(&mio), " ");
+        }
+
         if (uguale(nome, "a")) {
             const char *h = html_attr(&g_doc, v, "href");
 
@@ -989,10 +1109,18 @@ static void impagina_nodo(int v, const CssStile *ered)
             }
         }
 
+        if (uguale(nome, "pre") || uguale(nome, "code") ||
+            uguale(nome, "tt")  || uguale(nome, "kbd") ||
+            uguale(nome, "samp")) g_fisso++;
+
         for (f = g_doc.nodi[v].primo_figlio; f >= 0; f = g_doc.nodi[f].prossimo) {
             impagina_nodo(f, &mio);
             g_stile_ora = mio;      /* i figli l'hanno cambiato: si rimette */
         }
+
+        if (uguale(nome, "pre") || uguale(nome, "code") ||
+            uguale(nome, "tt")  || uguale(nome, "kbd") ||
+            uguale(nome, "samp")) g_fisso--;
 
         g_link_ora = era_link;
 
@@ -1017,6 +1145,8 @@ static void impagina(void)
 {
     g_pez_n = 0;
     g_link_n = 0;
+    g_fisso = 0;
+    g_doc.arena_n = g_arena_doc;    /* si butta il testo generato dal giro prima */
     g_marg_sx = g_marg_dx = 0;
     g_riga_primo = 0;
     g_sfondi_n = 0;
@@ -1122,7 +1252,16 @@ static void disegna(void)
                 static char cop[256];
                 int k = 0;
 
-                while (t[k] && t[k] != ' ' && k < (int)sizeof(cop) - 1) {
+                /* ! CI SI FERMA A QUALUNQUE BIANCO, non al solo spazio.
+                 * L'impaginazione ha gia' spezzato il testo in parole e il
+                 * pezzo punta all'inizio di una: quello che segue nell'arena
+                 * appartiene alla parola dopo. Fermarsi al solo ' ' bastava
+                 * finche' gli a capo non arrivavano fin qui — dentro <pre>
+                 * arrivano, e venivano DISEGNATI, cioe' un rettangolino in
+                 * coda a ogni riga. */
+                while (t[k] && t[k] != ' ' && t[k] != '\n' &&
+                       t[k] != '\r' && t[k] != '\t' &&
+                       k < (int)sizeof(cop) - 1) {
                     cop[k] = t[k]; k++;
                 }
                 cop[k] = '\0';
@@ -1682,6 +1821,7 @@ static void vai(const char *url, int in_storia, int usa_cache)
     html_prepara(&g_doc, g_nodi, NODI_MAX, g_attr, ATTR_MAX,
                  g_arena, ARENA_MAX);
     html_analizza(&g_doc, (const char *)g_pagina, e.byte);
+    g_arena_doc = g_doc.arena_n;    /* da qui in poi c'e' il testo generato */
 
     g_scorri = 0;
     raccogli_css();

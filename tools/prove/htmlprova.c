@@ -135,6 +135,23 @@ int main(int argc, char **argv)
        strcmp(html_attr(&g_doc, trova("div"), "class"), "x") == 0,
        "l'attributo si trova comunque lo si scriva");
 
+    printf("SPAZI E <pre>\n");
+    leggi("<p>a   \n\t b</p>");
+    buf[0] = '\0'; testo_sotto(trova("p"), buf, sizeof(buf));
+    ok(strcmp(buf, "a b") == 0, "fuori da <pre> gli spazi si riducono a uno");
+
+    leggi("<pre>a   \n\tb</pre>");
+    buf[0] = '\0'; testo_sotto(trova("pre"), buf, sizeof(buf));
+    ok(strcmp(buf, "a   \n\tb") == 0, "dentro <pre> restano tali e quali");
+
+    leggi("<pre>a\nb</pre><p>c   d</p>");
+    buf[0] = '\0'; testo_sotto(trova("p"), buf, sizeof(buf));
+    ok(strcmp(buf, "c d") == 0, "e dopo il </pre> si torna a ridurli");
+
+    leggi("<pre>x  <code>y  z</code>  w</pre>");
+    buf[0] = '\0'; testo_sotto(trova("pre"), buf, sizeof(buf));
+    ok(strcmp(buf, "x  y  z  w") == 0, "vale anche dentro i figli del <pre>");
+
     printf("ATTRIBUTI\n");
     leggi("<a href=\"/x?a=1&amp;b=2\" title='c\"d' hidden>t</a>");
     ok(strcmp(html_attr(&g_doc, trova("a"), "href"), "/x?a=1&b=2") == 0,
