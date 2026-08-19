@@ -4965,8 +4965,94 @@ int ipc_send(unsigned int dest_pid, unsigned int tipo,
                            (uint32_t)data, len);
 }
 
+/* =============================================================================
+ * LO SCAFFALE DEI MESSAGGI RIMESSI
+ *
+ * ! LA MAILBOX E' UNA SOLA E I CONSUMATORI SONO PIU' D'UNO, ed e' da qui che
+ * nasce il problema. Un'applicazione grafica riceve nella stessa coda gli
+ * eventi del server a finestre E le risposte dello stack IP. Chi aspetta una
+ * risposta dello stack scorre i messaggi finche' non trova la sua — e quelli
+ * degli altri, letti per sbaglio, finora li BUTTAVA. In un browser che scarica
+ * una pagina, quelli buttati sono i clic dell'utente.
+ *
+ * ! NON SI PUO' «NON LEGGERE» UN MESSAGGIO: ipc_recv toglie dalla coda del
+ * kernel e non c'e' modo di sbirciare. L'unica difesa e' rimetterlo da questa
+ * parte, e questo scaffale e' quel posto.
+ *
+ * ! E STA NELLA libc, NON IN CHI FILTRA. Il problema non e' dell'HTTP ne' del
+ * DNS: e' di chiunque condivida la mailbox con qualcun altro. Mettere lo
+ * scaffale in ognuno vorrebbe dire tanti scaffali che non si vedono fra loro,
+ * cioe' un messaggio rimesso da uno e mai visto dall'altro.
+ *
+ * ! L'ORDINE SI RISPETTA: prima cio' che e' stato rimesso, e fra quelli il
+ * piu' vecchio. Un messaggio rimesso e' arrivato PRIMA di quelli che ancora
+ * devono arrivare, e consegnarlo dopo vorrebbe dire riordinare una coda —
+ * che per un protocollo a domanda e risposta e' un modo di far combaciare la
+ * risposta sbagliata con la domanda giusta.
+ *
+ * ! QUATTRO POSTI, E IL PERCHE' DEL NUMERO. Chi filtra scorre pochi messaggi
+ * prima di trovare il suo; quattro coprono il caso vero senza costare: sono
+ * 6 KB di dati per processo, e la libreria condivisa ne da' una copia fresca a
+ * ognuno. Se lo scaffale e' pieno, il messaggio si perde COME PRIMA — non
+ * peggio di adesso, e si sa dal valore reso.
+ * ============================================================================= */
+#define IPC_SCAFFALE_N  4
+
+static struct {
+    IpcMessage    meta;
+    unsigned char dati[IPC_MSG_MAX_DATA];
+    unsigned int  len;
+    int           pieno;
+} g_scaffale[IPC_SCAFFALE_N];
+
+static unsigned int g_scaff_testa = 0;   /* il prossimo da servire */
+static unsigned int g_scaff_coda  = 0;   /* dove mettere il prossimo */
+static unsigned int g_scaff_n     = 0;
+
+int ipc_rimetti(const IpcMessage *meta, const void *dati, unsigned int len)
+{
+    if (!meta) return -1;
+    if (g_scaff_n >= IPC_SCAFFALE_N) return -1;
+    if (len > IPC_MSG_MAX_DATA) return -1;
+
+    g_scaffale[g_scaff_coda].meta = *meta;
+    if (len && dati) memcpy(g_scaffale[g_scaff_coda].dati, dati, len);
+    g_scaffale[g_scaff_coda].len   = len;
+    g_scaffale[g_scaff_coda].pieno = 1;
+
+    g_scaff_coda = (g_scaff_coda + 1u) % IPC_SCAFFALE_N;
+    g_scaff_n++;
+    return 0;
+}
+
+/* Serve un messaggio dallo scaffale, se ce n'e' uno. Rende i byte, o -1. */
+static int scaffale_prendi(IpcMessage *out_meta, void *buf, unsigned int buf_len)
+{
+    unsigned int i;
+    unsigned int q;
+
+    if (g_scaff_n == 0) return -1;
+
+    i = g_scaff_testa;
+    if (!g_scaffale[i].pieno) return -1;
+
+    if (out_meta) *out_meta = g_scaffale[i].meta;
+
+    q = g_scaffale[i].len;
+    if (q > buf_len) q = buf_len;
+    if (q && buf) memcpy(buf, g_scaffale[i].dati, q);
+
+    g_scaffale[i].pieno = 0;
+    g_scaff_testa = (g_scaff_testa + 1u) % IPC_SCAFFALE_N;
+    g_scaff_n--;
+    return (int)q;
+}
+
 int ipc_recv(IpcMessage *out_meta, void *buf, unsigned int buf_len)
 {
+    int r = scaffale_prendi(out_meta, buf, buf_len);
+
+    if (r >= 0) return r;
     return (int)_syscall3(SYS_IPC_RECV, (uint32_t)out_meta,
                            (uint32_t)buf, buf_len);
 }
@@ -4974,6 +5060,11 @@ int ipc_recv(IpcMessage *out_meta, void *buf, unsigned int buf_len)
 int ipc_recv_timeout(IpcMessage *out_meta, void *buf, unsigned int buf_len,
                      unsigned int timeout_ms)
 {
+    int r = scaffale_prendi(out_meta, buf, buf_len);
+
+    /* ! CIO' CHE E' GIA' SULLO SCAFFALE NON FA ASPETTARE, nemmeno con una
+     * scadenza lunga: e' gia' arrivato. */
+    if (r >= 0) return r;
     return (int)_syscall4(SYS_IPC_RECV_TMO, (uint32_t)out_meta,
                            (uint32_t)buf, buf_len, timeout_ms);
 }

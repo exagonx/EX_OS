@@ -2065,6 +2065,20 @@ int     ipc_recv(IpcMessage *out_meta, void *buf, unsigned int buf_len);
  * La scadenza e' arrotondata per eccesso al tick del PIT (10 ms): non
  * ha senso chiederne una piu' fine di cosi'.
  * ============================================================================= */
+/* Rimette un messaggio che si e' letto ma che non era per chi lo ha letto: la
+ * prossima ipc_recv_* lo ritrova, prima di qualunque altro.
+ *
+ * ! SERVE PERCHE' LA MAILBOX E' UNA SOLA E I CONSUMATORI SONO PIU' D'UNO.
+ * Un'applicazione grafica ci riceve gli eventi del server a finestre E le
+ * risposte dello stack IP: chi aspetta le seconde scorre i messaggi e, senza
+ * questa, BUTTA i primi — cioe' i clic dell'utente mentre scarica una pagina.
+ * Non si puo' «non leggere» un messaggio: ipc_recv toglie dalla coda del
+ * kernel, e rimetterlo da questa parte e' l'unica difesa.
+ *
+ * Rende 0, oppure -1 se lo scaffale e' pieno — e in quel caso il messaggio si
+ * perde come si perdeva prima, non peggio. */
+int     ipc_rimetti(const IpcMessage *meta, const void *dati, unsigned int len);
+
 int     ipc_recv_timeout(IpcMessage *out_meta, void *buf, unsigned int buf_len,
                          unsigned int timeout_ms);
 
