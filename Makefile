@@ -169,7 +169,7 @@ PROGRAMMI_FLOPPY := shell hello id chmod ls mem stack disk libctest fdisk mkfs t
 # `make verifica-programmi` — che le due ISO eseguono da sole — confronta
 # le liste con il contenuto di bin/ e si ferma dicendo quali mancano.
 # =============================================================================
-PROGRAMMI_CD := netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp telnet telnetd sshd xcp winprova exwincmd
+PROGRAMMI_CD := netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp scarica telnet telnetd sshd xcp winprova exwincmd
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
 PROGRAMMI_EXWIN := exwin_so exdlg_so eximg_so exfont_so pm filemgr edit term fontprova orologio
 
@@ -2113,6 +2113,45 @@ $(FTP_BIN): $(FTP_SRC) $(FTP_LD) $(IP_PROTO) $(DNS_SRC) $(DNS_HDR) $(RETE_SRC) $
 .PHONY: ftp
 ftp: dirs $(FTP_BIN)
 
+# --- /bin/scarica: prende una pagina da un URL (solo CD) ---------------------
+#
+# ! ESISTE PER PROVARE L'HTTP PRIMA CHE CI SIA UN BROWSER. Fra «i conti sulle
+# intestazioni tornano» e «si vede una pagina» ci sono l'impaginazione e il
+# disegno: un difetto dell'HTTP li' dentro si confonderebbe con un difetto loro.
+#
+# ! exhttp NON E' ANCORA UNA LIBRERIA CONDIVISA, e il criterio e' sempre lo
+# stesso: una .so conviene quando gli utenti sono due. Oggi e' uno. L'indirizzo
+# 0x05400000 e' riservato, e la divisione del codice e' gia' quella giusta —
+# http.c non tocca la rete, exhttp.c non conosce il trasporto — quindi il
+# giorno del browser e' una regola di Makefile, non una riscrittura.
+SCARICA_SRC := bin/scarica/scarica.c
+SCARICA_BIN := $(BUILD_BIN_CD)/scarica
+SCARICA_LD  := bin/scarica/scarica.ld
+EXHTTP_SRC  := lib/exhttp/exhttp.c
+EXHTTP_HTTP := lib/exhttp/http.c
+EXHTTP_HDR  := lib/exhttp/exhttp.h lib/exhttp/http.h
+
+$(SCARICA_BIN): $(SCARICA_SRC) $(SCARICA_LD) $(EXHTTP_SRC) $(EXHTTP_HTTP) \
+                $(EXHTTP_HDR) $(IP_PROTO) $(DNS_SRC) $(DNS_HDR) $(RETE_SRC) \
+                $(RETE_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/scarica ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhttp -I drivers/net -c $(SCARICA_SRC)  -o $(BUILD_OBJ)/scarica_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhttp -I drivers/net -c $(EXHTTP_SRC)   -o $(BUILD_OBJ)/scarica_exhttp.o
+	$(CC) $(CFLAGS_USER) -I lib/exhttp -c $(EXHTTP_HTTP) -o $(BUILD_OBJ)/scarica_http.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(DNS_SRC)  -o $(BUILD_OBJ)/scarica_dns.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(RETE_SRC) -o $(BUILD_OBJ)/scarica_rete.o
+	$(CC) -m32 -c $(LIBC_START)                        -o $(BUILD_OBJ)/scarica_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(SCARICA_LD) \
+	    $(BUILD_OBJ)/scarica_start.o $(BUILD_OBJ)/scarica_main.o \
+	    $(BUILD_OBJ)/scarica_exhttp.o $(BUILD_OBJ)/scarica_http.o \
+	    $(BUILD_OBJ)/scarica_dns.o $(BUILD_OBJ)/scarica_rete.o \
+	    $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] scarica compilato: $@"
+
+.PHONY: scarica
+scarica: dirs $(SCARICA_BIN)
+
 # --- /bin/telnet: sessione interattiva su TCP (solo CD) ----------------------
 # Sta con gli altri strumenti di rete. A differenza di ftp ha bisogno anche
 # del servizio TASTIERA, perche' una sessione interattiva vuole i tasti uno
@@ -4017,7 +4056,8 @@ ISOX_IMG  := $(DIST_DIR)/exos.iso
 BINARI_SOLO_CD := $(NETDETECT_BIN) $(NETTEST_BIN) $(PING_BIN) $(IPCFG_BIN) \
                   $(TCPSERV_BIN) $(TELNETD_BIN) $(CRYPTTEST_BIN) $(SSHD_BIN) \
                   $(DHCP_BIN) $(HOST_BIN) $(TCPTEST_BIN) $(FTP_BIN) \
-                  $(TELNET_BIN) $(XCP_BIN) $(WINPROVA_BIN) $(EXWINCMD_BIN)
+                  $(TELNET_BIN) $(XCP_BIN) $(WINPROVA_BIN) $(EXWINCMD_BIN) \
+                  $(SCARICA_BIN)
 # ! QUESTA LISTA E' LA DIPENDENZA DELL'ISO, E VA TENUTA ALLINEATA A
 # DRIVER_CD. Sono due elenchi della stessa cosa: DRIVER_CD dice COSA
 # COSTRUIRE (nomi di bersagli .PHONY), questo dice DA COSA DIPENDE L'IMMAGINE
