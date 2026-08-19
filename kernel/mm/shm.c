@@ -268,7 +268,7 @@ int32_t shm_apri(Process *proc, const char *nome, uint32_t byte, uint32_t flag,
 
     *out_byte = g_zone[idx].pagine * PAGE_SIZE;
 
-    klog(LOG_INFO, "SHM: PID %u %s '%s' (%u KB) a 0x%08x — %u process%s",
+    klog(LOG_INFO, "SHM: PID %u %s '%s' (%u KB) a 0x%08x - %u process%s",
          proc->pid, creata ? "crea" : "apre", g_zone[idx].nome,
          *out_byte / 1024, *out_virt, g_zone[idx].proc,
          g_zone[idx].proc == 1 ? "o" : "i");

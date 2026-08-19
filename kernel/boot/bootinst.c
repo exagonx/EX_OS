@@ -339,7 +339,7 @@ int boot_installa_ex(const char *punto, const char *nome_s2, const char *nome_k,
      * cancellato quello che funzionava. */
     if (solo_verifica) {
         klog(LOG_INFO, "INSTALL (verifica): stage2 LBA %u x%u, kernel %u "
-             "settori in %u intervalli — niente scritto",
+             "settori in %u intervalli - niente scritto",
              esito->s2_lba, s2_cnt, k_tot, k_next);
         return 0;
     }

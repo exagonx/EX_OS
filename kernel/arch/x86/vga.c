@@ -774,7 +774,7 @@ void vga_init_grafica(const BootInfo *info)
      * ring3 non deve essere raggiungibile, come non lo e' 0xB8000. */
     byte_tot = info->fb_pitch * info->fb_height;
     if (paging_mappa_framebuffer(info->fb_addr, byte_tot) != 0) {
-        klog(LOG_ERROR, "VGA: framebuffer 0x%08x non mappabile — "
+        klog(LOG_ERROR, "VGA: framebuffer 0x%08x non mappabile - "
                         "resto in modo testo", info->fb_addr);
         return;
     }

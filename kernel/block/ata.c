@@ -724,7 +724,7 @@ static void ata_rileva(int idx, int canale, int unita)
 
     if (d->clippato) {
         klog(LOG_WARN, "ATA: il disco dichiara %u MB ma di fabbrica ne ha %u "
-             "— HPA attiva o jumper di limitazione",
+             "- HPA attiva o jumper di limitazione",
              (uint32_t)(d->settori / 2048),
              (uint32_t)(d->settori_nativi / 2048));
     }

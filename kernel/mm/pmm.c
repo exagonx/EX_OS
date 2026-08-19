@@ -584,7 +584,7 @@ int pmm_ref_inc(uint32_t addr)
     }
 
     if (!BITMAP_TEST(page)) {
-        klog(LOG_ERROR, "PMM: ref_inc su pagina LIBERA 0x%08x — "
+        klog(LOG_ERROR, "PMM: ref_inc su pagina LIBERA 0x%08x - "
              "qualcuno la condivide senza possederla", addr);
         return -1;
     }

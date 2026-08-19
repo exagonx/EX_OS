@@ -238,7 +238,7 @@ klog(LOG_INFO, "[PASSO 7b] FPU %s", fpu_present() ? "OK" : "ASSENTE (x87 disabil
      * ========================================================================= */
     klog(LOG_INFO, "[PASSO 8] Inizializzazione Physical Memory Manager...");
     pmm_init(info);
-klog(LOG_INFO, "[PASSO 8] PMM OK — %u pagine libere (%u MB)",
+klog(LOG_INFO, "[PASSO 8] PMM OK - %u pagine libere (%u MB)",
          pmm_get_free_pages(),
          (pmm_get_free_pages() * PAGE_SIZE) / (1024*1024));
 
@@ -650,7 +650,7 @@ KernelConfig *cfg = cfg_load();
                  * un driver assente da' err=-2 (ENOENT), che elf_carica non
                  * stampa piu' a LOG_ERROR. Senza, resterebbe un «saltato»
                  * senza motivo. */
-                klog(LOG_WARN, "[PASSO 14b] Driver '%s': '%s' non caricato — "
+                klog(LOG_WARN, "[PASSO 14b] Driver '%s': '%s' non caricato - "
                      "saltato (err=%d)",
                      cfg->modules[di].name, cfg->modules[di].path, rc_drv);
                 /* Il PCB era stato creato solo per dare a elf_load una page
@@ -774,10 +774,63 @@ KernelConfig *cfg = cfg_load();
                                   ? cfg->login_path
                                   : cfg->shell_path;
             int rc_shell = elf_load(avviare, shell_proc, &elf_res);
+
+            /* =================================================================
+             * ! SE IL LOGIN NON SI CARICA SI APRE UN RECOVERY, e la ragione e'
+             * che il difetto E' nell'autenticazione.
+             *
+             * Una console che non riesce ad aprire `login` non e' una console
+             * che sta proteggendo qualcosa: e' una console il cui sistema di
+             * autenticazione e' CORROTTO. Lasciarla chiusa non difende niente
+             * — chi ha la macchina davanti avvia da CD e monta il disco in
+             * trenta secondi — e toglie l'unico modo di ripararla da dentro.
+             *
+             * ! IL RECOVERY E' root, E VA DETTO A CHIARE LETTERE. Non e' un
+             * accesso: e' una macchina rotta che si apre per essere riparata,
+             * e chi ci si trova davanti deve sapere che sta lavorando senza
+             * rete di sicurezza. Il messaggio qui sotto lo dice prima ancora
+             * che la shell parta.
+             *
+             * ! E LA SHELL E' STATICA APPOSTA (vedi la sua regola nel
+             * Makefile): e' il programma con cui si ripara, quindi non deve
+             * dipendere da niente che possa essere rotto a sua volta.
+             * ================================================================= */
+            if (rc_shell != 0 && avviare != cfg->shell_path) {
+                klog(LOG_ERROR, "[PASSO 15] Console %u: '%s' non si carica "
+                     "(err=%d) - apro un recovery come root", n, avviare,
+                     rc_shell);
+
+                proc_kill(shell_proc->pid);
+                proc_reap_zombie(shell_proc);
+
+                shell_proc = proc_create("recovery", 0, PRIO_NORMAL, 0);
+                if (shell_proc != NULL) {
+                    shell_proc->console = n;
+                    avviare  = cfg->shell_path;
+                    rc_shell = elf_load(avviare, shell_proc, &elf_res);
+                } else {
+                    rc_shell = -1;
+                }
+            }
             if (rc_shell == 0) {
                 proc_set_entry(shell_proc, elf_res.entry_point, elf_res.user_stack_top);
                 proc_set_ready(shell_proc);   /* ora è schedulabile */
                 avviate++;
+
+                /* Se siamo qui col ripiego, lo si dice sulla console: chi
+                 * guarda deve sapere che non ha fatto un accesso. */
+                if (cfg->login_path[0] && vfs_radice_ext2() &&
+                    avviare == cfg->shell_path) {
+                    const char *m =
+                        "\n  RECOVERY: l'autenticazione di questo sistema non "
+                        "si apre.\n"
+                        "  Questa shell gira come root e NESSUNO ha fatto "
+                        "l'accesso.\n"
+                        "  Ripara /bin/login (reinstalla dal CD) e riavvia.\n\n";
+                    unsigned int w;
+
+                    for (w = 0; m[w]; w++) vga_putchar_su(n, m[w]);
+                }
                 klog(LOG_INFO, "[PASSO 15] Console %u: shell '%s' caricata "
                      "(PID %u, entry=0x%08x stack=0x%08x)",
                      n, avviare, shell_proc->pid,
@@ -849,7 +902,7 @@ KernelConfig *cfg = cfg_load();
         }
 
         if (avviate == 0) {
-            klog(LOG_ERROR, "[PASSO 15] Nessuna shell avviata — "
+            klog(LOG_ERROR, "[PASSO 15] Nessuna shell avviata - "
                  "il sistema resta senza console");
         }
     }
@@ -884,7 +937,7 @@ KernelConfig *cfg = cfg_load();
      * riaccende pagando una sola volta i 300 ms di stabilizzazione. */
     fat12_motor_off();
 
-    klog(LOG_INFO, "Avvio scheduler — sblocco timer e cessione controllo.");
+    klog(LOG_INFO, "Avvio scheduler - sblocco timer e cessione controllo.");
     if (cfg->verbose_boot) sched_dump();
 
     /* sched_start() sblocca IRQ0 e non ritorna mai: da qui in poi il

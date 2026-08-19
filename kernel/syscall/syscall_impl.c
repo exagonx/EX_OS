@@ -534,7 +534,7 @@ int32_t sys_open(InterruptFrame *frame)
     proc->fds[free_fd].offset = 0;
     proc->fds[free_fd].inode  = (uint32_t)inode;
 
-    klog(LOG_DEBUG, "SYSCALL open('%s') → fd=%d", path, free_fd);
+    klog(LOG_DEBUG, "SYSCALL open('%s') -> fd=%d", path, free_fd);
     return free_fd;
 }
 
@@ -1067,7 +1067,7 @@ int32_t sys_ioctl(InterruptFrame *frame)
               proc->fds[fd].type == FD_STDERR);
 
     if (!is_tty) {
-        klog(LOG_DEBUG, "SYSCALL ioctl(fd=%d, req=0x%x): non è un terminale", fd, request);
+        klog(LOG_DEBUG, "SYSCALL ioctl(fd=%d, req=0x%x): non e' un terminale", fd, request);
         return ERR(ENOTTY);
     }
 
@@ -3660,7 +3660,7 @@ static int e_un_driver(Process *p, const char *chi)
     if (p != NULL && p->is_driver && p->uid == 0) return 1;
 
     if (p != NULL && p->is_driver && p->uid != 0) {
-        klog(LOG_WARN, "SYSCALL %s: PID %u e' un driver ma gira come uid %u — "
+        klog(LOG_WARN, "SYSCALL %s: PID %u e' un driver ma gira come uid %u - "
              "il varco dei driver e' di root", chi, p->pid, p->uid);
         return 0;
     }
@@ -3668,7 +3668,7 @@ static int e_un_driver(Process *p, const char *chi)
     /* Il motivo va detto per intero: «permesso negato» su una syscall che il
      * driver ha appena chiamato manda a cercare il guasto nel driver. Qui il
      * guasto e' quasi sempre un eseguibile installato nel posto sbagliato. */
-    klog(LOG_WARN, "SYSCALL %s: PID %u non e' un driver — l'eseguibile non si "
+    klog(LOG_WARN, "SYSCALL %s: PID %u non e' un driver - l'eseguibile non si "
          "chiama *.drv, rifiutato", chi, (p != NULL) ? p->pid : 0);
     return 0;
 }
@@ -4725,7 +4725,7 @@ int32_t sys_mmio_map(InterruptFrame *frame)
     limite_ram = pmm_get_total_pages() * PAGE_SIZE;
     if (base < limite_ram) {
         klog(LOG_WARN, "SYSCALL mmio_map: PID %u chiede 0x%08x, che e' RAM "
-             "(la RAM finisce a 0x%08x) — rifiutato",
+             "(la RAM finisce a 0x%08x) - rifiutato",
              proc->pid, z->fisico, limite_ram);
         return ERR(EPERM);
     }

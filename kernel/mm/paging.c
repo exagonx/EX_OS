@@ -302,7 +302,7 @@ static void pse_abilita(void)
     const CpuCapacita *cpu = cpu_capacita();
 
     if (!cpu->pse) {
-        klog(LOG_INFO, "PAGING: PSE assente — la fascia kernel resta a 4 KB");
+        klog(LOG_INFO, "PAGING: PSE assente - la fascia kernel resta a 4 KB");
         return;
     }
 
@@ -440,7 +440,7 @@ static void prova_spezzamento(PDE *pd, uint32_t base)
         }
     }
 
-    klog(LOG_INFO, "PAGING: spezzamento provato su 0x%08x — le traduzioni "
+    klog(LOG_INFO, "PAGING: spezzamento provato su 0x%08x - le traduzioni "
                    "coincidono", base);
 }
 
@@ -648,7 +648,7 @@ void paging_init(void)
         }
 
         if (blocchi) {
-            klog(LOG_INFO, "PAGING: PSE attivo — %u blocchi da 4 MB "
+            klog(LOG_INFO, "PAGING: PSE attivo - %u blocchi da 4 MB "
                  "(0x%08x-0x%08x), il resto a 4 KB",
                  blocchi, PSE_4MB, coda);
 
@@ -1188,7 +1188,7 @@ void page_fault_handler(InterruptFrame *frame)
         }
 
         vga_setcolor(VGA_COLOR_WHITE, VGA_COLOR_RED);
-        kprintf("\n[FAULT] PID %u '%s': page fault a 0x%08x (%s, %s, EIP=0x%08x) — processo terminato\n",
+        kprintf("\n[FAULT] PID %u '%s': page fault a 0x%08x (%s, %s, EIP=0x%08x) - processo terminato\n",
                 p ? p->pid : 0, p ? p->name : "?", fault_addr, reason, access, frame->eip);
         vga_setcolor(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
 
@@ -1249,16 +1249,16 @@ void page_fault_handler(InterruptFrame *frame)
      * per non proseguire con stato potenzialmente corrotto. */
     vga_setcolor(VGA_COLOR_WHITE, VGA_COLOR_RED);
     kprintf("\n");
-    kprintf("╔══════════════════════════════════════════════╗\n");
-    kprintf("║            PAGE FAULT (KERNEL)               ║\n");
-    kprintf("╠══════════════════════════════════════════════╣\n");
-    kprintf("║  Indirizzo : 0x%08x                    ║\n", fault_addr);
-    kprintf("║  Causa     : %-32s  ║\n", reason);
-    kprintf("║  Accesso   : %-32s  ║\n", access);
-    kprintf("║  Livello   : %-32s  ║\n", ring);
-    kprintf("║  EIP       : 0x%08x                    ║\n", frame->eip);
-    kprintf("║  Err code  : 0x%08x                    ║\n", err);
-    kprintf("╚══════════════════════════════════════════════╝\n");
+    kprintf("+==============================================+\n");
+    kprintf("|            PAGE FAULT (KERNEL)               |\n");
+    kprintf("+==============================================+\n");
+    kprintf("|  Indirizzo : 0x%08x                    |\n", fault_addr);
+    kprintf("|  Causa     : %-32s  |\n", reason);
+    kprintf("|  Accesso   : %-32s  |\n", access);
+    kprintf("|  Livello   : %-32s  |\n", ring);
+    kprintf("|  EIP       : 0x%08x                    |\n", frame->eip);
+    kprintf("|  Err code  : 0x%08x                    |\n", err);
+    kprintf("+==============================================+\n");
 
     kpanic("Page Fault non gestito in ring0 a 0x%08x (EIP=0x%08x)",
            fault_addr, frame->eip);

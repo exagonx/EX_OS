@@ -548,7 +548,7 @@ void proc_set_ready(Process *proc)
     if (proc == NULL || proc->state == PROC_READY) return;
     proc->state = PROC_READY;
     runq_add(proc);
-    klog(LOG_DEBUG, "SCHED: PID %u '%s' → READY", proc->pid, proc->name);
+    klog(LOG_DEBUG, "SCHED: PID %u '%s' -> READY", proc->pid, proc->name);
 }
 
 /* =============================================================================
@@ -613,7 +613,7 @@ static void sched_switch_to(Process *next)
      * non viaggiano nei registri salvati da context_switch. */
     gdt_set_tls_base(next->tls_tp);
 
-    klog(LOG_DEBUG, "SCHED: switch PID %u → PID %u (tick=%u)",
+    klog(LOG_DEBUG, "SCHED: switch PID %u -> PID %u (tick=%u)",
          prev->pid, next->pid, g_ticks);
 
     /* Coprocessore x87: lo stato NON e' nei registri che salva
@@ -1253,7 +1253,7 @@ void sched_stop(void)
 
 void sched_start(void)
 {
-    klog(LOG_INFO, "SCHED: avvio — sblocco IRQ0, %u processi pronti",
+    klog(LOG_INFO, "SCHED: avvio - sblocco IRQ0, %u processi pronti",
          g_proc_count);
 
 pic_unmask_irq(0);

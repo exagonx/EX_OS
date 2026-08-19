@@ -92,7 +92,7 @@ void tsc_init(void)
     uint32_t           guardia;
 
     if (!cpu->tsc) {
-        klog(LOG_INFO, "TSC: assente (CPU pre-Pentium) — le misure fini "
+        klog(LOG_INFO, "TSC: assente (CPU pre-Pentium) - le misure fini "
                        "restano indisponibili");
         return;
     }
@@ -124,7 +124,7 @@ void tsc_init(void)
     while (!(port_inb(PIT_GATE) & 0x20u)) {
         if (--guardia == 0) {
             port_outb(PIT_GATE, (uint8_t)(gate & ~0x03u));
-            klog(LOG_WARN, "TSC: il canale 2 del PIT non risponde — "
+            klog(LOG_WARN, "TSC: il canale 2 del PIT non risponde - "
                            "calibrazione abbandonata");
             return;
         }
@@ -140,14 +140,14 @@ void tsc_init(void)
      * riempire i 32 bit. Farla a 64 costringerebbe a una divisione a 64 bit,
      * che senza libgcc nel kernel andrebbe scritta a mano. */
     if ((t1 - t0) >> 32) {
-        klog(LOG_WARN, "TSC: misura fuori scala — calibrazione scartata");
+        klog(LOG_WARN, "TSC: misura fuori scala - calibrazione scartata");
         return;
     }
     delta = (uint32_t)(t1 - t0);
 
     /* Da cicli in 50 ms a cicli al secondo: per venti. */
     if (delta < 1000u) {
-        klog(LOG_WARN, "TSC: misura implausibile (%u cicli in 50 ms) — "
+        klog(LOG_WARN, "TSC: misura implausibile (%u cicli in 50 ms) - "
                        "calibrazione scartata", delta);
         return;
     }

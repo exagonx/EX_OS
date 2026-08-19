@@ -205,6 +205,15 @@ DRIVER_SOLO_CD := pci.drv ne2k.drv pcnet.drv ip.drv
 #         delle finestre, che includono tutti i programmi grafici.
 NON_DRIVER := net tty usb wserver
 
+# L'archivio degli utenti e le password: un modulo compilato dentro, non una
+# .so. Il perche' sta in cima a lib/exuser/exuser.h — login, install e su
+# devono partire anche quando /lib/libc.so non c'e'.
+#
+# ! DICHIARATO QUI, PRIMA DI CHIUNQUE LO USI, per la stessa ragione di
+# EXINFO_SRC dieci righe piu' giu': con `:=` make espande subito.
+EXUSER_SRC    := lib/exuser/exuser.c
+EXUSER_HDR    := lib/exuser/exuser.h
+
 # «Informazioni su»: un modulo compilato dentro, non una .so. Il perche' sta in
 # cima a lib/exinfo/exinfo.h.
 #
@@ -772,15 +781,17 @@ LOGIN_SRC := bin/login/login.c
 LOGIN_BIN := $(BUILD_BIN)/login
 LOGIN_LD  := bin/login/login.ld
 
-$(LOGIN_BIN): $(LOGIN_SRC) $(KBD_DRV_PROTO) $(LOGIN_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+$(LOGIN_BIN): $(LOGIN_SRC) $(EXUSER_SRC) $(EXUSER_HDR) $(KBD_DRV_PROTO) \
+              $(LOGIN_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione /bin/login ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/kbd -c $(LOGIN_SRC) -o $(BUILD_OBJ)/login_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exuser -I drivers/kbd -c $(LOGIN_SRC) -o $(BUILD_OBJ)/login_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exuser -I drivers/kbd -c $(EXUSER_SRC) -o $(BUILD_OBJ)/login_user.o
 	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)  -o $(BUILD_OBJ)/login_libc.o
 	$(CC) -m32 -c $(LIBC_START)          -o $(BUILD_OBJ)/login_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(LOGIN_LD) \
 	    $(BUILD_OBJ)/login_start.o $(BUILD_OBJ)/login_main.o \
-	    $(BUILD_OBJ)/login_libc.o -o $@
+	    $(BUILD_OBJ)/login_user.o $(BUILD_OBJ)/login_libc.o -o $@
 	@echo "[OK] login compilato: $@"
 
 .PHONY: login
@@ -2436,15 +2447,18 @@ INSTALL_SRC := bin/install/install.c
 INSTALL_BIN := $(BUILD_BIN)/install
 INSTALL_LD  := bin/install/install.ld
 
-$(INSTALL_BIN): $(INSTALL_SRC) $(INSTALL_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+$(INSTALL_BIN): $(INSTALL_SRC) $(EXUSER_SRC) $(EXUSER_HDR) $(INSTALL_LD) \
+                $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione /bin/install ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -c $(INSTALL_SRC) -o $(BUILD_OBJ)/install_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exuser -I drivers/kbd -c $(INSTALL_SRC) -o $(BUILD_OBJ)/install_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exuser -I drivers/kbd -c $(EXUSER_SRC) -o $(BUILD_OBJ)/install_user.o
 	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                   -o $(BUILD_OBJ)/install_libc.o
 	$(CC) -m32 -c $(LIBC_START)                           -o $(BUILD_OBJ)/install_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(INSTALL_LD) \
 	    $(BUILD_OBJ)/install_start.o \
 	    $(BUILD_OBJ)/install_main.o  \
+	    $(BUILD_OBJ)/install_user.o  \
 	    $(BUILD_OBJ)/install_libc.o  \
 	    -o $@
 	@echo "[OK] install compilato: $@"

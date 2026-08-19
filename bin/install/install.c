@@ -67,6 +67,7 @@
  * cancellando — non come effetto collaterale di "installa".
  * ============================================================================= */
 #include "libc.h"
+#include "exuser.h"
 
 #define BLOCCO      4096
 #define PERC_MAX    128
@@ -1454,10 +1455,115 @@ int main(int argc, char **argv)
         unisci(h, argv[1], "root");
         crea_dir(h);
 
-        printf("  = questo volume e' ext2: ha i proprietari dei file, quindi\n");
+        /* =====================================================================
+         * ! I CONTI SI CREANO QUI, NON AL PRIMO AVVIO, dal 19 agosto 2026.
+         *
+         * Prima li creava `login` la prima volta che partiva, e il commento
+         * che stava in questo punto diceva perche': per chiedere una password
+         * bisogna leggerla SENZA MOSTRARLA, cioe' mettere la tastiera in modo
+         * raw, e l'installatore gira mentre la shell possiede quella console.
+         *
+         * ! QUEL COMMENTO ERA VERO A META'. La tastiera si puo' prendere —
+         * l'installatore E' gia' il processo in primo piano, ci parla per
+         * chiedere «Procedo?» — e la lettura senza eco adesso sta in
+         * lib/exuser, cioe' nello stesso codice che usa login. Non c'era da
+         * inventare niente: c'era da spostare.
+         *
+         * ! E CIO' CHE MANCAVA DAVVERO ERA IL SECONDO CONTO. Lasciando fare a
+         * login si otteneva UN utente solo, ed era root: da li' in poi si
+         * lavorava sempre da amministratore, che e' il modo in cui un errore
+         * qualunque diventa un danno qualunque. Qui se ne creano due — root
+         * per riparare, e il tuo per lavorare — ed e' la ragione principale
+         * per cui questo pezzo si e' spostato.
+         * ===================================================================== */
+        {
+            char nome[EXUSER_NOME_MAX], p1[EXUSER_PASS_MAX], p2[EXUSER_PASS_MAX];
+            int  fatto_root = 0, fatto_utente = 0;
+
+            if (exuser_c_e_qualcuno(argv[1])) {
+                printf("  = questo volume ha gia' un archivio utenti: lo lascio\n");
+                printf("    com'e'. Per aggiungerne uno:  login -a\n");
+            } else {
+                exuser_prendi_console();
+
+                printf("\n  Adesso i due conti. Il primo e' root, che serve a\n");
+                printf("  riparare; il secondo e' il tuo, per lavorare.\n\n");
+
+                /* --- root ------------------------------------------------- */
+                while (!fatto_root) {
+                    printf("  password di root: ");
+                    if (exuser_leggi_password(p1, sizeof(p1)) < 0) {
+                        printf("\n  ! La tastiera non risponde in modo raw: non posso\n");
+                        printf("    chiedere una password senza mostrarla. Serve\n");
+                        printf("    /dev/kbd.drv — vedi [modules] in kernel.cfg.\n");
+                        printf("    I conti li creera' login al primo avvio.\n");
+                        break;
+                    }
+                    if (p1[0] == '\0') {
+                        printf("  Una password vuota lascia la macchina aperta.\n");
+                        continue;
+                    }
+                    printf("  ripetila:         ");
+                    if (exuser_leggi_password(p2, sizeof(p2)) < 0) break;
+                    if (strcmp(p1, p2) != 0) {
+                        printf("  Le due non coincidono.\n");
+                        continue;
+                    }
+                    if (exuser_aggiungi(argv[1], "root", p1, 0u, 0u) != 0) {
+                        printf("  ! non riesco a scrivere l'archivio utenti\n");
+                        errori++;
+                        break;
+                    }
+                    printf("  + root\n\n");
+                    fatto_root = 1;
+                }
+
+                /* --- l'utente principale ---------------------------------- */
+                while (fatto_root && !fatto_utente) {
+                    printf("  il tuo nome utente: ");
+                    if (exuser_leggi_riga(nome, sizeof(nome)) <= 0) continue;
+                    if (!exuser_nome_valido(nome) || strcmp(nome, "root") == 0) {
+                        printf("  Solo lettere, cifre e '_', e non «root».\n");
+                        continue;
+                    }
+                    printf("  password:           ");
+                    if (exuser_leggi_password(p1, sizeof(p1)) < 0) break;
+                    if (p1[0] == '\0') {
+                        printf("  Una password vuota lascia la macchina aperta.\n");
+                        continue;
+                    }
+                    printf("  ripetila:           ");
+                    if (exuser_leggi_password(p2, sizeof(p2)) < 0) break;
+                    if (strcmp(p1, p2) != 0) {
+                        printf("  Le due non coincidono.\n");
+                        continue;
+                    }
+
+                    /* ! uid 1000, NON 0: questo conto serve a lavorare, e chi
+                     * lavora da root non ha nessuna rete sotto. Per le cose da
+                     * amministratore c'e' `su`. */
+                    if (exuser_aggiungi(argv[1], nome, p1, 1000u, 1000u) != 0) {
+                        printf("  ! non riesco a scrivere l'archivio utenti\n");
+                        errori++;
+                        break;
+                    }
+
+                    unisci(h, argv[1], "home");
+                    strncat(h, "/", PERC_MAX - strlen(h) - 1);
+                    strncat(h, nome, PERC_MAX - strlen(h) - 1);
+                    crea_dir(h);
+                    if (chown(h, 1000, 1000) != 0 && errno != ENOSYS)
+                        printf("  ! %s creata ma non consegnata (%s)\n",
+                               h, strerror(errno));
+
+                    printf("  + %s (uid 1000), casa in %s\n", nome, h);
+                    fatto_utente = 1;
+                }
+            }
+        }
+
+        printf("\n  = questo volume e' ext2: ha i proprietari dei file, quindi\n");
         printf("    al primo avvio l'accesso sara' OBBLIGATORIO.\n");
-        printf("  = /bin/login chiedera' di creare il primo utente, che sara'\n");
-        printf("    root (uid 0). Da floppy o da CD si entra senza password.\n");
     }
 
     /* --- 3. l'avvio vero e proprio --- */

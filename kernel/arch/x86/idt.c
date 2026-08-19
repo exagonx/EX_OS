@@ -196,7 +196,7 @@ void idt_install(void)
 
     /* Rimappa PIC prima di installare i gate IRQ */
     remap_pic();
-    klog(LOG_INFO, "IDT: PIC rimappato (IRQ0→INT32, IRQ8→INT40)");
+    klog(LOG_INFO, "IDT: PIC rimappato (IRQ0->INT32, IRQ8->INT40)");
 
     /* Installa gate eccezioni CPU (0-31) — ring 0, interrupt gate 0x8E */
     #define IGATE0  0x8E    /* P=1, DPL=0, Type=E (interrupt gate 32-bit) */

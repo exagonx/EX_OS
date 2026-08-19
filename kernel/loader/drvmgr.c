@@ -272,7 +272,7 @@ static int drvmgr_load_driver(const char *name, const char *path,
     /* Verifica magic */
     if (hdr.e_ident[0] != 0x7F || hdr.e_ident[1] != 'E' ||
         hdr.e_ident[2] != 'L'  || hdr.e_ident[3] != 'F') {
-        klog(LOG_ERROR, "DRVMGR: '%s' non è un ELF", path);
+        klog(LOG_ERROR, "DRVMGR: '%s' non e' un ELF", path);
         goto cleanup;
     }
 
@@ -588,7 +588,7 @@ void drvmgr_init(void)
          * dinamico /dev/tty.drv duplicherebbe l'handler IRQ1 e il
          * buffer di input, causando conflitti. */
         if (drv_strcmp(name, "tty") == 0) {
-            klog(LOG_INFO, "DRVMGR: driver '%s' già attivo staticamente nel kernel, skip",
+            klog(LOG_INFO, "DRVMGR: driver '%s' gia' attivo staticamente nel kernel, skip",
                  name);
             continue;
         }

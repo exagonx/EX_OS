@@ -103,7 +103,7 @@ static void power_sync(void)
         /* Non fermiamo la procedura: l'utente ha chiesto di spegnere e
          * insistere non recupererebbe nulla. Ma lo deve sapere. */
         kprintf("\n");
-        klog(LOG_ERROR, "POWER: sincronizzazione filesystem fallita (%d) — "
+        klog(LOG_ERROR, "POWER: sincronizzazione filesystem fallita (%d) - "
              "possibile perdita di dati non salvati", r);
     }
 }

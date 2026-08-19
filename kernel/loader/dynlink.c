@@ -411,7 +411,7 @@ static int dl_load_so(const char *path, Process *proc,
     /* Verifica magic */
     if (hdr.e_ident[0] != 0x7F || hdr.e_ident[1] != 'E' ||
         hdr.e_ident[2] != 'L'  || hdr.e_ident[3] != 'F') {
-        klog(LOG_ERROR, "DYNLINK: '%s' non è un ELF valido", path);
+        klog(LOG_ERROR, "DYNLINK: '%s' non e' un ELF valido", path);
         goto cleanup;
     }
 
@@ -703,7 +703,7 @@ int dynlink_init(Process *proc, uint32_t load_cursor)
         load_cursor += ALIGN_UP(lib.size + 0x100000, PAGE_SIZE);
         klog(LOG_INFO, "DYNLINK: libc.so caricata");
     } else {
-        klog(LOG_WARN, "DYNLINK: libc.so non trovata in /lib/ — linking ridotto");
+        klog(LOG_WARN, "DYNLINK: libc.so non trovata in /lib/ - linking ridotto");
     }
 
     return 0;
@@ -724,7 +724,7 @@ int dynlink_load_lib(const char *name, Process *proc, uint32_t base)
 
     /* Controlla se già caricata */
     if (dl_find_loaded(name)) {
-        klog(LOG_DEBUG, "DYNLINK: '%s' già in cache", name);
+        klog(LOG_DEBUG, "DYNLINK: '%s' gia' in cache", name);
         return 0;
     }
 

@@ -12,11 +12,11 @@ seriale e USB — tastiera compresa, hub compresi.
 
 ## COSA E' COMMITTATO
 
-    977359c  "Le regioni sporche: si ricompone solo cio' che e' cambiato"
+    e53ee76  "Una console che non si apre dice perche', e la coda torna a
+              essere una coda"
 
-In attesa nell'albero: **una console che non si apre adesso dice perche'**, la
-decisione presa su `extls`, e la coda rimessa a essere una coda invece che un
-archivio.
+In attesa nell'albero: **il recovery come root**, **i due conti creati
+dall'installatore**, `lib/exuser`, e tutte le stringhe del kernel rese ASCII.
 
 ! **`gitupdate.sh` FA `git add .` E UN COMMIT SOLO**: `messaggio-commit.txt`
 deve coprire tutto quello che si e' fatto dall'ultimo commit, non l'ultima
@@ -148,9 +148,22 @@ puntatore — vedi la sua sezione).
     ! **IL PREREQUISITO SCRITTO IN QUESTA VOCE — «accorgersi che manca» — E'
     FATTO**, e ha trovato dell'altro: vedi la sezione sulla console che non si
     apre.
- 2. **Risolvere per hash invece che per nome** — altri ~3 KB per programma, col
+ 2. **`su`** — da quando l'installatore crea un utente normale, serve un modo
+    di alzarsi a root conoscendo la password. **Il meccanismo non c'e':**
+    `setuid` e' riservato a root e SOLO per scendere, e non esiste il bit
+    setuid sui file (vedi `sys_setuid`).
+
+    ! **LA STRADA SCELTA E' UNA CAPACITA' STRETTA, NON UNA LARGA**, che e' lo
+    stesso principio con cui `fb_map` ha sostituito `mmio_map`: una chiamata
+    che dice «diventa root SE sai la password di root», e non il bit setuid
+    sui file — quello renderebbe pericoloso ogni eseguibile che lo porta, e
+    non c'e' modo di controllarli tutti. Costa uno SHA-256 dentro il kernel,
+    che oggi non c'e': ~130 righe, verificabili contro gli stessi vettori
+    degli RFC che usa gia' `crypttest`.
+
+ 3. **Risolvere per hash invece che per nome** — altri ~3 KB per programma, col
     generatore che verifica a costruzione che non ci siano collisioni.
- 3. **Le regioni sporche, gli altri undici casi** — oggi si stringe solo il
+ 4. **Le regioni sporche, gli altri undici casi** — oggi si stringe solo il
     movimento del puntatore; una finestra che si aggiorna, che si sposta o che
     nasce dichiara ancora tutto lo schermo. Ognuno va fatto guardando i pixel,
     perche' una regione sbagliata per difetto lascia roba vecchia a video.
@@ -848,12 +861,60 @@ ha davvero.
 Provato per davvero: `/bin/login` cancellato da un sistema installato, avvio
 dal disco, foto della console. Poi rimesso, e il disco riparte normale.
 
-! **E RESTA UNA DECISIONE APERTA**: se una console che non riesce ad aprire
-`login` debba ripiegare sulla SHELL invece di restare chiusa. Non l'ho fatto
-perche' non e' una scelta tecnica: su una radice ext2 vorrebbe dire che
-cancellare `/bin/login` regala una shell di root: si passerebbe da «rotto» a
-«aperto». Contro: chi ha accesso fisico puo' gia' avviare da CD e montare il
-disco, quindi la difesa vale poco. E' da decidere, non da indovinare.
+! **DECISO IL 19 AGOSTO: SI APRE UN RECOVERY COME root**, e la ragione e' che
+il difetto E' nell'autenticazione. Una console che non riesce ad aprire `login`
+non sta proteggendo niente: e' una console il cui sistema di autenticazione e'
+CORROTTO. Lasciarla chiusa non difende — chi ha la macchina davanti avvia da CD
+e monta il disco in trenta secondi — e toglie l'unico modo di ripararla da
+dentro.
+
+! **E LO DICE A CHIARE LETTERE PRIMA DI APRIRSI**: «questa shell gira come root
+e NESSUNO ha fatto l'accesso». Non e' un accesso, e' una macchina rotta che si
+apre per essere riparata.
+
+Provato: `/bin/login` cancellato da un sistema installato, avvio dal disco, e la
+shell si apre con il cartello e `whoami` che rende root.
+
+### I DUE CONTI LI CREA L'INSTALLATORE — lib/exuser
+
+Prima li creava `login` al primo avvio, e ne creava **uno solo**: root. Da li'
+in poi si lavorava sempre da amministratore, che e' il modo in cui un errore
+qualunque diventa un danno qualunque. Adesso l'installatore ne chiede due —
+root per riparare, il tuo per lavorare (uid 1000) — con la casa gia' creata e
+consegnata.
+
+! **IL COMMENTO CHE STAVA IN QUEL PUNTO ERA VERO A META'.** Diceva che
+l'installatore non puo' chiedere una password perche' servirebbe il modo raw
+della tastiera e la console e' della shell che l'ha lanciato. Ma
+l'installatore E' gia' il processo in primo piano — ci parla per chiedere
+«Procedo?» — e la lettura senza eco adesso sta in `lib/exuser`, lo stesso
+codice che usa login. Non c'era da inventare: c'era da spostare.
+
+! **E TRE COPIE DI UN ARCHIVIO DI PASSWORD SONO TRE MODI DI DIVERGERE.** Il
+codice e' stato SPOSTATO da login.c, non riscritto: riscrivere un archivio di
+password vuol dire rifare gli stessi errori con numeri diversi. L'unica
+aggiunta e' la `radice`, il prefisso dei due file, che serve all'installatore
+per scrivere sul disco che sta preparando invece che sul proprio.
+
+Provato: installazione da zero, i due conti chiesti e creati, poi avvio dal
+disco e accesso come utente normale — `uid=1000(graziano)`, casa
+`/home/graziano` di sua proprieta', e nessuna richiesta di «primo utente»
+perche' l'archivio c'e' gia'.
+
+! **MANCA `su`**, ed e' la conseguenza diretta: da adesso si lavora da utente
+normale, quindi serve un modo di alzarsi a root conoscendo la password. Vedi la
+voce nella coda. Nel frattempo root si raggiunge con `exit` e un accesso nuovo:
+`login` e' un ciclo, quindi il prompt torna.
+
+### TUTTE LE STRINGHE DEL KERNEL SONO ASCII
+
+Sessantotto stringhe contenevano trattini lunghi, virgolette basse, lettere
+accentate e caratteri di riquadro. Il font della console e' indicizzato per
+BYTE: un carattere UTF-8 da tre byte diventa tre glifi di spazzatura in mezzo a
+una frase. Si vedeva nel messaggio del recovery che avevo appena scritto — e
+c'era gia' in cinquanta punti, compresi i riquadri del **kernel panic** e del
+**page fault**, cioe' le due schermate che contano proprio quando tutto il
+resto e' andato storto.
 
 ## Difetti aperti, dichiarati
 

@@ -249,7 +249,7 @@ void isr_handler(InterruptFrame *frame)
 
         vga_setcolor(VGA_COLOR_WHITE, VGA_COLOR_RED);
         kprintf("\n[FAULT] PID %u '%s': eccezione %u (%s) a EIP=0x%08x "
-                "err=0x%08x — processo terminato\n",
+                "err=0x%08x - processo terminato\n",
                 p ? p->pid : 0, p ? p->name : "?", int_no, name,
                 frame->eip, frame->err_code);
         vga_setcolor(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
@@ -268,14 +268,14 @@ void isr_handler(InterruptFrame *frame)
     /* Eccezione in ring0 senza handler: KERNEL PANIC */
     vga_setcolor(VGA_COLOR_WHITE, VGA_COLOR_RED);
     kprintf("\n");
-    kprintf("╔══════════════════════════════════════════════╗\n");
-    kprintf("║           KERNEL PANIC — ECCEZIONE CPU       ║\n");
-    kprintf("╠══════════════════════════════════════════════╣\n");
-    kprintf("║  Vettore : %3d                               ║\n", int_no);
-    kprintf("║  Nome    : %-32s  ║\n", name);
-    kprintf("║  EIP     : 0x%08x                    ║\n", frame->eip);
-    kprintf("║  Errore  : 0x%08x                    ║\n", frame->err_code);
-    kprintf("╚══════════════════════════════════════════════╝\n");
+    kprintf("+==============================================+\n");
+    kprintf("|           KERNEL PANIC - ECCEZIONE CPU       |\n");
+    kprintf("+==============================================+\n");
+    kprintf("|  Vettore : %3d                               |\n", int_no);
+    kprintf("|  Nome    : %-32s  |\n", name);
+    kprintf("|  EIP     : 0x%08x                    |\n", frame->eip);
+    kprintf("|  Errore  : 0x%08x                    |\n", frame->err_code);
+    kprintf("+==============================================+\n");
 
     dump_registers(frame);
 

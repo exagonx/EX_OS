@@ -491,7 +491,7 @@ static void fdc_recalibrate(void)
 
     g_fdc_cyl = -1;
     klog(LOG_WARN, "FAT12: RECALIBRATE non confermato dopo 3 tentativi "
-         "(ST0=0x%02x PCN=%u) — la testina potrebbe non essere al cilindro 0",
+         "(ST0=0x%02x PCN=%u) - la testina potrebbe non essere al cilindro 0",
          st0, pcn);
 }
 
@@ -811,7 +811,7 @@ static int fdc_rw_sector_once(uint16_t lba, uint8_t *buf, int write)
             return -1;
         }
 
-        klog(LOG_WARN, "FAT12: IRQ6 non ricevuto su %s LBA=%u — proseguo con "
+        klog(LOG_WARN, "FAT12: IRQ6 non ricevuto su %s LBA=%u - proseguo con "
              "il polling di MSR (controllare il routing dell'IRQ6)",
              write ? "WRITE" : "READ", lba);
     }
@@ -917,7 +917,7 @@ static int fdc_rw_sector(uint16_t lba, uint8_t *buf, int write)
 
         if (fdc_rw_sector_once(lba, buf, write) == 0) {
             if (tentativo > 0) {
-                klog(LOG_WARN, "FAT12: %s LBA=%u riuscita al tentativo %d — "
+                klog(LOG_WARN, "FAT12: %s LBA=%u riuscita al tentativo %d - "
                      "il supporto o il drive danno errori transitori",
                      write ? "WRITE" : "READ", lba, tentativo + 1);
             }
@@ -926,7 +926,7 @@ static int fdc_rw_sector(uint16_t lba, uint8_t *buf, int write)
     }
 
     if (!g_sondaggio) {
-        klog(LOG_ERROR, "FAT12: %s LBA=%u fallita dopo %d tentativi — rinuncio",
+        klog(LOG_ERROR, "FAT12: %s LBA=%u fallita dopo %d tentativi - rinuncio",
              write ? "WRITE" : "READ", lba, FDC_MAX_TENTATIVI);
     }
     return -1;
@@ -1711,7 +1711,7 @@ static int fat12_dir_scan(uint16_t dir_cluster, const char *name83,
             } else {
                 uint8_t match, j;
                 if (libera) {
-                    /* 0x00 significa "da qui in poi la directory è vuota":
+                    /* 0x00 significa "da qui in poi la directory e' vuota":
                      * inutile proseguire la ricerca oltre. */
                     if (entries[i].name[0] == 0x00) return -2;
                     continue;
@@ -1861,7 +1861,7 @@ int fat12_mkdir(const char *path)
     if (fat12_split_path(path, &dir_cluster, name83) != 0) return -2;
 
     if (dir_cluster != 0) {
-        klog(LOG_WARN, "FAT12: mkdir('%s') rifiutata — supportate solo "
+        klog(LOG_WARN, "FAT12: mkdir('%s') rifiutata - supportate solo "
              "directory nella root (percorsi a un solo livello)", path);
         return -38;   /* ENOSYS */
     }
@@ -1888,7 +1888,7 @@ int fat12_mkdir(const char *path)
     /* Cluster che conterrà le entry della nuova directory */
     nuovo = fat12_alloc_cluster();
     if (nuovo == 0) {
-        klog(LOG_ERROR, "FAT12: mkdir('%s') — disco pieno", path);
+        klog(LOG_ERROR, "FAT12: mkdir('%s') - disco pieno", path);
         return -28;   /* ENOSPC */
     }
     g_fat_dirty = 1;
@@ -1917,7 +1917,7 @@ int fat12_mkdir(const char *path)
 
     if (fat12_write_sector(fat12_cluster_to_lba(nuovo), buf) != 0) {
         fat12_free_chain(nuovo);
-        klog(LOG_ERROR, "FAT12: mkdir('%s') — scrittura del cluster fallita", path);
+        klog(LOG_ERROR, "FAT12: mkdir('%s') - scrittura del cluster fallita", path);
         return -5;
     }
 
@@ -1942,7 +1942,7 @@ int fat12_mkdir(const char *path)
                  * lascerebbe un cluster occupato e invisibile se il
                  * sistema venisse spento adesso. */
                 if (fat12_sync() != 0) {
-                    klog(LOG_ERROR, "FAT12: mkdir('%s') — sync fallita", path);
+                    klog(LOG_ERROR, "FAT12: mkdir('%s') - sync fallita", path);
                     return -5;
                 }
 
@@ -1956,7 +1956,7 @@ int fat12_mkdir(const char *path)
     /* Nessuno slot libero: restituisci il cluster appena preso, altrimenti
      * resterebbe occupato senza appartenere a nulla. */
     fat12_free_chain(nuovo);
-    klog(LOG_ERROR, "FAT12: mkdir('%s') — root directory piena", path);
+    klog(LOG_ERROR, "FAT12: mkdir('%s') - root directory piena", path);
     return -28;
 }
 
@@ -2023,14 +2023,14 @@ int fat12_rmdir(const char *path)
 
     /* La root non si cancella. */
     if (path && path[0] == '/' && path[1] == '\0') {
-        klog(LOG_WARN, "FAT12: rmdir('/') rifiutata — è la directory radice");
+        klog(LOG_WARN, "FAT12: rmdir('/') rifiutata - e' la directory radice");
         return -22;   /* EINVAL */
     }
 
     if (fat12_split_path(path, &dir_cluster, name83) != 0) return -2;
 
     if (dir_cluster != 0) {
-        klog(LOG_WARN, "FAT12: rmdir('%s') rifiutata — supportate solo "
+        klog(LOG_WARN, "FAT12: rmdir('%s') rifiutata - supportate solo "
              "directory nella root (percorsi a un solo livello)", path);
         return -38;   /* ENOSYS */
     }
@@ -2052,7 +2052,7 @@ int fat12_rmdir(const char *path)
         /* Trovata: dev'essere davvero una directory. Cancellare un file
          * con rmdir sarebbe una sorpresa sgradevole. */
         if (!(root[i].attr & FAT12_ATTR_DIRECTORY)) {
-            klog(LOG_WARN, "FAT12: rmdir('%s') — non è una directory", path);
+            klog(LOG_WARN, "FAT12: rmdir('%s') - non e' una directory", path);
             return -20;   /* ENOTDIR */
         }
 
@@ -2060,7 +2060,7 @@ int fat12_rmdir(const char *path)
             int vuota = fat12_dir_vuota(root[i].first_cluster);
             if (vuota < 0) return -5;
             if (vuota == 0) {
-                klog(LOG_WARN, "FAT12: rmdir('%s') — la directory non è vuota", path);
+                klog(LOG_WARN, "FAT12: rmdir('%s') - la directory non e' vuota", path);
                 return -39;   /* ENOTEMPTY */
             }
         }
@@ -2081,7 +2081,7 @@ int fat12_rmdir(const char *path)
          * cancellazione solo in RAM significherebbe che uno spegnimento
          * improvviso la annulla a metà. */
         if (fat12_sync() != 0) {
-            klog(LOG_ERROR, "FAT12: rmdir('%s') — sync fallita", path);
+            klog(LOG_ERROR, "FAT12: rmdir('%s') - sync fallita", path);
             return -5;
         }
 
@@ -2406,7 +2406,7 @@ int fat12_write(int handle, const void *buf, uint32_t size, uint32_t offset)
              *     ld: /prova.o: local symbol at index 4 (>= sh_info of 4)
              *
              * `in == 0` significa "scrivo dall'inizio del settore", non
-             * "il settore è vuoto". Le due cose coincidevano finché si
+             * "il settore e' vuoto". Le due cose coincidevano finché si
              * scriveva solo in coda.
              *
              * ! RESTA UN CASO NON COPERTO: un BUCO, cioè una scrittura
