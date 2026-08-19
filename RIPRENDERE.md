@@ -12,11 +12,11 @@ seriale e USB — tastiera compresa, hub compresi.
 
 ## COSA E' COMMITTATO
 
-    <in attesa del prossimo commit>
+    bb1e180  "Due librerie condivise: exhtml.so per l'albero, excss.so per i
+              fogli di stile"
 
-In attesa nell'albero: **exhtml.so** ed **excss.so** — il lettore di HTML e i
-fogli di stile, due librerie condivise; il browser che le usa tutt'e due, con i
-tag di aspetto (`<b>`, `<i>`, i titoli) diventati regole invece che `if`.
+In attesa nell'albero: **le tre proprieta' che excss calcolava e il browser
+buttava via** — allineamento, margini e sfondo — adesso impaginate e disegnate.
 
 ! **`gitupdate.sh` FA `git add .` E UN COMMIT SOLO**: `messaggio-commit.txt`
 deve coprire tutto quello che si e' fatto dall'ultimo commit, non l'ultima
@@ -497,6 +497,50 @@ In volo, contando i pixel di una foto:
     #00ff00 dal <link> esterno        3367
     #0000ff dall'attributo style      1724
     #ff00ff dentro un display:none       0   <- e deve essere zero
+
+### LE TRE PROPRIETA' CHE VENIVANO CALCOLATE E BUTTATE VIA
+
+Un anello lasciato aperto dal commit prima: `excss` leggeva e calcolava
+`text-align`, i quattro margini e `background-color`, e il browser non le
+guardava. Tre proprieta' su otto promesse dalla libreria e scartate da chi la
+usa — il tipo di divario che non da' nessun errore e che si scopre solo
+provando una pagina che le usa.
+
+! **L'ALLINEAMENTO NON SI PUO' APPLICARE MENTRE SI SCRIVE**, ed e' la ragione
+per cui serve segnare dove comincia la riga: per centrare bisogna sapere quanto
+e' larga, e lo si sa solo quando e' finita. Si segna il primo pezzo, e al
+momento di andare a capo si spostano tutti quelli della riga.
+
+! **I MARGINI SI ACCUMULANO E VANNO RIMESSI COM'ERANO USCENDO**, come il
+collegamento in corso: un `blockquote` dentro un altro rientra due volte.
+E il margine dichiarato SOSTITUISCE il predefinito invece di sommarcisi —
+`margin-top: 0` deve poter togliere lo spazio, e sommando non lo toglierebbe
+mai.
+
+! **UNO SFONDO NON E' UN PEZZO, E' CIO' CHE STA SOTTO I PEZZI.** Vive in un
+elenco suo e si disegna PRIMA di tutto il testo: metterlo fra i pezzi vorrebbe
+dire dipingere sopra le parole ogni volta che un blocco colorato viene dopo,
+perche' l'ordine dei pezzi e' quello del documento e non ha niente a che fare
+con la profondita'. E la sua altezza si sa solo quando il blocco e' finito: si
+segna la y entrando e si chiude uscendo.
+
+Nel foglio predefinito sono entrati anche i rientri che rendono i margini
+visibili senza che la pagina dica niente: `blockquote`, `ul`, `ol`, `dd`, e
+`center` come allineamento.
+
+#### Misurato sui pixel, non guardato
+
+    scatola con margin-left:60 margin-right:40
+        bordo sinistro   atteso  68 (+2 di cornice)   trovato  70
+        bordo destro     atteso 711 (+2)              trovato 713
+    testo con text-align:center
+        centro           atteso 382                   trovato 381
+    testo con text-align:right
+        fine             atteso 754                   trovato 751
+
+I due pixel di scarto sono la cornice della finestra dentro la foto dello
+schermo, e sono gli stessi da tutt'e due i lati; l'uno del centro e' la
+divisione per due; i tre della destra sono la spalla dell'ultimo glifo.
 
 ## Difetti aperti, dichiarati
 

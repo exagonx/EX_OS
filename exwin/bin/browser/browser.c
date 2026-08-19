@@ -149,6 +149,28 @@ typedef struct {
     char          src[EXHTTP_URL_MAX];
 } Imm;
 
+/* -----------------------------------------------------------------------------
+ * I riquadri di sfondo
+ *
+ * ! UNO SFONDO NON E' UN PEZZO, E' CIO' CHE STA SOTTO I PEZZI, quindi vive in
+ * un elenco suo e si disegna PRIMA di tutto il testo. Metterlo fra i pezzi
+ * vorrebbe dire dipingere sopra le parole gia' scritte ogni volta che un
+ * blocco colorato viene dopo — e l'ordine dei pezzi e' quello del documento,
+ * che non ha niente a che fare con la profondita'.
+ *
+ * ! E LA MISURA SI SA SOLO QUANDO IL BLOCCO E' FINITO: si segna la y d'inizio
+ * entrando e si chiude il riquadro uscendo.
+ * --------------------------------------------------------------------------- */
+#define SFONDI_MAX  256
+
+typedef struct {
+    int          x, y, w, h;
+    unsigned int colore;
+} Sfondo;
+
+static Sfondo g_sfondi[SFONDI_MAX];
+static int    g_sfondi_n = 0;
+
 static CssRegola     g_css_reg[CSS_REGOLE_MAX];
 static CssDich       g_css_dich[CSS_DICH_MAX];
 static char          g_css_arena[CSS_ARENA_MAX];
@@ -318,6 +340,32 @@ static int  g_link_ora;
 static CssStile g_stile_ora;
 
 /* -----------------------------------------------------------------------------
+ * La riga e i rientri
+ *
+ * ! I MARGINI SINISTRO E DESTRO RESTRINGONO LA RIGA, e vanno tenuti come stato
+ * dell'impaginazione perche' si ACCUMULANO: un `blockquote` dentro un altro
+ * rientra due volte. Il valore si mette entrando nell'elemento e si rimette
+ * com'era uscendone — la stessa disciplina del collegamento in corso.
+ *
+ * ! E L'ALLINEAMENTO NON SI PUO' APPLICARE MENTRE SI SCRIVE, ed e' la ragione
+ * per cui serve `g_riga_primo`: per centrare una riga bisogna sapere quanto e'
+ * larga, e lo si sa solo quando e' finita. Si segna dove la riga comincia, e
+ * al momento di andare a capo si spostano tutti i pezzi che ci stanno dentro.
+ * --------------------------------------------------------------------------- */
+static int g_marg_sx, g_marg_dx;    /* rientri di adesso, in pixel */
+static int g_riga_primo;            /* primo pezzo della riga in corso */
+
+static int riga_x(void) { return area_x() + g_marg_sx; }
+static int riga_w(void)
+{
+    int w = area_w() - g_marg_sx - g_marg_dx;
+
+    /* Una pagina che dichiara margini enormi non deve poter produrre una riga
+     * di larghezza negativa: si stringe fino a un minimo e li' ci si ferma. */
+    return w < 40 ? 40 : w;
+}
+
+/* -----------------------------------------------------------------------------
  * La riserva dei caratteri
  *
  * ! UN CARATTERE SI APRE UNA VOLTA SOLA E SI TIENE. Con i fogli di stile la
@@ -400,22 +448,48 @@ static int alt_riga_f(ExFont f)
     return h > 0 ? h + 3 : 19;
 }
 
+/* Sposta i pezzi della riga appena finita, se non e' allineata a sinistra. */
+static void allinea_riga(void)
+{
+    int avanzo, dx, i;
+
+    if (g_stile_ora.allineamento != CSS_ALL_CENTRO &&
+        g_stile_ora.allineamento != CSS_ALL_DX) return;
+    if (g_riga_primo >= g_pez_n) return;
+
+    avanzo = (riga_x() + riga_w()) - g_pen_x;
+    if (avanzo <= 0) return;
+
+    dx = (g_stile_ora.allineamento == CSS_ALL_CENTRO) ? avanzo / 2 : avanzo;
+    for (i = g_riga_primo; i < g_pez_n; i++) g_pez[i].x += dx;
+}
+
 static void a_capo(void)
 {
     /* ! UNA RIGA VUOTA NON SI ACCUMULA. Un documento indentato produce spazi
      * fra un blocco e l'altro: andando a capo per ognuno si otterrebbero
      * pagine fatte di buchi. Si va a capo solo se sulla riga c'e' qualcosa. */
-    if (g_pen_x <= area_x()) return;
-    g_pen_x  = area_x();
+    if (g_pen_x <= riga_x()) return;
+
+    allinea_riga();
+
+    g_pen_x  = riga_x();
     g_pen_y += g_riga_h;
     g_riga_h = alt_riga_f(font_di(&g_stile_ora));
+    g_riga_primo = g_pez_n;
 }
 
-static void spazio_fra_blocchi(void)
+/* Lo spazio sopra e sotto un blocco. ! IL MARGINE DICHIARATO SOSTITUISCE IL
+ * PREDEFINITO, non ci si somma: `margin-top: 0` deve poter togliere lo spazio,
+ * e sommando non lo toglierebbe mai. */
+static void spazio_blocco(int quale)
 {
+    int m = g_stile_ora.margine[quale];
+
     a_capo();
-    g_pen_y += 6;
+    g_pen_y += (m == CSS_MISURA_NO) ? 6 : m;
 }
+
 
 /* Mette una parola, andando a capo se non ci sta. */
 static void parola(const char *t, unsigned int off, int n)
@@ -435,7 +509,7 @@ static void parola(const char *t, unsigned int off, int n)
      * testo leggibile: spezzare in mezzo a una parola si vede subito. Una
      * parola piu' larga della finestra si mette lo stesso e sborda — meglio
      * che sparire. */
-    if (g_pen_x + w > area_x() + area_w() && g_pen_x > area_x()) a_capo();
+    if (g_pen_x + w > riga_x() + riga_w() && g_pen_x > riga_x()) a_capo();
 
     if (g_pez_n < PEZZI_MAX) {
         g_pez[g_pez_n].x = g_pen_x;
@@ -480,7 +554,7 @@ static void pezzo_immagine(int k)
     int w = (int)g_imm[k].w;
     int h = (int)g_imm[k].h;
 
-    if (g_pen_x + w > area_x() + area_w() && g_pen_x > area_x()) a_capo();
+    if (g_pen_x + w > riga_x() + riga_w() && g_pen_x > riga_x()) a_capo();
 
     if (g_pez_n < PEZZI_MAX) {
         g_pez[g_pez_n].x = g_pen_x;
@@ -555,7 +629,10 @@ static const char CSS_DI_SISTEMA[] =
     "h4, h5, h6 { font-weight: bold }"
     "b, strong { font-weight: bold }"
     "i, em, cite, var { font-style: italic }"
-    "a { color: #0000ee }";
+    "a { color: #0000ee }"
+    "blockquote { margin-left: 32px; margin-right: 16px }"
+    "ul, ol, dd { margin-left: 28px }"
+    "center { text-align: center }";
 
 static void impagina_nodo(int v, const CssStile *ered)
 {
@@ -575,6 +652,8 @@ static void impagina_nodo(int v, const CssStile *ered)
     {
         const char *nome = html_nome(&g_doc, v);
         int         era_link = g_link_ora;
+        int         era_sx = g_marg_sx, era_dx = g_marg_dx;
+        int         sfondo_mio = -1;
         CssStile    mio;
         int         e_blocco;
 
@@ -590,7 +669,7 @@ static void impagina_nodo(int v, const CssStile *ered)
 
         g_stile_ora = mio;
 
-        if (uguale(nome, "br")) { g_pen_x = area_x() + 1; a_capo(); return; }
+        if (uguale(nome, "br")) { g_pen_x = riga_x() + 1; a_capo(); return; }
 
         if (uguale(nome, "img")) {
             const char *src = html_attr(&g_doc, v, "src");
@@ -615,7 +694,30 @@ static void impagina_nodo(int v, const CssStile *ered)
         if (mio.display == CSS_DISPLAY_BLOCCO) e_blocco = 1;
         if (mio.display == CSS_DISPLAY_INLINE) e_blocco = 0;
 
-        if (e_blocco) spazio_fra_blocchi();
+        if (e_blocco) {
+            spazio_blocco(0);
+
+            /* ! I RIENTRI SI SOMMANO A QUELLI DI FUORI: un blocco dentro un
+             * altro rientra due volte, ed e' cosi' che si vedono le citazioni
+             * annidate. Valgono solo sui blocchi — un margine su un pezzo di
+             * testo in linea non ha un lato a cui attaccarsi. */
+            if (mio.margine[3] != CSS_MISURA_NO) g_marg_sx += mio.margine[3];
+            if (mio.margine[1] != CSS_MISURA_NO) g_marg_dx += mio.margine[1];
+            if (g_marg_sx < 0) g_marg_sx = 0;
+            if (g_marg_dx < 0) g_marg_dx = 0;
+
+            g_pen_x = riga_x();
+            g_riga_primo = g_pez_n;
+
+            if (mio.sfondo != CSS_NIENTE && g_sfondi_n < SFONDI_MAX) {
+                sfondo_mio = g_sfondi_n++;
+                g_sfondi[sfondo_mio].x = riga_x();
+                g_sfondi[sfondo_mio].y = g_pen_y;
+                g_sfondi[sfondo_mio].w = riga_w();
+                g_sfondi[sfondo_mio].h = 0;
+                g_sfondi[sfondo_mio].colore = mio.sfondo;
+            }
+        }
 
         if (uguale(nome, "a")) {
             const char *h = html_attr(&g_doc, v, "href");
@@ -638,7 +740,20 @@ static void impagina_nodo(int v, const CssStile *ered)
 
         g_link_ora = era_link;
 
-        if (e_blocco) spazio_fra_blocchi();
+        if (e_blocco) {
+            a_capo();
+            if (sfondo_mio >= 0) {
+                int fine = g_pen_y + ((g_pen_x > riga_x()) ? g_riga_h : 0);
+
+                g_sfondi[sfondo_mio].h = fine - g_sfondi[sfondo_mio].y;
+                if (g_sfondi[sfondo_mio].h < 1) g_sfondi[sfondo_mio].h = 1;
+            }
+            g_marg_sx = era_sx;
+            g_marg_dx = era_dx;
+            g_pen_x = riga_x();
+            g_riga_primo = g_pez_n;
+            spazio_blocco(2);
+        }
     }
 }
 
@@ -646,6 +761,9 @@ static void impagina(void)
 {
     g_pez_n = 0;
     g_link_n = 0;
+    g_marg_sx = g_marg_dx = 0;
+    g_riga_primo = 0;
+    g_sfondi_n = 0;
     g_pen_x = area_x();
     g_pen_y = area_y();
     g_link_ora = -1;
@@ -685,6 +803,20 @@ static void disegna(void)
     ex_riempi(g_f, area_x() - 2, area_y() - 2, area_w() + 4, area_h() + 4,
               EX_BIANCO);
     ex_incavo(g_f, area_x() - 2, area_y() - 2, area_w() + 4, area_h() + 4);
+
+    /* ! GLI SFONDI PRIMA DI TUTTO IL RESTO, e ritagliati a mano all'area come
+     * le immagini: ex_riempi ritaglia alla FINESTRA, non al documento. */
+    for (i = 0; i < g_sfondi_n; i++) {
+        int y = g_sfondi[i].y - g_scorri;
+        int h = g_sfondi[i].h;
+
+        if (y + h < area_y() || y > area_y() + area_h()) continue;
+        if (y < area_y()) { h -= area_y() - y; y = area_y(); }
+        if (y + h > area_y() + area_h()) h = area_y() + area_h() - y;
+        if (h > 0)
+            ex_riempi(g_f, g_sfondi[i].x, y, g_sfondi[i].w, h,
+                      g_sfondi[i].colore);
+    }
 
     for (i = 0; i < g_pez_n; i++) {
         int y  = g_pez[i].y - g_scorri;
