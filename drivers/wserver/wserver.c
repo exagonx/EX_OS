@@ -663,6 +663,33 @@ static void in_cima(int idx)
      * tasti anche se poi lo schermo lo disegna sotto alla barra. */
     if (g_fin[idx].usata && !(g_fin[idx].stile & WIN_ST_SFONDO)) g_fuoco = idx;
 
+    /* =====================================================================
+     * ! UNA FINESTRA «SOPRA» GIA' IN PILA NON SI RIALZA, E FRA LORO L'ORDINE
+     * LO DECIDE CHI E' NATO PRIMA.
+     *
+     * Segnalato cosi': «data e ora nella barra spariscono appena faccio
+     * clic». Non sparivano: finivano SOTTO. La barra delle applicazioni e
+     * l'orologio sono tutt'e due WIN_ST_SOPRA e si sovrappongono per
+     * disegno — l'angolo destro della barra E' dell'orologio, che e' un
+     * processo a parte. Al primo clic sulla barra questa funzione la portava
+     * davanti, e siccome il riordino qui sotto tiene l'ordine RELATIVO fra le
+     * «sopra», da quel momento la barra copriva l'orologio per sempre.
+     *
+     *     ordine: 0 1 2      l'orologio (2) sopra la barra (1)
+     *     ordine: 0 2 1      dopo un clic sulla barra
+     *
+     * ! E IL FUOCO SI DA' LO STESSO, sopra: chi clicca la barra deve poterci
+     * scrivere. Quello che non deve cambiare e' CHI COPRE CHI.
+     *
+     * Una finestra «sopra» NUOVA passa di qui e viene aggiunta normalmente —
+     * e' cosi' che il menu di avvio nasce davanti alla barra. La regola vale
+     * solo per chi in pila c'e' gia'.
+     * ===================================================================== */
+    if (g_fin[idx].stile & WIN_ST_SOPRA) {
+        for (k = 0; k < g_n_ordine; k++)
+            if (g_ordine[k] == (unsigned int)idx) return;
+    }
+
     for (k = 0; k < g_n_ordine; k++)
         if (g_ordine[k] != (unsigned int)idx) g_ordine[j++] = g_ordine[k];
 

@@ -74,6 +74,8 @@ typedef uint32_t        size_t;
 #define SYS_OPEN        5
 #define SYS_CLOSE       6
 #define SYS_CONSOLE_INFO 231
+#define SYS_SBRK         45
+#define SYS_PROCINFO    188
 #define SYS_IPC_SEND     220
 #define SYS_IPC_RECV_TMO 228
 #define SYS_IPC_LOOKUP   223
@@ -123,6 +125,7 @@ typedef uint32_t        size_t;
  * gia'. Sono header di soli #define e struct, senza dipendenze — il nome
  * si prende da li' e non si ricopia, cosi' rinominare un servizio non
  * lascia indietro una stringa in questo file. */
+#include "exinfo.h"
 #include "kbd_proto.h"
 #include "pci_proto.h"
 #include "net_proto.h"
@@ -601,6 +604,69 @@ static int sh_getcwd(char *buf, uint32_t size)
 static int sh_getpid(void)
 {
     return syscall1(SYS_GETPID, 0);
+}
+
+/* =============================================================================
+ * LA MEMORIA DI QUESTO PROCESSO — per `ver`
+ *
+ * ! LA SHELL NON SI COLLEGA ALLA libc, ED E' UNA SCELTA CHE SI PAGA QUI. E'
+ * il programma con cui si ripara un sistema: deve partire anche quando
+ * /lib/libc.so non c'e'. Quindi lib/exinfo, che la libc la usa, non si puo'
+ * collegare — e questi venti righe sono la stessa aritmetica rifatta con le
+ * sue chiamate diirette.
+ *
+ * ! DI exinfo.h SI PRENDE SOLO L'INTESTAZIONE, che e' fatta di #define e non
+ * di codice: cosi' l'autore e l'indirizzo restano scritti in UN FILE SOLO,
+ * che era il punto di avere quel modulo.
+ * ========================================================================== */
+extern void _start(void);
+extern char _bss_end;
+
+/* La stessa ProcInfo di libc.h e di kernel/include/syscall.h: le tre copie
+ * devono restare identiche. Qui servono solo i primi campi piu' gli stack. */
+typedef struct {
+    uint32_t pid, ppid, state, prio;
+    char     name[32];
+    uint32_t ustack_top, ustack_base, ustack_limit;
+    uint32_t kstack_base, kstack_top;
+} ShProcInfo;
+
+static void sh_memoria(uint32_t *immagine, uint32_t *heap, uint32_t *pila)
+{
+    uint32_t base = (uint32_t)(void *)_start;
+    uint32_t fine = (uint32_t)&_bss_end;
+    uint32_t inizio, cima;
+
+    *immagine = (fine > base) ? fine - base : 0;
+
+    inizio = (fine + 4095u) & ~4095u;
+    cima   = (uint32_t)syscall1(SYS_SBRK, 0);
+    *heap  = (cima > inizio) ? cima - inizio : 0;
+
+    *pila = 0;
+    {
+        ShProcInfo v[8];
+        uint32_t   start = 0, mio = (uint32_t)sh_getpid();
+        int        n, i;
+
+        /* ! QUATTRO ARGOMENTI, E IL QUARTO E' sizeof: il kernel rifiuta con
+         * EINVAL se non combacia, ed e' cosi' che si accorge di una copia
+         * della struttura andata fuori sincrono. Con syscall3 il quarto
+         * registro era spazzatura, la chiamata falliva e la pila si leggeva
+         * «0 KB» — un numero plausibile e sbagliato, che e' il modo peggiore
+         * di sbagliare. Visto perche' zero non e' un valore possibile: uno
+         * stack toccato occupa almeno una pagina. */
+        while ((n = syscall4(SYS_PROCINFO, (uint32_t)v, 8, start,
+                             (uint32_t)sizeof(ShProcInfo))) > 0) {
+            for (i = 0; i < n; i++) {
+                if (v[i].pid != mio) continue;
+                if (v[i].ustack_top > v[i].ustack_base)
+                    *pila = v[i].ustack_top - v[i].ustack_base;
+                return;
+            }
+            start += (uint32_t)n;
+        }
+    }
 }
 
 static void sh_yield(void)
@@ -1389,8 +1455,9 @@ static void cmd_export(int argc, char *argv[])
  * ============================================================================= */
 static void cmd_version(void)
 {
-    char buf[256];
-    int  n = sh_version(buf, sizeof(buf));
+    char     buf[256];
+    uint32_t img = 0, hp = 0, pl = 0;
+    int      n = sh_version(buf, sizeof(buf));
 
     if (n < 0) {
         printerr("version: il kernel non ha fornito l'identità di sistema");
@@ -1400,6 +1467,27 @@ static void cmd_version(void)
     print(CLR_GREEN);
     println(buf);
     print(CLR_WHITE);
+
+    /* Le stesse cose che dicono le finestre «Informazioni su» delle
+     * applicazioni grafiche: nome, a cosa serve, chi l'ha scritta, e quanto
+     * occupa. La shell non ha un menu, quindi il posto e' `ver`. */
+    println("");
+    println("Shell");
+    println("L'interprete di comandi di EX-OS: pipe, redirezioni, lavori in");
+    println("background, cronologia e completamento.");
+    println("");
+    println(EXINFO_AUTORE "  -  " EXINFO_EMAIL);
+    println("");
+
+    sh_memoria(&img, &hp, &pl);
+    print("Memoria di questo programma: ");
+    print_uint((img + hp + pl + 1023u) / 1024u);
+    println(" KB");
+    print("  programma ");   print_uint((img + 1023u) / 1024u);
+    print(" KB, heap ");     print_uint((hp  + 1023u) / 1024u);
+    print(" KB, pila ");     print_uint((pl  + 1023u) / 1024u);
+    println(" KB");
+    println("  (le librerie condivise non sono contate: sono di tutti)");
 }
 
 /* ! `uname` NON E' PIU' UN BUILT-IN, ed e' un programma: /bin/uname.

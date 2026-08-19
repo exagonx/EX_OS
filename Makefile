@@ -205,6 +205,16 @@ DRIVER_SOLO_CD := pci.drv ne2k.drv pcnet.drv ip.drv
 #         delle finestre, che includono tutti i programmi grafici.
 NON_DRIVER := net tty usb wserver
 
+# «Informazioni su»: un modulo compilato dentro, non una .so. Il perche' sta in
+# cima a lib/exinfo/exinfo.h.
+#
+# ! DICHIARATO QUI, PRIMA DI CHIUNQUE LO USI. Con `:=` make espande subito:
+# messo piu' in basso, la regola della shell — che viene prima — lo trovava
+# VUOTO, cioe' senza prerequisito e senza ricostruirsi. E' la stessa trappola
+# di exwin.so e del blocco di wserver, terza volta in questo Makefile.
+EXINFO_SRC    := lib/exinfo/exinfo.c
+EXINFO_HDR    := lib/exinfo/exinfo.h
+
 PCI_DRV_PROTO := drivers/pci/pci_proto.h
 NET_PROTO     := drivers/net/net_proto.h
 IP_PROTO      := drivers/net/ip_proto.h
@@ -353,10 +363,11 @@ $(SEGNO_FLAG):
 # non puo' usare l'ingresso comune, che chiama _libc_start. Questo prende
 # argc e argv dallo stack e li passa a shell_main: senza, `sh -c` non
 # esiste, e senza quello non esistono system() e popen() nella libc.
-$(SHELL_BIN): $(SHELL_SRC) $(SHELL_START) $(SHELL_LD) lib/include/spawn_abi.h $(SEGNO_FLAG)
+$(SHELL_BIN): $(SHELL_SRC) $(SHELL_START) $(SHELL_LD) lib/include/spawn_abi.h \
+              $(EXINFO_HDR) $(SEGNO_FLAG)
 	@echo "=== Compilazione Shell utente /bin/sh ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/kbd -I drivers/pci -I drivers/net -c $(SHELL_SRC) -o $(BUILD_OBJ)/shell.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exinfo -I drivers/kbd -I drivers/pci -I drivers/net -c $(SHELL_SRC) -o $(BUILD_OBJ)/shell.o
 	$(CC) -m32 -c $(SHELL_START) -o $(BUILD_OBJ)/sh_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(SHELL_LD) $(BUILD_OBJ)/sh_start.o $(BUILD_OBJ)/shell.o -o $@
 	@echo "[OK] Shell compilata: $@"
@@ -1541,19 +1552,20 @@ FILEMGR_SRC := exwin/bin/filemgr/filemgr.c
 FILEMGR_BIN := $(BUILD_EXWIN_BIN)/filemgr
 FILEMGR_LD  := exwin/bin/filemgr/filemgr.ld
 
-$(FILEMGR_BIN): $(FILEMGR_SRC) $(FILEMGR_LD) $(EXWIN_STUB) $(EXLIB_SRC) $(EXLIB_HDR) $(EXWIN_HDR) \
+$(FILEMGR_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(FILEMGR_SRC) $(FILEMGR_LD) $(EXWIN_STUB) $(EXLIB_SRC) $(EXLIB_HDR) $(EXWIN_HDR) \
                 $(EXDLG_STUB) $(EXDLG_HDR) \
                 $(WIN_PROTO) $(FONT_SRC) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione /exwin/bin/filemgr ==="
 	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -I drivers/wserver -I drivers/kbd -c $(FILEMGR_SRC) -o $(BUILD_OBJ)/filemgr_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -I lib/exinfo -I drivers/wserver -I drivers/kbd -c $(FILEMGR_SRC) -o $(BUILD_OBJ)/filemgr_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exinfo -c $(EXINFO_SRC) -o $(BUILD_OBJ)/filemgr_info.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/filemgr_exwin.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exdlg -c $(EXDLG_STUB) -o $(BUILD_OBJ)/filemgr_exdlg.o
 	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/filemgr_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(FILEMGR_LD) \
 	    $(BUILD_OBJ)/filemgr_start.o $(BUILD_OBJ)/filemgr_main.o \
 	    $(BUILD_OBJ)/filemgr_exwin.o \
-	    $(BUILD_OBJ)/filemgr_exdlg.o \
+	    $(BUILD_OBJ)/filemgr_exdlg.o $(BUILD_OBJ)/filemgr_info.o \
 	    $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] filemgr compilato: $@"
 
@@ -1565,19 +1577,20 @@ EDIT_SRC := exwin/bin/edit/edit.c
 EDIT_BIN := $(BUILD_EXWIN_BIN)/edit
 EDIT_LD  := exwin/bin/edit/edit.ld
 
-$(EDIT_BIN): $(EDIT_SRC) $(EDIT_LD) $(EXWIN_STUB) $(EXLIB_SRC) $(EXLIB_HDR) $(EXWIN_HDR) \
+$(EDIT_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(EDIT_SRC) $(EDIT_LD) $(EXWIN_STUB) $(EXLIB_SRC) $(EXLIB_HDR) $(EXWIN_HDR) \
              $(EXDLG_STUB) $(EXDLG_HDR) \
              $(WIN_PROTO) $(FONT_SRC) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione /exwin/bin/edit ==="
 	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -I drivers/wserver -I drivers/kbd -c $(EDIT_SRC) -o $(BUILD_OBJ)/edit_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -I lib/exinfo -I drivers/wserver -I drivers/kbd -c $(EDIT_SRC) -o $(BUILD_OBJ)/edit_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exinfo -c $(EXINFO_SRC) -o $(BUILD_OBJ)/edit_info.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/edit_exwin.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exdlg -c $(EXDLG_STUB) -o $(BUILD_OBJ)/edit_exdlg.o
 	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/edit_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(EDIT_LD) \
 	    $(BUILD_OBJ)/edit_start.o $(BUILD_OBJ)/edit_main.o \
 	    $(BUILD_OBJ)/edit_exwin.o \
-	    $(BUILD_OBJ)/edit_exdlg.o \
+	    $(BUILD_OBJ)/edit_exdlg.o $(BUILD_OBJ)/edit_info.o \
 	    $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] edit compilato: $@"
 
@@ -1672,7 +1685,7 @@ BROWSER_SRC := exwin/bin/browser/browser.c
 BROWSER_BIN := $(BUILD_EXWIN_BIN)/browser
 BROWSER_LD  := exwin/bin/browser/browser.ld
 
-$(BROWSER_BIN): $(BROWSER_SRC) $(BROWSER_LD) $(EXWIN_STUB) $(EXLIB_SRC) \
+$(BROWSER_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(BROWSER_SRC) $(BROWSER_LD) $(EXWIN_STUB) $(EXLIB_SRC) \
              $(EXLIB_HDR) $(EXWIN_HDR) $(WIN_PROTO) $(EXHTTP_SRC) \
              $(EXHTTP_HTTP) $(EXHTTP_HDR) lib/eximg/eximg.h \
              $(EXHTML_STUB) $(EXHTML_HDR) $(EXHTML_SO) \
@@ -1681,7 +1694,9 @@ $(BROWSER_BIN): $(BROWSER_SRC) $(BROWSER_LD) $(EXWIN_STUB) $(EXLIB_SRC) \
              $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione /exwin/bin/browser ==="
 	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_SRC) -o $(BUILD_OBJ)/browser_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I lib/exdlg -I lib/exinfo -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_SRC) -o $(BUILD_OBJ)/browser_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exdlg -c $(EXDLG_STUB) -o $(BUILD_OBJ)/browser_exdlg.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exinfo -c $(EXINFO_SRC) -o $(BUILD_OBJ)/browser_info.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/browser_exwin.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhttp -c $(EXHTTP_STUB) -o $(BUILD_OBJ)/browser_stub.o
 	@# ! html.c NON E' PIU' COLLEGATO DENTRO, dal 19 agosto 2026: qui c'era
@@ -1695,6 +1710,7 @@ $(BROWSER_BIN): $(BROWSER_SRC) $(BROWSER_LD) $(EXWIN_STUB) $(EXLIB_SRC) \
 	    $(BUILD_OBJ)/browser_start.o $(BUILD_OBJ)/browser_main.o \
 	    $(BUILD_OBJ)/browser_exwin.o $(BUILD_OBJ)/browser_stub.o \
 	    $(BUILD_OBJ)/browser_html.o $(BUILD_OBJ)/browser_css.o \
+	    $(BUILD_OBJ)/browser_exdlg.o $(BUILD_OBJ)/browser_info.o \
 	    $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] browser compilato: $@"
 
@@ -4280,6 +4296,7 @@ verifica-dipendenze-cd:
 $(ISOX_IMG): Makefile $(FLOPPY_IMG) boot/autoexec.sh $(DRIVER_SOLO_CD_OUT) \
              $(FONT_TTF) $(FONT_TTF_DIR)/LICENSE \
              $(EXWIN_OUT) $(EXWIN_APPLIST) $(PROVA_PNG) $(PROVA_ICO) $(PROVA_JPG) \
+             $(WSERVER_OUT) \
              $(BINARI_SOLO_CD) $(ISO_MKISO) README.md README.en.md \
              gpl-2.0.txt boot/kernel.cfg boot/kernel.txt boot/help.txt \
              boot/telnetd.cfg \

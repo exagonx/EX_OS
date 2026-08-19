@@ -12,11 +12,12 @@ seriale e USB — tastiera compresa, hub compresi.
 
 ## COSA E' COMMITTATO
 
-    bb1e180  "Due librerie condivise: exhtml.so per l'albero, excss.so per i
-              fogli di stile"
+    25af7b6  "Allineamento, margini e sfondo: le tre proprieta' che excss
+              calcolava a vuoto"
 
-In attesa nell'albero: **le tre proprieta' che excss calcolava e il browser
-buttava via** — allineamento, margini e sfondo — adesso impaginate e disegnate.
+In attesa nell'albero: **le tabelle impaginate come tabelle**, **l'orologio che
+spariva al primo clic**, e le finestre **«Informazioni su»** su browser, editor,
+file manager e `ver`.
 
 ! **`gitupdate.sh` FA `git add .` E UN COMMIT SOLO**: `messaggio-commit.txt`
 deve coprire tutto quello che si e' fatto dall'ultimo commit, non l'ultima
@@ -541,6 +542,103 @@ visibili senza che la pagina dica niente: `blockquote`, `ul`, `ol`, `dd`, e
 I due pixel di scarto sono la cornice della finestra dentro la foto dello
 schermo, e sono gli stessi da tutt'e due i lati; l'uno del centro e' la
 divisione per due; i tre della destra sono la spalla dell'ultimo glifo.
+
+### LE TABELLE, E L'UNICO POSTO CHE VUOLE DUE PASSATE
+
+! **LA LARGHEZZA DI UNA COLONNA NON SI SA FINCHE' NON SI E' GUARDATO OGNI
+CONTENUTO DI QUELLA COLONNA.** Il resto della pagina si impagina in avanti, una
+parola dopo l'altra, senza tornare indietro; qui no. Prima si misura ogni cella
+come se avesse tutta la riga, poi si decide quanto e' larga ogni colonna, e
+solo allora si impagina davvero. I pezzi della prima passata SI BUTTANO — si
+segna dove arrivava `g_pez_n` e ci si torna — o si disegnerebbe due volte ogni
+cella, la seconda nel posto giusto e la prima dove capita.
+
+! **E MENTRE SI MISURA NON SI ALLINEA.** Il difetto trovato dai pixel: il
+foglio predefinito centra i `<th>`, quindi la passata di misura spingeva i
+pezzi in mezzo alla riga e la larghezza tornava «meta' pagina» invece che
+«quanto la parola». Il risultato erano tre colonne quasi uguali, con quella
+lunga stretta e quella di due lettere larghissima. L'allineamento decide DOVE
+mettere una riga; la misura chiede QUANTO occupa: tenerli separati e' la
+correzione, non un caso particolare.
+
+Provato coi bordi delle colonne: destri identici su tutte le righe (232, 469,
+753) e distacchi di 8 px esatti, con la somma che fa 744 = la larghezza
+dell'area. Niente `colspan`/`rowspan` e niente bordi: dichiarato.
+
+### L'OROLOGIO CHE SPARIVA AL PRIMO CLIC — non spariva, andava SOTTO
+
+Segnalato cosi': «data e ora nella barra spariscono appena faccio clic».
+
+! **LA PRIMA DIAGNOSI ERA SBAGLIATA, E L'A/B L'HA SMENTITA.** Avevo trovato che
+`ex_procedura_base` ridipingeva la finestra su QUALUNQUE messaggio non gestito
+(`case EXM_DISEGNA: default:` uniti) e concluso che fosse quello. Rimesso il
+codice di prima, l'orologio **non spariva lo stesso**: il difetto era altrove.
+La correzione al toolkit e' rimasta perche' e' giusta di suo — ogni movimento
+del mouse sopra una finestra che non ascolta il mouse ne ripitturava il fondo e
+faceva ricomporre lo schermo — ma non c'entra con questo.
+
+Il difetto vero, trovato facendo stampare l'ordine di impilamento:
+
+    creata idx=2 (orologio)   ordine: 0 1 2     orologio SOPRA la barra
+                              ordine: 0 2 1     dopo un clic sulla barra
+
+La barra delle applicazioni e l'orologio sono tutt'e due `WIN_ST_SOPRA` e si
+sovrappongono **per disegno** — l'angolo destro della barra E' dell'orologio,
+che e' un processo a parte. Al primo clic `in_cima()` portava avanti la barra,
+e siccome il riordino tiene l'ordine RELATIVO fra le «sopra», da quel momento
+la barra copriva l'orologio per sempre.
+
+! **LA REGOLA NUOVA: UNA FINESTRA «SOPRA» GIA' IN PILA NON SI RIALZA.** Fra
+loro l'ordine lo decide chi e' nato prima. Il fuoco si da' lo stesso — chi
+clicca la barra deve poterci scrivere — quello che non deve cambiare e' CHI
+COPRE CHI. Una «sopra» NUOVA passa e si aggiunge normalmente: e' cosi' che il
+menu di avvio nasce davanti alla barra.
+
+### «INFORMAZIONI SU» — lib/exinfo
+
+Nome, a cosa serve, l'autore, l'indirizzo, e la memoria del processo. Su
+browser (pulsante `?`), editor, file manager, e nella shell con `ver`.
+
+! **LA MEMORIA DI UN PROCESSO NON LA DICE NESSUNA CHIAMATA, e va composta**:
+`meminfo()` racconta la RAM della MACCHINA, `procinfo()` da' gli stack e basta.
+Le tre parti si ricavano tutte — immagine da `_start` a `_bss_end`, heap da li'
+(arrotondato alla pagina) a `sbrk(0)`, pila come `ustack_top - ustack_base`,
+che sono le pagine DAVVERO toccate. Le librerie condivise non ci sono dentro, e
+si dichiara: sono di tutti, e attribuirle a chi le apre le conterebbe una volta
+per programma.
+
+! **LA SHELL SE LA RIFA', E NON E' UNA DUPLICAZIONE PER SBADATAGGINE**: non si
+collega alla libc apposta — e' il programma con cui si ripara un sistema, deve
+partire anche senza `/lib/libc.so`. Di `exinfo.h` prende solo i `#define`, cosi'
+l'autore e l'indirizzo restano scritti in un file solo.
+
+! **E `SYS_PROCINFO` VUOLE QUATTRO ARGOMENTI**, il quarto e' `sizeof`: il
+kernel rifiuta con EINVAL se non combacia. Con tre la chiamata falliva e la
+pila si leggeva «0 KB» — un numero plausibile e sbagliato. Visto perche' zero
+non e' possibile: uno stack toccato occupa almeno una pagina.
+
+#### E il dialogo degli avvisi ha imparato due cose
+
+`ex_dlg_avviso` disegnava i `\n` come glifi — in mezzo alla frase comparivano
+due pallini — e si fermava a sei righe, troncando a meta' parola. Adesso un
+`\n` e' un a capo voluto e le righe sono dodici. ! **UN DIALOGO CHE TRONCA E'
+PEGGIO DI UNO CORTO**: quello che si legge sembra tutto.
+
+! **E I TESTI SONO SOLO ASCII.** Il font della console non ha i trattini
+lunghi: al loro posto compaiono tre caratteri di spazzatura in mezzo a una
+frase, e si e' visto proprio qui.
+
+#### Tre difetti di Makefile, tutti della stessa forma
+
+1. **`$(WSERVER_OUT)` non era fra le prerequisite dell'ISO** — regressione del
+   trasloco di wserver fuori dai driver: il CD non si rifaceva piu' quando il
+   server cambiava, e si provava un binario vecchio credendolo nuovo.
+2. **`EXINFO_SRC` non era fra le prerequisite** di browser, editor e file
+   manager: cambiare exinfo.c non li ricostruiva.
+3. **`EXINFO_HDR` era definita DOPO la regola della shell**, e con `:=` make
+   espande subito: la shell aveva un prerequisito VUOTO. **Terza volta che
+   questo Makefile inciampa nella stessa cosa** — dopo exwin.so e il blocco di
+   wserver. Le definizioni adesso stanno in cima, col perche' accanto.
 
 ## Difetti aperti, dichiarati
 

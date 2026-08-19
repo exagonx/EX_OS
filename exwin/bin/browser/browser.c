@@ -49,6 +49,8 @@
 #include "exhttp.h"
 #include "html.h"
 #include "css.h"
+#include "exdlg.h"
+#include "exinfo.h"
 #include "kbd_proto.h"
 
 #define FIN_W       760
@@ -60,6 +62,7 @@
 #define ID_URL      1
 #define ID_VAI      2
 #define ID_INDIETRO 3
+#define ID_INFO     4
 
 /* ! I TETTI SONO DICHIARATI E NON SI CRESCE: una pagina la sceglie chi sta
  * dall'altra parte, quindi ogni numero che dipende da lei ha un limite. Una
@@ -355,6 +358,18 @@ static CssStile g_stile_ora;
 static int g_marg_sx, g_marg_dx;    /* rientri di adesso, in pixel */
 static int g_riga_primo;            /* primo pezzo della riga in corso */
 
+/* ! MENTRE SI MISURA NON SI ALLINEA, e non e' un dettaglio: la prima passata
+ * delle tabelle impagina ogni cella su tutta la riga per vedere quanto e'
+ * larga, e la larghezza si legge dal bordo destro dei pezzi. Con un `th`
+ * centrato — e il foglio predefinito li centra tutti — quei pezzi finiscono in
+ * mezzo alla riga, e la misura torna larga quanto meta' pagina invece che
+ * quanto la parola. Il risultato erano tre colonne quasi uguali, con quella
+ * lunga stretta e quella di due lettere larghissima.
+ *
+ * L'allineamento e' una decisione su DOVE mettere una riga; la misura chiede
+ * QUANTO occupa. Tenerli separati e' la correzione, non un caso particolare. */
+static int g_misura = 0;
+
 static int riga_x(void) { return area_x() + g_marg_sx; }
 static int riga_w(void)
 {
@@ -453,6 +468,7 @@ static void allinea_riga(void)
 {
     int avanzo, dx, i;
 
+    if (g_misura) return;
     if (g_stile_ora.allineamento != CSS_ALL_CENTRO &&
         g_stile_ora.allineamento != CSS_ALL_DX) return;
     if (g_riga_primo >= g_pez_n) return;
@@ -580,7 +596,7 @@ static int blocco(const char *nome)
 {
     static const char *const B[] = {
         "p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li",
-        "table", "tr", "pre", "blockquote", "form", "hr", "section",
+        "pre", "blockquote", "form", "hr", "section",
         "article", "header", "footer", "nav", "aside", "main", "title", 0
     };
     int i;
@@ -610,6 +626,10 @@ static int invisibile(const char *n)
            uguale(n, "title") || uguale(n, "meta") || uguale(n, "link");
 }
 
+/* impagina_nodo e impagina_tabella si chiamano a vicenda: una tabella contiene
+ * del contenuto qualunque, e quel contenuto puo' contenere un'altra tabella. */
+static void impagina_nodo(int v, const CssStile *ered);
+
 /* =============================================================================
  * IL FOGLIO PREDEFINITO — quello che il browser porta con se'
  *
@@ -632,7 +652,232 @@ static const char CSS_DI_SISTEMA[] =
     "a { color: #0000ee }"
     "blockquote { margin-left: 32px; margin-right: 16px }"
     "ul, ol, dd { margin-left: 28px }"
-    "center { text-align: center }";
+    "center { text-align: center }"
+    "th { font-weight: bold; text-align: center }";
+
+/* =============================================================================
+ * LE TABELLE — e sono l'unico posto che vuole DUE passate
+ *
+ * ! LA LARGHEZZA DI UNA COLONNA NON SI SA FINCHE' NON SI E' GUARDATO OGNI
+ * CONTENUTO DI QUELLA COLONNA, ed e' tutta la difficolta': il resto della
+ * pagina si impagina in avanti, una parola dopo l'altra, senza tornare
+ * indietro. Qui no. Prima si misura ogni cella come se avesse tutta la riga a
+ * disposizione, poi si decide quanto e' larga ogni colonna, e solo allora si
+ * impagina davvero.
+ *
+ * ! LA PRIMA PASSATA PRODUCE PEZZI CHE SI BUTTANO, e vanno buttati per
+ * davvero: si segna dove arrivava `g_pez_n` e ci si torna. Lasciarli
+ * vorrebbe dire disegnare due volte ogni cella, la seconda nel posto giusto e
+ * la prima dove capita.
+ *
+ * ! E SE LE COLONNE NON CI STANNO SI RESTRINGONO IN PROPORZIONE, non si
+ * lasciano sbordare: una tabella piu' larga della finestra e' la cosa che
+ * rende illeggibili le pagine vere, e qui non c'e' lo scorrimento
+ * orizzontale per rimediare.
+ *
+ * ! QUELLO CHE NON C'E', DICHIARATO: niente `colspan`/`rowspan` — una cella
+ * che ne chiede uno occupa una colonna sola e le altre restano al loro posto,
+ * che e' storto ma non disallinea il resto — e niente bordi.
+ * ============================================================================= */
+#define TAB_COL_MAX     10
+#define TAB_RIG_MAX     120
+#define TAB_LIV_MAX     3       /* tabelle dentro tabelle */
+#define TAB_SPAZIO      8       /* fra una colonna e l'altra */
+
+static int g_tab_liv = 0;
+
+static int e_riga(const char *n)  { return uguale(n, "tr"); }
+static int e_cella(const char *n) { return uguale(n, "td") || uguale(n, "th"); }
+
+/* Raccoglie le `tr` di questa tabella, saltando thead/tbody/tfoot e fermandosi
+ * davanti a una tabella annidata — le sue righe sono sue. */
+static void raccogli_righe(int v, int *righe, int *n)
+{
+    int f;
+
+    for (f = g_doc.nodi[v].primo_figlio; f >= 0; f = g_doc.nodi[f].prossimo) {
+        const char *nome;
+
+        if (g_doc.nodi[f].tipo != HTML_ELEMENTO) continue;
+        nome = html_nome(&g_doc, f);
+
+        if (uguale(nome, "table")) continue;
+        if (e_riga(nome)) { if (*n < TAB_RIG_MAX) righe[(*n)++] = f; continue; }
+        raccogli_righe(f, righe, n);
+    }
+}
+
+/* Impagina `nodo` dentro una colonna, e rende l'altezza che ha occupato.
+ * Con `prova` a 1 i pezzi si buttano e si rende invece la larghezza usata. */
+static int impagina_in_colonna(int nodo, const CssStile *ered,
+                               int x, int y, int w, int prova, int *alt)
+{
+    int era_sx = g_marg_sx, era_dx = g_marg_dx;
+    int era_px = g_pen_x, era_py = g_pen_y;
+    int era_rh = g_riga_h, era_rp = g_riga_primo;
+    int primo  = g_pez_n, primo_sf = g_sfondi_n;
+    int era_mis = g_misura;
+    int larga  = 0, i, f;
+
+    g_misura = prova;
+
+    g_marg_sx = x - area_x();
+    g_marg_dx = (area_x() + area_w()) - (x + w);
+    if (g_marg_sx < 0) g_marg_sx = 0;
+    if (g_marg_dx < 0) g_marg_dx = 0;
+
+    g_pen_x      = riga_x();
+    g_pen_y      = y;
+    g_riga_h     = alt_riga_f(font_di(ered));
+    g_riga_primo = g_pez_n;
+
+    /* I figli della cella, non la cella: `td` non e' un blocco, e trattarlo da
+     * tale aggiungerebbe uno stacco dentro ogni casella. */
+    for (f = g_doc.nodi[nodo].primo_figlio; f >= 0; f = g_doc.nodi[f].prossimo)
+        impagina_nodo(f, ered);
+    a_capo();
+
+    *alt = g_pen_y - y;
+    if (*alt < g_riga_h) *alt = g_riga_h;
+
+    for (i = primo; i < g_pez_n; i++) {
+        int destra = g_pez[i].x + g_pez[i].w - x;
+
+        if (destra > larga) larga = destra;
+    }
+
+    if (prova) { g_pez_n = primo; g_sfondi_n = primo_sf; }
+    g_misura = era_mis;
+
+    g_marg_sx = era_sx; g_marg_dx = era_dx;
+    g_pen_x = era_px;   g_pen_y = era_py;
+    g_riga_h = era_rh;  g_riga_primo = era_rp;
+    return larga;
+}
+
+static void impagina_tabella(int v, const CssStile *mio)
+{
+    int      righe[TAB_RIG_MAX], n_righe = 0;
+    int      largh[TAB_COL_MAX];
+    int      n_col = 0, r, c, somma = 0, disp, alt;
+    int      x0, y0;
+
+    raccogli_righe(v, righe, &n_righe);
+    if (n_righe == 0 || g_tab_liv >= TAB_LIV_MAX) {
+        int f;
+
+        /* Niente righe, o troppo annidata: si impagina come un blocco
+         * qualunque, che e' cio' che si faceva prima delle tabelle. */
+        for (f = g_doc.nodi[v].primo_figlio; f >= 0; f = g_doc.nodi[f].prossimo)
+            impagina_nodo(f, mio);
+        return;
+    }
+
+    g_tab_liv++;
+    for (c = 0; c < TAB_COL_MAX; c++) largh[c] = 0;
+
+    /* --- prima passata: quanto vorrebbe essere larga ogni colonna --------- */
+    for (r = 0; r < n_righe; r++) {
+        int f;
+
+        c = 0;
+        for (f = g_doc.nodi[righe[r]].primo_figlio; f >= 0;
+             f = g_doc.nodi[f].prossimo) {
+            CssStile sc;
+            int      w, a;
+
+            if (g_doc.nodi[f].tipo != HTML_ELEMENTO) continue;
+            if (!e_cella(html_nome(&g_doc, f))) continue;
+            if (c >= TAB_COL_MAX) break;
+
+            css_calcola(&g_css, &g_doc, f, mio, &sc);
+            w = impagina_in_colonna(f, &sc, riga_x(), 0, riga_w(), 1, &a);
+            if (w > largh[c]) largh[c] = w;
+            c++;
+        }
+        if (c > n_col) n_col = c;
+    }
+
+    if (n_col == 0) { g_tab_liv--; return; }
+
+    /* --- la distribuzione ------------------------------------------------- */
+    for (c = 0; c < n_col; c++) {
+        if (largh[c] < 12) largh[c] = 12;
+        somma += largh[c];
+    }
+    disp = riga_w() - (n_col - 1) * TAB_SPAZIO;
+    if (disp < n_col * 12) disp = n_col * 12;
+
+    if (somma > disp) {
+        /* Si stringe in proporzione: chi voleva piu' spazio ne perde di piu'. */
+        int resto = disp;
+
+        for (c = 0; c < n_col; c++) {
+            int w = (c == n_col - 1) ? resto : (int)((long)largh[c] * disp / somma);
+
+            if (w < 12) w = 12;
+            largh[c] = w;
+            resto -= w;
+            if (resto < 0) resto = 0;
+        }
+    }
+
+    /* --- seconda passata: si impagina per davvero ------------------------- */
+    a_capo();
+    y0 = g_pen_y;
+
+    for (r = 0; r < n_righe; r++) {
+        int f, alt_riga_tab = 0;
+
+        x0 = riga_x();
+        c  = 0;
+        for (f = g_doc.nodi[righe[r]].primo_figlio; f >= 0;
+             f = g_doc.nodi[f].prossimo) {
+            CssStile sc;
+
+            if (g_doc.nodi[f].tipo != HTML_ELEMENTO) continue;
+            if (!e_cella(html_nome(&g_doc, f))) continue;
+            if (c >= n_col) break;
+
+            css_calcola(&g_css, &g_doc, f, mio, &sc);
+
+            /* Lo sfondo della cella si segna PRIMA, con l'altezza rimessa a
+             * posto quando la riga e' finita: e' lo stesso giro dei blocchi. */
+            if (sc.sfondo != CSS_NIENTE && g_sfondi_n < SFONDI_MAX) {
+                g_sfondi[g_sfondi_n].x = x0;
+                g_sfondi[g_sfondi_n].y = y0;
+                g_sfondi[g_sfondi_n].w = largh[c];
+                g_sfondi[g_sfondi_n].h = 0;
+                g_sfondi[g_sfondi_n].colore = sc.sfondo;
+                g_sfondi_n++;
+            }
+
+            impagina_in_colonna(f, &sc, x0, y0, largh[c], 0, &alt);
+            if (alt > alt_riga_tab) alt_riga_tab = alt;
+
+            x0 += largh[c] + TAB_SPAZIO;
+            c++;
+        }
+
+        /* Gli sfondi di questa riga prendono adesso la loro altezza vera. */
+        {
+            int k;
+
+            for (k = g_sfondi_n - 1; k >= 0; k--) {
+                if (g_sfondi[k].y != y0 || g_sfondi[k].h != 0) continue;
+                g_sfondi[k].h = alt_riga_tab;
+            }
+        }
+
+        y0 += alt_riga_tab;
+    }
+
+    g_pen_y      = y0;
+    g_pen_x      = riga_x();
+    g_riga_h     = alt_riga_f(font_di(mio));
+    g_riga_primo = g_pez_n;
+    g_tab_liv--;
+}
 
 static void impagina_nodo(int v, const CssStile *ered)
 {
@@ -668,6 +913,17 @@ static void impagina_nodo(int v, const CssStile *ered)
         if (mio.display == CSS_DISPLAY_NIENTE) return;
 
         g_stile_ora = mio;
+
+        /* ! LA TABELLA HA UNA STRADA SUA, e va presa PRIMA della logica dei
+         * blocchi: quella impagina i figli uno dietro l'altro, che e'
+         * esattamente cio' che una tabella non deve fare. */
+        if (uguale(nome, "table")) {
+            spazio_blocco(0);
+            impagina_tabella(v, &mio);
+            g_link_ora = era_link;
+            spazio_blocco(2);
+            return;
+        }
 
         if (uguale(nome, "br")) { g_pen_x = riga_x() + 1; a_capo(); return; }
 
@@ -1498,6 +1754,18 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
             if (t && t[0]) vai(t, 1, 0);
             return 0;
         }
+        if (wp == ID_INFO) {
+            char t[640];
+
+            exinfo_testo(t, sizeof(t), "Navigatore",
+                         "Il browser di EX-OS.  Mette insieme exhttp per la "
+                         "rete, exhtml per l'albero, excss per i fogli di "
+                         "stile, eximg per le immagini e i font per misurare "
+                         "e disegnare il testo.  Niente JavaScript, niente "
+                         "https.");
+            ex_dlg_avviso("Informazioni su", t);
+            return 0;
+        }
         if (wp == ID_INDIETRO) {
             if (g_storia_n > 0) {
                 char indietro[EXHTTP_URL_MAX];
@@ -1565,10 +1833,17 @@ int main(int argc, char **argv)
 
     ex_crea("pulsante", "<", EX_FIGLIO, MARGINE, 4, 26, 22,
             g_f, ID_INDIETRO, 0);
+
+    /* ! I DUE PULSANTI DI DESTRA SI MISURANO DALLA DESTRA, non dalla
+     * sinistra: cosi' aggiungerne uno sposta solo il campo dell'indirizzo, che
+     * e' l'unico pezzo che puo' restringersi senza diventare inutile. */
+    ex_crea("pulsante", "?", EX_FIGLIO, FIN_W - MARGINE - 24, 4, 24, 22,
+            g_f, ID_INFO, 0);
+    ex_crea("pulsante", "Vai", EX_FIGLIO, FIN_W - MARGINE - 24 - 4 - 44, 4,
+            44, 22, g_f, ID_VAI, 0);
     g_url = ex_crea("testo", "", EX_FIGLIO, MARGINE + 32, 4,
-                    FIN_W - 2 * MARGINE - 32 - 56, 22, g_f, ID_URL, 0);
-    ex_crea("pulsante", "Vai", EX_FIGLIO, FIN_W - MARGINE - 50, 4, 50, 22,
-            g_f, ID_VAI, 0);
+                    FIN_W - MARGINE - 24 - 4 - 44 - 4 - (MARGINE + 32), 22,
+                    g_f, ID_URL, 0);
 
     g_stato = ex_crea("etichetta", "", EX_FIGLIO,
                       MARGINE, FIN_H - 18, FIN_W - 2 * MARGINE, 16, g_f, 0, 0);

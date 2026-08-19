@@ -378,7 +378,13 @@ static long av_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
  * ============================================================================= */
 #define AVVISO_W        420
 #define AVVISO_COL      ((AVVISO_W - 24) / 8)    /* caratteri per riga */
-#define AVVISO_RIGHE    6
+/* ! DODICI RIGHE E NON PIU' SEI. Sei bastavano finche' un avviso era una
+ * frase; con «Informazioni su» — nome, a cosa serve, chi l'ha scritto, quanta
+ * memoria occupa — il testo si troncava a meta' parola, e un dialogo che
+ * TRONCA e' peggio di uno che non c'e': quello che si legge sembra tutto.
+ * La finestra si misura gia' sul testo, quindi alzarlo non allarga niente per
+ * chi ne usa due. */
+#define AVVISO_RIGHE    12
 
 static unsigned int spezza(const char *t, char righe[][AVVISO_COL + 1],
                            unsigned int max)
@@ -389,20 +395,27 @@ static unsigned int spezza(const char *t, char righe[][AVVISO_COL + 1],
 
     while (t[i] && n < max) {
         unsigned int q = 0, ultimo = 0;
+        int          a_capo = 0;
 
         while (t[i + q] && q < AVVISO_COL) {
+            /* ! UN «\n» E' UN A CAPO VOLUTO, e va rispettato invece che
+             * disegnato. Prima finiva nel testo come un carattere qualunque:
+             * il font gli dava un glifo, e in mezzo alla frase comparivano due
+             * pallini. Chi scrive un avviso su piu' righe se le aspetta. */
+            if (t[i + q] == '\n') { a_capo = 1; break; }
             if (t[i + q] == ' ') ultimo = q;
             q++;
         }
 
         /* Se il testo continua e c'e' uno spazio dove tagliare, si taglia li'. */
-        if (t[i + q] && ultimo > 0) q = ultimo;
+        if (!a_capo && t[i + q] && ultimo > 0) q = ultimo;
 
         memcpy(righe[n], t + i, q);
         righe[n][q] = '\0';
         n++;
 
         i += q;
+        if (a_capo) i++;                    /* si salta il «\n» stesso */
         while (t[i] == ' ') i++;
     }
     return n;

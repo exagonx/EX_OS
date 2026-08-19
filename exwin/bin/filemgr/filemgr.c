@@ -47,6 +47,7 @@
 #include "libc.h"
 #include "exwin.h"
 #include "exdlg.h"
+#include "exinfo.h"
 #include "kbd_proto.h"
 
 #define VOCI_MAX    512
@@ -752,11 +753,14 @@ static void istruzioni(void)
 
 static void informazioni(void)
 {
-    ex_dlg_avviso("Informazioni su",
-                  "Il file manager di EX-OS, sul toolkit ExWin.  L'albero non "
-                  "e' un controllo nuovo: e' una lista con dentro "
-                  "l'indentazione, e i nodi stanno in un vettore nell'ordine "
-                  "in cui si vedono.");
+    char t[640];
+
+    exinfo_testo(t, sizeof(t), "File manager",
+                 "Il file manager di EX-OS, sul toolkit ExWin.  L'albero non "
+                 "e' un controllo nuovo: e' una lista con dentro "
+                 "l'indentazione, e i nodi stanno in un vettore nell'ordine "
+                 "in cui si vedono.");
+    ex_dlg_avviso("Informazioni su", t);
 }
 
 /* =============================================================================

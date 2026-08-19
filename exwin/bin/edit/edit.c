@@ -29,6 +29,7 @@
 #include "libc.h"
 #include "exwin.h"
 #include "exdlg.h"
+#include "exinfo.h"
 #include "kbd_proto.h"
 
 #define FIN_W       640
@@ -265,11 +266,14 @@ static void istruzioni(void)
 
 static void informazioni(void)
 {
-    ex_dlg_avviso("Informazioni su",
-                  "L'editor di testo di EX-OS, sul toolkit ExWin.  "
-                  "Il testo, il cursore e lo scorrimento sono del controllo "
-                  "areatesto; qui dentro c'e' solo leggere un file, "
-                  "scriverlo e decidere cosa fare quando va storto.");
+    char t[640];
+
+    exinfo_testo(t, sizeof(t), "Editor",
+                 "L'editor di testo di EX-OS, sul toolkit ExWin.  Il testo, "
+                 "il cursore e lo scorrimento sono del controllo areatesto; "
+                 "qui dentro c'e' solo leggere un file, scriverlo e decidere "
+                 "cosa fare quando va storto.");
+    ex_dlg_avviso("Informazioni su", t);
 }
 
 static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
