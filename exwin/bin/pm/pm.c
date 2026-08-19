@@ -577,7 +577,10 @@ static void avvia(unsigned int n)
      * voce non fa niente e non spiega niente e' peggio di un menu senza quella
      * voce. Il messaggio va sulla seriale perche' qui non c'e' un terminale a
      * cui dirlo — la scrivania e' l'unica cosa a video. */
-    if (spawn_ex(argv[0], argv, 0, 0, 0) < 0) {
+    /* ! L'AMBIENTE SI PASSA ANCHE QUI, ed e' l'ultimo anello: `envp` nullo
+     * vuol dire ambiente VUOTO. Un'applicazione avviata dal menu deve sapere
+     * dov'e' la casa di chi l'ha premuta, o si tiene i suoi file dove capita. */
+    if (spawn_ex(argv[0], argv, environ, 0, 0) < 0) {
         char m[160];
         sprintf(m, "pm: non riesco ad avviare %s", argv[0]);
         log_seriale(m);
@@ -777,7 +780,7 @@ int main(int argc, char **argv)
 
             av[0] = (char *)dove[k];
             av[1] = 0;
-            if (spawn_ex(av[0], av, 0, 0, 0) >= 0) partito = 1;
+            if (spawn_ex(av[0], av, environ, 0, 0) >= 0) partito = 1;
         }
 
         if (!partito) {
@@ -823,7 +826,7 @@ int main(int argc, char **argv)
         av[0] = perc;
         av[1] = 0;
 
-        if (spawn_ex(av[0], av, 0, 0, 0) < 0) {
+        if (spawn_ex(av[0], av, environ, 0, 0) < 0) {
             char msg[160];
 
             sprintf(msg, "pm: avvio automatico fallito: %s", perc);

@@ -107,7 +107,11 @@ int main(int argc, char **argv)
     }
     sv[n]   = 0;
 
-    if (spawn_ex(sv[0], sv, 0, 0, 0) < 0) {
+    /* ! L'AMBIENTE VA PASSATO A MANO: `envp` nullo vuol dire ambiente VUOTO,
+     * non «eredita». Da qui nasce tutta la scrivania, quindi qui si decide se
+     * le applicazioni grafiche sapranno chi le sta usando — a cominciare da
+     * HOME. Vedi lo stesso commento in wserver.c e in pm.c. */
+    if (spawn_ex(sv[0], sv, environ, 0, 0) < 0) {
         printf("exwin: non riesco ad avviare %s\n", server);
         return 1;
     }
@@ -123,7 +127,7 @@ int main(int argc, char **argv)
     if (sfondo) { pv[n++] = "-s"; pv[n++] = (char *)sfondo; }
     pv[n] = 0;
 
-    if (spawn_ex(pv[0], pv, 0, 0, 0) < 0) {
+    if (spawn_ex(pv[0], pv, environ, 0, 0) < 0) {
         printf("exwin: non riesco ad avviare %s\n", pm);
         return 1;
     }

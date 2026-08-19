@@ -1565,8 +1565,17 @@ int main(int argc, char **argv)
     {
         ConsoleInfo ci;
 
+        /* ! E L'AMBIENTE SI PASSA, o rinascere qui lo BUTTA VIA. `envp` nullo
+         * non vuol dire «eredita»: nel kernel (syscall_impl.c) vuol dire
+         * ambiente VUOTO, e al figlio resta solo il blocco [env] di
+         * kernel.cfg. Siccome tutta la scrivania nasce da qui, l'effetto era
+         * che un utente entrato come `tizio` — con `HOME=/home/tizio` messo da
+         * login — vedeva `HOME=/` in ogni applicazione grafica, cioe' nessun
+         * programma della scrivania sapeva dov'era la casa di chi lo stava
+         * usando. Si e' visto quando il browser ha provato a tenersi la cache
+         * in $HOME/.app/browser/cache e se l'e' ritrovata nella radice. */
         if (chiesta >= 0 && console_info(&ci) == 0 && ci.mia != (unsigned int)chiesta) {
-            int pid = spawn_su_console(argv[0], argv, 0, 0, 0, chiesta);
+            int pid = spawn_su_console(argv[0], argv, environ, 0, 0, chiesta);
 
             if (pid < 0) {
                 printf("wserver: non riesco a nascere sulla console %d\n", chiesta);

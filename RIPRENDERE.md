@@ -12,12 +12,12 @@ seriale e USB — tastiera compresa, hub compresi.
 
 ## COSA E' COMMITTATO
 
-    531f773  "Le immagini nel browser, e il tetto delle librerie che le
-              teneva fuori"
+    d630e97  "L'installatore non toglie piu' il login, e il browser ha una
+              cache su disco"
 
-In attesa nell'albero: **l'installatore che non toglieva piu' il login** — la
-fusione di `kernel.cfg` invece del «lo lascio com'e'» — e **la cache su disco
-del browser**, in `$HOME/.app/browser/cache`.
+In attesa nell'albero: **l'ambiente che la scrivania buttava via** — sei
+`spawn` che passavano `envp` nullo — e la prova di rete della cache, che era
+rimasta aperta e adesso e' chiusa.
 
 ! **`gitupdate.sh` FA `git add .` E UN COMMIT SOLO**: `messaggio-commit.txt`
 deve coprire tutto quello che si e' fatto dall'ultimo commit, non l'ultima
@@ -137,8 +137,23 @@ prima» e' un fatto solo se si e' guardato prima.
     ridisegno completo costa piu' di prima.
  4. **L'annullamento nell'editor** — un taglio sbagliato non si rimette a
     posto. E' quello che manca di piu' ora che c'e' un «Taglia».
- 5. **`ls -l`** — non c'e'. La libc sa gia' dire proprietario, permessi e
-    misura: manca l'impaginazione.
+ 5. **`ls -l`** — non c'e', ed **e' piu' grosso di quanto diceva questa voce**
+    (corretto il 19 agosto). Qui c'era scritto «la libc sa gia' dire
+    proprietario, permessi e misura: manca l'impaginazione». **E' falso.**
+    `VfsStat` nel kernel ha `modo`, `uid` e `gid` (kernel/include/vfs.h:120),
+    ma `sys_stat` NON LI COPIA: la `Stat` che arriva in spazio utente ha cinque
+    campi — misura, identita', attributi FAT, data, ora — e `struct stat`
+    dichiara `st_uid` «sempre 0: non ci sono utenti», che era vero prima di
+    login e degli utenti ext2. Manca il trasporto, non l'impaginazione.
+
+    ! **E LA STRADA GIUSTA E' UNA CHIAMATA IN PIU', NON UN CAMPO IN PIU' A
+    `Stat`.** Il precedente e' gia' scritto in libc.h accanto a
+    `spawn_su_console`: «e' una funzione in piu', non un parametro in piu' a
+    spawn_ex — cambiare la firma di una funzione che i programmi gia' chiamano
+    vuol dire ricostruire tutto cio' che la usa». `Stat` la usano tutti; farla
+    crescere e' un cambio di ABI che NON avvisa, e va ricostruito il bersaglio
+    intero. Serve poi decidere se `ls -l` mostra i numeri o i nomi presi da
+    `/boot/utenti`.
  6. **`-i` ai quattro driver che ancora non ce l'hanno** — `floppy`,
     `mouseser`, `uhci`, `vgaprova`. Gli altri nove ce l'hanno tutti (`pci`,
     `svga`, `kbd`, `xhci` e i cinque del CD); `tty` era in questo elenco per
@@ -270,14 +285,55 @@ sessione, svuotamento che lascia in pace i file altrui, e `HOME` assente.
 casa scrivibile ext2, e `browser: niente cache in /.app (filesystem in sola
 lettura), lavoro in memoria` avviando da CD.
 
-! **QUELLO CHE NON E' PROVATO IN VOLO, E VA DETTO**: il colpo a segno vero —
-la seconda `<img>` con lo stesso `src` servita dal disco invece che dalla rete
-— non e' stato verificato dentro EX-OS. Il server di prova sull'host ha smesso
-di essere raggiungibile dalla macchina virtuale a meta' sessione (i processi
-non condividono piu' lo spazio di rete), quindi le esecuzioni di rete dopo il
-commit 531f773 sono INCONCLUDENTI, non negative. Va rifatto con la ricetta di
-«Come si prova la catena della rete», guardando il log del server: la stessa
-`quadranti.png` dev'essere chiesta **una volta sola** invece che due.
+**E il colpo a segno, provato in volo il 19 agosto**: una pagina con DUE
+`<img>` che hanno lo stesso `src`, e il registro del server dice
+
+    /
+    /quadranti.png          <- una volta sola, non due
+
+mentre nella foto i pixel sono 4800 per colore, cioe' 2400 per due immagini:
+tutt'e due si vedono, e la rete e' stata toccata una volta.
+
+! **IL SERVER DI PROVA LO LANCIA QEMU, NON LA SHELL**, e senza questo la prova
+non si poteva fare: quando i processi dell'host non condividono lo spazio di
+rete, un server che ascolta su una porta non e' raggiungibile dalla macchina
+virtuale. Con `guestfwd` il comando NASCE DENTRO QEMU, quindi la rete e' la
+stessa. Il server parla su stdin/stdout, una connessione per esecuzione, e
+annota ogni richiesta in un file — che e' poi come si CONTANO le richieste
+invece di guardarle:
+
+    -netdev user,id=n1,guestfwd=tcp:10.0.2.100:80-cmd:/percorso/srv.sh
+
+! **E IL COMANDO NON PUO' AVERE SPAZI**: `EXOS_QEMU_EXTRA` viene spezzato sugli
+spazi da qemu_drive, quindi `-cmd:python3 srv.py` arriva a QEMU tagliato a
+meta'. Serve uno script senza argomenti.
+
+### LA SCRIVANIA BUTTAVA VIA L'AMBIENTE — sei `spawn` con `envp` nullo
+
+! **`envp == NULL` NON VUOL DIRE «EREDITA», VUOL DIRE «VUOTO».** Sta in
+kernel/syscall/syscall_impl.c: se il puntatore e' nullo il figlio nasce con
+zero variabili, e gli resta solo il blocco `[env]` di `kernel.cfg` — dove
+`HOME = /`.
+
+Erano nulli in tutti e sei i punti da cui nasce la scrivania:
+
+    bin/exwin/exwin.c            il server e il program manager
+    drivers/wserver/wserver.c    la RINASCITA sulla console 1
+    exwin/bin/pm/pm.c            il menu, l'orologio, l'avvio automatico
+
+Effetto: un utente entrava come `tizio`, `login` gli metteva
+`HOME=/home/tizio`, e **ogni applicazione grafica vedeva `HOME=/`**. Nessun
+programma della scrivania sapeva dov'era la casa di chi lo stava usando.
+
+! **NON SI VEDEVA PERCHE' NESSUNO GUARDAVA `HOME`**, ed e' saltato fuori solo
+quando il browser ha provato a tenersi la cache in `$HOME/.app/browser/cache` e
+se l'e' ritrovata nella radice. Un difetto che aspettava il primo programma
+grafico con dei file suoi.
+
+Provato A/B, stesso CD e stessi comandi, cambiati solo i sei argomenti:
+
+    prima   HOME=/disco/root esportato -> «niente cache in /.app»
+    dopo    HOME=/disco/root esportato -> «cache in /disco/root/.app/browser/cache»
 
 ## Difetti aperti, dichiarati
 
