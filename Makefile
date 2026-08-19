@@ -171,7 +171,7 @@ PROGRAMMI_FLOPPY := shell hello id chmod ls mem stack disk libctest fdisk mkfs t
 # =============================================================================
 PROGRAMMI_CD := netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp scarica telnet telnetd sshd xcp winprova exwincmd
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
-PROGRAMMI_EXWIN := exwin_so exdlg_so eximg_so exfont_so exhttp_so wserver pm filemgr edit term fontprova orologio browser
+PROGRAMMI_EXWIN := exwin_so exdlg_so eximg_so exfont_so exhttp_so exhtml_so excss_so wserver pm filemgr edit term fontprova orologio browser
 
 # I driver, con la stessa regola dei programmi. Quelli di base stanno gia'
 # dentro PROGRAMMI_FLOPPY (floppy_drv, kbd_drv): sul floppy servono a
@@ -1114,6 +1114,78 @@ $(EXHTTP_SO): $(EXHTTP_SRC) $(EXHTTP_HTTP) $(EXHTTP_HDR) $(EXHTTP_ESPORTA) \
 .PHONY: exhttp_so
 exhttp_so: dirs $(EXHTTP_SO)
 
+# =============================================================================
+# /exwin/lib/exhtml.so — l'albero del marcatore, a disposizione di tutti
+#
+# ! QUI IL CRITERIO DEI «DUE UTENTI» E' STATO SCAVALCATO DI PROPOSITO. La
+# regola di questo sistema e' che una .so conviene quando due programmi la
+# usano, e il lettore di HTML ne aveva uno solo: il browser — c'e' scritto
+# nella regola del browser stesso, due schermate piu' giu'. La si fa condivisa
+# lo stesso perche' un albero HTML non serve solo a impaginare una pagina, e
+# tenerlo dentro un eseguibile vuol dire che il secondo utente non nasce
+# perche' e' scomodo, non perche' non serve.
+#
+# ! E LA FORMA ERA GIA' QUELLA GIUSTA: html_prepara() riceve i buffer da chi
+# chiama, quindi la libreria non tiene stato e due programmi che analizzano due
+# documenti insieme non si toccano. Non c'e' stato niente da rendere
+# rientrante.
+# =============================================================================
+EXHTML_SRC     := lib/exhtml/html.c
+EXHTML_HDR     := lib/exhtml/html.h
+EXHTML_ESPORTA := lib/exhtml/exhtml_esporta.c
+EXHTML_STUB    := lib/exhtml/exhtml_stub.c
+EXHTML_LD      := lib/exhtml/exhtml.ld
+EXHTML_SO      := $(BUILD_EXWIN_LIB)/exhtml.so
+
+$(EXHTML_SO): $(EXHTML_SRC) $(EXHTML_HDR) $(EXHTML_ESPORTA) \
+              $(EXHTML_LD) $(EXLIB_HDR) \
+              $(LIBC_PONTI_OBJ) $(LIBC_SO) $(SEGNO_FLAG)
+	@echo "=== Compilazione libreria condivisa /exwin/lib/exhtml.so ==="
+	@mkdir -p $(BUILD_EXWIN_LIB) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhtml -c $(EXHTML_SRC) -o $(BUILD_OBJ)/sohtml_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhtml -c $(EXHTML_ESPORTA) -o $(BUILD_OBJ)/sohtml_esporta.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(EXHTML_LD) \
+	    $(BUILD_OBJ)/sohtml_esporta.o $(BUILD_OBJ)/sohtml_main.o \
+	    $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] exhtml.so compilata: $@"
+
+.PHONY: exhtml_so
+exhtml_so: dirs $(EXHTML_SO)
+
+# =============================================================================
+# /exwin/lib/excss.so — i fogli di stile
+#
+# ! E' LA PRIMA LIBRERIA DI EX-OS CHE NE USA UN'ALTRA: css.c chiama html_nome e
+# html_attr, quindi qui dentro si collega lo STUB di exhtml, esattamente come
+# farebbe un programma. L'alternativa era collegarsi dentro una seconda copia di
+# html.c — cioe' il difetto che le librerie condivise esistono per togliere.
+#
+# ! CHI APRE excss APRE ANCHE exhtml, e va tenuto a mente per il tetto del
+# kernel (LIB_MAX in kernel/loader/lib.c, dodici). Col browser siamo a sette.
+# =============================================================================
+EXCSS_SRC     := lib/excss/css.c
+EXCSS_HDR     := lib/excss/css.h
+EXCSS_ESPORTA := lib/excss/excss_esporta.c
+EXCSS_STUB    := lib/excss/excss_stub.c
+EXCSS_LD      := lib/excss/excss.ld
+EXCSS_SO      := $(BUILD_EXWIN_LIB)/excss.so
+
+$(EXCSS_SO): $(EXCSS_SRC) $(EXCSS_HDR) $(EXCSS_ESPORTA) $(EXCSS_LD) \
+             $(EXHTML_STUB) $(EXHTML_HDR) $(EXLIB_HDR) \
+             $(LIBC_PONTI_OBJ) $(LIBC_SO) $(SEGNO_FLAG)
+	@echo "=== Compilazione libreria condivisa /exwin/lib/excss.so ==="
+	@mkdir -p $(BUILD_EXWIN_LIB) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhtml -I lib/excss -c $(EXCSS_SRC) -o $(BUILD_OBJ)/socss_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhtml -I lib/excss -c $(EXCSS_ESPORTA) -o $(BUILD_OBJ)/socss_esporta.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhtml -c $(EXHTML_STUB) -o $(BUILD_OBJ)/socss_html.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(EXCSS_LD) \
+	    $(BUILD_OBJ)/socss_esporta.o $(BUILD_OBJ)/socss_main.o \
+	    $(BUILD_OBJ)/socss_html.o $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] excss.so compilata: $@"
+
+.PHONY: excss_so
+excss_so: dirs $(EXCSS_SO)
+
 EXWIN_ESPORTA := lib/exwin/exwin_esporta.c
 EXWIN_STUB    := lib/exwin/exwin_stub.c
 EXWIN_LD      := lib/exwin/exwin.ld
@@ -1603,22 +1675,26 @@ BROWSER_LD  := exwin/bin/browser/browser.ld
 $(BROWSER_BIN): $(BROWSER_SRC) $(BROWSER_LD) $(EXWIN_STUB) $(EXLIB_SRC) \
              $(EXLIB_HDR) $(EXWIN_HDR) $(WIN_PROTO) $(EXHTTP_SRC) \
              $(EXHTTP_HTTP) $(EXHTTP_HDR) lib/eximg/eximg.h \
-             lib/exhtml/html.c lib/exhtml/html.h \
+             $(EXHTML_STUB) $(EXHTML_HDR) $(EXHTML_SO) \
+             $(EXCSS_STUB) $(EXCSS_HDR) $(EXCSS_SO) \
              $(IP_PROTO) $(DNS_SRC) $(RETE_SRC) \
              $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione /exwin/bin/browser ==="
 	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_SRC) -o $(BUILD_OBJ)/browser_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_SRC) -o $(BUILD_OBJ)/browser_main.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/browser_exwin.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhttp -c $(EXHTTP_STUB) -o $(BUILD_OBJ)/browser_stub.o
-	@# ! html.c RESTA COLLEGATO DENTRO, e non e' una dimenticanza: l'utente e'
-	@# uno solo — questo browser — e il criterio vale in tutt'e due i versi.
-	$(CC) $(CFLAGS_USER) -I lib/exhtml -c lib/exhtml/html.c -o $(BUILD_OBJ)/browser_html.o
+	@# ! html.c NON E' PIU' COLLEGATO DENTRO, dal 19 agosto 2026: qui c'era
+	@# scritto che l'utente era uno solo e che il criterio vale in tutt'e due i
+	@# versi. Resta vero come criterio; la decisione e' stata di renderlo
+	@# comunque disponibile agli altri programmi — vedi il blocco di exhtml.so.
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhtml -c $(EXHTML_STUB) -o $(BUILD_OBJ)/browser_html.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhtml -I lib/excss -c $(EXCSS_STUB) -o $(BUILD_OBJ)/browser_css.o
 	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/browser_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(BROWSER_LD) \
 	    $(BUILD_OBJ)/browser_start.o $(BUILD_OBJ)/browser_main.o \
 	    $(BUILD_OBJ)/browser_exwin.o $(BUILD_OBJ)/browser_stub.o \
-	    $(BUILD_OBJ)/browser_html.o \
+	    $(BUILD_OBJ)/browser_html.o $(BUILD_OBJ)/browser_css.o \
 	    $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] browser compilato: $@"
 

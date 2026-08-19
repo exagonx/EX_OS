@@ -12,12 +12,11 @@ seriale e USB — tastiera compresa, hub compresi.
 
 ## COSA E' COMMITTATO
 
-    91d6194  "L'installatore non si copia piu' addosso, e la pila grafica
-              non e' dell'utente"
+    <in attesa del prossimo commit>
 
-In attesa nell'albero: **il server a finestre che smette di essere un driver** —
-da `/dev/wserver.drv` a `/exwin/bin/wserver` — cioe' la grafica multiutente che
-era progettata dal 17 agosto e non si poteva raggiungere.
+In attesa nell'albero: **exhtml.so** ed **excss.so** — il lettore di HTML e i
+fogli di stile, due librerie condivise; il browser che le usa tutt'e due, con i
+tag di aspetto (`<b>`, `<i>`, i titoli) diventati regole invece che `if`.
 
 ! **`gitupdate.sh` FA `git add .` E UN COMMIT SOLO**: `messaggio-commit.txt`
 deve coprire tutto quello che si e' fatto dall'ultimo commit, non l'ultima
@@ -406,6 +405,98 @@ regola nuova usava `$(BUILD_EXWIN_BIN)` PRIMA che fosse definita, e con `:=`
 make espande subito — quindi il collegamento scriveva in `/wserver`, la radice
 del disco. E' lo stesso errore che il Makefile documenta gia' per `exwin.so`,
 venti righe piu' in la'. Il blocco e' stato spostato sotto le dichiarazioni.
+
+### exhtml.so — E IL CRITERIO DEI «DUE UTENTI» SCAVALCATO DI PROPOSITO
+
+    /exwin/lib/exhtml.so     base 0x05800000, la settima fetta
+
+! **VA DETTO CHE QUESTA VOLTA LA REGOLA E' STATA MESSA DA PARTE**, invece di
+far finta che fosse soddisfatta. Il criterio di EX-OS e' che una libreria
+condivisa conviene quando gli utenti sono DUE, e il lettore di HTML ne aveva
+uno solo — il browser. C'era scritto perfino nella regola del browser: «html.c
+resta collegato dentro, e non e' una dimenticanza».
+
+La decisione e' stata di renderlo comunque disponibile: un albero di marcatore
+non serve solo a impaginare una pagina, e tenerlo dentro un eseguibile vuol
+dire che il secondo utente non nasce perche' e' scomodo, non perche' non serve.
+
+! **E LA FORMA ERA GIA' QUELLA GIUSTA PER UNA .so**, il che e' anche il motivo
+per cui e' costata poco: `html_prepara()` riceve i buffer da chi chiama, quindi
+la libreria NON TIENE STATO. Due programmi che analizzano due documenti nello
+stesso momento non si toccano, e non c'e' stato niente da rendere rientrante.
+
+! **SI ESPORTANO ANCHE I TRE LETTORI** — `html_nome`, `html_testo`,
+`html_attr` — e non sono un di piu': sono l'unico modo di guardare dentro un
+nodo senza conoscere l'arena. Chi li riscrivesse nell'applicazione dipenderebbe
+dalla disposizione interna di `HtmlDoc`, che e' esattamente cio' che una
+libreria deve poter cambiare.
+
+Il browser e' passato da 36788 a **28512 byte**; la tabella di esportazione sta
+esattamente a `0x05800000` (`readelf`). Provato in volo: la pagina di prova
+rende gli stessi 4800 pixel per colore di prima, cioe' l'albero e' identico.
+
+! **E LA MAPPA DELLE FETTE ERA INDIETRO DI DUE**: `exwin.ld` diceva
+«0x05000000 libere» mentre exfont e exhttp erano gia' li'. Una fetta assegnata
+due volte non da' un errore di collegamento — da' due librerie che si
+sovrascrivono dentro il processo che le apre tutt'e due. Adesso la mappa e'
+completa e c'e' scritto perche' va tenuta in pari.
+
+### excss.so — I FOGLI DI STILE
+
+    /exwin/lib/excss.so      base 0x05C00000, l'ottava fetta
+
+! **E' LA PRIMA LIBRERIA DI EX-OS CHE NE USA UN'ALTRA**: `css.c` chiama
+`html_nome` e `html_attr`, quindi dentro excss.so si collega lo STUB di exhtml,
+esattamente come farebbe un programma. L'alternativa era una seconda copia di
+html.c — cioe' il difetto che le librerie condivise esistono per togliere.
+
+! **LO STILE SI CALCOLA A RICHIESTA, NON SI TIENE IN CACHE, ED E' UNA SCELTA
+FATTA GUARDANDO AL JAVASCRIPT.** Il giorno che ci sara' un motore, il documento
+diventera' modificabile: un nodo cambia classe, un altro compare. Uno stile
+calcolato una volta e conservato accanto al nodo sarebbe, da quel giorno, un
+valore che invecchia senza che nessuno se ne accorga. Si ricalcola.
+
+! **E `CSS_ORIGINE_JS` E' GIA' DICHIARATA E NON LA USA NESSUNO**, sopra
+l'attributo `style`: e' il posto dove finiranno le assegnazioni di exjs, ed e'
+scritto adesso perche' dopo si sarebbe messo accanto invece che sopra.
+
+! **L'EREDITARIETA' LA PASSA IL CHIAMANTE.** Chi impagina scende gia'
+ricorsivamente e ha in mano lo stile del padre nel momento in cui serve; farla
+risalire alla libreria vorrebbe dire ripercorrere la catena dei padri per ogni
+elemento.
+
+! **QUELLO CHE SI SCARTA INVECE DI INDOVINARE**, che e' la regola con cui e'
+scritto tutto il lettore: un selettore con `>` non diventa una discendenza —
+`div > p` e `div p` non sono la stessa cosa, e confonderli colorerebbe i
+nipoti. Un selettore piu' lungo del tetto si butta invece di essere accorciato,
+perche' tenerne gli ultimi pezzi lo renderebbe piu' LARGO dell'originale. `2em`
+si rifiuta invece di valere due pixel. **Meno stile, mai stile sbagliato.**
+
+#### I tag di aspetto sono diventati CSS
+
+`h1`, `h2`, `h3`, `<b>`, `<i>`, `<strong>`, `<em>` e il colore dei collegamenti
+stanno adesso in un foglio predefinito dentro il browser, con l'origine piu'
+bassa della cascata. Prima `h1` era grande e in neretto per via di un `if`, e
+nessuna pagina poteva dire altrimenti; adesso e' una regola, quindi si
+sovrascrive. **E `<b>` e `<i>` prima non c'erano affatto**: sono arrivati come
+due righe di foglio invece che come due casi nel motore.
+
+#### Provato
+
+40 casi sull'host (`tools/prove/cssprova.c`), quasi tutti su fogli MALFATTI:
+`@media` annidati, commenti in mezzo a un selettore e dentro un valore,
+dichiarazioni senza i due punti, graffe mai chiuse, `!important`, un foglio piu'
+grande dei buffer. **Due difetti trovati dal banco e non guardando il codice**,
+tutt'e due della stessa forma — un commento dentro un selettore faceva scartare
+la regola INTERA, e un commento dentro un valore la spegneva — e tutt'e due
+MUTI: nessun errore, solo una regola che non si applicava.
+
+In volo, contando i pixel di una foto:
+
+    #ff0000 dal blocco <style>        2950
+    #00ff00 dal <link> esterno        3367
+    #0000ff dall'attributo style      1724
+    #ff00ff dentro un display:none       0   <- e deve essere zero
 
 ## Difetti aperti, dichiarati
 

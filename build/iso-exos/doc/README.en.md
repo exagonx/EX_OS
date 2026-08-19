@@ -82,7 +82,7 @@ and the one declared with `width`/`height` are right to the pixel.
 |---|---|
 | `lib/exhttp/http.c` | HTTP/1.1 without the network: URL, request, headers, chunked body |
 | `lib/exhttp/exhttp.c` | the TCP transport, redirects |
-| `lib/exhtml/html.c` | from text to tree |
+| `lib/exhtml/html.c` | from text to tree — **`/exwin/lib/exhtml.so`**, available to any program |
 | `bin/scarica` | fetches a page and prints or saves it |
 | `exwin/bin/browser` | address bar, links, scrolling, images |
 | `lib/eximg/eximg.c` | PNG, JPG and ICO — opened on demand, not linked in |
@@ -119,7 +119,23 @@ back. Keeping it would mean letting the page choose how much memory to take —
 128 KB of PNG can be 4000×3000 pixels, that is 48 MB on a machine that has 32.
 The ceilings are declared: twelve images, 128 KB per file, 512 K pixels in all.
 
-What is **not** there, declared: CSS, tables laid out as tables, `https`.
+! **STYLE SHEETS ARE THERE, in `/exwin/lib/excss.so`**: `<style>`, `<link
+rel=stylesheet>` and the `style=` attribute, with the real cascade (origin,
+specificity, order). Selectors by type, class, id, descendant and list; colors,
+sizes, bold, italic, `display:none`, alignment and margins.
+
+! **AND WHAT CANNOT BE READ IS DISCARDED, NOT GUESSED**: `div > p` does not
+become `div p`, a selector longer than the ceiling is dropped rather than
+shortened — shortening it would make it **wider** than the original — and `2em`
+is refused rather than taken for two pixels. Less style, never wrong style.
+
+! **AND THE APPEARANCE TAGS BECAME RULES**: `h1`, `<b>`, `<i>`, `<strong>`,
+`<em>` and the link color now live in a built-in sheet at the lowest cascade
+origin, so a page can override them. They used to be `if`s in the engine, and
+`<b>` and `<i>` were not there at all.
+
+What is **not** there, declared: JavaScript, tables laid out as tables,
+`@media`, relative units, `https`.
 
 
 ### Fonts: TrueType, measured against FreeType

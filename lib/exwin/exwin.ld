@@ -22,8 +22,17 @@
  *     0x04000000   exwin.so    il toolkit
  *     0x04400000   exdlg.so    i dialoghi (Apri/Salva)
  *     0x04800000   libc.so     la libreria C
- *     0x04C00000   eximg.so    i formati d'immagine (PNG oggi)
- *     0x05000000   libere
+ *     0x04C00000   eximg.so    i formati d'immagine (PNG, JPG, ICO)
+ *     0x05000000   exfont.so   il TrueType
+ *     0x05400000   exhttp.so   la rete
+ *     0x05800000   exhtml.so   l'albero del marcatore
+ *     0x05C00000   libere, fino a 0x08000000 (nove fette)
+ *
+ * ! QUESTA MAPPA VA TENUTA IN PARI, e per due volte non lo e' stata: diceva
+ * «0x05000000 libere» mentre exfont e exhttp erano gia' li'. Una fetta
+ * assegnata due volte non da' un errore di collegamento — da' due librerie che
+ * si sovrascrivono dentro il processo che le apre tutt'e due, cioe' un guasto
+ * che si manifesta lontano da dove e' stato fatto.
  *
  * Quattro megabyte a testa: una page table esatta, e nessuna libreria di
  * EX-OS e' lontanamente vicina a riempirla.

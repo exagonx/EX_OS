@@ -48,6 +48,7 @@
 #include "eximg.h"
 #include "exhttp.h"
 #include "html.h"
+#include "css.h"
 #include "kbd_proto.h"
 
 #define FIN_W       760
@@ -77,18 +78,34 @@
  * volta decodificate. Il terzo e' quello che conta davvero: centoventotto
  * chilobyte di PNG possono essere quattromila per tremila pixel, cioe'
  * quarantotto megabyte su una macchina che ne ha trentadue. */
+/* ! I TETTI DEL FOGLIO DI STILE, con la stessa regola di tutto il resto: li
+ * sceglie chi apre la pagina, non la pagina. Un sito con diecimila regole non
+ * deve poter decidere quanta memoria prendere qui — si applica quello che ci
+ * sta e si dice che il resto e' stato lasciato fuori. */
+#define CSS_REGOLE_MAX  600
+#define CSS_DICH_MAX    2000
+#define CSS_ARENA_MAX   (24u * 1024u)
+#define CSS_FOGLI_MAX   4       /* quanti <link rel=stylesheet> si seguono */
+
 #define IMM_MAX      12
 #define IMM_BYTE_MAX (128u * 1024u)     /* il file di UNA immagine  */
 #define IMM_PX_TOT   (512u * 1024u)     /* i pixel tenuti, IN TUTTO */
 
 /* Un tratto di testo — o un'immagine — gia' collocato. */
+/* ! IL PEZZO PORTA IL CARATTERE E IL COLORE GIA' SCELTI, e non piu' un «e' un
+ * titolo si'/no». Con i fogli di stile il carattere non e' piu' una di due
+ * possibilita': dipende da `font-weight`, `font-style` e `font-size`, che
+ * cambiano elemento per elemento. Deciderlo durante l'impaginazione — dove lo
+ * stile e' gia' calcolato — e lasciare al disegno solo il compito di usarlo
+ * tiene la scelta in un posto solo. */
 typedef struct {
     int          x, y, w;
     unsigned int testo;         /* scostamento nell'arena del documento */
-    unsigned char titolo;       /* 1 = grande e in neretto */
+    ExFont       font;          /* il carattere, gia' scelto            */
+    unsigned int colore;        /* ARGB, gia' deciso                    */
     short        h;             /* solo per le immagini: la loro altezza */
-    short        link;          /* indice in g_link, -1 = niente */
-    short        img;           /* indice in g_imm, -1 = e' testo */
+    short        link;          /* indice in g_link, -1 = niente         */
+    short        img;           /* indice in g_imm, -1 = e' testo        */
 } Pezzo;
 
 static unsigned char g_pagina[PAGINA_MAX];
@@ -131,6 +148,11 @@ typedef struct {
     unsigned char stato;            /* 0 da prendere, 1 presa, 2 rinunciata    */
     char          src[EXHTTP_URL_MAX];
 } Imm;
+
+static CssRegola     g_css_reg[CSS_REGOLE_MAX];
+static CssDich       g_css_dich[CSS_DICH_MAX];
+static char          g_css_arena[CSS_ARENA_MAX];
+static CssFoglio     g_css;
 
 static Imm           g_imm[IMM_MAX];
 static int           g_imm_n = 0;
@@ -290,12 +312,90 @@ static unsigned int *ridimensiona(const EximgBitmap *bm,
  * --------------------------------------------------------------------------- */
 static int  g_pen_x, g_pen_y, g_riga_h;
 static int  g_link_ora;
-static int  g_titolo_ora;
 
-static int alt_riga(int titolo)
+/* Lo stile dell'elemento dentro cui stiamo impaginando adesso. I nodi di testo
+ * non hanno uno stile proprio: usano quello del padre, che e' questo. */
+static CssStile g_stile_ora;
+
+/* -----------------------------------------------------------------------------
+ * La riserva dei caratteri
+ *
+ * ! UN CARATTERE SI APRE UNA VOLTA SOLA E SI TIENE. Con i fogli di stile la
+ * faccia non e' piu' una di due: `font-weight`, `font-style` e `font-size` la
+ * scelgono elemento per elemento, e aprire un TrueType costa — il file si
+ * legge, il contenitore si analizza, la cache dei glifi si riempie. Senza
+ * questa riserva una pagina con dieci corpi diversi aprirebbe dieci volte lo
+ * stesso file.
+ *
+ * ! E IL TETTO E' DICHIARATO: oltre, si ripiega sul carattere di sistema invece
+ * di continuare ad aprirne. Le combinazioni le sceglie la pagina.
+ * --------------------------------------------------------------------------- */
+#define FONT_MAX    12
+#define CORPO_MIN   6
+#define CORPO_MAX   72
+
+typedef struct {
+    unsigned char neretto, corsivo;
+    short         corpo;
+    ExFont        f;
+} FontVoce;
+
+static FontVoce g_font[FONT_MAX];
+static int      g_font_n = 0;
+
+static ExFont font_per(int neretto, int corsivo, int corpo)
 {
-    ExFont f = titolo ? g_font_titolo : g_font_testo;
-    int    h = ex_font_altezza(f);
+    static const char *const FACCIA[4] = {
+        "/exwin/font/LiberationSerif-Regular.ttf",
+        "/exwin/font/LiberationSerif-Bold.ttf",
+        "/exwin/font/LiberationSerif-Italic.ttf",
+        "/exwin/font/LiberationSerif-BoldItalic.ttf"
+    };
+    int i, k;
+
+    if (corpo < CORPO_MIN) corpo = CORPO_MIN;
+    if (corpo > CORPO_MAX) corpo = CORPO_MAX;
+    neretto = neretto ? 1 : 0;
+    corsivo = corsivo ? 1 : 0;
+
+    for (i = 0; i < g_font_n; i++)
+        if (g_font[i].neretto == neretto && g_font[i].corsivo == corsivo &&
+            g_font[i].corpo == (short)corpo) return g_font[i].f;
+
+    if (g_font_n >= FONT_MAX) return g_font_testo;
+
+    k = neretto + corsivo * 2;
+    g_font[g_font_n].f = ex_font_apri(FACCIA[k], corpo);
+
+    /* ! ex_font_apri RENDE 0 SE IL FILE NON C'E', e zero E' il font di sistema:
+     * si mette in riserva lo stesso, cosi' non si torna a cercarlo a ogni
+     * parola. Una pagina con un carattere diverso e' meglio di una pagina
+     * lenta. */
+    g_font[g_font_n].neretto = (unsigned char)neretto;
+    g_font[g_font_n].corsivo = (unsigned char)corsivo;
+    g_font[g_font_n].corpo   = (short)corpo;
+    return g_font[g_font_n++].f;
+}
+
+/* Il carattere che tocca allo stile di adesso. */
+static ExFont font_di(const CssStile *st)
+{
+    int neretto = (st->grassetto == 1);
+    int corsivo = (st->corsivo == 1);
+    int corpo   = (st->corpo == CSS_MISURA_NO) ? 15 : st->corpo;
+
+    if (!neretto && !corsivo && corpo == 15) return g_font_testo;
+    return font_per(neretto, corsivo, corpo);
+}
+
+static unsigned int colore_di(const CssStile *st)
+{
+    return (st->colore == CSS_NIENTE) ? EX_NERO : st->colore;
+}
+
+static int alt_riga_f(ExFont f)
+{
+    int h = ex_font_altezza(f);
 
     return h > 0 ? h + 3 : 19;
 }
@@ -308,7 +408,7 @@ static void a_capo(void)
     if (g_pen_x <= area_x()) return;
     g_pen_x  = area_x();
     g_pen_y += g_riga_h;
-    g_riga_h = alt_riga(g_titolo_ora);
+    g_riga_h = alt_riga_f(font_di(&g_stile_ora));
 }
 
 static void spazio_fra_blocchi(void)
@@ -321,7 +421,7 @@ static void spazio_fra_blocchi(void)
 static void parola(const char *t, unsigned int off, int n)
 {
     static char cop[256];
-    ExFont      f = g_titolo_ora ? g_font_titolo : g_font_testo;
+    ExFont      f = font_di(&g_stile_ora);
     int         w, i;
 
     if (n <= 0) return;
@@ -342,7 +442,8 @@ static void parola(const char *t, unsigned int off, int n)
         g_pez[g_pez_n].y = g_pen_y;
         g_pez[g_pez_n].w = w;
         g_pez[g_pez_n].testo = off;
-        g_pez[g_pez_n].titolo = (unsigned char)g_titolo_ora;
+        g_pez[g_pez_n].font = f;
+        g_pez[g_pez_n].colore = colore_di(&g_stile_ora);
         g_pez[g_pez_n].h = 0;
         g_pez[g_pez_n].link = (short)g_link_ora;
         g_pez[g_pez_n].img = -1;
@@ -350,7 +451,7 @@ static void parola(const char *t, unsigned int off, int n)
     }
 
     g_pen_x += w;
-    if (alt_riga(g_titolo_ora) > g_riga_h) g_riga_h = alt_riga(g_titolo_ora);
+    if (alt_riga_f(f) > g_riga_h) g_riga_h = alt_riga_f(f);
 }
 
 /* Un testo intero, spezzato in parole. Serve al testo dei nodi e al testo di
@@ -363,8 +464,7 @@ static void parole(const char *t, unsigned int base)
         int a;
 
         while (t[i] == ' ') {
-            g_pen_x += ex_larghezza_testo(
-                g_titolo_ora ? g_font_titolo : g_font_testo, " ");
+            g_pen_x += ex_larghezza_testo(font_di(&g_stile_ora), " ");
             i++;
         }
         if (!t[i]) break;
@@ -387,7 +487,8 @@ static void pezzo_immagine(int k)
         g_pez[g_pez_n].y = g_pen_y;
         g_pez[g_pez_n].w = w;
         g_pez[g_pez_n].testo = 0;
-        g_pez[g_pez_n].titolo = 0;
+        g_pez[g_pez_n].font = g_font_testo;
+        g_pez[g_pez_n].colore = EX_NERO;
         g_pez[g_pez_n].h = (short)h;
         g_pez[g_pez_n].link = (short)g_link_ora;
         g_pez[g_pez_n].img = (short)k;
@@ -426,11 +527,6 @@ static int uguale(const char *a, const char *b)
     return *a == '\0' && *b == '\0';
 }
 
-static int titolo_di(const char *n)
-{
-    return uguale(n, "h1") || uguale(n, "h2") || uguale(n, "h3");
-}
-
 /* ! CIO' CHE NON SI VEDE NON SI IMPAGINA: dentro <script>, <style>, <head> e
  * <title> c'e' testo che non appartiene alla pagina. Senza questo, la prima
  * cosa che si legge su un sito vero e' un chilometro di JavaScript. */
@@ -440,23 +536,59 @@ static int invisibile(const char *n)
            uguale(n, "title") || uguale(n, "meta") || uguale(n, "link");
 }
 
-static void impagina_nodo(int v)
+/* =============================================================================
+ * IL FOGLIO PREDEFINITO — quello che il browser porta con se'
+ *
+ * ! I TAG CHE «CAMBIANO L'ASPETTO» SONO DIVENTATI CSS, E NON E' UN GIRO PIU'
+ * LUNGO: e' cio' che li rende sovrascrivibili. Prima `h1` era grande e in
+ * neretto perche' c'era un `if` nell'impaginazione, e nessuna pagina poteva
+ * dire altrimenti. Adesso e' una regola come le altre, con l'origine piu'
+ * bassa della cascata: la pagina che vuole un `h1` piccolo lo ottiene.
+ *
+ * ! ED E' ANCHE COME SONO ARRIVATI <b>, <i>, <strong> ed <em>, che prima non
+ * c'erano: cinque righe qui invece di cinque casi nel motore.
+ * ============================================================================= */
+static const char CSS_DI_SISTEMA[] =
+    "h1 { font-size: 22px; font-weight: bold }"
+    "h2 { font-size: 19px; font-weight: bold }"
+    "h3 { font-size: 17px; font-weight: bold }"
+    "h4, h5, h6 { font-weight: bold }"
+    "b, strong { font-weight: bold }"
+    "i, em, cite, var { font-style: italic }"
+    "a { color: #0000ee }";
+
+static void impagina_nodo(int v, const CssStile *ered)
 {
     int f;
 
     if (v < 0) return;
 
+    /* ! UN NODO DI TESTO NON HA UNO STILE SUO: prende quello del padre, che e'
+     * esattamente cio' che `ered` porta. Calcolargliene uno vorrebbe dire far
+     * corrispondere dei selettori a qualcosa che selettore non ha. */
     if (g_doc.nodi[v].tipo == HTML_TESTO) {
+        g_stile_ora = *ered;
         parole(html_testo(&g_doc, v), g_doc.nodi[v].testo);
         return;
     }
 
     {
         const char *nome = html_nome(&g_doc, v);
-        int         era_titolo = g_titolo_ora;
-        int         era_link   = g_link_ora;
+        int         era_link = g_link_ora;
+        CssStile    mio;
+        int         e_blocco;
 
         if (invisibile(nome)) return;
+
+        css_calcola(&g_css, &g_doc, v, ered, &mio);
+
+        /* ! `display: none` TOGLIE ANCHE I FIGLI, e va fatto qui prima di
+         * qualunque altra cosa: e' cosi' che i siti veri nascondono i menu che
+         * si aprono col mouse. Impaginarli lo stesso vorrebbe dire una pagina
+         * piena di voci che non dovrebbero vedersi. */
+        if (mio.display == CSS_DISPLAY_NIENTE) return;
+
+        g_stile_ora = mio;
 
         if (uguale(nome, "br")) { g_pen_x = area_x() + 1; a_capo(); return; }
 
@@ -477,8 +609,13 @@ static void impagina_nodo(int v)
             return;
         }
 
-        if (blocco(nome)) spazio_fra_blocchi();
-        if (titolo_di(nome)) g_titolo_ora = 1;
+        /* L'elenco dei blocchi resta la regola di base; `display` la
+         * sovrascrive nei due versi, che e' a cosa serve. */
+        e_blocco = blocco(nome);
+        if (mio.display == CSS_DISPLAY_BLOCCO) e_blocco = 1;
+        if (mio.display == CSS_DISPLAY_INLINE) e_blocco = 0;
+
+        if (e_blocco) spazio_fra_blocchi();
 
         if (uguale(nome, "a")) {
             const char *h = html_attr(&g_doc, v, "href");
@@ -494,13 +631,14 @@ static void impagina_nodo(int v)
             }
         }
 
-        for (f = g_doc.nodi[v].primo_figlio; f >= 0; f = g_doc.nodi[f].prossimo)
-            impagina_nodo(f);
+        for (f = g_doc.nodi[v].primo_figlio; f >= 0; f = g_doc.nodi[f].prossimo) {
+            impagina_nodo(f, &mio);
+            g_stile_ora = mio;      /* i figli l'hanno cambiato: si rimette */
+        }
 
-        g_titolo_ora = era_titolo;
-        g_link_ora   = era_link;
+        g_link_ora = era_link;
 
-        if (blocco(nome)) spazio_fra_blocchi();
+        if (e_blocco) spazio_fra_blocchi();
     }
 }
 
@@ -510,11 +648,16 @@ static void impagina(void)
     g_link_n = 0;
     g_pen_x = area_x();
     g_pen_y = area_y();
-    g_titolo_ora = 0;
     g_link_ora = -1;
-    g_riga_h = alt_riga(0);
+    css_stile_vuoto(&g_stile_ora);
+    g_riga_h = alt_riga_f(g_font_testo);
 
-    impagina_nodo(g_doc.radice);
+    {
+        CssStile radice;
+
+        css_stile_vuoto(&radice);
+        impagina_nodo(g_doc.radice, &radice);
+    }
     a_capo();
 
     g_altezza = g_pen_y - area_y() + g_riga_h;
@@ -581,9 +724,9 @@ static void disegna(void)
         }
 
         {
-            ExFont       f = g_pez[i].titolo ? g_font_titolo : g_font_testo;
+            ExFont       f = g_pez[i].font;
             const char  *t = g_arena + g_pez[i].testo;
-            unsigned int c = (g_pez[i].link >= 0) ? EX_BLU : EX_NERO;
+            unsigned int c = g_pez[i].colore;
 
             /* Il testo nell'arena e' una parola sola perche' l'impaginazione
              * l'ha spezzato: si disegna fino allo spazio. */
@@ -602,7 +745,7 @@ static void disegna(void)
                  * male, e chi non li distingue non trova i collegamenti. */
                 if (g_pez[i].link >= 0)
                     ex_riempi(g_f, g_pez[i].x, y + ex_font_altezza(f) - 2,
-                              g_pez[i].w, 1, EX_BLU);
+                              g_pez[i].w, 1, c);
             }
         }
     }
@@ -1005,6 +1148,96 @@ static void immagini_prendi(void)
 }
 
 /* -----------------------------------------------------------------------------
+ * Raccogliere i fogli di stile
+ *
+ * ! L'ORDINE E' QUELLO DEL DOCUMENTO, ED E' META' DELLA CASCATA: a parita' di
+ * peso vince l'ultima regola letta, quindi leggerle nell'ordine sbagliato
+ * cambia il risultato. Gli indici dei nodi sono gia' in ordine di documento —
+ * html.c li assegna mentre analizza — quindi basta un giro dritto sul vettore,
+ * senza ricorsione.
+ *
+ * ! E I FOGLI ESTERNI SI ASPETTANO, al contrario delle immagini. Un'immagine
+ * che arriva dopo sposta il testo e si vede arrivare; un foglio di stile che
+ * arrivasse dopo cambierebbe TUTTA la pagina sotto gli occhi — colori, corpi,
+ * cose che spariscono. Meglio aspettare quei pochi decimi, con un tetto
+ * dichiarato di quanti seguirne.
+ * --------------------------------------------------------------------------- */
+static void raccogli_css(void)
+{
+    int i, presi = 0;
+
+    css_prepara(&g_css, g_css_reg, CSS_REGOLE_MAX, g_css_dich, CSS_DICH_MAX,
+                g_css_arena, CSS_ARENA_MAX);
+    css_analizza(&g_css, CSS_DI_SISTEMA, sizeof(CSS_DI_SISTEMA) - 1,
+                 CSS_ORIGINE_SISTEMA);
+
+    for (i = 0; i < (int)g_doc.nodi_n; i++) {
+        const char *nome;
+
+        if (g_doc.nodi[i].tipo != HTML_ELEMENTO) continue;
+        nome = html_nome(&g_doc, i);
+
+        if (uguale(nome, "style")) {
+            int f;
+
+            for (f = g_doc.nodi[i].primo_figlio; f >= 0;
+                 f = g_doc.nodi[f].prossimo) {
+                const char  *t;
+                unsigned int n = 0;
+
+                if (g_doc.nodi[f].tipo != HTML_TESTO) continue;
+                t = html_testo(&g_doc, f);
+                while (t[n]) n++;
+                css_analizza(&g_css, t, n, CSS_ORIGINE_FOGLIO);
+            }
+            continue;
+        }
+
+        if (uguale(nome, "link") && presi < CSS_FOGLI_MAX) {
+            const char  *rel  = html_attr(&g_doc, i, "rel");
+            const char  *href = html_attr(&g_doc, i, "href");
+            char         url[EXHTTP_URL_MAX];
+            unsigned int n = 0;
+            int          e_foglio = 0, a;
+
+            if (!rel || !href || !href[0]) continue;
+
+            /* «stylesheet» puo' stare in mezzo ad altre parole e in qualunque
+             * cassa: si cerca dentro invece di confrontare tutto. */
+            for (a = 0; rel[a] && rel[a+1] && rel[a+2] && rel[a+3] &&
+                        rel[a+4] && rel[a+5]; a++) {
+                if ((rel[a]   | 32) == 's' && (rel[a+1] | 32) == 't' &&
+                    (rel[a+2] | 32) == 'y' && (rel[a+3] | 32) == 'l' &&
+                    (rel[a+4] | 32) == 'e' && (rel[a+5] | 32) == 's') {
+                    e_foglio = 1; break;
+                }
+            }
+            if (!e_foglio) continue;
+            if (!risolvi(href, url, sizeof(url))) continue;
+
+            /* ! SI RIUSA IL BUFFER DELLE IMMAGINI, e si puo': i fogli si
+             * prendono PRIMA della prima impaginazione, le immagini dopo, e
+             * fra le due cose non c'e' sovrapposizione. Un buffer in piu' da
+             * centoventotto chilobyte non si paga per niente. */
+            if (!cache_leggi(url, g_imm_buf, sizeof(g_imm_buf), &n)) {
+                ExHttpEsito e;
+
+                dico("foglio di stile...");
+                if (!exhttp_prendi(url, g_imm_buf, sizeof(g_imm_buf), &e))
+                    continue;
+                if (e.codice != 200 || e.byte == 0) continue;
+                n = e.byte;
+                if (!e.troncata) cache_scrivi(url, g_imm_buf, n);
+            }
+
+            css_analizza(&g_css, (const char *)g_imm_buf, n,
+                         CSS_ORIGINE_FOGLIO);
+            presi++;
+        }
+    }
+}
+
+/* -----------------------------------------------------------------------------
  * Andare
  * --------------------------------------------------------------------------- */
 /* ! «INDIETRO» SI SERVE DALLA CACHE, TUTTO IL RESTO VA IN RETE, ed e' la
@@ -1063,12 +1296,14 @@ static void vai(const char *url, int in_storia, int usa_cache)
     html_analizza(&g_doc, (const char *)g_pagina, e.byte);
 
     g_scorri = 0;
+    raccogli_css();
     impagina();
 
-    sprintf(msg, "%d, %u byte, %u nodi%s%s%s", e.codice, e.byte, g_doc.nodi_n,
+    sprintf(msg, "%d, %u byte, %u nodi%s%s%s%s", e.codice, e.byte, g_doc.nodi_n,
             da_cache ? " (dalla cache)" : "",
             e.troncata ? " (pagina troncata)" : "",
-            g_doc.troncato ? " (albero troncato)" : "");
+            g_doc.troncato ? " (albero troncato)" : "",
+            g_css.troncato ? " (stile troncato)" : "");
     dico(msg);
 
     disegna();
@@ -1096,10 +1331,8 @@ static int link_sotto(int x, int y)
 
     for (i = 0; i < g_pez_n; i++) {
         int py = g_pez[i].y - g_scorri;
-        int h  = g_pez[i].img >= 0
-                     ? g_pez[i].h
-                     : ex_font_altezza(g_pez[i].titolo ? g_font_titolo
-                                                       : g_font_testo);
+        int h  = g_pez[i].img >= 0 ? g_pez[i].h
+                                   : ex_font_altezza(g_pez[i].font);
 
         if (g_pez[i].link < 0) continue;
         if (x >= g_pez[i].x && x < g_pez[i].x + g_pez[i].w &&

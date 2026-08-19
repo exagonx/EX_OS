@@ -83,7 +83,7 @@ sono tutt'e due giuste al pixel.
 |---|---|
 | `lib/exhttp/http.c` | HTTP/1.1 senza rete: URL, richiesta, intestazioni, corpo «a pezzi» |
 | `lib/exhttp/exhttp.c` | il trasporto TCP, le redirezioni |
-| `lib/exhtml/html.c` | da testo ad albero |
+| `lib/exhtml/html.c` | da testo ad albero — **`/exwin/lib/exhtml.so`**, a disposizione di ogni programma |
 | `bin/scarica` | prende una pagina e la stampa o la salva |
 | `exwin/bin/browser` | barra dell'indirizzo, collegamenti, scorrimento, immagini |
 | `lib/eximg/eximg.c` | PNG, JPG e ICO — aperta a richiesta, non collegata |
@@ -122,8 +122,23 @@ prendere — 128 KB di PNG possono essere 4000×3000 pixel, cioè 48 MB su una
 macchina che ne ha 32. I tetti sono dichiarati: dodici immagini, 128 KB per
 file, 512 K pixel in tutto.
 
-Quello che **non** c'è, dichiarato: CSS, tabelle impaginate come tabelle,
-`https`.
+! **I FOGLI DI STILE CI SONO, in `/exwin/lib/excss.so`**: `<style>`, `<link
+rel=stylesheet>` e l'attributo `style=`, con la cascata vera (origine,
+specificità, ordine). Selettori per tipo, classe, id, discendenza ed elenco;
+colori, corpi, grassetto, corsivo, `display:none`, allineamento e margini.
+
+! **E QUELLO CHE NON SI SA LEGGERE SI SCARTA, NON SI INDOVINA**: `div > p` non
+diventa `div p`, un selettore troppo lungo si butta invece di essere accorciato
+— accorciarlo lo renderebbe più **largo** dell'originale — e `2em` si rifiuta
+invece di valere due pixel. Meno stile, mai stile sbagliato.
+
+! **E I TAG DI ASPETTO SONO DIVENTATI REGOLE**: `h1`, `<b>`, `<i>`, `<strong>`,
+`<em>` e il colore dei collegamenti stanno in un foglio predefinito con
+l'origine più bassa della cascata, quindi una pagina può sovrascriverli. Prima
+erano `if` nel motore, e `<b>` e `<i>` non c'erano affatto.
+
+Quello che **non** c'è, dichiarato: JavaScript, tabelle impaginate come
+tabelle, `@media`, le unità relative, `https`.
 
 
 ### I font: TrueType, misurato contro FreeType
