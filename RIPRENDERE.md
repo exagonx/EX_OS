@@ -12,12 +12,12 @@ seriale e USB — tastiera compresa, hub compresi.
 
 ## COSA E' COMMITTATO
 
-    d630e97  "L'installatore non toglie piu' il login, e il browser ha una
-              cache su disco"
+    8d0df68  "La scrivania non butta piu' via l'ambiente, e la cache del
+              browser e' provata"
 
-In attesa nell'albero: **l'ambiente che la scrivania buttava via** — sei
-`spawn` che passavano `envp` nullo — e la prova di rete della cache, che era
-rimasta aperta e adesso e' chiusa.
+In attesa nell'albero: **l'installatore che copiava la destinazione dentro se
+stessa**, e la prova dell'utente normale sulla pila grafica — che ha trovato
+quello che doveva trovare.
 
 ! **`gitupdate.sh` FA `git add .` E UN COMMIT SOLO**: `messaggio-commit.txt`
 deve coprire tutto quello che si e' fatto dall'ultimo commit, non l'ultima
@@ -335,6 +335,35 @@ Provato A/B, stesso CD e stessi comandi, cambiati solo i sei argomenti:
     prima   HOME=/disco/root esportato -> «niente cache in /.app»
     dopo    HOME=/disco/root esportato -> «cache in /disco/root/.app/browser/cache»
 
+### L'INSTALLATORE COPIAVA LA DESTINAZIONE DENTRO SE STESSA
+
+Saltato fuori preparando la prova dell'utente normale:
+
+    ~ /disco/disco/boot/kernel.cfg
+    ~ /disco/disco/disco/boot/kernel.cfg
+    ~ /disco/disco/disco/disco/boot/kernel.cfg      ... e cosi' via
+
+**398 file inutili, sei livelli di profondita'**, fermati solo da
+`ALBERO_LIVELLI_MAX` — che e' un tetto contro i cicli, non una scelta. Ed erano
+anche i «6 errori» che ogni installazione dichiarava alla fine senza che
+nessuno ne cercasse la causa.
+
+`cerca_componenti` chiama componente ogni directory di primo livello che non
+sia di sistema; il punto di montaggio del disco su cui si sta installando E'
+una directory di primo livello, quindi finiva nell'elenco — e `install -t`,
+che prende tutti i componenti, se lo copiava dentro.
+
+! **E NON SI RIPARA ALLUNGANDO L'ELENCO DEI NOMI.** In `DIR_NON_COMPONENTI`
+c'era gia' `disk`, che e' il punto di montaggio usato negli esempi della
+documentazione; questa ricetta usa `/disco`, e sono bastate due lettere. Il
+nome lo sceglie chi installa, quindi qualunque elenco indovinato sbaglia al
+primo che non c'e'. L'installatore il bersaglio ce l'ha in mano: si salta
+QUELLO. Cinque casi sull'host — con la barra, senza, maiuscolo, con la barra in
+coda, e un punto che non esiste.
+
+Dopo: **zero annidamenti**, e «Installazione completata» senza contatore di
+errori.
+
 ## Difetti aperti, dichiarati
 
 - il **blocco temporaneo** della memoria condivisa non c'e': serve solo quando
@@ -344,9 +373,38 @@ Provato A/B, stesso CD e stessi comandi, cambiati solo i sei argomenti:
   bastare: manca l'interfaccia in modo protetto di VBE 2.0;
 - niente NX (vuole PAE, cioe' Pentium 4 in avanti: fuori dal bersaglio),
   SHA-256 senza irrobustimento della chiave, nessuna quota di memoria o disco;
-- **mai provato: un utente NORMALE che avvia la pila grafica.** E' l'unico buco
-  di prova rimasto, e proprio dove morderebbe — `blkread`/`blkwrite` sono stati
-  chiusi a root perche' non validano i puntatori utente.
+- **UN UTENTE NORMALE NON PUO' AVVIARE LA PILA GRAFICA.** Provato il 19 agosto,
+  e non e' piu' un buco di prova: e' un fatto misurato.
+
+      uid=1000(tizio) gid=1000
+      exwin
+      [WARN]  ELF: '/dev/wserver.drv' non eseguibile da questo utente (err=-13)
+      exwin: non riesco ad avviare /dev/wserver.drv
+
+  ! **E NON SI RIPARA ALLARGANDO I PERMESSI DI `wserver.drv`.** `is_driver` —
+  il flag da cui dipendono `ioport_bind`, `dma_alloc` e `mmio_map` — lo decide
+  il NOME dell'eseguibile (`percorso_di_driver` in kernel/loader/elf.c), e
+  l'unica cosa che impedisce a chiunque di farsi un `.drv` e' che `/dev` e' di
+  root. Rendere quel file eseguibile a tutti vuol dire dare l'accesso
+  all'hardware a qualunque utente: si toglierebbe la barriera invece del
+  difetto.
+
+  Le strade vere sono due, e vanno scelte:
+
+    1. **wserver come servizio d'avvio**, lanciato da root — `[modules]` in
+       kernel.cfg fa gia' questo per `kbd` — e `exwin` che si accorge di un
+       server gia' acceso invece di provare a lanciarlo. Oggi quel controllo
+       NON C'E': exwin prova sempre lo spawn. Resta da vedere come passare
+       `-c 1` a un modulo, che oggi prende solo il percorso; e va dichiarato
+       che un server solo serve tutti gli utenti, senza isolamento fra loro.
+    2. Un modo per eseguire con privilegio senza essere root — che EX-OS non
+       ha (niente setuid, `chmod` inerte), quindi sarebbe un meccanismo nuovo.
+
+  La prima e' quella che fanno i sistemi veri, ed e' la piu' piccola.
+
+- `login -a` stampa «Sistema nuovo: non c'e' ancora nessun utente» anche quando
+  gli utenti ci sono gia': riusa `primo_utente()` con il suo cartello del primo
+  avvio. Il messaggio e' falso, il comportamento e' giusto.
 
 ## COME SI PROVA QUELLO CHE C'E' (aggiornato il 19 agosto 2026)
 

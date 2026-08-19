@@ -499,6 +499,9 @@ static const char *const DIR_SISTEMA[] = {
     "bin", "boot", "lib", "dev", "drivers"
 };
 
+/* ! QUESTO ELENCO E' UN AIUTO, NON LA DIFESA. I nomi qui dentro sono quelli
+ * che di solito NON sono componenti; ma il punto di montaggio lo sceglie chi
+ * installa, e indovinarne il nome non funziona — vedi bersaglio_da_saltare(). */
 static const char *const DIR_NON_COMPONENTI[] = {
     "cdrom", "tmp", "mnt", "disk", "home", "lost+found"
 };
@@ -519,12 +522,52 @@ static int in_elenco(const char *nome, const char *const *elenco, int quanti)
     return 0;
 }
 
-static int cerca_componenti(void)
+/* =============================================================================
+ * ! IL BERSAGLIO NON E' UN COMPONENTE DI SE STESSO
+ *
+ * `cerca_componenti` guarda le directory di primo livello del supporto d'avvio
+ * e chiama componente tutto cio' che non e' di sistema. Ma il punto in cui si
+ * sta INSTALLANDO e' anch'esso una directory di primo livello — e' li' che il
+ * disco e' montato — quindi finiva nell'elenco, e `install -t` (che prende
+ * tutti i componenti) COPIAVA LA DESTINAZIONE DENTRO SE STESSA:
+ *
+ *     ~ /disco/disco/boot/kernel.cfg
+ *     ~ /disco/disco/disco/boot/kernel.cfg
+ *     ~ /disco/disco/disco/disco/boot/kernel.cfg      ... e cosi' via
+ *
+ * 398 file inutili, sei livelli di profondita', fermati solo da
+ * ALBERO_LIVELLI_MAX — che e' un tetto contro i cicli, non una scelta. Ed e'
+ * anche l'origine dei «6 errori» che l'installazione dichiarava alla fine.
+ *
+ * ! E NON SI RIPARA ALLUNGANDO L'ELENCO DEI NOMI. In DIR_NON_COMPONENTI c'era
+ * gia' «disk», che e' il punto di montaggio usato negli esempi della
+ * documentazione; la ricetta di RIPRENDERE usa «/disco», e sono bastate due
+ * lettere. Il nome del punto di montaggio lo sceglie chi installa, quindi
+ * qualunque elenco di nomi indovinati sbaglia al primo che non c'e'.
+ *
+ * L'installatore il bersaglio ce l'ha in mano: si salta QUELLO.
+ * ============================================================================= */
+static void bersaglio_da_saltare(const char *punto, char *out, unsigned int max)
+{
+    unsigned int i = 0;
+
+    out[0] = '\0';
+    if (!punto) return;
+
+    while (*punto == '/') punto++;               /* «/disco» -> «disco» */
+    while (punto[i] && punto[i] != '/' && i < max - 1) { out[i] = punto[i]; i++; }
+    out[i] = '\0';
+    minuscolo(out);
+}
+
+static int cerca_componenti(const char *punto)
 {
     DirEntry v[32];
+    char     salta[DIRENT_NAME_MAX];
     int start = 0, n, i;
 
     g_n_comp = 0;
+    bersaglio_da_saltare(punto, salta, sizeof(salta));
 
     while ((n = listdir_from("/", v, 32, start)) > 0) {
         for (i = 0; i < n && g_n_comp < COMPONENTI_MAX; i++) {
@@ -541,6 +584,9 @@ static int cerca_componenti(void)
                           (int)(sizeof DIR_SISTEMA / sizeof DIR_SISTEMA[0]))) continue;
             if (in_elenco(nome, DIR_NON_COMPONENTI,
                           (int)(sizeof DIR_NON_COMPONENTI / sizeof DIR_NON_COMPONENTI[0]))) continue;
+
+            /* Il punto in cui stiamo installando: vedi sopra. */
+            if (salta[0] && strcmp(nome, salta) == 0) continue;
 
             strcpy(g_comp[g_n_comp].nome, nome);
             g_comp[g_n_comp].installa = 0;
@@ -566,12 +612,12 @@ static char chiedi(const char *domanda)
 }
 
 /* `modo`: 0 = chiedi, 1 = minimale senza chiedere, 2 = tutto senza chiedere. */
-static void scegli_componenti(int modo)
+static void scegli_componenti(int modo, const char *punto)
 {
     int i;
     char c;
 
-    if (cerca_componenti() == 0) {
+    if (cerca_componenti(punto) == 0) {
         if (modo == 0)
             printf("\nNon ci sono componenti opzionali su questo supporto:\n"
                    "si installa il sistema minimale.\n");
@@ -1267,7 +1313,7 @@ int main(int argc, char **argv)
      * anche /exwin?» dopo aver gia' sostituito il kernel vorrebbe dire che
      * rispondere «annulla» non annulla piu' niente. Qui l'unica cosa fatta e'
      * guardare cosa c'e' sul supporto. */
-    scegli_componenti(modo_comp);
+    scegli_componenti(modo_comp, argv[1]);
 
     printf(aggiorna ? "\nAggiornamento di EX-OS in %s\n"
                     : "\nInstallazione di EX-OS in %s\n", argv[1]);
