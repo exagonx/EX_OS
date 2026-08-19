@@ -1565,22 +1565,24 @@ orologio: dirs $(OROLOGIO_BIN)
 
 # --- /exwin/bin/browser: mette insieme tutto ---------------------------------
 #
-# ! E' L'UNICO PROGRAMMA CHE USA QUATTRO PEZZI INSIEME: exhttp per la rete,
+# ! E' L'UNICO PROGRAMMA CHE USA CINQUE PEZZI INSIEME: exhttp per la rete,
 # exhtml per l'albero, i font per misurare e disegnare il testo, exwin per la
-# finestra. Per questo si collega anche a http.c e exhttp.c: la libreria
-# condivisa avra' senso quando gli utenti saranno due.
+# finestra, ed eximg per le immagini della pagina. Di questi solo exhtml resta
+# collegato dentro — gli altri quattro sono librerie condivise, e eximg il
+# browser se la apre da se' come fa il toolkit.
 BROWSER_SRC := exwin/bin/browser/browser.c
 BROWSER_BIN := $(BUILD_EXWIN_BIN)/browser
 BROWSER_LD  := exwin/bin/browser/browser.ld
 
 $(BROWSER_BIN): $(BROWSER_SRC) $(BROWSER_LD) $(EXWIN_STUB) $(EXLIB_SRC) \
              $(EXLIB_HDR) $(EXWIN_HDR) $(WIN_PROTO) $(EXHTTP_SRC) \
-             $(EXHTTP_HTTP) $(EXHTTP_HDR) lib/exhtml/html.c lib/exhtml/html.h \
+             $(EXHTTP_HTTP) $(EXHTTP_HDR) lib/eximg/eximg.h \
+             lib/exhtml/html.c lib/exhtml/html.h \
              $(IP_PROTO) $(DNS_SRC) $(RETE_SRC) \
              $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione /exwin/bin/browser ==="
 	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exhttp -I lib/exhtml -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_SRC) -o $(BUILD_OBJ)/browser_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_SRC) -o $(BUILD_OBJ)/browser_main.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/browser_exwin.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhttp -c $(EXHTTP_STUB) -o $(BUILD_OBJ)/browser_stub.o
 	@# ! html.c RESTA COLLEGATO DENTRO, e non e' una dimenticanza: l'utente e'

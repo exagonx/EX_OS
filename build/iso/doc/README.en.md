@@ -2,7 +2,7 @@
 
 [🇮🇹 Italiano](README.md) · **🇬🇧 English**
 
-**Version:** 0.176
+**Version:** 0.184
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit, FAT12 1.44MB floppy
@@ -68,6 +68,310 @@ for **`g++`** — containers, `std::string` and exceptions included. See
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### A browser: from the network to the screen
+
+**tested** — `http://www.google.com` returns 200 and 82550 bytes;
+`http://example.com` renders laid out in `/exwin/bin/browser`, with the heading
+in Liberation Sans Bold at 22 and the body in Serif at 15.
+
+| | |
+|---|---|
+| `lib/exhttp/http.c` | HTTP/1.1 without the network: URL, request, headers, chunked body |
+| `lib/exhttp/exhttp.c` | the TCP transport, redirects |
+| `lib/exhtml/html.c` | from text to tree |
+| `bin/scarica` | fetches a page and prints or saves it |
+| `exwin/bin/browser` | address bar, links, scrolling |
+
+! **THE TRANSPORT IS A PARAMETER, NOT SOMETHING KNOWN.** Today TCP sits under
+HTTP; tomorrow, for `https://`, TLS will. If this code opened the connection
+itself, that day it would have to be rewritten — and it would be the second
+time «read the headers, then the body» gets written.
+
+! **`chunked` IS NOT OPTIONAL.** A server that does not know in advance how long
+the answer will be — that is, any page generated on the fly — does not send
+`Content-Length`: it sends chunks. Without unrolling them you would see the
+hexadecimal length numbers in the middle of the text.
+
+! **HTML IS NOT XML**, and that is the whole difficulty: tags stay open, close in
+the wrong order, half of them are missing. `<ul><li>one<li>two` are two
+siblings and not a staircase; `<b><i>x</b>` closes up to the `<b>`; inside
+`<script>` and `<style>` there **is no markup**, or from the JavaScript's first
+`a < b` onwards the tree is garbage.
+
+! **`https://` IS REFUSED, AND SAYS SO.** TLS is missing: speaking plain HTTP to
+port 443 would give an incomprehensible answer and an unrelated error.
+
+What is **not** there, declared: CSS, tables laid out as tables, images inside
+the text, `https`.
+
+
+### Fonts: TrueType, measured against FreeType
+
+**tested** — six Liberation faces at six sizes inside EX-OS, and the rasterizer
+compared pixel by pixel with FreeType over 1460 glyphs: **bounding box
+identical 1460 out of 1460**, mean difference 0.94 levels out of 255.
+
+| | |
+|---|---|
+| `lib/exfont/exfont.c` | the EXFN bitmap format, inside `exwin.so` |
+| `lib/exfont/ttf.c` | the TrueType container |
+| `lib/exfont/raster.c` | outlines → coverage, in 26.6 integers |
+| `exfont.so` | instance, glyph cache, opened on demand |
+
+! **`strlen(s) * 8` IS THE SUM TO REMOVE BEFORE SOMEONE WRITES ANOTHER ONE ON
+TOP OF IT.** It is true only with the system font: a layout engine born on that
+assumption would have to be rewritten the day a proportional font arrives. That
+is why fonts came **before** the browser.
+
+! **THE ARITHMETIC IS INTEGER.** On the declared Pentium 133 floating point is
+slower, but above all every process that touches the FPU pays a state save at
+every switch — and drawing text is what one does continuously.
+
+! **THERE IS NO 64-BIT DIVISION** in an EX-OS library: it links without libgcc,
+so `__divdi3` is not there and the link fails.
+
+! **THE COMPARISON WITH FreeType FOUND A DEFECT NO HYPOTHESIS WOULD HAVE
+FOUND.** On the first pass identical boxes were 95.4%, and the missing ones had
+a shape: at 16 pixels almost every capital came out one pixel shorter. The scale
+truncated instead of rounding — half a sixty-fourth lost that becomes a whole
+pixel.
+
+What is missing, declared: hinting (which is why the interface still uses the
+8x16), kerning, ligatures, basic plane only, CFF refused on purpose.
+
+
+### `rename` replaces the destination, like POSIX
+
+**tested** on ext2, FAT12 and FAT16.
+
+Up to 0.184 `rename()` returned `EEXIST` if the destination existed. It was a
+declared choice, and it did not hold:
+
+! **«DELETE FIRST» IS NOT EQUIVALENT.** There is only one scheme for saving a
+file without risking losing it: write alongside, then **swap**. If the swap does
+not replace, you have to delete first — and between the deletion and the swap
+**the file does not exist**.
+
+! **AND THAT WINDOW CAN ONLY BE CLOSED IN THE KERNEL.** `vfs_rename` holds the
+filesystem lock for the whole operation: no other process sees the intermediate
+state. In user space that guarantee cannot be had.
+
+! **THE REPLACEMENT LIVES IN THE VFS, BEFORE THE DISPATCH**, so it holds for
+ext2, FAT12 and FAT16/32 without any driver reimplementing it. POSIX rules on
+types: a directory only over an empty directory, a file only over a file. And
+`rename("x","x")` does nothing — without that check the replacement would
+**destroy x**.
+
+
+### The taskbar: the clock, and applications that add themselves
+
+**tested** — the clock advances on its own (06:52 → 06:53 in 75 seconds); the
+«Applicazioni...» menu adds, removes and saves on ext2.
+
+! **THREADS DO NOT EXIST IN EX-OS**, and the clock is a separate **process**.
+And even if they existed, here a process is better: a thread inside the program
+manager would share its message queue, so a busy program manager would be a
+stopped clock.
+
+! **`ex_sveglia()` AND `EXM_TEMPO`**: without them an application cannot do
+anything by itself — the message loop sleeps until an event arrives. It costs no
+extra round: the `poll` already has a 200 ms deadline.
+
+! **AUTOSTART IS A DIRECTIVE, NOT A MARK ON THE ENTRY.** One may want a program
+that starts on its own and does **not** appear in the menu — a panel, a clock —
+or an entry that does not start by itself.
+
+! **`ipc_rimetti()`**: the mailbox is one and the consumers are more than one.
+Whoever waits for an answer from the IP stack scans the messages and used to
+**throw away** the others — in a browser those are the user's clicks. Now they
+are put back, and **at the end**: the shelf is served before the kernel queue,
+so putting one back and re-reading immediately would return the same message
+forever.
+
+
+### The graphical interface: a window server in ring 3
+
+| | |
+|---|---|
+| `/dev/wserver.drv` composes windows and moves the pointer, **in ring 3** | tested |
+| **ExWin** toolkit, Win32-style, with headers for **C, C++ and FreeBASIC** | tested |
+| Controls: window, button, label, text box, group box, separator, header, terminal | tested |
+| `exwin` brings up graphics **on a console of its own**: Alt+F2 goes there, Alt+F1 comes back to the shell | tested |
+| A **shell inside a window**, over two pipes | tested |
+| Image backgrounds: BMP today, and the reader table is already the right shape for JPG, PNG and ICO | tested |
+
+! **IT RUNS IN RING 3, AND THAT IS THE POINT.** When the server dies, only it
+dies: kernel, scheduler, serial console and keyboard stay alive, and the screen
+is restored with `/bin/testo` — which you type blind, and which was built as
+the safety net *before* the server was written.
+
+! **IT DOES NOT DRAW WINDOW CONTENTS, IT COMPOSES THEM.** Every window is a
+shared memory zone the client fills with pixels; the server adds the border and
+the title bar, stacks them and copies them to the framebuffer. A client that
+draws badly ruins its own window, not the screen. It is also why image decoders
+live in the client library: a JPG reader inside the server would be a defect of
+**every** application at once.
+
+! **CLIENTS ALWAYS DRAW IN 32-BIT ARGB** and know nothing about the screen. The
+conversion to 16, 24 or 32 bits lives in exactly one place. A toolkit that had
+to know the screen format would have six paths to try instead of one.
+
+### The desktop: `/exwin`, taskbar and start menu
+
+| | |
+|---|---|
+| `pm` — desktop, taskbar at the bottom, **Start** button, menu of applications | tested |
+| **Exit** (back to the shell) and **Shut down** entries in the menu | tested |
+| `/exwin/bin`, `/exwin/lib`, `/exwin/dev` — graphical applications **do not live in `/bin`** | tested |
+| The application list is a **text file**, `/exwin/lib/applicazioni.txt` | tested |
+| `filemgr` — file manager: scrolling list, directories first, opens files with the editor | tested |
+| `edit` — text editor: arrows, Home/End, PgUp/PgDn, Delete, mouse click, Ctrl+S, Ctrl+Q | tested |
+
+! **GRAPHICAL APPLICATIONS DO NOT LIVE IN `/bin`, AND THAT IS A DECISION.**
+Programs in `/bin` are launched from a shell and talk to a terminal; these want
+the window server, and launched without it they do nothing. Mixing them would
+mean an `ls /bin` where half the names cannot be used where you are looking.
+Same reason drivers live in `/dev`.
+
+! **THE LIST IS A FILE, NOT A COMPILED TABLE.** Adding an application is one
+line. A list inside the binary would mean rebuilding the program manager for
+every new application, and **whoever installs a program does not have the
+sources**.
+
+! **A FILE LARGER THAN THE LIMITS IS LOADED IN PART AND SAVING IS BLOCKED.**
+Saving what was read would mean erasing the rest of the file without ever
+having shown it: it is the quietest way an editor has of destroying data. The
+limit — 512 lines, 200 columns — follows from the bump allocator, where
+`free()` gives nothing back.
+
+### Shared libraries: `exwin.so`, `exdlg.so`, `libc.so`
+
+| | |
+|---|---|
+| `SYS_LIB_APRI` (248): the kernel maps a library **once** and attaches it to whoever asks | tested |
+| `.text`/`.rodata` **shared** across processes; `.data`/`.bss` a private copy | tested |
+| Resolution **by name**, not by position: update the library without recompiling applications | tested |
+| `/lib/libc.so` — **322 functions**, used by 39 programs | tested |
+| `/exwin/lib/exwin.so` — the toolkit; `/exwin/lib/exdlg.so` — the Open/Save dialogs | tested |
+| Headers do not change by a single line, and neither does application source | tested |
+
+```
+    0x04000000   exwin.so    the toolkit
+    0x04400000   exdlg.so    the dialogs
+    0x04800000   libc.so     the C library
+    0x08000000   programs
+```
+
+What it saved, measured:
+
+| | before | after |
+|---|---|---|
+| all of `/bin` | 850,132 | **608,468** |
+| EX-OS ISO | 4728 KB | **4252 KB** |
+| `libctest` (text) | 64,861 | **33,312** |
+| graphical applications | ~37,000 | **~15,000** |
+
+! **THIS IS NOT REAL DYNAMIC LINKING, AND THAT IS DELIBERATE.** A `.so` with
+`ld.so`, PIC code, GOT and PLT is the standard road, and it is months of work:
+the ELF loader rewritten, a dynamic linker written, the libc rebuilt as PIC.
+And any defect in there would be a defect of **every** application at once.
+
+Here a library is a perfectly ordinary ELF — `ET_EXEC`, not PIC — linked at a
+**reserved** address: it is always there, so there is nothing to relocate and
+no GOT is needed. What was actually wanted — updating the library without
+recompiling applications — comes from resolution by name.
+
+! **THE ORDER OF THE TABLE IS NOT PART OF THE ABI.** With a positional table,
+reordering entries would break every already-compiled application and no error
+would say so: you would simply call the wrong function. With names you can add,
+reorder and rewrite the body of any function. Only **removing** a name breaks
+things — which is exactly the bargain a DLL makes.
+
+! **FUNCTIONS ARE FORWARDED WITHOUT KNOWING THEIR SIGNATURES.** There are 322
+of them: writing the thunks in C would mean copying 322 signatures, each one
+silently wrong-able. A thunk in assembly is an indirect `jmp` that touches
+neither the arguments nor the return value — `printf: ff 25 c4 25 00 08
+jmp *0x80025c4`. It is the same job a PLT does, and `tools/genlibc.py`
+generates them by reading the real symbols with `nm`.
+
+! **THE FIVE GLOBAL VARIABLES CANNOT BE.** `errno`, `stdin`, `stdout`,
+`stderr`, `environ`: a program writing `errno = 0` would write into its **own**
+copy while the libc reads its own — two variables with the same name, and no
+error anywhere. The address is exported and the header turns the name into a
+read of it: `#define errno (*__errno_dove())`. Source using them does not
+change.
+
+! **AND STARTUP CANNOT BE SHARED.** `_libc_start` touches `main`,
+`__init_array_*` and `__fini_array_*`, which belong to the binary they sit in.
+Inside the library `main` would not even exist, and the arrays would be the
+library's — empty: the program's global constructors would never run, **and
+nobody would say so**.
+
+! **`login` AND `install` STAY STATIC**, and that is a decision: they are the
+two programs you get in with and repair with. If `libc.so` were missing or
+broken, a login linked against it would make the system unreachable with no way
+to fix it from inside.
+
+### Installing by components
+
+| | |
+|---|---|
+| `install` shows the components found on the medium and asks about them **one by one** | tested |
+| `install -m` minimal system, `install -t` everything: no questions | tested |
+| `copia_albero()` follows subdirectories: a component is not one level deep | tested |
+
+! **THE MINIMAL SYSTEM IS A CLOSED LIST; EVERYTHING ELSE IS OPTIONAL.** `bin`,
+`boot`, `lib`, `dev`, `drivers` are what EX-OS cannot start without. Any
+**other** directory in the root of the medium is a component, and the installer
+finds it by itself.
+
+It is the opposite of a list written inside the installer: adding a package —
+`/exwin` today, whatever comes tomorrow — means **putting its directory on the
+medium, and nothing else**. Whoever prepares a package does not have the
+installer's sources.
+
+! **THE CHOICE IS MADE BEFORE ANYTHING IS WRITTEN.** Asking "shall I install
+/exwin too?" after the kernel has already been replaced would mean that
+answering "cancel" no longer cancels anything.
+
+### Four old defects, and what they have in common
+
+| | |
+|---|---|
+| Keyboard focus was not focus: the taskbar took every key | fixed |
+| The shell had lost redirections and environment for three days, silently | fixed |
+| `wserver.drv` did not know `-i`: the probe **started** it and installing from CD hung | fixed |
+| `cat` with no arguments did not read `stdin`, so in a pipe it was useless | fixed |
+
+! **FOCUS WAS NOT FOCUS.** The server sent the key to the last window drawn.
+True while draw order depended only on who had come to the front; false since
+`WIN_ST_SOPRA` exists, which keeps the taskbar permanently on top. From that
+day **no window could receive a key** while the program manager was running.
+The defect was neither in the editor that seemed deaf nor in `WIN_ST_SOPRA`: it
+was in a function that decided **two** things while its name promised one.
+
+! **A MAGIC NUMBER PROTECTS AGAINST DAMAGE, NOT AGAINST DRIFT.** Of
+`SpawnExtra` — the structure that crosses the `spawn` syscall — there were
+**four copies**. Three were updated, the fourth (the shell's) was not. The
+kernel did exactly what the magic exists for: it did not recognise the block
+and **ignored** it rather than reading it crooked. But "ignored" meant that for
+three days `hello > file` printed to the screen and left the file at zero
+bytes, **with no message**. Silence is not noticed.
+
+The fix is not to update the fourth copy: it is to **not have four**.
+`lib/include/spawn_abi.h` is the single definition, and at the bottom it has
+`typedef char spawn_abi_misura_invariata[(sizeof(SpawnExtra) == 596) ? 1 : -1];`
+— a field added without changing the magic now stops the **build**.
+
+! **AND SIX TIMES "AN OUTPUT THAT DOES NOT KNOW IT IS STALE".** Fake
+prerequisites on the floppy target, `uhci.drv` missing from the ISO's, the SVGA
+resolution not a prerequisite of Stage 2, the images not depending on the
+`Makefile`, and twice a `Makefile` variable used as a prerequisite **before**
+being defined — where `make` expands it to the empty string. The second one
+made 294 tests appear to run against the shared libc while they ran against the
+static one. **A prerequisite written with an empty variable is not a weak
+prerequisite: it does not exist, and nobody says so.**
 
 ### Drivers: the machine picks them, they are not copied wholesale
 
@@ -706,6 +1010,26 @@ libc wrappers: `getconf()`, `osversion()`, `verboseboot()`.
 1 restart, 2 halt). It always syncs the filesystem and stops the scheduler
 before acting — see below.
 
+
+### Syscalls added in 0.184
+
+| EAX | Syscall       | EBX          | ECX      | EDX | What it is for |
+|-----|---------------|--------------|----------|-----|----------------|
+| 246 | video_info    | `VideoInfo*` | —        | —   | where the framebuffer is and what shape it has |
+| 247 | log           | `const char*`| length   | —   | one line on the kernel log, i.e. on the **serial port** |
+| 248 | lib_apri      | `const char*`| —        | —   | map a shared library, return its export table |
+
+`log` is not a duplicate of `printf`, and the difference matters: `printf`
+writes to the process's console, and if that console is not the one on screen
+nobody reads the message — which is exactly the case it exists for, a graphical
+server running on a console of its own. A blind tool costs more than the defect
+it is meant to find.
+
+`lib_apri` returns an **address**, not a handle, and it is fine that it is
+positive: the library band is 0x04000000-0x08000000, so the value can never be
+confused with a negative errno. What the caller wants is precisely the address
+to read the names from.
+
 ---
 
 ## /bin/mkdir and /bin/rmdir
@@ -943,6 +1267,58 @@ was never read. *Save as* to a different file is allowed instead.
 and raw mode lives in the keyboard driver. Without that service gfedit does
 not start and points you at textline, instead of showing an interface that
 would not respond.
+
+---
+
+## The graphical interface in practice
+
+```
+exwin                       brings up graphics on a console of its own
+                            Alt+F2 goes there, Alt+F1 returns to the shell
+
+/exwin/bin/pm               the desktop (exwin starts it by itself)
+/exwin/bin/filemgr [DIR]    the file manager
+/exwin/bin/edit [FILE]      the text editor
+```
+
+Once graphics are up, the shell **stays alive on console 0**: you keep working
+there and switch to the desktop with `Alt+F2`.
+
+! **APPLICATIONS ARE LAUNCHED FROM THE SHELL'S CONSOLE, THEN YOU SWITCH.**
+Typing the command *after* `Alt+F2` sends the keys to the graphical server, not
+to the shell — and it looks as if the system had frozen. It is the same
+separation that makes everything else possible, seen from the awkward side.
+
+### The editor
+
+| key | what it does |
+|---|---|
+| arrows, Home/End, PgUp/PgDn | move the cursor |
+| Backspace, Delete | erase backwards and forwards |
+| Enter | splits the line |
+| mouse click | places the cursor |
+| Ctrl+S | save; with no name it opens the **Save as** dialog |
+| Ctrl+Q | quit; if the text was modified it warns and asks again |
+
+The buttons are **New**, **Open**, **Save**, **Save as**, **Reload**. "Open"
+and "Save as" live in `exdlg.so`, the shared dialog library, which the file
+manager uses too.
+
+Missing, and declared: undo, selection and clipboard. And a **yes/no** dialog:
+today "do you want to lose your changes?" is asked by making you press the same
+button twice, and it shows.
+
+### The file manager
+
+Scrolling list, **directories first**, `Up` and `Open` buttons, a status line
+with the path. Arrows and Enter as well as the mouse. Pressing "Open" on a file
+hands it to the editor, looked for in `/exwin/bin` and then in
+`/cdrom/exwin/bin`.
+
+! **DIRECTORIES COME FIRST, AND IT IS NOT COSMETIC:** in a directory with a
+hundred files, the ones you want to enter would be scattered among them. It is
+the only thing this list sorts — sorting names would mean a comparison that
+depends on the language.
 
 ---
 
@@ -1276,6 +1652,60 @@ the disk with nothing flagging it.
 
 ---
 
+### `install -m` / `install -t` — minimal, or with components
+
+```
+install /disk          shows the components and asks about them one by one
+install -m /disk       minimal system only, no questions
+install -t /disk       system and every component, no questions
+```
+
+The installer looks at the root of the boot medium and calls **minimal system**
+a closed list: `bin`, `boot`, `lib`, `dev`, `drivers`. Any other directory is a
+component, and it is shown and asked about:
+
+```
+===============================================================
+ COSA INSTALLARE
+===============================================================
+
+Il sistema minimale e' sempre incluso: kernel, /bin, /lib,
+i driver e l'avvio. Senza quello EX-OS non parte.
+
+Su questo supporto ci sono anche 2 componenti in piu':
+
+    /doc
+    /exwin
+
+Installo solo il sistema minimale? [si/no] no
+
+Uno per volta:
+
+  /doc ? [si/no] no
+  /exwin ? [si/no] si
+```
+
+! **ADDING A PACKAGE DOES NOT REQUIRE TOUCHING THE INSTALLER:** you put its
+directory on the medium, and that is all. A list written inside `install` would
+be a second truth beside the directory's contents, and the two diverge the
+first time a package is added or removed. **Whoever prepares a package does not
+have the installer's sources.**
+
+! **COMPONENTS ARE COPIED WITH ALL THEIR LEVELS.** `/exwin` contains no files,
+it contains `bin/ lib/ dev/`: copying it one level deep would give an empty
+directory **and no error**, that is, an installation that looks successful.
+
+! **AND THE CHOICE IS MADE BEFORE ANYTHING IS WRITTEN**, not halfway: asking
+after the kernel has been replaced would mean that answering "cancel" no longer
+cancels anything.
+
+Scripts that install with nobody watching — `tools/mkhd.sh` — use `-t`. Without
+the flag the installer would stop on a question nobody answers, and the test
+would report "the installation did not get to the end": a message that does not
+resemble its cause.
+
+---
+
 ## The libc: from minimal to hosted
 
 Up to 0.145 `lib/libc.c` was a utility-program library: `printf`, the
@@ -1600,6 +2030,84 @@ replacement in hand.
 > process's descriptor, not in an intermediate "open file" object, and each
 > keeps its own. Whoever reads from a duplicated fd should do an explicit
 > `lseek()`. It is the first thing to fix the day pipes arrive.
+
+---
+
+## Writing a shared library
+
+An EX-OS library is a perfectly ordinary ELF, linked at a reserved address,
+whose **entry point is not code**: it is a table of names.
+
+**The library source** declares what it exports:
+
+```c
+#include "exlib.h"
+
+static const char *const nomi[] = { "pippo", "pluto" };
+static void *const dove[]       = { (void *)pippo, (void *)pluto };
+
+EXLIB_TESTA(mia_tabella, nomi, dove);
+```
+
+**The linker script** puts it at the base of its slice:
+
+```
+ENTRY(mia_tabella)
+
+SECTIONS
+{
+    . = 0x04C00000;             /* the first free slice */
+
+    .exlib_testa : { KEEP(*(.exlib_testa)) }
+    .text        : { *(.text) *(.text.*) }
+    .rodata      : { *(.rodata) *(.rodata.*) }
+
+    . = ALIGN(4096);            /* mandatory, see below */
+
+    .data : { *(.data) *(.data.*) }
+    .bss  : { *(.bss) *(.bss.*) *(COMMON) }
+}
+```
+
+**Whoever uses it** asks for the names it needs:
+
+```c
+const ExLibTesta *t = exlib_apri("/lib/mialib.so");
+void (*pippo)(void) = exlib_simbolo(t, "pippo");
+```
+
+In practice you do not do this by hand: you write a **stub** — a file with the
+same functions as the library, each one a thunk to the resolved pointer — and
+applications link against that. Their source does not change by a single line.
+See `lib/exwin/exwin_stub.c` as the model.
+
+### The three rules you cannot break
+
+! **`. = ALIGN(4096)` BEFORE `.data`.** The kernel shares read-only pages and
+gives a private copy of writable ones, and it works in **whole pages**. If the
+end of `.rodata` and the start of `.data` sat in the same page, that page would
+be writable — that is, copied for every process — and half of `.rodata` would
+quietly stop being shared **with nobody saying so**.
+
+! **ONE SLICE PER LIBRARY, ASSIGNED IN ONE PLACE.** The map lives in
+`lib/exwin/exwin.ld`. Two libraries at the same base would overwrite each other
+inside the process that uses both.
+
+! **YOU ADD, YOU DO NOT REMOVE.** Adding functions, reordering them and
+rewriting their bodies is always allowed: already-compiled applications keep
+working. Removing a name breaks them — and they say so, naming the missing
+symbol, instead of jumping into nothing.
+
+### If the library uses another library
+
+A program has `_start`, and there is a natural place there to attach what it
+needs. **A library does not start**: its functions are simply called. If it
+needs other libraries, it exports the optional name `__lib_avvio`:
+`exlib_apri()` looks it up and calls it, and that is the only moment at which
+the library is known to have just been mapped.
+
+That is how `exwin.so` and `exdlg.so` use `libc.so` without carrying a copy of
+it inside.
 
 ---
 

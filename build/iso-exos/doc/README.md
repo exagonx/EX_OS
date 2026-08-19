@@ -74,7 +74,10 @@ quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
 **testato** — `http://www.google.com` rende 200 e 82550 byte; `http://example.com`
 si vede impaginato in `/exwin/bin/browser`, con il titolo in Liberation Sans
-Bold a 22 e il corpo in Serif a 15.
+Bold a 22 e il corpo in Serif a 15. E le **immagini della pagina si vedono**:
+una prova con tre PNG generati a mano dà 3000 pixel esatti per ciascuno dei tre
+colori attesi — cioè la misura naturale e quella dichiarata con `width`/`height`
+sono tutt'e due giuste al pixel.
 
 | | |
 |---|---|
@@ -82,7 +85,8 @@ Bold a 22 e il corpo in Serif a 15.
 | `lib/exhttp/exhttp.c` | il trasporto TCP, le redirezioni |
 | `lib/exhtml/html.c` | da testo ad albero |
 | `bin/scarica` | prende una pagina e la stampa o la salva |
-| `exwin/bin/browser` | barra dell'indirizzo, collegamenti, scorrimento |
+| `exwin/bin/browser` | barra dell'indirizzo, collegamenti, scorrimento, immagini |
+| `lib/eximg/eximg.c` | PNG, JPG e ICO — aperta a richiesta, non collegata |
 
 ! **IL TRASPORTO È UN PARAMETRO, NON UNA COSA SAPUTA.** Oggi sotto l'HTTP c'è
 il TCP; domani, per `https://`, ci sarà il TLS. Se il codice aprisse la
@@ -104,8 +108,22 @@ poi l'albero è spazzatura.
 porta 443 darebbe una risposta incomprensibile e un errore che non c'entra
 niente.
 
+! **LE IMMAGINI ARRIVANO DOPO IL TESTO.** La pagina si impagina e si disegna con
+le sole parole; solo allora si scarica un'immagine per volta, e a ognuna che
+arriva si reimpagina. Prenderle prima vorrebbe dire una finestra vuota finché
+l'ultima non risponde, e una che non risponde costa otto secondi da sé. Quella
+che non arriva lascia il posto al suo `alt`, che è il motivo per cui
+quell'attributo esiste.
+
+! **E I PIXEL SONO DEL BROWSER, NON DEL DECODIFICATORE**: si decodifica, si
+copia nella misura con cui si disegnerà, e il bitmap naturale si restituisce
+subito. Tenerlo vorrebbe dire lasciar scegliere alla pagina quanta memoria
+prendere — 128 KB di PNG possono essere 4000×3000 pixel, cioè 48 MB su una
+macchina che ne ha 32. I tetti sono dichiarati: dodici immagini, 128 KB per
+file, 512 K pixel in tutto.
+
 Quello che **non** c'è, dichiarato: CSS, tabelle impaginate come tabelle,
-immagini dentro il testo, `https`.
+`https`.
 
 
 ### I font: TrueType, misurato contro FreeType

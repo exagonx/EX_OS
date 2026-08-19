@@ -12,9 +12,12 @@ seriale e USB — tastiera compresa, hub compresi.
 
 ## COSA E' COMMITTATO
 
-    c206fb2  "I due README imparano gli ultimi sei commit"
+    a371159  "RIPRENDERE.md torna in pari, ed exhttp diventa una libreria
+              condivisa"
 
-L'albero e' **pulito**: non c'e' niente in attesa.
+In attesa nell'albero: **le immagini nel browser** — `<img>` scaricate,
+decodificate, ridotte e collocate; il `LIB_MAX` del kernel da 4 a 12; il
+Navigatore nell'elenco delle applicazioni.
 
 ! **`gitupdate.sh` FA `git add .` E UN COMMIT SOLO**: `messaggio-commit.txt`
 deve coprire tutto quello che si e' fatto dall'ultimo commit, non l'ultima
@@ -36,6 +39,86 @@ nuovo» — si sono svuotate fra il 17 e il 18 agosto e sono state tolte: i
 lettori di immagini, il toolkit, i permessi, il dialogo «si'/no», le finestre
 modali, il ridimensionamento, SSH, TSC e PSE.
 
+### FATTO — le immagini nel browser
+
+Era il terzo di tre lavori scelti insieme, e chiude la serie. Il browser
+riconosce `<img>`, legge `src`, `width`, `height` e `alt`, scarica, decodifica
+con eximg.so, riduce e colloca.
+
+! **LE IMMAGINI ARRIVANO DOPO IL TESTO, ED E' LA DECISIONE CHE CONTA.** La
+pagina si impagina e si disegna con le sole parole; solo allora si prende
+un'immagine per volta, e a ognuna che arriva si reimpagina e si ridisegna. Il
+testo si sposta sotto gli occhi, ed e' il prezzo giusto: prenderle prima
+vorrebbe dire una finestra vuota finche' l'ultima non risponde, e una che non
+risponde costa otto secondi da sola.
+
+! **I PIXEL SONO DEL BROWSER, NON DI eximg.** Si decodifica, si copia nella
+misura con cui si disegnera' — col vicino piu' vicino — e il bitmap naturale si
+restituisce SUBITO. Tenerlo vorrebbe dire lasciar scegliere alla pagina quanta
+memoria prendere: centoventotto chilobyte di PNG possono essere 4000x3000
+pixel, cioe' 48 MB su una macchina che ne ha 32. I tetti sono tre e dichiarati:
+dodici immagini, 128 KB per file, 512 K pixel IN TUTTO.
+
+! **E QUELLA CHE NON ARRIVA NON FERMA NIENTE**: si salta, e al suo posto resta
+il suo `alt` impaginato come testo normale — che e' esattamente il motivo per
+cui quell'attributo esiste. Il valore sta gia' nell'arena del documento, quindi
+si spezza in parole con lo stesso codice di tutto il resto.
+
+! **`data:` NON SI SEGUE, E VA RICONOSCIUTO PRIMA DI RISOLVERE.** Uno schema
+qualunque attaccato in coda all'indirizzo di adesso produrrebbe una richiesta
+lunga un chilometro verso il sito sbagliato. La regola: due punti prima di
+qualunque `/` sono uno schema. E `//host/x` invece E' un indirizzo — «lo stesso
+schema della pagina» — e le immagini dei siti veri sono scritte cosi' molto
+piu' spesso dei collegamenti.
+
+! **UN'IMMAGINE SI RITAGLIA A MANO, e non e' pignoleria**: `ex_pixmap` ritaglia
+alla FINESTRA, non all'area del documento. Il testo se la cava perche' e' alto
+venti punti e sborda di poco; un'immagine alta duecentocinquanta scorsa in su
+dipingerebbe sopra la casella dell'indirizzo.
+
+#### IL DIFETTO CHE E' USCITO: `LIB_MAX` era 4, ED E' DI TUTTO IL SISTEMA
+
+    [ERROR] LIB: gia' 4 librerie caricate, '/exwin/lib/eximg.so' non entra
+
+! **NON E' UN TETTO PER PROCESSO, E' UNA CACHE UNICA.** Il browser da solo ne
+apre gia' quattro — libc, exwin, exhttp, e exfont che exwin apre da se' per il
+TrueType — quindi la quinta non entrava per nessuno. Il messaggio c'era e
+diceva la verita'; la verita' era che il numero era troppo piccolo.
+
+Alzato a **12**: le librerie di oggi sono sei (libc, exwin, exdlg, exfont,
+exhttp, eximg) e ne sono dichiarate altre tre per l'https (exbig, exasn1,
+extls). Costa solo kernel `.bss` — una voce inutilizzata e' `usata = 0` e non
+ha nessuna pagina dietro — circa 1,6 KB l'una, tredici in tutto.
+
+#### Come si e' provato, e con che numeri
+
+    python3 <server locale con una pagina e tre PNG generati a mano>
+    EXOS_QEMU_EXTRA="-netdev user,id=n1 -device ne2k_pci,netdev=n1" \
+    EXOS_NO_FLOPPY=1 EXOS_CDROM=dist/exos.iso \
+    python3 tools/qemu_drive.py "netdetect -c@14" "exwin@14" "key:alt-f2@3" \
+        "http://10.0.2.2:8080/@40" "foto:/tmp/pagina.ppm@2"
+
+! **IL BROWSER SI PROVA COME AVVIO AUTOMATICO, NON DALLA SHELL.** La grafica
+sta sulla console 1: dopo `exwin` i tasti vanno ancora alla shell, e
+`http://...` battuto li' rende «comando non trovato». Con `Alt+F2` si passa di
+la', e siccome il browser mette il fuoco sulla casella dell'indirizzo all'avvio
+si scrive l'indirizzo e basta. Per lanciarlo da solo serve `@avvio
+/exwin/bin/browser` in `applicazioni.txt` — `@avvio` non prende argomenti.
+
+I numeri della foto, contati e non guardati: la stessa `quadranti.png` (120x80,
+quattro quadranti pieni) messa due volte, una al naturale e una dichiarata
+`width=60 height=40`. Attesi 60*40 + 30*20 = **3000 pixel esatti** per ciascuno
+dei tre colori. Trovati 3000 rossi, 3000 verdi, 3000 blu. La terza, 1200x400,
+ridotta a 744x248 — la larghezza dell'area, con le proporzioni tenute. La
+quarta rende 404 e mostra «QUESTA IMMAGINE MANCA»; la quinta e' una `data:` e
+non ha prodotto **nessuna richiesta** al server.
+
+! **E `libctest` DA' 196 SU 211 PRIMA E DOPO IL CAMBIO DI `LIB_MAX`**, con gli
+stessi quindici falliti: sono tutte scritture, e da CD non c'e' niente di
+scrivibile. Misurato nei due sensi apposta, perche' «gli stessi errori di
+prima» e' un fatto solo se si e' guardato prima.
+
+
 ### Rifiniture, quando conviene
 
  1. **`login` e `install` sulla libc condivisa** — oggi restano statici
@@ -56,16 +139,7 @@ modali, il ridimensionamento, SSH, TSC e PSE.
     posto. E' quello che manca di piu' ora che c'e' un «Taglia».
  5. **`ls -l`** — non c'e'. La libc sa gia' dire proprietario, permessi e
     misura: manca l'impaginazione.
- 6. **`exhttp` e `exhtml` come librerie condivise** — il criterio e' sempre
-    stato «una .so conviene quando gli utenti sono DUE», e adesso lo sono:
-    `scarica` e `browser` si portano ciascuno la propria copia di `http.c` e
-    `exhttp.c`. L'indirizzo 0x05400000 e' riservato e la divisione del codice
-    e' gia' quella giusta — http.c non tocca la rete, exhttp.c non conosce il
-    trasporto — quindi e' una regola di Makefile, non una riscrittura.
- 7. **Le immagini nel browser** — `eximg` legge gia' PNG, JPG e ICO: manca
-    scaricare gli `<img src>` e collocarli. E' la cosa che si VEDE, e usa un
-    pezzo gia' pronto e provato.
- 8. **`-i` ai quattro driver che ancora non ce l'hanno** — `floppy`,
+ 6. **`-i` ai quattro driver che ancora non ce l'hanno** — `floppy`,
     `mouseser`, `uhci`, `vgaprova`. Gli altri nove ce l'hanno tutti (`pci`,
     `svga`, `kbd`, `xhci` e i cinque del CD); `tty` era in questo elenco per
     sbaglio, non e' un `.drv` ma un pezzo compilato dentro il kernel. Oggi non
@@ -76,6 +150,30 @@ modali, il ridimensionamento, SSH, TSC e PSE.
 Restano aperti, sullo stack USB: **piu' di un livello di hub**, **piu' di un
 dispositivo per volta** (lo stesso limite che ha uhci.drv), e **un tetto di
 quattro alloggiamenti** in xhci.drv — dichiarato, non scoperto dopo.
+
+### Il lavoro grosso che resta: `extls`
+
+`https://www.w3c.org` e' rifiutato con «https non ancora: manca il TLS», che e'
+la verita'. Per toglierlo servono, in quest'ordine:
+
+    exbig.so    interi lunghi, SOLO verifica — niente generazione di chiavi,
+                niente primalita', niente CRT. Con l'esponente 65537 sono 16
+                elevamenti al quadrato e una moltiplicazione: su un Pentium 133
+                decine di millisecondi
+    exasn1.so   DER, X.509, il magazzino delle CA
+    extls.so    TLS 1.3 — e i mattoni ci sono gia': SHA-256, SHA-512,
+                ChaCha20, Poly1305, X25519, Ed25519. Mancano HMAC e HKDF, che
+                sono un giorno
+
+! **SSH HA EVITATO RSA APPOSTA, PER NON SCRIVERE UNA LIBRERIA DI INTERI
+LUNGHI. L'HTTPS NON PUO' EVITARLO.** I certificati del web sono RSA ed ECDSA
+P-256; quelli Ed25519 in pratica non esistono.
+
+! **E C'E' UNA DECISIONE DA CHIEDERE ALL'UTENTE PRIMA DI COMINCIARE**: senza la
+verifica del certificato si ottiene una connessione cifrata con CHIUNQUE — la
+barra direbbe `https://` senza poter dire con chi si sta parlando, che e'
+peggio del testo in chiaro perche' mente. Non e' una scelta da fare da soli.
+
 
 ## Difetti aperti, dichiarati
 

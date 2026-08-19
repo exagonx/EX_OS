@@ -29,13 +29,23 @@
  * dire dipingere migliaia di righe fuori dalla finestra.
  *
  * ! QUELLO CHE NON C'E', DICHIARATO: niente CSS, niente tabelle impaginate come
- * tabelle, niente immagini dentro il testo, niente https. Un blocco va a capo,
- * il testo scorre e si spezza, i collegamenti si vedono e si premono. E' il
- * minimo che si possa chiamare browser, e ogni pezzo mancante ha il suo posto.
+ * tabelle, niente https. Un blocco va a capo, il testo scorre e si spezza, i
+ * collegamenti si vedono e si premono, le immagini si scaricano e si
+ * collocano. E' il minimo che si possa chiamare browser, e ogni pezzo mancante
+ * ha il suo posto.
+ *
+ * ! LE IMMAGINI ARRIVANO DOPO IL TESTO, ED E' LA DECISIONE CHE CONTA QUI. La
+ * pagina si impagina e si disegna con le sole parole; solo allora si scarica
+ * un'immagine per volta, e a ognuna che arriva si reimpagina e si ridisegna.
+ * Prenderle prima vorrebbe dire una finestra vuota finche' l'ultima non
+ * risponde — e una che non risponde costa otto secondi da sola, cioe' una
+ * pagina con cinque immagini morte non si vedrebbe per quaranta secondi.
  * ============================================================================= */
 
 #include "libc.h"
 #include "exwin.h"
+#include "exlib.h"
+#include "eximg.h"
 #include "exhttp.h"
 #include "html.h"
 #include "kbd_proto.h"
@@ -62,12 +72,23 @@
 #define LINK_MAX    512
 #define STORIA_MAX  32
 
-/* Un tratto di testo gia' collocato. */
+/* ! E I TETTI DELLE IMMAGINI SONO TRE, PERCHE' TRE SONO LE COSE CHE LA PAGINA
+ * SCEGLIE: quante ne mette, quanto pesa ognuna, e quanti pixel diventano una
+ * volta decodificate. Il terzo e' quello che conta davvero: centoventotto
+ * chilobyte di PNG possono essere quattromila per tremila pixel, cioe'
+ * quarantotto megabyte su una macchina che ne ha trentadue. */
+#define IMM_MAX      12
+#define IMM_BYTE_MAX (128u * 1024u)     /* il file di UNA immagine  */
+#define IMM_PX_TOT   (512u * 1024u)     /* i pixel tenuti, IN TUTTO */
+
+/* Un tratto di testo — o un'immagine — gia' collocato. */
 typedef struct {
     int          x, y, w;
     unsigned int testo;         /* scostamento nell'arena del documento */
     unsigned char titolo;       /* 1 = grande e in neretto */
+    short        h;             /* solo per le immagini: la loro altezza */
     short        link;          /* indice in g_link, -1 = niente */
+    short        img;           /* indice in g_imm, -1 = e' testo */
 } Pezzo;
 
 static unsigned char g_pagina[PAGINA_MAX];
@@ -90,10 +111,179 @@ static ExFont        g_font_testo = 0, g_font_titolo = 0;
 static int           g_scorri = 0, g_altezza = 0;
 static char          g_qui[EXHTTP_URL_MAX] = "";
 
+/* -----------------------------------------------------------------------------
+ * Le immagini
+ *
+ * ! L'IDENTITA' DI UN'IMMAGINE E' IL SUO NODO, non la sua posizione: la pagina
+ * si reimpagina a ogni immagine che arriva, e alla seconda impaginazione la
+ * prima immagine deve ritrovarsi, non riscaricarsi. Gli indici dei nodi non si
+ * muovono finche' l'albero e' quello.
+ *
+ * ! E I PIXEL SONO NOSTRI, NON DI eximg: si decodifica, si copia nella misura
+ * con cui si disegnera', e il bitmap naturale si restituisce SUBITO. Tenerlo
+ * vorrebbe dire lasciar scegliere alla pagina quanta memoria prendere.
+ * --------------------------------------------------------------------------- */
+typedef struct {
+    int           nodo;             /* il nodo <img> dentro g_doc              */
+    unsigned int  dich_w, dich_h;   /* width= e height=, 0 se non ci sono      */
+    unsigned int  w, h;             /* la misura con cui si disegna            */
+    unsigned int *px;               /* ARGB, nostri: free() li restituisce     */
+    unsigned char stato;            /* 0 da prendere, 1 presa, 2 rinunciata    */
+    char          src[EXHTTP_URL_MAX];
+} Imm;
+
+static Imm           g_imm[IMM_MAX];
+static int           g_imm_n = 0;
+static unsigned int  g_imm_px = 0;      /* quanti pixel si stanno tenendo */
+static unsigned char g_imm_buf[IMM_BYTE_MAX];
+
+static int  (*g_img_carica)(const unsigned char *, unsigned int, EximgBitmap *);
+static void (*g_img_libera)(EximgBitmap *);
+
 static int area_x(void) { return MARGINE; }
 static int area_y(void) { return BARRA_H + MARGINE; }
 static int area_w(void) { return FIN_W - 2 * MARGINE; }
 static int area_h(void) { return FIN_H - BARRA_H - 2 * MARGINE - 20; }
+
+/* eximg.so si apre una volta sola, e una volta sola si rinuncia.
+ *
+ * ! IL PERCORSO E' DOPPIO come per ogni libreria: su un sistema installato sta
+ * in /exwin/lib, avviando dal CD sotto /cdrom.
+ *
+ * ! E SE NON C'E' NON SI MUORE: un browser senza eximg mostra il testo, che e'
+ * la maggior parte di una pagina. E' la stessa scelta che fa il toolkit in
+ * ex_immagine, per la stessa ragione. */
+static int eximg_pronta(void)
+{
+    static const char *const dove[] = {
+        "/exwin/lib/eximg.so",
+        "/cdrom/exwin/lib/eximg.so"
+    };
+    static int cercata = 0;
+
+    if (!cercata) {
+        const ExLibTesta *t;
+
+        cercata = 1;    /* prima del tentativo: non si ricerca a ogni immagine */
+        t = exlib_apri_fra(dove, (int)(sizeof dove / sizeof dove[0]));
+        if (t) {
+            g_img_carica = (int (*)(const unsigned char *, unsigned int,
+                                    EximgBitmap *))
+                           exlib_simbolo(t, "eximg_carica");
+            g_img_libera = (void (*)(EximgBitmap *))
+                           exlib_simbolo(t, "eximg_libera");
+        }
+    }
+
+    /* Uno dei due senza l'altro vuol dire una eximg.so piu' vecchia di questo
+     * browser: si rinuncia invece di chiamare un indirizzo nullo. */
+    return g_img_carica != 0 && g_img_libera != 0;
+}
+
+static void imm_libera_tutte(void)
+{
+    int i;
+
+    for (i = 0; i < g_imm_n; i++)
+        if (g_imm[i].px) { free(g_imm[i].px); g_imm[i].px = 0; }
+
+    g_imm_n  = 0;
+    g_imm_px = 0;
+}
+
+/* Le cifre in testa, e basta.
+ *
+ * ! «80%» NON E' OTTANTA PIXEL, quindi rende 0 — cioe' «non l'hanno detto» —
+ * invece di collocare un'immagine larga ottanta punti. Le percentuali vogliono
+ * la larghezza del contenitore, che qui non esiste: meglio la misura vera. */
+static unsigned int numero(const char *s)
+{
+    unsigned int v = 0;
+    int          viste = 0;
+
+    if (!s) return 0;
+    while (*s >= '0' && *s <= '9') {
+        v = v * 10u + (unsigned int)(*s - '0');
+        s++;
+        viste = 1;
+    }
+    if (!viste || *s == '%') return 0;
+    return v;
+}
+
+/* Trova l'immagine di questo nodo, o la registra. Rende -1 se non c'e' posto. */
+static int imm_indice(int nodo, const char *src)
+{
+    int i;
+
+    for (i = 0; i < g_imm_n; i++)
+        if (g_imm[i].nodo == nodo) return i;
+
+    if (g_imm_n >= IMM_MAX) return -1;
+
+    i = g_imm_n++;
+    g_imm[i].nodo   = nodo;
+    g_imm[i].dich_w = numero(html_attr(&g_doc, nodo, "width"));
+    g_imm[i].dich_h = numero(html_attr(&g_doc, nodo, "height"));
+    g_imm[i].w      = 0;
+    g_imm[i].h      = 0;
+    g_imm[i].px     = 0;
+    g_imm[i].stato  = 0;
+    strncpy(g_imm[i].src, src, sizeof(g_imm[i].src) - 1);
+    g_imm[i].src[sizeof(g_imm[i].src) - 1] = '\0';
+    return i;
+}
+
+/* Da quanto e' l'immagine a quanto se ne disegna: `width`/`height` se ci sono,
+ * altrimenti la misura naturale — e in ogni caso dentro l'area.
+ *
+ * ! LE PROPORZIONI SI TENGONO ANCHE QUANDO SI RIDUCE, e non e' vezzo: una
+ * fotografia schiacciata si riconosce peggio di una fotografia piccola. */
+static void misura(const Imm *im, unsigned int nw, unsigned int nh,
+                   unsigned int *pw, unsigned int *ph)
+{
+    unsigned int w  = im->dich_w, h = im->dich_h;
+    unsigned int aw = (unsigned int)area_w(), ah = (unsigned int)area_h();
+
+    *pw = 0;
+    *ph = 0;
+    if (nw == 0 || nh == 0) return;
+
+    if (!w && !h)  { w = nw; h = nh; }
+    else if (!h)   { h = nh * w / nw; }
+    else if (!w)   { w = nw * h / nh; }
+
+    /* ! IL TETTO E' LA FINESTRA. Una pagina che dichiara width=4000 non deve
+     * poter chiedere quattromila colonne di pixel. */
+    if (w > aw && w) { h = h * aw / w; w = aw; }
+    if (h > ah && h) { w = w * ah / h; h = ah; }
+
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+
+    *pw = w;
+    *ph = h;
+}
+
+/* Copia nella misura voluta, col vicino piu' vicino. */
+static unsigned int *ridimensiona(const EximgBitmap *bm,
+                                  unsigned int w, unsigned int h)
+{
+    unsigned int *d = (unsigned int *)malloc(w * h * sizeof(unsigned int));
+    unsigned int  y;
+
+    if (!d) return 0;
+
+    for (y = 0; y < h; y++) {
+        const unsigned int *s = bm->px +
+                                (y * bm->altezza / h) * bm->larghezza;
+        unsigned int       *r = d + y * w;
+        unsigned int        x;
+
+        for (x = 0; x < w; x++) r[x] = s[x * bm->larghezza / w];
+    }
+    return d;
+}
 
 /* -----------------------------------------------------------------------------
  * L'impaginazione
@@ -153,12 +343,62 @@ static void parola(const char *t, unsigned int off, int n)
         g_pez[g_pez_n].w = w;
         g_pez[g_pez_n].testo = off;
         g_pez[g_pez_n].titolo = (unsigned char)g_titolo_ora;
+        g_pez[g_pez_n].h = 0;
         g_pez[g_pez_n].link = (short)g_link_ora;
+        g_pez[g_pez_n].img = -1;
         g_pez_n++;
     }
 
     g_pen_x += w;
     if (alt_riga(g_titolo_ora) > g_riga_h) g_riga_h = alt_riga(g_titolo_ora);
+}
+
+/* Un testo intero, spezzato in parole. Serve al testo dei nodi e al testo di
+ * ripiego di un'immagine, che e' la stessa cosa: parole nell'arena. */
+static void parole(const char *t, unsigned int base)
+{
+    int i = 0;
+
+    while (t[i]) {
+        int a;
+
+        while (t[i] == ' ') {
+            g_pen_x += ex_larghezza_testo(
+                g_titolo_ora ? g_font_titolo : g_font_testo, " ");
+            i++;
+        }
+        if (!t[i]) break;
+        a = i;
+        while (t[i] && t[i] != ' ') i++;
+        parola(t + a, base + (unsigned int)a, i - a);
+    }
+}
+
+/* Un'immagine gia' decodificata: si colloca come una parola molto grande. */
+static void pezzo_immagine(int k)
+{
+    int w = (int)g_imm[k].w;
+    int h = (int)g_imm[k].h;
+
+    if (g_pen_x + w > area_x() + area_w() && g_pen_x > area_x()) a_capo();
+
+    if (g_pez_n < PEZZI_MAX) {
+        g_pez[g_pez_n].x = g_pen_x;
+        g_pez[g_pez_n].y = g_pen_y;
+        g_pez[g_pez_n].w = w;
+        g_pez[g_pez_n].testo = 0;
+        g_pez[g_pez_n].titolo = 0;
+        g_pez[g_pez_n].h = (short)h;
+        g_pez[g_pez_n].link = (short)g_link_ora;
+        g_pez[g_pez_n].img = (short)k;
+        g_pez_n++;
+    }
+
+    g_pen_x += w;
+
+    /* ! LA RIGA CRESCE FINO ALL'IMMAGINE, altrimenti la riga dopo le passa
+     * sopra: l'altezza di una riga e' quella del suo pezzo piu' alto. */
+    if (h + 3 > g_riga_h) g_riga_h = h + 3;
 }
 
 static int blocco(const char *nome)
@@ -207,21 +447,7 @@ static void impagina_nodo(int v)
     if (v < 0) return;
 
     if (g_doc.nodi[v].tipo == HTML_TESTO) {
-        const char  *t = html_testo(&g_doc, v);
-        unsigned int base = g_doc.nodi[v].testo;
-        int          i = 0;
-
-        while (t[i]) {
-            int a;
-
-            while (t[i] == ' ') { g_pen_x += ex_larghezza_testo(
-                                      g_titolo_ora ? g_font_titolo : g_font_testo,
-                                      " "); i++; }
-            if (!t[i]) break;
-            a = i;
-            while (t[i] && t[i] != ' ') i++;
-            parola(t + a, base + (unsigned int)a, i - a);
-        }
+        parole(html_testo(&g_doc, v), g_doc.nodi[v].testo);
         return;
     }
 
@@ -233,6 +459,23 @@ static void impagina_nodo(int v)
         if (invisibile(nome)) return;
 
         if (uguale(nome, "br")) { g_pen_x = area_x() + 1; a_capo(); return; }
+
+        if (uguale(nome, "img")) {
+            const char *src = html_attr(&g_doc, v, "src");
+            const char *alt;
+            int         k = (src && src[0]) ? imm_indice(v, src) : -1;
+
+            if (k >= 0 && g_imm[k].px) { pezzo_immagine(k); return; }
+
+            /* ! FINCHE' L'IMMAGINE NON C'E' SI LEGGE IL SUO `alt`, ed e'
+             * esattamente il motivo per cui quell'attributo esiste. Il valore
+             * sta gia' nell'arena del documento, quindi si impagina con le
+             * stesse parole di tutto il resto. */
+            alt = html_attr(&g_doc, v, "alt");
+            if (alt && alt[0])
+                parole(alt, (unsigned int)(alt - g_doc.arena));
+            return;
+        }
 
         if (blocco(nome)) spazio_fra_blocchi();
         if (titolo_di(nome)) g_titolo_ora = 1;
@@ -301,13 +544,41 @@ static void disegna(void)
     ex_incavo(g_f, area_x() - 2, area_y() - 2, area_w() + 4, area_h() + 4);
 
     for (i = 0; i < g_pez_n; i++) {
-        int y = g_pez[i].y - g_scorri;
+        int y  = g_pez[i].y - g_scorri;
+        int ph = g_pez[i].img >= 0 ? g_pez[i].h : 24;
 
         /* ! SI DISEGNA SOLO CIO' CHE SI VEDE. Con una pagina di migliaia di
          * righe, dipingere tutto vorrebbe dire pagare l'intero documento a
          * ogni riga di scorrimento — e per il novantanove per cento fuori
          * dalla finestra. */
-        if (y + 24 < area_y() || y > area_y() + area_h()) continue;
+        if (y + ph < area_y() || y > area_y() + area_h()) continue;
+
+        /* ! UN'IMMAGINE SI RITAGLIA A MANO, e non e' pignoleria: ex_pixmap
+         * ritaglia alla FINESTRA, non all'area del documento, quindi
+         * un'immagine alta trecento pixel scorsa in su dipingerebbe sopra la
+         * casella dell'indirizzo. Il testo se la cava perche' e' alto venti
+         * punti e sborda di poco; un'immagine no. */
+        if (g_pez[i].img >= 0) {
+            const Imm *im    = &g_imm[g_pez[i].img];
+            int        cima  = y;
+            int        salta = 0;
+            int        alta  = (int)im->h;
+
+            if (!im->px) continue;
+
+            if (cima < area_y()) {
+                salta = area_y() - cima;
+                cima  = area_y();
+                alta -= salta;
+            }
+            if (cima + alta > area_y() + area_h())
+                alta = area_y() + area_h() - cima;
+
+            if (alta > 0)
+                ex_pixmap(g_f, g_pez[i].x, cima, (int)im->w, alta,
+                          im->px + (unsigned int)salta * im->w, im->w);
+            continue;
+        }
 
         {
             ExFont       f = g_pez[i].titolo ? g_font_titolo : g_font_testo;
@@ -345,6 +616,159 @@ static void dico(const char *s)
 }
 
 /* -----------------------------------------------------------------------------
+ * Gli indirizzi relativi
+ *
+ * ! I RIFERIMENTI RELATIVI SI RISOLVONO, e sono la maggioranza: «/x» o
+ * «pagina.html» senza schema. La stessa regola sta in exhttp per le
+ * redirezioni; qui la si applica a quello che scrive la pagina — i
+ * collegamenti e le immagini, che sono la stessa cosa vista da due parti.
+ * Averla in una funzione sola vuol dire che il giorno che sbaglia, sbaglia in
+ * un posto solo.
+ * --------------------------------------------------------------------------- */
+static int risolvi(const char *rif, char *out, unsigned int max)
+{
+    HttpUrl u;
+
+    if (!rif || !rif[0] || max < 2) return 0;
+
+    if (rif[0] == 'h' && rif[1] == 't') {
+        strncpy(out, rif, max - 1);
+        out[max - 1] = '\0';
+        return 1;
+    }
+
+    /* ! UNO SCHEMA CHE NON E' http NON SI SEGUE, e va riconosciuto PRIMA di
+     * trattarlo da percorso relativo: «data:image/png;base64,...» attaccato in
+     * coda all'indirizzo di adesso produrrebbe una richiesta lunga un
+     * chilometro verso il sito sbagliato. I due punti prima di qualunque «/»
+     * sono uno schema. */
+    {
+        const char *c = rif;
+
+        while (*c && *c != ':' && *c != '/' && *c != '?' && *c != '#') c++;
+        if (*c == ':') return 0;
+    }
+
+    if (!http_url(g_qui, &u)) return 0;
+
+    /* ! «//host/x» E' UN INDIRIZZO SENZA SCHEMA, non un percorso: vuol dire
+     * «lo stesso schema della pagina». Le immagini dei siti veri sono scritte
+     * cosi' molto piu' spesso dei collegamenti. */
+    if (rif[0] == '/' && rif[1] == '/') {
+        strcpy(out, u.cifrato ? "https:" : "http:");
+        strncat(out, rif, max - strlen(out) - 1);
+        return 1;
+    }
+
+    strcpy(out, u.cifrato ? "https://" : "http://");
+    strncat(out, u.host, max - strlen(out) - 1);
+
+    if ((u.cifrato && u.porta != 443) || (!u.cifrato && u.porta != 80)) {
+        char cifre[8], rov[8];
+        unsigned int p = u.porta;
+        int a = 0, b = 0;
+
+        while (p) { rov[b++] = (char)('0' + (p % 10)); p /= 10; }
+        while (b) cifre[a++] = rov[--b];
+        cifre[a] = '\0';
+        strncat(out, ":", max - strlen(out) - 1);
+        strncat(out, cifre, max - strlen(out) - 1);
+    }
+
+    if (rif[0] == '/') {
+        strncat(out, rif, max - strlen(out) - 1);
+    } else {
+        char base[HTTP_PERCORSO_MAX];
+        int  i;
+
+        strncpy(base, u.percorso, sizeof(base) - 1);
+        base[sizeof(base) - 1] = '\0';
+        i = (int)strlen(base);
+        while (i > 0 && base[i - 1] != '/') i--;
+        base[i] = '\0';
+        strncat(out, base, max - strlen(out) - 1);
+        strncat(out, rif, max - strlen(out) - 1);
+    }
+    return 1;
+}
+
+/* -----------------------------------------------------------------------------
+ * Prendere le immagini
+ * --------------------------------------------------------------------------- */
+
+/* Una sola immagine: la scarica, la decodifica, se la copia. Rende 1 se ce
+ * l'ha fatta — e su 0 non ha lasciato niente in giro. */
+static int imm_prendi(int k)
+{
+    Imm         *im = &g_imm[k];
+    ExHttpEsito  e;
+    EximgBitmap  bm;
+    char         url[EXHTTP_URL_MAX];
+    unsigned int w, h;
+
+    if (!eximg_pronta()) return 0;
+    if (!risolvi(im->src, url, sizeof(url))) return 0;
+    if (!exhttp_prendi(url, g_imm_buf, sizeof(g_imm_buf), &e)) return 0;
+    if (e.codice != 200 || e.byte == 0) return 0;
+
+    /* ! UN FILE TRONCATO NON SI PROVA A DECODIFICARE: un PNG a meta' non e' un
+     * PNG piu' piccolo, e' un file rotto — e il decodificatore lo scoprirebbe
+     * dopo aver allocato. */
+    if (e.troncata) return 0;
+
+    if (!g_img_carica(g_imm_buf, e.byte, &bm)) return 0;
+
+    misura(im, bm.larghezza, bm.altezza, &w, &h);
+
+    /* ! IL TETTO SI CONTROLLA PRIMA DI COPIARE, e vale sulla SOMMA: dodici
+     * immagini che stanno ciascuna nell'area sono lo stesso dodici volte
+     * l'area. */
+    if (w == 0 || h == 0 || g_imm_px + w * h > IMM_PX_TOT) {
+        g_img_libera(&bm);
+        return 0;
+    }
+
+    im->px = ridimensiona(&bm, w, h);
+    g_img_libera(&bm);
+    if (!im->px) return 0;
+
+    im->w = w;
+    im->h = h;
+    g_imm_px += w * h;
+    return 1;
+}
+
+/* Tutte quelle che l'impaginazione ha trovato, una per volta. */
+static void immagini_prendi(void)
+{
+    char msg[160];
+    int  k;
+
+    for (k = 0; k < g_imm_n; k++) {
+        if (g_imm[k].stato != 0) continue;
+
+        sprintf(msg, "immagine %d di %d...", k + 1, g_imm_n);
+        dico(msg);
+
+        if (!imm_prendi(k)) {
+            /* ! QUELLA CHE NON ARRIVA SI SALTA E BASTA: al suo posto resta il
+             * suo `alt`, e la pagina va avanti. Un browser che si ferma sulla
+             * prima immagine irraggiungibile non mostra mai niente. */
+            g_imm[k].stato = 2;
+            continue;
+        }
+
+        g_imm[k].stato = 1;
+
+        /* ! SI REIMPAGINA A OGNI IMMAGINE, e il testo si sposta sotto gli
+         * occhi: e' il prezzo di mostrare le parole prima dei pixel, e si paga
+         * volentieri. */
+        impagina();
+        disegna();
+    }
+}
+
+/* -----------------------------------------------------------------------------
  * Andare
  * --------------------------------------------------------------------------- */
 static void vai(const char *url, int in_storia)
@@ -373,6 +797,11 @@ static void vai(const char *url, int in_storia)
     g_qui[sizeof(g_qui) - 1] = '\0';
     ex_testo_metti(g_url, g_qui);
 
+    /* ! LE IMMAGINI DELLA PAGINA DI PRIMA SE NE VANNO QUI, prima che l'albero
+     * cambi: dopo html_analizza gli indici dei nodi sono di un altro documento
+     * e non vogliono piu' dire niente. */
+    imm_libera_tutte();
+
     html_prepara(&g_doc, g_nodi, NODI_MAX, g_attr, ATTR_MAX,
                  g_arena, ARENA_MAX);
     html_analizza(&g_doc, (const char *)g_pagina, e.byte);
@@ -386,6 +815,10 @@ static void vai(const char *url, int in_storia)
     dico(msg);
 
     disegna();
+
+    /* Il testo si vede: adesso, e solo adesso, si va a prendere il resto. */
+    immagini_prendi();
+    dico(msg);
 }
 
 /* Un collegamento premuto: si risolve contro l'indirizzo di adesso. */
@@ -394,49 +827,7 @@ static void segui(int k)
     char nuovo[EXHTTP_URL_MAX];
 
     if (k < 0 || k >= g_link_n) return;
-
-    /* ! I COLLEGAMENTI RELATIVI SI RISOLVONO, e sono la maggioranza: «/x» o
-     * «pagina.html» senza schema. La stessa regola sta in exhttp per le
-     * redirezioni; qui la si applica ai collegamenti, che e' la stessa cosa
-     * vista dall'altra parte. */
-    if (g_link[k][0] == 'h' && g_link[k][1] == 't') {
-        strncpy(nuovo, g_link[k], sizeof(nuovo) - 1);
-        nuovo[sizeof(nuovo) - 1] = '\0';
-    } else {
-        HttpUrl u;
-
-        if (!http_url(g_qui, &u)) return;
-
-        strcpy(nuovo, u.cifrato ? "https://" : "http://");
-        strncat(nuovo, u.host, sizeof(nuovo) - strlen(nuovo) - 1);
-
-        if ((u.cifrato && u.porta != 443) || (!u.cifrato && u.porta != 80)) {
-            char cifre[8], rov[8];
-            unsigned int p = u.porta;
-            int a = 0, b = 0;
-
-            while (p) { rov[b++] = (char)('0' + (p % 10)); p /= 10; }
-            while (b) cifre[a++] = rov[--b];
-            cifre[a] = '\0';
-            strncat(nuovo, ":", sizeof(nuovo) - strlen(nuovo) - 1);
-            strncat(nuovo, cifre, sizeof(nuovo) - strlen(nuovo) - 1);
-        }
-
-        if (g_link[k][0] == '/') {
-            strncat(nuovo, g_link[k], sizeof(nuovo) - strlen(nuovo) - 1);
-        } else {
-            char base[HTTP_PERCORSO_MAX];
-            int  i;
-
-            strncpy(base, u.percorso, sizeof(base) - 1);
-            base[sizeof(base) - 1] = '\0';
-            i = (int)strlen(base);
-            while (i > 0 && base[i - 1] != '/') i--;
-            base[i] = '\0';
-            strncat(nuovo, base, sizeof(nuovo) - strlen(nuovo) - 1);
-            strncat(nuovo, g_link[k], sizeof(nuovo) - strlen(nuovo) - 1);
-        }
-    }
+    if (!risolvi(g_link[k], nuovo, sizeof(nuovo))) return;
 
     vai(nuovo, 1);
 }
@@ -448,7 +839,10 @@ static int link_sotto(int x, int y)
 
     for (i = 0; i < g_pez_n; i++) {
         int py = g_pez[i].y - g_scorri;
-        int h  = ex_font_altezza(g_pez[i].titolo ? g_font_titolo : g_font_testo);
+        int h  = g_pez[i].img >= 0
+                     ? g_pez[i].h
+                     : ex_font_altezza(g_pez[i].titolo ? g_font_titolo
+                                                       : g_font_testo);
 
         if (g_pez[i].link < 0) continue;
         if (x >= g_pez[i].x && x < g_pez[i].x + g_pez[i].w &&

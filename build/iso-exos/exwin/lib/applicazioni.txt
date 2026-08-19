@@ -32,3 +32,4 @@ File manager   | /exwin/bin/filemgr
 Editor         | /exwin/bin/edit
 Terminale      | /exwin/bin/term
 Prova dei font | /exwin/bin/fontprova
+Navigatore     | /exwin/bin/browser

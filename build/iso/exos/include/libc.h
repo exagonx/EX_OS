@@ -182,7 +182,8 @@ void   *memchr(const void *s, int c, size_t n);
  * resta in mano al chiamante. errno serve a chi vuole un messaggio senza
  * portarsi dietro il numero — perror() e strerror(errno).
  * ============================================================================= */
-extern int  errno;
+#define errno   (*__errno_dove())
+int *__errno_dove(void);
 char *strerror(int err);
 void        perror(const char *msg);
 
@@ -220,9 +221,36 @@ typedef struct _FILE FILE;
 #define L_tmpnam        64
 #define TMP_MAX         32      /* tentativi di mkstemp prima di arrendersi */
 
-extern FILE *stdin;
-extern FILE *stdout;
-extern FILE *stderr;
+/* =============================================================================
+ * ! LE CINQUE VARIABILI GLOBALI SI RAGGIUNGONO CON UN INDIRIZZO, non con un
+ * nome, dal 17 agosto 2026 — cioe' da quando la libc puo' essere una libreria
+ * CONDIVISA.
+ *
+ * Le 313 funzioni della libc si raggiungono con un salto indiretto, che non ha
+ * bisogno di conoscerne la firma. Una variabile no: un programma che scrive
+ * `errno = 0` scriverebbe nella PROPRIA copia mentre la libc legge la sua —
+ * due variabili con lo stesso nome, e nessun errore da nessuna parte.
+ *
+ * E' la soluzione di ogni libc vera. Il sorgente di chi le usa non cambia:
+ * `errno = 0`, `if (errno == ENOENT)`, `fprintf(stderr, ...)` e `environ` si
+ * continuano a scrivere esattamente cosi'.
+ *
+ * ! VALGONO ANCHE COLLEGANDO STATICAMENTE, e apposta: un comportamento solo
+ * invece di due che divergono in silenzio.
+ * ============================================================================= */
+int    *__errno_dove(void);
+FILE  **__stdin_dove(void);
+FILE  **__stdout_dove(void);
+FILE  **__stderr_dove(void);
+char ***__environ_dove(void);
+
+/* Il programma registra i propri distruttori globali: exit(), che sta nella
+ * libreria, non puo' trovarli da se'. Vedi lib/libc.c. */
+void    __libc_distruttori_registra(void (*f)(void));
+
+#define stdin   (*__stdin_dove())
+#define stdout  (*__stdout_dove())
+#define stderr  (*__stderr_dove())
 
 FILE   *fopen(const char *path, const char *modo);
 FILE   *fdopen(int fd, const char *modo);
@@ -746,6 +774,21 @@ int        nanosleep(const struct timespec *req, struct timespec *rem);
 /* ! Tutte e quattro tornano 0, e non significa «root»: significa che su
  * EX-OS non esiste la domanda. Serve a OPENSSL_issetugid(), che chiede
  * «giro con privilegi non miei?» — e qui la risposta onesta e' no. */
+/* ! RENDONO L'IDENTITA' VERA dal 17 agosto 2026: prima erano zero fisso, che
+ * era onesto quando non c'erano utenti e sarebbe una bugia adesso.
+ *
+ * setuid() la puo' chiamare solo root e serve a scendere: e' cosi' che `login`
+ * cambia utente senza che esista il bit setuid sui file. Rende 0, o -1 con
+ * errno EPERM. */
+int        setuid(unsigned int uid);
+/* Consegna un file a un altro utente. Solo root; su FAT rende -1 con ENOSYS
+ * invece di fingere. */
+int        chown(const char *percorso, unsigned int uid, unsigned int gid);
+
+/* Il framebuffer, e SOLO quello. Non serve essere root ne' un driver: e' una
+ * capacita' stretta al posto di mmio_map, che mappa un indirizzo qualunque ed
+ * e' riservata. Rende 0 con errno se non c'e' un framebuffer. */
+void      *fb_map(void);
 int        getuid(void);
 int        geteuid(void);
 int        getgid(void);
@@ -1518,34 +1561,10 @@ int     listdir(const char *path, DirEntry *buf, int max);
  * compilati per la vecchia forma a tre argomenti — vedi il commento nel
  * kernel.
  * ============================================================================= */
-/* ! LA MAGIA E' CAMBIATA DA 0x53504E58 A 0x53504E59 (agosto 2026) perche'
- * e' cambiata la DISPOSIZIONE di SpawnAzione: ha due campi in piu'. Un
- * binario vecchio che passasse la struttura vecchia verrebbe letto storto,
- * e con una redirezione letta storta si scrive nel file sbagliato. Con la
- * magia nuova il kernel non la riconosce e la ignora, che e' l'errore
- * meno dannoso possibile. */
-#define SPAWN_EXTRA_MAGIA    0x53504E59u
-#define SPAWN_MAX_AZIONI     4
-#define SPAWN_RED_PATH_MAX   128
-
-/* Le due cose che si possono fare a un descrittore del figlio. */
-#define SPAWN_AZ_FILE   0   /* apri `percorso` e mettilo su `fd` */
-#define SPAWN_AZ_FD     1   /* dai al figlio il MIO descrittore `fd_padre` */
-
-typedef struct {
-    unsigned int tipo;          /* SPAWN_AZ_FILE oppure SPAWN_AZ_FD */
-    unsigned int fd;            /* il descrittore NEL FIGLIO */
-    unsigned int flags;         /* SPAWN_AZ_FILE: i flag di open */
-    int          fd_padre;      /* SPAWN_AZ_FD: quale descrittore del padre */
-    char         percorso[SPAWN_RED_PATH_MAX];
-} SpawnAzione;
-
-typedef struct {
-    unsigned int magia;
-    char       **envp;
-    unsigned int n_azioni;
-    SpawnAzione  azioni[SPAWN_MAX_AZIONI];
-} SpawnExtra;
+/* ! UNA DEFINIZIONE SOLA dal 17 agosto 2026: ce n'erano quattro e una e'
+ * rimasta indietro, costando alla shell redirezioni e ambiente per tre
+ * giorni senza un messaggio. Vedi lib/include/spawn_abi.h. */
+#include "spawn_abi.h"
 
 /* La forma comoda per chi chiama: percorso invece di buffer a lunghezza
  * fissa, e nessuna magia da ricordare.
@@ -1601,6 +1620,22 @@ int     pipe(int fd[2]);
 int     spawn(const char *path, char *const argv[]);
 int     spawn_ex(const char *path, char *const argv[], char *const envp[],
                  const SpawnRedir *redir, int n_redir);
+
+/* Come spawn_ex(), ma il figlio nasce sulla CONSOLE indicata invece che su
+ * quella del padre. `console` negativa = quella del padre, cioe' spawn_ex().
+ *
+ * ! SERVE AL SERVER GRAFICO, ed e' il motivo per cui esiste: deve poter stare
+ * su una console tutta sua mentre su un'altra continua a girare una shell, e
+ * con Alt+Fn si passa dall'una all'altra. Senza, il server nasce dove gira chi
+ * l'ha lanciato — addosso alla shell — e i due si contendono lo schermo.
+ *
+ * ! E' UNA FUNZIONE IN PIU', NON UN PARAMETRO IN PIU' A spawn_ex(). Cambiare
+ * la firma di una funzione che i programmi gia' chiamano vuol dire ricostruire
+ * tutto cio' che la usa, ed e' esattamente cio' che il blocco EXTRA di
+ * SYS_SPAWN e' stato inventato per evitare. */
+int     spawn_su_console(const char *path, char *const argv[],
+                         char *const envp[], const SpawnRedir *redir,
+                         int n_redir, int console);
 int     waitpid(int pid, int *stato, int opzioni);
 int     wait(int *stato);
 
@@ -1639,7 +1674,7 @@ int     wait(int *stato);
  * quel ripiego il primo processo — che il padre non ce l'ha — resterebbe
  * senza PATH. Vedi il commento in lib/libc.c.
  * ============================================================================= */
-extern char **environ;
+#define environ (*__environ_dove())
 
 int     putenv(char *voce);          /* la voce ENTRA nell'ambiente, senza copia */
 int     setenv(const char *nome, const char *valore, int sovrascrivi);
@@ -2030,6 +2065,20 @@ int     ipc_recv(IpcMessage *out_meta, void *buf, unsigned int buf_len);
  * La scadenza e' arrotondata per eccesso al tick del PIT (10 ms): non
  * ha senso chiederne una piu' fine di cosi'.
  * ============================================================================= */
+/* Rimette un messaggio che si e' letto ma che non era per chi lo ha letto: la
+ * prossima ipc_recv_* lo ritrova, prima di qualunque altro.
+ *
+ * ! SERVE PERCHE' LA MAILBOX E' UNA SOLA E I CONSUMATORI SONO PIU' D'UNO.
+ * Un'applicazione grafica ci riceve gli eventi del server a finestre E le
+ * risposte dello stack IP: chi aspetta le seconde scorre i messaggi e, senza
+ * questa, BUTTA i primi — cioe' i clic dell'utente mentre scarica una pagina.
+ * Non si puo' «non leggere» un messaggio: ipc_recv toglie dalla coda del
+ * kernel, e rimetterlo da questa parte e' l'unica difesa.
+ *
+ * Rende 0, oppure -1 se lo scaffale e' pieno — e in quel caso il messaggio si
+ * perde come si perdeva prima, non peggio. */
+int     ipc_rimetti(const IpcMessage *meta, const void *dati, unsigned int len);
+
 int     ipc_recv_timeout(IpcMessage *out_meta, void *buf, unsigned int buf_len,
                          unsigned int timeout_ms);
 
@@ -2171,6 +2220,42 @@ typedef struct {
 int     video_info(VideoInfo *v);
 
 /* =============================================================================
+ * log_seriale — una riga che arriva anche se nessuno guarda la tua console
+ *
+ * ! NON E' UN DOPPIONE DI printf, E LA DIFFERENZA E' TUTTA QUI. printf scrive
+ * sulla console del processo: se quella console non e' quella a video, il
+ * messaggio non lo legge nessuno — e se il processo e' un server grafico che
+ * gira su una console sua, non lo legge nessuno MAI.
+ *
+ * Serve a chi deve poter riferire un guasto proprio quando il guasto gli
+ * impedisce di farsi vedere. Il 14 agosto 2026 il server a finestre avviato
+ * sulla console 1 non dipingeva, e i suoi messaggi d'errore finivano sulla
+ * console che non si riusciva a guardare: uno strumento cieco costa piu' del
+ * difetto che deve trovare.
+ *
+ * ! UNA RIGA PER CHIAMATA, tagliata a 200 caratteri e marcata con il PID. E'
+ * un diario, non un flusso: chi ha dati da consegnare usa una pipe.
+ * ============================================================================= */
+int     log_seriale(const char *s);
+
+/* =============================================================================
+ * reboot — spegne, riavvia o ferma la macchina
+ *
+ * ! RENDE SOLO SE HA FALLITO. Se ha funzionato, questa chiamata non torna:
+ * chi ci scrive dopo del codice deve trattarlo come un errore, non come il
+ * caso normale.
+ *
+ * ! IL KERNEL SINCRONIZZA I DISCHI PRIMA, ed e' il motivo per cui questa
+ * passa dal kernel invece di scrivere sulla porta dell'emulatore da ring 3:
+ * spegnere senza svuotare le cache vuol dire perdere l'ultimo file scritto.
+ * ============================================================================= */
+#define EXOS_RB_POWEROFF  0     /* sincronizza, aspetta, spegne */
+#define EXOS_RB_RESTART   1     /* sincronizza e riavvia */
+#define EXOS_RB_HALT      2     /* sincronizza e ferma, senza spegnere */
+
+int     reboot(int cosa);
+
+/* =============================================================================
  * MEMORIA CONDIVISA FRA PROCESSI — le stesse pagine fisiche in due spazi
  *
  *     ShmZona z;
@@ -2248,6 +2333,51 @@ int     modo_testo(void);
 
 int     shm_apri(ShmZona *z);
 int     shm_chiudi(void *p);
+
+/* -----------------------------------------------------------------------------
+ * interrompi() — «smettila», detto a un altro processo
+ *
+ * Rende 0, oppure -ESRCH (non c'e'), -EPERM (non e' tuo, o e' init), -EINVAL
+ * (sei tu: per uscire c'e' exit).
+ *
+ * ! IL BERSAGLIO ESCE, NON RICEVE NIENTE. Non e' un segnale: non c'e' gestore,
+ * non c'e' maschera, non si puo' ignorare — e il codice di uscita e' 130, come
+ * una shell Unix riporta un Ctrl+C. Un programma non puo' quindi «pulire prima
+ * di andarsene»: quello che ha aperto lo chiude il kernel.
+ * --------------------------------------------------------------------------- */
+int     interrompi(int pid);
+
+/* -----------------------------------------------------------------------------
+ * Pseudo-terminali — una pipe CON una disciplina di linea attaccata
+ *
+ *     int fd[2];
+ *     pty_apri(fd);                  // fd[0] master, fd[1] slave
+ *     SpawnRedir r[3] = { {0,0,NULL,fd[1]}, {1,0,NULL,fd[1]}, {2,0,NULL,fd[1]} };
+ *     spawn_ex("/bin/sh", argv, environ, r, 3);
+ *     close(fd[1]);                  // ! come con le pipe: si chiude il capo dato
+ *
+ * ! CHI SCRIVE NEL MASTER STA BATTENDO TASTI, non stampando: quei byte passano
+ * dalla disciplina, che li accumula in una riga, li fa vedere (l'eco esce dal
+ * master, da leggere e disegnare) e li consegna allo slave solo all'Invio.
+ * Backspace cancella, Ctrl+C interrompe chi e' in primo piano, Ctrl+D a riga
+ * vuota e' la fine dei dati.
+ *
+ * ! IL PRIMO PIANO SI DICHIARA, e finche' nessuno lo fa Ctrl+C non interrompe
+ * nessuno: e' voluto. Il pty potrebbe prendersela con «l'ultimo che ha letto»,
+ * che pero' e' quasi sempre la shell — cioe' la sessione invece del programma.
+ *
+ * Le costanti PTY_* stanno qui sotto e valgono anche per il kernel.
+ * --------------------------------------------------------------------------- */
+#define PTY_CANONICO    0x0001
+#define PTY_ECO         0x0002
+
+#define PTY_CTL_FG              1   /* arg = pid che Ctrl+C deve interrompere */
+#define PTY_CTL_MODO            2   /* arg = PTY_CANONICO | PTY_ECO           */
+#define PTY_CTL_MISURA          3   /* arg = (righe << 16) | colonne          */
+#define PTY_CTL_LEGGI_MISURA    4   /* rende (righe << 16) | colonne          */
+
+int     pty_apri(int fd[2]);
+int     pty_ctl(int fd, unsigned int cmd, unsigned int arg);
 
 /* =============================================================================
  * ASPETTARE PIU' SORGENTI INSIEME — poll() e select()

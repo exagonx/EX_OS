@@ -67,7 +67,24 @@
 #define LIB_SPAZIO_BASE   0x04000000u
 #define LIB_SPAZIO_FINE   0x08000000u
 
-#define LIB_MAX           4     /* librerie diverse tenute insieme */
+/* ! IL TETTO E' DI TUTTO IL SISTEMA, NON DI UN PROCESSO, ed e' la cosa da
+ * sapere prima di scegliere il numero: questa e' una cache unica, quindi le
+ * quattro di prima erano quattro per la macchina intera. Il browser da solo
+ * ne apre gia' quattro — libc, exwin, exhttp, e exfont che exwin apre da se'
+ * per il TrueType — e la quinta, eximg per le immagini della pagina, non
+ * entrava piu'. Il messaggio c'era e diceva la verita'; la verita' era che il
+ * numero era troppo piccolo.
+ *
+ * Oggi le librerie del sistema sono SEI (libc, exwin, exdlg, exfont, exhttp,
+ * eximg) e ne sono dichiarate altre tre in arrivo per l'https (exbig, exasn1,
+ * extls): dodici e' quel conto piu' un margine, e non e' un numero che si
+ * alzera' ancora presto.
+ *
+ * ! E COSTA SOLO KERNEL .bss, NON RAM DELLE LIBRERIE: una voce inutilizzata e'
+ * `usata = 0` e non ha nessuna pagina dietro. Una voce sono circa 1,6 KB
+ * (96 pagine descritte piu' il percorso), quindi passare da quattro a dodici
+ * costa tredici kilobyte di kernel e nient'altro. */
+#define LIB_MAX           12    /* librerie diverse tenute insieme, IN TUTTO */
 #define LIB_PAGINE_MAX    96    /* 384 KB per libreria */
 #define LIB_PERC_MAX      96
 

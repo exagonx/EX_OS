@@ -73,7 +73,10 @@ the one on real hardware or on the real case — has not been done yet.
 
 **tested** — `http://www.google.com` returns 200 and 82550 bytes;
 `http://example.com` renders laid out in `/exwin/bin/browser`, with the heading
-in Liberation Sans Bold at 22 and the body in Serif at 15.
+in Liberation Sans Bold at 22 and the body in Serif at 15. And the **page's
+images show up**: a run against three hand-generated PNGs gives exactly 3000
+pixels for each of the three expected colours — that is, both the natural size
+and the one declared with `width`/`height` are right to the pixel.
 
 | | |
 |---|---|
@@ -81,7 +84,8 @@ in Liberation Sans Bold at 22 and the body in Serif at 15.
 | `lib/exhttp/exhttp.c` | the TCP transport, redirects |
 | `lib/exhtml/html.c` | from text to tree |
 | `bin/scarica` | fetches a page and prints or saves it |
-| `exwin/bin/browser` | address bar, links, scrolling |
+| `exwin/bin/browser` | address bar, links, scrolling, images |
+| `lib/eximg/eximg.c` | PNG, JPG and ICO — opened on demand, not linked in |
 
 ! **THE TRANSPORT IS A PARAMETER, NOT SOMETHING KNOWN.** Today TCP sits under
 HTTP; tomorrow, for `https://`, TLS will. If this code opened the connection
@@ -102,8 +106,20 @@ siblings and not a staircase; `<b><i>x</b>` closes up to the `<b>`; inside
 ! **`https://` IS REFUSED, AND SAYS SO.** TLS is missing: speaking plain HTTP to
 port 443 would give an incomprehensible answer and an unrelated error.
 
-What is **not** there, declared: CSS, tables laid out as tables, images inside
-the text, `https`.
+! **IMAGES COME AFTER THE TEXT.** The page is laid out and drawn with the words
+alone; only then is one image fetched at a time, and on each arrival the page is
+laid out again. Fetching them first would mean an empty window until the last
+one answers, and one that does not answer costs eight seconds by itself. One
+that never arrives leaves its place to its `alt`, which is what that attribute
+is for.
+
+! **AND THE PIXELS BELONG TO THE BROWSER, NOT TO THE DECODER**: it decodes,
+copies into the size it will be drawn at, and gives the natural bitmap straight
+back. Keeping it would mean letting the page choose how much memory to take —
+128 KB of PNG can be 4000×3000 pixels, that is 48 MB on a machine that has 32.
+The ceilings are declared: twelve images, 128 KB per file, 512 K pixels in all.
+
+What is **not** there, declared: CSS, tables laid out as tables, `https`.
 
 
 ### Fonts: TrueType, measured against FreeType

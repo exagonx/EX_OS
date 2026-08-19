@@ -55,6 +55,10 @@ public:
     const char *testo() const   { return ex_testo_prendi(h); }
     void mostra(bool v = true)  { ex_mostra(h, v ? 1 : 0); }
     void sposta(int x, int y)   { ex_sposta(h, x, y); }
+    /* h_ e non h: il campo si chiama gia' cosi', ed e' la maniglia. */
+    void misura(int w, int h_)  { ex_misura(h, w, h_); }
+    void rilievo(int x, int y, int w, int h_) { ex_rilievo(h, x, y, w, h_); }
+    void incavo(int x, int y, int w, int h_)  { ex_incavo(h, x, y, w, h_); }
 
 protected:
     ExFinestra h;
