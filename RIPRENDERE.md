@@ -12,12 +12,12 @@ seriale e USB — tastiera compresa, hub compresi.
 
 ## COSA E' COMMITTATO
 
-    a371159  "RIPRENDERE.md torna in pari, ed exhttp diventa una libreria
-              condivisa"
+    531f773  "Le immagini nel browser, e il tetto delle librerie che le
+              teneva fuori"
 
-In attesa nell'albero: **le immagini nel browser** — `<img>` scaricate,
-decodificate, ridotte e collocate; il `LIB_MAX` del kernel da 4 a 12; il
-Navigatore nell'elenco delle applicazioni.
+In attesa nell'albero: **l'installatore che non toglieva piu' il login** — la
+fusione di `kernel.cfg` invece del «lo lascio com'e'» — e **la cache su disco
+del browser**, in `$HOME/.app/browser/cache`.
 
 ! **`gitupdate.sh` FA `git add .` E UN COMMIT SOLO**: `messaggio-commit.txt`
 deve coprire tutto quello che si e' fatto dall'ultimo commit, non l'ultima
@@ -174,6 +174,110 @@ verifica del certificato si ottiene una connessione cifrata con CHIUNQUE — la
 barra direbbe `https://` senza poter dire con chi si sta parlando, che e'
 peggio del testo in chiaro perche' mente. Non e' una scelta da fare da soli.
 
+
+### L'INSTALLATORE TOGLIEVA L'AUTENTICAZIONE — e nessuno lo vedeva
+
+! **UN AGGIORNAMENTO LASCIAVA UNA RADICE ext2 SENZA ACCESSO.** Il kernel lancia
+`/bin/login` solo se `kernel.cfg` ha la voce `login` (kernel_main.c, PASSO 15);
+quella voce esiste dal 17 agosto 2026; e l'installatore, quando trovava un
+`kernel.cfg` gia' presente, **lo lasciava intatto e basta**. Quindi un sistema
+installato prima di quella data e poi aggiornato si riavviava con la radice
+ext2 e senza autenticazione — mentre due schermate piu' su l'installatore
+stampava «al primo avvio l'accesso sara' OBBLIGATORIO».
+
+! **NON ERA UNA SOVRASCRITTURA, ERA UN'OMISSIONE**, ed e' la parte da tenere a
+mente: «non tocco niente» sembra sempre la scelta prudente, e su un file di
+configurazione dell'utente quasi sempre lo e'. Non lo e' per una voce che nel
+file vecchio **non c'e'**: quella non e' una decisione di nessuno, e' una voce
+che non esisteva ancora quando quel file e' stato scritto.
+
+La regola nuova, in due righe:
+
+    voce ASSENTE e necessaria  ->  si aggiunge, e si dice che si e' aggiunta
+    voce PRESENTE ma diversa   ->  si lascia e si SUGGERISCE, perche' quella
+                                   si' e' una decisione di chi usa il sistema
+
+E in fondo si elencano le voci che il `kernel.cfg` spedito ha e quello
+installato no: non si toccano, si mostrano. L'elenco da allungare quando il
+kernel impara una voce nuova e' `CFG_NECESSARIE[]` in bin/install/install.c —
+e ci va **solo** una voce la cui assenza e' un difetto, non una preferenza.
+
+! **LE RIGHE COMMENTATE NON CONTANO COME VOCI.** `kernel.cfg` e' pieno di
+esempi spenti (`# svga = 800x600`): scambiarne uno per una voce presente
+vorrebbe dire non aggiungere mai la voce vera. E' uno dei sette casi del banco
+di prova.
+
+! **E IL TETTO DI 8191 BYTE VALE ANCHE QUI**: un file che sforerebbe NON si
+scrive, perche' oltre quel tetto le sezioni finali spariscono in silenzio e la
+macchina si presenta senza tastiera. Meglio dire «aggiungi questa riga a mano».
+
+#### Come si e' provato — riproducendo il difetto, non solo correggendolo
+
+    1. ISO costruita TOGLIENDO `login` da boot/kernel.cfg (il «prima»)
+    2. disco da 64 MB, fdisk (83), mkfs -t ext2, mount, install -t /disco
+    3. avvio DAL DISCO  ->  prompt della shell, `whoami` rende root
+                            NESSUNA autenticazione: difetto riprodotto
+    4. ISO normale, mount, `install -a /disco`, e poi avvio dal disco
+       ->  «nome utente:», utente creato, e da li' in poi si entra solo
+           autenticati
+
+    /boot/kernel.cfg      3058 byte
+    /boot/kernel.cfg.bak  3033 byte      (+25 = la riga aggiunta, e basta)
+    cmp                   differiscono al byte 1887, riga 49
+
+! **PIU' SETTE CASI SULL'HOST**, perche' il parser e' la parte che sbaglia:
+voce assente, voce presente, voce presente ma diversa, voce solo commentata,
+sezione mancante, file al tetto, e la voce che deve finire DENTRO `[boot]` e
+non dopo `[modules]`. **Il banco ha trovato un difetto mio**: il percorso del
+`.bak` veniva TRONCATO invece che rifiutato, e un `.bak` troncato e' il nome di
+un altro file su cui `copia()` avrebbe scritto sopra.
+
+### La cache su disco del browser
+
+`$HOME/.app/browser/cache`, e la convenzione e' `$HOME/.app/<programma>/`.
+
+! **IL POSTO NON SI SCRIVE NEL CODICE, SI RICAVA DA `HOME`.** La casa e'
+`/root` solo per root e `/home/<utente>` per tutti gli altri — la regola sta in
+bin/login/login.c — e un percorso costante nel sorgente funzionerebbe per una
+persona sola.
+
+! **SE NON SI PUO' SCRIVERE NON SI MUORE.** Avviando da CD la radice e' in sola
+lettura: il browser lo dice una volta e lavora in memoria come prima.
+
+! **IL NOME DEL FILE E' L'IMPRONTA DELL'INDIRIZZO, MA A DECIDERE E'
+L'INDIRIZZO SCRITTO DENTRO.** Un'impronta a 32 bit ogni tanto collide, e una
+collisione servirebbe l'immagine SBAGLIATA — un difetto silenzioso, il peggiore
+che una cache possa avere. Con l'indirizzo nella testa del file la collisione
+diventa un buco: si riscarica.
+
+! **«INDIETRO» SI SERVE DALLA CACHE, TUTTO IL RESTO VA IN RETE.** Tornare
+indietro deve mostrare la pagina che si e' vista; battere un indirizzo o premere
+un collegamento e' una richiesta nuova e vuole la pagina di adesso.
+
+! **ED E' UNA DIRECTORY TEMPORANEA: SI SVUOTA ALL'AVVIO**, e si cancellano solo
+i file col nostro nome (otto cifre esadecimali piu' `.dat`). Svuotare una
+directory cancellando tutto quello che ci si trova dentro e' come si perdono i
+file di qualcun altro il giorno che il percorso e' sbagliato di un livello.
+
+#### Cosa e' provato e cosa no — detto per intero
+
+**Sull'host, 12 casi sul codice ESTRATTO TALE E QUALE** dal browser: creazione
+della catena di directory, scrittura e rilettura byte per byte, miss su
+indirizzo mai visto, **collisione che non serve il file sbagliato**, tetto per
+sessione, svuotamento che lascia in pace i file altrui, e `HOME` assente.
+
+**Dentro EX-OS**: `browser: cache in /disco/root/.app/browser/cache` su una
+casa scrivibile ext2, e `browser: niente cache in /.app (filesystem in sola
+lettura), lavoro in memoria` avviando da CD.
+
+! **QUELLO CHE NON E' PROVATO IN VOLO, E VA DETTO**: il colpo a segno vero —
+la seconda `<img>` con lo stesso `src` servita dal disco invece che dalla rete
+— non e' stato verificato dentro EX-OS. Il server di prova sull'host ha smesso
+di essere raggiungibile dalla macchina virtuale a meta' sessione (i processi
+non condividono piu' lo spazio di rete), quindi le esecuzioni di rete dopo il
+commit 531f773 sono INCONCLUDENTI, non negative. Va rifatto con la ricetta di
+«Come si prova la catena della rete», guardando il log del server: la stessa
+`quadranti.png` dev'essere chiesta **una volta sola** invece che due.
 
 ## Difetti aperti, dichiarati
 

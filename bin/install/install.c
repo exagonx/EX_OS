@@ -776,6 +776,345 @@ static int installa_driver(const char *punto)
  * `install /disco` e vuole anche il compilatore prova `install` con
  * qualcosa, non un comando che si chiama toolinst.
  * ============================================================================= */
+/* =============================================================================
+ * kernel.cfg SI FONDE — non si sostituisce, e non si lascia nemmeno com'e'
+ *
+ * ! IL FILE E' DI CHI USA IL SISTEMA, MA CERTE VOCI SONO DEL SISTEMA, e fino a
+ * oggi l'installatore vedeva solo la prima meta' della frase: se kernel.cfg
+ * c'era gia' lo lasciava intatto e lo diceva. Su quasi tutte le voci e' la
+ * scelta giusta — i montaggi, `verboseboot`, le variabili d'ambiente sono
+ * decisioni prese di proposito, e un aggiornamento non deve disfarle.
+ *
+ * ! MA UNA VOCE CHE NEL FILE VECCHIO NON C'E' NON E' UNA DECISIONE DI NESSUNO:
+ * e' una voce che non esisteva ancora quando quel file e' stato scritto. E
+ * `login` e' esattamente quel caso, con la conseguenza peggiore possibile — il
+ * kernel lancia /bin/login SOLO se la voce c'e' (kernel_main.c, PASSO 15),
+ * quindi un sistema installato prima del 17 agosto 2026 e poi aggiornato si
+ * riavviava CON LA RADICE ext2 E SENZA AUTENTICAZIONE, mentre due schermate
+ * piu' su l'installatore stampava che «al primo avvio l'accesso sara'
+ * OBBLIGATORIO». Diceva il falso, e lo diceva in favore di chi entra.
+ *
+ * La regola sta in due righe:
+ *
+ *     voce ASSENTE e necessaria  ->  si aggiunge, e si dice che si e' aggiunta
+ *     voce PRESENTE ma diversa   ->  si lascia e si SUGGERISCE, perche' quella
+ *                                    si' e' una decisione di chi usa il sistema
+ *
+ * ! E LE RIGHE COMMENTATE NON CONTANO COME VOCI. kernel.cfg e' pieno di esempi
+ * spenti — «# svga = 800x600» — e scambiarne uno per una voce presente
+ * vorrebbe dire non aggiungere mai la voce vera.
+ * ============================================================================= */
+
+/* Il tetto vero, e non e' scelto qui: kernel/fs/cfg.c legge 8191 byte e oltre
+ * quelli le sezioni finali spariscono in silenzio — cioe' la macchina si
+ * presenta senza tastiera. Un file che sforerebbe NON si scrive. */
+#define CFG_MAX_BYTE    8191u
+#define CFG_NOME_MAX    48
+
+typedef struct {
+    const char *sezione;
+    const char *chiave;
+    const char *valore;
+    const char *perche;
+} VoceCfg;
+
+/* ! QUESTO E' L'ELENCO DA ALLUNGARE, e va allungato ogni volta che il kernel
+ * impara a leggere una voce SENZA LA QUALE si comporta diversamente da come
+ * l'installatore promette. Non ogni voce nuova: solo quelle la cui assenza e'
+ * un difetto e non una preferenza. */
+static const VoceCfg CFG_NECESSARIE[] = {
+    { "boot", "login", "/bin/login",
+      "senza, su una radice ext2 si entra SENZA autenticazione" },
+    { 0, 0, 0, 0 }
+};
+
+/* Tutto il file in `dst`. Rende i byte letti, -1 se non si apre. */
+static int cfg_leggi(const char *perc, char *dst, unsigned int max)
+{
+    int fd = open(perc, O_RDONLY), n;
+
+    if (fd < 0) return -1;
+    n = (int)read(fd, dst, (size_t)max - 1);
+    close(fd);
+    if (n < 0) n = 0;
+    dst[n] = '\0';
+    return n;
+}
+
+static const char *cfg_bianchi(const char *p)
+{
+    while (*p == ' ' || *p == '\t') p++;
+    return p;
+}
+
+static const char *cfg_riga_dopo(const char *p)
+{
+    while (*p && *p != '\n') p++;
+    return *p ? p + 1 : p;
+}
+
+static int cfg_uguale(const char *a, const char *b)
+{
+    while (*a && *b && *a == *b) { a++; b++; }
+    return *a == '\0' && *b == '\0';
+}
+
+/* Copia in `out` cio' che sta prima di uno dei terminatori, senza gli spazi
+ * ai bordi. Serve sia ai nomi di sezione (terminatore ']') sia alle chiavi
+ * (terminatore '='). */
+static void cfg_parola(const char *p, char fine, char *out, unsigned int max)
+{
+    unsigned int i = 0;
+
+    p = cfg_bianchi(p);
+    while (p[i] && p[i] != fine && p[i] != '\n' && p[i] != '\r' &&
+           i < max - 1) { out[i] = p[i]; i++; }
+    while (i > 0 && (out[i - 1] == ' ' || out[i - 1] == '\t')) i--;
+    out[i] = '\0';
+}
+
+/* Cerca [sezione] chiave dentro `testo`. Rende:
+ *
+ *     1   la chiave c'e'      -> `valore` la riporta
+ *     0   sezione si', chiave no -> `*coda` dice DOVE inserirla
+ *    -1   la sezione non c'e' proprio
+ *
+ * `coda` e' lo scostamento subito dopo l'ultima riga vera della sezione: la
+ * voce nuova finisce cosi' in mezzo alle altre e non dopo i commenti di
+ * quella successiva. */
+static int cfg_cerca(const char *testo, const char *sez, const char *chiave,
+                     char *valore, unsigned int vmax, unsigned int *coda)
+{
+    const char *p = testo;
+    const char *ultima = 0;
+    int         dentro = 0;
+
+    while (*p) {
+        const char *r  = cfg_bianchi(p);
+        const char *pr = cfg_riga_dopo(p);
+
+        if (*r == '[') {
+            char nome[CFG_NOME_MAX];
+
+            if (dentro) break;              /* la sezione cercata finisce qui */
+            cfg_parola(r + 1, ']', nome, sizeof(nome));
+            dentro = cfg_uguale(nome, sez);
+            if (dentro) ultima = pr;
+            p = pr;
+            continue;
+        }
+
+        if (dentro && *r != '#' && *r != '\n' && *r != '\r' && *r != '\0') {
+            char k[CFG_NOME_MAX];
+
+            cfg_parola(r, '=', k, sizeof(k));
+            if (cfg_uguale(k, chiave)) {
+                const char *v = r;
+
+                while (*v && *v != '=' && *v != '\n') v++;
+                if (vmax) valore[0] = '\0';
+                if (*v == '=' && vmax) {
+                    cfg_parola(v + 1, '\n', valore, vmax);
+                }
+                return 1;
+            }
+            ultima = pr;
+        }
+
+        p = pr;
+    }
+
+    if (dentro) {
+        if (coda) *coda = (unsigned int)((ultima ? ultima : p) - testo);
+        return 0;
+    }
+    return -1;
+}
+
+/* Infila `riga` allo scostamento `dove`. Rende 0 se non ci sta: e non farla
+ * stare e' un esito, non un incidente — vedi il tetto di 8191. */
+static int cfg_inserisci(char *testo, unsigned int max, unsigned int dove,
+                         const char *riga)
+{
+    unsigned int n = (unsigned int)strlen(testo);
+    unsigned int l = (unsigned int)strlen(riga);
+    unsigned int i;
+
+    if (n + l + 1 > max) return 0;
+    if (dove > n) dove = n;
+
+    for (i = n + 1; i-- > dove; ) testo[i + l] = testo[i];
+    for (i = 0; i < l; i++) testo[dove + i] = riga[i];
+    return 1;
+}
+
+/* La sezione non c'era: si aggiunge in fondo, con la sua voce dentro. */
+static int cfg_appendi_sezione(char *testo, unsigned int max, const char *sez,
+                               const char *riga)
+{
+    char         blocco[CFG_NOME_MAX + 8];
+    unsigned int n = (unsigned int)strlen(testo);
+
+    blocco[0] = '\n'; blocco[1] = '[';
+    blocco[2] = '\0';
+    strncat(blocco, sez, sizeof(blocco) - strlen(blocco) - 1);
+    strncat(blocco, "]\n", sizeof(blocco) - strlen(blocco) - 1);
+
+    if (!cfg_inserisci(testo, max, n, blocco)) return 0;
+    return cfg_inserisci(testo, max, (unsigned int)strlen(testo), riga);
+}
+
+/* Le voci che il file spedito ha e quello installato no. Non si toccano: si
+ * SUGGERISCONO, perche' se una voce nuova serva o no lo sa chi usa quella
+ * macchina, non l'installatore. */
+static int cfg_suggerisci(const char *nuovo, const char *vecchio)
+{
+    const char *p = nuovo;
+    char        sez[CFG_NOME_MAX] = "";
+    int         detti = 0;
+
+    while (*p) {
+        const char *r  = cfg_bianchi(p);
+        const char *pr = cfg_riga_dopo(p);
+
+        if (*r == '[') {
+            cfg_parola(r + 1, ']', sez, sizeof(sez));
+        } else if (sez[0] && *r != '#' && *r != '\n' && *r != '\r' && *r) {
+            char k[CFG_NOME_MAX], v[128];
+
+            cfg_parola(r, '=', k, sizeof(k));
+            if (k[0] && cfg_cerca(vecchio, sez, k, v, sizeof(v), 0) != 1) {
+                cfg_parola(r, '\n', v, sizeof(v));
+                if (!detti) {
+                    printf("    voci che il tuo kernel.cfg non ha ancora"
+                           " (valuta se ti servono):\n");
+                    detti = 1;
+                }
+                printf("      [%s] %s\n", sez, v);
+            }
+        }
+
+        p = pr;
+    }
+    return detti;
+}
+
+/* Il lavoro vero. `perc` e' il kernel.cfg gia' installato. */
+static void aggiorna_kernel_cfg(const char *perc)
+{
+    static char  testo[CFG_MAX_BYTE + 1];
+    static char  spedito[CFG_MAX_BYTE + 1];
+    char         valore[128];
+    char         riga[192];
+    char         bak[PERC_MAX];
+    int          i, aggiunte = 0, stretto = 0;
+
+    if (cfg_leggi(perc, testo, sizeof(testo)) < 0) {
+        printf("  ! %s non si rilegge: lo lascio com'e'\n", perc);
+        return;
+    }
+
+    for (i = 0; CFG_NECESSARIE[i].chiave; i++) {
+        const VoceCfg *v = &CFG_NECESSARIE[i];
+        unsigned int   coda = 0;
+        int            dove;
+
+        dove = cfg_cerca(testo, v->sezione, v->chiave,
+                         valore, sizeof(valore), &coda);
+
+        /* ! PRESENTE VUOL DIRE SCELTA, ANCHE SE E' DIVERSA DA QUELLA CHE
+         * metteremmo noi: chi ha scritto `login = /bin/altro` sapeva cosa
+         * stava facendo, e un aggiornamento che glielo cambia e' un
+         * aggiornamento di cui non ci si puo' fidare. */
+        if (dove == 1) {
+            if (!cfg_uguale(valore, v->valore))
+                printf("    [%s] %s = %s  (diverso dal predefinito %s:"
+                       " lo lascio)\n",
+                       v->sezione, v->chiave, valore, v->valore);
+            continue;
+        }
+
+        riga[0] = '\0';
+        strncat(riga, v->chiave, sizeof(riga) - strlen(riga) - 1);
+        strncat(riga, "       = ", sizeof(riga) - strlen(riga) - 1);
+        strncat(riga, v->valore, sizeof(riga) - strlen(riga) - 1);
+        strncat(riga, "\n", sizeof(riga) - strlen(riga) - 1);
+
+        if (dove == 0) {
+            if (!cfg_inserisci(testo, sizeof(testo), coda, riga)) stretto = 1;
+            else aggiunte++;
+        } else {
+            if (!cfg_appendi_sezione(testo, sizeof(testo), v->sezione, riga))
+                stretto = 1;
+            else aggiunte++;
+        }
+
+        if (!stretto)
+            printf("    + [%s] %s = %s\n      %s\n",
+                   v->sezione, v->chiave, v->valore, v->perche);
+    }
+
+    if (stretto) {
+        printf("  ! kernel.cfg e' vicino al tetto di %u byte: non ci sta\n",
+               CFG_MAX_BYTE);
+        printf("    altro, e oltre quel tetto le sezioni finali spariscono.\n");
+        printf("    Togli qualche commento e rilancia, oppure aggiungi a"
+               " mano:\n");
+        for (i = 0; CFG_NECESSARIE[i].chiave; i++)
+            printf("      [%s] %s = %s\n", CFG_NECESSARIE[i].sezione,
+                   CFG_NECESSARIE[i].chiave, CFG_NECESSARIE[i].valore);
+    }
+
+    if (aggiunte > 0) {
+        /* ! IL FILE DI PRIMA SI TIENE, e non per abitudine: e' l'unico modo di
+         * tornare indietro se la voce aggiunta non piace o non funziona su
+         * questa macchina. Stessa regola di hwconfig. */
+        /* ! UN PERCORSO TRONCATO NON E' UN PERCORSO PIU' CORTO, e qui
+         * sarebbe stato pericoloso: `.../kernel.cfg` tagliato a misura piu'
+         * «.bak» e' il nome di un ALTRO file, e copia() ci scriverebbe sopra
+         * senza che nessuno l'abbia chiesto. Se non ci sta, la copia di
+         * sicurezza non si fa e si dice — l'aggiornamento vale la pena lo
+         * stesso, ma chi legge deve sapere che indietro non si torna da solo.
+         * Trovato dal banco di prova sull'host, con un percorso lungo. */
+        if (strlen(perc) + 4 < sizeof(bak)) {
+            strcpy(bak, perc);
+            strcat(bak, ".bak");
+            if (copia(perc, bak) == 0)
+                printf("    il file di prima e' in %s\n", bak);
+            else
+                printf("  ! copia di sicurezza %s non riuscita (%s)\n",
+                       bak, strerror(errno));
+        } else {
+            printf("  ! %s e' troppo lungo per farne una copia .bak:"
+                   " procedo senza\n", perc);
+        }
+
+        {
+            int fd = open(perc, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+            int n  = (int)strlen(testo);
+
+            if (fd < 0 || (int)write(fd, testo, (size_t)n) != n) {
+                if (fd >= 0) close(fd);
+                printf("  ! non riesco a riscrivere %s (%s)\n",
+                       perc, strerror(errno));
+                printf("    Il sistema si avviera' SENZA quelle voci.\n");
+                errori++;
+                return;
+            }
+            close(fd);
+        }
+        printf("  = %s aggiornato: %d voc%s aggiunt%s, il resto com'era\n",
+               perc, aggiunte, aggiunte == 1 ? "e" : "i",
+               aggiunte == 1 ? "a" : "e");
+    } else if (!stretto) {
+        printf("  = %s  (le voci necessarie ci sono gia': non lo tocco)\n",
+               perc);
+    }
+
+    if (cfg_leggi("/boot/kernel.cfg", spedito, sizeof(spedito)) > 0)
+        cfg_suggerisci(spedito, testo);
+}
+
 static int installa_strumenti(int argc, char **argv)
 {
     char *a[16];
@@ -1008,18 +1347,16 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    /* ! kernel.cfg NON si sovrascrive se c'e' gia': e' l'unico file di
-     * tutto l'installatore che appartiene a chi usa il sistema e non al
-     * sistema. Ci stanno dentro i montaggi automatici, verboseboot, la
-     * shell, le variabili d'ambiente — cose che l'utente ha cambiato di
-     * proposito e che un aggiornamento non deve riportare indietro in
-     * silenzio. Se manca si installa, se c'e' si lascia e lo si dice. */
+    /* kernel.cfg: se manca si installa, se c'e' si FONDE. Il perche' della
+     * fusione — e perche' «lo lascio com'e'» non bastava — sta tutto sopra
+     * aggiorna_kernel_cfg(). */
+    printf("\nConfigurazione\n");
     unisci(q, p, "kernel.cfg");
     {
         int f = open(q, O_RDONLY);
         if (f >= 0) {
             close(f);
-            printf("  = %s  (gia' presente: la tua configurazione resta)\n", q);
+            aggiorna_kernel_cfg(q);
         } else {
             copia("/boot/kernel.cfg", q);
         }

@@ -693,6 +693,231 @@ static int risolvi(const char *rif, char *out, unsigned int max)
 }
 
 /* -----------------------------------------------------------------------------
+ * La cache su disco
+ *
+ * ! IL POSTO NON SI SCRIVE NEL CODICE, SI RICAVA DA `HOME`. La casa e' /root
+ * solo per root e /home/<utente> per tutti gli altri — la regola sta in
+ * bin/login/login.c — e un percorso costante nel sorgente funzionerebbe per
+ * una persona sola. Da li' in giu' la convenzione e' $HOME/.app/<programma>/,
+ * cioe' per noi $HOME/.app/browser/cache.
+ *
+ * ! E SE NON SI PUO' SCRIVERE NON SI MUORE. Avviando da CD la radice e' in
+ * sola lettura e la directory non si crea: il browser lavora in memoria
+ * esattamente come prima, e lo dice una volta sola invece di riprovarci a
+ * ogni immagine.
+ *
+ * ! IL NOME DEL FILE E' L'IMPRONTA DELL'INDIRIZZO, MA A DECIDERE E'
+ * L'INDIRIZZO SCRITTO DENTRO. Un'impronta a 32 bit ogni tanto collide, e una
+ * collisione servirebbe l'immagine SBAGLIATA — che e' un difetto silenzioso,
+ * il peggiore che una cache possa avere. Con l'indirizzo nella testa del file
+ * una collisione diventa semplicemente un buco: si riscarica e si riscrive.
+ *
+ * ! ED E' UNA DIRECTORY TEMPORANEA, quindi si svuota all'avvio. Il guadagno
+ * che conta e' dentro la sessione — la stessa <img> ripetuta, e «indietro» che
+ * non ripassa dalla rete — e una cache che sopravvive ai riavvii vorrebbe una
+ * politica di scadenza che qui non c'e'.
+ * --------------------------------------------------------------------------- */
+#define CACHE_MAX_BYTE  (4u * 1024u * 1024u)   /* quanto si scrive per sessione */
+#define CACHE_PERC_MAX  192
+#define CACHE_PULIZIA   128                    /* nomi per giro di svuotamento */
+
+typedef struct {
+    char         magia[12];
+    unsigned int byte;
+    char         url[EXHTTP_URL_MAX];
+} CacheTesta;
+
+static char         g_cache[CACHE_PERC_MAX] = "";
+static unsigned int g_cache_scritti = 0;
+
+/* Il percorso del file di una risorsa: otto cifre esadecimali piu' «.dat»,
+ * che sta anche in un nome 8.3 se la casa dell'utente e' su FAT. */
+static void cache_nome(const char *url, char *out, unsigned int max)
+{
+    static const char cifre[] = "0123456789abcdef";
+    unsigned int      h = 2166136261u;      /* FNV-1a */
+    unsigned int      i;
+    char              nome[16];
+
+    while (*url) { h ^= (unsigned char)*url++; h *= 16777619u; }
+
+    for (i = 0; i < 8; i++) nome[i] = cifre[(h >> ((7 - i) * 4)) & 0xFu];
+    nome[8] = '.'; nome[9] = 'd'; nome[10] = 'a'; nome[11] = 't';
+    nome[12] = '\0';
+
+    strncpy(out, g_cache, max - 1);
+    out[max - 1] = '\0';
+    strncat(out, "/", max - strlen(out) - 1);
+    strncat(out, nome, max - strlen(out) - 1);
+}
+
+/* ! SI CANCELLA SOLO QUELLO CHE ABBIAMO SCRITTO NOI, e il riconoscimento e' il
+ * nome: otto cifre esadecimali e «.dat». Svuotare una directory cancellando
+ * tutto quello che ci si trova dentro e' come si perdono i file di qualcun
+ * altro il giorno che il percorso e' sbagliato di un livello. */
+static int cache_nostro(const char *n)
+{
+    int i;
+
+    for (i = 0; i < 8; i++)
+        if (!((n[i] >= '0' && n[i] <= '9') || (n[i] >= 'a' && n[i] <= 'f')))
+            return 0;
+
+    return n[8] == '.' && n[9] == 'd' && n[10] == 'a' && n[11] == 't' &&
+           n[12] == '\0';
+}
+
+static void cache_svuota(void)
+{
+    static char nomi[CACHE_PULIZIA][16];
+    int         giri;
+
+    if (!g_cache[0]) return;
+
+    /* ! I NOMI SI RACCOLGONO PRIMA E SI CANCELLANO POI. Cancellare mentre si
+     * scorre una directory vuol dire cambiare sotto i piedi la cosa che si sta
+     * scorrendo, e quanto sia grave dipende dal filesystem — cioe' e' un
+     * difetto che si presenta su un disco e non sull'altro. */
+    for (giri = 0; giri < 32; giri++) {
+        DIR           *d = opendir(g_cache);
+        struct dirent *e;
+        int            n = 0, i;
+
+        if (!d) return;
+        while (n < CACHE_PULIZIA && (e = readdir(d)) != 0) {
+            if (!cache_nostro(e->d_name)) continue;
+            strncpy(nomi[n], e->d_name, sizeof(nomi[0]) - 1);
+            nomi[n][sizeof(nomi[0]) - 1] = '\0';
+            n++;
+        }
+        closedir(d);
+
+        for (i = 0; i < n; i++) {
+            char p[CACHE_PERC_MAX + 24];
+
+            strncpy(p, g_cache, sizeof(p) - 1);
+            p[sizeof(p) - 1] = '\0';
+            strncat(p, "/", sizeof(p) - strlen(p) - 1);
+            strncat(p, nomi[i], sizeof(p) - strlen(p) - 1);
+            unlink(p);
+        }
+
+        if (n < CACHE_PULIZIA) return;      /* la directory e' finita */
+    }
+}
+
+/* Crea $HOME/.app/browser/cache. Si chiama una volta, all'avvio. */
+static void cache_prepara(void)
+{
+    const char *casa = getenv("HOME");
+    char        p[CACHE_PERC_MAX];
+    int         i;
+
+    static const char *const passi[] = { "/.app", "/browser", "/cache" };
+
+    g_cache[0] = '\0';
+
+    if (!casa || !casa[0]) {
+        printf("browser: HOME non c'e', niente cache su disco.\n");
+        return;
+    }
+    if (strlen(casa) + 24 >= sizeof(p)) {
+        printf("browser: HOME troppo lungo, niente cache su disco.\n");
+        return;
+    }
+
+    strcpy(p, casa);
+
+    /* ! LE BARRE FINALI SI TOLGONO TUTTE, COMPRESA QUELLA DELLA RADICE, o
+     * «/» piu' «/.app» diventa «//.app». Su POSIX le due barre portano allo
+     * stesso posto, ma il percorso finisce stampato nei messaggi e scritto
+     * nella variabile: uno che si legge male e' uno che si cerca male. */
+    i = (int)strlen(p);
+    while (i > 0 && p[i - 1] == '/') p[--i] = '\0';
+
+    /* ! mkdir NON FA LA CATENA, e EEXIST non e' un errore: e' il caso normale
+     * dalla seconda volta in poi. */
+    for (i = 0; i < 3; i++) {
+        strncat(p, passi[i], sizeof(p) - strlen(p) - 1);
+        if (mkdir(p, i == 2 ? 0700 : 0755) != 0 && errno != EEXIST) {
+            printf("browser: niente cache in %s (%s), lavoro in memoria.\n",
+                   p, strerror(errno));
+            return;
+        }
+    }
+
+    strncpy(g_cache, p, sizeof(g_cache) - 1);
+    g_cache[sizeof(g_cache) - 1] = '\0';
+
+    cache_svuota();
+    printf("browser: cache in %s\n", g_cache);
+}
+
+/* Rende 1 e riempie `buf` se la risorsa c'e' ed e' proprio la sua. */
+static int cache_leggi(const char *url, unsigned char *buf, unsigned int max,
+                       unsigned int *quanti)
+{
+    CacheTesta t;
+    char       p[CACHE_PERC_MAX + 24];
+    int        fd, n;
+
+    if (!g_cache[0]) return 0;
+
+    cache_nome(url, p, sizeof(p));
+    fd = open(p, O_RDONLY);
+    if (fd < 0) return 0;
+
+    n = (int)read(fd, &t, sizeof(t));
+    if (n != (int)sizeof(t)) { close(fd); return 0; }
+
+    t.magia[sizeof(t.magia) - 1] = '\0';
+    t.url[sizeof(t.url) - 1]     = '\0';
+
+    if (!uguale(t.magia, "EXCACHE1") || t.byte == 0 || t.byte > max ||
+        !uguale(t.url, url)) { close(fd); return 0; }
+
+    n = (int)read(fd, buf, t.byte);
+    close(fd);
+    if (n != (int)t.byte) return 0;
+
+    *quanti = t.byte;
+    return 1;
+}
+
+static void cache_scrivi(const char *url, const unsigned char *dati,
+                         unsigned int n)
+{
+    CacheTesta t;
+    char       p[CACHE_PERC_MAX + 24];
+    int        fd, bene;
+
+    if (!g_cache[0] || n == 0) return;
+
+    /* ! QUANDO IL TETTO E' PIENO SI SMETTE DI SCRIVERE MA SI CONTINUA A
+     * LEGGERE. Una cache che si svuota da sola a meta' navigazione sarebbe
+     * peggio di nessuna cache: ogni pagina ricomincerebbe da zero senza che si
+     * capisca perche'. */
+    if (g_cache_scritti + n > CACHE_MAX_BYTE) return;
+
+    cache_nome(url, p, sizeof(p));
+    fd = open(p, O_CREAT | O_WRONLY | O_TRUNC, 0600);
+    if (fd < 0) return;
+
+    memset(&t, 0, sizeof(t));
+    strcpy(t.magia, "EXCACHE1");
+    t.byte = n;
+    strncpy(t.url, url, sizeof(t.url) - 1);
+
+    bene = (write(fd, &t, sizeof(t)) == (ssize_t)sizeof(t) &&
+            write(fd, dati, n) == (ssize_t)n);
+    close(fd);
+
+    /* Una voce scritta a meta' e' peggio di una voce assente: si toglie. */
+    if (bene) g_cache_scritti += n;
+    else      unlink(p);
+}
+
+/* -----------------------------------------------------------------------------
  * Prendere le immagini
  * --------------------------------------------------------------------------- */
 
@@ -704,19 +929,30 @@ static int imm_prendi(int k)
     ExHttpEsito  e;
     EximgBitmap  bm;
     char         url[EXHTTP_URL_MAX];
+    unsigned int n = 0;
     unsigned int w, h;
 
     if (!eximg_pronta()) return 0;
     if (!risolvi(im->src, url, sizeof(url))) return 0;
-    if (!exhttp_prendi(url, g_imm_buf, sizeof(g_imm_buf), &e)) return 0;
-    if (e.codice != 200 || e.byte == 0) return 0;
 
-    /* ! UN FILE TRONCATO NON SI PROVA A DECODIFICARE: un PNG a meta' non e' un
-     * PNG piu' piccolo, e' un file rotto — e il decodificatore lo scoprirebbe
-     * dopo aver allocato. */
-    if (e.troncata) return 0;
+    /* ! LA CACHE SI GUARDA PRIMA DELLA RETE, e si ripaga gia' dentro una
+     * pagina sola: due <img> con lo stesso `src` erano due richieste, e nella
+     * prova lo si vedeva nel log del server. */
+    if (!cache_leggi(url, g_imm_buf, sizeof(g_imm_buf), &n)) {
+        if (!exhttp_prendi(url, g_imm_buf, sizeof(g_imm_buf), &e)) return 0;
+        if (e.codice != 200 || e.byte == 0) return 0;
 
-    if (!g_img_carica(g_imm_buf, e.byte, &bm)) return 0;
+        /* ! UN FILE TRONCATO NON SI PROVA A DECODIFICARE: un PNG a meta' non
+         * e' un PNG piu' piccolo, e' un file rotto — e il decodificatore lo
+         * scoprirebbe dopo aver allocato. E non si mette in cache, o il
+         * troncamento diventerebbe permanente. */
+        if (e.troncata) return 0;
+
+        n = e.byte;
+        cache_scrivi(url, g_imm_buf, n);
+    }
+
+    if (!g_img_carica(g_imm_buf, n, &bm)) return 0;
 
     misura(im, bm.larghezza, bm.altezza, &w, &h);
 
@@ -771,20 +1007,40 @@ static void immagini_prendi(void)
 /* -----------------------------------------------------------------------------
  * Andare
  * --------------------------------------------------------------------------- */
-static void vai(const char *url, int in_storia)
+/* ! «INDIETRO» SI SERVE DALLA CACHE, TUTTO IL RESTO VA IN RETE, ed e' la
+ * distinzione che rende una cache di pagine accettabile: tornare indietro deve
+ * mostrare la pagina che si e' vista, mentre battere un indirizzo o premere un
+ * collegamento e' una richiesta nuova e vuole la pagina di adesso. Una cache
+ * che risponde anche a quelle mostrerebbe notizie vecchie senza dirlo. */
+static void vai(const char *url, int in_storia, int usa_cache)
 {
-    ExHttpEsito e;
-    char        msg[160];
+    ExHttpEsito  e;
+    char         msg[160];
+    unsigned int n = 0;
+    int          da_cache = 0;
 
     if (!url || !url[0]) return;
 
     dico("sto scaricando...");
     ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
 
-    if (!exhttp_prendi(url, g_pagina, sizeof(g_pagina), &e)) {
+    memset(&e, 0, sizeof(e));
+
+    if (usa_cache && cache_leggi(url, g_pagina, sizeof(g_pagina), &n)) {
+        e.codice = 200;
+        e.byte   = n;
+        strncpy(e.finale, url, sizeof(e.finale) - 1);
+        da_cache = 1;
+    } else if (!exhttp_prendi(url, g_pagina, sizeof(g_pagina), &e)) {
         sprintf(msg, "%s: %s", url, e.errore[0] ? e.errore : "non riuscito");
         dico(msg);
         return;
+    } else if (!e.troncata) {
+        /* ! LA CHIAVE E' `finale`, NON L'INDIRIZZO CHIESTO, perche' e' li' che
+         * il contenuto sta davvero: dopo una redirezione i due sono diversi, e
+         * `indietro` cerchera' proprio `finale` — e' quello che finisce nella
+         * storia. */
+        cache_scrivi(e.finale, g_pagina, e.byte);
     }
 
     if (in_storia && g_storia_n < STORIA_MAX && g_qui[0]) {
@@ -809,7 +1065,8 @@ static void vai(const char *url, int in_storia)
     g_scorri = 0;
     impagina();
 
-    sprintf(msg, "%d, %u byte, %u nodi%s%s", e.codice, e.byte, g_doc.nodi_n,
+    sprintf(msg, "%d, %u byte, %u nodi%s%s%s", e.codice, e.byte, g_doc.nodi_n,
+            da_cache ? " (dalla cache)" : "",
             e.troncata ? " (pagina troncata)" : "",
             g_doc.troncato ? " (albero troncato)" : "");
     dico(msg);
@@ -829,7 +1086,7 @@ static void segui(int k)
     if (k < 0 || k >= g_link_n) return;
     if (!risolvi(g_link[k], nuovo, sizeof(nuovo))) return;
 
-    vai(nuovo, 1);
+    vai(nuovo, 1, 0);
 }
 
 /* Quale collegamento sta sotto quel punto, o -1. */
@@ -873,7 +1130,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         if (wp == ID_VAI) {
             const char *t = ex_testo_prendi(g_url);
 
-            if (t && t[0]) vai(t, 1);
+            if (t && t[0]) vai(t, 1, 0);
             return 0;
         }
         if (wp == ID_INDIETRO) {
@@ -883,7 +1140,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
                 g_storia_n--;
                 strncpy(indietro, g_storia[g_storia_n], sizeof(indietro) - 1);
                 indietro[sizeof(indietro) - 1] = '\0';
-                vai(indietro, 0);
+                vai(indietro, 0, 1);
             }
             return 0;
         }
@@ -895,7 +1152,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         if (c == '\n' || c == '\r') {
             const char *t = ex_testo_prendi(g_url);
 
-            if (t && t[0]) vai(t, 1);
+            if (t && t[0]) vai(t, 1, 0);
             return 0;
         }
         if (c == KBD_K_DOWN)  { scorri(24);  return 0; }
@@ -951,12 +1208,14 @@ int main(int argc, char **argv)
     g_stato = ex_crea("etichetta", "", EX_FIGLIO,
                       MARGINE, FIN_H - 18, FIN_W - 2 * MARGINE, 16, g_f, 0, 0);
 
+    cache_prepara();
+
     ex_fuoco(g_url);
     dico("scrivi un indirizzo e premi Invio. https non ancora: manca il TLS.");
     ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
     disegna();
 
-    if (argc >= 2) { ex_testo_metti(g_url, argv[1]); vai(argv[1], 0); }
+    if (argc >= 2) { ex_testo_metti(g_url, argv[1]); vai(argv[1], 0, 0); }
 
     while (ex_prendi_msg(&m)) ex_smista(&m);
     return 0;
