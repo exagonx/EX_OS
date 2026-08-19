@@ -801,6 +801,46 @@ KernelConfig *cfg = cfg_load();
                      "fallito (err=%d; causa nella riga ELF: qui sopra, se "
                      "stampata)",
                      n, avviare, rc_shell);
+
+                /* =========================================================
+                 * ! E SI DICE ANCHE IN ITALIANO, NON SOLO NEL klog.
+                 *
+                 * Il klog qui sopra si vedeva gia' anche in avvio silenzioso —
+                 * `verboseboot = 0` abbassa il livello a LOG_WARN, non lo
+                 * spegne — e su questo mi ero sbagliato scrivendo la prima
+                 * versione di questo commento. Quello che mancava non era la
+                 * NOTIZIA: era che dicesse qualcosa a chi la legge.
+                 *
+                 *     [WARN] [PASSO 15] Console 0: caricamento di '/bin/login'
+                 *     fallito (err=-2; causa nella riga ELF: qui sopra, se
+                 *     stampata)
+                 *
+                 * Chi si trova davanti una macchina che non si apre non sa
+                 * cos'e' `err=-2` ne' cos'e' il PASSO 15, e la riga ELF a cui
+                 * quel testo rimanda spesso non c'e' — «file assente» e'
+                 * sceso a LOG_INFO apposta.
+                 *
+                 * ! E CHI LEGGE NON HA UNA SHELL, quindi non gli si puo' dire
+                 * «prova questo comando»: gli si dice cosa manca e da dove
+                 * ripartire, che e' l'unica azione che ha davvero.
+                 * ========================================================= */
+                {
+                    const char *pezzi[4];
+                    unsigned int q, w;
+
+                    pezzi[0] = "\n  Questa console non si apre: non riesco a "
+                               "caricare\n    ";
+                    pezzi[1] = avviare;
+                    pezzi[2] = "\n  Il file manca, e' troncato, o il disco non "
+                               "lo consegna.\n"
+                               "  Avvia dal CD di EX-OS e reinstalla per "
+                               "rimetterlo a posto.\n";
+                    pezzi[3] = 0;
+
+                    for (q = 0; pezzi[q]; q++)
+                        for (w = 0; pezzi[q][w]; w++)
+                            vga_putchar_su(n, pezzi[q][w]);
+                }
                 /* Stesso motivo del PASSO 14b: rilascia tutte le risorse
                  * del PCB scratch, non lasciarlo ZOMBIE non raccoglibile. */
                 proc_kill(shell_proc->pid);

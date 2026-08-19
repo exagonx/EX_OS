@@ -12,11 +12,11 @@ seriale e USB — tastiera compresa, hub compresi.
 
 ## COSA E' COMMITTATO
 
-    9d8aea3  "ls -l, e tre difetti trovati facendolo"
+    977359c  "Le regioni sporche: si ricompone solo cio' che e' cambiato"
 
-In attesa nell'albero: **le regioni sporche** — il compositore ricompone solo
-cio' che e' cambiato, e per un movimento del puntatore sono 260 pixel invece di
-480.000.
+In attesa nell'albero: **una console che non si apre adesso dice perche'**, la
+decisione presa su `extls`, e la coda rimessa a essere una coda invece che un
+archivio.
 
 ! **`gitupdate.sh` FA `git add .` E UN COMMIT SOLO**: `messaggio-commit.txt`
 deve coprire tutto quello che si e' fatto dall'ultimo commit, non l'ultima
@@ -120,64 +120,40 @@ prima» e' un fatto solo se si e' guardato prima.
 
 ### Rifiniture, quando conviene
 
- 1. **`login` e `install` sulla libc condivisa** — oggi restano statici
-    apposta: sono i due programmi con cui si entra e con cui si ripara. Prima
-    serve un modo di accorgersi che `/lib/libc.so` manca PRIMA di arrivare al
-    login.
+! **QUESTA E' UNA CODA, NON UN ARCHIVIO**, e va tenuta corta. Fino al 19 agosto
+le voci fatte restavano qui barrate, con dentro tutto il loro testo storico:
+il risultato era che rileggendo la coda ricomparivano ogni volta le stesse
+cose, e per trovare cio' che manca davvero bisognava saltare quattro voci
+chiuse. **Una voce fatta esce di qui**: il racconto di com'e' andata sta nella
+sua sezione piu' sotto, che e' il posto giusto per una cosa che non si deve
+piu' fare.
+
+Chiuse il 19 agosto e tolte da questo elenco: l'annullamento nell'editor,
+`ls -l`, `-i` ai driver, e le regioni sporche (per il solo movimento del
+puntatore — vedi la sua sezione).
+
+ 1. **`login` e `install` sulla libc condivisa** — **misurato il 19 agosto, e
+    la raccomandazione e' DI NON FARLO**, ma la decisione e' di chi possiede il
+    sistema:
+
+        login   statico   32.112 byte
+        install statico   39.768 byte
+        ls      dinamico  18.420 byte   (per paragone)
+
+    Si guadagnerebbero forse trentacinque chilobyte in tutto. Si perderebbe che
+    i due programmi con cui si ENTRA e con cui si RIPARA non dipendano da un
+    file che potrebbe essere proprio quello rotto. La shell e' statica per la
+    stessa ragione: e' una scelta che questo sistema ha gia' fatto altrove.
+
+    ! **IL PREREQUISITO SCRITTO IN QUESTA VOCE — «accorgersi che manca» — E'
+    FATTO**, e ha trovato dell'altro: vedi la sezione sulla console che non si
+    apre.
  2. **Risolvere per hash invece che per nome** — altri ~3 KB per programma, col
     generatore che verifica a costruzione che non ci siano collisioni.
- 3. ~~La lista delle regioni sporche~~ — **FATTO il 19 agosto**, ma per UN
-    CASO SOLO: il movimento del puntatore. Vedi la sezione qui sotto. Il testo
-    originale della voce diceva:
-
-    **La lista delle regioni sporche** — `WIN_MSG_AGGIORNA` porta gia' una
-    `WinRegione` che oggi si ignora. **Misurato il 18 agosto: `componi()` a
-    800x600 costa 0-20 ms**, quindi sotto QEMU non e' un'urgenza — ma il server
-    ridisegna tutto lo schermo per ogni movimento del puntatore, e sul Pentium
-    133 dichiarato quel numero non sara' 20 ms. E' la struttura piu' facile da
-    sbagliare di un server grafico. **E dal 19 agosto pesa di piu'**: la
-    fusione del testo antialiasato LEGGE e riscrive i pixel, quindi un
-    ridisegno completo costa piu' di prima.
- 4. ~~L'annullamento nell'editor~~ — **FATTO il 19 agosto**. Ctrl+Z, sedici
-    passi, e si annullano i tre comandi che modificano il testo: taglia,
-    incolla, cancella. ! **LA DIGITAZIONE NO, ED E' DICHIARATO**: i tasti se li
-    mangia il controllo `areatesto` e all'applicazione non arrivano mai — per
-    quella servirebbe che fosse il controllo a segnare i passi. E non c'e' il
-    «Ripeti».
- 5. ~~`ls -l`~~ — **FATTO il 19 agosto**, con la chiamata nuova `statperm()`
-    invece di un campo in piu' a `Stat`. Quello che segue resta come nota
-    storica di com'era la voce, perche' sbagliava:
-
-    ~~**e' piu' grosso di quanto diceva questa voce**~~
-    (corretto il 19 agosto). Qui c'era scritto «la libc sa gia' dire
-    proprietario, permessi e misura: manca l'impaginazione». **E' falso.**
-    `VfsStat` nel kernel ha `modo`, `uid` e `gid` (kernel/include/vfs.h:120),
-    ma `sys_stat` NON LI COPIA: la `Stat` che arriva in spazio utente ha cinque
-    campi — misura, identita', attributi FAT, data, ora — e `struct stat`
-    dichiara `st_uid` «sempre 0: non ci sono utenti», che era vero prima di
-    login e degli utenti ext2. Manca il trasporto, non l'impaginazione.
-
-    ! **E LA STRADA GIUSTA E' UNA CHIAMATA IN PIU', NON UN CAMPO IN PIU' A
-    `Stat`.** Il precedente e' gia' scritto in libc.h accanto a
-    `spawn_su_console`: «e' una funzione in piu', non un parametro in piu' a
-    spawn_ex — cambiare la firma di una funzione che i programmi gia' chiamano
-    vuol dire ricostruire tutto cio' che la usa». `Stat` la usano tutti; farla
-    crescere e' un cambio di ABI che NON avvisa, e va ricostruito il bersaglio
-    intero. Serve poi decidere se `ls -l` mostra i numeri o i nomi presi da
-    `/boot/utenti`.
- 6. ~~`-i` ai quattro driver~~ — **la voce era vecchia, verificato il 19
-    agosto**: `mouseser` e `uhci` ce l'hanno gia', completo di sonda e di
-    codice d'uscita. `floppy` NON PUO' averlo — non e' un programma, e' un
-    modulo del kernel senza `main`, e `spawn` lo rifiuta (la sonda infatti
-    fallisce e non lo installa, che e' l'esito giusto). Restava `vgaprova`, e
-    li' c'era di peggio: vedi la sezione qui sotto.
-
-    L'elenco originale diceva: `floppy`, Gli altri nove ce l'hanno tutti (`pci`,
-    `svga`, `kbd`, `xhci` e i cinque del CD); `tty` era in questo elenco per
-    sbaglio, non e' un `.drv` ma un pezzo compilato dentro il kernel. Oggi non
-    danno problemi perche' escono da soli quando non trovano la periferica; il
-    giorno che uno di loro diventasse un server, bloccherebbe l'installazione
-    come ha fatto `wserver`.
+ 3. **Le regioni sporche, gli altri undici casi** — oggi si stringe solo il
+    movimento del puntatore; una finestra che si aggiorna, che si sposta o che
+    nasce dichiara ancora tutto lo schermo. Ognuno va fatto guardando i pixel,
+    perche' una regione sbagliata per difetto lascia roba vecchia a video.
 
 Restano aperti, sullo stack USB: **piu' di un livello di hub**, **piu' di un
 dispositivo per volta** (lo stesso limite che ha uhci.drv), e **un tetto di
@@ -201,10 +177,19 @@ la verita'. Per toglierlo servono, in quest'ordine:
 LUNGHI. L'HTTPS NON PUO' EVITARLO.** I certificati del web sono RSA ed ECDSA
 P-256; quelli Ed25519 in pratica non esistono.
 
-! **E C'E' UNA DECISIONE DA CHIEDERE ALL'UTENTE PRIMA DI COMINCIARE**: senza la
-verifica del certificato si ottiene una connessione cifrata con CHIUNQUE — la
-barra direbbe `https://` senza poter dire con chi si sta parlando, che e'
-peggio del testo in chiaro perche' mente. Non e' una scelta da fare da soli.
+! **LA DECISIONE E' STATA PRESA IL 19 AGOSTO 2026: LA CIFRATURA ASPETTA LA
+VERIFICA.** Non si spedisce un TLS che cifra e non sa dire con chi sta
+parlando. Senza verifica del certificato la connessione e' cifrata con CHIUNQUE
+risponda: chi sta in mezzo si presenta come il sito che vuole, il browser
+accetta, e la barra scrive `https://`. Non e' «meno sicuro del testo in
+chiaro», e' PEGGIO — con `http://` chi guarda sa di essere scoperto, con
+`https://` gli si dice che e' al sicuro. Il lucchetto mentirebbe.
+
+! **QUINDI L'ORDINE NON E' NEGOZIABILE**: prima `exbig` e `exasn1`, poi
+`extls`. Niente scorciatoia «intanto cifriamo e lo diciamo nella barra»: e' la
+strada su cui l'etichetta si dimentica, e allora resta solo la bugia. Serve
+anche il magazzino delle CA sul CD, che fa parte del lavoro e non e' un
+dettaglio di contorno.
 
 
 ### L'INSTALLATORE TOGLIEVA L'AUTENTICAZIONE — e nessuno lo vedeva
@@ -759,6 +744,10 @@ con **0**, che per la sonda vuol dire «servo qui». Risultato:
 niente e non serve nessuna periferica — e' una prova che si lancia a mano.
 Stesso difetto di `wserver.drv`, stessa riparazione.
 
+Per il resto il `-i` ce l'hanno tutti: `pci`, `svga`, `kbd`, `xhci`, i cinque
+del CD, piu' `mouseser` e `uhci`. `tty` era in un elenco per sbaglio — non e'
+un `.drv`, e' un pezzo compilato dentro il kernel.
+
 ### LA SCIA DEL CURSORE SULLA CONSOLE
 
 Segnalato cosi': «ogni rigo termina con `_`, non causa problemi ma esteticamente
@@ -825,6 +814,46 @@ una cella di carattere sola** — l'ultima cifra dell'orologio. La controprova:
 due esecuzioni dello STESSO build differiscono nella stessa cella (26 pixel),
 perche' fra una foto e l'altra passa un minuto. Fuori da quella cella: **zero
 pixel diversi**.
+
+### UNA CONSOLE CHE NON SI APRE ADESSO DICE PERCHE'
+
+Se `elf_load` del programma di console fallisce — `/bin/login` troncato da
+un'installazione andata male, un settore che non risponde — quella console
+resta chiusa. Succede oggi, non in teoria.
+
+! **E QUI MI ERO SBAGLIATO SCRIVENDO LA PRIMA VERSIONE**: avevo scritto che con
+`verboseboot = 0` il klog non si vede e che quindi la console restava «nera e
+muta». **Non e' vero**: `verboseboot = 0` abbassa il livello a `LOG_WARN`, non
+lo spegne, quindi la riga c'era gia'. Verificato prima di scriverlo nel commit,
+e il commento nel codice e' stato corretto.
+
+Quello che mancava non era la NOTIZIA, era che dicesse qualcosa a chi la legge:
+
+    [WARN] [PASSO 15] Console 0: caricamento di '/bin/login' fallito
+    (err=-2; causa nella riga ELF: qui sopra, se stampata)
+
+Chi si trova davanti una macchina che non si apre non sa cos'e' `err=-2` ne'
+cos'e' il PASSO 15 — e la riga ELF a cui quel testo rimanda spesso non c'e',
+perche' «file assente» e' sceso a LOG_INFO apposta. Adesso, sotto, c'e':
+
+      Questa console non si apre: non riesco a caricare
+        /bin/login
+      Il file manca, e' troncato, o il disco non lo consegna.
+      Avvia dal CD di EX-OS e reinstalla per rimetterlo a posto.
+
+! **CHI LEGGE NON HA UNA SHELL**, quindi non gli si puo' dire «prova questo
+comando»: gli si dice cosa manca e da dove ripartire, che e' l'unica azione che
+ha davvero.
+
+Provato per davvero: `/bin/login` cancellato da un sistema installato, avvio
+dal disco, foto della console. Poi rimesso, e il disco riparte normale.
+
+! **E RESTA UNA DECISIONE APERTA**: se una console che non riesce ad aprire
+`login` debba ripiegare sulla SHELL invece di restare chiusa. Non l'ho fatto
+perche' non e' una scelta tecnica: su una radice ext2 vorrebbe dire che
+cancellare `/bin/login` regala una shell di root: si passerebbe da «rotto» a
+«aperto». Contro: chi ha accesso fisico puo' gia' avviare da CD e montare il
+disco, quindi la difesa vale poco. E' da decidere, non da indovinare.
 
 ## Difetti aperti, dichiarati
 
