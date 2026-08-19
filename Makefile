@@ -1364,16 +1364,18 @@ PM_SRC := exwin/bin/pm/pm.c
 PM_BIN := $(BUILD_EXWIN_BIN)/pm
 PM_LD  := exwin/bin/pm/pm.ld
 
-$(PM_BIN): $(PM_SRC) $(PM_LD) $(EXWIN_STUB) $(EXLIB_SRC) $(EXLIB_HDR) $(EXWIN_HDR) $(WIN_PROTO) \
+$(PM_BIN): $(PM_SRC) $(PM_LD) $(EXWIN_STUB) $(EXDLG_STUB) $(EXLIB_SRC) $(EXLIB_HDR) \
+           $(EXWIN_HDR) $(WIN_PROTO) \
            $(FONT_SRC) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione /exwin/bin/pm ==="
 	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(PM_SRC) -o $(BUILD_OBJ)/pm_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -I drivers/wserver -I drivers/kbd -c $(PM_SRC) -o $(BUILD_OBJ)/pm_main.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/pm_exwin.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exdlg -c $(EXDLG_STUB) -o $(BUILD_OBJ)/pm_exdlg.o
 	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/pm_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(PM_LD) \
 	    $(BUILD_OBJ)/pm_start.o $(BUILD_OBJ)/pm_main.o \
-	    $(BUILD_OBJ)/pm_exwin.o \
+	    $(BUILD_OBJ)/pm_exwin.o $(BUILD_OBJ)/pm_exdlg.o \
 	    $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] pm compilato: $@"
 

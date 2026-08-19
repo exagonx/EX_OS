@@ -1,4 +1,4 @@
-# DOVE RIPRENDERE — 18 agosto 2026
+# DOVE RIPRENDERE — 19 agosto 2026
 
 ## Lo stato in una riga
 
@@ -12,8 +12,8 @@ seriale e USB — tastiera compresa, hub compresi.
 
 ## COSA E' COMMITTATO
 
-    c2a1d52  "Il doppio clic, il «+» dell'albero, e un pomeriggio buttato
-              per colpa di un attrezzo"
+    d316875  "Il TrueType arriva sullo schermo: rasterizzatore, cache,
+              e la fusione col fondo"
 
 L'albero e' **pulito**: non c'e' niente in attesa.
 
@@ -80,7 +80,7 @@ quattro alloggiamenti** in xhci.drv — dichiarato, non scoperto dopo.
   di prova rimasto, e proprio dove morderebbe — `blkread`/`blkwrite` sono stati
   chiusi a root perche' non validano i puntatori utente.
 
-## COME SI PROVA QUELLO CHE C'E' (aggiornato il 18 agosto 2026)
+## COME SI PROVA QUELLO CHE C'E' (aggiornato il 19 agosto 2026)
 
     make -j2 all && make iso-exos
     python3 tools/qemu_drive.py "libctest@260"     316 prove, e ci sono dentro
@@ -98,6 +98,8 @@ quattro alloggiamenti** in xhci.drv — dichiarato, non scoperto dopo.
     tools/prova_doppioclic.sh                      il doppio clic e il «+»
                                                    dell'albero, nel file
                                                    manager e nel dialogo Apri
+    /exwin/bin/fontprova                           sei facce TrueType a sei
+                                                   corpi, dentro EX-OS
     python3 tools/righe_lista.py f.ppm X Y W N     quante righe ha una lista e
                                                    quale e' scelta, contando
                                                    l'inchiostro
@@ -136,6 +138,127 @@ aspetta il timeout del socket. Ci sono volute due ore per scoprirlo, e nel
 frattempo sembrava un difetto del sistema provato.
 
 ---
+
+# I FONT: DAL BITMAP AL TRUETYPE — 19 agosto 2026
+
+Tre commit di seguito, che sono un arco solo: 2d316cb porta il livello dei font
+e i file sull'ISO, d316875 il rasterizzatore e la resa a schermo.
+
+## Perche' PRIMA del browser e non dopo
+
+! **`strlen(s) * 8` E' IL CONTO DA TOGLIERE PRIMA CHE QUALCUNO NE SCRIVA UN
+ALTRO SOPRA.** E' vero finche' il font e' uno e a larghezza fissa: un motore
+d'impaginazione nato su quel presupposto andrebbe riscritto tutto il giorno che
+arriva un font proporzionale. Sostituito in sei punti del toolkit.
+
+! **IL FONT DI SISTEMA E' DESCRITTO DALLA STESSA STRUTTURA DI QUELLI CHE SI
+CARICANO**, e questo tiene UNO SOLO il ciclo che accende i pixel. Con due
+strade la seconda sarebbe nata copiando la prima. L'8x16 e' semplicemente un
+font fisso largo 8 e alto 16 che sta in memoria invece che su disco; la sua
+linea di base e' 14, MISURATA dai glifi (A, H, X finiscono a riga 13, la coda
+di Q scende a 14).
+
+## Dove sta cosa, e perche' la divisione e' li'
+
+    lib/exfont/exfont.c    il lettore dei font BITMAP (formato EXFN)
+                           -> DENTRO exwin.so: lo usano tutti
+    lib/exfont/ttf.c       il contenitore TrueType
+    lib/exfont/raster.c    contorni -> copertura
+    lib/exfont/exfont_ttf.c  istanza e cache
+                           -> in exfont.so, a 0x05000000, aperta A RICHIESTA
+
+! **IL CRITERIO E' «UN PROGRAMMA NON CARICA CIO' CHE NON USA», E VA APPLICATO
+NEL VERSO GIUSTO.** Tutti i programmi grafici scrivono del testo e caricano
+gia' exwin.so: mettere il lettore bitmap in un .so a parte avrebbe fatto aprire
+a ognuno una libreria in piu' per centocinquanta righe. Il TrueType invece —
+contenitore, curve, rasterizzatore, cache — e' «qualcosa che COSTA», e un
+orologio non ne apre uno mai.
+
+## Le regole del rasterizzatore
+
+Interi in 26.6; riempimento a CONTEGGIO NON NULLO (la parita' sbaglierebbe i
+glifi con tre contorni annidati); sedici campioni in verticale ed esatto in
+orizzontale; la piattezza di una curva si MISURA sul punto di controllo invece
+di spezzarla a passi fissi.
+
+! **NON ESISTE LA DIVISIONE A 64 BIT.** Una libreria di EX-OS si collega senza
+libgcc: `__divdi3` non c'e' e il collegamento FALLISCE — lo stesso muro di
+tsc.c. Le moltiplicazioni lunghe invece vanno bene, sono due istruzioni. I due
+conti che ne avevano bisogno stanno in 32 bit con la loro ipotesi scritta
+accanto: la scala perche' il corpo ha un tetto, l'incrocio perche' le
+coordinate si limitano e perche' il prodotto si fa SENZA SEGNO.
+
+## Provato contro FreeType, e non contro me stesso
+
+`tools/prove/ttfprova.c` gira SULL'HOST — ttf.c e raster.c non includono la
+libc apposta — e chiama FreeType via ctypes per confrontare pixel per pixel.
+4 font, 5 corpi, 73 caratteri:
+
+    riquadro IDENTICO         1460 su 1460   (100%)
+    differenza media/pixel    0,94 livelli su 255   (0,37%)
+
+E la cmap contro `fc-query --format %{charset}`: Sans 2327 codici, Serif Bold
+2321, Mono 2305, zero differenze nei due versi. hmtx contro l'invariante del
+monospazio: Mono da' 1229 per tutti e 94 i glifi ASCII, Sans ne da' 82 diversi.
+
+! **IL CONFRONTO HA TROVATO UN DIFETTO CHE NESSUNA IPOTESI AVREBBE TROVATO.**
+Alla prima passata i riquadri identici erano il 95,4%, e i mancanti avevano una
+FORMA: a 16 pixel quasi ogni maiuscola veniva alta un pixel meno. La scala
+troncava invece di arrotondare. Mezzo sessantaquattresimo perso che diventa un
+pixel intero — il genere di cosa che «sembra giusta» guardandola.
+
+## Tre trappole trovate, da non ricalpestare
+
+! **`x << 6` SU UN NEGATIVO E' COMPORTAMENTO INDEFINITO**, e i negativi ci
+sono: la 'j' comincia a sinistra della penna, un glifo tutto sotto la linea di
+base ha la cima negativa. Trovato da UBSan. E la divisione fra interi tronca
+verso ZERO: -1/64 fa 0, non -1, cioe' mezza lettera tagliata su un bordo a -0,5.
+
+! **LA MISURA DI UN FILE SI CHIEDE AL FILE.** `ex_font_apri` aveva un tetto di
+256 KB copiato da `ex_immagine()`, e i Liberation pesano da 280 a 420: si
+leggevano TRONCATI e non se ne apriva nessuno. Il sintomo non somigliava alla
+causa — «nessun font si carica», non «buffer piccolo».
+
+! **FONDERE VUOL DIRE LEGGERE IL PIXEL CHE C'E' GIA'**, e prima di oggi il
+disegno di questo toolkit non leggeva mai niente. Conseguenza da ricordare:
+cio' che sta sotto una lettera dev'essere gia' disegnato quando la lettera
+arriva. La divisione per 255 non si fa: l'identita' usata e' ESATTA, verificata
+su tutte le combinazioni, errore massimo zero livelli.
+
+## I font sull'ISO
+
+Dodici facce Liberation 2.1.5 in `exwin/font/`, col LICENSE accanto — la OFL
+obbliga a spedirlo, e tenerlo nella stessa directory e' cio' che rende
+impossibile dimenticarlo. `IMPRONTE.txt` fissa le SHA-256: senza, due macchine
+costruirebbero due ISO diverse senza dirlo. I SORGENTI dei font non entrano in
+git (`.gitignore`): andranno sull'ISO degli strumenti, accanto a quelli di GCC
+e FreeBASIC. Il perche' per esteso in `exwin/font/leggimi.md`.
+
+Dodici e non sedici e' un numero RICAVATO: tre famiglie per quattro stili e'
+esattamente cio' che una pagina HTML puo' chiedere.
+
+## Come si prova
+
+    /exwin/bin/fontprova            sei facce a sei corpi, dentro EX-OS,
+                                    con una riga bianca su blu per la fusione
+    cc -o /tmp/ttfprova tools/prove/ttfprova.c lib/exfont/ttf.c \
+       lib/exfont/raster.c -I lib/exfont
+    /tmp/ttfprova <font.ttf> [riassunto|charset|monospazio|disegna|pgm]
+
+## Cosa manca ai font
+
+    l'hinting            niente. A 12-14 pixel Liberation e' piu' MORBIDO del
+                         bitmap 8x16: per questo l'interfaccia usa ancora
+                         l'8x16, e il TrueType e' per i documenti e il browser
+    il crenatura         `kern` e GPOS non si leggono: le coppie come «AV»
+                         restano un po' larghe
+    le legature          GSUB non si legge
+    oltre il piano base  solo cmap formato 4, cioe' fino a FFFF. Il sistema
+                         dichiara Latin-1, quindi non morde
+    CFF / OpenType       un file «OTTO» si RIFIUTA apposta: contorni cubici in
+                         un formato diverso, con un suo interprete PostScript.
+                         Meglio «non lo so leggere» che leggere male
+
 
 # IL DOPPIO CLIC, E IL «+» DELL'ALBERO — 18 agosto 2026
 

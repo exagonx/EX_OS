@@ -5,8 +5,30 @@
 # vorrebbe dire rifare il program manager per ogni applicazione nuova, e chi
 # installa un programma non ha i sorgenti.
 #
+# ! E DAL 19 AGOSTO 2026 NON SERVE NEMMENO UN EDITORE DI TESTO: il menu di
+# avvio ha la voce «Applicazioni...», che aggiunge, toglie e riscrive questo
+# file. Resta leggibile e modificabile a mano apposta — un file di
+# configurazione che solo un programma sa scrivere e' un file che non si puo'
+# riparare quando quel programma non parte.
+#
 # Una riga per applicazione:   nome mostrato | percorso dell'eseguibile
 # Le righe che cominciano con # e quelle vuote si saltano.
+#
+# ! LE DIRETTIVE COMINCIANO CON @ E NON HANNO LA BARRA VERTICALE, che e' cio'
+# che le rende impossibili da confondere con una voce: un'applicazione che si
+# chiamasse «avvio» resta una voce, perche' ha la barra.
+#
+#   @avvio <percorso>   l'applicazione che parte DA SOLA quando la scrivania
+#                       e' pronta. Una sola, e puo' anche non essere fra le
+#                       voci qui sotto.
+#
+# ! L'AVVIO AUTOMATICO E' UNA DIRETTIVA A PARTE, NON UN SEGNO SULLA VOCE, e la
+# differenza si vede appena serve: si puo' volere un programma che parte da
+# solo e NON compare nel menu — un pannello, un orologio — oppure una voce di
+# menu che non parte da sola. Legarli vorrebbe dire non poter fare ne' l'uno
+# ne' l'altro.
+
 File manager   | /exwin/bin/filemgr
 Editor         | /exwin/bin/edit
 Terminale      | /exwin/bin/term
+Prova dei font | /exwin/bin/fontprova
