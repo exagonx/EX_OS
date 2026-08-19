@@ -101,6 +101,14 @@ static struct {
     void        (*rilievo)(ExFinestra, int, int, int, int);
     void        (*incavo)(ExFinestra, int, int, int, int);
     void        (*schermo)(unsigned int *, unsigned int *);
+    /* I font. In fondo, come vuole la regola dell'elenco esportato. */
+    unsigned int (*font_apri)(const char *, int);
+    void         (*font_chiudi)(unsigned int);
+    int          (*font_altezza)(unsigned int);
+    int          (*font_base)(unsigned int);
+    int          (*larghezza_testo)(unsigned int, const char *);
+    void         (*scrivi_con)(ExFinestra, unsigned int, int, int,
+                               const char *, unsigned int);
 } P;
 
 static void *chiedi(const ExLibTesta *t, const char *nome)
@@ -191,6 +199,17 @@ static void assicura(void)
                        chiedi(t, "ex_incavo");
     P.schermo        = (void (*)(unsigned int *, unsigned int *))
                        chiedi(t, "ex_schermo");
+
+    P.font_apri       = (unsigned int (*)(const char *, int))
+                        chiedi(t, "ex_font_apri");
+    P.font_chiudi     = (void (*)(unsigned int))chiedi(t, "ex_font_chiudi");
+    P.font_altezza    = (int (*)(unsigned int))chiedi(t, "ex_font_altezza");
+    P.font_base       = (int (*)(unsigned int))chiedi(t, "ex_font_base");
+    P.larghezza_testo = (int (*)(unsigned int, const char *))
+                        chiedi(t, "ex_larghezza_testo");
+    P.scrivi_con      = (void (*)(ExFinestra, unsigned int, int, int,
+                                  const char *, unsigned int))
+                        chiedi(t, "ex_scrivi_con");
 
     P.pronto = 1;
 }
@@ -308,3 +327,15 @@ void ex_area_cursore(ExFinestra f, unsigned int *r, unsigned int *c)
 }
 
 void ex_schermo(unsigned int *l, unsigned int *a) { assicura(); P.schermo(l, a); }
+
+ExFont ex_font_apri(const char *p, int corpo) { assicura(); return P.font_apri(p, corpo); }
+void   ex_font_chiudi(ExFont f)               { assicura(); P.font_chiudi(f); }
+int    ex_font_altezza(ExFont f)              { assicura(); return P.font_altezza(f); }
+int    ex_font_base(ExFont f)                 { assicura(); return P.font_base(f); }
+
+int ex_larghezza_testo(ExFont f, const char *s)
+{ assicura(); return P.larghezza_testo(f, s); }
+
+void ex_scrivi_con(ExFinestra w, ExFont f, int x, int y,
+                   const char *s, unsigned int c)
+{ assicura(); P.scrivi_con(w, f, x, y, s, c); }

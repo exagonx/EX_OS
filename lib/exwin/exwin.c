@@ -18,7 +18,8 @@
 #include "exwin.h"
 #include "exlib.h"      /* per aprire eximg.so quando serve davvero */
 #include "eximg.h"      /* solo il tipo e le firme: non ci si collega */
-#include "exfont.h"     /* il lettore dei font: compilato qui dentro */
+#include "exfont.h"     /* il lettore dei font bitmap: compilato qui dentro */
+#include "exfont_ttf.h" /* il TrueType: sta in exfont.so, si apre a richiesta */
 
 extern const unsigned char font8x16[256 * 16];
 
@@ -601,6 +602,50 @@ static void punto(Oggetto *r, int x, int y, unsigned int c)
     r->pix[(unsigned int)y * r->passo_px + (unsigned int)x] = c;
 }
 
+/* =============================================================================
+ * ! FONDERE VUOL DIRE LEGGERE IL PIXEL CHE C'E' GIA', e fino a oggi il disegno
+ * di questo toolkit non ha mai letto niente: scriveva e basta. E' il cambio
+ * che l'antialiasing porta con se' e che vale la pena dire, perche' ha una
+ * conseguenza — cio' che sta sotto una lettera deve essere gia' disegnato
+ * quando la lettera arriva. Per un'etichetta su un pannello grigio e' sempre
+ * vero; per chi disegnasse il testo prima dello sfondo, non piu'.
+ *
+ * ! LA DIVISIONE PER 255 NON SI FA, e non e' pignoleria da ottimizzatore:
+ * questa funzione gira per ogni pixel di ogni lettera di ogni ridisegno, e su
+ * un Pentium 133 una divisione costa quaranta cicli. L'identita' usata qui —
+ * sommare al numero il suo ottavo di spostamento e poi spostare — rende
+ * esattamente v/255 per ogni v che puo' uscire da questo prodotto, con due
+ * addizioni e due spostamenti.
+ * ============================================================================= */
+static unsigned int fondi_canale(unsigned int davanti, unsigned int dietro,
+                                 unsigned int a)
+{
+    unsigned int v = davanti * a + dietro * (255u - a) + 128u;
+
+    return (v + (v >> 8)) >> 8;
+}
+
+static void punto_fuso(Oggetto *r, int x, int y, unsigned int c, unsigned int a)
+{
+    unsigned int i, d;
+
+    if (!r || !r->pix) return;
+    if (x < 0 || y < 0 || x >= r->w || y >= r->h) return;
+    if (a == 0) return;
+
+    i = (unsigned int)y * r->passo_px + (unsigned int)x;
+
+    /* Copertura piena: si scrive e basta, come si e' sempre fatto. E' il caso
+     * piu' frequente dentro una lettera, e non deve pagare la fusione. */
+    if (a >= 255) { r->pix[i] = c; return; }
+
+    d = r->pix[i];
+    r->pix[i] =
+        (fondi_canale((c >> 16) & 0xFFu, (d >> 16) & 0xFFu, a) << 16) |
+        (fondi_canale((c >>  8) & 0xFFu, (d >>  8) & 0xFFu, a) <<  8) |
+         fondi_canale( c        & 0xFFu,  d        & 0xFFu, a);
+}
+
 void ex_riempi(ExFinestra f, int x, int y, int w, int h, unsigned int c)
 {
     Oggetto *r = radice(f);
@@ -721,7 +766,8 @@ void ex_incavo(ExFinestra f, int x, int y, int w, int h)
 typedef struct {
     int            usato;
     unsigned char *dati;        /* il file, che va tenuto vivo: vedi exfont.h */
-    ExFontDati     f;
+    ExFontDati     f;           /* se e' un EXFN */
+    ExTtf          ttf;         /* se e' un TrueType: sta in exfont.so */
 } FontAperto;
 
 static FontAperto g_font[FONT_MAX];
@@ -749,19 +795,78 @@ static const ExFontDati *font_di(ExFont h)
     return &g_font[h - 1].f;
 }
 
+/* =============================================================================
+ * IL TRUETYPE STA IN exfont.so, E SI APRE AL PRIMO FONT CHE LO CHIEDE
+ *
+ * ! STESSO PATTO DI eximg.so, per la stessa ragione. Il contenitore TrueType,
+ * l'appiattimento delle curve, il rasterizzatore e la cache sono «qualcosa che
+ * costa»: una barra delle applicazioni o un orologio non ne aprono uno mai, e
+ * non devono pagarlo. Il lettore dei font BITMAP invece sta qui dentro, perche'
+ * quello lo usano tutti — vedi il commento in lib/exfont/exfont.h.
+ *
+ * ! E SE exfont.so NON C'E', NON SI MUORE: il font non si apre, ex_font_apri()
+ * rende 0, e zero e' il font di sistema. Il testo esce con un carattere diverso
+ * da quello voluto e il programma continua. Farlo morire vorrebbe dire che
+ * installare mezza libreria grafica spegne applicazioni che funzionerebbero.
+ * ============================================================================= */
+static struct {
+    int    cercata;
+    ExTtf  (*apri)(const unsigned char *, unsigned int, int);
+    void   (*chiudi)(ExTtf);
+    int    (*altezza)(ExTtf);
+    int    (*base)(ExTtf);
+    int    (*larghezza_car)(ExTtf, unsigned int);
+    const unsigned char *(*glifo)(ExTtf, unsigned int, int *, int *, int *, int *);
+} T;
+
+static int exfont_pronta(void)
+{
+    static const char *const dove[] = {
+        "/exwin/lib/exfont.so",
+        "/cdrom/exwin/lib/exfont.so"
+    };
+    const ExLibTesta *t;
+
+    if (!T.cercata) {
+        T.cercata = 1;      /* prima del tentativo: se manca, non si ricerca */
+        t = exlib_apri_fra(dove, (int)(sizeof dove / sizeof dove[0]));
+        if (t) {
+            T.apri = (ExTtf (*)(const unsigned char *, unsigned int, int))
+                     exlib_simbolo(t, "exttf_apri");
+            T.chiudi = (void (*)(ExTtf))exlib_simbolo(t, "exttf_chiudi");
+            T.altezza = (int (*)(ExTtf))exlib_simbolo(t, "exttf_altezza");
+            T.base = (int (*)(ExTtf))exlib_simbolo(t, "exttf_base");
+            T.larghezza_car = (int (*)(ExTtf, unsigned int))
+                              exlib_simbolo(t, "exttf_larghezza_car");
+            T.glifo = (const unsigned char *(*)(ExTtf, unsigned int,
+                                                int *, int *, int *, int *))
+                      exlib_simbolo(t, "exttf_glifo");
+        }
+    }
+
+    /* Uno solo senza gli altri vuol dire una exfont.so piu' vecchia di questo
+     * toolkit: si rinuncia invece di chiamare un indirizzo nullo. */
+    return T.apri && T.chiudi && T.altezza && T.base &&
+           T.larghezza_car && T.glifo;
+}
+
+/* ! IL FORMATO SI RICONOSCE DAI PRIMI BYTE, NON DAL NOME. Un file di font
+ * arriva anche dalla rete, e li' il nome lo sceglie chi sta dall'altra parte.
+ * 0x00010000 e' TrueType, 'true' e' la variante di Apple. */
+static int e_truetype(const unsigned char *d, int n)
+{
+    if (n < 4) return 0;
+    if (d[0] == 0 && d[1] == 1 && d[2] == 0 && d[3] == 0) return 1;
+    return d[0] == 't' && d[1] == 'r' && d[2] == 'u' && d[3] == 'e';
+}
+
 ExFont ex_font_apri(const char *percorso, int corpo)
 {
     int            fd, n, k, slot;
     unsigned char *d;
-    unsigned int   cap = 256u * 1024u;
+    long           misura;
 
     if (!percorso) return 0;
-
-    /* ! IL CORPO OGGI SI IGNORA, E VA DETTO INVECE DI TACERLO. I font che
-     * questo toolkit sa leggere da se' sono bitmap: hanno l'altezza che hanno.
-     * Il giorno che un font scalabile passa di qui, il corpo arriva a chi lo
-     * rasterizza — e la firma non cambia. */
-    (void)corpo;
 
     for (slot = 0; slot < FONT_MAX && g_font[slot].usato; slot++) { }
     if (slot >= FONT_MAX) return 0;
@@ -769,17 +874,43 @@ ExFont ex_font_apri(const char *percorso, int corpo)
     fd = open(percorso, O_RDONLY);
     if (fd < 0) return 0;
 
-    d = (unsigned char *)malloc(cap);
+    /* ! LA MISURA SI CHIEDE AL FILE, NON SI INDOVINA. Qui c'era un tetto di
+     * 256 KB copiato da ex_immagine(), e i font Liberation ne pesano da 280 a
+     * 420: si leggevano TRONCATI, e non se ne apriva nemmeno uno. Il difetto
+     * non si e' visto come «buffer piccolo» ma come «nessun font si carica»,
+     * ed e' stato il controllo di troncamento dentro ttf_apri() a fermarli —
+     * cioe' la cosa giusta e' successa per la ragione giusta, ma il tetto
+     * restava sbagliato.
+     *
+     * ! IL TETTO C'E' ANCORA, ED E' PIU' ALTO PERCHE' NON SI CARICA UN FILE
+     * QUALUNQUE IN MEMORIA. Un font di sedici megabyte non e' un font: e' un
+     * modo di far finire la memoria a chi lo apre. */
+    misura = lseek(fd, 0, SEEK_END);
+    if (misura <= 0 || misura > 8L * 1024L * 1024L) { close(fd); return 0; }
+    (void)lseek(fd, 0, SEEK_SET);
+
+    d = (unsigned char *)malloc((unsigned int)misura);
     if (!d) { close(fd); return 0; }
 
     n = 0;
-    while ((k = (int)read(fd, d + n, cap - (unsigned int)n)) > 0) {
+    while (n < (int)misura &&
+           (k = (int)read(fd, d + n, (unsigned int)((int)misura - n))) > 0)
         n += k;
-        if ((unsigned int)n >= cap) break;
-    }
     close(fd);
 
-    if (n <= 0 || !exfont_apri(d, (unsigned int)n, &g_font[slot].f)) {
+    /* Letto meno di quanto il file dichiara: meglio niente che un font a meta'. */
+    if (n != (int)misura) { free(d); return 0; }
+
+    if (n <= 0) { free(d); return 0; }
+
+    if (e_truetype(d, n)) {
+        if (!exfont_pronta()) { free(d); return 0; }
+
+        /* Un corpo non chiesto vuol dire «quello di sistema», che e' 16: un
+         * font scalabile una misura deve pur averla. */
+        g_font[slot].ttf = T.apri(d, (unsigned int)n, corpo > 0 ? corpo : 16);
+        if (!g_font[slot].ttf) { free(d); return 0; }
+    } else if (!exfont_apri(d, (unsigned int)n, &g_font[slot].f)) {
         free(d);
         return 0;
     }
@@ -794,16 +925,52 @@ void ex_font_chiudi(ExFont h)
     if (h == 0 || h > FONT_MAX) return;
     if (!g_font[h - 1].usato) return;
 
+    /* ! IL FONT SI CHIUDE PRIMA DI LIBERARE I SUOI BYTE, e l'ordine conta: la
+     * cache dentro exfont.so tiene puntatori DENTRO questo buffer (vedi
+     * exfont_ttf.h, «non si copia»). Liberarlo prima lascerebbe la libreria a
+     * leggere memoria restituita, e il guasto comparirebbe alla prossima
+     * allocazione di qualcun altro. */
+    if (g_font[h - 1].ttf && T.chiudi) T.chiudi(g_font[h - 1].ttf);
+
     free(g_font[h - 1].dati);
     memset(&g_font[h - 1], 0, sizeof(g_font[h - 1]));
 }
 
-int ex_font_altezza(ExFont h) { return (int)font_di(h)->altezza; }
-int ex_font_base(ExFont h)    { return (int)font_di(h)->base;    }
+/* Il TrueType di quel manico, o 0 se e' un bitmap. Un posto solo per la
+ * domanda: i quattro rami qui sotto la fanno tutti. */
+static ExTtf ttf_di(ExFont h)
+{
+    if (h == 0 || h > FONT_MAX) return 0;
+    if (!g_font[h - 1].usato) return 0;
+    return g_font[h - 1].ttf;
+}
+
+int ex_font_altezza(ExFont h)
+{
+    ExTtf t = ttf_di(h);
+
+    if (t) return T.altezza(t);
+    return (int)font_di(h)->altezza;
+}
+
+int ex_font_base(ExFont h)
+{
+    ExTtf t = ttf_di(h);
+
+    if (t) return T.base(t);
+    return (int)font_di(h)->base;
+}
 
 int ex_larghezza_testo(ExFont h, const char *s)
 {
-    return (int)exfont_larghezza(font_di(h), s);
+    ExTtf t = ttf_di(h);
+    int   w = 0;
+
+    if (!s) return 0;
+    if (!t) return (int)exfont_larghezza(font_di(h), s);
+
+    while (*s) w += T.larghezza_car(t, (unsigned char)*s++);
+    return w;
 }
 
 /* Quanto e' larga una stringa nel font di sistema. Dentro il toolkit si scrive
@@ -817,11 +984,38 @@ static int larg(const char *s)
 void ex_scrivi_con(ExFinestra f, ExFont h, int x, int y,
                    const char *s, unsigned int c)
 {
-    const ExFontDati *fo = font_di(h);
+    const ExFontDati *fo;
     Oggetto          *r  = radice(f);
+    ExTtf             t  = ttf_di(h);
     unsigned int      i;
 
     if (!s) return;
+
+    /* ! LA y RESTA LA CIMA DELLA RIGA, ANCHE COL TRUETYPE, e non diventa la
+     * linea di base. Chi ha scritto ex_scrivi(f, x, y, ...) per un'etichetta
+     * ha in mente il bordo alto del testo: cambiare significato al parametro
+     * a seconda del font vorrebbe dire che lo stesso codice mette la scritta
+     * in due posti diversi. La linea di base si ricava, e la ricava questa. */
+    if (t) {
+        int base = T.base(t);
+
+        while (*s) {
+            unsigned char        ch = (unsigned char)*s++;
+            int                  gw, gh, sx, sy, px, py;
+            const unsigned char *cop = T.glifo(t, ch, &gw, &gh, &sx, &sy);
+
+            if (cop && gw > 0 && gh > 0) {
+                for (py = 0; py < gh; py++)
+                    for (px = 0; px < gw; px++)
+                        punto_fuso(r, x + sx + px, y + base - sy + py, c,
+                                   cop[py * gw + px]);
+            }
+            x += T.larghezza_car(t, ch);
+        }
+        return;
+    }
+
+    fo = font_di(h);
 
     for (i = 0; s[i]; i++) {
         unsigned char        ch = (unsigned char)s[i];

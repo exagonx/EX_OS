@@ -171,7 +171,7 @@ PROGRAMMI_FLOPPY := shell hello id chmod ls mem stack disk libctest fdisk mkfs t
 # =============================================================================
 PROGRAMMI_CD := netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp telnet telnetd sshd xcp winprova exwincmd
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
-PROGRAMMI_EXWIN := exwin_so exdlg_so eximg_so pm filemgr edit term
+PROGRAMMI_EXWIN := exwin_so exdlg_so eximg_so exfont_so pm filemgr edit term fontprova
 
 # I driver, con la stessa regola dei programmi. Quelli di base stanno gia'
 # dentro PROGRAMMI_FLOPPY (floppy_drv, kbd_drv): sul floppy servono a
@@ -1022,6 +1022,39 @@ FONT_TTF      := $(wildcard $(FONT_TTF_DIR)/*.ttf)
 EXFONT_SRC    := lib/exfont/exfont.c
 EXFONT_HDR    := lib/exfont/exfont.h
 
+# =============================================================================
+# /exwin/lib/exfont.so — il TrueType, che e' l'altra meta'
+#
+# ! QUESTA VOLTA LA LIBRERIA A PARTE E' GIUSTIFICATA, ed e' utile dire in cosa
+# e' diversa da exfont.c qui sopra. Quello sono centocinquanta righe che ogni
+# programma grafico usa, quindi sta DENTRO exwin.so. Questo e' il contenitore
+# TrueType, l'appiattimento delle curve, un rasterizzatore e una cache — cioe'
+# esattamente «qualcosa che costa», che era la condizione scritta in exfont.h
+# il giorno che quel file e' nato. Un orologio non apre un TrueType mai.
+# =============================================================================
+EXTTF_SRC     := lib/exfont/exfont_ttf.c lib/exfont/ttf.c lib/exfont/raster.c
+EXTTF_HDR     := lib/exfont/exfont_ttf.h lib/exfont/ttf.h lib/exfont/raster.h
+EXTTF_ESPORTA := lib/exfont/exfont_esporta.c
+EXTTF_LD      := lib/exfont/exfont.ld
+EXTTF_SO      := $(BUILD_EXWIN_LIB)/exfont.so
+
+$(EXTTF_SO): $(EXTTF_SRC) $(EXTTF_HDR) $(EXTTF_ESPORTA) $(EXTTF_LD) \
+             $(EXLIB_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(SEGNO_FLAG)
+	@echo "=== Compilazione libreria condivisa /exwin/lib/exfont.so ==="
+	@mkdir -p $(BUILD_EXWIN_LIB) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exfont -c lib/exfont/exfont_ttf.c -o $(BUILD_OBJ)/sottf_main.o
+	$(CC) $(CFLAGS_USER) -I lib/exfont -c lib/exfont/ttf.c    -o $(BUILD_OBJ)/sottf_ttf.o
+	$(CC) $(CFLAGS_USER) -I lib/exfont -c lib/exfont/raster.c -o $(BUILD_OBJ)/sottf_raster.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exfont -c $(EXTTF_ESPORTA) -o $(BUILD_OBJ)/sottf_esporta.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(EXTTF_LD) \
+	    $(BUILD_OBJ)/sottf_esporta.o $(BUILD_OBJ)/sottf_main.o \
+	    $(BUILD_OBJ)/sottf_ttf.o $(BUILD_OBJ)/sottf_raster.o \
+	    $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] exfont.so compilata: $@"
+
+.PHONY: exfont_so
+exfont_so: dirs $(EXTTF_SO)
+
 EXWIN_ESPORTA := lib/exwin/exwin_esporta.c
 EXWIN_STUB    := lib/exwin/exwin_stub.c
 EXWIN_LD      := lib/exwin/exwin.ld
@@ -1442,12 +1475,41 @@ $(TERM_BIN): $(TERM_SRC) $(TERM_LD) $(EXWIN_STUB) $(EXLIB_SRC) $(EXLIB_HDR) \
 .PHONY: term
 term: dirs $(TERM_BIN)
 
+# --- /exwin/bin/fontprova: la prova dei font, che si guarda -------------------
+#
+# ! IL RASTERIZZATORE E' GIA' PROVATO CONTRO FreeType, MA SULL'HOST. Quel
+# confronto dice che i glifi vengono giusti e non dice niente su exfont.so
+# caricata a caldo, sulla cache, sulla fusione col fondo o sul fatto che i file
+# dei font siano leggibili dal CD. Questa finestra prova il giro intero, ed e'
+# fatta per essere fotografata.
+FONTPROVA_SRC := exwin/bin/fontprova/fontprova.c
+FONTPROVA_BIN := $(BUILD_EXWIN_BIN)/fontprova
+FONTPROVA_LD  := exwin/bin/fontprova/fontprova.ld
+
+$(FONTPROVA_BIN): $(FONTPROVA_SRC) $(FONTPROVA_LD) $(EXWIN_STUB) $(EXLIB_SRC) \
+             $(EXLIB_HDR) $(EXWIN_HDR) $(WIN_PROTO) $(LIBC_PONTI_OBJ) \
+             $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /exwin/bin/fontprova ==="
+	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(FONTPROVA_SRC) -o $(BUILD_OBJ)/fontprova_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/fontprova_exwin.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/fontprova_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(FONTPROVA_LD) \
+	    $(BUILD_OBJ)/fontprova_start.o $(BUILD_OBJ)/fontprova_main.o \
+	    $(BUILD_OBJ)/fontprova_exwin.o $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] fontprova compilato: $@"
+
+.PHONY: fontprova
+fontprova: dirs $(FONTPROVA_BIN)
+
 # ! L'ELENCO E' UN FILE E VA COPIATO, non compilato dentro: aggiungere
 # un'applicazione dev'essere una riga, non una ricostruzione.
 # ! LA LIBRERIA CONDIVISA FA PARTE DI CIO' CHE SI INSTALLA, e va messa qui
 # dentro: senza, le applicazioni finirebbero sull'immagine e la libreria no —
 # tre programmi che partono e si fermano subito dicendo che non la trovano.
-EXWIN_OUT := $(PM_BIN) $(FILEMGR_BIN) $(EDIT_BIN) $(TERM_BIN) $(EXWIN_SO) $(EXDLG_SO) \
+EXWIN_OUT := $(PM_BIN) $(FILEMGR_BIN) $(EDIT_BIN) $(TERM_BIN) $(FONTPROVA_BIN) \
+             $(EXWIN_SO) $(EXDLG_SO) \
+             $(EXTTF_SO) \
              $(EXIMG_SO)
 
 # --- /bin/testo: rimette lo schermo, si digita alla cieca --------------------

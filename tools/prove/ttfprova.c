@@ -32,6 +32,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "ttf.h"
+#include "raster.h"
 
 static unsigned char *leggi_file(const char *p, unsigned int *n)
 {
@@ -63,6 +64,7 @@ int main(int argc, char **argv)
 
     if (!ttf_apri(d, n, &f)) {
         printf("RIFIUTATO: %s non e' un TrueType che so leggere\n", argv[1]);
+        free(d);        /* anche qui: LeakSanitizer lo nota, ed ha ragione */
         return 1;
     }
 
@@ -98,6 +100,53 @@ int main(int argc, char **argv)
                w0, provati, diverse, diverse ? "NON monospazio" : "monospazio");
         free(d);
         return diverse ? 1 : 0;
+    }
+
+    if (strcmp(modo, "disegna") == 0) {
+        /* Il glifo in arte ASCII: la prova che nessun numero puo' dare, cioe'
+         * «somiglia a quella lettera?». */
+        const char   *testo = (argc > 3) ? argv[3] : "B";
+        int           corpo = (argc > 4) ? atoi(argv[4]) : 24;
+        static unsigned char cop[512 * 512];
+        const char   *scala = " .:-=+*#%@";
+        const char   *t;
+
+        for (t = testo; *t; t++) {
+            unsigned int g = ttf_glifo_di(&f, (unsigned char)*t);
+            RasterMisure m;
+            int          y, x;
+
+            if (!raster_misura(&f, g, corpo, &m)) { printf("misura fallita\n"); continue; }
+            printf("--- '%c' glifo %u  %dx%d  sinistra %d cima %d  avanza %d.%02d\n",
+                   *t, g, m.larghezza, m.altezza, m.sinistra, m.cima,
+                   m.avanzamento >> 6, ((m.avanzamento & 63) * 100) >> 6);
+            if (m.larghezza <= 0 || m.altezza <= 0) continue;
+            if ((long)m.larghezza * m.altezza > (long)sizeof(cop)) continue;
+            if (!raster_glifo(&f, g, corpo, &m, cop)) { printf("disegno fallito\n"); continue; }
+
+            for (y = 0; y < m.altezza; y++) {
+                for (x = 0; x < m.larghezza; x++)
+                    putchar(scala[cop[y * m.larghezza + x] * 9 / 255]);
+                putchar('\n');
+            }
+        }
+        free(d);
+        return 0;
+    }
+
+    if (strcmp(modo, "pgm") == 0) {
+        /* Lo stesso, ma in PGM: serve al confronto con FreeType. */
+        unsigned int g = ttf_glifo_di(&f, (unsigned char)(argc > 3 ? argv[3][0] : 'B'));
+        int          corpo = (argc > 4) ? atoi(argv[4]) : 24;
+        static unsigned char cop[512 * 512];
+        RasterMisure m;
+
+        if (!raster_misura(&f, g, corpo, &m) || m.larghezza <= 0) { free(d); return 1; }
+        if (!raster_glifo(&f, g, corpo, &m, cop)) { free(d); return 1; }
+        printf("P5\n%d %d\n255\n", m.larghezza, m.altezza);
+        fwrite(cop, 1, (size_t)m.larghezza * m.altezza, stdout);
+        free(d);
+        return 0;
     }
 
     printf("%s\n", argv[1]);
