@@ -98,6 +98,12 @@ typedef long (*ExProcedura)(ExFinestra, unsigned int, unsigned int, long);
  * stessa cosa che dice l'Invio: un'applicazione che gestisce l'Invio ha gia'
  * il doppio clic senza scrivere una riga. */
 #define EXM_DOPPIOCLIC  0x000C
+/* ! LA SVEGLIA PERIODICA E' SCATTATA: vedi ex_sveglia(). lp porta i
+ * millisecondi dall'avvio, che servono a chi vuole misurare invece di
+ * contare i messaggi. Senza questo un'applicazione non puo' fare NIENTE da
+ * sola: il ciclo dei messaggi dorme finche' non arriva un evento, e un
+ * orologio si aggiornerebbe solo quando l'utente muove il mouse. */
+#define EXM_TEMPO       0x000D
 
 #define EX_X(lp)        ((int)((lp) & 0xFFFF))
 #define EX_Y(lp)        ((int)(((lp) >> 16) & 0xFFFF))
@@ -363,6 +369,14 @@ int    ex_larghezza_testo(ExFont f, const char *s);
 /* Come ex_scrivi, ma con un font scelto. `ex_scrivi` e' questa con f = 0. */
 void   ex_scrivi_con(ExFinestra w, ExFont f, int x, int y,
                      const char *s, unsigned int c);
+
+/* Chiede EXM_TEMPO ogni `ms` millisecondi per questa finestra; 0 smette.
+ *
+ * ! LA RISOLUZIONE VERA E' 200 ms, la scadenza del poll dentro il ciclo dei
+ * messaggi: chiedere 50 ne da' 200. Per un orologio al secondo il ritardo
+ * massimo e' un quinto di secondo; per un'animazione fluida serve un'altra
+ * cosa, non questa. */
+void   ex_sveglia(ExFinestra f, unsigned int ms);
 void ex_aggiorna(ExFinestra f);     /* «ho finito»: lo dice al server */
 
 /* -----------------------------------------------------------------------------

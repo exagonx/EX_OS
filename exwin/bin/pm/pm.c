@@ -719,8 +719,43 @@ int main(int argc, char **argv)
 
     ex_crea("pulsante", "Avvio", EX_FIGLIO, 2, 2, 70, BARRA_H - 4,
             g_barra, ID_AVVIO, 0);
-    ex_crea("etichetta", "EX-OS", EX_FIGLIO, (int)g_sw - 56, 6, 50, 16,
-            g_barra, 0, 0);
+    /* =====================================================================
+     * ! L'ANGOLO DESTRO E' DELL'OROLOGIO, e l'orologio e' un PROCESSO A
+     * PARTE. Qui c'era la scritta «EX-OS», che non diceva niente che non si
+     * sapesse gia'. La data e l'ora invece cambiano da sole, e devono farlo
+     * qualunque cosa stia facendo il program manager: dentro di lui si
+     * aggiornerebbero solo quando lui ha tempo.
+     *
+     * ! LO AVVIA LA SCRIVANIA PERCHE' E' ARREDAMENTO, non un'applicazione:
+     * sta nella barra come il pulsante «Avvio», e nessuno dovrebbe doverlo
+     * avviare a mano. Non passa dall'elenco delle applicazioni proprio per
+     * questo — non e' una cosa che si sceglie.
+     *
+     * ! E SE NON PARTE RESTA LA SCRITTA. Un angolo vuoto non direbbe se
+     * l'orologio manca o se e' l'ora a non funzionare; «EX-OS» al suo posto
+     * dice che la barra e' quella di sempre e che l'orologio non c'e'.
+     * ===================================================================== */
+    {
+        static const char *const dove[] = {
+            "/exwin/bin/orologio",
+            "/cdrom/exwin/bin/orologio"
+        };
+        int partito = 0, k;
+
+        for (k = 0; k < 2 && !partito; k++) {
+            char *av[2];
+
+            av[0] = (char *)dove[k];
+            av[1] = 0;
+            if (spawn_ex(av[0], av, 0, 0, 0) >= 0) partito = 1;
+        }
+
+        if (!partito) {
+            log_seriale("pm: l'orologio non parte, resta la scritta");
+            ex_crea("etichetta", "EX-OS", EX_FIGLIO, (int)g_sw - 56, 6, 50, 16,
+                    g_barra, 0, 0);
+        }
+    }
 
     ex_procedura_base(g_barra, EXM_DISEGNA, 0, 0);
 

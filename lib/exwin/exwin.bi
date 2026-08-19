@@ -76,6 +76,8 @@ const EXM_MOUSE_MOSSO = &h000B
 '' Due clic vicini nel tempo e nello spazio. Su una lista non arriva: diventa
 '' EXM_COMANDO con EX_APRIRE(lp) a 1, come l'Invio.
 const EXM_DOPPIOCLIC  = &h000C
+'' La sveglia periodica e' scattata: vedi ex_sveglia. Risoluzione vera 200 ms.
+const EXM_TEMPO       = &h000D
 
 '' --- Gli stili ---------------------------------------------------------------
 const EX_TITOLO   = &h0001
@@ -133,6 +135,8 @@ declare function ex_larghezza_testo cdecl alias "ex_larghezza_testo" ( _
 declare sub ex_scrivi_con cdecl alias "ex_scrivi_con" ( _
     byval w as ulong, byval f as ulong, byval x as long, byval y as long, _
     byval s as const zstring ptr, byval c as ulong)
+declare sub ex_sveglia cdecl alias "ex_sveglia" ( _
+    byval f as ulong, byval ms as ulong)
 
 '' --- Creare ------------------------------------------------------------------
 ''

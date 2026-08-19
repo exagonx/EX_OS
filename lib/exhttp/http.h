@@ -118,6 +118,13 @@ int http_intestazioni(const unsigned char *d, unsigned int n, HttpRisposta *r);
 #define HTTP_P_CODA     4       /* le intestazioni finali, che si buttano */
 #define HTTP_P_FATTO    5
 #define HTTP_P_ROTTO    6
+/* ! SALTARE LE ESTENSIONI E' UNO STATO, NON UN CICLO. Dopo la lunghezza puo'
+ * esserci «;nome=valore» fino a fine riga. Saltarlo con un ciclo dentro la
+ * chiamata funziona finche' l'estensione arriva tutta insieme: se il blocco
+ * finisce in mezzo, la chiamata dopo riprende in HTTP_P_DIM e le LETTERE
+ * dell'estensione tornano a contare come cifre esadecimali della lunghezza.
+ * Trovato dalla prova che consegna un byte per volta. */
+#define HTTP_P_EXT      7
 
 typedef struct {
     int          stato;

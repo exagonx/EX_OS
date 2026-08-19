@@ -43,6 +43,10 @@ typedef struct {
     unsigned int  premuto;      /* il controllo e' giu' */
     ExFinestra    fuoco;        /* solo per il primo livello: chi ha i tasti */
     unsigned int  cursore;      /* posizione del cursore in una casella */
+
+    /* La sveglia periodica: vedi ex_sveglia(). Zero = nessuna. */
+    unsigned int  sveglia_ms;
+    unsigned int  sveglia_quando;    /* uptime_ms della prossima */
 } Oggetto;
 
 #define CL_FINESTRA     1
@@ -860,16 +864,15 @@ static int e_truetype(const unsigned char *d, int n)
     return d[0] == 't' && d[1] == 'r' && d[2] == 'u' && d[3] == 'e';
 }
 
-ExFont ex_font_apri(const char *percorso, int corpo)
+/* Legge un file intero in memoria fresca. Rende il buffer e scrive quanti byte
+ * sono, oppure 0. */
+static unsigned char *file_intero(const char *percorso, int *quanti)
 {
-    int            fd, n, k, slot;
-    unsigned char *d;
+    int            fd, n, k;
     long           misura;
+    unsigned char *d;
 
-    if (!percorso) return 0;
-
-    for (slot = 0; slot < FONT_MAX && g_font[slot].usato; slot++) { }
-    if (slot >= FONT_MAX) return 0;
+    *quanti = 0;
 
     fd = open(percorso, O_RDONLY);
     if (fd < 0) return 0;
@@ -901,7 +904,48 @@ ExFont ex_font_apri(const char *percorso, int corpo)
     /* Letto meno di quanto il file dichiara: meglio niente che un font a meta'. */
     if (n != (int)misura) { free(d); return 0; }
 
-    if (n <= 0) { free(d); return 0; }
+    *quanti = n;
+    return d;
+}
+
+/* =============================================================================
+ * ! UN FONT SI CERCA IN DUE POSTI, COME TUTTO IL RESTO DI /exwin, e questa
+ * riga mancava. Su un sistema installato l'albero sta in /exwin; avviando dal
+ * FLOPPY col CD dentro, la radice e' il floppy e /exwin sta sotto /cdrom. E'
+ * la stessa regola che seguono gli stub del toolkit, eximg, exfont.so e
+ * l'elenco delle applicazioni del program manager.
+ *
+ * ! IL DIFETTO E' PASSATO PERCHE' LE PROVE ERANO TUTTE CON EXOS_NO_FLOPPY=1,
+ * dove la radice E' il CD e quindi /exwin/font esiste davvero. Avviando in
+ * modo normale non se ne apriva NESSUNO. E' il genere di cosa che una prova
+ * fatta sempre nella stessa configurazione non puo' trovare.
+ *
+ * ! E STA QUI, NON DENTRO LE APPLICAZIONI. Ogni programma che apre un font
+ * avrebbe dovuto conoscere questa faccenda e ricopiarla; chi se ne dimentica
+ * scrive un programma che funziona sul suo banco e non sul CD di qualcun
+ * altro. Un posto solo, e le applicazioni scrivono il percorso naturale.
+ * ============================================================================= */
+ExFont ex_font_apri(const char *percorso, int corpo)
+{
+    int            n, slot;
+    unsigned char *d;
+
+    if (!percorso) return 0;
+
+    for (slot = 0; slot < FONT_MAX && g_font[slot].usato; slot++) { }
+    if (slot >= FONT_MAX) return 0;
+
+    d = file_intero(percorso, &n);
+
+    if (!d && percorso[0] == '/') {
+        char alt[160];
+
+        strcpy(alt, "/cdrom");
+        strncat(alt, percorso, sizeof(alt) - 8);
+        d = file_intero(alt, &n);
+    }
+
+    if (!d || n <= 0) return 0;
 
     if (e_truetype(d, n)) {
         if (!exfont_pronta()) { free(d); return 0; }
@@ -2773,6 +2817,35 @@ int ex_prendi_msg(ExMsg *m)
 
         if (g_uscita) return 0;
 
+        /* ! LE SVEGLIE SI GUARDANO PRIMA DI DORMIRE, non dopo: guardarle dopo
+         * vorrebbe dire che la prima scade sempre con 200 ms di ritardo anche
+         * quando era gia' scaduta entrando. */
+        {
+            unsigned int ora = uptime_ms();
+            int          j;
+
+            for (j = 0; j < OGGETTI_MAX; j++) {
+                Oggetto *o = &g_ogg[j];
+
+                if (!o->usato || o->classe != CL_FINESTRA) continue;
+                if (o->sveglia_ms == 0) continue;
+
+                /* ! LA DIFFERENZA SI GUARDA CON LA SOTTRAZIONE, non con «>=».
+                 * uptime_ms torna a zero dopo quarantanove giorni: con un
+                 * confronto diretto, quel giorno la sveglia smetterebbe di
+                 * scattare per sempre. Con la sottrazione senza segno il giro
+                 * si chiude da se'. */
+                if ((int)(ora - o->sveglia_quando) >= 0) {
+                    o->sveglia_quando = ora + o->sveglia_ms;
+                    m->finestra = (ExFinestra)(j + 1);
+                    m->msg      = EXM_TEMPO;
+                    m->wp       = 0;
+                    m->lp       = (long)ora;
+                    return 1;
+                }
+            }
+        }
+
         /* ! SI DORME DAVVERO, E SU TUTTE LE SORGENTI INSIEME. poll() mette il
          * processo in BLOCKED finche' non succede qualcosa; e le sorgenti sono
          * due specie diverse — la mailbox IPC da cui arrivano i tasti e i
@@ -3122,6 +3195,39 @@ long ex_procedura_base(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 }
 
 void ex_esci(int codice) { g_uscita = 1; g_codice = codice; }
+
+/* =============================================================================
+ * LA SVEGLIA PERIODICA
+ *
+ * ! SENZA QUESTA UN'APPLICAZIONE NON PUO' FARE NIENTE DA SOLA. ex_prendi_msg()
+ * dorme finche' non arriva un evento: un orologio, un'animazione, una barra di
+ * avanzamento non hanno nessuno che li svegli — si aggiornerebbero solo quando
+ * l'utente muove il mouse, che e' esattamente il contrario di cio' che
+ * servirebbe.
+ *
+ * ! E NON COSTA UN GIRO IN PIU'. Il poll() del ciclo dei messaggi ha gia' una
+ * scadenza di 200 ms: il processo si sveglia cinque volte al secondo comunque,
+ * per guardare le pipe dei terminali. Qui si guarda anche l'orologio mentre si
+ * e' svegli, e non si aggiunge nessuna attesa.
+ *
+ * ! LA RISOLUZIONE E' QUELLA DEL poll, cioe' 200 ms, e va detto invece di
+ * lasciarlo scoprire: chiedere 50 ms non da' 50 ms, da' 200. Per un orologio
+ * al secondo e' irrilevante — il ritardo massimo e' un quinto di secondo — e
+ * per un'animazione fluida servirebbe un'altra cosa, non questa.
+ *
+ * ! IL MESSAGGIO ARRIVA ALLA FINESTRA, NON AL PROGRAMMA, cosi' un programma
+ * con due finestre puo' averne una che si aggiorna e una ferma senza
+ * distinguere niente a mano.
+ * ============================================================================= */
+void ex_sveglia(ExFinestra f, unsigned int ms)
+{
+    Oggetto *o = ogg(f);
+
+    if (!o) return;
+
+    o->sveglia_ms = ms;
+    o->sveglia_quando = ms ? uptime_ms() + ms : 0;
+}
 
 /* =============================================================================
  * L'API DELLA LISTA

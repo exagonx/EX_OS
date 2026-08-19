@@ -109,6 +109,7 @@ static struct {
     int          (*larghezza_testo)(unsigned int, const char *);
     void         (*scrivi_con)(ExFinestra, unsigned int, int, int,
                                const char *, unsigned int);
+    void         (*sveglia)(ExFinestra, unsigned int);
 } P;
 
 static void *chiedi(const ExLibTesta *t, const char *nome)
@@ -210,6 +211,8 @@ static void assicura(void)
     P.scrivi_con      = (void (*)(ExFinestra, unsigned int, int, int,
                                   const char *, unsigned int))
                         chiedi(t, "ex_scrivi_con");
+    P.sveglia         = (void (*)(ExFinestra, unsigned int))
+                        chiedi(t, "ex_sveglia");
 
     P.pronto = 1;
 }
@@ -339,3 +342,5 @@ int ex_larghezza_testo(ExFont f, const char *s)
 void ex_scrivi_con(ExFinestra w, ExFont f, int x, int y,
                    const char *s, unsigned int c)
 { assicura(); P.scrivi_con(w, f, x, y, s, c); }
+
+void ex_sveglia(ExFinestra f, unsigned int ms) { assicura(); P.sveglia(f, ms); }

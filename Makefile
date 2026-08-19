@@ -171,7 +171,7 @@ PROGRAMMI_FLOPPY := shell hello id chmod ls mem stack disk libctest fdisk mkfs t
 # =============================================================================
 PROGRAMMI_CD := netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp telnet telnetd sshd xcp winprova exwincmd
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
-PROGRAMMI_EXWIN := exwin_so exdlg_so eximg_so exfont_so pm filemgr edit term fontprova
+PROGRAMMI_EXWIN := exwin_so exdlg_so eximg_so exfont_so pm filemgr edit term fontprova orologio
 
 # I driver, con la stessa regola dei programmi. Quelli di base stanno gia'
 # dentro PROGRAMMI_FLOPPY (floppy_drv, kbd_drv): sul floppy servono a
@@ -1504,12 +1504,39 @@ $(FONTPROVA_BIN): $(FONTPROVA_SRC) $(FONTPROVA_LD) $(EXWIN_STUB) $(EXLIB_SRC) \
 .PHONY: fontprova
 fontprova: dirs $(FONTPROVA_BIN)
 
+# --- /exwin/bin/orologio: la data e l'ora nella barra ------------------------
+#
+# ! E' UN PROCESSO A PARTE E NON UN THREAD, perche' i thread in EX-OS non
+# esistono — e anche se ci fossero, un thread dentro il program manager
+# condividerebbe con lui la coda dei messaggi: un pm occupato sarebbe un
+# orologio fermo. Vedi il commento in cima al sorgente.
+OROLOGIO_SRC := exwin/bin/orologio/orologio.c
+OROLOGIO_BIN := $(BUILD_EXWIN_BIN)/orologio
+OROLOGIO_LD  := exwin/bin/orologio/orologio.ld
+
+$(OROLOGIO_BIN): $(OROLOGIO_SRC) $(OROLOGIO_LD) $(EXWIN_STUB) $(EXLIB_SRC) \
+             $(EXLIB_HDR) $(EXWIN_HDR) $(WIN_PROTO) $(LIBC_PONTI_OBJ) \
+             $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /exwin/bin/orologio ==="
+	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(OROLOGIO_SRC) -o $(BUILD_OBJ)/orologio_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/orologio_exwin.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/orologio_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(OROLOGIO_LD) \
+	    $(BUILD_OBJ)/orologio_start.o $(BUILD_OBJ)/orologio_main.o \
+	    $(BUILD_OBJ)/orologio_exwin.o $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] orologio compilato: $@"
+
+.PHONY: orologio
+orologio: dirs $(OROLOGIO_BIN)
+
 # ! L'ELENCO E' UN FILE E VA COPIATO, non compilato dentro: aggiungere
 # un'applicazione dev'essere una riga, non una ricostruzione.
 # ! LA LIBRERIA CONDIVISA FA PARTE DI CIO' CHE SI INSTALLA, e va messa qui
 # dentro: senza, le applicazioni finirebbero sull'immagine e la libreria no —
 # tre programmi che partono e si fermano subito dicendo che non la trovano.
 EXWIN_OUT := $(PM_BIN) $(FILEMGR_BIN) $(EDIT_BIN) $(TERM_BIN) $(FONTPROVA_BIN) \
+             $(OROLOGIO_BIN) \
              $(EXWIN_SO) $(EXDLG_SO) \
              $(EXTTF_SO) \
              $(EXIMG_SO)
