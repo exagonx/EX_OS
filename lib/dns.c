@@ -154,20 +154,58 @@ static unsigned int salta_nome(const unsigned char *m, unsigned int len,
 /* =============================================================================
  * Dialogo con lo stack
  * ============================================================================= */
+/* ! I MESSAGGI DEGLI ALTRI SI RIMETTONO A POSTO, NON SI BUTTANO. La mailbox e'
+ * una sola per processo: dentro un'applicazione grafica, cio' che non viene
+ * dallo stack sono gli eventi del server a finestre. Buttarli vuol dire un
+ * clic dell'utente mangiato mentre si risolve un nome — e un browser risolve
+ * un nome per ogni indirizzo che apre.
+ *
+ * ! E SI RIMETTONO ALLA FINE, NON APPENA LETTI: lo scaffale della libc si
+ * serve PRIMA della coda del kernel, quindi rimettere e rileggere subito
+ * renderebbe lo stesso messaggio all'infinito. Stessa forma di attendi() in
+ * lib/exhttp/exhttp.c, e per la stessa ragione.
+ *
+ * ! CIO' CHE VIENE DALLO STACK MA NON E' IL TIPO ATTESO SI BUTTA LO STESSO:
+ * e' una risposta vecchia a una nostra domanda, e rimetterla vorrebbe dire
+ * ritrovarsela davanti alla prossima. */
+#define DNS_DA_PARTE_N  4
+
 static int attendi_da(int pid_ip, unsigned int tipo, unsigned char *buf,
                       unsigned int *len, unsigned int ms)
 {
+    static IpcMessage    p_meta[DNS_DA_PARTE_N];
+    static unsigned char p_dati[DNS_DA_PARTE_N][IPC_MSG_MAX_DATA];
+    static unsigned int  p_len[DNS_DA_PARTE_N];
+
     IpcMessage meta;
-    int        i;
+    int        i, n_parte = 0, esito_r = -1;
 
     for (i = 0; i < 32; i++) {
-        if (ipc_recv_timeout(&meta, buf, IPC_MSG_MAX_DATA, ms) < 0) return -1;
-        if ((int)meta.sender_pid != pid_ip) continue;
-        if (meta.tipo != tipo) continue;
-        if (len) *len = meta.len;
-        return 0;
+        if (ipc_recv_timeout(&meta, buf, IPC_MSG_MAX_DATA, ms) < 0) break;
+
+        if ((int)meta.sender_pid == pid_ip && meta.tipo == tipo) {
+            if (len) *len = meta.len;
+            esito_r = 0;
+            break;
+        }
+
+        if ((int)meta.sender_pid == pid_ip) continue;
+
+        if (n_parte < DNS_DA_PARTE_N) {
+            unsigned int q = meta.len;
+
+            if (q > IPC_MSG_MAX_DATA) q = IPC_MSG_MAX_DATA;
+            p_meta[n_parte] = meta;
+            if (q) memcpy(p_dati[n_parte], buf, q);
+            p_len[n_parte] = q;
+            n_parte++;
+        }
     }
-    return -1;
+
+    for (i = 0; i < n_parte; i++)
+        ipc_rimetti(&p_meta[i], p_dati[i], p_len[i]);
+
+    return esito_r;
 }
 
 int dns_risolvi_da(const char *nome, unsigned char *ip, unsigned char *da)

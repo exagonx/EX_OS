@@ -171,7 +171,7 @@ PROGRAMMI_FLOPPY := shell hello id chmod ls mem stack disk libctest fdisk mkfs t
 # =============================================================================
 PROGRAMMI_CD := netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp scarica telnet telnetd sshd xcp winprova exwincmd
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
-PROGRAMMI_EXWIN := exwin_so exdlg_so eximg_so exfont_so pm filemgr edit term fontprova orologio
+PROGRAMMI_EXWIN := exwin_so exdlg_so eximg_so exfont_so pm filemgr edit term fontprova orologio browser
 
 # I driver, con la stessa regola dei programmi. Quelli di base stanno gia'
 # dentro PROGRAMMI_FLOPPY (floppy_drv, kbd_drv): sul floppy servono a
@@ -1530,13 +1530,49 @@ $(OROLOGIO_BIN): $(OROLOGIO_SRC) $(OROLOGIO_LD) $(EXWIN_STUB) $(EXLIB_SRC) \
 .PHONY: orologio
 orologio: dirs $(OROLOGIO_BIN)
 
+# --- /exwin/bin/browser: mette insieme tutto ---------------------------------
+#
+# ! E' L'UNICO PROGRAMMA CHE USA QUATTRO PEZZI INSIEME: exhttp per la rete,
+# exhtml per l'albero, i font per misurare e disegnare il testo, exwin per la
+# finestra. Per questo si collega anche a http.c e exhttp.c: la libreria
+# condivisa avra' senso quando gli utenti saranno due.
+BROWSER_SRC := exwin/bin/browser/browser.c
+BROWSER_BIN := $(BUILD_EXWIN_BIN)/browser
+BROWSER_LD  := exwin/bin/browser/browser.ld
+
+$(BROWSER_BIN): $(BROWSER_SRC) $(BROWSER_LD) $(EXWIN_STUB) $(EXLIB_SRC) \
+             $(EXLIB_HDR) $(EXWIN_HDR) $(WIN_PROTO) $(EXHTTP_SRC) \
+             $(EXHTTP_HTTP) $(EXHTTP_HDR) lib/exhtml/html.c lib/exhtml/html.h \
+             $(IP_PROTO) $(DNS_SRC) $(RETE_SRC) \
+             $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /exwin/bin/browser ==="
+	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exhttp -I lib/exhtml -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_SRC) -o $(BUILD_OBJ)/browser_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/browser_exwin.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhttp -I drivers/net -c $(EXHTTP_SRC) -o $(BUILD_OBJ)/browser_exhttp.o
+	$(CC) $(CFLAGS_USER) -I lib/exhttp -c $(EXHTTP_HTTP) -o $(BUILD_OBJ)/browser_http.o
+	$(CC) $(CFLAGS_USER) -I lib/exhtml -c lib/exhtml/html.c -o $(BUILD_OBJ)/browser_html.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(DNS_SRC)  -o $(BUILD_OBJ)/browser_dns.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(RETE_SRC) -o $(BUILD_OBJ)/browser_rete.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/browser_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(BROWSER_LD) \
+	    $(BUILD_OBJ)/browser_start.o $(BUILD_OBJ)/browser_main.o \
+	    $(BUILD_OBJ)/browser_exwin.o $(BUILD_OBJ)/browser_exhttp.o \
+	    $(BUILD_OBJ)/browser_http.o $(BUILD_OBJ)/browser_html.o \
+	    $(BUILD_OBJ)/browser_dns.o $(BUILD_OBJ)/browser_rete.o \
+	    $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] browser compilato: $@"
+
+.PHONY: browser
+browser: dirs $(BROWSER_BIN)
+
 # ! L'ELENCO E' UN FILE E VA COPIATO, non compilato dentro: aggiungere
 # un'applicazione dev'essere una riga, non una ricostruzione.
 # ! LA LIBRERIA CONDIVISA FA PARTE DI CIO' CHE SI INSTALLA, e va messa qui
 # dentro: senza, le applicazioni finirebbero sull'immagine e la libreria no —
 # tre programmi che partono e si fermano subito dicendo che non la trovano.
 EXWIN_OUT := $(PM_BIN) $(FILEMGR_BIN) $(EDIT_BIN) $(TERM_BIN) $(FONTPROVA_BIN) \
-             $(OROLOGIO_BIN) \
+             $(OROLOGIO_BIN) $(BROWSER_BIN) \
              $(EXWIN_SO) $(EXDLG_SO) \
              $(EXTTF_SO) \
              $(EXIMG_SO)

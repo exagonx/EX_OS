@@ -231,12 +231,25 @@ def main():
         # Due marker alternativi: "sblocco IRQ0" e' un klog INFO e sparisce
         # con verboseboot=0, quindi si accetta anche il prompt della shell,
         # che c'e' in entrambe le modalita'.
+        marca = os.environ.get("EXOS_MARCA", "")
         deadline = time.time() + 90
         while time.time() < deadline:
             if os.path.exists(SER):
                 with open(SER, "r", errors="replace") as fh:
                     txt = fh.read()
-                if "sblocco IRQ0" in txt or "ex-os" in txt:
+                # ! IL MARCATORE SI PUO' SCEGLIERE, e serve davvero: un
+                # sistema INSTALLATO non arriva al prompt della shell, si
+                # ferma su «nome utente:» finche' non si e' creato il primo
+                # utente. Con i soli marcatori d'avvio questa funzione
+                # rinuncia dopo novanta secondi e non manda MAI i comandi —
+                # e il sintomo e' «la macchina non risponde», che non
+                # somiglia a «sto aspettando la riga sbagliata».
+                #
+                #     EXOS_MARCA="nome utente:" python3 tools/qemu_drive.py ...
+                if marca:
+                    if marca in txt:
+                        break
+                elif "sblocco IRQ0" in txt or "ex-os" in txt:
                     break
             time.sleep(0.5)
         else:

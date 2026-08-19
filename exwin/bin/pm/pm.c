@@ -198,6 +198,12 @@ static int scrivi_tutto(int fd, const char *s)
     return 1;
 }
 
+/* ! QUALE PASSO E' FALLITO SI DICE, e non si lascia indovinare. «Non salvato»
+ * puo' voler dire quattro cose diverse — non posso creare, non posso scrivere,
+ * non posso rinominare, non so nemmeno dove — e sono quattro riparazioni
+ * diverse. Il numero che finisce nel messaggio e' errno. */
+static char g_perche[64] = "";
+
 /* Rende 1 se ha salvato, 0 se no. */
 static int applicazioni_scrivi(void)
 {
@@ -206,14 +212,16 @@ static int applicazioni_scrivi(void)
     unsigned int i;
     int          ok = 1;
 
-    if (g_elenco[0] == '\0') return 0;
+    g_perche[0] = '\0';
+
+    if (g_elenco[0] == '\0') { strcpy(g_perche, "non so da dove l'ho letto"); return 0; }
 
     strncpy(tmp, g_elenco, sizeof(tmp) - 5);
     tmp[sizeof(tmp) - 5] = '\0';
     strcat(tmp, ".nuo");
 
-    fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC);
-    if (fd < 0) return 0;
+    fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) { sprintf(g_perche, "non creo il file accanto (%d)", errno); return 0; }
 
     ok = scrivi_tutto(fd, INTESTAZIONE);
 
@@ -233,8 +241,31 @@ static int applicazioni_scrivi(void)
 
     close(fd);
 
-    if (!ok) { unlink(tmp); return 0; }
-    if (rename(tmp, g_elenco) != 0) { unlink(tmp); return 0; }
+    if (!ok) {
+        sprintf(g_perche, "non scrivo (%d)", errno);
+        unlink(tmp);
+        return 0;
+    }
+    /* ! IL rename DI EX-OS NON SOSTITUISCE, e POSIX invece si'. Con la
+     * destinazione gia' presente rende -EEXIST, e il salvataggio falliva
+     * SEMPRE — su un sistema installato, dove l'elenco c'e' per definizione.
+     * Il messaggio diceva «sola lettura, o permessi mancanti», che erano
+     * tutt'e due false: l'ha smentito il numero, 17, messo li' apposta per
+     * smettere di indovinare.
+     *
+     * ! TOGLIERE PRIMA APRE UNA FINESTRA, E LA SI DICHIARA. Fra unlink e
+     * rename l'elenco non esiste: se la corrente va via li' in mezzo, al
+     * riavvio la scrivania non ha applicazioni. Ma il file NUOVO e' gia'
+     * scritto per intero accanto — `applicazioni.txt.nuo` — quindi si ripara
+     * rinominandolo a mano. E' meno bello di uno scambio atomico e molto
+     * meglio di scrivere in luogo, dove una caduta a meta' lascia un elenco
+     * troncato che nessuno sa di dover riparare. */
+    unlink(g_elenco);
+
+    if (rename(tmp, g_elenco) != 0) {
+        sprintf(g_perche, "non rinomino (%d)", errno);
+        return 0;
+    }
     return 1;
 }
 
@@ -387,7 +418,13 @@ static void gest_salva(void)
      * Le due cause vere sono «il supporto e' di sola lettura» e «non ho i
      * permessi», e da qui non si distinguono senza chiederlo al sistema. Si
      * dicono tutt'e due: chi legge sa quale delle due lo riguarda. */
-    gest_dico("non salvato: sola lettura, o permessi mancanti.");
+    {
+        char m[128];
+
+        sprintf(m, "non salvato: %s", g_perche[0] ? g_perche
+                                    : "sola lettura, o permessi mancanti");
+        gest_dico(m);
+    }
 }
 
 static long gest_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
