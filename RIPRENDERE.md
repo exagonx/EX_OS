@@ -469,6 +469,54 @@ con i ponti non c'entra niente. Si scrive `&:` (make 4.3 in avanti), che dice
 grep che cercava «error:» ed «Errore»: make scrive «Error 1». La build era
 rossa e io leggevo la riga verde di `verifica-versioni` che le stava sopra.
 
+### IL BERSAGLIO E' RICOSTRUITO, E LA PROVA E' UN PROGRAMMA CHE GIRA
+
+Il giro completo di `tools/ricostruisci-bersaglio.sh` — libc, gcclibs, libm,
+libgcc, binutils, cc1, openssl, i due CD — e' finito. `make abi` e' verde, e
+adesso lo dice contando: «69 forme confrontate, nessuna cambiata».
+
+Ma il verde di un guardiano non e' una prova. Questa lo e', dentro EX-OS su
+disco ext2, con il CD degli strumenti nel lettore:
+
+    /cdrom/exos/bin/gcc /cdrom/prova-gcc.c -o /root/prova
+    /root/prova
+        La catena intera dentro EX-OS
+          somma dei quadrati 1..10 : 385   (atteso 385)
+          lunghezza del nome       : 5     (atteso 5)
+          divisione a 64 bit       : 64   (atteso 64)
+        Compilato, assemblato e collegato qui dentro.
+
+! **E' ESATTAMENTE CIO' CHE LA 0.203 AVEVA ROTTO.** Il driver `gcc` spawna cc1
+e as REDIRIGENDO l'uscita su file temporanei: con la magia del blocco EXTRA
+cambiata e la vecchia buttata via, quel blocco veniva ignorato e l'uscita di
+cc1 finiva a video. Adesso il kernel capisce tutt'e due le forme e la catena
+gira — con i binari nuovi, che mandano 'SPO0'.
+
+#### L'ALBERO DI OpenSSL AVEVA 822 FILE SVUOTATI, E NON LO SAPEVA NESSUNO
+
+La ricostruzione si e' fermata sull'ultima fase, il CD degli strumenti:
+`provassl` non si collegava piu'. Il motivo non era la ricostruzione.
+
+! **822 file di `openssl/` erano di ZERO BYTE dal 3 agosto** — `crypto/aes/*.c`,
+`crypto/sm3/*`, `crypto/slh_dsa/*`, `crypto/x509/*` e i `build.info` di quindici
+directory. Nome giusto, data giusta, dentro niente: un'estrazione andata a
+meta'. `openssl/` e' fuori dal repository (`.gitignore`), quindi e' stato
+danno locale silenzioso.
+
+! **NON SE N'ERA ACCORTO NESSUNO PERCHE' `libcrypto.a` NON VENIVA PIU' RIFATTO
+DA ZERO.** L'archivio conteneva ancora gli oggetti del 5 agosto, compilati
+quando i sorgenti erano interi; l'elenco dei membri era vecchio e giusto, i
+sorgenti nuovi e vuoti. La ricostruzione ha rifatto l'archivio dall'elenco di
+ADESSO e i pezzi mancanti sono venuti a galla: **813 membri prima, 957 dopo**.
+Cioe' il giro completo non ha rotto niente — ha scoperto una cosa gia' rotta,
+che e' precisamente il suo mestiere.
+
+Riparato dalla copia intatta che stava gia' sul disco (`~/Scaricati/openssl`),
+confrontando i due alberi file per file: 819 differenze, 818 delle quali file
+vuoti da noi, e la 819esima e' `Configurations/50-exos.conf`, che e' nostro e
+la' non c'e'. Gli unici quattro rimasti vuoti si chiamano `empty.txt` e
+`smcont_zero.txt`: sono vuoti di mestiere.
+
 ### FATTO — le immagini nel browser
 
 Era il terzo di tre lavori scelti insieme, e chiude la serie. Il browser
