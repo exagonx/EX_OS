@@ -352,7 +352,7 @@ static void show_range(int da, int a, int paginate)
 static void cmd_help(void)
 {
     printf("\n");
-    printf("  %s %s — editor di testo lineare per EX-OS\n", TL_NAME, TL_VERSION);
+    printf("  %s %s - editor di testo lineare per EX-OS\n", TL_NAME, TL_VERSION);
     printf("  Autore  : %s <%s>\n", TL_AUTHOR, TL_EMAIL);
     printf("  Licenza : %s (GNU General Public License)\n", TL_LICENSE);
     printf("\n");
@@ -573,7 +573,7 @@ static int exec_command(const char *cmd)
         return 1;
     }
 
-    printf("textline: comando sconosciuto '%c' — 'h' per l'elenco\n", c);
+    printf("textline: comando sconosciuto '%c' - 'h' per l'elenco\n", c);
     return 0;
 }
 
@@ -584,7 +584,7 @@ static int edit_loop(void)
 {
     char buf[INBUF];
 
-    printf("\n%s %s — 'h' per l'elenco dei comandi\n", TL_NAME, TL_VERSION);
+    printf("\n%s %s - 'h' per l'elenco dei comandi\n", TL_NAME, TL_VERSION);
 
     for (;;) {
         int r;
@@ -648,7 +648,7 @@ static int opzione_copia(const char *src, const char *dst)
 
 static void uso(void)
 {
-    printf("%s %s — editor di testo lineare\n", TL_NAME, TL_VERSION);
+    printf("%s %s - editor di testo lineare\n", TL_NAME, TL_VERSION);
     printf("Uso:\n");
     printf("  textline <file>              apre il file per l'editing\n");
     printf("  textline <file> -v           visualizza il contenuto\n");

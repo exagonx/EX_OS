@@ -2,7 +2,7 @@
 
 [🇮🇹 Italiano](README.md) · **🇬🇧 English**
 
-**Version:** 0.204
+**Version:** 0.205
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit, FAT12 1.44MB floppy

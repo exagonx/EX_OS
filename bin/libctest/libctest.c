@@ -2219,7 +2219,7 @@ static void prova_pty(void)
     /* 2. Backspace: tre caratteri di eco, e la lettera sparisce dalla riga. */
     write(fd[0], "\b", 1);
     n = read(fd[0], buf, sizeof(buf));
-    esito("Backspace fa eco «indietro, spazio, indietro»",
+    esito("Backspace fa eco 'indietro, spazio, indietro'",
           n == 3 && buf[0] == '\b' && buf[1] == ' ' && buf[2] == '\b');
 
     /* 3. L'Invio consegna la riga allo slave, e prima non arriva niente. */
@@ -2296,7 +2296,7 @@ int main(int argc, char **argv)
 {
     (void)argc; (void)argv;
 
-    printf("libctest — prova della libc di EX-OS\n");
+    printf("libctest - prova della libc di EX-OS\n");
 
     prova_allocatore();
     prova_printf();

@@ -139,11 +139,11 @@ static void spiega_errore(const char *nome, int err)
             printf("mkdir: '%s' esiste gia'\n", nome);
             break;
         case E_NOSYS:
-            printf("mkdir: '%s' — EX-OS supporta directory solo nella root; "
+            printf("mkdir: '%s' - EX-OS supporta directory solo nella root; "
                    "un percorso annidato non sarebbe raggiungibile\n", nome);
             break;
         case E_NOSPC:
-            printf("mkdir: '%s' — spazio esaurito (disco pieno o root directory "
+            printf("mkdir: '%s' - spazio esaurito (disco pieno o root directory "
                    "piena)\n", nome);
             break;
         case E_NOENT:

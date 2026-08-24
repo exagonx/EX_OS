@@ -539,7 +539,7 @@ int main(int argc, char **argv)
 
     rc = ioport_bind(PCI_PORT_BASE, PCI_PORT_COUNT);
     if (rc < 0) {
-        printf("pci: ioport_bind(0x%x, %d) fallita (%d) — esco\n",
+        printf("pci: ioport_bind(0x%x, %d) fallita (%d) - esco\n",
                PCI_PORT_BASE, PCI_PORT_COUNT, rc);
         return 1;
     }
@@ -567,7 +567,7 @@ int main(int argc, char **argv)
 
     rc = ipc_register(PCI_SERVIZIO);
     if (rc < 0) {
-        printf("pci: ipc_register('%s') fallita (%d) — esco\n", PCI_SERVIZIO, rc);
+        printf("pci: ipc_register('%s') fallita (%d) - esco\n", PCI_SERVIZIO, rc);
         return 1;
     }
 

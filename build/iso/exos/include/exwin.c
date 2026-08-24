@@ -3185,11 +3185,31 @@ long ex_procedura_base(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         return 0;
 
     case EXM_DISEGNA:
-    default:
         /* Lo sfondo dell'area del client, e poi i controlli sopra. */
         ex_riempi(f, 0, 0, o->w, o->h, EX_GRIGIO);
         disegna_figli(f);
         ex_aggiorna(f);
+        return 0;
+
+    /* ! SI RIDIPINGE SOLO SU EXM_DISEGNA, E NON SU QUALUNQUE MESSAGGIO.
+     *
+     * Qui `default:` cadeva dentro il disegno, cioe' OGNI messaggio che
+     * un'applicazione non gestisce riempiva la sua finestra di grigio. Si
+     * vedeva sull'orologio: un clic sulla barra arriva come EXM_MOUSE_GIU,
+     * l'orologio non lo gestisce, e l'ora spariva — per tornare al cambio di
+     * minuto, che e' l'unico momento in cui quel programma ridisegna.
+     * Segnalato provandolo, non trovato leggendo.
+     *
+     * ! ED ERA ANCHE LAVORO CONTINUO PER NIENTE: ogni movimento del mouse
+     * sopra una finestra che non ascolta il mouse ne ripitturava il fondo e
+     * chiedeva al server di ricomporre lo schermo. Su una macchina che
+     * ricompone tutto a ogni aggiornamento, e' il tipo di costo che non si
+     * vede in un profilo perche' e' sparso dappertutto.
+     *
+     * Chi deve ridisegnarsi riceve EXM_DISEGNA dal server — e' il server a
+     * saperlo, quando una finestra viene scoperta — quindi non si perde niente.
+     */
+    default:
         return 0;
     }
 }

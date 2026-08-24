@@ -490,7 +490,7 @@ static int tty_read_ipc(char *dst, uint32_t n)
             sched_sleep(10);
         }
         if (g_kbd_pid == 0) {
-            klog(LOG_ERROR, "TTY: servizio '%s' non registrato — "
+            klog(LOG_ERROR, "TTY: servizio '%s' non registrato - "
                  "ripiego sulla tastiera in-kernel", KBD_SERVICE_NAME);
             tty_set_input_source(TTY_INPUT_INTERNAL);
             return -1;
@@ -510,7 +510,7 @@ static int tty_read_ipc(char *dst, uint32_t n)
     if (r < 0) {
         /* -ESRCH: il driver è morto. Riprendiamoci la tastiera, così un
          * crash del driver degrada la console invece di spegnerla. */
-        klog(LOG_ERROR, "TTY: servizio '%s' (PID %u) non raggiungibile (%d) — "
+        klog(LOG_ERROR, "TTY: servizio '%s' (PID %u) non raggiungibile (%d) - "
              "ripiego sulla tastiera in-kernel",
              KBD_SERVICE_NAME, g_kbd_pid, r);
         g_kbd_pid = 0;

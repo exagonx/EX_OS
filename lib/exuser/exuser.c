@@ -388,6 +388,30 @@ static int aggiungi_utente(const char *radice, const char *nome,
 {
     char sale[17], imp[65], riga[RIGA_MAX], pa[96], pb[96];
 
+    /* =========================================================================
+     * ! UN NOME GIA' PRESO SI RIFIUTA, E IL CONTROLLO STA QUI DENTRO
+     *
+     * Le due scritture qui sotto AGGIUNGONO una riga in fondo: senza questo
+     * controllo, `login -a` su un nome che esiste gia' ne scriveva una seconda
+     * in tutt'e due i file, e diceva «Utente 'mario' creato».
+     *
+     * ! E LA RICERCA PRENDE LA PRIMA RIGA CHE COMBACIA (cerca_riga, qui
+     * sopra), quindi vinceva quella VECCHIA: la password nuova non funzionava,
+     * la vecchia si', e l'uid restava quello di prima. Cioe' il programma
+     * diceva di aver fatto una cosa e ne aveva fatta un'altra — che e' peggio
+     * di un rifiuto, perche' chi legge non ha motivo di controllare.
+     *
+     * ! IL CONTROLLO E' QUI E NON IN CHI CHIAMA perche' i chiamanti sono tre —
+     * login al primo avvio, `login -a`, l'installatore — e un controllo
+     * ripetuto tre volte e' un controllo che prima o poi ne ha due. Il file lo
+     * protegge il codice che lo scrive.
+     *
+     * ! CAMBIARE UNA PASSWORD NON E' QUESTO: vuol dire riscrivere una riga in
+     * mezzo a un file, cioe' rifarlo per intero. Il giorno che serve, e'
+     * un'altra funzione — e questa le stara' accanto senza contraddirla.
+     * ========================================================================= */
+    if (trova_utente(radice, nome, 0, 0, 0, 0) == 0) return -2;
+
     sale_nuovo(sale);
     impronta_di(sale, pass, imp);
 

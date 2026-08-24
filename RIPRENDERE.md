@@ -32,12 +32,18 @@ In attesa nell'albero, kernel **0.204**:
 
 **321 prove su 321**, su floppy FAT12 e su disco ext2.
 
-! **`make abi` E' ROSSO, E VA LASCIATO ROSSO FINCHE' NON SI RICOSTRUISCE IL
-BERSAGLIO.** Il sysroot ha la libc del 14 agosto. Con le forme tenute non e'
-piu' un'emergenza — i binari vecchi funzionano — ma resta vero che chi compila
-dentro EX-OS non ha `spawn_utente` ne' `ipc_attendi`:
-`tools/ricostruisci-bersaglio.sh`, quando c'e' tempo, e solo dopo
-`--impronta`.
+! **`make abi` ADESSO DICE COSA E' CAMBIATO, NON SOLO CHE QUALCOSA LO E'.**
+L'impronta del bersaglio era un solo sha256; da oggi e' un elenco — una riga
+per forma, con la misura — e quando non combacia stampa le righe che
+differiscono:
+
+        forma                        registrata     adesso
+        ---------------------------- ---------- ----------
+        spawnextra                          596        604
+
+Chi legge decide in dieci secondi: `struct stat` da 48 a 60 e' il difetto di
+agosto che e' costato due giorni, `spawnextra` da 596 a 604 e' una forma che il
+kernel continua a capire.
 
 ! **`gitupdate.sh` FA `git add .` E UN COMMIT SOLO**: `messaggio-commit.txt`
 deve coprire tutto quello che si e' fatto dall'ultimo commit, non l'ultima
@@ -197,6 +203,171 @@ ai ponti — e ferma la build. Gira dentro `make all`.
 
 ! **E SI GUARDA IL SIMBOLO, NON IL NOME DELLA REGOLA**: il nome dice cosa
 volevamo, il simbolo dice cosa e' venuto fuori.
+
+### IL GUARDIANO DELL'ABI DICE COSA E' CAMBIATO
+
+`make abi` confronta la forma dei tipi che libc e programmi si scambiano con
+quella registrata nel sysroot all'ultima ricostruzione completa. Era **un solo
+sha256**: quando non combaciava poteva dire soltanto «qualcosa e' cambiato,
+ricostruisci tutto» — ore di macchina chieste senza dire per cosa.
+
+! **E UN GUARDIANO CHE RESTA ROSSO SI IMPARA A SALTARE.** Il 24 agosto la sola
+forma cambiata era `SpawnExtra` (596 -> 604), che il kernel adesso gestisce da
+solo: il rosso diceva una cosa piu' forte del vero, e sarebbe rimasto li' per
+giorni. E' esattamente cio' che era successo la stessa settimana con la riga
+`[FALLITO]` di `rename` in libctest — quattro giorni sotto gli occhi di
+nessuno, perche' un avviso che non si puo' verificare in dieci secondi diventa
+rumore. E allora la volta che ha ragione non lo sente nessuno.
+
+Adesso l'impronta e' un ELENCO: una riga per forma, con la misura in decimale.
+Quando non combacia si stampano le sole righe che differiscono, con il valore
+registrato e quello di adesso; le forme sparite e quelle nuove si vedono
+etichettate. Gli `abi_off_*` portano offset + 1 (vedi `CAMPO` in
+`tools/abi-bersaglio.c`) e il numero si ritoglie prima di stamparlo, o il
+messaggio direbbe una posizione che nel sorgente non esiste.
+
+! **E I SYSROOT GIA' IN GIRO SI CONTINUANO A LEGGERE.** Un `.abi-libc` scritto
+prima del 24 agosto e' un solo hash: `--verifica` lo riconosce (una riga, 64
+esadecimali), lo confronta come si faceva prima, e se e' rosso lo dice
+chiaramente — «l'impronta registrata non puo' dire QUALE forma e' cambiata,
+dopo la prossima ricostruzione lo dira'». Cambiare formato a un file di stato
+non deve mandare a ricostruire tutto per il formato.
+
+Provato nei quattro casi che contano: uguale (verde, con il numero di forme
+confrontate), una misura cambiata, una forma sparita, una forma nuova.
+
+### `login -a` DICEVA IL FALSO, E SOTTO C'ERA DI PEGGIO
+
+Il difetto dichiarato era il cartello: `login -a` su una macchina piena di
+utenti annunciava «Sistema nuovo: non c'e' ancora nessun utente», perche'
+riusava la funzione del primo avvio. Il comportamento era giusto — l'uid lo
+sceglie `exuser_prossimo_uid()` — ma il messaggio no, e **un messaggio falso e'
+peggio di uno assente**: chi lo legge si chiede cosa sia successo all'archivio.
+Adesso la funzione prende un parametro e dice quale delle due cose sta facendo.
+
+! **MA GUARDANDO QUELLA STRADA NE E' USCITA UN'ALTRA: UN NOME GIA' PRESO NON
+VENIVA RIFIUTATO.** `aggiungi_utente()` AGGIUNGE una riga in fondo a
+`/boot/utenti` e a `/boot/ombra`; `cerca_riga()` prende la PRIMA che combacia.
+Quindi `login -a mario` su un `mario` che c'e' gia' scriveva una seconda coppia
+di righe, stampava «Utente 'mario' creato» — e vinceva la vecchia: **la
+password nuova non funzionava, quella vecchia si', e l'uid restava quello di
+prima**. Il programma diceva di aver fatto una cosa e ne aveva fatta un'altra,
+che e' peggio di un rifiuto perche' chi legge non ha motivo di controllare.
+
+! **IL CONTROLLO STA DENTRO `aggiungi_utente()`, non nei chiamanti.** I
+chiamanti sono tre — il primo avvio, `login -a`, l'installatore — e un
+controllo ripetuto tre volte e' un controllo che prima o poi ne ha due. Rende
+`-2`, che NON e' `-1`: «c'e' gia'» e «non riesco a scrivere» mandano a cercare
+in due posti diversi, e dirli con lo stesso messaggio manda nel disco un
+problema che sta nell'archivio.
+
+! **E CAMBIARE UNA PASSWORD NON E' QUESTO.** Riscrivere una riga in mezzo a un
+file vuol dire rifarlo per intero: e' un'altra funzione, il giorno che serve.
+Sovrascrivere qui vorrebbe dire che si cambia la password di qualcun altro
+digitandone il nome per sbaglio.
+
+#### E IL BANNER D'ACCESSO ERA TRE GLIFI A CASO
+
+`printf("  EX-OS — accesso")` — con il trattino lungo UTF-8. La console
+indicizza il font per BYTE (`font8x16[ch * CELLA_H]`), quindi quei tre byte
+diventano tre glifi presi da dove capita, **su ogni accesso, sulla prima cosa
+che si vede**. Il kernel aveva reso ASCII le proprie stringhe il 19 agosto per
+questa identica ragione; nessuno aveva guardato i programmi. Le tre di `login`
+sono a posto; le altre cinquantasette sono nell'elenco dei difetti aperti.
+
+#### Come si e' provato, e cosa manca
+
+Il rifiuto del doppione e' provato sul CODICE VERO estratto in un banco per
+l'host — `perc`, `cerca_riga`, `trova_utente` compilati dal sorgente, non
+riscritti — su sette casi: i tre nomi presenti, un prefisso (`mari`), una
+sovra-stringa (`marioo`), un nome libero e uno con la maiuscola. Il prefisso e
+la sovra-stringa sono l'errore classico di un controllo d'accesso, e non c'e'.
+
+! **QUELLO CHE MANCA E' IL GIRO DENTRO EX-OS** — `login -a` battuto davvero,
+con il cartello giusto e il rifiuto a video — e manca perche' la macchina sta
+ricostruendo il bersaglio: provarlo adesso vuol dire contendersi la CPU con
+`cc1` e leggere tempi che non sono quelli veri.
+
+### NOVANTATRE STRINGHE CHE SULLA CONSOLE NON SI LEGGEVANO
+
+La console disegna un carattere per BYTE: `font8x16[ch * CELLA_H]`
+(kernel/arch/x86/vga.c), nessuna decodifica UTF-8. Un trattino lungo sono TRE
+byte, quindi tre glifi presi da dove capita. Il kernel aveva reso ASCII le
+proprie stringhe il 19 agosto — voce 17 del changelog di `version.h` — e li' si
+era fermato: **nessuno aveva guardato i programmi**, che sulla stessa console
+scrivono molto piu' del kernel.
+
+Fotografato prima e dopo, sulla stessa schermata di `hwinfo`:
+
+    prima:   assurdo ZCO sul controller ATA vuol dire perdere
+    dopo:    assurdo -   sul controller ATA vuol dire perdere
+
+! **93, NON 57.** Il primo conto veniva da un `grep` sulle righe che contengono
+`printf`, e perdeva tutto cio' che sta nelle righe di continuazione e nelle
+tabelle di dati — `hwinfo` da solo ne aveva 23, quasi tutte in due elenchi di
+modelli. Il conto giusto lo da' un piccolo tokenizzatore che salta i commenti e
+guarda solo i letterali: contare con `grep` cio' che ha una struttura e' come
+cercare una parentesi con una regola.
+
+! **E I COMMENTI NON SI TOCCANO**: 1110 trattini lunghi restano dove stanno,
+perche' i commenti non li stampa nessuno. E' la ragione per cui la sostituzione
+e' passata da un tokenizzatore invece che da `sed`: `sed` non sa la differenza
+fra una stringa e la prosa che le sta accanto.
+
+Tre sostituzioni: `—` diventa `-`, `«»` diventano apostrofi — la forma che il
+kernel usa gia' per i nomi, `'nome'` — e l'unica lettera accentata diventa
+`a'`, come si scrive nel resto del progetto.
+
+! **E UNA TABELLA SI E' PURE RADDRIZZATA.** `netdetect` stampa i modelli con
+`%-44s`, che conta BYTE: le righe con il trattino lungo erano sfalsate di due
+caratteri rispetto alle altre. Il commento accanto alla tabella lo diceva gia',
+ed era rimasto una nota invece di una correzione.
+
+### LE LETTERE ACCENTATE SEMBRAVANO LETTERE CON UNA MACCHIA SOPRA
+
+Segnalato guardando lo schermo: `àèìòù` non somigliavano alle lettere
+accentate, ma a lettere normali con un accento strano. Guardando i bit del font
+si vede subito perche':
+
+    prima                     adesso
+    ..##....   riga 2         ........
+    ....##..   riga 3         ..##....   riga 3
+    ........   riga 4         ...##...   riga 4
+    ........   riga 5         ........
+    ..####..   riga 6         ..####..   il corpo della lettera
+
+Due cose insieme. **Il segno stava DUE righe sopra la lettera** — mentre il
+punto della `i`, nello stesso font, ne sta una sola: l'occhio lo legge come un
+segno che galleggia, non come parte della lettera. E **il grave e l'acuto erano
+una scaletta spezzata** su quattro colonne (`..##....` poi `....##..`): a otto
+pixel di larghezza due quadratini staccati si leggono come due macchie, non
+come un accento. Adesso sono un tratto continuo su tre colonne.
+
+28 glifi: le minuscole accentate e l'anello di `å` scendono di una riga; le
+maiuscole con segno (`Ä É Ö Ü Ñ`) pure, perche' il loro corpo comincia gia'
+alla riga 4. `Å` resta com'e': il suo anello arriva alla riga 3 e scendendo
+toccherebbe la lettera.
+
+! **VERIFICATO SULLO SCHERMO, NON SUI BIT.** La prima prova e' passata
+mostrando i glifi VECCHI, e non perche' la modifica fosse sbagliata: avevo
+ricostruito il kernel e non l'immagine del floppy, quindi QEMU avviava quello
+di prima. I pixel si sono letti dal framebuffer — `keymap it`, i cinque tasti
+accentati, screendump, e le celle 8x16 stampate come testo — invece di
+fidarsi di una compilazione riuscita.
+
+! **E IL COMMENTO IN TESTA AL FONT DICEVA IL FALSO:** «l'ordine e' Latin-1, non
+CP437», con tanto di spiegazione del perche' sarebbe stata una scelta. I dati
+sono sempre stati CP437: il byte 0xC0 disegna un angolo di cornice e la `a`
+accentata e' 0x85, non 0xE0. Ed e' CP437 che ci vuole, perche' in modo TESTO i
+glifi li tiene la scheda video e quelli sono CP437 per costruzione — se il font
+grafico fosse Latin-1, la stessa lettera comparirebbe in due posti diversi a
+seconda della modalita'. La tastiera lo dichiara gia' (`drivers/kbd/keymaps.h`):
+erano d'accordo font e tastiera, era il commento a essere sbagliato. **Chi si
+fosse fidato di quella riga avrebbe "corretto" la tastiera e rotto ogni tasto
+accentato.**
+
+! **E CHI RIGENERA IL FONT DAL .psf PERDE QUESTO LAVORO.** Sta scritto adesso in
+testa al file, accanto al comando che lo rigenera: era il posto dove serviva.
 
 ### FATTO — le immagini nel browser
 
@@ -1174,9 +1345,15 @@ resto e' andato storto.
   agosto**, e la riparazione non e' quella che sembrava. Vedi la sezione «Il
   server a finestre non e' un driver» qui sopra.
 
-- `login -a` stampa «Sistema nuovo: non c'e' ancora nessun utente» anche quando
-  gli utenti ci sono gia': riusa `primo_utente()` con il suo cartello del primo
-  avvio. Il messaggio e' falso, il comportamento e' giusto.
+- ~~`login -a` stampa «Sistema nuovo: non c'e' ancora nessun utente» anche
+  quando gli utenti ci sono gia'~~ — **RISOLTO il 24 agosto 2026**, e sotto il
+  messaggio falso c'era di peggio: vedi la sezione «`login -a` diceva il falso»
+  qui sopra.
+
+- ~~le stringhe dei programmi non sono ASCII, e la console indicizza il font per
+  BYTE~~ — **RISOLTO il 24 agosto 2026**: 93 letterali in 29 file fra `bin/` e
+  `drivers/`. Vedi la sezione «Novantatre stringhe che sulla console non si
+  leggevano» qui sopra.
 
 ## COME SI PROVA QUELLO CHE C'E' (aggiornato il 20 agosto 2026)
 

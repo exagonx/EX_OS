@@ -167,11 +167,11 @@ static const Flag g_flag_edx[] = {
     { 5,  "msr",   "registri di modello (RDMSR)"    },
     { 6,  "pae",   "indirizzi fisici a 36 bit"      },
     { 8,  "cx8",   "CMPXCHG8B"                      },
-    { 9,  "apic",  "APIC locale — serve all'SMP"    },
+    { 9,  "apic",  "APIC locale - serve all'SMP"    },
     { 11, "sep",   "SYSENTER/SYSEXIT"               },
     { 13, "pge",   "pagine globali"                 },
     { 15, "cmov",  "mosse condizionate"             },
-    { 19, "clfsh", "CLFLUSH — serve al DMA coerente"},
+    { 19, "clfsh", "CLFLUSH - serve al DMA coerente"},
     { 23, "mmx",   "MMX"                            },
     { 24, "fxsr",  "FXSAVE/FXRSTOR"                 },
     { 25, "sse",   "SSE"                            },
@@ -264,14 +264,14 @@ static void sezione_cpu(void)
          * esteso invece che come sigla. */
         rap("\n  Cosa ne discende per il kernel:\n");
         rap("    APIC locale    %s\n", (r[3] & (1u << 9))
-            ? "SI  — l'SMP e' possibile su questa macchina"
-            : "NO  — niente SMP: senza APIC non si avviano le altre CPU");
+            ? "SI  - l'SMP e' possibile su questa macchina"
+            : "NO  - niente SMP: senza APIC non si avviano le altre CPU");
         rap("    RDTSC          %s\n", (r[3] & (1u << 4))
-            ? "SI  — si possono misurare i tempi senza il PIT"
-            : "NO  — per misurare il tempo resta il PIT");
+            ? "SI  - si possono misurare i tempi senza il PIT"
+            : "NO  - per misurare il tempo resta il PIT");
         rap("    SYSENTER       %s\n", (r[3] & (1u << 11))
-            ? "SI  — le chiamate di sistema possono lasciare int 0x80"
-            : "NO  — le chiamate di sistema restano su int 0x80");
+            ? "SI  - le chiamate di sistema possono lasciare int 0x80"
+            : "NO  - le chiamate di sistema restano su int 0x80");
     }
 
     /* Il nome commerciale sta nelle foglie estese, e vanno chieste a parte:
@@ -489,13 +489,13 @@ static const Guida g_guide[] = {
     { 0x1022, 0x2000, 0, 0, "AMD PCnet-PCI II/FAST III (Am79C970/C973)",
       "/dev/pcnet.drv", NULL },
     { 0x1022, 0x2001, 0, 0, "AMD PCnet-Home", "/dev/pcnet.drv", NULL },
-    { 0x10EC, 0x8029, 0, 0, "Realtek RTL8029(AS) — NE2000 PCI",
+    { 0x10EC, 0x8029, 0, 0, "Realtek RTL8029(AS) - NE2000 PCI",
       "/dev/ne2k.drv", NULL },
-    { 0x1050, 0x0940, 0, 0, "Winbond W89C940 — NE2000 PCI",
+    { 0x1050, 0x0940, 0, 0, "Winbond W89C940 - NE2000 PCI",
       "/dev/ne2k.drv", NULL },
-    { 0x1106, 0x0926, 0, 0, "VIA VT86C926 Amazon — NE2000 PCI",
+    { 0x1106, 0x0926, 0, 0, "VIA VT86C926 Amazon - NE2000 PCI",
       "/dev/ne2k.drv", NULL },
-    { 0x8E2E, 0x3000, 0, 0, "KTI ET32P2 — NE2000 PCI",
+    { 0x8E2E, 0x3000, 0, 0, "KTI ET32P2 - NE2000 PCI",
       "/dev/ne2k.drv", NULL },
 
     /* --- schede di rete note, driver da scrivere -------------------------- */
@@ -522,7 +522,7 @@ static const Guida g_guide[] = {
 
     /* --- memoria di massa -------------------------------------------------- */
     { 0x8086, 0x7010, 0, 0, "Intel PIIX3 IDE", "(nel kernel)",
-      "kernel/block/ata.c — PIO e bus master DMA" },
+      "kernel/block/ata.c - PIO e bus master DMA" },
     { 0x8086, 0x7111, 0, 0, "Intel PIIX4 IDE", "(nel kernel)",
       "kernel/block/ata.c" },
 
@@ -530,7 +530,7 @@ static const Guida g_guide[] = {
     { QQ, QQ, 0x01, 0x01, NULL, "(nel kernel)",
       "kernel/block/ata.c gestisce l'IDE generico" },
     { QQ, QQ, 0x01, 0x06, NULL, NULL,
-      "AHCI: registri in memoria, liste di comandi — driver da scrivere" },
+      "AHCI: registri in memoria, liste di comandi - driver da scrivere" },
     { QQ, QQ, 0x01, 0x08, NULL, NULL,
       "NVMe: code in memoria, nessuna eredita' ATA" },
     { QQ, QQ, 0x02, 0x00, NULL, NULL,
@@ -699,7 +699,7 @@ static void sezione_pci(int pid)
 
     if (pid <= 0) {
         rap("  Il servizio PCI non e' disponibile: niente enumerazione.\n");
-        rap("  Serve /dev/pci.drv — c'e' sul CD di EX-OS. Avvialo con:\n");
+        rap("  Serve /dev/pci.drv - c'e' sul CD di EX-OS. Avvialo con:\n");
         rap("      /dev/pci.drv &\n");
         return;
     }
@@ -784,16 +784,16 @@ static void sezione_pci(int pid)
         }
 
         if (g == NULL) {
-            rap("    DRIVER         DA SCRIVERE — modello non in tabella\n");
+            rap("    DRIVER         DA SCRIVERE - modello non in tabella\n");
         } else if (g->driver == NULL) {
             rap("    DRIVER         DA SCRIVERE\n");
         } else if (g->driver[0] != '/') {
             rap("    DRIVER         %s\n", g->driver);
         } else if (driver_su_disco(g->driver)) {
-            rap("    DRIVER         %s — presente su questo supporto\n",
+            rap("    DRIVER         %s - presente su questo supporto\n",
                 g->driver);
         } else {
-            rap("    DRIVER         %s — SCRITTO ma non su questo supporto\n",
+            rap("    DRIVER         %s - SCRITTO ma non su questo supporto\n",
                 g->driver);
         }
         if (g != NULL && g->nota != NULL)
@@ -810,7 +810,7 @@ static void sezione_mancanti(void)
 
     rap("\n");
     rap("=============================================================\n");
-    rap(" DA FARE — dispositivi senza driver\n");
+    rap(" DA FARE - dispositivi senza driver\n");
     rap("=============================================================\n");
 
     for (n = 0; n < g_n_disp; n++) {
@@ -885,7 +885,7 @@ static void sezione_limiti(void)
     rap("  dimensione      quanto e' larga la finestra di un BAR si misura\n");
     rap("  dei BAR         scrivendoci 0xFFFFFFFF e rileggendo. Per quel\n");
     rap("                  tempo il dispositivo decodifica un indirizzo\n");
-    rap("                  assurdo — sul controller ATA vuol dire perdere\n");
+    rap("                  assurdo - sul controller ATA vuol dire perdere\n");
     rap("                  il disco. La dimensione la sa chi scrive il\n");
     rap("                  driver: viene dalla scheda tecnica.\n");
 }
@@ -897,7 +897,7 @@ static void intestazione(void)
     char       quando[32];
 
     rap("=============================================================\n");
-    rap(" EX-OS — inventario dell'hardware\n");
+    rap(" EX-OS - inventario dell'hardware\n");
     rap("=============================================================\n");
 
     ora = time(NULL);
@@ -907,7 +907,7 @@ static void intestazione(void)
     rap("  generato da      hwinfo\n");
     rap("\n");
     rap("  A cosa serve: raccogliere in un posto solo i dati che servono a\n");
-    rap("  scrivere un driver — identificatori su cui agganciarsi, classe,\n");
+    rap("  scrivere un driver - identificatori su cui agganciarsi, classe,\n");
     rap("  dove rispondono i registri, su quale IRQ, e cosa il BIOS ha gia'\n");
     rap("  acceso. In fondo c'e' l'elenco di cio' che un driver non ce l'ha.\n");
 }
@@ -953,7 +953,7 @@ int main(int argc, char **argv)
              * lettura, e il rapporto a video vale comunque: rinunciare
              * del tutto perche' non si puo' scrivere sarebbe buttare via
              * l'unica cosa che si poteva ancora fare. */
-            printf("hwinfo: non riesco a scrivere %s — proseguo solo a video\n",
+            printf("hwinfo: non riesco a scrivere %s - proseguo solo a video\n",
                    percorso);
             printf("        (dal CD la radice e' in sola lettura: prova\n");
             printf("         `hwinfo /disk/hwinfo.txt` su un disco montato)\n\n");

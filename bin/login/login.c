@@ -103,12 +103,32 @@ static char g_shell[128] = "/bin/sh";
  *
  * Qui restano soltanto le cose che sono di login e di nessun altro: la lista
  * di chi e' ammesso, l'avvio della shell, e il ciclo. */
-static void primo_utente(void)
+/* =============================================================================
+ * crea_utente — la stessa domanda, in due situazioni diverse
+ *
+ * ! `primo` DICE SE E' IL PRIMO CONTO DELLA MACCHINA, e non e' un dettaglio di
+ * cortesia: la stessa funzione la usa l'avvio di un sistema nuovo, dove non
+ * c'e' NESSUNO e senza un conto non si va avanti, e `login -a`, dove i conti
+ * ci sono e se ne aggiunge uno.
+ *
+ * ! FINO AL 24 AGOSTO 2026 IL CARTELLO ERA UNO SOLO, e `login -a` su una
+ * macchina piena di utenti annunciava «Sistema nuovo: non c'e' ancora nessun
+ * utente». Il comportamento era giusto — l'uid lo sceglie exuser_prossimo_uid()
+ * — ma il messaggio diceva il falso, e un messaggio falso e' peggio di un
+ * messaggio assente: chi lo legge si chiede cosa e' successo all'archivio.
+ * ============================================================================= */
+static void crea_utente(int primo)
 {
     char nome[NOME_MAX], p1[PASS_MAX], p2[PASS_MAX];
 
-    printf("\n  Sistema nuovo: non c'e' ancora nessun utente.\n");
-    printf("  Creane uno adesso — da qui in poi servira' per entrare.\n\n");
+    if (primo) {
+        printf("\n  Sistema nuovo: non c'e' ancora nessun utente.\n");
+        printf("  Creane uno adesso: da qui in poi servira' per entrare.\n\n");
+    } else {
+        printf("\n  Nuovo utente.\n");
+        printf("  Il nome dev'essere libero; il numero lo sceglie il sistema,\n");
+        printf("  il primo dopo quelli gia' usati.\n\n");
+    }
 
     for (;;) {
         printf("  nome utente: ");
@@ -123,7 +143,7 @@ static void primo_utente(void)
         if (exuser_leggi_password(p1, sizeof(p1)) < 0) {
             printf("\n  La tastiera non risponde in modalita' raw: non posso\n");
             printf("  chiedere una password senza mostrarla a schermo.\n");
-            printf("  Serve /dev/kbd.drv — vedi [modules] in kernel.cfg.\n");
+            printf("  Serve /dev/kbd.drv: vedi [modules] in kernel.cfg.\n");
             sleep(3);
             continue;
         }
@@ -146,10 +166,23 @@ static void primo_utente(void)
          * 999 restano liberi per i conti di servizio. */
         {
             unsigned int u = exuser_c_e_qualcuno(0) ? exuser_prossimo_uid(0) : 0u;
+            int          r = exuser_aggiungi(0, nome, p1, u, u);
 
-            if (exuser_aggiungi(0, nome, p1, u, u) == 0) {
-                printf("\n  Utente '%s' creato.\n\n", nome);
+            if (r == 0) {
+                printf("\n  Utente '%s' creato", nome);
+                if (u == 0) printf(" (root)");
+                else        printf(" (uid %u)", u);
+                printf(".\n\n");
                 return;
+            }
+
+            /* ! «C'E' GIA'» NON E' «NON SONO RIUSCITO A SCRIVERLO», e dirlo
+             * con lo stesso messaggio manda a cercare un guasto nel disco. E
+             * non si sovrascrive: cambiare la password di qualcuno non e' una
+             * cosa che si fa per sbaglio digitando un nome. */
+            if (r == -2) {
+                printf("  '%s' esiste gia'. Scegli un altro nome.\n", nome);
+                continue;
             }
         }
         printf("  Non sono riuscito a scriverlo. Riprovo.\n");
@@ -363,7 +396,7 @@ int main(int argc, char **argv)
                 return 1;
             }
             exuser_prendi_console();
-            primo_utente();
+            crea_utente(0);          /* non e' il primo: i conti ci sono */
             return 0;
         }
         if (strcmp(argv[i], "-c") == 0 && i + 1 < argc) {
@@ -384,12 +417,12 @@ int main(int argc, char **argv)
 
     for (;;) {
         if (!exuser_c_e_qualcuno(0)) {
-            primo_utente();
+            crea_utente(1);           /* macchina nuova: non c'e' nessuno */
             continue;                 /* ora c'e': si passa dal login vero */
         }
 
         printf("\n");
-        printf("  EX-OS — accesso\n\n");
+        printf("  EX-OS - accesso\n\n");
         printf("  utente: ");
         if (exuser_leggi_riga(nome, sizeof(nome)) <= 0) continue;
 

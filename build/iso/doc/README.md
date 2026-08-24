@@ -2,7 +2,7 @@
 
 **🇮🇹 Italiano** · [🇬🇧 English](README.en.md)
 
-**Versione:** 0.184
+**Versione:** 0.204
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 32-bit, floppy FAT12 1.44MB
@@ -70,19 +70,200 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### Utenti veri: due conti, `sudo`, e un recovery quando l'accesso è rotto
+
+**testato** — installazione da zero su ext2, i due conti chiesti e creati, poi
+avvio dal disco: `uid=1000(graziano)`, casa `/home/graziano` di sua proprietà.
+`sudo id` rende `uid=0(root)`, e dopo `exit` da `sudo -s` si torna a
+`uid=1000`.
+
+Prima i conti li creava `login` al primo avvio, e ne creava **uno solo**: root.
+Da lì in poi si lavorava sempre da amministratore, che è il modo in cui un
+errore qualunque diventa un danno qualunque. Adesso li chiede l'installatore —
+root per riparare, il tuo per lavorare — e chiede anche se il tuo deve poter
+fare le cose da root con la propria password.
+
+| | |
+|---|---|
+| `/boot/utenti` | `nome:uid:gid`, 0644 |
+| `/boot/ombra` | `nome:sale:impronta`, 0600 — SHA-256 di `sale:password` |
+| `/boot/amministratori` | un nome per riga, 0644 |
+| `lib/exuser` | leggere una password senza eco, verificarla, aggiungere un conto |
+| `bin/sudo` | il comando |
+| `SYS_SU` (254) | la capacità stretta: «diventa root SE sai la password» |
+
+    sudo <comando> [argomenti]   esegue quel comando come root
+    sudo -s                      apre una shell di root
+    sudo                         non fa niente e stampa l'uso
+
+! **ESEGUIRE UN COMANDO E APRIRE UNA SHELL NON SONO LA STESSA COSA DETTA IN DUE
+MODI.** Con `sudo comando` i poteri durano quanto il comando e finiscono da
+soli; con una shell durano finché qualcuno si ricorda di uscire. La seconda si
+ottiene — `-s` — ma bisogna **chiederla**: aprirla a chi ha battuto `sudo` e
+invio vorrebbe dire dare la più pericolosa delle due a chi non l'ha domandata.
+
+! **IL PROGRAMMA `sudo` NON HA NESSUN POTERE**, ed è la parte che regge tutto
+il resto. Non è setuid — il bit setuid sui file in EX-OS non esiste, di
+proposito, perché renderebbe pericoloso ogni eseguibile che lo porta e non c'è
+modo di controllarli tutti — e non decide niente. Legge una password, la passa
+al kernel, e **decide il kernel**. Un `sudo` sostituito con un programma
+qualunque resta un programma qualunque.
+
+! **LA VERIFICA STA NEL KERNEL PERCHÉ NON POTEVA STARE ALTROVE.**
+`/boot/ombra` è 0600 di root e deve restarlo: se fosse leggibile, chiunque si
+porterebbe via le impronte e le proverebbe con comodo su un'altra macchina.
+Quindi il confronto lo deve fare qualcuno che quel file lo può aprire. È lo
+stesso motivo per cui su Unix `su` è setuid root, e costa uno SHA-256 dentro il
+kernel.
+
+! **E IL KERNEL NON RIUSCIVA AD APRIRLO.** `SYS_SU` gira nel processo di chi
+chiama, uid 1000, e il VFS guardava le credenziali del **processo** invece di
+quelle di chi stava davvero leggendo. La riparazione è `vfs_open_autorita()`:
+non un bit dentro `flags` — arriverebbe da `sys_open`, cioè da un numero
+scelto dall'utente, e basterebbe indovinarlo per leggersi le password — e non
+uno stato globale, che varrebbe per **tutti** i processi finché è acceso,
+mentre il VFS qui dentro riscadenza. Il permesso viaggia come argomento e
+finisce con la chiamata.
+
+! **E UNA CONSOLE CHE NON APRE `login` NON STA PROTEGGENDO NIENTE**: è una
+console il cui sistema di autenticazione è **corrotto**. Lasciarla chiusa non
+difende — chi ha la macchina davanti avvia da CD e monta il disco in trenta
+secondi — e toglie l'unico modo di ripararla da dentro. Si apre una shell di
+root, e lo dice a chiare lettere prima di aprirsi: «questa shell gira come root
+e NESSUNO ha fatto l'accesso». Non è un accesso: è una macchina rotta che si
+apre per essere riparata.
+
+### `ls -l`: i permessi e i proprietari si vedono
+
+**testato** — e ha trovato due difetti, uno dei quali nel kernel.
+
+! **UNA CHIAMATA IN PIÙ, NON UN CAMPO IN PIÙ A `Stat`.** Cambiare una struttura
+che i programmi si passano già vuol dire ricostruire tutto ciò che la usa, e
+`Stat` la usa chiunque apra un file. `st_uid` e `st_gid` restano a zero e
+continuano a dichiararlo; la verità la chiede chi la vuole, con `statperm()`
+(`SYS_STATPERM`, 253).
+
+! **I DATI C'ERANO GIÀ E NON USCIVANO**: `VfsStat` porta modo, uid e gid da
+quando ext2 ha imparato i proprietari, ma `sys_stat` non li copiava. Mancava il
+trasporto, non l'informazione.
+
+! **E `VfsStat` NON ERA INIZIALIZZATA.** Su un CD `ls -l` mostrava permessi
+diversi per ogni file e proprietari a cinque cifre: `stat_interno()` lasciava
+modo, uid e gid a quello che c'era nello stack: li scriveva solo il ramo ext2,
+mentre ISO 9660, il FAT12 del floppy e la radice non li toccavano affatto. E
+non era estetica: **`vfs_permesso()` decide con `st->modo`**, dove zero vuol
+dire «questo volume non ha proprietari, passa».
+
+Su un volume senza proprietari `ls -l` scrive `?????????` e `-`, che è la
+verità: su FAT e su ISO 9660 il proprietario non esiste.
+
+### Lo schermo si ricompone solo dove è cambiato
+
+**testato** — misurato con una spia nel ciclo del compositore, non stimato:
+
+    ricomposizioni durante il movimento del puntatore
+        29 da   260 pixel
+        17 da   240
+         2 da   117
+        39 da 480.000   (avvio, finestre nuove, pressioni di bottone)
+
+cioè **260 pixel invece di 480.000** — circa 1850 volte meno — per il caso che
+si ripete a ogni movimento della mano.
+
+! **IL RITAGLIO STA NELLE DUE PRIMITIVE, NON NEI CHIAMANTI.** `px()` e
+`riempi()` sono le sole due strade per arrivare al framebuffer, quindi tutto
+ciò che disegna — cornici, prese, contorni, il puntatore — eredita il ritaglio
+senza sapere che esiste. Metterlo nei chiamanti vorrebbe dire ricordarselo a
+ogni funzione nuova, e prima o poi qualcuno non se lo ricorda.
+
+! **LA COPIA DELLA ZONA DEL CLIENT È L'ECCEZIONE**, e ce l'ha per forza: non
+passa dalle primitive apposta, perché va per righe intere con MMX ed è quello
+che la rende veloce. Lì il ritaglio si applica a mano.
+
+! **IL PREDEFINITO È «TUTTO», E VA TENUTO COSÌ.** Una regione sporca sbagliata
+per difetto lascia pixel vecchi sullo schermo: un difetto che non si vede dove
+è stato fatto e che si manifesta come «ogni tanto resta un pezzo di finestra».
+Oggi si stringe **un caso solo**, il movimento del puntatore; gli altri undici
+dichiarano ancora tutto lo schermo, ed è dichiarato.
+
+### Il browser: tabelle, elenchi, `<pre>` e i fogli di stile fino in fondo
+
+**testato** — bordi destri identici su tutte le righe (232, 469, 753),
+distacchi di 8 px, somma 744 = la larghezza dell'area.
+
+! **LA LARGHEZZA DI UNA COLONNA NON SI SA FINCHÉ NON SI È GUARDATO OGNI
+CONTENUTO DI QUELLA COLONNA**, ed è l'unico posto del browser che vuole **due**
+passate: il resto della pagina si impagina in avanti, una parola dopo l'altra,
+senza tornare indietro.
+
+! **E MENTRE SI MISURA NON SI ALLINEA.** È il difetto che hanno trovato i
+pixel: il foglio predefinito centra i `<th>`, quindi la passata di misura
+spingeva i pezzi in mezzo alla riga e la larghezza tornava «metà pagina»
+invece che «quanto la parola». L'allineamento decide **dove** mettere una riga,
+la misura chiede **quanto** occupa. Niente `colspan`/`rowspan`, niente bordi:
+dichiarato.
+
+`<hr>` era solo un po' d'aria: adesso è una riga, disegnata come uno sfondo
+alto due pixel perché è esattamente ciò che è. `<ul>` e `<ol>` hanno il loro
+segno, e per `<ol>` il numero si conta **fra i fratelli** — due liste annidate
+si darebbero i numeri a vicenda.
+
+! **DENTRO `<pre>` GLI SPAZI E GLI A CAPO SONO IL CONTENUTO**, ed è tutta la
+ragione per cui quel tag esiste. La correzione andava in `exhtml.so`, non nel
+browser: chi analizza riduce a uno spazio qualunque sequenza di bianchi — che è
+la regola dell'HTML e va bene per tutto il resto — e ridurli lì vuol dire che
+nessun utilizzatore, per quanto attento, può più rimetterli. L'informazione è
+persa prima di arrivargli.
+
+Dei fogli di stile si applicano adesso anche **allineamento, i quattro margini
+e il colore di sfondo**, che `excss.so` calcolava e il browser buttava via —
+tre proprietà su otto promesse dalla libreria e scartate da chi la usa, il tipo
+di divario che non dà nessun errore.
+
+! **L'ALLINEAMENTO NON SI PUÒ APPLICARE MENTRE SI SCRIVE**: per centrare
+bisogna sapere quanto è larga la riga, e lo si sa solo quando è finita. Si
+segna il primo pezzo, e al momento di andare a capo si spostano tutti quelli
+della riga.
+
+! **UNO SFONDO NON È UN PEZZO, È CIÒ CHE STA SOTTO I PEZZI.** Vive in un elenco
+suo e si disegna prima di tutto il testo: metterlo fra i pezzi vorrebbe dire
+dipingere sopra le parole già scritte, perché l'ordine dei pezzi è quello del
+documento e non ha niente a che fare con la profondità.
+
+### «Informazioni su», e l'orologio che non spariva
+
+**testato** — e la prima diagnosi era sbagliata, smentita da un A/B.
+
+Ogni programma della scrivania — browser, file manager, editor — dice adesso
+nome, che cosa fa, l'autore e **la memoria che sta usando**: immagine
+(`_start`→`_bss_end`), heap (`sbrk(0)`) e pila. Dalla shell lo dice `ver`. Sta
+in `lib/exinfo`, perché quattro copie dello stesso riquadro divergono alla
+prima riga aggiunta.
+
+! **L'OROLOGIO NON SPARIVA AL PRIMO CLIC: ANDAVA SOTTO.** Avevo dato la colpa
+al ridisegno della finestra su qualunque messaggio non gestito, e l'A/B l'ha
+smentito — due esecuzioni identiche al pixel, con l'unica differenza nella
+cifra dell'ora. La causa vera era `in_cima()`, che rialzava una finestra già in
+cima: la barra è `WIN_ST_SOPRA`, e rialzarla la rimetteva **sotto** le altre
+dello stesso strato.
+
 ### Un browser: dalla rete allo schermo
 
 **testato** — `http://www.google.com` rende 200 e 82550 byte; `http://example.com`
 si vede impaginato in `/exwin/bin/browser`, con il titolo in Liberation Sans
-Bold a 22 e il corpo in Serif a 15.
+Bold a 22 e il corpo in Serif a 15. E le **immagini della pagina si vedono**:
+una prova con tre PNG generati a mano dà 3000 pixel esatti per ciascuno dei tre
+colori attesi — cioè la misura naturale e quella dichiarata con `width`/`height`
+sono tutt'e due giuste al pixel.
 
 | | |
 |---|---|
 | `lib/exhttp/http.c` | HTTP/1.1 senza rete: URL, richiesta, intestazioni, corpo «a pezzi» |
 | `lib/exhttp/exhttp.c` | il trasporto TCP, le redirezioni |
-| `lib/exhtml/html.c` | da testo ad albero |
+| `lib/exhtml/html.c` | da testo ad albero — **`/exwin/lib/exhtml.so`**, a disposizione di ogni programma |
 | `bin/scarica` | prende una pagina e la stampa o la salva |
-| `exwin/bin/browser` | barra dell'indirizzo, collegamenti, scorrimento |
+| `exwin/bin/browser` | barra dell'indirizzo, collegamenti, scorrimento, immagini |
+| `lib/eximg/eximg.c` | PNG, JPG e ICO — aperta a richiesta, non collegata |
 
 ! **IL TRASPORTO È UN PARAMETRO, NON UNA COSA SAPUTA.** Oggi sotto l'HTTP c'è
 il TCP; domani, per `https://`, ci sarà il TLS. Se il codice aprisse la
@@ -104,8 +285,37 @@ poi l'albero è spazzatura.
 porta 443 darebbe una risposta incomprensibile e un errore che non c'entra
 niente.
 
-Quello che **non** c'è, dichiarato: CSS, tabelle impaginate come tabelle,
-immagini dentro il testo, `https`.
+! **LE IMMAGINI ARRIVANO DOPO IL TESTO.** La pagina si impagina e si disegna con
+le sole parole; solo allora si scarica un'immagine per volta, e a ognuna che
+arriva si reimpagina. Prenderle prima vorrebbe dire una finestra vuota finché
+l'ultima non risponde, e una che non risponde costa otto secondi da sé. Quella
+che non arriva lascia il posto al suo `alt`, che è il motivo per cui
+quell'attributo esiste.
+
+! **E I PIXEL SONO DEL BROWSER, NON DEL DECODIFICATORE**: si decodifica, si
+copia nella misura con cui si disegnerà, e il bitmap naturale si restituisce
+subito. Tenerlo vorrebbe dire lasciar scegliere alla pagina quanta memoria
+prendere — 128 KB di PNG possono essere 4000×3000 pixel, cioè 48 MB su una
+macchina che ne ha 32. I tetti sono dichiarati: dodici immagini, 128 KB per
+file, 512 K pixel in tutto.
+
+! **I FOGLI DI STILE CI SONO, in `/exwin/lib/excss.so`**: `<style>`, `<link
+rel=stylesheet>` e l'attributo `style=`, con la cascata vera (origine,
+specificità, ordine). Selettori per tipo, classe, id, discendenza ed elenco;
+colori, corpi, grassetto, corsivo, `display:none`, allineamento e margini.
+
+! **E QUELLO CHE NON SI SA LEGGERE SI SCARTA, NON SI INDOVINA**: `div > p` non
+diventa `div p`, un selettore troppo lungo si butta invece di essere accorciato
+— accorciarlo lo renderebbe più **largo** dell'originale — e `2em` si rifiuta
+invece di valere due pixel. Meno stile, mai stile sbagliato.
+
+! **E I TAG DI ASPETTO SONO DIVENTATI REGOLE**: `h1`, `<b>`, `<i>`, `<strong>`,
+`<em>` e il colore dei collegamenti stanno in un foglio predefinito con
+l'origine più bassa della cascata, quindi una pagina può sovrascriverli. Prima
+erano `if` nel motore, e `<b>` e `<i>` non c'erano affatto.
+
+Quello che **non** c'è, dichiarato: JavaScript, tabelle impaginate come
+tabelle, `@media`, le unità relative, `https`.
 
 
 ### I font: TrueType, misurato contro FreeType
@@ -195,7 +405,7 @@ rileggere subito renderebbe lo stesso messaggio all'infinito.
 
 | | |
 |---|---|
-| `/dev/wserver.drv` compone le finestre e muove il puntatore, **in ring 3** | testato |
+| `/exwin/bin/wserver` compone le finestre e muove il puntatore, **in ring 3 e senza privilegi** | testato |
 | Toolkit **ExWin** in stile Win32, con header per **C, C++ e FreeBASIC** | testato |
 | Controlli: finestra, pulsante, etichetta, casella di testo, riquadro, separatore, intestazione, terminale | testato |
 | `exwin` accende la grafica su una **console sua**: con Alt+F2 ci si va, con Alt+F1 si torna alla shell | testato |
@@ -710,6 +920,8 @@ SSE; è stato provato forzando la via lenta in QEMU, non su un 486 fisico.
 │   └── kernel.cfg   ← Configurazione: env, shell, moduli
 ├── bin/
 │   ├── sh           ← Shell (ELF statico, primo processo)
+│   ├── login        ← L'accesso (ELF statico: è il programma con cui si entra)
+│   ├── sudo         ← Esegue un comando come root, se ne hai il diritto
 │   ├── ls           ← Elenco directory
 │   ├── hello        ← Programma di esempio
 │   ├── textline     ← Editor di testo lineare (stile edlin)
@@ -1038,6 +1250,25 @@ difetto che deve trovare.
 positivo: la fascia delle librerie è 0x04000000-0x08000000, quindi il valore
 non può mai essere confuso con un -errno. Quello che il chiamante vuole è
 proprio l'indirizzo da cui leggere i nomi.
+
+### Le syscall aggiunte dalla 0.185 alla 0.202
+
+| EAX | Syscall     | EBX           | ECX        | EDX | A cosa serve |
+|-----|-------------|---------------|------------|-----|--------------|
+| 249 | fb_map      | `void**`      | —          | —   | mappa il framebuffer: la capacità **stretta** che ha sostituito `mmio_map` per il server grafico |
+| 250 | interrompi  | pid           | segnale    | —   | Ctrl+C che morde: il segnale arriva al gruppo in primo piano |
+| 251 | pty_apri    | `int fd[2]`   | —          | —   | una coppia padrone/schiavo |
+| 252 | pty_ctl     | fd            | comando    | arg | misura della finestra, modo raw, gruppo in primo piano |
+| 253 | statperm    | `const char*` | `StatPerm*`| —   | modo, uid e gid di un percorso **senza aprirlo** |
+| 254 | su          | `const char*` | password   | —   | «diventa root SE sai la password», e decide il kernel |
+
+! **DUE CAPACITÀ STRETTE, E LO STESSO PRINCIPIO.** `fb_map` fa una cosa sola —
+mappare il framebuffer — dove `mmio_map` faceva «mappa qualunque indirizzo
+fisico», che a un server grafico non serve e a un programma ostile serve
+moltissimo. `su` fa una cosa sola — diventare root sapendo la password — dove
+il bit setuid sui file renderebbe pericoloso ogni eseguibile che lo porta. Un
+permesso che fa esattamente ciò che serve si può ragionare; uno che fa di più
+si può solo sperare che nessuno lo usi.
 
 ---
 

@@ -624,7 +624,7 @@ static void uso(void)
     printf("  mkfs -t fat16 -L DATI hd0p2\n");
     printf("  mkfs -t ext2  -L SISTEMA hd0p3\n\n");
     printf("SENZA -t: fino a 2 GB FAT16, oltre FAT32. Non e' una soglia\n");
-    printf("arbitraria — FAT16 arriva a 65524 cluster, che con cluster da\n");
+    printf("arbitraria - FAT16 arriva a 65524 cluster, che con cluster da\n");
     printf("32 KB fanno poco piu' di 2 GB. ext2 non entra mai nella scelta\n");
     printf("automatica: e' un formato che si chiede, non uno in cui si\n");
     printf("finisce.\n\n");
@@ -858,7 +858,7 @@ int main(int argc, char **argv)
 
     if (dev == 0) { uso(); return 1; }
 
-    printf("%s %s — formattatore di EX-OS\n\n", MKFS_NAME, MKFS_VERSION);
+    printf("%s %s - formattatore di EX-OS\n\n", MKFS_NAME, MKFS_VERSION);
 
     if (trova(dev, &primo, &settori) != 0) return 1;
 

@@ -453,11 +453,11 @@ static void mostra(void)
     printf("  tastiera   disposizione '%s'%s\n", g_t.keymap,
            g_t.kbd ? "" : " (senza driver vale solo 'us')");
     printf("             %s\n", g_t.kbd
-           ? "/dev/kbd.drv — si carica all'avvio, serve alle frecce e a gfedit"
+           ? "/dev/kbd.drv - si carica all'avvio, serve alle frecce e a gfedit"
            : "assente: la console usera' la tastiera interna di ripiego");
 
     if (g_t.cd)
-        printf("  lettore    %s — montato all'avvio su /cdrom\n", g_t.cd_nome);
+        printf("  lettore    %s - montato all'avvio su /cdrom\n", g_t.cd_nome);
     else
         printf("  lettore    nessuno\n");
 
@@ -465,16 +465,16 @@ static void mostra(void)
         printf("  volumi     nessuna partizione con un filesystem leggibile\n");
     } else {
         for (i = 0; i < g_t.n_vol; i++)
-            printf("  volume     %-6s %-6s '%s' — montato su %s\n",
+            printf("  volume     %-6s %-6s '%s' - montato su %s\n",
                    g_t.vol_dev[i], nome_fs(g_t.vol_fs[i]),
                    g_t.vol_etichetta[i], g_t.vol_punto[i]);
     }
 
     if (g_t.rete && g_t.rete_driver[0])
-        printf("  rete       %s\n             %s — caricato all'avvio dal kernel\n",
+        printf("  rete       %s\n             %s - caricato all'avvio dal kernel\n",
                g_t.rete_modello, g_t.rete_driver);
     else if (g_t.rete && g_t.rete_modello[0])
-        printf("  rete       %s — driver da scrivere: resta spenta\n",
+        printf("  rete       %s - driver da scrivere: resta spenta\n",
                g_t.rete_modello);
     else if (g_t.rete)
         printf("  rete       scheda Ethernet sconosciuta: `netdetect` dice il numero\n");
@@ -658,7 +658,7 @@ static void componi_kernel_cfg(char *out, unsigned int max, const char *vecchio)
 
     strncat(out,
         "# =============================================================================\n"
-        "# kernel.cfg — scritto da `hwconfig`\n"
+        "# kernel.cfg - scritto da `hwconfig`\n"
         "#\n"
         "# Cosa vuol dire ogni voce sta in /boot/kernel.txt: qui ci sono solo\n"
         "# le impostazioni, perche' questo file ha un tetto di 8191 byte e\n"
@@ -845,7 +845,7 @@ static void componi_autoexec(char *out, unsigned int max)
 
     strncat(out,
         "# =============================================================================\n"
-        "# autoexec.sh — scritto da `hwconfig`\n"
+        "# autoexec.sh - scritto da `hwconfig`\n"
         "#\n"
         "# Una riga = un comando, come se fosse digitato.\n"
         "#   #           commento\n"
@@ -1308,7 +1308,7 @@ int main(int argc, char **argv)
     }
 
     printf("I file di adesso finiscono in .bak, e questi li sostituiscono\n");
-    printf("PER INTERO — i commenti che ci sono ora si perdono.\n");
+    printf("PER INTERO - i commenti che ci sono ora si perdono.\n");
     printf("Si riportano avanti soltanto `login` e `svga`: sono decisioni che\n");
     printf("con l'hardware non c'entrano, e nessuno potrebbe rimetterle.\n\n");
     printf("Procedo? [si/no] ");

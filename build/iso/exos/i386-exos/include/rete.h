@@ -64,4 +64,42 @@ int  rete_richiedi(const char *servizio);
  * è completa. Non stampa niente: serve a chi vuole decidere da sé. */
 int  rete_primo_mancante(void);
 
+/* =============================================================================
+ * QUALE DRIVER VUOLE QUESTA SCHEDA — la tabella, in UN posto solo
+ *
+ * ! STAVA DENTRO bin/netdetect/netdetect.c, e il commento accanto diceva di
+ * non copiarla altrove «perche' due elenchi divergono al primo driver nuovo».
+ * E' divenuta vera al primo driver nuovo: /dev/e1000.drv e' stato scritto, la
+ * riga 8086:100E della tabella e' rimasta a «driver da scrivere», e su QEMU —
+ * dove quella scheda e' la predefinita — `netdetect -c` rispondeva che il
+ * driver non c'era mentre stava nel CD accanto.
+ *
+ * Il difetto non era la copia: era che l'elenco stesse dentro un programma. Da
+ * qui lo leggono netdetect, che lo stampa e lo usa per caricare, e `hwconfig`,
+ * che deve scrivere il driver giusto nella sezione [modules] di kernel.cfg —
+ * cioe' decidere all'installazione cio' che prima si decideva a ogni avvio.
+ *
+ * ! `driver` NULL VUOL DIRE «MODELLO NOTO, DRIVER DA SCRIVERE», ed e' diverso
+ * da scheda sconosciuta: dice che il numero e' stato riconosciuto e che manca
+ * il codice, non che l'hardware sia un mistero.
+ *
+ * ! E DICE COSA SERVIREBBE, NON COSA C'E'. Il file del driver puo' non essere
+ * su questo supporto — avviando da floppy non c'e' — e chi usa la tabella deve
+ * controllarlo prima di prometterlo.
+ * ============================================================================= */
+typedef struct {
+    unsigned short venditore;
+    unsigned short dispositivo;
+    const char    *modello;
+    const char    *driver;      /* NULL = modello noto, driver da scrivere */
+} ReteScheda;
+
+/* La scheda con quei numeri, o NULL se non e' in tabella. */
+const ReteScheda *rete_riconosci(unsigned short venditore,
+                                 unsigned short dispositivo);
+
+/* La i-esima riga della tabella, NULL oltre la fine: serve a stamparla. */
+const ReteScheda *rete_scheda(int i);
+int               rete_schede_note(void);
+
 #endif /* RETE_H */

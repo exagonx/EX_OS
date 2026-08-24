@@ -1460,7 +1460,7 @@ static void cmd_version(void)
     int      n = sh_version(buf, sizeof(buf));
 
     if (n < 0) {
-        printerr("version: il kernel non ha fornito l'identità di sistema");
+        printerr("version: il kernel non ha fornito l'identita' di sistema");
         return;
     }
 

@@ -392,7 +392,7 @@ static int hc_reset(void)
         usleep(1000);
     }
     if (rd32(g_op, O_USBSTS) & STS_CNR) {
-        printf("xhci: resta «non pronto» dopo il reset\n");
+        printf("xhci: resta 'non pronto' dopo il reset\n");
         return 0;
     }
     return 1;
@@ -1286,11 +1286,11 @@ static int conosci(void)
 static int hid_prepara(unsigned int vel)
 {
     if (!usb_configura_hid(controllo, g_slot, &g_dev, g_verboso)) {
-        printf("xhci: non e' un HID «boot»\n");
+        printf("xhci: non e' un HID 'boot'\n");
         return 0;
     }
 
-    printf("xhci: %s USB «boot», endpoint %u, pacchetto %u\n",
+    printf("xhci: %s USB 'boot', endpoint %u, pacchetto %u\n",
            g_dev.proto == USB_PROTO_MOUSE ? "mouse" : "tastiera",
            g_dev.ep, g_dev.ep_maxp);
 
@@ -1373,7 +1373,7 @@ static int dietro_hub(unsigned int radice, unsigned int vel_hub)
         if (hid_prepara(vel_xhci(velp))) return 1;
     }
 
-    printf("xhci: nessun HID «boot» dietro l'hub\n");
+    printf("xhci: nessun HID 'boot' dietro l'hub\n");
     return 0;
 }
 
@@ -1640,7 +1640,7 @@ int main(int argc, char **argv)
                KBD_SERVICE_NAME, g_kbd_pid);
     } else {
         if (ipc_register(MOUSE_SERVICE_NAME) < 0) {
-            printf("xhci: ipc_register('%s') fallita — c'e' gia' un mouse?\n",
+            printf("xhci: ipc_register('%s') fallita - c'e' gia' un mouse?\n",
                    MOUSE_SERVICE_NAME);
             return 1;
         }

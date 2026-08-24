@@ -119,7 +119,7 @@ int usb_configura_hid(UsbControllo ctl, unsigned int dev, UsbDispositivo *d,
     }
 
     if (!trovato || d->ep == 0) {
-        if (verboso) printf("usb: non e' un HID «boot»\n");
+        if (verboso) printf("usb: non e' un HID 'boot'\n");
         return 0;
     }
 

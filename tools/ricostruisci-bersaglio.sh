@@ -54,7 +54,10 @@
 # tutto il bersaglio — non si ricollega.
 #
 # `--verifica` confronta l'impronta degli header e della libc con quella
-# registrata nel sysroot all'ultima ricostruzione completa, e lo dice.
+# registrata nel sysroot all'ultima ricostruzione completa, e lo dice — e da
+# quando l'impronta e' un elenco invece di un hash, dice anche QUALE forma e'
+# cambiata e da quanto a quanto. Un guardiano che risponde solo si'/no, se
+# resta rosso a lungo, si impara a saltarlo.
 # =============================================================================
 
 set -e
@@ -83,7 +86,26 @@ export PATH
 # ! Le dimensioni le calcola il COMPILATORE DEL BERSAGLIO e si leggono
 # con nm: non c'e' niente da eseguire, e un binario i386-exos su Linux non
 # girerebbe comunque.
-impronta_corrente() {
+# ! L'IMPRONTA E' UN ELENCO, NON UN SI'/NO — dal 24 agosto 2026.
+#
+# Era un solo sha256: quando non combaciava, questo script poteva dire soltanto
+# «qualcosa e' cambiato, ricostruisci tutto». Sono ore di macchina chieste senza
+# dire per cosa, e il giorno che una di quelle forme e' cambiata in un modo che
+# il kernel gestisce — SpawnExtra, che ha una magia proprio per questo — il
+# guardiano e' rimasto rosso lo stesso, dicendo una cosa piu' forte del vero.
+#
+# ! E UN GUARDIANO CHE RESTA ROSSO SI IMPARA A SALTARE. E' successo la stessa
+# settimana con la riga [FALLITO] di `rename` in libctest: era la prova a essere
+# indietro, ma per quattro giorni nessuno l'ha guardata. Un avviso che non si
+# puo' verificare in dieci secondi diventa rumore, e allora la volta che ha
+# ragione non lo sente nessuno.
+#
+# Percio' adesso si salva l'elenco — una riga per forma, con la misura in
+# decimale — e quando qualcosa cambia si dice CHE COSA e da quanto a quanto.
+# Chi legge decide in dieci secondi: `struct stat` che passa da 48 a 60 e' il
+# difetto di agosto che e' costato due giorni, `spawnextra` da 596 a 604 e' una
+# forma che il kernel continua a capire.
+impronta_lista() {
     o=$(mktemp --suffix=.o)
     if ! i386-exos-gcc -c -w -I lib/include tools/abi-bersaglio.c -o "$o" 2>/dev/null; then
         rm -f "$o"
@@ -91,27 +113,115 @@ impronta_corrente() {
         echo "          (il cross e' nel PATH? $PREFISSO/bin)" >&2
         exit 1
     fi
+    # ! nm STAMPA LA MISURA IN ESADECIMALE, E LE DUE SCORCIATOIE IN awk SONO
+    # TUTT'E DUE TRAPPOLE: `strtonum()` e' di gawk e su mawk non esiste, e
+    # `$2+0` non rende zero — che almeno si noterebbe — ma il PREFISSO DECIMALE
+    # della stringa: `0000025c` diventa 25 invece di 604. Numeri sbagliati e
+    # plausibili sono il modo peggiore di sbagliare un'impronta. La conversione
+    # la fa la shell, che e' POSIX e non ha nessuna delle due facce.
+    i386-exos-nm --print-size --defined-only "$o" | awk '{print $4, $2}' | sort |
+    while read -r nome mis; do
+        printf '%s %d\n' "$nome" "$(( 0x$mis ))"
+    done
+    rm -f "$o"
+}
+
+# L'impronta nel formato di prima: un solo sha256, sulla lista con le misure
+# ancora in esadecimale.
+# ! SERVE A LEGGERE I SYSROOT GIA' IN GIRO, e non si tocca: un sysroot scritto
+# prima del 24 agosto 2026 ha quel formato, e `--verifica` deve continuare a
+# saperlo confrontare invece di dire «nessuna impronta» e mandare a ricostruire
+# tutto per un cambio di formato di questo file.
+impronta_sha_vecchia() {
+    o=$(mktemp --suffix=.o)
+    if ! i386-exos-gcc -c -w -I lib/include tools/abi-bersaglio.c -o "$o" 2>/dev/null; then
+        rm -f "$o"; exit 1
+    fi
     i386-exos-nm --print-size --defined-only "$o" |
         awk '{print $4, $2}' | sort | sha256sum | cut -d' ' -f1
     rm -f "$o"
 }
 
+# Vero se il file dell'impronta e' nel formato vecchio (una riga, 64 esadecimali).
+impronta_e_vecchia() {
+    [ "$(wc -l < "$1")" -le 1 ] && grep -qE '^[0-9a-f]{64}$' "$1"
+}
+
+# Stampa le differenze fra due elenchi, in colonne. `abi_off_*` porta
+# offset + 1 (vedi CAMPO in tools/abi-bersaglio.c): qui si ritoglie, o il
+# messaggio direbbe un numero che nel sorgente non esiste.
+mostra_differenze() {
+    prima="$1"; adesso="$2"
+    printf '\n     %-28s %10s %10s\n' "forma" "registrata" "adesso"
+    printf '     %-28s %10s %10s\n' "----------------------------" "----------" "----------"
+    awk '
+        function etichetta(n) {
+            sub(/^abi_dim_/, "", n); sub(/^abi_off_/, "offset di ", n); return n
+        }
+        function valore(n, v) { return (n ~ /^abi_off_/) ? v - 1 : v }
+        NR == FNR { pri[$1] = $2; next }
+        { ades[$1] = $2 }
+        END {
+            for (n in pri)
+                if (!(n in ades))
+                    printf "     %-28s %10s %10s\n", etichetta(n), valore(n, pri[n]), "(sparita)"
+            for (n in ades) {
+                if (!(n in pri))
+                    printf "     %-28s %10s %10s\n", etichetta(n), "(nuova)", valore(n, ades[n])
+                else if (pri[n] != ades[n])
+                    printf "     %-28s %10s %10s\n", etichetta(n), valore(n, pri[n]), valore(n, ades[n])
+            }
+        }
+    ' "$prima" "$adesso" | sort
+    echo
+}
+
+# Il verdetto, uguale nei due formati: il motivo per cui non basta ricollegare
+# sta in testa a questo file.
+verdetto_rosso() {
+    echo "     I binari per i386-exos (cc1, as, ld, gmp, mpfr, mpc, libm,"
+    echo "     libstdc++, libcrypto) vanno RICOSTRUITI, non ricollegati:"
+    echo "     tools/ricostruisci-bersaglio.sh"
+}
+
 if [ "$1" = "--verifica" ]; then
-    ora=$(impronta_corrente)
     if [ ! -f "$IMPRONTA" ]; then
         echo "ABI: nessuna impronta in $IMPRONTA."
         echo "     Il codice di terzi nel sysroot non si sa contro quale libc"
         echo "     sia stato costruito: tools/ricostruisci-bersaglio.sh"
         exit 1
     fi
-    if [ "$ora" != "$(cat "$IMPRONTA")" ]; then
+
+    if impronta_e_vecchia "$IMPRONTA"; then
+        # Sysroot scritto prima del 24 agosto 2026: si confronta com'era.
+        if [ "$(impronta_sha_vecchia)" = "$(cat "$IMPRONTA")" ]; then
+            echo "ABI: il bersaglio e' allineato alla libc corrente."
+            echo "     (impronta nel formato vecchio: dalla prossima"
+            echo "      ricostruzione dira' anche QUALE forma cambia)"
+            exit 0
+        fi
         echo "ABI: la libc e' CAMBIATA dopo l'ultima ricostruzione del bersaglio."
-        echo "     I binari per i386-exos (cc1, as, ld, gmp, mpfr, mpc, libm,"
-        echo "     libstdc++, libcrypto) vanno RICOSTRUITI, non ricollegati:"
-        echo "     tools/ricostruisci-bersaglio.sh"
+        echo "     ! L'impronta registrata e' un solo hash — il formato di prima"
+        echo "       del 24 agosto 2026 — quindi non puo' dire QUALE forma e'"
+        echo "       cambiata. Dopo la prossima ricostruzione lo dira'."
+        verdetto_rosso
         exit 1
     fi
-    echo "ABI: il bersaglio e' allineato alla libc corrente ($ora)."
+
+    ora=$(mktemp)
+    impronta_lista > "$ora"
+
+    if ! cmp -s "$IMPRONTA" "$ora"; then
+        echo "ABI: la libc e' CAMBIATA dopo l'ultima ricostruzione del bersaglio."
+        mostra_differenze "$IMPRONTA" "$ora"
+        verdetto_rosso
+        rm -f "$ora"
+        exit 1
+    fi
+
+    rm -f "$ora"
+    echo "ABI: il bersaglio e' allineato alla libc corrente"
+    echo "     ($(wc -l < "$IMPRONTA") forme confrontate, nessuna cambiata)."
     exit 0
 fi
 
@@ -120,8 +230,8 @@ fi
 # ! E' una DICHIARAZIONE, e vale quanto chi la fa: dirla senza aver
 # davvero ricostruito tutto e' peggio che non dire niente.
 if [ "$1" = "--impronta" ]; then
-    impronta_corrente > "$IMPRONTA"
-    echo "[OK] impronta registrata: $(cat "$IMPRONTA")"
+    impronta_lista > "$IMPRONTA"
+    echo "[OK] impronta registrata: $(wc -l < "$IMPRONTA") forme in $IMPRONTA"
     exit 0
 fi
 
@@ -254,7 +364,8 @@ fi
 # fasi: un mondo ricostruito a meta' non e' allineato, e dichiararlo tale
 # sarebbe peggio che non dichiararlo affatto.
 if [ $# -eq 0 ]; then
-    impronta_corrente > "$IMPRONTA"
+    impronta_lista > "$IMPRONTA"
     echo
-    echo "[OK] bersaglio ricostruito e allineato: $(cat "$IMPRONTA")"
+    echo "[OK] bersaglio ricostruito e allineato:"
+    echo "     $(wc -l < "$IMPRONTA") forme registrate in $IMPRONTA"
 fi

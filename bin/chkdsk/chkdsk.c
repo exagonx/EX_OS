@@ -314,7 +314,7 @@ static int fat_apri(void)
         if (voci_root == 0) { guasto("FAT12 senza voci di root nel BPB"); }
     }
 
-    printf("  tipo FAT%u — %u cluster da %u settori, %u FAT da %u settori\n",
+    printf("  tipo FAT%u - %u cluster da %u settori, %u FAT da %u settori\n",
            tipo, n_cluster, sett_per_clus, n_fat, sett_per_fat);
 
     /* ! La FAT dev'essere abbastanza grande da contenere tutte le voci.
@@ -1113,7 +1113,7 @@ static int e2_apri(void)
      * gruppi invece che in tutti. Vedi gruppo_ha_backup(). */
     e2_sparse = (rev >= 1u) ? (le32(sb + 100) & 0x0001u) : 0u;
 
-    printf("  ext2 — %u blocchi da %u byte, %u inode, %u grupp%s\n",
+    printf("  ext2 - %u blocchi da %u byte, %u inode, %u grupp%s\n",
            e2_n_blocchi, e2_dim_blocco, e2_n_inode, e2_n_gruppi,
            (e2_n_gruppi == 1) ? "o" : "i");
 
@@ -1882,7 +1882,7 @@ int main(int argc, char **argv)
         dev[k] = '\0';
     }
 
-    printf("chkdsk — controllo di %s%s\n\n", dev,
+    printf("chkdsk - controllo di %s%s\n\n", dev,
            ripara ? "  [CORREZIONE ATTIVA]" : "  (sola lettura)");
 
     /* ! SI SONDA, NON SI CHIEDE. Chi ha un volume malandato spesso non sa
@@ -1896,7 +1896,7 @@ int main(int argc, char **argv)
 
     if (m == NULL) {
         printf("  ! non riconosco il formato di %s.\n\n", dev);
-        printf("Non e' ne' FAT ne' ext2 — o le strutture che lo direbbero\n");
+        printf("Non e' ne' FAT ne' ext2 - o le strutture che lo direbbero\n");
         printf("sono danneggiate. Se il volume e' MONTATO, smontalo prima:\n");
         printf("i settori grezzi di un volume montato non si leggono.\n");
         return 1;

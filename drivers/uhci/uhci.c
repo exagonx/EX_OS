@@ -413,7 +413,7 @@ static int enumera(unsigned int p, unsigned int indirizzo)
     }
 
     if (!usb_configura_hid(controllo, g_dev_addr, &g_dev, g_verboso)) {
-        if (g_verboso) printf("uhci: porta %u: non e' un HID «boot»\n", p);
+        if (g_verboso) printf("uhci: porta %u: non e' un HID 'boot'\n", p);
         return 0;
     }
 
@@ -628,7 +628,7 @@ int main(int argc, char **argv)
         for (p = 0; p < 2; p++) {
             if (!porta_reset(p)) continue;
             if (enumera(p, addr)) {
-                printf("uhci: porta %u: %s USB «boot», endpoint %u\n", p,
+                printf("uhci: porta %u: %s USB 'boot', endpoint %u\n", p,
                        g_dev_proto == USB_PROTO_MOUSE ? "mouse" : "tastiera",
                        g_dev_ep);
                 trovati++;
@@ -638,7 +638,7 @@ int main(int argc, char **argv)
         }
 
         if (!trovati) {
-            printf("uhci: nessun dispositivo HID «boot» sulle porte.\n");
+            printf("uhci: nessun dispositivo HID 'boot' sulle porte.\n");
             return 1;
         }
     }
@@ -658,7 +658,7 @@ int main(int argc, char **argv)
                KBD_SERVICE_NAME, g_kbd_pid);
     } else {
         if (ipc_register(MOUSE_SERVICE_NAME) < 0) {
-            printf("uhci: ipc_register('%s') fallita — c'e' gia' un mouse?\n",
+            printf("uhci: ipc_register('%s') fallita - c'e' gia' un mouse?\n",
                    MOUSE_SERVICE_NAME);
             return 1;
         }

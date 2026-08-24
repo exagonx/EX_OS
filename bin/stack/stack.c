@@ -71,7 +71,7 @@ int main(int argc, char **argv)
         if (n < 0) {
             printf("stack: impossibile leggere l'elenco dei processi (%d)\n", n);
             if (n == -22) {
-                printf("stack: ProcInfo non coincide fra kernel e libc — ricompilare tutto\n");
+                printf("stack: ProcInfo non coincide fra kernel e libc - ricompilare tutto\n");
             }
             return 1;
         }

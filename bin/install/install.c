@@ -1384,7 +1384,7 @@ int main(int argc, char **argv)
             pulisci_temporanei(argv[1]);
             return 1;
         }
-        printf("  = verifica: %u settori in %u intervall%s — si puo' sostituire\n",
+        printf("  = verifica: %u settori in %u intervall%s - si puo' sostituire\n",
                prova.k_cnt, prova.k_next, (prova.k_next == 1) ? "o" : "i");
     }
 
@@ -1495,7 +1495,7 @@ int main(int argc, char **argv)
                     if (exuser_leggi_password(p1, sizeof(p1)) < 0) {
                         printf("\n  ! La tastiera non risponde in modo raw: non posso\n");
                         printf("    chiedere una password senza mostrarla. Serve\n");
-                        printf("    /dev/kbd.drv — vedi [modules] in kernel.cfg.\n");
+                        printf("    /dev/kbd.drv - vedi [modules] in kernel.cfg.\n");
                         printf("    I conti li creera' login al primo avvio.\n");
                         break;
                     }
@@ -1509,10 +1509,25 @@ int main(int argc, char **argv)
                         printf("  Le due non coincidono.\n");
                         continue;
                     }
-                    if (exuser_aggiungi(argv[1], "root", p1, 0u, 0u) != 0) {
-                        printf("  ! non riesco a scrivere l'archivio utenti\n");
-                        errori++;
-                        break;
+                    {
+                        /* ! «C'E' GIA'» E «NON SI SCRIVE» SONO DUE GUASTI
+                         * DIVERSI, e dirli con lo stesso messaggio manda a
+                         * cercare nel disco un problema che sta nell'archivio.
+                         * Qui non dovrebbe succedere — ci si arriva solo se
+                         * l'archivio e' vuoto — ma il messaggio deve dire il
+                         * vero anche nel caso che non abbiamo previsto. */
+                        int r = exuser_aggiungi(argv[1], "root", p1, 0u, 0u);
+
+                        if (r == -2) {
+                            printf("  ! root esiste gia' in questo archivio\n");
+                            errori++;
+                            break;
+                        }
+                        if (r != 0) {
+                            printf("  ! non riesco a scrivere l'archivio utenti\n");
+                            errori++;
+                            break;
+                        }
                     }
                     printf("  + root\n\n");
                     fatto_root = 1;
@@ -1523,7 +1538,7 @@ int main(int argc, char **argv)
                     printf("  il tuo nome utente: ");
                     if (exuser_leggi_riga(nome, sizeof(nome)) <= 0) continue;
                     if (!exuser_nome_valido(nome) || strcmp(nome, "root") == 0) {
-                        printf("  Solo lettere, cifre e '_', e non «root».\n");
+                        printf("  Solo lettere, cifre e '_', e non 'root'.\n");
                         continue;
                     }
                     printf("  password:           ");
@@ -1542,10 +1557,19 @@ int main(int argc, char **argv)
                     /* ! uid 1000, NON 0: questo conto serve a lavorare, e chi
                      * lavora da root non ha nessuna rete sotto. Per le cose da
                      * amministratore c'e' `su`. */
-                    if (exuser_aggiungi(argv[1], nome, p1, 1000u, 1000u) != 0) {
-                        printf("  ! non riesco a scrivere l'archivio utenti\n");
-                        errori++;
-                        break;
+                    {
+                        int r = exuser_aggiungi(argv[1], nome, p1, 1000u, 1000u);
+
+                        if (r == -2) {
+                            printf("  ! '%s' esiste gia': scegline un altro\n",
+                                   nome);
+                            continue;
+                        }
+                        if (r != 0) {
+                            printf("  ! non riesco a scrivere l'archivio utenti\n");
+                            errori++;
+                            break;
+                        }
                     }
 
                     unisci(h, argv[1], "home");

@@ -396,7 +396,7 @@ static void controlla_montaggi(void)
 
     if (g_montata) {
         printf("Il kernel rifiutera' di riscrivere la tabella finche' lo sono.\n");
-        printf("Smontale con `umount`, oppure — se una di quelle e' la root —\n");
+        printf("Smontale con `umount`, oppure - se una di quelle e' la root -\n");
         printf("questo disco non e' ripartizionabile mentre ci giri sopra.\n\n");
     }
 }
@@ -908,7 +908,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    printf("%s %s — partizionatore MBR di EX-OS\n", FD_NAME, FD_VERSION);
+    printf("%s %s - partizionatore MBR di EX-OS\n", FD_NAME, FD_VERSION);
     printf("Niente viene scritto sul disco fino al comando `w`.\n\n");
 
     if (carica(idx) != 0) return 1;

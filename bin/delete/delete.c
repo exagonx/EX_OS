@@ -169,7 +169,7 @@ static void spiega_errore(const char *nome, int err)
 {
     switch (err) {
         case E_ISDIR:
-            printf("delete: '%s' e' una directory — usa rmdir\n", nome);
+            printf("delete: '%s' e' una directory - usa rmdir\n", nome);
             break;
         case E_NOENT:
             printf("delete: '%s' non esiste\n", nome);
@@ -292,7 +292,7 @@ static int elabora(const char *arg)
     if (troncato) {
         /* Dichiarato, non silenzioso: l'utente deve sapere che dovrà
          * ripetere il comando. */
-        printf("delete: attenzione — piu' di %d file corrispondono; "
+        printf("delete: attenzione - piu' di %d file corrispondono; "
                "verranno cancellati i primi %d, ripeti il comando per gli altri\n",
                MAX_SELEZIONE, MAX_SELEZIONE);
     }

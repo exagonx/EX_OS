@@ -96,7 +96,7 @@ static void uso(void)
     printf("  keymap it     passa a quella italiana, subito\n");
     printf("  keymap -p     stampa la riga per /boot/kernel.cfg\n\n");
     printf("Il cambio vale finche' la macchina resta accesa. Per renderlo\n");
-    printf("permanente serve la riga in kernel.cfg — o `hwconfig`, che\n");
+    printf("permanente serve la riga in kernel.cfg - o `hwconfig`, che\n");
     printf("quel file lo scrive tutto.\n\n");
     printf("Se sbagli disposizione e non riesci piu' a scrivere il comando\n");
     printf("per tornare indietro: RIAVVIA. Il cambio non e' permanente, e\n");

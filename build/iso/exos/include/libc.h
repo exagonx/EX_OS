@@ -1362,6 +1362,76 @@ struct stat {
 void   *sbrk(int incr);      /* cima dell'heap; ritorna la posizione VECCHIA */
 long    lseek(int fd, long offset, int whence);
 
+/* =============================================================================
+ * Proprietario e permessi — StatPerm
+ *
+ * ! E' UNA CHIAMATA IN PIU', NON CAMPI IN PIU' A `Stat`, ed e' la stessa regola
+ * scritta accanto a spawn_su_console piu' avanti: cambiare una struttura che i
+ * programmi si passano gia' vuol dire ricostruire tutto cio' che la usa, e
+ * `Stat` la usa chiunque apra un file. Percio' `st_uid` e `st_gid` di
+ * `struct stat` restano a zero e continuano a dire il falso — la verita' la
+ * chiede chi la vuole, con questa.
+ *
+ * ! `modo == 0` VUOL DIRE «QUESTO VOLUME NON HA PROPRIETARI», non «nessun
+ * permesso»: su FAT e su ISO 9660 non esistono, e il VFS lo dichiara cosi'.
+ * Chi stampa i permessi deve distinguere i due casi, o mostrerebbe
+ * `----------` su ogni file di un floppy.
+ *
+ * STRUTTURA DUPLICATA A MANO da kernel/include/syscall.h, come DirEntry e
+ * MemInfo: deve restare identica, e statperm() rende -EINVAL se le due copie
+ * divergono di dimensione.
+ * ============================================================================= */
+typedef struct {
+    unsigned short modo;    /* permessi POSIX (0644, 0755...), 0 = non ci sono */
+    unsigned short uid;
+    unsigned short gid;
+} StatPerm;
+
+int     statperm(const char *path, StatPerm *p);
+
+/* =============================================================================
+ * Dal numero al nome — /boot/utenti
+ *
+ * ! ADESSO GLI UTENTI SONO DUE, ed e' la condizione che questo sistema chiede
+ * prima di condividere qualcosa: la traduzione uid -> nome stava dentro
+ * /bin/id, e con `ls -l` sarebbe diventata una seconda copia dello stesso
+ * parser. Due copie di un formato di file divergono al primo campo aggiunto.
+ *
+ * ! LEGGE IL FILE PUBBLICO, non quello delle password: /boot/utenti e' 0644 e
+ * contiene `nome:uid:gid`; le impronte stanno in /boot/ombra, che e' 0600. Se
+ * i due non fossero separati, tradurre un uid riuscirebbe solo a root.
+ *
+ * Rende 1 se l'ha trovato. Il file puo' non esserci — avviando da floppy o da
+ * CD non c'e' affatto — e non e' un errore: chi chiama mostra il numero.
+ * ============================================================================= */
+int     nome_utente(unsigned int uid, char *out, unsigned int max);
+
+/* =============================================================================
+ * diventa_root() — diventare root provando di sapere una password
+ *
+ * ! LA VERIFICA LA FA IL KERNEL, e non e' un giro piu' lungo: /boot/ombra e'
+ * 0600, quindi un processo di un utente normale NON PUO' LEGGERLO — ed e'
+ * esattamente il punto. Se controllasse un programma in spazio utente
+ * bisognerebbe consegnargli qualcosa di quel file, e allora il file potrebbe
+ * anche essere pubblico.
+ *
+ * ! ED E' UNA CAPACITA' STRETTA, NON IL BIT setuid SUI FILE: quello renderebbe
+ * pericoloso ogni eseguibile che lo porta. Qui c'e' un solo modo di diventare
+ * root, e passa da una password.
+ *
+ * La regola: DIMOSTRA DI ESSERE `nome`, e se `nome` puo' fare root lo diventi.
+ * `nome` puo' fare root se ha uid 0, oppure se sta in /boot/amministratori.
+ *
+ * Rende 0 se il processo e' diventato root, -EPERM altrimenti — e non dice
+ * quale delle due cose e' andata storta, perche' la differenza serve solo a
+ * chi sta provando i nomi.
+ * ============================================================================= */
+/* ! IL NOME NON E' `su`, ED E' UN CASO ISTRUTTIVO: `su` in una libreria e' tre
+ * lettere buttate in uno spazio di nomi che tutti condividono, e infatti
+ * bin/mkfs/ext2.c aveva gia' una sua `su`. Il compilatore l'ha detto subito —
+ * ma un nome corto in una libreria condivisa e' una collisione che aspetta. */
+int     diventa_root(const char *nome, const char *password);
+
 /* stat() riempie la struttura POSIX; statraw() da' i campi grezzi del
  * filesystem (attributi FAT, primo cluster, data e ora codificate) a chi
  * ne ha bisogno davvero — mkfs, fdisk, un ls che mostri gli attributi. */
@@ -1636,6 +1706,20 @@ int     spawn_ex(const char *path, char *const argv[], char *const envp[],
 int     spawn_su_console(const char *path, char *const argv[],
                          char *const envp[], const SpawnRedir *redir,
                          int n_redir, int console);
+
+/* Come spawn_ex(), ma il figlio nasce con l'IDENTITA' indicata invece che con
+ * quella di chi lo lancia.
+ *
+ * ! SOLO root PUO' CHIAMARLA: a chiunque altro risponde -1 con EPERM, e non
+ * lancia niente. E' la stessa regola di setuid() — l'unica direzione possibile
+ * e' giu' — spostata dal processo che chiama al processo che nasce.
+ *
+ * ! SERVE A CHI DEVE RESTARE root MENTRE APRE UNA SESSIONE ALTRUI. `sudo` non
+ * ne ha bisogno: sale, esegue e muore. `login` si': e' un ciclo, e scendendo
+ * con setuid() non poteva piu' leggere /boot/ombra per l'accesso successivo —
+ * al primo `exit` la console restava chiusa per tutti. */
+int     spawn_utente(const char *path, char *const argv[], char *const envp[],
+                     unsigned int uid, unsigned int gid);
 int     waitpid(int pid, int *stato, int opzioni);
 int     wait(int *stato);
 
@@ -2089,6 +2173,16 @@ int     ipc_register(const char *name);
 /* Cerca il PID del processo che fornisce 'name'.
  * Ritorna il PID (>0) su successo, <0 se non trovato. */
 int     ipc_lookup(const char *name);
+
+/* Come ipc_lookup(), ma riprova per `ms` millisecondi prima di arrendersi.
+ *
+ * ! SERVE A CHI PARTE DA [modules] DI kernel.cfg: quei processi il kernel li
+ * avvia TUTTI INSIEME, quindi chi dipende da un altro puo' arrivare prima che
+ * quello si sia registrato. In uno script l'ordine lo garantiva chi l'ha
+ * scritto; all'avvio non lo garantisce nessuno, e un driver che esce perche'
+ * era in anticipo di mezzo secondo lascia la rete spenta fino al riavvio
+ * successivo — dove magari funziona. */
+int     ipc_attendi(const char *name, unsigned int ms);
 
 /* =============================================================================
  * Hardware kernel-mediato — accesso a IRQ e porte I/O per driver ring3.

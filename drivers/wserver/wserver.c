@@ -1349,7 +1349,7 @@ static void crea(unsigned int pid, const WinCrea *c)
     r.y     = g_fin[i].y;
 
     if (g_verboso)
-        printf("wserver: finestra %u per il PID %u, %ux%u «%s»\n",
+        printf("wserver: finestra %u per il PID %u, %ux%u '%s'\n",
                r.id, pid, r.larghezza, r.altezza, g_fin[i].titolo);
 
     (void)ipc_send(pid, WIN_MSG_CREATA, &r, sizeof(r));
@@ -1714,7 +1714,7 @@ int main(int argc, char **argv)
             printf("wserver: il server a finestre di EX-OS.\n");
             printf("         Nessuna periferica propria: usa il framebuffer\n");
             printf("         che ha impostato Stage 2. Serve solo a chi vuole\n");
-            printf("         l'interfaccia grafica — si avvia con  exwin\n");
+            printf("         l'interfaccia grafica - si avvia con  exwin\n");
             return 0;
         }
     }
@@ -1847,7 +1847,7 @@ int main(int argc, char **argv)
     win_nome_servizio(g_servizio, sizeof(g_servizio));
 
     if (ipc_register(g_servizio) < 0) {
-        printf("wserver: ipc_register('%s') fallita — ce n'e' gia' uno?\n",
+        printf("wserver: ipc_register('%s') fallita - ce n'e' gia' uno?\n",
                g_servizio);
         return 1;
     }

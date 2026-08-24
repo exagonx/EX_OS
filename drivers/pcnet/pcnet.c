@@ -783,7 +783,7 @@ static int stato_dal_servizio(int pid)
         if (meta.tipo != NET_MSG_STATO || meta.len < sizeof(s)) return -1;
 
         memcpy(&s, buf, sizeof(s));
-        printf("pcnet: %s — gia' in servizio (PID %d)\n", s.modello, pid);
+        printf("pcnet: %s - gia' in servizio (PID %d)\n", s.modello, pid);
         printf("       PCI %02x:%02x\n", s.bus, s.slot);
         printf("       porte  0x%x\n", s.porta_base);
         printf("       IRQ    %u\n", s.irq);
@@ -913,14 +913,14 @@ int main(int argc, char **argv)
 
     rc = irq_bind(g_irq);
     if (rc < 0) {
-        printf("pcnet: irq_bind(%u) fallita (%d) — l'IRQ e' di qualcun altro?\n",
+        printf("pcnet: irq_bind(%u) fallita (%d) - l'IRQ e' di qualcun altro?\n",
                g_irq, rc);
         return 1;
     }
 
     rc = ipc_register(NET_SERVIZIO_0);
     if (rc < 0) {
-        printf("pcnet: ipc_register('%s') fallita (%d) — c'e' gia' un driver "
+        printf("pcnet: ipc_register('%s') fallita (%d) - c'e' gia' un driver "
                "di rete?\n", NET_SERVIZIO_0, rc);
         return 1;
     }

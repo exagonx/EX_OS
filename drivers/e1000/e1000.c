@@ -932,7 +932,7 @@ int main(int argc, char **argv)
 
     rc = irq_bind(g_irq);
     if (rc < 0) {
-        printf("e1000: irq_bind(%u) fallita (%d) — l'IRQ e' di qualcun altro?\n",
+        printf("e1000: irq_bind(%u) fallita (%d) - l'IRQ e' di qualcun altro?\n",
                g_irq, rc);
         return 1;
     }

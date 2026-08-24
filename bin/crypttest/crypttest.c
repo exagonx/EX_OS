@@ -49,7 +49,7 @@ static void esa(const char *s, unsigned char *o, int n)
 
 int main(void)
 {
-    printf("crypttest — i vettori degli RFC su questa macchina\n\n");
+    printf("crypttest - i vettori degli RFC su questa macchina\n\n");
 
     /* --- ChaCha20, RFC 8439 2.4.2 ---------------------------------------- */
     {

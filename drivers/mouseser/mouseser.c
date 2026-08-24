@@ -255,13 +255,13 @@ int main(int argc, char **argv)
 
     rc = ipc_register("mouse");
     if (rc < 0) {
-        printf("mouseser: ipc_register('mouse') fallita (%d) — esco\n", rc);
+        printf("mouseser: ipc_register('mouse') fallita (%d) - esco\n", rc);
         return 1;
     }
 
     rc = irq_bind(g_irq);
     if (rc < 0) {
-        printf("mouseser: irq_bind(%u) fallita (%d) — esco\n", g_irq, rc);
+        printf("mouseser: irq_bind(%u) fallita (%d) - esco\n", g_irq, rc);
         return 1;
     }
 

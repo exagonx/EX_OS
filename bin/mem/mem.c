@@ -100,7 +100,7 @@ int main(int argc, char **argv)
          * desincronizzazione fra i due header si manifesta, ed è meglio
          * dirlo che stampare numeri senza senso. */
         if (rc == -22) {
-            printf("mem: MemInfo non coincide fra kernel e libc — ricompilare tutto\n");
+            printf("mem: MemInfo non coincide fra kernel e libc - ricompilare tutto\n");
         }
         return 1;
     }

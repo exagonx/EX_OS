@@ -1277,14 +1277,14 @@ int main(int argc, char **argv)
 
     rc = ipc_register(KBD_SERVICE_NAME);
     if (rc < 0) {
-        printf("kbd: ipc_register('%s') fallita (%d) — esco\n",
+        printf("kbd: ipc_register('%s') fallita (%d) - esco\n",
                KBD_SERVICE_NAME, rc);
         return 1;
     }
 
     rc = ioport_bind(KBC_PORT_BASE, KBC_PORT_COUNT);
     if (rc < 0) {
-        printf("kbd: ioport_bind(0x%x,%u) fallita (%d) — esco\n",
+        printf("kbd: ioport_bind(0x%x,%u) fallita (%d) - esco\n",
                KBC_PORT_BASE, KBC_PORT_COUNT, rc);
         return 1;
     }
@@ -1302,7 +1302,7 @@ int main(int argc, char **argv)
     if (g_mouse_c_e) {
         rc = irq_bind(MOUSE_IRQ);
         if (rc < 0) {
-            printf("kbd: irq_bind(%u) per il mouse fallita (%d) — "
+            printf("kbd: irq_bind(%u) per il mouse fallita (%d) - "
                    "vado avanti senza\n", MOUSE_IRQ, rc);
             g_mouse_c_e = 0;
         }
@@ -1310,7 +1310,7 @@ int main(int argc, char **argv)
 
     rc = irq_bind(KBD_IRQ);
     if (rc < 0) {
-        printf("kbd: irq_bind(%u) fallita (%d) — esco\n", KBD_IRQ, rc);
+        printf("kbd: irq_bind(%u) fallita (%d) - esco\n", KBD_IRQ, rc);
         return 1;
     }
 

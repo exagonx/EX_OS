@@ -123,7 +123,22 @@
  * cui struttura finisce a ridosso di una pagina — una volta ogni mille, sul
  * programma sbagliato.
  */
-#define EXOS_VERSION    "0.204"
+/* 0.204 -> 0.205: i segni delle lettere accentate ridisegnati nel font della
+ * console grafica (kernel/arch/x86/font8x16.c), 28 glifi.
+ *
+ * ! NON E' SOLO ESTETICA, E' LEGGIBILITA': nel font di partenza i segni stanno
+ * DUE righe sopra la lettera mentre il punto della `i` ne sta una sola, quindi
+ * `a` accentata sembrava una `a` normale con una macchia che galleggia sopra.
+ * Adesso i segni stanno dove sta il punto della `i`, e il grave e l'acuto sono
+ * un tratto continuo invece di una scaletta spezzata: a otto pixel di
+ * larghezza due quadratini staccati non si leggono come un accento.
+ *
+ * ! E IL COMMENTO IN TESTA AL FONT DICEVA IL FALSO: «l'ordine e' Latin-1, non
+ * CP437», mentre i dati sono sempre stati CP437 — come la tastiera, che lo
+ * dichiara. Chi si fosse fidato di quella riga avrebbe "corretto" la tastiera
+ * e rotto ogni tasto accentato.
+ */
+#define EXOS_VERSION    "0.205"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

@@ -897,14 +897,14 @@ int main(int argc, char **argv)
      * due righe lo toglierebbe a un driver che sta davvero lavorando. */
     rc = irq_bind(g_irq);
     if (rc < 0) {
-        printf("ne2k: irq_bind(%u) fallita (%d) — l'IRQ e' di qualcun altro?\n",
+        printf("ne2k: irq_bind(%u) fallita (%d) - l'IRQ e' di qualcun altro?\n",
                g_irq, rc);
         return 1;
     }
 
     rc = ipc_register(NET_SERVIZIO_0);
     if (rc < 0) {
-        printf("ne2k: ipc_register('%s') fallita (%d) — esco\n",
+        printf("ne2k: ipc_register('%s') fallita (%d) - esco\n",
                NET_SERVIZIO_0, rc);
         return 1;
     }

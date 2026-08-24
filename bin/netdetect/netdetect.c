@@ -208,8 +208,8 @@ static void stampa_tabella(void)
                (d && !driver_presente(d)) ? "  [assente]" : "");
     }
     printf("\nUna NE2000 ISA non compare qui: non ha spazio di configurazione,\n");
-    printf("quindi non si enumera. Non si cerca nemmeno a tentativi — se a\n");
-    printf("quell'indirizzo c'e' un'altra scheda le si scrive addosso — e va\n");
+    printf("quindi non si enumera. Non si cerca nemmeno a tentativi - se a\n");
+    printf("quell'indirizzo c'e' un'altra scheda le si scrive addosso - e va\n");
     printf("percio' indicata a mano:\n\n");
     printf("  /dev/ne2k.drv -p 0x300 -q 3\n");
 }
@@ -277,7 +277,7 @@ int main(int argc, char **argv)
             } else if (s->driver == NULL) {
                 printf("           driver: da scrivere per questo modello.\n");
             } else if (!driver_presente(s->driver)) {
-                printf("           driver: %s — non presente su questo supporto\n",
+                printf("           driver: %s - non presente su questo supporto\n",
                        s->driver);
             } else {
                 printf("           driver: %s\n", s->driver);

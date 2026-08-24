@@ -52,7 +52,7 @@ static void spiega_errore(const char *nome, int err)
 {
     switch (err) {
         case E_NOTEMPTY:
-            printf("rmdir: '%s' non e' vuota — cancella prima il suo "
+            printf("rmdir: '%s' non e' vuota - cancella prima il suo "
                    "contenuto\n", nome);
             break;
         case E_NOENT:
@@ -62,7 +62,7 @@ static void spiega_errore(const char *nome, int err)
             printf("rmdir: '%s' non e' una directory\n", nome);
             break;
         case E_NOSYS:
-            printf("rmdir: '%s' — EX-OS gestisce directory solo nella root "
+            printf("rmdir: '%s' - EX-OS gestisce directory solo nella root "
                    "(un livello)\n", nome);
             break;
         case E_INVAL:

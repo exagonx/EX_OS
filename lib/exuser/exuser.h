@@ -85,7 +85,17 @@ int  exuser_c_e_qualcuno(const char *radice);
 /* Il primo uid libero da 1000 in su; 0 se l'archivio e' vuoto (sara' root). */
 unsigned int exuser_prossimo_uid(const char *radice);
 
-/* Aggiunge un utente ai due file. Rende 0, o <0. */
+/* Aggiunge un utente ai due file.
+ *
+ *      0   fatto
+ *     -1   non si e' riusciti a scrivere
+ *     -2   quel nome c'e' gia'
+ *
+ * ! -2 NON E' UN ERRORE DI SCRITTURA, e chi chiama deve dirlo diversamente. Le
+ * due scritture aggiungono in fondo, e la ricerca prende la PRIMA riga che
+ * combacia: un nome ripetuto darebbe un conto che sembra creato e non lo e' —
+ * la password nuova non funzionerebbe e la vecchia si'. Vedi il commento in
+ * aggiungi_utente(). */
 int  exuser_aggiungi(const char *radice, const char *nome, const char *pass,
                      unsigned int uid, unsigned int gid);
 

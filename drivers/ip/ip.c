@@ -2198,7 +2198,7 @@ int main(int argc, char **argv)
              * attiva darebbe sempre «no» — al momento della sonda nessun
              * driver di rete e' ancora partito — e su ogni macchina si
              * finirebbe con le schede installate e lo stack no. */
-            printf("ip: stack TCP/IP, ICMP e UDP — software, nessuna "
+            printf("ip: stack TCP/IP, ICMP e UDP - software, nessuna "
                    "periferica propria\n");
             printf("    Si applica ovunque ci sia una scheda di rete.\n");
             return 0;
@@ -2226,7 +2226,7 @@ int main(int argc, char **argv)
 
     rc = ipc_register(IP_SERVIZIO);
     if (rc < 0) {
-        printf("ip: ipc_register('%s') fallita (%d) — esco\n", IP_SERVIZIO, rc);
+        printf("ip: ipc_register('%s') fallita (%d) - esco\n", IP_SERVIZIO, rc);
         return 1;
     }
 
