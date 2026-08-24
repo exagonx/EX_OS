@@ -1318,12 +1318,37 @@ static void prova_temporanei(void)
         esito("e il contenuto e' quello di prima",
               ok && strstr(riga, "non deve muoversi") != NULL);
 
-        /* ! Non sovrascrive: chi vuole sostituire cancella prima, cosi'
-         * la perdita e' una scelta e non un effetto collaterale. */
+        /* ! SOSTITUISCE, E LA PROVA ERA RIMASTA AL CONTRATTO DI PRIMA.
+         * Fino al 20 agosto 2026 `rename` rifiutava una destinazione che
+         * esisteva, e qui c'era scritto «chi vuole sostituire cancella
+         * prima». Poi vfs_rename ha imparato le regole di POSIX — e la
+         * ragione non e' la conformita': «cancella prima» NON e' equivalente
+         * a uno scambio, perche' fra la cancellazione e lo scambio il file
+         * NON ESISTE. Questa riga e' rimasta indietro di quattro giorni e
+         * accusava il kernel di un difetto che era suo. */
         f = fopen(a, "w");
         if (f) { fputs("altro\n", f); fclose(f); }
-        esito("rename NON sostituisce la destinazione",
-              rename(a, b) != 0 && errno == EEXIST);
+        esito("rename sostituisce la destinazione", rename(a, b) == 0);
+        esito("e il nome di partenza non c'e' piu'", access(a, F_OK) != 0);
+
+        riga[0] = '\0';
+        f = fopen(b, "r");
+        ok = (f != NULL) && (fgets(riga, sizeof(riga), f) != NULL);
+        if (f) fclose(f);
+        esito("e dentro c'e' quello che e' arrivato",
+              ok && strstr(riga, "altro") != NULL);
+
+        /* ! E SU SE STESSO NON FA NIENTE, che e' l'unico modo di non essere
+         * distruttivo: sostituire vuol dire togliere di mezzo la
+         * destinazione, e la destinazione qui e' il file stesso. POSIX lo
+         * dice, e chi costruisce i due nomi separatamente ci arriva. */
+        esito("rename di un file su se stesso non lo cancella",
+              rename(b, b) == 0 && access(b, F_OK) == 0);
+
+        /* Da qui in poi serve di nuovo un `a`: la sostituzione se l'e'
+         * portato via. */
+        f = fopen(a, "w");
+        if (f) { fputs("altro\n", f); fclose(f); }
 
         /* ! Non attraversa directory: sarebbe una copia piu' una
          * cancellazione, cioe' un'altra operazione. */

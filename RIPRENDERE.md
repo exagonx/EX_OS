@@ -1,4 +1,4 @@
-# DOVE RIPRENDERE — 20 agosto 2026
+# DOVE RIPRENDERE — 24 agosto 2026
 
 ## Lo stato in una riga
 
@@ -12,13 +12,18 @@ seriale e USB — tastiera compresa, hub compresi.
 
 ## COSA E' COMMITTATO
 
-    7c58a8b  "I due README imparano otto commit, e la versione torna a
-              voler dire qualcosa"
+    4c64777  "Il login non scende piu' con la shell, e i driver di rete li
+              carica il kernel"
 
-In attesa nell'albero: le **tre correzioni del 24 agosto 2026** — `login` che
-non scende piu' con la shell (`SPAWN_F_UTENTE`, kernel **0.203**), `hwconfig`
-che non spegne piu' l'accesso riscrivendo kernel.cfg, e la rete che si accende
-da `[modules]` invece che da `autoexec.sh`. La sezione e' qui sotto.
+Kernel **0.203**. Ci sono dentro le tre correzioni del 24 agosto — `login` che
+non scende piu' con la shell (`SPAWN_F_UTENTE`), `hwconfig` che non spegne piu'
+l'accesso riscrivendo kernel.cfg, la rete che si accende da `[modules]` — e la
+sezione che le racconta e' qui sotto.
+
+In attesa nell'albero: **la prova di `rename` in `/bin/libctest`**, che era
+rimasta al contratto di prima e accusava il kernel di un difetto che era suo.
+Vedi la sezione «`rename` e la finestra che solo il kernel puo' chiudere».
+**319 prove su 319**, su floppy FAT12 e su disco ext2.
 
 ! **`gitupdate.sh` FA `git add .` E UN COMMIT SOLO**: `messaggio-commit.txt`
 deve coprire tutto quello che si e' fatto dall'ultimo commit, non l'ultima
@@ -107,7 +112,9 @@ entra dopo di lui, una password sbagliata e' ancora rifiutata, `sudo id` da'
 `uid=0`. `hwconfig -n` mostra `login = /bin/login` sia sul file
 dell'installatore sia su quello che ha scritto lui (idempotente). Riavviato: la
 catena si accende da sola e `ipcfg` mostra 10.0.2.15 preso dal DHCP. Il CD
-accende la rete da solo. `libctest` resta a 315 su 316.
+accende la rete da solo. `libctest` dava 315 su 316, e la riga rossa era la
+PROVA rimasta indietro, non il sistema: vedi la sezione su `rename`. Adesso
+319 su 319.
 
 ! **`tools/mkhd.sh` NON RISPONDEVA PIU' ALL'INSTALLATORE** da quando `install`
 chiede i due conti (19 agosto): restava fermo su «password di root:» e finiva
@@ -1104,7 +1111,7 @@ resto e' andato storto.
 ## COME SI PROVA QUELLO CHE C'E' (aggiornato il 20 agosto 2026)
 
     make -j2 all && make iso-exos
-    python3 tools/qemu_drive.py "libctest@260"     316 prove, e ci sono dentro
+    python3 tools/qemu_drive.py "libctest@260"     319 prove, e ci sono dentro
                                                    pty e interruzione. Da CD
                                                    (EXOS_NO_FLOPPY=1) sono
                                                    196 con 15 fallite: manca
@@ -1246,6 +1253,22 @@ tutta l'operazione: in spazio utente quella garanzia non si puo' avere.
 ext2, FAT12 e FAT16/32 senza che nessun driver la reimplementi. Su questo mi
 ero sbagliato dicendo che fat12 teneva il comportamento vecchio: avevo guardato
 lo smistamento e non dove stava il blocco. Provato su tutt'e tre.
+
+! **E LA PROVA E' RIMASTA AL CONTRATTO DI PRIMA — quattro giorni, con la riga
+rossa sotto gli occhi.** `/bin/libctest` chiedeva ancora che `rename` FALLISSE
+con `EEXIST` su una destinazione occupata, cioe' la regola cambiata il 20
+agosto. Il conto diceva «315 prove su 316», e il `[FALLITO]` accusava il kernel
+di un difetto che era della prova: verificato a mano dentro EX-OS che
+`rename a b` con `b` gia' presente riesce e lascia in `b` il contenuto di `a`,
+su FAT12 come su ext2.
+
+! **UNA PROVA CHE SBAGLIA COSTA PIU' DI UNA PROVA CHE MANCA.** Quella riga
+rossa era in fondo a una schermata che scorre, e chi la vedeva imparava a
+saltarla — che e' il modo in cui la volta dopo si salta anche quella vera.
+Adesso la prova chiede il contratto nuovo, e in piu' due casi che prima
+nessuno guardava: che il nome di partenza sparisca insieme al contenuto, e che
+`rename(x, x)` NON cancelli `x` — sostituire vuol dire togliere di mezzo la
+destinazione, e li' la destinazione e' il file stesso. **319 su 319.**
 
 ## Come si prova la catena della rete
 
