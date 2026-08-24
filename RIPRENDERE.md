@@ -517,6 +517,165 @@ vuoti da noi, e la 819esima e' `Configurations/50-exos.conf`, che e' nostro e
 la' non c'e'. Gli unici quattro rimasti vuoti si chiamano `empty.txt` e
 `smcont_zero.txt`: sono vuoti di mestiere.
 
+### FATTO — `exasn1`: DER e X.509, letti con diffidenza
+
+Il secondo dei tre pezzi. `exbig` sa fare il conto di una firma; questo sa dire
+QUALI numeri mettere in quel conto e da dove prenderli.
+
+! **QUESTI BYTE ARRIVANO DALLA RETE, E CHI LI MANDA NON E' AMICO**, ed e' la
+differenza fra questo lettore e tutti gli altri di EX-OS. Un font malformato sta
+su un CD masterizzato da noi; un certificato lo sceglie chi risponde al posto
+del sito che si voleva. Quindi: ogni misura controllata contro la fine del
+buffer PRIMA di guardarci dentro, e i confronti scritti come sottrazioni sul
+residuo — `n > d->n - off` — perche' una somma puo' TRABOCCARE e allora il
+controllo dice di si' proprio quando dovrebbe dire di no.
+
+! **NON SI COPIA NIENTE.** Ogni campo e' una fetta — puntatore e misura — dentro
+il buffer di chi chiama: niente allocazione, niente buffer da dimensionare,
+niente `memcpy` da sbagliare. E il TBSCertificate e' la fetta ORIGINALE, non
+ricostruita: la firma copre quei byte esatti, e rigenerarli da una struttura
+analizzata vorrebbe dire verificare una cosa diversa da quella firmata ogni
+volta che il nostro codificatore sceglie una forma diversa dal mittente.
+
+! **LA LUNGHEZZA IN FORMA INDEFINITA SI RIFIUTA**: e' legale in BER, non in
+DER, e accettarla vuol dire due codifiche dello stesso certificato — cioe' due
+impronte diverse della stessa cosa.
+
+! **E GLI OID NON SI DECODIFICANO, SI CONFRONTANO PER BYTE.** Un OID e' una
+costante: tenerne il DER e confrontarlo e' meno codice, non ha casi limite, e
+soprattutto non aggiunge un ciclo di decodifica che gira su input ostile.
+
+#### Provato su centocinquantuno certificati veri, non su casi inventati
+
+    make prova-exasn1
+
+    151 certificati letti, 0 rifiutati  (108 RSA, 4 EC P-256, 39 altro)
+    82 firme verificate con i campi letti da exasn1 e il conto di exbig
+    nessuna differenza con openssl
+    1500 certificati rovinati, nessuno ha fatto uscire il lettore dal proprio buffer
+
+I certificati sono quelli di `/etc/ssl/certs`: centocinquanta CA diverse,
+scritte da programmi diversi, con versioni ed estensioni che nessuno si
+inventerebbe scrivendo casi di prova a mano. Il riferimento e' `openssl`, e si
+confrontano modulo, esponente, numero di serie, le due date, l'algoritmo della
+firma e il bit di CA.
+
+! **MA LA PROVA CHE CONTA NON CONFRONTA: VERIFICA.** Presi modulo, esponente,
+firma e TBSCertificate **dal nostro lettore**, si rifa' il conto con `exbig` e
+si guarda se ne esce PKCS#1 con l'impronta giusta. Se combacia, quei quattro
+campi sono giusti INSIEME — ed e' precisamente cio' che dovra' fare extls.
+
+! **E POI I CERTIFICATI GUASTI.** Quelli veri sono scritti bene per definizione:
+chi li ha firmati voleva farli leggere. Millecinquecento copie rovinate —
+tagliate in ogni punto, un byte cambiato a caso, e le LUNGHEZZE portate a valori
+assurdi, che e' il campo con cui si fa uscire un lettore dal proprio buffer. La
+prova non e' «li rifiuta»: un byte cambiato dentro un nome da' un nome diverso,
+non un errore. La prova e' che **non si schianta**, e quello si vede dal
+segnale.
+
+! **UNA PROVA CHE SBAGLIA DOMANDA DA' UNA RISPOSTA SBAGLIATA**: la prima
+passata diceva «modulo diverso» su quarantatre certificati, e li leggeva
+benissimo — erano a curva ellittica, e `openssl x509 -modulus` un modulo non lo
+stampa perche' non ce n'e' uno. Era la prova a chiedere la cosa sbagliata.
+
+#### Cosa non c'e', dichiarato
+
+Niente BER, niente stringhe convertite (le date si leggono e si normalizzano,
+i nomi restano DER e si confrontano BYTE PER BYTE — le regole di equivalenza di
+X.509 sono altrettanti modi di far sembrare uguali due nomi che non lo sono).
+Le chiavi EC si leggono solo su P-256: le altre curve si dicono «ignote», che e'
+diverso da «rifiutate» — il certificato si legge lo stesso, semplicemente non
+sappiamo ancora verificarne la firma. Niente CRL e niente OCSP: sono richieste
+in rete, non lettura di byte.
+
+**Restano, prima di `extls`**: il magazzino delle CA — che e' un file da
+leggere, non un formato da capire — e le curve, che stanno con l'ECDSA dentro
+extls.
+
+### FATTO — `exbig`: gli interi lunghi, e solo quelli che servono a VERIFICARE
+
+E' il primo dei tre pezzi che mancano all'https, e l'ordine non e' negoziabile:
+`exbig`, poi `exasn1`, poi `extls`. Un TLS che cifra senza sapere con chi sta
+parlando e' peggio del testo in chiaro — con `http://` chi guarda sa di essere
+scoperto, con `https://` gli si dice che e' al sicuro.
+
+**Cosa c'e'**: `lib/exbig/exbig.c`, 300 righe. Interi senza segno fino a 4096
+bit a misura FISSA (516 byte, sullo stack di chi chiama: una libreria che alloca
+in mezzo a un handshake e' una libreria che puo' fallire a meta' verifica), i
+byte in ordine di rete come stanno in un DER, e **una sola operazione vera**:
+`r = base^e mod m`.
+
+! **SOLO VERIFICA, E LA PAROLA VA PRESA ALLA LETTERA.** Niente generazione di
+chiavi, niente primalita', niente CRT, niente esponenti segreti. Non e' una
+tappa: e' il confine. E cio' che non c'e' non puo' perdere segreti — un codice
+che maneggia solo numeri pubblici non ha niente da far trapelare col tempo che
+impiega. Il giorno che ci entrasse una chiave privata, ogni `if` di quel file
+diventerebbe un canale laterale da chiudere.
+
+! **NON ESISTE LA DIVISIONE A 64 BIT, ED E' IL VINCOLO CHE HA SCELTO
+L'ALGORITMO.** Una libreria di EX-OS si collega senza libgcc: `__udivdi3` non
+c'e' e il collegamento FALLISCE — lo stesso muro di tsc.c e del rasterizzatore
+dei font. La riduzione modulare della scuola vuole proprio quella divisione;
+**Montgomery** invece il modulo non lo divide mai, lo somma. L'unica operazione
+lunga resta la moltiplicazione, che su i386 e' `mull`, due istruzioni. Anche il
+numero magico -m^-1 mod 2^32 si calcola senza dividere: Newton su interi,
+cinque giri da 3 bit a 32.
+
+#### I due difetti, e sono lo stesso difetto in due posti
+
+Tutt'e due li ha trovati la prova, e nessuno dei due si vedeva sui numeri a
+caso:
+
+  1. **la coda del prodotto di Montgomery.** Il risultato sta in n parole piu'
+     un bit, e con quel bit acceso il numero vero e' 2^(32n) + r con r piu'
+     PICCOLO di m: sottrarre m dal solo r va sotto zero. Sintomo: `(m-1)^2 mod m`
+     rendeva **zero** invece di uno. L'ha trovato il caso scritto a mano
+     `a = m-1`, non i quattrocento casuali;
+  2. **il raddoppio nel calcolo di R^2.** Con un modulo di 4096 bit — il tetto
+     dichiarato — il riporto uscente non ha piu' dove stare, e buttarlo cambia
+     il numero. Si vedeva solo alla misura massima, cioe' nel caso che si prova
+     per ultimo e si spedisce per primo.
+
+! **ADESSO E' UNA FUNZIONE SOLA**, `togli_m()`, chiamata da tutt'e due i posti:
+erano due copie della stessa sottrazione, e una delle due era sbagliata.
+
+#### Provato contro un'aritmetica di qualcun altro, e poi contro il mondo
+
+`make prova-exbig` (`tools/prove/bigprova.py`) fa due cose diverse:
+
+    2013 prove, 0 sbagliate
+    5 casi malformati, tutti rifiutati
+    12 firme di certificati veri verificate con exbig
+
+Il riferimento sono **gli interi di Python**: `pow(a, e, m)` e' la risposta
+giusta per definizione. Confrontare exbig con exbig direbbe solo che e'
+coerente con se stesso — e' lo stesso patto di zlib per inflate e di FreeType
+per i font.
+
+! **E I CASI NON SONO SOLO «A CASO»**, perche' i numeri casuali non passano mai
+per i bordi: modulo di una parola sola, base 0, base 1, base m-1, esponenti 0 e
+1, moduli con la parola alta piena, il tetto di 4096 bit. Sono quelli che hanno
+trovato tutt'e due i difetti.
+
+! **POI LE FIRME VERE**, che sono l'unica prova che l'aritmetica serva a
+qualcosa: i certificati radice di questa macchina, `m = firma^e mod n`, e
+dentro ci si ritrova PKCS#1 v1.5 — `00 01 FF..FF 00` e il DigestInfo con
+l'impronta SHA-256 del TBSCertificate che combacia. Autofirmati apposta: la
+chiave che li firma e' la loro, quindi non serve un magazzino di CA per fare il
+conto. Decidere DI CHI FIDARSI e' un'altra domanda, ed e' di extls.
+
+#### Perche' non e' (ancora) una `.so`
+
+La regola di questo sistema e' che una libreria condivisa conviene quando due
+programmi la usano. exbig oggi ne ha **zero**. Una .so senza utenti e' peso
+morto sul CD e, peggio, un artefatto che nessuno esercita: si scopre rotta il
+giorno che serve. Sta in `lib/` come `lib/excrypt`, compilata dentro chi la
+usera'. **Ma si compila a ogni build** — `make verifica-exbig`, dentro
+`make all` — perche' una libreria che non entra in nessun eseguibile smette di
+compilare senza che nessuno se ne accorga.
+
+**Il prossimo passo e' `exasn1`**: DER, X.509, il magazzino delle CA.
+
 ### FATTO — le immagini nel browser
 
 Era il terzo di tre lavori scelti insieme, e chiude la serie. Il browser
@@ -647,11 +806,11 @@ quattro alloggiamenti** in xhci.drv — dichiarato, non scoperto dopo.
 `https://www.w3c.org` e' rifiutato con «https non ancora: manca il TLS», che e'
 la verita'. Per toglierlo servono, in quest'ordine:
 
-    exbig.so    interi lunghi, SOLO verifica — niente generazione di chiavi,
-                niente primalita', niente CRT. Con l'esponente 65537 sono 16
-                elevamenti al quadrato e una moltiplicazione: su un Pentium 133
-                decine di millisecondi
-    exasn1.so   DER, X.509, il magazzino delle CA
+    exbig       FATTO il 24 agosto 2026 — vedi la sezione qui sotto. Interi
+                lunghi, SOLO verifica: niente generazione di chiavi, niente
+                primalita', niente CRT
+    exasn1      FATTO il 24 agosto 2026 — DER e X.509. Il magazzino delle CA
+                resta da fare: e' un file da leggere, non un formato da capire
     extls.so    TLS 1.3 — e i mattoni ci sono gia': SHA-256, SHA-512,
                 ChaCha20, Poly1305, X25519, Ed25519. Mancano HMAC e HKDF, che
                 sono un giorno

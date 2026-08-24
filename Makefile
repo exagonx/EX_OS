@@ -2817,7 +2817,7 @@ ip_drv: dirs $(IP_DRV_OUT)
 # agosto 2026 questa riga ripeteva a mano i nomi dei programmi di rete e
 # dei driver, e mancavano pcnet_drv e xcp: due elenchi della stessa cosa
 # divergono al primo che si dimentica di aggiornarne uno.
-all: dirs stage1 stage2 kernel $(PROGRAMMI_FLOPPY) $(PROGRAMMI_CD) $(PROGRAMMI_EXWIN) $(DRIVER_CD) verifica-programmi verifica-statici verifica-versioni floppy
+all: dirs stage1 stage2 kernel $(PROGRAMMI_FLOPPY) $(PROGRAMMI_CD) $(PROGRAMMI_EXWIN) $(DRIVER_CD) verifica-programmi verifica-statici verifica-versioni verifica-exbig verifica-exasn1 floppy
 	@echo ""
 	@echo "============================================"
 	@echo " EX-OS build completata!"
@@ -4253,6 +4253,63 @@ STATICI_OBBLIGATI := $(BUILD_BIN)/login $(BUILD_BIN)/install $(BUILD_BIN)/sh \
 #   net, tty, usb   non sono programmi, sono codice condiviso fra driver.
 # =============================================================================
 SENZA_VERSIONE := hello floppy net tty usb
+
+# =============================================================================
+# lib/exbig — interi lunghi, il primo dei tre pezzi che mancano all'https
+#
+# ! NON E' ANCORA UNA .so, E NON PER PIGRIZIA. La regola di questo sistema e'
+# che una libreria condivisa conviene quando due programmi la usano; exbig oggi
+# ne ha ZERO — exasn1 ed extls non esistono ancora. Una .so senza utenti sarebbe
+# peso morto sul CD e, peggio, un artefatto che nessuno esercita: si scoprirebbe
+# rotta il giorno in cui serve. Sta in lib/ come lib/excrypt, che e' compilata
+# dentro chi la usa, e diventera' condivisa quando gli utenti ci saranno.
+#
+# ! MA SI COMPILA A OGNI BUILD, e questo si': una libreria che non entra in
+# nessun eseguibile smette di compilare senza che nessuno se ne accorga. Qui si
+# compila per i386 con i flag veri, e l'oggetto si butta — serve il compilatore,
+# non il file.
+#
+# ! E LA PROVA STA SULL'HOST, dove c'e' un'aritmetica di cui fidarsi:
+# `make prova-exbig` confronta migliaia di elevamenti a potenza con quelli di
+# Python e poi verifica FIRME VERE dei certificati radice di questa macchina.
+# Dentro EX-OS non si prova niente di tutto cio': exbig non sa cos'e' EX-OS.
+# =============================================================================
+EXBIG_SRC := lib/exbig/exbig.c
+EXBIG_HDR := lib/exbig/exbig.h
+
+.PHONY: verifica-exbig
+verifica-exbig: $(EXBIG_SRC) $(EXBIG_HDR)
+	@$(CC) $(CFLAGS_USER) -I lib/exbig -c $(EXBIG_SRC) -o $(BUILD_OBJ)/exbig_prova.o
+	@echo "[OK] lib/exbig compila per i386 (nessun simbolo esterno)"
+
+.PHONY: prova-exbig
+prova-exbig:
+	@python3 tools/prove/bigprova.py $(N)
+
+# =============================================================================
+# lib/exasn1 — DER e X.509, il secondo dei tre pezzi che mancano all'https
+#
+# Stessa scelta di exbig e per le stesse ragioni: non e' ancora una .so perche'
+# non ha utenti, ma si compila a ogni build perche' una libreria che non entra
+# in nessun eseguibile smette di compilare in silenzio.
+#
+# ! E QUI LA PROVA CONTA DOPPIO, perche' questi byte arrivano DALLA RETE.
+# `make prova-exasn1` fa tre cose: confronta i campi letti con quelli che dice
+# `openssl` su tutti i certificati radice di questa macchina, verifica le firme
+# usando SOLO i nostri campi e il nostro exbig, e poi rovina un certificato in
+# millecinquecento modi per vedere se il lettore esce dal proprio buffer.
+# =============================================================================
+EXASN1_SRC := lib/exasn1/exasn1.c
+EXASN1_HDR := lib/exasn1/exasn1.h
+
+.PHONY: verifica-exasn1
+verifica-exasn1: $(EXASN1_SRC) $(EXASN1_HDR)
+	@$(CC) $(CFLAGS_USER) -I lib/exasn1 -c $(EXASN1_SRC) -o $(BUILD_OBJ)/exasn1_prova.o
+	@echo "[OK] lib/exasn1 compila per i386 (nessun simbolo esterno)"
+
+.PHONY: prova-exasn1
+prova-exasn1:
+	@python3 tools/prove/asn1prova.py
 
 .PHONY: verifica-versioni
 verifica-versioni:
