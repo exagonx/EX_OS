@@ -27,6 +27,9 @@
  * ============================================================================= */
 #include "libc.h"
 
+/* +0.001 a ogni modifica: `xcp -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("xcp", "0.001");
+
 #define BLOCCO       4096
 #define PERCORSO_MAX 320
 

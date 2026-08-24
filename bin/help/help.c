@@ -67,6 +67,9 @@
 #include "libc.h"
 #include "kbd_proto.h"
 
+/* +0.001 a ogni modifica: `help -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("help", "0.001");
+
 #define FILE_AIUTO   "/boot/help.txt"
 
 #define TESTO_MAX    32768

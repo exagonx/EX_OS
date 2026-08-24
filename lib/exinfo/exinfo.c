@@ -82,8 +82,8 @@ static unsigned int kb(unsigned int byte)
     return (byte + 1023u) / 1024u;
 }
 
-void exinfo_testo(char *out, unsigned int max,
-                  const char *nome, const char *descrizione)
+void exinfo_testo(char *out, unsigned int max, const char *nome,
+                  const char *versione, const char *descrizione)
 {
     unsigned int img = 0, hp = 0, pl = 0;
 
@@ -95,16 +95,18 @@ void exinfo_testo(char *out, unsigned int max,
      * Non e' un tetto da indovinare: e' scritto in lib/exdlg/exdlg.c accanto a
      * AVVISO_RIGHE, e superarlo significa un dialogo TRONCATO — che e' peggio
      * di uno corto, perche' quello che si legge sembra tutto. La versione del
-     * sistema non c'e' apposta: la dicono gia' `ver` e `uname`, e qui
-     * costerebbe due righe su dodici.
+     * SISTEMA non c'e' apposta: la dicono gia' `ver` e `uname`, e qui
+     * costerebbe due righe su dodici. Quella del PROGRAMMA c'e', e non costa
+     * niente: sta sulla riga del nome.
      *
      * ! E SOLO ASCII. Il font della console non ha i trattini lunghi ne' le
      * virgolette basse: al loro posto compaiono tre caratteri di spazzatura in
      * mezzo a una frase, e si e' visto proprio qui. */
     snprintf(out, max,
-             "%s\n\n%s\n\n%s  -  %s\n\n"
+             "%s %s\n\n%s\n\n%s  -  %s\n\n"
              "Memoria: %u KB  (programma %u, heap %u, pila %u)",
              nome ? nome : "",
+             versione ? versione : "",
              descrizione ? descrizione : "",
              EXINFO_AUTORE, EXINFO_EMAIL,
              kb(img + hp + pl), kb(img), kb(hp), kb(pl));

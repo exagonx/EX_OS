@@ -23,6 +23,9 @@
 #include "dns.h"
 #include "rete.h"
 
+/* +0.001 a ogni modifica: `host -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("host", "0.001");
+
 static void stampa_ip(const unsigned char *p)
 {
     printf("%u.%u.%u.%u", p[0], p[1], p[2], p[3]);

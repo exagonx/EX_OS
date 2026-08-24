@@ -56,6 +56,9 @@
 #include "dns.h"
 #include "rete.h"
 
+/* +0.001 a ogni modifica: `ftp -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("ftp", "0.001");
+
 #define BUF_CTRL   4096
 #define BUF_DATI   2048
 

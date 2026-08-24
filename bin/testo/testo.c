@@ -25,6 +25,9 @@
 
 #include "libc.h"
 
+/* +0.001 a ogni modifica: `testo -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("testo", "0.001");
+
 int main(void)
 {
     modo_testo();

@@ -64,6 +64,9 @@
 #include "ip_proto.h"
 #include "rete.h"
 
+/* +0.001 a ogni modifica: `dhcp -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("dhcp", "0.001");
+
 /* Porte fissate dalla specifica: non si scelgono. */
 #define PORTA_CLIENT   68
 #define PORTA_SERVER   67

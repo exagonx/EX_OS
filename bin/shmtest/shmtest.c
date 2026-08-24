@@ -26,6 +26,9 @@
 
 #include "libc.h"
 
+/* +0.001 a ogni modifica: `shmtest -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("shmtest", "0.001");
+
 #define NOME        "provashm"
 #define BYTE        8192            /* due pagine: si prova anche il confine */
 #define PASSO_PADRE 0x5A

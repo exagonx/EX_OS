@@ -43,6 +43,9 @@
  * ============================================================================= */
 #include "libc.h"
 
+/* +0.001 a ogni modifica: `rename -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("rename", "0.001");
+
 /* Vero se i due percorsi stanno nella stessa directory. Serve solo a dare
  * il messaggio giusto: la decisione la prende il kernel, qui si indovina
  * la ragione per spiegarla. */

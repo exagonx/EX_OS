@@ -42,6 +42,9 @@
 #include "dns.h"
 #include "rete.h"
 
+/* +0.001 a ogni modifica: `nettest -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("nettest", "0.001");
+
 #define ETH_TIPO_ARP   0x0806
 #define ETH_TIPO_IP    0x0800
 #define ETH_TIPO_IPV6  0x86DD

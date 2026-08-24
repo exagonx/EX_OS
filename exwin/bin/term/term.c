@@ -30,6 +30,9 @@
 #include "libc.h"
 #include "exwin.h"
 
+/* +0.001 a ogni modifica: `term -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("term", "0.001");
+
 /* ! LA FINESTRA E' UN MULTIPLO ESATTO DELLA CELLA. Il font e' 8x16 e il
  * controllo calcola le colonne come larghezza/8 e le righe come altezza/16:
  * una misura qualunque lascerebbe una striscia nera in fondo e a destra, che

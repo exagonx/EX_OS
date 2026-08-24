@@ -35,6 +35,9 @@
 #include "libc.h"
 #include "exwin.h"
 
+/* +0.001 a ogni modifica: `orologio -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("orologio", "0.001");
+
 /* ! LA MISURA E' RICAVATA DAL TESTO PIU' LUNGO CHE PUO' USCIRE, non scelta a
  * occhio: «19/08/2026  05:49:07» sono venti caratteri, e col font di sistema
  * un carattere e' otto pixel. Quattro di margine per parte. */

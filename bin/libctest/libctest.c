@@ -38,6 +38,9 @@
  * decine di funzioni. Vedi lib/include/math.h. */
 #include "math.h"
 
+/* +0.001 a ogni modifica: `libctest -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("libctest", "0.001");
+
 static int passati = 0;
 static int falliti = 0;
 

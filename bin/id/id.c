@@ -28,6 +28,9 @@
 
 #include "libc.h"
 
+/* +0.001 a ogni modifica: `id -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("id", "0.001");
+
 /* ! LA TRADUZIONE uid -> NOME E' PASSATA NELLA libc il 19 agosto, quando gli
  * utenti sono diventati due: la vuole anche `ls -l`. Stava qui, ed era giusto
  * finche' a chiederla c'era solo questo programma — due copie di un parser di

@@ -29,6 +29,9 @@
  * ============================================================================= */
 #include "libc.h"
 
+/* +0.001 a ogni modifica: `stack -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("stack", "0.001");
+
 #define BLOCCO PROCINFO_MAX_BATCH
 
 static const char *nome_stato(unsigned int s)

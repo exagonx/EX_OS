@@ -76,6 +76,9 @@
 #include "kbd_proto.h"
 #include "exuser.h"
 
+/* +0.001 a ogni modifica: `login -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("login", "0.001");
+
 #define UTENTI     "/boot/utenti"    /* nome:uid:gid — pubblico */
 #define OMBRA      "/boot/ombra"     /* nome:sale:impronta — di root */
 #define NOME_MAX   EXUSER_NOME_MAX

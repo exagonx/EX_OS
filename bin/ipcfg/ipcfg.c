@@ -41,6 +41,9 @@
 #include "dns.h"
 #include "rete.h"
 
+/* +0.001 a ogni modifica: `ipcfg -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("ipcfg", "0.001");
+
 static int pid_ip = 0;
 
 

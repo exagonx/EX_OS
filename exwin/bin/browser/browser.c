@@ -28,11 +28,22 @@
  * rifare tutto il lavoro a ogni riga di scorrimento; disegnare tutto vorrebbe
  * dire dipingere migliaia di righe fuori dalla finestra.
  *
- * ! QUELLO CHE NON C'E', DICHIARATO: niente CSS, niente tabelle impaginate come
- * tabelle, niente https. Un blocco va a capo, il testo scorre e si spezza, i
- * collegamenti si vedono e si premono, le immagini si scaricano e si
- * collocano. E' il minimo che si possa chiamare browser, e ogni pezzo mancante
- * ha il suo posto.
+ * ! QUELLO CHE C'E', E QUESTA RIGA E' RIMASTA INDIETRO DI GIORNI. Diceva
+ * «niente CSS, niente tabelle impaginate come tabelle»: erano vere quando il
+ * file e' nato, e sono diventate false senza che nessuno le riguardasse —
+ * proprio come il commento del font che diceva Latin-1 su dati CP437. Un
+ * elenco di cio' che manca invecchia peggio del codice: il codice, quando
+ * cambia, lo si sta guardando.
+ *
+ * Oggi ci sono: i blocchi e il testo che scorre e si spezza, i collegamenti,
+ * le immagini, i FOGLI DI STILE (excss: colori, corpo, stile e peso del
+ * carattere, i quattro margini, l'allineamento, `display`, selettori per tag,
+ * classe e id) e le TABELLE impaginate come tabelle, annidate comprese.
+ *
+ * ! QUELLO CHE NON C'E', DICHIARATO: `https` — il muro grosso, e vuole exbig,
+ * exasn1 ed extls in quest'ordine — `colspan` e `rowspan`, i moduli (`form` e
+ * `input` si impaginano ma non si compilano ne' si inviano), JavaScript, e la
+ * compressione, che non si chiede apposta.
  *
  * ! LE IMMAGINI ARRIVANO DOPO IL TESTO, ED E' LA DECISIONE CHE CONTA QUI. La
  * pagina si impagina e si disegna con le sole parole; solo allora si scarica
@@ -52,6 +63,10 @@
 #include "exdlg.h"
 #include "exinfo.h"
 #include "kbd_proto.h"
+
+/* +0.001 a ogni modifica: `browser -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+#define VERSIONE_APP "0.001"
+EX_VERSIONE("browser", VERSIONE_APP);
 
 #define FIN_W       760
 #define FIN_H       520
@@ -1897,7 +1912,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         if (wp == ID_INFO) {
             char t[640];
 
-            exinfo_testo(t, sizeof(t), "Navigatore",
+            exinfo_testo(t, sizeof(t), "Navigatore", VERSIONE_APP,
                          "Il browser di EX-OS.  Mette insieme exhttp per la "
                          "rete, exhtml per l'albero, excss per i fogli di "
                          "stile, eximg per le immagini e i font per misurare "

@@ -72,6 +72,12 @@
 #define FD_NAME     "fdisk"
 #define FD_VERSION  "0.001"
 
+
+/* ! LA VERSIONE STA IN UN POSTO SOLO, ed e' FD_VERSION qui sopra:
+ * `fdisk -version` la stampa dall'avvio della libc (vedi EX_VERSIONE in
+ * libc.h) e il banner la stampa da dentro. Due letterali uguali
+ * diventano due letterali diversi al primo incremento. */
+EX_VERSIONE("fdisk", FD_VERSION);
 /* =============================================================================
  * Politiche
  *

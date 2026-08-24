@@ -63,6 +63,9 @@
 #include "net_proto.h"
 #include "rete.h"
 
+/* +0.001 a ogni modifica: `netdetect -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("netdetect", "0.001");
+
 /* -----------------------------------------------------------------------------
  * ! LA TABELLA DEI MODELLI NON STA PIU' QUI, dal 24 agosto 2026: sta in
  * lib/rete.c, e questo file la legge con rete_riconosci() e rete_scheda().

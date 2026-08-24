@@ -53,6 +53,9 @@
 
 #include "libc.h"
 
+/* +0.001 a ogni modifica: `cmp -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("cmp", "0.001");
+
 #define BLOCCO 4096
 
 /* Le righe si contano per dire «riga N» come fa POSIX. Una riga finisce con

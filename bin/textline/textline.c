@@ -62,6 +62,12 @@
  * ============================================================================= */
 #define TL_NAME     "Text Line"
 #define TL_VERSION  "0.001"
+
+/* ! LA VERSIONE STA IN UN POSTO SOLO, ed e' TL_VERSION qui sopra:
+ * `textline -version` la stampa dall'avvio della libc (vedi EX_VERSIONE in
+ * libc.h) e il banner la stampa da dentro. Due letterali uguali
+ * diventano due letterali diversi al primo incremento. */
+EX_VERSIONE("textline", TL_VERSION);
 #define TL_AUTHOR   "Graziano Falcone"
 #define TL_EMAIL    "exagonx@hotmail.com"
 #define TL_LICENSE  "GPL 2.0"

@@ -60,6 +60,9 @@
 
 #include "libc.h"
 
+/* +0.001 a ogni modifica: `uname -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("uname", "0.001");
+
 /* =============================================================================
  * ! IL NOME DEL SISTEMA NON VIENE DA kernel.cfg, ED E' UNA SCELTA.
  *

@@ -73,6 +73,31 @@
  * ============================================================================= */
 int main(int argc, char **argv, char **envp);
 
+/* La versione dello strumento: la dichiara EX_VERSIONE() in libc.h. Deboli
+ * apposta — vedi il blocco su `-v` piu' sotto. */
+extern const char *const __ex_nome     __attribute__((weak));
+extern const char *const __ex_versione __attribute__((weak));
+
+/* strcmp a mano: qui non si puo' ancora chiamare la libc. Rende 1 se uguali. */
+static int confronta(const char *a, const char *b)
+{
+    unsigned int i = 0;
+
+    while (a[i] && a[i] == b[i]) i++;
+    return a[i] == b[i];
+}
+
+/* write(2) diretta: qui non si puo' ancora chiamare la libc. */
+static void scrivi_versione(const char *s)
+{
+    unsigned int n = 0;
+
+    if (s == 0) return;
+    while (s[n]) n++;
+    __asm__ volatile ("int $0x80" :: "a"(4), "b"(1), "c"(s), "d"(n)
+                      : "memory");
+}
+
 /* ! DICHIARATO QUI E NON INCLUDENDO libc.h. Questo file si compila in due
  * contesti: dentro libc.c (che la libc se la dichiara da se') e da solo, nello
  * stub della libc condivisa. Tirare dentro libc.h nel primo caso vorrebbe dire
@@ -271,6 +296,46 @@ void _libc_start(int argc, char **argv, char **envp)
      * chiamare getenv(); farlo girare prima che environ sia impostato
      * gli darebbe un ambiente vuoto invece di quello vero. */
     esegui_costruttori();
+
+    /* =====================================================================
+     * ! `-v` LA RISPONDE L'AVVIO, NON IL PROGRAMMA
+     *
+     * Ogni strumento dichiara la propria versione con EX_VERSIONE() e non
+     * guarda argv: la domanda «che versione sei?» e' identica per tutti, e
+     * cinquantaquattro copie della stessa riga sono cinquantaquattro occasioni
+     * di scriverla in modo diverso — una stampa il nome, un'altra no, una esce
+     * con 0 e un'altra con 1, tre non la scrivono nella pagina d'uso.
+     *
+     * ! I DUE SIMBOLI SONO DEBOLI, e chi non li definisce non ha `-v`: un
+     * simbolo debole non definito vale zero, quindi il controllo qui sotto e'
+     * un confronto con zero. E' cio' che permette a `make`, `gcc` e `fbc` —
+     * che si collegano a questa libc e hanno un `--version` loro — di non
+     * accorgersi di niente.
+     *
+     * ! L'OPZIONE E' `-version`, PER ESTESO, e non `-v`. Una lettera sola era
+     * gia' presa da tre programmi con tre significati diversi — «parla di
+     * piu'» in sshd e telnetd, «visualizza il file» in textline — e una regola
+     * che vale per tutti tranne tre non e' una regola. Con la parola intera
+     * non si sovrappone a niente, e chi la legge in uno script capisce cosa
+     * chiede senza andare a vedere il programma.
+     *
+     * ! E SI RISPONDE SOLO SE E' L'UNICO ARGOMENTO. `prog -version` e' una
+     * domanda sulla versione; `prog -version qualcosa` e' un comando
+     * malformato, e rispondergli vorrebbe dire far finta che sia una domanda.
+     *
+     * ! SI SCRIVE CON write(), NON CON printf(). Qui siamo prima di main e, in
+     * un programma collegato alla libc condivisa, prima che i ponti possano
+     * essere stati risolti: una printf sarebbe un salto a un puntatore che
+     * potrebbe valere ancora zero. Sono due stringhe e uno spazio.
+     * ===================================================================== */
+    if (&__ex_versione != 0 && &__ex_nome != 0 && argc == 2 &&
+        argv[1] != 0 && confronta(argv[1], "-version")) {
+        scrivi_versione(__ex_nome);
+        scrivi_versione(" ");
+        scrivi_versione(__ex_versione);
+        scrivi_versione("\n");
+        exit(0);
+    }
 
     exit(main(argc, argv, envp));
     for (;;);

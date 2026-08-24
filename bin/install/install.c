@@ -69,6 +69,9 @@
 #include "libc.h"
 #include "exuser.h"
 
+/* +0.001 a ogni modifica: `install -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("install", "0.001");
+
 #define BLOCCO      4096
 #define PERC_MAX    128
 

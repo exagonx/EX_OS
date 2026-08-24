@@ -29,6 +29,9 @@
 
 #include "libc.h"
 
+/* +0.001 a ogni modifica: `chmod -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("chmod", "0.001");
+
 /* Legge /boot/utenti — nome:uid:gid, il file PUBBLICO — e traduce un nome in
  * un numero. Rende -1 se il nome non c'e'. */
 static int uid_di_nome(const char *nome)

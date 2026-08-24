@@ -25,6 +25,9 @@
 #include "kbd_proto.h"
 #include "exwin.h"
 
+/* +0.001 a ogni modifica: `winprova -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("winprova", "0.001");
+
 #define ID_OK       101
 #define ID_ANNULLA  102
 

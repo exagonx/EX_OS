@@ -46,6 +46,9 @@
 #include "dns.h"
 #include "rete.h"
 
+/* +0.001 a ogni modifica: `ping -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("ping", "0.001");
+
 static int pid_ip = 0;
 
 static void stampa_ip(const unsigned char *p)

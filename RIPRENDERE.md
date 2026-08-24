@@ -369,6 +369,87 @@ accentato.**
 ! **E CHI RIGENERA IL FONT DAL .psf PERDE QUESTO LAVORO.** Sta scritto adesso in
 testa al file, accanto al comando che lo rigenera: era il posto dove serviva.
 
+### OGNI STRUMENTO HA LA SUA VERSIONE, E LA DICE CON `-v`
+
+Chiesto: una versione per programma, +0.001 a ogni modifica, `-v` da riga di
+comando e «Informazioni su» nelle applicazioni. Fatto per **59 programmi** —
+tutto `bin/` e tutto `exwin/bin/` — piu' la shell, che va per la sua strada.
+
+! **L'OPZIONE E' `-version`, PER ESTESO, E NON `-v`.** Una lettera sola era
+gia' presa da tre programmi con tre significati diversi — «parla di piu'» in
+`sshd` e `telnetd`, «visualizza il file» in `textline` — e una regola che vale
+per tutti tranne tre non e' una regola. Con la parola intera non si sovrappone
+a niente, nessun programma cambia le proprie opzioni, e chi legge `-version` in
+uno script capisce cosa chiede senza andare a vedere il programma.
+
+! **IL PROGRAMMA NON GUARDA `argv`, E NON DEVE.** La domanda «che versione
+sei?» e' identica per tutti: cinquantanove `if (strcmp(argv[i], "-version"))`
+sono cinquantanove occasioni di scriverla in modo diverso — una stampa il nome,
+una no, una esce con 0 e un'altra con 1, tre si dimenticano di metterla nella
+pagina d'uso. Risponde **l'avvio della libc** (`lib/libc_avvio.c`), che vede
+argv prima di `main`. Il programma dichiara una riga:
+
+    EX_VERSIONE("browser", "0.001");
+
+! **I DUE SIMBOLI SONO DEBOLI, E QUESTO E' CIO' CHE LO RENDE INNOCUO.** Chi non
+usa la macro non ha `-version`: il codice di terzi che si collega alla nostra
+libc — `make`, `gcc`, `fbc`, che un `--version` loro ce l'hanno — non si accorge
+di niente, perche' un simbolo debole non definito vale zero.
+
+! **E DEV'ESSERE L'UNICO ARGOMENTO.** `prog -version` e' una domanda;
+`prog -version qualcosa` e' un comando malformato, e rispondergli vorrebbe dire
+far finta che sia una domanda.
+
+! **LA SHELL SE LA STAMPA DA SE'**, e non e' un'eccezione capricciosa: `sh` non
+usa la libc — le syscall se le scrive — quindi quell'avvio li' non c'e'. Stessa
+forma di risposta. E la prima versione della riga tornava con `return 0`: la
+console moriva con «eccezione 13 a EIP=0x08000014», perche' da `shell_main` non
+si torna da nessuna parte — `start.S` mette uno zero come indirizzo di ritorno
+finto. Si esce con `sh_exit()`.
+
+**Nelle applicazioni** la versione sta in «Informazioni su», sulla riga del
+nome — «File manager 0.001» — dove non costa niente: il dialogo mostra dodici
+righe, e una riga in piu' sarebbe una riga in meno di descrizione. `exinfo_testo`
+prende la versione come parametro, e le tre applicazioni che hanno il dialogo le
+passano la **stessa macro** che stampa `-v`: due letterali uguali diventano due
+letterali diversi al primo incremento, e allora la finestra e la riga di comando
+direbbero due versioni dello stesso programma.
+
+**Provato**: `ls -version`, `sh -version`, `textline -version`, `sudo -version`
+dentro EX-OS, e `textline <file> -v` che continua a voler dire «visualizza»; e
+«Informazioni su» del file manager fotografato sulla scrivania, aprendo il menu
+col mouse.
+
+! **E LA REGOLA ADESSO SI CONTROLLA**: `make verifica-versioni` — dentro
+`make all` — ferma la build se un programma non dichiara la propria versione.
+Non controlla che sia stata INCREMENTATA: quello lo sa solo chi ha scritto la
+modifica. Ma il numero di versione del kernel e' rimasto fermo per tredici
+commit proprio perche' nessuno guardava, e questo e' il pezzo che si puo'
+guardare a macchina.
+
+**Restano fuori**: `hello`, che e' l'esempio del programma senza libc; i driver,
+che una versione non ce l'hanno ancora; e le quattro applicazioni senza voce
+«Informazioni su» (`fontprova`, `orologio`, `pm`, `term`).
+
+#### E IL PRIMO `make -j2` DOPO IL CAMBIO E' FALLITO IN UN POSTO CHE NON C'ENTRAVA
+
+«undefined reference a `printf`» collegando `/bin/chmod`. Il difetto era in una
+riga di Makefile vecchia di mesi, che si vede solo quando i ponti si rigenerano:
+
+    $(GEN_ESPORTA) $(GEN_PONTI): $(LIBC_SO_OBJ) tools/genlibc.py
+
+! **DUE BERSAGLI E UNA RICETTA SONO DUE REGOLE, NON UNA.** GNU make la legge
+come «per fare A esegui questo» e «per fare B esegui questo»: con `-j2` le due
+partono INSIEME, e la seconda riscrive i due file mentre la prima li sta gia'
+leggendo. Il risultato era un `.S` da 62 KB assemblato in un `.o` da **280 byte
+senza un simbolo**, e il guasto compariva molto piu' in la', in un programma che
+con i ponti non c'entra niente. Si scrive `&:` (make 4.3 in avanti), che dice
+«questa ricetta produce tutt'e due, eseguila una volta sola».
+
+! **E IL PRIMO ERRORE L'AVEVO NASCOSTO IO**, filtrando l'uscita di make con un
+grep che cercava «error:» ed «Errore»: make scrive «Error 1». La build era
+rossa e io leggevo la riga verde di `verifica-versioni` che le stava sopra.
+
 ### FATTO — le immagini nel browser
 
 Era il terzo di tre lavori scelti insieme, e chiude la serie. Il browser

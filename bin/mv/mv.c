@@ -59,6 +59,9 @@
 
 #include "libc.h"
 
+/* +0.001 a ogni modifica: `mv -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("mv", "0.001");
+
 #define PERCORSO_MAX  320
 #define BLOCCO        4096
 

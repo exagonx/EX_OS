@@ -56,6 +56,9 @@
 
 #include "libc.h"
 
+/* +0.001 a ogni modifica: `rm -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("rm", "0.001");
+
 /* Quanto puo' essere profondo un albero che `rm -r` scende.
  *
  * ! SERVE UN TETTO PERCHE' LA RICORSIONE E' VERA, e lo stack di un

@@ -44,6 +44,9 @@
 #include "libc.h"
 #include "exuser.h"
 
+/* +0.001 a ogni modifica: `sudo -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("sudo", "0.001");
+
 /* =============================================================================
  * ambiente_di_root — l'ambiente che vede il figlio
  *

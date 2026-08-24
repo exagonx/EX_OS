@@ -63,6 +63,9 @@
  * ============================================================================= */
 #include "libc.h"
 
+/* +0.001 a ogni modifica: `chkdsk -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("chkdsk", "0.001");
+
 #define SETT            512u
 #define MAX_PROF        16      /* annidamento massimo delle directory */
 #define TRANCHE         32u     /* settori per blkread: sotto BLKIO_MAX_SETT */

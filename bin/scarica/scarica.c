@@ -29,6 +29,9 @@
 #include "libc.h"
 #include "exhttp.h"
 
+/* +0.001 a ogni modifica: `scarica -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("scarica", "0.001");
+
 /* ! IL TETTO LO METTE CHI SCARICA, NON IL SERVER. Un megabyte tiene qualunque
  * pagina di testo; se non basta si tronca e si dice, invece di far decidere a
  * chi sta dall'altra parte quanta memoria prendere qui. */

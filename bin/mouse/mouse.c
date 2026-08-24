@@ -19,6 +19,9 @@
 #include "libc.h"
 #include "kbd_proto.h"
 
+/* +0.001 a ogni modifica: `mouse -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("mouse", "0.001");
+
 static int chiedi(int pid, MouseStato *s, unsigned int attendi)
 {
     MouseLeggi  r;

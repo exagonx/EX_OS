@@ -23,6 +23,9 @@
 
 #include "libc.h"
 
+/* +0.001 a ogni modifica: `polltest -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("polltest", "0.001");
+
 #define STATO_BLOCKED   3       /* vedi ProcInfo.state in libc.h */
 #define MSG_SVEGLIA     0x9001
 

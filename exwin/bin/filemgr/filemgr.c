@@ -50,6 +50,10 @@
 #include "exinfo.h"
 #include "kbd_proto.h"
 
+/* +0.001 a ogni modifica: `filemgr -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+#define VERSIONE_APP "0.001"
+EX_VERSIONE("filemgr", VERSIONE_APP);
+
 #define VOCI_MAX    512
 #define NODI_MAX    128
 #define PERC_MAX    192
@@ -755,7 +759,7 @@ static void informazioni(void)
 {
     char t[640];
 
-    exinfo_testo(t, sizeof(t), "File manager",
+    exinfo_testo(t, sizeof(t), "File manager", VERSIONE_APP,
                  "Il file manager di EX-OS, sul toolkit ExWin.  L'albero non "
                  "e' un controllo nuovo: e' una lista con dentro "
                  "l'indentazione, e i nodi stanno in un vettore nell'ordine "

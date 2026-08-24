@@ -41,6 +41,9 @@
 
 #include "libc.h"
 
+/* +0.001 a ogni modifica: `delete -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("delete", "0.001");
+
 /* Voci lette per ogni chiamata a listdir_from. Il kernel ha comunque un
  * tetto proprio (READDIR_MAX_BATCH), quindi questo numero è solo la
  * dimensione del blocco: la directory viene percorsa a blocchi finché

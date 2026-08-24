@@ -29,6 +29,9 @@
  * ============================================================================= */
 #include "libc.h"
 
+/* +0.001 a ogni modifica: `mem -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("mem", "0.001");
+
 /* Barra di occupazione: mostra a colpo d'occhio quale fascia è satura,
  * cosa che tre numeri in fila non comunicano altrettanto bene. */
 #define BARRA 20

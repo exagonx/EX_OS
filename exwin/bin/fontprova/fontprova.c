@@ -26,6 +26,9 @@
 #include "libc.h"
 #include "exwin.h"
 
+/* +0.001 a ogni modifica: `fontprova -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("fontprova", "0.001");
+
 #define FIN_W   720
 #define FIN_H   440
 

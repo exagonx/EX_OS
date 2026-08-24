@@ -41,6 +41,12 @@
  * ============================================================================= */
 #define TR_VERSION  "0.001"
 
+
+/* ! LA VERSIONE STA IN UN POSTO SOLO, ed e' TR_VERSION qui sopra:
+ * `trunc -version` la stampa dall'avvio della libc (vedi EX_VERSIONE in
+ * libc.h) e il banner la stampa da dentro. Due letterali uguali
+ * diventano due letterali diversi al primo incremento. */
+EX_VERSIONE("trunc", TR_VERSION);
 /* ! QUI C'ERA UNA TABELLA DEI CODICI FATTA IN CASA: truncate() adesso
  * rende -1 e mette il motivo in errno, e strerror() lo dice gia'. */
 

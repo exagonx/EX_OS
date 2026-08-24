@@ -85,6 +85,12 @@
 #define MKFS_NAME       "mkfs"
 #define MKFS_VERSION    "0.001"
 
+
+/* ! LA VERSIONE STA IN UN POSTO SOLO, ed e' MKFS_VERSION qui sopra:
+ * `mkfs -version` la stampa dall'avvio della libc (vedi EX_VERSIONE in
+ * libc.h) e il banner la stampa da dentro. Due letterali uguali
+ * diventano due letterali diversi al primo incremento. */
+EX_VERSIONE("mkfs", MKFS_VERSION);
 #define SETT_BYTE       512u
 #define SETT_PER_MB     2048u
 

@@ -75,6 +75,9 @@
 #include "dns.h"
 #include "rete.h"
 
+/* +0.001 a ogni modifica: `telnet -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("telnet", "0.001");
+
 /* --- Comandi Telnet --- */
 #define IAC     255
 #define DONT    254

@@ -25,6 +25,9 @@
  * ============================================================================= */
 #include "libc.h"
 
+/* +0.001 a ogni modifica: `mount -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("mount", "0.001");
+
 /* Gli stessi errno del kernel (kernel/include/syscall.h): la syscall
  * ritorna il valore negato. */
 #define E_NOENT     2

@@ -35,6 +35,9 @@
 #include "exwin.h"
 #include "exdlg.h"
 
+/* +0.001 a ogni modifica: `pm -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("pm", "0.001");
+
 #define BARRA_H     28
 #define MENU_W      220
 #define VOCE_H      24

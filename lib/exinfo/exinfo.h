@@ -36,10 +36,20 @@ extern "C" {
 void exinfo_memoria(unsigned int *immagine, unsigned int *heap,
                     unsigned int *pila);
 
-/* Compone il testo di «Informazioni su» in `out`. `nome` e `descrizione` li
- * da' il programma; l'autore, l'indirizzo, la versione e la memoria no. */
-void exinfo_testo(char *out, unsigned int max,
-                  const char *nome, const char *descrizione);
+/* Compone il testo di «Informazioni su» in `out`. `nome`, `versione` e
+ * `descrizione` li da' il programma; l'autore, l'indirizzo e la memoria no.
+ *
+ * ! LA VERSIONE E' QUELLA DEL PROGRAMMA, NON DEL SISTEMA, e sta sulla stessa
+ * riga del nome perche' li' non costa niente: il dialogo mostra dodici righe e
+ * una riga in piu' vorrebbe dire una in meno di descrizione. Quella del
+ * sistema la dicono gia' `ver` e `uname`.
+ *
+ * ! E' LA STESSA STRINGA CHE STAMPA `-v`: si passa la macro dichiarata con
+ * EX_VERSIONE() (vedi libc.h), non un letterale scritto qui — due letterali
+ * uguali diventano diversi al primo incremento, e allora la finestra e la riga
+ * di comando direbbero due versioni del medesimo programma. */
+void exinfo_testo(char *out, unsigned int max, const char *nome,
+                  const char *versione, const char *descrizione);
 
 #ifdef __cplusplus
 }

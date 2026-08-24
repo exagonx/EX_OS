@@ -43,6 +43,9 @@
 #include "ip_proto.h"
 #include "rete.h"
 
+/* +0.001 a ogni modifica: `telnetd -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("telnetd", "0.001");
+
 /* I comandi del protocollo, quelli che servono. */
 #define IAC     255
 #define DONT    254

@@ -1009,6 +1009,9 @@ static void verbose_init(void)
  * quando un nome ext2 puo' essere di 255 byte, perche' `cp <lungo> <dest>`
  * supera i 256. Un nome che si puo' creare ed elencare ma non digitare e'
  * un nome irraggiungibile per meta'. */
+/* +0.001 a ogni modifica: `sh -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+#define SH_VERSIONE  "0.001"
+
 #define MAX_LINE    512
 
 /* ! LA RIGA DI `sh -c` NON E' UNA RIGA DIGITATA, e non puo' avere lo
@@ -3420,6 +3423,22 @@ int shell_main(int argc, char **argv, char **envp)
 {
     char line[MAX_LINE];
     int  n;
+
+    /* ! LA VERSIONE SE LA STAMPA DA SE', e non per capriccio: la shell non usa
+     * la libc — le syscall se le scrive — quindi l'avvio che risponde a `-v`
+     * per tutti gli altri strumenti (EX_VERSIONE in libc.h) qui non c'e'.
+     * Stessa forma di risposta, «nome versione», o sarebbe l'unico programma
+     * che risponde diversamente. La regola resta la stessa: +0.001 a ogni
+     * modifica di questo file. */
+    if (argc == 2 && sh_strcmp(argv[1], "-version") == 0) {
+        println("sh " SH_VERSIONE);
+        /* ! SI ESCE CON sh_exit, NON CON `return`. Da shell_main non si torna
+         * da nessuna parte: start.S mette uno zero come indirizzo di ritorno
+         * finto, e tornare significa saltare la' — «eccezione 13 a
+         * EIP=0x08000014», che e' esattamente cio' che si e' visto provando
+         * questa riga. */
+        sh_exit(0);
+    }
 
     /* Inizializza variabili d'ambiente: prima i valori di sistema, poi
      * sopra quelli che il padre ci ha passato. Vedi env_eredita. */

@@ -47,6 +47,9 @@
 
 #include "libc.h"
 
+/* +0.001 a ogni modifica: `ls -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("ls", "0.001");
+
 /* Il blocco per chiamata e' LISTDIR_MAX_BATCH e non un numero scelto qui:
  * il kernel non ne consegna di piu' comunque, e chiederne 32 per poi
  * fermarsi appena ne tornano meno di 32 vorrebbe dire fermarsi alla prima

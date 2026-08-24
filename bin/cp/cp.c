@@ -59,6 +59,9 @@
  * ============================================================================= */
 #include "libc.h"
 
+/* +0.001 a ogni modifica: `cp -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("cp", "0.001");
+
 #define BLOCCO       4096
 #define PERCORSO_MAX 320
 #define FONTI_MAX    64

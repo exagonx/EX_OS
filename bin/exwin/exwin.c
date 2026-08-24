@@ -29,6 +29,9 @@
 
 #include "libc.h"
 
+/* +0.001 a ogni modifica: `exwin -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("exwin", "0.001");
+
 /* ! I PERCORSI SI CERCANO IN DUE POSTI. Su un sistema installato l'albero sta
  * nella radice; avviando dal CD sta sotto /cdrom. Cercare solo il primo
  * vorrebbe dire un comando che non funziona proprio quando si prova il CD. */

@@ -1465,7 +1465,16 @@ $(LIBC_SO_OBJ): $(LIBC_SRC) $(LIBC_AVVIO) $(SEGNO_FLAG)
 	@# Nella coda: dare a libc.so un canarino suo, acceso da __lib_avvio.
 	$(CC) $(CFLAGS_USER) -fno-stack-protector -DEXOS_LIBC_SO -c $(LIBC_SRC) -o $@
 
-$(GEN_ESPORTA) $(GEN_PONTI): $(LIBC_SO_OBJ) tools/genlibc.py
+# ! I DUE FILE LI SCRIVE UNA SOLA ESECUZIONE, E VA DETTO A make CON `&:`.
+# Scritto come `A B: prereq` — due bersagli e una ricetta — GNU make lo legge
+# come DUE regole indipendenti, ognuna con quella ricetta: con -j2 partono
+# INSIEME, e la seconda riscrive i due file mentre la prima li sta gia'
+# leggendo. Il risultato e' un .S da 62 KB assemblato in un .o da 280 byte
+# SENZA SIMBOLI, e il guasto compare molto piu' in la': «undefined reference a
+# printf» collegando un programma che con i ponti non c'entra niente.
+# `&:` (make 4.3 in avanti) dice che la ricetta produce TUTT'E DUE i file, e
+# che va eseguita una volta sola.
+$(GEN_ESPORTA) $(GEN_PONTI) &: $(LIBC_SO_OBJ) tools/genlibc.py
 	@mkdir -p $(GEN_DIR)
 	python3 tools/genlibc.py $(LIBC_SO_OBJ) $(GEN_DIR)
 
@@ -2800,7 +2809,7 @@ ip_drv: dirs $(IP_DRV_OUT)
 # agosto 2026 questa riga ripeteva a mano i nomi dei programmi di rete e
 # dei driver, e mancavano pcnet_drv e xcp: due elenchi della stessa cosa
 # divergono al primo che si dimentica di aggiornarne uno.
-all: dirs stage1 stage2 kernel $(PROGRAMMI_FLOPPY) $(PROGRAMMI_CD) $(PROGRAMMI_EXWIN) $(DRIVER_CD) verifica-programmi verifica-statici floppy
+all: dirs stage1 stage2 kernel $(PROGRAMMI_FLOPPY) $(PROGRAMMI_CD) $(PROGRAMMI_EXWIN) $(DRIVER_CD) verifica-programmi verifica-statici verifica-versioni floppy
 	@echo ""
 	@echo "============================================"
 	@echo " EX-OS build completata!"
@@ -4215,6 +4224,49 @@ verifica-cpu:
 STATICI_OBBLIGATI := $(BUILD_BIN)/login $(BUILD_BIN)/install $(BUILD_BIN)/sh \
                      $(wildcard $(BUILD_DRIVERS)/*.drv) \
                      $(wildcard $(BUILD_DRIVERS_CD)/*.drv)
+
+# =============================================================================
+# OGNI STRUMENTO DICHIARA LA PROPRIA VERSIONE
+#
+# ! LA REGOLA E' QUELLA DEL KERNEL — +0.001 A OGNI MODIFICA — E QUELLA DEL
+# KERNEL E' STATA IGNORATA PER TREDICI COMMIT. Non perche' qualcuno l'avesse
+# in mente e l'abbia disattesa: perche' nessuno la verificava, e una regola che
+# vive nella testa di chi scrive non e' una regola, e' un ricordo. Qui si
+# controlla almeno che la versione CI SIA: un programma nuovo senza versione lo
+# ferma la build, non il primo che se ne accorge sei mesi dopo.
+#
+# Non si controlla che sia stata INCREMENTATA: quello vuole sapere cosa e'
+# cambiato, e lo sa solo chi ha scritto la modifica.
+#
+# `hello` e' fuori apposta: e' l'esempio di un programma senza libc, tre
+# istruzioni dentro _start, e la macro EX_VERSIONE la libc non ce l'ha.
+# =============================================================================
+SENZA_VERSIONE := hello
+
+.PHONY: verifica-versioni
+verifica-versioni:
+	@mancanti=""; \
+	for d in $(BIN_DIR)/*/ exwin/bin/*/; do \
+	    n=$$(basename "$$d"); \
+	    salta=0; \
+	    for e in $(SENZA_VERSIONE); do [ "$$n" = "$$e" ] && salta=1; done; \
+	    [ $$salta -eq 1 ] && continue; \
+	    grep -qE "EX_VERSIONE\(|SH_VERSIONE" "$$d"*.c 2>/dev/null && continue; \
+	    mancanti="$$mancanti $$n"; \
+	done; \
+	if [ -n "$$mancanti" ]; then \
+	    echo ""; \
+	    echo "  ! Questi strumenti non dichiarano la propria versione:$$mancanti"; \
+	    echo ""; \
+	    echo "    In cima al file, dopo gli #include:"; \
+	    echo "        EX_VERSIONE(\"<nome>\", \"0.001\");"; \
+	    echo ""; \
+	    echo "    Da li' in poi \`<nome> -version\` stampa la versione, e la"; \
+	    echo "    regola e' quella del kernel: +0.001 a ogni modifica."; \
+	    echo ""; \
+	    exit 1; \
+	fi; \
+	echo "[OK] ogni strumento dichiara la propria versione"
 
 .PHONY: verifica-statici
 verifica-statici: $(PROGRAMMI_FLOPPY) $(PROGRAMMI_CD) $(DRIVER_CD)

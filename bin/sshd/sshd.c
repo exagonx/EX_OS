@@ -45,6 +45,9 @@
 #include "rete.h"
 #include "excrypt.h"
 
+/* +0.001 a ogni modifica: `sshd -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("sshd", "0.001");
+
 /* I messaggi che ci servono. Gli altri si ignorano o chiudono. */
 #define SSH_DISCONNECT          1
 #define SSH_IGNORE              2

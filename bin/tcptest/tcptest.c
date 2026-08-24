@@ -34,6 +34,9 @@
 #include "dns.h"
 #include "rete.h"
 
+/* +0.001 a ogni modifica: `tcptest -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("tcptest", "0.001");
+
 static int pid_ip = 0;
 
 static int attendi(unsigned int tipo, unsigned char *buf, unsigned int *len,

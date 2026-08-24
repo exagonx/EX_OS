@@ -26,6 +26,9 @@
 #include "libc.h"
 #include "excrypt.h"
 
+/* +0.001 a ogni modifica: `crypttest -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("crypttest", "0.001");
+
 static int falliti = 0, passati = 0;
 
 static void esito(const char *che, int ok)

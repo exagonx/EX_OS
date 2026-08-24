@@ -32,6 +32,10 @@
 #include "exinfo.h"
 #include "kbd_proto.h"
 
+/* +0.001 a ogni modifica: `edit -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+#define VERSIONE_APP "0.001"
+EX_VERSIONE("edit", VERSIONE_APP);
+
 #define FIN_W       640
 #define FIN_H       420
 
@@ -406,7 +410,7 @@ static void informazioni(void)
 {
     char t[640];
 
-    exinfo_testo(t, sizeof(t), "Editor",
+    exinfo_testo(t, sizeof(t), "Editor", VERSIONE_APP,
                  "L'editor di testo di EX-OS, sul toolkit ExWin.  Il testo, "
                  "il cursore e lo scorrimento sono del controllo areatesto; "
                  "qui dentro c'e' solo leggere un file, scriverlo e decidere "

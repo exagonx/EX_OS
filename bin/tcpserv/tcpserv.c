@@ -29,6 +29,9 @@
 #include "ip_proto.h"
 #include "rete.h"
 
+/* +0.001 a ogni modifica: `tcpserv -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("tcpserv", "0.001");
+
 static int pid_ip = 0;
 
 static int attendi(unsigned int tipo, unsigned char *buf, unsigned int *len,

@@ -20,6 +20,9 @@
  * ============================================================================= */
 #include "libc.h"
 
+/* +0.001 a ogni modifica: `disk -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("disk", "0.001");
+
 /* Un settore e' 512 byte: 2048 settori = 1 MB, 2097152 = 1 GB.
  * La divisione si fa sui settori e non sui byte perche' i byte di un
  * disco da 64 GB non entrano in 32 bit. */

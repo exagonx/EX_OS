@@ -72,6 +72,9 @@
 
 #include "libc.h"
 
+/* +0.001 a ogni modifica: `toolinst -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("toolinst", "0.001");
+
 #define PERC_MAX   320
 #define BLOCCO     4096
 #define RIGA_MAX   256

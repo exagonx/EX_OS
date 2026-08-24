@@ -26,6 +26,9 @@
 
 #include "libc.h"
 
+/* +0.001 a ogni modifica: `rmdir -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("rmdir", "0.001");
+
 /* Codici errno restituiti dal kernel, in negativo. Duplicati qui con la
  * stessa convenzione usata altrove nel progetto: userspace e kernel non
  * condividono header. */

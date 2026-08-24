@@ -79,6 +79,9 @@
 #include "libc.h"
 #include "pci_proto.h"
 
+/* +0.001 a ogni modifica: `hwinfo -version` la stampa. Vedi EX_VERSIONE in libc.h. */
+EX_VERSIONE("hwinfo", "0.001");
+
 #define RAPPORTO_PREDEFINITO  "/hwinfo.txt"
 #define ATTESA_MS             2000
 #define MAX_DISPOSITIVI       64
