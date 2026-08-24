@@ -3920,8 +3920,12 @@ static int spawn_cerca_path(const char *nome, char *dst, size_t dim)
     return -1;
 }
 
-int spawn_su_console(const char *path, char *const argv[], char *const envp[],
-                     const SpawnRedir *redir, int n_redir, int console)
+/* Il corpo unico: `console` < 0 = quella del padre, `uid` == NULL = l'identita'
+ * del padre. Le tre forme pubbliche qui sotto sono tre modi di chiamarlo. */
+static int spawn_completo(const char *path, char *const argv[],
+                          char *const envp[], const SpawnRedir *redir,
+                          int n_redir, int console,
+                          const unsigned int *uid, const unsigned int *gid)
 {
     SpawnExtra ex;
     char       trovato[PERCORSO_MAX];
@@ -3980,14 +3984,42 @@ int spawn_su_console(const char *path, char *const argv[], char *const envp[],
         ex.console  = (unsigned int)console;
     }
 
+    /* Stessa regola della console: il flag si accende solo se l'identita' e'
+     * stata chiesta davvero. Un uid 0 lasciato in una struttura azzerata
+     * vorrebbe dire «figlio di root», cioe' il contrario di cio' che serve. */
+    if (uid != NULL) {
+        ex.flag |= SPAWN_F_UTENTE;
+        ex.uid   = *uid;
+        ex.gid   = (gid != NULL) ? *gid : *uid;
+    }
+
     return err_posix(_syscall4(SYS_SPAWN, (uint32_t)path, (uint32_t)argc,
                              (uint32_t)argv, (uint32_t)&ex));
+}
+
+int spawn_su_console(const char *path, char *const argv[], char *const envp[],
+                     const SpawnRedir *redir, int n_redir, int console)
+{
+    return spawn_completo(path, argv, envp, redir, n_redir, console, NULL, NULL);
 }
 
 int spawn_ex(const char *path, char *const argv[], char *const envp[],
              const SpawnRedir *redir, int n_redir)
 {
-    return spawn_su_console(path, argv, envp, redir, n_redir, -1);
+    return spawn_completo(path, argv, envp, redir, n_redir, -1, NULL, NULL);
+}
+
+/* =============================================================================
+ * spawn_utente — un figlio che e' qualcun altro
+ *
+ * ! LA PUO' CHIAMARE SOLO root, e chi non lo e' prende EPERM senza che parta
+ * niente. Il perche' sta in lib/include/spawn_abi.h: e' la stessa regola di
+ * setuid(), spostata dal processo che chiama al processo che nasce.
+ * ============================================================================= */
+int spawn_utente(const char *path, char *const argv[], char *const envp[],
+                 unsigned int uid, unsigned int gid)
+{
+    return spawn_completo(path, argv, envp, NULL, 0, -1, &uid, &gid);
 }
 
 int waitpid(int pid, int *stato, int opzioni)
@@ -5673,6 +5705,35 @@ int ipc_register(const char *name)
 int ipc_lookup(const char *name)
 {
     return (int)_syscall1(SYS_IPC_LOOKUP, (uint32_t)name);
+}
+
+/* =============================================================================
+ * ipc_attendi — lo stesso servizio, ma dando il tempo di nascere
+ *
+ * ! ESISTE PER L'AVVIO DA kernel.cfg. Con i servizi lanciati a mano da uno
+ * script l'ordine e' quello delle righe, e chi le scrive aspetta: `netdetect
+ * -c` non torna finche' la scheda non ha registrato il proprio nome. I moduli
+ * di [modules] invece PARTONO TUTTI INSIEME — il kernel li crea uno dopo
+ * l'altro e li mette in coda — quindi lo stack IP puo' benissimo cercare la
+ * scheda mentre la scheda sta ancora leggendo la PROM.
+ *
+ * Chi non trova il proprio fornitore ESCE, e un driver uscito all'avvio non lo
+ * rilancia nessuno: la rete resterebbe spenta a ogni accensione, e la volta
+ * dopo funzionerebbe — perche' i tempi cambiano. E' il difetto peggiore da
+ * cercare. Aspettare qualche secondo lo toglie di mezzo per costruzione.
+ * ============================================================================= */
+int ipc_attendi(const char *name, unsigned int ms)
+{
+    unsigned int trascorso = 0;
+    int          pid;
+
+    for (;;) {
+        pid = ipc_lookup(name);
+        if (pid > 0) return pid;
+        if (trascorso >= ms) return pid;    /* l'ultimo errore, non un -1 finto */
+        usleep(100 * 1000);
+        trascorso += 100;
+    }
 }
 
 /* =============================================================================

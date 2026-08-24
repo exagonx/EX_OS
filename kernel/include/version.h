@@ -89,7 +89,21 @@
  *  18  SYS_SU (254) con SHA-256 dentro il kernel (kernel/crypto/sha256.c), e
  *      vfs_open_autorita() perche' il kernel non poteva leggere /boot/ombra
  */
-#define EXOS_VERSION    "0.202"
+/* 0.202 -> 0.203: SPAWN_F_UTENTE — spawn() sa far nascere il figlio con
+ * l'identita' di un altro utente, e solo se chi chiama e' gia' root
+ * (sys_spawn in kernel/syscall/syscall_impl.c, blocco EXTRA a 604 byte con
+ * magia 'SPO0').
+ *
+ * ! LA MAGIA E' CAMBIATA, QUINDI OGNI PROGRAMMA VA RICOMPILATO: un binario
+ * vecchio passa un blocco 'SPNZ', il kernel non lo riconosce e lo IGNORA —
+ * cioe' perde redirezioni e ambiente, in silenzio. E' gia' successo il 14
+ * agosto, e sta scritto in lib/include/spawn_abi.h.
+ *
+ * Serviva a `login`, che e' un ciclo: scendendo con setuid() per lanciare la
+ * shell diventava lui stesso l'utente, e al primo `exit` non poteva piu'
+ * leggere /boot/ombra — la console non faceva piu' entrare nessuno.
+ */
+#define EXOS_VERSION    "0.203"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

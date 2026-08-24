@@ -1918,6 +1918,16 @@ static void manda_tabella_arp(unsigned int client)
 /* =============================================================================
  * Collegamento al driver di scheda
  * ============================================================================= */
+/* ! SI ASPETTA LA SCHEDA, e l'attesa e' piu' lunga di quella che la scheda usa
+ * per il bus PCI: da quando la rete si accende da [modules] di kernel.cfg,
+ * bus, scheda e stack partono INSIEME, e questo e' l'ultimo anello — deve dar
+ * tempo ai due che lo precedono di accendersi in fila. Chi lo lancia a mano
+ * dopo `netdetect -c` trova il servizio gia' registrato e non aspetta niente.
+ *
+ * Lo stack senza scheda non ha nessun ripiego: esce. E un driver uscito
+ * all'avvio non lo rilancia nessuno. */
+#define ATTESA_SCHEDA_MS  10000
+
 static int aggancia_driver(void)
 {
     IpcMessage    meta;
@@ -1925,7 +1935,7 @@ static int aggancia_driver(void)
     NetStato      s;
     int           tentativi;
 
-    g_pid_rete = ipc_lookup(NET_SERVIZIO_0);
+    g_pid_rete = ipc_attendi(NET_SERVIZIO_0, ATTESA_SCHEDA_MS);
     if (g_pid_rete <= 0) {
         printf("ip: il servizio '%s' non e' attivo.\n", NET_SERVIZIO_0);
         printf("    Avvia prima la scheda:  netdetect -c\n");

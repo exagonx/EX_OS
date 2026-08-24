@@ -19,6 +19,62 @@
 #include "net_proto.h"
 #include "ip_proto.h"
 
+/* =============================================================================
+ * LA TABELLA DELLE SCHEDE — il perche' sta in lib/include/rete.h
+ *
+ * ! Solo ASCII nei nomi: chi la stampa usa printf("%-44s"), che conta BYTE e
+ * non colonne, e un trattino lungo UTF-8 ne occupa tre — la tabella si sfalsa
+ * di due caratteri sulle sole righe che lo contengono, che e' il modo piu'
+ * fastidioso di sbagliare un allineamento.
+ * ============================================================================= */
+static const ReteScheda g_note[] = {
+    /* AMD PCnet — e' la scheda predefinita di VirtualBox */
+    { 0x1022, 0x2000, "AMD PCnet-PCI II / FAST III (Am79C970/C973)", "/dev/pcnet.drv" },
+    { 0x1022, 0x2001, "AMD PCnet-Home",                             "/dev/pcnet.drv" },
+
+    /* Intel e1000 — e' la scheda predefinita di QEMU. I tre numeri sono
+     * quelli che /dev/e1000.drv riconosce davvero (g_modelli in
+     * drivers/e1000/e1000.c): aggiungerne uno qui senza aggiungerlo la'
+     * vuol dire un driver che parte e non trova niente. */
+    { 0x8086, 0x100E, "Intel 82540EM (e1000)",                      "/dev/e1000.drv" },
+    { 0x8086, 0x100F, "Intel 82545EM (e1000)",                      "/dev/e1000.drv" },
+    { 0x8086, 0x10D3, "Intel 82574L (e1000e)",                      "/dev/e1000.drv" },
+
+    /* Famiglia NE2000 PCI: schede diverse, stessa programmazione */
+    { 0x10EC, 0x8029, "Realtek RTL8029(AS) - NE2000 PCI",           "/dev/ne2k.drv"  },
+    { 0x1050, 0x0940, "Winbond W89C940 - NE2000 PCI",               "/dev/ne2k.drv"  },
+    { 0x1106, 0x0926, "VIA VT86C926 Amazon - NE2000 PCI",           "/dev/ne2k.drv"  },
+    { 0x8E2E, 0x3000, "KTI ET32P2 - NE2000 PCI",                    "/dev/ne2k.drv"  },
+
+    /* Modelli noti ma senza driver: dirlo per nome evita di far cercare
+     * un guasto a chi ha semplicemente una scheda che non gestiamo. */
+    { 0x8086, 0x1229, "Intel 82557/8/9 (EtherExpress Pro/100)",     NULL },
+    { 0x10EC, 0x8139, "Realtek RTL8139",                            NULL },
+    { 0x1011, 0x0019, "DEC 21140 (Tulip)",                          NULL },
+    { 0x1AF4, 0x1000, "virtio-net",                                 NULL },
+};
+
+#define N_NOTE ((int)(sizeof(g_note) / sizeof(g_note[0])))
+
+const ReteScheda *rete_riconosci(unsigned short venditore,
+                                 unsigned short dispositivo)
+{
+    int i;
+
+    for (i = 0; i < N_NOTE; i++)
+        if (g_note[i].venditore == venditore &&
+            g_note[i].dispositivo == dispositivo) return &g_note[i];
+    return NULL;
+}
+
+const ReteScheda *rete_scheda(int i)
+{
+    if (i < 0 || i >= N_NOTE) return NULL;
+    return &g_note[i];
+}
+
+int rete_schede_note(void) { return N_NOTE; }
+
 typedef struct {
     const char *nome;       /* che cos'è, per chi legge */
     const char *servizio;   /* nome nel registro IPC, NULL = si controlla altrove */

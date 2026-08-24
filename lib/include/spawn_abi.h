@@ -54,15 +54,20 @@
  *   'SPNX'  la prima forma
  *   'SPNY'  agosto 2026: SpawnAzione prende due campi
  *   'SPNZ'  14 agosto 2026: SpawnExtra prende `flag` e `console`
+ *   'SPO0'  24 agosto 2026: SpawnExtra prende `uid` e `gid`
  *
  * Un blocco con la magia sbagliata il kernel lo IGNORA. E' il modo meno
  * dannoso di sbagliare: una redirezione letta storta scriverebbe nel file
  * sbagliato.
  * --------------------------------------------------------------------------- */
-#define SPAWN_EXTRA_MAGIA    0x53504E5Au   /* 'SPNZ' */
+#define SPAWN_EXTRA_MAGIA    0x53504F30u   /* 'SPO0' */
 
 /* Il figlio nasce sulla console indicata invece che su quella del padre. */
 #define SPAWN_F_CONSOLE      0x00000001u
+
+/* Il figlio nasce con l'identita' indicata invece che con quella del padre.
+ * ! SOLO root PUO' CHIEDERLO: vedi il commento sui campi, in fondo. */
+#define SPAWN_F_UTENTE       0x00000002u
 
 #define SPAWN_MAX_AZIONI     4
 #define SPAWN_RED_PATH_MAX   128
@@ -100,17 +105,42 @@ typedef struct {
      * e' il comportamento di sempre. */
     unsigned int flag;                     /* SPAWN_F_* */
     unsigned int console;                  /* valido solo con SPAWN_F_CONSOLE */
+
+    /* ! CHI E' IL FIGLIO — aggiunti il 24 agosto 2026, e sono nati da un
+     * difetto preciso.
+     *
+     * L'identita' si e' sempre EREDITATA, e chi voleva un figlio di un altro
+     * utente aveva una strada sola: scendere con setuid() e poi lanciarlo. Va
+     * bene per `sudo`, che dopo il comando muore; NON va bene per `login`, che
+     * e' un CICLO. Scendendo, login diventava l'utente per sempre: al primo
+     * `exit` tornava alla richiesta di accesso senza poter piu' leggere
+     * /boot/ombra — che e' 0600 di root — e da li' in poi nessuno entrava piu'
+     * su quella console. Con root non si vedeva, perche' per uid 0 il setuid
+     * non si faceva nemmeno.
+     *
+     * ! E NON APRE NESSUNA PORTA, perche' la regola e' la stessa di setuid():
+     * la puo' chiedere solo un processo che gia' e' root, e serve a SCENDERE.
+     * Un processo di un utente che mettesse questo flag prende EPERM e non
+     * parte niente — non «parte come prima», che sarebbe il modo silenzioso di
+     * sbagliare.
+     *
+     * Validi solo con SPAWN_F_UTENTE: senza il flag, azzerare la struttura
+     * chiederebbe uid 0, cioe' il contrario di quel che si vuole. E' la stessa
+     * ragione per cui `console` ha il suo. */
+    unsigned int uid;                      /* validi solo con SPAWN_F_UTENTE */
+    unsigned int gid;
 } SpawnExtra;
 
 /* -----------------------------------------------------------------------------
  * ! LA MISURA E' PARTE DELL'ABI, e questa riga la inchioda.
  *
- *     magia 4 + envp 4 + n_azioni 4 + azioni 4*144 + flag 4 + console 4 = 596
+ *     magia 4 + envp 4 + n_azioni 4 + azioni 4*144 + flag 4 + console 4
+ *     + uid 4 + gid 4 = 604
  *
  * Se qualcuno aggiunge un campo senza cambiare la magia, la compilazione si
  * ferma qui invece di lasciare in giro binari che non si capiscono fra loro.
  * L'array di misura negativa e' il modo che funziona anche senza C11.
  * --------------------------------------------------------------------------- */
-typedef char spawn_abi_misura_invariata[(sizeof(SpawnExtra) == 596) ? 1 : -1];
+typedef char spawn_abi_misura_invariata[(sizeof(SpawnExtra) == 604) ? 1 : -1];
 
 #endif /* SPAWN_ABI_H */

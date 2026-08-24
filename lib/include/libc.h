@@ -1706,6 +1706,20 @@ int     spawn_ex(const char *path, char *const argv[], char *const envp[],
 int     spawn_su_console(const char *path, char *const argv[],
                          char *const envp[], const SpawnRedir *redir,
                          int n_redir, int console);
+
+/* Come spawn_ex(), ma il figlio nasce con l'IDENTITA' indicata invece che con
+ * quella di chi lo lancia.
+ *
+ * ! SOLO root PUO' CHIAMARLA: a chiunque altro risponde -1 con EPERM, e non
+ * lancia niente. E' la stessa regola di setuid() — l'unica direzione possibile
+ * e' giu' — spostata dal processo che chiama al processo che nasce.
+ *
+ * ! SERVE A CHI DEVE RESTARE root MENTRE APRE UNA SESSIONE ALTRUI. `sudo` non
+ * ne ha bisogno: sale, esegue e muore. `login` si': e' un ciclo, e scendendo
+ * con setuid() non poteva piu' leggere /boot/ombra per l'accesso successivo —
+ * al primo `exit` la console restava chiusa per tutti. */
+int     spawn_utente(const char *path, char *const argv[], char *const envp[],
+                     unsigned int uid, unsigned int gid);
 int     waitpid(int pid, int *stato, int opzioni);
 int     wait(int *stato);
 
@@ -2159,6 +2173,16 @@ int     ipc_register(const char *name);
 /* Cerca il PID del processo che fornisce 'name'.
  * Ritorna il PID (>0) su successo, <0 se non trovato. */
 int     ipc_lookup(const char *name);
+
+/* Come ipc_lookup(), ma riprova per `ms` millisecondi prima di arrendersi.
+ *
+ * ! SERVE A CHI PARTE DA [modules] DI kernel.cfg: quei processi il kernel li
+ * avvia TUTTI INSIEME, quindi chi dipende da un altro puo' arrivare prima che
+ * quello si sia registrato. In uno script l'ordine lo garantiva chi l'ha
+ * scritto; all'avvio non lo garantisce nessuno, e un driver che esce perche'
+ * era in anticipo di mezzo secondo lascia la rete spenta fino al riavvio
+ * successivo — dove magari funziona. */
+int     ipc_attendi(const char *name, unsigned int ms);
 
 /* =============================================================================
  * Hardware kernel-mediato — accesso a IRQ e porte I/O per driver ring3.

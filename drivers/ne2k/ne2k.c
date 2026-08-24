@@ -609,9 +609,17 @@ static const ModelloPci *modello_noto(unsigned short ven, unsigned short dev)
 /* Chiede al server PCI la n-esima scheda Ethernet e guarda se la sa
  * guidare. Ritorna 1 se trovata, 0 se non ce ne sono di note, -1 se il
  * server non risponde. */
+/* ! SI ASPETTA IL BUS, NON SI PRETENDE DI TROVARLO ACCESO. Da quando la rete
+ * si accende da [modules] di /boot/kernel.cfg, il kernel avvia il server PCI e
+ * questo driver UNO DOPO L'ALTRO, senza aspettare in mezzo: chiedere subito
+ * vuol dire chiedere a chi non si e' ancora registrato, uscire, e lasciare la
+ * macchina senza rete fino al riavvio — dove magari va, perche' i tempi
+ * cambiano. Chi lo lancia a mano trova il servizio gia' li' e non aspetta
+ * niente. */
+#define ATTESA_PCI_MS  5000
 static int cerca_su_pci(void)
 {
-    int pid = ipc_lookup(PCI_SERVIZIO);
+    int pid = ipc_attendi(PCI_SERVIZIO, ATTESA_PCI_MS);
     unsigned int n;
 
     if (pid <= 0) {

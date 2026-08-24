@@ -64,55 +64,20 @@
 #include "rete.h"
 
 /* -----------------------------------------------------------------------------
- * Modelli riconosciuti.
+ * ! LA TABELLA DEI MODELLI NON STA PIU' QUI, dal 24 agosto 2026: sta in
+ * lib/rete.c, e questo file la legge con rete_riconosci() e rete_scheda().
  *
- * driver == NULL significa «la scheda la so nominare ma non la so
- * pilotare»: è un'informazione utile e diversa da «scheda sconosciuta»,
- * perché dice che il modello è noto e il driver è solo da scrivere.
+ * Ci stava, con accanto il commento «duplicarla darebbe due elenchi che
+ * divergono al primo driver nuovo». E' andata proprio cosi', ma senza copia:
+ * e' stato scritto /dev/e1000.drv e la riga 8086:100E e' rimasta a «driver da
+ * scrivere», perche' chi scriveva un driver non aveva motivo di aprire il
+ * sorgente di netdetect. Su QEMU — dove quella scheda e' la predefinita —
+ * `netdetect -c` diceva che il driver non c'era mentre stava nel CD accanto.
+ *
+ * Il secondo lettore, adesso, e' `hwconfig`: deve scrivere in kernel.cfg il
+ * driver giusto per la scheda trovata, cosi' la rete si accende all'avvio
+ * invece che a ogni accesso. Con la tabella dentro un programma non poteva.
  * --------------------------------------------------------------------------- */
-typedef struct {
-    unsigned short venditore;
-    unsigned short dispositivo;
-    const char    *modello;
-    const char    *driver;
-} SchedaNota;
-
-static const SchedaNota g_note[] = {
-    /* AMD PCnet — è la scheda predefinita di VirtualBox */
-    /* ! Solo ASCII nei nomi: printf("%-44s") conta BYTE, non colonne, e
-     * un trattino lungo UTF-8 ne occupa tre — la tabella si sfalsa di
-     * due caratteri solo sulle righe che lo contengono, che e' il modo
-     * piu' fastidioso di sbagliare un allineamento. */
-    { 0x1022, 0x2000, "AMD PCnet-PCI II / FAST III (Am79C970/C973)", "/dev/pcnet.drv" },
-    { 0x1022, 0x2001, "AMD PCnet-Home",                             "/dev/pcnet.drv" },
-
-    /* Famiglia NE2000 PCI: schede diverse, stessa programmazione */
-    { 0x10EC, 0x8029, "Realtek RTL8029(AS) - NE2000 PCI",           "/dev/ne2k.drv"  },
-    { 0x1050, 0x0940, "Winbond W89C940 - NE2000 PCI",               "/dev/ne2k.drv"  },
-    { 0x1106, 0x0926, "VIA VT86C926 Amazon - NE2000 PCI",           "/dev/ne2k.drv"  },
-    { 0x8E2E, 0x3000, "KTI ET32P2 - NE2000 PCI",                    "/dev/ne2k.drv"  },
-
-    /* Modelli noti ma senza driver: dirlo per nome evita di far cercare
-     * un guasto a chi ha semplicemente una scheda che non gestiamo. */
-    { 0x8086, 0x100E, "Intel 82540EM (e1000)",                      NULL },
-    { 0x8086, 0x1229, "Intel 82557/8/9 (EtherExpress Pro/100)",     NULL },
-    { 0x10EC, 0x8139, "Realtek RTL8139",                            NULL },
-    { 0x1011, 0x0019, "DEC 21140 (Tulip)",                          NULL },
-    { 0x1AF4, 0x1000, "virtio-net",                                 NULL },
-};
-
-#define N_NOTE ((int)(sizeof(g_note) / sizeof(g_note[0])))
-
-static const SchedaNota *riconosci(unsigned short ven, unsigned short dev)
-{
-    int i;
-
-    for (i = 0; i < N_NOTE; i++) {
-        if (g_note[i].venditore == ven && g_note[i].dispositivo == dev)
-            return &g_note[i];
-    }
-    return NULL;
-}
 
 /* -----------------------------------------------------------------------------
  * Dialogo col server PCI
@@ -232,13 +197,13 @@ static void stampa_tabella(void)
 {
     int i;
 
-    printf("Modelli riconosciuti (%d):\n\n", N_NOTE);
-    for (i = 0; i < N_NOTE; i++) {
-        const char *d = g_note[i].driver;
+    printf("Modelli riconosciuti (%d):\n\n", rete_schede_note());
+    for (i = 0; i < rete_schede_note(); i++) {
+        const ReteScheda *n = rete_scheda(i);
+        const char       *d = n->driver;
 
         printf("  %04x:%04x  %-44s %s%s\n",
-               g_note[i].venditore, g_note[i].dispositivo,
-               g_note[i].modello,
+               n->venditore, n->dispositivo, n->modello,
                d ? d : "(driver da scrivere)",
                (d && !driver_presente(d)) ? "  [assente]" : "");
     }
@@ -292,7 +257,7 @@ int main(int argc, char **argv)
         if (esito == 0) break;
 
         {
-            const SchedaNota *s  = riconosci(d.venditore, d.dispositivo);
+            const ReteScheda *s  = rete_riconosci(d.venditore, d.dispositivo);
             unsigned int      io = prima_porta_io(&d);
 
             printf("%02x:%02x.%d  %04x:%04x  %s\n",
@@ -308,7 +273,7 @@ int main(int argc, char **argv)
             if (s == NULL) {
                 printf("           driver: nessuno. Serve il numero %04x:%04x\n",
                        d.venditore, d.dispositivo);
-                printf("                   nella tabella di netdetect.c.\n");
+                printf("                   nella tabella di lib/rete.c.\n");
             } else if (s->driver == NULL) {
                 printf("           driver: da scrivere per questo modello.\n");
             } else if (!driver_presente(s->driver)) {

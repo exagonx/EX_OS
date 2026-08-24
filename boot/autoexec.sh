@@ -24,6 +24,9 @@
 
 !silenced
 
+# !! LA RETE STA QUI SOLO PERCHE' QUESTO E' IL CD. Su un sistema INSTALLATO
+# va in [modules] di kernel.cfg, dove la scrive `hwconfig`: la' la carica il
+# kernel, una volta e da root. E QUESTO FILE HA UN TETTO DI 2 KB.
 echo Avvio automatico: accendo la rete...
 
 # L'ordine non e' modificabile: ogni passo serve al successivo.

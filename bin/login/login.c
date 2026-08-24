@@ -46,8 +46,9 @@
  * perche' non servono a nessun altro.
  *
  * ! L'uid E' NEL FILE, dal 17 agosto 2026. Prima non c'era e non serviva:
- * login autenticava e basta, e la shell girava comunque da root. Adesso login
- * SCENDE con setuid() prima di lanciarla, e per scendere deve sapere a chi.
+ * login autenticava e basta, e la shell girava comunque da root. Adesso la
+ * shell NASCE dell'utente — spawn_utente() — e per lanciarla bisogna sapere
+ * chi e'.
  *
  * ! root E' uid 0 PER DEFINIZIONE, e non e' una convenzione di questo file: e'
  * il numero che vfs_permesso() lascia passare dappertutto. Un utente normale
@@ -176,19 +177,6 @@ static void avvia_shell(const char *utente, unsigned int uid, unsigned int gid)
     setenv("USER", utente, 1);
 
     /* =====================================================================
-     * ! SI SCENDE PRIMA DI LANCIARE, e questo e' il punto di tutto il
-     * meccanismo. EX-OS non ha il bit setuid sui file, quindi un programma non
-     * puo' alzarsi di privilegio: l'unica direzione possibile e' giu'. init
-     * resta root, avvia login che resta root, login autentica e SCENDE, e solo
-     * allora lancia la shell — che eredita l'identita' come eredita la console
-     * e la directory corrente.
-     *
-     * ! E DA QUI NON SI TORNA SU. Quando la shell finisce, questo processo e'
-     * ormai l'utente e non puo' piu' chiedere una password per conto di
-     * nessun altro: e' per questo che il ciclo del login rifa' `exec` di se
-     * stesso invece di rimettersi ad aspettare.
-     * ===================================================================== */
-    /* =====================================================================
      * ! LA CASA SI CREA DA root E POI SI CONSEGNA, ed e' l'unico ordine che
      * funziona. /home appartiene a root con 0755: un utente normale non ci
      * puo' creare dentro, quindi non puo' farsi la propria directory. E se la
@@ -196,8 +184,8 @@ static void avvia_shell(const char *utente, unsigned int uid, unsigned int gid)
      * scrivere.
      *
      * Creare-e-consegnare e' esattamente quello che fa `adduser` su ogni Unix,
-     * e qui si puo' fare perche' in questo istante siamo ancora root: dopo
-     * setuid() non si potrebbe piu'.
+     * e qui si puo' fare perche' login e' root — e lo resta: vedi il blocco
+     * qui sotto, dove a scendere e' la shell.
      *
      * ! SE ESISTE GIA' NON E' UN ERRORE — e' il caso normale dal secondo
      * accesso in poi — e nemmeno se il filesystem non ha i proprietari:
@@ -223,30 +211,72 @@ static void avvia_shell(const char *utente, unsigned int uid, unsigned int gid)
         g_casa[sizeof(g_casa) - 1] = '\0';
     }
 
-    if (uid != 0 && setuid(uid) != 0) {
-        printf("login: non riesco a scendere all'utente %s (%s)\n",
-               utente, strerror(errno));
-        printf("       la shell NON viene avviata: meglio nessun accesso che\n");
-        printf("       un accesso con i privilegi sbagliati.\n");
-        sleep(3);
-        return;
-    }
-    (void)gid;
-
-    (void)gid;
-
-    /* ! E CI SI ENTRA DOPO ESSERE SCESI, non prima: entrare in una directory
-     * vuole il permesso di attraversarla, e vogliamo che sia l'UTENTE a
-     * poterlo fare — se ci riuscisse solo root, la casa non sarebbe sua. */
+    /* ! LA DIRECTORY LA SI PRENDE DA root E IL FIGLIO LA EREDITA. Farlo
+     * attraversare all'utente non si puo' piu' — non siamo lui, e non dobbiamo
+     * diventarlo — quindi il permesso si CONTROLLA invece di provarlo: una
+     * casa che l'utente non puo' attraversare e' una casa da riparare, e dirlo
+     * qui e' meglio di una shell che parte in una directory in cui non puo'
+     * leggere. La crea `login` stesso qui sopra con 0755 e la consegna, quindi
+     * il caso normale passa; ci si arriva se qualcuno le ha cambiato modo o
+     * padrone. */
     if (g_casa[0]) {
-        if (chdir(g_casa) == 0) setenv("HOME", g_casa, 1);
-        else printf("login: non riesco a entrare in %s (%s)\n",
-                    g_casa, strerror(errno));
+        StatPerm sp;
+
+        /* ! ATTRAVERSARE E' IL BIT x, NON r, e i tre insiemi vanno guardati
+         * tutti: padrone, gruppo, tutti gli altri. Guardarne uno solo vuol
+         * dire un avviso che compare su una casa perfettamente buona, e un
+         * avviso che grida al lupo si impara a saltarlo. `modo == 0` e' il VFS
+         * che dice «qui i permessi non esistono» — FAT, ISO 9660 — e li' non
+         * c'e' niente da controllare. */
+        if (statperm(g_casa, &sp) == 0 && sp.modo != 0 && uid != 0 &&
+            !((sp.uid == uid       && (sp.modo & 0100)) ||
+              (sp.gid == (unsigned short)gid && (sp.modo & 0010)) ||
+                                      (sp.modo & 0001))) {
+            printf("login: %s non e' attraversabile da %s: la shell parte\n",
+                   g_casa, utente);
+            printf("       da /. Si ripara con:  chown %s %s\n", utente, g_casa);
+        } else if (chdir(g_casa) != 0) {
+            printf("login: non riesco a entrare in %s (%s)\n",
+                   g_casa, strerror(errno));
+        }
+        setenv("HOME", g_casa, 1);
     }
 
-    pid = spawn(g_shell, argv);
+    /* =====================================================================
+     * ! SCENDE LA SHELL, NON login — ED E' LA CORREZIONE DEL 24 AGOSTO 2026
+     *
+     * EX-OS non ha il bit setuid sui file, quindi un programma non puo'
+     * alzarsi di privilegio: l'unica direzione possibile e' giu'. init resta
+     * root, avvia login che resta root, login autentica e la shell nasce
+     * dell'utente.
+     *
+     * ! PRIMA SCENDEVA login CON setuid() E POI LANCIAVA. Funzionava per un
+     * accesso solo, e il difetto stava nella parola «ciclo»: dopo `exit`
+     * questo processo era ormai l'utente, e /boot/ombra e' 0600 di root.
+     * L'accesso successivo trovava sempre «Accesso non riuscito» — QUALUNQUE
+     * password — e quella console non serviva piu' a nessuno. Con root non si
+     * vedeva, perche' per uid 0 il setuid non si faceva nemmeno: e' il motivo
+     * per cui il difetto e' sopravvissuto alle prove.
+     *
+     * ! E DA GIU' NON SI TORNA SU: non c'e' modo di rimediare dopo, per
+     * costruzione. L'unica correzione possibile e' non scendere affatto —
+     * spawn_utente() chiede al kernel un figlio di un altro utente, e la puo'
+     * chiamare solo chi e' gia' root. Vedi lib/include/spawn_abi.h.
+     * ===================================================================== */
+
+    /* ! root CHE LANCIA root NON AVREBBE NIENTE DA CHIEDERE, e gli si passa
+     * comunque l'identita': una strada sola vale piu' di un caso in meno da
+     * eseguire, ed e' proprio il caso particolare — «se uid != 0» — che aveva
+     * tenuto nascosto il difetto di prima. */
+    pid = spawn_utente(g_shell, argv, environ, uid, gid);
     if (pid < 0) {
-        printf("login: %s non si avvia (%s)\n", g_shell, strerror(errno));
+        printf("login: %s non si avvia come %s (%s)\n",
+               g_shell, utente, strerror(errno));
+        if (errno == EPERM) {
+            printf("       login non e' root: l'accesso NON viene aperto.\n");
+            printf("       Meglio nessun accesso che uno con i privilegi\n");
+            printf("       sbagliati.\n");
+        }
         sleep(3);
         return;
     }

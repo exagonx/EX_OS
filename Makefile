@@ -631,13 +631,19 @@ HWCONFIG_SRC := bin/hwconfig/hwconfig.c
 HWCONFIG_BIN := $(BUILD_BIN)/hwconfig
 HWCONFIG_LD  := bin/hwconfig/hwconfig.ld
 
-$(HWCONFIG_BIN): $(HWCONFIG_SRC) $(PCI_DRV_PROTO) $(HWCONFIG_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+# ! COLLEGA ANCHE lib/rete.c, dal 24 agosto 2026: e' li' che sta la tabella
+# «scheda -> driver», e hwconfig deve scrivere il driver giusto in [modules] di
+# kernel.cfg. --gc-sections butta il resto di quel file, che hwconfig non
+# chiama: della catena di rete gli serve solo l'elenco dei modelli.
+$(HWCONFIG_BIN): $(HWCONFIG_SRC) $(RETE_SRC) $(PCI_DRV_PROTO) $(HWCONFIG_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione /bin/hwconfig ==="
 	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/pci -I drivers/kbd -c $(HWCONFIG_SRC) -o $(BUILD_OBJ)/hwconfig_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/pci -I drivers/kbd -I drivers/net -c $(HWCONFIG_SRC) -o $(BUILD_OBJ)/hwconfig_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(RETE_SRC) -o $(BUILD_OBJ)/hwconfig_rete.o
 	$(CC) -m32 -c $(LIBC_START)          -o $(BUILD_OBJ)/hwconfig_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(HWCONFIG_LD) \
 	    $(BUILD_OBJ)/hwconfig_start.o $(BUILD_OBJ)/hwconfig_main.o \
+	    $(BUILD_OBJ)/hwconfig_rete.o \
 	    $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] hwconfig compilato: $@"
 

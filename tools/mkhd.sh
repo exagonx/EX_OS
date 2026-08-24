@@ -92,12 +92,28 @@ echo "--- Formattazione e installazione DENTRO EX-OS (qualche minuto) ---"
 # per 150 secondi su una domanda per poi dire «l'installazione non e' arrivata
 # in fondo». -t vuol dire «tutto, non chiedere», che e' quello che serve a un
 # disco di prova.
+# ! I DUE CONTI LI CHIEDE L'INSTALLATORE, dal 19 agosto 2026, e da allora
+# questo script si fermava li': le quattro righe qui sotto non rispondevano a
+# «password di root:», la macchina restava ferma sulla domanda e la prova
+# finiva con «l'installazione non e' arrivata in fondo» — un messaggio che
+# accusa l'installatore mentre il difetto era qui.
+#
+# Le credenziali sono SCRITTE IN CHIARO ed e' voluto: questo e' un disco di
+# prova, e una prova che si avvia deve sapere come entrare. Chi vuole un disco
+# vero fa `install` a mano e le sceglie lui.
+UTENTE="${EXOS_UTENTE:-mario}"
+PW_ROOT="${EXOS_PW_ROOT:-root}"
+PW_UTENTE="${EXOS_PW_UTENTE:-mario}"
+
 EXOS_QEMU_EXTRA="-drive file=$IMG,format=raw,if=ide" \
     python3 tools/qemu_drive.py \
         "mkfs -t ext2 -L exos hd0p1@4" \
         "si@180" \
         "mount hd0p1 /disk@10" \
-        "install -t /disk@150" \
+        "install -t /disk@90" \
+        "$PW_ROOT@2" "$PW_ROOT@3" \
+        "$UTENTE@2" "$PW_UTENTE@2" "$PW_UTENTE@3" \
+        "si@60" \
     > /tmp/exos-mkhd.log 2>&1
 
 if ! grep -q "Installazione completata" /tmp/exos-mkhd.log; then
@@ -111,6 +127,8 @@ fi
 grep -E "kernel: .* intervall|stage2: LBA" /tmp/exos-mkhd.log | sed 's/^ */  /'
 
 echo "[OK] $IMG e' avviabile."
+echo ""
+echo "Per entrare:  root / $PW_ROOT   oppure   $UTENTE / $PW_UTENTE"
 echo ""
 echo "Provalo senza floppy:"
 echo "  make run-hd"

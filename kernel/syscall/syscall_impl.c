@@ -1588,6 +1588,25 @@ int32_t sys_spawn(InterruptFrame *frame)
         ha_extra = 1;
     }
 
+    /* ! CHI CHIEDE UN FIGLIO DI UN ALTRO UTENTE DEV'ESSERE root, E SI CONTROLLA
+     * QUI — prima che il figlio esista. La regola e' quella di setuid(), per la
+     * stessa ragione: se un processo qualunque potesse scegliersi l'identita'
+     * del figlio, i permessi si aggirerebbero con uno spawn, e il figlio
+     * potrebbe fare cio' che il padre non puo'.
+     *
+     * ! E SI RIFIUTA, NON SI IGNORA. Partire lo stesso con l'identita'
+     * ereditata vorrebbe dire che login, il giorno che un difetto lo lasciasse
+     * girare da non-root, aprirebbe all'utente una shell CON I PRIVILEGI DI
+     * QUELL'ALTRO — cioe' il guasto peggiore possibile, in silenzio. */
+    if (ha_extra && (kex.flag & SPAWN_F_UTENTE) != 0 &&
+        parent != NULL && parent->uid != 0) {
+        klog(LOG_WARN, "SYSCALL spawn('%s'): il PID %u (uid %u) ha chiesto un "
+                       "figlio uid %u: serve root", kpath, parent->pid,
+             parent->uid, kex.uid);
+        kfree(sb);
+        return ERR(EPERM);
+    }
+
     /* Ambiente: stesse regole degli argomenti — copiato in kernel space
      * PRIMA di creare il figlio, cosi' un puntatore illeggibile ferma lo
      * spawn invece di lasciare il processo a meta'. Divide l'arena con
@@ -1639,12 +1658,25 @@ return ERR(ENOMEM); }
      * l'utente e' passato altrove con Alt+Fn. */
     child->console = parent->console;
 
-    /* ! L'IDENTITA' SI EREDITA SEMPRE, e non c'e' un flag per cambiarla. Un
+    /* ! L'IDENTITA' SI EREDITA, e chi vuole cambiarla dev'essere gia' root. Un
      * processo non puo' decidere di nascere con un utente diverso dal proprio:
-     * se potesse, i permessi si aggirerebbero con uno spawn. Chi cambia utente
-     * e' setuid() — e la puo' chiamare solo root. */
+     * se potesse, i permessi si aggirerebbero con uno spawn.
+     *
+     * ! DAL 24 AGOSTO 2026 root PUO' DIRLO, con SPAWN_F_UTENTE, e il permesso
+     * e' gia' stato verificato la' dove si legge il blocco EXTRA. Serve a chi
+     * lancia una sessione per conto di qualcun altro e deve RESTARE se stesso:
+     * `login` e' un ciclo, e scendendo con setuid() non poteva piu' autenticare
+     * l'accesso successivo. Vedi lib/include/spawn_abi.h. */
     child->uid = parent->uid;
     child->gid = parent->gid;
+
+    if (ha_extra && (kex.flag & SPAWN_F_UTENTE) != 0) {
+        child->uid = kex.uid;
+        child->gid = kex.gid;
+        klog(LOG_INFO, "SYSCALL spawn: '%s' nasce come uid %u gid %u "
+                       "(chiesto dal PID %u)", kpath, child->uid, child->gid,
+             parent->pid);
+    }
 
     /* =========================================================================
      * ! LE TRE STANDARD SI EREDITANO DAL PADRE, e fino al 18 agosto 2026 non

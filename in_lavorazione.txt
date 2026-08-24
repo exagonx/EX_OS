@@ -1,3 +1,7 @@
-1 Il comando exit nella shell esce dalla shell bloccando il sistema, aggiungere un sistema recursivo che uscendo torna alla schermata di autenticazione.
-2 Implementare un sistema di autenticazione.
-3 Controllare che tutto sia coerente con il progetto, possibile file mancanti.
+Bug trovati:
+`rename` non sostituisce la destinazione: /bin/libctest lo segnala con
+[FALLITO] sia su FAT12 sia su ext2 (315 prove su 316). La voce 12 del
+changelog di version.h dice "rename allineato a POSIX: la destinazione si
+sostituisce" — o la modifica non e' arrivata dove serve, o la prova guarda un
+percorso che non ci passa. Verificato che c'era gia' prima delle correzioni
+del 24 agosto 2026, rieseguendo libctest sull'immagine di HEAD.

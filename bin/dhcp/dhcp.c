@@ -346,6 +346,46 @@ riprenota:
     return -1;
 }
 
+/* =============================================================================
+ * ! ASPETTARE LO STACK — perche' `dhcp` sta in [modules] di kernel.cfg
+ *
+ * Fino al 24 agosto 2026 la rete si accendeva da /boot/autoexec.sh, dove le
+ * righe sono in ordine e ognuna aspetta la precedente. Adesso i quattro anelli
+ * — bus, scheda, stack, indirizzo — sono voci di [modules], e il kernel li
+ * avvia TUTTI INSIEME: quando questo programma comincia, lo stack IP puo'
+ * ancora star chiedendo alla scheda chi e'.
+ *
+ * Due secondi bastavano a un servizio lanciato con '&' due righe sopra; non
+ * bastano a una catena intera che si accende in parallelo su una macchina
+ * lenta. E arrendersi qui vuol dire una macchina che si avvia senza indirizzo
+ * — e che al riavvio dopo ce l'ha, perche' i tempi cambiano.
+ *
+ * ! MA CHI HA BATTUTO `dhcp` A MANO NON DEVE ASPETTARE DIECI SECONDI per
+ * sentirsi dire che la rete non e' accesa. La distinzione non e' «chi mi ha
+ * lanciato»: e' se una catena stia salendo o no. Passata la pazienza breve,
+ * se non e' acceso NEMMENO il primo anello — il bus PCI — non c'e' niente in
+ * arrivo, e si risponde subito. All'avvio il bus si registra in poche decine
+ * di millisecondi, quindi il caso vero passa di la'.
+ * ============================================================================= */
+#define ATTESA_STACK_MS    10000
+#define PAZIENZA_MS         2000
+#define PASSO_MS             100
+
+static int attendi_stack(void)
+{
+    unsigned int t;
+    int          pid;
+
+    for (t = 0; ; t += PASSO_MS) {
+        pid = ipc_lookup(IP_SERVIZIO);
+        if (pid > 0) return pid;
+        if (t >= ATTESA_STACK_MS) return pid;
+        if (t >= PAZIENZA_MS && rete_primo_mancante() == RETE_PASSO_PCI)
+            return pid;                  /* nessuna catena in salita */
+        usleep(PASSO_MS * 1000);
+    }
+}
+
 int main(int argc, char **argv)
 {
     unsigned char risposta[600];
@@ -363,8 +403,15 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    pid_ip = rete_richiedi(IP_SERVIZIO);
-    if (pid_ip <= 0) return 1;
+    pid_ip = attendi_stack();
+    if (pid_ip <= 0) {
+        /* ! LE ISTRUZIONI LE STAMPA rete_istruzioni() E NON QUESTO FILE: sono
+         * la stessa catena che spiegano `ping`, `host` e `nettest`, e scritta
+         * qui sarebbe la quinta copia — quella che resta indietro. */
+        printf("Il servizio '%s' non e' attivo.\n", IP_SERVIZIO);
+        rete_istruzioni();
+        return 1;
+    }
 
     if (leggi_stato(&s) != 0) {
         printf("dhcp: lo stack non risponde.\n");

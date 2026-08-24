@@ -64,6 +64,7 @@
 #include "libc.h"
 #include "pci_proto.h"
 #include "kbd_proto.h"
+#include "rete.h"
 
 #define PERC_MAX    256
 #define RIGHE_MAX   64
@@ -80,6 +81,16 @@ typedef struct {
 
     int  rete;                      /* c'e' una scheda Ethernet sul PCI */
     int  rete_ignota;               /* c'e' ma non si e' potuto chiedere */
+
+    /* ! QUALE scheda, e non solo SE. Fino al 24 agosto 2026 qui bastava un
+     * si'/no, perche' l'autoexec generato scriveva `netdetect -c` e chi
+     * sceglieva il driver era quel programma, a ogni avvio. Adesso il driver
+     * finisce in [modules] di kernel.cfg, cioe' la scelta si fa UNA VOLTA, qui.
+     *
+     * La tabella dei modelli non e' stata copiata: sta in lib/rete.c, e la
+     * leggono sia questo programma sia netdetect. Vedi il commento la'. */
+    char rete_modello[64];
+    char rete_driver[64];           /* vuoto = nessun driver per questa scheda */
 
     /* Partizioni con un filesystem riconosciuto, candidate al montaggio. */
     int  n_vol;
@@ -246,21 +257,57 @@ static void cerca_volumi(void)
     }
 }
 
-/* La scheda di rete: si chiede al servizio PCI se c'e' un dispositivo di
- * classe Ethernet, e basta.
+/* La scheda di rete: si chiede al servizio PCI quali dispositivi Ethernet
+ * ci sono, e per ognuno si guarda in tabella se sappiamo guidarlo.
  *
- * ! NON SI GUARDA QUALE MODELLO SIA, di proposito. La tabella dei
- * modelli e dei driver sta in `netdetect`, e duplicarla qui darebbe due
- * elenchi che divergono al primo driver nuovo. L'autoexec generato
- * chiama `netdetect -c`, che quella tabella ce l'ha: a noi serve sapere
- * SE c'e' una scheda, non quale. */
-static void cerca_rete(void)
+ * ! ADESSO SI GUARDA ANCHE QUALE MODELLO SIA, e fino al 24 agosto 2026 non si
+ * faceva: bastava sapere SE c'era una scheda, perche' il driver lo sceglieva
+ * `netdetect -c` dall'autoexec, a ogni avvio. Ma l'autoexec lo esegue la shell
+ * della prima console, cioe' UNO PER ACCESSO e con i privilegi di chi entra:
+ * un utente normale non puo' caricare un driver, e la rete si accendeva solo
+ * se il primo a entrare era root. In [modules] di kernel.cfg il driver lo
+ * carica il kernel, all'avvio, una volta — ma bisogna sapere quale, e la
+ * decisione si sposta qui.
+ *
+ * ! LA TABELLA NON E' STATA COPIATA QUI DENTRO: sta in lib/rete.c e la leggono
+ * sia netdetect sia questo programma. Era il motivo per cui prima non si
+ * guardava il modello, ed era un motivo giusto — solo che la risposta non e'
+ * «non guardarlo», e' «tienila in un posto solo».
+ * --------------------------------------------------------------------------- */
+static int chiedi_pci(int pid, unsigned int ordinale, PciDispositivo *out)
 {
-    int           pid = ipc_lookup(PCI_SERVIZIO);
     PciRichiesta  r;
     IpcMessage    meta;
     unsigned char buf[IPC_MSG_MAX_DATA];
-    int           i;
+    int           t;
+
+    r.ordinale    = ordinale;
+    r.classe      = PCI_CLASSE_RETE;
+    r.sottoclasse = PCI_SOTTO_ETHERNET;
+    r.venditore   = PCI_QUALUNQUE;
+    r.dispositivo = PCI_QUALUNQUE;
+
+    if (ipc_send(pid, PCI_MSG_CERCA, &r, sizeof(r)) < 0) return -1;
+
+    for (t = 0; t < 8; t++) {
+        if (ipc_recv_timeout(&meta, buf, sizeof(buf), 2000) < 0) return -1;
+        if ((int)meta.sender_pid != pid) continue;   /* non e' la nostra risposta */
+        if (meta.tipo == PCI_MSG_FINE) return 0;
+        if (meta.tipo == PCI_MSG_DISPOSITIVO && meta.len >= sizeof(*out)) {
+            memcpy(out, buf, sizeof(*out));
+            return 1;
+        }
+        return -1;
+    }
+    return -1;
+}
+
+static void cerca_rete(void)
+{
+    int            pid = ipc_lookup(PCI_SERVIZIO);
+    PciDispositivo d;
+    unsigned int   ord;
+    int            i;
 
     if (pid <= 0) {
         /* Il servizio non c'e': lo si prova ad accendere, perche' e'
@@ -282,27 +329,28 @@ static void cerca_rete(void)
 
     if (pid <= 0) { g_t.rete_ignota = 1; return; }
 
-    r.ordinale    = 0;
-    r.classe      = PCI_CLASSE_RETE;
-    r.sottoclasse = PCI_SOTTO_ETHERNET;
-    r.venditore   = PCI_QUALUNQUE;
-    r.dispositivo = PCI_QUALUNQUE;
+    for (ord = 0; ord < 16; ord++) {
+        const ReteScheda *n;
+        int               esito = chiedi_pci(pid, ord, &d);
 
-    if (ipc_send(pid, PCI_MSG_CERCA, &r, sizeof(r)) < 0) {
-        g_t.rete_ignota = 1;
-        return;
-    }
+        if (esito < 0) { g_t.rete_ignota = 1; return; }
+        if (esito == 0) break;                  /* finite */
 
-    for (i = 0; i < 8; i++) {
-        if (ipc_recv_timeout(&meta, buf, sizeof(buf), 2000) < 0) {
-            g_t.rete_ignota = 1;
-            return;
-        }
-        if ((int)meta.sender_pid != pid) continue;
-        g_t.rete = (meta.tipo == PCI_MSG_DISPOSITIVO);
-        return;
+        g_t.rete = 1;
+
+        /* ! LA PRIMA CHE SAPPIAMO GUIDARE, e le altre si lasciano stare: il
+         * sistema ha un solo servizio 'rete0', quindi due driver caricati si
+         * contenderebbero quel nome e il secondo morirebbe con un errore che
+         * nessuno andrebbe a leggere. */
+        if (g_t.rete_driver[0] != '\0') continue;
+
+        n = rete_riconosci(d.venditore, d.dispositivo);
+        if (n == NULL) continue;
+
+        strncpy(g_t.rete_modello, n->modello, sizeof(g_t.rete_modello) - 1);
+        if (n->driver != NULL)
+            strncpy(g_t.rete_driver, n->driver, sizeof(g_t.rete_driver) - 1);
     }
-    g_t.rete_ignota = 1;
 }
 
 /* La disposizione della tastiera.
@@ -343,14 +391,40 @@ static void cerca_keymap(void)
         strncpy(g_t.keymap, "us", sizeof(g_t.keymap) - 1);
 }
 
+/* Il sistema che si sta configurando: vuoto = questo, altrimenti il punto in
+ * cui e' montato. Serve a guardare i file DEL BERSAGLIO — un driver che c'e'
+ * qui e non la' e' una riga di kernel.cfg che all'avvio non si carica. */
+static char g_bersaglio[PERC_MAX] = "";
+
+/* Vero se `assoluto` (un percorso come si vedra' all'avvio, es. /dev/ip.drv)
+ * esiste nel sistema che stiamo configurando. */
+static int c_e_nel_bersaglio(const char *assoluto)
+{
+    char         perc[PERC_MAX];
+    unsigned int n;
+
+    if (g_bersaglio[0] == '\0') return access(assoluto, F_OK) == 0;
+
+    /* ! LE DUE BARRE NON SI SOMMANO: il punto di montaggio finisce senza
+     * barra e il percorso assoluto comincia con la sua, e attaccarli senza
+     * guardare darebbe /disk//dev/ip.drv. */
+    n = (unsigned int)strlen(g_bersaglio);
+    while (n > 1 && g_bersaglio[n-1] == '/') n--;
+    snprintf(perc, sizeof(perc), "%.*s%s", (int)n, g_bersaglio, assoluto);
+    return access(perc, F_OK) == 0;
+}
+
 static void esamina(const char *bersaglio)
 {
     memset(&g_t, 0, sizeof(g_t));
     g_t.primo_scrivibile = -1;
 
+    strncpy(g_bersaglio, bersaglio ? bersaglio : "", sizeof(g_bersaglio) - 1);
+    g_bersaglio[sizeof(g_bersaglio) - 1] = '\0';
+
     trova_radice(bersaglio);
 
-    g_t.kbd = (access("/dev/kbd.drv", F_OK) == 0);
+    g_t.kbd = c_e_nel_bersaglio("/dev/kbd.drv");
     cerca_keymap();
     cerca_volumi();
     cerca_rete();
@@ -396,8 +470,14 @@ static void mostra(void)
                    g_t.vol_etichetta[i], g_t.vol_punto[i]);
     }
 
-    if (g_t.rete)
-        printf("  rete       scheda Ethernet sul bus PCI — si accende all'avvio\n");
+    if (g_t.rete && g_t.rete_driver[0])
+        printf("  rete       %s\n             %s — caricato all'avvio dal kernel\n",
+               g_t.rete_modello, g_t.rete_driver);
+    else if (g_t.rete && g_t.rete_modello[0])
+        printf("  rete       %s — driver da scrivere: resta spenta\n",
+               g_t.rete_modello);
+    else if (g_t.rete)
+        printf("  rete       scheda Ethernet sconosciuta: `netdetect` dice il numero\n");
     else if (g_t.rete_ignota)
         printf("  rete       non verificabile: manca /dev/pci.drv (c'e' sul CD di EX-OS)\n");
     else
@@ -476,9 +556,102 @@ static int scrivi_con_copia(const char *percorso, const char *testo)
     return 0;
 }
 
-static void componi_kernel_cfg(char *out, unsigned int max)
+/* =============================================================================
+ * ! CERTE VOCI SONO DI CHI USA IL SISTEMA, E NON SI PERDONO
+ *
+ * Questo programma riscrive kernel.cfg PER INTERO — e' scritto anche nella
+ * domanda che fa prima di scrivere — perche' quel file rispecchia l'hardware,
+ * e l'hardware lo si e' appena guardato. Ma dentro ci sono anche voci che con
+ * l'hardware non c'entrano niente, e che nessuno puo' rimettere al posto loro
+ * se spariscono qui.
+ *
+ * ! `login` E' IL CASO PEGGIORE, ed e' il difetto per cui questa funzione
+ * esiste: il kernel avvia /bin/login SOLO se la voce c'e' (PASSO 15 di
+ * kernel_main.c). Un `hwconfig` dato su una macchina installata la toglieva, e
+ * al riavvio dopo si entrava SENZA PASSWORD — su un sistema che al primo
+ * avvio aveva detto che l'accesso sarebbe stato obbligatorio. Un programma che
+ * serve a togliere fatica non deve spegnere una serratura in silenzio.
+ *
+ * ! `svga` E' L'ALTRO: lo scrive /bin/svga insieme a un byte dentro Stage 2, e
+ * i due devono restare d'accordo. Toglierlo qui vuol dire una macchina che si
+ * avvia con la risoluzione che non e' quella dichiarata, e nessuno che sappia
+ * dire perche'.
+ *
+ * ! LE RIGHE COMMENTATE NON CONTANO. kernel.cfg e' pieno di esempi spenti —
+ * «# svga = 800x600» — e scambiarne uno per una voce vera vorrebbe dire
+ * riportare avanti una decisione che nessuno ha preso.
+ *
+ * ! E LA SEZIONE SI GUARDA. Le chiavi sono uniche oggi, ma [mount] contiene
+ * righe scritte dall'utente, e un punto di montaggio che si chiamasse come una
+ * di queste chiavi darebbe una voce copiata nel posto sbagliato.
+ * ============================================================================= */
+static int voce_di_prima(const char *file, const char *sezione,
+                         const char *chiave, char *out, unsigned int max)
+{
+    static char testo[8192];
+    const char *p;
+    int         fd, n;
+
+    out[0] = '\0';
+
+    fd = open(file, O_RDONLY);
+    if (fd < 0) return 0;
+    n = (int)read(fd, testo, sizeof(testo) - 1);
+    close(fd);
+    if (n < 0) n = 0;
+    testo[n] = '\0';
+
+    {
+        char dentro[64] = "";
+
+        for (p = testo; *p; ) {
+            const char *r = p, *fine;
+            char        k[64];
+            unsigned int i;
+
+            while (*p && *p != '\n') p++;
+            fine = p;
+            if (*p) p++;
+
+            while (r < fine && (*r == ' ' || *r == '\t')) r++;
+            if (r >= fine || *r == '#' || *r == ';') continue;
+
+            if (*r == '[') {
+                r++;
+                for (i = 0; i + 1 < sizeof(dentro) && r < fine && *r != ']'; i++)
+                    dentro[i] = *r++;
+                dentro[i] = '\0';
+                continue;
+            }
+
+            if (strcmp(dentro, sezione) != 0) continue;
+
+            for (i = 0; i + 1 < sizeof(k) && r < fine &&
+                        *r != '=' && *r != ' ' && *r != '\t'; i++)
+                k[i] = *r++;
+            k[i] = '\0';
+            if (strcmp(k, chiave) != 0) continue;
+
+            while (r < fine && (*r == ' ' || *r == '\t')) r++;
+            if (r >= fine || *r != '=') continue;
+            r++;
+            while (r < fine && (*r == ' ' || *r == '\t')) r++;
+            while (fine > r && (fine[-1] == ' ' || fine[-1] == '\t' ||
+                                fine[-1] == '\r')) fine--;
+            if (r >= fine) continue;              /* voce vuota: come assente */
+
+            for (i = 0; i + 1 < max && r < fine; i++) out[i] = *r++;
+            out[i] = '\0';
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void componi_kernel_cfg(char *out, unsigned int max, const char *vecchio)
 {
     char riga[256];
+    char v[128];
     int  i;
 
     out[0] = '\0';
@@ -511,9 +684,39 @@ static void componi_kernel_cfg(char *out, unsigned int max)
     snprintf(riga, sizeof(riga),
              "\n# Disposizione della tastiera: us it fr de es uk.\n"
              "# Si cambia a caldo con `keymap`; `keymap -p` ristampa questa riga.\n"
-             "keymap      = %s\n"
-             "\n[boot]\nshell       = /bin/sh\n", g_t.keymap);
+             "keymap      = %s\n", g_t.keymap);
     strncat(out, riga, max - 1 - strlen(out));
+
+    /* La risoluzione: non la decide questo programma, la decide /bin/svga
+     * insieme a Stage 2. Se c'era, resta. */
+    if (voce_di_prima(vecchio, "kernel", "svga", v, sizeof(v))) {
+        snprintf(riga, sizeof(riga),
+                 "\n# Dichiarata da `svga`: Stage 2 imposta, il kernel confronta.\n"
+                 "svga        = %s\n", v);
+        strncat(out, riga, max - 1 - strlen(out));
+    }
+
+    strncat(out, "\n[boot]\nshell       = /bin/sh\n", max - 1 - strlen(out));
+
+    /* ! L'ACCESSO NON SI SPEGNE RISCRIVENDO UN FILE. Se la voce c'era si
+     * riporta com'era — chi ha scritto `login = /bin/altro` sapeva cosa stava
+     * facendo — e se non c'era la si mette lo stesso, purche' il programma
+     * esista: il kernel lancia /bin/login SOLO se questa riga c'e', e senza si
+     * entra senza password su una radice ext2. */
+    if (voce_di_prima(vecchio, "boot", "login", v, sizeof(v))) {
+        snprintf(riga, sizeof(riga),
+                 "\n# Chi si apre su ogni console al posto della shell: chiede\n"
+                 "# nome e password, e `exit` torna qui invece di lasciare la\n"
+                 "# console morta. Senza questa riga NON si autentica nessuno.\n"
+                 "login       = %s\n", v);
+        strncat(out, riga, max - 1 - strlen(out));
+    } else if (c_e_nel_bersaglio("/bin/login")) {
+        strncat(out,
+                "\n# Chi si apre su ogni console al posto della shell: chiede\n"
+                "# nome e password, e `exit` torna qui invece di lasciare la\n"
+                "# console morta. Senza questa riga NON si autentica nessuno.\n"
+                "login       = /bin/login\n", max - 1 - strlen(out));
+    }
 
     if (g_t.kbd)
         strncat(out, "modules     = kbd\n", max - 1 - strlen(out));
@@ -539,11 +742,77 @@ static void componi_kernel_cfg(char *out, unsigned int max)
                 "TMPDIR      = /\n", max - 1 - strlen(out));
     }
 
-    if (g_t.kbd) {
+    /* =====================================================================
+     * ! I DRIVER STANNO QUI, NON IN autoexec.sh — dal 24 agosto 2026
+     *
+     * L'autoexec lo esegue la shell della prima console, e con `login` in
+     * mezzo quella shell nasce a OGNI ACCESSO e con l'identita' di chi entra.
+     * Due conseguenze, tutt'e due sbagliate: i driver di rete si riaccendevano
+     * a ogni `exit` seguito da un accesso — trovando i servizi gia' registrati
+     * e stampando una fila di errori — e se il primo a entrare non era root
+     * non si accendevano affatto, perche' un utente normale non puo' caricare
+     * un driver.
+     *
+     * Le voci di [modules] le carica il KERNEL: una volta sola, prima di
+     * qualunque console, da root. E' il posto giusto per tutto cio' che e' del
+     * sistema e non di chi lo usa.
+     *
+     * ! L'ORDINE E' QUELLO DELLA CATENA — bus, scheda, stack, indirizzo —
+     * perche' ognuno serve al successivo. Ma il kernel non aspetta che uno sia
+     * pronto prima di avviare l'altro: li mette in coda tutti insieme, e a
+     * mettere le cose in fila e' l'attesa che ciascuno fa del proprio
+     * fornitore (ipc_attendi, in lib/libc.c). L'ordine qui resta quello giusto
+     * lo stesso: fa partire per prima la parte che ha meno da aspettare.
+     * ===================================================================== */
+    if (g_t.kbd || (g_t.rete && g_t.rete_driver[0])) {
         strncat(out,
-            "\n# Caricati all'avvio come processi ring3.\n"
-            "[modules]\n"
-            "kbd         = /dev/kbd.drv\n", max - 1 - strlen(out));
+            "\n# Caricati all'avvio come processi ring3, in quest'ordine.\n"
+            "[modules]\n", max - 1 - strlen(out));
+    }
+
+    if (g_t.kbd)
+        strncat(out, "kbd         = /dev/kbd.drv\n", max - 1 - strlen(out));
+
+    if (g_t.rete && g_t.rete_driver[0]) {
+        int pci  = c_e_nel_bersaglio("/dev/pci.drv");
+        int drv  = c_e_nel_bersaglio(g_t.rete_driver);
+        int ip   = c_e_nel_bersaglio("/dev/ip.drv");
+        int dhcp = c_e_nel_bersaglio("/bin/dhcp");
+
+        if (pci && drv && ip) {
+            snprintf(riga, sizeof(riga),
+                     "\n# La rete: %s\n"
+                     "# `ipcfg` la mostra, `ping` la prova. Per spegnerla basta\n"
+                     "# commentare queste righe con un '#'.\n"
+                     "pci         = /dev/pci.drv\n"
+                     "rete        = %s\n"
+                     "ip          = /dev/ip.drv\n",
+                     g_t.rete_modello, g_t.rete_driver);
+            strncat(out, riga, max - 1 - strlen(out));
+
+            /* ! L'INDIRIZZO NON E' UN DRIVER, e sta qui lo stesso: e' l'ultimo
+             * anello della stessa catena, e l'unico posto dove il resto puo'
+             * accendersi. Senza un server DHCP fallisce e basta — l'indirizzo
+             * si mette allora a mano con `ipcfg`, che scrive nello stack gia'
+             * avviato dalle righe qui sopra. */
+            if (dhcp)
+                strncat(out,
+                        "# Un indirizzo dal DHCP, se c'e' un server. Senza:\n"
+                        "#   ipcfg -a 192.168.1.10 -m 255.255.255.0 -g 192.168.1.1\n"
+                        "dhcp        = /bin/dhcp\n", max - 1 - strlen(out));
+        } else {
+            /* ! SI DICE COSA MANCA INVECE DI SCRIVERE UNA RIGA CHE NON PARTE.
+             * Un modulo il cui file non c'e' il kernel lo salta con un avviso
+             * che scorre via all'avvio: qui invece lo si legge. */
+            snprintf(riga, sizeof(riga),
+                     "\n# La rete NON si accende all'avvio: manca%s%s%s.\n"
+                     "# Sono sul CD di EX-OS; si installano con `hwconfig -d`.\n",
+                     pci ? "" : " /dev/pci.drv",
+                     drv ? "" : (pci ? " il driver della scheda"
+                                     : " e il driver della scheda"),
+                     ip  ? "" : ((pci && drv) ? " /dev/ip.drv" : " e /dev/ip.drv"));
+            strncat(out, riga, max - 1 - strlen(out));
+        }
     }
 
     strncat(out,
@@ -592,22 +861,26 @@ static void componi_autoexec(char *out, unsigned int max)
         "!silenced\n"
         "\n", max - 1);
 
-    if (g_t.rete) {
+    /* ! LA RETE NON STA PIU' QUI, e non e' un alleggerimento: e' dove doveva
+     * stare. Questo file lo esegue la shell della prima console, cioe' a ogni
+     * accesso e con l'identita' di chi entra — un utente normale non puo'
+     * caricare un driver, e chi rientrava dopo un `exit` riaccendeva servizi
+     * gia' accesi. I quattro anelli della catena sono voci di [modules] in
+     * kernel.cfg dal 24 agosto 2026: li avvia il kernel, una volta, da root.
+     *
+     * Qui restano i comandi di CHI USA la macchina, che e' quello che un
+     * autoexec e' sempre stato. Di suo, appena installato, non ne ha nessuno. */
+    if (g_t.rete && g_t.rete_driver[0]) {
         strncat(out,
-            "echo Accendo la rete...\n"
-            "\n"
-            "# L'ordine non e' modificabile: ogni passo serve al successivo.\n"
-            "# `netdetect -c` sceglie da solo il driver giusto per la scheda.\n"
-            "/dev/pci.drv &\n"
-            "netdetect -c\n"
-            "/dev/ip.drv &\n"
-            "\n"
-            "# Un indirizzo dal DHCP, se c'e' un server. Quello che stampa si\n"
-            "# vede: e' il risultato, non il comando.\n"
-            "dhcp\n"
-            "\n"
-            "echo Rete pronta. `ipcfg` la mostra, `ping` la prova.\n",
-            max - 1 - strlen(out));
+            "# La rete si accende da sola: i driver stanno in [modules] di\n"
+            "# /boot/kernel.cfg. `ipcfg` la mostra, `ping` la prova.\n"
+            "@echo Sistema pronto.\n", max - 1 - strlen(out));
+    } else if (g_t.rete) {
+        strncat(out,
+            "# C'e' una scheda Ethernet ma non il driver per guidarla:\n"
+            "# `netdetect` dice il numero del modello, `netdetect -t` la\n"
+            "# tabella di quelli riconosciuti.\n"
+            "@echo Sistema pronto.\n", max - 1 - strlen(out));
     } else {
         strncat(out,
             "# Nessuna scheda Ethernet trovata: niente da accendere.\n"
@@ -1022,7 +1295,7 @@ int main(int argc, char **argv)
     unisci(p_cfg, boot, "kernel.cfg");
     unisci(p_aut, boot, "autoexec.sh");
 
-    componi_kernel_cfg(cfg, sizeof(cfg));
+    componi_kernel_cfg(cfg, sizeof(cfg), p_cfg);
     componi_autoexec(aut, sizeof(aut));
 
     printf("Cosa scriverei\n\n");
@@ -1035,7 +1308,9 @@ int main(int argc, char **argv)
     }
 
     printf("I file di adesso finiscono in .bak, e questi li sostituiscono\n");
-    printf("PER INTERO — i commenti che ci sono ora si perdono.\n\n");
+    printf("PER INTERO — i commenti che ci sono ora si perdono.\n");
+    printf("Si riportano avanti soltanto `login` e `svga`: sono decisioni che\n");
+    printf("con l'hardware non c'entrano, e nessuno potrebbe rimetterle.\n\n");
     printf("Procedo? [si/no] ");
 
     {

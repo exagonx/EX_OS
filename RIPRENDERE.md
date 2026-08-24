@@ -12,12 +12,13 @@ seriale e USB — tastiera compresa, hub compresi.
 
 ## COSA E' COMMITTATO
 
-    526f62b  "Recovery come root, i due conti li crea l'installatore, e il
-              kernel parla ASCII"
+    7c58a8b  "I due README imparano otto commit, e la versione torna a
+              voler dire qualcosa"
 
-In attesa nell'albero: **`sudo`**, la syscall `SYS_SU` con **SHA-256 dentro il
-kernel**, `vfs_open_autorita()`, `statperm()`, e la domanda
-sull'amministratore nell'installatore.
+In attesa nell'albero: le **tre correzioni del 24 agosto 2026** — `login` che
+non scende piu' con la shell (`SPAWN_F_UTENTE`, kernel **0.203**), `hwconfig`
+che non spegne piu' l'accesso riscrivendo kernel.cfg, e la rete che si accende
+da `[modules]` invece che da `autoexec.sh`. La sezione e' qui sotto.
 
 ! **`gitupdate.sh` FA `git add .` E UN COMMIT SOLO**: `messaggio-commit.txt`
 deve coprire tutto quello che si e' fatto dall'ultimo commit, non l'ultima
@@ -38,6 +39,87 @@ che il toolkit ha chiesto tre volte», «cose che vogliono un pezzo di kernel
 nuovo» — si sono svuotate fra il 17 e il 18 agosto e sono state tolte: i
 lettori di immagini, il toolkit, i permessi, il dialogo «si'/no», le finestre
 modali, il ridimensionamento, SSH, TSC e PSE.
+
+### FATTO — LE TRE DEL 24 AGOSTO: accesso, kernel.cfg e la rete all'avvio
+
+Erano le tre voci di `in_lavorazione.txt`, e hanno una radice sola: **`login`
+ha cambiato chi possiede la prima console**, e tre pezzi scritti prima di lui
+sono rimasti indietro.
+
+#### `exit` chiudeva la console dietro di se'
+
+Entrare come utente, `exit`, riprovare: «Accesso non riuscito» con qualunque
+password, per sempre. Da root no. Il difetto stava in una parola: **login e' un
+CICLO**, e per lanciare la shell scendeva con `setuid()`. Dopo, quel processo
+E' l'utente — e `/boot/ombra` e' 0600 di root, quindi al giro dopo non poteva
+nemmeno leggerlo. Da giu' non si torna su: EX-OS non ha il bit setuid sui file.
+
+! **LA CORREZIONE NON E' RIMEDIARE DOPO, E' NON SCENDERE.** `spawn()` ha
+imparato `SPAWN_F_UTENTE`: il figlio nasce con l'identita' che gli si dice, e
+**solo un processo gia' root puo' chiederlo**. Chi non lo e' prende `EPERM` e
+non parte niente — non «parte come prima», che sarebbe il modo silenzioso di
+aprire una shell con i privilegi di un altro.
+
+! **LA MAGIA DEL BLOCCO EXTRA E' PASSATA A `'SPO0'` (596 -> 604 byte): SI
+RICOMPILA TUTTO.** Un binario vecchio passa `'SPNZ'`, il kernel non lo
+riconosce e lo IGNORA, cioe' perde redirezioni e ambiente senza dirlo. E' gia'
+successo il 14 agosto.
+
+! **IL CASO PARTICOLARE E' CIO' CHE HA TENUTO NASCOSTO IL DIFETTO**: `if (uid
+!= 0)` saltava il setuid per root, e root e' l'utente con cui si prova.
+
+#### `hwconfig` toglieva `login` da kernel.cfg
+
+Riscrive il file per intero, ed e' giusto — rispecchia l'hardware, e l'hardware
+lo ha appena guardato. Ma il kernel lancia `/bin/login` **solo se la riga c'e'**
+(PASSO 15): un `hwconfig` su una macchina installata la toglieva, e al riavvio
+dopo si entrava senza password. Ora `login` e `svga` si riportano avanti — se
+c'erano restano com'erano, e `login` si aggiunge anche se mancava. Le righe
+commentate non contano come voci, e la sezione si guarda.
+
+#### La rete non e' roba da `autoexec.sh`
+
+L'autoexec lo esegue la shell della prima console: con `login` in mezzo nasce a
+**ogni accesso** e con l'identita' di chi entra. I driver si riaccendevano a
+ogni rientro, e se il primo a entrare non era root non si accendevano affatto.
+Sono passati in `[modules]` di kernel.cfg, dove li carica il kernel: una volta,
+da root, prima di qualunque console.
+
+! **MA IL KERNEL NON METTE I MODULI IN FILA: LI AVVIA TUTTI INSIEME.** In uno
+script l'ordine lo garantisce chi lo scrive; li' no, e un driver che chiede il
+proprio fornitore mezzo secondo troppo presto ESCE — e all'avvio non lo
+rilancia nessuno. A metterli in fila e' `ipc_attendi()`: la scheda aspetta il
+bus, lo stack aspetta la scheda, `dhcp` aspetta lo stack.
+
+! **E LA TABELLA «SCHEDA -> DRIVER» SI ERA SFASATA DA SOLA, SENZA NESSUNA
+COPIA.** Stava dentro `netdetect.c` con accanto scritto di non duplicarla; poi
+e' stato scritto `/dev/e1000.drv` e la riga `8086:100E` e' rimasta a «driver da
+scrivere» — su QEMU, dove quella scheda e' la predefinita, `netdetect -c`
+diceva che il driver non c'era mentre stava nel CD accanto. Ora sta in
+`lib/rete.c` e la leggono in due. **Il difetto non era la copia: era che
+l'elenco stesse dentro un programma.**
+
+#### Come si e' provato
+
+Disco ext2 vero (`make hd`, root/root e mario/mario), non un ragionamento:
+mario entra, `id` da' `uid=1000`, `exit` torna al prompt, mario rientra, root
+entra dopo di lui, una password sbagliata e' ancora rifiutata, `sudo id` da'
+`uid=0`. `hwconfig -n` mostra `login = /bin/login` sia sul file
+dell'installatore sia su quello che ha scritto lui (idempotente). Riavviato: la
+catena si accende da sola e `ipcfg` mostra 10.0.2.15 preso dal DHCP. Il CD
+accende la rete da solo. `libctest` resta a 315 su 316.
+
+! **`tools/mkhd.sh` NON RISPONDEVA PIU' ALL'INSTALLATORE** da quando `install`
+chiede i due conti (19 agosto): restava fermo su «password di root:» e finiva
+con «l'installazione non e' arrivata in fondo» — un messaggio che accusa
+l'installatore mentre il difetto era nello script. Senza correggerlo non
+c'era nessun disco su cui provare l'accesso.
+
+! **E `boot/autoexec.sh` HA UN TETTO DI 2 KB**: la shell lo legge in una volta
+sola e tronca il resto. Aggiungendoci nove righe di commento il file e' passato
+a 2230 byte e la riga `dhcp` e' finita oltre il taglio — la rete del CD si
+fermava allo stack, in silenzio. L'avviso c'e' («script piu' lungo di 2 KB»),
+ma scorre via nell'avvio.
 
 ### FATTO — le immagini nel browser
 

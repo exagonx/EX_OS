@@ -654,13 +654,21 @@ static int chiedi_pci(int pid, unsigned int ordinale, PciDispositivo *out)
     return -1;
 }
 
+/* ! SI ASPETTA IL BUS, NON SI PRETENDE DI TROVARLO ACCESO. Da quando la rete
+ * si accende da [modules] di /boot/kernel.cfg, il kernel avvia il server PCI e
+ * questo driver UNO DOPO L'ALTRO, senza aspettare in mezzo: chiedere subito
+ * vuol dire chiedere a chi non si e' ancora registrato, uscire, e lasciare la
+ * macchina senza rete fino al riavvio — dove magari va, perche' i tempi
+ * cambiano. Chi lo lancia a mano trova il servizio gia' li' e non aspetta
+ * niente. */
+#define ATTESA_PCI_MS  5000
 static int cerca_su_pci(void)
 {
     PciDispositivo d;
     unsigned int   ord;
     int            pid, n, i;
 
-    pid = ipc_lookup(PCI_SERVIZIO);
+    pid = ipc_attendi(PCI_SERVIZIO, ATTESA_PCI_MS);
     if (pid <= 0) {
         printf("e1000: il servizio PCI non c'e'. Avvialo:  /dev/pci.drv &\n");
         return -1;
