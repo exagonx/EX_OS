@@ -1,14 +1,11 @@
 Bug trovati:
-(nessuno aperto)
-
-I tre del 24 agosto 2026 sono chiusi e committati (4c64777): l'accesso che si
-chiudeva dietro al primo `exit`, `hwconfig` che toglieva `login` da kernel.cfg,
-i driver di rete passati da autoexec.sh a [modules].
-
-Il quarto, trovato mentre si provava, era la PROVA e non il sistema:
-/bin/libctest chiedeva ancora che `rename` fallisse su una destinazione
-occupata — regola cambiata il 20 agosto. Corretta: 319 prove su 319, su FAT12
-e su ext2.
-
-Cosa manca sta in RIPRENDERE.md («Rifiniture, quando conviene» e «Difetti
-aperti, dichiarati») e il prossimo lavoro grosso in DIREZIONE.md.
+Il BIO di file di OpenSSL non legge i file di EX-OS.
+    SSL_CTX_load_verify_locations("/cdrom/exos/ssl/certi.pem") rende
+    error:05880020 «x509 certificate routines::BIO lib», mentre `ls` vede il
+    file e `cp` lo copia. Lo stesso file letto con open/read e passato a un BIO
+    di memoria si carica benissimo: 150 certificati.
+    Sospetto: fseek/ftell o ferror nella nostra stdio, che il BIO di file usa e
+    la maggior parte dei nostri programmi no. Da cercare con un programma
+    minimo che apra un file con il solo stdio e ne legga la coda.
+    Aggirato in tools/iso/prova-tls.c, con il perche' scritto accanto — ma e'
+    un aggiramento, non una correzione.

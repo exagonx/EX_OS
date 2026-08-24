@@ -2817,7 +2817,7 @@ ip_drv: dirs $(IP_DRV_OUT)
 # agosto 2026 questa riga ripeteva a mano i nomi dei programmi di rete e
 # dei driver, e mancavano pcnet_drv e xcp: due elenchi della stessa cosa
 # divergono al primo che si dimentica di aggiornarne uno.
-all: dirs stage1 stage2 kernel $(PROGRAMMI_FLOPPY) $(PROGRAMMI_CD) $(PROGRAMMI_EXWIN) $(DRIVER_CD) verifica-programmi verifica-statici verifica-versioni verifica-exbig verifica-exasn1 floppy
+all: dirs stage1 stage2 kernel $(PROGRAMMI_FLOPPY) $(PROGRAMMI_CD) $(PROGRAMMI_EXWIN) $(DRIVER_CD) verifica-programmi verifica-statici verifica-versioni verifica-exbig verifica-exasn1 verifica-excert verifica-extls floppy
 	@echo ""
 	@echo "============================================"
 	@echo " EX-OS build completata!"
@@ -3784,6 +3784,8 @@ $(ISO_IMG): Makefile $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_PROVE) \
 	@# porta libcrypto.a in /exos/lib e il programma di prova in /bin.
 	@if [ -f "$(OPENSSL_BUILD)/libcrypto.a" ]; then \
 	    cp "$(OPENSSL_BUILD)/libcrypto.a" $(ISO_ROOT)/exos/lib/; \
+	    [ -f "$(OPENSSL_BUILD)/libssl.a" ] && \
+	        cp "$(OPENSSL_BUILD)/libssl.a" $(ISO_ROOT)/exos/lib/; \
 	    mkdir -p $(ISO_ROOT)/exos/include/openssl; \
 	    cp -r "$(OPENSSL_BUILD)/include/openssl/." $(ISO_ROOT)/exos/include/openssl/ 2>/dev/null || true; \
 	    cp -r openssl/include/openssl/. $(ISO_ROOT)/exos/include/openssl/ 2>/dev/null || true; \
@@ -3796,6 +3798,30 @@ $(ISO_IMG): Makefile $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_PROVE) \
 	    fi; \
 	else \
 	    echo "     OpenSSL assente: si costruisce con tools/openssl-exos/prepara-openssl.sh"; \
+	fi
+	@# --- provatls: un handshake TLS vero, dentro EX-OS -------------------
+	@#
+	@# ! E' LA PROVA CHE libssl SERVE A QUALCOSA, non che si compila. Fa un
+	@# handshake completo sopra lo stack IPC di EX-OS, con due BIO di memoria
+	@# al posto dei socket che non abbiamo, e stampa protocollo, cifrario,
+	@# certificato e VERDETTO DELLA VERIFICA.
+	@#
+	@# ! E IL MAGAZZINO DELLE CA VA SUL CD INSIEME. Senza, il programma dice
+	@# che non verifica — e lo dice, che e' meglio di tacere — ma non serve a
+	@# niente: cifrare con chiunque risponda e' peggio del testo in chiaro.
+	@if [ -f "$(OPENSSL_BUILD)/libssl.a" ] && command -v i386-exos-gcc >/dev/null 2>&1; then \
+	    mkdir -p $(ISO_ROOT)/exos/ssl; \
+	    for f in /etc/ssl/certs/ca-certificates.crt; do \
+	        [ -f "$$f" ] && cp "$$f" $(ISO_ROOT)/exos/ssl/certi.pem && break; \
+	    done; \
+	    i386-exos-gcc -O2 -I drivers/net -I drivers/pci \
+	        -I "$(OPENSSL_BUILD)/include" -I openssl/include \
+	        -o $(ISO_ROOT)/bin/provatls $(TOOLS_DIR)/iso/prova-tls.c \
+	        lib/rete.c lib/dns.c \
+	        "$(OPENSSL_BUILD)/libssl.a" "$(OPENSSL_BUILD)/libcrypto.a" \
+	        2>/dev/null && \
+	    i386-exos-strip $(ISO_ROOT)/bin/provatls && \
+	    echo "     TLS: libssl.a e /bin/provatls ($$(du -h $(ISO_ROOT)/bin/provatls | cut -f1))$$([ -f $(ISO_ROOT)/exos/ssl/certi.pem ] && echo ', magazzino CA')"; \
 	fi
 	@# --- FreeBASIC: il compilatore e la sua runtime ----------------------
 	@# Stessa regola di GCC, binutils e OpenSSL: non sta nel repository, si
@@ -4310,6 +4336,61 @@ verifica-exasn1: $(EXASN1_SRC) $(EXASN1_HDR)
 .PHONY: prova-exasn1
 prova-exasn1:
 	@python3 tools/prove/asn1prova.py
+
+# =============================================================================
+# lib/excert — la catena: da un certificato a una radice di cui ci si fida
+#
+# ! E' LA PARTE CHE, SE MANCA, RENDE IL TLS PEGGIO DEL TESTO IN CHIARO. Una
+# connessione cifrata con chiunque risponda e' cifrata con chi sta in mezzo, e
+# la barra scrive `https://` — cioe' dice a chi legge che e' al sicuro.
+#
+# ! LA SUA PROVA COSTRUISCE UNA PKI VERA con openssl — radice, intermedia,
+# sito — e poi la rovina: una CA che non e' una CA, una radice fuori dal
+# magazzino, un byte cambiato, le date spostate. Un verificatore che risponde
+# sempre «si'» passa il caso buono: sono i casi cattivi a smascherarlo, e il
+# MOTIVO del rifiuto conta quanto il rifiuto.
+# =============================================================================
+EXCERT_SRC := lib/excert/excert.c
+EXCERT_HDR := lib/excert/excert.h
+
+.PHONY: verifica-excert
+verifica-excert: $(EXCERT_SRC) $(EXCERT_HDR)
+	@$(CC) $(CFLAGS_USER) -I lib/excert -I lib/exasn1 -I lib/exbig \
+	    -c $(EXCERT_SRC) -o $(BUILD_OBJ)/excert_prova.o
+	@echo "[OK] lib/excert compila per i386"
+
+.PHONY: prova-excert
+prova-excert:
+	@python3 tools/prove/certprova.py
+
+# =============================================================================
+# lib/extls — i pezzi che TLS 1.3 chiede e che non stanno altrove
+#
+# Per adesso tre: HMAC-SHA256, HKDF (con l'etichetta di TLS 1.3) e RSA-PSS.
+#
+# ! PSS NON E' UN DOPPIONE DI PKCS#1 v1.5: TLS 1.3 ha TOLTO v1.5 dalla
+# CertificateVerify. I certificati restano firmati in v1.5 — e quello sta in
+# lib/excert — mentre la firma che il server fa sul dialogo in corso e' PSS. Un
+# TLS che sa fare solo v1.5 non completa nessun handshake 1.3.
+# =============================================================================
+EXTLS_SRC := lib/extls/extls_kdf.c lib/extls/extls_pss.c
+EXTLS_HDR := lib/extls/extls.h
+
+.PHONY: verifica-extls
+verifica-extls: $(EXTLS_SRC) $(EXTLS_HDR)
+	@$(CC) $(CFLAGS_USER) -I lib/extls -I lib/exbig -c lib/extls/extls_kdf.c \
+	    -o $(BUILD_OBJ)/extls_kdf_prova.o
+	@$(CC) $(CFLAGS_USER) -I lib/extls -I lib/exbig -c lib/extls/extls_pss.c \
+	    -o $(BUILD_OBJ)/extls_pss_prova.o
+	@echo "[OK] lib/extls compila per i386"
+
+.PHONY: prova-extls
+prova-extls:
+	@python3 tools/prove/tlsprova.py
+
+# Le prove dei pezzi dell'https, in fila.
+.PHONY: prova-tls
+prova-tls: prova-exbig prova-exasn1 prova-excert prova-extls
 
 .PHONY: verifica-versioni
 verifica-versioni:

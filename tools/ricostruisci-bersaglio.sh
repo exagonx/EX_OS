@@ -346,12 +346,18 @@ fi
 if vuoi openssl; then
     fase "OpenSSL (libcrypto.a)"
     tools/openssl-exos/prepara-openssl.sh
-    # ! libcrypto.a E BASTA, non `build_libs`. Quello tira dentro anche
-    # libssl, che NON si costruisce: ssl/rio/ di OpenSSL 4.x vuole fd_set
-    # e il polling sui socket, cioe' un BIO sopra lo stack IPC — lavoro
-    # vero, non uno stub, e finche' non c'e' la fase intera morirebbe qui
-    # portandosi dietro le successive.
-    ( cd "$HOME/openssl-build-exos" && make -j2 libcrypto.a )
+    # ! ADESSO ANCHE libssl.a, E LA NOTA DI PRIMA ERA FALSA PER COLPA DI UN
+    # ALBERO ROTTO. Qui c'era scritto che libssl «non si costruisce: ssl/rio di
+    # OpenSSL 4.x vuole fd_set e il polling sui socket». Il 24 agosto 2026 si e'
+    # scoperto che 822 file di openssl/ erano di ZERO BYTE dal 3 agosto — e fra
+    # quelli c'era proprio `ssl/rio/build.info`. Con i sorgenti interi libssl.a
+    # si costruisce senza un errore.
+    #
+    # ! E I SOCKET NON SERVONO DAVVERO: OpenSSL vuole leggere e scrivere byte,
+    # non un descrittore. Con due BIO di memoria il facchinaggio lo fa il
+    # programma, ed e' la strada documentata — vedi tools/iso/prova-tls.c, che
+    # fa un handshake vero sopra lo stack IPC di EX-OS.
+    ( cd "$HOME/openssl-build-exos" && make -j2 libcrypto.a libssl.a )
 fi
 
 # --- Il CD, con dentro tutto quanto sopra ------------------------------------

@@ -517,6 +517,195 @@ vuoti da noi, e la 819esima e' `Configurations/50-exos.conf`, che e' nostro e
 la' non c'e'. Gli unici quattro rimasti vuoti si chiamano `empty.txt` e
 `smcont_zero.txt`: sono vuoti di mestiere.
 
+### FATTO — HTTPS DENTRO EX-OS, con la libssl di OpenSSL
+
+    /cdrom/bin/provatls example.com 443 /
+
+    provatls: example.com e' 172.66.147.243, porta 443
+    provatls: TCP aperta (id 1)
+    provatls: 150 certificati nel magazzino
+    provatls: magazzino /cdrom/exos/ssl/certi.pem, il certificato SI VERIFICA
+    provatls: HANDSHAKE FATTO
+              protocollo TLSv1.3
+              cifrario   TLS_AES_256_GCM_SHA384
+              soggetto   /CN=example.com
+              emittente  /C=US/O=SSL Corporation/CN=Cloudflare TLS Issuing ECC CA 3
+              verifica   OK (0)
+    --- risposta ---
+    HTTP/1.1 200 OK
+    ...
+    --- 868 byte in chiaro ---
+
+! **E LA VERIFICA NON E' UN TIMBRO**: contro un server TLS locale con un
+certificato autofirmato, lo stesso programma dice
+
+    provatls: handshake fallito
+              error:0A000086:SSL routines::certificate verify failed
+
+#### La nota che diceva «libssl non si costruisce» era falsa da tre settimane
+
+`ricostruisci-bersaglio.sh` spiegava che si costruisce solo `libcrypto.a`
+perche' «ssl/rio di OpenSSL 4.x vuole fd_set e il polling sui socket». Era vero
+su un albero dei sorgenti a cui mancavano **822 file** — e fra quelli c'era
+proprio `ssl/rio/build.info`. Riparato l'albero, `libssl.a` si costruisce
+**senza un errore**, 53 oggetti, 900 KB.
+
+! **E I SOCKET NON SERVIVANO DAVVERO.** OpenSSL vuole leggere e scrivere byte,
+non un descrittore: con due BIO di memoria il facchinaggio lo fa il programma —
+cio' che la libreria vuole spedire si manda con `IP_MSG_TCP_INVIA`, cio' che
+arriva glielo si mette dentro. E' la strada documentata, non un aggiramento, ed
+e' quella che usa chiunque metta TLS sopra un trasporto che non e' un socket.
+
+#### Il difetto che e' uscito, e che non e' stato aggirato in silenzio
+
+`SSL_CTX_load_verify_locations` sul magazzino del CD rende
+
+    error:05880020:x509 certificate routines::BIO lib
+
+Il file c'e', `ls` lo vede, `cp` lo copia — ma il **BIO di file** di OpenSSL non
+ci arriva. E' un difetto della nostra stdio (o di cosa quel BIO si aspetta da
+`fseek`/`ftell`), sta in `in_lavorazione.txt`, e nel frattempo `provatls` legge
+il magazzino con `open`/`read` e lo carica da un BIO di memoria — con il perche'
+scritto accanto. **Un aggiramento che nessuno scrive diventa il motivo per cui,
+fra sei mesi, «openssl non legge i file» sembra normale.**
+
+#### E allora `extls` a cosa serve?
+
+! **A far navigare il BROWSER, che sta sul CD di sistema.** `libcrypto.a` piu'
+`libssl.a` sono sei megabyte e stanno sul CD degli STRUMENTI, che ne pesa 167:
+il browser vive sui nove del CD di sistema, e li' dentro OpenSSL non ci sta.
+`exbig`, `exasn1`, `excert` ed `extls` insieme sono qualche decina di
+chilobyte.
+
+! **MA ADESSO C'E' UN RIFERIMENTO CONTRO CUI PROVARLO, e non e' poco**: un
+server TLS 1.3 vero raggiungibile dalla macchina virtuale, e la stessa
+connessione fatta in due modi. Quando l'handshake nostro sbagliera' un byte del
+key schedule, ci sara' qualcosa con cui confrontare invece di indovinare.
+
+### FATTO — HMAC, HKDF e RSA-PSS: i tre mattoni che TLS 1.3 chiede
+
+`lib/extls`, il primo pezzo della terza libreria. Sono tre cose piccole e
+tutt'e tre indispensabili:
+
+  - **HMAC-SHA256**, il mattone di tutto il resto;
+  - **HKDF** (RFC 5869) con **HKDF-Expand-Label** (RFC 8446), cioe' il modo in
+    cui TLS 1.3 tira fuori tutte le chiavi da un segreto solo;
+  - **RSA-PSS**, verifica.
+
+! **PSS NON E' UN DOPPIONE DI PKCS#1 v1.5.** TLS 1.3 ha TOLTO v1.5 dalla
+CertificateVerify: i certificati restano firmati quasi sempre in v1.5 — e
+quello sta in `lib/excert` — mentre la firma che il server fa sul dialogo in
+corso e' PSS. Un TLS che sa fare solo v1.5 non completa nessun handshake 1.3.
+
+! **E PSS NON SI PUO' RICOSTRUIRE INTERO**, perche' porta un sale casuale: si
+ricostruisce l'IMPRONTA FINALE — che dal sale dipende — e si confronta quella,
+mentre il resto della busta si controlla pezzo per pezzo. Il punto delicato e'
+`emBits = bit(modulo) - 1`: sbagliarlo di uno fa rifiutare firme buone **solo
+su alcune chiavi**, quelle la cui misura in bit non e' multipla di otto — cioe'
+il modo peggiore di sbagliare, perche' sembra funzionare.
+
+#### Provato contro le RFC, contro Python e contro openssl
+
+    make prova-extls
+
+    10 vettori RFC 4231/5869, 300 HMAC a caso, 6 expand-label
+    12 firme PSS di openssl verificate, 36 varianti rovinate rifiutate
+    nessuna differenza
+
+! **I VETTORI DELLE RFC SONO IL RIFERIMENTO PIU' SOLIDO CHE ESISTA**: numeri
+stampati dentro uno standard, calcolati da altri, controllati da vent'anni di
+implementazioni. Ma sono pochi e tutti corti, quindi accanto ci sono trecento
+HMAC su dati a caso confrontati con il modulo `hmac` di Python — chiavi piu'
+lunghe del blocco, messaggi vuoti, chiavi da duecento byte: casi che in nessuna
+RFC compaiono.
+
+! **E PER PSS IL RIFERIMENTO E' CHI LE FIRME LE FA**: si firma con `openssl
+pkeyutl -pkeyopt rsa_padding_mode:pss` e si chiede a noi di verificarle. Poi
+ogni firma buona si rovina in tre modi — un bit girato, il messaggio cambiato,
+il sale di lunghezza diversa da quella pretesa — perche' un verificatore che
+dice sempre «si'» passa tutte le firme buone.
+
+! **E LA PROVA HA SBAGLIATO PRIMA DEL CODICE, di nuovo.** Le etichette di TLS
+1.3 contengono SPAZI — «c hs traffic», «res master» — e il banco le leggeva con
+uno `%s`, che si ferma al primo. Diceva «MALE» su un codice giusto perche' gli
+stava mandando meta' riga. Adesso l'etichetta viaggia in esadecimale anche se
+e' testo.
+
+**Restano, per un handshake vero**: il record (ChaCha20-Poly1305 c'e' gia'), la
+macchina a stati dell'handshake, l'ECDSA su P-256 — 39 dei 151 certificati
+radice sono gia' a curva — e il magazzino delle CA da mettere sul CD.
+
+### FATTO — `excert`: la catena, cioe' l'unica domanda che conta
+
+`exbig` fa il conto di una firma, `exasn1` dice quali numeri metterci. Questo
+risponde a **«posso fidarmi di chi mi ha risposto?»** — ed e' la parte che, se
+manca, rende il TLS PEGGIO del testo in chiaro: cifrare con chiunque risponda
+vuol dire cifrare con chi sta in mezzo, e la barra intanto scrive `https://`.
+
+Una catena e' buona se, per ogni anello: la **firma torna** con la chiave di
+chi lo ha emesso; l'emittente del figlio e' il soggetto del padre **byte per
+byte**; il padre e' una **CA** per basicConstraints; la data di oggi sta dentro
+la validita' di **tutti** gli anelli, intermedi compresi; e l'ultimo e' firmato
+da una radice **del magazzino**.
+
+! **LA RADICE NON SI VERIFICA CONTRO SE STESSA.** Un certificato autofirmato
+dimostra soltanto di possedere la propria chiave — vero anche per quello che si
+e' fatto in casa chi attacca. La radice vale perche' E' NEL MAGAZZINO.
+
+! **E IL NOME NON BASTA MAI.** Il nome dell'emittente lo scrive chi manda il
+certificato: cercare per nome e fermarsi li' vorrebbe dire farsi indicare da
+chi attacca quale radice usare. Il nome serve a SCEGLIERE il candidato fra le
+duecento del magazzino; poi si fa il conto.
+
+! **PKCS#1 v1.5 SI RICOSTRUISCE E SI CONFRONTA, NON SI ANALIZZA.** Guardare
+dentro la busta con un lettore vuol dire accettare tutto cio' che quel lettore
+lascia passare — byte in piu' in coda, lunghezze scritte lunghe, parametri
+diversi. Sono le firme di Bleichenbacher del 2006, e funzionavano proprio
+contro chi analizzava invece di confrontare. Qui la busta che DEVE esserci si
+costruisce e si confronta tutta.
+
+! **SHA-1 SI RIFIUTA PER NOME.** Le collisioni su SHA-1 si comprano, e una
+firma di CA e' esattamente il posto dove servono. Riconoscerlo serve a dire
+PERCHE' invece di dire «non lo capisco».
+
+#### Provato su una PKI vera, costruita e poi rovinata
+
+`make prova-excert` costruisce con openssl radice, intermedia e sito, e poi:
+
+    ok   catena buona                       OK
+    ok   radice non nel magazzino           SENZA RADICE
+    ok   magazzino vuoto                    SENZA RADICE
+    ok   senza l'intermedia                 SENZA RADICE
+    ok   un certificato di sito che firma   NON E' UNA CA
+    ok   emittente e soggetto non combaciano NOME DIVERSO
+    ok   scaduto (data spostata avanti)     SCADUTO
+    ok   non ancora valido (data indietro)  NON ANCORA VALIDO
+    ok   solo la radice, che sta nel magazzino OK
+    ok   un byte cambiato nel certificato   FIRMA SBAGLIATA
+
+! **UNA PROVA CHE GUARDA SOLO IL «SI'» NON PROVA NIENTE**: un verificatore che
+risponde sempre OK passa il caso buono. Sono i casi cattivi a smascherarlo — e
+il MOTIVO conta quanto il rifiuto, perche' «scaduto» e «non mi fido» mandano
+chi legge in due posti diversi.
+
+! **E UNA DELLE DIECI ASPETTATIVE ERA SBAGLIATA, NON IL CODICE.** Davo per
+rifiutata una catena fatta della sola radice che sta nel magazzino: e' valida,
+e lo e' anche per openssl. Non prova che chi risponde possieda la chiave — ma
+non e' compito della catena, e' della CertificateVerify dell'handshake, e un
+server che manda una radice quella chiave non ce l'ha.
+
+#### E l'impronta non e' qui dentro
+
+`excert.c` dichiara `sha256()` e non la contiene: dentro EX-OS la mette la
+libc, che ce l'ha gia'. Una seconda copia della stessa funzione e' la cosa che
+questo progetto ha imparato a temere di piu' — e nella prova sull'host la mette
+OpenSSL, cioe' l'implementazione di riferimento: qui si sta provando la CATENA,
+non l'impronta.
+
+**Restano, per `extls`**: HMAC e HKDF, RSA-PSS — che TLS 1.3 vuole al posto di
+PKCS#1 v1.5 per la CertificateVerify — l'ECDSA su P-256, e poi il record e
+l'handshake. E il magazzino sul CD, che e' un file da scrivere.
+
 ### FATTO — `exasn1`: DER e X.509, letti con diffidenza
 
 Il secondo dei tre pezzi. `exbig` sa fare il conto di una firma; questo sa dire
@@ -811,9 +1000,11 @@ la verita'. Per toglierlo servono, in quest'ordine:
                 primalita', niente CRT
     exasn1      FATTO il 24 agosto 2026 — DER e X.509. Il magazzino delle CA
                 resta da fare: e' un file da leggere, non un formato da capire
-    extls.so    TLS 1.3 — e i mattoni ci sono gia': SHA-256, SHA-512,
-                ChaCha20, Poly1305, X25519, Ed25519. Mancano HMAC e HKDF, che
-                sono un giorno
+    excert      FATTO il 24 agosto 2026 — la catena: chi firma chi, chi e' una
+                CA, cosa e' scaduto, e quale radice sta nel magazzino
+    extls.so    TLS 1.3 — HMAC, HKDF e RSA-PSS FATTI il 24 agosto 2026.
+                Restano il record, l'handshake, l'ECDSA su P-256 e il
+                magazzino delle CA da mettere sul CD
 
 ! **SSH HA EVITATO RSA APPOSTA, PER NON SCRIVERE UNA LIBRERIA DI INTERI
 LUNGHI. L'HTTPS NON PUO' EVITARLO.** I certificati del web sono RSA ed ECDSA
