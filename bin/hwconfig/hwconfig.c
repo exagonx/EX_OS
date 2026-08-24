@@ -783,14 +783,22 @@ static void componi_kernel_cfg(char *out, unsigned int max, const char *vecchio)
         int dhcp = c_e_nel_bersaglio("/bin/dhcp");
 
         if (pci && drv && ip) {
+            /* ! LA RETE NON STA PIU' IN [modules], E LA RAGIONE E' LA
+             * SUCCESSIONE. Il kernel avvia le voci di [modules] tutte insieme e
+             * non aspetta: ognuna deve aspettare il proprio fornitore, e su una
+             * macchina lenta quelle attese scadono — la rete resta spenta fino
+             * al riavvio dopo, dove magari va. In /boot/avvio.sh l'ordine e'
+             * quello delle righe, e `netdetect -c` non torna finche' il driver
+             * non ha registrato il servizio.
+             *
+             * ! E QUELLO SCRIPT LO ESEGUE `login`, PRIMA DELL'ACCESSO E DA
+             * root — non la shell dell'utente, che e' il difetto per cui la
+             * rete era finita in [modules] la prima volta. */
             snprintf(riga, sizeof(riga),
-                     "\n# La rete: %s\n"
-                     "# `ipcfg` la mostra, `ping` la prova. Per spegnerla basta\n"
-                     "# commentare queste righe con un '#'.\n"
-                     "pci         = /dev/pci.drv\n"
-                     "rete        = %s\n"
-                     "ip          = /dev/ip.drv\n",
-                     g_t.rete_modello, g_t.rete_driver);
+                     "\n# La rete: %s — si accende da /boot/avvio.sh, che\n"
+                     "# `login` esegue prima dell'accesso e da root. Li' l'ordine\n"
+                     "# e' garantito; qui non lo sarebbe.\n",
+                     g_t.rete_modello);
             strncat(out, riga, max - 1 - strlen(out));
 
             /* ! L'INDIRIZZO NON E' UN DRIVER, e sta qui lo stesso: e' l'ultimo
@@ -798,11 +806,7 @@ static void componi_kernel_cfg(char *out, unsigned int max, const char *vecchio)
              * accendersi. Senza un server DHCP fallisce e basta — l'indirizzo
              * si mette allora a mano con `ipcfg`, che scrive nello stack gia'
              * avviato dalle righe qui sopra. */
-            if (dhcp)
-                strncat(out,
-                        "# Un indirizzo dal DHCP, se c'e' un server. Senza:\n"
-                        "#   ipcfg -a 192.168.1.10 -m 255.255.255.0 -g 192.168.1.1\n"
-                        "dhcp        = /bin/dhcp\n", max - 1 - strlen(out));
+            (void)dhcp;
         } else {
             /* ! SI DICE COSA MANCA INVECE DI SCRIVERE UNA RIGA CHE NON PARTE.
              * Un modulo il cui file non c'e' il kernel lo salta con un avviso
@@ -842,6 +846,76 @@ static void componi_kernel_cfg(char *out, unsigned int max, const char *vecchio)
                 max - 1 - strlen(out));
 }
 
+/* =============================================================================
+ * /boot/avvio.sh — la successione che accende la rete
+ *
+ * ! LO ESEGUE `login`, PRIMA DELL'ACCESSO E DA root, e queste due parole sono
+ * tutta la differenza con l'autoexec: l'autoexec lo esegue la shell della prima
+ * console, cioe' DOPO che qualcuno e' entrato e con la SUA identita' — e un
+ * utente normale un driver non lo carica. Qui invece si e' root, si e' soli, e
+ * si aspetta la fine prima di mostrare il prompt.
+ *
+ * ! E L'ORDINE E' QUELLO DELLE RIGHE, che e' il motivo per cui la rete torna
+ * qui da [modules]: le voci di [modules] il kernel le avvia TUTTE INSIEME, e
+ * ognuna deve stare ad aspettare il proprio fornitore. Su una macchina lenta
+ * quelle attese scadono e la rete resta spenta fino al riavvio dopo — cioe' il
+ * difetto peggiore da cercare, perche' la volta dopo funziona.
+ * ============================================================================= */
+static void componi_avvio(char *out, unsigned int max)
+{
+    /* ! LA RIGA E' PIU' LUNGA DEL PARAGRAFO CHE CI SI ASPETTA, ed e' il motivo
+     * per cui e' 1024: qui dentro non ci va una riga di comando, ci va tutto il
+     * blocco della rete con i suoi commenti. Con 256 byte snprintf tagliava a
+     * meta' una frase e il file usciva monco senza dirlo — un troncamento non
+     * e' un errore, per snprintf. */
+    char riga[1024];
+
+    out[0] = '\0';
+
+    strncat(out,
+        "# =============================================================================\n"
+        "# avvio.sh — i comandi del SISTEMA, non di chi entra\n"
+        "#\n"
+        "# Lo esegue `login` prima dell'accesso e con i privilegi di root, sulla\n"
+        "# sola console 0, e aspetta che finisca. E' il posto delle cose che\n"
+        "# vogliono un ORDINE — accendere la rete e' la prima.\n"
+        "#\n"
+        "# Se una riga qui dentro si blocca: Alt+F2 da' una shell pulita, e\n"
+        "# cancellare questo file lo salta del tutto.\n"
+        "# =============================================================================\n"
+        "\n"
+        "!silenced\n"
+        "\n", max - 1);
+
+    if (g_t.rete && g_t.rete_driver[0]) {
+        snprintf(riga, sizeof(riga),
+            "echo Accendo la rete...\n"
+            "\n"
+            "# L'ordine non e' modificabile: ogni passo serve al successivo, e\n"
+            "# ognuno aspetta che il precedente abbia registrato il proprio\n"
+            "# servizio.\n"
+            "/dev/pci.drv &\n"
+            "%s &\n"
+            "/dev/ip.drv &\n"
+            "\n"
+            "# Un indirizzo dal DHCP, se c'e' un server. Senza, l'indirizzo si\n"
+            "# mette a mano:  ipcfg -a 192.168.1.10 -m 255.255.255.0 -g ...\n"
+            "dhcp\n"
+            "\n"
+            /* ! NIENTE BACKTICK IN CIO' CHE SI STAMPA. La shell non fa
+             * sostituzione di comando, ma qualcosa lungo la strada quella riga
+             * la troncava: usciva "Ret" e basta. Apici semplici. */
+            "echo Rete pronta: 'ipcfg' la mostra, 'ping' la prova.\n",
+            g_t.rete_driver);
+        strncat(out, riga, max - 1 - strlen(out));
+    } else {
+        strncat(out,
+            "# Nessuna scheda di rete da accendere. Se ne aggiungi una,\n"
+            "# rilancia `hwconfig`.\n"
+            "@echo Sistema pronto.\n", max - 1 - strlen(out));
+    }
+}
+
 static void componi_autoexec(char *out, unsigned int max)
 {
     out[0] = '\0';
@@ -875,8 +949,9 @@ static void componi_autoexec(char *out, unsigned int max)
      * autoexec e' sempre stato. Di suo, appena installato, non ne ha nessuno. */
     if (g_t.rete && g_t.rete_driver[0]) {
         strncat(out,
-            "# La rete si accende da sola: i driver stanno in [modules] di\n"
-            "# /boot/kernel.cfg. `ipcfg` la mostra, `ping` la prova.\n"
+            "# La rete la accende /boot/avvio.sh, che `login` esegue da root\n"
+            "# prima dell'accesso: qui dentro non serve niente.\n"
+            "# `ipcfg` la mostra, `ping` la prova.\n"
             "@echo Sistema pronto.\n", max - 1 - strlen(out));
     } else if (g_t.rete) {
         strncat(out,
@@ -1205,8 +1280,9 @@ int main(int argc, char **argv)
 {
     static char cfg[4096];
     static char aut[2048];
+    static char avv[4096];
     char        radice[PERC_MAX] = "";
-    char        p_cfg[PERC_MAX], p_aut[PERC_MAX], boot[PERC_MAX];
+    char        p_cfg[PERC_MAX], p_aut[PERC_MAX], p_avv[PERC_MAX], boot[PERC_MAX];
     int         solo_guarda = 0, solo_driver = 0, senza_chiedere = 0, i;
 
     for (i = 1; i < argc; i++) {
@@ -1297,12 +1373,15 @@ int main(int argc, char **argv)
     unisci(boot, radice[0] ? radice : "", "boot");
     unisci(p_cfg, boot, "kernel.cfg");
     unisci(p_aut, boot, "autoexec.sh");
+    unisci(p_avv, boot, "avvio.sh");
 
     componi_kernel_cfg(cfg, sizeof(cfg), p_cfg);
+    componi_avvio(avv, sizeof(avv));
     componi_autoexec(aut, sizeof(aut));
 
     printf("Cosa scriverei\n\n");
     printf("--- %s ---\n%s\n", p_cfg, cfg);
+    printf("--- %s ---\n%s\n", p_avv, avv);
     printf("--- %s ---\n%s\n", p_aut, aut);
 
     if (solo_guarda) {
@@ -1332,8 +1411,12 @@ int main(int argc, char **argv)
     if (scrivi_con_copia(p_cfg, cfg) != 0) return 1;
     printf("  scritto %s  (il precedente e' in %s.bak)\n", p_cfg, p_cfg);
 
+    if (scrivi_con_copia(p_avv, avv) != 0) return 1;
+    printf("  scritto %s  (lo esegue `login`, da root, prima dell'accesso)\n",
+           p_avv);
+
     if (scrivi_con_copia(p_aut, aut) != 0) return 1;
-    printf("  scritto %s  (il precedente e' in %s.bak)\n", p_aut, p_aut);
+    printf("  scritto %s  (i comandi di chi entra)\n", p_aut);
 
     printf("\nFatto. Al prossimo avvio la configurazione e' questa.\n");
     return 0;

@@ -12,23 +12,32 @@ seriale e USB — tastiera compresa, hub compresi.
 
 ## COSA E' COMMITTATO
 
-    4c64777  "Il login non scende piu' con la shell, e i driver di rete li
-              carica il kernel"
+    7c58a8b  "I due README imparano otto commit, e la versione torna a
+              voler dire qualcosa"
 
-Kernel **0.203**. Ci sono dentro le tre correzioni del 24 agosto — `login` che
-non scende piu' con la shell (`SPAWN_F_UTENTE`), `hwconfig` che non spegne piu'
-l'accesso riscrivendo kernel.cfg, la rete che si accende da `[modules]` — e la
-sezione che le racconta e' qui sotto.
+Kernel **0.205**. Ci sono dentro le correzioni del 24 agosto — `login` che non
+scende piu' con la shell (`SPAWN_F_UTENTE`), `hwconfig` che non spegne piu'
+l'accesso riscrivendo kernel.cfg, `sys_spawn` che capisce tutte le forme
+pubblicate del blocco EXTRA, `make verifica-statici`, la versione su ogni
+strumento con `-version`, le librerie `exbig`/`exasn1`/`excert`/`extls`,
+OpenSSL per i386-exos, e il browser che regge una pagina vera (UTF-8,
+allineamento delle tabelle, spazi).
 
-In attesa nell'albero, kernel **0.204**:
+In attesa nell'albero — **PROVATO, DA COMMETTERE**:
 
-  - **`sys_spawn` capisce tutte le forme pubblicate del blocco EXTRA**, non
-    solo l'ultima. La 0.203 aveva rotto il `gcc` che gira DENTRO EX-OS, e la
-    sezione qui sotto racconta come;
-  - **`make verifica-statici`**: `login`, `install`, `sh` e i driver DEVONO
-    essere statici, e adesso qualcuno lo controlla;
-  - la prova di `rename` in `/bin/libctest`, che era rimasta al contratto di
-    prima e accusava il kernel di un difetto che era suo.
+  - **`/boot/avvio.sh`: la rete si accende PRIMA dell'accesso.** E' il terzo
+    posto in cui questa catena e' stata messa, e il primo giusto: lo esegue
+    `login` da root, prima del prompt, e ASPETTA. Su CD e floppy — dove `login`
+    non c'e' — lo esegue la shell, e il confine fra le due strade e'
+    `EXOS_LOGIN=1` nell'ambiente. La sezione qui sotto racconta perche'
+    `autoexec.sh` e `[modules]` avevano fallito, ognuno a modo suo;
+  - **il browser tiene le pagine su disco**: 16 MB, sette giorni, potatura
+    delle piu' vecchie, otto caselle da 64 KB in RAM davanti, e la copia
+    locale usata QUANDO LA RETE NON RISPONDE, dicendolo nella barra di stato;
+  - **`install` fa tre domande**: minimale (la versione floppy), poi il resto
+    degli strumenti, poi ExWin completo — piu' `install -a`, che aggiorna solo
+    i file che ci sono gia'. L'elenco del minimale NON e' scritto a mano: il
+    Makefile lo ricava dal floppy appena costruito in `/boot/minimale.txt`.
 
 **321 prove su 321**, su floppy FAT12 e su disco ext2.
 
@@ -54,6 +63,63 @@ VOLTA.** Quello che ha trovato il difetto della firma — ricomporre i flussi TC
 da un dump e confrontare i buffer invece degli hash — sarebbe costato un'altra
 mezza giornata a riscriverlo. Vale anche per la ricetta con cui si porta il
 puntatore del mouse dove si vuole: mezz'ora a ritrovarla.
+
+## I tre posti della rete, e perche' i primi due erano sbagliati
+
+! **LA RETE E' STATA MESSA IN TRE POSTI DIVERSI IN DUE SETTIMANE**, e ognuno
+falliva per una ragione che l'altro non aveva. Vale la pena tenerne il conto,
+perche' e' la forma tipica dell'errore in un sistema con l'autenticazione: non
+si sbaglia il COMANDO, si sbaglia CHI lo esegue.
+
+**Primo posto: `autoexec.sh`.** Lo esegue la shell della prima console. Con
+`login` acceso quella shell nasce a OGNI accesso e con l'identita' di CHI ENTRA:
+i driver si riaccendevano a ogni rientro (una fila di `ipc_register` fallite con
+-17) e non partivano affatto se il primo a entrare non era root — un utente
+normale un driver non lo carica.
+
+**Secondo posto: `[modules]` di `kernel.cfg`.** Il kernel li carica lui, una
+volta e da root: giusto su chi, sbagliato su quando. **Le voci di `[modules]` il
+kernel le avvia TUTTE INSIEME**, e la catena e' `pci` -> driver della scheda ->
+`ip` -> `dhcp`, dove ogni anello deve trovare REGISTRATO il servizio di quello
+prima. Partendo in parallelo ognuno si mette ad aspettare, e su una macchina
+lenta quelle attese scadono. E' il difetto peggiore da cercare, perche' al
+riavvio dopo funziona.
+
+**Terzo posto: `/boot/avvio.sh`.** Lo esegue `login`, da root, prima
+dell'accesso, sulla sola console 0, e aspetta che finisca. Prima dell'accesso e
+da root e' cio' che manca al primo posto; l'ordine delle righe e' cio' che manca
+al secondo.
+
+! **SU CD E FLOPPY `login` NON C'E'**, perche' la radice non e' ext2: nessun
+proprietario da far rispettare, e il kernel lancia direttamente la shell — da
+root. Li' avvio.sh lo esegue la SHELL, prima dell'autoexec. Le due strade non si
+incrociano mai perche' `login` mette **`EXOS_LOGIN=1`** nell'ambiente della
+shell che avvia: trovarla significa «l'ha gia' fatto qualcuno». Togliere quel
+segno riporta esattamente al difetto del primo posto.
+
+! **E NEL RECOVERY LA RETE SI ACCENDE LO STESSO.** Quando `login` non si carica,
+il kernel apre una shell di riparazione: `EXOS_LOGIN` non c'e', quindi
+avvio.sh gira. Si ripara una macchina rotta avendo `ping` che funziona.
+
+Contorno che serve sapere:
+
+  - **`sh -f FILE`** esegue uno script e esce. E' cosi' che `login` chiama
+    avvio.sh;
+  - `hwconfig` scrive avvio.sh accanto a kernel.cfg e autoexec.sh, con il
+    driver della scheda che ha trovato, e i due file spiegano dov'e' andata la
+    rete;
+  - **snprintf su un buffer da 256 byte tagliava il blocco a meta' di una
+    frase**, e il file usciva monco senza dirlo — un troncamento non e' un
+    errore, per snprintf. La riga di `componi_avvio` e' 1024 byte, col perche'
+    scritto accanto;
+  - niente backtick in cio' che si stampa: la riga usciva come «Ret».
+
+**Come si prova.** Da disco ext2: `ipcfg` deve dare indirizzo, gateway e DNS
+subito dopo l'accesso, e nel log seriale «Accendo la rete...» deve stare PRIMA
+di «EX-OS - accesso». Uscendo e rientrando, «Accendo la rete» deve comparire UNA
+volta sola. Da CD la catena e' la stessa, eseguita dalla shell — ma **serve
+`-m 64M`**: a 32 MB `pci.drv` muore di page fault a EIP=0 appena avviato, ed e'
+un difetto suo, non di questo lavoro.
 
 ## La coda, in ordine
 

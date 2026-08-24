@@ -212,6 +212,14 @@ static void avvia_shell(const char *utente, unsigned int uid, unsigned int gid)
      * e ci si appoggera' il giorno che i file avranno un proprietario. */
     setenv("USER", utente, 1);
 
+    /* ! QUESTA VARIABILE DICE ALLA SHELL DI NON RIFARE L'AVVIO DEL SISTEMA.
+     * /boot/avvio.sh l'ha gia' eseguito `login`, da root e una volta sola; la
+     * shell lo esegue da se' SOLO dove `login` non c'e' — cioe' avviando da CD
+     * o da floppy, dove la radice non e' ext2 e il kernel lancia direttamente
+     * la shell. Senza questo segno i driver di rete si riaccenderebbero a ogni
+     * accesso, che e' esattamente il difetto da cui si viene. */
+    setenv("EXOS_LOGIN", "1", 1);
+
     /* =====================================================================
      * ! LA CASA SI CREA DA root E POI SI CONSEGNA, ed e' l'unico ordine che
      * funziona. /home appartiene a root con 0755: un utente normale non ci
@@ -372,6 +380,56 @@ static int utente_ammesso(const char *nome)
     return 1;
 }
 
+/* =============================================================================
+ * L'AVVIO DI SISTEMA — /boot/avvio.sh, prima che qualcuno entri
+ *
+ * ! LA RETE VUOLE UNA SUCCESSIONE, E [modules] NON LA GARANTISCE. Il kernel
+ * avvia le voci di [modules] tutte insieme e non aspetta: ognuna deve aspettare
+ * il proprio fornitore, e su una macchina lenta — o con una scheda che ci mette
+ * — le attese scadono e la rete resta spenta fino al riavvio dopo. In uno
+ * script l'ordine e' quello delle righe, e `netdetect -c` non torna finche' il
+ * driver non ha registrato il servizio.
+ *
+ * ! MA L'AUTOEXEC DELLA SHELL NON VA BENE, e non e' un dettaglio: lo esegue la
+ * shell della PRIMA CONSOLE, cioe' DOPO l'accesso e con l'identita' di chi
+ * entra — un utente normale un driver non lo carica, e chi rientra dopo un
+ * `exit` lo rieseguirebbe da capo.
+ *
+ * ! QUI INVECE SIAMO NEL POSTO GIUSTO: `login` gira PRIMA di chiunque, e gira
+ * da root. Lo script parte una volta sola, sulla console 0, e si ASPETTA che
+ * finisca: chi si trova davanti il prompt d'accesso ha gia' la rete accesa.
+ *
+ * ! E SI ASPETTA DAVVERO. Lanciarlo e tirare dritto vorrebbe dire il prompt
+ * d'accesso mescolato ai messaggi dei driver — e, peggio, un utente che entra
+ * mentre il sistema si sta ancora accendendo.
+ * ============================================================================= */
+#define AVVIO_SCRIPT  "/boot/avvio.sh"
+
+static void avvio_di_sistema(void)
+{
+    ConsoleInfo ci;
+    char       *argv[4];
+    int         pid, stato = 0;
+
+    /* Solo la console 0: le altre tre danno una shell pulita, ed e' la via
+     * d'uscita se una riga dello script si blocca. */
+    if (console_info(&ci) != 0 || ci.mia != 0) return;
+    if (access(AVVIO_SCRIPT, F_OK) != 0) return;
+
+    argv[0] = (char *)"sh";
+    argv[1] = (char *)"-f";
+    argv[2] = (char *)AVVIO_SCRIPT;
+    argv[3] = 0;
+
+    pid = spawn(g_shell, argv);
+    if (pid < 0) {
+        printf("login: %s non parte (%s)\n", AVVIO_SCRIPT, strerror(errno));
+        return;
+    }
+    waitpid(pid, &stato, 0);
+    exuser_prendi_console();     /* la shell dello script l'aveva presa */
+}
+
 int main(int argc, char **argv)
 {
     char nome[NOME_MAX], pass[PASS_MAX];
@@ -417,6 +475,10 @@ int main(int argc, char **argv)
     }
 
     exuser_prendi_console();
+
+    /* ! PRIMA DEL CICLO, NON DENTRO: lo script di avvio e' del SISTEMA, non
+     * della sessione. Dentro il ciclo ripartirebbe a ogni `exit`. */
+    avvio_di_sistema();
 
     for (;;) {
         if (!exuser_c_e_qualcuno(0)) {

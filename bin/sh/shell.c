@@ -3367,6 +3367,38 @@ static int esegui_script(const char *nome, const char *etichetta)
     return (r < 0) ? -1 : 0;
 }
 
+/* =============================================================================
+ * /boot/avvio.sh — l'avvio DEL SISTEMA, quando non c'e' `login`
+ *
+ * ! CHI LO ESEGUE DIPENDE DA DOVE SI E' AVVIATI, e le due strade non si
+ * incrociano mai. Su un sistema installato la radice e' ext2, il kernel lancia
+ * `login`, e avvio.sh lo esegue lui: da root, prima dell'accesso, una volta
+ * sola. Da CD o da floppy `login` non c'e' — non ci sono proprietari da far
+ * rispettare — e il kernel lancia direttamente questa shell, che gira da root:
+ * allora tocca a lei.
+ *
+ * ! LA VARIABILE EXOS_LOGIN E' IL CONFINE. La mette `login` nell'ambiente
+ * della shell che avvia: trovarla significa «l'ha gia' fatto qualcuno». Senza
+ * quel segno, ogni accesso riaccenderebbe i driver di rete gia' accesi — la
+ * fila di ipc_register fallite con -17 che si e' gia' vista con l'autoexec.
+ * ============================================================================= */
+#define AVVIO_PREDEFINITO  "/boot/avvio.sh"
+
+static void esegui_avvio(void)
+{
+    ConsoleInfo ci;
+    const char *v;
+
+    if (sh_console_info(&ci) != 0 || ci.mia != 0) return;
+    if (syscall3(SYS_PTY_CTL, 0, PTY_CTL_LEGGI_MISURA, 0) >= 0) return;
+
+    /* L'ha gia' eseguito `login`: qui non si tocca. */
+    v = env_get("EXOS_LOGIN");
+    if (v && v[0]) return;
+
+    esegui_script(AVVIO_PREDEFINITO, "avvio");
+}
+
 static void esegui_autoexec(void)
 {
     char        nome[128];
@@ -3445,6 +3477,23 @@ int shell_main(int argc, char **argv, char **envp)
     env_init();
     env_eredita(envp);
 
+    /* =====================================================================
+     * ! `sh -f <file>` ESEGUE UNO SCRIPT E BASTA, e serve a chi deve far
+     * girare una successione di comandi PRIMA che ci sia qualcuno davanti:
+     * `login` lo usa per /boot/avvio.sh. Senza, l'unico modo di eseguire uno
+     * script era essere la shell della prima console — cioe' dopo l'accesso, e
+     * con l'identita' di chi entra.
+     *
+     * ! NIENTE BANNER, NIENTE PROMPT, NIENTE autoexec: e' un esecutore, non una
+     * sessione. E si esce con il codice dell'ultimo comando.
+     * ===================================================================== */
+    if (argc >= 3 && sh_strcmp(argv[1], "-f") == 0) {
+        env_init();
+        env_eredita(envp);
+        esegui_script(argv[2], "avvio");
+        sh_exit(0);
+    }
+
     if (argc >= 2 && sh_strcmp(argv[1], "-c") == 0) {
         /* ! NON E' `line`, ED E' TRENTADUE VOLTE PIU' GRANDE. La riga di
          * `-c` non la scrive una persona: la scrive `make`, e la ricetta che
@@ -3504,6 +3553,7 @@ int shell_main(int argc, char **argv, char **envp)
 
     /* I comandi di /boot/autoexec.sh, se c'e'. Dopo il banner, cosi' quel
      * che stampano si legge sotto e non in mezzo. */
+    esegui_avvio();
     esegui_autoexec();
 
     /* Loop principale della shell */

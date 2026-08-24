@@ -616,20 +616,123 @@ static char chiedi(const char *domanda)
 }
 
 /* `modo`: 0 = chiedi, 1 = minimale senza chiedere, 2 = tutto senza chiedere. */
+/* =============================================================================
+ * IL MANIFESTO DEL MINIMALE — /boot/minimale.txt
+ *
+ * ! «MINIMALE» VUOL DIRE «QUELLO CHE STA SUL FLOPPY», e installando dal CD
+ * quella domanda non ha una risposta ovvia: il CD porta molto di piu' — i
+ * driver di rete, i programmi di rete, gli strumenti — tutti dentro le stesse
+ * /bin e /dev. Il manifesto e' l'elenco dei file del floppy, scritto DAL
+ * FLOPPY STESSO quando si costruisce il CD (vedi la regola dell'ISO nel
+ * Makefile).
+ *
+ * ! UN ELENCO SCRITTO QUI DENTRO SAREBBE UNA SECONDA VERITA', e divergerebbe
+ * dall'immagine al primo programma aggiunto o tolto. E' lo stesso motivo per
+ * cui i componenti opzionali non sono una tabella compilata ma le directory
+ * che si trovano sul supporto.
+ *
+ * ! E SE IL MANIFESTO NON C'E' SI INSTALLA TUTTO, che e' il comportamento di
+ * sempre: installando DAL floppy, il supporto E' il minimale, e non c'e'
+ * niente da distinguere.
+ * ============================================================================= */
+#define MINIMALE_MAX  (16u * 1024u)
+
+static char g_minimale[MINIMALE_MAX];
+static int  g_ha_minimale = 0;
+
+static void minimale_leggi(void)
+{
+    int fd, n;
+
+    g_ha_minimale = 0;
+    fd = open("/boot/minimale.txt", O_RDONLY);
+    if (fd < 0) return;
+
+    n = (int)read(fd, g_minimale, sizeof(g_minimale) - 1);
+    close(fd);
+    if (n <= 0) return;
+
+    g_minimale[n] = '\0';
+    g_ha_minimale = 1;
+}
+
+/* Vero se `dir/nome` e' nel manifesto. Il confronto e' su una riga intera:
+ * «bin/ls» non deve combaciare con «bin/lsof».
+ *
+ * ! I NOMI SI CONFRONTANO IN MINUSCOLO, e il manifesto e' gia' minuscolo:
+ * viene da una FAT12, dove i nomi corti sono MAIUSCOLI. Confrontare
+ * «KERNEL.BIN» con «kernel.bin» darebbe «non e' nel minimale» proprio per i
+ * due file senza cui non si avvia niente. */
+static char giu(char c)
+{
+    return (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c;
+}
+
+static int nel_minimale(const char *dir, const char *nome)
+{
+    const char *p = g_minimale;
+
+    if (!g_ha_minimale) return 1;          /* niente manifesto: tutto e' minimale */
+
+    while (*p) {
+        const char *r = p;
+        int         i = 0;
+
+        while (*p && *p != '\n') p++;
+
+        /* confronto: <dir>/<nome> contro la riga [r, p) */
+        if (dir && dir[0]) {
+            while (dir[i] && r + i < p && giu(r[i]) == giu(dir[i])) i++;
+            if (dir[i] != '\0' || r + i >= p || r[i] != '/') { if (*p) p++; continue; }
+            r += i + 1;
+        }
+        i = 0;
+        while (nome[i] && r + i < p && giu(r[i]) == giu(nome[i])) i++;
+        if (nome[i] == '\0' && r + i == p) return 1;
+
+        if (*p) p++;
+    }
+    return 0;
+}
+
+/* Cio' che si e' scelto di installare oltre al minimale. */
+static int g_vuole_strumenti = 0;      /* il resto di /bin, /lib, /dev */
+static int g_vuole_exwin     = 0;      /* /exwin e gli altri componenti */
+
+/* =============================================================================
+ * TRE PASSI, E SONO TRE DOMANDE CHE SI CAPISCONO
+ *
+ * ! PRIMA ERA UNA DOMANDA PER OGNI DIRECTORY TROVATA, e la domanda era «/doc?
+ * /exwin?» — cioe' chiedeva il NOME di una cartella a chi sta installando un
+ * sistema operativo, e per rispondere bisognava gia' sapere cosa c'e' dentro.
+ * Adesso i passi sono quelli che una persona ha in mente:
+ *
+ *   1. il MINIMALE, sempre: e' quello che sta su un floppy, cioe' quanto basta
+ *      ad avviare la macchina e a ripararla. Non si chiede;
+ *   2. IL RESTO DEGLI STRUMENTI: i driver che sul floppy non ci stanno, i
+ *      programmi di rete, quelli di sviluppo. Sono file dentro le stesse /bin,
+ *      /lib e /dev, e li distingue il manifesto;
+ *   3. EXWIN COMPLETO: l'interfaccia grafica, che e' una scelta a parte perche'
+ *      e' la piu' grossa e la piu' facile da rimandare.
+ *
+ * ! E L'ORDINE DELLE DOMANDE E' L'ORDINE IN CUI SI RINUNCIA. Se lo spazio
+ * finisce, a mancare dev'essere ExWin, non un driver; e a mancare prima dei
+ * driver dev'essere niente, perche' il minimale non e' negoziabile.
+ * ============================================================================= */
 static void scegli_componenti(int modo, const char *punto)
 {
     int i;
     char c;
 
-    if (cerca_componenti(punto) == 0) {
-        if (modo == 0)
-            printf("\nNon ci sono componenti opzionali su questo supporto:\n"
-                   "si installa il sistema minimale.\n");
+    cerca_componenti(punto);
+
+    if (modo == 1) {                    /* -m: solo il minimale */
+        g_vuole_strumenti = g_vuole_exwin = 0;
+        for (i = 0; i < g_n_comp; i++) g_comp[i].installa = 0;
         return;
     }
-
-    if (modo == 1) return;              /* minimale: nessuno */
-    if (modo == 2) {                    /* tutto: tutti */
+    if (modo == 2) {                    /* -t: tutto, senza chiedere */
+        g_vuole_strumenti = g_vuole_exwin = 1;
         for (i = 0; i < g_n_comp; i++) g_comp[i].installa = 1;
         return;
     }
@@ -637,28 +740,37 @@ static void scegli_componenti(int modo, const char *punto)
     printf("\n===============================================================\n");
     printf(" COSA INSTALLARE\n");
     printf("===============================================================\n");
-    printf("\nIl sistema minimale e' sempre incluso: kernel, /bin, /lib,\n");
-    printf("i driver e l'avvio. Senza quello EX-OS non parte.\n\n");
-    printf("Su questo supporto ci sono anche %d component%s in piu':\n\n",
-           g_n_comp, (g_n_comp == 1) ? "e" : "i");
+    printf("\n  1. Il sistema minimale — sempre.\n");
+    printf("     Kernel, avvio, /bin, /lib e i driver di base: e' quello che\n");
+    printf("     sta su un floppy, e basta ad accendere la macchina e a\n");
+    printf("     ripararla.\n");
 
-    for (i = 0; i < g_n_comp; i++)
-        printf("    /%s\n", g_comp[i].nome);
+    if (!g_ha_minimale)
+        printf("\n     (su questo supporto non c'e' il manifesto del minimale:\n"
+               "      si installa tutto cio' che c'e' in /bin, /lib e /dev)\n");
 
-    c = chiedi("\nInstallo solo il sistema minimale? [si/no] ");
-    if (c == 's' || c == 'S') {
-        printf("\nSistema minimale: nessun componente in piu'.\n");
-        return;
+    printf("\n  2. Il resto degli strumenti — da chiedere.\n");
+    printf("     I driver che sul floppy non ci stanno (rete, USB, grafica),\n");
+    printf("     i programmi di rete e quelli di sviluppo.\n");
+
+    c = g_ha_minimale ? chiedi("\n     Li aggiungo? [si/no] ") : 's';
+    g_vuole_strumenti = (c == 's' || c == 'S');
+
+    if (g_n_comp > 0) {
+        printf("\n  3. ExWin completo — da chiedere.\n");
+        printf("     L'interfaccia grafica: il server a finestre e le sue\n");
+        printf("     applicazioni.\n\n");
+        for (i = 0; i < g_n_comp; i++)
+            printf("       /%s\n", g_comp[i].nome);
+
+        c = chiedi("\n     Lo installo? [si/no] ");
+        g_vuole_exwin = (c == 's' || c == 'S');
+        for (i = 0; i < g_n_comp; i++) g_comp[i].installa = g_vuole_exwin;
     }
 
-    printf("\nUno per volta:\n\n");
-    for (i = 0; i < g_n_comp; i++) {
-        char d[96];
-
-        sprintf(d, "  /%s ? [si/no] ", g_comp[i].nome);
-        c = chiedi(d);
-        g_comp[i].installa = (c == 's' || c == 'S');
-    }
+    printf("\n  ->  minimale%s%s\n",
+           g_vuole_strumenti ? " + strumenti" : "",
+           g_vuole_exwin ? " + ExWin" : "");
 }
 
 static void installa_componenti(const char *punto, int aggiorna)
@@ -725,7 +837,11 @@ static int e_directory_di_programmi(const char *dest)
            strcmp(dest, "exwin/bin") == 0;
 }
 
-static void copia_dir(const char *sorgente, const char *punto, const char *dest)
+/* `solo_minimale`: si copia soltanto cio' che il manifesto elenca. Con 0 si
+ * copia tutto, che e' il comportamento di sempre e quello di un supporto senza
+ * manifesto. */
+static void copia_dir_filtrata(const char *sorgente, const char *punto,
+                               const char *dest, int solo_minimale)
 {
     DirEntry voci[LISTDIR_MAX_BATCH];
     char     pdest[PERC_MAX];
@@ -742,6 +858,7 @@ static void copia_dir(const char *sorgente, const char *punto, const char *dest)
 
             if (voci[i].is_dir) continue;          /* un livello solo */
             if (voci[i].name[0] == '.') continue;
+            if (solo_minimale && !nel_minimale(dest, voci[i].name)) continue;
 
             unisci(da, sorgente, voci[i].name);
             unisci(a,  pdest,    voci[i].name);
@@ -752,6 +869,11 @@ static void copia_dir(const char *sorgente, const char *punto, const char *dest)
         start += (unsigned int)n;
         if (n < LISTDIR_MAX_BATCH) break;
     }
+}
+
+static void copia_dir(const char *sorgente, const char *punto, const char *dest)
+{
+    copia_dir_filtrata(sorgente, punto, dest, 0);
 }
 
 /* =============================================================================
@@ -1228,8 +1350,14 @@ int main(int argc, char **argv)
         printf("Il volume dev'essere gia' montato in lettura/scrittura:\n");
         printf("  disk                 elenca i dispositivi\n");
         printf("  mount hd0p1 /disk    monta\n");
-        printf("  install /disk        installa\n");
-        printf("  install -a /disk     aggiorna\n\n");
+        printf("  install /disk        installa, in tre passi\n");
+        printf("  install -a /disk     aggiorna cio' che c'e' gia'\n");
+        printf("  install -m /disk     solo il minimale, senza chiedere\n");
+        printf("  install -t /disk     tutto, senza chiedere\n\n");
+        printf("I tre passi sono: il sistema minimale (quello che sta su un\n");
+        printf("floppy, sempre installato), poi il resto degli strumenti —\n");
+        printf("driver di rete, USB, grafica e i programmi che sul floppy non\n");
+        printf("ci stanno — e infine ExWin completo.\n\n");
         printf("Non partiziona e non formatta: sono operazioni distruttive\n");
         printf("e vanno fatte di proposito, non come effetto collaterale.\n\n");
         printf("GLI STRUMENTI DI SVILUPPO SONO UN'ALTRA COSA. Stanno sul CD\n");
@@ -1317,6 +1445,9 @@ int main(int argc, char **argv)
      * anche /exwin?» dopo aver gia' sostituito il kernel vorrebbe dire che
      * rispondere «annulla» non annulla piu' niente. Qui l'unica cosa fatta e'
      * guardare cosa c'e' sul supporto. */
+    /* Il manifesto va letto PRIMA di chiedere: le domande cambiano a seconda
+     * che ci sia o no. */
+    minimale_leggi();
     scegli_componenti(modo_comp, argv[1]);
 
     printf(aggiorna ? "\nAggiornamento di EX-OS in %s\n"
@@ -1412,16 +1543,30 @@ int main(int argc, char **argv)
         }
     }
 
-    /* --- 2. il resto del sistema --- */
-    printf("\nSistema\n");
+    /* --- 2. il sistema: prima il minimale, poi il resto se lo si e' chiesto -- */
     if (aggiorna) {
+        printf("\nSistema\n");
         scorri_confronto("/bin", argv[1], "bin", 1, 0);
         scorri_confronto("/lib", argv[1], "lib", 1, 0);
         installa_driver(argv[1]);
     } else {
-        copia_dir("/bin", argv[1], "bin");
-        copia_dir("/lib", argv[1], "lib");
-        installa_driver(argv[1]);
+        printf("\nSistema minimale\n");
+        copia_dir_filtrata("/bin", argv[1], "bin", g_ha_minimale);
+        copia_dir_filtrata("/lib", argv[1], "lib", g_ha_minimale);
+
+        /* ! I DRIVER DEL MINIMALE SONO QUELLI CHE STANNO SUL FLOPPY, e gli
+         * altri arrivano col passo 2: installa_driver() invece li SCEGLIE
+         * sondando l'hardware, che e' un'altra domanda e viene dopo. */
+        if (g_ha_minimale) copia_dir_filtrata("/dev", argv[1], "dev", 1);
+
+        if (g_vuole_strumenti) {
+            printf("\nIl resto degli strumenti\n");
+            copia_dir("/bin", argv[1], "bin");
+            copia_dir("/lib", argv[1], "lib");
+            installa_driver(argv[1]);
+        } else if (!g_ha_minimale) {
+            installa_driver(argv[1]);
+        }
     }
 
     /* ! I COMPONENTI DOPO IL SISTEMA, e l'ordine conta: se lo spazio finisce,

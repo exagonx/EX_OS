@@ -4592,7 +4592,7 @@ verifica-dipendenze-cd:
 	fi; \
 	echo "[OK] ogni driver del CD e' fra le dipendenze dell'ISO"
 
-$(ISOX_IMG): Makefile $(FLOPPY_IMG) boot/autoexec.sh $(DRIVER_SOLO_CD_OUT) \
+$(ISOX_IMG): Makefile $(FLOPPY_IMG) boot/autoexec.sh boot/avvio.sh $(DRIVER_SOLO_CD_OUT) \
              $(FONT_TTF) $(FONT_TTF_DIR)/LICENSE \
              $(EXWIN_OUT) $(EXWIN_APPLIST) $(PROVA_PNG) $(PROVA_ICO) $(PROVA_JPG) \
              $(WSERVER_OUT) \
@@ -4605,6 +4605,22 @@ $(ISOX_IMG): Makefile $(FLOPPY_IMG) boot/autoexec.sh $(DRIVER_SOLO_CD_OUT) \
 	@rm -rf $(ISOX_ROOT)
 	@mkdir -p $(ISOX_ROOT)/bin $(ISOX_ROOT)/lib $(ISOX_ROOT)/dev \
 	          $(ISOX_ROOT)/boot $(ISOX_ROOT)/doc
+	@# =====================================================================
+	@# ! IL MANIFESTO DEL MINIMALE, e non e' un elenco scritto a mano.
+	@#
+	@# `install` deve poter installare «il sistema minimale» — cioe' cio' che
+	@# sta sul floppy — anche quando lo si lancia dal CD, che di roba ne ha
+	@# molta di piu'. Sapere COSA sta sul floppy e' una domanda a cui puo'
+	@# rispondere solo il floppy: qui si legge l'immagine appena costruita e
+	@# se ne scrive l'elenco.
+	@#
+	@# ! UN ELENCO SCRITTO NEL SORGENTE DELL'INSTALLATORE SAREBBE UNA SECONDA
+	@# VERITA', e divergerebbe dal floppy al primo programma aggiunto o tolto.
+	@# Questo invece e' il floppy stesso, letto.
+	@# =====================================================================
+	@mdir -i $(FLOPPY_IMG) -b -/ :: 2>/dev/null | grep -v '/$$' | \
+	    sed 's|^::/||' | tr 'A-Z' 'a-z' | sort > $(ISOX_ROOT)/boot/minimale.txt || true
+	@echo "     manifesto del minimale: $$(grep -c '' $(ISOX_ROOT)/boot/minimale.txt) file"
 	@cp $(BUILD_BIN)/* $(ISOX_ROOT)/bin/ 2>/dev/null || true
 	@cp $(BUILD_BIN)/mount $(ISOX_ROOT)/bin/umount 2>/dev/null || true
 	@# Programmi che esistono solo sul CD, vedi BUILD_BIN_CD in testa.
@@ -4655,8 +4671,11 @@ $(ISOX_IMG): Makefile $(FLOPPY_IMG) boot/autoexec.sh $(DRIVER_SOLO_CD_OUT) \
 	@# La configurazione del servitore telnet: porta, shell, chi entra e da
 	@# dove. Va sul CD perche' il servizio si accende da li'.
 	@cp boot/telnetd.cfg $(ISOX_ROOT)/boot/telnetd.cfg
-	@# L'autoexec: accende la rete da solo. Vedi il file per la via
-	@# d'uscita se un comando qui dentro si blocca.
+	@# ! I DUE FILE DI AVVIO SONO DUE PERCHE' CHI LI ESEGUE E' DIVERSO.
+	@# avvio.sh lo esegue `login` da root prima dell'accesso, e ci sta la
+	@# rete; autoexec.sh lo esegue la shell di chi entra, e ci stanno le
+	@# sue cose. Vedi i due file per la via d'uscita se una riga si blocca.
+	@cp boot/avvio.sh $(ISOX_ROOT)/boot/avvio.sh
 	@cp boot/autoexec.sh $(ISOX_ROOT)/boot/autoexec.sh
 	@cp README.md README.en.md HANDOFF.md KERNEL_CORE_NOTES.md gpl-2.0.txt $(ISOX_ROOT)/doc/
 	@# ! Anche il kernel e stage2 sulla radice: non servono ad avviare —

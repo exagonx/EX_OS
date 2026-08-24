@@ -1,4 +1,14 @@
 Bug trovati:
+Da CD, con 32 MB, pci.drv muore appena avviato.
+    Avviando `qemu -cdrom dist/exos.iso -boot d -m 32M`, il primo comando di
+    /boot/avvio.sh stampa «pci: servizio 'pci' attivo, 6 dispositivi» e subito
+    dopo: page fault a 0x00000000, EIP=0x00000000, e nel dump lo STACK del
+    processo e' 0x0..0x0 — cioe' non ne ha uno. Con -m 64M non succede mai.
+    Riproducibile due volte su due. Il sospetto e' l'allocazione dello stack
+    utente in elf_load quando la memoria libera e' poca: dovrebbe fallire il
+    caricamento, invece lascia partire un processo senza stack. Da cercare
+    guardando cosa rende elf_load in quel caso.
+
 Il BIO di file di OpenSSL non legge i file di EX-OS.
     SSL_CTX_load_verify_locations("/cdrom/exos/ssl/certi.pem") rende
     error:05880020 «x509 certificate routines::BIO lib», mentre `ls` vede il

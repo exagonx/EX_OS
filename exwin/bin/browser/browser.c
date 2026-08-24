@@ -1434,14 +1434,42 @@ static int risolvi(const char *rif, char *out, unsigned int max)
  * il peggiore che una cache possa avere. Con l'indirizzo nella testa del file
  * una collisione diventa semplicemente un buco: si riscarica e si riscrive.
  *
- * ! ED E' UNA DIRECTORY TEMPORANEA, quindi si svuota all'avvio. Il guadagno
- * che conta e' dentro la sessione — la stessa <img> ripetuta, e «indietro» che
- * non ripassa dalla rete — e una cache che sopravvive ai riavvii vorrebbe una
- * politica di scadenza che qui non c'e'.
+ * ! ADESSO SOPRAVVIVE AI RIAVVII, e prima no: si svuotava all'avvio perche'
+ * una cache che dura vuole una politica di scadenza, e non c'era. Adesso c'e',
+ * ed e' fatta di due numeri soli — quanto puo' occupare in tutto e quanti
+ * giorni puo' avere una voce. Alla partenza si POTA: si buttano le voci
+ * scadute, e se si sfora ancora si buttano le piu' vecchie finche' non si
+ * rientra.
+ *
+ * ! E LA SCADENZA E' PER ETA', NON PER INTESTAZIONI HTTP. `Cache-Control` ed
+ * `ETag` vogliono una richiesta condizionale e un dialogo con il server: e'
+ * lavoro vero, e va fatto il giorno che si vuole rispettare cio' che il sito
+ * chiede. Sette giorni sono una regola nostra, dichiarata, e sbagliano sempre
+ * dalla parte prudente — una pagina di sette giorni fa non si serve.
+ *
+ * ! DAVANTI AL DISCO C'E' UN PEZZO DI RAM, E SOLO UN PEZZO. Otto caselle da
+ * sessantaquattro chilobyte: ci stanno le immagini, i fogli di stile e le
+ * pagine piccole — cioe' le cose che si rileggono spesso — e non ci sta una
+ * pagina da mezzo megabyte, che tanto sta gia' in g_pagina. Una cache in RAM
+ * che tiene tutto e' un altro modo di scrivere «memoria finita».
+ *
+ * ! LE CASELLE SONO A MISURA FISSA, e non e' pigrizia: con un'arena a
+ * scorrimento servirebbe compattare, e compattare vuol dire spostare byte che
+ * qualcuno sta guardando. Otto pezzi uguali si buttano e si riusano senza
+ * muovere niente.
+ *
+ * ! E QUANDO LA RETE NON RISPONDE, LA COPIA SU DISCO VALE. E' il motivo per
+ * cui una cache che dura serve davvero: la pagina di ieri e' meglio di una
+ * finestra vuota, purche' si DICA che e' di ieri.
  * --------------------------------------------------------------------------- */
 #define CACHE_MAX_BYTE  (4u * 1024u * 1024u)   /* quanto si scrive per sessione */
 #define CACHE_PERC_MAX  192
-#define CACHE_PULIZIA   128                    /* nomi per giro di svuotamento */
+#define CACHE_PULIZIA   128                    /* nomi per giro di potatura */
+#define CACHE_DISCO_MAX (16u * 1024u * 1024u)  /* quanto puo' occupare in tutto */
+#define CACHE_GIORNI    7                      /* oltre, una voce e' scaduta */
+
+#define RAM_VOCI        8
+#define RAM_CASELLA     (64u * 1024u)
 
 typedef struct {
     char         magia[12];
@@ -1473,59 +1501,117 @@ static void cache_nome(const char *url, char *out, unsigned int max)
     strncat(out, nome, max - strlen(out) - 1);
 }
 
-/* ! SI CANCELLA SOLO QUELLO CHE ABBIAMO SCRITTO NOI, e il riconoscimento e' il
- * nome: otto cifre esadecimali e «.dat». Svuotare una directory cancellando
- * tutto quello che ci si trova dentro e' come si perdono i file di qualcun
- * altro il giorno che il percorso e' sbagliato di un livello. */
+
+/* Vero se il nome e' di una nostra voce: otto cifre esadecimali e «.dat».
+ *
+ * ! SI GUARDA IL NOME PRIMA DI CANCELLARE, e non e' pignoleria: la directory
+ * e' di chi usa il sistema, e potrebbe averci messo dentro qualcosa. Una
+ * potatura che cancella cio' che non ha scritto lei e' un difetto che si
+ * scopre quando e' tardi. */
 static int cache_nostro(const char *n)
 {
     int i;
 
-    for (i = 0; i < 8; i++)
-        if (!((n[i] >= '0' && n[i] <= '9') || (n[i] >= 'a' && n[i] <= 'f')))
-            return 0;
+    for (i = 0; i < 8; i++) {
+        char c = n[i];
 
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return 0;
+    }
     return n[8] == '.' && n[9] == 'd' && n[10] == 'a' && n[11] == 't' &&
            n[12] == '\0';
 }
 
-static void cache_svuota(void)
+/* =============================================================================
+ * La potatura: cosa si butta e perche'
+ *
+ * Due passate, e la prima e' quella che conta: si tolgono le voci SCADUTE. Se
+ * dopo quella si sfora ancora il tetto, si tolgono le piu' vecchie finche' non
+ * si rientra.
+ *
+ * ! SI GUARDA IL TEMPO DI MODIFICA, che per una voce di cache e' il momento in
+ * cui e' stata scritta: e' l'unico orologio che c'e' senza aggiungere un campo
+ * all'intestazione — e un campo in piu' vorrebbe dire che le voci scritte dalla
+ * versione di prima non si leggono.
+ *
+ * ! E SE L'OROLOGIO NON C'E' NON SI BUTTA NIENTE PER ETA'. Su una macchina
+ * senza batteria la data all'avvio puo' essere il 1980: con quella, «sette
+ * giorni fa» sta nel futuro e si cancellerebbe tutta la cache a ogni accensione.
+ * Il tetto sulla misura invece vale sempre, perche' non dipende dall'orologio.
+ * ============================================================================= */
+static void cache_pota(void)
 {
-    static char nomi[CACHE_PULIZIA][16];
-    int         giri;
+    static char  nomi[CACHE_PULIZIA][16];
+    static unsigned int eta[CACHE_PULIZIA];
+    static unsigned int misura[CACHE_PULIZIA];
+    DIR           *d;
+    struct dirent *e;
+    unsigned int   totale = 0, adesso = (unsigned int)time(0);
+    int            n = 0, i, buttate = 0;
 
     if (!g_cache[0]) return;
 
-    /* ! I NOMI SI RACCOLGONO PRIMA E SI CANCELLANO POI. Cancellare mentre si
-     * scorre una directory vuol dire cambiare sotto i piedi la cosa che si sta
-     * scorrendo, e quanto sia grave dipende dal filesystem — cioe' e' un
-     * difetto che si presenta su un disco e non sull'altro. */
-    for (giri = 0; giri < 32; giri++) {
-        DIR           *d = opendir(g_cache);
-        struct dirent *e;
-        int            n = 0, i;
+    d = opendir(g_cache);
+    if (!d) return;
 
-        if (!d) return;
-        while (n < CACHE_PULIZIA && (e = readdir(d)) != 0) {
-            if (!cache_nostro(e->d_name)) continue;
-            strncpy(nomi[n], e->d_name, sizeof(nomi[0]) - 1);
-            nomi[n][sizeof(nomi[0]) - 1] = '\0';
-            n++;
-        }
-        closedir(d);
+    while (n < CACHE_PULIZIA && (e = readdir(d)) != 0) {
+        char        p[CACHE_PERC_MAX + 24];
+        struct stat st;
 
-        for (i = 0; i < n; i++) {
+        if (!cache_nostro(e->d_name)) continue;
+
+        strncpy(nomi[n], e->d_name, sizeof(nomi[0]) - 1);
+        nomi[n][sizeof(nomi[0]) - 1] = '\0';
+
+        snprintf(p, sizeof(p), "%s/%s", g_cache, nomi[n]);
+        if (stat(p, &st) != 0) continue;
+
+        misura[n] = (unsigned int)st.st_size;
+        eta[n]    = (adesso > (unsigned int)st.st_mtime)
+                    ? adesso - (unsigned int)st.st_mtime : 0;
+        totale += misura[n];
+        n++;
+    }
+    closedir(d);
+
+    /* 1. le scadute */
+    for (i = 0; i < n; i++) {
+        char p[CACHE_PERC_MAX + 24];
+
+        if (adesso == 0 || eta[i] <= CACHE_GIORNI * 24u * 3600u) continue;
+        snprintf(p, sizeof(p), "%s/%s", g_cache, nomi[i]);
+        unlink(p);
+        totale -= misura[i];
+        misura[i] = 0;
+        buttate++;
+    }
+
+    /* 2. le piu' vecchie, finche' non si rientra nel tetto */
+    while (totale > CACHE_DISCO_MAX) {
+        int          peggiore = -1;
+        unsigned int piu_vecchia = 0;
+
+        for (i = 0; i < n; i++)
+            if (misura[i] != 0 && eta[i] >= piu_vecchia) {
+                piu_vecchia = eta[i];
+                peggiore = i;
+            }
+        if (peggiore < 0) break;
+
+        {
             char p[CACHE_PERC_MAX + 24];
 
-            strncpy(p, g_cache, sizeof(p) - 1);
-            p[sizeof(p) - 1] = '\0';
-            strncat(p, "/", sizeof(p) - strlen(p) - 1);
-            strncat(p, nomi[i], sizeof(p) - strlen(p) - 1);
+            snprintf(p, sizeof(p), "%s/%s", g_cache, nomi[peggiore]);
             unlink(p);
+            totale -= misura[peggiore];
+            misura[peggiore] = 0;
+            buttate++;
         }
-
-        if (n < CACHE_PULIZIA) return;      /* la directory e' finita */
     }
+
+    printf("browser: cache in %s — %u voci, %u KB", g_cache,
+           (unsigned int)n - (unsigned int)buttate, totale / 1024u);
+    if (buttate) printf(", %d potate", buttate);
+    printf("\n");
 }
 
 /* Crea $HOME/.app/browser/cache. Si chiama una volta, all'avvio. */
@@ -1571,17 +1657,77 @@ static void cache_prepara(void)
     strncpy(g_cache, p, sizeof(g_cache) - 1);
     g_cache[sizeof(g_cache) - 1] = '\0';
 
-    cache_svuota();
+    cache_pota();
     printf("browser: cache in %s\n", g_cache);
 }
 
 /* Rende 1 e riempie `buf` se la risorsa c'e' ed e' proprio la sua. */
+/* =============================================================================
+ * Il pezzo di RAM davanti al disco
+ *
+ * Otto caselle uguali; quando servono tutte, si butta quella usata piu' tempo
+ * fa. Il contatore d'uso e' un numero che cresce: non serve un orologio, serve
+ * un ordine.
+ * ============================================================================= */
+typedef struct {
+    char         url[EXHTTP_URL_MAX];
+    unsigned int byte;                  /* 0 = casella libera */
+    unsigned int uso;
+} RamVoce;
+
+static RamVoce      g_ram[RAM_VOCI];
+static unsigned char g_ram_dati[RAM_VOCI][RAM_CASELLA];
+static unsigned int  g_ram_orologio = 1;
+static unsigned int  g_ram_colpi = 0, g_ram_giri = 0;
+
+static int ram_cerca(const char *url, unsigned char *buf, unsigned int max,
+                     unsigned int *quanti)
+{
+    unsigned int i;
+
+    for (i = 0; i < RAM_VOCI; i++) {
+        if (g_ram[i].byte == 0 || !uguale(g_ram[i].url, url)) continue;
+        if (g_ram[i].byte > max) return 0;
+        memcpy(buf, g_ram_dati[i], g_ram[i].byte);
+        *quanti = g_ram[i].byte;
+        g_ram[i].uso = g_ram_orologio++;
+        g_ram_colpi++;
+        return 1;
+    }
+    return 0;
+}
+
+static void ram_metti(const char *url, const unsigned char *dati, unsigned int n)
+{
+    unsigned int i, scelta = 0, piu_vecchia = 0xFFFFFFFFu;
+
+    /* ! CIO' CHE NON CI STA NON ENTRA, e non e' un fallimento: la pagina
+     * grande sta gia' nel suo buffer, e sacrificare otto casella per lei
+     * vorrebbe dire buttare le otto cose che si rileggono davvero. */
+    if (n == 0 || n > RAM_CASELLA) return;
+
+    for (i = 0; i < RAM_VOCI; i++) {
+        if (g_ram[i].byte == 0) { scelta = i; break; }
+        if (uguale(g_ram[i].url, url)) { scelta = i; break; }
+        if (g_ram[i].uso < piu_vecchia) { piu_vecchia = g_ram[i].uso; scelta = i; }
+    }
+
+    memcpy(g_ram_dati[scelta], dati, n);
+    strncpy(g_ram[scelta].url, url, sizeof(g_ram[0].url) - 1);
+    g_ram[scelta].url[sizeof(g_ram[0].url) - 1] = '\0';
+    g_ram[scelta].byte = n;
+    g_ram[scelta].uso  = g_ram_orologio++;
+}
+
 static int cache_leggi(const char *url, unsigned char *buf, unsigned int max,
                        unsigned int *quanti)
 {
     CacheTesta t;
     char       p[CACHE_PERC_MAX + 24];
     int        fd, n;
+
+    g_ram_giri++;
+    if (ram_cerca(url, buf, max, quanti)) return 1;
 
     if (!g_cache[0]) return 0;
 
@@ -1603,6 +1749,9 @@ static int cache_leggi(const char *url, unsigned char *buf, unsigned int max,
     if (n != (int)t.byte) return 0;
 
     *quanti = t.byte;
+
+    /* Letta dal disco una volta, la prossima si prende dalla RAM. */
+    ram_metti(url, buf, t.byte);
     return 1;
 }
 
@@ -1635,7 +1784,7 @@ static void cache_scrivi(const char *url, const unsigned char *dati,
     close(fd);
 
     /* Una voce scritta a meta' e' peggio di una voce assente: si toglie. */
-    if (bene) g_cache_scritti += n;
+    if (bene) { g_cache_scritti += n; ram_metti(url, dati, n); }
     else      unlink(p);
 }
 
@@ -1844,9 +1993,28 @@ static void vai(const char *url, int in_storia, int usa_cache)
         strncpy(e.finale, url, sizeof(e.finale) - 1);
         da_cache = 1;
     } else if (!exhttp_prendi(url, g_pagina, sizeof(g_pagina), &e)) {
-        sprintf(msg, "%s: %s", url, e.errore[0] ? e.errore : "non riuscito");
-        dico(msg);
-        return;
+        /* =====================================================================
+         * ! LA RETE NON RISPONDE: SE LA COPIA SU DISCO C'E', VALE. E' il motivo
+         * per cui una cache che sopravvive ai riavvii serve davvero — la pagina
+         * di ieri e' meglio di una finestra vuota.
+         *
+         * ! MA SI DICE CHE E' DI IERI, e questa e' la meta' che conta. Una
+         * copia vecchia servita come se fosse quella di adesso e' peggio di un
+         * errore: chi legge prende decisioni su un'informazione che crede
+         * fresca. Nella riga di stato compare «(copia locale: la rete non
+         * risponde)», e non e' una nota, e' il verdetto.
+         * ===================================================================== */
+        if (cache_leggi(url, g_pagina, sizeof(g_pagina), &n)) {
+            memset(&e, 0, sizeof(e));
+            e.codice = 200;
+            e.byte   = n;
+            strncpy(e.finale, url, sizeof(e.finale) - 1);
+            da_cache = 2;
+        } else {
+            sprintf(msg, "%s: %s", url, e.errore[0] ? e.errore : "non riuscito");
+            dico(msg);
+            return;
+        }
     } else if (!e.troncata) {
         /* ! LA CHIAVE E' `finale`, NON L'INDIRIZZO CHIESTO, perche' e' li' che
          * il contenuto sta davvero: dopo una redirezione i due sono diversi, e
@@ -1880,7 +2048,8 @@ static void vai(const char *url, int in_storia, int usa_cache)
     impagina();
 
     sprintf(msg, "%d, %u byte, %u nodi%s%s%s%s", e.codice, e.byte, g_doc.nodi_n,
-            da_cache ? " (dalla cache)" : "",
+            da_cache == 2 ? " (copia locale: la rete non risponde)"
+                          : da_cache ? " (dalla cache)" : "",
             e.troncata ? " (pagina troncata)" : "",
             g_doc.troncato ? " (albero troncato)" : "",
             g_css.troncato ? " (stile troncato)" : "");
