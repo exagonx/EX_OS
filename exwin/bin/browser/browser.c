@@ -600,6 +600,12 @@ static unsigned int genera(const char *s)
     return inizio;
 }
 
+/* Fuori da <pre>, questi quattro sono tutti «spazio». */
+static int bianco(char c)
+{
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r';
+}
+
 static void parole(const char *t, unsigned int base)
 {
     int i = 0;
@@ -627,13 +633,30 @@ static void parole(const char *t, unsigned int base)
             continue;
         }
 
-        while (t[i] == ' ') {
-            g_pen_x += ex_larghezza_testo(font_di(&g_stile_ora), " ");
-            i++;
+        /* =====================================================================
+         * ! GLI A CAPO SONO SPAZI, E NON LO ERANO: qui si guardava solo ' ',
+         * e l'HTML fra un tag e l'altro va a capo di continuo. Il risultato si
+         * leggeva su qualunque pagina vera — «Hacker Newsnew» al posto di
+         * «Hacker News new» — perche' quel nodo di testo fatto di un solo a
+         * capo non avanzava la penna e diventava una parola vuota.
+         *
+         * ! E UNA SEQUENZA DI BIANCHI VALE UNO SPAZIO SOLO, che e' la regola
+         * dell'HTML: prima ogni spazio ne aggiungeva uno, quindi il testo
+         * sorgente indentato apriva buchi larghi quanto il rientro.
+         *
+         * ! A INIZIO RIGA NON VALE NIENTE. Senza questa riga ogni paragrafo che
+         * nel sorgente comincia a capo partirebbe rientrato di uno spazio, e
+         * il margine sinistro della pagina sembrerebbe storto.
+         * ===================================================================== */
+        if (bianco(t[i])) {
+            while (bianco(t[i])) i++;
+            if (g_pen_x > riga_x())
+                g_pen_x += ex_larghezza_testo(font_di(&g_stile_ora), " ");
+            continue;
         }
         if (!t[i]) break;
         a = i;
-        while (t[i] && t[i] != ' ') i++;
+        while (t[i] && !bianco(t[i])) i++;
         parola(t + a, base + (unsigned int)a, i - a);
     }
 }
@@ -727,7 +750,21 @@ static const char CSS_DI_SISTEMA[] =
     "blockquote { margin-left: 32px; margin-right: 16px }"
     "ul, ol, dd { margin-left: 28px }"
     "center { text-align: center }"
-    "th { font-weight: bold; text-align: center }";
+    "th { font-weight: bold; text-align: center }"
+
+    /* ! UNA TABELLA NON EREDITA L'ALLINEAMENTO DA CHI LA CONTIENE, e questa
+     * riga vale piu' di tutte le altre messe insieme su una pagina vera. Molti
+     * siti — Hacker News per dirne uno che si guarda ogni giorno — chiudono
+     * tutto dentro un `<center>` per centrare la TABELLA, non il testo dentro
+     * le celle. Ereditando, ogni titolo e ogni riga finivano in mezzo alla
+     * colonna: la pagina si leggeva, ma sembrava scritta da un ubriaco.
+     *
+     * ! E' LA REGOLA DEI BROWSER VERI, non una nostra invenzione: l'effetto di
+     * `<center>` e di `align=center` si ferma al bordo della tabella, ed e'
+     * proprio perche' quel modo di centrare una tabella e' vecchio quanto il
+     * web. Chi vuole centrare una cella lo dice sulla cella, e allora vince
+     * perche' la sua regola sta piu' in alto nella cascata. */
+    "table, td { text-align: left }";
 
 /* =============================================================================
  * LE TABELLE — e sono l'unico posto che vuole DUE passate

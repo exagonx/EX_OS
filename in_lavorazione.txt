@@ -7,5 +7,15 @@ Il BIO di file di OpenSSL non legge i file di EX-OS.
     Sospetto: fseek/ftell o ferror nella nostra stdio, che il BIO di file usa e
     la maggior parte dei nostri programmi no. Da cercare con un programma
     minimo che apra un file con il solo stdio e ne legga la coda.
-    Aggirato in tools/iso/prova-tls.c, con il perche' scritto accanto — ma e'
-    un aggiramento, non una correzione.
+    Aggirato in tools/iso/prova-tls.c, con il perche' scritto accanto.
+
+Da fare, per una pagina web moderna (in ordine di quanto pesa):
+1. https nel browser: mancano il record e l'handshake di extls.
+2. I tetti del browser: PAGINA_MAX 512 KB e NODI_MAX 4096 troncano Wikipedia
+   (676 KB). Un nodo pesa 32 byte, un pezzo 32: alzarli e' un conto di memoria
+   da fare in faccia su una macchina da 32 MB, non una riga da cambiare.
+3. I margini sugli elementi in linea (margin-right su uno <span>): e' cosi' che
+   i siti separano le voci di un menu.
+4. Lo sfondo delle celle di tabella non si dipinge (la barra arancione di
+   Hacker News).
+5. Moduli (<form>, <input>), colspan/rowspan, JavaScript: dichiarati fuori.

@@ -517,6 +517,79 @@ vuoti da noi, e la 819esima e' `Configurations/50-exos.conf`, che e' nostro e
 la' non c'e'. Gli unici quattro rimasti vuoti si chiamano `empty.txt` e
 `smcont_zero.txt`: sono vuoti di mestiere.
 
+### IL BROWSER SU UNA PAGINA VERA: tre difetti trovati GUARDANDO, non pensando
+
+Chiesto: rendere il browser capace di mostrare una pagina web moderna. Il primo
+passo non e' stato aggiungere niente — e' stato **servire una pagina vera** da
+questa macchina (Hacker News, con il suo CSS) e fotografare cosa succede.
+
+Tre difetti, tutti visibili nella prima fotografia:
+
+#### 1. UTF-8: «RISC-V â» dove c'era un trattino lungo
+
+! **IL DISEGNO DEL TESTO PRENDEVA UN BYTE PER VOLTA**, e tutto il web di oggi e'
+UTF-8: i tre byte di un trattino lungo diventavano tre glifi presi da dove
+capita. Adesso `ex_scrivi_con` e `ex_larghezza_testo` decodificano UTF-8 —
+tutt'e due, con lo stesso decodificatore, perche' se la misura conta i byte e
+il disegno conta i caratteri l'impaginazione e il disegno non sono piu'
+d'accordo e il difetto sembra dell'impaginazione.
+
+! **MA LE STRINGHE DI EX-OS NON SONO UTF-8**: la tastiera emette CP437, la `a`
+accentata e' il byte 0x85. La regola percio' e' INDULGENTE, come quella di un
+browser vero: **sequenza valida si decodifica, byte isolato vale per se'**. Un
+byte CP437 non forma quasi mai una sequenza valida, e le due cose convivono
+senza che nessuno debba dichiarare la codifica.
+
+! **E IL FONT DI SISTEMA HA 256 GLIFI**, quindi per lui si SCEGLIE cosa perdere:
+le accentate ci sono davvero (tabella verso CP437), i segni tipografici del web
+— trattini lunghi, virgolette curve, puntini — diventano il loro parente ASCII.
+Meglio un trattino corto di tre glifi a caso. Col TrueType invece il codice
+passa dritto alla cmap, e Liberation ce li ha tutti.
+
+**Vale per tutte le applicazioni**, non solo per il browser: l'editor che apre
+un file UTF-8 adesso lo legge.
+
+#### 2. La pagina era tutta centrata
+
+Hacker News chiude tutto dentro un `<center>` per centrare la TABELLA. Il
+`text-align` ereditava fin dentro le celle, e ogni titolo finiva in mezzo alla
+colonna: si leggeva, ma sembrava scritto da un ubriaco.
+
+! **UNA TABELLA NON EREDITA L'ALLINEAMENTO DA CHI LA CONTIENE**, ed e' la regola
+dei browser veri, non una nostra invenzione: l'effetto di `<center>` si ferma al
+bordo della tabella, proprio perche' quel modo di centrare e' vecchio quanto il
+web. Una riga nel foglio predefinito — `table, td { text-align: left }` — e chi
+vuole centrare una cella lo dice sulla cella, vincendo per cascata.
+
+#### 3. Gli a capo non erano spazi
+
+Fuori da `<pre>` si guardava solo `' '`. L'HTML fra un tag e l'altro va a capo
+di continuo: quei nodi di testo fatti di un solo a capo non avanzavano la penna
+e diventavano parole vuote. E una sequenza di bianchi vale **uno** spazio solo —
+prima ognuno ne aggiungeva uno, quindi il sorgente indentato apriva buchi larghi
+quanto il rientro.
+
+Provato su una pagina scritta apposta: `uno due tre — quattro` da tre elementi
+separati da a capo, `molti spazi nel sorgente` collassati, e
+`perché città può — «virgolette» … → fine` tutto giusto.
+
+#### Cosa manca ancora, in ordine di quanto pesa
+
+ 1. **`https`**, ed e' il muro: quasi ogni sito vero oggi e' solo TLS. `exbig`,
+    `exasn1`, `excert` e i tre mattoni di `extls` ci sono; mancano il record e
+    l'handshake.
+ 2. **I tetti**: 512 KB di pagina e 4096 nodi. Wikipedia ne vuole 676 KB e
+    l'albero si tronca — il browser lo DICE («pagina troncata», «albero
+    troncato»), che e' il modo giusto di fallire, ma la pagina non si vede
+    intera. Un nodo pesa 32 byte: alzarli e' un conto di memoria da fare in
+    faccia, non di codice.
+ 3. **I margini sugli elementi in linea**: `margin-right` su uno `<span>` non si
+    applica, ed e' cosi' che i siti separano le voci di un menu — l'«Hacker
+    Newsnew» della fotografia NON era un difetto degli spazi: li' spazi non ce
+    ne sono, c'e' un margine.
+ 4. **Lo sfondo delle celle**: la barra arancione di HN non si dipinge.
+ 5. Moduli, `colspan`/`rowspan`, JavaScript: dichiarati fuori.
+
 ### FATTO — HTTPS DENTRO EX-OS, con la libssl di OpenSSL
 
     /cdrom/bin/provatls example.com 443 /
