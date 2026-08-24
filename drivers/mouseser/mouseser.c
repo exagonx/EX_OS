@@ -55,6 +55,10 @@
 #include "libc.h"
 #include "kbd_proto.h"
 
+/* +0.001 a ogni modifica: `mouseser.drv -version` la stampa. Vedi
+ * EX_VERSIONE in libc.h. */
+EX_VERSIONE("mouseser.drv", "0.001");
+
 /* --- UART 16550, spiazzamenti dalla base --------------------------------- */
 #define U_DATI      0   /* RBR/THR (e DLL quando DLAB e' acceso) */
 #define U_IER       1   /* interrupt enable (e DLM con DLAB)     */

@@ -63,6 +63,10 @@
 #include "kbd_proto.h"
 #include "win_proto.h"
 
+/* +0.001 a ogni modifica: `wserver -version` la stampa. Vedi
+ * EX_VERSIONE in libc.h. */
+EX_VERSIONE("wserver", "0.001");
+
 #define FINESTRE_MAX    16
 #define BARRA_H         20
 

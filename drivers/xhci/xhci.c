@@ -77,6 +77,10 @@
 #include "kbd_proto.h"
 #include "usb_comune.h"
 
+/* +0.001 a ogni modifica: `xhci.drv -version` la stampa. Vedi
+ * EX_VERSIONE in libc.h. */
+EX_VERSIONE("xhci.drv", "0.001");
+
 /* --- Registri di CAPACITA', dall'inizio della finestra -------------------- */
 #define C_CAPLENGTH     0x00    /* 8 bit: quanto sono lunghi questi registri */
 #define C_HCIVERSION    0x02    /* 16 bit */

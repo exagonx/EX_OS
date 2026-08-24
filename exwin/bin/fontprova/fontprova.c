@@ -25,12 +25,21 @@
 
 #include "libc.h"
 #include "exwin.h"
+#include "exdlg.h"
+#include "exinfo.h"
 
 /* +0.001 a ogni modifica: `fontprova -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("fontprova", "0.001");
+#define VERSIONE_APP "0.001"
+EX_VERSIONE("fontprova", VERSIONE_APP);
 
 #define FIN_W   720
-#define FIN_H   440
+/* ! LA BARRA DEI MENU NON RESTRINGE L'AREA DEL CLIENT: il toolkit la mette in
+ * cima e larga quanto la finestra, ma il posto glielo deve lasciare chi scrive
+ * il programma. Venti pixel sono MENU_BARRA_H di lib/exwin/exwin.c. */
+#define MENU_H  20
+#define FIN_H   (440 + MENU_H)
+
+#define ID_INFO 1
 
 /* Il campione: maiuscole, minuscole, cifre, accentate e un po' di punti.
  *
@@ -65,10 +74,24 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         ex_esci(0);
         return 0;
 
-    case EXM_DISEGNA: {
-        int i, y = 6;
+    case EXM_COMANDO:
+        if (wp == ID_INFO) {
+            char t[512];
 
-        ex_riempi(f, 0, 0, FIN_W, FIN_H, EX_GRIGIO);
+            exinfo_testo(t, sizeof(t), "Prova dei font", VERSIONE_APP,
+                         "Disegna la stessa frase con il font di sistema 8x16 "
+                         "e con i TrueType a corpi diversi: serve a guardare "
+                         "la fusione dei bordi, che si vede solo confrontando "
+                         "un fondo chiaro e uno scuro.");
+            ex_dlg_avviso("Informazioni su", t);
+        }
+        return 0;
+
+    case EXM_DISEGNA: {
+        int i, y = 6 + MENU_H;
+
+        /* Sotto la barra dei menu: il fondo comincia da li'. */
+        ex_riempi(f, 0, MENU_H, FIN_W, FIN_H - MENU_H, EX_GRIGIO);
 
         /* Il metro: il font di sistema, che c'e' sempre. */
         ex_scrivi(f, 8, y, "font di sistema 8x16:", EX_NERO);
@@ -134,6 +157,12 @@ int main(int argc, char **argv)
         printf("fontprova: il server a finestre non risponde.\n");
         printf("           Avvialo con:  exwin\n");
         return 1;
+    }
+
+    {
+        ExFinestra menu = ex_menu(g_f);
+
+        ex_menu_voce(menu, "Info", "Informazioni su", ID_INFO);
     }
 
     for (i = 0; i < QUANTI; i++) {

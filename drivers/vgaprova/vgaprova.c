@@ -36,6 +36,10 @@
 
 #include "libc.h"
 
+/* +0.001 a ogni modifica: `vgaprova.drv -version` la stampa. Vedi
+ * EX_VERSIONE in libc.h. */
+EX_VERSIONE("vgaprova.drv", "0.001");
+
 #define VGA_MISC_W      0x3C2
 #define VGA_SEQ_IDX     0x3C4
 #define VGA_SEQ_DAT     0x3C5

@@ -29,9 +29,12 @@
 
 #include "libc.h"
 #include "exwin.h"
+#include "exdlg.h"
+#include "exinfo.h"
 
 /* +0.001 a ogni modifica: `term -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("term", "0.001");
+#define VERSIONE_APP "0.001"
+EX_VERSIONE("term", VERSIONE_APP);
 
 /* ! LA FINESTRA E' UN MULTIPLO ESATTO DELLA CELLA. Il font e' 8x16 e il
  * controllo calcola le colonne come larghezza/8 e le righe come altezza/16:
@@ -46,12 +49,20 @@ EX_VERSIONE("term", "0.001");
 #define AREA_H      (RIGHE * CAR_H)     /* 400 */
 #define BORDO       2
 
+/* ! LA BARRA DEI MENU SI PAGA IN ALTEZZA, e il conto va fatto qui: il toolkit
+ * la mette in cima e larga quanto la finestra, ma NON restringe l'area del
+ * client — chi scrive il programma deve lasciarle il posto. Venti pixel sono
+ * MENU_BARRA_H di lib/exwin/exwin.c. */
+#define MENU_H      20
+
 #define FIN_W       (AREA_W + BORDO * 2)
-#define FIN_H       (AREA_H + BORDO * 2)
+#define FIN_H       (AREA_H + BORDO * 2 + MENU_H)
 
 static ExFinestra g_f;
 static ExFinestra g_t;                  /* il controllo «terminale» */
 static const char *g_prog = "/bin/sh";
+
+#define ID_INFO   1
 
 static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 {
@@ -75,7 +86,10 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
      * ===================================================================== */
     case EXM_MISURA: {
         int w = EX_X(lp) - BORDO * 2;
-        int h = EX_Y(lp) - BORDO * 2;
+        /* ! LA BARRA DEI MENU VA TOLTA ANCHE QUI, e dimenticarlo si vede solo
+         * ridimensionando: la griglia crescerebbe di venti pixel oltre il
+         * bordo di sotto, cioe' una riga e un quarto disegnata fuori. */
+        int h = EX_Y(lp) - BORDO * 2 - MENU_H;
 
         w = (w / CAR_W) * CAR_W;
         h = (h / CAR_H) * CAR_H;
@@ -91,6 +105,19 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
      * shell morta accetta i tasti, li mostra nella griglia e non risponde —
      * sembra bloccata mentre e' semplicemente vuota. Battere `exit` in una
      * shell chiude il terminale, come su qualunque altro sistema. */
+    case EXM_COMANDO:
+        if (wp == ID_INFO) {
+            char t[512];
+
+            exinfo_testo(t, sizeof(t), "Terminale", VERSIONE_APP,
+                         "Una console di EX-OS dentro una finestra.  Il testo, "
+                         "la griglia e i tasti sono del controllo terminale; "
+                         "qui dentro c'e' solo avviare il programma e chiudere "
+                         "quando esce.");
+            ex_dlg_avviso("Informazioni su", t);
+        }
+        return 0;
+
     case EXM_TERMFINITO:
         printf("term: %s e' uscito, chiudo la finestra\n", g_prog);
         ex_esci(0);
@@ -137,11 +164,17 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    {
+        ExFinestra menu = ex_menu(g_f);
+
+        ex_menu_voce(menu, "Info", "Informazioni su", ID_INFO);
+    }
+
     /* ! IL TITOLO DEL CONTROLLO E' IL PROGRAMMA DA AVVIARE, non un'etichetta:
      * e' la convenzione del controllo «terminale», ed e' scritta in exwin.h
      * accanto all'elenco delle classi. */
     g_t = ex_crea("terminale", g_prog, EX_FIGLIO,
-                  BORDO, BORDO, AREA_W, AREA_H, g_f, 0, 0);
+                  BORDO, BORDO + MENU_H, AREA_W, AREA_H, g_f, 0, 0);
     t = g_t;
     if (t == 0) {
         printf("term: non riesco ad avviare %s nella finestra\n", g_prog);

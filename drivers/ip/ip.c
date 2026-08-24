@@ -56,6 +56,10 @@
 #include "net_proto.h"
 #include "ip_proto.h"
 
+/* +0.001 a ogni modifica: `ip.drv -version` la stampa. Vedi
+ * EX_VERSIONE in libc.h. */
+EX_VERSIONE("ip.drv", "0.001");
+
 /* =============================================================================
  * Costanti di protocollo
  * ============================================================================= */

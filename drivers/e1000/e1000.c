@@ -68,6 +68,10 @@
 #include "pci_proto.h"
 #include "net_proto.h"
 
+/* +0.001 a ogni modifica: `e1000.drv -version` la stampa. Vedi
+ * EX_VERSIONE in libc.h. */
+EX_VERSIONE("e1000.drv", "0.001");
+
 /* -----------------------------------------------------------------------------
  * La scheda
  * --------------------------------------------------------------------------- */

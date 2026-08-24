@@ -64,6 +64,10 @@
 
 #include "libc.h"
 
+/* +0.001 a ogni modifica: `svga.drv -version` la stampa. Vedi
+ * EX_VERSIONE in libc.h. */
+EX_VERSIONE("svga.drv", "0.001");
+
 #define PERC_MAX  256
 #define S2_MAX    65536
 #define CFG_MAX   16384

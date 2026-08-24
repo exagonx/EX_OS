@@ -34,9 +34,12 @@
 
 #include "libc.h"
 #include "exwin.h"
+#include "exdlg.h"
+#include "exinfo.h"
 
 /* +0.001 a ogni modifica: `orologio -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("orologio", "0.001");
+#define VERSIONE_APP "0.001"
+EX_VERSIONE("orologio", VERSIONE_APP);
 
 /* ! LA MISURA E' RICAVATA DAL TESTO PIU' LUNGO CHE PUO' USCIRE, non scelta a
  * occhio: «19/08/2026  05:49:07» sono venti caratteri, e col font di sistema
@@ -89,6 +92,30 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
     case EXM_CHIUDI:
         ex_esci(0);
         return 0;
+
+    /* =====================================================================
+     * ! QUI «INFORMAZIONI SU» SI APRE CON UN CLIC, NON DA UN MENU, e non e'
+     * un'eccezione presa alla leggera: questa finestra e' alta VENTI PIXEL e
+     * non ha nemmeno la barra del titolo — e' arredamento della scrivania, non
+     * un'applicazione (lo dice pm.c dove lo avvia). Una barra dei menu qui
+     * sarebbe piu' alta dell'orologio: metterla per rispettare la forma della
+     * regola vorrebbe dire romperne il senso.
+     *
+     * ! E IL CLIC E' L'UNICO GESTO CHE QUESTA FINESTRA PUO' RICEVERE. Non ci
+     * si puo' battere dentro — non prende il fuoco della tastiera — quindi o
+     * si risponde al mouse o non si risponde a niente.
+     * ===================================================================== */
+    case EXM_MOUSE_GIU: {
+        char t[512];
+
+        exinfo_testo(t, sizeof(t), "Orologio", VERSIONE_APP,
+                     "La data e l'ora nell'angolo della barra.  E' un processo "
+                     "a se' e non un pezzo della scrivania: cosi' l'ora "
+                     "continua a cambiare qualunque cosa stia facendo il "
+                     "program manager.");
+        ex_dlg_avviso("Informazioni su", t);
+        return 0;
+    }
 
     /* ! SI RIDISEGNA SOLO SE IL TESTO E' CAMBIATO, e la sveglia batte molto
      * piu' spesso del minuto. Ridisegnare ogni volta vorrebbe dire chiedere al

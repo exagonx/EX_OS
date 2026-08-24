@@ -1176,7 +1176,7 @@ namespace __gnu_cxx
 /* #undef _GLIBCXX_HAVE_ISNANL */
 
 /* Defined if iswblank exists. */
-/* #undef _GLIBCXX_HAVE_ISWBLANK */
+#define _GLIBCXX_HAVE_ISWBLANK 1
 
 /* Define if LC_MESSAGES is available in <locale.h>. */
 #define _GLIBCXX_HAVE_LC_MESSAGES 1
@@ -1516,7 +1516,7 @@ namespace __gnu_cxx
 /* #undef _GLIBCXX_HAVE_WCSTOF */
 
 /* Define to 1 if you have the <wctype.h> header file. */
-/* #undef _GLIBCXX_HAVE_WCTYPE_H */
+#define _GLIBCXX_HAVE_WCTYPE_H 1
 
 /* Define to 1 if you have the <windows.h> header file. */
 /* #undef _GLIBCXX_HAVE_WINDOWS_H */
@@ -1699,7 +1699,7 @@ namespace __gnu_cxx
 
 /* Define if C99 functions or macros from <wchar.h>, <math.h>, <complex.h>,
    <stdio.h>, and <stdlib.h> can be used or exposed. */
-#define _GLIBCXX_USE_C99 1
+/* #undef _GLIBCXX_USE_C99 */
 
 /* Define if C99 inverse trig functions in <complex.h> should be used in
    <complex>. Using compiler builtins for these functions requires

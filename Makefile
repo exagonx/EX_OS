@@ -1557,18 +1557,20 @@ PM_SRC := exwin/bin/pm/pm.c
 PM_BIN := $(BUILD_EXWIN_BIN)/pm
 PM_LD  := exwin/bin/pm/pm.ld
 
-$(PM_BIN): $(PM_SRC) $(PM_LD) $(EXWIN_STUB) $(EXDLG_STUB) $(EXLIB_SRC) $(EXLIB_HDR) \
+$(PM_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(PM_SRC) $(PM_LD) $(EXWIN_STUB) $(EXDLG_STUB) $(EXLIB_SRC) $(EXLIB_HDR) \
            $(EXWIN_HDR) $(WIN_PROTO) \
            $(FONT_SRC) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione /exwin/bin/pm ==="
 	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -I drivers/wserver -I drivers/kbd -c $(PM_SRC) -o $(BUILD_OBJ)/pm_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -I lib/exinfo -I drivers/wserver -I drivers/kbd -c $(PM_SRC) -o $(BUILD_OBJ)/pm_main.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/pm_exwin.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exdlg -c $(EXDLG_STUB) -o $(BUILD_OBJ)/pm_exdlg.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exinfo -c $(EXINFO_SRC) -o $(BUILD_OBJ)/pm_info.o
 	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/pm_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(PM_LD) \
 	    $(BUILD_OBJ)/pm_start.o $(BUILD_OBJ)/pm_main.o \
 	    $(BUILD_OBJ)/pm_exwin.o $(BUILD_OBJ)/pm_exdlg.o \
+	    $(BUILD_OBJ)/pm_info.o \
 	    $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] pm compilato: $@"
 
@@ -1657,16 +1659,18 @@ TERM_SRC := exwin/bin/term/term.c
 TERM_BIN := $(BUILD_EXWIN_BIN)/term
 TERM_LD  := exwin/bin/term/term.ld
 
-$(TERM_BIN): $(TERM_SRC) $(TERM_LD) $(EXWIN_STUB) $(EXLIB_SRC) $(EXLIB_HDR) \
+$(TERM_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(TERM_SRC) $(TERM_LD) $(EXWIN_STUB) $(EXLIB_SRC) $(EXLIB_HDR) \
              $(EXWIN_HDR) $(WIN_PROTO) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione /exwin/bin/term ==="
 	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(TERM_SRC) -o $(BUILD_OBJ)/term_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -I lib/exinfo -I drivers/wserver -I drivers/kbd -c $(TERM_SRC) -o $(BUILD_OBJ)/term_main.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/term_exwin.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exinfo -c $(EXINFO_SRC) -o $(BUILD_OBJ)/term_info.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exdlg -c $(EXDLG_STUB) -o $(BUILD_OBJ)/term_exdlg.o
 	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/term_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(TERM_LD) \
 	    $(BUILD_OBJ)/term_start.o $(BUILD_OBJ)/term_main.o \
-	    $(BUILD_OBJ)/term_exwin.o $(LIBC_PONTI_OBJ) -o $@
+	    $(BUILD_OBJ)/term_exwin.o $(BUILD_OBJ)/term_exdlg.o $(BUILD_OBJ)/term_info.o $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] term compilato: $@"
 
 .PHONY: term
@@ -1683,17 +1687,19 @@ FONTPROVA_SRC := exwin/bin/fontprova/fontprova.c
 FONTPROVA_BIN := $(BUILD_EXWIN_BIN)/fontprova
 FONTPROVA_LD  := exwin/bin/fontprova/fontprova.ld
 
-$(FONTPROVA_BIN): $(FONTPROVA_SRC) $(FONTPROVA_LD) $(EXWIN_STUB) $(EXLIB_SRC) \
+$(FONTPROVA_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(FONTPROVA_SRC) $(FONTPROVA_LD) $(EXWIN_STUB) $(EXLIB_SRC) \
              $(EXLIB_HDR) $(EXWIN_HDR) $(WIN_PROTO) $(LIBC_PONTI_OBJ) \
              $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione /exwin/bin/fontprova ==="
 	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(FONTPROVA_SRC) -o $(BUILD_OBJ)/fontprova_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -I lib/exinfo -I drivers/wserver -I drivers/kbd -c $(FONTPROVA_SRC) -o $(BUILD_OBJ)/fontprova_main.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/fontprova_exwin.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exinfo -c $(EXINFO_SRC) -o $(BUILD_OBJ)/fontprova_info.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exdlg -c $(EXDLG_STUB) -o $(BUILD_OBJ)/fontprova_exdlg.o
 	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/fontprova_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(FONTPROVA_LD) \
 	    $(BUILD_OBJ)/fontprova_start.o $(BUILD_OBJ)/fontprova_main.o \
-	    $(BUILD_OBJ)/fontprova_exwin.o $(LIBC_PONTI_OBJ) -o $@
+	    $(BUILD_OBJ)/fontprova_exwin.o $(BUILD_OBJ)/fontprova_exdlg.o $(BUILD_OBJ)/fontprova_info.o $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] fontprova compilato: $@"
 
 .PHONY: fontprova
@@ -1709,17 +1715,19 @@ OROLOGIO_SRC := exwin/bin/orologio/orologio.c
 OROLOGIO_BIN := $(BUILD_EXWIN_BIN)/orologio
 OROLOGIO_LD  := exwin/bin/orologio/orologio.ld
 
-$(OROLOGIO_BIN): $(OROLOGIO_SRC) $(OROLOGIO_LD) $(EXWIN_STUB) $(EXLIB_SRC) \
+$(OROLOGIO_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(OROLOGIO_SRC) $(OROLOGIO_LD) $(EXWIN_STUB) $(EXLIB_SRC) \
              $(EXLIB_HDR) $(EXWIN_HDR) $(WIN_PROTO) $(LIBC_PONTI_OBJ) \
              $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione /exwin/bin/orologio ==="
 	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(OROLOGIO_SRC) -o $(BUILD_OBJ)/orologio_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -I lib/exinfo -I drivers/wserver -I drivers/kbd -c $(OROLOGIO_SRC) -o $(BUILD_OBJ)/orologio_main.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/orologio_exwin.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exinfo -c $(EXINFO_SRC) -o $(BUILD_OBJ)/orologio_info.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exdlg -c $(EXDLG_STUB) -o $(BUILD_OBJ)/orologio_exdlg.o
 	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/orologio_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(OROLOGIO_LD) \
 	    $(BUILD_OBJ)/orologio_start.o $(BUILD_OBJ)/orologio_main.o \
-	    $(BUILD_OBJ)/orologio_exwin.o $(LIBC_PONTI_OBJ) -o $@
+	    $(BUILD_OBJ)/orologio_exwin.o $(BUILD_OBJ)/orologio_exdlg.o $(BUILD_OBJ)/orologio_info.o $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] orologio compilato: $@"
 
 .PHONY: orologio
@@ -4238,15 +4246,18 @@ STATICI_OBBLIGATI := $(BUILD_BIN)/login $(BUILD_BIN)/install $(BUILD_BIN)/sh \
 # Non si controlla che sia stata INCREMENTATA: quello vuole sapere cosa e'
 # cambiato, e lo sa solo chi ha scritto la modifica.
 #
-# `hello` e' fuori apposta: e' l'esempio di un programma senza libc, tre
-# istruzioni dentro _start, e la macro EX_VERSIONE la libc non ce l'ha.
+# Fuori apposta, e ognuno per una ragione sua:
+#   hello   e' l'esempio del programma SENZA libc — tre istruzioni dentro
+#           _start, e la macro EX_VERSIONE sta nella libc;
+#   floppy  e' un driver dinamico: non ha un main, l'ingresso e' un altro;
+#   net, tty, usb   non sono programmi, sono codice condiviso fra driver.
 # =============================================================================
-SENZA_VERSIONE := hello
+SENZA_VERSIONE := hello floppy net tty usb
 
 .PHONY: verifica-versioni
 verifica-versioni:
 	@mancanti=""; \
-	for d in $(BIN_DIR)/*/ exwin/bin/*/; do \
+	for d in $(BIN_DIR)/*/ exwin/bin/*/ $(DRIVER_DIR)/*/; do \
 	    n=$$(basename "$$d"); \
 	    salta=0; \
 	    for e in $(SENZA_VERSIONE); do [ "$$n" = "$$e" ] && salta=1; done; \

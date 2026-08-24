@@ -64,6 +64,10 @@
 #include "libc.h"
 #include "pci_proto.h"
 
+/* +0.001 a ogni modifica: `pci.drv -version` la stampa. Vedi
+ * EX_VERSIONE in libc.h. */
+EX_VERSIONE("pci.drv", "0.001");
+
 /* =============================================================================
  * Porte del meccanismo di configurazione #1
  *

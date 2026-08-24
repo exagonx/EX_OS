@@ -427,9 +427,28 @@ modifica. Ma il numero di versione del kernel e' rimasto fermo per tredici
 commit proprio perche' nessuno guardava, e questo e' il pezzo che si puo'
 guardare a macchina.
 
-**Restano fuori**: `hello`, che e' l'esempio del programma senza libc; i driver,
-che una versione non ce l'hanno ancora; e le quattro applicazioni senza voce
-«Informazioni su» (`fontprova`, `orologio`, `pm`, `term`).
+**Anche i driver**, dal 24 agosto: dodici, e si chiamano col nome che si digita
+— `/dev/kbd.drv -version` risponde «kbd.drv 0.001». Fuori restano `hello`
+(l'esempio del programma senza libc), `floppy.drv` (driver dinamico, non ha un
+`main`) e `net`, `tty`, `usb`, che non sono programmi ma codice condiviso.
+
+**E le quattro applicazioni che non avevano «Informazioni su» adesso ce
+l'hanno**, ognuna dove ha senso:
+
+  - `term` e `fontprova` hanno preso una barra dei menu con «Info» —
+    e con lei venti pixel in meno di area utile, che vanno tolti a mano: il
+    toolkit la mette in cima e larga quanto la finestra, ma il posto glielo
+    deve lasciare il programma. In `term` il conto va rifatto anche nel
+    ridimensionamento, o la griglia cresce oltre il bordo di sotto;
+  - la **scrivania** ce l'ha nel menu «Avvio», sotto la riga che separa le
+    applicazioni da cio' che spegne le cose: non ha una barra dei menu dove
+    metterla — la sua barra e' quella delle finestre — e quello e' l'unico menu
+    che ha. Provata col mouse: «Scrivania 0.001»;
+  - l'**orologio** con un clic, e questa e' l'unica eccezione: e' alto VENTI
+    PIXEL e non ha nemmeno la barra del titolo. Una barra dei menu sarebbe piu'
+    alta dell'orologio — rispettare la forma della regola ne romperebbe il
+    senso. E il clic e' l'unico gesto che quella finestra puo' ricevere: il
+    fuoco della tastiera non lo prende.
 
 #### E IL PRIMO `make -j2` DOPO IL CAMBIO E' FALLITO IN UN POSTO CHE NON C'ENTRAVA
 

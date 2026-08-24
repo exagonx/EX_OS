@@ -82,6 +82,10 @@
 #include "pci_proto.h"
 #include "net_proto.h"
 
+/* +0.001 a ogni modifica: `ne2k.drv -version` la stampa. Vedi
+ * EX_VERSIONE in libc.h. */
+EX_VERSIONE("ne2k.drv", "0.001");
+
 /* =============================================================================
  * Registri DP8390. Gli offset 0x00-0x0F cambiano significato secondo la
  * pagina selezionata nei bit 6-7 del registro comando: e' il motivo per

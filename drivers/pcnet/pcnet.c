@@ -107,6 +107,10 @@
 #include "net_proto.h"
 #include "pci_proto.h"
 
+/* +0.001 a ogni modifica: `pcnet.drv -version` la stampa. Vedi
+ * EX_VERSIONE in libc.h. */
+EX_VERSIONE("pcnet.drv", "0.001");
+
 /* =============================================================================
  * Registri
  * ============================================================================= */

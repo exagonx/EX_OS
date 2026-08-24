@@ -1687,6 +1687,43 @@ typedef struct {
  * ============================================================================= */
 int     pipe(int fd[2]);
 
+/* =============================================================================
+ * LA VERSIONE DI UNO STRUMENTO — dichiarata una volta, stampata da sola
+ *
+ * Ogni programma di EX-OS porta una versione propria, e la regola e' quella del
+ * kernel: **+0.001 a ogni modifica**, tre decimali sempre presenti.
+ *
+ *     EX_VERSIONE("browser", "0.001");     in cima al file, fuori da main
+ *
+ * Da quel momento `browser -version` stampa «browser 0.001» ed esce, e le
+ * applicazioni grafiche passano gli stessi due pezzi a exinfo_testo(), che li
+ * mostra in «Informazioni su».
+ *
+ * ! IL PROGRAMMA NON GUARDA argv, E NON DEVE. Se ognuno si scrivesse il proprio
+ * `if (strcmp(argv[i], "-version"))` sarebbero cinquantanove copie della stessa
+ * riga: la prima volta uguali, poi una stampa il nome e un'altra no, una esce
+ * con 0 e un'altra con 1, e tre si dimenticano l'opzione nella pagina d'uso.
+ * Se ne occupa l'avvio della libc (lib/libc_avvio.c), che vede argv prima di
+ * main.
+ *
+ * ! E SI ACCENDE SOLO SE IL PROGRAMMA LA DICHIARA. I due simboli sono DEBOLI:
+ * chi non usa la macro non ha `-version`, e il codice di terzi — `make`, `gcc`,
+ * `fbc`, che si collegano alla nostra libc e hanno un `--version` loro — non se
+ * ne accorge nemmeno.
+ *
+ * ! LA PAROLA INTERA, NON `-v`. Una lettera sola era gia' presa da tre
+ * programmi con tre significati diversi: «parla di piu'» in sshd e telnetd,
+ * «visualizza il file» in textline. Una regola che vale per tutti tranne tre
+ * non e' una regola — e chi legge `-version` in uno script capisce cosa chiede
+ * senza andare a vedere il programma.
+ *
+ * ! E DEV'ESSERE L'UNICO ARGOMENTO: `prog -version` e' una domanda,
+ * `prog -version qualcosa` e' un comando malformato.
+ * ============================================================================= */
+#define EX_VERSIONE(nome, versione)                 \
+    const char *const __ex_nome     = (nome);       \
+    const char *const __ex_versione = (versione)
+
 int     spawn(const char *path, char *const argv[]);
 int     spawn_ex(const char *path, char *const argv[], char *const envp[],
                  const SpawnRedir *redir, int n_redir);

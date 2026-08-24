@@ -122,6 +122,10 @@
  * ============================================================================= */
 #include "keymaps.h"
 
+/* +0.001 a ogni modifica: `kbd.drv -version` la stampa. Vedi
+ * EX_VERSIONE in libc.h. */
+EX_VERSIONE("kbd.drv", "0.001");
+
 static const Keymap *g_map = &g_keymaps[0];   /* us */
 
 

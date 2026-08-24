@@ -53,6 +53,10 @@
 #include "kbd_proto.h"
 #include "usb_comune.h"
 
+/* +0.001 a ogni modifica: `uhci.drv -version` la stampa. Vedi
+ * EX_VERSIONE in libc.h. */
+EX_VERSIONE("uhci.drv", "0.001");
+
 /* --- Registri UHCI, spiazzamenti dalla base I/O --------------------------- */
 #define R_CMD       0x00    /* USBCMD  (16 bit) */
 #define R_STS       0x02    /* USBSTS  (16 bit) */

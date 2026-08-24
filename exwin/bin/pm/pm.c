@@ -34,9 +34,11 @@
 #include "libc.h"
 #include "exwin.h"
 #include "exdlg.h"
+#include "exinfo.h"
 
 /* +0.001 a ogni modifica: `pm -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("pm", "0.001");
+#define VERSIONE_APP "0.001"
+EX_VERSIONE("pm", VERSIONE_APP);
 
 #define BARRA_H     28
 #define MENU_W      220
@@ -48,6 +50,7 @@ EX_VERSIONE("pm", "0.001");
 #define ID_ESCI     90
 #define ID_SPEGNI   91
 #define ID_GESTISCI 92
+#define ID_INFO     93
 
 /* La finestra che gestisce l'elenco. */
 #define ID_G_LISTA  1
@@ -531,9 +534,9 @@ static void menu_apri(void)
      * rifiutasse di aprirsi perche' l'elenco e' vuoto lascerebbe senza modo
      * di uscire dalla grafica — e uscire e' proprio cio' che si vuole fare
      * quando non c'e' niente da avviare. */
-    /* Tre voci fisse adesso — «Applicazioni...», «Esci», «Spegni» — e non
-     * piu' due. */
-    h = (int)(g_app_n * VOCE_H) + 8 + 3 * VOCE_H + 6;
+    /* Quattro voci fisse adesso — «Applicazioni...», «Informazioni su»,
+     * «Esci», «Spegni». */
+    h = (int)(g_app_n * VOCE_H) + 8 + 4 * VOCE_H + 6;
 
     g_menu = ex_crea("finestra", "", EX_BORDO | EX_SOPRA,
                      4, (int)g_sh - BARRA_H - h - 2, MENU_W, h, 0, 0, menu_proc);
@@ -557,11 +560,18 @@ static void menu_apri(void)
     ex_crea("pulsante", "Applicazioni...", EX_FIGLIO,
             4, 10 + (int)g_app_n * VOCE_H, MENU_W - 8, VOCE_H - 2,
             g_menu, ID_GESTISCI, 0);
-    ex_crea("pulsante", "Esci", EX_FIGLIO,
+    /* ! «INFORMAZIONI SU» STA CON LE COSE CHE SA FARE LA SCRIVANIA, sotto la
+     * riga, e non fra le applicazioni: la scrivania non ha una barra dei menu
+     * dove metterla — la sua barra e' quella delle finestre aperte — e questo
+     * e' l'unico menu che ha. */
+    ex_crea("pulsante", "Informazioni su", EX_FIGLIO,
             4, 10 + (int)(g_app_n + 1) * VOCE_H, MENU_W - 8, VOCE_H - 2,
+            g_menu, ID_INFO, 0);
+    ex_crea("pulsante", "Esci", EX_FIGLIO,
+            4, 10 + (int)(g_app_n + 2) * VOCE_H, MENU_W - 8, VOCE_H - 2,
             g_menu, ID_ESCI, 0);
     ex_crea("pulsante", "Spegni", EX_FIGLIO,
-            4, 10 + (int)(g_app_n + 2) * VOCE_H, MENU_W - 8, VOCE_H - 2,
+            4, 10 + (int)(g_app_n + 3) * VOCE_H, MENU_W - 8, VOCE_H - 2,
             g_menu, ID_SPEGNI, 0);
 
     ex_procedura_base(g_menu, EXM_DISEGNA, 0, 0);
@@ -618,6 +628,18 @@ static long menu_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         }
 
         if (wp == ID_GESTISCI) { gest_apri(); return 0; }
+
+        if (wp == ID_INFO) {
+            char t[512];
+
+            exinfo_testo(t, sizeof(t), "Scrivania", VERSIONE_APP,
+                         "La scrivania di EX-OS: la barra delle finestre, il "
+                         "menu di avvio e l'elenco delle applicazioni.  Le "
+                         "applicazioni sono processi a se': se una muore, la "
+                         "scrivania resta.");
+            ex_dlg_avviso("Informazioni su", t);
+            return 0;
+        }
 
         /* ! QUI SOTTO CI ARRIVA SOLO CIO' CHE NON E' UNA VOCE FISSA, e il
          * controllo serve: `avvia` prende `wp - ID_VOCE` senza segno, quindi
