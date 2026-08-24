@@ -1577,15 +1577,51 @@ int32_t sys_spawn(InterruptFrame *frame)
     SpawnExtra  kex;
     int         ha_extra = 0;
 
-    if (uex != NULL && syscall_verify_ptr(uex, sizeof(SpawnExtra)) &&
-        uex->magia == SPAWN_EXTRA_MAGIA) {
-        uint32_t bi;
-        const uint8_t *src = (const uint8_t *)uex;
-        uint8_t       *dst = (uint8_t *)&kex;
+    /* ! SI LEGGE LA MAGIA PRIMA DI SAPERE QUANTO E' GRANDE IL BLOCCO, e per
+     * leggerla bastano quattro byte. Verificarne 604 per un blocco che ne ha
+     * 596 vuol dire rifiutare un chiamante legittimo la cui struttura sta a
+     * ridosso della fine di una pagina: un difetto che si vede una volta ogni
+     * mille, sul programma sbagliato. */
+    if (uex != NULL && syscall_verify_ptr(uex, sizeof(uint32_t))) {
+        uint32_t magia  = uex->magia;
+        uint32_t quanti = 0;      /* byte che quella forma dichiara */
+        uint32_t noti   = 0;      /* bit di `flag` che quella forma conosceva */
 
-        for (bi = 0; bi < sizeof(SpawnExtra); bi++) dst[bi] = src[bi];
-        if (kex.n_azioni > SPAWN_MAX_AZIONI) kex.n_azioni = SPAWN_MAX_AZIONI;
-        ha_extra = 1;
+        /* ! OGNI FORMA MAI PUBBLICATA SI CONTINUA A CAPIRE. Il perche' sta in
+         * lib/include/spawn_abi.h: un blocco ignorato e' un programma senza
+         * redirezioni e senza ambiente, in silenzio, e i binari del CD degli
+         * strumenti sono compilati contro la libc del giorno in cui sono stati
+         * fatti. Il 24 agosto 2026 questo elenco aveva una riga sola, e il
+         * `gcc` che gira dentro EX-OS ha smesso di redirigere l'uscita di cc1
+         * su un file: la scriveva a video. */
+        if (magia == SPAWN_EXTRA_MAGIA) {
+            quanti = sizeof(SpawnExtra);
+            noti   = SPAWN_F_CONSOLE | SPAWN_F_UTENTE;
+        } else if (magia == SPAWN_EXTRA_MAGIA_V1) {
+            quanti = SPAWN_EXTRA_V1_BYTE;
+            noti   = SPAWN_F_V1;
+        }
+
+        if (quanti != 0 && syscall_verify_ptr(uex, quanti)) {
+            uint32_t bi;
+            const uint8_t *src = (const uint8_t *)uex;
+            uint8_t       *dst = (uint8_t *)&kex;
+
+            /* Cio' che quella forma ha, e ZERO per tutto il resto: un campo
+             * che non esisteva vale zero, che e' esattamente «non l'ho
+             * chiesto». */
+            for (bi = 0; bi < quanti; bi++)              dst[bi] = src[bi];
+            for (     ; bi < sizeof(SpawnExtra); bi++)   dst[bi] = 0;
+
+            /* ! E I BIT CHE QUELLA FORMA NON CONOSCEVA SI SPENGONO. Un
+             * programma vecchio non poteva chiedere SPAWN_F_UTENTE, e trovarlo
+             * acceso significa spazzatura, non una richiesta: senza questa
+             * riga farebbe nascere un figlio con l'identita' che capita. */
+            kex.flag &= noti;
+
+            if (kex.n_azioni > SPAWN_MAX_AZIONI) kex.n_azioni = SPAWN_MAX_AZIONI;
+            ha_extra = 1;
+        }
     }
 
     /* ! CHI CHIEDE UN FIGLIO DI UN ALTRO UTENTE DEV'ESSERE root, E SI CONTROLLA

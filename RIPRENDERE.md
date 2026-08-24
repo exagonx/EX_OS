@@ -20,10 +20,24 @@ non scende piu' con la shell (`SPAWN_F_UTENTE`), `hwconfig` che non spegne piu'
 l'accesso riscrivendo kernel.cfg, la rete che si accende da `[modules]` — e la
 sezione che le racconta e' qui sotto.
 
-In attesa nell'albero: **la prova di `rename` in `/bin/libctest`**, che era
-rimasta al contratto di prima e accusava il kernel di un difetto che era suo.
-Vedi la sezione «`rename` e la finestra che solo il kernel puo' chiudere».
-**319 prove su 319**, su floppy FAT12 e su disco ext2.
+In attesa nell'albero, kernel **0.204**:
+
+  - **`sys_spawn` capisce tutte le forme pubblicate del blocco EXTRA**, non
+    solo l'ultima. La 0.203 aveva rotto il `gcc` che gira DENTRO EX-OS, e la
+    sezione qui sotto racconta come;
+  - **`make verifica-statici`**: `login`, `install`, `sh` e i driver DEVONO
+    essere statici, e adesso qualcuno lo controlla;
+  - la prova di `rename` in `/bin/libctest`, che era rimasta al contratto di
+    prima e accusava il kernel di un difetto che era suo.
+
+**321 prove su 321**, su floppy FAT12 e su disco ext2.
+
+! **`make abi` E' ROSSO, E VA LASCIATO ROSSO FINCHE' NON SI RICOSTRUISCE IL
+BERSAGLIO.** Il sysroot ha la libc del 14 agosto. Con le forme tenute non e'
+piu' un'emergenza — i binari vecchi funzionano — ma resta vero che chi compila
+dentro EX-OS non ha `spawn_utente` ne' `ipc_attendi`:
+`tools/ricostruisci-bersaglio.sh`, quando c'e' tempo, e solo dopo
+`--impronta`.
 
 ! **`gitupdate.sh` FA `git add .` E UN COMMIT SOLO**: `messaggio-commit.txt`
 deve coprire tutto quello che si e' fatto dall'ultimo commit, non l'ultima
@@ -114,7 +128,7 @@ dell'installatore sia su quello che ha scritto lui (idempotente). Riavviato: la
 catena si accende da sola e `ipcfg` mostra 10.0.2.15 preso dal DHCP. Il CD
 accende la rete da solo. `libctest` dava 315 su 316, e la riga rossa era la
 PROVA rimasta indietro, non il sistema: vedi la sezione su `rename`. Adesso
-319 su 319.
+321 su 321.
 
 ! **`tools/mkhd.sh` NON RISPONDEVA PIU' ALL'INSTALLATORE** da quando `install`
 chiede i due conti (19 agosto): restava fermo su «password di root:» e finiva
@@ -127,6 +141,62 @@ sola e tronca il resto. Aggiungendoci nove righe di commento il file e' passato
 a 2230 byte e la riga `dhcp` e' finita oltre il taglio — la rete del CD si
 fermava allo stack, in silenzio. L'avviso c'e' («script piu' lungo di 2 KB»),
 ma scorre via nell'avvio.
+
+### LA MAGIA DEL BLOCCO EXTRA DICE LA FORMA, NON «CAPISCO / NON CAPISCO»
+
+! **LA 0.203 AVEVA ROTTO IL `gcc` CHE GIRA DENTRO EX-OS, e non se ne accorgeva
+nessuno.** Per far nascere la shell con l'identita' dell'utente, `SpawnExtra`
+ha preso due campi e la magia e' passata da `'SPNZ'` a `'SPO0'`. Regola scritta
+in `spawn_abi.h` e rispettata alla lettera — solo che «il kernel ignora un
+blocco che non riconosce» vuol dire che ogni binario compilato contro la libc
+del 14 agosto parte **senza redirezioni e senza ambiente**. In silenzio.
+
+E i binari compilati contro quella libc sono tutto il CD degli strumenti. Il
+driver `gcc` redirige l'uscita di `cc1` su un file temporaneo: da quel commit
+quell'uscita finiva a video, e la compilazione dentro EX-OS non arrivava in
+fondo. Il difetto e' uscito da `make abi`, che e' il guardiano scritto apposta
+il giorno in cui la stessa cosa era gia' successa.
+
+! **BUMPARE LA MAGIA BUTTANDO VIA LA VECCHIA TRASFORMA UN MECCANISMO DI
+COMPATIBILITA' IN UNA ROTTURA.** La magia esisteva per non far leggere ESI ai
+programmi della forma a tre argomenti — «la vecchia forma continua a funzionare
+esattamente come prima», dice `syscall.h`. Fra una forma del blocco e l'altra
+quella promessa non c'era.
+
+Adesso la magia dice **quale forma**, e il kernel le conosce tutte: legge tanti
+byte quanti ne dichiara, azzera i campi che quella forma non aveva, e **spegne
+i bit di `flag` che allora non volevano dire niente** — senza quest'ultima
+riga, un programma vecchio con il bit 0x2 acceso per caso farebbe nascere un
+figlio con l'identita' che capita.
+
+! **E LA VERIFICA DEL PUNTATORE ERA DELLA MISURA SBAGLIATA**: 604 byte
+leggibili chiesti a un blocco che ne ha 596. Un chiamante legittimo la cui
+struttura finisce a ridosso di una pagina veniva rifiutato — una volta ogni
+mille, sul programma sbagliato. Adesso si legge la magia (quattro byte), e da
+quella si sa quanti verificarne.
+
+! **LA PROVA MANDA AL KERNEL LA FORMA DEL 14 AGOSTO**, con una copia CONGELATA
+della struttura di allora e la syscall chiamata a mano — `spawn_ex()` non
+serve, manderebbe sempre la forma di adesso. Verificata anche al contrario:
+togliendo il ramo `'SPNZ'` dal kernel, `spawn` riesce lo stesso e la
+redirezione sparisce, che e' esattamente il modo silenzioso in cui il difetto
+si era presentato.
+
+#### E `login` adesso e' statico PERCHE' QUALCUNO LO CONTROLLA
+
+`login`, `install`, `sh` e tutti i driver non collegano la libc condivisa: sono
+i programmi con cui si ENTRA, si RIPARA e si AVVIA, e dipendere da
+`/lib/libc.so` vuol dire non poter entrare proprio il giorno che quel file e'
+rotto — che e' il giorno in cui serve.
+
+! **ERA VERO SOLO PERCHE' LE REGOLE DEL Makefile ERANO SCRITTE COSI'.** Bastava
+copiare la regola sbagliata mentre si aggiungeva un programma, e il sistema si
+sarebbe avviato benissimo fino al giorno sbagliato. `make verifica-statici`
+guarda dentro i binari — `__libc_ponti_tabella` c'e' solo in chi e' collegato
+ai ponti — e ferma la build. Gira dentro `make all`.
+
+! **E SI GUARDA IL SIMBOLO, NON IL NOME DELLA REGOLA**: il nome dice cosa
+volevamo, il simbolo dice cosa e' venuto fuori.
 
 ### FATTO — le immagini nel browser
 
@@ -1111,7 +1181,7 @@ resto e' andato storto.
 ## COME SI PROVA QUELLO CHE C'E' (aggiornato il 20 agosto 2026)
 
     make -j2 all && make iso-exos
-    python3 tools/qemu_drive.py "libctest@260"     319 prove, e ci sono dentro
+    python3 tools/qemu_drive.py "libctest@260"     321 prove, e ci sono dentro
                                                    pty e interruzione. Da CD
                                                    (EXOS_NO_FLOPPY=1) sono
                                                    196 con 15 fallite: manca
@@ -1268,7 +1338,7 @@ saltarla — che e' il modo in cui la volta dopo si salta anche quella vera.
 Adesso la prova chiede il contratto nuovo, e in piu' due casi che prima
 nessuno guardava: che il nome di partenza sparisca insieme al contenuto, e che
 `rename(x, x)` NON cancelli `x` — sostituire vuol dire togliere di mezzo la
-destinazione, e li' la destinazione e' il file stesso. **319 su 319.**
+destinazione, e li' la destinazione e' il file stesso. **321 su 321.**
 
 ## Come si prova la catena della rete
 

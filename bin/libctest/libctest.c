@@ -1884,6 +1884,105 @@ static void prova_dup(void)
  * file: se dentro c'e' cio' che hello stampa, allora spawn, redirezione e
  * waitpid funzionano tutti e tre.
  * ============================================================================= */
+/* =============================================================================
+ * ! LA FORMA VECCHIA DEL BLOCCO EXTRA DEVE CONTINUARE A FUNZIONARE
+ *
+ * `spawn()` passa al kernel un blocco che comincia con una parola magica, e la
+ * magia dice la FORMA. Cambiandola — 'SPNY', 'SPNZ', 'SPO0' — il kernel non
+ * riconosce piu' i blocchi vecchi e li IGNORA: il programma parte lo stesso,
+ * ma senza redirezioni e senza ambiente. In silenzio.
+ *
+ * ! E «IN SILENZIO» E' IL PUNTO. Il 14 agosto 2026 e' costato tre giorni alla
+ * shell, che scriveva a video cio' che doveva finire in un file. Il 24 agosto,
+ * bumpando 'SPNZ' in 'SPO0', ha rotto il `gcc` che gira DENTRO EX-OS: il
+ * driver redirige l'uscita di cc1 su un file temporaneo, e quei binari sono
+ * compilati contro la libc del giorno in cui il CD degli strumenti e' stato
+ * costruito. Nessuno se ne accorge finche' non si compila qualcosa.
+ *
+ * Questa prova manda al kernel la forma del 14 agosto e pretende che la
+ * redirezione funzioni. E' l'unico modo di sapere che i binari gia' costruiti
+ * funzionano ancora, senza ricostruirli per scoprirlo.
+ * ============================================================================= */
+#define SPNZ_MAGIA  0x53504E5Au     /* 'SPNZ' */
+
+/* La struttura com'era: `uid` e `gid` non c'erano.
+ *
+ * ! E' UNA COPIA CONGELATA, e non va tenuta allineata a quella vera — sarebbe
+ * il contrario di cio' che serve. Descrive i binari GIA' COSTRUITI, non gli
+ * header di adesso: il giorno che qualcuno la "aggiorna", questa prova smette
+ * di provare qualcosa e passa comunque. */
+typedef struct {
+    unsigned int magia;
+    char       **envp;
+    unsigned int n_azioni;
+    SpawnAzione  azioni[SPAWN_MAX_AZIONI];
+    unsigned int flag;
+    unsigned int console;
+} SpawnExtraV1;
+
+typedef char spnz_misura[(sizeof(SpawnExtraV1) == 596) ? 1 : -1];
+
+/* ! NON SI PUO' PASSARE DA spawn_ex(): manda sempre la forma di adesso, che e'
+ * esattamente quella che questa prova NON deve mandare. Qui si chiama la
+ * syscall a mano, come farebbe un binario vecchio. */
+static int spawn_v1(const char *path, char *const argv[], SpawnExtraV1 *ex)
+{
+    int argc = 0, r;
+
+    while (argv[argc] != NULL) argc++;
+
+    __asm__ volatile ("int $0x80"
+                      : "=a"(r)
+                      : "a"(2), "b"(path), "c"(argc), "d"(argv), "S"(ex)
+                      : "memory");
+    return r;
+}
+
+static void prova_spawn_forma_vecchia(void)
+{
+    const char  *uscita = "/uscitav1.txt";
+    SpawnExtraV1 ex;
+    char        *argv[2];
+    int          pid, stato = 0;
+    unsigned int i;
+
+    unlink(uscita);
+
+    argv[0] = (char *)"/bin/hello";
+    argv[1] = NULL;
+
+    for (i = 0; i < sizeof(ex); i++) ((unsigned char *)&ex)[i] = 0;
+    ex.magia    = SPNZ_MAGIA;
+    ex.envp     = NULL;
+    ex.n_azioni = 1;
+    ex.azioni[0].tipo     = SPAWN_AZ_FILE;
+    ex.azioni[0].fd       = 1;
+    ex.azioni[0].flags    = O_WRONLY | O_CREAT | O_TRUNC;
+    ex.azioni[0].fd_padre = -1;
+    strcpy(ex.azioni[0].percorso, uscita);
+
+    pid = spawn_v1("/bin/hello", argv, &ex);
+    esito("spawn con la forma vecchia del blocco riesce", pid > 0);
+    if (pid <= 0) return;
+
+    waitpid(pid, &stato, 0);
+
+    {
+        FILE *f = fopen(uscita, "r");
+        char  riga[128];
+        int   letto = 0;
+
+        if (f != NULL) {
+            letto = (fgets(riga, sizeof(riga), f) != NULL);
+            fclose(f);
+        }
+        esito("e la redirezione di un binario vecchio funziona ancora",
+              letto && strstr(riga, "Ciao") != NULL);
+    }
+
+    unlink(uscita);
+}
+
 static void prova_spawn(void)
 {
     const char *uscita = "/uscita.txt";
@@ -1928,6 +2027,8 @@ static void prova_spawn(void)
     /* Un figlio che non esiste deve fallire, non restare appeso. */
     esito("spawn di un programma assente fallisce",
           spawn("/bin/non-esiste-di-sicuro", argv) < 0);
+
+    prova_spawn_forma_vecchia();
 }
 
 /* =============================================================================

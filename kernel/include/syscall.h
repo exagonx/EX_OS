@@ -1167,6 +1167,19 @@ int32_t sys_random(InterruptFrame *f);
  * casuale sia insieme un puntatore valido e la magia giusta e' quella di
  * indovinare 32 bit.
  *
+ * ! E LA STESSA PROMESSA VALE FRA UNA FORMA DEL BLOCCO E L'ALTRA, dal 24
+ * agosto 2026. La magia non dice «capisco» o «non capisco»: dice QUALE FORMA,
+ * e il kernel le conosce tutte quelle che sono state pubblicate. Legge tanti
+ * byte quanti ne dichiara quella magia, azzera i campi che in quella forma non
+ * esistevano e spegne i bit di `flag` che allora non volevano dire niente.
+ *
+ * Senza, «magia sconosciuta» vuol dire «blocco ignorato», cioe' un programma
+ * che parte SENZA redirezioni e SENZA ambiente, in silenzio — e i programmi
+ * gia' costruiti sono quelli del CD degli strumenti, `gcc` compreso, che
+ * redirige l'uscita di cc1 su un file temporaneo. L'elenco delle forme sta in
+ * lib/include/spawn_abi.h; la prova che continuano a funzionare sta in
+ * /bin/libctest, e manda al kernel la forma del 14 agosto.
+ *
  * L'AMBIENTE si eredita per copia, come argv: le stringhe finiscono sullo
  * stack del figlio. Non c'e' un ambiente "del sistema" che i processi
  * condividono — quello di /boot/kernel.cfg resta consultabile con

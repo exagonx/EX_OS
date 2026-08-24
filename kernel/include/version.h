@@ -103,7 +103,27 @@
  * shell diventava lui stesso l'utente, e al primo `exit` non poteva piu'
  * leggere /boot/ombra — la console non faceva piu' entrare nessuno.
  */
-#define EXOS_VERSION    "0.203"
+/* 0.203 -> 0.204: sys_spawn capisce TUTTE le forme pubblicate del blocco EXTRA,
+ * non solo l'ultima — 'SPNZ' (596 byte) accanto a 'SPO0' (604).
+ *
+ * ! LA 0.203 AVEVA ROTTO IL gcc CHE GIRA DENTRO EX-OS, e questo e' il difetto
+ * che la voce corregge. Bumpando la magia, i binari compilati contro la libc
+ * del 14 agosto — cioe' tutto il CD degli strumenti — passavano un blocco che
+ * il kernel non riconosceva e IGNORAVA: partivano senza redirezioni e senza
+ * ambiente, in silenzio. Il driver `gcc` redirige l'uscita di cc1 su un file
+ * temporaneo: quell'uscita finiva a video.
+ *
+ * ! LA MAGIA DICE LA FORMA, NON «CAPISCO / NON CAPISCO». Il kernel legge tanti
+ * byte quanti ne dichiara la magia, azzera i campi che quella forma non aveva
+ * e spegne i bit di `flag` che allora non volevano dire niente. Ricostruire il
+ * bersaglio resta la cosa giusta da fare, ma non e' piu' un'emergenza.
+ *
+ * ! E LA VERIFICA DEL PUNTATORE ADESSO E' DELLA MISURA GIUSTA: chiedere 604
+ * byte leggibili a un blocco che ne ha 596 rifiuta un chiamante legittimo la
+ * cui struttura finisce a ridosso di una pagina — una volta ogni mille, sul
+ * programma sbagliato.
+ */
+#define EXOS_VERSION    "0.204"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

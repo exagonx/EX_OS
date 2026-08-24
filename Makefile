@@ -23,6 +23,7 @@ CC      := gcc
 LD      := ld
 OBJCOPY := objcopy
 OBJDUMP := objdump
+NM      := nm
 AS      := nasm
 
 # --- Flag di compilazione -----------------------------------------------------
@@ -2799,7 +2800,7 @@ ip_drv: dirs $(IP_DRV_OUT)
 # agosto 2026 questa riga ripeteva a mano i nomi dei programmi di rete e
 # dei driver, e mancavano pcnet_drv e xcp: due elenchi della stessa cosa
 # divergono al primo che si dimentica di aggiornarne uno.
-all: dirs stage1 stage2 kernel $(PROGRAMMI_FLOPPY) $(PROGRAMMI_CD) $(PROGRAMMI_EXWIN) $(DRIVER_CD) verifica-programmi floppy
+all: dirs stage1 stage2 kernel $(PROGRAMMI_FLOPPY) $(PROGRAMMI_CD) $(PROGRAMMI_EXWIN) $(DRIVER_CD) verifica-programmi verifica-statici floppy
 	@echo ""
 	@echo "============================================"
 	@echo " EX-OS build completata!"
@@ -4186,6 +4187,58 @@ verifica-cpu:
 	      print('   La CPU di base e\' il Pentium 133 MMX: vedi CPU_BASE nel Makefile.'), \
 	      sys.exit(1))"
 
+
+# =============================================================================
+# CHI DEVE ESSERE STATICO LO E' — verificato, non promesso
+#
+# ! CI SONO PROGRAMMI CHE NON POSSONO DIPENDERE DA /lib/libc.so, e la ragione
+# non e' la misura: sono quelli con cui si ENTRA e con cui si RIPARA. Un
+# `login` che si apre solo se la libc condivisa e' a posto lascia fuori
+# chiunque proprio il giorno in cui quel file e' rotto — e quel giorno arriva
+# per un aggiornamento andato a meta', che e' esattamente quando serve entrare.
+# Stessa cosa per `install`, che quel file lo deve poter riscrivere, e per i
+# driver, che partono PRIMA che ci sia un filesystem da cui leggere una
+# libreria.
+#
+# ! ED ERA VERO SOLO PERCHE' LE REGOLE ERANO SCRITTE COSI'. Niente lo
+# verificava: bastava che qualcuno, aggiungendo un programma o copiando una
+# regola vicina, mettesse $(LIBC_PONTI_OBJ) al posto di <prog>_libc.o, e il
+# sistema si sarebbe avviato benissimo fino al giorno sbagliato. Una regola che
+# vive nella testa di chi scrive il Makefile non e' una regola: e' un ricordo.
+#
+# COME SI GUARDA: un programma collegato ai ponti porta dentro
+# `__libc_ponti_tabella` — la generano tools/genlibc.py e i ponti, e un
+# programma statico non ce l'ha (ha al piu' `__libc_ponti_avvia` DEBOLE, che
+# vale zero e non viene chiamata). Si guarda il simbolo, non il nome del file:
+# il nome dice cosa volevamo, il simbolo dice cosa e' venuto fuori.
+# =============================================================================
+STATICI_OBBLIGATI := $(BUILD_BIN)/login $(BUILD_BIN)/install $(BUILD_BIN)/sh \
+                     $(wildcard $(BUILD_DRIVERS)/*.drv) \
+                     $(wildcard $(BUILD_DRIVERS_CD)/*.drv)
+
+.PHONY: verifica-statici
+verifica-statici: $(PROGRAMMI_FLOPPY) $(PROGRAMMI_CD) $(DRIVER_CD)
+	@sbagliati=""; \
+	for f in $(STATICI_OBBLIGATI); do \
+	    [ -f "$$f" ] || continue; \
+	    if $(NM) "$$f" 2>/dev/null | grep -q "__libc_ponti_tabella"; then \
+	        sbagliati="$$sbagliati $$(basename $$f)"; \
+	    fi; \
+	done; \
+	if [ -n "$$sbagliati" ]; then \
+	    echo ""; \
+	    echo "  ! Questi DEVONO essere statici e non lo sono:$$sbagliati"; \
+	    echo ""; \
+	    echo "    Sono i programmi con cui si entra, si ripara e si avvia la"; \
+	    echo "    macchina: se dipendono da /lib/libc.so, il giorno che quel"; \
+	    echo "    file e' rotto non c'e' piu' modo di aggiustarlo."; \
+	    echo ""; \
+	    echo "    Nella loro regola ci vuole  \$$(BUILD_OBJ)/<nome>_libc.o"; \
+	    echo "    (cioe' lib/libc.c compilato dentro), NON \$$(LIBC_PONTI_OBJ)."; \
+	    echo ""; \
+	    exit 1; \
+	fi; \
+	echo "[OK] login, install, sh e i driver sono statici"
 
 .PHONY: verifica-programmi
 verifica-programmi: $(PROGRAMMI_FLOPPY) $(PROGRAMMI_CD) $(DRIVER_CD)
