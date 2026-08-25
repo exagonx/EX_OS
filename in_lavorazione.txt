@@ -1,26 +1,44 @@
 Bug trovati:
-Da CD, con 32 MB, pci.drv muore appena avviato.
-    Avviando `qemu -cdrom dist/exos.iso -boot d -m 32M`, il primo comando di
-    /boot/avvio.sh stampa «pci: servizio 'pci' attivo, 6 dispositivi» e subito
-    dopo: page fault a 0x00000000, EIP=0x00000000, e nel dump lo STACK del
-    processo e' 0x0..0x0 — cioe' non ne ha uno. Con -m 64M non succede mai.
-    Riproducibile due volte su due. Il sospetto e' l'allocazione dello stack
-    utente in elf_load quando la memoria libera e' poca: dovrebbe fallire il
-    caricamento, invece lascia partire un processo senza stack. Da cercare
-    guardando cosa rende elf_load in quel caso.
+Da CD, un driver ogni tanto muore appena avviato (raro, non chiuso).
+    Sintomo: «page fault a 0x00000000, EIP=0x00000000», e nel dump lo STACK
+    del processo e' 0x0..0x0 mentre heap e VMA sono quelli di un altro
+    programma. Visto tre volte su una cinquantina di avvii da CD, sempre sul
+    primo comando di /boot/avvio.sh, piu' facilmente con poca memoria (16-20
+    MB) e mai con loglevel=4 — cioe' un problema di TEMPI, non di RAM.
+    Il 24 agosto 2026 e' stata chiusa la strada che lo spiega: fra
+    proc_create() e proc_set_ready() il processo stava in PROC_BLOCKED con un
+    PID gia' vivo, e chiunque svegliasse un bloccato PER PID (ipc_send, il
+    VFS, i pty) lo faceva partire con EIP=0 e senza stack. Adesso quello
+    stato e' PROC_NASCENTE e nessuna via di risveglio lo conosce; in piu'
+    sched_unblock_locked scrive un [WARN] se qualcuno ci prova.
+    NON E' PROVATO CHE FOSSE QUELLA: 18 avvii senza la correzione non l'hanno
+    riprodotto, quindi la misura non distingue. Se il fault ricompare, il
+    [WARN] dira' se e' quella strada o un'altra.
 
 Il BIO di file di OpenSSL non legge i file di EX-OS.
     SSL_CTX_load_verify_locations("/cdrom/exos/ssl/certi.pem") rende
     error:05880020 «x509 certificate routines::BIO lib», mentre `ls` vede il
     file e `cp` lo copia. Lo stesso file letto con open/read e passato a un BIO
     di memoria si carica benissimo: 150 certificati.
-    Sospetto: fseek/ftell o ferror nella nostra stdio, che il BIO di file usa e
-    la maggior parte dei nostri programmi no. Da cercare con un programma
-    minimo che apra un file con il solo stdio e ne legga la coda.
+    NON E' LA NOSTRA stdio, e adesso c'e' una prova che lo dice. `libctest`
+    apre QUEL file — 224 KB, su ISO 9660 — con la sola stdio, lo legge fino in
+    fondo con fread, controlla feof e ferror, e fa fseek/ftell in coda e in
+    testa: tutto giusto. Il sospetto scritto qui (fseek/ftell o ferror) era
+    sbagliato.
+    Resta da guardare: BIO_C_SET_FILENAME chiama fopen(percorso, "r") e in
+    caso di NULL alza proprio quell'errore. La sola strada per cui la nostra
+    fopen puo' rendere NULL con SYS_OPEN che riesce e' la malloc di fdopen
+    (una FILE piu' 4 KB di buffer) — cioe' MEMORIA, dentro un programma che ha
+    libssl e libcrypto in pancia. Da provare stampando errno subito dopo la
+    load_verify_locations, e guardando quanta heap resta.
     Aggirato in tools/iso/prova-tls.c, con il perche' scritto accanto.
 
 Da fare, per una pagina web moderna (in ordine di quanto pesa):
-1. https nel browser: mancano il record e l'handshake di extls.
+1. I siti che servono SOLO certificati ECDSA non si aprono: il cliente TLS
+   annuncia rsa_pss_rsae_sha256 e basta, e la catena la verifica lib/excert,
+   che sa fare solo RSA. Servono la P-256 (firma ECDSA) in lib/excrypt e il
+   ramo corrispondente in excert. Si vede su wikipedia.org e su
+   news.ycombinator.com: allarme 40, «nessun cifrario in comune».
 2. I tetti del browser: PAGINA_MAX 512 KB e NODI_MAX 4096 troncano Wikipedia
    (676 KB). Un nodo pesa 32 byte, un pezzo 32: alzarli e' un conto di memoria
    da fare in faccia su una macchina da 32 MB, non una riga da cambiare.

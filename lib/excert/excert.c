@@ -208,3 +208,81 @@ int excert_catena_valida(const ExCert *catena, unsigned int quanti,
 
     return EXCERT_OK;
 }
+
+/* =============================================================================
+ * Il nome del sito
+ * ============================================================================= */
+
+/* Minuscolo ASCII, e SOLO ASCII: un nome di dominio internazionalizzato arriva
+ * qui gia' in punycode (`xn--...`), che di lettere accentate non ne ha. */
+static char giu(char c)
+{
+    return (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
+}
+
+/* Confronta un'etichetta DNS del certificato con quella dell'host.
+ * `n` e' la lunghezza del nome nel certificato, che NON e' terminato da zero:
+ * viene dal DER, e li' le stringhe hanno una lunghezza e basta. */
+static int nome_uguale(const unsigned char *cert, unsigned int n,
+                       const char *host)
+{
+    unsigned int i;
+
+    for (i = 0; i < n; i++) {
+        if (host[i] == '\0') return 0;
+        if (giu((char)cert[i]) != giu(host[i])) return 0;
+    }
+    return host[n] == '\0';
+}
+
+/* `*.dominio` contro `host`. Il jolly copre UN'ETICHETTA, quella piu' a
+ * sinistra, e non copre il dominio nudo. */
+static int jolly_uguale(const unsigned char *cert, unsigned int n,
+                        const char *host)
+{
+    unsigned int i;
+    const char  *punto;
+
+    if (n < 2 || cert[0] != '*' || cert[1] != '.') return 0;
+
+    /* Il resto del nome nel certificato dev'essere ancora un dominio con
+     * almeno un punto: un `*.it` non deve valere per tutto un paese. */
+    for (i = 2; i < n; i++) if (cert[i] == '.') break;
+    if (i >= n) return 0;
+
+    /* L'host deve avere un'etichetta da consumare, e una sola. */
+    for (punto = host; *punto && *punto != '.'; punto++) ;
+    if (*punto != '.') return 0;
+
+    return nome_uguale(cert + 1, n - 1, punto);
+}
+
+int excert_nome_combacia(const ExCert *c, const char *host)
+{
+    unsigned int off = 0;
+
+    if (c == 0 || host == 0 || host[0] == '\0') return EXCERT_NOME_DIVERSO;
+
+    /* ! SENZA subjectAltName SI RIFIUTA, e non si ripiega sul CommonName.
+     * Vedi il perche' accanto alla dichiarazione in excert.h. */
+    if (c->san.p == 0 || c->san.n == 0) return EXCERT_NOME_DIVERSO;
+
+    while (off < c->san.n) {
+        ExDerElem g;
+
+        if (exder_leggi(&c->san, off, &g) != 0) return EXCERT_NOME_DIVERSO;
+        off += g.intestazione + g.valore.n;
+
+        /* GeneralName ::= CHOICE { ... dNSName [2] IA5String ... }
+         * Primitivo, contesto-specifico, numero 2: 0x82. Gli altri — indirizzi
+         * di posta, URI, indirizzi IP — non rispondono alla domanda «e' questo
+         * sito?» e si saltano. */
+        if (g.tag != 0x82) continue;
+        if (g.valore.n == 0) continue;
+
+        if (nome_uguale(g.valore.p, g.valore.n, host))  return EXCERT_OK;
+        if (jolly_uguale(g.valore.p, g.valore.n, host)) return EXCERT_OK;
+    }
+
+    return EXCERT_NOME_DIVERSO;
+}

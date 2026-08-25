@@ -69,6 +69,8 @@ void ipc_notify_irq(uint32_t dest_pid, uint8_t irq_num)
         if (dest->state == PROC_BLOCKED) {
             sched_unblock_locked(dest_pid);
         }
+        /* Un PROC_NASCENTE non compare qui apposta: il messaggio resta in
+         * cassetta e lo legge quando parte. Vedi PROC_NASCENTE in sched.h. */
     }
     /* Mailbox piena: notifica scartata, vedi commento sopra la funzione. */
 }

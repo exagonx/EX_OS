@@ -146,6 +146,8 @@ static const unsigned char OID_P256[] =
     { 0x2A,0x86,0x48,0xCE,0x3D,0x03,0x01,0x07 };
 /* 2.5.29.19 — basicConstraints */
 static const unsigned char OID_BASIC[] = { 0x55,0x1D,0x13 };
+/* 2.5.29.17 — subjectAltName */
+static const unsigned char OID_SAN[]   = { 0x55,0x1D,0x11 };
 
 static unsigned int alg_da_oid(const ExDer *o)
 {
@@ -258,7 +260,13 @@ static int leggi_chiave(const ExDer *spki, ExCert *c)
 }
 
 /* =============================================================================
- * Le estensioni: per adesso serve solo basicConstraints
+ * Le estensioni: basicConstraints e subjectAltName
+ *
+ * ! DUE SOLE, E LE ALTRE SI IGNORANO DI PROPOSITO. Un certificato ne porta
+ * anche dieci, e leggerle tutte vorrebbe dire dieci parser su byte scelti da
+ * qualcun altro. Queste due sono quelle senza cui la verifica NON e' una
+ * verifica: la prima dice se questo certificato aveva il diritto di firmarne
+ * un altro, la seconda per quale sito vale.
  * ============================================================================= */
 static void leggi_estensioni(const ExDer *ext, ExCert *c)
 {
@@ -268,14 +276,16 @@ static void leggi_estensioni(const ExDer *ext, ExCert *c)
     while (off < ext->n) {
         ExDerElem e, oid, dopo;
         unsigned int passo = misura(ext, off), interno;
+        int          e_basic, e_san;
 
         if (passo == 0) return;
         if (exder_leggi(ext, off, &e) != 0 || e.tag != TAG_SEQUENZA) return;
         off += passo;
 
         if (exder_leggi(&e.valore, 0, &oid) != 0 || oid.tag != TAG_OID) continue;
-        if (!uguali(oid.valore.p, oid.valore.n, OID_BASIC, sizeof(OID_BASIC)))
-            continue;
+        e_basic = uguali(oid.valore.p, oid.valore.n, OID_BASIC, sizeof(OID_BASIC));
+        e_san   = uguali(oid.valore.p, oid.valore.n, OID_SAN,   sizeof(OID_SAN));
+        if (!e_basic && !e_san) continue;
 
         /* Dopo l'OID puo' esserci il booleano «critica», poi l'OCTET STRING. */
         interno = oid.intestazione + oid.valore.n;
@@ -285,6 +295,18 @@ static void leggi_estensioni(const ExDer *ext, ExCert *c)
             if (exder_leggi(&e.valore, interno, &dopo) != 0) continue;
         }
         if (dopo.tag != TAG_OCTETSTRING) continue;
+
+        if (e_san) {
+            /* GeneralNames ::= SEQUENCE SIZE (1..MAX) OF GeneralName.
+             * Si tiene il CONTENUTO della sequenza: chi confronta i nomi la
+             * scorre, e non deve rileggere l'intestazione. */
+            ExDerElem seq;
+
+            if (exder_leggi(&dopo.valore, 0, &seq) == 0 &&
+                seq.tag == TAG_SEQUENZA)
+                c->san = seq.valore;
+            continue;
+        }
 
         c->ha_basic = 1;
         {

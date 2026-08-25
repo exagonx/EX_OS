@@ -855,7 +855,8 @@ typedef struct {
     uint32_t pid;
     uint32_t ppid;
     uint32_t state;          /* ProcState: 1=READY 2=RUNNING 3=BLOCKED
-                              * 4=ZOMBIE 5=SLEEPING */
+                              * 4=ZOMBIE 5=SLEEPING 6=NASCENTE (creato, non
+                              * ancora caricato) */
     uint32_t prio;
     char     name[PROCINFO_NAME_MAX];
     uint32_t ustack_top;

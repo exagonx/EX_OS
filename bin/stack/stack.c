@@ -42,6 +42,9 @@ static const char *nome_stato(unsigned int s)
         case 3:  return "blocc.";
         case 4:  return "zombie";
         case 5:  return "dorme ";
+        /* Creato ma non ancora caricato: si vede solo cogliendo un `spawn` a
+         * meta'. Vedi PROC_NASCENTE in kernel/include/sched.h. */
+        case 6:  return "nasce ";
         default: return "?     ";
     }
 }

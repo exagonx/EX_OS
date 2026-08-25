@@ -3614,13 +3614,49 @@ int32_t sys_truncate(InterruptFrame *frame)
  * dove quelle istruzioni sono legali, e include la sincronizzazione del
  * filesystem — che dalla shell non era comunque possibile fare.
  *
- * NOTA sui permessi: qualunque processo può chiamarla. Non c'è ancora un
- * concetto di utente o privilegio in EX-OS, quindi non c'è nulla su cui
- * basare un controllo. Da rivedere quando esisteranno gli UID.
+ * =============================================================================
+ * ! CHI PUO' SPEGNERE: ROOT SEMPRE, E CHI E' DAVANTI ALLA MACCHINA.
+ *
+ * Questa era `solo_root`, ed era la risposta sbagliata alla domanda giusta.
+ * Spegnere non e' un privilegio amministrativo: e' il gesto di chi ha il
+ * computer davanti, e su quella macchina c'e' comunque il pulsante
+ * dell'alimentazione. Negarlo all'utente normale non protegge niente — lo
+ * costringe a staccare la corrente, che e' il modo PEGGIORE di spegnere,
+ * perche' salta la sincronizzazione del filesystem che questa syscall fa.
+ *
+ * ! MA UNA SESSIONE REMOTA NON SPEGNE LA MACCHINA DI QUALCUN ALTRO. Ed e' la
+ * distinzione che conta davvero: chi entra via telnet non ha il pulsante, non
+ * vede chi sta lavorando alla console, e spegnendo interrompe il lavoro di una
+ * persona che non ha chiesto niente. E' la stessa regola dei sistemi veri, che
+ * concedono l'arresto alle sessioni LOCALI e non a quelle di rete.
+ *
+ * ! IL CRITERIO E' IL DESCRITTORE 0, e non «da dove viene la connessione».
+ * Una sessione remota — telnet, o un terminale dentro una finestra — legge da
+ * uno pseudo-terminale; una console vera e' FD_STDIN. Chiedere al descrittore
+ * invece che al protocollo vuol dire che il giorno che arriva ssh la regola
+ * vale gia', senza che nessuno se ne debba ricordare.
+ *
+ * ! E root RESTA ROOT: da remoto un amministratore spegne, perche' quello si'
+ * che e' amministrazione.
  * ============================================================================= */
+static int puo_spegnere(void)
+{
+    Process *self = proc_get_current();
+
+    if (self == NULL || self->uid == 0) return 1;      /* root, o il kernel */
+
+    /* Una console vera: chi ha la macchina davanti. */
+    if (self->fds[0].type == FD_STDIN) return 1;
+
+    klog(LOG_WARN, "SYSCALL reboot: rifiutata al PID %u (uid %u): "
+         "non e' root e non e' su una console di questa macchina",
+         self->pid, self->uid);
+    return 0;
+}
+
 int32_t sys_reboot(InterruptFrame *frame)
 {
-    if (!solo_root("reboot")) return ERR(EPERM);
+    if (!puo_spegnere()) return ERR(EPERM);
 
     uint32_t cmd  = frame->ebx;
     Process *self = proc_get_current();

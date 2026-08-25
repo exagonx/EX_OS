@@ -105,6 +105,28 @@ int excert_firma_valida(const ExCert *figlio, const ExCert *padre);
 int excert_catena_valida(const ExCert *catena, unsigned int quanti,
                          const ExMagazzino *magazzino, const char *adesso);
 
+/* =============================================================================
+ * Il nome: questo certificato e' di QUESTO sito?
+ *
+ * ! E' LA META' DELLA VERIFICA CHE SI DIMENTICA, ed e' quella che i falsi
+ * superano. Una catena valida dice soltanto che una CA di cui ci si fida ha
+ * firmato quel certificato: un certificato legittimo per «esempio.it», emesso
+ * davvero, ha una catena impeccabile — e non autorizza nessuno a farsi passare
+ * per la banca. Senza questo controllo, chiunque possa deviare il traffico e
+ * abbia UN certificato qualunque e' dentro.
+ *
+ * ! SI GUARDA SOLO IL subjectAltName. Il CommonName non si legge: da RFC 6125
+ * un certificato che ha il SAN va confrontato li' e basta, e uno che non ce
+ * l'ha non esiste piu' fra i certificati pubblici. Leggere il CN come ripiego
+ * vorrebbe dire accettare un nome che l'emittente non ha inteso autorizzare.
+ *
+ * ! IL JOLLY VALE UN'ETICHETTA SOLA E SOLO LA PRIMA. `*.esempio.it` copre
+ * `www.esempio.it` e NON copre `a.b.esempio.it` ne' `esempio.it`: e' la regola
+ * che impedisce a un `*.it` di valere per tutto un paese.
+ *
+ * Rende EXCERT_OK o EXCERT_NOME_DIVERSO. */
+int excert_nome_combacia(const ExCert *c, const char *host);
+
 #ifdef __cplusplus
 }
 #endif

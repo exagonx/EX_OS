@@ -2010,7 +2010,8 @@ static void cmd_cat(int argc, char *argv[])
 static void cmd_reboot(void)
 {
     syscall1(SYS_REBOOT, EXOS_RB_RESTART);
-    printerr("reboot: il kernel ha rifiutato la richiesta di riavvio");
+    printerr("reboot: non da qui. Vedi `poweroff`: da una sessione remota non "
+             "si riavvia la macchina di qualcun altro.");
 }
 
 /* =============================================================================
@@ -2033,14 +2034,20 @@ static void cmd_poweroff(void)
      * alla rovescia e l'esito della sincronizzazione. */
     syscall1(SYS_REBOOT, EXOS_RB_POWEROFF);
 
-    /* Raggiunta solo se il kernel ha rifiutato la richiesta. */
-    printerr("poweroff: il kernel ha rifiutato la richiesta di spegnimento");
+    /* ! IL RIFIUTO SI SPIEGA, ALTRIMENTI SEMBRA UN GUASTO. Il kernel ne dice
+     * di no per un motivo solo: una sessione remota non spegne la macchina di
+     * chi ci sta lavorando davanti. Detto cosi' e' una regola; detto «ha
+     * rifiutato» e' un difetto da segnalare. */
+    printerr("poweroff: non da qui. Lo spegnimento lo puo' chiedere root, "
+             "oppure chi e' a una console di questa macchina - non una "
+             "sessione remota.");
 }
 
 static void cmd_halt(void)
 {
     syscall1(SYS_REBOOT, EXOS_RB_HALT);
-    printerr("halt: il kernel ha rifiutato la richiesta di arresto");
+    printerr("halt: non da qui. Vedi `poweroff`: da una sessione remota non "
+             "si ferma la macchina di qualcun altro.");
 }
 
 /* =============================================================================
@@ -3286,10 +3293,28 @@ static int g_script_livello = 0;
  * Ritorna 0, oppure -1 se lo script ha chiesto `exit`. */
 static int esegui_script(const char *nome, const char *etichetta)
 {
+    /* ! IL BUFFER E' UNA FINESTRA SUL FILE, NON IL FILE. Fino al 24 agosto
+     * 2026 lo script si leggeva TUTTO IN UNA VOLTA in questi 2 KB, e il resto
+     * veniva troncato: c'era scritto qui che leggerlo a pezzi sarebbe stata
+     * «complicazione per un caso che non si presenta».
+     *
+     * Il caso si e' presentato. /boot/avvio.sh, con i commenti che spiegano
+     * perche' la rete si accende li' e non altrove, passa i 2 KB: il taglio
+     * cadeva in mezzo all'ultima riga e la macchina stampava «Ret» invece di
+     * «Rete pronta». Su un file di comandi un troncamento non e' una riga
+     * persa — e' una riga ESEGUITA A META', e quella e' un comando diverso.
+     *
+     * Adesso il buffer si ricarica: si consumano le righe intere, la coda
+     * incompleta si sposta in testa e si legge il pezzo dopo. Il file non ha
+     * piu' un tetto; ce l'ha solo la singola riga, che e' MAX_LINE. La
+     * memoria in gioco e' la stessa di prima. */
     char        buf[2048];
     char        riga[MAX_LINE];
-    int         fd, letti, i, r = 0;
+    int         fd, r = 0;
     int         zitto_sempre = 0;
+    int         pieno = 0;          /* byte validi in buf */
+    int         fine  = 0;          /* il file e' finito */
+    int         scarta = 0;         /* riga piu' lunga del buffer: si butta */
 
     if (g_script_livello >= SCRIPT_ANNIDAMENTO_MAX) {
         printerr("sh: script annidati troppo in profondita'");
@@ -3299,29 +3324,47 @@ static int esegui_script(const char *nome, const char *etichetta)
     fd = syscall3(SYS_OPEN, (uint32_t)nome, 0, 0);
     if (fd < 0) return 0;           /* non c'e': non e' un errore */
 
-    letti = (int)sh_read(fd, buf, sizeof(buf) - 1);
-    syscall1(SYS_CLOSE, (uint32_t)fd);
-    if (letti <= 0) return 0;
-    buf[letti] = '\0';
-
     if (etichetta == 0) etichetta = nome;
     g_script_livello++;
 
-    /* ! SI LEGGE TUTTO IN UNA VOLTA, e il limite e' dichiarato: 2 KB.
-     * Un autoexec e' un elenco di comandi, non un programma; leggerlo a
-     * pezzi vorrebbe dire gestire una riga spezzata a meta' fra due
-     * letture, che e' complicazione per un caso che non si presenta. Un
-     * file piu' lungo viene TRONCATO, e lo si dice. */
-    if (letti == (int)sizeof(buf) - 1)
-        println("sh: script piu' lungo di 2 KB, il resto e' stato ignorato");
+    for (;;) {
+        int n = 0, zitto = 0, i, consumati;
 
-    i = 0;
-    while (i < letti) {
-        int n = 0, zitto = 0;
+        /* Si ricarica solo se c'e' posto: la coda incompleta resta in testa. */
+        if (!fine && pieno < (int)sizeof(buf) - 1) {
+            int letti = (int)sh_read(fd, buf + pieno,
+                                     (uint32_t)(sizeof(buf) - 1 - pieno));
 
-        while (i < letti && buf[i] != '\n' && n < MAX_LINE - 1) riga[n++] = buf[i++];
-        while (i < letti && buf[i] != '\n') i++;    /* riga troppo lunga: si scarta la coda */
-        if (i < letti) i++;                        /* salta il newline */
+            if (letti > 0) pieno += letti;
+            else           fine = 1;
+        }
+        if (pieno == 0) break;
+
+        for (i = 0; i < pieno && buf[i] != '\n'; i++) ;
+
+        if (i == pieno && !fine) {
+            /* Nessun newline in tutto il buffer: o serve leggere ancora, o
+             * questa riga e' piu' lunga del buffer e va buttata fino al
+             * prossimo a capo. */
+            if (pieno >= (int)sizeof(buf) - 1) {
+                printerr("sh: riga di script troppo lunga, saltata");
+                pieno  = 0;
+                scarta = 1;
+            }
+            continue;
+        }
+
+        consumati = (i < pieno) ? i + 1 : i;     /* il newline si mangia */
+
+        if (!scarta) {
+            n = (i < MAX_LINE - 1) ? i : MAX_LINE - 1;   /* la coda si scarta */
+            { int k; for (k = 0; k < n; k++) riga[k] = buf[k]; }
+        }
+
+        { int k; for (k = consumati; k < pieno; k++) buf[k - consumati] = buf[k]; }
+        pieno -= consumati;
+
+        if (scarta) { scarta = 0; continue; }   /* era la coda di una riga lunga */
 
         while (n > 0 && (riga[n-1] == '\r' || riga[n-1] == ' ' ||
                          riga[n-1] == '\t')) n--;
@@ -3363,6 +3406,7 @@ static int esegui_script(const char *nome, const char *etichetta)
         if (r < 0) break;           /* `exit` dentro lo script */
     }
 
+    syscall1(SYS_CLOSE, (uint32_t)fd);
     g_script_livello--;
     return (r < 0) ? -1 : 0;
 }

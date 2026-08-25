@@ -517,7 +517,10 @@ for (uint32_t pi = 0; pi < npages; pi++) {
         proc->state = PROC_READY;
         runq_add(proc);
     } else {
-        proc->state  = PROC_BLOCKED;
+        /* ! NASCENTE, NON BLOCCATO: vedi ProcState in sched.h. Un bloccato lo
+         * sveglia chiunque conosca il suo PID, e qui il PID c'e' gia' mentre
+         * entry point e stack ancora no. */
+        proc->state  = PROC_NASCENTE;
         proc->next   = NULL;   /* non in run queue: runq_remove deve sapere */
         proc->prev   = NULL;
     }
@@ -796,6 +799,20 @@ void sched_unblock_locked(uint32_t pid)
     uint32_t i;
 
     for (i = 0; i < MAX_PROCESSES; i++) {
+        /* ! IL TESTIMONE DI UN RISVEGLIO SBAGLIATO, ed e' l'unico posto dove
+         * metterlo: qui passano IPC, il VFS e i pty, tutti a svegliare PER
+         * PID. Un PID appena riciclato puo' appartenere a un processo che sta
+         * ancora nascendo — e farlo partire vorrebbe dire ring 3 con EIP=0 e
+         * senza stack. Non si sveglia, e si dice a chi legge il log che
+         * qualcuno tiene in mano un PID che non e' piu' quello di prima. */
+        if (g_process_pool[i].pid   == pid &&
+            g_process_pool[i].state == PROC_NASCENTE) {
+            klog(LOG_WARN, "SCHED: risveglio del PID %u '%s' ignorato: sta "
+                 "ancora nascendo (PID riciclato?)",
+                 pid, g_process_pool[i].name);
+            return;
+        }
+
         if (g_process_pool[i].pid   == pid &&
             g_process_pool[i].state == PROC_BLOCKED) {
             /* L'evento è arrivato: la scadenza non serve più. Lasciarla
@@ -846,6 +863,8 @@ int proc_interrompi_locked(uint32_t pid)
 
     p->interrotto = 1;
     if (p->state == PROC_BLOCKED) sched_unblock_locked(pid);
+    /* Un nascente non e' in nessuna coda e non si sveglia: proc_kill lo
+     * trovera' comunque, perche' guarda lo stato e non la coda. */
     return 0;
 }
 

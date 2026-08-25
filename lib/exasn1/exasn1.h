@@ -118,6 +118,17 @@ typedef struct {
 
     int e_ca;                  /* basicConstraints: CA vero */
     int ha_basic;              /* l'estensione c'era */
+
+    /* subjectAltName, il contenuto della SEQUENCE: una fila di nomi con il
+     * loro tag. Serve a rispondere alla sola domanda che conta per un
+     * browser — questo certificato e' di QUESTO sito?
+     *
+     * ! E IL CommonName NON E' UNA RISPOSTA A QUELLA DOMANDA. Lo era prima del
+     * 2000, e da RFC 6125 in poi un certificato con subjectAltName va guardato
+     * SOLO li' dentro: accettare il CN quando il SAN c'e' vuol dire accettare
+     * un nome che l'emittente non ha inteso autorizzare. Qui il CN non si
+     * legge affatto — un certificato pubblico senza SAN non esiste piu'. */
+    ExDer san;                 /* p nullo = l'estensione non c'era */
 } ExCert;
 
 /* Analizza un certificato X.509 in DER. Rende 0, oppure -1: e -1 vuol dire

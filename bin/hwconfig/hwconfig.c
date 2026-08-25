@@ -902,9 +902,11 @@ static void componi_avvio(char *out, unsigned int max)
             "# mette a mano:  ipcfg -a 192.168.1.10 -m 255.255.255.0 -g ...\n"
             "dhcp\n"
             "\n"
-            /* ! NIENTE BACKTICK IN CIO' CHE SI STAMPA. La shell non fa
-             * sostituzione di comando, ma qualcosa lungo la strada quella riga
-             * la troncava: usciva "Ret" e basta. Apici semplici. */
+            /* Apici semplici e non backtick: la shell non fa sostituzione di
+             * comando, e un backtick in cio' che si stampa fa solo pensare che
+             * la faccia. (Il «Ret» che usciva al posto di «Rete pronta» non
+             * era colpa loro: era il tetto di 2 KB del motore degli script,
+             * che tagliava il file in mezzo all'ultima riga.) */
             "echo Rete pronta: 'ipcfg' la mostra, 'ping' la prova.\n",
             g_t.rete_driver);
         strncat(out, riga, max - 1 - strlen(out));

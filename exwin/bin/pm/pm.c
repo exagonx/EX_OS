@@ -623,7 +623,16 @@ static long menu_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         if (wp == ID_SPEGNI) {
             log_seriale("pm: spegnimento chiesto dal menu");
             reboot(EXOS_RB_POWEROFF);
+            /* ! SI TORNA QUI SOLO SE IL KERNEL HA DETTO DI NO, e da ExWin
+             * succede in un caso solo: la scrivania non e' su una console di
+             * questa macchina. Lo si dice in una finestra, perche' un menu che
+             * non fa niente sembra rotto. */
             log_seriale("pm: il kernel ha rifiutato lo spegnimento");
+            ex_dlg_avviso("Spegnimento",
+                          "Il sistema non si spegne da qui.\n\n"
+                          "Lo puo' chiedere root, oppure chi sta a una "
+                          "console di questa macchina: da una sessione "
+                          "remota no.");
             return 0;
         }
 

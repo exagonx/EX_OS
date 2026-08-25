@@ -42,6 +42,8 @@
 #ifndef EXTLS_H
 #define EXTLS_H
 
+#include "excert.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -101,6 +103,104 @@ int extls_rsa_pss_verifica(const unsigned char *modulo, unsigned int modulo_n,
                            const unsigned char impronta[EXTLS_IMPRONTA],
                            const unsigned char *firma, unsigned int firma_n,
                            int sale_atteso);
+
+/* =============================================================================
+ * IL CLIENTE TLS 1.3
+ *
+ * ! UNA SOLA STRADA, E SCELTA APPOSTA. TLS 1.3 permette una decina di
+ * combinazioni; qui se ne parla UNA:
+ *
+ *     scambio di chiavi   X25519
+ *     cifrario            TLS_CHACHA20_POLY1305_SHA256
+ *     firma del server    RSA-PSS con SHA-256 (e Ed25519, se mai arrivera')
+ *
+ * Non e' poverta': e' il fatto che ognuna delle altre combinazioni sarebbe
+ * un'altra implementazione da provare, e una crittografia provata a meta' e'
+ * peggio di una che non c'e' — perche' la barra scrive `https://` lo stesso.
+ * Questi tre pezzi EX-OS li ha gia' e sono gia' provati contro OpenSSL:
+ * X25519, ChaCha20 e Poly1305 stanno in lib/excrypt dai tempi di sshd.
+ *
+ * ! IL PREZZO, DETTO SUBITO: un sito che offre SOLO certificati ECDSA non si
+ * apre. La verifica della catena vuole RSA (lib/excert), e la P-256 non c'e'.
+ * Quasi tutti i grandi servono ancora una catena RSA a chi non annuncia
+ * ECDSA — e questo cliente non la annuncia — ma qualcuno no, e quel qualcuno
+ * riceve un errore chiaro invece di una pagina.
+ *
+ * ! E LA VERIFICA NON E' OPZIONALE. Senza magazzino di CA la stretta di mano
+ * fallisce: non c'e' un modo di dire «cifra e fidati». Cifrare con chiunque
+ * risponda vuol dire cifrare con chi sta in mezzo, e in quel caso il lucchetto
+ * mente a chi lo guarda.
+ * ============================================================================= */
+
+/* Il trasporto sotto: TCP, e nient'altro che questo cliente debba sapere.
+ * `leggi` rende i byte letti, 0 se l'altro ha chiuso, <0 per errore. */
+typedef struct {
+    void *stato;
+    int (*leggi)(void *stato, unsigned char *dst, unsigned int max,
+                 unsigned int ms);
+    int (*scrivi)(void *stato, const unsigned char *src, unsigned int n);
+} ExTlsSotto;
+
+#define EXTLS_OK                 0
+#define EXTLS_ERR_RETE          -1   /* la connessione e' caduta */
+#define EXTLS_ERR_PROTOCOLLO    -2   /* byte che non stanno in TLS 1.3 */
+#define EXTLS_ERR_VERSIONE      -3   /* l'altro non parla 1.3 */
+#define EXTLS_ERR_CIFRARIO      -4   /* non ha scelto il nostro */
+#define EXTLS_ERR_CERTIFICATO   -5   /* catena non valida */
+#define EXTLS_ERR_NOME          -6   /* certificato di un altro sito */
+#define EXTLS_ERR_FIRMA         -7   /* CertificateVerify sbagliata */
+#define EXTLS_ERR_FINISHED      -8   /* le chiavi non coincidono */
+#define EXTLS_ERR_ALLERTA       -9   /* l'altro ha detto di no */
+#define EXTLS_ERR_SPAZIO       -10   /* un messaggio piu' grande dei buffer */
+#define EXTLS_ERR_HRR          -11   /* HelloRetryRequest: non gestito */
+#define EXTLS_ERR_USO          -12   /* argomenti mancanti */
+
+/* Quanti byte occupa una connessione. Chi chiama alloca: qui dentro non si
+ * chiama malloc, cosi' la stessa libreria gira dentro EX-OS e sull'host. */
+unsigned int extls_misura(void);
+
+/* La stretta di mano. `t` e' `extls_misura()` byte azzerati o no, non importa.
+ * `adesso` e' l'ora in «AAAAMMGGhhmmssZ», per le date dei certificati.
+ * `casuale` riempie di byte imprevedibili — dentro EX-OS e' getrandom().
+ *
+ * Rende EXTLS_OK o uno dei codici qui sopra. */
+int extls_stretta(void *t, const ExTlsSotto *sotto, const char *host,
+                  const ExMagazzino *magazzino, const char *adesso,
+                  void (*casuale)(unsigned char *, unsigned int));
+
+/* Dopo la stretta: dati applicativi, cifrati. Stessa firma del trasporto. */
+int  extls_leggi(void *t, unsigned char *dst, unsigned int max,
+                 unsigned int ms);
+int  extls_scrivi(void *t, const unsigned char *src, unsigned int n);
+
+/* Manda close_notify. Il trasporto sotto lo chiude chi l'ha aperto. */
+void extls_chiudi(void *t);
+
+/* =============================================================================
+ * Il magazzino delle CA, letto da un file PEM
+ *
+ * `der` e' dove finiscono i byte decifrati, e DEVE restare vivo quanto il
+ * magazzino: ExCert non copia niente, tiene fette che puntano li' dentro.
+ *
+ * Rende quanti certificati ha capito (>= 0), -1 per argomenti sbagliati, -2 se
+ * `der` e' troppo piccolo. Un certificato che non si capisce si salta.
+ * ============================================================================= */
+int extls_magazzino_pem(ExMagazzino *m, const char *pem, unsigned int pem_n,
+                        unsigned char *der, unsigned int der_max,
+                        unsigned int *der_usati);
+
+/* Il codice dell'ultimo allarme ricevuto (0 = nessuno). Vale la pena
+ * stamparlo accanto a EXTLS_ERR_ALLERTA: 40 e' «non abbiamo niente in
+ * comune», 112 «questo nome non e' mio», 48 «non mi fido del tuo
+ * certificato». */
+unsigned int extls_allarme(void *t);
+
+/* L'ultimo errore incontrato leggendo, DOPO la stretta: `extls_leggi` rende
+ * byte e non codici, e senza questo «zero byte» non dice perche'. */
+int extls_ultimo(void *t);
+
+/* Una riga in italiano per un codice di errore. */
+const char *extls_perche(int codice);
 
 #ifdef __cplusplus
 }

@@ -1143,6 +1143,18 @@ exfont_so: dirs $(EXTTF_SO)
 # http.c, exhttp.c, dns.c e rete.c. Chi non apre un URL — un editor, un
 # orologio, un file manager — non la carica mai.
 # =============================================================================
+# ! IL TLS ENTRA DENTRO exhttp.so, NON ACCANTO, e il criterio e' quello di
+# sempre: chi apre un URL lo carica, chi non lo apre no. Sono cinque librerie —
+# i grandi numeri, il DER, la catena, le chiavi e i cifrari — e nessuna di loro
+# ha senso da sola per un programma che non parla in rete.
+EXTLS_CLIENT := lib/extls/extls_client.c lib/extls/extls_pem.c \
+                lib/extls/extls_kdf.c lib/extls/extls_pss.c \
+                lib/excert/excert.c lib/exasn1/exasn1.c lib/exbig/exbig.c \
+                lib/excrypt/chacha20.c lib/excrypt/poly1305.c \
+                lib/excrypt/x25519.c lib/excrypt/fe25519.c
+EXTLS_INC    := -I lib/extls -I lib/excert -I lib/exasn1 -I lib/exbig \
+                -I lib/excrypt
+
 EXHTTP_ESPORTA := lib/exhttp/exhttp_esporta.c
 EXHTTP_STUB    := lib/exhttp/exhttp_stub.c
 EXHTTP_LD      := lib/exhttp/exhttp.ld
@@ -1150,18 +1162,26 @@ EXHTTP_SO      := $(BUILD_EXWIN_LIB)/exhttp.so
 
 $(EXHTTP_SO): $(EXHTTP_SRC) $(EXHTTP_HTTP) $(EXHTTP_HDR) $(EXHTTP_ESPORTA) \
               $(EXHTTP_LD) $(EXLIB_HDR) $(IP_PROTO) $(DNS_SRC) $(RETE_SRC) \
-              $(LIBC_PONTI_OBJ) $(LIBC_SO) $(SEGNO_FLAG)
+              $(EXTLS_CLIENT) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(SEGNO_FLAG)
 	@echo "=== Compilazione libreria condivisa /exwin/lib/exhttp.so ==="
 	@mkdir -p $(BUILD_EXWIN_LIB) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhttp -I drivers/net -c $(EXHTTP_SRC) -o $(BUILD_OBJ)/sohttp_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhttp $(EXTLS_INC) -I drivers/net -c $(EXHTTP_SRC) -o $(BUILD_OBJ)/sohttp_main.o
 	$(CC) $(CFLAGS_USER) -I lib/exhttp -c $(EXHTTP_HTTP) -o $(BUILD_OBJ)/sohttp_http.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(DNS_SRC)  -o $(BUILD_OBJ)/sohttp_dns.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(RETE_SRC) -o $(BUILD_OBJ)/sohttp_rete.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhttp -c $(EXHTTP_ESPORTA) -o $(BUILD_OBJ)/sohttp_esporta.o
+	@# I mattoni dell'https: non toccano la libc, e si compilano da soli.
+	@for f in $(EXTLS_CLIENT); do \
+	    n=$$(basename $$f .c); \
+	    $(CC) $(CFLAGS_USER) -I lib/include $(EXTLS_INC) -c $$f \
+	        -o $(BUILD_OBJ)/sohttp_$$n.o || exit 1; \
+	done
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(EXHTTP_LD) \
 	    $(BUILD_OBJ)/sohttp_esporta.o $(BUILD_OBJ)/sohttp_main.o \
 	    $(BUILD_OBJ)/sohttp_http.o $(BUILD_OBJ)/sohttp_dns.o \
-	    $(BUILD_OBJ)/sohttp_rete.o $(LIBC_PONTI_OBJ) -o $@
+	    $(BUILD_OBJ)/sohttp_rete.o \
+	    $(foreach f,$(EXTLS_CLIENT),$(BUILD_OBJ)/sohttp_$(basename $(notdir $(f))).o) \
+	    $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] exhttp.so compilata: $@"
 
 .PHONY: exhttp_so
@@ -4373,24 +4393,34 @@ prova-excert:
 # lib/excert — mentre la firma che il server fa sul dialogo in corso e' PSS. Un
 # TLS che sa fare solo v1.5 non completa nessun handshake 1.3.
 # =============================================================================
-EXTLS_SRC := lib/extls/extls_kdf.c lib/extls/extls_pss.c
+EXTLS_SRC := lib/extls/extls_kdf.c lib/extls/extls_pss.c \
+             lib/extls/extls_client.c lib/extls/extls_pem.c
 EXTLS_HDR := lib/extls/extls.h
 
 .PHONY: verifica-extls
 verifica-extls: $(EXTLS_SRC) $(EXTLS_HDR)
-	@$(CC) $(CFLAGS_USER) -I lib/extls -I lib/exbig -c lib/extls/extls_kdf.c \
-	    -o $(BUILD_OBJ)/extls_kdf_prova.o
-	@$(CC) $(CFLAGS_USER) -I lib/extls -I lib/exbig -c lib/extls/extls_pss.c \
-	    -o $(BUILD_OBJ)/extls_pss_prova.o
+	@for f in $(EXTLS_SRC); do \
+	    n=$$(basename $$f .c); \
+	    $(CC) $(CFLAGS_USER) $(EXTLS_INC) -c $$f \
+	        -o $(BUILD_OBJ)/$${n}_prova.o || exit 1; \
+	done
 	@echo "[OK] lib/extls compila per i386"
 
 .PHONY: prova-extls
 prova-extls:
 	@python3 tools/prove/tlsprova.py
 
+# ! LA PROVA DEL CLIENTE E' L'UNICA CHE DICE SE L'https FUNZIONA. Le altre
+# provano i mattoni contro dei numeri; questa mette lo stesso codice che gira
+# dentro EX-OS a parlare con un server OpenSSL vero, e poi gli mette davanti
+# un certificato di un altro sito, una radice sconosciuta e uno scaduto.
+.PHONY: prova-cliente-tls
+prova-cliente-tls:
+	@python3 tools/prove/clientprova.py
+
 # Le prove dei pezzi dell'https, in fila.
 .PHONY: prova-tls
-prova-tls: prova-exbig prova-exasn1 prova-excert prova-extls
+prova-tls: prova-exbig prova-exasn1 prova-excert prova-extls prova-cliente-tls
 
 .PHONY: verifica-versioni
 verifica-versioni:
@@ -4675,6 +4705,24 @@ $(ISOX_IMG): Makefile $(FLOPPY_IMG) boot/autoexec.sh boot/avvio.sh $(DRIVER_SOLO
 	@# avvio.sh lo esegue `login` da root prima dell'accesso, e ci sta la
 	@# rete; autoexec.sh lo esegue la shell di chi entra, e ci stanno le
 	@# sue cose. Vedi i due file per la via d'uscita se una riga si blocca.
+	@# ! IL MAGAZZINO DELLE CA VA SUL CD DI EX-OS, non solo su quello degli
+	@# strumenti: senza, `https` non si apre. E non e' una limitazione da
+	@# aggirare — un TLS che cifra con chiunque risponda cifra con chi sta
+	@# in mezzo, e la barra scrive `https://` lo stesso.
+	@#
+	@# ! SI COPIA DA QUESTA MACCHINA, e non si tiene nel repository: un
+	@# elenco di CA e' una cosa VIVA — ne entrano, ne escono, ne scadono — e
+	@# un file fermo dentro un git diventa sbagliato senza che nessuno se ne
+	@# accorga. Se qui non c'e', il CD si fa lo stesso e lo dice.
+	@mkdir -p $(ISOX_ROOT)/exos/ssl
+	@for f in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt; do \
+	    [ -f "$$f" ] && cp "$$f" $(ISOX_ROOT)/exos/ssl/certi.pem && break; \
+	done; \
+	if [ -f $(ISOX_ROOT)/exos/ssl/certi.pem ]; then \
+	    echo "     CA: $$(grep -c 'BEGIN CERTIFICATE' $(ISOX_ROOT)/exos/ssl/certi.pem) certificati per https"; \
+	else \
+	    echo "     !  nessun magazzino di CA su questa macchina: https non si aprira'"; \
+	fi
 	@cp boot/avvio.sh $(ISOX_ROOT)/boot/avvio.sh
 	@cp boot/autoexec.sh $(ISOX_ROOT)/boot/autoexec.sh
 	@cp README.md README.en.md HANDOFF.md KERNEL_CORE_NOTES.md gpl-2.0.txt $(ISOX_ROOT)/doc/

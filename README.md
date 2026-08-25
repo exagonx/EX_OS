@@ -281,9 +281,16 @@ fratelli e non una scala; `<b><i>x</b>` chiude fino alla `<b>`; dentro
 `<script>` e `<style>` **non c'è markup**, o dal primo `a < b` del JavaScript in
 poi l'albero è spazzatura.
 
-! **`https://` SI RIFIUTA DICENDOLO.** Manca il TLS: parlare HTTP in chiaro alla
-porta 443 darebbe una risposta incomprensibile e un errore che non c'entra
-niente.
+! **`https://` FUNZIONA, E VERIFICA DAVVERO.** TLS 1.3 scritto qui dentro:
+X25519 per lo scambio di chiavi, ChaCha20-Poly1305 per i dati, la catena dei
+certificati controllata contro un magazzino di CA vere e il nome del sito
+confrontato col `subjectAltName`. Senza magazzino non si apre niente: cifrare
+con chiunque risponda vuol dire cifrare con chi sta in mezzo, e la barra
+scriverebbe `https://` lo stesso.
+
+Il prezzo, dichiarato: un sito che serve **solo** certificati ECDSA non si apre
+— la verifica della catena vuole RSA — e riceve un errore chiaro invece di una
+pagina.
 
 ! **LE IMMAGINI ARRIVANO DOPO IL TESTO.** La pagina si impagina e si disegna con
 le sole parole; solo allora si scarica un'immagine per volta, e a ognuna che
@@ -314,8 +321,7 @@ invece di valere due pixel. Meno stile, mai stile sbagliato.
 l'origine più bassa della cascata, quindi una pagina può sovrascriverli. Prima
 erano `if` nel motore, e `<b>` e `<i>` non c'erano affatto.
 
-Quello che **non** c'è, dichiarato: JavaScript, tabelle impaginate come
-tabelle, `@media`, le unità relative, `https`.
+Quello che **non** c'è, dichiarato: JavaScript, `@media`, le unità relative.
 
 
 ### I font: TrueType, misurato contro FreeType

@@ -280,8 +280,15 @@ siblings and not a staircase; `<b><i>x</b>` closes up to the `<b>`; inside
 `<script>` and `<style>` there **is no markup**, or from the JavaScript's first
 `a < b` onwards the tree is garbage.
 
-! **`https://` IS REFUSED, AND SAYS SO.** TLS is missing: speaking plain HTTP to
-port 443 would give an incomprehensible answer and an unrelated error.
+! **`https://` WORKS, AND ACTUALLY VERIFIES.** TLS 1.3 written here: X25519 for
+the key exchange, ChaCha20-Poly1305 for the data, the certificate chain checked
+against a store of real CAs and the site name matched against the
+`subjectAltName`. Without a store nothing opens: encrypting with whoever answers
+means encrypting with whoever is in the middle, and the bar would say
+`https://` all the same.
+
+The price, declared: a site serving **only** ECDSA certificates does not open —
+chain verification wants RSA — and gets a clear error instead of a page.
 
 ! **IMAGES COME AFTER THE TEXT.** The page is laid out and drawn with the words
 alone; only then is one image fetched at a time, and on each arrival the page is
@@ -311,8 +318,7 @@ is refused rather than taken for two pixels. Less style, never wrong style.
 origin, so a page can override them. They used to be `if`s in the engine, and
 `<b>` and `<i>` were not there at all.
 
-What is **not** there, declared: JavaScript, tables laid out as tables,
-`@media`, relative units, `https`.
+What is **not** there, declared: JavaScript, `@media`, relative units.
 
 
 ### Fonts: TrueType, measured against FreeType

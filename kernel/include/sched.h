@@ -175,6 +175,24 @@ typedef enum {
     PROC_BLOCKED    = 3,    /* In attesa di un evento (I/O, sleep, ecc.) */
     PROC_ZOMBIE     = 4,    /* Terminato, aspetta wait() del parent */
     PROC_SLEEPING   = 5,    /* In sleep(n), sveglio dopo n tick */
+    /* ! NASCENTE NON E' BLOCCATO, ED E' UNA DISTINZIONE CHE COSTA UN DIFETTO
+     * A NON FARLA. Fra proc_create() e proc_set_ready() c'e' tutto elf_load,
+     * che gira con gli interrupt ABILITATI: in quella finestra il processo ha
+     * gia' un PID e un nome, ma non ha ne' entry point ne' stack utente.
+     *
+     * Finche' quello stato si chiamava BLOCKED, chiunque svegliasse un
+     * bloccato PER PID lo faceva partire: ipc_send verso un PID appena
+     * riciclato, o la scadenza di un'attesa. Il processo entrava in ring 3
+     * con EIP=0 e senza stack, e il fault che ne usciva diceva
+     * «page fault a 0x00000000, EIP=0x00000000, stack 0x0..0x0» — un dump che
+     * non somiglia a niente, su un binario che non ha mai eseguito una sua
+     * istruzione. Si e' visto accendendo la rete all'avvio da CD: pci.drv
+     * moriva cosi', e piu' spesso quanto meno il log rallentava la macchina.
+     *
+     * Un nascente NON e' in nessuna coda e nessuna via di risveglio lo
+     * conosce: l'unico modo di farlo partire e' proc_set_ready(), cioe' chi
+     * l'ha creato, quando ha finito di caricarlo. */
+    PROC_NASCENTE   = 6,    /* Creato, non ancora caricato: solo proc_set_ready() lo avvia */
 } ProcState;
 
 /* =============================================================================

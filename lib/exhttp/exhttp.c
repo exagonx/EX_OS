@@ -18,6 +18,7 @@
 #include "dns.h"
 #include "ip_proto.h"
 #include "exhttp.h"
+#include "extls.h"
 
 /* -----------------------------------------------------------------------------
  * Il trasporto TCP
@@ -28,8 +29,25 @@
  * --------------------------------------------------------------------------- */
 static int g_pid_ip = 0;
 
+/* ! IL RESTO DI UN PEZZO SI TIENE, E FINO AL 25 AGOSTO 2026 SI BUTTAVA. Lo
+ * stack consegna i dati a PEZZI — quello che e' arrivato in un segmento TCP —
+ * e chi legge chiede quanti byte gli servono. Finche' sopra c'era solo l'HTTP
+ * la cosa non si vedeva: l'HTTP chiede sempre un buffer grande, quindi il
+ * pezzo ci stava sempre tutto.
+ *
+ * Il record di TLS no. Legge PRIMA cinque byte — l'intestazione, che dice
+ * quanto e' lungo il resto — e poi il resto. Con un `if (len > max) len = max`
+ * quei cinque byte arrivavano e tutto il resto del segmento spariva: la
+ * lunghezza letta dopo era un numero preso da byte a caso, e usciva
+ * «messaggio troppo grande» su un server che aveva risposto benissimo.
+ *
+ * Adesso l'avanzo resta qui e si consegna alla lettura dopo. E' cio' che
+ * rende questo trasporto un FLUSSO invece di una fila di pacchetti — che e'
+ * quello che TCP e' sempre stato, e che l'interfaccia a messaggi nascondeva. */
 typedef struct {
-    int id;                 /* la connessione, lato stack */
+    int           id;              /* la connessione, lato stack */
+    unsigned char avanzo[IPC_MSG_MAX_DATA];
+    unsigned int  a_pos, a_fine;
 } TcpStato;
 
 /* ! UNO SOLO PER VOLTA, E VA DETTO. Il browser di oggi scarica una pagina alla
@@ -185,6 +203,16 @@ static int tcp_leggi(void *st, unsigned char *dst, unsigned int max,
     IpTcpRif      r;
     IpTcpDati     d;
 
+    /* Prima si finisce quello che era gia' arrivato. */
+    if (s->a_pos < s->a_fine) {
+        unsigned int q = s->a_fine - s->a_pos;
+
+        if (q > max) q = max;
+        memcpy(dst, s->avanzo + s->a_pos, q);
+        s->a_pos += q;
+        return (int)q;
+    }
+
     r.id = (unsigned int)s->id;
     if (ipc_send((unsigned int)g_pid_ip, IP_MSG_TCP_RICEVI, &r, sizeof(r)) < 0)
         return -1;
@@ -193,10 +221,19 @@ static int tcp_leggi(void *st, unsigned char *dst, unsigned int max,
 
     memcpy(&d, buf, sizeof(d));
     if (d.len == 0) return 0;
-    if (d.len > max) d.len = max;
+    if (d.len > IPC_MSG_MAX_DATA - sizeof(d)) return -1;
 
-    memcpy(dst, buf + sizeof(d), d.len);
-    return (int)d.len;
+    if (d.len <= max) {
+        memcpy(dst, buf + sizeof(d), d.len);
+        return (int)d.len;
+    }
+
+    /* Ne e' arrivato piu' di quanto ne siano stati chiesti: il resto aspetta. */
+    memcpy(dst, buf + sizeof(d), max);
+    s->a_fine = d.len - max;
+    s->a_pos  = 0;
+    memcpy(s->avanzo, buf + sizeof(d) + max, s->a_fine);
+    return (int)max;
 }
 
 static int tcp_scrivi(void *st, const unsigned char *src, unsigned int n)
@@ -309,11 +346,205 @@ int exhttp_tcp(ExHttpTrasporto *t, const char *host, unsigned int porta)
     }
     if (id <= 0) { g_ultimo_errore = id; return 0; }
 
-    g_tcp.id  = id;
-    t->stato  = &g_tcp;
+    g_tcp.id    = id;
+    g_tcp.a_pos = g_tcp.a_fine = 0;
+    t->stato    = &g_tcp;
     t->leggi  = tcp_leggi;
     t->scrivi = tcp_scrivi;
     t->chiudi = tcp_chiudi;
+    return 1;
+}
+
+/* =============================================================================
+ * https: lo stesso HTTP, dentro un tubo cifrato
+ *
+ * ! IL TLS STA SOTTO L'HTTP E NON SI VEDE DA SOPRA, ed e' il motivo per cui
+ * questo file poteva accoglierlo senza riscritture: `exhttp_scambio` parla con
+ * un ExHttpTrasporto e non ha mai saputo cosa ci sia sotto. Qui si costruisce
+ * un trasporto le cui `leggi` e `scrivi` passano per lib/extls, e tutto il
+ * resto — richieste, intestazioni, pezzi, redirezioni — resta com'era.
+ *
+ * ! IL MAGAZZINO DELLE CA SI CARICA UNA VOLTA SOLA E RESTA. Sono duecento
+ * certificati e un paio di centinaia di kilobyte: rileggerli a ogni immagine
+ * di una pagina vorrebbe dire rileggere il CD venti volte per aprire un sito.
+ *
+ * ! E SENZA MAGAZZINO NON SI APRE NIENTE. Non c'e' una modalita' «cifra e
+ * fidati»: cifrare con chiunque risponda vuol dire cifrare con chi sta in
+ * mezzo, e in quel caso il lucchetto dice una bugia a chi lo guarda.
+ * ============================================================================= */
+
+/* Dove cercarlo: prima il sistema installato, poi il CD. */
+static const char *CA_DOVE[] = {
+    "/exos/ssl/certi.pem",
+    "/cdrom/exos/ssl/certi.pem",
+    0
+};
+
+static ExMagazzino  *g_magazzino = 0;
+static unsigned char *g_der      = 0;
+static char           g_tls_errore[96];
+
+/* La stessa struttura serve da stato del trasporto: dentro c'e' il TLS e
+ * sotto di lui il TCP. */
+typedef struct {
+    void            *tls;
+    ExHttpTrasporto  tcp;
+} StatoTls;
+
+static StatoTls g_stato_tls;
+
+static void casuale(unsigned char *b, unsigned int n)
+{
+    /* ! SE getrandom NON RIEMPIE, NON SI INVENTA NIENTE. Byte prevedibili in
+     * uno scambio di chiavi non danno un errore: danno una connessione che
+     * sembra cifrata e non lo e'. Si azzera tutto, la chiave pubblica esce
+     * degenere e la stretta fallisce — che e' il comportamento giusto. */
+    if (getrandom(b, n, 0) != (ssize_t)n) memset(b, 0, n);
+}
+
+static int magazzino_carica(void)
+{
+    int   fd = -1, i;
+    long  dim = 0;
+    char *pem;
+    int   quanti;
+
+    if (g_magazzino) return 1;
+
+    for (i = 0; CA_DOVE[i]; i++) {
+        fd = open(CA_DOVE[i], O_RDONLY);
+        if (fd >= 0) break;
+    }
+    if (fd < 0) {
+        strcpy(g_tls_errore, "manca il magazzino delle CA (exos/ssl/certi.pem)");
+        return 0;
+    }
+
+    dim = fsize(fd);
+    if (dim <= 0 || dim > 4 * 1024 * 1024) {
+        close(fd);
+        strcpy(g_tls_errore, "il magazzino delle CA non si legge");
+        return 0;
+    }
+
+    pem = (char *)malloc((unsigned int)dim);
+    g_der = (unsigned char *)malloc((unsigned int)dim);
+    g_magazzino = (ExMagazzino *)malloc(sizeof(ExMagazzino));
+    if (!pem || !g_der || !g_magazzino) {
+        close(fd);
+        free(pem);
+        strcpy(g_tls_errore, "non c'e' memoria per il magazzino delle CA");
+        g_magazzino = 0;
+        return 0;
+    }
+
+    /* ! SI LEGGE IN UN CICLO. Una read sola puo' rendere meno di quanto si e'
+     * chiesto — e su un file di duecento kilobyte lo fa — e il pezzo mancante
+     * diventerebbe un certificato tagliato a meta' invece di un errore. */
+    {
+        long fatti = 0;
+
+        while (fatti < dim) {
+            int r = (int)read(fd, pem + fatti, (unsigned int)(dim - fatti));
+
+            if (r <= 0) break;
+            fatti += r;
+        }
+        close(fd);
+        dim = fatti;
+    }
+
+    quanti = extls_magazzino_pem(g_magazzino, pem, (unsigned int)dim,
+                                 g_der, (unsigned int)dim, 0);
+    free(pem);
+
+    if (quanti <= 0) {
+        free(g_der); free(g_magazzino);
+        g_der = 0; g_magazzino = 0;
+        strcpy(g_tls_errore, "il magazzino delle CA e' vuoto");
+        return 0;
+    }
+    return 1;
+}
+
+static int tls_leggi(void *stato, unsigned char *dst, unsigned int max,
+                     unsigned int ms)
+{
+    return extls_leggi(((StatoTls *)stato)->tls, dst, max, ms);
+}
+
+static int tls_scrivi(void *stato, const unsigned char *src, unsigned int n)
+{
+    return extls_scrivi(((StatoTls *)stato)->tls, src, n);
+}
+
+static void tls_chiudi(void *stato)
+{
+    StatoTls *s = (StatoTls *)stato;
+
+    extls_chiudi(s->tls);
+    s->tcp.chiudi(s->tcp.stato);
+}
+
+/* L'ora, nella forma che le date dei certificati vogliono. Se l'orologio non
+ * risponde si prende una data che fa passare tutto tranne i certificati
+ * scaduti da anni: meglio di rifiutare ogni sito su una macchina senza
+ * batteria. */
+static void adesso_in(char *out, unsigned int max)
+{
+    time_t     ora = time(0);
+    struct tm *g;
+
+    if (ora == (time_t)-1 || (g = gmtime(&ora)) == 0) {
+        strncpy(out, "20260101000000Z", max - 1);
+        out[max - 1] = 0;
+        return;
+    }
+    snprintf(out, max, "%04d%02d%02d%02d%02d%02dZ",
+             g->tm_year + 1900, g->tm_mon + 1, g->tm_mday,
+             g->tm_hour, g->tm_min, g->tm_sec);
+}
+
+static int exhttp_tls(ExHttpTrasporto *t, const char *host, unsigned int porta)
+{
+    ExTlsSotto sotto;
+    char       adesso[24];
+    int        r;
+
+    g_tls_errore[0] = 0;
+
+    if (!magazzino_carica()) return 0;
+
+    if (!exhttp_tcp(&g_stato_tls.tcp, host, porta)) return 0;
+
+    if (!g_stato_tls.tls) {
+        g_stato_tls.tls = malloc(extls_misura());
+        if (!g_stato_tls.tls) {
+            g_stato_tls.tcp.chiudi(g_stato_tls.tcp.stato);
+            strcpy(g_tls_errore, "non c'e' memoria per la connessione cifrata");
+            return 0;
+        }
+    }
+
+    sotto.stato  = g_stato_tls.tcp.stato;
+    sotto.leggi  = g_stato_tls.tcp.leggi;
+    sotto.scrivi = g_stato_tls.tcp.scrivi;
+
+    adesso_in(adesso, sizeof(adesso));
+
+    r = extls_stretta(g_stato_tls.tls, &sotto, host, g_magazzino, adesso,
+                      casuale);
+    if (r != EXTLS_OK) {
+        g_stato_tls.tcp.chiudi(g_stato_tls.tcp.stato);
+        strncpy(g_tls_errore, extls_perche(r), sizeof(g_tls_errore) - 1);
+        g_tls_errore[sizeof(g_tls_errore) - 1] = 0;
+        return 0;
+    }
+
+    t->stato  = &g_stato_tls;
+    t->leggi  = tls_leggi;
+    t->scrivi = tls_scrivi;
+    t->chiudi = tls_chiudi;
     return 1;
 }
 
@@ -521,13 +752,23 @@ int exhttp_prendi(const char *url, unsigned char *buf, unsigned int max,
 
         if (!http_url(adesso, &u)) { strcpy(e->errore, "indirizzo illeggibile"); return 0; }
 
-        /* ! https:// SI RIFIUTA IN CHIARO, E LO DICE. Aprire una connessione
-         * TCP alla porta 443 e parlarci HTTP darebbe una risposta
-         * incomprensibile e un messaggio che non c'entra niente: meglio dire
-         * che il TLS non c'e' ancora. */
+        /* ! LO SCHEMA SCEGLIE IL TRASPORTO, E BASTA. Da qui in giu' non c'e'
+         * una riga che sappia se sotto ci sia un tubo cifrato: e' la divisione
+         * che questo file aveva gia' il giorno prima che il TLS esistesse. */
         if (u.cifrato) {
-            strcpy(e->errore, "https non ancora: manca il TLS");
-            return 0;
+            if (!exhttp_tls(&t, u.host, u.porta)) {
+                if (g_tls_errore[0])
+                    strncpy(e->errore, g_tls_errore, sizeof(e->errore) - 1);
+                else if (g_ultimo_errore == -1)
+                    strcpy(e->errore, "la rete non e' pronta");
+                else if (g_ultimo_errore == -2)
+                    strcpy(e->errore, "il nome non si risolve");
+                else
+                    sprintf(e->errore, "non riesco a connettermi (%d)",
+                            g_ultimo_errore);
+                return 0;
+            }
+            goto collegato;
         }
 
         if (!exhttp_tcp(&t, u.host, u.porta)) {
@@ -541,6 +782,7 @@ int exhttp_prendi(const char *url, unsigned char *buf, unsigned int max,
             return 0;
         }
 
+collegato:
         ok = exhttp_scambio(&t, &u, buf, max, e, &r);
         t.chiudi(t.stato);
         if (!ok) return 0;

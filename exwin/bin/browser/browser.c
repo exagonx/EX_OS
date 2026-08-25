@@ -40,10 +40,15 @@
  * carattere, i quattro margini, l'allineamento, `display`, selettori per tag,
  * classe e id) e le TABELLE impaginate come tabelle, annidate comprese.
  *
- * ! QUELLO CHE NON C'E', DICHIARATO: `https` — il muro grosso, e vuole exbig,
- * exasn1 ed extls in quest'ordine — `colspan` e `rowspan`, i moduli (`form` e
- * `input` si impaginano ma non si compilano ne' si inviano), JavaScript, e la
- * compressione, che non si chiede apposta.
+ * ! E DAL 25 AGOSTO 2026 ANCHE `https`, che era il muro grosso: TLS 1.3 con
+ * X25519, ChaCha20-Poly1305 e la catena dei certificati verificata contro un
+ * magazzino di CA vere. Il tubo cifrato sta sotto exhttp e da qui non si vede
+ * — questo file non ha una riga che sappia se sotto ci sia il TLS.
+ *
+ * ! QUELLO CHE NON C'E', DICHIARATO: i siti che servono SOLO certificati
+ * ECDSA (la verifica della catena vuole RSA), `colspan` e `rowspan`, i moduli
+ * (`form` e `input` si impaginano ma non si compilano ne' si inviano),
+ * JavaScript, e la compressione, che non si chiede apposta.
  *
  * ! LE IMMAGINI ARRIVANO DOPO IL TESTO, ED E' LA DECISIONE CHE CONTA QUI. La
  * pagina si impagina e si disegna con le sole parole; solo allora si scarica
@@ -2122,8 +2127,8 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
                          "Il browser di EX-OS.  Mette insieme exhttp per la "
                          "rete, exhtml per l'albero, excss per i fogli di "
                          "stile, eximg per le immagini e i font per misurare "
-                         "e disegnare il testo.  Niente JavaScript, niente "
-                         "https.");
+                         "e disegnare il testo.  http e https (TLS 1.3, "
+                         "certificati verificati).  Niente JavaScript.");
             ex_dlg_avviso("Informazioni su", t);
             return 0;
         }
@@ -2212,7 +2217,7 @@ int main(int argc, char **argv)
     cache_prepara();
 
     ex_fuoco(g_url);
-    dico("scrivi un indirizzo e premi Invio. https non ancora: manca il TLS.");
+    dico("scrivi un indirizzo e premi Invio. http e https.");
     ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
     disegna();
 

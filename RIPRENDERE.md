@@ -12,57 +12,170 @@ seriale e USB — tastiera compresa, hub compresi.
 
 ## COSA E' COMMITTATO
 
-    7c58a8b  "I due README imparano otto commit, e la versione torna a
-              voler dire qualcosa"
+    696f728  "La rete si accende prima dell'accesso, il browser tiene le
+              pagine, install fa tre domande"
 
-Kernel **0.205**. Ci sono dentro le correzioni del 24 agosto — `login` che non
-scende piu' con la shell (`SPAWN_F_UTENTE`), `hwconfig` che non spegne piu'
-l'accesso riscrivendo kernel.cfg, `sys_spawn` che capisce tutte le forme
-pubblicate del blocco EXTRA, `make verifica-statici`, la versione su ogni
-strumento con `-version`, le librerie `exbig`/`exasn1`/`excert`/`extls`,
-OpenSSL per i386-exos, e il browser che regge una pagina vera (UTF-8,
-allineamento delle tabelle, spazi).
+Kernel **0.205**. Vedi la sezione sui tre posti della rete, qui sotto.
 
 In attesa nell'albero — **PROVATO, DA COMMETTERE**:
 
-  - **`/boot/avvio.sh`: la rete si accende PRIMA dell'accesso.** E' il terzo
-    posto in cui questa catena e' stata messa, e il primo giusto: lo esegue
-    `login` da root, prima del prompt, e ASPETTA. Su CD e floppy — dove `login`
-    non c'e' — lo esegue la shell, e il confine fra le due strade e'
-    `EXOS_LOGIN=1` nell'ambiente. La sezione qui sotto racconta perche'
-    `autoexec.sh` e `[modules]` avevano fallito, ognuno a modo suo;
-  - **il browser tiene le pagine su disco**: 16 MB, sette giorni, potatura
-    delle piu' vecchie, otto caselle da 64 KB in RAM davanti, e la copia
-    locale usata QUANDO LA RETE NON RISPONDE, dicendolo nella barra di stato;
-  - **`install` fa tre domande**: minimale (la versione floppy), poi il resto
-    degli strumenti, poi ExWin completo — piu' `install -a`, che aggiorna solo
-    i file che ci sono gia'. L'elenco del minimale NON e' scritto a mano: il
-    Makefile lo ricava dal floppy appena costruito in `/boot/minimale.txt`.
+  - **`https` NEL BROWSER.** TLS 1.3 scritto in casa: X25519,
+    ChaCha20-Poly1305, catena dei certificati verificata contro un magazzino
+    di 150 CA e nome del sito confrontato col `subjectAltName`. La sezione qui
+    sotto racconta i tre difetti che ci sono voluti per arrivarci;
+  - **`shutdown` NON E' PIU' SOLO DI root.** Lo puo' chiedere chi sta a una
+    console di questa macchina; una sessione remota no. Sezione sotto;
+  - **il motore degli script non tronca piu' a 2 KB**: leggeva tutto in una
+    volta in un buffer da 2 KB e tagliava il resto — su `/boot/avvio.sh` il
+    taglio cadeva in mezzo all'ultima riga;
+  - **`PROC_NASCENTE`**: un processo che nasce non e' un processo bloccato, e
+    finche' lo era ogni risveglio per PID poteva farlo partire con EIP=0;
+  - **`libctest` prova la stdio su un file grande e di sola lettura**, e ha
+    SCARTATO un sospetto scritto in `in_lavorazione.txt`.
 
-**321 prove su 321**, su floppy FAT12 e su disco ext2.
+**326 prove su 326** con `libctest`; **9 su 9** con `make prova-cliente-tls`.
 
-! **`make abi` ADESSO DICE COSA E' CAMBIATO, NON SOLO CHE QUALCOSA LO E'.**
-L'impronta del bersaglio era un solo sha256; da oggi e' un elenco — una riga
-per forma, con la misura — e quando non combacia stampa le righe che
-differiscono:
+## https: TLS 1.3 scritto qui dentro
 
-        forma                        registrata     adesso
-        ---------------------------- ---------- ----------
-        spawnextra                          596        604
+! **NON C'ERA QUASI NIENTE DA INVENTARE, E QUELLO E' IL PUNTO.** X25519,
+ChaCha20 e Poly1305 stanno in `lib/excrypt` dai tempi di sshd, provati contro
+OpenSSL; SHA-256 lo da' la libc; HMAC, HKDF e RSA-PSS stanno in `lib/extls`;
+il DER e la catena in `lib/exasn1` e `lib/excert`. `extls_client.c` e' solo
+l'ORDINE in cui quelle cose si chiamano — che e' esattamente cio' che TLS 1.3
+e', e anche il posto dove si sbaglia.
 
-Chi legge decide in dieci secondi: `struct stat` da 48 a 60 e' il difetto di
-agosto che e' costato due giorni, `spawnextra` da 596 a 604 e' una forma che il
-kernel continua a capire.
+**Una sola strada, scelta apposta**: X25519, `TLS_CHACHA20_POLY1305_SHA256`,
+`rsa_pss_rsae_sha256`. Ogni combinazione in piu' sarebbe un'altra
+implementazione da provare, e una crittografia provata a meta' e' peggio di una
+che non c'e' — la barra scrive `https://` lo stesso.
 
-! **`gitupdate.sh` FA `git add .` E UN COMMIT SOLO**: `messaggio-commit.txt`
-deve coprire tutto quello che si e' fatto dall'ultimo commit, non l'ultima
-cosa.
+! **IL PREZZO E' DICHIARATO**: un sito che serve SOLO certificati ECDSA non si
+apre (wikipedia.org, news.ycombinator.com: allarme 40). Serve la P-256, ed e' la
+voce 1 di `in_lavorazione.txt`.
 
-! **UN ATTREZZO CHE STA IN /tmp E' UN ATTREZZO CHE SI RIFA' DA CAPO LA PROSSIMA
-VOLTA.** Quello che ha trovato il difetto della firma — ricomporre i flussi TCP
-da un dump e confrontare i buffer invece degli hash — sarebbe costato un'altra
-mezza giornata a riscriverlo. Vale anche per la ricetta con cui si porta il
-puntatore del mouse dove si vuole: mezz'ora a ritrovarla.
+### I tre difetti, perche' nessuno era dove sembrava
+
+1. **Il cursore della trascrizione.** La trascrizione e' UNA e ci vanno dentro
+   tutt'e due le parti del dialogo: senza far avanzare `hs_off` anche sui
+   messaggi che mandiamo NOI, il lettore ripescava il nostro ClientHello e lo
+   trattava come la risposta del server. «Risposta che non e' TLS 1.3» su un
+   server che aveva risposto benissimo.
+
+2. **`testo_n >> 32` su un `unsigned int`.** Le due lunghezze in coda al dato
+   di Poly1305 sono a 64 bit; scorrendo un numero a 32 bit oltre i 32 bit non
+   si ottiene zero, si ottiene comportamento indefinito — e su x86 il
+   processore usa solo i cinque bit bassi del conto, cioe' rifa' `>> 0`. La
+   coda usciva `1d 00 00 00 1d 00 00 00` invece di `1d 00 00 00 00 00 00 00`.
+
+3. **`hs_off` contro `trascr_n`, e questo si vedeva SOLO SU UN SITO VERO.**
+   `trascr_n` e' quanto e' ARRIVATO, `hs_off` quanto e' stato LETTO. Coincidono
+   finche' ogni record porta un messaggio solo — ed e' cosi' che si comporta un
+   `openssl s_server` — ma un server vero impacchetta Certificate,
+   CertificateVerify e Finished nello stesso record. L'impronta «fino al
+   Certificate» comprendeva anche la firma: la firma non tornava mai.
+   Banco di prova verde, `example.com` rosso.
+
+! **E UN QUARTO NON ERA NEL TLS**: `tcp_leggi` di exhttp faceva `if (len > max)
+len = max` e BUTTAVA il resto del pezzo. Con l'HTTP sopra non si vedeva mai —
+l'HTTP chiede sempre un buffer grande — ma il record di TLS legge PRIMA cinque
+byte e poi il resto: quei cinque arrivavano e tutto il resto del segmento
+spariva. Adesso l'avanzo si tiene, ed e' cio' che rende quel trasporto un
+FLUSSO invece di una fila di pacchetti.
+
+### Come si prova
+
+    make prova-cliente-tls     # contro un openssl s_server vero, 9 prove
+
+Il caso buono non prova niente da solo: un cliente che accetta qualunque
+certificato completa la stretta esattamente come uno corretto. Le prove che
+contano sono le altre — nome sbagliato, radice sconosciuta, certificato
+scaduto, jolly che non deve allargarsi a due etichette ne' al dominio nudo.
+
+Dentro EX-OS: `scarica https://example.com/` (meno di otto secondi), e il
+browser su `https://example.com/`.
+
+## Spegnere non e' un privilegio amministrativo
+
+`sys_reboot` era `solo_root`, ed era la risposta sbagliata alla domanda giusta.
+Spegnere e' il gesto di chi ha il computer davanti — e su quella macchina c'e'
+comunque il pulsante dell'alimentazione. Negarlo all'utente normale non protegge
+niente: lo costringe a staccare la corrente, cioe' a saltare la
+sincronizzazione del filesystem che quella syscall fa.
+
+! **MA UNA SESSIONE REMOTA NON SPEGNE LA MACCHINA DI QUALCUN ALTRO**, ed e' la
+distinzione che conta. Chi entra via telnet non ha il pulsante, non vede chi sta
+lavorando alla console, e spegnendo interrompe il lavoro di una persona che non
+ha chiesto niente.
+
+! **IL CRITERIO E' IL DESCRITTORE 0, NON «DA DOVE VIENE LA CONNESSIONE»**. Una
+console vera e' `FD_STDIN`; una sessione remota o un terminale in finestra
+leggono da uno pseudo-terminale. Chiedere al descrittore invece che al
+protocollo vuol dire che il giorno che arriva ssh la regola vale gia'.
+root resta root: da remoto un amministratore spegne, perche' quello si' che e'
+amministrazione.
+
+Provato in tutt'e due i versi su disco ext2, con l'utente `prova` (uid 1001):
+`poweroff` dalla console spegne davvero; `echo poweroff | sh` — stessa persona,
+descrittore 0 che non e' una console — riceve il rifiuto con la spiegazione.
+
+## Un processo che nasce non e' un processo bloccato
+
+! **IL DUMP CHE NON SOMIGLIAVA A NIENTE.** Avviando da CD, ogni tanto il primo
+driver di `/boot/avvio.sh` moriva cosi':
+
+        [FAULT] PID 6 '/dev/pci.drv': page fault a 0x00000000
+                (protezione, lettura, EIP=0x00000000)
+        PF:   heap 0x08007000..0x08007000 (tetto 0xbffbe000),
+              stack 0x00000000..0x00000000
+        PF:   vma[0] 0x08000000..0x08004000  file+0x1000
+        PF:   vma[1] 0x08004000..0x08007000  file+0x5000
+
+Tre cose che insieme non stanno in piedi: **EIP=0** (il processo non ha mai
+eseguito una sua istruzione), **stack 0x0..0x0** (non ne ha uno), e un **heap
+con un tetto valido** piu' due VMA — cioe' i resti di un ALTRO programma
+rimasti nello stesso slot.
+
+! **LA FINESTRA E' FRA `proc_create()` E `proc_set_ready()`.** Un processo
+utente si crea con entry=0, poi `elf_load` gira **con gli interrupt
+abilitati** — deve, perche' legge dal disco — e solo alla fine arrivano entry
+point e stack. In quella finestra il processo ha gia' un PID vivo e un nome, e
+si chiamava `PROC_BLOCKED`.
+
+! **E CHIUNQUE SVEGLI UN BLOCCATO LO FA PER PID.** `ipc_send` e `irq_notify`
+in `kernel/ipc/ipc.c`, la lista di attesa del VFS in `kernel/fs/vfs.c`, i
+`pid_att_in`/`pid_att_out` dei pty. Un PID appena riciclato in mano a uno di
+questi, e il neonato parte: ring 3, EIP=0, nessuno stack. Il dump qui sopra,
+esattamente.
+
+Adesso quello stato e' **`PROC_NASCENTE`** (`kernel/include/sched.h`): non e' in
+nessuna coda, `sched_unblock_locked` non lo trova, e l'unico modo di farlo
+partire e' `proc_set_ready()` — cioe' chi l'ha creato, quando ha finito di
+caricarlo. Un messaggio IPC per lui resta in cassetta e lo legge quando parte.
+
+! **NON E' PROVATO CHE FOSSE QUELLA, E VA DETTO.** Il fault e' raro — tre volte
+su una cinquantina di avvii — e **diciotto avvii senza la correzione non
+l'hanno riprodotto**: la misura non distingue. Quello che si sa e' che la
+strada esiste nel codice e che il dump che produrrebbe e' quello osservato.
+Per questo `sched_unblock_locked` lascia un **[WARN]** quando qualcuno prova a
+svegliare un nascente: se il difetto ricompare, il log dira' se e' quella
+strada o un'altra. E' l'unico modo onesto di chiudere una caccia che non si e'
+potuta concludere.
+
+## Il motore degli script non ha piu' un tetto
+
+Leggeva lo script **tutto in una volta** in `char buf[2048]` e troncava il
+resto, con scritto accanto che leggerlo a pezzi sarebbe stata «complicazione
+per un caso che non si presenta». Il caso si e' presentato al primo file di
+avvio con dentro le sue spiegazioni.
+
+! **UN TRONCAMENTO IN UN FILE DI COMANDI NON E' UNA RIGA PERSA: E' UNA RIGA
+ESEGUITA A META'**, che e' un comando diverso. Qui il taglio cadeva su `echo
+Rete pronta...` e la macchina stampava `Ret`. Poteva cadere altrove.
+
+Adesso il buffer si ricarica: si consumano le righe intere, la coda incompleta
+si sposta in testa, si legge il pezzo dopo. Stessa memoria, nessun tetto sul
+file; il tetto resta sulla singola riga (MAX_LINE), e una riga piu' lunga del
+buffer viene saltata dicendolo.
 
 ## I tre posti della rete, e perche' i primi due erano sbagliati
 

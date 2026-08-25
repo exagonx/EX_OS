@@ -307,6 +307,8 @@ static void prova_printf(void)
 /* =============================================================================
  * Flussi
  * ============================================================================= */
+static void prova_stdio_sola_lettura(void);
+
 static void prova_stdio(void)
 {
     const char *nome = "/libctest.tmp";
@@ -315,6 +317,12 @@ static void prova_stdio(void)
     long        dim;
 
     printf("\nFlussi\n");
+
+    /* ! PRIMA LA PARTE CHE NON SCRIVE. Avviando da CD la radice e' di sola
+     * lettura e la prova in scrittura qui sotto esce subito: mettendo dopo
+     * quella riga la lettura di un file grande, il CD — che e' l'unico posto
+     * dove quel file esiste — era esattamente il caso che non si provava. */
+    prova_stdio_sola_lettura();
 
     f = fopen(nome, "w");
     if (f == NULL) {
@@ -392,6 +400,73 @@ static void prova_stdio(void)
     }
 
     unlink(nome);
+}
+
+static void prova_stdio_sola_lettura(void)
+{
+    /* =========================================================================
+     * ! UN FILE GRANDE, DI SOLA LETTURA, LETTO SOLO CON stdio.
+     *
+     * Le prove qui sopra girano tutte su un file di 29 byte scritto un attimo
+     * prima: sta dentro un solo riempimento del buffer, sta su ext2 o su FAT,
+     * ed e' nostro. Nessuna delle tre cose e' vera per il file che ha fatto
+     * fallire OpenSSL — il magazzino delle CA, 200 KB su un CD — e infatti
+     * quel difetto queste prove non lo vedevano.
+     *
+     * Qui si legge fino in fondo un file VERO del CD con fread, come fa il BIO
+     * di file, e si confronta il totale con quello che dicono le syscall nude.
+     * Se i due numeri non coincidono, il difetto e' nel nostro stdio; se
+     * coincidono, e' altrove — e saperlo vale la prova.
+     * ========================================================================= */
+    {
+        /* Il primo che c'e': il magazzino CA sta solo sul CD degli strumenti,
+         * la GPL sta su ogni CD di EX-OS. */
+        static const char *CANDIDATI[] = {
+            "/cdrom/exos/ssl/certi.pem",
+            "/cdrom/doc/gpl-2.0.txt",
+            "/doc/gpl-2.0.txt",
+            NULL
+        };
+        const char *scelto = NULL;
+        long        vero = -1;
+        int         i;
+
+        for (i = 0; CANDIDATI[i]; i++) {
+            int fd = open(CANDIDATI[i], O_RDONLY);
+
+            if (fd >= 0) { vero = fsize(fd); close(fd); scelto = CANDIDATI[i]; break; }
+        }
+
+        if (scelto == NULL || vero <= 0) {
+            printf("  (saltata: nessun file grande di sola lettura da provare)\n");
+        } else {
+            FILE *g = fopen(scelto, "r");
+
+            esito("fopen di un file del CD", g != NULL);
+
+            if (g != NULL) {
+                char   pezzo[4096];
+                long   tot = 0;
+                size_t n;
+
+                while ((n = fread(pezzo, 1, sizeof(pezzo), g)) > 0)
+                    tot += (long)n;
+
+                esito("fread arriva in fondo, e non prima", tot == vero);
+                esito("a fine file feof si', ferror no",
+                      feof(g) != 0 && ferror(g) == 0);
+
+                /* Il salto in coda e il ritorno: e' quello che fa chi cerca
+                 * una firma o un indice alla fine di un file. */
+                esito("fseek alla fine dice la stessa dimensione",
+                      fseek(g, 0, SEEK_END) == 0 && ftell(g) == vero);
+                esito("e si torna in testa a leggere",
+                      fseek(g, 0, SEEK_SET) == 0 && fgetc(g) >= 0);
+
+                fclose(g);
+            }
+        }
+    }
 }
 
 /* =============================================================================
