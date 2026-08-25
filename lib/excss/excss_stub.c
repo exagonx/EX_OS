@@ -40,6 +40,7 @@ static struct {
                     const CssStile *, CssStile *);
     void (*inline_)(const char *, unsigned int, CssStile *);
     void (*vuoto)(CssStile *);
+    int  (*colore)(const char *, unsigned int, unsigned int *);
 } P;
 
 static int assicura(void)
@@ -63,6 +64,8 @@ static int assicura(void)
             P.inline_  = (void (*)(const char *, unsigned int, CssStile *))
                          exlib_simbolo(t, "css_stile_inline");
             P.vuoto    = (void (*)(CssStile *))exlib_simbolo(t, "css_stile_vuoto");
+            P.colore   = (int (*)(const char *, unsigned int, unsigned int *))
+                         exlib_simbolo(t, "css_colore");
         }
     }
 
@@ -130,4 +133,14 @@ void css_stile_vuoto(CssStile *s)
 {
     if (assicura()) { P.vuoto(s); return; }
     vuoto_locale(s);
+}
+
+/* ! SENZA LA LIBRERIA I COLORI NON SI LEGGONO, e va bene cosi': un attributo
+ * `bgcolor` che non si capisce lascia lo sfondo com'era. E' la stessa rinuncia
+ * di tutto il resto di questo file — una pagina con meno colori e' meglio di un
+ * browser che non parte. */
+int css_colore(const char *v, unsigned int n, unsigned int *out)
+{
+    if (assicura() && P.colore) return P.colore(v, n, out);
+    return 0;
 }

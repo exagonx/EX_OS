@@ -193,6 +193,15 @@ void css_stile_inline(const char *testo, unsigned int n, CssStile *s);
  * cascata delle regole che corrispondono, poi l'attributo `style`.
  *
  * `ereditato` puo' essere 0 per la radice. */
+/* Legge un colore CSS — «#rgb», «#rrggbb», o un nome fra quelli noti — e lo
+ * rende in ARGB. Rende 1 se ci e' riuscito.
+ *
+ * ! SERVE AI SUGGERIMENTI DI PRESENTAZIONE dell'HTML vecchio: `bgcolor`,
+ * `text`, `link` sono attributi, non stile, e il browser li deve leggere con
+ * LO STESSO parser dei fogli di stile — o due colori scritti allo stesso modo
+ * verrebbero due colori diversi. */
+int css_colore(const char *v, unsigned int n, unsigned int *out);
+
 void css_calcola(const CssFoglio *f, const HtmlDoc *d, int nodo,
                  const CssStile *ereditato, CssStile *out);
 

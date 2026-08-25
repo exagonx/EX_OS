@@ -291,10 +291,16 @@ ellittici. Senza magazzino di CA non si apre niente: cifrare con chiunque
 risponda vuol dire cifrare con chi sta in mezzo, e la barra scriverebbe
 `https://` lo stesso.
 
-! **I MODULI SI VEDONO E SI COMPILANO**: caselle di testo, password, spunte,
-scelte, pulsanti e aree di testo si disegnano come i controlli del sistema e
-prendono i tasti. Quello che manca — dichiarato — e' MANDARLI: nessuna query
-parte, e il pulsante lo dice invece di non fare niente.
+! **I MODULI SI VEDONO, SI COMPILANO E SI MANDANO**: caselle di testo,
+password, spunte, scelte, pulsanti e aree di testo si disegnano come i controlli
+del sistema, prendono i tasti, e il pulsante manda davvero — in GET, con la
+codifica percento. POST no, ed e' dichiarato: vuole una richiesta con un corpo,
+che e' un lavoro in `exhttp`.
+
+! **E I COLORI SCRITTI NEGLI ATTRIBUTI CONTANO**: `bgcolor`, `text`, `align`.
+Mezzo web li usa ancora — la barra arancione di Hacker News e' un `bgcolor` su
+una `<table>` — e stanno al gradino piu' basso della cascata, sotto ogni regola
+di stile.
 
 ! **E LE IMMAGINI SONO TRE FORMATI**: PNG, JPEG e GIF (primo fotogramma,
 trasparenza compresa).
@@ -329,7 +335,7 @@ l'origine più bassa della cascata, quindi una pagina può sovrascriverli. Prima
 erano `if` nel motore, e `<b>` e `<i>` non c'erano affatto.
 
 Quello che **non** c'è, dichiarato: JavaScript, `@media`, le unità relative,
-l'invio dei moduli, `colspan`/`rowspan`.
+i moduli in POST, `colspan`/`rowspan`.
 
 
 ### I font: TrueType, misurato contro FreeType

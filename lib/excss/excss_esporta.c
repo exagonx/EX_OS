@@ -36,6 +36,10 @@ static const char *const g_nomi[] = {
     "css_calcola",
     "css_stile_inline",
     "css_stile_vuoto",
+
+    /* Aggiunta il 25 agosto 2026: i colori degli attributi HTML. */
+    "css_colore",
+
     "__lib_avvio"
 };
 
@@ -45,6 +49,9 @@ static void *const g_indirizzi[] = {
     (void *)css_calcola,
     (void *)css_stile_inline,
     (void *)css_stile_vuoto,
+
+    (void *)css_colore,
+
     (void *)__libc_ponti_avvia
 };
 

@@ -139,6 +139,21 @@ static int esa(int c)
 }
 
 /* Rende 1 e posa il colore, 0 se non l'ha capito. */
+static int leggi_colore(const char *v, unsigned int n, unsigned int *out);
+
+/* ! IL LETTORE DI COLORI E' PUBBLICO DAL 25 AGOSTO 2026, e non e' un capriccio
+ * di simmetria: l'HTML vecchio scrive i colori negli ATTRIBUTI — `bgcolor`,
+ * `text`, `link` — e non nei fogli di stile. Sono «suggerimenti di
+ * presentazione», stanno al gradino piu' basso della cascata, e mezzo web li
+ * usa ancora: la barra arancione di Hacker News e' un `bgcolor` su una
+ * `<table>`. Chi li deve leggere e' il browser, e senza questa funzione
+ * dovrebbe riscriversi un parser di colori — cioe' averne due che divergono.
+ */
+int css_colore(const char *v, unsigned int n, unsigned int *out)
+{
+    return leggi_colore(v, n, out);
+}
+
 static int leggi_colore(const char *v, unsigned int n, unsigned int *out)
 {
     unsigned int i;

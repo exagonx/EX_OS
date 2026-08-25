@@ -289,10 +289,16 @@ news.ycombinator.com and github.com only have elliptic certificates. Without a
 CA store nothing opens: encrypting with whoever answers means encrypting with
 whoever is in the middle, and the bar would say `https://` all the same.
 
-! **FORMS ARE DRAWN AND CAN BE FILLED IN**: text and password boxes, check
-boxes, selects, buttons and text areas are drawn like the system's own controls
-and take keystrokes. What is missing — declared — is SUBMITTING them: no query
-is sent, and the button says so instead of doing nothing.
+! **FORMS ARE DRAWN, FILLED IN AND SUBMITTED**: text and password boxes, check
+boxes, selects, buttons and text areas are drawn like the system's own controls,
+take keystrokes, and the button really submits — over GET, percent-encoded.
+Not POST, and that is declared: it wants a request with a body, which is work
+in `exhttp`.
+
+! **AND COLOURS WRITTEN IN ATTRIBUTES COUNT**: `bgcolor`, `text`, `align`. Half
+the web still uses them — Hacker News's orange bar is a `bgcolor` on a
+`<table>` — and they sit at the lowest step of the cascade, below every style
+rule.
 
 ! **AND IMAGES COME IN THREE FORMATS**: PNG, JPEG and GIF (first frame,
 transparency included).
@@ -325,8 +331,8 @@ is refused rather than taken for two pixels. Less style, never wrong style.
 origin, so a page can override them. They used to be `if`s in the engine, and
 `<b>` and `<i>` were not there at all.
 
-What is **not** there, declared: JavaScript, `@media`, relative units, form
-submission, `colspan`/`rowspan`.
+What is **not** there, declared: JavaScript, `@media`, relative units, POST
+forms, `colspan`/`rowspan`.
 
 
 ### Fonts: TrueType, measured against FreeType

@@ -15,38 +15,37 @@ Da CD, un driver ogni tanto muore appena avviato (raro, non chiuso).
     riprodotto, quindi la misura non distingue. Se il fault ricompare, il
     [WARN] dira' se e' quella strada o un'altra.
 
-Il BIO di file di OpenSSL non legge i file di EX-OS.
-    SSL_CTX_load_verify_locations("/cdrom/exos/ssl/certi.pem") rende
-    error:05880020 «x509 certificate routines::BIO lib», mentre `ls` vede il
-    file e `cp` lo copia. Lo stesso file letto con open/read e passato a un BIO
-    di memoria si carica benissimo: 150 certificati.
-    NON E' LA NOSTRA stdio, e adesso c'e' una prova che lo dice. `libctest`
-    apre QUEL file — 224 KB, su ISO 9660 — con la sola stdio, lo legge fino in
-    fondo con fread, controlla feof e ferror, e fa fseek/ftell in coda e in
-    testa: tutto giusto. Il sospetto scritto qui (fseek/ftell o ferror) era
-    sbagliato.
-    Resta da guardare: BIO_C_SET_FILENAME chiama fopen(percorso, "r") e in
-    caso di NULL alza proprio quell'errore. La sola strada per cui la nostra
-    fopen puo' rendere NULL con SYS_OPEN che riesce e' la malloc di fdopen
-    (una FILE piu' 4 KB di buffer) — cioe' MEMORIA, dentro un programma che ha
-    libssl e libcrypto in pancia. Da provare stampando errno subito dopo la
-    load_verify_locations, e guardando quanta heap resta.
-    Aggirato in tools/iso/prova-tls.c, con il perche' scritto accanto.
+CHIUSO — «il BIO di file di OpenSSL non legge i file di EX-OS» NON ERA UN BUG.
+    SSL_CTX_load_verify_locations rendeva error:05880020 «x509 certificate
+    routines::BIO lib», e per settimane il sospetto e' stato la nostra stdio.
+    Non lo era, e ci sono voluti due passi per dimostrarlo:
+      1. `libctest` apre QUEL file — 224 KB, su ISO 9660 — con la sola stdio e
+         lo legge fino in fondo: fread, feof, ferror, fseek, ftell, tutto
+         giusto. Il sospetto scritto qui era sbagliato.
+      2. Guardando crypto/o_fopen.c: con OPENSSL_NO_STDIO definito,
+         `openssl_fopen` rende NULL SEMPRE — e BIO_C_SET_FILENAME alza
+         esattamente quell'errore. La nostra OpenSSL e' configurata `no-stdio`
+         (vedi tools/openssl-exos/prepara-openssl.sh), quindi il BIO di file
+         NON PUO' funzionare per costruzione.
+    Non c'e' niente da riparare: leggere il file con open/read e passarlo a un
+    BIO di memoria — cio' che fa tools/iso/prova-tls.c — e' la strada giusta
+    per una libreria costruita senza stdio, non un aggiramento.
 
 Da fare, per una pagina web moderna (in ordine di quanto pesa):
-1. I tetti del browser: PAGINA_MAX 512 KB e NODI_MAX 4096 troncano Wikipedia
-   (676 KB). Un nodo pesa 32 byte, un pezzo 32: alzarli e' un conto di memoria
-   da fare in faccia su una macchina da 32 MB, non una riga da cambiare.
-2. I moduli si VEDONO e si compilano, ma non si MANDANO. Serve costruire la
-   query da `name` e valore, seguire `action` e `method`, e codificare i
-   campi (percento). Il pulsante lo dice invece di non fare niente.
-   E i `radio` non sono raggruppati per `name`: due gruppi nella stessa
-   pagina si comportano come uno solo.
-3. Lo sfondo delle celle di tabella non si dipinge (la barra arancione di
-   Hacker News).
-4. I margini sugli elementi in linea (margin-right su uno <span>): e' cosi' che
-   i siti separano le voci di un menu.
-5. Il <select> mostra la prima opzione e non si apre; la <textarea> mostra il
-   contenuto su una riga sola. Colspan/rowspan, JavaScript: dichiarati fuori.
+1. L'arena del testo si riempie sulle pagine grandi. Una voce di Wikipedia da
+   676 KB entra nell'albero ma esaurisce ARENA_MAX (512 KB): la barra di stato
+   dice «albero troncato» e i segni degli elenchi spariscono — il che e'
+   corretto, ma la pagina resta a meta'. Alzarla e' un conto di memoria: il
+   browser occupa gia' 5,5 MB dichiarati in cima a browser.c.
+2. I moduli si mandano in GET; POST no. Serve `http_richiesta` capace di un
+   corpo, con Content-Length e Content-Type: e' un lavoro in exhttp, non nel
+   browser. Il pulsante lo dice invece di fare finta.
+3. Il <select> non apre un elenco a tendina: cliccandolo si passa all'opzione
+   dopo. Si arriva a tutte e il modulo si manda, ma non e' quello che si
+   aspetta chi arriva da un altro browser. Un elenco vero vuole una finestra
+   con un ciclo di messaggi suo.
+4. La <textarea> mostra il testo e va a capo, ma non si scrive su piu' righe:
+   l'Invio manda il modulo invece di andare a capo.
+5. colspan/rowspan, @media, le unita' relative, JavaScript: dichiarati fuori.
 6. Le GIF animate mostrano il primo fotogramma, ed e' dichiarato: animarle
    vorrebbe dire un orologio dentro la libreria delle immagini.

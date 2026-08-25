@@ -19,6 +19,11 @@ Kernel **0.205**. Vedi la sezione sui tre posti della rete, qui sotto.
 
 In attesa nell'albero — **PROVATO, DA COMMETTERE**:
 
+  - **LA CODA DELL'https, SVUOTATA**: i tetti del browser scelti su una pagina
+    vera, i suggerimenti di presentazione (la barra arancione di HN), i moduli
+    che si MANDANO in GET, i margini in linea, il `<select>` usabile, e
+    `genera()` che non rende piu' un offset valido per dire «non c'e' posto».
+    Piu' il BIO di OpenSSL, che non era un bug. Sezione qui sotto;
   - **IL WEB VERO**: ECDSA su P-256 e P-384 (wikipedia.org, HN, github.com si
     aprono), la barra di scorrimento, i moduli disegnati, le GIF, i font che
     non si esauriscono piu' a otto, e `/bin/shutdown` per `sudo`. Sezione qui
@@ -38,6 +43,77 @@ In attesa nell'albero — **PROVATO, DA COMMETTERE**:
     SCARTATO un sospetto scritto in `in_lavorazione.txt`.
 
 **326 prove su 326** con `libctest`; **9 su 9** con `make prova-cliente-tls`.
+
+## La coda dell'https, svuotata
+
+Tutte le voci che erano in `in_lavorazione.txt` sotto «per una pagina web
+moderna», tranne quelle dichiarate fuori.
+
+### I tetti, scelti da una pagina vera e non a occhio
+
+La voce «Operating system» di Wikipedia e' 676 KB di HTML e ~11000 tag. Con i
+tetti di prima — mezzo megabyte, quattromila nodi — si troncava a meta', e il
+troncamento di una pagina non e' una pagina corta: e' un albero senza chiusure.
+Adesso 1 MB, 24000 nodi, 24000 pezzi, e il conto di cosa costa e' scritto in
+cima a `browser.c` — 5,5 MB su 32.
+
+! **E GLI INDIRIZZI DEI LINK STANNO IN UN'ARENA**: erano 512 caselle da 600
+byte (300 KB quasi tutti vuoti, un indirizzo medio sta in sessanta). Duemila
+link costano quanto sono lunghi davvero.
+
+### `#Main page` sovrapposto a `Main page`
+
+! **ZERO NON PUO' VOLER DIRE «NON C'E' POSTO».** `genera()` — che scrive i segni
+degli elenchi in coda all'arena — rendeva 0 quando l'arena era piena. Ma zero e'
+un OFFSET VALIDO: e' l'inizio dell'arena, cioe' il primo testo della pagina. Il
+segno di ogni voce veniva disegnato con quel testo, e su Wikipedia si vedeva
+`#Main page` sovrapposto a `Main page`.
+
+Sembrava che l'impaginazione disegnasse due volte. Non disegnava due volte:
+disegnava **una volta la cosa sbagliata**. Adesso l'impossibile e' un valore che
+non puo' essere un offset.
+
+### I suggerimenti di presentazione
+
+! **MEZZO WEB SCRIVE ANCORA I COLORI NEGLI ATTRIBUTI**: `<table
+bgcolor="#ff6600">` e' la barra arancione di Hacker News, `<td align="right">`
+e' come si incolonnavano i numeri prima del CSS. Stanno al gradino piu' BASSO
+della cascata, quindi si applicano DOPO `css_calcola` e solo dove il foglio non
+ha detto niente — applicarli prima vorrebbe dire che un `bgcolor` batte una
+regola CSS.
+
+! **E LO SFONDO DELLA TABELLA E' SUO, NON DELLE CELLE**: la strada delle tabelle
+salta tutta la logica dei blocchi, e con lei il riquadro di sfondo. La barra
+arancione era proprio quel caso.
+
+### I moduli si mandano
+
+GET: la query si costruisce dai `name`, con la codifica percento — senza,
+cercare «pane & vino» manda due campi invece di uno, e il secondo si chiama
+« vino». I radio si spengono per GRUPPO (`name`), non tutti insieme. L'Invio
+dentro una casella manda il modulo, che e' come si usa una casella di ricerca.
+POST no, ed e' dichiarato: vuole un `http_richiesta` capace di un corpo.
+
+### E i margini in linea
+
+Su un blocco un margine e' un rientro del lato; su uno `<span>` non c'e' nessun
+lato a cui attaccarsi — e' spazio orizzontale prima e dopo, ed e' cosi' che i
+siti separano le voci di un menu. Senza, quelle voci si toccano.
+
+## Il BIO di file di OpenSSL: NON era un bug
+
+Per settimane l'accusa era alla nostra stdio. Due passi per scagionarla:
+
+1. `libctest` apre QUEL file — 224 KB su ISO 9660 — con la sola stdio e lo
+   legge fino in fondo. Il sospetto scritto in `in_lavorazione.txt` era
+   sbagliato.
+2. `crypto/o_fopen.c`: con **OPENSSL_NO_STDIO** definito, `openssl_fopen` rende
+   NULL **sempre** — e `BIO_C_SET_FILENAME` alza esattamente quell'errore. La
+   nostra OpenSSL e' configurata `no-stdio` (`tools/openssl-exos/`).
+
+Non c'e' niente da riparare: leggere il file con open/read e passarlo a un BIO
+di memoria e' la strada giusta per una libreria costruita senza FILE*. Sta
+scritto anche in cima a `tools/iso/prova-tls.c`, perche' nessuno ricominci.
 
 ## Il web vero: ECDSA, i moduli, la barra e le GIF
 

@@ -25,6 +25,19 @@
  * `ssl/rio/build.info`. Con i sorgenti interi libssl.a si costruisce senza un
  * errore, e questo programma non chiede nessun fd_set.
  *
+ * ! IL MAGAZZINO SI LEGGE CON open/read, E NON CON -CAfile, PER COSTRUZIONE.
+ * `SSL_CTX_load_verify_locations` qui non puo' funzionare: questa OpenSSL e'
+ * configurata `no-stdio`, e con OPENSSL_NO_STDIO definito `openssl_fopen`
+ * (crypto/o_fopen.c) rende NULL SEMPRE — da cui l'errore «x509 certificate
+ * routines::BIO lib», che sembra un difetto della nostra stdio e non lo e'.
+ * Si e' verificato: `libctest` legge quello STESSO file con la sola stdio,
+ * fino in fondo, senza un errore.
+ *
+ * Quindi il file lo si apre a mano e lo si passa a un BIO di memoria. Non e'
+ * un aggiramento: e' l'unica strada che una libreria costruita senza FILE*
+ * lascia aperta, ed e' anche quella che non porta dentro la gestione dei
+ * percorsi di OpenSSL.
+ *
  * ! LA VERIFICA DEL CERTIFICATO SI DICE, NON SI FA FINTA. Con il magazzino
  * delle CA (`-CAfile`, che qui e' /exos/ssl/certi.pem se c'e') si verifica e
  * si stampa il verdetto; senza, si stampa CHE NON SI E' VERIFICATO. Un

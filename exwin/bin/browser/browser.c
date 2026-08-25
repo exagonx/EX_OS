@@ -88,12 +88,46 @@ EX_VERSIONE("browser", VERSIONE_APP);
  * dall'altra parte, quindi ogni numero che dipende da lei ha un limite. Una
  * pagina che sfora si vede a meta' e lo dice, che e' meglio di una macchina
  * che rallenta finche' non finisce la memoria. */
-#define PAGINA_MAX  (512u * 1024u)
-#define NODI_MAX    4096
-#define ATTR_MAX    2048
-#define ARENA_MAX   (192u * 1024u)
-#define PEZZI_MAX   6000
-#define LINK_MAX    512
+/* =============================================================================
+ * I TETTI, E IL CONTO CHE LI HA SCELTI
+ *
+ * ! NON SONO NUMERI TONDI SCELTI A OCCHIO: vengono da una pagina vera. La voce
+ * «Operating system» di Wikipedia e' 676 kilobyte di HTML e circa undicimila
+ * tag; con i tetti di prima — mezzo megabyte e quattromila nodi — si troncava
+ * a meta', e il troncamento di una pagina non e' una pagina corta: e' un
+ * albero senza chiusure, cioe' un'impaginazione che sbaglia dalla' in giu'.
+ *
+ * ! E IL CONTO SI FA IN FACCIA, perche' questa e' una macchina da 32 MB. Ecco
+ * cosa costa ogni tetto, e il totale e' cio' che il browser occupa PRIMA di
+ * avere una pagina:
+ *
+ *     la pagina scaricata          1024 KB
+ *     i nodi dell'albero            750 KB   (24000 x 32 byte)
+ *     gli attributi                  94 KB   (12000 x 8)
+ *     il testo (arena)              512 KB
+ *     i pezzi impaginati            750 KB   (24000 x 32)
+ *     gli indirizzi dei link        200 KB   (arena + scostamenti)
+ *     la cronologia                  19 KB
+ *     le immagini                  2176 KB
+ *                                  -------
+ *                                   5525 KB
+ *
+ * Cinque megabyte e mezzo su trentadue: molto, e dichiarato. Il giorno che
+ * sara' troppo, la voce da guardare per prima e' quella delle immagini.
+ * ========================================================================== */
+#define PAGINA_MAX  (1024u * 1024u)
+#define NODI_MAX    24000
+#define ATTR_MAX    12000
+#define ARENA_MAX   (512u * 1024u)
+#define PEZZI_MAX   24000
+
+/* ! GLI INDIRIZZI DEI LINK STANNO IN UN'ARENA, NON IN CASELLE FISSE. Erano
+ * 512 caselle da 600 byte — 300 KB — e per tenerne duemila (una pagina di
+ * Wikipedia ne ha tanti) sarebbero diventati 1,2 MB, quasi tutti spazio vuoto:
+ * un indirizzo medio sta in sessanta byte, non in seicento. Con l'arena i
+ * duemila link costano quanto sono lunghi davvero. */
+#define LINK_MAX    2048
+#define LINK_ARENA  (192u * 1024u)
 #define STORIA_MAX  32
 
 /* ! E I TETTI DELLE IMMAGINI SONO TRE, PERCHE' TRE SONO LE COSE CHE LA PAGINA
@@ -150,7 +184,11 @@ typedef struct {
  * per questo un pulsante premuto lo DICE nella barra di stato.
  * ========================================================================== */
 #define CTRL_MAX        64
-#define CTRL_VAL_MAX    96
+/* ! DUECENTOCINQUANTASEI E NON NOVANTASEI, e la differenza si vede in una
+ * <textarea>: novantasei byte sono una riga e mezza, e il resto del testo
+ * spariva dentro un riquadro alto ottantotto pixel che sembrava mezzo vuoto.
+ * Sessantaquattro controlli per 256 byte sono sedici kilobyte. */
+#define CTRL_VAL_MAX    256
 
 #define CTRL_TESTO      0       /* input di testo, password, ricerca... */
 #define CTRL_PULSANTE   1       /* button, submit, reset, image         */
@@ -159,12 +197,53 @@ typedef struct {
 #define CTRL_SCELTA     4       /* select                               */
 #define CTRL_AREA       5       /* textarea                             */
 
+#define CTRL_NOME_MAX   40
+
+/* ! LE OPZIONI DI UNA SCELTA STANNO IN UN ELENCO CONDIVISO, e ogni <select>
+ * ne possiede un tratto: sono stringhe corte e poche, e una casella per
+ * controllo sarebbe stata memoria buttata su ogni pagina che non ha scelte. */
+#define OPZ_MAX     128
+
 typedef struct {
     unsigned char tipo;
     unsigned char segreto;      /* password: si mostrano asterischi */
     unsigned char acceso;       /* spunta e radio */
+    short         modulo;       /* indice del <form> che lo contiene, -1 */
+    short         opz_primo;    /* scelta: la prima opzione in g_opz, -1 */
+    short         opz_n;        /* quante ne ha */
+    short         opz_ora;      /* quale e' scelta adesso */
+    char          nome[CTRL_NOME_MAX];   /* l'attributo `name` */
     char          valore[CTRL_VAL_MAX];
 } Ctrl;
+
+static char g_opz[OPZ_MAX][CTRL_VAL_MAX];
+static int  g_opz_n = 0;
+
+/* =============================================================================
+ * I MODULI
+ *
+ * ! UN MODULO E' UN INDIRIZZO E UN VERBO, e i controlli che gli appartengono.
+ * `action` dice dove, `method` dice come: GET mette i campi nella query
+ * dell'indirizzo, POST li manda nel corpo. Qui si fa GET — che e' cio' che
+ * fanno le ricerche, cioe' il caso per cui uno vuole un modulo in un browser
+ * che non ha ancora una sessione da nessuna parte.
+ *
+ * ! POST E' DICHIARATO FUORI, e non per pigrizia: mandare un corpo vuol dire
+ * `Content-Length`, `Content-Type` e una richiesta che exhttp oggi non sa
+ * costruire — `http_richiesta` fa GET e basta. E' un lavoro onesto, ma e' un
+ * lavoro in exhttp, non qui.
+ * ========================================================================== */
+#define MODULI_MAX      16
+#define AZIONE_MAX      EXHTTP_URL_MAX
+
+typedef struct {
+    char azione[AZIONE_MAX];
+    int  post;                  /* 1 = method="post" */
+} Modulo;
+
+static Modulo g_mod[MODULI_MAX];
+static int    g_mod_n = 0;
+static int    g_mod_ora = -1;   /* il <form> che stiamo impaginando */
 
 static Ctrl g_ctrl[CTRL_MAX];
 static int  g_ctrl_n = 0;
@@ -179,8 +258,17 @@ static HtmlDoc       g_doc;
 static Pezzo         g_pez[PEZZI_MAX];
 static int           g_pez_n = 0;
 
-static char          g_link[LINK_MAX][EXHTTP_URL_MAX];
+static char          g_link_arena[LINK_ARENA];
+static unsigned int  g_link_off[LINK_MAX];
+static unsigned int  g_link_usati = 0;
 static int           g_link_n = 0;
+
+/* L'indirizzo del link `k`, o la stringa vuota. */
+static const char *link_url(int k)
+{
+    if (k < 0 || k >= g_link_n) return "";
+    return g_link_arena + g_link_off[k];
+}
 
 static char          g_storia[STORIA_MAX][EXHTTP_URL_MAX];
 static int           g_storia_n = 0;
@@ -261,6 +349,10 @@ static void (*g_img_libera)(EximgBitmap *);
  * fissa e' un ornamento — sposta la pagina e non informa. */
 #define SCORRI_W    16
 #define SCORRI_MIN  24          /* il pollice non scende sotto: sparirebbe */
+
+/* Definita piu' in basso, accanto al disegno: l'impaginazione la chiama
+ * subito dopo css_calcola. */
+static void suggerimenti(int v, CssStile *st);
 
 static int area_x(void) { return MARGINE; }
 static int area_y(void) { return BARRA_H + MARGINE; }
@@ -655,12 +747,28 @@ static void parola(const char *t, unsigned int off, int n)
  * ========================================================================== */
 static unsigned int g_arena_doc = 0;    /* dove finisce il testo del documento */
 
+/* ! ZERO NON PUO' VOLER DIRE «NON C'E' POSTO», ED E' COSTATO UN DIFETTO CHE
+ * SEMBRAVA UN'ALTRA COSA. Zero e' un OFFSET VALIDO — e' l'inizio dell'arena,
+ * cioe' il primo testo della pagina. Con l'arena piena, il segno di una voce
+ * di elenco riceveva offset 0 e veniva disegnato con quel testo: su Wikipedia
+ * si vedeva «#Main page» sovrapposto a «Main page», e sembrava che
+ * l'impaginazione disegnasse due volte. Non disegnava due volte: disegnava
+ * una volta la cosa sbagliata.
+ *
+ * Adesso l'impossibile e' un valore che non puo' essere un offset, e chi
+ * chiama salta il pezzo. Un elenco senza i segni e' meno di un elenco; un
+ * elenco con dentro pezzi di un'altra frase e' peggio di niente. */
+#define GENERA_NIENTE   ((unsigned int)-1)
+
 static unsigned int genera(const char *s)
 {
     unsigned int inizio = g_doc.arena_n, i = 0;
 
     while (s[i]) i++;
-    if (g_doc.arena_n + i + 1 > ARENA_MAX) return 0;
+    if (g_doc.arena_n + i + 1 > ARENA_MAX) {
+        g_doc.troncato = 1;         /* la barra di stato lo dira' */
+        return GENERA_NIENTE;
+    }
 
     for (i = 0; s[i]; i++) g_arena[g_doc.arena_n++] = s[i];
     g_arena[g_doc.arena_n++] = '\0';
@@ -970,6 +1078,7 @@ static void impagina_tabella(int v, const CssStile *mio)
             if (c >= TAB_COL_MAX) break;
 
             css_calcola(&g_css, &g_doc, f, mio, &sc);
+            suggerimenti(f, &sc);
             w = impagina_in_colonna(f, &sc, riga_x(), 0, riga_w(), 1, &a);
             if (w > largh[c]) largh[c] = w;
             c++;
@@ -1019,6 +1128,7 @@ static void impagina_tabella(int v, const CssStile *mio)
             if (c >= n_col) break;
 
             css_calcola(&g_css, &g_doc, f, mio, &sc);
+            suggerimenti(f, &sc);
 
             /* Lo sfondo della cella si segna PRIMA, con l'altezza rimessa a
              * posto quando la riga e' finita: e' lo stesso giro dei blocchi. */
@@ -1125,6 +1235,7 @@ static void impagina_nodo(int v, const CssStile *ered)
     {
         const char *nome = html_nome(&g_doc, v);
         int         era_link = g_link_ora;
+        int         era_modulo = g_mod_ora;
         int         era_sx = g_marg_sx, era_dx = g_marg_dx;
         int         sfondo_mio = -1;
         CssStile    mio;
@@ -1133,6 +1244,7 @@ static void impagina_nodo(int v, const CssStile *ered)
         if (invisibile(nome)) return;
 
         css_calcola(&g_css, &g_doc, v, ered, &mio);
+        suggerimenti(v, &mio);
 
         /* ! `display: none` TOGLIE ANCHE I FIGLI, e va fatto qui prima di
          * qualunque altra cosa: e' cosi' che i siti veri nascondono i menu che
@@ -1146,8 +1258,32 @@ static void impagina_nodo(int v, const CssStile *ered)
          * blocchi: quella impagina i figli uno dietro l'altro, che e'
          * esattamente cio' che una tabella non deve fare. */
         if (uguale(nome, "table")) {
+            int sf = -1;
+
             spazio_blocco(0);
+
+            /* ! LO SFONDO DELLA TABELLA E' SUO, NON DELLE CELLE, e va segnato
+             * qui: la strada delle tabelle salta tutta la logica dei blocchi,
+             * e con lei il riquadro di sfondo. E' il caso della barra
+             * arancione di Hacker News, che e' un `bgcolor` sulla <table> —
+             * non sulle celle. L'altezza si rimette quando la tabella e'
+             * finita, come per i blocchi. */
+            if (mio.sfondo != CSS_NIENTE && g_sfondi_n < SFONDI_MAX) {
+                sf = g_sfondi_n++;
+                g_sfondi[sf].x = riga_x();
+                g_sfondi[sf].y = g_pen_y;
+                g_sfondi[sf].w = riga_w();
+                g_sfondi[sf].h = 0;
+                g_sfondi[sf].colore = mio.sfondo;
+            }
+
             impagina_tabella(v, &mio);
+
+            if (sf >= 0) {
+                g_sfondi[sf].h = g_pen_y - g_sfondi[sf].y;
+                if (g_sfondi[sf].h < 1) g_sfondi[sf].h = 1;
+            }
+
             g_link_ora = era_link;
             spazio_blocco(2);
             return;
@@ -1210,10 +1346,28 @@ static void impagina_nodo(int v, const CssStile *ered)
                 Ctrl *c = &g_ctrl[g_ctrl_n];
                 int   i = 0;
 
+                const char *nm = html_attr(&g_doc, v, "name");
+
                 c->tipo    = (unsigned char)t;
                 c->segreto = (unsigned char)(tipo && uguale(tipo, "password"));
                 c->acceso  = (unsigned char)(html_attr(&g_doc, v, "checked") != 0);
                 c->valore[0] = '\0';
+
+                /* ! IL `name` SERVE AI RADIO PRIMA CHE AI MODULI. Due gruppi di
+                 * scelte nella stessa pagina sono due gruppi solo se si sa a
+                 * quale nome appartiene ognuna: senza, accenderne una spegne
+                 * anche quelle dell'altro gruppo. */
+                c->modulo  = (short)g_mod_ora;
+                c->opz_primo = -1;
+                c->opz_n     = 0;
+                c->opz_ora   = 0;
+                c->nome[0] = '\0';
+                if (nm) {
+                    int q = 0;
+
+                    while (nm[q] && q < CTRL_NOME_MAX - 1) { c->nome[q] = nm[q]; q++; }
+                    c->nome[q] = '\0';
+                }
 
                 /* Il testo dentro: `value` per gli input, il contenuto per un
                  * <button>. Il contenuto sta nei figli, e qui non si scende:
@@ -1221,10 +1375,36 @@ static void impagina_nodo(int v, const CssStile *ered)
                 if (val) {
                     while (val[i] && i < CTRL_VAL_MAX - 1) { c->valore[i] = val[i]; i++; }
                     c->valore[i] = '\0';
+                } else if (t == CTRL_SCELTA) {
+                    /* ! LE OPZIONI SI RACCOLGONO UNA PER UNA, e non si prende
+                     * il testo di tutto il <select>: quello darebbe le voci
+                     * incollate in una riga sola. Ognuna e' una scelta
+                     * possibile, e l'utente deve poterle avere tutte. */
+                    int f2;
+
+                    c->opz_primo = (short)g_opz_n;
+                    for (f2 = g_doc.nodi[v].primo_figlio; f2 >= 0;
+                         f2 = g_doc.nodi[f2].prossimo) {
+                        if (g_doc.nodi[f2].tipo != HTML_ELEMENTO) continue;
+                        if (!uguale(html_nome(&g_doc, f2), "option")) continue;
+                        if (g_opz_n >= OPZ_MAX) break;
+
+                        testo_dentro(f2, g_opz[g_opz_n], CTRL_VAL_MAX);
+                        if (html_attr(&g_doc, f2, "selected"))
+                            c->opz_ora = (short)(g_opz_n - c->opz_primo);
+                        g_opz_n++;
+                        c->opz_n++;
+                    }
+
+                    if (c->opz_n > 0) {
+                        int q = 0;
+                        const char *o = g_opz[c->opz_primo + c->opz_ora];
+
+                        while (o[q] && q < CTRL_VAL_MAX - 1) { c->valore[q] = o[q]; q++; }
+                        c->valore[q] = '\0';
+                    }
                 } else if (t != CTRL_TESTO) {
-                    /* <button>, <select> e <textarea> portano dentro il
-                     * proprio testo. Un <select> mostra la prima opzione:
-                     * e' quella che sarebbe scelta. */
+                    /* <button> e <textarea> portano dentro il proprio testo. */
                     testo_dentro(v, c->valore, CTRL_VAL_MAX);
                 }
                 if (val == 0 && t == CTRL_TESTO) c->valore[0] = '\0';
@@ -1360,13 +1540,39 @@ static void impagina_nodo(int v, const CssStile *ered)
                 while (nc > 0) seg[q++] = (char)('0' + cifre[--nc]);
                 seg[q++] = '.';
                 seg[q] = '\0';
-                parola(seg, genera(seg), q);
+                {
+                    unsigned int off = genera(seg);
+
+                    if (off != GENERA_NIENTE) parola(seg, off, q);
+                }
             } else {
                 /* Un pallino, non un asterisco: e' il segno che ci si aspetta,
                  * e il carattere c'e' in tutte le facce Liberation. */
-                parola("-", genera("-"), 1);
+                {
+                    unsigned int off = genera("-");
+
+                    if (off != GENERA_NIENTE) parola("-", off, 1);
+                }
             }
             g_pen_x += ex_larghezza_testo(font_di(&mio), " ");
+        }
+
+        /* ! IL MODULO SI APRE QUI E SI CHIUDE DOPO I FIGLI, come un
+         * collegamento: i controlli dentro ci finiscono per posizione, che e'
+         * l'unica cosa che l'HTML garantisce. (L'attributo `form` che permette
+         * a un campo di stare fuori dal suo modulo esiste, ed e' rarissimo:
+         * dichiarato fuori.) */
+        if (uguale(nome, "form") && g_mod_n < MODULI_MAX) {
+            const char *az = html_attr(&g_doc, v, "action");
+            const char *me = html_attr(&g_doc, v, "method");
+            int q = 0;
+
+            g_mod[g_mod_n].post = (me && (uguale(me, "post") || uguale(me, "POST")));
+            if (az) {
+                while (az[q] && q < AZIONE_MAX - 1) { g_mod[g_mod_n].azione[q] = az[q]; q++; }
+            }
+            g_mod[g_mod_n].azione[q] = '\0';
+            g_mod_ora = g_mod_n++;
         }
 
         if (uguale(nome, "a")) {
@@ -1375,11 +1581,19 @@ static void impagina_nodo(int v, const CssStile *ered)
             if (h && h[0] && g_link_n < LINK_MAX) {
                 unsigned int k = 0;
 
-                while (h[k] && k < sizeof(g_link[0]) - 1) {
-                    g_link[g_link_n][k] = h[k]; k++;
+                /* ! SE L'ARENA E' PIENA IL LINK NON SI SCRIVE A META'. Un
+                 * indirizzo troncato porta da un'altra parte, e «da un'altra
+                 * parte» in un browser vuol dire una pagina sbagliata senza
+                 * un errore. Si smette di raccoglierli e basta. */
+                while (h[k]) k++;
+                if (g_link_usati + k + 1 <= LINK_ARENA) {
+                    g_link_off[g_link_n] = g_link_usati;
+                    for (k = 0; h[k]; k++)
+                        g_link_arena[g_link_usati + k] = h[k];
+                    g_link_arena[g_link_usati + k] = '\0';
+                    g_link_usati += k + 1;
+                    g_link_ora = g_link_n++;
                 }
-                g_link[g_link_n][k] = '\0';
-                g_link_ora = g_link_n++;
             }
         }
 
@@ -1387,16 +1601,33 @@ static void impagina_nodo(int v, const CssStile *ered)
             uguale(nome, "tt")  || uguale(nome, "kbd") ||
             uguale(nome, "samp")) g_fisso++;
 
+        /* ! I MARGINI DI UN ELEMENTO IN LINEA SPOSTANO LA PENNA, NON IL
+         * BLOCCO. Su un blocco un margine e' un rientro del lato — e quello si
+         * fa piu' su, con g_marg_sx e g_marg_dx. Su uno <span> non c'e' nessun
+         * lato a cui attaccarsi: il margine e' spazio orizzontale prima e dopo
+         * il testo, ed e' proprio cosi' che i siti separano le voci di un
+         * menu. Senza, quelle voci si toccano e sembrano una parola sola.
+         *
+         * ! I MARGINI VERTICALI IN LINEA NON ESISTONO, e non e' una
+         * semplificazione nostra: e' la regola del CSS. Un margine sopra e
+         * sotto uno <span> non sposta niente. */
+        if (!e_blocco && mio.margine[3] != CSS_MISURA_NO && mio.margine[3] > 0)
+            g_pen_x += mio.margine[3];
+
         for (f = g_doc.nodi[v].primo_figlio; f >= 0; f = g_doc.nodi[f].prossimo) {
             impagina_nodo(f, &mio);
             g_stile_ora = mio;      /* i figli l'hanno cambiato: si rimette */
         }
+
+        if (!e_blocco && mio.margine[1] != CSS_MISURA_NO && mio.margine[1] > 0)
+            g_pen_x += mio.margine[1];
 
         if (uguale(nome, "pre") || uguale(nome, "code") ||
             uguale(nome, "tt")  || uguale(nome, "kbd") ||
             uguale(nome, "samp")) g_fisso--;
 
         g_link_ora = era_link;
+        if (uguale(nome, "form")) g_mod_ora = era_modulo;
 
         if (e_blocco) {
             a_capo();
@@ -1419,6 +1650,9 @@ static void impagina(void)
 {
     g_pez_n = 0;
     g_link_n = 0;
+    g_link_usati = 0;
+    g_mod_n = 0;
+    g_mod_ora = -1;
     g_fisso = 0;
     g_doc.arena_n = g_arena_doc;    /* si butta il testo generato dal giro prima */
     g_marg_sx = g_marg_dx = 0;
@@ -1440,6 +1674,60 @@ static void impagina(void)
 
     g_altezza = g_pen_y - area_y() + g_riga_h;
     if (g_altezza < 1) g_altezza = 1;
+}
+
+/* =============================================================================
+ * I SUGGERIMENTI DI PRESENTAZIONE DELL'HTML VECCHIO
+ *
+ * ! MEZZO WEB SCRIVE ANCORA I COLORI NEGLI ATTRIBUTI, e non nei fogli di
+ * stile: `<table bgcolor="#ff6600">` e' la barra arancione di Hacker News, e
+ * `<td align="right">` e' come si incolonnavano i numeri prima del CSS. Sono
+ * chiamati «suggerimenti di presentazione» e stanno al gradino PIU' BASSO
+ * della cascata: valgono solo dove il foglio di stile non ha detto niente.
+ *
+ * ! ED E' PROPRIO PERCHE' STANNO IN FONDO CHE SI APPLICANO DOPO css_calcola e
+ * solo sui campi rimasti vuoti. Applicarli prima — o sopra — vorrebbe dire che
+ * un `bgcolor` batte una regola CSS, che e' il contrario di quello che deve
+ * succedere: una pagina moderna che ha ereditato un vecchio attributo si
+ * vedrebbe con i colori di vent'anni fa.
+ * ========================================================================== */
+static void suggerimenti(int v, CssStile *st)
+{
+    const char *a;
+
+    a = html_attr(&g_doc, v, "bgcolor");
+    if (a && a[0] && st->sfondo == CSS_NIENTE) {
+        unsigned int c;
+        unsigned int n = 0;
+
+        while (a[n]) n++;
+        if (css_colore(a, n, &c)) st->sfondo = c;
+    }
+
+    /* `text` sta su <body> e su <font>, e il colore SI EREDITA: qui non c'e'
+     * modo di sapere se il valore che c'e' viene da una regola o dal padre.
+     * L'attributo vince — su una pagina moderna non c'e', e su una vecchia e'
+     * quello che l'autore intendeva. */
+    a = html_attr(&g_doc, v, "text");
+    if (!a || !a[0]) a = html_attr(&g_doc, v, "color");
+    if (a && a[0]) {
+        unsigned int c;
+        unsigned int n = 0;
+
+        while (a[n]) n++;
+        if (css_colore(a, n, &c)) st->colore = c;
+    }
+
+    /* ! E L'ALLINEAMENTO SI APPLICA SEMPRE, per la stessa ragione: anche lui
+     * si eredita, quindi «vuoto» non si distingue da «ereditato». Un `align`
+     * scritto sull'elemento e' un'intenzione esplicita di chi ha scritto la
+     * pagina, e vale piu' di quella del padre. */
+    a = html_attr(&g_doc, v, "align");
+    if (a && a[0]) {
+        if (uguale(a, "center"))     st->allineamento = CSS_ALL_CENTRO;
+        else if (uguale(a, "right")) st->allineamento = CSS_ALL_DX;
+        else if (uguale(a, "left"))  st->allineamento = CSS_ALL_SX;
+    }
 }
 
 /* -----------------------------------------------------------------------------
@@ -1554,7 +1842,36 @@ static void disegna(void)
                 ex_scrivi(g_f, cx + cw - 14, y + (ch - 16) / 2, "v", EX_NERO);
                 break;
 
-            default:                     /* casella di testo e area */
+            case CTRL_AREA: {
+                /* ! L'AREA VA A CAPO, e non e' un vezzo: una <textarea> alta
+                 * ottantotto pixel che mostra una riga sola sembra una casella
+                 * rotta. Si spezza sui pixel e non sulle parole — un'area di
+                 * testo non e' un paragrafo — ma si vede tutto quello che c'e'
+                 * dentro, che e' il punto. */
+                int riga = 0, i0 = 0;
+                int per_riga = (cw - 8) / 8;
+
+                ex_riempi(g_f, cx, y, cw, ch, EX_BIANCO);
+                ex_incavo(g_f, cx, y, cw, ch);
+
+                if (per_riga < 1) per_riga = 1;
+                while (mostra[i0] && (riga + 1) * 18 < ch) {
+                    char pezzo[CTRL_VAL_MAX];
+                    int  q = 0;
+
+                    while (mostra[i0] && q < per_riga && q < CTRL_VAL_MAX - 1)
+                        pezzo[q++] = mostra[i0++];
+                    pezzo[q] = '\0';
+                    ex_scrivi(g_f, cx + 4, y + 3 + riga * 18, pezzo, EX_NERO);
+                    riga++;
+                }
+
+                if (g_pez[i].ctrl == g_ctrl_fuoco)
+                    ex_riempi(g_f, cx + 2, y + 2, 2, ch - 4, EX_NERO);
+                break;
+            }
+
+            default:                     /* casella di testo */
                 ex_riempi(g_f, cx, y, cw, ch, EX_BIANCO);
                 ex_incavo(g_f, cx, y, cw, ch);
                 ex_scrivi(g_f, cx + 4, y + 3, mostra, EX_NERO);
@@ -2352,6 +2669,7 @@ static void vai(const char *url, int in_storia, int usa_cache)
     g_scorri = 0;
     g_ctrl_n = 0;
     g_ctrl_fuoco = -1;
+    g_opz_n = 0;
     raccogli_css();
     impagina();
 
@@ -2376,7 +2694,7 @@ static void segui(int k)
     char nuovo[EXHTTP_URL_MAX];
 
     if (k < 0 || k >= g_link_n) return;
-    if (!risolvi(g_link[k], nuovo, sizeof(nuovo))) return;
+    if (!risolvi(link_url(k), nuovo, sizeof(nuovo))) return;
 
     vai(nuovo, 1, 0);
 }
@@ -2396,6 +2714,151 @@ static int link_sotto(int x, int y)
             y >= py && y < py + h) return g_pez[i].link;
     }
     return -1;
+}
+
+/* Due controlli sono dello stesso gruppo se portano lo stesso `name`. Due
+ * nomi vuoti contano come lo stesso gruppo: e' quello che fa un browser vero
+ * con dei radio senza nome, e sono comunque un modulo scritto male. */
+static int confronta_nome(const char *a, const char *b)
+{
+    int i = 0;
+
+    while (a[i] && a[i] == b[i]) i++;
+    return a[i] == b[i];
+}
+
+/* =============================================================================
+ * MANDARE UN MODULO
+ *
+ * ! LA CODIFICA PERCENTO NON E' UN DETTAGLIO. Un campo che contiene uno
+ * spazio, una `&` o un `=` va scritto in modo che il server non lo scambi per
+ * la struttura della query: senza, cercare «pane & vino» manda due campi
+ * invece di uno, e il secondo si chiama « vino». La regola e' semplice —
+ * lettere, cifre e quattro segni passano, lo spazio diventa `+`, tutto il
+ * resto diventa %XX — ed e' la stessa da trent'anni.
+ *
+ * ! SI MANDANO SOLO I CAMPI CON UN `name`, e le spunte solo se accese: e' cio'
+ * che il server si aspetta. Una spunta spenta non si manda affatto — non si
+ * manda «no», si tace — ed e' il motivo per cui i moduli hanno spesso un campo
+ * nascosto accanto.
+ * ========================================================================== */
+static int esadecimale(int v) { return v < 10 ? '0' + v : 'A' + v - 10; }
+
+static int aggiungi_codificato(char *out, int pos, int max, const char *s)
+{
+    int i;
+
+    for (i = 0; s[i]; i++) {
+        unsigned char ch = (unsigned char)s[i];
+
+        if (pos + 4 >= max) return pos;
+
+        if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+            (ch >= '0' && ch <= '9') ||
+            ch == '-' || ch == '_' || ch == '.' || ch == '~') {
+            out[pos++] = (char)ch;
+        } else if (ch == ' ') {
+            out[pos++] = '+';
+        } else {
+            out[pos++] = '%';
+            out[pos++] = (char)esadecimale(ch >> 4);
+            out[pos++] = (char)esadecimale(ch & 15);
+        }
+    }
+    return pos;
+}
+
+static void manda_modulo(int m)
+{
+    char q[EXHTTP_URL_MAX];
+    char meta[EXHTTP_URL_MAX];
+    int  pos = 0, primo = 1, i;
+
+    if (m < 0 || m >= g_mod_n) {
+        dico("questo campo non sta dentro nessun modulo");
+        return;
+    }
+
+    /* ! POST SI DICE, NON SI FINGE. Costruire la query e mandarla in GET a un
+     * modulo che chiedeva POST darebbe una risposta sbagliata senza un errore:
+     * meglio dire che non si sa fare. */
+    if (g_mod[m].post) {
+        dico("questo modulo vuole POST, e non lo so ancora mandare");
+        return;
+    }
+
+    for (i = 0; i < g_ctrl_n && pos < (int)sizeof(q) - 8; i++) {
+        const Ctrl *c = &g_ctrl[i];
+
+        if (c->modulo != m) continue;
+        if (c->nome[0] == '\0') continue;
+        if (c->tipo == CTRL_PULSANTE) continue;
+        if ((c->tipo == CTRL_SPUNTA || c->tipo == CTRL_RADIO) && !c->acceso)
+            continue;
+
+        if (!primo) q[pos++] = '&';
+        primo = 0;
+
+        pos = aggiungi_codificato(q, pos, (int)sizeof(q), c->nome);
+        q[pos++] = '=';
+        /* Una spunta accesa senza valore vale «on», come ovunque. */
+        pos = aggiungi_codificato(q, pos, (int)sizeof(q),
+                (c->valore[0] || c->tipo == CTRL_TESTO || c->tipo == CTRL_AREA)
+                ? c->valore : "on");
+    }
+    q[pos] = '\0';
+
+    /* L'azione vuota vuol dire «questa stessa pagina». */
+    if (g_mod[m].azione[0] == '\0') {
+        int k = 0;
+
+        while (g_qui[k] && g_qui[k] != '?' && k < (int)sizeof(meta) - 1) {
+            meta[k] = g_qui[k]; k++;
+        }
+        meta[k] = '\0';
+    } else {
+        int k = 0;
+
+        while (g_mod[m].azione[k] && k < (int)sizeof(meta) - 1) {
+            meta[k] = g_mod[m].azione[k]; k++;
+        }
+        meta[k] = '\0';
+    }
+
+    /* ! LA QUERY CHE C'E' GIA' NELL'AZIONE SI BUTTA, e non si mescola: la
+     * specifica dice che i campi del modulo SOSTITUISCONO la query
+     * dell'action, e tenere tutt'e due darebbe due volte lo stesso parametro. */
+    {
+        int k = 0;
+
+        while (meta[k] && meta[k] != '?') k++;
+        meta[k] = '\0';
+    }
+
+    {
+        char nuovo[EXHTTP_URL_MAX];
+        int  k = 0;
+
+        while (meta[k] && k < (int)sizeof(nuovo) - 2) { nuovo[k] = meta[k]; k++; }
+        if (pos > 0 && k < (int)sizeof(nuovo) - 2) {
+            int j = 0;
+
+            nuovo[k++] = '?';
+            while (q[j] && k < (int)sizeof(nuovo) - 1) nuovo[k++] = q[j++];
+        }
+        nuovo[k] = '\0';
+
+        {
+            char assoluto[EXHTTP_URL_MAX];
+
+            if (!risolvi(nuovo, assoluto, sizeof(assoluto))) {
+                dico("l'indirizzo del modulo non si capisce");
+                return;
+            }
+            ex_testo_metti(g_url, assoluto);
+            vai(assoluto, 1, 0);
+        }
+    }
 }
 
 /* Quale controllo sta sotto quel punto, o -1. */
@@ -2586,8 +3049,13 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
                 disegna();
                 return 0;
             }
+            /* ! INVIO DENTRO UNA CASELLA MANDA IL MODULO, ed e' cosi' che si
+             * usa una casella di ricerca: nessuno cerca il pulsante. */
             if (c == '\n' || c == '\r') {
-                dico("questo modulo non si manda ancora: manca l'invio");
+                int m = k->modulo;
+
+                g_ctrl_fuoco = -1;
+                manda_modulo(m);
                 return 0;
             }
             if (c >= 32 && c < 256 && n < CTRL_VAL_MAX - 1) {
@@ -2632,16 +3100,17 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
                 break;
 
             case CTRL_RADIO: {
-                /* ! UN SOLO ACCESO ALLA VOLTA, e qui si spengono TUTTI gli
-                 * altri della pagina invece che quelli dello stesso `name`.
-                 * E' un'approssimazione, e va detta: con due gruppi di scelte
-                 * nella stessa pagina si comporta come se fossero uno solo.
-                 * Raggrupparli per nome vuol dire tenersi il nome, e i moduli
-                 * non si mandano ancora — quel giorno servira' comunque. */
+                /* ! UNO SOLO ACCESO PER GRUPPO, E IL GRUPPO E' IL `name`. Si
+                 * spengono le scelte che portano lo STESSO nome, non tutte
+                 * quelle della pagina: un modulo con «spedizione» e
+                 * «pagamento» ha due gruppi, e spegnerli insieme renderebbe
+                 * impossibile rispondere a tutt'e due. */
                 int j;
 
                 for (j = 0; j < g_ctrl_n; j++)
-                    if (g_ctrl[j].tipo == CTRL_RADIO) g_ctrl[j].acceso = 0;
+                    if (g_ctrl[j].tipo == CTRL_RADIO &&
+                        confronta_nome(g_ctrl[j].nome, c->nome))
+                        g_ctrl[j].acceso = 0;
                 c->acceso = 1;
                 g_ctrl_fuoco = -1;
                 break;
@@ -2649,8 +3118,30 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 
             case CTRL_PULSANTE:
                 g_ctrl_fuoco = -1;
-                dico("questo modulo non si manda ancora: manca l'invio");
+                manda_modulo(c->modulo);
                 return 0;
+
+            case CTRL_SCELTA:
+                /* ! SI PASSA ALL'OPZIONE DOPO, E NON SI APRE UN ELENCO A
+                 * TENDINA. Un elenco che si apre e' una finestra nuova, un
+                 * ciclo di messaggi suo e un ritaglio sopra la pagina: e' un
+                 * lavoro onesto e non e' questo. Cliccando si gira fra le
+                 * opzioni — si arriva a tutte, e il modulo si puo' mandare
+                 * davvero. E' dichiarato qui e nella barra di stato, perche'
+                 * non e' quello che si aspetta chi arriva da un altro
+                 * browser. */
+                if (c->opz_n > 0) {
+                    int q = 0;
+                    const char *o;
+
+                    c->opz_ora = (short)((c->opz_ora + 1) % c->opz_n);
+                    o = g_opz[c->opz_primo + c->opz_ora];
+                    while (o[q] && q < CTRL_VAL_MAX - 1) { c->valore[q] = o[q]; q++; }
+                    c->valore[q] = '\0';
+                    dico("scelta cambiata: clicca ancora per la prossima");
+                }
+                g_ctrl_fuoco = -1;
+                break;
 
             default:
                 g_ctrl_fuoco = k;
