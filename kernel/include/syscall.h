@@ -169,6 +169,10 @@
 #define SYS_CONSOLE_WRITE  230  /* scrive su una console specifica */
 #define SYS_CONSOLE_INFO   231  /* quante sono, qual e' la mia, qual e' visibile */
 #define SYS_CONSOLE_SETFG  232  /* dichiara il processo in primo piano (job control) */
+/* Chi rivendica la console della GRAFICA, e chi chiede quale sia.
+ * ebx: 0 = chiedi (rende il numero, -1 se nessuna), 1 = prendi (la mia),
+ *      2 = lascia. Vedi sys_console_grafica. */
+#define SYS_CONSOLE_GRAFICA 233
 
 /* =============================================================================
  * Accessi I/O a 16 e 32 bit — servono al bus PCI, non sono un lusso
@@ -1119,6 +1123,7 @@ int32_t sys_console_switch(InterruptFrame *f);
 int32_t sys_console_write(InterruptFrame *f);
 int32_t sys_console_info(InterruptFrame *f);
 int32_t sys_console_setfg(InterruptFrame *f);
+int32_t sys_console_grafica(InterruptFrame *f);
 int32_t sys_ipc_register(InterruptFrame *f);
 int32_t sys_ipc_lookup(InterruptFrame *f);
 int32_t sys_irq_bind(InterruptFrame *f);

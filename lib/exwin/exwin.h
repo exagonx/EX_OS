@@ -279,6 +279,15 @@ void        ex_fuoco(ExFinestra controllo);
  * EXM_TASTO, e chi li vuole se li gestisce. */
 void        ex_fuoco_via(ExFinestra finestra);
 
+/* ! SPEGNE LA SCRIVANIA INTERA, non questa finestra. Chiede al server di
+ * mandare a ogni applicazione la stessa chiusura della crocetta, di aspettare
+ * che se ne vadano, di rimettere il modo testo e di morire.
+ *
+ * Lo chiama il program manager quando si sceglie «Esci»: prima quella voce
+ * chiudeva solo la scrivania e lasciava la grafica accesa senza nessuno
+ * dentro. Un programma qualunque non ha motivo di chiamarla. */
+void        ex_spegni_scrivania(void);
+
 /* Il testo di un controllo: lo legge una casella, lo cambia un'etichetta. */
 void        ex_testo_metti(ExFinestra f, const char *s);
 const char *ex_testo_prendi(ExFinestra f);

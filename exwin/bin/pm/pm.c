@@ -605,14 +605,29 @@ static long menu_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
     if (msg == EXM_COMANDO) {
         menu_chiudi();
 
-        /* ! «ESCI» CHIUDE SOLO LA SCRIVANIA, NON IL SERVER. Il server e' di
-         * chi lo ha avviato — `exwin`, o kernel.cfg — e potrebbe avere altre
-         * finestre aperte: chiuderlo da qui vorrebbe dire portarsi via il
-         * lavoro di qualcun altro. Chi torna alla shell trova la console di
-         * testo con Alt+Fn, che e' li' apposta. */
+        /* =================================================================
+         * ! «ESCI» SPEGNE LA SCRIVANIA INTERA, dal 25 agosto 2026.
+         *
+         * Qui c'era scritto il contrario, e la ragione non era sciocca: il
+         * server e' di chi lo ha avviato e potrebbe avere altre finestre
+         * aperte, quindi chiuderlo da qui sembrava portarsi via il lavoro di
+         * qualcun altro. In pratica lasciava una macchina con la grafica
+         * accesa e NESSUNO dentro: per spegnerla davvero bisognava sapere
+         * cosa uccidere, e chi non lo sapeva restava con uno schermo che non
+         * rispondeva piu' a niente.
+         *
+         * ! ALLE APPLICAZIONI SI CHIEDE, NON LE SI UCCIDE: il server manda a
+         * ognuna la stessa chiusura della crocetta e aspetta. Chi ha da
+         * salvare fa in tempo; il server rimette il modo testo e muore.
+         *
+         * ! E NON SI CHIAMA ex_esci() DOPO. Il server sta per mandare a QUESTA
+         * finestra la sua chiusura, come a tutte le altre: uscire subito
+         * vorrebbe dire sparire prima di aver ricevuto il messaggio che si e'
+         * appena chiesto di ricevere.
+         * ================================================================= */
         if (wp == ID_ESCI) {
-            log_seriale("pm: uscita chiesta dal menu");
-            ex_esci(0);
+            log_seriale("pm: spegnimento della scrivania chiesto dal menu");
+            ex_spegni_scrivania();
             return 0;
         }
 

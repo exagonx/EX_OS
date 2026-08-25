@@ -155,7 +155,24 @@
  * sa quali messaggi ha — ma sa dove sta scritta, cosi' che non ce ne siano
  * due.
  */
-#define EXOS_VERSION    "0.206"
+/* 0.206 -> 0.207: SYS_CONSOLE_GRAFICA (233) — chi tiene la console della
+ * grafica, e quale sia.
+ *
+ * ! SERVE PERCHE' UNA CONSOLE SENZA NESSUNO SOPRA NON E' UN POSTO DOVE
+ * ANDARE. La grafica sta sull'ultima console; finche' il server non c'e',
+ * quella e' uno schermo nero con una shell che nessuno guarda, e portarcisi
+ * con Alt+Fn vuol dire sparire nel nulla senza sapere come tornare. Adesso il
+ * driver di tastiera chiede, e se non c'e' grafica quel tasto non fa niente.
+ *
+ * ! E LO STATO STA NEL KERNEL, NON NEL SERVER, apposta: quando il server muore
+ * — anche ucciso — qualcuno deve poter dire «li' non c'e' piu' niente». Un
+ * flag tenuto dal server morirebbe con lui e lascerebbe la porta aperta su una
+ * stanza vuota. Il kernel ricontrolla da se' che chi l'ha presa sia vivo.
+ *
+ * Lo usa anche `exwin`, che con questa voce sa quando la grafica e' finita e
+ * riporta l'utente alla console da cui era partito.
+ */
+#define EXOS_VERSION    "0.207"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

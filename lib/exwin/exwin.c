@@ -565,6 +565,15 @@ static void fuoco_metti(ExFinestra f, ExFinestra c)
  * sarebbe una finestra che ignora la tastiera senza dirlo, ed e' peggio di una
  * chiamata che non fa niente.
  * ============================================================================= */
+/* Definita piu' in basso, dov'e' il resto del dialogo col server. */
+static int server_trova(void);
+
+void ex_spegni_scrivania(void)
+{
+    if (!server_trova()) return;
+    ipc_send((unsigned int)g_server, WIN_MSG_SPEGNI, 0, 0);
+}
+
 void ex_fuoco_via(ExFinestra f)
 {
     Oggetto *r = radice(f);

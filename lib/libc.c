@@ -357,6 +357,7 @@ typedef struct { unsigned int bit; } fd_set;
 #define SYS_CONSOLE_WRITE  230
 #define SYS_CONSOLE_INFO   231
 #define SYS_CONSOLE_SETFG  232
+#define SYS_CONSOLE_GRAFICA 233
 #define SYS_IOCTL         54
 #define SYS_DUP           41
 #define SYS_DUP2          63
@@ -5695,6 +5696,18 @@ int console_info(ConsoleInfo *ci)
 int console_setfg(unsigned int pid)
 {
     return (int)_syscall1(SYS_CONSOLE_SETFG, pid);
+}
+
+/* ! CHI TIENE LA CONSOLE DELLA GRAFICA. `azione`: 0 chiedi (rende il numero
+ * della console, -1 se non c'e' nessuna grafica accesa), 1 prendi (quella del
+ * chiamante), 2 lascia.
+ *
+ * Serve al driver di tastiera, che deve sapere se Alt+F<ultima> porta da
+ * qualche parte: una console senza il server sopra e' uno schermo nero da cui
+ * non si capisce come tornare indietro. E serve a `exwin`, che aspetta. */
+int console_grafica(int azione)
+{
+    return (int)_syscall1(SYS_CONSOLE_GRAFICA, (unsigned int)azione);
 }
 
 int ipc_register(const char *name)

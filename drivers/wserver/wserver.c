@@ -1594,6 +1594,56 @@ static int servi_messaggio(void)
         if (meta.len >= sizeof(WinCrea)) crea(meta.sender_pid, (WinCrea *)buf);
         break;
 
+    /* =====================================================================
+     * ! SI SPEGNE LA SCRIVANIA, e non e' la crocetta di una finestra.
+     *
+     * Fino a oggi «Esci» dal program manager chiudeva solo la scrivania e
+     * lasciava acceso il server: la ragione scritta in pm.c era che il server
+     * e' di chi lo ha avviato e poteva avere altre finestre aperte. Vera in
+     * astratto; in pratica lasciava una macchina con la grafica accesa e
+     * nessuno dentro, e per spegnerla davvero bisognava sapere cosa uccidere.
+     *
+     * ! ALLE APPLICAZIONI SI CHIEDE, NON LE SI UCCIDE. Va a ognuna lo stesso
+     * WIN_EV_CHIUDI della crocetta — un messaggio che sanno gia' gestire —
+     * cosi' chi ha qualcosa da salvare fa in tempo. Poi si aspetta: chi se ne
+     * va libera la sua finestra, e `raccogli_morti` se ne accorge.
+     *
+     * ! E SI ASPETTA UN TEMPO DICHIARATO, non «finche' non sono uscite tutte».
+     * Un'applicazione bloccata non deve poter tenere accesa la grafica per
+     * sempre: dopo il tempo si va avanti lo stesso, e chi resta se lo porta
+     * via la fine del server.
+     * ===================================================================== */
+    case WIN_MSG_SPEGNI: {
+        int n, giri;
+
+        log_seriale("wserver: spegnimento chiesto");
+
+        /* Nell'elenco del server ci sono SOLO finestre di primo livello: i
+         * controlli del toolkit vivono dentro il client e non si registrano
+         * qui. Quindi ognuna di queste e' un'applicazione da avvisare. */
+        for (n = 0; n < FINESTRE_MAX; n++)
+            if (g_fin[n].usata)
+                manda_evento(&g_fin[n], WIN_EV_CHIUDI, 0, 0, 0, 0);
+
+        for (giri = 0; giri < 100; giri++) {
+            int vive = 0;
+
+            for (n = 0; n < 16 && servi_messaggio(); n++) { }
+            raccogli_morti();
+
+            for (n = 0; n < FINESTRE_MAX; n++)
+                if (g_fin[n].usata) vive++;
+            if (vive == 0) break;
+
+            usleep(20000);
+        }
+
+        console_grafica(2);     /* la console non e' piu' della grafica */
+        modo_testo();
+        log_seriale("wserver: spento");
+        exit(0);
+    }
+
     case WIN_MSG_DISTRUGGI: {
         WinRegione *w = (WinRegione *)buf;
         int idx;
@@ -1873,6 +1923,18 @@ int main(int argc, char **argv)
     g_py = (int)g_fb_h / 2;
 
     printf("wserver: servizio '%s' attivo\n", g_servizio);
+    /* ! DA QUI IN AVANTI QUESTA CONSOLE E' DELLA GRAFICA, e il kernel lo sa:
+     * il driver di tastiera glielo chiede per decidere se Alt+F<ultima> porti
+     * da qualche parte. Prima di adesso non lo era davvero — il framebuffer
+     * poteva ancora non essere mappato — e dirlo prima avrebbe aperto la porta
+     * su una stanza non ancora arredata.
+     *
+     * ! E NON SERVE DISDIRLA MORENDO MALE: il kernel ricontrolla che chi l'ha
+     * presa sia ancora vivo, quindi un wserver ucciso libera la console da
+     * solo. La si lascia comunque all'uscita pulita, perche' una cosa che si
+     * puo' dire subito non si fa scoprire a qualcun altro. */
+    console_grafica(1);
+
     log_seriale("wserver: servizio attivo, entro nel ciclo");
 
     /* ! IL CICLO NON ASPETTA A LUNGO SU NIENTE. Ha tre cose da fare — leggere

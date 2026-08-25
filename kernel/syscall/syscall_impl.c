@@ -859,6 +859,57 @@ int32_t sys_console_setfg(InterruptFrame *frame)
     return 0;
 }
 
+/* =============================================================================
+ * SYS_CONSOLE_GRAFICA (233) -- Chi rivendica la console della grafica
+ *
+ * ebx = 0 chiedi, 1 prendi (quella del chiamante), 2 lascia
+ *
+ * ! SERVE PERCHE' UNA CONSOLE SENZA NESSUNO SOPRA NON E' UN POSTO DOVE
+ * ANDARE. La grafica sta sull'ultima console, e finche' il server non c'e'
+ * quella console e' uno schermo nero con una shell che nessuno guarda:
+ * portarcisi con Alt+Fn vuol dire sparire dentro il nulla e non capire come
+ * tornare indietro. Con questa voce il driver di tastiera sa se quel tasto ha
+ * un senso adesso, e se non ce l'ha non fa niente — che e' la risposta giusta
+ * a un tasto che non porta da nessuna parte.
+ *
+ * ! E LO STATO STA NEL KERNEL, non nel server: quando il server MUORE — anche
+ * male, anche ucciso — il kernel deve poter dire «li' non c'e' piu' niente».
+ * Un flag tenuto dal server morirebbe con lui, lasciando la porta aperta su
+ * una stanza vuota. Chi la teneva si ricontrolla a ogni domanda: se quel
+ * processo non c'e' piu', la console torna libera da sola.
+ * ============================================================================= */
+static int32_t g_console_grafica = -1;   /* quale console, -1 = nessuna */
+static uint32_t g_console_grafica_pid = 0;
+
+int32_t sys_console_grafica(InterruptFrame *frame)
+{
+    uint32_t azione = frame->ebx;
+    Process *proc   = proc_get_current();
+
+    /* Chi la teneva e' ancora vivo? Se no, la console e' libera. */
+    if (g_console_grafica >= 0 && g_console_grafica_pid != 0 &&
+        proc_get_by_pid(g_console_grafica_pid) == NULL) {
+        g_console_grafica     = -1;
+        g_console_grafica_pid = 0;
+    }
+
+    if (azione == 1) {
+        g_console_grafica     = (int32_t)proc->console;
+        g_console_grafica_pid = proc->pid;
+        return g_console_grafica;
+    }
+    if (azione == 2) {
+        /* La lascia solo chi l'aveva presa: un altro processo non deve poter
+         * dichiarare spenta una grafica che sta girando. */
+        if (g_console_grafica_pid == proc->pid) {
+            g_console_grafica     = -1;
+            g_console_grafica_pid = 0;
+        }
+        return 0;
+    }
+    return g_console_grafica;
+}
+
 /* Riferimento al pool PCB globale (definito in sched.c) */
 
 /* =============================================================================

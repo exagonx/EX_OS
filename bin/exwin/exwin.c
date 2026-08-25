@@ -164,5 +164,49 @@ int main(int argc, char **argv)
     if (console_switch((unsigned int)console) != 0)
         printf("exwin: non riesco a passare alla console %d: vacci con Alt+F%d\n",
                console + 1, console + 1);
+
+    /* =====================================================================
+     * ! SI ASPETTA CHE LA GRAFICA FINISCA, e poi si torna da dove si e'
+     * partiti. Prima `exwin` lanciava e usciva: chi sceglieva «Esci» dalla
+     * scrivania restava davanti a una console che non era piu' di nessuno, e
+     * doveva sapere di Alt+F1 per ritrovare la sua shell.
+     *
+     * ! NON SI ASPETTA IL PROCESSO, SI ASPETTA LA CONSOLE. wserver e' stato
+     * avviato con spawn e non e' figlio nostro in un modo che waitpid sappia
+     * seguire fino in fondo; ma il kernel sa chi tiene la console della
+     * grafica, e quando quella risposta torna -1 la grafica non c'e' piu' —
+     * che il server sia uscito bene o sia stato ucciso.
+     *
+     * ! E SI GUARDA PIANO. Mezzo secondo per giro: qui non c'e' niente da
+     * fare in fretta, e un ciclo stretto per aspettare una cosa che dura
+     * minuti sarebbe tempo di CPU tolto alla scrivania che si sta usando.
+     * ===================================================================== */
+    /* ! PRIMA SI ASPETTA CHE LA GRAFICA CI SIA, POI CHE FINISCA, e l'ordine
+     * non e' pignoleria: il server rivendica la console solo quando ha finito
+     * di mappare il framebuffer, cioe' qualche decimo di secondo DOPO che
+     * questo processo l'ha lanciato. Guardando subito «c'e' una grafica?» si
+     * troverebbe -1 — non ancora — e si scambierebbe il non essere ancora nato
+     * per l'essere gia' morto: exwin uscirebbe all'istante riportando la
+     * console indietro, e la scrivania si aprirebbe su uno schermo che nessuno
+     * sta guardando.
+     *
+     * Dieci secondi bastano con abbondanza; scaduti, si rinuncia ad aspettare
+     * e si lascia la grafica dov'e' invece di trascinare l'utente altrove. */
+    {
+        int giri;
+
+        for (giri = 0; giri < 100 && console_grafica(0) < 0; giri++)
+            usleep(100000);
+
+        if (console_grafica(0) < 0) {
+            printf("exwin: il server non ha preso la console: lo lascio la'\n");
+            return 0;
+        }
+    }
+
+    while (console_grafica(0) >= 0) usleep(500000);
+
+    console_switch((unsigned int)partenza);
+    printf("exwin: grafica spenta.\n");
     return 0;
 }

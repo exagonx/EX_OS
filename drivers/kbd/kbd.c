@@ -515,6 +515,31 @@ static void kbd_commuta(unsigned n)
 {
     if (n >= KBD_N_CONSOLE || n == g_attiva) return;
 
+    /* =====================================================================
+     * ! LA CONSOLE DELLA GRAFICA ESISTE SOLO MENTRE LA GRAFICA C'E'.
+     *
+     * L'ultima console e' del server a finestre. Finche' quello non gira, li'
+     * c'e' uno schermo nero con sopra una shell che nessuno guarda: portarcisi
+     * con Alt+Fn vuol dire sparire dentro il nulla, e da li' chi non sa di
+     * Alt+F1 non torna piu' indietro. Un tasto che non porta da nessuna parte
+     * e' meglio che non faccia niente.
+     *
+     * ! SI CHIEDE AL KERNEL, e la risposta e' -1 quando nessuno ha preso una
+     * console per la grafica. Solo allora l'ultima si chiude, perche' solo
+     * allora e' vuota. Le prime restano raggiungibili sempre: da dentro la
+     * grafica si esce con Alt+F1..F4 come da qualunque altra parte.
+     *
+     * ! E SE LA GRAFICA GIRA ALTROVE — `exwin -c 2` — l'ultima console torna a
+     * essere una console di testo come le altre, e non si blocca: la risposta
+     * del kernel e' 2, cioe' «una grafica c'e'», e il divieto cade. Il tasto
+     * si chiude solo nel caso in cui porterebbe davvero nel vuoto.
+     * ===================================================================== */
+    {
+        int graf = console_grafica(0);
+
+        if (graf < 0 && n == KBD_N_CONSOLE - 1) return;
+    }
+
     if (console_switch(n) < 0) return;
 
     g_attiva = n;

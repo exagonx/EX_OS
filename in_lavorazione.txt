@@ -80,35 +80,50 @@ B. FATTO — la lingua, chiesta all'installazione e scritta in [kernel] di
    scriveva da nessuna parte. Adesso anche il file appena copiato passa di li'.
    Provato: scelto «francais», e nel kernel.cfg del disco c'e' `lingua = fr`.
 
-C. FATTO A META' — exwin sulla console 5, e ci si va da soli.
-   Le console erano quattro e la grafica se ne prendeva una (la seconda): chi
-   lavorava in testo si ritrovava con tre console senza averlo chiesto. Adesso
-   sono cinque, Alt+F1..F4 restano di chi scrive e la grafica sta in fondo.
-   VGA_N_CONSOLE e KBD_N_CONSOLE devono combaciare, ed e' scritto in tutt'e
-   due i posti: se divergono, l'ultima console esiste ma non ci si arriva.
-   E digitando `exwin` si passa alla grafica SUBITO, invece di leggere «Alt+F5
-   per andarci»: chi lo digita vuole la grafica, adesso. Il messaggio resta
-   sulla console di partenza, dov'e' utile quando si torna.
-   ! MANCA IL RITORNO AUTOMATICO alla console di partenza quando la grafica si
-   spegne: exwin oggi lancia e finisce, non aspetta nessuno. Sta insieme al
-   punto D — e' lo stesso lavoro.
+C. FATTO — exwin sulla console 5, ci si va e si torna.
+   Le console erano quattro e la grafica se ne prendeva una: chi lavorava in
+   testo ne aveva tre senza averlo chiesto. Adesso sono cinque, Alt+F1..F4
+   restano di chi scrive. VGA_N_CONSOLE e KBD_N_CONSOLE devono combaciare, ed
+   e' scritto in tutt'e due i posti.
+   Digitando `exwin` si passa alla grafica SUBITO, e quando la grafica si
+   spegne si torna da soli alla console di partenza.
+   ! LA CONSOLE DELLA GRAFICA ESISTE SOLO MENTRE LA GRAFICA C'E'. Finche' il
+   server non gira, Alt+F5 non fa niente: li' ci sarebbe uno schermo nero con
+   una shell che nessuno guarda, e chi ci finisce non sa come tornare. Da
+   DENTRO la grafica, Alt+F1..F4 funzionano come sempre e Alt+F5 riporta alla
+   scrivania. E se la grafica gira altrove (`exwin -c 2`) l'ultima console
+   torna a essere una console di testo come le altre.
+   Il meccanismo e' SYS_CONSOLE_GRAFICA (kernel 0.207): lo stato sta nel
+   KERNEL e non nel server, cosi' un server ucciso libera la console da solo.
+
+D. FATTO — `exit` dal program manager spegne la scrivania.
+   Prima chiudeva solo il pm e lasciava la grafica accesa senza nessuno
+   dentro: per spegnerla davvero bisognava sapere cosa uccidere. Adesso il
+   server manda a OGNI applicazione la stessa chiusura della crocetta — un
+   messaggio che sanno gia' gestire, quindi chi ha da salvare fa in tempo —
+   aspetta al massimo due secondi, rimette il modo testo e muore. Le
+   applicazioni non si uccidono: gli si CHIEDE.
+   Provato dal CD: pm chiede, wserver spegne, exwin riporta alla console di
+   partenza, e lo schermo torna 720x400 cioe' modo testo.
 
 
 DA FARE (in coda):
 
-D. `exit` dal program manager deve spegnere il server grafico e chiudere le
-   applicazioni che ci girano dentro. Oggi exwin resta acceso.
-   FATTIBILE: il server sa quali finestre esistono e di chi sono; serve un
-   messaggio di chiusura a ognuna, poi la fine di wserver e il ritorno al modo
-   testo che il gradino 0 gia' sa fare. E con exwin che ASPETTA il server, il
-   ritorno alla console di partenza (punto C) viene da se'.
-
-E. Nelle impostazioni del server grafico, la scelta della RISOLUZIONE. Il modo
-   video si sceglie prima che il server parta — lo imposta Stage 2 leggendo un
-   proprio byte — quindi la nuova risoluzione arriva al RIAVVIO.
-   ! NON SI PARTE DA ZERO: esiste gia' `svga` in [kernel] di kernel.cfg, e la
-   nota accanto dice che Stage 2 impone e il kernel confronta. Il lavoro e'
-   l'interfaccia che scrive quella voce, non il meccanismo.
+E. LA RISOLUZIONE VIDEO — ed e' piu' grande di come sembrava.
+   ! IL MECCANISMO NON C'E'. In giro si legge che «lo scrive /bin/svga insieme
+   a un byte dentro Stage 2» (commento in hwconfig.c) e che il kernel
+   confronta la voce `svga` con quel byte (cfg.h): ma /bin/svga NON ESISTE, e
+   Stage 2 non legge nessun byte — SCEGLIE DA SE' il modo VESA migliore
+   scorrendo quelli che la scheda dichiara (bootloader/stage2/loader.asm,
+   .mloop). La voce `svga` in kernel.cfg oggi non decide niente: si conserva e
+   basta.
+   Quindi il lavoro e' in tre pezzi, e l'interfaccia e' il piu' piccolo:
+     1. Stage 2 deve poter LEGGERE una risoluzione voluta. Gira prima che
+        esista un filesystem, quindi va messa in un byte dentro la sua
+        immagine — che e' esattamente quel che il commento dava per fatto.
+     2. Un programma che scrive quel byte nell'immagine installata E la voce
+        `svga` in kernel.cfg, tenendo i due d'accordo.
+     3. La finestra che lo chiama e dice che il nuovo modo arriva al riavvio.
 
 F. Taglia/copia/incolla: C'E' GIA' ed e' di tutta la scrivania —
    `ex_area_copia`, `ex_area_taglia`, `ex_area_incolla`,
