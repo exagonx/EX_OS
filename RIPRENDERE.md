@@ -19,6 +19,10 @@ Kernel **0.205**. Vedi la sezione sui tre posti della rete, qui sotto.
 
 In attesa nell'albero — **PROVATO, DA COMMETTERE**:
 
+  - **IL WEB VERO**: ECDSA su P-256 e P-384 (wikipedia.org, HN, github.com si
+    aprono), la barra di scorrimento, i moduli disegnati, le GIF, i font che
+    non si esauriscono piu' a otto, e `/bin/shutdown` per `sudo`. Sezione qui
+    sotto;
   - **`https` NEL BROWSER.** TLS 1.3 scritto in casa: X25519,
     ChaCha20-Poly1305, catena dei certificati verificata contro un magazzino
     di 150 CA e nome del sito confrontato col `subjectAltName`. La sezione qui
@@ -34,6 +38,106 @@ In attesa nell'albero — **PROVATO, DA COMMETTERE**:
     SCARTATO un sospetto scritto in `in_lavorazione.txt`.
 
 **326 prove su 326** con `libctest`; **9 su 9** con `make prova-cliente-tls`.
+
+## Il web vero: ECDSA, i moduli, la barra e le GIF
+
+! **SEI COSE CHIESTE INSIEME, E UNA SOLA ERA GROSSA.** Vale la pena dire quale,
+perche' la stima a occhio era sbagliata: il TLS ellittico sembrava il lavoro di
+mezza giornata e i font una sciocchezza, ed e' andata quasi al contrario.
+
+### `sudo shutdown` diceva «comando non trovato»
+
+! **UN BUILTIN NON SI PUO' PASSARE A `sudo`.** La shell aveva gia' `shutdown`,
+`poweroff`, `reboot` e `halt`, e funzionavano — ma `sudo` fa uno `spawn`, e di
+un builtin non c'e' nessun file da eseguire. Adesso c'e' `/bin/shutdown`, con i
+suoi tre nomi alternativi come id/whoami. **Il builtin resta**: la shell di
+recovery e' statica apposta e deve poter spegnere una macchina il cui `/bin`
+non si legge piu'.
+
+### ECDSA: due curve, non una — e la seconda si e' scoperta guardando
+
+Con le sole firme RSA meta' del web rispondeva «allarme 40». Aggiunta la P-256,
+`wikipedia.org` rispondeva ancora no e `example.com` — che prima funzionava —
+ha smesso: annunciando ECDSA i server mandano la catena ellittica, e quella e'
+firmata **ecdsa-with-SHA384** con chiavi su **P-384**.
+
+    wikipedia.org:  *.wikipedia.org (P-256)  <- YE2 (P-384)  <- ISRG Root YE
+                    tutte le firme ecdsa-with-SHA384
+    example.com:    leaf ecdsa-with-SHA256, intermedia ecdsa-with-SHA384
+
+! **LA CURVA DELLA CHIAVE E L'IMPRONTA DELLA FIRMA SONO INDIPENDENTI**, ed e' la
+cosa che si sbaglia: una chiave P-256 firmata con SHA-384 e' normalissima.
+Legare le due — «P-256 quindi SHA-256» — vuol dire rifiutare catene valide.
+E dell'impronta si prendono i bit piu' a sinistra, tanti quanti `n`.
+
+Quindi: `lib/excurva` (P-256 e P-384, solo verifica), `sha384` in excrypt (stesso
+motore di SHA-512, altro valore iniziale, 48 byte), gli OID nuovi in exasn1, il
+ramo in excert e i due algoritmi annunciati in extls.
+
+! **SI VERIFICA E BASTA, NON SI FIRMA.** Firmare vuol dire generare un numero
+segreto per ogni firma, e un generatore appena debole rivela la chiave privata.
+Un browser non ha niente da firmare; scrivere quel codice «per completezza»
+vorrebbe dire mettere in casa un'arma carica.
+
+Prove: `make prova-excurva` — 13, con le combinazioni miste (P-256 con SHA-384,
+P-384 con SHA-256) e i rifiuti (bit girato in r, in s, nell'impronta, nella
+chiave; r o s a zero; punto fuori dalla curva).
+
+### Due difetti che il TLS ha soltanto SVELATO
+
+! **`if (len > max) len = max` IN `tcp_leggi`, e il resto del pezzo si
+BUTTAVA.** Con l'HTTP sopra non si vedeva mai — l'HTTP chiede sempre un buffer
+grande — ma il record di TLS legge PRIMA cinque byte e poi il resto.
+
+! **E IL CONTROLLO DEL BUFFER DELLE INTESTAZIONI STAVA PRIMA DELLA LETTURA.**
+TCP consegna pezzi da un chilo e mezzo, quindi quel buffer da 16 KB non si
+riempiva mai in una volta; il TLS consegna un RECORD INTERO, che e' esattamente
+16 KB. Al giro dopo si usciva con «intestazioni troppo lunghe» senza aver mai
+guardato le intestazioni, che stavano nei primi settecento byte. Si e' visto su
+news.ycombinator.com.
+
+! **E UN TERZO NEL Makefile, che ha fatto perdere mezz'ora**: `EXHTTP_SRC` era
+definito DUECENTO RIGHE DOPO la regola che lo usa, e make espande le dipendenze
+quando legge la regola. `exhttp.so` non dipendeva da `exhttp.c`: la correzione
+qui sopra «non aveva effetto», e il CD conteneva la libreria di prima.
+
+### Il browser: barra, moduli, immagini
+
+**La barra di scorrimento** con il pollice proporzionato alla parte visibile —
+l'unica cosa che dice QUANTO manca. Il posto si riserva sempre, anche quando la
+barra non serve: se la larghezza cambiasse a seconda della lunghezza del
+documento, un documento al limite oscillerebbe.
+
+! **E DISEGNANDOLA E' VENUTO FUORI CHE IL TESTO NON SI RITAGLIAVA.** `ex_scrivi`
+taglia alla FINESTRA, non all'area del documento: una riga che cominciava sopra
+il bordo veniva dipinta SOPRA LA BARRA DELL'INDIRIZZO. C'era da sempre; si
+vedeva solo con un documento piu' lungo della finestra.
+
+**I moduli** — caselle, password, spunte, radio, scelte, pulsanti, aree — si
+disegnano coi rilievi del toolkit e non sono finestre figlie: un `<input>` in
+mezzo a un paragrafo scorre col testo, e farne una finestra vorrebbe dire
+spostarla a ogni riga di scorrimento. Si cliccano e ci si scrive. **Non si
+mandano**, ed e' dichiarato: il pulsante lo DICE nella barra di stato.
+
+**Le GIF**: PNG e JPEG c'erano gia', mancava LZW — che non e' il deflate del
+PNG. Dizionario che cresce mentre si legge, larghezza del codice che cambia
+sotto i piedi, codici a cavallo dei blocchi da 255 byte. Confrontata pixel per
+pixel con ImageMagick su cinque immagini, intreccio e trasparenza compresi.
+
+### I font: non erano i file
+
+`fontprova` diceva «NON aperto» su quattro file su dodici, e sembravano quattro
+file guasti. Erano gli **otto slot** della tabella dei font del toolkit.
+
+! **MA IL NUMERO NON ERA IL PUNTO: OGNI VOCE TENEVA UNA COPIA DEL FILE.** Un
+Liberation pesa fra i 280 e i 410 KB, e il browser apre la STESSA faccia a
+cinque o sei corpi — cinque copie degli stessi quattrocento kilobyte su una
+macchina che ne ha trentadue milioni. Alzare il limite e basta avrebbe
+trasformato un difetto visibile in un esaurimento di memoria.
+
+Adesso i byte stanno in una riserva a parte con un contatore: stessa faccia a
+sei corpi = un file in memoria. Slot 48. E `ex_font_trova(famiglia, corpo,
+grassetto, corsivo)` toglie i percorsi scritti dentro i programmi.
 
 ## https: TLS 1.3 scritto qui dentro
 

@@ -199,6 +199,10 @@ unsigned int extls_allarme(void *t);
  * byte e non codici, e senza questo «zero byte» non dice perche'. */
 int extls_ultimo(void *t);
 
+/* Quando la catena non e' valida: il codice EXCERT_* che l'ha detto. Nove casi
+ * diversi che «certificato non verificabile» non distingue. */
+int extls_motivo(void *t);
+
 /* Una riga in italiano per un codice di errore. */
 const char *extls_perche(int codice);
 

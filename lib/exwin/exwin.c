@@ -765,16 +765,44 @@ void ex_incavo(ExFinestra f, int x, int y, int w, int h)
  * rende larg_max e non tocca mai la tabella. Un font non fisso con le larghezze
  * a zero sarebbe invece un disegno tutto sovrapposto nell'angolo.
  * ============================================================================= */
-#define FONT_MAX        8
+/* ! OTTO NON BASTAVANO, E IL MODO IN CUI SI SCOPRIVA ERA IL PEGGIORE. Il nono
+ * `ex_font_apri` rendeva 0 — che E' il font di sistema, non un errore — quindi
+ * il programma continuava e disegnava con un carattere diverso. `fontprova` su
+ * una directory con dodici facce ne apriva otto e dichiarava «NON aperto» le
+ * altre quattro: sembrava che quattro FILE fossero guasti, e invece era la
+ * tabella che era finita.
+ *
+ * ! MA IL NUMERO NON E' IL PUNTO: OGNI VOCE TENEVA UNA COPIA DEL FILE. Un
+ * TrueType di Liberation pesa fra i 280 e i 410 kilobyte, e il browser apre la
+ * STESSA faccia a cinque o sei corpi diversi — cinque copie degli stessi
+ * quattrocento kilobyte, su una macchina che ne ha trentadue milioni. Alzare
+ * il limite e basta avrebbe trasformato un difetto visibile in un esaurimento
+ * di memoria, che si vede molto piu' tardi e molto peggio.
+ *
+ * Adesso i BYTE del file stanno in una riserva a parte, con un contatore: la
+ * stessa faccia a sei corpi e' un file solo in memoria e sei voci qui. E le
+ * voci possono essere molte, perche' una voce da sola non pesa niente. */
+#define FONT_MAX        48
+#define FILE_MAX        12
 
 typedef struct {
     int            usato;
-    unsigned char *dati;        /* il file, che va tenuto vivo: vedi exfont.h */
+    int            file;        /* indice in g_file, -1 = nessuno */
     ExFontDati     f;           /* se e' un EXFN */
     ExTtf          ttf;         /* se e' un TrueType: sta in exfont.so */
 } FontAperto;
 
 static FontAperto g_font[FONT_MAX];
+
+/* I byte dei file, condivisi fra tutti i corpi della stessa faccia. */
+typedef struct {
+    char           percorso[128];
+    unsigned char *dati;
+    int            n;
+    int            quanti;      /* quante voci di g_font lo usano */
+} FontFile;
+
+static FontFile g_file[FILE_MAX];
 
 static const ExFontDati g_sistema = {
     16,     /* altezza   */
@@ -925,18 +953,28 @@ static unsigned char *file_intero(const char *percorso, int *quanti)
  * scrive un programma che funziona sul suo banco e non sul CD di qualcun
  * altro. Un posto solo, e le applicazioni scrivono il percorso naturale.
  * ============================================================================= */
-ExFont ex_font_apri(const char *percorso, int corpo)
+/* Rende l'indice del file in riserva, caricandolo se serve, o -1. Chi lo
+ * ottiene ha gia' un riferimento contato. */
+static int file_font(const char *percorso)
 {
-    int            n, slot;
+    int            i, slot = -1, n;
     unsigned char *d;
 
-    if (!percorso) return 0;
-
-    for (slot = 0; slot < FONT_MAX && g_font[slot].usato; slot++) { }
-    if (slot >= FONT_MAX) return 0;
+    for (i = 0; i < FILE_MAX; i++) {
+        if (g_file[i].dati && strcmp(g_file[i].percorso, percorso) == 0) {
+            g_file[i].quanti++;
+            return i;
+        }
+        if (!g_file[i].dati && slot < 0) slot = i;
+    }
+    if (slot < 0) return -1;
 
     d = file_intero(percorso, &n);
 
+    /* ! IL RIPIEGO SU /cdrom STA QUI E NON NELLE APPLICAZIONI. Avviando dal CD
+     * la radice E' il CD e «/exwin/font/...» si apre da solo; ma un programma
+     * del CD lanciato mentre gira un sistema installato deve trovare i propri
+     * dati sotto /cdrom, e chi scrive il programma non deve saperlo. */
     if (!d && percorso[0] == '/') {
         char alt[160];
 
@@ -944,24 +982,134 @@ ExFont ex_font_apri(const char *percorso, int corpo)
         strncat(alt, percorso, sizeof(alt) - 8);
         d = file_intero(alt, &n);
     }
+    if (!d || n <= 0) return -1;
 
-    if (!d || n <= 0) return 0;
+    strncpy(g_file[slot].percorso, percorso, sizeof(g_file[slot].percorso) - 1);
+    g_file[slot].percorso[sizeof(g_file[slot].percorso) - 1] = '\0';
+    g_file[slot].dati   = d;
+    g_file[slot].n      = n;
+    g_file[slot].quanti = 1;
+    return slot;
+}
 
-    if (e_truetype(d, n)) {
-        if (!exfont_pronta()) { free(d); return 0; }
+static void file_font_lascia(int i)
+{
+    if (i < 0 || i >= FILE_MAX || !g_file[i].dati) return;
+    if (--g_file[i].quanti > 0) return;
+
+    free(g_file[i].dati);
+    g_file[i].dati = 0;
+    g_file[i].n    = 0;
+    g_file[i].percorso[0] = '\0';
+}
+
+ExFont ex_font_apri(const char *percorso, int corpo)
+{
+    int slot, fi;
+
+    if (!percorso) return 0;
+
+    for (slot = 0; slot < FONT_MAX && g_font[slot].usato; slot++) { }
+    if (slot >= FONT_MAX) return 0;
+
+    fi = file_font(percorso);
+    if (fi < 0) return 0;
+
+    if (e_truetype(g_file[fi].dati, g_file[fi].n)) {
+        if (!exfont_pronta()) { file_font_lascia(fi); return 0; }
 
         /* Un corpo non chiesto vuol dire «quello di sistema», che e' 16: un
          * font scalabile una misura deve pur averla. */
-        g_font[slot].ttf = T.apri(d, (unsigned int)n, corpo > 0 ? corpo : 16);
-        if (!g_font[slot].ttf) { free(d); return 0; }
-    } else if (!exfont_apri(d, (unsigned int)n, &g_font[slot].f)) {
-        free(d);
+        g_font[slot].ttf = T.apri(g_file[fi].dati, (unsigned int)g_file[fi].n,
+                                  corpo > 0 ? corpo : 16);
+        if (!g_font[slot].ttf) { file_font_lascia(fi); return 0; }
+    } else if (!exfont_apri(g_file[fi].dati, (unsigned int)g_file[fi].n,
+                            &g_font[slot].f)) {
+        file_font_lascia(fi);
         return 0;
     }
 
-    g_font[slot].dati  = d;
+    g_font[slot].file  = fi;
     g_font[slot].usato = 1;
     return (ExFont)(slot + 1);
+}
+
+/* =============================================================================
+ * ex_font_trova / ex_font_nome
+ * ========================================================================== */
+
+/* Le dodici facce che EX-OS porta con se'. L'ordine e' famiglia * 4 + stile,
+ * con lo stile = grassetto + corsivo * 2: cosi' l'indice e' un conto e non una
+ * ricerca. */
+static const char *const FACCE[12] = {
+    "/exwin/font/LiberationSerif-Regular.ttf",
+    "/exwin/font/LiberationSerif-Bold.ttf",
+    "/exwin/font/LiberationSerif-Italic.ttf",
+    "/exwin/font/LiberationSerif-BoldItalic.ttf",
+    "/exwin/font/LiberationSans-Regular.ttf",
+    "/exwin/font/LiberationSans-Bold.ttf",
+    "/exwin/font/LiberationSans-Italic.ttf",
+    "/exwin/font/LiberationSans-BoldItalic.ttf",
+    "/exwin/font/LiberationMono-Regular.ttf",
+    "/exwin/font/LiberationMono-Bold.ttf",
+    "/exwin/font/LiberationMono-Italic.ttf",
+    "/exwin/font/LiberationMono-BoldItalic.ttf"
+};
+
+#define TROVA_MAX  24
+
+static struct {
+    unsigned char usato, fam, stile;
+    short         corpo;
+    ExFont        f;
+} g_trovati[TROVA_MAX];
+
+static int indice_faccia(int famiglia, int grassetto, int corsivo)
+{
+    int fam = famiglia;
+    int st  = (grassetto ? 1 : 0) + (corsivo ? 2 : 0);
+
+    if (fam < 0 || fam > 2) fam = EX_FAM_SANS;
+    return fam * 4 + st;
+}
+
+const char *ex_font_nome(int famiglia, int grassetto, int corsivo)
+{
+    return FACCE[indice_faccia(famiglia, grassetto, corsivo)];
+}
+
+ExFont ex_font_trova(int famiglia, int corpo, int grassetto, int corsivo)
+{
+    int    fam = (famiglia < 0 || famiglia > 2) ? EX_FAM_SANS : famiglia;
+    int    st  = (grassetto ? 1 : 0) + (corsivo ? 2 : 0);
+    int    i, slot = -1;
+    ExFont f;
+
+    if (corpo <= 0) corpo = 16;
+
+    for (i = 0; i < TROVA_MAX; i++) {
+        if (g_trovati[i].usato && g_trovati[i].fam == (unsigned char)fam &&
+            g_trovati[i].stile == (unsigned char)st &&
+            g_trovati[i].corpo == (short)corpo)
+            return g_trovati[i].f;
+        if (!g_trovati[i].usato && slot < 0) slot = i;
+    }
+
+    /* ! I RIPIEGHI IN ORDINE, e ognuno e' una rinuncia dichiarata: la faccia
+     * chiesta, la normale della stessa famiglia, il sans normale. L'ultimo
+     * ripiego e' 0, che E' il font di sistema — non un errore. */
+    f = ex_font_apri(FACCE[fam * 4 + st], corpo);
+    if (!f && st != 0) f = ex_font_apri(FACCE[fam * 4], corpo);
+    if (!f && fam != EX_FAM_SANS) f = ex_font_apri(FACCE[EX_FAM_SANS * 4], corpo);
+
+    if (slot >= 0) {
+        g_trovati[slot].usato = 1;
+        g_trovati[slot].fam   = (unsigned char)fam;
+        g_trovati[slot].stile = (unsigned char)st;
+        g_trovati[slot].corpo = (short)corpo;
+        g_trovati[slot].f     = f;
+    }
+    return f;
 }
 
 void ex_font_chiudi(ExFont h)
@@ -976,8 +1124,13 @@ void ex_font_chiudi(ExFont h)
      * allocazione di qualcun altro. */
     if (g_font[h - 1].ttf && T.chiudi) T.chiudi(g_font[h - 1].ttf);
 
-    free(g_font[h - 1].dati);
+    /* ! I BYTE SE NE VANNO SOLO QUANDO NON LI USA PIU' NESSUNO. Erano di
+     * questa voce e basta; adesso la stessa faccia a corpi diversi li
+     * condivide, e liberarli qui toglierebbe il file da sotto agli altri
+     * corpi — che continuerebbero a disegnare da memoria restituita. */
+    file_font_lascia(g_font[h - 1].file);
     memset(&g_font[h - 1], 0, sizeof(g_font[h - 1]));
+    g_font[h - 1].file = -1;
 }
 
 /* Il TrueType di quel manico, o 0 se e' un bitmap. Un posto solo per la

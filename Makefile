@@ -136,7 +136,7 @@ BUILD_BIN_CD  := $(BUILD_DIR)/bin-cd
 # kernel (kernel/block/atapi.c, kernel/fs/iso9660.c), perche' il kernel
 # deve poterci montare la radice prima che esista un processo.
 # =============================================================================
-PROGRAMMI_FLOPPY := shell hello id chmod ls mem stack disk libctest fdisk mkfs trunc chkdsk rename rm_prog mv_prog uname_prog mount_prog cp_prog install_prog textline gfedit mkdir_prog rmdir_prog delete_prog hwconfig hwinfo cmp_prog shmtest polltest toolinst login sudo help_prog keymap libc testo mouse_prog floppy_drv kbd_drv svga_drv vgaprova_drv \
+PROGRAMMI_FLOPPY := shell hello id chmod shutdown ls mem stack disk libctest fdisk mkfs trunc chkdsk rename rm_prog mv_prog uname_prog mount_prog cp_prog install_prog textline gfedit mkdir_prog rmdir_prog delete_prog hwconfig hwinfo cmp_prog shmtest polltest toolinst login sudo help_prog keymap libc testo mouse_prog floppy_drv kbd_drv svga_drv vgaprova_drv \
                     pci_drv mouseser_drv uhci_drv xhci_drv
 
 # =============================================================================
@@ -1150,10 +1150,25 @@ exfont_so: dirs $(EXTTF_SO)
 EXTLS_CLIENT := lib/extls/extls_client.c lib/extls/extls_pem.c \
                 lib/extls/extls_kdf.c lib/extls/extls_pss.c \
                 lib/excert/excert.c lib/exasn1/exasn1.c lib/exbig/exbig.c \
+                lib/excurva/excurva.c \
                 lib/excrypt/chacha20.c lib/excrypt/poly1305.c \
-                lib/excrypt/x25519.c lib/excrypt/fe25519.c
+                lib/excrypt/x25519.c lib/excrypt/fe25519.c \
+                lib/excrypt/sha512.c
 EXTLS_INC    := -I lib/extls -I lib/excert -I lib/exasn1 -I lib/exbig \
-                -I lib/excrypt
+                -I lib/excrypt -I lib/excurva
+
+# ! QUESTE TRE RIGHE STANNO QUI E NON PIU' IN BASSO, ED E' UN DIFETTO CHE HA
+# FATTO PERDERE MEZZ'ORA. Erano definite accanto alla regola di /bin/scarica,
+# duecento righe DOPO la regola di exhttp.so — e make espande le dipendenze di
+# una regola quando la LEGGE, non quando la esegue. Quindi `$(EXHTTP_SRC)` era
+# vuoto: exhttp.so non dipendeva da exhttp.c, e cambiare quel file non
+# ricostruiva niente. Non dava errori — ricostruiva lo stesso ogni volta che
+# cambiava uno degli altri prerequisiti, quindi quasi sempre. Si e' visto solo
+# il giorno che si e' toccato SOLO exhttp.c: il CD conteneva ancora la
+# libreria di prima, e la modifica «non aveva effetto».
+EXHTTP_SRC  := lib/exhttp/exhttp.c
+EXHTTP_HTTP := lib/exhttp/http.c
+EXHTTP_HDR  := lib/exhttp/exhttp.h lib/exhttp/http.h
 
 EXHTTP_ESPORTA := lib/exhttp/exhttp_esporta.c
 EXHTTP_STUB    := lib/exhttp/exhttp_stub.c
@@ -1418,6 +1433,7 @@ EXIMG_SRC     := lib/eximg/eximg.c
 EXIMG_PNG     := lib/eximg/png.c
 EXIMG_ICO     := lib/eximg/ico.c
 EXIMG_JPG     := lib/eximg/jpg.c
+EXIMG_GIF     := lib/eximg/gif.c
 EXIMG_INFLATE := lib/eximg/inflate.c
 EXIMG_ESPORTA := lib/eximg/eximg_esporta.c
 EXIMG_HDR     := lib/eximg/eximg.h lib/eximg/eximg_interno.h lib/eximg/inflate.h
@@ -1425,7 +1441,7 @@ EXIMG_LD      := lib/eximg/eximg.ld
 
 EXIMG_SO := $(BUILD_EXWIN_LIB)/eximg.so
 
-$(EXIMG_SO): $(EXIMG_SRC) $(EXIMG_PNG) $(EXIMG_ICO) $(EXIMG_JPG) \
+$(EXIMG_SO): $(EXIMG_SRC) $(EXIMG_PNG) $(EXIMG_ICO) $(EXIMG_JPG) $(EXIMG_GIF) \
              $(EXIMG_INFLATE) $(EXIMG_ESPORTA) \
              $(EXIMG_HDR) $(EXIMG_LD) $(EXLIB_SRC) $(EXLIB_HDR) \
              $(LIBC_PONTI_OBJ) $(LIBC_SO) $(SEGNO_FLAG)
@@ -1435,12 +1451,13 @@ $(EXIMG_SO): $(EXIMG_SRC) $(EXIMG_PNG) $(EXIMG_ICO) $(EXIMG_JPG) \
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -c $(EXIMG_PNG) -o $(BUILD_OBJ)/soimg_png.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -c $(EXIMG_ICO) -o $(BUILD_OBJ)/soimg_ico.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -c $(EXIMG_JPG) -o $(BUILD_OBJ)/soimg_jpg.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -c $(EXIMG_GIF) -o $(BUILD_OBJ)/soimg_gif.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -c $(EXIMG_INFLATE) -o $(BUILD_OBJ)/soimg_inflate.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -c $(EXIMG_ESPORTA) -o $(BUILD_OBJ)/soimg_esporta.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(EXIMG_LD) \
 	    $(BUILD_OBJ)/soimg_esporta.o $(BUILD_OBJ)/soimg_main.o \
 	    $(BUILD_OBJ)/soimg_png.o $(BUILD_OBJ)/soimg_ico.o \
-	    $(BUILD_OBJ)/soimg_jpg.o \
+	    $(BUILD_OBJ)/soimg_jpg.o $(BUILD_OBJ)/soimg_gif.o \
 	    $(BUILD_OBJ)/soimg_inflate.o \
 	    $(LIBC_PONTI_OBJ) -o $@
 	@ent=$$(LC_ALL=C readelf -h $@ | awk '/Entry point/ {print $$4}'); \
@@ -2025,6 +2042,35 @@ $(ID_BIN): $(ID_SRC) $(ID_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO
 .PHONY: id
 id: dirs $(ID_BIN)
 
+# --- /bin/shutdown (e poweroff, reboot, halt) --------------------------------
+#
+# ! UN BUILTIN NON SI PUO' PASSARE A `sudo`, ed e' tutto il motivo per cui
+# questo binario esiste. La shell ha gia' i quattro comandi e funzionano; ma
+# `sudo shutdown` diceva «comando non trovato», perche' sudo fa uno spawn e di
+# un builtin non c'e' nessun file da eseguire.
+#
+# ! QUATTRO NOMI, UN BINARIO, come id/whoami: la differenza la fa argv[0].
+SHUTDOWN_SRC := bin/shutdown/shutdown.c
+SHUTDOWN_BIN := $(BUILD_BIN)/shutdown
+SHUTDOWN_LD  := bin/shutdown/shutdown.ld
+
+$(SHUTDOWN_BIN): $(SHUTDOWN_SRC) $(SHUTDOWN_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) \
+                 $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/shutdown (e poweroff, reboot, halt) ==="
+	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -c $(SHUTDOWN_SRC) -o $(BUILD_OBJ)/shutdown_main.o
+	$(CC) -m32 -c $(LIBC_START)                            -o $(BUILD_OBJ)/shutdown_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(SHUTDOWN_LD) \
+	    $(BUILD_OBJ)/shutdown_start.o $(BUILD_OBJ)/shutdown_main.o \
+	    $(LIBC_PONTI_OBJ) -o $@
+	@cp $@ $(BUILD_BIN)/poweroff
+	@cp $@ $(BUILD_BIN)/reboot
+	@cp $@ $(BUILD_BIN)/halt
+	@echo "[OK] shutdown compilato: $@ (e poweroff, reboot, halt)"
+
+.PHONY: shutdown
+shutdown: dirs $(SHUTDOWN_BIN)
+
 # --- /bin/chmod e /bin/chown: governare i permessi ---------------------------
 #
 # ! UN BINARIO CON DUE NOMI, come id/whoami. Le due funzioni condividono la
@@ -2393,9 +2439,6 @@ ftp: dirs $(FTP_BIN)
 SCARICA_SRC := bin/scarica/scarica.c
 SCARICA_BIN := $(BUILD_BIN_CD)/scarica
 SCARICA_LD  := bin/scarica/scarica.ld
-EXHTTP_SRC  := lib/exhttp/exhttp.c
-EXHTTP_HTTP := lib/exhttp/http.c
-EXHTTP_HDR  := lib/exhttp/exhttp.h lib/exhttp/http.h
 
 $(SCARICA_BIN): $(SCARICA_SRC) $(SCARICA_LD) $(EXHTTP_STUB) $(EXHTTP_HDR) \
                 $(EXLIB_SRC) $(EXLIB_HDR) \
@@ -2837,7 +2880,7 @@ ip_drv: dirs $(IP_DRV_OUT)
 # agosto 2026 questa riga ripeteva a mano i nomi dei programmi di rete e
 # dei driver, e mancavano pcnet_drv e xcp: due elenchi della stessa cosa
 # divergono al primo che si dimentica di aggiornarne uno.
-all: dirs stage1 stage2 kernel $(PROGRAMMI_FLOPPY) $(PROGRAMMI_CD) $(PROGRAMMI_EXWIN) $(DRIVER_CD) verifica-programmi verifica-statici verifica-versioni verifica-exbig verifica-exasn1 verifica-excert verifica-extls floppy
+all: dirs stage1 stage2 kernel $(PROGRAMMI_FLOPPY) $(PROGRAMMI_CD) $(PROGRAMMI_EXWIN) $(DRIVER_CD) verifica-programmi verifica-statici verifica-versioni verifica-exbig verifica-exasn1 verifica-excert verifica-excurva verifica-extls floppy
 	@echo ""
 	@echo "============================================"
 	@echo " EX-OS build completata!"
@@ -3155,6 +3198,7 @@ PROGRAMMI_FLOPPY_OUT := $(SHELL_BIN) $(HELLO_BIN) $(LS_BIN) $(MEM_BIN) \
                         $(HWINFO_BIN) $(CMP_BIN) $(SHMTEST_BIN) $(POLLTEST_BIN) \
                         $(TOOLINST_BIN) $(LOGIN_BIN) $(SU_BIN) $(HELP_BIN) $(KEYMAP_BIN) \
                         $(TESTO_BIN) $(MOUSE_BIN) $(ID_BIN) $(BUILD_BIN)/whoami $(PERM_BIN) $(BUILD_BIN)/chown $(LIBC_SO) \
+                        $(SHUTDOWN_BIN) $(BUILD_BIN)/poweroff $(BUILD_BIN)/reboot $(BUILD_BIN)/halt \
                         $(FLOPPY_DRV_OUT) $(KBD_DRV_OUT) $(SVGA_DRV_OUT) \
                         $(VGAPROVA_OUT) $(PCI_DRV_OUT) $(MOUSESER_OUT) \
                         $(UHCI_OUT) $(XHCI_OUT)
@@ -4375,7 +4419,7 @@ EXCERT_HDR := lib/excert/excert.h
 
 .PHONY: verifica-excert
 verifica-excert: $(EXCERT_SRC) $(EXCERT_HDR)
-	@$(CC) $(CFLAGS_USER) -I lib/excert -I lib/exasn1 -I lib/exbig \
+	@$(CC) $(CFLAGS_USER) $(EXTLS_INC) \
 	    -c $(EXCERT_SRC) -o $(BUILD_OBJ)/excert_prova.o
 	@echo "[OK] lib/excert compila per i386"
 
@@ -4418,9 +4462,36 @@ prova-extls:
 prova-cliente-tls:
 	@python3 tools/prove/clientprova.py
 
+# =============================================================================
+# lib/excurva — ECDSA su P-256 e P-384: solo la verifica
+#
+# ! ESISTE PERCHE' MEZZO WEB NON SI APRIVA. Con le sole firme RSA,
+# wikipedia.org e news.ycombinator.com rispondevano «nessun cifrario in
+# comune»: hanno solo certificati ECDSA. E una curva sola non bastava — la
+# chiave del sito e' quasi sempre P-256, ma l'intermedia che la firma sta su
+# P-384 e firma con SHA-384.
+#
+# ! SI VERIFICA E BASTA, NON SI FIRMA. Firmare vuol dire generare un numero
+# segreto per ogni firma, e un generatore appena debole rivela la chiave
+# privata. Un browser non ha niente da firmare.
+# =============================================================================
+EXCURVA_SRC := lib/excurva/excurva.c
+EXCURVA_HDR := lib/excurva/excurva.h
+
+.PHONY: verifica-excurva
+verifica-excurva: $(EXCURVA_SRC) $(EXCURVA_HDR)
+	@$(CC) $(CFLAGS_USER) -I lib/excurva -I lib/exbig \
+	    -c $(EXCURVA_SRC) -o $(BUILD_OBJ)/excurva_prova.o
+	@echo "[OK] lib/excurva compila per i386"
+
+.PHONY: prova-excurva
+prova-excurva:
+	@python3 tools/prove/curvaprova.py
+
 # Le prove dei pezzi dell'https, in fila.
 .PHONY: prova-tls
-prova-tls: prova-exbig prova-exasn1 prova-excert prova-extls prova-cliente-tls
+prova-tls: prova-exbig prova-exasn1 prova-excert prova-extls prova-excurva \
+           prova-cliente-tls
 
 .PHONY: verifica-versioni
 verifica-versioni:

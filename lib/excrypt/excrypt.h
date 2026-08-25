@@ -54,6 +54,10 @@ int  x25519_pubblica(unsigned char fuori[32], const unsigned char privata[32]);
  * tutto insieme: qui non si firmano file, si firmano scambi di chiavi. */
 void sha512(const unsigned char *m, unsigned int n, unsigned char out[64]);
 
+/* SHA-384: stesso motore, altro valore iniziale, 48 byte in uscita. Serve alle
+ * firme ECDSA su P-384 — che sul web sono tutt'altro che rare. */
+void sha384(const unsigned char *m, unsigned int n, unsigned char out[48]);
+
 /* --- Ed25519 (RFC 8032) -----------------------------------------------------
  *
  * ! DICE CON CHI SI STA PARLANDO, ed e' la parte che X25519 da solo non da':

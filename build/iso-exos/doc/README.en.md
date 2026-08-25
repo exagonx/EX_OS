@@ -283,12 +283,19 @@ siblings and not a staircase; `<b><i>x</b>` closes up to the `<b>`; inside
 ! **`https://` WORKS, AND ACTUALLY VERIFIES.** TLS 1.3 written here: X25519 for
 the key exchange, ChaCha20-Poly1305 for the data, the certificate chain checked
 against a store of real CAs and the site name matched against the
-`subjectAltName`. Without a store nothing opens: encrypting with whoever answers
-means encrypting with whoever is in the middle, and the bar would say
-`https://` all the same.
+`subjectAltName`. Signatures are verified in RSA-PSS **and in ECDSA over P-256
+and P-384**, which is what it takes to open real sites: wikipedia.org,
+news.ycombinator.com and github.com only have elliptic certificates. Without a
+CA store nothing opens: encrypting with whoever answers means encrypting with
+whoever is in the middle, and the bar would say `https://` all the same.
 
-The price, declared: a site serving **only** ECDSA certificates does not open —
-chain verification wants RSA — and gets a clear error instead of a page.
+! **FORMS ARE DRAWN AND CAN BE FILLED IN**: text and password boxes, check
+boxes, selects, buttons and text areas are drawn like the system's own controls
+and take keystrokes. What is missing — declared — is SUBMITTING them: no query
+is sent, and the button says so instead of doing nothing.
+
+! **AND IMAGES COME IN THREE FORMATS**: PNG, JPEG and GIF (first frame,
+transparency included).
 
 ! **IMAGES COME AFTER THE TEXT.** The page is laid out and drawn with the words
 alone; only then is one image fetched at a time, and on each arrival the page is
@@ -318,7 +325,8 @@ is refused rather than taken for two pixels. Less style, never wrong style.
 origin, so a page can override them. They used to be `if`s in the engine, and
 `<b>` and `<i>` were not there at all.
 
-What is **not** there, declared: JavaScript, `@media`, relative units.
+What is **not** there, declared: JavaScript, `@media`, relative units, form
+submission, `colspan`/`rowspan`.
 
 
 ### Fonts: TrueType, measured against FreeType

@@ -120,6 +120,38 @@ unsigned int exbig_bit(const ExBig *a);           /* quanti bit servono */
  * certificato. */
 int  exbig_modexp(ExBig *r, const ExBig *base, const ExBig *e, const ExBig *m);
 
+/* =============================================================================
+ * ARITMETICA MODULARE CON IL MODULO PREPARATO
+ *
+ * ! SERVE ALLE CURVE, E LA RAGIONE E' IL NUMERO DI MOLTIPLICAZIONI. Una
+ * verifica RSA e' UNA esponenziazione: preparare il modulo dentro di essa non
+ * si nota. Una verifica ECDSA su P-256 e' un migliaio di moltiplicazioni
+ * modulari con lo STESSO modulo — e R^2, che la forma di Montgomery pretende,
+ * costa da solo quanto un centinaio di quelle. Calcolarlo una volta e tenerlo
+ * e' la differenza fra una firma verificata in un attimo e una che fa
+ * aspettare.
+ *
+ * ! E I NUMERI ENTRANO ED ESCONO NORMALI, non in forma di Montgomery. La forma
+ * di Montgomery resta un fatto interno: chi scrive l'aritmetica di una curva
+ * ha gia' abbastanza da sbagliare senza doversi ricordare in quale mondo si
+ * trova ogni variabile.
+ * ========================================================================== */
+typedef struct {
+    ExBig        m;         /* il modulo */
+    ExBig        rr;        /* R^2 mod m, per entrare in forma di Montgomery */
+    unsigned int n;         /* parole del modulo */
+    unsigned int n0;        /* -m^-1 mod 2^32 */
+} ExBigMod;
+
+/* Rende 0, o -1 se il modulo e' zero, pari o troppo grande. */
+int  exbig_mod_prepara(ExBigMod *c, const ExBig *m);
+
+/* r = a*b mod m, r = a+b mod m, r = a-b mod m. `a` e `b` devono essere gia'
+ * ridotti: chi chiama lavora sempre dentro il campo. */
+void exbig_mod_mul(ExBig *r, const ExBig *a, const ExBig *b, const ExBigMod *c);
+void exbig_mod_add(ExBig *r, const ExBig *a, const ExBig *b, const ExBigMod *c);
+void exbig_mod_sub(ExBig *r, const ExBig *a, const ExBig *b, const ExBigMod *c);
+
 #ifdef __cplusplus
 }
 #endif

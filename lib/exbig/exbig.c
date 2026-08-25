@@ -385,3 +385,63 @@ int exbig_modexp(ExBig *r, const ExBig *base, const ExBig *e, const ExBig *m)
     mont_mul(r, &acc, &uno, m, n0, n);
     return 0;
 }
+
+/* =============================================================================
+ * Il modulo preparato: vedi il commento in exbig.h
+ * ========================================================================== */
+int exbig_mod_prepara(ExBigMod *c, const ExBig *m)
+{
+    if (!c || !m) return -1;
+    if (m->n == 0 || (m->p[0] & 1u) == 0) return -1;
+    if (m->n > EXBIG_PAROLE) return -1;
+
+    copia(&c->m, m);
+    c->n  = m->n;
+    c->n0 = n0_inverso(m->p[0]);
+    erre_quadro(&c->rr, &c->m, c->n);
+    return 0;
+}
+
+void exbig_mod_mul(ExBig *r, const ExBig *a, const ExBig *b, const ExBigMod *c)
+{
+    ExBig t;
+
+    /* ! DUE PASSAGGI DI MONTGOMERY, E NON UNO. mont(a,b) rende a*b*R^-1: e'
+     * il prodotto MENO un fattore R, che va tolto. Passando il risultato
+     * ancora una volta con R^2 il conto torna: a*b*R^-1 * R^2 * R^-1 = a*b.
+     * Farne uno solo e' l'errore che da' numeri plausibili e sbagliati — e in
+     * una curva ellittica «sbagliato» vuol dire un punto che non sta sulla
+     * curva, cioe' una firma rifiutata senza motivo apparente. */
+    mont_mul(&t, a, b, &c->m, c->n0, c->n);
+    mont_mul(r, &t, &c->rr, &c->m, c->n0, c->n);
+}
+
+void exbig_mod_add(ExBig *r, const ExBig *a, const ExBig *b, const ExBigMod *c)
+{
+    /* ! LA SOTTRAZIONE E' CONDIZIONATA, e non si puo' usare togli_m: quella
+     * toglie m SEMPRE, perche' i suoi due chiamanti sanno per costruzione di
+     * essere sopra il modulo. Qui no: con a e b gia' ridotti la somma sta fra
+     * 0 e 2m, quindi il modulo va tolto una volta SE serve. Toglierlo sempre
+     * manderebbe sotto zero meta' delle somme. */
+    somma(r, a, b);
+    if (exbig_cmp(r, &c->m) >= 0) {
+        ExBig t;
+
+        sottrai(&t, r, &c->m);
+        copia(r, &t);
+    }
+}
+
+void exbig_mod_sub(ExBig *r, const ExBig *a, const ExBig *b, const ExBigMod *c)
+{
+    if (exbig_cmp(a, b) >= 0) {
+        sottrai(r, a, b);
+    } else {
+        /* a - b sotto zero: si aggiunge il modulo, che nel campo e' zero. */
+        ExBig t;
+
+        somma(&t, a, &c->m);
+        sottrai(r, &t, b);
+    }
+    normalizza(r);
+}

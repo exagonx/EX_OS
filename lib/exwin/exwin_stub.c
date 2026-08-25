@@ -103,6 +103,8 @@ static struct {
     void        (*schermo)(unsigned int *, unsigned int *);
     /* I font. In fondo, come vuole la regola dell'elenco esportato. */
     unsigned int (*font_apri)(const char *, int);
+    unsigned int (*font_trova)(int, int, int, int);
+    const char  *(*font_nome)(int, int, int);
     void         (*font_chiudi)(unsigned int);
     int          (*font_altezza)(unsigned int);
     int          (*font_base)(unsigned int);
@@ -203,6 +205,10 @@ static void assicura(void)
 
     P.font_apri       = (unsigned int (*)(const char *, int))
                         chiedi(t, "ex_font_apri");
+    P.font_trova      = (unsigned int (*)(int, int, int, int))
+                        chiedi(t, "ex_font_trova");
+    P.font_nome       = (const char *(*)(int, int, int))
+                        chiedi(t, "ex_font_nome");
     P.font_chiudi     = (void (*)(unsigned int))chiedi(t, "ex_font_chiudi");
     P.font_altezza    = (int (*)(unsigned int))chiedi(t, "ex_font_altezza");
     P.font_base       = (int (*)(unsigned int))chiedi(t, "ex_font_base");
@@ -332,6 +338,8 @@ void ex_area_cursore(ExFinestra f, unsigned int *r, unsigned int *c)
 void ex_schermo(unsigned int *l, unsigned int *a) { assicura(); P.schermo(l, a); }
 
 ExFont ex_font_apri(const char *p, int corpo) { assicura(); return P.font_apri(p, corpo); }
+ExFont ex_font_trova(int fam, int corpo, int g, int c) { assicura(); return P.font_trova(fam, corpo, g, c); }
+const char *ex_font_nome(int fam, int g, int c) { assicura(); return P.font_nome(fam, g, c); }
 void   ex_font_chiudi(ExFont f)               { assicura(); P.font_chiudi(f); }
 int    ex_font_altezza(ExFont f)              { assicura(); return P.font_altezza(f); }
 int    ex_font_base(ExFont f)                 { assicura(); return P.font_base(f); }

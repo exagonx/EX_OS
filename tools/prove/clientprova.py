@@ -33,11 +33,13 @@ SORGENTI = [
     "lib/extls/extls_client.c", "lib/extls/extls_pem.c",
     "lib/extls/extls_kdf.c",    "lib/extls/extls_pss.c",
     "lib/excert/excert.c",      "lib/exasn1/exasn1.c",
-    "lib/exbig/exbig.c",
+    "lib/exbig/exbig.c",        "lib/excurva/excurva.c",
     "lib/excrypt/chacha20.c",   "lib/excrypt/poly1305.c",
     "lib/excrypt/x25519.c",     "lib/excrypt/fe25519.c",
+    "lib/excrypt/sha512.c",
 ]
-INCLUDI = ["lib/extls", "lib/excert", "lib/exasn1", "lib/exbig", "lib/excrypt"]
+INCLUDI = ["lib/extls", "lib/excert", "lib/exasn1", "lib/exbig", "lib/excrypt",
+           "lib/excurva"]
 
 passate = 0
 fallite = 0
@@ -76,6 +78,16 @@ def pki():
        "-keyout", "altra.key", "-out", "altra.pem", "-days", "3650",
        "-subj", "/CN=CA estranea", "-addext", "basicConstraints=critical,CA:TRUE")
 
+    # ! E UNA PKI ECDSA ACCANTO A QUELLA RSA, perche' sul web ci sono tutt'e
+    # due e la seconda e' quella che per mesi non si e' potuta aprire. La
+    # radice e' su P-384 e firma con SHA-384, il sito su P-256: e' esattamente
+    # la forma delle catene vere (example.com, wikipedia.org).
+    sh("openssl", "ecparam", "-name", "secp384r1", "-genkey", "-noout",
+       "-out", "eca.key")
+    sh("openssl", "req", "-x509", "-new", "-key", "eca.key", "-sha384",
+       "-out", "eca.pem", "-days", "3650", "-subj", "/CN=CA ellittica",
+       "-addext", "basicConstraints=critical,CA:TRUE")
+
     with open(os.path.join(BANCO, "ext.cnf"), "w") as f:
         f.write("subjectAltName=DNS:prova.exos,DNS:*.jolly.exos\n"
                 "basicConstraints=CA:FALSE\n")
@@ -93,6 +105,16 @@ def pki():
             # Gia' scaduto: si data la fine a ieri.
             c += ["-not_before", "20200101000000Z", "-not_after", "20200201000000Z"]
         sh(*c)
+
+def pki_ec():
+    """Il certificato del sito su P-256, firmato dalla radice P-384."""
+    sh("openssl", "ecparam", "-name", "prime256v1", "-genkey", "-noout",
+       "-out", "esrv.key")
+    sh("openssl", "req", "-new", "-key", "esrv.key", "-out", "esrv.csr",
+       "-subj", "/CN=prova.exos")
+    sh("openssl", "x509", "-req", "-in", "esrv.csr", "-CA", "eca.pem",
+       "-CAkey", "eca.key", "-CAcreateserial", "-sha384",
+       "-out", "esrv.pem", "-days", "365", "-extfile", "ext.cnf")
 
 def porta_libera():
     s = socket.socket()
@@ -131,6 +153,8 @@ def main():
     compila()
     pki()
 
+    pki_ec()
+
     # ---- il caso buono ----------------------------------------------------
     def buono(p):
         rc, out = cliente(p, "prova.exos", "ca.pem")
@@ -163,6 +187,17 @@ def main():
         esito("una radice che non ha firmato si rifiuta",
               "certificato non verificabile" in out, out.strip())
     con_server("srv.pem", "srv.key", cattivi)
+
+    # ---- la catena ellittica ----------------------------------------------
+    def ellittica(p):
+        rc, out = cliente(p, "prova.exos", "eca.pem")
+        esito("una catena ECDSA (sito P-256, CA P-384, firme SHA-384)",
+              rc == 0, out.strip())
+
+        rc, out = cliente(p, "prova.exos", "ca.pem")
+        esito("e con la radice sbagliata si rifiuta lo stesso",
+              "certificato non verificabile" in out, out.strip())
+    con_server("esrv.pem", "esrv.key", ellittica)
 
     # ---- scaduto ----------------------------------------------------------
     def scaduto(p):

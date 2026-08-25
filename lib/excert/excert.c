@@ -18,6 +18,8 @@
  * ============================================================================= */
 
 #include "excert.h"
+#include "excurva.h"
+#include "excrypt.h"
 #include "exbig.h"
 
 /* =============================================================================
@@ -54,6 +56,29 @@ static int confronta(const unsigned char *a, const unsigned char *b,
     return diverso == 0;
 }
 
+/* =============================================================================
+ * ECDSA: la firma e' una SEQUENCE di due interi
+ *
+ * ! NON E' UN NUMERO SOLO COME IN RSA, e chi lo dimentica passa i byte del DER
+ * come se fossero l'intero: la verifica fallisce sempre, e sembra un problema
+ * della curva. Dentro il BIT STRING c'e' `SEQUENCE { INTEGER r, INTEGER s }`,
+ * e i due interi portano lo zero davanti quando il primo bit e' acceso.
+ * ========================================================================== */
+static int ecdsa_r_s(const ExDer *firma, ExDer *r, ExDer *s)
+{
+    ExDer     dentro;
+    ExDerElem a, b;
+
+    if (exder_dentro(firma, 0, 0x30, &dentro) != 0) return -1;
+    if (exder_leggi(&dentro, 0, &a) != 0 || a.tag != 0x02) return -1;
+    if (exder_leggi(&dentro, a.intestazione + a.valore.n, &b) != 0 ||
+        b.tag != 0x02) return -1;
+
+    *r = a.valore;
+    *s = b.valore;
+    return 0;
+}
+
 int excert_firma_valida(const ExCert *figlio, const ExCert *padre)
 {
     ExBig firma, esp, modulo, risultato;
@@ -68,6 +93,47 @@ int excert_firma_valida(const ExCert *figlio, const ExCert *padre)
      * collisioni si comprano, e una firma di CA e' esattamente il posto dove
      * servono a chi attacca. */
     if (figlio->alg_firma == EXASN1_ALG_RSA_SHA1) return EXCERT_ALG_RIFIUTATO;
+
+    /* ! LA STRADA ECDSA STA QUI, PRIMA DI QUELLA RSA, e le due non si
+     * mescolano: l'algoritmo della firma e il tipo della chiave del padre
+     * devono ESSERE D'ACCORDO. Verificare una firma ECDSA con una chiave RSA —
+     * o viceversa — non e' un errore da correggere leggendo l'altro campo: e'
+     * un certificato che dichiara una cosa e ne porta un'altra. */
+    if (figlio->alg_firma == EXASN1_ALG_ECDSA_SHA256 ||
+        figlio->alg_firma == EXASN1_ALG_ECDSA_SHA384) {
+        unsigned char lunga[48];
+        const unsigned char *imp;
+        unsigned int  imp_n;
+        ExDer         r, sg;
+        int           curva;
+
+        /* ! LA CURVA VIENE DALLA CHIAVE, L'IMPRONTA DALLA FIRMA, e le due sono
+         * indipendenti. Una chiave P-256 firmata con SHA-384 e' normalissima:
+         * la catena di example.com e' esattamente cosi'. Legarle — «P-256
+         * quindi SHA-256» — vuol dire rifiutare catene valide. */
+        if (padre->tipo_chiave == EXASN1_CHIAVE_EC_P256)      curva = EXCURVA_P256;
+        else if (padre->tipo_chiave == EXASN1_CHIAVE_EC_P384) curva = EXCURVA_P384;
+        else return EXCERT_ALG_RIFIUTATO;
+
+        if (figlio->tbs.p == 0 || figlio->firma.p == 0) return EXCERT_MALFORMATO;
+        if (padre->chiave_punto.p == 0) return EXCERT_MALFORMATO;
+
+        if (ecdsa_r_s(&figlio->firma, &r, &sg) != 0) return EXCERT_MALFORMATO;
+
+        if (figlio->alg_firma == EXASN1_ALG_ECDSA_SHA384) {
+            sha384(figlio->tbs.p, figlio->tbs.n, lunga);
+            imp = lunga; imp_n = 48;
+        } else {
+            sha256(figlio->tbs.p, figlio->tbs.n, impronta);
+            imp = impronta; imp_n = 32;
+        }
+
+        if (excurva_verifica(curva, padre->chiave_punto.p, padre->chiave_punto.n,
+                             imp, imp_n, r.p, r.n, sg.p, sg.n) != 0)
+            return EXCERT_FIRMA_SBAGLIATA;
+        return EXCERT_OK;
+    }
+
     if (figlio->alg_firma != EXASN1_ALG_RSA_SHA256) return EXCERT_ALG_RIFIUTATO;
     if (padre->tipo_chiave != EXASN1_CHIAVE_RSA) return EXCERT_ALG_RIFIUTATO;
 

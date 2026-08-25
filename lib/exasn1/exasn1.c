@@ -133,9 +133,11 @@ static const unsigned char OID_RSA_SHA512[] =
     { 0x2A,0x86,0x48,0x86,0xF7,0x0D,0x01,0x01,0x0D };
 static const unsigned char OID_RSA_SHA1[] =
     { 0x2A,0x86,0x48,0x86,0xF7,0x0D,0x01,0x01,0x05 };
-/* 1.2.840.10045.4.3.2 — ecdsa-with-SHA256 */
+/* 1.2.840.10045.4.3.2 — ecdsa-with-SHA256 ; .3 — ecdsa-with-SHA384 */
 static const unsigned char OID_ECDSA_SHA256[] =
     { 0x2A,0x86,0x48,0xCE,0x3D,0x04,0x03,0x02 };
+static const unsigned char OID_ECDSA_SHA384[] =
+    { 0x2A,0x86,0x48,0xCE,0x3D,0x04,0x03,0x03 };
 /* 1.2.840.113549.1.1.1 — rsaEncryption */
 static const unsigned char OID_RSA[] =
     { 0x2A,0x86,0x48,0x86,0xF7,0x0D,0x01,0x01,0x01 };
@@ -144,6 +146,11 @@ static const unsigned char OID_EC[] =
     { 0x2A,0x86,0x48,0xCE,0x3D,0x02,0x01 };
 static const unsigned char OID_P256[] =
     { 0x2A,0x86,0x48,0xCE,0x3D,0x03,0x01,0x07 };
+/* 1.3.132.0.34 — secp384r1. ! LA RADICE E' 1.3 E NON 1.2, quindi il primo
+ * byte e' 0x2B: le curve NIST piu' grandi stanno in un ramo diverso da
+ * prime256v1, ed e' un dettaglio che si sbaglia una volta sola. */
+static const unsigned char OID_P384[] =
+    { 0x2B,0x81,0x04,0x00,0x22 };
 /* 2.5.29.19 — basicConstraints */
 static const unsigned char OID_BASIC[] = { 0x55,0x1D,0x13 };
 /* 2.5.29.17 — subjectAltName */
@@ -161,6 +168,8 @@ static unsigned int alg_da_oid(const ExDer *o)
         return EXASN1_ALG_RSA_SHA1;
     if (uguali(o->p, o->n, OID_ECDSA_SHA256, sizeof(OID_ECDSA_SHA256)))
         return EXASN1_ALG_ECDSA_SHA256;
+    if (uguali(o->p, o->n, OID_ECDSA_SHA384, sizeof(OID_ECDSA_SHA384)))
+        return EXASN1_ALG_ECDSA_SHA384;
     return EXASN1_ALG_IGNOTO;
 }
 
@@ -247,11 +256,15 @@ static int leggi_chiave(const ExDer *spki, ExCert *c)
         off = oid.intestazione + oid.valore.n;
         if (exder_leggi(&alg.valore, off, &curva) != 0) return -1;
         if (curva.tag != TAG_OID) return -1;
-        if (!uguali(curva.valore.p, curva.valore.n, OID_P256, sizeof(OID_P256)))
-            return -1;                          /* altre curve: non ancora */
         if (dentro.n < 1 || dentro.p[0] != 0x04) return -1;  /* non compresso */
 
-        c->tipo_chiave  = EXASN1_CHIAVE_EC_P256;
+        if (uguali(curva.valore.p, curva.valore.n, OID_P256, sizeof(OID_P256)))
+            c->tipo_chiave = EXASN1_CHIAVE_EC_P256;
+        else if (uguali(curva.valore.p, curva.valore.n, OID_P384, sizeof(OID_P384)))
+            c->tipo_chiave = EXASN1_CHIAVE_EC_P384;
+        else
+            return -1;                          /* altre curve: non ancora */
+
         c->chiave_punto = dentro;
         return 0;
     }

@@ -34,16 +34,19 @@ Il BIO di file di OpenSSL non legge i file di EX-OS.
     Aggirato in tools/iso/prova-tls.c, con il perche' scritto accanto.
 
 Da fare, per una pagina web moderna (in ordine di quanto pesa):
-1. I siti che servono SOLO certificati ECDSA non si aprono: il cliente TLS
-   annuncia rsa_pss_rsae_sha256 e basta, e la catena la verifica lib/excert,
-   che sa fare solo RSA. Servono la P-256 (firma ECDSA) in lib/excrypt e il
-   ramo corrispondente in excert. Si vede su wikipedia.org e su
-   news.ycombinator.com: allarme 40, «nessun cifrario in comune».
-2. I tetti del browser: PAGINA_MAX 512 KB e NODI_MAX 4096 troncano Wikipedia
+1. I tetti del browser: PAGINA_MAX 512 KB e NODI_MAX 4096 troncano Wikipedia
    (676 KB). Un nodo pesa 32 byte, un pezzo 32: alzarli e' un conto di memoria
    da fare in faccia su una macchina da 32 MB, non una riga da cambiare.
-3. I margini sugli elementi in linea (margin-right su uno <span>): e' cosi' che
-   i siti separano le voci di un menu.
-4. Lo sfondo delle celle di tabella non si dipinge (la barra arancione di
+2. I moduli si VEDONO e si compilano, ma non si MANDANO. Serve costruire la
+   query da `name` e valore, seguire `action` e `method`, e codificare i
+   campi (percento). Il pulsante lo dice invece di non fare niente.
+   E i `radio` non sono raggruppati per `name`: due gruppi nella stessa
+   pagina si comportano come uno solo.
+3. Lo sfondo delle celle di tabella non si dipinge (la barra arancione di
    Hacker News).
-5. Moduli (<form>, <input>), colspan/rowspan, JavaScript: dichiarati fuori.
+4. I margini sugli elementi in linea (margin-right su uno <span>): e' cosi' che
+   i siti separano le voci di un menu.
+5. Il <select> mostra la prima opzione e non si apre; la <textarea> mostra il
+   contenuto su una riga sola. Colspan/rowspan, JavaScript: dichiarati fuori.
+6. Le GIF animate mostrano il primo fotogramma, ed e' dichiarato: animarle
+   vorrebbe dire un orologio dentro la libreria delle immagini.

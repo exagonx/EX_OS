@@ -7,6 +7,7 @@ bin/delete
 bin/disk
 bin/fdisk
 bin/gfedit
+bin/halt
 bin/hello
 bin/help
 bin/hwconfig
@@ -24,11 +25,14 @@ bin/mount
 bin/mouse
 bin/mv
 bin/polltest
+bin/poweroff
+bin/reboot
 bin/rename
 bin/rm
 bin/rmdir
 bin/sh
 bin/shmtest
+bin/shutdown
 bin/stack
 bin/sudo
 bin/testo

@@ -126,10 +126,49 @@ typedef struct {
     unsigned int testo;         /* scostamento nell'arena del documento */
     ExFont       font;          /* il carattere, gia' scelto            */
     unsigned int colore;        /* ARGB, gia' deciso                    */
-    short        h;             /* solo per le immagini: la loro altezza */
+    short        h;             /* immagini e controlli: la loro altezza */
     short        link;          /* indice in g_link, -1 = niente         */
     short        img;           /* indice in g_imm, -1 = e' testo        */
+    short        ctrl;          /* indice in g_ctrl, -1 = non e' un controllo */
 } Pezzo;
+
+/* =============================================================================
+ * I CONTROLLI DI UN MODULO
+ *
+ * ! SI DISEGNANO QUI DENTRO E NON SONO FINESTRE DEL TOOLKIT, ed e' la scelta
+ * che decide tutto il resto. Un `<input>` in mezzo a un paragrafo scorre col
+ * testo: farne una finestra figlia vorrebbe dire spostarla a ogni riga di
+ * scorrimento, e ritagliarla quando esce dall'area — cioe' rifare a mano il
+ * lavoro che il disegno diretto fa da solo. Sono rettangoli con dentro del
+ * testo, come tutto il resto della pagina.
+ *
+ * ! E QUELLO CHE C'E' E' LA FORMA, NON L'INVIO. Si vedono, si cliccano, in una
+ * casella si scrive; ma nessun modulo parte. Mandare un modulo vuol dire
+ * costruire una query o un corpo POST, seguire `action` e `method`, e
+ * codificare i campi: e' un lavoro che comincia dove questo finisce, ed e'
+ * dichiarato qui invece che scoperto premendo un pulsante che non fa niente —
+ * per questo un pulsante premuto lo DICE nella barra di stato.
+ * ========================================================================== */
+#define CTRL_MAX        64
+#define CTRL_VAL_MAX    96
+
+#define CTRL_TESTO      0       /* input di testo, password, ricerca... */
+#define CTRL_PULSANTE   1       /* button, submit, reset, image         */
+#define CTRL_SPUNTA     2       /* checkbox                             */
+#define CTRL_RADIO      3       /* radio                                */
+#define CTRL_SCELTA     4       /* select                               */
+#define CTRL_AREA       5       /* textarea                             */
+
+typedef struct {
+    unsigned char tipo;
+    unsigned char segreto;      /* password: si mostrano asterischi */
+    unsigned char acceso;       /* spunta e radio */
+    char          valore[CTRL_VAL_MAX];
+} Ctrl;
+
+static Ctrl g_ctrl[CTRL_MAX];
+static int  g_ctrl_n = 0;
+static int  g_ctrl_fuoco = -1;      /* quale casella prende i tasti */
 
 static unsigned char g_pagina[PAGINA_MAX];
 static HtmlNodo      g_nodi[NODI_MAX];
@@ -207,10 +246,32 @@ static unsigned char g_imm_buf[IMM_BYTE_MAX];
 static int  (*g_img_carica)(const unsigned char *, unsigned int, EximgBitmap *);
 static void (*g_img_libera)(EximgBitmap *);
 
+/* =============================================================================
+ * LA BARRA DI SCORRIMENTO
+ *
+ * ! IL POSTO SI RISERVA SEMPRE, ANCHE QUANDO LA BARRA NON SERVE, e non e' per
+ * pigrizia. Se la larghezza dell'area cambiasse a seconda che la pagina sia
+ * lunga o corta, un documento al limite entrerebbe senza barra, l'assenza della
+ * barra lo allargherebbe, l'allargamento lo accorcerebbe di una riga... e il
+ * disegno oscillerebbe. E' un anello che si chiude solo togliendo la variabile
+ * dal giro: sedici pixel sono di chi scorre, sempre.
+ *
+ * ! E IL POLLICE E' GRANDE QUANTO LA PARTE VISIBILE, in proporzione: e' l'unica
+ * cosa che dice a chi guarda QUANTO manca. Una barra col cursore di misura
+ * fissa e' un ornamento — sposta la pagina e non informa. */
+#define SCORRI_W    16
+#define SCORRI_MIN  24          /* il pollice non scende sotto: sparirebbe */
+
 static int area_x(void) { return MARGINE; }
 static int area_y(void) { return BARRA_H + MARGINE; }
-static int area_w(void) { return FIN_W - 2 * MARGINE; }
+static int area_w(void) { return FIN_W - 2 * MARGINE - SCORRI_W; }
 static int area_h(void) { return FIN_H - BARRA_H - 2 * MARGINE - 20; }
+
+static int barra_x(void) { return area_x() + area_w() + 2; }
+
+/* Definita piu' in basso, accanto al resto della barra: `disegna` sta qui
+ * sopra e ha bisogno di poterla chiamare. */
+static void disegna_barra(void);
 
 /* eximg.so si apre una volta sola, e una volta sola si rinuncia.
  *
@@ -571,6 +632,7 @@ static void parola(const char *t, unsigned int off, int n)
         g_pez[g_pez_n].h = 0;
         g_pez[g_pez_n].link = (short)g_link_ora;
         g_pez[g_pez_n].img = -1;
+        g_pez[g_pez_n].ctrl = -1;
         g_pez_n++;
     }
 
@@ -684,6 +746,7 @@ static void pezzo_immagine(int k)
         g_pez[g_pez_n].h = (short)h;
         g_pez[g_pez_n].link = (short)g_link_ora;
         g_pez[g_pez_n].img = (short)k;
+        g_pez[g_pez_n].ctrl = -1;
         g_pez_n++;
     }
 
@@ -995,6 +1058,55 @@ static void impagina_tabella(int v, const CssStile *mio)
     g_tab_liv--;
 }
 
+/* Il testo che sta DENTRO un elemento, messo in fila.
+ *
+ * ! UN <button> NON HA `value`, HA UN CONTENUTO, e la stessa cosa vale per
+ * <option> e <textarea>. Con i controlli si scende nei figli una volta sola,
+ * qui, e poi non ci si scende piu': se il contenuto finisse anche nel flusso
+ * della pagina, l'etichetta di un pulsante comparirebbe due volte — una dentro
+ * il pulsante e una accanto. */
+static void testo_dentro(int v, char *out, unsigned int max)
+{
+    unsigned int n = 0;
+    int          f;
+
+    out[0] = '\0';
+    if (v < 0) return;
+
+    for (f = g_doc.nodi[v].primo_figlio; f >= 0; f = g_doc.nodi[f].prossimo) {
+        if (g_doc.nodi[f].tipo == HTML_TESTO) {
+            const char *t = g_doc.arena + g_doc.nodi[f].testo;
+
+            while (*t && n < max - 1) {
+                /* Gli spazi multipli diventano uno solo, come nel resto. */
+                if (*t == '\n' || *t == '\r' || *t == '\t') {
+                    if (n > 0 && out[n - 1] != ' ') out[n++] = ' ';
+                } else {
+                    out[n++] = *t;
+                }
+                t++;
+            }
+        } else {
+            char dentro[CTRL_VAL_MAX];
+            unsigned int k = 0;
+
+            testo_dentro(f, dentro, sizeof(dentro));
+            while (dentro[k] && n < max - 1) out[n++] = dentro[k++];
+        }
+        if (n >= max - 1) break;
+    }
+
+    /* Via gli spazi in testa e in coda: l'HTML ne mette sempre. */
+    while (n > 0 && out[n - 1] == ' ') n--;
+    out[n] = '\0';
+    if (out[0] == ' ') {
+        unsigned int i = 0;
+        while (out[i] == ' ') i++;
+        for (n = 0; out[i]; i++) out[n++] = out[i];
+        out[n] = '\0';
+    }
+}
+
 static void impagina_nodo(int v, const CssStile *ered)
 {
     int f;
@@ -1061,6 +1173,111 @@ static void impagina_nodo(int v, const CssStile *ered)
             g_riga_h = alt_riga_f(font_di(&mio));
             g_riga_primo = g_pez_n;
             spazio_blocco(2);
+            return;
+        }
+
+        /* =====================================================================
+         * I CONTROLLI DI UN MODULO
+         *
+         * ! LA MISURA VIENE DALL'ATTRIBUTO `size` QUANDO C'E', e altrimenti da
+         * un valore ragionevole: venti caratteri e' quello che quasi tutti i
+         * browser hanno usato per trent'anni, e una casella troppo stretta si
+         * nota molto piu' di una troppo larga.
+         * ===================================================================== */
+        if (uguale(nome, "input") || uguale(nome, "button") ||
+            uguale(nome, "select") || uguale(nome, "textarea")) {
+            const char *tipo = html_attr(&g_doc, v, "type");
+            const char *val  = html_attr(&g_doc, v, "value");
+            const char *sz   = html_attr(&g_doc, v, "size");
+            int         t    = CTRL_TESTO;
+            int         w, h;
+
+            if (uguale(nome, "button"))        t = CTRL_PULSANTE;
+            else if (uguale(nome, "select"))   t = CTRL_SCELTA;
+            else if (uguale(nome, "textarea")) t = CTRL_AREA;
+            else if (tipo) {
+                if (uguale(tipo, "submit") || uguale(tipo, "reset") ||
+                    uguale(tipo, "button") || uguale(tipo, "image"))
+                    t = CTRL_PULSANTE;
+                else if (uguale(tipo, "checkbox")) t = CTRL_SPUNTA;
+                else if (uguale(tipo, "radio"))    t = CTRL_RADIO;
+                else if (uguale(tipo, "hidden"))   return;   /* non si vede */
+            }
+
+            if (g_ctrl_n >= CTRL_MAX || g_pez_n >= PEZZI_MAX) return;
+
+            {
+                Ctrl *c = &g_ctrl[g_ctrl_n];
+                int   i = 0;
+
+                c->tipo    = (unsigned char)t;
+                c->segreto = (unsigned char)(tipo && uguale(tipo, "password"));
+                c->acceso  = (unsigned char)(html_attr(&g_doc, v, "checked") != 0);
+                c->valore[0] = '\0';
+
+                /* Il testo dentro: `value` per gli input, il contenuto per un
+                 * <button>. Il contenuto sta nei figli, e qui non si scende:
+                 * si prende `value`, e senza quello un'etichetta onesta. */
+                if (val) {
+                    while (val[i] && i < CTRL_VAL_MAX - 1) { c->valore[i] = val[i]; i++; }
+                    c->valore[i] = '\0';
+                } else if (t != CTRL_TESTO) {
+                    /* <button>, <select> e <textarea> portano dentro il
+                     * proprio testo. Un <select> mostra la prima opzione:
+                     * e' quella che sarebbe scelta. */
+                    testo_dentro(v, c->valore, CTRL_VAL_MAX);
+                }
+                if (val == 0 && t == CTRL_TESTO) c->valore[0] = '\0';
+
+                if (t == CTRL_PULSANTE && c->valore[0] == '\0') {
+                    const char *d = tipo && uguale(tipo, "reset") ? "Azzera" : "Invia";
+                    i = 0;
+                    while (d[i] && i < CTRL_VAL_MAX - 1) { c->valore[i] = d[i]; i++; }
+                    c->valore[i] = '\0';
+                }
+            }
+
+            switch (t) {
+            case CTRL_SPUNTA:
+            case CTRL_RADIO:    w = 14; h = 14; break;
+            case CTRL_PULSANTE: {
+                int n_car = 0;
+                while (g_ctrl[g_ctrl_n].valore[n_car]) n_car++;
+                w = 16 + n_car * 8;
+                if (w < 56) w = 56;
+                h = 22;
+                break;
+            }
+            case CTRL_AREA:     w = 320; h = 88; break;
+            case CTRL_SCELTA:   w = 160; h = 22; break;
+            default: {
+                int car = sz ? atoi(sz) : 20;
+                if (car < 2)  car = 2;
+                if (car > 80) car = 80;
+                w = car * 8 + 8;
+                h = 22;
+                break;
+            }
+            }
+
+            if (w > riga_w()) w = riga_w();
+            if (g_pen_x + w > riga_x() + riga_w() && g_pen_x > riga_x()) a_capo();
+
+            g_pez[g_pez_n].x = g_pen_x;
+            g_pez[g_pez_n].y = g_pen_y;
+            g_pez[g_pez_n].w = w;
+            g_pez[g_pez_n].testo = 0;
+            g_pez[g_pez_n].font = g_font_testo;
+            g_pez[g_pez_n].colore = EX_NERO;
+            g_pez[g_pez_n].h = (short)h;
+            g_pez[g_pez_n].link = -1;
+            g_pez[g_pez_n].img = -1;
+            g_pez[g_pez_n].ctrl = (short)g_ctrl_n;
+            g_pez_n++;
+            g_ctrl_n++;
+
+            g_pen_x += w + 4;
+            if (h + 4 > g_riga_h) g_riga_h = h + 4;
             return;
         }
 
@@ -1247,6 +1464,8 @@ static void disegna(void)
               EX_BIANCO);
     ex_incavo(g_f, area_x() - 2, area_y() - 2, area_w() + 4, area_h() + 4);
 
+    disegna_barra();
+
     /* ! GLI SFONDI PRIMA DI TUTTO IL RESTO, e ritagliati a mano all'area come
      * le immagini: ex_riempi ritaglia alla FINESTRA, non al documento. */
     for (i = 0; i < g_sfondi_n; i++) {
@@ -1263,13 +1482,95 @@ static void disegna(void)
 
     for (i = 0; i < g_pez_n; i++) {
         int y  = g_pez[i].y - g_scorri;
-        int ph = g_pez[i].img >= 0 ? g_pez[i].h : 24;
+        int ph = (g_pez[i].img >= 0 || g_pez[i].ctrl >= 0)
+                 ? g_pez[i].h : ex_font_altezza(g_pez[i].font);
 
         /* ! SI DISEGNA SOLO CIO' CHE SI VEDE. Con una pagina di migliaia di
          * righe, dipingere tutto vorrebbe dire pagare l'intero documento a
          * ogni riga di scorrimento — e per il novantanove per cento fuori
          * dalla finestra. */
         if (y + ph < area_y() || y > area_y() + area_h()) continue;
+
+        /* ! E UNA RIGA A META' NON SI DISEGNA AFFATTO, perche' non c'e' un
+         * ritaglio. `ex_scrivi` taglia alla FINESTRA, non all'area del
+         * documento: una riga che comincia sopra il bordo veniva dipinta
+         * SOPRA LA BARRA DELL'INDIRIZZO, e una in fondo sopra la barra di
+         * stato. Si vedeva appena il documento diventava piu' lungo della
+         * finestra — cioe' proprio quando e' arrivata la barra di
+         * scorrimento.
+         *
+         * Le immagini no: quelle un ritaglio ce l'hanno, fatto a mano qui
+         * sotto, e possono sporgere quanto vogliono. */
+        if (g_pez[i].img < 0 &&
+            (y < area_y() || y + ph > area_y() + area_h())) continue;
+
+        /* =================================================================
+         * UN CONTROLLO DI MODULO
+         *
+         * ! LA FORMA LA FA IL RILIEVO, non un bordo disegnato: `ex_incavo`
+         * per cio' in cui si scrive, `ex_rilievo` per cio' che si preme. Sono
+         * le stesse due funzioni con cui il toolkit disegna i propri
+         * controlli, ed e' il motivo per cui una pagina web dentro EX-OS
+         * sembra fatta della stessa materia del resto del sistema.
+         * ================================================================= */
+        if (g_pez[i].ctrl >= 0) {
+            Ctrl *c  = &g_ctrl[g_pez[i].ctrl];
+            int   cx = g_pez[i].x, cw = g_pez[i].w, ch = g_pez[i].h;
+            char  mostra[CTRL_VAL_MAX];
+            int   k;
+
+            for (k = 0; c->valore[k] && k < CTRL_VAL_MAX - 1; k++)
+                mostra[k] = c->segreto ? '*' : c->valore[k];
+            mostra[k] = '\0';
+
+            switch (c->tipo) {
+            case CTRL_PULSANTE:
+                ex_riempi(g_f, cx, y, cw, ch, EX_GRIGIO);
+                ex_rilievo(g_f, cx, y, cw, ch);
+                ex_scrivi(g_f,
+                          cx + (cw - ex_larghezza_testo(EX_FONT_SISTEMA, mostra)) / 2,
+                          y + (ch - 16) / 2, mostra, EX_NERO);
+                break;
+
+            case CTRL_SPUNTA:
+            case CTRL_RADIO:
+                ex_riempi(g_f, cx, y, cw, ch, EX_BIANCO);
+                ex_incavo(g_f, cx, y, cw, ch);
+                /* ! IL SEGNO E' UN QUADRATINO PIENO, e vale per tutt'e due.
+                 * Un cerchio disegnato a mano su quattordici pixel viene un
+                 * ottagono storto: peggio di un quadrato onesto. */
+                if (c->acceso)
+                    ex_riempi(g_f, cx + 3, y + 3, cw - 6, ch - 6, EX_NERO);
+                break;
+
+            case CTRL_SCELTA:
+                ex_riempi(g_f, cx, y, cw, ch, EX_BIANCO);
+                ex_incavo(g_f, cx, y, cw, ch);
+                ex_scrivi(g_f, cx + 4, y + (ch - 16) / 2, mostra, EX_NERO);
+                /* La freccia in fondo: dice che si apre, anche se non si apre
+                 * ancora. */
+                ex_riempi(g_f, cx + cw - 18, y + 2, 16, ch - 4, EX_GRIGIO);
+                ex_rilievo(g_f, cx + cw - 18, y + 2, 16, ch - 4);
+                ex_scrivi(g_f, cx + cw - 14, y + (ch - 16) / 2, "v", EX_NERO);
+                break;
+
+            default:                     /* casella di testo e area */
+                ex_riempi(g_f, cx, y, cw, ch, EX_BIANCO);
+                ex_incavo(g_f, cx, y, cw, ch);
+                ex_scrivi(g_f, cx + 4, y + 3, mostra, EX_NERO);
+                /* ! IL CURSORE SI VEDE SOLO DOVE SI STA SCRIVENDO. Senza, non
+                 * c'e' modo di sapere quale casella prende i tasti — e chi
+                 * scrive nel posto sbagliato pensa che la tastiera sia rotta. */
+                if (g_pez[i].ctrl == g_ctrl_fuoco) {
+                    int cur = cx + 4 + ex_larghezza_testo(EX_FONT_SISTEMA, mostra);
+
+                    if (cur < cx + cw - 3)
+                        ex_riempi(g_f, cur, y + 3, 2, ch - 6, EX_NERO);
+                }
+                break;
+            }
+            continue;
+        }
 
         /* ! UN'IMMAGINE SI RITAGLIA A MANO, e non e' pignoleria: ex_pixmap
          * ritaglia alla FINESTRA, non all'area del documento, quindi
@@ -2049,6 +2350,8 @@ static void vai(const char *url, int in_storia, int usa_cache)
     g_arena_doc = g_doc.arena_n;    /* da qui in poi c'e' il testo generato */
 
     g_scorri = 0;
+    g_ctrl_n = 0;
+    g_ctrl_fuoco = -1;
     raccogli_css();
     impagina();
 
@@ -2095,15 +2398,135 @@ static int link_sotto(int x, int y)
     return -1;
 }
 
-static void scorri(int quanto)
+/* Quale controllo sta sotto quel punto, o -1. */
+static int ctrl_sotto(int x, int y)
+{
+    int i;
+
+    for (i = 0; i < g_pez_n; i++) {
+        int py = g_pez[i].y - g_scorri;
+
+        if (g_pez[i].ctrl < 0) continue;
+        if (x >= g_pez[i].x && x < g_pez[i].x + g_pez[i].w &&
+            y >= py && y < py + g_pez[i].h) return g_pez[i].ctrl;
+    }
+    return -1;
+}
+
+static int scorri_max(void)
 {
     int max = g_altezza - area_h();
 
-    if (max < 0) max = 0;
+    return (max < 0) ? 0 : max;
+}
+
+/* Il pollice: dove comincia e quanto e' alto, dentro la corsa. */
+static void pollice(int *py, int *ph)
+{
+    int corsa = area_h();
+    int max   = scorri_max();
+    int h, y;
+
+    if (max == 0) { *py = area_y(); *ph = corsa; return; }
+
+    /* Alto in proporzione a quanto si vede del documento. */
+    h = (int)(((long)corsa * corsa) / (long)g_altezza);
+    if (h < SCORRI_MIN) h = SCORRI_MIN;
+    if (h > corsa)      h = corsa;
+
+    y = (int)(((long)g_scorri * (corsa - h)) / (long)max);
+    *py = area_y() + y;
+    *ph = h;
+}
+
+static void disegna_barra(void)
+{
+    int x = barra_x(), y = area_y(), h = area_h();
+    int py, ph;
+
+    /* La corsa: incavata, come una scanalatura. */
+    ex_riempi(g_f, x, y, SCORRI_W, h, EX_GRIGIO_SC);
+    ex_incavo(g_f, x, y, SCORRI_W, h);
+
+    /* ! SENZA NIENTE DA SCORRERE NON SI DISEGNA IL POLLICE. Un pollice che
+     * riempie tutta la corsa e non si muove sembra bloccato; la scanalatura
+     * vuota si legge subito come «ci sta tutto». */
+    if (scorri_max() == 0) return;
+
+    pollice(&py, &ph);
+    ex_riempi(g_f, x + 1, py, SCORRI_W - 2, ph, EX_GRIGIO);
+    ex_rilievo(g_f, x + 1, py, SCORRI_W - 2, ph);
+}
+
+static void scorri(int quanto)
+{
+    int max = scorri_max();
+
     g_scorri += quanto;
     if (g_scorri < 0) g_scorri = 0;
     if (g_scorri > max) g_scorri = max;
     disegna();
+}
+
+/* Porta la cima della finestra a `y` del documento. */
+static void scorri_a(int y)
+{
+    int max = scorri_max();
+
+    if (y < 0) y = 0;
+    if (y > max) y = max;
+    if (y == g_scorri) return;
+    g_scorri = y;
+    disegna();
+}
+
+/* ! IL TRASCINAMENTO SI RICORDA DA DOVE HA PRESO IL POLLICE, e non e' un
+ * dettaglio: senza, il pollice salta col centro sotto il puntatore al primo
+ * pixel di movimento, e la pagina fa un balzo. Si tiene lo scarto fra il punto
+ * cliccato e la cima del pollice, e lo si sottrae sempre. */
+static int g_trascino = 0;
+static int g_trascino_dy = 0;
+
+static int nella_barra(int x, int y)
+{
+    return x >= barra_x() && x < barra_x() + SCORRI_W &&
+           y >= area_y()  && y < area_y() + area_h();
+}
+
+/* Rende 1 se il clic era suo. */
+static int barra_giu(int x, int y)
+{
+    int py, ph;
+
+    if (!nella_barra(x, y)) return 0;
+    if (scorri_max() == 0) return 1;        /* suo, ma non c'e' niente da fare */
+
+    pollice(&py, &ph);
+
+    if (y >= py && y < py + ph) {
+        g_trascino    = 1;
+        g_trascino_dy = y - py;
+        return 1;
+    }
+
+    /* Sopra o sotto il pollice: una schermata per volta, come ovunque. */
+    scorri(y < py ? -(area_h() - 24) : (area_h() - 24));
+    return 1;
+}
+
+static void barra_mosso(int y)
+{
+    int corsa = area_h();
+    int max   = scorri_max();
+    int py, ph;
+
+    if (!g_trascino || max == 0) return;
+
+    pollice(&py, &ph);
+    if (corsa == ph) return;
+
+    scorri_a((int)(((long)(y - g_trascino_dy - area_y()) * max) /
+                   (long)(corsa - ph)));
 }
 
 static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
@@ -2148,6 +2571,33 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
     case EXM_TASTO: {
         unsigned int c = wp & 0xFFFF;
 
+        /* ! CON UNA CASELLA A FUOCO I TASTI SONO SUOI, e le frecce non
+         * scorrono piu' la pagina: e' la regola di ogni browser, e senza di
+         * essa scrivere in un campo farebbe saltare il documento. */
+        if (g_ctrl_fuoco >= 0) {
+            Ctrl *k = &g_ctrl[g_ctrl_fuoco];
+            int   n = 0;
+
+            while (k->valore[n]) n++;
+
+            if (c == 27 || c == '\t')  /* Esc o Tab: si esce dalla casella */ { g_ctrl_fuoco = -1; disegna(); return 0; }
+            if (c == '\b') {
+                if (n > 0) k->valore[n - 1] = '\0';
+                disegna();
+                return 0;
+            }
+            if (c == '\n' || c == '\r') {
+                dico("questo modulo non si manda ancora: manca l'invio");
+                return 0;
+            }
+            if (c >= 32 && c < 256 && n < CTRL_VAL_MAX - 1) {
+                k->valore[n]     = (char)c;
+                k->valore[n + 1] = '\0';
+                disegna();
+            }
+            return 0;
+        }
+
         if (c == '\n' || c == '\r') {
             const char *t = ex_testo_prendi(g_url);
 
@@ -2158,16 +2608,74 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         if (c == KBD_K_UP)    { scorri(-24); return 0; }
         if (c == KBD_K_PGDN)  { scorri(area_h() - 24);  return 0; }
         if (c == KBD_K_PGUP)  { scorri(-(area_h() - 24)); return 0; }
-        if (c == KBD_K_HOME)  { g_scorri = 0; disegna(); return 0; }
+        if (c == KBD_K_HOME)  { scorri_a(0); return 0; }
+        if (c == KBD_K_END)   { scorri_a(scorri_max()); return 0; }
         return ex_procedura_base(f, msg, wp, lp);
     }
 
     case EXM_MOUSE_GIU: {
-        int k = link_sotto(EX_X(lp), EX_Y(lp));
+        int x = EX_X(lp), y = EX_Y(lp), k;
 
+        if (barra_giu(x, y)) return 0;
+
+        /* ! I CONTROLLI PRIMA DEI COLLEGAMENTI. Un `<input>` dentro un `<a>`
+         * capita, e in quel caso vince il controllo: chi clicca dentro una
+         * casella vuole scriverci, non essere portato altrove. */
+        k = ctrl_sotto(x, y);
+        if (k >= 0) {
+            Ctrl *c = &g_ctrl[k];
+
+            switch (c->tipo) {
+            case CTRL_SPUNTA:
+                c->acceso = (unsigned char)!c->acceso;
+                g_ctrl_fuoco = -1;
+                break;
+
+            case CTRL_RADIO: {
+                /* ! UN SOLO ACCESO ALLA VOLTA, e qui si spengono TUTTI gli
+                 * altri della pagina invece che quelli dello stesso `name`.
+                 * E' un'approssimazione, e va detta: con due gruppi di scelte
+                 * nella stessa pagina si comporta come se fossero uno solo.
+                 * Raggrupparli per nome vuol dire tenersi il nome, e i moduli
+                 * non si mandano ancora — quel giorno servira' comunque. */
+                int j;
+
+                for (j = 0; j < g_ctrl_n; j++)
+                    if (g_ctrl[j].tipo == CTRL_RADIO) g_ctrl[j].acceso = 0;
+                c->acceso = 1;
+                g_ctrl_fuoco = -1;
+                break;
+            }
+
+            case CTRL_PULSANTE:
+                g_ctrl_fuoco = -1;
+                dico("questo modulo non si manda ancora: manca l'invio");
+                return 0;
+
+            default:
+                g_ctrl_fuoco = k;
+                break;
+            }
+            disegna();
+            return 0;
+        }
+
+        /* Un clic fuori da ogni casella toglie il fuoco: e' quello che si
+         * aspetta chi ha finito di scrivere. */
+        if (g_ctrl_fuoco >= 0) { g_ctrl_fuoco = -1; disegna(); }
+
+        k = link_sotto(x, y);
         if (k >= 0) { segui(k); return 0; }
         return 0;
     }
+
+    case EXM_MOUSE_MOSSO:
+        barra_mosso(EX_Y(lp));
+        return 0;
+
+    case EXM_MOUSE_SU:
+        g_trascino = 0;
+        return 0;
 
     case EXM_DISEGNA:
         disegna();

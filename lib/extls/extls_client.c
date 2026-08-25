@@ -47,6 +47,7 @@
 
 #include "extls.h"
 #include "excrypt.h"
+#include "excurva.h"
 
 /* Traccia di servizio: si accende solo compilando con -DEXTLS_TRACCIA, e serve
  * a confrontare i segreti con il keylog di OpenSSL quando una stretta non va. */
@@ -145,6 +146,7 @@ typedef struct {
     int chiuso;
     unsigned int allarme;   /* l'ultimo codice di allarme ricevuto */
     int          ultimo;    /* l'ultimo errore, per chi legge dopo la stretta */
+    int          motivo;    /* il codice di lib/excert, quando la catena cade */
 } Tls;
 
 unsigned int extls_misura(void) { return (unsigned int)sizeof(Tls); }
@@ -556,9 +558,19 @@ static int manda_hello(Tls *t, const char *host,
      * extls_rsa_pss_verifica non sa fare, perche' prende uno SHA-256 e basta.
      * Il risultato era «la firma del server non torna» su un certificato
      * perfetto. Si annuncia cio' che si sa verificare. */
+    /* ! E DAL 25 AGOSTO 2026 SONO DUE, non una. Con la sola RSA meta' del web
+     * restava chiusa: wikipedia.org e news.ycombinator.com hanno solo
+     * certificati ECDSA e rispondevano «nessun cifrario in comune» — allarme
+     * 40 — perche' non avevamo niente da offrire che sapessero firmare.
+     * lib/exp256 verifica le firme su P-256, quindi adesso si puo' annunciare.
+     *
+     * ! L'ORDINE E' UNA PREFERENZA, non un elenco: si mette per prima quella
+     * che copre i siti che prima si rifiutavano. */
     metti16(c + i, 13); i += 2;
-    metti16(c + i, 4);  i += 2;
-    metti16(c + i, 2);  i += 2;
+    metti16(c + i, 8);  i += 2;
+    metti16(c + i, 6);  i += 2;
+    metti16(c + i, 0x0403); i += 2;             /* ecdsa_secp256r1_sha256 */
+    metti16(c + i, 0x0503); i += 2;             /* ecdsa_secp384r1_sha384 */
     metti16(c + i, 0x0804); i += 2;             /* rsa_pss_rsae_sha256 */
 
     /* supported_versions (43): solo 1.3 */
@@ -686,6 +698,25 @@ static int leggi_certificati(const unsigned char *p, unsigned int n,
 
     if (*quanti == 0) return EXTLS_ERR_CERTIFICATO;
     return EXTLS_OK;
+}
+
+/* ! LA FIRMA ECDSA E' UNA SEQUENCE DI DUE INTERI, e chi la tratta come un
+ * numero solo la vede fallire sempre — e cerca il difetto nella curva. Sta
+ * qui e non in lib/excert perche' e' un fatto del FORMATO, non della catena:
+ * la CertificateVerify di TLS porta esattamente gli stessi byte. */
+static int extls_ecdsa_r_s(const ExDer *firma, ExDer *r, ExDer *s)
+{
+    ExDer     dentro;
+    ExDerElem a, b;
+
+    if (exder_dentro(firma, 0, 0x30, &dentro) != 0) return -1;
+    if (exder_leggi(&dentro, 0, &a) != 0 || a.tag != 0x02) return -1;
+    if (exder_leggi(&dentro, a.intestazione + a.valore.n, &b) != 0 ||
+        b.tag != 0x02) return -1;
+
+    *r = a.valore;
+    *s = b.valore;
+    return 0;
 }
 
 /* Il messaggio su cui il server firma: 64 spazi, una frase, uno zero e
@@ -817,26 +848,62 @@ int extls_stretta(void *opaco, const ExTlsSotto *sotto, const char *host,
                 firma_n = be16(corpo + 2);
                 if (4 + firma_n > n) return EXTLS_ERR_PROTOCOLLO;
 
-                /* Solo PSS-SHA256: e' cio' che si e' annunciato. */
-                if (alg != 0x0804) return EXTLS_ERR_FIRMA;
-
-                /* ! UNA CHIAVE CHE NON SAPPIAMO USARE E' UN PROBLEMA DEL
-                 * CERTIFICATO, NON DELLA FIRMA, e distinguerli e' cio' che
-                 * dice a chi legge se il sito e' fuori portata (chiave ECDSA)
-                 * o se c'e' qualcosa che non va. */
-                if (catena[0].tipo_chiave != EXASN1_CHIAVE_RSA)
-                    return EXTLS_ERR_CERTIFICATO;
+                /* ! LE DUE STRADE SONO QUELLE ANNUNCIATE, E NON UNA DI PIU'.
+                 * Un server puo' firmare solo con cio' che il ClientHello ha
+                 * offerto: qualunque altro numero qui e' un server che non
+                 * rispetta il patto, e la risposta giusta e' smettere. */
+                if (alg != 0x0804 && alg != 0x0403 && alg != 0x0503)
+                    return EXTLS_ERR_FIRMA;
 
                 contesto_firma(cert_impronta, messaggio, &m_n);
-                sha256(messaggio, m_n, m_impronta);
 
-                if (extls_rsa_pss_verifica(catena[0].chiave_modulo.p,
-                                           catena[0].chiave_modulo.n,
-                                           catena[0].chiave_esponente.p,
-                                           catena[0].chiave_esponente.n,
-                                           m_impronta, corpo + 4, firma_n,
-                                           EXTLS_IMPRONTA) != 0)
-                    return EXTLS_ERR_FIRMA;
+                if (alg == 0x0403 || alg == 0x0503) {
+                    /* ECDSA: la curva la dice la CHIAVE, l'impronta la dice
+                     * l'algoritmo annunciato. Sono due cose diverse. */
+                    unsigned char lunga[48];
+                    const unsigned char *imp;
+                    unsigned int  imp_n;
+                    int           curva;
+                    ExDer f, r_i, s_i;
+
+                    if (catena[0].tipo_chiave == EXASN1_CHIAVE_EC_P256)
+                        curva = EXCURVA_P256;
+                    else if (catena[0].tipo_chiave == EXASN1_CHIAVE_EC_P384)
+                        curva = EXCURVA_P384;
+                    else
+                        return EXTLS_ERR_FIRMA;
+
+                    if (alg == 0x0503) {
+                        sha384(messaggio, m_n, lunga);
+                        imp = lunga; imp_n = 48;
+                    } else {
+                        sha256(messaggio, m_n, m_impronta);
+                        imp = m_impronta; imp_n = EXTLS_IMPRONTA;
+                    }
+
+                    f.p = corpo + 4;
+                    f.n = firma_n;
+                    if (extls_ecdsa_r_s(&f, &r_i, &s_i) != 0)
+                        return EXTLS_ERR_FIRMA;
+
+                    if (excurva_verifica(curva, catena[0].chiave_punto.p,
+                                         catena[0].chiave_punto.n,
+                                         imp, imp_n, r_i.p, r_i.n,
+                                         s_i.p, s_i.n) != 0)
+                        return EXTLS_ERR_FIRMA;
+                } else {
+                    sha256(messaggio, m_n, m_impronta);
+                    if (catena[0].tipo_chiave != EXASN1_CHIAVE_RSA)
+                        return EXTLS_ERR_FIRMA;
+
+                    if (extls_rsa_pss_verifica(catena[0].chiave_modulo.p,
+                                               catena[0].chiave_modulo.n,
+                                               catena[0].chiave_esponente.p,
+                                               catena[0].chiave_esponente.n,
+                                               m_impronta, corpo + 4, firma_n,
+                                               EXTLS_IMPRONTA) != 0)
+                        return EXTLS_ERR_FIRMA;
+                }
 
                 visto_firma = 1;
                 continue;
@@ -875,8 +942,13 @@ int extls_stretta(void *opaco, const ExTlsSotto *sotto, const char *host,
     }
 
     /* --- il certificato vale per QUESTO sito, e viene da una CA vera ------ */
+    /* ! IL MOTIVO DELLA CATENA SI TIENE. `excert_catena_valida` distingue nove
+     * casi — scaduto, senza radice, firma sbagliata, non e' una CA — e
+     * schiacciarli tutti in «certificato non verificabile» manda a cercare il
+     * difetto nel posto sbagliato. Il codice resta leggibile con
+     * extls_motivo(). */
     r = excert_catena_valida(catena, quanti, magazzino, adesso);
-    if (r != EXCERT_OK) return EXTLS_ERR_CERTIFICATO;
+    if (r != EXCERT_OK) { t->motivo = r; return EXTLS_ERR_CERTIFICATO; }
 
     if (excert_nome_combacia(&catena[0], host) != EXCERT_OK)
         return EXTLS_ERR_NOME;
@@ -1009,6 +1081,11 @@ unsigned int extls_allarme(void *opaco)
 int extls_ultimo(void *opaco)
 {
     return opaco ? ((Tls *)opaco)->ultimo : 0;
+}
+
+int extls_motivo(void *opaco)
+{
+    return opaco ? ((Tls *)opaco)->motivo : 0;
 }
 
 const char *extls_perche(int codice)

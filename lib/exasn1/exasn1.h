@@ -87,11 +87,13 @@ int exder_dentro(const ExDer *d, unsigned int off, unsigned int tag_atteso,
 #define EXASN1_ALG_RSA_SHA512    3
 #define EXASN1_ALG_RSA_SHA1      4     /* riconosciuto per poterlo RIFIUTARE */
 #define EXASN1_ALG_ECDSA_SHA256  5
+#define EXASN1_ALG_ECDSA_SHA384  6
 
 /* --- La chiave pubblica --------------------------------------------------- */
 #define EXASN1_CHIAVE_IGNOTA     0
 #define EXASN1_CHIAVE_RSA        1
 #define EXASN1_CHIAVE_EC_P256    2
+#define EXASN1_CHIAVE_EC_P384    3
 
 /* Un certificato analizzato. Tutte le fette puntano dentro il DER originale,
  * che deve restare vivo finche' si guarda questa struttura. */

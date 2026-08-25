@@ -573,14 +573,38 @@ int exhttp_scambio(ExHttpTrasporto *t, const HttpUrl *u,
 
     /* --- le intestazioni ---------------------------------------------- */
     for (;;) {
-        if (acc_n >= sizeof(acc)) {
-            strcpy(e->errore, "intestazioni troppo lunghe");
-            return 0;
-        }
-
+        /* ! PRIMA SI GUARDA COSA C'E', POI SI DICE CHE NON CI STA. Il
+         * controllo sul buffer pieno stava in cima, e con l'HTTP in chiaro non
+         * si notava: TCP consegna a pezzi di un chilo e mezzo, quindi il
+         * buffer non si riempiva mai in una volta. Il TLS consegna un RECORD
+         * intero — fino a sedici kilobyte, cioe' esattamente quanto questo
+         * buffer — e allora la prima lettura lo riempiva tutta insieme: al
+         * giro dopo si usciva con «intestazioni troppo lunghe» senza aver mai
+         * guardato le intestazioni, che stavano nei primi settecento byte.
+         *
+         * Si e' visto su news.ycombinator.com, che manda una pagina grande in
+         * un record solo. */
         fine = http_intestazioni(acc, acc_n, r);
         if (fine < 0) { strcpy(e->errore, "risposta malformata"); return 0; }
         if (fine > 0) break;
+
+        if (acc_n >= sizeof(acc)) {
+            /* ! IL MESSAGGIO PORTA I PRIMI BYTE DI CIO' CHE E' ARRIVATO, e
+             * cambia tutto: «intestazioni troppo lunghe» manda a cercare un
+             * buffer da allargare, mentre vedere cosa c'e' davvero dice in un
+             * colpo se e' una risposta HTTP, un errore del server o
+             * spazzatura. */
+            char primi[24];
+            unsigned int k;
+
+            for (k = 0; k < sizeof(primi) - 1 && k < acc_n; k++)
+                primi[k] = (acc[k] >= 32 && acc[k] < 127) ? (char)acc[k] : '.';
+            primi[k] = '\0';
+
+            sprintf(e->errore, "%u byte senza fine intestazioni: \"%s\"",
+                    acc_n, primi);
+            return 0;
+        }
 
         n = t->leggi(t->stato, acc + acc_n, sizeof(acc) - acc_n, 10000);
         if (n < 0) { strcpy(e->errore, "connessione interrotta"); return 0; }

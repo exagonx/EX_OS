@@ -144,6 +144,7 @@ int main(int argc, char **argv)
     if (r != EXTLS_OK) {
         printf("esito: %d (%s)", r, extls_perche(r));
         if (extls_allarme(tls)) printf(" [allarme %u]", extls_allarme(tls));
+        if (extls_motivo(tls))  printf(" [catena %d]", extls_motivo(tls));
         printf("\n");
         return 1;
     }

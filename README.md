@@ -284,13 +284,20 @@ poi l'albero è spazzatura.
 ! **`https://` FUNZIONA, E VERIFICA DAVVERO.** TLS 1.3 scritto qui dentro:
 X25519 per lo scambio di chiavi, ChaCha20-Poly1305 per i dati, la catena dei
 certificati controllata contro un magazzino di CA vere e il nome del sito
-confrontato col `subjectAltName`. Senza magazzino non si apre niente: cifrare
-con chiunque risponda vuol dire cifrare con chi sta in mezzo, e la barra
-scriverebbe `https://` lo stesso.
+confrontato col `subjectAltName`. Le firme si verificano in RSA-PSS **e in
+ECDSA su P-256 e P-384**, che e' cio' che serve per aprire i siti veri:
+wikipedia.org, news.ycombinator.com e github.com hanno solo certificati
+ellittici. Senza magazzino di CA non si apre niente: cifrare con chiunque
+risponda vuol dire cifrare con chi sta in mezzo, e la barra scriverebbe
+`https://` lo stesso.
 
-Il prezzo, dichiarato: un sito che serve **solo** certificati ECDSA non si apre
-— la verifica della catena vuole RSA — e riceve un errore chiaro invece di una
-pagina.
+! **I MODULI SI VEDONO E SI COMPILANO**: caselle di testo, password, spunte,
+scelte, pulsanti e aree di testo si disegnano come i controlli del sistema e
+prendono i tasti. Quello che manca — dichiarato — e' MANDARLI: nessuna query
+parte, e il pulsante lo dice invece di non fare niente.
+
+! **E LE IMMAGINI SONO TRE FORMATI**: PNG, JPEG e GIF (primo fotogramma,
+trasparenza compresa).
 
 ! **LE IMMAGINI ARRIVANO DOPO IL TESTO.** La pagina si impagina e si disegna con
 le sole parole; solo allora si scarica un'immagine per volta, e a ognuna che
@@ -321,7 +328,8 @@ invece di valere due pixel. Meno stile, mai stile sbagliato.
 l'origine più bassa della cascata, quindi una pagina può sovrascriverli. Prima
 erano `if` nel motore, e `<b>` e `<i>` non c'erano affatto.
 
-Quello che **non** c'è, dichiarato: JavaScript, `@media`, le unità relative.
+Quello che **non** c'è, dichiarato: JavaScript, `@media`, le unità relative,
+l'invio dei moduli, `colspan`/`rowspan`.
 
 
 ### I font: TrueType, misurato contro FreeType

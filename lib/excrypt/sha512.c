@@ -83,17 +83,55 @@ static void blocco(u64 h[8], const unsigned char *p)
     h[0]+=a; h[1]+=b; h[2]+=c; h[3]+=d; h[4]+=e; h[5]+=f; h[6]+=g; h[7]+=hh;
 }
 
+/* =============================================================================
+ * ! SHA-384 E' SHA-512 CON DUE DIFFERENZE, ED E' TUTTO. Il valore iniziale e'
+ * un altro — quello di SHA-512 con i bit invertiti in un modo che lo standard
+ * definisce — e alla fine si tengono solo i primi 48 byte dei 64.
+ *
+ * ! NON E' «SHA-512 TRONCATO», e la distinzione conta: con lo STESSO valore
+ * iniziale, i primi 48 byte di SHA-512 sarebbero prevedibili da chi conosce
+ * l'impronta intera. Il valore iniziale diverso e' cio' che rende SHA-384 una
+ * funzione a se'.
+ *
+ * Serve alle firme ECDSA su P-384, che il web usa piu' di quanto sembri: la
+ * catena di wikipedia.org e' tutta ecdsa-with-SHA384.
+ * ========================================================================== */
+static void sha512_con(const u64 iniziale[8], const unsigned char *m,
+                       unsigned int n, unsigned char *out, unsigned int quanti);
+
+void sha384(const unsigned char *m, unsigned int n, unsigned char out[48])
+{
+    static const u64 H0[8] = {
+        0xcbbb9d5dc1059ed8ULL, 0x629a292a367cd507ULL,
+        0x9159015a3070dd17ULL, 0x152fecd8f70e5939ULL,
+        0x67332667ffc00b31ULL, 0x8eb44a8768581511ULL,
+        0xdb0c2e0d64f98fa7ULL, 0x47b5481dbefa4fa4ULL
+    };
+
+    sha512_con(H0, m, n, out, 48);
+}
+
 void sha512(const unsigned char *m, unsigned int n, unsigned char out[64])
 {
-    u64 h[8] = {
+    static const u64 H0[8] = {
         0x6a09e667f3bcc908ULL, 0xbb67ae8584caa73bULL,
         0x3c6ef372fe94f82bULL, 0xa54ff53a5f1d36f1ULL,
         0x510e527fade682d1ULL, 0x9b05688c2b3e6c1fULL,
         0x1f83d9abfb41bd6bULL, 0x5be0cd19137e2179ULL
     };
+
+    sha512_con(H0, m, n, out, 64);
+}
+
+static void sha512_con(const u64 iniziale[8], const unsigned char *m,
+                       unsigned int n, unsigned char *out, unsigned int quanti)
+{
+    u64 h[8];
     unsigned char coda[256];
     unsigned int  i, resto, len_coda;
     u64 bit = (u64)n * 8;
+
+    for (i = 0; i < 8; i++) h[i] = iniziale[i];
 
     for (i = 0; i + 128 <= n; i += 128) blocco(h, m + i);
 
@@ -115,6 +153,11 @@ void sha512(const unsigned char *m, unsigned int n, unsigned char out[64])
 
     for (i = 0; i < 8; i++) {
         int j;
-        for (j = 0; j < 8; j++) out[i * 8 + j] = (unsigned char)(h[i] >> (56 - 8 * j));
+
+        for (j = 0; j < 8; j++) {
+            unsigned int k = i * 8 + (unsigned int)j;
+
+            if (k < quanti) out[k] = (unsigned char)(h[i] >> (56 - 8 * j));
+        }
     }
 }

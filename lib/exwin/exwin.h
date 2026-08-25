@@ -355,6 +355,37 @@ typedef unsigned int ExFont;
  * font arriva anche dalla rete, e li' il nome lo sceglie chi sta dall'altra
  * parte. */
 ExFont ex_font_apri(const char *percorso, int corpo);
+
+/* =============================================================================
+ * TROVARE UN CARATTERE PER FAMIGLIA, invece che per percorso
+ *
+ * ! IL PERCORSO SCRITTO NEL PROGRAMMA E' UNA DIPENDENZA NASCOSTA. Ogni
+ * applicazione che voleva il grassetto si portava dentro
+ * «/exwin/font/LiberationSans-Bold.ttf»: il giorno che quel file cambia nome,
+ * o che accanto ne arriva un altro, vanno ritoccati tutti i programmi — e
+ * quello che si dimentica non da' un errore, da' un carattere diverso.
+ *
+ * ! E LE QUATTRO FACCE DI UNA FAMIGLIA NON SONO QUATTRO FAMIGLIE. Chiedere
+ * «serif, grassetto, corsivo» e' cio' che un foglio di stile dice davvero;
+ * comporre il nome del file da quei tre pezzi e' un lavoro che va fatto in un
+ * posto solo, o il browser e l'editor lo faranno in due modi diversi.
+ *
+ * ! CHI NON TROVA RIPIEGA, E NON MUORE MAI: la faccia chiesta, poi la normale
+ * della stessa famiglia, poi il sans, poi 0 — che e' il font di sistema. Una
+ * finestra con un carattere diverso e' meglio di una finestra vuota.
+ *
+ * I font aperti restano in una riserva: chiedere due volte lo stesso non
+ * riapre il file. Non si chiudono con ex_font_chiudi().
+ * ========================================================================== */
+#define EX_FAM_SERIF    0
+#define EX_FAM_SANS     1
+#define EX_FAM_MONO     2
+
+ExFont ex_font_trova(int famiglia, int corpo, int grassetto, int corsivo);
+
+/* Il nome del file che ex_font_trova userebbe, senza aprirlo: serve a chi
+ * vuole DIRE quale carattere sta usando — o quale non ha trovato. */
+const char *ex_font_nome(int famiglia, int grassetto, int corsivo);
 void   ex_font_chiudi(ExFont f);
 
 /* L'interlinea, e la distanza fra la cima e la linea di base. La seconda serve

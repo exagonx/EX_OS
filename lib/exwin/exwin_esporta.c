@@ -102,6 +102,10 @@ static const char *const g_nomi[] = {
     "ex_scrivi_con",
     "ex_sveglia",
 
+    /* Aggiunte il 25 agosto 2026: trovare un carattere per famiglia. */
+    "ex_font_trova",
+    "ex_font_nome",
+
     /* L'avvio della libreria: lo chiama chi la apre, non l'applicazione. */
     "__lib_avvio"
 };
@@ -163,6 +167,9 @@ static void *const g_indirizzi[] = {
     (void *)ex_larghezza_testo,
     (void *)ex_scrivi_con,
     (void *)ex_sveglia,
+
+    (void *)ex_font_trova,
+    (void *)ex_font_nome,
 
     (void *)__libc_ponti_avvia
 };

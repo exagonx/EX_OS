@@ -32,12 +32,12 @@
 #define VERSIONE_APP "0.001"
 EX_VERSIONE("fontprova", VERSIONE_APP);
 
-#define FIN_W   720
+#define FIN_W   760
 /* ! LA BARRA DEI MENU NON RESTRINGE L'AREA DEL CLIENT: il toolkit la mette in
  * cima e larga quanto la finestra, ma il posto glielo deve lasciare chi scrive
  * il programma. Venti pixel sono MENU_BARRA_H di lib/exwin/exwin.c. */
 #define MENU_H  20
-#define FIN_H   (440 + MENU_H)
+#define FIN_H   (540 + MENU_H)
 
 #define ID_INFO 1
 
@@ -50,22 +50,89 @@ static const char *CAMPIONE = "Aa Bb Gg Qq 0123 e' a` o` .,;:!? Ciao EX-OS";
 
 static ExFinestra g_f;
 
+/* =============================================================================
+ * ! L'ELENCO DEI FONT SI LEGGE DALLA DIRECTORY, NON SI SCRIVE QUI.
+ *
+ * Prima erano sei percorsi scritti in questo file, e la prova diceva «NON
+ * CARICATO» in rosso per ognuno che mancasse. Ma un font che manca non e' un
+ * ERRORE del rasterizzatore: e' un file che su QUESTA macchina non c'e' — e la
+ * prova serve a guardare il rasterizzatore. Con l'elenco scritto a mano, i due
+ * casi avevano lo stesso aspetto, e cercare il difetto cominciava dal posto
+ * sbagliato.
+ *
+ * Adesso si guarda cosa c'e' davvero in /exwin/font e si prova QUELLO. Se la
+ * directory e' vuota lo si dice con una frase, non con sei righe rosse. E se
+ * un file c'e' e NON si apre, quella si' che e' una notizia — ed e' la sola
+ * che resta scritta in rosso.
+ *
+ * ! E VALE ANCHE PER I FONT CHE NON ABBIAMO MESSO NOI. Copiando un .ttf in
+ * /exwin/font, la prova lo mostra: e' il modo piu' rapido per sapere se un
+ * carattere qualunque e' leggibile da EX-OS prima di usarlo in un programma.
+ * ========================================================================== */
+#define QUANTI      14
+#define NOME_MAX    64
+
 static struct {
-    const char *file;
-    const char *nome;
-    int         corpo;
-} G[] = {
-    { "/exwin/font/LiberationSans-Regular.ttf",  "Sans 14",   14 },
-    { "/exwin/font/LiberationSans-Bold.ttf",     "Sans 18 g", 18 },
-    { "/exwin/font/LiberationSerif-Regular.ttf", "Serif 20",  20 },
-    { "/exwin/font/LiberationSerif-Italic.ttf",  "Serif 26 c",26 },
-    { "/exwin/font/LiberationMono-Regular.ttf",  "Mono 16",   16 },
-    { "/exwin/font/LiberationSans-Regular.ttf",  "Sans 32",   32 }
-};
+    char nome[NOME_MAX];
+    char percorso[128];
+    int  corpo;
+} G[QUANTI];
 
-#define QUANTI  ((int)(sizeof(G) / sizeof(G[0])))
-
+static int    g_n = 0;
 static ExFont g_font[QUANTI];
+static char   g_dove[64] = "";
+
+/* I corpi si alternano, cosi' una sola finestra mostra sia il testo piccolo
+ * sia quello grande: e' ai due estremi che i difetti di scala si vedono. */
+static int corpo_per(int i)
+{
+    static const int C[4] = { 14, 18, 22, 30 };
+
+    return C[i % 4];
+}
+
+static int finisce_con_ttf(const char *s)
+{
+    int n = 0;
+
+    while (s[n]) n++;
+    if (n < 4) return 0;
+    return (s[n-4] == '.' &&
+            (s[n-3] == 't' || s[n-3] == 'T') &&
+            (s[n-2] == 't' || s[n-2] == 'T') &&
+            (s[n-1] == 'f' || s[n-1] == 'F'));
+}
+
+static void cerca_font(void)
+{
+    static const char *const DOVE[] = {
+        "/exwin/font", "/cdrom/exwin/font", 0
+    };
+    DirEntry v[32];
+    int      d;
+
+    for (d = 0; DOVE[d] && g_n == 0; d++) {
+        unsigned int start = 0;
+        int n;
+
+        while ((n = listdir_from(DOVE[d], v, 32, start)) > 0 && g_n < QUANTI) {
+            int i;
+
+            for (i = 0; i < n && g_n < QUANTI; i++) {
+                if (v[i].is_dir) continue;
+                if (!finisce_con_ttf(v[i].name)) continue;
+
+                snprintf(G[g_n].percorso, sizeof(G[g_n].percorso),
+                         "%s/%s", DOVE[d], v[i].name);
+                snprintf(G[g_n].nome, sizeof(G[g_n].nome), "%s", v[i].name);
+                G[g_n].corpo = corpo_per(g_n);
+                g_n++;
+            }
+            start += (unsigned int)n;
+        }
+        if (g_n > 0) snprintf(g_dove, sizeof(g_dove), "%s", DOVE[d]);
+    }
+}
 
 static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 {
@@ -103,12 +170,23 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         ex_riempi(f, 6, y, FIN_W - 12, 2, EX_GRIGIO_SC);
         y += 8;
 
-        for (i = 0; i < QUANTI; i++) {
+        if (g_n == 0) {
+            ex_scrivi(f, 8, y,
+                      "Nessun file .ttf in /exwin/font: non c'e' niente da",
+                      EX_NERO);
+            y += 18;
+            ex_scrivi(f, 8, y,
+                      "provare. Copiane uno li' dentro e rilancia.", EX_NERO);
+            ex_aggiorna(f);
+            return 0;
+        }
+
+        for (i = 0; i < g_n; i++) {
             if (g_font[i] == 0) {
                 ex_scrivi(f, 8, y, "NON CARICATO:", EX_ROSSO);
                 ex_scrivi(f, 8 + ex_larghezza_testo(EX_FONT_SISTEMA,
                                                     "NON CARICATO: "),
-                          y, G[i].file, EX_ROSSO);
+                          y, G[i].percorso, EX_ROSSO);
                 y += 20;
                 continue;
             }
@@ -119,9 +197,16 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
              * l'errore che si vede su un paragrafo e mai su una parola. */
             ex_scrivi_con(f, g_font[i], 8, y, CAMPIONE, EX_NERO);
 
-            /* L'etichetta a destra, col font di sistema, per sapere quale e'. */
-            ex_scrivi(f, FIN_W - 8 - ex_larghezza_testo(EX_FONT_SISTEMA, G[i].nome),
-                      y, G[i].nome, EX_BLU);
+            /* L'etichetta a destra, col font di sistema, per sapere quale e'.
+             * ! IL NOME DEL FILE E IL CORPO INSIEME: sapere che il campione e'
+             * brutto non serve se non si sa QUALE file l'ha disegnato. */
+            {
+                char et[NOME_MAX + 16];
+
+                snprintf(et, sizeof(et), "%s %d", G[i].nome, G[i].corpo);
+                ex_scrivi(f, FIN_W - 8 - ex_larghezza_testo(EX_FONT_SISTEMA, et),
+                          y, et, EX_BLU);
+            }
 
             y += ex_font_altezza(g_font[i]) + 6;
         }
@@ -165,12 +250,21 @@ int main(int argc, char **argv)
         ex_menu_voce(menu, "Info", "Informazioni su", ID_INFO);
     }
 
-    for (i = 0; i < QUANTI; i++) {
-        g_font[i] = ex_font_apri(G[i].file, G[i].corpo);
+    cerca_font();
+
+    if (g_n == 0) {
+        printf("fontprova: nessun .ttf trovato ne' in /exwin/font ne' in\n");
+        printf("           /cdrom/exwin/font. Non c'e' niente da provare.\n");
+    } else {
+        printf("fontprova: %d file in %s\n", g_n, g_dove);
+    }
+
+    for (i = 0; i < g_n; i++) {
+        g_font[i] = ex_font_apri(G[i].percorso, G[i].corpo);
 
         /* Si dice anche sulla seriale: una fotografia dice CHE non si e'
          * caricato, il log dice quale e a che corpo. */
-        printf("fontprova: %s corpo %d -> %s\n", G[i].file, G[i].corpo,
+        printf("fontprova: %s corpo %d -> %s\n", G[i].percorso, G[i].corpo,
                g_font[i] ? "aperto" : "NON aperto");
     }
 
@@ -179,7 +273,7 @@ int main(int argc, char **argv)
 
     while (ex_prendi_msg(&m)) ex_smista(&m);
 
-    for (i = 0; i < QUANTI; i++)
+    for (i = 0; i < g_n; i++)
         if (g_font[i]) ex_font_chiudi(g_font[i]);
 
     return 0;

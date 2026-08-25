@@ -49,5 +49,6 @@ typedef int (*EximgDecodificatore)(const unsigned char *d, unsigned int n,
 int eximg_png(const unsigned char *d, unsigned int n, EximgBitmap *bm);
 int eximg_jpg(const unsigned char *d, unsigned int n, EximgBitmap *bm);
 int eximg_ico(const unsigned char *d, unsigned int n, EximgBitmap *bm);
+int eximg_gif(const unsigned char *d, unsigned int n, EximgBitmap *bm);
 
 #endif /* EXIMG_INTERNO_H */
