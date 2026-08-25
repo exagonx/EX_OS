@@ -68,6 +68,25 @@ extern "C" {
 #define CSS_DISPLAY_BLOCCO  2
 #define CSS_DISPLAY_NIENTE  3
 
+/* =============================================================================
+ * font-family — e QUI SI SCEGLIE COSA SI PUO' DIRE
+ *
+ * ! LE FAMIGLIE SONO TRE PERCHE' TRE SONO I FILE CHE IL SISTEMA PORTA CON SE':
+ * Liberation Serif, Sans e Mono. Un `font-family: Helvetica, Arial, sans-serif`
+ * non si puo' onorare alla lettera — quei file non ci sono — ma la RICHIESTA si
+ * capisce lo stesso: e' un carattere senza grazie. Ridurre l'elenco a una delle
+ * tre facce che abbiamo e' molto piu' vicino a quel che la pagina voleva che
+ * ignorarla e scrivere tutto in serif.
+ *
+ * ! E SI LEGGE IL PRIMO NOME CHE SI CONOSCE, non l'ultimo: e' l'ordine di
+ * preferenza del CSS, e la generica in coda («sans-serif») e' l'ultima
+ * spiaggia, non la prima scelta.
+ * ========================================================================== */
+#define CSS_FAM_EREDITA 0
+#define CSS_FAM_SERIF   1
+#define CSS_FAM_SANS    2
+#define CSS_FAM_FISSO   3   /* monospace */
+
 /* text-align */
 #define CSS_ALL_EREDITA 0
 #define CSS_ALL_SX      1
@@ -85,6 +104,7 @@ typedef struct {
     unsigned char corsivo;      /* 0, 1, o CSS_FORSE             */
     unsigned char allineamento; /* CSS_ALL_*                     */
     unsigned char display;      /* CSS_DISPLAY_*                 */
+    unsigned char famiglia;     /* CSS_FAM_*                     */
 
     /* sopra, destra, sotto, sinistra — la stessa rotazione di CSS */
     short         margine[4];
@@ -145,7 +165,8 @@ typedef struct {
 #define CSS_P_MARG_DX       8
 #define CSS_P_MARG_SOTTO    9
 #define CSS_P_MARG_SX       10
-#define CSS_P_N             11
+#define CSS_P_FAMIGLIA      11  /* font-family  */
+#define CSS_P_N             12
 
 typedef struct {
     unsigned short proprieta;   /* CSS_P_*                          */

@@ -103,14 +103,14 @@ EX_VERSIONE("browser", VERSIONE_APP);
  *
  *     la pagina scaricata          1024 KB
  *     i nodi dell'albero            750 KB   (24000 x 32 byte)
- *     gli attributi                  94 KB   (12000 x 8)
- *     il testo (arena)              512 KB
+ *     gli attributi                 125 KB   (16000 x 8)
+ *     l'arena (testo E attributi)  1024 KB
  *     i pezzi impaginati            750 KB   (24000 x 32)
  *     gli indirizzi dei link        200 KB   (arena + scostamenti)
  *     la cronologia                  19 KB
  *     le immagini                 128 KB + il tetto scelto all'avvio
  *                                  -------
- *                                   3477 KB piu' i pixel
+ *                                   4020 KB piu' i pixel
  *
  * Tre megabyte e mezzo FISSI, piu' i pixel delle immagini — e quelli non sono
  * una costante: si decidono all'avvio su un sedicesimo della memoria libera,
@@ -119,8 +119,38 @@ EX_VERSIONE("browser", VERSIONE_APP);
  * ========================================================================== */
 #define PAGINA_MAX  (1024u * 1024u)
 #define NODI_MAX    24000
-#define ATTR_MAX    12000
-#define ARENA_MAX   (512u * 1024u)
+
+/* =============================================================================
+ * ! L'ARENA NON E' PIENA DI TESTO: E' PIENA DI ATTRIBUTI.
+ *
+ * Per settimane si e' chiamata «l'arena del testo» e la si e' creduta stretta
+ * per via delle parole della pagina. Misurata sulla voce «Operating system» di
+ * Wikipedia, quel che ci finisce dentro e':
+ *
+ *     il testo dei nodi         71 KB    15%
+ *     i nomi dei tag            20 KB     4%
+ *     gli ATTRIBUTI            386 KB    81%   <-- il grosso
+ *
+ * cioe' 467 KB, e il tetto era 512. Il testo VISIBILE di quella voce sta in
+ * settanta kilobyte: si troncava una pagina di 70 KB di parole perche' non
+ * c'era posto per gli attributi.
+ *
+ * ! E FRA GLI ATTRIBUTI I PIU' PESANTI SONO href (96 KB), class (83 KB),
+ * id (54 KB) e title (52 KB). I primi tre servono davvero — i collegamenti e i
+ * selettori del CSS — mentre `title`, `typeof`, `about` e i `data-*` non li
+ * guarda nessuno qui dentro: sono un centinaio di kilobyte di arena spesi per
+ * niente. Non filtrarli e' una scelta, non una svista: un attributo che non si
+ * salva non si puo' piu' chiedere, e la lista di quelli «che non servono» e'
+ * esattamente il genere di elenco che si dimentica di aggiornare il giorno che
+ * serve. Un megabyte costa mezzo megabyte di BSS e non si dimentica.
+ * ========================================================================== */
+#define ARENA_MAX   (1024u * 1024u)
+
+/* ! E GLI ATTRIBUTI SI CONTANO ANCHE A UNO A UNO, non solo a byte. Quella voce
+ * ne ha circa tredicimilaseicento: col tetto a dodicimila, alzare la sola arena
+ * avrebbe spostato la troncatura di un metro senza toglierla. Otto byte l'uno,
+ * quindi sedicimila costano centoventotto kilobyte. */
+#define ATTR_MAX    16000
 #define PEZZI_MAX   24000
 
 /* ! GLI INDIRIZZI DEI LINK STANNO IN UN'ARENA, NON IN CASELLE FISSE. Erano
@@ -383,6 +413,21 @@ static Imm           g_imm[IMM_MAX];
 static int           g_imm_n = 0;
 static unsigned int  g_imm_px = 0;      /* quanti pixel si stanno tenendo */
 static int           g_imm_fuori = 0;   /* quante lasciate fuori: non c'era posto */
+
+/* ! LA PIU' PICCOLA CHE LA MACCHINA HA RIFIUTATO, in pixel; 0 = nessuna.
+ *
+ * Serve a non ripetere una domanda di cui si conosce gia' la risposta. Il tetto
+ * dice quanti pixel VOGLIAMO tenere; `ridimensiona` dice quanti ce ne sono
+ * DAVVERO, e le due risposte possono differire. Ma quando differiscono c'e' un
+ * difetto sottile: un'immagine che fallisce non consuma tetto, quindi il
+ * controllo del tetto continua a dire di si' e il ciclo SCARICA TUTTE LE ALTRE
+ * per buttarle una per una. Sulla voce di Wikipedia si sono viste scaricare
+ * tutte e venticinque le immagini e tenerne quasi nessuna.
+ *
+ * Con questo numero la domanda si fa una volta sola: se non c'e' stato posto
+ * per N pixel, non ce n'e' per N o piu'. Quelle piu' piccole si provano ancora,
+ * perche' per loro la risposta puo' essere davvero diversa. */
+static unsigned int  g_imm_px_negato = 0;
 static unsigned char g_imm_buf[IMM_BYTE_MAX];
 
 static int  (*g_img_carica)(const unsigned char *, unsigned int, EximgBitmap *);
@@ -464,6 +509,7 @@ static void imm_libera_tutte(void)
     g_imm_n  = 0;
     g_imm_px = 0;
     g_imm_fuori = 0;
+    g_imm_px_negato = 0;
 }
 
 /* Le cifre in testa, e basta.
@@ -667,12 +713,18 @@ static int riga_w(void)
  * ! E IL TETTO E' DICHIARATO: oltre, si ripiega sul carattere di sistema invece
  * di continuare ad aprirne. Le combinazioni le sceglie la pagina.
  * --------------------------------------------------------------------------- */
-#define FONT_MAX    12
+/* ! VENTIQUATTRO DA QUANDO LE FAMIGLIE SONO TRE. Il conto delle combinazioni
+ * si e' triplicato — tre facce per quattro stili fanno gia' dodici prima ancora
+ * di contare i corpi — e con dodici caselle una pagina normale le esauriva a
+ * meta', ripiegando sul carattere di sistema per tutto il resto. Una casella
+ * non e' un file: i byte del TrueType stanno in una riserva condivisa del
+ * toolkit, qui c'e' la cache dei glifi a quel corpo. */
+#define FONT_MAX    24
 #define CORPO_MIN   6
 #define CORPO_MAX   72
 
 typedef struct {
-    unsigned char neretto, corsivo, fisso;
+    unsigned char neretto, corsivo, famiglia;
     short         corpo;
     ExFont        f;
 } FontVoce;
@@ -683,13 +735,25 @@ static int      g_font_n = 0;
 /* ! IL CARATTERE A LARGHEZZA FISSA E' UNA FAMIGLIA, NON UN CORPO: dentro <pre>
  * e <code> gli spazi devono valere quanto le lettere, o l'incolonnamento — che
  * e' l'unica ragione per cui quel testo e' preformattato — non si vede. */
-static ExFont font_per(int neretto, int corsivo, int fisso, int corpo)
+/* ! LE FAMIGLIE SONO TRE, e non piu' «fisso si'/no»: da quando il foglio di
+ * stile puo' chiedere `font-family`, il senza-grazie e' una richiesta comune
+ * quanto il monospazio — su un sito moderno lo e' molto di piu'. Le tre facce
+ * sono quelle che il sistema porta con se'. */
+#define FAM_SERIF   0
+#define FAM_SANS    1
+#define FAM_MONO    2
+
+static ExFont font_per(int neretto, int corsivo, int famiglia, int corpo)
 {
-    static const char *const FACCIA[8] = {
+    static const char *const FACCIA[12] = {
         "/exwin/font/LiberationSerif-Regular.ttf",
         "/exwin/font/LiberationSerif-Bold.ttf",
         "/exwin/font/LiberationSerif-Italic.ttf",
         "/exwin/font/LiberationSerif-BoldItalic.ttf",
+        "/exwin/font/LiberationSans-Regular.ttf",
+        "/exwin/font/LiberationSans-Bold.ttf",
+        "/exwin/font/LiberationSans-Italic.ttf",
+        "/exwin/font/LiberationSans-BoldItalic.ttf",
         "/exwin/font/LiberationMono-Regular.ttf",
         "/exwin/font/LiberationMono-Bold.ttf",
         "/exwin/font/LiberationMono-Italic.ttf",
@@ -699,28 +763,28 @@ static ExFont font_per(int neretto, int corsivo, int fisso, int corpo)
 
     if (corpo < CORPO_MIN) corpo = CORPO_MIN;
     if (corpo > CORPO_MAX) corpo = CORPO_MAX;
-    neretto = neretto ? 1 : 0;
-    corsivo = corsivo ? 1 : 0;
-    fisso   = fisso   ? 1 : 0;
+    neretto  = neretto ? 1 : 0;
+    corsivo  = corsivo ? 1 : 0;
+    if (famiglia < FAM_SERIF || famiglia > FAM_MONO) famiglia = FAM_SERIF;
 
     for (i = 0; i < g_font_n; i++)
         if (g_font[i].neretto == neretto && g_font[i].corsivo == corsivo &&
-            g_font[i].fisso == fisso && g_font[i].corpo == (short)corpo)
+            g_font[i].famiglia == famiglia && g_font[i].corpo == (short)corpo)
             return g_font[i].f;
 
     if (g_font_n >= FONT_MAX) return g_font_testo;
 
-    k = neretto + corsivo * 2 + fisso * 4;
+    k = famiglia * 4 + neretto + corsivo * 2;
     g_font[g_font_n].f = ex_font_apri(FACCIA[k], corpo);
 
     /* ! ex_font_apri RENDE 0 SE IL FILE NON C'E', e zero E' il font di sistema:
      * si mette in riserva lo stesso, cosi' non si torna a cercarlo a ogni
      * parola. Una pagina con un carattere diverso e' meglio di una pagina
      * lenta. */
-    g_font[g_font_n].neretto = (unsigned char)neretto;
-    g_font[g_font_n].corsivo = (unsigned char)corsivo;
-    g_font[g_font_n].fisso   = (unsigned char)fisso;
-    g_font[g_font_n].corpo   = (short)corpo;
+    g_font[g_font_n].neretto  = (unsigned char)neretto;
+    g_font[g_font_n].corsivo  = (unsigned char)corsivo;
+    g_font[g_font_n].famiglia = (unsigned char)famiglia;
+    g_font[g_font_n].corpo    = (short)corpo;
     return g_font[g_font_n++].f;
 }
 
@@ -734,9 +798,22 @@ static ExFont font_di(const CssStile *st)
     int neretto = (st->grassetto == 1);
     int corsivo = (st->corsivo == 1);
     int corpo   = (st->corpo == CSS_MISURA_NO) ? 15 : st->corpo;
+    int fam;
 
-    if (!neretto && !corsivo && !g_fisso && corpo == 15) return g_font_testo;
-    return font_per(neretto, corsivo, g_fisso > 0, corpo);
+    /* ! IL TAG BATTE IL FOGLIO SOLO DOVE IL FOGLIO TACE. Dentro <pre> o <code>
+     * il monospazio e' il valore predefinito, non un obbligo: una pagina che
+     * scrive `code { font-family: sans-serif }` lo sta chiedendo davvero, e
+     * quel foglio ha l'ultima parola. Ma se non dice niente, <pre> vuole il
+     * monospazio — e' il motivo per cui quel tag esiste. */
+    if (st->famiglia == CSS_FAM_FISSO)      fam = FAM_MONO;
+    else if (st->famiglia == CSS_FAM_SANS)  fam = FAM_SANS;
+    else if (st->famiglia == CSS_FAM_SERIF) fam = FAM_SERIF;
+    else                                    fam = g_fisso > 0 ? FAM_MONO
+                                                              : FAM_SERIF;
+
+    if (!neretto && !corsivo && fam == FAM_SERIF && corpo == 15)
+        return g_font_testo;
+    return font_per(neretto, corsivo, fam, corpo);
 }
 
 static unsigned int colore_di(const CssStile *st)
@@ -2714,7 +2791,21 @@ static int imm_prendi(int k)
 
     im->px = ridimensiona(&bm, w, h);
     g_img_libera(&bm);
-    if (!im->px) return 0;
+
+    /* ! ANCHE QUESTA E' «NON C'ERA POSTO», e va contata come le altre. Il tetto
+     * dei pixel dice quanto vogliamo prenderne; questa riga e' la macchina che
+     * dice quanto ce n'e' davvero, e le due risposte possono differire — un
+     * altro programma puo' aver preso la memoria nel frattempo. Chi guarda la
+     * pagina vede la stessa cosa in tutt'e due i casi: un'immagine che non
+     * c'e'. Lasciarla fuori dal conto rendeva la riga di stato una bugia. */
+    if (!im->px) {
+        unsigned int chiesti = w * h;
+
+        if (g_imm_px_negato == 0 || chiesti < g_imm_px_negato)
+            g_imm_px_negato = chiesti;
+        g_imm_fuori++;
+        return 0;
+    }
 
     im->w = w;
     im->h = h;
@@ -2747,6 +2838,9 @@ static int imm_ci_sta(int k)
 
     misura(&g_imm[k], g_imm[k].dich_w, g_imm[k].dich_h, &w, &h);
     if (w == 0 || h == 0) return 1;
+
+    /* Gia' rifiutata una piu' piccola di questa: inutile scaricarla. */
+    if (g_imm_px_negato && w * h >= g_imm_px_negato) return 0;
 
     return g_imm_px + w * h <= g_imm_px_tot;
 }

@@ -86,6 +86,7 @@ void css_stile_vuoto(CssStile *s)
     s->corsivo      = CSS_FORSE;
     s->allineamento = CSS_ALL_EREDITA;
     s->display      = CSS_DISPLAY_EREDITA;
+    s->famiglia     = CSS_FAM_EREDITA;
     for (i = 0; i < 4; i++) s->margine[i] = CSS_MISURA_NO;
 }
 
@@ -224,6 +225,93 @@ static int leggi_misura(const char *v, unsigned int n, int *out)
 }
 
 /* -----------------------------------------------------------------------------
+ * font-family: da un elenco di nomi a una delle tre facce che abbiamo
+ *
+ * ! SI SCORRE L'ELENCO E CI SI FERMA AL PRIMO NOME CHE SI CONOSCE. E' l'ordine
+ * di preferenza del CSS: «Georgia, Times, serif» vuol dire «Georgia se ce
+ * l'hai, se no Times, se no una con le grazie qualunque». Fermarsi al primo
+ * riconosciuto rispetta quella scala; guardare solo la generica in coda
+ * butterebbe via l'informazione piu' precisa.
+ *
+ * ! E I NOMI VERI CONTANO QUANTO LE GENERICHE, perche' meta' del web non
+ * scrive mai la generica: «font-family: Courier New» e basta e' comunissimo, e
+ * senza i nomi propri quel testo resterebbe proporzionale — cioe' il caso in
+ * cui il monospazio serve davvero.
+ * --------------------------------------------------------------------------- */
+typedef struct { const char *nome; unsigned char fam; } FamNota;
+
+static const FamNota FAMIGLIE[] = {
+    /* monospazio */
+    { "monospace",       CSS_FAM_FISSO }, { "courier",     CSS_FAM_FISSO },
+    { "courier new",     CSS_FAM_FISSO }, { "consolas",    CSS_FAM_FISSO },
+    { "monaco",          CSS_FAM_FISSO }, { "menlo",       CSS_FAM_FISSO },
+    { "liberation mono", CSS_FAM_FISSO }, { "dejavu sans mono", CSS_FAM_FISSO },
+    { "lucida console",  CSS_FAM_FISSO }, { "andale mono", CSS_FAM_FISSO },
+    { "ui-monospace",    CSS_FAM_FISSO },
+    /* senza grazie */
+    { "sans-serif",      CSS_FAM_SANS  }, { "arial",       CSS_FAM_SANS  },
+    { "helvetica",       CSS_FAM_SANS  }, { "helvetica neue", CSS_FAM_SANS },
+    { "verdana",         CSS_FAM_SANS  }, { "tahoma",      CSS_FAM_SANS  },
+    { "segoe ui",        CSS_FAM_SANS  }, { "roboto",      CSS_FAM_SANS  },
+    { "liberation sans", CSS_FAM_SANS  }, { "dejavu sans", CSS_FAM_SANS  },
+    { "open sans",       CSS_FAM_SANS  }, { "noto sans",   CSS_FAM_SANS  },
+    { "system-ui",       CSS_FAM_SANS  }, { "ui-sans-serif", CSS_FAM_SANS },
+    { "calibri",         CSS_FAM_SANS  }, { "trebuchet ms", CSS_FAM_SANS },
+    /* con le grazie */
+    { "serif",           CSS_FAM_SERIF }, { "times",       CSS_FAM_SERIF },
+    { "times new roman", CSS_FAM_SERIF }, { "georgia",     CSS_FAM_SERIF },
+    { "garamond",        CSS_FAM_SERIF }, { "liberation serif", CSS_FAM_SERIF },
+    { "dejavu serif",    CSS_FAM_SERIF }, { "noto serif",  CSS_FAM_SERIF },
+    { "ui-serif",        CSS_FAM_SERIF }, { "cambria",     CSS_FAM_SERIF },
+    { 0, 0 }
+};
+
+/* Un nome dell'elenco, senza spazi ai bordi e senza virgolette. */
+static int fam_uguale(const char *v, unsigned int n, const char *nome)
+{
+    unsigned int i = 0;
+
+    while (nome[i]) {
+        if (i >= n) return 0;
+        if (minusc((unsigned char)v[i]) != nome[i]) return 0;
+        i++;
+    }
+    return i == n;
+}
+
+static int leggi_famiglia(const char *v, unsigned int n, unsigned int *out)
+{
+    unsigned int i = 0;
+
+    while (i < n) {
+        unsigned int a, b, k;
+
+        while (i < n && (v[i] == ' ' || v[i] == '\t' ||
+                         v[i] == '"' || v[i] == '\'')) i++;
+        a = i;
+        while (i < n && v[i] != ',') i++;
+        b = i;
+        if (i < n) i++;                      /* la virgola */
+
+        /* via gli spazi e le virgolette in coda */
+        while (b > a && (v[b - 1] == ' ' || v[b - 1] == '\t' ||
+                         v[b - 1] == '"' || v[b - 1] == '\'')) b--;
+        if (b <= a) continue;
+
+        for (k = 0; FAMIGLIE[k].nome; k++)
+            if (fam_uguale(v + a, b - a, FAMIGLIE[k].nome)) {
+                *out = FAMIGLIE[k].fam;
+                return 1;
+            }
+    }
+
+    /* ! NESSUN NOME RICONOSCIUTO: LA DICHIARAZIONE SI BUTTA, e non si ripiega
+     * sul serif. Buttarla lascia in piedi quella ereditata, che e' quasi sempre
+     * piu' vicina al vero di una scelta presa a caso da noi. */
+    return 0;
+}
+
+/* -----------------------------------------------------------------------------
  * I nomi delle proprieta'
  * --------------------------------------------------------------------------- */
 typedef struct { const char *nome; unsigned short codice; } PropNota;
@@ -241,6 +329,7 @@ static const PropNota PROPRIETA[] = {
     { "margin-right",     CSS_P_MARG_DX    },
     { "margin-bottom",    CSS_P_MARG_SOTTO },
     { "margin-left",      CSS_P_MARG_SX    },
+    { "font-family",      CSS_P_FAMIGLIA   },
     { 0, 0 }
 };
 
@@ -302,6 +391,9 @@ static int leggi_valore(unsigned short prop, const char *v, unsigned int n,
         if (minusc((unsigned char)v[0]) == 'c') { *out = CSS_ALL_CENTRO; return 1; }
         if (minusc((unsigned char)v[0]) == 'r') { *out = CSS_ALL_DX;     return 1; }
         return 0;
+
+    case CSS_P_FAMIGLIA:
+        return leggi_famiglia(v, n, out);
 
     case CSS_P_DISPLAY:
         if (n == 4 && minusc((unsigned char)v[0]) == 'n') { *out = CSS_DISPLAY_NIENTE; return 1; }
@@ -422,6 +514,7 @@ static void css_posa(CssStile *s, unsigned short prop, unsigned int val)
     case CSS_P_SFONDO:     s->sfondo = val;                            break;
     case CSS_P_PESO:       s->grassetto = (unsigned char)val;          break;
     case CSS_P_STILE:      s->corsivo = (unsigned char)val;            break;
+    case CSS_P_FAMIGLIA:   s->famiglia = (unsigned char)val;           break;
     case CSS_P_CORPO:      s->corpo = (short)((int)val - 32768);       break;
     case CSS_P_ALLINEA:    s->allineamento = (unsigned char)val;       break;
     case CSS_P_DISPLAY:    s->display = (unsigned char)val;            break;
@@ -704,6 +797,7 @@ void css_calcola(const CssFoglio *f, const HtmlDoc *d, int nodo,
         out->grassetto    = ereditato->grassetto;
         out->corsivo      = ereditato->corsivo;
         out->allineamento = ereditato->allineamento;
+        out->famiglia     = ereditato->famiglia;   /* il carattere scende */
     }
 
     if (!f || !d || nodo < 0) return;

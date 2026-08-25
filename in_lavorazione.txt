@@ -135,20 +135,64 @@ Da fare, per una pagina web moderna (in ordine di quanto pesa):
    tutte le immagini arrivano, le due schermate finali differiscono di 0 pixel
    nella pagina (solo l'orologio). Questa cosa cambia COME ci si arriva, non
    dove si arriva.
-2. L'ARENA DEL TESTO E' ADESSO IL PRIMO TETTO CHE SI TOCCA, ed e' salita in
-   cima alla lista. Sulla voce «Operating system» di Wikipedia si riempie —
-   «testo 511K» su 512K — e l'albero si tronca a 11807 nodi su 24000: gli altri
-   tetti non c'entrano, e' SOLO il testo. Da li' in giu' la pagina non esiste,
-   comprese le immagini che ci stavano dentro — dopo aver alzato IMM_MAX, il
-   numero di immagini di quella voce e' limitato dalla TRONCATURA, non piu' dal
-   tetto delle immagini.
-   La barra di stato lo dice coi numeri: «albero troncato [nodi 11807/24000,
-   testo 511K/512K, pezzi .../24000]». Il conto della memoria sta in cima a
-   browser.c. Alzare l'arena da 512 KB a 1 MB costa 512 KB fissi e sarebbe la
-   mossa piu' redditizia che resta.
+2. FATTO — L'ARENA, E NON ERA PIENA DI TESTO. Si chiamava «l'arena del testo»
+   e la si credeva stretta per via delle parole. Misurata sulla voce
+   «Operating system» di Wikipedia, quel che ci finisce dentro e':
+       il testo dei nodi     71 KB   15%
+       i nomi dei tag        20 KB    4%
+       gli ATTRIBUTI        386 KB   81%   <-- il grosso
+   cioe' 467 KB contro un tetto di 512. Il testo VISIBILE di quella voce sta in
+   settanta kilobyte: si troncava una pagina di 70 KB di parole perche' non
+   c'era posto per gli attributi. I piu' pesanti sono href (96 KB), class
+   (83 KB), id (54 KB) e title (52 KB).
+   ! E ALZARE LA SOLA ARENA NON SAREBBE BASTATO: quella voce ha circa
+   tredicimilaseicento attributi e ATTR_MAX era dodicimila. Si sarebbe spostata
+   la troncatura di un metro senza toglierla. Adesso arena 1 MB e ATTR_MAX
+   16000, cioe' 512 + 128 KB di BSS in piu'.
+   RISULTATO, in QEMU: la voce di Wikipedia NON SI TRONCA PIU' — «200, 672390
+   byte, 11234 nodi», senza «albero troncato» — e le immagini raggiungibili
+   passano da 15 a tutte e 25. In piu' ricompaiono i segni degli elenchi: sono
+   testo generato, e prima l'arena piena non aveva posto per farli.
+   ! NON SI FILTRANO GLI ATTRIBUTI CHE NON GUARDIAMO, ed e' una scelta. `title`,
+   `typeof`, `about` e i `data-*` sono un centinaio di kilobyte spesi per
+   niente, ma un attributo che non si salva non si puo' piu' chiedere, e la
+   lista di quelli «che non servono» e' esattamente il genere di elenco che ci
+   si dimentica di aggiornare il giorno che serve.
+
+2bis. FATTO — font-family. Il CSS non lo leggeva affatto: ogni pagina usciva in
+   serif, e il monospazio arrivava solo dal TAG (<pre>, <code>). Adesso
+   `font-family` si legge, l'elenco si scorre e ci si ferma al PRIMO nome che si
+   conosce — l'ordine di preferenza del CSS — e si riduce a una delle tre facce
+   che il sistema ha: Liberation Serif, Sans e Mono.
+   ! I NOMI VERI CONTANO QUANTO LE GENERICHE, perche' meta' del web non scrive
+   mai la generica: «font-family: Courier New» e basta e' comunissimo.
+   ! E IL TAG BATTE IL FOGLIO SOLO DOVE IL FOGLIO TACE: dentro <pre> il
+   monospazio e' il predefinito, non un obbligo. Una pagina che scrive
+   `code { font-family: sans-serif }` lo sta chiedendo davvero.
+   Se nessun nome dell'elenco si riconosce la dichiarazione si BUTTA invece di
+   ripiegare sul serif: cosi' resta in piedi quella ereditata, che e' quasi
+   sempre piu' vicina al vero di una scelta presa a caso.
+   FONT_MAX da 12 a 24: le combinazioni si sono triplicate (tre facce per
+   quattro stili fanno gia' dodici prima di contare i corpi) e con dodici
+   caselle una pagina normale le esauriva a meta'.
+   Provato in QEMU su nove casi, tutti giusti — compreso il <code> a cui il
+   foglio chiede sans.
+
 3. colspan/rowspan, @media, le unita' relative, JavaScript: dichiarati fuori.
 4. Le GIF animate mostrano il primo fotogramma, ed e' dichiarato: animarle
    vorrebbe dire un orologio dentro la libreria delle immagini.
 5. La <textarea> prende gli a capo ma non ha un cursore che si muove: si
    scrive in coda e si cancella dalla coda. Un'area vera e' il controllo
    `ex_area` del toolkit, che quel lavoro l'ha gia' fatto.
+6. I FONT COPRONO IL LATINO, IL CIRILLICO E IL GRECO, non il resto. Sulla
+   colonna delle lingue di Wikipedia si leggono Türkce, Tiếng Việt, Татарча,
+   Українська; arabo, ebraico, cinese e giapponese escono come collegamenti
+   VUOTI — sottolineati e senza lettere. Non e' un difetto del lettore
+   TrueType: Liberation quei glifi non ce li ha. Servirebbe un font con una
+   copertura piu' larga (Noto, DejaVu) e la scelta di quanti megabyte
+   spenderci; oggi non e' dichiarato da nessuna parte, e chi guarda pensa che
+   il collegamento sia rotto.
+7. Le entita' numeriche sopra il Latin-1 diventano «?»: &#8212;, le virgolette
+   curve, i puntini di sospensione. E' dichiarato in html.c ed e' coerente col
+   font di sistema a 256 glifi, ma con un TrueType quei caratteri ci sarebbero.
+   Il limite e' nella tabella delle entita', non nel disegno.
