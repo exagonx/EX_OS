@@ -70,6 +70,58 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### Il browser regge una pagina vera: impaginazione, immagini, caratteri, moduli
+
+**testato** — dal CD, in QEMU, sulla voce «Operating system» di Wikipedia (676
+KB) e su pagine costruite apposta.
+
+**La lentezza non era più la rete, era l'impaginazione.** A ogni immagine che
+arrivava si rifaceva l'impaginazione dell'intero documento. Quando l'`<img>`
+dichiara `width` e `height` la misura finale si sa prima di scaricare un byte:
+il posto si tiene subito, e quando l'immagine arriva ci entra senza spostare
+niente. Da 7,0 s a 3,3 s per dodici immagini; e la prova che il testo non si
+muove è pixel per pixel — **zero** pixel cambiati fuori dalla banda delle
+immagini.
+
+**L'arena non era piena di testo: era piena di attributi.** Misurata su quella
+voce: il testo dei nodi 71 KB (15%), i nomi dei tag 20 KB (4%), gli attributi
+386 KB (81%). Si troncava una pagina di 70 KB di parole perché non c'era posto
+per gli attributi. Alzata a 1 MB (e `ATTR_MAX` a 16000, perché quella voce ha
+~13.600 attributi), la pagina **non si tronca più**.
+
+**Quante immagini tenere lo decide la macchina**, non una costante: un
+sedicesimo della memoria libera letta con `meminfo()`. Un tetto fisso era avaro
+su un PC grande e causava `OUT OF MEMORY` su uno da 32 MB. E il posto si
+controlla *prima* di scaricare, così l'immagine che non ci sta non costa né
+rete né CPU.
+
+**`font-family` adesso si legge.** Prima ogni pagina usciva in serif e il
+monospazio arrivava solo dal tag `<pre>`. L'elenco si scorre e ci si ferma al
+primo nome riconosciuto — i nomi veri contano quanto le generiche, perché metà
+del web scrive `font-family: Courier New` e basta.
+
+**I caratteri che mancavano.** Liberation copre 2327 codici, DejaVu 5918: si
+ripiega **carattere per carattere** su DejaVu invece di sostituire il font, così
+il testo resta com'è e si riempiono solo i buchi. Greco, cirillico, ebraico e
+arabo si leggono. E le entità sopra il Latin-1 — `&#8212;`, le virgolette
+curve, i puntini — non diventano più `?`.
+
+**`colspan` e `rowspan`**, senza i quali ogni tabella con un'intestazione che
+scavalca due colonne mandava fuori posto tutte le celle dopo di lei.
+
+**E i moduli non ricevevano i tasti.** Non mancava il cursore: mancavano i
+tasti. Il fuoco restava alla barra dell'indirizzo — un controllo del toolkit —
+mentre i campi di una pagina sono rettangoli disegnati, che il fuoco non
+possono averlo. Si scriveva nella barra credendo di scrivere nel modulo. Ora il
+cursore si muove con frecce, Home, Fine e cancellazioni, e si inserisce in
+mezzo al testo.
+
+> **Un difetto del toolkit, non del browser:** quando una casella consumava un
+> tasto, `exwin` rifaceva sfondo e controlli *senza avvisare l'applicazione*,
+> per non svegliarla a ogni lettera. Giusto per una finestra di soli controlli;
+> per una che disegna anche del suo, quel disegno spariva a ogni tasto battuto.
+> Riguarda ogni programma che mescoli controlli e disegno proprio.
+
 ### Utenti veri: due conti, `sudo`, e un recovery quando l'accesso è rotto
 
 **testato** — installazione da zero su ext2, i due conti chiesti e creati, poi

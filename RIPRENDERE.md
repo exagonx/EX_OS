@@ -1,3 +1,103 @@
+# DOVE RIPRENDERE — 25 agosto 2026
+
+## 25 agosto 2026 — il browser: impaginazione, immagini, caratteri, moduli
+
+Quattro giri in un giorno, e tre di loro sono nati da una misura che ha
+smentito il nome della cosa. In ordine.
+
+### 1. Il posto tenuto in anticipo (commit `a16832c`)
+
+Una pagina di Wikipedia con nove immagini impiegava minuti, e non era piu' la
+rete: a **ogni** immagine che arrivava si rifaceva `impagina()` su
+ventiquattromila pezzi. Quando l'`<img>` dichiara `width` e `height` la misura
+finale si sa PRIMA di scaricare un byte: si tiene il posto gia' giusto, e
+quando l'immagine arriva ci entra dentro senza spostare niente — allora si
+**ridisegna** soltanto.
+
+    fra la prima immagine e la dodicesima      7,0 s  ->  3,3 s
+    per immagine                             ~0,45 s  -> ~0,06 s
+
+E la prova che non si sposta niente e' pixel per pixel: fra la schermata coi
+soli riquadri riservati e quella con tutte le immagini arrivate cambiano 60800
+pixel DENTRO la banda delle immagini e **zero** fuori. La stessa pagina senza
+`width`/`height` ne cambia 7191 — cioe' la misura sa vedere il movimento.
+
+! **E QUELLA CORREZIONE NE HA SVELATA UN'ALTRA.** Confrontando le due build
+sulla stessa voce, quella che reimpaginava di MENO mostrava PIU' contenuto.
+`impagina()` azzerava tutto quel che produce — pezzi, collegamenti, moduli,
+sfondi — ma **non** `g_ctrl_n`: ogni giro accodava una copia dei controlli, e
+oltre `CTRL_MAX` (64) `impagina_nodo` rinunciava al controllo **e a tutto il
+sottoalbero sotto di lui**. Spariva pagina anche lontano dai moduli.
+
+### 2. Le immagini non le conta piu' una costante (commit `f5b2b1a`)
+
+`IMM_MAX` valeva dodici e sembrava il limite. Non lo era: una casella di quel
+elenco costa l'indirizzo che ci sta dentro (600 byte), non i pixel — quelli li
+contava `IMM_PX_TOT`. Sulla voce «Operating system» le immagini con le misure
+dichiarate sono venticinque e, dopo il cap alla finestra, ne vogliono 2,2
+milioni: con mezzo milione ne entravano **cinque**.
+
+Alzando quella costante a un milione la macchina da 32 MB finiva le pagine
+fisiche (`[ERROR] PMM: OUT OF MEMORY`). Un tetto fisso e' sbagliato in tutt'e
+due i versi, quindi adesso **lo sceglie la macchina**: un sedicesimo della
+memoria libera letta con `meminfo()`, fra 256K e 2048K pixel. E il posto si
+controlla PRIMA di scaricare, non dopo.
+
+### 3. L'arena non era piena di testo (commit `f1d96bc`)
+
+Si chiamava «l'arena del testo». Misurata:
+
+    il testo dei nodi     71 KB   15%
+    i nomi dei tag        20 KB    4%
+    gli ATTRIBUTI        386 KB   81%
+
+Si troncava una pagina di 70 KB di parole perche' non c'era posto per gli
+attributi. E alzare la sola arena non sarebbe bastato: quella voce ha ~13.600
+attributi contro un `ATTR_MAX` di 12.000. Adesso arena 1 MB e ATTR_MAX 16000 —
+la voce di Wikipedia **non si tronca piu'** (11234 nodi) e le immagini
+raggiungibili passano da 15 a tutte e 25.
+
+Nello stesso giro: **`font-family`**, che il CSS non leggeva affatto. Ogni
+pagina usciva in serif e il monospazio arrivava solo dal tag. Adesso l'elenco
+si scorre e ci si ferma al primo nome che si conosce, riducendolo a Serif /
+Sans / Mono. Il tag batte il foglio solo dove il foglio tace.
+
+### 4. Caratteri, tabelle e moduli — da commettere
+
+**Il ripiego dei font.** Liberation copre 2327 codici, DejaVu 5918. Non si
+sostituisce il font: si **ripiega carattere per carattere**, come fa ogni
+sistema con un fontconfig — il testo resta com'e' e si riempiono solo i buchi.
+`exttf_ha_glifo` e' nuova in `exfont.so`, e non e' fra i simboli obbligatori:
+una exfont.so piu' vecchia non ce l'ha e semplicemente non ripiega.
+
+**Le entita' sopra il Latin-1** diventavano `?`: `&#8212;`, le virgolette
+curve, i puntini. La ragione era vera quando fu scritta — il font di sistema ha
+256 glifi — ma il testo delle pagine lo disegna un TrueType. Il posto giusto
+per perdere un carattere e' il disegno, non il lettore: adesso l'arena tiene il
+codice in UTF-8.
+
+**colspan e rowspan.** Senza, ogni tabella con un'intestazione che scavalca due
+colonne mandava fuori posto tutte le celle dopo di lei. L'altezza di una cella
+che scavalca si divide fra le righe che occupa, e serve una mappa di cio' che
+e' gia' occupato — non un contatore di celle.
+
+**E i moduli non ricevevano i tasti.** La voce diceva «la `<textarea>` non ha
+un cursore»: non era il cursore a mancare, erano i **tasti**. `ex_fuoco(g_url)`
+all'avvio da il fuoco a un controllo del toolkit, e da quel momento ogni tasto
+e' suo — i controlli della pagina sono rettangoli disegnati, non finestre,
+quindi non potevano averlo. Si scriveva nella barra dell'indirizzo credendo di
+scrivere nel modulo. Ora c'e' `ex_fuoco_via()` nel toolkit.
+
+! **E SOTTO C'ERA UN DIFETTO DEL TOOLKIT**, che riguarda ogni programma e non
+solo il browser: quando una casella consumava un tasto, `exwin` rifaceva sfondo
+e controlli **senza avvisare l'applicazione** — «per non svegliarla a ogni
+lettera». Giusto per una finestra di soli controlli; per una che disegna anche
+del suo, quel disegno spariva a ogni tasto. Bastava scrivere nella barra
+dell'indirizzo per far sparire la pagina. Adesso il messaggio arriva: costa un
+`EXM_DISEGNA` per tasto battuto, non per pixel di mouse mosso.
+
+---
+
 # DOVE RIPRENDERE — 24 agosto 2026
 
 ## Lo stato in una riga

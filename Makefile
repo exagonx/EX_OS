@@ -4756,7 +4756,7 @@ verifica-dipendenze-cd:
 	echo "[OK] ogni driver del CD e' fra le dipendenze dell'ISO"
 
 $(ISOX_IMG): Makefile $(FLOPPY_IMG) boot/autoexec.sh boot/avvio.sh $(DRIVER_SOLO_CD_OUT) \
-             $(FONT_TTF) $(FONT_TTF_DIR)/LICENSE \
+             $(FONT_TTF) $(FONT_TTF_DIR)/LICENSE $(FONT_TTF_DIR)/LICENSE.DejaVu \
              $(EXWIN_OUT) $(EXWIN_APPLIST) $(PROVA_PNG) $(PROVA_ICO) $(PROVA_JPG) \
              $(WSERVER_OUT) \
              $(BINARI_SOLO_CD) $(ISO_MKISO) README.md README.en.md \
@@ -4808,7 +4808,13 @@ $(ISOX_IMG): Makefile $(FLOPPY_IMG) boot/autoexec.sh boot/avvio.sh $(DRIVER_SOLO
 	@# copiando. Vedi exwin/font/leggimi.md.
 	@mkdir -p $(ISOX_ROOT)/exwin/font
 	@cp $(FONT_TTF) $(ISOX_ROOT)/exwin/font/ 2>/dev/null || true
-	@cp $(FONT_TTF_DIR)/LICENSE $(FONT_TTF_DIR)/AUTHORS $(ISOX_ROOT)/exwin/font/
+	@# ! E LA LICENZA DI DEJAVU E' UN FILE A PARTE, perche' e' un'ALTRA
+	@# licenza: Liberation sta sotto la OFL, DejaVu sotto la Bitstream Vera.
+	@# Metterle nello stesso LICENSE avrebbe fatto sembrare che valgano per
+	@# tutti e due i font, che e' proprio quel che una licenza non deve
+	@# lasciar credere.
+	@cp $(FONT_TTF_DIR)/LICENSE $(FONT_TTF_DIR)/AUTHORS \
+	    $(FONT_TTF_DIR)/LICENSE.DejaVu $(ISOX_ROOT)/exwin/font/
 	@# Le immagini di prova dei lettori: vedi PROVE_IMG_DIR.
 	@cp $(PROVA_PNG) $(ISOX_ROOT)/exwin/prova.png
 	@cp $(PROVA_ICO) $(ISOX_ROOT)/exwin/prova.ico

@@ -15,184 +15,35 @@ Da CD, un driver ogni tanto muore appena avviato (raro, non chiuso).
     riprodotto, quindi la misura non distingue. Se il fault ricompare, il
     [WARN] dira' se e' quella strada o un'altra.
 
-CHIUSO — «il BIO di file di OpenSSL non legge i file di EX-OS» NON ERA UN BUG.
-    SSL_CTX_load_verify_locations rendeva error:05880020 «x509 certificate
-    routines::BIO lib», e per settimane il sospetto e' stato la nostra stdio.
-    Non lo era, e ci sono voluti due passi per dimostrarlo:
-      1. `libctest` apre QUEL file — 224 KB, su ISO 9660 — con la sola stdio e
-         lo legge fino in fondo: fread, feof, ferror, fseek, ftell, tutto
-         giusto. Il sospetto scritto qui era sbagliato.
-      2. Guardando crypto/o_fopen.c: con OPENSSL_NO_STDIO definito,
-         `openssl_fopen` rende NULL SEMPRE — e BIO_C_SET_FILENAME alza
-         esattamente quell'errore. La nostra OpenSSL e' configurata `no-stdio`
-         (vedi tools/openssl-exos/prepara-openssl.sh), quindi il BIO di file
-         NON PUO' funzionare per costruzione.
-    Non c'e' niente da riparare: leggere il file con open/read e passarlo a un
-    BIO di memoria — cio' che fa tools/iso/prova-tls.c — e' la strada giusta
-    per una libreria costruita senza stdio, non un aggiramento.
-
-CHIUSO — «make prova-tls» NON PROVAVA PIU' LA CATENA DEI CERTIFICATI, e non lo
-    diceva. Si fermava su «excert.c:21: excurva.h: File o directory non
-    esistente»: quando excert ha imparato ECDSA, tools/prove/certprova.py non
-    e' stato aggiornato — mancavano -I lib/excurva e -I lib/excrypt, e mancava
-    il ponte `sha384` in certprova.c (c'era solo quello di sha256, e P-384
-    firma con SHA-384). Stessa cosa per tlsprova.py: extls.h tira dentro
-    excert.h, che tira excurva.h ed excrypt.h.
-    ! UNA PROVA CHE NON PARTE NON FALLISCE, TACE — ed e' molto peggio di una
-    rossa. Per settimane il pezzo che, se manca, «rende il TLS peggio del testo
-    in chiaro» (parole del Makefile) non e' stato provato nemmeno una volta.
-    Adesso gira di nuovo: 10 su 10, e l'intero prova-tls e' verde.
-
-CHIUSO — QUATTRO BANCHI DELL'HOST STAVANO FUORI DAL Makefile. htmlprova,
-    cssprova, httpprova e ttfprova si compilavano a mano, con la riga scritta
-    nel commento in cima al file; nessun bersaglio li chiamava. Quella di
-    ttfprova era rimasta indietro di uno split — raster.c era uscito da ttf.c e
-    non era stata aggiunta — quindi il banco non si collegava piu', e nessuno
-    se n'era accorto perche' niente lo chiamava.
-    Adesso c'e' `make prove-host` (prova-exhtml, prova-excss, prova-exhttp,
-    prova-exfont). Tutti verdi: html ok, css 40 su 40, http ok, e il lettore
-    TrueType legge tutti i font di exwin/font.
-
-CHIUSO — I CONTROLLI DEI MODULI SI MOLTIPLICAVANO A OGNI REIMPAGINAZIONE, e a
-    un certo punto sparivano. `impagina()` azzera tutto quello che produce —
-    pezzi, collegamenti, moduli, sfondi — ma NON `g_ctrl_n`, che si azzerava
-    solo al caricamento di una pagina nuova. Ogni giro accodava una copia dei
-    controlli: sei reimpaginazioni di una pagina con dodici caselle ne facevano
-    settantadue, e oltre CTRL_MAX (64) `impagina_nodo` RINUNCIAVA — non solo al
-    controllo, ma a tutto il sottoalbero sotto di lui.
-    ! IL SINTOMO NON SOMIGLIAVA ALLA CAUSA: sparivano pezzi di pagina anche
-    lontani dai moduli, e solo sulle pagine con molte immagini — cioe' quelle
-    che si reimpaginano tante volte. Provato con una pagina di sei immagini
-    senza misure (sei reimpaginazioni) e dodici caselle: col binario di prima
-    si vedono le dodici etichette e NESSUNA casella; con la correzione tutte e
-    dodici.
-    ! E SI E' TROVATO PER CASO, confrontando due build sulla stessa voce di
-    Wikipedia: quella che reimpaginava di MENO mostrava PIU' contenuto — che e'
-    il contrario di quello che ci si aspetta da un'ottimizzazione, ed e' il
-    genere di stranezza che conviene inseguire invece che spiegare via.
-    In piu' adesso quel che si e' scritto in una casella SOPRAVVIVE alla
-    reimpaginazione: lo slot si riconosce dal nodo che l'ha generato. Prima
-    un'immagine che arrivava mentre si compilava un modulo cancellava il campo
-    sotto le dita, e il colpevole sembrava la tastiera.
-
-CHIUSO — IMM_MAX ERA DODICI, MA NON ERA LUI IL TETTO CHE SI TOCCAVA. Alzarlo e
-    basta non avrebbe cambiato NIENTE: una casella di quell'elenco costa
-    l'indirizzo che ci sta dentro (600 byte), non i pixel, e i pixel li contava
-    un'altra costante — IMM_PX_TOT, mezzo milione. Sulla voce «Operating
-    system» di Wikipedia le immagini con le misure dichiarate sono venticinque
-    e, dopo il cap alla finestra, ne vogliono 2,2 milioni: con mezzo milione ne
-    entravano CINQUE.
-    ! E ALZANDO QUELLA COSTANTE A UN MILIONE LA MACCHINA DA 32 MB FINIVA LE
-    PAGINE FISICHE: «[ERROR] PMM: OUT OF MEMORY». Il browser reggeva — l'immagine
-    che non entra si salta e al suo posto si legge l'`alt` — ma un tetto fisso
-    e' sbagliato in tutt'e due i versi: avaro su una macchina grande, troppo su
-    una piccola.
-    Adesso il tetto si SCEGLIE ALL'AVVIO, un sedicesimo della memoria libera
-    letta con meminfo(), fra un quarto di milione e due milioni di pixel. E il
-    posto si controlla PRIMA di scaricare, non dopo: quando la pagina ha
-    dichiarato width e height la misura finale si sa gia', quindi l'immagine
-    che non ci sta non costa piu' ne' rete ne' CPU per finire buttata.
-    Misurato su una pagina di trenta immagini 200x150:
-        32 MB   12 immagini,  zero OOM
-        48 MB   21 immagini,  zero OOM   [9 immagini fuori: pixel 615K/617K]
-    Prima erano dodici in tutt'e due i casi, e su una pagina grande arrivava
-    l'OOM. La barra di stato adesso lo DICE, coi numeri, come per l'albero
-    troncato.
 
 Da fare, per una pagina web moderna (in ordine di quanto pesa):
-1. FATTO — LA LENTEZZA DELL'IMPAGINAZIONE. Si e' presa la seconda strada di
-   quelle scritte qui: non l'impaginazione incrementale, ma il posto tenuto in
-   anticipo. Quando l'`<img>` dichiara `width` e `height`, la misura finale si
-   sa PRIMA di scaricare un byte: si riserva il posto gia' della misura
-   giusta, e quando l'immagine arriva ci entra dentro senza spostare niente —
-   allora si ridisegna soltanto, e `impagina()` non si rifa'. Se la misura non
-   combacia, o non era dichiarata, si reimpagina come prima: una misura
-   diversa sposta tutto quello che viene dopo, e disegnare sopra
-   un'impaginazione vecchia darebbe testo sovrapposto.
-   Il posto riservato si VEDE, come riquadro grigio incavato, e si ritaglia
-   all'area del documento esattamente come l'immagine che aspetta — ex_riempi
-   ritaglia alla FINESTRA, e un riquadro alto quanto l'area non ci sta mai per
-   intero: disegnarlo solo quando ci sta tutto lo faceva sparire proprio
-   mentre lo si scorreva.
-   MISURATO IN QEMU, il 25 agosto 2026, sulla voce «Operating system» di
-   Wikipedia (676 KB, albero troncato a 11807 nodi, 12 immagini — IMM_MAX e'
-   12) servita da un server locale, cosi' che il tempo misurato sia
-   impaginazione e non rete. Confronto fra il binario di HEAD e questo:
 
-       fra la prima immagine e la dodicesima   7,0 s  ->  3,3 s
-       gli undici intervalli, tolto uno stallo
-       di ~2,5 s che c'e' in tutt'e due        5,0 s  ->  0,7 s
-       cioe' per immagine                    ~0,45 s  -> ~0,06 s
+1. GLI SCRIPT DI COLLEGAMENTO CJK, e cioe' i font. Cinese, giapponese,
+   coreano, devanagari e thai escono come collegamenti VUOTI — sottolineati e
+   senza lettere. Non e' il lettore TrueType: ne' Liberation ne' DejaVu hanno
+   quei glifi, e chi li ha (Noto CJK) pesa venti megabyte su un CD che ne pesa
+   dieci. Le strade sono due, e nessuna e' gratis: un font CJK ridotto ai soli
+   caratteri comuni, oppure dichiararlo a schermo invece che lasciare un
+   collegamento vuoto che sembra rotto.
 
-   E LA PROVA CHE NON SI SPOSTA NIENTE e' pixel per pixel: due schermate della
-   stessa pagina, una coi soli riquadri riservati e una con tutte le immagini
-   arrivate, differiscono in 60800 pixel DENTRO la banda delle immagini, 33
-   nell'orologio della barra e 22 sul puntatore. Fuori di li': ZERO. La stessa
-   pagina senza `width`/`height` ne cambia 7191 — cioe' la misura sa vedere il
-   movimento, e con le misure dichiarate non ce n'e'.
+2. @media, le unita' relative (em, %, rem) e JavaScript: dichiarati fuori.
+   Le unita' relative sono le piu' vicine a essere fattibili — `font-size`
+   accetta solo i pixel — ma vogliono la misura del contenitore, che
+   l'impaginazione a penna corrente non ha in mano quando serve.
 
-   ! E IL RISULTATO FINALE E' IDENTICO al binario di prima: sulla pagina in cui
-   tutte le immagini arrivano, le due schermate finali differiscono di 0 pixel
-   nella pagina (solo l'orologio). Questa cosa cambia COME ci si arriva, non
-   dove si arriva.
-2. FATTO — L'ARENA, E NON ERA PIENA DI TESTO. Si chiamava «l'arena del testo»
-   e la si credeva stretta per via delle parole. Misurata sulla voce
-   «Operating system» di Wikipedia, quel che ci finisce dentro e':
-       il testo dei nodi     71 KB   15%
-       i nomi dei tag        20 KB    4%
-       gli ATTRIBUTI        386 KB   81%   <-- il grosso
-   cioe' 467 KB contro un tetto di 512. Il testo VISIBILE di quella voce sta in
-   settanta kilobyte: si troncava una pagina di 70 KB di parole perche' non
-   c'era posto per gli attributi. I piu' pesanti sono href (96 KB), class
-   (83 KB), id (54 KB) e title (52 KB).
-   ! E ALZARE LA SOLA ARENA NON SAREBBE BASTATO: quella voce ha circa
-   tredicimilaseicento attributi e ATTR_MAX era dodicimila. Si sarebbe spostata
-   la troncatura di un metro senza toglierla. Adesso arena 1 MB e ATTR_MAX
-   16000, cioe' 512 + 128 KB di BSS in piu'.
-   RISULTATO, in QEMU: la voce di Wikipedia NON SI TRONCA PIU' — «200, 672390
-   byte, 11234 nodi», senza «albero troncato» — e le immagini raggiungibili
-   passano da 15 a tutte e 25. In piu' ricompaiono i segni degli elenchi: sono
-   testo generato, e prima l'arena piena non aveva posto per farli.
-   ! NON SI FILTRANO GLI ATTRIBUTI CHE NON GUARDIAMO, ed e' una scelta. `title`,
-   `typeof`, `about` e i `data-*` sono un centinaio di kilobyte spesi per
-   niente, ma un attributo che non si salva non si puo' piu' chiedere, e la
-   lista di quelli «che non servono» e' esattamente il genere di elenco che ci
-   si dimentica di aggiornare il giorno che serve.
-
-2bis. FATTO — font-family. Il CSS non lo leggeva affatto: ogni pagina usciva in
-   serif, e il monospazio arrivava solo dal TAG (<pre>, <code>). Adesso
-   `font-family` si legge, l'elenco si scorre e ci si ferma al PRIMO nome che si
-   conosce — l'ordine di preferenza del CSS — e si riduce a una delle tre facce
-   che il sistema ha: Liberation Serif, Sans e Mono.
-   ! I NOMI VERI CONTANO QUANTO LE GENERICHE, perche' meta' del web non scrive
-   mai la generica: «font-family: Courier New» e basta e' comunissimo.
-   ! E IL TAG BATTE IL FOGLIO SOLO DOVE IL FOGLIO TACE: dentro <pre> il
-   monospazio e' il predefinito, non un obbligo. Una pagina che scrive
-   `code { font-family: sans-serif }` lo sta chiedendo davvero.
-   Se nessun nome dell'elenco si riconosce la dichiarazione si BUTTA invece di
-   ripiegare sul serif: cosi' resta in piedi quella ereditata, che e' quasi
-   sempre piu' vicina al vero di una scelta presa a caso.
-   FONT_MAX da 12 a 24: le combinazioni si sono triplicate (tre facce per
-   quattro stili fanno gia' dodici prima di contare i corpi) e con dodici
-   caselle una pagina normale le esauriva a meta'.
-   Provato in QEMU su nove casi, tutti giusti — compreso il <code> a cui il
-   foglio chiede sans.
-
-3. colspan/rowspan, @media, le unita' relative, JavaScript: dichiarati fuori.
-4. Le GIF animate mostrano il primo fotogramma, ed e' dichiarato: animarle
+3. Le GIF animate mostrano il primo fotogramma, ed e' dichiarato: animarle
    vorrebbe dire un orologio dentro la libreria delle immagini.
-5. La <textarea> prende gli a capo ma non ha un cursore che si muove: si
-   scrive in coda e si cancella dalla coda. Un'area vera e' il controllo
-   `ex_area` del toolkit, che quel lavoro l'ha gia' fatto.
-6. I FONT COPRONO IL LATINO, IL CIRILLICO E IL GRECO, non il resto. Sulla
-   colonna delle lingue di Wikipedia si leggono Türkce, Tiếng Việt, Татарча,
-   Українська; arabo, ebraico, cinese e giapponese escono come collegamenti
-   VUOTI — sottolineati e senza lettere. Non e' un difetto del lettore
-   TrueType: Liberation quei glifi non ce li ha. Servirebbe un font con una
-   copertura piu' larga (Noto, DejaVu) e la scelta di quanti megabyte
-   spenderci; oggi non e' dichiarato da nessuna parte, e chi guarda pensa che
-   il collegamento sia rotto.
-7. Le entita' numeriche sopra il Latin-1 diventano «?»: &#8212;, le virgolette
-   curve, i puntini di sospensione. E' dichiarato in html.c ed e' coerente col
-   font di sistema a 256 glifi, ma con un TrueType quei caratteri ci sarebbero.
-   Il limite e' nella tabella delle entita', non nel disegno.
+
+4. I BORDI DELLE TABELLE non si disegnano. `border` non si legge e le celle
+   non hanno un contorno: su una tabella di dati si distinguono le colonne
+   dall'incolonnamento e basta. colspan e rowspan invece ci sono.
+
+5. L'ARABO E L'EBRAICO SI VEDONO MA VANNO NEL VERSO SBAGLIATO. I glifi ci
+   sono (DejaVu), ma si impaginano da sinistra a destra come tutto il resto:
+   una riga di arabo si legge al contrario. Il BiDi non c'e' ed e' un lavoro
+   suo, non un ritocco.
+
+6. IL CURSORE NON SI PIAZZA COL MOUSE. Nelle caselle e nelle aree si muove
+   con le frecce, Home, Fine e le cancellazioni; un clic dentro il testo pero'
+   da' il fuoco alla casella e mette il cursore in fondo, non nel punto in cui
+   si e' cliccato.

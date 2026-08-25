@@ -64,6 +64,42 @@ static void arena_car(HtmlDoc *d, int c)
     d->arena[d->arena_n++] = (char)c;
 }
 
+/* =============================================================================
+ * ! UN CODICE UNICODE NELL'ARENA SI SCRIVE IN UTF-8, non in un byte.
+ *
+ * Prima le entita' numeriche sopra il Latin-1 diventavano «?»: `&#8212;` — il
+ * trattino lungo — le virgolette curve e i puntini di sospensione sono su ogni
+ * pagina scritta bene, e uscivano tutti come punti interrogativi. La ragione
+ * era vera quando fu scritta: il font di sistema ha 256 glifi. Ma il testo
+ * delle pagine non lo disegna piu' quello — lo disegna un TrueType, che quei
+ * caratteri ce li ha — e chi non ce li ha ripiega su un altro font.
+ *
+ * ! IL POSTO GIUSTO PER PERDERE UN CARATTERE E' IL DISEGNO, NON IL LETTORE.
+ * Qui si conserva quel che la pagina ha scritto; sara' chi ha il font a dire
+ * se sa mostrarlo. Buttarlo qui vorrebbe dire che nemmeno un font completo
+ * potrebbe piu' recuperarlo.
+ * ========================================================================== */
+static void arena_codice(HtmlDoc *d, unsigned int u)
+{
+    if (u < 0x80) { arena_car(d, (int)u); return; }
+
+    if (u < 0x800) {
+        arena_car(d, (int)(0xC0 | (u >> 6)));
+        arena_car(d, (int)(0x80 | (u & 0x3F)));
+        return;
+    }
+    if (u < 0x10000) {
+        arena_car(d, (int)(0xE0 | (u >> 12)));
+        arena_car(d, (int)(0x80 | ((u >> 6) & 0x3F)));
+        arena_car(d, (int)(0x80 | (u & 0x3F)));
+        return;
+    }
+    arena_car(d, (int)(0xF0 | (u >> 18)));
+    arena_car(d, (int)(0x80 | ((u >> 12) & 0x3F)));
+    arena_car(d, (int)(0x80 | ((u >> 6) & 0x3F)));
+    arena_car(d, (int)(0x80 | (u & 0x3F)));
+}
+
 static void arena_chiudi(HtmlDoc *d)
 {
     if (d->arena_n + 1 >= d->arena_max) { d->troncato = 1; return; }
@@ -121,10 +157,15 @@ static unsigned int entita(const char *p, unsigned int n, int *car)
         if (cifre == 0) return 0;
         if (k < n && p[k] == ';') k++;
 
-        /* ! OLTRE IL LATIN-1 SI METTE UN PUNTO INTERROGATIVO, e non si tace:
-         * questo sistema dichiara Latin-1 e non ha i glifi per il resto. Un
-         * carattere mancante che si vede e' meglio di uno che sparisce. */
-        *car = (v == 0 || v > 255) ? '?' : (int)v;
+        /* ! IL CODICE SI TIENE PER INTERO: chi lo scrive nell'arena lo mette
+         * in UTF-8, e chi lo disegna ripiega su un altro font se il suo non ha
+         * quel glifo. Qui si rifiuta solo cio' che non e' un carattere: lo
+         * zero, i surrogati (che esistono solo dentro UTF-16) e tutto quello
+         * che sta oltre il piano Unicode. */
+        if (v == 0 || v > 0x10FFFFu || (v >= 0xD800u && v <= 0xDFFFu))
+            *car = '?';
+        else
+            *car = (int)v;
         return k;
     }
 
@@ -299,7 +340,7 @@ int html_analizza(HtmlDoc *d, const char *t, unsigned int n)
                     int          car = 0;
                     unsigned int q = entita(t + i + 1, n - i - 1, &car);
 
-                    if (q) { arena_car(d, car); i += 1 + q; qualcosa = 1; continue; }
+                    if (q) { arena_codice(d, (unsigned int)car); i += 1 + q; qualcosa = 1; continue; }
                 }
 
                 /* ! GLI SPAZI SI RIDUCONO A UNO, ed e' cio' che l'HTML dice di
@@ -451,7 +492,7 @@ int html_analizza(HtmlDoc *d, const char *t, unsigned int n)
                                 int car = 0;
                                 unsigned int k = entita(t + i + 1, n - i - 1, &car);
 
-                                if (k) { arena_car(d, car); i += 1 + k; continue; }
+                                if (k) { arena_codice(d, (unsigned int)car); i += 1 + k; continue; }
                             }
                             arena_car(d, c); i++;
                         }

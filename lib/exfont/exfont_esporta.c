@@ -13,7 +13,7 @@
  * lib/exwin/exwin_esporta.c, e sono due: si aggiunge in fondo, non si toglie
  * mai.
  *
- * ! SEI NOMI, E NESSUNO DI LORO DISEGNA SULLO SCHERMO. Chi guarda questo
+ * ! SETTE NOMI, E NESSUNO DI LORO DISEGNA SULLO SCHERMO. Chi guarda questo
  * elenco capisce la divisione senza leggere altro: si apre un font a un corpo,
  * si chiedono le due linee che servono per andare a capo, quanto avanza un
  * carattere, e dove stanno i suoi byte di copertura. I pixel li accende chi ha
@@ -39,6 +39,7 @@ static const char *const g_nomi[] = {
     "exttf_base",
     "exttf_larghezza_car",
     "exttf_glifo",
+    "exttf_ha_glifo",
     "__lib_avvio"
 };
 
@@ -49,6 +50,7 @@ static void *const g_indirizzi[] = {
     (void *)exttf_base,
     (void *)exttf_larghezza_car,
     (void *)exttf_glifo,
+    (void *)exttf_ha_glifo,
     (void *)__libc_ponti_avvia
 };
 

@@ -64,6 +64,17 @@ int   exttf_base(ExTtf f);
  * e chi disegna ottengono lo stesso numero, sempre. */
 int   exttf_larghezza_car(ExTtf f, unsigned int codice);
 
+/* ! QUESTO FONT HA UN DISEGNO PER QUEL CARATTERE? Rende 1 o 0, e serve a chi
+ * deve decidere se ripiegare su un altro font. Nel TrueType il glifo 0 e' il
+ * «mancante» — il rettangolo vuoto — quindi la domanda si riduce a «la cmap
+ * rende qualcosa di diverso da zero».
+ *
+ * ! SENZA QUESTA DOMANDA IL RIPIEGO NON SI PUO' FARE ONESTAMENTE. Si potrebbe
+ * guardare il glifo restituito e indovinare, ma il rettangolo vuoto E' un
+ * disegno valido: un font che ce l'ha e un font che non ha il carattere
+ * darebbero la stessa risposta. */
+int   exttf_ha_glifo(ExTtf f, unsigned int codice);
+
 /* Il glifo, dalla cache o rasterizzato al momento. Rende il puntatore alla
  * copertura (larghezza * altezza byte) o 0 se il glifo non ha niente da
  * disegnare — lo spazio, per esempio, che NON e' un errore.

@@ -268,6 +268,17 @@ void       ex_misura(ExFinestra f, int w, int h);
  * --------------------------------------------------------------------------- */
 void        ex_fuoco(ExFinestra controllo);
 
+/* ! IL FUOCO A NESSUNO, e serve a chi disegna i propri controlli. `ex_fuoco`
+ * lo puo' dare solo a un controllo del toolkit — un oggetto che lo accetta —
+ * quindi non c'e' modo di dire «da qui in avanti i tasti li voglio io».
+ * Il browser ne aveva bisogno: i controlli di un modulo HTML sono rettangoli
+ * disegnati, non finestre, e finche' la casella dell'indirizzo teneva il fuoco
+ * ogni lettera battuta dentro un modulo finiva nella barra dell'indirizzo.
+ *
+ * Dopo questa chiamata i tasti arrivano alla procedura della finestra come
+ * EXM_TASTO, e chi li vuole se li gestisce. */
+void        ex_fuoco_via(ExFinestra finestra);
+
 /* Il testo di un controllo: lo legge una casella, lo cambia un'etichetta. */
 void        ex_testo_metti(ExFinestra f, const char *s);
 const char *ex_testo_prendi(ExFinestra f);

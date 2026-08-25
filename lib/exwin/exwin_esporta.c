@@ -106,6 +106,8 @@ static const char *const g_nomi[] = {
     "ex_font_trova",
     "ex_font_nome",
 
+    "ex_fuoco_via",
+
     /* L'avvio della libreria: lo chiama chi la apre, non l'applicazione. */
     "__lib_avvio"
 };
@@ -170,6 +172,8 @@ static void *const g_indirizzi[] = {
 
     (void *)ex_font_trova,
     (void *)ex_font_nome,
+
+    (void *)ex_fuoco_via,
 
     (void *)__libc_ponti_avvia
 };

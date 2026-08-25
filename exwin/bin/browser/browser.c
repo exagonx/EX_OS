@@ -294,6 +294,7 @@ typedef struct {
     short         opz_n;        /* quante ne ha */
     short         opz_ora;      /* quale e' scelta adesso */
     int           nodo;         /* il nodo che l'ha generato, -1 se libero */
+    short         cur;          /* dove si sta scrivendo, dentro `valore` */
     char          nome[CTRL_NOME_MAX];   /* l'attributo `name` */
     char          valore[CTRL_VAL_MAX];
 } Ctrl;
@@ -1139,9 +1140,19 @@ static const char CSS_DI_SISTEMA[] =
  * rende illeggibili le pagine vere, e qui non c'e' lo scorrimento
  * orizzontale per rimediare.
  *
- * ! QUELLO CHE NON C'E', DICHIARATO: niente `colspan`/`rowspan` — una cella
- * che ne chiede uno occupa una colonna sola e le altre restano al loro posto,
- * che e' storto ma non disallinea il resto — e niente bordi.
+ * ! `colspan` E `rowspan` CI SONO, e cambiano piu' di quanto sembri: senza,
+ * ogni tabella con un'intestazione che scavalca due colonne — cioe' quasi
+ * tutte quelle vere — mandava fuori posto tutte le celle dopo di lei, non solo
+ * quella. Una cella che scavalca prende la somma delle colonne che occupa piu'
+ * gli spazi in mezzo; e chi scavalca delle RIGHE si tiene la sua colonna per i
+ * giri successivi, che e' il motivo per cui serve una mappa di cio' che e' gia'
+ * occupato invece di un semplice contatore di celle.
+ *
+ * ! L'ALTEZZA DI UNA CELLA CHE SCAVALCA SI DIVIDE FRA LE RIGHE che occupa, non
+ * si scarica tutta sulla prima. Scaricarla sulla prima farebbe una riga alta e
+ * due vuote sotto — il contrario di quel che si vede in una tabella vera.
+ *
+ * ! QUELLO CHE NON C'E', DICHIARATO: i bordi.
  * ============================================================================= */
 #define TAB_COL_MAX     10
 #define TAB_RIG_MAX     120
@@ -1149,6 +1160,21 @@ static const char CSS_DI_SISTEMA[] =
 #define TAB_SPAZIO      8       /* fra una colonna e l'altra */
 
 static int g_tab_liv = 0;
+
+/* Quante colonne (o righe) scavalca questa cella. Sempre almeno una, e con un
+ * tetto: `colspan="9999"` esiste davvero sulle pagine vere, ed e' un modo di
+ * dire «tutta la riga» che non deve poter allocare novemila colonne. */
+static int quanto_scavalca(int nodo, const char *attr)
+{
+    const char  *a = html_attr(&g_doc, nodo, attr);
+    unsigned int v;
+
+    if (!a) return 1;
+    v = numero(a);
+    if (v < 1) return 1;
+    if (v > TAB_COL_MAX) return TAB_COL_MAX;
+    return (int)v;
+}
 
 static int e_riga(const char *n)  { return uguale(n, "tr"); }
 static int e_cella(const char *n) { return uguale(n, "td") || uguale(n, "th"); }
@@ -1223,6 +1249,7 @@ static void impagina_tabella(int v, const CssStile *mio)
 {
     int      righe[TAB_RIG_MAX], n_righe = 0;
     int      largh[TAB_COL_MAX];
+    int      resta[TAB_COL_MAX], debito[TAB_COL_MAX];
     int      n_col = 0, r, c, somma = 0, disp, alt;
     int      x0, y0;
 
@@ -1248,7 +1275,7 @@ static void impagina_tabella(int v, const CssStile *mio)
         for (f = g_doc.nodi[righe[r]].primo_figlio; f >= 0;
              f = g_doc.nodi[f].prossimo) {
             CssStile sc;
-            int      w, a;
+            int      w, a, sp;
 
             if (g_doc.nodi[f].tipo != HTML_ELEMENTO) continue;
             if (!e_cella(html_nome(&g_doc, f))) continue;
@@ -1257,8 +1284,28 @@ static void impagina_tabella(int v, const CssStile *mio)
             css_calcola(&g_css, &g_doc, f, mio, &sc);
             suggerimenti(f, &sc);
             w = impagina_in_colonna(f, &sc, riga_x(), 0, riga_w(), 1, &a);
-            if (w > largh[c]) largh[c] = w;
-            c++;
+
+            sp = quanto_scavalca(f, "colspan");
+            if (c + sp > TAB_COL_MAX) sp = TAB_COL_MAX - c;
+
+            /* ! UNA CELLA CHE SCAVALCA NON ALLARGA UNA COLONNA SOLA. La sua
+             * larghezza si spalma sulle colonne che occupa, e solo per la
+             * parte che quelle non hanno gia': altrimenti un titolo lungo su
+             * due colonne le renderebbe larghe il doppio del necessario. */
+            if (sp <= 1) {
+                if (w > largh[c]) largh[c] = w;
+            } else {
+                int k, gia = 0;
+
+                for (k = 0; k < sp; k++) gia += largh[c + k];
+                gia += (sp - 1) * TAB_SPAZIO;
+                if (w > gia) {
+                    int manca = (w - gia + sp - 1) / sp;
+
+                    for (k = 0; k < sp; k++) largh[c + k] += manca;
+                }
+            }
+            c += sp;
         }
         if (c > n_col) n_col = c;
     }
@@ -1291,38 +1338,97 @@ static void impagina_tabella(int v, const CssStile *mio)
     a_capo();
     y0 = g_pen_y;
 
+    /* ! LA MAPPA DI CIO' CHE E' GIA' OCCUPATO, ed e' tutto cio' che serve per
+     * `rowspan`. `resta[c]` dice per quanti giri ancora la colonna c e' presa
+     * da una cella cominciata sopra; `debito[c]` quanta altezza quella cella
+     * deve ancora coprire, cosi' le righe sotto non si schiacciano. */
+    {
+        int k;
+
+        for (k = 0; k < TAB_COL_MAX; k++) { resta[k] = 0; debito[k] = 0; }
+    }
+
     for (r = 0; r < n_righe; r++) {
         int f, alt_riga_tab = 0;
+
+        /* Quel che una cella cominciata prima pretende da QUESTA riga. */
+        for (c = 0; c < n_col; c++)
+            if (resta[c] > 0) {
+                int q = (debito[c] + resta[c] - 1) / resta[c];
+
+                if (q > alt_riga_tab) alt_riga_tab = q;
+            }
 
         x0 = riga_x();
         c  = 0;
         for (f = g_doc.nodi[righe[r]].primo_figlio; f >= 0;
              f = g_doc.nodi[f].prossimo) {
             CssStile sc;
+            int      sp, rp, largh_cella, k;
 
             if (g_doc.nodi[f].tipo != HTML_ELEMENTO) continue;
             if (!e_cella(html_nome(&g_doc, f))) continue;
+
+            /* ! LE COLONNE GIA' PRESE SI SALTANO, e si salta anche il loro
+             * spazio: e' l'unica cosa che tiene incolonnato quel che viene
+             * dopo una cella che scavalca delle righe. */
+            while (c < n_col && resta[c] > 0) {
+                x0 += largh[c] + TAB_SPAZIO;
+                c++;
+            }
             if (c >= n_col) break;
 
             css_calcola(&g_css, &g_doc, f, mio, &sc);
             suggerimenti(f, &sc);
+
+            sp = quanto_scavalca(f, "colspan");
+            if (c + sp > n_col) sp = n_col - c;
+            if (sp < 1) sp = 1;
+            rp = quanto_scavalca(f, "rowspan");
+
+            largh_cella = 0;
+            for (k = 0; k < sp; k++) largh_cella += largh[c + k];
+            largh_cella += (sp - 1) * TAB_SPAZIO;
 
             /* Lo sfondo della cella si segna PRIMA, con l'altezza rimessa a
              * posto quando la riga e' finita: e' lo stesso giro dei blocchi. */
             if (sc.sfondo != CSS_NIENTE && g_sfondi_n < SFONDI_MAX) {
                 g_sfondi[g_sfondi_n].x = x0;
                 g_sfondi[g_sfondi_n].y = y0;
-                g_sfondi[g_sfondi_n].w = largh[c];
+                g_sfondi[g_sfondi_n].w = largh_cella;
                 g_sfondi[g_sfondi_n].h = 0;
                 g_sfondi[g_sfondi_n].colore = sc.sfondo;
                 g_sfondi_n++;
             }
 
-            impagina_in_colonna(f, &sc, x0, y0, largh[c], 0, &alt);
-            if (alt > alt_riga_tab) alt_riga_tab = alt;
+            impagina_in_colonna(f, &sc, x0, y0, largh_cella, 0, &alt);
 
-            x0 += largh[c] + TAB_SPAZIO;
-            c++;
+            if (rp <= 1) {
+                if (alt > alt_riga_tab) alt_riga_tab = alt;
+            } else {
+                /* Si tiene la colonna per i giri successivi, e ci si porta
+                 * dietro l'altezza che resta da coprire. */
+                int primo = (alt + rp - 1) / rp;
+
+                if (primo > alt_riga_tab) alt_riga_tab = primo;
+
+                /* ! SI SEGNA `rp`, NON `rp - 1`, e la differenza e' un giro
+                 * intero: in fondo a QUESTA riga si decrementa insieme a tutte
+                 * le altre, quindi partire da rp-1 lasciava la colonna libera
+                 * un giro troppo presto. Il sintomo era la cella dell'ultima
+                 * riga che tornava nella colonna della cella che scavalca, e
+                 * ci si scriveva sopra.
+                 *
+                 * Il debito e' l'altezza INTERA: quel che ogni riga copre si
+                 * sottrae in fondo alla riga, sempre nello stesso posto. */
+                for (k = 0; k < sp; k++) {
+                    resta[c + k]  = rp;
+                    debito[c + k] = alt;
+                }
+            }
+
+            x0 += largh_cella + TAB_SPAZIO;
+            c += sp;
         }
 
         /* Gli sfondi di questa riga prendono adesso la loro altezza vera. */
@@ -1334,6 +1440,14 @@ static void impagina_tabella(int v, const CssStile *mio)
                 g_sfondi[k].h = alt_riga_tab;
             }
         }
+
+        /* Le celle che scavalcano hanno consumato un giro. */
+        for (c = 0; c < n_col; c++)
+            if (resta[c] > 0) {
+                debito[c] -= alt_riga_tab;
+                if (debito[c] < 0) debito[c] = 0;
+                resta[c]--;
+            }
 
         y0 += alt_riga_tab;
     }
@@ -1641,6 +1755,19 @@ static void impagina_nodo(int v, const CssStile *ered)
                     o = g_opz[c->opz_primo + c->opz_ora];
                     while (o[q] && q < CTRL_VAL_MAX - 1) { c->valore[q] = o[q]; q++; }
                     c->valore[q] = '\0';
+                }
+
+                /* ! IL CURSORE SI ANCORA QUANDO IL VALORE E' DEFINITIVO, non
+                 * prima: sopra il testo puo' ancora cambiare. Se lo slot era
+                 * gia' suo si tiene dov'era — reimpaginare mentre si scrive
+                 * non deve spostare il punto in cui si sta scrivendo — e se e'
+                 * nuovo si mette in fondo. */
+                {
+                    int q = 0;
+
+                    while (c->valore[q]) q++;
+                    if (!suo || c->cur > (short)q) c->cur = (short)q;
+                    if (c->cur < 0) c->cur = 0;
                 }
             }
 
@@ -2135,6 +2262,7 @@ static void disegna(void)
                 while (mostra[i0] && (riga + 1) * 18 < ch) {
                     char pezzo[CTRL_VAL_MAX];
                     int  q = 0;
+                    int  ini = i0;
 
                     /* ! GLI A CAPO SCRITTI DA CHI DIGITA VALGONO, e vengono
                      * prima del riempimento: un'area che ignora l'Invio
@@ -2148,14 +2276,27 @@ static void disegna(void)
                     ex_scrivi(g_f, cx + 4, y + 3 + riga * 18, pezzo, EX_NERO);
                     riga++;
 
-                    /* Il cursore sta in fondo a cio' che si e' scritto. */
-                    if (g_pez[i].ctrl == g_ctrl_fuoco && !mostra[i0]) {
-                        int cur = cx + 4 +
-                                  ex_larghezza_testo(EX_FONT_SISTEMA, pezzo);
+                    /* ! IL CURSORE STA SULLA RIGA CHE LO CONTIENE. Questo giro
+                     * ha appena impaginato i caratteri da `ini` a `i0`: se il
+                     * punto di scrittura cade li' dentro, il cursore e' su
+                     * QUESTA riga, alla colonna che gli tocca. */
+                    if (g_pez[i].ctrl == g_ctrl_fuoco) {
+                        int cu = g_ctrl[g_pez[i].ctrl].cur;
 
-                        if (cur < cx + cw - 3)
-                            ex_riempi(g_f, cur, y + 3 + (riga - 1) * 18,
-                                      2, 15, EX_NERO);
+                        if (cu >= ini && (cu < i0 || !mostra[i0])) {
+                            static char prima[CTRL_VAL_MAX];
+                            int         j, cur;
+
+                            for (j = 0; j < cu - ini && j < q; j++)
+                                prima[j] = pezzo[j];
+                            prima[j] = '\0';
+
+                            cur = cx + 4 +
+                                  ex_larghezza_testo(EX_FONT_SISTEMA, prima);
+                            if (cur < cx + cw - 3)
+                                ex_riempi(g_f, cur, y + 3 + (riga - 1) * 18,
+                                          2, 15, EX_NERO);
+                        }
                     }
                 }
 
@@ -2172,8 +2313,24 @@ static void disegna(void)
                  * c'e' modo di sapere quale casella prende i tasti — e chi
                  * scrive nel posto sbagliato pensa che la tastiera sia rotta. */
                 if (g_pez[i].ctrl == g_ctrl_fuoco) {
-                    int cur = cx + 4 + ex_larghezza_testo(EX_FONT_SISTEMA, mostra);
+                    /* ! IL CURSORE STA DOVE SI SCRIVE, non in fondo: si misura
+                     * il testo che lo PRECEDE. `mostra` ha un carattere per
+                     * ogni carattere del valore — gli asterischi di una
+                     * password compresi — quindi l'indice vale per tutt'e due. */
+                    /* ! STATICO COME `cop` QUI SOTTO, e per la stessa ragione:
+                     * `disegna` gira dentro un ciclo su ventiquattromila pezzi
+                     * e la sua cornice e' gia' grassa — mostra[], pezzo[] —
+                     * mentre lo stack impegnato al caricamento e' 8 KB. Non
+                     * c'e' ricorsione qui dentro, quindi una copia sola basta. */
+                    static char prima[CTRL_VAL_MAX];
+                    int         q = g_ctrl[g_pez[i].ctrl].cur, j;
+                    int         cur;
 
+                    if (q < 0) q = 0;
+                    for (j = 0; j < q && mostra[j]; j++) prima[j] = mostra[j];
+                    prima[j] = '\0';
+
+                    cur = cx + 4 + ex_larghezza_testo(EX_FONT_SISTEMA, prima);
                     if (cur < cx + cw - 3)
                         ex_riempi(g_f, cur, y + 3, 2, ch - 6, EX_NERO);
                 }
@@ -3635,9 +3792,77 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 
             while (k->valore[n]) n++;
 
-            if (c == 27 || c == '\t')  /* Esc o Tab: si esce dalla casella */ { g_ctrl_fuoco = -1; disegna(); return 0; }
+            /* Esc o Tab: si esce dalla casella, e il fuoco torna dov'era. */
+            if (c == 27 || c == '\t') {
+                g_ctrl_fuoco = -1;
+                ex_fuoco(g_url);
+                disegna();
+                return 0;
+            }
+
+            if (k->cur > (short)n) k->cur = (short)n;
+            if (k->cur < 0)        k->cur = 0;
+
+            /* =================================================================
+             * ! IL CURSORE SI MUOVE, e non e' un lusso. Prima si scriveva solo
+             * in coda e si cancellava solo dalla coda: per correggere la prima
+             * lettera di un indirizzo di posta bisognava cancellare tutto il
+             * resto. E' il genere di cosa che non si nota leggendo il codice e
+             * si nota alla prima riga digitata storta.
+             *
+             * ! DENTRO UN'AREA LE FRECCE SU E GIU' CAMBIANO RIGA, e non
+             * scorrono la pagina: mentre si scrive in un'area, la pagina sotto
+             * non deve muoversi. Fuori da una casella tornano a scorrere, ed e'
+             * il ramo piu' sotto.
+             * ================================================================= */
+            if (c == KBD_K_LEFT)  { if (k->cur > 0) k->cur--; disegna(); return 0; }
+            if (c == KBD_K_RIGHT) { if (k->cur < (short)n) k->cur++; disegna(); return 0; }
+            if (c == KBD_K_HOME)  { k->cur = 0;          disegna(); return 0; }
+            if (c == KBD_K_END)   { k->cur = (short)n;   disegna(); return 0; }
+
+            if (c == KBD_K_UP || c == KBD_K_DOWN) {
+                if (k->tipo == CTRL_AREA) {
+                    int i, ini = 0, col, prec = -1, succ = -1;
+
+                    /* L'inizio della riga di adesso, e quelle intorno. */
+                    for (i = 0; i < (int)k->cur; i++)
+                        if (k->valore[i] == '\n') { prec = ini; ini = i + 1; }
+                    col = (int)k->cur - ini;
+                    for (i = (int)k->cur; k->valore[i]; i++)
+                        if (k->valore[i] == '\n') { succ = i + 1; break; }
+
+                    if (c == KBD_K_UP && prec >= 0) ini = prec;
+                    else if (c == KBD_K_DOWN && succ >= 0) ini = succ;
+                    else { disegna(); return 0; }
+
+                    for (i = 0; i < col && k->valore[ini + i] &&
+                                k->valore[ini + i] != '\n'; i++) { }
+                    k->cur = (short)(ini + i);
+                    disegna();
+                    return 0;
+                }
+                /* In una casella di una riga sola non c'e' dove andare. */
+                return 0;
+            }
+
             if (c == '\b') {
-                if (n > 0) k->valore[n - 1] = '\0';
+                if (k->cur > 0) {
+                    int i;
+
+                    for (i = (int)k->cur - 1; i < n; i++)
+                        k->valore[i] = k->valore[i + 1];
+                    k->cur--;
+                }
+                disegna();
+                return 0;
+            }
+            if (c == KBD_K_DEL) {
+                if ((int)k->cur < n) {
+                    int i;
+
+                    for (i = (int)k->cur; i < n; i++)
+                        k->valore[i] = k->valore[i + 1];
+                }
                 disegna();
                 return 0;
             }
@@ -3652,8 +3877,12 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
             if (c == '\n' || c == '\r') {
                 if (k->tipo == CTRL_AREA) {
                     if (n < CTRL_VAL_MAX - 1) {
-                        k->valore[n]     = '\n';
-                        k->valore[n + 1] = '\0';
+                        int i;
+
+                        for (i = n; i >= (int)k->cur; i--)
+                            k->valore[i + 1] = k->valore[i];
+                        k->valore[k->cur] = '\n';
+                        k->cur++;
                         disegna();
                     }
                     return 0;
@@ -3667,8 +3896,12 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
                 return 0;
             }
             if (c >= 32 && c < 256 && n < CTRL_VAL_MAX - 1) {
-                k->valore[n]     = (char)c;
-                k->valore[n + 1] = '\0';
+                int i;
+
+                for (i = n; i >= (int)k->cur; i--)
+                    k->valore[i + 1] = k->valore[i];
+                k->valore[k->cur] = (char)c;
+                k->cur++;
                 disegna();
             }
             return 0;
@@ -3746,6 +3979,21 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
             }
 
             default:
+                /* =========================================================
+                 * ! IL FUOCO SI TOGLIE ALLA CASELLA DELL'INDIRIZZO, o i tasti
+                 * non arrivano MAI qui. E' il difetto vero dietro la voce
+                 * «la <textarea> non ha un cursore»: non era il cursore a
+                 * mancare, erano i TASTI. `ex_fuoco(g_url)` all'avvio da il
+                 * fuoco a un controllo del toolkit, e da quel momento ogni
+                 * tasto e' suo — i controlli della PAGINA non sono finestre
+                 * del toolkit, quindi non possono averlo e non ricevevano
+                 * niente. Si scriveva nella barra dell'indirizzo credendo di
+                 * scrivere nel modulo.
+                 *
+                 * Dandolo alla finestra si toglie a ogni suo figlio, e i tasti
+                 * tornano al nostro gestore, che sa dei controlli disegnati.
+                 * ========================================================= */
+                ex_fuoco_via(g_f);
                 g_ctrl_fuoco = k;
                 break;
             }

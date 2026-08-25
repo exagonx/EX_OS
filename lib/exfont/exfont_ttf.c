@@ -124,6 +124,14 @@ int exttf_larghezza_car(ExTtf f, unsigned int codice)
     return (m.avanzamento + 32) >> 6;
 }
 
+int exttf_ha_glifo(ExTtf f, unsigned int codice)
+{
+    Istanza *s = (Istanza *)f;
+
+    if (!s) return 0;
+    return ttf_glifo_di(&s->f, codice) != 0;
+}
+
 /* Rasterizza il glifo di `codice` dentro l'elemento di cache `c`. */
 static void prepara(Istanza *s, unsigned int codice, Glifo *c)
 {
