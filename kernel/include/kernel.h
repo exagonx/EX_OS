@@ -76,7 +76,7 @@ typedef struct PACKED {
      * risoluzione richiesta e Stage 2 ha ripiegato sul testo.
      *
      * Vedi il blocco "MODALITA' GRAFICA VESA" in bootloader/stage2/loader.asm
-     * e il comando /bin/svga, che sceglie la risoluzione.
+     * e il comando /dev/svga.drv, che sceglie la risoluzione.
      * ===================================================================== */
     uint32_t    fb_addr;        /* indirizzo fisico del framebuffer, 0 = testo */
     uint32_t    fb_pitch;       /* byte per riga di scansione */

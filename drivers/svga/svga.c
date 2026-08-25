@@ -320,7 +320,7 @@ static int scrivi_cfg(const char *valore)
         if (in_kernel && !fatto && riga[k] == '[') {
             o += snprintf(nuovo + o, CFG_MAX - o,
                           "# Risoluzione della console. La imposta Stage 2\n"
-                          "# prima del modo protetto; la cambia `svga`.\n"
+                          "# prima del modo protetto; la cambia `/dev/svga.drv`.\n"
                           "svga      = %s\n", valore);
             fatto = 1;
         }
@@ -381,7 +381,7 @@ static void mostra(void)
 
     if (bl < 0 || bl > 3) {
         printf("  bootloader   valore %d non valido in %s\n", bl, g_s2);
-        printf("               (si rimette con `svga testo`)\n");
+        printf("               (si rimette con `/dev/svga.drv testo`)\n");
     } else {
         printf("  bootloader   %-9s  %s\n", nome_modo[bl], dice_modo[bl]);
         printf("               in %s\n", g_s2);
@@ -404,7 +404,13 @@ static void mostra(void)
     }
 
     printf("\n  disponibili  testo  640x480  800x600  1024x768\n");
-    printf("\nSi cambia con `svga <modo>`, e vale dal prossimo avvio.\n");
+    /* ! IL NOME PER INTERO, E NON «svga». Questo programma sta in /dev con
+     * l'estensione .drv — cosi' entra nel catalogo dei driver — quindi in
+     * PATH non c'e' nessun `svga` da digitare. Dire un comando che non
+     * esiste e' peggio che non dire niente: chi lo prova si vede
+     * rispondere «comando non trovato» e conclude che manchi il
+     * programma, non la riga. */
+    printf("\nSi cambia con `/dev/svga.drv <modo>`, e vale dal prossimo avvio.\n");
     printf("La modalita' ATTIVA ADESSO la stampa il kernel all'accensione\n");
     printf("(riga \"Video\" del log di avvio).\n");
 }
@@ -487,7 +493,8 @@ int main(int argc, char **argv)
     }
     printf("  scritto %s  (il precedente e' in %s.bak)\n", g_cfg, g_cfg);
 
-    /* ! IL RIAVVIO SI DICE FORTE. Chi ha appena scritto `svga 800x600` si
+    /* ! IL RIAVVIO SI DICE FORTE. Chi ha appena scritto `/dev/svga.drv
+     * 800x600` si
      * aspetta di vedere lo schermo cambiare, e non cambia niente: la
      * modalita' la imposta Stage 2, che ha finito il proprio lavoro
      * all'accensione. Senza questa riga si conclude che il comando non ha

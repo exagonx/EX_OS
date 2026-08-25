@@ -383,7 +383,7 @@ _start:
     ; /boot/kernel.cfg da qui vorrebbe dire un lettore FAT12 in
     ; assembly che funzionerebbe da floppy e non da disco.
     ;
-    ; Il byte lo scrive /bin/svga, che lo trova cercando la firma
+    ; Il byte lo scrive /dev/svga.drv, che lo trova cercando la firma
     ; 'SVGAMODE' dentro LOADER.BIN o STAGE2.BIN. E' lo stesso patto della
     ; mappa di settori: il programma che gira DENTRO EX-OS, e che il
     ; filesystem ce l'ha, prepara qui cio' che serve a chi si avvia.
@@ -597,7 +597,7 @@ _start:
     jmp  .pmloop         ; non dovrebbe mai arrivare qui
 
 ; -----------------------------------------------------------------------------
-; La modalita' grafica voluta, e la firma con cui /bin/svga la trova.
+; La modalita' grafica voluta, e la firma con cui /dev/svga.drv la trova.
 ;
 ; ! LA FIRMA NON E' DECORAZIONE: e' l'unico modo che ha il comando di
 ; sapere DOVE scrivere. Un offset fisso dentro il binario cambierebbe a

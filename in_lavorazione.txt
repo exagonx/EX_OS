@@ -154,7 +154,26 @@ F. FATTO — taglia/copia/incolla nei campi di un modulo del browser.
    Provato dal CD: «CIAO» scelto, Ctrl+Ins, Fine, Shift+Ins -> CIAOMONDOCIAO;
    e con Shift+Canc al posto della copia -> MONDOCIAO.
 
-G. I commenti che nominano `/bin/svga` sono da correggere: il programma sta in
-   `/dev/svga.drv`. Sono in bin/hwconfig/hwconfig.c, kernel/include/cfg.h e
-   bootloader/stage2/loader.asm. Un nome sbagliato in un commento e' il modo
-   in cui si conclude che una cosa non esista — e' successo qui.
+G. FATTO — i riferimenti a `/bin/svga`, che non e' mai esistito.
+   Erano OTTO, non tre: bin/hwconfig/hwconfig.c (due), kernel/fs/cfg.c,
+   kernel/include/cfg.h, kernel/include/kernel.h, kernel/kernel_main.c e
+   bootloader/stage2/loader.asm (due). Il programma sta in `/dev/svga.drv`.
+   ! E C'ERA ANCHE NEI MESSAGGI CHE L'UTENTE LEGGE, che e' il posto peggiore:
+   il programma stesso stampava «Si cambia con `svga <modo>`» e scriveva
+   «la cambia `svga`» dentro il kernel.cfg che genera. In PATH non c'e' nessun
+   `svga`: chi lo digitava si sentiva rispondere «comando non trovato» e ne
+   concludeva che mancasse il programma, non la riga.
+   ! IN cfg.h RESTA UNA CITAZIONE DEL NOME SBAGLIATO, apposta: dice che
+   «/bin/svga» non e' mai esistito e spiega perche' quel programma sta in /dev
+   (l'estensione .drv lo fa entrare nel catalogo dei driver, e `hwconfig -d` lo
+   installa con gli altri). Chi cerchera' il vecchio nome finira' li' invece
+   che in un vicolo cieco — e' successo a me, ed e' costato una conclusione
+   sbagliata scritta in questo file.
+   Controllati anche gli altri percorsi citati nei commenti: /dev/wserver.drv,
+   /dev/ide.drv e /dev/tty.drv non esistono ma sono gia' spiegati dove vengono
+   nominati (il Makefile dice che wserver NON e' piu' un driver, e
+   boot/kernel.txt che un /dev/tty.drv non e' mai esistito). Il resto sono
+   esempi nei commenti o nomi di Linux usati per confronto.
+
+
+Niente altro in coda.

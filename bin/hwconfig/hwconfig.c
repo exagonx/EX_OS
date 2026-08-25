@@ -575,7 +575,8 @@ static int scrivi_con_copia(const char *percorso, const char *testo)
  * avvio aveva detto che l'accesso sarebbe stato obbligatorio. Un programma che
  * serve a togliere fatica non deve spegnere una serratura in silenzio.
  *
- * ! `svga` E' L'ALTRO: lo scrive /bin/svga insieme a un byte dentro Stage 2, e
+ * ! `svga` E' L'ALTRO: lo scrive /dev/svga.drv insieme a un byte dentro Stage
+ * 2, e
  * i due devono restare d'accordo. Toglierlo qui vuol dire una macchina che si
  * avvia con la risoluzione che non e' quella dichiarata, e nessuno che sappia
  * dire perche'.
@@ -700,8 +701,8 @@ static void componi_kernel_cfg(char *out, unsigned int max, const char *vecchio)
         strncat(out, riga, max - 1 - strlen(out));
     }
 
-    /* La risoluzione: non la decide questo programma, la decide /bin/svga
-     * insieme a Stage 2. Se c'era, resta. */
+    /* La risoluzione: non la decide questo programma, la decide
+     * /dev/svga.drv insieme a Stage 2. Se c'era, resta. */
     if (voce_di_prima(vecchio, "kernel", "svga", v, sizeof(v))) {
         snprintf(riga, sizeof(riga),
                  "\n# Dichiarata da `svga`: Stage 2 imposta, il kernel confronta.\n"

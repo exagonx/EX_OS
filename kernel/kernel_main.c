@@ -392,7 +392,7 @@ KernelConfig *cfg = cfg_load();
      * ! QUI NON SI IMPOSTA NIENTE, SI CONFRONTA E BASTA. La modalita'
      * grafica la decide Stage 2 leggendo un proprio byte interno, perche' e'
      * l'ultimo a girare in modo reale — da qui il BIOS non e' piu'
-     * raggiungibile. /bin/svga scrive tutti e due, e questo controllo esiste
+     * raggiungibile. /dev/svga.drv scrive tutti e due, e questo controllo esiste
      * per il caso in cui non l'abbia fatto: un bootloader aggiornato senza
      * toccare kernel.cfg, o un kernel.cfg modificato a mano. Una macchina
      * che si avvia in una risoluzione che nessun file dichiara e' proprio

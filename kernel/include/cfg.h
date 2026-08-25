@@ -80,7 +80,15 @@ typedef struct {
      * questo kernel gira quella porta e' chiusa. La imposta Stage 2, che
      * legge un proprio byte interno; questa voce serve a CONFRONTARE quel
      * byte con cio' che l'utente ha dichiarato, e a dirlo se divergono.
-     * Vedi /bin/svga, che scrive tutti e due. */
+     * Vedi /dev/svga.drv, che scrive tutti e due.
+     *
+     * ! STA IN /dev E NON IN /bin, e vale la pena dirlo qui: non guida nessuna
+     * periferica — quel lavoro lo fa Stage 2 una volta sola prima del modo
+     * protetto — ma porta l'estensione .drv perche' cosi' entra nel CATALOGO
+     * dei driver e `hwconfig -d` lo installa insieme agli altri. Per mesi i
+     * commenti di mezzo albero hanno scritto «/bin/svga», che non e' mai
+     * esistito: cercarlo li' e non trovarlo porta a concludere che il
+     * meccanismo della risoluzione non sia implementato. Lo e'. */
     char        svga[CFG_NAME_LEN];
 
     char        shell_path[CFG_PATH_LEN];

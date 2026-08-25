@@ -133,7 +133,7 @@ static void cfg_apply_key(KernelConfig *cfg, const char *section,
             return;
         }
         /* Solo conservata e riconsegnata, come keymap: chi la usa e'
-         * /bin/svga, e chi la impone e' Stage 2. Vedi cfg.h. */
+         * /dev/svga.drv, e chi la impone e' Stage 2. Vedi cfg.h. */
         if (cfg_strcmp(key, "svga") == 0) {
             cfg_strcpy(cfg->svga, value, sizeof(cfg->svga));
             return;
