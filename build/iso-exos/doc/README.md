@@ -292,10 +292,15 @@ risponda vuol dire cifrare con chi sta in mezzo, e la barra scriverebbe
 `https://` lo stesso.
 
 ! **I MODULI SI VEDONO, SI COMPILANO E SI MANDANO**: caselle di testo,
-password, spunte, scelte, pulsanti e aree di testo si disegnano come i controlli
-del sistema, prendono i tasti, e il pulsante manda davvero — in GET, con la
-codifica percento. POST no, ed e' dichiarato: vuole una richiesta con un corpo,
-che e' un lavoro in `exhttp`.
+password, spunte, scelte con l'elenco a tendina, pulsanti e aree di testo si
+disegnano come i controlli del sistema, prendono i tasti, e il pulsante manda
+davvero — **in GET e in POST**, con la codifica percento.
+
+! **E LA CONNESSIONE SI RIUSA.** Su `https` la stretta di mano e' tutto il
+costo — chiave effimera, catena di certificati, firma — e una pagina con dieci
+immagini la pagava dieci volte. Adesso si riusa la connessione quando si sa
+dove finisce il corpo, si rispetta il `Connection: close` del server, e si
+riprova una volta se l'altra parte l'ha chiusa senza dirlo.
 
 ! **E I COLORI SCRITTI NEGLI ATTRIBUTI CONTANO**: `bgcolor`, `text`, `align`.
 Mezzo web li usa ancora — la barra arancione di Hacker News e' un `bgcolor` su
@@ -335,7 +340,7 @@ l'origine più bassa della cascata, quindi una pagina può sovrascriverli. Prima
 erano `if` nel motore, e `<b>` e `<i>` non c'erano affatto.
 
 Quello che **non** c'è, dichiarato: JavaScript, `@media`, le unità relative,
-i moduli in POST, `colspan`/`rowspan`.
+`colspan`/`rowspan`.
 
 
 ### I font: TrueType, misurato contro FreeType

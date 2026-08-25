@@ -38,6 +38,10 @@ static const char *const g_nomi[] = {
     "exhttp_tcp",
     "exhttp_scambio",
     "http_url",
+
+    /* Aggiunta il 25 agosto 2026: i moduli in POST. */
+    "exhttp_posta",
+
     "__lib_avvio"
 };
 
@@ -46,6 +50,9 @@ static void *const g_indirizzi[] = {
     (void *)exhttp_tcp,
     (void *)exhttp_scambio,
     (void *)http_url,
+
+    (void *)exhttp_posta,
+
     (void *)__libc_ponti_avvia
 };
 

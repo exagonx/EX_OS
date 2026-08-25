@@ -32,20 +32,19 @@ CHIUSO — «il BIO di file di OpenSSL non legge i file di EX-OS» NON ERA UN BU
     per una libreria costruita senza stdio, non un aggiramento.
 
 Da fare, per una pagina web moderna (in ordine di quanto pesa):
-1. L'arena del testo si riempie sulle pagine grandi. Una voce di Wikipedia da
-   676 KB entra nell'albero ma esaurisce ARENA_MAX (512 KB): la barra di stato
-   dice «albero troncato» e i segni degli elenchi spariscono — il che e'
-   corretto, ma la pagina resta a meta'. Alzarla e' un conto di memoria: il
-   browser occupa gia' 5,5 MB dichiarati in cima a browser.c.
-2. I moduli si mandano in GET; POST no. Serve `http_richiesta` capace di un
-   corpo, con Content-Length e Content-Type: e' un lavoro in exhttp, non nel
-   browser. Il pulsante lo dice invece di fare finta.
-3. Il <select> non apre un elenco a tendina: cliccandolo si passa all'opzione
-   dopo. Si arriva a tutte e il modulo si manda, ma non e' quello che si
-   aspetta chi arriva da un altro browser. Un elenco vero vuole una finestra
-   con un ciclo di messaggi suo.
-4. La <textarea> mostra il testo e va a capo, ma non si scrive su piu' righe:
-   l'Invio manda il modulo invece di andare a capo.
-5. colspan/rowspan, @media, le unita' relative, JavaScript: dichiarati fuori.
-6. Le GIF animate mostrano il primo fotogramma, ed e' dichiarato: animarle
+1. LA LENTEZZA E' NELL'IMPAGINAZIONE, NON PIU' NELLA RETE. Dopo il riuso delle
+   connessioni, una pagina di Wikipedia con nove immagini impiega ancora
+   minuti: il motivo e' che a OGNI immagine che arriva si rifa' `impagina()`
+   su ventiquattromila pezzi. Serve un'impaginazione incrementale, o almeno
+   ridisegnare senza reimpaginare quando l'immagine non cambia la misura
+   dichiarata (`width`/`height` sull'`<img>` la danno gia').
+2. L'arena del testo puo' riempirsi sulle pagine molto grandi. La barra di
+   stato adesso lo dice CON I NUMERI — «albero troncato [nodi 9000/24000,
+   testo 512K/512K, pezzi 12000/24000]» — quindi si sa quale tetto alzare.
+   Il conto della memoria sta in cima a browser.c.
+3. colspan/rowspan, @media, le unita' relative, JavaScript: dichiarati fuori.
+4. Le GIF animate mostrano il primo fotogramma, ed e' dichiarato: animarle
    vorrebbe dire un orologio dentro la libreria delle immagini.
+5. La <textarea> prende gli a capo ma non ha un cursore che si muove: si
+   scrive in coda e si cancella dalla coda. Un'area vera e' il controllo
+   `ex_area` del toolkit, che quel lavoro l'ha gia' fatto.

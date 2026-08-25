@@ -150,14 +150,27 @@ static int metti(char *out, unsigned int max, unsigned int *n, const char *s)
     return 1;
 }
 
-int http_richiesta(char *out, unsigned int max, const HttpUrl *u,
-                   const char *agente)
+/* =============================================================================
+ * ! DUE VERBI, UNA FUNZIONE SOLA, ed e' la ragione per cui POST e' arrivato in
+ * venti righe: fra un GET e un POST cambiano tre cose — la parola in cima, due
+ * intestazioni in fondo e un corpo attaccato dietro. Tutto il resto — l'host,
+ * la porta che va nell'host solo se non e' quella prevista, l'agente, il
+ * «Connection: close» — e' identico, e duplicarlo avrebbe voluto dire due
+ * funzioni che divergono alla prima intestazione aggiunta.
+ *
+ * ! IL CORPO NON SI TOCCA E NON SI CODIFICA QUI. Chi manda un modulo ha gia'
+ * costruito «a=1&b=2» con la codifica percento, ed e' l'unico a sapere come
+ * andava fatta. Questa funzione ci mette intorno le due intestazioni che
+ * dicono al server quanto e' lungo e di che tipo e', e basta.
+ * ========================================================================== */
+int http_richiesta_corpo(char *out, unsigned int max, const HttpUrl *u,
+                         const char *agente, const char *corpo, int vivo)
 {
     unsigned int n = 0;
 
     if (!out || !u || max == 0) return 0;
 
-    if (!metti(out, max, &n, "GET ")) return 0;
+    if (!metti(out, max, &n, corpo ? "POST " : "GET ")) return 0;
     if (!metti(out, max, &n, u->percorso)) return 0;
     if (!metti(out, max, &n, " HTTP/1.1\r\nHost: ")) return 0;
     if (!metti(out, max, &n, u->host)) return 0;
@@ -189,11 +202,43 @@ int http_richiesta(char *out, unsigned int max, const HttpUrl *u,
      * compresse — che sapremmo pure srotolare, inflate c'e' — ma e' un pezzo
      * in piu' da sbagliare prima ancora di aver visto una pagina intera. Si
      * aggiunge quando il resto funziona. */
-    if (!metti(out, max, &n, "\r\nAccept: */*\r\nConnection: close\r\n\r\n"))
-        return 0;
+    if (!metti(out, max, &n, "\r\nAccept: */*\r\nConnection: ")) return 0;
+    if (!metti(out, max, &n, vivo ? "keep-alive" : "close")) return 0;
+
+    if (corpo) {
+        char cifre[12], rov[12];
+        unsigned int len = 0;
+        int k = 0, r = 0;
+
+        while (corpo[len]) len++;
+
+        /* ! Content-Length E' OBBLIGATORIO, e sbagliarlo di un byte fa
+         * aspettare il server per sempre (troppo corto) o gli fa leggere
+         * l'inizio della richiesta dopo (troppo lungo). Si conta il corpo,
+         * non si stima. */
+        if (len == 0) { rov[r++] = '0'; }
+        else { unsigned int q = len; while (q) { rov[r++] = (char)('0' + q % 10); q /= 10; } }
+        while (r) cifre[k++] = rov[--r];
+        cifre[k] = '\0';
+
+        if (!metti(out, max, &n,
+                   "\r\nContent-Type: application/x-www-form-urlencoded"
+                   "\r\nContent-Length: ")) return 0;
+        if (!metti(out, max, &n, cifre)) return 0;
+        if (!metti(out, max, &n, "\r\n\r\n")) return 0;
+        if (!metti(out, max, &n, corpo)) return 0;
+    } else {
+        if (!metti(out, max, &n, "\r\n\r\n")) return 0;
+    }
 
     out[n] = '\0';
     return (int)n;
+}
+
+int http_richiesta(char *out, unsigned int max, const HttpUrl *u,
+                   const char *agente)
+{
+    return http_richiesta_corpo(out, max, u, agente, 0, 0);
 }
 
 /* -----------------------------------------------------------------------------
@@ -287,6 +332,23 @@ int http_intestazioni(const unsigned char *d, unsigned int n, HttpRisposta *r)
                 valore(d, due + 1, riga_b, r->tipo, sizeof(r->tipo));
             } else if (nl == 8 && uguale_min(d + riga_a, "location", 8)) {
                 valore(d, due + 1, riga_b, r->posizione, sizeof(r->posizione));
+            } else if (nl == 10 && uguale_min(d + riga_a, "connection", 10)) {
+                char t[32];
+
+                /* ! «close» SI CERCA DENTRO L'ELENCO, non come uguaglianza: la
+                 * specifica permette «keep-alive, close» e altre combinazioni,
+                 * e chi confronta tutta la riga si perde proprio il caso in
+                 * cui il server sta dicendo che chiude. Riusare una
+                 * connessione che l'altro ha appena chiuso vuol dire una
+                 * richiesta persa. */
+                valore(d, due + 1, riga_b, t, sizeof(t));
+                {
+                    unsigned int k, L = lung(t);
+
+                    for (k = 0; k + 5 <= L; k++)
+                        if (uguale_min((const unsigned char *)t + k, "close", 5))
+                            r->chiude = 1;
+                }
             } else if (nl == 17 &&
                        uguale_min(d + riga_a, "transfer-encoding", 17)) {
                 char t[32];

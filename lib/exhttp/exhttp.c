@@ -386,9 +386,23 @@ static char           g_tls_errore[96];
 
 /* La stessa struttura serve da stato del trasporto: dentro c'e' il TLS e
  * sotto di lui il TCP. */
+/* ! IL TRASPORTO DI SOTTO DEVE VIVERE QUANTO LA CONNESSIONE, E STA QUI.
+ * `extls_stretta` non copia la struttura: si TIENE IL PUNTATORE, e lo usa a
+ * ogni record per tutta la vita della connessione. Passandogli una variabile
+ * locale di exhttp_tls, quel puntatore restava appeso allo stack di una
+ * funzione gia' uscita.
+ *
+ * ! E PER MESI HA FUNZIONATO LO STESSO, che e' la parte peggiore: la
+ * connessione si usava subito dopo la stretta, dalla stessa profondita' di
+ * stack, e quei byte erano ancora quelli giusti. Il difetto e' comparso il
+ * giorno del RIUSO — la seconda immagine di una pagina, presa piu' tardi da
+ * un'altra parte del programma, leggeva funzioni da spazzatura e saltava
+ * dentro il nulla. Un puntatore appeso non si vede finche' non cambia chi
+ * cammina sopra quella memoria. */
 typedef struct {
     void            *tls;
     ExHttpTrasporto  tcp;
+    ExTlsSotto       sotto;     /* quello che extls tiene per riferimento */
 } StatoTls;
 
 static StatoTls g_stato_tls;
@@ -507,7 +521,6 @@ static void adesso_in(char *out, unsigned int max)
 
 static int exhttp_tls(ExHttpTrasporto *t, const char *host, unsigned int porta)
 {
-    ExTlsSotto sotto;
     char       adesso[24];
     int        r;
 
@@ -526,14 +539,14 @@ static int exhttp_tls(ExHttpTrasporto *t, const char *host, unsigned int porta)
         }
     }
 
-    sotto.stato  = g_stato_tls.tcp.stato;
-    sotto.leggi  = g_stato_tls.tcp.leggi;
-    sotto.scrivi = g_stato_tls.tcp.scrivi;
+    g_stato_tls.sotto.stato  = g_stato_tls.tcp.stato;
+    g_stato_tls.sotto.leggi  = g_stato_tls.tcp.leggi;
+    g_stato_tls.sotto.scrivi = g_stato_tls.tcp.scrivi;
 
     adesso_in(adesso, sizeof(adesso));
 
-    r = extls_stretta(g_stato_tls.tls, &sotto, host, g_magazzino, adesso,
-                      casuale);
+    r = extls_stretta(g_stato_tls.tls, &g_stato_tls.sotto, host, g_magazzino,
+                      adesso, casuale);
     if (r != EXTLS_OK) {
         g_stato_tls.tcp.chiudi(g_stato_tls.tcp.stato);
         strncpy(g_tls_errore, extls_perche(r), sizeof(g_tls_errore) - 1);
@@ -548,6 +561,61 @@ static int exhttp_tls(ExHttpTrasporto *t, const char *host, unsigned int porta)
     return 1;
 }
 
+/* ! IL CORPO DI UN POST SI POSA QUI PRIMA DELLO SCAMBIO, e non passa per la
+ * firma di exhttp_scambio: quella firma la usano `scarica`, il browser e le
+ * immagini, e allargarla per un caso solo vorrebbe dire toccare tutti. Chi
+ * manda un modulo chiama exhttp_posta(), che posa il corpo e lo toglie di
+ * mezzo appena fatto — un POST non si ripete alla redirezione successiva, e
+ * questa e' anche la regola dell'HTTP. */
+static const char *g_corpo = 0;
+
+/* =============================================================================
+ * LA CONNESSIONE CHE RESTA APERTA
+ *
+ * ! SU https LA STRETTA DI MANO E' TUTTO IL COSTO. Chiave effimera, catena di
+ * certificati, firma: su un 386 emulato sono venti secondi. Una pagina di
+ * Wikipedia con dieci immagini li pagava dieci volte, e la barra di stato
+ * diceva «immagine 9 di 9» per due minuti — sembrava bloccata, e in un certo
+ * senso lo era.
+ *
+ * ! SI RIUSA SOLO SE SI SA DOVE FINISCE IL CORPO. Con Content-Length o con i
+ * pezzi si sa esattamente quando la risposta e' finita, e allora la
+ * connessione e' pulita per la prossima. Senza, la fine E' la chiusura: non
+ * c'e' niente da riusare, e provarci vorrebbe dire aspettare per sempre byte
+ * che non arriveranno.
+ *
+ * ! E SI RIPROVA UNA VOLTA, SEMPRE. Una connessione tenuta aperta puo' essere
+ * chiusa dall'altra parte in qualunque momento, senza dirlo: e' normale, non
+ * e' un errore. Chi la riusa deve mettere in conto un fallimento e rifarla da
+ * capo — senza, il primo timeout del server diventa una pagina che non si
+ * apre.
+ * ========================================================================== */
+static ExHttpTrasporto g_vivo;
+static int             g_vivo_c = 0;        /* 1 = ce n'e' una aperta */
+static char            g_vivo_host[HTTP_HOST_MAX];
+static unsigned int    g_vivo_porta = 0;
+static int             g_vivo_cifrato = 0;
+static int             g_riusabile = 0;     /* l'ultimo scambio l'ha lasciata pulita */
+
+static void vivo_chiudi(void)
+{
+    if (!g_vivo_c) return;
+    g_vivo.chiudi(g_vivo.stato);
+    g_vivo_c = 0;
+}
+
+static int stesso_posto(const HttpUrl *u)
+{
+    int i;
+
+    if (!g_vivo_c) return 0;
+    if (g_vivo_porta != u->porta || g_vivo_cifrato != u->cifrato) return 0;
+
+    for (i = 0; g_vivo_host[i] || u->host[i]; i++)
+        if (g_vivo_host[i] != u->host[i]) return 0;
+    return 1;
+}
+
 /* -----------------------------------------------------------------------------
  * Lo scambio
  * --------------------------------------------------------------------------- */
@@ -557,14 +625,19 @@ int exhttp_scambio(ExHttpTrasporto *t, const HttpUrl *u,
 {
     static unsigned char acc[16 * 1024];    /* le intestazioni, mentre arrivano */
     unsigned int  acc_n = 0;
-    char          req[1024];
+    static char   req[4096];   /* il corpo di un POST ci sta dentro */
     int           n, fine = 0;
     HttpPezzi     pezzi;
     unsigned int  corpo_gia = 0;
 
     if (!t || !u || !buf || !e || !r) return 0;
 
-    n = http_richiesta(req, sizeof(req), u, "EX-OS");
+    /* ! SI CHIEDE DI TENERLA APERTA SEMPRE, e si decide DOPO se si e' potuto:
+     * il server risponde come vuole, e cio' che conta e' se il corpo ha una
+     * fine dichiarata. Chiedere «keep-alive» a un server che chiude comunque
+     * non costa niente. */
+    g_riusabile = 0;
+    n = http_richiesta_corpo(req, sizeof(req), u, "EX-OS", g_corpo, 1);
     if (n <= 0) { strcpy(e->errore, "richiesta troppo lunga"); return 0; }
     if (t->scrivi(t->stato, (const unsigned char *)req, (unsigned int)n) != n) {
         strcpy(e->errore, "non riesco a mandare la richiesta");
@@ -674,9 +747,15 @@ int exhttp_scambio(ExHttpTrasporto *t, const HttpUrl *u,
              * ancora spegnendo.
              * ============================================================= */
             if (r->a_pezzi) {
-                if (pezzi.stato == HTTP_P_FATTO) return 1;
+                if (pezzi.stato == HTTP_P_FATTO) {
+                    g_riusabile = !r->chiude && !e->troncata;
+                    return 1;
+                }
             } else if (r->ha_lunghezza) {
-                if (e->byte >= r->lunghezza) return 1;
+                if (e->byte >= r->lunghezza) {
+                    g_riusabile = !r->chiude && !e->troncata;
+                    return 1;
+                }
             }
 
             /* ! SENZA LUNGHEZZA NE' PEZZI, LA FINE E' LA CHIUSURA, ed e'
@@ -752,6 +831,27 @@ static void unisci_url(const HttpUrl *da, const char *pos, char *out,
     }
 }
 
+/* =============================================================================
+ * exhttp_posta — come exhttp_prendi, ma con un corpo
+ *
+ * ! IL CORPO VALE PER LA PRIMA RICHIESTA E BASTA, e non e' una scorciatoia: e'
+ * la regola dell'HTTP. Un 301 o un 302 dopo un POST si ri-segue in GET — lo
+ * fanno tutti i browser da vent'anni, e un 307 che chiederebbe di ripetere il
+ * POST qui si comporta come gli altri. Ripetere un invio a un indirizzo diverso
+ * da quello a cui l'utente l'aveva mandato e' il modo in cui si ordina due
+ * volte la stessa cosa.
+ * ========================================================================== */
+int exhttp_posta(const char *url, const char *corpo,
+                 unsigned char *buf, unsigned int max, ExHttpEsito *e)
+{
+    int r;
+
+    g_corpo = corpo;
+    r = exhttp_prendi(url, buf, max, e);
+    g_corpo = 0;
+    return r;
+}
+
 int exhttp_prendi(const char *url, unsigned char *buf, unsigned int max,
                   ExHttpEsito *e)
 {
@@ -768,13 +868,25 @@ int exhttp_prendi(const char *url, unsigned char *buf, unsigned int max,
         HttpUrl         u;
         HttpRisposta    r;
         ExHttpTrasporto t;
-        int             ok;
+        int             ok, riusata = 0;
 
         e->salti = salto;
         strncpy(e->finale, adesso, sizeof(e->finale) - 1);
         e->finale[sizeof(e->finale) - 1] = '\0';
 
         if (!http_url(adesso, &u)) { strcpy(e->errore, "indirizzo illeggibile"); return 0; }
+
+riprova:
+        /* ! LA CONNESSIONE DI PRIMA, SE E' PER LO STESSO POSTO. E' tutto il
+         * guadagno: su https una richiesta nuova costa la stretta di mano, i
+         * byte non contano quasi. */
+        if (stesso_posto(&u)) {
+            t = g_vivo;
+            riusata = 1;
+            goto collegato;
+        }
+
+        vivo_chiudi();
 
         /* ! LO SCHEMA SCEGLIE IL TRASPORTO, E BASTA. Da qui in giu' non c'e'
          * una riga che sappia se sotto ci sia un tubo cifrato: e' la divisione
@@ -808,7 +920,36 @@ int exhttp_prendi(const char *url, unsigned char *buf, unsigned int max,
 
 collegato:
         ok = exhttp_scambio(&t, &u, buf, max, e, &r);
-        t.chiudi(t.stato);
+        g_corpo = 0;            /* la redirezione dopo un POST si segue in GET */
+
+        /* ! UNA CONNESSIONE RIUSATA CHE FALLISCE SI RIFA' DA CAPO, UNA VOLTA.
+         * L'altra parte puo' averla chiusa in qualunque momento senza dirlo —
+         * e' normale, non e' un errore — e chi la riusa deve metterlo in
+         * conto. Senza questa riga il primo timeout del server diventerebbe
+         * una pagina che non si apre. */
+        if (!ok && riusata) {
+            g_vivo_c = 0;               /* e' gia' morta: non si richiude */
+            riusata  = 0;
+            memset(e, 0, sizeof(*e));
+            e->salti = salto;
+            strncpy(e->finale, adesso, sizeof(e->finale) - 1);
+            e->finale[sizeof(e->finale) - 1] = '\0';
+            goto riprova;
+        }
+
+        if (ok && g_riusabile) {
+            /* Si tiene: la prossima richiesta allo stesso posto la trovera'. */
+            g_vivo   = t;
+            g_vivo_c = 1;
+            g_vivo_porta   = u.porta;
+            g_vivo_cifrato = u.cifrato;
+            strncpy(g_vivo_host, u.host, sizeof(g_vivo_host) - 1);
+            g_vivo_host[sizeof(g_vivo_host) - 1] = '\0';
+        } else {
+            g_vivo_c = 0;
+            t.chiudi(t.stato);
+        }
+
         if (!ok) return 0;
 
         /* Una redirezione: si rifa' il giro con la posizione nuova. */

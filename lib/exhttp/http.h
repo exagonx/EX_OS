@@ -78,6 +78,29 @@ int http_url(const char *url, HttpUrl *u);
 int http_richiesta(char *out, unsigned int max, const HttpUrl *u,
                    const char *agente);
 
+/* La stessa richiesta, ma con un corpo: `corpo` non nullo vuol dire POST, e
+ * porta con se' `Content-Type: application/x-www-form-urlencoded` e il
+ * `Content-Length` contato sui byte veri.
+ *
+ * ! IL CORPO ARRIVA GIA' CODIFICATO. Chi manda un modulo ha costruito
+ * «a=1&b=2» con la codifica percento, ed e' l'unico a sapere come andava
+ * fatta: qui non si tocca. */
+/* `vivo` a 1 chiede al server di TENERE APERTA la connessione dopo la
+ * risposta, cosi' la richiesta dopo non paga un'altra stretta di mano.
+ *
+ * ! SU https QUELLA STRETTA E' TUTTO IL COSTO. Su un 386 emulato una
+ * connessione TLS — chiave effimera, catena di certificati, firma — sono venti
+ * secondi; una pagina con dieci immagini ne pagava dieci volte tanto e la
+ * barra di stato sembrava bloccata. Riusare la connessione le fa costare
+ * quanto i loro byte.
+ *
+ * ! E SI PUO' CHIEDERE SOLO SE SI SA DOVE FINISCE IL CORPO — Content-Length o
+ * pezzi. Senza, la fine e' la CHIUSURA, e tenere aperta una connessione di cui
+ * non si sa quando finisce la risposta vuol dire aspettare per sempre. Chi
+ * chiama guarda la risposta e decide. */
+int http_richiesta_corpo(char *out, unsigned int max, const HttpUrl *u,
+                         const char *agente, const char *corpo, int vivo);
+
 typedef struct {
     int          codice;                    /* 200, 404, ... */
     int          ha_lunghezza;
@@ -85,6 +108,7 @@ typedef struct {
     int          a_pezzi;                   /* Transfer-Encoding: chunked */
     char         tipo[HTTP_TIPO_MAX];       /* Content-Type */
     char         posizione[HTTP_POSIZIONE_MAX];  /* Location */
+    int          chiude;                    /* «Connection: close» dal server */
 } HttpRisposta;
 
 /* Legge la riga di stato e le intestazioni, se sono complete dentro `d`.

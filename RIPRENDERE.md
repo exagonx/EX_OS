@@ -19,6 +19,11 @@ Kernel **0.205**. Vedi la sezione sui tre posti della rete, qui sotto.
 
 In attesa nell'albero — **PROVATO, DA COMMETTERE**:
 
+  - **IL RIUSO DELLE CONNESSIONI**, e il puntatore appeso che ha svelato — un
+    difetto che ha funzionato per mesi perche' nessuno usava quella memoria
+    piu' tardi. Piu' POST, l'elenco a tendina dei `<select>`, la `<textarea>`
+    che prende gli a capo, e le immagini in formati che non sappiamo leggere
+    che non si scaricano piu'. Sezioni qui sotto;
   - **LA CODA DELL'https, SVUOTATA**: i tetti del browser scelti su una pagina
     vera, i suggerimenti di presentazione (la barra arancione di HN), i moduli
     che si MANDANO in GET, i margini in linea, il `<select>` usabile, e
@@ -43,6 +48,54 @@ In attesa nell'albero — **PROVATO, DA COMMETTERE**:
     SCARTATO un sospetto scritto in `in_lavorazione.txt`.
 
 **326 prove su 326** con `libctest`; **9 su 9** con `make prova-cliente-tls`.
+
+## Il puntatore appeso che ha aspettato mesi
+
+! **UN DIFETTO CHE FUNZIONAVA.** `extls_stretta` non copia il trasporto di
+sotto: si tiene il PUNTATORE, e lo usa a ogni record per tutta la vita della
+connessione. `exhttp_tls` gli passava una **variabile locale**, che muore quando
+la funzione esce.
+
+Per mesi non si e' visto, e la ragione e' istruttiva: la connessione si usava
+SUBITO dopo la stretta, dalla stessa profondita' di stack, e quei byte erano
+ancora quelli giusti. Il difetto e' comparso il giorno del riuso — la seconda
+immagine di una pagina, presa piu' tardi da un'altra parte del programma,
+leggeva funzioni da spazzatura e saltava dentro il nulla.
+
+! **E LA CACCIA E' PARTITA DAL POSTO SBAGLIATO, DUE VOLTE.** Prima il sospetto
+e' andato al riuso delle connessioni, che era appena arrivato: spento, il
+difetto restava. Poi a un `sprintf` su un buffer da 160 byte, che era davvero
+troppo piccolo ma non c'entrava. Il colpevole si e' trovato solo mettendo una
+traccia dentro il ciclo delle immagini — **la prima immagine passava, la
+seconda no** — che e' esattamente la firma di uno stato riusato.
+
+Un puntatore appeso non si vede finche' non cambia chi cammina sopra quella
+memoria.
+
+## Il riuso delle connessioni
+
+! **SU https LA STRETTA DI MANO E' TUTTO IL COSTO**: chiave effimera, catena di
+certificati, firma — su un 386 emulato sono venti secondi. Una pagina di
+Wikipedia con dieci immagini li pagava dieci volte, e la barra di stato diceva
+«immagine 9 di 9» per due minuti.
+
+Adesso la connessione resta aperta e la richiesta dopo, se e' per lo stesso
+posto, non paga niente. Le tre regole:
+
+  - **si riusa solo se si sa dove finisce il corpo** (Content-Length o pezzi).
+    Senza, la fine E' la chiusura: non c'e' niente da riusare;
+  - **si riprova una volta**. L'altra parte puo' chiudere in qualunque momento
+    senza dirlo — e' normale, non e' un errore;
+  - **`Connection: close` dal server si rispetta**, e si cerca dentro l'elenco:
+    «keep-alive, close» e' valido, e chi confronta tutta la riga si perde
+    proprio il caso in cui il server sta dicendo che chiude.
+
+! **E LE IMMAGINI CHE NON SAPREMMO DECODIFICARE NON SI SCARICANO PIU'.** Otto
+delle undici immagini della voce «Operating system» sono SVG: due minuti passati
+a scaricare file che finiscono comunque nel cestino. La regola e'
+sull'estensione, ed e' un'approssimazione dichiarata — il tipo vero lo direbbe
+il Content-Type, che pero' arriva dopo aver aperto la connessione, cioe' dopo
+aver speso quello che si voleva risparmiare.
 
 ## La coda dell'https, svuotata
 

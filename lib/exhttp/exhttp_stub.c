@@ -46,6 +46,8 @@ static struct {
     int (*scambio)(ExHttpTrasporto *, const HttpUrl *, unsigned char *,
                    unsigned int, ExHttpEsito *, HttpRisposta *);
     int (*url)(const char *, HttpUrl *);
+    int (*posta)(const char *, const char *, unsigned char *, unsigned int,
+                 ExHttpEsito *);
 } P;
 
 static void *chiedi(const ExLibTesta *t, const char *nome)
@@ -77,6 +79,8 @@ static void assicura(void)
                          unsigned int, ExHttpEsito *, HttpRisposta *))
                 chiedi(t, "exhttp_scambio");
     P.url     = (int (*)(const char *, HttpUrl *))chiedi(t, "http_url");
+    P.posta   = (int (*)(const char *, const char *, unsigned char *,
+                         unsigned int, ExHttpEsito *))chiedi(t, "exhttp_posta");
 
     P.pronto = 1;
 }
@@ -84,6 +88,10 @@ static void assicura(void)
 int exhttp_prendi(const char *url, unsigned char *buf, unsigned int max,
                   ExHttpEsito *e)
 { assicura(); return P.prendi(url, buf, max, e); }
+
+int exhttp_posta(const char *url, const char *corpo, unsigned char *buf,
+                 unsigned int max, ExHttpEsito *e)
+{ assicura(); return P.posta(url, corpo, buf, max, e); }
 
 int exhttp_tcp(ExHttpTrasporto *t, const char *host, unsigned int porta)
 { assicura(); return P.tcp(t, host, porta); }

@@ -90,6 +90,15 @@ typedef struct {
 int exhttp_prendi(const char *url, unsigned char *buf, unsigned int max,
                   ExHttpEsito *e);
 
+/* Come exhttp_prendi, ma manda `corpo` in POST (con Content-Type
+ * application/x-www-form-urlencoded). Il corpo arriva GIA' CODIFICATO: chi
+ * costruisce un modulo e' l'unico a sapere come andava fatta la codifica.
+ *
+ * ! IL CORPO VALE PER LA PRIMA RICHIESTA E BASTA: una redirezione dopo un POST
+ * si segue in GET, come fanno tutti i browser. */
+int exhttp_posta(const char *url, const char *corpo,
+                 unsigned char *buf, unsigned int max, ExHttpEsito *e);
+
 /* Come sopra ma su un trasporto gia' aperto, e senza seguire le redirezioni:
  * e' il mattone con cui exhttp_prendi e' fatta, ed e' quello che servira' al
  * TLS. `u` dice cosa chiedere. */

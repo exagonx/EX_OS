@@ -431,6 +431,49 @@ static unsigned int numero(const char *s)
     return v;
 }
 
+/* =============================================================================
+ * ! UN'IMMAGINE CHE NON SAPREMMO DECODIFICARE NON SI SCARICA AFFATTO.
+ *
+ * Sembra un'ottimizzazione e non lo e': su https ogni immagine e' una stretta
+ * di mano TLS intera — chiave effimera, catena di certificati, firma — e su un
+ * 386 emulato sono venti secondi. La pagina «Operating system» di Wikipedia ne
+ * ha undici, e OTTO SONO SVG: due minuti e mezzo passati a scaricare file che
+ * finiscono comunque nel cestino, con la barra di stato che dice «immagine 11
+ * di 11» e sembra bloccata.
+ *
+ * ! LA REGOLA E' SULL'ESTENSIONE, ed e' un'approssimazione dichiarata: il tipo
+ * vero lo direbbe il Content-Type, che pero' arriva DOPO aver aperto la
+ * connessione — cioe' dopo aver speso quello che si voleva risparmiare. Un
+ * `.svg` servito come PNG non si vedrebbe lo stesso; un PNG chiamato `.svg`
+ * si perde, e non capita.
+ *
+ * Vale anche per i formati vettoriali in generale: EX-OS disegna pixel, e un
+ * SVG e' un disegno da eseguire, non un'immagine da leggere.
+ * ========================================================================== */
+static int formato_ignoto(const char *src)
+{
+    static const char *const FUORI[] = { ".svg", ".webp", ".avif", ".bmp", 0 };
+    int n = 0, i, k;
+
+    while (src[n]) n++;
+
+    for (i = 0; FUORI[i]; i++) {
+        int m = 0;
+
+        while (FUORI[i][m]) m++;
+        if (n < m) continue;
+
+        for (k = 0; k < m; k++) {
+            char a = src[n - m + k], b = FUORI[i][k];
+
+            if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
+            if (a != b) break;
+        }
+        if (k == m) return 1;
+    }
+    return 0;
+}
+
 /* Trova l'immagine di questo nodo, o la registra. Rende -1 se non c'e' posto. */
 static int imm_indice(int nodo, const char *src)
 {
@@ -440,6 +483,7 @@ static int imm_indice(int nodo, const char *src)
         if (g_imm[i].nodo == nodo) return i;
 
     if (g_imm_n >= IMM_MAX) return -1;
+    if (formato_ignoto(src)) return -1;
 
     i = g_imm_n++;
     g_imm[i].nodo   = nodo;
@@ -1859,15 +1903,31 @@ static void disegna(void)
                     char pezzo[CTRL_VAL_MAX];
                     int  q = 0;
 
-                    while (mostra[i0] && q < per_riga && q < CTRL_VAL_MAX - 1)
+                    /* ! GLI A CAPO SCRITTI DA CHI DIGITA VALGONO, e vengono
+                     * prima del riempimento: un'area che ignora l'Invio
+                     * mostrerebbe due paragrafi come una frase sola. */
+                    while (mostra[i0] && mostra[i0] != '\n' &&
+                           q < per_riga && q < CTRL_VAL_MAX - 1)
                         pezzo[q++] = mostra[i0++];
                     pezzo[q] = '\0';
+                    if (mostra[i0] == '\n') i0++;
+
                     ex_scrivi(g_f, cx + 4, y + 3 + riga * 18, pezzo, EX_NERO);
                     riga++;
+
+                    /* Il cursore sta in fondo a cio' che si e' scritto. */
+                    if (g_pez[i].ctrl == g_ctrl_fuoco && !mostra[i0]) {
+                        int cur = cx + 4 +
+                                  ex_larghezza_testo(EX_FONT_SISTEMA, pezzo);
+
+                        if (cur < cx + cw - 3)
+                            ex_riempi(g_f, cur, y + 3 + (riga - 1) * 18,
+                                      2, 15, EX_NERO);
+                    }
                 }
 
-                if (g_pez[i].ctrl == g_ctrl_fuoco)
-                    ex_riempi(g_f, cx + 2, y + 2, 2, ch - 4, EX_NERO);
+                if (g_pez[i].ctrl == g_ctrl_fuoco && riga == 0)
+                    ex_riempi(g_f, cx + 4, y + 3, 2, 15, EX_NERO);
                 break;
             }
 
@@ -2596,14 +2656,33 @@ static void raccogli_css(void)
  * mostrare la pagina che si e' vista, mentre battere un indirizzo o premere un
  * collegamento e' una richiesta nuova e vuole la pagina di adesso. Una cache
  * che risponde anche a quelle mostrerebbe notizie vecchie senza dirlo. */
+/* ! IL CORPO DI UN POST SI POSA PRIMA DI CHIAMARE `vai`, e non si aggiunge un
+ * quarto argomento a una funzione che ha gia' otto chiamanti: sarebbe un `0`
+ * in piu' in otto posti, e il nono che si dimentica passerebbe spazzatura.
+ * `vai` lo prende, lo usa e lo azzera — un POST non si ripete. */
+static const char *g_da_postare = 0;
+
 static void vai(const char *url, int in_storia, int usa_cache)
 {
     ExHttpEsito  e;
-    char         msg[160];
+    /* ! CENTOSESSANTA BYTE NON BASTAVANO, E IL MODO DI SCOPRIRLO E' STATO IL
+     * PEGGIORE. Con tutte le note accese — «copia locale», pagina troncata,
+     * albero troncato, stile troncato — piu' i quattro contatori, la riga
+     * supera i centosessanta caratteri: `sprintf` scriveva oltre il buffer,
+     * cioe' sopra l'indirizzo di ritorno, e il browser saltava a 0x00000005.
+     * Si vedeva SOLO sulle pagine grandi, che sono le uniche che accendono le
+     * note. E si e' cercato prima nel riuso delle connessioni, che era appena
+     * arrivato e non c'entrava niente. */
+    char         msg[320];
     unsigned int n = 0;
     int          da_cache = 0;
 
-    if (!url || !url[0]) return;
+    if (!url || !url[0]) { g_da_postare = 0; return; }
+
+    /* ! UNA PAGINA MANDATA IN POST NON SI PRENDE DALLA CACHE, ne' ci finisce
+     * dentro: la risposta a un invio dipende da cosa si e' inviato, e servirla
+     * a un altro invio sarebbe la risposta sbagliata. */
+    if (g_da_postare) usa_cache = 0;
 
     dico("sto scaricando...");
     ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
@@ -2615,7 +2694,9 @@ static void vai(const char *url, int in_storia, int usa_cache)
         e.byte   = n;
         strncpy(e.finale, url, sizeof(e.finale) - 1);
         da_cache = 1;
-    } else if (!exhttp_prendi(url, g_pagina, sizeof(g_pagina), &e)) {
+    } else if (g_da_postare
+               ? !exhttp_posta(url, g_da_postare, g_pagina, sizeof(g_pagina), &e)
+               : !exhttp_prendi(url, g_pagina, sizeof(g_pagina), &e)) {
         /* =====================================================================
          * ! LA RETE NON RISPONDE: SE LA COPIA SU DISCO C'E', VALE. E' il motivo
          * per cui una cache che sopravvive ai riavvii serve davvero — la pagina
@@ -2673,12 +2754,33 @@ static void vai(const char *url, int in_storia, int usa_cache)
     raccogli_css();
     impagina();
 
-    sprintf(msg, "%d, %u byte, %u nodi%s%s%s%s", e.codice, e.byte, g_doc.nodi_n,
-            da_cache == 2 ? " (copia locale: la rete non risponde)"
-                          : da_cache ? " (dalla cache)" : "",
-            e.troncata ? " (pagina troncata)" : "",
-            g_doc.troncato ? " (albero troncato)" : "",
-            g_css.troncato ? " (stile troncato)" : "");
+    /* ! E SI SCRIVE CON snprintf, non con sprintf: la riga qui sotto e' fatta
+     * di pezzi che dipendono dalla pagina, e nessuno di loro ha una lunghezza
+     * che si possa contare guardando il codice.
+     *
+     * ! QUANDO SI TRONCA SI DICE ANCHE DI QUANTO, e non e' vanita' di numeri:
+     * «albero troncato» non dice se manca un tetto di poco o di molto, e i
+     * tetti di questo browser sono quattro. Con i numeri davanti si sa quale
+     * alzare — e si sa anche quando NON serve alzare niente. */
+    if (g_doc.troncato || g_css.troncato || e.troncata) {
+        snprintf(msg, sizeof(msg),
+                 "%d, %u byte%s%s%s%s  [nodi %u/%u, testo %uK/%uK, "
+                 "pezzi %u/%u]",
+                e.codice, e.byte,
+                da_cache == 2 ? " (copia locale: la rete non risponde)"
+                              : da_cache ? " (dalla cache)" : "",
+                e.troncata ? " pagina troncata" : "",
+                g_doc.troncato ? " albero troncato" : "",
+                g_css.troncato ? " stile troncato" : "",
+                g_doc.nodi_n, (unsigned int)NODI_MAX,
+                g_doc.arena_n / 1024u, (unsigned int)(ARENA_MAX / 1024u),
+                (unsigned int)g_pez_n, (unsigned int)PEZZI_MAX);
+    } else {
+        snprintf(msg, sizeof(msg), "%d, %u byte, %u nodi%s",
+                 e.codice, e.byte, g_doc.nodi_n,
+                 da_cache == 2 ? " (copia locale: la rete non risponde)"
+                               : da_cache ? " (dalla cache)" : "");
+    }
     dico(msg);
 
     disegna();
@@ -2686,6 +2788,7 @@ static void vai(const char *url, int in_storia, int usa_cache)
     /* Il testo si vede: adesso, e solo adesso, si va a prendere il resto. */
     immagini_prendi();
     dico(msg);
+    g_da_postare = 0;
 }
 
 /* Un collegamento premuto: si risolve contro l'indirizzo di adesso. */
@@ -2779,14 +2882,6 @@ static void manda_modulo(int m)
         return;
     }
 
-    /* ! POST SI DICE, NON SI FINGE. Costruire la query e mandarla in GET a un
-     * modulo che chiedeva POST darebbe una risposta sbagliata senza un errore:
-     * meglio dire che non si sa fare. */
-    if (g_mod[m].post) {
-        dico("questo modulo vuole POST, e non lo so ancora mandare");
-        return;
-    }
-
     for (i = 0; i < g_ctrl_n && pos < (int)sizeof(q) - 8; i++) {
         const Ctrl *c = &g_ctrl[i];
 
@@ -2840,7 +2935,13 @@ static void manda_modulo(int m)
         int  k = 0;
 
         while (meta[k] && k < (int)sizeof(nuovo) - 2) { nuovo[k] = meta[k]; k++; }
-        if (pos > 0 && k < (int)sizeof(nuovo) - 2) {
+
+        /* ! IN GET I CAMPI VANNO NELL'INDIRIZZO, IN POST NEL CORPO, ed e' la
+         * sola differenza che il browser deve conoscere: il resto lo fa
+         * exhttp. Con POST l'indirizzo resta pulito — che e' anche il motivo
+         * per cui un modulo di pagamento non usa GET: la query finisce nella
+         * cronologia e nei log del server. */
+        if (!g_mod[m].post && pos > 0 && k < (int)sizeof(nuovo) - 2) {
             int j = 0;
 
             nuovo[k++] = '?';
@@ -2849,16 +2950,125 @@ static void manda_modulo(int m)
         nuovo[k] = '\0';
 
         {
+            static char corpo[EXHTTP_URL_MAX];
             char assoluto[EXHTTP_URL_MAX];
+            int  j = 0;
 
             if (!risolvi(nuovo, assoluto, sizeof(assoluto))) {
                 dico("l'indirizzo del modulo non si capisce");
                 return;
             }
+
+            if (g_mod[m].post) {
+                while (q[j] && j < (int)sizeof(corpo) - 1) { corpo[j] = q[j]; j++; }
+                corpo[j] = '\0';
+                g_da_postare = corpo;
+            }
+
             ex_testo_metti(g_url, assoluto);
             vai(assoluto, 1, 0);
         }
     }
+}
+
+/* =============================================================================
+ * L'ELENCO A TENDINA DI UN <select>
+ *
+ * ! E' UNA FINESTRA MODALE, com'e' un dialogo, e non un rettangolo disegnato
+ * sopra la pagina. Un rettangolo disegnato bisognerebbe ritagliarlo, farlo
+ * scorrere con la pagina, ridisegnarlo a ogni movimento e togliergli i tasti a
+ * mano: sono tutte cose che il server a finestre sa gia' fare. Una finestra
+ * costa qualche riga in piu' qui e nessuna nel disegno.
+ *
+ * ! E IL CICLO ANNIDATO E' L'IDIOMA DI exdlg, non un'invenzione: si continua a
+ * chiamare ex_prendi_msg/ex_smista finche' qualcuno non dichiara di aver
+ * finito. Il resto dell'applicazione resta viva — ridisegna, risponde — e
+ * quando l'elenco si chiude si torna dove si era.
+ * ========================================================================== */
+#define ID_TENDINA_OK   700
+
+static ExFinestra g_tendina_lista;
+static int        g_tendina_fatto;      /* 0 = aperta, 1 = scelto, 2 = via */
+
+static long tendina_proc(ExFinestra f, unsigned int msg, unsigned int wp,
+                         long lp)
+{
+    switch (msg) {
+    case EXM_CHIUDI:
+        g_tendina_fatto = 2;
+        return 0;
+
+    /* ! LA SCELTA SI LEGGE ALLA FINE, NON QUI DENTRO, ed e' una lezione che
+     * costa poco impararla e molto no: il messaggio che dice «ho scelto» e
+     * l'aggiornamento della riga scelta dentro il controllo sono due cose, e
+     * l'ordine fra loro non e' scritto da nessuna parte. Leggendo qui si
+     * prendeva a volte la riga di PRIMA — e il difetto compariva a
+     * intermittenza, che e' il peggio. Qui si dice solo CHE si e' finito. */
+    case EXM_COMANDO:
+        if (wp == ID_TENDINA_OK || wp == 1) g_tendina_fatto = 1;
+        return 0;
+
+    case EXM_TASTO:
+        if ((wp & 0xFFFF) == '\n' || (wp & 0xFFFF) == '\r') g_tendina_fatto = 1;
+        else if ((wp & 0xFFFF) == 27)                         g_tendina_fatto = 2;
+        return 0;
+
+    default:
+        return ex_procedura_base(f, msg, wp, lp);
+    }
+}
+
+/* Apre l'elenco delle opzioni di `k` e rende quella scelta, o -1. */
+static int tendina(int k, int x, int y)
+{
+    Ctrl        *c = &g_ctrl[k];
+    ExFinestra   f;
+    ExMsg        m;
+    unsigned int sw = 0, sh = 0;
+    int          h, i, scelto = -1;
+
+    if (c->opz_n <= 0) return -1;
+
+    /* Alta quanto le opzioni, entro un tetto: un <select> con cento voci non
+     * deve diventare una finestra piu' alta dello schermo. */
+    h = 44 + c->opz_n * 16;
+    if (h > 300) h = 300;
+
+    ex_schermo(&sw, &sh);
+    if (x + 240 > (int)sw) x = (int)sw - 240;
+    if (y + h > (int)sh)   y = (int)sh - h;
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+
+    g_tendina_fatto = 0;
+
+    f = ex_crea("finestra", "Scegli",
+                EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_SOPRA | EX_MODALE,
+                x, y, 240, h, 0, 0, tendina_proc);
+    if (f == 0) return -1;
+
+    g_tendina_lista = ex_crea("lista", "", EX_FIGLIO, 6, 24, 228, h - 30,
+                              f, 1, 0);
+    if (g_tendina_lista == 0) { ex_distruggi(f); return -1; }
+
+    for (i = 0; i < c->opz_n; i++)
+        ex_lista_aggiungi(g_tendina_lista, g_opz[c->opz_primo + i]);
+    ex_lista_scegli(g_tendina_lista, (unsigned int)c->opz_ora);
+    ex_fuoco(g_tendina_lista);
+
+    ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+    ex_aggiorna(f);
+
+    while (!g_tendina_fatto && ex_prendi_msg(&m)) ex_smista(&m);
+
+    if (g_tendina_fatto == 1) scelto = (int)ex_lista_scelta(g_tendina_lista);
+    ex_distruggi(f);
+
+    /* ! LA PAGINA SI RIDISEGNA DOPO, SEMPRE. La finestra che se ne va lascia
+     * il suo buco: il server ridisegna cio' che stava sotto solo se qualcuno
+     * glielo chiede, e quel qualcuno e' chi ha aperto la finestra. */
+    disegna();
+    return scelto;
 }
 
 /* Quale controllo sta sotto quel punto, o -1. */
@@ -3050,12 +3260,28 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
                 return 0;
             }
             /* ! INVIO DENTRO UNA CASELLA MANDA IL MODULO, ed e' cosi' che si
-             * usa una casella di ricerca: nessuno cerca il pulsante. */
+             * usa una casella di ricerca: nessuno cerca il pulsante.
+             *
+             * ! MA DENTRO UN'AREA VA A CAPO, e la differenza non e' un
+             * dettaglio: un'area di testo esiste PER contenere piu' righe, e
+             * un Invio che manda il modulo a meta' della seconda riga e' il
+             * modo piu' rapido di perdere quello che si stava scrivendo. Il
+             * modulo lo si manda col pulsante, come in ogni browser. */
             if (c == '\n' || c == '\r') {
-                int m = k->modulo;
+                if (k->tipo == CTRL_AREA) {
+                    if (n < CTRL_VAL_MAX - 1) {
+                        k->valore[n]     = '\n';
+                        k->valore[n + 1] = '\0';
+                        disegna();
+                    }
+                    return 0;
+                }
+                {
+                    int m = k->modulo;
 
-                g_ctrl_fuoco = -1;
-                manda_modulo(m);
+                    g_ctrl_fuoco = -1;
+                    manda_modulo(m);
+                }
                 return 0;
             }
             if (c >= 32 && c < 256 && n < CTRL_VAL_MAX - 1) {
@@ -3121,27 +3347,21 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
                 manda_modulo(c->modulo);
                 return 0;
 
-            case CTRL_SCELTA:
-                /* ! SI PASSA ALL'OPZIONE DOPO, E NON SI APRE UN ELENCO A
-                 * TENDINA. Un elenco che si apre e' una finestra nuova, un
-                 * ciclo di messaggi suo e un ritaglio sopra la pagina: e' un
-                 * lavoro onesto e non e' questo. Cliccando si gira fra le
-                 * opzioni — si arriva a tutte, e il modulo si puo' mandare
-                 * davvero. E' dichiarato qui e nella barra di stato, perche'
-                 * non e' quello che si aspetta chi arriva da un altro
-                 * browser. */
-                if (c->opz_n > 0) {
-                    int q = 0;
-                    const char *o;
+            case CTRL_SCELTA: {
+                /* L'elenco si apre sotto al controllo, dove ci si aspetta. */
+                int scelto = tendina(k, x, y + 20);
 
-                    c->opz_ora = (short)((c->opz_ora + 1) % c->opz_n);
-                    o = g_opz[c->opz_primo + c->opz_ora];
+                if (scelto >= 0 && scelto < c->opz_n) {
+                    int q = 0;
+                    const char *o = g_opz[c->opz_primo + scelto];
+
+                    c->opz_ora = (short)scelto;
                     while (o[q] && q < CTRL_VAL_MAX - 1) { c->valore[q] = o[q]; q++; }
                     c->valore[q] = '\0';
-                    dico("scelta cambiata: clicca ancora per la prossima");
                 }
                 g_ctrl_fuoco = -1;
                 break;
+            }
 
             default:
                 g_ctrl_fuoco = k;

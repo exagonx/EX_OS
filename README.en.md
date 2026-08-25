@@ -290,10 +290,15 @@ CA store nothing opens: encrypting with whoever answers means encrypting with
 whoever is in the middle, and the bar would say `https://` all the same.
 
 ! **FORMS ARE DRAWN, FILLED IN AND SUBMITTED**: text and password boxes, check
-boxes, selects, buttons and text areas are drawn like the system's own controls,
-take keystrokes, and the button really submits — over GET, percent-encoded.
-Not POST, and that is declared: it wants a request with a body, which is work
-in `exhttp`.
+boxes, selects with a drop-down list, buttons and text areas are drawn like the
+system's own controls, take keystrokes, and the button really submits — **over
+GET and POST**, percent-encoded.
+
+! **AND THE CONNECTION IS REUSED.** Over `https` the handshake is the whole
+cost — ephemeral key, certificate chain, signature — and a page with ten images
+paid it ten times. Now the connection is kept when the end of the body is
+known, the server's `Connection: close` is honoured, and a request is retried
+once if the other side closed without saying so.
 
 ! **AND COLOURS WRITTEN IN ATTRIBUTES COUNT**: `bgcolor`, `text`, `align`. Half
 the web still uses them — Hacker News's orange bar is a `bgcolor` on a
@@ -331,8 +336,8 @@ is refused rather than taken for two pixels. Less style, never wrong style.
 origin, so a page can override them. They used to be `if`s in the engine, and
 `<b>` and `<i>` were not there at all.
 
-What is **not** there, declared: JavaScript, `@media`, relative units, POST
-forms, `colspan`/`rowspan`.
+What is **not** there, declared: JavaScript, `@media`, relative units,
+`colspan`/`rowspan`.
 
 
 ### Fonts: TrueType, measured against FreeType
