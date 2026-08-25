@@ -107,23 +107,34 @@ D. FATTO — `exit` dal program manager spegne la scrivania.
    partenza, e lo schermo torna 720x400 cioe' modo testo.
 
 
-DA FARE (in coda):
+E. FATTO — la risoluzione, nelle impostazioni della scrivania.
 
-E. LA RISOLUZIONE VIDEO — ed e' piu' grande di come sembrava.
-   ! IL MECCANISMO NON C'E'. In giro si legge che «lo scrive /bin/svga insieme
-   a un byte dentro Stage 2» (commento in hwconfig.c) e che il kernel
-   confronta la voce `svga` con quel byte (cfg.h): ma /bin/svga NON ESISTE, e
-   Stage 2 non legge nessun byte — SCEGLIE DA SE' il modo VESA migliore
-   scorrendo quelli che la scheda dichiara (bootloader/stage2/loader.asm,
-   .mloop). La voce `svga` in kernel.cfg oggi non decide niente: si conserva e
-   basta.
-   Quindi il lavoro e' in tre pezzi, e l'interfaccia e' il piu' piccolo:
-     1. Stage 2 deve poter LEGGERE una risoluzione voluta. Gira prima che
-        esista un filesystem, quindi va messa in un byte dentro la sua
-        immagine — che e' esattamente quel che il commento dava per fatto.
-     2. Un programma che scrive quel byte nell'immagine installata E la voce
-        `svga` in kernel.cfg, tenendo i due d'accordo.
-     3. La finestra che lo chiama e dice che il nuovo modo arriva al riavvio.
+   ! E IL MECCANISMO C'ERA GIA' TUTTO. Nella nota precedente avevo scritto il
+   contrario — «/bin/svga non esiste e Stage 2 sceglie da se'» — e mi ero
+   sbagliato leggendo solo il ciclo che scorre i modi VESA. Sopra quel ciclo
+   c'e' il cancello: `svgamodo`, un byte dentro Stage 2 marcato dalla firma
+   'SVGAMODE', con la tabella 1=640x480 2=800x600 3=1024x768 e 0=testo. Se
+   quel byte e' zero si resta in testo; se e' valido, la risoluzione voluta
+   finisce in vwant/hwant e il ciclo cerca QUEL modo.
+   E il programma che lo scrive c'e': e' `/dev/svga.drv`, non /bin/svga — sta
+   fra i driver perche' cosi' entra nel catalogo ed e' `hwconfig -d` a
+   installarlo. Scrive due cose che devono restare d'accordo: la voce `svga`
+   in kernel.cfg (la configurazione) e il byte dentro Stage 2 (il recapito per
+   chi si avvia prima che esista un filesystem).
+
+   Mancava solo l'interfaccia, e adesso c'e': Avvio > Impostazioni... apre una
+   finestra che mostra la risoluzione di ADESSO (chiesta al server, non
+   indovinata) e i quattro modi. Premendone uno si lancia /dev/svga.drv e si
+   dice com'e' andata.
+   ! IL RIAVVIO SI DICE, perche' il modo video lo sceglie l'avvio: quando la
+   scrivania gira, quella porta e' chiusa da un pezzo.
+   ! E IL FALLIMENTO NON SI INDOVINA. Da CD non si puo' scrivere — LOADER.BIN
+   e' in sola lettura — ed e' il caso piu' comune: dire «la scheda non offre
+   quel modo» manderebbe a cercare un difetto dove non c'e'. Si dicono i due
+   casi veri e si rimanda alla console, dove svga stampa il motivo esatto.
+
+
+DA FARE (in coda):
 
 F. Taglia/copia/incolla: C'E' GIA' ed e' di tutta la scrivania —
    `ex_area_copia`, `ex_area_taglia`, `ex_area_incolla`,
@@ -131,3 +142,8 @@ F. Taglia/copia/incolla: C'E' GIA' ed e' di tutta la scrivania —
    programma e si incolla in un altro. MA vale per il controllo `ex_area` del
    toolkit: i campi di un modulo del BROWSER sono rettangoli disegnati, non
    `ex_area`, e li' non c'e'.
+
+G. I commenti che nominano `/bin/svga` sono da correggere: il programma sta in
+   `/dev/svga.drv`. Sono in bin/hwconfig/hwconfig.c, kernel/include/cfg.h e
+   bootloader/stage2/loader.asm. Un nome sbagliato in un commento e' il modo
+   in cui si conclude che una cosa non esista — e' successo qui.

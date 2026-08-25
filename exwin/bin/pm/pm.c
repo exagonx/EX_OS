@@ -51,6 +51,11 @@ EX_VERSIONE("pm", VERSIONE_APP);
 #define ID_SPEGNI   91
 #define ID_GESTISCI 92
 #define ID_INFO     93
+#define ID_IMPOST   94
+
+/* Le quattro risoluzioni: gli stessi nomi che accetta /dev/svga.drv, e
+ * nello stesso ordine della tabella dentro Stage 2. */
+#define ID_RIS      100     /* ..103: uno per modo */
 
 /* La finestra che gestisce l'elenco. */
 #define ID_G_LISTA  1
@@ -536,7 +541,9 @@ static void menu_apri(void)
      * quando non c'e' niente da avviare. */
     /* Quattro voci fisse adesso — «Applicazioni...», «Informazioni su»,
      * «Esci», «Spegni». */
-    h = (int)(g_app_n * VOCE_H) + 8 + 4 * VOCE_H + 6;
+    /* Cinque voci sotto la riga: Applicazioni, Impostazioni, Informazioni,
+     * Esci, Spegni. Il numero sta qui e non sparso nelle posizioni. */
+    h = (int)(g_app_n * VOCE_H) + 8 + 5 * VOCE_H + 6;
 
     g_menu = ex_crea("finestra", "", EX_BORDO | EX_SOPRA,
                      4, (int)g_sh - BARRA_H - h - 2, MENU_W, h, 0, 0, menu_proc);
@@ -567,14 +574,118 @@ static void menu_apri(void)
     ex_crea("pulsante", "Informazioni su", EX_FIGLIO,
             4, 10 + (int)(g_app_n + 1) * VOCE_H, MENU_W - 8, VOCE_H - 2,
             g_menu, ID_INFO, 0);
-    ex_crea("pulsante", "Esci", EX_FIGLIO,
+    ex_crea("pulsante", "Impostazioni...", EX_FIGLIO,
             4, 10 + (int)(g_app_n + 2) * VOCE_H, MENU_W - 8, VOCE_H - 2,
+            g_menu, ID_IMPOST, 0);
+    ex_crea("pulsante", "Esci", EX_FIGLIO,
+            4, 10 + (int)(g_app_n + 3) * VOCE_H, MENU_W - 8, VOCE_H - 2,
             g_menu, ID_ESCI, 0);
     ex_crea("pulsante", "Spegni", EX_FIGLIO,
-            4, 10 + (int)(g_app_n + 3) * VOCE_H, MENU_W - 8, VOCE_H - 2,
+            4, 10 + (int)(g_app_n + 4) * VOCE_H, MENU_W - 8, VOCE_H - 2,
             g_menu, ID_SPEGNI, 0);
 
     ex_procedura_base(g_menu, EXM_DISEGNA, 0, 0);
+}
+
+/* =============================================================================
+ * LE IMPOSTAZIONI — per ora una sola: la risoluzione
+ *
+ * ! IL MECCANISMO C'ERA GIA' TUTTO, e questa finestra non lo rifa': lo chiama.
+ * `/dev/svga.drv <modo>` scrive due cose che devono restare d'accordo — la
+ * voce `svga` in kernel.cfg, che e' la configurazione, e un byte dentro Stage
+ * 2 marcato dalla firma 'SVGAMODE', che e' il recapito per chi si avvia prima
+ * che esista un filesystem. Rifarlo qui vorrebbe dire una seconda verita'
+ * accanto a quella vera.
+ *
+ * ! E IL NUOVO MODO ARRIVA AL RIAVVIO, non adesso: la modalita' video la
+ * imposta Stage 2 con il BIOS, in modo reale, e quando la scrivania gira
+ * quella porta e' chiusa da un pezzo. Dirlo e' meta' del lavoro — una finestra
+ * che sembra non aver fatto niente e' peggio di una che non c'e'.
+ * ========================================================================== */
+static ExFinestra g_impost = 0;
+
+static const char *const MODI[4] = { "testo", "640x480", "800x600", "1024x768" };
+
+static long impost_proc(ExFinestra f, unsigned int msg,
+                        unsigned int wp, long lp)
+{
+    if (msg == EXM_CHIUDI) { ex_distruggi(f); g_impost = 0; return 0; }
+
+    if (msg == EXM_COMANDO && wp >= ID_RIS && wp < ID_RIS + 4) {
+        const char *modo = MODI[wp - ID_RIS];
+        char       *av[3];
+        char        m[256];
+        int         pid, st = 0;
+
+        av[0] = "/dev/svga.drv";
+        av[1] = (char *)modo;
+        av[2] = 0;
+
+        pid = spawn_ex(av[0], av, environ, 0, 0);
+        if (pid < 0) {
+            sprintf(m, "Non riesco a lanciare %s.", av[0]);
+            ex_dlg_avviso("Risoluzione", m);
+            return 0;
+        }
+        waitpid(pid, &st, 0);
+
+        /* ! SI GUARDA COM'E' ANDATA. Una finestra che dice «fatto» comunque
+         * manderebbe l'utente a riavviare per niente.
+         *
+         * ! E NON SI INDOVINA IL PERCHE'. Il motivo piu' comune non e' la
+         * scheda: e' che il sistema gira da CD, e li' LOADER.BIN non si puo'
+         * riscrivere — `svga` dice «filesystem in sola lettura». Scrivere
+         * «la scheda non lo offre» manderebbe a cercare un difetto dove non
+         * c'e'. Il motivo esatto lo stampa svga sulla console di testo; qui
+         * si dicono i due casi veri e si rimanda li'. */
+        if (st != 0)
+            sprintf(m, "%s non e' stato impostato.\n\n"
+                       "Da CD non si puo': il file di avvio e' in sola "
+                       "lettura. Su un sistema installato, la scheda "
+                       "potrebbe non offrire quel modo.\n\n"
+                       "Il motivo esatto e' sulla console di testo.", modo);
+        else
+            sprintf(m, "Risoluzione impostata su %s.\n\n"
+                       "Arriva al PROSSIMO RIAVVIO: il modo video lo sceglie "
+                       "l'avvio, prima che esista la scrivania.", modo);
+        ex_dlg_avviso("Risoluzione", m);
+        return 0;
+    }
+    return ex_procedura_base(f, msg, wp, lp);
+}
+
+static void impostazioni_apri(void)
+{
+    unsigned int sw = 0, sh = 0;
+    char         t[96];
+    int          i;
+
+    /* Gia' aperta: si rimette davanti facendola rivedere. Non c'e' un
+     * «portami in primo piano» nel toolkit, e ex_mostra basta: il server mette
+     * davanti cio' che torna visibile. */
+    if (g_impost) { ex_mostra(g_impost, 1); return; }
+
+    g_impost = ex_crea("finestra", "Impostazioni",
+                       EX_TITOLO | EX_BORDO | EX_CHIUDI,
+                       EX_AUTO, EX_AUTO, 300, 200, 0, 0, impost_proc);
+    if (!g_impost) return;
+
+    ex_schermo(&sw, &sh);
+    sprintf(t, "Risoluzione: adesso %ux%u", sw, sh);
+    ex_crea("etichetta", t, EX_FIGLIO, 12, 10, 276, 18, g_impost, 0, 0);
+
+    ex_crea("etichetta", "Si applica al prossimo riavvio.", EX_FIGLIO,
+            12, 30, 276, 18, g_impost, 0, 0);
+
+    for (i = 0; i < 4; i++)
+        ex_crea("pulsante", MODI[i], EX_FIGLIO,
+                12 + (i % 2) * 140, 58 + (i / 2) * 34, 132, 28,
+                g_impost, (unsigned int)(ID_RIS + i), 0);
+
+    ex_crea("etichetta", "«testo» spegne la grafica all'avvio.", EX_FIGLIO,
+            12, 132, 276, 18, g_impost, 0, 0);
+
+    ex_procedura_base(g_impost, EXM_DISEGNA, 0, 0);
 }
 
 static void avvia(unsigned int n)
@@ -652,6 +763,11 @@ static long menu_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         }
 
         if (wp == ID_GESTISCI) { gest_apri(); return 0; }
+
+        if (wp == ID_IMPOST) {
+            impostazioni_apri();
+            return 0;
+        }
 
         if (wp == ID_INFO) {
             char t[512];
