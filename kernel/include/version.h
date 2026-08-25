@@ -138,7 +138,24 @@
  * dichiara. Chi si fosse fidato di quella riga avrebbe "corretto" la tastiera
  * e rotto ogni tasto accentato.
  */
-#define EXOS_VERSION    "0.205"
+/* 0.205 -> 0.206: due cose, tutt'e due «il kernel tiene il posto, non decide».
+ *
+ * ! LE CONSOLE DIVENTANO CINQUE (VGA_N_CONSOLE, kernel/include/vga.h). Il
+ * server a finestre si prendeva una delle quattro — la seconda — e chi
+ * lavorava in testo si ritrovava con tre console invece di quattro senza
+ * averlo chiesto. Adesso Alt+F1..F4 restano di chi scrive e la grafica sta
+ * sulla quinta. Costa 4000 byte di BSS e una shell in piu'.
+ * ! E DEVE COMBACIARE CON KBD_N_CONSOLE (drivers/kbd/kbd_proto.h): e' il
+ * driver a tradurre Alt+Fn in un cambio di console, e se i due numeri
+ * divergono l'ultima console esiste ma non ci si arriva.
+ *
+ * ! `lingua` IN [kernel] DI kernel.cfg (kernel/fs/cfg.c, cfg.h). La sceglie
+ * l'installatore e la riconsegna `cfg_get_option`, esattamente come `keymap`:
+ * il kernel non la usa per NIENTE — tradurre e' lavoro dei programmi, e ognuno
+ * sa quali messaggi ha — ma sa dove sta scritta, cosi' che non ce ne siano
+ * due.
+ */
+#define EXOS_VERSION    "0.206"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

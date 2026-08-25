@@ -54,31 +54,65 @@ Da fare, per una pagina web moderna (in ordine di quanto pesa):
    si e' cliccato.
 
 
-DA FARE, CHIESTO IL 25 AGOSTO 2026 (in coda, nessuno cominciato):
+FATTI IL 25 AGOSTO 2026 (chiesti nella stessa giornata):
 
-A. install: in fondo chiedere di lanciare `hwconfig` per riconoscere l'hardware
-   e installare i driver che servono all'avvio da disco.
+A. FATTO — install lancia hwconfig in fondo. Il kernel.cfg appena copiato e'
+   quello del supporto d'installazione: elenca i driver che servivano a LUI,
+   non alla macchina su cui si e' appena installato. Il primo avvio da disco e'
+   proprio il momento in cui un driver mancante si paga, e li' non c'e' piu'
+   modo di lanciare hwconfig per ripararlo.
+   ! GLI SI PASSA LA RADICE DEL DISCO, non niente: senza argomento hwconfig
+   riscrive il kernel.cfg del sistema che sta GIRANDO — quello del CD — e il
+   disco resta con l'elenco sbagliato, cioe' il caso che si voleva evitare.
+   ! E SI CHIEDE, non si fa: hwconfig riscrive il file per intero, ed e' una
+   decisione. Chi dice di no se lo sente dire come rimediare.
 
-B. install: chiedere la LINGUA e scriverla in kernel.cfg.
+B. FATTO — la lingua, chiesta all'installazione e scritta in [kernel] di
+   kernel.cfg. Il kernel NON la usa per niente: tradurre e' lavoro dei
+   programmi, e ognuno sa quali messaggi ha. Il kernel la conserva e la
+   riconsegna con getenv("lingua"), esattamente come fa con `keymap` — cosi'
+   non ci sono due elenchi di lingue che divergono.
+   ! E hwconfig NON LA CANCELLA: sta fra le voci che si riportano com'erano,
+   insieme a `login` e `svga`.
+   ! IL DIFETTO TROVATO PROVANDO: la voce si scriveva solo sulla FUSIONE, cioe'
+   reinstallando sopra. Sull'installazione pulita — il caso normale —
+   kernel.cfg si copia e basta, quindi si chiedeva la lingua e non la si
+   scriveva da nessuna parte. Adesso anche il file appena copiato passa di li'.
+   Provato: scelto «francais», e nel kernel.cfg del disco c'e' `lingua = fr`.
 
-C. exwin sulla console 5, non sulla 2. Alt+F1..F4 sono delle console di testo,
-   quindi la grafica gli sta in mezzo. E lanciando `exwin` la console va
-   CAMBIATA subito invece di stampare «vai su Alt+F2»; uscendo si torna alla
-   console da cui si e' partiti.
+C. FATTO A META' — exwin sulla console 5, e ci si va da soli.
+   Le console erano quattro e la grafica se ne prendeva una (la seconda): chi
+   lavorava in testo si ritrovava con tre console senza averlo chiesto. Adesso
+   sono cinque, Alt+F1..F4 restano di chi scrive e la grafica sta in fondo.
+   VGA_N_CONSOLE e KBD_N_CONSOLE devono combaciare, ed e' scritto in tutt'e
+   due i posti: se divergono, l'ultima console esiste ma non ci si arriva.
+   E digitando `exwin` si passa alla grafica SUBITO, invece di leggere «Alt+F5
+   per andarci»: chi lo digita vuole la grafica, adesso. Il messaggio resta
+   sulla console di partenza, dov'e' utile quando si torna.
+   ! MANCA IL RITORNO AUTOMATICO alla console di partenza quando la grafica si
+   spegne: exwin oggi lancia e finisce, non aspetta nessuno. Sta insieme al
+   punto D — e' lo stesso lavoro.
+
+
+DA FARE (in coda):
 
 D. `exit` dal program manager deve spegnere il server grafico e chiudere le
    applicazioni che ci girano dentro. Oggi exwin resta acceso.
    FATTIBILE: il server sa quali finestre esistono e di chi sono; serve un
-   messaggio di chiusura a ognuna e poi la fine del processo wserver, piu' il
-   ritorno al modo testo che il gradino 0 gia' sa fare.
+   messaggio di chiusura a ognuna, poi la fine di wserver e il ritorno al modo
+   testo che il gradino 0 gia' sa fare. E con exwin che ASPETTA il server, il
+   ritorno alla console di partenza (punto C) viene da se'.
 
-E. Nelle impostazioni del server grafico, la scelta della RISOLUZIONE. Va
-   scritta da qualche parte che il prossimo avvio legge (kernel.cfg, come la
-   lingua): il modo video si sceglie prima che il server parta, quindi la
-   nuova risoluzione arriva al riavvio.
+E. Nelle impostazioni del server grafico, la scelta della RISOLUZIONE. Il modo
+   video si sceglie prima che il server parta — lo imposta Stage 2 leggendo un
+   proprio byte — quindi la nuova risoluzione arriva al RIAVVIO.
+   ! NON SI PARTE DA ZERO: esiste gia' `svga` in [kernel] di kernel.cfg, e la
+   nota accanto dice che Stage 2 impone e il kernel confronta. Il lavoro e'
+   l'interfaccia che scrive quella voce, non il meccanismo.
 
-F. Taglia/copia/incolla: C'E' GIA' ed e' di tutta la scrivania — `ex_area_copia`,
-   `ex_area_taglia`, `ex_area_incolla`, `ex_area_seleziona_tutto`, in memoria
-   condivisa, quindi si copia in un programma e si incolla in un altro. MA vale
-   per il controllo `ex_area` del toolkit: i campi di un modulo del BROWSER
-   sono rettangoli disegnati, non `ex_area`, e li' non c'e'.
+F. Taglia/copia/incolla: C'E' GIA' ed e' di tutta la scrivania —
+   `ex_area_copia`, `ex_area_taglia`, `ex_area_incolla`,
+   `ex_area_seleziona_tutto`, in memoria condivisa, quindi si copia in un
+   programma e si incolla in un altro. MA vale per il controllo `ex_area` del
+   toolkit: i campi di un modulo del BROWSER sono rettangoli disegnati, non
+   `ex_area`, e li' non c'e'.

@@ -65,6 +65,15 @@ typedef struct {
      * sistema, non una variabile che i programmi ereditano. */
     char        keymap[CFG_NAME_LEN];
 
+    /* La lingua del sistema: "it", "en", ... La sceglie l'installatore e la
+     * riconsegna `cfg_get_option`, esattamente come `keymap`.
+     *
+     * ! IL KERNEL NON LA USA PER NIENTE, ed e' voluto. Tradurre e' lavoro dei
+     * programmi, e ognuno sa quali messaggi ha; il kernel sa solo DOVE sta
+     * scritta la scelta, cosi' che non ce ne siano due. La stessa ragione per
+     * cui `keymap` sta qui e l'elenco delle disposizioni sta nel driver. */
+    char        lingua[CFG_NAME_LEN];
+
     /* La risoluzione della console voluta: "testo", "640x480", "800x600",
      * "1024x768". Il kernel NON la usa per impostare niente — non puo': la
      * modalita' grafica si imposta con il BIOS, in modo reale, e quando

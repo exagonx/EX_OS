@@ -125,6 +125,13 @@ static void cfg_apply_key(KernelConfig *cfg, const char *section,
             cfg_strcpy(cfg->keymap, value, sizeof(cfg->keymap));
             return;
         }
+        /* Solo conservata e riconsegnata, come keymap: chi traduce sono i
+         * programmi, e il kernel tiene soltanto il posto dove la scelta e'
+         * scritta una volta sola. */
+        if (cfg_strcmp(key, "lingua") == 0) {
+            cfg_strcpy(cfg->lingua, value, sizeof(cfg->lingua));
+            return;
+        }
         /* Solo conservata e riconsegnata, come keymap: chi la usa e'
          * /bin/svga, e chi la impone e' Stage 2. Vedi cfg.h. */
         if (cfg_strcmp(key, "svga") == 0) {
@@ -471,6 +478,9 @@ const char *cfg_get_option(const char *key)
     }
     if (cfg_strcmp(key, "keymap") == 0) {
         return cfg->keymap[0] ? cfg->keymap : NULL;
+    }
+    if (cfg_strcmp(key, "lingua") == 0) {
+        return cfg->lingua[0] ? cfg->lingua : NULL;
     }
     return NULL;
 }

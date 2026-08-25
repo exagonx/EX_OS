@@ -690,6 +690,16 @@ static void componi_kernel_cfg(char *out, unsigned int max, const char *vecchio)
              "keymap      = %s\n", g_t.keymap);
     strncat(out, riga, max - 1 - strlen(out));
 
+    /* ! LA LINGUA E' DI CHI USA IL SISTEMA, non dell'hardware: la sceglie
+     * l'installatore una volta e non la si ritocca guardando le schede PCI.
+     * Se c'era, resta — e' lo stesso patto di `login` e `svga`. */
+    if (voce_di_prima(vecchio, "kernel", "lingua", v, sizeof(v))) {
+        snprintf(riga, sizeof(riga),
+                 "\n# La lingua dei programmi: la scrive l'installatore.\n"
+                 "lingua      = %s\n", v);
+        strncat(out, riga, max - 1 - strlen(out));
+    }
+
     /* La risoluzione: non la decide questo programma, la decide /bin/svga
      * insieme a Stage 2. Se c'era, resta. */
     if (voce_di_prima(vecchio, "kernel", "svga", v, sizeof(v))) {

@@ -603,6 +603,32 @@ static int cerca_componenti(const char *punto)
 }
 
 /* Legge una riga dalla console. Rende il primo carattere, o 0 se non c'e'. */
+/* =============================================================================
+ * LA LINGUA DEL SISTEMA
+ *
+ * ! LA SCELTA SI FA UNA VOLTA E STA IN UN POSTO SOLO: `lingua` in [kernel] di
+ * kernel.cfg. Il kernel non la usa per niente — tradurre e' lavoro dei
+ * programmi, e ognuno sa quali messaggi ha — ma la conserva e la riconsegna
+ * con `getenv("lingua")`, esattamente come fa con `keymap`. Cosi' non ci sono
+ * due elenchi di lingue che divergono.
+ *
+ * ! E `hwconfig` NON LA CANCELLA. Quel programma riscrive kernel.cfg per
+ * intero guardando l'hardware, e la lingua con l'hardware non c'entra niente:
+ * sta fra le voci che si riportano com'erano, insieme a `login` e `svga`.
+ * ========================================================================== */
+#define LINGUA_MAX 8
+
+static char g_lingua[LINGUA_MAX] = "";
+
+static const struct { const char *sigla, *nome; } LINGUE[] = {
+    { "it", "italiano" },
+    { "en", "english"  },
+    { "fr", "francais" },
+    { "de", "deutsch"  },
+    { "es", "espanol"  },
+    { 0, 0 }
+};
+
 static char chiedi(const char *domanda)
 {
     char r[16];
@@ -613,6 +639,30 @@ static char chiedi(const char *domanda)
     if (n < 0) n = 0;
     r[n] = '\0';
     return r[0];
+}
+
+/* Chiede la lingua e la lascia in g_lingua. Una risposta che non si capisce
+ * vale «la prima», che e' l'italiano: e' meglio di un file senza la voce. */
+static void chiedi_lingua(void)
+{
+    char r[16];
+    int  i, n;
+
+    printf("\nLingua del sistema\n");
+    for (i = 0; LINGUE[i].sigla; i++)
+        printf("  %d) %-8s (%s)\n", i + 1, LINGUE[i].nome, LINGUE[i].sigla);
+
+    printf("\n  scegli [1-%d, Invio = 1]: ", i);
+    n = (int)read(0, r, sizeof(r) - 1);
+    if (n < 0) n = 0;
+    r[n] = '\0';
+
+    i = (r[0] >= '1' && r[0] <= '9') ? r[0] - '1' : 0;
+    if (!LINGUE[i].sigla) i = 0;
+
+    strncpy(g_lingua, LINGUE[i].sigla, LINGUA_MAX - 1);
+    g_lingua[LINGUA_MAX - 1] = '\0';
+    printf("  = %s (%s)\n", LINGUE[i].nome, g_lingua);
 }
 
 /* `modo`: 0 = chiedi, 1 = minimale senza chiedere, 2 = tutto senza chiedere. */
@@ -1226,6 +1276,39 @@ static void aggiorna_kernel_cfg(const char *perc)
                    v->sezione, v->chiave, v->valore, v->perche);
     }
 
+    /* ! LA LINGUA SI AGGIUNGE SOLO SE NON C'E' GIA'. E' la stessa regola di
+     * tutte le altre voci qui sopra: presente vuol dire SCELTA, anche se e'
+     * diversa da quella appena detta a voce. Chi reinstalla sopra un sistema
+     * che parlava inglese non se lo ritrova in italiano perche' ha premuto
+     * Invio su una domanda. */
+    if (g_lingua[0]) {
+        unsigned int coda = 0;
+        int          dove = cfg_cerca(testo, "kernel", "lingua",
+                                      valore, sizeof(valore), &coda);
+
+        if (dove == 1) {
+            if (!cfg_uguale(valore, g_lingua))
+                printf("    [kernel] lingua = %s  (gia' scelta prima:"
+                       " la lascio)\n", valore);
+        } else {
+            riga[0] = '\0';
+            strncat(riga, "lingua      = ", sizeof(riga) - strlen(riga) - 1);
+            strncat(riga, g_lingua, sizeof(riga) - strlen(riga) - 1);
+            strncat(riga, "\n", sizeof(riga) - strlen(riga) - 1);
+
+            if (dove == 0) {
+                if (!cfg_inserisci(testo, sizeof(testo), coda, riga)) stretto = 1;
+                else aggiunte++;
+            } else {
+                if (!cfg_appendi_sezione(testo, sizeof(testo), "kernel", riga))
+                    stretto = 1;
+                else aggiunte++;
+            }
+            if (!stretto)
+                printf("    + [kernel] lingua = %s\n", g_lingua);
+        }
+    }
+
     if (stretto) {
         printf("  ! kernel.cfg e' vicino al tetto di %u byte: non ci sta\n",
                CFG_MAX_BYTE);
@@ -1441,6 +1524,11 @@ int main(int argc, char **argv)
         printf("\n");
     }
 
+    /* ! LA LINGUA SI CHIEDE QUI, dopo il «procedo» e prima di scrivere: e' una
+     * scelta che finisce in un file, quindi non ha senso chiederla a chi sta
+     * per annullare. */
+    chiedi_lingua();
+
     /* ! SI SCEGLIE PRIMA DI SCRIVERE, non a meta' strada. Chiedere «installo
      * anche /exwin?» dopo aver gia' sostituito il kernel vorrebbe dire che
      * rispondere «annulla» non annulla piu' niente. Qui l'unica cosa fatta e'
@@ -1539,7 +1627,14 @@ int main(int argc, char **argv)
             close(f);
             aggiorna_kernel_cfg(q);
         } else {
+            /* ! ANCHE IL FILE APPENA COPIATO PASSA DI LI'. Il kernel.cfg del
+             * supporto non ha la voce `lingua` — nessuno gliel'ha mai scritta
+             * — e senza questo secondo giro la scelta fatta a voce due
+             * schermate fa non finiva da nessuna parte: si chiedeva la lingua
+             * e non la si scriveva. Succedeva solo sull'installazione PULITA,
+             * cioe' il caso normale, perche' la fusione la scriveva gia'. */
             copia("/boot/kernel.cfg", q);
+            aggiorna_kernel_cfg(q);
         }
     }
 
@@ -1795,7 +1890,58 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    printf("Installazione completata. Togli il floppy e riavvia.\n\n");
+    /* =========================================================================
+     * ! L'HARDWARE SI GUARDA ADESSO, NON AL PRIMO AVVIO DAL DISCO.
+     *
+     * kernel.cfg appena copiato e' quello del supporto d'installazione, e
+     * quello elenca i driver che servono a far partire il CD o il floppy — non
+     * quelli di QUESTA macchina. Il primo avvio da disco e' proprio il momento
+     * in cui un driver mancante si paga: se il controller del disco non e' fra
+     * i moduli, la macchina non arriva alla shell e non c'e' piu' modo di
+     * lanciare hwconfig per ripararlo.
+     *
+     * ! E SI CHIEDE, NON SI FA. hwconfig riscrive kernel.cfg per intero: e'
+     * una decisione, e le decisioni le prende chi installa. Chi dice di no ha
+     * comunque il sistema installato e puo' lanciarlo dopo — questa riga lo
+     * dice, invece di lasciarlo scoprire.
+     * ===================================================================== */
+    printf("Riconoscimento dell'hardware\n");
+    printf("  Il kernel.cfg appena copiato e' quello del supporto da cui hai\n");
+    printf("  installato: elenca i driver che servivano a LUI, non a questa\n");
+    printf("  macchina. `hwconfig` la guarda e riscrive l'elenco.\n");
+
+    if (chiedi("\n  Lo lancio adesso? [si/no] ") == 's') {
+        char *av[3];
+        int   pid, st = 0;
+
+        /* ! GLI SI DA' LA RADICE DEL DISCO APPENA INSTALLATO, non niente:
+         * senza argomento hwconfig riscriverebbe il kernel.cfg del sistema che
+         * sta GIRANDO — quello del CD — e il disco resterebbe con l'elenco di
+         * driver sbagliato, cioe' proprio il caso che si voleva evitare. */
+        av[0] = "/bin/hwconfig";
+        av[1] = argv[1];
+        av[2] = 0;
+
+        printf("\n");
+        pid = spawn(av[0], av);
+        if (pid < 0) {
+            printf("  ! non riesco a lanciare %s (%s)\n",
+                   av[0], strerror(errno));
+            printf("    rimedio, dopo il riavvio:  hwconfig\n");
+        } else {
+            /* Il primo piano gli si cede: hwconfig qui CHIEDE prima di
+             * riscrivere, e una domanda che arriva a un programma in secondo
+             * piano e' una domanda a cui non risponde nessuno. */
+            console_setfg((unsigned)pid);
+            waitpid(pid, &st, 0);
+            console_setfg((unsigned)getpid());
+        }
+    } else {
+        printf("\n  = saltato. Se la macchina non si avvia dal disco, o se un\n");
+        printf("    dispositivo non risponde, lancia `hwconfig` e riavvia.\n");
+    }
+
+    printf("\nInstallazione completata. Togli il floppy e riavvia.\n\n");
     printf("Ricorda: la mappa dei settori vale finche' quei file non si\n");
     printf("spostano. Se ricopi kernel o stage2 sul disco, rilancia install.\n");
     return 0;

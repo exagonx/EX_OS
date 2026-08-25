@@ -118,7 +118,10 @@ typedef struct {
  * finirebbero tutte sull'indice 0 — cioè si ruberebbero i tasti a
  * vicenda. Non si può includere vga.h da qui: questo header deve
  * restare privo di dipendenze (vedi la nota in testa al file). */
-#define KBD_N_CONSOLE       4
+/* ! DEVE COMBACIARE CON VGA_N_CONSOLE (kernel/include/vga.h). Cinque da
+ * quando la grafica ha la sua console: Alt+F1..F4 restano di chi scrive in
+ * testo, Alt+F5 e' del server a finestre. */
+#define KBD_N_CONSOLE       5
 
 /* Alt+F1..F12 commutano fra le console. Il driver li intercetta PRIMA
  * di qualunque altra elaborazione e non li consegna a nessuno: sono un

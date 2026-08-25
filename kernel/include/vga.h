@@ -39,14 +39,25 @@ typedef enum {
  *
  * Quante ne esistono. Ognuna costa 4000 byte di BSS del kernel per il
  * proprio buffer di schermo, più un processo shell che ci gira sopra:
- * quattro sono il compromesso classico (Alt+F1..F4) fra averne
+ * quattro erano il compromesso classico (Alt+F1..F4) fra averne
  * abbastanza e non sprecare RAM su una macchina che ne ha 32 MB.
+ *
+ * ! CINQUE DA QUANDO LA GRAFICA HA LA SUA. Il server a finestre si prendeva
+ * una delle quattro — la seconda — e chi lavorava in testo si ritrovava con
+ * tre console invece di quattro, senza averlo chiesto. Alt+F1..F4 restano di
+ * chi scrive; la grafica sta sulla quinta, Alt+F5, e non toglie niente a
+ * nessuno. Costa 4000 byte e una shell in piu'.
+ *
+ * ! E DEVE COMBACIARE CON KBD_N_CONSOLE, in drivers/kbd/kbd_proto.h: e' il
+ * driver a tradurre Alt+Fn in un cambio di console, e se i due numeri
+ * divergono l'ultima console esiste ma non ci si arriva — oppure si chiede al
+ * kernel di mostrarne una che non c'e'.
  *
  * La console 0 è quella di SISTEMA: ci finiscono i messaggi del kernel
  * (klog/kprintf) e tutto ciò che viene scritto prima che esista un
  * processo. Vedi kernel/arch/x86/vga.c.
  * ============================================================================= */
-#define VGA_N_CONSOLE   4
+#define VGA_N_CONSOLE   5
 
 /* Funzioni aggiuntive vga.c */
 uint8_t vga_get_row(void);

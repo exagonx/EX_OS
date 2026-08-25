@@ -49,7 +49,7 @@ int main(int argc, char **argv)
     VideoInfo   v;
     char        c_arg[8];
     char       *sv[6], *pv[4];
-    int i, console = -1, n;
+    int i, console = -1, n, partenza = 0;
 
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-c") == 0 && i + 1 < argc) console = atoi(argv[++i]);
@@ -82,13 +82,27 @@ int main(int argc, char **argv)
     if (!server) { printf("exwin: /exwin/bin/wserver non trovato\n"); return 1; }
     if (!pm)     { printf("exwin: /exwin/bin/pm non trovato\n"); return 1; }
 
-    /* La prossima console dopo la nostra: quella dove gira la shell resta
-     * dov'e'. */
+    /* =====================================================================
+     * ! L'ULTIMA CONSOLE, NON LA PROSSIMA.
+     *
+     * Prima si prendeva «quella dopo la mia»: lanciando exwin dalla prima si
+     * finiva sulla seconda, cioe' in mezzo alle console di testo. Chi lavora
+     * in testo si ritrovava Alt+F2 occupato dalla grafica senza averlo
+     * chiesto, e le console utili diventavano tre.
+     *
+     * L'ultima e' di casa: Alt+F1..F4 restano di chi scrive, la grafica sta in
+     * fondo. E siccome e' l'ULTIMA e non un numero scritto qui, il giorno che
+     * le console diventassero sei questo file non cambia.
+     * ===================================================================== */
+    if (console_info(&ci) != 0) {
+        printf("exwin: non so su che console sono\n");
+        return 1;
+    }
+    partenza = (int)ci.mia;
+
     if (console < 0) {
-        if (console_info(&ci) != 0) { printf("exwin: non so su che console sono\n"); return 1; }
-        console = (int)ci.mia + 1;
-        if (console >= (int)ci.totale) console = 0;
-        if (console == (int)ci.mia) {
+        console = (int)ci.totale - 1;
+        if (console == partenza) {
             printf("exwin: c'e' una sola console: la grafica coprirebbe la shell\n");
             return 1;
         }
@@ -139,8 +153,16 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    printf("exwin: grafica accesa sulla console %d.\n", console);
-    printf("       Alt+F%d per andarci, Alt+F%d per tornare qui.\n",
-           console + 1, (int)(console_info(&ci) == 0 ? ci.mia : 0) + 1);
+    /* ! CI SI VA, NON SI DICE COME ANDARCI. Stampare «Alt+F5 per andarci» e
+     * lasciare l'utente davanti alla shell era una schermata di istruzioni al
+     * posto della cosa chiesta: chi digita `exwin` vuole la grafica, adesso.
+     * Il messaggio resta, ma sulla console da cui si e' partiti, cosi' e' li'
+     * ad aspettare quando si torna. */
+    printf("exwin: grafica accesa sulla console %d.\n", console + 1);
+    printf("       Alt+F%d per tornare qui.\n", partenza + 1);
+
+    if (console_switch((unsigned int)console) != 0)
+        printf("exwin: non riesco a passare alla console %d: vacci con Alt+F%d\n",
+               console + 1, console + 1);
     return 0;
 }
