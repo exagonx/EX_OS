@@ -108,12 +108,14 @@ EX_VERSIONE("browser", VERSIONE_APP);
  *     i pezzi impaginati            750 KB   (24000 x 32)
  *     gli indirizzi dei link        200 KB   (arena + scostamenti)
  *     la cronologia                  19 KB
- *     le immagini                  2176 KB
+ *     le immagini                 128 KB + il tetto scelto all'avvio
  *                                  -------
- *                                   5525 KB
+ *                                   3477 KB piu' i pixel
  *
- * Cinque megabyte e mezzo su trentadue: molto, e dichiarato. Il giorno che
- * sara' troppo, la voce da guardare per prima e' quella delle immagini.
+ * Tre megabyte e mezzo FISSI, piu' i pixel delle immagini — e quelli non sono
+ * una costante: si decidono all'avvio su un sedicesimo della memoria libera,
+ * fra un quarto di milione e due milioni di pixel. Su una macchina da 32 MB
+ * sono circa un megabyte e mezzo; su una da 128 il massimo. Vedi IMM_PX_MIN.
  * ========================================================================== */
 #define PAGINA_MAX  (1024u * 1024u)
 #define NODI_MAX    24000
@@ -144,9 +146,58 @@ EX_VERSIONE("browser", VERSIONE_APP);
 #define CSS_ARENA_MAX   (24u * 1024u)
 #define CSS_FOGLI_MAX   4       /* quanti <link rel=stylesheet> si seguono */
 
-#define IMM_MAX      12
+/* ! SESSANTAQUATTRO E NON DODICI, E IL CONTO NON E' QUELLO CHE SEMBRA. Una
+ * casella di questo elenco costa l'indirizzo che ci sta dentro — 600 byte piu'
+ * una manciata — non i pixel: passare da dodici a sessantaquattro sono
+ * trentadue kilobyte, cioe' niente. I PIXEL LI CONTA il tetto qui sotto, ed e'
+ * quello il tetto vero.
+ *
+ * ! CHE E' ANCHE IL MOTIVO PER CUI ALZARE QUESTO NUMERO DA SOLO NON SERVIVA A
+ * NIENTE. Sulla voce «Operating system» di Wikipedia le immagini con le misure
+ * dichiarate sono venticinque e, dopo il cap alla finestra, vogliono 2,2
+ * milioni di pixel: con mezzo milione ne entravano CINQUE. Il tetto che si
+ * toccava non era mai stato dodici. */
+#define IMM_MAX      64
 #define IMM_BYTE_MAX (128u * 1024u)     /* il file di UNA immagine  */
-#define IMM_PX_TOT   (512u * 1024u)     /* i pixel tenuti, IN TUTTO */
+
+/* =============================================================================
+ * ! QUANTI PIXEL SI TENGONO LO DECIDE LA MACCHINA, NON QUESTA RIGA.
+ *
+ * Era una costante, ed era la cosa sbagliata: mezzo milione di pixel sono
+ * avari su un PC con 128 MB e sono ANCORA TROPPI su uno con 32, dove il
+ * browser occupa gia' tre megabyte e mezzo di suo. Sulla voce «Operating
+ * system» di Wikipedia si sono visti tutt'e due i difetti lo stesso
+ * pomeriggio: con mezzo milione entravano CINQUE immagini su venticinque, e
+ * alzando a un milione la macchina da 32 MB finiva le pagine fisiche — il
+ * kernel scriveva «OUT OF MEMORY» e il browser ripiegava sugli `alt`.
+ *
+ * ! UN SEDICESIMO DELLA MEMORIA LIBERA. I due estremi sono dichiarati perche'
+ * nessuna delle due direzioni deve poter scappare: un quarto di milione di
+ * pixel e' il minimo sotto cui la pagina non e' piu' una pagina, due milioni
+ * il massimo che ha senso tenere per una finestra sola.
+ *
+ * ! E RESTA UN TETTO, NON UNA PROMESSA. `ridimensiona` puo' fallire lo stesso
+ * se qualcun altro ha preso la memoria nel frattempo, e quel caso e' gia'
+ * gestito: l'immagine si salta e al suo posto si legge il suo `alt`. Questo
+ * conto serve a non ARRIVARCI, non a sostituire il controllo.
+ * ========================================================================== */
+#define IMM_PX_MIN   (256u * 1024u)
+#define IMM_PX_MAX   (2048u * 1024u)
+
+static unsigned int g_imm_px_tot = IMM_PX_MIN;   /* deciso all'avvio */
+
+static void imm_tetto_scegli(void)
+{
+    MemInfo mi;
+
+    if (meminfo(&mi) != 0) { g_imm_px_tot = IMM_PX_MIN; return; }
+
+    /* free_kb / 16 kilobyte, in pixel da quattro byte: free_kb * 16. */
+    g_imm_px_tot = mi.free_kb * 16u;
+
+    if (g_imm_px_tot < IMM_PX_MIN) g_imm_px_tot = IMM_PX_MIN;
+    if (g_imm_px_tot > IMM_PX_MAX) g_imm_px_tot = IMM_PX_MAX;
+}
 
 /* Un tratto di testo — o un'immagine — gia' collocato. */
 /* ! IL PEZZO PORTA IL CARATTERE E IL COLORE GIA' SCELTI, e non piu' un «e' un
@@ -331,6 +382,7 @@ static CssFoglio     g_css;
 static Imm           g_imm[IMM_MAX];
 static int           g_imm_n = 0;
 static unsigned int  g_imm_px = 0;      /* quanti pixel si stanno tenendo */
+static int           g_imm_fuori = 0;   /* quante lasciate fuori: non c'era posto */
 static unsigned char g_imm_buf[IMM_BYTE_MAX];
 
 static int  (*g_img_carica)(const unsigned char *, unsigned int, EximgBitmap *);
@@ -411,6 +463,7 @@ static void imm_libera_tutte(void)
 
     g_imm_n  = 0;
     g_imm_px = 0;
+    g_imm_fuori = 0;
 }
 
 /* Le cifre in testa, e basta.
@@ -2649,7 +2702,12 @@ static int imm_prendi(int k)
     /* ! IL TETTO SI CONTROLLA PRIMA DI COPIARE, e vale sulla SOMMA: dodici
      * immagini che stanno ciascuna nell'area sono lo stesso dodici volte
      * l'area. */
-    if (w == 0 || h == 0 || g_imm_px + w * h > IMM_PX_TOT) {
+    if (w == 0 || h == 0 || g_imm_px + w * h > g_imm_px_tot) {
+        /* ! QUI CI FINISCE SOLO CHI NON AVEVA DICHIARATO LE MISURE: per le
+         * altre la risposta si e' gia' data prima di scaricare. Si conta lo
+         * stesso, perche' a chi guarda la pagina non importa in che momento
+         * abbiamo scoperto che non c'era posto. */
+        if (w && h) g_imm_fuori++;
         g_img_libera(&bm);
         return 0;
     }
@@ -2664,6 +2722,35 @@ static int imm_prendi(int k)
     return 1;
 }
 
+/* =============================================================================
+ * ! C'E' POSTO PER QUESTA? SI RISPONDE PRIMA DI SCARICARLA.
+ *
+ * Il tetto dei pixel si controllava dentro `imm_prendi`, cioe' DOPO aver
+ * scaricato il file e DOPO averlo decodificato: l'immagine che non ci stava
+ * costava tutta la rete e tutta la CPU per finire buttata. Con dodici caselle
+ * si perdevano pochi secondi; con sessantaquattro sarebbero minuti.
+ *
+ * Due risposte sicure, e nessuna delle due indovina:
+ *   - se non c'e' piu' un pixel libero, non c'e' posto per NESSUNO;
+ *   - se la pagina ha dichiarato `width` e `height`, la misura finale si sa
+ *     gia' — e' la stessa che tiene il posto nell'impaginazione — quindi si sa
+ *     con certezza se ci sta.
+ * Quella senza misure dichiarate si scarica e si vede: non c'e' modo di
+ * saperlo prima, e tirare a indovinare butterebbe via immagini buone.
+ * ========================================================================== */
+static int imm_ci_sta(int k)
+{
+    unsigned int w, h;
+
+    if (g_imm_px >= g_imm_px_tot) return 0;
+    if (!g_imm[k].dich_w || !g_imm[k].dich_h) return 1;
+
+    misura(&g_imm[k], g_imm[k].dich_w, g_imm[k].dich_h, &w, &h);
+    if (w == 0 || h == 0) return 1;
+
+    return g_imm_px + w * h <= g_imm_px_tot;
+}
+
 /* Tutte quelle che l'impaginazione ha trovato, una per volta. */
 static void immagini_prendi(void)
 {
@@ -2672,6 +2759,17 @@ static void immagini_prendi(void)
 
     for (k = 0; k < g_imm_n; k++) {
         if (g_imm[k].stato != 0) continue;
+
+        if (!imm_ci_sta(k)) {
+            g_imm_fuori++;
+            g_imm[k].stato = 2;
+            if (g_imm[k].ris_w) {
+                g_imm[k].ris_w = g_imm[k].ris_h = 0;
+                impagina();
+                disegna();
+            }
+            continue;
+        }
 
         sprintf(msg, "immagine %d di %d...", k + 1, g_imm_n);
         dico(msg);
@@ -2716,6 +2814,7 @@ static void immagini_prendi(void)
             disegna();
         }
     }
+
 }
 
 /* -----------------------------------------------------------------------------
@@ -2959,6 +3058,23 @@ static void vai(const char *url, int in_storia, int usa_cache)
 
     /* Il testo si vede: adesso, e solo adesso, si va a prendere il resto. */
     immagini_prendi();
+
+    /* ! E SE QUALCHE IMMAGINE E' RIMASTA FUORI LO SI DICE QUI, COI NUMERI, con
+     * la stessa regola dell'albero troncato: «manca un'immagine» non dice se
+     * il tetto va alzato di poco o se quella pagina non ci starebbe mai. Al
+     * suo posto si legge il suo `alt`, non un riquadro vuoto.
+     *
+     * ! E VA SCRITTO QUI E NON DENTRO `immagini_prendi`, perche' la riga qui
+     * sotto rimette la riga di stato della pagina: un `dico` la' dentro
+     * verrebbe cancellato un'istruzione dopo — che e' esattamente quello che
+     * succedeva. */
+    if (g_imm_fuori > 0) {
+        int l = (int)strlen(msg);
+
+        snprintf(msg + l, sizeof(msg) - (size_t)l,
+                 "  [%d immagini fuori: pixel %uK/%uK]",
+                 g_imm_fuori, g_imm_px / 1024u, g_imm_px_tot / 1024u);
+    }
     dico(msg);
     g_da_postare = 0;
 }
@@ -3604,6 +3720,11 @@ int main(int argc, char **argv)
 
     g_stato = ex_crea("etichetta", "", EX_FIGLIO,
                       MARGINE, FIN_H - 18, FIN_W - 2 * MARGINE, 16, g_f, 0, 0);
+
+    /* ! IL TETTO DELLE IMMAGINI SI SCEGLIE QUI, a finestra gia' aperta: prima
+     * di ex_crea la memoria che il server a finestre prendera' per questa
+     * finestra e' ancora libera, e conterebbe come nostra. */
+    imm_tetto_scegli();
 
     cache_prepara();
 
