@@ -96,6 +96,123 @@ del suo, quel disegno spariva a ogni tasto. Bastava scrivere nella barra
 dell'indirizzo per far sparire la pagina. Adesso il messaggio arriva: costa un
 `EXM_DISEGNA` per tasto battuto, non per pixel di mouse mosso.
 
+### 5. Le tabelle coi bordi, e le connessioni di un processo morto
+
+`<table border="1">` disegna un filo intorno a ogni cella e alla tabella. E'
+l'attributo e non il CSS, perche' e' cosi' che si sono disegnate le tabelle per
+vent'anni e le pagine che lo usano sono quelle senza foglio di stile. I bordi
+stanno nello stesso elenco degli sfondi: un bordo e' un rettangolo sotto il
+testo e sopra lo sfondo, come uno sfondo.
+
+! **«RIAPRI IL BROWSER E NON NAVIGA PIU'»: -23, cioe' ENFILE.** Il driver IP
+tiene una tabella di connessioni e ogni voce ricorda il PID di chi l'ha aperta.
+Un programma chiuso con la crocetta non chiude niente, e il suo slot restava
+occupato **per sempre**: con otto slot bastavano poche aperture.
+
+! **E IL PROGRAMMA NON PUO' RIPARARE DA SE'**: se e' morto non gira piu' nessun
+suo codice. Adesso, quando la tabella e' piena, prima di rispondere -ENFILE si
+guarda chi e' morto con `procinfo()` — e uno zombie non conta come vivo. Il
+tetto passa da 8 a 24 perche' otto erano pochi anche senza la perdita: una
+pagina tiene aperta la connessione per riusarla mentre un servitore ascolta e
+un altro programma scarica.
+
+### 6. Il sistema: lingua, hardware, console della grafica
+
+**`lingua` in [kernel] di kernel.cfg**, chiesta dall'installatore. Il kernel non
+la usa per niente — tradurre e' lavoro dei programmi — ma la conserva e la
+riconsegna con `getenv`, esattamente come `keymap`: cosi' non ci sono due
+elenchi di lingue che divergono. `hwconfig` non la cancella.
+
+**`install` lancia `hwconfig` in fondo**, e gli passa la radice del disco
+appena installato: senza argomento riscriverebbe il kernel.cfg del sistema che
+sta *girando* — quello del CD — lasciando il disco con l'elenco di driver
+sbagliato, cioe' il caso che si voleva evitare.
+
+**Le console diventano cinque.** La grafica se ne prendeva una delle quattro e
+chi lavorava in testo ne aveva tre senza averlo chiesto. Adesso Alt+F1..F4
+restano di chi scrive e la grafica sta in fondo; `exwin` ci passa da solo e
+torna indietro quando la grafica si spegne.
+
+! **E LA CONSOLE DELLA GRAFICA ESISTE SOLO MENTRE LA GRAFICA C'E'**
+(`SYS_CONSOLE_GRAFICA`, kernel 0.207): finche' il server non gira, Alt+F5 non
+fa niente — li' ci sarebbe uno schermo nero con una shell che nessuno guarda.
+Lo stato sta nel **kernel** e non nel server, cosi' un server ucciso libera la
+console da solo.
+
+**`Esci` dal program manager spegne la scrivania.** Alle applicazioni si
+CHIEDE, non le si uccide: a ognuna arriva la stessa chiusura della crocetta.
+
+### 7. La risoluzione, e una conclusione sbagliata da cui imparare
+
+! **AVEVO SCRITTO CHE IL MECCANISMO NON C'ERA, E MI ERO SBAGLIATO.** Avevo
+letto solo il ciclo che scorre i modi VESA; sopra c'e' il cancello — `svgamodo`,
+un byte dentro Stage 2 marcato dalla firma `SVGAMODE`. E il programma che lo
+scrive esiste: e' `/dev/svga.drv`, non `/bin/svga`.
+
+! **OTTO COMMENTI DICEVANO IL NOME SBAGLIATO**, e mi ci sono fidato. Un nome
+sbagliato in un commento e' il modo in cui si conclude che una cosa non esista:
+e' costato un giro di lavoro speso a progettare una cosa gia' fatta. Adesso
+sono corretti, e in `cfg.h` resta scritto **apposta** che «/bin/svga» non e' mai
+esistito, con la ragione per cui quel programma sta in /dev (l'estensione .drv
+lo fa entrare nel catalogo dei driver). Chi cerchera' il vecchio nome finira'
+sulla spiegazione invece che in un vicolo cieco.
+
+Mancava solo l'interfaccia: **Avvio > Impostazioni...** mostra la risoluzione di
+adesso (chiesta al server, non indovinata) e i quattro modi.
+
+### 8. Copia e incolla dentro una pagina
+
+I campi di un modulo HTML sono rettangoli disegnati, non controlli del toolkit:
+per questo `ex_area_copia` non li riguardava, e la scrivania aveva gli appunti
+dappertutto tranne che dentro una pagina. Adesso c'e' la selezione, e **due**
+scorciatoie perche' nessuna e' «quella giusta»:
+
+    Ctrl+C   Ctrl+X   Ctrl+V   Ctrl+A      Windows e desktop moderni
+    Ctrl+Ins   Shift+Ins   Shift+Canc      CUA: DOS, OS/2, terminali Unix
+
+Gli appunti sono quelli di **tutta la scrivania**: `ex_appunti_metti` e
+`ex_appunti_prendi` (nuove in exwin.so) usano la stessa memoria condivisa di
+`ex_area`, quindi si copia da una casella e si incolla in un editor. Stanno
+nella libreria condivisa perche' serviranno anche all'editor RTF e all'IDE.
+
+! **IL BROWSER BUTTAVA VIA I MODIFICATORI**: `wp & 0xFFFF` in cima al gestore
+dei tasti. Il sintomo di Ctrl+C e' stato una «c» scritta dentro la casella.
+
+---
+
+## 25 agosto 2026 — tre errori miei, e cosa insegnano
+
+Vale la pena tenerli scritti: sono tutti e tre della stessa famiglia.
+
+**1. Un numero di syscall preso senza contare i doppioni.**
+`SYS_CONSOLE_GRAFICA` messo a 233, che era gia' `SYS_IOPORT_IN16`. Il sintomo
+non somigliava alla causa: il driver di rete leggeva la propria firma con
+`in16` e si vedeva tornare «00 00», quindi dichiarava che la scheda non
+c'era. Mezzo pomeriggio dentro la rete per una riga scritta altrove. Il
+controllo costa un comando, ed e' scritto accanto alla voce:
+
+    grep -oE '#define SYS_[A-Z_0-9]+ +[0-9]+' kernel/include/syscall.h \
+      | awk '{print $3}' | sort -n | uniq -d
+
+**2. Una patch fallita a meta', controllata a meta'.**
+`exwin` doveva lanciare una copia di se' con `--attendi`; il ramo che riconosce
+quell'opzione non e' mai stato aggiunto perche' la patch era fallita, e io
+avevo guardato solo che la SECONDA meta' fosse andata a posto. Ogni copia si
+comportava da exwin normale e ne lanciava un'altra: schermo blu, e in fondo
+alla seriale «SCHED: PCB pool esaurito». Una ricorsione che si vede solo
+dall'esaurimento non somiglia a una ricorsione — e l'avevo pure scambiata per
+un difetto dell'incolla, poi per uno screendump preso a meta' di un ridisegno.
+Un `grep` del nome che avrei dovuto aver aggiunto lo diceva in un secondo.
+
+**3. Una conclusione tratta da un commento invece che dal codice.**
+Vedi il punto 7 qui sopra: `/bin/svga`.
+
+! **E UNA COSA SUL BUILD, che vale per chi tocca /exwin:** `make` da solo NON
+ricostruisce i programmi grafici — si ferma su un file bandiera. Un errore di
+compilazione in `pm.c` e' rimasto invisibile finche' non ho lanciato `make pm`.
+Chi tocca `exwin/bin/*` lanci il bersaglio suo (`make pm`, `make browser`,
+`make exwincmd`).
+
 ---
 
 # DOVE RIPRENDERE — 24 agosto 2026

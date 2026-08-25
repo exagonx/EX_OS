@@ -70,6 +70,42 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### La scrivania ha una console sua, si spegne, e parla la tua lingua
+
+**testato** — dal CD e su un disco ext2 installato da zero, in QEMU.
+
+**Le console diventano cinque.** Il server grafico se ne prendeva una delle
+quattro e chi lavorava in testo ne aveva tre senza averlo chiesto. Ora Alt+F1–F4
+restano di chi scrive e la grafica sta in fondo: digitando `exwin` lo schermo ci
+passa da solo, e quando la grafica si spegne torna alla console di partenza.
+
+**E la console della grafica esiste solo mentre la grafica c'è.** Finché il
+server non gira, Alt+F5 non fa niente — lì ci sarebbe uno schermo nero con una
+shell che nessuno guarda, e chi ci finisce non sa come tornare. Lo stato sta nel
+*kernel* e non nel server, così un server ucciso libera la console da solo.
+
+**`Esci` dal menu spegne la scrivania**, non solo il program manager. Alle
+applicazioni si *chiede*, non le si uccide: a ognuna arriva la stessa chiusura
+della crocetta, così chi ha da salvare fa in tempo; poi torna il modo testo.
+
+**L'installazione chiede la lingua** e la scrive in `kernel.cfg`. Il kernel non
+la usa per niente — tradurre è lavoro dei programmi — ma la conserva e la
+riconsegna come fa con `keymap`, così non ci sono due elenchi che divergono.
+
+**E in fondo propone `hwconfig`**, puntato al disco appena installato: il
+`kernel.cfg` copiato è quello del supporto d'installazione, e il primo avvio da
+disco è il momento peggiore per scoprire che manca il driver del controller.
+
+**La risoluzione si sceglie da Avvio > Impostazioni...** — il meccanismo c'era
+già tutto (`/dev/svga.drv` scrive la voce in `kernel.cfg` e un byte dentro Stage
+2); mancava la finestra. Si applica al riavvio, perché il modo video lo sceglie
+l'avvio col BIOS.
+
+**Copia e incolla dentro i campi di una pagina**, con tutt'e due gli standard:
+`Ctrl+C/X/V` e `Ctrl+Ins` / `Shift+Ins` / `Shift+Canc`. Gli appunti sono quelli
+di tutta la scrivania — la stessa memoria condivisa di `ex_area` — quindi si
+copia da un modulo e si incolla in un editor.
+
 ### Il browser regge una pagina vera: impaginazione, immagini, caratteri, moduli
 
 **testato** — dal CD, in QEMU, sulla voce «Operating system» di Wikipedia (676
