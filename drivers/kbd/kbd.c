@@ -554,6 +554,54 @@ static void kbd_commuta(unsigned n)
 }
 
 /* =============================================================================
+ * attiva_segui — la console davanti la sa il KERNEL, e qui se ne prende atto
+ *
+ * ! g_attiva E' UNA COPIA, E LE COPIE DIVERGONO. Fino a oggi si muoveva solo
+ * dentro kbd_commuta(), cioe' quando la commutazione la chiedeva Alt+Fn — e
+ * andava bene finche' NESSUN ALTRO chiamava console_switch(). Ma `exwin` lo
+ * chiama: accende la grafica sull'ultima console e ci porta lo schermo da se',
+ * perche' chi digita `exwin` la grafica la vuole adesso e non vuole leggere
+ * come arrivarci. Da quel momento il kernel mostrava la scrivania mentre
+ * questo driver continuava a consegnare i tasti alla shell di prima.
+ *
+ * Il sintomo non somigliava a una console sbagliata: la grafica si vedeva, il
+ * mouse si muoveva — quello passa da un'altra strada — e la tastiera sembrava
+ * semplicemente morta. Cio' che si era battuto ricompariva tutto insieme
+ * tornando indietro con Alt+F1, che e' l'unico momento in cui la cosa si
+ * spiegava. E vale anche al contrario: uscendo dalla scrivania e' `exwin` a
+ * riportare lo schermo alla console di partenza, e senza questa funzione i
+ * tasti restavano su quella della grafica, che non c'e' piu'.
+ *
+ * ! SI CHIEDE, NON SI ASPETTA DI ESSERE AVVISATI. Un messaggio «ho commutato»
+ * da mandare a questo driver metterebbe la correttezza in mano a chi chiama:
+ * il prossimo programma che commuta senza saperlo rifarebbe lo stesso guasto.
+ * Una domanda al kernel non si puo' dimenticare. Costa una syscall per
+ * messaggio ricevuto — cioe' per tasto premuto — e quella syscall copia
+ * quattro parole.
+ *
+ * ! E CHI ENTRA VIENE SERVITO SUBITO, come in kbd_commuta: sulla console che
+ * arriva puo' esserci un lettore fermo da prima, con del type-ahead gia' in
+ * coda, e farlo aspettare il tasto successivo vorrebbe dire una riga che
+ * compare solo quando se ne scrive un'altra.
+ * ========================================================================== */
+static void attiva_segui(void)
+{
+    ConsoleInfo ci;
+
+    if (console_info(&ci) != 0) return;
+    if (ci.visibile >= KBD_N_CONSOLE || ci.visibile == g_attiva) return;
+
+    g_attiva = ci.visibile;
+
+    /* Un prefisso di tasto esteso a meta' appartiene alla console che si
+     * lascia, non a quella che arriva: stesso motivo di kbd_commuta(). */
+    g_e0 = 0;
+
+    try_serve_reader(g_attiva);
+    try_serve_keyreader(g_attiva);
+}
+
+/* =============================================================================
  * Traduzione degli scancode in eventi tasto (solo modalità raw)
  *
  * Ritorna il codice base (>0) o 0 se lo scancode non produce un evento.
@@ -1361,6 +1409,14 @@ int main(int argc, char **argv)
 
     for (;;) {
         if (ipc_recv(&meta, payload, sizeof(payload)) < 0) continue;
+
+        /* ! PRIMA DI GUARDARE IL MESSAGGIO, SI GUARDA CHI E' DAVANTI. Qualunque
+         * cosa questo ciclo faccia dopo — tradurre uno scancode, consegnare una
+         * riga, accettare una READKEY — la fa su g_attiva, e g_attiva puo'
+         * essere rimasta indietro perche' a commutare e' stato qualcun altro.
+         * Vedi attiva_segui(). Sta qui e non dentro i singoli rami perche' un
+         * ramo aggiunto domani se ne dimenticherebbe. */
+        attiva_segui();
 
         if (meta.sender_pid == IPC_SENDER_KERNEL &&
             meta.tipo == IPC_TYPE_IRQ_NOTIFY) {

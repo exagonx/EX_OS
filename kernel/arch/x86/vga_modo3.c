@@ -74,7 +74,13 @@
  * VGA: la modalita' VBE ha registri suoi, e finche' non la si spegne la scheda
  * resta li'. Sulle schede Bochs/QEMU/VirtualBox — cioe' quelle su cui EX-OS
  * gira oggi — si spegne dalla finestra a porte 0x1CE/0x1CF, e questo file lo
- * fa, riconoscendola dal proprio identificativo.
+ * fa. La finestra non si riconosce da un elenco di identificativi noti — quello
+ * era vero per Bochs e QEMU e falso per VirtualBox, e il perche' sta sopra
+ * vbe_spegni() — ma chiedendole di rispondere.
+ *
+ * ! E QUANDO NON RISPONDE LO DICE, sulla seriale, a livello WARN: e' l'unico
+ * modo di sapere perche' lo schermo e' diventato illeggibile, visto che lo
+ * schermo non puo' piu' dirlo.
  *
  * Su ferro vero l'equivalente e' l'interfaccia in modo protetto di VBE 2.0,
  * che EX-OS non ha. Percio': su hardware reale con una VESA attiva questo
@@ -107,8 +113,12 @@ extern const uint8_t font8x16[256 * 16];
 #define DISPI_DAT       0x01CF
 #define DISPI_ID        0
 #define DISPI_ENABLE    4
-#define DISPI_ID_MIN    0xB0C0
-#define DISPI_ID_MAX    0xB0C5
+
+/* L'identificativo che si SCRIVE per vedere se la finestra risponde: e' il
+ * primo della serie, quello che ogni versione dell'interfaccia accetta. Vedi
+ * vbe_spegni(): non e' il valore che ci si aspetta di leggere, e' quello che
+ * si usa per fare la domanda. */
+#define DISPI_ID_PROVA  0xB0C0
 
 /* --- Lo stato del modo 3 sui registri ------------------------------------- */
 static const uint8_t m3_misc = 0x67;
@@ -150,7 +160,7 @@ static const uint8_t m3_dac[16][3] = {
 /* --- La scheda VBE, se e' una di quelle che sappiamo spegnere -------------- */
 static void vbe_spegni(void)
 {
-    uint16_t id;
+    uint16_t id, riletto;
 
     /* ! LA FINESTRA E' A SEDICI BIT, INDICE E DATO, e leggerla a byte NON
      * funziona: 0x1CF e' una porta a 16 bit, e 0x1D0 non ne e' la meta' alta —
@@ -162,17 +172,56 @@ static void vbe_spegni(void)
     port_outw(DISPI_IDX, DISPI_ID);
     id = port_inw(DISPI_DAT);
 
-    /* Su una macchina senza questa scheda si legge 0xFFFF, che non e' un
-     * identificativo valido, e non si tocca niente. */
-    if (id < DISPI_ID_MIN || id > DISPI_ID_MAX) {
-        klog(LOG_INFO, "VGA: nessuna VBE Bochs/QEMU (letto 0x%04x)", id);
+    /* =====================================================================
+     * ! L'IDENTIFICATIVO SI SCRIVE E SI RILEGGE, NON SI CONFRONTA CON UN
+     * ELENCO — ed e' la seconda volta che questa funzione sbaglia allo
+     * stesso modo.
+     *
+     * Prima si accettavano solo i valori da 0xB0C0 a 0xB0C5, quelli di
+     * Bochs e di QEMU. Ma quel registro non dice «che scheda sono»: dice
+     * quale VERSIONE dell'interfaccia e' stata concordata, e chi la concorda
+     * e' l'ultimo che ci ha scritto — di norma il BIOS video della scheda,
+     * mentre imposta la modalita'. Il BIOS di VirtualBox ne concorda una
+     * SUA, fuori da quell'intervallo (0xBE00..0xBE03: VBOX_VIDEO, ANYX,
+     * HGSMI, CFG). Su VirtualBox quindi si leggeva un numero legittimo, non
+     * lo si riconosceva, si usciva senza spegnere niente — e poi si
+     * riscrivevano i registri VGA SOPRA una VESA ancora accesa. Il risultato
+     * non e' uno schermo fermo, e' uno schermo che rotola: colori e disegni
+     * casuali, la macchina viva e il comando battuto alla cieca.
+     *
+     * ! UN ELENCO DI NUMERI NOTI E' SEMPRE INCOMPLETO, e lo si scopre solo
+     * sulla macchina che non c'era nell'elenco. La domanda giusta non e'
+     * «che numero c'e' scritto» ma «c'e' qualcuno che risponde»: si scrive
+     * l'identificativo piu' vecchio, quello che ogni versione accetta, e lo
+     * si rilegge. Se torna indietro uguale la finestra c'e', qualunque
+     * scheda sia e qualunque versione avesse concordato prima. Se non c'e'
+     * nessuno — su una macchina senza queste porte si legge 0xFFFF — non
+     * puo' tornare indietro niente, e non si tocca altro.
+     *
+     * ! E DECLASSARE LA VERSIONE QUI NON COSTA NULLA: la riga dopo la
+     * modalita' estesa si spegne, e la prossima a concordarne una sara' di
+     * nuovo il BIOS video, al riavvio.
+     * ===================================================================== */
+    port_outw(DISPI_IDX, DISPI_ID);
+    port_outw(DISPI_DAT, DISPI_ID_PROVA);
+    port_outw(DISPI_IDX, DISPI_ID);
+    riletto = port_inw(DISPI_DAT);
+
+    if (riletto != DISPI_ID_PROVA) {
+        /* ! LO DICE FORTE, non a livello informativo. Quando questa riga si
+         * stampa lo schermo sta per diventare illeggibile, e questa e'
+         * l'unica frase che spiega perche'. Va letta sulla seriale: e' la
+         * sola cosa che qui continua a funzionare. */
+        klog(LOG_WARN, "VGA: nessuna finestra VBE DISPI a 0x1CE "
+             "(id 0x%04x, riletto 0x%04x): se la scheda e' in VESA lo "
+             "schermo restera' illeggibile", id, riletto);
         return;
     }
 
     port_outw(DISPI_IDX, DISPI_ENABLE);
     port_outw(DISPI_DAT, 0x0000);
 
-    klog(LOG_INFO, "VGA: VBE Bochs/QEMU (id 0x%04x) spenta", id);
+    klog(LOG_INFO, "VGA: VBE DISPI spenta (l'identificativo era 0x%04x)", id);
 }
 
 /* --- Il carattere, dentro il piano 2 -------------------------------------- */
