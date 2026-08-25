@@ -29,10 +29,16 @@ MOTIVO = {0: "OK", -1: "MALFORMATO", -2: "FIRMA SBAGLIATA", -3: "NOME DIVERSO",
           -7: "SENZA RADICE", -8: "ALGORITMO RIFIUTATO", -9: "TROPPO LUNGA"}
 
 def compila():
+    # ! excurva STA QUI DENTRO DA QUANDO excert SA VERIFICARE ECDSA, e per
+    # settimane non c'e' stato: il banco non compilava piu' e `make prova-tls`
+    # si fermava su «excurva.h: File o directory non esistente». Una prova che
+    # non parte non e' una prova che passa — ed e' proprio quella che dice se
+    # la catena dei certificati regge.
     c = ["cc", "-Wall", "-Wextra", "-O2", "-o", BANCO,
          "tools/prove/certprova.c", "lib/excert/excert.c",
-         "lib/exasn1/exasn1.c", "lib/exbig/exbig.c",
-         "-I", "lib/excert", "-I", "lib/exasn1", "-I", "lib/exbig", "-lcrypto"]
+         "lib/exasn1/exasn1.c", "lib/exbig/exbig.c", "lib/excurva/excurva.c",
+         "-I", "lib/excert", "-I", "lib/exasn1", "-I", "lib/exbig",
+         "-I", "lib/excurva", "-I", "lib/excrypt", "-lcrypto"]
     r = subprocess.run(c, cwd=RADICE, capture_output=True, text=True)
     if r.returncode != 0:
         print(r.stderr)

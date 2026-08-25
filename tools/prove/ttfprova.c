@@ -23,9 +23,18 @@
  * QUALI codici il font copre, la cmap e' letta bene. E' lo stesso patto di
  * zlib per inflate.
  *
+ *     make prova-exfont          # su tutti i font del sistema
+ *
+ * O a mano, per scegliere il modo:
+ *
  *     cc -o /tmp/ttfprova tools/prove/ttfprova.c lib/exfont/ttf.c \
- *        -I lib/exfont -I tools/prove
+ *        lib/exfont/raster.c -I lib/exfont -I tools/prove
  *     /tmp/ttfprova <font.ttf> [codici|monospazio|charset]
+ *
+ * ! raster.c VA AGGIUNTO, e per un po' non c'era: e' uscito da ttf.c e questa
+ * riga e' rimasta indietro, cosi' il banco non si collegava piu'. Adesso la
+ * riga buona sta nel Makefile — quella qui sopra e' una comodita', non la
+ * fonte.
  * ============================================================================= */
 
 #include <stdio.h>

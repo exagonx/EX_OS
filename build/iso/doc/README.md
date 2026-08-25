@@ -281,9 +281,34 @@ fratelli e non una scala; `<b><i>x</b>` chiude fino alla `<b>`; dentro
 `<script>` e `<style>` **non c'è markup**, o dal primo `a < b` del JavaScript in
 poi l'albero è spazzatura.
 
-! **`https://` SI RIFIUTA DICENDOLO.** Manca il TLS: parlare HTTP in chiaro alla
-porta 443 darebbe una risposta incomprensibile e un errore che non c'entra
-niente.
+! **`https://` FUNZIONA, E VERIFICA DAVVERO.** TLS 1.3 scritto qui dentro:
+X25519 per lo scambio di chiavi, ChaCha20-Poly1305 per i dati, la catena dei
+certificati controllata contro un magazzino di CA vere e il nome del sito
+confrontato col `subjectAltName`. Le firme si verificano in RSA-PSS **e in
+ECDSA su P-256 e P-384**, che e' cio' che serve per aprire i siti veri:
+wikipedia.org, news.ycombinator.com e github.com hanno solo certificati
+ellittici. Senza magazzino di CA non si apre niente: cifrare con chiunque
+risponda vuol dire cifrare con chi sta in mezzo, e la barra scriverebbe
+`https://` lo stesso.
+
+! **I MODULI SI VEDONO, SI COMPILANO E SI MANDANO**: caselle di testo,
+password, spunte, scelte con l'elenco a tendina, pulsanti e aree di testo si
+disegnano come i controlli del sistema, prendono i tasti, e il pulsante manda
+davvero — **in GET e in POST**, con la codifica percento.
+
+! **E LA CONNESSIONE SI RIUSA.** Su `https` la stretta di mano e' tutto il
+costo — chiave effimera, catena di certificati, firma — e una pagina con dieci
+immagini la pagava dieci volte. Adesso si riusa la connessione quando si sa
+dove finisce il corpo, si rispetta il `Connection: close` del server, e si
+riprova una volta se l'altra parte l'ha chiusa senza dirlo.
+
+! **E I COLORI SCRITTI NEGLI ATTRIBUTI CONTANO**: `bgcolor`, `text`, `align`.
+Mezzo web li usa ancora — la barra arancione di Hacker News e' un `bgcolor` su
+una `<table>` — e stanno al gradino piu' basso della cascata, sotto ogni regola
+di stile.
+
+! **E LE IMMAGINI SONO TRE FORMATI**: PNG, JPEG e GIF (primo fotogramma,
+trasparenza compresa).
 
 ! **LE IMMAGINI ARRIVANO DOPO IL TESTO.** La pagina si impagina e si disegna con
 le sole parole; solo allora si scarica un'immagine per volta, e a ognuna che
@@ -314,8 +339,8 @@ invece di valere due pixel. Meno stile, mai stile sbagliato.
 l'origine più bassa della cascata, quindi una pagina può sovrascriverli. Prima
 erano `if` nel motore, e `<b>` e `<i>` non c'erano affatto.
 
-Quello che **non** c'è, dichiarato: JavaScript, tabelle impaginate come
-tabelle, `@media`, le unità relative, `https`.
+Quello che **non** c'è, dichiarato: JavaScript, `@media`, le unità relative,
+`colspan`/`rowspan`.
 
 
 ### I font: TrueType, misurato contro FreeType

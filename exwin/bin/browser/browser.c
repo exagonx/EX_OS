@@ -212,6 +212,7 @@ typedef struct {
     short         opz_primo;    /* scelta: la prima opzione in g_opz, -1 */
     short         opz_n;        /* quante ne ha */
     short         opz_ora;      /* quale e' scelta adesso */
+    int           nodo;         /* il nodo che l'ha generato, -1 se libero */
     char          nome[CTRL_NOME_MAX];   /* l'attributo `name` */
     char          valore[CTRL_VAL_MAX];
 } Ctrl;
@@ -294,6 +295,7 @@ typedef struct {
     int           nodo;             /* il nodo <img> dentro g_doc              */
     unsigned int  dich_w, dich_h;   /* width= e height=, 0 se non ci sono      */
     unsigned int  w, h;             /* la misura con cui si disegna            */
+    unsigned int  ris_w, ris_h;     /* il posto riservato prima che arrivasse  */
     unsigned int *px;               /* ARGB, nostri: free() li restituisce     */
     unsigned char stato;            /* 0 da prendere, 1 presa, 2 rinunciata    */
     char          src[EXHTTP_URL_MAX];
@@ -491,6 +493,8 @@ static int imm_indice(int nodo, const char *src)
     g_imm[i].dich_h = numero(html_attr(&g_doc, nodo, "height"));
     g_imm[i].w      = 0;
     g_imm[i].h      = 0;
+    g_imm[i].ris_w  = 0;
+    g_imm[i].ris_h  = 0;
     g_imm[i].px     = 0;
     g_imm[i].stato  = 0;
     strncpy(g_imm[i].src, src, sizeof(g_imm[i].src) - 1);
@@ -880,11 +884,10 @@ static void parole(const char *t, unsigned int base)
     }
 }
 
-/* Un'immagine gia' decodificata: si colloca come una parola molto grande. */
-static void pezzo_immagine(int k)
+/* Un'immagine — o il posto che le si tiene — si colloca come una parola molto
+ * grande. */
+static void pezzo_immagine(int k, int w, int h)
 {
-    int w = (int)g_imm[k].w;
-    int h = (int)g_imm[k].h;
 
     if (g_pen_x + w > riga_x() + riga_w() && g_pen_x > riga_x()) a_capo();
 
@@ -1392,9 +1395,34 @@ static void impagina_nodo(int v, const CssStile *ered)
 
                 const char *nm = html_attr(&g_doc, v, "name");
 
+                /* ! QUEL CHE L'UTENTE HA SCRITTO SOPRAVVIVE ALLA
+                 * REIMPAGINAZIONE. L'albero non cambia fra un'impaginazione e
+                 * l'altra, quindi i controlli escono sempre nello stesso
+                 * ordine e lo slot `i` e' sempre dello stesso nodo: se e'
+                 * ancora suo, il valore digitato e la spunta restano dov'erano.
+                 *
+                 * Senza questo, un'immagine che arriva mentre si compila un
+                 * modulo cancellerebbe il campo sotto le dita — e il colpevole
+                 * sembrerebbe la tastiera, non l'impaginazione. */
+                int   suo = (c->nodo == v);
+                short opz_prima = c->opz_ora;
+                char  scritto[CTRL_VAL_MAX];
+
+                scritto[0] = '\0';
+                if (suo) {
+                    int q = 0;
+
+                    while (c->valore[q] && q < CTRL_VAL_MAX - 1) {
+                        scritto[q] = c->valore[q]; q++;
+                    }
+                    scritto[q] = '\0';
+                }
+
                 c->tipo    = (unsigned char)t;
                 c->segreto = (unsigned char)(tipo && uguale(tipo, "password"));
-                c->acceso  = (unsigned char)(html_attr(&g_doc, v, "checked") != 0);
+                if (!suo)
+                    c->acceso = (unsigned char)(html_attr(&g_doc, v, "checked") != 0);
+                c->nodo    = v;
                 c->valore[0] = '\0';
 
                 /* ! IL `name` SERVE AI RADIO PRIMA CHE AI MODULI. Due gruppi di
@@ -1459,6 +1487,31 @@ static void impagina_nodo(int v, const CssStile *ered)
                     while (d[i] && i < CTRL_VAL_MAX - 1) { c->valore[i] = d[i]; i++; }
                     c->valore[i] = '\0';
                 }
+
+                /* ! E SOLO ADESSO SI RIMETTE QUEL CHE L'UTENTE AVEVA SCRITTO,
+                 * perche' solo adesso si conosce il tipo. Vale per le caselle
+                 * e per le aree, che sono le uniche in cui si scrive: il testo
+                 * di un pulsante e le opzioni di una scelta vengono dalla
+                 * pagina e si rifanno ogni volta, com'e' giusto. Di una scelta
+                 * si tiene invece la RIGA SCELTA, che e' quel che l'utente ha
+                 * deciso. */
+                if (suo && (t == CTRL_TESTO || t == CTRL_AREA)) {
+                    int q = 0;
+
+                    while (scritto[q] && q < CTRL_VAL_MAX - 1) {
+                        c->valore[q] = scritto[q]; q++;
+                    }
+                    c->valore[q] = '\0';
+                } else if (suo && t == CTRL_SCELTA && c->opz_n > 0) {
+                    int q = 0;
+                    const char *o;
+
+                    if (opz_prima >= 0 && opz_prima < c->opz_n)
+                        c->opz_ora = opz_prima;
+                    o = g_opz[c->opz_primo + c->opz_ora];
+                    while (o[q] && q < CTRL_VAL_MAX - 1) { c->valore[q] = o[q]; q++; }
+                    c->valore[q] = '\0';
+                }
             }
 
             switch (t) {
@@ -1510,7 +1563,39 @@ static void impagina_nodo(int v, const CssStile *ered)
             const char *alt;
             int         k = (src && src[0]) ? imm_indice(v, src) : -1;
 
-            if (k >= 0 && g_imm[k].px) { pezzo_immagine(k); return; }
+            if (k >= 0 && g_imm[k].px) {
+                pezzo_immagine(k, (int)g_imm[k].w, (int)g_imm[k].h);
+                return;
+            }
+
+            /* =================================================================
+             * ! SE LA PAGINA DICE QUANTO E' GRANDE, IL POSTO SI TIENE SUBITO.
+             *
+             * E' la differenza fra una pagina che si riassesta a ogni immagine
+             * e una che si riempie: con `width` e `height` sull'<img> la
+             * misura finale si sa PRIMA di aver scaricato un solo byte, quindi
+             * l'impaginazione e' gia' quella definitiva. Quando l'immagine
+             * arriva non si sposta niente — e infatti non si reimpagina, si
+             * ridisegna soltanto.
+             *
+             * ! ED E' TUTTA LA LENTEZZA CHE RESTAVA. Reimpaginare un documento
+             * di ventiquattromila pezzi per ognuna delle nove immagini di una
+             * voce di Wikipedia costa piu' dello scaricarle. Chi dichiara le
+             * misure — e i siti seri le dichiarano, proprio per questo — non
+             * lo paga piu'.
+             * ================================================================= */
+            if (k >= 0 && g_imm[k].stato != 2 &&
+                g_imm[k].dich_w && g_imm[k].dich_h) {
+                unsigned int rw, rh;
+
+                misura(&g_imm[k], g_imm[k].dich_w, g_imm[k].dich_h, &rw, &rh);
+                if (rw && rh) {
+                    g_imm[k].ris_w = rw;
+                    g_imm[k].ris_h = rh;
+                    pezzo_immagine(k, (int)rw, (int)rh);
+                    return;
+                }
+            }
 
             /* ! FINCHE' L'IMMAGINE NON C'E' SI LEGGE IL SUO `alt`, ed e'
              * esattamente il motivo per cui quell'attributo esiste. Il valore
@@ -1697,6 +1782,24 @@ static void impagina(void)
     g_link_usati = 0;
     g_mod_n = 0;
     g_mod_ora = -1;
+
+    /* =====================================================================
+     * ! I CONTROLLI SONO UN PRODOTTO DELL'IMPAGINAZIONE, come i pezzi e i
+     * collegamenti, e per molto tempo sono stati l'unico che non si
+     * azzerava qui. Ogni `impagina()` ne accodava una copia nuova senza
+     * buttare le vecchie: dodici reimpaginazioni di una pagina con cinque
+     * controlli ne facevano sessanta, e a CTRL_MAX (64) `impagina_nodo`
+     * cominciava a RINUNCIARE — non solo al controllo, ma a tutto il
+     * sottoalbero sotto di lui.
+     *
+     * ! E IL SINTOMO NON SOMIGLIAVA ALLA CAUSA: sparivano pezzi di pagina
+     * lontani dai moduli, e sparivano solo sulle pagine con molte immagini
+     * — cioe' quelle che si reimpaginano tante volte. Si e' visto
+     * confrontando due build sulla stessa voce di Wikipedia: quella che
+     * reimpagina di meno mostrava PIU' contenuto, che e' esattamente il
+     * contrario di quello che ci si aspetta da un'ottimizzazione.
+     * ===================================================================== */
+    g_ctrl_n = 0;
     g_fisso = 0;
     g_doc.arena_n = g_arena_doc;    /* si butta il testo generato dal giro prima */
     g_marg_sx = g_marg_dx = 0;
@@ -1960,7 +2063,40 @@ static void disegna(void)
             int        salta = 0;
             int        alta  = (int)im->h;
 
-            if (!im->px) continue;
+            /* ! IL POSTO RISERVATO SI VEDE, e non e' decorazione: un buco
+             * bianco in mezzo al testo sembra un difetto di impaginazione,
+             * mentre un riquadro dice «qui sta arrivando un'immagine». E'
+             * quello che hanno sempre fatto i browser.
+             *
+             * ! E SI RITAGLIA COME L'IMMAGINE CHE ASPETTA, per la ragione
+             * scritta qui sopra: anche ex_riempi ritaglia alla FINESTRA e non
+             * all'area del documento. Disegnarlo solo quando ci sta tutto
+             * sarebbe stato piu' corto, ma un riquadro alto quanto l'area non
+             * ci sta MAI per intero: sparirebbe appena lo si scorre, cioe'
+             * proprio mentre lo si guarda. */
+            if (!im->px) {
+                int rw = g_pez[i].w;
+
+                alta = g_pez[i].h;
+                if (cima < area_y()) {
+                    salta = area_y() - cima;
+                    cima  = area_y();
+                    alta -= salta;
+                }
+                if (cima + alta > area_y() + area_h())
+                    alta = area_y() + area_h() - cima;
+
+                if (rw > 0 && alta > 0) {
+                    ex_riempi(g_f, g_pez[i].x, cima, rw, alta, EX_GRIGIO);
+
+                    /* Il bordo si incide solo quando il riquadro c'e' tutto:
+                     * un incavo tagliato a meta' disegna una riga di luce in
+                     * mezzo al testo, e si legge come un difetto. */
+                    if (salta == 0 && alta == g_pez[i].h)
+                        ex_incavo(g_f, g_pez[i].x, cima, rw, alta);
+                }
+                continue;
+            }
 
             if (cima < area_y()) {
                 salta = area_y() - cima;
@@ -2543,18 +2679,42 @@ static void immagini_prendi(void)
         if (!imm_prendi(k)) {
             /* ! QUELLA CHE NON ARRIVA SI SALTA E BASTA: al suo posto resta il
              * suo `alt`, e la pagina va avanti. Un browser che si ferma sulla
-             * prima immagine irraggiungibile non mostra mai niente. */
+             * prima immagine irraggiungibile non mostra mai niente.
+             *
+             * ! MA IL POSTO RISERVATO VA RESTITUITO, o resterebbe un riquadro
+             * vuoto per sempre al posto di un `alt` che si puo' leggere. */
             g_imm[k].stato = 2;
+            if (g_imm[k].ris_w) {
+                g_imm[k].ris_w = g_imm[k].ris_h = 0;
+                impagina();
+                disegna();
+            }
             continue;
         }
 
         g_imm[k].stato = 1;
 
-        /* ! SI REIMPAGINA A OGNI IMMAGINE, e il testo si sposta sotto gli
-         * occhi: e' il prezzo di mostrare le parole prima dei pixel, e si paga
-         * volentieri. */
-        impagina();
-        disegna();
+        /* =====================================================================
+         * ! SI REIMPAGINA SOLO SE LA MISURA E' CAMBIATA, e la differenza si
+         * misura in minuti. Reimpaginare vuol dire rifare l'albero intero —
+         * ventiquattromila pezzi su una voce di Wikipedia — e farlo per ognuna
+         * delle nove immagini costa piu' dello scaricarle.
+         *
+         * Se la pagina aveva dichiarato `width` e `height`, il posto era gia'
+         * stato tenuto della misura giusta: l'immagine ci entra dentro e non
+         * sposta una virgola. Allora si ridisegna e basta.
+         *
+         * ! E SE NON COMBACIA SI REIMPAGINA DAVVERO, senza scorciatoie: una
+         * misura diversa sposta tutto quello che viene dopo, e disegnare
+         * sopra un'impaginazione vecchia darebbe testo sovrapposto — il genere
+         * di difetto che sembra un problema di disegno e non lo e'.
+         * ===================================================================== */
+        if (g_imm[k].ris_w == g_imm[k].w && g_imm[k].ris_h == g_imm[k].h) {
+            disegna();
+        } else {
+            impagina();
+            disegna();
+        }
     }
 }
 
@@ -2751,6 +2911,18 @@ static void vai(const char *url, int in_storia, int usa_cache)
     g_ctrl_n = 0;
     g_ctrl_fuoco = -1;
     g_opz_n = 0;
+
+    /* ! E GLI SLOT SI DICHIARANO DI NESSUNO, o il primo giro sulla pagina
+     * NUOVA troverebbe li' dentro i numeri di nodo della pagina VECCHIA. Sono
+     * indici in un albero che non esiste piu': uno di loro puo' benissimo
+     * combaciare per caso con un nodo di adesso, e allora il campo si
+     * riempirebbe con quel che era stato scritto su un altro sito. */
+    {
+        int q;
+
+        for (q = 0; q < CTRL_MAX; q++) g_ctrl[q].nodo = -1;
+    }
+
     raccogli_css();
     impagina();
 

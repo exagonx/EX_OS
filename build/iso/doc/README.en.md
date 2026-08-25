@@ -280,8 +280,33 @@ siblings and not a staircase; `<b><i>x</b>` closes up to the `<b>`; inside
 `<script>` and `<style>` there **is no markup**, or from the JavaScript's first
 `a < b` onwards the tree is garbage.
 
-! **`https://` IS REFUSED, AND SAYS SO.** TLS is missing: speaking plain HTTP to
-port 443 would give an incomprehensible answer and an unrelated error.
+! **`https://` WORKS, AND ACTUALLY VERIFIES.** TLS 1.3 written here: X25519 for
+the key exchange, ChaCha20-Poly1305 for the data, the certificate chain checked
+against a store of real CAs and the site name matched against the
+`subjectAltName`. Signatures are verified in RSA-PSS **and in ECDSA over P-256
+and P-384**, which is what it takes to open real sites: wikipedia.org,
+news.ycombinator.com and github.com only have elliptic certificates. Without a
+CA store nothing opens: encrypting with whoever answers means encrypting with
+whoever is in the middle, and the bar would say `https://` all the same.
+
+! **FORMS ARE DRAWN, FILLED IN AND SUBMITTED**: text and password boxes, check
+boxes, selects with a drop-down list, buttons and text areas are drawn like the
+system's own controls, take keystrokes, and the button really submits — **over
+GET and POST**, percent-encoded.
+
+! **AND THE CONNECTION IS REUSED.** Over `https` the handshake is the whole
+cost — ephemeral key, certificate chain, signature — and a page with ten images
+paid it ten times. Now the connection is kept when the end of the body is
+known, the server's `Connection: close` is honoured, and a request is retried
+once if the other side closed without saying so.
+
+! **AND COLOURS WRITTEN IN ATTRIBUTES COUNT**: `bgcolor`, `text`, `align`. Half
+the web still uses them — Hacker News's orange bar is a `bgcolor` on a
+`<table>` — and they sit at the lowest step of the cascade, below every style
+rule.
+
+! **AND IMAGES COME IN THREE FORMATS**: PNG, JPEG and GIF (first frame,
+transparency included).
 
 ! **IMAGES COME AFTER THE TEXT.** The page is laid out and drawn with the words
 alone; only then is one image fetched at a time, and on each arrival the page is
@@ -311,8 +336,8 @@ is refused rather than taken for two pixels. Less style, never wrong style.
 origin, so a page can override them. They used to be `if`s in the engine, and
 `<b>` and `<i>` were not there at all.
 
-What is **not** there, declared: JavaScript, tables laid out as tables,
-`@media`, relative units, `https`.
+What is **not** there, declared: JavaScript, `@media`, relative units,
+`colspan`/`rowspan`.
 
 
 ### Fonts: TrueType, measured against FreeType

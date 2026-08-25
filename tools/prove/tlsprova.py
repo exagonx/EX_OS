@@ -35,7 +35,13 @@ def compila():
     c = ["cc", "-Wall", "-Wextra", "-O2", "-o", BANCO,
          "tools/prove/tlsprova.c", "lib/extls/extls_kdf.c",
          "lib/extls/extls_pss.c", "lib/exbig/exbig.c",
-         "-I", "lib/extls", "-I", "lib/exbig", "-lcrypto"]
+         # ! GLI INCLUDE SEGUONO extls.h, NON I FILE COMPILATI QUI: extls.h
+         # tira dentro excert.h, che tira excurva.h ed excrypt.h. Quando
+         # excert ha imparato ECDSA questa riga non e' cambiata, e la prova
+         # ha smesso di compilare — cioe' di provare.
+         "-I", "lib/extls", "-I", "lib/exbig", "-I", "lib/excert",
+         "-I", "lib/exasn1", "-I", "lib/excurva", "-I", "lib/excrypt",
+         "-lcrypto"]
     r = subprocess.run(c, cwd=RADICE, capture_output=True, text=True)
     if r.returncode != 0:
         print(r.stderr)

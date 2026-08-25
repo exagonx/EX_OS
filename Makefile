@@ -4493,6 +4493,68 @@ prova-excurva:
 prova-tls: prova-exbig prova-exasn1 prova-excert prova-extls prova-excurva \
            prova-cliente-tls
 
+# =============================================================================
+# I banchi che girano SULL'HOST: HTML, CSS, HTTP e il lettore TrueType
+#
+# ! STAVANO FUORI DAL Makefile, E SI VEDE COSA COSTA. Erano quattro sorgenti in
+# tools/prove/ che si compilavano a mano, con la riga di comando scritta nel
+# commento in cima al file — e quella di ttfprova era rimasta indietro di uno
+# split: raster.c era uscito da ttf.c e nessuno l'aveva aggiunta, quindi il
+# banco non si collegava piu'. Nessuno se n'e' accorto perche' NIENTE LO
+# CHIAMAVA.
+#
+# ! E' LO STESSO MODO IN CUI SI ERA SPENTA LA PROVA DELLA CATENA DEI
+# CERTIFICATI: `make prova-tls` esisteva, ma certprova non compilava piu' da
+# quando excert aveva imparato ECDSA. Una prova che non parte non fallisce —
+# tace, ed e' molto peggio. Da qui in avanti stanno tutte dentro un bersaglio.
+# =============================================================================
+# ! I BANCHI NON VANNO IN build/, ma dove vanno gia' gli altri: certprova e
+# tlsprova si costruiscono in /tmp da sempre. build/obj/ e' tracciato dal
+# repository, e metterci dentro degli eseguibili dell'HOST — non del bersaglio
+# — vorrebbe dire committarli.
+PROVE_HOST_DIR := /tmp/exos-prove
+
+.PHONY: prova-exhtml
+prova-exhtml:
+	@mkdir -p $(PROVE_HOST_DIR)
+	@cc -Wall -O2 -o $(PROVE_HOST_DIR)/htmlprova \
+	    tools/prove/htmlprova.c lib/exhtml/html.c -I lib/exhtml
+	@$(PROVE_HOST_DIR)/htmlprova
+
+.PHONY: prova-excss
+prova-excss:
+	@mkdir -p $(PROVE_HOST_DIR)
+	@# ! IL CSS TIRA DENTRO html.c, e non e' un di piu': un selettore si
+	@# decide sul NOME e sugli ATTRIBUTI del nodo, cioe' chiamando
+	@# html_nome e html_attr. Un foglio di stile senza albero non si prova.
+	@cc -Wall -O2 -o $(PROVE_HOST_DIR)/cssprova \
+	    tools/prove/cssprova.c lib/excss/css.c lib/exhtml/html.c \
+	    -I lib/excss -I lib/exhtml
+	@$(PROVE_HOST_DIR)/cssprova
+
+.PHONY: prova-exhttp
+prova-exhttp:
+	@mkdir -p $(PROVE_HOST_DIR)
+	@cc -Wall -O2 -o $(PROVE_HOST_DIR)/httpprova \
+	    tools/prove/httpprova.c lib/exhttp/http.c -I lib/exhttp
+	@$(PROVE_HOST_DIR)/httpprova
+
+# ! ttfprova NON DICE «passa» O «fallisce»: legge un font vero e stampa quello
+# che ci ha trovato — unita' per em, glifi, metriche, un contorno composto. Qui
+# si guarda che il lettore REGGA sui font che il sistema si porta dietro, che
+# e' gia' la meta' del lavoro: quando ttf.c si rompe, si rompe qui e subito.
+.PHONY: prova-exfont
+prova-exfont:
+	@mkdir -p $(PROVE_HOST_DIR)
+	@cc -Wall -O2 -o $(PROVE_HOST_DIR)/ttfprova \
+	    tools/prove/ttfprova.c lib/exfont/ttf.c lib/exfont/raster.c \
+	    -I lib/exfont -I tools/prove
+	@for f in exwin/font/*.ttf; do $(PROVE_HOST_DIR)/ttfprova "$$f" || exit 1; done
+
+# Tutti i banchi dell'host, in fila.
+.PHONY: prove-host
+prove-host: prova-exhtml prova-excss prova-exhttp prova-exfont
+
 .PHONY: verifica-versioni
 verifica-versioni:
 	@mancanti=""; \

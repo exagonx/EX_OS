@@ -29,6 +29,14 @@ void sha256(const void *dati, unsigned int len, unsigned char out[32])
     SHA256((const unsigned char *)dati, len, out);
 }
 
+/* ! E SHA-384 PER LO STESSO MOTIVO, da quando excert verifica ECDSA su P-384:
+ * quella curva firma con SHA-384, e senza questo ponte il banco non si
+ * collegava nemmeno — cioe' la prova della catena non girava piu' affatto. */
+void sha384(const void *dati, unsigned int len, unsigned char out[48])
+{
+    SHA384((const unsigned char *)dati, len, out);
+}
+
 static unsigned char buf[64][65536];
 static unsigned int  misura[64];
 static unsigned int  quanti_file;
