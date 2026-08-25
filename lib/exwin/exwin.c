@@ -568,6 +568,36 @@ static void fuoco_metti(ExFinestra f, ExFinestra c)
 /* Definita piu' in basso, dov'e' il resto del dialogo col server. */
 static int server_trova(void);
 
+unsigned int ex_appunti_metti(const char *testo, unsigned int n)
+{
+    Appunti     *ap = appunti();
+    unsigned int i;
+
+    if (!ap || !testo) return 0;
+    if (n > sizeof(ap->testo) - 1) n = sizeof(ap->testo) - 1;
+
+    for (i = 0; i < n; i++) ap->testo[i] = testo[i];
+    ap->testo[n] = '\0';
+    ap->n = n;
+    return n;
+}
+
+unsigned int ex_appunti_prendi(char *out, unsigned int max)
+{
+    Appunti     *ap = appunti();
+    unsigned int i, n;
+
+    if (!out || max == 0) return 0;
+    out[0] = '\0';
+    if (!ap || ap->n == 0) return 0;
+
+    n = ap->n;
+    if (n > max - 1) n = max - 1;
+    for (i = 0; i < n; i++) out[i] = ap->testo[i];
+    out[n] = '\0';
+    return n;
+}
+
 void ex_spegni_scrivania(void)
 {
     if (!server_trova()) return;

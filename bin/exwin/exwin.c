@@ -42,6 +42,42 @@ static const char *trova(const char *a, const char *b)
     return 0;
 }
 
+/* =============================================================================
+ * ! CHI ASPETTA E' UNA COPIA DI QUESTO PROGRAMMA, non questo programma.
+ *
+ * Aspettare dentro main() vorrebbe dire tenere occupata la shell da cui si e'
+ * digitato `exwin` per tutto il tempo in cui la grafica gira: con Alt+F1 si
+ * tornerebbe a una console che non risponde.
+ *
+ * Non c'e' fork() in EX-OS — c'e' spawn — quindi si lancia una copia di se'
+ * con `--attendi <console>`: quella non apre niente, guarda, e quando la
+ * grafica finisce riporta lo schermo dov'era. Il padre torna subito al prompt.
+ *
+ * ! E IL RAMO SI GUARDA PRIMA DI QUALUNQUE ALTRA COSA. Averlo dimenticato e'
+ * costato un pomeriggio: la copia non riconosceva l'opzione, si comportava da
+ * exwin normale, apriva un secondo server E LANCIAVA UN'ALTRA COPIA. Il
+ * sintomo era uno schermo blu senza barra, e in fondo alla seriale
+ * «SCHED: PCB pool esaurito» — cioe' la tabella dei processi finita. Una
+ * ricorsione che si vede solo dall'esaurimento non somiglia a una ricorsione.
+ * ========================================================================== */
+static int attendi_e_torna(int partenza)
+{
+    int giri;
+
+    /* Prima che la grafica CI SIA: il server rivendica la console qualche
+     * decimo di secondo dopo essere partito, e scambiare il non essere ancora
+     * nato per l'essere gia' morto riporterebbe lo schermo indietro subito. */
+    for (giri = 0; giri < 100 && console_grafica(0) < 0; giri++)
+        usleep(100000);
+
+    if (console_grafica(0) < 0) return 0;   /* non e' mai partita */
+
+    while (console_grafica(0) >= 0) usleep(500000);
+
+    console_switch((unsigned int)partenza);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     const char *server, *pm, *sfondo = 0;
@@ -50,6 +86,12 @@ int main(int argc, char **argv)
     char        c_arg[8];
     char       *sv[6], *pv[4];
     int i, console = -1, n, partenza = 0;
+
+    /* ! IL RAMO DELL'ATTESA PER PRIMO, e non apre niente: e' la copia lanciata
+     * da noi stessi in fondo a questa funzione. Vedi attendi_e_torna(). */
+    for (i = 1; i < argc; i++)
+        if (strcmp(argv[i], "--attendi") == 0 && i + 1 < argc)
+            return attendi_e_torna(atoi(argv[i + 1]));
 
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-c") == 0 && i + 1 < argc) console = atoi(argv[++i]);
@@ -165,48 +207,22 @@ int main(int argc, char **argv)
         printf("exwin: non riesco a passare alla console %d: vacci con Alt+F%d\n",
                console + 1, console + 1);
 
-    /* =====================================================================
-     * ! SI ASPETTA CHE LA GRAFICA FINISCA, e poi si torna da dove si e'
-     * partiti. Prima `exwin` lanciava e usciva: chi sceglieva «Esci» dalla
-     * scrivania restava davanti a una console che non era piu' di nessuno, e
-     * doveva sapere di Alt+F1 per ritrovare la sua shell.
-     *
-     * ! NON SI ASPETTA IL PROCESSO, SI ASPETTA LA CONSOLE. wserver e' stato
-     * avviato con spawn e non e' figlio nostro in un modo che waitpid sappia
-     * seguire fino in fondo; ma il kernel sa chi tiene la console della
-     * grafica, e quando quella risposta torna -1 la grafica non c'e' piu' —
-     * che il server sia uscito bene o sia stato ucciso.
-     *
-     * ! E SI GUARDA PIANO. Mezzo secondo per giro: qui non c'e' niente da
-     * fare in fretta, e un ciclo stretto per aspettare una cosa che dura
-     * minuti sarebbe tempo di CPU tolto alla scrivania che si sta usando.
-     * ===================================================================== */
-    /* ! PRIMA SI ASPETTA CHE LA GRAFICA CI SIA, POI CHE FINISCA, e l'ordine
-     * non e' pignoleria: il server rivendica la console solo quando ha finito
-     * di mappare il framebuffer, cioe' qualche decimo di secondo DOPO che
-     * questo processo l'ha lanciato. Guardando subito «c'e' una grafica?» si
-     * troverebbe -1 — non ancora — e si scambierebbe il non essere ancora nato
-     * per l'essere gia' morto: exwin uscirebbe all'istante riportando la
-     * console indietro, e la scrivania si aprirebbe su uno schermo che nessuno
-     * sta guardando.
-     *
-     * Dieci secondi bastano con abbondanza; scaduti, si rinuncia ad aspettare
-     * e si lascia la grafica dov'e' invece di trascinare l'utente altrove. */
+    /* ! CHI RIPORTA LO SCHERMO INDIETRO E' UNA COPIA DI QUESTO PROGRAMMA, e
+     * il perche' sta sopra attendi_e_torna(): aspettare qui bloccherebbe la
+     * shell da cui si e' digitato `exwin` per tutto il tempo della grafica. */
     {
-        int giri;
+        const char *io_stesso = trova("/bin/exwin", "/cdrom/bin/exwin");
+        char        p_arg[16];
+        char       *gv[4];
 
-        for (giri = 0; giri < 100 && console_grafica(0) < 0; giri++)
-            usleep(100000);
-
-        if (console_grafica(0) < 0) {
-            printf("exwin: il server non ha preso la console: lo lascio la'\n");
-            return 0;
+        if (io_stesso) {
+            sprintf(p_arg, "%d", partenza);
+            gv[0] = (char *)io_stesso;
+            gv[1] = "--attendi";
+            gv[2] = p_arg;
+            gv[3] = 0;
+            spawn_ex(gv[0], gv, environ, 0, 0);
         }
     }
-
-    while (console_grafica(0) >= 0) usleep(500000);
-
-    console_switch((unsigned int)partenza);
-    printf("exwin: grafica spenta.\n");
     return 0;
 }

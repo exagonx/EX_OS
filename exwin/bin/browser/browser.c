@@ -295,6 +295,11 @@ typedef struct {
     short         opz_ora;      /* quale e' scelta adesso */
     int           nodo;         /* il nodo che l'ha generato, -1 se libero */
     short         cur;          /* dove si sta scrivendo, dentro `valore` */
+    /* ! L'ANCORA DELLA SELEZIONE, -1 quando non c'e' niente di scelto. La
+     * selezione e' il tratto fra `sel` e `cur`, in un verso o nell'altro: chi
+     * la usa ordina i due estremi. Tenere l'ancora invece di «inizio e fine»
+     * e' cio' che fa muovere l'estremo giusto quando si allarga con Shift. */
+    short         sel;
     char          nome[CTRL_NOME_MAX];   /* l'attributo `name` */
     char          valore[CTRL_VAL_MAX];
 } Ctrl;
@@ -793,6 +798,107 @@ static ExFont font_per(int neretto, int corsivo, int famiglia, int corpo)
     g_font[g_font_n].famiglia = (unsigned char)famiglia;
     g_font[g_font_n].corpo    = (short)corpo;
     return g_font[g_font_n++].f;
+}
+
+/* =============================================================================
+ * LA SELEZIONE DENTRO UN CONTROLLO DISEGNATO
+ *
+ * ! IL TRATTO SI ORDINA, l'ancora no. `sel` e' dove la selezione e' COMINCIATA
+ * e `cur` dov'e' arrivata: tirando all'indietro il primo e' maggiore del
+ * secondo, ed e' giusto cosi' — e' l'ancora che deve restare ferma mentre
+ * l'altro estremo si muove. Chi vuole il tratto se lo fa ordinare qui.
+ * ========================================================================== */
+static int sel_tratto(Ctrl *k, int *a, int *b)
+{
+    int n = 0;
+
+    while (k->valore[n]) n++;
+
+    if (k->sel < 0 || k->sel == k->cur) {
+        /* ! SENZA SELEZIONE SI PRENDE TUTTO IL CAMPO, e non «niente»: chi
+         * preme Ctrl+C in una casella senza aver scelto nulla vuole il suo
+         * contenuto, non il silenzio. */
+        *a = 0; *b = n;
+        return n > 0;
+    }
+
+    *a = k->sel < k->cur ? k->sel : k->cur;
+    *b = k->sel < k->cur ? k->cur : k->sel;
+    if (*b > n) *b = n;
+    if (*a > *b) *a = *b;
+    return *b > *a;
+}
+
+/* Toglie di mezzo il testo scelto, se c'e'. Il cursore resta dove cominciava. */
+static void sel_togli(Ctrl *k)
+{
+    int a, b, i, n = 0;
+
+    if (k->sel < 0 || k->sel == k->cur) return;
+    while (k->valore[n]) n++;
+
+    a = k->sel < k->cur ? k->sel : k->cur;
+    b = k->sel < k->cur ? k->cur : k->sel;
+    if (b > n) b = n;
+
+    for (i = a; i + (b - a) <= n; i++) k->valore[i] = k->valore[i + (b - a)];
+    k->cur = (short)a;
+    k->sel = -1;
+}
+
+/* =============================================================================
+ * COPIA, TAGLIA, INCOLLA — le tre cose, in un posto solo
+ *
+ * ! CI SI ARRIVA DA DUE STRADE, e sono tutt'e due standard. Ctrl+C/X/V e'
+ * quella che conosce chi viene da Windows o da un desktop moderno; Ctrl+Ins,
+ * Shift+Ins e Shift+Canc sono quella di CUA — DOS, OS/2, i terminali Unix, e
+ * ancora oggi mezzo mondo dei programmi a schermo intero. Nessuna delle due e'
+ * «quella giusta»: dipende da dove uno ha imparato, e sono entrambe gratis.
+ *
+ * ! LE FUNZIONI STANNO QUI E I TASTI LA': se il codice fosse duplicato nei due
+ * rami, il giorno che l'incolla cambia ne cambierebbe uno solo — e il difetto
+ * si vedrebbe solo a chi usa l'altra scorciatoia.
+ * ========================================================================== */
+static void ctrl_inserisci(Ctrl *k, char ch);
+
+static void app_copia(Ctrl *k, int taglia)
+{
+    int a, b;
+
+    if (!sel_tratto(k, &a, &b)) return;
+    ex_appunti_metti(k->valore + a, (unsigned int)(b - a));
+    if (taglia) sel_togli(k);
+}
+
+static void app_incolla(Ctrl *k)
+{
+    static char  inc[CTRL_VAL_MAX];
+    unsigned int q = ex_appunti_prendi(inc, sizeof(inc));
+    unsigned int i;
+
+    sel_togli(k);
+    for (i = 0; i < q; i++) {
+        char ch = inc[i];
+
+        /* ! IN UNA CASELLA DI UNA RIGA SOLA UN A CAPO DIVENTA UNO SPAZIO, e
+         * non si perde: incollando un indirizzo copiato da un testo su due
+         * righe, quel che si vuole e' l'indirizzo intero, non la prima meta'. */
+        if ((ch == '\n' || ch == '\r') && k->tipo != CTRL_AREA) ch = ' ';
+        ctrl_inserisci(k, ch);
+    }
+}
+
+/* Un carattere nel punto in cui si scrive. */
+static void ctrl_inserisci(Ctrl *k, char ch)
+{
+    int i, n = 0;
+
+    while (k->valore[n]) n++;
+    if (n >= CTRL_VAL_MAX - 1) return;
+
+    for (i = n; i >= (int)k->cur; i--) k->valore[i + 1] = k->valore[i];
+    k->valore[k->cur] = ch;
+    k->cur++;
 }
 
 /* Dentro quanti <pre>/<code> siamo: e' un contatore e non un si'/no, perche'
@@ -1839,6 +1945,7 @@ static void impagina_nodo(int v, const CssStile *ered)
                     while (c->valore[q]) q++;
                     if (!suo || c->cur > (short)q) c->cur = (short)q;
                     if (c->cur < 0) c->cur = 0;
+                    if (!suo || c->sel > (short)q) c->sel = -1;
                 }
             }
 
@@ -2401,6 +2508,29 @@ static void disegna(void)
             default:                     /* casella di testo */
                 ex_riempi(g_f, cx, y, cw, ch, EX_BIANCO);
                 ex_incavo(g_f, cx, y, cw, ch);
+
+                /* ! IL TRATTO SCELTO SI VEDE, e va disegnato PRIMA del testo:
+                 * e' uno sfondo, non un colore delle lettere. Dipingerlo dopo
+                 * vorrebbe dire coprire le parole che dovrebbe evidenziare. */
+                if (c->sel >= 0 && c->sel != c->cur) {
+                    static char pre[CTRL_VAL_MAX];
+                    int a = c->sel < c->cur ? c->sel : c->cur;
+                    int b = c->sel < c->cur ? c->cur : c->sel;
+                    int j, x0, x1;
+
+                    for (j = 0; j < a && mostra[j]; j++) pre[j] = mostra[j];
+                    pre[j] = '\0';
+                    x0 = cx + 4 + ex_larghezza_testo(EX_FONT_SISTEMA, pre);
+
+                    for (j = 0; j < b && mostra[j]; j++) pre[j] = mostra[j];
+                    pre[j] = '\0';
+                    x1 = cx + 4 + ex_larghezza_testo(EX_FONT_SISTEMA, pre);
+
+                    if (x1 > cx + cw - 3) x1 = cx + cw - 3;
+                    if (x1 > x0)
+                        ex_riempi(g_f, x0, y + 3, x1 - x0, ch - 6, EX_BLU);
+                }
+
                 ex_scrivi(g_f, cx + 4, y + 3, mostra, EX_NERO);
                 /* ! IL CURSORE SI VEDE SOLO DOVE SI STA SCRIVENDO. Senza, non
                  * c'e' modo di sapere quale casella prende i tasti — e chi
@@ -3874,7 +4004,12 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         return 0;
 
     case EXM_TASTO: {
-        unsigned int c = wp & 0xFFFF;
+        /* ! IL CARATTERE E I MODIFICATORI SONO DUE COSE, e qui c'era solo la
+         * prima: `wp & 0xFFFF` butta via i bit alti, che sono Ctrl, Shift e
+         * Alt. Finche' il browser non li guardava non si notava; il giorno di
+         * Ctrl+C il sintomo e' stato una `c` scritta dentro la casella — cioe'
+         * il tasto e' arrivato, spogliato di quel che lo distingueva. */
+        unsigned int c = wp & KBD_KEY_MASK;
 
         /* ! CON UNA CASELLA A FUOCO I TASTI SONO SUOI, e le frecce non
          * scorrono piu' la pagina: e' la regola di ogni browser, e senza di
@@ -3895,23 +4030,86 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 
             if (k->cur > (short)n) k->cur = (short)n;
             if (k->cur < 0)        k->cur = 0;
+            if (k->sel > (short)n) k->sel = -1;
 
             /* =================================================================
-             * ! IL CURSORE SI MUOVE, e non e' un lusso. Prima si scriveva solo
-             * in coda e si cancellava solo dalla coda: per correggere la prima
-             * lettera di un indirizzo di posta bisognava cancellare tutto il
-             * resto. E' il genere di cosa che non si nota leggendo il codice e
-             * si nota alla prima riga digitata storta.
+             * ! GLI APPUNTI SONO QUELLI DI TUTTA LA SCRIVANIA, non un blocco
+             * del browser: la zona di memoria condivisa e' la stessa che usa
+             * `ex_area`, quindi si copia da una casella di un modulo e si
+             * incolla in un editor, e viceversa. Due «ultimi copiati» sarebbe
+             * la cosa peggiore — nessuno saprebbe quale sta usando.
              *
-             * ! DENTRO UN'AREA LE FRECCE SU E GIU' CAMBIANO RIGA, e non
-             * scorrono la pagina: mentre si scrive in un'area, la pagina sotto
-             * non deve muoversi. Fuori da una casella tornano a scorrere, ed e'
-             * il ramo piu' sotto.
+             * ! E LA SELEZIONE SI CANCELLA SCRIVENDOCI SOPRA, com'e' ovunque:
+             * chi ha scelto tre lettere e batte un tasto si aspetta che quelle
+             * tre spariscano, non che il testo si allunghi.
              * ================================================================= */
-            if (c == KBD_K_LEFT)  { if (k->cur > 0) k->cur--; disegna(); return 0; }
-            if (c == KBD_K_RIGHT) { if (k->cur < (short)n) k->cur++; disegna(); return 0; }
-            if (c == KBD_K_HOME)  { k->cur = 0;          disegna(); return 0; }
-            if (c == KBD_K_END)   { k->cur = (short)n;   disegna(); return 0; }
+            /* ! LE DUE SCORCIATOIE, PRIMA DI TUTTO IL RESTO. Ctrl+Canc e
+             * Shift+Canc devono essere guardate qui: piu' sotto c'e' il ramo
+             * che cancella un carattere, e Canc da solo ci finirebbe dentro
+             * portandosi via il taglio. */
+            {
+                int ctrl  = (wp & KBD_MOD_CTRL)  != 0;
+                int shf   = (wp & KBD_MOD_SHIFT) != 0;
+                int copia = 0, taglia = 0, incolla = 0;
+
+                if (ctrl && (c == 'c' || c == 'C'))       copia   = 1;
+                if (ctrl && (c == 'x' || c == 'X'))       taglia  = 1;
+                if (ctrl && (c == 'v' || c == 'V'))       incolla = 1;
+
+                /* CUA: quella di DOS, OS/2 e dei terminali Unix. */
+                if (ctrl && c == KBD_K_INS)               copia   = 1;
+                if (shf  && c == KBD_K_INS)               incolla = 1;
+                if (shf  && c == KBD_K_DEL)               taglia  = 1;
+                /* ! CTRL+CANC NON E' CUA — li' e' Shift+Canc — ma lo chiedono
+                 * le dita di chi l'ha imparato altrove, e costa una riga.
+                 * Averle tutt'e due non toglie niente a nessuno. */
+                if (ctrl && c == KBD_K_DEL)               taglia  = 1;
+
+                if (ctrl && (c == 'a' || c == 'A')) {
+                    k->sel = 0;
+                    k->cur = (short)n;
+                    disegna();
+                    return 0;
+                }
+                if (copia || taglia) {
+                    app_copia(k, taglia);
+                    disegna();
+                    return 0;
+                }
+                if (incolla) {
+                    app_incolla(k);
+                    disegna();
+                    return 0;
+                }
+            }
+
+            /* =================================================================
+             * ! I TASTI DI MOVIMENTO SI GUARDANO SENZA I MODIFICATORI, e prima
+             * non era cosi': `c == KBD_K_LEFT` e' falso appena si tiene Shift,
+             * perche' il modificatore sta nei bit alti. Finche' non c'era la
+             * selezione non si notava — Shift+freccia semplicemente non faceva
+             * niente; con la selezione sarebbe stato il difetto principale.
+             *
+             * ! E SHIFT POSA L'ANCORA, una freccia nuda la toglie. E' l'unica
+             * regola che non stupisce, ed e' la stessa che segue `ex_area`.
+             * ================================================================= */
+            {
+                unsigned int t     = c;
+                int          shift = (wp & KBD_MOD_SHIFT) != 0;
+                int          muove = (t == KBD_K_LEFT || t == KBD_K_RIGHT ||
+                                      t == KBD_K_HOME || t == KBD_K_END ||
+                                      t == KBD_K_UP   || t == KBD_K_DOWN);
+
+                if (muove) {
+                    if (shift) { if (k->sel < 0) k->sel = k->cur; }
+                    else       k->sel = -1;
+                }
+
+                if (t == KBD_K_LEFT)  { if (k->cur > 0) k->cur--; disegna(); return 0; }
+                if (t == KBD_K_RIGHT) { if (k->cur < (short)n) k->cur++; disegna(); return 0; }
+                if (t == KBD_K_HOME)  { k->cur = 0;          disegna(); return 0; }
+                if (t == KBD_K_END)   { k->cur = (short)n;   disegna(); return 0; }
+            }
 
             if (c == KBD_K_UP || c == KBD_K_DOWN) {
                 if (k->tipo == CTRL_AREA) {
@@ -3938,19 +4136,21 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
                 return 0;
             }
 
-            if (c == '\b') {
-                if (k->cur > 0) {
+            /* ! CANCELLARE CON DEL TESTO SCELTO TOGLIE QUELLO, e non il
+             * carattere accanto: e' la cosa che si sta guardando. */
+            if (c == '\b' || c == KBD_K_DEL) {
+                if (k->sel >= 0 && k->sel != k->cur) {
+                    sel_togli(k);
+                    disegna();
+                    return 0;
+                }
+                if (c == '\b' && k->cur > 0) {
                     int i;
 
                     for (i = (int)k->cur - 1; i < n; i++)
                         k->valore[i] = k->valore[i + 1];
                     k->cur--;
-                }
-                disegna();
-                return 0;
-            }
-            if (c == KBD_K_DEL) {
-                if ((int)k->cur < n) {
+                } else if (c == KBD_K_DEL && (int)k->cur < n) {
                     int i;
 
                     for (i = (int)k->cur; i < n; i++)
@@ -3988,13 +4188,9 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
                 }
                 return 0;
             }
-            if (c >= 32 && c < 256 && n < CTRL_VAL_MAX - 1) {
-                int i;
-
-                for (i = n; i >= (int)k->cur; i--)
-                    k->valore[i + 1] = k->valore[i];
-                k->valore[k->cur] = (char)c;
-                k->cur++;
+            if (c >= 32 && c < 256) {
+                sel_togli(k);           /* scrivere sopra una scelta la sostituisce */
+                ctrl_inserisci(k, (char)c);
                 disegna();
             }
             return 0;

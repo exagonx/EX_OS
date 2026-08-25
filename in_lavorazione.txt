@@ -136,12 +136,23 @@ E. FATTO — la risoluzione, nelle impostazioni della scrivania.
 
 DA FARE (in coda):
 
-F. Taglia/copia/incolla: C'E' GIA' ed e' di tutta la scrivania —
-   `ex_area_copia`, `ex_area_taglia`, `ex_area_incolla`,
-   `ex_area_seleziona_tutto`, in memoria condivisa, quindi si copia in un
-   programma e si incolla in un altro. MA vale per il controllo `ex_area` del
-   toolkit: i campi di un modulo del BROWSER sono rettangoli disegnati, non
-   `ex_area`, e li' non c'e'.
+F. FATTO — taglia/copia/incolla nei campi di un modulo del browser.
+   Selezione con Shift+frecce/Home/Fine, il tratto scelto evidenziato in blu,
+   scrivere sopra una selezione la sostituisce, Canc e Backspace tolgono il
+   tratto invece del carattere accanto.
+   DUE SCORCIATOIE, tutt'e due standard, e nessuna e' «quella giusta»:
+       Ctrl+C  Ctrl+X  Ctrl+V   Ctrl+A     (Windows e desktop moderni)
+       Ctrl+Ins  Shift+Ins  Shift+Canc     (CUA: DOS, OS/2, terminali Unix)
+       Ctrl+Canc                           (non e' CUA, ma lo chiedono le dita)
+   Le funzioni stanno in un posto solo e i tasti chiamano quelle: se fossero
+   duplicate nei due rami, il giorno che l'incolla cambia ne cambierebbe uno
+   solo, e il difetto si vedrebbe solo a chi usa l'altra scorciatoia.
+   ! E GLI APPUNTI SONO QUELLI DI TUTTA LA SCRIVANIA: `ex_appunti_metti` e
+   `ex_appunti_prendi` sono nuove in exwin.so e usano la STESSA zona di memoria
+   condivisa di `ex_area`, quindi si copia da una casella del browser e si
+   incolla in un editor. Serviranno anche all'editor RTF e all'IDE.
+   Provato dal CD: «CIAO» scelto, Ctrl+Ins, Fine, Shift+Ins -> CIAOMONDOCIAO;
+   e con Shift+Canc al posto della copia -> MONDOCIAO.
 
 G. I commenti che nominano `/bin/svga` sono da correggere: il programma sta in
    `/dev/svga.drv`. Sono in bin/hwconfig/hwconfig.c, kernel/include/cfg.h e

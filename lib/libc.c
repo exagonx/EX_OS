@@ -357,7 +357,7 @@ typedef struct { unsigned int bit; } fd_set;
 #define SYS_CONSOLE_WRITE  230
 #define SYS_CONSOLE_INFO   231
 #define SYS_CONSOLE_SETFG  232
-#define SYS_CONSOLE_GRAFICA 233
+#define SYS_CONSOLE_GRAFICA 255
 #define SYS_IOCTL         54
 #define SYS_DUP           41
 #define SYS_DUP2          63

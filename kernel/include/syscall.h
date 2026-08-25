@@ -94,7 +94,7 @@
  * cioe' sopra qualunque cosa il compilatore avesse messo dopo. Il sintomo era
  * «video_info non risponde», che non somiglia per niente a una scrittura fuori
  * limite. Chi aggiunge una syscall aggiorna anche questo. */
-#define SYSCALL_COUNT   255     /* la piu' alta e' SYS_SU = 254 */
+#define SYSCALL_COUNT   256     /* la piu' alta e' SYS_CONSOLE_GRAFICA = 255 */
 
 /* =============================================================================
  * Codici errno
@@ -171,8 +171,22 @@
 #define SYS_CONSOLE_SETFG  232  /* dichiara il processo in primo piano (job control) */
 /* Chi rivendica la console della GRAFICA, e chi chiede quale sia.
  * ebx: 0 = chiedi (rende il numero, -1 se nessuna), 1 = prendi (la mia),
- *      2 = lascia. Vedi sys_console_grafica. */
-#define SYS_CONSOLE_GRAFICA 233
+ *      2 = lascia. Vedi sys_console_grafica.
+ *
+ * ! IL NUMERO NON STA ACCANTO AGLI ALTRI SYS_CONSOLE_*, e non e' una svista:
+ * il 233 — che sarebbe stato il prossimo — E' GIA' DI SYS_IOPORT_IN16, tre
+ * schermate piu' giu'. Prenderlo ha sovrascritto quella voce nella tabella, e
+ * il sintomo non somigliava alla causa: il driver della scheda di rete leggeva
+ * la propria firma con in16 e si vedeva tornare «00 00» invece di «57 57»,
+ * quindi dichiarava che a quell'indirizzo non c'era nessuna NE2000. Mezzo
+ * pomeriggio a cercare un difetto nella rete per una riga scritta qui.
+ *
+ * ! CHI AGGIUNGE UNA CHIAMATA CONTI I DOPPIONI PRIMA:
+ *     grep -oE '#define SYS_[A-Z_0-9]+ +[0-9]+' kernel/include/syscall.h \
+ *       | awk '{print $3}' | sort -n | uniq -d
+ * Non deve stampare niente. I numeri qui dentro non sono in ordine e non sono
+ * contigui: guardare «l'ultimo del gruppo» non basta. */
+#define SYS_CONSOLE_GRAFICA 255
 
 /* =============================================================================
  * Accessi I/O a 16 e 32 bit — servono al bus PCI, non sono un lusso
