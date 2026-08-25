@@ -397,9 +397,15 @@ typedef struct {
  * --------------------------------------------------------------------------- */
 #define SFONDI_MAX  256
 
+/* ! LO STESSO ELENCO PORTA ANCHE I BORDI, e non e' pigrizia: un bordo di
+ * tabella e' un rettangolo che sta SOTTO il testo e sopra lo sfondo,
+ * esattamente come uno sfondo. Dargli un elenco suo avrebbe voluto dire un
+ * secondo tetto da scegliere, un secondo ciclo da ritagliare all'area e un
+ * secondo posto dove sbagliare l'ordine di disegno. */
 typedef struct {
-    int          x, y, w, h;
-    unsigned int colore;
+    int           x, y, w, h;
+    unsigned int  colore;
+    unsigned char bordo;    /* 0 = si riempie, >0 = contorno di tanti pixel */
 } Sfondo;
 
 static Sfondo g_sfondi[SFONDI_MAX];
@@ -1176,6 +1182,40 @@ static int quanto_scavalca(int nodo, const char *attr)
     return (int)v;
 }
 
+/* ! IL BORDO LO DICE L'ATTRIBUTO, non il foglio di stile, e per il web vero e'
+ * la scelta giusta: `<table border="1">` e' come si sono disegnate le tabelle
+ * per vent'anni, e le pagine che lo usano sono le stesse che non hanno un CSS.
+ * `border-collapse`, i colori e i lati separati non ci sono: un filo scuro
+ * intorno a ogni cella e' quel che quell'attributo ha sempre voluto dire.
+ *
+ * ! E SI CAPPA A QUATTRO. `border="20"` esiste, ed e' una tabella fatta quasi
+ * solo di bordo: chi la scrive vuole «spesso», non venti pixel per lato. */
+static int bordo_tabella(int v)
+{
+    const char  *a = html_attr(&g_doc, v, "border");
+    unsigned int b;
+
+    if (!a) return 0;
+    if (!a[0]) return 1;        /* `border` da solo vale «si'» */
+    b = numero(a);
+    if (b == 0) return 0;
+    return b > 4 ? 4 : (int)b;
+}
+
+/* Un rettangolo da contornare, nello stesso elenco degli sfondi. */
+static int bordo_metti(int x, int y, int w, int h, int spess)
+{
+    if (spess <= 0 || g_sfondi_n >= SFONDI_MAX) return -1;
+
+    g_sfondi[g_sfondi_n].x      = x;
+    g_sfondi[g_sfondi_n].y      = y;
+    g_sfondi[g_sfondi_n].w      = w;
+    g_sfondi[g_sfondi_n].h      = h;
+    g_sfondi[g_sfondi_n].colore = EX_GRIGIO_SC;
+    g_sfondi[g_sfondi_n].bordo  = (unsigned char)spess;
+    return g_sfondi_n++;
+}
+
 static int e_riga(const char *n)  { return uguale(n, "tr"); }
 static int e_cella(const char *n) { return uguale(n, "td") || uguale(n, "th"); }
 
@@ -1251,7 +1291,7 @@ static void impagina_tabella(int v, const CssStile *mio)
     int      largh[TAB_COL_MAX];
     int      resta[TAB_COL_MAX], debito[TAB_COL_MAX];
     int      n_col = 0, r, c, somma = 0, disp, alt;
-    int      x0, y0;
+    int      x0, y0, bordo, y_inizio, i_bordo_tab;
 
     raccogli_righe(v, righe, &n_righe);
     if (n_righe == 0 || g_tab_liv >= TAB_LIV_MAX) {
@@ -1265,6 +1305,7 @@ static void impagina_tabella(int v, const CssStile *mio)
     }
 
     g_tab_liv++;
+    bordo = bordo_tabella(v);
     for (c = 0; c < TAB_COL_MAX; c++) largh[c] = 0;
 
     /* --- prima passata: quanto vorrebbe essere larga ogni colonna --------- */
@@ -1337,6 +1378,18 @@ static void impagina_tabella(int v, const CssStile *mio)
     /* --- seconda passata: si impagina per davvero ------------------------- */
     a_capo();
     y0 = g_pen_y;
+    y_inizio = y0;
+
+    /* Il contorno di TUTTA la tabella: si apre adesso e si chiude in fondo,
+     * quando si sa quanto e' venuta alta. */
+    i_bordo_tab = -1;
+    if (bordo > 0) {
+        int tot = 0;
+
+        for (c = 0; c < n_col; c++) tot += largh[c];
+        tot += (n_col - 1) * TAB_SPAZIO;
+        i_bordo_tab = bordo_metti(riga_x(), y0, tot, 0, bordo);
+    }
 
     /* ! LA MAPPA DI CIO' CHE E' GIA' OCCUPATO, ed e' tutto cio' che serve per
      * `rowspan`. `resta[c]` dice per quanti giri ancora la colonna c e' presa
@@ -1364,7 +1417,7 @@ static void impagina_tabella(int v, const CssStile *mio)
         for (f = g_doc.nodi[righe[r]].primo_figlio; f >= 0;
              f = g_doc.nodi[f].prossimo) {
             CssStile sc;
-            int      sp, rp, largh_cella, k;
+            int      sp, rp, largh_cella, k, i_bordo;
 
             if (g_doc.nodi[f].tipo != HTML_ELEMENTO) continue;
             if (!e_cella(html_nome(&g_doc, f))) continue;
@@ -1398,10 +1451,26 @@ static void impagina_tabella(int v, const CssStile *mio)
                 g_sfondi[g_sfondi_n].w = largh_cella;
                 g_sfondi[g_sfondi_n].h = 0;
                 g_sfondi[g_sfondi_n].colore = sc.sfondo;
+                g_sfondi[g_sfondi_n].bordo  = 0;
                 g_sfondi_n++;
             }
 
+            i_bordo = bordo_metti(x0, y0, largh_cella, 0, bordo);
+
             impagina_in_colonna(f, &sc, x0, y0, largh_cella, 0, &alt);
+
+            /* ! UNA CELLA CHE SCAVALCA CHIUDE IL SUO RIQUADRO DA SOLA, adesso:
+             * il giro di fine riga qui sotto rimette l'altezza a tutto cio' che
+             * e' ancora aperto su questa y, e per una cella alta tre righe
+             * sarebbe l'altezza di UNA. */
+            if (rp > 1) {
+                int q;
+
+                for (q = g_sfondi_n - 1; q >= 0; q--)
+                    if ((q == i_bordo || g_sfondi[q].y == y0) &&
+                        g_sfondi[q].h == 0 && g_sfondi[q].x == x0)
+                        g_sfondi[q].h = alt;
+            }
 
             if (rp <= 1) {
                 if (alt > alt_riga_tab) alt_riga_tab = alt;
@@ -1451,6 +1520,8 @@ static void impagina_tabella(int v, const CssStile *mio)
 
         y0 += alt_riga_tab;
     }
+
+    if (i_bordo_tab >= 0) g_sfondi[i_bordo_tab].h = y0 - y_inizio;
 
     g_pen_y      = y0;
     g_pen_x      = riga_x();
@@ -2167,9 +2238,31 @@ static void disegna(void)
         if (y + h < area_y() || y > area_y() + area_h()) continue;
         if (y < area_y()) { h -= area_y() - y; y = area_y(); }
         if (y + h > area_y() + area_h()) h = area_y() + area_h() - y;
-        if (h > 0)
+        if (h <= 0) continue;
+
+        if (!g_sfondi[i].bordo) {
             ex_riempi(g_f, g_sfondi[i].x, y, g_sfondi[i].w, h,
                       g_sfondi[i].colore);
+            continue;
+        }
+
+        /* ! IL CONTORNO SI FA DI QUATTRO RIEMPIMENTI, e i due orizzontali si
+         * disegnano solo se il loro lato e' DENTRO l'area: il ritaglio qui
+         * sopra ha gia' accorciato il rettangolo, quindi una tabella scorsa a
+         * meta' avrebbe altrimenti una riga di bordo dove il bordo non c'e'. */
+        {
+            int b  = g_sfondi[i].bordo;
+            int x  = g_sfondi[i].x, w = g_sfondi[i].w;
+            int y0 = g_sfondi[i].y - g_scorri;
+            int h0 = g_sfondi[i].h;
+
+            ex_riempi(g_f, x, y, b, h, g_sfondi[i].colore);
+            ex_riempi(g_f, x + w - b, y, b, h, g_sfondi[i].colore);
+            if (y0 >= area_y())
+                ex_riempi(g_f, x, y0, w, b, g_sfondi[i].colore);
+            if (y0 + h0 <= area_y() + area_h())
+                ex_riempi(g_f, x, y0 + h0 - b, w, b, g_sfondi[i].colore);
+        }
     }
 
     for (i = 0; i < g_pez_n; i++) {

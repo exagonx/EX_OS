@@ -265,8 +265,16 @@ typedef struct {
  * ! DA OTTO DA QUANDO C'E' L'ASCOLTO, e il motivo e' che un ascoltatore
  * OCCUPA UNO SLOT senza essere una connessione: un servitore con due clienti
  * collegati ne usa gia' tre, e con quattro in tutto il primo che bussa mentre
- * gli altri parlano si sente rifiutare. Otto per 8 KB di buffer sono 64 KB. */
-#define IP_TCP_CONNESSIONI  8
+ * gli altri parlano si sente rifiutare.
+ *
+ * ! DA VENTIQUATTRO DA QUANDO PIU' PROGRAMMI VANNO IN RETE INSIEME. Otto era
+ * gia' stretto per un browser solo: una pagina tiene aperta la connessione per
+ * riusarla, e intanto un servitore ascolta e un altro programma scarica. Con
+ * piu' finestre di navigazione, o un browser e un client di posta accesi
+ * insieme, otto si esauriscono senza che niente sia rotto.
+ * Ventiquattro per 8 KB di buffer sono 192 KB — su una macchina da 32 MB e'
+ * una voce che si vede, ed e' dichiarata qui. */
+#define IP_TCP_CONNESSIONI  24
 
 /* Stati visibili a un client. Sono meno di quelli veri della macchina a
  * stati: a chi usa la connessione interessa sapere se puo' scrivere, se

@@ -34,9 +34,14 @@ Da fare, per una pagina web moderna (in ordine di quanto pesa):
 3. Le GIF animate mostrano il primo fotogramma, ed e' dichiarato: animarle
    vorrebbe dire un orologio dentro la libreria delle immagini.
 
-4. I BORDI DELLE TABELLE non si disegnano. `border` non si legge e le celle
-   non hanno un contorno: su una tabella di dati si distinguono le colonne
-   dall'incolonnamento e basta. colspan e rowspan invece ci sono.
+4. FATTO — I BORDI DELLE TABELLE. `<table border="1">` adesso si legge e
+   disegna un filo intorno a ogni cella e intorno alla tabella. E' l'attributo,
+   non il CSS: e' come si sono disegnate le tabelle per vent'anni, e le pagine
+   che lo usano sono le stesse che non hanno un foglio di stile. I bordi stanno
+   nello stesso elenco degli sfondi — sono rettangoli sotto il testo e sopra lo
+   sfondo, esattamente come uno sfondo — cosi' non c'e' un secondo tetto da
+   scegliere ne' un secondo ritaglio da sbagliare. `border-collapse`, i colori e
+   i lati separati non ci sono.
 
 5. L'ARABO E L'EBRAICO SI VEDONO MA VANNO NEL VERSO SBAGLIATO. I glifi ci
    sono (DejaVu), ma si impaginano da sinistra a destra come tutto il resto:
@@ -47,3 +52,33 @@ Da fare, per una pagina web moderna (in ordine di quanto pesa):
    con le frecce, Home, Fine e le cancellazioni; un clic dentro il testo pero'
    da' il fuoco alla casella e mette il cursore in fondo, non nel punto in cui
    si e' cliccato.
+
+
+DA FARE, CHIESTO IL 25 AGOSTO 2026 (in coda, nessuno cominciato):
+
+A. install: in fondo chiedere di lanciare `hwconfig` per riconoscere l'hardware
+   e installare i driver che servono all'avvio da disco.
+
+B. install: chiedere la LINGUA e scriverla in kernel.cfg.
+
+C. exwin sulla console 5, non sulla 2. Alt+F1..F4 sono delle console di testo,
+   quindi la grafica gli sta in mezzo. E lanciando `exwin` la console va
+   CAMBIATA subito invece di stampare «vai su Alt+F2»; uscendo si torna alla
+   console da cui si e' partiti.
+
+D. `exit` dal program manager deve spegnere il server grafico e chiudere le
+   applicazioni che ci girano dentro. Oggi exwin resta acceso.
+   FATTIBILE: il server sa quali finestre esistono e di chi sono; serve un
+   messaggio di chiusura a ognuna e poi la fine del processo wserver, piu' il
+   ritorno al modo testo che il gradino 0 gia' sa fare.
+
+E. Nelle impostazioni del server grafico, la scelta della RISOLUZIONE. Va
+   scritta da qualche parte che il prossimo avvio legge (kernel.cfg, come la
+   lingua): il modo video si sceglie prima che il server parta, quindi la
+   nuova risoluzione arriva al riavvio.
+
+F. Taglia/copia/incolla: C'E' GIA' ed e' di tutta la scrivania — `ex_area_copia`,
+   `ex_area_taglia`, `ex_area_incolla`, `ex_area_seleziona_tutto`, in memoria
+   condivisa, quindi si copia in un programma e si incolla in un altro. MA vale
+   per il controllo `ex_area` del toolkit: i campi di un modulo del BROWSER
+   sono rettangoli disegnati, non `ex_area`, e li' non c'e'.

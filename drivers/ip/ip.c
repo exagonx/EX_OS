@@ -777,6 +777,70 @@ static int seq_prima(unsigned int a, unsigned int b)
     return (int)(a - b) < 0;
 }
 
+/* =============================================================================
+ * ! UNA CONNESSIONE DI UN PROCESSO MORTO SI RIPRENDE, e non e' un di piu': e'
+ * l'unico posto in cui si PUO' fare.
+ *
+ * Un programma che chiude bene chiude anche le sue connessioni. Ma un
+ * programma ucciso, o caduto, o chiuso dalla crocetta della finestra non
+ * chiude niente — e il suo slot restava occupato per sempre. Con otto slot in
+ * tutto bastava aprire e chiudere il browser qualche volta per non poter piu'
+ * aprire NIENTE: `-ENFILE`, che e' il limite di SISTEMA, su una macchina dove
+ * di connessioni non ce n'era piu' nessuna viva.
+ *
+ * ! E IL PROGRAMMA NON PUO' RIPARARE DA SE': se e' morto non gira piu' nessun
+ * suo codice. Il posto giusto e' qui, in chi tiene la tabella.
+ *
+ * Si guarda solo quando serve — la tabella e' piena — perche' scorrere
+ * l'elenco dei processi costa, e nel caso normale non serve mai.
+ * ========================================================================== */
+static int pid_vivo(unsigned int pid)
+{
+    ProcInfo     v[PROCINFO_MAX_BATCH];
+    unsigned int da = 0;
+    int          n, i;
+
+    if (pid == 0) return 0;
+
+    while ((n = procinfo(v, PROCINFO_MAX_BATCH, da)) > 0) {
+        for (i = 0; i < n; i++)
+            if (v[i].pid == pid) {
+                /* ! UNO ZOMBIE NON E' VIVO: ha finito e aspetta solo che il
+                 * padre ne raccolga l'esito. Contarlo fra i vivi vorrebbe
+                 * dire non riprendersi mai lo slot di chi e' finito male. */
+                return v[i].state != 4;
+            }
+        da += (unsigned int)n;
+    }
+    return 0;
+}
+
+/* Libera gli slot dei processi che non ci sono piu'. Rende quanti ne ha
+ * ripresi. */
+static int tcp_riprendi_orfane(void)
+{
+    int i, presi = 0;
+
+    for (i = 0; i < IP_TCP_CONNESSIONI; i++) {
+        Conn *c = &g_tcp[i];
+
+        if (c->stato == S_LIBERA) continue;
+        if (pid_vivo(c->proprietario)) continue;
+
+        /* ! NON SI MANDA UN FIN, e va detto perche' sembra scortese: il FIN
+         * vorrebbe aspettare l'ACK, cioe' tenere lo slot ancora un po' —
+         * proprio quel che qui manca. L'altra parte se ne accorgera' da sola
+         * col suo timeout, ed e' cio' che succede a ogni cavo staccato. */
+        c->stato      = S_LIBERA;
+        c->rx_len     = 0;
+        c->tx_len     = 0;
+        c->attesa_pid = 0;
+        c->porta_loc  = 0;
+        presi++;
+    }
+    return presi;
+}
+
 static Conn *tcp_da_id(unsigned int id, unsigned int cliente)
 {
     Conn *c;
@@ -1277,6 +1341,13 @@ static void tcp_apri(unsigned int cliente, const IpTcpApri *a)
             break;
         }
     }
+    /* ! PIENA? PRIMA DI DIRE DI NO SI GUARDA CHI E' MORTO. Dire -ENFILE
+     * mentre la tabella e' piena di slot di processi che non esistono piu' e'
+     * il modo in cui «riapri il browser e non naviga piu'» diventa permanente. */
+    if (c == NULL && tcp_riprendi_orfane() > 0) {
+        for (i = 0; i < IP_TCP_CONNESSIONI; i++)
+            if (g_tcp[i].stato == S_LIBERA) { c = &g_tcp[i]; break; }
+    }
     if (c == NULL) { rispondi_esito(cliente, -ENFILE); return; }
 
     if (prossimo_salto(a->ip, hop) != 0) {
@@ -1370,6 +1441,10 @@ static void tcp_ascolta(unsigned int cliente, const IpTcpAscolta *a)
 
     for (i = 0; i < IP_TCP_CONNESSIONI; i++)
         if (g_tcp[i].stato == S_LIBERA) { c = &g_tcp[i]; break; }
+
+    if (c == NULL && tcp_riprendi_orfane() > 0)
+        for (i = 0; i < IP_TCP_CONNESSIONI; i++)
+            if (g_tcp[i].stato == S_LIBERA) { c = &g_tcp[i]; break; }
 
     if (c == NULL) { rispondi_esito(cliente, -ENFILE); return; }
 
@@ -1789,6 +1864,12 @@ static void udp_apri(unsigned int client, const IpUdpApri *a)
     if (udp_cerca(porta) >= 0) { rispondi_esito(client, -EADDRINUSE); return; }
 
     for (i = 0; i < UDP_PORTE; i++) if (!g_udp[i].usata) { libero = i; break; }
+    if (libero < 0 && tcp_riprendi_orfane() > 0) {
+        int q;
+
+        for (q = 0; q < IP_TCP_CONNESSIONI; q++)
+            if (g_tcp[q].stato == S_LIBERA) { libero = q; break; }
+    }
     if (libero < 0) { rispondi_esito(client, -ENFILE); return; }
 
     g_udp[libero].porta        = porta;
