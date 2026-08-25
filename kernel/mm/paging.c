@@ -822,6 +822,12 @@ void paging_destroy_directory(PDE *pd)
                      * un errore vero su un'operazione che non ha nessun
                      * errore, e che avrebbe insegnato a ignorare quel
                      * messaggio proprio quando serve. */
+                    /* ! E QUESTO CONTROLLO VALE QUANTO VALE g_total_pages.
+                     * Dice «oltre la RAM», quindi e' esatto solo se il PMM
+                     * conta come RAM la sola RAM: vedi il Passo 1 di
+                     * pmm_init(). Quando li' si prendeva il massimo su TUTTA
+                     * la mappa E820, il tetto finiva sull'APIC e questa riga
+                     * lasciava passare il framebuffer di VirtualBox. */
                     if (frame >= pmm_get_total_pages() * PAGE_SIZE) continue;
 
                     pmm_free_page(frame);

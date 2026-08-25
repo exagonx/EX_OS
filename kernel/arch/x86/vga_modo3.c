@@ -174,20 +174,23 @@ static void vbe_spegni(void)
 
     /* =====================================================================
      * ! L'IDENTIFICATIVO SI SCRIVE E SI RILEGGE, NON SI CONFRONTA CON UN
-     * ELENCO — ed e' la seconda volta che questa funzione sbaglia allo
-     * stesso modo.
+     * ELENCO.
      *
      * Prima si accettavano solo i valori da 0xB0C0 a 0xB0C5, quelli di
      * Bochs e di QEMU. Ma quel registro non dice «che scheda sono»: dice
      * quale VERSIONE dell'interfaccia e' stata concordata, e chi la concorda
      * e' l'ultimo che ci ha scritto — di norma il BIOS video della scheda,
-     * mentre imposta la modalita'. Il BIOS di VirtualBox ne concorda una
-     * SUA, fuori da quell'intervallo (0xBE00..0xBE03: VBOX_VIDEO, ANYX,
-     * HGSMI, CFG). Su VirtualBox quindi si leggeva un numero legittimo, non
-     * lo si riconosceva, si usciva senza spegnere niente — e poi si
-     * riscrivevano i registri VGA SOPRA una VESA ancora accesa. Il risultato
-     * non e' uno schermo fermo, e' uno schermo che rotola: colori e disegni
-     * casuali, la macchina viva e il comando battuto alla cieca.
+     * mentre imposta la modalita'. Chi ne concordasse una fuori
+     * dall'intervallo — VirtualBox ne ha di proprie, 0xBE00..0xBE03 — farebbe
+     * leggere qui un numero legittimo e non riconosciuto: si usciva senza
+     * spegnere niente, e poi si riscrivevano i registri VGA SOPRA una VESA
+     * ancora accesa. Non uno schermo fermo: uno schermo che rotola.
+     *
+     * ! MISURATO, E SU VBoxVGA NON SUCCEDEVA: l'identificativo cadeva dentro
+     * l'intervallo vecchio e il ripristino gia' funzionava. L'elenco si toglie
+     * perche' non c'era ragione di fidarsene, non perche' lo si sia visto
+     * tradire. (I colori casuali del 26 agosto 2026 venivano da tutt'altro:
+     * dal PMM — vedi il Passo 1 di pmm_init.)
      *
      * ! UN ELENCO DI NUMERI NOTI E' SEMPRE INCOMPLETO, e lo si scopre solo
      * sulla macchina che non c'era nell'elenco. La domanda giusta non e'

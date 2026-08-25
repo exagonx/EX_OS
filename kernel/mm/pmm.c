@@ -124,10 +124,36 @@ void pmm_init(BootInfo *info)
 
     klog(LOG_INFO, "PMM: inizializzazione Physical Memory Manager...");
 
-    /* -------------------------------------------------------------------------
-     * Passo 1: Determina la quantità massima di RAM dalla mappa E820
-     * Cerchiamo l'indirizzo fisico più alto tra le regioni usabili.
-     * ------------------------------------------------------------------------- */
+    /* =========================================================================
+     * Passo 1: fin dove arriva la RAM VERA
+     *
+     * ! SOLO LE REGIONI USABILI, e il commento lo diceva gia' mentre il codice
+     * faceva un'altra cosa: il ciclo prendeva il massimo su TUTTE le voci
+     * della mappa E820, comprese quelle riservate. Su una macchina con 64 MB
+     * il risultato non era 0x04000000 ma 0xFEE01000 — il registro dell'APIC
+     * locale, che di RAM non ne ha nemmeno un byte.
+     *
+     * ! E NON ERA UN NUMERO SBAGLIATO DENTRO UN LOG. g_total_pages e' la
+     * risposta del PMM alla domanda «questo indirizzo fisico e' RAM?», e su
+     * quella risposta si regge chi libera lo spazio di un processo morto:
+     * paging_destroy_directory salta le pagine che stanno OLTRE la RAM,
+     * perche' sono finestre MMIO mappate da mmio_map/fb_map e non sono mai
+     * state allocate da noi. Con il tetto a 0xFEE01000, il framebuffer di
+     * VirtualBox — che sta a 0xE0000000, cioe' SOTTO — non veniva piu'
+     * riconosciuto: alla morte del server grafico le sue 469 pagine di
+     * memoria video entravano nell'elenco delle pagine libere.
+     *
+     * Da li' in poi l'allocatore le consegnava come RAM qualunque. Il primo
+     * programma avviato dopo aver chiuso la scrivania si ritrovava lo stack o
+     * una tabella delle pagine DENTRO la scheda video: sullo schermo
+     * comparivano colori e disegni casuali, e il programma moriva di page
+     * fault su una pagina che aveva appena ottenuto. Su QEMU il framebuffer
+     * sta piu' in alto e la stessa mappa lo salvava per caso.
+     *
+     * ! COSTAVA ANCHE 1,1 MB DI RAM su una macchina da 64. La bitmap e
+     * l'elenco dei riferimenti sono dimensionati su g_total_pages: un byte
+     * per pagina per un milione di pagine inesistenti.
+     * ========================================================================= */
     if (info->e820_count == 0 || info->e820_addr == 0) {
         /* Fallback: usa mem_upper da Stage 2 */
         max_addr = (info->mem_lower + info->mem_upper) * 1024;
@@ -137,6 +163,7 @@ void pmm_init(BootInfo *info)
         map = (E820Entry *)info->e820_addr;
         for (i = 0; i < info->e820_count; i++) {
             /* Solo regioni usabili e con base < 4GB */
+            if (map[i].type != E820_TYPE_USABLE) continue;
             if (map[i].base_high != 0) continue; /* > 4GB, ignora */
             uint32_t end = map[i].base_low + map[i].length_low;
             if (end > max_addr) max_addr = end;

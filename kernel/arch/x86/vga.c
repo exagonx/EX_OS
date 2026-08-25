@@ -835,9 +835,52 @@ void vga_init_grafica(const BootInfo *info)
 void vga_ripristina_testo(void)
 {
     uint32_t n, i;
+    uint32_t eflags;
 
-    vga_hw_modo3();
+    /* =====================================================================
+     * ! DA QUI IN GIU' NON DEVE ENTRARE NESSUNO, e non e' prudenza: e' la
+     * differenza fra rimettere il testo e riempire lo schermo di colori.
+     *
+     * `int 0x80` passa da un TRAP gate (vedi idt.c): durante una syscall gli
+     * interrupt restano ACCESI, quindi il timer puo' togliere la CPU proprio
+     * qui in mezzo e darla a un altro processo — che magari sta scrivendo
+     * sulla console. E in mezzo ci sono due momenti in cui una scrittura
+     * fatta da qualcun altro non e' un carattere fuori posto, e' un guasto:
+     *
+     *   - fra il cambio di modalita' e l'azzeramento di g_fb, chi scrive
+     *     disegna PIXEL dentro una memoria video che ormai e' letta come
+     *     testo — ottanta colonne di simboli e colori casuali;
+     *   - dentro carattere_ricarica(), che apre il solo piano 2 a 0xA0000
+     *     per ricopiarci i disegni dei caratteri. Una scrittura a 0xB8000
+     *     mentre la maschera dei piani e' quella finisce DENTRO il generatore
+     *     di caratteri: da li' in poi ogni lettera e' un disegno diverso.
+     *
+     * ! E CHI VOLESSE SCRIVERE PROPRIO ADESSO NON E' UN CASO RARO. Uscendo
+     * dalla scrivania, `exwin --attendi` sta interrogando il kernel ogni
+     * mezzo secondo per sapere se la grafica e' finita, e quando se ne
+     * accorge chiama console_switch(), che ridisegna una console intera.
+     *
+     * ! ONESTA': QUESTA FINESTRA NON SI E' MAI VISTA SBATTERE. I colori
+     * casuali dopo l'uscita dalla scrivania — 26 agosto 2026 — venivano da
+     * tutt'altro: dal PMM che restituiva all'allocatore le pagine del
+     * framebuffer (vedi pmm_init, Passo 1). Questa e' una porta trovata
+     * aperta mentre si cercava quella, e chiusa per quello che e': una
+     * funzione che riprogramma la scheda non deve poter essere interrotta
+     * da chi scrive sulla scheda.
+     *
+     * Il costo e' qualche millisecondo a interrupt chiusi, una volta per
+     * ripristino. Si rimette IF com'era invece di farlo a `sti`: questa
+     * funzione la si chiama anche da posti dove era gia' chiuso.
+     * ===================================================================== */
+    __asm__ volatile ("pushf; pop %0" : "=r"(eflags));
+    __asm__ volatile ("cli");
 
+    /* ! PRIMA SI SMETTE DI CREDERE AL FRAMEBUFFER, POI SI TOCCA LA SCHEDA.
+     * L'ordine inverso lasciava una finestra in cui il kernel disegnava
+     * ancora pixel su una scheda gia' tornata al testo. Adesso, se anche
+     * qualcosa riuscisse a scrivere qui in mezzo, scriverebbe caratteri a
+     * 0xB8000 — cioe' la cosa giusta, magari un po' presto: riversa_tutto()
+     * qui sotto ridisegna comunque tutto. */
     g_fb       = 0;             /* da qui in poi si scrive a 0xB8000 */
     g_fb_pitch = 0;
     g_fb_w     = 0;
@@ -848,6 +891,8 @@ void vga_ripristina_testo(void)
     g_cols   = 80;
     g_righe  = 25;
     g_totale = 80 * 25;
+
+    vga_hw_modo3();
 
     for (n = 0; n < VGA_N_CONSOLE; n++) {
         Console *c = &g_console[n];
@@ -865,6 +910,11 @@ void vga_ripristina_testo(void)
         vga_update_cursor(c);
     }
 
+    if (eflags & (1u << 9)) __asm__ volatile ("sti");
+
+    /* ! IL LOG DOPO AVER RIAPERTO, non prima: klog scrive sulla console e
+     * sulla seriale, e la seriale aspetta il registro di trasmissione. Non
+     * e' un posto in cui restare a interrupt chiusi quando non serve piu'. */
     klog(LOG_INFO, "VGA: modo testo 80x25 ripristinato senza BIOS");
 }
 

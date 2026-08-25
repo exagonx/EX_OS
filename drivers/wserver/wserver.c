@@ -1638,8 +1638,25 @@ static int servi_messaggio(void)
             usleep(20000);
         }
 
-        console_grafica(2);     /* la console non e' piu' della grafica */
+        /* ! PRIMA SI RIMETTE LO SCHERMO, POI SI DICE CHE LA GRAFICA E'
+         * FINITA.
+         *
+         * ! ONESTA': QUESTA NON E' LA CORREZIONE DEL GUASTO DEL 26 AGOSTO.
+         * I colori casuali dopo l'uscita venivano dal PMM (vedi pmm_init,
+         * Passo 1). Questa e' una finestra trovata mentre lo si cercava, e
+         * chiusa perche' era aperta — non perche' si sia vista sbattere.
+         *
+         * `console_grafica(2)` non e' una pulizia: e' il SEGNALE che gli
+         * altri aspettano. `exwin --attendi` interroga `console_grafica(0)`
+         * ogni mezzo secondo apposta per accorgersene, e appena se ne accorge
+         * chiama `console_switch()` — cioe' ridisegna una console intera.
+         * Dandogli il segnale prima del ripristino lo si invitava a farlo
+         * mentre la scheda stava cambiando modalita' sotto di lui.
+         *
+         * Dopo `modo_testo()` lo schermo e' gia' testo e la console e' gia'
+         * ridisegnata: chi arriva adesso, arriva a cose fatte. */
         modo_testo();
+        console_grafica(2);     /* la console non e' piu' della grafica */
         log_seriale("wserver: spento");
         exit(0);
     }
