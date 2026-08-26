@@ -29,10 +29,11 @@
  * -----------------------------------------------------------------------------
  * ! I VALORI SONO OPACHI, e si toccano solo attraverso queste funzioni.
  *
- * Un ExJsVal e' un numero, non una struttura da guardare dentro. Oggi e'
- * l'indice di una casella; domani puo' essere un NaN-boxing a 64 bit o un
- * puntatore con i bit bassi marcati. Chi lo tratta come opaco non se ne
- * accorge; chi ci guarda dentro va riscritto.
+ * Un ExJsVal e' un numero, non una struttura da guardare dentro. Oggi e' un
+ * NaN-boxing a 64 bit (il perche' e' scritto sotto, accanto al typedef);
+ * domani puo' essere un puntatore con i bit bassi marcati, o quello che
+ * QuickJS usa. Chi lo tratta come opaco non se ne accorge; chi ci guarda
+ * dentro va riscritto.
  *
  * -----------------------------------------------------------------------------
  * ! I BUFFER SONO DI CHI CHIAMA, come in exhtml e in excss.
@@ -94,7 +95,27 @@ extern "C" {
 #define EXJS_OGGETTO      5
 #define EXJS_FUNZIONE     6
 
-typedef unsigned int ExJsVal;       /* opaco: vedi in cima */
+/* =============================================================================
+ * ! UN VALORE E' SESSANTAQUATTRO BIT, E DENTRO C'E' UN double VERO.
+ *
+ * La prima stesura diceva «l'indice di una casella», e sarebbe stato piu'
+ * semplice — ma un interprete che cammina sull'albero produce un valore per
+ * ogni operazione, e con una casella per valore `for (i=0;i<10000;i++) x=x+1`
+ * chiederebbe ventimila caselle per un ciclo che non conserva niente. Senza un
+ * raccoglitore di memoria — e in questo scaglione non c'e' — sarebbe un motore
+ * che muore sul primo ciclo vero.
+ *
+ * Percio' NaN-boxing: un valore E' un double, e i valori che double non sono
+ * si nascondono dentro i NaN silenziosi, che nella norma IEEE 754 sono
+ * duemiladuecentocinquantatre miliardi di configurazioni tutte uguali fra
+ * loro. Numeri e booleani non costano niente; solo stringhe e oggetti
+ * occupano una casella.
+ *
+ * ! RESTA OPACO. Chi lo tratta come un numero da confrontare con exjs_tipo()
+ * non si accorgera' del giorno che ci mettiamo QuickJS sotto; chi ci guarda
+ * dentro va riscritto. Le macro che lo aprono stanno in exjs_int.h, non qui.
+ * ========================================================================== */
+typedef unsigned long long ExJsVal;
 
 /* Il contesto: tutto lo stato di un'esecuzione. Chi chiama lo alloca e ne
  * decide la taglia; la libreria non ne tiene nessuno per conto suo. */

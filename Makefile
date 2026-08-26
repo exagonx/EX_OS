@@ -4653,7 +4653,7 @@ prova-exhtml:
 	@$(PROVE_HOST_DIR)/htmlprova
 
 # =============================================================================
-# ExJs — il motore JavaScript, provato a pezzi
+# ExJs — il motore JavaScript, provato a pezzi (gettoni, albero, ...)
 #
 # ! IL PRIMO PEZZO E' L'ANALIZZATORE LESSICALE, e si prova da solo perche' un
 # suo difetto non si presenta mai come un difetto suo: si presenta come un
@@ -4666,16 +4666,21 @@ prova-exhtml:
 prova-exjs:
 	@mkdir -p $(PROVE_HOST_DIR)
 	@cc -Wall -Wextra -O2 -o $(PROVE_HOST_DIR)/jsprova \
-	    tools/prove/jsprova.c lib/exjs/lex.c -I lib/exjs
+	    tools/prove/jsprova.c lib/exjs/lex.c lib/exjs/parse.c \
+	    lib/exjs/val.c lib/exjs/run.c -I lib/exjs
 	@$(PROVE_HOST_DIR)/jsprova
 
 # ! E COMPILA ANCHE PER IL BERSAGLIO, non solo per l'host. Il banco gira a 64
 # bit; il motore girera' a 32, e le due cose non si accorgono da sole di essere
 # diverse. Lo stesso controllo c'e' per extls e per excert.
 .PHONY: verifica-exjs
-verifica-exjs: lib/exjs/lex.c lib/exjs/exjs.h lib/exjs/exjs_int.h
-	@$(CC) $(CFLAGS_USER) -I lib/exjs -I lib/include -c lib/exjs/lex.c \
-	    -o $(BUILD_OBJ)/exjs_lex_prova.o
+verifica-exjs: lib/exjs/lex.c lib/exjs/parse.c lib/exjs/val.c lib/exjs/run.c \
+               lib/exjs/exjs.h lib/exjs/exjs_int.h
+	@for f in lib/exjs/lex.c lib/exjs/parse.c lib/exjs/val.c lib/exjs/run.c; do \
+	    n=$$(basename $$f .c); \
+	    $(CC) $(CFLAGS_USER) -I lib/exjs -I lib/include -c $$f \
+	        -o $(BUILD_OBJ)/exjs_$${n}_prova.o || exit 1; \
+	done
 	@echo "[OK] lib/exjs compila per i386"
 
 .PHONY: prova-excss

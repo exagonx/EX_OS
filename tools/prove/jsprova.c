@@ -153,6 +153,230 @@ static void prova_riga(const char *nome, const char *testo, int riga_attesa)
     printf("ok   %-34s errore alla riga %d\n", nome, err.riga);
 }
 
+/* =============================================================================
+ * L'ALBERO, STAMPATO COME TESTO
+ *
+ * ! LA PRECEDENZA E' LA COSA CHE SI SBAGLIA IN SILENZIO. `a + b * c` con le
+ * precedenze invertite non da' nessun errore: da' un numero diverso, e il
+ * numero diverso si vede tre schermate piu' in la'. L'unico modo di vedere un
+ * albero storto e' guardarlo — quindi lo si stampa in una forma senza
+ * ambiguita' (tutto fra parentesi) e la si confronta lettera per lettera.
+ *
+ * ! E LA FORMA E' A PARENTESI, NON RIENTRATA. Un albero rientrato si legge
+ * meglio a occhio e si confronta peggio: la prova attesa diventa una stringa
+ * su piu' righe piena di spazi, e uno spazio di troppo la fa fallire per il
+ * motivo sbagliato.
+ * ========================================================================== */
+static char  g_out[4096];
+static int   g_out_n;
+
+static void em(const char *s)
+{
+    while (*s && g_out_n + 1 < (int)sizeof(g_out)) g_out[g_out_n++] = *s++;
+    g_out[g_out_n] = '\0';
+}
+
+static void em_num(double v)
+{
+    char b[40];
+    /* Gli interi si stampano senza virgola: un albero pieno di "1.000000" non
+     * si legge, e le prove diventano illeggibili proprio dove servono. */
+    if (v == (double)(long)v) snprintf(b, sizeof(b), "%ld", (long)v);
+    else                      snprintf(b, sizeof(b), "%g", v);
+    em(b);
+}
+
+static void stampa(const ExJsAst *A, int i);
+
+/* Una lista concatenata con `prossimo`, tutta di seguito. */
+static void stampa_lista(const ExJsAst *A, int i)
+{
+    while (i >= 0) {
+        em(" ");
+        stampa(A, i);
+        i = A->nodi[i].prossimo;
+    }
+}
+
+static void stampa(const ExJsAst *A, int i)
+{
+    const ExJsNodo *N;
+
+    if (i < 0) { em("-"); return; }
+    N = &A->nodi[i];
+
+    em("(");
+    em(exjs_nodo_nome(N->tipo));
+
+    switch (N->tipo) {
+    case N_NUMERO:  em(" "); em_num(N->numero); break;
+    case N_STRINGA: em(" \""); em(A->arena + N->testo); em("\""); break;
+    case N_NOME:
+    case N_PARAMETRO:
+        em(" "); em(A->arena + N->testo); break;
+
+    case N_VERO: case N_FALSO: case N_NULLO: case N_QUESTO:
+    case N_ROMPI: case N_CONTINUA: case N_VUOTO:
+        break;
+
+    case N_UNARIO: case N_BINARIO: case N_LOGICO: case N_ASSEGNA:
+    case N_PRE: case N_POST:
+        em(" "); em(exjs_lex_nome(N->op));
+        em(" "); stampa(A, N->a);
+        if (N->tipo == N_BINARIO || N->tipo == N_LOGICO || N->tipo == N_ASSEGNA) {
+            em(" "); stampa(A, N->b);
+        }
+        break;
+
+    case N_MEMBRO:
+        em(" "); stampa(A, N->a);
+        em(" ."); em(A->arena + N->testo);
+        break;
+
+    case N_VOCE:
+        em(" "); em(A->arena + N->testo);
+        em(" "); stampa(A, N->a);
+        break;
+
+    case N_DICHIARA:
+        em(" "); em(A->arena + N->testo);
+        em(" "); stampa(A, N->a);
+        break;
+
+    case N_FUNZIONE:
+        em(" "); em(N->testo ? A->arena + N->testo : "<anonima>");
+        em(" (par"); stampa_lista(A, N->a); em(")");
+        em(" "); stampa(A, N->b);
+        break;
+
+    /* I nodi che sono una LISTA: programma, blocco, var, vettore, oggetto. */
+    case N_PROGRAMMA: case N_BLOCCO: case N_VAR:
+    case N_VETTORE: case N_OGGETTO:
+        stampa_lista(A, N->a);
+        break;
+
+    /* ! for..in USA a, b E d, NON c. Stampare il buco come "-" non e' un
+     * errore ma e' rumore: la prova attesa diventa piu' difficile da leggere
+     * proprio dove serve leggerla. */
+    case N_PER_IN:
+        em(" "); stampa(A, N->a);
+        em(" "); stampa(A, N->b);
+        em(" "); stampa(A, N->d);
+        break;
+
+    /* Chiamata e new: il primo figlio e' chi, il secondo e' una lista. */
+    case N_CHIAMATA: case N_NUOVO:
+        em(" "); stampa(A, N->a);
+        em(" (arg"); stampa_lista(A, N->b); em(")");
+        break;
+
+    default:
+        /* Il caso generale: fino a quattro figli, e si stampano solo quelli
+         * che ci sono. */
+        if (N->a != -1 || N->b != -1 || N->c != -1 || N->d != -1) {
+            em(" "); stampa(A, N->a);
+            if (N->b != -1 || N->c != -1 || N->d != -1) { em(" "); stampa(A, N->b); }
+            if (N->c != -1 || N->d != -1)               { em(" "); stampa(A, N->c); }
+            if (N->d != -1)                             { em(" "); stampa(A, N->d); }
+        }
+        break;
+    }
+    em(")");
+}
+
+static void prova_albero(const char *nome, const char *testo, const char *atteso)
+{
+    static ExJsNodo nodi[512];
+    static char     arena_buf[4096];
+    ExJsAst         A;
+    ExJsErrore      err;
+    char            testo_buf[512];
+
+    fatte++;
+    memset(&err, 0, sizeof(err));
+    exjs_ast_prepara(&A, nodi, 512, arena_buf, sizeof(arena_buf));
+
+    if (!exjs_analizza(&A, testo, (unsigned int)strlen(testo),
+                       testo_buf, sizeof(testo_buf), &err)) {
+        if (atteso == 0) {
+            printf("ok   %-34s rifiutato: %s\n", nome, err.messaggio);
+            return;
+        }
+        printf("NO   %-34s riga %d col %d: %s\n", nome, err.riga, err.colonna,
+               err.messaggio);
+        sbagliate++;
+        return;
+    }
+
+    if (atteso == 0) {
+        printf("NO   %-34s doveva essere rifiutato e non lo e' stato\n", nome);
+        sbagliate++;
+        return;
+    }
+
+    g_out_n = 0; g_out[0] = '\0';
+    stampa(&A, A.radice);
+
+    if (strcmp(g_out, atteso) != 0) {
+        printf("NO   %-34s\n     atteso:  %s\n     trovato: %s\n", nome,
+               atteso, g_out);
+        sbagliate++;
+        return;
+    }
+    printf("ok   %-34s %s\n", nome, g_out);
+}
+
+/* =============================================================================
+ * ESEGUIRE
+ *
+ * ! SI GUARDA IL VALORE DELL'ULTIMA ESPRESSIONE, come fa una console. E' il
+ * modo piu' corto di provare un motore: si scrive un programma che finisce con
+ * il numero che deve venire fuori, e si confronta quel numero. Senza,
+ * servirebbe una `console.log` finta e un confronto sull'uscita — cioe' due
+ * cose da far funzionare prima di poter provare la prima.
+ * ========================================================================== */
+#define MOTORE_OGG   400
+#define MOTORE_ARENA 16384
+
+static void prova_esegui(const char *nome, const char *codice, const char *atteso)
+{
+    static unsigned char memoria[1 << 20];
+    ExJsCtx    *c;
+    ExJsVal     r;
+    ExJsErrore  err;
+    const char *s;
+
+    fatte++;
+    memset(&err, 0, sizeof(err));
+
+    c = exjs_apri(memoria, sizeof(memoria), MOTORE_OGG, MOTORE_ARENA);
+    if (!c) { printf("NO   %-34s il contesto non si apre\n", nome); sbagliate++; return; }
+
+    if (!exjs_esegui(c, codice, (unsigned int)strlen(codice), &r, &err)) {
+        if (atteso == 0) {
+            printf("ok   %-34s rifiutato: %s\n", nome, err.messaggio);
+            return;
+        }
+        printf("NO   %-34s riga %d: %s\n", nome, err.riga, err.messaggio);
+        sbagliate++;
+        return;
+    }
+
+    if (atteso == 0) {
+        printf("NO   %-34s doveva fallire e non l'ha fatto\n", nome);
+        sbagliate++;
+        return;
+    }
+
+    s = exjs_a_stringa(c, r);
+    if (strcmp(s, atteso) != 0) {
+        printf("NO   %-34s atteso \"%s\", trovato \"%s\"\n", nome, atteso, s);
+        sbagliate++;
+        return;
+    }
+    printf("ok   %-34s %s\n", nome, s);
+}
+
 int main(void)
 {
     printf("=== ExJs: l'analizzatore lessicale ===\n\n");
@@ -234,6 +458,216 @@ int main(void)
         static const int a[] = { TK_ERRORE };
         prova("\\u a meta'", "'\\u00'", a);
     }
+
+    printf("\n=== l'albero: le precedenze ===\n\n");
+    prova_albero("1 + 2 * 3", "1+2*3;",
+                 "(programma (espr (binario + (numero 1) "
+                 "(binario * (numero 2) (numero 3)))))");
+    prova_albero("1 * 2 + 3", "1*2+3;",
+                 "(programma (espr (binario + (binario * (numero 1) "
+                 "(numero 2)) (numero 3))))");
+    /* ! A SINISTRA: 1-2-3 fa -4, non 2. Con l'associativita' invertita non
+     * c'e' nessun errore, solo un numero diverso. */
+    prova_albero("1 - 2 - 3 (a sinistra)", "1-2-3;",
+                 "(programma (espr (binario - (binario - (numero 1) "
+                 "(numero 2)) (numero 3))))");
+    /* ! A DESTRA: a = b = 1 assegna 1 a b e poi b ad a. */
+    prova_albero("a = b = 1 (a destra)", "a=b=1;",
+                 "(programma (espr (assegna = (nome a) "
+                 "(assegna = (nome b) (numero 1)))))");
+    prova_albero("&& lega piu' di ||", "a||b&&c;",
+                 "(programma (espr (logico || (nome a) "
+                 "(logico && (nome b) (nome c)))))");
+    prova_albero("confronto sotto la somma", "a<b+1;",
+                 "(programma (espr (binario < (nome a) "
+                 "(binario + (nome b) (numero 1)))))");
+    prova_albero("condizionale", "a?b:c;",
+                 "(programma (espr (condizione (nome a) (nome b) (nome c))))");
+    prova_albero("unario meno", "-a*b;",
+                 "(programma (espr (binario * (unario - (nome a)) (nome b))))");
+    prova_albero("typeof", "typeof a;",
+                 "(programma (espr (unario typeof (nome a))))");
+
+    printf("\n=== l'albero: chiamate, membri, new ===\n\n");
+    prova_albero("a.b.c", "a.b.c;",
+                 "(programma (espr (membro (membro (nome a) .b) .c)))");
+    prova_albero("f(1, 2)", "f(1,2);",
+                 "(programma (espr (chiamata (nome f) "
+                 "(arg (numero 1) (numero 2)))))");
+    prova_albero("a[0]()", "a[0]();",
+                 "(programma (espr (chiamata (indice (nome a) (numero 0)) (arg))))");
+    /* ! new SI PRENDE a.b, NON a: e' il punto in cui i motori scritti in
+     * fretta sbagliano, e non da' nessun errore — costruisce l'oggetto
+     * sbagliato. */
+    prova_albero("new a.b()", "new a.b();",
+                 "(programma (espr (nuovo (membro (nome a) .b) (arg))))");
+    prova_albero("new F(1).x", "new F(1).x;",
+                 "(programma (espr (membro (nuovo (nome F) (arg (numero 1))) .x)))");
+    prova_albero("i++", "i++;",
+                 "(programma (espr (post ++ (nome i))))");
+    prova_albero("++i", "++i;",
+                 "(programma (espr (pre ++ (nome i))))");
+
+    printf("\n=== l'albero: le istruzioni ===\n\n");
+    prova_albero("var con due nomi", "var a=1,b;",
+                 "(programma (var (dichiara a (numero 1)) (dichiara b -)))");
+    prova_albero("if/else", "if(a)b();else c();",
+                 "(programma (se (nome a) (espr (chiamata (nome b) (arg))) "
+                 "(espr (chiamata (nome c) (arg)))))");
+    prova_albero("while", "while(a){b;}",
+                 "(programma (mentre (nome a) (blocco (espr (nome b)))))");
+    prova_albero("for classico", "for(var i=0;i<3;i++){}",
+                 "(programma (per (var (dichiara i (numero 0))) "
+                 "(binario < (nome i) (numero 3)) (post ++ (nome i)) (blocco)))");
+    /* ! for..in E for CLASSICO COMINCIANO UGUALI, e si distinguono solo dopo
+     * aver letto l'inizializzazione con `in` spento come operatore. */
+    prova_albero("for..in", "for(var k in o){}",
+                 "(programma (per_in (var (dichiara k -)) (nome o) (blocco)))");
+    prova_albero("una funzione", "function f(a,b){return a+b;}",
+                 "(programma (funzione f (par (parametro a) (parametro b)) "
+                 "(blocco (ritorna (binario + (nome a) (nome b))))))");
+    prova_albero("funzione anonima", "var f=function(){};",
+                 "(programma (var (dichiara f (funzione <anonima> (par) (blocco)))))");
+
+    printf("\n=== l'albero: oggetti e vettori ===\n\n");
+    prova_albero("oggetto", "o={a:1,\"b\":2};",
+                 "(programma (espr (assegna = (nome o) (oggetto "
+                 "(voce a (numero 1)) (voce b (numero 2))))))");
+    /* ! UNA PAROLA CHIAVE E' UN NOME DI PROPRIETA' LEGITTIMO, e i
+     * minificatori lo usano di continuo. */
+    prova_albero("chiave che e' parola chiave", "o={if:1,in:2};",
+                 "(programma (espr (assegna = (nome o) (oggetto "
+                 "(voce if (numero 1)) (voce in (numero 2))))))");
+    prova_albero("vettore", "v=[1,2];",
+                 "(programma (espr (assegna = (nome v) "
+                 "(vettore (numero 1) (numero 2)))))");
+    prova_albero("virgola finale", "v=[1,2,];",
+                 "(programma (espr (assegna = (nome v) "
+                 "(vettore (numero 1) (numero 2)))))");
+
+    printf("\n=== il punto e virgola che non c'e' ===\n\n");
+    /* ! LA REGOLA FEROCE: `return` piu' a capo rende undefined, e il valore
+     * sotto diventa un'istruzione a se'. Un motore che la ignorasse
+     * eseguirebbe un programma diverso da quello scritto. */
+    prova_albero("return + a capo", "function f(){return\n1;}",
+                 "(programma (funzione f (par) (blocco (ritorna) "
+                 "(espr (numero 1)))))");
+    prova_albero("return sulla stessa riga", "function f(){return 1;}",
+                 "(programma (funzione f (par) (blocco (ritorna (numero 1)))))");
+    prova_albero("senza ';' a fine riga", "a=1\nb=2\n",
+                 "(programma (espr (assegna = (nome a) (numero 1))) "
+                 "(espr (assegna = (nome b) (numero 2))))");
+    /* ! `a` e `++b` su due righe sono DUE istruzioni: il postfisso non
+     * attraversa un a capo. */
+    prova_albero("++ non attraversa l'a capo", "a\n++b\n",
+                 "(programma (espr (nome a)) (espr (pre ++ (nome b))))");
+
+    printf("\n=== cio' che deve essere rifiutato ===\n\n");
+    prova_albero("switch non c'e' ancora", "switch(a){}", 0);
+    prova_albero("parentesi non chiusa",   "f(1;",       0);
+    prova_albero("var senza nome",         "var = 1;",   0);
+
+    printf("\n=== eseguire: i conti ===\n\n");
+    prova_esegui("somma",              "1+2;",              "3");
+    prova_esegui("precedenza",         "1+2*3;",            "7");
+    prova_esegui("parentesi",          "(1+2)*3;",          "9");
+    prova_esegui("divisione",          "7/2;",              "3.5");
+    prova_esegui("modulo",             "7%3;",              "1");
+    /* ! DIVIDERE PER ZERO NON E' UN ERRORE in JavaScript: fa Infinity. Un
+     * motore che desse errore fermerebbe pagine che funzionano. */
+    prova_esegui("uno diviso zero",    "1/0;",              "Infinity");
+    prova_esegui("zero diviso zero",   "0/0;",              "NaN");
+    prova_esegui("bit",                "6&3;",              "2");
+    prova_esegui("spostamento",        "1<<10;",            "1024");
+    /* ! GLI OPERATORI SUI BIT LAVORANO SU INTERI A 32 BIT CON SEGNO, e la
+     * conversione fa parte della definizione. */
+    prova_esegui("2147483648|0",       "2147483648|0;",     "-2147483648");
+
+    printf("\n=== eseguire: le conversioni, dove stanno le sorprese ===\n\n");
+    prova_esegui("stringa + numero",   "'a'+1;",            "a1");
+    prova_esegui("numero + stringa",   "1+'2';",            "12");
+    prova_esegui("stringa * numero",   "'5'*2;",            "10");
+    prova_esegui("numero + numero",    "1+2+'a';",          "3a");
+    prova_esegui("'5'-2",              "'5'-2;",            "3");
+    prova_esegui("true+1",             "true+1;",           "2");
+    prova_esegui("null+1",             "null+1;",           "1");
+    prova_esegui("undefined+1",        "undefined+1;",      "NaN");
+    prova_esegui("'abc'*1",            "'abc'*1;",          "NaN");
+
+    printf("\n=== eseguire: la verita' e i confronti ===\n\n");
+    /* ! SONO FALSI: false, 0, NaN, "", null, undefined. Tutto il resto e'
+     * vero, COMPRESO "0" — chi sbaglia questo elenco scrive `if` che prendono
+     * il ramo sbagliato senza dare errore. */
+    prova_esegui("if('0')",            "if('0'){1;}else{2;}",   "1");
+    prova_esegui("if('')",             "if(''){1;}else{2;}",    "2");
+    prova_esegui("if(0)",              "if(0){1;}else{2;}",     "2");
+    prova_esegui("1=='1'",             "1=='1';",           "true");
+    prova_esegui("1==='1'",            "1==='1';",          "false");
+    prova_esegui("null==undefined",    "null==undefined;",  "true");
+    prova_esegui("null===undefined",   "null===undefined;", "false");
+    prova_esegui("NaN!=NaN",           "0/0!=0/0;",         "true");
+    prova_esegui("'a'<'b'",            "'a'<'b';",          "true");
+    /* ! IL CORTO CIRCUITO RENDE L'OPERANDO, non un booleano: e' il modo in
+     * cui si scrivono i valori predefiniti. */
+    prova_esegui("|| rende l'operando", "0||'niente';",     "niente");
+    prova_esegui("&& rende l'operando", "1&&'si';",         "si");
+
+    printf("\n=== eseguire: variabili, cicli, funzioni ===\n\n");
+    prova_esegui("var e assegnazione",  "var a=1;a=a+2;a;",  "3");
+    prova_esegui("un ciclo",            "var s=0;for(var i=1;i<=10;i++)s=s+i;s;", "55");
+    prova_esegui("while",               "var i=0;while(i<5)i++;i;", "5");
+    prova_esegui("do..while gira una volta", "var i=9;do{i++;}while(i<5);i;", "10");
+    prova_esegui("break",               "var i=0;while(1){i++;if(i>3)break;}i;", "4");
+    prova_esegui("continue",            "var s=0,i;for(i=0;i<5;i++){if(i==2)continue;s=s+i;}s;", "8");
+    prova_esegui("una funzione",        "function f(a,b){return a+b;}f(2,3);", "5");
+    /* ! LE DICHIARAZIONI SI ISSANO: `f` si puo' chiamare prima di dov'e'
+     * scritta, e il codice vero lo fa di continuo. */
+    prova_esegui("chiamata prima della definizione", "var x=f(4);function f(a){return a*2;}x;", "8");
+    prova_esegui("ricorsione",          "function f(n){return n<2?1:n*f(n-1);}f(5);", "120");
+    prova_esegui("i++ rende il valore prima", "var i=1,j=i++;j;", "1");
+    prova_esegui("++i rende quello dopo",     "var i=1,j=++i;j;", "2");
+
+    printf("\n=== eseguire: le chiusure ===\n\n");
+    /* ! LA FUNZIONE SI RICORDA L'AMBITO IN CUI E' NATA, non quello in cui e'
+     * chiamata. E' tutta la differenza, ed e' il pezzo che rende JavaScript
+     * quello che e'. */
+    prova_esegui("un contatore",
+                 "function conta(){var n=0;return function(){n=n+1;return n;};}"
+                 "var c=conta();c();c();c();", "3");
+    prova_esegui("due contatori indipendenti",
+                 "function conta(){var n=0;return function(){return ++n;};}"
+                 "var a=conta(),b=conta();a();a();b();", "1");
+
+    printf("\n=== eseguire: oggetti e vettori ===\n\n");
+    prova_esegui("oggetto",             "var o={a:1,b:2};o.a+o.b;", "3");
+    prova_esegui("proprieta' nuova",    "var o={};o.x=5;o.x;",      "5");
+    prova_esegui("proprieta' che non c'e'", "var o={};o.x;",        "undefined");
+    prova_esegui("vettore",             "var v=[1,2,3];v[1];",      "2");
+    prova_esegui("lunghezza",           "[1,2,3].length;",          "3");
+    prova_esegui("vettore che cresce",  "var v=[];v[0]=7;v.length;", "1");
+    prova_esegui("vettore come testo",  "''+[1,2,3];",              "1,2,3");
+    prova_esegui("lunghezza di una stringa", "'ciao'.length;",      "4");
+    /* ! `this` E' L'OGGETTO PRIMA DEL PUNTO, e lo decide la FORMA della
+     * chiamata: per questo `var g=o.f; g()` perde `this`. */
+    prova_esegui("this dentro un metodo",
+                 "var o={n:7,dammi:function(){return this.n;}};o.dammi();", "7");
+    prova_esegui("new",
+                 "function P(x){this.x=x;}var p=new P(3);p.x;", "3");
+    prova_esegui("for..in su un oggetto",
+                 "var o={a:1,b:2},s='';for(var k in o)s=s+k;s.length;", "2");
+
+    printf("\n=== eseguire: typeof, e cio' che non c'e' ===\n\n");
+    /* ! typeof SU UN NOME CHE NON ESISTE NON E' UN ERRORE: e' l'unico modo di
+     * chiedere se una cosa c'e', e mezzo web comincia proprio cosi'. */
+    prova_esegui("typeof di un nome assente", "typeof pippo;", "undefined");
+    prova_esegui("typeof numero",       "typeof 1;",          "number");
+    prova_esegui("typeof stringa",      "typeof 'a';",        "string");
+    prova_esegui("typeof funzione",     "typeof function(){};","function");
+    prova_esegui("typeof null",         "typeof null;",       "object");
+    prova_esegui("nome non definito",   "pippo+1;",           0);
+    /* ! LE DUE GUARDIE: un ciclo senza fine e una ricorsione senza fine non
+     * devono poter portarsi via la macchina. */
+    prova_esegui("ricorsione senza fine", "function f(){return f();}f();", 0);
 
     printf("\n%d prove, %d sbagliate\n", fatte, sbagliate);
     return sbagliate ? 1 : 0;
