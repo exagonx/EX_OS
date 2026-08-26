@@ -78,6 +78,21 @@ void sha256(const void *dati, unsigned int len, unsigned char out[32]);
 #define EXCERT_SENZA_RADICE    -7
 #define EXCERT_ALG_RIFIUTATO   -8
 #define EXCERT_TROPPO_LUNGA    -9
+/* ! DUE CAUSE DIVERSE, DUE CODICI. Fino a oggi «algoritmo non gestito» valeva
+ * sia per la FIRMA del figlio (un OID che non conosciamo) sia per la CHIAVE
+ * del padre (una curva o un tipo che non sappiamo usare). Sono due guasti che
+ * si riparano in due posti diversi — uno in alg_da_oid, l'altro nella lettura
+ * della SubjectPublicKeyInfo — e schiacciarli insieme costringe a indovinare
+ * quale dei due si sta guardando. */
+#define EXCERT_CHIAVE_RIFIUTATA -10
+
+/* ! I NOVE CASI HANNO NOVE FRASI, e servono davvero. Il codice si teneva gia'
+ * — extls lo mette in `motivo` apposta — ma nessuno lo traduceva, e quello che
+ * arrivava all'utente era sempre «certificato non verificabile»: una frase che
+ * vale per un certificato scaduto, per una radice che manca e per una firma
+ * falsa, cioe' per tre situazioni che si risolvono in tre modi diversi.
+ * Distinguerle e' la differenza fra «cambia l'orologio» e «manca una CA». */
+const char *excert_perche(int codice);
 
 /* Il magazzino: certificati DER di cui ci si fida, uno per voce. Chi lo
  * riempie tiene vivi i byte — qui non si copia niente, come in exasn1. */
@@ -102,8 +117,15 @@ int excert_firma_valida(const ExCert *figlio, const ExCert *padre);
  * oggi nella forma «AAAAMMGGhhmmssZ»; passando 0 le date non si guardano —
  * e chi lo fa deve avere una ragione, perche' un certificato scaduto e' un
  * certificato che qualcuno ha smesso di difendere. */
+/* ! E DICE ANCHE QUALE ANELLO SI E' ROTTO. `anello` puo' essere 0 se non
+ * interessa; quando c'e', ci finisce l'indice dell'anello che ha fatto
+ * fallire — 0 e' il certificato del sito. Senza, «la firma non torna» e'
+ * vero per una catena di quattro e non dice quale dei quattro, che e'
+ * esattamente cio' che serve sapere per capire se il guasto e' nel sito o
+ * nel nostro magazzino. */
 int excert_catena_valida(const ExCert *catena, unsigned int quanti,
-                         const ExMagazzino *magazzino, const char *adesso);
+                         const ExMagazzino *magazzino, const char *adesso,
+                         unsigned int *anello);
 
 /* =============================================================================
  * Il nome: questo certificato e' di QUESTO sito?

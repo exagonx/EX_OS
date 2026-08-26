@@ -19,6 +19,7 @@
 #include "ip_proto.h"
 #include "exhttp.h"
 #include "extls.h"
+#include "excert.h"    /* excert_perche: QUALE dei nove casi, non solo «non va» */
 
 /* -----------------------------------------------------------------------------
  * Il trasporto TCP
@@ -551,6 +552,21 @@ static int exhttp_tls(ExHttpTrasporto *t, const char *host, unsigned int porta)
         g_stato_tls.tcp.chiudi(g_stato_tls.tcp.stato);
         strncpy(g_tls_errore, extls_perche(r), sizeof(g_tls_errore) - 1);
         g_tls_errore[sizeof(g_tls_errore) - 1] = 0;
+
+        /* ! E SE E' LA CATENA, SI DICE QUALE DEI NOVE CASI. extls tiene il
+         * codice in `motivo` proprio per questo — sta scritto accanto alla
+         * chiamata a excert_catena_valida — ma finora non lo leggeva nessuno,
+         * e chi vedeva «certificato non verificabile» non aveva modo di sapere
+         * se gli mancasse una CA o se avesse l'orologio sbagliato. */
+        if (r == EXTLS_ERR_CERTIFICATO) {
+            char coda[96];
+
+            sprintf(coda, "%s: %s (anello %d)", extls_perche(r),
+                    excert_perche(extls_motivo(g_stato_tls.tls)),
+                    extls_anello(g_stato_tls.tls));
+            strncpy(g_tls_errore, coda, sizeof(g_tls_errore) - 1);
+            g_tls_errore[sizeof(g_tls_errore) - 1] = 0;
+        }
         return 0;
     }
 

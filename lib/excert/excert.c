@@ -38,10 +38,37 @@
  * Se ne manca uno la firma non e' valida, e non c'e' niente da interpretare.
  * ============================================================================= */
 
-/* DigestInfo con l'OID di SHA-256 e la lunghezza fissa: e' una costante. */
+/* =============================================================================
+ * ! TRE DigestInfo, NON UNO, ED E' COSTATO UN SITO.
+ *
+ * Qui c'era solo quello di SHA-256, e sotto un `alg_firma != RSA_SHA256`
+ * rifiutava tutto il resto. Sembra una scelta prudente e non lo e':
+ * `sha384WithRSAEncryption` non e' un algoritmo esotico, e' quello con cui
+ * Microsoft firma le sue catene RSA. www.bing.com, chiesto con il nostro
+ * ClientHello, risponde esattamente con quella — e la risposta era
+ * «algoritmo di firma non gestito» su un certificato perfettamente normale.
+ *
+ * ! E LA STESSA SCHEDA DA' CATENE DIVERSE A CLIENTI DIVERSI, il che rende la
+ * cosa difficile da vedere: con `openssl s_client` senza opzioni bing manda
+ * una catena ECDSA, che noi sappiamo verificare. Serve chiedere con i NOSTRI
+ * cifrari e i NOSTRI algoritmi di firma per farsi dare la catena che
+ * riceviamo davvero. Il comando sta in RIPRENDERE.md.
+ *
+ * I byte non sono inventati: sono la codifica DER di
+ * DigestInfo ::= SEQUENCE { AlgorithmIdentifier(OID, NULL), OCTET STRING },
+ * con gli OID 2.16.840.1.101.3.4.2.{1,2,3} e le lunghezze 32, 48, 64.
+ * ========================================================================== */
 static const unsigned char DIGESTINFO_SHA256[] = {
     0x30,0x31,0x30,0x0d,0x06,0x09,0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x01,
     0x05,0x00,0x04,0x20
+};
+static const unsigned char DIGESTINFO_SHA384[] = {
+    0x30,0x41,0x30,0x0d,0x06,0x09,0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x02,
+    0x05,0x00,0x04,0x30
+};
+static const unsigned char DIGESTINFO_SHA512[] = {
+    0x30,0x51,0x30,0x0d,0x06,0x09,0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x03,
+    0x05,0x00,0x04,0x40
 };
 
 static int confronta(const unsigned char *a, const unsigned char *b,
@@ -84,8 +111,16 @@ int excert_firma_valida(const ExCert *figlio, const ExCert *padre)
     ExBig firma, esp, modulo, risultato;
     unsigned char busta[EXBIG_PAROLE * 4];
     unsigned char atteso[EXBIG_PAROLE * 4];
-    unsigned char impronta[32];
+    /* ! SESSANTAQUATTRO, NON TRENTADUE: ci deve stare anche uno SHA-512.
+     * Lasciarlo a 32 e scriverci dentro un'impronta lunga sarebbe scrivere
+     * oltre la fine di un vettore sullo stack, cioe' il difetto peggiore di
+     * tutto questo file, in una funzione che tocca dati di chiunque risponda
+     * su una porta 443. */
+    unsigned char impronta[64];
     unsigned int  k, i, riempimento;
+    unsigned int  imp_n = 0;
+    const unsigned char *digestinfo = 0;
+    unsigned int         digestinfo_n = 0;
 
     if (figlio == 0 || padre == 0) return EXCERT_MALFORMATO;
 
@@ -113,7 +148,7 @@ int excert_firma_valida(const ExCert *figlio, const ExCert *padre)
          * quindi SHA-256» — vuol dire rifiutare catene valide. */
         if (padre->tipo_chiave == EXASN1_CHIAVE_EC_P256)      curva = EXCURVA_P256;
         else if (padre->tipo_chiave == EXASN1_CHIAVE_EC_P384) curva = EXCURVA_P384;
-        else return EXCERT_ALG_RIFIUTATO;
+        else return EXCERT_CHIAVE_RIFIUTATA;
 
         if (figlio->tbs.p == 0 || figlio->firma.p == 0) return EXCERT_MALFORMATO;
         if (padre->chiave_punto.p == 0) return EXCERT_MALFORMATO;
@@ -134,8 +169,34 @@ int excert_firma_valida(const ExCert *figlio, const ExCert *padre)
         return EXCERT_OK;
     }
 
-    if (figlio->alg_firma != EXASN1_ALG_RSA_SHA256) return EXCERT_ALG_RIFIUTATO;
-    if (padre->tipo_chiave != EXASN1_CHIAVE_RSA) return EXCERT_ALG_RIFIUTATO;
+    /* ! L'IMPRONTA LA SCEGLIE L'ALGORITMO DELLA FIRMA, e con lei il DigestInfo
+     * e la sua lunghezza. Sono tre cose che devono muoversi INSIEME: prenderne
+     * due dal SHA-384 e una dal SHA-256 darebbe una busta lunga quanto serve e
+     * sbagliata dentro, cioe' una firma valida rifiutata senza spiegazione. */
+    {
+        const unsigned char *di;
+        unsigned int         di_n;
+
+        if (figlio->alg_firma == EXASN1_ALG_RSA_SHA256) {
+            di = DIGESTINFO_SHA256; di_n = sizeof(DIGESTINFO_SHA256);
+            imp_n = 32;
+            sha256(figlio->tbs.p, figlio->tbs.n, impronta);
+        } else if (figlio->alg_firma == EXASN1_ALG_RSA_SHA384) {
+            di = DIGESTINFO_SHA384; di_n = sizeof(DIGESTINFO_SHA384);
+            imp_n = 48;
+            sha384(figlio->tbs.p, figlio->tbs.n, impronta);
+        } else if (figlio->alg_firma == EXASN1_ALG_RSA_SHA512) {
+            di = DIGESTINFO_SHA512; di_n = sizeof(DIGESTINFO_SHA512);
+            imp_n = 64;
+            sha512(figlio->tbs.p, figlio->tbs.n, impronta);
+        } else {
+            return EXCERT_ALG_RIFIUTATO;
+        }
+        digestinfo = di;
+        digestinfo_n = di_n;
+    }
+
+    if (padre->tipo_chiave != EXASN1_CHIAVE_RSA) return EXCERT_CHIAVE_RIFIUTATA;
 
     if (figlio->tbs.p == 0 || figlio->firma.p == 0) return EXCERT_MALFORMATO;
     if (padre->chiave_modulo.p == 0) return EXCERT_MALFORMATO;
@@ -156,20 +217,20 @@ int excert_firma_valida(const ExCert *figlio, const ExCert *padre)
 
     if (exbig_a_byte(&risultato, busta, k) != 0) return EXCERT_FIRMA_SBAGLIATA;
 
-    /* La busta attesa, costruita byte per byte. */
-    riempimento = k - 3 - (unsigned int)sizeof(DIGESTINFO_SHA256) - 32;
+    /* La busta attesa, costruita byte per byte. L'impronta e' gia' calcolata
+     * sopra, insieme alla scelta del DigestInfo. */
+    if (k < 3 + digestinfo_n + imp_n) return EXCERT_MALFORMATO;
+    riempimento = k - 3 - digestinfo_n - imp_n;
     if (riempimento < 8) return EXCERT_MALFORMATO;   /* la RFC ne vuole almeno 8 */
-
-    sha256(figlio->tbs.p, figlio->tbs.n, impronta);
 
     i = 0;
     atteso[i++] = 0x00;
     atteso[i++] = 0x01;
     while (riempimento--) atteso[i++] = 0xFF;
     atteso[i++] = 0x00;
-    for (riempimento = 0; riempimento < sizeof(DIGESTINFO_SHA256); riempimento++)
-        atteso[i++] = DIGESTINFO_SHA256[riempimento];
-    for (riempimento = 0; riempimento < 32; riempimento++)
+    for (riempimento = 0; riempimento < digestinfo_n; riempimento++)
+        atteso[i++] = digestinfo[riempimento];
+    for (riempimento = 0; riempimento < imp_n; riempimento++)
         atteso[i++] = impronta[riempimento];
 
     if (i != k) return EXCERT_MALFORMATO;
@@ -236,11 +297,32 @@ static const ExCert *radice_di(const ExCert *c, const ExMagazzino *m)
     return 0;
 }
 
+const char *excert_perche(int codice)
+{
+    switch (codice) {
+    case EXCERT_OK:              return "a posto";
+    case EXCERT_MALFORMATO:      return "certificato illeggibile";
+    case EXCERT_FIRMA_SBAGLIATA: return "la firma di un anello non torna";
+    case EXCERT_NOME_DIVERSO:    return "un anello non e' firmato da chi dice";
+    case EXCERT_NON_E_CA:        return "chi firma non e' una CA";
+    case EXCERT_SCADUTO:         return "scaduto (o l'orologio e' indietro)";
+    case EXCERT_NON_ANCORA:      return "non ancora valido (orologio avanti?)";
+    case EXCERT_SENZA_RADICE:    return "la radice non e' nel magazzino delle CA";
+    case EXCERT_ALG_RIFIUTATO:   return "algoritmo di firma non gestito";
+    case EXCERT_CHIAVE_RIFIUTATA:return "chiave di chi firma non gestita";
+    case EXCERT_TROPPO_LUNGA:    return "catena troppo lunga";
+    default:                     return "motivo ignoto";
+    }
+}
+
 int excert_catena_valida(const ExCert *catena, unsigned int quanti,
-                         const ExMagazzino *magazzino, const char *adesso)
+                         const ExMagazzino *magazzino, const char *adesso,
+                         unsigned int *anello)
 {
     unsigned int i;
     int          r;
+
+    if (anello) *anello = 0;
 
     if (catena == 0 || magazzino == 0 || quanti == 0) return EXCERT_MALFORMATO;
     if (quanti > 10) return EXCERT_TROPPO_LUNGA;    /* nessuna catena vera e' cosi' */
@@ -249,12 +331,14 @@ int excert_catena_valida(const ExCert *catena, unsigned int quanti,
      * scaduto e' una CA che ha smesso di essere difesa. */
     for (i = 0; i < quanti; i++) {
         r = date_a_posto(&catena[i], adesso);
-        if (r != EXCERT_OK) return r;
+        if (r != EXCERT_OK) { if (anello) *anello = i; return r; }
     }
 
     /* Da un anello al successivo. */
     for (i = 0; i + 1 < quanti; i++) {
         const ExCert *figlio = &catena[i], *padre = &catena[i + 1];
+
+        if (anello) *anello = i;
 
         if (!excert_stesso_nome(&figlio->emittente, &padre->soggetto))
             return EXCERT_NOME_DIVERSO;
@@ -270,8 +354,10 @@ int excert_catena_valida(const ExCert *catena, unsigned int quanti,
     }
 
     /* L'ultimo anello dev'essere firmato da una radice DEL MAGAZZINO. */
+    if (anello) *anello = quanti - 1;
     if (radice_di(&catena[quanti - 1], magazzino) == 0) return EXCERT_SENZA_RADICE;
 
+    if (anello) *anello = 0;
     return EXCERT_OK;
 }
 

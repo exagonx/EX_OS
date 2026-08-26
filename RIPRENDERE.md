@@ -90,6 +90,102 @@ framebuffer. Quindi il tetto ora e' lo schermo, e si sposta da solo il giorno
 che si cambia risoluzione. `SHM_PAGINE_MIN` resta come pavimento, per quando
 uno schermo grafico non c'e'.
 
+### 4. I pulsanti: il comando parte al RILASCIO, e si vedono premuti
+
+Due richieste che sono una modifica sola. Prima `EXM_COMANDO` partiva alla
+PRESSIONE: e' il comportamento che si scrive per primo perche' e' il piu'
+corto, ed e' anche quello che toglie a chi usa il programma l'unica
+possibilita' di ripensarci. Su «Esci» o «Spegni» non e' estetica.
+
+Adesso premere ARMA e alzare il dito SPARA, e scivolare via prima di alzarlo
+annulla — come ovunque, dai Macintosh in poi. Il disegno segue il dito: il
+pulsante si rialza appena il puntatore esce e si riabbassa se torna, perche'
+deve dire in ogni istante cosa succedera' alzando il dito adesso.
+
+E il premuto adesso si VEDE: `ex_rilievo` e `ex_incavo` c'erano gia' — sono lo
+stesso `bordo3d` coi colori scambiati — e qui non le usava nessuno; l'unica
+differenza fra su e giu' era il colore del riempimento, che si notava solo
+confrontando due fotografie. Con l'ombra scambiata piu' la scritta spostata di
+un pixel in giu' e a destra, il pulsante SI MUOVE.
+
+! LA PROVA E' CHE UN COMANDO NON PARTE. Premuto «Spegni», trascinato fuori,
+rilasciato: la macchina e' ancora accesa e nel registro non c'e' nessuno
+spegnimento. Una prova che un'azione NON avviene vale piu' di una fotografia.
+
+### 5. «Riavvia» nel menu di avvio
+
+Sta fra «Esci» e «Spegni», in ordine di gravita'. E oggi serve piu' del solito:
+uscendo dalla scrivania la scheda torna in modo testo e `exwin` rifiuta di
+ripartire — la modalita' grafica la imposta Stage 2 col BIOS — quindi per
+rivedere la scrivania bisogna riavviare, e quel comando deve stare dove sta chi
+guarda la grafica, non in una console di testo.
+
+! E NON CHIAMA reboot() SUBITO. Chiede alla scrivania di spegnersi — come
+«Esci» — si segna che dopo si riavvia, e riavvia da `main()`, DOPO che il
+ciclo dei messaggi e' finito e DOPO aver aspettato che il kernel dica che la
+console della grafica e' libera. Cosi' le applicazioni fanno in tempo a
+salvare e lo schermo e' gia' testo: se il riavvio venisse rifiutato si resta
+davanti a una console leggibile.
+
+    pm: riavvio chiesto dal menu
+    wserver: spegnimento chiesto
+    [WARN] SYSCALL modo_testo: PID 11 rimette lo schermo
+    wserver: spento
+    pm: la scrivania e' uscita, riavvio la macchina
+
+La prima stesura riavviava subito dopo `ex_spegni_scrivania()` — che e' un
+MESSAGGIO, non una chiamata — e la seriale lo ha detto: `modo_testo` non
+compariva affatto. Il commento prometteva un'attesa che il codice non faceva.
+
+### 6. www.bing.com: mancava RSA con SHA-384 (e come si e' trovato)
+
+Il sintomo era `certificato non verificabile`, e per tre giri di prove ha
+mandato nel posto sbagliato. La catena di bing presa con `openssl s_client`
+senza opzioni e' ECDSA, e passata al banco `certprova` sull'host **valeva**.
+
+! LA STESSA SCHEDA DA' CATENE DIVERSE A CLIENTI DIVERSI. Chiesta con i NOSTRI
+parametri — ChaCha20-Poly1305, X25519, le nostre tre firme — bing risponde con
+una catena RSA il cui leaf e' firmato `sha384WithRSAEncryption`. E
+`excert_firma_valida` accettava, per RSA, il solo SHA-256:
+
+    if (figlio->alg_firma != EXASN1_ALG_RSA_SHA256) return EXCERT_ALG_RIFIUTATO;
+
+`exasn1` quegli OID li riconosceva gia' da sempre — RSA_SHA384 e RSA_SHA512
+sono nella sua tabella — era `excert` a rifiutarli. Adesso i DigestInfo sono
+tre e l'impronta la sceglie l'algoritmo. Il vettore dell'impronta e' passato da
+32 a 64 byte: lasciarlo a 32 e scriverci uno SHA-512 sarebbe stato uno
+sfondamento di stack in una funzione che tocca i dati di chiunque risponda su
+una 443.
+
+    prima:  scarica: certificato non verificabile
+    dopo:   scarica: 200, text/html; charset=utf-8, 66645 byte
+
+! E CI SI E' ARRIVATI SOLO DOPO AVER FATTO PARLARE L'ERRORE. Il codice esatto
+c'era gia' — extls lo tiene in `motivo` apposta, e accanto alla chiamata c'e'
+scritto perche' — ma non lo leggeva nessuno: usciva sempre e solo «certificato
+non verificabile», che vale per uno scaduto, per una radice che manca e per una
+firma falsa. Adesso escono il motivo e QUALE ANELLO:
+
+    certificato non verificabile: algoritmo di firma non gestito (anello 0)
+
+ed e' quella riga che ha detto dove guardare. Nello stesso giro si e' sdoppiato
+`EXCERT_ALG_RIFIUTATO`: la firma del figlio e la chiave del padre sono due
+guasti che si riparano in due posti diversi.
+
+### E due commenti che dicevano il falso
+
+! `extls.h` dichiarava in intestazione: «un sito che offre SOLO certificati
+ECDSA non si apre, la P-256 non c'e'». Era vero quando fu scritto e falso dal
+25 agosto — venti righe piu' in basso, nel codice, il client annuncia
+ecdsa_secp256r1 ed ecdsa_secp384r1. Chi leggeva l'intestazione e chi leggeva il
+codice avevano due risposte diverse, e l'intestazione si legge per prima.
+Corretta, non cancellata.
+
+! E in `tools/prove/certprova.c` mancava `sha512`, cosi' il banco non compilava
+piu' appena excert ha imparato SHA-512. E' *esattamente* il difetto che il
+Makefile ha gia' scritto accanto a quel bersaglio, capitato di nuovo: «una
+prova che non parte non fallisce, tace».
+
 ### Due porte trovate aperte cercando la seconda, e chiuse
 
 ! **DICHIARATO: NON SONO LA CAUSA DI NIENTE DI QUANTO SOPRA.** Non si sono mai

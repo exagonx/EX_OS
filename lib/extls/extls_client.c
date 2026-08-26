@@ -147,6 +147,7 @@ typedef struct {
     unsigned int allarme;   /* l'ultimo codice di allarme ricevuto */
     int          ultimo;    /* l'ultimo errore, per chi legge dopo la stretta */
     int          motivo;    /* il codice di lib/excert, quando la catena cade */
+    unsigned int anello;    /* e QUALE anello: 0 e' il certificato del sito */
 } Tls;
 
 unsigned int extls_misura(void) { return (unsigned int)sizeof(Tls); }
@@ -947,7 +948,7 @@ int extls_stretta(void *opaco, const ExTlsSotto *sotto, const char *host,
      * schiacciarli tutti in «certificato non verificabile» manda a cercare il
      * difetto nel posto sbagliato. Il codice resta leggibile con
      * extls_motivo(). */
-    r = excert_catena_valida(catena, quanti, magazzino, adesso);
+    r = excert_catena_valida(catena, quanti, magazzino, adesso, &t->anello);
     if (r != EXCERT_OK) { t->motivo = r; return EXTLS_ERR_CERTIFICATO; }
 
     if (excert_nome_combacia(&catena[0], host) != EXCERT_OK)
@@ -1086,6 +1087,11 @@ int extls_ultimo(void *opaco)
 int extls_motivo(void *opaco)
 {
     return opaco ? ((Tls *)opaco)->motivo : 0;
+}
+
+int extls_anello(void *opaco)
+{
+    return opaco ? (int)((Tls *)opaco)->anello : 0;
 }
 
 const char *extls_perche(int codice)

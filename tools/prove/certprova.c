@@ -37,6 +37,15 @@ void sha384(const void *dati, unsigned int len, unsigned char out[48])
     SHA384((const unsigned char *)dati, len, out);
 }
 
+/* ! E SHA-512, da quando excert verifica anche sha512WithRSAEncryption. Il
+ * banco deve avere TUTTE le impronte che il codice provato puo' chiamare, o
+ * non compila — ed e' successo di nuovo: l'ultima volta era excurva. */
+void sha512(const void *dati, unsigned int len, unsigned char out[64]);
+void sha512(const void *dati, unsigned int len, unsigned char out[64])
+{
+    SHA512((const unsigned char *)dati, len, out);
+}
+
 static unsigned char buf[64][65536];
 static unsigned int  misura[64];
 static unsigned int  quanti_file;
@@ -86,6 +95,13 @@ int main(int argc, char **argv)
         }
     }
 
-    printf("%d\n", excert_catena_valida(catena, nc, &m, adesso));
+    {
+        unsigned int anello = 0;
+        int esito = excert_catena_valida(catena, nc, &m, adesso, &anello);
+
+        if (esito != EXCERT_OK)
+            fprintf(stderr, "anello %u: %s\n", anello, excert_perche(esito));
+        printf("%d\n", esito);
+    }
     return 0;
 }

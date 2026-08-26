@@ -292,6 +292,13 @@ static Oggetto g_ogg[OGGETTI_MAX];
  * che e' la stessa regola che il server applica alle finestre. */
 static ExFinestra g_trascinato = 0;
 
+/* ! IL PULSANTE TENUTO GIU', e serve perche' il comando parte al RILASCIO.
+ * Fra la pressione e il rilascio il puntatore puo' uscire dal pulsante, e in
+ * quel caso il comando non deve partire: senza ricordarsi QUALE fosse, al
+ * rilascio non ci sarebbe modo di sapere se si sta alzando il dito dallo
+ * stesso pulsante su cui lo si era posato. Vedi WIN_EV_MOUSE_SU. */
+static ExFinestra g_premuto = 0;
+
 /* ! LA RIGA SCELTA QUANDO IL DITO E' SCESO, per sapere al rilascio se il
  * trascinamento l'ha cambiata. Senza, chi sceglie una voce trascinando invece
  * che cliccando non lo direbbe a nessuno: la lista si vedrebbe cambiare la
@@ -1982,13 +1989,39 @@ static void disegna_oggetto(Oggetto *o)
     y = oy + o->y;
 
     switch (o->classe) {
-    case CL_PULSANTE:
-        ex_riempi(o->padre, x, y, o->w, o->h,
-                  o->premuto ? EX_GRIGIO_SC : EX_GRIGIO);
+    /* =====================================================================
+     * ! IL PULSANTE PREMUTO SI SCAMBIA L'OMBRA, non si tinge di grigio scuro.
+     *
+     * Prima l'unica differenza fra su e giu' era il colore del riempimento, e
+     * la si notava solo confrontando due fotografie. Un pulsante sporge
+     * perche' ha la LUCE sopra e a sinistra e l'OMBRA sotto e a destra:
+     * scambiando i due bordi lo stesso disegno sprofonda, ed e' cio' che
+     * l'occhio legge come «l'ho premuto» senza doverci pensare. Le due
+     * funzioni c'erano gia' — ex_rilievo e ex_incavo, che chiamano lo stesso
+     * bordo3d con i colori invertiti — e non le usava nessuno qui.
+     *
+     * ! E LA SCRITTA SI SPOSTA DI UN PIXEL IN GIU' E A DESTRA. Sembra un
+     * dettaglio ed e' meta' dell'effetto: senza, il rilievo cambia ma cio' che
+     * c'e' scritto sopra resta inchiodato, e il pulsante sembra un riquadro
+     * che cambia colore invece di una cosa che si muove.
+     *
+     * ! IL BORDO NERO RESTA FUORI, e il rilievo sta dentro di lui. E' l'ordine
+     * che tiene i pulsanti riconoscibili accanto agli altri controlli, che il
+     * riquadro nero ce l'hanno anche loro.
+     * ===================================================================== */
+    case CL_PULSANTE: {
+        int dx = o->premuto ? 1 : 0;
+
+        ex_riempi(o->padre, x, y, o->w, o->h, EX_GRIGIO);
         ex_riquadro_disegna(o->padre, x, y, o->w, o->h, EX_NERO);
-        ex_scrivi(o->padre, x + (o->w - larg(o->titolo)) / 2,
-                  y + (o->h - 16) / 2, o->titolo, EX_NERO);
+
+        if (o->premuto) ex_incavo(o->padre,  x + 1, y + 1, o->w - 2, o->h - 2);
+        else            ex_rilievo(o->padre, x + 1, y + 1, o->w - 2, o->h - 2);
+
+        ex_scrivi(o->padre, x + dx + (o->w - larg(o->titolo)) / 2,
+                  y + dx + (o->h - 16) / 2, o->titolo, EX_NERO);
         break;
+    }
 
     case CL_ETICHETTA:
         ex_scrivi(o->padre, x, y, o->titolo, EX_NERO);
@@ -3398,6 +3431,26 @@ int ex_prendi_msg(ExMsg *m)
         case WIN_EV_MOUSE_MOSSO: {
             Oggetto *co = ogg(g_trascinato);
 
+            /* ! IL PULSANTE SI ALZA SE IL DITO SCIVOLA VIA, e si riabbassa se
+             * torna. Senza, «scivolare fuori per annullare» resterebbe una
+             * cosa vera che non si vede: il pulsante continuerebbe a sembrare
+             * premuto mentre ormai non farebbe piu' niente, e chi guarda
+             * crederebbe di aver comandato. Il disegno deve dire in ogni
+             * istante cosa succedera' alzando il dito adesso. */
+            {
+                Oggetto *pr = ogg(g_premuto);
+
+                if (pr && pr->usato && pr->classe == CL_PULSANTE) {
+                    unsigned int giu =
+                        (controllo_in(f, (int)e.x, (int)e.y) == g_premuto);
+
+                    if (giu != pr->premuto) {
+                        pr->premuto = giu;
+                        ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                    }
+                }
+            }
+
             if (co && co->classe == CL_AREA) {
                 area_punta(co, (int)e.x, (int)e.y);
                 ex_procedura_base(f, EXM_DISEGNA, 0, 0);
@@ -3412,15 +3465,30 @@ int ex_prendi_msg(ExMsg *m)
             return 1;
         }
 
-        case WIN_EV_MOUSE_SU:
-            /* ! IL PULSANTE TORNA SU QUANDO IL DITO SI ALZA, e non prima: il
-             * comando parte gia' alla pressione, ma se il rilievo tornasse
-             * subito non si vedrebbe MAI premuto — e un pulsante che non si
-             * muove sembra un pulsante che non ha sentito. Si alzano tutti,
-             * non solo quello sotto il puntatore: chi preme e poi trascina
-             * fuori lascerebbe un pulsante schiacciato per sempre. */
+        case WIN_EV_MOUSE_SU: {
+            /* =================================================================
+             * ! QUI PARTE IL COMANDO, ed e' il rilascio a farlo partire.
+             *
+             * Il perche' sta accanto a CL_PULSANTE in WIN_EV_MOUSE_GIU. Qui
+             * c'e' la seconda meta': il comando parte SOLO se il dito si alza
+             * ancora sopra il pulsante su cui si era posato. Scivolare via
+             * prima di alzarlo annulla, e non serve spiegarlo a nessuno —
+             * chiunque abbia usato un mouse lo sa gia' senza saperlo.
+             *
+             * ! I PULSANTI SI ALZANO TUTTI, non solo quello sotto il
+             * puntatore: chi preme e poi trascina fuori lascerebbe altrimenti
+             * un pulsante schiacciato per sempre.
+             * ============================================================= */
+            unsigned int cmd_id = 0;
             {
+                Oggetto *pr = ogg(g_premuto);
                 int j, cambiato = 0;
+
+                if (pr && pr->usato && pr->classe == CL_PULSANTE &&
+                    controllo_in(f, (int)e.x, (int)e.y) == g_premuto)
+                    cmd_id = pr->id;
+
+                g_premuto = 0;
 
                 for (j = 0; j < OGGETTI_MAX; j++)
                     if (g_ogg[j].usato && g_ogg[j].premuto) {
@@ -3428,6 +3496,18 @@ int ex_prendi_msg(ExMsg *m)
                         cambiato = 1;
                     }
                 if (cambiato) ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+            }
+
+            /* ! IL PULSANTE SI SERVE PRIMA DELLA LISTA TRASCINATA. Sono due
+             * cose che non possono essere vere insieme — o si e' posato il
+             * dito su un pulsante o dentro una lista — ma l'ordine va scelto
+             * lo stesso, o domani lo sceglie il caso. */
+            if (cmd_id) {
+                g_trascinato = 0;
+                m->msg = EXM_COMANDO;
+                m->wp  = cmd_id;
+                m->lp  = 0;
+                return 1;
             }
 
             /* ! SCEGLIERE TRASCINANDO E' SCEGLIERE, e va detto all'applicazione
@@ -3450,6 +3530,7 @@ int ex_prendi_msg(ExMsg *m)
 
             m->msg = EXM_MOUSE_SU;
             return 1;
+        }
         case WIN_EV_MOUSE_GIU: {
             /* ! IL CLIC SU UN PULSANTE DIVENTA EXM_COMANDO, e il messaggio
              * grezzo non arriva all'applicazione. E' cio' che distingue un
@@ -3494,12 +3575,27 @@ int ex_prendi_msg(ExMsg *m)
              * caso premendolo. */
             if (co && co->classe != CL_PULSANTE) fuoco_metti(f, c);
 
+            /* =============================================================
+             * ! PREMERE NON E' ANCORA COMANDARE.
+             *
+             * Fino a oggi EXM_COMANDO partiva qui, alla pressione. E' il
+             * comportamento che si scrive per primo perche' e' il piu' corto,
+             * ed e' anche quello che toglie a chi usa il programma l'unica
+             * possibilita' di RIPENSARCI: un pulsante premuto per sbaglio era
+             * gia' un pulsante eseguito. Su «Esci» o «Spegni» la differenza
+             * non e' estetica.
+             *
+             * Ovunque — dai Macintosh in poi — un pulsante si arma premendo e
+             * spara alzando il dito, e scivolare via prima di alzarlo annulla.
+             * Qui si fa lo stesso: adesso si segna soltanto chi e' giu', il
+             * disegno lo mostra sprofondato, e il comando parte da
+             * WIN_EV_MOUSE_SU se il puntatore e' ancora sopra.
+             * ============================================================= */
             if (co && co->classe == CL_PULSANTE) {
                 co->premuto = 1;
+                g_premuto   = c;
                 ex_procedura_base(f, EXM_DISEGNA, 0, 0);
-                m->msg = EXM_COMANDO;
-                m->wp  = co->id;
-                return 1;
+                continue;
             }
 
             /* ! UN CLIC SU UNA LISTA SCEGLIE LA RIGA, e l'applicazione lo

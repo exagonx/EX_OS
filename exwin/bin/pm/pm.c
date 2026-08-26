@@ -49,6 +49,7 @@ EX_VERSIONE("pm", VERSIONE_APP);
 #define ID_VOCE     100     /* ID_VOCE + n = la voce n del menu */
 #define ID_ESCI     90
 #define ID_SPEGNI   91
+#define ID_RIAVVIA  95
 #define ID_GESTISCI 92
 #define ID_INFO     93
 #define ID_IMPOST   94
@@ -88,6 +89,11 @@ static char g_avvio[96]  = "";
 static char g_elenco[96] = "";
 
 static ExFinestra g_barra, g_menu = 0;
+
+/* ! «RIAVVIA» SI RICORDA, NON SI ESEGUE SUBITO. Il perche' sta accanto a
+ * ID_RIAVVIA in barra_proc: prima la scrivania se ne va per bene, poi la
+ * macchina riparte. Lo esegue main(), dopo il ciclo dei messaggi. */
+static int g_riavvia = 0;
 static unsigned int g_sw, g_sh;
 
 /* -----------------------------------------------------------------------------
@@ -541,9 +547,9 @@ static void menu_apri(void)
      * quando non c'e' niente da avviare. */
     /* Quattro voci fisse adesso — «Applicazioni...», «Informazioni su»,
      * «Esci», «Spegni». */
-    /* Cinque voci sotto la riga: Applicazioni, Impostazioni, Informazioni,
-     * Esci, Spegni. Il numero sta qui e non sparso nelle posizioni. */
-    h = (int)(g_app_n * VOCE_H) + 8 + 5 * VOCE_H + 6;
+    /* Sei voci sotto la riga: Applicazioni, Informazioni, Impostazioni,
+     * Esci, Riavvia, Spegni. Il numero sta qui e non sparso nelle posizioni. */
+    h = (int)(g_app_n * VOCE_H) + 8 + 6 * VOCE_H + 6;
 
     g_menu = ex_crea("finestra", "", EX_BORDO | EX_SOPRA,
                      4, (int)g_sh - BARRA_H - h - 2, MENU_W, h, 0, 0, menu_proc);
@@ -580,8 +586,23 @@ static void menu_apri(void)
     ex_crea("pulsante", "Esci", EX_FIGLIO,
             4, 10 + (int)(g_app_n + 3) * VOCE_H, MENU_W - 8, VOCE_H - 2,
             g_menu, ID_ESCI, 0);
-    ex_crea("pulsante", "Spegni", EX_FIGLIO,
+    /* ! «RIAVVIA» STA FRA «ESCI» E «SPEGNI», ed e' il posto giusto per due
+     * ragioni. La prima e' l'ordine di gravita': si esce dalla scrivania, si
+     * riavvia la macchina, si spegne la macchina — ogni voce costa piu' della
+     * precedente, e chi sbaglia mira di una riga sbaglia di poco.
+     *
+     * La seconda e' che oggi «Esci» e «Riavvia» sono quasi la stessa cosa, e
+     * si e' visto usandolo: uscendo dalla scrivania la scheda torna in modo
+     * testo e `exwin` rifiuta di ripartire — la modalita' grafica la imposta
+     * Stage 2 col BIOS, e da qui quella porta e' chiusa (vedi DIREZIONE.md).
+     * Per rivedere la scrivania bisogna riavviare, e finche' e' cosi' quel
+     * comando deve stare nel menu invece che in una console di testo che chi
+     * e' nella grafica non sta guardando. */
+    ex_crea("pulsante", "Riavvia", EX_FIGLIO,
             4, 10 + (int)(g_app_n + 4) * VOCE_H, MENU_W - 8, VOCE_H - 2,
+            g_menu, ID_RIAVVIA, 0);
+    ex_crea("pulsante", "Spegni", EX_FIGLIO,
+            4, 10 + (int)(g_app_n + 5) * VOCE_H, MENU_W - 8, VOCE_H - 2,
             g_menu, ID_SPEGNI, 0);
 
     ex_procedura_base(g_menu, EXM_DISEGNA, 0, 0);
@@ -738,6 +759,35 @@ static long menu_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
          * ================================================================= */
         if (wp == ID_ESCI) {
             log_seriale("pm: spegnimento della scrivania chiesto dal menu");
+            ex_spegni_scrivania();
+            return 0;
+        }
+
+        /* =================================================================
+         * ! RIAVVIA E' «ESCI» PIU' UNA COSA, E L'ORDINE E' TUTTO.
+         *
+         * Non si chiama reboot() qui. Qui si chiede alla scrivania di
+         * spegnersi — esattamente come «Esci» — e ci si SEGNA che dopo si
+         * riavvia: il riavvio vero lo fa main(), quando il ciclo dei messaggi
+         * e' finito.
+         *
+         * Il perche' e' che ex_spegni_scrivania() e' un messaggio, non una
+         * chiamata: manda WIN_MSG_SPEGNI e torna subito. E' il SERVER a fare
+         * il lavoro — chiede a ogni applicazione la stessa chiusura della
+         * crocetta, le aspetta, rimette il modo testo e muore. Riavviando su
+         * questa riga si porterebbe via un editor con del testo non salvato
+         * mentre gli si sta ancora chiedendo se ha finito, e il riavvio dal
+         * menu lo si chiede proprio quando si sta ancora lavorando.
+         *
+         * ! E SI RIAVVIA CON LO SCHERMO GIA' RIMESSO A TESTO, che e' l'altra
+         * meta' del regalo: cosi' se il riavvio venisse rifiutato — capita a
+         * chi non e' root da una sessione remota — si resta davanti a una
+         * console leggibile invece che a uno schermo grafico senza piu'
+         * nessuno dentro.
+         * ================================================================= */
+        if (wp == ID_RIAVVIA) {
+            log_seriale("pm: riavvio chiesto dal menu");
+            g_riavvia = 1;
             ex_spegni_scrivania();
             return 0;
         }
@@ -1003,5 +1053,45 @@ int main(int argc, char **argv)
     }
 
     while (ex_prendi_msg(&m)) ex_smista(&m);
+
+    /* =========================================================================
+     * ! QUI LA NOSTRA FINESTRA E' CHIUSA, MA IL SERVER STA ANCORA LAVORANDO.
+     *
+     * Il ciclo dei messaggi finisce appena arriva a NOI la chiusura, e il
+     * server la manda a tutte le finestre insieme: quando usciamo di li' le
+     * altre applicazioni possono avere ancora qualche decimo di secondo per
+     * salvare, e la scheda video e' ancora in grafica. Riavviare adesso
+     * sarebbe riavviare in mezzo al lavoro che si e' appena chiesto di fare.
+     *
+     * ! COSA SI ASPETTA E' UN FATTO, NON UN TEMPO. Il kernel sa chi tiene la
+     * console della grafica, e il server la lascia — console_grafica(2) — solo
+     * dopo aver rimesso il modo testo. La domanda «c'e' ancora una grafica?»
+     * ha quindi una risposta esatta, e si aspetta quella. E' la stessa attesa
+     * che fa `exwin --attendi`, per la stessa ragione.
+     *
+     * ! CON UN TETTO, PERO'. Un server bloccato non deve poter tenere in
+     * ostaggio un riavvio gia' chiesto: dopo il tempo si va avanti lo stesso.
+     * ======================================================================= */
+    if (g_riavvia) {
+        int giri;
+
+        for (giri = 0; giri < 100 && console_grafica(0) >= 0; giri++)
+            usleep(50000);
+
+        /* ! E ADESSO LO SCHERMO E' GIA' TESTO, che e' l'altra meta' del
+         * regalo: se il riavvio venisse rifiutato — capita a chi non e' root
+         * da una sessione remota — si resta davanti a una console leggibile
+         * invece che a uno schermo grafico senza piu' nessuno dentro.
+         *
+         * ! SINCRONIZZARE I DISCHI LO FA IL KERNEL: qui si chiede e basta. Se
+         * reboot() rende, ha rifiutato. */
+        log_seriale("pm: la scrivania e' uscita, riavvio la macchina");
+        reboot(EXOS_RB_RESTART);
+        log_seriale("pm: il kernel ha rifiutato il riavvio");
+        printf("pm: il sistema non si riavvia da qui.\n");
+        printf("    Lo puo' chiedere root, oppure chi sta a una console di\n");
+        printf("    questa macchina: da una sessione remota no.\n");
+        return 1;
+    }
     return 0;
 }

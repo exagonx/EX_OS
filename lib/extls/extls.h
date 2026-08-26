@@ -112,7 +112,7 @@ int extls_rsa_pss_verifica(const unsigned char *modulo, unsigned int modulo_n,
  *
  *     scambio di chiavi   X25519
  *     cifrario            TLS_CHACHA20_POLY1305_SHA256
- *     firma del server    RSA-PSS con SHA-256 (e Ed25519, se mai arrivera')
+ *     firma del server    RSA-PSS con SHA-256, ECDSA su P-256 e P-384
  *
  * Non e' poverta': e' il fatto che ognuna delle altre combinazioni sarebbe
  * un'altra implementazione da provare, e una crittografia provata a meta' e'
@@ -120,11 +120,19 @@ int extls_rsa_pss_verifica(const unsigned char *modulo, unsigned int modulo_n,
  * Questi tre pezzi EX-OS li ha gia' e sono gia' provati contro OpenSSL:
  * X25519, ChaCha20 e Poly1305 stanno in lib/excrypt dai tempi di sshd.
  *
- * ! IL PREZZO, DETTO SUBITO: un sito che offre SOLO certificati ECDSA non si
- * apre. La verifica della catena vuole RSA (lib/excert), e la P-256 non c'e'.
- * Quasi tutti i grandi servono ancora una catena RSA a chi non annuncia
- * ECDSA — e questo cliente non la annuncia — ma qualcuno no, e quel qualcuno
- * riceve un errore chiaro invece di una pagina.
+ * ! QUESTO PARAGRAFO DICEVA UNA COSA FALSA DA SETTIMANE, e si tiene la
+ * correzione invece di cancellarlo. Diceva: «un sito che offre SOLO
+ * certificati ECDSA non si apre: la verifica della catena vuole RSA e la P-256
+ * non c'e'». Era vero quando e' stato scritto; dal 25 agosto 2026 lib/excert
+ * verifica ECDSA su P-256 e P-384, e il client annuncia le due firme
+ * corrispondenti — sta scritto venti righe piu' in basso, dentro il codice.
+ * Chi leggeva l'intestazione e chi leggeva il codice ottenevano due risposte
+ * diverse, e l'intestazione e' quella che si legge per prima.
+ *
+ * ! IL PREZZO VERO, OGGI: la catena si verifica con RSA PKCS#1 v1.5
+ * (SHA-256/384/512) e con ECDSA su P-256 e P-384. Fuori restano le curve piu'
+ * grandi, Ed25519, e RSA-PSS DENTRO i certificati — che e' un'altra cosa dal
+ * PSS della CertificateVerify, quello c'e'.
  *
  * ! E LA VERIFICA NON E' OPZIONALE. Senza magazzino di CA la stretta di mano
  * fallisce: non c'e' un modo di dire «cifra e fidati». Cifrare con chiunque
@@ -202,6 +210,11 @@ int extls_ultimo(void *t);
 /* Quando la catena non e' valida: il codice EXCERT_* che l'ha detto. Nove casi
  * diversi che «certificato non verificabile» non distingue. */
 int extls_motivo(void *t);
+
+/* Quale anello della catena ha fatto fallire: 0 e' il certificato del sito,
+ * l'ultimo e' quello che avrebbe dovuto agganciarsi a una radice. Ha senso
+ * solo dopo un EXTLS_ERR_CERTIFICATO. */
+int extls_anello(void *t);
 
 /* Una riga in italiano per un codice di errore. */
 const char *extls_perche(int codice);
