@@ -172,7 +172,7 @@ PROGRAMMI_FLOPPY := shell id chmod shutdown ls mem stack disk fdisk mkfs mkswap 
 # =============================================================================
 PROGRAMMI_CD := cdinstall swaptest libctest hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp scarica telnet telnetd sshd xcp winprova exwincmd
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
-PROGRAMMI_EXWIN := exwin_so exdlg_so eximg_so exfont_so exhttp_so exhtml_so excss_so wserver pm filemgr edit term fontprova orologio browser
+PROGRAMMI_EXWIN := exwin_so exdlg_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr edit term fontprova orologio browser
 
 # I driver, con la stessa regola dei programmi. Quelli di base stanno gia'
 # dentro PROGRAMMI_FLOPPY (floppy_drv, kbd_drv): sul floppy servono a
@@ -1264,7 +1264,8 @@ exhtml_so: dirs $(EXHTML_SO)
 # html.c — cioe' il difetto che le librerie condivise esistono per togliere.
 #
 # ! CHI APRE excss APRE ANCHE exhtml, e va tenuto a mente per il tetto del
-# kernel (LIB_MAX in kernel/loader/lib.c, dodici). Col browser siamo a sette.
+# kernel (LIB_MAX in kernel/loader/lib.c, sessantaquattro). Col browser, da
+# quando c'e' il motore JavaScript, siamo a nove.
 # =============================================================================
 EXCSS_SRC     := lib/excss/css.c
 EXCSS_HDR     := lib/excss/css.h
@@ -1288,6 +1289,69 @@ $(EXCSS_SO): $(EXCSS_SRC) $(EXCSS_HDR) $(EXCSS_ESPORTA) $(EXCSS_LD) \
 
 .PHONY: excss_so
 excss_so: dirs $(EXCSS_SO)
+
+# =============================================================================
+# /exwin/lib/exjs.so — il motore JavaScript
+#
+# ! CINQUE SORGENTI IN UNA LIBRERIA SOLA, e nessuno di loro e' un modulo a se':
+# il lessicale, l'analizzatore, i valori, l'interprete e la libreria di base
+# sono un linguaggio, e un linguaggio meta' non serve a niente. Sono file
+# separati perche' mille righe per file si leggono, non perche' si possano
+# staccare.
+#
+# ! E QUESTA E' LA LIBRERIA CHE exwin.ld AVEVA PREVISTO PER NOME quando ha
+# spiegato perche' le fette sono da un megabyte: «il controllo che comincera' a
+# contare da solo il giorno che arrivera' un motore JavaScript». A dire se ci
+# sta e' tools/fette.py, che le misure le legge dagli ELF veri.
+# =============================================================================
+EXJS_SRC     := lib/exjs/lex.c lib/exjs/parse.c lib/exjs/val.c                 lib/exjs/run.c lib/exjs/base.c
+EXJS_HDR     := lib/exjs/exjs.h lib/exjs/exjs_int.h
+EXJS_ESPORTA := lib/exjs/exjs_esporta.c
+EXJS_STUB    := lib/exjs/exjs_stub.c
+EXJS_LD      := lib/exjs/exjs.ld
+EXJS_SO      := $(BUILD_EXWIN_LIB)/exjs.so
+
+EXJS_OBJ     := $(BUILD_OBJ)/sojs_lex.o $(BUILD_OBJ)/sojs_parse.o                 $(BUILD_OBJ)/sojs_val.o $(BUILD_OBJ)/sojs_run.o                 $(BUILD_OBJ)/sojs_base.o
+
+$(EXJS_SO): $(EXJS_SRC) $(EXJS_HDR) $(EXJS_ESPORTA) $(EXJS_LD)             $(EXLIB_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(SEGNO_FLAG)
+	@echo "=== Compilazione libreria condivisa /exwin/lib/exjs.so ==="
+	@mkdir -p $(BUILD_EXWIN_LIB) $(BUILD_OBJ)
+	@for f in $(EXJS_SRC); do 	    n=$$(basename $$f .c); 	    $(CC) $(CFLAGS_USER) -I lib/include -I lib/exjs -c $$f 	        -o $(BUILD_OBJ)/sojs_$${n}.o || exit 1; 	done
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exjs -c $(EXJS_ESPORTA) -o $(BUILD_OBJ)/sojs_esporta.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(EXJS_LD) 	    $(BUILD_OBJ)/sojs_esporta.o $(EXJS_OBJ) 	    $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] exjs.so compilata: $@"
+
+.PHONY: exjs_so
+exjs_so: dirs $(EXJS_SO)
+
+# =============================================================================
+# /exwin/lib/exdom.so — il ponte fra l'albero e il motore
+#
+# ! E' LA PRIMA LIBRERIA CHE NE APRE DUE, non una: dentro ci sono lo stub di
+# exjs e quello di exhtml, come excss ha quello di exhtml. Chi apre exdom si
+# ritrova tre fette occupate, e va saputo — ma l'alternativa era una copia del
+# motore dentro il ponte, cioe' due interpreti nello stesso processo che non si
+# vedono. Non e' spreco di spazio: e' un guasto.
+# =============================================================================
+EXDOM_SRC     := lib/exdom/exdom.c
+EXDOM_HDR     := lib/exdom/exdom.h
+EXDOM_ESPORTA := lib/exdom/exdom_esporta.c
+EXDOM_STUB    := lib/exdom/exdom_stub.c
+EXDOM_LD      := lib/exdom/exdom.ld
+EXDOM_SO      := $(BUILD_EXWIN_LIB)/exdom.so
+
+$(EXDOM_SO): $(EXDOM_SRC) $(EXDOM_HDR) $(EXDOM_ESPORTA) $(EXDOM_LD)              $(EXJS_STUB) $(EXJS_HDR) $(EXHTML_STUB) $(EXHTML_HDR)              $(EXLIB_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(SEGNO_FLAG)
+	@echo "=== Compilazione libreria condivisa /exwin/lib/exdom.so ==="
+	@mkdir -p $(BUILD_EXWIN_LIB) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exdom -I lib/exjs -I lib/exhtml -c $(EXDOM_SRC) -o $(BUILD_OBJ)/sodom_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exdom -I lib/exjs -I lib/exhtml -c $(EXDOM_ESPORTA) -o $(BUILD_OBJ)/sodom_esporta.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exjs -c $(EXJS_STUB) -o $(BUILD_OBJ)/sodom_js.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhtml -c $(EXHTML_STUB) -o $(BUILD_OBJ)/sodom_html.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(EXDOM_LD) 	    $(BUILD_OBJ)/sodom_esporta.o $(BUILD_OBJ)/sodom_main.o 	    $(BUILD_OBJ)/sodom_js.o $(BUILD_OBJ)/sodom_html.o 	    $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] exdom.so compilata: $@"
+
+.PHONY: exdom_so
+exdom_so: dirs $(EXDOM_SO)
 
 EXWIN_ESPORTA := lib/exwin/exwin_esporta.c
 EXWIN_STUB    := lib/exwin/exwin_stub.c
@@ -1829,11 +1893,13 @@ $(BROWSER_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(BROWSER_SRC) $(BROWSER_LD) $(EXWIN
              $(EXHTTP_HTTP) $(EXHTTP_HDR) lib/eximg/eximg.h \
              $(EXHTML_STUB) $(EXHTML_HDR) $(EXHTML_SO) \
              $(EXCSS_STUB) $(EXCSS_HDR) $(EXCSS_SO) \
+             $(EXJS_STUB) $(EXJS_HDR) $(EXJS_SO) \
+             $(EXDOM_STUB) $(EXDOM_HDR) $(EXDOM_SO) \
              $(IP_PROTO) $(DNS_SRC) $(RETE_SRC) \
              $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione /exwin/bin/browser ==="
 	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I lib/exdlg -I lib/exinfo -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_SRC) -o $(BUILD_OBJ)/browser_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I lib/exjs -I lib/exdom -I lib/exdlg -I lib/exinfo -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_SRC) -o $(BUILD_OBJ)/browser_main.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exdlg -c $(EXDLG_STUB) -o $(BUILD_OBJ)/browser_exdlg.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exinfo -c $(EXINFO_SRC) -o $(BUILD_OBJ)/browser_info.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/browser_exwin.o
@@ -1844,11 +1910,14 @@ $(BROWSER_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(BROWSER_SRC) $(BROWSER_LD) $(EXWIN
 	@# comunque disponibile agli altri programmi — vedi il blocco di exhtml.so.
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhtml -c $(EXHTML_STUB) -o $(BUILD_OBJ)/browser_html.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhtml -I lib/excss -c $(EXCSS_STUB) -o $(BUILD_OBJ)/browser_css.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exjs -c $(EXJS_STUB) -o $(BUILD_OBJ)/browser_js.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exdom -I lib/exjs -I lib/exhtml -c $(EXDOM_STUB) -o $(BUILD_OBJ)/browser_dom.o
 	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/browser_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(BROWSER_LD) \
 	    $(BUILD_OBJ)/browser_start.o $(BUILD_OBJ)/browser_main.o \
 	    $(BUILD_OBJ)/browser_exwin.o $(BUILD_OBJ)/browser_stub.o \
 	    $(BUILD_OBJ)/browser_html.o $(BUILD_OBJ)/browser_css.o \
+	    $(BUILD_OBJ)/browser_js.o $(BUILD_OBJ)/browser_dom.o \
 	    $(BUILD_OBJ)/browser_exdlg.o $(BUILD_OBJ)/browser_info.o \
 	    $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] browser compilato: $@"

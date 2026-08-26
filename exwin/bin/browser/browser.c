@@ -65,6 +65,8 @@
 #include "exhttp.h"
 #include "html.h"
 #include "css.h"
+#include "exjs.h"
+#include "exdom.h"
 #include "exdlg.h"
 #include "exinfo.h"
 #include "kbd_proto.h"
@@ -105,12 +107,17 @@ EX_VERSIONE("browser", VERSIONE_APP);
  *     i nodi dell'albero            750 KB   (24000 x 32 byte)
  *     gli attributi                 125 KB   (16000 x 8)
  *     l'arena (testo E attributi)  1024 KB
- *     i pezzi impaginati            750 KB   (24000 x 32)
+ *     i pezzi impaginati            844 KB   (24000 x 36)
  *     gli indirizzi dei link        200 KB   (arena + scostamenti)
  *     la cronologia                  19 KB
  *     le immagini                 128 KB + il tetto scelto all'avvio
  *                                  -------
- *                                   4020 KB piu' i pixel
+ *                                   4114 KB piu' i pixel
+ *
+ * ! E IL MOTORE JAVASCRIPT NON E' IN QUESTO CONTO, perche' non e' un tetto
+ * fisso: si chiede alla libc quando una pagina ha davvero uno script, e si
+ * rende quando la pagina se ne va. Una pagina senza script non lo paga — e
+ * sono ancora la maggioranza di quelle che questo browser riesce ad aprire.
  *
  * Tre megabyte e mezzo FISSI, piu' i pixel delle immagini — e quelli non sono
  * una costante: si decidono all'avvio su un sedicesimo della memoria libera,
@@ -245,6 +252,18 @@ typedef struct {
     short        link;          /* indice in g_link, -1 = niente         */
     short        img;           /* indice in g_imm, -1 = e' testo        */
     short        ctrl;          /* indice in g_ctrl, -1 = non e' un controllo */
+
+    /* ! E IL NODO DA CUI VIENE, che prima non serviva a nessuno e adesso e'
+     * l'unico modo di dire a uno script DOVE si e' cliccato. Sono quattro byte
+     * per pezzo, novantasei chilobyte al tetto — e l'alternativa era ricavare
+     * il nodo dalla posizione ripercorrendo l'albero a ogni clic, cioe' una
+     * seconda impaginazione per sapere una cosa che la prima aveva in mano.
+     *
+     * ! PER IL TESTO CI SI METTE IL PADRE, non il nodo di testo. E' quel che
+     * fa il browser vero: `event.target` di un clic su una parola e'
+     * l'elemento che la contiene, e uno script che leggesse `target.tagName`
+     * su un nodo di testo troverebbe `undefined`. */
+    int          nodo;
 } Pezzo;
 
 /* =============================================================================
@@ -670,6 +689,13 @@ static unsigned int *ridimensiona(const EximgBitmap *bm,
 static int  g_pen_x, g_pen_y, g_riga_h;
 static int  g_link_ora;
 
+/* ! IL NODO DA CUI ESCE IL PEZZO CHE SI STA COLLOCANDO. Non ha bisogno del
+ * salva-e-rimetti che g_link_ora si porta dietro, e la differenza vale la
+ * riga: un collegamento vale per tutto quel che c'e' DENTRO, quindi va
+ * ricordato risalendo; il nodo invece si scrive un istante prima di ogni
+ * pezzo, nei tre soli posti dove un pezzo nasce. */
+static int  g_nodo_ora = -1;
+
 /* Lo stile dell'elemento dentro cui stiamo impaginando adesso. I nodi di testo
  * non hanno uno stile proprio: usano quello del padre, che e' questo. */
 static CssStile g_stile_ora;
@@ -1016,6 +1042,7 @@ static void parola(const char *t, unsigned int off, int n)
         g_pez[g_pez_n].link = (short)g_link_ora;
         g_pez[g_pez_n].img = -1;
         g_pez[g_pez_n].ctrl = -1;
+        g_pez[g_pez_n].nodo = g_nodo_ora;
         g_pez_n++;
     }
 
@@ -1145,6 +1172,7 @@ static void pezzo_immagine(int k, int w, int h)
         g_pez[g_pez_n].link = (short)g_link_ora;
         g_pez[g_pez_n].img = (short)k;
         g_pez[g_pez_n].ctrl = -1;
+        g_pez[g_pez_n].nodo = g_nodo_ora;
         g_pez_n++;
     }
 
@@ -1696,6 +1724,7 @@ static void impagina_nodo(int v, const CssStile *ered)
      * corrispondere dei selettori a qualcosa che selettore non ha. */
     if (g_doc.nodi[v].tipo == HTML_TESTO) {
         g_stile_ora = *ered;
+        g_nodo_ora  = g_doc.nodi[v].padre;
         parole(html_testo(&g_doc, v), g_doc.nodi[v].testo);
         return;
     }
@@ -1985,6 +2014,7 @@ static void impagina_nodo(int v, const CssStile *ered)
             g_pez[g_pez_n].link = -1;
             g_pez[g_pez_n].img = -1;
             g_pez[g_pez_n].ctrl = (short)g_ctrl_n;
+            g_pez[g_pez_n].nodo = v;
             g_pez_n++;
             g_ctrl_n++;
 
@@ -1997,6 +2027,10 @@ static void impagina_nodo(int v, const CssStile *ered)
             const char *src = html_attr(&g_doc, v, "src");
             const char *alt;
             int         k = (src && src[0]) ? imm_indice(v, src) : -1;
+
+            /* Un'immagine e' un pezzo suo, quindi il nodo e' lei stessa: e'
+             * il caso in cui `event.target` deve dire `IMG`. */
+            g_nodo_ora = v;
 
             if (k >= 0 && g_imm[k].px) {
                 pezzo_immagine(k, (int)g_imm[k].w, (int)g_imm[k].h);
@@ -3381,6 +3415,268 @@ static void raccogli_css(void)
     }
 }
 
+/* =============================================================================
+ * IL MOTORE JAVASCRIPT
+ *
+ * ! NON E' UN TETTO FISSO, E' UNA RICHIESTA ALLA LIBC. Tutti gli altri buffer
+ * di questo browser sono vettori dichiarati, e va bene: servono a ogni pagina.
+ * Il motore no — la maggioranza delle pagine che questo browser riesce ad
+ * aprire non ha nemmeno uno script, e farle pagare due megabyte e mezzo fissi
+ * vorrebbe dire due megabyte e mezzo in meno per le immagini di tutte.
+ *
+ * ! E SI CHIUDE QUANDO LA PAGINA SE NE VA. Un contesto vive quanto la pagina
+ * che lo ha chiesto: le sue variabili, le sue funzioni e i suoi involucri
+ * parlano di un albero che dopo html_analizza non esiste piu'. Tenerlo aperto
+ * vorrebbe dire uno script della pagina di prima che tocca i nodi di quella di
+ * adesso — che e' peggio di non avere JavaScript per niente.
+ *
+ * ! LE TAGLIE SONO PICCOLE APPOSTA. Duemila caselle e novantasei chilobyte di
+ * arena non aprono google.com, e non ci provano: aprono le pagine che
+ * costruiscono un pezzo di se' con uno script, che sono tante e sono proprio
+ * quelle che oggi si vedono vuote. Quando ci sara' un motore piu' grande — il
+ * QuickJS gia' dichiarato in exjs.h — questi due numeri saranno la prima cosa
+ * da rifare, e sono in un posto solo.
+ * ========================================================================== */
+#define JS_OGGETTI    2000u
+#define JS_ARENA      (96u * 1024u)
+#define JS_TESTO      (64u * 1024u)
+#define JS_ASCOLTI    256u
+#define JS_SCRIPT_MAX 16
+
+static ExJsCtx *g_js  = 0;
+static ExDom   *g_dom = 0;
+static void    *g_js_mem = 0;
+static void    *g_dom_mem = 0;
+
+/* L'ultima versione del documento che l'impaginazione ha visto. Il perche' di
+ * questo confronto sta accanto al campo `versione` in html.h. */
+static unsigned int g_vista = 0;
+
+/* ! `console.log` FINISCE NELLA BARRA DI STATO, e non nel vuoto. Una pagina
+ * che stampa un messaggio lo sta scrivendo per qualcuno; buttarlo via
+ * risparmierebbe tre righe e toglierebbe l'unico modo di capire cosa sta
+ * facendo uno script quando la pagina non cambia. Si tiene l'ULTIMA riga: la
+ * barra e' alta sedici pixel, e mostrarne una vecchia sarebbe peggio. */
+static void js_uscita(const char *t, unsigned int n, void *dato)
+{
+    static char riga[160];
+    unsigned int i = 0, k = 0;
+
+    (void)dato;
+    while (i < n && k < sizeof(riga) - 1) {
+        if (t[i] != '\n' && t[i] != '\r') riga[k++] = t[i];
+        else if (k > 0 && riga[k-1] != ' ') riga[k++] = ' ';
+        i++;
+    }
+    riga[k] = '\0';
+    if (k) dico(riga);
+}
+
+static void motore_chiudi(void)
+{
+    if (g_js_mem)  { free(g_js_mem);  g_js_mem = 0; }
+    if (g_dom_mem) { free(g_dom_mem); g_dom_mem = 0; }
+    g_js  = 0;
+    g_dom = 0;
+    ex_sveglia(g_f, 0);
+}
+
+/* Rende 1 se il motore c'e' ed e' agganciato al documento di adesso. */
+static int motore_apri(void)
+{
+    unsigned int quanto;
+
+    if (g_js && g_dom) return 1;
+    motore_chiudi();
+
+    quanto   = exjs_quanto_serve(JS_OGGETTI, JS_ARENA);
+    g_js_mem = malloc(quanto);
+    if (!g_js_mem) { dico("javascript: memoria non disponibile"); return 0; }
+
+    g_js = exjs_apri(g_js_mem, quanto, JS_OGGETTI, JS_ARENA);
+    if (!g_js) { motore_chiudi(); dico("javascript: il motore non si apre"); return 0; }
+    exjs_uscita_metti(g_js, js_uscita, 0);
+
+    quanto    = exdom_quanto_serve(NODI_MAX, JS_TESTO, JS_ASCOLTI);
+    g_dom_mem = malloc(quanto);
+    if (!g_dom_mem) { motore_chiudi(); dico("javascript: memoria non disponibile"); return 0; }
+
+    g_dom = exdom_apri(g_dom_mem, quanto, g_js, &g_doc,
+                       NODI_MAX, JS_TESTO, JS_ASCOLTI);
+    if (!g_dom) { motore_chiudi(); dico("javascript: il ponte non si apre"); return 0; }
+    return 1;
+}
+
+/* ! UN <script> SI SALTA SE DICHIARA DI NON ESSERE JAVASCRIPT. `type` assente
+ * vuol dire JavaScript — e' cosi' che sta scritto in mezzo web — ma
+ * `type="text/template"` e' un pezzo di marcatore che una libreria copiera'
+ * altrove, e darlo in pasto a un interprete darebbe un errore di sintassi su
+ * una pagina che non ha nessuno sbaglio. */
+static int e_javascript(int v)
+{
+    const char *t = html_attr(&g_doc, v, "type");
+    int         i;
+
+    if (!t || !t[0]) return 1;
+    for (i = 0; t[i]; i++)
+        if ((t[i] | 32) == 'j' && (t[i+1] | 32) == 'a' && (t[i+2] | 32) == 'v')
+            return 1;
+    /* «ecmascript» e' l'altro nome dello stesso linguaggio. */
+    for (i = 0; t[i]; i++)
+        if ((t[i] | 32) == 'e' && (t[i+1] | 32) == 'c' && (t[i+2] | 32) == 'm')
+            return 1;
+    return 0;
+}
+
+static void js_grida(const ExJsErrore *e)
+{
+    char b[160];
+
+    if (!e->messaggio[0]) return;
+    snprintf(b, sizeof(b), "javascript, riga %d: %s", e->riga, e->messaggio);
+    dico(b);
+}
+
+/* -----------------------------------------------------------------------------
+ * Far girare gli script della pagina
+ *
+ * ! SI GIRA DRITTO SUL VETTORE DEI NODI, nell'ordine in cui l'analizzatore li
+ * ha creati, che e' l'ordine del documento. E' lo stesso giro che fa
+ * raccogli_css, e per lo stesso motivo: gli script della pagina vanno eseguiti
+ * nell'ordine in cui stanno scritti, perche' il secondo si aspetta di trovare
+ * quel che ha definito il primo.
+ *
+ * ! E SI ESEGUONO PRIMA DEI FOGLI DI STILE E DELL'IMPAGINAZIONE. Uno script
+ * che costruisce meta' della pagina — ed e' quel che fanno le pagine che oggi
+ * si vedono vuote — deve aver finito prima che si decida come impaginare, o
+ * si impaginerebbe il documento senza il pezzo che quello script aggiunge.
+ * --------------------------------------------------------------------------- */
+static void esegui_script(void)
+{
+    int i, fatti = 0, aperti = 0;
+
+    for (i = 0; i < (int)g_doc.nodi_n && fatti < JS_SCRIPT_MAX; i++) {
+        const char *src;
+        ExJsErrore  err;
+        ExJsVal     r;
+        int         f;
+
+        if (g_doc.nodi[i].tipo != HTML_ELEMENTO) continue;
+        if (!uguale(html_nome(&g_doc, i), "script")) continue;
+        if (!e_javascript(i)) continue;
+
+        if (!aperti) {
+            if (!motore_apri()) return;
+            aperti = 1;
+        }
+
+        /* --- lo script che sta altrove ---------------------------------- */
+        src = html_attr(&g_doc, i, "src");
+        if (src && src[0]) {
+            char         url[EXHTTP_URL_MAX];
+            unsigned int n = 0;
+
+            if (!risolvi(src, url, sizeof(url))) continue;
+
+            /* ! SI RIUSA IL BUFFER DELLE IMMAGINI, come fanno i fogli di
+             * stile e per la stessa ragione: gli script si prendono PRIMA
+             * della prima impaginazione, le immagini dopo. */
+            if (!cache_leggi(url, g_imm_buf, sizeof(g_imm_buf), &n)) {
+                ExHttpEsito e;
+
+                dico("script...");
+                if (!exhttp_prendi(url, g_imm_buf, sizeof(g_imm_buf), &e)) continue;
+                if (e.codice != 200 || e.byte == 0) continue;
+                n = e.byte;
+                if (!e.troncata) cache_scrivi(url, g_imm_buf, n);
+            }
+
+            memset(&err, 0, sizeof(err));
+            if (!exjs_esegui(g_js, (const char *)g_imm_buf, n, &r, &err))
+                js_grida(&err);
+            fatti++;
+            continue;
+        }
+
+        /* --- lo script scritto qui -------------------------------------- */
+        for (f = g_doc.nodi[i].primo_figlio; f >= 0; f = g_doc.nodi[f].prossimo) {
+            const char  *t;
+            unsigned int n = 0;
+
+            if (g_doc.nodi[f].tipo != HTML_TESTO) continue;
+            t = html_testo(&g_doc, f);
+            while (t[n]) n++;
+            if (!n) continue;
+
+            memset(&err, 0, sizeof(err));
+            if (!exjs_esegui(g_js, t, n, &r, &err)) js_grida(&err);
+            fatti++;
+        }
+    }
+
+    /* ! LA SVEGLIA SI CHIEDE SOLO SE C'E' QUALCOSA CHE ASPETTA. Una pagina con
+     * uno script che ha finito non ha motivo di svegliare il browser cinque
+     * volte al secondo per sempre — e su una macchina da 32 MB il costo di un
+     * risveglio inutile e' un ridisegno che nessuno ha chiesto. */
+    if (g_js && exjs_lavori_in_attesa(g_js)) ex_sveglia(g_f, 200);
+}
+
+/* ! DOPO OGNI SCRIPT SI GUARDA SE IL DOCUMENTO E' CAMBIATO, e si rifa' solo
+ * allora. E' tutto il motivo per cui html.c tiene un contatore di versione:
+ * senza, l'unica scelta sarebbe fra rimpaginare dopo ogni clic — su un albero
+ * di ventiquattromila nodi, a ogni movimento — e non rimpaginare mai, cioe'
+ * una pagina che non risponde. */
+static void rifai_se_cambiato(void)
+{
+    if (!g_dom) return;
+    if (html_versione(&g_doc) == g_vista) return;
+
+    /* I fogli di stile si rileggono perche' uno script puo' aver aggiunto un
+     * <style> o cambiato una classe: il calcolo dello stile guarda l'albero,
+     * ma le REGOLE stanno in un'altra struttura, e quella non si aggiorna da
+     * sola. */
+    raccogli_css();
+    impagina();
+    g_vista = html_versione(&g_doc);
+    disegna();
+}
+
+/* Il nodo sotto il puntatore, o -1. */
+static int nodo_sotto(int x, int y)
+{
+    int i;
+
+    for (i = 0; i < g_pez_n; i++) {
+        int py = g_pez[i].y - g_scorri;
+        int h  = g_pez[i].img >= 0 ? g_pez[i].h
+                                   : ex_font_altezza(g_pez[i].font);
+
+        if (g_pez[i].nodo < 0) continue;
+        if (x >= g_pez[i].x && x < g_pez[i].x + g_pez[i].w &&
+            y >= py && y < py + h) return g_pez[i].nodo;
+    }
+    return -1;
+}
+
+/* Rende 0 se uno script ha chiamato preventDefault(): allora il collegamento
+ * NON si segue e il modulo NON si manda. E' l'unica cosa che il browser deve
+ * sapere di quel che e' successo dentro il motore. */
+static int clic_al_documento(int x, int y)
+{
+    ExJsErrore err;
+    int        nodo, seguire;
+
+    if (!g_dom) return 1;
+    nodo = nodo_sotto(x, y);
+    if (nodo < 0) return 1;
+
+    memset(&err, 0, sizeof(err));
+    seguire = exdom_evento(g_dom, nodo, "click", &err);
+    js_grida(&err);
+    rifai_se_cambiato();
+    return seguire;
+}
+
 /* -----------------------------------------------------------------------------
  * Andare
  * --------------------------------------------------------------------------- */
@@ -3475,6 +3771,13 @@ static void vai(const char *url, int in_storia, int usa_cache)
      * e non vogliono piu' dire niente. */
     imm_libera_tutte();
 
+    /* ! E CON LORO SE NE VA IL MOTORE, per lo stesso identico motivo: un
+     * contesto JavaScript e' pieno di involucri che sono indici in QUESTO
+     * albero, e fra un istante l'albero e' un altro. Tenerlo aperto vorrebbe
+     * dire uno script della pagina di prima che tocca i nodi di quella di
+     * adesso. */
+    motore_chiudi();
+
     html_prepara(&g_doc, g_nodi, NODI_MAX, g_attr, ATTR_MAX,
                  g_arena, ARENA_MAX);
     html_analizza(&g_doc, (const char *)g_pagina, e.byte);
@@ -3496,8 +3799,14 @@ static void vai(const char *url, int in_storia, int usa_cache)
         for (q = 0; q < CTRL_MAX; q++) g_ctrl[q].nodo = -1;
     }
 
+    /* ! GLI SCRIPT PRIMA DEI FOGLI DI STILE E DELL'IMPAGINAZIONE. Il perche'
+     * sta accanto a esegui_script: uno script che costruisce meta' della
+     * pagina deve aver finito prima che si decida come impaginarla. */
+    esegui_script();
+
     raccogli_css();
     impagina();
+    g_vista = html_versione(&g_doc);
 
     /* ! E SI SCRIVE CON snprintf, non con sprintf: la riga qui sotto e' fatta
      * di pezzi che dipendono dalla pagina, e nessuno di loro ha una lunghezza
@@ -4211,6 +4520,23 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         return ex_procedura_base(f, msg, wp, lp);
     }
 
+    /* ! I TEMPI SI POMPANO DA QUI, e la risoluzione vera e' 200 ms — la
+     * scadenza del poll dentro il ciclo dei messaggi, dichiarata accanto a
+     * ex_sveglia. Un `setTimeout(f, 50)` girera' dopo 200: e' poco per
+     * un'animazione e basta per tutto il resto, e dirlo e' meglio che
+     * promettere i millisecondi e non darli.
+     *
+     * ! E LA SVEGLIA SI SPEGNE QUANDO NON ASPETTA PIU' NESSUNO. Una pagina che
+     * ha finito non ha motivo di svegliare il browser cinque volte al secondo
+     * per sempre. */
+    case EXM_TEMPO:
+        if (g_js) {
+            exjs_pompa(g_js, uptime_ms());
+            rifai_se_cambiato();
+            if (!exjs_lavori_in_attesa(g_js)) ex_sveglia(g_f, 0);
+        }
+        return 0;
+
     case EXM_MOUSE_GIU: {
         int x = EX_X(lp), y = EX_Y(lp), k;
 
@@ -4293,6 +4619,12 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         /* Un clic fuori da ogni casella toglie il fuoco: e' quello che si
          * aspetta chi ha finito di scrivere. */
         if (g_ctrl_fuoco >= 0) { g_ctrl_fuoco = -1; disegna(); }
+
+        /* ! IL DOCUMENTO SENTE IL CLIC PRIMA CHE IL BROWSER LO USI, ed e'
+         * l'ordine giusto: preventDefault() esiste proprio per impedire a un
+         * collegamento di essere seguito, e non potrebbe farlo se il
+         * collegamento fosse gia' stato seguito. */
+        if (!clic_al_documento(x, y)) return 0;
 
         k = link_sotto(x, y);
         if (k >= 0) { segui(k); return 0; }

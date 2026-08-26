@@ -240,8 +240,101 @@ static const char *PAG =
     "<body><div id=\"uno\" class=\"grosso rosso\">ciao</div>"
     "<p class=\"rosso\">testo</p><span>fine</span></body></html>";
 
-int main(void)
+/* -----------------------------------------------------------------------------
+ * La pagina vera
+ *
+ * ! SI FA GIRARE UNA PAGINA DEL SITO DI PROVA SENZA ACCENDERE QEMU, e non e'
+ * pigrizia: un giro dentro la macchina virtuale costa minuti e mostra una
+ * schermata, questo costa un istante e dice quale nodo e' venuto storto. Il
+ * browser fa esattamente queste tre cose in questo ordine — apre il ponte,
+ * esegue gli <script> nell'ordine del documento, poi impagina — quindi cio'
+ * che si vede qui e' cio' che si vedra' li'.
+ * --------------------------------------------------------------------------- */
+static int pagina(const char *nomefile)
 {
+    static char  testo[512 * 1024];
+    FILE        *fp = fopen(nomefile, "rb");
+    unsigned int n;
+    ExJsCtx     *c;
+    ExDom       *D;
+    int          i, fatti = 0;
+
+    if (!fp) { printf("non trovo %s\n", nomefile); return 1; }
+    n = (unsigned int)fread(testo, 1, sizeof(testo) - 1, fp);
+    testo[n] = '\0';
+    fclose(fp);
+
+    html_prepara(&g_doc, g_nodi, NODI, g_attr, ATTR, g_arena, sizeof(g_arena));
+    html_analizza(&g_doc, testo, n);
+
+    c = exjs_apri(g_mem_js, sizeof(g_mem_js), OGG, ARENA);
+    if (!c) { printf("il motore non si apre\n"); return 1; }
+    g_console_n = 0; g_console[0] = '\0';
+    exjs_uscita_metti(c, raccogli, 0);
+
+    D = exdom_apri(g_mem_dom, sizeof(g_mem_dom), c, &g_doc, NODI, TESTO, ASCOLTI);
+    if (!D) { printf("il ponte non si apre\n"); return 1; }
+
+    for (i = 0; i < (int)g_doc.nodi_n; i++) {
+        int f;
+
+        if (g_doc.nodi[i].tipo != HTML_ELEMENTO) continue;
+        if (strcmp(html_nome(&g_doc, i), "script") != 0) continue;
+
+        for (f = g_doc.nodi[i].primo_figlio; f >= 0; f = g_doc.nodi[f].prossimo) {
+            ExJsErrore err;
+            ExJsVal    r;
+            const char *t;
+
+            if (g_doc.nodi[f].tipo != HTML_TESTO) continue;
+            t = html_testo(&g_doc, f);
+            if (!t[0]) continue;
+
+            memset(&err, 0, sizeof(err));
+            if (!exjs_esegui(c, t, (unsigned int)strlen(t), &r, &err))
+                printf("!! script, riga %d: %s\n", err.riga, err.messaggio);
+            fatti++;
+        }
+    }
+
+    printf("script eseguiti: %d\n", fatti);
+    if (g_console[0]) printf("console: %s", g_console);
+
+    /* I tempi: si pompano come farebbe il ciclo dei messaggi del browser. */
+    if (exjs_lavori_in_attesa(c)) {
+        exjs_pompa(c, 5000);
+        printf("dopo i tempi, versione %u\n", html_versione(&g_doc));
+    }
+
+    /* ! E SI PREME QUEL CHE C'E' DA PREMERE. Una pagina di prova che non venga
+     * mai toccata non dice niente sui gestori — e i gestori sono meta' del
+     * motivo per cui il JavaScript esiste. Si cercano gli elementi che hanno
+     * un `id` e un gestore, e si fa partire il clic da fuori, come fa il
+     * browser dal suo ciclo di messaggi. */
+    for (i = 0; i < (int)g_doc.nodi_n; i++) {
+        const char *id = html_attr(&g_doc, (int)i, "id");
+        int         seguire;
+
+        if (g_doc.nodi[i].tipo != HTML_ELEMENTO || !id) continue;
+        if (!html_attr(&g_doc, i, "onclick") &&
+            strcmp(html_nome(&g_doc, i), "a") != 0) continue;
+
+        g_console_n = 0; g_console[0] = '\0';
+        seguire = exdom_evento(D, i, "click", 0);
+        printf("clic su #%-10s  %s\n", id,
+               seguire ? "il browser prosegue" : "preventDefault: fermo");
+    }
+
+    printf("\n--- il documento dopo gli script ---\n");
+    html_serializza(&g_doc, g_doc.radice, 0, g_ser, sizeof(g_ser));
+    printf("%s\n", g_ser);
+    return 0;
+}
+
+int main(int argc, char **argv)
+{
+    if (argc >= 2) return pagina(argv[1]);
+
     printf("\n--- il documento e la navigazione ---\n");
 
     prova_val("document c'e'", PAG, "typeof document", "object");

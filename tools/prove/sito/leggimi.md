@@ -38,6 +38,7 @@ settanta movimenti diventano tre minuti.
 | `tabella.html` | colspan e rowspan senza bordo |
 | `copertura.html` | accentate, entita' numeriche, greco, cirillico, ebraico, arabo |
 | `font.html` | `font-family`: elenchi, nomi veri senza generica, `<pre>`, e il foglio che batte il tag |
+| `script.html` | il motore JavaScript: innerHTML, i nodi costruiti a mano, gli attributi, i clic, `preventDefault`, `setTimeout` |
 | `modulo.html` | una casella e un'area: cursore, selezione, appunti |
 | `perdita.html` | sei immagini senza misure e dodici caselle: i controlli che si moltiplicavano |
 
