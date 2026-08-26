@@ -236,19 +236,24 @@ static ExJsVal chiama(Ese *E, ExJsVal f, ExJsVal questo,
 ExJsVal exjs_chiama(ExJsCtx *c, ExJsVal f, ExJsVal questo,
                     const ExJsVal *arg, int n_arg, ExJsErrore *err)
 {
-    (void)c; (void)f; (void)questo; (void)arg; (void)n_arg; (void)err;
-    /* ! DA FUORI NON SI PUO' ANCORA CHIAMARE UNA FUNZIONE SCRITTA IN
-     * JavaScript, e va detto invece di renderne `undefined` in silenzio:
-     * servirebbe un Ese, che vive dentro exjs_esegui. Il ponte lo fara' lo
-     * scaglione della coda dei lavori, che ha lo stesso bisogno. */
-    if (err) {
-        const char *m = "exjs_chiama non c'e' ancora in questo scaglione";
-        unsigned int i = 0;
-        while (m[i] && i + 1 < EXJS_ERR_LEN) { err->messaggio[i] = m[i]; i++; }
-        err->messaggio[i] = '\0';
-        err->riga = 0; err->colonna = 0;
+    Ese *E = (Ese *)exjs_ese_prendi(c);
+
+    /* ! SI PUO' CHIAMARE SOLO MENTRE IL MOTORE STA GIRANDO, ed e' esattamente
+     * quello che serve: chi chiama di qui e' una funzione NATIVA — `forEach`,
+     * un gestore di evento, un lavoro scaduto — e quelle girano dentro
+     * exjs_esegui o dentro exjs_pompa. Fuori non c'e' nessun interprete a cui
+     * chiedere, e dirlo e' meglio che rendere `undefined`. */
+    if (!E) {
+        if (err) {
+            const char *m = "exjs_chiama fuori da un'esecuzione";
+            unsigned int i = 0;
+            while (m[i] && i + 1 < EXJS_ERR_LEN) { err->messaggio[i] = m[i]; i++; }
+            err->messaggio[i] = '\0';
+            err->riga = 0; err->colonna = 0;
+        }
+        return exjs_indefinito();
     }
-    return exjs_indefinito();
+    return chiama(E, f, questo, arg, n_arg, -1);
 }
 
 /* =============================================================================
@@ -307,6 +312,14 @@ static int identici(ExJsCtx *c, ExJsVal a, ExJsVal b)
  *   null == undefined   vero, e non sono uguali a nient'altro
  *   numero == stringa   la stringa diventa numero
  *   booleano == altro   il booleano diventa numero */
+/* Lo stesso confronto stretto, aperto a base.c: `Array.indexOf` deve usare
+ * `===` come dice la norma, e riscriverlo li' vorrebbe dire due confronti che
+ * devono restare d'accordo. */
+int exjs_identici_pub(ExJsCtx *c, ExJsVal a, ExJsVal b)
+{
+    return identici(c, a, b);
+}
+
 static int uguali(ExJsCtx *c, ExJsVal a, ExJsVal b)
 {
     int ta = exjs_tipo(c, a), tb = exjs_tipo(c, b);
@@ -934,6 +947,12 @@ int exjs_esegui(ExJsCtx *c, const char *sorgente, unsigned int n,
 
     if (!c || !sorgente) return 0;
 
+    /* ! LA LIBRERIA DI BASE SI REGISTRA UNA VOLTA SOLA, alla prima esecuzione
+     * e non in exjs_apri. Cosi' chi apre un contesto per un uso che JavaScript
+     * non e' — e un giorno ci sara' — non paga le duecento proprieta' di Math,
+     * String e Array. */
+    exjs_base_registra(c);
+
     A = exjs_ctx_ast(c);
 
     /* ! L'ALBERO SI RIFA' A OGNI exjs_esegui, ma le VARIABILI NO: due <script>
@@ -958,11 +977,18 @@ int exjs_esegui(ExJsCtx *c, const char *sorgente, unsigned int n,
 
     if (err) { err->messaggio[0] = '\0'; err->riga = 0; err->colonna = 0; }
 
+    /* Da qui in poi le funzioni native possono richiamare il motore: vedi
+     * exjs_chiama. Si toglie prima di uscire, o resterebbe un puntatore a una
+     * struttura sulla pila che non esiste piu'. */
+    exjs_ese_metti(c, &E);
+
     /* ! LE DICHIARAZIONI DI TUTTO IL PROGRAMMA PRIMA DI ESEGUIRE LA PRIMA
      * ISTRUZIONE. Vedi issa(): senza, una funzione non puo' chiamarne una
      * scritta piu' sotto. */
     issa(&E, A->nodi[A->radice].a, exjs_globale_idx(c));
     esegui(&E, A->radice, exjs_globale_idx(c));
+
+    exjs_ese_metti(c, 0);
 
     if (risultato) *risultato = E.ritorno;
 

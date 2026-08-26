@@ -206,6 +206,22 @@ int     exjs_indice_metti(ExJsCtx *c, ExJsVal vet, unsigned int i, ExJsVal v);
 ExJsVal exjs_indice_prendi(ExJsCtx *c, ExJsVal vet, unsigned int i);
 unsigned int exjs_lunghezza(ExJsCtx *c, ExJsVal vet);
 
+/* =============================================================================
+ * DOVE FINISCE console.log
+ *
+ * ! LO DECIDE CHI OSPITA, e non la libreria. In un browser va nella sua
+ * console, in un banco di prova sullo schermo, dentro un servizio da nessuna
+ * parte. Una libreria che scrivesse sullo standard output da se' porterebbe
+ * con se' una decisione che non e' sua — e dentro un server grafico stamperebbe
+ * su una console che nessuno guarda.
+ *
+ * Senza registrarne una, `console.log` non da' errore: tace. E' il
+ * comportamento giusto per un motore incorporato.
+ * ========================================================================== */
+typedef void (*ExJsUscita)(const char *testo, unsigned int n, void *dato);
+
+void exjs_uscita_metti(ExJsCtx *c, ExJsUscita f, void *dato);
+
 /* L'oggetto globale: e' li' che si appendono `console`, `document`, `window`. */
 ExJsVal exjs_globale(ExJsCtx *c);
 

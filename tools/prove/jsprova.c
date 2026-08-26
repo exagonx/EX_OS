@@ -335,6 +335,21 @@ static void prova_albero(const char *nome, const char *testo, const char *atteso
  * servirebbe una `console.log` finta e un confronto sull'uscita — cioe' due
  * cose da far funzionare prima di poter provare la prima.
  * ========================================================================== */
+/* ! console.log FINISCE QUI DENTRO, e non sullo schermo: il banco deve poter
+ * CONFRONTARE quello che uno script ha stampato, non guardarlo passare. E' la
+ * ragione per cui exjs non decide da se' dove scrivere. */
+static char g_console[2048];
+static int  g_console_n;
+
+static void raccogli(const char *testo, unsigned int n, void *dato)
+{
+    unsigned int i;
+    (void)dato;
+    for (i = 0; i < n && g_console_n + 1 < (int)sizeof(g_console); i++)
+        g_console[g_console_n++] = testo[i];
+    g_console[g_console_n] = '\0';
+}
+
 #define MOTORE_OGG   400
 #define MOTORE_ARENA 16384
 
@@ -351,6 +366,8 @@ static void prova_esegui(const char *nome, const char *codice, const char *attes
 
     c = exjs_apri(memoria, sizeof(memoria), MOTORE_OGG, MOTORE_ARENA);
     if (!c) { printf("NO   %-34s il contesto non si apre\n", nome); sbagliate++; return; }
+    g_console_n = 0; g_console[0] = '\0';
+    exjs_uscita_metti(c, raccogli, 0);
 
     if (!exjs_esegui(c, codice, (unsigned int)strlen(codice), &r, &err)) {
         if (atteso == 0) {
@@ -375,6 +392,37 @@ static void prova_esegui(const char *nome, const char *codice, const char *attes
         return;
     }
     printf("ok   %-34s %s\n", nome, s);
+}
+
+/* Come prova_esegui, ma guarda cio' che lo script ha STAMPATO invece del
+ * valore dell'ultima espressione. Serve a provare console.log e tutto cio' che
+ * un giorno scrivera' da solo. */
+static void prova_stampa(const char *nome, const char *codice, const char *atteso)
+{
+    static unsigned char memoria[1 << 20];
+    ExJsCtx    *c;
+    ExJsVal     r;
+    ExJsErrore  err;
+
+    fatte++;
+    memset(&err, 0, sizeof(err));
+
+    c = exjs_apri(memoria, sizeof(memoria), MOTORE_OGG, MOTORE_ARENA);
+    if (!c) { printf("NO   %-34s il contesto non si apre\n", nome); sbagliate++; return; }
+    g_console_n = 0; g_console[0] = '\0';
+    exjs_uscita_metti(c, raccogli, 0);
+
+    if (!exjs_esegui(c, codice, (unsigned int)strlen(codice), &r, &err)) {
+        printf("NO   %-34s riga %d: %s\n", nome, err.riga, err.messaggio);
+        sbagliate++;
+        return;
+    }
+    if (strcmp(g_console, atteso) != 0) {
+        printf("NO   %-34s atteso \"%s\", stampato \"%s\"\n", nome, atteso, g_console);
+        sbagliate++;
+        return;
+    }
+    printf("ok   %-34s stampato: %s", nome, g_console);
 }
 
 int main(void)
@@ -668,6 +716,88 @@ int main(void)
     /* ! LE DUE GUARDIE: un ciclo senza fine e una ricorsione senza fine non
      * devono poter portarsi via la macchina. */
     prova_esegui("ricorsione senza fine", "function f(){return f();}f();", 0);
+
+    printf("\n=== la libreria di base: i nomi globali ===\n\n");
+    /* ! parseInt E Number NON SONO LA STESSA COSA, e le pagine si appoggiano
+     * alla differenza: chi le confonde legge male ogni misura CSS. */
+    prova_esegui("parseInt('12px')",   "parseInt('12px');",   "12");
+    prova_esegui("Number('12px')",     "Number('12px');",     "NaN");
+    prova_esegui("parseInt('0x1f')",   "parseInt('0x1f');",   "31");
+    prova_esegui("parseInt('101',2)",  "parseInt('101',2);",  "5");
+    prova_esegui("parseFloat('3.5em')","parseFloat('3.5em');","3.5");
+    prova_esegui("isNaN",              "isNaN('a');",         "true");
+    prova_esegui("isFinite(1/0)",      "isFinite(1/0);",      "false");
+    prova_esegui("String(12)",         "String(12);",         "12");
+
+    printf("\n=== la libreria di base: Math ===\n\n");
+    prova_esegui("floor",              "Math.floor(3.7);",    "3");
+    prova_esegui("floor negativo",     "Math.floor(-3.2);",   "-4");
+    prova_esegui("ceil",               "Math.ceil(3.2);",     "4");
+    prova_esegui("round",              "Math.round(2.5);",    "3");
+    prova_esegui("abs",                "Math.abs(-7);",       "7");
+    prova_esegui("sqrt",               "Math.sqrt(144);",     "12");
+    prova_esegui("pow",                "Math.pow(2,10);",     "1024");
+    prova_esegui("pow negativo",       "Math.pow(2,-2);",     "0.25");
+    prova_esegui("min",                "Math.min(3,1,2);",    "1");
+    prova_esegui("max",                "Math.max(3,1,2);",    "3");
+    prova_esegui("random sta fra 0 e 1",
+                 "var r=Math.random();r>=0&&r<1;",            "true");
+
+    printf("\n=== la libreria di base: le stringhe ===\n\n");
+    prova_esegui("charAt",             "'ciao'.charAt(1);",   "i");
+    prova_esegui("charCodeAt",         "'A'.charCodeAt(0);",  "65");
+    prova_esegui("fromCharCode",       "String.fromCharCode(65,66);", "AB");
+    /* ! indexOf RENDE -1 QUANDO NON C'E', e mezzo web scrive `>= 0`. */
+    prova_esegui("indexOf trovato",    "'ciao'.indexOf('a');","2");
+    prova_esegui("indexOf assente",    "'ciao'.indexOf('z');","-1");
+    prova_esegui("lastIndexOf",        "'abab'.lastIndexOf('ab');", "2");
+    /* ! slice E substring SI COMPORTANO DIVERSAMENTE COI NEGATIVI, e le pagine
+     * usano tutt'e due. */
+    prova_esegui("slice negativo",     "'ciao'.slice(-2);",   "ao");
+    prova_esegui("substring negativo", "'ciao'.substring(-2);","ciao");
+    prova_esegui("toUpperCase",        "'ciao'.toUpperCase();","CIAO");
+    prova_esegui("toLowerCase",        "'CIAO'.toLowerCase();","ciao");
+    prova_esegui("trim",               "'  x  '.trim();",     "x");
+    prova_esegui("split e lunghezza",  "'a,b,c'.split(',').length;", "3");
+    prova_esegui("split e primo pezzo","'a,b,c'.split(',')[0];", "a");
+    prova_esegui("split('')",          "'ab'.split('').length;", "2");
+    prova_esegui("split() senza nulla","'ab'.split().length;", "1");
+    prova_esegui("replace",            "'a-b-c'.replace('-','+');", "a+b-c");
+    prova_esegui("metodi in catena",   "'  Ciao Mondo '.trim().toLowerCase();",
+                 "ciao mondo");
+
+    printf("\n=== la libreria di base: i vettori ===\n\n");
+    prova_esegui("push rende la lunghezza", "var v=[1];v.push(2,3);", "3");
+    prova_esegui("push e poi leggi",   "var v=[];v.push(9);v[0];", "9");
+    prova_esegui("pop",                "var v=[1,2,3];v.pop();", "3");
+    prova_esegui("pop accorcia",       "var v=[1,2,3];v.pop();v.length;", "2");
+    prova_esegui("join",               "[1,2,3].join('-');",  "1-2-3");
+    prova_esegui("join con null",      "[1,null,2].join('-');", "1--2");
+    prova_esegui("indexOf",            "[1,2,3].indexOf(2);", "1");
+    /* ! IL CONFRONTO E' STRETTO: [1].indexOf('1') rende -1. */
+    prova_esegui("indexOf e' stretto", "[1].indexOf('1');",   "-1");
+    prova_esegui("reverse",            "[1,2,3].reverse().join('');", "321");
+    prova_esegui("slice",              "[1,2,3,4].slice(1,3).join('');", "23");
+    prova_esegui("slice negativo",     "[1,2,3,4].slice(-2).join('');", "34");
+
+    printf("\n=== il C che chiama JavaScript ===\n\n");
+    /* ! QUESTE TRE SONO LA PROVA CHE exjs_chiama FUNZIONA DA DENTRO UNA
+     * NATIVA: e' il meccanismo che servira' a ogni gestore di evento del DOM. */
+    prova_esegui("forEach",
+                 "var s=0;[1,2,3].forEach(function(x){s=s+x;});s;", "6");
+    prova_esegui("forEach vede l'indice",
+                 "var s='';[9,8].forEach(function(x,i){s=s+i;});s;", "01");
+    prova_esegui("map",   "[1,2,3].map(function(x){return x*2;}).join('');", "246");
+    prova_esegui("filter","[1,2,3,4].filter(function(x){return x>2;}).join('');", "34");
+    prova_esegui("map e chiusura",
+                 "var k=10;[1,2].map(function(x){return x+k;}).join('-');", "11-12");
+
+    printf("\n=== console.log ===\n\n");
+    prova_stampa("una riga",       "console.log('ciao');",        "ciao\n");
+    prova_stampa("piu' argomenti", "console.log(1,'a',true);",    "1 a true\n");
+    prova_stampa("un vettore",     "console.log([1,2]);",         "1,2\n");
+    prova_stampa("dentro un ciclo",
+                 "for(var i=0;i<3;i++)console.log(i);",           "0\n1\n2\n");
 
     printf("\n%d prove, %d sbagliate\n", fatte, sbagliate);
     return sbagliate ? 1 : 0;

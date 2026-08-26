@@ -142,6 +142,38 @@ struct ExJsCtx {
      * le pagine vere — ma il testo del primo, una volta eseguito, non serve
      * piu' a nessuno.
      * ===================================================================== */
+    /* =====================================================================
+     * ! I PROTOTIPI DEI TIPI PRIMITIVI, e senza questi `'abc'.indexOf('b')`
+     * non puo' esistere.
+     *
+     * Una stringa non e' un oggetto e non ha proprieta' sue: quando si chiede
+     * `s.indexOf`, JavaScript cerca su String.prototype. Lo stesso per i
+     * vettori e per i numeri. Tenerli QUI, e farli consultare da exjs_prendi,
+     * vuol dire che il posto in cui si cerca una proprieta' resta UNO —
+     * altrimenti l'interprete dovrebbe sapere che le stringhe sono speciali,
+     * e ogni punto che legge una proprieta' andrebbe ricordato.
+     * ===================================================================== */
+    int          proto_str, proto_vet, proto_num, proto_fun;
+
+    /* ! LO STATO D'ESECUZIONE IN CORSO, e serve a una cosa sola: permettere a
+     * una funzione NATIVA di chiamare una funzione scritta in JavaScript.
+     * `[1,2].forEach(f)` e' codice C che deve chiamare `f`, e senza un modo di
+     * risalire all'interprete non potrebbe. Vale solo durante exjs_esegui, ed
+     * e' zero fuori. */
+    void        *ese;
+
+    unsigned int seme;              /* per Math.random */
+    int          base_fatta;        /* la libreria di base e' gia' registrata */
+
+    /* ! DOVE FINISCE console.log LO DECIDE CHI OSPITA, non questa libreria.
+     * In un browser va nella sua console, in un banco di prova sullo schermo,
+     * dentro un servizio da nessuna parte. Una libreria che scrivesse sullo
+     * standard output da se' sarebbe una libreria che si porta dietro una
+     * decisione che non e' sua — e che in un server grafico stamperebbe su una
+     * console che nessuno guarda. */
+    ExJsUscita   uscita;
+    void        *uscita_dato;
+
     ExJsAst      ast;
     ExJsNodo    *nodi;
     unsigned int nodi_max;
@@ -223,6 +255,16 @@ ExJsCtx *exjs_apri(void *memoria, unsigned int byte,
      * sono variabili globali che il linguaggio si trova gia' pronte, e in
      * ES3 si potevano perfino riassegnare.
      * ===================================================================== */
+    c->proto_str = exjs_ogg_nuovo(c, EXJS_CL_OGGETTO);
+    c->proto_vet = exjs_ogg_nuovo(c, EXJS_CL_OGGETTO);
+    c->proto_num = exjs_ogg_nuovo(c, EXJS_CL_OGGETTO);
+    c->proto_fun = exjs_ogg_nuovo(c, EXJS_CL_OGGETTO);
+    c->ese  = 0;
+    c->seme = 2463534242u;          /* un seme qualunque, ma non zero */
+    c->base_fatta  = 0;
+    c->uscita      = 0;
+    c->uscita_dato = 0;
+
     exjs_metti(c, exjs_da_oggetto(c->globale), "undefined", V_INDEF);
     exjs_metti(c, exjs_da_oggetto(c->globale), "NaN",       MASC);
     exjs_metti(c, exjs_da_oggetto(c->globale), "Infinity",
@@ -649,7 +691,20 @@ ExJsVal exjs_prendi(ExJsCtx *c, ExJsVal ogg, const char *nome)
 {
     int i = exjs_a_oggetto(ogg), p;
 
-    if (i < 0) return V_INDEF;
+    /* ! UN VALORE PRIMITIVO CERCA SUL PROPRIO PROTOTIPO. Il perche' sta
+     * accanto a proto_str nella struttura: e' cosi' che `'abc'.length` e
+     * `'abc'.indexOf` possono esistere su una cosa che oggetto non e'. */
+    if (i < 0) {
+        int pr = -1;
+
+        switch (exjs_tipo(c, ogg)) {
+        case EXJS_STRINGA: pr = c->proto_str; break;
+        case EXJS_NUMERO:  pr = c->proto_num; break;
+        default: return V_INDEF;
+        }
+        p = prop_trova(c, pr, nome, 1);
+        return (p >= 0) ? c->prop[p].valore : V_INDEF;
+    }
 
     /* `length` non e' una proprieta' come le altre su un vettore: e' un conto,
      * e deve seguire gli elementi anche quando nessuno l'ha mai scritta. */
@@ -662,7 +717,66 @@ ExJsVal exjs_prendi(ExJsCtx *c, ExJsVal ogg, const char *nome)
     }
 
     p = prop_trova(c, i, nome, 1);
-    return (p >= 0) ? c->prop[p].valore : V_INDEF;
+    if (p >= 0) return c->prop[p].valore;
+
+    /* ! IL PROTOTIPO DI UN VETTORE NON SI AGGANCIA ALLA CREAZIONE, si consulta
+     * qui. Agganciarlo vorrebbe dire una proprieta' `proto` scritta in ogni
+     * vettore appena nato — e i vettori nascono a migliaia dentro un ciclo. */
+    {
+        ExJsOggetto *O = exjs_ogg(c, i);
+        int pr = -1;
+
+        if (O && O->classe == EXJS_CL_VETTORE)       pr = c->proto_vet;
+        else if (O && O->classe == EXJS_CL_FUNZIONE) pr = c->proto_fun;
+        if (pr >= 0) {
+            p = prop_trova(c, pr, nome, 1);
+            if (p >= 0) return c->prop[p].valore;
+        }
+    }
+    return V_INDEF;
+}
+
+int  exjs_base_gia_fatta(ExJsCtx *c) { return c->base_fatta; }
+void exjs_base_segna(ExJsCtx *c)     { c->base_fatta = 1; }
+
+void exjs_uscita_metti(ExJsCtx *c, ExJsUscita f, void *dato)
+{
+    if (!c) return;
+    c->uscita = f;
+    c->uscita_dato = dato;
+}
+
+void exjs_uscita_scrivi(ExJsCtx *c, const char *s, unsigned int n)
+{
+    if (c && c->uscita) c->uscita(s, n, c->uscita_dato);
+}
+
+/* Toglie gli elementi in coda: serve a `pop`. Non libera niente — non c'e'
+ * raccoglitore — ma la lunghezza e' quella che conta per chi legge. */
+void exjs_vettore_tronca(ExJsCtx *c, ExJsVal vet, unsigned int nuova)
+{
+    ExJsOggetto *O = exjs_ogg(c, exjs_a_oggetto(vet));
+    if (O && O->classe == EXJS_CL_VETTORE && nuova <= O->lunghezza)
+        O->lunghezza = nuova;
+}
+
+int  exjs_proto_str(ExJsCtx *c) { return c->proto_str; }
+int  exjs_proto_vet(ExJsCtx *c) { return c->proto_vet; }
+int  exjs_proto_num(ExJsCtx *c) { return c->proto_num; }
+void exjs_ese_metti(ExJsCtx *c, void *e) { c->ese = e; }
+void*exjs_ese_prendi(ExJsCtx *c) { return c->ese; }
+
+/* ! UN GENERATORE PSEUDOCASUALE PROPRIO, e non quello del sistema: Math.random
+ * dev'essere RIPETIBILE nelle prove — lo stesso seme, la stessa sequenza — e
+ * un motore che chiedesse l'ora all'orologio darebbe prove che passano oggi e
+ * falliscono domani. xorshift32: tre righe, nessuno stato globale. */
+double exjs_random(ExJsCtx *c)
+{
+    unsigned int x = c->seme;
+
+    x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+    c->seme = x;
+    return (double)(x >> 8) / 16777216.0;
 }
 
 ExJsVal exjs_globale(ExJsCtx *c) { return exjs_da_oggetto(c->globale); }

@@ -296,6 +296,20 @@ ExJsVal      exjs_concat(ExJsCtx *c, ExJsVal a, ExJsVal b);
 int          exjs_prop_prima(ExJsCtx *c, int ogg);
 int          exjs_prop_prossima(ExJsCtx *c, int p);
 unsigned int exjs_prop_nome(ExJsCtx *c, int p);
+int          exjs_proto_str(ExJsCtx *c);
+int          exjs_proto_vet(ExJsCtx *c);
+int          exjs_proto_num(ExJsCtx *c);
+void         exjs_ese_metti(ExJsCtx *c, void *e);
+void        *exjs_ese_prendi(ExJsCtx *c);
+double       exjs_random(ExJsCtx *c);
+
+/* --- base.c: la libreria di base si registra sul globale --- */
+void         exjs_base_registra(ExJsCtx *c);
+int          exjs_base_gia_fatta(ExJsCtx *c);
+void         exjs_base_segna(ExJsCtx *c);
+void         exjs_vettore_tronca(ExJsCtx *c, ExJsVal vet, unsigned int nuova);
+int          exjs_identici_pub(ExJsCtx *c, ExJsVal a, ExJsVal b);
+void         exjs_uscita_scrivi(ExJsCtx *c, const char *s, unsigned int n);
 
 void exjs_ast_prepara(ExJsAst *A, ExJsNodo *nodi, unsigned int nodi_max,
                       char *arena, unsigned int arena_max);
