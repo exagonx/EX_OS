@@ -18,6 +18,7 @@
 #include "paging.h"
 #include "kmalloc.h"
 #include "syscall.h"    /* i codici di errore e la macro ERR, in un posto solo */
+#include "vga.h"        /* vga_info_fb: il tetto di una zona e' lo schermo */
 
 static ShmZonaK g_zone[SHM_MAX_ZONE];
 
@@ -215,6 +216,38 @@ static void sgancia(Process *proc, uint32_t slot, int smonta)
 /* -----------------------------------------------------------------------------
  * Interfaccia
  * --------------------------------------------------------------------------- */
+/* =============================================================================
+ * pagine_max — quanto puo' essere grande una zona, e perche' lo chiede al video
+ *
+ * Il perche' per esteso sta accanto a SHM_PAGINE_MIN in shm.h. In breve: la
+ * cosa piu' grande che una zona deve poter contenere e' una finestra grande
+ * quanto lo schermo, e piu' grandi non ne esistono perche' il server le
+ * stringe gia' al framebuffer. Un numero scritto qui sarebbe giusto per la
+ * risoluzione di oggi e sbagliato per quella di domani — che e' esattamente
+ * come ci si e' arrivati.
+ *
+ * ! SI USA IL PASSO DI RIGA, NON LA LARGHEZZA: e' il passo a dire quanti byte
+ * occupa davvero una riga sulla scheda, e una scheda che allinea le righe ne
+ * usa piu' della larghezza. Chiedere meno di uno schermo vorrebbe dire un
+ * tetto che ci passa sotto di pochissimo su una macchina e non sull'altra.
+ *
+ * ! E IN MODO TESTO SI RENDE IL PAVIMENTO. Li' vga_info_fb() rende zeri: la
+ * domanda «quanto e' grande uno schermo grafico» non ha risposta, e inventarne
+ * una da un framebuffer che non c'e' darebbe tetto zero, cioe' nessuna zona.
+ * ========================================================================== */
+static uint32_t pagine_max(void)
+{
+    uint32_t fisico, passo, w, h, bpp, byte, pagine;
+
+    vga_info_fb(&fisico, &passo, &w, &h, &bpp);
+    if (passo == 0 || h == 0) return SHM_PAGINE_MIN;
+
+    byte   = passo * h;
+    pagine = ALIGN_UP(byte, PAGE_SIZE) / PAGE_SIZE;
+
+    return (pagine < SHM_PAGINE_MIN) ? SHM_PAGINE_MIN : pagine;
+}
+
 int32_t shm_apri(Process *proc, const char *nome, uint32_t byte, uint32_t flag,
                  uint32_t *out_virt, uint32_t *out_byte)
 {
@@ -244,7 +277,12 @@ int32_t shm_apri(Process *proc, const char *nome, uint32_t byte, uint32_t flag,
         if (byte == 0) return ERR(EINVAL);
 
         pagine = ALIGN_UP(byte, PAGE_SIZE) / PAGE_SIZE;
-        if (pagine > SHM_PAGINE_MAX) return ERR(ENOMEM);
+        if (pagine > pagine_max()) {
+            klog(LOG_WARN, "SHM: PID %u chiede '%s' da %u pagine, il tetto e' "
+                 "%u (uno schermo intero)", proc->pid, nome, pagine,
+                 pagine_max());
+            return ERR(ENOMEM);
+        }
 
         for (i = 0; i < SHM_MAX_ZONE; i++)
             if (g_zone[i].proc == 0 && g_zone[i].fisico == NULL) break;

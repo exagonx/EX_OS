@@ -1,4 +1,142 @@
-# DOVE RIPRENDERE — 25 agosto 2026
+# DOVE RIPRENDERE — 26 agosto 2026
+
+## 26 agosto 2026 — ExWin: il fuoco, i colori casuali, e una risoluzione su tre
+
+Tre guasti, e nessuno dei tre era dove sembrava. Il primo era nel driver di
+tastiera, il secondo nell'allocatore di pagine fisiche, il terzo in una
+costante scelta nel 2026 per la risoluzione del 2026. In ordine.
+
+### 1. La scrivania si vedeva e la tastiera restava alla shell (commit `0f0e348`)
+
+Digitando `exwin` la grafica compariva e i tasti no: cio' che si batteva
+ricompariva tutto insieme tornando indietro con Alt+F1, che era l'unico
+momento in cui la cosa si spiegava.
+
+! **ERA UNA COPIA CHE NESSUNO AGGIORNAVA.** `g_attiva`, la console in primo
+piano secondo `drivers/kbd/kbd.c`, si muoveva SOLO dentro `kbd_commuta()` —
+cioe' solo quando a commutare era Alt+Fn. Vero finche' nessun altro chiamava
+`console_switch()`. Ma `exwin` lo chiama, ed e' voluto: chi digita `exwin`
+vuole la grafica adesso, non vuole leggere come arrivarci. Da quel momento il
+kernel mostrava la console 4 e il driver consegnava i tasti alla 0.
+
+E valeva anche al contrario, uscendo: e' `exwin --attendi` a riportare lo
+schermo alla console di partenza, e i tasti restavano su quella della grafica,
+che non c'e' piu'. Si vedeva il prompt e non si poteva scrivere.
+
+La correzione non e' un messaggio in piu' — un «ho commutato» da mandare al
+driver metterebbe la correttezza in mano a chi chiama, e il prossimo programma
+che commuta senza saperlo rifarebbe lo stesso guasto. E' una domanda: il driver
+chiede al kernel chi sia davanti, una volta per messaggio ricevuto, in cima al
+ciclo (`attiva_segui()`). Una domanda non si puo' dimenticare.
+
+! **ERA GIA' SCRITTO IN QUESTO FILE COME SE FOSSE UNA REGOLA DEL GIOCO:** «dopo
+`exwin` i tasti vanno ancora alla shell, con `Alt+F2` si passa di la'». Era un
+guasto, annotato per mesi come un fatto della vita.
+
+### 2. Colori e disegni casuali uscendo dalla scrivania (commit `710f653`)
+
+Su VirtualBox, chiudendo la scrivania con «Esci», poco dopo lo schermo si
+riempiva di colori e disegni casuali. Non era la grafica: era il PMM.
+
+`pmm_init`, Passo 1, cercava «l'indirizzo fisico piu' alto tra le regioni
+**usabili**» — cosi' diceva il commento — mentre il ciclo prendeva il massimo
+su TUTTE le voci E820, riservate comprese:
+
+    PMM: RAM massima rilevata: 0xfee01000 (4078 MB)      <- l'APIC locale
+
+! **E QUEL NUMERO NON STAVA SOLO IN UN LOG.** `g_total_pages` e' la risposta
+del PMM alla domanda «questo indirizzo e' RAM?», e su quella si regge
+`paging_destroy_directory`: quando un processo muore, le pagine OLTRE la RAM si
+saltano, perche' sono finestre MMIO di `mmio_map`/`fb_map` e non le abbiamo mai
+allocate noi. Col tetto a 0xFEE01000 il framebuffer di VirtualBox — 0xE0000000,
+cioe' **sotto** — non era piu' riconosciuto: alla morte del server grafico le
+sue 469 pagine di memoria video entravano fra le pagine libere. L'allocatore e'
+next-fit: da li' in poi le consegnava come RAM qualunque.
+
+Le due facce erano la stessa cosa:
+
+    [FAULT] PID 17 '/bin/mem': page fault a 0xbfff0f52 (pagina assente)
+
+e lo schermo pieno di colori — i dati del programma, letti dalla scheda come
+celle di testo. Su QEMU il framebuffer sta piu' in alto e la stessa mappa lo
+salvava per caso: ecco perche' non si riproduceva.
+
+    prima:  RAM massima 0xfee01000, 1043969 pagine, 15585 libere
+    dopo:   RAM massima 0x03ff0000,   16368 pagine, 15867 libere
+
+! **E SI SONO RECUPERATI 1,1 MB DI RAM VERI** su una macchina da 64: bitmap e
+elenco dei riferimenti erano dimensionati su un milione di pagine inesistenti,
+un byte l'una.
+
+### 3. A 1024x768 la scrivania non partiva affatto
+
+Il sintomo non nominava la memoria: `pm: il server a finestre non risponde` —
+cioe' il messaggio che la scrivania stampa quando NON TROVA il server, mentre
+il server c'era, si era registrato, e aveva appena detto di no a una zona.
+
+`SHM_PAGINE_MAX` valeva 512 pagine, 2 MB, con accanto scritto «una finestra
+640x480x32 ne usa 300». Era vero, ed era tutto il difetto: il numero era stato
+scelto guardando la risoluzione di allora.
+
+    640x480   -> 283 pagine
+    800x600   -> 447 pagine      ci passava per sessantacinque pagine
+    1024x768  -> 740 pagine      rifiutata
+
+Il tetto serve ancora — senza, un processo chiede una zona da tutta la RAM e la
+ottiene — ma il limite giusto non e' un numero, e' una frase: **la cosa piu'
+grande che una zona deve contenere e' una finestra grande quanto lo schermo.**
+Piu' grandi non ne esistono, perche' `crea()` in `wserver.c` le stringe gia' al
+framebuffer. Quindi il tetto ora e' lo schermo, e si sposta da solo il giorno
+che si cambia risoluzione. `SHM_PAGINE_MIN` resta come pavimento, per quando
+uno schermo grafico non c'e'.
+
+### Due porte trovate aperte cercando la seconda, e chiuse
+
+! **DICHIARATO: NON SONO LA CAUSA DI NIENTE DI QUANTO SOPRA.** Non si sono mai
+viste sbattere, e i commenti nel codice lo dicono a chiare lettere per non far
+credere a chi legge domani di aver trovato il colpevole.
+
+- `vga_ripristina_testo()` girava interrompibile. Le syscall passano da un TRAP
+  gate — `idt.c` lo scrive apposta — quindi il timer puo' dare la CPU a un
+  altro processo in mezzo al cambio di modalita'. Adesso gira a interrupt
+  chiusi, e `g_fb` si azzera PRIMA di toccare la scheda.
+- `wserver` diceva «la grafica e' finita» (`console_grafica(2)`) PRIMA di
+  rimettere il testo. Quel segnale e' cio' che `exwin --attendi` aspetta per
+  chiamare `console_switch()`. Adesso prima si rimette lo schermo.
+
+### Come si sono provati, e con che macchine
+
+Il guasto 2 **non si riproduce su QEMU**: e' servito VirtualBox, che qui non
+parte finche' `kvm_intel` e' caricato. VBoxManage la tastiera la inietta ma il
+mouse no, e «Esci» si preme — il mouse e' arrivato dall'API Python (`vboxapi`,
+`IMouse.putMouseEvent`).
+
+! **E IL MOUSE VA MOSSO A PASSI PICCOLI, come sotto QEMU.** Il server chiede lo
+stato del mouse una volta per giro — venti millisecondi — e una richiesta per
+volta: con passi da cento pixel il puntatore arrivava a due terzi di strada, il
+clic cadeva su «Navigatore» invece che su «Esci», e la prova diceva «l'uscita
+non funziona» avendo aperto il browser.
+
+### Un errore mio, di quelli che questo file tiene scritti
+
+! **HO DATO UNA CAUSA PRIMA DI AVERLA MISURATA.** Per il guasto 2 avevo
+concluso che l'identificativo VBE di VirtualBox cadesse fuori dall'elenco
+accettato da `vbe_spegni()`, e l'ho scritto in un commento come fatto. Poi ho
+ricostruito un'immagine col codice precedente e l'ho provata: su VBoxVGA quel
+ripristino **funzionava gia'**. La sostituzione dell'elenco con la domanda
+scritta-e-riletta resta — un elenco di numeri noti e' sempre incompleto — ma il
+commento adesso dice che si toglie perche' non c'era ragione di fidarsene, non
+perche' lo si sia visto tradire.
+
+E' della stessa famiglia dei tre errori del 25 agosto: una conclusione tratta
+da qualcosa che assomigliava a una prova. La differenza fra le due volte e'
+solo che stavolta la prova l'ho fatta prima di lasciarla scritta.
+
+! **E IL PASSO 1 DI `pmm_init` E' LO STESSO ERRORE VISTO DALL'ALTRO LATO:** il
+commento diceva la cosa giusta — «solo regioni usabili» — sopra un ciclo che le
+prendeva tutte, da sempre. Come `/bin/svga` ieri: li' il commento mentiva e il
+codice aveva ragione, qui il contrario. **La prova sta sempre nel codice, mai
+accanto.**
 
 ## 25 agosto 2026 — il browser: impaginazione, immagini, caratteri, moduli
 
@@ -221,7 +359,9 @@ Chi tocca `exwin/bin/*` lanci il bersaglio suo (`make pm`, `make browser`,
 
 Il **gradino 1 e' cominciato e regge**: un server a finestre in ring 3 su una
 console sua, il toolkit ExWin con header C, C++ e FreeBASIC, e la tastiera che
-arriva alle finestre. E una shell gira dentro una finestra, su due pipe.
+arriva alle finestre — dal 26 agosto 2026 **senza dover premere Alt+Fn**, e a
+tutt'e tre le risoluzioni che Stage 2 sa impostare. E una shell gira dentro una
+finestra, su due pipe.
 
 Il **gradino 0** (mappatura framebuffer, memoria
 condivisa, poll/select, ritorno al modo testo) e l'input funziona da PS/2,
@@ -1626,12 +1766,18 @@ ha nessuna pagina dietro — circa 1,6 KB l'una, tredici in tutto.
     python3 tools/qemu_drive.py "netdetect -c@14" "exwin@14" "key:alt-f2@3" \
         "http://10.0.2.2:8080/@40" "foto:/tmp/pagina.ppm@2"
 
-! **IL BROWSER SI PROVA COME AVVIO AUTOMATICO, NON DALLA SHELL.** La grafica
-sta sulla console 1: dopo `exwin` i tasti vanno ancora alla shell, e
-`http://...` battuto li' rende «comando non trovato». Con `Alt+F2` si passa di
-la', e siccome il browser mette il fuoco sulla casella dell'indirizzo all'avvio
-si scrive l'indirizzo e basta. Per lanciarlo da solo serve `@avvio
-/exwin/bin/browser` in `applicazioni.txt` — `@avvio` non prende argomenti.
+! **SORPASSATO IL 26 AGOSTO 2026, e si tiene scritto perche' era un GUASTO
+annotato come una regola.** Qui c'era: «la grafica sta sulla console 1: dopo
+`exwin` i tasti vanno ancora alla shell, con `Alt+F2` si passa di la'». Non era
+il funzionamento previsto, era il driver di tastiera che non seguiva chi
+commutava la console — vedi il punto 1 del 26 agosto. Adesso dopo `exwin` i
+tasti arrivano alla scrivania da soli, e il `key:alt-f2@3` qui sopra non serve
+piu' (lasciarlo non fa danno: porta a una console di testo e torna).
+
+Resta vero il resto: il browser mette il fuoco sulla casella dell'indirizzo
+all'avvio, quindi si scrive l'indirizzo e basta. Per lanciarlo da solo serve
+`@avvio /exwin/bin/browser` in `applicazioni.txt` — `@avvio` non prende
+argomenti.
 
 I numeri della foto, contati e non guardati: la stessa `quadranti.png` (120x80,
 quattro quadranti pieni) messa due volte, una al naturale e una dichiarata

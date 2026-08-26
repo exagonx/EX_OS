@@ -80,7 +80,35 @@
  * slot in piu' e' una struttura di poche parole: la memoria vera la occupano le
  * pagine, che si allocano solo quando la zona esiste davvero. */
 #define SHM_MAX_ZONE     24     /* zone vive nel sistema */
-#define SHM_PAGINE_MAX  512     /* 2 MB per zona: una finestra 640x480x32 ne usa 300 */
+/* =============================================================================
+ * ! IL TETTO DI UNA ZONA LO DECIDE LO SCHERMO, NON UNA COSTANTE.
+ *
+ * Qui c'erano 512 pagine — 2 MB — con accanto scritto «una finestra 640x480x32
+ * ne usa 300». Era vero, ed era anche tutto il difetto: il numero era stato
+ * scelto guardando la risoluzione di allora. La scrivania a 1024x768 vuole una
+ * finestra di sfondo da 1024x740x4, cioe' 740 pagine, e il tetto la rifiutava:
+ *
+ *     640x480   -> 283 pagine
+ *     800x600   -> 447 pagine      (ci passava per sessantacinque pagine)
+ *     1024x768  -> 740 pagine      (rifiutata)
+ *
+ * Il sintomo non nominava la memoria condivisa: `pm: il server a finestre non
+ * risponde`, cioe' il messaggio che la scrivania stampa quando NON TROVA il
+ * server — mentre il server c'era, si era registrato, e aveva appena detto di
+ * no a una zona. Una risoluzione su tre non aveva la grafica.
+ *
+ * ! IL TETTO SERVE ANCORA, e non si toglie: senza, un processo qualunque
+ * chiede una zona da tutta la RAM e la ottiene. Ma il limite giusto non e' un
+ * numero, e' una FRASE: la cosa piu' grande che una zona deve poter contenere
+ * e' una finestra grande quanto lo schermo. Piu' grande di cosi' non ne
+ * esistono — il server le stringe gia' alla misura del framebuffer, vedi
+ * crea() in wserver.c — quindi il tetto e' lo schermo, e si sposta da solo il
+ * giorno che si cambia risoluzione.
+ *
+ * SHM_PAGINE_MIN e' il pavimento: vale quando uno schermo non c'e' — modo
+ * testo, o una macchina senza framebuffer — dove la domanda non ha risposta.
+ * ========================================================================== */
+#define SHM_PAGINE_MIN  512     /* 2 MB: il minimo, quando lo schermo non c'e' */
 
 /* Flag di shm_apri */
 #define SHM_CREA     0x0001     /* creala se non c'e' (senza: solo attacco) */
