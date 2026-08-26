@@ -182,6 +182,34 @@ int html_testo_metti(HtmlDoc *d, int nodo, const char *testo);
 /* Il numero di modifiche fatte finora. Vedi il campo `versione`. */
 unsigned int html_versione(const HtmlDoc *d);
 
+/* Analizza `testo` DENTRO un elemento che esiste gia', attaccando quel che
+ * trova in fondo ai suoi figli. E' la meta' che serve a `innerHTML = ...`,
+ * insieme a html_svuota. Rende 1, o 0 se il nodo non e' un elemento valido.
+ *
+ * ! NON TOCCA LA RADICE e non azzera niente: chi vuole SOSTITUIRE il contenuto
+ * chiama prima html_svuota. Tenerle separate lascia fare anche l'altra meta'
+ * — `insertAdjacentHTML`, che aggiunge senza cancellare — senza una seconda
+ * funzione quasi uguale. */
+int html_analizza_in(HtmlDoc *d, int padre, const char *testo, unsigned int n);
+
+/* Stacca tutti i figli di un nodo in un colpo solo. Rende 1, o 0 se il nodo
+ * non e' valido. I figli restano validi e si possono riattaccare altrove. */
+int html_svuota(HtmlDoc *d, int nodo);
+
+/* Rimette in marcatore il sottoalbero: con `con_se_stesso` a 0 solo i figli
+ * (`innerHTML`), a 1 anche il nodo stesso (`outerHTML`).
+ *
+ * ! RENDE LA LUNGHEZZA CHE SERVIVA, come snprintf, e scrive fino a `max`
+ * lasciando sempre lo zero finale. Con `fuori` a 0 misura soltanto: cosi' chi
+ * non sa quanto gli serve lo chiede, invece di tentare con buffer sempre piu'
+ * grandi.
+ *
+ * ! NON RIDA' IL DOCUMENTO DI PARTENZA: gli spazi sono gia' ridotti e i
+ * commenti gia' buttati. Rida' un marcatore che, rianalizzato, produce lo
+ * stesso albero — che e' quel che `innerHTML` promette davvero. */
+unsigned int html_serializza(HtmlDoc *d, int nodo, int con_se_stesso,
+                             char *fuori, unsigned int max);
+
 #ifdef __cplusplus
 }
 #endif

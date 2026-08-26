@@ -60,6 +60,9 @@ static struct {
     int  (*attr_togli)(HtmlDoc *, int, const char *);
     int  (*testo_metti)(HtmlDoc *, int, const char *);
     unsigned int (*versione)(const HtmlDoc *);
+    int  (*analizza_in)(HtmlDoc *, int, const char *, unsigned int);
+    int  (*svuota)(HtmlDoc *, int);
+    unsigned int (*serializza)(HtmlDoc *, int, int, char *, unsigned int);
 } P;
 
 static void *chiedi(const ExLibTesta *t, const char *nome)
@@ -110,6 +113,12 @@ static void assicura(void)
                         chiedi(t, "html_testo_metti");
     P.versione        = (unsigned int (*)(const HtmlDoc *))
                         chiedi(t, "html_versione");
+    P.analizza_in     = (int (*)(HtmlDoc *, int, const char *, unsigned int))
+                        chiedi(t, "html_analizza_in");
+    P.svuota          = (int (*)(HtmlDoc *, int))chiedi(t, "html_svuota");
+    P.serializza      = (unsigned int (*)(HtmlDoc *, int, int, char *,
+                                          unsigned int))
+                        chiedi(t, "html_serializza");
 
     P.pronto = 1;
 }
@@ -157,3 +166,13 @@ int html_testo_metti(HtmlDoc *d, int nodo, const char *testo)
 
 unsigned int html_versione(const HtmlDoc *d)
 { assicura(); return P.versione(d); }
+
+int html_analizza_in(HtmlDoc *d, int padre, const char *testo, unsigned int n)
+{ assicura(); return P.analizza_in(d, padre, testo, n); }
+
+int html_svuota(HtmlDoc *d, int nodo)
+{ assicura(); return P.svuota(d, nodo); }
+
+unsigned int html_serializza(HtmlDoc *d, int nodo, int con_se_stesso,
+                             char *fuori, unsigned int max)
+{ assicura(); return P.serializza(d, nodo, con_se_stesso, fuori, max); }

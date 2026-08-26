@@ -58,6 +58,9 @@ static const char *const g_nomi[] = {
     "html_attr_togli",
     "html_testo_metti",
     "html_versione",
+    "html_analizza_in",
+    "html_svuota",
+    "html_serializza",
 
     "__lib_avvio"
 };
@@ -78,6 +81,9 @@ static void *const g_indirizzi[] = {
     (void *)html_attr_togli,
     (void *)html_testo_metti,
     (void *)html_versione,
+    (void *)html_analizza_in,
+    (void *)html_svuota,
+    (void *)html_serializza,
 
     (void *)__libc_ponti_avvia
 };

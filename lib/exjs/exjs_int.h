@@ -256,6 +256,16 @@ typedef struct {
 
     /* --- se e' un vettore --- */
     unsigned int  elem_off, elem_cap, lunghezza;
+
+    /* --- se e' ESOTICO: i due ganci verso il mondo di fuori ---
+     *
+     * ! IL `dato` E' QUELLO DI SOPRA, riusato. Un oggetto non e' mai insieme
+     * una funzione nativa e un ponte verso il documento, e il campo vuol dire
+     * gia' la cosa giusta — «il puntatore che si porta dietro chi lo ha
+     * costruito». Due campi separati sarebbero quattro byte in piu' su ogni
+     * oggetto di ogni pagina per una distinzione che non esiste. */
+    ExJsLeggiProp  eso_leggi;
+    ExJsScriviProp eso_scrivi;
 } ExJsOggetto;
 
 /* Un lavoro in coda: il perche' sta in exjs.h, accanto a exjs_accoda. */

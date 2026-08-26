@@ -4684,6 +4684,32 @@ verifica-exjs: lib/exjs/lex.c lib/exjs/parse.c lib/exjs/val.c lib/exjs/run.c \
 	done
 	@echo "[OK] lib/exjs compila per i386"
 
+# =============================================================================
+# IL BANCO DEL PONTE FRA L'ALBERO E IL MOTORE
+#
+# ! QUI SI COMPILANO INSIEME TRE LIBRERIE CHE NEL SISTEMA SONO SEPARATE, ed e'
+# il senso della prova: exdom e' l'unico posto in cui exhtml ed exjs si
+# guardano, e finche' non li si mette insieme non c'e' niente da provare. Il
+# banco guarda il DOCUMENTO dopo lo script, non il valore che lo script rende:
+# un ponte rotto rende valori benissimo — scrive `innerHTML` in una proprieta'
+# JavaScript e lascia la pagina com'era — ed e' esattamente il difetto che gli
+# oggetti esotici sono nati per rendere impossibile.
+# =============================================================================
+.PHONY: prova-exdom
+prova-exdom:
+	@mkdir -p $(PROVE_HOST_DIR)
+	@cc -Wall -Wextra -O2 -o $(PROVE_HOST_DIR)/domprova \
+	    tools/prove/domprova.c lib/exdom/exdom.c lib/exhtml/html.c \
+	    lib/exjs/lex.c lib/exjs/parse.c lib/exjs/val.c lib/exjs/run.c \
+	    lib/exjs/base.c -I lib/exdom -I lib/exjs -I lib/exhtml
+	@$(PROVE_HOST_DIR)/domprova
+
+.PHONY: verifica-exdom
+verifica-exdom: lib/exdom/exdom.c lib/exdom/exdom.h
+	@$(CC) $(CFLAGS_USER) -I lib/exdom -I lib/exjs -I lib/exhtml \
+	    -I lib/include -c lib/exdom/exdom.c -o $(BUILD_OBJ)/exdom_prova.o
+	@echo "[OK] lib/exdom compila per i386"
+
 .PHONY: prova-excss
 prova-excss:
 	@mkdir -p $(PROVE_HOST_DIR)
@@ -4716,7 +4742,7 @@ prova-exfont:
 
 # Tutti i banchi dell'host, in fila.
 .PHONY: prove-host
-prove-host: prova-exhtml prova-excss prova-exhttp prova-exfont
+prove-host: prova-exhtml prova-excss prova-exhttp prova-exfont prova-exdom
 
 .PHONY: verifica-versioni
 verifica-versioni:

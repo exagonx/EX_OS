@@ -339,6 +339,8 @@ int exjs_ogg_nuovo(ExJsCtx *c, int classe)
     O->elem_off   = 0;
     O->elem_cap   = 0;
     O->lunghezza  = 0;
+    O->eso_leggi  = 0;
+    O->eso_scrivi = 0;
     return i;
 }
 
@@ -670,6 +672,15 @@ int exjs_metti(ExJsCtx *c, ExJsVal ogg, const char *nome, ExJsVal v)
 
     if (i < 0) return 0;
 
+    /* ! IL GANCIO PER PRIMO, altrimenti non intercetterebbe mai niente: la
+     * seconda volta che si scrive `innerHTML` la proprieta' esisterebbe gia'
+     * e il ramo di sotto la riempirebbe senza avvisare nessuno. Se rende 0 la
+     * scrittura prosegue come se il gancio non ci fosse. */
+    {
+        ExJsOggetto *O = exjs_ogg(c, i);
+        if (O && O->eso_scrivi && O->eso_scrivi(c, O->dato, nome, v)) return 1;
+    }
+
     /* ! SI CERCA SENZA RISALIRE. Assegnare a `o.x` quando `x` sta nel
      * prototipo NON cambia il prototipo: crea una proprieta' su `o` che lo
      * copre. Risalire vorrebbe dire che scrivere su un oggetto cambia tutti
@@ -720,8 +731,30 @@ ExJsVal exjs_prendi(ExJsCtx *c, ExJsVal ogg, const char *nome)
             return exjs_numero(c, (double)O->lunghezza);
     }
 
-    p = prop_trova(c, i, nome, 1);
+    /* ! LE PROPRIE PRIMA, POI IL GANCIO, POI IL PROTOTIPO — e l'ordine e'
+     * motivato accanto a ExJsLeggiProp in exjs.h. Qui si cerca senza risalire
+     * apposta: se si risalisse subito, un nome che sta sul prototipo
+     * coprirebbe il gancio, e siccome sul prototipo degli elementi ci sono i
+     * metodi basterebbe una pagina che chiama un attributo come un metodo per
+     * ottenere la funzione invece del valore. */
+    p = prop_trova(c, i, nome, 0);
     if (p >= 0) return c->prop[p].valore;
+
+    {
+        ExJsOggetto *O = exjs_ogg(c, i);
+        if (O && O->eso_leggi) {
+            ExJsVal fuori = V_INDEF;
+            if (O->eso_leggi(c, O->dato, nome, &fuori)) return fuori;
+        }
+    }
+
+    {
+        ExJsOggetto *O = exjs_ogg(c, i);
+        if (O && O->proto >= 0) {
+            p = prop_trova(c, O->proto, nome, 1);
+            if (p >= 0) return c->prop[p].valore;
+        }
+    }
 
     /* ! IL PROTOTIPO DI UN VETTORE NON SI AGGANCIA ALLA CREAZIONE, si consulta
      * qui. Agganciarlo vorrebbe dire una proprieta' `proto` scritta in ogni
@@ -738,6 +771,51 @@ ExJsVal exjs_prendi(ExJsCtx *c, ExJsVal ogg, const char *nome)
         }
     }
     return V_INDEF;
+}
+
+/* =============================================================================
+ * GLI OGGETTI ESOTICI
+ *
+ * ! NON SONO UNA CLASSE A PARTE: sono oggetti normali con due puntatori in
+ * piu'. Tutto quel che vale per un oggetto — il prototipo, le proprieta' che
+ * uno script ci appende, il fatto di essere passato in giro come valore —
+ * continua a valere. Farne una classe avrebbe voluto dire un ramo nuovo in
+ * ogni posto dove si guarda `classe`, per guadagnare niente.
+ * ========================================================================== */
+ExJsVal exjs_esotico(ExJsCtx *c, ExJsLeggiProp leggi, ExJsScriviProp scrivi,
+                     void *dato)
+{
+    int i = exjs_ogg_nuovo(c, EXJS_CL_OGGETTO);
+
+    if (i < 0) return V_INDEF;
+    c->oggetti[i].eso_leggi  = leggi;
+    c->oggetti[i].eso_scrivi = scrivi;
+    c->oggetti[i].dato       = dato;
+    return exjs_da_oggetto(i);
+}
+
+void *exjs_esotico_dato(ExJsCtx *c, ExJsVal v)
+{
+    int i = exjs_a_oggetto(v);
+
+    if (i < 0) return 0;
+    /* ! SI CHIEDE UN GANCIO, non solo un `dato`. Una funzione nativa ha un
+     * `dato` anche lei, e senza questo controllo un metodo del DOM chiamato
+     * su una funzione qualunque leggerebbe quel puntatore come se fosse un
+     * nodo — cioe' il modo piu' rapido per far cadere il browser da uno
+     * script che non ha fatto niente di illegale. */
+    if (!c->oggetti[i].eso_leggi && !c->oggetti[i].eso_scrivi) return 0;
+    return c->oggetti[i].dato;
+}
+
+int exjs_proto_metti(ExJsCtx *c, ExJsVal ogg, ExJsVal proto)
+{
+    int i = exjs_a_oggetto(ogg);
+    int p = exjs_a_oggetto(proto);
+
+    if (i < 0 || p < 0) return 0;
+    c->oggetti[i].proto = p;
+    return 1;
 }
 
 unsigned int exjs_ora(ExJsCtx *c)              { return c ? c->ora_ms : 0; }

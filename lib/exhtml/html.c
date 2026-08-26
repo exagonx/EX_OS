@@ -550,23 +550,22 @@ int html_testo_metti(HtmlDoc *d, int nodo, const char *testo)
     return !d->troncato;
 }
 
-int html_analizza(HtmlDoc *d, const char *t, unsigned int n)
+/* ! IL CORPO DELL'ANALIZZATORE NON SA DOVE STA ATTACCANDO, e da oggi e' cio'
+ * che rende possibile `innerHTML`. Prima costruiva sempre sotto la radice
+ * appena creata; adesso riceve il padre e ci lavora sotto. Non e' un
+ * generalizzare per il gusto di farlo: analizzare un pezzo di marcatore dentro
+ * un elemento che esiste gia' e' esattamente la stessa grammatica, e l'unica
+ * alternativa sarebbe stato un secondo analizzatore da tenere d'accordo col
+ * primo — cioe' due posti dove correggere ogni regola dell'HTML che non e'
+ * XML. */
+static int analizza_dentro(HtmlDoc *d, int padre, const char *t, unsigned int n)
 {
     unsigned int i = 0;
     int          pila[64];
     int          cima = 0;
     int          pre_liv = 0;       /* dentro quanti <pre> siamo */
 
-    if (!d || !d->nodi || !d->arena || !t) return 0;
-
-    d->radice = nodo_nuovo(d, HTML_ELEMENTO);
-    if (d->radice < 0) return 0;
-    d->nodi[d->radice].nome = arena_apri(d);
-    arena_car(d, '#'); arena_car(d, 'd'); arena_car(d, 'o');
-    arena_car(d, 'c');
-    arena_chiudi(d);
-
-    pila[0] = d->radice;
+    pila[0] = padre;
 
     while (i < n) {
         /* --- testo ---------------------------------------------------- */
@@ -810,5 +809,191 @@ int html_analizza(HtmlDoc *d, const char *t, unsigned int n)
         }
     }
 
+    return 1;
+}
+
+/* =============================================================================
+ * RIMETTERE L'ALBERO IN MARCATORE
+ *
+ * ! SI SCRIVE COME snprintf, e per la stessa ragione: rende la lunghezza che
+ * SERVIVA, non quella che ha scritto. Un serializzatore che rendesse «ho
+ * scritto tutto quello che ci stava» costringerebbe chi chiama a indovinare se
+ * il risultato e' completo, e nel dubbio a rifare il lavoro con un buffer piu'
+ * grande a ogni giro. Cosi' invece una chiamata a vuoto misura, e la seconda
+ * riempie.
+ *
+ * ! NON RENDE IL DOCUMENTO ORIGINALE, e va detto prima che qualcuno ci conti.
+ * Gli spazi sono gia' stati ridotti dall'analizzatore, i commenti buttati, i
+ * tag chiusi dove l'HTML permetteva di non chiuderli. Quel che rende e' un
+ * marcatore che RIANALIZZATO da lo stesso albero — che e' cio' che serve a
+ * `innerHTML`, e l'unica promessa che si possa mantenere senza tenere da parte
+ * il testo di partenza per intero.
+ * ========================================================================== */
+typedef struct {
+    char        *fuori;
+    unsigned int max;
+    unsigned int n;                 /* quanto SERVIVA, non quanto sta */
+    int          troppo_fondo;
+} Uscita;
+
+static void u_car(Uscita *u, int c)
+{
+    if (u->fuori && u->n + 1 < u->max) u->fuori[u->n] = (char)c;
+    u->n++;
+}
+
+static void u_testo(Uscita *u, const char *s)
+{
+    while (*s) u_car(u, (unsigned char)*s++);
+}
+
+/* ! SI SFUGGONO TRE CARATTERI E BASTA nel testo, e le virgolette solo dentro
+ * un attributo. Sfuggire tutto quel che si puo' sfuggire darebbe un marcatore
+ * corretto e illeggibile; questi tre sono gli unici che, lasciati passare,
+ * cambierebbero l'albero alla rianalisi. */
+static void u_sfuggi(Uscita *u, const char *s, int in_attributo)
+{
+    while (*s) {
+        int c = (unsigned char)*s++;
+
+        if      (c == '&')  u_testo(u, "&amp;");
+        else if (c == '<')  u_testo(u, "&lt;");
+        else if (c == '>')  u_testo(u, "&gt;");
+        else if (c == '"' && in_attributo) u_testo(u, "&quot;");
+        else u_car(u, c);
+    }
+}
+
+/* ! LA RICORSIONE HA UN FONDO, e stavolta non basta quello dell'analizzatore.
+ * Li' la pila di 64 livelli limita quanto si puo' annidare LEGGENDO; ma da
+ * quando ci sono le mutazioni, uno script che chiama appendChild in un ciclo
+ * costruisce un albero profondo quanto vuole, e a scriverlo si scenderebbe di
+ * altrettanti livelli sulla pila di chi chiama. Non e' un caso di scuola: e'
+ * un ciclo di dieci righe. Oltre il tetto si smette e si segna il troncamento,
+ * che e' l'unica risposta che non e' un guasto. */
+#define SER_LIV_MAX  256
+
+static void scrivi_nodo(const HtmlDoc *d, int nodo, Uscita *u, int liv);
+
+static void scrivi_figli(const HtmlDoc *d, int nodo, Uscita *u, int liv)
+{
+    int f;
+
+    for (f = d->nodi[nodo].primo_figlio; f >= 0; f = d->nodi[f].prossimo)
+        scrivi_nodo(d, f, u, liv);
+}
+
+static void scrivi_nodo(const HtmlDoc *d, int nodo, Uscita *u, int liv)
+{
+    const char *nome;
+    int         a;
+
+    if (liv >= SER_LIV_MAX) { u->troppo_fondo = 1; return; }
+
+    if (d->nodi[nodo].tipo == HTML_TESTO) {
+        u_sfuggi(u, d->arena + d->nodi[nodo].testo, 0);
+        return;
+    }
+
+    nome = d->arena + d->nodi[nodo].nome;
+    u_car(u, '<');
+    u_testo(u, nome);
+
+    for (a = d->nodi[nodo].attributi; a >= 0; a = d->attr[a].prossimo) {
+        u_car(u, ' ');
+        u_testo(u, d->arena + d->attr[a].nome);
+        u_car(u, '=');
+        u_car(u, '"');
+        u_sfuggi(u, d->arena + d->attr[a].valore, 1);
+        u_car(u, '"');
+    }
+    u_car(u, '>');
+
+    /* ! UN ELEMENTO VUOTO NON SI CHIUDE, e non si scrive nemmeno `<br />`.
+     * Quella barra e' XHTML: in HTML non serve, e in un documento che l'ha
+     * appena analizzata sarebbe rimettere una decorazione che l'albero non ha
+     * mai avuto. */
+    if (vuoto(nome)) return;
+
+    scrivi_figli(d, nodo, u, liv + 1);
+    u_car(u, '<');
+    u_car(u, '/');
+    u_testo(u, nome);
+    u_car(u, '>');
+}
+
+unsigned int html_serializza(HtmlDoc *d, int nodo, int con_se_stesso,
+                             char *fuori, unsigned int max)
+{
+    Uscita u;
+
+    u.fuori        = fuori;
+    u.max          = max;
+    u.n            = 0;
+    u.troppo_fondo = 0;
+
+    if (fuori && max > 0) fuori[0] = '\0';
+    if (!d || nodo < 0 || nodo >= (int)d->nodi_n) return 0;
+
+    if (con_se_stesso) scrivi_nodo(d, nodo, &u, 0);
+    else               scrivi_figli(d, nodo, &u, 0);
+
+    if (fuori && max > 0) fuori[(u.n < max) ? u.n : max - 1] = '\0';
+
+    /* ! IL FONDO RAGGIUNTO SI DICE, e si dice nello stesso posto dove si dice
+     * che i buffer non sono bastati: tutt'e due vogliono dire «quel che leggi
+     * e' meno di quel che c'e'», ed e' quella la cosa che chi guarda deve
+     * sapere. E' anche il motivo per cui questa funzione non prende un
+     * documento costante: scrivere non lo cambia, ma accorgersi di non averlo
+     * scritto tutto si', ed e' meglio di un troncamento taciuto. */
+    if (u.troppo_fondo) d->troncato = 1;
+    return u.n;
+}
+
+int html_analizza(HtmlDoc *d, const char *t, unsigned int n)
+{
+    if (!d || !d->nodi || !d->arena || !t) return 0;
+
+    d->radice = nodo_nuovo(d, HTML_ELEMENTO);
+    if (d->radice < 0) return 0;
+    d->nodi[d->radice].nome = arena_apri(d);
+    arena_car(d, '#'); arena_car(d, 'd'); arena_car(d, 'o');
+    arena_car(d, 'c');
+    arena_chiudi(d);
+
+    return analizza_dentro(d, d->radice, t, n);
+}
+
+int html_analizza_in(HtmlDoc *d, int padre, const char *t, unsigned int n)
+{
+    if (!d || !t || !valido(d, padre)) return 0;
+    if (d->nodi[padre].tipo != HTML_ELEMENTO) return 0;
+
+    d->versione++;
+    return analizza_dentro(d, padre, t, n);
+}
+
+int html_svuota(HtmlDoc *d, int nodo)
+{
+    if (!valido(d, nodo)) return 0;
+
+    /* ! SI STACCANO TUTTI IN UN COLPO, senza chiamare html_togli in ciclo.
+     * Quella scorre i fratelli per trovare il precedente, e su un elenco di
+     * mille figli farebbe mezzo milione di passi per un lavoro che qui e' un
+     * inseguire il puntatore una volta sola. */
+    {
+        int f = d->nodi[nodo].primo_figlio;
+
+        while (f >= 0) {
+            int prossimo = d->nodi[f].prossimo;
+
+            d->nodi[f].padre    = -1;
+            d->nodi[f].prossimo = -1;
+            f = prossimo;
+        }
+    }
+    d->nodi[nodo].primo_figlio = -1;
+    d->nodi[nodo].ultimo_figlio = -1;
+    d->versione++;
     return 1;
 }

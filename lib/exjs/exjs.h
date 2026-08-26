@@ -152,6 +152,55 @@ typedef ExJsVal (*ExJsNativa)(ExJsCtx *c, ExJsVal questo,
                               const ExJsVal *arg, int n_arg, void *dato);
 
 /* =============================================================================
+ * GLI OGGETTI ESOTICI — le proprieta' che non stanno in nessuna tabella
+ *
+ * ! SENZA QUESTO, UN DOM E' UNA FOTOGRAFIA, e invecchia senza dirlo.
+ *
+ * Il caso e' `elemento.innerHTML = '<b>ciao</b>'`. Se l'elemento fosse un
+ * oggetto normale, quella riga scriverebbe una proprieta' chiamata "innerHTML"
+ * dentro un oggetto JavaScript, e il documento non se ne accorgerebbe:
+ * nessun errore, nessun avviso, e una pagina che resta com'era. Lo stesso
+ * vale in lettura — `elemento.parentNode` dopo che qualcuno ha spostato il
+ * nodo darebbe il padre di prima. Copiare i campi al momento di avvolgere il
+ * nodo, e sperare che nessuno lo muova, e' la stessa bugia scritta piu' piano.
+ *
+ * Percio' un oggetto puo' avere due GANCI: uno che risponde alle letture e uno
+ * che intercetta le scritture. Chi lo costruisce e' fuori dal linguaggio —
+ * exdom, per gli elementi — e il motore non sa che cosa ci sia dietro.
+ *
+ * ! IL GANCIO PUO' DIRE «NON E' MIA», ed e' la parte che fa funzionare le
+ * pagine vere. Rendendo 0 lascia passare la richiesta al meccanismo normale:
+ * cosi' `elemento.miaRoba = 42` finisce in una proprieta' come tutte le altre,
+ * ed e' giusto, perche' gli script appendono i propri dati agli elementi in
+ * continuazione e non e' compito nostro impedirglielo.
+ *
+ * ! L'ORDINE E' STABILITO: in lettura prima le proprieta' proprie, poi il
+ * gancio, poi il prototipo. Le proprie prima perche' chi ha scritto qualcosa
+ * di suo si aspetta di rileggerlo; il prototipo dopo il gancio perche' li'
+ * stanno i metodi (appendChild e compagnia), che sono comuni a tutti gli
+ * elementi e non hanno motivo di passare da un gancio. In scrittura il gancio
+ * viene per primo, altrimenti non potrebbe mai intercettare niente.
+ * ========================================================================== */
+typedef int (*ExJsLeggiProp)(ExJsCtx *c, void *dato, const char *nome,
+                             ExJsVal *fuori);
+typedef int (*ExJsScriviProp)(ExJsCtx *c, void *dato, const char *nome,
+                              ExJsVal v);
+
+/* Un oggetto i cui accessi passano dai ganci. `dato` e' quel che si porta
+ * dietro: per exdom, il documento e l'indice del nodo. */
+ExJsVal exjs_esotico(ExJsCtx *c, ExJsLeggiProp leggi, ExJsScriviProp scrivi,
+                     void *dato);
+
+/* Il `dato` di un oggetto esotico, o 0 se non lo e'. Serve ai metodi nativi
+ * per ritrovare il nodo partendo da `questo`. */
+void *exjs_esotico_dato(ExJsCtx *c, ExJsVal v);
+
+/* Aggancia un prototipo a un oggetto. Serve a mettere i metodi in un posto
+ * solo invece che in ogni elemento: una pagina con mille nodi altrimenti
+ * pagherebbe mille copie di appendChild. */
+int exjs_proto_metti(ExJsCtx *c, ExJsVal ogg, ExJsVal proto);
+
+/* =============================================================================
  * IL CICLO DI VITA
  * ========================================================================== */
 
