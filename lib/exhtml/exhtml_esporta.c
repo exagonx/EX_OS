@@ -44,6 +44,21 @@ static const char *const g_nomi[] = {
     "html_nome",
     "html_testo",
     "html_attr",
+
+    /* ! E LE MUTAZIONI, dal 26 agosto 2026. Servono a exdom, che e' un'altra
+     * libreria: senza esportarle, il ponte col motore JavaScript non potrebbe
+     * toccare il documento — e uno script che legge la pagina e non la cambia
+     * non serve a niente. */
+    "html_crea_elemento",
+    "html_crea_testo",
+    "html_aggiungi",
+    "html_inserisci_prima",
+    "html_togli",
+    "html_attr_metti",
+    "html_attr_togli",
+    "html_testo_metti",
+    "html_versione",
+
     "__lib_avvio"
 };
 
@@ -53,6 +68,17 @@ static void *const g_indirizzi[] = {
     (void *)html_nome,
     (void *)html_testo,
     (void *)html_attr,
+
+    (void *)html_crea_elemento,
+    (void *)html_crea_testo,
+    (void *)html_aggiungi,
+    (void *)html_inserisci_prima,
+    (void *)html_togli,
+    (void *)html_attr_metti,
+    (void *)html_attr_togli,
+    (void *)html_testo_metti,
+    (void *)html_versione,
+
     (void *)__libc_ponti_avvia
 };
 

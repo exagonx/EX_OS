@@ -71,6 +71,25 @@ typedef struct {
 
     int          radice;
 
+    /* =====================================================================
+     * ! IL CONTATORE DELLE MODIFICHE, e senza di lui il DOM non serve a
+     * niente.
+     *
+     * Uno script che cambia il documento deve far rifare l'impaginazione. Le
+     * due strade sbagliate sono simmetriche: rifarla SEMPRE dopo ogni script —
+     * e allora una pagina con dieci script si impagina dieci volte per niente
+     * — oppure MAI, e allora la pagina mostra quello che c'era prima. Questo
+     * numero cresce a ogni mutazione, e chi impagina confronta il suo con
+     * quello di adesso: due interi, e la domanda ha una risposta esatta.
+     *
+     * ! CRESCE ANCHE PER LE MODIFICHE CHE NON SI VEDONO — un attributo che
+     * nessuno legge, un nodo staccato e riattaccato dov'era. Distinguere «ha
+     * cambiato qualcosa di visibile» da «ha cambiato qualcosa» vorrebbe dire
+     * sapere cosa guarda l'impaginatore, cioe' mettere qui una conoscenza che
+     * e' sua. Meglio un'impaginazione di troppo che una di meno.
+     * ===================================================================== */
+    unsigned int versione;
+
     /* ! CHE SIA FINITO LO SPAZIO SI DICE, non si lascia intuire da una pagina
      * a meta'. Un browser che mostra meno di quello che c'e' senza avvisare
      * fa credere che la pagina sia cosi'. */
@@ -102,6 +121,66 @@ const char *html_testo(const HtmlDoc *d, int nodo);
 /* Il valore di un attributo, o 0 se l'elemento non ce l'ha. Il nome si
  * confronta senza distinguere maiuscole. */
 const char *html_attr(const HtmlDoc *d, int nodo, const char *nome);
+
+/* =============================================================================
+ * MUTARE IL DOCUMENTO
+ *
+ * ! FINO A OGGI L'ALBERO ERA DI SOLA LETTURA, e andava benissimo: chi lo legge
+ * e' l'impaginatore, che non ha motivo di toccarlo. Da quando c'e' un motore
+ * JavaScript non basta piu' — uno script che puo' leggere la pagina e non
+ * cambiarla non serve a niente, e `document.createElement` e' la prima riga di
+ * qualunque codice vero.
+ *
+ * ! NIENTE SI LIBERA, e va saputo. Un nodo tolto lascia la sua casella
+ * occupata, un attributo riscritto lascia la vecchia stringa nell'arena. E' la
+ * stessa scelta dichiarata in ExJs, per la stessa ragione: un documento vive
+ * quanto una pagina, e si butta tutto insieme. Diventera' un problema il
+ * giorno che una pagina sola restera' aperta a mutare per ore — e quel giorno
+ * il posto dove intervenire e' qui, non nei chiamanti.
+ *
+ * ! E OGNI FUNZIONE ALZA `versione`. Il perche' sta accanto al campo.
+ * ========================================================================== */
+
+/* Un elemento nuovo, ancora attaccato a niente. Rende l'indice, o -1 se non
+ * c'e' piu' posto. Il nome si copia e si mette in minuscolo, come fa
+ * l'analizzatore: `createElement('DIV')` e `<div>` devono dare la stessa cosa. */
+int html_crea_elemento(HtmlDoc *d, const char *nome);
+
+/* Un nodo di testo nuovo. ! IL TESTO SI PRENDE COM'E': le entita' NON si
+ * sciolgono, perche' qui non arriva da un documento — arriva da uno script che
+ * ha gia' scritto quello che voleva. Scioglierle vorrebbe dire che
+ * `createTextNode('&amp;')` mostra una `&`, cioe' il contrario di quel che ha
+ * chiesto chi lo ha scritto. */
+int html_crea_testo(HtmlDoc *d, const char *testo);
+
+/* Attacca `figlio` in fondo ai figli di `padre`. Se il figlio era attaccato
+ * altrove, prima lo si stacca — come fa il DOM: un nodo sta in un posto solo,
+ * e appendChild SPOSTA. Rende 1, o 0 se rifiuta.
+ *
+ * ! RIFIUTA DI FARE UN CICLO. Attaccare un nodo dentro un proprio discendente
+ * darebbe un albero che non finisce, e chi lo percorre — l'impaginatore — ci
+ * girerebbe dentro per sempre. Costa una risalita, e la si paga volentieri. */
+int html_aggiungi(HtmlDoc *d, int padre, int figlio);
+
+/* Come sopra, ma prima di `riferimento` (che dev'essere figlio di `padre`).
+ * Con riferimento = -1 si comporta come html_aggiungi. */
+int html_inserisci_prima(HtmlDoc *d, int padre, int figlio, int riferimento);
+
+/* Stacca un nodo dal padre. Il nodo resta valido e si puo' riattaccare.
+ * Rende 1, o 0 se non aveva un padre. */
+int html_togli(HtmlDoc *d, int nodo);
+
+/* Mette o cambia un attributo. Rende 1, o 0 se non c'e' posto. */
+int html_attr_metti(HtmlDoc *d, int nodo, const char *nome, const char *valore);
+
+/* Toglie un attributo. Rende 1 se c'era. */
+int html_attr_togli(HtmlDoc *d, int nodo, const char *nome);
+
+/* Cambia il testo di un nodo di testo. Rende 1, o 0 se non e' testo. */
+int html_testo_metti(HtmlDoc *d, int nodo, const char *testo);
+
+/* Il numero di modifiche fatte finora. Vedi il campo `versione`. */
+unsigned int html_versione(const HtmlDoc *d);
 
 #ifdef __cplusplus
 }

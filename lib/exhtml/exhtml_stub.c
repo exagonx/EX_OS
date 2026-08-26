@@ -47,6 +47,19 @@ static struct {
     const char *(*nome)(const HtmlDoc *, int);
     const char *(*testo)(const HtmlDoc *, int);
     const char *(*attr)(const HtmlDoc *, int, const char *);
+
+    /* Le mutazioni. Sono nove ponti in piu' e non uno stato in piu': la
+     * libreria continua a non ricordare niente fra una chiamata e l'altra,
+     * perche' il documento e' sempre quello di chi chiama. */
+    int  (*crea_elemento)(HtmlDoc *, const char *);
+    int  (*crea_testo)(HtmlDoc *, const char *);
+    int  (*aggiungi)(HtmlDoc *, int, int);
+    int  (*inserisci_prima)(HtmlDoc *, int, int, int);
+    int  (*togli)(HtmlDoc *, int);
+    int  (*attr_metti)(HtmlDoc *, int, const char *, const char *);
+    int  (*attr_togli)(HtmlDoc *, int, const char *);
+    int  (*testo_metti)(HtmlDoc *, int, const char *);
+    unsigned int (*versione)(const HtmlDoc *);
 } P;
 
 static void *chiedi(const ExLibTesta *t, const char *nome)
@@ -80,6 +93,24 @@ static void assicura(void)
     P.attr     = (const char *(*)(const HtmlDoc *, int, const char *))
                  chiedi(t, "html_attr");
 
+    P.crea_elemento   = (int (*)(HtmlDoc *, const char *))
+                        chiedi(t, "html_crea_elemento");
+    P.crea_testo      = (int (*)(HtmlDoc *, const char *))
+                        chiedi(t, "html_crea_testo");
+    P.aggiungi        = (int (*)(HtmlDoc *, int, int))
+                        chiedi(t, "html_aggiungi");
+    P.inserisci_prima = (int (*)(HtmlDoc *, int, int, int))
+                        chiedi(t, "html_inserisci_prima");
+    P.togli           = (int (*)(HtmlDoc *, int))chiedi(t, "html_togli");
+    P.attr_metti      = (int (*)(HtmlDoc *, int, const char *, const char *))
+                        chiedi(t, "html_attr_metti");
+    P.attr_togli      = (int (*)(HtmlDoc *, int, const char *))
+                        chiedi(t, "html_attr_togli");
+    P.testo_metti     = (int (*)(HtmlDoc *, int, const char *))
+                        chiedi(t, "html_testo_metti");
+    P.versione        = (unsigned int (*)(const HtmlDoc *))
+                        chiedi(t, "html_versione");
+
     P.pronto = 1;
 }
 
@@ -99,3 +130,30 @@ const char *html_testo(const HtmlDoc *d, int nodo)
 
 const char *html_attr(const HtmlDoc *d, int nodo, const char *nome)
 { assicura(); return P.attr(d, nodo, nome); }
+
+int html_crea_elemento(HtmlDoc *d, const char *nome)
+{ assicura(); return P.crea_elemento(d, nome); }
+
+int html_crea_testo(HtmlDoc *d, const char *testo)
+{ assicura(); return P.crea_testo(d, testo); }
+
+int html_aggiungi(HtmlDoc *d, int padre, int figlio)
+{ assicura(); return P.aggiungi(d, padre, figlio); }
+
+int html_inserisci_prima(HtmlDoc *d, int padre, int figlio, int riferimento)
+{ assicura(); return P.inserisci_prima(d, padre, figlio, riferimento); }
+
+int html_togli(HtmlDoc *d, int nodo)
+{ assicura(); return P.togli(d, nodo); }
+
+int html_attr_metti(HtmlDoc *d, int nodo, const char *nome, const char *valore)
+{ assicura(); return P.attr_metti(d, nodo, nome, valore); }
+
+int html_attr_togli(HtmlDoc *d, int nodo, const char *nome)
+{ assicura(); return P.attr_togli(d, nodo, nome); }
+
+int html_testo_metti(HtmlDoc *d, int nodo, const char *testo)
+{ assicura(); return P.testo_metti(d, nodo, testo); }
+
+unsigned int html_versione(const HtmlDoc *d)
+{ assicura(); return P.versione(d); }

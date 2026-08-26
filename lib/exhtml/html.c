@@ -281,6 +281,7 @@ void html_prepara(HtmlDoc *d,
     d->arena = arena; d->arena_max = arena_max; d->arena_n = 0;
     d->radice = -1;
     d->troncato = 0;
+    d->versione = 0;
 }
 
 const char *html_nome(const HtmlDoc *d, int nodo)
@@ -307,6 +308,246 @@ const char *html_attr(const HtmlDoc *d, int nodo, const char *nome)
         if (uguale_min(d->arena + d->attr[a].nome, nome))
             return d->arena + d->attr[a].valore;
     return 0;
+}
+
+/* =============================================================================
+ * MUTARE — il perche' di tutto sta in html.h
+ * ========================================================================== */
+
+static int valido(const HtmlDoc *d, int nodo)
+{
+    return d && nodo >= 0 && (unsigned)nodo < d->nodi_n;
+}
+
+/* Una stringa nell'arena, in minuscolo se richiesto. Rende lo scostamento, o
+ * 0 (l'arena vuota) se non c'e' posto — e alza `troncato`, come fa il resto
+ * del file. */
+static unsigned int arena_stringa(HtmlDoc *d, const char *s, int minuscolo)
+{
+    unsigned int off = d->arena_n;
+
+    if (!s) s = "";
+    while (*s) {
+        int c = (unsigned char)*s++;
+        if (minuscolo && c >= 'A' && c <= 'Z') c += 32;
+        arena_car(d, c);
+    }
+    arena_chiudi(d);
+    return d->troncato ? 0u : off;
+}
+
+unsigned int html_versione(const HtmlDoc *d) { return d ? d->versione : 0u; }
+
+int html_crea_elemento(HtmlDoc *d, const char *nome)
+{
+    unsigned int off;
+    int          v;
+
+    if (!d || !nome) return -1;
+
+    /* ! IN MINUSCOLO, come fa l'analizzatore: `createElement('DIV')` e `<div>`
+     * devono dare la stessa cosa, o un selettore CSS ne troverebbe uno e non
+     * l'altro. */
+    off = arena_stringa(d, nome, 1);
+    v   = nodo_nuovo(d, HTML_ELEMENTO);
+    if (v < 0) return -1;
+
+    d->nodi[v].nome = off;
+    d->versione++;
+    return v;
+}
+
+int html_crea_testo(HtmlDoc *d, const char *testo)
+{
+    unsigned int off;
+    int          v;
+
+    if (!d) return -1;
+
+    /* ! COM'E', SENZA SCIOGLIERE LE ENTITA'. Il perche' sta in html.h: qui il
+     * testo non arriva da un documento, arriva da chi lo ha scritto. */
+    off = arena_stringa(d, testo ? testo : "", 0);
+    v   = nodo_nuovo(d, HTML_TESTO);
+    if (v < 0) return -1;
+
+    d->nodi[v].testo = off;
+    d->versione++;
+    return v;
+}
+
+/* ! IL FRATELLO PRECEDENTE NON C'E' NELLA STRUTTURA, quindi staccare vuol dire
+ * scorrere i figli del padre fino a trovare chi punta a noi. Costa quanto sono
+ * lunghi i figli di UN nodo — non quanto e' grande il documento — e aggiungere
+ * un campo `precedente` costerebbe quattro byte su OGNI nodo di ogni pagina per
+ * far risparmiare un giro a un'operazione rara. Se un giorno le mutazioni
+ * diventassero il caso normale, il conto cambia e il campo si aggiunge. */
+int html_togli(HtmlDoc *d, int nodo)
+{
+    int padre, f;
+
+    if (!valido(d, nodo)) return 0;
+    padre = d->nodi[nodo].padre;
+    if (!valido(d, padre)) return 0;
+
+    if (d->nodi[padre].primo_figlio == nodo) {
+        d->nodi[padre].primo_figlio = d->nodi[nodo].prossimo;
+    } else {
+        for (f = d->nodi[padre].primo_figlio; valido(d, f); f = d->nodi[f].prossimo)
+            if (d->nodi[f].prossimo == nodo) {
+                d->nodi[f].prossimo = d->nodi[nodo].prossimo;
+                break;
+            }
+        if (!valido(d, f)) return 0;        /* non era figlio di suo padre */
+    }
+
+    if (d->nodi[padre].ultimo_figlio == nodo) {
+        /* L'ultimo se n'e' andato: il nuovo ultimo va ritrovato. */
+        int ultimo = -1;
+        for (f = d->nodi[padre].primo_figlio; valido(d, f); f = d->nodi[f].prossimo)
+            ultimo = f;
+        d->nodi[padre].ultimo_figlio = ultimo;
+    }
+
+    d->nodi[nodo].padre    = -1;
+    d->nodi[nodo].prossimo = -1;
+    d->versione++;
+    return 1;
+}
+
+/* Rende 1 se `forse_avo` sta sopra `nodo` nell'albero (o e' lui). */
+static int e_avo(const HtmlDoc *d, int forse_avo, int nodo)
+{
+    while (valido(d, nodo)) {
+        if (nodo == forse_avo) return 1;
+        nodo = d->nodi[nodo].padre;
+    }
+    return 0;
+}
+
+int html_inserisci_prima(HtmlDoc *d, int padre, int figlio, int riferimento)
+{
+    if (!valido(d, padre) || !valido(d, figlio)) return 0;
+    if (d->nodi[padre].tipo != HTML_ELEMENTO) return 0;
+
+    /* ! IL CICLO SI RIFIUTA PRIMA DI TOCCARE QUALUNQUE COSA. Attaccare un nodo
+     * dentro un proprio discendente darebbe un albero che non finisce, e chi lo
+     * percorre ci girerebbe dentro per sempre — cioe' il browser si pianta su
+     * una riga di JavaScript sbagliata. */
+    if (e_avo(d, figlio, padre)) return 0;
+
+    /* ! CHI ERA GIA' ATTACCATO SI STACCA PRIMA. Nel DOM un nodo sta in un posto
+     * solo e appendChild SPOSTA: senza questo, il nodo comparirebbe in due
+     * elenchi di figli, e il secondo giro dell'impaginatore lo disegnerebbe due
+     * volte prima di perdersi. */
+    if (valido(d, d->nodi[figlio].padre)) html_togli(d, figlio);
+
+    d->nodi[figlio].padre = padre;
+
+    if (!valido(d, riferimento) || d->nodi[riferimento].padre != padre) {
+        /* In coda. */
+        d->nodi[figlio].prossimo = -1;
+        if (valido(d, d->nodi[padre].ultimo_figlio))
+            d->nodi[d->nodi[padre].ultimo_figlio].prossimo = figlio;
+        else
+            d->nodi[padre].primo_figlio = figlio;
+        d->nodi[padre].ultimo_figlio = figlio;
+    } else if (d->nodi[padre].primo_figlio == riferimento) {
+        d->nodi[figlio].prossimo = riferimento;
+        d->nodi[padre].primo_figlio = figlio;
+    } else {
+        int f;
+        for (f = d->nodi[padre].primo_figlio; valido(d, f); f = d->nodi[f].prossimo)
+            if (d->nodi[f].prossimo == riferimento) {
+                d->nodi[figlio].prossimo = riferimento;
+                d->nodi[f].prossimo = figlio;
+                break;
+            }
+        if (!valido(d, f)) return 0;
+    }
+
+    d->versione++;
+    return 1;
+}
+
+int html_aggiungi(HtmlDoc *d, int padre, int figlio)
+{
+    return html_inserisci_prima(d, padre, figlio, -1);
+}
+
+/* Trova un attributo per nome, senza distinguere maiuscole come fa html_attr.
+ * Rende l'indice o -1. */
+static int attr_trova(HtmlDoc *d, int nodo, const char *nome)
+{
+    int a;
+
+    for (a = d->nodi[nodo].attributi; a >= 0 && (unsigned)a < d->attr_n;
+         a = d->attr[a].prossimo)
+        if (uguale_min(d->arena + d->attr[a].nome, nome)) return a;
+    return -1;
+}
+
+int html_attr_metti(HtmlDoc *d, int nodo, const char *nome, const char *valore)
+{
+    int a;
+
+    if (!valido(d, nodo) || !nome) return 0;
+    if (d->nodi[nodo].tipo != HTML_ELEMENTO) return 0;
+
+    a = attr_trova(d, nodo, nome);
+    if (a >= 0) {
+        /* ! IL VALORE VECCHIO RESTA NELL'ARENA. Vedi html.h: niente si libera,
+         * e uno script che riscrive lo stesso attributo in un ciclo consuma
+         * arena. E' il prezzo dichiarato di questo scaglione. */
+        d->attr[a].valore = arena_stringa(d, valore ? valore : "", 0);
+        d->versione++;
+        return !d->troncato;
+    }
+
+    if (d->attr_n >= d->attr_max) { d->troncato = 1; return 0; }
+
+    {
+        unsigned int n_off = arena_stringa(d, nome, 1);
+        unsigned int v_off = arena_stringa(d, valore ? valore : "", 0);
+        int          na    = (int)d->attr_n++;
+
+        d->attr[na].nome     = n_off;
+        d->attr[na].valore   = v_off;
+        /* In testa: l'ordine degli attributi non conta per nessuno, e mettere
+         * in coda vorrebbe dire scorrere l'elenco a ogni aggiunta. */
+        d->attr[na].prossimo = d->nodi[nodo].attributi;
+        d->nodi[nodo].attributi = na;
+    }
+    d->versione++;
+    return !d->troncato;
+}
+
+int html_attr_togli(HtmlDoc *d, int nodo, const char *nome)
+{
+    int a, p;
+
+    if (!valido(d, nodo) || !nome) return 0;
+
+    a = attr_trova(d, nodo, nome);
+    if (a < 0) return 0;
+
+    if (d->nodi[nodo].attributi == a) {
+        d->nodi[nodo].attributi = d->attr[a].prossimo;
+    } else {
+        for (p = d->nodi[nodo].attributi; p >= 0; p = d->attr[p].prossimo)
+            if (d->attr[p].prossimo == a) { d->attr[p].prossimo = d->attr[a].prossimo; break; }
+    }
+    d->versione++;
+    return 1;
+}
+
+int html_testo_metti(HtmlDoc *d, int nodo, const char *testo)
+{
+    if (!valido(d, nodo)) return 0;
+    if (d->nodi[nodo].tipo != HTML_TESTO) return 0;
+
+    d->nodi[nodo].testo = arena_stringa(d, testo ? testo : "", 0);
+    d->versione++;
+    return !d->troncato;
 }
 
 int html_analizza(HtmlDoc *d, const char *t, unsigned int n)

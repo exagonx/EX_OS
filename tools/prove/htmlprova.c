@@ -284,6 +284,101 @@ int main(int argc, char **argv)
         ok(p.troncato, "finiti i nodi, `troncato` lo dice");
     }
 
+    printf("MUTAZIONI\n");
+    {
+        int corpo, p1, p2, t;
+
+        leggi("<body><p id=uno>A</p></body>");
+        corpo = trova("body");
+        p1    = trova("p");
+
+        /* ! IL CONTATORE DELLE MODIFICHE E' LA COSA PIU' IMPORTANTE: senza,
+         * chi impagina o rifa' tutto a ogni script o non rifa' mai niente. */
+        {
+            unsigned int prima = html_versione(&g_doc);
+            p2 = html_crea_elemento(&g_doc, "SPAN");
+            ok(p2 > 0, "createElement rende un nodo");
+            ok(strcmp(html_nome(&g_doc, p2), "span") == 0,
+               "il nome va in minuscolo, come nell'analizzatore");
+            ok(html_versione(&g_doc) > prima, "creare alza la versione");
+        }
+
+        ok(html_aggiungi(&g_doc, corpo, p2), "appendChild attacca");
+        ok(g_doc.nodi[corpo].ultimo_figlio == p2, "e va in fondo");
+        ok(g_doc.nodi[p2].padre == corpo, "e il padre e' quello giusto");
+
+        t = html_crea_testo(&g_doc, "&amp; resta com'e'");
+        html_aggiungi(&g_doc, p2, t);
+        /* ! LE ENTITA' NON SI SCIOLGONO in createTextNode: il testo arriva da
+         * chi lo ha scritto, non da un documento. */
+        ok(strcmp(html_testo(&g_doc, t), "&amp; resta com'e'") == 0,
+           "createTextNode non tocca le entita'");
+
+        /* ! UN NODO STA IN UN POSTO SOLO: appendChild SPOSTA. */
+        ok(html_aggiungi(&g_doc, p1, p2), "riattaccare altrove funziona");
+        ok(g_doc.nodi[p2].padre == p1, "il padre e' cambiato");
+        ok(g_doc.nodi[corpo].ultimo_figlio == p1,
+           "e il vecchio padre non lo tiene piu'");
+
+        /* ! IL CICLO SI RIFIUTA: senza, l'impaginatore girerebbe per sempre. */
+        ok(!html_aggiungi(&g_doc, p2, p1),
+           "attaccare un avo dentro un discendente si rifiuta");
+        ok(!html_aggiungi(&g_doc, p1, p1), "e nemmeno dentro se stesso");
+
+        /* Togliere, e riattaccare. */
+        {
+            unsigned int prima = html_versione(&g_doc);
+            ok(html_togli(&g_doc, p2), "removeChild stacca");
+            ok(g_doc.nodi[p2].padre == -1, "e il padre non c'e' piu'");
+            ok(!html_togli(&g_doc, p2), "toglierlo due volte rende 0");
+            ok(html_versione(&g_doc) > prima, "togliere alza la versione");
+            ok(html_aggiungi(&g_doc, corpo, p2), "e si puo' riattaccare");
+        }
+
+        /* Inserire in mezzo. */
+        {
+            int a = html_crea_elemento(&g_doc, "i");
+            int b = html_crea_elemento(&g_doc, "b");
+
+            html_aggiungi(&g_doc, corpo, a);
+            ok(html_inserisci_prima(&g_doc, corpo, b, a),
+               "insertBefore mette prima del riferimento");
+            ok(g_doc.nodi[b].prossimo == a, "e l'ordine e' quello");
+        }
+
+        /* Gli attributi. */
+        ok(html_attr_metti(&g_doc, p2, "CLASS", "rosso"),
+           "setAttribute mette");
+        ok(strcmp(html_attr(&g_doc, p2, "class"), "rosso") == 0,
+           "e il nome va in minuscolo");
+        ok(html_attr_metti(&g_doc, p2, "class", "blu"),
+           "riscriverlo funziona");
+        ok(strcmp(html_attr(&g_doc, p2, "class"), "blu") == 0,
+           "e vale il valore nuovo");
+        ok(html_attr_togli(&g_doc, p2, "class"), "removeAttribute toglie");
+        ok(html_attr(&g_doc, p2, "class") == 0, "e poi non c'e' piu'");
+        ok(!html_attr_togli(&g_doc, p2, "class"), "toglierlo due volte rende 0");
+
+        /* Il testo. */
+        ok(html_testo_metti(&g_doc, t, "altro"), "il testo si cambia");
+        ok(strcmp(html_testo(&g_doc, t), "altro") == 0, "e vale quello nuovo");
+        ok(!html_testo_metti(&g_doc, p2, "no"),
+           "ma non su un elemento: rende 0 invece di fingere");
+
+        /* ! L'ALBERO DEVE RESTARE PERCORRIBILE dopo tutto questo: e' la prova
+         * che conta, perche' un elenco di figli rotto non da' errore — da' un
+         * ciclo infinito nell'impaginatore. */
+        {
+            int  f, n = 0;
+            for (f = g_doc.nodi[corpo].primo_figlio; f >= 0 && n < 1000;
+                 f = g_doc.nodi[f].prossimo) {
+                ok(g_doc.nodi[f].padre == corpo, "ogni figlio ha il padre giusto");
+                n++;
+            }
+            ok(n < 1000, "l'elenco dei figli finisce");
+        }
+    }
+
     printf("\n%s\n", errori ? "CI SONO ERRORI" : "tutto a posto");
     return errori ? 1 : 0;
 }
