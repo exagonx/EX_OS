@@ -624,11 +624,13 @@ static void controlla_tipo_mbr(const char *nome, unsigned int tipo_fs)
  * ============================================================================= */
 static void uso(void)
 {
-    printf("uso: mkfs [-t fat16|fat32|ext2] [-L ETICHETTA] <partizione>\n\n");
+    printf("uso: mkfs [-t fat16|fat32|ext2] [-L ETICHETTA] [-f] <partizione>\n\n");
     printf("  mkfs hd0p1                 sceglie dalla dimensione\n");
     printf("  mkfs -t fat32 hd0p1\n");
     printf("  mkfs -t fat16 -L DATI hd0p2\n");
     printf("  mkfs -t ext2  -L SISTEMA hd0p3\n\n");
+    printf("  -f  non chiede conferma. E' per chi la chiede gia' al posto\n");
+    printf("      tuo — `install -prepara` — non per fare prima.\n\n");
     printf("SENZA -t: fino a 2 GB FAT16, oltre FAT32. Non e' una soglia\n");
     printf("arbitraria - FAT16 arriva a 65524 cluster, che con cluster da\n");
     printf("32 KB fanno poco piu' di 2 GB. ext2 non entra mai nella scelta\n");
@@ -642,10 +644,26 @@ static void uso(void)
 
 /* Chiede conferma prima di distruggere. Ritorna 1 se l'utente ha
  * confermato. */
+/* ! «SENZA CHIEDERE» ESISTE PER CHI CHIEDE GIA' AL POSTO SUO, non per chi ha
+ * fretta. L'installatore guidato (`install -prepara`) mostra il piano intero —
+ * partizioni, misure, cosa si perde — e fa scrivere «si» una volta sola per
+ * tutto: arrivato qui, la domanda sarebbe la SECONDA sulla stessa decisione,
+ * e una conferma ripetuta e' una conferma che si impara a dare senza leggere.
+ *
+ * ! CHI LA USA A MANO NON LA TROVA NELL'AIUTO PER CASO: sta scritta, ma dopo
+ * le altre. Una formattazione che non chiede niente non dev'essere la cosa
+ * piu' facile da digitare. */
+static int g_senza_chiedere = 0;
+
 static int conferma(const char *dev)
 {
     char risposta[16];
     int  r;
+
+    if (g_senza_chiedere) {
+        printf("\nmkfs: %s formattata senza conferma (-f).\n", dev);
+        return 1;
+    }
 
     printf("\nTUTTO IL CONTENUTO DI %s VERRA' PERSO.\n", dev);
     printf("Scrivere? (scrivi `si` per confermare): ");
@@ -850,6 +868,8 @@ int main(int argc, char **argv)
                        argv[i]);
                 return 1;
             }
+        } else if (strcmp(argv[i], "-f") == 0) {
+            g_senza_chiedere = 1;
         } else if (strcmp(argv[i], "-L") == 0) {
             if (++i >= argc) { uso(); return 1; }
             etichetta = argv[i];

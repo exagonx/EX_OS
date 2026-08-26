@@ -136,7 +136,7 @@ BUILD_BIN_CD  := $(BUILD_DIR)/bin-cd
 # kernel (kernel/block/atapi.c, kernel/fs/iso9660.c), perche' il kernel
 # deve poterci montare la radice prima che esista un processo.
 # =============================================================================
-PROGRAMMI_FLOPPY := shell hello id chmod shutdown ls mem stack disk libctest fdisk mkfs mkswap trunc chkdsk rename rm_prog mv_prog uname_prog mount_prog cp_prog install_prog textline gfedit mkdir_prog rmdir_prog delete_prog hwconfig hwinfo cmp_prog shmtest polltest toolinst login sudo help_prog keymap libc testo mouse_prog floppy_drv kbd_drv svga_drv vgaprova_drv \
+PROGRAMMI_FLOPPY := shell hello id chmod shutdown ls mem stack disk fdisk mkfs mkswap trunc chkdsk rename rm_prog mv_prog uname_prog mount_prog cp_prog install_prog textline gfedit mkdir_prog rmdir_prog delete_prog hwconfig hwinfo cmp_prog shmtest polltest toolinst login sudo help_prog keymap libc testo mouse_prog floppy_drv kbd_drv svga_drv vgaprova_drv \
                     pci_drv mouseser_drv uhci_drv xhci_drv
 
 # =============================================================================
@@ -170,7 +170,7 @@ PROGRAMMI_FLOPPY := shell hello id chmod shutdown ls mem stack disk libctest fdi
 # `make verifica-programmi` — che le due ISO eseguono da sole — confronta
 # le liste con il contenuto di bin/ e si ferma dicendo quali mancano.
 # =============================================================================
-PROGRAMMI_CD := swaptest netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp scarica telnet telnetd sshd xcp winprova exwincmd
+PROGRAMMI_CD := swaptest libctest netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp scarica telnet telnetd sshd xcp winprova exwincmd
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
 PROGRAMMI_EXWIN := exwin_so exdlg_so eximg_so exfont_so exhttp_so exhtml_so excss_so wserver pm filemgr edit term fontprova orologio browser
 
@@ -537,7 +537,17 @@ $(STACK_BIN): $(STACK_SRC) $(STACK_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START
 # e deve poter girare sulla macchina che ha il problema — che magari e'
 # proprio quella senza lettore CD.
 LIBCTEST_SRC := bin/libctest/libctest.c
-LIBCTEST_BIN := $(BUILD_BIN)/libctest
+# ! LIBCTEST STA SUL CD, NON SUL FLOPPY, dal 26 agosto 2026. Sono cinquanta
+# kilobyte di sole PROVE — nessun sistema ne ha bisogno per funzionare — su
+# un supporto da un megabyte e mezzo che era arrivato a quattromila byte
+# liberi. La regola e' la stessa di swaptest: chi PREPARA una macchina la
+# avvia dal floppy e ha bisogno di fdisk, mkfs, mkswap, install; chi PROVA
+# che le cose funzionano ha il CD.
+#
+# ! E tools/mkfloppy.sh COPIA TUTTO CIO' CHE TROVA in build/bin/ senza
+# consultare nessun elenco, quindi l'unico modo di tenere fuori un programma
+# e' non costruirlo li' dentro.
+LIBCTEST_BIN := $(BUILD_BIN_CD)/libctest
 LIBCTEST_LD  := bin/libctest/libctest.ld
 
 # ! COLLEGATO ALLA LIBC CONDIVISA, ed e' la prova che conta piu' di tutte: 294
@@ -551,7 +561,7 @@ LIBCTEST_LD  := bin/libctest/libctest.ld
 $(LIBCTEST_BIN): $(LIBCTEST_SRC) $(LIBCTEST_LD) $(LIBC_PONTI_OBJ) $(LIBC_START) \
                  $(LIBC_HDR) $(LIBC_SO) $(SEGNO_FLAG)
 	@echo "=== Compilazione /bin/libctest (libc CONDIVISA) ==="
-	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -c $(LIBCTEST_SRC) -o $(BUILD_OBJ)/libctest_main.o
 	$(CC) -m32 -c $(LIBC_START)                            -o $(BUILD_OBJ)/libctest_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(LIBCTEST_LD) \
@@ -3270,7 +3280,7 @@ $(KERNEL_BIN): $(KERNEL_ELF) $(SEGNO_FLAG)
 # aggiunto solo alla prima si costruisce e non entra mai in un floppy nuovo.
 # La guardia `verifica-dipendenze-floppy` qui sotto confronta le due.
 PROGRAMMI_FLOPPY_OUT := $(SHELL_BIN) $(HELLO_BIN) $(LS_BIN) $(MEM_BIN) \
-                        $(STACK_BIN) $(DISK_BIN) $(LIBCTEST_BIN) $(FDISK_BIN) \
+                        $(STACK_BIN) $(DISK_BIN) $(FDISK_BIN) \
                         $(MKFS_BIN) $(MKSWAP_BIN) $(TRUNC_BIN) $(CHKDSK_BIN) $(RENAME_BIN) \
                         $(RM_BIN) $(MV_BIN) $(UNAME_BIN) $(MOUNT_BIN) \
                         $(CP_BIN) $(INSTALL_BIN) $(TEXTLINE_BIN) $(GFEDIT_BIN) \

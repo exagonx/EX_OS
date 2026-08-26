@@ -1,5 +1,65 @@
 # DOVE RIPRENDERE — 26 agosto 2026
 
+## 26 agosto 2026 — il disco nuovo in un percorso solo
+
+`install -prepara hd0`: mostra il disco e cio' che c'e' sopra, chiede quanto
+dare al sistema, quanto allo scambio e se farne una terza per i dati, mostra il
+piano, e dopo un «si» scrive la tabella, formatta in ext2 e prepara l'area di
+scambio. Poi `install /disco` mette la riga `swap` in kernel.cfg da solo.
+
+! **E' UN COMANDO A PARTE, NON UN COMPORTAMENTO DI `install`.** In testa a
+install.c c'e' scritto da sempre che «non partiziona e non formatta: sono
+operazioni distruttive e vanno fatte di proposito, non come effetto
+collaterale». Resta vero — `install /disco` non e' cambiato di una riga.
+
+Quello che mancava non era la distruzione automatica: era il **percorso**. Le
+tre cose si potevano gia' fare con `fdisk`, `mkfs` e `mkswap`, e chi installava
+doveva ricordarsi tutti e tre i comandi, il loro ordine, e che lo scambio va poi
+dichiarato in kernel.cfg.
+
+! **E NON RIFA' NESSUNO DEI TRE.** La tabella la scrive il kernel (`partwrite`,
+l'unica porta al partizionamento: valida tutto o rifiuta tutto e rilegge i
+dispositivi da se'), il filesystem lo fa `mkfs`, la firma la mette `mkswap`.
+Qui c'e' solo l'ordine e le domande da fare prima. E' la stessa scelta della
+finestra Impostazioni di ExWin, che chiama `/dev/svga.drv` invece di imitarlo.
+
+### La riga `swap` in kernel.cfg se la trova da sola
+
+`install` cerca l'area di scambio **come la cerca il kernel: dalla firma dentro
+la partizione**, non dal byte di tipo nella tabella. Sono due sorgenti diverse
+per la stessa domanda, e fidandosi del tipo si proporrebbe come area una
+partizione che il kernel poi rifiuta — cioe' una riga che promette memoria
+virtuale e non la accende.
+
+Vale la regola di `CFG_NECESSARIE`: voce assente si aggiunge, voce presente si
+lascia, perche' quella e' una decisione di chi usa il sistema.
+
+### Provato dall'inizio alla fine, su un disco vergine da 128 MB
+
+    install -prepara hd0   ->  hd0p1  64 MB ext2 (avviabile)
+                               hd0p2  32 MB scambio
+                               hd0p3  31 MB ext2
+
+Letto dall'host a macchina spenta: tipi 0x83/0x82/0x83, inizi 2048 / 133120 /
+198656 (tutti allineati a 1 MiB), e `EXOSSWAP` nel primo settore della seconda.
+Poi `install -m /disco` ha scritto `+ [kernel] swap = hd0p2`, e il sistema
+avviato **dal proprio disco** dice:
+
+    SWAP: 'hd0p2' attiva: 8191 slot da 4 KB (31 MB), elenco di 1024 byte
+
+### Due cose che sono cambiate per far posto
+
+! **`mkfs` ha imparato `-f`**, e non e' per chi ha fretta: e' per chi la domanda
+la fa gia' al posto suo. L'installatore mostra il piano intero e fa scrivere
+«si» una volta sola; arrivato a mkfs, quella sarebbe la SECONDA conferma sulla
+stessa decisione — e una conferma ripetuta e' una conferma che si impara a dare
+senza leggere.
+
+! **`libctest` e' passato sul CD.** Sono cinquanta kilobyte di sole prove su un
+supporto da 1,44 MB che era arrivato a quattromila byte liberi. Stessa regola di
+`swaptest`: chi PREPARA una macchina la avvia dal floppy e ha bisogno di fdisk,
+mkfs, mkswap, install; chi PROVA ha il CD. Adesso il floppy ha 50 KB liberi.
+
 ## 26 agosto 2026 — la memoria virtuale, su una partizione dedicata
 
 Il gradino sotto a tutto il resto: senza, un motore JavaScript su una macchina

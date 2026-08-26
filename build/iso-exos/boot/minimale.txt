@@ -15,7 +15,6 @@ bin/hwinfo
 bin/id
 bin/install
 bin/keymap
-bin/libctest
 bin/login
 bin/ls
 bin/mem

@@ -62,9 +62,22 @@
  * -----------------------------------------------------------------------
  * COSA NON FA
  *
- * Non partiziona e non formatta. Sono due operazioni che distruggono dati
- * e vanno fatte con strumenti dedicati, con l'utente che sa cosa sta
- * cancellando — non come effetto collaterale di "installa".
+ * `install <punto>` non partiziona e non formatta. Distruggono dati, e vanno
+ * fatte con l'utente che sa cosa sta cancellando — non come effetto
+ * collaterale di "installa". Questo non e' cambiato di una riga.
+ *
+ * ! MA DAL 26 AGOSTO 2026 C'E' UN MODO A PARTE CHE LE FA, e la differenza sta
+ * tutta nell'essere un ALTRO COMANDO: `install -prepara hd0`. Mostra il disco
+ * e cio' che c'e' sopra, chiede quanto dare al sistema, quanto allo scambio e
+ * se farne una terza per i dati, mostra il piano, e solo dopo un «si» scrive
+ * la tabella, formatta in ext2 e prepara l'area di scambio.
+ *
+ * Quello che mancava non era la distruzione automatica: era il PERCORSO. Le
+ * tre cose si potevano gia' fare con fdisk, mkfs e mkswap, e chi installava
+ * doveva ricordarsi tutti e tre i comandi, il loro ordine, e che lo scambio va
+ * poi dichiarato in kernel.cfg. Qui non si RIFA' nessuno dei tre — la tabella
+ * la scrive il kernel, il filesystem lo fa mkfs, la firma la mette mkswap — si
+ * mettono in fila e si chiede una volta sola.
  * ============================================================================= */
 #include "libc.h"
 #include "exuser.h"
@@ -1050,6 +1063,42 @@ static const VoceCfg CFG_NECESSARIE[] = {
     { 0, 0, 0, 0 }
 };
 
+/* =============================================================================
+ * L'AREA DI SCAMBIO SI TROVA DA SOLA, e finisce fra le voci da proporre
+ *
+ * ! LA SI CERCA COME LA CERCA IL KERNEL: dalla FIRMA dentro la partizione, non
+ * dal byte di tipo nella tabella. Sono due sorgenti diverse per la stessa
+ * domanda, e se questo programma si fidasse del tipo proporrebbe come area di
+ * scambio una partizione che il kernel poi rifiuta — cioe' una riga in
+ * kernel.cfg che promette memoria virtuale e non la accende.
+ *
+ * ! E SI PROPONE, NON SI IMPONE. Vale la regola di CFG_NECESSARIE: se la voce
+ * `swap` nel file c'e' gia', e' una decisione di chi usa il sistema e si
+ * lascia — anche se punta a un'altra partizione.
+ * ========================================================================== */
+static char g_swap_trovata[BLKINFO_NOME_MAX];
+
+static const char *cerca_area_swap(void)
+{
+    BlkInfo       v[16];
+    unsigned char settore[512];
+    int           n, i;
+
+    n = blkinfo(v, 16, 0);
+    if (n < 0) return 0;
+
+    for (i = 0; i < n; i++) {
+        if (v[i].tipo != 3) continue;               /* solo partizioni */
+        if (blkread(v[i].nome, 0, 1, settore) < 0) continue;
+        if (memcmp(settore, "EXOSSWAP", 8) != 0) continue;
+
+        strncpy(g_swap_trovata, v[i].nome, sizeof(g_swap_trovata) - 1);
+        g_swap_trovata[sizeof(g_swap_trovata) - 1] = '\0';
+        return g_swap_trovata;
+    }
+    return 0;
+}
+
 /* Tutto il file in `dst`. Rende i byte letti, -1 se non si apre. */
 static int cfg_leggi(const char *perc, char *dst, unsigned int max)
 {
@@ -1230,14 +1279,38 @@ static void aggiorna_kernel_cfg(const char *perc)
     char         riga[192];
     char         bak[PERC_MAX];
     int          i, aggiunte = 0, stretto = 0;
+    VoceCfg      elenco[8];
 
     if (cfg_leggi(perc, testo, sizeof(testo)) < 0) {
         printf("  ! %s non si rilegge: lo lascio com'e'\n", perc);
         return;
     }
 
-    for (i = 0; CFG_NECESSARIE[i].chiave; i++) {
-        const VoceCfg *v = &CFG_NECESSARIE[i];
+    /* ! L'ELENCO SI COMPONE ADESSO perche' una delle voci ha un valore che si
+     * sa solo guardando i dischi di questa macchina. Le altre restano
+     * costanti: e' la tabella qui sopra, copiata. */
+    {
+        const char *dev = cerca_area_swap();
+        unsigned int k;
+
+        for (k = 0; k < (unsigned)(sizeof(elenco)/sizeof(elenco[0])) - 1 &&
+                    CFG_NECESSARIE[k].chiave; k++)
+            elenco[k] = CFG_NECESSARIE[k];
+
+        if (dev && k < (unsigned)(sizeof(elenco)/sizeof(elenco[0])) - 1) {
+            elenco[k].sezione = "kernel";
+            elenco[k].chiave  = "swap";
+            elenco[k].valore  = dev;
+            elenco[k].perche  = "c'e' un'area di scambio pronta su questo "
+                                "sistema, e senza questa riga resta spenta";
+            k++;
+        }
+        elenco[k].sezione = 0; elenco[k].chiave = 0;
+        elenco[k].valore  = 0; elenco[k].perche = 0;
+    }
+
+    for (i = 0; elenco[i].chiave; i++) {
+        const VoceCfg *v = &elenco[i];
         unsigned int   coda = 0;
         int            dove;
 
@@ -1315,9 +1388,9 @@ static void aggiorna_kernel_cfg(const char *perc)
         printf("    altro, e oltre quel tetto le sezioni finali spariscono.\n");
         printf("    Togli qualche commento e rilancia, oppure aggiungi a"
                " mano:\n");
-        for (i = 0; CFG_NECESSARIE[i].chiave; i++)
-            printf("      [%s] %s = %s\n", CFG_NECESSARIE[i].sezione,
-                   CFG_NECESSARIE[i].chiave, CFG_NECESSARIE[i].valore);
+        for (i = 0; elenco[i].chiave; i++)
+            printf("      [%s] %s = %s\n", elenco[i].sezione,
+                   elenco[i].chiave, elenco[i].valore);
     }
 
     if (aggiunte > 0) {
@@ -1409,6 +1482,301 @@ static int installa_strumenti(int argc, char **argv)
     return stato;
 }
 
+/* =============================================================================
+ * IL DISCO NUOVO — partizionare, formattare, e dare un posto alla memoria
+ * virtuale, in una domanda per volta
+ *
+ * ! E' UN MODO A PARTE, E NON UN COMPORTAMENTO DI `install`. Sopra sta scritto,
+ * da sempre, che questo programma «non partiziona e non formatta: sono
+ * operazioni distruttive e vanno fatte di proposito, non come effetto
+ * collaterale». Resta vero: `install /disco` non e' cambiato di una riga.
+ * Quello che mancava non era la distruzione automatica — era il PERCORSO, cioe'
+ * qualcuno che chieda le tre misure una volta sola invece di far ricordare tre
+ * comandi e la sintassi di ognuno.
+ *
+ * ! E NON RIFA' NIENTE DI CIO' CHE ESISTE GIA'. La tabella la scrive il kernel
+ * (partwrite, l'unica porta al partizionamento: valida tutto o rifiuta tutto,
+ * e rilegge i dispositivi da se'), il filesystem lo fa `mkfs`, la firma dello
+ * scambio la mette `mkswap`. Qui c'e' solo l'ordine in cui vanno fatte e le
+ * domande da fare prima. Rifare uno di quei tre pezzi vorrebbe dire una seconda
+ * verita' accanto a quella vera — ed e' esattamente cio' che la finestra delle
+ * Impostazioni di ExWin ha evitato chiamando /dev/svga.drv invece di imitarlo.
+ *
+ * ! LE MISURE SI ALLINEANO A UN MEGABYTE. 2048 settori: e' quello che fanno
+ * tutti da vent'anni, e non e' superstizione — un disco a settori da 4 KB che
+ * riceve scritture disallineate le paga con una lettura-modifica-scrittura
+ * ognuna. Allineare costa al massimo un megabyte di spazio.
+ * ========================================================================== */
+#define PREP_ALLINEA    2048u       /* 1 MiB */
+
+static int prep_riga(char *dst, unsigned int max)
+{
+    int n = (int)read(0, dst, (size_t)max - 1);
+
+    if (n <= 0) { dst[0] = '\0'; return -1; }
+    dst[n] = '\0';
+    while (n > 0 && (dst[n - 1] == '\n' || dst[n - 1] == '\r')) dst[--n] = '\0';
+    return n;
+}
+
+static unsigned int prep_mb(const char *domanda, unsigned int predefinito,
+                            unsigned int massimo)
+{
+    char r[32];
+
+    for (;;) {
+        unsigned int v;
+
+        printf("%s [%u]: ", domanda, predefinito);
+        if (prep_riga(r, sizeof(r)) < 0) return predefinito;
+        if (r[0] == '\0') return predefinito;
+
+        v = (unsigned int)atoi(r);
+        if (v == 0) {
+            printf("  Zero non e' una misura. Invio accetta %u.\n", predefinito);
+            continue;
+        }
+        if (v > massimo) {
+            printf("  Ci stanno al massimo %u MB.\n", massimo);
+            continue;
+        }
+        return v;
+    }
+}
+
+static int prep_si(const char *domanda, int predefinito)
+{
+    char r[16];
+
+    printf("%s [%s]: ", domanda, predefinito ? "S/n" : "s/N");
+    if (prep_riga(r, sizeof(r)) < 0) return predefinito;
+    if (r[0] == '\0') return predefinito;
+    return r[0] == 's' || r[0] == 'S';
+}
+
+/* Lancia un programma e aspetta. Rende 0 se e' andato bene. */
+static int prep_lancia(const char *perc, char *a0, char *a1, char *a2,
+                       char *a3, char *a4)
+{
+    char *v[7];
+    int   n = 0, pid, stato = 0;
+
+    v[n++] = (char *)perc;
+    if (a0) v[n++] = a0;
+    if (a1) v[n++] = a1;
+    if (a2) v[n++] = a2;
+    if (a3) v[n++] = a3;
+    if (a4) v[n++] = a4;
+    v[n] = 0;
+
+    pid = spawn(v[0], v);
+    if (pid < 0) {
+        printf("install: non riesco ad avviare %s\n", perc);
+        return -1;
+    }
+    /* ! IL PRIMO PIANO SI CEDE, o mkfs e mkswap leggerebbero zero byte da ogni
+     * domanda. Qui li lanciamo con `-f`, quindi domande non ne fanno — ma il
+     * giorno che una ne facessero, il difetto sarebbe di quelli che non
+     * somigliano a un errore: risposte tutte predefinite e nessun messaggio. */
+    console_setfg((unsigned int)pid);
+    waitpid(pid, &stato, 0);
+    console_setfg((unsigned int)getpid());
+    return stato;
+}
+
+static int prepara_disco(const char *nome)
+{
+    DiskInfo     di;
+    MemInfo      mi;
+    PartTabella  tab;
+    unsigned int idx, i;
+    unsigned int tot_mb, resto_mb, sis_mb, swap_mb = 0, dati_mb = 0;
+    unsigned int lba;
+    int          fai_swap, fai_dati = 0;
+    char         r[16];
+    char         p_sis[16], p_swap[16], p_dati[16];
+
+    /* "hd0" -> 0. Solo dischi ATA: un floppy non si partiziona, e un CD
+     * nemmeno. */
+    if (nome[0] != 'h' || nome[1] != 'd' || nome[2] < '0' || nome[2] > '3' ||
+        nome[3] != '\0') {
+        printf("install: '%s' non e' un disco. Sono hd0..hd3; l'elenco lo da'  disk\n",
+               nome);
+        return 1;
+    }
+    idx = (unsigned int)(nome[2] - '0');
+
+    if (diskinfo(idx, &di) != 0 || !di.presente) {
+        printf("install: %s non c'e'.\n", nome);
+        return 1;
+    }
+    if (di.settori_hi != 0) {
+        printf("install: %s e' piu' grande di 2 TiB: qui non si partiziona.\n",
+               nome);
+        return 1;
+    }
+
+    tot_mb = (unsigned int)((unsigned long long)di.settori_lo * 512ull
+                            / (1024ull * 1024ull));
+
+    printf("\n=== %s — %s ===\n", nome, di.modello);
+    printf("    %u settori, %u MB\n\n", di.settori_lo, tot_mb);
+
+    /* ! CIO' CHE C'E' ADESSO SI MOSTRA PRIMA DI CHIEDERE QUALUNQUE COSA. Chi
+     * ha sbagliato disco lo capisce da qui — dal vedere una partizione che
+     * riconosce — e non dalla domanda finale, che a quel punto ha gia' letto
+     * tre volte e risponde per abitudine. */
+    if (di.n_part > 0) {
+        printf("    ATTENZIONE: su questo disco ci sono gia' %u partizioni:\n",
+               di.n_part);
+        for (i = 0; i < di.n_part && i < DISKINFO_MAX_PART; i++)
+            printf("      %sp%u  tipo 0x%02X  %u MB\n", nome, di.part[i].numero,
+                   di.part[i].tipo,
+                   (unsigned int)((unsigned long long)di.part[i].settori_lo
+                                  * 512ull / (1024ull * 1024ull)));
+        printf("    Verranno CANCELLATE tutte.\n\n");
+    } else {
+        printf("    Il disco non ha partizioni.\n\n");
+    }
+
+    /* Lo spazio utile: il primo megabyte va all'allineamento e alla tabella. */
+    resto_mb = tot_mb > 1 ? tot_mb - 1 : 0;
+    if (resto_mb < 8) {
+        printf("install: %u MB non bastano per un sistema.\n", tot_mb);
+        return 1;
+    }
+
+    /* ! LO SWAP SI PROPONE GRANDE QUANTO SERVE A QUESTA MACCHINA, non un
+     * numero fisso. Il doppio della RAM e' la regola vecchia e regge ancora
+     * per il caso che ci interessa: tenere in vita programmi piu' grandi della
+     * memoria. Su una macchina da 32 MB fa 64, che su un disco moderno non si
+     * notano nemmeno. */
+    swap_mb = 64;
+    if (meminfo(&mi) == 0 && mi.total_kb > 0) {
+        swap_mb = (mi.total_kb / 1024) * 2;
+        if (swap_mb < 32)  swap_mb = 32;
+        if (swap_mb > 512) swap_mb = 512;
+    }
+
+    fai_swap = prep_si("Creare una partizione di scambio (memoria virtuale)?", 1);
+    if (fai_swap) {
+        if (swap_mb > resto_mb / 2) swap_mb = resto_mb / 2;
+        swap_mb = prep_mb("  Quanti MB per lo scambio", swap_mb, resto_mb - 4);
+    } else {
+        swap_mb = 0;
+    }
+
+    sis_mb = prep_mb("Quanti MB per il sistema", resto_mb - swap_mb,
+                     resto_mb - swap_mb);
+
+    if (resto_mb - swap_mb - sis_mb >= 4) {
+        dati_mb = resto_mb - swap_mb - sis_mb;
+        printf("Avanzano %u MB.\n", dati_mb);
+        fai_dati = prep_si("  Farne una partizione per i dati (ext2)?", 1);
+        if (!fai_dati) dati_mb = 0;
+    }
+
+    /* --- il piano, tutto in una schermata ---------------------------------- */
+    printf("\n    Il disco %s diventera':\n", nome);
+    printf("      %sp1  %5u MB   ext2, il sistema\n", nome, sis_mb);
+    i = 2;
+    if (fai_swap) { printf("      %sp%u  %5u MB   scambio\n", nome, i, swap_mb); i++; }
+    if (fai_dati) { printf("      %sp%u  %5u MB   ext2, i dati\n", nome, i, dati_mb); }
+
+    printf("\n    TUTTO CIO' CHE C'E' SU %s ANDRA' PERSO.\n", nome);
+    printf("    Scrivere? (scrivi `si` per confermare): ");
+    if (prep_riga(r, sizeof(r)) < 0 || strcmp(r, "si") != 0) {
+        printf("\ninstall: annullato. Il disco non e' stato toccato.\n");
+        return 1;
+    }
+
+    /* --- la tabella --------------------------------------------------------- */
+    memset(&tab, 0, sizeof(tab));
+    lba = PREP_ALLINEA;
+    i   = 0;
+
+    /* ! IL SISTEMA E' LA PRIMA E L'AVVIABILE. Il settore di avvio della
+     * partizione lo installa `install` dopo, e cerca la voce con 0x80. */
+    tab.voce[i].attiva     = 0x80;
+    tab.voce[i].tipo       = 0x83;              /* Linux: qui ci va ext2 */
+    tab.voce[i].inizio_lo  = lba;
+    tab.voce[i].settori_lo = sis_mb * 2048u;
+    lba += tab.voce[i].settori_lo;
+    strcpy(p_sis, nome); p_sis[3] = 'p'; p_sis[4] = (char)('1' + i); p_sis[5] = '\0';
+    i++;
+
+    p_swap[0] = '\0';
+    if (fai_swap) {
+        /* ! IL TIPO 0x82 IL KERNEL DI EX-OS NON LO GUARDA — si fida solo della
+         * firma che ci mette mkswap — ma si scrive lo stesso: e' quello che
+         * dice a Linux, a un fdisk qualunque e a chi rimettera' le mani su
+         * questo disco fra un anno che li' dentro non c'e' un filesystem. */
+        tab.voce[i].tipo       = 0x82;
+        tab.voce[i].inizio_lo  = lba;
+        tab.voce[i].settori_lo = swap_mb * 2048u;
+        lba += tab.voce[i].settori_lo;
+        strcpy(p_swap, nome); p_swap[3] = 'p'; p_swap[4] = (char)('1' + i);
+        p_swap[5] = '\0';
+        i++;
+    }
+
+    p_dati[0] = '\0';
+    if (fai_dati) {
+        tab.voce[i].tipo       = 0x83;
+        tab.voce[i].inizio_lo  = lba;
+        tab.voce[i].settori_lo = dati_mb * 2048u;
+        strcpy(p_dati, nome); p_dati[3] = 'p'; p_dati[4] = (char)('1' + i);
+        p_dati[5] = '\0';
+        i++;
+    }
+
+    printf("\n[1/3] Tabella delle partizioni...\n");
+    if (partwrite(idx, &tab) != 0) {
+        printf("install: il kernel ha rifiutato la tabella (problemi 0x%x).\n",
+               tab.problemi);
+        printf("         Se una partizione di %s e' montata, smontala prima.\n",
+               nome);
+        return 1;
+    }
+    printf("      scritta, e i dispositivi sono gia' aggiornati.\n");
+
+    printf("\n[2/3] Filesystem su %s...\n", p_sis);
+    if (prep_lancia("/bin/mkfs", "-t", "ext2", "-f", p_sis, 0) != 0) {
+        printf("install: la formattazione di %s non e' riuscita.\n", p_sis);
+        return 1;
+    }
+    if (fai_dati && prep_lancia("/bin/mkfs", "-t", "ext2", "-f", p_dati, 0) != 0)
+        printf("install: %s non si e' formattata: la si puo' rifare a mano.\n",
+               p_dati);
+
+    printf("\n[3/3] Area di scambio...\n");
+    if (fai_swap) {
+        if (prep_lancia("/bin/mkswap", "-f", p_swap, 0, 0, 0) != 0) {
+            printf("install: %s non si e' preparata: la si puo' rifare a mano.\n",
+                   p_swap);
+            p_swap[0] = '\0';
+        }
+    } else {
+        printf("      non richiesta.\n");
+    }
+
+    /* ! E ADESSO SI DICE COSA MANCA, con i comandi gia' scritti. Il passo che
+     * segue e' distruttivo quanto questo ma su un'altra cosa — il contenuto —
+     * e tenerlo separato e' la stessa scelta di prima: chi ha preparato il
+     * disco per sbaglio si ferma qui. */
+    printf("\ninstall: %s e' pronto.\n\n", nome);
+    printf("  Adesso:\n");
+    printf("    mount %s /disco\n", p_sis);
+    printf("    install /disco\n");
+    if (p_swap[0]) {
+        printf("\n  E per accendere la memoria virtuale, in\n");
+        printf("  /disco/boot/kernel.cfg, sezione [kernel]:\n");
+        printf("      swap = %s\n", p_swap);
+        printf("  (l'installatore lo propone da se': vedi CFG_NECESSARIE)\n");
+    }
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     char            p[PERC_MAX], q[PERC_MAX];
@@ -1420,6 +1788,11 @@ int main(int argc, char **argv)
 
     if (argc >= 2 && strcmp(argv[1], "-tools") == 0)
         return installa_strumenti(argc, argv);
+
+    /* ! IL DISCO NUOVO E' UN MODO A PARTE. Vedi prepara_disco(): `install
+     * /disco` non partiziona e non formatta, e continua a non farlo. */
+    if (argc == 3 && strcmp(argv[1], "-prepara") == 0)
+        return prepara_disco(argv[2]);
 
     if (argc < 2 || argc > 3) {
         printf("uso: install [-a|-m|-t] <punto di montaggio>\n");
@@ -1442,7 +1815,12 @@ int main(int argc, char **argv)
         printf("driver di rete, USB, grafica e i programmi che sul floppy non\n");
         printf("ci stanno — e infine ExWin completo.\n\n");
         printf("Non partiziona e non formatta: sono operazioni distruttive\n");
-        printf("e vanno fatte di proposito, non come effetto collaterale.\n\n");
+        printf("e vanno fatte di proposito, non come effetto collaterale.\n");
+        printf("Per farle DI PROPOSITO c'e' un modo a parte, che chiede le\n");
+        printf("misure in una volta sola e poi formatta e prepara lo scambio:\n");
+        printf("  install -prepara hd0   mostra il disco, chiede quanto dare\n");
+        printf("                         al sistema, allo scambio e ai dati,\n");
+        printf("                         poi partiziona, fa ext2 e mkswap\n\n");
         printf("GLI STRUMENTI DI SVILUPPO SONO UN'ALTRA COSA. Stanno sul CD\n");
         printf("tools, non sul supporto di avvio, e si installano con:\n");
         printf("  install -tools               nel sistema in esecuzione\n");
