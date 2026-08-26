@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>La scrivania &mdash; EX-OS</title>
+<link rel="stylesheet" href="stile.css">
+<!-- Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>  GPL-2.0-or-later
+     ! SOLO ASCII: apostrofi al posto degli accenti. -->
+</head>
+<body>
+
+<p class="navi">
+<a href="index.html">Documentazione</a> |
+<a href="sistema.html">Il sistema</a> |
+<a href="comandi.html">Comandi</a> |
+<a href="installa.html">Installazione</a> &mdash; Scrivania |
+<a href="rete.html">Rete</a> |
+<a href="sviluppo.html">Sviluppo</a> |
+<a href="browser.html">Navigatore</a>
+</p>
+
+<h1>ExWin, la scrivania</h1>
+
+<h2>Accenderla e spegnerla</h2>
+
+<pre>    exwin</pre>
+
+<p>
+Lo schermo passa da solo alla console della grafica &mdash; la quinta &mdash;
+e le quattro di testo restano dove sono, con i loro programmi vivi. Dal menu
+di avvio, la voce <b>Esci</b> spegne la scrivania intera: chiede a ogni
+applicazione di chiudersi, rimette il modo testo e torna alla console da cui
+si era partiti.
+</p>
+
+<h2>Chi c'e' dentro</h2>
+
+<table border="1">
+<tr><th>Pezzo</th><th>Che cos'e'</th></tr>
+<tr><td><code>/dev/wserver.drv</code></td>
+    <td>il <b>server a finestre</b>: e' un driver, cioe' un processo ring3 come
+        gli altri. Tiene lo schermo, le zone di memoria condivisa delle
+        finestre, il mouse e il cursore.</td></tr>
+<tr><td><code>/exwin/bin/pm</code></td>
+    <td>il <b>gestore dei programmi</b>: la barra, il menu di avvio,
+        l'elenco delle finestre aperte.</td></tr>
+<tr><td><code>/exwin/lib/applicazioni.txt</code></td>
+    <td>l'elenco delle applicazioni, che il gestore legge all'avvio.</td></tr>
+</table>
+
+<h3>Aggiungere un'applicazione e' una riga, non una ricompilazione</h3>
+
+<pre>    Nome mostrato  | /percorso/dell/eseguibile
+    @avvio /exwin/bin/orologio</pre>
+
+<p>
+Il menu di avvio ha la voce <b>Applicazioni...</b>, che scrive quel file da
+sola. Resta leggibile e modificabile a mano apposta: un file di
+configurazione che solo un programma sa scrivere e' un file che non si puo'
+riparare quando quel programma non parte.
+</p>
+
+<p class="nota">
+<b>L'avvio automatico e' una direttiva a parte, non un segno sulla voce.</b>
+Si puo' volere un programma che parte da solo e <i>non</i> compare nel menu
+&mdash; un pannello, un orologio &mdash; oppure una voce di menu che non parte
+da sola. Legarli vorrebbe dire non poter fare ne' l'uno ne' l'altro.
+</p>
+
+<h2>Le applicazioni</h2>
+
+<table border="1">
+<tr><th>Programma</th><th>Che cosa fa</th></tr>
+<tr><td><b>File manager</b> <code>filemgr</code></td>
+    <td>sfoglia i volumi, copia, sposta, cancella, apre</td></tr>
+<tr><td><b>Editor</b> <code>edit</code></td>
+    <td>testo: apri, salva, annulla, taglia/copia/incolla</td></tr>
+<tr><td><b>Terminale</b> <code>term</code></td>
+    <td>una shell dentro una finestra, con il suo pty</td></tr>
+<tr><td><b>Navigatore</b> <code>browser</code></td>
+    <td>il browser &mdash; ha il <a href="browser.html">suo manuale</a></td></tr>
+<tr><td><b>Prova dei font</b> <code>fontprova</code></td>
+    <td>disegna la stessa frase con ogni file di <code>/exwin/font</code>: e'
+        il modo piu' rapido di sapere se un carattere si carica</td></tr>
+<tr><td><b>Orologio</b> <code>orologio</code></td>
+    <td>l'ora, ed e' l'esempio piu' corto di applicazione grafica</td></tr>
+</table>
+
+<h2>I tasti che valgono dappertutto</h2>
+
+<table border="1">
+<tr><th>Tasto</th><th>Che cosa fa</th></tr>
+<tr><td><code>F10</code></td><td>apre la barra dei menu; frecce per girare, Invio sceglie, Esc chiude</td></tr>
+<tr><td><code>Tab</code></td><td>sposta il fuoco da un controllo al successivo</td></tr>
+<tr><td><code>Ctrl+C</code> <code>Ctrl+X</code> <code>Ctrl+V</code></td>
+    <td>appunti &mdash; e valgono anche le combinazioni CUA con Ins e Canc</td></tr>
+</table>
+
+<p class="nota">
+<b>Gli appunti sono di tutta la scrivania, non di un programma.</b> Si copia
+da una casella di un modulo nel navigatore e si incolla nell'editor. Due
+&laquo;ultimi copiati&raquo; sarebbero la cosa peggiore: nessuno saprebbe
+quale sta usando.
+</p>
+
+<h2>I caratteri</h2>
+
+<p>
+Il <b>font di sistema 8x16</b> e' compilato dentro il toolkit e dentro il
+server: c'e' sempre. Un server che non riuscisse a scrivere il titolo di una
+finestra perche' manca un file sarebbe un guasto molto peggiore di un
+carattere brutto.
+</p>
+
+<p>
+I caratteri veri sono TrueType e stanno in <code>/exwin/font</code>: le dodici
+facce di <b>Liberation</b> &mdash; Serif, Sans e Mono, ognuna normale,
+neretto, corsivo e neretto corsivo &mdash; piu' DejaVu Sans come riserva. Le
+legge <code>/exwin/lib/exfont.so</code>, che si apre solo quando qualcuno
+chiede un font: un orologio non deve pagare un rasterizzatore di curve.
+</p>
+
+<p class="nota">
+<b>Se il testo esce tutto con lo stesso carattere squadrato, quello e' il font
+di sistema</b>, cioe' il ripiego. <code>ex_font_apri</code> rende 0 quando un
+file non c'e' o non si apre, e zero <i>e'</i> il font di sistema: la finestra
+resta leggibile e nessuno dice niente. Si guarda con <code>fontprova</code>,
+che prova i file uno per uno, e nel navigatore con <b>Aiuto &gt; Informazioni
+su</b>, che conta le facce aperte e quelle ripiegate.
+</p>
+
+<p>
+Copiando un <code>.ttf</code> qualunque in <code>/exwin/font</code>,
+<code>fontprova</code> lo mostra: e' il modo di sapere se EX-OS lo sa leggere
+prima di usarlo in un programma.
+</p>
+
+<h2>Le librerie condivise</h2>
+
+<p>
+Un'applicazione grafica non si porta dentro il toolkit: lo apre. Ogni
+libreria e' un ELF collegato a un indirizzo riservato, e le applicazioni ne
+chiedono i nomi a caricamento &mdash; aggiungere funzioni o riscriverne il
+corpo non le rompe.
+</p>
+
+<table border="1">
+<tr><th>Libreria</th><th>A che serve</th><th>Chi la apre</th></tr>
+<tr><td><code>exwin.so</code></td><td>finestre, controlli, menu, disegno, font</td><td>ogni programma grafico</td></tr>
+<tr><td><code>exdlg.so</code></td><td>i dialoghi: apri, salva, avviso, conferma</td><td>chi ne ha bisogno</td></tr>
+<tr><td><code>exfont.so</code></td><td>il TrueType: contenitore, curve, rasterizzatore, cache</td><td>al primo font chiesto</td></tr>
+<tr><td><code>eximg.so</code></td><td>PNG, GIF, JPEG, ICO</td><td>chi mostra immagini</td></tr>
+<tr><td><code>exhttp.so</code></td><td>HTTP, HTTPS, TLS 1.3, certificati</td><td>il navigatore</td></tr>
+<tr><td><code>exhtml.so</code> <code>excss.so</code></td><td>l'albero della pagina, i fogli di stile</td><td>il navigatore</td></tr>
+<tr><td><code>exjs.so</code> <code>exdom.so</code></td><td>JavaScript e il ponte col documento</td><td>il navigatore, solo se la pagina ha uno script</td></tr>
+</table>
+
+<p class="nota">
+<b>Il criterio e' che un programma non carichi cio' che non usa.</b> Per
+questo il TrueType e le immagini stanno fuori dal toolkit e si aprono a
+richiesta, mentre il lettore dei font bitmap ci sta dentro: quello lo usano
+tutti.
+</p>
+
+<p>
+Gli indirizzi delle librerie non si scelgono a occhio: <code>fette.py</code>
+misura gli ELF veri e dice quali fasce sono libere. Una mappa scritta a mano
+aveva gia' dichiarato &laquo;libere&raquo; fasce occupate tre volte.
+</p>
+
+<hr>
+<p class="navi">
+<a href="index.html">Torna alla documentazione</a> |
+<a href="browser.html">Il Navigatore &gt;</a>
+</p>
+<p class="piede">
+EX-OS &mdash; Graziano Falcone, exagonx@hotmail.com &mdash; GNU GPL v2.
+</p>
+
+</body>
+</html>

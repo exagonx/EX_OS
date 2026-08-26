@@ -101,6 +101,19 @@ EX_VERSIONE("browser", VERSIONE_APP);
 #define ID_ESCI     7
 #define ID_AIUTO    8
 #define ID_DOC      9
+#define ID_HOME     10
+#define ID_IMPOST   11
+
+/* La schermata delle impostazioni ha i propri, lontani da quelli della
+ * finestra principale: sono due finestre e due procedure, ma un id ripetuto
+ * si confonde leggendo. */
+#define ID_IMP_HOME    720
+#define ID_IMP_ORA     721
+#define ID_IMP_JS      722
+#define ID_IMP_IMG     723
+#define ID_IMP_CACHE   724
+#define ID_IMP_SALVA   725
+#define ID_IMP_ANNULLA 726
 
 /* ! I TETTI SONO DICHIARATI E NON SI CRESCE: una pagina la sceglie chi sta
  * dall'altra parte, quindi ogni numero che dipende da lei ha un limite. Una
@@ -408,6 +421,28 @@ static ExFinestra    g_f, g_url, g_stato;
 static ExFont        g_font_testo = 0, g_font_titolo = 0;
 static int           g_scorri = 0, g_altezza = 0;
 static char          g_qui[EXHTTP_URL_MAX] = "";
+
+/* =============================================================================
+ * LE IMPOSTAZIONI
+ *
+ * ! SONO QUATTRO VARIABILI E UN FILE, e il file sta in $HOME/.app/browser/
+ * come la cache — non in un percorso fisso. Un percorso fisso funziona per il
+ * primo utente e scrive addosso al secondo.
+ *
+ * ! I VALORI PREDEFINITI SONO QUELLI DI PRIMA. Chi non ha mai aperto la
+ * schermata dev'essere esattamente dove era: JavaScript acceso, immagini
+ * accese, cache accesa. Un'impostazione nuova che cambia il comportamento
+ * predefinito e' un difetto travestito da funzione.
+ *
+ * ! E LA PAGINA INIZIALE PREDEFINITA E' LA DOCUMENTAZIONE, non una pagina in
+ * rete: e' l'unica che c'e' di sicuro — su una macchina appena installata,
+ * senza rete configurata, una pagina iniziale che non si apre sarebbe la
+ * prima cosa che il browser fa e la prima che sbaglia.
+ * ============================================================================= */
+static char          g_home[EXHTTP_URL_MAX] = "";
+static int           g_js_acceso    = 1;
+static int           g_img_accese   = 1;
+static int           g_cache_accesa = 1;
 
 /* -----------------------------------------------------------------------------
  * Le immagini
@@ -852,7 +887,18 @@ static ExFont font_per(int neretto, int corsivo, int famiglia, int corpo)
 
     k = famiglia * 4 + neretto + corsivo * 2;
     g_font[g_font_n].f = ex_font_apri(FACCIA[k], corpo);
-    if (g_font[g_font_n].f) g_facce_si++; else g_facce_no++;
+
+    /* ! E QUANDO NON SI APRE LO SI SCRIVE, col nome del file e col corpo.
+     * Il conto in «Informazioni su» dice QUANTI; questo dice QUALI, e la
+     * differenza si sente quando a mancare e' una faccia sola. Va sulla
+     * console da cui il browser e' partito — cioe' sulla seriale, quando si
+     * prova dentro QEMU. */
+    if (g_font[g_font_n].f) g_facce_si++;
+    else {
+        g_facce_no++;
+        printf("browser: carattere NON aperto: %s corpo %d\n",
+               FACCIA[k], corpo);
+    }
 
     /* ! ex_font_apri RENDE 0 SE IL FILE NON C'E', e zero E' il font di sistema:
      * si mette in riserva lo stesso, cosi' non si torna a cercarlo a ogni
@@ -3155,7 +3201,7 @@ static void cache_pota(void)
         }
     }
 
-    printf("browser: cache in %s — %u voci, %u KB", g_cache,
+    printf("browser: cache in %s - %u voci, %u KB", g_cache,
            (unsigned int)n - (unsigned int)buttate, totale / 1024u);
     if (buttate) printf(", %d potate", buttate);
     printf("\n");
@@ -3206,6 +3252,179 @@ static void cache_prepara(void)
 
     cache_pota();
     printf("browser: cache in %s\n", g_cache);
+}
+
+
+/* =============================================================================
+ * IL FILE DELLE IMPOSTAZIONI
+ *
+ *     $HOME/.app/browser/impostazioni.txt
+ *
+ * ! E' TESTO, chiave = valore, una per riga, e resta modificabile a mano
+ * apposta: un file di configurazione che solo il programma sa scrivere e' un
+ * file che non si puo' riparare quando quel programma non parte. E' la stessa
+ * regola di /exwin/lib/applicazioni.txt.
+ *
+ * ! UNA CHIAVE SCONOSCIUTA SI SALTA IN SILENZIO, come fa il kernel con
+ * kernel.cfg. E' cio' che permette a una versione vecchia del browser di
+ * leggere un file scritto da una nuova senza morire su una riga che non
+ * conosce — e alle «opzioni future» di aggiungersi senza rompere niente.
+ *
+ * ! E CIO' CHE NON C'E' NEL FILE RESTA COM'E', non torna al valore
+ * predefinito: si legge sopra allo stato di adesso, che all'avvio e' quello
+ * predefinito. Un file scritto a meta' toglie meno di quanto tolga
+ * riazzerare tutto.
+ * ============================================================================= */
+#define IMP_PERC_MAX  192
+
+static char g_imp_perc[IMP_PERC_MAX] = "";
+
+/* Costruisce $HOME/.app/browser/impostazioni.txt creando le directory che
+ * mancano. Rende 0 se non si puo': allora le impostazioni valgono per questa
+ * sessione e basta, e lo si dice. */
+static int imp_prepara(void)
+{
+    static const char *const passi[] = { "/.app", "/browser" };
+    const char *casa = getenv("HOME");
+    char        p[IMP_PERC_MAX];
+    int         i;
+
+    g_imp_perc[0] = '\0';
+
+    if (!casa || !casa[0]) return 0;
+    if (strlen(casa) + 32 >= sizeof(p)) return 0;
+
+    strcpy(p, casa);
+    i = (int)strlen(p);
+    while (i > 0 && p[i - 1] == '/') p[--i] = '\0';
+
+    for (i = 0; i < 2; i++) {
+        strncat(p, passi[i], sizeof(p) - strlen(p) - 1);
+        if (mkdir(p, 0755) != 0 && errno != EEXIST) return 0;
+    }
+
+    strncat(p, "/impostazioni.txt", sizeof(p) - strlen(p) - 1);
+    strncpy(g_imp_perc, p, sizeof(g_imp_perc) - 1);
+    g_imp_perc[sizeof(g_imp_perc) - 1] = '\0';
+    return 1;
+}
+
+/* «si», «no», «1», «0», «acceso», «spento». Rende il valore, o `ora` se non
+ * si capisce: un valore incomprensibile non deve cambiare niente. */
+static int imp_bandiera(const char *v, int ora)
+{
+    if (!v || !v[0]) return ora;
+    if (v[0] == 's' || v[0] == 'S' || v[0] == '1' ||
+        v[0] == 'a' || v[0] == 'A') return 1;
+    if (v[0] == 'n' || v[0] == 'N' || v[0] == '0' ||
+        v[0] == 'f' || v[0] == 'F') return 0;
+    return ora;
+}
+
+static void imp_riga(char *riga)
+{
+    char *ug, *k, *v;
+    int   i;
+
+    /* via i commenti e gli spazi ai due capi */
+    for (i = 0; riga[i]; i++)
+        if (riga[i] == '#') { riga[i] = '\0'; break; }
+
+    ug = 0;
+    for (i = 0; riga[i]; i++) if (riga[i] == '=') { ug = riga + i; break; }
+    if (!ug) return;
+
+    *ug = '\0';
+    k = riga;
+    v = ug + 1;
+
+    while (*k == ' ' || *k == '\t') k++;
+    i = (int)strlen(k);
+    while (i > 0 && (k[i-1] == ' ' || k[i-1] == '\t')) k[--i] = '\0';
+
+    while (*v == ' ' || *v == '\t') v++;
+    i = (int)strlen(v);
+    while (i > 0 && (v[i-1] == ' ' || v[i-1] == '\t' ||
+                     v[i-1] == '\r' || v[i-1] == '\n')) v[--i] = '\0';
+
+    if (uguale(k, "home")) {
+        strncpy(g_home, v, sizeof(g_home) - 1);
+        g_home[sizeof(g_home) - 1] = '\0';
+        return;
+    }
+    if (uguale(k, "javascript")) { g_js_acceso    = imp_bandiera(v, g_js_acceso);    return; }
+    if (uguale(k, "immagini"))   { g_img_accese   = imp_bandiera(v, g_img_accese);   return; }
+    if (uguale(k, "cache"))      { g_cache_accesa = imp_bandiera(v, g_cache_accesa); return; }
+    /* una chiave che non conosciamo: si salta, e non e' un errore */
+}
+
+static void imp_leggi(void)
+{
+    char  buf[1024];
+    char  riga[256];
+    int   fd, n, i, col = 0;
+
+    if (!g_imp_perc[0]) return;
+
+    fd = open(g_imp_perc, O_RDONLY);
+    if (fd < 0) return;
+
+    while ((n = (int)read(fd, buf, sizeof(buf))) > 0) {
+        for (i = 0; i < n; i++) {
+            char c = buf[i];
+
+            if (c == '\n' || c == '\r') {
+                riga[col] = '\0';
+                if (col) imp_riga(riga);
+                col = 0;
+                continue;
+            }
+            if (col + 1 < (int)sizeof(riga)) riga[col++] = c;
+        }
+    }
+    close(fd);
+
+    riga[col] = '\0';
+    if (col) imp_riga(riga);
+}
+
+/* Rende 1 se il file e' stato scritto per intero. */
+static int imp_scrivi(void)
+{
+    char t[EXHTTP_URL_MAX + 256];
+    int  fd, n, scritti = 0;
+
+    if (!g_imp_perc[0]) return 0;
+
+    /* ! L'INTESTAZIONE DICE DOVE STA E CHI LO SCRIVE. Chi lo trova aprendolo
+     * con `cat` deve capire in dieci secondi che cos'e' e che si puo'
+     * modificare. */
+    snprintf(t, sizeof(t),
+             "# Le impostazioni del navigatore di EX-OS.\n"
+             "# Si puo' modificare a mano: chiave = valore, # commenta.\n"
+             "# Le chiavi che questo browser non conosce si saltano.\n"
+             "\n"
+             "home       = %s\n"
+             "javascript = %s\n"
+             "immagini   = %s\n"
+             "cache      = %s\n",
+             g_home,
+             g_js_acceso    ? "si" : "no",
+             g_img_accese   ? "si" : "no",
+             g_cache_accesa ? "si" : "no");
+
+    fd = open(g_imp_perc, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    if (fd < 0) return 0;
+
+    n = (int)strlen(t);
+    while (scritti < n) {
+        int k = (int)write(fd, t + scritti, (unsigned int)(n - scritti));
+
+        if (k <= 0) break;
+        scritti += k;
+    }
+    close(fd);
+    return scritti == n;
 }
 
 /* Rende 1 e riempie `buf` se la risorsa c'e' ed e' proprio la sua. */
@@ -3269,6 +3488,12 @@ static void ram_metti(const char *url, const unsigned char *dati, unsigned int n
 static int cache_leggi(const char *url, unsigned char *buf, unsigned int max,
                        unsigned int *quanti)
 {
+    /* ! SPENTA VUOL DIRE ANCHE «NON LEGGERE», non solo «non scrivere». Una
+     * cache che smette di riempirsi ma continua a servire quel che ha
+     * dentro sarebbe la cosa peggiore: chi la spegne lo fa proprio perche'
+     * vuole la pagina di adesso. */
+    if (!g_cache_accesa) { *quanti = 0; return 0; }
+
     CacheTesta t;
     char       p[CACHE_PERC_MAX + 24];
     int        fd, n;
@@ -3309,6 +3534,7 @@ static void cache_scrivi(const char *url, const unsigned char *dati,
     char       p[CACHE_PERC_MAX + 24];
     int        fd, bene;
 
+    if (!g_cache_accesa) return;
     if (!g_cache[0] || n == 0) return;
 
     /* ! QUANDO IL TETTO E' PIENO SI SMETTE DI SCRIVERE MA SI CONTINUA A
@@ -3457,6 +3683,12 @@ static void immagini_prendi(void)
 {
     char msg[160];
     int  k;
+
+    /* ! SPENTE NON VUOL DIRE «RIQUADRO VUOTO»: i pezzi non sono nemmeno
+     * stati creati, e al loro posto si legge l'`alt`, che e' cio' che il
+     * testo alternativo serve a fare. Chi spegne le immagini di solito lo fa
+     * perche' la rete e' lenta, e vuole leggere. */
+    if (!g_img_accese) return;
 
     for (k = 0; k < g_imm_n; k++) {
         if (g_imm[k].stato != 0) continue;
@@ -3757,6 +3989,12 @@ static void esegui_script(void)
 {
     int i, fatti = 0, aperti = 0;
 
+    /* ! SPENTO SI CONTROLLA QUI E NON PIU' IN BASSO, prima che il motore si
+     * apra: aprirlo vuol dire chiedere alla libc mezzo megabyte e mappare due
+     * librerie condivise, e su una pagina che non deve eseguire niente
+     * sarebbero spesi per non fare nulla. */
+    if (!g_js_acceso) return;
+
     for (i = 0; i < (int)g_doc.nodi_n && fatti < JS_SCRIPT_MAX; i++) {
         const char *src;
         ExJsErrore  err;
@@ -3911,6 +4149,7 @@ static void vai(const char *url, int in_storia, int usa_cache)
      * note. E si e' cercato prima nel riuso delle connessioni, che era appena
      * arrivato e non c'entrava niente. */
     char         msg[320];
+    char         stato_codice[16];
     unsigned int n = 0;
     int          da_cache = 0;
 
@@ -3985,6 +4224,9 @@ static void vai(const char *url, int in_storia, int usa_cache)
         cache_scrivi(e.finale, g_pagina, e.byte);
     }
 
+    if (e_locale(url)) strcpy(stato_codice, "dal disco");
+    else               sprintf(stato_codice, "%d", e.codice);
+
     /* ! DA QUI IN POI LA MISURA E' DI TUTTI, e «Salva» e' l'unico che la
      * guarda: senza, scriverebbe il buffer intero invece della pagina. */
     g_pagina_n = e.byte;
@@ -4049,11 +4291,14 @@ static void vai(const char *url, int in_storia, int usa_cache)
      * «albero troncato» non dice se manca un tetto di poco o di molto, e i
      * tetti di questo browser sono quattro. Con i numeri davanti si sa quale
      * alzare — e si sa anche quando NON serve alzare niente. */
+    /* ! UN FILE LETTO DAL DISCO NON HA UN CODICE HTTP, e stampare «200» su una
+     * pagina che la rete non l'ha nemmeno toccata e' una riga di stato che
+     * dice il falso su cosa e' appena successo. */
     if (g_doc.troncato || g_css.troncato || e.troncata) {
         snprintf(msg, sizeof(msg),
-                 "%d, %u byte%s%s%s%s  [nodi %u/%u, testo %uK/%uK, "
+                 "%s, %u byte%s%s%s%s  [nodi %u/%u, testo %uK/%uK, "
                  "pezzi %u/%u]",
-                e.codice, e.byte,
+                stato_codice, e.byte,
                 da_cache == 2 ? " (copia locale: la rete non risponde)"
                               : da_cache ? " (dalla cache)" : "",
                 e.troncata ? " pagina troncata" : "",
@@ -4063,8 +4308,8 @@ static void vai(const char *url, int in_storia, int usa_cache)
                 g_doc.arena_n / 1024u, (unsigned int)(ARENA_MAX / 1024u),
                 (unsigned int)g_pez_n, (unsigned int)PEZZI_MAX);
     } else {
-        snprintf(msg, sizeof(msg), "%d, %u byte, %u nodi%s",
-                 e.codice, e.byte, g_doc.nodi_n,
+        snprintf(msg, sizeof(msg), "%s, %u byte, %u nodi%s",
+                 stato_codice, e.byte, g_doc.nodi_n,
                  da_cache == 2 ? " (copia locale: la rete non risponde)"
                                : da_cache ? " (dalla cache)" : "");
     }
@@ -4306,6 +4551,205 @@ static void informazioni(void)
     strncat(t, coda, sizeof(t) - strlen(t) - 1);
 
     ex_dlg_avviso("Informazioni su", t);
+}
+
+
+/* =============================================================================
+ * LA SCHERMATA DELLE IMPOSTAZIONI
+ *
+ * ! E' UNA FINESTRA MODALE CON UN CICLO SUO, come la tendina di un <select>:
+ * si apre, si gira dentro finche' non si e' deciso, si chiude e si ridisegna
+ * la pagina sotto. Il ciclo dei messaggi resta uno solo — `ex_prendi_msg`
+ * continua a smistare a tutte le finestre — quindi il resto
+ * dell'applicazione non muore mentre e' aperta.
+ *
+ * ! GLI INTERRUTTORI SONO PULSANTI CHE CAMBIANO SCRITTA, e non caselle da
+ * spuntare: nel toolkit una casella di spunta non c'e', e disegnarne una a
+ * mano qui dentro vorrebbe dire un controllo che vive in un programma solo.
+ * Un pulsante che dice «JavaScript: acceso» dice lo stato E cosa succede a
+ * premerlo, che e' quello che serve.
+ *
+ * ! SI LAVORA SU UNA COPIA, e si scrive solo su «Salva». Cambiare le
+ * variabili vere a ogni clic vorrebbe dire che «Annulla» deve saper tornare
+ * indietro — cioe' tenere la copia lo stesso, ma nel posto piu' scomodo.
+ * ============================================================================= */
+static ExFinestra g_imp_f, g_imp_campo, g_imp_bjs, g_imp_bimg, g_imp_bcache;
+static int        g_imp_fatto;          /* 0 = aperta, 1 = salva, 2 = annulla */
+static int        g_imp_js, g_imp_img, g_imp_cache;
+
+static void imp_etichette(void)
+{
+    char t[80];
+
+    snprintf(t, sizeof(t), "JavaScript:  %s", g_imp_js ? "acceso" : "spento");
+    ex_titolo(g_imp_bjs, t);
+    snprintf(t, sizeof(t), "Immagini:  %s", g_imp_img ? "accese" : "spente");
+    ex_titolo(g_imp_bimg, t);
+    snprintf(t, sizeof(t), "Cache su disco:  %s",
+             g_imp_cache ? "accesa" : "spenta");
+    ex_titolo(g_imp_bcache, t);
+
+    /* ex_titolo cambia la scritta e non ridisegna: il disegno lo chiede chi
+     * sa che e' cambiata qualcosa. */
+    ex_procedura_base(g_imp_f, EXM_DISEGNA, 0, 0);
+    ex_aggiorna(g_imp_f);
+}
+
+static long imp_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+{
+    switch (msg) {
+    case EXM_CHIUDI:
+        g_imp_fatto = 2;
+        return 0;
+
+    case EXM_COMANDO:
+        if (wp == ID_IMP_JS)    { g_imp_js    = !g_imp_js;    imp_etichette(); return 0; }
+        if (wp == ID_IMP_IMG)   { g_imp_img   = !g_imp_img;   imp_etichette(); return 0; }
+        if (wp == ID_IMP_CACHE) { g_imp_cache = !g_imp_cache; imp_etichette(); return 0; }
+
+        /* ! «USA LA PAGINA DI ADESSO» E' L'UNICO MODO COMODO DI RIEMPIRE QUEL
+         * CAMPO. Nessuno ricopia a mano un indirizzo lungo guardandolo nella
+         * finestra di sotto. */
+        if (wp == ID_IMP_ORA) {
+            if (g_qui[0]) ex_testo_metti(g_imp_campo, g_qui);
+            return 0;
+        }
+
+        if (wp == ID_IMP_SALVA)   { g_imp_fatto = 1; return 0; }
+        if (wp == ID_IMP_ANNULLA) { g_imp_fatto = 2; return 0; }
+        return 0;
+
+    case EXM_TASTO: {
+        unsigned int c = wp & KBD_KEY_MASK;
+
+        if (c == 27)                  g_imp_fatto = 2;
+        else if (c == '\n' || c == '\r') g_imp_fatto = 1;
+        return 0;
+    }
+
+    default:
+        return ex_procedura_base(f, msg, wp, lp);
+    }
+}
+
+static void impostazioni(void)
+{
+    const int    W = 440, H = 300;
+    ExMsg        m;
+    unsigned int sw = 0, sh = 0;
+    int          x, y;
+
+    ex_schermo(&sw, &sh);
+    x = ((int)sw - W) / 2;
+    y = ((int)sh - H) / 2;
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+
+    g_imp_js    = g_js_acceso;
+    g_imp_img   = g_img_accese;
+    g_imp_cache = g_cache_accesa;
+    g_imp_fatto = 0;
+
+    g_imp_f = ex_crea("finestra", "Impostazioni",
+                      EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_SOPRA | EX_MODALE,
+                      x, y, W, H, 0, 0, imp_proc);
+    if (!g_imp_f) { dico("non riesco ad aprire le impostazioni"); return; }
+
+    ex_crea("etichetta", "Pagina iniziale - si apre all'avvio:", EX_FIGLIO,
+            12, 10, 416, 16, g_imp_f, 0, 0);
+    g_imp_campo = ex_crea("testo", "", EX_FIGLIO, 12, 30, 416, 22,
+                          g_imp_f, ID_IMP_HOME, 0);
+    ex_crea("pulsante", "Usa la pagina di adesso", EX_FIGLIO,
+            12, 58, 200, 22, g_imp_f, ID_IMP_ORA, 0);
+
+    ex_crea("etichetta", "Che cosa puo' fare una pagina:", EX_FIGLIO,
+            12, 96, 416, 16, g_imp_f, 0, 0);
+    g_imp_bjs    = ex_crea("pulsante", "", EX_FIGLIO, 12, 116, 220, 24,
+                           g_imp_f, ID_IMP_JS, 0);
+    g_imp_bimg   = ex_crea("pulsante", "", EX_FIGLIO, 12, 146, 220, 24,
+                           g_imp_f, ID_IMP_IMG, 0);
+    g_imp_bcache = ex_crea("pulsante", "", EX_FIGLIO, 12, 176, 220, 24,
+                           g_imp_f, ID_IMP_CACHE, 0);
+
+    ex_crea("etichetta", "Si scrivono in $HOME/.app/browser/impostazioni.txt",
+            EX_FIGLIO, 12, 214, 416, 16, g_imp_f, 0, 0);
+    ex_crea("etichetta", "e si possono modificare a mano.",
+            EX_FIGLIO, 12, 232, 416, 16, g_imp_f, 0, 0);
+
+    ex_crea("pulsante", "Salva",   EX_FIGLIO, 12,  260, 100, 26,
+            g_imp_f, ID_IMP_SALVA, 0);
+    ex_crea("pulsante", "Annulla", EX_FIGLIO, 120, 260, 100, 26,
+            g_imp_f, ID_IMP_ANNULLA, 0);
+
+    ex_testo_metti(g_imp_campo, g_home);
+    imp_etichette();
+    ex_fuoco(g_imp_campo);
+
+    while (!g_imp_fatto && ex_prendi_msg(&m)) ex_smista(&m);
+
+    if (g_imp_fatto == 1) {
+        const char *t = ex_testo_prendi(g_imp_campo);
+        int         js_era = g_js_acceso;
+
+        strncpy(g_home, t ? t : "", sizeof(g_home) - 1);
+        g_home[sizeof(g_home) - 1] = '\0';
+        g_js_acceso    = g_imp_js;
+        g_img_accese   = g_imp_img;
+        g_cache_accesa = g_imp_cache;
+
+        ex_distruggi(g_imp_f);
+        g_imp_f = 0;
+
+        /* ! SI DICE ANCHE QUANDO NON SI RIESCE A SCRIVERE, e le impostazioni
+         * valgono lo stesso per questa sessione: perderle in silenzio al
+         * prossimo avvio sarebbe il modo peggiore di scoprire che HOME non
+         * c'e'. */
+        if (!imp_scrivi())
+            dico("impostazioni valide per questa sessione: il file non si scrive");
+        else if (js_era != g_js_acceso)
+            dico(g_js_acceso ? "impostazioni salvate: JavaScript acceso dalla "
+                               "prossima pagina"
+                             : "impostazioni salvate: JavaScript spento dalla "
+                               "prossima pagina");
+        else
+            dico("impostazioni salvate");
+    } else {
+        ex_distruggi(g_imp_f);
+        g_imp_f = 0;
+        dico("impostazioni non cambiate");
+    }
+
+    /* La finestra che se ne va lascia il suo buco: il server ridisegna cio'
+     * che stava sotto solo se qualcuno glielo chiede. */
+    disegna();
+}
+
+/* Va alla pagina iniziale. Se non ce n'e' una, lo dice invece di non fare
+ * niente: un comando che non risponde sembra rotto. */
+static void vai_a_casa(void)
+{
+    if (!g_home[0]) {
+        dico("nessuna pagina iniziale: scegline una in File > Impostazioni");
+        return;
+    }
+    ex_testo_metti(g_url, g_home);
+    vai(g_home, 1, 1);
+}
+
+/* La pagina iniziale, quando nessuno ne ha ancora scelta una. */
+static void home_predefinita(void)
+{
+    static const char *const DOVE[] = {
+        "/exwin/doc/index.html",
+        "/cdrom/exwin/doc/index.html"
+    };
+    int i;
+
+    for (i = 0; i < (int)(sizeof(DOVE) / sizeof(DOVE[0])); i++)
+        if (locale_esiste(DOVE[i])) {
+            url_di_percorso(DOVE[i], g_home, sizeof(g_home));
+            return;
+        }
 }
 
 /* Un collegamento premuto: si risolve contro l'indirizzo di adesso. */
@@ -4736,6 +5180,8 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         if (wp == ID_INFO)  { informazioni(); return 0; }
         if (wp == ID_APRI)  { apri_locale();  return 0; }
         if (wp == ID_SALVA) { salva_pagina(); return 0; }
+        if (wp == ID_IMPOST) { impostazioni(); return 0; }
+        if (wp == ID_HOME)   { vai_a_casa();   return 0; }
         if (wp == ID_AIUTO) { doc_apri("browser.html"); return 0; }
         if (wp == ID_DOC)   { doc_apri("index.html");   return 0; }
 
@@ -4958,6 +5404,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
             if (c == 'o' || c == 'O') { apri_locale();  return 0; }
             if (c == 's' || c == 'S') { salva_pagina(); return 0; }
             if (c == 'q' || c == 'Q') { ex_esci(0);     return 0; }
+            if (c == 'h' || c == 'H') { vai_a_casa();   return 0; }
         }
 
         if (c == '\n' || c == '\r') {
@@ -5127,6 +5574,15 @@ int main(int argc, char **argv)
     if (g_font_testo)  g_facce_si++; else g_facce_no++;
     if (g_font_titolo) g_facce_si++; else g_facce_no++;
 
+    /* ! LE DUE DI PARTENZA SI DICONO SUBITO. Se non si aprono queste, non si
+     * aprira' nessuna: sono le prime due chiamate del programma, quando la
+     * memoria e' tutta libera e nessuna tabella e' piena. Vederlo qui vuol
+     * dire che il guasto e' nel caricamento dei font e non nella pagina. */
+    if (!g_font_testo || !g_font_titolo)
+        printf("browser: i caratteri di base non si aprono "
+               "(testo %s, titolo %s): si disegna col font di sistema.\n",
+               g_font_testo ? "ok" : "NO", g_font_titolo ? "ok" : "NO");
+
     /* ! LA BARRA DEI MENU SI CREA PRIMA DEI CONTROLLI, e non e' indifferente:
      * sta a y = 0 e larga quanto la finestra, e tutto il resto comincia sotto
      * di lei — vedi BARRA_Y. */
@@ -5134,7 +5590,10 @@ int main(int argc, char **argv)
         ExFinestra menu = ex_menu(g_f);
 
         ex_menu_voce(menu, "File", "Apri...\tCtrl+O",             ID_APRI);
+        ex_menu_voce(menu, "File", "Pagina iniziale\tCtrl+H",     ID_HOME);
         ex_menu_voce(menu, "File", "Salva con nome...\tCtrl+S",   ID_SALVA);
+        ex_menu_voce(menu, "File", "-",                           0);
+        ex_menu_voce(menu, "File", "Impostazioni...",             ID_IMPOST);
         ex_menu_voce(menu, "File", "-",                           0);
         ex_menu_voce(menu, "File", "Esci\tCtrl+Q",                ID_ESCI);
 
@@ -5168,6 +5627,13 @@ int main(int argc, char **argv)
 
     cache_prepara();
 
+    /* ! LE IMPOSTAZIONI PRIMA DI TUTTO CIO' CHE DIPENDE DA LORO, e la pagina
+     * iniziale e' una di quelle. Leggerle dopo aver gia' aperto una pagina
+     * vorrebbe dire aprirne due. */
+    imp_prepara();
+    imp_leggi();
+    if (!g_home[0]) home_predefinita();
+
     ex_fuoco(g_url);
     dico("scrivi un indirizzo e premi Invio. http, https e file locali.");
     ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
@@ -5188,6 +5654,11 @@ int main(int argc, char **argv)
 
         ex_testo_metti(g_url, primo);
         vai(primo, 0, 0);
+    } else if (g_home[0]) {
+        /* ! L'ARGOMENTO BATTE LA PAGINA INIZIALE, e non e' discutibile: chi
+         * scrive `browser qualcosa` ha chiesto QUELLA pagina. */
+        ex_testo_metti(g_url, g_home);
+        vai(g_home, 0, 1);
     }
 
     while (ex_prendi_msg(&m)) ex_smista(&m);

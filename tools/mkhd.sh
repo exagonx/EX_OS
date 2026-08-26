@@ -105,12 +105,27 @@ UTENTE="${EXOS_UTENTE:-mario}"
 PW_ROOT="${EXOS_PW_ROOT:-root}"
 PW_UTENTE="${EXOS_PW_UTENTE:-mario}"
 
+# ! E DAL 26 AGOSTO 2026 LA PRIMA DOMANDA E' LA LINGUA, non la password. E'
+# successo di nuovo cio' che il commento qui sopra racconta: l'installatore ha
+# imparato a chiedere una cosa in piu' e questo script ha continuato a
+# rispondere alle domande di prima, sfasato di uno — «root» finiva nella
+# scelta della lingua e da li' in avanti ogni risposta andava alla domanda
+# sbagliata. Il messaggio finale accusava l'installatore.
+#
+# ! IL VERO RIMEDIO NON E' QUESTA RIGA: e' che una prova che pilota un
+# programma interattivo si rompe a ogni domanda nuova, e non c'e' modo di
+# accorgersene se non guardando il registro. Finche' `install` non prende le
+# risposte da un file, questa riga va rivista ogni volta che l'installatore
+# chiede qualcosa di nuovo.
+LINGUA="${EXOS_LINGUA:-1}"
+
 EXOS_QEMU_EXTRA="-drive file=$IMG,format=raw,if=ide" \
     python3 tools/qemu_drive.py \
         "mkfs -t ext2 -L exos hd0p1@4" \
         "si@180" \
         "mount hd0p1 /disk@10" \
-        "install -t /disk@90" \
+        "install -t /disk@10" \
+        "$LINGUA@90" \
         "$PW_ROOT@2" "$PW_ROOT@3" \
         "$UTENTE@2" "$PW_UTENTE@2" "$PW_UTENTE@3" \
         "si@60" \

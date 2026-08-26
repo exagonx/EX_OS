@@ -125,6 +125,45 @@ static void minuscolo(char *s)
         if (s[i] >= 'A' && s[i] <= 'Z') s[i] = (char)(s[i] - 'A' + 'a');
 }
 
+/* =============================================================================
+ * ! MA IL MINUSCOLO A TAPPETO ERA GIUSTO SOLO FINCHE' SI INSTALLAVA DA UN
+ * FLOPPY, e dal CD ha rotto i caratteri per settimane senza che si capisse.
+ *
+ * Da FAT12 in forma 8.3 il nome arriva TUTTO MAIUSCOLO e il caso vero non
+ * esiste piu': «KERNEL.BIN» va scritto «kernel.bin», o su ext2 il kernel non
+ * si trova. Ma da un CD i nomi arrivano da Joliet, che il caso lo CONSERVA:
+ * «LiberationSerif-Regular.ttf» e' il nome vero, e abbassarlo su un volume
+ * dove il caso conta vuol dire che chi lo cerca con quel nome non lo trova
+ * piu'.
+ *
+ * ! ED E' STATO IL DIFETTO PIU' DIFFICILE DA VEDERE DI TUTTA LA SERIE,
+ * perche' non somigliava a se stesso: il browser disegnava tutto col font di
+ * sistema — «non sa cambiare carattere» — mentre `fontprova`, sulla STESSA
+ * macchina, mostrava i dodici caratteri benissimo. La differenza non era nei
+ * font: fontprova LEGGE LA DIRECTORY e apre i nomi che trova, il browser li
+ * ha scritti dentro. Uno chiedeva «dammi quel che c'e'», l'altro chiedeva
+ * «dammi LiberationSerif-Regular.ttf», e su ext2 quel file non c'era.
+ *
+ * ! IL CRITERIO NON E' «CHE FILESYSTEM E'», E' «QUESTO NOME PORTA IL PROPRIO
+ * CASO». Un nome tutto maiuscolo non ne porta — e' quel che da' FAT in 8.3 —
+ * e si abbassa come sempre. Un nome che ha anche una sola minuscola il caso
+ * ce l'ha davvero, e si copia com'e': vale per Joliet, per ext2 e anche per i
+ * nomi lunghi di FAT, senza chiedere niente a nessuno.
+ * ============================================================================= */
+static int porta_il_caso(const char *s)
+{
+    int i;
+    for (i = 0; s[i]; i++)
+        if (s[i] >= 'a' && s[i] <= 'z') return 1;
+    return 0;
+}
+
+/* Il nome come va scritto sulla destinazione. */
+static void caso_di_destinazione(char *s)
+{
+    if (!porta_il_caso(s)) minuscolo(s);
+}
+
 /* Concatena "punto" + "/" + "resto" senza sforare. */
 /* Vero se `s` finisce con `coda`. */
 static int finisce_con(const char *s, const char *coda)
@@ -383,7 +422,7 @@ static int scorri_confronto(const char *sorgente, const char *punto,
 
             unisci(da, sorgente, voci[i].name);
             unisci(a,  pdest,    voci[i].name);
-            minuscolo(a + strlen(pdest));
+            caso_di_destinazione(a + strlen(pdest));
 
             st = confronta(da, a);
             if (st == STATO_UGUALE) continue;
@@ -452,7 +491,7 @@ static void copia_albero_ric(const char *sorgente, const char *pdest,
 
             unisci(da, sorgente, voci[i].name);
             unisci(a,  pdest,    voci[i].name);
-            minuscolo(a + strlen(pdest));
+            caso_di_destinazione(a + strlen(pdest));
 
             if (voci[i].is_dir) {
                 if (livello + 1 >= ALBERO_LIVELLI_MAX) {
@@ -925,7 +964,7 @@ static void copia_dir_filtrata(const char *sorgente, const char *punto,
 
             unisci(da, sorgente, voci[i].name);
             unisci(a,  pdest,    voci[i].name);
-            minuscolo(a + strlen(pdest));   /* solo il NOME, non il punto */
+            caso_di_destinazione(a + strlen(pdest));  /* il NOME, non il punto */
             if (copia(da, a) >= 0 && e_directory_di_programmi(dest))
                 chmod(a, 0755);             /* su FAT rende ENOSYS: pazienza */
         }

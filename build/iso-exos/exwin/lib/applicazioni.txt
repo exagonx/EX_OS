@@ -33,3 +33,6 @@ Editor         | /exwin/bin/edit
 Terminale      | /exwin/bin/term
 Prova dei font | /exwin/bin/fontprova
 Navigatore     | /exwin/bin/browser
+
+# PROVA LOCALE: il browser parte da solo, per la fotografia in QEMU.
+@avvio /exwin/bin/browser

@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Scrivere programmi &mdash; EX-OS</title>
+<link rel="stylesheet" href="stile.css">
+<!-- Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>  GPL-2.0-or-later
+     ! SOLO ASCII: apostrofi al posto degli accenti. -->
+</head>
+<body>
+
+<p class="navi">
+<a href="index.html">Documentazione</a> |
+<a href="sistema.html">Il sistema</a> |
+<a href="comandi.html">Comandi</a> |
+<a href="installa.html">Installazione</a> |
+<a href="exwin.html">Scrivania</a> |
+<a href="rete.html">Rete</a> &mdash; Sviluppo |
+<a href="browser.html">Navigatore</a>
+</p>
+
+<h1>Scrivere programmi</h1>
+
+<h2>La catena e' chiusa: si compila <i>dentro</i> EX-OS</h2>
+
+<p>
+EX-OS ospita codice di terzi e lo fa girare da solo. <b>GNU binutils 2.44</b>
+&mdash; <code>as</code> e <code>ld</code> &mdash; e' compilato <i>per</i>
+EX-OS: un programma assemblato e collegato qui e' identico byte per byte a
+uno prodotto dal cross-compilatore su Linux. E <b>gcc</b> gira dentro EX-OS,
+trova i propri header senza che nessuno glielo dica, e concatena da se'
+<code>cc1</code>, <code>as</code>, <code>collect2</code> e <code>ld</code>
+fino a un eseguibile che parte. Lo stesso vale per <b>g++</b>, contenitori,
+<code>std::string</code> ed eccezioni compresi.
+</p>
+
+<pre>    gcc -o prog prog.c
+    g++ -o prog prog.cpp
+    fbc  prog.bas                  FreeBASIC</pre>
+
+<p>
+Gli strumenti vengono dal <b>CD tools</b>, che e' un supporto a parte: si
+usano da li' (<code>/cdrom/exos/bin/gcc</code>) oppure si installano con
+<code>install -tools</code>.
+</p>
+
+<p class="nota">
+<b>Non copiare <code>gcc</code> in <code>/bin</code>.</b> Calcola i propri
+percorsi da dove sta il suo binario: da <code>/bin</code> cercherebbe
+<code>/libexec/gcc/...</code> e risponderebbe <code>cannot execute cc1</code>,
+oppure che non trova <code>stdio.h</code>. Va lanciato da dove sta, o messo
+nel <code>PATH</code> con la sua <code>bin</code>.
+</p>
+
+<h3>make e i binutils</h3>
+
+<pre>    make                make -j2                make -f altro.mk
+    ar rcs libmia.a a.o b.o     ranlib libmia.a     nm libmia.a
+    strip prog                  objdump -d prog</pre>
+
+<p>
+E' GNU make 4.2. Un esempio da provare sta in <code>/cdrom/prova-make</code>:
+si copia in una directory scrivibile (il CD non lo e'), si lancia
+<code>make</code>, e <code>./prova</code> deve dire 385.
+</p>
+
+<p class="nota">
+<b>Meglio su ext2 che su FAT.</b> Su FAT i nomi tornano in maiuscolo, e un
+makefile che nomina <code>main.c</code> non riconosce piu' il
+<code>MAIN.C</code> che gli arriva da un carattere jolly.
+<code>make --output-sync</code> non c'e' e <i>lo dice</i> invece di
+ignorarlo: vuole i lock di record di <code>fcntl</code>, che EX-OS non ha.
+</p>
+
+<h2>La libc</h2>
+
+<p>
+La libreria standard e' scritta qui: stringhe, memoria, <code>stdio</code>,
+<code>printf</code> e <code>scanf</code> completi di ampiezza e precisione,
+matematica, <code>time</code>, <code>wchar</code>. Gli header stanno in
+<code>/exos/include</code> sul CD degli strumenti.
+</p>
+
+<p class="nota">
+<b>Le funzioni POSIX rendono -1 e mettono <code>errno</code>.</b> E' la
+convenzione che si aspetta chiunque abbia scritto C prima d'ora, ed e' quella
+che permette di ricompilare codice di terzi senza toccarlo.
+</p>
+
+<h2>Come e' fatto un programma</h2>
+
+<p>
+Un programma di EX-OS e' un <b>ELF a 32 bit, ring3</b>, collegato a
+<code>0x08000000</code>. Il caricatore gli prepara i segmenti, uno stack con
+una riserva da 256 KB che cresce su richiesta, un blocco TLS se serve, e uno
+heap che comincia sopra l'ultimo segmento &mdash; con un tetto dichiarato e
+una pagina di guardia non mappata sotto il primo oggetto che c'e' davvero.
+</p>
+
+<h3>Le librerie condivise</h3>
+
+<p>
+Non c'e' <code>ld.so</code>, e non e' una mancanza da colmare: un linker
+dinamico vero e' mesi di lavoro, e ogni suo difetto sarebbe un difetto di
+tutte le applicazioni insieme. Qui una libreria e' un ELF normalissimo
+&mdash; non PIC &mdash; collegato a un <b>indirizzo riservato</b> nella
+fascia <code>0x04000000&ndash;0x08000000</code>. Sta sempre li', quindi non
+c'e' niente da rilocare.
+</p>
+
+<p>
+Cio' che serviva davvero &mdash; aggiornare una libreria senza ricompilare le
+applicazioni &mdash; si ottiene con la <b>risoluzione per nome</b>: la
+libreria esporta una tabella <code>{nome, indirizzo}</code> e l'applicazione
+chiede i nomi che le servono. Aggiungere funzioni, riordinarle, riscriverne
+il corpo: le applicazioni continuano a funzionare. Solo <i>togliere</i> un
+nome le rompe, esattamente come una DLL.
+</p>
+
+<table border="1">
+<tr><th>Cosa</th><th>Come sta in memoria</th></tr>
+<tr><td><code>.text</code> <code>.rodata</code></td>
+    <td>la <b>stessa pagina fisica</b> in ogni processo che la apre</td></tr>
+<tr><td><code>.data</code> <code>.bss</code></td>
+    <td>una copia <b>fresca per processo</b>, presa dall'originale</td></tr>
+</table>
+
+<p class="nota">
+<b>I dati scrivibili non si condividono, ed e' tutta la differenza.</b>
+Condividerli vorrebbe dire che due applicazioni si scrivono addosso le
+variabili: la tabella delle finestre di ExWin e' in <code>.bss</code>, e
+sarebbe la stessa per tutti.
+</p>
+
+<h2>Un'applicazione grafica, dalla prima riga</h2>
+
+<pre>#include "libc.h"
+#include "exwin.h"
+
+static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+{
+    switch (msg) {
+    case EXM_CHIUDI:
+        ex_esci(0);
+        return 0;
+
+    case EXM_COMANDO:
+        if (wp == 1) ex_titolo(f, "hai scelto la voce di menu");
+        return 0;
+
+    case EXM_DISEGNA:
+        ex_riempi(f, 0, 20, 300, 180, EX_GRIGIO);
+        ex_scrivi(f, 12, 40, "Ciao da EX-OS", EX_NERO);
+        ex_aggiorna(f);
+        return 0;
+
+    default:
+        return ex_procedura_base(f, msg, wp, lp);
+    }
+}
+
+int main(void)
+{
+    ExMsg      m;
+    ExFinestra f, menu;
+
+    f = ex_crea("finestra", "Esempio",
+                EX_TITOLO | EX_BORDO | EX_CHIUDI,
+                EX_AUTO, EX_AUTO, 300, 200, 0, 0, proc);
+    if (!f) { printf("il server a finestre non risponde: avvialo con exwin\n");
+              return 1; }
+
+    menu = ex_menu(f);
+    ex_menu_voce(menu, "File", "Prova", 1);
+
+    while (ex_prendi_msg(&amp;m)) ex_smista(&amp;m);
+    return 0;
+}</pre>
+
+<p>
+<code>exwin.h</code> e il file da compilare insieme stanno in
+<code>/exos/include</code> sul CD degli strumenti, con anche
+<code>exwin.bi</code> per FreeBASIC e <code>exwin.hpp</code> per il C++.
+</p>
+
+<p class="nota">
+<b>La barra dei menu non restringe l'area del client.</b> Il toolkit la mette
+in cima e larga quanto la finestra, ma il posto glielo deve lasciare chi
+scrive il programma: venti pixel. E' il motivo per cui l'esempio qui sopra
+comincia a disegnare da <code>y = 20</code>.
+</p>
+
+<p>
+Per farla comparire nel menu di avvio basta una riga in
+<code>/exwin/lib/applicazioni.txt</code> &mdash; oppure la voce
+<b>Applicazioni...</b> del menu stesso. Vedi
+<a href="exwin.html">La scrivania</a>.
+</p>
+
+<hr>
+<p class="navi">
+<a href="index.html">Torna alla documentazione</a> |
+<a href="browser.html">Il Navigatore &gt;</a>
+</p>
+<p class="piede">
+EX-OS &mdash; Graziano Falcone, exagonx@hotmail.com &mdash; GNU GPL v2.
+</p>
+
+</body>
+</html>

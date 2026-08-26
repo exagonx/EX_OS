@@ -1,5 +1,136 @@
 # DOVE RIPRENDERE — 26 agosto 2026
 
+## 26 agosto 2026 — I FONT NON SI APRIVANO PERCHE' L'INSTALLATORE ABBASSAVA I NOMI
+
+Il difetto piu' difficile da vedere di tutta la serie, e non perche' fosse
+profondo: perche' **non somigliava a se stesso**.
+
+    il browser:   ogni pagina disegnata col font di sistema 8x16
+    fontprova:    sulla STESSA macchina, i dodici caratteri benissimo
+
+Con quelle due righe davanti si cerca nel browser. Ed era nell'installatore.
+
+### Che cosa succedeva
+
+`bin/install/install.c` abbassava **ogni nome che copiava**. La regola e' nata
+sul floppy, dove ha ragione: FAT12 in forma 8.3 rende `KERNEL.BIN` e il caso
+vero non esiste piu', quindi su ext2 va scritto `kernel.bin` o il kernel non si
+trova. Ma **dal CD i nomi vengono da Joliet, che il caso lo conserva**:
+
+    sul CD:      /exwin/font/LiberationSerif-Regular.ttf
+    sul disco:   /exwin/font/liberationserif-regular.ttf
+
+Su ext2 il caso conta. `ex_font_apri("/exwin/font/LiberationSerif-Regular.ttf")`
+non trovava niente — e rende 0, che **E'** il font di sistema, non un errore.
+
+! **E I FONT SONO GLI UNICI PERCORSI CON LE MAIUSCOLE DI TUTTO IL SISTEMA.**
+Cercandoli con un grep sui sorgenti vengono fuori dodici righe, tutte in
+`lib/exwin/exwin.c` e in `browser.c`: nient'altro poteva rompersi cosi', ed e'
+per questo che il resto del sistema installato funzionava perfettamente.
+
+! **E FONTPROVA NON POTEVA ACCORGERSENE, PER COSTRUZIONE.** Legge la directory
+e apre i nomi che TROVA; il browser li ha scritti dentro. Uno chiede «dammi
+quel che c'e'», l'altro chiede «dammi *quel* file». La differenza fra i due
+programmi non era nei font: era nella domanda.
+
+### La correzione, e il criterio
+
+Non «che filesystem e'», ma **«questo nome porta il proprio caso»**:
+
+    nome tutto maiuscolo  -> non ne porta (e' FAT in 8.3) -> si abbassa
+    nome con una minuscola -> il caso ce l'ha davvero      -> si copia com'e'
+
+Vale per Joliet, per ext2 e anche per i nomi lunghi di FAT, senza chiedere
+niente a nessuno. `caso_di_destinazione()` in `install.c`, nei tre punti che
+costruiscono il nome di destinazione — non nei due che confrontano.
+
+! **E UN PONTE PER I DISCHI GIA' INSTALLATI**, in `file_font()` di
+`lib/exwin/exwin.c`: se il percorso non si apre, si riprova con l'ultimo pezzo
+tutto minuscolo. Costa una `open` in piu' solo dopo che la prima e' fallita, e
+vale anche per chi si copia un `.ttf` a mano passando da una chiavetta FAT.
+L'installatore corretto non rimette a posto i dischi installati ieri.
+
+### Come si e' trovato: QEMU, non il ragionamento
+
+    make ISOX_IMG=/tmp/prova.iso iso-exos          senza toccare dist/
+    EXOS_NO_FLOPPY=1 EXOS_CDROM=/tmp/prova.iso EXOS_RAM=64M \
+        python3 tools/qemu_drive.py "exwin@25" "foto:/tmp/scrivania.ppm@3"
+
+Dal CD **funzionava tutto**: titoli grandi, monospazio nel codice, neretto
+nelle tabelle. Quindi il guasto non era nel browser. Installando poi sul disco
+dentro QEMU, la riga che lo ha detto stava nel registro dell'installatore:
+
+    + /disk/exwin/font/liberationserif-regular.ttf  (393692 byte)
+
+Il nome era li' da leggere, in minuscolo, in mezzo a quattrocento righe.
+
+! **E `tools/mkhd.sh` ERA ROTTO NELLO STESSO MODO IN CUI IL SUO COMMENTO
+DICEVA DI ESSERE STATO ROTTO**: l'installatore adesso chiede la lingua per
+prima, e lo script rispondeva ancora alle domande di prima — «root» finiva
+nella scelta della lingua e tutto il resto andava sfasato di uno. Corretto, e
+scritto accanto che una prova che pilota un programma interattivo si rompe a
+ogni domanda nuova.
+
+
+## 26 agosto 2026 — LE IMPOSTAZIONI DEL NAVIGATORE
+
+Quattro cose in una schermata: **pagina iniziale**, **JavaScript**,
+**immagini**, **cache su disco**. Si arriva da `File > Impostazioni...`.
+
+! **SI LAVORA SU UNA COPIA E SI SCRIVE SOLO SU «SALVA».** Cambiare le
+variabili vere a ogni clic vorrebbe dire che «Annulla» deve saper tornare
+indietro — cioe' tenere la copia lo stesso, ma nel posto piu' scomodo.
+
+! **GLI INTERRUTTORI SONO PULSANTI CHE CAMBIANO SCRITTA**, non caselle da
+spuntare: nel toolkit una casella di spunta non c'e', e disegnarne una a mano
+dentro il browser vorrebbe dire un controllo che vive in un programma solo. Un
+pulsante che dice «JavaScript: acceso» dice lo stato E cosa succede a premerlo.
+
+! **E SPENTO VUOL DIRE SPENTO DAVVERO, in tutt'e tre i casi.** JavaScript
+spento non apre nemmeno il motore — niente mezzo megabyte e due librerie
+condivise per non fare niente. Immagini spente non creano i pezzi: al loro
+posto si legge l'`alt`, che e' esattamente cio' a cui serve. Cache spenta non
+LEGGE, non solo non scrive: chi la spegne vuole la pagina di adesso, e una
+cache che continua a servire quel che ha dentro sarebbe la cosa peggiore.
+
+### Il file
+
+    $HOME/.app/browser/impostazioni.txt      chiave = valore, # commenta
+
+! **UNA CHIAVE SCONOSCIUTA SI SALTA IN SILENZIO**, come fa il kernel con
+kernel.cfg: e' cio' che permette alle «opzioni future» di aggiungersi senza
+rompere una versione piu' vecchia del browser, e a una versione piu' vecchia di
+leggere un file scritto da una nuova. E cio' che nel file non c'e' resta com'e'
+invece di tornare al valore predefinito.
+
+! **I PREDEFINITI SONO QUELLI DI PRIMA.** Chi non apre mai quella schermata
+dev'essere esattamente dove era: tutto acceso. Un'impostazione nuova che cambia
+il comportamento predefinito e' un difetto travestito da funzione.
+
+! **E LA PAGINA INIZIALE PREDEFINITA E' LA DOCUMENTAZIONE LOCALE**, non un
+indirizzo in rete: su una macchina appena installata, senza rete configurata,
+una pagina iniziale che non si apre sarebbe la prima cosa che il browser fa e
+la prima che sbaglia. `Ctrl+H` ci torna.
+
+### E i caratteri che non si aprono adesso si nominano
+
+Il conto in «Informazioni su» dice QUANTI; una riga sulla console dice QUALI,
+col nome del file e il corpo. Piu' una riga all'avvio se non si aprono le due
+di base — che sono le prime due chiamate del programma, con la memoria tutta
+libera e nessuna tabella piena: vederla li' vuol dire che il guasto e' nel
+caricamento dei font e non nella pagina.
+
+### Provato in QEMU, con la fotografia
+
+    make ISOX_IMG=/tmp/prova.iso iso-exos       (senza toccare dist/exos.iso)
+    EXOS_NO_FLOPPY=1 EXOS_CDROM=/tmp/prova.iso EXOS_RAM=64M \
+        python3 tools/qemu_drive.py "exwin@25" "foto:/tmp/scrivania.ppm@3"
+
+Con `@avvio /exwin/bin/browser` in `applicazioni.txt` il browser parte da solo
+e apre la pagina iniziale: la fotografia mostra l'indice della documentazione
+coi titoli grandi, il monospazio nel codice, il neretto nelle tabelle e i
+colori del foglio esterno. **Avviando dal CD i caratteri si aprono tutti.**
+
 ## 26 agosto 2026 — IL TREDICESIMO FONT, I MENU E LA DOCUMENTAZIONE
 
 Due cose viste sulla macchina vera — EX-OS installato su VirtualBox, con la
