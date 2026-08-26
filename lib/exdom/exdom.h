@@ -56,13 +56,30 @@
  * qui, e vorra' dire un oggetto esotico con un `length` che riconta.
  *
  * -----------------------------------------------------------------------------
- * ! QUELLO CHE NON C'E' ANCORA, dichiarato subito: gli EVENTI
- * (addEventListener, onclick, la propagazione) e `style` come oggetto. Sono i
- * due pezzi che seguono, e sono tenuti fuori da questo scaglione apposta: gli
- * eventi hanno bisogno che il browser sappia dire dove e' stato il clic, e
- * `style` ha bisogno di un pezzo di excss per sciogliere le dichiarazioni. Un
- * `style` finto che accetta le scritture e non le mostra sarebbe esattamente
- * la bugia silenziosa che gli oggetti esotici sono nati per evitare.
+ * -----------------------------------------------------------------------------
+ * ! GLI EVENTI LI FA PARTIRE IL BROWSER, e questa libreria non sa che cosa sia
+ * un clic.
+ *
+ * Qui dentro non c'e' il mouse, non c'e' la tastiera e non c'e' un ciclo di
+ * messaggi: c'e' exdom_evento(), che il browser chiama quando ha deciso su
+ * quale nodo e' successo qualcosa. E' la stessa regola del tempo in ExJs —
+ * l'orologio arriva da fuori — e per lo stesso motivo: un ponte che
+ * interrogasse il server grafico da se' non si potrebbe provare senza uno
+ * schermo, e le prove che hanno bisogno di uno schermo non si scrivono.
+ *
+ * ! LA PROPAGAZIONE E' QUELLA VERA: discesa, bersaglio, risalita. Fare solo la
+ * risalita sarebbe bastato per nove pagine su dieci, e la decima avrebbe
+ * smesso di funzionare senza che si capisse perche' — la cattura si usa
+ * proprio per intercettare quel che i figli non devono vedere.
+ *
+ * -----------------------------------------------------------------------------
+ * ! QUELLO CHE NON C'E' ANCORA, dichiarato subito: `style` come oggetto, e
+ * `this` legato dentro un gestore scritto nell'attributo. Il primo ha bisogno
+ * di un pezzo di excss per sciogliere le dichiarazioni; il secondo di un
+ * costruttore Function che compili una stringa in una funzione, che ExJs non
+ * ha ancora. Uno `style` finto che accetta le scritture e non le mostra
+ * sarebbe esattamente la bugia silenziosa che gli oggetti esotici sono nati
+ * per evitare.
  * ============================================================================= */
 
 #ifndef EXDOM_H
@@ -83,7 +100,8 @@ typedef struct ExDom ExDom;
  * ! `nodi_max` DEV'ESSERE QUELLO DEL DOCUMENTO, non il numero di nodi che ci
  * sono adesso: gli script ne creano di nuovi, e un involucro chiesto per un
  * nodo fuori tabella non avrebbe dove stare. */
-unsigned int exdom_quanto_serve(unsigned int nodi_max, unsigned int testo_max);
+unsigned int exdom_quanto_serve(unsigned int nodi_max, unsigned int testo_max,
+                                unsigned int ascolti_max);
 
 /* Costruisce il ponte dentro `memoria` e appende `document` e `window`
  * all'oggetto globale del motore. Rende 0 se la memoria non basta.
@@ -93,7 +111,8 @@ unsigned int exdom_quanto_serve(unsigned int nodi_max, unsigned int testo_max);
  * di tutte le altre librerie — chi apre la pagina possiede tutto. */
 ExDom *exdom_apri(void *memoria, unsigned int byte,
                   ExJsCtx *js, HtmlDoc *doc,
-                  unsigned int nodi_max, unsigned int testo_max);
+                  unsigned int nodi_max, unsigned int testo_max,
+                  unsigned int ascolti_max);
 
 /* L'involucro JavaScript di un nodo: sempre lo stesso oggetto per lo stesso
  * nodo. Con `nodo` a -1 rende `null`, che e' cio' che il DOM rende per il
@@ -107,6 +126,33 @@ int exdom_nodo(ExDom *D, ExJsVal v);
 
 /* L'oggetto `document`, per chi lo vuole senza cercarlo nel globale. */
 ExJsVal exdom_documento(ExDom *D);
+
+/* =============================================================================
+ * FAR PARTIRE UN EVENTO
+ *
+ * Il browser chiama questa quando ha deciso che su `nodo` e' successo `tipo`
+ * ("click", "mousedown", "load", quel che gli pare: qui non c'e' un elenco di
+ * nomi ammessi, perche' nel DOM non c'e').
+ *
+ * ! RENDE 0 SE LO SCRIPT HA CHIAMATO preventDefault(), e non e' un dettaglio:
+ * e' l'unica cosa che il browser deve sapere. Un clic su un collegamento
+ * segue l'indirizzo se questa rende 1 e non lo segue se rende 0 — che e'
+ * tutto il motivo per cui preventDefault esiste.
+ *
+ * ! L'ERRORE DI UN GESTORE NON FERMA GLI ALTRI. Uno script rotto in una pagina
+ * vera e' la regola, non l'eccezione, e un browser che smettesse di reagire ai
+ * clic per colpa del primo gestore sbagliato sarebbe inutilizzabile. Se `err`
+ * e' dato, ci finisce il PRIMO errore incontrato: gli altri gestori girano
+ * lo stesso.
+ * ========================================================================== */
+int exdom_evento(ExDom *D, int nodo, const char *tipo, ExJsErrore *err);
+
+/* ! UN ASCOLTATORE CHE NON HA TROVATO POSTO SI DICE, come si dice una
+ * serializzazione troncata. La tabella degli ascolti ha un tetto, e una pagina
+ * che ne registra piu' di quanti ce ne stanno resterebbe muta su qualche clic
+ * senza che nessuno possa accorgersene guardando la pagina. Diventa 1 e non
+ * torna piu' indietro: e' una spia. */
+int exdom_perso(const ExDom *D);
 
 /* ! SE UNA SERIALIZZAZIONE NON C'E' STATA TUTTA LO SI PUO' CHIEDERE, invece di
  * lasciare che una pagina mostri meno di quel che c'e' senza dirlo. Diventa 1

@@ -989,6 +989,53 @@ int exjs_pompa(ExJsCtx *c, unsigned int ora_ms)
     return fatti;
 }
 
+/* =============================================================================
+ * CHIAMARE UNA FUNZIONE DA FUORI
+ *
+ * ! QUESTA E' NATA IL GIORNO DEGLI EVENTI, e il difetto che l'ha fatta nascere
+ * merita di restare scritto. exjs_chiama funziona solo mentre il motore gira,
+ * ed era giusto finche' a chiamare erano `forEach` e i lavori scaduti — che
+ * girano dentro exjs_esegui o dentro exjs_pompa. Un gestore di clic no: il
+ * browser lo fa partire dal suo ciclo di messaggi, quando nessuno script sta
+ * girando. Chiamandolo di li' si sarebbe presa la risposta onesta di
+ * exjs_chiama — «fuori da un'esecuzione» — cioe' nessun gestore avrebbe mai
+ * funzionato.
+ *
+ * ! SE UN'ESECUZIONE C'E' GIA', SI USA QUELLA. Metterne una nuova sopra
+ * azzererebbe il conto dei passi e della profondita', e sarebbe la strada per
+ * far girare all'infinito uno script che si fa partire un evento da se'.
+ * ========================================================================== */
+ExJsVal exjs_invoca(ExJsCtx *c, ExJsVal f, ExJsVal questo,
+                    const ExJsVal *arg, int n_arg, ExJsErrore *err)
+{
+    Ese     E;
+    ExJsVal r;
+
+    if (!c) return exjs_indefinito();
+    if (exjs_ese_prendi(c)) return exjs_chiama(c, f, questo, arg, n_arg, err);
+    if (!exjs_ast_pronto(c)) {
+        /* Nessuno script ha ancora girato: non c'e' albero, quindi non c'e'
+         * nemmeno una funzione da chiamare. */
+        return exjs_indefinito();
+    }
+
+    E.c          = c;
+    E.A          = exjs_ctx_ast(c);
+    E.err        = err;
+    E.rotto      = 0;
+    E.passi      = 0;
+    E.profondita = 0;
+    E.segnale    = SEG_AVANTI;
+    E.ritorno    = exjs_indefinito();
+
+    if (err) { err->messaggio[0] = '\0'; err->riga = 0; err->colonna = 0; }
+
+    exjs_ese_metti(c, &E);
+    r = chiama(&E, f, questo, arg, n_arg, -1);
+    exjs_ese_metti(c, 0);
+    return r;
+}
+
 int exjs_esegui(ExJsCtx *c, const char *sorgente, unsigned int n,
                 ExJsVal *risultato, ExJsErrore *err)
 {
@@ -1045,16 +1092,28 @@ int exjs_esegui(ExJsCtx *c, const char *sorgente, unsigned int n,
 
     /* Da qui in poi le funzioni native possono richiamare il motore: vedi
      * exjs_chiama. Si toglie prima di uscire, o resterebbe un puntatore a una
-     * struttura sulla pila che non esiste piu'. */
-    exjs_ese_metti(c, &E);
+     * struttura sulla pila che non esiste piu'.
+     *
+     * ! SI RIMETTE QUELLA DI PRIMA, NON ZERO, perche' exjs_esegui puo' trovarsi
+     * dentro un'altra esecuzione: un gestore scritto in un attributo —
+     * `onclick="..."` — e' del testo che si esegue mentre uno script sta gia'
+     * girando, se e' stato quello a far partire l'evento. Azzerando, il motore
+     * di fuori si sarebbe ritrovato senza esecuzione a meta' strada, e la
+     * prossima funzione nativa che avesse richiamato il motore avrebbe detto
+     * «fuori da un'esecuzione» in mezzo a uno script perfettamente sano. */
+    {
+        void *prima = exjs_ese_prendi(c);
 
-    /* ! LE DICHIARAZIONI DI TUTTO IL PROGRAMMA PRIMA DI ESEGUIRE LA PRIMA
-     * ISTRUZIONE. Vedi issa(): senza, una funzione non puo' chiamarne una
-     * scritta piu' sotto. */
-    issa(&E, A->nodi[A->radice].a, exjs_globale_idx(c));
-    esegui(&E, A->radice, exjs_globale_idx(c));
+        exjs_ese_metti(c, &E);
 
-    exjs_ese_metti(c, 0);
+        /* ! LE DICHIARAZIONI DI TUTTO IL PROGRAMMA PRIMA DI ESEGUIRE LA PRIMA
+         * ISTRUZIONE. Vedi issa(): senza, una funzione non puo' chiamarne una
+         * scritta piu' sotto. */
+        issa(&E, A->nodi[A->radice].a, exjs_globale_idx(c));
+        esegui(&E, A->radice, exjs_globale_idx(c));
+
+        exjs_ese_metti(c, prima);
+    }
 
     if (risultato) *risultato = E.ritorno;
 

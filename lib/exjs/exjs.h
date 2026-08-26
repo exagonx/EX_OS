@@ -278,6 +278,18 @@ ExJsVal exjs_globale(ExJsCtx *c);
 ExJsVal exjs_chiama(ExJsCtx *c, ExJsVal f, ExJsVal questo,
                     const ExJsVal *arg, int n_arg, ExJsErrore *err);
 
+/* Come exjs_chiama, ma si puo' chiamare anche quando NESSUNO script sta
+ * girando — e' la porta da cui entra un gestore di evento.
+ *
+ * ! LA DIFFERENZA FRA LE DUE E' CHI CHIAMA. exjs_chiama e' per le funzioni
+ * native, che girano gia' dentro il motore; questa e' per chi ospita il
+ * motore, che dal suo ciclo di messaggi vuole far partire una funzione
+ * JavaScript. Se un'esecuzione c'e' gia', usa quella: aprirne una seconda
+ * azzererebbe il conto dei passi, cioe' il tetto che impedisce a uno script
+ * di non finire mai. */
+ExJsVal exjs_invoca(ExJsCtx *c, ExJsVal f, ExJsVal questo,
+                    const ExJsVal *arg, int n_arg, ExJsErrore *err);
+
 /* =============================================================================
  * LA CODA DEI LAVORI — i tempi, senza che la libreria guardi l'orologio
  *

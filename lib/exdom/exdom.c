@@ -51,6 +51,39 @@ typedef struct {
     ExJsVal val;                    /* l'involucro, se e' gia' stato fatto */
 } Legame;
 
+/* =============================================================================
+ * GLI ASCOLTATORI
+ *
+ * ! STANNO IN UNA TABELLA DEL PONTE, non appesi all'involucro del nodo. La
+ * strada breve sarebbe stata una proprieta' nascosta sull'oggetto JavaScript
+ * — `elemento.__ascoltatori` — e sarebbe stata sbagliata due volte: uno script
+ * la vedrebbe (e potrebbe cancellarla), e ogni nodo con un gestore pagherebbe
+ * un vettore. Qui e' una tabella sola, con un tetto che sceglie chi apre la
+ * pagina, come tutto il resto in questo sistema.
+ *
+ * ! IL NOME DELL'EVENTO STA DENTRO IL RECORD e non in un'arena. Trentadue
+ * caratteri tengono ogni nome che esiste davvero — il piu' lungo che si
+ * incontri e' "webkitTransitionEnd" — e un'arena avrebbe voluto dire un terzo
+ * buffer da dimensionare per risparmiare qualche decina di byte. Un nome piu'
+ * lungo si RIFIUTA invece di troncarlo: troncare farebbe rispondere allo
+ * stesso gestore due eventi diversi, che e' peggio del non registrarlo.
+ * ========================================================================== */
+#define TIPO_MAX   32
+
+typedef struct {
+    int           usato;
+    int           nodo;
+    char          tipo[TIPO_MAX];
+    ExJsVal       f;
+    unsigned char cattura;
+    /* ! GLI `onclick` STANNO NELLA STESSA TABELLA, con una bandiera. Sono
+     * un'altra cosa dal DOM — ce n'e' UNO per tipo, e riassegnarlo sostituisce
+     * invece di aggiungere — ma girano nello stesso momento e nello stesso
+     * ordine, e tenerli in due posti avrebbe voluto dire due meccanismi di
+     * propagazione da tenere d'accordo. */
+    unsigned char attributo;
+} Ascolto;
+
 struct ExDom {
     ExJsCtx     *js;
     HtmlDoc     *doc;
@@ -58,9 +91,12 @@ struct ExDom {
     unsigned int testo_max;
     char        *testo;             /* dove si rimette in marcatore */
     Legame      *leg;
+    Ascolto     *asc;
+    unsigned int asc_max;
     ExJsVal      proto;             /* i metodi, in un posto solo */
     ExJsVal      documento;
     int          troncato;
+    int          perso;
 };
 
 /* -----------------------------------------------------------------------------
@@ -93,6 +129,15 @@ static void t_chiudi(Testo *t)
  * ========================================================================== */
 static int leggi_prop(ExJsCtx *c, void *dato, const char *nome, ExJsVal *fuori);
 static int scrivi_prop(ExJsCtx *c, void *dato, const char *nome, ExJsVal v);
+
+/* La tabella degli ascolti si tocca dai ganci — `elemento.onclick` e' una
+ * proprieta' — e il codice degli eventi sta piu' sotto. */
+static int  asc_trova(ExDom *D, int nodo, const char *tipo, ExJsVal f,
+                      int cattura, int attributo);
+static int  asc_aggiungi(ExDom *D, int nodo, const char *tipo, ExJsVal f,
+                         int cattura, int attributo);
+static void asc_togli(ExDom *D, int i);
+static int  tipo_copia(char *dest, const char *s);
 
 ExJsVal exdom_avvolgi(ExDom *D, int nodo)
 {
@@ -360,6 +405,17 @@ static int leggi_prop(ExJsCtx *c, void *dato, const char *nome, ExJsVal *fuori)
     }
     if (ugu(nome, "className")) { *fuori = stringa_c(c, html_attr(d, n, "class")); return 1; }
 
+    /* ! `elemento.onclick` RENDE IL GESTORE, o null. Il DOM fa cosi', e le
+     * pagine ci contano per due cose: sapere se ce n'e' gia' uno, e
+     * richiamarlo a mano. Rendere `undefined` avrebbe fatto passare il primo
+     * controllo e fallire il secondo. */
+    if (nome[0] == 'o' && nome[1] == 'n' && nome[2]) {
+        int i = asc_trova(D, n, nome + 2, exjs_indefinito(), 0, 1);
+
+        *fuori = (i >= 0) ? D->asc[i].f : exjs_nullo();
+        return 1;
+    }
+
     /* --- solo il documento -------------------------------------------- */
     if (n == d->radice) {
         if (ugu(nome, "documentElement")) {
@@ -428,6 +484,26 @@ static int scrivi_prop(ExJsCtx *c, void *dato, const char *nome, ExJsVal v)
     }
     if (ugu(nome, "id"))        { html_attr_metti(d, n, "id", exjs_a_stringa(c, v)); return 1; }
     if (ugu(nome, "className")) { html_attr_metti(d, n, "class", exjs_a_stringa(c, v)); return 1; }
+
+    /* ! SI PRENDE `on...` SOLO SE IL VALORE E' UNA FUNZIONE O `null`, e non
+     * ogni nome che comincia per "on". Uno script che scrive `el.onda = 3` sta
+     * usando l'elemento come un cassetto, come ha diritto di fare; prendersi
+     * quel nome vorrebbe dire fargli sparire un dato senza spiegazioni. */
+    if (nome[0] == 'o' && nome[1] == 'n' && nome[2]) {
+        int tipo_ok = exjs_tipo(c, v);
+
+        if (tipo_ok == EXJS_FUNZIONE) {
+            char tipo[TIPO_MAX];
+
+            if (!tipo_copia(tipo, nome + 2)) { D->perso = 1; return 1; }
+            asc_aggiungi(D, n, tipo, v, 0, 1);
+            return 1;
+        }
+        if (tipo_ok == EXJS_NULLO) {
+            asc_togli(D, asc_trova(D, n, nome + 2, exjs_indefinito(), 0, 1));
+            return 1;
+        }
+    }
 
     if (n == d->radice && ugu(nome, "title")) {
         int t = primo_tag(d, d->radice, "title");
@@ -667,13 +743,331 @@ static ExJsVal m_createTextNode(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
 }
 
 /* =============================================================================
+ * GLI EVENTI
+ * ========================================================================== */
+
+/* Rende 0 se il nome non ci sta: si rifiuta, non si tronca. Il perche' sta
+ * accanto alla struttura Ascolto. */
+static void azzera_errore(ExJsErrore *e)
+{
+    unsigned int i;
+
+    e->riga = e->colonna = 0;
+    e->posizione = 0;
+    for (i = 0; i < EXJS_ERR_LEN; i++) e->messaggio[i] = '\0';
+}
+
+static int tipo_copia(char *dest, const char *s)
+{
+    unsigned int i = 0;
+
+    while (s[i]) {
+        if (i >= TIPO_MAX - 1) return 0;
+        dest[i] = s[i];
+        i++;
+    }
+    dest[i] = '\0';
+    return i > 0;
+}
+
+static int asc_trova(ExDom *D, int nodo, const char *tipo, ExJsVal f,
+                     int cattura, int attributo)
+{
+    unsigned int i;
+
+    for (i = 0; i < D->asc_max; i++) {
+        Ascolto *A = &D->asc[i];
+
+        if (!A->usato || A->nodo != nodo) continue;
+        if (A->attributo != (unsigned char)attributo) continue;
+        if (A->cattura != (unsigned char)cattura) continue;
+        if (!ugu(A->tipo, tipo)) continue;
+        /* ! PER UN `onclick` NON SI CONFRONTA LA FUNZIONE, perche' ce n'e' uno
+         * solo: riassegnarlo deve SOSTITUIRE. Per addEventListener invece la
+         * funzione fa parte dell'identita', ed e' cosi' che due gestori diversi
+         * sullo stesso evento convivono. */
+        if (attributo || A->f == f) return (int)i;
+    }
+    return -1;
+}
+
+static int asc_aggiungi(ExDom *D, int nodo, const char *tipo, ExJsVal f,
+                        int cattura, int attributo)
+{
+    unsigned int i;
+    int          gia;
+
+    if (!tipo || !tipo[0]) return 0;
+
+    gia = asc_trova(D, nodo, tipo, f, cattura, attributo);
+    if (gia >= 0) {
+        /* ! LO STESSO GESTORE DUE VOLTE SI REGISTRA UNA VOLTA SOLA, come dice
+         * il DOM. Sembra pignoleria, e invece e' cio' che salva le pagine che
+         * chiamano addEventListener dentro una funzione richiamata piu' volte:
+         * senza, il gestore girerebbe dieci volte per un clic. */
+        D->asc[gia].f = f;
+        return 1;
+    }
+
+    for (i = 0; i < D->asc_max; i++) {
+        if (D->asc[i].usato) continue;
+        if (!tipo_copia(D->asc[i].tipo, tipo)) { D->perso = 1; return 0; }
+        D->asc[i].usato     = 1;
+        D->asc[i].nodo      = nodo;
+        D->asc[i].f         = f;
+        D->asc[i].cattura   = (unsigned char)cattura;
+        D->asc[i].attributo = (unsigned char)attributo;
+        return 1;
+    }
+    D->perso = 1;
+    return 0;
+}
+
+static void asc_togli(ExDom *D, int i)
+{
+    if (i >= 0 && i < (int)D->asc_max) D->asc[i].usato = 0;
+}
+
+/* -----------------------------------------------------------------------------
+ * L'oggetto evento
+ *
+ * ! LE DUE BANDIERE SONO PROPRIETA' VERE, non stato tenuto qui in C.
+ * `defaultPrevented` e `cancelBubble` esistono nel DOM e le pagine le leggono;
+ * tenerle in C avrebbe voluto dire scriverle anche nell'oggetto per farle
+ * vedere, cioe' la stessa cosa in due posti che devono restare d'accordo. Qui
+ * le scrivono i due metodi e le rilegge la propagazione, con exjs_prendi.
+ * --------------------------------------------------------------------------- */
+static ExJsVal m_preventDefault(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                                int n_arg, void *dato)
+{
+    (void)a; (void)n_arg; (void)dato;
+    exjs_metti(c, questo, "defaultPrevented", exjs_booleano(1));
+    return exjs_indefinito();
+}
+
+static ExJsVal m_stopPropagation(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                                 int n_arg, void *dato)
+{
+    (void)a; (void)n_arg; (void)dato;
+    exjs_metti(c, questo, "cancelBubble", exjs_booleano(1));
+    return exjs_indefinito();
+}
+
+static ExJsVal crea_evento(ExDom *D, const char *tipo, int bersaglio)
+{
+    ExJsCtx *c = D->js;
+    ExJsVal  e = exjs_oggetto(c);
+
+    if (exjs_tipo(c, e) != EXJS_OGGETTO) return exjs_indefinito();
+    exjs_metti(c, e, "type",             stringa_c(c, tipo));
+    exjs_metti(c, e, "target",           exdom_avvolgi(D, bersaglio));
+    exjs_metti(c, e, "currentTarget",    exjs_nullo());
+    exjs_metti(c, e, "defaultPrevented", exjs_booleano(0));
+    exjs_metti(c, e, "cancelBubble",     exjs_booleano(0));
+    exjs_metti(c, e, "preventDefault",
+               exjs_nativa(c, m_preventDefault, D, "preventDefault"));
+    exjs_metti(c, e, "stopPropagation",
+               exjs_nativa(c, m_stopPropagation, D, "stopPropagation"));
+    return e;
+}
+
+static int fermato(ExDom *D, ExJsVal ev)
+{
+    return exjs_a_booleano(D->js, exjs_prendi(D->js, ev, "cancelBubble"));
+}
+
+/* -----------------------------------------------------------------------------
+ * I gestori scritti nell'attributo: onclick="..."
+ *
+ * ! IL TESTO SI ESEGUE COME UNO SCRIPT, e non diventa una funzione, perche' un
+ * costruttore Function ExJs non ce l'ha ancora. Le due differenze si vedono e
+ * vanno sapute: `this` dentro non e' l'elemento, e le variabili dichiarate li'
+ * finiscono fra le globali. `event` invece c'e', perche' e' `window.event`,
+ * che nel DOM esiste davvero — e con quello la stragrande maggioranza degli
+ * attributi veri, che sono chiamate a una funzione gia' scritta altrove,
+ * funziona come deve.
+ *
+ * ! E SI RIANALIZZA A OGNI EVENTO. Su un clic non si sente; su un mousemove
+ * si sentirebbe, e quel giorno il posto dove rimediare e' qui — compilando una
+ * volta e tenendo la funzione nella tabella, come gli altri.
+ * --------------------------------------------------------------------------- */
+static void gestore_attributo(ExDom *D, int nodo, const char *tipo,
+                              ExJsVal ev, ExJsErrore *err, int *avuto)
+{
+    char        nome[TIPO_MAX + 4];
+    unsigned int i = 0;
+    const char *testo;
+    ExJsErrore  mio;
+    ExJsVal     r;
+
+    if (D->doc->nodi[nodo].tipo != HTML_ELEMENTO) return;
+
+    nome[0] = 'o'; nome[1] = 'n';
+    while (tipo[i] && i < TIPO_MAX) { nome[2 + i] = tipo[i]; i++; }
+    nome[2 + i] = '\0';
+
+    testo = html_attr(D->doc, nodo, nome);
+    if (!testo || !testo[0]) return;
+
+    exjs_metti(D->js, exjs_globale(D->js), "event", ev);
+    if (!exjs_esegui(D->js, testo, lung(testo), &r, &mio)) {
+        if (err && !*avuto) { *err = mio; *avuto = 1; }
+    }
+}
+
+/* Fa girare i gestori registrati su un nodo per una fase. Rende 0 se qualcuno
+ * ha fermato la propagazione. */
+static int ascolti_di(ExDom *D, int nodo, const char *tipo, int cattura,
+                      ExJsVal ev, ExJsErrore *err, int *avuto)
+{
+    ExJsCtx     *c = D->js;
+    unsigned int i;
+
+    exjs_metti(c, ev, "currentTarget", exdom_avvolgi(D, nodo));
+
+    /* ! L'ATTRIBUTO GIRA PER PRIMO, e solo in risalita. Nel browser vero
+     * `onclick="..."` diventa la proprieta' onclick al momento in cui la
+     * pagina si legge, quindi e' il primo registrato; e un attributo non
+     * cattura mai, perche' non c'e' modo di scriverlo. */
+    if (!cattura) {
+        gestore_attributo(D, nodo, tipo, ev, err, avuto);
+        if (fermato(D, ev)) return 0;
+    }
+
+    for (i = 0; i < D->asc_max; i++) {
+        Ascolto *A = &D->asc[i];
+        ExJsVal  arg[1];
+        ExJsErrore mio;
+
+        if (!A->usato || A->nodo != nodo) continue;
+        if (A->cattura != (unsigned char)cattura) continue;
+        if (!ugu(A->tipo, tipo)) continue;
+
+        arg[0] = ev;
+        azzera_errore(&mio);
+        /* ! `this` DENTRO UN GESTORE E' L'ELEMENTO SU CUI E' REGISTRATO, non
+         * quello su cui e' successo il fatto. E' la differenza fra target e
+         * currentTarget, ed e' proprio cio' che serve a chi mette un gestore
+         * solo sul contenitore per servire cento figli. */
+        exjs_invoca(c, A->f, exdom_avvolgi(D, nodo), arg, 1, &mio);
+        if (mio.messaggio[0] && err && !*avuto) { *err = mio; *avuto = 1; }
+
+        if (fermato(D, ev)) return 0;
+    }
+    return 1;
+}
+
+#define STRADA_MAX  64
+
+int exdom_evento(ExDom *D, int nodo, const char *tipo, ExJsErrore *err)
+{
+    int     strada[STRADA_MAX];
+    int     n_strada = 0, i, avuto = 0;
+    ExJsVal ev;
+
+    if (!D || !tipo || !tipo[0]) return 1;
+    if (nodo < 0 || nodo >= (int)D->doc->nodi_n) return 1;
+
+    ev = crea_evento(D, tipo, nodo);
+    if (exjs_tipo(D->js, ev) != EXJS_OGGETTO) return 1;
+    if (err) { err->messaggio[0] = '\0'; err->riga = 0; }
+
+    /* La strada dal bersaglio in su. ! IL BERSAGLIO NON CI STA DENTRO: la sua
+     * fase e' una sola e si fa in mezzo, con tutt'e due i tipi di gestore. */
+    for (i = D->doc->nodi[nodo].padre; i >= 0 && n_strada < STRADA_MAX;
+         i = D->doc->nodi[i].padre)
+        strada[n_strada++] = i;
+
+    /* --- discesa: dalla radice giu' fino al padre del bersaglio --------- */
+    for (i = n_strada - 1; i >= 0; i--)
+        if (!ascolti_di(D, strada[i], tipo, 1, ev, err, &avuto)) goto finito;
+
+    /* --- il bersaglio: le due fasi si toccano qui ----------------------- */
+    if (!ascolti_di(D, nodo, tipo, 1, ev, err, &avuto)) goto finito;
+    if (!ascolti_di(D, nodo, tipo, 0, ev, err, &avuto)) goto finito;
+
+    /* --- risalita ------------------------------------------------------- */
+    for (i = 0; i < n_strada; i++)
+        if (!ascolti_di(D, strada[i], tipo, 0, ev, err, &avuto)) goto finito;
+
+finito:
+    /* ! `window.event` SI TOGLIE DI MEZZO A COSE FATTE. Lasciarlo li' vorrebbe
+     * dire che uno script eseguito dopo, che non c'entra niente, trova un
+     * evento vecchio e ci crede. */
+    exjs_metti(D->js, exjs_globale(D->js), "event", exjs_indefinito());
+    return exjs_a_booleano(D->js, exjs_prendi(D->js, ev, "defaultPrevented"))
+           ? 0 : 1;
+}
+
+int exdom_perso(const ExDom *D) { return D ? D->perso : 0; }
+
+/* -----------------------------------------------------------------------------
+ * I tre metodi
+ * --------------------------------------------------------------------------- */
+static ExJsVal m_addEventListener(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                                  int n_arg, void *dato)
+{
+    ExDom *D = (ExDom *)dato;
+    int    n = nodo_di(D, questo);
+    char   tipo[TIPO_MAX];
+
+    if (n < 0 || n_arg < 2) return exjs_indefinito();
+    if (exjs_tipo(c, a[1]) != EXJS_FUNZIONE) return exjs_indefinito();
+    if (!tipo_copia(tipo, exjs_a_stringa(c, a[0]))) { D->perso = 1; return exjs_indefinito(); }
+
+    asc_aggiungi(D, n, tipo, a[1],
+                 (n_arg >= 3) ? exjs_a_booleano(c, a[2]) : 0, 0);
+    return exjs_indefinito();
+}
+
+static ExJsVal m_removeEventListener(ExJsCtx *c, ExJsVal questo,
+                                     const ExJsVal *a, int n_arg, void *dato)
+{
+    ExDom *D = (ExDom *)dato;
+    int    n = nodo_di(D, questo);
+    char   tipo[TIPO_MAX];
+
+    if (n < 0 || n_arg < 2) return exjs_indefinito();
+    if (!tipo_copia(tipo, exjs_a_stringa(c, a[0]))) return exjs_indefinito();
+
+    asc_togli(D, asc_trova(D, n, tipo, a[1],
+                           (n_arg >= 3) ? exjs_a_booleano(c, a[2]) : 0, 0));
+    return exjs_indefinito();
+}
+
+static ExJsVal m_dispatchEvent(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                               int n_arg, void *dato)
+{
+    ExDom *D = (ExDom *)dato;
+    int    n = nodo_di(D, questo);
+    char   tipo[TIPO_MAX];
+
+    if (n < 0 || n_arg < 1) return exjs_booleano(1);
+
+    /* ! SI ACCETTA SIA UNA STRINGA SIA UN OGGETTO CON `type`. Il DOM vuole un
+     * oggetto Event, che si costruisce con `new Event('click')` — e un
+     * costruttore Event qui non c'e' ancora. Accettare la stringa da alle
+     * pagine di prova un modo di far partire un evento senza aspettare quel
+     * pezzo, e non toglie niente a chi passa l'oggetto giusto. */
+    if (exjs_tipo(c, a[0]) == EXJS_OGGETTO)
+        tipo_copia(tipo, exjs_a_stringa(c, exjs_prendi(c, a[0], "type")));
+    else if (!tipo_copia(tipo, exjs_a_stringa(c, a[0])))
+        return exjs_booleano(1);
+
+    return exjs_booleano(exdom_evento(D, n, tipo, 0));
+}
+
+/* =============================================================================
  * APRIRE IL PONTE
  * ========================================================================== */
 #define ALLINEA8(x)  (((x) + 7u) & ~7u)
 
-unsigned int exdom_quanto_serve(unsigned int nodi_max, unsigned int testo_max)
+unsigned int exdom_quanto_serve(unsigned int nodi_max, unsigned int testo_max,
+                                unsigned int ascolti_max)
 {
-    return ALLINEA8(sizeof(ExDom)) + ALLINEA8(nodi_max * (unsigned int)sizeof(Legame))
+    return ALLINEA8(sizeof(ExDom))
+           + ALLINEA8(nodi_max * (unsigned int)sizeof(Legame))
+           + ALLINEA8(ascolti_max * (unsigned int)sizeof(Ascolto))
            + ALLINEA8(testo_max);
 }
 
@@ -684,24 +1078,30 @@ static void metti_metodo(ExDom *D, ExJsVal dove, const char *nome, ExJsNativa f)
 
 ExDom *exdom_apri(void *memoria, unsigned int byte,
                   ExJsCtx *js, HtmlDoc *doc,
-                  unsigned int nodi_max, unsigned int testo_max)
+                  unsigned int nodi_max, unsigned int testo_max,
+                  unsigned int ascolti_max)
 {
     unsigned char *p = (unsigned char *)memoria;
     ExDom         *D;
     unsigned int   i;
 
     if (!memoria || !js || !doc || nodi_max == 0 || testo_max < 64) return 0;
-    if (byte < exdom_quanto_serve(nodi_max, testo_max)) return 0;
+    if (byte < exdom_quanto_serve(nodi_max, testo_max, ascolti_max)) return 0;
 
     D = (ExDom *)p;                          p += ALLINEA8(sizeof(ExDom));
     D->leg = (Legame *)p;                    p += ALLINEA8(nodi_max * (unsigned int)sizeof(Legame));
+    D->asc = (Ascolto *)p;                   p += ALLINEA8(ascolti_max * (unsigned int)sizeof(Ascolto));
     D->testo = (char *)p;
 
     D->js        = js;
     D->doc       = doc;
     D->nodi_max  = nodi_max;
     D->testo_max = testo_max;
+    D->asc_max   = ascolti_max;
     D->troncato  = 0;
+    D->perso     = 0;
+
+    for (i = 0; i < ascolti_max; i++) D->asc[i].usato = 0;
 
     for (i = 0; i < nodi_max; i++) {
         D->leg[i].D    = D;
@@ -724,6 +1124,9 @@ ExDom *exdom_apri(void *memoria, unsigned int byte,
     metti_metodo(D, D->proto, "hasChildNodes",          m_hasChildNodes);
     metti_metodo(D, D->proto, "getElementsByTagName",   m_getElementsByTagName);
     metti_metodo(D, D->proto, "getElementsByClassName", m_getElementsByClassName);
+    metti_metodo(D, D->proto, "addEventListener",       m_addEventListener);
+    metti_metodo(D, D->proto, "removeEventListener",    m_removeEventListener);
+    metti_metodo(D, D->proto, "dispatchEvent",          m_dispatchEvent);
 
     D->documento = exdom_avvolgi(D, doc->radice);
     if (exjs_tipo(js, D->documento) != EXJS_OGGETTO) return 0;
