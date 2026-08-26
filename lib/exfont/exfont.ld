@@ -22,7 +22,7 @@ ENTRY(exfont_tabella)
 
 SECTIONS
 {
-    . = 0x05000000;
+    . = 0x04400000;
 
     .exlib_testa : {
         KEEP(*(.exlib_testa))

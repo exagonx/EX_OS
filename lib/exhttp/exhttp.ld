@@ -22,7 +22,7 @@ ENTRY(exhttp_tabella)
 
 SECTIONS
 {
-    . = 0x05400000;
+    . = 0x04500000;
 
     .exlib_testa : {
         KEEP(*(.exlib_testa))

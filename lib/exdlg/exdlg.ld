@@ -22,7 +22,7 @@ ENTRY(exdlg_tabella)
 
 SECTIONS
 {
-    . = 0x04400000;
+    . = 0x04100000;
 
     .exlib_testa : {
         KEEP(*(.exlib_testa))

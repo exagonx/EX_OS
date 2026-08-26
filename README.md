@@ -583,10 +583,16 @@ conseguenza dell'allocatore a bump, dove `free()` non restituisce niente.
 | Gli header non cambiano di una riga, e nemmeno il sorgente delle applicazioni | testato |
 
 ```
-    0x04000000   exwin.so    il toolkit
-    0x04400000   exdlg.so    i dialoghi
-    0x04800000   libc.so     la libreria C
-    0x08000000   i programmi
+    0x04000000 - 0x08000000   le librerie, una fetta da 1 MB a testa (64 in tutto)
+    0x08000000               i programmi
+```
+
+La mappa di chi occupa cosa **non e' scritta da nessuna parte**: la si legge
+dai file, perche' scritta a mano ha sbagliato tre volte.
+
+```
+    python3 tools/fette.py            la mappa vera, e dice se qualcosa si tocca
+    python3 tools/fette.py --libera   il prossimo indirizzo libero
 ```
 
 Il risparmio, misurato:

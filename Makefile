@@ -1305,9 +1305,16 @@ $(EXWIN_SO): $(EXWIN_SRC) $(EXWIN_ESPORTA) $(EXWIN_HDR) $(EXWIN_LD) \
 	@# trovava niente — passando per un confronto con la stringa vuota, che
 	@# fallisce sempre. Un controllo che dipende dalla lingua non e' un
 	@# controllo.
-	@ent=$$(LC_ALL=C readelf -h $@ | awk '/Entry point/ {print $$4}'); \
-	 if [ "$$ent" != "0x4000000" ]; then \
-	     echo "[ERRORE] la tabella di exwin.so e' a $$ent invece che a 0x4000000"; \
+	@# ! L'INDIRIZZO ATTESO SI LEGGE DAL .ld, NON SI RISCRIVE QUI. Scritto
+	@# a mano era la TERZA copia della stessa mappa — il .ld, il commento
+	@# in testa a exwin.ld e questa riga — e le tre sono divergute:
+	@# ricompattando le fette il 26 agosto 2026 il collegamento e'
+	@# fallito qui, con il Makefile che pretendeva l'indirizzo vecchio.
+	@# Adesso la verita' e' una: la riga «. = 0x...» del .ld.
+	@atteso=$$(sed -n 's/^[[:space:]]*\.[[:space:]]*=[[:space:]]*0x0*\([0-9A-Fa-f]*\)[[:space:]]*;.*/0x\1/p' $(EXWIN_LD) | head -1 | tr 'A-F' 'a-f'); \
+	 ent=$$(LC_ALL=C readelf -h $@ | awk '/Entry point/ {print $$4}' | tr 'A-F' 'a-f'); \
+	 if [ "$$ent" != "$$atteso" ]; then \
+	     echo "[ERRORE] la tabella di exwin.so e' a $$ent invece che a $$atteso ($(EXWIN_LD))"; \
 	     exit 1; \
 	 fi; \
 	 echo "[OK] exwin.so compilata: $@ (tabella a $$ent)"
@@ -1345,9 +1352,16 @@ $(EXDLG_SO): $(EXDLG_SRC) $(EXDLG_ESPORTA) $(EXDLG_HDR) $(EXDLG_LD) \
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(EXDLG_LD) \
 	    $(BUILD_OBJ)/sodlg_esporta.o $(BUILD_OBJ)/sodlg_main.o \
 	    $(BUILD_OBJ)/sodlg_exwin.o $(LIBC_PONTI_OBJ) -o $@
-	@ent=$$(LC_ALL=C readelf -h $@ | awk '/Entry point/ {print $$4}'); \
-	 if [ "$$ent" != "0x4400000" ]; then \
-	     echo "[ERRORE] la tabella di exdlg.so e' a $$ent invece che a 0x4400000"; \
+	@# ! L'INDIRIZZO ATTESO SI LEGGE DAL .ld, NON SI RISCRIVE QUI. Scritto
+	@# a mano era la TERZA copia della stessa mappa — il .ld, il commento
+	@# in testa a exwin.ld e questa riga — e le tre sono divergute:
+	@# ricompattando le fette il 26 agosto 2026 il collegamento e'
+	@# fallito qui, con il Makefile che pretendeva l'indirizzo vecchio.
+	@# Adesso la verita' e' una: la riga «. = 0x...» del .ld.
+	@atteso=$$(sed -n 's/^[[:space:]]*\.[[:space:]]*=[[:space:]]*0x0*\([0-9A-Fa-f]*\)[[:space:]]*;.*/0x\1/p' $(EXDLG_LD) | head -1 | tr 'A-F' 'a-f'); \
+	 ent=$$(LC_ALL=C readelf -h $@ | awk '/Entry point/ {print $$4}' | tr 'A-F' 'a-f'); \
+	 if [ "$$ent" != "$$atteso" ]; then \
+	     echo "[ERRORE] la tabella di exdlg.so e' a $$ent invece che a $$atteso ($(EXDLG_LD))"; \
 	     exit 1; \
 	 fi; \
 	 echo "[OK] exdlg.so compilata: $@ (tabella a $$ent)"
@@ -1460,9 +1474,16 @@ $(EXIMG_SO): $(EXIMG_SRC) $(EXIMG_PNG) $(EXIMG_ICO) $(EXIMG_JPG) $(EXIMG_GIF) \
 	    $(BUILD_OBJ)/soimg_jpg.o $(BUILD_OBJ)/soimg_gif.o \
 	    $(BUILD_OBJ)/soimg_inflate.o \
 	    $(LIBC_PONTI_OBJ) -o $@
-	@ent=$$(LC_ALL=C readelf -h $@ | awk '/Entry point/ {print $$4}'); \
-	 if [ "$$ent" != "0x4c00000" ]; then \
-	     echo "[ERRORE] la tabella di eximg.so e' a $$ent invece che a 0x4c00000"; \
+	@# ! L'INDIRIZZO ATTESO SI LEGGE DAL .ld, NON SI RISCRIVE QUI. Scritto
+	@# a mano era la TERZA copia della stessa mappa — il .ld, il commento
+	@# in testa a exwin.ld e questa riga — e le tre sono divergute:
+	@# ricompattando le fette il 26 agosto 2026 il collegamento e'
+	@# fallito qui, con il Makefile che pretendeva l'indirizzo vecchio.
+	@# Adesso la verita' e' una: la riga «. = 0x...» del .ld.
+	@atteso=$$(sed -n 's/^[[:space:]]*\.[[:space:]]*=[[:space:]]*0x0*\([0-9A-Fa-f]*\)[[:space:]]*;.*/0x\1/p' $(EXIMG_LD) | head -1 | tr 'A-F' 'a-f'); \
+	 ent=$$(LC_ALL=C readelf -h $@ | awk '/Entry point/ {print $$4}' | tr 'A-F' 'a-f'); \
+	 if [ "$$ent" != "$$atteso" ]; then \
+	     echo "[ERRORE] la tabella di eximg.so e' a $$ent invece che a $$atteso ($(EXIMG_LD))"; \
 	     exit 1; \
 	 fi; \
 	 echo "[OK] eximg.so compilata: $@ (tabella a $$ent)"
@@ -1523,9 +1544,16 @@ $(LIBC_SO): $(LIBC_SO_OBJ) $(GEN_ESPORTA) $(LIBC_LD) $(SEGNO_FLAG)
 	@# condivisa non sa chi la usera' domani.
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib -T $(LIBC_LD) \
 	    $(BUILD_OBJ)/libc_esporta.o $(LIBC_SO_OBJ) -o $@
-	@ent=$$(LC_ALL=C readelf -h $@ | awk '/Entry point/ {print $$4}'); \
-	 if [ "$$ent" != "0x4800000" ]; then \
-	     echo "[ERRORE] la tabella di libc.so e' a $$ent invece che a 0x4800000"; \
+	@# ! L'INDIRIZZO ATTESO SI LEGGE DAL .ld, NON SI RISCRIVE QUI. Scritto
+	@# a mano era la TERZA copia della stessa mappa — il .ld, il commento
+	@# in testa a exwin.ld e questa riga — e le tre sono divergute:
+	@# ricompattando le fette il 26 agosto 2026 il collegamento e'
+	@# fallito qui, con il Makefile che pretendeva l'indirizzo vecchio.
+	@# Adesso la verita' e' una: la riga «. = 0x...» del .ld.
+	@atteso=$$(sed -n 's/^[[:space:]]*\.[[:space:]]*=[[:space:]]*0x0*\([0-9A-Fa-f]*\)[[:space:]]*;.*/0x\1/p' $(LIBC_LD) | head -1 | tr 'A-F' 'a-f'); \
+	 ent=$$(LC_ALL=C readelf -h $@ | awk '/Entry point/ {print $$4}' | tr 'A-F' 'a-f'); \
+	 if [ "$$ent" != "$$atteso" ]; then \
+	     echo "[ERRORE] la tabella di libc.so e' a $$ent invece che a $$atteso ($(LIBC_LD))"; \
 	     exit 1; \
 	 fi; \
 	 echo "[OK] libc.so compilata: $@ (tabella a $$ent)"
@@ -4423,6 +4451,18 @@ verifica-excert: $(EXCERT_SRC) $(EXCERT_HDR)
 	    -c $(EXCERT_SRC) -o $(BUILD_OBJ)/excert_prova.o
 	@echo "[OK] lib/excert compila per i386"
 
+# =============================================================================
+# LE FETTE DELLE LIBRERIE — controllate, non ricordate
+#
+# ! GIRA NEL BUILD, e non e' un extra: una fetta assegnata due volte non da'
+# nessun errore di collegamento. Da' due librerie che si sovrascrivono dentro
+# il processo che le apre entrambe, e il guasto si vede lontanissimo da dove e'
+# stato fatto. E' gia' successo tre volte con la mappa scritta a mano.
+# =============================================================================
+.PHONY: fette
+fette:
+	@python3 tools/fette.py
+
 .PHONY: prova-excert
 prova-excert:
 	@python3 tools/prove/certprova.py
@@ -4949,7 +4989,7 @@ iso-unisci:
 	@echo "[OK] $(ISO_IMG) ricomposto e verificato"
 
 .PHONY: iso-exos
-iso-exos: $(ISOX_IMG)
+iso-exos: fette $(ISOX_IMG)
 
 # Prova il CD degli strumenti dentro QEMU, montato su /cdrom.
 .PHONY: run-iso

@@ -55,6 +55,7 @@
 #include "paging.h"
 #include "sched.h"
 #include "syscall.h"
+#include "kmalloc.h"   /* l'elenco delle pagine e' grande quanto la libreria */
 
 /* -----------------------------------------------------------------------------
  * I confini, e sono controllati
@@ -67,25 +68,37 @@
 #define LIB_SPAZIO_BASE   0x04000000u
 #define LIB_SPAZIO_FINE   0x08000000u
 
-/* ! IL TETTO E' DI TUTTO IL SISTEMA, NON DI UN PROCESSO, ed e' la cosa da
- * sapere prima di scegliere il numero: questa e' una cache unica, quindi le
- * quattro di prima erano quattro per la macchina intera. Il browser da solo
- * ne apre gia' quattro — libc, exwin, exhttp, e exfont che exwin apre da se'
- * per il TrueType — e la quinta, eximg per le immagini della pagina, non
- * entrava piu'. Il messaggio c'era e diceva la verita'; la verita' era che il
- * numero era troppo piccolo.
+/* =============================================================================
+ * ! IL TETTO E' DI TUTTO IL SISTEMA, NON DI UN PROCESSO: questa e' una cache
+ * unica, quindi il numero vale per la macchina intera.
  *
- * Oggi le librerie del sistema sono SEI (libc, exwin, exdlg, exfont, exhttp,
- * eximg) e ne sono dichiarate altre tre in arrivo per l'https (exbig, exasn1,
- * extls): dodici e' quel conto piu' un margine, e non e' un numero che si
- * alzera' ancora presto.
+ * E' stato 4, poi 12, e ogni volta il numero era «il conto di adesso piu' un
+ * margine» — con scritto accanto che non si sarebbe alzato ancora presto. Si
+ * e' alzato ancora, due volte. La lezione non e' che serviva un margine piu'
+ * largo: e' che un tetto scelto sul conto di oggi si rifa' a ogni conto nuovo,
+ * e ogni volta lo si scopre da un programma che non parte.
  *
- * ! E COSTA SOLO KERNEL .bss, NON RAM DELLE LIBRERIE: una voce inutilizzata e'
- * `usata = 0` e non ha nessuna pagina dietro. Una voce sono circa 1,6 KB
- * (96 pagine descritte piu' il percorso), quindi passare da quattro a dodici
- * costa tredici kilobyte di kernel e nient'altro. */
-#define LIB_MAX           12    /* librerie diverse tenute insieme, IN TUTTO */
-#define LIB_PAGINE_MAX    96    /* 384 KB per libreria */
+ * ! ADESSO IL NUMERO NON E' PIU' UN CONTO, E' UN CONFINE. Sessantaquattro non
+ * e' «le nostre piu' un margine»: e' piu' di quante librerie diverse possano
+ * esistere insieme su una macchina di questa taglia, e ci sta un motore
+ * JavaScript spezzato in una decina di pezzi senza che nessuno debba tornare
+ * qui a contare.
+ *
+ * ! E ADESSO COSTA POCO DAVVERO. Prima una voce portava dentro un vettore
+ * fisso di 96 descrittori di pagina — 1,6 KB a voce, occupati anche dalle
+ * voci vuote — e quel vettore era anche il tetto alla DIMENSIONE di una
+ * libreria: 384 KB, cioe' meno di un motore JavaScript. Adesso l'elenco delle
+ * pagine si alloca con kmalloc quando la libreria si carica, grande quanto
+ * quella libreria: una voce vuota e' un centinaio di byte, e una libreria puo'
+ * essere grande quanto serve.
+ * ========================================================================== */
+#define LIB_MAX           64    /* librerie diverse tenute insieme, IN TUTTO */
+
+/* ! UN TETTO ALLA SINGOLA LIBRERIA RESTA, ma e' un confine, non una misura:
+ * 16 MB. Serve a fermare un file corrotto o ostile che dichiara segmenti
+ * enormi prima che il kernel provi ad allocarli, non a dire quanto puo' essere
+ * grande una libreria vera. */
+#define LIB_PAGINE_MAX    4096  /* 16 MB per libreria: e' un confine, non una misura */
 #define LIB_PERC_MAX      96
 
 typedef struct {
@@ -100,8 +113,9 @@ typedef struct {
     int        usata;
     char       percorso[LIB_PERC_MAX];
     uint32_t   tabella;                     /* e_entry: dov'e' la tabella */
-    uint32_t   n_pagine;
-    LibPagina  pag[LIB_PAGINE_MAX];
+    uint32_t   n_pagine;                    /* quante ne descrive `pag` */
+    uint32_t   pag_capienza;                /* quante ne CONTIENE `pag` */
+    LibPagina *pag;                         /* kmalloc: grande quanto serve */
 } Libreria;
 
 static Libreria g_lib[LIB_MAX];
@@ -169,6 +183,14 @@ static void disfa(Libreria *L)
 
     for (i = 0; i < L->n_pagine; i++)
         if (L->pag[i].fisico) pmm_free_page(L->pag[i].fisico);
+
+    /* ! ANCHE L'ELENCO, da quando e' allocato: e' l'unica strada che disfa una
+     * voce, quindi e' l'unico posto dove quella memoria puo' tornare indietro.
+     * Dimenticarla qui vorrebbe dire perdere qualche kilobyte a ogni libreria
+     * che non si carica — e chi non si carica e' spesso chi ci riprova. */
+    if (L->pag) kfree(L->pag);
+    L->pag          = NULL;
+    L->pag_capienza = 0;
 
     L->n_pagine = 0;
     L->usata    = 0;
@@ -245,9 +267,35 @@ static int leggi_libreria(const char *percorso, Libreria *L)
         if (ph.p_flags & PF_W) flags |= PG_WRITABLE;
 
         if (L->n_pagine + pagine > LIB_PAGINE_MAX) {
-            klog(LOG_ERROR, "LIB: '%s' non ci sta: piu' di %u pagine",
-                 percorso, (unsigned)LIB_PAGINE_MAX);
+            klog(LOG_ERROR, "LIB: '%s' non ci sta: piu' di %u pagine (%u MB)",
+                 percorso, (unsigned)LIB_PAGINE_MAX,
+                 (unsigned)(LIB_PAGINE_MAX * PAGE_SIZE / (1024 * 1024)));
             goto fine;
+        }
+
+        /* ! L'ELENCO CRESCE QUANDO SERVE, e non si indovina prima: i segmenti
+         * si leggono uno per volta e quanti ne saranno in tutto lo si sa solo
+         * alla fine. Si raddoppia invece di allungare di poco a ogni giro,
+         * cosi' il numero di riallocazioni non dipende da come e' spezzato il
+         * file — un ELF con dieci segmenti piccoli non deve costare dieci
+         * copie dell'elenco. */
+        if (L->n_pagine + pagine > L->pag_capienza) {
+            uint32_t   nuova = L->pag_capienza ? L->pag_capienza * 2 : 64;
+            LibPagina *piu_grande;
+
+            while (nuova < L->n_pagine + pagine) nuova *= 2;
+
+            piu_grande = (LibPagina *)kmalloc(nuova * sizeof(LibPagina));
+            if (piu_grande == NULL) {
+                klog(LOG_ERROR, "LIB: '%s': non c'e' memoria per l'elenco di "
+                     "%u pagine", percorso, nuova);
+                rc = ERR(ENOMEM);
+                goto fine;
+            }
+            for (pg = 0; pg < L->n_pagine; pg++) piu_grande[pg] = L->pag[pg];
+            if (L->pag) kfree(L->pag);
+            L->pag         = piu_grande;
+            L->pag_capienza = nuova;
         }
 
         for (pg = 0; pg < pagine; pg++) {

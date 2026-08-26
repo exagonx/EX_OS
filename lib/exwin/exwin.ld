@@ -17,25 +17,39 @@
  * USER_SPACE_BASE e l'indirizzo dei programmi (0x08000000) sono riservati alle
  * librerie proprio per questo — vedi kernel/loader/lib.c.
  *
- * ! OGNI LIBRERIA HA LA SUA FETTA, e vanno assegnate qui, in un posto solo:
+ * ! LA MAPPA NON STA PIU' QUI, E NON E' UNA PERDITA: STA NEI FILE.
  *
- *     0x04000000   exwin.so    il toolkit
- *     0x04400000   exdlg.so    i dialoghi (Apri/Salva)
- *     0x04800000   libc.so     la libreria C
- *     0x04C00000   eximg.so    i formati d'immagine (PNG, JPG, ICO)
- *     0x05000000   exfont.so   il TrueType
- *     0x05400000   exhttp.so   la rete
- *     0x05800000   exhtml.so   l'albero del marcatore
- *     0x05C00000   libere, fino a 0x08000000 (nove fette)
+ * Qui c'era l'elenco delle fette assegnate, scritto a mano. Per TRE volte ha
+ * detto «libere» di fette che erano gia' occupate — l'ultima il 26 agosto
+ * 2026, con excss.so dentro «0x05C00000 libere». E una fetta assegnata due
+ * volte non da' un errore di collegamento: da' due librerie che si
+ * sovrascrivono dentro il processo che le apre tutt'e due, cioe' un guasto che
+ * si manifesta lontanissimo da dove e' stato fatto.
  *
- * ! QUESTA MAPPA VA TENUTA IN PARI, e per due volte non lo e' stata: diceva
- * «0x05000000 libere» mentre exfont e exhttp erano gia' li'. Una fetta
- * assegnata due volte non da' un errore di collegamento — da' due librerie che
- * si sovrascrivono dentro il processo che le apre tutt'e due, cioe' un guasto
- * che si manifesta lontano da dove e' stato fatto.
+ * Il difetto non era la disattenzione: era che la mappa e la verita' erano due
+ * cose diverse. La verita' sta nella riga «. = 0x...» di ogni .ld e nella
+ * misura vera di ogni .so costruito, e adesso a leggerle e' un programma:
  *
- * Quattro megabyte a testa: una page table esatta, e nessuna libreria di
- * EX-OS e' lontanamente vicina a riempirla.
+ *     python3 tools/fette.py            la mappa, e dice se qualcosa si tocca
+ *     python3 tools/fette.py --libera   il prossimo indirizzo libero
+ *
+ * Lo lancia anche il build. Una nuova libreria si assegna chiedendo a lui
+ * l'indirizzo, non leggendo un commento.
+ *
+ * ! UN MEGABYTE A TESTA, NON QUATTRO. Le otto librerie di oggi stanno tutte
+ * sotto i 120 KB e ognuna aveva una fetta da quattro megabyte: il 97 per cento
+ * dello spazio era sprecato, e la fascia ne teneva sedici in tutto. A un
+ * megabyte ne tiene sessantaquattro — quante ne dichiara LIB_MAX in
+ * kernel/loader/lib.c, e le due cose devono potersi guardare in faccia: un
+ * kernel che ne promette 64 sopra una fascia che ne tiene 16 e' una promessa
+ * che gli indirizzi non mantengono.
+ *
+ * ! E CHI E' PIU' GRANDE DI UN MEGABYTE PRENDE PIU' FETTE DI SEGUITO. Non e'
+ * un caso particolare da gestire: si sceglie una base che abbia dietro lo
+ * spazio che serve, e tools/fette.py — che le misure le legge dagli ELF veri —
+ * si accorge se quella dopo e' troppo vicina. E' il controllo che comincera' a
+ * contare da solo il giorno che arrivera' un motore JavaScript, che in un
+ * megabyte non ci sta per definizione.
  *
  * ! LA TABELLA STA PRIMA DI TUTTO IL RESTO, e con KEEP(). E' il punto
  * d'ingresso dichiarato con ENTRY(): metterla in .rodata insieme al resto

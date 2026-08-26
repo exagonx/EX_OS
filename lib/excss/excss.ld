@@ -24,7 +24,7 @@ ENTRY(excss_tabella)
 
 SECTIONS
 {
-    . = 0x05C00000;
+    . = 0x04700000;
 
     .exlib_testa : {
         KEEP(*(.exlib_testa))

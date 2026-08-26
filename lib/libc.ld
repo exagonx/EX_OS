@@ -32,7 +32,7 @@ ENTRY(libc_tabella)
 
 SECTIONS
 {
-    . = 0x04800000;
+    . = 0x04200000;
 
     .exlib_testa : {
         KEEP(*(.exlib_testa))
