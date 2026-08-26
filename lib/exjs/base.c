@@ -709,6 +709,407 @@ static ExJsVal nat_filter(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *
 { (void)d; return scorri(c, q, a, n, 2); }
 
 /* =============================================================================
+ * JSON
+ *
+ * -----------------------------------------------------------------------------
+ * ! JSON NON E' JavaScript, ed e' la prima cosa da tenere ferma.
+ *
+ * Somiglia a un oggetto letterale e non lo e': le chiavi vogliono le
+ * virgolette DOPPIE, le virgolette singole non esistono, la virgola finale e'
+ * un errore, i commenti non ci sono, e `undefined` non e' un valore. Un
+ * analizzatore che accettasse anche il resto sarebbe piu' comodo e sbagliato:
+ * accetterebbe roba che ogni altro sistema rifiuta, e il file che passa qui
+ * verrebbe rifiutato altrove.
+ *
+ * -----------------------------------------------------------------------------
+ * ! stringify SI FERMA SUI CICLI, e non e' un caso di scuola.
+ *
+ * `var o={}; o.io=o;` e' un attimo da scrivere e un attimo da trovarsi in una
+ * struttura vera — un nodo che punta al padre, per dirne una. Senza un tetto
+ * alla profondita', stringify scenderebbe per sempre e si porterebbe via la
+ * pila del C. JavaScript vero solleva un'eccezione; qui, che le eccezioni non
+ * ci sono ancora, si rende `undefined` e si smette.
+ *
+ * -----------------------------------------------------------------------------
+ * ! E SI COMPONE IN UN POSTO A PARTE, NON NELL'ARENA.
+ *
+ * Comporre direttamente nell'arena sarebbe piu' elegante e fragile: durante la
+ * discesa si chiama exjs_a_stringa, e per un vettore QUELLA scrive nell'arena.
+ * Le due scritture si intreccerebbero e il risultato sarebbe una stringa a
+ * pezzi — un guasto che si vede solo con un vettore dentro un oggetto, cioe'
+ * tardi. Un vettore di servizio ha un tetto dichiarato e fallisce dicendolo.
+ * ========================================================================== */
+#define JSON_MAX        4096
+#define JSON_PROFONDO   32
+
+typedef struct {
+    char        *b;
+    unsigned int max, n;
+    int          rotto;
+} Comp;
+
+static void c_car(Comp *C, char ch)
+{
+    if (C->n + 1 >= C->max) { C->rotto = 1; return; }
+    C->b[C->n++] = ch;
+    C->b[C->n] = '\0';
+}
+
+static void c_testo(Comp *C, const char *s)
+{
+    while (*s && !C->rotto) c_car(C, *s++);
+}
+
+/* ! LE VIRGOLETTE E LE BARRE VANNO PROTETTE, e i caratteri di controllo pure:
+ * un a capo dentro una stringa JSON e' vietato dalla norma, e lasciarcelo
+ * produce un file che nessun altro analizzatore accetta. */
+static void c_stringa(Comp *C, const char *s)
+{
+    c_car(C, '"');
+    while (*s && !C->rotto) {
+        unsigned char ch = (unsigned char)*s++;
+
+        switch (ch) {
+        case '"':  c_testo(C, "\\\""); break;
+        case '\\': c_testo(C, "\\\\"); break;
+        case '\n': c_testo(C, "\\n");  break;
+        case '\r': c_testo(C, "\\r");  break;
+        case '\t': c_testo(C, "\\t");  break;
+        case '\b': c_testo(C, "\\b");  break;
+        case '\f': c_testo(C, "\\f");  break;
+        default:
+            if (ch < 0x20) {
+                static const char esa[] = "0123456789abcdef";
+                c_testo(C, "\\u00");
+                c_car(C, esa[(ch >> 4) & 15]);
+                c_car(C, esa[ch & 15]);
+            } else {
+                c_car(C, (char)ch);
+            }
+            break;
+        }
+    }
+    c_car(C, '"');
+}
+
+static void componi(ExJsCtx *c, Comp *C, ExJsVal v, int profondo)
+{
+    char tmp[TESTO_MAX];
+
+    if (C->rotto) return;
+    if (profondo > JSON_PROFONDO) { C->rotto = 1; return; }
+
+    switch (exjs_tipo(c, v)) {
+    case EXJS_NULLO:      c_testo(C, "null");  return;
+    /* ! `undefined` E LE FUNZIONI NON SONO VALORI JSON. Dentro un oggetto la
+     * voce sparisce, dentro un vettore diventa `null` — perche' li' togliere
+     * un elemento cambierebbe gli indici di tutti gli altri. Lo decide chi
+     * chiama, qui si scrive `null`. */
+    case EXJS_INDEFINITO:
+    case EXJS_FUNZIONE:   c_testo(C, "null");  return;
+    case EXJS_BOOLEANO:   c_testo(C, exjs_a_booleano(c, v) ? "true" : "false"); return;
+
+    case EXJS_NUMERO: {
+        double d = exjs_a_numero(c, v);
+        /* ! NaN E Infinity NON ESISTONO IN JSON, e diventano `null`: e' quello
+         * che fa JavaScript, e un file con dentro `NaN` non lo rilegge
+         * nessuno. */
+        if (d != d || d > 1.7e308 || d < -1.7e308) { c_testo(C, "null"); return; }
+        copia_val(c, v, tmp, sizeof(tmp));
+        c_testo(C, tmp);
+        return;
+    }
+
+    case EXJS_STRINGA:
+        copia_val(c, v, tmp, sizeof(tmp));
+        c_stringa(C, tmp);
+        return;
+
+    default: break;
+    }
+
+    /* Un vettore. */
+    {
+        int          k = exjs_a_oggetto(v);
+        ExJsOggetto *O = exjs_ogg(c, k);
+
+        if (O && O->classe == EXJS_CL_VETTORE) {
+            unsigned int i, l = exjs_lunghezza(c, v);
+
+            c_car(C, '[');
+            for (i = 0; i < l && !C->rotto; i++) {
+                if (i) c_car(C, ',');
+                componi(c, C, exjs_indice_prendi(c, v, i), profondo + 1);
+            }
+            c_car(C, ']');
+            return;
+        }
+
+        /* Un oggetto: le sue proprieta' PROPRIE, in ordine di dichiarazione.
+         * L'elenco e' concatenato al contrario, quindi si rovescia scrivendo
+         * a ritroso — le pagine si aspettano l'ordine in cui le chiavi sono
+         * state messe. */
+        c_car(C, '{');
+        {
+            int p, elenco[256], quanti = 0, i;
+
+            for (p = exjs_prop_prima(c, k); p >= 0 && quanti < 256;
+                 p = exjs_prop_prossima(c, p))
+                elenco[quanti++] = p;
+
+            for (i = quanti - 1; i >= 0 && !C->rotto; i--) {
+                ExJsVal pv = exjs_prop_val(c, elenco[i]);
+
+                /* Le voci `undefined` e le funzioni SPARISCONO da un oggetto:
+                 * e' cio' che fa JavaScript, e ci si conta per non serializzare
+                 * i metodi. */
+                if (exjs_tipo(c, pv) == EXJS_INDEFINITO ||
+                    exjs_tipo(c, pv) == EXJS_FUNZIONE) continue;
+
+                if (i != quanti - 1) c_car(C, ',');
+                c_stringa(C, exjs_arena_leggi(c, exjs_prop_nome(c, elenco[i])));
+                c_car(C, ':');
+                componi(c, C, pv, profondo + 1);
+            }
+        }
+        c_car(C, '}');
+    }
+}
+
+static ExJsVal nat_stringify(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
+{
+    char b[JSON_MAX];
+    Comp C;
+
+    (void)q; (void)d;
+    C.b = b; C.max = sizeof(b); C.n = 0; C.rotto = 0;
+    b[0] = '\0';
+
+    componi(c, &C, arg_di(a, n, 0), 0);
+
+    /* ! SI RENDE `undefined` QUANDO NON CI SI RIESCE, come fa JavaScript
+     * quando gli si passa `undefined` — e non una stringa a meta'. Una stringa
+     * troncata verrebbe scritta su disco o mandata in rete come se fosse
+     * intera. */
+    if (C.rotto) return exjs_indefinito();
+    return exjs_stringa(c, b, -1);
+}
+
+/* -----------------------------------------------------------------------------
+ * JSON.parse
+ *
+ * ! SI LEGGE DALL'ARENA MENTRE CI SI SCRIVE DENTRO, e va bene per una ragione
+ * precisa: l'arena e' un allocatore a spinta — cresce in coda e non sposta mai
+ * niente. Il testo da leggere resta dov'e' anche mentre si creano le stringhe
+ * e gli oggetti del risultato. Il giorno che l'arena imparasse a compattare,
+ * questa funzione andrebbe rivista per prima.
+ * --------------------------------------------------------------------------- */
+typedef struct {
+    const char  *s;
+    unsigned int i;
+    int          rotto;
+} Leg;
+
+static void l_spazi(Leg *L)
+{
+    while (L->s[L->i] == ' ' || L->s[L->i] == '\t' ||
+           L->s[L->i] == '\n' || L->s[L->i] == '\r') L->i++;
+}
+
+static ExJsVal l_valore(ExJsCtx *c, Leg *L, int profondo);
+
+static int l_uguale(Leg *L, const char *parola)
+{
+    unsigned int k;
+    for (k = 0; parola[k]; k++)
+        if (L->s[L->i + k] != parola[k]) return 0;
+    L->i += k;
+    return 1;
+}
+
+static ExJsVal l_stringa(ExJsCtx *c, Leg *L)
+{
+    char         b[TESTO_MAX];
+    unsigned int k = 0;
+
+    if (L->s[L->i] != '"') { L->rotto = 1; return exjs_indefinito(); }
+    L->i++;
+
+    while (L->s[L->i] && L->s[L->i] != '"') {
+        char ch = L->s[L->i++];
+
+        if (ch == '\\') {
+            char e = L->s[L->i++];
+            switch (e) {
+            case 'n': ch = '\n'; break;
+            case 't': ch = '\t'; break;
+            case 'r': ch = '\r'; break;
+            case 'b': ch = '\b'; break;
+            case 'f': ch = '\f'; break;
+            case '"': case '\\': case '/': ch = e; break;
+            case 'u': {
+                unsigned int u = 0, j;
+                for (j = 0; j < 4; j++) {
+                    char h = L->s[L->i++];
+                    int  d;
+                    if (h >= '0' && h <= '9')                d = h - '0';
+                    else if ((h|0x20) >= 'a' && (h|0x20) <= 'f') d = (h|0x20) - 'a' + 10;
+                    else { L->rotto = 1; return exjs_indefinito(); }
+                    u = u * 16 + (unsigned int)d;
+                }
+                /* In UTF-8, come fa il lessicale: e' quello che il resto del
+                 * sistema legge. */
+                if (u < 0x80) { if (k + 1 < sizeof(b)) b[k++] = (char)u; }
+                else if (u < 0x800) {
+                    if (k + 2 < sizeof(b)) {
+                        b[k++] = (char)(0xC0 | (u >> 6));
+                        b[k++] = (char)(0x80 | (u & 0x3F));
+                    }
+                } else if (k + 3 < sizeof(b)) {
+                    b[k++] = (char)(0xE0 | (u >> 12));
+                    b[k++] = (char)(0x80 | ((u >> 6) & 0x3F));
+                    b[k++] = (char)(0x80 | (u & 0x3F));
+                }
+                continue;
+            }
+            default: L->rotto = 1; return exjs_indefinito();
+            }
+        }
+        if (k + 1 < sizeof(b)) b[k++] = ch;
+    }
+
+    if (L->s[L->i] != '"') { L->rotto = 1; return exjs_indefinito(); }
+    L->i++;
+    b[k] = '\0';
+    return exjs_stringa(c, b, -1);
+}
+
+static ExJsVal l_numero(ExJsCtx *c, Leg *L)
+{
+    char         b[64];
+    unsigned int k = 0;
+
+    if (L->s[L->i] == '-') b[k++] = L->s[L->i++];
+    if (L->s[L->i] < '0' || L->s[L->i] > '9') { L->rotto = 1; return exjs_indefinito(); }
+
+    while (k + 1 < sizeof(b) &&
+           ((L->s[L->i] >= '0' && L->s[L->i] <= '9') ||
+            L->s[L->i] == '.' || L->s[L->i] == 'e' || L->s[L->i] == 'E' ||
+            ((L->s[L->i] == '+' || L->s[L->i] == '-') &&
+             (L->s[L->i-1] == 'e' || L->s[L->i-1] == 'E'))))
+        b[k++] = L->s[L->i++];
+    b[k] = '\0';
+
+    return exjs_numero(c, exjs_a_numero(c, exjs_stringa(c, b, -1)));
+}
+
+static ExJsVal l_valore(ExJsCtx *c, Leg *L, int profondo)
+{
+    l_spazi(L);
+    if (L->rotto || profondo > JSON_PROFONDO) { L->rotto = 1; return exjs_indefinito(); }
+
+    switch (L->s[L->i]) {
+    case '"': return l_stringa(c, L);
+
+    case '{': {
+        ExJsVal o = exjs_oggetto(c);
+
+        L->i++;
+        l_spazi(L);
+        if (L->s[L->i] == '}') { L->i++; return o; }
+
+        for (;;) {
+            char    nome[TESTO_MAX];
+            ExJsVal chiave, v;
+
+            l_spazi(L);
+            /* ! LA CHIAVE VUOLE LE VIRGOLETTE. In JavaScript `{a:1}` e'
+             * legale, in JSON no — e accettarlo qui vorrebbe dire produrre e
+             * accettare file che nessun altro legge. */
+            if (L->s[L->i] != '"') { L->rotto = 1; return exjs_indefinito(); }
+            chiave = l_stringa(c, L);
+            if (L->rotto) return exjs_indefinito();
+            copia_val(c, chiave, nome, sizeof(nome));
+
+            l_spazi(L);
+            if (L->s[L->i] != ':') { L->rotto = 1; return exjs_indefinito(); }
+            L->i++;
+
+            v = l_valore(c, L, profondo + 1);
+            if (L->rotto) return exjs_indefinito();
+            exjs_metti(c, o, nome, v);
+
+            l_spazi(L);
+            if (L->s[L->i] == ',') { L->i++; continue; }
+            if (L->s[L->i] == '}') { L->i++; return o; }
+            L->rotto = 1;
+            return exjs_indefinito();
+        }
+    }
+
+    case '[': {
+        ExJsVal      v = exjs_vettore(c);
+        unsigned int k = 0;
+
+        L->i++;
+        l_spazi(L);
+        if (L->s[L->i] == ']') { L->i++; return v; }
+
+        for (;;) {
+            ExJsVal e = l_valore(c, L, profondo + 1);
+
+            if (L->rotto) return exjs_indefinito();
+            exjs_indice_metti(c, v, k++, e);
+
+            l_spazi(L);
+            if (L->s[L->i] == ',') { L->i++; continue; }
+            if (L->s[L->i] == ']') { L->i++; return v; }
+            L->rotto = 1;
+            return exjs_indefinito();
+        }
+    }
+
+    case 't': if (l_uguale(L, "true"))  return exjs_booleano(1); break;
+    case 'f': if (l_uguale(L, "false")) return exjs_booleano(0); break;
+    case 'n': if (l_uguale(L, "null"))  return exjs_nullo();     break;
+    default:  return l_numero(c, L);
+    }
+
+    L->rotto = 1;
+    return exjs_indefinito();
+}
+
+static ExJsVal nat_parse(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
+{
+    Leg     L;
+    ExJsVal v, testo = arg_di(a, n, 0);
+    char    copia[JSON_MAX];
+
+    (void)q; (void)d;
+
+    /* Se non e' gia' una stringa lo diventa, e la copia serve: exjs_a_stringa
+     * su un numero rende il posto di servizio, che la prima creazione di valore
+     * riscriverebbe. */
+    if (exjs_tipo(c, testo) == EXJS_STRINGA) {
+        L.s = exjs_a_stringa(c, testo);     /* nell'arena: non si sposta */
+    } else {
+        copia_val(c, testo, copia, sizeof(copia));
+        L.s = copia;
+    }
+    L.i = 0;
+    L.rotto = 0;
+
+    v = l_valore(c, &L, 0);
+    l_spazi(&L);
+
+    /* ! CIO' CHE AVANZA DOPO IL VALORE E' UN ERRORE. `{"a":1} spazzatura` non
+     * e' JSON valido, e accettarlo vorrebbe dire leggere meta' di un file
+     * corrotto credendo di averlo letto tutto. */
+    if (L.rotto || L.s[L.i] != '\0') return exjs_indefinito();
+    return v;
+}
+
+/* =============================================================================
  * LA REGISTRAZIONE
  *
  * ! SI FA UNA VOLTA SOLA, e run.c la chiama a ogni exjs_esegui: la bandiera sta
@@ -764,6 +1165,13 @@ void exjs_base_registra(ExJsCtx *c)
     exjs_metti(c, math, "PI", exjs_numero(c, 3.14159265358979323846));
     exjs_metti(c, math, "E",  exjs_numero(c, 2.71828182845904523536));
 
+    {
+        ExJsVal json = exjs_oggetto(c);
+        exjs_metti(c, g, "JSON", json);
+        metti_nat(c, json, "stringify", nat_stringify, 0);
+        metti_nat(c, json, "parse",     nat_parse,     0);
+    }
+
     /* `String.fromCharCode` sta sulla FUNZIONE String, non sul prototipo: e'
      * un metodo del costruttore, e chi lo cerca lo cerca li'. */
     {
@@ -803,8 +1211,6 @@ void exjs_base_registra(ExJsCtx *c)
 /* =============================================================================
  * QUELLO CHE NON C'E', DICHIARATO
  *
- *   JSON.stringify / JSON.parse   il prossimo, e non e' difficile: serve un
- *                                 posto dove comporre, e l'arena ce l'ha
  *   Array.sort                    vuole un confronto che chiama JavaScript;
  *                                 il meccanismo c'e' gia' (vedi scorri), manca
  *                                 solo l'ordinamento

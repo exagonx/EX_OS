@@ -799,6 +799,68 @@ int main(void)
     prova_stampa("dentro un ciclo",
                  "for(var i=0;i<3;i++)console.log(i);",           "0\n1\n2\n");
 
+    printf("\n=== JSON: scrivere ===\n\n");
+    prova_esegui("numero",       "JSON.stringify(1);",            "1");
+    prova_esegui("stringa",      "JSON.stringify('a');",          "\"a\"");
+    prova_esegui("booleano",     "JSON.stringify(true);",         "true");
+    prova_esegui("null",         "JSON.stringify(null);",         "null");
+    prova_esegui("vettore",      "JSON.stringify([1,2,3]);",      "[1,2,3]");
+    prova_esegui("oggetto",      "JSON.stringify({a:1,b:2});",    "{\"a\":1,\"b\":2}");
+    prova_esegui("annidati",     "JSON.stringify({a:[1,{b:2}]});","{\"a\":[1,{\"b\":2}]}");
+    prova_esegui("vuoti",        "JSON.stringify([])+JSON.stringify({});", "[]{}");
+    /* ! LE VIRGOLETTE E GLI A CAPO VANNO PROTETTI: un a capo dentro una
+     * stringa JSON e' vietato dalla norma, e lasciarcelo produce un file che
+     * nessun altro analizzatore accetta. */
+    prova_esegui("virgolette dentro", "JSON.stringify('di\"co');",  "\"di\\\"co\"");
+    prova_esegui("a capo dentro",     "JSON.stringify('a\\nb');",   "\"a\\nb\"");
+    /* ! NaN E Infinity NON ESISTONO IN JSON e diventano null: e' quello che fa
+     * JavaScript, e un file con dentro NaN non lo rilegge nessuno. */
+    prova_esegui("NaN diventa null",  "JSON.stringify(0/0);",       "null");
+    prova_esegui("Infinity idem",     "JSON.stringify(1/0);",       "null");
+    /* ! undefined SPARISCE da un oggetto e diventa null in un vettore: li'
+     * toglierlo cambierebbe gli indici di tutti gli altri. */
+    prova_esegui("undefined nel vettore", "JSON.stringify([1,undefined,2]);",
+                 "[1,null,2]");
+    prova_esegui("undefined nell'oggetto","JSON.stringify({a:1,b:undefined});",
+                 "{\"a\":1}");
+    prova_esegui("le funzioni spariscono",
+                 "JSON.stringify({a:1,f:function(){}});", "{\"a\":1}");
+    /* ! UN CICLO NON DEVE PORTARSI VIA LA PILA. `var o={};o.io=o` e' un attimo
+     * da scrivere, e in una struttura vera — un nodo che punta al padre — e'
+     * normale. */
+    prova_esegui("un ciclo si ferma",
+                 "var o={};o.io=o;typeof JSON.stringify(o);", "undefined");
+
+    printf("\n=== JSON: leggere ===\n\n");
+    prova_esegui("numero",       "JSON.parse('1')+1;",            "2");
+    prova_esegui("stringa",      "JSON.parse('\"ciao\"');",       "ciao");
+    prova_esegui("true",         "JSON.parse('true');",           "true");
+    prova_esegui("null",         "typeof JSON.parse('null');",    "object");
+    prova_esegui("vettore",      "JSON.parse('[1,2,3]')[1];",     "2");
+    prova_esegui("lunghezza",    "JSON.parse('[1,2,3]').length;", "3");
+    prova_esegui("oggetto",      "JSON.parse('{\"a\":7}').a;",    "7");
+    prova_esegui("annidato",     "JSON.parse('{\"a\":[1,{\"b\":9}]}').a[1].b;", "9");
+    prova_esegui("scappamenti",  "JSON.parse('\"a\\\\nb\"').length;", "3");
+    prova_esegui("\\u",          "JSON.parse('\"\\\\u0041\"');",  "A");
+    prova_esegui("spazi attorno","JSON.parse('  { \"a\" : 1 } ').a;", "1");
+    prova_esegui("negativi",     "JSON.parse('[-1.5]')[0];",      "-1.5");
+
+    printf("\n=== JSON: cio' che deve essere RIFIUTATO ===\n\n");
+    /* ! JSON NON E' JavaScript. Accettare anche il resto sarebbe piu' comodo e
+     * sbagliato: passerebbe qui roba che ogni altro sistema rifiuta. */
+    prova_esegui("chiave senza virgolette", "typeof JSON.parse('{a:1}');",  "undefined");
+    prova_esegui("virgolette singole",      "typeof JSON.parse(\"'a'\");",  "undefined");
+    prova_esegui("virgola finale",          "typeof JSON.parse('[1,]');",   "undefined");
+    prova_esegui("spazzatura in coda",      "typeof JSON.parse('1 x');",    "undefined");
+    prova_esegui("parentesi non chiusa",    "typeof JSON.parse('[1');",     "undefined");
+
+    printf("\n=== JSON: andata e ritorno ===\n\n");
+    /* La prova che conta: cio' che esce da stringify deve rientrare identico. */
+    prova_esegui("giro completo",
+                 "var o={n:'x',v:[1,2],b:true};"
+                 "JSON.stringify(JSON.parse(JSON.stringify(o)));",
+                 "{\"n\":\"x\",\"v\":[1,2],\"b\":true}");
+
     printf("\n%d prove, %d sbagliate\n", fatte, sbagliate);
     return sbagliate ? 1 : 0;
 }
