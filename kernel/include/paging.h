@@ -69,6 +69,22 @@ void     paging_unmap_page(PDE *pd, uint32_t virt);
 uint32_t paging_get_physical(PDE *pd, uint32_t virt);
 PDE     *paging_create_directory(void);
 void     paging_destroy_directory(PDE *pd);
+
+/* =============================================================================
+ * Le due meta' dello sfratto che riguardano le TABELLE, non il disco
+ *
+ * ! STANNO QUI E NON IN swap.c PERCHE' LE MACRO CHE SPEZZANO UN INDIRIZZO IN
+ * INDICI SONO PRIVATE DI paging.c, ed e' giusto che lo siano: due copie degli
+ * stessi turni di bit sono due modi di sbagliarli. swap.c decide cosa farne,
+ * qui si guarda e si scrive.
+ *
+ * paging_vittima  cerca una pagina utente che si possa mandare via e rende 1,
+ *                 riempiendo i tre argomenti; 0 se non ce n'e' nessuna.
+ * paging_marca_swap  sostituisce la mappatura con il segnaposto dello slot,
+ *                 conservando i permessi che la pagina aveva.
+ * ========================================================================== */
+int      paging_vittima(PDE **out_pd, uint32_t *out_virt, uint32_t *out_frame);
+void     paging_marca_swap(PDE *pd, uint32_t virt, uint32_t slot);
 void     paging_switch(PDE *pd);
 PDE     *paging_get_kernel_directory(void);
 PDE     *paging_get_current_directory(void);

@@ -21,6 +21,7 @@ bin/ls
 bin/mem
 bin/mkdir
 bin/mkfs
+bin/mkswap
 bin/mount
 bin/mouse
 bin/mv

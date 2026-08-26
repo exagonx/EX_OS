@@ -19,6 +19,7 @@
 #include "tsc.h"
 #include "pmm.h"
 #include "paging.h"
+#include "swap.h"
 #include "kmalloc.h"
 #include "sched.h"
 #include "syscall.h"
@@ -505,6 +506,26 @@ KernelConfig *cfg = cfg_load();
 
         klog(LOG_INFO, "[PASSO 13d] %u montaggi su %u riusciti (%u saltati)",
              fatti, cfg->mount_count, saltati);
+    }
+
+    /* =========================================================================
+     * PASSO 13e: l'area di scambio
+     *
+     * ! DOPO I MONTAGGI E NON PRIMA, e non e' per simmetria: l'area si nomina
+     * come un dispositivo a blocchi ("hd0p2"), quindi i dischi devono essere
+     * gia' stati riconosciuti — cioe' dopo blk_init. Metterla prima vorrebbe
+     * dire cercare una partizione che ancora non esiste per nessuno.
+     *
+     * ! E SE NON C'E' NON SUCCEDE NIENTE. Senza `swap` in kernel.cfg, o con
+     * una partizione senza firma, il sistema parte come e' sempre partito: la
+     * memoria virtuale e' un di piu', non un requisito, e un kernel che si
+     * rifiutasse di avviarsi senza swap sarebbe inutilizzabile proprio sulle
+     * macchine piccole per cui lo swap serve.
+     * ===================================================================== */
+    if (cfg->swap[0] != '\0') {
+        if (swap_init(cfg->swap) != 0)
+            klog(LOG_WARN, "[PASSO 13e] '%s' non e' utilizzabile come area di "
+                 "scambio: si va avanti senza", cfg->swap);
     }
 
     /* =========================================================================

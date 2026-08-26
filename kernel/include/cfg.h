@@ -91,6 +91,14 @@ typedef struct {
      * meccanismo della risoluzione non sia implementato. Lo e'. */
     char        svga[CFG_NAME_LEN];
 
+    /* ! LA PARTIZIONE DI SCAMBIO SI DICHIARA, NON SI CERCA. Un kernel che
+     * andasse a caccia di aree di swap da solo prima o poi ne troverebbe una
+     * su un disco altrui e ci scriverebbe sopra la memoria di un processo.
+     * Qui c'e' il nome del dispositivo a blocchi ("hd0p2") e basta; la firma
+     * dentro la partizione decide se sia davvero utilizzabile — vedi swap.h.
+     * Vuota = niente memoria virtuale, e il sistema si comporta come prima. */
+    char        swap[CFG_NAME_LEN];
+
     char        shell_path[CFG_PATH_LEN];
 
     /* Chi viene lanciato su ogni console AL POSTO della shell. Vuoto = si

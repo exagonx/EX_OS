@@ -17,6 +17,7 @@
 #include "sched.h"
 #include "pmm.h"
 #include "paging.h"
+#include "swap.h"
 #include "kmalloc.h"
 #include "ipc.h"
 #include "shm.h"
@@ -1011,6 +1012,8 @@ int32_t sys_mmap(InterruptFrame *frame)
     /* Alloca e mappa le pagine */
     for (i = 0; i < pages; i++) {
         uint32_t phys = pmm_alloc_page();
+        /* Se la RAM e' finita si prova a fare posto: vedi swap.h. */
+        if (phys == 0 && swap_sfratta()) phys = pmm_alloc_page();
         if (phys == 0) {
             /* OOM: libera le pagine già allocate */
             uint32_t j;
@@ -2188,6 +2191,8 @@ int32_t sys_sbrk(InterruptFrame *frame)
         for (i = 0; i < pages; i++) {
             uint32_t vaddr = proc->heap_end + i * PAGE_SIZE;
             uint32_t phys  = pmm_alloc_page();
+            /* Se la RAM e' finita si prova a fare posto: vedi swap.h. */
+            if (phys == 0 && swap_sfratta()) phys = pmm_alloc_page();
             if (phys == 0) {
                 /* OOM: rilascia le pagine già allocate in questo ciclo */
                 uint32_t j;

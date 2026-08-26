@@ -13,6 +13,7 @@
 #include "vga.h"
 #include "fpu.h"   /* cpu_capacita(): il bit PSE lo scopre CPUID */
 #include "pmm.h"
+#include "swap.h"   /* SWAP_PTE: il segnaposto di una pagina che se n'e' andata */
 #include "paging.h"
 #include "idt.h"
 #include "sched.h"
@@ -235,6 +236,35 @@ int paging_map_page(PDE *pd, uint32_t virt_addr, uint32_t phys_addr, uint32_t fl
          * processo qualunque. Una page table sopra USER_SPACE_BASE
          * sarebbe irraggiungibile proprio nei momenti in cui serve. */
         uint32_t pt_phys = pmm_alloc_page_kernel();
+
+        /* =================================================================
+         * ! ANCHE UNA TABELLA E' UNA PAGINA, e questo era il punto in cui la
+         * memoria virtuale non bastava.
+         *
+         * Una tabella deve venire dalla FASCIA KERNEL (il perche' e' qui
+         * sopra), e quella fascia pmm_alloc_page() la regala come ULTIMA
+         * RISORSA anche alle pagine utente. Uno heap che cresce fino a
+         * riempire la macchina se la mangia tutta, e la tabella successiva —
+         * una ogni 1024 pagine — non trova piu' niente. Il sintomo era
+         * «PAGING: OOM durante map_page» dopo migliaia di sfratti riusciti:
+         * la memoria virtuale funzionava e si fermava sull'unica pagina che
+         * non poteva venire dal disco.
+         *
+         * Sfrattando si liberano pagine utente, e in questa situazione le
+         * pagine utente SONO anche quelle della fascia: qualcuna torna
+         * libera dove serve. Si insiste un numero limitato di volte — se
+         * dopo qualche decina la fascia e' ancora vuota, non e' la fascia il
+         * problema.
+         * ================================================================= */
+        if (pt_phys == 0) {
+            int giri;
+
+            for (giri = 0; giri < 64 && pt_phys == 0; giri++) {
+                if (!swap_sfratta()) break;
+                pt_phys = pmm_alloc_page_kernel();
+            }
+        }
+
         if (pt_phys == 0) {
             klog(LOG_ERROR, "PAGING: OOM durante map_page virt=0x%08x", virt_addr);
             return -1;
@@ -809,6 +839,17 @@ void paging_destroy_directory(PDE *pd)
             PTE *pt = (PTE *)PG_ADDR(pd[i]);
 
             for (j = 0; j < 1024; j++) {
+                /* ! UNA PAGINA SUL DISCO E' COMUNQUE UNA PAGINA DA LIBERARE.
+                 * Il ciclo guarda PG_PRESENT, e una pagina sfrattata presente
+                 * non e': senza questa riga il suo slot resterebbe occupato
+                 * fino al riavvio, e un processo che nasce e muore mangiando
+                 * memoria svuoterebbe l'area di scambio un pezzo per volta
+                 * senza che nessuno usi piu' niente. */
+                if (SWAP_PTE_E_SWAP(pt[j])) {
+                    swap_slot_molla(SWAP_PTE_SLOT(pt[j]));
+                    continue;
+                }
+
                 if (pt[j] & PG_PRESENT) {
                     uint32_t frame = PG_ADDR(pt[j]);
 
@@ -844,6 +885,114 @@ void paging_destroy_directory(PDE *pd)
 
     klog(LOG_DEBUG, "PAGING: PD processo 0x%08x distrutta (dati utente inclusi)",
          (uint32_t)pd);
+}
+
+/* =============================================================================
+ * paging_vittima — quale pagina si puo' mandare via, e perche' proprio quella
+ *
+ * ! SECONDA CHANCE, E NON «LA PRIMA CHE CAPITA». Il bit Accessed lo accende la
+ * CPU da sola a ogni lettura: una pagina che ce l'ha acceso e' stata toccata da
+ * quando ci si e' passati sopra l'ultima volta, e mandarla via vuol dire quasi
+ * certamente doverla rileggere subito. Al primo incontro le si spegne il bit e
+ * le si da' un'altra possibilita'; se al giro dopo e' ancora spento, quella
+ * pagina non la sta usando nessuno.
+ *
+ * ! E SI RIPARTE DA DOVE SI ERA ARRIVATI, non dal primo processo. Ricominciare
+ * sempre da capo vorrebbe dire scegliere la vittima in base all'ORDINE nella
+ * tabella dei processi invece che all'uso — e il primo processo e' la shell,
+ * che finirebbe sfrattata a ogni giro mentre chi mangia memoria resta intatto.
+ *
+ * ! CHI HA PIU' DI UN PROPRIETARIO NON SI TOCCA. Il perche' sta in swap.h:
+ * mandare via una pagina vuol dire segnare TUTTE le tabelle che la mappano, e
+ * qui non c'e' una mappa all'indietro. Il PMM sa contare i proprietari, e uno
+ * solo e' l'unico caso in cui la tabella che si sta guardando e' anche l'unica
+ * da cambiare.
+ *
+ * ! E NON SI GUARDA SOTTO USER_SPACE_BASE. Li' c'e' la meta' kernel, che e'
+ * la STESSA in ogni processo: sfrattarla vorrebbe dire toglierla a tutti.
+ * ========================================================================== */
+static uint32_t g_giro_proc = 0;
+
+int paging_vittima(PDE **out_pd, uint32_t *out_virt, uint32_t *out_frame)
+{
+    uint32_t tentativi;
+
+    if (out_pd == NULL || out_virt == NULL || out_frame == NULL) return 0;
+
+    /* Due giri completi sulla tabella dei processi: nel primo si spengono i
+     * bit Accessed, nel secondo si prende chi non li ha riaccesi. Piu' di
+     * cosi' non serve — se dopo due passaggi risulta tutto in uso, e' tutto
+     * davvero in uso, e insistere costerebbe solo tempo. */
+    for (tentativi = 0; tentativi < 2 * MAX_PROCESSES; tentativi++) {
+        Process *p = &g_process_pool[g_giro_proc % MAX_PROCESSES];
+        uint32_t pdi;
+
+        g_giro_proc++;
+
+        if (p->state == PROC_UNUSED || p->state == PROC_ZOMBIE) continue;
+        if (p->page_directory == NULL) continue;
+
+        for (pdi = PD_INDEX(USER_SPACE_BASE); pdi < 1024; pdi++) {
+            PDE *pd = p->page_directory;
+            PTE *pt;
+            uint32_t pti;
+
+            if (!(pd[pdi] & PG_PRESENT)) continue;
+            pt = (PTE *)PG_ADDR(pd[pdi]);
+
+            for (pti = 0; pti < 1024; pti++) {
+                uint32_t pte = pt[pti];
+                uint32_t frame;
+
+                if (!(pte & PG_PRESENT)) continue;
+                if (!(pte & PG_USER))    continue;
+
+                frame = PG_ADDR(pte);
+
+                /* Non e' RAM: e' il framebuffer o una finestra MMIO. Vedi la
+                 * stessa domanda in paging_destroy_directory. */
+                if (frame >= pmm_get_total_pages() * PAGE_SIZE) continue;
+
+                /* Condivisa con qualcun altro: vedi sopra. */
+                if (pmm_ref_count(frame) != 1) continue;
+
+                if (pte & PG_ACCESSED) {
+                    pt[pti] = pte & ~(uint32_t)PG_ACCESSED;
+                    /* ! E IL TLB VA AVVISATO, o la CPU continuerebbe a usare
+                     * la copia vecchia e il bit non si spegnerebbe mai: la
+                     * seconda chance diventerebbe una chance infinita. */
+                    if (p == proc_get_current()) {
+                        uint32_t v = (pdi << 22) | (pti << 12);
+                        __asm__ volatile ("invlpg (%0)" : : "r"(v) : "memory");
+                    }
+                    continue;
+                }
+
+                *out_pd    = pd;
+                *out_virt  = (pdi << 22) | (pti << 12);
+                *out_frame = frame;
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+void paging_marca_swap(PDE *pd, uint32_t virt, uint32_t slot)
+{
+    PTE *pt;
+    uint32_t pdi = PD_INDEX(virt), pti = PT_INDEX(virt);
+
+    if (pd == NULL || !(pd[pdi] & PG_PRESENT)) return;
+    pt = (PTE *)PG_ADDR(pd[pdi]);
+
+    pt[pti] = SWAP_PTE(slot, pt[pti]);
+
+    /* ! IL TLB TIENE ANCORA LA TRADUZIONE VECCHIA, e senza questa riga la CPU
+     * continuerebbe a scrivere nella pagina fisica che stiamo per restituire
+     * al PMM — cioe' dentro la memoria del prossimo che la ricevera'. */
+    if (proc_get_current() != NULL && proc_get_current()->page_directory == pd)
+        __asm__ volatile ("invlpg (%0)" : : "r"(virt) : "memory");
 }
 
 /* =============================================================================
@@ -965,6 +1114,12 @@ static int pf_cresci_stack(Process *p, InterruptFrame *frame,
     for (ind = pagina; ind < p->user_stack_base; ind += PAGE_SIZE) {
         uint32_t phys = pmm_alloc_page();
 
+        /* ! SE NON C'E' POSTO SE NE FA: e' tutto il senso della memoria
+         * virtuale. Prima di questa riga «RAM esaurita» voleva dire che il
+         * processo moriva; adesso vuol dire che non c'era nemmeno una
+         * pagina da mandare via, che e' un'altra cosa e molto piu' rara. */
+        if (phys == 0 && swap_sfratta()) phys = pmm_alloc_page();
+
         if (phys == 0) {
             /* Memoria esaurita: non e' un errore del programma, ma non
              * possiamo soddisfarlo. Si torna 0 e il chiamante lo termina
@@ -1080,6 +1235,7 @@ static int pf_carica_da_file(Process *p, uint32_t fault_addr)
     if (paging_get_physical(p->page_directory, pagina) != 0) return 1;
 
     phys = pmm_alloc_page();
+    if (phys == 0 && swap_sfratta()) phys = pmm_alloc_page();
     if (phys == 0) {
         klog(LOG_ERROR, "PF: RAM esaurita caricando 0x%08x per PID %u",
              pagina, p->pid);
@@ -1140,6 +1296,73 @@ void vm_precarica_utente(uint32_t addr, uint32_t len)
     }
 }
 
+/* =============================================================================
+ * pf_torna_da_swap — la pagina che era andata sul disco, e adesso serve
+ *
+ * ! E' LA META' CHE RENDE LO SFRATTO REVERSIBILE, e va guardata PRIMA di
+ * decidere che un fault sia un errore. Una PTE non presente ma col marcatore
+ * dello swap non e' un puntatore sbagliato: e' una pagina che esiste, ha un
+ * contenuto, e sta su un disco.
+ *
+ * ! E LA DIFFERENZA CON UNA PTE A ZERO E' TUTTO. Zero vuol dire «questa pagina
+ * non e' mai esistita», e allora il fault e' davvero un errore del programma.
+ * Le due si distinguono per un bit — vedi PG_SWAP in swap.h — e senza quel bit
+ * ogni puntatore sbagliato diventerebbe la lettura di uno slot a caso.
+ * ========================================================================== */
+static int pf_torna_da_swap(Process *p, uint32_t addr)
+{
+    uint32_t pagina = ALIGN_DOWN(addr, PAGE_SIZE);
+    uint32_t pdi, pti, pte, fisico;
+    PTE     *pt;
+    PDE     *pd;
+
+    if (p == NULL || p->page_directory == NULL) return 0;
+    if (pagina < USER_SPACE_BASE) return 0;
+
+    pd  = p->page_directory;
+    pdi = PD_INDEX(pagina);
+    pti = PT_INDEX(pagina);
+
+    if (!(pd[pdi] & PG_PRESENT)) return 0;
+    pt  = (PTE *)PG_ADDR(pd[pdi]);
+    pte = pt[pti];
+
+    if (!SWAP_PTE_E_SWAP(pte)) return 0;
+
+    /* ! LA PAGINA FISICA SI CHIEDE PRIMA DI LEGGERE, e se non c'e' si prova a
+     * fare posto: siamo qui perche' la memoria e' stretta, ed e' esattamente il
+     * momento in cui un'altra pagina puo' dover uscire per far entrare questa.
+     * Sfrattare per rientrare non e' un giro a vuoto: la pagina che esce e'
+     * quella che nessuno tocca, questa e' quella che serve adesso. */
+    fisico = pmm_alloc_page();
+    if (fisico == 0 && swap_sfratta()) fisico = pmm_alloc_page();
+    if (fisico == 0) {
+        klog(LOG_ERROR, "PF: RAM esaurita rileggendo 0x%08x per PID %u",
+             pagina, p->pid);
+        return 0;
+    }
+
+    if (swap_leggi(SWAP_PTE_SLOT(pte), fisico) != 0) {
+        pmm_free_page(fisico);
+        return 0;
+    }
+
+    /* ! I PERMESSI ERANO NELLA PTE, e si rimettono da li'. Ricostruirli a
+     * indovinare — «e' utente, sara' scrivibile» — vorrebbe dire restituire
+     * scrivibile una pagina che era di sola lettura. */
+    pt[pti] = (fisico & 0xFFFFF000) | SWAP_PTE_FLAGS(pte);
+    __asm__ volatile ("invlpg (%0)" : : "r"(pagina) : "memory");
+
+    /* ! LO SLOT SI MOLLA SOLO ADESSO, a pagina rimessa a posto: mollarlo prima
+     * della lettura vorrebbe dire che uno sfratto in mezzo puo' prenderselo e
+     * scriverci sopra cio' che stiamo per leggere. */
+    swap_slot_molla(SWAP_PTE_SLOT(pte));
+
+    klog(LOG_DEBUG, "PF: PID %u, 0x%08x rientrata dallo slot %u",
+         p->pid, pagina, SWAP_PTE_SLOT(pte));
+    return 1;
+}
+
 void page_fault_handler(InterruptFrame *frame)
 {
     uint32_t fault_addr = read_cr2();
@@ -1173,6 +1396,16 @@ void page_fault_handler(InterruptFrame *frame)
          * stringa in .rodata mai letta prima) e' legittimo quanto uno
          * ring3, ed e' cio' che permette a syscall_verify_str di
          * dereferenziare senza sapere niente di paginazione. */
+        /* ! LO SWAP PRIMA DEL FILE, e l'ordine non e' indifferente: una
+         * pagina di dati che e' stata sfrattata ha ANCHE una VMA che dice da
+         * quale file veniva, ed e' la stessa da cui era stata caricata la
+         * prima volta. Provando prima il file si rileggerebbe il contenuto
+         * ORIGINALE, buttando via tutto cio' che il programma ci aveva
+         * scritto sopra — un guasto silenzioso e perfetto. */
+        if (!(err & 0x1) && pf_torna_da_swap(p, fault_addr)) {
+            return;
+        }
+
         if (!(err & 0x1) && pf_carica_da_file(p, fault_addr)) {
             return;
         }

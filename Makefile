@@ -136,7 +136,7 @@ BUILD_BIN_CD  := $(BUILD_DIR)/bin-cd
 # kernel (kernel/block/atapi.c, kernel/fs/iso9660.c), perche' il kernel
 # deve poterci montare la radice prima che esista un processo.
 # =============================================================================
-PROGRAMMI_FLOPPY := shell hello id chmod shutdown ls mem stack disk libctest fdisk mkfs trunc chkdsk rename rm_prog mv_prog uname_prog mount_prog cp_prog install_prog textline gfedit mkdir_prog rmdir_prog delete_prog hwconfig hwinfo cmp_prog shmtest polltest toolinst login sudo help_prog keymap libc testo mouse_prog floppy_drv kbd_drv svga_drv vgaprova_drv \
+PROGRAMMI_FLOPPY := shell hello id chmod shutdown ls mem stack disk libctest fdisk mkfs mkswap trunc chkdsk rename rm_prog mv_prog uname_prog mount_prog cp_prog install_prog textline gfedit mkdir_prog rmdir_prog delete_prog hwconfig hwinfo cmp_prog shmtest polltest toolinst login sudo help_prog keymap libc testo mouse_prog floppy_drv kbd_drv svga_drv vgaprova_drv \
                     pci_drv mouseser_drv uhci_drv xhci_drv
 
 # =============================================================================
@@ -170,7 +170,7 @@ PROGRAMMI_FLOPPY := shell hello id chmod shutdown ls mem stack disk libctest fdi
 # `make verifica-programmi` — che le due ISO eseguono da sole — confronta
 # le liste con il contenuto di bin/ e si ferma dicendo quali mancano.
 # =============================================================================
-PROGRAMMI_CD := netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp scarica telnet telnetd sshd xcp winprova exwincmd
+PROGRAMMI_CD := swaptest netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp scarica telnet telnetd sshd xcp winprova exwincmd
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
 PROGRAMMI_EXWIN := exwin_so exdlg_so eximg_so exfont_so exhttp_so exhtml_so excss_so wserver pm filemgr edit term fontprova orologio browser
 
@@ -1936,6 +1936,57 @@ $(TRUNC_BIN): $(TRUNC_SRC) $(TRUNC_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START
 .PHONY: trunc
 trunc: dirs $(TRUNC_BIN)
 
+# --- Programma utente /bin/swaptest -------------------------------------------
+# Chiede piu' memoria di quanta ce ne sia e controlla che i byte tornino: e' la
+# prova della memoria virtuale, perche' un meccanismo del kernel senza un
+# programma che lo eserciti e' un meccanismo di cui non si sa se funziona.
+#
+# ! VA IN BUILD_BIN_CD E NON IN BUILD_BIN, cioe' sul CD e non sul floppy, e la
+# ragione e' fisica: il floppy era gia' a 17 KB liberi e due programmi nuovi
+# non ci stavano. tools/mkfloppy.sh copia TUTTO cio' che trova in build/bin —
+# non consulta nessun elenco — quindi l'unico modo di tenere un programma
+# fuori dal floppy e' non costruirlo li' dentro.
+#
+# ! E LA SCELTA DI CHI RESTA FUORI NON E' CASUALE: mkswap serve a PREPARARE una
+# macchina, e una macchina la si prepara avviandola dal floppy; swaptest serve
+# a PROVARE che il meccanismo funziona, e chi prova ha il CD.
+SWAPTEST_SRC := bin/swaptest/swaptest.c
+SWAPTEST_BIN := $(BUILD_BIN_CD)/swaptest
+SWAPTEST_LD  := bin/swaptest/swaptest.ld
+
+$(SWAPTEST_BIN): $(SWAPTEST_SRC) $(SWAPTEST_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/swaptest ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -c $(SWAPTEST_SRC) -o $(BUILD_OBJ)/swaptest_main.o
+	$(CC) -m32 -c $(LIBC_START)                            -o $(BUILD_OBJ)/swaptest_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(SWAPTEST_LD) \
+	    $(BUILD_OBJ)/swaptest_start.o $(BUILD_OBJ)/swaptest_main.o $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] swaptest compilato: $@"
+
+.PHONY: swaptest
+swaptest: dirs $(SWAPTEST_BIN)
+
+# --- Programma utente /bin/mkswap ---------------------------------------------
+# Prepara una partizione per la memoria virtuale: ci scrive l'intestazione che
+# il kernel cerca all'avvio. Sta in userspace per la stessa ragione di mkfs —
+# scrive solo DENTRO una finestra che il livello a blocchi controlla gia'.
+# Stesso schema di /bin/trunc.
+MKSWAP_SRC := bin/mkswap/mkswap.c
+MKSWAP_BIN := $(BUILD_BIN)/mkswap
+MKSWAP_LD  := bin/mkswap/mkswap.ld
+
+$(MKSWAP_BIN): $(MKSWAP_SRC) $(MKSWAP_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/mkswap ==="
+	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -c $(MKSWAP_SRC) -o $(BUILD_OBJ)/mkswap_main.o
+	$(CC) -m32 -c $(LIBC_START)                          -o $(BUILD_OBJ)/mkswap_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(MKSWAP_LD) \
+	    $(BUILD_OBJ)/mkswap_start.o $(BUILD_OBJ)/mkswap_main.o $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] mkswap compilato: $@"
+
+.PHONY: mkswap
+mkswap: dirs $(MKSWAP_BIN)
+
 # --- Programma utente /bin/chkdsk ---------------------------------------------
 # Controllo e riparazione di un volume FAT12/16/32. Lavora sui SETTORI
 # GREZZI di una partizione NON montata (blkread/blkwrite): sopra un volume
@@ -3082,6 +3133,7 @@ KERNEL_C_SRC   := $(KERNEL_DIR)/arch/x86/gdt.c \
                   $(KERNEL_DIR)/mm/paging.c \
                   $(KERNEL_DIR)/mm/kmalloc.c \
                   $(KERNEL_DIR)/mm/shm.c \
+                  $(KERNEL_DIR)/mm/swap.c \
                   $(KERNEL_DIR)/sched/sched.c \
                   $(KERNEL_DIR)/ipc/ipc.c \
                   $(KERNEL_DIR)/ipc/pipe.c \
@@ -3219,7 +3271,7 @@ $(KERNEL_BIN): $(KERNEL_ELF) $(SEGNO_FLAG)
 # La guardia `verifica-dipendenze-floppy` qui sotto confronta le due.
 PROGRAMMI_FLOPPY_OUT := $(SHELL_BIN) $(HELLO_BIN) $(LS_BIN) $(MEM_BIN) \
                         $(STACK_BIN) $(DISK_BIN) $(LIBCTEST_BIN) $(FDISK_BIN) \
-                        $(MKFS_BIN) $(TRUNC_BIN) $(CHKDSK_BIN) $(RENAME_BIN) \
+                        $(MKFS_BIN) $(MKSWAP_BIN) $(TRUNC_BIN) $(CHKDSK_BIN) $(RENAME_BIN) \
                         $(RM_BIN) $(MV_BIN) $(UNAME_BIN) $(MOUNT_BIN) \
                         $(CP_BIN) $(INSTALL_BIN) $(TEXTLINE_BIN) $(GFEDIT_BIN) \
                         $(MKDIR_BIN) $(RMDIR_BIN) $(DELETE_BIN) $(HWCONFIG_BIN) \

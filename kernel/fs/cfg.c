@@ -138,6 +138,12 @@ static void cfg_apply_key(KernelConfig *cfg, const char *section,
             cfg_strcpy(cfg->svga, value, sizeof(cfg->svga));
             return;
         }
+        /* Il nome del dispositivo a blocchi dell'area di scambio: la apre
+         * kernel_main dopo aver registrato i dischi. Vedi cfg.h. */
+        if (cfg_strcmp(key, "swap") == 0) {
+            cfg_strcpy(cfg->swap, value, sizeof(cfg->swap));
+            return;
+        }
         if (cfg_strcmp(key, "verboseboot") == 0) {
             /* Il valore predefinito è 0 (agosto 2026: prima era 1) e resta
              * 0 in tutti i casi dubbi: SOLO un numero diverso da zero fa

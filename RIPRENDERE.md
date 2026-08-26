@@ -1,5 +1,98 @@
 # DOVE RIPRENDERE — 26 agosto 2026
 
+## 26 agosto 2026 — la memoria virtuale, su una partizione dedicata
+
+Il gradino sotto a tutto il resto: senza, un motore JavaScript su una macchina
+da 32 MB non ha dove stare, e i file grandi non si leggono.
+
+### Cosa c'e' adesso
+
+    mkswap -f hd0p1              prepara la partizione (ci scrive la firma)
+    [kernel] swap = hd0p1        in /boot/kernel.cfg
+    swaptest 40                  la prova: 40 MB su una macchina da 32
+
+    SWAP: 'hd0p1' attiva: 16127 slot da 4 KB (62 MB), elenco di 2016 byte
+    swaptest: RAM libera 29000 KB, chiedo 40 MB (10240 pagine)
+    swaptest: RAM libera prima 29000 KB, dopo 0 KB
+    swaptest: tutte e 10240 le pagine sono tornate identiche.
+
+Sul disco, contati dall'host a macchina spenta: **6021 slot scritti, 23 MB**.
+
+### Le tre decisioni
+
+! **SU UNA PARTIZIONE, NON DENTRO UN FILE.** Un file di scambio vorrebbe dire
+passare dal filesystem per liberare memoria — allocare blocchi, aggiornare
+inode, magari leggere metadati — e farlo proprio quando la memoria e' finita,
+cioe' quando ogni allocazione puo' fallire. E' una dipendenza circolare: il
+codice che serve a trovare memoria ne chiede. Una partizione e' una finestra di
+settori che il livello a blocchi controlla gia': scriverci una pagina e'
+«settore N, otto settori».
+
+! **SI RICONOSCE DALLA FIRMA, NON DAL TIPO NELLA TABELLA.** Il byte 0x82 lo
+scrive chiunque e non lo controlla nessuno: fidarsene vorrebbe dire che un
+errore di fdisk basta a far scrivere pagine di memoria sopra un filesystem. La
+firma «EXOSSWAP» sta nel primo settore DELLA partizione, ce la mette `mkswap`, e
+senza quella il kernel non tocca niente.
+
+! **E LA PARTIZIONE SI DICHIARA, NON SI CERCA.** Un kernel che andasse a caccia
+di aree utilizzabili prima o poi ne troverebbe una su un disco altrui.
+
+### Il limite, dichiarato: solo pagine con UN proprietario
+
+Mandare via una pagina vuol dire segnare TUTTE le tabelle che la mappano, e
+EX-OS non ha una mappa all'indietro. Quindi le pagine condivise — il codice
+delle librerie, le zone di memoria condivisa — non si toccano: il PMM sa
+contare i proprietari, e si sfratta solo chi ne ha uno.
+
+Non e' una perdita grave: cio' che occupa RAM sotto pressione sono heap, stack
+e dati privati. Il codice condiviso e' anche quello che si rileggerebbe piu'
+facilmente dal file da cui e' venuto — ed e' il prossimo gradino, non questo.
+
+### Come si sceglie chi se ne va
+
+Seconda chance. Il bit Accessed lo accende la CPU da sola: una pagina che ce
+l'ha acceso e' stata toccata da poco, e mandarla via vuol dire rileggerla
+subito. Al primo incontro le si spegne il bit; se al giro dopo e' ancora
+spento, quella pagina non la usa nessuno.
+
+! **E SI RIPARTE DA DOVE SI ERA ARRIVATI, non dal primo processo.** Ricominciare
+da capo vorrebbe dire scegliere la vittima in base all'ORDINE nella tabella dei
+processi invece che all'uso — e il primo processo e' la shell.
+
+### Il difetto che si e' visto solo provando, e che c'era gia' prima
+
+La prima esecuzione di `swaptest 40` e' fallita **dopo aver sfrattato con
+successo**: sessanta pagine erano gia' sul disco (contate aprendo l'immagine
+dall'host) e poi
+
+    [ERROR] PAGING: OOM durante map_page virt=0x0a000000
+
+Una tabella delle pagine deve venire dalla **fascia kernel** — le pagine basse,
+raggiungibili con qualunque CR3 caricato — e `pmm_alloc_page()` quella fascia la
+regala come ULTIMA RISORSA anche alle pagine utente. Uno heap che cresce fino a
+riempire la macchina se la mangia tutta, e la tabella successiva (una ogni 1024
+pagine) non trova piu' niente.
+
+! **NON E' UN DIFETTO DELLO SWAP: E' UN DIFETTO CHE SOLO LO SWAP POTEVA FAR
+VEDERE.** Prima, una macchina piena moriva di OOM molto prima di arrivare li'.
+Adesso `paging_map_page` sfratta anche lui, e in quella situazione le pagine
+utente SONO anche quelle della fascia: qualcuna torna libera dove serve.
+
+### Cosa NON e' cambiato
+
+Senza `swap` in kernel.cfg il sistema si comporta esattamente come prima —
+provato: `swaptest 40` risponde «malloc rifiutata» e la macchina continua a
+girare. La memoria virtuale e' un di piu', non un requisito: un kernel che si
+rifiutasse di partire senza swap sarebbe inutilizzabile proprio sulle macchine
+piccole per cui lo swap serve.
+
+! **E swaptest STA SUL CD, NON SUL FLOPPY.** Non e' una scelta di stile: il
+floppy era a 17 KB liberi e due programmi nuovi non ci stavano. `tools/mkfloppy.sh`
+copia TUTTO cio' che trova in `build/bin/` senza consultare nessun elenco,
+quindi l'unico modo di tenere un programma fuori dal floppy e' non costruirlo
+li' dentro (`BUILD_BIN_CD`). Chi PREPARA una macchina la avvia dal floppy e ha
+`mkswap`; chi PROVA ha il CD.
+
 ## 26 agosto 2026 — ExWin: il fuoco, i colori casuali, e una risoluzione su tre
 
 Tre guasti, e nessuno dei tre era dove sembrava. Il primo era nel driver di
