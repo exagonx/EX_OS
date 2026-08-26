@@ -96,6 +96,22 @@ uint32_t vga_visible_console(void);
 
 /* Dice dov'e' il framebuffer e che forma ha. Tutti zero = modo testo.
  * Serve a SYS_VIDEO_INFO, cioe' al server grafico in ring 3. */
+/* =============================================================================
+ * vga_geometria — quante colonne e quante righe ha la console ADESSO
+ *
+ * ! NON SONO 80x25 PER SEMPRE, ed e' esattamente l'errore che questa funzione
+ * viene a correggere. In modo testo lo sono; su una console disegnata dentro un
+ * framebuffer dipendono dalla risoluzione — a 800x600 col carattere 8x16 sono
+ * cento colonne per trentasette righe.
+ *
+ * Il driver tty rispondeva a TTY_IOCTL_GETSIZE con due costanti, e chiunque
+ * gliele chiedesse riceveva 80x25 su uno schermo che ne aveva 100x37: un
+ * programma a schermo intero disegnava su tre quarti di schermo, e `telnet`
+ * dichiarava all'altro capo (NAWS) una finestra che non era la sua.
+ * ========================================================================== */
+void vga_geometria(uint32_t *colonne, uint32_t *righe, uint32_t *px_w,
+                   uint32_t *px_h);
+
 void vga_info_fb(uint32_t *addr, uint32_t *pitch, uint32_t *w, uint32_t *h,
                  uint32_t *bpp);
 

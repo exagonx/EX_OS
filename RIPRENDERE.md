@@ -1,5 +1,87 @@
 # DOVE RIPRENDERE — 26 agosto 2026
 
+## 26 agosto 2026 — il floppy si congela, l'installatore si sposta sul CD
+
+Una decisione di architettura, non una funzione in piu'.
+
+    /bin/install     CONGELATO. Copia i file, installa l'avvio, fonde
+                     kernel.cfg. Basta a installare da un floppy e basta.
+    /bin/cdinstall   tutto il resto, adesso e in futuro. Sta sul CD.
+
+! **IL MOTIVO E' LO SPAZIO, E SI E' VISTO DUE VOLTE IN UN GIORNO.** Il floppy e'
+1,44 MB che non crescono; il kernel cresce a ogni cosa che impara. Oggi sono
+dovuti uscire `libctest`, `hello` e `swaptest` per far posto a mkswap e
+all'installatore cresciuto. Un installatore che continuasse ad arricchirsi la'
+dentro sarebbe il prossimo a togliere spazio all'unica cosa che sul floppy DEVE
+starci.
+
+    prima di oggi:    4096 byte liberi
+    dopo:            59904 byte liberi
+
+! **E LA DELEGA E' TRASPARENTE.** `install` cerca `/bin/cdinstall` (poi
+`/cdrom/bin/cdinstall`) e gli cede il posto: chi digita `install` ha in mente
+l'installazione, non quale dei due programmi la faccia. Senza CD non cambia
+niente.
+
+! **MA LA COPIA NON SI RIFA' IN DUE POSTI.** `cdinstall` fa la sua parte e poi
+chiama `install -diretto`, che e' l'unico posto dove quel codice esiste — mappa
+dei settori, fusione di kernel.cfg, controllo di contiguita' di stage2 e kernel.
+`-diretto` e' anche cio' che impedisce ai due di rimbalzarsi addosso all'infinito.
+
+### L'interfaccia a schermo intero
+
+Riquadri ASCII, righe scelte in negativo, barra dei tasti in fondo. Frecce per
+muoversi, cifre per cambiare una misura, Esc per tornare indietro. Le tre misure
+— sistema, scambio, dati — stanno in **una schermata sola**, con lo spazio non
+assegnato che si vede cambiare: chieste una per volta, chi risponde alla prima
+non sa ancora cosa gli restera' per la terza.
+
+! **NON USA ExWin, e non e' pigrizia:** ExWin richiede il server grafico, il
+server grafico richiede una modalita' VESA che Stage 2 imposta solo se la
+configurazione e' gia' scritta — cioe' se il sistema e' gia' installato. Un
+installatore che pretendesse la grafica non girerebbe nell'unico momento in cui
+serve.
+
+### Tre difetti trovati provandolo, e due non erano miei
+
+! **I TRATTINI LUNGHI DIVENTAVANO `ZCO`.** La console e' in code page 437 e il
+sorgente era in UTF-8. `bin/help/help.c` lo aveva gia' scritto — «SOLO ASCII IN
+CIO' CHE VA A VIDEO» — e l'ho riscoperto guardando lo schermo.
+
+! **`TTY_IOCTL_GETSIZE` RISPONDEVA 80x25 SCRITTO A MANO.** Vero in modo testo,
+falso su una console disegnata nel framebuffer: a 800x600 col carattere 8x16 le
+colonne sono cento e le righe trentasette. L'installatore disegnava su tre
+quarti di schermo — ma il difetto non e' suo: **`telnet` usa la stessa ioctl per
+NAWS**, e dichiarava all'altro capo una finestra che non era la sua. Adesso la
+misura la chiede al VGA (`vga_geometria`).
+
+! **E SCRIVERE L'ULTIMA CELLA DELL'ULTIMA RIGA FA SCORRERE LO SCHERMO.** Il
+sintomo era la testata che spariva a ogni schermata: la riga che scompare sta
+dalla parte opposta di quella che la fa scomparire.
+
+! **E UNA COSA SUL BUILD, la stessa di sempre:** `cdinstall` non era fra le
+dipendenze dell'ISO, quindi il CD portava il binario VECCHIO e le correzioni non
+si vedevano. Il Makefile ha una guardia per il floppy (`verifica-dipendenze-floppy`)
+e non ne aveva una equivalente per i programmi solo-CD: adesso stanno tutti in
+`BINARI_SOLO_CD`.
+
+### Provato dall'inizio alla fine
+
+Disco vergine da 256 MB, `install` senza argomenti:
+
+    tipo 0x83 attiva 0x80  inizio   2048  settori 395264 (193 MB)
+    tipo 0x82 attiva 0x00  inizio 397312  settori 126976  (62 MB)
+
+ext2 sulla prima, `EXOSSWAP` sulla seconda, poi `install -diretto` per la copia,
+`+ [kernel] swap = hd0p2` in kernel.cfg, e il sistema avviato dal proprio disco:
+
+    SWAP: 'hd0p2' attiva: 15871 slot da 4 KB (61 MB), elenco di 1984 byte
+
+Provata anche la strada di servizio: `install -m /disco` continua a funzionare
+identico dentro uno script — `cdinstall` con argomenti passa dritto senza aprire
+nessuna schermata, perche' una procedura guidata in mezzo a un'automazione la
+blocca su una domanda che nessuno vedra'.
+
 ## 26 agosto 2026 — il disco nuovo in un percorso solo
 
 `install -prepara hd0`: mostra il disco e cio' che c'e' sopra, chiede quanto

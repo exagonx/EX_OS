@@ -136,7 +136,7 @@ BUILD_BIN_CD  := $(BUILD_DIR)/bin-cd
 # kernel (kernel/block/atapi.c, kernel/fs/iso9660.c), perche' il kernel
 # deve poterci montare la radice prima che esista un processo.
 # =============================================================================
-PROGRAMMI_FLOPPY := shell hello id chmod shutdown ls mem stack disk fdisk mkfs mkswap trunc chkdsk rename rm_prog mv_prog uname_prog mount_prog cp_prog install_prog textline gfedit mkdir_prog rmdir_prog delete_prog hwconfig hwinfo cmp_prog shmtest polltest toolinst login sudo help_prog keymap libc testo mouse_prog floppy_drv kbd_drv svga_drv vgaprova_drv \
+PROGRAMMI_FLOPPY := shell id chmod shutdown ls mem stack disk fdisk mkfs mkswap trunc chkdsk rename rm_prog mv_prog uname_prog mount_prog cp_prog install_prog textline gfedit mkdir_prog rmdir_prog delete_prog hwconfig hwinfo cmp_prog shmtest polltest toolinst login sudo help_prog keymap libc testo mouse_prog floppy_drv kbd_drv svga_drv vgaprova_drv \
                     pci_drv mouseser_drv uhci_drv xhci_drv
 
 # =============================================================================
@@ -170,7 +170,7 @@ PROGRAMMI_FLOPPY := shell hello id chmod shutdown ls mem stack disk fdisk mkfs m
 # `make verifica-programmi` — che le due ISO eseguono da sole — confronta
 # le liste con il contenuto di bin/ e si ferma dicendo quali mancano.
 # =============================================================================
-PROGRAMMI_CD := swaptest libctest netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp scarica telnet telnetd sshd xcp winprova exwincmd
+PROGRAMMI_CD := cdinstall swaptest libctest hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp scarica telnet telnetd sshd xcp winprova exwincmd
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
 PROGRAMMI_EXWIN := exwin_so exdlg_so eximg_so exfont_so exhttp_so exhtml_so excss_so wserver pm filemgr edit term fontprova orologio browser
 
@@ -387,7 +387,12 @@ shell: dirs $(SHELL_BIN)
 
 # --- Programma utente di esempio (/bin/hello) ---------------------------------
 HELLO_SRC := bin/hello/hello.c
-HELLO_BIN := $(BUILD_BIN)/hello
+# ! HELLO NON STA PIU' SUL FLOPPY, dal 26 agosto 2026. Stampa una riga: e' il
+# programma con cui si e' provato per la prima volta che un ELF girasse in ring
+# 3, e da allora non serve a nessuno che non stia provando proprio quello. Su un
+# supporto d'avvio da 1,44 MB ogni kilobyte e' spazio che manchera' al kernel il
+# giorno che cresce — ed e' esattamente cio' che sta per succedere.
+HELLO_BIN := $(BUILD_BIN_CD)/hello
 HELLO_LD  := bin/hello/hello.ld
 
 # ! hello NON COLLEGA LA libc — ha un _start suo — quindi non ha
@@ -397,7 +402,7 @@ HELLO_LD  := bin/hello/hello.ld
 # persona, il canarino se lo definisce da se'.
 $(HELLO_BIN): $(HELLO_SRC) $(HELLO_LD) $(SEGNO_FLAG)
 	@echo "=== Compilazione /bin/hello ==="
-	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -fno-stack-protector -c $(HELLO_SRC) -o $(BUILD_OBJ)/hello.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(HELLO_LD) $(BUILD_OBJ)/hello.o -o $@
 	@echo "[OK] hello compilato: $@"
@@ -1976,6 +1981,30 @@ $(SWAPTEST_BIN): $(SWAPTEST_SRC) $(SWAPTEST_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(L
 .PHONY: swaptest
 swaptest: dirs $(SWAPTEST_BIN)
 
+# --- Programma utente /bin/cdinstall (SOLO CD) --------------------------------
+# L'installatore a schermo intero. Sta in BUILD_BIN_CD e non su BUILD_BIN, e
+# quella riga e' la decisione piu' importante di questo blocco: /bin/install sul
+# floppy resta congelato, e tutto cio' che l'installazione imparera' da qui in
+# avanti cresce QUI, dove lo spazio non manca. Il perche' per esteso sta in
+# testa a bin/cdinstall/cdinstall.c.
+CDINSTALL_SRC := bin/cdinstall/cdinstall.c
+CDINSTALL_BIN := $(BUILD_BIN_CD)/cdinstall
+CDINSTALL_LD  := bin/cdinstall/cdinstall.ld
+
+$(CDINSTALL_BIN): $(CDINSTALL_SRC) $(CDINSTALL_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/cdinstall ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/kbd -c $(CDINSTALL_SRC) \
+	    -o $(BUILD_OBJ)/cdinstall_main.o
+	$(CC) -m32 -c $(LIBC_START) -o $(BUILD_OBJ)/cdinstall_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(CDINSTALL_LD) \
+	    $(BUILD_OBJ)/cdinstall_start.o $(BUILD_OBJ)/cdinstall_main.o \
+	    $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] cdinstall compilato: $@"
+
+.PHONY: cdinstall
+cdinstall: dirs $(CDINSTALL_BIN)
+
 # --- Programma utente /bin/mkswap ---------------------------------------------
 # Prepara una partizione per la memoria virtuale: ci scrive l'intestazione che
 # il kernel cerca all'avvio. Sta in userspace per la stessa ragione di mkfs —
@@ -3279,7 +3308,7 @@ $(KERNEL_BIN): $(KERNEL_ELF) $(SEGNO_FLAG)
 # DRIVER_SOLO_CD_OUT, ed e' lo stesso modo di sbagliare: un programma
 # aggiunto solo alla prima si costruisce e non entra mai in un floppy nuovo.
 # La guardia `verifica-dipendenze-floppy` qui sotto confronta le due.
-PROGRAMMI_FLOPPY_OUT := $(SHELL_BIN) $(HELLO_BIN) $(LS_BIN) $(MEM_BIN) \
+PROGRAMMI_FLOPPY_OUT := $(SHELL_BIN) $(LS_BIN) $(MEM_BIN) \
                         $(STACK_BIN) $(DISK_BIN) $(FDISK_BIN) \
                         $(MKFS_BIN) $(MKSWAP_BIN) $(TRUNC_BIN) $(CHKDSK_BIN) $(RENAME_BIN) \
                         $(RM_BIN) $(MV_BIN) $(UNAME_BIN) $(MOUNT_BIN) \
@@ -4623,6 +4652,32 @@ prova-exhtml:
 	    tools/prove/htmlprova.c lib/exhtml/html.c -I lib/exhtml
 	@$(PROVE_HOST_DIR)/htmlprova
 
+# =============================================================================
+# ExJs — il motore JavaScript, provato a pezzi
+#
+# ! IL PRIMO PEZZO E' L'ANALIZZATORE LESSICALE, e si prova da solo perche' un
+# suo difetto non si presenta mai come un difetto suo: si presenta come un
+# programma che fa un'altra cosa. `a >>>= b` letto male diventa un confronto
+# seguito da spazzatura, e l'errore parla di un punto lontano da dove sta lo
+# sbaglio. Contare i gettoni e' l'unico modo di sapere che la base regge prima
+# di costruirci sopra il costruttore dell'albero.
+# =============================================================================
+.PHONY: prova-exjs
+prova-exjs:
+	@mkdir -p $(PROVE_HOST_DIR)
+	@cc -Wall -Wextra -O2 -o $(PROVE_HOST_DIR)/jsprova \
+	    tools/prove/jsprova.c lib/exjs/lex.c -I lib/exjs
+	@$(PROVE_HOST_DIR)/jsprova
+
+# ! E COMPILA ANCHE PER IL BERSAGLIO, non solo per l'host. Il banco gira a 64
+# bit; il motore girera' a 32, e le due cose non si accorgono da sole di essere
+# diverse. Lo stesso controllo c'e' per extls e per excert.
+.PHONY: verifica-exjs
+verifica-exjs: lib/exjs/lex.c lib/exjs/exjs.h lib/exjs/exjs_int.h
+	@$(CC) $(CFLAGS_USER) -I lib/exjs -I lib/include -c lib/exjs/lex.c \
+	    -o $(BUILD_OBJ)/exjs_lex_prova.o
+	@echo "[OK] lib/exjs compila per i386"
+
 .PHONY: prova-excss
 prova-excss:
 	@mkdir -p $(PROVE_HOST_DIR)
@@ -4804,7 +4859,8 @@ BINARI_SOLO_CD := $(NETDETECT_BIN) $(NETTEST_BIN) $(PING_BIN) $(IPCFG_BIN) \
                   $(TCPSERV_BIN) $(TELNETD_BIN) $(CRYPTTEST_BIN) $(SSHD_BIN) \
                   $(DHCP_BIN) $(HOST_BIN) $(TCPTEST_BIN) $(FTP_BIN) \
                   $(TELNET_BIN) $(XCP_BIN) $(WINPROVA_BIN) $(EXWINCMD_BIN) \
-                  $(SCARICA_BIN)
+                  $(SCARICA_BIN) \
+                  $(CDINSTALL_BIN) $(SWAPTEST_BIN) $(LIBCTEST_BIN) $(HELLO_BIN)
 # ! QUESTA LISTA E' LA DIPENDENZA DELL'ISO, E VA TENUTA ALLINEATA A
 # DRIVER_CD. Sono due elenchi della stessa cosa: DRIVER_CD dice COSA
 # COSTRUIRE (nomi di bersagli .PHONY), questo dice DA COSA DIPENDE L'IMMAGINE

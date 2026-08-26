@@ -8,7 +8,6 @@ bin/disk
 bin/fdisk
 bin/gfedit
 bin/halt
-bin/hello
 bin/help
 bin/hwconfig
 bin/hwinfo

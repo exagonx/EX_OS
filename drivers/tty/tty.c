@@ -674,12 +674,21 @@ int drv_ioctl(int cmd, void *arg)
     switch (cmd) {
         case TTY_IOCTL_GETSIZE: {
             /* Ritorna dimensioni terminale */
+            /* ! LA MISURA SI CHIEDE AL VGA, NON SI SCRIVE QUI. Qui c'erano
+             * 80x25 e 640x400 come costanti: vero in modo testo, falso su una
+             * console disegnata dentro un framebuffer, dove a 800x600 le
+             * colonne sono cento e le righe trentasette. Chi ci credeva
+             * disegnava su tre quarti di schermo — e `telnet` dichiarava
+             * all'altro capo, con NAWS, una finestra che non era la sua. */
             TtyWinSize *ws = (TtyWinSize *)arg;
+            uint32_t c, r, pw, ph;
+
             if (!ws) return -1;
-            ws->rows   = 25;
-            ws->cols   = 80;
-            ws->xpixel = 640;
-            ws->ypixel = 400;
+            vga_geometria(&c, &r, &pw, &ph);
+            ws->rows   = (unsigned short)r;
+            ws->cols   = (unsigned short)c;
+            ws->xpixel = (unsigned short)pw;
+            ws->ypixel = (unsigned short)ph;
             return 0;
         }
         case TTY_IOCTL_SETRAW: {

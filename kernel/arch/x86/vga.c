@@ -1063,6 +1063,20 @@ uint32_t vga_visible_console(void)
  * ! NON DA' ACCESSO A NIENTE: dice dei numeri. Mapparlo resta un privilegio
  * da .drv, e chi non lo e' con questi numeri non ci fa niente.
  * ========================================================================== */
+void vga_geometria(uint32_t *colonne, uint32_t *righe, uint32_t *px_w,
+                   uint32_t *px_h)
+{
+    if (colonne) *colonne = g_cols;
+    if (righe)   *righe   = g_righe;
+
+    /* ! I PIXEL SONO QUELLI VERI SOLO IN GRAFICA. In modo testo il framebuffer
+     * non c'e' e la misura in pixel di un carattere non e' una cosa che questo
+     * file conosca: si rende quella del modo 3 (720x400), che e' cio' che la
+     * scheda sta davvero mostrando. */
+    if (px_w) *px_w = g_fb ? g_fb_w : (uint32_t)(g_cols * CELLA_W);
+    if (px_h) *px_h = g_fb ? g_fb_h : (uint32_t)(g_righe * CELLA_H);
+}
+
 void vga_info_fb(uint32_t *addr, uint32_t *pitch, uint32_t *w, uint32_t *h,
                  uint32_t *bpp)
 {
