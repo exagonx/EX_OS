@@ -847,6 +847,15 @@ typedef struct {
 
 int console_info(ConsoleInfo *ci);
 int console_switch(unsigned int n);
+
+/* Chi tiene la console della GRAFICA. `azione`: 0 chiedi (rende il numero
+ * della console, -1 se nessuna), 1 prendi (quella del chiamante), 2 lascia.
+ *
+ * ! LO STATO STA NEL KERNEL, non nel server grafico: quando il server muore —
+ * anche ucciso — qualcuno deve poter dire «li' non c'e' piu' niente», e un
+ * flag tenuto dal server morirebbe con lui lasciando la porta aperta su una
+ * stanza vuota. Il kernel ricontrolla da se' che chi l'aveva presa sia vivo. */
+int console_grafica(int azione);
 int console_write(unsigned int n, const void *buf, unsigned int len);
 
 /* =============================================================================

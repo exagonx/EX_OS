@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Installare EX-OS</title>
+<link rel="stylesheet" href="stile.css">
+<!-- Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>  GPL-2.0-or-later
+     ! SOLO ASCII: apostrofi al posto degli accenti. -->
+</head>
+<body>
+
+<p class="navi">
+<a href="index.html">Documentazione</a> |
+<a href="sistema.html">Il sistema</a> |
+<a href="comandi.html">Comandi</a> &mdash; Installazione |
+<a href="exwin.html">Scrivania</a> |
+<a href="rete.html">Rete</a> |
+<a href="sviluppo.html">Sviluppo</a> |
+<a href="browser.html">Navigatore</a>
+</p>
+
+<h1>Installare EX-OS</h1>
+
+<h2>La via breve: <code>install</code> e basta</h2>
+
+<p>
+Avvia dal CD e digita:
+</p>
+
+<pre>    install</pre>
+
+<p>
+Senza argomenti l'installatore prende in mano tutto: mostra i dischi, chiede
+quanto dare al sistema, quanto all'area di scambio e se fare una terza
+partizione per i dati, partiziona, formatta, copia, scrive l'avvio e mette a
+posto <code>kernel.cfg</code>. Alla fine il disco parte da solo.
+</p>
+
+<p class="nota">
+<b>Le tre misure si chiedono in una schermata sola</b>, con lo spazio non
+assegnato che si vede cambiare mentre le muovi. Chiederle una per volta
+vorrebbe dire far rispondere alla prima domanda senza sapere cosa resta per
+la terza.
+</p>
+
+<h3>Come si guida</h3>
+<pre>    frecce      muoversi
+    cifre       cambiare una misura
+    Invio       confermare
+    Esc         tornare indietro</pre>
+
+<p class="nota">
+<b>L'installatore non usa la grafica, e non e' pigrizia.</b> ExWin vuole il
+server a finestre, il server a finestre vuole una modalita' VESA che stage 2
+imposta solo se la configurazione e' gia' scritta &mdash; cioe' se il sistema
+e' <i>gia'</i> installato. Un installatore che pretendesse la grafica non
+girerebbe nell'unico momento in cui serve.
+</p>
+
+<h2>I due programmi, e perche' sono due</h2>
+
+<table border="1">
+<tr><th>Programma</th><th>Dove sta</th><th>Che cosa fa</th></tr>
+<tr><td><code>/bin/install</code></td><td>anche sul floppy</td>
+    <td><b>congelato</b>: copia i file, installa l'avvio, fonde
+        <code>kernel.cfg</code>. Basta a installare da un floppy, e basta.</td></tr>
+<tr><td><code>/bin/cdinstall</code></td><td>solo sul CD</td>
+    <td>tutto il resto, adesso e in futuro: le schermate, le partizioni, lo
+        scambio.</td></tr>
+</table>
+
+<p>
+<b>La delega e' trasparente</b>: chi digita <code>install</code> ha in mente
+l'installazione, non quale dei due programmi la faccia. <code>install</code>
+cerca <code>cdinstall</code> e gli cede il posto; senza CD non cambia niente.
+E <code>cdinstall</code>, per la copia, richiama <code>install -diretto</code>
+&mdash; che e' l'unico posto dove quel codice esiste.
+</p>
+
+<p class="nota">
+<b>Il motivo e' lo spazio, e si e' visto due volte in un giorno.</b> Il floppy
+e' 1,44 MB che non crescono; il kernel cresce a ogni cosa che impara. Un
+installatore che continuasse ad arricchirsi la' dentro sarebbe il prossimo a
+togliere spazio all'unica cosa che sul floppy <i>deve</i> starci.
+</p>
+
+<h2>La via lunga, un passo per volta</h2>
+
+<p>Serve quando si vuole decidere tutto, o quando si installa su un disco che
+ha gia' altro sopra.</p>
+
+<pre>    disk                          quali dischi ci sono, e cosa non torna
+    fdisk hd0                     creare le partizioni
+    mkfs -t ext2 -L exos hd0p1    formattare quella di sistema
+    mkswap hd0p2                  preparare l'area di scambio
+    mount hd0p1 /disco            montarla dove si vuole
+    install /disco                copiare il sistema li' dentro</pre>
+
+<p>
+Oppure, in un passaggio solo, la parte che riguarda un disco vergine:
+</p>
+
+<pre>    install -prepara hd0</pre>
+
+<h3>Le opzioni che contano</h3>
+<table border="1">
+<tr><th>Comando</th><th>Che cosa fa</th></tr>
+<tr><td><code>install</code></td><td>la procedura guidata dal CD</td></tr>
+<tr><td><code>install -prepara hd0</code></td><td>prepara un disco: partizioni, formattazione, scambio, copia</td></tr>
+<tr><td><code>install /disco</code></td><td>copia il sistema su un volume gia' montato: <b>riscrive tutto</b></td></tr>
+<tr><td><code>install -a /disco</code></td><td>aggiorna: copia solo cio' che sul supporto e' piu' nuovo</td></tr>
+<tr><td><code>install -m /disco</code></td><td>solo il sistema minimale</td></tr>
+<tr><td><code>install -t /disco</code></td><td>tutti i componenti, senza chiedere</td></tr>
+<tr><td><code>install -tools</code></td><td>gli strumenti di sviluppo, che vengono dal <b>CD tools</b> e non dal supporto d'avvio</td></tr>
+</table>
+
+<p class="nota">
+<b>Con degli argomenti non si apre nessuna schermata.</b> Una procedura
+guidata in mezzo a un'automazione la blocca su una domanda che nessuno
+vedra': <code>install -m /disco</code> dentro uno script continua a
+funzionare identico.
+</p>
+
+<h2>Che cosa viene installato</h2>
+
+<p>
+<b>Il sistema minimale, sempre</b>: <code>/bin</code>, <code>/boot</code>,
+<code>/lib</code>, <code>/dev</code>, <code>/drivers</code>. E' cio' senza cui
+EX-OS non parte.
+</p>
+
+<p>
+<b>Tutto il resto e' un componente</b>, e i componenti non sono un elenco
+scritto dentro l'installatore: <i>qualunque</i> altra directory di primo
+livello trovata sul supporto d'avvio viene mostrata e chiesta. Oggi sono
+<code>/exwin</code> (la scrivania, i caratteri e questa documentazione) e
+<code>/doc</code>; domani basta mettere una directory sul supporto.
+</p>
+
+<p class="nota">
+<b>Chi prepara un pacchetto non ha i sorgenti dell'installatore</b>, ed e' la
+ragione per cui l'elenco non e' compilato dentro. E' la stessa ragione per cui
+l'elenco delle applicazioni grafiche e' un file di testo.
+</p>
+
+<p>
+Il confine fra minimale e opzionale lo dice <code>/boot/minimale.txt</code>,
+che e' l'elenco dei file del floppy scritto <i>leggendo il floppy</i>. Un
+elenco scritto a mano nel sorgente sarebbe una seconda verita', e
+divergerebbe al primo programma aggiunto.
+</p>
+
+<h2>I driver non si copiano: si scelgono</h2>
+
+<p>
+L'installatore chiede a <code>hwconfig</code> quali driver servono su
+<i>questa</i> macchina e mette solo quelli, poi li dichiara nella sezione
+<code>[modules]</code> di <code>kernel.cfg</code>. Il driver di una scheda di
+rete che non c'e' sarebbe soltanto un file in piu' e una riga di errore
+all'avvio.
+</p>
+
+<h2>Aggiornare un sistema gia' installato</h2>
+
+<pre>    install -a /disco</pre>
+
+<p class="nota">
+<b>Fino alla versione 0.148 questa era la trappola peggiore.</b> La copia
+saltava i file che esistevano gia': <code>install</code> su un sistema
+installato aggiornava i file <i>nuovi</i> e lasciava indietro tutti gli altri,
+kernel compreso. Il disco continuava ad avviare la versione vecchia mentre
+l'installatore stampava &laquo;Installazione completata&raquo;. Adesso si
+riscrive sempre, e alla fine ogni file si rilegge per verificare che sul
+volume ci siano esattamente i byte che ci abbiamo scritto.
+</p>
+
+<p class="nota">
+<b>E la mappa dei settori del kernel vale finche' quel file non si sposta.</b>
+Chi ricopia a mano <code>kernel.bin</code> o <code>stage2</code> su un disco
+gia' installato <i>deve</i> rilanciare <code>install</code>, o il disco
+riparte con la versione di prima.
+</p>
+
+<h2>Dopo l'installazione</h2>
+
+<ol>
+<li><code>reboot</code>, e togli il CD;</li>
+<li>entra con <code>login</code>;</li>
+<li>se serve la rete: <code>netdetect</code> e poi <code>dhcp</code> &mdash;
+    vedi <a href="rete.html">La rete</a>;</li>
+<li><code>exwin</code> accende la scrivania &mdash; vedi
+    <a href="exwin.html">La scrivania</a>.</li>
+</ol>
+
+<hr>
+<p class="navi">
+<a href="index.html">Torna alla documentazione</a> |
+<a href="exwin.html">La scrivania &gt;</a>
+</p>
+<p class="piede">
+EX-OS &mdash; Graziano Falcone, exagonx@hotmail.com &mdash; GNU GPL v2.
+</p>
+
+</body>
+</html>

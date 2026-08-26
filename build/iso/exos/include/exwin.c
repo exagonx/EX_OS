@@ -292,6 +292,13 @@ static Oggetto g_ogg[OGGETTI_MAX];
  * che e' la stessa regola che il server applica alle finestre. */
 static ExFinestra g_trascinato = 0;
 
+/* ! IL PULSANTE TENUTO GIU', e serve perche' il comando parte al RILASCIO.
+ * Fra la pressione e il rilascio il puntatore puo' uscire dal pulsante, e in
+ * quel caso il comando non deve partire: senza ricordarsi QUALE fosse, al
+ * rilascio non ci sarebbe modo di sapere se si sta alzando il dito dallo
+ * stesso pulsante su cui lo si era posato. Vedi WIN_EV_MOUSE_SU. */
+static ExFinestra g_premuto = 0;
+
 /* ! LA RIGA SCELTA QUANDO IL DITO E' SCESO, per sapere al rilascio se il
  * trascinamento l'ha cambiata. Senza, chi sceglie una voce trascinando invece
  * che cliccando non lo direbbe a nessuno: la lista si vedrebbe cambiare la
@@ -565,6 +572,53 @@ static void fuoco_metti(ExFinestra f, ExFinestra c)
  * sarebbe una finestra che ignora la tastiera senza dirlo, ed e' peggio di una
  * chiamata che non fa niente.
  * ============================================================================= */
+/* Definita piu' in basso, dov'e' il resto del dialogo col server. */
+static int server_trova(void);
+
+unsigned int ex_appunti_metti(const char *testo, unsigned int n)
+{
+    Appunti     *ap = appunti();
+    unsigned int i;
+
+    if (!ap || !testo) return 0;
+    if (n > sizeof(ap->testo) - 1) n = sizeof(ap->testo) - 1;
+
+    for (i = 0; i < n; i++) ap->testo[i] = testo[i];
+    ap->testo[n] = '\0';
+    ap->n = n;
+    return n;
+}
+
+unsigned int ex_appunti_prendi(char *out, unsigned int max)
+{
+    Appunti     *ap = appunti();
+    unsigned int i, n;
+
+    if (!out || max == 0) return 0;
+    out[0] = '\0';
+    if (!ap || ap->n == 0) return 0;
+
+    n = ap->n;
+    if (n > max - 1) n = max - 1;
+    for (i = 0; i < n; i++) out[i] = ap->testo[i];
+    out[n] = '\0';
+    return n;
+}
+
+void ex_spegni_scrivania(void)
+{
+    if (!server_trova()) return;
+    ipc_send((unsigned int)g_server, WIN_MSG_SPEGNI, 0, 0);
+}
+
+void ex_fuoco_via(ExFinestra f)
+{
+    Oggetto *r = radice(f);
+
+    if (!r) return;
+    r->fuoco = 0;
+}
+
 void ex_fuoco(ExFinestra f)
 {
     Oggetto *o = ogg(f);
@@ -788,6 +842,7 @@ void ex_incavo(ExFinestra f, int x, int y, int w, int h)
 typedef struct {
     int            usato;
     int            file;        /* indice in g_file, -1 = nessuno */
+    int            corpo;       /* a che misura e' aperto: serve al ripiego */
     ExFontDati     f;           /* se e' un EXFN */
     ExTtf          ttf;         /* se e' un TrueType: sta in exfont.so */
 } FontAperto;
@@ -849,6 +904,7 @@ static struct {
     int    (*base)(ExTtf);
     int    (*larghezza_car)(ExTtf, unsigned int);
     const unsigned char *(*glifo)(ExTtf, unsigned int, int *, int *, int *, int *);
+    int    (*ha_glifo)(ExTtf, unsigned int);
 } T;
 
 static int exfont_pronta(void)
@@ -873,6 +929,14 @@ static int exfont_pronta(void)
             T.glifo = (const unsigned char *(*)(ExTtf, unsigned int,
                                                 int *, int *, int *, int *))
                       exlib_simbolo(t, "exttf_glifo");
+
+            /* ! QUESTO NON SI PRETENDE, ed e' voluto: una exfont.so piu'
+             * vecchia di questo toolkit non ce l'ha, e senza di lui il
+             * ripiego non si fa — ma tutto il resto continua a funzionare
+             * esattamente come prima. Metterlo fra gli obbligatori qui sotto
+             * avrebbe reso illeggibile ogni testo su un sistema misto. */
+            T.ha_glifo = (int (*)(ExTtf, unsigned int))
+                         exlib_simbolo(t, "exttf_ha_glifo");
         }
     }
 
@@ -1030,6 +1094,7 @@ ExFont ex_font_apri(const char *percorso, int corpo)
     }
 
     g_font[slot].file  = fi;
+    g_font[slot].corpo = corpo > 0 ? corpo : 16;
     g_font[slot].usato = 1;
     return (ExFont)(slot + 1);
 }
@@ -1140,6 +1205,84 @@ static ExTtf ttf_di(ExFont h)
     if (h == 0 || h > FONT_MAX) return 0;
     if (!g_font[h - 1].usato) return 0;
     return g_font[h - 1].ttf;
+}
+
+/* =============================================================================
+ * IL FONT DI RIPIEGO
+ *
+ * ! LIBERATION COPRE DUEMILATRECENTO CODICI, DEJAVU QUASI SEIMILA, e la
+ * differenza si vede sulla colonna delle lingue di Wikipedia: col solo
+ * Liberation l'arabo esce come una fila di collegamenti VUOTI — sottolineati e
+ * senza lettere — e chi guarda pensa che il collegamento sia rotto, non che
+ * manchi un carattere.
+ *
+ * ! MA NON SI SOSTITUISCE IL FONT: SI RIPIEGA CARATTERE PER CARATTERE. Sono
+ * due cose diverse. Sostituirlo vorrebbe dire cambiare l'aspetto di OGNI
+ * pagina — le forme, le larghezze, l'impaginazione — per via di una manciata
+ * di caratteri che quasi nessuna pagina usa. Ripiegare lascia il testo com'e' e
+ * riempie solo i buchi, che e' quel che fa ogni sistema con un fontconfig.
+ *
+ * ! E RESTA FUORI IL CINESE, IL GIAPPONESE, IL COREANO, il devanagari e il
+ * thai: DejaVu non li ha, e chi li ha (Noto CJK) pesa venti megabyte su un CD
+ * che ne pesa dieci. E' un limite DICHIARATO, non una dimenticanza.
+ * ========================================================================== */
+#define RIPIEGO_FILE  "/exwin/font/DejaVuSans.ttf"
+#define RIPIEGO_MAX   8
+
+static struct { int corpo; ExFont f; } g_ripiego[RIPIEGO_MAX];
+static int g_ripiego_n = 0;
+static int g_ripiego_no = 0;    /* il file non c'e': non si richiede piu' */
+
+/* Il ripiego a quel corpo, aperto la prima volta che serve davvero.
+ *
+ * ! NON SI APRE ALL'AVVIO, e non e' pigrizia: sono settecento kilobyte, e la
+ * stragrande maggioranza delle pagine non ha un solo carattere che li chieda.
+ * Chi non ne ha bisogno non li paga. */
+static ExTtf ripiego_ttf(int corpo)
+{
+    int i;
+
+    if (g_ripiego_no || corpo <= 0) return 0;
+
+    for (i = 0; i < g_ripiego_n; i++)
+        if (g_ripiego[i].corpo == corpo) return ttf_di(g_ripiego[i].f);
+
+    if (g_ripiego_n >= RIPIEGO_MAX) return 0;
+
+    {
+        ExFont f = ex_font_apri(RIPIEGO_FILE, corpo);
+
+        /* ex_font_apri rende 0 anche per «il file non c'e'»: si smette di
+         * chiedere, o ogni parola tornerebbe a cercarlo sul disco. */
+        if (!f) { if (g_ripiego_n == 0) g_ripiego_no = 1; return 0; }
+
+        g_ripiego[g_ripiego_n].corpo = corpo;
+        g_ripiego[g_ripiego_n].f     = f;
+        g_ripiego_n++;
+        return ttf_di(f);
+    }
+}
+
+/* Quale font disegna DAVVERO questo carattere: il suo, o il ripiego.
+ *
+ * ! LA MISURA E IL DISEGNO CHIAMANO QUESTA STESSA FUNZIONE. Se si separassero
+ * — uno che ripiega e l'altro no — le larghezze non tornerebbero e il testo si
+ * sovrapporrebbe, con l'aria di un difetto d'impaginazione. E' lo stesso
+ * motivo per cui il decodificatore UTF-8 sta in un posto solo. */
+static ExTtf ttf_per_codice(ExFont h, ExTtf suo, unsigned int ch)
+{
+    ExTtf r;
+
+    if (!suo || !T.ha_glifo) return suo;
+    if (T.ha_glifo(suo, ch)) return suo;
+
+    /* Lo spazio e i caratteri di servizio non si ripiegano: non hanno un
+     * disegno da nessuna parte, e cercarlo aprirebbe il ripiego per niente. */
+    if (ch < 0x80) return suo;
+
+    r = ripiego_ttf(h && h <= FONT_MAX ? g_font[h - 1].corpo : 0);
+    if (r && r != suo && T.ha_glifo(r, ch)) return r;
+    return suo;
 }
 
 int ex_font_altezza(ExFont h)
@@ -1256,7 +1399,11 @@ int ex_larghezza_testo(ExFont h, const char *s)
         return w;
     }
 
-    while (*s) w += T.larghezza_car(t, prossimo_codice(&s));
+    while (*s) {
+        unsigned int ch = prossimo_codice(&s);
+
+        w += T.larghezza_car(ttf_per_codice(h, t, ch), ch);
+    }
     return w;
 }
 
@@ -1287,16 +1434,25 @@ void ex_scrivi_con(ExFinestra f, ExFont h, int x, int y,
 
         while (*s) {
             unsigned int         ch = prossimo_codice(&s);
+            ExTtf                q  = ttf_per_codice(h, t, ch);
             int                  gw, gh, sx, sy, px, py;
-            const unsigned char *cop = T.glifo(t, ch, &gw, &gh, &sx, &sy);
+            const unsigned char *cop;
+            int                  b2;
+
+            cop = T.glifo(q, ch, &gw, &gh, &sx, &sy);
+
+            /* ! LA BASE E' QUELLA DEL FONT CHE DISEGNA, non del suo. Due facce
+             * diverse hanno due linee di base diverse, e allinearle alla cima
+             * farebbe ballare le lettere ripiegate mezza riga piu' su. */
+            b2 = (q == t) ? base : T.base(q);
 
             if (cop && gw > 0 && gh > 0) {
                 for (py = 0; py < gh; py++)
                     for (px = 0; px < gw; px++)
-                        punto_fuso(r, x + sx + px, y + base - sy + py, c,
+                        punto_fuso(r, x + sx + px, y + b2 - sy + py, c,
                                    cop[py * gw + px]);
             }
-            x += T.larghezza_car(t, ch);
+            x += T.larghezza_car(q, ch);
         }
         return;
     }
@@ -1833,13 +1989,39 @@ static void disegna_oggetto(Oggetto *o)
     y = oy + o->y;
 
     switch (o->classe) {
-    case CL_PULSANTE:
-        ex_riempi(o->padre, x, y, o->w, o->h,
-                  o->premuto ? EX_GRIGIO_SC : EX_GRIGIO);
+    /* =====================================================================
+     * ! IL PULSANTE PREMUTO SI SCAMBIA L'OMBRA, non si tinge di grigio scuro.
+     *
+     * Prima l'unica differenza fra su e giu' era il colore del riempimento, e
+     * la si notava solo confrontando due fotografie. Un pulsante sporge
+     * perche' ha la LUCE sopra e a sinistra e l'OMBRA sotto e a destra:
+     * scambiando i due bordi lo stesso disegno sprofonda, ed e' cio' che
+     * l'occhio legge come «l'ho premuto» senza doverci pensare. Le due
+     * funzioni c'erano gia' — ex_rilievo e ex_incavo, che chiamano lo stesso
+     * bordo3d con i colori invertiti — e non le usava nessuno qui.
+     *
+     * ! E LA SCRITTA SI SPOSTA DI UN PIXEL IN GIU' E A DESTRA. Sembra un
+     * dettaglio ed e' meta' dell'effetto: senza, il rilievo cambia ma cio' che
+     * c'e' scritto sopra resta inchiodato, e il pulsante sembra un riquadro
+     * che cambia colore invece di una cosa che si muove.
+     *
+     * ! IL BORDO NERO RESTA FUORI, e il rilievo sta dentro di lui. E' l'ordine
+     * che tiene i pulsanti riconoscibili accanto agli altri controlli, che il
+     * riquadro nero ce l'hanno anche loro.
+     * ===================================================================== */
+    case CL_PULSANTE: {
+        int dx = o->premuto ? 1 : 0;
+
+        ex_riempi(o->padre, x, y, o->w, o->h, EX_GRIGIO);
         ex_riquadro_disegna(o->padre, x, y, o->w, o->h, EX_NERO);
-        ex_scrivi(o->padre, x + (o->w - larg(o->titolo)) / 2,
-                  y + (o->h - 16) / 2, o->titolo, EX_NERO);
+
+        if (o->premuto) ex_incavo(o->padre,  x + 1, y + 1, o->w - 2, o->h - 2);
+        else            ex_rilievo(o->padre, x + 1, y + 1, o->w - 2, o->h - 2);
+
+        ex_scrivi(o->padre, x + dx + (o->w - larg(o->titolo)) / 2,
+                  y + dx + (o->h - 16) / 2, o->titolo, EX_NERO);
         break;
+    }
 
     case CL_ETICHETTA:
         ex_scrivi(o->padre, x, y, o->titolo, EX_NERO);
@@ -3212,10 +3394,32 @@ int ex_prendi_msg(ExMsg *m)
             }
 
             if (tasto_al_fuoco(f, e.tasto)) {
-                /* Consumato da una casella: si ridisegna e si aspetta ancora,
-                 * invece di svegliare l'applicazione per ogni lettera. */
+                /* =========================================================
+                 * ! CONSUMATO DA UNA CASELLA — MA L'APPLICAZIONE VA AVVISATA
+                 * LO STESSO, e qui c'era scritto il contrario.
+                 *
+                 * `ex_procedura_base(EXM_DISEGNA)` rifa' lo SFONDO della
+                 * finestra e i controlli del toolkit. Per una finestra fatta
+                 * di soli controlli e' tutto, e non svegliare l'applicazione
+                 * a ogni lettera era un risparmio giusto. Ma una finestra che
+                 * disegna ANCHE del suo — il browser dipinge la pagina, e
+                 * l'editor di testo che verra' dipingera' il testo — si vedeva
+                 * cancellare quel disegno a ogni tasto battuto in una casella:
+                 * bastava scrivere nella barra dell'indirizzo per far sparire
+                 * la pagina, e restava sparita finche' qualcos'altro non
+                 * provocava un ridisegno.
+                 *
+                 * ! IL MESSAGGIO IN PIU' COSTA UN NIENTE, ed e' il confronto
+                 * che conta: un messaggio per ogni TASTO BATTUTO — non per
+                 * ogni pixel di mouse mosso, che e' il caso per cui quella
+                 * regola era nata. Chi non disegna niente di suo non fa
+                 * niente e paga solo il giro del ciclo.
+                 * ========================================================= */
                 ex_procedura_base(f, EXM_DISEGNA, 0, 0);
-                continue;
+                m->msg = EXM_DISEGNA;
+                m->wp  = 0;
+                m->lp  = 0;
+                return 1;
             }
             m->msg = EXM_TASTO;
             m->wp  = e.tasto;
@@ -3226,6 +3430,26 @@ int ex_prendi_msg(ExMsg *m)
          * pixel percorso sarebbe un fiume per chi non lo guarda. */
         case WIN_EV_MOUSE_MOSSO: {
             Oggetto *co = ogg(g_trascinato);
+
+            /* ! IL PULSANTE SI ALZA SE IL DITO SCIVOLA VIA, e si riabbassa se
+             * torna. Senza, «scivolare fuori per annullare» resterebbe una
+             * cosa vera che non si vede: il pulsante continuerebbe a sembrare
+             * premuto mentre ormai non farebbe piu' niente, e chi guarda
+             * crederebbe di aver comandato. Il disegno deve dire in ogni
+             * istante cosa succedera' alzando il dito adesso. */
+            {
+                Oggetto *pr = ogg(g_premuto);
+
+                if (pr && pr->usato && pr->classe == CL_PULSANTE) {
+                    unsigned int giu =
+                        (controllo_in(f, (int)e.x, (int)e.y) == g_premuto);
+
+                    if (giu != pr->premuto) {
+                        pr->premuto = giu;
+                        ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                    }
+                }
+            }
 
             if (co && co->classe == CL_AREA) {
                 area_punta(co, (int)e.x, (int)e.y);
@@ -3241,15 +3465,30 @@ int ex_prendi_msg(ExMsg *m)
             return 1;
         }
 
-        case WIN_EV_MOUSE_SU:
-            /* ! IL PULSANTE TORNA SU QUANDO IL DITO SI ALZA, e non prima: il
-             * comando parte gia' alla pressione, ma se il rilievo tornasse
-             * subito non si vedrebbe MAI premuto — e un pulsante che non si
-             * muove sembra un pulsante che non ha sentito. Si alzano tutti,
-             * non solo quello sotto il puntatore: chi preme e poi trascina
-             * fuori lascerebbe un pulsante schiacciato per sempre. */
+        case WIN_EV_MOUSE_SU: {
+            /* =================================================================
+             * ! QUI PARTE IL COMANDO, ed e' il rilascio a farlo partire.
+             *
+             * Il perche' sta accanto a CL_PULSANTE in WIN_EV_MOUSE_GIU. Qui
+             * c'e' la seconda meta': il comando parte SOLO se il dito si alza
+             * ancora sopra il pulsante su cui si era posato. Scivolare via
+             * prima di alzarlo annulla, e non serve spiegarlo a nessuno —
+             * chiunque abbia usato un mouse lo sa gia' senza saperlo.
+             *
+             * ! I PULSANTI SI ALZANO TUTTI, non solo quello sotto il
+             * puntatore: chi preme e poi trascina fuori lascerebbe altrimenti
+             * un pulsante schiacciato per sempre.
+             * ============================================================= */
+            unsigned int cmd_id = 0;
             {
+                Oggetto *pr = ogg(g_premuto);
                 int j, cambiato = 0;
+
+                if (pr && pr->usato && pr->classe == CL_PULSANTE &&
+                    controllo_in(f, (int)e.x, (int)e.y) == g_premuto)
+                    cmd_id = pr->id;
+
+                g_premuto = 0;
 
                 for (j = 0; j < OGGETTI_MAX; j++)
                     if (g_ogg[j].usato && g_ogg[j].premuto) {
@@ -3257,6 +3496,18 @@ int ex_prendi_msg(ExMsg *m)
                         cambiato = 1;
                     }
                 if (cambiato) ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+            }
+
+            /* ! IL PULSANTE SI SERVE PRIMA DELLA LISTA TRASCINATA. Sono due
+             * cose che non possono essere vere insieme — o si e' posato il
+             * dito su un pulsante o dentro una lista — ma l'ordine va scelto
+             * lo stesso, o domani lo sceglie il caso. */
+            if (cmd_id) {
+                g_trascinato = 0;
+                m->msg = EXM_COMANDO;
+                m->wp  = cmd_id;
+                m->lp  = 0;
+                return 1;
             }
 
             /* ! SCEGLIERE TRASCINANDO E' SCEGLIERE, e va detto all'applicazione
@@ -3279,6 +3530,7 @@ int ex_prendi_msg(ExMsg *m)
 
             m->msg = EXM_MOUSE_SU;
             return 1;
+        }
         case WIN_EV_MOUSE_GIU: {
             /* ! IL CLIC SU UN PULSANTE DIVENTA EXM_COMANDO, e il messaggio
              * grezzo non arriva all'applicazione. E' cio' che distingue un
@@ -3323,12 +3575,27 @@ int ex_prendi_msg(ExMsg *m)
              * caso premendolo. */
             if (co && co->classe != CL_PULSANTE) fuoco_metti(f, c);
 
+            /* =============================================================
+             * ! PREMERE NON E' ANCORA COMANDARE.
+             *
+             * Fino a oggi EXM_COMANDO partiva qui, alla pressione. E' il
+             * comportamento che si scrive per primo perche' e' il piu' corto,
+             * ed e' anche quello che toglie a chi usa il programma l'unica
+             * possibilita' di RIPENSARCI: un pulsante premuto per sbaglio era
+             * gia' un pulsante eseguito. Su «Esci» o «Spegni» la differenza
+             * non e' estetica.
+             *
+             * Ovunque — dai Macintosh in poi — un pulsante si arma premendo e
+             * spara alzando il dito, e scivolare via prima di alzarlo annulla.
+             * Qui si fa lo stesso: adesso si segna soltanto chi e' giu', il
+             * disegno lo mostra sprofondato, e il comando parte da
+             * WIN_EV_MOUSE_SU se il puntatore e' ancora sopra.
+             * ============================================================= */
             if (co && co->classe == CL_PULSANTE) {
                 co->premuto = 1;
+                g_premuto   = c;
                 ex_procedura_base(f, EXM_DISEGNA, 0, 0);
-                m->msg = EXM_COMANDO;
-                m->wp  = co->id;
-                return 1;
+                continue;
             }
 
             /* ! UN CLIC SU UNA LISTA SCEGLIE LA RIGA, e l'applicazione lo

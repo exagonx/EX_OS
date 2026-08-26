@@ -837,7 +837,26 @@ void ex_incavo(ExFinestra f, int x, int y, int w, int h)
  * stessa faccia a sei corpi e' un file solo in memoria e sei voci qui. E le
  * voci possono essere molte, perche' una voce da sola non pesa niente. */
 #define FONT_MAX        48
-#define FILE_MAX        12
+
+/* ! E DODICI FILE ERANO «LE NOSTRE DODICI FACCE», cioe' un CONTO e non un
+ * confine: lo stesso errore dell'otto qui sopra, rifatto un piano piu' in la'.
+ * In /exwin/font i file sono TREDICI — le dodici Liberation piu' DejaVuSans,
+ * che sta li' come riserva per i caratteri che le altre non hanno.
+ *
+ * ! E IL TREDICESIMO E' IL PEGGIORE CHE POTESSE TOCCARE. I file si aprono
+ * nell'ordine in cui la directory li rende, cioe' alfabetico, e ultimo di
+ * quell'ordine viene LiberationSerif-Regular.ttf: il carattere con cui il
+ * browser scrive il testo normale. `fontprova` lo dichiarava «NON CARICATO» in
+ * rosso — sembrava un file guasto, o una copia sbagliata dall'installatore —
+ * mentre gli altri dodici si aprivano benissimo. Non era il file: era questa
+ * tabella, finita.
+ *
+ * ! VENTIQUATTRO NON E' «TREDICI PIU' UN MARGINE». Una voce qui pesa
+ * centoquaranta byte e NON tiene piu' i byte del font — quelli stanno nella
+ * riserva condivisa, contati — quindi il tetto puo' stare largo senza costare
+ * niente. Chi copia un .ttf dentro /exwin/font, che fontprova.c dichiara come
+ * cosa da fare, non deve tornare qui a contare. */
+#define FILE_MAX        24
 
 typedef struct {
     int            usato;

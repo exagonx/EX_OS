@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>La riga di comando &mdash; EX-OS</title>
+<link rel="stylesheet" href="stile.css">
+<!-- Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>  GPL-2.0-or-later
+     ! SOLO ASCII: apostrofi al posto degli accenti.
+     ! I comandi qui elencati sono quelli documentati in /boot/help.txt: la
+       spiegazione lunga di ognuno la da' `help <nome>`, e sta la' dentro
+       perche' aggiungere un comando non deve voler dire ricompilare niente. -->
+</head>
+<body>
+
+<p class="navi">
+<a href="index.html">Documentazione</a> |
+<a href="sistema.html">Il sistema</a> &mdash; Comandi |
+<a href="installa.html">Installazione</a> |
+<a href="exwin.html">Scrivania</a> |
+<a href="rete.html">Rete</a> |
+<a href="sviluppo.html">Sviluppo</a> |
+<a href="browser.html">Navigatore</a>
+</p>
+
+<h1>La riga di comando</h1>
+
+<p class="nota">
+<b>La spiegazione di ogni comando e' nella macchina, non qui.</b>
+<code>help</code> da' l'indice, <code>help ls</code> il blocco di un comando
+solo, <code>help -t</code> tutto di seguito. Il testo sta in
+<code>/boot/help.txt</code>: documentare un comando nuovo vuol dire
+aggiungere un blocco a quel file, senza ricompilare niente. Questa pagina e'
+la mappa, quello e' il manuale.
+</p>
+
+<h2>La sintassi</h2>
+
+<h3>Piu' comandi su una riga</h3>
+<pre>    uno ; due          esegui il secondo comunque
+    uno &amp;&amp; due         esegui il secondo solo se il primo e' riuscito
+    uno || due         esegui il secondo solo se il primo e' fallito
+    comando &amp;          in secondo piano (vedi jobs, fg)</pre>
+
+<h3>Dove va l'uscita</h3>
+<pre>    comando &gt; file      scrive sul file, buttando via cio' che c'era
+    comando &gt;&gt; file     accoda in fondo
+    comando &lt; file      legge dal file invece che dalla tastiera
+    comando 2&gt; file     gli ERRORI sul file
+    comando &gt; f 2&gt;&amp;1    errori dove va l'uscita (l'ordine conta)
+    uno | due          l'uscita del primo diventa l'ingresso del secondo</pre>
+
+<h3>Virgolette e caratteri jolly</h3>
+<pre>    cp "appunti di ieri.txt" /disco     tiene insieme cio' che ha spazi
+    rm *.o                              il modello lo espande la shell
+    cp "*.o" altrove                    fra virgolette NON si espande</pre>
+
+<p class="nota">
+<b>Distingue maiuscole e minuscole.</b> Su ext2 i nomi restano come li hai
+scritti; su FAT tornano in maiuscolo, e li' serve <code>*.O</code>. Se il
+modello non corrisponde a niente passa com'e', come su ogni shell POSIX:
+<code>rm -f *.o</code> in una directory gia' pulita non e' un errore.
+</p>
+
+<p>
+<span class="manca">Quello che NON c'e', detto:</span> niente
+<code>$VARIABILE</code> sostituita dentro una riga, niente backtick, niente
+<code>for</code> ne' <code>if</code>. <code>echo $PATH</code> funziona perche'
+lo fa <code>echo</code>, non la shell.
+</p>
+
+<h2>I comandi, per mestiere</h2>
+
+<h3>File e directory</h3>
+<table border="1">
+<tr><th>Comando</th><th>Che cosa fa</th></tr>
+<tr><td><code>ls</code> <code>dir</code></td><td>elenca; <code>-mc</code> a colonne, <code>-d</code> coi dettagli, <code>-a</code> anche i nascosti, <code>-p</code> una pagina per volta</td></tr>
+<tr><td><code>cd</code> <code>pwd</code></td><td>cambia directory, dice dove sei</td></tr>
+<tr><td><code>cat</code></td><td>mostra un file</td></tr>
+<tr><td><code>cp</code> <code>xcp</code></td><td>copia un file; <code>xcp</code> copia un albero intero</td></tr>
+<tr><td><code>mv</code> <code>rename</code></td><td>sposta, rinomina</td></tr>
+<tr><td><code>rm</code> <code>delete</code></td><td>cancella</td></tr>
+<tr><td><code>mkdir</code> <code>rmdir</code></td><td>crea e toglie directory</td></tr>
+<tr><td><code>cmp</code></td><td>confronta due file byte per byte</td></tr>
+<tr><td><code>trunc</code> <code>textline</code></td><td>tronca un file, prende una riga</td></tr>
+<tr><td><code>chmod</code> <code>id</code></td><td>i permessi, chi sei</td></tr>
+<tr><td><code>gfedit</code></td><td>l'editor di testo da console</td></tr>
+</table>
+
+<h3>Dischi e volumi</h3>
+<table border="1">
+<tr><th>Comando</th><th>Che cosa fa</th></tr>
+<tr><td><code>disk</code></td><td>elenca dischi e partizioni, e dice cosa <b>non</b> torna: firme mancanti, partizioni sovrapposte, catene logiche rotte</td></tr>
+<tr><td><code>fdisk</code></td><td>crea e cancella partizioni (interattivo). Non tocca i dischi GPT</td></tr>
+<tr><td><code>mkfs</code></td><td>formatta: <code>-t fat16|fat32|ext2</code>, <code>-L etichetta</code></td></tr>
+<tr><td><code>mkswap</code></td><td>prepara una partizione di scambio</td></tr>
+<tr><td><code>mount</code> <code>umount</code></td><td>monta e smonta; il punto di montaggio lo crea il VFS</td></tr>
+<tr><td><code>chkdsk</code></td><td>controlla un filesystem, <code>-r</code> ripara</td></tr>
+<tr><td><code>install</code></td><td>installa o aggiorna il sistema &mdash; vedi <a href="installa.html">Installare EX-OS</a></td></tr>
+</table>
+
+<h3>Il sistema</h3>
+<table border="1">
+<tr><th>Comando</th><th>Che cosa fa</th></tr>
+<tr><td><code>uname</code> <code>ver</code></td><td>la versione del sistema</td></tr>
+<tr><td><code>mem</code></td><td>la memoria: quanta c'e', quanta se ne usa</td></tr>
+<tr><td><code>stack</code> <code>ps</code></td><td>i processi vivi</td></tr>
+<tr><td><code>jobs</code> <code>fg</code></td><td>i comandi in secondo piano, e come riprenderli</td></tr>
+<tr><td><code>env</code> <code>export</code></td><td>le variabili d'ambiente</td></tr>
+<tr><td><code>source</code> <code>exec</code></td><td>esegue uno script nella shell di adesso, sostituisce la shell</td></tr>
+<tr><td><code>hwinfo</code> <code>hwconfig</code></td><td>cosa c'e' in questa macchina; scrivere la configurazione da quello che si e' visto</td></tr>
+<tr><td><code>keymap</code></td><td>la disposizione della tastiera</td></tr>
+<tr><td><code>login</code> <code>sudo</code></td><td>entrare, e fare una cosa da amministratore</td></tr>
+<tr><td><code>reboot</code> <code>halt</code> <code>poweroff</code></td><td>riavviare, fermare, spegnere</td></tr>
+<tr><td><code>exwin</code></td><td>accende la scrivania grafica</td></tr>
+</table>
+
+<h3>Rete</h3>
+<p>
+<code>netdetect</code>, <code>ipcfg</code>, <code>dhcp</code>,
+<code>ping</code>, <code>host</code>, <code>telnet</code>, <code>ftp</code>,
+<code>nettest</code>: stanno tutti in <a href="rete.html">La rete</a>.
+</p>
+
+<h3>Sviluppo</h3>
+<p>
+<code>gcc</code>, <code>g++</code>, <code>make</code>, <code>as</code>,
+<code>ld</code>, <code>ar</code>, <code>ranlib</code>, <code>nm</code>,
+<code>strip</code>, <code>objcopy</code>, <code>objdump</code>,
+<code>fbc</code>: vengono dal CD degli strumenti, e stanno in
+<a href="sviluppo.html">Scrivere programmi</a>.
+</p>
+
+<h2>L'ambiente</h2>
+
+<table border="1">
+<tr><th>Variabile</th><th>A che serve</th></tr>
+<tr><td><code>PATH</code></td><td>dove si cercano i programmi</td></tr>
+<tr><td><code>HOME</code></td><td>la tua directory: <code>cd</code> senza argomenti ci torna, e i programmi ci tengono i loro dati sotto <code>.app/</code></td></tr>
+<tr><td><code>TERM</code></td><td>che terminale e'</td></tr>
+</table>
+
+<p>
+I valori iniziali stanno nella sezione <code>[env]</code> di
+<code>/boot/kernel.cfg</code>.
+</p>
+
+<h2>Dove sta cosa</h2>
+
+<pre>    /bin        i programmi
+    /dev        i driver: sono programmi anche loro
+    /lib        le librerie condivise
+    /boot       kernel.cfg, kernel.txt, help.txt, gli utenti
+    /exwin      la scrivania: bin, lib, font, doc
+    /doc        i documenti del progetto
+    /cdrom      il CD, se c'e'</pre>
+
+<hr>
+<p class="navi">
+<a href="index.html">Torna alla documentazione</a> |
+<a href="installa.html">Installare EX-OS &gt;</a>
+</p>
+<p class="piede">
+EX-OS &mdash; Graziano Falcone, exagonx@hotmail.com &mdash; GNU GPL v2.
+</p>
+
+</body>
+</html>

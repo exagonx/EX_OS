@@ -106,6 +106,18 @@ static inline void win_nome_servizio(char *out, unsigned int max)
  * Usa i soli campi id, larghezza e altezza; x e y si ignorano. */
 #define WIN_MSG_MISURA      0x5707  /* WinRegione: cambia MISURA             */
 
+/* ! SPEGNI TUTTO. Non chiude UNA finestra: chiude la scrivania.
+ *
+ * Il server manda WIN_EV_CHIUDI a ogni finestra di primo livello — cioe' la
+ * stessa cosa che arriva premendo la crocetta — poi aspetta che i client
+ * escano da soli, rimette il modo testo e muore. Le applicazioni non vengono
+ * uccise: gli si CHIEDE di chiudere, con lo stesso messaggio che sanno gia'
+ * gestire, cosi' chi ha da salvare qualcosa lo salva.
+ *
+ * ! E NON C'E' UNA RISPOSTA, perche' non ci sarebbe nessuno a leggerla: quando
+ * questo messaggio ha effetto, il server non c'e' piu'. */
+#define WIN_MSG_SPEGNI      0x5708  /* nessun corpo                          */
+
 /* --- Messaggi dal SERVER al CLIENT --------------------------------------- */
 #define WIN_MSG_CREATA      0x5781  /* WinCreata */
 #define WIN_MSG_EVENTO      0x5782  /* WinEvento */

@@ -1113,6 +1113,19 @@ wserver: dirs $(WSERVER_OUT)
 FONT_TTF_DIR  := exwin/font
 FONT_TTF      := $(wildcard $(FONT_TTF_DIR)/*.ttf)
 
+# ! LA DOCUMENTAZIONE DELLE APPLICAZIONI GRAFICHE E' FATTA DI PAGINE HTML, e
+# sta accanto a loro invece che in /doc: la voce «Aiuto» del navigatore apre
+# /exwin/doc/browser.html con il navigatore stesso. Metterla in /doc l'avrebbe
+# legata a un componente diverso da quello dell'applicazione che la mostra —
+# cioe' un sistema dove il browser c'e' e la sua guida no.
+EXWIN_DOC_DIR := exwin/doc
+# ! IL FOGLIO DI STILE STA NELL'ELENCO COME LE PAGINE, e non e' pignoleria:
+# e' l'unico file non-HTML della directory, quindi un wildcard sui soli .html
+# lo lascerebbe fuori — e le otto pagine finirebbero sul CD senza colori e
+# senza titoli grandi, senza che nessun errore lo dica.
+EXWIN_DOC     := $(wildcard $(EXWIN_DOC_DIR)/*.html) \
+                 $(wildcard $(EXWIN_DOC_DIR)/*.css)
+
 EXFONT_SRC    := lib/exfont/exfont.c
 EXFONT_HDR    := lib/exfont/exfont.h
 
@@ -5016,6 +5029,7 @@ verifica-dipendenze-cd:
 
 $(ISOX_IMG): Makefile $(FLOPPY_IMG) boot/autoexec.sh boot/avvio.sh $(DRIVER_SOLO_CD_OUT) \
              $(FONT_TTF) $(FONT_TTF_DIR)/LICENSE $(FONT_TTF_DIR)/LICENSE.DejaVu \
+             $(EXWIN_DOC) \
              $(EXWIN_OUT) $(EXWIN_APPLIST) $(PROVA_PNG) $(PROVA_ICO) $(PROVA_JPG) \
              $(WSERVER_OUT) \
              $(BINARI_SOLO_CD) $(ISO_MKISO) README.md README.en.md \
@@ -5074,6 +5088,9 @@ $(ISOX_IMG): Makefile $(FLOPPY_IMG) boot/autoexec.sh boot/avvio.sh $(DRIVER_SOLO
 	@# lasciar credere.
 	@cp $(FONT_TTF_DIR)/LICENSE $(FONT_TTF_DIR)/AUTHORS \
 	    $(FONT_TTF_DIR)/LICENSE.DejaVu $(ISOX_ROOT)/exwin/font/
+	@# La guida delle applicazioni grafiche: vedi EXWIN_DOC in testa.
+	@mkdir -p $(ISOX_ROOT)/exwin/doc
+	@cp $(EXWIN_DOC) $(ISOX_ROOT)/exwin/doc/ 2>/dev/null || true
 	@# Le immagini di prova dei lettori: vedi PROVE_IMG_DIR.
 	@cp $(PROVA_PNG) $(ISOX_ROOT)/exwin/prova.png
 	@cp $(PROVA_ICO) $(ISOX_ROOT)/exwin/prova.ico

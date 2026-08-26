@@ -72,19 +72,35 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `browser -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.001"
+#define VERSIONE_APP "0.002"
 EX_VERSIONE("browser", VERSIONE_APP);
 
 #define FIN_W       760
-#define FIN_H       520
 
-#define BARRA_H     30          /* la riga dell'indirizzo */
+/* ! LA BARRA DEI MENU NON RESTRINGE L'AREA DEL CLIENT: il toolkit la mette in
+ * cima e larga quanto la finestra, ma il posto glielo deve lasciare chi scrive
+ * il programma. Venti pixel sono MENU_BARRA_H di lib/exwin/exwin.c, e sono
+ * l'unica misura di questo file che non decide questo file. */
+#define MENU_H      20
+#define FIN_H       (520 + MENU_H)
+
+#define BARRA_H     30          /* la riga dell'indirizzo, sotto i menu */
+#define BARRA_Y     MENU_H      /* dove comincia */
 #define MARGINE     8
+
+/* Quanto lungo puo' essere un percorso: e' la misura di ExDlg, e i due
+ * dialoghi sono gli unici che ne producono. */
+#define PERC_MAX    192
 
 #define ID_URL      1
 #define ID_VAI      2
 #define ID_INDIETRO 3
 #define ID_INFO     4
+#define ID_APRI     5
+#define ID_SALVA    6
+#define ID_ESCI     7
+#define ID_AIUTO    8
+#define ID_DOC      9
 
 /* ! I TETTI SONO DICHIARATI E NON SI CRESCE: una pagina la sceglie chi sta
  * dall'altra parte, quindi ogni numero che dipende da lei ha un limite. Una
@@ -357,6 +373,14 @@ static int  g_ctrl_n = 0;
 static int  g_ctrl_fuoco = -1;      /* quale casella prende i tasti */
 
 static unsigned char g_pagina[PAGINA_MAX];
+
+/* ! QUANTI BYTE HA LA PAGINA DI ADESSO, e fino a ieri non lo sapeva nessuno:
+ * la misura viveva dentro `vai()` e moriva con lei, perche' l'unica cosa che
+ * ne aveva bisogno — l'analizzatore — la riceveva li' per argomento. «Salva»
+ * la vuole da fuori, e senza scriverebbe il buffer INTERO: un megabyte, di cui
+ * l'HTML e' la prima parte e il resto e' la pagina di prima. */
+static unsigned int  g_pagina_n = 0;
+
 static HtmlNodo      g_nodi[NODI_MAX];
 static HtmlAttr      g_attr[ATTR_MAX];
 static char          g_arena[ARENA_MAX];
@@ -485,9 +509,9 @@ static void (*g_img_libera)(EximgBitmap *);
 static void suggerimenti(int v, CssStile *st);
 
 static int area_x(void) { return MARGINE; }
-static int area_y(void) { return BARRA_H + MARGINE; }
+static int area_y(void) { return BARRA_Y + BARRA_H + MARGINE; }
 static int area_w(void) { return FIN_W - 2 * MARGINE - SCORRI_W; }
-static int area_h(void) { return FIN_H - BARRA_H - 2 * MARGINE - 20; }
+static int area_h(void) { return FIN_H - BARRA_Y - BARRA_H - 2 * MARGINE - 20; }
 
 static int barra_x(void) { return area_x() + area_w() + 2; }
 
@@ -770,6 +794,20 @@ typedef struct {
 static FontVoce g_font[FONT_MAX];
 static int      g_font_n = 0;
 
+/* =============================================================================
+ * ! IL RIPIEGO SUL FONT DI SISTEMA E' MUTO, E QUESTI DUE INTERI SONO LA SUA
+ * VOCE. `ex_font_apri` rende 0 quando il file non c'e' o non si apre, e zero
+ * E' il font di sistema: la pagina esce leggibile, tutta con lo stesso
+ * carattere, e da nessuna parte compare il motivo. Chi guarda non vede «manca
+ * un file»: vede un browser che non sa cambiare carattere — che e' una
+ * diagnosi sbagliata, e porta a cercare il difetto dentro l'impaginatore.
+ *
+ * Contarli costa due interi e una riga in «Informazioni su», e trasforma «non
+ * funziona» in «di tredici facce, tre non si aprono», che dice anche DOVE
+ * guardare: /exwin/font e /exwin/lib/exfont.so.
+ * ========================================================================== */
+static int      g_facce_si = 0, g_facce_no = 0;
+
 /* ! IL CARATTERE A LARGHEZZA FISSA E' UNA FAMIGLIA, NON UN CORPO: dentro <pre>
  * e <code> gli spazi devono valere quanto le lettere, o l'incolonnamento — che
  * e' l'unica ragione per cui quel testo e' preformattato — non si vede. */
@@ -814,6 +852,7 @@ static ExFont font_per(int neretto, int corsivo, int famiglia, int corpo)
 
     k = famiglia * 4 + neretto + corsivo * 2;
     g_font[g_font_n].f = ex_font_apri(FACCIA[k], corpo);
+    if (g_font[g_font_n].f) g_facce_si++; else g_facce_no++;
 
     /* ! ex_font_apri RENDE 0 SE IL FILE NON C'E', e zero E' il font di sistema:
      * si mette in riserva lo stesso, cosi' non si torna a cercarlo a ogni
@@ -2700,6 +2739,108 @@ static void dico(const char *s)
     if (g_stato) ex_testo_metti(g_stato, s);
 }
 
+/* =============================================================================
+ * I FILE LOCALI — «file:», e perche' passano dalla stessa porta di tutto
+ *
+ * ! UN FILE APERTO DAL MENU DIVENTA UN INDIRIZZO, non un caso a parte. La
+ * strada che porta una pagina sullo schermo — libera le immagini, chiudi il
+ * motore, analizza, azzera i controlli, impagina, disegna — sta dentro `vai()`
+ * ed e' lunga: rifarla per il disco vorrebbe dire due strade che divergono al
+ * primo difetto corretto in una sola. Qui si leggono i byte e si lascia fare a
+ * lei.
+ *
+ * ! COSI' CRONOLOGIA, PULSANTE INDIETRO E RIFERIMENTI RELATIVI VENGONO GRATIS.
+ * Un `<a href="altra.html">` dentro una pagina locale e' un riferimento
+ * relativo come tutti gli altri, e `risolvi()` sa da quale pagina viene: era
+ * l'unico modo perche' la documentazione — che e' fatta di pagine che si
+ * rimandano — si potesse sfogliare invece di guardare.
+ *
+ * ! LO SCHEMA SI SCRIVE COME LO SCRIVONO TUTTI. `file:///exwin/doc/x.html` ha
+ * tre barre perche' le prime due sono l'host (vuoto: e' questa macchina) e la
+ * terza e' l'inizio del percorso. Si accetta anche `file:/percorso`, che e' la
+ * stessa cosa scritta piu' corta ed e' quella che viene da digitare.
+ *
+ * ! E LA CACHE NON C'ENTRA, in nessuna delle due direzioni. Serve a
+ * risparmiare la RETE; tenere in /tmp la copia di un file che sta gia' su
+ * disco sarebbe spazio speso per non risparmiare niente, e servire la copia
+ * VECCHIA di un file che intanto si sta modificando con l'editor sarebbe la
+ * cosa peggiore che possa fare a chi scrive una pagina.
+ * ============================================================================= */
+static int e_locale(const char *url)
+{
+    return url && url[0] == 'f' && url[1] == 'i' && url[2] == 'l' &&
+           url[3] == 'e' && url[4] == ':';
+}
+
+/* Il percorso vero dentro un «file:...», sempre assoluto. Rende 0 se dopo lo
+ * schema e le barre non resta niente. */
+static int percorso_di(const char *url, char *out, unsigned int max)
+{
+    const char  *c = url + 5;           /* dopo «file:» */
+    unsigned int i = 0;
+
+    while (*c == '/') c++;              /* le barre dello schema, quante sono */
+    if (!*c || max < 3) return 0;
+
+    /* ! LA RADICE SI RIMETTE, e non e' pignoleria: `open("exwin/doc/x.html")`
+     * e' un percorso RELATIVO alla directory di lavoro del browser, che non e'
+     * quella che si aveva in mente. */
+    out[i++] = '/';
+    while (*c && i + 1 < max) out[i++] = *c++;
+    out[i] = '\0';
+    return 1;
+}
+
+/* Il contrario: da un percorso a un indirizzo. */
+static void url_di_percorso(const char *perc, char *out, unsigned int max)
+{
+    snprintf(out, max, "file://%s%s", perc[0] == '/' ? "" : "/", perc);
+}
+
+static int locale_esiste(const char *perc)
+{
+    int fd = open(perc, O_RDONLY);
+
+    if (fd < 0) return 0;
+    close(fd);
+    return 1;
+}
+
+/* Legge il file di un «file:...» dentro `buf`. Rende 0 se non si apre; scrive
+ * in `quanti` i byte letti e in `troncata` se il file era piu' grande del
+ * tetto. */
+static int locale_leggi(const char *url, unsigned char *buf, unsigned int max,
+                        unsigned int *quanti, int *troncata)
+{
+    char         perc[PERC_MAX];
+    int          fd, k;
+    unsigned int n = 0;
+
+    *quanti = 0;
+    *troncata = 0;
+
+    if (!percorso_di(url, perc, sizeof(perc))) return 0;
+
+    fd = open(perc, O_RDONLY);
+    if (fd < 0) return 0;
+
+    while (n < max && (k = (int)read(fd, buf + n, max - n)) > 0)
+        n += (unsigned int)k;
+
+    /* ! IL TRONCAMENTO SI SCOPRE LEGGENDO UN BYTE IN PIU', non confrontando
+     * `n` col tetto: un file lungo ESATTAMENTE un megabyte non e' troncato, e
+     * dirlo lo stesso sarebbe una nota falsa su una pagina intera. */
+    if (n == max) {
+        unsigned char altro;
+
+        if (read(fd, &altro, 1) > 0) *troncata = 1;
+    }
+    close(fd);
+
+    *quanti = n;
+    return 1;
+}
+
 /* -----------------------------------------------------------------------------
  * Gli indirizzi relativi
  *
@@ -2722,6 +2863,21 @@ static int risolvi(const char *rif, char *out, unsigned int max)
         return 1;
     }
 
+    /* Un «file:» e' gia' un indirizzo intero, come un http. */
+    if (e_locale(rif)) {
+        strncpy(out, rif, max - 1);
+        out[max - 1] = '\0';
+        return 1;
+    }
+
+    /* ! UN RIFERIMENTO CHE E' SOLO UN'ANCORA («#qualcosa») PUNTA ALLA PAGINA
+     * CHE SI STA GIA' GUARDANDO, e questo browser non sa ancora saltare a un
+     * punto dentro un documento. Seguirlo vorrebbe dire RICARICARE la stessa
+     * pagina e riportarla in cima: il contrario esatto di quel che chiede chi
+     * lo preme. Finche' il salto non c'e', non fare niente e' la risposta piu'
+     * onesta. */
+    if (rif[0] == '#') return 0;
+
     /* ! UNO SCHEMA CHE NON E' http NON SI SEGUE, e va riconosciuto PRIMA di
      * trattarlo da percorso relativo: «data:image/png;base64,...» attaccato in
      * coda all'indirizzo di adesso produrrebbe una richiesta lunga un
@@ -2732,6 +2888,34 @@ static int risolvi(const char *rif, char *out, unsigned int max)
 
         while (*c && *c != ':' && *c != '/' && *c != '?' && *c != '#') c++;
         if (*c == ':') return 0;
+    }
+
+    /* =========================================================================
+     * ! DA UNA PAGINA LOCALE I RIFERIMENTI RESTANO LOCALI, e la base e' la
+     * DIRECTORY del file, non il file: «altra.html» accanto a
+     * /exwin/doc/browser.html vuol dire /exwin/doc/altra.html. Senza questo il
+     * riferimento finirebbe in http_url(), che di un «file:» non sa niente, e
+     * la voce Aiuto sarebbe una pagina sola e senza uscite.
+     * ===================================================================== */
+    if (e_locale(g_qui)) {
+        char base[PERC_MAX];
+        int  i;
+
+        if (!percorso_di(g_qui, base, sizeof(base))) return 0;
+
+        /* Un riferimento che comincia con «/» e' gia' un percorso assoluto:
+         * la directory della pagina non c'entra. */
+        if (rif[0] == '/') {
+            url_di_percorso(rif, out, max);
+            return 1;
+        }
+
+        for (i = 0; base[i]; i++) { }
+        while (i > 0 && base[i - 1] != '/') i--;    /* via il nome del file */
+        base[i] = '\0';
+
+        snprintf(out, max, "file://%s%s", base, rif);
+        return 1;
     }
 
     if (!http_url(g_qui, &u)) return 0;
@@ -3172,7 +3356,16 @@ static int imm_prendi(int k)
     /* ! LA CACHE SI GUARDA PRIMA DELLA RETE, e si ripaga gia' dentro una
      * pagina sola: due <img> con lo stesso `src` erano due richieste, e nella
      * prova lo si vedeva nel log del server. */
-    if (!cache_leggi(url, g_imm_buf, sizeof(g_imm_buf), &n)) {
+    /* ! UN'IMMAGINE DI UNA PAGINA LOCALE SI LEGGE DAL DISCO, e senza questo
+     * ramo finirebbe in exhttp, che di «file:» non sa niente e risponde di no:
+     * una guida con dentro una figura mostrerebbe l'`alt` e nient'altro. */
+    if (e_locale(url)) {
+        int troncata = 0;
+
+        if (!locale_leggi(url, g_imm_buf, sizeof(g_imm_buf), &n, &troncata))
+            return 0;
+        if (n == 0 || troncata) return 0;
+    } else if (!cache_leggi(url, g_imm_buf, sizeof(g_imm_buf), &n)) {
         if (!exhttp_prendi(url, g_imm_buf, sizeof(g_imm_buf), &e)) return 0;
         if (e.codice != 200 || e.byte == 0) return 0;
 
@@ -3397,7 +3590,16 @@ static void raccogli_css(void)
              * prendono PRIMA della prima impaginazione, le immagini dopo, e
              * fra le due cose non c'e' sovrapposizione. Un buffer in piu' da
              * centoventotto chilobyte non si paga per niente. */
-            if (!cache_leggi(url, g_imm_buf, sizeof(g_imm_buf), &n)) {
+            /* ! E ANCHE QUI IL DISCO PRIMA DELLA RETE: una pagina locale con
+             * accanto il suo .css e' il caso normale di chi scrive una pagina
+             * e la guarda, non un caso di confine. */
+            if (e_locale(url)) {
+                int troncato = 0;
+
+                if (!locale_leggi(url, g_imm_buf, sizeof(g_imm_buf), &n,
+                                  &troncato)) continue;
+                if (n == 0) continue;
+            } else if (!cache_leggi(url, g_imm_buf, sizeof(g_imm_buf), &n)) {
                 ExHttpEsito e;
 
                 dico("foglio di stile...");
@@ -3581,7 +3783,13 @@ static void esegui_script(void)
             /* ! SI RIUSA IL BUFFER DELLE IMMAGINI, come fanno i fogli di
              * stile e per la stessa ragione: gli script si prendono PRIMA
              * della prima impaginazione, le immagini dopo. */
-            if (!cache_leggi(url, g_imm_buf, sizeof(g_imm_buf), &n)) {
+            if (e_locale(url)) {
+                int troncato = 0;
+
+                if (!locale_leggi(url, g_imm_buf, sizeof(g_imm_buf), &n,
+                                  &troncato)) continue;
+                if (n == 0) continue;
+            } else if (!cache_leggi(url, g_imm_buf, sizeof(g_imm_buf), &n)) {
                 ExHttpEsito e;
 
                 dico("script...");
@@ -3713,12 +3921,33 @@ static void vai(const char *url, int in_storia, int usa_cache)
      * a un altro invio sarebbe la risposta sbagliata. */
     if (g_da_postare) usa_cache = 0;
 
-    dico("sto scaricando...");
+    dico(e_locale(url) ? "sto aprendo il file..." : "sto scaricando...");
     ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
 
     memset(&e, 0, sizeof(e));
 
-    if (usa_cache && cache_leggi(url, g_pagina, sizeof(g_pagina), &n)) {
+    /* ! IL DISCO PRIMA DI TUTTO IL RESTO, e senza passare dalla cache: vedi il
+     * blocco «I FILE LOCALI» piu' in alto. */
+    if (e_locale(url)) {
+        if (!locale_leggi(url, g_pagina, sizeof(g_pagina), &n, &e.troncata)) {
+            char perc[PERC_MAX];
+
+            /* ! SI DICE IL PERCORSO, NON L'INDIRIZZO. Chi ha sbagliato a
+             * scrivere ha in mente un file, e «file:///exwin/doc/x.html: non
+             * si apre» lo fa cercare nello schema; il percorso nudo gli fa
+             * cercare dove guarda lui, cioe' nella directory. */
+            if (!percorso_di(url, perc, sizeof(perc)))
+                strcpy(perc, "(nessun percorso)");
+            sprintf(msg, "%s: non si apre", perc);
+            dico(msg);
+            g_da_postare = 0;
+            return;
+        }
+        e.codice = 200;
+        e.byte   = n;
+        strncpy(e.finale, url, sizeof(e.finale) - 1);
+        e.finale[sizeof(e.finale) - 1] = '\0';
+    } else if (usa_cache && cache_leggi(url, g_pagina, sizeof(g_pagina), &n)) {
         e.codice = 200;
         e.byte   = n;
         strncpy(e.finale, url, sizeof(e.finale) - 1);
@@ -3755,6 +3984,10 @@ static void vai(const char *url, int in_storia, int usa_cache)
          * storia. */
         cache_scrivi(e.finale, g_pagina, e.byte);
     }
+
+    /* ! DA QUI IN POI LA MISURA E' DI TUTTI, e «Salva» e' l'unico che la
+     * guarda: senza, scriverebbe il buffer intero invece della pagina. */
+    g_pagina_n = e.byte;
 
     if (in_storia && g_storia_n < STORIA_MAX && g_qui[0]) {
         strncpy(g_storia[g_storia_n], g_qui, EXHTTP_URL_MAX - 1);
@@ -3860,6 +4093,219 @@ static void vai(const char *url, int in_storia, int usa_cache)
     }
     dico(msg);
     g_da_postare = 0;
+}
+
+
+/* =============================================================================
+ * LE VOCI DEL MENU
+ *
+ * ! LE STESSE DECISIONI CHE SI PRENDONO DAI TASTI, e per questo stanno in
+ * funzioni e non dentro il ramo EXM_COMANDO: «Apri» si sceglie dal menu o con
+ * Ctrl+O, e le due strade devono arrivare nello stesso posto. Il toolkit manda
+ * la voce di menu e il pulsante come lo stesso messaggio proprio per questo —
+ * le scorciatoie no, quelle le esegue l'applicazione, che e' l'unica a sapere
+ * se in quel momento hanno senso.
+ * ============================================================================= */
+
+/* Il nome che si propone salvando: l'ultimo pezzo dell'indirizzo. Un indirizzo
+ * che finisce con «/» non ne ha uno, e allora vale la convenzione di tutti. */
+static void nome_proposto(const char *url, char *out, unsigned int max)
+{
+    int i, fine, inizio;
+
+    for (i = 0; url[i]; i++) { }
+    fine = i;
+
+    /* Via l'ancora e la query: non fanno parte del nome di un file. */
+    for (i = 0; i < fine; i++)
+        if (url[i] == '?' || url[i] == '#') { fine = i; break; }
+
+    inizio = fine;
+    while (inizio > 0 && url[inizio - 1] != '/') inizio--;
+
+    if (inizio >= fine) { strncpy(out, "pagina.html", max - 1);
+                          out[max - 1] = '\0'; return; }
+
+    snprintf(out, max, "%.*s", fine - inizio, url + inizio);
+}
+
+static void apri_locale(void)
+{
+    char perc[PERC_MAX];
+    char url[EXHTTP_URL_MAX];
+
+    /* ! IL DIALOGO PARTE DA DOVE SI E' GIA'. Se la pagina di adesso e' un
+     * file, si riparte dalla sua directory: chi apre due pagine della
+     * documentazione di fila non deve rifare la strada la seconda volta. */
+    perc[0] = '\0';
+    if (!e_locale(g_qui) || !percorso_di(g_qui, perc, sizeof(perc))) {
+        /* Non si viene da un file: si parte da casa, non dalla radice. Chi
+         * apre una pagina che ha scritto lui l'ha scritta li'. */
+        const char *casa = getenv("HOME");
+
+        if (casa && casa[0] && strlen(casa) + 2 < sizeof(perc))
+            snprintf(perc, sizeof(perc), "%s%s", casa,
+                     casa[strlen(casa) - 1] == '/' ? "" : "/");
+    }
+
+    if (!ex_dlg_apri(perc, sizeof(perc))) { dico("apertura annullata"); return; }
+    if (!perc[0])                          { dico("nessun file scelto");  return; }
+
+    url_di_percorso(perc, url, sizeof(url));
+    ex_testo_metti(g_url, url);
+    vai(url, 1, 0);
+}
+
+/* =============================================================================
+ * ! SI SALVA L'HTML COM'E' ARRIVATO, NON LA PAGINA COME SI VEDE, ed e' una
+ * differenza che va detta e non nascosta. Nel file finiscono i byte del
+ * documento: non le immagini, non i fogli di stile esterni, non quello che
+ * uno script ha costruito dopo. Riaprendolo da qui si rivede la stessa pagina
+ * solo se non aveva nulla di tutto cio' — ed e' esattamente quel che fa
+ * «Salva pagina con nome» di qualunque browser quando si sceglie «solo HTML».
+ *
+ * ! E SI SALVA g_pagina, NON L'ALBERO. Serializzare il documento darebbe un
+ * HTML RIPARATO — con i tag chiusi che la pagina non aveva — cioe' un file
+ * diverso da quello che il sito ha mandato. Chi salva una pagina per guardarci
+ * dentro vuole l'originale, difetti compresi.
+ * ============================================================================= */
+static void salva_pagina(void)
+{
+    char         perc[PERC_MAX];
+    char         msg[PERC_MAX + 64];
+    int          fd;
+    unsigned int scritti = 0;
+
+    if (!g_qui[0] || g_pagina_n == 0) {
+        dico("non c'e' nessuna pagina da salvare");
+        return;
+    }
+
+    /* =====================================================================
+     * ! IL NOME PROPOSTO DEV'ESSERE UN PERCORSO ASSOLUTO, e non e' un
+     * dettaglio di stile: ExDlg spezza cio' che riceve in directory e nome
+     * cercando l'ultima barra, e su un nome nudo — «browser.html» — la barra
+     * non c'e'. Quel che ne esce non e' «la directory di adesso»: e' la prima
+     * lettera presa per directory e il resto per nome. Un salvataggio che
+     * comincia con una destinazione inventata e' peggio di uno che chiede.
+     *
+     * ! DOVE, IN ORDINE: la directory della pagina se e' un file locale —
+     * salvare accanto all'originale e' quel che si sta facendo se si e' li' —
+     * altrimenti $HOME, che e' il posto di chi sta usando la macchina. La
+     * radice solo se HOME non c'e'.
+     * ===================================================================== */
+    {
+        char        nome[PERC_MAX];
+        const char *casa = getenv("HOME");
+
+        nome_proposto(g_qui, nome, sizeof(nome));
+
+        if (e_locale(g_qui) && percorso_di(g_qui, perc, sizeof(perc))) {
+            int i;
+
+            for (i = 0; perc[i]; i++) { }
+            while (i > 0 && perc[i - 1] != '/') i--;
+            perc[i] = '\0';
+            strncat(perc, nome, sizeof(perc) - strlen(perc) - 1);
+        } else if (casa && casa[0] && strlen(casa) + strlen(nome) + 2 < sizeof(perc)) {
+            snprintf(perc, sizeof(perc), "%s%s%s", casa,
+                     casa[strlen(casa) - 1] == '/' ? "" : "/", nome);
+        } else {
+            snprintf(perc, sizeof(perc), "/%s", nome);
+        }
+    }
+
+    if (!ex_dlg_salva(perc, sizeof(perc))) { dico("salvataggio annullato"); return; }
+    if (!perc[0])                          { dico("nessun nome: non salvo");  return; }
+
+    fd = open(perc, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    if (fd < 0) {
+        sprintf(msg, "non riesco a scrivere %s", perc);
+        dico(msg);
+        return;
+    }
+
+    while (scritti < g_pagina_n) {
+        int k = (int)write(fd, g_pagina + scritti, g_pagina_n - scritti);
+
+        if (k <= 0) break;
+        scritti += (unsigned int)k;
+    }
+    close(fd);
+
+    /* ! UN FILE SCRITTO A META' SI DICE, e non si cancella: chi salva una
+     * pagina perche' il disco sta finendo preferisce i due terzi che ci sono
+     * stati al niente che gli lascerebbe una pulizia zelante. */
+    if (scritti == g_pagina_n)
+        sprintf(msg, "salvato: %s (%u byte)", perc, scritti);
+    else
+        sprintf(msg, "%s: scritti solo %u byte su %u", perc, scritti, g_pagina_n);
+    dico(msg);
+}
+
+/* =============================================================================
+ * L'AIUTO E' UNA PAGINA, E LA APRE QUESTO BROWSER
+ *
+ * ! NON E' UN DIALOGO PIENO DI TESTO, ed e' una scelta e non una comodita': la
+ * documentazione di un browser e' fatta di titoli, elenchi ed esempi, cioe' di
+ * cose che un avviso a una schermata non sa mostrare. E aprirla con se stesso
+ * vuol dire che il giorno che l'HTML si vede male, si vede male anche l'aiuto:
+ * il difetto si presenta da solo invece di nascondersi.
+ *
+ * ! I DUE POSTI SONO QUELLI DEI FONT, E PER LA STESSA RAGIONE. Sul sistema
+ * installato la guida sta in /exwin/doc; avviando dal CD la radice e' un
+ * altro disco, e /cdrom e' dove si trova. Chi scrive il programma non deve
+ * sapere quale dei due casi e' quello di adesso.
+ * ============================================================================= */
+/* ! IL NOME DELLA PAGINA E' UN ARGOMENTO, e le voci di menu sono due: il
+ * manuale del navigatore e l'indice di tutta la documentazione. La ricerca nei
+ * due posti resta una sola — due copie divergerebbero il giorno che se ne
+ * aggiunge un terzo. */
+static void doc_apri(const char *nome)
+{
+    static const char *const DOVE[] = { "/exwin/doc", "/cdrom/exwin/doc" };
+    char perc[PERC_MAX];
+    char url[EXHTTP_URL_MAX];
+    int  i;
+
+    for (i = 0; i < (int)(sizeof(DOVE) / sizeof(DOVE[0])); i++) {
+        snprintf(perc, sizeof(perc), "%s/%s", DOVE[i], nome);
+        if (!locale_esiste(perc)) continue;
+
+        url_di_percorso(perc, url, sizeof(url));
+        ex_testo_metti(g_url, url);
+        vai(url, 1, 0);
+        return;
+    }
+
+    ex_dlg_avviso("Documentazione",
+                  "Le pagine della guida non ci sono.  Dovrebbero stare in "
+                  "/exwin/doc, oppure in /cdrom/exwin/doc avviando dal CD.  "
+                  "Fanno parte del componente /exwin: reinstallandolo "
+                  "tornano al loro posto.");
+}
+
+static void informazioni(void)
+{
+    char t[900];
+    char coda[128];
+
+    exinfo_testo(t, sizeof(t), "Navigatore", VERSIONE_APP,
+                 "Il browser di EX-OS.  Mette insieme exhttp per la rete, "
+                 "exhtml per l'albero, excss per i fogli di stile, exjs ed "
+                 "exdom per JavaScript, eximg per le immagini e i font per "
+                 "misurare e disegnare il testo.  http e https (TLS 1.3, "
+                 "certificati verificati) e i file locali con file:.");
+
+    /* ! LA RIGA DEI CARATTERI STA QUI E NON IN exinfo, perche' e' una cosa di
+     * QUESTO programma: exinfo dice chi l'ha scritto e quanta memoria usa, che
+     * valgono per tutti. Vedi i due contatori accanto a font_per(). */
+    snprintf(coda, sizeof(coda),
+             "\nCaratteri: %d facce aperte, %d ripiegate sul font di sistema.",
+             g_facce_si, g_facce_no);
+    strncat(t, coda, sizeof(t) - strlen(t) - 1);
+
+    ex_dlg_avviso("Informazioni su", t);
 }
 
 /* Un collegamento premuto: si risolve contro l'indirizzo di adesso. */
@@ -4287,18 +4733,16 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
             if (t && t[0]) vai(t, 1, 0);
             return 0;
         }
-        if (wp == ID_INFO) {
-            char t[640];
+        if (wp == ID_INFO)  { informazioni(); return 0; }
+        if (wp == ID_APRI)  { apri_locale();  return 0; }
+        if (wp == ID_SALVA) { salva_pagina(); return 0; }
+        if (wp == ID_AIUTO) { doc_apri("browser.html"); return 0; }
+        if (wp == ID_DOC)   { doc_apri("index.html");   return 0; }
 
-            exinfo_testo(t, sizeof(t), "Navigatore", VERSIONE_APP,
-                         "Il browser di EX-OS.  Mette insieme exhttp per la "
-                         "rete, exhtml per l'albero, excss per i fogli di "
-                         "stile, eximg per le immagini e i font per misurare "
-                         "e disegnare il testo.  http e https (TLS 1.3, "
-                         "certificati verificati).  Niente JavaScript.");
-            ex_dlg_avviso("Informazioni su", t);
-            return 0;
-        }
+        /* ! «ESCI» NON CHIEDE NIENTE, e qui e' giusto: un browser non ha un
+         * lavoro non salvato da perdere. La domanda la fa l'editor, che ce
+         * l'ha. */
+        if (wp == ID_ESCI)  { ex_esci(0);     return 0; }
         if (wp == ID_INDIETRO) {
             if (g_storia_n > 0) {
                 char indietro[EXHTTP_URL_MAX];
@@ -4505,6 +4949,17 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
             return 0;
         }
 
+        /* ! LE SCORCIATOIE DEL MENU FILE, e arrivano fin qui solo quando
+         * nessuna casella di un modulo ha il fuoco — il ramo qui sopra e'
+         * uscito prima. Con Ctrl premuto la casella dell'indirizzo lascia
+         * passare il tasto, che e' esattamente cio' che permette a Ctrl+O di
+         * funzionare mentre si sta scrivendo un indirizzo. */
+        if (wp & KBD_MOD_CTRL) {
+            if (c == 'o' || c == 'O') { apri_locale();  return 0; }
+            if (c == 's' || c == 'S') { salva_pagina(); return 0; }
+            if (c == 'q' || c == 'Q') { ex_esci(0);     return 0; }
+        }
+
         if (c == '\n' || c == '\r') {
             const char *t = ex_testo_prendi(g_url);
 
@@ -4667,17 +5122,39 @@ int main(int argc, char **argv)
     g_font_testo  = ex_font_apri("/exwin/font/LiberationSerif-Regular.ttf", 15);
     g_font_titolo = ex_font_apri("/exwin/font/LiberationSans-Bold.ttf", 22);
 
-    ex_crea("pulsante", "<", EX_FIGLIO, MARGINE, 4, 26, 22,
+    /* Anche queste due contano: sono le facce del testo normale e dei titoli,
+     * cioe' le due che si notano per prime se non si aprono. */
+    if (g_font_testo)  g_facce_si++; else g_facce_no++;
+    if (g_font_titolo) g_facce_si++; else g_facce_no++;
+
+    /* ! LA BARRA DEI MENU SI CREA PRIMA DEI CONTROLLI, e non e' indifferente:
+     * sta a y = 0 e larga quanto la finestra, e tutto il resto comincia sotto
+     * di lei — vedi BARRA_Y. */
+    {
+        ExFinestra menu = ex_menu(g_f);
+
+        ex_menu_voce(menu, "File", "Apri...\tCtrl+O",             ID_APRI);
+        ex_menu_voce(menu, "File", "Salva con nome...\tCtrl+S",   ID_SALVA);
+        ex_menu_voce(menu, "File", "-",                           0);
+        ex_menu_voce(menu, "File", "Esci\tCtrl+Q",                ID_ESCI);
+
+        ex_menu_voce(menu, "Aiuto", "Guida del navigatore",       ID_AIUTO);
+        ex_menu_voce(menu, "Aiuto", "Documentazione di EX-OS",    ID_DOC);
+        ex_menu_voce(menu, "Aiuto", "-",                          0);
+        ex_menu_voce(menu, "Aiuto", "Informazioni su",            ID_INFO);
+    }
+
+    ex_crea("pulsante", "<", EX_FIGLIO, MARGINE, BARRA_Y + 4, 26, 22,
             g_f, ID_INDIETRO, 0);
 
     /* ! I DUE PULSANTI DI DESTRA SI MISURANO DALLA DESTRA, non dalla
      * sinistra: cosi' aggiungerne uno sposta solo il campo dell'indirizzo, che
      * e' l'unico pezzo che puo' restringersi senza diventare inutile. */
-    ex_crea("pulsante", "?", EX_FIGLIO, FIN_W - MARGINE - 24, 4, 24, 22,
-            g_f, ID_INFO, 0);
-    ex_crea("pulsante", "Vai", EX_FIGLIO, FIN_W - MARGINE - 24 - 4 - 44, 4,
-            44, 22, g_f, ID_VAI, 0);
-    g_url = ex_crea("testo", "", EX_FIGLIO, MARGINE + 32, 4,
+    ex_crea("pulsante", "?", EX_FIGLIO, FIN_W - MARGINE - 24, BARRA_Y + 4,
+            24, 22, g_f, ID_INFO, 0);
+    ex_crea("pulsante", "Vai", EX_FIGLIO, FIN_W - MARGINE - 24 - 4 - 44,
+            BARRA_Y + 4, 44, 22, g_f, ID_VAI, 0);
+    g_url = ex_crea("testo", "", EX_FIGLIO, MARGINE + 32, BARRA_Y + 4,
                     FIN_W - MARGINE - 24 - 4 - 44 - 4 - (MARGINE + 32), 22,
                     g_f, ID_URL, 0);
 
@@ -4692,11 +5169,26 @@ int main(int argc, char **argv)
     cache_prepara();
 
     ex_fuoco(g_url);
-    dico("scrivi un indirizzo e premi Invio. http e https.");
+    dico("scrivi un indirizzo e premi Invio. http, https e file locali.");
     ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
     disegna();
 
-    if (argc >= 2) { ex_testo_metti(g_url, argv[1]); vai(argv[1], 0, 0); }
+    /* ! UN ARGOMENTO CHE COMINCIA CON «/» E' UN FILE, non un indirizzo, e
+     * chiamarlo cosi' e' l'unico modo di scriverlo che venga in mente da una
+     * riga di comando: `browser /exwin/doc/browser.html`. Lo si trasforma qui
+     * in un «file:», che e' la sola forma che il resto del programma conosce. */
+    if (argc >= 2) {
+        char primo[EXHTTP_URL_MAX];
+
+        if (argv[1][0] == '/') url_di_percorso(argv[1], primo, sizeof(primo));
+        else {
+            strncpy(primo, argv[1], sizeof(primo) - 1);
+            primo[sizeof(primo) - 1] = '\0';
+        }
+
+        ex_testo_metti(g_url, primo);
+        vai(primo, 0, 0);
+    }
 
     while (ex_prendi_msg(&m)) ex_smista(&m);
     return 0;

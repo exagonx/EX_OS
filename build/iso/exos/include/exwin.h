@@ -268,6 +268,48 @@ void       ex_misura(ExFinestra f, int w, int h);
  * --------------------------------------------------------------------------- */
 void        ex_fuoco(ExFinestra controllo);
 
+/* ! IL FUOCO A NESSUNO, e serve a chi disegna i propri controlli. `ex_fuoco`
+ * lo puo' dare solo a un controllo del toolkit — un oggetto che lo accetta —
+ * quindi non c'e' modo di dire «da qui in avanti i tasti li voglio io».
+ * Il browser ne aveva bisogno: i controlli di un modulo HTML sono rettangoli
+ * disegnati, non finestre, e finche' la casella dell'indirizzo teneva il fuoco
+ * ogni lettera battuta dentro un modulo finiva nella barra dell'indirizzo.
+ *
+ * Dopo questa chiamata i tasti arrivano alla procedura della finestra come
+ * EXM_TASTO, e chi li vuole se li gestisce. */
+void        ex_fuoco_via(ExFinestra finestra);
+
+/* ! SPEGNE LA SCRIVANIA INTERA, non questa finestra. Chiede al server di
+ * mandare a ogni applicazione la stessa chiusura della crocetta, di aspettare
+ * che se ne vadano, di rimettere il modo testo e di morire.
+ *
+ * Lo chiama il program manager quando si sceglie «Esci»: prima quella voce
+ * chiudeva solo la scrivania e lasciava la grafica accesa senza nessuno
+ * dentro. Un programma qualunque non ha motivo di chiamarla. */
+void        ex_spegni_scrivania(void);
+
+/* -----------------------------------------------------------------------------
+ * Gli appunti, senza passare da `ex_area`
+ *
+ * ! SERVONO A CHI DISEGNA I PROPRI CONTROLLI. `ex_area_copia` e compagni
+ * lavorano sul controllo `ex_area` del toolkit, e vanno benissimo per chi lo
+ * usa; ma i campi di un modulo HTML nel browser sono RETTANGOLI DISEGNATI, non
+ * `ex_area` — e senza queste due funzioni la scrivania avrebbe avuto gli
+ * appunti dappertutto tranne che dentro una pagina web.
+ *
+ * ! E SONO LE STESSE DI `ex_area`, non una seconda copia: la zona di memoria
+ * condivisa e' una sola, quindi si taglia da una casella del browser e si
+ * incolla in un editor, e viceversa. Un secondo blocco di appunti sarebbe
+ * stato la cosa peggiore — due «ultimi copiati» e nessun modo di sapere quale.
+ *
+ * `ex_appunti_metti` rende quanti byte ha preso; `ex_appunti_prendi` quanti ne
+ * ha messi in `out` (sempre terminato da zero). Zero vuol dire appunti vuoti,
+ * o nessuna zona condivisa — che succede quando non c'e' nessuna applicazione
+ * grafica, e allora non si muore: si continua senza appunti.
+ * --------------------------------------------------------------------------- */
+unsigned int ex_appunti_metti(const char *testo, unsigned int n);
+unsigned int ex_appunti_prendi(char *out, unsigned int max);
+
 /* Il testo di un controllo: lo legge una casella, lo cambia un'etichetta. */
 void        ex_testo_metti(ExFinestra f, const char *s);
 const char *ex_testo_prendi(ExFinestra f);

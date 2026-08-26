@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Documentazione di EX-OS</title>
+<link rel="stylesheet" href="stile.css">
+<!--
+  exwin/doc/index.html - EX-OS
+  Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>
+  SPDX-License-Identifier: GPL-2.0-or-later
+
+  ! SOLO ASCII, apostrofi al posto degli accenti: gli stessi file si aprono
+  con `edit` e si guardano da una console in code page 437.
+-->
+</head>
+<body>
+
+<p class="navi">
+Documentazione di EX-OS &mdash;
+<a href="sistema.html">Il sistema</a> |
+<a href="comandi.html">Comandi</a> |
+<a href="installa.html">Installazione</a> |
+<a href="exwin.html">Scrivania</a> |
+<a href="rete.html">Rete</a> |
+<a href="sviluppo.html">Sviluppo</a> |
+<a href="browser.html">Navigatore</a>
+</p>
+
+<h1>Documentazione di EX-OS</h1>
+
+<p>
+EX-OS &mdash; <i>Extensible Operating System</i> &mdash; e' un sistema
+operativo baremetal scritto da zero in C e assembly per x86 a 32 bit. Parte da
+un floppy da 1,44 MB, da un CD o da un disco rigido, e non porta dentro
+niente di nessun altro: il kernel, i driver, la libc, la shell, i programmi,
+il server grafico, lo stack di rete con TLS 1.3 e il browser sono scritti qui.
+</p>
+
+<p>
+Queste pagine stanno in <code>/exwin/doc/</code> e si aprono con il
+navigatore, dalla voce <b>Aiuto</b> o scrivendo l'indirizzo:
+</p>
+
+<pre>    file:///exwin/doc/index.html</pre>
+
+<h2>Le pagine</h2>
+
+<table border="1">
+<tr><th>Pagina</th><th>Che cosa racconta</th></tr>
+
+<tr><td><a href="sistema.html"><b>Il sistema</b></a></td>
+    <td>Il minikernel, i driver che sono processi, i filesystem, le cinque
+        console, <code>kernel.cfg</code>, la memoria e lo scambio, l'avvio.</td></tr>
+
+<tr><td><a href="comandi.html"><b>La riga di comando</b></a></td>
+    <td>La sintassi della shell, le redirezioni, i caratteri jolly, e tutti i
+        comandi divisi per mestiere.</td></tr>
+
+<tr><td><a href="installa.html"><b>Installare EX-OS</b></a></td>
+    <td>Partizionare, formattare, l'area di scambio, l'installatore a schermo
+        intero, aggiornare un sistema gia' installato.</td></tr>
+
+<tr><td><a href="exwin.html"><b>La scrivania</b></a></td>
+    <td>ExWin: il server a finestre, il gestore dei programmi, le
+        applicazioni, i caratteri TrueType, le librerie condivise.</td></tr>
+
+<tr><td><a href="rete.html"><b>La rete</b></a></td>
+    <td>Le schede riconosciute, l'indirizzo, DHCP, DNS, ping, telnet, ftp, i
+        servizi in ascolto, e il TLS 1.3 scritto qui dentro.</td></tr>
+
+<tr><td><a href="sviluppo.html"><b>Scrivere programmi</b></a></td>
+    <td>La catena di compilazione che gira <i>dentro</i> EX-OS, la libc, il
+        formato dei programmi, le librerie condivise e le loro fette, come si
+        scrive un'applicazione grafica.</td></tr>
+
+<tr><td><a href="browser.html"><b>Il Navigatore</b></a></td>
+    <td>Il manuale del browser: indirizzi, menu, tasti, moduli, immagini,
+        cache, JavaScript e i suoi limiti.</td></tr>
+</table>
+
+<h2>L'altra documentazione, quella che non e' in HTML</h2>
+
+<p>
+Non tutto sta qui, e le due strade servono a due momenti diversi: queste
+pagine si leggono <b>con la grafica accesa</b>, quelle qui sotto si leggono
+<b>dalla console</b>, che e' dove ci si trova quando la grafica non parte.
+</p>
+
+<table border="1">
+<tr><th>Dove</th><th>Che cos'e'</th></tr>
+<tr><td><code>help</code></td>
+    <td>L'aiuto della riga di comando: l'indice di tutti i comandi
+        (<code>help</code>), un comando solo (<code>help ls</code>), tutto di
+        seguito (<code>help -t</code>). Il testo sta in
+        <code>/boot/help.txt</code> e non dentro i programmi.</td></tr>
+<tr><td><code>/boot/kernel.txt</code></td>
+    <td>Ogni voce di <code>/boot/kernel.cfg</code> spiegata una per una:
+        cosa fa, che valori accetta, cosa succede se manca.</td></tr>
+<tr><td><code>/doc/README.md</code></td>
+    <td>Il quadro generale del progetto e le novita', in italiano.
+        <code>README.en.md</code> e' la stessa cosa in inglese.</td></tr>
+<tr><td><code>/doc/KERNEL_CORE_NOTES.md</code></td>
+    <td>Le note sul nucleo: quello che serve a chi mette le mani nel
+        kernel.</td></tr>
+<tr><td><code>/doc/gpl-2.0.txt</code></td>
+    <td>Il testo della licenza.</td></tr>
+</table>
+
+<p class="nota">
+<b>I file <code>.md</code> si possono aprire anche da qui</b> &mdash;
+<code>file:///doc/README.md</code> &mdash; ma sono testo, non HTML: si vedono
+di seguito, senza titoli ne' elenchi. Per leggerli come si deve ci sono
+<code>edit</code> e <code>cat</code>. Sono in <code>/doc</code> solo se hai
+installato quel componente.
+</p>
+
+<h2>Le versioni</h2>
+
+<p>
+Il sistema dice la sua versione con <code>ver</code> o <code>uname -a</code>;
+ogni programma dice la propria con <code>-version</code>, e le applicazioni
+grafiche la mostrano in <b>Informazioni su</b>. Sono numeri distinti apposta:
+il kernel e un programma non crescono insieme.
+</p>
+
+<hr>
+
+<p class="piede">
+EX-OS &mdash; Graziano Falcone, exagonx@hotmail.com &mdash; GNU GPL v2.
+Questa pagina sta in <code>/exwin/doc/index.html</code>.
+</p>
+
+</body>
+</html>

@@ -1,0 +1,41 @@
+/* =============================================================================
+ * exwin/doc/stile.css - il foglio di stile della documentazione di EX-OS
+ * Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ *
+ * ! E' UN FOGLIO ESTERNO APPOSTA, e non l'ennesimo <style> ripetuto in otto
+ * pagine: cambiare il colore dei titoli in un posto solo e' il motivo per cui
+ * i fogli di stile esistono. E dice anche una cosa sul browser che lo legge -
+ * un <link rel="stylesheet"> RELATIVO, dentro una pagina aperta da disco, e'
+ * un giro che tocca risolvi(), lo schema file: e la lettura locale.
+ *
+ * ! SOLO PROPRIETA' CHE excss CONOSCE: color, background, font-size,
+ * font-weight, font-style, font-family, text-align, margin-*, display. Le
+ * altre non danno errore - si ignorano - ma scriverle vorrebbe dire un foglio
+ * che promette cio' che nessuno mantiene. I bordi delle tabelle li fa
+ * l'attributo border, non questo file.
+ * ========================================================================== */
+
+body      { background: #ffffff; color: #101010; font-family: serif }
+
+h1        { font-size: 26px; font-weight: bold; color: #002d6b }
+h2        { font-size: 20px; font-weight: bold; color: #002d6b }
+h3        { font-size: 16px; font-weight: bold; color: #303030 }
+
+code      { font-family: monospace; color: #603000 }
+pre       { font-family: monospace; background: #f2f2f2; color: #202020 }
+
+th        { background: #dfe6ef; text-align: left; font-weight: bold }
+td        { text-align: left }
+
+/* La barra di navigazione in cima e in fondo a ogni pagina. */
+.navi     { background: #dfe6ef; color: #002d6b }
+
+/* Un riquadro che dice una cosa da non dimenticare. */
+.nota     { background: #f4f2e2 }
+
+/* Cio' che manca, dichiarato: sempre dello stesso colore, in tutte le
+ * pagine, cosi' si riconosce senza leggerlo. */
+.manca    { color: #8b0000; font-weight: bold }
+
+.piede    { font-size: 13px; color: #505050 }

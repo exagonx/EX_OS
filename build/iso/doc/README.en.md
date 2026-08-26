@@ -69,6 +69,93 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### The desktop has a console of its own, shuts down, and speaks your language
+
+**tested** — from the CD and on an ext2 disk installed from scratch, under QEMU.
+
+**Five consoles now.** The window server used to take one of the four, leaving
+whoever worked in text with three they never asked to give up. Alt+F1–F4 are now
+the text consoles and graphics lives at the end: typing `exwin` switches the
+screen there by itself, and returns to the starting console when graphics stops.
+
+**And the graphics console only exists while graphics does.** Until the server
+runs, Alt+F5 does nothing — there would be a black screen with a shell nobody is
+watching, and no obvious way back. The state lives in the *kernel*, not in the
+server, so a killed server frees the console on its own.
+
+**`Exit` from the menu shuts down the desktop**, not just the program manager.
+Applications are *asked*, not killed: each gets the same close event as the
+window's close box, so anyone with unsaved work has time; then text mode returns.
+
+**Install asks for the language** and writes it to `kernel.cfg`. The kernel never
+uses it — translating is the programs' job — but it keeps it and hands it back
+the way it does with `keymap`, so there are never two diverging lists.
+
+**And it offers `hwconfig` at the end**, pointed at the freshly installed disk:
+the copied `kernel.cfg` is the install medium's, and first boot from disk is the
+worst possible moment to discover the disk controller's driver is missing.
+
+**Resolution is chosen from Start > Settings** — the mechanism was already all
+there (`/dev/svga.drv` writes both the `kernel.cfg` entry and a byte inside Stage
+2); the window was what was missing. It applies on reboot, because the video mode
+is chosen at boot through the BIOS.
+
+**Copy and paste inside a page's form fields**, with both standards:
+`Ctrl+C/X/V` and `Ctrl+Ins` / `Shift+Ins` / `Shift+Del`. The clipboard is the
+whole desktop's — the same shared memory `ex_area` uses — so you can copy from a
+form and paste into an editor.
+
+### The browser holds a real page: layout, images, characters, forms
+
+**tested** — from the CD, under QEMU, on Wikipedia's "Operating system" article
+(676 KB) and on pages built for the purpose.
+
+**The slowness was no longer the network, it was layout.** Every image that
+arrived re-laid-out the whole document. When the `<img>` declares `width` and
+`height` the final size is known before a single byte is downloaded: the space
+is reserved right away, and the image drops into it without moving anything.
+From 7.0 s to 3.3 s for twelve images — and the proof that the text does not
+move is pixel by pixel: **zero** pixels changed outside the image band.
+
+**The arena was not full of text: it was full of attributes.** Measured on that
+article: node text 71 KB (15%), tag names 20 KB (4%), attributes 386 KB (81%).
+A page with 70 KB of words was being truncated because there was no room for
+the attributes. Raised to 1 MB — and `ATTR_MAX` to 16000, since that article
+has ~13,600 attributes — the page **is no longer truncated**.
+
+**How many images to keep is decided by the machine**, not by a constant: one
+sixteenth of the free memory, read with `meminfo()`. A fixed ceiling was stingy
+on a large PC and caused `OUT OF MEMORY` on a 32 MB one. And the room is
+checked *before* downloading, so an image that will not fit costs neither
+network nor CPU.
+
+**`font-family` is now read.** Before, every page came out in serif and
+monospace only ever arrived from the `<pre>` tag. The list is scanned and the
+first recognised name wins — real names count as much as the generic ones,
+because half the web just writes `font-family: Courier New`.
+
+**The characters that were missing.** Liberation covers 2327 codepoints, DejaVu
+5918: the fallback is **per character** onto DejaVu rather than replacing the
+font, so the text stays as it is and only the holes are filled. Greek,
+Cyrillic, Hebrew and Arabic render. And numeric entities above Latin-1 —
+`&#8212;`, curly quotes, ellipses — are no longer `?`.
+
+**`colspan` and `rowspan`**, without which any table with a heading spanning
+two columns pushed every cell after it out of place.
+
+**And forms were not receiving keystrokes.** The cursor was not what was
+missing: the *keys* were. Focus stayed on the address bar — a toolkit control —
+while a page's fields are drawn rectangles, which cannot hold focus. You typed
+into the address bar believing you were typing into the form. The cursor now
+moves with arrows, Home, End and deletions, and inserts mid-text.
+
+> **A toolkit defect, not a browser one:** when a text box consumed a key,
+> `exwin` repainted the background and the controls *without telling the
+> application*, so as not to wake it for every letter. Right for a window made
+> only of controls; for one that also draws its own content, that content
+> vanished on every keystroke. It affects any program mixing controls with its
+> own drawing.
+
 ### Real users: two accounts, `sudo`, and a recovery when login is broken
 
 **tested** — install from scratch on ext2, both accounts asked for and created,

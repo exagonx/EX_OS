@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Il sistema &mdash; EX-OS</title>
+<link rel="stylesheet" href="stile.css">
+<!-- Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>  GPL-2.0-or-later
+     ! SOLO ASCII: apostrofi al posto degli accenti. -->
+</head>
+<body>
+
+<p class="navi">
+<a href="index.html">Documentazione</a> &mdash; Il sistema |
+<a href="comandi.html">Comandi</a> |
+<a href="installa.html">Installazione</a> |
+<a href="exwin.html">Scrivania</a> |
+<a href="rete.html">Rete</a> |
+<a href="sviluppo.html">Sviluppo</a> |
+<a href="browser.html">Navigatore</a>
+</p>
+
+<h1>Il sistema</h1>
+
+<h2>Un minikernel, e perche' non e' nessuna delle due parole solite</h2>
+
+<p>
+<b>Microkernel no</b>: dentro il kernel ci sono la memoria virtuale, lo
+scheduler, il VFS con FAT12/16/32, ext2 e ISO 9660, il caricatore ELF e la
+cache dei blocchi. Un microkernel vero quelli li mette fuori.
+</p>
+
+<p>
+<b>Monolitico no</b>: i driver di dispositivo &mdash; tastiera, floppy, PCI,
+schede di rete, tty, IP, mouse, USB, il server grafico &mdash; sono
+<b>processi ring3</b>, eseguibili ELF come quelli di <code>/bin</code>, che
+parlano per IPC e non eseguono una sola istruzione privilegiata. Il kernel
+media ogni accesso all'hardware e controlla i permessi a ogni chiamata.
+</p>
+
+<p class="nota">
+<b>Un driver che muore lo si rilancia.</b> E' la conseguenza pratica di quella
+scelta, ed e' anche il motivo per cui e' stata fatta: un difetto dentro il
+driver di rete non porta giu' la macchina.
+</p>
+
+<p>
+<b>Minikernel</b> dice le stesse due cose e in piu' contiene un impegno
+&mdash; <i>restare piccolo</i> &mdash; che si misura: circa 30 000 righe di C
+e assembly. Chi aggiunge codice al kernel dovrebbe prima chiedersi se non
+possa essere un processo ring3: e' quasi sempre la risposta giusta, ed e'
+come sono nati tutti i driver.
+</p>
+
+<h2>I filesystem</h2>
+
+<table border="1">
+<tr><th>Formato</th><th>Cosa si puo' fare</th></tr>
+<tr><td>FAT12</td><td>il floppy da 1,44 MB da cui il sistema parte</td></tr>
+<tr><td>FAT16 / FAT32</td><td>dischi rigidi, lettura e scrittura</td></tr>
+<tr><td>ext2</td><td>dischi rigidi: e' il formato consigliato per l'installazione</td></tr>
+<tr><td>ISO 9660</td><td>CD e DVD, in sola lettura, con i nomi lunghi (Joliet)</td></tr>
+</table>
+
+<p class="nota">
+<b>Su FAT i nomi lunghi sono in sola lettura.</b> Si leggono, ma un file
+creato li' torna in maiuscolo e in forma 8.3. Su ext2 i nomi restano come li
+hai scritti &mdash; e' il motivo per cui la shell distingue maiuscole e
+minuscole e su FAT serve <code>*.O</code> invece di <code>*.o</code>.
+</p>
+
+<h2>Le cinque console</h2>
+
+<pre>    Alt+F1 .. Alt+F4     quattro console di testo, ognuna con la sua shell
+    la quinta           la grafica</pre>
+
+<p>
+La tastiera va a quella visibile: un programma su una console nascosta resta
+fermo invece di rubare i tasti a chi sta scrivendo. Digitando <code>exwin</code>
+lo schermo passa da solo alla console grafica, e quando la grafica si spegne
+si torna a quella di partenza.
+</p>
+
+<p>
+Fino alla versione 0.206 le console erano quattro e il server grafico se ne
+prendeva una: chi lavorava in testo si ritrovava con tre console senza averlo
+chiesto.
+</p>
+
+<h2>La configurazione: <code>/boot/kernel.cfg</code></h2>
+
+<p>Formato INI, cinque sezioni:</p>
+
+<table border="1">
+<tr><th>Sezione</th><th>Che cosa ci sta</th></tr>
+<tr><td><code>[kernel]</code></td>
+    <td><code>loglevel</code>, <code>timer_hz</code>, <code>verboseboot</code>,
+        <code>keymap</code>, <code>lingua</code>, <code>swap</code></td></tr>
+<tr><td><code>[env]</code></td>
+    <td>le variabili d'ambiente iniziali: <code>PATH</code>,
+        <code>HOME</code>, <code>TERM</code></td></tr>
+<tr><td><code>[boot]</code></td>
+    <td>quale shell, quale <code>login</code>, quali moduli caricare</td></tr>
+<tr><td><code>[modules]</code></td>
+    <td>il percorso di ogni driver da caricare all'avvio</td></tr>
+<tr><td><code>[mount]</code></td>
+    <td>i montaggi automatici, per esempio <code>/cdrom = cd0</code></td></tr>
+</table>
+
+<p class="nota">
+<b>Il file ha un tetto di 8191 byte, e sforarlo si paga male.</b> Il kernel lo
+legge in un buffer da 8192 e si ferma li': le sezioni finali &mdash;
+<code>[modules]</code>, cioe' il driver di tastiera &mdash; spariscono, e la
+macchina si presenta <i>senza tastiera</i> senza che il collegamento sia
+ovvio. Per questo le spiegazioni non stanno la' dentro ma in
+<code>/boot/kernel.txt</code>, che il kernel non legge e puo' crescere quanto
+serve.
+</p>
+
+<p>
+<code>hwconfig</code> guarda la macchina e scrive <code>kernel.cfg</code> da
+solo, tenendo da parte una copia <code>.bak</code> di quello di prima:
+e' la via breve al posto di scriverlo a mano.
+</p>
+
+<h2>La memoria, e lo scambio</h2>
+
+<p>
+Il kernel sta in RAM convenzionale ed e' in sola lettura; tutto il resto
+&mdash; driver, shell, programmi &mdash; gira in RAM estesa, in spazio
+protetto, con la propria tabella delle pagine. Ogni programma ha uno heap che
+comincia sopra il suo ultimo segmento e un tetto dichiarato: sopra ci sono il
+blocco TLS e la riserva dello stack, e una pagina di guardia non mappata fra
+i due, cosi' che sfondare sia un errore e non una corruzione silenziosa.
+</p>
+
+<p>
+Da agosto 2026 c'e' la <b>memoria virtuale su partizione dedicata</b>: si
+prepara con <code>mkswap</code> e si dichiara in <code>kernel.cfg</code>:
+</p>
+
+<pre>    mkswap hd0p2
+
+    [kernel]
+    swap = hd0p2</pre>
+
+<p>
+All'avvio il kernel lo dice, e vale la pena leggerlo: dice quanti slot da
+4 KB ha trovato, cioe' quanta memoria in piu' ha davvero.
+</p>
+
+<h2>L'avvio, passo per passo</h2>
+
+<ol>
+<li>il settore di avvio carica <b>stage 2</b>;</li>
+<li>stage 2 passa in modo protetto, imposta il video (VESA, se la
+    configurazione lo dice) e carica <code>kernel.bin</code>;</li>
+<li>il kernel legge <code>/boot/kernel.cfg</code>, monta la radice, carica i
+    moduli della sezione <code>[modules]</code>;</li>
+<li>avvia <code>login</code>, che <b>prima</b> di chiedere chi sei esegue
+    <code>/boot/avvio.sh</code> da amministratore &mdash; li' dentro sta la
+    rete, che deve essere accesa anche per chi non ha ancora fatto
+    l'accesso;</li>
+<li>fatto l'accesso, la shell di chi e' entrato esegue il suo
+    <code>autoexec.sh</code>. Sono due file perche' sono due momenti e due
+    utenti diversi.</li>
+</ol>
+
+<p class="nota">
+<b>Il kernel si trova per mappa dei settori, non per nome.</b> Chi copia a
+mano un <code>kernel.bin</code> nuovo su un disco gia' installato deve
+rilanciare <code>install</code>: senza, il disco riparte con la versione di
+prima e nessuno dice niente.
+</p>
+
+<h2>Gli utenti</h2>
+
+<p>
+<code>login</code> chiede chi sei prima di consegnare la shell; gli utenti
+stanno in <code>/boot</code>. Ognuno ha il proprio <code>HOME</code>, e i
+programmi ci tengono i propri dati sotto <code>$HOME/.app/</code>: la cache
+del navigatore, per esempio, e' in <code>$HOME/.app/browser/cache</code>.
+</p>
+
+<p class="nota">
+<b>Nessun programma scrive i propri dati in un percorso fisso.</b> Un
+programma che lo facesse funzionerebbe per il primo utente e sbaglierebbe per
+il secondo &mdash; o peggio, gli scriverebbe addosso.
+</p>
+
+<hr>
+<p class="navi">
+<a href="index.html">Torna alla documentazione</a> |
+<a href="comandi.html">La riga di comando &gt;</a>
+</p>
+<p class="piede">
+EX-OS &mdash; Graziano Falcone, exagonx@hotmail.com &mdash; GNU GPL v2.
+</p>
+
+</body>
+</html>

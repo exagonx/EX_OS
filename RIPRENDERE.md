@@ -1,5 +1,340 @@
 # DOVE RIPRENDERE — 26 agosto 2026
 
+## 26 agosto 2026 — IL TREDICESIMO FONT, I MENU E LA DOCUMENTAZIONE
+
+Due cose viste sulla macchina vera — EX-OS installato su VirtualBox, con la
+partizione di scambio — e una terza chiesta dopo averle viste.
+
+### ! IL FONT CHE NON SI CARICAVA ERA IL TREDICESIMO, NON UN FILE GUASTO
+
+`fontprova` diceva **NON CARICATO** in rosso su
+`LiberationSerif-Regular.ttf`, e sugli altri dodici niente. Sembrava una copia
+sbagliata dell'installatore, o un file rotto sul CD: era `FILE_MAX` in
+`lib/exwin/exwin.c`, che valeva **12**.
+
+In `/exwin/font` i file sono **tredici** — le dodici Liberation piu'
+DejaVuSans. La directory li rende in ordine alfabetico e ultimo di
+quell'ordine viene proprio `LiberationSerif-Regular.ttf`, che e' il carattere
+con cui il browser scrive il **testo normale**. Il tredicesimo
+`ex_font_apri` trovava la tabella piena e rendeva 0 — che E' il font di
+sistema, non un errore — quindi nessuno diceva niente.
+
+! **E' LA TERZA VOLTA CHE LO STESSO NUMERO SBAGLIA NELLO STESSO MODO.** Era
+stato 8 (`FONT_MAX`, e si scopri' con quattro facce «guaste»), poi 12
+(`LIB_MAX`, e si scopri' con un programma che non partiva), adesso 12 di
+nuovo. Ogni volta il numero era «il conto di oggi piu' un margine». Adesso e'
+24, ed e' scritto accanto perche' non e' un conto: una voce pesa
+centoquaranta byte e i byte del font stanno altrove, contati.
+
+### ! IL RIPIEGO SILENZIOSO ADESSO HA UNA VOCE
+
+Il difetto sopra era invisibile per costruzione: `ex_font_apri` rende 0, zero
+e' il font di sistema, la pagina esce leggibile e tutta di un carattere solo.
+Chi guarda non conclude «manca un file»: conclude «il browser non sa cambiare
+carattere», che e' una diagnosi sbagliata e fa cercare nell'impaginatore.
+
+Due contatori accanto a `font_per()` e una riga in **Aiuto > Informazioni su**:
+
+    Caratteri: 11 facce aperte, 2 ripiegate sul font di sistema.
+
+E la guida dice dove guardare, in ordine: `/exwin/font`,
+`/exwin/lib/exfont.so`, `fontprova`.
+
+### I MENU DEL NAVIGATORE, e lo schema `file:`
+
+Barra dei menu con **File** (Apri, Salva con nome, Esci) e **Aiuto** (Guida,
+Informazioni su), piu' `Ctrl+O`, `Ctrl+S`, `Ctrl+Q`.
+
+! **«APRI» NON E' UN CASO A PARTE: E' UN INDIRIZZO.** Il file diventa un
+`file:///percorso` e passa da `vai()` come qualunque pagina. La strada che
+porta un documento sullo schermo — libera le immagini, chiudi il motore,
+analizza, azzera i controlli, impagina, disegna — e' lunga, e rifarla per il
+disco avrebbe dato due strade che divergono al primo difetto corretto in una
+sola. Cosi' invece **cronologia, pulsante indietro, collegamenti relativi,
+fogli di stile esterni, script esterni e immagini locali vengono gratis**:
+`risolvi()` sa che la base di una pagina locale e' la sua DIRECTORY.
+
+! **E «SALVA» SCRIVE L'HTML COM'E' ARRIVATO**, non la pagina come si vede e
+non l'albero serializzato. Serializzare darebbe un HTML *riparato*, coi tag
+chiusi che il sito non aveva: chi salva una pagina per guardarci dentro vuole
+l'originale, difetti compresi.
+
+! **UN RIFERIMENTO «#qualcosa» ADESSO NON SI SEGUE PIU'.** Punta alla pagina
+che si sta gia' guardando, e il salto a un'ancora non c'e': seguirlo voleva
+dire ricaricare tutto e tornare in cima, cioe' il contrario di quel che chiede
+chi lo preme.
+
+### LA DOCUMENTAZIONE E' UN SITO, E LO APRE IL BROWSER STESSO
+
+Otto pagine in `exwin/doc/`, installate in `/exwin/doc/` (e cercate anche in
+`/cdrom/exwin/doc/`, come i font e per la stessa ragione):
+
+    index.html      la porta d'ingresso, anche verso cio' che non e' HTML
+    browser.html    il manuale del navigatore: aiuto in due minuti, poi tutto
+    sistema.html    minikernel, driver-processo, filesystem, console, kernel.cfg
+    comandi.html    la sintassi della shell e i comandi per mestiere
+    installa.html   partizioni, scambio, l'installatore, gli aggiornamenti
+    exwin.html      server a finestre, applicazioni, caratteri, librerie
+    rete.html       schede, DHCP, DNS, servizi, TLS 1.3
+    sviluppo.html   gcc dentro EX-OS, la libc, le fette, un'app dalla prima riga
+
+Due voci in **Aiuto**: la guida del navigatore e l'indice. `doc_apri()` prende
+il nome per argomento — due copie della ricerca nei due posti sarebbero
+divergute il giorno del terzo.
+
+! **NON E' UN DIALOGO PIENO DI TESTO**, ed e' una scelta: la documentazione di
+un sistema e' fatta di titoli, tabelle, elenchi ed esempi, cioe' di cose che un
+avviso a una schermata non sa mostrare.
+
+! **ED E' ANCHE UNA PROVA DEL BROWSER, IN TRE PUNTI.** Le pagine sono scritte
+nel sottoinsieme che sa impaginare, quindi un difetto di titoli o tabelle si
+presenta da solo aprendo l'aiuto. I collegamenti fra le pagine sono **relativi**
+e passano dal ramo `file:` di `risolvi()`. E lo stile e' un **foglio esterno
+condiviso** (`stile.css`), cioe' un `<link rel="stylesheet">` relativo letto da
+disco: se quel giro si rompe, otto pagine perdono i colori insieme.
+
+! **E IL FOGLIO STA NELL'ELENCO COME LE PAGINE.** Un wildcard sui soli `.html`
+lo lasciava fuori — l'unico file non-HTML della directory — e le pagine
+sarebbero finite sul CD senza stile, senza nessun errore. `EXWIN_DOC` nel
+Makefile prende `*.html` e `*.css`, ed e' fra le dipendenze dell'ISO: un file
+non dichiarato la' dentro finisce sul CD **vecchio** e non se ne accorge
+nessuno.
+
+### E IL BROWSER HA IMPARATO IL DISCO PER INTERO
+
+Non solo il documento: anche i **fogli di stile esterni**, gli **script
+esterni** e le **immagini** di una pagina locale si leggono da disco invece di
+finire in exhttp, che di `file:` non sa niente e risponde di no. Erano tre
+posti con la stessa forma — cache, poi rete — e adesso ognuno guarda prima se
+l'indirizzo e' locale. Senza, una guida con dentro una figura avrebbe mostrato
+l'`alt`.
+
+### Su google.com, per scritto
+
+Il motore c'e' e gli script girano, ma `google.com` manda ES2017 offuscato:
+muore alla prima espressione regolare, che ExJs non ha. Continuera' a mostrare
+la pagina «abilita JavaScript» finche' non si porta **QuickJS**, che e' gia'
+dichiarato in `lib/exjs/exjs.h` dalla prima riga. Adesso lo dice anche la
+guida, invece di lasciarlo scoprire.
+
+! **E UN'ISO VECCHIA LO NASCONDE.** L'immagine da cui si era installato era
+stata costruita prima del motore: dentro non c'erano ne' `exjs.so` ne'
+`exdom.so`, e il browser era quello di prima. Prima di dare la colpa a un
+motore, si guarda la data dell'ISO.
+
+
+## 26 agosto 2026 — IL BROWSER ESEGUE JAVASCRIPT
+
+Il punto di arrivo di sei scaglioni: c'e' un motore JavaScript scritto a mano,
+c'e' un ponte col documento, e il browser li usa. Una pagina che costruisce se
+stessa con uno script si vede costruita.
+
+### Come e' fatto, in tre righe
+
+    lib/exjs/     il LINGUAGGIO, e non sa che l'HTML esista
+    lib/exhtml/   l'ALBERO, e non sa che gli script esistano
+    lib/exdom/    il PONTE, l'unico che sa tutt'e due le cose
+
+! **QUESTA SEPARAZIONE E' LA DECISIONE PIU' IMPORTANTE DI TUTTO IL PROGETTO
+JAVASCRIPT**, ed e' scritta in cima a `lib/exjs/exjs.h`. Non e' eleganza: il
+giorno che si portera' QuickJS — ed e' dichiarato che si portera', perche' per
+google.com questo motore non basta — si sostituisce cio' che sta sotto senza
+riscrivere il ponte. Se `document` vivesse dentro il motore, cambiare motore
+vorrebbe dire rifare il DOM.
+
+### Che cosa c'e' nel motore (lib/exjs, 5 sorgenti, ~4400 righe)
+
+`lex.c` `parse.c` `val.c` `run.c` `base.c`. Un ES3 utile: var, funzioni,
+chiusure, oggetti, prototipi, Array, String, Math, JSON, `setTimeout` e
+`setInterval`. I valori sono NaN-boxing a 64 bit — numeri e booleani non
+costano una casella, e un interprete che cammina sull'albero ne produce
+migliaia per ciclo. Non c'e' raccoglitore di memoria (il posto e' preparato);
+non ci sono espressioni regolari, `Date`, `toFixed`, `try/catch` completo,
+`Function`, ne' niente da ES5 in avanti.
+
+! **IL TEMPO ARRIVA DA FUORI.** `exjs_pompa(ctx, ora_ms)`: chi ospita passa
+l'ora che ha lui. Una libreria che chiedesse l'orologio da se' darebbe prove
+che passano oggi e falliscono domani.
+
+! **I BUFFER SONO DI CHI CHIAMA**, come in exhtml e in excss. Niente stato
+globale: due pagine aperte insieme sono due contesti che non si toccano.
+
+### Gli OGGETTI ESOTICI — la crescita che il DOM ha imposto
+
+Un oggetto ExJs puo' portarsi due ganci, uno per le letture e uno per le
+scritture (`ExJsLeggiProp`, `ExJsScriviProp` in exjs.h). Sono nati per una
+domanda sola: cosa succede a `elemento.innerHTML = '<b>x</b>'`. Senza ganci
+quella riga scrive una proprieta' JavaScript e lascia il documento com'era —
+nessun errore, nessun avviso, pagina invariata, e rileggendo `innerHTML` si
+ritrova pure la stringa giusta. Cioe' un motore che sembra funzionare.
+
+L'ordine e' fissato: in lettura **proprie, gancio, prototipo**; in scrittura il
+**gancio per primo**. E il gancio puo' dire «non e' mia» rendendo 0, cosi'
+`elemento.mioStato = 3` finisce in una proprieta' normale — gli script
+appendono roba propria agli elementi in continuazione.
+
+### exjs_invoca — chiamare il motore da fermo
+
+`exjs_chiama` funziona solo mentre un'esecuzione e' in corso. Era giusto finche'
+a chiamare erano `forEach` e i lavori scaduti; un gestore di clic parte dal
+ciclo di messaggi del browser, quando nessuno script gira. Da qui
+`exjs_invoca()`, che l'esecuzione se la apre — e se una c'e' gia' usa quella,
+perche' aprirne una sopra azzererebbe il conto dei passi, cioe' il tetto che
+impedisce a uno script di non finire mai.
+
+! **E `exjs_esegui` ADESSO SALVA E RIMETTE l'esecuzione invece di azzerarla.**
+Un `onclick="..."` fatto partire da dentro uno script lasciava il motore di
+fuori senza esecuzione a meta' strada.
+
+### Che cosa ha guadagnato exhtml
+
+Nove mutazioni (`html_crea_elemento`, `html_aggiungi`, `html_togli`,
+`html_attr_metti`, ...) piu' `html_analizza_in`, `html_svuota` e
+`html_serializza`. E soprattutto:
+
+! **`versione`, IL CONTATORE DELLE MODIFICHE.** E' il perno di tutto il
+rifacimento della pagina: senza, l'unica scelta e' fra rimpaginare dopo ogni
+script (insostenibile su ventiquattromila nodi) e non rimpaginare mai (pagina
+che non risponde). Cresce anche per le modifiche che non si vedono, apposta.
+
+Le scelte che non sono ovvie e stanno nei commenti: `createElement` abbassa il
+nome ma `createTextNode` **non** scioglie le entita'; `appendChild` SPOSTA e
+rifiuta i cicli prima di toccare qualsiasi cosa; `html_togli` scorre i fratelli
+perche' `HtmlNodo` non ha `precedente` (quattro byte per nodo per un'operazione
+rara); niente si libera, come in ExJs e per lo stesso motivo.
+
+### Che cosa c'e' nel ponte (lib/exdom, ~1200 righe)
+
+`document`, `window` (che **e'** l'oggetto globale), i quattro parenti,
+`childNodes`/`children`, `innerHTML`/`outerHTML`, `textContent`, `id`,
+`className`, `getElementById`, `getElementsByTagName` (anche `*`),
+`getElementsByClassName`, gli attributi, `appendChild`/`insertBefore`/
+`removeChild`, `createElement`/`createTextNode`, `document.title`.
+
+Gli eventi: `addEventListener`/`removeEventListener`/`dispatchEvent`, gli
+`onclick` come proprieta', i gestori scritti nell'attributo, e la propagazione
+**completa** — discesa, bersaglio, risalita. `exdom_evento()` rende 0 se
+qualcuno ha chiamato `preventDefault()`, che e' l'unica cosa che il browser deve
+sapere.
+
+Le scelte da ricordare:
+
+- un nodo si avvolge **una volta sola** (tabella nodo -> involucro): altrimenti
+  cadono in silenzio `getElementById('x') === getElementById('x')` e lo stato
+  che uno script appende a un elemento;
+- i metodi stanno su un **prototipo condiviso**: duemila nodi non possono
+  pagare duemila copie di appendChild in un motore senza raccoglitore;
+- gli ascoltatori stanno in una **tabella del ponte**, non appesi
+  all'involucro, dove uno script li vedrebbe e potrebbe cancellarli;
+- `this` in un gestore e' l'elemento su cui e' registrato, non il bersaglio;
+- `textContent` in scrittura mette TESTO e non analizza — se analizzasse, un
+  utente che scrive `<script>` in un campo si troverebbe uno script;
+- gli elenchi sono **fotografie**, e nel DOM vero sono vivi: e' una differenza
+  vera, scritta in exdom.h col caso che la fa vedere;
+- le visite dell'albero sono **iterative**, perche' da quando ci sono le
+  mutazioni l'albero e' profondo quanto vuole uno script.
+
+### Le librerie condivise
+
+    /exwin/lib/exjs.so     base 0x04800000    66 KB
+    /exwin/lib/exdom.so    base 0x04900000    26 KB
+
+Le basi le ha dette `python3 tools/fette.py --libera`, non un commento: la
+mappa scritta a mano ha detto «libere» di fette occupate tre volte.
+
+! **exwin.ld AVEVA PREVISTO IL CONTRARIO**, per nome: «un motore JavaScript,
+che in un megabyte non ci sta per definizione». Misurato, ci sta in un
+quindicesimo di fetta. La previsione era ragionevole e i fatti dicono altro:
+e' esattamente perche' a misurare sono gli ELF veri e non i commenti.
+
+! **exdom.so E' LA PRIMA LIBRERIA CHE NE APRE DUE**: dentro ci sono lo stub di
+exjs e quello di exhtml. Chi apre il ponte occupa tre fette. `LIB_MAX` in
+`kernel/loader/lib.c` e' **64** (non dodici, come diceva un commento fino a
+oggi); il browser adesso ne apre nove.
+
+### Il browser
+
+Il motore non e' un tetto fisso: `malloc` quando la pagina ha davvero uno
+`<script>`, `free` quando la pagina se ne va — accanto a `imm_libera_tutte()` e
+per la stessa ragione, perche' gli involucri sono indici in QUELL'albero.
+Taglie in un posto solo, in cima alla sezione: `JS_OGGETTI 2000`, `JS_ARENA
+96K`, `JS_TESTO 64K`, `JS_ASCOLTI 256`.
+
+- gli `<script>` girano nell'ordine del documento, **prima** dei fogli di stile
+  e dell'impaginazione (anche `src`, riusando `g_imm_buf` come i fogli esterni);
+- un `type` che non dice javascript/ecmascript si salta;
+- i clic vanno al documento **prima** che il browser li usi;
+- i tempi si pompano da `EXM_TEMPO`; risoluzione vera **200 ms**, la scadenza
+  del poll nel ciclo dei messaggi. La sveglia si spegne quando la coda e' vuota;
+- `console.log` finisce nella barra di stato;
+- dopo ogni script e ogni clic si confronta `html_versione()`.
+
+! **IL `Pezzo` IMPAGINATO PORTA IL SUO NODO** (quattro byte l'uno, 96 KB al
+tetto): serve a dire a uno script dove si e' cliccato. Per il testo ci si mette
+il **padre**, come fa il browser vero — `target.tagName` su un nodo di testo
+darebbe `undefined`. Si scrive in tre soli posti, i tre dove un pezzo nasce, e
+per questo non ha bisogno del salva-e-rimetti che `g_link_ora` si porta dietro.
+
+### Come si prova — SENZA ACCENDERE QEMU
+
+    make prova-exjs      239 prove   il linguaggio
+    make prova-exdom      92 prove   il ponte, gli eventi compresi
+    make prova-exhtml     65 prove   l'albero e le mutazioni
+    make prova-excss      40 prove
+    make verifica-exjs               compila per i386 (il banco gira a 64 bit)
+    make verifica-exdom
+    python3 tools/fette.py           la mappa delle fette
+
+E la pagina vera, che e' la prova che vale di piu':
+
+    make prova-exdom                              (costruisce il banco)
+    /tmp/exos-prove/domprova tools/prove/sito/script.html
+
+Apre il ponte, esegue gli script nell'ordine del documento, pompa i tempi,
+preme quel che c'e' da premere e stampa il documento risultante. Fa le stesse
+tre cose del browser nello stesso ordine, quindi quel che si vede li' e' quel
+che si vedra' dentro EX-OS. Ultimo risultato: tutti e sette i riquadri
+cambiati, `#cinque -> il browser prosegue`, `#sei -> preventDefault: fermo`,
+`event.type` letto da dentro un gestore d'attributo.
+
+Dentro QEMU, con `python3 tools/prove/sito/servi.py` sull'host:
+`http://10.0.2.2:8000/script.html` — vedi `tools/prove/sito/leggimi.md`.
+
+### I difetti trovati strada facendo, e vale la pena ricordarli
+
+1. **L'albero dell'AST si rifaceva a ogni `exjs_esegui`.** Una funzione e' un
+   indice dentro l'albero: il secondo `<script>` della pagina faceva puntare le
+   funzioni del primo a nodi diversi. Non un errore — una funzione che esegue
+   il codice di un'altra. Adesso l'albero si prepara una volta e si allunga.
+2. **`exjs_chiama` fuori da un'esecuzione** (vedi `exjs_invoca` sopra).
+3. **`exjs_esegui` azzerava l'esecuzione uscendo** invece di rimettere quella
+   che aveva trovato.
+4. **Quattordici prove rosse erano il BANCO**, non il ponte: si aspettavano
+   `<html><head><body>` attorno a documenti che non ce l'avevano. exhtml non
+   inventa gli elementi impliciti. La nota e' rimasta accanto alla funzione che
+   confronta.
+
+## Che cosa manca, in ordine di quanto serve
+
+1. **`style` come oggetto** — `el.style.display = 'none'` e' fra le righe piu'
+   scritte del web e adesso non fa niente. Vuole un pezzo di excss per
+   sciogliere le dichiarazioni. Dichiarato in `exdom.h`.
+2. **`this` legato dentro un gestore d'attributo** — vuole un costruttore
+   `Function`, che compili una stringa in una funzione. Oggi il testo
+   dell'attributo si esegue come uno script: `event` c'e' (e' `window.event`,
+   che nel DOM esiste davvero), `this` no, e le variabili dichiarate li'
+   finiscono fra le globali. E si rianalizza a ogni evento: su un clic non si
+   sente, su un `mousemove` si sentirebbe.
+3. **Un raccoglitore di memoria in ExJs** — il posto e' preparato. Serve il
+   giorno che una pagina resti aperta a mutare per ore.
+4. **`Date`, `RegExp`, `toFixed`** — dichiarati mancanti in fondo a `base.c`.
+   `Date` adesso si potrebbe: il gancio del tempo c'e'.
+5. **QuickJS** — dichiarato in `exjs.h` fin dalla prima riga. google.com vuole
+   ES2017 offuscato: `async/await`, `Proxy`, destrutturazione. Quello e' un
+   lavoro di portabilita', non di crescita di un ES3, e l'interfaccia e'
+   scritta perche' quel giorno si cambi il motore e non il browser.
+
+
 ## 26 agosto 2026 — il floppy si congela, l'installatore si sposta sul CD
 
 Una decisione di architettura, non una funzione in piu'.
