@@ -425,6 +425,85 @@ static void prova_stampa(const char *nome, const char *codice, const char *attes
     printf("ok   %-34s stampato: %s", nome, g_console);
 }
 
+/* =============================================================================
+ * I TEMPI, con un orologio INVENTATO
+ *
+ * ! E' TUTTO IL SENSO DI AVER TENUTO IL TEMPO FUORI DALLA LIBRERIA. Qui l'ora
+ * la decide la prova: si eseguono gli script, poi si pompa a 50, a 150, a 250
+ * millisecondi, e si guarda cosa e' partito. La stessa prova dara' lo stesso
+ * risultato fra dieci anni e su una macchina mille volte piu' lenta — cosa che
+ * un motore con l'orologio dentro non puo' promettere.
+ * ========================================================================== */
+static void prova_tempo(const char *nome, const char *codice,
+                        const unsigned int *ore, int n_ore, const char *atteso)
+{
+    static unsigned char memoria[1 << 20];
+    ExJsCtx    *c;
+    ExJsVal     r;
+    ExJsErrore  err;
+    int         i;
+
+    fatte++;
+    memset(&err, 0, sizeof(err));
+
+    c = exjs_apri(memoria, sizeof(memoria), MOTORE_OGG, MOTORE_ARENA);
+    if (!c) { printf("NO   %-34s il contesto non si apre\n", nome); sbagliate++; return; }
+    g_console_n = 0; g_console[0] = '\0';
+    exjs_uscita_metti(c, raccogli, 0);
+
+    if (!exjs_esegui(c, codice, (unsigned int)strlen(codice), &r, &err)) {
+        printf("NO   %-34s riga %d: %s\n", nome, err.riga, err.messaggio);
+        sbagliate++;
+        return;
+    }
+
+    for (i = 0; i < n_ore; i++) exjs_pompa(c, ore[i]);
+
+    if (strcmp(g_console, atteso) != 0) {
+        printf("NO   %-34s atteso \"%s\", stampato \"%s\"\n", nome, atteso, g_console);
+        sbagliate++;
+        return;
+    }
+    printf("ok   %-34s %s", nome, g_console[0] ? g_console : "(niente)\n");
+}
+
+/* ! DUE SCRIPT NELLA STESSA PAGINA, ed e' la prova del difetto corretto
+ * insieme alla coda: una funzione e' un INDICE DENTRO L'ALBERO, e finche'
+ * l'albero si rifaceva a ogni exjs_esegui il secondo <script> faceva puntare
+ * la funzione del primo a nodi diversi. Non un errore: una funzione che esegue
+ * il codice di un'altra. */
+static void prova_due_script(const char *nome, const char *uno, const char *due,
+                             unsigned int ora, const char *atteso)
+{
+    static unsigned char memoria[1 << 20];
+    ExJsCtx    *c;
+    ExJsVal     r;
+    ExJsErrore  err;
+
+    fatte++;
+    memset(&err, 0, sizeof(err));
+
+    c = exjs_apri(memoria, sizeof(memoria), MOTORE_OGG, MOTORE_ARENA);
+    if (!c) { printf("NO   %-34s il contesto non si apre\n", nome); sbagliate++; return; }
+    g_console_n = 0; g_console[0] = '\0';
+    exjs_uscita_metti(c, raccogli, 0);
+
+    if (!exjs_esegui(c, uno, (unsigned int)strlen(uno), &r, &err) ||
+        !exjs_esegui(c, due, (unsigned int)strlen(due), &r, &err)) {
+        printf("NO   %-34s riga %d: %s\n", nome, err.riga, err.messaggio);
+        sbagliate++;
+        return;
+    }
+    exjs_pompa(c, ora);
+
+    if (strcmp(g_console, atteso) != 0) {
+        printf("NO   %-34s atteso \"%s\", stampato \"%s\"\n", nome, atteso, g_console);
+        sbagliate++;
+        return;
+    }
+    printf("ok   %-34s %s", nome, g_console[0] ? g_console : "(niente)\n");
+}
+
 int main(void)
 {
     printf("=== ExJs: l'analizzatore lessicale ===\n\n");
@@ -860,6 +939,94 @@ int main(void)
                  "var o={n:'x',v:[1,2],b:true};"
                  "JSON.stringify(JSON.parse(JSON.stringify(o)));",
                  "{\"n\":\"x\",\"v\":[1,2],\"b\":true}");
+
+    printf("\n=== i vettori, il resto ===\n\n");
+    prova_esegui("shift",          "var v=[1,2,3];v.shift();",       "1");
+    prova_esegui("shift accorcia", "var v=[1,2,3];v.shift();v.join('');", "23");
+    prova_esegui("unshift",        "var v=[3];v.unshift(1,2);v.join('');", "123");
+    /* ! UN VETTORE PASSATO A concat SI APRE, un valore qualunque no. */
+    prova_esegui("concat con vettore", "[1].concat([2,3]).join('');", "123");
+    prova_esegui("concat con valore",  "[1].concat(2).join('');",     "12");
+    prova_esegui("lastIndexOf",    "[1,2,1].lastIndexOf(1);",         "2");
+
+    printf("\n=== sort ===\n\n");
+    /* ! LA SORPRESA PIU' FAMOSA DI JavaScript: senza confronto si ordina come
+     * TESTO, anche i numeri. Sembra un difetto e non lo e': e' la norma, e un
+     * motore che ordinasse per valore darebbe risultati diversi da ogni altro. */
+    prova_esegui("senza confronto e' testo", "[10,9,1].sort().join(',');", "1,10,9");
+    prova_esegui("con il confronto",
+                 "[10,9,1].sort(function(a,b){return a-b;}).join(',');", "1,9,10");
+    prova_esegui("al contrario",
+                 "[1,9,10].sort(function(a,b){return b-a;}).join(',');", "10,9,1");
+    prova_esegui("stringhe",       "['pera','mela'].sort().join(',');", "mela,pera");
+    prova_esegui("gia' ordinato",  "[1,2,3].sort().join('');",          "123");
+    prova_esegui("uno solo",       "[5].sort().join('');",              "5");
+    prova_esegui("vuoto",          "[].sort().length;",                 "0");
+    /* ! `undefined` VA IN FONDO SEMPRE, e non passa dal confronto: e' l'unica
+     * eccezione scritta nella norma. */
+    prova_esegui("undefined in fondo",
+                 "var v=[3,undefined,1];v.sort(function(a,b){return a-b;});"
+                 "typeof v[2];", "undefined");
+    prova_esegui("sort rende lo stesso vettore",
+                 "var v=[2,1];v.sort()===v;", "true");
+
+    printf("\n=== i tempi, con un orologio inventato ===\n\n");
+    {
+        static const unsigned int ore[] = { 50, 150, 250 };
+
+        prova_tempo("setTimeout non parte subito",
+                    "setTimeout(function(){console.log('poi');},100);",
+                    ore, 0, "");
+        prova_tempo("e non parte nemmeno a 50",
+                    "setTimeout(function(){console.log('poi');},100);",
+                    ore, 1, "");
+        prova_tempo("parte a 150",
+                    "setTimeout(function(){console.log('poi');},100);",
+                    ore, 2, "poi\n");
+        prova_tempo("una volta sola",
+                    "setTimeout(function(){console.log('x');},100);",
+                    ore, 3, "x\n");
+        /* ! setInterval SI RIACCODA, e la prossima scadenza si conta da
+         * ADESSO: una pagina rimasta ferma non spara tutte le esecuzioni
+         * perse una dietro l'altra. */
+        prova_tempo("setInterval si ripete",
+                    "setInterval(function(){console.log('t');},100);",
+                    ore, 3, "t\nt\n");
+        prova_tempo("clearTimeout ferma",
+                    "var id=setTimeout(function(){console.log('mai');},100);"
+                    "clearTimeout(id);",
+                    ore, 3, "");
+        /* ! L'ORDINE E' QUELLO DELLE SCADENZE, non quello di creazione. */
+        prova_tempo("in ordine di scadenza",
+                    "setTimeout(function(){console.log('b');},90);"
+                    "setTimeout(function(){console.log('a');},10);",
+                    ore, 3, "a\nb\n");
+        /* ! UNA CHIUSURA SOPRAVVIVE ALLO SCRIPT CHE L'HA CREATA: e' il motivo
+         * per cui l'albero adesso si allunga invece di rifarsi. */
+        prova_tempo("una chiusura in coda",
+                    "var n=7;setTimeout(function(){console.log(n);},10);",
+                    ore, 3, "7\n");
+    }
+
+    printf("\n=== due script nella stessa pagina ===\n\n");
+    prova_due_script("le variabili restano",
+                     "var a=1;", "console.log(a+1);", 0, "2\n");
+    prova_due_script("una funzione del primo",
+                     "function f(){console.log('dal primo');}",
+                     "f();", 0, "dal primo\n");
+    /* ! LA PROVA DEL DIFETTO CORRETTO: il timer nasce nel PRIMO script, il
+     * secondo allunga l'albero, e la funzione deve ancora eseguire il codice
+     * suo. Con l'albero che si rifaceva, qui usciva altro — o niente. */
+    prova_due_script("un timer del primo script",
+                     "var n=42;setTimeout(function(){console.log(n);},10);",
+                     "var altro=1;function g(){return 99;}",
+                     100, "42\n");
+    prova_due_script("e la chiusura vede il suo valore",
+                     "function crea(){var v='mio';"
+                     "return function(){console.log(v);};}"
+                     "setTimeout(crea(),10);",
+                     "var v='di un altro';",
+                     100, "mio\n");
 
     printf("\n%d prove, %d sbagliate\n", fatte, sbagliate);
     return sbagliate ? 1 : 0;

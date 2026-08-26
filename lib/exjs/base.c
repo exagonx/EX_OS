@@ -667,6 +667,155 @@ static ExJsVal nat_slice_vet(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, voi
     return v;
 }
 
+static ExJsVal nat_lastIndexOf_vet(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
+{
+    unsigned int l = exjs_lunghezza(c, q), i;
+    ExJsVal      cercato = arg_di(a, n, 0);
+
+    (void)d;
+    for (i = l; i > 0; i--)
+        if (exjs_identici_pub(c, exjs_indice_prendi(c, q, i - 1), cercato))
+            return exjs_numero(c, (double)(i - 1));
+    return exjs_numero(c, -1.0);
+}
+
+/* ! shift E unshift COSTANO UN GIRO INTERO, e non c'e' modo di evitarlo con
+ * elementi densi: togliere il primo vuol dire spostare tutti gli altri. Le
+ * pagine li usano lo stesso, e su vettori di poche decine non si sente. */
+static ExJsVal nat_shift(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
+{
+    unsigned int l = exjs_lunghezza(c, q), i;
+    ExJsVal      primo;
+
+    (void)a; (void)n; (void)d;
+    if (l == 0) return exjs_indefinito();
+
+    primo = exjs_indice_prendi(c, q, 0);
+    for (i = 1; i < l; i++)
+        exjs_indice_metti(c, q, i - 1, exjs_indice_prendi(c, q, i));
+    exjs_vettore_tronca(c, q, l - 1);
+    return primo;
+}
+
+static ExJsVal nat_unshift(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
+{
+    unsigned int l = exjs_lunghezza(c, q), i;
+    int          k;
+
+    (void)d;
+    if (n <= 0) return exjs_numero(c, (double)l);
+
+    /* All'indietro, o si sovrascriverebbero gli elementi non ancora spostati. */
+    for (i = l; i > 0; i--)
+        exjs_indice_metti(c, q, i - 1 + (unsigned int)n,
+                          exjs_indice_prendi(c, q, i - 1));
+    for (k = 0; k < n; k++) exjs_indice_metti(c, q, (unsigned int)k, a[k]);
+    return exjs_numero(c, (double)(l + (unsigned int)n));
+}
+
+static ExJsVal nat_concat(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
+{
+    ExJsVal      v = exjs_vettore(c);
+    unsigned int k = 0, i, l = exjs_lunghezza(c, q);
+    int          j;
+
+    (void)d;
+    for (i = 0; i < l; i++) exjs_indice_metti(c, v, k++, exjs_indice_prendi(c, q, i));
+
+    for (j = 0; j < n; j++) {
+        /* ! UN VETTORE PASSATO A concat SI APRE, un valore qualunque no:
+         * `[1].concat([2,3])` fa [1,2,3] e `[1].concat(2)` fa [1,2]. E' una
+         * differenza che le pagine usano, non un caso limite. */
+        int          o = exjs_a_oggetto(a[j]);
+        ExJsOggetto *O = exjs_ogg(c, o);
+
+        if (O && O->classe == EXJS_CL_VETTORE) {
+            unsigned int m = exjs_lunghezza(c, a[j]), t;
+            for (t = 0; t < m; t++)
+                exjs_indice_metti(c, v, k++, exjs_indice_prendi(c, a[j], t));
+        } else {
+            exjs_indice_metti(c, v, k++, a[j]);
+        }
+    }
+    return v;
+}
+
+/* =============================================================================
+ * sort
+ *
+ * ! SENZA CONFRONTO SI ORDINA COME TESTO, ANCHE I NUMERI, ed e' la sorpresa
+ * piu' famosa di JavaScript: `[10,9,1].sort()` da' [1,10,9], perche' "10" viene
+ * prima di "9". Sembra un difetto e non lo e': e' quello che dice la norma, e
+ * un motore che ordinasse i numeri per valore darebbe risultati diversi da
+ * ogni altro proprio sul codice che si fida del comportamento noto.
+ *
+ * ! `undefined` VA IN FONDO SEMPRE, e non passa dal confronto: e' l'unica
+ * eccezione scritta nella norma, ed esiste perche' un confronto scritto da chi
+ * usa il motore non se lo aspetterebbe mai.
+ *
+ * ! E L'ORDINAMENTO E' A INSERZIONE, non un quicksort. Due ragioni: i vettori
+ * di una pagina sono corti — decine, non milioni — e soprattutto il confronto
+ * puo' essere JavaScript, quindi ogni paragone costa mille volte piu' del
+ * riordino. Con un confronto cosi' caro, il numero di CONFRONTI e' l'unica
+ * cosa che conta, e a inserzione su dati quasi ordinati e' il minimo possibile.
+ * ========================================================================== */
+static int precede(ExJsCtx *c, ExJsVal x, ExJsVal y, ExJsVal f)
+{
+    if (exjs_tipo(c, f) == EXJS_FUNZIONE) {
+        ExJsVal arg[2], r;
+
+        arg[0] = x; arg[1] = y;
+        r = exjs_chiama(c, f, exjs_indefinito(), arg, 2, 0);
+        return exjs_a_numero(c, r) <= 0.0;
+    }
+    {
+        char         b[TESTO_MAX];
+        const char  *sy;
+        unsigned int i;
+
+        copia_val(c, x, b, sizeof(b));
+        sy = exjs_a_stringa(c, y);
+        for (i = 0; b[i] && b[i] == sy[i]; i++) { }
+        return (int)(unsigned char)b[i] <= (int)(unsigned char)sy[i];
+    }
+}
+
+static ExJsVal nat_sort(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
+{
+    unsigned int l = exjs_lunghezza(c, q), i, j, fine;
+    ExJsVal      f = arg_di(a, n, 0);
+
+    (void)d;
+
+    /* Prima gli `undefined` in fondo, e poi non li si tocca piu'. */
+    fine = l;
+    for (i = 0; i < fine; ) {
+        if (exjs_tipo(c, exjs_indice_prendi(c, q, i)) == EXJS_INDEFINITO) {
+            for (j = i; j + 1 < fine; j++)
+                exjs_indice_metti(c, q, j, exjs_indice_prendi(c, q, j + 1));
+            exjs_indice_metti(c, q, fine - 1, exjs_indefinito());
+            fine--;
+            continue;
+        }
+        i++;
+    }
+
+    for (i = 1; i < fine; i++) {
+        ExJsVal x = exjs_indice_prendi(c, q, i);
+
+        j = i;
+        while (j > 0 && !precede(c, exjs_indice_prendi(c, q, j - 1), x, f)) {
+            exjs_indice_metti(c, q, j, exjs_indice_prendi(c, q, j - 1));
+            j--;
+            if (exjs_finita(c)) return q;
+        }
+        exjs_indice_metti(c, q, j, x);
+    }
+    /* ! RENDE LO STESSO VETTORE, non una copia: `v.sort()` riordina `v`, e chi
+     * si aspettasse una copia troverebbe l'originale gia' cambiato. */
+    return q;
+}
+
 /* =============================================================================
  * forEach, map, filter — le funzioni che CHIAMANO codice JavaScript
  *
@@ -1110,6 +1259,39 @@ static ExJsVal nat_parse(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d
 }
 
 /* =============================================================================
+ * setTimeout, setInterval — e il tempo che arriva da fuori
+ *
+ * ! QUESTE NON FANNO SCADERE NIENTE: mettono in coda. A far passare il tempo e'
+ * chi ospita, che chiama exjs_pompa con l'ora che ha lui. In un browser e' il
+ * ciclo dei messaggi, in un banco di prova sono numeri inventati — ed e'
+ * proprio per questo che una prova sui timer puo' essere ripetibile.
+ *
+ * ! L'ORA DI PARTENZA E' QUELLA DELL'ULTIMA POMPATA, non l'orologio: il motore
+ * non ne ha uno. Chi non ha ancora pompato mai e' all'istante zero, il che e'
+ * esattamente cio' che serve a uno script che parte con la pagina.
+ * ========================================================================== */
+static ExJsVal nat_setTimeout(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
+{
+    int ritardo = arg_intero(c, a, n, 1, 0);
+    int ripete  = (d != 0);
+
+    (void)q;
+    if (exjs_tipo(c, arg_di(a, n, 0)) != EXJS_FUNZIONE) return exjs_numero(c, 0);
+    if (ritardo < 0) ritardo = 0;
+
+    return exjs_numero(c, (double)exjs_accoda(c, a[0],
+                            exjs_ora(c) + (unsigned int)ritardo,
+                            ripete ? (unsigned int)ritardo : 0u));
+}
+
+static ExJsVal nat_clearTimeout(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
+{
+    (void)q; (void)d;
+    exjs_disdici(c, (unsigned int)arg_intero(c, a, n, 0, 0));
+    return exjs_indefinito();
+}
+
+/* =============================================================================
  * LA REGISTRAZIONE
  *
  * ! SI FA UNA VOLTA SOLA, e run.c la chiama a ogni exjs_esegui: la bandiera sta
@@ -1135,6 +1317,11 @@ void exjs_base_registra(ExJsCtx *c)
     exjs_base_segna(c);
 
     g = exjs_globale(c);
+
+    metti_nat(c, g, "setTimeout",    nat_setTimeout,   0);
+    metti_nat(c, g, "setInterval",   nat_setTimeout,   (void *)1);
+    metti_nat(c, g, "clearTimeout",  nat_clearTimeout, 0);
+    metti_nat(c, g, "clearInterval", nat_clearTimeout, 0);
 
     metti_nat(c, g, "parseInt",   nat_parseint,   0);
     metti_nat(c, g, "parseFloat", nat_parsefloat, 0);
@@ -1202,6 +1389,11 @@ void exjs_base_registra(ExJsCtx *c)
         metti_nat_ogg(c, pv, "indexOf",  nat_indexOf_vet, 0);
         metti_nat_ogg(c, pv, "reverse",  nat_reverse,     0);
         metti_nat_ogg(c, pv, "slice",    nat_slice_vet,   0);
+        metti_nat_ogg(c, pv, "lastIndexOf", nat_lastIndexOf_vet, 0);
+        metti_nat_ogg(c, pv, "shift",    nat_shift,       0);
+        metti_nat_ogg(c, pv, "unshift",  nat_unshift,     0);
+        metti_nat_ogg(c, pv, "concat",   nat_concat,      0);
+        metti_nat_ogg(c, pv, "sort",     nat_sort,        0);
         metti_nat_ogg(c, pv, "forEach",  nat_forEach,     0);
         metti_nat_ogg(c, pv, "map",      nat_map,         0);
         metti_nat_ogg(c, pv, "filter",   nat_filter,      0);
@@ -1211,9 +1403,6 @@ void exjs_base_registra(ExJsCtx *c)
 /* =============================================================================
  * QUELLO CHE NON C'E', DICHIARATO
  *
- *   Array.sort                    vuole un confronto che chiama JavaScript;
- *                                 il meccanismo c'e' gia' (vedi scorri), manca
- *                                 solo l'ordinamento
  *   Date                          vuole l'orologio, e l'orologio non sta in
  *                                 questa libreria: arrivera' come nativa
  *                                 registrata da chi ospita, come setTimeout

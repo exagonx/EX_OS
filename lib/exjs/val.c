@@ -164,6 +164,8 @@ struct ExJsCtx {
 
     unsigned int seme;              /* per Math.random */
     int          base_fatta;        /* la libreria di base e' gia' registrata */
+    int          ast_pronto;        /* l'albero e' stato preparato una volta */
+    unsigned int ora_ms;            /* l'ultima ora vista da exjs_pompa */
 
     /* ! DOVE FINISCE console.log LO DECIDE CHI OSPITA, non questa libreria.
      * In un browser va nella sua console, in un banco di prova sullo schermo,
@@ -262,6 +264,8 @@ ExJsCtx *exjs_apri(void *memoria, unsigned int byte,
     c->ese  = 0;
     c->seme = 2463534242u;          /* un seme qualunque, ma non zero */
     c->base_fatta  = 0;
+    c->ast_pronto  = 0;
+    c->ora_ms      = 0;
     c->uscita      = 0;
     c->uscita_dato = 0;
 
@@ -734,6 +738,102 @@ ExJsVal exjs_prendi(ExJsCtx *c, ExJsVal ogg, const char *nome)
         }
     }
     return V_INDEF;
+}
+
+unsigned int exjs_ora(ExJsCtx *c)              { return c ? c->ora_ms : 0; }
+void         exjs_ora_metti(ExJsCtx *c, unsigned int t) { if (c) c->ora_ms = t; }
+
+int  exjs_ast_pronto(ExJsCtx *c) { return c->ast_pronto; }
+void exjs_ast_segna(ExJsCtx *c)  { c->ast_pronto = 1; }
+
+/* =============================================================================
+ * LA CODA DEI LAVORI
+ *
+ * ! IL TEMPO ARRIVA DA FUORI, e il perche' sta in exjs.h: una libreria che
+ * chiedesse l'ora all'orologio darebbe prove che passano oggi e falliscono
+ * domani. Qui ci sono soltanto delle scadenze da confrontare con un numero che
+ * porta chi pompa.
+ *
+ * ! E L'IDENTIFICATIVO NON E' L'INDICE DELLA CASELLA. Se lo fosse, disdire un
+ * lavoro finito e poi rimpiazzato disdirebbe quello NUOVO — un difetto che
+ * compare solo quando la coda si riusa, cioe' dopo un po' che la pagina gira.
+ * Il numero cresce e non torna indietro.
+ * ========================================================================== */
+unsigned int exjs_accoda(ExJsCtx *c, ExJsVal f, unsigned int quando_ms,
+                         unsigned int ripeti_ms)
+{
+    unsigned int i;
+
+    if (!c) return 0;
+    for (i = 0; i < c->lavori_max; i++) {
+        if (c->lavori[i].usato) continue;
+
+        c->lavori[i].usato     = 1;
+        c->lavori[i].id        = c->prossimo_id++;
+        c->lavori[i].funzione  = f;
+        c->lavori[i].quando_ms = quando_ms;
+        c->lavori[i].ripeti_ms = ripeti_ms;
+        return c->lavori[i].id;
+    }
+    /* ! LA CODA PIENA SI DICE RENDENDO ZERO, e zero non e' mai un
+     * identificativo valido: chi accoda puo' accorgersene, e chi non guarda si
+     * ritrova un timer che non parte invece di uno che parte per sbaglio. */
+    return 0;
+}
+
+void exjs_disdici(ExJsCtx *c, unsigned int id)
+{
+    unsigned int i;
+
+    if (!c || !id) return;
+    for (i = 0; i < c->lavori_max; i++)
+        if (c->lavori[i].usato && c->lavori[i].id == id) {
+            c->lavori[i].usato = 0;
+            return;
+        }
+}
+
+int exjs_lavori_in_attesa(ExJsCtx *c)
+{
+    unsigned int i, n = 0;
+
+    if (!c) return 0;
+    for (i = 0; i < c->lavori_max; i++) if (c->lavori[i].usato) n++;
+    return (int)n;
+}
+
+/* Prende il lavoro scaduto piu' VECCHIO e lo toglie (o lo riaccoda, se si
+ * ripete). Rende 0 quando non ce n'e' piu' nessuno da fare a quest'ora.
+ *
+ * ! IL PIU' VECCHIO PER PRIMO, e non il primo che si trova nel vettore: due
+ * `setTimeout` con scadenze diverse devono partire in ORDINE DI SCADENZA, e le
+ * caselle sono in ordine di creazione. */
+int exjs_lavoro_scaduto(ExJsCtx *c, unsigned int ora_ms, ExJsVal *fuori)
+{
+    unsigned int i;
+    int          scelto = -1;
+
+    if (!c) return 0;
+
+    for (i = 0; i < c->lavori_max; i++) {
+        if (!c->lavori[i].usato) continue;
+        if (c->lavori[i].quando_ms > ora_ms) continue;
+        if (scelto < 0 ||
+            c->lavori[i].quando_ms < c->lavori[scelto].quando_ms) scelto = (int)i;
+    }
+    if (scelto < 0) return 0;
+
+    *fuori = c->lavori[scelto].funzione;
+
+    if (c->lavori[scelto].ripeti_ms) {
+        /* ! LA PROSSIMA SCADENZA SI CONTA DA ADESSO, non da quella di prima:
+         * altrimenti un intervallo rimasto indietro — una pagina ferma mezzo
+         * secondo — sparerebbe tutte le esecuzioni perse una dietro l'altra. */
+        c->lavori[scelto].quando_ms = ora_ms + c->lavori[scelto].ripeti_ms;
+    } else {
+        c->lavori[scelto].usato = 0;
+    }
+    return 1;
 }
 
 int  exjs_base_gia_fatta(ExJsCtx *c) { return c->base_fatta; }

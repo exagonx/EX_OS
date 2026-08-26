@@ -939,6 +939,56 @@ static void esegui(Ese *E, int n, int ambito)
 /* =============================================================================
  * LA PORTA D'INGRESSO
  * ========================================================================== */
+/* =============================================================================
+ * ! LA CODA DEI LAVORI HA BISOGNO DI UN INTERPRETE, e non ne ha uno suo.
+ *
+ * `exjs_pompa` viene chiamata da FUORI — dal ciclo dei messaggi del browser —
+ * quando nessuno script sta girando: li' `exjs_chiama` non troverebbe nessuno
+ * stato d'esecuzione a cui appoggiarsi. Percio' se ne allestisce uno per la
+ * durata della pompata, esattamente come fa exjs_esegui.
+ *
+ * ! E L'ALBERO E' QUELLO DI PRIMA, non uno nuovo: le funzioni in coda sono
+ * indici dentro di lui. E' il motivo per cui l'albero adesso si allunga invece
+ * di rifarsi — vedi sopra.
+ * ========================================================================== */
+int exjs_pompa(ExJsCtx *c, unsigned int ora_ms)
+{
+    Ese     E;
+    int     fatti = 0;
+    ExJsVal f;
+
+    if (!c || !exjs_ast_pronto(c)) return 0;
+
+    E.c          = c;
+    E.A          = exjs_ctx_ast(c);
+    E.err        = 0;
+    E.rotto      = 0;
+    E.passi      = 0;
+    E.profondita = 0;
+    E.segnale    = SEG_AVANTI;
+    E.ritorno    = exjs_indefinito();
+
+    exjs_ese_metti(c, &E);
+    exjs_ora_metti(c, ora_ms);
+
+    /* ! SI PRENDE UN LAVORO PER VOLTA E SI RICHIEDE, invece di scorrere un
+     * elenco: la funzione appena eseguita puo' averne accodati altri — anzi,
+     * `setInterval` lo fa sempre — e un ciclo su un elenco preso all'inizio
+     * lavorerebbe su una fotografia gia' vecchia.
+     *
+     * ! E CIO' CHE SCADE MENTRE SI POMPA NON SI ESEGUE IN QUESTO GIRO. Senza
+     * questo, un `setTimeout(f, 0)` che si riaccoda darebbe un ciclo infinito
+     * dentro una sola pompata, e il browser non tornerebbe piu' a disegnare. */
+    while (!E.rotto && exjs_lavoro_scaduto(c, ora_ms, &f)) {
+        exjs_chiama(c, f, exjs_indefinito(), 0, 0, 0);
+        fatti++;
+        if (fatti > 1000) break;        /* una pompata non e' un'eternita' */
+    }
+
+    exjs_ese_metti(c, 0);
+    return fatti;
+}
+
 int exjs_esegui(ExJsCtx *c, const char *sorgente, unsigned int n,
                 ExJsVal *risultato, ExJsErrore *err)
 {
@@ -955,12 +1005,28 @@ int exjs_esegui(ExJsCtx *c, const char *sorgente, unsigned int n,
 
     A = exjs_ctx_ast(c);
 
-    /* ! L'ALBERO SI RIFA' A OGNI exjs_esegui, ma le VARIABILI NO: due <script>
-     * nella stessa pagina vedono le stesse variabili — ed e' esattamente cio'
-     * che le pagine si aspettano — mentre il testo del primo non serve piu' a
-     * nessuno una volta eseguito. */
-    exjs_ast_prepara(A, exjs_ctx_nodi(c), exjs_ctx_nodi_max(c),
-                     exjs_ctx_ast_arena(c), exjs_ctx_ast_arena_max(c));
+    /* =====================================================================
+     * ! L'ALBERO NON SI RIFA': SI ALLUNGA. E questa e' una correzione, non una
+     * scelta di comodo.
+     *
+     * La prima stesura rifaceva l'albero da capo a ogni exjs_esegui, e sarebbe
+     * andata bene finche' uno script finiva quando finiva il suo testo. Ma una
+     * funzione — una chiusura, un gestore di evento, un `setTimeout` — e' un
+     * INDICE DENTRO L'ALBERO: sopravvive allo script che l'ha creata, e il
+     * secondo <script> della pagina le avrebbe fatto puntare a nodi diversi.
+     * Il guasto non sarebbe stato un errore: sarebbe stata una funzione che
+     * esegue il codice di un'altra.
+     *
+     * Adesso l'albero si prepara UNA VOLTA e ogni script accoda i suoi nodi in
+     * fondo, come le variabili si accumulano sul globale. Lo spazio dei nodi
+     * non torna piu' indietro — e' lo stesso prezzo dell'arena, dichiarato in
+     * val.c — e si paga solo su pagine che eseguono molti script.
+     * ===================================================================== */
+    if (!exjs_ast_pronto(c)) {
+        exjs_ast_prepara(A, exjs_ctx_nodi(c), exjs_ctx_nodi_max(c),
+                         exjs_ctx_ast_arena(c), exjs_ctx_ast_arena_max(c));
+        exjs_ast_segna(c);
+    }
 
     if (!exjs_analizza(A, sorgente, n, exjs_ctx_scratch(c),
                        EXJS_SCRATCH, err))

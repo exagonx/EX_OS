@@ -310,6 +310,11 @@ void         exjs_base_segna(ExJsCtx *c);
 void         exjs_vettore_tronca(ExJsCtx *c, ExJsVal vet, unsigned int nuova);
 int          exjs_identici_pub(ExJsCtx *c, ExJsVal a, ExJsVal b);
 void         exjs_uscita_scrivi(ExJsCtx *c, const char *s, unsigned int n);
+int          exjs_ast_pronto(ExJsCtx *c);
+void         exjs_ast_segna(ExJsCtx *c);
+int          exjs_lavoro_scaduto(ExJsCtx *c, unsigned int ora_ms, ExJsVal *fuori);
+unsigned int exjs_ora(ExJsCtx *c);
+void         exjs_ora_metti(ExJsCtx *c, unsigned int t);
 
 void exjs_ast_prepara(ExJsAst *A, ExJsNodo *nodi, unsigned int nodi_max,
                       char *arena, unsigned int arena_max);
