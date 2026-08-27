@@ -152,6 +152,14 @@ lavora su una copia: niente cambia finche' non si preme <b>Salva</b>.
     <td>acceso o spento. Spento, il motore non si apre affatto: una pagina
         senza script non paga mezzo megabyte e due librerie condivise per non
         fare niente. Vale dalla pagina successiva.</td></tr>
+<tr><td><b>Motore</b></td>
+    <td><b>ExJs (66 KB)</b> oppure <b>QuickJS (594 KB)</b>. Il primo e' l'ES3
+        scritto dentro EX-OS: c'e' sempre, parte subito, e per una pagina con
+        uno script di dieci righe e' quello giusto. Il secondo e' il motore
+        completo &mdash; espressioni regolari, <code>Date</code>,
+        <code>try/catch</code>, ES2017 &mdash; e sta in
+        <code>/exwin/lib/quickjs.so</code>, che si puo' anche non aver
+        installato. Vale dalla pagina successiva.</td></tr>
 <tr><td><b>Immagini</b></td>
     <td>spente, al loro posto si legge il testo alternativo &mdash; che e'
         esattamente cio' a cui l'attributo <code>alt</code> serve. Su una rete
@@ -226,12 +234,39 @@ se e' cambiata.
 </p>
 
 <p class="nota">
-<b class="manca">Quello che NON c'e', dichiarato:</b> espressioni regolari,
-<code>Date</code>, <code>try/catch</code> completo, <code>Function</code>,
-<code>el.style</code> come oggetto, e tutto ES5 in avanti &mdash;
-<code>async</code>/<code>await</code>, <code>Proxy</code>, la
+<b class="manca">Quello che a ExJs NON c'e', dichiarato:</b> espressioni
+regolari, <code>Date</code>, <code>try/catch</code> completo,
+<code>Function</code>, <code>el.style</code> come oggetto, e tutto ES5 in
+avanti &mdash; <code>async</code>/<code>await</code>, <code>Proxy</code>, la
 destrutturazione, le classi. Non c'e' nemmeno un raccoglitore di memoria: il
 posto e' preparato, ma una pagina lasciata a mutare per ore consuma.
+</p>
+
+<h3>Due motori, e come si scambiano</h3>
+
+<p>
+Da <b>File &gt; Impostazioni</b> si sceglie <b>QuickJS</b> al posto di ExJs:
+espressioni regolari, <code>Date</code>, <code>try/catch</code>, le promesse e
+ES2017. E' il motore di Fabrice Bellard, adattato a EX-OS e messo sotto la
+stessa interfaccia.
+</p>
+
+<p class="nota">
+<b>Il ponte col documento non cambia.</b> Le stesse novantadue prove del ponte
+passano con l'uno e con l'altro, e questa pagina rende un documento identico
+byte per byte in tutt'e due i casi. E' il motivo per cui il linguaggio,
+l'albero e il ponte sono tre librerie separate invece di una.
+</p>
+
+<p>
+<b>Aiuto &gt; Informazioni su</b> dice quale motore sta girando <i>davvero</i>:
+se si e' scelto QuickJS e <code>quickjs.so</code> non e' installata, il
+navigatore apre ExJs e va avanti invece di fermarsi &mdash; ma lo scrive.
+</p>
+
+<p>
+La pagina <a href="javascript.html">JavaScript, sette cose alla volta</a> e'
+una prova che si guarda: se i sette riquadri si riempiono, il motore funziona.
 </p>
 
 <p>
@@ -327,6 +362,9 @@ aprono con questo stesso navigatore.
         condivise</td></tr>
 <tr><td><a href="rete.html"><b>La rete</b></a></td>
     <td>schede, indirizzo, DHCP, DNS, i servizi in ascolto, il TLS 1.3</td></tr>
+<tr><td><a href="javascript.html"><b>JavaScript</b></a></td>
+    <td>sette riquadri che si riempiono da soli: una spiegazione e una prova
+        del motore insieme</td></tr>
 <tr><td><a href="sviluppo.html"><b>Scrivere programmi</b></a></td>
     <td>gcc dentro EX-OS, la libc, il formato dei programmi, le librerie
         condivise, un'applicazione grafica dalla prima riga</td></tr>

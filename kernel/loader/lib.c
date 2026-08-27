@@ -423,6 +423,53 @@ senza_memoria:
     return ERR(ENOMEM);
 }
 
+/* =============================================================================
+ * lib_trova — «CE L'HO GIA' DENTRO?», e perche' questa domanda serve
+ *
+ * ! DUE PEZZI DELLO STESSO PROCESSO POSSONO VOLER APRIRE LA STESSA COSA E NON
+ * SAPERLO L'UNO DELL'ALTRO. Ogni programma e ogni libreria si portano dentro
+ * il proprio STUB — le poche righe che risolvono i nomi — e ogni stub ha i
+ * propri dati: sono copie separate, per costruzione. Finche' la libreria da
+ * aprire e' una sola non fa differenza. Ma dal giorno che ce ne sono DUE che
+ * offrono la stessa interfaccia — exjs.so e quickjs.so — due stub possono
+ * sceglierne una ciascuno, e allora nello stesso processo girano due motori
+ * che non si vedono. Il sintomo e' stato un page fault dentro il primo, con
+ * in mano un contesto costruito dal secondo.
+ *
+ * ! LA RISPOSTA NON PUO' VENIRE DA RING 3, e non e' una scelta di stile: un
+ * programma non ha modo di sapere quali pagine gli sono state mappate senza
+ * provare a leggerle, e provare vuol dire un fault. Il caricatore invece lo
+ * sa: la tavola delle pagine del processo E' l'elenco.
+ *
+ * Rende l'indirizzo della tabella se la libreria e' gia' agganciata a QUESTO
+ * processo, -ENOENT se non lo e'. Non carica, non aggancia, non tocca il
+ * disco: e' una domanda, non un ordine.
+ * ============================================================================= */
+int32_t lib_trova(const char *percorso, Process *proc, uint32_t *out_tabella)
+{
+    uint32_t i;
+
+    if (percorso == NULL || proc == NULL || out_tabella == NULL)
+        return ERR(EINVAL);
+
+    for (i = 0; i < LIB_MAX; i++) {
+        if (!g_lib[i].usata) continue;
+        if (!perc_uguale(g_lib[i].percorso, percorso)) continue;
+
+        /* ! LA DOMANDA LA RISPONDE LA TAVOLA DELLE PAGINE, come per il
+         * controllo del doppio aggancio in lib_apri: se l'indirizzo della
+         * tabella di esportazione e' mappato in questo processo, la libreria
+         * e' sua. Un elenco nel PCB direbbe la stessa cosa e potrebbe
+         * divergere. */
+        if (paging_get_physical(proc->page_directory, g_lib[i].tabella) == 0)
+            return ERR(ENOENT);
+
+        *out_tabella = g_lib[i].tabella;
+        return 0;
+    }
+    return ERR(ENOENT);
+}
+
 /* -----------------------------------------------------------------------------
  * lib_apri — l'unica porta d'ingresso
  *

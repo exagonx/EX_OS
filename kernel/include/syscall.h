@@ -559,6 +559,33 @@ typedef struct {
 #define SYS_LIB_APRI      248   /* ebx = const char* */
 
 /* ==========================================================================
+ * SYS_LIB_TROVA (238) — «questa libreria ce l'ho GIA' dentro?»
+ *
+ *     ebx = const char *percorso
+ *     rende l'indirizzo della tabella se e' gia' agganciata a questo
+ *     processo, -ENOENT se non lo e'. NON la carica e non la aggancia.
+ *
+ * ! SERVE PERCHE' UN PROCESSO PUO' AVERE PIU' STUB, E OGNUNO HA I PROPRI
+ * DATI. Ogni programma e ogni libreria si portano dentro le poche righe che
+ * risolvono i nomi, e sono copie separate per costruzione. Finche' la
+ * libreria da aprire e' una sola non fa differenza; ma da quando ce ne sono
+ * DUE che offrono la stessa interfaccia — exjs.so e quickjs.so, i due motori
+ * JavaScript — due stub possono sceglierne una ciascuno, e allora nello
+ * stesso processo girano due motori che non si vedono. Il sintomo e' stato un
+ * page fault dentro il primo, con in mano un contesto costruito dal secondo.
+ *
+ * ! E LA RISPOSTA NON PUO' DARSELA RING 3: un programma non ha modo di sapere
+ * quali pagine gli sono mappate senza provare a leggerle, e provare vuol dire
+ * un fault. Il caricatore invece lo sa — la tavola delle pagine del processo
+ * E' l'elenco.
+ *
+ * ! IL NUMERO E' 238 E NON 256: la tabella e' piena fino a 255, e 238 era un
+ * buco lasciato da una syscall tolta. Meglio riempire un buco che allargare
+ * una tabella che entra in una pagina.
+ * ========================================================================== */
+#define SYS_LIB_TROVA     238   /* ebx = const char* */
+
+/* ==========================================================================
  * SYS_FB_MAP (249) — il framebuffer, e SOLO quello
  *
  * Rende l'indirizzo virtuale del framebuffer mappato nel processo, o -errno.
@@ -1146,6 +1173,7 @@ int32_t sys_modo_testo(InterruptFrame *f);
 int32_t sys_video_info(InterruptFrame *f);
 int32_t sys_log(InterruptFrame *f);
 int32_t sys_lib_apri(InterruptFrame *f);
+int32_t sys_lib_trova(InterruptFrame *f);
 int32_t sys_interrompi(InterruptFrame *f);
 int32_t sys_pty_apri(InterruptFrame *f);
 int32_t sys_pty_ctl(InterruptFrame *f);

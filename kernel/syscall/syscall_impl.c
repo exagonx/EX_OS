@@ -4708,6 +4708,34 @@ int32_t sys_lib_apri(InterruptFrame *frame)
 }
 
 /* =============================================================================
+ * SYS_LIB_TROVA (238) — la stessa porta, ma solo per chiedere
+ *
+ * Il perche' sta in kernel/include/syscall.h e in kernel/loader/lib.c. Qui c'e'
+ * il passaggio del confine, identico a quello di sys_lib_apri: il percorso si
+ * COPIA prima di usarlo.
+ * ========================================================================== */
+int32_t sys_lib_trova(InterruptFrame *frame)
+{
+    const char *u    = (const char *)frame->ebx;
+    Process    *self = proc_get_current();
+    char        perc[128];
+    uint32_t    i;
+    uint32_t    tabella = 0;
+    int32_t     rc;
+
+    if (self == NULL) return ERR(ESRCH);
+    if (!syscall_verify_str(u, sizeof(perc) - 1)) return ERR(EFAULT);
+
+    for (i = 0; i + 1 < sizeof(perc) && u[i]; i++) perc[i] = u[i];
+    perc[i] = '\0';
+
+    rc = lib_trova(perc, self, &tabella);
+    if (rc != 0) return rc;
+
+    return (int32_t)tabella;
+}
+
+/* =============================================================================
  * SYS_POLL (244) — aspettare piu' sorgenti insieme
  *
  * L'interfaccia e il perche' stanno in kernel/include/syscall.h. Qui c'e' il

@@ -134,4 +134,9 @@ int elf_load_residente(const char *path, Process *proc, ElfLoadResult *result);
  * ============================================================================= */
 int32_t lib_apri(const char *percorso, Process *proc, uint32_t *out_tabella);
 
+/* «Ce l'ho gia' dentro?»: rende la tabella se la libreria e' gia'
+ * agganciata a questo processo, -ENOENT se no. Non carica niente.
+ * Il perche' per esteso sta in kernel/loader/lib.c. */
+int32_t lib_trova(const char *percorso, Process *proc, uint32_t *out_tabella);
+
 #endif /* ELF_H */

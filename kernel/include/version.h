@@ -155,6 +155,28 @@
  * sa quali messaggi ha — ma sa dove sta scritta, cosi' che non ce ne siano
  * due.
  */
+/* 0.207 -> 0.208: SYS_LIB_TROVA (238) — «questa libreria ce l'ho gia' dentro?»
+ *
+ * ! DUE STUB NELLO STESSO PROCESSO POSSONO SCEGLIERE DUE LIBRERIE DIVERSE, e
+ * fino a oggi non c'era modo di accorgersene. Ogni programma e ogni libreria
+ * si portano dentro le poche righe che risolvono i nomi, e sono copie
+ * separate con dati separati: finche' la libreria da aprire era una sola non
+ * faceva differenza. Da quando ce ne sono DUE che offrono la stessa
+ * interfaccia — exjs.so e quickjs.so, i due motori JavaScript — il browser ne
+ * apriva una ed exdom.so l'altra, e nello stesso processo giravano due motori
+ * che non si vedevano.
+ *
+ * ! IL SINTOMO ERA UN PAGE FAULT DENTRO IL PRIMO MOTORE con in mano un
+ * contesto costruito dal secondo, e non somigliava affatto alla sua causa.
+ *
+ * ! LA RISPOSTA NON PUO' DARSELA RING 3: un programma non ha modo di sapere
+ * quali pagine gli sono mappate senza provare a leggerle, e provare vuol dire
+ * un fault. Il caricatore invece lo sa, perche' la tavola delle pagine del
+ * processo E' l'elenco. Vedi kernel/loader/lib.c.
+ *
+ * ! E IL NUMERO 238 E' UN BUCO RIEMPITO, non un allargamento: la tabella
+ * arriva a 255 ed entra in una pagina.
+ */
 /* 0.206 -> 0.207: SYS_CONSOLE_GRAFICA (233) — chi tiene la console della
  * grafica, e quale sia.
  *
@@ -172,7 +194,7 @@
  * Lo usa anche `exwin`, che con questa voce sa quando la grafica e' finita e
  * riporta l'utente alla console da cui era partito.
  */
-#define EXOS_VERSION    "0.207"
+#define EXOS_VERSION    "0.208"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

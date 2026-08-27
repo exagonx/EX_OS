@@ -27,8 +27,23 @@
 #include "exjs.h"
 #include "exlib.h"
 
-#define SYS_WRITE   4
-#define SYS_EXIT    1
+#define SYS_WRITE       4
+#define SYS_EXIT        1
+#define SYS_LIB_TROVA   238
+
+/* ! LA SYSCALL SI CHIAMA A MANO, come tutto in questo file: lo stub non
+ * dipende dalla libc — e' l'unico pezzo che deve funzionare PRIMA che una
+ * libreria qualunque sia aperta. Vedi la nota in testa a exlib.c. */
+static int lib_gia_aperta(const char *percorso)
+{
+    int r;
+
+    __asm__ volatile ("int $0x80"
+                      : "=a"(r)
+                      : "a"(SYS_LIB_TROVA), "b"(percorso)
+                      : "memory");
+    return r > 0;
+}
 
 static void grida_e_muori(const char *s)
 {
@@ -122,12 +137,40 @@ static void assicura(void)
 
     if (P.pronto) return;
 
+    /* =========================================================================
+     * ! PRIMA SI GUARDA CHE COSA C'E' GIA' IN QUESTO PROCESSO, e questa e' la
+     * riga che tiene insieme tutto il resto.
+     *
+     * Ogni programma e ogni libreria si portano dentro una copia di questo
+     * stub, con i propri dati: il browser ha il suo, exdom.so ha il suo. Se
+     * ognuno scegliesse per conto proprio, nello stesso processo girerebbero
+     * DUE motori che non si vedono — e il ponte lavorerebbe su un contesto
+     * costruito dall'altro. Il sintomo, quando e' successo, e' stato un page
+     * fault dentro exjs.so con in mano un contesto di QuickJS: non somigliava
+     * affatto alla sua causa.
+     *
+     * ! CHI ARRIVA PER PRIMO DECIDE PER TUTTI, ed e' l'unica regola che due
+     * stub separati possono seguire senza parlarsi. Nel browser il primo e'
+     * lui — apre il motore prima di aprire il ponte — quindi la scelta
+     * dell'utente vale; per chiunque arrivi dopo, «quella che c'e' gia'» E'
+     * la scelta.
+     * ===================================================================== */
+    t = 0;
+    if (lib_gia_aperta(g_dove_exjs[0]) || lib_gia_aperta(g_dove_exjs[1])) {
+        t = exlib_apri_fra(g_dove_exjs,
+                           (int)(sizeof g_dove_exjs / sizeof g_dove_exjs[0]));
+        if (t) g_caricato = 0;
+    } else if (lib_gia_aperta(g_dove_qjs[0]) || lib_gia_aperta(g_dove_qjs[1])) {
+        t = exlib_apri_fra(g_dove_qjs,
+                           (int)(sizeof g_dove_qjs / sizeof g_dove_qjs[0]));
+        if (t) g_caricato = 1;
+    }
+
     /* ! SI PROVA QUELLA VOLUTA, POI L'ALTRA. Un sistema senza quickjs.so —
      * che e' un file da mezzo megabyte e puo' benissimo non essere stato
      * installato — deve continuare a eseguire gli script con ExJs, non
      * fermarsi. Quale sia finita davvero lo dice exjs_motore_ora(). */
-    t = 0;
-    if (g_voluto) {
+    if (t == 0 && g_voluto) {
         t = exlib_apri_fra(g_dove_qjs,
                            (int)(sizeof g_dove_qjs / sizeof g_dove_qjs[0]));
         if (t) g_caricato = 1;

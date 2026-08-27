@@ -158,6 +158,7 @@ void syscall_init(void)
     syscall_table[SYS_VIDEO_INFO]   = sys_video_info;
     syscall_table[SYS_LOG]          = sys_log;
     syscall_table[SYS_LIB_APRI]     = sys_lib_apri;
+    syscall_table[SYS_LIB_TROVA]    = sys_lib_trova;
     syscall_table[SYS_FB_MAP]       = sys_fb_map;
     syscall_table[SYS_INTERROMPI]   = sys_interrompi;
     syscall_table[SYS_PTY_APRI]     = sys_pty_apri;

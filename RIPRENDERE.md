@@ -1,5 +1,52 @@
 # DOVE RIPRENDERE — 27 agosto 2026
 
+## 27 agosto 2026 — DUE MOTORI NELLO STESSO PROCESSO, E IL DIFETTO CHE NE E' USCITO
+
+! **IL SINTOMO NON SOMIGLIAVA PER NIENTE ALLA CAUSA**, ed e' il motivo per cui
+la prova dentro EX-OS andava fatta comunque:
+
+    [FAULT] PID 18 '/exwin/bin/browser': page fault a 0xbfdac7c0
+            (pagina assente, scrittura, EIP=0x048038bf) - processo terminato
+
+`EIP=0x048038bf` sta dentro **exjs.so** (fetta `0x04800000`), non dentro
+QuickJS (`0x04A00000`). Il browser aveva aperto QuickJS e stava morendo dentro
+ExJs.
+
+### Ogni stub ha i propri dati, e questo fino a ieri non contava
+
+Ogni programma **e ogni libreria** si portano dentro una copia dello stub — le
+poche righe che risolvono i nomi — con la propria `.data`. Il browser ha il
+suo, `exdom.so` ha il suo. Finche' la libreria da aprire era **una sola** non
+faceva differenza. Da quando ce ne sono **due** che offrono la stessa
+interfaccia, il browser ne apriva una e il ponte l'altra: due motori nello
+stesso processo che non si vedono, e il ponte al lavoro su un contesto
+costruito dall'altro.
+
+! **E `make prova-exqjs` NON POTEVA TROVARLO.** Sull'host c'e' un eseguibile
+solo e nessuna libreria condivisa: il difetto vive esattamente nella
+differenza fra il banco e la macchina vera.
+
+### SYS_LIB_TROVA (238) — «questa libreria ce l'ho gia' dentro?»
+
+! **LA RISPOSTA NON PUO' DARSELA RING 3.** Un programma non ha modo di sapere
+quali pagine gli sono mappate senza provare a leggerle, e provare vuol dire un
+fault. Il caricatore invece lo sa: **la tavola delle pagine del processo E'
+l'elenco**. La syscall rende la tabella se la libreria e' gia' agganciata,
+-ENOENT se no; non carica, non aggancia, non tocca il disco.
+
+! **CHI ARRIVA PER PRIMO DECIDE PER TUTTI**, ed e' l'unica regola che due stub
+separati possono seguire senza parlarsi. Nel browser il primo e' lui — apre il
+motore prima del ponte — quindi la scelta dell'utente vale; per chiunque
+arrivi dopo, «quella che c'e' gia'» E' la scelta.
+
+! **E IL NUMERO 238 E' UN BUCO RIEMPITO**, non un allargamento: la tabella
+arriva a 255 ed entra in una pagina. Kernel a **0.208**, con la nota di
+versione che racconta il difetto.
+
+! **SU UN KERNEL VECCHIO NON SUCCEDE NIENTE DI BRUTTO**: una syscall che non
+c'e' rende un errore, cioe' un numero negativo, e lo stub si comporta come
+prima. Un ponte verso il futuro che non rompe il passato.
+
 ## 27 agosto 2026 — /exwin/lib/quickjs.so, E IL BROWSER PUO' SCEGLIERE
 
     make quickjs_so
