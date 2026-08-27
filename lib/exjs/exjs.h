@@ -213,6 +213,33 @@ unsigned int exjs_quanto_serve(unsigned int oggetti, unsigned int arena_byte);
 ExJsCtx *exjs_apri(void *memoria, unsigned int byte,
                    unsigned int oggetti, unsigned int arena_byte);
 
+/* =============================================================================
+ * QUALE MOTORE — e perche' questa e' l'unica funzione che NON sta nelle
+ * librerie
+ *
+ * Ci sono due implementazioni di questo header: `exjs.so`, l'ES3 scritto in
+ * lib/exjs (66 KB), e `quickjs.so`, QuickJS con l'adattatore di lib/exqjs
+ * (594 KB). Esportano gli stessi nomi, e chi le usa non se ne accorge.
+ *
+ * ! LA SCELTA NON PUO' STARE DENTRO UNA DELLE DUE, perche' va fatta PRIMA di
+ * aprirne una. Vive nello stub — la manciata di ponti che ogni programma si
+ * porta dentro — che e' l'unico pezzo di codice che c'e' sempre e che sa
+ * quale file aprire. Per questo `exjs_esporta.c` non la esporta: non e' roba
+ * delle librerie.
+ *
+ * `exjs_motore(1)` chiede QuickJS, `exjs_motore(0)` ExJs. Va chiamata prima di
+ * qualunque altra exjs_*: dopo, la libreria e' gia' mappata e la chiamata non
+ * fa niente.
+ *
+ * ! E SE QUELLA CHIESTA NON C'E' SI APRE L'ALTRA, invece di non partire: un
+ * sistema installato senza quickjs.so deve continuare a eseguire gli script.
+ * Ma non in silenzio — `exjs_motore_ora()` dice quale sta girando DAVVERO
+ * (0 ExJs, 1 QuickJS, -1 nessuna ancora aperta), e chi ospita puo' mostrarlo.
+ * Un ripiego che nessuno puo' vedere e' un ripiego che diventa un mistero.
+ * ============================================================================= */
+void exjs_motore(int quickjs);
+int  exjs_motore_ora(void);
+
 /* Chiude il contesto: da chiamare PRIMA di liberare il blocco di memoria.
  *
  * ! IN ExJs NON FA NIENTE, ED E' GIUSTO COSI'. Tutto quello che ExJs possiede

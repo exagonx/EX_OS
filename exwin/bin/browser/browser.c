@@ -112,6 +112,7 @@ EX_VERSIONE("browser", VERSIONE_APP);
 #define ID_IMP_JS      722
 #define ID_IMP_IMG     723
 #define ID_IMP_CACHE   724
+#define ID_IMP_MOTORE  727
 #define ID_IMP_SALVA   725
 #define ID_IMP_ANNULLA 726
 
@@ -443,6 +444,13 @@ static char          g_home[EXHTTP_URL_MAX] = "";
 static int           g_js_acceso    = 1;
 static int           g_img_accese   = 1;
 static int           g_cache_accesa = 1;
+
+/* ! QUALE MOTORE: 0 = ExJs, 1 = QuickJS. La scelta si fa PRIMA di aprire —
+ * vedi exjs_motore() in exjs.h — quindi cambiarla vale dalla pagina dopo, come
+ * per JavaScript acceso/spento. Il predefinito e' ExJs: e' quello che c'e'
+ * sempre, mentre quickjs.so e' mezzo megabyte che si puo' non aver
+ * installato. */
+static int           g_qjs = 0;
 
 /* -----------------------------------------------------------------------------
  * Le immagini
@@ -3355,6 +3363,14 @@ static void imp_riga(char *riga)
     if (uguale(k, "javascript")) { g_js_acceso    = imp_bandiera(v, g_js_acceso);    return; }
     if (uguale(k, "immagini"))   { g_img_accese   = imp_bandiera(v, g_img_accese);   return; }
     if (uguale(k, "cache"))      { g_cache_accesa = imp_bandiera(v, g_cache_accesa); return; }
+    if (uguale(k, "motore")) {
+        /* ! IL VALORE E' UN NOME, NON UN SI'/NO, perche' i motori possono
+         * diventare tre: «exjs», «quickjs». Qualunque altra cosa lascia le
+         * cose come stanno, come per ogni chiave che non si capisce. */
+        if (v[0] == 'q' || v[0] == 'Q') g_qjs = 1;
+        else if (v[0] == 'e' || v[0] == 'E') g_qjs = 0;
+        return;
+    }
     /* una chiave che non conosciamo: si salta, e non e' un errore */
 }
 
@@ -3406,10 +3422,12 @@ static int imp_scrivi(void)
              "\n"
              "home       = %s\n"
              "javascript = %s\n"
+             "motore     = %s\n"
              "immagini   = %s\n"
              "cache      = %s\n",
              g_home,
              g_js_acceso    ? "si" : "no",
+             g_qjs          ? "quickjs" : "exjs",
              g_img_accese   ? "si" : "no",
              g_cache_accesa ? "si" : "no");
 
@@ -3930,6 +3948,11 @@ static int motore_apri(void)
 
     if (g_js && g_dom) return 1;
     motore_chiudi();
+
+    /* ! LA SCELTA DEL MOTORE VA FATTA QUI, PRIMA DI TUTTO IL RESTO: dopo la
+     * prima chiamata la libreria e' gia' mappata e non si cambia piu'. E' il
+     * motivo per cui cambiare motore vale dalla pagina dopo. */
+    exjs_motore(g_qjs);
 
     quanto   = exjs_quanto_serve(JS_OGGETTI, JS_ARENA);
     g_js_mem = malloc(quanto);
@@ -4558,6 +4581,20 @@ static void informazioni(void)
              g_facce_si, g_facce_no);
     strncat(t, coda, sizeof(t) - strlen(t) - 1);
 
+    /* ! QUELLO CHE GIRA DAVVERO, non quello che si e' chiesto. Se si e' scelto
+     * QuickJS e quickjs.so non e' installata, lo stub apre ExJs e va avanti:
+     * senza questa riga il ripiego sarebbe invisibile, e la pagina che non
+     * funziona sembrerebbe colpa del motore sbagliato. */
+    {
+        int ora = exjs_motore_ora();
+
+        snprintf(coda, sizeof(coda), "\nMotore JavaScript: %s.",
+                 ora < 0 ? (g_qjs ? "QuickJS (non ancora aperto)"
+                                  : "ExJs (non ancora aperto)")
+                         : (ora ? "QuickJS" : "ExJs"));
+        strncat(t, coda, sizeof(t) - strlen(t) - 1);
+    }
+
     ex_dlg_avviso("Informazioni su", t);
 }
 
@@ -4582,8 +4619,9 @@ static void informazioni(void)
  * indietro — cioe' tenere la copia lo stesso, ma nel posto piu' scomodo.
  * ============================================================================= */
 static ExFinestra g_imp_f, g_imp_campo, g_imp_bjs, g_imp_bimg, g_imp_bcache;
+static ExFinestra g_imp_bmotore;
 static int        g_imp_fatto;          /* 0 = aperta, 1 = salva, 2 = annulla */
-static int        g_imp_js, g_imp_img, g_imp_cache;
+static int        g_imp_js, g_imp_img, g_imp_cache, g_imp_qjs;
 
 static void imp_etichette(void)
 {
@@ -4591,6 +4629,12 @@ static void imp_etichette(void)
 
     snprintf(t, sizeof(t), "JavaScript:  %s", g_imp_js ? "acceso" : "spento");
     ex_titolo(g_imp_bjs, t);
+    /* ! IL NOME DEL MOTORE PORTA CON SE' LA SUA TAGLIA, e non e' un vezzo: la
+     * differenza fra i due e' mezzo megabyte, ed e' l'unica cosa che chi
+     * sceglie deve sapere per scegliere. */
+    snprintf(t, sizeof(t), "Motore:  %s", g_imp_qjs ? "QuickJS (594 KB)"
+                                                    : "ExJs (66 KB)");
+    ex_titolo(g_imp_bmotore, t);
     snprintf(t, sizeof(t), "Immagini:  %s", g_imp_img ? "accese" : "spente");
     ex_titolo(g_imp_bimg, t);
     snprintf(t, sizeof(t), "Cache su disco:  %s",
@@ -4614,6 +4658,7 @@ static long imp_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         if (wp == ID_IMP_JS)    { g_imp_js    = !g_imp_js;    imp_etichette(); return 0; }
         if (wp == ID_IMP_IMG)   { g_imp_img   = !g_imp_img;   imp_etichette(); return 0; }
         if (wp == ID_IMP_CACHE) { g_imp_cache = !g_imp_cache; imp_etichette(); return 0; }
+        if (wp == ID_IMP_MOTORE){ g_imp_qjs   = !g_imp_qjs;   imp_etichette(); return 0; }
 
         /* ! «USA LA PAGINA DI ADESSO» E' L'UNICO MODO COMODO DI RIEMPIRE QUEL
          * CAMPO. Nessuno ricopia a mano un indirizzo lungo guardandolo nella
@@ -4656,6 +4701,7 @@ static void impostazioni(void)
     g_imp_js    = g_js_acceso;
     g_imp_img   = g_img_accese;
     g_imp_cache = g_cache_accesa;
+    g_imp_qjs   = g_qjs;
     g_imp_fatto = 0;
 
     g_imp_f = ex_crea("finestra", "Impostazioni",
@@ -4678,6 +4724,8 @@ static void impostazioni(void)
                            g_imp_f, ID_IMP_IMG, 0);
     g_imp_bcache = ex_crea("pulsante", "", EX_FIGLIO, 12, 176, 220, 24,
                            g_imp_f, ID_IMP_CACHE, 0);
+    g_imp_bmotore = ex_crea("pulsante", "", EX_FIGLIO, 240, 116, 188, 24,
+                            g_imp_f, ID_IMP_MOTORE, 0);
 
     ex_crea("etichetta", "Si scrivono in $HOME/.app/browser/impostazioni.txt",
             EX_FIGLIO, 12, 214, 416, 16, g_imp_f, 0, 0);
@@ -4704,6 +4752,7 @@ static void impostazioni(void)
         g_js_acceso    = g_imp_js;
         g_img_accese   = g_imp_img;
         g_cache_accesa = g_imp_cache;
+        g_qjs          = g_imp_qjs;
 
         ex_distruggi(g_imp_f);
         g_imp_f = 0;

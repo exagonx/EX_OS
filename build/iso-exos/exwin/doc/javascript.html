@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>JavaScript &mdash; EX-OS</title>
+<link rel="stylesheet" href="stile.css">
+<style>
+.riq    { background: #f2f2f2 }
+.acceso { background: #ffe08a }
+</style>
+<!-- Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>  GPL-2.0-or-later
+
+     ! QUESTA PAGINA E' ANCHE UNA PROVA, ed e' la stessa che gira sul banco
+     dell'host: tools/prove/sito/script.html. Se qui i sette riquadri si
+     riempiono, il motore JavaScript dentro EX-OS fa quello che fa il banco —
+     e se non si riempiono, si vede QUALE dei sette e' rimasto indietro. -->
+</head>
+<body>
+
+<p class="navi">
+<a href="index.html">Documentazione</a> |
+<a href="browser.html">Navigatore</a> &mdash; JavaScript
+</p>
+
+<h1>JavaScript, sette cose alla volta</h1>
+
+<p>Ogni riquadro prova UNA cosa. Se un riquadro contiene ancora la scritta
+«non e' successo niente», quel pezzo del motore non ha funzionato.</p>
+
+<h2>1. Uno script scrive dentro un elemento</h2>
+<div id="uno" class="riq">non e' successo niente</div>
+
+<h2>2. Uno script costruisce dei nodi</h2>
+<ul id="due"><li>non e' successo niente</li></ul>
+
+<h2>3. Attributi e classi</h2>
+<div id="tre" class="riq">questo riquadro deve diventare giallo</div>
+
+<h2>4. Leggere la pagina</h2>
+<div id="quattro" class="riq">non e' successo niente</div>
+
+<h2>5. Un gestore scritto nell'attributo</h2>
+<div id="cinque" class="riq" onclick="cliccato('cinque')">premimi</div>
+
+<h2>6. addEventListener, e un collegamento che non si segue</h2>
+<p><a id="sei" href="/senza.html">questo collegamento NON deve portare via</a></p>
+<div id="sei_riq" class="riq">non e' stato premuto</div>
+
+<h2>7. setTimeout</h2>
+<div id="sette" class="riq">aspetta un secondo...</div>
+
+<script>
+/* 1 — innerHTML */
+document.getElementById('uno').innerHTML =
+    'scritto da uno script, con del <b>neretto</b> dentro';
+
+/* 2 — createElement, createTextNode, appendChild */
+var u = document.getElementById('due');
+u.innerHTML = '';
+for (var i = 1; i <= 4; i++) {
+    var li = document.createElement('li');
+    li.appendChild(document.createTextNode('riga numero ' + i));
+    u.appendChild(li);
+}
+
+/* 3 — className e setAttribute */
+var t = document.getElementById('tre');
+t.className = 'riq acceso';
+t.setAttribute('title', 'un attributo messo da uno script');
+
+/* 4 — leggere l'albero */
+var q = document.getElementById('quattro');
+q.textContent = 'in questa pagina ci sono ' +
+    document.getElementsByTagName('div').length + ' div, ' +
+    document.getElementsByTagName('li').length + ' li e ' +
+    document.getElementsByClassName('riq').length + ' riquadri';
+
+/* 5 — il gestore che l'attributo chiama */
+function cliccato(chi) {
+    var e = document.getElementById(chi);
+    e.textContent = 'premuto! e event.type dice: ' + event.type;
+    e.className = 'riq acceso';
+}
+
+/* 6 — addEventListener e preventDefault */
+document.getElementById('sei').addEventListener('click', function (ev) {
+    ev.preventDefault();
+    var r = document.getElementById('sei_riq');
+    r.textContent = 'premuto, e il collegamento non e' + "'" + ' stato seguito';
+    r.className = 'riq acceso';
+});
+
+/* 7 — i tempi */
+setTimeout(function () {
+    var s = document.getElementById('sette');
+    s.textContent = 'e questo lo ha scritto un setTimeout';
+    s.className = 'riq acceso';
+}, 1000);
+
+console.log('lo script della pagina e' + "'" + ' arrivato in fondo');
+</script>
+
+<hr>
+<p class="navi">
+<a href="index.html">Torna alla documentazione</a> |
+<a href="browser.html">Il manuale del navigatore &gt;</a>
+</p>
+<p class="piede">
+EX-OS &mdash; Graziano Falcone, exagonx@hotmail.com &mdash; GNU GPL v2.
+Questa pagina e' la stessa del banco di prova
+(<code>tools/prove/sito/script.html</code>): se i sette riquadri si riempiono,
+il motore fa dentro EX-OS quel che fa sull'host.
+</p>
+
+</body>
+</html>

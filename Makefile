@@ -1338,6 +1338,78 @@ $(EXJS_SO): $(EXJS_SRC) $(EXJS_HDR) $(EXJS_ESPORTA) $(EXJS_LD)             $(EXL
 exjs_so: dirs $(EXJS_SO)
 
 # =============================================================================
+# /exwin/lib/quickjs.so — LO STESSO MOTORE, MA GRANDE
+#
+# ! DUE LIBRERIE, UNA SOLA INTERFACCIA. exjs.so e' l'ES3 scritto qui dentro,
+# 66 KB; quickjs.so e' QuickJS, 648. Esportano gli STESSI NOMI — la tabella e'
+# lo stesso file, $(EXJS_ESPORTA) — quindi lo stub in ogni programma e'
+# identico e chi le apre non sa quale delle due ha davanti.
+#
+# ! I SORGENTI DI QUICKJS NON STANNO NEL REPOSITORY. Vale la regola di GCC e
+# della userland: /quickjs/ e' in .gitignore. Questa regola non e' fra le
+# dipendenze dell'ISO apposta — chi non ha l'albero costruisce tutto il resto
+# senza accorgersene, e chi ce l'ha lancia `make quickjs_so` e basta.
+#
+# ! E VUOLE openlibm E QUATTRO NOMI DI libgcc, che i programmi di EX-OS non
+# hanno mai chiesto: le funzioni trigonometriche per Math, e la divisione a 64
+# bit che l'i386 non ha in hardware. Il perche' per esteso sta in
+# tools/quickjs-exos/leggimi.md.
+# =============================================================================
+QUICKJS_DIR   ?= quickjs
+EXQJS_SRC     := lib/exqjs/exqjs.c
+EXQJS_LD      := lib/exqjs/quickjs.ld
+EXQJS_SO      := $(BUILD_EXWIN_LIB)/quickjs.so
+
+QJS_SRC       := $(QUICKJS_DIR)/quickjs.c $(QUICKJS_DIR)/libregexp.c \
+                 $(QUICKJS_DIR)/libunicode.c $(QUICKJS_DIR)/dtoa.c
+QJS_OBJ       := $(BUILD_OBJ)/soqjs_quickjs.o $(BUILD_OBJ)/soqjs_libregexp.o \
+                 $(BUILD_OBJ)/soqjs_libunicode.o $(BUILD_OBJ)/soqjs_dtoa.o
+
+# ! -nostdinc E -D__EXOS__ NON SONO OPZIONALI. Il primo impedisce a QuickJS di
+# pescare gli header del sistema OSPITE — compilerebbe contro promesse che
+# dentro EX-OS nessuno mantiene; il secondo accende le cinque modifiche di
+# tools/quickjs-exos/. E -Os al posto di -O2 e' cio' che fa stare il motore in
+# una fetta: 648 KB invece di 946.
+QJS_CFLAGS    := $(CFLAGS_USER) -Os -nostdinc -D__EXOS__ \
+                 -I $(shell $(CC) -m32 -print-file-name=include) \
+                 -I lib/include -I $(QUICKJS_DIR)
+
+EXQJS_LIBM    ?= $(HOME)/exos-cross/i386-exos/lib/libm.a
+EXQJS_LIBGCC  ?= $(firstword $(wildcard $(HOME)/exos-cross/lib/gcc/i386-exos/*/libgcc.a))
+
+$(EXQJS_SO): $(EXQJS_SRC) $(EXJS_HDR) $(EXJS_ESPORTA) $(EXQJS_LD) \
+             $(EXLIB_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(SEGNO_FLAG)
+	@echo "=== Compilazione libreria condivisa /exwin/lib/quickjs.so ==="
+	@if [ ! -f $(QUICKJS_DIR)/quickjs.c ]; then \
+	    echo "   manca l'albero di QuickJS in '$(QUICKJS_DIR)':"; \
+	    echo "   vedi tools/quickjs-exos/leggimi.md"; exit 1; fi
+	@if ! grep -q "__EXOS__" $(QUICKJS_DIR)/cutils.h; then \
+	    echo "   l'albero non e' adattato. Lancia prima:"; \
+	    echo "     python3 tools/quickjs-exos/applica.py $(QUICKJS_DIR)"; exit 1; fi
+	@if [ ! -f "$(EXQJS_LIBM)" ]; then \
+	    echo "   manca openlibm per il bersaglio ($(EXQJS_LIBM)):"; \
+	    echo "   vedi tools/openlibm-exos/"; exit 1; fi
+	@if [ ! -f "$(EXQJS_LIBGCC)" ]; then \
+	    echo "   manca libgcc del cross-compilatore i386-exos"; exit 1; fi
+	@mkdir -p $(BUILD_EXWIN_LIB) $(BUILD_OBJ)
+	@for f in $(QJS_SRC); do \
+	    n=$$(basename $$f .c); \
+	    echo "   $$n.c"; \
+	    $(CC) $(QJS_CFLAGS) -c $$f -o $(BUILD_OBJ)/soqjs_$${n}.o || exit 1; \
+	done
+	$(CC) $(CFLAGS_USER) -Os -I lib/include -I lib/exjs -I $(QUICKJS_DIR) \
+	    -c $(EXQJS_SRC) -o $(BUILD_OBJ)/soqjs_exqjs.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exjs \
+	    -c $(EXJS_ESPORTA) -o $(BUILD_OBJ)/soqjs_esporta.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(EXQJS_LD) \
+	    $(BUILD_OBJ)/soqjs_esporta.o $(BUILD_OBJ)/soqjs_exqjs.o $(QJS_OBJ) \
+	    $(LIBC_PONTI_OBJ) $(EXQJS_LIBM) $(EXQJS_LIBGCC) -o $@
+	@echo "[OK] quickjs.so compilata: $@ ($$(du -h $@ | cut -f1))"
+
+.PHONY: quickjs_so
+quickjs_so: dirs $(EXQJS_SO)
+
+# =============================================================================
 # /exwin/lib/exdom.so — il ponte fra l'albero e il motore
 #
 # ! E' LA PRIMA LIBRERIA CHE NE APRE DUE, non una: dentro ci sono lo stub di

@@ -39,10 +39,34 @@ static void grida_e_muori(const char *s)
     for (;;) { }
 }
 
-static const char *const g_dove[] = {
+/* I due motori, e i due posti per ognuno: sul sistema installato e sul CD. */
+static const char *const g_dove_exjs[] = {
     "/exwin/lib/exjs.so",
     "/cdrom/exwin/lib/exjs.so"
 };
+
+static const char *const g_dove_qjs[] = {
+    "/exwin/lib/quickjs.so",
+    "/cdrom/exwin/lib/quickjs.so"
+};
+
+/* Quale si vuole, e quale si e' aperto davvero. Vedi exjs.h. */
+static int g_voluto   = 0;      /* 0 = ExJs, 1 = QuickJS */
+static int g_caricato = -1;     /* -1 = nessuno ancora */
+
+void exjs_motore(int quickjs)
+{
+    /* ! DOPO L'APERTURA NON CAMBIA NIENTE, e non e' un errore: la libreria e'
+     * gia' mappata nel processo, e un secondo motore accanto al primo vorrebbe
+     * dire due interpreti che non si vedono. Chi vuole cambiare motore chiude
+     * la pagina e riapre — che e' esattamente quel che fa il browser. */
+    g_voluto = quickjs ? 1 : 0;
+}
+
+int exjs_motore_ora(void)
+{
+    return g_caricato;
+}
 
 static struct {
     int pronto;
@@ -98,11 +122,31 @@ static void assicura(void)
 
     if (P.pronto) return;
 
-    t = exlib_apri_fra(g_dove, (int)(sizeof g_dove / sizeof g_dove[0]));
+    /* ! SI PROVA QUELLA VOLUTA, POI L'ALTRA. Un sistema senza quickjs.so —
+     * che e' un file da mezzo megabyte e puo' benissimo non essere stato
+     * installato — deve continuare a eseguire gli script con ExJs, non
+     * fermarsi. Quale sia finita davvero lo dice exjs_motore_ora(). */
+    t = 0;
+    if (g_voluto) {
+        t = exlib_apri_fra(g_dove_qjs,
+                           (int)(sizeof g_dove_qjs / sizeof g_dove_qjs[0]));
+        if (t) g_caricato = 1;
+    }
+    if (t == 0) {
+        t = exlib_apri_fra(g_dove_exjs,
+                           (int)(sizeof g_dove_exjs / sizeof g_dove_exjs[0]));
+        if (t) g_caricato = 0;
+    }
+    if (t == 0 && !g_voluto) {
+        t = exlib_apri_fra(g_dove_qjs,
+                           (int)(sizeof g_dove_qjs / sizeof g_dove_qjs[0]));
+        if (t) g_caricato = 1;
+    }
+
     if (t == 0)
-        grida_e_muori("exjs: non trovo la libreria condivisa del JavaScript.\n"
-                      "      Cercata in /exwin/lib/exjs.so e "
-                      "/cdrom/exwin/lib/exjs.so\n");
+        grida_e_muori("exjs: non trovo nessuna libreria del JavaScript.\n"
+                      "      Cercate /exwin/lib/exjs.so e "
+                      "/exwin/lib/quickjs.so (anche sotto /cdrom).\n");
 
     P.quanto_serve = (unsigned int (*)(unsigned int, unsigned int))
         chiedi(t, "exjs_quanto_serve");

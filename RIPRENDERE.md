@@ -1,5 +1,64 @@
 # DOVE RIPRENDERE — 27 agosto 2026
 
+## 27 agosto 2026 — /exwin/lib/quickjs.so, E IL BROWSER PUO' SCEGLIERE
+
+    make quickjs_so
+
+    quickjs    0x04A00000   594 KB       (tools/fette.py)
+    sul disco               672 KB
+
+! **CI STA IN UNA FETTA CON QUATTROCENTO KILOBYTE DI MARGINE**, e il margine va
+lasciato: un motore cresce a ogni versione di upstream, e la prima cosa che
+farebbe crescendo e' scavalcare la vicina senza dire niente. `fette.py` se ne
+accorge.
+
+! **LA TABELLA DI ESPORTAZIONE E' LO STESSO FILE DI exjs.so**,
+`lib/exjs/exjs_esporta.c`. Non e' una comodita': e' cio' che garantisce che le
+due librerie esportino gli **stessi nomi**. Se una si allontanasse
+dall'interfaccia non compilerebbe piu' — invece di scoprirlo il giorno che il
+browser apre l'altra e non trova un simbolo.
+
+! **E IL .ld SI CHIAMA COME LA LIBRERIA, NON COME LA DIRECTORY.** `fette.py`
+ricava il nome del `.so` dal nome del `.ld`: con `exqjs.ld` la mappa avrebbe
+dichiarato «non costruita» proprio la libreria piu' grossa di tutte, cioe'
+l'unica che puo' davvero scavalcare una vicina. Sta scritto in testa a
+`lib/exqjs/quickjs.ld`.
+
+### Chi sceglie, e dove vive la scelta
+
+! **NON PUO' STARE DENTRO NESSUNA DELLE DUE LIBRERIE**, perche' va fatta PRIMA
+di aprirne una. Vive nello **stub** — la manciata di ponti che ogni programma
+si porta dentro — che e' l'unico pezzo di codice che c'e' sempre e che sa quale
+file aprire. Per questo `exjs_esporta.c` non la esporta.
+
+    exjs_motore(1)      chiede QuickJS        \  vivono in exjs_stub.c,
+    exjs_motore_ora()   dice quale gira DAVVERO /  non nelle librerie
+
+    File > Impostazioni > Motore:  ExJs (66 KB) / QuickJS (594 KB)
+    $HOME/.app/browser/impostazioni.txt:   motore = quickjs
+
+! **SE QUELLA CHIESTA NON C'E' SI APRE L'ALTRA, MA SI DICE.** Un sistema senza
+`quickjs.so` — mezzo megabyte che si puo' non aver installato — deve continuare
+a eseguire gli script. «Informazioni su» scrive quale motore sta girando
+davvero: un ripiego che nessuno puo' vedere e' un ripiego che diventa un
+mistero.
+
+### E una riga di collegamento che non e' matematica
+
+`scalbn` lo definisce l'adattatore, e vale `ldexp`. In openlibm quel nome sta
+nello stesso oggetto di `ldexp`, che la libc ha gia': il collegamento si
+fermava su una doppia definizione. Su base due — la nostra — le due funzioni
+sono la stessa cosa per definizione.
+
+### La documentazione adesso si prova da sola
+
+`/exwin/doc/javascript.html` e' **la stessa pagina** di
+`tools/prove/sito/script.html`: sette riquadri che si riempiono da soli. Se
+sullo schermo si riempiono, il motore dentro EX-OS fa quel che fa il banco
+sull'host — e se uno resta vuoto, si vede QUALE. E' documentazione e prova
+insieme, come lo era gia' il resto di `/exwin/doc`.
+
+
 ## 27 agosto 2026 — QUICKJS PASSA LE PROVE DEL PONTE: 92 SU 92
 
     make prova-exdom     92 prove, 0 sbagliate      con ExJs sotto

@@ -155,6 +155,31 @@ struct ExJsCtx {
 static JSClassID g_classe_eso;
 
 /* =============================================================================
+ * ! scalbn E' ldexp CON UN ALTRO NOME, e questa riga esiste per un motivo di
+ * COLLEGAMENTO, non di matematica.
+ *
+ * QuickJS chiama `scalbn`. In openlibm quel nome sta nello stesso oggetto di
+ * `ldexp` (s_scalbn.S), e quell'oggetto entrando nel collegamento porta con
+ * se' anche il secondo — che pero' la libc di EX-OS ha gia'. Il risultato e'
+ * una doppia definizione e un collegamento che si ferma.
+ *
+ * Definendolo qui, l'oggetto di openlibm non viene mai chiamato in causa. E le
+ * due funzioni sono la stessa cosa per definizione: `scalbn` moltiplica per
+ * FLT_RADIX elevato a n, e su questa macchina FLT_RADIX vale due — cioe' e'
+ * esattamente cio' che fa ldexp.
+ *
+ * ! E STA QUI E NON NELLA LIBC APPOSTA: e' un dettaglio di come si mette
+ * insieme QUESTA libreria, non una funzione che manca al sistema. Il giorno
+ * che qualcun altro chiedera' scalbn, si sposta.
+ * ========================================================================== */
+double ldexp(double x, int n);
+
+double scalbn(double x, int n)
+{
+    return ldexp(x, n);
+}
+
+/* =============================================================================
  * LA TABELLA DELLE MANIGLIE
  * ========================================================================== */
 

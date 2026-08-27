@@ -12,10 +12,12 @@ di GCC, della userland e dei sorgenti dei font.
     python3 tools/quickjs-exos/applica.py quickjs
     tools/quickjs-exos/prova-compila.sh quickjs
     make prova-exqjs
+    make quickjs_so
 
 Il primo adatta l'albero (e `--togli` lo riporta com'era). Il secondo compila,
 mette insieme e stampa **quanto viene** e **cosa chiede ancora**. Il terzo fa
-girare le novantadue prove del ponte **con QuickJS sotto**.
+girare le novantadue prove del ponte **con QuickJS sotto**. Il quarto
+costruisce `/exwin/lib/quickjs.so`, la libreria condivisa vera.
 
 ---
 
@@ -164,29 +166,54 @@ sugli eventi risultavano rosse mostrando il testo giusto: il banco confronta
 l'uscita, e due log di seguito diventavano una parola sola. Un difetto da una
 riga che sembrava sedici difetti.
 
+## La libreria c'e': `/exwin/lib/quickjs.so`
+
+    make quickjs_so
+
+    quickjs    0x04A00000   594 KB      (tools/fette.py)
+    il file sul disco                    672 KB
+
+! **CI STA IN UNA FETTA, CON QUATTROCENTO KILOBYTE DI MARGINE**, e il margine
+va lasciato: un motore cresce a ogni versione di upstream, e la prima cosa che
+farebbe crescendo e' scavalcare la libreria vicina senza dire niente.
+`tools/fette.py` se ne accorge — si lancia dopo ogni aggiornamento.
+
+! **LA TABELLA DI ESPORTAZIONE E' LO STESSO FILE DI exjs.so**
+(`lib/exjs/exjs_esporta.c`). Non e' una comodita': e' cio' che garantisce che
+le due librerie esportino gli stessi nomi. Se una si allontanasse
+dall'interfaccia, non compilerebbe piu' — invece di scoprirlo il giorno che il
+browser apre l'altra e non trova un simbolo.
+
+! **E `scalbn` LO DEFINISCE L'ADATTATORE**, in una riga. Non e' matematica, e'
+collegamento: in openlibm quel nome sta nello stesso oggetto di `ldexp`, che la
+libc ha gia', e il collegamento si fermava su una doppia definizione. Su base
+due le due funzioni sono la stessa cosa per definizione.
+
+### Chi sceglie, e come
+
+`exjs_motore(1)` chiede QuickJS, `exjs_motore(0)` ExJs, e **la scelta vive
+nello stub** — la manciata di ponti che ogni programma si porta dentro — non
+nelle librerie: va fatta *prima* di aprirne una.
+
+    File > Impostazioni > Motore:  ExJs (66 KB) / QuickJS (594 KB)
+    $HOME/.app/browser/impostazioni.txt:   motore = quickjs
+
+! **SE QUELLA CHIESTA NON C'E' SI APRE L'ALTRA, MA SI DICE.** Un sistema
+installato senza `quickjs.so` — mezzo megabyte che si puo' benissimo non aver
+copiato — deve continuare a eseguire gli script. `exjs_motore_ora()` rende
+quale sta girando davvero, e il navigatore lo scrive in **Informazioni su**:
+un ripiego che nessuno puo' vedere e' un ripiego che diventa un mistero.
+
 ## Che cosa manca, in ordine
 
-### 1. La libreria condivisa
+### 1. La prova dentro EX-OS, ripetibile
 
-    exqjs.c  compilato per i386     8 958 byte
-    QuickJS + openlibm + libgcc   654 824 byte
-    ------------------------------------------
-    TOTALE                        663 792 byte  (648 KB)
+La pagina `/exwin/doc/javascript.html` — sette riquadri che si riempiono da
+soli — e' **la stessa** di `tools/prove/sito/script.html`, quindi quel che si
+vede sullo schermo si confronta con quel che stampa il banco. Manca uno script
+che la faccia girare in QEMU da sola e confronti le due cose senza guardare.
 
-Tutto cio' che resta indefinito e' la libc. Serve un `exqjs.ld` alla fetta che
-`tools/fette.py --libera` indica (oggi `0x04A00000`), una tabella di
-esportazione con gli stessi nomi di `exjs_esporta.c`, e la regola nel Makefile.
-Da li' il browser puo' aprire `quickjs.so` invece di `exjs.so` **senza saperlo**:
-lo stub e' lo stesso.
-
-### 2. Chi sceglie, e come
-
-Due motori nello stesso sistema vogliono una decisione dichiarata: un'opzione
-in `File > Impostazioni` accanto a JavaScript acceso/spento, oppure la regola
-«se la pagina ha uno `<script>` che ExJs rifiuta, riapri con QuickJS».
-La seconda e' piu' furba e piu' difficile da spiegare; la prima si vede.
-
-### 3. Le maniglie, quando la pagina resta aperta per ore
+### 2. Le maniglie, quando la pagina resta aperta per ore
 
 Non si liberano una per una, perche' l'interfaccia non ha un `exjs_libera`.
 Per una pagina va benissimo — muoiono con lei — ma una pagina che chiama una
@@ -194,7 +221,7 @@ funzione nativa in un ciclo lungo le consuma. Il giorno che si vede, la
 risposta e' una funzione in piu' nell'interfaccia, che ExJs implementa come
 una riga vuota: esattamente com'e' andata per `exjs_chiudi`.
 
-### 4. Il tempo e il caso
+### 3. Il tempo e il caso
 
 `Date` e `Math.random` girano gia' (sono di QuickJS). Da guardare quando il
 motore sara' dentro EX-OS: `gettimeofday` a 10 ms di risoluzione e un seme per

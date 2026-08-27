@@ -9,7 +9,15 @@
  * See the LICENSE file in the project root for the full license text.
  * =============================================================================
  *
- * La tabella di exjs.so.
+ * La tabella di exjs.so — E ANCHE DI quickjs.so.
+ *
+ * ! LO STESSO FILE SERVE LE DUE LIBRERIE, e non e' una comodita': e' cio' che
+ * garantisce che esportino gli STESSI NOMI. `lib/exjs` e `lib/exqjs` sono due
+ * implementazioni della stessa interfaccia — l'ES3 scritto qui e QuickJS — e
+ * il browser ne apre una senza sapere quale. Se una delle due si allontanasse
+ * da `exjs.h`, questo file non compilerebbe piu' contro di lei: l'errore
+ * arriva alla costruzione, invece che il giorno in cui qualcuno apre l'altra
+ * libreria e non trova un simbolo.
  *
  * ! QUESTA LIBRERIA HA DUE UTENTI VERI PRIMA ANCORA DI NASCERE, ed e' il caso
  * che il criterio dei «due utenti» descrive esattamente: il browser, che
