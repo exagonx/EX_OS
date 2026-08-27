@@ -213,6 +213,20 @@ unsigned int exjs_quanto_serve(unsigned int oggetti, unsigned int arena_byte);
 ExJsCtx *exjs_apri(void *memoria, unsigned int byte,
                    unsigned int oggetti, unsigned int arena_byte);
 
+/* Chiude il contesto: da chiamare PRIMA di liberare il blocco di memoria.
+ *
+ * ! IN ExJs NON FA NIENTE, ED E' GIUSTO COSI'. Tutto quello che ExJs possiede
+ * sta dentro il blocco di chi chiama: liberare il blocco libera tutto, e
+ * questa funzione e' una riga vuota. Esiste per un motore che possiede anche
+ * ALTRO — QuickJS ha il proprio runtime, preso dalla libc — e che senza una
+ * porta come questa lascerebbe dietro se stesso a ogni pagina.
+ *
+ * ! ED E' L'UNICA COSA CHE IL PORTING DI QUICKJS HA DOVUTO AGGIUNGERE
+ * ALL'INTERFACCIA. Vale la pena scriverlo: il resto — trenta funzioni — e'
+ * bastato com'era, ed e' la misura di quanto la divisione in tre reggesse.
+ * Chi ospita deve chiamarla sempre, qualunque motore ci sia sotto. */
+void exjs_chiudi(ExJsCtx *c);
+
 /* Esegue `sorgente`. Rende 1 se e' andata, 0 se no — e in quel caso `err`
  * (se dato) dice dove e perche'. Il valore dell'ultima espressione, se
  * interessa, esce da `risultato`.

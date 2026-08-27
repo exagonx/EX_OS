@@ -277,6 +277,18 @@ ExJsCtx *exjs_apri(void *memoria, unsigned int byte,
     return c;
 }
 
+/* ! NON FA NIENTE, E DEVE ESISTERE LO STESSO. Tutto quello che questo motore
+ * possiede sta nel blocco di chi chiama: liberare quello libera tutto, e non
+ * c'e' un runtime da restituire a nessuno. La funzione c'e' perche'
+ * l'interfaccia la dichiara — un motore che possiede anche altro, come
+ * QuickJS, senza questa porta lascerebbe se stesso dietro a ogni pagina — e
+ * chi ospita deve poterla chiamare senza sapere quale motore ha sotto.
+ * Vedi il commento in exjs.h. */
+void exjs_chiudi(ExJsCtx *c)
+{
+    (void)c;
+}
+
 void exjs_memoria(ExJsCtx *c, unsigned int *caselle_usate,
                   unsigned int *caselle_max, unsigned int *arena_usata,
                   unsigned int *arena_max)

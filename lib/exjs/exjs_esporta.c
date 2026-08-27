@@ -39,6 +39,7 @@ void __libc_ponti_avvia(void);
 static const char *const g_nomi[] = {
     "exjs_quanto_serve",
     "exjs_apri",
+    "exjs_chiudi",
     "exjs_esegui",
 
     "exjs_indefinito",
@@ -83,6 +84,7 @@ static const char *const g_nomi[] = {
 static void *const g_indirizzi[] = {
     (void *)exjs_quanto_serve,
     (void *)exjs_apri,
+    (void *)exjs_chiudi,
     (void *)exjs_esegui,
 
     (void *)exjs_indefinito,

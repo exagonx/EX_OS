@@ -4793,6 +4793,39 @@ verifica-exdom: lib/exdom/exdom.c lib/exdom/exdom.h
 	@echo "[OK] lib/exdom compila per i386"
 
 .PHONY: prova-excss
+# =============================================================================
+# ! LO STESSO BANCO, CON L'ALTRO MOTORE SOTTO — ed e' la prova che la
+# divisione in tre librerie serviva a qualcosa.
+#
+# domprova.c non cambia di una riga, exdom.c nemmeno: si cambia solo CHI
+# implementa exjs.h — lib/exjs (il nostro ES3) oppure lib/exqjs (QuickJS).
+# Se le novantadue prove passano da tutt'e due, il ponte e' davvero
+# indipendente dal motore; se ne passano meno, la differenza dice esattamente
+# dove l'interfaccia perde qualcosa.
+#
+# ! VUOLE I SORGENTI DI QUICKJS ADATTATI, che non stanno nel repository:
+#     python3 tools/quickjs-exos/applica.py quickjs
+# Senza, il bersaglio lo dice invece di fallire in mezzo alla compilazione.
+# =============================================================================
+QUICKJS_DIR ?= quickjs
+
+prova-exqjs:
+	@if [ ! -f $(QUICKJS_DIR)/quickjs.c ]; then 	    echo "prova-exqjs: manca l'albero di QuickJS in '$(QUICKJS_DIR)'."; 	    echo "             Vedi tools/quickjs-exos/leggimi.md."; 	    exit 1; 	fi
+	@if ! grep -q "__EXOS__" $(QUICKJS_DIR)/cutils.h; then 	    echo "prova-exqjs: l'albero non e' adattato. Lancia prima:"; 	    echo "    python3 tools/quickjs-exos/applica.py $(QUICKJS_DIR)"; 	    exit 1; 	fi
+	@mkdir -p $(PROVE_HOST_DIR)
+	@cc -w -O1 -o $(PROVE_HOST_DIR)/domqjs \
+	    tools/prove/domprova.c lib/exdom/exdom.c lib/exhtml/html.c \
+	    lib/exqjs/exqjs.c \
+	    $(QUICKJS_DIR)/quickjs.c $(QUICKJS_DIR)/libregexp.c \
+	    $(QUICKJS_DIR)/libunicode.c $(QUICKJS_DIR)/dtoa.c \
+	    -I lib/exdom -I lib/exjs -I lib/exhtml -I $(QUICKJS_DIR) -lm -lpthread
+	@$(PROVE_HOST_DIR)/domqjs
+	@echo ""
+	@echo "=== e la pagina vera, con QuickJS sotto ==="
+	@$(PROVE_HOST_DIR)/domqjs tools/prove/sito/script.html | head -6
+
+.PHONY: prova-exqjs
+
 prova-excss:
 	@mkdir -p $(PROVE_HOST_DIR)
 	@# ! IL CSS TIRA DENTRO html.c, e non e' un di piu': un selettore si

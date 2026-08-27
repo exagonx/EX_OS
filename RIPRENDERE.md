@@ -1,4 +1,88 @@
-# DOVE RIPRENDERE — 26 agosto 2026
+# DOVE RIPRENDERE — 27 agosto 2026
+
+## 27 agosto 2026 — QUICKJS PASSA LE PROVE DEL PONTE: 92 SU 92
+
+    make prova-exdom     92 prove, 0 sbagliate      con ExJs sotto
+    make prova-exqjs     92 prove, 0 sbagliate      con QuickJS sotto
+
+! **LE PROVE SONO LE STESSE, E NON E' CAMBIATA UNA RIGA** ne' in
+`tools/prove/domprova.c` ne' in `lib/exdom/exdom.c`. Cambia solo chi implementa
+`exjs.h`. Era la promessa scritta in cima a quel file dalla prima stesura — «si
+sostituisce cio' che sta sotto senza riscrivere il ponte» — e da oggi e' una
+cosa misurata, non un'intenzione.
+
+E la pagina vera dei sette riquadri rende un documento **identico byte per
+byte** con i due motori: `diff` non trova niente.
+
+### `lib/exqjs/exqjs.c` — novecento righe, e una tabella di maniglie
+
+Un `ExJsVal` diventa una **maniglia**: ExJs non ha raccoglitore e un valore si
+tiene dove si vuole, QuickJS conta i riferimenti e un `JSValue` messo da parte
+senza `JS_DupValue` muore quando decide lui. La tabella e' l'unica radice che
+il raccoglitore vede da questa parte, e si libera tutta insieme con la pagina.
+
+! **E UNA MANIGLIA NASCE SOLO QUANDO UN VALORE ATTRAVERSA IL CONFINE C.** Un
+ciclo che costruisce diecimila stringhe dentro il JavaScript non la tocca
+nemmeno una volta — in ExJs ogni valore costava una casella, ed e' il difetto
+che il commento in cima a `exjs.h` descrive.
+
+### I tre difetti che il porting ha fatto uscire, e valgono da soli
+
+! **1. IL GANCIO GIUSTO E' `get_own_property`, NON `get_property`.** Sembrano
+la stessa cosa e non lo sono: col secondo QuickJS ci consegna la lettura e SI
+FERMA a quel che rispondiamo — il prototipo non viene piu' guardato, cioe'
+`elemento.appendChild` sparisce. Col primo ci chiede se la proprieta' e'
+NOSTRA, e se diciamo di no prosegue lui: proprie, gancio, prototipo, che e'
+esattamente l'ordine scritto in `exjs.h`. **75 prove rosse su 92**, tutte con
+«not a function».
+
+! **2. UN OGGETTO CHE ATTRAVERSA DUE VOLTE DEVE RENDERE LA STESSA MANIGLIA.**
+Due `addEventListener` con la stessa funzione registravano due gestori e
+`removeEventListener` non ne trovava nessuno: il ponte confronta gli
+`ExJsVal`, e ogni passaggio ne fabbricava uno nuovo. La maniglia adesso si
+scrive **sull'oggetto stesso**, in una proprieta' non elencabile. E' lo stesso
+problema che exdom risolve dall'altra parte — «un nodo si avvolge una volta
+sola» — visto dal lato del motore.
+
+! **3. `console.log` E' UNA RIGA.** Mancava l'a-capo, e sedici prove sugli
+eventi erano rosse mostrando il testo giusto: il banco confronta l'uscita, e
+due log di seguito diventavano una parola sola. Un difetto da una riga che
+sembrava sedici difetti.
+
+E uno stupido, ma va scritto perche' e' costato un core dump:
+`JS_ExecutePendingJob(rt, NULL)` **non si puo' chiamare con NULL** — la
+funzione ci scrive dentro il contesto, sempre.
+
+### L'unica cosa che l'interfaccia ha dovuto imparare: `exjs_chiudi`
+
+In ExJs non serviva — tutto quel che possiede sta nel blocco di chi chiama — e
+infatti li' e' una riga vuota. Serve a un motore che possiede anche altro:
+QuickJS ha il proprio runtime, preso dalla libc, e senza questa porta ogni
+pagina ne lascerebbe dietro uno intero. Il browser la chiama in
+`motore_chiudi()` **prima** di liberare il blocco.
+
+! **UNA FUNZIONE SU TRENTA.** E' la misura di quanto la divisione in tre
+reggesse davvero.
+
+### La taglia, per intero
+
+    exqjs.c per i386                8 958 byte
+    QuickJS + openlibm + libgcc   654 824 byte
+    ------------------------------------------
+    TOTALE                        663 792 byte   (648 KB)
+
+Ci sta in una fetta da un megabyte. Tutto cio' che resta indefinito e' la libc.
+
+### Il prossimo passo
+
+`exqjs.ld` alla fetta che dice `tools/fette.py --libera` (oggi `0x04A00000`),
+la tabella di esportazione con gli stessi nomi di `exjs_esporta.c`, e la regola
+nel Makefile. Da li' il browser apre `quickjs.so` invece di `exjs.so`
+**senza saperlo**: lo stub e' lo stesso. Poi la scelta fra i due motori, che e'
+una decisione da mettere in `File > Impostazioni` e non da indovinare.
+
+Tutto per esteso in `tools/quickjs-exos/leggimi.md`.
+
 
 ## 26 agosto 2026 — QUICKJS COMPILA PER EX-OS
 

@@ -3908,6 +3908,14 @@ static void js_uscita(const char *t, unsigned int n, void *dato)
 
 static void motore_chiudi(void)
 {
+    /* ! IL MOTORE SI CHIUDE PRIMA DI LIBERARE IL SUO BLOCCO, e l'ordine e'
+     * l'unica cosa che conta qui. Con ExJs la chiamata non fa niente — tutto
+     * quello che possiede sta in quel blocco — ma un motore puo' possedere
+     * anche altro: QuickJS ha il proprio runtime, preso dalla libc, e senza
+     * questa riga ogni pagina ne lascerebbe dietro uno intero. Liberare prima
+     * il blocco vorrebbe dire chiamarla su un contesto che non c'e' piu'. */
+    if (g_js) exjs_chiudi(g_js);
+
     if (g_js_mem)  { free(g_js_mem);  g_js_mem = 0; }
     if (g_dom_mem) { free(g_dom_mem); g_dom_mem = 0; }
     g_js  = 0;

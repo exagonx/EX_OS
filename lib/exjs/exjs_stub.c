@@ -48,6 +48,7 @@ static struct {
     int pronto;
     unsigned int (*quanto_serve)(unsigned int, unsigned int);
     ExJsCtx *(*apri)(void *, unsigned int, unsigned int, unsigned int);
+    void      (*chiudi)(ExJsCtx *);
     int (*esegui)(ExJsCtx *, const char *, unsigned int, ExJsVal *, ExJsErrore *);
     ExJsVal (*indefinito)(void);
     ExJsVal (*nullo)(void);
@@ -107,6 +108,8 @@ static void assicura(void)
         chiedi(t, "exjs_quanto_serve");
     P.apri = (ExJsCtx *(*)(void *, unsigned int, unsigned int, unsigned int))
         chiedi(t, "exjs_apri");
+    P.chiudi = (void (*)(ExJsCtx *))
+        chiedi(t, "exjs_chiudi");
     P.esegui = (int (*)(ExJsCtx *, const char *, unsigned int, ExJsVal *, ExJsErrore *))
         chiedi(t, "exjs_esegui");
     P.indefinito = (ExJsVal (*)(void))
@@ -177,6 +180,9 @@ unsigned int exjs_quanto_serve(unsigned int oggetti, unsigned int arena_byte)
 ExJsCtx *exjs_apri(void *memoria, unsigned int byte, unsigned int oggetti,
                    unsigned int arena_byte)
 { assicura(); return P.apri(memoria, byte, oggetti, arena_byte); }
+
+void exjs_chiudi(ExJsCtx *c)
+{ assicura(); P.chiudi(c); }
 
 int exjs_esegui(ExJsCtx *c, const char *sorgente, unsigned int n,
                 ExJsVal *risultato, ExJsErrore *err)

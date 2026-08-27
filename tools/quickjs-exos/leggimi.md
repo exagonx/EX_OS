@@ -11,9 +11,11 @@ di GCC, della userland e dei sorgenti dei font.
 
     python3 tools/quickjs-exos/applica.py quickjs
     tools/quickjs-exos/prova-compila.sh quickjs
+    make prova-exqjs
 
 Il primo adatta l'albero (e `--togli` lo riporta com'era). Il secondo compila,
-mette insieme e stampa **quanto viene** e **cosa chiede ancora**.
+mette insieme e stampa **quanto viene** e **cosa chiede ancora**. Il terzo fa
+girare le novantadue prove del ponte **con QuickJS sotto**.
 
 ---
 
@@ -97,59 +99,106 @@ nostro finiva su quello del sistema ospite.
 
 ---
 
-## Che cosa manca, in ordine
+## L'adattatore c'e', e passa le prove del ponte
 
-### 1. L'ADATTATORE, che e' tutto il lavoro vero
+`lib/exqjs/exqjs.c` implementa **l'interfaccia di `exjs.h`** sopra QuickJS.
+Novecento righe, e questo e' il risultato:
 
-`lib/exdom` e il browser parlano all'interfaccia di **`lib/exjs/exjs.h`** —
-una trentina di funzioni: `exjs_apri`, `exjs_esegui`, `exjs_esotico`,
-`exjs_chiama`, `exjs_accoda`, `exjs_pompa`... Quell'interfaccia e' stata
-divisa in tre librerie proprio perche' oggi si potesse cambiare il motore
-**senza toccare ne' il ponte ne' il browser**. Serve un `lib/exqjs/` che la
-implementi sopra QuickJS.
+    make prova-exdom     92 prove, 0 sbagliate      con ExJs sotto
+    make prova-exqjs     92 prove, 0 sbagliate      con QuickJS sotto
 
-Le corrispondenze ci sono quasi tutte:
+! **LE PROVE SONO LE STESSE E NON E' CAMBIATA UNA RIGA**, ne' in
+`tools/prove/domprova.c` ne' in `lib/exdom/exdom.c`. Cambia solo chi
+implementa `exjs.h`. Era la promessa scritta in cima a quel file dalla prima
+stesura — «il giorno che si portera' QuickJS si sostituisce cio' che sta sotto
+senza riscrivere il ponte» — e adesso e' una cosa misurata.
+
+E la pagina vera, quella con i sette riquadri:
+
+    /tmp/exos-prove/domqjs tools/prove/sito/script.html
+
+rende un documento **identico byte per byte** a quello di ExJs, `diff` compreso.
+
+### Come si traducono
 
 | exjs.h | QuickJS |
 |---|---|
-| `exjs_apri` / `exjs_chiudi` | `JS_NewRuntime` + `JS_NewContext` |
+| `exjs_apri` / `exjs_chiudi` | `JS_NewRuntime` + `JS_NewContext` / `JS_FreeRuntime` |
 | `exjs_esegui` | `JS_Eval` |
-| `exjs_esotico` (ganci lettura/scrittura) | `JSClassExoticMethods` |
+| `exjs_esotico` (ganci lettura/scrittura) | `JSClassExoticMethods.get_own_property` + `.set_property` |
+| `exjs_nativa` | `JS_NewCFunctionData`, con l'indice della tabella come dato |
 | `exjs_chiama` / `exjs_invoca` | `JS_Call` |
+| `exjs_accoda` / `exjs_pompa` | nostri, piu' `JS_ExecutePendingJob` per le promesse |
 | `exjs_memoria` | `JS_ComputeMemoryUsage` |
-| `exjs_accoda` / `exjs_pompa` | **non c'e'**: la coda dei lavori la teniamo noi, come adesso, piu' `JS_ExecutePendingJob` per le promesse |
+| `console.log`, `setTimeout` | **nostri**: in QuickJS stanno in quickjs-libc, che scrive su stdout |
 
-! **E IL PUNTO DIFFICILE E' UNO SOLO: I RIFERIMENTI.** ExJs non ha un
-raccoglitore e un `ExJsVal` e' un valore che si puo' tenere dove si vuole;
-QuickJS conta i riferimenti, e un `JSValue` tenuto da parte senza
-`JS_DupValue` e' un puntatore che muore quando il motore decide. Il ponte
-tiene involucri per ogni nodo del documento: se ne tiene migliaia.
-**La strada e' una tabella di maniglie dentro l'adattatore** — `ExJsVal`
-diventa un indice, e la tabella e' l'unica cosa che il raccoglitore vede come
-radice. E' li' che questo porting si decide.
+! **UN `ExJsVal` E' UNA MANIGLIA.** ExJs non ha raccoglitore e un valore si
+tiene dove si vuole; QuickJS conta i riferimenti, e un `JSValue` messo da parte
+senza `JS_DupValue` muore quando decide il motore — mentre il ponte ne tiene
+uno per ogni nodo del documento. La tabella delle maniglie dentro l'adattatore
+e' l'unica radice che il raccoglitore vede da questa parte, e si libera tutta
+insieme con la pagina. **Una maniglia nasce solo quando un valore attraversa il
+confine C**: un ciclo che costruisce diecimila stringhe dentro il JavaScript non
+la tocca nemmeno una volta — in ExJs invece ogni valore costava una casella.
 
-### 2. La fetta, e il `.ld`
+### Le tre cose che il porting ha insegnato
 
-639 KB ci stanno in una fetta da un megabyte, ma la mappa la fa
-`python3 tools/fette.py --libera`, non un commento. Oggi risponde
-**`0x04A00000`**, ed e' li' che andra' `exqjs.ld` — da richiedere il giorno
-che si scrive, perche' nel frattempo qualcun altro puo' aver preso quella
-fetta.
+! **1. IL GANCIO GIUSTO E' `get_own_property`, NON `get_property`.** Sembrano
+la stessa cosa. Col secondo QuickJS ci consegna la lettura e si ferma a quel
+che rispondiamo: il prototipo non viene piu' guardato, cioe'
+`elemento.appendChild` non esiste piu'. Col primo ci chiede se la proprieta' e'
+NOSTRA, e se diciamo di no prosegue lui — proprie, gancio, prototipo, che e'
+esattamente l'ordine scritto in `exjs.h`. Prima della correzione: 75 prove
+rosse su 92, tutte con «not a function».
 
-### 3. Il tempo e il caso
+! **2. UN OGGETTO CHE ATTRAVERSA DUE VOLTE DEVE RENDERE LA STESSA MANIGLIA.**
+Il sintomo era piccolo e preciso: due `addEventListener` con la stessa
+funzione registravano due gestori, e `removeEventListener` non ne trovava
+nessuno. Il ponte confronta gli `ExJsVal`, e ogni passaggio ne fabbricava uno
+nuovo. La maniglia adesso si scrive **sull'oggetto stesso**, in una proprieta'
+che non si elenca: ricerca in tempo costante. E' lo stesso problema che exdom
+risolve dall'altra parte con «un nodo si avvolge una volta sola».
 
-QuickJS chiede l'ora a `gettimeofday` (per `Date`) e a `js__hrtime_ns` (per i
-tetti di esecuzione). La regola di ExJs — **il tempo arriva da fuori**, vedi
-`exjs_pompa` — va tenuta anche qui: una libreria che chiede l'orologio da se'
-da' prove che passano oggi e falliscono domani.
+! **3. `console.log` E' UNA RIGA.** Mancava l'a-capo finale, e sedici prove
+sugli eventi risultavano rosse mostrando il testo giusto: il banco confronta
+l'uscita, e due log di seguito diventavano una parola sola. Un difetto da una
+riga che sembrava sedici difetti.
 
-### 4. `Math.random` e la memoria
+## Che cosa manca, in ordine
 
-Da guardare quando il motore gira: QuickJS vuole un seme, e alloca a manciate.
-Il `malloc` di EX-OS regge, ma non e' mai stato messo sotto un raccoglitore
-che libera migliaia di oggetti per ciclo.
+### 1. La libreria condivisa
 
----
+    exqjs.c  compilato per i386     8 958 byte
+    QuickJS + openlibm + libgcc   654 824 byte
+    ------------------------------------------
+    TOTALE                        663 792 byte  (648 KB)
+
+Tutto cio' che resta indefinito e' la libc. Serve un `exqjs.ld` alla fetta che
+`tools/fette.py --libera` indica (oggi `0x04A00000`), una tabella di
+esportazione con gli stessi nomi di `exjs_esporta.c`, e la regola nel Makefile.
+Da li' il browser puo' aprire `quickjs.so` invece di `exjs.so` **senza saperlo**:
+lo stub e' lo stesso.
+
+### 2. Chi sceglie, e come
+
+Due motori nello stesso sistema vogliono una decisione dichiarata: un'opzione
+in `File > Impostazioni` accanto a JavaScript acceso/spento, oppure la regola
+«se la pagina ha uno `<script>` che ExJs rifiuta, riapri con QuickJS».
+La seconda e' piu' furba e piu' difficile da spiegare; la prima si vede.
+
+### 3. Le maniglie, quando la pagina resta aperta per ore
+
+Non si liberano una per una, perche' l'interfaccia non ha un `exjs_libera`.
+Per una pagina va benissimo — muoiono con lei — ma una pagina che chiama una
+funzione nativa in un ciclo lungo le consuma. Il giorno che si vede, la
+risposta e' una funzione in piu' nell'interfaccia, che ExJs implementa come
+una riga vuota: esattamente com'e' andata per `exjs_chiudi`.
+
+### 4. Il tempo e il caso
+
+`Date` e `Math.random` girano gia' (sono di QuickJS). Da guardare quando il
+motore sara' dentro EX-OS: `gettimeofday` a 10 ms di risoluzione e un seme per
+il generatore che non sia sempre lo stesso.
 
 ## E ExJs resta
 
