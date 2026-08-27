@@ -485,6 +485,12 @@ void   *malloc(size_t size);
 #define alloca(n) __builtin_alloca(n)
 #endif
 void    free(void *ptr);
+
+/* ! QUANTI BYTE SI POSSONO DAVVERO USARE dietro un puntatore di malloc: e'
+ * `dim` dell'intestazione, cioe' la taglia vera dopo l'allineamento, non
+ * quella chiesta. Serve a chi conta la memoria viva — il primo a chiederla e'
+ * stato il raccoglitore di QuickJS. NULL rende 0. */
+size_t  malloc_usable_size(void *ptr);
 void   *calloc(size_t nmemb, size_t size);
 void   *realloc(void *ptr, size_t size);
 
@@ -725,6 +731,30 @@ struct tm {
     int tm_wday;    /* 0..6, domenica = 0 */
     int tm_yday;    /* 0..365 */
     int tm_isdst;   /* sempre 0 */
+
+    /* =========================================================================
+     * ! I DUE CAMPI DEL FUSO CI SONO E DICONO LA VERITA': zero e «UTC».
+     *
+     * Non sono un'aggiunta di comodo: stanno in POSIX dal 2024, li hanno la
+     * glibc e i BSD, e il codice di terzi li usa senza chiedere permesso —
+     * il primo a chiederli e' stato QuickJS, che senza `tm_gmtoff` non
+     * compila la sua `Date`.
+     *
+     * ! E QUI VALGONO SEMPRE 0 e «UTC» PERCHE' EX-OS NON SA DOVE SI TROVA.
+     * Riempirli con un fuso inventato sarebbe peggio che non averli: un
+     * programma che li legge crederebbe a un'informazione che nessuno ha
+     * mai misurato. Zero non e' un ripiego, e' la risposta esatta finche'
+     * localtime() e gmtime() sono la stessa funzione.
+     *
+     * ! STANNO IN FONDO, ed e' l'unico posto dove potevano stare. I campi
+     * di prima non si spostano di un byte, quindi un binario gia' collegato
+     * continua a leggerli agli scostamenti di sempre. Ma `sizeof` cambia:
+     * chi passa una PROPRIA struct tm a gmtime_r dev'essere ricompilato con
+     * questo header — ed e' per questo che le due funzioni nuove sono nuove
+     * e non il rifacimento di due vecchie.
+     * ========================================================================= */
+    long        tm_gmtoff;  /* secondi a est di UTC: sempre 0 */
+    const char *tm_zone;    /* il nome del fuso: sempre "UTC" */
 };
 
 struct timeval {
@@ -738,6 +768,13 @@ struct timeval {
 time_t     time(time_t *t);
 struct tm *gmtime(const time_t *t);      /* risultato in una struttura STATICA */
 struct tm *localtime(const time_t *t);   /* identica a gmtime: vedi sopra */
+
+/* ! LE DUE VERSIONI RIENTRANTI, che scrivono dove dice CHI CHIAMA. Le altre
+ * due tengono il risultato in una struttura statica: due chiamate di seguito e
+ * la prima e' persa, e con due processi leggeri sarebbe peggio. Rendono `out`,
+ * o NULL se `t` e' NULL — come vuole POSIX. */
+struct tm *gmtime_r(const time_t *t, struct tm *out);
+struct tm *localtime_r(const time_t *t, struct tm *out);
 /* ! L'INVERSA DI gmtime, E NORMALIZZA LA STRUTTURA CHE RICEVE — per
  * questo il parametro non e' const. Un tm_mon a 12 diventa gennaio
  * dell'anno dopo, un tm_sec a 90 diventa un minuto e mezzo: e' cosi' che

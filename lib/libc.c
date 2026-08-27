@@ -694,6 +694,15 @@ struct tm {
     int tm_wday;    /* 0..6, domenica = 0 */
     int tm_yday;    /* 0..365 */
     int tm_isdst;   /* sempre 0: EX-OS non conosce l'ora legale */
+
+    /* ! GLI ULTIMI DUE CAMPI ESISTONO DA QUANDO SERVONO A QUALCUNO — li
+     * chiede QuickJS, e stanno in POSIX dal 2024. Valgono sempre 0 e «UTC»
+     * perche' EX-OS non sa in che fuso si trova, e un fuso inventato sarebbe
+     * peggio che nessun campo. Il perche' per esteso e' in lib/include/libc.h,
+     * accanto al gemello di questa struttura: le due definizioni vanno tenute
+     * allineate a mano, come dice il commento in testa a questo file. */
+    long        tm_gmtoff;
+    const char *tm_zone;
 };
 
 /* ! tv_sec E' time_t, NON long, E QUESTA RIGA E' COSTATA CARA.
@@ -3397,6 +3406,35 @@ void free(void *ptr)
     if (heap_ultimo != NULL && heap_ultimo->libero) heap_restituisci();
 }
 
+/* =============================================================================
+ * malloc_usable_size — quanti byte si possono davvero usare
+ *
+ * ! NON E' UN LUSSO GNU: e' cio' che permette a un raccoglitore di memoria di
+ * sapere quanto sta occupando. QuickJS lo chiede per contare la memoria viva e
+ * decidere QUANDO raccogliere; senza, lo standard prevede che si risponda 0 —
+ * e allora il motore conta solo le taglie che ha chiesto lui, sbagliando per
+ * difetto di tutto l'arrotondamento.
+ *
+ * ! IL NUMERO E' VERO, non la taglia chiesta: e' `dim` dell'intestazione,
+ * cioe' quello che malloc ha davvero riservato dopo l'allineamento a otto e
+ * l'eventuale rifiuto di spezzare un avanzo troppo piccolo. Chi scrive fin
+ * la' dentro non corrompe niente, ed e' esattamente la promessa che questa
+ * funzione fa.
+ *
+ * ! SU UN PUNTATORE CHE NON VIENE DA malloc IL RISULTATO NON HA SENSO, come
+ * per free: si legge un'intestazione che non c'e'. NULL invece si accetta e
+ * rende 0, perche' e' il caso che capita davvero.
+ * ============================================================================= */
+size_t malloc_usable_size(void *ptr)
+{
+    Blocco *b;
+
+    if (ptr == NULL) return 0;
+
+    b = DATI_BLOCCO(ptr);
+    return b->dim;
+}
+
 void *calloc(size_t nmemb, size_t size)
 {
     size_t tot = nmemb * size;
@@ -5293,6 +5331,41 @@ struct tm *localtime(const time_t *t)
 }
 
 /* =============================================================================
+ * gmtime_r / localtime_r — le stesse, ma nella memoria di chi chiama
+ *
+ * ! NON SONO UN VEZZO POSIX: sono cio' che permette a due chiamate di
+ * convivere. `gmtime` tiene il risultato in una struttura statica, quindi
+ *
+ *     printf("%d %d", gmtime(&a)->tm_year, gmtime(&b)->tm_year);
+ *
+ * stampa due volte lo stesso anno e non se ne accorge nessuno. Il codice di
+ * terzi le da' per scontate — QuickJS non compila senza `localtime_r`.
+ *
+ * ! E RIEMPIONO ANCHE tm_gmtoff E tm_zone, che la versione statica lascia a
+ * zero: qui la struttura e' di chi chiama, ed e' l'unico posto dove si sa che
+ * ha la forma di OGGI. Vedi il commento su struct tm in libc.h.
+ * ============================================================================= */
+struct tm *gmtime_r(const time_t *t, struct tm *out)
+{
+    struct tm *s;
+
+    if (t == NULL || out == NULL) return NULL;
+
+    s = gmtime(t);
+    if (s == NULL) return NULL;
+
+    *out = *s;
+    out->tm_gmtoff = 0;         /* EX-OS non sa in che fuso si trova */
+    out->tm_zone   = "UTC";
+    return out;
+}
+
+struct tm *localtime_r(const time_t *t, struct tm *out)
+{
+    return gmtime_r(t, out);    /* nessun fuso orario: vedi il commento in testa */
+}
+
+/* =============================================================================
  * mktime — l'inversa di gmtime
  *
  * ! NORMALIZZA LA STRUTTURA CHE RICEVE, e non e' un effetto collaterale:
@@ -5338,7 +5411,34 @@ time_t mktime(struct tm *tm)
     {
         time_t      quando = (time_t)secondi;
         struct tm  *rifatto = gmtime(&quando);
-        if (rifatto != NULL && rifatto != tm) *tm = *rifatto;
+        /* =====================================================================
+         * ! CAMPO PER CAMPO, E NON `*tm = *rifatto`, ED E' UN'ABI CHE SI
+         * ROMPEVA IN SILENZIO.
+         *
+         * La struttura di chi chiama e' SUA: sta sulla sua pila, e ha la forma
+         * che aveva l'header con cui e' stato compilato. Copiarci sopra una
+         * `struct tm` intera vuol dire scriverci `sizeof(struct tm)` byte di
+         * OGGI — e il giorno in cui la struttura e' cresciuta (tm_gmtoff e
+         * tm_zone, agosto 2026) sarebbero stati otto byte oltre la variabile
+         * di un programma compilato ieri. Sulla pila, cioe' sopra qualcos'altro
+         * di suo.
+         *
+         * ! E I CAMPI NUOVI NON SI TOCCANO APPOSTA: mktime normalizza una data,
+         * e il fuso non e' una cosa che normalizza. Chi li vuole riempiti
+         * chiama gmtime_r, che scrive in una struttura di cui conosce la
+         * forma perche' gliel'ha data lui.
+         * ===================================================================== */
+        if (rifatto != NULL && rifatto != tm) {
+            tm->tm_sec   = rifatto->tm_sec;
+            tm->tm_min   = rifatto->tm_min;
+            tm->tm_hour  = rifatto->tm_hour;
+            tm->tm_mday  = rifatto->tm_mday;
+            tm->tm_mon   = rifatto->tm_mon;
+            tm->tm_year  = rifatto->tm_year;
+            tm->tm_wday  = rifatto->tm_wday;
+            tm->tm_yday  = rifatto->tm_yday;
+            tm->tm_isdst = rifatto->tm_isdst;
+        }
         return quando;
     }
 }

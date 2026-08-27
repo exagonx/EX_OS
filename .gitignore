@@ -199,3 +199,30 @@ __pycache__/
 /azzera-storia.sh
 /messaggio-primo-commit.txt
 /finisci-azzeramento.sh
+
+# =============================================================================
+# QUICKJS — i sorgenti del motore che sostituira' ExJs
+#
+# Cinque megabyte di codice di terzi (quickjs-ng 0.16.2, licenza MIT: Fabrice
+# Bellard, Charlie Gordon, Ben Noordhuis, Saul Ibarra Corretge). Stessa regola
+# di GCC, della userland e dei sorgenti dei font: **i sorgenti di terzi non
+# entrano nella cronologia di questo repository**. Chi clona EX-OS non deve
+# scaricare il codice di qualcun altro, e quel codice cambia a monte con i
+# suoi tempi, non coi nostri.
+#
+# ! LE NOSTRE MODIFICHE NON ANDRANNO QUI DENTRO. Come per GCC — vedi
+# tools/gcc-exos/ — il porting sara' un insieme di differenze applicabili a un
+# albero pulito, tracciate a parte. Se le correzioni vivessero dentro questa
+# directory, aggiornare QuickJS vorrebbe dire perderle, e nessuno saprebbe
+# piu' quali righe sono nostre.
+#
+# ! E IL PERCHE' DEL PORTING E' SCRITTO DA UN'ALTRA PARTE, in cima a
+# lib/exjs/exjs.h, dalla prima riga: ExJs e' un ES3 e per google.com non
+# basta. L'interfaccia fra il linguaggio (exjs), l'albero (exhtml) e il ponte
+# (exdom) e' stata divisa in tre proprio perche' quel giorno si cambi il
+# motore e non il browser.
+#
+# ! ANCORATO ALLA RADICE con lo slash iniziale, come tutti i pacchetti di
+# terzi qui sopra.
+# =============================================================================
+/quickjs/

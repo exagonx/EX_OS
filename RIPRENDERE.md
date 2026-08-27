@@ -1,5 +1,87 @@
 # DOVE RIPRENDERE — 26 agosto 2026
 
+## 26 agosto 2026 — QUICKJS COMPILA PER EX-OS
+
+Primo scaglione del porting. Non gira ancora: **compila e si collega**, e si
+sa quanto pesa e cosa chiede.
+
+    quickjs.c     537 630 byte di codice     -Os, i386
+    libunicode.c   57 707
+    libregexp.c    26 208
+    dtoa.c          8 134
+    + openlibm e i quattro nomi di libgcc
+    -----------------------------------------
+    TOTALE        654 824 byte  (639 KB)
+
+! **CI STA IN UNA FETTA DA UN MEGABYTE**, e la previsione di `exwin.ld` —
+«un motore JavaScript, che in un megabyte non ci sta per definizione» — e'
+smentita per la seconda volta. A `-O1` sarebbero 946 KB: **`-Os` non e' un
+gusto, e' cio' che lo fa entrare**. La fetta libera oggi e' `0x04A00000`
+(chiesta a `tools/fette.py --libera`, non a un commento).
+
+! **E TUTTO CIO' CHE RESTA INDEFINITO E' LA NOSTRA LIBC**: ventotto nomi,
+malloc, printf, memcpy, strtod, gettimeofday. Nessuna syscall che non abbiamo,
+nessun buco di sistema.
+
+### Cinque modifiche, e nessuna dentro il motore
+
+`tools/quickjs-exos/applica.py`, sullo stampo di `tools/gcc-exos/`: i sorgenti
+restano fuori dalla cronologia e cio' che cambiamo sta a parte, come
+sostituzioni di stringhe esatte.
+
+    cutils.h    niente <pthread.h>              EX-OS non ha i thread
+    quickjs.c   niente CONFIG_ATOMICS           Atomics senza thread non ha senso
+    cutils.h    JS_HAVE_THREADS 0               l'interruttore c'era gia'
+    cutils.h    gettimeofday, non clock_gettime la libc ha il primo
+    cutils.h    js_exepath rende -1             qui non c'e' /proc
+
+! **QUATTRO SU CINQUE AGGIUNGONO SOLO `__EXOS__` A UN ELENCO CHE ESISTEVA**,
+con dentro DJGPP, WASI ed Emscripten — gli altri sistemi senza thread e senza
+`/proc`. E' il segno che si sta seguendo una strada gia' prevista, non che se
+ne apre una a forza. L'interprete, il parser, il raccoglitore, le espressioni
+regolari e Unicode compilano **come sono**.
+
+### Che cosa ha imparato la libc
+
+- **`localtime_r` e `gmtime_r`** — le rientranti. Senza `localtime_r` QuickJS
+  non compila proprio.
+- **`tm_gmtoff` e `tm_zone` in `struct tm`** — POSIX 2024, sempre `0` e
+  `"UTC"`: EX-OS non sa in che fuso si trova, e un fuso inventato sarebbe
+  peggio di un campo assente. Stanno **in fondo**, e i campi di prima non si
+  spostano di un byte.
+- **`malloc_usable_size`** — la taglia vera dietro un puntatore. Serve a un
+  raccoglitore per sapere quanto occupa; senza, QuickJS conta solo cio' che ha
+  chiesto e sbaglia per difetto di tutto l'arrotondamento.
+- **`lib/include/malloc.h`** — non e' standard e proprio per questo esiste:
+  mezzo mondo lo include senza chiederselo, e senza il nostro finiva su quello
+  del sistema ospite.
+
+! **E `mktime` NON COPIA PIU' LA STRUTTURA INTERA**, campo per campo. Era
+`*tm = *rifatto`, cioe' una `struct tm` scritta tutta nella memoria di chi
+chiama: con la struttura cresciuta di otto byte, un binario compilato con
+l'header VECCHIO si sarebbe visto scrivere otto byte oltre la propria
+variabile — sulla pila. Copiare i nove campi che c'erano prima toglie il
+problema alla radice invece di obbligare a ricostruire tutto.
+
+### Il prossimo scaglione, ed e' tutto il lavoro vero
+
+**L'adattatore `lib/exqjs/`**, che implementa l'interfaccia di `exjs.h` sopra
+QuickJS: e' per quello che il linguaggio, l'albero e il ponte sono tre
+librerie separate. Le corrispondenze ci sono quasi tutte (`JS_Eval`,
+`JSClassExoticMethods`, `JS_Call`, `JS_ComputeMemoryUsage`); la coda dei
+lavori resta nostra, come adesso.
+
+! **IL PUNTO DIFFICILE E' UNO SOLO: I RIFERIMENTI.** ExJs non ha raccoglitore e
+un `ExJsVal` si tiene dove si vuole; QuickJS li conta, e un `JSValue` messo da
+parte senza `JS_DupValue` muore quando decide il motore. Il ponte tiene un
+involucro per ogni nodo del documento: **migliaia**. La strada e' una tabella
+di maniglie dentro l'adattatore — `ExJsVal` diventa un indice, e quella tabella
+e' l'unica radice che il raccoglitore vede. E' li' che il porting si decide.
+
+Tutto per esteso in `tools/quickjs-exos/leggimi.md`, e si rifa' in venti
+secondi con `tools/quickjs-exos/prova-compila.sh`.
+
+
 ## 26 agosto 2026 — I FONT NON SI APRIVANO PERCHE' L'INSTALLATORE ABBASSAVA I NOMI
 
 Il difetto piu' difficile da vedere di tutta la serie, e non perche' fosse
@@ -71,6 +153,29 @@ nella scelta della lingua e tutto il resto andava sfasato di uno. Corretto, e
 scritto accanto che una prova che pilota un programma interattivo si rompe a
 ogni domanda nuova.
 
+
+## 26 agosto 2026 — I SORGENTI DI QUICKJS SONO NELL'ALBERO (E FUORI DA GIT)
+
+`quickjs/` — quickjs-ng **0.16.2**, licenza MIT (Bellard, Gordon, Noordhuis,
+Ibarra Corretge), 5 MB, 58 file. E' il motore che sostituira' ExJs: il perche'
+sta in cima a `lib/exjs/exjs.h` dalla prima riga, e cioe' che per google.com un
+ES3 non basta.
+
+! **NON ENTRA NELLA CRONOLOGIA**, come GCC, la userland e i sorgenti dei font:
+`/quickjs/` sta in `.gitignore`, ancorato alla radice. Chi clona EX-OS non
+scarica il codice di qualcun altro.
+
+! **E LE NOSTRE MODIFICHE NON ANDRANNO LI' DENTRO.** Come per GCC — vedi
+`tools/gcc-exos/` — il porting sara' un insieme di differenze applicabili a un
+albero pulito, tracciate a parte. Correzioni scritte dentro `quickjs/` si
+perderebbero al primo aggiornamento a monte, e nessuno saprebbe piu' quali
+righe sono nostre.
+
+Il lavoro che aspetta, in ordine: la libc (QuickJS vuole `Date`, `RegExp` le ha
+sue, ma vuole anche `malloc` serio e i double), la fetta di memoria in
+`tools/fette.py`, e il ponte — che **non si tocca**: `lib/exdom` parla
+all'interfaccia di `exjs.h`, ed e' esattamente per questo che le tre librerie
+sono tre.
 
 ## 26 agosto 2026 — LE IMPOSTAZIONI DEL NAVIGATORE
 
