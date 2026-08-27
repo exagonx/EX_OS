@@ -206,12 +206,23 @@ un ripiego che nessuno puo' vedere e' un ripiego che diventa un mistero.
 
 ## Che cosa manca, in ordine
 
-### 1. La prova dentro EX-OS, ripetibile
+### 1. La prova dentro EX-OS, ripetibile senza guardare
 
-La pagina `/exwin/doc/javascript.html` — sette riquadri che si riempiono da
-soli — e' **la stessa** di `tools/prove/sito/script.html`, quindi quel che si
-vede sullo schermo si confronta con quel che stampa il banco. Manca uno script
-che la faccia girare in QEMU da sola e confronti le due cose senza guardare.
+E' **gia' stata fatta a mano**, e ha funzionato: disco installato, `motore =
+quickjs`, `/exwin/doc/javascript.html` come pagina iniziale — i sette riquadri
+si riempiono, il neretto e' neretto, le quattro righe della lista ci sono
+tutte. La stessa pagina del banco (`tools/prove/sito/script.html`), quindi il
+confronto con l'host e' immediato.
+
+! **E LA STRADA HA FATTO USCIRE DUE DIFETTI CHE NESSUNA PROVA VEDEVA**: i due
+stub che sceglievano due motori diversi (SYS_LIB_TROVA, kernel 0.208) e l'arena
+del documento riavvolta dall'impaginazione. Entrambi vivevano nella differenza
+fra il banco e la macchina vera.
+
+Manca lo **script** che rifaccia quel giro da solo e confronti le due uscite
+senza che qualcuno guardi una fotografia. Le tappe sono note e sono cinque:
+ISO di prova con `@avvio /exwin/bin/browser`, installazione, `echo` delle
+impostazioni, `exwin`, `screendump`.
 
 ### 2. Le maniglie, quando la pagina resta aperta per ore
 

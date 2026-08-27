@@ -1,5 +1,75 @@
 # DOVE RIPRENDERE — 27 agosto 2026
 
+## 27 agosto 2026 — L'ARENA DEL DOCUMENTO ERA ANCHE QUELLA DELL'IMPAGINAZIONE
+
+Il difetto che ha rovinato **ogni pagina con uno script** da quando JavaScript
+esiste, e che nessuna prova poteva vedere.
+
+    riquadro 1:  «-setTimeoutut»        invece della sua frase
+    lista, 1a riga:  «so»               invece di «riga numero 1»
+    righe 2, 3, 4:   giuste
+
+! **E LO FACEVA CON TUTT'E DUE I MOTORI.** E' cosi' che si e' capito che il
+motore non c'entrava: la stessa pagina, la stessa macchina, ExJs e QuickJS —
+due fotografie identiche pixel per pixel, sbagliate allo stesso modo. Un'ora
+prima sembrava un difetto dell'adattatore appena scritto.
+
+### Che cosa succedeva
+
+I segni degli elenchi — «-», «3.» — non stanno nel documento: li fabbrica
+l'impaginazione, e finivano **nell'arena del documento**, dopo il testo vero.
+Per non accumularli a ogni giro, `impagina()` la riavvolgeva:
+
+    g_doc.arena_n = g_arena_doc;    /* si butta il testo generato dal giro prima */
+
+Era giusto finche' in quell'arena scriveva solo l'impaginazione.
+
+! **DA QUANDO C'E' JAVASCRIPT, NELLA STESSA ARENA SCRIVONO ANCHE GLI SCRIPT**:
+`innerHTML`, `textContent`, `createTextNode` passano da exhtml, che copia li'
+dentro. Il riavvolgimento buttava via **il loro** testo mentre i nodi
+continuavano a puntarci, e la scrittura successiva ci finiva sopra. Il
+riquadro 1 mostrava una briciola del testo che il riquadro 7 avrebbe scritto
+un secondo dopo.
+
+### La cura non e' spostare il segnaposto: e' non scrivere la'
+
+L'arena del documento e' del documento. L'impaginazione adesso ha la sua
+(`g_gen`, 64 KB), che si azzera a ogni giro perche' quel testo dura un giro.
+E' la regola dei buffer di chi chiama, applicata dentro un programma solo.
+
+! **L'OFFSET PORTA IL BIT PIU' ALTO ACCESO** per dire da quale delle due arene
+viene. Un'arena da un megabyte non arriva a `0x80000000` nemmeno per sbaglio,
+quindi il bit e' libero davvero, e un pezzo continua a costare quattro byte
+invece di quattro piu' un si'/no.
+
+### Com'e' finita, sullo schermo
+
+Stesso disco, stessa pagina, browser corretto:
+
+    1. Uno script scrive dentro un elemento
+       scritto da uno script, con del NERETTO dentro        <- e il neretto c'e'
+    2. Uno script costruisce dei nodi
+       - riga numero 1  - riga numero 2  - riga numero 3  - riga numero 4
+    3. Attributi e classi                                   <- giallo
+
+**Con QuickJS sotto, dentro EX-OS, su un disco installato.** E' il giro
+completo: l'adattatore, la libreria condivisa, la scelta del motore, e una
+pagina che fa quello che dice di fare.
+
+### E perche' nessuna prova lo trovava
+
+! **`make prova-exdom` E `make prova-exqjs` NON IMPAGINANO.** Il banco costruisce
+il documento, esegue gli script e stampa l'albero: `impagina()` non esiste
+la' dentro, quindi l'arena non si riavvolge mai e il difetto non c'e'. Centoventi
+prove verdi, e la pagina sbagliata sullo schermo.
+
+! **E NON BASTAVA UNO SCRIPT: SERVIVA UNA REIMPAGINAZIONE.** Che arriva sempre —
+dopo ogni script, dopo ogni immagine, dopo ogni clic — ma solo dentro il
+browser vero. E' esattamente la differenza fra il banco e la macchina, ed e'
+il secondo difetto in due giorni che vive li' dentro (il primo era i due stub
+che sceglievano due motori diversi).
+
+
 ## 27 agosto 2026 — DUE MOTORI NELLO STESSO PROCESSO, E IL DIFETTO CHE NE E' USCITO
 
 ! **IL SINTOMO NON SOMIGLIAVA PER NIENTE ALLA CAUSA**, ed e' il motivo per cui

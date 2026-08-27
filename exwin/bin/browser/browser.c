@@ -1156,7 +1156,6 @@ static void parola(const char *t, unsigned int off, int n)
  * ! E SI RIPARTE DAL SEGNO A OGNI IMPAGINAZIONE, o la coda crescerebbe di un
  * giro per volta — e la pagina si reimpagina a ogni immagine che arriva.
  * ========================================================================== */
-static unsigned int g_arena_doc = 0;    /* dove finisce il testo del documento */
 
 /* ! ZERO NON PUO' VOLER DIRE «NON C'E' POSTO», ED E' COSTATO UN DIFETTO CHE
  * SEMBRAVA UN'ALTRA COSA. Zero e' un OFFSET VALIDO — e' l'inizio dell'arena,
@@ -1171,19 +1170,61 @@ static unsigned int g_arena_doc = 0;    /* dove finisce il testo del documento *
  * elenco con dentro pezzi di un'altra frase e' peggio di niente. */
 #define GENERA_NIENTE   ((unsigned int)-1)
 
+/* =============================================================================
+ * ! IL TESTO CHE L'IMPAGINAZIONE INVENTA HA UN'ARENA SUA, E PRIMA NO — ED E'
+ * STATO IL DIFETTO CHE HA ROVINATO OGNI PAGINA CON UNO SCRIPT.
+ *
+ * I segni degli elenchi («-», «3.») non stanno nel documento: li fabbrica
+ * l'impaginazione. Finivano nell'arena del DOCUMENTO, dopo il testo vero, e
+ * `impagina()` la riavvolgeva a ogni giro per non accumularli — «si butta il
+ * testo generato dal giro prima». Era giusto finche' in quell'arena scriveva
+ * solo l'impaginazione.
+ *
+ * ! DA QUANDO C'E' JAVASCRIPT, NELLA STESSA ARENA SCRIVONO ANCHE GLI SCRIPT:
+ * `innerHTML`, `textContent`, `createTextNode` chiedono a exhtml, che copia
+ * li' dentro. Riavvolgere buttava via IL LORO testo mentre i nodi continuavano
+ * a puntarci — e la scrittura successiva ci finiva sopra. Il sintomo era
+ * cattivo: il riquadro 1 mostrava un pezzo del testo del riquadro 7, e il
+ * primo elemento di una lista una briciola di un'altra frase. Sembrava un
+ * difetto del motore JavaScript, e lo faceva con TUTT'E DUE i motori — che e'
+ * stato il modo in cui si e' capito che il motore non c'entrava.
+ *
+ * ! LA CURA NON E' SPOSTARE IL SEGNAPOSTO, E' NON SCRIVERE LA'. L'arena del
+ * documento e' del documento; l'impaginazione ha la sua, che si azzera a ogni
+ * giro perche' quel testo dura un giro. E' la stessa regola dei buffer di chi
+ * chiama applicata dentro un programma solo.
+ *
+ * ! L'OFFSET PORTA IL BIT PIU' ALTO ACCESO per dire da quale delle due arene
+ * viene. Un'arena da un megabyte non arriva a 0x80000000 nemmeno per sbaglio,
+ * quindi il bit e' libero davvero — e un pezzo continua a costare quattro byte
+ * di scostamento invece di un puntatore da quattro piu' un si'/no.
+ * ============================================================================= */
+#define GEN_MAX     (64u * 1024u)
+#define GEN_BIT     0x80000000u
+
+static char         g_gen[GEN_MAX];
+static unsigned int g_gen_n = 0;
+
 static unsigned int genera(const char *s)
 {
-    unsigned int inizio = g_doc.arena_n, i = 0;
+    unsigned int inizio = g_gen_n, i = 0;
 
     while (s[i]) i++;
-    if (g_doc.arena_n + i + 1 > ARENA_MAX) {
+    if (g_gen_n + i + 1 > GEN_MAX) {
         g_doc.troncato = 1;         /* la barra di stato lo dira' */
         return GENERA_NIENTE;
     }
 
-    for (i = 0; s[i]; i++) g_arena[g_doc.arena_n++] = s[i];
-    g_arena[g_doc.arena_n++] = '\0';
-    return inizio;
+    for (i = 0; s[i]; i++) g_gen[g_gen_n++] = s[i];
+    g_gen[g_gen_n++] = '\0';
+    return inizio | GEN_BIT;
+}
+
+/* Il testo di un pezzo, da qualunque delle due arene venga. */
+static const char *testo_pezzo(unsigned int off)
+{
+    if (off & GEN_BIT) return g_gen + (off & ~GEN_BIT);
+    return g_arena + off;
 }
 
 /* Fuori da <pre>, questi quattro sono tutti «spazio». */
@@ -2363,7 +2404,11 @@ static void impagina(void)
      * ===================================================================== */
     g_ctrl_n = 0;
     g_fisso = 0;
-    g_doc.arena_n = g_arena_doc;    /* si butta il testo generato dal giro prima */
+    /* ! L'ARENA DEL DOCUMENTO NON SI RIAVVOLGE PIU', e la riga che lo faceva
+     * era diventata un difetto il giorno che JavaScript ha cominciato a
+     * scrivere li' dentro: vedi il commento esteso accanto a genera(). Quel
+     * che l'impaginazione inventa sta in g_gen, che si azzera qui. */
+    g_gen_n = 0;
     g_marg_sx = g_marg_dx = 0;
     g_riga_primo = 0;
     g_sfondi_n = 0;
@@ -2751,7 +2796,7 @@ static void disegna(void)
 
         {
             ExFont       f = g_pez[i].font;
-            const char  *t = g_arena + g_pez[i].testo;
+            const char  *t = testo_pezzo(g_pez[i].testo);
             unsigned int c = g_pez[i].colore;
 
             /* Il testo nell'arena e' una parola sola perche' l'impaginazione
@@ -4287,7 +4332,6 @@ static void vai(const char *url, int in_storia, int usa_cache)
     html_prepara(&g_doc, g_nodi, NODI_MAX, g_attr, ATTR_MAX,
                  g_arena, ARENA_MAX);
     html_analizza(&g_doc, (const char *)g_pagina, e.byte);
-    g_arena_doc = g_doc.arena_n;    /* da qui in poi c'e' il testo generato */
 
     g_scorri = 0;
     g_ctrl_n = 0;
