@@ -1065,6 +1065,40 @@ static int file_font(const char *percorso)
         strncat(alt, percorso, sizeof(alt) - 8);
         d = file_intero(alt, &n);
     }
+
+    /* =========================================================================
+     * ! E IL SECONDO RIPIEGO E' IL NOME TUTTO MINUSCOLO, che e' come i font si
+     * sono trovati sui dischi installati fino ad agosto 2026.
+     *
+     * L'installatore abbassava OGNI nome che copiava — regola nata sul floppy,
+     * dove FAT in 8.3 rende «KERNEL.BIN» e il caso vero non esiste piu'. Dal CD
+     * pero' i nomi vengono da Joliet, che il caso lo conserva: sul disco
+     * finivano dodici «liberationserif-regular.ttf» mentre chiunque li apre li
+     * chiede con le maiuscole. Su ext2, dove il caso conta, non si apriva
+     * NIENTE — e la pagina usciva tutta col font di sistema.
+     *
+     * ! L'INSTALLATORE E' STATO CORRETTO, MA I DISCHI GIA' INSTALLATI RESTANO
+     * COM'ERANO. Questo ripiego e' il ponte: costa una `open` in piu' solo
+     * quando la prima e' gia' fallita, e vale anche per chi si copia un .ttf a
+     * mano passando da una chiavetta FAT.
+     * ===================================================================== */
+    if (!d) {
+        char alt[160];
+        int  i, taglio = 0;
+
+        for (i = 0; percorso[i] && i < (int)sizeof(alt) - 1; i++) {
+            alt[i] = percorso[i];
+            if (percorso[i] == '/') taglio = i + 1;
+        }
+        alt[i] = '\0';
+
+        for (i = taglio; alt[i]; i++)
+            if (alt[i] >= 'A' && alt[i] <= 'Z')
+                alt[i] = (char)(alt[i] - 'A' + 'a');
+
+        if (strcmp(alt, percorso) != 0) d = file_intero(alt, &n);
+    }
+
     if (!d || n <= 0) return -1;
 
     strncpy(g_file[slot].percorso, percorso, sizeof(g_file[slot].percorso) - 1);

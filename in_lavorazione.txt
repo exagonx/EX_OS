@@ -54,6 +54,63 @@ Da fare, per una pagina web moderna (in ordine di quanto pesa):
    si e' cliccato.
 
 
+LO STATO DEL NAVIGATORE AL 27 AGOSTO 2026 — dove riprendere
+
+Questo e' il punto in cui il browser e' stato lasciato. Le prove che contano:
+
+    make prova-exdom     92 prove, 0 sbagliate      con ExJs sotto
+    make prova-exqjs     92 prove, 0 sbagliate      con QuickJS sotto
+    /exwin/doc/javascript.html aperto DENTRO EX-OS, su disco installato:
+        i sette riquadri si riempiono, con l'uno e con l'altro motore
+
+CHE COSA C'E' ADESSO
+
+ - DUE MOTORI JAVASCRIPT, stessa interfaccia (exjs.h), scelti da
+   File > Impostazioni: ExJs (66 KB, l'ES3 scritto qui) e QuickJS
+   (594 KB, in /exwin/lib/quickjs.so). L'adattatore e' lib/exqjs/exqjs.c;
+   i sorgenti di QuickJS stanno fuori dal repository, vedi
+   tools/quickjs-exos/leggimi.md.
+ - I MENU: File (Apri, Pagina iniziale, Salva con nome, Impostazioni, Esci)
+   e Aiuto (guida, documentazione, Informazioni su).
+ - LO SCHEMA file:, con collegamenti relativi, fogli di stile esterni,
+   script esterni e immagini presi dal disco.
+ - LE IMPOSTAZIONI in $HOME/.app/browser/impostazioni.txt: pagina iniziale,
+   JavaScript acceso/spento, motore, immagini, cache. Una chiave sconosciuta
+   si salta, cosi' le opzioni future non rompono le versioni di prima.
+ - LA DOCUMENTAZIONE in /exwin/doc/, otto pagine piu' javascript.html, che
+   e' insieme spiegazione e prova.
+
+I DUE DIFETTI CHIUSI IL 27, ED ERANO TUTT'E DUE INVISIBILI AL BANCO
+
+ ! L'ARENA DEL DOCUMENTO ERA ANCHE QUELLA DELL'IMPAGINAZIONE. I segni degli
+   elenchi finivano nell'arena del documento e impagina() la riavvolgeva a
+   ogni giro, buttando via il testo che gli SCRIPT avevano scritto li'
+   dentro. Rovinava ogni pagina con uno script, con tutt'e due i motori.
+   Adesso l'impaginazione ha la sua arena (g_gen) e l'offset porta il bit
+   piu' alto acceso per dire da quale delle due viene.
+ ! DUE STUB NELLO STESSO PROCESSO SCEGLIEVANO DUE MOTORI DIVERSI: il browser
+   apriva QuickJS ed exdom.so apriva ExJs. SYS_LIB_TROVA (238, kernel 0.208)
+   chiede al caricatore «ce l'ho gia' dentro?», e chi arriva per primo decide
+   per tutti.
+
+ ! TUTT'E DUE VIVEVANO NELLA DIFFERENZA FRA IL BANCO E LA MACCHINA VERA: il
+   banco non impagina e non carica librerie condivise. Centoventi prove verdi
+   e la pagina sbagliata sullo schermo. La prova in QEMU si fa comunque.
+
+DA FARE, IN ORDINE DI QUANTO PESA SU UNA PAGINA VERA
+
+ 1. `el.style` COME OGGETTO. E' fra le righe piu' scritte del web e oggi non
+    fa niente. Vuole un pezzo di excss per sciogliere le dichiarazioni e un
+    oggetto esotico in exdom. Dichiarato in exdom.h.
+ 2. querySelector / querySelectorAll. excss sa gia' leggere i selettori: ne
+    manca l'uso dal ponte.
+ 3. XMLHttpRequest e fetch. exhttp c'e' gia', TLS compreso: manca
+    l'involucro nel ponte, e con QuickJS ci sono anche le promesse.
+ 4. `border` nel CSS. Oggi i bordi si disegnano solo dall'attributo
+    `border` delle tabelle.
+ 5. Le unita' relative (em, %, rem) e @media: vedi il punto 2 dell'elenco
+    generale qui sopra.
+
 FATTI IL 25 AGOSTO 2026 (chiesti nella stessa giornata):
 
 A. FATTO — install lancia hwconfig in fondo. Il kernel.cfg appena copiato e'
