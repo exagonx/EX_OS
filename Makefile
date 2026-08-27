@@ -5654,3 +5654,139 @@ help:
 	@echo "  #5 jump_to_kernel in ASM puro (no .code32 in binario 16-bit)"
 	@echo "  #6 lib/libc.ld aggiunto"
 	@echo ""
+
+# =============================================================================
+# I PROGRAMMI DI TERZI — 3p_app_source/ e il CD "3PAPP"
+#
+# ! I SORGENTI NON SONO NEL REPOSITORY, E LE REGOLE SI'. Sotto
+# 3p_app_source/ stanno sorgenti di terzi con le LORO licenze, esclusi da
+# .gitignore: il primo e' Wolfenstein 3D, la cui licenza (id Software,
+# "Limited Use", 1995) permette di USARE le sue routine per scriverci
+# software proprio ma NON di duplicarne il sorgente. Anche lo strato di
+# porting, che da quelle routine deriva, sta fuori dal repository — in
+# 3p_app_source/wolf3d/exos/ — e nel repository ci sono solo queste regole,
+# che quei file li NOMINANO senza contenerli.
+#
+# ! CHI CLONA IL REPOSITORY NON HA NIENTE DI TUTTO QUESTO, ed e' il caso
+# normale, non l'errore. Per questo ogni regola qui sotto comincia col
+# controllare che i sorgenti ci siano e, se mancano, lo DICE invece di
+# lasciar sbagliare `ld` su un file che non esiste.
+#
+# ! IL CD E' SEPARATO DA dist/exos.iso APPOSTA. Roba di altri e roba nostra
+# su due dischi diversi: quello di EX-OS si pubblica, questo no.
+# =============================================================================
+TERZI_DIR    := 3p_app_source
+WOLF_DIR     := $(TERZI_DIR)/wolf3d/exos
+WOLF_SORG    := $(TERZI_DIR)/wolf3d/WOLFSRC
+WOLF_DATI    := $(TERZI_DIR)/wolf3d/WOLF3D
+WOLF_BIN     := $(BUILD_DIR)/3papp/bin/wolf3d
+WOLF_LD      := $(WOLF_DIR)/wolf3d.ld
+WOLF_GAMEPAL := $(WOLF_SORG)/OBJ/GAMEPAL.OBJ
+
+# I file .c dello strato di porting. tabelle_pronte.c NON e' qui: e' generato.
+WOLF_SRC := $(WOLF_DIR)/dati.c      \
+            $(WOLF_DIR)/motore.c    \
+            $(WOLF_DIR)/gioco.c     \
+            $(WOLF_DIR)/piatto_exos.c
+WOLF_OBJ := $(patsubst $(WOLF_DIR)/%.c,$(BUILD_OBJ)/wolf3d_%.o,$(WOLF_SRC)) \
+            $(BUILD_OBJ)/wolf3d_tabelle_pronte.o
+
+# --- i due file generati ------------------------------------------------------
+#
+# ! LA PALETTE SI ESTRAE DAL SORGENTE, NON DAI DATI: non sta in VSWAP ne' in
+# VGAGRAPH, ma dentro GAMEPAL.OBJ, un file oggetto OMF di Borland. Chi la
+# cerca fra i dati non la trova e finisce per inventarsene una.
+#
+# ! LE TABELLE TRIGONOMETRICHE SI CALCOLANO QUI, sulla macchina che
+# costruisce, e il bersaglio riceve i numeri gia' fatti. Cosi' wolf3d non
+# ha bisogno di openlibm per i386-exos — una dipendenza in meno da
+# procurarsi — e, cosa che conta di piu', la versione di collaudo per Linux
+# usa BYTE IDENTICI a quella per EX-OS: se ognuna ricalcolasse le proprie,
+# una differenza nell'ultimo bit del seno le farebbe divergere e la prova
+# su Linux smetterebbe di dire qualcosa su EX-OS.
+$(WOLF_DIR)/palette.h: $(WOLF_GAMEPAL) $(WOLF_DIR)/palette.py
+	@python3 $(WOLF_DIR)/palette.py $(WOLF_GAMEPAL) $@
+
+$(BUILD_OBJ)/wolf3d-gentabelle: $(WOLF_DIR)/gentabelle.c $(WOLF_DIR)/tabelle.c $(WOLF_DIR)/wolf.h
+	@mkdir -p $(BUILD_OBJ)
+	@gcc -O2 -I $(WOLF_DIR) -o $@ $(WOLF_DIR)/gentabelle.c $(WOLF_DIR)/tabelle.c -lm
+
+$(WOLF_DIR)/tabelle_pronte.c: $(BUILD_OBJ)/wolf3d-gentabelle
+	@$< > $@
+
+# --- compilazione -------------------------------------------------------------
+$(BUILD_OBJ)/wolf3d_%.o: $(WOLF_DIR)/%.c $(WOLF_DIR)/wolf.h $(WOLF_DIR)/piatto.h $(WOLF_DIR)/palette.h
+	@mkdir -p $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -DEXOS -I lib/include -I drivers/kbd -I $(WOLF_DIR) -c $< -o $@
+
+$(WOLF_BIN): $(WOLF_OBJ) $(WOLF_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione wolf3d (da $(TERZI_DIR)) ==="
+	@mkdir -p $(dir $@) $(BUILD_OBJ)
+	$(CC) -m32 -c $(LIBC_START) -o $(BUILD_OBJ)/wolf3d_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(WOLF_LD) \
+	    $(BUILD_OBJ)/wolf3d_start.o \
+	    $(WOLF_OBJ)                 \
+	    $(LIBC_PONTI_OBJ)           \
+	    -o $@
+	@echo "[OK] wolf3d compilato: $@"
+
+.PHONY: wolf3d
+wolf3d:
+	@if [ ! -d "$(WOLF_DIR)" ]; then \
+	    echo "[SALTO] wolf3d: manca $(WOLF_DIR)."; \
+	    echo "        Sono sorgenti di terzi, esclusi dal repository apposta:"; \
+	    echo "        chi clona EX-OS non li ha, e non e' un guasto."; \
+	    exit 0; \
+	fi; \
+	$(MAKE) --no-print-directory dirs $(WOLF_BIN)
+
+# =============================================================================
+# Il CD "3PAPP"
+#
+# ! CI VANNO ANCHE I DATI DEL GIOCO, e va detto invece di lasciarlo scoprire
+# a chi masterizza. Un CD col solo eseguibile non sarebbe un CD: wolf3d
+# senza VSWAP.WL6, GAMEMAPS.WL6 e MAPHEAD.WL6 si ferma alla prima riga. Quei
+# file sono la versione REGISTRATA, che non e' ridistribuibile: questo disco
+# e' una copia personale di chi possiede il gioco, e non si pubblica.
+# =============================================================================
+P3_ROOT := $(BUILD_DIR)/3papp
+P3_IMG  := $(DIST_DIR)/3papp.iso
+
+.PHONY: iso-3papp
+iso-3papp:
+	@if [ ! -d "$(WOLF_DIR)" ]; then \
+	    echo "[ERRORE] manca $(TERZI_DIR): non c'e' niente da mettere sul CD."; \
+	    exit 1; \
+	fi
+	@$(MAKE) --no-print-directory wolf3d
+	@# ! NIENTE cp DELL'ESEGUIBILE: wolf3d si collega GIA' dentro l'albero
+	@# del CD ($(WOLF_BIN)), e ricopiarlo su se' stesso e' un errore di cp,
+	@# non un doppione innocuo. L'albero del CD e' la destinazione del
+	@# collegamento, non una copia di cortesia fatta dopo.
+	@mkdir -p $(P3_ROOT)/bin $(P3_ROOT)/wolf3d $(DIST_DIR)
+	@if [ -d "$(WOLF_DATI)" ]; then \
+	    cp $(WOLF_DATI)/VSWAP.WL6 $(WOLF_DATI)/GAMEMAPS.WL6 \
+	       $(WOLF_DATI)/MAPHEAD.WL6 $(P3_ROOT)/wolf3d/ ; \
+	    echo "     dati del gioco inclusi (WL6 registrata: copia personale)"; \
+	 else \
+	    echo "[AVVISO] manca $(WOLF_DATI): il CD avra' il programma ma non i dati,"; \
+	    echo "         e wolf3d si fermera' dicendo che non trova VSWAP.WL6."; \
+	 fi
+	@printf '%s\n' \
+	    'CD 3PAPP — programmi costruiti dai sorgenti di terzi.' \
+	    '' \
+	    'wolf3d — Wolfenstein 3D (id Software), portato su EX-OS.' \
+	    '  bin/wolf3d      l eseguibile' \
+	    '  wolf3d/         i dati del gioco' \
+	    '' \
+	    'Si avvia dalla console GRAFICA, non da exwin:' \
+	    '  wolf3d /wolf3d 0' \
+	    '' \
+	    'Comandi: W avanti, S indietro, A e D girano, Q ed E di lato,' \
+	    'Esc esce. Le frecce fanno come WASD.' \
+	    '' \
+	    'I dati sono di chi possiede il gioco: questo disco non si' \
+	    'ridistribuisce.' \
+	    > $(P3_ROOT)/leggimi.txt
+	@python3 $(ISO_MKISO) $(P3_IMG) --da $(P3_ROOT) --etichetta "3PAPP"
+	@echo "[OK] CD dei programmi di terzi: $(P3_IMG)"

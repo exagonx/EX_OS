@@ -226,3 +226,51 @@ __pycache__/
 # terzi qui sopra.
 # =============================================================================
 /quickjs/
+
+# =============================================================================
+# 3P_APP_SOURCE — i sorgenti delle applicazioni di terzi da portare
+#
+# Sotto questa directory stanno i sorgenti ORIGINALI di programmi che non
+# sono nostri e che hanno le LORO licenze e i LORO proprietari (il primo e'
+# Wolfenstein 3D, id Software). Valgono le stesse ragioni di GCC, della
+# userland e di QuickJS qui sopra: **il codice di terzi non entra nella
+# cronologia di questo repository**. Chi clona EX-OS non deve portarsi
+# dietro roba che non e' sua e che deve prendere da chi la distribuisce.
+#
+# ! QUI LA RAGIONE E' ANCHE DI LICENZA, non solo di peso. Questi sorgenti
+# non sono ridistribuibili alle stesse condizioni di EX-OS: entrando nella
+# cronologia ci resterebbero per sempre, e toglierli dopo vorrebbe dire
+# riscrivere la cronologia di tutti.
+#
+# ! LE MODIFICHE PER FARLI GIRARE QUI NON VANNO DENTRO QUESTA DIRECTORY.
+# Come per GCC (tools/gcc-exos/) e per la userland, il porting e' un insieme
+# di differenze applicabili a un albero pulito, tracciate a parte: se
+# vivessero qui dentro, aggiornare il sorgente originale vorrebbe dire
+# perderle, e nessuno saprebbe piu' quali righe sono nostre.
+#
+# ! I BINARI COMPILATI DA QUI, INVECE, HANNO UN DISCO TUTTO LORO: il CD
+# "3PAPP", che porta soltanto programmi costruiti da questi sorgenti e non
+# si mescola con dist/exos.iso.
+#
+# ! ANCORATO ALLA RADICE con lo slash iniziale, come tutti i pacchetti di
+# terzi qui sopra.
+# =============================================================================
+/3p_app_source/
+
+# ! E ANCHE CIO' CHE NE ESCE. I sorgenti sono esclusi qui sopra, ma il CD e
+# l'albero da cui si costruisce CONTENGONO i dati del gioco — VSWAP.WL6 e
+# compagni, la versione registrata, che non e' ridistribuibile. Restano fuori
+# dalla riga precedente perche' nascono in dist/ e in build/, che sono
+# tracciate: senza queste due righe basterebbe un `git add -A` per portarli
+# dentro la cronologia di un repository pubblico, ed e' esattamente la cosa
+# che tutto il resto di questo blocco esiste per impedire.
+/dist/3papp.iso
+/build/3papp/
+
+# ! E GLI OGGETTI INTERMEDI, che stanno in build/obj/ insieme a quelli di
+# tutti gli altri programmi. Sono il sorgente di id COMPILATO: la sua licenza
+# non permette di ridistribuirlo, e non lo permette ne' in forma di testo ne'
+# tradotto in istruzioni macchina. build/obj/ e' tracciata, quindi senza
+# queste righe ci entrerebbero da soli.
+/build/obj/wolf3d_*.o
+/build/obj/wolf3d-gentabelle
