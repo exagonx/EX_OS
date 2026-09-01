@@ -778,14 +778,42 @@ static void componi_kernel_cfg(char *out, unsigned int max, const char *vecchio)
      * fornitore (ipc_attendi, in lib/libc.c). L'ordine qui resta quello giusto
      * lo stesso: fa partire per prima la parte che ha meno da aspettare.
      * ===================================================================== */
-    if (g_t.kbd || (g_t.rete && g_t.rete_driver[0])) {
-        strncat(out,
-            "\n# Caricati all'avvio come processi ring3, in quest'ordine.\n"
-            "[modules]\n", max - 1 - strlen(out));
+    /* ! LA VOCE DEL SUONO SI LEGGE PRIMA DI DECIDERE SE LA SEZIONE CI VUOLE.
+     * Su una macchina senza tastiera legacy e senza rete — che esiste: e' una
+     * scheda madre moderna con tastiera USB — [modules] verrebbe saltata, e la
+     * riga dell'audio non avrebbe dove andare. Una riga fuori sezione il
+     * kernel la ignora in silenzio, che e' il modo peggiore di perderla. */
+    {
+        char audio_prec[128];
+
+        if (!voce_di_prima(vecchio, "modules", "audio", audio_prec,
+                           sizeof(audio_prec)))
+            audio_prec[0] = '\0';
+
+        if (g_t.kbd || (g_t.rete && g_t.rete_driver[0]) || audio_prec[0]) {
+            strncat(out,
+                "\n# Caricati all'avvio come processi ring3, in quest'ordine.\n"
+                "[modules]\n", max - 1 - strlen(out));
+        }
     }
 
     if (g_t.kbd)
         strncat(out, "kbd         = /dev/kbd.drv\n", max - 1 - strlen(out));
+
+    /* ! IL SUONO SI RIPORTA AVANTI, NON SI RIDECIDE, ed e' lo stesso caso di
+     * `login` e di `svga` qui sopra. Quella riga la scrive `audio -i`, e la
+     * scrive DOPO aver fatto suonare la scheda: e' il risultato di un
+     * collaudo, non una deduzione dall'hardware. hwconfig non collauda niente
+     * — se la riscrivesse da se' rimetterebbe un driver che non ha mai
+     * provato; se la lasciasse cadere, una macchina che suonava si
+     * ritroverebbe muta dopo un comando che con l'audio non c'entra, e il
+     * collegamento fra le due cose non lo troverebbe nessuno. */
+    if (voce_di_prima(vecchio, "modules", "audio", v, sizeof(v)) && v[0]) {
+        snprintf(riga, sizeof(riga),
+                 "# Il suono: lo ha scritto `audio -i` dopo averlo collaudato.\n"
+                 "audio       = %s\n", v);
+        strncat(out, riga, max - 1 - strlen(out));
+    }
 
     if (g_t.rete && g_t.rete_driver[0]) {
         int pci  = c_e_nel_bersaglio("/dev/pci.drv");

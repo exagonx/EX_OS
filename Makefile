@@ -170,7 +170,7 @@ PROGRAMMI_FLOPPY := shell id chmod shutdown ls mem stack disk fdisk mkfs mkswap 
 # `make verifica-programmi` — che le due ISO eseguono da sole — confronta
 # le liste con il contenuto di bin/ e si ferma dicendo quali mancano.
 # =============================================================================
-PROGRAMMI_CD := cdinstall swaptest libctest hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp scarica telnet telnetd sshd xcp winprova exwincmd
+PROGRAMMI_CD := cdinstall swaptest libctest hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp scarica telnet telnetd sshd xcp winprova exwincmd audio
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
 PROGRAMMI_EXWIN := exwin_so exdlg_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr edit term fontprova orologio browser
 
@@ -182,10 +182,10 @@ PROGRAMMI_EXWIN := exwin_so exdlg_so eximg_so exfont_so exhttp_so exhtml_so excs
 # solo di rimbalzo, perche' la ricetta di exos.iso lo nominava fra le
 # proprie prerequisite. `make all` non lo faceva, e chi costruiva senza
 # passare dalla ISO si ritrovava un driver in meno senza un messaggio.
-DRIVER_CD := ne2k_drv pcnet_drv e1000_drv ip_drv
+DRIVER_CD := ne2k_drv pcnet_drv e1000_drv ip_drv sb_drv es1371_drv ac97_drv hdaudio_drv
 
 # I driver che sul floppy NON devono comparire. Serve a `make verify`.
-DRIVER_SOLO_CD := pci.drv ne2k.drv pcnet.drv ip.drv
+DRIVER_SOLO_CD := pci.drv ne2k.drv pcnet.drv ip.drv sb.drv es1371.drv ac97.drv hdaudio.drv
 
 # Directory di drivers/ che NON producono un .drv, con il perche'. Serve a
 # verifica-programmi, che senza le segnalerebbe come driver dimenticati.
@@ -204,7 +204,12 @@ DRIVER_SOLO_CD := pci.drv ne2k.drv pcnet.drv ip.drv
 #         come un programma qualunque — vedi il blocco della sua regola. Il
 #         sorgente resta qui perche' qui sta win_proto.h, cioe' il protocollo
 #         delle finestre, che includono tutti i programmi grafici.
-NON_DRIVER := net tty usb wserver
+#   audio e' la META' COMUNE di ogni driver audio — anello, protocollo IPC,
+#         prove di collaudo, main() — compilata DENTRO sb.drv e dentro i
+#         driver delle schede PCI. Qui sta anche audio_proto.h, cioe' il
+#         protocollo che includono i programmi che suonano. Non guida
+#         nessun hardware e non nomina nessuna scheda.
+NON_DRIVER := net tty usb wserver audio
 
 # L'archivio degli utenti e le password: un modulo compilato dentro, non una
 # .so. Il perche' sta in cima a lib/exuser/exuser.h — login, install e su
@@ -238,6 +243,18 @@ DNS_HDR       := lib/include/dns.h
 # istruzioni diverse a seconda del comando con cui ci aveva provato.
 RETE_SRC      := lib/rete.c
 RETE_HDR      := lib/include/rete.h
+# Il protocollo del servizio "audio" e la meta' comune dei driver audio.
+# ! DICHIARATI QUI, PRIMA DI CHIUNQUE LI USI, per la stessa ragione scritta
+# venti righe piu' su: con `:=` make espande subito, e una variabile definita
+# sotto la regola che la nomina risulta VUOTA — la dipendenza sparisce senza
+# un errore e modificare il protocollo smette di ricompilare i client.
+AUDIO_PROTO   := drivers/audio/audio_proto.h
+AUDIO_DORSO   := drivers/audio/audio_dorso.h
+AUDIO_COMUNE  := drivers/audio/audio_comune.c
+# La tabella «quale driver vuole questa scheda audio», stessa forma e stessa
+# ragione di RETE_SRC: la leggono `audio` e, un giorno, `hwconfig`.
+AUDIO_SRC     := lib/audio.c
+AUDIO_HDR     := lib/include/audio.h
 BUILD_OBJ     := $(BUILD_DIR)/obj
 BUILD_LIB     := $(BUILD_DIR)/lib
 
@@ -1595,6 +1612,31 @@ $(PROVE_IMG_DIR)/.fatte: $(PROVA_IMG_GEN)
 
 $(PROVA_PNG) $(PROVA_ICO) $(PROVA_JPG): $(PROVE_IMG_DIR)/.fatte
 
+# --- I due file con cui si prova il suono ------------------------------------
+#
+# ! SENZA UN FILE SUL SUPPORTO IL PERCORSO DEI GIOCHI NON LO ESEGUE NESSUNO.
+# Il collaudo di `audio -i` prova la SCHEDA: e' il driver a generare i
+# campioni, e non passa mai dal lettore RIFF ne' dall'anello riempito da un
+# processo diverso da quello che lo svuota. `audio /cdrom/suono/prova.wav` fa
+# esattamente cio' che fa un gioco, e senza un .wav a bordo quella strada
+# resta non percorsa fino al primo utente. 44 KB su un CD da dieci megabyte.
+#
+# Stessa scelta di PROVA_PNG venti righe piu' su, e stesso motivo per cui i
+# file si GENERANO invece di stare nel repository: la formula sta in
+# tools/mksuono.py e dice cosa si sente e cosa si mette alla prova.
+PROVA_SUONO_GEN := tools/mksuono.py
+PROVE_SUONO_DIR := $(BUILD_DIR)/prove-suono
+PROVA_WAV       := $(PROVE_SUONO_DIR)/prova.wav
+PROVA_MID       := $(PROVE_SUONO_DIR)/prova.mid
+
+$(PROVE_SUONO_DIR)/.fatte: $(PROVA_SUONO_GEN)
+	@mkdir -p $(PROVE_SUONO_DIR)
+	@python3 $(PROVA_SUONO_GEN) $(PROVE_SUONO_DIR) >/dev/null
+	@touch $@
+	@echo "[OK] file di prova del suono (WAV e MIDI) in $(PROVE_SUONO_DIR)"
+
+$(PROVA_WAV) $(PROVA_MID): $(PROVE_SUONO_DIR)/.fatte
+
 # --- /exwin/lib/eximg.so: i formati d'immagine che costano -------------------
 #
 # ! NON SI COLLEGA A NESSUNO, SI APRE QUANDO SERVE. exdlg ha uno stub perche'
@@ -2433,6 +2475,27 @@ $(NETDETECT_BIN): $(NETDETECT_SRC) $(NETDETECT_LD) $(PCI_DRV_PROTO) $(NET_PROTO)
 .PHONY: netdetect
 netdetect: dirs $(NETDETECT_BIN)
 
+# --- Programma /bin/audio (solo CD) ------------------------------------------
+# Trova la scheda audio, la COLLAUDA e scrive il driver in kernel.cfg. Il
+# collaudo non e' un abbellimento: un driver audio che si carica senza suonare
+# e' il guasto normale, non quello raro. Vedi il commento in testa al file.
+AUDIO_BIN_SRC := bin/audio/audio.c
+AUDIO_BIN     := $(BUILD_BIN_CD)/audio
+AUDIO_BIN_LD  := bin/audio/audio.ld
+
+$(AUDIO_BIN): $(AUDIO_BIN_SRC) $(AUDIO_BIN_LD) $(AUDIO_PROTO) $(AUDIO_SRC) $(AUDIO_HDR) $(PCI_DRV_PROTO) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/audio ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/audio -I drivers/pci -c $(AUDIO_BIN_SRC) -o $(BUILD_OBJ)/audio_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/audio -c $(AUDIO_SRC) -o $(BUILD_OBJ)/audio_tab.o
+	$(CC) -m32 -c $(LIBC_START)                          -o $(BUILD_OBJ)/audio_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(AUDIO_BIN_LD) \
+	    $(BUILD_OBJ)/audio_start.o $(BUILD_OBJ)/audio_main.o $(BUILD_OBJ)/audio_tab.o $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] audio compilato: $@"
+
+.PHONY: audio
+audio: dirs $(AUDIO_BIN)
+
 # --- Programma /bin/nettest (solo CD) -----------------------------------------
 # Prova un driver di rete mandando un frame vero. Usa ARP e non ping
 # perche' ARP e' il primo scambio possibile senza avere uno stack: se
@@ -3063,6 +3126,125 @@ $(NE2K_DRV_OUT): $(NE2K_DRV_SRC) $(NET_PROTO) $(PCI_DRV_PROTO) $(NE2K_DRV_LD) $(
 
 .PHONY: ne2k_drv
 ne2k_drv: dirs $(NE2K_DRV_OUT)
+
+# --- Driver ring3: sb.drv (solo CD) ------------------------------------------
+# Sound Blaster ISA, dalla 1.0 alla AWE64. E' il primo driver del sistema che
+# usa il DMA DELLA SCHEDA MADRE — l'8237 — invece di essere lui un bus master:
+# la scheda non sa niente di indirizzi, e' il chip della piastra a leggere la
+# memoria e a passargliela. Da qui le due cose che nessun altro driver ha:
+# sei finestre di porte I/O (vedi IO_FINESTRE_MAX in kernel/include/sched.h) e
+# un buffer allineato a mano dentro una zona doppia (vedi in testa a sb.c).
+#
+# ! SI COMPILA CON audio_comune.c DENTRO. Il main() sta li', non qui: sb.c e'
+# soltanto i registri di questa scheda. Il perche' sta in audio_dorso.h.
+SB_DRV_SRC   := drivers/sb/sb.c
+SB_DRV_OUT   := $(BUILD_DRIVERS_CD)/sb.drv
+SB_DRV_LD    := drivers/sb/sb.ld
+
+$(SB_DRV_OUT): $(SB_DRV_SRC) $(AUDIO_COMUNE) $(AUDIO_PROTO) $(AUDIO_DORSO) $(SB_DRV_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione driver ring3 sb.drv ==="
+	@mkdir -p $(BUILD_DRIVERS_CD)
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/audio -c $(SB_DRV_SRC) -o $(BUILD_DRIVERS_CD)/sb_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/audio -c $(AUDIO_COMUNE) -o $(BUILD_DRIVERS_CD)/sb_comune.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)   -o $(BUILD_DRIVERS_CD)/sb_libc.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_DRIVERS_CD)/sb_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(SB_DRV_LD) \
+	    $(BUILD_DRIVERS_CD)/sb_start.o  \
+	    $(BUILD_DRIVERS_CD)/sb_main.o   \
+	    $(BUILD_DRIVERS_CD)/sb_comune.o \
+	    $(BUILD_DRIVERS_CD)/sb_libc.o   \
+	    -o $@
+	@echo "[OK] sb.drv compilato: $@"
+
+.PHONY: sb_drv
+sb_drv: dirs $(SB_DRV_OUT)
+
+# --- Driver ring3: es1371.drv (solo CD) --------------------------------------
+# Ensoniq ES1370/ES1371 e CT5880, cioe' le «Sound Blaster PCI 64/128». Del DSP
+# della Sound Blaster non hanno niente: e' un altro silicio con un altro nome
+# sulla scatola, e il perche' sta in testa al file.
+#
+# A differenza della SB ISA questa scheda e' un BUS MASTER: legge la RAM da
+# sola sul bus PCI, quindi niente 8237, niente confine dei 64 KB, ma serve il
+# bit bus master nella configurazione PCI — senza, suona il silenzio con tutti
+# i contatori a posto.
+ES1371_DRV_SRC := drivers/es1371/es1371.c
+ES1371_DRV_OUT := $(BUILD_DRIVERS_CD)/es1371.drv
+ES1371_DRV_LD  := drivers/es1371/es1371.ld
+
+$(ES1371_DRV_OUT): $(ES1371_DRV_SRC) $(AUDIO_COMUNE) $(AUDIO_PROTO) $(AUDIO_DORSO) $(PCI_DRV_PROTO) $(ES1371_DRV_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione driver ring3 es1371.drv ==="
+	@mkdir -p $(BUILD_DRIVERS_CD)
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/audio -I drivers/pci -c $(ES1371_DRV_SRC) -o $(BUILD_DRIVERS_CD)/es1371_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/audio -c $(AUDIO_COMUNE) -o $(BUILD_DRIVERS_CD)/es1371_comune.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)   -o $(BUILD_DRIVERS_CD)/es1371_libc.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_DRIVERS_CD)/es1371_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(ES1371_DRV_LD) \
+	    $(BUILD_DRIVERS_CD)/es1371_start.o  \
+	    $(BUILD_DRIVERS_CD)/es1371_main.o   \
+	    $(BUILD_DRIVERS_CD)/es1371_comune.o \
+	    $(BUILD_DRIVERS_CD)/es1371_libc.o   \
+	    -o $@
+	@echo "[OK] es1371.drv compilato: $@"
+
+.PHONY: es1371_drv
+es1371_drv: dirs $(ES1371_DRV_OUT)
+
+# --- Driver ring3: ac97.drv (solo CD) ----------------------------------------
+# Controller AC'97 (Intel ICH, VIA, nVidia). E' il posto dove sta un codec
+# Realtek delle schede madri fino al 2004 circa — «scheda audio Realtek» e'
+# un codec, non una scheda, e il perche' sta in testa al file.
+AC97_DRV_SRC := drivers/ac97/ac97.c
+AC97_DRV_OUT := $(BUILD_DRIVERS_CD)/ac97.drv
+AC97_DRV_LD  := drivers/ac97/ac97.ld
+
+$(AC97_DRV_OUT): $(AC97_DRV_SRC) $(AUDIO_COMUNE) $(AUDIO_PROTO) $(AUDIO_DORSO) $(PCI_DRV_PROTO) $(AC97_DRV_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione driver ring3 ac97.drv ==="
+	@mkdir -p $(BUILD_DRIVERS_CD)
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/audio -I drivers/pci -c $(AC97_DRV_SRC) -o $(BUILD_DRIVERS_CD)/ac97_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/audio -c $(AUDIO_COMUNE) -o $(BUILD_DRIVERS_CD)/ac97_comune.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)   -o $(BUILD_DRIVERS_CD)/ac97_libc.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_DRIVERS_CD)/ac97_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(AC97_DRV_LD) \
+	    $(BUILD_DRIVERS_CD)/ac97_start.o  \
+	    $(BUILD_DRIVERS_CD)/ac97_main.o   \
+	    $(BUILD_DRIVERS_CD)/ac97_comune.o \
+	    $(BUILD_DRIVERS_CD)/ac97_libc.o   \
+	    -o $@
+	@echo "[OK] ac97.drv compilato: $@"
+
+.PHONY: ac97_drv
+ac97_drv: dirs $(AC97_DRV_OUT)
+
+# --- Driver ring3: hdaudio.drv (solo CD) -------------------------------------
+# Intel HD Audio: il bus dove sta il Realtek ALC di qualunque scheda madre dal
+# 2004 in poi. E' il driver di un BUS, non di una scheda — la topologia se la
+# fa dire dal codec invece di saperla — e per questo lo stesso file guida un
+# ALC887, un ALC1220 e il codec Analog Devices della stessa piastra.
+#
+# ! UNICO DRIVER AUDIO CHE USA mmio_map E NON ioport_bind: i suoi registri
+# stanno nello spazio di MEMORIA.
+HDAUDIO_DRV_SRC := drivers/hdaudio/hdaudio.c
+HDAUDIO_DRV_OUT := $(BUILD_DRIVERS_CD)/hdaudio.drv
+HDAUDIO_DRV_LD  := drivers/hdaudio/hdaudio.ld
+
+$(HDAUDIO_DRV_OUT): $(HDAUDIO_DRV_SRC) $(AUDIO_COMUNE) $(AUDIO_PROTO) $(AUDIO_DORSO) $(PCI_DRV_PROTO) $(HDAUDIO_DRV_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione driver ring3 hdaudio.drv ==="
+	@mkdir -p $(BUILD_DRIVERS_CD)
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/audio -I drivers/pci -c $(HDAUDIO_DRV_SRC) -o $(BUILD_DRIVERS_CD)/hdaudio_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/audio -c $(AUDIO_COMUNE) -o $(BUILD_DRIVERS_CD)/hdaudio_comune.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)   -o $(BUILD_DRIVERS_CD)/hdaudio_libc.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_DRIVERS_CD)/hdaudio_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(HDAUDIO_DRV_LD) \
+	    $(BUILD_DRIVERS_CD)/hdaudio_start.o  \
+	    $(BUILD_DRIVERS_CD)/hdaudio_main.o   \
+	    $(BUILD_DRIVERS_CD)/hdaudio_comune.o \
+	    $(BUILD_DRIVERS_CD)/hdaudio_libc.o   \
+	    -o $@
+	@echo "[OK] hdaudio.drv compilato: $@"
+
+.PHONY: hdaudio_drv
+hdaudio_drv: dirs $(HDAUDIO_DRV_OUT)
 
 # --- Driver ring3: pcnet.drv (solo CD) ---------------------------------------
 # AMD PCnet-PCI II / FAST III (Am79C970/C973). A differenza del ne2k questa
@@ -4613,9 +4795,16 @@ STATICI_OBBLIGATI := $(BUILD_BIN)/login $(BUILD_BIN)/install $(BUILD_BIN)/sh \
 #   hello   e' l'esempio del programma SENZA libc — tre istruzioni dentro
 #           _start, e la macro EX_VERSIONE sta nella libc;
 #   floppy  e' un driver dinamico: non ha un main, l'ingresso e' un altro;
-#   net, tty, usb   non sono programmi, sono codice condiviso fra driver.
+#   net, tty, usb   non sono programmi, sono codice condiviso fra driver;
+#   drivers/audio   idem — anello, protocollo e main() dei driver audio. La
+#           versione la dichiara la scheda: sb.drv, es1371.drv, ...
+#
+# ! LE VOCI SI POSSONO SCRIVERE COL PERCORSO, e a volte si DEVE. `audio` da
+# solo escluderebbe anche bin/audio, che una versione ce l'ha e deve
+# continuare a doverla avere: due directory diverse con lo stesso nome sono
+# due programmi diversi, e un'esenzione scritta per una non vale per l'altra.
 # =============================================================================
-SENZA_VERSIONE := hello floppy net tty usb
+SENZA_VERSIONE := hello floppy net tty usb drivers/audio
 
 # =============================================================================
 # lib/exbig — interi lunghi, il primo dei tre pezzi che mancano all'https
@@ -4936,8 +5125,12 @@ verifica-versioni:
 	@mancanti=""; \
 	for d in $(BIN_DIR)/*/ exwin/bin/*/ $(DRIVER_DIR)/*/; do \
 	    n=$$(basename "$$d"); \
+	    p=$$(echo "$$d" | sed 's:/*$$::'); \
 	    salta=0; \
-	    for e in $(SENZA_VERSIONE); do [ "$$n" = "$$e" ] && salta=1; done; \
+	    for e in $(SENZA_VERSIONE); do \
+	        [ "$$n" = "$$e" ] && salta=1; \
+	        [ "$$p" = "$$e" ] && salta=1; \
+	    done; \
 	    [ $$salta -eq 1 ] && continue; \
 	    grep -qE "EX_VERSIONE\(|SH_VERSIONE" "$$d"*.c 2>/dev/null && continue; \
 	    mancanti="$$mancanti $$n"; \
@@ -5079,7 +5272,8 @@ BINARI_SOLO_CD := $(NETDETECT_BIN) $(NETTEST_BIN) $(PING_BIN) $(IPCFG_BIN) \
                   $(DHCP_BIN) $(HOST_BIN) $(TCPTEST_BIN) $(FTP_BIN) \
                   $(TELNET_BIN) $(XCP_BIN) $(WINPROVA_BIN) $(EXWINCMD_BIN) \
                   $(SCARICA_BIN) \
-                  $(CDINSTALL_BIN) $(SWAPTEST_BIN) $(LIBCTEST_BIN) $(HELLO_BIN)
+                  $(CDINSTALL_BIN) $(SWAPTEST_BIN) $(LIBCTEST_BIN) $(HELLO_BIN) \
+                  $(AUDIO_BIN)
 # ! QUESTA LISTA E' LA DIPENDENZA DELL'ISO, E VA TENUTA ALLINEATA A
 # DRIVER_CD. Sono due elenchi della stessa cosa: DRIVER_CD dice COSA
 # COSTRUIRE (nomi di bersagli .PHONY), questo dice DA COSA DIPENDE L'IMMAGINE
@@ -5101,7 +5295,9 @@ BINARI_SOLO_CD := $(NETDETECT_BIN) $(NETTEST_BIN) $(PING_BIN) $(IPCFG_BIN) \
 # Il controllo che manca lo fa `verifica-dipendenze-cd` qui sotto.
 DRIVER_SOLO_CD_OUT := $(NE2K_DRV_OUT) $(PCNET_DRV_OUT) \
                       $(E1000_DRV_OUT) \
-                      $(IP_DRV_OUT)
+                      $(IP_DRV_OUT) \
+                      $(SB_DRV_OUT) $(ES1371_DRV_OUT) \
+                      $(AC97_DRV_OUT) $(HDAUDIO_DRV_OUT)
 
 # ! verifica-programmi E' UNA PREREQUISITA D'ORDINE (dopo la barra).
 # Cosi' viene eseguita prima di costruire il CD — e ferma tutto se un
@@ -5131,11 +5327,33 @@ verifica-dipendenze-cd:
 	    exit 1; \
 	fi; \
 	echo "[OK] ogni driver del CD e' fra le dipendenze dell'ISO"
+	@# ! E LO STESSO CONTROLLO SUI PROGRAMMI, che prima non c'era. Il
+	@# commento accanto a BINARI_SOLO_CD avvertiva della trappola e la
+	@# guardia copriva solo i driver: il 1 settembre 2026 ci e' cascato
+	@# `audio`, compilato, corretto, e assente da un'ISO che si ricostruiva
+	@# senza toccarlo. Tre prove di fila hanno girato sul binario vecchio,
+	@# esattamente come con uhci.drv ad agosto.
+	@fatti=""; \
+	for b in $(BINARI_SOLO_CD); do fatti="$$fatti $$(basename $$b)"; done; \
+	manca=""; \
+	for f in $(BUILD_BIN_CD)/*; do \
+	    [ -f "$$f" ] || continue; \
+	    n=$$(basename $$f); \
+	    case " $$fatti " in *" $$n "*) ;; *) manca="$$manca $$n";; esac; \
+	done; \
+	if [ -n "$$manca" ]; then \
+	    echo "[ERRORE] programmi del CD fuori da BINARI_SOLO_CD:$$manca"; \
+	    echo "         l'ISO non dipende da loro: si ricompilano e l'immagine"; \
+	    echo "         resta VECCHIA, senza nessun errore."; \
+	    exit 1; \
+	fi; \
+	echo "[OK] ogni programma del CD e' fra le dipendenze dell'ISO"
 
 $(ISOX_IMG): Makefile $(FLOPPY_IMG) boot/autoexec.sh boot/avvio.sh $(DRIVER_SOLO_CD_OUT) \
              $(FONT_TTF) $(FONT_TTF_DIR)/LICENSE $(FONT_TTF_DIR)/LICENSE.DejaVu \
              $(EXWIN_DOC) \
              $(EXWIN_OUT) $(EXWIN_APPLIST) $(PROVA_PNG) $(PROVA_ICO) $(PROVA_JPG) \
+             $(PROVA_WAV) $(PROVA_MID) \
              $(WSERVER_OUT) \
              $(BINARI_SOLO_CD) $(ISO_MKISO) README.md README.en.md \
              gpl-2.0.txt boot/kernel.cfg boot/kernel.txt boot/help.txt \
@@ -5197,6 +5415,12 @@ $(ISOX_IMG): Makefile $(FLOPPY_IMG) boot/autoexec.sh boot/avvio.sh $(DRIVER_SOLO
 	@mkdir -p $(ISOX_ROOT)/exwin/doc
 	@cp $(EXWIN_DOC) $(ISOX_ROOT)/exwin/doc/ 2>/dev/null || true
 	@# Le immagini di prova dei lettori: vedi PROVE_IMG_DIR.
+	@# I due file con cui si prova il suono. Stanno in /suono e non in
+	@# /exwin perche' non c'entrano con la grafica: li suona un comando di
+	@# /bin, e la strada che percorrono e' quella di un gioco.
+	@mkdir -p $(ISOX_ROOT)/suono
+	@cp $(PROVA_WAV) $(ISOX_ROOT)/suono/prova.wav
+	@cp $(PROVA_MID) $(ISOX_ROOT)/suono/prova.mid
 	@cp $(PROVA_PNG) $(ISOX_ROOT)/exwin/prova.png
 	@cp $(PROVA_ICO) $(ISOX_ROOT)/exwin/prova.ico
 	@cp $(PROVA_JPG) $(ISOX_ROOT)/exwin/prova.jpg
@@ -5615,6 +5839,11 @@ help:
 	@echo "                      (base + rete + driver: tutto bin/ e drivers/)"
 	@echo "  make iso          — CD degli strumenti dist/exos-tools.iso"
 	@echo "                      (gcc, g++, cpp, cc1, fbc, as, ld, OpenSSL)"
+	@echo "  make 3papp        — Solo i binari delle app di terze parti"
+	@echo "                      (build/3papp/bin/, senza creare l'ISO)"
+	@echo "  make iso-3papp    — CD autonomo dist/3papp.iso (app di terze parti)"
+	@echo "                      (separato da exos.iso: rigenera solo questo"
+	@echo "                      quando aggiorni 3p_app_source/)"
 	@echo "  make verifica-programmi"
 	@echo "                      — controlla che nessun sorgente resti fuori"
 	@echo "  make hd           — Disco avviabile $(HD_IMG) (512 MB, ext2)"
@@ -5655,138 +5884,202 @@ help:
 	@echo "  #6 lib/libc.ld aggiunto"
 	@echo ""
 
+
 # =============================================================================
 # I PROGRAMMI DI TERZI — 3p_app_source/ e il CD "3PAPP"
 #
-# ! I SORGENTI NON SONO NEL REPOSITORY, E LE REGOLE SI'. Sotto
-# 3p_app_source/ stanno sorgenti di terzi con le LORO licenze, esclusi da
-# .gitignore: il primo e' Wolfenstein 3D, la cui licenza (id Software,
-# "Limited Use", 1995) permette di USARE le sue routine per scriverci
-# software proprio ma NON di duplicarne il sorgente. Anche lo strato di
-# porting, che da quelle routine deriva, sta fuori dal repository — in
-# 3p_app_source/wolf3d/exos/ — e nel repository ci sono solo queste regole,
-# che quei file li NOMINANO senza contenerli.
+# ! I SORGENTI NON SONO NEL REPOSITORY, E LE REGOLE SI'. Sotto 3p_app_source/
+# stanno sorgenti di terzi con le LORO licenze, esclusi da .gitignore: il primo
+# e' Wolfenstein 3D, la cui licenza (id Software, "Limited Use", 1995) permette
+# di USARE le sue routine per scriverci software proprio ma NON di duplicarne
+# il sorgente. Anche lo strato di porting, che da quelle routine deriva, sta
+# fuori dal repository — in 3p_app_source/<app>/exos/ — e qui dentro c'e' solo
+# l'IMPALCATURA, che quei file li nomina senza contenerli.
 #
 # ! CHI CLONA IL REPOSITORY NON HA NIENTE DI TUTTO QUESTO, ed e' il caso
-# normale, non l'errore. Per questo ogni regola qui sotto comincia col
-# controllare che i sorgenti ci siano e, se mancano, lo DICE invece di
-# lasciar sbagliare `ld` su un file che non esiste.
+# normale, non l'errore. Per questo l'elenco delle applicazioni si scopre con
+# un wildcard invece di essere scritto qui: dove la directory non c'e',
+# l'elenco e' vuoto e nessuna regola nomina file inesistenti.
 #
-# ! IL CD E' SEPARATO DA dist/exos.iso APPOSTA. Roba di altri e roba nostra
-# su due dischi diversi: quello di EX-OS si pubblica, questo no.
+# ! IL CD E' SEPARATO DA dist/exos.iso APPOSTA. Roba di altri e roba nostra su
+# due dischi diversi: quello di EX-OS si pubblica, questo no.
+#
+# --- COME SI AGGIUNGE UNA SECONDA APPLICAZIONE -------------------------------
+#
+# Non si tocca questo file. Si mette 3p_app_source/<nome>/exos/regole.mk, che
+# dichiara i propri sorgenti e chiama il modello qui sotto:
+#
+#     SORGENTI_<nome> := uno.c due.c tre.c      # dentro exos/, solo i nomi
+#     CFLAGS_<nome>   := -I drivers/kbd         # facoltativo
+#     DATI_<nome>     := ../DATI                # facoltativo: copiati sul CD
+#     $(eval $(call REGOLE_APP_TERZI,<nome>))
+#
+# Serve anche exos/<nome>.ld — lo script di collegamento — e, se
+# l'applicazione ha file generati (tabelle, palette), le sue regole se li
+# scrive da se' dentro regole.mk: e' roba sua, e qui non se ne sa niente.
 # =============================================================================
-TERZI_DIR    := 3p_app_source
-WOLF_DIR     := $(TERZI_DIR)/wolf3d/exos
-WOLF_SORG    := $(TERZI_DIR)/wolf3d/WOLFSRC
-WOLF_DATI    := $(TERZI_DIR)/wolf3d/WOLF3D
-WOLF_BIN     := $(BUILD_DIR)/3papp/bin/wolf3d
-WOLF_LD      := $(WOLF_DIR)/wolf3d.ld
-WOLF_GAMEPAL := $(WOLF_SORG)/OBJ/GAMEPAL.OBJ
+TERZI_DIR := 3p_app_source
+P3_ROOT   := $(BUILD_DIR)/3papp
+P3_IMG    := $(DIST_DIR)/3papp.iso
 
-# I file .c dello strato di porting. tabelle_pronte.c NON e' qui: e' generato.
-WOLF_SRC := $(WOLF_DIR)/dati.c      \
-            $(WOLF_DIR)/motore.c    \
-            $(WOLF_DIR)/gioco.c     \
-            $(WOLF_DIR)/piatto_exos.c
-WOLF_OBJ := $(patsubst $(WOLF_DIR)/%.c,$(BUILD_OBJ)/wolf3d_%.o,$(WOLF_SRC)) \
-            $(BUILD_OBJ)/wolf3d_tabelle_pronte.o
+# Chi c'e'. Vuoto se la directory non esiste, ed e' il caso di chi clona.
+TERZI_REGOLE := $(wildcard $(TERZI_DIR)/*/exos/regole.mk)
+TERZI_APP    := $(patsubst $(TERZI_DIR)/%/exos/regole.mk,%,$(TERZI_REGOLE))
 
-# --- i due file generati ------------------------------------------------------
+# Riempiti dal modello, una voce per applicazione.
+TERZI_BINARI :=
+
+# -----------------------------------------------------------------------------
+# Il modello: da un nome, le regole per compilare e collegare
 #
-# ! LA PALETTE SI ESTRAE DAL SORGENTE, NON DAI DATI: non sta in VSWAP ne' in
-# VGAGRAPH, ma dentro GAMEPAL.OBJ, un file oggetto OMF di Borland. Chi la
-# cerca fra i dati non la trova e finisce per inventarsene una.
+# ! I $$ SONO OBBLIGATORI E NON SONO RUMORE. Questo testo viene espanso DUE
+# volte — una da $(call), una da $(eval) — e cio' che deve sopravvivere alla
+# prima passata va protetto. Un $ solo dove ne servono due da' una regola che
+# si costruisce con le variabili dell'ULTIMA applicazione dichiarata invece
+# che con le proprie: con una sola applicazione funziona benissimo, e comincia
+# a sbagliare il giorno che se ne aggiunge la seconda.
+# -----------------------------------------------------------------------------
+define REGOLE_APP_TERZI
+
+DIR_$(1) := $$(TERZI_DIR)/$(1)/exos
+BIN_$(1) := $$(P3_ROOT)/bin/$(1)
+OBJ_$(1) := $$(patsubst %.c,$$(BUILD_OBJ)/$(1)_%.o,$$(SORGENTI_$(1)))
+
+$$(BUILD_OBJ)/$(1)_%.o: $$(DIR_$(1))/%.c $$(GENERATI_$(1))
+	@mkdir -p $$(BUILD_OBJ)
+	$$(CC) $$(CFLAGS_USER) -DEXOS -I lib/include $$(CFLAGS_$(1)) \
+	    -I $$(DIR_$(1)) -c $$< -o $$@
+
+$$(BIN_$(1)): $$(OBJ_$(1)) $$(DIR_$(1))/$(1).ld $$(LIBC_PONTI_OBJ) \
+              $$(LIBC_SO) $$(LIBC_START) $$(SEGNO_FLAG)
+	@echo "=== Compilazione $(1) (da $$(TERZI_DIR)) ==="
+	@mkdir -p $$(dir $$@) $$(BUILD_OBJ)
+	$$(CC) -m32 -c $$(LIBC_START) -o $$(BUILD_OBJ)/$(1)_start.o
+	$$(LD) -m $$(CROSS_LD_EMU) -nostdlib --gc-sections -T $$(DIR_$(1))/$(1).ld \
+	    $$(BUILD_OBJ)/$(1)_start.o $$(OBJ_$(1)) $$(LIBC_PONTI_OBJ) -o $$@
+	@echo "[OK] $(1) compilato: $$@"
+
+.PHONY: $(1)
+$(1): dirs $$(BIN_$(1))
+
+TERZI_BINARI += $$(BIN_$(1))
+
+endef
+
+# ! L'INCLUSIONE STA DOPO IL MODELLO, e non e' questione di stile: i frammenti
+# chiamano $(call REGOLE_APP_TERZI,...) mentre vengono letti, e make espande
+# una `define` solo se l'ha gia' incontrata. Messa sotto, ogni frammento
+# chiamerebbe una macro vuota e non nascerebbe nessuna regola — senza un
+# errore, perche' per make chiamare una macro vuota e' legittimo.
 #
-# ! LE TABELLE TRIGONOMETRICHE SI CALCOLANO QUI, sulla macchina che
-# costruisce, e il bersaglio riceve i numeri gia' fatti. Cosi' wolf3d non
-# ha bisogno di openlibm per i386-exos — una dipendenza in meno da
-# procurarsi — e, cosa che conta di piu', la versione di collaudo per Linux
-# usa BYTE IDENTICI a quella per EX-OS: se ognuna ricalcolasse le proprie,
-# una differenza nell'ultimo bit del seno le farebbe divergere e la prova
-# su Linux smetterebbe di dire qualcosa su EX-OS.
-$(WOLF_DIR)/palette.h: $(WOLF_GAMEPAL) $(WOLF_DIR)/palette.py
-	@python3 $(WOLF_DIR)/palette.py $(WOLF_GAMEPAL) $@
+# ! -include E NON include: senza la directory dei terzi la lista e' vuota, e
+# `include` di una lista vuota va bene, ma il trattino tiene buono anche il
+# caso di un frammento illeggibile.
+-include $(TERZI_REGOLE)
 
-$(BUILD_OBJ)/wolf3d-gentabelle: $(WOLF_DIR)/gentabelle.c $(WOLF_DIR)/tabelle.c $(WOLF_DIR)/wolf.h
-	@mkdir -p $(BUILD_OBJ)
-	@gcc -O2 -I $(WOLF_DIR) -o $@ $(WOLF_DIR)/gentabelle.c $(WOLF_DIR)/tabelle.c -lm
-
-$(WOLF_DIR)/tabelle_pronte.c: $(BUILD_OBJ)/wolf3d-gentabelle
-	@$< > $@
-
-# --- compilazione -------------------------------------------------------------
-$(BUILD_OBJ)/wolf3d_%.o: $(WOLF_DIR)/%.c $(WOLF_DIR)/wolf.h $(WOLF_DIR)/piatto.h $(WOLF_DIR)/palette.h
-	@mkdir -p $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -DEXOS -I lib/include -I drivers/kbd -I $(WOLF_DIR) -c $< -o $@
-
-$(WOLF_BIN): $(WOLF_OBJ) $(WOLF_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
-	@echo "=== Compilazione wolf3d (da $(TERZI_DIR)) ==="
-	@mkdir -p $(dir $@) $(BUILD_OBJ)
-	$(CC) -m32 -c $(LIBC_START) -o $(BUILD_OBJ)/wolf3d_start.o
-	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(WOLF_LD) \
-	    $(BUILD_OBJ)/wolf3d_start.o \
-	    $(WOLF_OBJ)                 \
-	    $(LIBC_PONTI_OBJ)           \
-	    -o $@
-	@echo "[OK] wolf3d compilato: $@"
-
-.PHONY: wolf3d
-wolf3d:
-	@if [ ! -d "$(WOLF_DIR)" ]; then \
-	    echo "[SALTO] wolf3d: manca $(WOLF_DIR)."; \
-	    echo "        Sono sorgenti di terzi, esclusi dal repository apposta:"; \
-	    echo "        chi clona EX-OS non li ha, e non e' un guasto."; \
-	    exit 0; \
-	fi; \
-	$(MAKE) --no-print-directory dirs $(WOLF_BIN)
+# ! DOPO L'INCLUSIONE, perche' prima DATI_<app> non esiste ancora. Ogni voce e'
+# "<app>:<percorso>", cosi' la ricetta sa a quale directory del CD destinare
+# ogni file senza doverlo indovinare dal nome.
+TERZI_DATI := $(foreach a,$(TERZI_APP),\
+                $(foreach f,$(DATI_$(a)),$(a):$(TERZI_DIR)/$(a)/exos/$(f)))
 
 # =============================================================================
 # Il CD "3PAPP"
 #
-# ! CI VANNO ANCHE I DATI DEL GIOCO, e va detto invece di lasciarlo scoprire
-# a chi masterizza. Un CD col solo eseguibile non sarebbe un CD: wolf3d
-# senza VSWAP.WL6, GAMEMAPS.WL6 e MAPHEAD.WL6 si ferma alla prima riga. Quei
-# file sono la versione REGISTRATA, che non e' ridistribuibile: questo disco
-# e' una copia personale di chi possiede il gioco, e non si pubblica.
+# ! CI VANNO ANCHE I DATI DELLE APPLICAZIONI, e va detto invece di lasciarlo
+# scoprire a chi masterizza. Un CD col solo eseguibile non sarebbe un CD:
+# wolf3d senza VSWAP.WL6 si ferma alla prima riga. Quei file sono della
+# versione REGISTRATA, che non e' ridistribuibile: questo disco e' una copia
+# personale di chi possiede il gioco, e non si pubblica.
+#
+# ! IL leggimi.txt SI COMPONE DAI PEZZI DELLE APPLICAZIONI, non e' scritto
+# qui: ognuna lascia il proprio exos/leggimi-cd.txt e questa regola li mette
+# in fila. Un elenco scritto a mano qui invecchierebbe alla prima
+# applicazione aggiunta, e il modo in cui invecchia e' silenzioso — il CD
+# resta giusto e il foglio che lo descrive no.
 # =============================================================================
-P3_ROOT := $(BUILD_DIR)/3papp
-P3_IMG  := $(DIST_DIR)/3papp.iso
+.PHONY: iso-3papp 3papp
+3papp: $(TERZI_BINARI)
 
-.PHONY: iso-3papp
 iso-3papp:
-	@if [ ! -d "$(WOLF_DIR)" ]; then \
-	    echo "[ERRORE] manca $(TERZI_DIR): non c'e' niente da mettere sul CD."; \
+	@if [ -z "$(strip $(TERZI_APP))" ]; then \
+	    echo "[ERRORE] nessuna applicazione in $(TERZI_DIR)/."; \
+	    echo "         Ne serve almeno una, con il suo exos/regole.mk:"; \
+	    echo "         sono sorgenti di terzi, esclusi dal repository apposta,"; \
+	    echo "         e chi clona EX-OS non li ha."; \
 	    exit 1; \
 	fi
-	@$(MAKE) --no-print-directory wolf3d
-	@# ! NIENTE cp DELL'ESEGUIBILE: wolf3d si collega GIA' dentro l'albero
-	@# del CD ($(WOLF_BIN)), e ricopiarlo su se' stesso e' un errore di cp,
-	@# non un doppione innocuo. L'albero del CD e' la destinazione del
-	@# collegamento, non una copia di cortesia fatta dopo.
-	@mkdir -p $(P3_ROOT)/bin $(P3_ROOT)/wolf3d $(DIST_DIR)
-	@if [ -d "$(WOLF_DATI)" ]; then \
-	    cp $(WOLF_DATI)/VSWAP.WL6 $(WOLF_DATI)/GAMEMAPS.WL6 \
-	       $(WOLF_DATI)/MAPHEAD.WL6 $(P3_ROOT)/wolf3d/ ; \
-	    echo "     dati del gioco inclusi (WL6 registrata: copia personale)"; \
-	 else \
-	    echo "[AVVISO] manca $(WOLF_DATI): il CD avra' il programma ma non i dati,"; \
-	    echo "         e wolf3d si fermera' dicendo che non trova VSWAP.WL6."; \
-	 fi
-	@printf '%s\n' \
-	    'CD 3PAPP — programmi costruiti dai sorgenti di terzi.' \
-	    '' \
-	    'wolf3d — Wolfenstein 3D (id Software), portato su EX-OS.' \
-	    '  bin/wolf3d      l eseguibile' \
-	    '  wolf3d/         i dati del gioco' \
-	    '' \
-	    'Si avvia dalla console GRAFICA, non da exwin:' \
-	    '  wolf3d /wolf3d 0' \
-	    '' \
-	    'Comandi: W avanti, S indietro, A e D girano, Q ed E di lato,' \
-	    'Esc esce. Le frecce fanno come WASD.' \
-	    '' \
-	    'I dati sono di chi possiede il gioco: questo disco non si' \
-	    'ridistribuisce.' \
+	@echo "=== CD 3PAPP: $(words $(TERZI_APP)) applicazioni ($(TERZI_APP)) ==="
+	@$(MAKE) --no-print-directory 3papp
+	@# ! LE DIRECTORY DEI DATI SI SVUOTANO PRIMA, e non e' pulizia per
+	@# ordine. cp aggiunge e sovrascrive, non toglie: un file che l'elenco
+	@# DATI_<app> non nomina piu' resterebbe sul CD per sempre, e il disco
+	@# continuerebbe a portarsi dietro roba che nessuno gli ha piu' chiesto
+	@# senza che niente lo dica. E' lo stesso guasto silenzioso per cui il CD
+	@# degli strumenti si ricostruisce dall'albero intero e non da una lista.
+	@#
+	@# ! SOLO I DATI, NON bin/. Gli eseguibili si COLLEGANO li' dentro:
+	@# cancellarli qui vorrebbe dire un CD senza programmi, perche' make li ha
+	@# gia' considerati aggiornati e non li rifarebbe.
+	@#
+	@# ! SI TOLGONO TUTTE LE DIRECTORY TRANNE bin/, non solo quelle delle
+	@# applicazioni che ci sono ADESSO. La differenza si vede solo quando
+	@# un'applicazione viene TOLTA da 3p_app_source: cancellare per nome
+	@# lascerebbe a bordo i dati di quella sparita, perche' il suo nome non e'
+	@# piu' in nessun elenco da cui dedurlo. Si cancella per ESCLUSIONE, che
+	@# e' l'unica forma che copre anche cio' di cui non si sa piu' niente.
+	@for d in $(P3_ROOT)/*/; do \
+	    [ -d "$$d" ] || continue; \
+	    [ "`basename $$d`" = bin ] || rm -rf "$$d"; \
+	done
+	@mkdir -p $(P3_ROOT)/bin $(DIST_DIR)
+	@# ! E GLI ESEGUIBILI ORFANI SI TOLGONO, uno per uno. bin/ non si puo'
+	@# svuotare — i binari si collegano li' dentro e make non li rifarebbe —
+	@# ma un'applicazione TOLTA da 3p_app_source lascerebbe il suo eseguibile
+	@# a bordo per sempre. Toglierla e ritrovarsela ancora sul disco e' un
+	@# guasto che non somiglia a un guasto: il CD funziona, porta solo una
+	@# cosa in piu' di quel che si e' chiesto.
+	@set -e; attesi=" $(notdir $(TERZI_BINARI)) "; \
+	for f in $(P3_ROOT)/bin/*; do \
+	    [ -e "$$f" ] || continue; \
+	    case "$$attesi" in \
+	        *" `basename $$f` "*) ;; \
+	        *) echo "     tolgo bin/`basename $$f`: nessuna applicazione lo dichiara piu'"; \
+	           rm -f "$$f";; \
+	    esac; \
+	done
+	@# I dati di ciascuna applicazione, sotto una directory col suo nome.
+	@#
+	@# ! L'ELENCO LO DA' make, NON UN sed SUL FRAMMENTO. I regole.mk sono
+	@# INCLUSI, quindi DATI_<app> e' gia' una variabile qui dentro: rileggere
+	@# il file con sed vorrebbe dire una seconda grammatica, piu' povera di
+	@# quella di make, che sbaglia in silenzio alla prima riga spezzata con la
+	@# barra o alla prima variabile usata dentro il valore.
+	@set -e; for v in $(TERZI_DATI); do \
+	    a=$${v%%:*}; f=$${v#*:}; \
+	    mkdir -p $(P3_ROOT)/$$a; \
+	    if [ -f "$$f" ]; then cp "$$f" $(P3_ROOT)/$$a/; \
+	    else \
+	        echo "[AVVISO] $$a: manca $$f"; \
+	        echo "         il CD avra' il programma senza quel dato, e il"; \
+	        echo "         programma si fermera' dicendo che non lo trova."; \
+	    fi; \
+	done
+	@for a in $(TERZI_APP); do \
+	    n=$$(ls $(P3_ROOT)/$$a 2>/dev/null | wc -l); \
+	    [ "$$n" -gt 0 ] && echo "     $$a: $$n file di dati"; \
+	done; true
+	@# Il foglio del disco: intestazione piu' il pezzo di ogni applicazione.
+	@printf '%s\n\n' 'CD 3PAPP — programmi costruiti dai sorgenti di terzi.' \
 	    > $(P3_ROOT)/leggimi.txt
+	@set -e; for a in $(TERZI_APP); do \
+	    f="$(TERZI_DIR)/$$a/exos/leggimi-cd.txt"; \
+	    if [ -f "$$f" ]; then cat "$$f" >> $(P3_ROOT)/leggimi.txt; \
+	    else echo "$$a — bin/$$a" >> $(P3_ROOT)/leggimi.txt; fi; \
+	    echo "" >> $(P3_ROOT)/leggimi.txt; \
+	done
+	@printf '%s\n' \
+	    'I dati sono di chi possiede i programmi originali: questo disco' \
+	    'non si ridistribuisce.' >> $(P3_ROOT)/leggimi.txt
 	@python3 $(ISO_MKISO) $(P3_IMG) --da $(P3_ROOT) --etichetta "3PAPP"
 	@echo "[OK] CD dei programmi di terzi: $(P3_IMG)"

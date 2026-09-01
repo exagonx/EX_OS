@@ -538,6 +538,23 @@ Mostra anche a che punto sei: per ogni servizio dice se e' gia' vivo o
 se manca. Lo sa chiedendo al registro IPC, quindi non e' un elenco di
 istruzioni ma lo stato della macchina.
 
+[audio]
+il suono: trova la scheda, la collauda e la installa
+
+  audio                            se e' acceso, e su quale scheda
+  audio -i                         cerca, prova, collauda e installa
+  audio -c                         rifa' solo il collaudo
+  audio -t                         le schede riconosciute
+  audio -v 70                      il volume, da 0 a 100
+  audio /suono/prova.wav           suona un file WAV
+  audio -m /suono/prova.mid        suona un file MIDI
+
+Il collaudo non e' un abbellimento: fa suonare un tono, una nota MIDI e
+un flusso continuo, e guarda quanti interrupt sono arrivati e se il
+contatore del DMA e' avanzato. Se non suona, in kernel.cfg non ci va.
+
+Un driver audio alla volta. Le schede PCI vogliono anche /dev/pci.drv.
+
 [netdetect]
 elenca le schede di rete e il driver che vogliono
 

@@ -2299,6 +2299,15 @@ int     irq_bind(unsigned int irq);
  * Si chiama DOPO aver azzerato lo stato della scheda, mai prima. */
 int     irq_done(unsigned int irq);
 
+/* Restituisce una linea rivendicata con irq_bind(). ! SERVE SOLO A UNA
+ * SONDA: chi cerca su quale IRQ e' cablata una scheda che non lo dichiara
+ * — una Sound Blaster anteriore alla 16 — ne rivendica quattro, ne scopre
+ * una e deve poter ridare indietro le altre tre. NON e' un «chiudi» da
+ * chiamare prima di uscire: alla morte del processo le rilascia tutte il
+ * kernel, e un driver vivo che restituisce la linea del proprio hardware
+ * sta solo spegnendolo senza dirlo. Rende 0, -EPERM se non e' tua. */
+int     irq_unbind(unsigned int irq);
+
 /* =============================================================================
  * Memoria per un bus master — vedi kernel/include/syscall.h per il perche'
  *

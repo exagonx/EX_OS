@@ -45,11 +45,17 @@
  * driver che processa in ritardo troverà comunque lo stato reale del
  * controller alla prossima lettura.
  * ============================================================================= */
-void ipc_notify_irq(uint32_t dest_pid, uint8_t irq_num)
+/* ! RENDE SE HA CONSEGNATO, dal 1 settembre 2026, e serve a chi condivide una
+ * linea: il dispatcher segna «questo driver deve ancora rispondere» solo per
+ * chi la notifica l'ha davvero ricevuta. Segnarlo per una notifica caduta
+ * vorrebbe dire aspettare per sempre una risposta che nessuno ha motivo di
+ * dare — cioe' una linea chiusa a chiave, e con lei l'hardware di chi la
+ * condivide. */
+int ipc_notify_irq(uint32_t dest_pid, uint8_t irq_num)
 {
     Process *dest = proc_get_by_pid(dest_pid);
     if (dest == NULL || dest->state == PROC_UNUSED || dest->state == PROC_ZOMBIE) {
-        return;
+        return 0;
     }
 
     /* NIENTE cli/sti qui: i gate IRQ sono "interrupt gate" (0x8E), quindi
@@ -71,8 +77,10 @@ void ipc_notify_irq(uint32_t dest_pid, uint8_t irq_num)
         }
         /* Un PROC_NASCENTE non compare qui apposta: il messaggio resta in
          * cassetta e lo legge quando parte. Vedi PROC_NASCENTE in sched.h. */
+        return 1;
     }
     /* Mailbox piena: notifica scartata, vedi commento sopra la funzione. */
+    return 0;
 }
 
 /* =============================================================================

@@ -4019,6 +4019,7 @@ int32_t sys_ioport_bind(InterruptFrame *frame)
     uint32_t base  = frame->ebx;
     uint32_t count = frame->ecx;
     Process *self  = proc_get_current();
+    uint32_t i;
 
     if (!e_un_driver(self, "ioport_bind")) return ERR(EPERM);
 
@@ -4026,20 +4027,47 @@ int32_t sys_ioport_bind(InterruptFrame *frame)
         return ERR(EINVAL);
     }
 
-    self->io_port_base  = base;
-    self->io_port_count = count;
+    /* ! SI AGGIUNGE, NON SI SOSTITUISCE — dal 1 settembre 2026. Il perche'
+     * per esteso sta accanto a io_finestre in kernel/include/sched.h: un
+     * driver audio ISA deve toccare quattro isole di porte lontane fra
+     * loro, e coprirle con un intervallo solo vorrebbe dire dargli anche
+     * il PIC e il timer.
+     *
+     * Chi chiama una volta sola — cioe' ogni driver scritto prima di
+     * oggi — ottiene esattamente cio' che otteneva prima. */
 
-    klog(LOG_INFO, "SYSCALL ioport_bind(base=0x%x, count=%u) PID=%u",
-         base, count, self->pid);
+    /* La stessa finestra chiesta due volte non ne consuma una seconda: un
+     * driver che riprova dopo un reset non deve esaurire il posto. */
+    for (i = 0; i < self->io_finestre_n; i++) {
+        if (self->io_finestre[i].base  == base &&
+            self->io_finestre[i].count == count) return 0;
+    }
+
+    if (self->io_finestre_n >= IO_FINESTRE_MAX) {
+        klog(LOG_WARN, "SYSCALL ioport_bind: PID %u ha gia' %u finestre",
+             self->pid, self->io_finestre_n);
+        return ERR(ENOSPC);
+    }
+
+    self->io_finestre[self->io_finestre_n].base  = base;
+    self->io_finestre[self->io_finestre_n].count = count;
+    self->io_finestre_n++;
+
+    klog(LOG_INFO, "SYSCALL ioport_bind(base=0x%x, count=%u) PID=%u "
+         "[finestra %u]", base, count, self->pid, self->io_finestre_n);
     return 0;
 }
 
-/* Verifica che 'port' sia dentro il range rivendicato dal chiamante */
+/* Verifica che 'port' stia in UNA delle finestre rivendicate dal chiamante */
 static int ioport_allowed(Process *p, uint16_t port)
 {
-    if (p->io_port_count == 0) return 0;
-    return (port >= p->io_port_base) &&
-           (port < p->io_port_base + p->io_port_count);
+    uint32_t i;
+
+    for (i = 0; i < p->io_finestre_n; i++) {
+        if (port >= p->io_finestre[i].base &&
+            port <  p->io_finestre[i].base + p->io_finestre[i].count) return 1;
+    }
+    return 0;
 }
 
 /* =============================================================================
@@ -4197,6 +4225,19 @@ int32_t sys_ioport_out32(InterruptFrame *frame)
 int32_t sys_irq_done(InterruptFrame *frame)
 {
     return irq_done_process((uint8_t)frame->ebx, proc_get_current()->pid);
+}
+
+/* =============================================================================
+ * SYS_IRQ_UNBIND (219) — vedi kernel/include/syscall.h per il contratto
+ * ========================================================================== */
+int32_t sys_irq_unbind(InterruptFrame *frame)
+{
+    uint8_t  irq = (uint8_t)frame->ebx;
+    uint32_t pid = proc_get_current()->pid;
+
+    int32_t ret = irq_unbind_uno(irq, pid);
+    klog(LOG_INFO, "SYSCALL irq_unbind(irq=%u) PID=%u -> %d", irq, pid, ret);
+    return ret;
 }
 
 /* =============================================================================

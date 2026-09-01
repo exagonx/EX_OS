@@ -281,6 +281,52 @@ questa sezione lo farebbe partire a ogni avvio senza argomenti - cioe' per
 non fare niente.
 
 -------------------------------------------------------------------------------
+audio = /dev/sb.drv   -   il suono
+-------------------------------------------------------------------------------
+
+    [modules]
+    audio = /dev/sb.drv
+
+QUESTA RIGA NON SI SCRIVE A MANO: la scrive `audio -i`, e la scrive solo
+DOPO aver collaudato la scheda. Il collaudo non e' un abbellimento - fa
+suonare un tono, una nota MIDI e un flusso continuo, e guarda cosa risponde
+l'hardware: quanti interrupt sono arrivati e se il contatore del DMA e'
+avanzato davvero. Un driver audio che si carica senza suonare e' il guasto
+NORMALE, non quello raro: gli indirizzi ISA si sovrappongono, l'IRQ e'
+condiviso, il canale DMA e' di qualcun altro. Scrivere qui un driver mai
+provato vuol dire consegnare un silenzio che si manifesta al riavvio dopo,
+lontano dal comando che lo ha causato.
+
+    audio -i        cerca, prova, collauda, e scrive questa riga
+    audio -c        rifa' solo il collaudo, sul driver gia' attivo
+    audio -t        la tabella delle schede riconosciute
+    audio           dice se il suono e' acceso e su quale scheda
+
+Il valore e' il driver della scheda TROVATA su questa macchina:
+
+    /dev/sb.drv         Sound Blaster ISA: 1.0, 2.0, Pro, 16, AWE32, AWE64
+    /dev/es1371.drv     Sound Blaster PCI 64/128 (Ensoniq ES1370/ES1371)
+    /dev/ac97.drv       controller AC'97 (Intel ICH, VIA) - i codec Realtek
+                        delle schede madri fino al 2004 circa
+    /dev/hdaudio.drv    controller HD Audio - i codec Realtek ALC di dopo
+
+UN SOLO DRIVER AUDIO ALLA VOLTA. Tutti registrano lo stesso servizio,
+"audio": il secondo che parte non si registra e muore dicendolo, invece di
+contendersi i campioni con il primo.
+
+SE LA SCHEDA E' PCI, SERVE ANCHE IL BUS. /dev/es1371.drv, /dev/ac97.drv e
+/dev/hdaudio.drv chiedono al server PCI dove sta la scheda, quindi vogliono
+anche:
+
+    pci   = /dev/pci.drv
+
+Le voci di [modules] il kernel le avvia TUTTE INSIEME e non aspetta che una
+sia pronta prima della successiva: e' il driver audio ad attendere il
+server PCI, non l'ordine delle righe a garantirlo. /dev/sb.drv invece non
+dipende da niente - una scheda ISA non si enumera, si sonda.
+
+
+-------------------------------------------------------------------------------
 Storia di questa sezione (luglio 2026) - perche' non c'e' piu' 'tty' e non c'e'
 ancora 'floppy'
 -------------------------------------------------------------------------------

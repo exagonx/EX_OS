@@ -62,16 +62,90 @@ static isr_handler_fn exception_handlers[32] = { NULL };
 static isr_handler_fn irq_handlers[16]       = { NULL };
 
 /* =============================================================================
- * Tabella IRQ -> PID driver ring3
+ * Tabella IRQ -> PID dei driver ring3
  *
  * Un driver ring3 rivendica un IRQ hardware con irq_bind_process(). Da
  * quel momento, se non c'è un handler kernel-space registrato per quel
  * IRQ (caso normale per hardware gestito interamente in userspace, come
  * tastiera o floppy convertiti a driver ring3), il dispatcher consegna
- * una notifica IPC al PID proprietario invece di ignorare l'interrupt.
- * 0 = nessun proprietario (i PID validi partono da 1).
+ * una notifica IPC ai PID proprietari invece di ignorare l'interrupt.
+ * 0 = slot libero (i PID validi partono da 1).
+ *
+ * -----------------------------------------------------------------------------
+ * ! PIU' DI UN PROPRIETARIO, dal 1 settembre 2026, E NON E' UN LUSSO
+ *
+ * Fino a quel giorno era un PID solo, con accanto scritto «evita che due
+ * driver si contendano lo stesso hardware». La frase era giusta per l'ISA,
+ * dove una linea appartiene a una scheda e basta. SUL PCI E' FALSA: le quattro
+ * linee INTA-INTD di uno slot si distribuiscono a rotazione fra gli slot, e
+ * una macchina con più di quattro dispositivi ne ha per forza due sulla
+ * stessa. Non è un caso raro: è la configurazione normale.
+ *
+ * ! E SI E' VISTO SUBITO. Il primo driver audio PCI provato in QEMU trovava
+ * la scheda, leggeva i BAR, e moriva su `irq_bind(11) fallita (-17)`: l'IRQ 11
+ * ce l'aveva la scheda di rete, avviata trenta secondi prima da /boot/avvio.sh.
+ * Con un proprietario solo, «hai la rete» e «hai il suono» erano alternative.
+ *
+ * COME SI SERVE UNA LINEA CONDIVISA. Il dispositivo non dice di essere lui:
+ * lo si scopre chiedendo a ognuno. Il kernel maschera la linea e notifica
+ * TUTTI i proprietari; ognuno guarda il registro di stato della propria
+ * scheda e o la serve o dice «non era mio». La linea si riapre quando hanno
+ * risposto tutti — vedi irq_pendenti qui sotto.
+ *
+ * ! LA RIAPERTURA VUOLE L'ULTIMO, NON IL PRIMO. Riaprire alla prima risposta
+ * rimetterebbe la linea in gioco mentre l'altro driver non ha ancora azzerato
+ * la SUA scheda: la linea è ancora alta, e si torna esattamente alla tempesta
+ * che il mascheramento esiste per evitare. Per questo c'è una maschera di chi
+ * deve ancora rispondere, e non un contatore.
  * ============================================================================= */
-static uint32_t irq_owner_pid[16] = { 0 };
+#define IRQ_PROPRIETARI_MAX 4
+
+static uint32_t irq_owner_pid[16][IRQ_PROPRIETARI_MAX];
+
+/* Bit i = il proprietario nello slot i non ha ancora chiamato irq_done(). */
+static uint32_t irq_pendenti[16] = { 0 };
+
+/* C'è qualcuno su questa linea? Solo una scansione di quattro parole.
+ *
+ * ! NON SI CHIAMA irq_ripulisci() DAL DISPATCHER, e non è un dettaglio di
+ * velocità: quella scorre la tabella dei processi con proc_get_by_pid, cioè
+ * fa un ciclo dentro un ciclo DENTRO L'INTERRUPT, a ogni battuta di tasto. Il
+ * lavoro di ripulitura è raro per natura — un driver muore una volta — e sta
+ * dove è raro anche chiamarlo: bind, done, unbind, e la morte del processo.
+ * Un proprietario morto qui non fa danno: ipc_notify_irq lo riconosce da sé e
+ * rende 0, quindi non gli si aspetta nessuna risposta. */
+static int irq_qualcuno(uint8_t irq)
+{
+    int i;
+
+    for (i = 0; i < IRQ_PROPRIETARI_MAX; i++)
+        if (irq_owner_pid[irq][i] != 0) return 1;
+    return 0;
+}
+
+/* Quanti proprietari VIVI ha questa linea, e intanto ripulisce gli slot di
+ * chi è morto: un processo terminato non deve tenere chiusa una linea per
+ * sempre, e nessuno chiamerà irq_done() per lui. */
+static uint32_t irq_ripulisci(uint8_t irq)
+{
+    uint32_t vivi = 0;
+    int      i;
+
+    for (i = 0; i < IRQ_PROPRIETARI_MAX; i++) {
+        Process *p;
+
+        if (irq_owner_pid[irq][i] == 0) continue;
+
+        p = proc_get_by_pid(irq_owner_pid[irq][i]);
+        if (p == NULL || p->state == PROC_UNUSED || p->state == PROC_ZOMBIE) {
+            irq_owner_pid[irq][i] = 0;
+            irq_pendenti[irq] &= ~(1u << i);
+            continue;
+        }
+        vivi++;
+    }
+    return vivi;
+}
 
 /* =============================================================================
  * irq_bind_process — un driver ring3 rivendica un IRQ hardware
@@ -82,18 +156,40 @@ static uint32_t irq_owner_pid[16] = { 0 };
  * ============================================================================= */
 int32_t irq_bind_process(uint8_t irq, uint32_t pid)
 {
+    int i, libero = -1;
+
     if (irq >= 16) return ERR(EINVAL);
 
-    if (irq_owner_pid[irq] != 0) {
-        Process *owner = proc_get_by_pid(irq_owner_pid[irq]);
-        if (owner != NULL && owner->state != PROC_UNUSED &&
-            owner->state != PROC_ZOMBIE) {
-            return ERR(EEXIST);  /* già rivendicato da un processo vivo */
+    irq_ripulisci(irq);
+
+    for (i = 0; i < IRQ_PROPRIETARI_MAX; i++) {
+        /* ! LA STESSA LINEA RICHIESTA DUE VOLTE DALLO STESSO PROCESSO NON E'
+         * UN CONFLITTO. Senza questo, un driver che sonda le linee per
+         * scoprire la propria e poi rivendica quella trovata riceve -EEXIST da
+         * se' stesso, e il messaggio che ne esce — «IRQ gia' rivendicato» —
+         * manda a cercare un altro driver che non c'e'. */
+        if (irq_owner_pid[irq][i] == pid) {
+            pic_unmask_irq(irq);
+            return 0;
         }
-        /* Il vecchio proprietario è morto: il claim si può riassegnare */
+        if (irq_owner_pid[irq][i] == 0 && libero < 0) libero = i;
     }
 
-    irq_owner_pid[irq] = pid;
+    if (libero < 0) {
+        klog(LOG_WARN, "IRQ%u: gia' %d proprietari, non ce ne stanno altri",
+             irq, IRQ_PROPRIETARI_MAX);
+        return ERR(EEXIST);
+    }
+
+    irq_owner_pid[irq][libero] = pid;
+
+    /* ! IL BIT DI ATTESA DELLO SLOT SI AZZERA QUI. Uno slot riusato puo'
+     * portarsi dietro il «deve ancora rispondere» del proprietario di prima:
+     * un bit acceso che nessuno spegnera' mai tiene la linea chiusa per
+     * sempre, e il sintomo — l'hardware muto, senza un errore — non
+     * assomiglia per niente a un bit rimasto acceso. */
+    irq_pendenti[irq] &= ~(1u << libero);
+
     pic_unmask_irq(irq);
     return 0;
 }
@@ -113,10 +209,69 @@ int32_t irq_bind_process(uint8_t irq, uint32_t pid)
  * ============================================================================= */
 int32_t irq_done_process(uint8_t irq, uint32_t pid)
 {
-    if (irq >= 16) return ERR(EINVAL);
-    if (irq_owner_pid[irq] != pid) return ERR(EPERM);
+    int i, mio = -1;
 
-    pic_unmask_irq(irq);
+    if (irq >= 16) return ERR(EINVAL);
+
+    for (i = 0; i < IRQ_PROPRIETARI_MAX; i++)
+        if (irq_owner_pid[irq][i] == pid) { mio = i; break; }
+
+    if (mio < 0) return ERR(EPERM);
+
+    irq_pendenti[irq] &= ~(1u << mio);
+
+    /* Un proprietario morto fra la notifica e adesso non deve tenere chiusa
+     * la linea: irq_ripulisci gli toglie anche il bit di attesa. */
+    irq_ripulisci(irq);
+
+    /* ! SI RIAPRE QUANDO HANNO RISPOSTO TUTTI, non al primo. Il perche' sta
+     * accanto a irq_pendenti, in cima al file: riaprire mentre un altro
+     * driver non ha ancora azzerato la propria scheda rimette in gioco una
+     * linea che e' ancora alta. */
+    if (irq_pendenti[irq] == 0) pic_unmask_irq(irq);
+    return 0;
+}
+
+/* =============================================================================
+ * irq_unbind_uno — un driver rilascia UNA linea che aveva rivendicato
+ *
+ * ! ESISTE PER LA SONDA DELL'AUDIO ISA, ed e' l'unico caso che la chiede.
+ * Una Sound Blaster anteriore alla 16 non dice su quale IRQ e' cablata: il
+ * ponticello lo ha messo qualcuno vent'anni fa e non c'e' un registro che
+ * lo riporti. L'unico modo di scoprirlo e' provocare un interrupt e
+ * guardare quale linea si alza — cioe' rivendicare i quattro candidati
+ * (5, 7, 10, 2/9), suonare un blocco di silenzio, e vedere quale notifica
+ * arriva.
+ *
+ * Senza questa, dopo la sonda il driver terrebbe per sempre le tre linee
+ * SBAGLIATE: l'IRQ 7 e' la parallela, il 10 e' libero per una scheda
+ * qualunque, e un driver futuro se li troverebbe occupati da un processo
+ * che non li usa e non sa di averli. Il claim dev'essere restituibile
+ * perche' la sonda lo prende PER SCOPRIRE, non per usare.
+ *
+ * Rilascia solo cio' che e' proprio: -EPERM se la linea e' di un altro,
+ * per la stessa ragione per cui la verifica c'e' in irq_done_process.
+ * ============================================================================= */
+int32_t irq_unbind_uno(uint8_t irq, uint32_t pid)
+{
+    int i, mio = -1;
+
+    if (irq >= 16) return ERR(EINVAL);
+
+    for (i = 0; i < IRQ_PROPRIETARI_MAX; i++)
+        if (irq_owner_pid[irq][i] == pid) { mio = i; break; }
+
+    if (mio < 0) return ERR(EPERM);
+
+    irq_owner_pid[irq][mio] = 0;
+    irq_pendenti[irq] &= ~(1u << mio);
+
+    /* ! LA LINEA SI CHIUDE SOLO SE NON LA VUOLE PIU' NESSUNO. Chiuderla
+     * sempre — com'era quando i proprietari erano uno solo — vorrebbe dire
+     * che un driver che restituisce una linea presa in prestito per una sonda
+     * spegne l'hardware di qualcun altro. */
+    if (irq_ripulisci(irq) == 0) pic_mask_irq(irq);
+    else if (irq_pendenti[irq] == 0) pic_unmask_irq(irq);
     return 0;
 }
 
@@ -124,10 +279,23 @@ int32_t irq_done_process(uint8_t irq, uint32_t pid)
 void irq_unbind_process(uint32_t pid)
 {
     for (int i = 0; i < 16; i++) {
-        if (irq_owner_pid[i] == pid) {
-            irq_owner_pid[i] = 0;
-            pic_mask_irq((uint8_t)i);
+        int j, trovato = 0;
+
+        for (j = 0; j < IRQ_PROPRIETARI_MAX; j++) {
+            if (irq_owner_pid[i][j] != pid) continue;
+            irq_owner_pid[i][j] = 0;
+            irq_pendenti[i] &= ~(1u << j);
+            trovato = 1;
         }
+        if (!trovato) continue;
+
+        /* ! SI CHIUDE SOLO SE ERA L'ULTIMO. Un driver che muore mentre un
+         * altro condivide la sua linea non deve portarsi via anche
+         * l'hardware del vicino — ed e' esattamente cio' che succedeva
+         * quando i proprietari erano uno solo e questa funzione mascherava
+         * sempre. */
+        if (irq_ripulisci((uint8_t)i) == 0) pic_mask_irq((uint8_t)i);
+        else if (irq_pendenti[i] == 0) pic_unmask_irq((uint8_t)i);
     }
 }
 
@@ -358,7 +526,7 @@ void irq_handler(InterruptFrame *frame)
      * driver ring3 che ha rivendicato questo IRQ (se esiste) */
     if (irq < 16 && irq_handlers[irq] != NULL) {
         irq_handlers[irq](frame);
-    } else if (irq < 16 && irq_owner_pid[irq] != 0) {
+    } else if (irq < 16 && irq_qualcuno((uint8_t)irq)) {
         /* =====================================================================
          * ! SI MASCHERA PRIMA DI NOTIFICARE, E SENZA QUESTO IL PCI BLOCCA
          * LA MACCHINA.
@@ -390,7 +558,45 @@ void irq_handler(InterruptFrame *frame)
          * fronte resta nell'IRR del PIC e viene consegnato alla riapertura.
          * ===================================================================== */
         pic_mask_irq((uint8_t)irq);
-        ipc_notify_irq(irq_owner_pid[irq], irq);
+
+        /* ! SI NOTIFICANO TUTTI, e la linea si riapre quando hanno risposto
+         * tutti. Su una linea PCI condivisa il dispositivo non dice di essere
+         * lui: lo si scopre chiedendo a ognuno di guardare il proprio registro
+         * di stato. Il perche' per esteso sta accanto a irq_owner_pid. */
+        {
+            int k;
+            irq_pendenti[irq] = 0;
+            for (k = 0; k < IRQ_PROPRIETARI_MAX; k++) {
+                if (irq_owner_pid[irq][k] == 0) continue;
+                if (ipc_notify_irq(irq_owner_pid[irq][k], (uint8_t)irq))
+                    irq_pendenti[irq] |= (1u << k);
+            }
+
+            /* ! LA LINEA NON SI RIAPRE MAI DA QUI, NEMMENO SE LA NOTIFICA
+             * E' CADUTA, e questa riga e' costata un blocco su hardware vero.
+             *
+             * C'era scritto il contrario: se nessuno ha ricevuto la notifica —
+             * cassetta piena, quattro messaggi e basta — «tanto vale
+             * riaprire, al massimo l'interrupt si ripresenta». Si ripresenta
+             * ECCOME. Il PIC ha gia' avuto l'EOI, il controller di tastiera
+             * tiene la linea alta finche' qualcuno non gli legge il byte, e
+             * chi deve leggerlo e' un processo ring3 che per farlo ha bisogno
+             * della CPU. Riaprire qui gliela toglie: subito dopo l'iret
+             * l'interrupt riparte, trova la cassetta ancora piena, riapre, e
+             * ricomincia. E' una tempesta che non finisce, ed e' esattamente
+             * quella che il mascheramento esiste per evitare.
+             *
+             * In QEMU non si vede: la macchina e' abbastanza veloce che la
+             * cassetta non si riempie mai. Su un Pentium II basta tenere
+             * premuto un tasto mentre l'avvio finisce — il prompt compare e
+             * poi la tastiera e' morta, con la macchina che sembra viva.
+             *
+             * Cosa succede adesso, che e' quello che succedeva prima di
+             * questa modifica: la linea resta chiusa, e la riapre il driver
+             * alla prossima irq_done() — che chiamera' di sicuro, perche' in
+             * cassetta le notifiche precedenti ce le ha. Un messaggio perso
+             * costa un giro di servizio in piu', non la macchina. */
+        }
     } else {
         /* IRQ non gestito: log a livello debug (non panic) */
         klog(LOG_DEBUG, "IRQ%d non gestito (vettore %d)", irq, frame->int_no);

@@ -1,3 +1,43 @@
+Da fare, sul suono (1 settembre 2026):
+
+1. L'ES1371 VERO NON E' MAI STATO ESEGUITO. QEMU emula l'ES1370, non
+   l'ES1371: tutto il codice del convertitore di frequenza (SRC) e del codec
+   AC'97 dentro drivers/es1371/es1371.c e' scritto sulla sequenza documentata
+   e non e' mai girato ne' su silicio ne' su emulazione. E' segnato nel file
+   dove comincia. Su una scheda vera, se il suono esce alla velocita'
+   sbagliata o non esce, si comincia a guardare da li'. La parte ES1370 --
+   quella provata -- e' invece completa e funziona.
+
+2. L'HD AUDIO E' PROVATO SOLO SUL CODEC FINTO DI QEMU, che ha una topologia
+   semplice: un convertitore, una presa, e nient'altro. Un Realtek ALC vero
+   ha quindici prese, miscelatori e selettori in mezzo, e la scelta dei due
+   widget (trova_widget in hdaudio.c) prende il primo convertitore d'uscita e
+   la prima presa collegata. Su una scheda madre vera puo' non bastare: se il
+   suono non esce, il posto e' quello, e la strada e' seguire la lista di
+   connessione invece di sperare che siano adiacenti.
+
+3. LA REGISTRAZIONE NON C'E'. AUDIO_CAP_REGISTRA e' dichiarato nel
+   protocollo e nessun driver lo accende: tutti e quattro sanno solo suonare.
+   Il motore DMA per l'ingresso e' lo stesso, quindi il lavoro e' quasi tutto
+   nella meta' comune -- un secondo anello che va nel verso opposto.
+
+4. UN CLIENT ALLA VOLTA. Il secondo programma che chiede di suonare riceve
+   -EBUSY. Mescolare due flussi vuol dire un mixer software, che e' un lavoro
+   vero e non una riga, e va fatto quando serve invece che inventato di
+   nascosto dentro il driver della scheda.
+
+5. LA TAVOLA D'ONDE E' OTTO SENI. Il MIDI sulle schede PCI si sente ed e'
+   intonato, ma e' un timbro solo: il cambio di strumento si ignora e la
+   percussione non esiste. Il passo successivo e' leggere dei campioni da un
+   file, non aggiungere armoniche.
+
+6. L'EMU8000 DI UNA AWE32/AWE64 NON SI USA. La scheda si riconosce e si guida
+   come una SB16 -- la riproduzione PCM e' identica -- ma il sintetizzatore a
+   tavola d'onde a bordo resta spento, e il MIDI lo fa l'OPL. Per accenderlo
+   servirebbe una settima finestra di porte (0x620) e i campioni da caricarci
+   dentro.
+
+
 Bug trovati:
 Da CD, un driver ogni tanto muore appena avviato (raro, non chiuso).
     Sintomo: «page fault a 0x00000000, EIP=0x00000000», e nel dump lo STACK

@@ -1,4 +1,153 @@
-# DOVE RIPRENDERE — 27 agosto 2026
+# DOVE RIPRENDERE — 1 settembre 2026
+
+## 1 settembre 2026 — IL SUONO, E TRE APERTURE NEL KERNEL PER AVERLO
+
+EX-OS suona. Un servizio solo — `audio` — e quattro driver che lo parlano:
+
+    /dev/sb.drv        Sound Blaster ISA, dalla 1.0 alla AWE64
+    /dev/es1371.drv    Ensoniq ES1370/ES1371, le «Sound Blaster PCI 64/128»
+    /dev/ac97.drv      controller AC'97 (Intel ICH, VIA, nVidia)
+    /dev/hdaudio.drv   Intel HD Audio
+
+Gli ultimi due sono «le schede Realtek», e vale la pena dirlo subito perche'
+e' il primo equivoco: **Realtek non ha mai fabbricato un controller audio**.
+L'ALC che sta su ogni scheda madre e' il CODEC; il controller e' di Intel, di
+VIA, di nVidia. Quindi non c'e' un `realtek.drv`: c'e' il driver del bus, e il
+nome Realtek lo si LEGGE dal codec e lo si stampa.
+
+### La forma: due meta', e la seconda non sa cos'e' un client
+
+`drivers/audio/audio_comune.c` tiene l'anello, il protocollo IPC, il ciclo del
+server, le prove di collaudo, il `main()` e il sintetizzatore software. Il file
+della scheda tiene **solo i registri**. L'interfaccia sta in `audio_dorso.h`.
+
+Quattro famiglie di schede e una logica sola: scritta quattro volte avrebbe
+avuto quattro difetti diversi, e i tre driver meno usati sarebbero rimasti
+indietro sul primo che si corregge. E' gia' successo con la tabella delle
+schede di rete.
+
+### ! IL SUONO NON PASSA DAI MESSAGGI IPC
+
+Un messaggio porta 1536 byte e la cassetta e' profonda quattro. Un flusso a
+44100/16/stereo sono 176400 byte al secondo: il suono sarebbe scandito dallo
+scheduler invece che dal quarzo della scheda.
+
+I campioni stanno in una zona di memoria condivisa — un anello con **due
+contatori monotoni**: il client alza solo `scritto`, il driver solo `suonato`.
+Nessuno tocca il campo dell'altro, quindi niente lucchetti; e nel percorso
+caldo non c'e' **nemmeno un messaggio**. Un gioco a 60 fotogrammi fa 60
+scritture in memoria, non 60 syscall.
+
+I contatori sono monotoni e non indici perche' due indici che girano non
+distinguono l'anello pieno da quello vuoto — e la differenza fra le due
+condizioni e' quella fra il silenzio e un rumore bianco a tutto volume.
+
+### ! `audio -i` COLLAUDA PRIMA DI INSTALLARE, e il collaudo e' il punto
+
+Un driver audio che si carica senza suonare e' il guasto **normale**: gli
+indirizzi ISA si sovrappongono, l'IRQ e' di un altro, il canale DMA pure.
+
+Quindi `audio -i` fa quattro cose e ognuna puo' dire di no: cerca, carica e
+**aspetta il servizio**, collauda, installa. Il collaudo fa suonare un tono a
+8 bit, uno a 16 stereo, una nota MIDI e un flusso continuo, e guarda cosa
+risponde l'HARDWARE — quanti interrupt sono arrivati, se il contatore del DMA
+e' avanzato. Se non suona, in `kernel.cfg` non ci va.
+
+Prima di scrivere la riga il driver viene **copiato** in `/dev` della radice.
+Scrivere `/cdrom/dev/sb.drv` in `[modules]` sarebbe una trappola a scoppio
+ritardato: i moduli partono al PASSO 14b, i montaggi vengono dopo.
+
+### Tre aperture nel kernel, ognuna con un vincolo dietro
+
+**`ioport_bind` aggiunge una finestra invece di sostituirla** (max 8). Il DMA
+ISA vive su quattro isole di porte lontane — la scheda a 0x220, l'8237 a
+0x00-0x0F, i registri di pagina a 0x80-0x8F, il DMA a 16 bit a 0xC0-0xDF —
+piu' MPU-401 e OPL. Con una finestra sola l'unico modo di coprirle era chiedere
+0x000-0x38F, cioe' consegnare a un driver audio anche il PIC, il timer, il
+controller di tastiera e il CMOS. Concedere mille porte per usarne quaranta
+non e' una whitelist: e' il suo contrario.
+
+**`SYS_IRQ_UNBIND` (219)** restituisce una linea rivendicata. Ha un caso solo:
+una Sound Blaster anteriore alla 16 non dice su quale IRQ e' cablata, e per
+scoprirlo si rivendicano i quattro candidati, si manda il comando 0xF2 del DSP
+(«alza l'interrupt senza suonare») e si guarda quale linea si alza. Le altre
+tre erano una domanda, non un possesso.
+
+**! UN IRQ PUO' AVERE PIU' PROPRIETARI (4).** Fino a ieri era uno solo, con
+accanto scritto «evita che due driver si contendano lo stesso hardware» — vero
+sull'ISA, **falso sul PCI**, dove le quattro linee INTA-D si distribuiscono a
+rotazione fra gli slot e due schede sulla stessa linea sono la norma. Si e'
+visto al primo tentativo: il driver ES1370 trovava la scheda, leggeva i BAR e
+moriva su `irq_bind(11) fallita (-17)`, perche' quell'IRQ ce l'aveva la scheda
+di rete avviata da `/boot/avvio.sh`. Con un proprietario solo, «hai la rete» e
+«hai il suono» erano alternative.
+
+Adesso il kernel notifica **tutti** i proprietari e riapre la linea quando
+hanno risposto **tutti** — non al primo: riaprire mentre l'altro driver non ha
+ancora azzerato la sua scheda rimette in gioco una linea ancora alta, cioe' la
+tempesta che il mascheramento esiste per evitare. E `ipc_notify_irq` adesso
+dice se ha consegnato, perche' una notifica caduta in una cassetta piena non
+deve far aspettare una risposta che nessuno sa di dover dare.
+
+#### ! E LA LINEA NON SI RIAPRE MAI DAL DISPATCHER — costata un blocco vero
+
+La prima versione, quando **tutte** le notifiche cadevano per cassetta piena,
+riapriva la linea subito: «tanto l'interrupt si ripresenta, ed e' cio' che
+deve fare». Si ripresenta eccome. Il PIC ha gia' avuto l'EOI, l'8042 tiene
+IRQ1 alta finche' nessuno gli legge il byte, e chi deve leggerlo e' un
+processo ring3 — a cui la riapertura toglie la CPU. Subito dopo l'`iret`
+l'interrupt riparte, trova la cassetta ancora piena, riapre, ricomincia.
+
+**In QEMU non si vede**: la macchina e' abbastanza veloce che quattro
+messaggi non si accumulano mai. Su un **Pentium II** basta tenere premuto un
+tasto mentre l'avvio finisce: il prompt compare e poi la tastiera e' morta,
+con la macchina che sembra viva.
+
+Adesso la linea resta chiusa e la riapre il driver alla prossima
+`irq_done()` — che chiamera' di sicuro, perche' le notifiche precedenti in
+cassetta ce le ha. Un messaggio perso costa un giro di servizio in piu', non
+la macchina. E' anche esattamente cio' che faceva il codice a un
+proprietario solo: la regola nuova non deve essere piu' permissiva della
+vecchia, mai.
+
+E `irq_ripulisci()` non si chiama piu' dal dispatcher: scorre la tabella dei
+processi, cioe' un ciclo dentro un ciclo dentro l'interrupt, a ogni battuta
+di tasto. La ripulitura sta dove e' rara — bind, done, unbind, morte del
+processo — e un proprietario morto nel frattempo lo riconosce da se'
+`ipc_notify_irq`, che rende 0.
+
+### ! IL MIDI SU UNA SCHEDA MODERNA O LO FA IL PROCESSORE O NON ESISTE
+
+Una Sound Blaster ha l'OPL a bordo. Una ES1371, una AC'97, una HD Audio **non
+hanno nessun sintetizzatore**: hanno al massimo una porta MIDI, cioe' un
+connettore per uno strumento esterno che quasi nessuno attacca.
+
+Nella meta' comune c'e' quindi una tavola d'onde software, minima e dichiarata:
+otto voci, seno piu' terza armonica, spegnimento esponenziale. Si prende
+l'uscita PCM quando nessun programma la sta usando — la scheda ha un flusso
+solo, e mescolare vorrebbe dire un mixer, che e' un lavoro vero e non una riga.
+
+### Come si prova, e perche' non basta che il driver dica di si'
+
+    sh tools/prove/audio_prova.sh tutte
+
+Avvia EX-OS in QEMU con la scheda emulata e fa registrare all'audiodev `wav`
+**gli stessi campioni che sarebbero andati all'altoparlante**. Poi
+`tools/prove/audio_wav.py` li spezza nei singoli suoni, ne stima la frequenza
+per autocorrelazione — senza assumere quale nota debba essere — e ne misura la
+purezza con un Goertzel.
+
+! **E' l'unico modo di vedere le cose che si sentono.** Il contatore DMA
+avanza allo stesso modo se i campioni sono sbagliati, se le due meta' del
+buffer sono scambiate, se il formato dichiarato non e' quello scritto. Su
+tutte e quattro le schede il tono di prova esce a **441.0 Hz con il 98% di
+purezza**; `/suono/prova.wav` esce come il do-mi-sol-do con cui e' stato
+generato; il MIDI esce sulle note giuste.
+
+Con la rete accesa e l'audio sulla stessa IRQ 11: collaudo superato, e quattro
+ping su quattro.
+
+---
 
 ## 27 agosto 2026 — L'ARENA DEL DOCUMENTO ERA ANCHE QUELLA DELL'IMPAGINAZIONE
 

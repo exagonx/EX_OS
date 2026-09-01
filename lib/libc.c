@@ -280,6 +280,7 @@ typedef struct {
 #define SYS_IOPORT_OUT16  234
 #define SYS_IOPORT_IN32   235
 #define SYS_IOPORT_OUT32  236
+#define SYS_IRQ_UNBIND    219
 #define SYS_IRQ_DONE      237
 #define SYS_DMA_ALLOC     239
 #define SYS_RANDOM        240
@@ -5898,6 +5899,11 @@ int ioport_out32(unsigned int port, unsigned int value)
 int irq_done(unsigned int irq)
 {
     return (int)_syscall1(SYS_IRQ_DONE, irq);
+}
+
+int irq_unbind(unsigned int irq)
+{
+    return (int)_syscall1(SYS_IRQ_UNBIND, irq);
 }
 
 int dma_alloc(DmaZona *z)

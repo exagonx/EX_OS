@@ -192,7 +192,18 @@ static void dma_copia(uint8_t *dst, const uint8_t *src, uint32_t n)
 
 static uint8_t  g_dma_buf[DMA_BUF_BYTE] __attribute__((aligned(65536)));
 static Prd      g_prdt[1]               __attribute__((aligned(8)));
-static uint16_t g_bm_base = 0;          /* 0 = niente bus master: si va in PIO */
+static uint16_t g_bm_base   = 0;        /* 0 = niente bus master: si va in PIO */
+static int      g_dma_rotto = 0;        /* 1 = DMA gia' fallito: non si ritenta piu'
+                                          * per il resto della sessione. Senza questo
+                                          * flag ogni ata_rw() successiva riprovava il
+                                          * DMA da capo — su un bus master rilevato ma
+                                          * non funzionante, questo vuol dire pagare il
+                                          * timeout pieno (~200000 cicli, qualche
+                                          * secondo) A OGNI lettura/scrittura, per
+                                          * tutta la sessione: su hardware reale con
+                                          * decine di accessi al boot il sistema
+                                          * sembra bloccato, anche se in realta' sta
+                                          * solo avanzando a passo di lumaca. */
 
 /* --- lettura di configurazione PCI, il minimo indispensabile -------------- */
 #define PCI_ADDR    0xCF8
@@ -823,9 +834,16 @@ static int ata_rw(int indice, uint64_t lba, uint32_t n, void *buf, int scrivi)
      * un'emulazione parziale — deve rendere il sistema piu' lento, non
      * inavviabile. Il ripiego si dice una volta sola nel log e poi si tace,
      * perche' su un disco lento sarebbe una riga per settore.
-     * ===================================================================== */
-    if (g_bm_base != 0) {
-        static int gia_detto = 0;
+     *
+     * ! UNA VOLTA ROTTO, RESTA ROTTO — non si ritenta il DMA a ogni
+     * chiamata. Un bus master rilevato sul PCI ma non funzionante davvero
+     * (capita su hardware reale, non solo in emulazione) faceva pagare il
+     * timeout pieno di ata_dma_blocco() — qualche secondo — a OGNI lettura
+     * e scrittura per tutta la sessione: con le decine di accessi al disco
+     * del solo avvio, il sistema restava utilizzabile in teoria e bloccato
+     * in pratica. g_dma_rotto lo impedisce: il primo fallimento lo marca, e
+     * da li' in poi si va dritti in PIO senza riprovare. */
+    if (g_bm_base != 0 && !g_dma_rotto) {
         uint64_t   l = lba;
         uint32_t   r = n;
         uint8_t   *q = p;
@@ -852,10 +870,9 @@ static int ata_rw(int indice, uint64_t lba, uint32_t n, void *buf, int scrivi)
 
         if (ok) return 0;
 
-        if (!gia_detto) {
-            klog(LOG_ERROR, "ATA: il DMA non funziona, si continua in PIO");
-            gia_detto = 1;
-        }
+        g_dma_rotto = 1;
+        klog(LOG_ERROR, "ATA: il DMA non funziona, si continua in PIO "
+             "(non si ritentera' piu' in questa sessione)");
         /* ! E SI RIPARTE DA CAPO, non da dove il DMA si e' fermato: una
          * parte del buffer potrebbe essere gia' stata riempita a meta' da un
          * trasferimento interrotto, e ripetere una lettura non costa niente

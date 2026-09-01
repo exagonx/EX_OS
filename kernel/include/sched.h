@@ -283,6 +283,36 @@ typedef struct {
 } ProcVma;
 
 /* =============================================================================
+ * Le finestre di porte I/O di un driver ring3
+ *
+ * QUANTE. Otto, e il numero viene da un conto vero, non da un tondo: il
+ * driver Sound Blaster ne chiede SEI, e sono tutte necessarie —
+ *
+ *     0x000-0x00F   controller DMA a 8 bit
+ *     0x080-0x08F   registri di pagina del DMA (l'indirizzo alto)
+ *     0x0C0-0x0DF   controller DMA a 16 bit
+ *     0x210-0x28F   la scheda, dovunque sia fra i sette indirizzi possibili
+ *     0x330-0x333   MPU-401, la porta MIDI
+ *     0x388-0x389   OPL2/OPL3, la sintesi FM
+ *
+ * — e nessun altro driver del sistema ne usa piu' di una. Due di scorta
+ * bastano per la settima e l'ottava che nessuno ha ancora chiesto.
+ * Alzarlo costa 8 byte per finestra in OGNI PCB, cioe' in memoria che i
+ * processi che non sono driver — quasi tutti — non useranno mai.
+ *
+ * ! LE FINESTRE NON SI TOLGONO, come per SYS_DMA_ALLOC e per lo stesso
+ * motivo: l'unico caso in cui servirebbe e' un driver che smette di
+ * guidare l'hardware restando vivo, e quel driver non esiste. Quando il
+ * processo muore muore anche il PCB, e con lui la whitelist.
+ * ============================================================================= */
+#define IO_FINESTRE_MAX 8
+
+typedef struct {
+    uint32_t base;      /* prima porta della finestra */
+    uint32_t count;     /* quante porte, a partire da base */
+} IoFinestra;
+
+/* =============================================================================
  * Process Control Block (PCB)
  * ============================================================================= */
 typedef struct Process {
@@ -532,11 +562,27 @@ typedef struct Process {
     char            ipc_service_name[IPC_NAME_LEN]; /* nome registrato (vuoto se nessuno) */
 
     /* --- I/O porte: whitelist kernel-mediata per driver ring3 ---
-     * Un solo range contiguo per processo (sufficiente per un
-     * controller hardware tipico: tastiera 0x60-0x64, FDC 0x3F0-0x3F7).
-     * io_port_count == 0 significa nessun accesso I/O consentito. */
-    uint32_t        io_port_base;
-    uint32_t        io_port_count;
+     *
+     * PIU' FINESTRE, e non una sola. Fino al 1 settembre 2026 il campo era
+     * uno solo — base e lunghezza — perche' un controller tipico sta tutto
+     * in un intervallo contiguo: tastiera 0x60-0x64, FDC 0x3F0-0x3F7,
+     * NE2000 0x300-0x31F.
+     *
+     * ! IL PRIMO HARDWARE CHE NON CI STA E' L'AUDIO ISA, e non e' un caso
+     * particolare: una Sound Blaster suona con il DMA della scheda madre,
+     * quindi il suo driver deve toccare QUATTRO isole lontane fra loro —
+     * la scheda a 0x220, il controller DMA a 0x00-0x0F, i registri di
+     * pagina a 0x80-0x8F, il DMA a 16 bit a 0xC0-0xDF, e la MPU-401 a
+     * 0x330. Con una finestra sola l'unico modo di coprirle era chiedere
+     * 0x000-0x38F, cioe' consegnare a un driver audio anche il PIC, il
+     * timer, il controller di tastiera e il CMOS. Concedere mille porte
+     * per usarne quaranta non e' una whitelist: e' il suo contrario.
+     *
+     * io_finestre_n == 0 significa nessun accesso I/O consentito.
+     * ioport_bind AGGIUNGE una finestra: un driver che la chiama una
+     * volta sola si comporta esattamente come prima. */
+    IoFinestra      io_finestre[IO_FINESTRE_MAX];
+    uint32_t        io_finestre_n;
 
     /* --- E' un driver? Il varco verso l'hardware, in un campo solo ---
      *

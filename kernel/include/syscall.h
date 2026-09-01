@@ -137,6 +137,25 @@
 #define ENOEXEC      8
 
 /* Syscall IPC — comunicazione kernel-mediata tra task ring3 */
+/* =============================================================================
+ * SYS_IRQ_UNBIND (219) — restituire una linea rivendicata per sbaglio
+ *
+ * ebx = irq. Rende 0, -EINVAL se l'IRQ non esiste, -EPERM se la linea e'
+ * di un altro processo.
+ *
+ * ! IL SUO UNICO CASO E' UNA SONDA, ed e' meglio dirlo qui che lasciarlo
+ * capire: serve a chi rivendica delle linee PER SCOPRIRE su quale e'
+ * cablata una scheda che non lo dichiara — una Sound Blaster anteriore
+ * alla 16 — e deve poter restituire le altre tre. Il ragionamento per
+ * esteso sta su irq_unbind_uno() in kernel/arch/x86/isr.c.
+ *
+ * ! NON E' UN «CHIUDI» DA CHIAMARE PER PULIZIA PRIMA DI USCIRE. Alla morte
+ * del processo ci pensa gia' irq_unbind_process, che le rilascia tutte;
+ * un driver vivo che restituisce la linea del proprio hardware sta solo
+ * spegnendo il proprio hardware senza dirlo.
+ * ============================================================================= */
+#define SYS_IRQ_UNBIND   219   /* ebx = irq; restituisce una linea rivendicata */
+
 #define SYS_IPC_SEND     220
 #define SYS_IPC_RECV     221
 #define SYS_IPC_REGISTER 222
@@ -1194,6 +1213,7 @@ int32_t sys_ioport_out16(InterruptFrame *f);
 int32_t sys_ioport_in32(InterruptFrame *f);
 int32_t sys_ioport_out32(InterruptFrame *f);
 int32_t sys_irq_done(InterruptFrame *f);
+int32_t sys_irq_unbind(InterruptFrame *f);
 int32_t sys_dma_alloc(InterruptFrame *f);
 int32_t sys_mmio_map(InterruptFrame *f);
 int32_t sys_random(InterruptFrame *f);

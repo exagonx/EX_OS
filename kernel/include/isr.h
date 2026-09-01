@@ -32,6 +32,7 @@ int32_t irq_bind_process(uint8_t irq, uint32_t pid);
  * il commento in isr.c — senza, un IRQ a livello come quelli PCI blocca
  * la macchina). */
 int32_t irq_done_process(uint8_t irq, uint32_t pid);
+int32_t irq_unbind_uno(uint8_t irq, uint32_t pid);
 void    irq_unbind_process(uint32_t pid);
 
 #endif /* ISR_H */

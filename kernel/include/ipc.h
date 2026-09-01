@@ -71,6 +71,6 @@ void    ipc_cleanup_process(uint32_t pid);
  * Interrupt-safe: chiamabile SOLO da dentro il dispatcher IRQ (isr.c),
  * mai da codice ring3 o da un contesto con IF=1. Non bloccante: se la
  * mailbox è piena la notifica viene scartata silenziosamente. */
-void    ipc_notify_irq(uint32_t dest_pid, uint8_t irq_num);
+int     ipc_notify_irq(uint32_t dest_pid, uint8_t irq_num);
 
 #endif /* IPC_H */
