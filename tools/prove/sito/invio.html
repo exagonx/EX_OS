@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Il pulsante che manda</title>
+<style>
+body { font-family: sans-serif; margin: 16px; }
+h2   { font-size: 17px; margin-top: 18px; }
+form { border: 1px solid #888; padding: 8px; background: #f4f4f4; }
+</style>
+<!-- Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>  GPL-2.0-or-later
+
+     ! CHE UN PULSANTE SI PREMA SI VEDE A OCCHIO; CHE IL SUO `name=valore` SIA
+     PARTITO NO. Per questo ogni modulo qui manda a /eco-modulo, che risponde
+     con i campi che gli sono arrivati: la risposta E' il risultato della
+     prova.
+
+     Cosa deve succedere, in ordine:
+       1. premendo «Salva»    -> azione=salva      (e NON azione=cancella)
+       2. premendo «Cancella» -> azione=cancella
+       3. l'Invio nella casella -> come il PRIMO pulsante: azione=salva
+       4. «Azzera» NON manda niente: rimette la casella com'era
+       5. «Solo script» NON manda niente
+       6. un pulsante SENZA nome non aggiunge campi -->
+</head>
+<body>
+
+<h1>Il pulsante che manda</h1>
+
+<h2>1, 2 e 3 — due invii con lo stesso nome e valori diversi</h2>
+<form action="/eco-modulo" method="get">
+  <input type="text" name="testo" value="ciao" size="12">
+  <input type="hidden" name="nascosto" value="c-e-sempre">
+  <input type="submit" name="azione" value="salva">
+  <input type="submit" name="azione" value="cancella">
+</form>
+
+<h2>4 e 5 — quelli che NON mandano</h2>
+<form action="/eco-modulo" method="get">
+  <input type="text" name="testo" value="scrivici sopra" size="16">
+  <input type="reset" value="Azzera">
+  <input type="button" value="Solo script">
+  <input type="submit" name="azione" value="manda">
+</form>
+
+<h2>6 — un invio senza nome non aggiunge niente</h2>
+<form action="/eco-modulo" method="post">
+  <input type="hidden" name="a" value="1">
+  <input type="submit" value="Manda in POST">
+</form>
+
+</body>
+</html>

@@ -45,6 +45,19 @@ class H(BaseHTTPRequestHandler):
             self.wfile.write(dati)
             return
 
+        # ! E UNO CHE RIMANDA INDIETRO I CAMPI DI UN MODULO, per la stessa
+        # ragione dei biscotti: che un pulsante si prema si vede a occhio, che
+        # il suo `name=valore` sia PARTITO no. Vale per GET e per POST.
+        if nome == "eco-modulo":
+            q = self.path.split("?", 1)[1] if "?" in self.path else ""
+            dati = ("GET: " + (q or "(niente)")).encode("utf-8", "replace")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(dati)))
+            self.end_headers()
+            self.wfile.write(dati)
+            return
+
         if nome == "eco-biscotti":
             avuti = self.headers.get("Cookie") or "(nessuno)"
             dati = avuti.encode("utf-8", "replace")
@@ -71,6 +84,22 @@ class H(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(dati)))
         self.end_headers()
         self.wfile.write(dati)
+
+    def do_POST(self):
+        nome = self.path.lstrip("/").split("?")[0]
+        n = int(self.headers.get("Content-Length") or 0)
+        corpo = self.rfile.read(n).decode("utf-8", "replace") if n else ""
+
+        if nome == "eco-modulo":
+            dati = ("POST: " + (corpo or "(niente)")).encode("utf-8", "replace")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(dati)))
+            self.end_headers()
+            self.wfile.write(dati)
+            return
+
+        self.send_error(404)
 
     def log_message(self, f, *a):
         sys.stderr.write("%.1f  %s\n" % (time.time() % 1000, f % a))

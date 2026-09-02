@@ -1,5 +1,92 @@
 # DOVE RIPRENDERE — 2 settembre 2026
 
+## 2 settembre 2026 (fine) — IL PULSANTE CHE MANDA, E DUE CHE NON DOVEVANO MANDARE
+
+Era l'ultima riga della coda: «il pulsante che manda un modulo non porta il suo
+`name=valore`». Sistemandola sono venuti fuori altri due difetti nello stesso
+punto, e tutt'e due facevano il CONTRARIO di quel che il pulsante prometteva.
+
+### Il pulsante premuto fa parte dei campi, e solo lui
+
+    <input type="submit" name="azione" value="salva">
+    <input type="submit" name="azione" value="cancella">
+
+Sono due pulsanti nello stesso modulo, ed e' il modo normale in cui una pagina
+distingue due comandi: il server guarda QUALE nome e' arrivato. Qui i pulsanti
+si saltavano tutti — `if (c->tipo == CTRL_PULSANTE) continue;` — quindi quel
+modulo non si poteva usare: le due strade erano indistinguibili.
+
+! **MANDARLI TUTTI SAREBBE COME PREMERLI TUTTI INSIEME**, e non e' un'iperbole:
+il server riceverebbe `azione=salva&azione=cancella` e sceglierebbe lui. Ne va
+mandato UNO, quello che e' stato premuto, e per questo `manda_modulo` ha un
+secondo argomento.
+
+! **IL VALORE SI RILEGGE DALL'ALBERO, non si prende dal controllo.** In
+`c->valore` c'e' l'ETICHETTA: per un `<button>` e' il testo che ci sta scritto
+dentro, e per un `submit` senza `value` e' «Invia», messa dall'impaginazione per
+avere qualcosa da disegnare. Mandare «Invia» al server sarebbe inventare un
+valore che nella pagina non c'e'. Il nodo il controllo ce l'ha (`c->nodo`), e
+`html_attr` dice la verita'.
+
+### L'Invio dentro una casella e' come premere il primo pulsante
+
+Lo dice la specifica, e i moduli di ricerca ci contano: quello di google.com ha
+`btnG`, e senza di lui la richiesta e' un'altra. Prima l'invio implicito mandava
+i campi e nessun pulsante.
+
+### E DUE PULSANTI FACEVANO IL CONTRARIO DI QUEL CHE PROMETTEVANO
+
+`CTRL_PULSANTE` sono quattro cose diverse — `submit`, `reset`, `button`,
+`image` — e finora si comportavano tutte come la prima.
+
+! **PREMERE «AZZERA» SPEDIVA IL MODULO.** Un `type="reset"` esiste per
+rimettere i campi com'erano, e faceva l'unica cosa che chi lo preme sta
+cercando di evitare.
+
+! **E UN `type="button"` PURE.** Quel tipo esiste per far girare uno script e
+nient'altro; il suo clic lo script ce l'ha gia' da `clic_al_documento`, e in
+piu' partiva un modulo che nessuno voleva mandare.
+
+! **AZZERARE E' DIRE AI CONTROLLI «NON SEI PIU' MIO».** L'impaginazione
+ricostruisce i controlli a ogni giro e tiene quel che l'utente ha scritto solo
+se lo slot appartiene ancora allo stesso nodo — e' il meccanismo che impedisce a
+un'immagine in arrivo di cancellare un campo sotto le dita. Staccando il nodo,
+il giro dopo li riempie da capo con i valori della PAGINA, che e' esattamente la
+definizione di «azzera». Rileggere qui `value`, `checked` e `selected` vorrebbe
+dire un secondo posto che deve sapere che cosa significano.
+
+! **E IL GENERE SI CHIEDE ALL'ALBERO, non si tiene nel controllo.** Un byte in
+piu' in `Ctrl` sono centonovantadue byte su ogni pagina, comprese quelle senza
+moduli; il nodo c'e' gia'. `<button>` senza `type` **invia** — e' il predefinito
+della specifica, e mezzo web scrive `<button>Cerca</button>` dentro un modulo
+aspettandosi che funzioni.
+
+Un `type="image"` manda `nome.x` e `nome.y`, che e' quel che certi server
+guardano. **Sono zero e si dichiara**: qui si disegna come un pulsante e non
+come l'immagine cliccabile che dovrebbe essere, quindi un punto preciso non ce
+l'ha, e inventarlo sarebbe peggio che dire zero.
+
+### Come si e' provato
+
+Un modulo si prova solo premendolo, e **che un pulsante si prema si vede a
+occhio; che il suo `name=valore` sia partito no**. Percio' c'e'
+`tools/prove/sito/invio.html`, che manda a `/eco-modulo` — un indirizzo che
+risponde con i campi che gli sono arrivati, in GET e in POST. La risposta E' il
+risultato della prova.
+
+Sei casi, tutti dentro EX-OS, da CD, con la rete:
+
+    clic su «cancella»   -> testo=ciao&nascosto=c-e-sempre&azione=cancella
+    Invio nella casella  -> testo=ciao&nascosto=c-e-sempre&azione=salva
+    clic su «Azzera»     -> non manda niente, e il campo torna com'era
+    clic su «Solo script»-> non manda niente
+    submit senza nome    -> POST: a=1, e nient'altro
+    campo nascosto       -> c'e' in tutt'e tre gli invii
+
+! **E LA CASELLA DI GOOGLE FUNZIONA DA DENTRO LA PAGINA**: si scrive nel campo
+di google.com, si batte Invio, e il modulo parte — Google risponde con la
+pagina di consenso, che e' quel che risponde a un browser vero senza consenso.
+
 ## 2 settembre 2026 (tardi) — I BISCOTTI, TUTT'E DUE LE META'
 
 La meta' che mancava era quella che conta: uno script poteva scrivere e

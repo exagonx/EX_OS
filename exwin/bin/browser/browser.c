@@ -5385,6 +5385,81 @@ static int aggiungi_codificato(char *out, int pos, int max, const char *s)
     return pos;
 }
 
+
+/* =============================================================================
+ * CHE COSA FA UN PULSANTE QUANDO SI PREME
+ *
+ * ! CTRL_PULSANTE SONO QUATTRO COSE DIVERSE, e finora si comportavano tutte
+ * come la prima: `submit`, `reset`, `button` e `image` finivano nello stesso
+ * tipo e mandavano tutte il modulo. Premere «Azzera» lo SPEDIVA — che e'
+ * esattamente il contrario di quel che quel pulsante promette — e premere un
+ * `type="button"`, che esiste per far girare uno script e nient'altro, mandava
+ * un modulo che nessuno voleva mandare.
+ *
+ * ! IL GENERE SI CHIEDE ALL'ALBERO E NON SI TIENE NEL CONTROLLO, per due
+ * ragioni: il nodo il controllo ce l'ha gia' (`c->nodo`), e un byte in piu' in
+ * Ctrl sono centonovantadue byte su ogni pagina, comprese quelle senza moduli.
+ * ========================================================================== */
+#define PULS_INVIA   0
+#define PULS_AZZERA  1
+#define PULS_NULLA   2          /* type="button": lo tocca solo uno script */
+#define PULS_IMMAGINE 3
+
+static int genere_pulsante(const Ctrl *c)
+{
+    const char *tipo;
+
+    if (c->nodo < 0) return PULS_NULLA;
+    tipo = html_attr(&g_doc, c->nodo, "type");
+
+    /* ! UN <button> SENZA `type` INVIA, e non e' un dettaglio: e' il
+     * predefinito della specifica, e mezzo web scrive `<button>Cerca</button>`
+     * dentro un modulo aspettandosi che funzioni. */
+    if (!tipo || !tipo[0]) return PULS_INVIA;
+    if (uguale(tipo, "reset"))  return PULS_AZZERA;
+    if (uguale(tipo, "button")) return PULS_NULLA;
+    if (uguale(tipo, "image"))  return PULS_IMMAGINE;
+    return PULS_INVIA;
+}
+
+/* ! AZZERARE UN MODULO E' DIRE AI SUOI CONTROLLI «NON SEI PIU' MIO».
+ * L'impaginazione ricostruisce i controlli a ogni giro e tiene quel che
+ * l'utente ha scritto SOLO se lo slot appartiene ancora allo stesso nodo
+ * (`suo`, in impagina_nodo). Staccando il nodo, il giro dopo li riempie da
+ * capo con i valori della PAGINA — che e' la definizione di «azzera». Rifare
+ * qui quella lettura vorrebbe dire un secondo posto che deve sapere che cosa
+ * significa `value`, `checked` e `selected`. */
+static void azzera_modulo(int m)
+{
+    int i;
+
+    for (i = 0; i < g_ctrl_n; i++)
+        if (g_ctrl[i].modulo == m) g_ctrl[i].nodo = -1;
+
+    g_ctrl_fuoco = -1;
+    impagina();
+    disegna();
+}
+
+/* Il primo pulsante d'invio di un modulo, o -1. Serve all'invio IMPLICITO —
+ * l'Invio battuto dentro una casella — che per la specifica si comporta come
+ * se si fosse premuto quel pulsante, col suo nome e il suo valore. */
+static int primo_invio(int m)
+{
+    int i;
+
+    for (i = 0; i < g_ctrl_n; i++) {
+        if (g_ctrl[i].modulo != m) continue;
+        if (g_ctrl[i].tipo != CTRL_PULSANTE) continue;
+        {
+            int g = genere_pulsante(&g_ctrl[i]);
+
+            if (g == PULS_INVIA || g == PULS_IMMAGINE) return i;
+        }
+    }
+    return -1;
+}
+
 /* ! IL CORPO DI UNA POST NON HA LA MISURA DI UN INDIRIZZO, e per un pezzo qui
  * ce l'ha avuta: i campi finivano in un buffer da EXHTTP_URL_MAX, seicento
  * byte, che e' il tetto giusto per un URL e non per un modulo. Un modulo di
@@ -5398,7 +5473,14 @@ static int aggiungi_codificato(char *out, int pos, int max, const char *s)
  * peggio accetta a meta'. Meglio dirlo e fermarsi. */
 #define MODULO_CORPO_MAX  (8u * 1024u)
 
-static void manda_modulo(int m)
+/* `attivato` e' l'indice del pulsante che ha mandato il modulo, o -1.
+ *
+ * ! IL PULSANTE PREMUTO FA PARTE DEI CAMPI, ed e' l'unico dei pulsanti che ci
+ * entra. E' cosi' che una pagina distingue «salva» da «cancella» con due
+ * submit dentro lo stesso modulo: il server guarda QUALE nome e' arrivato.
+ * Mandarli tutti sarebbe come premerli tutti insieme; non mandarne nessuno —
+ * com'era — vuol dire che quel modulo non si puo' usare. */
+static void manda_modulo(int m, int attivato)
 {
     static char q[MODULO_CORPO_MAX];
     char meta[EXHTTP_URL_MAX];
@@ -5415,9 +5497,55 @@ static void manda_modulo(int m)
         if (pos >= (int)sizeof(q) - 8) { pieno = 1; break; }
         if (c->modulo != m) continue;
         if (c->nome[0] == '\0') continue;
-        if (c->tipo == CTRL_PULSANTE) continue;
         if ((c->tipo == CTRL_SPUNTA || c->tipo == CTRL_RADIO) && !c->acceso)
             continue;
+
+        if (c->tipo == CTRL_PULSANTE) {
+            int genere;
+
+            if (i != attivato) continue;        /* gli altri non c'entrano */
+            genere = genere_pulsante(c);
+            if (genere == PULS_AZZERA || genere == PULS_NULLA) continue;
+
+            /* ! UN PULSANTE IMMAGINE MANDA LE COORDINATE, non il suo valore:
+             * `nome.x` e `nome.y`. Certi server guardano solo se `nome.x` c'e'.
+             * Qui sono ZERO E SI DICHIARA — un `type="image"` si disegna come
+             * un pulsante, non come l'immagine cliccabile che dovrebbe essere,
+             * quindi un punto preciso non ce l'ha e inventarlo sarebbe peggio
+             * che dire zero. */
+            if (genere == PULS_IMMAGINE) {
+                const char *fine[2] = { ".x", ".y" };
+                int         k;
+
+                for (k = 0; k < 2; k++) {
+                    if (!primo) q[pos++] = '&';
+                    primo = 0;
+                    pos = aggiungi_codificato(q, pos, (int)sizeof(q), c->nome);
+                    pos = aggiungi_codificato(q, pos, (int)sizeof(q), fine[k]);
+                    q[pos++] = '=';
+                    q[pos++] = '0';
+                }
+                continue;
+            }
+
+            /* ! IL VALORE DI UN PULSANTE SI RILEGGE DALL'ALBERO, e non si
+             * prende da `c->valore`: li' dentro c'e' l'ETICHETTA, che per un
+             * <button> e' il testo che ci sta scritto e per un submit senza
+             * `value` e' «Invia», messa dall'impaginazione per avere qualcosa
+             * da disegnare. Mandare «Invia» al server sarebbe inventare un
+             * valore che nella pagina non c'e'. */
+            {
+                const char *v = (c->nodo >= 0)
+                              ? html_attr(&g_doc, c->nodo, "value") : 0;
+
+                if (!primo) q[pos++] = '&';
+                primo = 0;
+                pos = aggiungi_codificato(q, pos, (int)sizeof(q), c->nome);
+                q[pos++] = '=';
+                pos = aggiungi_codificato(q, pos, (int)sizeof(q), v ? v : "");
+            }
+            continue;
+        }
 
         if (!primo) q[pos++] = '&';
         primo = 0;
@@ -5963,8 +6091,13 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
                 {
                     int m = k->modulo;
 
+                    /* ! L'INVIO BATTUTO IN UNA CASELLA E' COME PREMERE IL
+                     * PRIMO PULSANTE D'INVIO, e ne manda anche il nome: lo
+                     * dice la specifica, e i moduli di ricerca ci contano —
+                     * quello di google.com ha `btnG` e senza di lui la
+                     * richiesta e' un'altra. */
                     g_ctrl_fuoco = -1;
-                    manda_modulo(m);
+                    manda_modulo(m, primo_invio(m));
                 }
                 return 0;
             }
@@ -6060,10 +6193,21 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
                 break;
             }
 
-            case CTRL_PULSANTE:
+            case CTRL_PULSANTE: {
+                int genere = genere_pulsante(c);
+
                 g_ctrl_fuoco = -1;
-                manda_modulo(c->modulo);
+                /* ! «AZZERA» AZZERA E «button» NON FA NIENTE. Prima mandavano
+                 * tutt'e due il modulo: il primo faceva il contrario di quel
+                 * che promette, e il secondo mandava un modulo che nessuno
+                 * voleva mandare — quel tipo esiste per far girare uno script,
+                 * e lo script il suo clic l'ha gia' avuto da
+                 * clic_al_documento. */
+                if (genere == PULS_AZZERA) { azzera_modulo(c->modulo); return 0; }
+                if (genere == PULS_NULLA)  { disegna(); return 0; }
+                manda_modulo(c->modulo, k);
                 return 0;
+            }
 
             case CTRL_SCELTA: {
                 /* L'elenco si apre sotto al controllo, dove ci si aspetta. */

@@ -212,10 +212,30 @@ nell'editor.
 <h2>I moduli</h2>
 
 <p>
-Caselle di testo, aree, spunte, scelte esclusive, elenchi a tendina e pulsanti.
-L'invio va sia in <code>GET</code> sia in <code>POST</code>. <b>Invio</b> in
-una casella manda il modulo; dentro un'area va a capo, perche' un'area esiste
-per contenere piu' righe.
+Caselle di testo, aree, spunte, scelte esclusive, elenchi a tendina e pulsanti,
+piu' i campi <b>nascosti</b>, che non si vedono ma partono con gli altri &mdash;
+sono i gettoni di sicurezza e gli identificativi di sessione, cioe' meta' di
+quel che un modulo manda. L'invio va sia in <code>GET</code> sia in
+<code>POST</code>. <b>Invio</b> in una casella manda il modulo; dentro un'area
+va a capo, perche' un'area esiste per contenere piu' righe.
+</p>
+
+<p>
+<b>Il pulsante premuto fa parte dei campi</b>, e solo lui: e' cosi' che una
+pagina distingue due comandi con due pulsanti nello stesso modulo &mdash;
+<code>azione=salva</code> oppure <code>azione=cancella</code>, e il server
+guarda quale gli e' arrivato. L'<b>Invio</b> battuto in una casella si comporta
+come se si fosse premuto il primo pulsante d'invio, col suo nome.
+</p>
+
+<p class="nota">
+<b>«Azzera» azzera, e non manda.</b> Un <code>type="reset"</code> rimette i
+campi come stavano nella pagina; un <code>type="button"</code> non fa niente
+per conto suo &mdash; esiste per far girare uno script, e lo script il clic ce
+l'ha lo stesso. Un <code>type="image"</code> manda <code>nome.x</code> e
+<code>nome.y</code>, che qui valgono <b>zero</b>: si disegna come un pulsante e
+non come l'immagine cliccabile che dovrebbe essere, quindi un punto preciso non
+ce l'ha.
 </p>
 
 <h2>JavaScript</h2>

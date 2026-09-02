@@ -40,6 +40,7 @@ settanta movimenti diventano tre minuti.
 | `font.html` | `font-family`: elenchi, nomi veri senza generica, `<pre>`, e il foglio che batte il tag |
 | `script.html` | il motore JavaScript: quattordici riquadri — innerHTML, i nodi costruiti a mano, gli attributi, i clic, `preventDefault`, `setTimeout`, `style`, i selettori, `classList`, `dataset`, `location`, XMLHttpRequest e `fetch` |
 | `biscotti.html` | i cookie, **tutt'e due le meta'**: quel che uno script vede e quel che il server RICEVE. Si apre da `/metti-biscotti`, non dal suo nome — vedi qui sotto |
+| `invio.html` | i pulsanti di un modulo: quale manda il suo `name=valore`, quali NON devono mandare (`reset`, `button`), l'Invio implicito. Manda a `/eco-modulo` — vedi qui sotto |
 | `modulo.html` | una casella e un'area: cursore, selezione, appunti |
 | `perdita.html` | sei immagini senza misure e dodici caselle: i controlli che si moltiplicavano |
 
@@ -61,6 +62,7 @@ davvero tornato indietro.
 |---|---|
 | `/metti-biscotti` | manda `biscotti.html` con due `Set-Cookie`: uno normale e uno `HttpOnly` |
 | `/eco-biscotti` | risponde con l'intestazione `Cookie` che ha ricevuto, e basta |
+| `/eco-modulo` | risponde con i campi di un modulo, in GET e in POST: che un pulsante si prema si vede a occhio, che il suo `name=valore` sia partito no |
 
     EXOS_QEMU_EXTRA="-netdev user,id=n1 -device ne2k_pci,netdev=n1" \
     EXOS_NO_FLOPPY=1 EXOS_CDROM=dist/exos.iso EXOS_RAM=64M \

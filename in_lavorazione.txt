@@ -108,6 +108,8 @@ Questo e' il punto in cui il browser e' stato lasciato. Le prove che contano:
         i riquadri 13 e 14 provano XMLHttpRequest e fetch per davvero
     http://10.0.2.2:8000/metti-biscotti — i biscotti, tutt'e due le meta':
         quel che uno script vede, e quel che il SERVER riceve indietro
+    http://10.0.2.2:8000/invio.html — i pulsanti di un modulo: quale manda,
+        quali non devono mandare, e che cosa arriva davvero dall'altra parte
 
     E LA PAGINA VERA, che e' la prova che vale di piu':
         /tmp/exos-prove/domqjs <pagina.html> [indirizzo]
@@ -219,9 +221,22 @@ DA FARE, IN ORDINE DI QUANTO PESA SU UNA PAGINA VERA
       ne ha ottomila, e quando non ci sta NON SI MANDA.
     ! I CONTROLLI ERANO 64 e adesso sono 192: i campi nascosti non li riempie
       nessuno e non si contano a occhio.
-    ! RESTA DA FARE: il pulsante che manda il modulo non porta il suo
-      `name=valore`. Nel DOM ne fa parte, ed e' cosi' che una pagina distingue
-      «salva» da «cancella» con due submit nello stesso modulo.
+    ! FATTO — il pulsante che manda il modulo porta il suo `name=valore`, e
+      SOLO lui: mandarli tutti sarebbe come premerli tutti insieme. Il valore
+      si rilegge dall'ALBERO e non da `c->valore`, che contiene l'etichetta —
+      per un <button> il testo dentro, per un submit senza `value` la parola
+      «Invia» messa dall'impaginazione. L'Invio battuto in una casella vale
+      come il PRIMO pulsante d'invio, col suo nome: e' quel che dice la
+      specifica, ed e' come funziona la casella di google.com (`btnG`).
+    ! E DUE PULSANTI FACEVANO IL CONTRARIO DI QUEL CHE PROMETTEVANO:
+      `type="reset"` SPEDIVA il modulo invece di azzerarlo, e `type="button"`
+      — che esiste per far girare uno script e nient'altro — pure. Adesso
+      azzerare vuol dire dire ai controlli «non sei piu' mio» e rimpaginare:
+      i valori li rilegge l'impaginazione dalla pagina, che e' l'unico posto
+      che sa che cosa significano `value`, `checked` e `selected`.
+    ! `type="image"` manda `nome.x` e `nome.y`, e SONO ZERO: qui si disegna
+      come un pulsante e non come l'immagine cliccabile che dovrebbe essere,
+      quindi un punto preciso non ce l'ha.
  6. L'INDIRIZZO ASSOLUTO in `img.src` e `a.href`. Oggi si riflette
     l'attributo: `src="b.png"` rende `"b.png"` e non
     `"http://sito/a/b.png"`. Adesso il ponte l'indirizzo della pagina ce l'ha
