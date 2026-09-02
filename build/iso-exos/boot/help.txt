@@ -538,6 +538,53 @@ Mostra anche a che punto sei: per ogni servizio dice se e' gia' vivo o
 se manca. Lo sa chiedendo al registro IPC, quindi non e' un elenco di
 istruzioni ma lo stato della macchina.
 
+[fdprova]
+prova il drive floppy passo passo: si guarda e si ascolta
+
+  fdprova                    con l'avviso, poi la prova
+  fdprova -s                 parte subito
+  fdprova -o /disco/f.log    dove scrivere il log
+
+Ogni passo dice cosa deve succedere FISICAMENTE prima di farlo — la
+spia che si accende, la testina che si sposta, il motore che si ferma —
+e poi dice cosa ha risposto il controller. Se il rumore non corrisponde
+all'annuncio, il guasto e' fra controller e meccanica; se corrisponde e
+le letture sbagliano lo stesso, e' il dischetto.
+
+Il log va in /fdprova.log. Se non si scrive — ed e' il caso normale,
+visto che si sta provando proprio quel disco — le venti righe che
+contano finiscono a schermo, in ordine di esecuzione.
+
+Va data da root. Esiste anche un floppy che la esegue da solo
+all'avvio: dist/diagnostic.img, prodotto da `make all`.
+
+[kbprova]
+prova la tastiera passo passo: dove si ferma, fra tasto e programma
+
+  kbprova              con l'avviso, poi la prova
+  kbprova -s           parte subito
+  kbprova -o <file>    dove scrivere il log
+
+Otto passi: controller 8042, autodiagnosi, prova della porta, byte di
+configurazione, reset della tastiera, accensione della scansione,
+maschera del PIC, e infine trenta secondi in cui bisogna PREMERE UN
+TASTO.
+
+L'ultimo passo conta DUE cose diverse: i codici che arrivano nel buffer
+e gli interrupt che li accompagnano. La differenza dice dove si ferma:
+
+  ne' codici ne' interrupt   la tastiera non parla con l'8042: se e' USB
+                             serve lo stack USB (pci + uhci in [modules])
+  codici ma niente interrupt l'8042 riceve e non interrompe: bit IRQ1
+                             spento, o linea chiusa nel PIC
+  codici e interrupt         l'hardware fa il suo dovere: il guasto e'
+                             piu' in alto, in kbd.drv o in chi legge
+
+! VA ESEGUITA SENZA /dev/kbd.drv: legge il buffer dell'8042 a tappeto, e
+due lettori si rubano i byte. Si usa dist/diagnostic.img, che i moduli
+non li carica ed esegue la prova da sola all'avvio. Sul floppy normale
+la prova se ne accorge e si ferma dicendolo.
+
 [audio]
 il suono: trova la scheda, la collauda e la installa
 

@@ -136,7 +136,7 @@ BUILD_BIN_CD  := $(BUILD_DIR)/bin-cd
 # kernel (kernel/block/atapi.c, kernel/fs/iso9660.c), perche' il kernel
 # deve poterci montare la radice prima che esista un processo.
 # =============================================================================
-PROGRAMMI_FLOPPY := shell id chmod shutdown ls mem stack disk fdisk mkfs mkswap trunc chkdsk rename rm_prog mv_prog uname_prog mount_prog cp_prog install_prog textline gfedit mkdir_prog rmdir_prog delete_prog hwconfig hwinfo cmp_prog shmtest polltest toolinst login sudo help_prog keymap libc testo mouse_prog floppy_drv kbd_drv svga_drv vgaprova_drv \
+PROGRAMMI_FLOPPY := shell id chmod shutdown ls mem stack disk fdisk mkfs mkswap trunc chkdsk rename rm_prog mv_prog uname_prog mount_prog cp_prog install_prog textline gfedit mkdir_prog rmdir_prog delete_prog hwconfig hwinfo cmp_prog shmtest polltest toolinst login sudo help_prog keymap libc testo fdprova kbprova mouse_prog floppy_drv kbd_drv svga_drv vgaprova_drv \
                     pci_drv mouseser_drv uhci_drv xhci_drv
 
 # =============================================================================
@@ -2472,6 +2472,149 @@ $(NETDETECT_BIN): $(NETDETECT_SRC) $(NETDETECT_LD) $(PCI_DRV_PROTO) $(NET_PROTO)
 	    $(BUILD_OBJ)/netdetect_start.o $(BUILD_OBJ)/netdetect_main.o $(BUILD_OBJ)/netdetect_rete.o $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] netdetect compilato: $@"
 
+# --- Programma /bin/fdprova (floppy) -----------------------------------------
+# La prova passo passo del drive: reset, motore, ricalibratura, spostamenti
+# della testina, letture. Sta SUL FLOPPY e non sul CD perche' e' li' che
+# serve — su una macchina che si avvia da floppy e da errori di lettura, il
+# CD potrebbe non esserci nemmeno.
+#
+# ! IL LAVORO LO FA IL KERNEL (SYS_FDPROVA): il controller e' suo, e l'IRQ6 ha
+# un gestore kernel-space che un programma ring3 non vedrebbe mai. Vedi il
+# commento in testa al sorgente.
+FDPROVA_SRC := bin/fdprova/fdprova.c
+FDPROVA_BIN := $(BUILD_BIN)/fdprova
+FDPROVA_LD  := bin/fdprova/fdprova.ld
+
+$(FDPROVA_BIN): $(FDPROVA_SRC) $(FDPROVA_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/fdprova ==="
+	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -c $(FDPROVA_SRC) -o $(BUILD_OBJ)/fdprova_main.o
+	$(CC) -m32 -c $(LIBC_START)                          -o $(BUILD_OBJ)/fdprova_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(FDPROVA_LD) \
+	    $(BUILD_OBJ)/fdprova_start.o $(BUILD_OBJ)/fdprova_main.o $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] fdprova compilato: $@"
+
+# --- Programma /bin/kbprova (floppy) -----------------------------------------
+# La prova passo passo della tastiera. Sta sul floppy per la stessa ragione di
+# fdprova: serve su una macchina che non parte bene, dove il CD potrebbe non
+# esserci. Il lavoro lo fa il kernel (SYS_KBPROVA), che legge l'8042 a tappeto
+# e insieme conta gli IRQ1 — due misure diverse, e la differenza fra le due
+# dice dove si ferma la catena fra il tasto e il programma.
+KBPROVA_SRC := bin/kbprova/kbprova.c
+KBPROVA_BIN := $(BUILD_BIN)/kbprova
+KBPROVA_LD  := bin/kbprova/kbprova.ld
+
+$(KBPROVA_BIN): $(KBPROVA_SRC) $(KBPROVA_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/kbprova ==="
+	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -c $(KBPROVA_SRC) -o $(BUILD_OBJ)/kbprova_main.o
+	$(CC) -m32 -c $(LIBC_START)                          -o $(BUILD_OBJ)/kbprova_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(KBPROVA_LD) \
+	    $(BUILD_OBJ)/kbprova_start.o $(BUILD_OBJ)/kbprova_main.o $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] kbprova compilato: $@"
+
+.PHONY: kbprova
+kbprova: dirs $(KBPROVA_BIN)
+
+# ! IL BERSAGLIO STA DOPO LE VARIABILI, e ci sono gia' cascato tre volte in
+# questo file: con `:=` make espande quando LEGGE la riga, quindi un
+# `fdprova: dirs $(FDPROVA_BIN)` scritto piu' su avrebbe $(FDPROVA_BIN) VUOTO —
+# il bersaglio esiste, non dipende da niente, e `make fdprova` non compila
+# niente senza dare errore.
+.PHONY: fdprova
+fdprova: dirs $(FDPROVA_BIN)
+
+# =============================================================================
+# dist/diagnostic.img — il floppy che si avvia e si esamina da solo
+#
+# ! ESISTE PERCHE' LA MACCHINA MALATA NON SI PUO' COMANDARE. Il caso per cui
+# serve e' quello vero: un drive che sbaglia, una tastiera che non risponde,
+# uno schermo e basta. Un'immagine su cui bisogna DIGITARE `fdprova` e' inutile
+# proprio li'. Questa parte, esegue la prova da sola e lascia il risultato a
+# schermo.
+#
+# Tre differenze dal floppy normale, e nessuna e' cosmetica:
+#
+#   verboseboot = 1     il log d'avvio si vede: se il blocco arriva PRIMA
+#                       della prova, si legge dove
+#   loglevel = 2        ma solo avvisi ed errori. ! CON loglevel 3 LA
+#                       DIAGNOSTICA NON SI LEGGE: le righe [INFO] degli altri
+#                       processi che continuano ad avviarsi si infilano in
+#                       mezzo ai passi, e il testo che si vuole leggere esce
+#                       spezzato a meta' riga. Quello che serve qui e' vedere
+#                       cosa VA STORTO, e gli errori a livello 2 ci sono tutti
+#   autoexec.sh         una riga, `fdprova -s`: la prova parte da sola
+#   login spento        `login` chiederebbe una password su una macchina la
+#                       cui tastiera potrebbe essere proprio il guasto
+#   modules vuoto       ! NIENTE kbd.drv, ed e' necessario: `kbprova` legge il
+#                       buffer dell'8042 a tappeto, e due lettori si rubano i
+#                       byte a vicenda. Con il driver caricato la prova della
+#                       tastiera vedrebbe la meta' dei codici, cioe'
+#                       misurerebbe male proprio cio' che deve misurare. Su
+#                       questa immagine la tastiera non si usa: le prove
+#                       partono da sole
+#
+# ! SI COSTRUISCE COPIANDO IL FLOPPY, NON RIFACENDOLO. Deve contenere gli
+# STESSI file dell'immagine normale: se fosse un'immagine costruita a parte,
+# una diagnostica che passa non direbbe niente sull'immagine che poi si usa.
+# Cambiano due file di configurazione, e si vede quali.
+DIAGNOSTIC_IMG := $(DIST_DIR)/diagnostic.img
+
+$(DIAGNOSTIC_IMG): $(FLOPPY_IMG)
+	@echo "=== Creazione floppy di diagnostica: $@ ==="
+	@cp $(FLOPPY_IMG) $@
+	@rm -rf $(BUILD_DIR)/diag && mkdir -p $(BUILD_DIR)/diag
+	@mtype -i $@ ::/boot/kernel.cfg > $(BUILD_DIR)/diag/kernel.cfg
+	@sed -i -e 's/^verboseboot = 0/verboseboot = 1/' \
+	        -e 's/^loglevel    = 3/loglevel    = 2/' \
+	        -e 's|^login     = /bin/login|# login spento: la tastiera puo essere il guasto\n# login   = /bin/login|' \
+	        -e 's|^modules     = kbd.*|modules     =|' \
+	        -e 's|^kbd         = /dev/kbd.drv|# kbd non si carica: kbprova legge l'"'"'8042 a tappeto\n# kbd       = /dev/kbd.drv|' \
+	        $(BUILD_DIR)/diag/kernel.cfg
+	@mcopy -o -i $@ $(BUILD_DIR)/diag/kernel.cfg ::/boot/kernel.cfg
+	@printf 'fdprova -s\nkbprova -s\n' > $(BUILD_DIR)/diag/autoexec.sh
+	@mcopy -o -i $@ $(BUILD_DIR)/diag/autoexec.sh ::/boot/autoexec.sh
+	@echo "[OK] floppy di diagnostica: $@"
+	@echo "     Si avvia ed esegue da solo la prova del DRIVE e quella"
+	@echo "     della TASTIERA. Se il log non si scrive, mostra le venti"
+	@echo "     righe che contano. Verso la fine chiede di premere dei tasti."
+
+.PHONY: diagnostic
+diagnostic: $(DIAGNOSTIC_IMG)
+
+# =============================================================================
+# dist/floppy-verboso.img — il floppy NORMALE, che pero' racconta l'avvio
+#
+# ! DIVERSO DA diagnostic.img, E LE DUE NON SI SOSTITUISCONO. diagnostic.img
+# toglie i moduli per poter provare l'hardware senza nessuno di mezzo: e'
+# perfetto per chiedere all'8042 come sta, e inutile per capire perche' il
+# SISTEMA non funziona — perche' quel sistema li' non e' quello che si usa.
+#
+# Questo invece e' il floppy vero, con /dev/kbd.drv caricato, e cambia solo
+# quanto racconta: il log d'avvio acceso e `kbprova -stato` in coda
+# all'autoexec. Serve a rispondere alla domanda che viene prima di tutte le
+# altre quando la tastiera non risponde: SU QUALE DELLE DUE STRADE si e'
+# finiti. Il TTY e il driver ring3 si escludono a vicenda, e quale delle due
+# sia attiva lo si legge solo qui.
+FLOPPY_VERBOSO_IMG := $(DIST_DIR)/floppy-verboso.img
+
+$(FLOPPY_VERBOSO_IMG): $(FLOPPY_IMG)
+	@echo "=== Creazione floppy verboso: $@ ==="
+	@cp $(FLOPPY_IMG) $@
+	@rm -rf $(BUILD_DIR)/verboso && mkdir -p $(BUILD_DIR)/verboso
+	@mtype -i $@ ::/boot/kernel.cfg > $(BUILD_DIR)/verboso/kernel.cfg
+	@sed -i -e 's/^verboseboot = 0/verboseboot = 1/' $(BUILD_DIR)/verboso/kernel.cfg
+	@mcopy -o -i $@ $(BUILD_DIR)/verboso/kernel.cfg ::/boot/kernel.cfg
+	@printf 'kbprova -stato\n' > $(BUILD_DIR)/verboso/autoexec.sh
+	@mcopy -o -i $@ $(BUILD_DIR)/verboso/autoexec.sh ::/boot/autoexec.sh
+	@echo "[OK] floppy verboso: $@"
+	@echo "     Il sistema NORMALE, con il log d'avvio acceso e lo stato"
+	@echo "     della tastiera stampato in coda: dice su quale delle due"
+	@echo "     strade — driver ring3 o ripiego interno — si e' finiti."
+
+.PHONY: floppy-verboso
+floppy-verboso: $(FLOPPY_VERBOSO_IMG)
+
 .PHONY: netdetect
 netdetect: dirs $(NETDETECT_BIN)
 
@@ -3334,11 +3477,18 @@ ip_drv: dirs $(IP_DRV_OUT)
 # agosto 2026 questa riga ripeteva a mano i nomi dei programmi di rete e
 # dei driver, e mancavano pcnet_drv e xcp: due elenchi della stessa cosa
 # divergono al primo che si dimentica di aggiornarne uno.
-all: dirs stage1 stage2 kernel $(PROGRAMMI_FLOPPY) $(PROGRAMMI_CD) $(PROGRAMMI_EXWIN) $(DRIVER_CD) verifica-programmi verifica-statici verifica-versioni verifica-exbig verifica-exasn1 verifica-excert verifica-excurva verifica-extls floppy
+# ! `diagnostic` STA IN `all`, e non e' un bersaglio da ricordarsi. Il floppy
+# di diagnostica serve quando una macchina non parte: se lo si dovesse
+# costruire apposta in quel momento, si costruirebbe da un albero diverso da
+# quello che ha prodotto il floppy che non parte — cioe' si proverebbe
+# un'altra cosa. Costa una copia di 1.4 MB e due mcopy.
+all: dirs stage1 stage2 kernel $(PROGRAMMI_FLOPPY) $(PROGRAMMI_CD) $(PROGRAMMI_EXWIN) $(DRIVER_CD) verifica-programmi verifica-statici verifica-versioni verifica-exbig verifica-exasn1 verifica-excert verifica-excurva verifica-extls floppy diagnostic floppy-verboso
 	@echo ""
 	@echo "============================================"
 	@echo " EX-OS build completata!"
-	@echo " Immagine: $(FLOPPY_IMG)"
+	@echo " Immagine:     $(FLOPPY_IMG)"
+	@echo " Diagnostica:  $(DIAGNOSTIC_IMG)"
+	@echo " Verboso:      $(FLOPPY_VERBOSO_IMG)"
 	@echo "============================================"
 	@echo ""
 	@echo "Test con QEMU:"
@@ -3502,6 +3652,7 @@ KERNEL_C_SRC   := $(KERNEL_DIR)/arch/x86/gdt.c \
                   $(KERNEL_DIR)/arch/x86/font8x16.c \
                   $(KERNEL_DIR)/arch/x86/rtc.c \
                   $(KERNEL_DIR)/arch/x86/kprintf.c \
+                  $(KERNEL_DIR)/arch/x86/kbdprova.c \
                   $(KERNEL_DIR)/arch/x86/memfun.c \
                   $(KERNEL_DIR)/arch/x86/tsc.c \
                   $(KERNEL_DIR)/mm/pmm.c \
@@ -3652,7 +3803,7 @@ PROGRAMMI_FLOPPY_OUT := $(SHELL_BIN) $(LS_BIN) $(MEM_BIN) \
                         $(MKDIR_BIN) $(RMDIR_BIN) $(DELETE_BIN) $(HWCONFIG_BIN) \
                         $(HWINFO_BIN) $(CMP_BIN) $(SHMTEST_BIN) $(POLLTEST_BIN) \
                         $(TOOLINST_BIN) $(LOGIN_BIN) $(SU_BIN) $(HELP_BIN) $(KEYMAP_BIN) \
-                        $(TESTO_BIN) $(MOUSE_BIN) $(ID_BIN) $(BUILD_BIN)/whoami $(PERM_BIN) $(BUILD_BIN)/chown $(LIBC_SO) \
+                        $(TESTO_BIN) $(FDPROVA_BIN) $(KBPROVA_BIN) $(MOUSE_BIN) $(ID_BIN) $(BUILD_BIN)/whoami $(PERM_BIN) $(BUILD_BIN)/chown $(LIBC_SO) \
                         $(SHUTDOWN_BIN) $(BUILD_BIN)/poweroff $(BUILD_BIN)/reboot $(BUILD_BIN)/halt \
                         $(FLOPPY_DRV_OUT) $(KBD_DRV_OUT) $(SVGA_DRV_OUT) \
                         $(VGAPROVA_OUT) $(PCI_DRV_OUT) $(MOUSESER_OUT) \

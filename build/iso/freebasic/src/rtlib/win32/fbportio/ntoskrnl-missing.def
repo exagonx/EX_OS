@@ -1,3 +1,0 @@
-LIBRARY ntoskrnl.exe
-EXPORTS
-PsLookupProcessByProcessId@8

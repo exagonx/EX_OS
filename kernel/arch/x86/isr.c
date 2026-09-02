@@ -105,6 +105,18 @@ static uint32_t irq_owner_pid[16][IRQ_PROPRIETARI_MAX];
 /* Bit i = il proprietario nello slot i non ha ancora chiamato irq_done(). */
 static uint32_t irq_pendenti[16] = { 0 };
 
+/* ! QUANTE NOTIFICHE SONO STATE CONSEGNATE DAVVERO, per linea. Non e' una
+ * statistica: e' la misura che separa «l'hardware non interrompe» da «il
+ * driver non ascolta», e senza di lei le due cose si somigliano troppo. Un
+ * driver vivo, registrato, che possiede la linea e ha ricevuto ZERO notifiche
+ * mentre qualcuno batteva sui tasti dice tutto quello che c'e' da dire. */
+static uint32_t irq_notifiche[16] = { 0 };
+
+uint32_t irq_notifiche_di(uint8_t irq)
+{
+    return (irq < 16) ? irq_notifiche[irq] : 0;
+}
+
 /* C'è qualcuno su questa linea? Solo una scansione di quattro parole.
  *
  * ! NON SI CHIAMA irq_ripulisci() DAL DISPATCHER, e non è un dettaglio di
@@ -120,6 +132,21 @@ static int irq_qualcuno(uint8_t irq)
 
     for (i = 0; i < IRQ_PROPRIETARI_MAX; i++)
         if (irq_owner_pid[irq][i] != 0) return 1;
+    return 0;
+}
+
+isr_handler_fn irq_handler_get(uint8_t irq)
+{
+    return (irq < 16) ? irq_handlers[irq] : 0;
+}
+
+uint32_t irq_proprietario(uint8_t irq)
+{
+    int i;
+
+    if (irq >= 16) return 0;
+    for (i = 0; i < IRQ_PROPRIETARI_MAX; i++)
+        if (irq_owner_pid[irq][i] != 0) return irq_owner_pid[irq][i];
     return 0;
 }
 
@@ -568,8 +595,10 @@ void irq_handler(InterruptFrame *frame)
             irq_pendenti[irq] = 0;
             for (k = 0; k < IRQ_PROPRIETARI_MAX; k++) {
                 if (irq_owner_pid[irq][k] == 0) continue;
-                if (ipc_notify_irq(irq_owner_pid[irq][k], (uint8_t)irq))
+                if (ipc_notify_irq(irq_owner_pid[irq][k], (uint8_t)irq)) {
                     irq_pendenti[irq] |= (1u << k);
+                    irq_notifiche[irq]++;
+                }
             }
 
             /* ! LA LINEA NON SI RIAPRE MAI DA QUI, NEMMENO SE LA NOTIFICA

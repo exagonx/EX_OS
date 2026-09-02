@@ -1,18 +1,18 @@
 bin/chkdsk
 bin/chmod
-bin/chown
 bin/cmp
 bin/cp
 bin/delete
 bin/disk
 bin/fdisk
+bin/fdprova
 bin/gfedit
-bin/halt
 bin/help
 bin/hwconfig
 bin/hwinfo
 bin/id
 bin/install
+bin/kbprova
 bin/keymap
 bin/login
 bin/ls
@@ -24,8 +24,6 @@ bin/mount
 bin/mouse
 bin/mv
 bin/polltest
-bin/poweroff
-bin/reboot
 bin/rename
 bin/rm
 bin/rmdir
@@ -40,7 +38,6 @@ bin/toolinst
 bin/trunc
 bin/umount
 bin/uname
-bin/whoami
 boot/help.txt
 boot/kernel.cfg
 boot/kernel.txt

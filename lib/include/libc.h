@@ -2309,6 +2309,72 @@ int     irq_done(unsigned int irq);
 int     irq_unbind(unsigned int irq);
 
 /* =============================================================================
+ * fdprova — la prova passo passo del drive floppy
+ *
+ * Rende quanti passi hanno dato problemi (0 = nessuno), oppure -EPERM se non
+ * la chiede root.
+ *
+ * ! I PASSI LI STAMPA IL KERNEL mentre la prova va avanti, non questa
+ * funzione: meta' della prova la fa l'orecchio di chi sta davanti alla
+ * macchina, e «adesso la testina va a cilindro 40» va letto PRIMA del rumore.
+ * Chi chiama stampa il verdetto, non la cronaca. */
+/* =============================================================================
+ * La prova passo passo del drive floppy
+ *
+ * Riempie fino a `max` passi e rende quanti ne ha registrati, oppure -EPERM
+ * se non la chiede root. Con `passi` NULL la prova si fa lo stesso.
+ *
+ * ! I PASSI SI ANNUNCIANO A SCHERMO MENTRE LA PROVA GIRA, e li stampa il
+ * kernel: meta' della prova la fa l'orecchio di chi sta davanti alla macchina.
+ * Questi dati servono a scriverne un log, non a raccontarla.
+ *
+ * ! FdPasso DEVE RESTARE IDENTICA a quella in kernel/include/syscall.h.
+ * ============================================================================= */
+#define FD_MSR          1
+#define FD_RESET_IRQ    2
+#define FD_SENSE        3
+#define FD_MOTORE_ON    4
+#define FD_RECAL        5
+#define FD_SEEK         6
+#define FD_LETTURA      7
+#define FD_RIPETUTA     8
+#define FD_MOTORE_OFF   9
+
+typedef struct {
+    unsigned int passo;
+    unsigned int codice;
+    int          esito;
+    unsigned int a, b;
+} FdPasso;
+
+#define FD_RIACCESO    10
+
+#define KB_OCCUPATO     20
+#define KB_STATO        21
+#define KB_SELFTEST     22
+#define KB_PORTA        23
+#define KB_CONFIG       24
+#define KB_RESET        25
+#define KB_SCANSIONE    26
+#define KB_PIC          27
+#define KB_TASTI        28
+
+int     fdprova(FdPasso *passi, unsigned int max);
+
+/* La prova passo passo della tastiera. Stesso contratto di fdprova().
+ * ! CHIEDE CHE /dev/kbd.drv NON SIA CARICATO: legge il buffer dell'8042 a
+ * tappeto, e due lettori si rubano i byte a vicenda. Si esegue da
+ * dist/diagnostic.img, che i moduli non li carica. */
+int     kbprova(FdPasso *passi, unsigned int max);
+
+/* Solo lo stato: quale delle due strade serve la tastiera, se il servizio
+ * 'kbd' e' registrato, chi ha l'IRQ1, se la linea e' aperta nel PIC.
+ * ! QUESTA SI PUO' CHIAMARE CON kbd.drv CARICATO — guarda variabili del
+ * kernel e non parla con l'8042, quindi non ruba byte a nessuno. */
+int     kbstato(FdPasso *passi, unsigned int max);
+#define KB_SORGENTE     29
+
+/* =============================================================================
  * Memoria per un bus master — vedi kernel/include/syscall.h per il perche'
  *
  * ! DEVE RESTARE IDENTICA a DmaZona in kernel/include/syscall.h: la

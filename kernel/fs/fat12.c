@@ -553,6 +553,51 @@ static int fdc_seek_if_needed(uint8_t cyl, uint8_t head)
 static uint8_t g_motor_running = 0;
 
 /* =============================================================================
+ * IL TIMER DI INATTIVITA' DEL MOTORE
+ *
+ * ! IL MOTORE NON PUO' RESTARE ACCESO, E NON E' UN DETTAGLIO DI CONSUMO. Su un
+ * floppy la testina e' APPOGGIATA al supporto mentre il disco gira: un
+ * dischetto lasciato in rotazione per ore non si scalda soltanto, si consuma —
+ * e il drive di un Pentium II ha vent'anni e non se ne trovano piu'.
+ *
+ * fat12_sync() lo spegneva gia' a ogni sys_exit, cioe' alla fine di ogni
+ * comando. Ma le uscite IN ERRORE lo lasciano acceso di proposito, per non
+ * ripagare i 300 ms di spin-up al tentativo successivo — e su un drive che
+ * sbaglia sempre «il tentativo successivo» non arriva mai. Il risultato e'
+ * esattamente il caso peggiore: il supporto gira per ore proprio sulla
+ * macchina il cui drive sta gia' dando errori.
+ *
+ * ! PERCHE' UN CONTATORE E NON UN SI'/NO. Le operazioni si annidano davvero:
+ * una lettura che manca la cache puo' dover riversare prima uno slot sporco,
+ * cioe' una SCRITTURA dentro una LETTURA. Con una variabile a due stati la
+ * fine di quella interna direbbe «libero» mentre l'esterna sta ancora
+ * lavorando, e il tick spegnerebbe il motore in mezzo a un trasferimento.
+ *
+ * ! E IL CONTROLLO STA NEL TICK, NON NEL DRIVER. E' l'unico posto che continua
+ * a girare quando il driver e' fermo in attesa — che e' proprio la situazione
+ * da cui bisogna uscire. Il commento che stava qui diceva di NON aggiungere un
+ * timer di inattivita' perche' l'idle task avrebbe potuto spegnere il motore
+ * durante un trasferimento: e' vero senza un contatore di occupazione, ed e'
+ * la ragione per cui il contatore c'e'.
+ * ========================================================================== */
+#define FDC_INATTIVITA_TICK  200    /* 2 secondi a 100 Hz */
+
+static volatile uint32_t g_fdc_occupato = 0;   /* quante operazioni in corso */
+static volatile uint32_t g_fdc_ultimo   = 0;   /* tick dell'ultima attivita' */
+
+static void fdc_entra(void)
+{
+    g_fdc_occupato++;
+    g_fdc_ultimo = g_ticks;
+}
+
+static void fdc_esce(void)
+{
+    if (g_fdc_occupato > 0) g_fdc_occupato--;
+    g_fdc_ultimo = g_ticks;
+}
+
+/* =============================================================================
  * fdc_motor_on — avvia il motore, aspettando solo se serve davvero
  *
  * PRESTAZIONI (luglio 2026): questa funzione aspettava 300 ms A OGNI
@@ -618,6 +663,315 @@ void fat12_motor_off(void)
     fdc_motor_off();
 }
 
+/* =============================================================================
+ * LA DIAGNOSTICA PASSO PASSO — «la meccanica fa quello che le diciamo?»
+ *
+ * PERCHE' STA NEL KERNEL E NON IN UN PROGRAMMA. Il controller del floppy e' del
+ * kernel: un programma in ring3 potrebbe prendersi le porte 0x3F0-0x3F7 con
+ * ioport_bind, ma NON puo' ricevere l'IRQ6 — quella linea ha un gestore
+ * kernel, e il dispatcher lo serve prima di guardare i driver ring3. Una
+ * diagnostica che non vede l'IRQ6 non puo' dire niente sul problema piu'
+ * comune, che e' proprio l'IRQ6 che non arriva. E soprattutto: proverebbe un
+ * ALTRO codice, non quello che il sistema usa davvero.
+ *
+ * Qui invece si chiamano le STESSE funzioni che leggono i file. Se la
+ * diagnostica passa e la lettura no, la differenza e' nel supporto, non nel
+ * driver.
+ *
+ * ! SI SCRIVE CON kprintf E NON CON klog. klog obbedisce a `loglevel`: una
+ * diagnostica che sparisce perche' il log e' basso e' una diagnostica che non
+ * c'e' quando serve. kprintf va sulla console e sulla seriale sempre.
+ *
+ * ! E SI FA CON IL SISTEMA ACCESO, sulla stessa unita' da cui si sta girando.
+ * Percio' ogni passo che muove la testina finisce con una ricalibratura, e
+ * alla fine si invalida la posizione creduta: il primo accesso successivo
+ * fara' un SEEK in piu' e ripartira' allineato.
+ * ========================================================================== */
+static int fdc_rw_sector(uint16_t lba, uint8_t *buf, int write);
+
+static void diag_passo(int n, const char *cosa)
+{
+    kprintf("\n[PASSO %d] %s\n", n, cosa);
+}
+
+static void diag_esito(int ok, const char *dettaglio)
+{
+    kprintf("          %s  %s\n", ok ? "OK   " : "NO   ", dettaglio);
+}
+
+/* Registra un passo nel taccuino che finira' nel log. Se il chiamante non ha
+ * dato un buffer, la prova si fa lo stesso e qui non si scrive niente. */
+static FdPasso    *g_diag_out = 0;
+static unsigned int g_diag_max = 0;
+static unsigned int g_diag_n   = 0;
+
+static void diag_nota(unsigned int passo, unsigned int codice, int esito,
+                      unsigned int a, unsigned int b)
+{
+    if (!g_diag_out || g_diag_n >= g_diag_max) return;
+
+    g_diag_out[g_diag_n].passo  = passo;
+    g_diag_out[g_diag_n].codice = codice;
+    g_diag_out[g_diag_n].esito  = esito;
+    g_diag_out[g_diag_n].a      = a;
+    g_diag_out[g_diag_n].b      = b;
+    g_diag_n++;
+}
+
+int fat12_diagnostica(FdPasso *out, unsigned int max)
+{
+    static const uint8_t cilindri[] = { 10, 40, 79, 0 };
+    uint8_t  st0 = 0, pcn = 0, msr;
+    uint8_t  settore[BYTES_PER_SECTOR];
+    int      guasti = 0;
+    int      i, r;
+
+    g_diag_out = out;
+    g_diag_max = out ? max : 0;
+    g_diag_n   = 0;
+
+    fdc_entra();        /* il tick non tocchera' il motore mentre proviamo */
+
+    kprintf("\n=== PROVA DEL FLOPPY, PASSO PASSO ===\n");
+    kprintf("Guardare e ASCOLTARE il drive: ogni passo dice cosa deve\n");
+    kprintf("succedere fisicamente. Se il rumore non corrisponde, il\n");
+    kprintf("problema e' fra il controller e la meccanica.\n");
+
+    /* --- 1 ------------------------------------------------------------- */
+    diag_passo(1, "Il controller risponde? (lettura di MSR, niente si muove)");
+    msr = port_inb(FDC_MSR);
+    kprintf("          MSR=0x%02x  (atteso 0x80: pronto, in attesa di comandi)\n", msr);
+    if (msr == 0xFF) {
+        diag_esito(0, "nessun controller a 0x3F0-0x3F7");
+        diag_nota(1, FD_MSR, -1, msr, 0);
+        guasti++;
+        fdc_esce();
+        return (int)g_diag_n;
+    }
+    diag_esito((msr & 0x80) != 0, (msr & 0x80) ? "il controller c'e' ed e' pronto"
+                                               : "il controller c'e' ma non e' pronto");
+    diag_nota(1, FD_MSR, (msr & 0x80) ? 0 : -1, msr, 0);
+    if (!(msr & 0x80)) guasti++;
+
+    /* --- 2 ------------------------------------------------------------- */
+    diag_passo(2, "Reset del controller: deve arrivare un IRQ6");
+    kprintf("          (nessun movimento: e' solo elettronica)\n");
+    fdc_irq_clear();
+    g_motor_running = 0;
+    port_outb(FDC_DOR, 0x00);
+    fdc_delay_ms(2);
+    port_outb(FDC_DOR, 0x0C);
+    r = fdc_wait_irq(500);
+    diag_esito(r == 0, r == 0 ? "IRQ6 ricevuto: la linea 6 arriva alla CPU"
+                              : "IRQ6 NON ricevuto: e' qui che si rompe tutto il resto");
+    diag_nota(2, FD_RESET_IRQ, r == 0 ? 0 : -1, 0, 0);
+    if (r != 0) guasti++;
+
+    /* --- 3 ------------------------------------------------------------- */
+    diag_passo(3, "SENSE INTERRUPT per le quattro unita' possibili");
+    for (i = 0; i < 4; i++) {
+        fdc_sense_interrupt(&st0, &pcn);
+        kprintf("          unita' %d: ST0=0x%02x PCN=%u\n", i, st0, pcn);
+        diag_nota(3, FD_SENSE, 0, (unsigned int)i, st0);
+    }
+    port_outb(FDC_CCR, 0x00);
+    fdc_send_byte(0x03);
+    fdc_send_byte(0xDF);
+    fdc_send_byte(0x03);
+    diag_esito(1, "velocita' 500 kbps e tempi impostati");
+
+    /* --- 4 ------------------------------------------------------------- */
+    diag_passo(4, "Motore ACCESO: la spia del drive deve accendersi ORA");
+    fdc_motor_on();
+    fdc_delay_ms(1500);
+    diag_esito(1, "se la spia e' spenta, il DOR non comanda questo drive");
+    diag_nota(4, FD_MOTORE_ON, 0, 0, 0);
+
+    /* --- 5 ------------------------------------------------------------- */
+    diag_passo(5, "RECALIBRATE: la testina torna a cilindro 0 (rumore secco)");
+    fdc_irq_clear();
+    fdc_send_byte(0x07);
+    fdc_send_byte(0x00);
+    r = fdc_wait_irq(3000);
+    fdc_sense_interrupt(&st0, &pcn);
+    kprintf("          ST0=0x%02x PCN=%u  (atteso ST0 con bit 0x20, PCN=0)\n",
+            st0, pcn);
+    if (r != 0) {
+        diag_esito(0, "nessun IRQ6: la testina puo' essersi mossa lo stesso");
+        diag_nota(5, FD_RECAL, -1, st0, pcn);
+        guasti++;
+    } else if (!(st0 & 0x20) || pcn != 0) {
+        diag_esito(0, "il controller dice che la testina NON e' a cilindro 0");
+        diag_nota(5, FD_RECAL, -1, st0, pcn);
+        guasti++;
+    } else {
+        diag_esito(1, "testina a cilindro 0, confermato dal controller");
+        diag_nota(5, FD_RECAL, 0, st0, pcn);
+    }
+
+    /* --- 6 ------------------------------------------------------------- */
+    diag_passo(6, "SEEK a 10, 40, 79 e 0: si deve sentire la testina che va");
+    for (i = 0; i < (int)(sizeof(cilindri) / sizeof(cilindri[0])); i++) {
+        uint8_t c = cilindri[i];
+
+        kprintf("          -> cilindro %u ...", c);
+        fdc_irq_clear();
+        fdc_send_byte(0x0F);            /* SEEK */
+        fdc_send_byte(0x00);            /* testina 0, unita' 0 */
+        fdc_send_byte(c);
+        r = fdc_wait_irq(3000);
+        fdc_sense_interrupt(&st0, &pcn);
+
+        if (r != 0) {
+            kprintf(" IRQ6 assente (ST0=0x%02x PCN=%u)\n", st0, pcn);
+            diag_nota(6, FD_SEEK, -1, c, pcn);
+            guasti++;
+        } else if (!(st0 & 0x20)) {
+            kprintf(" seek non concluso (ST0=0x%02x)\n", st0);
+            diag_nota(6, FD_SEEK, -1, c, pcn);
+            guasti++;
+        } else if (pcn != c) {
+            kprintf(" la testina dice di essere a %u, non a %u\n", pcn, c);
+            diag_nota(6, FD_SEEK, -1, c, pcn);
+            guasti++;
+        } else {
+            kprintf(" arrivata (PCN=%u)\n", pcn);
+            diag_nota(6, FD_SEEK, 0, c, pcn);
+        }
+        fdc_delay_ms(300);
+    }
+    g_fdc_cyl = -1;
+
+    /* --- 7 ------------------------------------------------------------- */
+    diag_passo(7, "Lettura del settore di avvio (cilindro 0): la firma 0x55AA");
+    r = fdc_rw_sector(0, settore, 0);
+    if (r != 0) {
+        diag_esito(0, "il settore 0 non si legge");
+        diag_nota(7, FD_LETTURA, -1, 0, 0);
+        guasti++;
+    } else if (settore[510] != 0x55 || settore[511] != 0xAA) {
+        kprintf("          ultimi due byte: 0x%02x 0x%02x\n",
+                settore[510], settore[511]);
+        diag_esito(0, "letto, ma non e' un settore di avvio: supporto sbagliato?");
+        diag_nota(7, FD_LETTURA, -1, 0, 0);
+        guasti++;
+    } else {
+        diag_esito(1, "settore 0 letto e riconosciuto");
+        diag_nota(7, FD_LETTURA, 0, 0, 1);
+    }
+
+    /* --- 8 ------------------------------------------------------------- */
+    diag_passo(8, "Dieci letture del cilindro 63 (LBA 2268): la meta' del disco");
+    kprintf("          E' la traccia dove i drive stanchi cominciano a sbagliare.\n");
+    {
+        int falliti = 0;
+
+        for (i = 0; i < 10; i++) {
+            if (fdc_rw_sector(2268, settore, 0) != 0) falliti++;
+        }
+        kprintf("          %d letture su 10 fallite dopo tutti i ritenti\n", falliti);
+        diag_nota(8, FD_RIPETUTA, falliti == 0 ? 0 : -1, 2268,
+                  (unsigned int)falliti);
+        if (falliti == 0) {
+            diag_esito(1, "il cilindro 63 si legge sempre");
+        } else {
+            diag_esito(0, "supporto o testina non affidabili a meta' disco");
+            guasti++;
+        }
+    }
+
+    /* --- 9 ------------------------------------------------------------- */
+    diag_passo(9, "Motore SPENTO: la spia deve spegnersi ORA");
+    fdc_motor_off();
+    fdc_delay_ms(1000);
+    diag_esito(1, "se resta accesa, il DOR non spegne questo drive");
+    diag_nota(9, FD_MOTORE_OFF, 0, 0, 0);
+
+    /* --- 10 ------------------------------------------------------------ */
+    diag_passo(10, "Motore fermo, poi si rilegge: deve riaccendersi da solo");
+    kprintf("          E' il percorso che il timer di inattivita' crea a ogni\n");
+    kprintf("          pausa: il disco si ferma, e la lettura dopo deve\n");
+    kprintf("          rimetterlo in moto, aspettare che sia a regime e\n");
+    kprintf("          ritrovare la traccia. Se qui sbaglia, la macchina\n");
+    kprintf("          funziona finche' si lavora e sbaglia dopo una pausa —\n");
+    kprintf("          il guasto piu' difficile da collegare alla causa.\n");
+
+    fdc_delay_ms(2000);         /* il disco deve fermarsi davvero */
+    kprintf("          ora la spia deve essere SPENTA; rileggo il settore 0\n");
+
+    settore[510] = 0;
+    settore[511] = 0;
+    r = fdc_rw_sector(0, settore, 0);
+
+    if (r != 0) {
+        diag_esito(0, "dopo la fermata il settore 0 non si legge piu'");
+        diag_nota(10, FD_RIACCESO, -1, 0, 0);
+        guasti++;
+    } else if (settore[510] != 0x55 || settore[511] != 0xAA) {
+        diag_esito(0, "riletto, ma i dati non tornano: rispin troppo corto?");
+        diag_nota(10, FD_RIACCESO, -1, 0, 0);
+        guasti++;
+    } else {
+        diag_esito(1, "il motore e' ripartito e la lettura e' giusta");
+        diag_nota(10, FD_RIACCESO, 0, 0, 1);
+    }
+
+    /* E si rispegne: la prova non deve lasciare il disco a girare. */
+    fdc_motor_off();
+
+    /* --- fine ---------------------------------------------------------- */
+    kprintf("\n=== %d passi con problemi ===\n", guasti);
+    if (guasti == 0) {
+        kprintf("La meccanica risponde ai comandi. Se la lettura dei file\n");
+        kprintf("sbaglia lo stesso, il sospetto e' il singolo dischetto.\n");
+    } else {
+        kprintf("Il primo passo con NO e' quello da guardare: i successivi\n");
+        kprintf("sbagliano quasi sempre di conseguenza.\n");
+    }
+
+    g_fdc_cyl = -1;     /* dove sia la testina non lo sa piu' nessuno */
+    fdc_esce();
+
+    /* ! SI RENDE QUANTI PASSI SONO STATI REGISTRATI, non quanti sono andati
+     * male. Chi chiama i guasti se li conta guardando `esito`, e cosi' puo'
+     * anche dire QUALI: un numero solo direbbe che qualcosa non va senza dire
+     * cosa, e questa e' una diagnostica. */
+    return (int)g_diag_n;
+}
+
+/* =============================================================================
+ * fat12_motor_tick — chiamata dal tick del timer, cento volte al secondo
+ *
+ * Il perche' sta accanto a FDC_INATTIVITA_TICK. Qui c'e' solo la regola: se il
+ * motore gira, se nessuno sta usando il controller, e se sono passati due
+ * secondi dall'ultima attivita', si spegne.
+ *
+ * ! GIRA DENTRO L'INTERRUPT DEL TIMER, quindi non puo' fare altro che una
+ * out su una porta. fdc_motor_off() e' esattamente questo: una scrittura sul
+ * DOR piu' due assegnazioni. Niente attese, niente log — un klog qui
+ * stamperebbe una riga ogni volta che il disco si ferma.
+ *
+ * ! E MENTRE SI E' OCCUPATI SI RINFRESCA IL TIMBRO. Un trasferimento lungo —
+ * un seek che ritenta, una traccia che va riletta — supera i due secondi
+ * senza che nessuno tocchi g_fdc_ultimo: senza questa riga il conto
+ * scadrebbe mentre l'operazione e' in corso, e il motore si spegnerebbe
+ * appena il contatore torna a zero, cioe' un istante prima dell'operazione
+ * successiva invece che due secondi dopo l'ultima.
+ * ========================================================================== */
+void fat12_motor_tick(void)
+{
+    if (!g_motor_running) return;
+
+    if (g_fdc_occupato > 0) {
+        g_fdc_ultimo = g_ticks;
+        return;
+    }
+
+    if ((uint32_t)(g_ticks - g_fdc_ultimo) < FDC_INATTIVITA_TICK) return;
+
+    fdc_motor_off();
+}
+
 /* Converti LBA → CHS per floppy 1.44MB */
 static void lba_to_chs(uint16_t lba, uint8_t *cyl, uint8_t *head, uint8_t *sec)
 {
@@ -667,6 +1021,96 @@ static void lba_to_chs(uint16_t lba, uint8_t *cyl, uint8_t *head, uint8_t *sec)
  *   - allineato a 512 byte: un blocco di 512 byte allineato a 512 non può
  *     attraversare un confine di 64KB, perché 65536 è multiplo di 512.
  * ============================================================================= */
+
+/* =============================================================================
+ * fdc_drena — butta via i byte di risultato che nessuno ha letto
+ *
+ * ! E' LA CURA DELLA VALANGA, e la valanga si riconosce dal log:
+ *
+ *     FAT12: IRQ6 non ricevuto su READ LBA=2268
+ *     FAT12: fase di risultato incompleta su READ LBA=2268
+ *     FAT12: FDC non in modalita' write (MSR=0xd0)
+ *     ... e da li' in poi sbaglia tutto
+ *
+ * Un comando READ finisce in FASE DI RISULTATO: sette byte che il software
+ * DEVE leggere. Se l'IRQ6 non arriva in tempo e il driver rinuncia a meta',
+ * quei byte restano nel FIFO. Il comando successivo trova MSR con DIO=1 —
+ * «ho da darti dei dati», non «dammi un comando» — e fallisce. Fallisce anche
+ * quello dopo, e quello dopo ancora: un solo errore di lettura diventa una
+ * sessione intera di errori, e il primo messaggio non e' piu' riconoscibile
+ * in mezzo agli altri.
+ *
+ * Leggere e buttare i byte rimasti rimette il controller in stato di comando.
+ * Costa UNA lettura di MSR quando non c'e' niente da buttare, cioe' sempre
+ * tranne che dopo un guasto.
+ *
+ * ! IL LIMITE C'E' PERCHE' UN CONTROLLER GUASTO PUO' NON SMETTERE MAI. Un
+ * ciclo senza tetto qui sarebbe un blocco della macchina dentro il gestore di
+ * un errore, che e' il posto peggiore dove metterne uno.
+ * ========================================================================== */
+static int fdc_drena(void)
+{
+    int buttati = 0;
+
+    while (buttati < 32) {
+        uint8_t msr = port_inb(FDC_MSR);
+
+        /* RQM=1 e DIO=1: il controller ha un byte da darci. */
+        if ((msr & 0xC0) != 0xC0) break;
+
+        (void)port_inb(FDC_FIFO);
+        buttati++;
+    }
+
+    if (buttati > 0) {
+        klog(LOG_WARN, "FAT12: buttati %d byte di risultato rimasti nel FIFO "
+             "(il comando precedente non era stato concluso)", buttati);
+    }
+    return buttati;
+}
+
+/* =============================================================================
+ * fdc_reset_controller — la ripartenza da zero del controller
+ *
+ * Era scritta dentro fat12_init e non si poteva richiamare. Serve invece
+ * proprio quando le cose vanno male: dopo due tentativi falliti il problema
+ * non e' piu' la testina fuori posto — quella la rimette il RECALIBRATE — ma
+ * il controller in uno stato che nessuna sequenza normale rimette a posto.
+ *
+ * ! NON SI FA AL PRIMO ERRORE. Costa un reset, quattro SENSE INTERRUPT e 300
+ * ms di rispin del motore: su un supporto che sbaglia ogni tanto — il caso
+ * normale di un dischetto vecchio — farlo subito trasformerebbe una lettura
+ * lenta in una lettura lentissima, e la seconda non e' piu' affidabile della
+ * prima.
+ * ========================================================================== */
+static void fdc_reset_controller(void)
+{
+    uint8_t st0, pcn;
+    int     i;
+
+    fdc_irq_clear();
+    g_motor_running = 0;            /* il reset spegne il motore */
+
+    port_outb(FDC_DOR, 0x00);       /* reset asserito */
+    fdc_delay_ms(2);
+    port_outb(FDC_DOR, 0x0C);       /* rilascio: genera IRQ6 */
+
+    if (fdc_wait_irq(500) != 0) {
+        klog(LOG_WARN, "FAT12: nessun IRQ6 dopo il reset del controller");
+    }
+
+    /* Quattro volte: il reset arma un IRQ per ciascuna delle quattro unita'
+     * possibili, e finche' non si leggono tutti il FIFO resta bloccato. */
+    for (i = 0; i < 4; i++) fdc_sense_interrupt(&st0, &pcn);
+
+    port_outb(FDC_CCR, 0x00);       /* 500 kbps: floppy 1.44MB */
+
+    fdc_send_byte(0x03);            /* SPECIFY */
+    fdc_send_byte(0xDF);            /* SRT=3ms, HUT=240ms */
+    fdc_send_byte(0x03);            /* HLT=2ms */
+
+    g_fdc_cyl = -1;                 /* dove sia la testina non lo sa piu' nessuno */
+}
 
 /* Porte del controller DMA 8237 (canale 2 = floppy) */
 #define DMA_MASK        0x0A    /* maschera singolo canale        */
@@ -744,6 +1188,12 @@ static int fdc_rw_sector_once(uint16_t lba, uint8_t *buf, int write)
     if (write) {
         for (i = 0; i < BYTES_PER_SECTOR; i++) g_dma_buf[i] = buf[i];
     }
+
+/* ! PRIMA DI OGNI COMANDO SI CONTROLLA CHE IL FIFO SIA VUOTO. Costa una
+     * lettura di MSR; senza, un risultato rimasto da un guasto precedente fa
+     * fallire questo comando per un motivo che non ha niente a che vedere con
+     * questo comando. */
+    fdc_drena();
 
     fdc_motor_on();
     fdc_seek_if_needed(cyl, head);
@@ -832,6 +1282,12 @@ static int fdc_rw_sector_once(uint16_t lba, uint8_t *buf, int write)
     if (err != 0) {
         klog(LOG_ERROR, "FAT12: fase di risultato incompleta su %s LBA=%u",
              write ? "WRITE" : "READ", lba);
+        /* ! E SI RIPULISCE SUBITO, invece di lasciare il resto nel FIFO. E'
+         * qui che nasceva la valanga: i byte non letti facevano fallire il
+         * comando SUCCESSIVO con «FDC non in modalita' write», e quello dopo
+         * ancora. Un errore di lettura deve costare una lettura, non la
+         * sessione. Vedi fdc_drena(). */
+        fdc_drena();
         g_fdc_cyl = -1;
         return -1;
     }
@@ -900,18 +1356,36 @@ static int fdc_rw_sector_once(uint16_t lba, uint8_t *buf, int write)
 static int fdc_rw_sector(uint16_t lba, uint8_t *buf, int write)
 {
     int tentativo;
+    int esito = -1;
 
     int massimo = g_sondaggio ? 1 : FDC_MAX_TENTATIVI;
+
+    /* Da qui il controller e' nostro: il tick del timer non tocchera' il
+     * motore finche' non si esce, ritenti e ricalibrature comprese. */
+    fdc_entra();
 
     for (tentativo = 0; tentativo < massimo; tentativo++) {
         if (tentativo > 0) {
             klog(LOG_WARN, "FAT12: %s LBA=%u fallita, ritento (%d/%d)",
                  write ? "WRITE" : "READ", lba, tentativo + 1, FDC_MAX_TENTATIVI);
 
-            if (tentativo & 1) {
+            /* ! LA SCALA SALE: prima si sospetta la testina, poi il
+             * controller. Un supporto che sbaglia ogni tanto si rimette con
+             * un SEEK o una ricalibratura; un controller rimasto a meta' di
+             * una fase di risultato non si rimette con niente di meno di un
+             * reset — ed e' esattamente lo stato in cui lo lascia un IRQ6 che
+             * non arriva. Fare il reset al primo errore costerebbe 300 ms di
+             * rispin a ogni graffio del dischetto, per niente. */
+            if (tentativo == 1) {
+                g_fdc_cyl = -1;         /* forza almeno un nuovo SEEK */
+            } else if (tentativo == 2) {
                 fdc_recalibrate();      /* riallinea testina e credenza */
             } else {
-                g_fdc_cyl = -1;         /* forza almeno un nuovo SEEK */
+                klog(LOG_WARN, "FAT12: il controller non risponde piu' come "
+                     "dovrebbe, lo azzero");
+                fdc_reset_controller();
+                fdc_motor_on();
+                fdc_recalibrate();
             }
         }
 
@@ -921,15 +1395,23 @@ static int fdc_rw_sector(uint16_t lba, uint8_t *buf, int write)
                      "il supporto o il drive danno errori transitori",
                      write ? "WRITE" : "READ", lba, tentativo + 1);
             }
-            return 0;
+            esito = 0;
+            break;
         }
     }
 
-    if (!g_sondaggio) {
+    if (esito != 0 && !g_sondaggio) {
         klog(LOG_ERROR, "FAT12: %s LBA=%u fallita dopo %d tentativi - rinuncio",
              write ? "WRITE" : "READ", lba, FDC_MAX_TENTATIVI);
     }
-    return -1;
+
+    /* ! UN'USCITA SOLA, e non tre `return` sparsi. Ogni via d'uscita deve
+     * decrementare il contatore: una che se ne dimentica lascia il
+     * controller «occupato» per sempre, cioe' rimette esattamente il difetto
+     * che questo contatore serve a togliere — il motore che non si ferma
+     * piu'. Con un solo punto di uscita non ci si puo' dimenticare. */
+    fdc_esce();
+    return esito;
 }
 
 /* =============================================================================
@@ -1208,48 +1690,13 @@ int fat12_init(uint8_t drive)
      * velocita' della CPU, quindi su hardware diverso da quello su cui
      * erano stati tarati il controller puo' non aver completato il reset
      * quando gli si parla. Ora sono attese in tempo reale. */
-    fdc_irq_clear();
-    g_motor_running = 0;       /* il reset spegne il motore */
-    port_outb(FDC_DOR, 0x00);  /* Reset asserito */
-    fdc_delay_ms(2);           /* il reset pulse richiede microsecondi;
-                                  2ms e' il minimo esprimibile a 100Hz */
-    port_outb(FDC_DOR, 0x0C);  /* Release reset: l'uscita dal reset genera IRQ6 */
-
-    /* Attendi davvero l'IRQ del reset invece di sperare che sia passato
-     * abbastanza tempo. Il timeout e' generoso e non fatale: se manca, i
-     * SENSE INTERRUPT qui sotto disarmano comunque il controller. */
-    if (fdc_wait_irq(500) != 0) {
-        klog(LOG_WARN, "FAT12: nessun IRQ6 dopo il reset del controller");
-    }
-
-    /* ACK dell'IRQ implicito generato dal reset: senza questo il FDC
-     * resta con un'interruzione "pendente" da acknowledgiare e il comando
-     * successivo si blocca in attesa di RQM. Quattro volte perche' il
-     * reset arma un IRQ per ciascuna delle 4 unita' possibili. */
-    {
-        uint8_t st0, pcn;
-        int tries;
-        for (tries = 0; tries < 4; tries++) {
-            fdc_sense_interrupt(&st0, &pcn);
-        }
-    }
-
-    /* Imposta data rate a 500 kbps (floppy 1.44MB alta densita').
-     * Il default post-reset del controller non e' garantito essere
-     * 500kbps; senza impostarlo esplicitamente i trasferimenti dati
-     * possono interrompersi prematuramente per mismatch di clock. */
-    port_outb(FDC_CCR, 0x00);  /* 00 = 500 kbps */
-
-    /* Specifica timing FDC (comando SPECIFY).
-     *
-     * Il bit ND qui vale poco: ogni operazione dati rimanda il proprio
-     * SPECIFY con ND=0 (vedi fdc_rw_sector_once), e questo SPECIFY serve
-     * solo a fissare SRT/HLT per il RECALIBRATE che segue, che non
-     * trasferisce dati. Il commento precedente diceva che il driver legge
-     * dal FIFO manualmente: non e' piu' vero dalla migrazione al DMA. */
-    fdc_send_byte(0x03);    /* SPECIFY */
-    fdc_send_byte(0xDF);    /* SRT=3ms (16-13), HUT=240ms */
-    fdc_send_byte(0x03);    /* HLT=2ms; ND ininfluente qui */
+    /* ! LA SEQUENZA DI RESET STA IN fdc_reset_controller(), NON PIU' QUI.
+     * Era scritta a mano dentro questa funzione e quindi si poteva eseguire
+     * una volta sola, all'avvio — mentre il momento in cui serve davvero e'
+     * DOPO, quando una fase di risultato interrotta ha lasciato il
+     * controller in uno stato che nessun SEEK rimette a posto. Adesso la
+     * chiamano tutt'e due: l'avvio e la scala dei ritenti. */
+    fdc_reset_controller();
 
     /* MOTORE ACCESO PRIMA DEL RECALIBRATE (luglio 2026).
      *
@@ -1267,6 +1714,7 @@ int fat12_init(uint8_t drive)
      *
      * Non costa nulla in piu': i 300 ms di stabilizzazione andavano
      * comunque pagati alla prima lettura, qui vengono solo anticipati. */
+    fdc_entra();
     fdc_motor_on();
 
     /* Riporta la testina al cilindro 0: il BIOS ha gia' letto vari
@@ -1275,6 +1723,7 @@ int fat12_init(uint8_t drive)
      * desincronizzata dai parametri C/H/S che invieremo nei comandi
      * READ successivi. */
     fdc_recalibrate();
+    fdc_esce();
 
     /* Leggi FAT1 in RAM */
     if (!g_sondaggio) klog(LOG_INFO, "FAT12: caricamento FAT in RAM...");

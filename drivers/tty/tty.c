@@ -404,6 +404,11 @@ void tty_attesa_togli_locked(unsigned int pid)
     if (g_waiting_pid == pid) g_waiting_pid = 0;
 }
 
+int tty_input_source(void)
+{
+    return g_input_src;
+}
+
 void tty_set_input_source(int src)
 {
     if (src == g_input_src) return;
@@ -427,6 +432,94 @@ void tty_set_input_source(int src)
             port_inb(0x60);
         }
 
+        /* =================================================================
+         * ! IL CONFIGURATION BYTE VA RIPROGRAMMATO ANCHE QUI, e non solo in
+         * /dev/kbd.drv. E' il buco che la correzione del 31 luglio 2026 ha
+         * lasciato aperto: quel giorno si e' scoperto che su un 8042 VERO il
+         * comando di self-test 0xAA reinizializza il configuration byte, e
+         * che la configurazione predefinita ha il bit 0 — «alza IRQ1» — a
+         * ZERO. La cura e' stata scritta dentro kbd_hw_init(), cioe' dentro
+         * il driver ring3, e questo ripiego non l'ha mai avuta.
+         *
+         * Conseguenza: se kbd.drv non si carica o non registra il servizio in
+         * tempo — e su una macchina lenta che legge da floppy succede — il
+         * sistema ripiega QUI, e qui la tastiera resta muta lo stesso, per un
+         * motivo diverso da quello per cui il driver non e' partito. Due
+         * guasti che sembrano uno: il prompt compare e nessun tasto fa niente.
+         *
+         * In emulazione non si vede, perche' l'8042 di QEMU non tocca il
+         * proprio registro di modo quando esegue 0xAA.
+         *
+         * Read-modify-write e non un valore fisso: nel byte ci sono anche la
+         * seconda porta PS/2 e il system flag, che non ci riguardano.
+         * ================================================================= */
+        {
+            int guard, cfg = -1;
+
+            for (guard = 0; guard < 100000; guard++)
+                if (!(port_inb(0x64) & 0x02)) break;
+            port_outb(0x64, 0x20);                  /* leggi configurazione */
+
+            for (guard = 0; guard < 100000; guard++) {
+                if (port_inb(0x64) & 0x01) { cfg = port_inb(0x60); break; }
+            }
+
+            if (cfg < 0) {
+                /* Non si e' potuto leggere: si scrive un valore prudente —
+                 * IRQ1 acceso, clock acceso, traduzione al set 1 — invece di
+                 * lasciare il controller com'e'. Un byte inventato che
+                 * accende la tastiera e' meglio di uno giusto che la lascia
+                 * spenta. */
+                cfg = 0x45;
+                klog(LOG_WARN, "TTY: configuration byte non leggibile, "
+                     "uso il ripiego 0x45");
+            }
+
+            cfg |=  0x01;       /* bit 0: IRQ1. Senza, la tastiera e' muta */
+            cfg &= ~0x10;       /* bit 4 ALTO = clock della porta DISABILITATO */
+            cfg |=  0x40;       /* bit 6: traduzione al set 1, come le tabelle */
+
+            for (guard = 0; guard < 100000; guard++)
+                if (!(port_inb(0x64) & 0x02)) break;
+            port_outb(0x64, 0x60);                  /* scrivi configurazione */
+            for (guard = 0; guard < 100000; guard++)
+                if (!(port_inb(0x64) & 0x02)) break;
+            port_outb(0x60, (uint8_t)cfg);
+
+            /* ! E SI RILEGGE. Su un 8042 vero una scrittura sul byte di
+             * configurazione non e' un fatto ma una richiesta: puo' non
+             * attecchire, e allora la tastiera resta muta con tutto il
+             * codice che dice di aver funzionato. Rileggere costa due
+             * accessi a una porta e trasforma un guasto silenzioso in una
+             * riga di log. */
+            {
+                int riletto = -1;
+
+                for (guard = 0; guard < 100000; guard++)
+                    if (!(port_inb(0x64) & 0x02)) break;
+                port_outb(0x64, 0x20);
+                for (guard = 0; guard < 100000; guard++)
+                    if (port_inb(0x64) & 0x01) { riletto = port_inb(0x60); break; }
+
+                if (riletto < 0 || !(riletto & 0x01) || (riletto & 0x10) ||
+                    !(riletto & 0x40)) {
+                    klog(LOG_ERROR, "TTY: l'8042 non tiene la configurazione "
+                         "(voluto 0x%02x, riletto 0x%02x): tastiera in dubbio",
+                         cfg, riletto);
+                } else {
+                    cfg = riletto;
+                }
+            }
+
+            /* E la porta della tastiera accesa: 0xAA e 0xAB la spengono. */
+            for (guard = 0; guard < 100000; guard++)
+                if (!(port_inb(0x64) & 0x02)) break;
+            port_outb(0x64, 0xAE);
+
+            klog(LOG_INFO, "TTY: configuration byte dell'8042 = 0x%02x "
+                 "(IRQ1 acceso)", cfg);
+        }
+
         irq_register_handler(1, kbd_irq1_handler);
         pic_unmask_irq(1);
         g_input_src = TTY_INPUT_INTERNAL;
@@ -435,6 +528,15 @@ void tty_set_input_source(int src)
     }
 
     if (src == TTY_INPUT_IPC) {
+        /* ! SI TOGLIE IL GESTORE KERNEL, e senza questo il ritorno all'IPC
+         * non servirebbe a niente: irq_handler() (isr.c) da' la precedenza a
+         * un handler registrato qui rispetto al proprietario ring3 della
+         * linea. Lasciarlo su vorrebbe dire un TTY che crede di parlare col
+         * driver mentre gli scancode se li prende ancora il kernel, e il
+         * driver che aspetta per sempre una notifica che non arrivera'. */
+        irq_register_handler(1, NULL);
+        pic_unmask_irq(1);
+
         g_kbd_pid   = 0;
         g_input_src = TTY_INPUT_IPC;
         klog(LOG_INFO, "TTY: input dal servizio ring3 '%s' via IPC",
@@ -459,6 +561,39 @@ void tty_set_input_source(int src)
  * recv, il messaggio resta nella mailbox e ipc_recv() lo trova subito.
  * ============================================================================= */
 #define TTY_KBD_LOOKUP_TRIES    200   /* ~2s a 10ms per tentativo */
+
+/* =============================================================================
+ * tty_forse_torna_al_driver — il ripiego non e' una condanna
+ *
+ * ! FINO AL 2 SETTEMBRE 2026 IL RIPIEGO ERA DEFINITIVO. Una volta caduti sul
+ * gestore interno non si tornava piu' indietro, per tutta la sessione: e
+ * siccome ci si cadeva per una CORSA all'avvio — cinque shell, una cassetta
+ * postale da quattro — bastava un attimo di sfortuna nei primi secondi per
+ * lasciare kbd.drv affamato fino allo spegnimento.
+ *
+ * Un ripiego che si puo' disfare trasforma quella corsa in un inciampo: si
+ * riprova ogni tanto, e appena il servizio risponde si torna al driver.
+ *
+ * ! NON SI RIPROVA A OGNI read(), che vorrebbe dire un ipc_lookup per ogni
+ * tasto. Una volta ogni cento chiamate e' abbastanza spesso da recuperare in
+ * un attimo e abbastanza raro da non pesare.
+ * ============================================================================= */
+static void tty_forse_torna_al_driver(void)
+{
+    static uint32_t quando = 0;
+    int32_t pid;
+
+    if (g_input_src != TTY_INPUT_INTERNAL) return;
+    if (++quando < 100) return;
+    quando = 0;
+
+    pid = ipc_lookup(KBD_SERVICE_NAME);
+    if (pid <= 0) return;
+
+    klog(LOG_INFO, "TTY: il servizio '%s' risponde di nuovo (PID %d), "
+         "torno al driver ring3", KBD_SERVICE_NAME, pid);
+    tty_set_input_source(TTY_INPUT_IPC);
+}
 
 static int tty_read_ipc(char *dst, uint32_t n)
 {
@@ -506,10 +641,47 @@ static int tty_read_ipc(char *dst, uint32_t n)
      * gli altri in attesa. Vedi drivers/kbd/kbd.c. */
     richiesta.console = proc_get_current()->console;
 
-    r = ipc_send(g_kbd_pid, KBD_MSG_READLINE, &richiesta, sizeof(richiesta));
+    /* =====================================================================
+     * ! UNA CASSETTA PIENA NON E' UN DRIVER MORTO, e confonderle e' costato
+     * la tastiera su hardware vero.
+     *
+     * Al PASSO 15 il kernel avvia UNA SHELL PER CONSOLE VIRTUALE — cinque —
+     * e ognuna chiama read(0), cioe' manda una KBD_MSG_READLINE a kbd.drv.
+     * La sua mailbox e' profonda QUATTRO (IPC_MAILBOX_DEPTH). La quinta
+     * richiesta trova pieno, ipc_send ritenta e alla fine rende -EBUSY.
+     *
+     * Il codice di prima trattava qualunque valore negativo come «il driver
+     * e' morto» e ripiegava sul gestore interno — per sempre, perche' quel
+     * ripiego non tornava mai indietro. Da quel momento kbd.drv era affamato:
+     * irq_handler() da' la precedenza all'handler kernel, e il driver
+     * aspettava notifiche che non arrivavano piu'.
+     *
+     * ! E SI VEDEVA SOLO SU MACCHINA VERA, per una ragione che sembra assurda
+     * e non lo e': con `verboseboot = 1` l'avvio stampa tanto, le cinque
+     * shell partono sfalsate, la cassetta non si riempie mai e la tastiera
+     * funziona. Con l'avvio silenzioso arrivano insieme. Lo stesso floppy,
+     * due comportamenti, e la differenza era la VELOCITA' — il tipo di
+     * indizio che in emulazione non si produce mai.
+     *
+     * Adesso: solo -ESRCH e' morte. Tutto il resto si riprova.
+     * ===================================================================== */
+    {
+        int tentativo;
+
+        for (tentativo = 0; tentativo < 50; tentativo++) {
+            r = ipc_send(g_kbd_pid, KBD_MSG_READLINE, &richiesta,
+                         sizeof(richiesta));
+            if (r >= 0) break;
+            if (r == -ESRCH) break;         /* quello si': il driver non c'e' piu' */
+            sched_sleep(10);                /* pieno: fra poco si svuota */
+        }
+    }
+
     if (r < 0) {
-        /* -ESRCH: il driver è morto. Riprendiamoci la tastiera, così un
-         * crash del driver degrada la console invece di spegnerla. */
+        /* -ESRCH, o cinquanta tentativi di seguito con la cassetta piena:
+         * a quel punto il driver non sta piu' svuotando, ed e' come se non
+         * ci fosse. Riprendiamoci la tastiera, cosi' un driver bloccato
+         * degrada la console invece di spegnerla. */
         klog(LOG_ERROR, "TTY: servizio '%s' (PID %u) non raggiungibile (%d) - "
              "ripiego sulla tastiera in-kernel",
              KBD_SERVICE_NAME, g_kbd_pid, r);
@@ -543,6 +715,10 @@ static int tty_read_ipc(char *dst, uint32_t n)
  * ============================================================================= */
 static int tty_read_internal(char *dst, uint32_t n)
 {
+    /* Il ripiego si prova a disfare da qui: e' il punto attraversato a ogni
+     * lettura mentre si e' caduti sul gestore interno. Vedi la funzione. */
+    tty_forse_torna_al_driver();
+
     uint32_t i = 0;
 
     while (i < n) {

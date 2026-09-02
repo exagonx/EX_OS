@@ -90,6 +90,11 @@
 /* --- La seconda porta PS/2: il mouse. Vedi kbd_proto.h per il perche' sta
  * dentro questo driver e non in uno suo. --------------------------------- */
 #define KBC_CMD_AUX_ENABLE  0xA8    /* abilita la seconda porta */
+/* ! E LA SI SPEGNE QUANDO IL MOUSE NON C'E'. Le due porte condividono un solo
+ * buffer di uscita: un byte arrivato da una porta che nessuno ascolta lo tiene
+ * pieno, e finche' e' pieno il controller non consegna piu' niente dalla
+ * tastiera. Vedi il blocco in main(). */
+#define KBC_CMD_AUX_DISABLE 0xA7    /* disabilita la seconda porta */
 #define KBC_CMD_AUX_SCRIVI  0xD4    /* il byte dopo va AL MOUSE, non al KBC */
 #define KBC_CFG_AUX_INT     0x02    /* 1 = il KBC alza IRQ12 per la seconda porta */
 #define KBC_CFG_AUX_CLOCK   0x20    /* 1 = clock della seconda porta DISABILITATO */
@@ -1101,13 +1106,63 @@ static void mouse_byte(unsigned char b)
 }
 
 /* Manda un byte AL MOUSE (non al controller) e aspetta l'ACK. */
+/* =============================================================================
+ * mouse_leggi_ms — una risposta che viene DAVVERO dalla seconda porta
+ *
+ * ! LE DUE PORTE HANNO UN BUFFER DI USCITA SOLO, e il bit KBC_AUX del registro
+ * di stato e' l'unica cosa che dice da quale delle due viene il byte che si
+ * sta per leggere. Ignorarlo — com'e' stato fino al 2 settembre 2026 — vuol
+ * dire che una risposta della TASTIERA ancora in volo viene raccolta al posto
+ * di quella del mouse.
+ *
+ * Non e' un caso di scuola: kbd_set_leds() manda 0xED piu' il valore e non
+ * legge i due ACK che la tastiera risponde. In emulazione arrivano subito e la
+ * drenata all'inizio di mouse_hw_init() li prende tutti; su una macchina vera
+ * la tastiera ci mette il suo tempo, la drenata passa a vuoto perche' il byte
+ * non e' ancora arrivato, e quell'ACK spunta un istante dopo — proprio mentre
+ * si aspetta la risposta al reset del mouse. Siccome un ACK vale 0xFA per
+ * tutti e due, il reset «riesce», e poi il controllo dell'autodiagnosi trova
+ * il SECONDO ACK della tastiera invece di 0xAA e conclude che il mouse non
+ * c'e'. Su una macchina che il mouse ce l'ha.
+ *
+ * I byte della tastiera raccolti qui non si buttano: vanno al decodificatore,
+ * che e' il loro posto. Un tasto premuto mentre si accende il mouse non deve
+ * sparire.
+ * ============================================================================= */
+static void kbd_process_scancode(unsigned char sc);  /* il decodificatore */
+
+static int mouse_leggi_ms(unsigned timeout_ms)
+{
+    unsigned inizio = uptime_ms();
+
+    for (;;) {
+        int st = ioport_in(KBC_STATUS);
+        if (st < 0) return -1;
+
+        if (st & KBC_OBF) {
+            int dato = ioport_in(KBC_DATA);
+            if (dato < 0) return -1;
+
+            if (st & KBC_AUX) return dato;      /* questa e' del mouse */
+
+            /* Della tastiera: si consegna a chi di dovere e si continua ad
+             * aspettare quella che serve qui. */
+            kbd_process_scancode((unsigned char)dato);
+            continue;
+        }
+
+        if (uptime_ms() - inizio >= timeout_ms) return -1;
+        sched_yield();
+    }
+}
+
 static int mouse_comando(unsigned char cmd)
 {
     kbc_wait_write();
     ioport_out(KBC_CMD, KBC_CMD_AUX_SCRIVI);
     kbc_wait_write();
     ioport_out(KBC_DATA, cmd);
-    return kbc_wait_read_ms(KBC_TMO_ACK);
+    return mouse_leggi_ms(KBC_TMO_ACK);
 }
 
 /* =============================================================================
@@ -1133,9 +1188,19 @@ static int mouse_hw_init(void)
      * mouse, il reset «riuscirebbe» e poi il controllo del self-test
      * troverebbe il secondo 0xFA invece di 0xAA. Sintomo: «nessun mouse ha
      * risposto» su una macchina che il mouse ce l'ha. */
-    for (drain = 0; drain < 16; drain++) {
+    /* ! SI ASPETTA PRIMA DI DRENARE, e non e' scaramanzia. I due ACK di
+     * kbd_set_leds() sono ancora IN VOLO quando si arriva qui: su hardware
+     * vero la tastiera risponde in millisecondi, non in nanosecondi. Una
+     * drenata immediata trova il buffer vuoto e li lascia arrivare dopo, in
+     * mezzo alla conversazione col mouse. Venti millisecondi e due passate
+     * costano niente e chiudono la finestra. */
+    usleep(20000);
+    for (drain = 0; drain < 32; drain++) {
         int st = ioport_in(KBC_STATUS);
-        if (st < 0 || !(st & KBC_OBF)) break;
+        if (st < 0 || !(st & KBC_OBF)) {
+            if (drain == 0) { usleep(10000); continue; }   /* una seconda passata */
+            break;
+        }
         ioport_in(KBC_DATA);
     }
 
@@ -1149,8 +1214,8 @@ static int mouse_hw_init(void)
     r = mouse_comando(MOUSE_CMD_RESET);
     if (r != MOUSE_ACK) return 0;
 
-    if (kbc_wait_read_ms(KBC_TMO_SELFTEST) != 0xAA) return 0;
-    (void)kbc_wait_read_ms(KBC_TMO_ACK);      /* id del dispositivo */
+    if (mouse_leggi_ms(KBC_TMO_SELFTEST) != 0xAA) return 0;
+    (void)mouse_leggi_ms(KBC_TMO_ACK);        /* id del dispositivo */
 
     if (mouse_comando(MOUSE_CMD_DEFAULTS)  != MOUSE_ACK) return 0;
     if (mouse_comando(MOUSE_CMD_REPORT_ON) != MOUSE_ACK) return 0;
@@ -1248,31 +1313,80 @@ static void kbd_hw_init(void)
      * flag, che non ci riguardano e non vanno calpestati.
      * ===================================================================== */
     {
-        int cfg;
+        /* ! SI SCRIVE E POI SI RILEGGE, FINCHE' NON TORNA — e fino al
+         * 2 settembre 2026 si scriveva e basta.
+         *
+         * Il difetto e' rimasto invisibile per un mese perche' in emulazione
+         * la scrittura riesce sempre. Su un Pentium II vero no: il
+         * configuration byte letto DOPO la scrittura aveva ancora l'IRQ1
+         * spento, e il sintomo era una tastiera completamente muta con il
+         * driver che diceva di essere partito bene. Una scrittura su un chip
+         * che ha appena subito un'autodiagnosi non e' un fatto: e' una
+         * richiesta, e va verificata.
+         *
+         * ! E SE NON TORNA DOPO TRE TENTATIVI, LO SI DICE. Un driver che
+         * fallisce in silenzio su una macchina senza tastiera e' un driver
+         * che non si puo' interrogare: il messaggio e' l'unico canale
+         * rimasto, ed e' scritto perche' si capisca senza avere il sorgente
+         * davanti. */
+        int cfg = -1, letto = -1, tentativo;
 
-        kbc_wait_write();
-        ioport_out(KBC_CMD, KBC_CMD_READ_CFG);
-        cfg = kbc_wait_read_ms(KBC_TMO_CFG);
+        for (tentativo = 0; tentativo < 3; tentativo++) {
+            kbc_wait_write();
+            ioport_out(KBC_CMD, KBC_CMD_READ_CFG);
+            cfg = kbc_wait_read_ms(KBC_TMO_CFG);
 
-        if (cfg < 0) {
-            printf("kbd: lettura del configuration byte fallita, "
-                   "uso il ripiego 0x%x\n", KBC_CFG_FALLBACK);
-            cfg = KBC_CFG_FALLBACK;
+            if (cfg < 0) {
+                printf("kbd: lettura del configuration byte fallita, "
+                       "uso il ripiego 0x%x\n", KBC_CFG_FALLBACK);
+                cfg = KBC_CFG_FALLBACK;
+            }
+
+            cfg |=  KBC_CFG_KBD_INT;      /* IRQ1: senza questo, tastiera muta */
+            cfg &= ~KBC_CFG_KBD_CLOCK;    /* il bit ALTO significa "disabilitato" */
+            cfg |=  KBC_CFG_TRANSLATE;    /* le tabelle qui sopra sono set 1 */
+            /* La seconda porta, cioe' il mouse. Stesso registro: si scrive una
+             * volta sola per tutti e due, che e' il motivo per cui il mouse si
+             * accende qui e non in mouse_hw_init(). */
+            cfg |=  KBC_CFG_AUX_INT;      /* IRQ12 */
+            cfg &= ~KBC_CFG_AUX_CLOCK;    /* anche qui il bit ALTO disabilita */
+
+            kbc_wait_write();
+            ioport_out(KBC_CMD, KBC_CMD_WRITE_CFG);
+            kbc_wait_write();
+            ioport_out(KBC_DATA, (unsigned char)cfg);
+
+            /* La verifica. I tre bit che contano per la tastiera: interrupt,
+             * clock acceso, traduzione al set 1. Gli altri li lasciamo
+             * decidere al controller. */
+            kbc_wait_write();
+            ioport_out(KBC_CMD, KBC_CMD_READ_CFG);
+            letto = kbc_wait_read_ms(KBC_TMO_CFG);
+
+            if (letto >= 0 &&
+                (letto & KBC_CFG_KBD_INT) &&
+                !(letto & KBC_CFG_KBD_CLOCK) &&
+                (letto & KBC_CFG_TRANSLATE)) break;
+
+            printf("kbd: configuration byte non accettato (voluto 0x%x, "
+                   "riletto 0x%x), ritento\n", cfg, letto);
         }
 
-        cfg |=  KBC_CFG_KBD_INT;      /* IRQ1: senza questo, tastiera muta */
-        cfg &= ~KBC_CFG_KBD_CLOCK;    /* il bit ALTO significa "disabilitato" */
-        cfg |=  KBC_CFG_TRANSLATE;    /* le tabelle qui sopra sono set 1 */
-        /* La seconda porta, cioe' il mouse. Stesso registro: si scrive una
-         * volta sola per tutti e due, che e' il motivo per cui il mouse si
-         * accende qui e non in mouse_hw_init(). */
-        cfg |=  KBC_CFG_AUX_INT;      /* IRQ12 */
-        cfg &= ~KBC_CFG_AUX_CLOCK;    /* anche qui il bit ALTO disabilita */
-
-        kbc_wait_write();
-        ioport_out(KBC_CMD, KBC_CMD_WRITE_CFG);
-        kbc_wait_write();
-        ioport_out(KBC_DATA, (unsigned char)cfg);
+        if (letto < 0 ||
+            !(letto & KBC_CFG_KBD_INT) ||
+            (letto & KBC_CFG_KBD_CLOCK) ||
+            !(letto & KBC_CFG_TRANSLATE)) {
+            printf("kbd: ! IL CONTROLLER NON TIENE LA CONFIGURAZIONE "
+                   "(0x%x).\n", letto);
+            if (letto >= 0 && !(letto & KBC_CFG_KBD_INT))
+                printf("     IRQ1 spento: nessun tasto verra' annunciato.\n");
+            if (letto >= 0 && !(letto & KBC_CFG_TRANSLATE))
+                printf("     Traduzione al set 1 spenta: usciranno lettere\n"
+                       "     sbagliate e Invio non funzionera'.\n");
+        } else {
+            printf("kbd: configuration byte 0x%x (IRQ1, clock, traduzione)\n",
+                   letto);
+        }
     }
 
     /* Abilita la scansione (comando alla tastiera, non al controller) */
@@ -1368,10 +1482,34 @@ int main(int argc, char **argv)
 
     kbd_hw_init();
 
-    /* irq_bind() smaschera l'IRQ nel PIC: da qui in poi gli IRQ1
-     * arrivano. Va fatto DOPO kbd_hw_init(), che genera traffico sul
-     * KBC (ACK del self-test, ACK di enable-scan) che non vogliamo
-     * scambiare per input dell'utente. */
+    /* =====================================================================
+     * ! PRIMA LA TASTIERA, POI IL MOUSE — e fino al 2 settembre 2026 era il
+     * contrario.
+     *
+     * irq_bind() smaschera l'IRQ nel PIC: da qui in poi gli IRQ1 arrivano. Va
+     * fatto DOPO kbd_hw_init(), che genera traffico sul KBC (ACK del
+     * self-test, ACK di enable-scan) che non vogliamo scambiare per input
+     * dell'utente. Ma va fatto PRIMA di toccare il mouse, e questo e' il
+     * punto: l'inizializzazione della seconda porta parla con un dispositivo
+     * che su moltissime macchine NON C'E', e ogni suo passo costa un timeout.
+     * Con l'ordine di prima, tutto quel tempo passava con la tastiera ancora
+     * non rivendicata — e se qualcosa fosse andato storto li' dentro, la
+     * tastiera non sarebbe mai stata rivendicata affatto.
+     *
+     * La regola generale: cio' che serve SEMPRE non aspetta cio' che serve
+     * a volte.
+     * ===================================================================== */
+    rc = irq_bind(KBD_IRQ);
+    if (rc < 0) {
+        printf("kbd: irq_bind(%u) fallita (%d) - esco\n", KBD_IRQ, rc);
+        return 1;
+    }
+
+    /* Un tasto premuto fra kbd_hw_init() e irq_bind() lascia OBF alto
+     * senza aver prodotto un fronte utile: senza questa drenata iniziale
+     * il KBC resterebbe zittito per sempre. */
+    kbd_drain();
+
     /* Il mouse PS/2, sulla seconda porta dello stesso controller. Assente
      * non e' un errore: moltissime macchine non ne hanno uno, e la tastiera
      * non c'entra niente. */
@@ -1385,16 +1523,53 @@ int main(int argc, char **argv)
         }
     }
 
-    rc = irq_bind(KBD_IRQ);
-    if (rc < 0) {
-        printf("kbd: irq_bind(%u) fallita (%d) - esco\n", KBD_IRQ, rc);
-        return 1;
-    }
+    /* =====================================================================
+     * ! SE IL MOUSE NON C'E', LA SUA PORTA SI SPEGNE — e non e' pulizia.
+     *
+     * Le due porte del controller condividono UN SOLO buffer di uscita. Con
+     * la seconda porta accesa e il suo interrupt abilitato — che e' come
+     * kbd_hw_init() lascia il byte di configurazione, 0x43 — un byte
+     * proveniente da li' riempie quel buffer; e finche' OBF resta alto il
+     * controller NON consegna piu' niente dalla tastiera.
+     *
+     * Se il mouse c'e', quel byte lo raccoglie il gestore di IRQ12. Se non
+     * c'e', nessuno ha rivendicato IRQ12: il byte resta li' per sempre e la
+     * TASTIERA muore, con il driver vivo, il byte di configurazione
+     * verificato e nessun errore da nessuna parte. Un guasto che non
+     * assomiglia alla sua causa — e una porta lasciata accesa «tanto non c'e'
+     * niente attaccato» e' esattamente il genere di cosa che su hardware vero
+     * qualcosa attaccato ce l'ha: rumore, un residuo del BIOS, un touchpad
+     * che risponde tardi.
+     * ===================================================================== */
+    if (!g_mouse_c_e) {
+        int cfg;
 
-    /* Un tasto premuto fra kbd_hw_init() e irq_bind() lascia OBF alto
-     * senza aver prodotto un fronte utile: senza questa drenata iniziale
-     * il KBC resterebbe zittito per sempre. */
-    kbd_drain();
+        kbc_wait_write();
+        ioport_out(KBC_CMD, KBC_CMD_AUX_DISABLE);
+
+        kbc_wait_write();
+        ioport_out(KBC_CMD, KBC_CMD_READ_CFG);
+        cfg = kbc_wait_read_ms(KBC_TMO_CFG);
+
+        if (cfg >= 0) {
+            cfg &= ~KBC_CFG_AUX_INT;      /* niente IRQ12 */
+            cfg |=  KBC_CFG_AUX_CLOCK;    /* il bit ALTO disabilita la porta */
+
+            kbc_wait_write();
+            ioport_out(KBC_CMD, KBC_CMD_WRITE_CFG);
+            kbc_wait_write();
+            ioport_out(KBC_DATA, (unsigned char)cfg);
+
+            printf("kbd: nessun mouse PS/2, seconda porta spenta "
+                   "(config 0x%x)\n", cfg);
+        } else {
+            printf("kbd: nessun mouse PS/2, seconda porta spenta\n");
+        }
+
+        /* E si svuota di nuovo: la sequenza qui sopra puo' aver lasciato
+         * un byte, e un byte fermo nel buffer zittisce la tastiera. */
+        kbd_drain();
+    }
 
     /* Messaggio di avvio solo se il boot è verboso: con verboseboot=0
      * questa riga sarebbe l'unica a sfuggire al silenzio, perché non

@@ -1,0 +1,19 @@
+Prova del drive floppy di EX-OS
+16 passi registrati
+
+ok passo 1  controller: MSR=0x80 (atteso 0x80)
+ok passo 2  reset: IRQ6 ricevuto
+ok passo 3  unita' 0: ST0=0xc0
+ok passo 3  unita' 1: ST0=0xc1
+ok passo 3  unita' 2: ST0=0xc2
+ok passo 3  unita' 3: ST0=0xc3
+ok passo 4  motore acceso (la spia deve accendersi)
+ok passo 5  ricalibratura: ST0=0x20 PCN=0
+ok passo 6  testina a 10: il controller dice 10
+ok passo 6  testina a 40: il controller dice 40
+ok passo 6  testina a 79: il controller dice 79
+ok passo 6  testina a 0: il controller dice 0
+ok passo 7  settore 0: letto, firma 0x55AA presente
+ok passo 8  LBA 2268: 0 letture su 10 fallite
+ok passo 9  motore spento (la spia deve spegnersi)
+ok passo 10  codice 10 (a=0 b=1)

@@ -280,6 +280,21 @@ typedef struct {
 #define SYS_IOPORT_OUT16  234
 #define SYS_IOPORT_IN32   235
 #define SYS_IOPORT_OUT32  236
+#define SYS_FDPROVA       198
+#define SYS_KBPROVA       199
+
+/* ! DEVE RESTARE IDENTICA a FdPasso in kernel/include/syscall.h e in
+ * lib/include/libc.h. TRE copie, come per DmaZona e ShmZona, e per la stessa
+ * ragione: questo file non include libc.h. La riempie il kernel scrivendo
+ * nella memoria del processo, quindi due definizioni che divergono danno
+ * numeri letti dal campo sbagliato — una diagnostica che mente e' peggio di
+ * una che non c'e'. */
+typedef struct {
+    unsigned int passo;
+    unsigned int codice;
+    int          esito;
+    unsigned int a, b;
+} FdPasso;
 #define SYS_IRQ_UNBIND    219
 #define SYS_IRQ_DONE      237
 #define SYS_DMA_ALLOC     239
@@ -5904,6 +5919,21 @@ int irq_done(unsigned int irq)
 int irq_unbind(unsigned int irq)
 {
     return (int)_syscall1(SYS_IRQ_UNBIND, irq);
+}
+
+int fdprova(FdPasso *passi, unsigned int max)
+{
+    return (int)_syscall3(SYS_FDPROVA, (unsigned int)passi, max, 0);
+}
+
+int kbprova(FdPasso *passi, unsigned int max)
+{
+    return (int)_syscall3(SYS_KBPROVA, (unsigned int)passi, max, 0);
+}
+
+int kbstato(FdPasso *passi, unsigned int max)
+{
+    return (int)_syscall3(SYS_KBPROVA, (unsigned int)passi, max, 1);
 }
 
 int dma_alloc(DmaZona *z)

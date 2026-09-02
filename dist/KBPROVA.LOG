@@ -1,0 +1,11 @@
+Prova della tastiera di EX-OS
+8 passi registrati
+
+ok passo 1  8042: stato=0x1c (0xFF = assente)
+ok passo 2  autodiagnosi 8042: 0x55 (atteso 0x55)
+ok passo 3  prova della porta: 0x00 (atteso 0x00)
+NO passo 4  configurazione=0x21 (bit0 IRQ1, bit4 clock)
+ok passo 5  reset tastiera: ACK=0xfa BAT=0xaa
+ok passo 6  scansione accesa: 0xfa (atteso 0xFA)
+ok passo 7  maschera PIC=0xbc (bit1 = IRQ1 chiusa)
+ok passo 8  tasti: 6 codici, 4 interrupt

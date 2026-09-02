@@ -84,4 +84,9 @@ int  drv_write(const void *buf, size_t n);
 int  drv_ioctl(int cmd, void *arg);
 void drv_exit(void);
 
+/* Quale delle due strade serve la tastiera adesso: TTY_INPUT_*. Serve a una
+ * diagnostica — le due si escludono a vicenda, e sapere su quale si e' finiti
+ * e' la prima domanda quando nessun tasto fa niente. */
+int tty_input_source(void);
+
 #endif /* TTY_H */

@@ -12,6 +12,8 @@
 #ifndef FAT12_H
 #define FAT12_H
 
+#include "syscall.h"   /* FdPasso: il taccuino della diagnostica */
+
 #include "kernel.h"
 
 /* Entry directory FAT12 (32 byte, layout hardware) */
@@ -96,6 +98,20 @@ int  fat12_sync(void);
  * Il prossimo accesso al disco lo riaccende pagando una volta i 300 ms di
  * stabilizzazione. */
 void fat12_motor_off(void);
+
+/* Il tick del timer, cento volte al secondo: spegne il motore del floppy dopo
+ * due secondi di inattivita'. ! LA CHIAMA sched_irq0_handler, cioe' gira
+ * DENTRO l'interrupt: non fa altro che una out su una porta. Il perche' esista
+ * — un dischetto lasciato girare consuma il supporto, e le uscite in errore di
+ * fat12_sync() lasciavano il motore acceso proprio sui drive che sbagliano —
+ * sta accanto a FDC_INATTIVITA_TICK in kernel/fs/fat12.c. */
+void fat12_motor_tick(void);
+
+/* La diagnostica passo passo del drive: rende quanti passi hanno dato
+ * problemi. Scrive su console e seriale con kprintf, quindi si vede anche a
+ * loglevel basso. Il perche' stia nel kernel — l'IRQ6 e' suo, e un programma
+ * ring3 proverebbe un altro codice — sta accanto alla funzione in fat12.c. */
+int  fat12_diagnostica(FdPasso *out, unsigned int max);
 
 /* =============================================================================
  * Accesso GREZZO al supporto floppy, per l'astrazione a blocchi (blk.c).

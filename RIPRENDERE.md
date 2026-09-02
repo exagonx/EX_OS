@@ -1,3 +1,130 @@
+# DOVE RIPRENDERE — 2 settembre 2026
+
+## 2 settembre 2026 — UNA CASSETTA PIENA NON E' UN DRIVER MORTO
+
+Il sintomo durava da giorni: su Pentium II il sistema arrivava al prompt e
+nessun tasto faceva niente; in QEMU la stessa immagine funzionava sempre. Poi
+l'indizio che ha risolto tutto — **su hardware vero funzionava anche, se si
+avviava con `verboseboot = 1`**. Lo stesso floppy, due comportamenti, e l'unica
+differenza era la **velocita'** dell'avvio.
+
+### La causa
+
+Al PASSO 15 il kernel avvia **una shell per console virtuale: cinque**. Ognuna
+chiama `read(0)`, cioe' manda una `KBD_MSG_READLINE` a `/dev/kbd.drv`. La
+mailbox di un processo e' profonda **quattro**. La quinta trova pieno e
+`ipc_send` rende `-EBUSY`.
+
+`tty_read_ipc` trattava **qualunque** valore negativo come «il driver e' morto»
+e ripiegava sul gestore IRQ1 interno — **per sempre**. Da li' `kbd.drv` era
+affamato: `irq_handler()` da' la precedenza a un handler kernel rispetto al
+proprietario ring3 della linea. Driver vivo, registrato, IRQ1 rivendicato, byte
+di configurazione verificato, e nessun errore da nessuna parte.
+
+! **CON L'AVVIO VERBOSO LE CINQUE SHELL PARTONO SFALSATE** dalle stampe, la
+cassetta non si riempie mai, e tutto funziona. E' anche il motivo per cui in
+emulazione non si e' visto per due mesi.
+
+### Tre correzioni
+
+- `-EBUSY` si riprova; solo `-ESRCH` e' morte.
+- **Il ripiego e' reversibile**: ci si cadeva per una corsa nei primi secondi e
+  si restava li' fino allo spegnimento. Ora si ricontrolla, e appena il servizio
+  risponde si torna al driver.
+- Tornando all'IPC **si toglie il gestore kernel**, o il ritorno non servirebbe.
+
+### ! LA LEZIONE, che vale oltre questo file
+
+Un codice d'errore che accorpa «occupato» e «morto» costringe chi lo legge a
+scegliere la reazione sbagliata per uno dei due. Qui la reazione era
+irreversibile, e trasformava mezzo secondo di contesa in una sessione senza
+tastiera. **Le condizioni transitorie si riprovano, quelle definitive si
+dichiarano, e una via di ripiego deve saper tornare indietro.**
+
+---
+
+# DOVE RIPRENDERE — 2 settembre 2026
+
+## 2 settembre 2026 (sera) — IL BYTE DI CONFIGURAZIONE SI SCRIVE E POI SI RILEGGE
+
+Il log di `kbprova` dalla macchina vera ha chiuso in una riga la tastiera muta
+del Pentium II:
+
+    NO passo 4  configurazione=0x21 (bit0 IRQ1, bit4 clock)
+
+0x21 e' il valore **dopo** la correzione della prova: l'originale aveva l'IRQ1
+**spento**. Stessa causa del 31 luglio — su un 8042 vero il comando 0xAA
+reinizializza il configuration byte, e il predefinito ha quel bit a zero.
+
+! **LA CURA C'ERA E NON BASTAVA, per due ragioni.** La prima: stava in un posto
+solo, dentro `kbd_hw_init()`, e la tastiera ha **due strade** che si escludono a
+vicenda — il driver ring3 e il gestore IRQ1 dentro il TTY. Il ripiego non l'ha
+mai avuta. La seconda, che e' quella che conta: **si scriveva senza rileggere**.
+Su un chip che ha appena subito un'autodiagnosi, una scrittura sul byte di
+configurazione non e' un fatto, e' una richiesta. Adesso si scrive, si rilegge,
+si ritenta tre volte, e se non attecchisce lo si dice.
+
+### ! E LA TRADUZIONE E' IL TERZO BIT, non un dettaglio
+
+La prima versione di `kbprova` correggeva IRQ1 e clock e lasciava spento il
+**bit 6**. Il controller consegna allora gli scancode del **set 2** mentre le
+tabelle del sistema sono per il set 1. Il sintomo, riferito dalla macchina
+vera: *«la shell mi permette di scrivere ma non funzionano backspace e invio,
+solo alfanumerico»*. Le lettere escono perche' qualche codice del set 2 cade su
+una lettera del set 1; INVIO (0x5A) e BACKSPACE (0x66) nel set 1 non vogliono
+dire niente.
+
+Da qui il **passo 9**: la prova rimette il controller come serve a chi usa la
+macchina. L'autodiagnosi del passo 2 lo azzera, e **una diagnostica non deve
+rompere cio' che e' venuta a misurare** — regola che vale ben oltre questo file.
+
+---
+
+# DOVE RIPRENDERE — 2 settembre 2026
+
+## 2 settembre 2026 — LA TASTIERA MUTA AVEVA DUE STRADE, E LA CURA ERA SU UNA
+
+Il 31 luglio si era trovato il perche' di una tastiera morta su un Pentium II:
+su un 8042 **vero** il comando 0xAA reinizializza il configuration byte, e il
+predefinito ha il bit «alza IRQ1» a ZERO. In QEMU non si vede.
+
+! **LA CURA ERA IN UN POSTO SOLO**, dentro `kbd_hw_init()`. Ma la tastiera ha
+**due** percorsi che si escludono a vicenda: il driver ring3, e il gestore IRQ1
+dentro il TTY del kernel — che entra in gioco quando `kbd.drv` non c'e' o non
+registra il servizio in tempo, e `tty_read_ipc` aspetta solo qualche decimo di
+secondo. Su una macchina lenta che legge da floppy non e' detto che basti.
+
+Quel secondo percorso la correzione non l'ha mai avuta: ripiega, registra il
+proprio gestore, apre la linea nel PIC, e trova IRQ1 spento nel configuration
+byte esattamente come il driver ring3 lo trovava a luglio. **Due guasti diversi
+con lo stesso identico sintomo**: il prompt compare e nessun tasto fa niente.
+
+### `kbprova`, e le due cose che la prova ha dovuto imparare da se'
+
+Otto passi, e l'ultimo conta **due numeri diversi**: i codici che arrivano nel
+buffer e gli interrupt che li accompagnano. La differenza e' tutta la diagnosi.
+
+! **PRENDERSI L'IRQ1 PER TUTTA LA PROVA, non solo per l'ultimo passo.** Se la
+tastiera la serve il TTY, il suo gestore **svuota** la porta 0x60: le risposte
+dell'8042 ai passi 2-6 finivano li' dentro, e la prova diceva «il controller
+non risponde» su un controller che rispondeva benissimo.
+
+! **E IL GESTORE TEMPORANEO DEVE SVUOTARE LA PORTA.** La prima versione non lo
+faceva, per non rubare i byte al ciclo a tappeto. Ma l'8042 tiene IRQ1 **alta**
+finche' il buffer e' pieno: l'interrupt ripartiva subito dopo l'`iret` e la
+macchina passava tutto il tempo dentro il gestore. Trentacinque tasti battuti,
+zero visti. E' lo stesso errore di ragionamento della tempesta di ieri, fatto
+in un posto diverso.
+
+### Il floppy, passo 10
+
+Dopo che il motore si e' fermato si rilegge, e si verifica che riparta da solo
+e che i dati tornino. E' il percorso che il timer di inattivita' crea a ogni
+pausa, e se sbaglia li' la macchina funziona finche' si lavora e sbaglia dopo
+una pausa — il guasto piu' difficile da collegare alla causa.
+
+---
+
 # DOVE RIPRENDERE — 1 settembre 2026
 
 ## 1 settembre 2026 — IL SUONO, E TRE APERTURE NEL KERNEL PER AVERLO

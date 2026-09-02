@@ -1,1 +1,0 @@
-binutils nativi per EX-OS (2.44): as ld ar ranlib nm strip objcopy objdump

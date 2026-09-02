@@ -4228,6 +4228,58 @@ int32_t sys_irq_done(InterruptFrame *frame)
 }
 
 /* =============================================================================
+ * SYS_FDPROVA (198) — vedi kernel/include/syscall.h per il contratto
+ * ========================================================================== */
+int32_t sys_fdprova(InterruptFrame *frame)
+{
+    Process *self = proc_get_current();
+
+    (void)frame;
+
+    /* ! SOLO root, e non per abitudine: la prova muove la testina e azzera il
+     * controller del disco da cui il sistema sta girando. Un utente qualunque
+     * non deve poter fermare il floppy sotto i piedi di chi sta scrivendo. */
+    if (self->uid != 0) return ERR(EPERM);
+
+    {
+        FdPasso     *out = (FdPasso *)frame->ebx;
+        unsigned int max = frame->ecx;
+
+        /* Con un buffer nullo la prova si fa lo stesso: la cronaca a schermo
+         * e' meta' del valore, e chi la lancia a mano puo' non volere il log. */
+        if (out != 0) {
+            if (max == 0 || max > 64) return ERR(EINVAL);
+            if (!syscall_verify_ptr(out, max * sizeof(FdPasso))) return ERR(EFAULT);
+        }
+
+        return (int32_t)fat12_diagnostica(out, max);
+    }
+}
+
+/* =============================================================================
+ * SYS_KBPROVA (199) — vedi kernel/include/syscall.h per il contratto
+ * ========================================================================== */
+int kbd_diagnostica(FdPasso *out, unsigned int max);  /* kernel/arch/x86/kbdprova.c */
+int kbd_stato(FdPasso *out, unsigned int max);
+
+int32_t sys_kbprova(InterruptFrame *frame)
+{
+    Process     *self = proc_get_current();
+    FdPasso     *out  = (FdPasso *)frame->ebx;
+    unsigned int max  = frame->ecx;
+
+    if (self->uid != 0) return ERR(EPERM);
+
+    if (out != 0) {
+        if (max == 0 || max > 64) return ERR(EINVAL);
+        if (!syscall_verify_ptr(out, max * sizeof(FdPasso))) return ERR(EFAULT);
+    }
+
+        if (frame->edx == KBP_STATO) return (int32_t)kbd_stato(out, max);
+        return (int32_t)kbd_diagnostica(out, max);
+}
+
+/* =============================================================================
  * SYS_IRQ_UNBIND (219) — vedi kernel/include/syscall.h per il contratto
  * ========================================================================== */
 int32_t sys_irq_unbind(InterruptFrame *frame)

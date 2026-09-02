@@ -152,6 +152,8 @@ void syscall_init(void)
     syscall_table[SYS_IOPORT_OUT32] = sys_ioport_out32;
     syscall_table[SYS_IRQ_DONE]     = sys_irq_done;
     syscall_table[SYS_IRQ_UNBIND]   = sys_irq_unbind;
+    syscall_table[SYS_FDPROVA]      = sys_fdprova;
+    syscall_table[SYS_KBPROVA]      = sys_kbprova;
     syscall_table[SYS_DMA_ALLOC]    = sys_dma_alloc;
     syscall_table[SYS_MMIO_MAP]     = sys_mmio_map;
     syscall_table[SYS_POLL]         = sys_poll;

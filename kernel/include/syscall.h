@@ -74,6 +74,82 @@
 #define SYS_PARTWRITE   195    /* riscrive la tabella delle partizioni (vedi PartTabella) */
 #define SYS_BLKREAD     196    /* legge settori da una partizione NON montata */
 #define SYS_BLKWRITE    197    /* scrive settori in una partizione NON montata */
+
+/* =============================================================================
+ * SYS_FDPROVA — la prova passo passo del drive floppy
+ *
+ * ebx = FdPasso*, ecx = quanti ce ne stanno. Rende quanti passi ha registrato,
+ * oppure -EPERM se non la chiede root, -EFAULT se il buffer non e' suo.
+ * Con ebx == 0 la prova si fa lo stesso e non registra niente.
+ *
+ * ! IL KERNEL RENDE DATI, NON RIGHE DI TESTO. Le frasi le compone
+ * /bin/fdprova, e non e' pignoleria: le stesse misure devono poter finire in
+ * un file di log, a schermo in forma ridotta quando il file non si scrive, e
+ * un giorno magari altrove. Un kernel che rende testo gia' impaginato
+ * costringe chiunque a disfarlo.
+ *
+ * ! MA LA CRONACA RESTA A CARICO DEL KERNEL, e va detto perche' sembra una
+ * contraddizione: mentre la prova gira, ogni passo si annuncia con kprintf
+ * PRIMA di eseguire il movimento. Meta' della prova la fa l'orecchio di chi
+ * sta davanti alla macchina, e «adesso la testina va a cilindro 40» letto
+ * dopo, in un riassunto, non prova piu' niente. Il testo che esce durante la
+ * prova serve all'uomo; questi dati servono al file.
+ * ============================================================================= */
+#define SYS_FDPROVA     198    /* ebx = FdPasso*, ecx = quanti; prova il floppy */
+
+/* Che cosa e' stato provato in questo passo. */
+#define FD_MSR          1   /* a = MSR letto                                  */
+#define FD_RESET_IRQ    2   /* il reset ha prodotto l'IRQ6?                   */
+#define FD_SENSE        3   /* a = unita', b = ST0                            */
+#define FD_MOTORE_ON    4   /* il motore e' stato acceso                      */
+#define FD_RECAL        5   /* a = ST0, b = PCN                               */
+#define FD_SEEK         6   /* a = cilindro chiesto, b = cilindro riferito    */
+#define FD_LETTURA      7   /* a = LBA, b = 1 se la firma 0x55AA c'era        */
+#define FD_RIPETUTA     8   /* a = LBA, b = quante fallite su dieci           */
+#define FD_MOTORE_OFF   9   /* il motore e' stato spento                      */
+#define FD_RIACCESO    10   /* fermo e poi riletto: b = 1 se i dati tornano   */
+
+/* =============================================================================
+ * SYS_KBPROVA — la prova passo passo della tastiera
+ *
+ * ebx = FdPasso*, ecx = quanti. Stesso contratto di SYS_FDPROVA: il kernel
+ * rende misure, le frasi le compone /bin/kbprova, e la cronaca a schermo la
+ * scrive il kernel mentre la prova gira — perche' il passo 8 chiede
+ * all'utente di premere dei tasti, e un invito letto DOPO non serve a niente.
+ *
+ * ! CHIEDE CHE NESSUNO ABBIA L'IRQ1. Legge il buffer dell'8042 a tappeto:
+ * se /dev/kbd.drv e' caricato, i codici se li prende lui e la prova ne
+ * vedrebbe la meta'. Con l'IRQ1 rivendicato la prova lo dice e si ferma.
+ * ============================================================================= */
+#define SYS_KBPROVA     199    /* ebx = FdPasso*, ecx = quanti; prova la tastiera */
+
+#define KB_OCCUPATO     20   /* c'e' gia' un driver sull'IRQ1: non si prova   */
+#define KB_STATO        21   /* a = registro di stato dell'8042               */
+#define KB_SELFTEST     22   /* a = risposta a 0xAA (attesa 0x55)             */
+#define KB_PORTA        23   /* a = risposta a 0xAB (attesa 0x00)             */
+#define KB_CONFIG       24   /* a = byte di configurazione                    */
+#define KB_RESET        25   /* a = ACK, b = autodiagnosi della tastiera      */
+#define KB_SCANSIONE    26   /* a = risposta a 0xF4 (attesa 0xFA)             */
+#define KB_PIC          27   /* a = maschera del PIC                          */
+#define KB_TASTI        28   /* a = codici ricevuti, b = interrupt ricevuti   */
+#define KB_SORGENTE     29   /* a = TTY_INPUT_*, b = PID del servizio 'kbd'   */
+
+/* edx della SYS_KBPROVA: 0 = prova completa, 1 = solo lo stato.
+ * ! LO STATO SI PUO' CHIEDERE CON kbd.drv CARICATO, la prova no: la prova
+ * parla con l'8042 e due lettori si rubano i byte, lo stato guarda soltanto
+ * delle variabili del kernel e la maschera del PIC. */
+#define KBP_COMPLETA    0
+#define KBP_STATO       1
+
+/* ! DEVE RESTARE IDENTICA a FdPasso in lib/include/libc.h. La riempie il
+ * kernel scrivendo nella memoria del processo: due definizioni che divergono
+ * danno numeri letti dal campo sbagliato, cioe' una diagnostica che mente. */
+typedef struct {
+    unsigned int passo;     /* il numero stampato a schermo */
+    unsigned int codice;    /* FD_* : che cosa e' stato provato */
+    int          esito;     /* 0 = a posto, <0 = problema */
+    unsigned int a, b;      /* due numeri, il significato lo da' `codice` */
+} FdPasso;
 #define SYS_TRUNCATE     92    /* cambia la dimensione di un file (vedi sys_truncate) */
 #define SYS_REBOOT       88    /* spegne, riavvia o ferma il sistema */
 #define SYS_DUP          41    /* un secondo descrittore sullo stesso file */
@@ -1214,6 +1290,8 @@ int32_t sys_ioport_in32(InterruptFrame *f);
 int32_t sys_ioport_out32(InterruptFrame *f);
 int32_t sys_irq_done(InterruptFrame *f);
 int32_t sys_irq_unbind(InterruptFrame *f);
+int32_t sys_fdprova(InterruptFrame *f);
+int32_t sys_kbprova(InterruptFrame *f);
 int32_t sys_dma_alloc(InterruptFrame *f);
 int32_t sys_mmio_map(InterruptFrame *f);
 int32_t sys_random(InterruptFrame *f);

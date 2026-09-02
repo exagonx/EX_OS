@@ -11,6 +11,7 @@
 
 #include "kernel.h"
 #include "sched.h"
+#include "fat12.h"   /* fat12_motor_tick: il motore del floppy si ferma dal tick */
 #include "vga.h"   /* VGA_N_CONSOLE: una tabella di primo piano per console */
 #include "pmm.h"
 #include "ipc.h"
@@ -655,6 +656,17 @@ static void sched_irq0_handler(InterruptFrame *frame)
     (void)frame;    /* Non usiamo il frame direttamente */
 
     g_ticks++;
+
+    /* ! IL MOTORE DEL FLOPPY SI SPEGNE DA QUI, e non da dentro il driver.
+     * Il driver, quando servirebbe, e' fermo in attesa o ha appena rinunciato
+     * per errore: l'unica cosa che continua a girare e' questo tick. Costa tre
+     * confronti e, due secondi dopo l'ultimo accesso, una out. Il perche' per
+     * esteso sta accanto a FDC_INATTIVITA_TICK in kernel/fs/fat12.c.
+     *
+     * ! PRIMA DEL RITORNO PER g_sched_stopped, apposta: durante lo spegnimento
+     * il disco si sincronizza e poi resta fermo, e non c'e' motivo di lasciarlo
+     * girare fino al taglio dell'alimentazione. */
+    fat12_motor_tick();
 
     /* Sistema in arresto: g_ticks deve continuare ad avanzare (serve al
      * conto alla rovescia dello spegnimento e ai delay del driver FDC
