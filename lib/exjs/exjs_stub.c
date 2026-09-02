@@ -97,6 +97,7 @@ static struct {
     ExJsVal (*oggetto)(ExJsCtx *);
     ExJsVal (*vettore)(ExJsCtx *);
     ExJsVal (*nativa)(ExJsCtx *, ExJsNativa, void *, const char *);
+    ExJsVal (*costruttore)(ExJsCtx *, ExJsNativa, void *, const char *);
     int (*tipo)(ExJsCtx *, ExJsVal);
     double (*a_numero)(ExJsCtx *, ExJsVal);
     int (*a_booleano)(ExJsCtx *, ExJsVal);
@@ -215,6 +216,8 @@ static void assicura(void)
         chiedi(t, "exjs_vettore");
     P.nativa = (ExJsVal (*)(ExJsCtx *, ExJsNativa, void *, const char *))
         chiedi(t, "exjs_nativa");
+    P.costruttore = (ExJsVal (*)(ExJsCtx *, ExJsNativa, void *, const char *))
+        chiedi(t, "exjs_costruttore");
     P.tipo = (int (*)(ExJsCtx *, ExJsVal))
         chiedi(t, "exjs_tipo");
     P.a_numero = (double (*)(ExJsCtx *, ExJsVal))
@@ -295,6 +298,9 @@ ExJsVal exjs_oggetto(ExJsCtx *c)
 
 ExJsVal exjs_vettore(ExJsCtx *c)
 { assicura(); return P.vettore(c); }
+
+ExJsVal exjs_costruttore(ExJsCtx *c, ExJsNativa f, void *dato, const char *nome)
+{ assicura(); return P.costruttore(c, f, dato, nome); }
 
 ExJsVal exjs_nativa(ExJsCtx *c, ExJsNativa f, void *dato, const char *nome)
 { assicura(); return P.nativa(c, f, dato, nome); }

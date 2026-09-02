@@ -45,6 +45,17 @@ extern "C" {
 #define HTTP_TIPO_MAX        96
 #define HTTP_POSIZIONE_MAX  512
 
+/* ! I BISCOTTI DI UNA RISPOSTA SONO PIU' D'UNO, e per questo sono un vettore e
+ * non un campo. `Set-Cookie` e' l'unica intestazione che un server manda
+ * ripetuta apposta: accorparla come si fa con le altre — l'ultima vince —
+ * vorrebbe dire buttarne via tre su quattro senza dirlo.
+ *
+ * ! E IL TETTO SI DICHIARA, come ovunque qui dentro: se ne arrivano di piu' si
+ * accende `biscotti_persi`. Sei bastano ai siti che si incontrano; chi ne
+ * manda dodici lo fa sapere invece di far sparire i suoi in silenzio. */
+#define HTTP_BISCOTTI_MAX     6
+#define HTTP_BISCOTTO_MAX   256
+
 /* ! UN PEZZO PIU' GRANDE DI QUESTO E' UNA RISPOSTA SBAGLIATA, non una risposta
  * grande: il corpo si consuma a blocchi, quindi la dimensione di un pezzo non
  * ha nessun bisogno di essere enorme. Sedici megabyte e' gia' assurdo e serve
@@ -98,8 +109,14 @@ int http_richiesta(char *out, unsigned int max, const HttpUrl *u,
  * pezzi. Senza, la fine e' la CHIUSURA, e tenere aperta una connessione di cui
  * non si sa quando finisce la risposta vuol dire aspettare per sempre. Chi
  * chiama guarda la risposta e decide. */
+/* ! I BISCOTTI DA MANDARE ARRIVANO GIA' PRONTI, «n=v; n2=v2», e questa
+ * funzione li scrive e basta. Non sa che cosa sia un dominio ne' quando un
+ * biscotto scade: chi tiene la dispensa lo sa, e sceglie lui quali riguardano
+ * questo indirizzo. Con 0 o "" l'intestazione non si scrive affatto — e non
+ * si scrive `Cookie:` vuota, che per certi server e' un'altra cosa. */
 int http_richiesta_corpo(char *out, unsigned int max, const HttpUrl *u,
-                         const char *agente, const char *corpo, int vivo);
+                         const char *agente, const char *corpo, int vivo,
+                         const char *biscotti);
 
 typedef struct {
     int          codice;                    /* 200, 404, ... */
@@ -109,6 +126,13 @@ typedef struct {
     char         tipo[HTTP_TIPO_MAX];       /* Content-Type */
     char         posizione[HTTP_POSIZIONE_MAX];  /* Location */
     int          chiude;                    /* «Connection: close» dal server */
+
+    /* Le righe `Set-Cookie`, com'erano scritte: qui non si interpretano.
+     * Chi le legge decide che cosa e' un dominio, un percorso e una scadenza,
+     * ed e' giusto che sia lui — questa e' una libreria di trasporto. */
+    char         biscotti[HTTP_BISCOTTI_MAX][HTTP_BISCOTTO_MAX];
+    int          n_biscotti;
+    int          biscotti_persi;            /* 1 = ce n'erano di piu' */
 } HttpRisposta;
 
 /* Legge la riga di stato e le intestazioni, se sono complete dentro `d`.

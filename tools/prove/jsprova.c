@@ -1027,6 +1027,76 @@ int main(void)
                      "setTimeout(crea(),10);",
                      "var v='di un altro';",
                      100, "mio\n");
+    /* =========================================================================
+     * LE STRINGHE LUNGHE
+     *
+     * ! QUESTE PROVE NASCONO DA UN DIFETTO, e vale la pena dire quale: ogni
+     * metodo di String copiava il soggetto in un buffer da 512 byte e lavorava
+     * sui primi 511 caratteri. `pagina.indexOf('riquadro')` rendeva -1 su un
+     * testo che quella parola ce l'aveva — nessun errore, nessun avviso, la
+     * risposta sbagliata. Si e' visto quando XMLHttpRequest ha cominciato a
+     * consegnare documenti interi agli script; prima, di stringhe cosi' lunghe
+     * in giro ce n'erano poche.
+     *
+     * ! IL NUMERO 512 NON COMPARE IN NESSUNA DI QUESTE PROVE, ed e' voluto:
+     * si prova che il tetto NON C'E', non che e' piu' alto. Mille caratteri
+     * bastano a farlo vedere, e chi domani lo abbassasse per sbaglio se ne
+     * accorgerebbe qui.
+     * ====================================================================== */
+    printf("\n=== le stringhe lunghe (piu' di un buffer) ===\n");
+
+/* ! LA STRINGA SI RADDOPPIA INVECE DI ALLUNGARSI DI DIECI, e non e' un vezzo:
+ * ExJs non ha un raccoglitore di memoria, quindi ogni concatenazione lascia
+ * nell'arena la stringa di prima. Cento passi da dieci caratteri ne
+ * consumavano cinquantamila e la finivano; sette raddoppi ne consumano
+ * duemilacinquecento e arrivano piu' lontano. E' una lezione sulle stringhe in
+ * questo motore, non solo un modo di scrivere la prova. */
+#define LUNGA "var s = '0123456789';" \
+              "for (var i = 0; i < 7; i++) s = s + s;"
+
+    prova_esegui("milleduecentottanta caratteri ci sono tutti",
+                 LUNGA "s.length", "1280");
+    prova_esegui("indexOf trova oltre il buffer",
+                 LUNGA "s = s + 'AGO'; s.indexOf('AGO')", "1280");
+    prova_esegui("e rende -1 solo quando davvero non c'e'",
+                 LUNGA "s.indexOf('AGO')", "-1");
+    prova_esegui("lastIndexOf pure",
+                 LUNGA "s.lastIndexOf('89')", "1278");
+    prova_esegui("charAt oltre il buffer",
+                 LUNGA "s.charAt(1279)", "9");
+    prova_esegui("charCodeAt oltre il buffer",
+                 LUNGA "s.charCodeAt(1279)", "57");
+    prova_esegui("slice tiene la coda intera",
+                 LUNGA "s.slice(900).length", "380");
+    prova_esegui("substring pure",
+                 LUNGA "s.substring(500, 1000).length", "500");
+    prova_esegui("toUpperCase non accorcia",
+                 LUNGA "s = s + 'coda'; s.toUpperCase().length", "1284");
+    prova_esegui("e cambia caso in fondo",
+                 LUNGA "s = s + 'coda'; s.toUpperCase().slice(1280)", "CODA");
+    prova_esegui("split taglia dove deve, anche in fondo",
+                 LUNGA "s = s + '|ultimo'; var p = s.split('|');"
+                       "p.length + ' ' + p[1]", "2 ultimo");
+    prova_esegui("replace sostituisce e non tronca",
+                 LUNGA "s = s + 'AGO'; var r = s.replace('AGO', 'X');"
+                       "r.length + ' ' + r.slice(1278)", "1281 89X");
+    prova_esegui("replace in testa tiene tutta la coda",
+                 LUNGA "var r = s.replace('012', 'X');"
+                       "r.length + ' ' + r.slice(-3)", "1278 789");
+    prova_esegui("trim non accorcia quel che sta in mezzo",
+                 LUNGA "('  ' + s + '  ').trim().length", "1280");
+    /* ! DUE TESTI LUNGHI CHE DIFFERISCONO IN FONDO SONO DIVERSI, e con la
+     * copia troncata risultavano uguali. */
+    prova_esegui("due lunghe si confrontano per intero",
+                 LUNGA "var a = s + 'A'; var b = s + 'B'; (a < b) + ' ' + (a == b)",
+                 "true false");
+    prova_esegui("JSON.stringify non taglia una stringa lunga",
+                 LUNGA "JSON.parse(JSON.stringify(s)).length", "1280");
+    prova_esegui("e JSON.parse rilegge un documento lungo",
+                 LUNGA "var o = JSON.parse('{\"t\":\"' + s + '\"}'); o.t.length",
+                 "1280");
+#undef LUNGA
+
 
     printf("\n%d prove, %d sbagliate\n", fatte, sbagliate);
     return sbagliate ? 1 : 0;

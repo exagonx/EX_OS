@@ -99,6 +99,36 @@ int exhttp_prendi(const char *url, unsigned char *buf, unsigned int max,
 int exhttp_posta(const char *url, const char *corpo,
                  unsigned char *buf, unsigned int max, ExHttpEsito *e);
 
+/* =============================================================================
+ * I BISCOTTI — exhttp non li tiene, li chiede e li consegna
+ *
+ * ! LA DISPENSA STA IN CHI CHIAMA. Sapere che cosa e' un dominio, quando una
+ * scadenza e' passata e dove si scrivono su disco sono tre cose che una
+ * libreria di trasporto non ha motivo di sapere. exhttp fa la quarta: li mette
+ * nella richiesta e riporta quelli che tornano.
+ *
+ * ! E DEVE FARLA exhttp, non chi chiama, perche' il giro delle redirezioni lo
+ * fa lei. Un server che manda `302` e `Set-Cookie` insieme si aspetta che la
+ * richiesta DOPO — quella che exhttp fa da se', dentro la stessa chiamata —
+ * se lo porti gia' dietro. E' il caso normale di mezzo web, non un dettaglio.
+ *
+ * `chiedi` riempie `fuori` con «n=v; n2=v2» — gia' scelti per QUEL host e QUEL
+ * percorso — o lo lascia vuoto. `arrivato` riceve una riga `Set-Cookie` com'era
+ * scritta, e l'host che l'ha mandata.
+ *
+ * ! SENZA REGISTRARE NIENTE NON CAMBIA NIENTE: niente `Cookie:` in uscita, e i
+ * `Set-Cookie` che arrivano si leggono e si buttano. Un programma che di
+ * biscotti non sa niente non deve accorgersi che esistono.
+ * ========================================================================== */
+typedef void (*ExHttpBiscottiChiedi)(void *dato, const char *host,
+                                     const char *percorso, int cifrata,
+                                     char *fuori, unsigned int max);
+typedef void (*ExHttpBiscottoArrivato)(void *dato, const char *host,
+                                       const char *riga);
+
+void exhttp_biscotti(ExHttpBiscottiChiedi chiedi,
+                     ExHttpBiscottoArrivato arrivato, void *dato);
+
 /* Come sopra ma su un trasporto gia' aperto, e senza seguire le redirezioni:
  * e' il mattone con cui exhttp_prendi e' fatta, ed e' quello che servira' al
  * TLS. `u` dice cosa chiedere. */

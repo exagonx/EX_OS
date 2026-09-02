@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>I biscotti</title>
+<style>
+body   { font-family: sans-serif; margin: 16px; }
+h1     { font-size: 22px; }
+h2     { font-size: 17px; margin-top: 18px; }
+.riq   { border: 1px solid #888; padding: 6px; background: #f4f4f4; }
+</style>
+<!-- Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>  GPL-2.0-or-later
+
+     ! QUESTA PAGINA SI APRE DA /metti-biscotti, NON DAL SUO NOME. E' il
+     server (servi.py) a mettere i due Set-Cookie mentre la manda; aperta per
+     nome arriva senza biscotti, e i riquadri lo dicono invece di sembrare
+     rotti.
+
+     ! E PROVA LE DUE META' DEL GIRO. Che document.cookie faccia vedere
+     qualcosa non dimostra niente: il biscotto deve TORNARE AL SERVER. Per
+     questo c'e' /eco-biscotti, che risponde con l'intestazione Cookie che gli
+     e' arrivata — cioe' con quel che il browser ha davvero mandato. -->
+</head>
+<body>
+
+<h1>I biscotti, le due meta' del giro</h1>
+
+<h2>1. quel che uno script vede</h2>
+<div id="uno" class="riq">non e' successo niente</div>
+
+<h2>2. quel che il server riceve</h2>
+<div id="due" class="riq">non e' successo niente</div>
+
+<h2>3. un biscotto messo da uno script, e rimandato indietro</h2>
+<div id="tre" class="riq">non e' successo niente</div>
+
+<script>
+/* 1 — document.cookie: c'e' quello normale e NON quello HttpOnly */
+document.getElementById('uno').textContent =
+    'document.cookie: «' + document.cookie + '»' +
+    '  (dalserver: ' + (document.cookie.indexOf('dalserver') >= 0) +
+    ', segreto: ' + (document.cookie.indexOf('segreto') >= 0) + ')';
+
+/* 2 — la meta' che conta: il biscotto torna al server? */
+fetch('/eco-biscotti').then(function (r) { return r.text(); })
+                      .then(function (t) {
+    document.getElementById('due').textContent = 'il server ha ricevuto: ' + t;
+});
+
+/* 3 — uno scritto da qui deve partire alla richiesta dopo */
+document.cookie = 'dascript=fatto; Path=/';
+fetch('/eco-biscotti').then(function (r) { return r.text(); })
+                      .then(function (t) {
+    document.getElementById('tre').textContent =
+        'dopo document.cookie: ' + t +
+        '  (c' + "'" + 'e' + "'" + ': ' + (t.indexOf('dascript') >= 0) + ')';
+});
+</script>
+
+</body>
+</html>

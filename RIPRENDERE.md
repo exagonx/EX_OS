@@ -1,5 +1,337 @@
 # DOVE RIPRENDERE — 2 settembre 2026
 
+## 2 settembre 2026 (tardi) — I BISCOTTI, TUTT'E DUE LE META'
+
+La meta' che mancava era quella che conta: uno script poteva scrivere e
+rileggere `document.cookie`, ma quel biscotto al server non arrivava. Adesso
+arriva, e il giro si chiude su un sito vero.
+
+### exhttp LI PORTA, IL BROWSER LI TIENE
+
+! **LA DISPENSA NON STA IN exhttp.** Un biscotto non e' un pezzo di protocollo:
+e' una decisione su chi puo' rileggere che cosa e per quanto. Domini, percorsi,
+scadenze, `Secure`, `HttpOnly` sono regole di chi naviga, non di chi trasporta
+byte. exhttp li mette nella richiesta e riporta quelli che tornano; a scegliere
+quali ci pensa il browser.
+
+! **MA IL GIRO LO DEVE FARE exhttp, ed e' il motivo per cui non basta un
+parametro.** Una redirezione e' il caso NORMALE dei biscotti: il server manda
+`302` e `Set-Cookie` insieme, e la richiesta dopo — quella che exhttp fa da se',
+dentro la stessa chiamata — deve gia' portarselo. Con un parametro passato una
+volta sola, il secondo salto sarebbe partito a mani vuote, che e' esattamente il
+caso da sistemare. Percio' e' un gancio: `exhttp_biscotti(chiedi, arrivato)`.
+
+! **E SENZA REGISTRARLO NON CAMBIA NIENTE.** Niente `Cookie:` in uscita, i
+`Set-Cookie` che arrivano si leggono e si buttano. `ftp`, `telnet`, chi scarica
+un file non devono accorgersi che i biscotti esistono.
+
+`Set-Cookie` e' **l'unica intestazione che si manda ripetuta apposta**, e per
+questo in `HttpRisposta` e' un vettore e non un campo: accorparla come le altre
+— l'ultima vince — ne butterebbe via tre su quattro senza dirlo. Il tetto e'
+sei, e quando si supera si accende `biscotti_persi`.
+
+### LA DISPENSA STA IN UN FILE SUO, E SI PROVA DA SOLA
+
+`exwin/bin/browser/biscotti.c` e' l'unico pezzo del browser staccato da
+`browser.c`. Il motivo e' uno: **le sue regole si sbagliano in silenzio.**
+
+    ex.os e' suffisso di www.ex.os     ma NON di notex.os
+    /conto copre /conto/estratto       ma NON /contoltre
+
+Un confronto a lettere invece che a etichette manda i biscotti di un sito a un
+altro che ha scelto il nome apposta; nessuna delle due cose si vede navigando.
+Si vedono quando qualcuno le sfrutta. Nessuna di quelle regole ha bisogno di uno
+schermo, di una rete o di un disco: `make prova-biscotti`, 51 prove.
+
+! **E L'OROLOGIO ARRIVA DA FUORI**, come in exjs e in exdom: ogni funzione che
+puo' incontrare una scadenza prende i secondi dall'epoca. Cosi' una prova sulle
+scadenze si scrive SCEGLIENDO che ore sono, invece di aspettare.
+
+### Le regole, e quelle che si sbagliano scrivendole
+
+! **`Max-Age` VINCE SU `Expires`, ED E' UN CASO VERO.** I server mandano
+tutt'e due — un `Expires` nel 1970 e un `Max-Age=3600` — proprio contando su
+quella regola per tenere in piedi i browser vecchi e i nuovi con la stessa riga.
+Leggendo le voci in ordine si prendeva la prima e si buttava la seconda: il
+biscotto nasceva morto. Trovato dal banco.
+
+! **IL PERCORSO PREDEFINITO E' LA DIRECTORY, NON LA RADICE**, e neanche la
+pagina: un biscotto messo da `/conto/entra.html` senza `Path` vale per
+`/conto/`. Ma la directory di `/conto` **e' `/`**, perche' l'ultima barra e'
+quella iniziale — sembra il contrario, e scrivendo le prove ci si e' cascati.
+C'e' una prova apposta con quel nome.
+
+! **UNO SCRIPT NON PUO' FABBRICARE UN `HttpOnly`.** E' l'unica differenza fra le
+due porte d'ingresso — i `Set-Cookie` del server e `document.cookie` — e senza
+di lei quella bandiera diventerebbe una parola che chiunque puo' scrivere, cioe'
+nessuna protezione.
+
+! **E UN SITO NON PUO' METTERE BISCOTTI PER UN ALTRO.** Senza il controllo, una
+pagina qualunque scriverebbe `Domain=google.com` e ce lo farebbe rimandare la
+volta dopo.
+
+! **QUANDO LA DISPENSA E' PIENA SI BUTTA IL PIU' VICINO A SCADERE**, non il
+primo che capita: un biscotto di sessione non ha scadenza e vale piu' di uno che
+muore fra un minuto — e' quello che tiene in piedi un accesso appena fatto.
+
+! **I BISCOTTI DI SESSIONE NON VANNO SU DISCO.** Scriverli vorrebbe dire che
+chiudere il navigatore non chiude piu' la sessione, che e' il contrario di quel
+che promettono. Il file e' `$HOME/.app/browser/biscotti.txt`, accanto alle
+impostazioni: una riga per biscotto, campi separati da una tabulazione — l'unico
+carattere che dentro un biscotto non ci puo' stare — e il valore in fondo,
+perche' e' l'unico che puo' contenere di tutto.
+
+### L'ORDINE CHE MANCAVA, e si e' visto solo provando
+
+    document.cookie = 'x=1';
+    fetch('/dove-sono');        <- deve gia' portarselo
+
+Le due righe stanno nello stesso script. I biscotti scritti dagli script si
+raccoglievano alla FINE della pagina, quindi quella richiesta partiva senza. Non
+e' un caso di scuola: e' il modo normale in cui una pagina segna una scelta e la
+manda al server subito dopo. Adesso si raccolgono **prima di ogni richiesta**.
+
+### DUE DIFETTI GROSSI, TROVATI ANDANDO FINO IN FONDO
+
+Con i biscotti, `google.com/search` non risponde piu' con la pagina
+anti&ndash;robot: manda la **pagina di consenso**, che e' HTML normale con
+cinque moduli e i pulsanti «Accetta tutto» e «Rifiuta tutto». Si vede, si legge,
+si preme. E premendola arrivava **400, richiesta malformata**.
+
+! **`<input type="hidden">` SI SALTAVA, e c'era scritto «non si vede».** Era
+vero e irrilevante: un campo nascosto non si disegna, ma e' meta' di quel che un
+modulo manda. I gettoni contro la falsificazione delle richieste, gli
+identificativi di sessione, il «continua a» di una pagina di consenso sono tutti
+nascosti. Il modulo di Google ne ha tredici e nient'altro: la POST partiva vuota.
+
+> «Non si vede» non vuol dire «non c'e'», ed e' il genere di commento che
+> sembra una spiegazione e invece e' la descrizione di un difetto.
+
+! **E IL CORPO DI UNA POST AVEVA LA MISURA DI UN INDIRIZZO.** Seicento byte, che
+e' il tetto giusto per un URL e non per un modulo: uno solo di quei campi
+nascosti ne fa duecentocinquanta. Adesso sono ottomila, e **quando non ci sta
+non si manda**: un modulo troncato non e' un modulo con qualche campo in meno,
+e' una richiesta che il server rifiuta o — peggio — accetta a meta'.
+
+! **CENTONOVANTADUE CONTROLLI E NON PIU' SESSANTAQUATTRO.** Sessantaquattro
+bastavano a un modulo che si vede: nessuno chiede a una persona di riempire
+sessanta caselle. I campi nascosti pero' non li riempie nessuno e non si contano
+a occhio — quella pagina ne ha cinquantacinque sparsi in cinque moduli.
+
+Con tutt'e tre le correzioni la POST passa, Google accetta il consenso e rimanda
+alla ricerca — **e l'indirizzo non porta piu' `&ucbcb=1`**, che era il suo modo
+di dire «questo browser i biscotti non li tiene». Da li' in poi c'e' la pagina
+anti&ndash;robot, che e' un'altra storia e sta scritta nella nota di stamattina.
+
+### Come si e' provato
+
+    make prova-biscotti     51 prove, 0 sbagliate    la dispensa, da sola
+    make prova-exhttp       + 9 prove sui Set-Cookie e sull'intestazione
+
+E dentro EX-OS, con un server sull'ospite che mette due biscotti — uno normale e
+uno `HttpOnly` — e un indirizzo che risponde con l'intestazione `Cookie` che gli
+e' arrivata (`tools/prove/sito/biscotti.html`, servito da `/metti-biscotti`):
+
+    1. document.cookie: «dalserver=abc123»     — il segreto NON si vede
+    2. il server ha ricevuto: dalserver=abc123; segreto=nonsivede
+    3. dopo document.cookie: ... dascript=fatto
+
+! **IL RIQUADRO 2 E' QUELLO CHE CONTA.** Che `document.cookie` faccia vedere
+qualcosa non dimostra niente: il biscotto deve TORNARE AL SERVER, e l'unico modo
+di saperlo e' chiedere al server che cosa ha ricevuto.
+
+### Quel che manca, dichiarato
+
+- **Il pulsante che manda il modulo non porta il suo nome.** Nel DOM il
+  `name=valore` del submit premuto fa parte dei campi, ed e' cosi' che una
+  pagina distingue «salva» da «cancella» con due pulsanti nello stesso modulo.
+  Qui i pulsanti si saltano tutti. Non si e' visto sul consenso di Google perche'
+  quei submit un nome non ce l'hanno.
+- **La persistenza su disco non e' provata dentro EX-OS**, solo sul banco: da CD
+  non si scrive, e il giro completo vuole un sistema installato.
+- **`Expires` si legge in due formati** (RFC 1123 e RFC 850) e basta; una data
+  illeggibile fa restare il biscotto di sessione, che e' l'errore piu' piccolo
+  dei due possibili.
+
+## 2 settembre 2026 (notte) — XMLHttpRequest E fetch, E UN DIFETTO CHE LI ASPETTAVA
+
+Il primo della coda era «XMLHttpRequest e fetch: exhttp c'e' gia', TLS
+compreso, manca l'involucro nel ponte». L'involucro c'e'. E strada facendo e'
+uscito un difetto di ExJs che stava li' da sempre e che nessuno poteva vedere
+finche' gli script non hanno avuto in mano documenti interi.
+
+### LA RETE ARRIVA DA FUORI, come il tempo, gli eventi e l'indirizzo
+
+! **exdom NON CHIAMA exhttp, E NON DEVE.** Sarebbe stato di gran lunga il modo
+piu' corto, e sarebbe stato il primo posto in cui questa libreria smette di
+essere un ponte: exdom sa due cose — che esiste un albero e che esiste un
+motore — e ogni terza cosa che imparasse sarebbe una cosa che il giorno dopo
+non si puo' piu' provare senza. C'e' un gancio, `exdom_rete_metti()`, e il
+browser ci mette dentro exhttp.
+
+! **E IL BANCO NE APPROFITTA, che e' la prova che la divisione serviva.**
+Provare XMLHttpRequest non vuole ne' una rete ne' un server: il banco registra
+un gancio finto che risponde secondo l'indirizzo, e i casi scomodi — il 404, la
+richiesta che non parte — sono facili quanto gli altri. Con una chiamata a
+exhttp dentro exdom, quelle prove non si potrebbero scrivere affatto.
+
+! **L'INDIRIZZO ARRIVA COM'E' SCRITTO NELLA PAGINA**, relativo compreso, e
+risolverlo tocca a chi ha il gancio: e' il browser ad avere `risolvi()` ed e'
+lui a sapere rispetto a che cosa. Cosi' `fetch('altro.html')` da una pagina
+`file:` legge da disco, perche' li' la rete e' il disco — ed e' anche il modo
+piu' comodo di provare tutto senza accendere niente.
+
+### `new` SU UNA NATIVA: UN MOTORE DICEVA DI SI', L'ALTRO DI NO
+
+    var f = document.createElement;  new f('div');
+    ExJs     -> funziona
+    QuickJS  -> TypeError: not a constructor
+
+QuickJS tiene un BIT sull'oggetto funzione, e le native che nascono da
+`JS_NewCFunctionData` non ce l'hanno; in ExJs `new` su una funzione qualunque
+funziona gia'. Quindi `new XMLHttpRequest()` sarebbe girato sotto un motore e
+morto sotto l'altro, **con la stessa pagina e senza che niente lo dicesse**.
+
+Percio' l'interfaccia e' cresciuta di una riga: `exjs_costruttore()`, accanto a
+`exjs_nativa`. In ExJs e' la stessa funzione; in QuickJS accende il bit. Chi
+scrive un oggetto che le pagine costruiscono con `new` chiama quella.
+
+! **E' esattamente il genere di divergenza per cui avere due motori sotto la
+stessa interfaccia vale la pena.** Non l'ha trovata una prova scritta apposta:
+l'ha trovata il fatto che le stesse novantadue — adesso duecentoventisei —
+girano su tutt'e due.
+
+### LE PROMESSE SONO UNA SOLA FORMA, SCRITTA A MANO
+
+ExJs e' un ES3 e le promesse non ce le ha; QuickJS si'. Un `fetch` che
+rendesse una `Promise` vera sotto un motore e un oggetto finto sotto l'altro
+sarebbe stata la cosa peggiore di tutte. Ce n'e' una sola, qui dentro, e fa
+`then`, `catch`, `finally`, si incatena, e **se il gestore ne rende un'altra si
+rende quella** — che e' cio' che fa funzionare
+`fetch(u).then(r => r.text()).then(...)`.
+
+! **SI RISOLVONO SUBITO, e in questo browser e' giusto.** La richiesta e' gia'
+finita quando `then` viene chiamato, perche' le richieste sono sincrone; e gli
+script girano DOPO che il documento e' stato analizzato per intero — e' anche il
+motivo per cui `document.readyState` dice «complete» — quindi non c'e' il
+pericolo classico di far partire il seguito di una pagina mentre il `<body>` non
+c'e' ancora.
+
+! **E `await` FUNZIONA LO STESSO, con QuickJS.** `await x` non vuole una
+Promise: vuole un oggetto con un `then`, e lo chiama. Il nostro lo chiama
+subito, QuickJS accoda la ripresa come lavoro, e la pompa dei tempi la esegue.
+
+! **LA PROMESSA DI `document.fonts` E' DIVENTATA QUESTA.** Ne aveva una sua, con
+un `then` che accodava invece di chiamare: due oggetti che si chiamano promessa
+e si comportano in due modi dentro la stessa libreria sono un difetto che
+aspetta, non un'ottimizzazione.
+
+### LE RICHIESTE SONO SINCRONE, TUTTE, ANCHE QUELLE DICHIARATE ASINCRONE
+
+`xhr.open(m, u, true)` e' la forma normale sul web e qui si comporta come
+`false`. La differenza si vede in un caso solo: **il codice che sta dopo
+`send()` gira dopo `onload` invece che prima**. E' scritto nel file e nella
+guida, perche' chi lo incontrera' lo riconosca. La strada per l'asincrono vero
+non e' nel ponte: e' un browser che sappia aspettare una connessione senza
+smettere di rispondere al mouse.
+
+! **E I GESTORI SI CHIAMANO SUBITO PROPRIO PER AVERE `this` GIUSTO.** La coda
+dei lavori di ExJs porta una funzione e nient'altro — niente `this`, niente
+argomenti — e un `onload` che facesse `this.responseText`, e sono tanti,
+troverebbe il globale.
+
+### IL BUFFER DELLE RISPOSTE NON E' QUELLO DELLE IMMAGINI
+
+! **E RIUSARLO SAREBBE STATO GRATIS E SBAGLIATO.** Uno script che fa una
+XMLHttpRequest sta girando MENTRE `esegui_script` tiene il proprio sorgente in
+`g_imm_buf`: la risposta gli scriverebbe sopra il codice che si sta ancora
+eseguendo. Il buffer delle richieste e' suo, 128 KB, e si prende alla prima —
+una pagina che non chiede niente alla rete non paga niente.
+
+### IL DIFETTO CHE ASPETTAVA: ExJs LAVORAVA SUI PRIMI 511 CARATTERI
+
+Questo e' il pezzo che vale piu' di tutto il resto.
+
+    pagina.indexOf('riquadro')   ->  -1, su un testo che quella parola ce l'ha
+
+Ogni metodo di String copiava il soggetto in un buffer da mezzo kilobyte —
+`copia_val`, il cui commento diceva gia' che «una copia troncata darebbe un
+risultato sbagliato invece di un errore» — e **nessuno dei suoi chiamanti
+guardava quel che rendeva**. Niente errore, niente avviso, la risposta
+sbagliata.
+
+! **SI E' VISTO PERCHE' XMLHttpRequest HA COMINCIATO A CONSEGNARE DOCUMENTI
+INTERI.** Prima, di stringhe piu' lunghe di 511 caratteri in giro ce n'erano
+poche: era un difetto che non aveva ancora incontrato il suo caso.
+
+La cura e' **non copiare**. `exjs_a_stringa` rende un posto di servizio solo per
+quel che stringa non e' — i numeri, che sono corti — e per una stringa vera
+rende il suo posto nell'arena, che non si muove piu': l'arena e' un allocatore
+a spinta, cresce in coda e non ricompatta mai. Puntarla costa zero e non ha
+tetti. Corretti: `indexOf`, `lastIndexOf`, `charAt`, `charCodeAt`, `slice`,
+`substring`, `trim`, `split`, `replace`, `toUpperCase`, `toLowerCase`,
+`String()`, `console.log`, il confronto fra stringhe, `JSON.parse` e
+`JSON.stringify`.
+
+! **E CHI PRODUCE UN TESTO LUNGO ADESSO SCRIVE NELL'ARENA**, con `exjs_arena_apri
+/ aggiungi / chiudi` — il «filo». `replace` su un documento intero rende un
+documento intero; `JSON.stringify` non ha piu' il tetto di quattro kilobyte.
+Mentre un filo e' aperto non si creano altre stringhe, perche' la prossima
+scriverebbe in mezzo a questa: e' il motivo per cui `replace` copia l'ago e il
+ricambio PRIMA di aprirlo.
+
+! **QUEL CHE ANCORA SI COPIA, SI COPIA CONTROLLANDO.** L'ago di `indexOf`, il
+separatore di `split`, l'ago e il ricambio di `replace` stanno ancora in mezzo
+kilobyte — sono le cose corte — ma adesso, **se non ci stanno, la funzione
+rinuncia**: `indexOf` rende -1, `split` non taglia, `replace` non sostituisce.
+Un ago troncato TROVEREBBE, e troverebbe il posto sbagliato.
+
+! **RESTA `join`, e si dichiara.** Il suo risultato sta ancora in mezzo
+kilobyte. Non passa dal filo per un motivo preciso: fra un pezzo e l'altro deve
+chiamare `exjs_a_stringa` sull'elemento, e su un vettore annidato quella
+funzione **scrive nell'arena** — cioe' in mezzo al filo aperto. Farlo bene vuole
+prima decidere quel caso.
+
+### Le prove
+
+    make prova-exjs     256 prove, 0 sbagliate   (17 nuove, sulle lunghe)
+    make prova-exdom    226 prove, 0 sbagliate   con ExJs sotto
+    make prova-exqjs    226 prove, 0 sbagliate   con QuickJS sotto
+
+! **NELLE PROVE SULLE STRINGHE LUNGHE IL NUMERO 512 NON COMPARE**, ed e'
+voluto: si prova che il tetto NON C'E', non che e' piu' alto.
+
+! **E LA STRINGA DI PROVA SI RADDOPPIA INVECE DI ALLUNGARSI DI DIECI.** Cento
+concatenazioni da dieci caratteri consumavano cinquantamila byte di arena e la
+finivano — ExJs non ha un raccoglitore di memoria, ogni concatenazione lascia
+dietro quella di prima. Sette raddoppi ne consumano duemilacinquecento. E' una
+lezione sulle stringhe in questo motore, non solo un modo di scrivere la prova.
+
+Dentro EX-OS, da CD, i riquadri sono passati da dodici a **quattordici**:
+XMLHttpRequest e fetch che chiedono la pagina stessa. Provati in tutt'e due i
+modi che contano — `file:///exwin/doc/javascript.html`, dove la rete e' il
+disco, e `http://10.0.2.2:8000/script.html`, dove e' exhttp per davvero.
+
+! **E IL RIQUADRO 13 E' LA PROVA DEL DIFETTO DI PRIMA**: dice se dentro la
+risposta c'e' la parola «riquadro». Sulla pagina da 7050 byte, prima diceva
+`false`.
+
+### Quel che manca, dichiarato
+
+- **Le intestazioni delle richieste si prendono e si buttano.**
+  `setRequestHeader` accetta e non manda: exhttp costruisce la richiesta da se'
+  e non ha un posto dove infilarne una in piu'. Rifiutarle fermerebbe ogni
+  pagina che ne mette una, e sono quasi tutte; fra le due si e' scelta quella
+  che lascia la pagina viva, e la si e' scritta in tre posti.
+- **Delle intestazioni della risposta se ne conosce una**, il `Content-Type`:
+  per tutte le altre `getResponseHeader` rende `null`, che vuol dire «non c'e'»
+  e non «c'e' ed e' vuota».
+- **Con ExJs il tetto vero e' l'arena del motore**, 96 KB nel browser: una
+  risposta piu' grande diventa la stringa vuota e il motore segna che la
+  memoria e' finita. Con QuickJS le stringhe stanno nel suo heap e il tetto e'
+  quello del buffer, 128 KB.
+- **`responseType` si legge e non si usa**: la risposta e' sempre testo.
+
 ## 2 settembre 2026 (sera) — GOOGLE NON E' UNA PROVA DEL BROWSER, E ORA SI SA PERCHE'
 
 Si riprendeva da «il navigatore continua a non funzionare con google per via

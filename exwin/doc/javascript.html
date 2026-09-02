@@ -11,9 +11,9 @@
 <!-- Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>  GPL-2.0-or-later
 
      ! QUESTA PAGINA E' ANCHE UNA PROVA, ed e' la stessa che gira sul banco
-     dell'host: tools/prove/sito/script.html. Se qui i dodici riquadri si
+     dell'host: tools/prove/sito/script.html. Se qui i quattordici riquadri si
      riempiono, il motore JavaScript dentro EX-OS fa quello che fa il banco —
-     e se non si riempiono, si vede QUALE dei dodici e' rimasto indietro. -->
+     e se non si riempiono, si vede QUALE dei quattordici e' rimasto indietro. -->
 </head>
 <body>
 
@@ -22,7 +22,7 @@
 <a href="browser.html">Navigatore</a> &mdash; JavaScript
 </p>
 
-<h1>JavaScript, dodici cose alla volta</h1>
+<h1>JavaScript, quattordici cose alla volta</h1>
 
 <p>Ogni riquadro prova UNA cosa. Se un riquadro contiene ancora la scritta
 «non e' successo niente», quel pezzo del motore non ha funzionato.</p>
@@ -63,6 +63,12 @@
 
 <h2>12. location e navigator</h2>
 <div id="dodici" class="riq">non e' successo niente</div>
+
+<h2>13. XMLHttpRequest</h2>
+<div id="tredici" class="riq">non e' successo niente</div>
+
+<h2>14. fetch</h2>
+<div id="quattordici" class="riq">non e' successo niente</div>
 
 <script>
 /* 1 — innerHTML */
@@ -148,6 +154,34 @@ dd.textContent = 'location.protocol ' + location.protocol +
     ', location.pathname ' + location.pathname +
     ', navigator.userAgent ' + navigator.userAgent;
 
+/* 13 — XMLHttpRequest: la pagina chiede se stessa */
+var x = new XMLHttpRequest();
+x.onload = function () {
+    document.getElementById('tredici').textContent =
+        'stato ' + this.status + ', ' + this.responseText.length +
+        ' byte, e dentro c' + "'" + 'e' + "'" + ' la parola «riquadro»: ' +
+        (this.responseText.indexOf('riquadro') >= 0);
+};
+x.onerror = function () {
+    document.getElementById('tredici').textContent =
+        'la richiesta non e' + "'" + ' partita (stato ' + this.status + ')';
+};
+x.open('GET', location.href);
+x.send();
+
+/* 14 — fetch: la stessa cosa con le promesse */
+fetch(location.href).then(function (r) {
+    document.getElementById('quattordici').textContent =
+        'ok ' + r.ok + ', stato ' + r.status + ', ';
+    return r.text();
+}).then(function (t) {
+    var q = document.getElementById('quattordici');
+    q.textContent = q.textContent + t.length + ' byte dal disco';
+}).catch(function (e) {
+    document.getElementById('quattordici').textContent =
+        'fetch ha detto di no: ' + e.message;
+});
+
 console.log('lo script della pagina e' + "'" + ' arrivato in fondo');
 </script>
 
@@ -159,7 +193,7 @@ console.log('lo script della pagina e' + "'" + ' arrivato in fondo');
 <p class="piede">
 EX-OS &mdash; Graziano Falcone, exagonx@hotmail.com &mdash; GNU GPL v2.
 Questa pagina e' la stessa del banco di prova
-(<code>tools/prove/sito/script.html</code>): se i dodici riquadri si riempiono,
+(<code>tools/prove/sito/script.html</code>): se i quattordici riquadri si riempiono,
 il motore fa dentro EX-OS quel che fa sull'host.
 </p>
 

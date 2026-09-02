@@ -223,6 +223,50 @@ void exdom_biscotti_metti(ExDom *D, const char *tutti);
  * il browser lo raccoglie per metterlo nella sua dispensa. */
 const char *exdom_biscotti(ExDom *D);
 
+/* =============================================================================
+ * LA RETE — il gancio da cui passano XMLHttpRequest e fetch
+ *
+ * ! IL PONTE NON APRE CONNESSIONI, E NON DEVE. exhttp esiste, TLS compreso, e
+ * chiamarlo da qui sarebbe stato di gran lunga il modo piu' corto: sarebbe
+ * anche stato il primo posto in cui questa libreria smette di essere un ponte.
+ * exdom sa due cose — che esiste un albero e che esiste un motore — e ogni
+ * terza cosa che imparasse sarebbe una cosa che il giorno dopo non si puo'
+ * piu' provare senza. Il tempo arriva da fuori, gli eventi arrivano da fuori,
+ * l'indirizzo arriva da fuori: la rete arriva da fuori come loro.
+ *
+ * ! E IL BANCO NE APPROFITTA: provare XMLHttpRequest non vuole ne' una rete
+ * ne' un server. La prova registra un gancio finto che risponde quel che vuole
+ * lei — 200, 404, oppure «non e' partita» — e guarda che cosa fa la pagina.
+ *
+ * ! L'INDIRIZZO ARRIVA COM'E' SCRITTO NELLA PAGINA, relativo compreso.
+ * Risolverlo tocca a chi ha il gancio: e' il browser ad avere la funzione che
+ * lo fa, ed e' lui a sapere rispetto a che cosa.
+ * ========================================================================== */
+typedef struct {
+    /* quel che il ponte chiede */
+    const char  *metodo;        /* "GET", "POST", ...                     */
+    const char  *url;
+    const char  *corpo;         /* 0 se non ce n'e'                       */
+    const char  *tipo_corpo;    /* Content-Type del corpo, o 0            */
+
+    /* quel che chi risponde riempie */
+    const char  *risposta;      /* memoria DI CHI RISPONDE: il ponte la
+                                   copia subito e non la tiene            */
+    unsigned int byte;
+    int          codice;        /* 200, 404... 0 = non e' partita         */
+    const char  *tipo;          /* Content-Type della risposta, o 0       */
+} ExDomRichiesta;
+
+/* Rende 1 se la richiesta e' stata fatta (anche con un codice di errore:
+ * un 404 e' una risposta), 0 se non e' partita affatto. */
+typedef int (*ExDomRete)(void *dato, ExDomRichiesta *r);
+
+/* Senza questa chiamata `XMLHttpRequest` e `fetch` ci sono lo stesso e
+ * rispondono «non e' partita»: e' la verita', ed e' meglio di un oggetto che
+ * non esiste — una pagina che cerca XMLHttpRequest e non lo trova prende
+ * un'altra strada, di solito peggiore. */
+void exdom_rete_metti(ExDom *D, ExDomRete f, void *dato);
+
 /* ! UN ASCOLTATORE CHE NON HA TROVATO POSTO SI DICE, come si dice una
  * serializzazione troncata. La tabella degli ascolti ha un tetto, e una pagina
  * che ne registra piu' di quanti ce ne stanno resterebbe muta su qualche clic

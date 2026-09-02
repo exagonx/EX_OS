@@ -98,10 +98,16 @@ LO STATO DEL NAVIGATORE AL 2 SETTEMBRE 2026 — dove riprendere
 
 Questo e' il punto in cui il browser e' stato lasciato. Le prove che contano:
 
-    make prova-exdom    196 prove, 0 sbagliate      con ExJs sotto
-    make prova-exqjs    196 prove, 0 sbagliate      con QuickJS sotto
+    make prova-exjs      256 prove, 0 sbagliate     il linguaggio da solo
+    make prova-exdom     226 prove, 0 sbagliate     il ponte, con ExJs sotto
+    make prova-exqjs     226 prove, 0 sbagliate     il ponte, con QuickJS sotto
+    make prova-biscotti   51 prove, 0 sbagliate     la dispensa dei cookie
     /exwin/doc/javascript.html aperto DENTRO EX-OS:
-        i DODICI riquadri si riempiono, con l'uno e con l'altro motore
+        i QUATTORDICI riquadri si riempiono, con l'uno e con l'altro motore
+    e la stessa pagina servita in rete (http://10.0.2.2:8000/script.html):
+        i riquadri 13 e 14 provano XMLHttpRequest e fetch per davvero
+    http://10.0.2.2:8000/metti-biscotti — i biscotti, tutt'e due le meta':
+        quel che uno script vede, e quel che il SERVER riceve indietro
 
     E LA PAGINA VERA, che e' la prova che vale di piu':
         /tmp/exos-prove/domqjs <pagina.html> [indirizzo]
@@ -164,23 +170,79 @@ DA FARE, IN ORDINE DI QUANTO PESA SU UNA PAGINA VERA
     `document.fonts`, `window.addEventListener`, `navigator`, `location` e
     `document.cookie`. Le prove del ponte sono 196, verdi con tutt'e due i
     motori.
- 4. XMLHttpRequest e fetch. E' il primo della coda adesso. exhttp c'e' gia',
-    TLS compreso, ma NON si chiama da dentro exdom: la rete e' del browser,
-    come lo sono l'orologio, gli eventi e l'indirizzo. Vuole un gancio che il
-    browser registra, non una `#include "exhttp.h"` nel ponte. Con QuickJS ci
-    sono anche le promesse vere; con ExJs no, e la differenza va decisa prima
-    di scrivere.
- 5. LA META' HTTP DEI BISCOTTI. `document.cookie` si legge e si scrive
-    (exdom_biscotti / exdom_biscotti_metti sono gia' esportate), ma nessuno
-    manda `Cookie:` e nessuno raccoglie `Set-Cookie:`. Vuole exhttp e una
-    dispensa per dominio nel browser, che sopravviva alla navigazione. Finche'
-    non c'e', una pagina che scrive un biscotto e ricarica se stessa
-    aspettandoselo indietro DAL SERVER non lo trovera'.
+ 4. FATTO — XMLHttpRequest e fetch, con un GANCIO: exdom non chiama exhttp,
+    lo chiama il browser (exdom_rete_metti). Cosi' il banco puo' provarli con
+    una rete finta, senza server e senza macchina accesa.
+    ! LE RICHIESTE SONO SINCRONE, tutte, anche quelle dichiarate asincrone: il
+      codice dopo `send()` gira DOPO `onload` invece che prima. Dichiarato nel
+      file e nella guida.
+    ! LE PROMESSE SONO UNA FORMA SOLA, scritta a mano, uguale sotto i due
+      motori — ExJs non le ha, QuickJS si', e due comportamenti sarebbero stati
+      peggio di nessuno. `await` funziona lo stesso con QuickJS: vuole un
+      oggetto con un `then`, non una Promise.
+    ! `setRequestHeader` ACCETTA E BUTTA: exhttp costruisce la richiesta da se'
+      e non ha dove infilarne una in piu'. Rifiutarle fermerebbe ogni pagina
+      che ne mette una. E' la meta' che manca, ed e' scritta in tre posti.
+    ! CON ExJs IL TETTO VERO E' L'ARENA del motore (96 KB nel browser), non i
+      128 KB del buffer: una risposta piu' grande diventa la stringa vuota.
+
+ 4bis. FATTO STRADA FACENDO — `exjs_costruttore`, perche' `new` su una nativa
+    funzionava con ExJs e falliva con QuickJS («not a constructor»): QuickJS
+    tiene un bit sull'oggetto funzione e le native non ce l'hanno. Senza,
+    `new XMLHttpRequest()` sarebbe girato sotto un motore e morto sotto
+    l'altro, con la stessa pagina e senza che niente lo dicesse.
+ 5. FATTO — LA META' HTTP DEI BISCOTTI, con un gancio come per la rete:
+    exhttp li porta (exhttp_biscotti) e il browser li tiene. La dispensa sta in
+    exwin/bin/browser/biscotti.c, l'unico pezzo del browser staccato da
+    browser.c, e il motivo e' che si prova da sola (make prova-biscotti, 51
+    prove): le sue regole si sbagliano in silenzio, e il danno e' mandare i
+    biscotti di un sito a un altro.
+    ! IL GANCIO E NON UN PARAMETRO, perche' il giro delle redirezioni lo fa
+      exhttp: «302 + Set-Cookie» insieme e' il caso NORMALE, e la richiesta
+      dopo — che parte dentro la stessa chiamata — deve gia' portarselo.
+    ! I BISCOTTI DEGLI SCRIPT SI RACCOLGONO PRIMA DI OGNI RICHIESTA, non a
+      fine pagina: `document.cookie = 'x=1'; fetch(...)` sono due righe dello
+      stesso script, e raccogliere dopo voleva dire partire senza.
+    ! IL FILE E' $HOME/.app/browser/biscotti.txt, e i biscotti di SESSIONE non
+      ci vanno: scriverli vorrebbe dire che chiudere il navigatore non chiude
+      piu' la sessione.
+    ! LA PERSISTENZA SU DISCO NON E' PROVATA DENTRO EX-OS, solo sul banco: da
+      CD non si scrive, e il giro completo vuole un sistema installato.
+
+ 5bis. FATTI ANDANDO FINO IN FONDO — tre difetti dei MODULI, trovati premendo
+    «Rifiuta tutto» sulla pagina di consenso di google.com, che risponde 400.
+    ! `<input type="hidden">` SI SALTAVA, e c'era scritto «non si vede». Vero e
+      irrilevante: un campo nascosto non si disegna ma e' meta' di quel che un
+      modulo manda — i gettoni anti-falsificazione, gli identificativi di
+      sessione, il «continua a» di un consenso sono tutti nascosti.
+    ! IL CORPO DI UNA POST AVEVA LA MISURA DI UN INDIRIZZO (600 byte). Adesso
+      ne ha ottomila, e quando non ci sta NON SI MANDA.
+    ! I CONTROLLI ERANO 64 e adesso sono 192: i campi nascosti non li riempie
+      nessuno e non si contano a occhio.
+    ! RESTA DA FARE: il pulsante che manda il modulo non porta il suo
+      `name=valore`. Nel DOM ne fa parte, ed e' cosi' che una pagina distingue
+      «salva» da «cancella» con due submit nello stesso modulo.
  6. L'INDIRIZZO ASSOLUTO in `img.src` e `a.href`. Oggi si riflette
     l'attributo: `src="b.png"` rende `"b.png"` e non
     `"http://sito/a/b.png"`. Adesso il ponte l'indirizzo della pagina ce l'ha
     (exdom_indirizzo), quindi manca solo la risoluzione.
- 7. `exjs_a_stringa` NON CHIAMA `toString`. `String(location)` rende
+ 7. FATTO — ExJs LAVORAVA SUI PRIMI 511 CARATTERI, e nessuno l'aveva visto.
+    Ogni metodo di String copiava il soggetto in un buffer da mezzo kilobyte:
+    `pagina.indexOf('riquadro')` rendeva -1 su un testo che quella parola ce
+    l'aveva. Nessun errore, nessun avviso, la risposta sbagliata. Si e' visto
+    quando XMLHttpRequest ha cominciato a consegnare documenti interi.
+    Adesso una stringa non si copia, si punta (l'arena non si muove mai), e chi
+    PRODUCE un testo lungo scrive nell'arena col «filo»
+    (exjs_arena_apri/aggiungi/chiudi).
+    ! QUEL CHE ANCORA SI COPIA, SI COPIA CONTROLLANDO: l'ago di indexOf, il
+      separatore di split, l'ago e il ricambio di replace. Se non ci stanno, la
+      funzione RINUNCIA — un ago troncato troverebbe, e nel posto sbagliato.
+    ! RESTA `join`: il suo risultato sta ancora in mezzo kilobyte. Non passa dal
+      filo perche' fra un pezzo e l'altro chiama exjs_a_stringa sull'elemento, e
+      su un vettore annidato quella SCRIVE NELL'ARENA, cioe' in mezzo al filo
+      aperto. Farlo bene vuole prima decidere quel caso.
+
+ 7bis. `exjs_a_stringa` NON CHIAMA `toString`. `String(location)` rende
     l'indirizzo con QuickJS e "[object Object]" con ExJs: e' la conversione
     IMPLICITA che manca, e vale per qualunque oggetto del DOM messo dentro una
     stringa. Il posto e' val.c; vuole un'esecuzione aperta, quindi non e' una

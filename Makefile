@@ -2015,7 +2015,16 @@ BROWSER_SRC := exwin/bin/browser/browser.c
 BROWSER_BIN := $(BUILD_EXWIN_BIN)/browser
 BROWSER_LD  := exwin/bin/browser/browser.ld
 
-$(BROWSER_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(BROWSER_SRC) $(BROWSER_LD) $(EXWIN_STUB) $(EXLIB_SRC) \
+# ! LA DISPENSA DEI BISCOTTI E' UN FILE A PARTE, ed e' l'unico pezzo del
+# browser che lo sia. Il motivo e' che si prova da sola (make prova-biscotti):
+# le sue regole — quale biscotto vale per quale dominio e per quale percorso —
+# si sbagliano in silenzio, e non hanno bisogno ne' di uno schermo ne' di una
+# rete per essere messe alla prova.
+BROWSER_BIS := exwin/bin/browser/biscotti.c
+BROWSER_BISH := exwin/bin/browser/biscotti.h
+
+$(BROWSER_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(BROWSER_SRC) $(BROWSER_LD) \
+             $(BROWSER_BIS) $(BROWSER_BISH) $(EXWIN_STUB) $(EXLIB_SRC) \
              $(EXLIB_HDR) $(EXWIN_HDR) $(WIN_PROTO) $(EXHTTP_SRC) \
              $(EXHTTP_HTTP) $(EXHTTP_HDR) lib/eximg/eximg.h \
              $(EXHTML_STUB) $(EXHTML_HDR) $(EXHTML_SO) \
@@ -2026,7 +2035,8 @@ $(BROWSER_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(BROWSER_SRC) $(BROWSER_LD) $(EXWIN
              $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione /exwin/bin/browser ==="
 	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I lib/exjs -I lib/exdom -I lib/exdlg -I lib/exinfo -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_SRC) -o $(BUILD_OBJ)/browser_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I lib/exjs -I lib/exdom -I lib/exdlg -I lib/exinfo -I exwin/bin/browser -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_SRC) -o $(BUILD_OBJ)/browser_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I exwin/bin/browser -c $(BROWSER_BIS) -o $(BUILD_OBJ)/browser_bis.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exdlg -c $(EXDLG_STUB) -o $(BUILD_OBJ)/browser_exdlg.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exinfo -c $(EXINFO_SRC) -o $(BUILD_OBJ)/browser_info.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/browser_exwin.o
@@ -2042,6 +2052,7 @@ $(BROWSER_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(BROWSER_SRC) $(BROWSER_LD) $(EXWIN
 	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/browser_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(BROWSER_LD) \
 	    $(BUILD_OBJ)/browser_start.o $(BUILD_OBJ)/browser_main.o \
+	    $(BUILD_OBJ)/browser_bis.o \
 	    $(BUILD_OBJ)/browser_exwin.o $(BUILD_OBJ)/browser_stub.o \
 	    $(BUILD_OBJ)/browser_html.o $(BUILD_OBJ)/browser_css.o \
 	    $(BUILD_OBJ)/browser_js.o $(BUILD_OBJ)/browser_dom.o \
@@ -5248,6 +5259,22 @@ prova-excss:
 	    -I lib/excss -I lib/exhtml
 	@$(PROVE_HOST_DIR)/cssprova
 
+# =============================================================================
+# ! LA DISPENSA DEI BISCOTTI SI PROVA DA SOLA, e per questo sta in un file suo
+# invece che dentro browser.c. Le sue regole — quali biscotti valgono per
+# quale dominio e per quale percorso — si sbagliano in silenzio e in modi che
+# non si vedono navigando: un suffisso confrontato a lettere manda i biscotti
+# di `ex.os` a `notex.os`. Nessuna di quelle regole ha bisogno di uno schermo,
+# di una rete o di un disco, e l'ora si passa come numero.
+# =============================================================================
+.PHONY: prova-biscotti
+prova-biscotti:
+	@mkdir -p $(PROVE_HOST_DIR)
+	@cc -Wall -Wextra -O2 -o $(PROVE_HOST_DIR)/bisprova \
+	    tools/prove/bisprova.c exwin/bin/browser/biscotti.c \
+	    -I exwin/bin/browser
+	@$(PROVE_HOST_DIR)/bisprova
+
 .PHONY: prova-exhttp
 prova-exhttp:
 	@mkdir -p $(PROVE_HOST_DIR)
@@ -5269,7 +5296,8 @@ prova-exfont:
 
 # Tutti i banchi dell'host, in fila.
 .PHONY: prove-host
-prove-host: prova-exhtml prova-excss prova-exhttp prova-exfont prova-exdom
+prove-host: prova-exhtml prova-excss prova-exhttp prova-exfont prova-exdom \
+            prova-biscotti
 
 .PHONY: verifica-versioni
 verifica-versioni:

@@ -74,7 +74,113 @@ static void raccogli(const char *t, unsigned int n, void *dato)
 /* Apre tutto da capo: documento, motore, ponte. Ogni prova parte pulita,
  * perche' una prova che eredita lo stato della precedente prima o poi passa
  * per il motivo sbagliato. */
+/* =============================================================================
+ * LA RETE FINTA
+ *
+ * ! IL GANCIO DELLA RETE ESISTE ANCHE PER QUESTO. Provare XMLHttpRequest e
+ * fetch con una rete vera vorrebbe dire un server, una porta e una macchina
+ * accesa: tre cose che non ci sono quando si lancia `make prova-exdom`, e che
+ * renderebbero le prove diverse a seconda di dove girano. Qui la rete e' una
+ * funzione di venti righe che risponde secondo l'indirizzo, e le risposte
+ * scomode — il 404, la richiesta che non parte — sono facili quanto le altre.
+ * Con una chiamata a exhttp dentro exdom, niente di tutto questo si potrebbe
+ * scrivere.
+ * ========================================================================== */
+static int   g_rete_n;              /* quante richieste sono passate di qui */
+static char  g_rete_ultima[256];    /* metodo, spazio, indirizzo            */
+static char  g_rete_corpo[256];     /* il corpo dell'ultima POST            */
+
+static int rete_finta(void *dato, ExDomRichiesta *r)
+{
+    (void)dato;
+    g_rete_n++;
+    snprintf(g_rete_ultima, sizeof(g_rete_ultima), "%s %s",
+             r->metodo ? r->metodo : "?", r->url ? r->url : "?");
+    g_rete_corpo[0] = '\0';
+    if (r->corpo) snprintf(g_rete_corpo, sizeof(g_rete_corpo), "%s", r->corpo);
+
+    if (strcmp(r->url, "/ciao") == 0) {
+        r->risposta = "buongiorno";
+        r->byte     = 10;
+        r->codice   = 200;
+        r->tipo     = "text/plain";
+        return 1;
+    }
+    if (strcmp(r->url, "/dati.json") == 0) {
+        r->risposta = "{\"n\":7,\"s\":\"ciao\"}";
+        r->byte     = 18;
+        r->codice   = 200;
+        r->tipo     = "application/json";
+        return 1;
+    }
+    if (strcmp(r->url, "/manca") == 0) {
+        r->risposta = "non c'e'";
+        r->byte     = 8;
+        r->codice   = 404;
+        r->tipo     = "text/plain";
+        return 1;
+    }
+    if (strcmp(r->url, "/eco") == 0) {
+        r->risposta = g_rete_corpo;
+        r->byte     = (unsigned int)strlen(g_rete_corpo);
+        r->codice   = 200;
+        r->tipo     = "text/plain";
+        return 1;
+    }
+    /* ! «NON E' PARTITA» NON E' UN CODICE, ed e' il caso che distingue fetch
+     * da XMLHttpRequest: fetch RIFIUTA la promessa, XHR lascia status a zero. */
+    return 0;
+}
+
+/* =============================================================================
+ * LA RETE DEL DISCO — per il modo «una pagina vera»
+ *
+ * ! QUANDO SI APRE UN FILE, LA RETE E' IL DISCO, ed e' quel che fa anche il
+ * browser: `fetch('altro.html')` da una pagina `file:` legge da disco, perche'
+ * exhttp di «file:» non sa niente. Senza questo gancio, la stessa pagina si
+ * comporterebbe in due modi qui e li' — che e' l'unica cosa che un banco non
+ * deve mai fare.
+ * ========================================================================== */
+static char g_disco_buf[512 * 1024];
+
+static int rete_da_disco(void *dato, ExDomRichiesta *r)
+{
+    const char *p = r->url;
+    FILE       *fp;
+    size_t      n;
+
+    (void)dato;
+    if (!p) return 0;
+    if (strncmp(p, "file://", 7) == 0) p += 7;
+
+    fp = fopen(p, "rb");
+    /* ! E SI RIPROVA SENZA LA BARRA IN TESTA. Il banco dichiara alla pagina un
+     * indirizzo `file:///qualcosa` costruito da un percorso RELATIVO, quindi
+     * il percorso assoluto che ne esce non esiste. E' una stortura del banco e
+     * non del ponte: si ripara qui, dove sta. */
+    if (!fp && p[0] == '/') fp = fopen(p + 1, "rb");
+    if (!fp) return 0;
+
+    n = fread(g_disco_buf, 1, sizeof(g_disco_buf), fp);
+    fclose(fp);
+
+    r->risposta = g_disco_buf;
+    r->byte     = (unsigned int)n;
+    r->codice   = 200;
+    r->tipo     = 0;
+    return 1;
+}
+
+/* Con `rete` a 0 il ponte resta senza gancio: serve a provare che senza
+ * browser sotto XMLHttpRequest e fetch dicono di no invece di fingere. */
+static ExDom *apparecchia_rete(const char *html, ExJsCtx **fuori, int rete);
+
 static ExDom *apparecchia(const char *html, ExJsCtx **fuori)
+{
+    return apparecchia_rete(html, fuori, 1);
+}
+
+static ExDom *apparecchia_rete(const char *html, ExJsCtx **fuori, int rete)
 {
     ExJsCtx *c;
     ExDom   *D;
@@ -89,6 +195,10 @@ static ExDom *apparecchia(const char *html, ExJsCtx **fuori)
 
     D = exdom_apri(g_mem_dom, sizeof(g_mem_dom), c, &g_doc, NODI, TESTO,
                    ASCOLTI);
+    if (D && rete) exdom_rete_metti(D, rete_finta, 0);
+    g_rete_n = 0;
+    g_rete_ultima[0] = '\0';
+    g_rete_corpo[0]  = '\0';
     *fuori = c;
     return D;
 }
@@ -347,6 +457,7 @@ static int pagina(const char *nomefile)
 
     D = exdom_apri(g_mem_dom, sizeof(g_mem_dom), c, &g_doc, NODI, TESTO, ASCOLTI);
     if (!D) { printf("il ponte non si apre\n"); return 1; }
+    exdom_rete_metti(D, rete_da_disco, 0);
 
     /* ! ANCHE L'INDIRIZZO, come fa il browser. Senza, `location` risponde
      * stringhe vuote e una pagina vera si comporta diversamente qui e la':
@@ -358,7 +469,10 @@ static int pagina(const char *nomefile)
 
         if (g_url_finto[0]) exdom_indirizzo(D, g_url_finto);
         else {
-            snprintf(url, sizeof(url), "file://%s", nomefile);
+            /* Tre barre e non due: dopo «file://» viene l'HOST, e con due un
+             * percorso relativo diventerebbe un nome di macchina. */
+            snprintf(url, sizeof(url), "file://%s%s",
+                     nomefile[0] == '/' ? "" : "/", nomefile);
             exdom_indirizzo(D, url);
         }
     }
@@ -1243,6 +1357,168 @@ int main(int argc, char **argv)
                   "navigator.cookieEnabled", "false");
         prova_gia("sendBeacon non manda niente e lo dice", c,
                   "navigator.sendBeacon('/x', '')", "false");
+    }
+
+    /* =========================================================================
+     * XMLHttpRequest E fetch
+     *
+     * ! LE PROVE SONO SCRITTE IN ES3, senza funzioni a freccia e senza
+     * try/catch: girano su tutt'e due i motori, e ExJs quelle cose non le ha.
+     * ====================================================================== */
+    printf("\n--- XMLHttpRequest ---\n");
+
+    /* ! `new` SU UNA NATIVA NON E' SCONTATO: QuickJS tiene un bit sulla
+     * funzione e senza quello e' «not a constructor». Questa prova esiste
+     * perche' il difetto si vedeva su UN motore solo. */
+    prova_val("si costruisce con new", PAG,
+              "var x = new XMLHttpRequest(); typeof x", "object");
+    prova_val("appena nato e' allo stato zero", PAG,
+              "var x = new XMLHttpRequest();"
+              "x.readyState + ' ' + x.status + ' ' + x.responseText",
+              "0 0 ");
+    prova_val("open porta allo stato uno", PAG,
+              "var x = new XMLHttpRequest(); x.open('GET', '/ciao');"
+              "x.readyState", "1");
+    prova_val("send prende la risposta", PAG,
+              "var x = new XMLHttpRequest(); x.open('GET', '/ciao'); x.send();"
+              "x.status + ' ' + x.responseText + ' ' + x.readyState",
+              "200 buongiorno 4");
+    prova_val("un 404 e' una risposta, non un errore", PAG,
+              "var x = new XMLHttpRequest(); x.open('GET', '/manca'); x.send();"
+              "x.status + ' ' + x.responseText", "404 non c'e'");
+    /* ! LA RICHIESTA CHE NON PARTE LASCIA status A ZERO, ed e' cosi' che una
+     * pagina distingue «il server ha detto 404» da «non ho potuto chiedere». */
+    prova_val("quella che non parte lascia zero", PAG,
+              "var x = new XMLHttpRequest(); x.open('GET', '/altrove'); x.send();"
+              "x.status + ' ' + x.readyState", "0 4");
+    prova_val("onload si chiama, e `this` e' la richiesta", PAG,
+              "var v = '';"
+              "var x = new XMLHttpRequest();"
+              "x.onload = function () { v = this.status + ':' + this.responseText; };"
+              "x.open('GET', '/ciao'); x.send(); v", "200:buongiorno");
+    prova_val("l'evento porta il tipo e il bersaglio", PAG,
+              "var v = '';"
+              "var x = new XMLHttpRequest();"
+              "x.onload = function (e) { v = e.type + ' ' + (e.target === x); };"
+              "x.open('GET', '/ciao'); x.send(); v", "load true");
+    prova_val("onerror per quella che non parte", PAG,
+              "var v = 'niente';"
+              "var x = new XMLHttpRequest();"
+              "x.onerror = function () { v = 'errore'; };"
+              "x.onload  = function () { v = 'carico'; };"
+              "x.open('GET', '/altrove'); x.send(); v", "errore");
+    prova_val("onreadystatechange vede lo stato quattro", PAG,
+              "var v = 0;"
+              "var x = new XMLHttpRequest();"
+              "x.onreadystatechange = function () { v = this.readyState; };"
+              "x.open('GET', '/ciao'); x.send(); v", "4");
+    /* ! addEventListener SU UN XHR NON PASSA DALLA TABELLA DEGLI ASCOLTI del
+     * ponte: quella e' indicizzata per NODO, e una richiesta non e' un nodo. */
+    prova_val("addEventListener, e piu' di uno", PAG,
+              "var v = '';"
+              "var x = new XMLHttpRequest();"
+              "x.addEventListener('load', function () { v = v + 'a'; });"
+              "x.addEventListener('load', function () { v = v + 'b'; });"
+              "x.open('GET', '/ciao'); x.send(); v", "ab");
+    prova_val("POST manda il corpo", PAG,
+              "var x = new XMLHttpRequest(); x.open('POST', '/eco');"
+              "x.send('ciao mondo'); x.responseText", "ciao mondo");
+    prova_val("getResponseHeader conosce il tipo", PAG,
+              "var x = new XMLHttpRequest(); x.open('GET', '/ciao'); x.send();"
+              "x.getResponseHeader('Content-Type')", "text/plain");
+    /* ! DI UN'ALTRA INTESTAZIONE SI RENDE null, non "": nel DOM la differenza
+     * e' fra «non c'e'» e «c'e' ed e' vuota», e le pagine ci contano. */
+    prova_val("di un'altra rende null", PAG,
+              "var x = new XMLHttpRequest(); x.open('GET', '/ciao'); x.send();"
+              "String(x.getResponseHeader('X-Qualcosa'))", "null");
+    prova_val("setRequestHeader si accetta e non ferma niente", PAG,
+              "var x = new XMLHttpRequest(); x.open('GET', '/ciao');"
+              "x.setRequestHeader('X-Prova', '1'); x.send(); x.status", "200");
+
+    printf("\n--- fetch ---\n");
+
+    prova_val("fetch rende qualcosa con then", PAG,
+              "typeof fetch('/ciao').then", "function");
+    prova_val("la catena arriva al testo", PAG,
+              "var v = '';"
+              "fetch('/ciao').then(function (r) { return r.text(); })"
+              "              .then(function (t) { v = t; }); v", "buongiorno");
+    prova_val("ok, status e url", PAG,
+              "var v = '';"
+              "fetch('/ciao').then(function (r) {"
+              "  v = r.ok + ' ' + r.status + ' ' + r.url; }); v",
+              "true 200 /ciao");
+    /* ! UN 404 NON RIFIUTA LA PROMESSA, ed e' la regola di fetch: la rete ha
+     * risposto benissimo, e' il server che ha detto di no. */
+    prova_val("un 404 non rifiuta, e ok e' falso", PAG,
+              "var v = '';"
+              "fetch('/manca').then(function (r) { v = r.ok + ' ' + r.status; },"
+              "                     function ()  { v = 'rifiutata'; }); v",
+              "false 404");
+    prova_val("la rete che non risponde rifiuta", PAG,
+              "var v = 'niente';"
+              "fetch('/altrove').then(function () { v = 'arrivata'; })"
+              "                 .catch(function (e) { v = 'no: ' + e.message; });"
+              "v", "no: la richiesta non e' partita");
+    /* ! IL RIFIUTO SCENDE LUNGO LA CATENA fino a chi lo prende: e' cosi' che
+     * `.then(a).then(b).catch(c)` fa arrivare l'errore a `c` e non ad `a`. */
+    prova_val("il rifiuto scavalca i then e arriva al catch", PAG,
+              "var v = '';"
+              "fetch('/altrove').then(function () { v = v + 'a'; })"
+              "                 .then(function () { v = v + 'b'; })"
+              "                 .catch(function () { v = v + 'c'; }); v", "c");
+    prova_val("json passa da JSON.parse del motore", PAG,
+              "var v = '';"
+              "fetch('/dati.json').then(function (r) { return r.json(); })"
+              "                   .then(function (d) { v = d.n + ' ' + d.s; });"
+              "v", "7 ciao");
+    prova_val("headers.get", PAG,
+              "var v = '';"
+              "fetch('/dati.json').then(function (r) {"
+              "  v = r.headers.get('content-type'); }); v", "application/json");
+    prova_val("fetch con metodo e corpo", PAG,
+              "var v = '';"
+              "fetch('/eco', { method: 'POST', body: 'roba' })"
+              "  .then(function (r) { return r.text(); })"
+              "  .then(function (t) { v = t; }); v", "roba");
+    prova_val("finally passa e non cambia il valore", PAG,
+              "var v = '';"
+              "fetch('/ciao').finally(function () { v = v + 'f'; })"
+              "              .then(function (r) { v = v + r.status; }); v",
+              "f200");
+
+    /* ! SENZA GANCIO NON SI FINGE UN 200 VUOTO. Un browser che non ha
+     * registrato la rete non e' un server che ha risposto male, e una pagina
+     * che ricevesse «200, zero byte» concluderebbe la cosa sbagliata. */
+    {
+        ExJsCtx *c;
+        ExDom   *D;
+
+        D = apparecchia_rete(PAG, &c, 0);
+        (void)D;
+        prova_gia("senza gancio, XHR lascia zero", c,
+                  "var x = new XMLHttpRequest(); x.open('GET', '/ciao');"
+                  "x.send(); x.status", "0");
+        prova_gia("senza gancio, fetch rifiuta", c,
+                  "var v = '';"
+                  "fetch('/ciao').catch(function (e) { v = e.name; }); v",
+                  "TypeError");
+    }
+
+    /* Il gancio riceve metodo e indirizzo com'e' scritto nella pagina: e'
+     * chi lo registra a doverlo risolvere, e la prova lo fissa. */
+    {
+        ExJsCtx *c;
+        ExDom   *D;
+
+        D = apparecchia(PAG, &c);
+        (void)D;
+        gira(c, "var x = new XMLHttpRequest();"
+                "x.open('POST', '/eco'); x.send('abc');", "gancio");
+        ok("il gancio ha visto metodo e indirizzo",
+           strcmp(g_rete_ultima, "POST /eco") == 0, g_rete_ultima);
+        ok("e il corpo", strcmp(g_rete_corpo, "abc") == 0, g_rete_corpo);
+        ok("una richiesta sola", g_rete_n == 1, "");
     }
 
     printf("\n%d prove, %d sbagliate\n\n", fatte, sbagliate);

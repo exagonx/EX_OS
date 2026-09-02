@@ -101,6 +101,11 @@ struct ExDom {
     ExJsVal      proto_classi;
     ExJsVal      promessa;          /* vedi `document.fonts`, in fondo */
     ExJsVal      luogo;             /* `location`                       */
+    ExJsVal      proto_promessa;
+    ExJsVal      proto_risposta;
+    ExJsVal      proto_xhr;
+    ExDomRete    rete;
+    void        *rete_dato;
     char         url[EXDOM_URL_MAX];    /* dove siamo, detto da fuori   */
     char         vai[EXDOM_URL_MAX];    /* dove uno script vuole andare */
     char         biscotti[EXDOM_BISCOTTI_MAX];
@@ -140,6 +145,7 @@ static void t_chiudi(Testo *t)
 static int leggi_prop(ExJsCtx *c, void *dato, const char *nome, ExJsVal *fuori);
 static int scrivi_prop(ExJsCtx *c, void *dato, const char *nome, ExJsVal v);
 static ExJsVal stile_oggetto(ExDom *D, Legame *L);
+static void metti_metodo(ExDom *D, ExJsVal dove, const char *nome, ExJsNativa f);
 static int  biscotto_pezzo(const char *s, char *fuori, unsigned int max);
 static void biscotto_aggiungi(ExDom *D, const char *nuovo);
 static ExJsVal dati_oggetto(ExDom *D, Legame *L);
@@ -2461,42 +2467,24 @@ static ExJsVal m_win_removeEventListener(ExJsCtx *c, ExJsVal questo,
 /* =============================================================================
  * `document.fonts` — LA PROMESSA CHE NON HA NIENTE DA ASPETTARE
  *
- * ! NON E' UNA Promise VERA, ED E' DICHIARATO. ExJs non ha le promesse e
- * QuickJS si': un oggetto che si comportasse diversamente sotto i due motori
- * sarebbe la cosa peggiore, quindi qui ce n'e' uno solo, scritto a mano, che
- * fa quel poco che serve — `then`, `catch`, `finally`.
+ * ! LA PROMESSA E' QUELLA DI fetch, non una seconda scritta apposta. Ce n'era
+ * una sua, con un `then` che ACCODAVA il gestore invece di chiamarlo: due
+ * oggetti che si chiamano promessa e si comportano in due modi dentro la
+ * stessa libreria sono un difetto che aspetta, non un'ottimizzazione. Adesso
+ * la forma e' una sola — sta in fondo a questo file, insieme a fetch — e
+ * questa e' un'istanza gia' risolta, con `undefined` dentro.
  *
- * ! E LA FUNZIONE NON SI CHIAMA SUBITO, SI ACCODA. Chiamarla li' per li'
- * vorrebbe dire eseguire il seguito della pagina MENTRE il <head> si sta
- * ancora leggendo: `document.fonts.ready.then(parti)` farebbe partire `parti`
- * prima che il <body> esista. Accodandola con scadenza zero parte al primo
- * giro della pompa dei tempi, cioe' quando il documento c'e' — che e' anche
- * quello che promette il DOM.
+ * ! E CHIAMARE SUBITO IL GESTORE, QUI, E' GIUSTO — mentre in un browser vero
+ * non lo sarebbe. Il pericolo classico e' `document.fonts.ready.then(parti)`
+ * che fa partire `parti` prima che il <body> esista; qui non puo' succedere,
+ * perche' gli script girano DOPO che il documento e' stato analizzato per
+ * intero. E' lo stesso motivo per cui `document.readyState` dice «complete».
  *
  * ! LA PROMESSA E' UNA SOLA per tutto il documento, e non una per chiamata:
  * non ha stato — non c'e' niente da aspettare e non c'e' errore possibile —
- * e ExJs non ha un raccoglitore di memoria, quindi una pagina che chieda
+ * e ExJs non ha un raccoglitore di memoria, quindi una pagina che chiedesse
  * cinquecento caratteri ne lascerebbe cinquecento in giro.
  * ========================================================================== */
-static ExJsVal m_promessa_poi(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
-                              int n_arg, void *dato)
-{
-    (void)dato;
-    if (n_arg >= 1 && exjs_tipo(c, a[0]) == EXJS_FUNZIONE)
-        exjs_accoda(c, a[0], 0, 0);
-    return questo;                      /* si incatena: .then().then() */
-}
-
-static ExJsVal m_promessa_male(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
-                               int n_arg, void *dato)
-{
-    (void)c; (void)a; (void)n_arg; (void)dato;
-    /* ! `catch` NON CHIAMA NIENTE, e non e' una dimenticanza: qui non puo'
-     * andare storto niente, e chiamare il gestore dell'errore vorrebbe dire
-     * dire a una pagina che i caratteri non si sono caricati. */
-    return questo;
-}
-
 static ExJsVal m_falso(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
                        int n_arg, void *dato)
 {
@@ -2841,6 +2829,523 @@ const char *exdom_biscotti(ExDom *D)
     return D ? D->biscotti : "";
 }
 
+
+/* =============================================================================
+ * LA RETE — XMLHttpRequest E fetch
+ *
+ * ! IL PONTE NON APRE CONNESSIONI, E NON DEVE. exhttp esiste, TLS compreso, e
+ * chiamarlo da qui sarebbe stato di gran lunga il modo piu' corto: sarebbe
+ * anche stato il primo posto in cui questa libreria smette di essere un ponte.
+ * exdom sa due cose — che esiste un albero e che esiste un motore — e ogni
+ * terza cosa che impara e' una cosa che il giorno dopo non si puo' piu'
+ * provare senza. Il tempo arriva da fuori (exjs_pompa), gli eventi arrivano da
+ * fuori (exdom_evento), l'indirizzo arriva da fuori (exdom_indirizzo): la rete
+ * arriva da fuori come loro, con un gancio che il browser registra.
+ *
+ * ! E IL BANCO NE APPROFITTA. Con un gancio, provare XMLHttpRequest non vuole
+ * ne' una rete ne' un server: la prova registra un gancio finto che risponde
+ * quel che vuole lei — 200, 404, o «non e' partita» — e guarda che cosa fa la
+ * pagina. Con una chiamata a exhttp qui dentro, quelle prove non si potrebbero
+ * scrivere affatto.
+ *
+ * -----------------------------------------------------------------------------
+ * ! LE RICHIESTE SONO SINCRONE, TUTTE, ANCHE QUELLE DICHIARATE ASINCRONE.
+ * `xhr.open(m, u, true)` e' la forma normale sul web e qui si comporta come
+ * `false`: send() va in rete, aspetta, riempie i campi e SUBITO DOPO chiama i
+ * gestori. La differenza si vede in un caso solo — il codice che sta dopo
+ * `send()` gira DOPO `onload` invece che prima — ed e' scritto qui perche' chi
+ * lo incontrera' lo riconosca. La strada per l'asincrono vero non e' in questa
+ * libreria: e' un browser che sappia aspettare una connessione senza smettere
+ * di rispondere al mouse, e quello e' un lavoro suo.
+ *
+ * ! E I GESTORI SI CHIAMANO CON `this` GIUSTO, che e' il motivo per cui si
+ * chiamano subito invece di accodarli. La coda dei lavori di ExJs porta una
+ * funzione e nient'altro: niente `this`, niente argomenti. Un `onload` che
+ * facesse `this.responseText` — e sono tanti — troverebbe il globale.
+ * ========================================================================== */
+
+static int rete_chiedi(ExDom *D, ExDomRichiesta *r)
+{
+    r->risposta = 0;
+    r->byte     = 0;
+    r->codice   = 0;
+    r->tipo     = 0;
+
+    /* ! SENZA GANCIO SI RISPONDE DI NO, non si finge un 200 vuoto. Un browser
+     * che non ha registrato la rete non e' un server che ha risposto male. */
+    if (!D->rete || !r->url || !r->url[0]) return 0;
+    return D->rete(D->rete_dato, r) ? 1 : 0;
+}
+
+/* Il testo della risposta come stringa del motore. */
+static ExJsVal rete_testo(ExDom *D, const ExDomRichiesta *r)
+{
+    if (!r->risposta || r->byte == 0) return stringa_c(D->js, "");
+    return exjs_stringa(D->js, r->risposta, (int)r->byte);
+}
+
+/* =============================================================================
+ * LE PROMESSE, SCRITTE A MANO
+ *
+ * ! NON SONO Promise VERE, ED E' DICHIARATO. ExJs e' un ES3 e le promesse non
+ * ce le ha; QuickJS si'. Un `fetch` che rendesse una Promise vera sotto un
+ * motore e un oggetto finto sotto l'altro sarebbe la cosa peggiore di tutte —
+ * la stessa pagina, due comportamenti, nessun errore. Qui ce n'e' UNA sola,
+ * scritta qui, e fa quel che serve: `then`, `catch`, `finally`, e si incatena.
+ *
+ * ! SI RISOLVONO SUBITO, e in questo browser e' giusto. La richiesta e' gia'
+ * finita quando `then` viene chiamato — le richieste sono sincrone, vedi sopra
+ * — quindi non c'e' niente da aspettare. E gli script girano DOPO che il
+ * documento e' stato analizzato per intero (e' anche il motivo per cui
+ * `document.readyState` dice «complete»), quindi non c'e' nemmeno il pericolo
+ * classico: far partire il seguito di una pagina mentre il <body> non c'e'
+ * ancora.
+ *
+ * ! E `await` FUNZIONA LO STESSO, con QuickJS. `await x` non vuole una
+ * Promise: vuole un oggetto con un `then`, e chiama `then(risolvi, rifiuta)`.
+ * Il nostro lo chiama subito, QuickJS accoda la ripresa come lavoro, e la
+ * pompa dei tempi la esegue. Con ExJs `await` non esiste, ma li' non esiste
+ * nemmeno la parola.
+ * ========================================================================== */
+
+/* Il segno che un oggetto e' una delle nostre promesse: serve a `then` per
+ * riconoscere che il gestore ne ha resa un'altra e non incartarla di nuovo. */
+#define SEGNO_PROMESSA  "__exos_promessa"
+
+static ExJsVal promessa_nuova(ExDom *D, ExJsVal valore, int ok)
+{
+    ExJsCtx *c = D->js;
+    ExJsVal  p = exjs_oggetto(c);
+
+    if (exjs_tipo(c, p) != EXJS_OGGETTO) return exjs_indefinito();
+    exjs_proto_metti(c, p, D->proto_promessa);
+    exjs_metti(c, p, SEGNO_PROMESSA, exjs_booleano(1));
+    exjs_metti(c, p, "__valore", valore);
+    exjs_metti(c, p, "__ok", exjs_booleano(ok != 0));
+    return p;
+}
+
+static int e_promessa(ExJsCtx *c, ExJsVal v)
+{
+    if (exjs_tipo(c, v) != EXJS_OGGETTO) return 0;
+    return exjs_a_booleano(c, exjs_prendi(c, v, SEGNO_PROMESSA));
+}
+
+/* Un motivo di rifiuto che somigli a un errore: mezza pagina legge `.message`,
+ * e una stringa nuda non ce l'ha. */
+static ExJsVal motivo(ExDom *D, const char *testo)
+{
+    ExJsCtx *c = D->js;
+    ExJsVal  e = exjs_oggetto(c);
+
+    exjs_metti(c, e, "name", stringa_c(c, "TypeError"));
+    exjs_metti(c, e, "message", stringa_c(c, testo));
+    return e;
+}
+
+static ExJsVal m_pr_then(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                         int n_arg, void *dato)
+{
+    ExDom  *D = (ExDom *)dato;
+    ExJsVal v = exjs_prendi(c, questo, "__valore");
+    int     ok = exjs_a_booleano(c, exjs_prendi(c, questo, "__ok"));
+    ExJsVal f = (n_arg >= 1) ? a[0] : exjs_indefinito();
+    ExJsVal g = (n_arg >= 2) ? a[1] : exjs_indefinito();
+    ExJsVal r;
+
+    if (ok) {
+        if (exjs_tipo(c, f) != EXJS_FUNZIONE) return questo;
+        r = exjs_invoca(c, f, exjs_indefinito(), &v, 1, 0);
+    } else {
+        /* Senza gestore dell'errore il rifiuto prosegue lungo la catena: e'
+         * cosi' che `.then(a).then(b).catch(c)` fa arrivare l'errore a `c`. */
+        if (exjs_tipo(c, g) != EXJS_FUNZIONE) return questo;
+        r = exjs_invoca(c, g, exjs_indefinito(), &v, 1, 0);
+        ok = 1;                     /* gestito: da qui in poi si e' a posto */
+    }
+
+    /* ! SE IL GESTORE NE HA RESA UN'ALTRA SI RENDE QUELLA, e non la si
+     * incarta. E' cio' che fa funzionare
+     * `fetch(u).then(function (r) { return r.text(); }).then(...)`: il primo
+     * gestore rende una promessa, e il secondo `then` deve vedere il TESTO,
+     * non una promessa dentro una promessa. */
+    if (e_promessa(c, r)) return r;
+    return promessa_nuova(D, r, ok);
+}
+
+static ExJsVal m_pr_catch(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                          int n_arg, void *dato)
+{
+    ExJsVal arg[2];
+
+    arg[0] = exjs_indefinito();
+    arg[1] = (n_arg >= 1) ? a[0] : exjs_indefinito();
+    return m_pr_then(c, questo, arg, 2, dato);
+}
+
+/* ! `finally` CHIAMA E BASTA, e NON cambia il valore: e' la sua regola nel
+ * linguaggio, ed e' anche il motivo per cui esiste separato da `then`. */
+static ExJsVal m_pr_finally(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                            int n_arg, void *dato)
+{
+    (void)dato;
+    if (n_arg >= 1 && exjs_tipo(c, a[0]) == EXJS_FUNZIONE)
+        exjs_invoca(c, a[0], exjs_indefinito(), 0, 0, 0);
+    return questo;
+}
+
+/* =============================================================================
+ * LA RISPOSTA DI fetch
+ * ========================================================================== */
+static ExJsVal m_rp_text(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                         int n_arg, void *dato)
+{
+    ExDom *D = (ExDom *)dato;
+
+    (void)a; (void)n_arg;
+    return promessa_nuova(D, exjs_prendi(c, questo, "__testo"), 1);
+}
+
+static ExJsVal m_rp_json(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                         int n_arg, void *dato)
+{
+    ExDom  *D = (ExDom *)dato;
+    ExJsVal t = exjs_prendi(c, questo, "__testo");
+    ExJsVal J = exjs_prendi(c, exjs_globale(c), "JSON");
+    ExJsVal p;
+
+    (void)a; (void)n_arg;
+    /* ! JSON.parse SI CHIEDE AL MOTORE, non si riscrive qui. Ce l'hanno
+     * tutt'e due, ed e' il posto giusto: un secondo analizzatore di JSON
+     * dentro il ponte sarebbe una seconda idea di che cosa sia un numero. */
+    if (exjs_tipo(c, J) != EXJS_OGGETTO) return promessa_nuova(D, t, 1);
+    p = exjs_prendi(c, J, "parse");
+    if (exjs_tipo(c, p) != EXJS_FUNZIONE) return promessa_nuova(D, t, 1);
+    return promessa_nuova(D, exjs_invoca(c, p, J, &t, 1, 0), 1);
+}
+
+static ExJsVal m_hd_get(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                        int n_arg, void *dato)
+{
+    const char *n;
+
+    (void)dato;
+    if (n_arg < 1) return exjs_nullo();
+    n = exjs_a_stringa(c, a[0]);
+    /* ! DI INTESTAZIONI SE NE CONOSCE UNA, e si dice quale. exhttp oggi
+     * riporta il solo Content-Type; per tutte le altre la risposta onesta e'
+     * `null`, che nel DOM vuol dire «non c'e'» — e non "" , che vorrebbe dire
+     * «c'e' ed e' vuota». */
+    if ((n[0] | 32) == 'c' && (n[1] | 32) == 'o' && (n[2] | 32) == 'n')
+        return exjs_prendi(c, questo, "__tipo");
+    return exjs_nullo();
+}
+
+static ExJsVal risposta_nuova(ExDom *D, const ExDomRichiesta *r,
+                              const char *url)
+{
+    ExJsCtx *c = D->js;
+    ExJsVal  o = exjs_oggetto(c);
+    ExJsVal  h;
+
+    if (exjs_tipo(c, o) != EXJS_OGGETTO) return exjs_indefinito();
+    exjs_proto_metti(c, o, D->proto_risposta);
+    exjs_metti(c, o, "__testo", rete_testo(D, r));
+    exjs_metti(c, o, "__tipo",
+               r->tipo ? stringa_c(c, r->tipo) : exjs_nullo());
+    /* ! `ok` E' 200..299 E NON «e' arrivata qualcosa». Una pagina che
+     * controlla `if (!resp.ok)` sta chiedendo del CODICE, e un 404 arrivato
+     * benissimo dalla rete e' una risposta riuscita e un `ok` falso. */
+    exjs_metti(c, o, "ok",
+               exjs_booleano(r->codice >= 200 && r->codice <= 299));
+    exjs_metti(c, o, "status", exjs_numero(c, (double)r->codice));
+    exjs_metti(c, o, "statusText",
+               stringa_c(c, r->codice == 200 ? "OK" : ""));
+    exjs_metti(c, o, "url", stringa_c(c, url));
+    exjs_metti(c, o, "redirected", exjs_booleano(0));
+    exjs_metti(c, o, "type", stringa_c(c, "basic"));
+    exjs_metti(c, o, "bodyUsed", exjs_booleano(0));
+
+    h = exjs_oggetto(c);
+    exjs_metti(c, h, "__tipo", exjs_prendi(c, o, "__tipo"));
+    metti_metodo(D, h, "get", m_hd_get);
+    exjs_metti(c, o, "headers", h);
+    return o;
+}
+
+static ExJsVal m_fetch(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                       int n_arg, void *dato)
+{
+    ExDom          *D = (ExDom *)dato;
+    ExDomRichiesta  r;
+    const char     *url;
+
+    (void)questo;
+    if (n_arg < 1) return promessa_nuova(D, motivo(D, "fetch senza indirizzo"), 0);
+
+    url = exjs_a_stringa(c, a[0]);
+    r.metodo     = "GET";
+    r.url        = url;
+    r.corpo      = 0;
+    r.tipo_corpo = 0;
+
+    if (n_arg >= 2 && exjs_tipo(c, a[1]) == EXJS_OGGETTO) {
+        ExJsVal m = exjs_prendi(c, a[1], "method");
+        ExJsVal b = exjs_prendi(c, a[1], "body");
+
+        if (exjs_tipo(c, m) == EXJS_STRINGA) r.metodo = exjs_a_stringa(c, m);
+        if (exjs_tipo(c, b) == EXJS_STRINGA) r.corpo  = exjs_a_stringa(c, b);
+    }
+
+    /* ! LA RETE CHE NON RISPONDE E' UN RIFIUTO, un 404 NO. E' la regola di
+     * fetch, ed e' quella giusta: «il server ha detto di no» e «non sono
+     * riuscito a chiedere» sono due cose diverse, e una pagina le tratta in
+     * due posti diversi. */
+    if (!rete_chiedi(D, &r) || r.codice == 0)
+        return promessa_nuova(D, motivo(D, "la richiesta non e' partita"), 0);
+
+    return promessa_nuova(D, risposta_nuova(D, &r, url), 1);
+}
+
+/* =============================================================================
+ * XMLHttpRequest
+ *
+ * ! LO STATO STA IN PROPRIETA' DELL'OGGETTO, non in una tabella del ponte, e
+ * per una volta la strada corta e' anche quella giusta: un XHR e' un oggetto
+ * che vive quanto lo script vuole, e una tabella avrebbe voluto un tetto —
+ * cioe' un numero da indovinare e una pagina che smette di funzionare quando
+ * lo supera. Le proprieta' di servizio cominciano con due trattini bassi e
+ * sono visibili a chi le cerca: nasconderle vorrebbe dire un secondo
+ * meccanismo di oggetti esotici per non far vedere tre stringhe.
+ *
+ * ! I METODI STANNO SUL PROTOTIPO, come per i nodi: una pagina che apre venti
+ * richieste altrimenti pagherebbe centoquaranta funzioni native.
+ * ========================================================================== */
+
+/* Chiama i gestori registrati per `tipo`: prima `on<tipo>`, poi quelli messi
+ * con addEventListener. */
+static void xhr_manda(ExDom *D, ExJsVal x, const char *tipo)
+{
+    ExJsCtx     *c = D->js;
+    char         nome[TIPO_MAX + 8];
+    unsigned int i = 0, k;
+    ExJsVal      f, lista, ev;
+
+    if (lung(tipo) + 5 >= sizeof(nome)) return;
+
+    ev = exjs_oggetto(c);
+    exjs_metti(c, ev, "type", stringa_c(c, tipo));
+    exjs_metti(c, ev, "target", x);
+
+    nome[0] = 'o'; nome[1] = 'n'; i = 2;
+    for (k = 0; tipo[k]; k++) nome[i++] = tipo[k];
+    nome[i] = '\0';
+    f = exjs_prendi(c, x, nome);
+    if (exjs_tipo(c, f) == EXJS_FUNZIONE) exjs_invoca(c, f, x, &ev, 1, 0);
+
+    nome[0] = '_'; nome[1] = '_'; i = 2;
+    for (k = 0; tipo[k]; k++) nome[i++] = tipo[k];
+    nome[i] = '\0';
+    lista = exjs_prendi(c, x, nome);
+    if (exjs_tipo(c, lista) != EXJS_OGGETTO) return;
+    {
+        unsigned int n = exjs_lunghezza(c, lista);
+
+        for (k = 0; k < n; k++) {
+            ExJsVal g = exjs_indice_prendi(c, lista, k);
+
+            if (exjs_tipo(c, g) == EXJS_FUNZIONE) exjs_invoca(c, g, x, &ev, 1, 0);
+        }
+    }
+}
+
+static ExJsVal m_xhr_open(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                          int n_arg, void *dato)
+{
+    ExDom *D = (ExDom *)dato;
+
+    (void)D;
+    if (n_arg < 2) return exjs_indefinito();
+    exjs_metti(c, questo, "__metodo", a[0]);
+    exjs_metti(c, questo, "__url", a[1]);
+    /* ! IL TERZO ARGOMENTO SI LEGGE E NON SI USA, ed e' dichiarato in cima:
+     * qui la richiesta e' sincrona comunque. Rifiutarlo sarebbe peggio — la
+     * forma con `true` e' quella che si scrive sempre. */
+    exjs_metti(c, questo, "readyState", exjs_numero(c, 1.0));
+    return exjs_indefinito();
+}
+
+/* ! LE INTESTAZIONI SI PRENDONO E SI BUTTANO, e va detto qui e nella guida.
+ * exhttp costruisce la richiesta da se' e non ha un posto dove infilarne una
+ * in piu': accettarle e non mandarle e' una bugia, ma RIFIUTARLE fermerebbe
+ * ogni pagina che ne mette una — e sono quasi tutte. Fra le due si e' scelta
+ * quella che lascia la pagina viva, e la si e' scritta in tre posti. */
+static ExJsVal m_xhr_header(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                            int n_arg, void *dato)
+{
+    (void)c; (void)questo; (void)a; (void)n_arg; (void)dato;
+    return exjs_indefinito();
+}
+
+static ExJsVal m_xhr_send(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                          int n_arg, void *dato)
+{
+    ExDom          *D = (ExDom *)dato;
+    ExDomRichiesta  r;
+    ExJsVal         m = exjs_prendi(c, questo, "__metodo");
+    ExJsVal         u = exjs_prendi(c, questo, "__url");
+
+    if (exjs_tipo(c, u) != EXJS_STRINGA) {
+        xhr_manda(D, questo, "error");
+        return exjs_indefinito();
+    }
+
+    r.metodo     = (exjs_tipo(c, m) == EXJS_STRINGA) ? exjs_a_stringa(c, m) : "GET";
+    r.url        = exjs_a_stringa(c, u);
+    r.corpo      = (n_arg >= 1 && exjs_tipo(c, a[0]) == EXJS_STRINGA)
+                   ? exjs_a_stringa(c, a[0]) : 0;
+    r.tipo_corpo = 0;
+
+    if (!rete_chiedi(D, &r) || r.codice == 0) {
+        /* ! UNA RICHIESTA CHE NON PARTE LASCIA status A ZERO, ed e' quel che
+         * fa il DOM: e' cosi' che una pagina distingue «il server ha detto
+         * 404» da «non sono nemmeno riuscito a chiedere». */
+        exjs_metti(c, questo, "readyState", exjs_numero(c, 4.0));
+        exjs_metti(c, questo, "status", exjs_numero(c, 0.0));
+        xhr_manda(D, questo, "readystatechange");
+        xhr_manda(D, questo, "error");
+        xhr_manda(D, questo, "loadend");
+        return exjs_indefinito();
+    }
+
+    {
+        ExJsVal t = rete_testo(D, &r);
+
+        exjs_metti(c, questo, "responseText", t);
+        exjs_metti(c, questo, "response", t);
+    }
+    exjs_metti(c, questo, "status", exjs_numero(c, (double)r.codice));
+    exjs_metti(c, questo, "statusText",
+               stringa_c(c, r.codice == 200 ? "OK" : ""));
+    exjs_metti(c, questo, "__tipo",
+               r.tipo ? stringa_c(c, r.tipo) : exjs_nullo());
+    exjs_metti(c, questo, "responseURL", stringa_c(c, r.url));
+    exjs_metti(c, questo, "readyState", exjs_numero(c, 4.0));
+
+    xhr_manda(D, questo, "readystatechange");
+    xhr_manda(D, questo, "load");
+    xhr_manda(D, questo, "loadend");
+    return exjs_indefinito();
+}
+
+static ExJsVal m_xhr_abort(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                           int n_arg, void *dato)
+{
+    (void)a; (void)n_arg; (void)dato;
+    /* ! NON C'E' NIENTE DA INTERROMPERE: quando questa si puo' chiamare, la
+     * richiesta e' gia' finita. Si riporta lo stato a zero perche' e' quel
+     * che una pagina si aspetta di leggere dopo, e non si manda `abort`:
+     * l'evento direbbe che si e' fermato qualcosa che era gia' fermo. */
+    exjs_metti(c, questo, "readyState", exjs_numero(c, 0.0));
+    exjs_metti(c, questo, "status", exjs_numero(c, 0.0));
+    return exjs_indefinito();
+}
+
+static ExJsVal m_xhr_tutte(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                           int n_arg, void *dato)
+{
+    ExJsVal t = exjs_prendi(c, questo, "__tipo");
+    char    b[256];
+    Testo   s;
+
+    (void)a; (void)n_arg; (void)dato;
+    s.p = b; s.max = sizeof(b); s.n = 0; s.pieno = 0;
+    if (exjs_tipo(c, t) == EXJS_STRINGA) {
+        t_stringa(&s, "content-type: ");
+        t_stringa(&s, exjs_a_stringa(c, t));
+        t_stringa(&s, "\r\n");
+    }
+    t_chiudi(&s);
+    return stringa_c(c, b);
+}
+
+static ExJsVal m_xhr_una(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                         int n_arg, void *dato)
+{
+    (void)dato;
+    if (n_arg < 1) return exjs_nullo();
+    {
+        const char *n = exjs_a_stringa(c, a[0]);
+
+        if ((n[0] | 32) == 'c' && (n[1] | 32) == 'o' && (n[2] | 32) == 'n')
+            return exjs_prendi(c, questo, "__tipo");
+    }
+    return exjs_nullo();
+}
+
+static ExJsVal m_xhr_ascolta(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                             int n_arg, void *dato)
+{
+    char         nome[TIPO_MAX + 8];
+    unsigned int i = 2, k;
+    const char  *tipo;
+    ExJsVal      lista;
+
+    (void)dato;
+    if (n_arg < 2 || exjs_tipo(c, a[1]) != EXJS_FUNZIONE) return exjs_indefinito();
+    tipo = exjs_a_stringa(c, a[0]);
+    if (lung(tipo) + 3 >= sizeof(nome)) return exjs_indefinito();
+
+    /* ! LA LISTA STA SULL'OGGETTO, non nella tabella degli ascolti del ponte:
+     * quella tabella e' indicizzata per NODO, e un XMLHttpRequest non e' un
+     * nodo dell'albero. Sono due meccanismi perche' sono due cose. */
+    nome[0] = '_'; nome[1] = '_';
+    for (k = 0; tipo[k]; k++) nome[i++] = tipo[k];
+    nome[i] = '\0';
+
+    lista = exjs_prendi(c, questo, nome);
+    if (exjs_tipo(c, lista) != EXJS_OGGETTO) {
+        lista = exjs_vettore(c);
+        exjs_metti(c, questo, nome, lista);
+    }
+    exjs_indice_metti(c, lista, exjs_lunghezza(c, lista), a[1]);
+    return exjs_indefinito();
+}
+
+static ExJsVal m_xhr_nuovo(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                           int n_arg, void *dato)
+{
+    ExDom  *D = (ExDom *)dato;
+    ExJsVal o = exjs_oggetto(c);
+
+    (void)questo; (void)a; (void)n_arg;
+    if (exjs_tipo(c, o) != EXJS_OGGETTO) return exjs_indefinito();
+    exjs_proto_metti(c, o, D->proto_xhr);
+
+    /* ! I CAMPI CI SONO DA SUBITO, anche prima di `open`. Una pagina che
+     * legge `xhr.readyState` appena costruito deve trovare 0, non
+     * `undefined`: il primo e' uno stato del DOM, il secondo e' un oggetto
+     * che non sa di essere un XMLHttpRequest. */
+    exjs_metti(c, o, "readyState",   exjs_numero(c, 0.0));
+    exjs_metti(c, o, "status",       exjs_numero(c, 0.0));
+    exjs_metti(c, o, "statusText",   stringa_c(c, ""));
+    exjs_metti(c, o, "responseText", stringa_c(c, ""));
+    exjs_metti(c, o, "response",     stringa_c(c, ""));
+    exjs_metti(c, o, "responseType", stringa_c(c, ""));
+    exjs_metti(c, o, "responseURL",  stringa_c(c, ""));
+    exjs_metti(c, o, "timeout",      exjs_numero(c, 0.0));
+    exjs_metti(c, o, "withCredentials", exjs_booleano(0));
+    exjs_metti(c, o, "__tipo",       exjs_nullo());
+    return o;
+}
+
+void exdom_rete_metti(ExDom *D, ExDomRete f, void *dato)
+{
+    if (!D) return;
+    D->rete      = f;
+    D->rete_dato = dato;
+}
+
 unsigned int exdom_quanto_serve(unsigned int nodi_max, unsigned int testo_max,
                                 unsigned int ascolti_max)
 {
@@ -2882,6 +3387,8 @@ ExDom *exdom_apri(void *memoria, unsigned int byte,
     D->url[0]      = '\0';
     D->vai[0]      = '\0';
     D->biscotti[0] = '\0';
+    D->rete        = 0;
+    D->rete_dato   = 0;
 
     for (i = 0; i < ascolti_max; i++) D->asc[i].usato = 0;
 
@@ -3018,10 +3525,40 @@ ExDom *exdom_apri(void *memoria, unsigned int byte,
     exjs_metti(js, exjs_globale(js), "location", D->luogo);
     exjs_metti(js, D->documento,     "location", D->luogo);
 
-    D->promessa = exjs_oggetto(js);
-    metti_metodo(D, D->promessa, "then",    m_promessa_poi);
-    metti_metodo(D, D->promessa, "finally", m_promessa_poi);
-    metti_metodo(D, D->promessa, "catch",   m_promessa_male);
+    /* =====================================================================
+     * LE PROMESSE, LE RISPOSTE E XMLHttpRequest
+     *
+     * ! TRE PROTOTIPI E NON TRE COPIE PER OGGETTO. Una pagina che apre venti
+     * richieste altrimenti pagherebbe centoquaranta funzioni native, e in un
+     * motore senza raccoglitore di memoria quelle non tornano indietro.
+     * ================================================================== */
+    D->proto_promessa = exjs_oggetto(js);
+    metti_metodo(D, D->proto_promessa, "then",    m_pr_then);
+    metti_metodo(D, D->proto_promessa, "catch",   m_pr_catch);
+    metti_metodo(D, D->proto_promessa, "finally", m_pr_finally);
+
+    D->proto_risposta = exjs_oggetto(js);
+    metti_metodo(D, D->proto_risposta, "text", m_rp_text);
+    metti_metodo(D, D->proto_risposta, "json", m_rp_json);
+
+    D->proto_xhr = exjs_oggetto(js);
+    metti_metodo(D, D->proto_xhr, "open",                m_xhr_open);
+    metti_metodo(D, D->proto_xhr, "send",                m_xhr_send);
+    metti_metodo(D, D->proto_xhr, "abort",               m_xhr_abort);
+    metti_metodo(D, D->proto_xhr, "setRequestHeader",    m_xhr_header);
+    metti_metodo(D, D->proto_xhr, "overrideMimeType",    m_xhr_header);
+    metti_metodo(D, D->proto_xhr, "getAllResponseHeaders", m_xhr_tutte);
+    metti_metodo(D, D->proto_xhr, "getResponseHeader",   m_xhr_una);
+    metti_metodo(D, D->proto_xhr, "addEventListener",    m_xhr_ascolta);
+
+    /* ! IL COSTRUTTORE VUOLE exjs_costruttore E NON exjs_nativa, o sotto
+     * QuickJS `new XMLHttpRequest()` e' «not a constructor» mentre sotto ExJs
+     * funziona: il perche' sta accanto alla dichiarazione in exjs.h. */
+    exjs_metti(js, exjs_globale(js), "XMLHttpRequest",
+               exjs_costruttore(js, m_xhr_nuovo, D, "XMLHttpRequest"));
+    metti_metodo(D, exjs_globale(js), "fetch", m_fetch);
+
+    D->promessa = promessa_nuova(D, exjs_indefinito(), 1);
 
     {
         ExJsVal f = exjs_oggetto(js);

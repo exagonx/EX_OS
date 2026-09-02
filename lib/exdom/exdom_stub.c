@@ -11,7 +11,7 @@
  *
  * Lo stub di ExDom. Stessa forma di quello di exhtml e di quello di exjs.
  *
- * ! E' CORTO PERCHE' IL DOM NON PASSA DI QUI. Dodici ponti, e quasi tutti li usera' il
+ * ! E' CORTO PERCHE' IL DOM NON PASSA DI QUI. Tredici ponti, e quasi tutti li usera' il
  * browser una volta sola per pagina: aprire, chiedere il documento, far
  * partire un evento. Tutto il resto — document, gli elementi, gli attributi —
  * vive dentro il motore JavaScript, dove exdom_apri() lo ha appeso all'oggetto
@@ -54,6 +54,7 @@ static struct {
     int (*dove_andare)(ExDom *, char *, unsigned int);
     void (*biscotti_metti)(ExDom *, const char *);
     const char *(*biscotti)(ExDom *);
+    void (*rete_metti)(ExDom *, ExDomRete, void *);
 } P;
 
 static void *chiedi(const ExLibTesta *t, const char *nome)
@@ -97,6 +98,8 @@ static void assicura(void)
     P.biscotti_metti = (void (*)(ExDom *, const char *))
                      chiedi(t, "exdom_biscotti_metti");
     P.biscotti     = (const char *(*)(ExDom *))chiedi(t, "exdom_biscotti");
+    P.rete_metti   = (void (*)(ExDom *, ExDomRete, void *))
+                     chiedi(t, "exdom_rete_metti");
 
     P.pronto = 1;
 }
@@ -141,3 +144,6 @@ void exdom_biscotti_metti(ExDom *D, const char *tutti)
 
 const char *exdom_biscotti(ExDom *D)
 { assicura(); return P.biscotti(D); }
+
+void exdom_rete_metti(ExDom *D, ExDomRete f, void *dato)
+{ assicura(); P.rete_metti(D, f, dato); }

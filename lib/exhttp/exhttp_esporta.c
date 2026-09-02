@@ -42,6 +42,9 @@ static const char *const g_nomi[] = {
     /* Aggiunta il 25 agosto 2026: i moduli in POST. */
     "exhttp_posta",
 
+    /* Aggiunta il 2 settembre 2026: il gancio dei biscotti. */
+    "exhttp_biscotti",
+
     "__lib_avvio"
 };
 
@@ -52,6 +55,7 @@ static void *const g_indirizzi[] = {
     (void *)http_url,
 
     (void *)exhttp_posta,
+    (void *)exhttp_biscotti,
 
     (void *)__libc_ponti_avvia
 };

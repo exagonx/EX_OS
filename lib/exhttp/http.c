@@ -164,7 +164,8 @@ static int metti(char *out, unsigned int max, unsigned int *n, const char *s)
  * dicono al server quanto e' lungo e di che tipo e', e basta.
  * ========================================================================== */
 int http_richiesta_corpo(char *out, unsigned int max, const HttpUrl *u,
-                         const char *agente, const char *corpo, int vivo)
+                         const char *agente, const char *corpo, int vivo,
+                         const char *biscotti)
 {
     unsigned int n = 0;
 
@@ -202,6 +203,15 @@ int http_richiesta_corpo(char *out, unsigned int max, const HttpUrl *u,
      * compresse — che sapremmo pure srotolare, inflate c'e' — ma e' un pezzo
      * in piu' da sbagliare prima ancora di aver visto una pagina intera. Si
      * aggiunge quando il resto funziona. */
+    /* ! I BISCOTTI VANNO PRIMA DI Accept, e l'ordine non conta per il
+     * protocollo: conta per chi legge un dump. Le intestazioni che dipendono
+     * da CHI siamo — User-Agent, Cookie — stanno insieme, e quelle che dicono
+     * che cosa vogliamo vengono dopo. */
+    if (biscotti && biscotti[0]) {
+        if (!metti(out, max, &n, "\r\nCookie: ")) return 0;
+        if (!metti(out, max, &n, biscotti)) return 0;
+    }
+
     if (!metti(out, max, &n, "\r\nAccept: */*\r\nConnection: ")) return 0;
     if (!metti(out, max, &n, vivo ? "keep-alive" : "close")) return 0;
 
@@ -238,7 +248,7 @@ int http_richiesta_corpo(char *out, unsigned int max, const HttpUrl *u,
 int http_richiesta(char *out, unsigned int max, const HttpUrl *u,
                    const char *agente)
 {
-    return http_richiesta_corpo(out, max, u, agente, 0, 0);
+    return http_richiesta_corpo(out, max, u, agente, 0, 0, 0);
 }
 
 /* -----------------------------------------------------------------------------
@@ -349,6 +359,21 @@ int http_intestazioni(const unsigned char *d, unsigned int n, HttpRisposta *r)
                         if (uguale_min((const unsigned char *)t + k, "close", 5))
                             r->chiude = 1;
                 }
+            } else if (nl == 10 && uguale_min(d + riga_a, "set-cookie", 10)) {
+                /* ! SI COPIA LA RIGA COM'E', senza guardarci dentro. Che cosa
+                 * sia un dominio, un percorso o una scadenza lo decide chi
+                 * tiene la dispensa: questa e' una libreria di trasporto, e il
+                 * giorno che le regole dei biscotti cambiano — succede — non
+                 * deve cambiare niente qui.
+                 *
+                 * ! E SE NON CI STANNO SI DICE. Un biscotto perso in silenzio
+                 * si paga tre pagine dopo, quando un sito rimanda a fare
+                 * l'accesso senza motivo apparente. */
+                if (r->n_biscotti < HTTP_BISCOTTI_MAX)
+                    valore(d, due + 1, riga_b,
+                           r->biscotti[r->n_biscotti++], HTTP_BISCOTTO_MAX);
+                else
+                    r->biscotti_persi = 1;
             } else if (nl == 17 &&
                        uguale_min(d + riga_a, "transfer-encoding", 17)) {
                 char t[32];

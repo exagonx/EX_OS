@@ -290,6 +290,14 @@ unsigned int  exjs_ctx_ast_arena_max(ExJsCtx *c);
 char         *exjs_ctx_scratch(ExJsCtx *c);
 unsigned int exjs_arena_metti(ExJsCtx *c, const char *s, unsigned int n);
 const char  *exjs_arena_leggi(ExJsCtx *c, unsigned int off);
+
+/* Una stringa costruita a pezzi dentro l'arena: il perche' sta in val.c,
+ * accanto all'implementazione. `exjs_arena_apri` rende EXJS_FILO_NO se non
+ * c'e' piu' spazio, e da li' in poi tutto il resto e' innocuo. */
+#define EXJS_FILO_NO  0xFFFFFFFFu
+unsigned int exjs_arena_apri(ExJsCtx *c);
+int          exjs_arena_aggiungi(ExJsCtx *c, const char *s, unsigned int n);
+ExJsVal      exjs_arena_chiudi(ExJsCtx *c, unsigned int off);
 int          exjs_ogg_nuovo(ExJsCtx *c, int classe);
 ExJsOggetto *exjs_ogg(ExJsCtx *c, int i);
 ExJsVal      exjs_da_oggetto(int i);

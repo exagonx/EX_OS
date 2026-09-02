@@ -330,6 +330,53 @@ const char *exjs_arena_leggi(ExJsCtx *c, unsigned int off)
     return (off < c->arena_n) ? c->arena + off : "";
 }
 
+/* =============================================================================
+ * UNA STRINGA COSTRUITA A PEZZI, DENTRO L'ARENA
+ *
+ * ! SERVE A CHI PRODUCE UN TESTO LUNGO QUANTO QUELLO CHE HA IN MANO. Prima
+ * `replace` e compagnia scrivevano il risultato in un buffer di mezzo
+ * kilobyte, e su una pagina intera ne rendevano mezzo — senza dire niente.
+ * Qui i pezzi si appendono in coda all'arena e alla fine si chiude con lo
+ * zero, che e' esattamente quel che avrebbe fatto exjs_stringa se avesse
+ * saputo il risultato in anticipo.
+ *
+ * ! MENTRE UN FILO E' APERTO NON SI CREANO ALTRE STRINGHE: la prossima
+ * scriverebbe in coda all'arena, cioe' in mezzo a questa. Sta scritto anche
+ * dall'altra parte, in base.c, accanto a chi lo usa.
+ *
+ * ! E STA QUI E NON LA' perche' l'arena e' dentro ExJsCtx, che fuori da questo
+ * file e' un tipo opaco. Esporre il puntatore all'arena per far scrivere
+ * qualcun altro sarebbe stato un modo per non avere piu' un solo posto che sa
+ * come e' fatta. */
+unsigned int exjs_arena_apri(ExJsCtx *c)
+{
+    if (c->arena_n >= c->arena_max) { c->finita = 1; return EXJS_FILO_NO; }
+    return c->arena_n;
+}
+
+int exjs_arena_aggiungi(ExJsCtx *c, const char *s, unsigned int n)
+{
+    unsigned int i;
+
+    for (i = 0; i < n; i++) {
+        if (c->arena_n + 1 >= c->arena_max) { c->finita = 1; return 0; }
+        c->arena[c->arena_n++] = s[i];
+    }
+    return 1;
+}
+
+/* ! SE NON C'E' STATO SPAZIO SI RENDE LA STRINGA VUOTA, non quel che era
+ * entrato: mezza stringa e' un risultato sbagliato che sembra giusto. */
+ExJsVal exjs_arena_chiudi(ExJsCtx *c, unsigned int off)
+{
+    if (off == EXJS_FILO_NO || c->arena_n + 1 > c->arena_max) {
+        c->finita = 1;
+        return exjs_stringa(c, "", -1);
+    }
+    c->arena[c->arena_n++] = '\0';
+    return exjs_stringa_off(c, off);
+}
+
 int exjs_ogg_nuovo(ExJsCtx *c, int classe)
 {
     ExJsOggetto *O;
@@ -429,6 +476,16 @@ ExJsVal exjs_nativa(ExJsCtx *c, ExJsNativa f, void *dato, const char *nome)
     O->dato   = dato;
     O->nome   = nome ? exjs_arena_metti(c, nome, lung(nome)) : 0;
     return exjs_da_oggetto(i);
+}
+
+/* ! QUI E' LA STESSA COSA, ed e' giusto che lo sia: in ExJs `new` su una
+ * funzione qualunque funziona gia' (vedi N_NUOVO in run.c). La chiamata
+ * esiste per l'ALTRO motore — il perche' sta accanto alla dichiarazione in
+ * exjs.h — e averla anche qui e' cio' che permette a chi la usa di non
+ * chiedersi quale motore ci sia sotto. */
+ExJsVal exjs_costruttore(ExJsCtx *c, ExJsNativa f, void *dato, const char *nome)
+{
+    return exjs_nativa(c, f, dato, nome);
 }
 
 /* =============================================================================

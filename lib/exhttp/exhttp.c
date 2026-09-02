@@ -586,6 +586,39 @@ static int exhttp_tls(ExHttpTrasporto *t, const char *host, unsigned int porta)
 static const char *g_corpo = 0;
 
 /* =============================================================================
+ * I BISCOTTI — exhttp non li tiene, li chiede e li consegna
+ *
+ * ! LA DISPENSA STA NEL BROWSER, e non qui, per la stessa ragione per cui la
+ * rete di exdom sta nel browser: chi tiene i biscotti deve sapere che cosa e'
+ * un dominio, quando una scadenza e' passata e dove si scrivono su disco.
+ * Sono tre cose che una libreria di trasporto non ha motivo di sapere, e la
+ * quarta e' che con la dispensa qui dentro non si potrebbe piu' provare un
+ * giro di richieste senza portarsi dietro anche la dispensa.
+ *
+ * ! MA IL GIRO LO DEVE FARE exhttp, ed e' il motivo per cui non basta un
+ * parametro. Una redirezione e' il caso normale dei biscotti: il server manda
+ * 302 e `Set-Cookie` insieme, e la richiesta DOPO — quella che exhttp fa da
+ * se', dentro la stessa chiamata — deve gia' portarselo. Con un parametro
+ * passato una volta sola, il secondo salto partirebbe a mani vuote, che e'
+ * esattamente il caso che si voleva sistemare.
+ *
+ * ! SENZA GANCIO NON CAMBIA NIENTE: niente `Cookie:` in uscita, i `Set-Cookie`
+ * che arrivano si leggono e si buttano. Un programma che di biscotti non sa
+ * niente — ftp, telnet, chi scarica un file — non deve accorgersi che esistono.
+ * ========================================================================== */
+static ExHttpBiscottiChiedi   g_bis_chiedi   = 0;
+static ExHttpBiscottoArrivato g_bis_arrivato = 0;
+static void                  *g_bis_dato     = 0;
+
+void exhttp_biscotti(ExHttpBiscottiChiedi chiedi,
+                     ExHttpBiscottoArrivato arrivato, void *dato)
+{
+    g_bis_chiedi   = chiedi;
+    g_bis_arrivato = arrivato;
+    g_bis_dato     = dato;
+}
+
+/* =============================================================================
  * LA CONNESSIONE CHE RESTA APERTA
  *
  * ! SU https LA STRETTA DI MANO E' TUTTO IL COSTO. Chiave effimera, catena di
@@ -641,7 +674,13 @@ int exhttp_scambio(ExHttpTrasporto *t, const HttpUrl *u,
 {
     static unsigned char acc[16 * 1024];    /* le intestazioni, mentre arrivano */
     unsigned int  acc_n = 0;
-    static char   req[4096];   /* il corpo di un POST ci sta dentro */
+    /* ! DODICI KILOBYTE PERCHE' CI DEVE STARE IL CORPO DI UN POST, e i quattro
+     * di prima non bastavano: il modulo di consenso di google.com fa quasi
+     * ottomila byte da solo. Quando non ci sta si rende un errore — «richiesta
+     * troppo lunga» — invece di mandarne meta', ed e' l'unica cosa da fare:
+     * un corpo tagliato e' una richiesta che il server rifiuta, o peggio
+     * accetta a meta'. */
+    static char   req[12 * 1024];
     int           n, fine = 0;
     HttpPezzi     pezzi;
     unsigned int  corpo_gia = 0;
@@ -653,7 +692,18 @@ int exhttp_scambio(ExHttpTrasporto *t, const HttpUrl *u,
      * fine dichiarata. Chiedere «keep-alive» a un server che chiude comunque
      * non costa niente. */
     g_riusabile = 0;
-    n = http_richiesta_corpo(req, sizeof(req), u, "EX-OS", g_corpo, 1);
+    {
+        /* ! SI CHIEDONO A OGNI SALTO, non una volta per chiamata: dopo una
+         * redirezione l'host puo' essere un altro, e i biscotti sono di chi
+         * li ha messi. */
+        static char bis[1024];
+
+        bis[0] = '\0';
+        if (g_bis_chiedi)
+            g_bis_chiedi(g_bis_dato, u->host, u->percorso, u->cifrato,
+                         bis, sizeof(bis));
+        n = http_richiesta_corpo(req, sizeof(req), u, "EX-OS", g_corpo, 1, bis);
+    }
     if (n <= 0) { strcpy(e->errore, "richiesta troppo lunga"); return 0; }
     if (t->scrivi(t->stato, (const unsigned char *)req, (unsigned int)n) != n) {
         strcpy(e->errore, "non riesco a mandare la richiesta");
@@ -675,7 +725,19 @@ int exhttp_scambio(ExHttpTrasporto *t, const HttpUrl *u,
          * un record solo. */
         fine = http_intestazioni(acc, acc_n, r);
         if (fine < 0) { strcpy(e->errore, "risposta malformata"); return 0; }
-        if (fine > 0) break;
+        if (fine > 0) {
+            /* ! I BISCOTTI SI CONSEGNANO QUI, PRIMA DEL CORPO E PRIMA DI
+             * SEGUIRE UNA REDIREZIONE: e' l'unico momento in cui il salto dopo
+             * puo' ancora portarseli. Consegnarli alla fine dello scambio
+             * vorrebbe dire darli a chi non ne ha piu' bisogno. */
+            if (g_bis_arrivato) {
+                int b;
+
+                for (b = 0; b < r->n_biscotti; b++)
+                    g_bis_arrivato(g_bis_dato, u->host, r->biscotti[b]);
+            }
+            break;
+        }
 
         if (acc_n >= sizeof(acc)) {
             /* ! IL MESSAGGIO PORTA I PRIMI BYTE DI CIO' CHE E' ARRIVATO, e

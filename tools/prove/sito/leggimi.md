@@ -38,7 +38,8 @@ settanta movimenti diventano tre minuti.
 | `tabella.html` | colspan e rowspan senza bordo |
 | `copertura.html` | accentate, entita' numeriche, greco, cirillico, ebraico, arabo |
 | `font.html` | `font-family`: elenchi, nomi veri senza generica, `<pre>`, e il foglio che batte il tag |
-| `script.html` | il motore JavaScript: innerHTML, i nodi costruiti a mano, gli attributi, i clic, `preventDefault`, `setTimeout` |
+| `script.html` | il motore JavaScript: quattordici riquadri — innerHTML, i nodi costruiti a mano, gli attributi, i clic, `preventDefault`, `setTimeout`, `style`, i selettori, `classList`, `dataset`, `location`, XMLHttpRequest e `fetch` |
+| `biscotti.html` | i cookie, **tutt'e due le meta'**: quel che uno script vede e quel che il server RICEVE. Si apre da `/metti-biscotti`, non dal suo nome — vedi qui sotto |
 | `modulo.html` | una casella e un'area: cursore, selezione, appunti |
 | `perdita.html` | sei immagini senza misure e dodici caselle: i controlli che si moltiplicavano |
 
@@ -48,6 +49,28 @@ Serve le pagine e **RITARDA le immagini** di `RITARDO` secondi (6 di
 predefinito, `RITARDO=0` per non ritardare). Il ritardo non e' un trucco: serve
 a fotografare lo stato intermedio — testo gia' impaginato, pixel non ancora
 arrivati — che senza sparirebbe prima di riuscire a guardarlo.
+
+### I due indirizzi finti dei biscotti
+
+Non sono file su disco: per provare i cookie serve un server che ne **metta** e
+uno che dica quali gli sono **arrivati**. Sono le due meta' del giro, e senza la
+seconda si puo' solo vedere che il browser non si rompe — non che il biscotto e'
+davvero tornato indietro.
+
+| indirizzo | cosa fa |
+|---|---|
+| `/metti-biscotti` | manda `biscotti.html` con due `Set-Cookie`: uno normale e uno `HttpOnly` |
+| `/eco-biscotti` | risponde con l'intestazione `Cookie` che ha ricevuto, e basta |
+
+    EXOS_QEMU_EXTRA="-netdev user,id=n1 -device ne2k_pci,netdev=n1" \
+    EXOS_NO_FLOPPY=1 EXOS_CDROM=dist/exos.iso EXOS_RAM=64M \
+    python3 tools/qemu_drive.py "netdetect -c@18" "exwin@25" \
+        "http://10.0.2.2:8000/metti-biscotti@45" "foto:/tmp/b.ppm@3"
+
+I tre riquadri devono dire, in quest'ordine: che `document.cookie` mostra il
+biscotto normale e **non** quello `HttpOnly`; che il server ha ricevuto
+**tutt'e due**; e che un biscotto scritto da uno script parte con la richiesta
+subito dopo.
 
 ## Cosa NON c'e', e perche'
 

@@ -58,6 +58,7 @@ static const char *const g_nomi[] = {
     "exjs_oggetto",
     "exjs_vettore",
     "exjs_nativa",
+    "exjs_costruttore",
 
     "exjs_tipo",
     "exjs_a_numero",
@@ -103,6 +104,7 @@ static void *const g_indirizzi[] = {
     (void *)exjs_oggetto,
     (void *)exjs_vettore,
     (void *)exjs_nativa,
+    (void *)exjs_costruttore,
 
     (void *)exjs_tipo,
     (void *)exjs_a_numero,

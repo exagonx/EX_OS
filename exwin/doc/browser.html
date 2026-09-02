@@ -252,12 +252,66 @@ destrutturazione, le classi. Non c'e' nemmeno un raccoglitore di memoria: il
 posto e' preparato, ma una pagina lasciata a mutare per ore consuma.
 </p>
 
+<h3>Chiedere alla rete: XMLHttpRequest e fetch</h3>
+
+<p>
+Ci sono tutt'e due, e passano da <code>exhttp</code> &mdash; quindi anche da
+<b>https</b>. Un indirizzo relativo si risolve rispetto alla pagina, come un
+collegamento; e da una pagina <code>file:</code> la rete e' il disco, cosi'
+una pagina locale puo' andarsi a prendere un altro file.
+<code>fetch</code> rende un oggetto con <code>then</code>,
+<code>catch</code> e <code>finally</code> che si incatena, e la risposta ha
+<code>ok</code>, <code>status</code>, <code>text()</code>,
+<code>json()</code> e <code>headers.get()</code>.
+</p>
+
 <p class="nota">
-<b class="manca">E quello che manca al ponte, per tutt'e due i motori:</b>
-<code>XMLHttpRequest</code> e <code>fetch</code> &mdash; una pagina che va a
-prendersi i dati da sola resta com'e' &mdash; e la meta' HTTP dei biscotti:
-uno script puo' scrivere e rileggere <code>document.cookie</code>, ma quel
-biscotto al server non arriva.
+<b>Le richieste sono sincrone, anche quelle dichiarate asincrone.</b>
+<code>xhr.open(m, u, true)</code> si comporta come <code>false</code>: la
+risposta arriva prima che <code>send()</code> ritorni, e i gestori
+(<code>onload</code>, <code>onerror</code>) si chiamano subito dopo. Si vede in
+un caso solo &mdash; il codice che sta <i>dopo</i> <code>send()</code> gira
+dopo <code>onload</code> invece che prima &mdash; ed e' scritto qui perche' chi
+lo incontra lo riconosca.
+</p>
+
+<p class="nota">
+<b class="manca">Quello che manca alle richieste:</b> le intestazioni che si
+mandano. <code>setRequestHeader</code> si accetta e non fa niente, perche'
+<code>exhttp</code> costruisce la richiesta da se' e non ha dove infilarne una
+in piu'; rifiutarla fermerebbe ogni pagina che ne mette una. Di quelle che
+tornano se ne conosce una, il <code>Content-Type</code>: per tutte le altre
+<code>getResponseHeader</code> rende <code>null</code>. E con <b>ExJs</b> il
+tetto vero e' l'arena del motore, 96 KB: una risposta piu' grande diventa la
+stringa vuota.
+</p>
+
+<h3>I biscotti (i cookie)</h3>
+
+<p>
+Ci sono, e fanno tutt'e due i giri: quelli che il server manda con
+<code>Set-Cookie</code> tornano indietro nelle richieste dopo, comprese quelle
+di una redirezione; e uno script li legge e li scrive con
+<code>document.cookie</code>. Si rispettano dominio, percorso, scadenza,
+<code>Secure</code> &mdash; su una connessione in chiaro non parte &mdash; e
+<code>HttpOnly</code>, che li nasconde agli script: e' quel che impedisce a uno
+script di rubare una sessione.
+</p>
+
+<p>
+Quelli con una scadenza si scrivono in
+<code>$HOME/.app/browser/biscotti.txt</code> e si ritrovano al riavvio; quelli
+<b>di sessione</b> no, e non e' una mancanza: un biscotto di sessione deve
+morire quando il navigatore si chiude, ed e' quel che promette al sito che lo
+ha messo. Il file e' leggibile e si puo' cancellare a mano.
+</p>
+
+<p class="nota">
+<b>Un sito non puo' mettere biscotti per un altro</b>, e il confronto fra
+domini si fa a etichette: <code>ex.os</code> vale per <code>www.ex.os</code> e
+non per <code>notex.os</code>, che gli somiglia soltanto. Lo stesso per i
+percorsi: <code>/conto</code> copre <code>/conto/estratto</code> e non
+<code>/contoltre</code>.
 </p>
 
 <h3>Due motori, e come si scambiano</h3>
@@ -270,7 +324,7 @@ stessa interfaccia.
 </p>
 
 <p class="nota">
-<b>Il ponte col documento non cambia.</b> Le stesse centonovantasei prove del
+<b>Il ponte col documento non cambia.</b> Le stesse duecentoventisei prove del
 ponte passano con l'uno e con l'altro, e questa pagina rende un documento identico
 byte per byte in tutt'e due i casi. E' il motivo per cui il linguaggio,
 l'albero e il ponte sono tre librerie separate invece di una.
@@ -283,8 +337,9 @@ navigatore apre ExJs e va avanti invece di fermarsi &mdash; ma lo scrive.
 </p>
 
 <p>
-La pagina <a href="javascript.html">JavaScript, dodici cose alla volta</a> e'
-una prova che si guarda: se i dodici riquadri si riempiono, il motore funziona.
+La pagina <a href="javascript.html">JavaScript, quattordici cose alla volta</a>
+e' una prova che si guarda: se i quattordici riquadri si riempiono, il motore
+funziona.
 </p>
 
 <h3>E i siti grandi?</h3>
@@ -400,7 +455,7 @@ aprono con questo stesso navigatore.
 <tr><td><a href="rete.html"><b>La rete</b></a></td>
     <td>schede, indirizzo, DHCP, DNS, i servizi in ascolto, il TLS 1.3</td></tr>
 <tr><td><a href="javascript.html"><b>JavaScript</b></a></td>
-    <td>dodici riquadri che si riempiono da soli: una spiegazione e una prova
+    <td>quattordici riquadri che si riempiono da soli: una spiegazione e una prova
         del motore insieme</td></tr>
 <tr><td><a href="sviluppo.html"><b>Scrivere programmi</b></a></td>
     <td>gcc dentro EX-OS, la libc, il formato dei programmi, le librerie

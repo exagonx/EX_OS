@@ -33,5 +33,3 @@ Editor         | /exwin/bin/edit
 Terminale      | /exwin/bin/term
 Prova dei font | /exwin/bin/fontprova
 Navigatore     | /exwin/bin/browser
-
-@avvio /exwin/bin/browser

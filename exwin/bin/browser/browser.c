@@ -70,6 +70,7 @@
 #include "exdlg.h"
 #include "exinfo.h"
 #include "kbd_proto.h"
+#include "biscotti.h"
 
 /* +0.001 a ogni modifica: `browser -version` la stampa. Vedi EX_VERSIONE in libc.h. */
 #define VERSIONE_APP "0.002"
@@ -313,7 +314,14 @@ typedef struct {
  * dichiarato qui invece che scoperto premendo un pulsante che non fa niente —
  * per questo un pulsante premuto lo DICE nella barra di stato.
  * ========================================================================== */
-#define CTRL_MAX        64
+/* ! CENTONOVANTADUE DA QUANDO I CAMPI NASCOSTI CONTANO. Sessantaquattro
+ * bastavano a un modulo che si vede — nessuno chiede a una persona di
+ * riempire sessanta caselle — ma i campi nascosti non li riempie nessuno e non
+ * si contano a occhio: la pagina di consenso di google.com ne ha cinquantacinque
+ * sparsi in cinque moduli, piu' i pulsanti. Con il tetto vecchio l'ultimo
+ * modulo restava senza meta' dei suoi campi, e la richiesta partiva incompleta
+ * senza che niente lo dicesse. */
+#define CTRL_MAX        192
 /* ! DUECENTOCINQUANTASEI E NON NOVANTASEI, e la differenza si vede in una
  * <textarea>: novantasei byte sono una riga e mezza, e il resto del testo
  * spariva dentro un riquadro alto ottantotto pixel che sembrava mezzo vuoto.
@@ -326,6 +334,15 @@ typedef struct {
 #define CTRL_RADIO      3       /* radio                                */
 #define CTRL_SCELTA     4       /* select                               */
 #define CTRL_AREA       5       /* textarea                             */
+/* ! «NON SI VEDE» NON VUOL DIRE «NON C'E'», ed e' costato un pomeriggio.
+ * `<input type="hidden">` qui si SALTAVA — c'era scritto «non si vede», ed era
+ * vero e irrilevante: un campo nascosto non si disegna, ma e' meta' di quel
+ * che un modulo manda. I gettoni contro la falsificazione delle richieste, gli
+ * identificativi di sessione, il «continua a» di una pagina di consenso: sono
+ * tutti nascosti. Il modulo di google.com/consent ne ha tredici e nient'altro,
+ * e la POST partiva vuota — il server rispondeva «400, richiesta malformata» e
+ * dallo schermo non c'era modo di capire perche'. */
+#define CTRL_NASCOSTO   6       /* input type=hidden: si manda, non si vede */
 
 #define CTRL_NOME_MAX   40
 
@@ -1983,7 +2000,7 @@ static void impagina_nodo(int v, const CssStile *ered)
                     t = CTRL_PULSANTE;
                 else if (uguale(tipo, "checkbox")) t = CTRL_SPUNTA;
                 else if (uguale(tipo, "radio"))    t = CTRL_RADIO;
-                else if (uguale(tipo, "hidden"))   return;   /* non si vede */
+                else if (uguale(tipo, "hidden"))   t = CTRL_NASCOSTO;
             }
 
             if (g_ctrl_n >= CTRL_MAX || g_pez_n >= PEZZI_MAX) return;
@@ -2126,6 +2143,12 @@ static void impagina_nodo(int v, const CssStile *ered)
                     if (!suo || c->sel > (short)q) c->sel = -1;
                 }
             }
+
+            /* ! UN CAMPO NASCOSTO ENTRA NELL'ELENCO E NON NELL'IMPAGINAZIONE:
+             * niente pezzo, niente larghezza, niente penna che avanza. Da qui
+             * in giu' si parla solo di come si DISEGNA un controllo, e quello
+             * non si disegna. */
+            if (t == CTRL_NASCOSTO) { g_ctrl_n++; return; }
 
             switch (t) {
             case CTRL_SPUNTA:
@@ -3505,6 +3528,184 @@ static int imp_scrivi(void)
     return scritti == n;
 }
 
+/* =============================================================================
+ * I BISCOTTI — la dispensa, il file, e le due porte da cui entrano
+ *
+ * ! LA DISPENSA STA QUI, E LE SUE REGOLE NO. Quali biscotti valgono per quale
+ * dominio e per quale percorso lo decide biscotti.c, che sta in un file suo
+ * apposta: quelle regole si sbagliano in silenzio e si provano senza schermo,
+ * senza rete e senza disco (make prova-biscotti). Qui c'e' quel che il banco
+ * non puo' avere — l'orologio vero, il file su disco, e le due porte.
+ *
+ * ! LE PORTE SONO DUE E VANNO TENUTE DISTINTE. Da una entrano i `Set-Cookie`
+ * del server, dall'altra quel che uno script scrive in `document.cookie`; la
+ * differenza e' `HttpOnly`, che uno script non puo' ne' leggere ne' fabbricare.
+ * Se fossero la stessa funzione, quella bandiera non vorrebbe dire piu' niente.
+ *
+ * ! E IL FILE SI RISCRIVE SOLO QUANDO QUALCOSA E' CAMBIATO. Una pagina con
+ * venti immagini fa venti richieste e nessuna cambia la dispensa: riscrivere il
+ * file a ogni giro vorrebbe dire venti scritture su un CD che non si scrive, e
+ * venti messaggi d'errore.
+ * ========================================================================== */
+#define BIS_TESTO_MAX  (16u * 1024u)
+
+static Dispensa g_bis;
+static char     g_bis_perc[IMP_PERC_MAX] = "";
+static int      g_bis_sporca = 0;       /* c'e' qualcosa da salvare */
+
+/* L'ora vera, in secondi dall'epoca. Zero vuol dire «non si sa», e allora
+ * biscotti.c non fa scadere niente: e' meglio tenere un biscotto morto che
+ * buttarne uno vivo perche' l'orologio non risponde. */
+static unsigned int ora_epoca(void)
+{
+    struct timeval tv;
+
+    if (gettimeofday(&tv, 0) != 0) return 0;
+    if (tv.tv_sec <= 0) return 0;
+    return (unsigned int)tv.tv_sec;
+}
+
+/* $HOME/.app/browser/biscotti.txt, accanto alle impostazioni. */
+static int bis_prepara(void)
+{
+    char t[IMP_PERC_MAX];
+    int  i;
+
+    g_bis_perc[0] = '\0';
+    if (!g_imp_perc[0]) return 0;
+
+    /* Si parte dal percorso delle impostazioni, che le directory le ha gia'
+     * create: rifare qui la stessa salita vorrebbe dire due funzioni che
+     * devono restare d'accordo su dove sta la casa. */
+    strncpy(t, g_imp_perc, sizeof(t) - 1);
+    t[sizeof(t) - 1] = '\0';
+    i = (int)strlen(t);
+    while (i > 0 && t[i - 1] != '/') i--;
+    if (i == 0) return 0;
+    t[i] = '\0';
+    strncat(t, "biscotti.txt", sizeof(t) - strlen(t) - 1);
+
+    strncpy(g_bis_perc, t, sizeof(g_bis_perc) - 1);
+    g_bis_perc[sizeof(g_bis_perc) - 1] = '\0';
+    return 1;
+}
+
+static void bis_leggi_file(void)
+{
+    static char testo[BIS_TESTO_MAX];
+    int         fd, n;
+    unsigned int u = 0;
+
+    if (!g_bis_perc[0]) return;
+    fd = open(g_bis_perc, O_RDONLY);
+    if (fd < 0) return;
+
+    while (u + 1 < sizeof(testo) &&
+           (n = (int)read(fd, testo + u, sizeof(testo) - 1 - u)) > 0)
+        u += (unsigned int)n;
+    close(fd);
+    testo[u] = '\0';
+
+    bis_carica(&g_bis, testo, ora_epoca());
+}
+
+static void bis_scrivi_file(void)
+{
+    static char  testo[BIS_TESTO_MAX];
+    unsigned int n;
+    int          fd;
+
+    if (!g_bis_sporca || !g_bis_perc[0]) return;
+    g_bis_sporca = 0;
+
+    n = bis_salva(&g_bis, testo, sizeof(testo), ora_epoca());
+
+    fd = open(g_bis_perc, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    /* ! UN DISCO IN SOLA LETTURA NON E' UN ERRORE DA GRIDARE. Da CD non si
+     * scrive niente, e i biscotti valgono per questa sessione: e' gia' detto
+     * all'avvio per la cache, e ripeterlo a ogni pagina sarebbe rumore. */
+    if (fd < 0) return;
+    if (n) write(fd, testo, n);
+    close(fd);
+}
+
+/* ! IL PERCORSO DELLA PAGINA DI ADESSO, per capire quali biscotti la
+ * riguardano. Se l'indirizzo non si smonta si risponde vuoto: meglio non
+ * mandarne che mandarne di un altro sito. */
+static int bis_qui(HttpUrl *u)
+{
+    if (!g_qui[0] || e_locale(g_qui)) return 0;
+    return http_url(g_qui, u) ? 1 : 0;
+}
+
+/* --- la porta dell'HTTP: i due ganci che exhttp chiama -------------------- */
+static void bis_chiedi(void *dato, const char *host, const char *percorso,
+                       int cifrata, char *fuori, unsigned int max)
+{
+    (void)dato;
+    bis_da_mandare(&g_bis, host, percorso, cifrata, 0, ora_epoca(), fuori, max);
+}
+
+static void bis_arrivo(void *dato, const char *host, const char *riga)
+{
+    (void)dato;
+    /* ! IL PERCORSO NON CE L'ABBIAMO QUI E NON SERVE INVENTARLO: exhttp ci
+     * da' l'host, e il percorso predefinito lo si prende dalla pagina che si
+     * sta caricando. Nei casi che contano — una redirezione dentro la stessa
+     * chiamata — e' quello giusto; e comunque un `Path` scritto nel biscotto
+     * vince su qualunque predefinito. */
+    if (bis_arrivato(&g_bis, host, "/", riga, ora_epoca())) g_bis_sporca = 1;
+}
+
+/* --- la porta degli script: document.cookie ------------------------------- */
+
+/* Quel che uno script puo' vedere di questa pagina. */
+static void bis_per_script(char *fuori, unsigned int max)
+{
+    HttpUrl u;
+
+    fuori[0] = '\0';
+    if (!bis_qui(&u)) return;
+    bis_da_mandare(&g_bis, u.host, u.percorso, u.cifrato, 1, ora_epoca(),
+                   fuori, max);
+}
+
+/* ! QUEL CHE UNO SCRIPT HA SCRITTO SI RACCOGLIE A PEZZI E SI CONFRONTA. Il
+ * ponte tiene una stringa sola — «a=1; b=2» — e non dice QUALE riga e'
+ * cambiata: la si spezza e si rimette dentro ogni pezzo. Rimetterne uno che
+ * c'era gia' non fa niente, ed e' molto piu' semplice che tenere due elenchi
+ * d'accordo fra loro. */
+static ExDom *bis_ponte(void);          /* vedi motore_apri, piu' avanti */
+
+static void bis_dallo_script(void)
+{
+    const char  *s;
+    HttpUrl      u;
+    char         pezzo[BIS_NOME_MAX + BIS_VAL_MAX + 4];
+    unsigned int i = 0, k;
+
+    { ExDom *D = bis_ponte();
+
+      if (!D || !bis_qui(&u)) return;
+      s = exdom_biscotti(D); }
+    if (!s || !s[0]) return;
+
+    while (s[i]) {
+        while (s[i] == ' ' || s[i] == ';') i++;
+        if (!s[i]) break;
+        k = 0;
+        while (s[i] && s[i] != ';') {
+            if (k + 1 < sizeof(pezzo)) pezzo[k++] = s[i];
+            i++;
+        }
+        while (k > 0 && pezzo[k - 1] == ' ') k--;
+        pezzo[k] = '\0';
+        if (pezzo[0] &&
+            bis_da_script(&g_bis, u.host, u.percorso, pezzo, ora_epoca()))
+            g_bis_sporca = 1;
+    }
+}
+
 /* Rende 1 e riempie `buf` se la risorsa c'e' ed e' proprio la sua. */
 /* =============================================================================
  * Il pezzo di RAM davanti al disco
@@ -3957,6 +4158,23 @@ static void raccogli_css(void)
 
 static ExJsCtx *g_js  = 0;
 static ExDom   *g_dom = 0;
+
+/* ! UNA RIGA SOLA PER NON SPOSTARE MEZZO FILE. Le funzioni dei biscotti stanno
+ * accanto alle impostazioni — e' li' che si scrive su disco — ma una di loro ha
+ * bisogno del ponte, che si dichiara duemila righe piu' giu'. Fra spostare un
+ * blocco e dichiarare una funzione, la seconda si legge meglio. */
+static ExDom *bis_ponte(void) { return g_dom; }
+
+/* ! SI CHIAMA DOVUNQUE UNO SCRIPT ABBIA POTUTO GIRARE, e sono tre posti: dopo
+ * gli script della pagina, dopo un evento, e dopo la pompa dei tempi. Un
+ * `document.cookie = ...` scritto dentro un gestore di clic e' comune quanto
+ * uno scritto in cima alla pagina, e raccoglierlo solo nel primo caso vorrebbe
+ * dire un biscotto che sparisce a seconda di DOVE e' stato messo. */
+static void dopo_gli_script(void)
+{
+    bis_dallo_script();
+    bis_scrivi_file();
+}
 static void    *g_js_mem = 0;
 static void    *g_dom_mem = 0;
 
@@ -3982,6 +4200,103 @@ static void js_uscita(const char *t, unsigned int n, void *dato)
     }
     riga[k] = '\0';
     if (k) dico(riga);
+}
+
+
+/* =============================================================================
+ * LA RETE PER GLI SCRIPT — il gancio che exdom chiama
+ *
+ * ! IL PONTE NON CHIAMA exhttp, LO CHIAMA IL BROWSER. Da questa parte c'e'
+ * tutto quello che serve e che il ponte non ha: risolvi() per gli indirizzi
+ * relativi, e_locale() per lo schema `file:`, e un tetto scelto qui. Il perche'
+ * della divisione sta in exdom.h, accanto a ExDomRete.
+ *
+ * ! IL BUFFER E' SUO E SI PRENDE ALLA PRIMA RICHIESTA. Riusare g_imm_buf —
+ * quello di immagini, fogli di stile e script esterni — sarebbe stato gratis e
+ * sbagliato: uno script che fa una XMLHttpRequest sta girando MENTRE
+ * esegui_script tiene il proprio sorgente in quel buffer, e la risposta gli
+ * scriverebbe sopra il codice che si sta ancora eseguendo. Una pagina che non
+ * chiede niente alla rete non paga niente, perche' la malloc si fa qui.
+ *
+ * ! E IL TETTO E' DICHIARATO. Centoventotto kilobyte: una risposta piu' grande
+ * arriva TRONCATA e lo si scrive sulla console, invece di far credere a una
+ * pagina di avere tutto. Con ExJs c'e' anche un secondo tetto, piu' basso e
+ * fuori di qui — l'arena delle stringhe del motore, che e' di 96 KB: una
+ * risposta che non ci sta diventa la stringa vuota, e il motore segna che la
+ * memoria e' finita.
+ * ========================================================================== */
+#define XHR_MAX  (128u * 1024u)
+
+static unsigned char *g_xhr_buf = 0;
+
+static int rete_per_script(void *dato, ExDomRichiesta *r)
+{
+    char         url[EXHTTP_URL_MAX];
+    ExHttpEsito  e;
+    int          post;
+
+    (void)dato;
+    if (!r->url || !r->url[0]) return 0;
+
+    /* ! I BISCOTTI DEGLI SCRIPT SI RACCOLGONO PRIMA DI PARTIRE, non alla fine
+     * della pagina, e la differenza si vede in tre righe di JavaScript:
+     *
+     *     document.cookie = 'x=1';
+     *     fetch('/dove-sono');        <- deve gia' portarselo
+     *
+     * Le due cose succedono dentro lo stesso script, e raccogliere solo dopo
+     * — com'era — voleva dire che la richiesta partiva senza. Non e' un caso
+     * di scuola: e' il modo normale in cui una pagina segna una scelta e la
+     * manda al server subito dopo. */
+    bis_dallo_script();
+
+    /* ! L'INDIRIZZO ARRIVA COM'E' SCRITTO NELLA PAGINA, e risolverlo tocca a
+     * noi: il ponte non sa rispetto a che cosa. E' la stessa risolvi() dei
+     * collegamenti, quindi «/a», «../b» e «c.html» si comportano nello
+     * script come si comportano in un href. */
+    if (!risolvi(r->url, url, sizeof(url))) return 0;
+
+    if (!g_xhr_buf) {
+        g_xhr_buf = malloc(XHR_MAX);
+        if (!g_xhr_buf) { dico("javascript: memoria non disponibile"); return 0; }
+    }
+
+    post = r->metodo && (r->metodo[0] | 32) == 'p' && (r->metodo[1] | 32) == 'o';
+
+    /* ! ANCHE `file:` PASSA DI QUI, e non e' un di piu': la documentazione sta
+     * su disco, e una pagina locale che si legge un pezzo con fetch e' il modo
+     * piu' comodo di provare tutto questo senza accendere una rete. exhttp di
+     * «file:» non sa niente e risponderebbe di no. */
+    if (e_locale(url)) {
+        unsigned int n = 0;
+        int          troncata = 0;
+
+        if (!locale_leggi(url, g_xhr_buf, XHR_MAX, &n, &troncata)) return 0;
+        if (troncata) dico("javascript: risposta troncata");
+        r->risposta = (const char *)g_xhr_buf;
+        r->byte     = n;
+        r->codice   = 200;
+        r->tipo     = 0;
+        return 1;
+    }
+
+    memset(&e, 0, sizeof(e));
+    if (post ? !exhttp_posta(url, r->corpo ? r->corpo : "",
+                             g_xhr_buf, XHR_MAX, &e)
+             : !exhttp_prendi(url, g_xhr_buf, XHR_MAX, &e)) {
+        /* ! «NON E' PARTITA» E «IL SERVER HA DETTO DI NO» SONO DUE COSE, e la
+         * differenza esce da qui: rendendo 0, fetch rifiuta la promessa e
+         * XMLHttpRequest lascia `status` a zero. Rendere 1 con codice 0
+         * direbbe a una pagina che ha ricevuto una risposta vuota. */
+        return 0;
+    }
+
+    if (e.troncata) dico("javascript: risposta troncata");
+    r->risposta = (const char *)g_xhr_buf;
+    r->byte     = e.byte;
+    r->codice   = e.codice;
+    r->tipo     = e.tipo[0] ? e.tipo : 0;
+    return 1;
 }
 
 static void motore_chiudi(void)
@@ -4035,6 +4350,22 @@ static int motore_apri(void)
      * e senza questa riga `location.href` sarebbe una stringa vuota su ogni
      * pagina, cioe' una risposta sbagliata data senza errore. */
     exdom_indirizzo(g_dom, g_qui);
+
+    /* ! E I BISCOTTI CHE QUESTA PAGINA PUO' VEDERE, che non sono tutti: gli
+     * `HttpOnly` restano fuori, ed e' tutto il senso di quella bandiera. Il
+     * ponte ne tiene una copia e ci lascia scrivere sopra; a raccogliere quel
+     * che gli script hanno scritto ci pensa bis_dallo_script(). */
+    {
+        static char miei[BIS_TESTO_MAX / 8];
+
+        bis_per_script(miei, sizeof(miei));
+        exdom_biscotti_metti(g_dom, miei);
+    }
+
+    /* ! E LA RETE, che il ponte non ha e non deve avere. Senza questa riga
+     * XMLHttpRequest e fetch ci sono lo stesso e rispondono «non e' partita»:
+     * e' la verita', ed e' quel che si vede se un giorno la riga sparisce. */
+    exdom_rete_metti(g_dom, rete_per_script, 0);
     return 1;
 }
 
@@ -4162,6 +4493,8 @@ static void esegui_script(void)
      * volte al secondo per sempre — e su una macchina da 32 MB il costo di un
      * risveglio inutile e' un ridisegno che nessuno ha chiesto. */
     if (g_js && exjs_lavori_in_attesa(g_js)) ex_sveglia(g_f, 200);
+
+    dopo_gli_script();
 }
 
 /* ! DOPO OGNI SCRIPT SI GUARDA SE IL DOCUMENTO E' CAMBIATO, e si rifa' solo
@@ -4229,6 +4562,7 @@ static int clic_al_documento(int x, int y)
     seguire = exdom_evento(g_dom, nodo, "click", &err);
     js_grida(&err);
     rifai_se_cambiato();
+    dopo_gli_script();
     return seguire;
 }
 
@@ -5051,20 +5385,34 @@ static int aggiungi_codificato(char *out, int pos, int max, const char *s)
     return pos;
 }
 
+/* ! IL CORPO DI UNA POST NON HA LA MISURA DI UN INDIRIZZO, e per un pezzo qui
+ * ce l'ha avuta: i campi finivano in un buffer da EXHTTP_URL_MAX, seicento
+ * byte, che e' il tetto giusto per un URL e non per un modulo. Un modulo di
+ * consenso — quello di google.com ne ha tredici, uno solo da duecentocinquanta
+ * caratteri — lo supera senza sforzo, e il corpo partiva TAGLIATO: il server
+ * rispondeva «400, la richiesta e' malformata» e non c'era modo di capire
+ * perche' guardando lo schermo.
+ *
+ * ! E ADESSO QUANDO NON CI STA NON SI MANDA. Un modulo troncato non e' un
+ * modulo con qualche campo in meno: e' una richiesta che il server rifiuta, o
+ * peggio accetta a meta'. Meglio dirlo e fermarsi. */
+#define MODULO_CORPO_MAX  (8u * 1024u)
+
 static void manda_modulo(int m)
 {
-    char q[EXHTTP_URL_MAX];
+    static char q[MODULO_CORPO_MAX];
     char meta[EXHTTP_URL_MAX];
-    int  pos = 0, primo = 1, i;
+    int  pos = 0, primo = 1, i, pieno = 0;
 
     if (m < 0 || m >= g_mod_n) {
         dico("questo campo non sta dentro nessun modulo");
         return;
     }
 
-    for (i = 0; i < g_ctrl_n && pos < (int)sizeof(q) - 8; i++) {
+    for (i = 0; i < g_ctrl_n; i++) {
         const Ctrl *c = &g_ctrl[i];
 
+        if (pos >= (int)sizeof(q) - 8) { pieno = 1; break; }
         if (c->modulo != m) continue;
         if (c->nome[0] == '\0') continue;
         if (c->tipo == CTRL_PULSANTE) continue;
@@ -5082,6 +5430,11 @@ static void manda_modulo(int m)
                 ? c->valore : "on");
     }
     q[pos] = '\0';
+
+    if (pieno) {
+        dico("il modulo e' troppo grande: non lo mando a meta'");
+        return;
+    }
 
     /* L'azione vuota vuol dire «questa stessa pagina». */
     if (g_mod[m].azione[0] == '\0') {
@@ -5121,16 +5474,25 @@ static void manda_modulo(int m)
          * exhttp. Con POST l'indirizzo resta pulito — che e' anche il motivo
          * per cui un modulo di pagamento non usa GET: la query finisce nella
          * cronologia e nei log del server. */
-        if (!g_mod[m].post && pos > 0 && k < (int)sizeof(nuovo) - 2) {
+        if (!g_mod[m].post && pos > 0) {
             int j = 0;
 
+            /* ! IN GET IL TETTO E' QUELLO DELL'INDIRIZZO, e li' non si scappa:
+             * un URL ha una lunghezza massima. Se i campi non ci stanno si
+             * dice, invece di mandarne meta' — che e' una ricerca sbagliata
+             * spacciata per giusta. */
+            if (k >= (int)sizeof(nuovo) - 2 ||
+                pos > (int)sizeof(nuovo) - 2 - k) {
+                dico("il modulo non sta in un indirizzo: servirebbe un POST");
+                return;
+            }
             nuovo[k++] = '?';
             while (q[j] && k < (int)sizeof(nuovo) - 1) nuovo[k++] = q[j++];
         }
         nuovo[k] = '\0';
 
         {
-            static char corpo[EXHTTP_URL_MAX];
+            static char corpo[MODULO_CORPO_MAX];
             char assoluto[EXHTTP_URL_MAX];
             int  j = 0;
 
@@ -5654,6 +6016,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         if (g_js) {
             exjs_pompa(g_js, uptime_ms());
             rifai_se_cambiato();
+            dopo_gli_script();
             if (!exjs_lavori_in_attesa(g_js)) ex_sveglia(g_f, 0);
             /* Un `setTimeout` che cambia indirizzo e' il modo classico di
              * scrivere una redirezione: si guarda anche qui, non solo dopo
@@ -5863,6 +6226,15 @@ int main(int argc, char **argv)
      * vorrebbe dire aprirne due. */
     imp_prepara();
     imp_leggi();
+
+    /* ! I BISCOTTI DOPO LE IMPOSTAZIONI, perche' il loro file sta accanto a
+     * quello e riusa le directory che imp_prepara ha appena creato. E il
+     * gancio si registra SUBITO: da questo momento ogni richiesta di exhttp
+     * porta quel che c'e' nella dispensa, comprese quelle che partono dentro
+     * una redirezione. */
+    bis_azzera(&g_bis);
+    if (bis_prepara()) bis_leggi_file();
+    exhttp_biscotti(bis_chiedi, bis_arrivo, 0);
     if (!g_home[0]) home_predefinita();
 
     ex_fuoco(g_url);

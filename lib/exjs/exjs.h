@@ -275,6 +275,23 @@ ExJsVal exjs_oggetto(ExJsCtx *c);
 ExJsVal exjs_vettore(ExJsCtx *c);
 ExJsVal exjs_nativa(ExJsCtx *c, ExJsNativa f, void *dato, const char *nome);
 
+/* Come exjs_nativa, ma la funzione si puo' chiamare con `new`.
+ *
+ * ! DUE CHIAMATE E NON UNA, PERCHE' I DUE MOTORI NON LA PENSANO UGUALE. In
+ * ExJs qualunque funzione si puo' costruire: `new f()` fa un oggetto, lo passa
+ * come `this` e lo rende — a meno che il costruttore non renda un oggetto suo.
+ * QuickJS invece tiene un BIT sull'oggetto funzione, e senza quel bit
+ * `new f()` e' «TypeError: not a constructor»: le funzioni native che nascono
+ * da JS_NewCFunctionData non ce l'hanno.
+ *
+ * ! E LA DIFFERENZA SI VEDEVA SOLO SU UN MOTORE, che e' il caso peggiore.
+ * `new XMLHttpRequest()` funzionava sotto ExJs e falliva sotto QuickJS, con la
+ * stessa pagina e senza che niente lo dicesse: e' esattamente il genere di
+ * divergenza che avere due motori sotto la stessa interfaccia esiste per
+ * scoprire. Chi scrive un oggetto che le pagine costruiscono con `new` chiama
+ * questa; per tutto il resto exjs_nativa va bene e costa meno. */
+ExJsVal exjs_costruttore(ExJsCtx *c, ExJsNativa f, void *dato, const char *nome);
+
 int         exjs_tipo(ExJsCtx *c, ExJsVal v);
 double      exjs_a_numero(ExJsCtx *c, ExJsVal v);
 int         exjs_a_booleano(ExJsCtx *c, ExJsVal v);

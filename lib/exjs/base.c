@@ -52,6 +52,70 @@ static int copia_val(ExJsCtx *c, ExJsVal v, char *dst, unsigned int max)
     return s[i] == '\0';
 }
 
+/* =============================================================================
+ * ! UNA STRINGA NON SI COPIA: SI PUNTA — e dietro c'e' un difetto vero,
+ * trovato aprendo una pagina da settemila byte.
+ *
+ * Il commento di `copia_val` qui sopra dice che «una copia troncata darebbe un
+ * risultato sbagliato invece di un errore». Aveva ragione, e nessuno dei suoi
+ * chiamanti guardava quel che rendeva: ogni metodo di String copiava il
+ * soggetto in mezzo kilobyte e lavorava sui primi 511 caratteri.
+ *
+ *     pagina.indexOf('riquadro')   ->  -1, su un testo che ce l'ha
+ *
+ * Nessun errore, nessun avviso, la risposta sbagliata. Si e' visto quando
+ * XMLHttpRequest ha cominciato a consegnare documenti interi agli script:
+ * prima, di stringhe lunghe in giro ce n'erano poche.
+ *
+ * ! LA CURA E' NON COPIARE. `exjs_a_stringa` rende un posto di SERVIZIO solo
+ * per quel che stringa non e' — i numeri, che sono corti — e per una stringa
+ * vera rende il suo posto nell'arena, che non si muove piu': l'arena cresce in
+ * coda e non si ricompatta mai. Puntarla costa zero e non ha tetti.
+ *
+ * ! IL POSTO DI SERVIZIO SI RIEMPIE DA CAPO A OGNI CHIAMATA, e questa e' la
+ * trappola che resta: chi ne maneggia DUE, e almeno una non e' una stringa,
+ * deve comunque copiarne una. Percio' un buffer serve lo stesso, e si usa solo
+ * quando serve davvero.
+ * ========================================================================== */
+static const char *testo_di(ExJsCtx *c, ExJsVal v, char *dst, unsigned int max)
+{
+    if (exjs_tipo(c, v) == EXJS_STRINGA) return exjs_a_stringa(c, v);
+    copia_val(c, v, dst, max);
+    return dst;
+}
+
+/* =============================================================================
+ * IL FILO — una stringa costruita a pezzi dentro l'arena, senza un tetto suo
+ *
+ * ! SERVE A CHI PRODUCE, non a chi legge. Un `replace` su un documento intero
+ * rende un documento intero: scriverlo in un buffer da mezzo kilobyte vuol
+ * dire renderne mezzo. Il meccanismo sta in val.c, dove sta l'arena; qui c'e'
+ * solo il modo comodo di chiamarlo.
+ *
+ * ! MENTRE UN FILO E' APERTO NON SI CREANO ALTRE STRINGHE. La prossima
+ * scriverebbe in coda all'arena, cioe' in mezzo a questa. Chi apre un filo
+ * prepara PRIMA tutto quel che gli serve — ed e' il motivo per cui `replace`
+ * copia l'ago e il ricambio prima di aprirlo.
+ * ========================================================================== */
+typedef struct { ExJsCtx *c; unsigned int off; } Filo;
+
+static void filo_apri(Filo *f, ExJsCtx *c)
+{
+    f->c   = c;
+    f->off = exjs_arena_apri(c);
+}
+
+static void filo_mette(Filo *f, const char *s, unsigned int n)
+{
+    if (f->off != EXJS_FILO_NO && !exjs_arena_aggiungi(f->c, s, n))
+        f->off = EXJS_FILO_NO;
+}
+
+static ExJsVal filo_chiudi(Filo *f)
+{
+    return exjs_arena_chiudi(f->c, f->off);
+}
+
 static unsigned int lung(const char *s)
 {
     unsigned int n = 0;
@@ -93,10 +157,11 @@ static ExJsVal nat_log(ExJsCtx *c, ExJsVal questo, const ExJsVal *a, int n,
 
     (void)questo; (void)dato;
     for (i = 0; i < n; i++) {
-        char b[TESTO_MAX];
-        copia_val(c, a[i], b, sizeof(b));
+        char        tmp[TESTO_MAX];
+        const char *s = testo_di(c, a[i], tmp, sizeof(tmp));
+
         if (i) exjs_uscita_scrivi(c, " ", 1);
-        exjs_uscita_scrivi(c, b, lung(b));
+        exjs_uscita_scrivi(c, s, lung(s));
     }
     exjs_uscita_scrivi(c, "\n", 1);
     return exjs_indefinito();
@@ -194,11 +259,13 @@ static ExJsVal nat_isfinite(ExJsCtx *c, ExJsVal questo, const ExJsVal *a, int n,
 static ExJsVal nat_String(ExJsCtx *c, ExJsVal questo, const ExJsVal *a, int n,
                           void *dato)
 {
-    char b[TESTO_MAX];
+    char tmp[TESTO_MAX];
     (void)questo; (void)dato;
     if (n == 0) return exjs_stringa(c, "", -1);
-    copia_val(c, a[0], b, sizeof(b));
-    return exjs_stringa(c, b, -1);
+    /* Una stringa e' gia' una stringa: renderla com'e' evita di ricopiarla
+     * nell'arena e, soprattutto, di troncarla. */
+    if (exjs_tipo(c, a[0]) == EXJS_STRINGA) return a[0];
+    return exjs_stringa(c, testo_di(c, a[0], tmp, sizeof(tmp)), -1);
 }
 
 static ExJsVal nat_Number(ExJsCtx *c, ExJsVal questo, const ExJsVal *a, int n,
@@ -337,11 +404,11 @@ static ExJsVal nat_random(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *
  * ========================================================================== */
 static ExJsVal nat_charAt(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
 {
-    char b[TESTO_MAX], uno[2];
-    int  i = arg_intero(c, a, n, 0, 0);
+    char        tmp[TESTO_MAX], uno[2];
+    const char *b = testo_di(c, q, tmp, sizeof(tmp));
+    int         i = arg_intero(c, a, n, 0, 0);
 
     (void)d;
-    copia_val(c, q, b, sizeof(b));
     if (i < 0 || (unsigned int)i >= lung(b)) return exjs_stringa(c, "", -1);
     uno[0] = b[i]; uno[1] = '\0';
     return exjs_stringa(c, uno, -1);
@@ -349,11 +416,11 @@ static ExJsVal nat_charAt(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *
 
 static ExJsVal nat_charCodeAt(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
 {
-    char b[TESTO_MAX];
-    int  i = arg_intero(c, a, n, 0, 0);
+    char        tmp[TESTO_MAX];
+    const char *b = testo_di(c, q, tmp, sizeof(tmp));
+    int         i = arg_intero(c, a, n, 0, 0);
 
     (void)d;
-    copia_val(c, q, b, sizeof(b));
     if (i < 0 || (unsigned int)i >= lung(b)) return exjs_numero(c, 0.0/0.0);
     return exjs_numero(c, (double)(unsigned char)b[i]);
 }
@@ -363,13 +430,19 @@ static ExJsVal nat_charCodeAt(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, vo
  * sbagliata — funzionerebbe per caso finche' qualcuno non scrive `!= -1`. */
 static ExJsVal nat_indexOf_str(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
 {
-    char         b[TESTO_MAX], ago[TESTO_MAX];
+    char         tmp[TESTO_MAX], ago[TESTO_MAX];
+    const char  *b;
     unsigned int i, j, lb, la;
     int          da = arg_intero(c, a, n, 1, 0);
 
     (void)d;
-    copia_val(c, q, b, sizeof(b));
-    copia_val(c, arg_di(a, n, 0), ago, sizeof(ago));
+    /* ! L'AGO SI COPIA E IL PAGLIAIO NO: dei due, quello che puo' essere
+     * lungo davvero e' il secondo. E se l'ago non ci sta si rende -1 invece
+     * di cercarne uno accorciato — un ago troncato TROVEREBBE, e troverebbe
+     * il posto sbagliato. */
+    if (!copia_val(c, arg_di(a, n, 0), ago, sizeof(ago)))
+        return exjs_numero(c, -1.0);
+    b = testo_di(c, q, tmp, sizeof(tmp));
     lb = lung(b); la = lung(ago);
 
     if (da < 0) da = 0;
@@ -385,12 +458,14 @@ static ExJsVal nat_indexOf_str(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, v
 
 static ExJsVal nat_lastIndexOf_str(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
 {
-    char         b[TESTO_MAX], ago[TESTO_MAX];
+    char         tmp[TESTO_MAX], ago[TESTO_MAX];
+    const char  *b;
     unsigned int i, j, lb, la;
 
     (void)d; (void)n;
-    copia_val(c, q, b, sizeof(b));
-    copia_val(c, arg_di(a, n, 0), ago, sizeof(ago));
+    if (!copia_val(c, arg_di(a, n, 0), ago, sizeof(ago)))
+        return exjs_numero(c, -1.0);
+    b = testo_di(c, q, tmp, sizeof(tmp));
     lb = lung(b); la = lung(ago);
 
     if (la == 0)  return exjs_numero(c, (double)lb);
@@ -408,11 +483,11 @@ static ExJsVal nat_lastIndexOf_str(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int 
  * -2 come zero. Le pagine usano tutt'e due. */
 static ExJsVal taglia(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, int e_slice)
 {
-    char         b[TESTO_MAX], out[TESTO_MAX];
-    unsigned int l, k;
+    char         tmp[TESTO_MAX];
+    const char  *b = testo_di(c, q, tmp, sizeof(tmp));
+    unsigned int l;
     int          da, fino;
 
-    copia_val(c, q, b, sizeof(b));
     l = lung(b);
 
     da   = arg_intero(c, a, n, 0, 0);
@@ -433,10 +508,10 @@ static ExJsVal taglia(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, int e_slic
     if (!e_slice && da > fino) { int t = da; da = fino; fino = t; }
     if (da >= fino) return exjs_stringa(c, "", -1);
 
-    for (k = 0; k + (unsigned int)da < (unsigned int)fino && k + 1 < sizeof(out); k++)
-        out[k] = b[da + (int)k];
-    out[k] = '\0';
-    return exjs_stringa(c, out, -1);
+    /* ! IL PEZZO SI RENDE DALLA STRINGA DI PARTENZA, con la sua lunghezza:
+     * exjs_stringa la prende, e cosi' non c'e' nessun buffer d'uscita da
+     * scegliere — cioe' nessuna misura oltre la quale `slice` mentirebbe. */
+    return exjs_stringa(c, b + da, fino - da);
 }
 
 static ExJsVal nat_slice_str(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
@@ -447,44 +522,56 @@ static ExJsVal nat_substring(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, voi
 
 static ExJsVal nat_caso(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
 {
-    char         b[TESTO_MAX];
-    unsigned int i;
+    char         tmp[TESTO_MAX];
+    const char  *b = testo_di(c, q, tmp, sizeof(tmp));
+    unsigned int i, l = lung(b);
     int          su = (d != 0);
+    Filo         f;
 
     (void)a; (void)n;
-    copia_val(c, q, b, sizeof(b));
-    /* ! SOLO ASCII, e si dichiara: cambiare caso a un carattere accentato
-     * richiede una tabella Unicode, e quella non sta in questo scaglione.
-     * Cambiare i soli byte alti darebbe testo rotto. */
-    for (i = 0; b[i]; i++) {
-        if (su  && b[i] >= 'a' && b[i] <= 'z') b[i] = (char)(b[i] - 32);
-        if (!su && b[i] >= 'A' && b[i] <= 'Z') b[i] = (char)(b[i] + 32);
+    /* ! IL RISULTATO SI COSTRUISCE, NON SI MODIFICA IL SOGGETTO. Prima si
+     * cambiava caso dentro la copia e si rendeva quella; adesso il soggetto
+     * e' la stringa VERA di chi ha chiamato — nell'arena — e scriverci sopra
+     * vorrebbe dire cambiare la sua variabile. */
+    filo_apri(&f, c);
+    for (i = 0; i < l; i++) {
+        /* ! SOLO ASCII, e si dichiara: cambiare caso a un carattere accentato
+         * richiede una tabella Unicode, e quella non sta in questo scaglione.
+         * Cambiare i soli byte alti darebbe testo rotto. */
+        char ch = b[i];
+
+        if (su  && ch >= 'a' && ch <= 'z') ch = (char)(ch - 32);
+        if (!su && ch >= 'A' && ch <= 'Z') ch = (char)(ch + 32);
+        filo_mette(&f, &ch, 1);
     }
-    return exjs_stringa(c, b, -1);
+    return filo_chiudi(&f);
 }
 
 static ExJsVal nat_trim(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
 {
-    char         b[TESTO_MAX];
+    char         tmp[TESTO_MAX];
+    const char  *b;
     unsigned int i = 0, f;
 
     (void)a; (void)n; (void)d;
-    copia_val(c, q, b, sizeof(b));
+    b = testo_di(c, q, tmp, sizeof(tmp));
     f = lung(b);
     while (b[i] == ' ' || b[i] == '\t' || b[i] == '\n' || b[i] == '\r') i++;
     while (f > i && (b[f-1]==' '||b[f-1]=='\t'||b[f-1]=='\n'||b[f-1]=='\r')) f--;
-    b[f] = '\0';
-    return exjs_stringa(c, b + i, -1);
+    /* Non si tocca la stringa di partenza — potrebbe essere quella di
+     * qualcun altro: si rende il tratto che resta, con la sua lunghezza. */
+    return exjs_stringa(c, b + i, (int)(f - i));
 }
 
 static ExJsVal nat_split(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
 {
-    char         b[TESTO_MAX], sep[TESTO_MAX], pezzo[TESTO_MAX];
-    unsigned int i = 0, k = 0, ls, idx = 0;
+    char         tmp[TESTO_MAX], sep[TESTO_MAX];
+    const char  *b;
+    unsigned int i = 0, inizio = 0, ls, idx = 0;
     ExJsVal      v = exjs_vettore(c);
 
     (void)d;
-    copia_val(c, q, b, sizeof(b));
+    b = testo_di(c, q, tmp, sizeof(tmp));
 
     /* ! SENZA SEPARATORE SI RENDE UN VETTORE CON DENTRO LA STRINGA INTERA, non
      * le sue lettere. `"ab".split()` fa ["ab"], `"ab".split("")` fa ["a","b"].
@@ -494,7 +581,12 @@ static ExJsVal nat_split(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d
         return v;
     }
 
-    copia_val(c, a[0], sep, sizeof(sep));
+    /* ! UN SEPARATORE CHE NON CI STA NON SEPARA NIENTE, e si rende la stringa
+     * intera: un separatore troncato taglierebbe nei posti sbagliati. */
+    if (!copia_val(c, a[0], sep, sizeof(sep))) {
+        exjs_indice_metti(c, v, 0, exjs_stringa(c, b, -1));
+        return v;
+    }
     ls = lung(sep);
 
     if (ls == 0) {
@@ -506,21 +598,26 @@ static ExJsVal nat_split(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d
         return v;
     }
 
+    /* ! I PEZZI SI RENDONO DALLA STRINGA DI PARTENZA, con la loro lunghezza,
+     * invece di ricopiarli in un buffer: cosi' non c'e' una misura oltre la
+     * quale un pezzo si accorcia da solo. Ogni exjs_stringa qui appende
+     * all'arena, e il puntatore `b` resta valido perche' l'arena cresce in
+     * coda e non si ricompatta mai. */
     for (i = 0; b[i]; ) {
         unsigned int j;
+
         for (j = 0; j < ls && b[i + j] == sep[j]; j++) { }
         if (j == ls) {
-            pezzo[k] = '\0';
-            exjs_indice_metti(c, v, idx++, exjs_stringa(c, pezzo, -1));
-            k = 0;
+            exjs_indice_metti(c, v, idx++,
+                              exjs_stringa(c, b + inizio, (int)(i - inizio)));
             i += ls;
+            inizio = i;
             continue;
         }
-        if (k + 1 < sizeof(pezzo)) pezzo[k++] = b[i];
         i++;
     }
-    pezzo[k] = '\0';
-    exjs_indice_metti(c, v, idx++, exjs_stringa(c, pezzo, -1));
+    exjs_indice_metti(c, v, idx++,
+                      exjs_stringa(c, b + inizio, (int)(i - inizio)));
     return v;
 }
 
@@ -530,25 +627,34 @@ static ExJsVal nat_split(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d
  * stesso vorrebbe dire un comportamento diverso da ogni altro motore. */
 static ExJsVal nat_replace(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
 {
-    char         b[TESTO_MAX], ago[TESTO_MAX], nuovo[TESTO_MAX], out[TESTO_MAX];
-    unsigned int i, j, k = 0, lb, la;
+    char         tmp[TESTO_MAX], ago[TESTO_MAX], nuovo[TESTO_MAX];
+    const char  *b;
+    unsigned int i, j, lb, la, ln;
 
     (void)d;
-    copia_val(c, q, b, sizeof(b));
-    copia_val(c, arg_di(a, n, 0), ago, sizeof(ago));
-    copia_val(c, arg_di(a, n, 1), nuovo, sizeof(nuovo));
-    lb = lung(b); la = lung(ago);
+    /* ! L'AGO E IL RICAMBIO SI COPIANO PRIMA DI APRIRE IL FILO, e non e' un
+     * dettaglio: dentro un filo non si possono creare altre stringhe, e
+     * `exjs_a_stringa` su un numero riscrive il posto di servizio. Se non ci
+     * stanno non si sostituisce niente — un ago troncato colpirebbe nel posto
+     * sbagliato, e un ricambio troncato lascerebbe un testo a meta'. */
+    if (!copia_val(c, arg_di(a, n, 0), ago, sizeof(ago)) ||
+        !copia_val(c, arg_di(a, n, 1), nuovo, sizeof(nuovo)))
+        return q;
+    b = testo_di(c, q, tmp, sizeof(tmp));
+    lb = lung(b); la = lung(ago); ln = lung(nuovo);
 
     if (la == 0 || la > lb) return exjs_stringa(c, b, -1);
 
     for (i = 0; i + la <= lb; i++) {
         for (j = 0; j < la && b[i + j] == ago[j]; j++) { }
         if (j == la) {
-            for (j = 0; j < i && k + 1 < sizeof(out); j++)          out[k++] = b[j];
-            for (j = 0; nuovo[j] && k + 1 < sizeof(out); j++)       out[k++] = nuovo[j];
-            for (j = i + la; b[j] && k + 1 < sizeof(out); j++)      out[k++] = b[j];
-            out[k] = '\0';
-            return exjs_stringa(c, out, -1);
+            Filo f;
+
+            filo_apri(&f, c);
+            filo_mette(&f, b, i);
+            filo_mette(&f, nuovo, ln);
+            filo_mette(&f, b + i + la, lb - i - la);
+            return filo_chiudi(&f);
         }
     }
     return exjs_stringa(c, b, -1);
@@ -769,11 +875,14 @@ static int precede(ExJsCtx *c, ExJsVal x, ExJsVal y, ExJsVal f)
         return exjs_a_numero(c, r) <= 0.0;
     }
     {
-        char         b[TESTO_MAX];
-        const char  *sy;
+        char         tmp[TESTO_MAX];
+        const char  *b, *sy;
         unsigned int i;
 
-        copia_val(c, x, b, sizeof(b));
+        /* ! IL PRIMO SI PUNTA SE E' UNA STRINGA, il secondo si legge dopo: se
+         * si copiassero tutt'e due in mezzo kilobyte, due testi lunghi che
+         * differiscono oltre il 511esimo carattere risulterebbero uguali. */
+        b  = testo_di(c, x, tmp, sizeof(tmp));
         sy = exjs_a_stringa(c, y);
         for (i = 0; b[i] && b[i] == sy[i]; i++) { }
         return (int)(unsigned char)b[i] <= (int)(unsigned char)sy[i];
@@ -888,20 +997,31 @@ static ExJsVal nat_filter(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *
  * pezzi — un guasto che si vede solo con un vettore dentro un oggetto, cioe'
  * tardi. Un vettore di servizio ha un tetto dichiarato e fallisce dicendolo.
  * ========================================================================== */
+/* ! JSON_MAX NON E' PIU' IL TETTO DEL RISULTATO, e la differenza conta: quello
+ * adesso e' l'arena del motore, perche' JSON.stringify scrive li'. Resta il
+ * tetto di una sola cosa — la COPIA del testo da leggere, quando a JSON.parse
+ * si passa qualcosa che non e' gia' una stringa (un numero, un oggetto). Se e'
+ * gia' una stringa non si copia niente e non c'e' tetto. */
 #define JSON_MAX        4096
 #define JSON_PROFONDO   32
 
+/* ! IL RISULTATO SI SCRIVE NELL'ARENA, non in un buffer da quattro kilobyte.
+ * Prima JSON.stringify di un oggetto piu' grande di quello rendeva
+ * `undefined` — che almeno era onesto — ma una stringa lunga dentro un oggetto
+ * piccolo veniva TRONCATA a 511 caratteri e il JSON usciva valido e sbagliato.
+ *
+ * ! E MENTRE IL FILO E' APERTO NON SI CREANO STRINGHE: componi() legge e
+ * basta — exjs_a_stringa su una stringa rende il suo posto nell'arena, su un
+ * numero il posto di servizio, e i nomi delle proprieta' si leggono
+ * dall'arena. Nessuna di queste cose alloca. */
 typedef struct {
-    char        *b;
-    unsigned int max, n;
-    int          rotto;
+    Filo f;
+    int  rotto;
 } Comp;
 
 static void c_car(Comp *C, char ch)
 {
-    if (C->n + 1 >= C->max) { C->rotto = 1; return; }
-    C->b[C->n++] = ch;
-    C->b[C->n] = '\0';
+    filo_mette(&C->f, &ch, 1);
 }
 
 static void c_testo(Comp *C, const char *s)
@@ -970,8 +1090,10 @@ static void componi(ExJsCtx *c, Comp *C, ExJsVal v, int profondo)
     }
 
     case EXJS_STRINGA:
-        copia_val(c, v, tmp, sizeof(tmp));
-        c_stringa(C, tmp);
+        /* Una stringa sta gia' nell'arena: puntarla invece di copiarla e'
+         * anche l'unico modo perche' JSON.stringify di un testo lungo non
+         * renda un JSON tagliato a meta'. */
+        c_stringa(C, exjs_a_stringa(c, v));
         return;
 
     default: break;
@@ -1027,21 +1149,24 @@ static void componi(ExJsCtx *c, Comp *C, ExJsVal v, int profondo)
 
 static ExJsVal nat_stringify(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
 {
-    char b[JSON_MAX];
     Comp C;
 
     (void)q; (void)d;
-    C.b = b; C.max = sizeof(b); C.n = 0; C.rotto = 0;
-    b[0] = '\0';
+    C.rotto = 0;
+    filo_apri(&C.f, c);
 
     componi(c, &C, arg_di(a, n, 0), 0);
 
     /* ! SI RENDE `undefined` QUANDO NON CI SI RIESCE, come fa JavaScript
      * quando gli si passa `undefined` — e non una stringa a meta'. Una stringa
      * troncata verrebbe scritta su disco o mandata in rete come se fosse
-     * intera. */
-    if (C.rotto) return exjs_indefinito();
-    return exjs_stringa(c, b, -1);
+     * intera. Adesso il caso e' raro — il tetto e' l'arena del motore, non
+     * quattro kilobyte — ma resta possibile, e resta gestito. */
+    if (C.rotto || C.f.off == EXJS_FILO_NO) {
+        filo_chiudi(&C.f);
+        return exjs_indefinito();
+    }
+    return filo_chiudi(&C.f);
 }
 
 /* -----------------------------------------------------------------------------
@@ -1076,13 +1201,18 @@ static int l_uguale(Leg *L, const char *parola)
     return 1;
 }
 
+/* ! ANCHE QUESTA SCRIVE NELL'ARENA. Prima costruiva il valore in mezzo
+ * kilobyte: un campo di testo piu' lungo dentro un JSON — il corpo di un
+ * messaggio, una pagina dentro una risposta — si rileggeva accorciato, senza
+ * un errore. Si legge dall'arena e ci si scrive dentro nello stesso tempo, ed
+ * e' lecito per la ragione scritta sopra: l'arena cresce in coda. */
 static ExJsVal l_stringa(ExJsCtx *c, Leg *L)
 {
-    char         b[TESTO_MAX];
-    unsigned int k = 0;
+    Filo f;
 
     if (L->s[L->i] != '"') { L->rotto = 1; return exjs_indefinito(); }
     L->i++;
+    filo_apri(&f, c);
 
     while (L->s[L->i] && L->s[L->i] != '"') {
         char ch = L->s[L->i++];
@@ -1103,34 +1233,46 @@ static ExJsVal l_stringa(ExJsCtx *c, Leg *L)
                     int  d;
                     if (h >= '0' && h <= '9')                d = h - '0';
                     else if ((h|0x20) >= 'a' && (h|0x20) <= 'f') d = (h|0x20) - 'a' + 10;
-                    else { L->rotto = 1; return exjs_indefinito(); }
+                    else { L->rotto = 1; filo_chiudi(&f); return exjs_indefinito(); }
                     u = u * 16 + (unsigned int)d;
                 }
                 /* In UTF-8, come fa il lessicale: e' quello che il resto del
                  * sistema legge. */
-                if (u < 0x80) { if (k + 1 < sizeof(b)) b[k++] = (char)u; }
-                else if (u < 0x800) {
-                    if (k + 2 < sizeof(b)) {
-                        b[k++] = (char)(0xC0 | (u >> 6));
-                        b[k++] = (char)(0x80 | (u & 0x3F));
+                {
+                    char u8[3];
+
+                    if (u < 0x80) {
+                        u8[0] = (char)u;
+                        filo_mette(&f, u8, 1);
+                    } else if (u < 0x800) {
+                        u8[0] = (char)(0xC0 | (u >> 6));
+                        u8[1] = (char)(0x80 | (u & 0x3F));
+                        filo_mette(&f, u8, 2);
+                    } else {
+                        u8[0] = (char)(0xE0 | (u >> 12));
+                        u8[1] = (char)(0x80 | ((u >> 6) & 0x3F));
+                        u8[2] = (char)(0x80 | (u & 0x3F));
+                        filo_mette(&f, u8, 3);
                     }
-                } else if (k + 3 < sizeof(b)) {
-                    b[k++] = (char)(0xE0 | (u >> 12));
-                    b[k++] = (char)(0x80 | ((u >> 6) & 0x3F));
-                    b[k++] = (char)(0x80 | (u & 0x3F));
                 }
                 continue;
             }
-            default: L->rotto = 1; return exjs_indefinito();
+            /* ! IL FILO SI CHIUDE ANCHE USCENDO PER ERRORE, o l'arena
+             * resterebbe con una stringa aperta a meta' e la prossima le
+             * scriverebbe dentro. */
+            default: L->rotto = 1; filo_chiudi(&f); return exjs_indefinito();
             }
         }
-        if (k + 1 < sizeof(b)) b[k++] = ch;
+        filo_mette(&f, &ch, 1);
     }
 
-    if (L->s[L->i] != '"') { L->rotto = 1; return exjs_indefinito(); }
+    if (L->s[L->i] != '"') {
+        L->rotto = 1;
+        filo_chiudi(&f);
+        return exjs_indefinito();
+    }
     L->i++;
-    b[k] = '\0';
-    return exjs_stringa(c, b, -1);
+    return filo_chiudi(&f);
 }
 
 static ExJsVal l_numero(ExJsCtx *c, Leg *L)

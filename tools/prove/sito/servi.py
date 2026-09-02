@@ -27,6 +27,34 @@ class H(BaseHTTPRequestHandler):
 
     def do_GET(self):
         nome = self.path.lstrip("/").split("?")[0] or "con.html"
+
+        # ! DUE INDIRIZZI FINTI PER I BISCOTTI, e non sono file su disco: per
+        # provare i cookie serve un server che ne METTA e uno che dica quali
+        # gli sono arrivati. Sono le due meta' del giro, e senza la seconda si
+        # puo' solo vedere che il browser non si rompe — non che il biscotto e'
+        # davvero tornato indietro.
+        if nome == "metti-biscotti":
+            dati = open(os.path.join(DIR, "biscotti.html"), "rb").read()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(dati)))
+            # Uno normale e uno che gli script non devono vedere.
+            self.send_header("Set-Cookie", "dalserver=abc123; Path=/")
+            self.send_header("Set-Cookie", "segreto=nonsivede; Path=/; HttpOnly")
+            self.end_headers()
+            self.wfile.write(dati)
+            return
+
+        if nome == "eco-biscotti":
+            avuti = self.headers.get("Cookie") or "(nessuno)"
+            dati = avuti.encode("utf-8", "replace")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(dati)))
+            self.end_headers()
+            self.wfile.write(dati)
+            return
+
         via = os.path.join(DIR, os.path.basename(nome))
         if not os.path.isfile(via):
             self.send_error(404); return

@@ -494,6 +494,22 @@ ExJsVal exjs_nativa(ExJsCtx *c, ExJsNativa f, void *dato, const char *nome)
     return da_js(c, fn);
 }
 
+/* ! IL BIT DEL COSTRUTTORE SI ACCENDE A MANO. Una funzione nativa nata da
+ * JS_NewCFunctionData non e' costruibile, e `new f()` e' «not a constructor»:
+ * il bit c'e' apposta in QuickJS e si accende con JS_SetConstructorBit. Senza
+ * questa funzione `new XMLHttpRequest()` girava sotto ExJs e falliva qui, con
+ * la stessa pagina e senza che niente lo dicesse. */
+ExJsVal exjs_costruttore(ExJsCtx *c, ExJsNativa f, void *dato, const char *nome)
+{
+    ExJsVal v = exjs_nativa(c, f, dato, nome);
+    JSValue j;
+
+    if (!c || exjs_tipo(c, v) != EXJS_FUNZIONE) return v;
+    j = a_js(c, v);
+    JS_SetConstructorBit(c->ctx, j, true);
+    return v;
+}
+
 /* =============================================================================
  * console.log E LA CODA DEI LAVORI — quel che ExJs offre di suo
  *

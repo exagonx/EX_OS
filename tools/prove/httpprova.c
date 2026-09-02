@@ -110,11 +110,86 @@ static void prova_richiesta(void)
        "la porta non prevista entra nell'Host");
 
     ok(http_richiesta(r, 20, &u, 0) == 0, "un buffer piccolo rende 0, non scrive oltre");
+
+    /* ! I BISCOTTI ARRIVANO GIA' PRONTI E SI SCRIVONO E BASTA: che cosa valga
+     * per quale dominio lo decide la dispensa del browser, non questa
+     * funzione. Qui si prova solo che finiscano nell'intestazione giusta. */
+    http_url("http://ex.os/", &u);
+    http_richiesta_corpo(r, sizeof(r), &u, "EX-OS", 0, 0, "a=1; b=2");
+    ok(strstr(r, "\r\nCookie: a=1; b=2\r\n") != 0, "i biscotti in uscita");
+
+    /* ! UNA `Cookie:` VUOTA NON SI SCRIVE, e non e' pignoleria: un'intestazione
+     * senza valore e un'intestazione assente sono due cose diverse, e certi
+     * server rispondono diversamente. */
+    http_richiesta_corpo(r, sizeof(r), &u, "EX-OS", 0, 0, "");
+    ok(strstr(r, "Cookie:") == 0, "senza biscotti l'intestazione non c'e'");
+    http_richiesta_corpo(r, sizeof(r), &u, "EX-OS", 0, 0, 0);
+    ok(strstr(r, "Cookie:") == 0, "e nemmeno con un puntatore nullo");
 }
 
 /* -----------------------------------------------------------------------------
  * Le intestazioni
  * --------------------------------------------------------------------------- */
+static void prova_biscotti(void)
+{
+    HttpRisposta r;
+
+    printf("BISCOTTI\n");
+
+    {
+        /* ! `Set-Cookie` E' L'UNICA INTESTAZIONE CHE SI MANDA RIPETUTA
+         * APPOSTA, e per questo e' un vettore: accorparla come le altre —
+         * l'ultima vince — ne butterebbe via tre su quattro senza dirlo. */
+        const char *s =
+            "HTTP/1.1 200 OK\r\n"
+            "Set-Cookie: a=1; Path=/\r\n"
+            "Content-Type: text/html\r\n"
+            "Set-Cookie: b=2; HttpOnly\r\n"
+            "\r\n";
+
+        http_intestazioni((const unsigned char *)s, strlen(s), &r);
+        ok(r.n_biscotti == 2, "due Set-Cookie sono due");
+        ok(strcmp(r.biscotti[0], "a=1; Path=/") == 0, "il primo, com'era scritto");
+        ok(strcmp(r.biscotti[1], "b=2; HttpOnly") == 0, "e il secondo");
+        ok(strcmp(r.tipo, "text/html") == 0, "e le altre intestazioni si leggono lo stesso");
+        ok(r.biscotti_persi == 0, "nessuno perso");
+    }
+
+    {
+        /* Maiuscole a caso, come fanno i server veri. */
+        const char *s = "HTTP/1.1 200 OK\r\nSET-COOKIE: x=9\r\n\r\n";
+
+        http_intestazioni((const unsigned char *)s, strlen(s), &r);
+        ok(r.n_biscotti == 1 && strcmp(r.biscotti[0], "x=9") == 0,
+           "il nome non distingue le maiuscole");
+    }
+
+    {
+        /* ! QUANDO NON CI STANNO SI DICE. Un biscotto perso in silenzio si
+         * paga tre pagine dopo, quando un sito rimanda a fare l'accesso senza
+         * un motivo apparente. */
+        char         s[1024];
+        unsigned int i, u = 0;
+
+        u += (unsigned int)sprintf(s + u, "HTTP/1.1 200 OK\r\n");
+        for (i = 0; i < HTTP_BISCOTTI_MAX + 3; i++)
+            u += (unsigned int)sprintf(s + u, "Set-Cookie: n%u=v\r\n", i);
+        sprintf(s + u, "\r\n");
+
+        http_intestazioni((const unsigned char *)s, strlen(s), &r);
+        ok(r.n_biscotti == HTTP_BISCOTTI_MAX, "il tetto e' quello dichiarato");
+        ok(r.biscotti_persi == 1, "e chi non ci sta lo fa sapere");
+    }
+
+    {
+        const char *s = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+
+        http_intestazioni((const unsigned char *)s, strlen(s), &r);
+        ok(r.n_biscotti == 0 && r.biscotti_persi == 0,
+           "una risposta senza biscotti non ne inventa");
+    }
+}
+
 static void prova_intestazioni(void)
 {
     HttpRisposta r;
@@ -329,6 +404,7 @@ int main(void)
     prova_url();
     prova_richiesta();
     prova_intestazioni();
+    prova_biscotti();
     prova_pezzi();
 
     printf("\n%s\n", errori ? "CI SONO ERRORI" : "tutto a posto");
