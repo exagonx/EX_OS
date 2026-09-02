@@ -558,6 +558,22 @@ contano finiscono a schermo, in ordine di esecuzione.
 Va data da root. Esiste anche un floppy che la esegue da solo
 all'avvio: dist/diagnostic.img, prodotto da `make all`.
 
+[mouse]
+segue il mouse e stampa movimenti e tasti
+
+  mouse              finche' non si preme ESC o `q`
+  mouse -n 10        dieci letture e poi esce
+
+! IN MODO TESTO NON C'E' NESSUN PUNTATORE DA VEDERE, e non e' un difetto:
+la freccia la disegna il server a finestre, non la console. Qui il mouse
+esiste come SERVIZIO — chi lo vuole lo chiede — e questo comando e' il
+modo di guardarlo lavorare.
+
+Il mouse PS/2 lo serve /dev/kbd.drv: e' la seconda porta dello stesso
+controller della tastiera, e due processi che leggono la porta 0x60 si
+rubano i byte a vicenda. Se c'e' un mouse seriale, /dev/mouseser.drv
+registra il servizio 'mouse' e questo comando preferisce quello.
+
 [kbprova]
 prova la tastiera passo passo: dove si ferma, fra tasto e programma
 
