@@ -75,6 +75,39 @@ static void bcopia(void *d, const void *s, unsigned int n)
     for (i = 0; i < n; i++) a[i] = b[i];
 }
 
+/* =============================================================================
+ * A CHE PUNTO E' LA STRETTA — il perche' sta in extls.h
+ * ========================================================================== */
+static ExTlsPasso g_passo      = 0;
+static void      *g_passo_dato = 0;
+
+void extls_passo_metti(ExTlsPasso f, void *dato)
+{
+    g_passo      = f;
+    g_passo_dato = dato;
+}
+
+const char *extls_passo_nome(int passo)
+{
+    switch (passo) {
+    case EXTLS_P_CHIAVE:      return "preparo la chiave";
+    case EXTLS_P_HELLO:       return "il server ha risposto";
+    case EXTLS_P_SEGRETO:     return "concordo il segreto";
+    case EXTLS_P_CERTIFICATI: return "leggo i certificati";
+    case EXTLS_P_FIRMA:       return "controllo la firma";
+    case EXTLS_P_CATENA:      return "verifico la catena";
+    case EXTLS_P_FATTO:       return "connessione cifrata";
+    default:                  return "";
+    }
+}
+
+/* Rende 0 se chi ospita ha detto di smettere. */
+static int passo(int quale)
+{
+    if (!g_passo) return 1;
+    return g_passo(g_passo_dato, quale) ? 1 : 0;
+}
+
 static void bzero_(void *d, unsigned int n)
 {
     unsigned char *a = (unsigned char *)d;
@@ -763,6 +796,7 @@ int extls_stretta(void *opaco, const ExTlsSotto *sotto, const char *host,
     bzero_(zeri, sizeof(zeri));
 
     /* --- la nostra meta' dello scambio ----------------------------------- */
+    if (!passo(EXTLS_P_CHIAVE)) return EXTLS_ERR_RETE;
     casuale(privata, 32);
     if (x25519_pubblica(pubblica, privata) != 0) return EXTLS_ERR_PROTOCOLLO;
 
@@ -781,11 +815,13 @@ int extls_stretta(void *opaco, const ExTlsSotto *sotto, const char *host,
         r = leggi_hello(corpo, n, altrui);
         if (r != EXTLS_OK) return r;
     }
+    if (!passo(EXTLS_P_HELLO)) return EXTLS_ERR_RETE;
 
     /* ! UN SEGRETO TUTTO ZERI SI RIFIUTA. Vuol dire che il punto ricevuto era
      * di ordine piccolo: il «segreto» condiviso lo conoscerebbe anche chi
      * guarda. x25519() lo dice, e qui si smette. */
     if (x25519(condiviso, privata, altrui) != 0) return EXTLS_ERR_PROTOCOLLO;
+    if (!passo(EXTLS_P_SEGRETO)) return EXTLS_ERR_RETE;
 
     /* --- il calendario delle chiavi, primo giro --------------------------- */
     extls_hkdf_extract(0, 0, zeri, EXTLS_IMPRONTA, primo);
@@ -835,6 +871,7 @@ int extls_stretta(void *opaco, const ExTlsSotto *sotto, const char *host,
                  * si e' detto FINO AL certificato compreso, non oltre. */
                 trascr_impronta(t, cert_impronta);
                 visto_cert = 1;
+                if (!passo(EXTLS_P_CERTIFICATI)) return EXTLS_ERR_RETE;
                 continue;
             }
 
@@ -907,6 +944,7 @@ int extls_stretta(void *opaco, const ExTlsSotto *sotto, const char *host,
                 }
 
                 visto_firma = 1;
+                if (!passo(EXTLS_P_FIRMA)) return EXTLS_ERR_RETE;
                 continue;
             }
 
@@ -948,6 +986,7 @@ int extls_stretta(void *opaco, const ExTlsSotto *sotto, const char *host,
      * schiacciarli tutti in «certificato non verificabile» manda a cercare il
      * difetto nel posto sbagliato. Il codice resta leggibile con
      * extls_motivo(). */
+    if (!passo(EXTLS_P_CATENA)) return EXTLS_ERR_RETE;
     r = excert_catena_valida(catena, quanti, magazzino, adesso, &t->anello);
     if (r != EXCERT_OK) { t->motivo = r; return EXTLS_ERR_CERTIFICATO; }
 
@@ -994,6 +1033,10 @@ int extls_stretta(void *opaco, const ExTlsSotto *sotto, const char *host,
     t->trascr_n = t->hs_off = 0;
     t->pos = t->fine = 0;
 
+    /* ! L'ULTIMO PASSO NON PUO' PIU' ANNULLARE NIENTE: la connessione c'e', e
+     * dire di no adesso vorrebbe dire buttarla via dopo averla pagata. Si
+     * chiama lo stesso, perche' chi ospita ha una riga di stato da chiudere. */
+    passo(EXTLS_P_FATTO);
     return EXTLS_OK;
 }
 

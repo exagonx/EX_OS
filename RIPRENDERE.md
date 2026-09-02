@@ -1,5 +1,103 @@
 # DOVE RIPRENDERE — 3 settembre 2026
 
+## 3 settembre 2026 (sera) — LA STRETTA DI MANO: MISURATA, NON SPEZZATA
+
+Il compito era «la stretta di mano TLS a pezzi». La prima cosa fatta e' stata
+misurarla, e i numeri hanno cambiato il compito.
+
+### ! VENTI SECONDI ERANO SCRITTI IN TRE POSTI, E NON SONO MAI STATI MISURATI
+
+Dentro EX-OS, in QEMU, verso `google.com`:
+
+    magazzino delle CA (150 certificati)     60 ms
+    DNS piu' connessione TCP                320 ms
+    stretta di mano TLS                     490 ms
+      di cui  il ServerHello (rete + x25519)  ~160
+              i certificati                    ~10
+              la firma del server              ~150
+              il finale                        ~140
+
+**Meno di un secondo in tutto.** La frase «su un 386 emulato sono venti
+secondi» stava in `exhttp.c`, in `browser.c` e in RIPRENDERE.md, ed e' quella
+che ha fatto sembrare la stretta il problema principale piu' a lungo del
+dovuto. Adesso i numeri sono scritti accanto alle frasi, e le frasi sono
+corrette.
+
+! **IL RAGIONAMENTO CHE CI STAVA SOPRA RESTA VALIDO.** La stretta e' comunque
+il pezzo caro di una connessione cifrata, riusare la connessione e' comunque il
+guadagno, e non scaricare un SVG che non sapremmo disegnare risparmia comunque
+una stretta per immagine. Solo, in secondi, e' **uno** — e undici immagini
+saltate sono cinque secondi e mezzo, non due minuti.
+
+### Il gancio dei passi: a che punto e' la stretta
+
+Mezzo secondo di finestra ferma non e' un dramma; **mezzo secondo di finestra
+ferma senza sapere perche'** e' quel che fa sembrare morto un programma. E su
+una macchina piu' lenta di questa quel mezzo secondo cresce.
+
+`extls_passo_metti()` chiama chi ospita fra un passo e l'altro — sette punti:
+la chiave, il ServerHello, il segreto, i certificati, la firma, la catena, la
+fine. exhttp lo traduce in una frase (`exhttp_passo`), e il browser la scrive
+nella riga di stato e ne approfitta per smistare i messaggi: **la finestra si
+ridisegna e Esc arriva anche durante la stretta**.
+
+! **RENDENDO 0 ANNULLA**, come il gancio dell'attesa. L'ultimo passo pero' non
+puo' piu' annullare niente — la connessione c'e', e buttarla via dopo averla
+pagata sarebbe assurdo — e si chiama lo stesso perche' chi ospita ha una riga
+di stato da chiudere.
+
+! **E DENTRO UN SINGOLO PASSO NON SI RESPIRA.** Un x25519 o una verifica di
+firma sono un blocco solo: li' non si legge, si calcola. Spezzarli vorrebbe
+dire portare un gancio dentro excurva e exbig, e con 150 ms come pezzo piu'
+lungo non lo merita. E' scritto in extls.h, in exhttp.h e qui.
+
+### SPEZZARE LE LETTURE DELLA STRETTA: PROVATO, E TOLTO
+
+Le letture della stretta passavano dritte a `tcp_leggi`. Farle passare dal
+gancio dell'attesa — come quelle del corpo — e' stato scritto, provato, e
+**tolto**: con quel pezzo dentro, le pagine `https` smettono di aprirsi. Si
+resta fermi prima ancora del primo passo, senza un errore da nessuna parte.
+
+! **NON E' RESTATO UN MISTERO: IL POSTO DOVE GUARDARE E' NOTO.** Il ciclo dei
+messaggi, girando dentro l'attesa, interferisce con le risposte che lo stack IP
+manda a chi sta leggendo. Due sospetti concreti, e sono scritti nel codice:
+
+1. `ex_msg_ora` svuotava la mailbox e **buttava via** tutto quel che non era
+   del server a finestre — comprese le risposte dello stack IP che stava per
+   leggere il navigatore stesso. Adesso le **rimette** (`ipc_rimetti`), e solo
+   nel ciclo che non dorme: in quello che dorme un messaggio rimesso si
+   ritroverebbe davanti all'infinito.
+2. `attendi()`, in exhttp.c, **butta** i messaggi che vengono dallo stack e non
+   sono del tipo atteso. E' giusto per una risposta vecchia alla propria
+   domanda; non lo e' piu' se qualcun altro, in mezzo, ha chiesto altro allo
+   stesso stack.
+
+La correzione (1) e' rimasta perche' e' giusta di suo. La (2) non e' stata
+fatta: **il guadagno non paga la caccia.** Spezzare quelle letture varrebbe
+qualche centinaio di millisecondi su tutta la connessione, e i sei passi le
+intervallano gia'.
+
+> Misurare prima ha cambiato il lavoro da «spezzare la stretta» a «dire a che
+> punto e', e correggere un numero sbagliato scritto in tre posti». La prima
+> versione sarebbe costata giorni e avrebbe reso millisecondi.
+
+### Come si e' provato
+
+    in QEMU, da CD, con la rete:
+        https://www.google.com/          si apre, e i sette passi si vedono
+                                         passare nella riga di stato
+        http://10.0.2.2:8000/script.html i quindici riquadri si riempiono
+
+    make prova-exjs      256 prove, 0 sbagliate
+    make prova-exdom     244 prove, 0 sbagliate
+    make prova-exqjs     244 prove, 0 sbagliate
+    make prova-biscotti   51 prove, 0 sbagliate
+    make prova-exhttp    tutto a posto
+
+! **E LA MISURA SI E' FATTA CON DELLE SONDE TEMPORANEE, poi tolte.** Sono
+rimaste il tempo di leggere due schermate di seriale: i numeri stanno nei
+commenti, che e' dove servono.
+
 ## 3 settembre 2026 — LA LETTURA A PEZZI: LA FINESTRA RESTA VIVA MENTRE SCARICA
 
 Era l'ultima riga della coda, e stava scritta cosi': «il passo dopo e' un

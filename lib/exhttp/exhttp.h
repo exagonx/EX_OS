@@ -174,6 +174,25 @@ typedef int (*ExHttpAttesa)(void *dato);   /* 0 = annulla la richiesta */
 
 void exhttp_attesa(ExHttpAttesa f, void *dato);
 
+/* =============================================================================
+ * A CHE PUNTO E' LA STRETTA DI MANO
+ *
+ * ! APRIRE UNA CONNESSIONE CIFRATA E' LUNGO, E CHI ASPETTA NON SA PERCHE'. Su
+ * una macchina lenta sono secondi: una chiave effimera da calcolare, una
+ * catena di certificati da verificare, una firma. Chi guarda vede una finestra
+ * ferma e non ha modo di sapere se stia lavorando o se sia morta.
+ *
+ * Il gancio si chiama fra un passo e l'altro con la frase che lo descrive —
+ * «verifico la catena», «controllo la firma» — e rendendo 0 ANNULLA.
+ *
+ * ! NON RENDE LA STRETTA INTERROMPIBILE DENTRO UN CONTO. Un x25519 o una
+ * verifica di firma sono un blocco solo: fra un passo e l'altro si respira,
+ * dentro no. E' scritto anche in extls.h, dove i passi si chiamano.
+ * ========================================================================== */
+typedef int (*ExHttpPasso)(void *dato, const char *cosa);  /* 0 = annulla */
+
+void exhttp_passo(ExHttpPasso f, void *dato);
+
 /* Come sopra ma su un trasporto gia' aperto, e senza seguire le redirezioni:
  * e' il mattone con cui exhttp_prendi e' fatta, ed e' quello che servira' al
  * TLS. `u` dice cosa chiedere. */

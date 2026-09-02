@@ -650,12 +650,17 @@ static unsigned int numero(const char *s)
 /* =============================================================================
  * ! UN'IMMAGINE CHE NON SAPREMMO DECODIFICARE NON SI SCARICA AFFATTO.
  *
- * Sembra un'ottimizzazione e non lo e': su https ogni immagine e' una stretta
- * di mano TLS intera — chiave effimera, catena di certificati, firma — e su un
- * 386 emulato sono venti secondi. La pagina «Operating system» di Wikipedia ne
- * ha undici, e OTTO SONO SVG: due minuti e mezzo passati a scaricare file che
- * finiscono comunque nel cestino, con la barra di stato che dice «immagine 11
- * di 11» e sembra bloccata.
+ * Sembra un'ottimizzazione e non lo e': su https ogni immagine che apra una
+ * connessione nuova e' una stretta di mano TLS intera — chiave effimera,
+ * catena di certificati, firma. La pagina «Operating system» di Wikipedia ne
+ * ha undici, e OTTO SONO SVG: tempo passato a scaricare file che finiscono
+ * comunque nel cestino, con la barra di stato che dice «immagine 11 di 11» e
+ * sembra bloccata.
+ *
+ * ! LA STRETTA E' STATA MISURATA, e non e' quel che c'era scritto qui: 490 ms
+ * in QEMU verso google.com, non venti secondi. Il conto resta — undici strette
+ * risparmiate sono cinque secondi e mezzo — ma il numero giusto sta in
+ * exhttp.c, accanto alla connessione che resta aperta.
  *
  * ! LA REGOLA E' SULL'ESTENSIONE, ed e' un'approssimazione dichiarata: il tipo
  * vero lo direbbe il Content-Type, che pero' arriva DOPO aver aperto la
@@ -4272,6 +4277,29 @@ static void js_uscita(const char *t, unsigned int n, void *dato)
  * annulla e la pagina di prima resta dov'era: senza questo giro non c'era
  * proprio modo di offrirlo, perche' mentre si scaricava nessun tasto arrivava.
  * ========================================================================== */
+/* ! APRIRE UNA CONNESSIONE CIFRATA E' LUNGO, E ADESSO SI VEDE COSA STA
+ * FACENDO. Prima la riga di stato diceva «connetto...» e restava li' per
+ * secondi: da fuori una macchina che verifica una catena di certificati e una
+ * che e' morta si assomigliano molto. Fra un passo e l'altro si scrive dove si
+ * e' arrivati e si smistano i messaggi — cosi' la finestra si ridisegna e Esc
+ * arriva anche durante la stretta.
+ *
+ * ! DENTRO UN SINGOLO PASSO PERO' NON SI RESPIRA. Un x25519 o una verifica di
+ * firma sono un blocco solo, e li' non si legge: si calcola. Spezzarli
+ * vorrebbe dire portare un gancio dentro excurva e exbig, ed e' un altro
+ * lavoro. Sta scritto qui, in extls.h e in exhttp.h, perche' chi guardera' i
+ * tempi sappia che cosa sta guardando. */
+static int rete_a_che_punto(void *dato, const char *cosa)
+{
+    ExMsg m;
+    int   n = 0;
+
+    (void)dato;
+    if (cosa && cosa[0]) dico(cosa);
+    while (n++ < 8 && ex_msg_ora(&m)) ex_smista(&m);
+    return g_ferma ? 0 : 1;
+}
+
 static int rete_mentre_aspetta(void *dato)
 {
     ExMsg m;
@@ -6523,6 +6551,7 @@ int main(int argc, char **argv)
      * si scarica: senza, fra un pezzo e l'altro exhttp dorme e qui non arriva
      * piu' niente — nemmeno il tasto per fermare. */
     exhttp_attesa(rete_mentre_aspetta, 0);
+    exhttp_passo(rete_a_che_punto, 0);
     if (!g_home[0]) home_predefinita();
 
     ex_fuoco(g_url);

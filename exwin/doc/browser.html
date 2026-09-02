@@ -308,12 +308,22 @@ pagina tagliata mostrata come se fosse intera e' peggio di una pagina che non
 c'e'. Le immagini che mancano tornano al loro <code>alt</code>.
 </p>
 
+<p>
+<b>E aprire una connessione cifrata dice a che punto e'.</b> La riga di stato
+scrive i passi mentre li fa &mdash; <i>«concordo il segreto»</i>,
+<i>«controllo la firma»</i>, <i>«verifico la catena»</i> &mdash; e fra un passo
+e l'altro la finestra si ridisegna e <b>Esc</b> arriva. Su una macchina svelta
+passano in mezzo secondo e si fa in tempo appena a leggerli; su una lenta sono
+la differenza fra un programma che lavora e uno che sembra morto.
+</p>
+
 <p class="nota">
-<b class="manca">Quel che resta fermo:</b> la stretta di mano di <b>https</b>
-&mdash; chiave effimera, catena di certificati, firma &mdash; il DNS e la
-connessione. Li' non si aspettano byte, si calcola o si apre: sono secondi in
-cui la finestra e' ancora ferma. La stretta pero' si paga <i>una volta per
-connessione</i>, e la connessione si riusa.
+<b class="manca">Quel che resta fermo:</b> dentro un singolo passo non si
+respira &mdash; un calcolo di chiave o una verifica di firma sono un blocco
+solo. Misurati dentro EX-OS verso google.com: magazzino delle CA 60 ms, DNS e
+connessione 320 ms, stretta di mano 490 ms. Meno di un secondo in tutto, e la
+stretta si paga <i>una volta per connessione</i> perche' la connessione si
+riusa.
 </p>
 
 <p class="nota">

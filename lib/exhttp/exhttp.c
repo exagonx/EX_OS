@@ -563,6 +563,31 @@ static void tls_chiudi(void *stato)
     s->tcp.chiudi(s->tcp.stato);
 }
 
+/* =============================================================================
+ * A CHE PUNTO E' LA STRETTA — il ponte fra extls e chi ospita
+ *
+ * ! IL NOME DEL PASSO ARRIVA DA extls, LA DECISIONE DA CHI OSPITA. Qui in mezzo
+ * non si decide niente: si traduce un numero in una frase e si passa la
+ * risposta indietro. Senza questo ponte il browser dovrebbe collegarsi a extls
+ * per una costante, e non ha nessun altro motivo di conoscerla.
+ * ========================================================================== */
+static ExHttpPasso  g_passo      = 0;
+static void        *g_passo_dato = 0;
+
+static int passo_ponte(void *dato, int p)
+{
+    (void)dato;
+    if (!g_passo) return 1;
+    return g_passo(g_passo_dato, extls_passo_nome(p)) ? 1 : 0;
+}
+
+void exhttp_passo(ExHttpPasso f, void *dato)
+{
+    g_passo      = f;
+    g_passo_dato = dato;
+    extls_passo_metti(f ? passo_ponte : 0, 0);
+}
+
 /* L'ora, nella forma che le date dei certificati vogliono. Se l'orologio non
  * risponde si prende una data che fa passare tutto tranne i certificati
  * scaduti da anni: meglio di rifiutare ogni sito su una macchina senza
@@ -603,6 +628,26 @@ static int exhttp_tls(ExHttpTrasporto *t, const char *host, unsigned int porta)
     }
 
     g_stato_tls.sotto.stato  = g_stato_tls.tcp.stato;
+    /* ! LA STRETTA LEGGE COME HA SEMPRE LETTO, E NON A PEZZI — ed e' una
+     * decisione presa sui numeri, non per prudenza. Misurata dentro EX-OS,
+     * verso google.com:
+     *
+     *     magazzino delle CA    60 ms
+     *     DNS piu' connessione 320 ms
+     *     stretta di mano      490 ms   (di cui ~150 il ServerHello,
+     *                                    ~150 la firma, ~140 il finale)
+     *
+     * Meno di mezzo secondo in tutto, e diviso in sei pezzi che il gancio dei
+     * PASSI gia' intervalla. Spezzare anche le letture varrebbe qualche
+     * centinaio di millisecondi in tutta la connessione — e provandolo le
+     * pagine https hanno smesso di aprirsi: il ciclo dei messaggi, girando
+     * dentro l'attesa, interferisce con le risposte che lo stack IP manda a
+     * chi sta leggendo. Il guasto e' vero e sta li'; il guadagno non paga la
+     * caccia.
+     *
+     * ! E LA NOTA CHE DICEVA «VENTI SECONDI» ERA VECCHIA. E' quella che ha
+     * fatto sembrare la stretta il problema principale: i numeri qui sopra
+     * dicono un'altra cosa, e adesso sono scritti. */
     g_stato_tls.sotto.leggi  = g_stato_tls.tcp.leggi;
     g_stato_tls.sotto.scrivi = g_stato_tls.tcp.scrivi;
 
@@ -707,13 +752,14 @@ void exhttp_attesa(ExHttpAttesa f, void *dato)
 #define ATTESA_MS  10000
 
 static int leggi_a_pezzi(ExHttpTrasporto *t, unsigned char *dst,
-                         unsigned int max, int *annullata)
+                         unsigned int max, unsigned int ms, int *annullata)
 {
     unsigned int inizio;
 
     if (annullata) *annullata = 0;
+    if (ms == 0) ms = ATTESA_MS;
     if (!g_attesa || !t->quanti)
-        return t->leggi(t->stato, dst, max, ATTESA_MS);
+        return t->leggi(t->stato, dst, max, ms);
 
     inizio = uptime_ms();
     for (;;) {
@@ -721,18 +767,28 @@ static int leggi_a_pezzi(ExHttpTrasporto *t, unsigned char *dst,
 
         /* C'e' roba, oppure e' finita: in tutt'e due i casi la lettura vera
          * risponde subito e sa dire quale dei due. */
-        if (q != 0) return t->leggi(t->stato, dst, max, ATTESA_MS);
+        if (q != 0) return t->leggi(t->stato, dst, max, ms);
 
         if (!g_attesa(g_attesa_dato)) {
             if (annullata) *annullata = 1;
             return -1;
         }
 
+        /* ! E SI DORME UN ISTANTE, O SI AFFAMA LO STACK. Senza questa riga il
+         * ciclo chiede «quanti byte ci sono?» centinaia di volte al secondo:
+         * ogni domanda e' un messaggio al processo che fa la rete, e quel
+         * processo non arriva piu' a occuparsi dei pacchetti che ARRIVANO.
+         * Il sintomo e' una pagina che non si apre mai, senza un errore da
+         * nessuna parte — e non e' un caso di scuola, e' successo. Dieci
+         * millisecondi costano al piu' dieci millisecondi di latenza per
+         * lettura e riducono le domande a cento al secondo. */
+        usleep(10000);
+
         /* ! SCADUTO IL TEMPO SI FA LA LETTURA VERA, e fallisce come sempre.
          * Rendere un errore da qui vorrebbe dire due strade per lo stesso
          * guasto, con due messaggi da tenere d'accordo. */
-        if (uptime_ms() - inizio >= ATTESA_MS)
-            return t->leggi(t->stato, dst, max, ATTESA_MS);
+        if (uptime_ms() - inizio >= ms)
+            return t->leggi(t->stato, dst, max, ms);
     }
 }
 
@@ -752,10 +808,17 @@ void exhttp_biscotti(ExHttpBiscottiChiedi chiedi,
  * LA CONNESSIONE CHE RESTA APERTA
  *
  * ! SU https LA STRETTA DI MANO E' TUTTO IL COSTO. Chiave effimera, catena di
- * certificati, firma: su un 386 emulato sono venti secondi. Una pagina di
- * Wikipedia con dieci immagini li pagava dieci volte, e la barra di stato
- * diceva «immagine 9 di 9» per due minuti — sembrava bloccata, e in un certo
- * senso lo era.
+ * certificati, firma. Una pagina di Wikipedia con dieci immagini la pagava
+ * dieci volte, e la barra di stato diceva «immagine 9 di 9» a lungo —
+ * sembrava bloccata, e in un certo senso lo era. *
+ * ! IL NUMERO E' STATO MISURATO, E NON E' QUELLO CHE C'ERA SCRITTO. Dentro
+ * EX-OS, in QEMU, verso google.com: magazzino delle CA 60 ms, DNS piu'
+ * connessione 320 ms, stretta di mano 490 ms. Meno di un secondo in tutto —
+ * non venti. La frase qui sopra e' di quando la connessione non si riusava e
+ * la misura non si era mai fatta; si tiene, corretta, perche' e' quella che ha
+ * fatto sembrare la stretta il problema principale piu' a lungo del dovuto.
+ * Il ragionamento resta valido: la stretta e' comunque il pezzo caro, e
+ * riusare la connessione e' comunque il guadagno. Solo, in secondi, e' UNO.
  *
  * ! SI RIUSA SOLO SE SI SA DOVE FINISCE IL CORPO. Con Content-Length o con i
  * pezzi si sa esattamente quando la risposta e' finita, e allora la
@@ -887,7 +950,7 @@ int exhttp_scambio(ExHttpTrasporto *t, const HttpUrl *u,
             return 0;
         }
 
-        n = leggi_a_pezzi(t, acc + acc_n, sizeof(acc) - acc_n, &annullata);
+        n = leggi_a_pezzi(t, acc + acc_n, sizeof(acc) - acc_n, 0, &annullata);
         if (annullata) { strcpy(e->errore, "fermata"); return 0; }
         if (n < 0) { strcpy(e->errore, "connessione interrotta"); return 0; }
         if (n == 0) { strcpy(e->errore, "chiusa senza rispondere"); return 0; }
@@ -970,7 +1033,7 @@ int exhttp_scambio(ExHttpTrasporto *t, const HttpUrl *u,
             /* ! SENZA LUNGHEZZA NE' PEZZI, LA FINE E' LA CHIUSURA, ed e'
              * legittimo: HTTP/1.0 fa cosi', e con «Connection: close» anche
              * l'1.1 puo'. Percio' una lettura che rende 0 non e' un errore. */
-            n = leggi_a_pezzi(t, blocco, sizeof(blocco), &annullata);
+            n = leggi_a_pezzi(t, blocco, sizeof(blocco), 0, &annullata);
             /* ! UNA FERMATA NON E' UNA FINE: cio' che e' arrivato fin qui e'
              * meta' pagina, e darlo per buono vorrebbe dire mostrare una
              * pagina tagliata come se fosse intera. */

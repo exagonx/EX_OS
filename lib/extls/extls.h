@@ -176,6 +176,41 @@ int extls_stretta(void *t, const ExTlsSotto *sotto, const char *host,
                   const ExMagazzino *magazzino, const char *adesso,
                   void (*casuale)(unsigned char *, unsigned int));
 
+/* =============================================================================
+ * A CHE PUNTO E' LA STRETTA
+ *
+ * ! LA STRETTA E' LUNGA, E CHI ASPETTA NON SA PERCHE'. Su una macchina lenta
+ * sono secondi: una chiave effimera da calcolare, una catena di certificati da
+ * verificare, una firma. Chi guarda vede una finestra ferma e non ha modo di
+ * sapere se stia lavorando o se sia morta.
+ *
+ * ! IL GANCIO SI CHIAMA FRA UN PASSO E L'ALTRO, non dentro: qui si dice DOVE
+ * si e' arrivati, e chi ospita ne fa quel che vuole — una riga di stato, un
+ * ridisegno, o niente. Rendendo 0 ANNULLA: la stretta si ferma con
+ * EXTLS_ERR_RETE, che e' la verita' piu' vicina — la connessione non si e'
+ * stabilita.
+ *
+ * ! E NON RENDE LA STRETTA INTERROMPIBILE DENTRO UN CONTO. Un x25519 o una
+ * verifica di firma sono un blocco solo: fra un passo e l'altro si respira,
+ * dentro no. Spezzare quelli vorrebbe dire portare un gancio dentro excurva e
+ * exbig, ed e' un altro lavoro — sta scritto qui perche' chi misurera' i tempi
+ * sappia che cosa sta guardando.
+ * ========================================================================== */
+#define EXTLS_P_CHIAVE       0   /* la nostra meta' dello scambio      */
+#define EXTLS_P_HELLO        1   /* il ServerHello e' arrivato         */
+#define EXTLS_P_SEGRETO      2   /* il segreto condiviso e' calcolato  */
+#define EXTLS_P_CERTIFICATI  3   /* i certificati sono arrivati        */
+#define EXTLS_P_FIRMA        4   /* la firma del server torna          */
+#define EXTLS_P_CATENA       5   /* la catena e' valida                */
+#define EXTLS_P_FATTO        6   /* si puo' parlare                    */
+
+typedef int (*ExTlsPasso)(void *dato, int passo);   /* 0 = annulla */
+
+void extls_passo_metti(ExTlsPasso f, void *dato);
+
+/* Il nome del passo, per chi lo vuole scrivere a schermo. */
+const char *extls_passo_nome(int passo);
+
 /* Dopo la stretta: dati applicativi, cifrati. Stessa firma del trasporto. */
 int  extls_leggi(void *t, unsigned char *dst, unsigned int max,
                  unsigned int ms);

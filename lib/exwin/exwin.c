@@ -3396,6 +3396,34 @@ static int prendi_msg(ExMsg *m, int bloccante)
 
         if (ipc_recv_timeout(&meta, buf, sizeof(buf), 0) < 0) continue;
 
+        /* =====================================================================
+         * ! CIO' CHE NON E' NOSTRO SI RIMETTE, E SOLO QUANDO NON SI DORME.
+         *
+         * Questo ciclo prende dalla mailbox e butta via tutto quel che non e'
+         * un messaggio del server a finestre. Finche' l'unica porta era
+         * ex_prendi_msg — che si chiama quando l'applicazione non sta
+         * aspettando nient'altro — buttare via era giusto: una risposta in
+         * ritardo non serve piu' a nessuno.
+         *
+         * ! CON ex_msg_ora NON LO E' PIU'. Quella si chiama proprio MENTRE si
+         * aspetta altro: una risposta della rete, per dirne una. Buttarla
+         * vorrebbe dire che chi l'aspetta aspetta per sempre — ed e'
+         * esattamente il guasto che ha fatto smettere di aprirsi le pagine
+         * https quando la stretta di mano ha cominciato a leggere a pezzi:
+         * il navigatore, fra un pezzo e l'altro, si mangiava la risposta dello
+         * stack IP che stava per leggere lui stesso.
+         *
+         * ! E SI RIMETTE SOLO QUI PERCHE' LI' SI GIREREBBE A VUOTO. Nel ciclo
+         * che dorme, un messaggio rimesso si ritroverebbe davanti al giro
+         * dopo, all'infinito, con poll() che dice sempre «c'e' roba». Chi non
+         * dorme fa un giro solo e torna, quindi non c'e' nessun giro a vuoto.
+         * ================================================================= */
+        if (!bloccante && meta.tipo != WIN_MSG_EVENTO &&
+            meta.tipo != WIN_MSG_MISURATA && meta.tipo != WIN_MSG_POSTA) {
+            ipc_rimetti(&meta, buf, meta.len);
+            return 0;
+        }
+
         /* ! LA ZONA NUOVA SI PRENDE PRIMA DI SVEGLIARE L'APPLICAZIONE, e non
          * dopo: consegnando EXM_MISURA con i pixel ancora vecchi, la prima
          * cosa che l'applicazione fa — ridisegnarsi nella misura nuova —

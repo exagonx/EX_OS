@@ -200,9 +200,24 @@ DA FARE, IN ORDINE DI QUANTO PESA SU UNA PAGINA VERA
       tagliata mostrata come intera e' peggio di una pagina che non c'e'.
       ! IL GANCIO RIENTRA IN CASA PROPRIA: chi lo registra deve impedire da se'
         che i messaggi facciano ripartire la rete (nel browser, `g_in_rete`).
-    ! QUEL CHE RESTA FERMO, ed e' dichiarato: la stretta di mano del TLS (li'
-      non si legge, si calcola), il DNS e la connessione TCP. La stretta si
-      paga una volta per connessione e poi la connessione si riusa.
+    ! LA STRETTA DI MANO E' STATA MISURATA, e non e' quel che si credeva.
+      Dentro EX-OS in QEMU, verso google.com: magazzino delle CA 60 ms, DNS
+      piu' connessione 320 ms, stretta 490 ms — meno di un secondo in tutto,
+      non i «venti secondi» che stavano scritti in tre punti del codice (ora
+      corretti). Percio' NON si spezzano le sue letture: fra un passo e l'altro
+      c'e' gia' il gancio dei passi (extls_passo_metti / exhttp_passo), che
+      scrive a che punto e' e lascia respirare la finestra.
+    ! E SPEZZARLE E' STATO PROVATO E TOLTO: con le letture della stretta a
+      pezzi le pagine https smettono di aprirsi. Il ciclo dei messaggi, girando
+      dentro l'attesa, interferisce con le risposte che lo stack IP manda a chi
+      sta leggendo — exwin adesso rimette in mailbox quel che non e' suo, e non
+      basta. Il guasto e' vero e sta li'; il guadagno (qualche centinaio di
+      millisecondi su tutta la connessione) non paga la caccia. Chi ci tornera'
+      cominci da attendi() in exhttp.c, che BUTTA i messaggi dello stack di
+      tipo diverso da quello atteso.
+    ! DENTRO UN SINGOLO PASSO NON SI RESPIRA: un x25519 o una verifica di firma
+      sono un blocco solo, e li' non si legge — si calcola. Spezzarli vorrebbe
+      dire un gancio dentro excurva e exbig.
     ! LE PROMESSE SONO UNA FORMA SOLA, scritta a mano, uguale sotto i due
       motori — ExJs non le ha, QuickJS si', e due comportamenti sarebbero stati
       peggio di nessuno. `await` funziona lo stesso con QuickJS: vuole un
