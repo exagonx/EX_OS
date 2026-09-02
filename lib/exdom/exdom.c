@@ -94,6 +94,16 @@ struct ExDom {
     Ascolto     *asc;
     unsigned int asc_max;
     ExJsVal      proto;             /* i metodi, in un posto solo */
+    /* ! LO STILE HA UN PROTOTIPO SUO, e non i metodi dell'elemento: un
+     * CSSStyleDeclaration non fa appendChild. Tenerli insieme avrebbe voluto
+     * dire che `el.style.appendChild` esiste e fa una cosa senza senso. */
+    ExJsVal      proto_stile;
+    ExJsVal      proto_classi;
+    ExJsVal      promessa;          /* vedi `document.fonts`, in fondo */
+    ExJsVal      luogo;             /* `location`                       */
+    char         url[EXDOM_URL_MAX];    /* dove siamo, detto da fuori   */
+    char         vai[EXDOM_URL_MAX];    /* dove uno script vuole andare */
+    char         biscotti[EXDOM_BISCOTTI_MAX];
     ExJsVal      documento;
     int          troncato;
     int          perso;
@@ -129,6 +139,15 @@ static void t_chiudi(Testo *t)
  * ========================================================================== */
 static int leggi_prop(ExJsCtx *c, void *dato, const char *nome, ExJsVal *fuori);
 static int scrivi_prop(ExJsCtx *c, void *dato, const char *nome, ExJsVal v);
+static ExJsVal stile_oggetto(ExDom *D, Legame *L);
+static int  biscotto_pezzo(const char *s, char *fuori, unsigned int max);
+static void biscotto_aggiungi(ExDom *D, const char *nuovo);
+static ExJsVal dati_oggetto(ExDom *D, Legame *L);
+static ExJsVal classi_oggetto(ExDom *D, Legame *L);
+static int riflesso_leggi(ExJsCtx *c, HtmlDoc *d, int n, const char *nome,
+                          ExJsVal *fuori);
+static int riflesso_scrivi(ExJsCtx *c, HtmlDoc *d, int n, const char *nome,
+                           ExJsVal v);
 
 /* La tabella degli ascolti si tocca dai ganci — `elemento.onclick` e' una
  * proprieta' — e il codice degli eventi sta piu' sotto. */
@@ -171,10 +190,19 @@ int exdom_nodo(ExDom *D, ExJsVal v)
 
     if (!D) return -1;
     L = (Legame *)exjs_esotico_dato(D->js, v);
-    /* ! SI CONTROLLA CHE IL LEGAME SIA NOSTRO. Un altro oggetto esotico —
-     * oggi non ce ne sono, domani si' — porterebbe un `dato` di forma diversa,
-     * e leggerlo come un Legame vorrebbe dire un indice inventato. */
-    if (!L || L->D != D) return -1;
+    /* ! SI CONTROLLA CHE IL LEGAME SIA NOSTRO, e ADESSO IL DOMANI E' ARRIVATO:
+     * qui c'era scritto «oggi non ce ne sono, domani si'» e confrontava il
+     * campo `D`. Da quando esiste `el.style` gli oggetti esotici sono di due
+     * specie e portano lo STESSO Legame — e' cosi' che un satellite ritrova il
+     * suo elemento — quindi il campo `D` combacia per tutt'e due e non
+     * distingue piu' niente. Servono due controlli, e sono diversi:
+     *
+     *   - che il puntatore stia nella NOSTRA tabella (l'intervallo e' una
+     *     verifica esatta; il campo `D` era solo probabile);
+     *   - che il valore sia proprio L'INVOLUCRO del nodo. Senza,
+     *     `padre.appendChild(el.style)` avrebbe spostato `el`. */
+    if (!L || L < D->leg || L >= D->leg + D->nodi_max) return -1;
+    if (v != L->val) return -1;
     return L->nodo;
 }
 
@@ -404,6 +432,34 @@ static int leggi_prop(ExJsCtx *c, void *dato, const char *nome, ExJsVal *fuori)
         return 1;
     }
     if (ugu(nome, "className")) { *fuori = stringa_c(c, html_attr(d, n, "class")); return 1; }
+    if (ugu(nome, "style")) {
+        ExJsVal s = stile_oggetto(D, L);
+
+        if (exjs_tipo(c, s) != EXJS_OGGETTO) return 0;
+        *fuori = s;
+        return 1;
+    }
+    if (ugu(nome, "dataset")) {
+        ExJsVal s = dati_oggetto(D, L);
+
+        if (exjs_tipo(c, s) != EXJS_OGGETTO) return 0;
+        *fuori = s;
+        return 1;
+    }
+    if (ugu(nome, "classList")) {
+        ExJsVal s = classi_oggetto(D, L);
+
+        if (exjs_tipo(c, s) != EXJS_OGGETTO) return 0;
+        *fuori = s;
+        return 1;
+    }
+
+    /* ! LE PROPRIETA' RIFLESSE NON VALGONO SULLA RADICE. `title` e' nella
+     * tabella per QUALUNQUE elemento, e la radice del documento e' un elemento
+     * anche lei (con il nome vuoto): senza questa riga `document.title`
+     * diventerebbe l'attributo `title` della radice — che non esiste — invece
+     * del testo del <title>, che sta trenta righe piu' giu'. */
+    if (n != d->radice && riflesso_leggi(c, d, n, nome, fuori)) return 1;
 
     /* ! `elemento.onclick` RENDE IL GESTORE, o null. Il DOM fa cosi', e le
      * pagine ci contano per due cose: sapere se ce n'e' gia' uno, e
@@ -428,6 +484,26 @@ static int leggi_prop(ExJsCtx *c, void *dato, const char *nome, ExJsVal *fuori)
         if (ugu(nome, "title")) {
             int t = primo_tag(d, d->radice, "title");
             *fuori = (t >= 0) ? contenuto_testo(D, t) : stringa_c(c, "");
+            return 1;
+        }
+        /* ! `document.cookie` RENDE UNA STRINGA, ANCHE VUOTA, e mai
+         * `undefined`: mezza pagina moderna fa `document.cookie.length` senza
+         * guardare, e su `undefined` quella riga e' la fine dello script. */
+        if (ugu(nome, "cookie")) { *fuori = stringa_c(c, D->biscotti); return 1; }
+        if (ugu(nome, "URL") || ugu(nome, "documentURI")) {
+            *fuori = stringa_c(c, D->url);
+            return 1;
+        }
+        /* ! `referrer` E' VUOTO E NON MANCA. Da dove si arriva il ponte non lo
+         * sa — lo sa il browser, che tiene la cronologia — e una stringa vuota
+         * e' quel che rende il DOM quando non c'e' pagina di provenienza. */
+        if (ugu(nome, "referrer")) { *fuori = stringa_c(c, ""); return 1; }
+        /* ! «complete» PERCHE' QUANDO UNO SCRIPT PUO' CHIEDERLO IL DOCUMENTO
+         * C'E' GIA' TUTTO: qui gli script girano dopo l'analisi, non durante.
+         * Dire «loading» sarebbe far aspettare una pagina che aspetta un
+         * evento che non arrivera' mai. */
+        if (ugu(nome, "readyState")) {
+            *fuori = stringa_c(c, "complete");
             return 1;
         }
     }
@@ -485,6 +561,28 @@ static int scrivi_prop(ExJsCtx *c, void *dato, const char *nome, ExJsVal v)
     if (ugu(nome, "id"))        { html_attr_metti(d, n, "id", exjs_a_stringa(c, v)); return 1; }
     if (ugu(nome, "className")) { html_attr_metti(d, n, "class", exjs_a_stringa(c, v)); return 1; }
 
+    /* ! `el.style = "color:red"` E' LEGALE e vale come cssText; `el.style = un
+     * oggetto` NO — e quel caso qui e' NOSTRO, non di chi scrive la pagina:
+     * e' stile_oggetto() che si ricorda l'involucro mettendolo come proprieta'
+     * propria, e quella scrittura passa da questo gancio. Tirandosi indietro
+     * per gli oggetti, la memoria finisce nella cache; prendendola, finirebbe
+     * dentro l'attributo `style` sotto forma di "[object Object]". */
+    if (ugu(nome, "style")) {
+        if (exjs_tipo(c, v) == EXJS_OGGETTO) return 0;
+        html_attr_metti(d, n, "style", exjs_a_stringa(c, v));
+        return 1;
+    }
+
+    /* ! `dataset` E `classList` SI LEGGONO E BASTA, e nel DOM e' cosi': chi
+     * vuole sostituire tutte le classi in un colpo scrive `className`. Un
+     * OGGETTO pero' si lascia passare, ed e' la memoria del satellite che si
+     * scrive da se' (vedi satellite()): prendersela vorrebbe dire non
+     * ricordarsi piu' niente e rifare l'oggetto a ogni lettura. */
+    if (ugu(nome, "dataset") || ugu(nome, "classList"))
+        return exjs_tipo(c, v) != EXJS_OGGETTO;
+
+    if (n != d->radice && riflesso_scrivi(c, d, n, nome, v)) return 1;
+
     /* ! SI PRENDE `on...` SOLO SE IL VALORE E' UNA FUNZIONE O `null`, e non
      * ogni nome che comincia per "on". Uno script che scrive `el.onda = 3` sta
      * usando l'elemento come un cassetto, come ha diritto di fare; prendersi
@@ -503,6 +601,14 @@ static int scrivi_prop(ExJsCtx *c, void *dato, const char *nome, ExJsVal v)
             asc_togli(D, asc_trova(D, n, nome + 2, exjs_indefinito(), 0, 1));
             return 1;
         }
+    }
+
+    if (n == d->radice && ugu(nome, "cookie")) {
+        char b[EXDOM_BISCOTTI_MAX];
+
+        if (biscotto_pezzo(exjs_a_stringa(c, v), b, sizeof(b)))
+            biscotto_aggiungi(D, b);
+        return 1;
     }
 
     if (n == d->radice && ugu(nome, "title")) {
@@ -740,6 +846,1240 @@ static ExJsVal m_createTextNode(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
     if (n_arg < 1) return exjs_nullo();
     n = html_crea_testo(D->doc, exjs_a_stringa(c, a[0]));
     return exdom_avvolgi(D, n);
+}
+
+
+/* =============================================================================
+ * LO STILE INLINE — `el.style` COME OGGETTO
+ *
+ * ! NON PASSA DA excss, E LA NOTA IN CIMA A exdom.h DICEVA CHE CI SAREBBE
+ * PASSATO. Ci si era detti che serviva «un pezzo di excss per sciogliere le
+ * dichiarazioni»; scrivendolo si e' visto che sarebbe stato sbagliato due
+ * volte, e la nota vecchia e' corretta di conseguenza:
+ *
+ *   - excss conosce DODICI proprieta' e le riduce a una CssStile. Uno script
+ *     che scrive `el.style.zIndex = 5` e lo rilegge deve ritrovarcelo: farlo
+ *     passare di li' vorrebbe dire perderlo in silenzio, cioe' esattamente la
+ *     bugia che gli oggetti esotici sono nati per rendere impossibile.
+ *   - il ponte non decide che cosa VUOL DIRE una dichiarazione: la conserva.
+ *     Chi le da' un senso e' css_calcola(), che l'attributo `style` lo legge
+ *     gia' da prima — quindi scrivere li' basta perche' l'impaginazione se ne
+ *     accorga, e exdom non impara una riga di CSS.
+ *
+ * ! LO STATO STA NELL'ATTRIBUTO, e non in una struttura accanto. `el.style`
+ * non possiede niente: legge e riscrive `style="..."`. Cosi' setAttribute,
+ * `el.style.color = ...` e il foglio di stile guardano tutti la stessa cosa e
+ * non c'e' un secondo posto da tenere d'accordo — che e' il difetto che si
+ * paga sempre, e che in questo browser si e' gia' pagato una volta con l'arena
+ * dell'impaginazione.
+ *
+ * ! E L'OGGETTO SI FA UNA VOLTA SOLA PER NODO, ma senza un campo per nodo: si
+ * ricorda come proprieta' PROPRIA dell'involucro. In lettura le proprie
+ * vengono prima del gancio (vedi exjs.h), quindi dalla seconda volta in poi il
+ * gancio non viene nemmeno chiamato — e un nodo che `style` non lo tocca mai
+ * non paga niente. Un campo in Legame sarebbe costato otto byte per ogni nodo
+ * della pagina, cioe' duecento kilobyte su un documento da ventiquattromila.
+ * ========================================================================== */
+#define STILE_MAX   2048        /* quanto puo' diventare lungo un `style=` */
+#define PROP_MAX      96
+#define VAL_MAX      512
+
+static int bianco(int c)
+{
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f';
+}
+
+/* Da `backgroundColor` a `background-color`. Un nome che i trattini ce li ha
+ * gia' passa intatto: e' cosi' che arriva da setProperty. Rende 0 se non ci
+ * sta, e allora il gancio dira' «non e' mia» invece di troncare un nome. */
+static int nome_css(char *dest, unsigned int max, const char *js)
+{
+    unsigned int k = 0, i;
+
+    /* ! `cssFloat` E' L'UNICO NOME CHE IL DOM HA DOVUTO CAMBIARE: `float` era
+     * una parola riservata nel JavaScript del 1996, e la proprieta' CSS piu'
+     * usata di quegli anni non poteva chiamarsi come si chiamava. */
+    if (ugu(js, "cssFloat") || ugu(js, "styleFloat")) js = "float";
+
+    for (i = 0; js[i]; i++) {
+        unsigned char ch = (unsigned char)js[i];
+
+        if (ch >= 'A' && ch <= 'Z') {
+            /* `WebkitTransform` -> `-webkit-transform`: la maiuscola iniziale
+             * fa il trattino come tutte le altre, ed e' quel che vuole il DOM. */
+            if (k + 2 >= max) return 0;
+            dest[k++] = '-';
+            dest[k++] = (char)(ch + 32);
+        } else {
+            if (k + 1 >= max) return 0;
+            dest[k++] = (char)ch;
+        }
+    }
+    dest[k] = '\0';
+    return k > 0;
+}
+
+/* Dove finisce la dichiarazione che comincia a `i`.
+ * ! LE PARENTESI SI CONTANO, perche' `background:url(a;b)` e' legale e un
+ * punto e virgola dentro le tonde non separa niente. */
+static unsigned int fine_dich(const char *st, unsigned int i)
+{
+    int liv = 0;
+
+    while (st[i]) {
+        if (st[i] == '(') liv++;
+        else if (st[i] == ')') { if (liv > 0) liv--; }
+        else if (st[i] == ';' && liv == 0) break;
+        i++;
+    }
+    return i;
+}
+
+/* Spezza [a,b) in nome e valore, senza gli spazi ai bordi. Rende 0 se li'
+ * dentro non c'e' una dichiarazione (niente «:», o nome vuoto). */
+static int dich_pezzi(const char *st, unsigned int a, unsigned int b,
+                      unsigned int *n0, unsigned int *n1,
+                      unsigned int *v0, unsigned int *v1)
+{
+    unsigned int i = a, dp;
+
+    while (i < b && bianco(st[i])) i++;
+    dp = i;
+    while (dp < b && st[dp] != ':') dp++;
+    if (dp >= b) return 0;
+    *n0 = i; *n1 = dp;
+    while (*n1 > *n0 && bianco(st[*n1 - 1])) (*n1)--;
+    i = dp + 1;
+    while (i < b && bianco(st[i])) i++;
+    *v0 = i; *v1 = b;
+    while (*v1 > *v0 && bianco(st[*v1 - 1])) (*v1)--;
+    return *n1 > *n0;
+}
+
+static int nome_uguale(const char *st, unsigned int a, unsigned int b,
+                       const char *prop)
+{
+    unsigned int i;
+
+    for (i = 0; a + i < b; i++) {
+        if (!prop[i]) return 0;
+        if (minuscola((unsigned char)st[a + i]) !=
+            minuscola((unsigned char)prop[i])) return 0;
+    }
+    return prop[b - a] == '\0';
+}
+
+/* Il valore di `prop` dentro `st`, o "" se non c'e'.
+ * ! SI TIENE L'ULTIMA E NON LA PRIMA. `style="color:red;color:blue"` e' rosso
+ * per chi legge da sinistra e blu per il CSS, che a parita' di peso fa vincere
+ * chi arriva dopo. Rendere la prima vorrebbe dire che `el.style.color` e
+ * quello che si vede sullo schermo non sono la stessa cosa. */
+static int stile_valore(const char *st, const char *prop,
+                        char *fuori, unsigned int max)
+{
+    unsigned int i = 0, b, n0, n1, v0, v1, k;
+    int          trovata = 0;
+
+    fuori[0] = '\0';
+    if (!st) return 0;
+    while (st[i]) {
+        b = fine_dich(st, i);
+        if (dich_pezzi(st, i, b, &n0, &n1, &v0, &v1) &&
+            nome_uguale(st, n0, n1, prop)) {
+            for (k = 0; v0 + k < v1 && k + 1 < max; k++) fuori[k] = st[v0 + k];
+            fuori[k] = '\0';
+            trovata = 1;
+        }
+        i = st[b] ? b + 1 : b;
+    }
+    return trovata;
+}
+
+static unsigned int stile_conta(const char *st)
+{
+    unsigned int i = 0, b, n0, n1, v0, v1, n = 0;
+
+    if (!st) return 0;
+    while (st[i]) {
+        b = fine_dich(st, i);
+        if (dich_pezzi(st, i, b, &n0, &n1, &v0, &v1)) n++;
+        i = st[b] ? b + 1 : b;
+    }
+    return n;
+}
+
+/* Il nome della dichiarazione numero `k`, per `style.item(k)`. */
+static int stile_nome_k(const char *st, unsigned int k,
+                        char *fuori, unsigned int max)
+{
+    unsigned int i = 0, b, n0, n1, v0, v1, n = 0, j;
+
+    fuori[0] = '\0';
+    if (!st) return 0;
+    while (st[i]) {
+        b = fine_dich(st, i);
+        if (dich_pezzi(st, i, b, &n0, &n1, &v0, &v1)) {
+            if (n == k) {
+                for (j = 0; n0 + j < n1 && j + 1 < max; j++)
+                    fuori[j] = (char)minuscola((unsigned char)st[n0 + j]);
+                fuori[j] = '\0';
+                return 1;
+            }
+            n++;
+        }
+        i = st[b] ? b + 1 : b;
+    }
+    return 0;
+}
+
+static void t_dich(Testo *t, const char *nome, unsigned int nn,
+                   const char *val, unsigned int vn)
+{
+    unsigned int k;
+
+    if (t->n) { t_car(t, ';'); t_car(t, ' '); }
+    for (k = 0; k < nn; k++) t_car(t, nome[k]);
+    t_car(t, ':'); t_car(t, ' ');
+    for (k = 0; k < vn; k++) t_car(t, val[k]);
+}
+
+static unsigned int lung_u(const char *s) { return s ? lung(s) : 0; }
+
+/* Riscrive `style=` con `prop` posta a `val`; `val` vuoto la toglie.
+ *
+ * ! IL POSTO NELL'ELENCO SI CONSERVA. Sostituire vuol dire riscrivere quella
+ * dichiarazione dov'e', non toglierla e rimetterla in fondo: per il CSS
+ * cambierebbe poco, ma un `style=` che si rimescola a ogni assegnazione e'
+ * illeggibile a chi guarda la pagina cercando un difetto — cioe' a noi.
+ *
+ * ! E SE NON CI STA NON SI SCRIVE NIENTE. Un attributo troncato a meta' di una
+ * dichiarazione sarebbe CSS sbagliato scritto da noi, che e' peggio di una
+ * assegnazione persa: la spia `troncato` c'e' apposta per dirlo. */
+static void stile_metti(ExDom *D, Legame *L, const char *prop, const char *val)
+{
+    const char  *st = html_attr(D->doc, L->nodo, "style");
+    char         nuovo[STILE_MAX];
+    Testo        t;
+    unsigned int i = 0, b, n0, n1, v0, v1;
+    int          fatto = 0;
+
+    if (!st) st = "";
+    t.p = nuovo; t.max = sizeof(nuovo); t.n = 0; t.pieno = 0;
+
+    while (st[i]) {
+        b = fine_dich(st, i);
+        if (dich_pezzi(st, i, b, &n0, &n1, &v0, &v1)) {
+            if (nome_uguale(st, n0, n1, prop)) {
+                /* La prima occorrenza prende il valore nuovo; le altre
+                 * spariscono, che e' il modo di non lasciare in giro un
+                 * doppione che il CSS farebbe vincere sul nostro. */
+                if (!fatto && val && val[0])
+                    t_dich(&t, prop, lung_u(prop), val, lung_u(val));
+                fatto = 1;
+            } else {
+                t_dich(&t, st + n0, n1 - n0, st + v0, v1 - v0);
+            }
+        }
+        i = st[b] ? b + 1 : b;
+    }
+    if (!fatto && val && val[0])
+        t_dich(&t, prop, lung_u(prop), val, lung_u(val));
+
+    t_chiudi(&t);
+    if (t.pieno) { D->troncato = 1; return; }
+    html_attr_metti(D->doc, L->nodo, "style", nuovo);
+}
+
+/* ! IL GANCIO VIENE PRIMA DEL PROTOTIPO, quindi deve dire «non e' mia» sui
+ * nomi dei metodi o li coprirebbe: `el.style.setProperty` diventerebbe la
+ * stringa vuota invece di una funzione, e la pagina si fermerebbe li'. E'
+ * l'unico elenco di nomi riservati di questa libreria, ed e' corto perche' i
+ * metodi di CSSStyleDeclaration sono quattro. */
+static int stile_e_metodo(const char *nome)
+{
+    return ugu(nome, "setProperty") || ugu(nome, "getPropertyValue") ||
+           ugu(nome, "removeProperty") || ugu(nome, "item") ||
+           ugu(nome, "getPropertyPriority");
+}
+
+static int stile_leggi(ExJsCtx *c, void *dato, const char *nome, ExJsVal *fuori)
+{
+    Legame     *L = (Legame *)dato;
+    const char *st;
+    char        prop[PROP_MAX], val[VAL_MAX];
+
+    if (stile_e_metodo(nome)) return 0;
+    st = html_attr(L->D->doc, L->nodo, "style");
+
+    if (ugu(nome, "cssText")) { *fuori = stringa_c(c, st ? st : ""); return 1; }
+    if (ugu(nome, "length")) {
+        *fuori = exjs_numero(c, (double)stile_conta(st));
+        return 1;
+    }
+    if (!nome_css(prop, sizeof(prop), nome)) return 0;
+
+    /* ! UNA PROPRIETA' CHE NON C'E' DA "" E NON `undefined`, ed e' quel che fa
+     * il DOM: `if (el.style.display)` dev'essere falso, non un errore.
+     *
+     * ! E QUI C'E' UNA BUGIA DICHIARATA: rendendo "" per QUALUNQUE nome, una
+     * pagina che scopre le funzioni con `'grid' in el.style` si sente dire di
+     * si' anche per cio' che non sappiamo disegnare. L'alternativa sarebbe un
+     * elenco delle proprieta' CSS esistenti dentro il ponte — un secondo
+     * elenco da tenere d'accordo con excss, che invecchierebbe da solo. Fra
+     * una bugia sola e due elenchi che divergono si e' scelta la bugia, e si
+     * scrive qui perche' chi cerchera' quel difetto la trovi. */
+    stile_valore(st, prop, val, sizeof(val));
+    *fuori = stringa_c(c, val);
+    return 1;
+}
+
+static int stile_scrivi(ExJsCtx *c, void *dato, const char *nome, ExJsVal v)
+{
+    Legame *L = (Legame *)dato;
+    char    prop[PROP_MAX];
+    int     tipo;
+
+    if (stile_e_metodo(nome)) return 0;
+    if (ugu(nome, "length")) return 1;      /* si legge e basta */
+
+    if (ugu(nome, "cssText")) {
+        html_attr_metti(L->D->doc, L->nodo, "style", exjs_a_stringa(c, v));
+        return 1;
+    }
+    if (!nome_css(prop, sizeof(prop), nome)) return 0;
+
+    /* ! `null` E `undefined` TOLGONO LA DICHIARAZIONE, non scrivono le parole
+     * "null" e "undefined". E' quel che fa il DOM, ed e' anche l'unica cosa
+     * sensata: `el.style.display = x` con x non impostata deve tornare al
+     * valore di prima, non dipingere la pagina con una proprieta' invalida. */
+    tipo = exjs_tipo(c, v);
+    if (tipo == EXJS_NULLO || tipo == EXJS_INDEFINITO)
+        stile_metti(L->D, L, prop, "");
+    else
+        stile_metti(L->D, L, prop, exjs_a_stringa(c, v));
+    return 1;
+}
+
+/* ! I SATELLITI PORTANO LO STESSO Legame DELL'ELEMENTO, ed e' come ritrovano
+ * il nodo: `el.style` non e' `el`, ma sa di chi e'. Il controllo che li
+ * distingue sta in exdom_nodo (l'involucro e' UNO, ed e' `L->val`); qui basta
+ * che il puntatore stia nella nostra tabella. */
+static Legame *legame_satellite(ExDom *D, ExJsVal v)
+{
+    Legame *L = (Legame *)exjs_esotico_dato(D->js, v);
+
+    if (!L || L < D->leg || L >= D->leg + D->nodi_max) return 0;
+    if (L->nodo < 0 || L->nodo >= (int)D->doc->nodi_n) return 0;
+    return L;
+}
+
+static ExJsVal m_setProperty(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                             int n_arg, void *dato)
+{
+    ExDom  *D = (ExDom *)dato;
+    Legame *L = legame_satellite(D, questo);
+    char    prop[PROP_MAX];
+
+    if (!L || n_arg < 1) return exjs_indefinito();
+    if (!nome_css(prop, sizeof(prop), exjs_a_stringa(c, a[0])))
+        return exjs_indefinito();
+    stile_metti(D, L, prop, arg_str(c, a, n_arg, 1));
+    return exjs_indefinito();
+}
+
+static ExJsVal m_getPropertyValue(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                                  int n_arg, void *dato)
+{
+    ExDom  *D = (ExDom *)dato;
+    Legame *L = legame_satellite(D, questo);
+    char    prop[PROP_MAX], val[VAL_MAX];
+
+    if (!L || n_arg < 1) return stringa_c(c, "");
+    if (!nome_css(prop, sizeof(prop), exjs_a_stringa(c, a[0])))
+        return stringa_c(c, "");
+    stile_valore(html_attr(D->doc, L->nodo, "style"), prop, val, sizeof(val));
+    return stringa_c(c, val);
+}
+
+static ExJsVal m_removeProperty(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                                int n_arg, void *dato)
+{
+    ExDom  *D = (ExDom *)dato;
+    Legame *L = legame_satellite(D, questo);
+    char    prop[PROP_MAX], val[VAL_MAX];
+
+    if (!L || n_arg < 1) return stringa_c(c, "");
+    if (!nome_css(prop, sizeof(prop), exjs_a_stringa(c, a[0])))
+        return stringa_c(c, "");
+    /* Il DOM rende il valore che c'era: serve a chi lo rimette. */
+    stile_valore(html_attr(D->doc, L->nodo, "style"), prop, val, sizeof(val));
+    stile_metti(D, L, prop, "");
+    return stringa_c(c, val);
+}
+
+static ExJsVal m_item(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                      int n_arg, void *dato)
+{
+    ExDom  *D = (ExDom *)dato;
+    Legame *L = legame_satellite(D, questo);
+    char    nome[PROP_MAX];
+
+    if (!L || n_arg < 1) return stringa_c(c, "");
+    stile_nome_k(html_attr(D->doc, L->nodo, "style"),
+                 (unsigned int)exjs_a_numero(c, a[0]), nome, sizeof(nome));
+    return stringa_c(c, nome);
+}
+
+
+/* Un satellite si costruisce una volta sola, e la memoria e' una proprieta'
+ * PROPRIA dell'involucro invece di un campo per nodo: in lettura le proprie
+ * vengono prima del gancio, quindi dalla seconda volta in poi il gancio non
+ * viene nemmeno chiamato, e un nodo che non chiede mai `style` non paga
+ * niente.
+ * Il perche' per esteso sta in cima a questo blocco. */
+static ExJsVal satellite(ExDom *D, Legame *L, const char *nome,
+                         ExJsLeggiProp leggi, ExJsScriviProp scrivi,
+                         ExJsVal proto)
+{
+    ExJsVal s = exjs_esotico(D->js, leggi, scrivi, L);
+
+    if (exjs_tipo(D->js, s) != EXJS_OGGETTO) return exjs_indefinito();
+    if (exjs_tipo(D->js, proto) == EXJS_OGGETTO)
+        exjs_proto_metti(D->js, s, proto);
+
+    /* ! LA SCRITTURA PASSA DAL GANCIO scrivi_prop, che per un OGGETTO si tira
+     * indietro apposta (vedi li'): prendendola, questa riga finirebbe dentro
+     * l'attributo invece che nella cache. */
+    exjs_metti(D->js, L->val, nome, s);
+    return s;
+}
+
+/* L'oggetto `style` di un elemento, costruito la prima volta che lo si chiede. */
+static ExJsVal stile_oggetto(ExDom *D, Legame *L)
+{
+    return satellite(D, L, "style", stile_leggi, stile_scrivi, D->proto_stile);
+}
+
+/* =============================================================================
+ * I SELETTORI — querySelector, querySelectorAll, matches, closest
+ *
+ * ! NON SI USANO QUELLI DI excss, E LA COSA ERA SCRITTA AL CONTRARIO nella
+ * coda dei lavori («excss sa gia' leggere i selettori: ne manca l'uso dal
+ * ponte»). Provandolo si e' visto che non torna:
+ *
+ *   - un CssPezzo conosce TIPO, CLASSE e ID e nient'altro. `[data-x]`, `>`,
+ *     `+` e le classi multiple — che sono meta' di quel che scrive una pagina
+ *     dentro querySelector — li' non ci sono.
+ *   - un selettore di excss vive dentro un CssFoglio: e' fatto di scostamenti
+ *     dentro l'arena di QUEL foglio. Per usarne uno al volo bisognerebbe
+ *     fabbricare un foglio finto a ogni chiamata, cioe' un'arena e due vettori
+ *     per una domanda che dura un istante.
+ *   - e exdom prenderebbe una dipendenza da excss, che oggi non ha: le tre
+ *     librerie si ignorano apposta, ed e' la decisione da cui viene tutto
+ *     questo file.
+ *
+ * Il pezzo che segue e' un riconoscitore SUO, e sa una cosa in piu' e una in
+ * meno di quello di excss. In piu': gli attributi, i combinatori, le classi a
+ * ripetizione. In meno: non ha nessuna nozione di peso, perche' qui non c'e'
+ * niente da mettere in cascata — si risponde si' o no su un nodo.
+ *
+ * ! QUEL CHE NON C'E' SI DICHIARA, e un selettore che lo contiene NON TROVA
+ * NIENTE invece di trovare la cosa sbagliata: le pseudo-classi (`:hover`,
+ * `:nth-child`, `:not`), i namespace e le virgole dentro le parentesi. Una
+ * querySelector che rendesse un nodo a caso perche' ha ignorato un pezzo del
+ * selettore e' peggio di una che rende null: il chiamante il null lo controlla.
+ * ========================================================================== */
+#define SEL_COMP_MAX   6        /* «div ul li a» sono quattro                */
+#define SEL_TAG_MAX   40
+#define SEL_ID_MAX    64
+#define SEL_CL_MAX     4        /* `.a.b.c` in un compound                   */
+#define SEL_AT_MAX     2
+
+typedef struct {
+    char comb;                                  /* 0 (il primo), ' ', >, +, ~ */
+    char tag[SEL_TAG_MAX];                      /* "" = qualunque             */
+    char id[SEL_ID_MAX];
+    char classe[SEL_CL_MAX][SEL_TAG_MAX];
+    int  n_classi;
+    char attr[SEL_AT_MAX][SEL_TAG_MAX];
+    char aval[SEL_AT_MAX][SEL_ID_MAX];
+    char aop[SEL_AT_MAX];                       /* 0=presenza, = ~ ^ $ *      */
+    int  n_attr;
+} SelComp;
+
+static int sel_ident(const char *s, unsigned int *i, char *fuori,
+                     unsigned int max, int minusc)
+{
+    unsigned int k = 0;
+
+    while (s[*i] && (s[*i] == '-' || s[*i] == '_' ||
+                     (s[*i] >= '0' && s[*i] <= '9') ||
+                     (s[*i] >= 'a' && s[*i] <= 'z') ||
+                     (s[*i] >= 'A' && s[*i] <= 'Z') ||
+                     (unsigned char)s[*i] >= 0x80)) {
+        if (k + 1 >= max) return 0;
+        fuori[k++] = minusc ? (char)minuscola((unsigned char)s[*i]) : s[*i];
+        (*i)++;
+    }
+    fuori[k] = '\0';
+    return k > 0;
+}
+
+/* Legge un compound (`div.a#b[c=d]`) dentro `sc`. Rende 0 se incontra
+ * qualcosa che non sa leggere: chi chiama trasforma quello 0 in «non trova
+ * niente», che e' la risposta onesta. */
+static int sel_compound(const char *s, unsigned int *i, SelComp *sc)
+{
+    int qualcosa = 0;
+
+    sc->tag[0] = sc->id[0] = '\0';
+    sc->n_classi = sc->n_attr = 0;
+
+    for (;;) {
+        char ch = s[*i];
+
+        if (ch == '*') { (*i)++; qualcosa = 1; continue; }
+        if (ch == '#') {
+            (*i)++;
+            if (!sel_ident(s, i, sc->id, sizeof(sc->id), 0)) return 0;
+            qualcosa = 1;
+            continue;
+        }
+        if (ch == '.') {
+            (*i)++;
+            if (sc->n_classi >= SEL_CL_MAX) return 0;
+            if (!sel_ident(s, i, sc->classe[sc->n_classi], SEL_TAG_MAX, 0))
+                return 0;
+            sc->n_classi++;
+            qualcosa = 1;
+            continue;
+        }
+        if (ch == '[') {
+            unsigned int k = 0;
+            char         chiudi;
+
+            (*i)++;
+            if (sc->n_attr >= SEL_AT_MAX) return 0;
+            while (s[*i] == ' ') (*i)++;
+            if (!sel_ident(s, i, sc->attr[sc->n_attr], SEL_TAG_MAX, 1)) return 0;
+            while (s[*i] == ' ') (*i)++;
+            sc->aop[sc->n_attr] = 0;
+            if (s[*i] == '~' || s[*i] == '^' || s[*i] == '$' ||
+                s[*i] == '*' || s[*i] == '|') {
+                sc->aop[sc->n_attr] = s[*i];
+                (*i)++;
+                if (s[*i] != '=') return 0;
+            } else if (s[*i] == '=') {
+                sc->aop[sc->n_attr] = '=';
+            } else if (s[*i] != ']') {
+                return 0;
+            }
+            if (s[*i] == '=') {
+                (*i)++;
+                while (s[*i] == ' ') (*i)++;
+                chiudi = (s[*i] == '"' || s[*i] == '\'') ? s[*i] : 0;
+                if (chiudi) (*i)++;
+                while (s[*i] && s[*i] != ']' &&
+                       (chiudi ? s[*i] != chiudi : s[*i] != ' ')) {
+                    if (k + 1 >= SEL_ID_MAX) return 0;
+                    sc->aval[sc->n_attr][k++] = s[*i];
+                    (*i)++;
+                }
+                if (chiudi && s[*i] == chiudi) (*i)++;
+            }
+            sc->aval[sc->n_attr][k] = '\0';
+            while (s[*i] == ' ') (*i)++;
+            if (s[*i] != ']') return 0;
+            (*i)++;
+            sc->n_attr++;
+            qualcosa = 1;
+            continue;
+        }
+        if (ch == ':') return 0;            /* le pseudo-classi: vedi sopra */
+        if (sc->tag[0] == '\0' && !qualcosa &&
+            sel_ident(s, i, sc->tag, sizeof(sc->tag), 1)) {
+            qualcosa = 1;
+            continue;
+        }
+        break;
+    }
+    return qualcosa;
+}
+
+/* Legge un selettore intero (senza virgole) in `sc[0..]`, dal primo pezzo
+ * all'ultimo. Rende il numero di compound, o 0 se non si sa leggere. */
+static int sel_leggi(const char *s, SelComp *sc, int max)
+{
+    unsigned int i = 0;
+    int          n = 0;
+    char         comb = 0;
+
+    while (s[i] == ' ') i++;
+    while (s[i]) {
+        if (n >= max) return 0;
+        if (!sel_compound(s, &i, &sc[n])) return 0;
+        sc[n].comb = comb;
+        n++;
+
+        /* ! LO SPAZIO IN CODA NON E' UN COMBINATORE, e distinguerlo costa una
+         * variabile: «div » e' un selettore intero con uno spazio di troppo,
+         * «div >» e' un selettore mozzo. Senza la distinzione uno dei due
+         * casi si comporta male, e sono tutt'e due comuni. */
+        {
+            char esplicito = 0;
+            int  spazi = 0;
+
+            while (s[i] == ' ' || s[i] == '>' || s[i] == '+' || s[i] == '~') {
+                if (s[i] == ' ') spazi = 1;
+                else {
+                    if (esplicito) return 0;   /* «> >» non vuol dire niente */
+                    esplicito = s[i];
+                }
+                i++;
+            }
+            if (!s[i]) return esplicito ? 0 : n;
+            comb = esplicito ? esplicito : (spazi ? ' ' : 0);
+            if (!comb) return 0;
+        }
+    }
+    return n;
+}
+
+/* ! LA LIBC QUI NON C'E' (vedi in cima al file): il confronto su n byte se
+ * lo scrive da se', come ugu e lung. */
+static int uguali_n(const char *a, const char *b, unsigned int n)
+{
+    unsigned int i;
+
+    for (i = 0; i < n; i++) if (a[i] != b[i]) return 0;
+    return 1;
+}
+
+static int attr_confronta(const char *v, char op, const char *atteso)
+{
+    unsigned int lv, la;
+
+    if (!v) return 0;
+    if (!op) return 1;                       /* [attr]: basta che ci sia */
+    lv = lung(v); la = lung(atteso);
+    switch (op) {
+    case '=':  return ugu(v, atteso);
+    case '~':  return ha_classe(v, atteso);  /* la stessa regola a parole */
+    case '^':  return la <= lv && uguali_n(v, atteso, la);
+    case '$':  return la <= lv && uguali_n(v + lv - la, atteso, la);
+    case '*': {
+        unsigned int k;
+        if (!la) return 0;
+        for (k = 0; k + la <= lv; k++) if (uguali_n(v + k, atteso, la)) return 1;
+        return 0;
+    }
+    case '|':  return ugu(v, atteso) ||
+                      (la < lv && uguali_n(v, atteso, la) && v[la] == '-');
+    default:   return 0;
+    }
+}
+
+static int sel_nodo(const SelComp *sc, HtmlDoc *d, int n)
+{
+    int i;
+
+    if (sc->tag[0] && !ugu(html_nome(d, n), sc->tag)) return 0;
+    if (sc->id[0]) {
+        const char *v = html_attr(d, n, "id");
+        if (!v || !ugu(v, sc->id)) return 0;
+    }
+    for (i = 0; i < sc->n_classi; i++)
+        if (!ha_classe(html_attr(d, n, "class"), sc->classe[i])) return 0;
+    for (i = 0; i < sc->n_attr; i++)
+        if (!attr_confronta(html_attr(d, n, sc->attr[i]), sc->aop[i],
+                            sc->aval[i])) return 0;
+    return 1;
+}
+
+static int elemento_prima(const HtmlDoc *d, int n)
+{
+    int p = fratello_prima(d, n);
+
+    while (p >= 0 && d->nodi[p].tipo != HTML_ELEMENTO) p = fratello_prima(d, p);
+    return p;
+}
+
+/* Il nodo `n` soddisfa i compound da 0 a k?
+ *
+ * ! SI GUARDA DA DESTRA A SINISTRA, ed e' il verso che rende la cosa
+ * praticabile: da sinistra bisognerebbe cercare tutti i `div` della pagina e
+ * poi tutti i loro discendenti; da destra si parte dal nodo che si ha in mano
+ * e si sale. E' anche il verso in cui lo fanno i browser veri.
+ *
+ * ! LA RICORSIONE QUI E' AMMESSA e altrove in questo file no, perche' e'
+ * PROFONDA QUANTO IL SELETTORE — al piu' SEL_COMP_MAX — e non quanto l'albero.
+ * Le visite dell'albero restano iterative per la ragione scritta piu' su. */
+static int sel_risali(const SelComp *sc, int k, HtmlDoc *d, int n)
+{
+    if (n < 0 || d->nodi[n].tipo != HTML_ELEMENTO) return 0;
+    if (!sel_nodo(&sc[k], d, n)) return 0;
+    if (k == 0) return 1;
+
+    switch (sc[k].comb) {
+    case '>':
+        return sel_risali(sc, k - 1, d, d->nodi[n].padre);
+    case '+':
+        return sel_risali(sc, k - 1, d, elemento_prima(d, n));
+    case '~': {
+        int p = elemento_prima(d, n);
+        while (p >= 0) {
+            if (sel_risali(sc, k - 1, d, p)) return 1;
+            p = elemento_prima(d, p);
+        }
+        return 0;
+    }
+    default: {
+        int p = d->nodi[n].padre;
+        while (p >= 0) {
+            if (sel_risali(sc, k - 1, d, p)) return 1;
+            p = d->nodi[p].padre;
+        }
+        return 0;
+    }
+    }
+}
+
+/* Un selettore con le virgole: `a, b, c` vale se ne vale uno.
+ * `fermo_al_primo` fa rendere il primo nodo trovato invece di riempire il
+ * vettore — e' la differenza fra querySelector e querySelectorAll, che
+ * altrimenti sarebbero due copie della stessa visita. */
+static ExJsVal sel_cerca(ExDom *D, int radice, const char *selettore,
+                         int fermo_al_primo)
+{
+    ExJsCtx     *c = D->js;
+    ExJsVal      v = fermo_al_primo ? exjs_nullo() : exjs_vettore(c);
+    unsigned int k = 0;
+    char         pezzo[256];
+    int          n;
+
+    if (!selettore || !selettore[0] || radice < 0) return v;
+
+    for (n = prossimo_in_visita(D->doc, radice, radice); n >= 0;
+         n = prossimo_in_visita(D->doc, n, radice)) {
+        unsigned int i = 0, u;
+        int          preso = 0, lungo;
+
+        if (D->doc->nodi[n].tipo != HTML_ELEMENTO) continue;
+
+        /* ! IL SELETTORE SI RILEGGE PER OGNI NODO, ed e' uno spreco
+         * dichiarato: analizzarlo una volta sola vorrebbe dire un vettore di
+         * liste di compound dimensionato a occhio, e le pagine vere chiamano
+         * querySelector con selettori di venti caratteri su alberi di
+         * duemila nodi. Se un giorno si vedra' in un profilo, il posto e'
+         * questo e la cura e' ovvia. */
+        while (selettore[i] && !preso) {
+            SelComp sc[SEL_COMP_MAX];
+            int     np;
+
+            u = 0; lungo = 0;
+            while (selettore[i] && selettore[i] != ',') {
+                if (u + 1 < sizeof(pezzo)) pezzo[u++] = selettore[i];
+                else lungo = 1;
+                i++;
+            }
+            pezzo[u] = '\0';
+            if (selettore[i] == ',') i++;
+
+            /* ! UN PEZZO PIU' LUNGO DEL BUFFER NON COMBACIA, e non combacia a
+             * meta': un selettore troncato e' un ALTRO selettore, e piu'
+             * largo di quello che era scritto. */
+            np = lungo ? 0 : sel_leggi(pezzo, sc, SEL_COMP_MAX);
+            if (np > 0 && sel_risali(sc, np - 1, D->doc, n)) preso = 1;
+        }
+
+        if (!preso) continue;
+        if (fermo_al_primo) return exdom_avvolgi(D, n);
+        exjs_indice_metti(c, v, k++, exdom_avvolgi(D, n));
+    }
+    return v;
+}
+
+static int sel_combacia(ExDom *D, int n, const char *selettore)
+{
+    unsigned int i = 0, u;
+    int          lungo;
+    char         pezzo[256];
+
+    if (n < 0 || !selettore || D->doc->nodi[n].tipo != HTML_ELEMENTO) return 0;
+    while (selettore[i]) {
+        SelComp sc[SEL_COMP_MAX];
+        int     np;
+
+        u = 0; lungo = 0;
+        while (selettore[i] && selettore[i] != ',') {
+            if (u + 1 < sizeof(pezzo)) pezzo[u++] = selettore[i];
+            else lungo = 1;
+            i++;
+        }
+        pezzo[u] = '\0';
+        if (selettore[i] == ',') i++;
+
+        np = lungo ? 0 : sel_leggi(pezzo, sc, SEL_COMP_MAX);
+        if (np > 0 && sel_risali(sc, np - 1, D->doc, n)) return 1;
+    }
+    return 0;
+}
+
+static ExJsVal m_querySelector(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                               int n_arg, void *dato)
+{
+    ExDom *D = (ExDom *)dato;
+    int    r = nodo_di(D, questo);
+
+    if (r < 0 || n_arg < 1) return exjs_nullo();
+    return sel_cerca(D, r, exjs_a_stringa(c, a[0]), 1);
+}
+
+static ExJsVal m_querySelectorAll(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                                  int n_arg, void *dato)
+{
+    ExDom *D = (ExDom *)dato;
+    int    r = nodo_di(D, questo);
+
+    if (r < 0 || n_arg < 1) return exjs_vettore(c);
+    return sel_cerca(D, r, exjs_a_stringa(c, a[0]), 0);
+}
+
+static ExJsVal m_matches(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                         int n_arg, void *dato)
+{
+    ExDom *D = (ExDom *)dato;
+    int    n = nodo_di(D, questo);
+
+    if (n < 0 || n_arg < 1) return exjs_booleano(0);
+    return exjs_booleano(sel_combacia(D, n, exjs_a_stringa(c, a[0])));
+}
+
+/* ! closest() PARTE DAL NODO STESSO, non dal padre, e le pagine ci contano:
+ * un gestore di clic fa `e.target.closest('a')` e sul collegamento vero deve
+ * rendere il collegamento, non il primo antenato. */
+static ExJsVal m_closest(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                         int n_arg, void *dato)
+{
+    ExDom      *D = (ExDom *)dato;
+    int         n = nodo_di(D, questo);
+    const char *s;
+
+    if (n < 0 || n_arg < 1) return exjs_nullo();
+    s = exjs_a_stringa(c, a[0]);
+    while (n >= 0) {
+        if (D->doc->nodi[n].tipo == HTML_ELEMENTO && sel_combacia(D, n, s))
+            return exdom_avvolgi(D, n);
+        n = D->doc->nodi[n].padre;
+    }
+    return exjs_nullo();
+}
+
+
+/* =============================================================================
+ * GLI ATTRIBUTI RIFLESSI — `img.src`, `a.href`, `input.value`...
+ *
+ * ! NON SI RIFLETTE TUTTO SU TUTTO, e la scorciatoia sarebbe stata proprio
+ * quella: prendersi ogni nome e cercarlo fra gli attributi. Sarebbe stato
+ * sbagliato in un modo che non si vede subito — gli script appendono i propri
+ * dati agli elementi in continuazione, e un `div.value = 3` che diventa un
+ * attributo `value="3"` rende `3` la volta dopo invece del numero 3. Il DOM
+ * dice ESATTAMENTE quali proprieta' esistono su quali elementi, ed e' un
+ * elenco: eccolo.
+ *
+ * ! E QUI SI RIFLETTE L'ATTRIBUTO, NON L'INDIRIZZO RISOLTO. Nel DOM vero
+ * `img.src` rende l'indirizzo assoluto («http://sito/a/b.png») anche se
+ * l'attributo dice «b.png»: la differenza la fa l'indirizzo DELLA PAGINA, che
+ * il ponte non conosce e non deve conoscere — chi lo sa e' il browser, che ha
+ * risolvi(). Il giorno che serva, la strada e' passare quell'indirizzo a
+ * exdom_apri, non indovinarlo qui. Fino ad allora e' scritto, perche' una
+ * pagina che confronta `a.href` con un indirizzo intero trovera' di no.
+ * ========================================================================== */
+typedef struct {
+    const char *prop;       /* il nome in JavaScript                        */
+    const char *attr;       /* l'attributo nell'albero                      */
+    const char *tag;        /* i tag ammessi, separati da '|'; 0 = tutti    */
+} Riflesso;
+
+static const Riflesso RIFLESSI[] = {
+    /* comuni a ogni elemento */
+    { "title",       "title",       0 },
+    { "lang",        "lang",        0 },
+    { "dir",         "dir",         0 },
+    /* gli indirizzi */
+    { "src",         "src",         "img|script|iframe|source|video|audio|embed|input|frame|track" },
+    { "href",        "href",        "a|area|link|base" },
+    { "alt",         "alt",         "img|area|input" },
+    /* i moduli */
+    { "value",       "value",       "input|button|option|li|param|progress|meter" },
+    { "name",        "name",        "input|select|textarea|button|form|img|iframe|a|meta|param|map|object" },
+    { "type",        "type",        "input|button|script|link|style|ol|source|embed|object" },
+    { "placeholder", "placeholder", "input|textarea" },
+    { "action",      "action",      "form" },
+    { "method",      "method",      "form" },
+    { "htmlFor",     "for",         "label|output" },
+    /* il resto che le pagine leggono davvero */
+    { "target",      "target",      "a|area|form|base" },
+    { "rel",         "rel",         "a|area|link" },
+    { "content",     "content",     "meta" },
+    { "width",       "width",       "img|canvas|iframe|video|embed|object|table|td|th" },
+    { "height",      "height",      "img|canvas|iframe|video|embed|object" },
+    { 0, 0, 0 }
+};
+
+/* `tag` sta nell'elenco «a|b|c»? Un elenco vuoto (0) vuol dire «qualunque». */
+static int tag_nell_elenco(const char *elenco, const char *tag)
+{
+    unsigned int i = 0, k;
+
+    if (!elenco) return 1;
+    while (elenco[i]) {
+        k = 0;
+        while (elenco[i + k] && elenco[i + k] != '|' &&
+               elenco[i + k] == tag[k]) k++;
+        if (tag[k] == '\0' && (elenco[i + k] == '\0' || elenco[i + k] == '|'))
+            return 1;
+        while (elenco[i] && elenco[i] != '|') i++;
+        if (elenco[i] == '|') i++;
+    }
+    return 0;
+}
+
+static const Riflesso *riflesso_di(HtmlDoc *d, int n, const char *nome)
+{
+    const char *tag = html_nome(d, n);
+    int         i;
+
+    for (i = 0; RIFLESSI[i].prop; i++)
+        if (ugu(nome, RIFLESSI[i].prop) &&
+            tag_nell_elenco(RIFLESSI[i].tag, tag))
+            return &RIFLESSI[i];
+    return 0;
+}
+
+/* =============================================================================
+ * `el.dataset` — gli attributi `data-*`
+ *
+ * ! E' UN SATELLITE COME `el.style`, con lo stesso meccanismo e per la stessa
+ * ragione: non possiede niente, legge e scrive gli attributi. Cambia solo la
+ * regola del nome — `data-vista-larga` da una parte, `vistaLarga` dall'altra.
+ * ========================================================================== */
+
+/* Da `vistaLarga` a `data-vista-larga`. Rende 0 se non ci sta. */
+static int nome_data(char *dest, unsigned int max, const char *js)
+{
+    unsigned int k = 0, i;
+
+    if (max < 8) return 0;
+    dest[k++] = 'd'; dest[k++] = 'a'; dest[k++] = 't'; dest[k++] = 'a';
+    dest[k++] = '-';
+    for (i = 0; js[i]; i++) {
+        unsigned char ch = (unsigned char)js[i];
+
+        if (ch >= 'A' && ch <= 'Z') {
+            if (k + 2 >= max) return 0;
+            dest[k++] = '-';
+            dest[k++] = (char)(ch + 32);
+        } else {
+            if (k + 1 >= max) return 0;
+            dest[k++] = (char)ch;
+        }
+    }
+    dest[k] = '\0';
+    return i > 0;
+}
+
+static int dati_leggi(ExJsCtx *c, void *dato, const char *nome, ExJsVal *fuori)
+{
+    Legame     *L = (Legame *)dato;
+    char        att[PROP_MAX];
+    const char *v;
+
+    if (!nome_data(att, sizeof(att), nome)) return 0;
+    v = html_attr(L->D->doc, L->nodo, att);
+
+    /* ! UN `data-` CHE NON C'E' DA `undefined`, non "" — al contrario di
+     * `el.style.qualcosa`. Non e' un capriccio: e' come il DOM distingue i due
+     * casi, e le pagine ci contano. `if (el.dataset.x)` dev'essere falso, ma
+     * `'x' in el.dataset` dev'essere falso anche lui, e con "" non lo
+     * sarebbe. Dicendo «non e' mia» il motore prosegue e rende undefined. */
+    if (!v) return 0;
+    *fuori = stringa_c(c, v);
+    return 1;
+}
+
+static int dati_scrivi(ExJsCtx *c, void *dato, const char *nome, ExJsVal v)
+{
+    Legame *L = (Legame *)dato;
+    char    att[PROP_MAX];
+
+    if (!nome_data(att, sizeof(att), nome)) return 0;
+    html_attr_metti(L->D->doc, L->nodo, att, exjs_a_stringa(c, v));
+    return 1;
+}
+
+/* =============================================================================
+ * `el.classList`
+ *
+ * ! LE CLASSI SI TENGONO NELL'ATTRIBUTO, non in una lista accanto: chi scrive
+ * `el.className = 'a b'` e chi scrive `el.classList.add('b')` devono vedere la
+ * stessa cosa, e con due depositi bisognerebbe tenerli d'accordo a ogni giro.
+ * ========================================================================== */
+#define CLASSI_MAX  512
+
+static int classe_e_metodo(const char *nome)
+{
+    return ugu(nome, "add") || ugu(nome, "remove") || ugu(nome, "toggle") ||
+           ugu(nome, "contains") || ugu(nome, "item") ||
+           ugu(nome, "replace");
+}
+
+static unsigned int classi_conta(const char *el)
+{
+    unsigned int i = 0, n = 0;
+
+    if (!el) return 0;
+    while (el[i]) {
+        while (el[i] && bianco(el[i])) i++;
+        if (!el[i]) break;
+        n++;
+        while (el[i] && !bianco(el[i])) i++;
+    }
+    return n;
+}
+
+static int classe_k(const char *el, unsigned int k, char *fuori, unsigned int max)
+{
+    unsigned int i = 0, n = 0, j;
+
+    fuori[0] = '\0';
+    if (!el) return 0;
+    while (el[i]) {
+        while (el[i] && bianco(el[i])) i++;
+        if (!el[i]) break;
+        if (n == k) {
+            for (j = 0; el[i + j] && !bianco(el[i + j]) && j + 1 < max; j++)
+                fuori[j] = el[i + j];
+            fuori[j] = '\0';
+            return 1;
+        }
+        n++;
+        while (el[i] && !bianco(el[i])) i++;
+    }
+    return 0;
+}
+
+/* Riscrive `class=` con `cl` aggiunta (metti=1) o tolta (metti=0). Rende 1 se
+ * l'attributo e' cambiato davvero. */
+static int classi_cambia(ExDom *D, Legame *L, const char *cl, int metti)
+{
+    const char  *el = html_attr(D->doc, L->nodo, "class");
+    char         nuovo[CLASSI_MAX];
+    Testo        t;
+    unsigned int i = 0, j;
+    int          c_era;
+
+    if (!cl || !cl[0]) return 0;
+    if (!el) el = "";
+    c_era = ha_classe(el, cl);
+    if (metti == (c_era ? 1 : 0)) return 0;      /* gia' com'e' voluta */
+
+    t.p = nuovo; t.max = sizeof(nuovo); t.n = 0; t.pieno = 0;
+    while (el[i]) {
+        unsigned int a;
+
+        while (el[i] && bianco(el[i])) i++;
+        if (!el[i]) break;
+        a = i;
+        while (el[i] && !bianco(el[i])) i++;
+        /* Togliendo: si salta la parola cercata. Aggiungendo: si copia tutto,
+         * e la parola nuova va in fondo — non c'era, o non si sarebbe qui. */
+        if (!metti && (i - a) == lung(cl) && uguali_n(el + a, cl, i - a))
+            continue;
+        if (t.n) t_car(&t, ' ');
+        for (j = a; j < i; j++) t_car(&t, el[j]);
+    }
+    if (metti) {
+        if (t.n) t_car(&t, ' ');
+        t_stringa(&t, cl);
+    }
+    t_chiudi(&t);
+    if (t.pieno) { D->troncato = 1; return 0; }
+    html_attr_metti(D->doc, L->nodo, "class", nuovo);
+    return 1;
+}
+
+static int classi_leggi(ExJsCtx *c, void *dato, const char *nome, ExJsVal *fuori)
+{
+    Legame     *L = (Legame *)dato;
+    const char *el;
+    char        b[128];
+
+    if (classe_e_metodo(nome)) return 0;
+    el = html_attr(L->D->doc, L->nodo, "class");
+
+    if (ugu(nome, "length")) {
+        *fuori = exjs_numero(c, (double)classi_conta(el));
+        return 1;
+    }
+    if (ugu(nome, "value")) { *fuori = stringa_c(c, el ? el : ""); return 1; }
+
+    /* ! SI RISPONDE ANCHE AGLI INDICI, perche' classList si scorre con un
+     * ciclo `for (i = 0; i < l.length; i++) l[i]` almeno quanto con forEach. */
+    if (nome[0] >= '0' && nome[0] <= '9') {
+        unsigned int k = 0, i;
+
+        for (i = 0; nome[i]; i++) {
+            if (nome[i] < '0' || nome[i] > '9') return 0;
+            k = k * 10 + (unsigned int)(nome[i] - '0');
+        }
+        if (!classe_k(el, k, b, sizeof(b))) return 0;
+        *fuori = stringa_c(c, b);
+        return 1;
+    }
+    return 0;
+}
+
+/* ! IL GANCIO IN SCRITTURA C'E' ANCHE SE HA UNA COSA SOLA DA FARE, e non si
+ * puo' passare 0 al suo posto: un esotico senza gancio di scrittura, su
+ * QuickJS, e' un oggetto su cui NON SI SCRIVE (l'assegnazione si perde in
+ * silenzio), mentre su ExJs la scrittura passa e diventa una proprieta'
+ * normale. Due motori, due comportamenti, nessun errore da nessuna parte: e'
+ * esattamente il genere di differenza che le novantadue prove uguali per
+ * tutt'e due esistono per non far nascere. */
+static int classi_scrivi(ExJsCtx *c, void *dato, const char *nome, ExJsVal v)
+{
+    Legame *L = (Legame *)dato;
+
+    /* `classList.value = 'a b'` e' l'unica scrittura che il DOM ammette, ed e'
+     * la stessa cosa di `className`. */
+    if (ugu(nome, "value")) {
+        html_attr_metti(L->D->doc, L->nodo, "class", exjs_a_stringa(c, v));
+        return 1;
+    }
+    return 0;
+}
+
+static ExJsVal m_cl_add(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                        int n_arg, void *dato)
+{
+    ExDom  *D = (ExDom *)dato;
+    Legame *L = legame_satellite(D, questo);
+    int     i;
+
+    if (!L) return exjs_indefinito();
+    /* Il DOM ne accetta quante gliene si danno: `classList.add('a', 'b')`. */
+    for (i = 0; i < n_arg; i++) classi_cambia(D, L, exjs_a_stringa(c, a[i]), 1);
+    return exjs_indefinito();
+}
+
+static ExJsVal m_cl_remove(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                           int n_arg, void *dato)
+{
+    ExDom  *D = (ExDom *)dato;
+    Legame *L = legame_satellite(D, questo);
+    int     i;
+
+    if (!L) return exjs_indefinito();
+    for (i = 0; i < n_arg; i++) classi_cambia(D, L, exjs_a_stringa(c, a[i]), 0);
+    return exjs_indefinito();
+}
+
+static ExJsVal m_cl_contains(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                             int n_arg, void *dato)
+{
+    ExDom  *D = (ExDom *)dato;
+    Legame *L = legame_satellite(D, questo);
+
+    if (!L || n_arg < 1) return exjs_booleano(0);
+    return exjs_booleano(ha_classe(html_attr(D->doc, L->nodo, "class"),
+                                   exjs_a_stringa(c, a[0])));
+}
+
+/* ! toggle CON IL SECONDO ARGOMENTO NON E' UN toggle: `toggle('x', cond)`
+ * vuol dire «mettila se cond, toglila se no», ed e' il modo in cui mezzo web
+ * accende e spegne una classe senza scrivere un if. */
+static ExJsVal m_cl_toggle(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                           int n_arg, void *dato)
+{
+    ExDom      *D = (ExDom *)dato;
+    Legame     *L = legame_satellite(D, questo);
+    const char *cl;
+    int         voluta;
+
+    if (!L || n_arg < 1) return exjs_booleano(0);
+    cl = exjs_a_stringa(c, a[0]);
+    if (n_arg >= 2) voluta = exjs_a_booleano(c, a[1]);
+    else voluta = !ha_classe(html_attr(D->doc, L->nodo, "class"), cl);
+    classi_cambia(D, L, cl, voluta);
+    return exjs_booleano(voluta);
+}
+
+static ExJsVal m_cl_item(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                         int n_arg, void *dato)
+{
+    ExDom  *D = (ExDom *)dato;
+    Legame *L = legame_satellite(D, questo);
+    char    b[128];
+
+    if (!L || n_arg < 1) return exjs_nullo();
+    if (!classe_k(html_attr(D->doc, L->nodo, "class"),
+                  (unsigned int)exjs_a_numero(c, a[0]), b, sizeof(b)))
+        return exjs_nullo();
+    return stringa_c(c, b);
+}
+
+static ExJsVal m_cl_replace(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                            int n_arg, void *dato)
+{
+    ExDom  *D = (ExDom *)dato;
+    Legame *L = legame_satellite(D, questo);
+
+    if (!L || n_arg < 2) return exjs_booleano(0);
+    if (!ha_classe(html_attr(D->doc, L->nodo, "class"), exjs_a_stringa(c, a[0])))
+        return exjs_booleano(0);
+    classi_cambia(D, L, exjs_a_stringa(c, a[0]), 0);
+    classi_cambia(D, L, exjs_a_stringa(c, a[1]), 1);
+    return exjs_booleano(1);
+}
+
+static ExJsVal dati_oggetto(ExDom *D, Legame *L)
+{
+    return satellite(D, L, "dataset", dati_leggi, dati_scrivi,
+                     exjs_indefinito());
+}
+
+static ExJsVal classi_oggetto(ExDom *D, Legame *L)
+{
+    return satellite(D, L, "classList", classi_leggi, classi_scrivi,
+                     D->proto_classi);
+}
+
+/* ! IL PONTE FRA leggi_prop E LA TABELLA STA QUI E NON LA', perche' leggi_prop
+ * viene prima nel file e non puo' vedere il tipo Riflesso. Due righe di
+ * involucro costano meno di spostare mezza libreria per far tornare l'ordine
+ * delle dichiarazioni. */
+static int riflesso_leggi(ExJsCtx *c, HtmlDoc *d, int n, const char *nome,
+                          ExJsVal *fuori)
+{
+    const Riflesso *R = riflesso_di(d, n, nome);
+
+    if (!R) return 0;
+    /* ! L'ATTRIBUTO CHE NON C'E' DA "", come `id` e `className` e al
+     * contrario di getAttribute: e' quel che fa il DOM per le proprieta'
+     * riflesse, ed e' il motivo per cui `if (img.alt)` funziona. */
+    *fuori = stringa_c(c, html_attr(d, n, R->attr));
+    return 1;
+}
+
+static int riflesso_scrivi(ExJsCtx *c, HtmlDoc *d, int n, const char *nome,
+                           ExJsVal v)
+{
+    const Riflesso *R = riflesso_di(d, n, nome);
+
+    if (!R) return 0;
+    html_attr_metti(d, n, R->attr, exjs_a_stringa(c, v));
+    return 1;
 }
 
 /* =============================================================================
@@ -1062,6 +2402,445 @@ static ExJsVal m_dispatchEvent(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
  * ========================================================================== */
 #define ALLINEA8(x)  (((x) + 7u) & ~7u)
 
+
+/* =============================================================================
+ * GLI EVENTI DELLA FINESTRA — `window.addEventListener`
+ *
+ * ! `window` E' L'OGGETTO GLOBALE (vedi in fondo, dove lo si dichiara), e
+ * l'oggetto globale non e' un nodo: `nodo_di` su di lui rende -1, e i metodi
+ * del prototipo degli elementi non ci arrivano. Servono tre involucri, e ogni
+ * involucro fa una cosa sola: prende la RADICE al posto di `questo`.
+ *
+ * ! QUINDI GLI ASCOLTATORI DELLA FINESTRA E QUELLI DEL DOCUMENTO SONO GLI
+ * STESSI, ed e' una differenza vera dal DOM, dove window e document sono due
+ * bersagli distinti. Qui il documento E' la radice e la finestra E' il
+ * globale: tenerli separati vorrebbe dire una seconda tabella di ascolti con
+ * una seconda propagazione, per una distinzione che si vede solo in
+ * `event.currentTarget`. Sta scritto qui perche' il giorno che una pagina ci
+ * caschi si sappia dove guardare.
+ * ========================================================================== */
+static ExJsVal m_win_addEventListener(ExJsCtx *c, ExJsVal questo,
+                                      const ExJsVal *a, int n_arg, void *dato)
+{
+    ExDom *D = (ExDom *)dato;
+    char   tipo[TIPO_MAX];
+
+    (void)questo;
+    /* ! LE STESSE TRE PORTE DI m_addEventListener, NELLO STESSO ORDINE, e non
+     * e' pignoleria: la spia `perso` vuol dire «un ascoltatore non ha trovato
+     * posto», non «qualcuno ha chiamato male». Una chiamata con un argomento
+     * solo, o con qualcosa che non e' una funzione, e' uno sbaglio della
+     * pagina e si lascia cadere in silenzio come fa il DOM; solo un nome
+     * troppo lungo per la tabella accende la spia. Se le due funzioni si
+     * comportassero diversamente, `window.addEventListener` farebbe apparire
+     * spie che il gemello non fa apparire, e nessuno capirebbe perche'. */
+    if (n_arg < 2) return exjs_indefinito();
+    if (exjs_tipo(c, a[1]) != EXJS_FUNZIONE) return exjs_indefinito();
+    if (!tipo_copia(tipo, exjs_a_stringa(c, a[0]))) {
+        D->perso = 1;
+        return exjs_indefinito();
+    }
+    asc_aggiungi(D, D->doc->radice, tipo, a[1],
+                 (n_arg >= 3) ? exjs_a_booleano(c, a[2]) : 0, 0);
+    return exjs_indefinito();
+}
+
+static ExJsVal m_win_removeEventListener(ExJsCtx *c, ExJsVal questo,
+                                         const ExJsVal *a, int n_arg,
+                                         void *dato)
+{
+    ExDom *D = (ExDom *)dato;
+
+    (void)questo;
+    if (n_arg < 2) return exjs_indefinito();
+    asc_togli(D, asc_trova(D, D->doc->radice, exjs_a_stringa(c, a[0]), a[1],
+                           (n_arg >= 3) ? exjs_a_booleano(c, a[2]) : 0, 0));
+    return exjs_indefinito();
+}
+
+/* =============================================================================
+ * `document.fonts` — LA PROMESSA CHE NON HA NIENTE DA ASPETTARE
+ *
+ * ! NON E' UNA Promise VERA, ED E' DICHIARATO. ExJs non ha le promesse e
+ * QuickJS si': un oggetto che si comportasse diversamente sotto i due motori
+ * sarebbe la cosa peggiore, quindi qui ce n'e' uno solo, scritto a mano, che
+ * fa quel poco che serve — `then`, `catch`, `finally`.
+ *
+ * ! E LA FUNZIONE NON SI CHIAMA SUBITO, SI ACCODA. Chiamarla li' per li'
+ * vorrebbe dire eseguire il seguito della pagina MENTRE il <head> si sta
+ * ancora leggendo: `document.fonts.ready.then(parti)` farebbe partire `parti`
+ * prima che il <body> esista. Accodandola con scadenza zero parte al primo
+ * giro della pompa dei tempi, cioe' quando il documento c'e' — che e' anche
+ * quello che promette il DOM.
+ *
+ * ! LA PROMESSA E' UNA SOLA per tutto il documento, e non una per chiamata:
+ * non ha stato — non c'e' niente da aspettare e non c'e' errore possibile —
+ * e ExJs non ha un raccoglitore di memoria, quindi una pagina che chieda
+ * cinquecento caratteri ne lascerebbe cinquecento in giro.
+ * ========================================================================== */
+static ExJsVal m_promessa_poi(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                              int n_arg, void *dato)
+{
+    (void)dato;
+    if (n_arg >= 1 && exjs_tipo(c, a[0]) == EXJS_FUNZIONE)
+        exjs_accoda(c, a[0], 0, 0);
+    return questo;                      /* si incatena: .then().then() */
+}
+
+static ExJsVal m_promessa_male(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                               int n_arg, void *dato)
+{
+    (void)c; (void)a; (void)n_arg; (void)dato;
+    /* ! `catch` NON CHIAMA NIENTE, e non e' una dimenticanza: qui non puo'
+     * andare storto niente, e chiamare il gestore dell'errore vorrebbe dire
+     * dire a una pagina che i caratteri non si sono caricati. */
+    return questo;
+}
+
+static ExJsVal m_falso(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                       int n_arg, void *dato)
+{
+    (void)questo; (void)a; (void)n_arg; (void)dato; (void)c;
+    return exjs_booleano(0);
+}
+
+static ExJsVal m_vero(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                      int n_arg, void *dato)
+{
+    (void)questo; (void)a; (void)n_arg; (void)dato; (void)c;
+    return exjs_booleano(1);
+}
+
+static ExJsVal m_niente(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                        int n_arg, void *dato)
+{
+    (void)c; (void)questo; (void)a; (void)n_arg; (void)dato;
+    return exjs_indefinito();
+}
+
+static ExJsVal m_fonts_load(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                            int n_arg, void *dato)
+{
+    ExDom *D = (ExDom *)dato;
+
+    (void)c; (void)questo; (void)a; (void)n_arg;
+    return D->promessa;
+}
+
+
+/* =============================================================================
+ * `location` — L'INDIRIZZO DELLA PAGINA
+ *
+ * ! L'INDIRIZZO ARRIVA DA FUORI, come il tempo in ExJs e come gli eventi in
+ * questa stessa libreria. Il ponte non apre connessioni e non sa dove si trovi
+ * la pagina che ha in mano: glielo dice chi l'ha caricata, con
+ * exdom_indirizzo(). Una libreria che se lo andasse a cercare non si potrebbe
+ * provare senza una rete.
+ *
+ * ! E LA NAVIGAZIONE NON LA FA LEI. `location.href = "..."` non apre niente:
+ * mette da parte l'indirizzo, e il browser lo raccoglie con
+ * exdom_dove_andare() quando lo script ha finito. E' la stessa forma di
+ * preventDefault — il ponte dice che cosa e' successo, chi ha lo schermo
+ * decide che cosa farne — ed e' anche l'unica che funziona: una navigazione
+ * fatta in mezzo a uno script butterebbe via l'albero che quello script sta
+ * ancora usando.
+ *
+ * ! LE PARTI SI CALCOLANO A OGNI LETTURA e non si tengono in dieci campi.
+ * `location.search` di una pagina e' una fetta di `location.href`: due
+ * depositi vorrebbero dire tenerli d'accordo, e sarebbe la solita storia.
+ * ========================================================================== */
+
+/* Le fette di un indirizzo, calcolate al volo:
+ *
+ *     https://ex.os:8080/a/b?c=d#e
+ *     ~~~~~                          protocol  «https:»
+ *             ~~~~~~~~~~             host      «ex.os:8080»
+ *             ~~~~~                  hostname  «ex.os»
+ *                   ~~~~             port      «8080»
+ *                       ~~~~         pathname  «/a/b»
+ *                           ~~~~     search    «?c=d»
+ *                                ~~  hash      «#e»
+ */
+static int url_fetta(const char *u, const char *quale, char *fuori,
+                     unsigned int max)
+{
+    unsigned int i = 0, a, b, k;
+
+    fuori[0] = '\0';
+    if (!u || !u[0]) return 1;
+
+    /* lo schema, fino ai «://» (o ai soli «:» per «file:») */
+    while (u[i] && u[i] != ':' && u[i] != '/' && u[i] != '?' && u[i] != '#') i++;
+    if (u[i] != ':') { i = 0; }                  /* indirizzo senza schema */
+
+    if (ugu(quale, "protocol")) { a = 0; b = (u[i] == ':') ? i + 1 : 0; }
+    else {
+        unsigned int p = (u[i] == ':') ? i + 1 : 0;
+        unsigned int h0, h1, c0;
+
+        if (u[p] == '/' && u[p + 1] == '/') p += 2;
+        h0 = p;
+        while (u[p] && u[p] != '/' && u[p] != '?' && u[p] != '#') p++;
+        h1 = p;
+        c0 = h0;
+        while (c0 < h1 && u[c0] != ':') c0++;
+
+        if (ugu(quale, "host"))          { a = h0; b = h1; }
+        else if (ugu(quale, "hostname")) { a = h0; b = c0; }
+        else if (ugu(quale, "port"))     { a = (c0 < h1) ? c0 + 1 : h1; b = h1; }
+        else if (ugu(quale, "origin"))   { a = 0;  b = h1; }
+        else {
+            unsigned int q = p, f;
+
+            while (u[q] && u[q] != '?' && u[q] != '#') q++;
+            f = q;
+            while (u[f] && u[f] != '#') f++;
+
+            if (ugu(quale, "pathname"))    { a = h1; b = q; }
+            else if (ugu(quale, "search")) { a = q;  b = f; }
+            else if (ugu(quale, "hash"))   { a = f;  b = f + lung(u + f); }
+            else return 0;                       /* non e' una parte nostra */
+        }
+    }
+
+    for (k = 0; a + k < b && k + 1 < max; k++) fuori[k] = u[a + k];
+    fuori[k] = '\0';
+    return 1;
+}
+
+static int luogo_e_metodo(const char *nome)
+{
+    return ugu(nome, "assign") || ugu(nome, "replace") ||
+           ugu(nome, "reload") || ugu(nome, "toString");
+}
+
+static int luogo_leggi(ExJsCtx *c, void *dato, const char *nome, ExJsVal *fuori)
+{
+    ExDom *D = (ExDom *)dato;
+    char   b[EXDOM_URL_MAX];
+
+    if (luogo_e_metodo(nome)) return 0;
+    if (ugu(nome, "href")) { *fuori = stringa_c(c, D->url); return 1; }
+    if (!url_fetta(D->url, nome, b, sizeof(b))) return 0;
+    *fuori = stringa_c(c, b);
+    return 1;
+}
+
+/* Mette da parte dove si vuole andare. Non apre niente: vedi in cima. */
+static void luogo_vai(ExDom *D, const char *dove)
+{
+    unsigned int i;
+
+    if (!dove) return;
+    for (i = 0; dove[i] && i + 1 < sizeof(D->vai); i++) D->vai[i] = dove[i];
+    D->vai[i] = '\0';
+}
+
+static int luogo_scrivi(ExJsCtx *c, void *dato, const char *nome, ExJsVal v)
+{
+    ExDom *D = (ExDom *)dato;
+
+    if (luogo_e_metodo(nome)) return 0;
+
+    /* ! `location.href = "..."` SI PRENDE; `location = "..."` NO, ed e' una
+     * differenza che si vede. Il secondo assegna a una proprieta' del globale,
+     * e il globale non ha ganci: intercettarlo vorrebbe dire mettere un gancio
+     * su TUTTE le scritture globali di ogni pagina, per un caso solo. La forma
+     * lunga e i due metodi assign/replace coprono quel che si legge in giro;
+     * se un giorno una pagina vera cadesse sulla forma corta, e' scritto qui
+     * che cosa costa prenderla. */
+    if (ugu(nome, "href")) { luogo_vai(D, exjs_a_stringa(c, v)); return 1; }
+
+    /* ! LE ALTRE PARTI SI LEGGONO E BASTA, per adesso. Nel DOM sono
+     * scrivibili — `location.hash = '#x'` e' comune — e per farle bisogna
+     * RICOMPORRE l'indirizzo, non solo tagliarlo. Si dichiara invece di
+     * accettarle e non fare niente: una scrittura che sparisce in silenzio e'
+     * peggio di una che non c'e'. */
+    { char b[EXDOM_URL_MAX];
+      if (url_fetta(D->url, nome, b, sizeof(b))) return 1; }
+    return 0;
+}
+
+static ExJsVal m_loc_assign(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                            int n_arg, void *dato)
+{
+    ExDom *D = (ExDom *)dato;
+
+    (void)questo;
+    if (n_arg >= 1) luogo_vai(D, exjs_a_stringa(c, a[0]));
+    return exjs_indefinito();
+}
+
+/* ! reload() RIMANDA DOVE SI E' GIA': e' quel che vuol dire ricaricare. */
+static ExJsVal m_loc_reload(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                            int n_arg, void *dato)
+{
+    ExDom *D = (ExDom *)dato;
+
+    (void)c; (void)questo; (void)a; (void)n_arg;
+    luogo_vai(D, D->url);
+    return exjs_indefinito();
+}
+
+static ExJsVal m_loc_stringa(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                             int n_arg, void *dato)
+{
+    ExDom *D = (ExDom *)dato;
+
+    (void)questo; (void)a; (void)n_arg;
+    return stringa_c(c, D->url);
+}
+
+void exdom_indirizzo(ExDom *D, const char *url)
+{
+    unsigned int i = 0;
+
+    if (!D) return;
+    if (url) while (url[i] && i + 1 < sizeof(D->url)) { D->url[i] = url[i]; i++; }
+    D->url[i] = '\0';
+    /* ! L'INDIRIZZO NUOVO CANCELLA QUELLO VOLUTO. Si arriva qui perche' una
+     * pagina e' stata caricata: un `location.href` rimasto in sospeso dalla
+     * pagina di PRIMA farebbe partire una seconda navigazione che nessuno ha
+     * chiesto, e sarebbe impossibile da capire guardando lo schermo. */
+    D->vai[0] = '\0';
+}
+
+/* ! SI COPIA E SI DIMENTICA, in una chiamata sola. Rendere un puntatore
+ * dentro il ponte e lasciare a chi legge il compito di azzerarlo vorrebbe dire
+ * che una navigazione fallita resta in coda e riparte al giro dopo: il browser
+ * tornerebbe su una pagina che non ha caricato, per sempre, e nessuno
+ * capirebbe da dove viene. */
+int exdom_dove_andare(ExDom *D, char *fuori, unsigned int max)
+{
+    unsigned int i = 0;
+
+    if (!D || !fuori || max == 0) return 0;
+    fuori[0] = '\0';
+    if (!D->vai[0]) return 0;
+    while (D->vai[i] && i + 1 < max) { fuori[i] = D->vai[i]; i++; }
+    fuori[i] = '\0';
+    D->vai[0] = '\0';
+    return 1;
+}
+
+
+/* =============================================================================
+ * `document.cookie` — I BISCOTTI, LA META' CHE TOCCA AL PONTE
+ *
+ * ! QUESTA E' LA META' JAVASCRIPT, E L'ALTRA NON C'E' ANCORA. Un biscotto vero
+ * fa due giri: uno script lo scrive e lo rilegge (questo), e il browser lo
+ * manda al server in un'intestazione `Cookie:` e ne raccoglie i `Set-Cookie:`
+ * che tornano (quello, che vuole exhttp e una dispensa per dominio nel
+ * browser). Sta scritto qui perche' la differenza si vede: una pagina che
+ * scrive un biscotto e RICARICA se stessa aspettandoselo indietro dal server
+ * non lo trovera'.
+ *
+ * ! E ALLORA PERCHE' FARNE META'? Perche' senza, mezza pagina moderna non
+ * arriva in fondo alla prima funzione: `document.cookie.length` su
+ * `undefined` e' un errore, e da li' in poi non gira piu' niente. Con la
+ * dispensa in memoria lo script prosegue e — e' il caso di google.com —
+ * SCEGLIE DA SE' la strada senza biscotti, che e' quella che sappiamo
+ * percorrere. Rispondere «non ne ho» in modo corretto vale piu' che non
+ * rispondere.
+ *
+ * ! GLI ATTRIBUTI SI BUTTANO. `nome=valore; expires=...; path=/; secure` porta
+ * dentro la dispensa solo `nome=valore`: scadenze, percorsi e domini sono
+ * decisioni che spettano a chi tiene la dispensa vera, e fingere di rispettarli
+ * qui vorrebbe dire scriverli due volte e in due modi diversi.
+ * ========================================================================== */
+
+/* Copia in `fuori` il pezzo `nome=valore` di una scrittura, cioe' tutto quel
+ * che sta prima del primo «;», senza gli spazi ai bordi. Rende 0 se non c'e'
+ * un nome. */
+static int biscotto_pezzo(const char *s, char *fuori, unsigned int max)
+{
+    unsigned int a = 0, b, k;
+
+    fuori[0] = '\0';
+    if (!s) return 0;
+    while (s[a] && bianco(s[a])) a++;
+    b = a;
+    while (s[b] && s[b] != ';') b++;
+    while (b > a && bianco(s[b - 1])) b--;
+    if (b == a) return 0;
+    for (k = 0; a + k < b && k + 1 < max; k++) fuori[k] = s[a + k];
+    fuori[k] = '\0';
+    /* Senza «=» non e' un biscotto: e' un attributo scritto da solo. */
+    for (k = 0; fuori[k]; k++) if (fuori[k] == '=') return 1;
+    return 0;
+}
+
+/* Quanto e' lungo il NOME di «nome=valore» (fino al primo «=»). */
+static unsigned int nome_biscotto(const char *s)
+{
+    unsigned int k = 0;
+
+    while (s[k] && s[k] != '=') k++;
+    return k;
+}
+
+static void biscotto_aggiungi(ExDom *D, const char *nuovo)
+{
+    char         fatto[EXDOM_BISCOTTI_MAX];
+    Testo        t;
+    unsigned int nl = nome_biscotto(nuovo), i = 0;
+    int          sostituito = 0;
+
+    t.p = fatto; t.max = sizeof(fatto); t.n = 0; t.pieno = 0;
+
+    /* Si ricopiano quelli che restano, saltando l'omonimo: un biscotto
+     * riscritto sostituisce, non si affianca. */
+    while (D->biscotti[i]) {
+        unsigned int a = i, b;
+
+        while (D->biscotti[i] && D->biscotti[i] != ';') i++;
+        b = i;
+        if (D->biscotti[i] == ';') i++;
+        while (D->biscotti[i] == ' ') i++;
+        while (a < b && bianco(D->biscotti[a])) a++;
+        while (b > a && bianco(D->biscotti[b - 1])) b--;
+        if (b == a) continue;
+
+        if (b - a > nl && nome_biscotto(D->biscotti + a) == nl &&
+            uguali_n(D->biscotti + a, nuovo, nl)) {
+            if (t.n) { t_car(&t, ';'); t_car(&t, ' '); }
+            t_stringa(&t, nuovo);
+            sostituito = 1;
+            continue;
+        }
+        if (t.n) { t_car(&t, ';'); t_car(&t, ' '); }
+        { unsigned int k; for (k = a; k < b; k++) t_car(&t, D->biscotti[k]); }
+    }
+    if (!sostituito) {
+        if (t.n) { t_car(&t, ';'); t_car(&t, ' '); }
+        t_stringa(&t, nuovo);
+    }
+    t_chiudi(&t);
+
+    /* ! SE NON CI STA NON SI SCRIVE NIENTE, come per lo stile: una dispensa
+     * troncata a meta' di un valore e' un biscotto sbagliato, che e' peggio di
+     * un biscotto mancante. */
+    if (t.pieno) { D->troncato = 1; return; }
+    for (i = 0; fatto[i]; i++) D->biscotti[i] = fatto[i];
+    D->biscotti[i] = '\0';
+}
+
+void exdom_biscotti_metti(ExDom *D, const char *tutti)
+{
+    unsigned int i = 0;
+
+    if (!D) return;
+    if (tutti) while (tutti[i] && i + 1 < sizeof(D->biscotti)) {
+        D->biscotti[i] = tutti[i]; i++;
+    }
+    D->biscotti[i] = '\0';
+}
+
+const char *exdom_biscotti(ExDom *D)
+{
+    return D ? D->biscotti : "";
+}
+
 unsigned int exdom_quanto_serve(unsigned int nodi_max, unsigned int testo_max,
                                 unsigned int ascolti_max)
 {
@@ -1100,6 +2879,9 @@ ExDom *exdom_apri(void *memoria, unsigned int byte,
     D->asc_max   = ascolti_max;
     D->troncato  = 0;
     D->perso     = 0;
+    D->url[0]      = '\0';
+    D->vai[0]      = '\0';
+    D->biscotti[0] = '\0';
 
     for (i = 0; i < ascolti_max; i++) D->asc[i].usato = 0;
 
@@ -1124,9 +2906,32 @@ ExDom *exdom_apri(void *memoria, unsigned int byte,
     metti_metodo(D, D->proto, "hasChildNodes",          m_hasChildNodes);
     metti_metodo(D, D->proto, "getElementsByTagName",   m_getElementsByTagName);
     metti_metodo(D, D->proto, "getElementsByClassName", m_getElementsByClassName);
+    /* ! I SELETTORI STANNO SUL PROTOTIPO E VALGONO ANCHE PER IL DOCUMENTO, che
+     * quel prototipo ce l'ha come tutti gli altri nodi. Nel DOM vero
+     * querySelector e' su Document E su Element — al contrario di
+     * getElementById, che e' del documento soltanto — quindi qui il posto
+     * giusto e' uno solo. */
+    metti_metodo(D, D->proto, "querySelector",          m_querySelector);
+    metti_metodo(D, D->proto, "querySelectorAll",       m_querySelectorAll);
+    metti_metodo(D, D->proto, "matches",                m_matches);
+    metti_metodo(D, D->proto, "closest",                m_closest);
     metti_metodo(D, D->proto, "addEventListener",       m_addEventListener);
     metti_metodo(D, D->proto, "removeEventListener",    m_removeEventListener);
     metti_metodo(D, D->proto, "dispatchEvent",          m_dispatchEvent);
+
+    D->proto_stile = exjs_oggetto(js);
+    metti_metodo(D, D->proto_stile, "setProperty",      m_setProperty);
+    metti_metodo(D, D->proto_stile, "getPropertyValue", m_getPropertyValue);
+    metti_metodo(D, D->proto_stile, "removeProperty",   m_removeProperty);
+    metti_metodo(D, D->proto_stile, "item",             m_item);
+
+    D->proto_classi = exjs_oggetto(js);
+    metti_metodo(D, D->proto_classi, "add",      m_cl_add);
+    metti_metodo(D, D->proto_classi, "remove",   m_cl_remove);
+    metti_metodo(D, D->proto_classi, "contains", m_cl_contains);
+    metti_metodo(D, D->proto_classi, "toggle",   m_cl_toggle);
+    metti_metodo(D, D->proto_classi, "item",     m_cl_item);
+    metti_metodo(D, D->proto_classi, "replace",  m_cl_replace);
 
     D->documento = exdom_avvolgi(D, doc->radice);
     if (exjs_tipo(js, D->documento) != EXJS_OGGETTO) return 0;
@@ -1147,5 +2952,93 @@ ExDom *exdom_apri(void *memoria, unsigned int byte,
      * cioe' un gancio fisso su tutto il globale per una cosa che il linguaggio
      * gia' faceva da se'. */
     exjs_metti(js, exjs_globale(js), "window", exjs_globale(js));
+
+    /* ! GLI ASCOLTATORI DELLA FINESTRA VANNO SUL GLOBALE, non sul prototipo
+     * dei nodi: `window` E' il globale, e il globale non e' un nodo. Il perche'
+     * per esteso sta accanto a m_win_addEventListener. */
+    metti_metodo(D, exjs_globale(js), "addEventListener",
+                 m_win_addEventListener);
+    metti_metodo(D, exjs_globale(js), "removeEventListener",
+                 m_win_removeEventListener);
+
+    /* =====================================================================
+     * `navigator`
+     *
+     * ! NON E' UN VEZZO: senza, la pagina dei risultati di google.com muore
+     * alla terza riga con «navigator is not defined» e mostra il contenuto
+     * del <noscript>. Mezzo web moderno guarda `navigator.userAgent` prima
+     * di decidere che cosa disegnare, e chi non risponde non e' un browser
+     * sconosciuto: e' un errore.
+     *
+     * ! E SI DICE LA VERITA', anche quando conviene mentire. `userAgent` e'
+     * la stessa stringa che exhttp mette nell'intestazione (vedi
+     * lib/exhttp/exhttp.c, dove e' scritta a mano): se le due divergessero,
+     * un sito servirebbe una pagina pensata per un browser e la pagina ne
+     * troverebbe un altro. `cookieEnabled` e' falso perche' i biscotti non
+     * ci sono davvero — dire di si' farebbe fare a un sito un giro che non
+     * puo' finire.
+     * ================================================================== */
+    {
+        ExJsVal nv = exjs_oggetto(js);
+
+        exjs_metti(js, nv, "userAgent",  exjs_stringa(js, "EX-OS", -1));
+        exjs_metti(js, nv, "appName",    exjs_stringa(js, "Netscape", -1));
+        exjs_metti(js, nv, "appVersion", exjs_stringa(js, "5.0 (EX-OS)", -1));
+        exjs_metti(js, nv, "appCodeName",exjs_stringa(js, "Mozilla", -1));
+        exjs_metti(js, nv, "platform",   exjs_stringa(js, "EX-OS", -1));
+        exjs_metti(js, nv, "product",    exjs_stringa(js, "Gecko", -1));
+        exjs_metti(js, nv, "vendor",     exjs_stringa(js, "", -1));
+        /* ! LA LINGUA E' QUELLA E BASTA, per ora. Il sistema una lingua ce
+         * l'ha — sta in kernel.cfg e la rende getenv("lingua") — ma questa
+         * libreria gira anche sull'ospite, dove quella chiamata non esiste.
+         * Il giorno che serva, la strada e' che il browser la passi, come
+         * dovra' passare l'indirizzo della pagina per `location`. */
+        exjs_metti(js, nv, "language",   exjs_stringa(js, "en", -1));
+        exjs_metti(js, nv, "cookieEnabled", exjs_booleano(0));
+        exjs_metti(js, nv, "onLine",        exjs_booleano(1));
+        exjs_metti(js, nv, "doNotTrack",    exjs_nullo());
+        exjs_metti(js, nv, "maxTouchPoints", exjs_numero(js, 0.0));
+        exjs_metti(js, nv, "hardwareConcurrency", exjs_numero(js, 1.0));
+        metti_metodo(D, nv, "javaEnabled", m_falso);
+        /* ! sendBeacon RENDE FALSO E NON MANDA NIENTE, ed e' la risposta
+         * giusta due volte: non sappiamo mandare una richiesta in sottofondo,
+         * e chi la usa manda statistiche. Rendere `true` vorrebbe dire dire
+         * a una pagina che il messaggio e' partito. */
+        metti_metodo(D, nv, "sendBeacon", m_falso);
+        exjs_metti(js, exjs_globale(js), "navigator", nv);
+    }
+
+    /* `location`, su window E su document: nel DOM e' lo stesso oggetto. */
+    D->luogo = exjs_esotico(js, luogo_leggi, luogo_scrivi, D);
+    if (exjs_tipo(js, D->luogo) != EXJS_OGGETTO) return 0;
+    metti_metodo(D, D->luogo, "assign",   m_loc_assign);
+    metti_metodo(D, D->luogo, "replace",  m_loc_assign);
+    metti_metodo(D, D->luogo, "reload",   m_loc_reload);
+    metti_metodo(D, D->luogo, "toString", m_loc_stringa);
+    exjs_metti(js, exjs_globale(js), "location", D->luogo);
+    exjs_metti(js, D->documento,     "location", D->luogo);
+
+    D->promessa = exjs_oggetto(js);
+    metti_metodo(D, D->promessa, "then",    m_promessa_poi);
+    metti_metodo(D, D->promessa, "finally", m_promessa_poi);
+    metti_metodo(D, D->promessa, "catch",   m_promessa_male);
+
+    {
+        ExJsVal f = exjs_oggetto(js);
+
+        metti_metodo(D, f, "load",    m_fonts_load);
+        metti_metodo(D, f, "check",   m_vero);
+        metti_metodo(D, f, "add",     m_niente);
+        metti_metodo(D, f, "delete",  m_niente);
+        metti_metodo(D, f, "clear",   m_niente);
+        metti_metodo(D, f, "forEach", m_niente);
+        exjs_metti(js, f, "ready",  D->promessa);
+        exjs_metti(js, f, "size",   exjs_numero(js, 0.0));
+        /* ! «loaded» E NON «loading»: i caratteri che questo browser sa
+         * disegnare li ha gia' tutti in memoria, e non ne arriveranno altri.
+         * Dire «sto caricando» sarebbe una promessa che non si mantiene. */
+        exjs_metti(js, f, "status", exjs_stringa(js, "loaded", -1));
+        exjs_metti(js, D->documento, "fonts", f);
+    }
     return D;
 }

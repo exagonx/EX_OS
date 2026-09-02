@@ -1,5 +1,203 @@
 # DOVE RIPRENDERE — 2 settembre 2026
 
+## 2 settembre 2026 (sera) — GOOGLE NON E' UNA PROVA DEL BROWSER, E ORA SI SA PERCHE'
+
+Si riprendeva da «il navigatore continua a non funzionare con google per via
+di JavaScript». La frase era vera a meta', e le due meta' vanno separate,
+perche' portano in due direzioni diverse.
+
+### Quel che si e' misurato, prima di scrivere una riga di codice
+
+Il banco `domprova` sa gia' aprire una pagina vera e dire quali script muoiono
+e dove. Si e' scaricata la pagina di google.com **con lo User-Agent che manda
+exhttp** (`EX-OS`, scritto a mano in `lib/exhttp/exhttp.c`) e le si e' data in
+pasto, con QuickJS sotto.
+
+! **LA PRIMA COSA TROVATA NON ERA UN DIFETTO DEL MOTORE: ERA IL BANCO.** Il
+banco aveva 2048 nodi e un'arena da 256 KB; il browser ne ha 24000 e 1 MB.
+google.com pesa 280 KB, l'arena finiva a meta' documento, e l'ultimo `<script>`
+arrivava al motore **troncato**. Il messaggio era «SyntaxError: unexpected end
+of string» — cioe' un guasto del motore, che non c'era. Adesso i numeri del
+banco sono quelli del browser, con i nomi delle costanti accanto.
+
+> Un banco con meno memoria del programma che imita non prova quel programma:
+> ne prova uno piu' povero, e i guasti che inventa costano piu' di quelli che
+> trova.
+
+E il banco adesso dice **quale** script e' morto — numero, nodo, lunghezza in
+byte (che smaschera un testo troncato) e le prime cento lettere. Con quindici
+`<script>` in una pagina, «TypeError: not a function» da solo non porta da
+nessuna parte.
+
+### Gli otto errori, e che cosa erano davvero
+
+Sulla home di google.com, otto script su tredici morivano. Nessuno per colpa
+del motore: mancavano **pezzi di DOM**, sempre gli stessi, e sono esattamente
+quelli che erano in coda in `in_lavorazione.txt`.
+
+    document.fonts          il primo script della pagina
+    el.style                `.style.display` di undefined
+    querySelector/All       su document E su un elemento
+    img.src, a.href         le proprieta' riflesse degli attributi
+    el.dataset              `.dataset.ved`
+    window.addEventListener `window` e' il globale, e il globale non e' un nodo
+    navigator               «navigator is not defined»
+    location                `location.href`, `.search`, `.pathname`
+
+Fatti tutti. Restano **zero errori** sulla home di google.com e zero sulla
+pagina dei risultati. Le prove del ponte sono passate da 92 a **196**, verdi
+con tutt'e due i motori — che e' l'altra meta' del lavoro: ogni cosa aggiunta
+si comporta uguale sotto ExJs e sotto QuickJS, o non e' finita.
+
+### E LA RISPOSTA ALLA DOMANDA: google.com si apre, google.com/search no
+
+    https://www.google.com/          si vede, logo compreso, casella e pulsante
+    https://www.google.com/search    pagina bianca
+
+Provato in QEMU, non dedotto. Il perche' non e' il nostro JavaScript:
+
+1. Con lo User-Agent `EX-OS` google manda una home **semplice**, di 83 KB, con
+   un `<form action="/search">` e una tabella: quella si disegna, e si disegnava
+   anche prima di questo lavoro.
+2. La pagina dei **risultati** ha tutto il contenuto dentro `<noscript>` e i
+   risultati veri li costruisce uno script offuscato, che e' il controllo
+   anti-robot di Google. Quel codice non si limita a costruire la pagina:
+   verifica di girare dentro un browser che riconosce.
+3. Provato con lo User-Agent di Lynx, di w3m e di MSIE 6, google risponde
+   **«Aggiorna il browser — il tuo browser non e' piu' supportato»**, 2432 byte,
+   nessun risultato. Con lo User-Agent di un Firefox recente risponde con la
+   pagina anti-robot. Non c'e' una terza porta.
+
+! **QUINDI I RISULTATI DI GOOGLE NON SONO UN BERSAGLIO ONESTO PER QUESTO
+BROWSER**, e non lo sono nemmeno per Lynx o per w3m, che sono programmi maturi
+da trent'anni. Continuare a inseguirli vorrebbe dire riscrivere un motore
+anti-robot altrui, non far crescere un browser. Le funzioni scritte oggi valgono
+per il web in generale — `el.style` e `querySelector` sono fra le righe piu'
+scritte che esistano — e si sono provate su google perche' era il caso portato,
+non perche' google fosse il traguardo.
+
+### `<noscript>` NON SI MOSTRA PIU' QUANDO GLI SCRIPT SONO ACCESI
+
+E' un difetto vero, trovato per strada: `<noscript>` sta li' **per chi il
+JavaScript non ce l'ha**. Mostrarlo comunque vuol dire che una pagina con gli
+script accesi fa vedere due volte la stessa cosa, o fa vedere il ripiego di una
+pagina che gli script hanno gia' costruito.
+
+! **E IL SINTOMO SEMBRAVA UN ALTRO.** Su google.com/search si leggeva «Se non
+vieni reindirizzato automaticamente entro alcuni secondi, fai clic qui» — cioe'
+il testo del `<noscript>` — e sembrava che il motore non girasse. Girava.
+Quella riga non doveva essere sullo schermo.
+
+! **MA COSI' LA PAGINA RESTA BIANCA, E UNA PAGINA BIANCA SEMBRA UN BROWSER
+ROTTO.** Percio' la riga di stato lo dice: `[vuota: la disegna JavaScript]`,
+e solo se nella pagina gli `<script>` ci sono davvero — dare la colpa a un
+JavaScript che non c'e' manderebbe a cercare un guasto dove non ce n'e' nessuno.
+Il messaggio e' **corto** perche' la riga di stato taglia: la prima stesura
+diceva «niente da mostrare: questa pagina si disegna da sola con JavaScript» e
+sullo schermo si leggeva «...questa pagina si».
+
+### Le decisioni che valgono oltre questa giornata
+
+! **I SATELLITI NON POSSIEDONO NIENTE.** `el.style`, `el.dataset` e
+`el.classList` sono oggetti esotici che portano lo STESSO legame dell'elemento
+e leggono e scrivono l'**attributo** — `style=`, `data-*`, `class=`. Cosi'
+`setAttribute('style', ...)`, `el.style.color = ...` e il foglio di stile
+guardano tutti la stessa cosa. Un deposito accanto vorrebbe dire due verita' da
+tenere d'accordo, ed e' il difetto che si paga sempre — in questo browser si e'
+gia' pagato una volta con l'arena dell'impaginazione.
+
+! **E SI COSTRUISCONO UNA VOLTA SOLA SENZA UN CAMPO PER NODO.** Il satellite si
+ricorda come proprieta' PROPRIA dell'involucro, e in lettura le proprie vengono
+prima del gancio (sta scritto in `exjs.h`): dalla seconda volta il gancio non
+viene nemmeno chiamato, e un nodo che `style` non lo tocca mai non paga niente.
+Un campo in `Legame` sarebbe costato otto byte per ognuno dei ventiquattromila
+nodi di una pagina — duecento kilobyte per una proprieta' che la maggior parte
+dei nodi non chiede mai.
+
+! **UN SATELLITE NON E' IL SUO ELEMENTO, e `exdom_nodo` ha dovuto imparare a
+dirlo.** Li' c'era scritto «un altro oggetto esotico — oggi non ce ne sono,
+domani si' — porterebbe un dato di forma diversa», e confrontava il campo `D`.
+Il domani e' arrivato: i satelliti portano lo stesso `Legame`, quindi quel campo
+combacia per tutt'e due e non distingue piu' niente. Adesso si controllano due
+cose diverse — che il puntatore stia nella nostra tabella (l'intervallo e' una
+verifica esatta) e che il valore sia proprio **l'involucro** del nodo. Senza la
+seconda, `padre.appendChild(el.style)` avrebbe spostato `el`.
+
+! **`el.style` NON PASSA DA excss, E LA NOTA IN `exdom.h` DICEVA DI SI'.**
+Scrivendolo si e' visto che sarebbe stato sbagliato: excss conosce dodici
+proprieta' e le riduce a una `CssStile`, quindi `el.style.zIndex = 5` scritto e
+riletto si perderebbe in silenzio. Il ponte non decide che cosa VUOL DIRE una
+dichiarazione: la conserva. Chi le da' un senso e' `css_calcola()`, che
+l'attributo `style` lo legge gia' da prima — quindi scrivere li' basta perche'
+l'impaginazione se ne accorga, e exdom non impara una riga di CSS.
+
+! **NEMMENO I SELETTORI PASSANO DA excss, e anche li' la coda diceva il
+contrario** («excss sa gia' leggere i selettori: ne manca l'uso dal ponte»). Un
+`CssPezzo` conosce tipo, classe e id: `[data-x]`, `>`, `+` e le classi multiple
+non ci sono, e sono meta' di quel che si scrive dentro un `querySelector`. In
+piu' un selettore di excss vive dentro un `CssFoglio` fatto di scostamenti in
+QUELL'arena: per usarne uno al volo bisognerebbe fabbricare un foglio finto a
+ogni chiamata. Il riconoscitore e' suo, ed e' scritto che cosa NON sa fare — le
+pseudo-classi, i namespace — e che un selettore che le contiene **non trova
+niente** invece di trovare la cosa sbagliata.
+
+! **LE PROPRIETA' RIFLESSE SONO UN ELENCO, NON UNA REGOLA.** La scorciatoia
+sarebbe stata prendersi ogni nome e cercarlo fra gli attributi; sarebbe stata
+sbagliata in un modo che non si vede subito, perche' gli script appendono i
+propri dati agli elementi in continuazione e un `div.value = 3` diventato
+attributo rende `"3"` la volta dopo invece del numero `3`. Il DOM dice
+esattamente quali proprieta' esistono su quali elementi, e nel ponte c'e'
+quell'elenco.
+
+! **L'INDIRIZZO E LA NAVIGAZIONE ARRIVANO DA FUORI, come il tempo e gli
+eventi.** `exdom_indirizzo()` dice al ponte dove si trova la pagina — e da li'
+vengono tutte le fette di `location`, calcolate a ogni lettura e non copiate in
+dieci campi. `location.href = "..."` **non carica niente**: mette da parte
+l'indirizzo, e il browser lo raccoglie con `exdom_dove_andare()` quando lo
+script ha finito. Caricare un'altra pagina in mezzo a uno script vorrebbe dire
+buttare via l'albero che quello script sta ancora usando.
+
+! **E I SALTI SI CONTANO: cinque, come le redirezioni di exhttp.** Una pagina
+che si rimanda da sola all'infinito esiste. Il conto si azzera da solo appena
+una navigazione la chiede una persona, e la bandiera che lo dice sta in un
+posto solo: azzerarlo nei nove punti che chiamano `vai()` vorrebbe dire che il
+decimo, quello che si aggiunge fra sei mesi, se ne dimentica.
+
+! **UN GANCIO DI SCRITTURA CI VUOLE ANCHE SE HA UNA COSA SOLA DA FARE.** Un
+oggetto esotico senza gancio di scrittura, su QuickJS, e' un oggetto su cui non
+si scrive — l'assegnazione si perde in silenzio — mentre su ExJs la scrittura
+passa e diventa una proprieta' normale. Due motori, due comportamenti, nessun
+errore da nessuna parte: e' il genere di differenza che le prove uguali per
+tutt'e due esistono per non far nascere. Trovato su `classList`.
+
+### Una differenza fra i due motori, dichiarata
+
+`String(location)` rende l'indirizzo con QuickJS e `"[object Object]"` con ExJs:
+portando un oggetto in stringa, QuickJS ne chiama `toString` e ExJs no
+(`val.c`, `exjs_a_stringa`). Il metodo c'e' ed e' giusto in tutt'e due — la
+prova chiede `location.toString()`, che i due motori devono fare uguale — ma la
+conversione implicita manca da una parte, e vale per **qualunque** oggetto del
+DOM messo dentro una stringa. Il posto per rimediare e' `exjs_a_stringa`.
+
+### `document.cookie` c'e' a meta', e la meta' e' dichiarata
+
+Un biscotto vero fa due giri: uno script lo scrive e lo rilegge (fatto), e il
+browser lo manda al server in `Cookie:` raccogliendo i `Set-Cookie:` che
+tornano (**non fatto**: vuole exhttp e una dispensa per dominio nel browser).
+
+! **E META' SERVE LO STESSO**, altrimenti non si sarebbe scritta:
+`document.cookie.length` su `undefined` e' un errore, e mezza pagina moderna si
+ferma alla prima funzione. Con la dispensa in memoria lo script prosegue e —
+e' il caso di google.com — sceglie da se' la strada senza biscotti.
+
+### La pagina delle prove adesso ha dodici riquadri
+
+`/exwin/doc/javascript.html` e `tools/prove/sito/script.html` sono la stessa
+pagina e lo restano: gli script dei due file combaciano riga per riga. Ai sette
+riquadri di prima se ne aggiungono cinque — `el.style`, i selettori,
+`classList`, `dataset` con le proprieta' riflesse, `location` e `navigator`.
+Provata dentro EX-OS, da CD: si riempiono tutti e dodici.
+
 ## 2 settembre 2026 — UNA CASSETTA PIENA NON E' UN DRIVER MORTO
 
 Il sintomo durava da giorni: su Pentium II il sistema arrivava al prompt e

@@ -233,13 +233,31 @@ nell'ordine del documento; dopo ognuno, e dopo ogni clic, la pagina si rifa'
 se e' cambiata.
 </p>
 
+<p>
+Il ponte col documento sa anche <code>el.style</code> (che scrive
+nell'attributo <code>style</code>, quindi si <i>vede</i>),
+<code>querySelector</code> e <code>querySelectorAll</code>,
+<code>matches</code>, <code>closest</code>, <code>classList</code>,
+<code>dataset</code>, le proprieta' degli elementi
+(<code>img.src</code>, <code>a.href</code>, <code>input.value</code>),
+<code>location</code>, <code>navigator</code> e <code>document.cookie</code>.
+</p>
+
 <p class="nota">
 <b class="manca">Quello che a ExJs NON c'e', dichiarato:</b> espressioni
 regolari, <code>Date</code>, <code>try/catch</code> completo,
-<code>Function</code>, <code>el.style</code> come oggetto, e tutto ES5 in
-avanti &mdash; <code>async</code>/<code>await</code>, <code>Proxy</code>, la
+<code>Function</code>, e tutto ES5 in avanti &mdash;
+<code>async</code>/<code>await</code>, <code>Proxy</code>, la
 destrutturazione, le classi. Non c'e' nemmeno un raccoglitore di memoria: il
 posto e' preparato, ma una pagina lasciata a mutare per ore consuma.
+</p>
+
+<p class="nota">
+<b class="manca">E quello che manca al ponte, per tutt'e due i motori:</b>
+<code>XMLHttpRequest</code> e <code>fetch</code> &mdash; una pagina che va a
+prendersi i dati da sola resta com'e' &mdash; e la meta' HTTP dei biscotti:
+uno script puo' scrivere e rileggere <code>document.cookie</code>, ma quel
+biscotto al server non arriva.
 </p>
 
 <h3>Due motori, e come si scambiano</h3>
@@ -252,8 +270,8 @@ stessa interfaccia.
 </p>
 
 <p class="nota">
-<b>Il ponte col documento non cambia.</b> Le stesse novantadue prove del ponte
-passano con l'uno e con l'altro, e questa pagina rende un documento identico
+<b>Il ponte col documento non cambia.</b> Le stesse centonovantasei prove del
+ponte passano con l'uno e con l'altro, e questa pagina rende un documento identico
 byte per byte in tutt'e due i casi. E' il motivo per cui il linguaggio,
 l'albero e il ponte sono tre librerie separate invece di una.
 </p>
@@ -265,17 +283,36 @@ navigatore apre ExJs e va avanti invece di fermarsi &mdash; ma lo scrive.
 </p>
 
 <p>
-La pagina <a href="javascript.html">JavaScript, sette cose alla volta</a> e'
-una prova che si guarda: se i sette riquadri si riempiono, il motore funziona.
+La pagina <a href="javascript.html">JavaScript, dodici cose alla volta</a> e'
+una prova che si guarda: se i dodici riquadri si riempiono, il motore funziona.
+</p>
+
+<h3>E i siti grandi?</h3>
+
+<p>
+<code>google.com</code> <b>si apre e si vede</b>: il logo, la casella di
+ricerca, il pulsante. La pagina dei <b>risultati</b> no, e vale la pena dire
+perche', perche' non e' il nostro JavaScript.
 </p>
 
 <p>
-Di conseguenza <b>i siti grandi non funzionano</b>, e non e' un difetto da
-segnalare: <code>google.com</code> manda ES2017 offuscato, che muore alla
-prima espressione regolare, e continua percio' a mostrare la pagina che dice
-di abilitare JavaScript. La strada dichiarata per quel caso e' portare
-<b>QuickJS</b>: l'interfaccia fra il linguaggio, l'albero e il ponte e' stata
-divisa in tre proprio perche' quel giorno si cambi il motore e non il browser.
+Quella pagina ha tutto il contenuto dentro un <code>&lt;noscript&gt;</code>, e
+i risultati veri li costruisce uno script offuscato che e' il controllo
+anti&ndash;robot di Google: non si limita a disegnare la pagina, verifica di
+girare dentro un browser che riconosce. Chiedendo la stessa pagina con il nome
+di Lynx, di w3m o di Internet Explorer 6, Google risponde <i>&laquo;Aggiorna
+il browser&raquo;</i> e nessun risultato. Non c'e' una terza porta, e non ce
+l'hanno nemmeno Lynx e w3m, che sono programmi maturi da trent'anni.
+</p>
+
+<p class="nota">
+<b>Una pagina bianca lo dice.</b> Da quando <code>&lt;noscript&gt;</code> non
+si mostra piu' con gli script accesi &mdash; sta li' per chi il JavaScript non
+ce l'ha, e mostrarlo comunque vuol dire far vedere due volte la stessa cosa
+&mdash; un sito che si disegna tutto in JavaScript e non ci riesce lascia lo
+schermo vuoto. La riga di stato scrive allora
+<code>[vuota: la disegna JavaScript]</code>, cosi' non sembra un guasto del
+navigatore.
 </p>
 
 <h2>Le immagini</h2>
@@ -363,7 +400,7 @@ aprono con questo stesso navigatore.
 <tr><td><a href="rete.html"><b>La rete</b></a></td>
     <td>schede, indirizzo, DHCP, DNS, i servizi in ascolto, il TLS 1.3</td></tr>
 <tr><td><a href="javascript.html"><b>JavaScript</b></a></td>
-    <td>sette riquadri che si riempiono da soli: una spiegazione e una prova
+    <td>dodici riquadri che si riempiono da soli: una spiegazione e una prova
         del motore insieme</td></tr>
 <tr><td><a href="sviluppo.html"><b>Scrivere programmi</b></a></td>
     <td>gcc dentro EX-OS, la libc, il formato dei programmi, le librerie

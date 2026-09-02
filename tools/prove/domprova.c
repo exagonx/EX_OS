@@ -29,21 +29,32 @@
 #include <stdlib.h>
 #include "exdom.h"
 
-#define OGG        4096
-#define ARENA      (192 * 1024)
-#define NODI       2048
-#define ATTR       1024
-#define TESTO      (64 * 1024)
-#define ASCOLTI    64
+/* ! QUESTI NUMERI SONO QUELLI DEL BROWSER, E NON PER ELEGANZA.
+ * Erano piu' piccoli — 2048 nodi, un'arena da 256 KB — e su una pagina vera
+ * il banco RACCONTAVA UNA COSA CHE NEL BROWSER NON SUCCEDE: google.com pesa
+ * 280 KB, l'arena finiva a meta' documento, e l'ultimo <script> arrivava al
+ * motore TRONCATO. L'errore che si leggeva era «SyntaxError: unexpected end
+ * of string» — cioe' un difetto del motore, che non c'era. Un banco con meno
+ * memoria del programma che imita non prova il programma: ne prova uno piu'
+ * povero, e i guasti che inventa costano piu' di quelli che trova.
+ * I nomi accanto sono le costanti di exwin/bin/browser/browser.c: se una
+ * cresce li', cresce anche qui. */
+#define OGG        4096                 /* >= JS_OGGETTI  (2000)   */
+#define ARENA      (192 * 1024)         /* >= JS_ARENA    (96 KB)  */
+#define NODI       24000                /* == NODI_MAX             */
+#define ATTR       16000                /* == ATTR_MAX             */
+#define TESTO      (64 * 1024)          /* == JS_TESTO             */
+#define ASCOLTI    256                  /* == JS_ASCOLTI           */
+#define ARENA_DOC  (1024u * 1024u)      /* == ARENA_MAX            */
 
 static HtmlNodo g_nodi[NODI];
 static HtmlAttr g_attr[ATTR];
-static char     g_arena[256 * 1024];
+static char     g_arena[ARENA_DOC];
 static HtmlDoc  g_doc;
 
-static unsigned char g_mem_js[4 << 20];
-static unsigned char g_mem_dom[NODI * 32 + ASCOLTI * 64 + TESTO + 4096];
-static char          g_ser[TESTO];
+static unsigned char g_mem_js[8 << 20];
+static unsigned char g_mem_dom[NODI * 64 + ASCOLTI * 64 + TESTO + 65536];
+static char          g_ser[2 * 1024 * 1024];
 
 static int fatte = 0, sbagliate = 0;
 
@@ -109,6 +120,32 @@ static void prova_val(const char *nome, const char *html, const char *script,
     D = apparecchia(html, &c);
     if (!D) { printf("NO   %-38s il ponte non si apre\n", nome); sbagliate++; return; }
 
+    memset(&err, 0, sizeof(err));
+    if (!exjs_esegui(c, script, (unsigned int)strlen(script), &r, &err)) {
+        printf("NO   %-38s riga %d: %s\n", nome, err.riga, err.messaggio);
+        sbagliate++;
+        return;
+    }
+    s = exjs_a_stringa(c, r);
+    if (strcmp(s, atteso) != 0) {
+        printf("NO   %-38s atteso \"%s\", trovato \"%s\"\n", nome, atteso, s);
+        sbagliate++;
+        return;
+    }
+    printf("ok   %-38s %s\n", nome, s);
+}
+
+/* ! COME prova_val MA SU UN PONTE GIA' APERTO. `location` vuole che qualcuno
+ * abbia gia' detto dove siamo — exdom_indirizzo() — e prova_val apparecchia
+ * da se': servirebbe un quinto argomento su cinquanta chiamate per un caso. */
+static void prova_gia(const char *nome, ExJsCtx *c, const char *script,
+                      const char *atteso)
+{
+    ExJsErrore  err;
+    ExJsVal     r;
+    const char *s;
+
+    fatte++;
     memset(&err, 0, sizeof(err));
     if (!exjs_esegui(c, script, (unsigned int)strlen(script), &r, &err)) {
         printf("NO   %-38s riga %d: %s\n", nome, err.riga, err.messaggio);
@@ -240,6 +277,39 @@ static const char *PAG =
     "<body><div id=\"uno\" class=\"grosso rosso\">ciao</div>"
     "<p class=\"rosso\">testo</p><span>fine</span></body></html>";
 
+/* Per lo stile: uno senza attributo, uno con due dichiarazioni, e uno con la
+ * stessa proprieta' due volte — che nel CSS non e' un errore e ha un vincitore
+ * preciso, l'ultima. */
+static const char *STL =
+    "<p id=\"uno\"></p>"
+    "<p id=\"due\" style=\"color: red; margin: 0px\"></p>"
+    "<p id=\"tre\" style=\"color: red; color: blue\"></p>";
+
+/* Per i selettori. E' costruito perche' `div p` e `div > p` diano risposte
+ * DIVERSE: con tutti i `p` figli diretti del `div` le due prove passerebbero
+ * anche con il combinatore ignorato, cioe' non proverebbero niente. */
+/* Per le proprieta' riflesse: un <title> vero (che NON e' l'attributo `title`
+ * della radice), un elemento per ogni famiglia di attributi, e un `div` che
+ * fa da cassetto — quello che uno script usa per appenderci i propri dati. */
+static const char *RFL =
+    "<html><head><title>Prova</title></head><body>"
+    "<img src=\"gatto.png\">"
+    "<a href=\"/via.html\">via</a>"
+    "<input id=\"campo\" type=\"text\" value=\"ciao\">"
+    "<div id=\"cassetto\" class=\"rosso grosso\""
+    " data-ruolo=\"capo\" data-vista-larga=\"si\">roba</div>"
+    "</body></html>";
+
+static const char *SEL =
+    "<body><div>"
+    "<p id=\"uno\" class=\"x y\"><b>forte</b></p>"
+    "<span data-ruolo=\"capo\">a</span>"
+    "<section><p class=\"x\"><i>corsivo</i></p></section>"
+    "<span>b</span>"
+    "</div>"
+    "<p class=\"x\" data-ruolo=\"gregario\">fuori</p>"
+    "<a href=\"http://ex/os.html\">via</a></body>";
+
 /* -----------------------------------------------------------------------------
  * La pagina vera
  *
@@ -250,9 +320,12 @@ static const char *PAG =
  * esegue gli <script> nell'ordine del documento, poi impagina — quindi cio'
  * che si vede qui e' cio' che si vedra' li'.
  * --------------------------------------------------------------------------- */
+/* L'indirizzo da dichiarare alla pagina, se chi prova ne da' uno. */
+static char g_url_finto[EXDOM_URL_MAX] = "";
+
 static int pagina(const char *nomefile)
 {
-    static char  testo[512 * 1024];
+    static char  testo[2 * 1024 * 1024];
     FILE        *fp = fopen(nomefile, "rb");
     unsigned int n;
     ExJsCtx     *c;
@@ -275,6 +348,21 @@ static int pagina(const char *nomefile)
     D = exdom_apri(g_mem_dom, sizeof(g_mem_dom), c, &g_doc, NODI, TESTO, ASCOLTI);
     if (!D) { printf("il ponte non si apre\n"); return 1; }
 
+    /* ! ANCHE L'INDIRIZZO, come fa il browser. Senza, `location` risponde
+     * stringhe vuote e una pagina vera si comporta diversamente qui e la':
+     * il banco imita il browser o non serve a niente. Con un secondo
+     * argomento si passa l'indirizzo VERO da cui la pagina e' stata scaricata,
+     * che e' quel che serve a provare un sito salvato su disco. */
+    {
+        char url[EXDOM_URL_MAX];
+
+        if (g_url_finto[0]) exdom_indirizzo(D, g_url_finto);
+        else {
+            snprintf(url, sizeof(url), "file://%s", nomefile);
+            exdom_indirizzo(D, url);
+        }
+    }
+
     for (i = 0; i < (int)g_doc.nodi_n; i++) {
         int f;
 
@@ -291,14 +379,41 @@ static int pagina(const char *nomefile)
             if (!t[0]) continue;
 
             memset(&err, 0, sizeof(err));
-            if (!exjs_esegui(c, t, (unsigned int)strlen(t), &r, &err))
-                printf("!! script, riga %d: %s\n", err.riga, err.messaggio);
+            if (!exjs_esegui(c, t, (unsigned int)strlen(t), &r, &err)) {
+                /* ! E SI DICE QUALE, non solo che ce n'e' uno. Su una pagina
+                 * vera gli <script> sono quindici e il messaggio da solo —
+                 * «TypeError: not a function» — non dice ne' quale riga del
+                 * web manca ne' dove guardare. Il numero, il nodo, la
+                 * LUNGHEZZA (che smaschera un testo troncato) e le prime
+                 * lettere bastano a ritrovarlo dentro il documento. */
+                char        capo[97];
+                unsigned int k, len = (unsigned int)strlen(t);
+
+                for (k = 0; k < sizeof(capo) - 1 && t[k]; k++)
+                    capo[k] = (t[k] == '\n' || t[k] == '\r') ? ' ' : t[k];
+                capo[k] = '\0';
+                printf("!! script #%d (nodo %d, %u byte), riga %d: %s\n"
+                       "   [%s]\n",
+                       fatti, i, len, err.riga, err.messaggio, capo);
+            }
             fatti++;
         }
     }
 
     printf("script eseguiti: %d\n", fatti);
     if (g_console[0]) printf("console: %s", g_console);
+
+    /* ! E SE UNO SCRIPT HA CHIESTO DI ANDARE ALTROVE LO SI DICE, perche' su
+     * una pagina vera e' spesso TUTTO quello che quella pagina fa: la
+     * redirezione scritta in JavaScript e' il modo normale di mandare altrove
+     * un browser che non ha i biscotti. Senza questa riga il banco direbbe
+     * «zero errori» su una pagina che non ha fatto niente di visibile. */
+    {
+        char dove[EXDOM_URL_MAX];
+
+        if (exdom_dove_andare(D, dove, sizeof(dove)))
+            printf("uno script vuole andare a: %s\n", dove);
+    }
 
     /* I tempi: si pompano come farebbe il ciclo dei messaggi del browser. */
     if (exjs_lavori_in_attesa(c)) {
@@ -333,6 +448,17 @@ static int pagina(const char *nomefile)
 
 int main(int argc, char **argv)
 {
+    /* ! CON UN SECONDO ARGOMENTO SI DICHIARA L'INDIRIZZO VERO della pagina.
+     * Un sito salvato su disco e provato come `file://…` non e' lo stesso
+     * sito: mezzo web guarda `location.hostname` prima di decidere che fare. */
+    if (argc >= 3) {
+        unsigned int k = 0;
+
+        while (argv[2][k] && k + 1 < sizeof(g_url_finto)) {
+            g_url_finto[k] = argv[2][k]; k++;
+        }
+        g_url_finto[k] = '\0';
+    }
     if (argc >= 2) return pagina(argv[1]);
 
     printf("\n--- il documento e la navigazione ---\n");
@@ -724,6 +850,399 @@ int main(int argc, char **argv)
                 "'unNomeDiEventoMoltoMaMoltoLungoDavvero', function () { });",
                 "lungo");
         ok("e un nome troppo lungo si rifiuta", exdom_perso(D) == 1, "");
+    }
+
+    /* =========================================================================
+     * `el.style`
+     *
+     * ! LE PROVE GUARDANO L'ATTRIBUTO, non solo il valore riletto. Uno `style`
+     * finto che si ricorda quel che gli si scrive e lo rende indietro passa
+     * qualunque prova fatta con `el.style.color` da sola — e lascia la pagina
+     * esattamente com'era. E' lo stesso motivo per cui questo banco guarda il
+     * documento invece del valore reso dallo script.
+     * ====================================================================== */
+    printf("\n--- lo stile inline ---\n");
+
+    prova_val("scrivere una proprieta' tocca l'attributo", STL,
+              "var e = document.getElementById('uno');"
+              "e.style.color = 'red';"
+              "e.getAttribute('style')", "color: red");
+    prova_val("e si rilegge", STL,
+              "var e = document.getElementById('uno');"
+              "e.style.color = 'red'; e.style.color", "red");
+    prova_val("il maiuscolo diventa un trattino", STL,
+              "var e = document.getElementById('uno');"
+              "e.style.backgroundColor = 'blue';"
+              "e.getAttribute('style')", "background-color: blue");
+    prova_val("una proprieta' che non c'e' da \"\"", STL,
+              "document.getElementById('uno').style.display", "");
+    prova_val("quel che c'era resta, e al suo posto", STL,
+              "var e = document.getElementById('due');"
+              "e.style.color = 'blue';"
+              "e.getAttribute('style')", "color: blue; margin: 0px");
+    /* ! UNA PROPRIETA' CHE excss NON CONOSCE DEV'ESSERE CONSERVATA LO STESSO,
+     * ed e' il motivo per cui lo stile non passa da li'. */
+    prova_val("una proprieta' sconosciuta al CSS nostro", STL,
+              "var e = document.getElementById('uno');"
+              "e.style.zIndex = '7'; e.style.zIndex", "7");
+    prova_val("la stringa vuota toglie la dichiarazione", STL,
+              "var e = document.getElementById('due');"
+              "e.style.margin = ''; e.getAttribute('style')", "color: red");
+    prova_val("e null la toglie come la stringa vuota", STL,
+              "var e = document.getElementById('due');"
+              "e.style.color = null; e.getAttribute('style')", "margin: 0px");
+    prova_val("l'ultima dichiarazione vince, come nel CSS", STL,
+              "document.getElementById('tre').style.color", "blue");
+    prova_val("cssText si legge", STL,
+              "document.getElementById('due').style.cssText",
+              "color: red; margin: 0px");
+    prova_val("cssText si scrive", STL,
+              "var e = document.getElementById('uno');"
+              "e.style.cssText = 'color: green';"
+              "e.getAttribute('style')", "color: green");
+    prova_val("setProperty e getPropertyValue", STL,
+              "var e = document.getElementById('uno');"
+              "e.style.setProperty('font-size', '12px');"
+              "e.style.getPropertyValue('font-size')", "12px");
+    prova_val("e il nome col trattino arriva anche da JS", STL,
+              "var e = document.getElementById('uno');"
+              "e.style.setProperty('font-size', '12px');"
+              "e.style.fontSize", "12px");
+    prova_val("removeProperty rende quel che c'era", STL,
+              "document.getElementById('due').style.removeProperty('color')",
+              "red");
+    prova_val("length conta le dichiarazioni", STL,
+              "document.getElementById('due').style.length", "2");
+    prova_val("item da' il nome della k-esima", STL,
+              "document.getElementById('due').style.item(1)", "margin");
+    /* ! L'OGGETTO E' SEMPRE LO STESSO, come l'involucro del nodo: senza,
+     * `var s = el.style; s.color = 'x'` scriverebbe su una copia. */
+    prova_val("`el.style` e' sempre lo stesso oggetto", STL,
+              "var e = document.getElementById('uno');"
+              "e.style === e.style", "true");
+    /* ! IL GANCIO VIENE PRIMA DEL PROTOTIPO: se non dicesse «non e' mia» sui
+     * nomi dei metodi, questa sarebbe la stringa vuota. */
+    prova_val("i metodi non li copre il gancio", STL,
+              "typeof document.getElementById('uno').style.setProperty",
+              "function");
+    prova_val("assegnare una stringa a style vale cssText", STL,
+              "var e = document.getElementById('uno');"
+              "e.style = 'color: teal';"
+              "e.getAttribute('style')", "color: teal");
+    /* ! UN SATELLITE NON E' IL SUO ELEMENTO. Prima di questo controllo
+     * `appendChild(el.style)` avrebbe spostato `el`: lo stile porta lo stesso
+     * Legame, ed e' l'involucro — non il legame — a dire chi e' un nodo. */
+    prova_val("`el.style` non e' un nodo", STL,
+              "var e = document.getElementById('uno');"
+              "String(document.getElementById('due').appendChild(e.style))",
+              "null");
+    /* ! NON CI SONO DUE POSTI DA TENERE D'ACCORDO: `setAttribute('style')` e
+     * `el.style.x` scrivono e leggono lo stesso attributo, e questa prova
+     * cadrebbe il giorno che qualcuno mettesse lo stile in una struttura
+     * accanto «per andare piu' svelti». */
+    prova_val("setAttribute e style, la stessa cosa", STL,
+              "var e = document.getElementById('uno');"
+              "e.setAttribute('style', 'color: red');"
+              "e.style.color = 'blue';"
+              "e.getAttribute('style')", "color: blue");
+
+    /* =========================================================================
+     * I SELETTORI
+     * ====================================================================== */
+    printf("\n--- i selettori ---\n");
+
+    prova_val("querySelector per tipo", SEL,
+              "document.querySelector('b').textContent", "forte");
+    prova_val("per id", SEL,
+              "document.querySelector('#uno').tagName", "P");
+    prova_val("per classe", SEL,
+              "document.querySelector('.x').tagName", "P");
+    prova_val("querySelectorAll conta", SEL,
+              "document.querySelectorAll('.x').length", "3");
+    prova_val("le classi si sommano nello stesso pezzo", SEL,
+              "document.querySelectorAll('.x.y').length", "1");
+    prova_val("il discendente", SEL,
+              "document.querySelectorAll('div p').length", "2");
+    prova_val("il figlio non e' il discendente", SEL,
+              "document.querySelectorAll('div > p').length", "1");
+    prova_val("il fratello che viene subito dopo", SEL,
+              "document.querySelectorAll('p + span').length", "1");
+    prova_val("e il fratello che viene dopo, comunque", SEL,
+              "document.querySelectorAll('p ~ span').length", "2");
+    prova_val("un attributo che c'e'", SEL,
+              "document.querySelectorAll('[data-ruolo]').length", "2");
+    prova_val("un attributo con un valore", SEL,
+              "document.querySelector('[data-ruolo=capo]').tagName", "SPAN");
+    prova_val("le virgolette dentro le quadre", SEL,
+              "document.querySelector('[data-ruolo=\"capo\"]').tagName", "SPAN");
+    prova_val("il prefisso di un attributo", SEL,
+              "document.querySelectorAll('a[href^=http]').length", "1");
+    prova_val("e la coda", SEL,
+              "document.querySelectorAll('a[href$=\".html\"]').length", "1");
+    prova_val("l'elenco separato dalle virgole", SEL,
+              "document.querySelectorAll('b, i').length", "2");
+    prova_val("la stella prende tutto", SEL,
+              "document.querySelectorAll('div *').length", "7");
+    prova_val("matches dice si' e no", SEL,
+              "document.querySelector('#uno').matches('p.x') + ' ' +"
+              "document.querySelector('#uno').matches('div')", "true false");
+    /* ! closest PARTE DA SE STESSO: e' cosi' che lo usano i gestori di clic. */
+    prova_val("closest parte dal nodo stesso", SEL,
+              "document.querySelector('b').closest('div').tagName", "DIV");
+    prova_val("e se il nodo gia' combacia rende lui", SEL,
+              "document.querySelector('#uno').closest('p').id", "uno");
+    prova_val("closest che non trova niente rende null", SEL,
+              "String(document.querySelector('b').closest('table'))", "null");
+    /* ! DA UN ELEMENTO SI GUARDANO I DISCENDENTI, non tutto il documento. */
+    prova_val("da un elemento si cercano i discendenti", SEL,
+              "document.querySelector('div').querySelectorAll('p').length", "2");
+    prova_val("ma il selettore puo' risalire fuori", SEL,
+              "document.querySelector('div').querySelectorAll('body p').length",
+              "2");
+    /* ! QUEL CHE NON SI SA LEGGERE NON TROVA NIENTE, e non trova la cosa
+     * sbagliata: una pseudo-classe ignorata avrebbe reso il primo `p` della
+     * pagina a chi chiedeva `p:hover`. */
+    prova_val("una pseudo-classe non trova niente", SEL,
+              "String(document.querySelector('p:hover'))", "null");
+    prova_val("e nemmeno dentro un elenco", SEL,
+              "document.querySelectorAll('b, i:first-child').length", "1");
+    prova_val("un selettore vuoto non trova niente", SEL,
+              "String(document.querySelector(''))", "null");
+    /* ! I NODI RESI SONO GLI INVOLUCRI DI SEMPRE, non copie nuove. */
+    prova_val("rende l'involucro di sempre", SEL,
+              "document.querySelector('#uno') === document.getElementById('uno')",
+              "true");
+    /* ! E IL NODO TROVATO E' TOCCABILE, che e' tutto il punto: un
+     * querySelector che rendesse una fotografia sarebbe una funzione di
+     * lettura, non un pezzo di DOM. */
+    prova_val("e da li' si tocca la pagina", SEL,
+              "document.querySelector('#uno').style.display = 'none';"
+              "document.getElementById('uno').getAttribute('style')",
+              "display: none");
+
+    /* =========================================================================
+     * GLI ATTRIBUTI RIFLESSI, `dataset`, `classList`
+     * ====================================================================== */
+    printf("\n--- le proprieta' degli elementi ---\n");
+
+    prova_val("img.src rende l'attributo", RFL,
+              "document.getElementsByTagName('img')[0].src", "gatto.png");
+    prova_val("a.href pure", RFL,
+              "document.getElementsByTagName('a')[0].href", "/via.html");
+    prova_val("e si scrivono", RFL,
+              "var i = document.getElementsByTagName('img')[0];"
+              "i.src = 'cane.png'; i.getAttribute('src')", "cane.png");
+    prova_val("quel che non c'e' da \"\", non null", RFL,
+              "document.getElementsByTagName('img')[0].alt", "");
+    prova_val("input.value e input.type", RFL,
+              "var e = document.getElementById('campo');"
+              "e.value + ' ' + e.type", "ciao text");
+    /* ! LA TABELLA DICE ANCHE SU QUALE ELEMENTO, e questa prova e' il motivo:
+     * un `div` usato come cassetto da uno script non deve trovarsi le sue
+     * proprieta' trasformate in attributi. */
+    prova_val("su un div, `value` resta roba dello script", RFL,
+              "var d = document.getElementById('cassetto');"
+              "d.value = 3; d.value + ' ' + String(d.getAttribute('value'))",
+              "3 null");
+    prova_val("e `src` su un div nemmeno", RFL,
+              "var d = document.getElementById('cassetto');"
+              "d.src = 'x'; String(d.getAttribute('src'))", "null");
+    /* ! `document.title` NON E' L'ATTRIBUTO `title` DELLA RADICE. La radice e'
+     * un elemento come gli altri, e senza il controllo apposta la tabella
+     * l'avrebbe presa lei. */
+    prova_val("document.title resta il <title>", RFL,
+              "document.title", "Prova");
+    prova_val("ma su un elemento `title` e' l'attributo", RFL,
+              "var d = document.getElementById('cassetto');"
+              "d.title = 'spiegazione'; d.getAttribute('title')", "spiegazione");
+
+    prova_val("dataset legge un data-", RFL,
+              "document.getElementById('cassetto').dataset.ruolo", "capo");
+    prova_val("e il maiuscolo e' un trattino", RFL,
+              "document.getElementById('cassetto').dataset.vistaLarga", "si");
+    prova_val("dataset scrive", RFL,
+              "var d = document.getElementById('cassetto');"
+              "d.dataset.nuovoDato = '7'; d.getAttribute('data-nuovo-dato')",
+              "7");
+    /* ! UN data- CHE NON C'E' DA undefined, non "": e' come il DOM distingue
+     * «non c'e'» da «c'e' ed e' vuoto», e le pagine ci contano. */
+    prova_val("un data- che non c'e' da' undefined", RFL,
+              "String(document.getElementById('cassetto').dataset.mai)",
+              "undefined");
+
+    prova_val("classList.contains", RFL,
+              "var d = document.getElementById('cassetto');"
+              "d.classList.contains('rosso') + ' ' + d.classList.contains('blu')",
+              "true false");
+    prova_val("classList.add non duplica", RFL,
+              "var d = document.getElementById('cassetto');"
+              "d.classList.add('rosso'); d.className", "rosso grosso");
+    prova_val("classList.add aggiunge in fondo", RFL,
+              "var d = document.getElementById('cassetto');"
+              "d.classList.add('blu'); d.className", "rosso grosso blu");
+    prova_val("classList.remove toglie la parola giusta", RFL,
+              "var d = document.getElementById('cassetto');"
+              "d.classList.remove('rosso'); d.className", "grosso");
+    prova_val("toggle senza argomento gira", RFL,
+              "var d = document.getElementById('cassetto');"
+              "d.classList.toggle('rosso') + ' ' + d.className", "false grosso");
+    /* ! toggle CON IL SECONDO ARGOMENTO NON GIRA: mette o toglie. */
+    prova_val("toggle con la condizione non gira", RFL,
+              "var d = document.getElementById('cassetto');"
+              "d.classList.toggle('rosso', true); d.className", "rosso grosso");
+    prova_val("classList si scorre per indice", RFL,
+              "var l = document.getElementById('cassetto').classList;"
+              "l.length + ' ' + l[0] + ' ' + l[1]", "2 rosso grosso");
+    prova_val("classList.replace", RFL,
+              "var d = document.getElementById('cassetto');"
+              "d.classList.replace('rosso', 'verde'); d.className",
+              "grosso verde");
+    /* ! className E classList GUARDANO LA STESSA COSA: se fossero due depositi
+     * questa prova cadrebbe, ed e' l'unico modo di accorgersene. */
+    prova_val("className e classList, un deposito solo", RFL,
+              "var d = document.getElementById('cassetto');"
+              "d.className = 'a b'; d.classList.contains('b') + ' ' +"
+              "d.classList.length", "true 2");
+    /* ! IL GANCIO IN SCRITTURA DEV'ESSERCI ANCHE SE FA UNA COSA SOLA, o i due
+     * motori si comportano in modo diverso: vedi la nota accanto a
+     * classi_scrivi. Questa prova gira su tutt'e due. */
+    prova_val("scrivere roba propria sul classList non si perde", RFL,
+              "var l = document.getElementById('cassetto').classList;"
+              "l.mioStato = 3; l.mioStato", "3");
+    prova_val("classList.value scrive le classi", RFL,
+              "var d = document.getElementById('cassetto');"
+              "d.classList.value = 'x y'; d.getAttribute('class')", "x y");
+
+    /* =========================================================================
+     * `location` E `navigator`
+     *
+     * ! L'INDIRIZZO SI DA' DA FUORI, e queste prove lo fanno come lo fa il
+     * browser: exdom_indirizzo() prima, gli script dopo. Senza la chiamata
+     * `location` risponde stringhe vuote — che e' la verita', non un errore.
+     * ====================================================================== */
+    printf("\n--- location e navigator ---\n");
+    {
+        ExJsCtx    *c;
+        ExDom      *D;
+        char        dove[EXDOM_URL_MAX];
+        const char *URL = "https://ex.os:8080/a/b.html?q=1&r=2#in-fondo";
+
+        D = apparecchia(PAG, &c);
+        exdom_indirizzo(D, URL);
+        prova_gia("href e' l'indirizzo intero", c, "location.href", URL);
+        prova_gia("protocol", c, "location.protocol", "https:");
+        prova_gia("host col numero di porta", c, "location.host", "ex.os:8080");
+        prova_gia("hostname senza", c, "location.hostname", "ex.os");
+        prova_gia("port", c, "location.port", "8080");
+        prova_gia("pathname", c, "location.pathname", "/a/b.html");
+        prova_gia("search comincia col punto interrogativo", c,
+                  "location.search", "?q=1&r=2");
+        prova_gia("hash comincia col cancelletto", c, "location.hash",
+                  "#in-fondo");
+        prova_gia("origin e' schema piu' host", c, "location.origin",
+                  "https://ex.os:8080");
+        /* ! `location.toString()` E NON `String(location)`, E LA DIFFERENZA
+         * E' DEI MOTORI, NON DEL PONTE. QuickJS, portando un oggetto in
+         * stringa, ne chiama `toString`; ExJs rende "[object Object]" senza
+         * guardare (val.c, exjs_a_stringa). Il metodo c'e' ed e' giusto in
+         * tutt'e due: e' la CONVERSIONE implicita che manca da una parte.
+         * La prova chiede quel che i due motori devono fare uguale; la
+         * differenza sta scritta qui e nella coda dei lavori, perche' vale
+         * per QUALUNQUE oggetto del DOM messo dentro una stringa — e allora
+         * il posto per rimediare e' exjs_a_stringa, non questo file. */
+        prova_gia("in stringa e' l'indirizzo", c, "location.toString()", URL);
+        /* ! window.location E document.location SONO LO STESSO OGGETTO, come
+         * nel DOM: due oggetti distinti vorrebbero dire due verita'. */
+        prova_gia("window.location e document.location", c,
+                  "window.location === document.location", "true");
+
+        /* Senza porta, senza query e senza frammento: le fette vuote devono
+         * essere vuote, non l'ultima cosa che c'era. */
+        D = apparecchia(PAG, &c);
+        exdom_indirizzo(D, "http://ex.os/");
+        prova_gia("niente porta da' \"\"", c, "location.port", "");
+        prova_gia("niente search da' \"\"", c, "location.search", "");
+        prova_gia("niente hash da' \"\"", c, "location.hash", "");
+        prova_gia("il percorso resta la barra", c, "location.pathname", "/");
+
+        /* ! UN INDIRIZZO LOCALE HA LO SCHEMA E NON HA HOST, e il taglio
+         * dev'essere quello giusto lo stesso: «file:///a/b.html». */
+        D = apparecchia(PAG, &c);
+        exdom_indirizzo(D, "file:///exwin/doc/index.html");
+        prova_gia("file: lo schema", c, "location.protocol", "file:");
+        prova_gia("file: il percorso", c, "location.pathname",
+                  "/exwin/doc/index.html");
+        prova_gia("file: nessun host", c, "location.host", "");
+
+        /* --- la navigazione, che il ponte NON fa ------------------------- */
+        D = apparecchia(PAG, &c);
+        exdom_indirizzo(D, "http://ex.os/uno");
+        ok("nessuno vuole andare da nessuna parte",
+           exdom_dove_andare(D, dove, sizeof(dove)) == 0, "");
+        gira(c, "location.href = 'http://ex.os/due';", "href");
+        ok("location.href dice dove andare",
+           exdom_dove_andare(D, dove, sizeof(dove)) == 1 &&
+           strcmp(dove, "http://ex.os/due") == 0, dove);
+        /* ! E SE LO DIMENTICA: una navigazione fallita non deve ripartire da
+         * sola al giro dopo, per sempre. */
+        ok("e se lo dimentica",
+           exdom_dove_andare(D, dove, sizeof(dove)) == 0, "");
+        /* ! L'INDIRIZZO NON CAMBIA DA SE': location.href resta quello di
+         * prima finche' il browser non carica davvero. Un ponte che si
+         * aggiornasse da solo direbbe di essere su una pagina mai aperta. */
+        prova_gia("ma l'indirizzo e' ancora quello", c, "location.href",
+                  "http://ex.os/uno");
+
+        gira(c, "location.assign('/tre');", "assign");
+        ok("assign fa lo stesso",
+           exdom_dove_andare(D, dove, sizeof(dove)) == 1 &&
+           strcmp(dove, "/tre") == 0, dove);
+        gira(c, "location.replace('/quattro');", "replace");
+        ok("replace pure",
+           exdom_dove_andare(D, dove, sizeof(dove)) == 1 &&
+           strcmp(dove, "/quattro") == 0, dove);
+        gira(c, "location.reload();", "reload");
+        ok("reload rimanda dove si e' gia'",
+           exdom_dove_andare(D, dove, sizeof(dove)) == 1 &&
+           strcmp(dove, "http://ex.os/uno") == 0, dove);
+        /* ! UNA PAGINA NUOVA CANCELLA LA VOGLIA DI ANDARE ALTROVE, o un
+         * `location.href` rimasto in sospeso dalla pagina di PRIMA farebbe
+         * partire una navigazione che nessuno ha chiesto. */
+        gira(c, "location.href = '/cinque';", "sospeso");
+        exdom_indirizzo(D, "http://ex.os/sei");
+        ok("caricare una pagina cancella il sospeso",
+           exdom_dove_andare(D, dove, sizeof(dove)) == 0, "");
+
+        /* --- gli ascoltatori della finestra ------------------------------ */
+        /* ! window E' IL GLOBALE, e il globale non e' un nodo: senza i tre
+         * involucri apposta, `window.addEventListener` e' «not a function» —
+         * ed e' cosi' che una pagina vera se ne accorge. */
+        D = apparecchia(PAG, &c);
+        prova_gia("window.addEventListener c'e'", c,
+                  "typeof window.addEventListener", "function");
+        gira(c, "var visto = 0;"
+                "window.addEventListener('pippo', function () { visto = 1; });",
+                "win");
+        exdom_evento(D, g_doc.radice, "pippo", 0);
+        prova_gia("e un evento sulla radice lo chiama", c, "visto", "1");
+        /* ! LA SPIA `perso` NON SI ACCENDE PER UNA CHIAMATA SBAGLIATA, come
+         * per il gemello sugli elementi: vuol dire «non c'era posto», non
+         * «qualcuno ha chiamato male». */
+        gira(c, "window.addEventListener('x');", "corta");
+        gira(c, "window.addEventListener('y', 3);", "nonfunz");
+        ok("una chiamata sbagliata non accende la spia",
+           exdom_perso(D) == 0, "");
+
+        /* --- navigator --------------------------------------------------- */
+        D = apparecchia(PAG, &c);
+        /* ! LA STRINGA E' QUELLA CHE exhttp MANDA DAVVERO (lib/exhttp/exhttp.c):
+         * se le due divergessero, un sito servirebbe la pagina per un browser
+         * e la pagina ne troverebbe un altro. */
+        prova_gia("navigator.userAgent", c, "navigator.userAgent", "EX-OS");
+        prova_gia("i biscotti non ci sono, e lo si dice", c,
+                  "navigator.cookieEnabled", "false");
+        prova_gia("sendBeacon non manda niente e lo dice", c,
+                  "navigator.sendBeacon('/x', '')", "false");
     }
 
     printf("\n%d prove, %d sbagliate\n\n", fatte, sbagliate);

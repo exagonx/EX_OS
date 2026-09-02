@@ -11,9 +11,9 @@
 <!-- Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>  GPL-2.0-or-later
 
      ! QUESTA PAGINA E' ANCHE UNA PROVA, ed e' la stessa che gira sul banco
-     dell'host: tools/prove/sito/script.html. Se qui i sette riquadri si
+     dell'host: tools/prove/sito/script.html. Se qui i dodici riquadri si
      riempiono, il motore JavaScript dentro EX-OS fa quello che fa il banco —
-     e se non si riempiono, si vede QUALE dei sette e' rimasto indietro. -->
+     e se non si riempiono, si vede QUALE dei dodici e' rimasto indietro. -->
 </head>
 <body>
 
@@ -22,7 +22,7 @@
 <a href="browser.html">Navigatore</a> &mdash; JavaScript
 </p>
 
-<h1>JavaScript, sette cose alla volta</h1>
+<h1>JavaScript, dodici cose alla volta</h1>
 
 <p>Ogni riquadro prova UNA cosa. Se un riquadro contiene ancora la scritta
 «non e' successo niente», quel pezzo del motore non ha funzionato.</p>
@@ -48,6 +48,21 @@
 
 <h2>7. setTimeout</h2>
 <div id="sette" class="riq">aspetta un secondo...</div>
+
+<h2>8. lo stile di un elemento</h2>
+<div id="otto" class="riq">questo riquadro deve diventare verde e grande</div>
+
+<h2>9. querySelector e querySelectorAll</h2>
+<div id="nove" class="riq">non e' successo niente</div>
+
+<h2>10. classList</h2>
+<div id="dieci" class="riq">questo riquadro deve diventare giallo</div>
+
+<h2>11. dataset e le proprieta' degli elementi</h2>
+<div id="undici" class="riq" data-colore-scelto="verde">non e' successo niente</div>
+
+<h2>12. location e navigator</h2>
+<div id="dodici" class="riq">non e' successo niente</div>
 
 <script>
 /* 1 — innerHTML */
@@ -97,6 +112,42 @@ setTimeout(function () {
     s.className = 'riq acceso';
 }, 1000);
 
+/* 8 — el.style, che scrive nell'attributo `style` e quindi si VEDE */
+var o = document.getElementById('otto');
+o.style.backgroundColor = '#bfe3c0';
+o.style.fontSize = '20px';
+o.style.setProperty('color', '#1a4d1a');
+
+/* 9 — i selettori */
+var n = document.getElementById('nove');
+n.textContent = 'querySelectorAll(".riq") ne trova ' +
+    document.querySelectorAll('.riq').length +
+    ', querySelector("h2 + div") e' + "'" + ' un ' +
+    document.querySelector('h2 + div').tagName +
+    ', e closest("body") del primo li e' + "'" + ' ' +
+    document.querySelector('li').closest('body').tagName;
+
+/* 10 — classList */
+var d = document.getElementById('dieci');
+d.classList.add('acceso');
+d.classList.remove('riq');
+d.classList.toggle('riq', true);
+d.textContent = 'classi: ' + d.className +
+    ' (contains acceso: ' + d.classList.contains('acceso') + ')';
+
+/* 11 — dataset e attributi riflessi */
+var un = document.getElementById('undici');
+un.dataset.messoDaUnoScript = 'si';
+un.textContent = 'data-colore-scelto vale «' + un.dataset.coloreScelto +
+    '», e il primo collegamento della pagina punta a ' +
+    document.getElementsByTagName('a')[0].href;
+
+/* 12 — dove siamo e chi siamo */
+var dd = document.getElementById('dodici');
+dd.textContent = 'location.protocol ' + location.protocol +
+    ', location.pathname ' + location.pathname +
+    ', navigator.userAgent ' + navigator.userAgent;
+
 console.log('lo script della pagina e' + "'" + ' arrivato in fondo');
 </script>
 
@@ -108,7 +159,7 @@ console.log('lo script della pagina e' + "'" + ' arrivato in fondo');
 <p class="piede">
 EX-OS &mdash; Graziano Falcone, exagonx@hotmail.com &mdash; GNU GPL v2.
 Questa pagina e' la stessa del banco di prova
-(<code>tools/prove/sito/script.html</code>): se i sette riquadri si riempiono,
+(<code>tools/prove/sito/script.html</code>): se i dodici riquadri si riempiono,
 il motore fa dentro EX-OS quel che fa sull'host.
 </p>
 

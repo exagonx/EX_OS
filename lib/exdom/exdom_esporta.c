@@ -11,7 +11,7 @@
  *
  * La tabella di exdom.so.
  *
- * ! OTTO NOMI, E SONO POCHI APPOSTA. Tutto il DOM — document, gli elementi, gli
+ * ! DODICI NOMI, E SONO POCHI APPOSTA. Tutto il DOM — document, gli elementi, gli
  * eventi — non passa di qui: passa dal motore JavaScript, dove exdom si e'
  * registrato da solo dentro exdom_apri(). Da fuori servono soltanto le due
  * cose che un programma C deve poter fare: aprire il ponte, e far partire un
@@ -38,6 +38,10 @@ static const char *const g_nomi[] = {
     "exdom_evento",
     "exdom_perso",
     "exdom_troncato",
+    "exdom_indirizzo",
+    "exdom_dove_andare",
+    "exdom_biscotti_metti",
+    "exdom_biscotti",
     "__lib_avvio"
 };
 
@@ -50,6 +54,10 @@ static void *const g_indirizzi[] = {
     (void *)exdom_evento,
     (void *)exdom_perso,
     (void *)exdom_troncato,
+    (void *)exdom_indirizzo,
+    (void *)exdom_dove_andare,
+    (void *)exdom_biscotti_metti,
+    (void *)exdom_biscotti,
     (void *)__libc_ponti_avvia
 };
 

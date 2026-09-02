@@ -1344,11 +1344,26 @@ static int uguale(const char *a, const char *b)
 
 /* ! CIO' CHE NON SI VEDE NON SI IMPAGINA: dentro <script>, <style>, <head> e
  * <title> c'e' testo che non appartiene alla pagina. Senza questo, la prima
- * cosa che si legge su un sito vero e' un chilometro di JavaScript. */
+ * cosa che si legge su un sito vero e' un chilometro di JavaScript.
+ *
+ * ! E <noscript> DIPENDE DA COM'E' MESSO L'INTERRUTTORE, che e' l'unico tag
+ * di questo elenco a non essere sempre uguale a se stesso. E' li' apposta per
+ * chi il JavaScript non ce l'ha: mostrarlo COMUNQUE vuol dire che una pagina
+ * con gli script accesi fa vedere due volte la stessa cosa — una dagli script
+ * e una dal ripiego — o, peggio, fa vedere il ripiego di una pagina che gli
+ * script hanno gia' costruito.
+ *
+ * ! SI E' VISTO SU google.com/search, ED ERA IL SINTOMO CHE SEMBRAVA UN
+ * ALTRO. La pagina dei risultati ha TUTTO il contenuto dentro <noscript> —
+ * «Se non vieni reindirizzato automaticamente entro alcuni secondi, fai clic
+ * qui» — e i risultati veri li costruisce uno script. Il browser mostrava
+ * quella riga e sembrava che il motore non girasse: girava, e quella riga non
+ * doveva essere sullo schermo. */
 static int invisibile(const char *n)
 {
     return uguale(n, "script") || uguale(n, "style") || uguale(n, "head") ||
-           uguale(n, "title") || uguale(n, "meta") || uguale(n, "link");
+           uguale(n, "title") || uguale(n, "meta") || uguale(n, "link") ||
+           (g_js_acceso && uguale(n, "noscript"));
 }
 
 /* impagina_nodo e impagina_tabella si chiamano a vicenda: una tabella contiene
@@ -3991,7 +4006,7 @@ static int motore_apri(void)
 {
     unsigned int quanto;
 
-    if (g_js && g_dom) return 1;
+    if (g_js && g_dom) { exdom_indirizzo(g_dom, g_qui); return 1; }
     motore_chiudi();
 
     /* ! LA SCELTA DEL MOTORE VA FATTA QUI, PRIMA DI TUTTO IL RESTO: dopo la
@@ -4014,6 +4029,12 @@ static int motore_apri(void)
     g_dom = exdom_apri(g_dom_mem, quanto, g_js, &g_doc,
                        NODI_MAX, JS_TESTO, JS_ASCOLTI);
     if (!g_dom) { motore_chiudi(); dico("javascript: il ponte non si apre"); return 0; }
+
+    /* ! L'INDIRIZZO GLIELO DICIAMO NOI, e da qui viene tutto `location`. Il
+     * ponte non sa dove sia la pagina che ha in mano — non apre connessioni —
+     * e senza questa riga `location.href` sarebbe una stringa vuota su ogni
+     * pagina, cioe' una risposta sbagliata data senza errore. */
+    exdom_indirizzo(g_dom, g_qui);
     return 1;
 }
 
@@ -4180,6 +4201,18 @@ static int nodo_sotto(int x, int y)
     return -1;
 }
 
+/* C'e' almeno un <script> in questa pagina? Serve solo a scegliere le parole
+ * di un messaggio: vedi in fondo a vai(). */
+static int ha_script(void)
+{
+    unsigned int i;
+
+    for (i = 0; i < g_doc.nodi_n; i++)
+        if (g_doc.nodi[i].tipo == HTML_ELEMENTO &&
+            uguale(html_nome(&g_doc, (int)i), "script")) return 1;
+    return 0;
+}
+
 /* Rende 0 se uno script ha chiamato preventDefault(): allora il collegamento
  * NON si segue e il modulo NON si manda. E' l'unica cosa che il browser deve
  * sapere di quel che e' successo dentro il motore. */
@@ -4213,6 +4246,56 @@ static int clic_al_documento(int x, int y)
  * `vai` lo prende, lo usa e lo azzera — un POST non si ripete. */
 static const char *g_da_postare = 0;
 
+/* =============================================================================
+ * QUANDO UNO SCRIPT DICE DOVE ANDARE
+ *
+ * ! SI VA DOPO, MAI IN MEZZO. `location.href = "..."` non carica niente da
+ * se': il ponte mette da parte l'indirizzo e questa funzione lo raccoglie
+ * quando lo script ha finito. Caricare un'altra pagina mentre uno script gira
+ * vorrebbe dire buttare via l'albero che quello script sta ancora usando —
+ * e' la stessa ragione per cui gli eventi li fa partire il browser e non il
+ * ponte.
+ *
+ * ! E SI CONTANO I SALTI. Una pagina che si rimanda da sola all'infinito
+ * esiste — e' anche un modo classico di sbagliare un controllo — e senza un
+ * tetto il browser ci girerebbe dentro per sempre, con la rete accesa e senza
+ * un modo di fermarlo. Cinque e' il numero delle redirezioni HTTP di exhttp:
+ * lo stesso problema, quindi lo stesso tetto.
+ *
+ * ! IL CONTO SI AZZERA DA SOLO appena una navigazione la chiede una persona.
+ * La bandiera `g_js_salta` dice a vai() da dove sta arrivando: senza, il
+ * contatore andrebbe azzerato in nove punti diversi, e il decimo — quello che
+ * si aggiunge fra sei mesi — se ne dimenticherebbe.
+ * ========================================================================== */
+#define JS_SALTI_MAX  5
+
+static int g_js_salti  = 0;
+static int g_js_salta  = 0;
+
+static void vai(const char *url, int in_storia, int usa_cache);
+
+/* Rende 1 se ha davvero cambiato pagina: chi chiama deve sapere che l'albero
+ * che aveva in mano un istante fa non c'e' piu'. */
+static int segui_location(void)
+{
+    char dove[EXHTTP_URL_MAX], assoluto[EXHTTP_URL_MAX];
+
+    if (!g_dom) return 0;
+    if (!exdom_dove_andare(g_dom, dove, sizeof(dove))) return 0;
+    if (!dove[0]) return 0;
+
+    if (g_js_salti >= JS_SALTI_MAX) {
+        dico("javascript: troppi cambi di indirizzo di fila, mi fermo");
+        return 0;
+    }
+    if (!risolvi(dove, assoluto, sizeof(assoluto))) return 0;
+
+    ex_testo_metti(g_url, assoluto);
+    g_js_salta = 1;
+    vai(assoluto, 1, 0);
+    return 1;
+}
+
 static void vai(const char *url, int in_storia, int usa_cache)
 {
     ExHttpEsito  e;
@@ -4230,6 +4313,11 @@ static void vai(const char *url, int in_storia, int usa_cache)
     int          da_cache = 0;
 
     if (!url || !url[0]) { g_da_postare = 0; return; }
+
+    /* Vedi segui_location: chi arriva di li' alza il conto, tutti gli altri
+     * lo azzerano — e «tutti gli altri» vuol dire una persona che ha cliccato
+     * o scritto un indirizzo. */
+    if (g_js_salta) { g_js_salti++; g_js_salta = 0; } else g_js_salti = 0;
 
     /* ! UNA PAGINA MANDATA IN POST NON SI PRENDE DALLA CACHE, ne' ci finisce
      * dentro: la risposta a un invio dipende da cosa si e' inviato, e servirla
@@ -4411,8 +4499,38 @@ static void vai(const char *url, int in_storia, int usa_cache)
                  "  [%d immagini fuori: pixel %uK/%uK]",
                  g_imm_fuori, g_imm_px / 1024u, g_imm_px_tot / 1024u);
     }
+
+    /* ! UNA PAGINA BIANCA NON E' UN BROWSER ROTTO, MA LO SEMBRA — e si dice.
+     * Da quando <noscript> non si mostra piu' con gli script accesi, un sito
+     * che costruisce TUTTO in JavaScript e non ci riesce lascia lo schermo
+     * vuoto e nessuna spiegazione: e' il caso della pagina dei risultati di
+     * google.com. Prima si vedeva il ripiego «se non vieni reindirizzato...»
+     * e sembrava che il motore non girasse; adesso non si vede niente e
+     * sembra che sia rotto il browser. La verita' e' la terza: quella pagina
+     * qui non si puo' disegnare, e la riga di stato e' il posto per dirlo.
+     *
+     * ! SI DICE SOLO SE GLI SCRIPT CI SONO DAVVERO. Un documento vuoto e'
+     * vuoto e basta, e dare la colpa a un JavaScript che non c'e' manderebbe
+     * a cercare un guasto dove non ce n'e' nessuno.
+     *
+     * ! ED E' CORTA PERCHE' LA RIGA DI STATO TAGLIA. La prima stesura diceva
+     * «niente da mostrare: questa pagina si disegna da sola con JavaScript» e
+     * sullo schermo si leggeva «...questa pagina si»: un messaggio troncato a
+     * meta' e' peggio di uno breve, perche' sembra un guasto anche lui. */
+    if (g_pez_n == 0 && ha_script()) {
+        int l = (int)strlen(msg);
+
+        snprintf(msg + l, sizeof(msg) - (size_t)l,
+                 "  [vuota: la disegna JavaScript]");
+    }
     dico(msg);
     g_da_postare = 0;
+
+    /* ! IN FONDO, E NON PRIMA: se uno script della pagina appena caricata ha
+     * chiesto un altro indirizzo, si va li' adesso — con l'albero, i controlli
+     * e la riga di stato di QUESTA pagina gia' a posto. Chiamarla in mezzo a
+     * `vai` vorrebbe dire una pagina caricata a meta' dentro un'altra. */
+    segui_location();
 }
 
 
@@ -5537,6 +5655,10 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
             exjs_pompa(g_js, uptime_ms());
             rifai_se_cambiato();
             if (!exjs_lavori_in_attesa(g_js)) ex_sveglia(g_f, 0);
+            /* Un `setTimeout` che cambia indirizzo e' il modo classico di
+             * scrivere una redirezione: si guarda anche qui, non solo dopo
+             * gli script della pagina. */
+            segui_location();
         }
         return 0;
 
@@ -5627,7 +5749,15 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
          * l'ordine giusto: preventDefault() esiste proprio per impedire a un
          * collegamento di essere seguito, e non potrebbe farlo se il
          * collegamento fosse gia' stato seguito. */
-        if (!clic_al_documento(x, y)) return 0;
+        /* ! ANCHE SE IL GESTORE HA DETTO «FERMO» SI GUARDA DOVE VUOLE
+         * ANDARE, ed e' l'accoppiata piu' comune del web: `onclick` chiama
+         * preventDefault() per non seguire l'href e poi assegna
+         * `location.href` per andare da un'altra parte. Guardare solo quando
+         * il clic prosegue vorrebbe dire perdere proprio quel caso. */
+        if (!clic_al_documento(x, y)) { segui_location(); return 0; }
+        /* Se lo script ha portato altrove, il collegamento sotto il dito
+         * appartiene a una pagina che non c'e' piu': non lo si segue. */
+        if (segui_location()) return 0;
 
         k = link_sotto(x, y);
         if (k >= 0) { segui(k); return 0; }

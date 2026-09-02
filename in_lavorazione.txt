@@ -94,14 +94,21 @@ Da fare, per una pagina web moderna (in ordine di quanto pesa):
    si e' cliccato.
 
 
-LO STATO DEL NAVIGATORE AL 27 AGOSTO 2026 — dove riprendere
+LO STATO DEL NAVIGATORE AL 2 SETTEMBRE 2026 — dove riprendere
 
 Questo e' il punto in cui il browser e' stato lasciato. Le prove che contano:
 
-    make prova-exdom     92 prove, 0 sbagliate      con ExJs sotto
-    make prova-exqjs     92 prove, 0 sbagliate      con QuickJS sotto
-    /exwin/doc/javascript.html aperto DENTRO EX-OS, su disco installato:
-        i sette riquadri si riempiono, con l'uno e con l'altro motore
+    make prova-exdom    196 prove, 0 sbagliate      con ExJs sotto
+    make prova-exqjs    196 prove, 0 sbagliate      con QuickJS sotto
+    /exwin/doc/javascript.html aperto DENTRO EX-OS:
+        i DODICI riquadri si riempiono, con l'uno e con l'altro motore
+
+    E LA PAGINA VERA, che e' la prova che vale di piu':
+        /tmp/exos-prove/domqjs <pagina.html> [indirizzo]
+    Il secondo argomento e' l'indirizzo da dichiarare alla pagina: senza,
+    `location` dice `file://...`, e mezzo web guarda location.hostname prima
+    di decidere che fare. Il banco stampa quale script e' morto, dove, e se
+    qualcuno ha chiesto di andare altrove.
 
 CHE COSA C'E' ADESSO
 
@@ -139,17 +146,56 @@ I DUE DIFETTI CHIUSI IL 27, ED ERANO TUTT'E DUE INVISIBILI AL BANCO
 
 DA FARE, IN ORDINE DI QUANTO PESA SU UNA PAGINA VERA
 
- 1. `el.style` COME OGGETTO. E' fra le righe piu' scritte del web e oggi non
-    fa niente. Vuole un pezzo di excss per sciogliere le dichiarazioni e un
-    oggetto esotico in exdom. Dichiarato in exdom.h.
- 2. querySelector / querySelectorAll. excss sa gia' leggere i selettori: ne
-    manca l'uso dal ponte.
- 3. XMLHttpRequest e fetch. exhttp c'e' gia', TLS compreso: manca
-    l'involucro nel ponte, e con QuickJS ci sono anche le promesse.
- 4. `border` nel CSS. Oggi i bordi si disegnano solo dall'attributo
+ 1. FATTO — `el.style` COME OGGETTO, e NON passa da excss: la nota di prima
+    diceva il contrario. excss conosce dodici proprieta' e le riduce a una
+    CssStile, quindi `el.style.zIndex = 5` scritto e riletto si perderebbe in
+    silenzio. Il satellite legge e scrive l'ATTRIBUTO `style=`, che
+    css_calcola() gia' guarda: un deposito solo, e l'impaginazione se ne
+    accorge senza che exdom impari una riga di CSS.
+ 2. FATTO — querySelector / querySelectorAll / matches / closest, e nemmeno
+    questi passano da excss. Un CssPezzo conosce tipo, classe e id: `[attr]`,
+    `>`, `+`, `~` e le classi multiple non ci sono, e sono meta' di quel che
+    si scrive dentro un querySelector. Le pseudo-classi NON ci sono nemmeno
+    qui, e un selettore che le contiene non trova NIENTE invece di trovare la
+    cosa sbagliata.
+ 3. FATTI STRADA FACENDO, perche' senza di loro google.com non arriva in fondo
+    a un solo script: le proprieta' riflesse (img.src, a.href, input.value...
+    su un elenco di tag, non su tutti), `el.dataset`, `el.classList`,
+    `document.fonts`, `window.addEventListener`, `navigator`, `location` e
+    `document.cookie`. Le prove del ponte sono 196, verdi con tutt'e due i
+    motori.
+ 4. XMLHttpRequest e fetch. E' il primo della coda adesso. exhttp c'e' gia',
+    TLS compreso, ma NON si chiama da dentro exdom: la rete e' del browser,
+    come lo sono l'orologio, gli eventi e l'indirizzo. Vuole un gancio che il
+    browser registra, non una `#include "exhttp.h"` nel ponte. Con QuickJS ci
+    sono anche le promesse vere; con ExJs no, e la differenza va decisa prima
+    di scrivere.
+ 5. LA META' HTTP DEI BISCOTTI. `document.cookie` si legge e si scrive
+    (exdom_biscotti / exdom_biscotti_metti sono gia' esportate), ma nessuno
+    manda `Cookie:` e nessuno raccoglie `Set-Cookie:`. Vuole exhttp e una
+    dispensa per dominio nel browser, che sopravviva alla navigazione. Finche'
+    non c'e', una pagina che scrive un biscotto e ricarica se stessa
+    aspettandoselo indietro DAL SERVER non lo trovera'.
+ 6. L'INDIRIZZO ASSOLUTO in `img.src` e `a.href`. Oggi si riflette
+    l'attributo: `src="b.png"` rende `"b.png"` e non
+    `"http://sito/a/b.png"`. Adesso il ponte l'indirizzo della pagina ce l'ha
+    (exdom_indirizzo), quindi manca solo la risoluzione.
+ 7. `exjs_a_stringa` NON CHIAMA `toString`. `String(location)` rende
+    l'indirizzo con QuickJS e "[object Object]" con ExJs: e' la conversione
+    IMPLICITA che manca, e vale per qualunque oggetto del DOM messo dentro una
+    stringa. Il posto e' val.c; vuole un'esecuzione aperta, quindi non e' una
+    riga.
+ 8. `border` nel CSS. Oggi i bordi si disegnano solo dall'attributo
     `border` delle tabelle.
- 5. Le unita' relative (em, %, rem) e @media: vedi il punto 2 dell'elenco
+ 9. Le unita' relative (em, %, rem) e @media: vedi il punto 2 dell'elenco
     generale qui sopra.
+
+! E GOOGLE NON E' PIU' UN BERSAGLIO. google.com si apre e si vede; la pagina
+  dei RISULTATI no, e non e' colpa del nostro JavaScript: con lo User-Agent di
+  Lynx, di w3m o di MSIE 6 google risponde «Aggiorna il browser», e con quello
+  di un Firefox recente manda il suo controllo anti-robot offuscato. Non c'e'
+  una terza porta. Il dettaglio, coi numeri, sta in RIPRENDERE.md alla data del
+  2 settembre 2026 (sera).
 
 FATTI IL 25 AGOSTO 2026 (chiesti nella stessa giornata):
 

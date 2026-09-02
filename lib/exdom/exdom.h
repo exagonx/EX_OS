@@ -73,13 +73,37 @@
  * proprio per intercettare quel che i figli non devono vedere.
  *
  * -----------------------------------------------------------------------------
- * ! QUELLO CHE NON C'E' ANCORA, dichiarato subito: `style` come oggetto, e
- * `this` legato dentro un gestore scritto nell'attributo. Il primo ha bisogno
- * di un pezzo di excss per sciogliere le dichiarazioni; il secondo di un
- * costruttore Function che compili una stringa in una funzione, che ExJs non
- * ha ancora. Uno `style` finto che accetta le scritture e non le mostra
- * sarebbe esattamente la bugia silenziosa che gli oggetti esotici sono nati
- * per evitare.
+ * ! I SATELLITI — `el.style`, `el.dataset`, `el.classList` — NON POSSIEDONO
+ * NIENTE.
+ *
+ * Sono oggetti esotici anche loro, e portano lo STESSO legame dell'elemento:
+ * e' cosi' che ritrovano il nodo. Quel che leggono e scrivono e' l'ATTRIBUTO —
+ * `style=`, `data-*`, `class=` — e non una struttura accanto. Cosi'
+ * `setAttribute('style', ...)`, `el.style.color = ...` e il foglio di stile
+ * guardano tutti la stessa cosa, e non c'e' un secondo deposito da tenere
+ * d'accordo: e' il difetto che si paga sempre, e in questo browser si e' gia'
+ * pagato una volta con l'arena dell'impaginazione.
+ *
+ * ! E SI COSTRUISCONO UNA VOLTA SOLA SENZA UN CAMPO PER NODO: il satellite si
+ * ricorda come proprieta' PROPRIA dell'involucro, e in lettura le proprie
+ * vengono prima del gancio. Dalla seconda volta in poi il gancio non viene
+ * nemmeno chiamato, e un nodo che `style` non lo tocca mai non paga niente —
+ * mentre un campo in Legame sarebbe costato otto byte per ognuno dei
+ * ventiquattromila nodi di una pagina.
+ *
+ * -----------------------------------------------------------------------------
+ * ! QUELLO CHE NON C'E' ANCORA, dichiarato subito:
+ *
+ *   - `this` legato dentro un gestore scritto nell'attributo. Vuole un
+ *     costruttore `Function` che compili una stringa in una funzione, che ExJs
+ *     non ha.
+ *   - XMLHttpRequest e fetch. Il ponte non apre connessioni — e non deve: la
+ *     rete e' del browser, come lo sono l'orologio, gli eventi e l'indirizzo.
+ *     Vorranno un gancio, non una chiamata a exhttp da qui dentro.
+ *   - la meta' HTTP dei biscotti (vedi `exdom_biscotti` piu' sotto).
+ *   - l'indirizzo ASSOLUTO in `img.src` e `a.href`: qui si riflette
+ *     l'attributo, e risolverlo vuole l'indirizzo della pagina — che adesso
+ *     c'e' (exdom_indirizzo) ma non e' ancora usato per questo.
  * ============================================================================= */
 
 #ifndef EXDOM_H
@@ -146,6 +170,58 @@ ExJsVal exdom_documento(ExDom *D);
  * lo stesso.
  * ========================================================================== */
 int exdom_evento(ExDom *D, int nodo, const char *tipo, ExJsErrore *err);
+
+/* =============================================================================
+ * DOVE SI TROVA LA PAGINA — `location`
+ *
+ * ! L'INDIRIZZO ARRIVA DA FUORI, come il tempo in ExJs e come gli eventi qui
+ * sopra: il ponte non apre connessioni e non sa dove sia la pagina che ha in
+ * mano. Chi l'ha caricata glielo dice, e da quella stringa vengono
+ * `location.href`, `.protocol`, `.host`, `.pathname`, `.search`, `.hash` —
+ * calcolate a ogni lettura, non copiate in dieci campi da tenere d'accordo.
+ *
+ * Senza questa chiamata `location` c'e' lo stesso e risponde stringhe vuote:
+ * una pagina che la legge non trova un errore, trova una pagina senza
+ * indirizzo. E' la stessa scelta di `exdom_avvolgi` con un nodo che non c'e'.
+ * ========================================================================== */
+#define EXDOM_URL_MAX  640      /* >= EXHTTP_URL_MAX, che qui non si include */
+
+void exdom_indirizzo(ExDom *D, const char *url);
+
+/* ! LA NAVIGAZIONE LA FA IL BROWSER, NON IL PONTE. `location.href = "..."`
+ * mette da parte l'indirizzo e basta; chi ha lo schermo lo raccoglie di qui
+ * QUANDO LO SCRIPT HA FINITO. E' la stessa forma di preventDefault — il ponte
+ * dice che cosa e' successo, chi comanda decide che farne — ed e' anche
+ * l'unica che regge: caricare un'altra pagina in mezzo a uno script vorrebbe
+ * dire buttare via l'albero che quello script sta ancora usando.
+ *
+ * Rende 1 e copia l'indirizzo in `fuori` se ce n'era uno, e SE LO DIMENTICA.
+ * Rende 0 se nessuno ha chiesto di andare da nessuna parte. */
+int exdom_dove_andare(ExDom *D, char *fuori, unsigned int max);
+
+/* =============================================================================
+ * I BISCOTTI — `document.cookie`
+ *
+ * ! QUESTA E' META' DEL LAVORO, E L'ALTRA META' NON C'E'. Un biscotto vero fa
+ * due giri: uno script lo scrive e lo rilegge (questo), e il browser lo manda
+ * al server in `Cookie:` raccogliendo i `Set-Cookie:` che tornano (quello, che
+ * vuole exhttp e una dispensa per dominio). Chi legge queste due funzioni deve
+ * saperlo: una pagina che scrive un biscotto e ricarica se stessa
+ * aspettandoselo indietro DAL SERVER non lo trovera'.
+ *
+ * ! E META' SERVE LO STESSO. Senza, `document.cookie.length` e' un errore su
+ * `undefined` e mezza pagina moderna si ferma alla prima funzione; con la
+ * dispensa in memoria lo script prosegue e sceglie da se' la strada senza
+ * biscotti — che e' quella che questo browser sa percorrere.
+ * ========================================================================== */
+#define EXDOM_BISCOTTI_MAX  1024
+
+/* Quel che il browser sa per questa pagina, prima che gli script girino. */
+void exdom_biscotti_metti(ExDom *D, const char *tutti);
+
+/* Quel che c'e' adesso, con dentro anche cio' che gli script hanno scritto:
+ * il browser lo raccoglie per metterlo nella sua dispensa. */
+const char *exdom_biscotti(ExDom *D);
 
 /* ! UN ASCOLTATORE CHE NON HA TROVATO POSTO SI DICE, come si dice una
  * serializzazione troncata. La tabella degli ascolti ha un tetto, e una pagina

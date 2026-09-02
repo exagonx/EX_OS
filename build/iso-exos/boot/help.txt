@@ -558,12 +558,35 @@ contano finiscono a schermo, in ordine di esecuzione.
 Va data da root. Esiste anche un floppy che la esegue da solo
 all'avvio: dist/diagnostic.img, prodotto da `make all`.
 
+[mouse]
+segue il mouse e stampa movimenti e tasti
+
+  mouse              finche' non si preme ESC o `q`
+  mouse -n 10        dieci letture e poi esce
+
+! IN MODO TESTO NON C'E' NESSUN PUNTATORE DA VEDERE, e non e' un difetto:
+la freccia la disegna il server a finestre, non la console. Qui il mouse
+esiste come SERVIZIO — chi lo vuole lo chiede — e questo comando e' il
+modo di guardarlo lavorare.
+
+Il mouse PS/2 lo serve /dev/kbd.drv: e' la seconda porta dello stesso
+controller della tastiera, e due processi che leggono la porta 0x60 si
+rubano i byte a vicenda. Se c'e' un mouse seriale, /dev/mouseser.drv
+registra il servizio 'mouse' e questo comando preferisce quello.
+
 [kbprova]
 prova la tastiera passo passo: dove si ferma, fra tasto e programma
 
   kbprova              con l'avviso, poi la prova
   kbprova -s           parte subito
+  kbprova -stato       solo lo stato, senza toccare l'8042
   kbprova -o <file>    dove scrivere il log
+
+`-stato` si puo' dare anche con /dev/kbd.drv caricato: guarda soltanto
+delle variabili del kernel e la maschera del PIC, e dice su quale delle
+due strade — driver ring3 o ripiego interno — sta la tastiera. E' la
+prima domanda da farsi quando nessun tasto fa niente, perche' le due
+strade si escludono a vicenda e solo una delle due e' attiva.
 
 Otto passi: controller 8042, autodiagnosi, prova della porta, byte di
 configurazione, reset della tastiera, accensione della scansione,

@@ -11,7 +11,7 @@
  *
  * Lo stub di ExDom. Stessa forma di quello di exhtml e di quello di exjs.
  *
- * ! E' CORTO PERCHE' IL DOM NON PASSA DI QUI. Otto ponti, e sette li usera' il
+ * ! E' CORTO PERCHE' IL DOM NON PASSA DI QUI. Dodici ponti, e quasi tutti li usera' il
  * browser una volta sola per pagina: aprire, chiedere il documento, far
  * partire un evento. Tutto il resto — document, gli elementi, gli attributi —
  * vive dentro il motore JavaScript, dove exdom_apri() lo ha appeso all'oggetto
@@ -50,6 +50,10 @@ static struct {
     int (*evento)(ExDom *, int, const char *, ExJsErrore *);
     int (*perso)(const ExDom *);
     int (*troncato)(const ExDom *);
+    void (*indirizzo)(ExDom *, const char *);
+    int (*dove_andare)(ExDom *, char *, unsigned int);
+    void (*biscotti_metti)(ExDom *, const char *);
+    const char *(*biscotti)(ExDom *);
 } P;
 
 static void *chiedi(const ExLibTesta *t, const char *nome)
@@ -86,6 +90,13 @@ static void assicura(void)
                      chiedi(t, "exdom_evento");
     P.perso        = (int (*)(const ExDom *))chiedi(t, "exdom_perso");
     P.troncato     = (int (*)(const ExDom *))chiedi(t, "exdom_troncato");
+    P.indirizzo    = (void (*)(ExDom *, const char *))
+                     chiedi(t, "exdom_indirizzo");
+    P.dove_andare  = (int (*)(ExDom *, char *, unsigned int))
+                     chiedi(t, "exdom_dove_andare");
+    P.biscotti_metti = (void (*)(ExDom *, const char *))
+                     chiedi(t, "exdom_biscotti_metti");
+    P.biscotti     = (const char *(*)(ExDom *))chiedi(t, "exdom_biscotti");
 
     P.pronto = 1;
 }
@@ -118,3 +129,15 @@ int exdom_perso(const ExDom *D)
 
 int exdom_troncato(const ExDom *D)
 { assicura(); return P.troncato(D); }
+
+void exdom_indirizzo(ExDom *D, const char *url)
+{ assicura(); P.indirizzo(D, url); }
+
+int exdom_dove_andare(ExDom *D, char *fuori, unsigned int max)
+{ assicura(); return P.dove_andare(D, fuori, max); }
+
+void exdom_biscotti_metti(ExDom *D, const char *tutti)
+{ assicura(); P.biscotti_metti(D, tutti); }
+
+const char *exdom_biscotti(ExDom *D)
+{ assicura(); return P.biscotti(D); }
