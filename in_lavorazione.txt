@@ -99,13 +99,13 @@ LO STATO DEL NAVIGATORE AL 2 SETTEMBRE 2026 — dove riprendere
 Questo e' il punto in cui il browser e' stato lasciato. Le prove che contano:
 
     make prova-exjs      256 prove, 0 sbagliate     il linguaggio da solo
-    make prova-exdom     226 prove, 0 sbagliate     il ponte, con ExJs sotto
-    make prova-exqjs     226 prove, 0 sbagliate     il ponte, con QuickJS sotto
+    make prova-exdom     244 prove, 0 sbagliate     il ponte, con ExJs sotto
+    make prova-exqjs     244 prove, 0 sbagliate     il ponte, con QuickJS sotto
     make prova-biscotti   51 prove, 0 sbagliate     la dispensa dei cookie
     /exwin/doc/javascript.html aperto DENTRO EX-OS:
-        i QUATTORDICI riquadri si riempiono, con l'uno e con l'altro motore
+        i QUINDICI riquadri si riempiono, con l'uno e con l'altro motore
     e la stessa pagina servita in rete (http://10.0.2.2:8000/script.html):
-        i riquadri 13 e 14 provano XMLHttpRequest e fetch per davvero
+        i riquadri 13, 14 e 15 provano XMLHttpRequest, fetch e l'ORDINE
     http://10.0.2.2:8000/metti-biscotti — i biscotti, tutt'e due le meta':
         quel che uno script vede, e quel che il SERVER riceve indietro
     http://10.0.2.2:8000/invio.html — i pulsanti di un modulo: quale manda,
@@ -175,9 +175,20 @@ DA FARE, IN ORDINE DI QUANTO PESA SU UNA PAGINA VERA
  4. FATTO — XMLHttpRequest e fetch, con un GANCIO: exdom non chiama exhttp,
     lo chiama il browser (exdom_rete_metti). Cosi' il banco puo' provarli con
     una rete finta, senza server e senza macchina accesa.
-    ! LE RICHIESTE SONO SINCRONE, tutte, anche quelle dichiarate asincrone: il
-      codice dopo `send()` gira DOPO `onload` invece che prima. Dichiarato nel
-      file e nella guida.
+    ! FATTO — L'ASINCRONO VERO: `send()` mette in coda e torna, e il codice
+      dopo gira PRIMA di `onload`. A mandare avanti la coda e' il ciclo dei
+      messaggi (exdom_rete_pompa), una richiesta per giro: e' la stessa regola
+      del tempo e degli eventi — adesso anche il MOMENTO in cui la rete si usa
+      arriva da fuori. `open(m, u, false)` resta sincera davvero.
+      Le promesse hanno imparato ad aspettare: i gestori messi su una promessa
+      ancora in sospeso si mettono da parte e scattano quando arriva.
+    ! QUEL CHE RESTA FERMO: mentre si fa UNA richiesta il browser e' bloccato.
+      La pagina non si blocca piu' prima di disegnarsi, e fra una richiesta e
+      l'altra il navigatore risponde, ma durante il singolo scaricamento no.
+      Il passo dopo NON e' in exdom: e' in exhttp, e vuole (a) una lettura che
+      distingua «non e' ancora arrivato niente» da «l'altro ha chiuso» —
+      tcp_leggi oggi rende -1 per tutt'e due — e (b) un modo di rientrare nel
+      ciclo dei messaggi senza bloccarsi, che ex_prendi_msg non ha.
     ! LE PROMESSE SONO UNA FORMA SOLA, scritta a mano, uguale sotto i due
       motori — ExJs non le ha, QuickJS si', e due comportamenti sarebbero stati
       peggio di nessuno. `await` funziona lo stesso con QuickJS: vuole un

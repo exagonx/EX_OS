@@ -267,6 +267,45 @@ typedef int (*ExDomRete)(void *dato, ExDomRichiesta *r);
  * un'altra strada, di solito peggiore. */
 void exdom_rete_metti(ExDom *D, ExDomRete f, void *dato);
 
+/* =============================================================================
+ * L'ASINCRONO — e dove sta davvero
+ *
+ * ! `send()` NON VA IN RETE: METTE IN CODA E TORNA. E' tutta la differenza fra
+ * asincrono e sincrono vista da JavaScript, ed e' quella che le pagine
+ * guardano:
+ *
+ *     xhr.onload = function () { ... };
+ *     xhr.send();
+ *     continua();              <- deve girare PRIMA di onload
+ *
+ * La richiesta la fa chi ha il ciclo dei messaggi, chiamando exdom_rete_pompa()
+ * quando gli fa comodo. E' la stessa regola del tempo e degli eventi: adesso
+ * anche il MOMENTO in cui la rete si usa arriva da fuori.
+ *
+ * ! QUEL CHE RESTA SINCRONO, E VA DETTO: mentre exdom_rete_pompa() fa UNA
+ * richiesta, chi l'ha chiamata e' fermo — il gancio della rete aspetta la
+ * risposta e non c'e' modo di tornare indietro a meta'. Quindi una pagina non
+ * si blocca piu' PRIMA di disegnarsi, e fra una richiesta e l'altra il ciclo
+ * dei messaggi respira, ma dentro una singola richiesta no. Il passo dopo e'
+ * un trasporto che sappia consegnare a pezzi, e non e' in questa libreria.
+ *
+ * ! UNA PER CHIAMATA, APPOSTA. Chi pompa decide quante farne per giro, e cosi'
+ * puo' ridisegnare in mezzo. Farle tutte qui dentro sarebbe stato piu' corto e
+ * avrebbe riportato il blocco dov'era.
+ * ========================================================================== */
+
+/* Quante aspettano. Serve a chi ospita per sapere se deve rifarsi vivo. */
+int exdom_rete_in_attesa(const ExDom *D);
+
+/* Ne fa UNA. Rende 1 se ha fatto qualcosa, 0 se non c'era niente da fare. */
+int exdom_rete_pompa(ExDom *D);
+
+/* ! LA CODA PIENA SI DICE, come gli ascoltatori persi: una pagina che ne apre
+ * piu' di quante ne stanno in coda se le vede fallire subito — che e' meglio
+ * di un'attesa infinita — ma chi guarda deve poterlo sapere. Diventa 1 e non
+ * torna piu' indietro: e' una spia. */
+int exdom_rete_persa(const ExDom *D);
+
 /* ! UN ASCOLTATORE CHE NON HA TROVATO POSTO SI DICE, come si dice una
  * serializzazione troncata. La tabella degli ascolti ha un tetto, e una pagina
  * che ne registra piu' di quanti ce ne stanno resterebbe muta su qualche clic

@@ -38,7 +38,7 @@ settanta movimenti diventano tre minuti.
 | `tabella.html` | colspan e rowspan senza bordo |
 | `copertura.html` | accentate, entita' numeriche, greco, cirillico, ebraico, arabo |
 | `font.html` | `font-family`: elenchi, nomi veri senza generica, `<pre>`, e il foglio che batte il tag |
-| `script.html` | il motore JavaScript: quattordici riquadri — innerHTML, i nodi costruiti a mano, gli attributi, i clic, `preventDefault`, `setTimeout`, `style`, i selettori, `classList`, `dataset`, `location`, XMLHttpRequest e `fetch` |
+| `script.html` | il motore JavaScript: quindici riquadri — innerHTML, i nodi costruiti a mano, gli attributi, i clic, `preventDefault`, `setTimeout`, `style`, i selettori, `classList`, `dataset`, `location`, XMLHttpRequest e `fetch` (asincroni), e l'ORDINE che lo dimostra |
 | `biscotti.html` | i cookie, **tutt'e due le meta'**: quel che uno script vede e quel che il server RICEVE. Si apre da `/metti-biscotti`, non dal suo nome — vedi qui sotto |
 | `invio.html` | i pulsanti di un modulo: quale manda il suo `name=valore`, quali NON devono mandare (`reset`, `button`), l'Invio implicito. Manda a `/eco-modulo` — vedi qui sotto |
 | `modulo.html` | una casella e un'area: cursore, selezione, appunti |

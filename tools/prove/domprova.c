@@ -245,6 +245,64 @@ static void prova_val(const char *nome, const char *html, const char *script,
     printf("ok   %-38s %s\n", nome, s);
 }
 
+/* =============================================================================
+ * ! LE RICHIESTE NON SI FANNO PIU' DENTRO `send()`, e il banco ha dovuto
+ * imparare a fare quel che fa il browser: mandare avanti la coda.
+ *
+ * exdom_rete_pompa() ne fa UNA per chiamata — cosi' chi ospita puo' ridisegnare
+ * in mezzo — quindi qui si gira finche' non ne resta nessuna. Il tetto ai giri
+ * c'e' perche' un gestore puo' fare un'altra richiesta, e due gestori che se le
+ * rimbalzano non devono bloccare il banco: sessantaquattro sono piu' di quante
+ * ne faccia qualunque prova, e un ciclo infinito si vede subito.
+ * ========================================================================== */
+static void pompa_rete(ExDom *D)
+{
+    int giri = 0;
+
+    while (giri++ < 64 && exdom_rete_pompa(D)) { }
+}
+
+/* Come prova_val, ma GUARDA DOPO: esegue lo script, manda avanti la coda delle
+ * richieste, e solo allora valuta l'espressione. E' la forma che serve a tutto
+ * cio' che e' asincrono — il valore che conta non c'e' ancora quando lo script
+ * finisce, ed e' esattamente quel che «asincrono» vuol dire. */
+static void prova_dopo(const char *nome, const char *html, const char *script,
+                       const char *espressione, const char *atteso)
+{
+    ExJsCtx    *c;
+    ExDom      *D;
+    ExJsErrore  err;
+    ExJsVal     r;
+    const char *s;
+
+    fatte++;
+    D = apparecchia(html, &c);
+    if (!D) { printf("NO   %-38s il ponte non si apre\n", nome); sbagliate++; return; }
+
+    memset(&err, 0, sizeof(err));
+    if (!exjs_esegui(c, script, (unsigned int)strlen(script), &r, &err)) {
+        printf("NO   %-38s riga %d: %s\n", nome, err.riga, err.messaggio);
+        sbagliate++;
+        return;
+    }
+
+    pompa_rete(D);
+
+    memset(&err, 0, sizeof(err));
+    if (!exjs_esegui(c, espressione, (unsigned int)strlen(espressione), &r, &err)) {
+        printf("NO   %-38s riga %d: %s\n", nome, err.riga, err.messaggio);
+        sbagliate++;
+        return;
+    }
+    s = exjs_a_stringa(c, r);
+    if (strcmp(s, atteso) != 0) {
+        printf("NO   %-38s atteso \"%s\", trovato \"%s\"\n", nome, atteso, s);
+        sbagliate++;
+        return;
+    }
+    printf("ok   %-38s %s\n", nome, s);
+}
+
 /* ! COME prova_val MA SU UN PONTE GIA' APERTO. `location` vuole che qualcuno
  * abbia gia' detto dove siamo — exdom_indirizzo() — e prova_val apparecchia
  * da se': servirebbe un quinto argomento su cinquanta chiamate per un caso. */
@@ -515,6 +573,14 @@ static int pagina(const char *nomefile)
     }
 
     printf("script eseguiti: %d\n", fatti);
+
+    /* ! E SI MANDA AVANTI LA CODA DELLE RICHIESTE, come fa il browser dal suo
+     * ciclo dei messaggi: da quando `send()` mette in coda e torna, una pagina
+     * che chiede qualcosa alla rete non ha ancora la risposta quando l'ultimo
+     * <script> finisce. Senza queste righe il banco mostrerebbe la pagina a
+     * meta' e sembrerebbe un difetto del ponte. */
+    pompa_rete(D);
+
     if (g_console[0]) printf("console: %s", g_console);
 
     /* ! E SE UNO SCRIPT HA CHIESTO DI ANDARE ALTROVE LO SI DICE, perche' su
@@ -1379,113 +1445,113 @@ int main(int argc, char **argv)
     prova_val("open porta allo stato uno", PAG,
               "var x = new XMLHttpRequest(); x.open('GET', '/ciao');"
               "x.readyState", "1");
-    prova_val("send prende la risposta", PAG,
-              "var x = new XMLHttpRequest(); x.open('GET', '/ciao'); x.send();"
-              "x.status + ' ' + x.responseText + ' ' + x.readyState",
-              "200 buongiorno 4");
-    prova_val("un 404 e' una risposta, non un errore", PAG,
-              "var x = new XMLHttpRequest(); x.open('GET', '/manca'); x.send();"
-              "x.status + ' ' + x.responseText", "404 non c'e'");
+    prova_dopo("send prende la risposta", PAG,
+               "var x = new XMLHttpRequest(); x.open('GET', '/ciao'); x.send();",
+               "x.status + ' ' + x.responseText + ' ' + x.readyState",
+               "200 buongiorno 4");
+    prova_dopo("un 404 e' una risposta, non un errore", PAG,
+               "var x = new XMLHttpRequest(); x.open('GET', '/manca'); x.send();",
+               "x.status + ' ' + x.responseText", "404 non c'e'");
     /* ! LA RICHIESTA CHE NON PARTE LASCIA status A ZERO, ed e' cosi' che una
      * pagina distingue «il server ha detto 404» da «non ho potuto chiedere». */
-    prova_val("quella che non parte lascia zero", PAG,
-              "var x = new XMLHttpRequest(); x.open('GET', '/altrove'); x.send();"
-              "x.status + ' ' + x.readyState", "0 4");
-    prova_val("onload si chiama, e `this` e' la richiesta", PAG,
-              "var v = '';"
-              "var x = new XMLHttpRequest();"
-              "x.onload = function () { v = this.status + ':' + this.responseText; };"
-              "x.open('GET', '/ciao'); x.send(); v", "200:buongiorno");
-    prova_val("l'evento porta il tipo e il bersaglio", PAG,
-              "var v = '';"
-              "var x = new XMLHttpRequest();"
-              "x.onload = function (e) { v = e.type + ' ' + (e.target === x); };"
-              "x.open('GET', '/ciao'); x.send(); v", "load true");
-    prova_val("onerror per quella che non parte", PAG,
-              "var v = 'niente';"
-              "var x = new XMLHttpRequest();"
-              "x.onerror = function () { v = 'errore'; };"
-              "x.onload  = function () { v = 'carico'; };"
-              "x.open('GET', '/altrove'); x.send(); v", "errore");
-    prova_val("onreadystatechange vede lo stato quattro", PAG,
-              "var v = 0;"
-              "var x = new XMLHttpRequest();"
-              "x.onreadystatechange = function () { v = this.readyState; };"
-              "x.open('GET', '/ciao'); x.send(); v", "4");
+    prova_dopo("quella che non parte lascia zero", PAG,
+               "var x = new XMLHttpRequest(); x.open('GET', '/altrove'); x.send();",
+               "x.status + ' ' + x.readyState", "0 4");
+    prova_dopo("onload si chiama, e `this` e' la richiesta", PAG,
+               "var v = '';"
+               "var x = new XMLHttpRequest();"
+               "x.onload = function () { v = this.status + ':' + this.responseText; };"
+               "x.open('GET', '/ciao'); x.send();", "v", "200:buongiorno");
+    prova_dopo("l'evento porta il tipo e il bersaglio", PAG,
+               "var v = '';"
+               "var x = new XMLHttpRequest();"
+               "x.onload = function (e) { v = e.type + ' ' + (e.target === x); };"
+               "x.open('GET', '/ciao'); x.send();", "v", "load true");
+    prova_dopo("onerror per quella che non parte", PAG,
+               "var v = 'niente';"
+               "var x = new XMLHttpRequest();"
+               "x.onerror = function () { v = 'errore'; };"
+               "x.onload  = function () { v = 'carico'; };"
+               "x.open('GET', '/altrove'); x.send();", "v", "errore");
+    prova_dopo("onreadystatechange vede lo stato quattro", PAG,
+               "var v = 0;"
+               "var x = new XMLHttpRequest();"
+               "x.onreadystatechange = function () { v = this.readyState; };"
+               "x.open('GET', '/ciao'); x.send();", "v", "4");
     /* ! addEventListener SU UN XHR NON PASSA DALLA TABELLA DEGLI ASCOLTI del
      * ponte: quella e' indicizzata per NODO, e una richiesta non e' un nodo. */
-    prova_val("addEventListener, e piu' di uno", PAG,
-              "var v = '';"
-              "var x = new XMLHttpRequest();"
-              "x.addEventListener('load', function () { v = v + 'a'; });"
-              "x.addEventListener('load', function () { v = v + 'b'; });"
-              "x.open('GET', '/ciao'); x.send(); v", "ab");
-    prova_val("POST manda il corpo", PAG,
-              "var x = new XMLHttpRequest(); x.open('POST', '/eco');"
-              "x.send('ciao mondo'); x.responseText", "ciao mondo");
-    prova_val("getResponseHeader conosce il tipo", PAG,
-              "var x = new XMLHttpRequest(); x.open('GET', '/ciao'); x.send();"
-              "x.getResponseHeader('Content-Type')", "text/plain");
+    prova_dopo("addEventListener, e piu' di uno", PAG,
+               "var v = '';"
+               "var x = new XMLHttpRequest();"
+               "x.addEventListener('load', function () { v = v + 'a'; });"
+               "x.addEventListener('load', function () { v = v + 'b'; });"
+               "x.open('GET', '/ciao'); x.send();", "v", "ab");
+    prova_dopo("POST manda il corpo", PAG,
+               "var x = new XMLHttpRequest(); x.open('POST', '/eco');"
+               "x.send('ciao mondo');", "x.responseText", "ciao mondo");
+    prova_dopo("getResponseHeader conosce il tipo", PAG,
+               "var x = new XMLHttpRequest(); x.open('GET', '/ciao'); x.send();",
+               "x.getResponseHeader('Content-Type')", "text/plain");
     /* ! DI UN'ALTRA INTESTAZIONE SI RENDE null, non "": nel DOM la differenza
      * e' fra «non c'e'» e «c'e' ed e' vuota», e le pagine ci contano. */
-    prova_val("di un'altra rende null", PAG,
-              "var x = new XMLHttpRequest(); x.open('GET', '/ciao'); x.send();"
-              "String(x.getResponseHeader('X-Qualcosa'))", "null");
-    prova_val("setRequestHeader si accetta e non ferma niente", PAG,
-              "var x = new XMLHttpRequest(); x.open('GET', '/ciao');"
-              "x.setRequestHeader('X-Prova', '1'); x.send(); x.status", "200");
+    prova_dopo("di un'altra rende null", PAG,
+               "var x = new XMLHttpRequest(); x.open('GET', '/ciao'); x.send();",
+               "String(x.getResponseHeader('X-Qualcosa'))", "null");
+    prova_dopo("setRequestHeader si accetta e non ferma niente", PAG,
+               "var x = new XMLHttpRequest(); x.open('GET', '/ciao');"
+               "x.setRequestHeader('X-Prova', '1'); x.send();", "x.status", "200");
 
     printf("\n--- fetch ---\n");
 
     prova_val("fetch rende qualcosa con then", PAG,
               "typeof fetch('/ciao').then", "function");
-    prova_val("la catena arriva al testo", PAG,
-              "var v = '';"
-              "fetch('/ciao').then(function (r) { return r.text(); })"
-              "              .then(function (t) { v = t; }); v", "buongiorno");
-    prova_val("ok, status e url", PAG,
-              "var v = '';"
-              "fetch('/ciao').then(function (r) {"
-              "  v = r.ok + ' ' + r.status + ' ' + r.url; }); v",
-              "true 200 /ciao");
+    prova_dopo("la catena arriva al testo", PAG,
+               "var v = '';"
+               "fetch('/ciao').then(function (r) { return r.text(); })"
+               "              .then(function (t) { v = t; });", "v", "buongiorno");
+    prova_dopo("ok, status e url", PAG,
+               "var v = '';"
+               "fetch('/ciao').then(function (r) {"
+               "  v = r.ok + ' ' + r.status + ' ' + r.url; });", "v",
+               "true 200 /ciao");
     /* ! UN 404 NON RIFIUTA LA PROMESSA, ed e' la regola di fetch: la rete ha
      * risposto benissimo, e' il server che ha detto di no. */
-    prova_val("un 404 non rifiuta, e ok e' falso", PAG,
-              "var v = '';"
-              "fetch('/manca').then(function (r) { v = r.ok + ' ' + r.status; },"
-              "                     function ()  { v = 'rifiutata'; }); v",
-              "false 404");
-    prova_val("la rete che non risponde rifiuta", PAG,
-              "var v = 'niente';"
-              "fetch('/altrove').then(function () { v = 'arrivata'; })"
-              "                 .catch(function (e) { v = 'no: ' + e.message; });"
-              "v", "no: la richiesta non e' partita");
+    prova_dopo("un 404 non rifiuta, e ok e' falso", PAG,
+               "var v = '';"
+               "fetch('/manca').then(function (r) { v = r.ok + ' ' + r.status; },"
+               "                     function ()  { v = 'rifiutata'; });", "v",
+               "false 404");
+    prova_dopo("la rete che non risponde rifiuta", PAG,
+               "var v = 'niente';"
+               "fetch('/altrove').then(function () { v = 'arrivata'; })"
+               "                 .catch(function (e) { v = 'no: ' + e.message; });",
+               "v", "no: la richiesta non e' partita");
     /* ! IL RIFIUTO SCENDE LUNGO LA CATENA fino a chi lo prende: e' cosi' che
      * `.then(a).then(b).catch(c)` fa arrivare l'errore a `c` e non ad `a`. */
-    prova_val("il rifiuto scavalca i then e arriva al catch", PAG,
-              "var v = '';"
-              "fetch('/altrove').then(function () { v = v + 'a'; })"
-              "                 .then(function () { v = v + 'b'; })"
-              "                 .catch(function () { v = v + 'c'; }); v", "c");
-    prova_val("json passa da JSON.parse del motore", PAG,
-              "var v = '';"
-              "fetch('/dati.json').then(function (r) { return r.json(); })"
-              "                   .then(function (d) { v = d.n + ' ' + d.s; });"
-              "v", "7 ciao");
-    prova_val("headers.get", PAG,
-              "var v = '';"
-              "fetch('/dati.json').then(function (r) {"
-              "  v = r.headers.get('content-type'); }); v", "application/json");
-    prova_val("fetch con metodo e corpo", PAG,
-              "var v = '';"
-              "fetch('/eco', { method: 'POST', body: 'roba' })"
-              "  .then(function (r) { return r.text(); })"
-              "  .then(function (t) { v = t; }); v", "roba");
-    prova_val("finally passa e non cambia il valore", PAG,
-              "var v = '';"
-              "fetch('/ciao').finally(function () { v = v + 'f'; })"
-              "              .then(function (r) { v = v + r.status; }); v",
-              "f200");
+    prova_dopo("il rifiuto scavalca i then e arriva al catch", PAG,
+               "var v = '';"
+               "fetch('/altrove').then(function () { v = v + 'a'; })"
+               "                 .then(function () { v = v + 'b'; })"
+               "                 .catch(function () { v = v + 'c'; });", "v", "c");
+    prova_dopo("json passa da JSON.parse del motore", PAG,
+               "var v = '';"
+               "fetch('/dati.json').then(function (r) { return r.json(); })"
+               "                   .then(function (d) { v = d.n + ' ' + d.s; });",
+               "v", "7 ciao");
+    prova_dopo("headers.get", PAG,
+               "var v = '';"
+               "fetch('/dati.json').then(function (r) {"
+               "  v = r.headers.get('content-type'); });", "v", "application/json");
+    prova_dopo("fetch con metodo e corpo", PAG,
+               "var v = '';"
+               "fetch('/eco', { method: 'POST', body: 'roba' })"
+               "  .then(function (r) { return r.text(); })"
+               "  .then(function (t) { v = t; });", "v", "roba");
+    prova_dopo("finally passa e non cambia il valore", PAG,
+               "var v = '';"
+               "fetch('/ciao').finally(function () { v = v + 'f'; })"
+               "              .then(function (r) { v = v + r.status; });", "v",
+               "f200");
 
     /* ! SENZA GANCIO NON SI FINGE UN 200 VUOTO. Un browser che non ha
      * registrato la rete non e' un server che ha risposto male, e una pagina
@@ -1495,14 +1561,13 @@ int main(int argc, char **argv)
         ExDom   *D;
 
         D = apparecchia_rete(PAG, &c, 0);
-        (void)D;
         prova_gia("senza gancio, XHR lascia zero", c,
                   "var x = new XMLHttpRequest(); x.open('GET', '/ciao');"
                   "x.send(); x.status", "0");
-        prova_gia("senza gancio, fetch rifiuta", c,
-                  "var v = '';"
-                  "fetch('/ciao').catch(function (e) { v = e.name; }); v",
-                  "TypeError");
+        gira(c, "var v = '';"
+                "fetch('/ciao').catch(function (e) { v = e.name; });", "senza");
+        pompa_rete(D);
+        prova_gia("senza gancio, fetch rifiuta", c, "v", "TypeError");
     }
 
     /* Il gancio riceve metodo e indirizzo com'e' scritto nella pagina: e'
@@ -1512,13 +1577,130 @@ int main(int argc, char **argv)
         ExDom   *D;
 
         D = apparecchia(PAG, &c);
-        (void)D;
         gira(c, "var x = new XMLHttpRequest();"
                 "x.open('POST', '/eco'); x.send('abc');", "gancio");
+        /* ! IL GANCIO NON L'HA ANCORA VISTO: `send` mette in coda. Questa riga
+         * e' la prova che l'asincrono e' asincrono. */
+        ok("prima della pompa il gancio non ha visto niente", g_rete_n == 0, "");
+        pompa_rete(D);
         ok("il gancio ha visto metodo e indirizzo",
            strcmp(g_rete_ultima, "POST /eco") == 0, g_rete_ultima);
         ok("e il corpo", strcmp(g_rete_corpo, "abc") == 0, g_rete_corpo);
         ok("una richiesta sola", g_rete_n == 1, "");
+    }
+
+    /* =========================================================================
+     * L'ASINCRONO
+     *
+     * ! LA PROVA CHE CONTA E' L'ORDINE, non il risultato. Che `onload` prima o
+     * poi si chiami lo diceva anche la versione sincrona; quel che distingue
+     * l'asincrono e' che il codice DOPO `send()` gira PRIMA del gestore. Un
+     * contatore di lettere e' il modo piu' corto di scriverlo.
+     * ====================================================================== */
+    printf("\n--- l'asincrono ---\n");
+
+    prova_val("send torna subito, e lo stato resta 1", PAG,
+              "var x = new XMLHttpRequest();"
+              "x.open('GET', '/ciao'); x.send();"
+              "x.readyState + ' ' + x.status + ' ' + x.responseText", "1 0 ");
+    /* ! QUESTA E' LA RIGA CHE DEFINISCE L'ASINCRONO. Con la versione di prima
+     * il risultato era «BA»: il gestore girava dentro send(). */
+    prova_dopo("il codice dopo send gira PRIMA di onload", PAG,
+               "var v = '';"
+               "var x = new XMLHttpRequest();"
+               "x.onload = function () { v = v + 'B'; };"
+               "x.open('GET', '/ciao'); x.send();"
+               "v = v + 'A';", "v", "AB");
+    /* ! E LA FORMA SINCRONA RESTA SINCRONA, che e' quel che promette:
+     * `open(m, u, false)` esiste apposta, e c'e' del codice che ci conta. */
+    prova_val("con async=false il gestore gira dentro send", PAG,
+              "var v = '';"
+              "var x = new XMLHttpRequest();"
+              "x.onload = function () { v = v + 'B'; };"
+              "x.open('GET', '/ciao', false); x.send();"
+              "v = v + 'A'; v", "BA");
+    prova_val("e la risposta c'e' gia' quando send torna", PAG,
+              "var x = new XMLHttpRequest();"
+              "x.open('GET', '/ciao', false); x.send();"
+              "x.readyState + ' ' + x.responseText", "4 buongiorno");
+
+    /* ! PIU' RICHIESTE INSIEME: prima non si poteva nemmeno chiedere, perche'
+     * la prima non tornava finche' non era finita. */
+    prova_dopo("due richieste insieme arrivano tutt'e due", PAG,
+               "var v = '';"
+               "var a = new XMLHttpRequest();"
+               "var b = new XMLHttpRequest();"
+               "a.onload = function () { v = v + 'a'; };"
+               "b.onload = function () { v = v + 'b'; };"
+               "a.open('GET', '/ciao'); a.send();"
+               "b.open('GET', '/manca'); b.send();", "v", "ab");
+
+    /* --- le promesse che sanno aspettare ---------------------------------- */
+    prova_val("fetch rende una promessa ancora in sospeso", PAG,
+              "var p = fetch('/ciao');"
+              "typeof p.then + ' ' + p.__stato", "function 0");
+    prova_dopo("e si risolve quando la risposta arriva", PAG,
+               "var p = fetch('/ciao');", "p.__stato", "1");
+    /* ! UN `then` MESSO PRIMA DELLA RISPOSTA DEVE SCATTARE LO STESSO: e' tutta
+     * la differenza fra una promessa e un valore. */
+    prova_dopo("un then messo prima scatta dopo", PAG,
+               "var v = 'niente';"
+               "fetch('/ciao').then(function (r) { v = 'stato ' + r.status; });",
+               "v", "stato 200");
+    /* ! E UNO MESSO DOPO, SU UNA PROMESSA GIA' RISOLTA, SCATTA SUBITO. Sono le
+     * due strade di `then`, e vanno provate tutt'e due. */
+    prova_dopo("e uno messo dopo scatta subito", PAG,
+               "var v = 'niente';"
+               "var p = fetch('/ciao');", 
+               "p.then(function (r) { v = 'poi ' + r.status; }); v", "poi 200");
+    prova_dopo("la catena si costruisce prima che ci sia il valore", PAG,
+               "var v = '';"
+               "fetch('/ciao').then(function (r) { return r.text(); })"
+               "              .then(function (t) { return t.length; })"
+               "              .then(function (n) { v = 'lungo ' + n; });",
+               "v", "lungo 10");
+    prova_dopo("finally scatta anche sulla sospesa", PAG,
+               "var v = '';"
+               "fetch('/ciao').finally(function () { v = v + 'f'; })"
+               "              .then(function (r) { v = v + r.status; });",
+               "v", "f200");
+    prova_dopo("e su una rifiutata finally scatta lo stesso", PAG,
+               "var v = '';"
+               "fetch('/altrove').finally(function () { v = v + 'f'; })"
+               "                 .catch(function () { v = v + '!'; });",
+               "v", "f!");
+    /* ! UNA PROMESSA SI RISOLVE UNA VOLTA SOLA, e il gestore si chiama una
+     * volta sola: senza, un `then` su una promessa gia' risolta e poi ripompata
+     * scatterebbe due volte. */
+    prova_dopo("il gestore si chiama una volta sola", PAG,
+               "var n = 0;"
+               "fetch('/ciao').then(function () { n = n + 1; });", "n", "1");
+
+    /* --- la coda ---------------------------------------------------------- */
+    {
+        ExJsCtx *c;
+        ExDom   *D;
+        char     codice[256];
+        int      i;
+
+        D = apparecchia(PAG, &c);
+        gira(c, "var v = 0; var s = [];", "coda");
+        for (i = 0; i < 12; i++) {
+            sprintf(codice,
+                    "s[%d] = new XMLHttpRequest();"
+                    "s[%d].onload = function () { v = v + 1; };"
+                    "s[%d].open('GET', '/ciao'); s[%d].send();", i, i, i, i);
+            gira(c, codice, "coda");
+        }
+        /* ! LA CODA PIENA SI DICE, e chi non ci sta fallisce SUBITO invece di
+         * aspettare una risposta che non arrivera' mai. */
+        ok("la coda piena si dice", exdom_rete_persa(D) == 1, "");
+        ok("e quante ne aspettano si sa",
+           exdom_rete_in_attesa(D) == 8, "");
+        pompa_rete(D);
+        ok("dopo la pompa non ne aspetta piu' nessuna",
+           exdom_rete_in_attesa(D) == 0, "");
+        prova_gia("e le otto che ci stavano sono arrivate", c, "v", "8");
     }
 
     printf("\n%d prove, %d sbagliate\n\n", fatte, sbagliate);

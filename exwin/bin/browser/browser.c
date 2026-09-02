@@ -6148,9 +6148,21 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
     case EXM_TEMPO:
         if (g_js) {
             exjs_pompa(g_js, uptime_ms());
+
+            /* ! UNA RICHIESTA PER GIRO, E NON TUTTE QUELLE CHE ASPETTANO.
+             * Mentre exdom_rete_pompa fa la sua, il browser e' fermo — il
+             * gancio della rete aspetta la risposta e non c'e' modo di tornare
+             * indietro a meta'. Facendone una per volta il ciclo dei messaggi
+             * respira in mezzo: si ridisegna e si risponde al mouse, e una
+             * pagina con cinque richieste non diventa cinque secondi di
+             * schermo morto. Farle tutte qui dentro sarebbe stato piu' corto e
+             * avrebbe riportato il blocco dov'era. */
+            exdom_rete_pompa(g_dom);
+
             rifai_se_cambiato();
             dopo_gli_script();
-            if (!exjs_lavori_in_attesa(g_js)) ex_sveglia(g_f, 0);
+            if (!exjs_lavori_in_attesa(g_js) && !exdom_rete_in_attesa(g_dom))
+                ex_sveglia(g_f, 0);
             /* Un `setTimeout` che cambia indirizzo e' il modo classico di
              * scrivere una redirezione: si guarda anche qui, non solo dopo
              * gli script della pagina. */

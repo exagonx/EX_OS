@@ -12,7 +12,7 @@ h2     { font-size: 17px; margin-top: 18px; }
 </head>
 <body>
 
-<h1>JavaScript, quattordici cose alla volta</h1>
+<h1>JavaScript, quindici cose alla volta</h1>
 
 <p>Ogni riquadro prova UNA cosa. Se un riquadro contiene ancora la scritta
 «non e' successo niente», quel pezzo del motore non ha funzionato.</p>
@@ -59,6 +59,9 @@ h2     { font-size: 17px; margin-top: 18px; }
 
 <h2>14. fetch</h2>
 <div id="quattordici" class="riq">non e' successo niente</div>
+
+<h2>15. l'asincrono: chi arriva prima</h2>
+<div id="quindici" class="riq">non e' successo niente</div>
 
 <script>
 /* 1 — innerHTML */
@@ -171,6 +174,22 @@ fetch(location.href).then(function (r) {
     document.getElementById('quattordici').textContent =
         'fetch ha detto di no: ' + e.message;
 });
+
+/* 15 — l'ordine, che e' la sola cosa che distingue l'asincrono dal sincrono:
+   il codice DOPO send() deve girare PRIMA del gestore. */
+var ordine = '';
+var xa = new XMLHttpRequest();
+xa.onload = function () {
+    ordine = ordine + 'B(risposta)';
+    document.getElementById('quindici').textContent =
+        'ordine: ' + ordine +
+        '   -> ' + (ordine.indexOf('A') < ordine.indexOf('B')
+                    ? 'giusto: send e' + "'" + ' tornata subito'
+                    : 'sbagliato: send ha aspettato');
+};
+xa.open('GET', location.href);
+xa.send();
+ordine = ordine + 'A(dopo send) ';
 
 console.log('lo script della pagina e' + "'" + ' arrivato in fondo');
 </script>

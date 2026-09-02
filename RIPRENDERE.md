@@ -1,5 +1,110 @@
 # DOVE RIPRENDERE — 2 settembre 2026
 
+## 2 settembre 2026 (notte fonda) — L'ASINCRONO VERO, E DOVE STA DAVVERO
+
+`XMLHttpRequest` c'era gia' e funzionava, ma con una nota in cima al file:
+«le richieste sono sincrone, tutte, anche quelle dichiarate asincrone». Adesso
+non piu' — e la parte interessante e' **quale** delle due cose che si chiamano
+«asincrono» si e' sistemata.
+
+### `send()` non va in rete: mette in coda e torna
+
+    xhr.onload = function () { ... };
+    xhr.send();
+    continua();              <- deve girare PRIMA di onload
+
+E' tutta la differenza vista da JavaScript, ed e' quella che le pagine
+guardano. Prima `send()` faceva la richiesta li' per li' e chiamava i gestori
+prima di tornare, quindi `continua()` girava per ultima: un ordine che nessuna
+pagina si aspetta.
+
+! **E' LA STESSA REGOLA DI TUTTO IL RESTO DEL PONTE.** Il tempo arriva da
+fuori, gli eventi arrivano da fuori, la rete arriva da fuori — e adesso anche
+il MOMENTO in cui la rete si usa arriva da fuori: `exdom_rete_pompa()`, che il
+browser chiama dal suo ciclo dei messaggi.
+
+! **UNA PER GIRO, E NON TUTTE QUELLE CHE ASPETTANO.** Farle tutte dentro la
+pompa sarebbe stato piu' corto e avrebbe riportato il blocco dov'era. Una per
+volta, il ciclo dei messaggi respira in mezzo: si ridisegna, si risponde al
+mouse, e una pagina con cinque richieste non diventa cinque secondi di schermo
+morto.
+
+! **`open(m, u, false)` RESTA SINCRONA DAVVERO**, e non e' pigrizia: e' quel
+che quella forma promette, e c'e' del codice che ci conta — legge una
+configurazione e va avanti. Sono due strade e si provano tutt'e due.
+
+### QUEL CHE RESTA FERMO, E VA DETTO CHIARO
+
+Mentre `exdom_rete_pompa()` fa **una** richiesta, il browser e' fermo: il
+gancio della rete aspetta la risposta e non c'e' modo di tornare indietro a
+meta'. Quindi:
+
+    prima:  la pagina non si disegna finche' TUTTE le richieste non sono finite
+    adesso: la pagina si disegna subito, e si riempie una risposta per volta;
+            fra una richiesta e l'altra il navigatore risponde di nuovo
+
+Non e' ancora «il navigatore resta vivo durante lo scaricamento». Il passo dopo
+e' un trasporto che sappia consegnare a pezzi, e **non e' in exdom**: e' in
+exhttp, e vuole due cose che oggi non ci sono — una lettura che distingua «non
+e' ancora arrivato niente» da «l'altro ha chiuso» (oggi `tcp_leggi` rende -1
+per tutt'e due) e un modo di rientrare nel ciclo dei messaggi senza bloccarsi
+(`ex_prendi_msg` dorme). Sta scritto qui perche' chi ci tornera' sappia da dove
+si comincia.
+
+### LE PROMESSE HANNO IMPARATO AD ASPETTARE
+
+Finche' la richiesta si faceva dentro `send()`, quando `then` veniva chiamato
+la risposta c'era gia' e bastava chiamare subito il gestore. Adesso `then`
+arriva su una promessa che non sa ancora niente: i gestori si mettono da parte
+e si chiamano quando la risposta arriva.
+
+! **I GESTORI IN ATTESA STANNO IN UN VETTORE A QUATERNE** — funzione, gestore
+dell'errore, promessa figlia, e il MODO — e non in quattro vettori paralleli
+ne' in un oggetto per ognuno. Quattro caselle contigue si leggono con una
+moltiplicazione, e in un motore senza raccoglitore di memoria ogni oggetto in
+piu' e' un oggetto che non torna indietro.
+
+! **IL MODO SERVE PERCHE' `finally` NON E' UN `then`**: chiama e basta, e il
+valore passa oltre com'era. Senza quel campo, un `finally` su una promessa
+ancora in sospeso avrebbe sostituito il valore con quel che il suo gestore
+rende — che di solito e' `undefined`.
+
+! **E `await` FUNZIONA MEGLIO DI PRIMA, con QuickJS.** `await x` vuole un
+oggetto con un `then` e lo chiama; adesso che il nostro sa aspettare, quella
+chiamata torna subito e la ripresa scatta quando la risposta arriva. Prima
+funzionava per caso, perche' la risposta c'era gia'.
+
+### La coda ha un tetto, e si dice
+
+Otto richieste insieme. La nona **fallisce subito** invece di aspettare per
+sempre: una pagina che aspetta un `onload` che non arrivera' mai non ha modo di
+accorgersene, mentre un `onerror` lo gestisce gia'. E `exdom_rete_persa()` e'
+la spia, come `exdom_perso()` per gli ascoltatori.
+
+### Come si e' provato
+
+    make prova-exdom    244 prove, 0 sbagliate   con ExJs sotto
+    make prova-exqjs    244 prove, 0 sbagliate   con QuickJS sotto
+
+! **IL BANCO HA DOVUTO IMPARARE A POMPARE**, e la forma nuova delle prove dice
+da sola che cosa e' cambiato: `prova_dopo()` esegue lo script, manda avanti la
+coda, e **solo allora** valuta l'espressione. Il valore che conta non c'e'
+ancora quando lo script finisce — ed e' esattamente quel che «asincrono» vuol
+dire.
+
+La prova che conta e' l'ordine, non il risultato:
+
+    var v = '';
+    x.onload = function () { v = v + 'B'; };
+    x.send();
+    v = v + 'A';
+                        asincrona -> "AB"      (e con la vecchia era "BA")
+                        sincrona  -> "BA"      (open(..., false), apposta)
+
+E dentro EX-OS, da CD, con la rete: `/exwin/doc/javascript.html` ha adesso
+**quindici** riquadri, e il quindicesimo scrive l'ordine che ha visto —
+`A(dopo send) B(risposta) -> giusto: send e' tornata subito`.
+
 ## 2 settembre 2026 (fine) — IL PULSANTE CHE MANDA, E DUE CHE NON DOVEVANO MANDARE
 
 Era l'ultima riga della coda: «il pulsante che manda un modulo non porta il suo

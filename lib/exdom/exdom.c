@@ -84,6 +84,19 @@ typedef struct {
     unsigned char attributo;
 } Ascolto;
 
+/* Una richiesta messa in coda da uno script e non ancora fatta.
+ * ! SI CONSERVANO ExJsVal E NON COPIE: un indirizzo puo' essere lungo quanto
+ * vuole, e una copia in un buffer di misura fissa sarebbe l'ennesimo tetto da
+ * scegliere. Il motore le stringhe le tiene gia'. */
+#define RETE_CODA_MAX  8
+
+typedef struct {
+    int     usato;
+    int     e_fetch;            /* 1 = fetch, 0 = XMLHttpRequest */
+    ExJsVal chi;                /* l'XHR, oppure la promessa da risolvere */
+    ExJsVal metodo, url, corpo;
+} InCorso;
+
 struct ExDom {
     ExJsCtx     *js;
     HtmlDoc     *doc;
@@ -106,6 +119,8 @@ struct ExDom {
     ExJsVal      proto_xhr;
     ExDomRete    rete;
     void        *rete_dato;
+    InCorso      coda[RETE_CODA_MAX];
+    int          rete_persa;        /* la coda era piena: e' una spia */
     char         url[EXDOM_URL_MAX];    /* dove siamo, detto da fuori   */
     char         vai[EXDOM_URL_MAX];    /* dove uno script vuole andare */
     char         biscotti[EXDOM_BISCOTTI_MAX];
@@ -145,6 +160,10 @@ static void t_chiudi(Testo *t)
 static int leggi_prop(ExJsCtx *c, void *dato, const char *nome, ExJsVal *fuori);
 static int scrivi_prop(ExJsCtx *c, void *dato, const char *nome, ExJsVal v);
 static ExJsVal stile_oggetto(ExDom *D, Legame *L);
+static int  coda_metti(ExDom *D, int e_fetch, ExJsVal chi,
+                       const char *metodo, ExJsVal url, ExJsVal corpo);
+static void xhr_fallita(ExDom *D, ExJsVal x);
+static void xhr_riuscita(ExDom *D, ExJsVal x, const ExDomRichiesta *r);
 static void metti_metodo(ExDom *D, ExJsVal dove, const char *nome, ExJsNativa f);
 static int  biscotto_pezzo(const char *s, char *fuori, unsigned int max);
 static void biscotto_aggiungi(ExDom *D, const char *nuovo);
@@ -2891,28 +2910,47 @@ static ExJsVal rete_testo(ExDom *D, const ExDomRichiesta *r)
  * ce le ha; QuickJS si'. Un `fetch` che rendesse una Promise vera sotto un
  * motore e un oggetto finto sotto l'altro sarebbe la cosa peggiore di tutte —
  * la stessa pagina, due comportamenti, nessun errore. Qui ce n'e' UNA sola,
- * scritta qui, e fa quel che serve: `then`, `catch`, `finally`, e si incatena.
+ * scritta qui, e fa quel che serve: `then`, `catch`, `finally`, si incatena, e
+ * SA RESTARE IN SOSPESO.
  *
- * ! SI RISOLVONO SUBITO, e in questo browser e' giusto. La richiesta e' gia'
- * finita quando `then` viene chiamato — le richieste sono sincrone, vedi sopra
- * — quindi non c'e' niente da aspettare. E gli script girano DOPO che il
- * documento e' stato analizzato per intero (e' anche il motivo per cui
- * `document.readyState` dice «complete»), quindi non c'e' nemmeno il pericolo
- * classico: far partire il seguito di una pagina mentre il <body> non c'e'
- * ancora.
+ * ! IL SOSPESO E' ARRIVATO CON L'ASINCRONO, e prima non c'era. Finche' una
+ * richiesta si faceva dentro `send()`, quando `then` veniva chiamato la
+ * risposta c'era gia' e bastava chiamare subito il gestore. Adesso la
+ * richiesta parte DOPO — dal ciclo dei messaggi — e `then` arriva su una
+ * promessa che non sa ancora niente: i gestori si mettono da parte e si
+ * chiamano quando la risposta arriva.
+ *
+ * ! I GESTORI IN ATTESA STANNO IN UN VETTORE A QUATERNE — funzione, gestore
+ * dell'errore, promessa figlia, e il MODO — non in quattro vettori paralleli
+ * ne' in un oggetto per ognuno. Quattro caselle contigue si leggono con una
+ * moltiplicazione, e in un motore senza raccoglitore di memoria ogni oggetto
+ * in piu' e' un oggetto che non torna indietro.
+ *
+ * ! IL MODO SERVE PERCHE' `finally` NON E' UN `then`: chiama e basta, e il
+ * valore passa oltre com'era. Senza quel campo, un `finally` su una promessa
+ * ancora in sospeso avrebbe sostituito il valore con quel che il suo gestore
+ * rende — che di solito e' `undefined`.
  *
  * ! E `await` FUNZIONA LO STESSO, con QuickJS. `await x` non vuole una
  * Promise: vuole un oggetto con un `then`, e chiama `then(risolvi, rifiuta)`.
- * Il nostro lo chiama subito, QuickJS accoda la ripresa come lavoro, e la
- * pompa dei tempi la esegue. Con ExJs `await` non esiste, ma li' non esiste
- * nemmeno la parola.
+ * Adesso che il nostro sa aspettare, quella chiamata torna subito e la ripresa
+ * scatta quando la risposta arriva — che e' esattamente quel che deve fare.
  * ========================================================================== */
 
 /* Il segno che un oggetto e' una delle nostre promesse: serve a `then` per
  * riconoscere che il gestore ne ha resa un'altra e non incartarla di nuovo. */
 #define SEGNO_PROMESSA  "__exos_promessa"
 
-static ExJsVal promessa_nuova(ExDom *D, ExJsVal valore, int ok)
+#define PROM_SOSPESA  0
+#define PROM_OK       1
+#define PROM_NO       2
+
+#define MODO_THEN     0
+#define MODO_FINALLY  1
+
+static void promessa_risolvi(ExDom *D, ExJsVal p, ExJsVal valore, int ok);
+
+static ExJsVal promessa_vuota(ExDom *D)
 {
     ExJsCtx *c = D->js;
     ExJsVal  p = exjs_oggetto(c);
@@ -2920,8 +2958,19 @@ static ExJsVal promessa_nuova(ExDom *D, ExJsVal valore, int ok)
     if (exjs_tipo(c, p) != EXJS_OGGETTO) return exjs_indefinito();
     exjs_proto_metti(c, p, D->proto_promessa);
     exjs_metti(c, p, SEGNO_PROMESSA, exjs_booleano(1));
-    exjs_metti(c, p, "__valore", valore);
-    exjs_metti(c, p, "__ok", exjs_booleano(ok != 0));
+    exjs_metti(c, p, "__stato",  exjs_numero(c, (double)PROM_SOSPESA));
+    exjs_metti(c, p, "__valore", exjs_indefinito());
+    return p;
+}
+
+static ExJsVal promessa_nuova(ExDom *D, ExJsVal valore, int ok)
+{
+    ExJsVal p = promessa_vuota(D);
+
+    if (exjs_tipo(D->js, p) != EXJS_OGGETTO) return p;
+    exjs_metti(D->js, p, "__stato",
+               exjs_numero(D->js, (double)(ok ? PROM_OK : PROM_NO)));
+    exjs_metti(D->js, p, "__valore", valore);
     return p;
 }
 
@@ -2929,6 +2978,11 @@ static int e_promessa(ExJsCtx *c, ExJsVal v)
 {
     if (exjs_tipo(c, v) != EXJS_OGGETTO) return 0;
     return exjs_a_booleano(c, exjs_prendi(c, v, SEGNO_PROMESSA));
+}
+
+static int promessa_stato(ExJsCtx *c, ExJsVal p)
+{
+    return (int)exjs_a_numero(c, exjs_prendi(c, p, "__stato"));
 }
 
 /* Un motivo di rifiuto che somigli a un errore: mezza pagina legge `.message`,
@@ -2943,34 +2997,146 @@ static ExJsVal motivo(ExDom *D, const char *testo)
     return e;
 }
 
+/* La figlia prende lo stato di `p`: subito se lo sa gia', altrimenti quando lo
+ * sapra'. E' il caso «il gestore ha reso un'altra promessa». */
+static void promessa_adotta(ExDom *D, ExJsVal figlia, ExJsVal p)
+{
+    ExJsCtx *c = D->js;
+    int      st = promessa_stato(c, p);
+
+    if (st != PROM_SOSPESA) {
+        promessa_risolvi(D, figlia, exjs_prendi(c, p, "__valore"),
+                         st == PROM_OK);
+        return;
+    }
+    {
+        ExJsVal coda = exjs_prendi(c, p, "__poi");
+        unsigned int n;
+
+        if (exjs_tipo(c, coda) != EXJS_OGGETTO) {
+            coda = exjs_vettore(c);
+            exjs_metti(c, p, "__poi", coda);
+        }
+        n = exjs_lunghezza(c, coda);
+        exjs_indice_metti(c, coda, n + 0, exjs_indefinito());
+        exjs_indice_metti(c, coda, n + 1, exjs_indefinito());
+        exjs_indice_metti(c, coda, n + 2, figlia);
+        exjs_indice_metti(c, coda, n + 3, exjs_numero(c, (double)MODO_THEN));
+    }
+}
+
+/* Fa scattare UNA quaterna. */
+static void quaterna_scatta(ExDom *D, ExJsVal f, ExJsVal g, ExJsVal figlia,
+                            int modo, ExJsVal valore, int ok)
+{
+    ExJsCtx *c = D->js;
+    ExJsVal  scelto = ok ? f : g;
+    ExJsVal  r;
+
+    if (exjs_tipo(c, figlia) != EXJS_OGGETTO) return;
+
+    /* ! `finally` CHIAMA E NON CAMBIA NIENTE: ne' il valore ne' lo stato. Chi
+     * lo scrive vuole chiudere una cosa — un'attesa, un contatore — e non
+     * entrare nella catena. */
+    if (modo == MODO_FINALLY) {
+        if (exjs_tipo(c, f) == EXJS_FUNZIONE)
+            exjs_invoca(c, f, exjs_indefinito(), 0, 0, 0);
+        promessa_risolvi(D, figlia, valore, ok);
+        return;
+    }
+
+    if (exjs_tipo(c, scelto) != EXJS_FUNZIONE) {
+        /* ! SENZA IL GESTORE IL VALORE PASSA OLTRE COM'E', ed e' cio' che fa
+         * arrivare un errore a `.catch` in fondo alla catena invece di
+         * fermarlo al primo `.then` che non lo guarda. */
+        promessa_risolvi(D, figlia, valore, ok);
+        return;
+    }
+
+    r = exjs_invoca(c, scelto, exjs_indefinito(), &valore, 1, 0);
+
+    /* ! SE IL GESTORE NE HA RESA UN'ALTRA SI ASPETTA QUELLA, e non la si
+     * incarta: e' cio' che fa funzionare
+     * `fetch(u).then(function (r) { return r.text(); }).then(...)` — il primo
+     * gestore rende una promessa, e il secondo `then` deve vedere il TESTO. */
+    if (e_promessa(c, r)) { promessa_adotta(D, figlia, r); return; }
+
+    /* Un gestore d'errore che rende un valore ha GESTITO l'errore: da li' in
+     * poi la catena e' a posto. */
+    promessa_risolvi(D, figlia, r, 1);
+}
+
+static void promessa_risolvi(ExDom *D, ExJsVal p, ExJsVal valore, int ok)
+{
+    ExJsCtx     *c = D->js;
+    ExJsVal      coda;
+    unsigned int n, i;
+
+    if (exjs_tipo(c, p) != EXJS_OGGETTO) return;
+    /* ! UNA PROMESSA SI RISOLVE UNA VOLTA SOLA. Il secondo tentativo si butta
+     * in silenzio, come nel linguaggio: chi risolve non deve sapere se
+     * qualcun altro l'ha gia' fatto. */
+    if (promessa_stato(c, p) != PROM_SOSPESA) return;
+
+    exjs_metti(c, p, "__stato",
+               exjs_numero(c, (double)(ok ? PROM_OK : PROM_NO)));
+    exjs_metti(c, p, "__valore", valore);
+
+    coda = exjs_prendi(c, p, "__poi");
+    if (exjs_tipo(c, coda) != EXJS_OGGETTO) return;
+    exjs_metti(c, p, "__poi", exjs_indefinito());
+
+    n = exjs_lunghezza(c, coda);
+    for (i = 0; i + 4 <= n; i += 4)
+        quaterna_scatta(D, exjs_indice_prendi(c, coda, i + 0),
+                           exjs_indice_prendi(c, coda, i + 1),
+                           exjs_indice_prendi(c, coda, i + 2),
+                           (int)exjs_a_numero(c, exjs_indice_prendi(c, coda, i + 3)),
+                           valore, ok);
+}
+
+static ExJsVal aggancia(ExDom *D, ExJsVal p, ExJsVal f, ExJsVal g, int modo)
+{
+    ExJsCtx *c = D->js;
+    ExJsVal  figlia = promessa_vuota(D);
+    int      st;
+
+    if (exjs_tipo(c, figlia) != EXJS_OGGETTO) return p;
+    st = promessa_stato(c, p);
+
+    if (st == PROM_SOSPESA) {
+        ExJsVal      coda = exjs_prendi(c, p, "__poi");
+        unsigned int n;
+
+        if (exjs_tipo(c, coda) != EXJS_OGGETTO) {
+            coda = exjs_vettore(c);
+            exjs_metti(c, p, "__poi", coda);
+        }
+        n = exjs_lunghezza(c, coda);
+        exjs_indice_metti(c, coda, n + 0, f);
+        exjs_indice_metti(c, coda, n + 1, g);
+        exjs_indice_metti(c, coda, n + 2, figlia);
+        exjs_indice_metti(c, coda, n + 3, exjs_numero(c, (double)modo));
+        return figlia;
+    }
+
+    /* ! GIA' RISOLTA: IL GESTORE SI CHIAMA SUBITO. Nel linguaggio vero
+     * andrebbe in coda ai microlavori, e quella differenza si vede solo in un
+     * codice che confronta l'ORDINE fra un `then` e la riga dopo. Accodarlo
+     * vorrebbe dire una coda che sa portare un argomento, che exjs_accoda non
+     * ha: sta scritto qui perche' il giorno che serva si sappia dov'e'. */
+    quaterna_scatta(D, f, g, figlia, modo, exjs_prendi(c, p, "__valore"),
+                    st == PROM_OK);
+    return figlia;
+}
+
 static ExJsVal m_pr_then(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
                          int n_arg, void *dato)
 {
-    ExDom  *D = (ExDom *)dato;
-    ExJsVal v = exjs_prendi(c, questo, "__valore");
-    int     ok = exjs_a_booleano(c, exjs_prendi(c, questo, "__ok"));
-    ExJsVal f = (n_arg >= 1) ? a[0] : exjs_indefinito();
-    ExJsVal g = (n_arg >= 2) ? a[1] : exjs_indefinito();
-    ExJsVal r;
-
-    if (ok) {
-        if (exjs_tipo(c, f) != EXJS_FUNZIONE) return questo;
-        r = exjs_invoca(c, f, exjs_indefinito(), &v, 1, 0);
-    } else {
-        /* Senza gestore dell'errore il rifiuto prosegue lungo la catena: e'
-         * cosi' che `.then(a).then(b).catch(c)` fa arrivare l'errore a `c`. */
-        if (exjs_tipo(c, g) != EXJS_FUNZIONE) return questo;
-        r = exjs_invoca(c, g, exjs_indefinito(), &v, 1, 0);
-        ok = 1;                     /* gestito: da qui in poi si e' a posto */
-    }
-
-    /* ! SE IL GESTORE NE HA RESA UN'ALTRA SI RENDE QUELLA, e non la si
-     * incarta. E' cio' che fa funzionare
-     * `fetch(u).then(function (r) { return r.text(); }).then(...)`: il primo
-     * gestore rende una promessa, e il secondo `then` deve vedere il TESTO,
-     * non una promessa dentro una promessa. */
-    if (e_promessa(c, r)) return r;
-    return promessa_nuova(D, r, ok);
+    (void)c;
+    return aggancia((ExDom *)dato, questo,
+                    (n_arg >= 1) ? a[0] : exjs_indefinito(),
+                    (n_arg >= 2) ? a[1] : exjs_indefinito(), MODO_THEN);
 }
 
 static ExJsVal m_pr_catch(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
@@ -2988,10 +3154,10 @@ static ExJsVal m_pr_catch(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
 static ExJsVal m_pr_finally(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
                             int n_arg, void *dato)
 {
-    (void)dato;
-    if (n_arg >= 1 && exjs_tipo(c, a[0]) == EXJS_FUNZIONE)
-        exjs_invoca(c, a[0], exjs_indefinito(), 0, 0, 0);
-    return questo;
+    (void)c;
+    return aggancia((ExDom *)dato, questo,
+                    (n_arg >= 1) ? a[0] : exjs_indefinito(),
+                    exjs_indefinito(), MODO_FINALLY);
 }
 
 /* =============================================================================
@@ -3097,14 +3263,24 @@ static ExJsVal m_fetch(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
         if (exjs_tipo(c, b) == EXJS_STRINGA) r.corpo  = exjs_a_stringa(c, b);
     }
 
-    /* ! LA RETE CHE NON RISPONDE E' UN RIFIUTO, un 404 NO. E' la regola di
-     * fetch, ed e' quella giusta: «il server ha detto di no» e «non sono
-     * riuscito a chiedere» sono due cose diverse, e una pagina le tratta in
-     * due posti diversi. */
-    if (!rete_chiedi(D, &r) || r.codice == 0)
-        return promessa_nuova(D, motivo(D, "la richiesta non e' partita"), 0);
+    /* ! fetch E' SEMPRE ASINCRONA, e non ha una forma sincrona da nessuna
+     * parte: si mette in coda e si rende una promessa ancora in sospeso. Il
+     * codice che viene dopo la chiamata gira PRIMA che la risposta arrivi, che
+     * e' l'unica cosa che `fetch` ha sempre promesso. */
+    {
+        ExJsVal p = promessa_vuota(D);
 
-    return promessa_nuova(D, risposta_nuova(D, &r, url), 1);
+        if (exjs_tipo(c, p) != EXJS_OGGETTO) return p;
+        if (coda_metti(D, 1, p, r.metodo, a[0],
+                       r.corpo ? exjs_stringa(c, r.corpo, -1)
+                               : exjs_indefinito()))
+            return p;
+
+        /* La coda piena si dice subito: una promessa che non si risolvera' mai
+         * e' peggio di una rifiutata. */
+        promessa_risolvi(D, p, motivo(D, "troppe richieste insieme"), 0);
+        return p;
+    }
 }
 
 /* =============================================================================
@@ -3168,9 +3344,12 @@ static ExJsVal m_xhr_open(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
     if (n_arg < 2) return exjs_indefinito();
     exjs_metti(c, questo, "__metodo", a[0]);
     exjs_metti(c, questo, "__url", a[1]);
-    /* ! IL TERZO ARGOMENTO SI LEGGE E NON SI USA, ed e' dichiarato in cima:
-     * qui la richiesta e' sincrona comunque. Rifiutarlo sarebbe peggio — la
-     * forma con `true` e' quella che si scrive sempre. */
+    /* ! IL TERZO ARGOMENTO ADESSO CONTA. Assente vuol dire ASINCRONA, come nel
+     * DOM, ed e' anche la forma che si scrive sempre; `false` chiede la
+     * risposta prima di tornare, e c'e' del codice che ci conta — legge un file
+     * di configurazione e va avanti. Sono due strade e si vedono tutt'e due. */
+    exjs_metti(c, questo, "__async",
+               exjs_booleano(n_arg < 3 || exjs_a_booleano(c, a[2])));
     exjs_metti(c, questo, "readyState", exjs_numero(c, 1.0));
     return exjs_indefinito();
 }
@@ -3187,6 +3366,45 @@ static ExJsVal m_xhr_header(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
     return exjs_indefinito();
 }
 
+/* ! QUEL CHE SUCCEDE QUANDO LA RISPOSTA ARRIVA STA IN DUE FUNZIONI SOLE, e
+ * non dentro `send`: le chiamano tutt'e due le strade — quella sincrona, che
+ * le usa subito, e quella asincrona, che le usa dal ciclo dei messaggi. Se
+ * fossero duplicate, il giorno che un campo si aggiunge lo si aggiungerebbe a
+ * una sola, e la differenza si vedrebbe solo su una delle due forme. */
+static void xhr_fallita(ExDom *D, ExJsVal x)
+{
+    ExJsCtx *c = D->js;
+
+    /* ! UNA RICHIESTA CHE NON PARTE LASCIA status A ZERO, ed e' quel che fa il
+     * DOM: e' cosi' che una pagina distingue «il server ha detto 404» da «non
+     * sono nemmeno riuscito a chiedere». */
+    exjs_metti(c, x, "readyState", exjs_numero(c, 4.0));
+    exjs_metti(c, x, "status", exjs_numero(c, 0.0));
+    xhr_manda(D, x, "readystatechange");
+    xhr_manda(D, x, "error");
+    xhr_manda(D, x, "loadend");
+}
+
+static void xhr_riuscita(ExDom *D, ExJsVal x, const ExDomRichiesta *r)
+{
+    ExJsCtx *c = D->js;
+    ExJsVal  t = rete_testo(D, r);
+
+    exjs_metti(c, x, "responseText", t);
+    exjs_metti(c, x, "response", t);
+    exjs_metti(c, x, "status", exjs_numero(c, (double)r->codice));
+    exjs_metti(c, x, "statusText",
+               stringa_c(c, r->codice == 200 ? "OK" : ""));
+    exjs_metti(c, x, "__tipo",
+               r->tipo ? stringa_c(c, r->tipo) : exjs_nullo());
+    exjs_metti(c, x, "responseURL", stringa_c(c, r->url));
+    exjs_metti(c, x, "readyState", exjs_numero(c, 4.0));
+
+    xhr_manda(D, x, "readystatechange");
+    xhr_manda(D, x, "load");
+    xhr_manda(D, x, "loadend");
+}
+
 static ExJsVal m_xhr_send(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
                           int n_arg, void *dato)
 {
@@ -3194,47 +3412,34 @@ static ExJsVal m_xhr_send(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
     ExDomRichiesta  r;
     ExJsVal         m = exjs_prendi(c, questo, "__metodo");
     ExJsVal         u = exjs_prendi(c, questo, "__url");
+    ExJsVal         corpo = (n_arg >= 1) ? a[0] : exjs_indefinito();
 
     if (exjs_tipo(c, u) != EXJS_STRINGA) {
         xhr_manda(D, questo, "error");
         return exjs_indefinito();
     }
 
-    r.metodo     = (exjs_tipo(c, m) == EXJS_STRINGA) ? exjs_a_stringa(c, m) : "GET";
-    r.url        = exjs_a_stringa(c, u);
-    r.corpo      = (n_arg >= 1 && exjs_tipo(c, a[0]) == EXJS_STRINGA)
-                   ? exjs_a_stringa(c, a[0]) : 0;
-    r.tipo_corpo = 0;
-
-    if (!rete_chiedi(D, &r) || r.codice == 0) {
-        /* ! UNA RICHIESTA CHE NON PARTE LASCIA status A ZERO, ed e' quel che
-         * fa il DOM: e' cosi' che una pagina distingue «il server ha detto
-         * 404» da «non sono nemmeno riuscito a chiedere». */
-        exjs_metti(c, questo, "readyState", exjs_numero(c, 4.0));
-        exjs_metti(c, questo, "status", exjs_numero(c, 0.0));
-        xhr_manda(D, questo, "readystatechange");
-        xhr_manda(D, questo, "error");
-        xhr_manda(D, questo, "loadend");
+    /* ! ASINCRONA VUOL DIRE: SI METTE IN CODA E SI TORNA SUBITO. Il codice che
+     * segue `send()` gira prima di `onload`, che e' quel che le pagine si
+     * aspettano — e che prima non succedeva. */
+    if (exjs_a_booleano(c, exjs_prendi(c, questo, "__async"))) {
+        if (coda_metti(D, 0, questo, exjs_a_stringa(c, m), u, corpo))
+            return exjs_indefinito();
+        /* ! LA CODA PIENA E' UN FALLIMENTO SUBITO, non un'attesa infinita: una
+         * pagina che aspetta un `onload` che non arrivera' mai non ha modo di
+         * accorgersene. */
+        xhr_fallita(D, questo);
         return exjs_indefinito();
     }
 
-    {
-        ExJsVal t = rete_testo(D, &r);
+    r.metodo     = (exjs_tipo(c, m) == EXJS_STRINGA) ? exjs_a_stringa(c, m) : "GET";
+    r.url        = exjs_a_stringa(c, u);
+    r.corpo      = (exjs_tipo(c, corpo) == EXJS_STRINGA)
+                   ? exjs_a_stringa(c, corpo) : 0;
+    r.tipo_corpo = 0;
 
-        exjs_metti(c, questo, "responseText", t);
-        exjs_metti(c, questo, "response", t);
-    }
-    exjs_metti(c, questo, "status", exjs_numero(c, (double)r.codice));
-    exjs_metti(c, questo, "statusText",
-               stringa_c(c, r.codice == 200 ? "OK" : ""));
-    exjs_metti(c, questo, "__tipo",
-               r.tipo ? stringa_c(c, r.tipo) : exjs_nullo());
-    exjs_metti(c, questo, "responseURL", stringa_c(c, r.url));
-    exjs_metti(c, questo, "readyState", exjs_numero(c, 4.0));
-
-    xhr_manda(D, questo, "readystatechange");
-    xhr_manda(D, questo, "load");
-    xhr_manda(D, questo, "loadend");
+    if (!rete_chiedi(D, &r) || r.codice == 0) { xhr_fallita(D, questo); }
+    else                                        xhr_riuscita(D, questo, &r);
     return exjs_indefinito();
 }
 
@@ -3339,6 +3544,116 @@ static ExJsVal m_xhr_nuovo(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
     return o;
 }
 
+
+/* =============================================================================
+ * LA CODA DELLE RICHIESTE — l'asincrono, e dove sta davvero
+ *
+ * ! `send()` NON VA IN RETE: METTE IN CODA E TORNA. E' tutta la differenza fra
+ * asincrono e sincrono vista da JavaScript, ed e' quella che le pagine
+ * guardano:
+ *
+ *     xhr.onload = function () { ... };
+ *     xhr.send();
+ *     continua();              <- deve girare PRIMA di onload
+ *
+ * Prima `send()` faceva la richiesta li' per li' e chiamava i gestori prima di
+ * tornare, quindi `continua()` girava per ultima. Adesso la richiesta la fa il
+ * BROWSER, dal suo ciclo dei messaggi, chiamando exdom_rete_pompa().
+ *
+ * ! E' LA STESSA REGOLA DI TUTTO IL RESTO DI QUESTO FILE: il tempo arriva da
+ * fuori, gli eventi arrivano da fuori, la rete arriva da fuori. Adesso anche
+ * il MOMENTO in cui la rete si usa arriva da fuori.
+ *
+ * ! QUEL CHE RESTA SINCRONO, E VA DETTO: mentre il browser fa UNA richiesta,
+ * il browser e' fermo — exhttp aspetta la risposta e non c'e' un modo di
+ * tornare indietro a meta'. Quindi la pagina non si blocca piu' PRIMA di
+ * disegnarsi, e fra una richiesta e l'altra il ciclo dei messaggi respira, ma
+ * dentro una singola richiesta no. Il passo dopo e' un exhttp che sappia
+ * consegnare a pezzi; non e' in questa libreria.
+ *
+ * ! `open(m, u, false)` RESTA SINCRONA DAVVERO, e non e' pigrizia: e' quel che
+ * quella forma promette, e c'e' del codice che ci conta — legge un file di
+ * configurazione e va avanti. Sono due strade e si vedono tutt'e due.
+ * ========================================================================== */
+/* Mette in coda. Rende 0 se non c'e' posto — e allora chi chiama fallisce
+ * subito, invece di far aspettare per sempre una risposta che non arrivera'. */
+static int coda_metti(ExDom *D, int e_fetch, ExJsVal chi,
+                      const char *metodo, ExJsVal url, ExJsVal corpo)
+{
+    ExJsCtx *c = D->js;
+    int      i;
+
+    for (i = 0; i < RETE_CODA_MAX; i++) if (!D->coda[i].usato) break;
+    if (i == RETE_CODA_MAX) { D->rete_persa = 1; return 0; }
+
+    D->coda[i].usato   = 1;
+    D->coda[i].e_fetch = e_fetch;
+    D->coda[i].chi     = chi;
+    /* ! SI CONSERVANO STRINGHE, non quel che e' arrivato. `exjs_a_stringa` su
+     * un numero rende il posto di servizio, che la chiamata dopo riscrive: fra
+     * il momento in cui si mette in coda e quello in cui si parte passa un
+     * giro intero del ciclo dei messaggi. */
+    D->coda[i].metodo = exjs_stringa(c, metodo ? metodo : "GET", -1);
+    D->coda[i].url    = (exjs_tipo(c, url) == EXJS_STRINGA)
+                        ? url : exjs_stringa(c, exjs_a_stringa(c, url), -1);
+    D->coda[i].corpo  = (exjs_tipo(c, corpo) == EXJS_STRINGA)
+                        ? corpo : exjs_indefinito();
+    return 1;
+}
+
+int exdom_rete_in_attesa(const ExDom *D)
+{
+    int i, n = 0;
+
+    if (!D) return 0;
+    for (i = 0; i < RETE_CODA_MAX; i++) if (D->coda[i].usato) n++;
+    return n;
+}
+
+int exdom_rete_persa(const ExDom *D) { return D ? D->rete_persa : 0; }
+
+int exdom_rete_pompa(ExDom *D)
+{
+    ExJsCtx       *c;
+    ExDomRichiesta r;
+    InCorso        lavoro;
+    int            i;
+
+    if (!D) return 0;
+    c = D->js;
+
+    for (i = 0; i < RETE_CODA_MAX; i++) if (D->coda[i].usato) break;
+    if (i == RETE_CODA_MAX) return 0;
+
+    /* ! LO SLOT SI LIBERA PRIMA DI PARTIRE, e la copia si porta via quel che
+     * serve: i gestori che scatteranno fra un istante possono fare un'altra
+     * richiesta, e troverebbero la coda con dentro quella appena finita. */
+    lavoro = D->coda[i];
+    D->coda[i].usato = 0;
+
+    r.metodo     = exjs_a_stringa(c, lavoro.metodo);
+    r.url        = exjs_a_stringa(c, lavoro.url);
+    r.corpo      = (exjs_tipo(c, lavoro.corpo) == EXJS_STRINGA)
+                   ? exjs_a_stringa(c, lavoro.corpo) : 0;
+    r.tipo_corpo = 0;
+
+    if (!rete_chiedi(D, &r) || r.codice == 0) {
+        if (lavoro.e_fetch)
+            promessa_risolvi(D, lavoro.chi,
+                             motivo(D, "la richiesta non e' partita"), 0);
+        else
+            xhr_fallita(D, lavoro.chi);
+        return 1;
+    }
+
+    if (lavoro.e_fetch)
+        promessa_risolvi(D, lavoro.chi,
+                         risposta_nuova(D, &r, exjs_a_stringa(c, lavoro.url)), 1);
+    else
+        xhr_riuscita(D, lavoro.chi, &r);
+    return 1;
+}
+
 void exdom_rete_metti(ExDom *D, ExDomRete f, void *dato)
 {
     if (!D) return;
@@ -3389,6 +3704,8 @@ ExDom *exdom_apri(void *memoria, unsigned int byte,
     D->biscotti[0] = '\0';
     D->rete        = 0;
     D->rete_dato   = 0;
+    D->rete_persa  = 0;
+    for (i = 0; i < RETE_CODA_MAX; i++) D->coda[i].usato = 0;
 
     for (i = 0; i < ascolti_max; i++) D->asc[i].usato = 0;
 

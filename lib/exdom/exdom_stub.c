@@ -11,7 +11,7 @@
  *
  * Lo stub di ExDom. Stessa forma di quello di exhtml e di quello di exjs.
  *
- * ! E' CORTO PERCHE' IL DOM NON PASSA DI QUI. Tredici ponti, e quasi tutti li usera' il
+ * ! E' CORTO PERCHE' IL DOM NON PASSA DI QUI. Sedici ponti, e quasi tutti li usera' il
  * browser una volta sola per pagina: aprire, chiedere il documento, far
  * partire un evento. Tutto il resto — document, gli elementi, gli attributi —
  * vive dentro il motore JavaScript, dove exdom_apri() lo ha appeso all'oggetto
@@ -55,6 +55,9 @@ static struct {
     void (*biscotti_metti)(ExDom *, const char *);
     const char *(*biscotti)(ExDom *);
     void (*rete_metti)(ExDom *, ExDomRete, void *);
+    int (*rete_in_attesa)(const ExDom *);
+    int (*rete_pompa)(ExDom *);
+    int (*rete_persa)(const ExDom *);
 } P;
 
 static void *chiedi(const ExLibTesta *t, const char *nome)
@@ -100,6 +103,9 @@ static void assicura(void)
     P.biscotti     = (const char *(*)(ExDom *))chiedi(t, "exdom_biscotti");
     P.rete_metti   = (void (*)(ExDom *, ExDomRete, void *))
                      chiedi(t, "exdom_rete_metti");
+    P.rete_in_attesa = (int (*)(const ExDom *))chiedi(t, "exdom_rete_in_attesa");
+    P.rete_pompa   = (int (*)(ExDom *))chiedi(t, "exdom_rete_pompa");
+    P.rete_persa   = (int (*)(const ExDom *))chiedi(t, "exdom_rete_persa");
 
     P.pronto = 1;
 }
@@ -147,3 +153,12 @@ const char *exdom_biscotti(ExDom *D)
 
 void exdom_rete_metti(ExDom *D, ExDomRete f, void *dato)
 { assicura(); P.rete_metti(D, f, dato); }
+
+int exdom_rete_in_attesa(const ExDom *D)
+{ assicura(); return P.rete_in_attesa(D); }
+
+int exdom_rete_pompa(ExDom *D)
+{ assicura(); return P.rete_pompa(D); }
+
+int exdom_rete_persa(const ExDom *D)
+{ assicura(); return P.rete_persa(D); }

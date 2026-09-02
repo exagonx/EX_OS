@@ -285,14 +285,23 @@ una pagina locale puo' andarsi a prendere un altro file.
 <code>json()</code> e <code>headers.get()</code>.
 </p>
 
+<p>
+<b>E sono asincrone davvero.</b> <code>send()</code> mette in coda e torna
+subito: il codice che sta <i>dopo</i> gira <i>prima</i> del gestore, come
+promette il DOM, e piu' richieste possono aspettare insieme. A mandarle avanti
+e' il ciclo dei messaggi del navigatore, una per giro. La forma
+<code>xhr.open(m, u, false)</code> resta sincera: la risposta c'e' quando
+<code>send()</code> ritorna, perche' e' quel che quella forma promette e c'e'
+del codice che ci conta.
+</p>
+
 <p class="nota">
-<b>Le richieste sono sincrone, anche quelle dichiarate asincrone.</b>
-<code>xhr.open(m, u, true)</code> si comporta come <code>false</code>: la
-risposta arriva prima che <code>send()</code> ritorni, e i gestori
-(<code>onload</code>, <code>onerror</code>) si chiamano subito dopo. Si vede in
-un caso solo &mdash; il codice che sta <i>dopo</i> <code>send()</code> gira
-dopo <code>onload</code> invece che prima &mdash; ed e' scritto qui perche' chi
-lo incontra lo riconosca.
+<b class="manca">Quel che resta fermo, e va detto:</b> mentre il navigatore fa
+<i>una</i> richiesta e' bloccato &mdash; aspetta la risposta e non c'e' modo di
+tornare indietro a meta'. Quindi una pagina non si blocca piu' <i>prima</i> di
+disegnarsi, e fra una richiesta e l'altra il navigatore risponde di nuovo, ma
+durante il singolo scaricamento no. Il passo dopo e' un trasporto che sappia
+consegnare a pezzi.
 </p>
 
 <p class="nota">
@@ -344,7 +353,7 @@ stessa interfaccia.
 </p>
 
 <p class="nota">
-<b>Il ponte col documento non cambia.</b> Le stesse duecentoventisei prove del
+<b>Il ponte col documento non cambia.</b> Le stesse duecentoquarantaquattro prove del
 ponte passano con l'uno e con l'altro, e questa pagina rende un documento identico
 byte per byte in tutt'e due i casi. E' il motivo per cui il linguaggio,
 l'albero e il ponte sono tre librerie separate invece di una.
@@ -357,8 +366,8 @@ navigatore apre ExJs e va avanti invece di fermarsi &mdash; ma lo scrive.
 </p>
 
 <p>
-La pagina <a href="javascript.html">JavaScript, quattordici cose alla volta</a>
-e' una prova che si guarda: se i quattordici riquadri si riempiono, il motore
+La pagina <a href="javascript.html">JavaScript, quindici cose alla volta</a>
+e' una prova che si guarda: se i quindici riquadri si riempiono, il motore
 funziona.
 </p>
 
@@ -475,7 +484,7 @@ aprono con questo stesso navigatore.
 <tr><td><a href="rete.html"><b>La rete</b></a></td>
     <td>schede, indirizzo, DHCP, DNS, i servizi in ascolto, il TLS 1.3</td></tr>
 <tr><td><a href="javascript.html"><b>JavaScript</b></a></td>
-    <td>quattordici riquadri che si riempiono da soli: una spiegazione e una prova
+    <td>quindici riquadri che si riempiono da soli: una spiegazione e una prova
         del motore insieme</td></tr>
 <tr><td><a href="sviluppo.html"><b>Scrivere programmi</b></a></td>
     <td>gcc dentro EX-OS, la libc, il formato dei programmi, le librerie

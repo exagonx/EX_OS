@@ -11,9 +11,9 @@
 <!-- Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>  GPL-2.0-or-later
 
      ! QUESTA PAGINA E' ANCHE UNA PROVA, ed e' la stessa che gira sul banco
-     dell'host: tools/prove/sito/script.html. Se qui i quattordici riquadri si
+     dell'host: tools/prove/sito/script.html. Se qui i quindici riquadri si
      riempiono, il motore JavaScript dentro EX-OS fa quello che fa il banco —
-     e se non si riempiono, si vede QUALE dei quattordici e' rimasto indietro. -->
+     e se non si riempiono, si vede QUALE dei quindici e' rimasto indietro. -->
 </head>
 <body>
 
@@ -22,7 +22,7 @@
 <a href="browser.html">Navigatore</a> &mdash; JavaScript
 </p>
 
-<h1>JavaScript, quattordici cose alla volta</h1>
+<h1>JavaScript, quindici cose alla volta</h1>
 
 <p>Ogni riquadro prova UNA cosa. Se un riquadro contiene ancora la scritta
 «non e' successo niente», quel pezzo del motore non ha funzionato.</p>
@@ -69,6 +69,9 @@
 
 <h2>14. fetch</h2>
 <div id="quattordici" class="riq">non e' successo niente</div>
+
+<h2>15. l'asincrono: chi arriva prima</h2>
+<div id="quindici" class="riq">non e' successo niente</div>
 
 <script>
 /* 1 — innerHTML */
@@ -182,6 +185,22 @@ fetch(location.href).then(function (r) {
         'fetch ha detto di no: ' + e.message;
 });
 
+/* 15 — l'ordine, che e' la sola cosa che distingue l'asincrono dal sincrono:
+   il codice DOPO send() deve girare PRIMA del gestore. */
+var ordine = '';
+var xa = new XMLHttpRequest();
+xa.onload = function () {
+    ordine = ordine + 'B(risposta)';
+    document.getElementById('quindici').textContent =
+        'ordine: ' + ordine +
+        '   -> ' + (ordine.indexOf('A') < ordine.indexOf('B')
+                    ? 'giusto: send e' + "'" + ' tornata subito'
+                    : 'sbagliato: send ha aspettato');
+};
+xa.open('GET', location.href);
+xa.send();
+ordine = ordine + 'A(dopo send) ';
+
 console.log('lo script della pagina e' + "'" + ' arrivato in fondo');
 </script>
 
@@ -193,7 +212,7 @@ console.log('lo script della pagina e' + "'" + ' arrivato in fondo');
 <p class="piede">
 EX-OS &mdash; Graziano Falcone, exagonx@hotmail.com &mdash; GNU GPL v2.
 Questa pagina e' la stessa del banco di prova
-(<code>tools/prove/sito/script.html</code>): se i quattordici riquadri si riempiono,
+(<code>tools/prove/sito/script.html</code>): se i quindici riquadri si riempiono,
 il motore fa dentro EX-OS quel che fa sull'host.
 </p>
 
