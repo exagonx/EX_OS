@@ -58,24 +58,50 @@ gancio dell'attesa — come quelle del corpo — e' stato scritto, provato, e
 **tolto**: con quel pezzo dentro, le pagine `https` smettono di aprirsi. Si
 resta fermi prima ancora del primo passo, senza un errore da nessuna parte.
 
-! **NON E' RESTATO UN MISTERO: IL POSTO DOVE GUARDARE E' NOTO.** Il ciclo dei
-messaggi, girando dentro l'attesa, interferisce con le risposte che lo stack IP
-manda a chi sta leggendo. Due sospetti concreti, e sono scritti nel codice:
+! **DUE CAUSE TROVATE E CORRETTE, E NESSUNA DELLE DUE BASTAVA.** Sono rimaste
+tutt'e due perche' sono giuste di suo — buttare un messaggio di qualcun altro e'
+sbagliato comunque — ma con tutt'e due dentro la stretta a pezzi si pianta lo
+stesso:
 
-1. `ex_msg_ora` svuotava la mailbox e **buttava via** tutto quel che non era
-   del server a finestre — comprese le risposte dello stack IP che stava per
-   leggere il navigatore stesso. Adesso le **rimette** (`ipc_rimetti`), e solo
-   nel ciclo che non dorme: in quello che dorme un messaggio rimesso si
-   ritroverebbe davanti all'infinito.
-2. `attendi()`, in exhttp.c, **butta** i messaggi che vengono dallo stack e non
-   sono del tipo atteso. E' giusto per una risposta vecchia alla propria
-   domanda; non lo e' piu' se qualcun altro, in mezzo, ha chiesto altro allo
-   stesso stack.
+1. **`ex_msg_ora` buttava via quel che non era suo.** Svuotava la mailbox e
+   scartava tutto cio' che non veniva dal server a finestre — comprese le
+   risposte dello stack IP che stava per leggere il navigatore stesso. Adesso
+   le **rimette**, e solo nel ciclo che non dorme: in quello che dorme un
+   messaggio rimesso si ritroverebbe davanti all'infinito.
+2. **`attendi()` buttava via i `IP_MSG_TCP_DATI`.** Il commento diceva «e' una
+   risposta vecchia alla nostra stessa domanda»: vero per uno STATO, un ESITO,
+   un'INFO — sono risposte che si possono richiedere — e **falso per i dati**.
+   Quei byte lo stack li ha gia' tolti dalla sua coda: buttarli vuol dire
+   perderli per sempre, e chi aspettava quella lettura aspetta all'infinito
+   senza un errore da nessuna parte. Adesso si rimettono, e quando lo scaffale
+   e' pieno si butta un evento del server a finestre al loro posto: un clic
+   perso e' un clic da rifare, un pezzo di pagina perso e' una pagina che non
+   si apre.
 
-La correzione (1) e' rimasta perche' e' giusta di suo. La (2) non e' stata
-fatta: **il guadagno non paga la caccia.** Spezzare quelle letture varrebbe
-qualche centinaio di millisecondi su tutta la connessione, e i sei passi le
-intervallano gia'.
+! **E UNO SBAGLIO MIO, CHE VALE PIU' DELLE DUE CORREZIONI.** Per far posto ai
+dati ho alzato lo scaffale da quattro a otto — e **il commento accanto diceva
+gia' perche' quattro**: tanti quanti se ne possono RIMETTERE, «e tenerne di piu'
+vorrebbe dire scoprire che sono persi solo al momento di restituirli». Con otto,
+quattro messaggi su otto sparivano in silenzio e il sistema smetteva persino di
+riconoscere la rete. Il numero e' tornato quattro, e la scelta di chi buttare
+si fa **dentro** quei quattro.
+
+> Un commento che spiega un numero e' una prova gia' pagata da qualcun altro.
+> Alzarlo senza rileggerlo e' rifare l'errore che quel commento raccontava.
+
+! **QUEL CHE RESTA DA CAPIRE, per chi ci tornera'.** La mailbox di un processo
+e' profonda **quattro**, e mentre la stretta legge ci sono **due consumatori**:
+exhttp che aspetta lo stack, e il ciclo dei messaggi che aspetta il server a
+finestre. Quattro posti in due non bastano, e nessuno dei due sa che l'altro
+c'e'. E' la stessa forma del difetto della tastiera del 2 settembre — «una
+cassetta postale piena non e' un driver morto» — e la cura non e' un'altra toppa
+in `attendi`: e' decidere chi possiede la mailbox mentre due attese si
+incrociano.
+
+**Il guadagno non paga la caccia**: spezzare quelle letture vale qualche
+centinaio di millisecondi su tutta la connessione, e i sei passi le intervallano
+gia'. `stretta_leggi` e' rimasta nel file, inutilizzata, perche' basta una riga
+per riprovare.
 
 > Misurare prima ha cambiato il lavoro da «spezzare la stretta» a «dire a che
 > punto e', e correggere un numero sbagliato scritto in tre posti». La prima

@@ -86,6 +86,12 @@ static int ip_pronto(void)
 static int attendi(unsigned int tipo, unsigned char *buf, unsigned int *len,
                    unsigned int ms)
 {
+    /* ! QUATTRO, E NON DI PIU', ANCHE ADESSO CHE CI FINISCONO ANCHE I DATI.
+     * Il numero non e' arbitrario: e' quanti se ne possono RIMETTERE, e
+     * tenerne di piu' vorrebbe dire scoprire che sono persi al momento di
+     * restituirli. Alzarlo a otto e' stato provato, e ha fatto smettere di
+     * funzionare persino il riconoscimento della rete — quattro messaggi su
+     * otto sparivano in silenzio. Il commento qui sopra lo diceva gia'. */
     static IpcMessage    p_meta[DA_PARTE_N];
     static unsigned char p_dati[DA_PARTE_N][IPC_MSG_MAX_DATA];
     static unsigned int  p_len[DA_PARTE_N];
@@ -102,20 +108,59 @@ static int attendi(unsigned int tipo, unsigned char *buf, unsigned int *len,
             break;
         }
 
-        /* ! CIO' CHE VIENE DALLO STACK MA NON E' IL TIPO ATTESO SI BUTTA, e
-         * non si rimette: e' una risposta vecchia alla nostra stessa domanda,
-         * e rimetterla vorrebbe dire ritrovarsela davanti alla prossima. Solo
-         * cio' che viene da ALTRI torna al suo posto. */
-        if ((int)meta.sender_pid == g_pid_ip) continue;
+        /* =====================================================================
+         * ! CIO' CHE VIENE DALLO STACK MA NON E' IL TIPO ATTESO SI BUTTA — MA
+         * NON I DATI. Qui c'era scritto «e' una risposta vecchia alla nostra
+         * stessa domanda, e rimetterla vorrebbe dire ritrovarsela davanti alla
+         * prossima»: vero per uno STATO, per un ESITO, per un'INFO — sono
+         * risposte che si possono richiedere — e falso per IP_MSG_TCP_DATI.
+         *
+         * ! UN TCP_DATI BUTTATO E' PERSO PER SEMPRE. Lo stack quei byte li ha
+         * gia' tolti dalla sua coda per consegnarceli: nessuno li rimandera'
+         * piu'. Chi aspettava quella lettura aspetta all'infinito, e non c'e'
+         * un errore da nessuna parte.
+         *
+         * ! E DIVENTA POSSIBILE APPENA SI FANNO DUE DOMANDE DIVERSE. Finche'
+         * exhttp chiedeva una cosa per volta — manda, aspetta, leggi — non
+         * poteva succedere. Da quando c'e' `tcp_quanti`, che chiede
+         * IP_MSG_TCP_STATO mentre una lettura puo' avere una prenotazione
+         * ancora in volo, la risposta di ieri e la domanda di oggi si
+         * incrociano: e' cosi' che le pagine https hanno smesso di aprirsi
+         * quando la stretta di mano ha provato a leggere a pezzi.
+         *
+         * ! SI RIMETTE NEL MUCCHIO DI CHI TORNA AL SUO POSTO, non subito: qui
+         * dentro non lo si rilegge, e alla prossima lettura lo trovera' chi lo
+         * stava aspettando. La distinzione la fa il TIPO, ed e' l'unica che si
+         * puo' fare: il protocollo non numera le domande.
+         * ================================================================= */
+        if ((int)meta.sender_pid == g_pid_ip && meta.tipo != IP_MSG_TCP_DATI)
+            continue;
 
-        if (n_parte < DA_PARTE_N) {
+        {
             unsigned int q = meta.len;
+            int          dove = -1;
 
             if (q > IPC_MSG_MAX_DATA) q = IPC_MSG_MAX_DATA;
-            p_meta[n_parte] = meta;
-            if (q) memcpy(p_dati[n_parte], buf, q);
-            p_len[n_parte] = q;
-            n_parte++;
+
+            if (n_parte < DA_PARTE_N) {
+                dove = n_parte++;
+            } else if ((int)meta.sender_pid == g_pid_ip) {
+                /* ! LO SCAFFALE E' PIENO E QUESTO E' UN TCP_DATI: si butta un
+                 * evento del server a finestre, non i byte. Un clic perso e'
+                 * un clic da rifare; un pezzo di pagina perso e' una pagina
+                 * che non si apre e non dice perche'. La scelta e' fra due
+                 * perdite, e questa e' la piu' piccola. */
+                int k;
+
+                for (k = 0; k < DA_PARTE_N; k++)
+                    if ((int)p_meta[k].sender_pid != g_pid_ip) { dove = k; break; }
+            }
+
+            if (dove >= 0) {
+                p_meta[dove] = meta;
+                if (q) memcpy(p_dati[dove], buf, q);
+                p_len[dove] = q;
+            }
         }
     }
 
@@ -161,6 +206,12 @@ static int esito(unsigned int ms)
  * ============================================================================= */
 static void svuota_stack(void)
 {
+    /* ! QUATTRO, E NON DI PIU', ANCHE ADESSO CHE CI FINISCONO ANCHE I DATI.
+     * Il numero non e' arbitrario: e' quanti se ne possono RIMETTERE, e
+     * tenerne di piu' vorrebbe dire scoprire che sono persi al momento di
+     * restituirli. Alzarlo a otto e' stato provato, e ha fatto smettere di
+     * funzionare persino il riconoscimento della rete — quattro messaggi su
+     * otto sparivano in silenzio. Il commento qui sopra lo diceva gia'. */
     static IpcMessage    p_meta[DA_PARTE_N];
     static unsigned char p_dati[DA_PARTE_N][IPC_MSG_MAX_DATA];
     static unsigned int  p_len[DA_PARTE_N];
@@ -180,14 +231,31 @@ static void svuota_stack(void)
         /* Anche qui: cio' che non e' dello stack non e' roba da buttare. */
         if ((int)meta.sender_pid == g_pid_ip) continue;
 
-        if (n_parte < DA_PARTE_N) {
+        {
             unsigned int q = meta.len;
+            int          dove = -1;
 
             if (q > IPC_MSG_MAX_DATA) q = IPC_MSG_MAX_DATA;
-            p_meta[n_parte] = meta;
-            if (q) memcpy(p_dati[n_parte], buf, q);
-            p_len[n_parte] = q;
-            n_parte++;
+
+            if (n_parte < DA_PARTE_N) {
+                dove = n_parte++;
+            } else if ((int)meta.sender_pid == g_pid_ip) {
+                /* ! LO SCAFFALE E' PIENO E QUESTO E' UN TCP_DATI: si butta un
+                 * evento del server a finestre, non i byte. Un clic perso e'
+                 * un clic da rifare; un pezzo di pagina perso e' una pagina
+                 * che non si apre e non dice perche'. La scelta e' fra due
+                 * perdite, e questa e' la piu' piccola. */
+                int k;
+
+                for (k = 0; k < DA_PARTE_N; k++)
+                    if ((int)p_meta[k].sender_pid != g_pid_ip) { dove = k; break; }
+            }
+
+            if (dove >= 0) {
+                p_meta[dove] = meta;
+                if (q) memcpy(p_dati[dove], buf, q);
+                p_len[dove] = q;
+            }
         }
     }
 
@@ -563,6 +631,20 @@ static void tls_chiudi(void *stato)
     s->tcp.chiudi(s->tcp.stato);
 }
 
+static int leggi_a_pezzi(ExHttpTrasporto *t, unsigned char *dst,
+                         unsigned int max, unsigned int ms, int *annullata);
+
+/* ! LA LETTURA DELLA STRETTA: la stessa del resto, col gancio dell'attesa in
+ * mezzo. Non si passa direttamente `leggi_a_pezzi` perche' la stretta legge da
+ * ExTlsSotto, che ha la sua firma — ed e' giusto che l'abbia: extls non deve
+ * sapere che esiste exhttp. */
+static int stretta_leggi(void *stato, unsigned char *dst, unsigned int max,
+                         unsigned int ms)
+{
+    (void)stato;
+    return leggi_a_pezzi(&g_stato_tls.tcp, dst, max, ms, 0);
+}
+
 /* =============================================================================
  * A CHE PUNTO E' LA STRETTA — il ponte fra extls e chi ospita
  *
@@ -628,26 +710,36 @@ static int exhttp_tls(ExHttpTrasporto *t, const char *host, unsigned int porta)
     }
 
     g_stato_tls.sotto.stato  = g_stato_tls.tcp.stato;
-    /* ! LA STRETTA LEGGE COME HA SEMPRE LETTO, E NON A PEZZI — ed e' una
-     * decisione presa sui numeri, non per prudenza. Misurata dentro EX-OS,
-     * verso google.com:
+    /* =====================================================================
+     * ! LA STRETTA LEGGE COME HA SEMPRE LETTO, E NON A PEZZI. Non per scelta
+     * di comodo: e' stato scritto, provato tre volte e tolto tre volte —
+     * `stretta_leggi`, qui sopra, e' rimasta apposta perche' basta questa riga
+     * per riprovare.
      *
-     *     magazzino delle CA    60 ms
-     *     DNS piu' connessione 320 ms
-     *     stretta di mano      490 ms   (di cui ~150 il ServerHello,
-     *                                    ~150 la firma, ~140 il finale)
+     * ! COL GANCIO DELL'ATTESA DENTRO LE LETTURE DELLA STRETTA, LE PAGINE
+     * https SMETTONO DI APRIRSI. Ci si ferma dentro la stretta — la seriale
+     * mostra i due prelievi di entropia, quindi il ClientHello e' partito — e
+     * non si torna piu'. Due cause sono state trovate e corrette lungo la
+     * strada, e nessuna delle due bastava:
      *
-     * Meno di mezzo secondo in tutto, e diviso in sei pezzi che il gancio dei
-     * PASSI gia' intervalla. Spezzare anche le letture varrebbe qualche
-     * centinaio di millisecondi in tutta la connessione — e provandolo le
-     * pagine https hanno smesso di aprirsi: il ciclo dei messaggi, girando
-     * dentro l'attesa, interferisce con le risposte che lo stack IP manda a
-     * chi sta leggendo. Il guasto e' vero e sta li'; il guadagno non paga la
-     * caccia.
+     *   - exwin, pompando i messaggi, BUTTAVA quel che non era suo, comprese
+     *     le risposte dello stack IP (adesso le rimette: vedi ex_msg_ora);
+     *   - `attendi` qui sotto BUTTAVA i IP_MSG_TCP_DATI arrivati mentre
+     *     aspettava un'altra risposta (adesso li rimette).
      *
-     * ! E LA NOTA CHE DICEVA «VENTI SECONDI» ERA VECCHIA. E' quella che ha
-     * fatto sembrare la stretta il problema principale: i numeri qui sopra
-     * dicono un'altra cosa, e adesso sono scritti. */
+     * ! E IL GUADAGNO E' PICCOLO, MISURATO: la stretta e' 490 ms in tutto —
+     * magazzino delle CA 60, DNS e connessione 320 — non i «venti secondi» che
+     * stavano scritti in tre posti. I sei PASSI la intervallano gia', e da li'
+     * la finestra respira e Esc arriva. Fra qualche centinaio di millisecondi
+     * e una caccia in fondo al meccanismo dei messaggi, si e' scelto di
+     * scrivere dove si era arrivati.
+     *
+     * ! CHI CI TORNERA' cominci di qui: la mailbox di un processo e' profonda
+     * QUATTRO, e mentre la stretta legge ci sono DUE consumatori — exhttp che
+     * aspetta lo stack e il ciclo dei messaggi che aspetta il server a
+     * finestre. Quattro posti in due non bastano, e nessuno dei due sa che
+     * l'altro c'e'.
+     * ================================================================== */
     g_stato_tls.sotto.leggi  = g_stato_tls.tcp.leggi;
     g_stato_tls.sotto.scrivi = g_stato_tls.tcp.scrivi;
 

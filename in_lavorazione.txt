@@ -207,14 +207,26 @@ DA FARE, IN ORDINE DI QUANTO PESA SU UNA PAGINA VERA
       corretti). Percio' NON si spezzano le sue letture: fra un passo e l'altro
       c'e' gia' il gancio dei passi (extls_passo_metti / exhttp_passo), che
       scrive a che punto e' e lascia respirare la finestra.
-    ! E SPEZZARLE E' STATO PROVATO E TOLTO: con le letture della stretta a
-      pezzi le pagine https smettono di aprirsi. Il ciclo dei messaggi, girando
-      dentro l'attesa, interferisce con le risposte che lo stack IP manda a chi
-      sta leggendo — exwin adesso rimette in mailbox quel che non e' suo, e non
-      basta. Il guasto e' vero e sta li'; il guadagno (qualche centinaio di
-      millisecondi su tutta la connessione) non paga la caccia. Chi ci tornera'
-      cominci da attendi() in exhttp.c, che BUTTA i messaggi dello stack di
-      tipo diverso da quello atteso.
+    ! E SPEZZARLE E' STATO PROVATO TRE VOLTE E TOLTO TRE VOLTE: con le letture
+      della stretta a pezzi le pagine https smettono di aprirsi. Due cause
+      trovate e corrette (restano, sono giuste di suo), e nessuna bastava:
+        - ex_msg_ora BUTTAVA quel che non era suo, comprese le risposte dello
+          stack IP; adesso le rimette (solo nel ciclo che non dorme).
+        - attendi() BUTTAVA i IP_MSG_TCP_DATI: quei byte lo stack li ha gia'
+          tolti dalla coda, buttarli e' perderli per sempre. Adesso si
+          rimettono, e a scaffale pieno si butta un evento del server a
+          finestre al loro posto.
+      ! E UNO SBAGLIO MIO: per far posto ai dati ho alzato lo scaffale da 4 a 8,
+        e il commento accanto diceva GIA' perche' 4 — tanti quanti se ne possono
+        rimettere. Con 8, quattro su otto sparivano e il sistema non riconosceva
+        piu' la rete. Tornato a 4.
+      ! QUEL CHE RESTA: la mailbox e' profonda QUATTRO e mentre la stretta legge
+        ci sono DUE consumatori (exhttp e il ciclo dei messaggi) che non sanno
+        l'uno dell'altro. Stessa forma del difetto della tastiera. La cura non
+        e' un'altra toppa in attendi: e' decidere chi possiede la mailbox
+        mentre due attese si incrociano.
+      `stretta_leggi` e' rimasta nel file, inutilizzata: basta una riga per
+      riprovare.
     ! DENTRO UN SINGOLO PASSO NON SI RESPIRA: un x25519 o una verifica di firma
       sono un blocco solo, e li' non si legge — si calcola. Spezzarli vorrebbe
       dire un gancio dentro excurva e exbig.
