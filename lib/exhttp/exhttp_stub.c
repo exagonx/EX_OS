@@ -47,6 +47,7 @@ static struct {
                    unsigned int, ExHttpEsito *, HttpRisposta *);
     int (*url)(const char *, HttpUrl *);
     void (*biscotti)(ExHttpBiscottiChiedi, ExHttpBiscottoArrivato, void *);
+    void (*attesa)(ExHttpAttesa, void *);
     int (*posta)(const char *, const char *, unsigned char *, unsigned int,
                  ExHttpEsito *);
 } P;
@@ -84,6 +85,7 @@ static void assicura(void)
                          unsigned int, ExHttpEsito *))chiedi(t, "exhttp_posta");
     P.biscotti = (void (*)(ExHttpBiscottiChiedi, ExHttpBiscottoArrivato, void *))
                  chiedi(t, "exhttp_biscotti");
+    P.attesa   = (void (*)(ExHttpAttesa, void *))chiedi(t, "exhttp_attesa");
 
     P.pronto = 1;
 }
@@ -95,6 +97,9 @@ int exhttp_prendi(const char *url, unsigned char *buf, unsigned int max,
 void exhttp_biscotti(ExHttpBiscottiChiedi chiedi,
                      ExHttpBiscottoArrivato arrivato, void *dato)
 { assicura(); P.biscotti(chiedi, arrivato, dato); }
+
+void exhttp_attesa(ExHttpAttesa f, void *dato)
+{ assicura(); P.attesa(f, dato); }
 
 int exhttp_posta(const char *url, const char *corpo, unsigned char *buf,
                  unsigned int max, ExHttpEsito *e)

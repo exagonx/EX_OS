@@ -48,6 +48,21 @@ typedef struct {
                  unsigned int ms);
     int (*scrivi)(void *stato, const unsigned char *src, unsigned int n);
     void (*chiudi)(void *stato);
+
+    /* ! QUANTI BYTE SI POSSONO LEGGERE ADESSO, senza aspettare: >0 se ce n'e',
+     * 0 se non e' ancora arrivato niente, <0 se e' finita.
+     *
+     * ! E' L'UNICO MODO DI SAPERE «NON C'E' ANCORA NIENTE» SENZA CONFONDERLO
+     * CON «L'ALTRO HA CHIUSO». `leggi` rende -1 sia per un timeout sia per un
+     * errore, e 0 solo alla chiusura: finche' si aspettava e basta non
+     * importava, ma chi legge dentro un ciclo di messaggi deve poter andarsene
+     * a fare altro, e per farlo deve sapere che non c'e' niente da aspettare
+     * ADESSO.
+     *
+     * ! PUO' ESSERE 0 (il puntatore), e allora si legge come si e' sempre
+     * letto: un trasporto che non sa rispondere non deve smettere di
+     * funzionare. */
+    int (*quanti)(void *stato);
 } ExHttpTrasporto;
 
 /* Apre un trasporto TCP verso host:porta. Rende 1 se ci e' riuscito.
@@ -128,6 +143,36 @@ typedef void (*ExHttpBiscottoArrivato)(void *dato, const char *host,
 
 void exhttp_biscotti(ExHttpBiscottiChiedi chiedi,
                      ExHttpBiscottoArrivato arrivato, void *dato);
+
+/* =============================================================================
+ * L'ATTESA — leggere a pezzi senza smettere di essere vivi
+ *
+ * ! IL PROBLEMA NON E' LEGGERE A PEZZI: TCP CONSEGNA GIA' A PEZZI. Il problema
+ * e' che fra un pezzo e l'altro si DORME dentro la lettura, e mentre si dorme
+ * il programma non risponde piu' a niente. Su una pagina da un megabyte sono
+ * decine di secondi di finestra morta.
+ *
+ * ! LA CURA E' CHIEDERE PRIMA E ADDORMENTARSI POI. Il trasporto sa dire quanti
+ * byte ci sono ADESSO; se sono zero exhttp chiama questo gancio, chi ospita fa
+ * il suo giro — ridisegna, risponde al mouse — e si riprova. Si dorme solo
+ * quando c'e' qualcosa da leggere, cioe' per un istante.
+ *
+ * ! IL GANCIO PUO' DIRE DI SMETTERE: rendendo 0 annulla la richiesta. E' il
+ * tasto Esc di chi si e' stufato di aspettare, e senza questo giro non si
+ * poteva nemmeno offrire.
+ *
+ * ! E CHI LO REGISTRA DEVE SAPERE CHE RIENTRA IN CASA PROPRIA. Se dentro il
+ * gancio si smistano i messaggi, l'applicazione puo' ritrovarsi a far partire
+ * un'altra richiesta mentre questa e' a meta': chi ospita deve impedirselo con
+ * una bandiera. Non e' un dettaglio da scoprire dopo.
+ *
+ * ! SENZA REGISTRARE NIENTE NON CAMBIA NIENTE: si legge come si e' sempre
+ * letto. Un programma senza ciclo di messaggi non deve accorgersi che questo
+ * meccanismo esiste.
+ * ========================================================================== */
+typedef int (*ExHttpAttesa)(void *dato);   /* 0 = annulla la richiesta */
+
+void exhttp_attesa(ExHttpAttesa f, void *dato);
 
 /* Come sopra ma su un trasporto gia' aperto, e senza seguire le redirezioni:
  * e' il mattone con cui exhttp_prendi e' fatta, ed e' quello che servira' al

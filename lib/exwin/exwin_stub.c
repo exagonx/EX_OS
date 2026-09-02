@@ -72,6 +72,7 @@ static struct {
     void        (*testo_metti)(ExFinestra, const char *);
     const char *(*testo_prendi)(ExFinestra);
     int         (*prendi_msg)(ExMsg *);
+    int         (*msg_ora)(ExMsg *);
     void        (*smista)(const ExMsg *);
     void        (*esci)(int);
     long        (*procedura_base)(ExFinestra, unsigned int, unsigned int, long);
@@ -164,6 +165,7 @@ static void assicura(void)
     P.testo_metti    = (void (*)(ExFinestra, const char *))chiedi(t, "ex_testo_metti");
     P.testo_prendi   = (const char *(*)(ExFinestra))       chiedi(t, "ex_testo_prendi");
     P.prendi_msg     = (int (*)(ExMsg *))                  chiedi(t, "ex_prendi_msg");
+    P.msg_ora        = (int (*)(ExMsg *))                  chiedi(t, "ex_msg_ora");
     P.smista         = (void (*)(const ExMsg *))           chiedi(t, "ex_smista");
     P.esci           = (void (*)(int))                     chiedi(t, "ex_esci");
     P.procedura_base = (long (*)(ExFinestra, unsigned int, unsigned int, long))
@@ -276,6 +278,7 @@ void ex_testo_metti(ExFinestra f, const char *s) { assicura(); P.testo_metti(f, 
 const char *ex_testo_prendi(ExFinestra f)        { assicura(); return P.testo_prendi(f); }
 
 int  ex_prendi_msg(ExMsg *m)        { assicura(); return P.prendi_msg(m); }
+int  ex_msg_ora(ExMsg *m)           { assicura(); return P.msg_ora(m); }
 void ex_smista(const ExMsg *m)      { assicura(); P.smista(m); }
 void ex_esci(int codice)            { assicura(); P.esci(codice); }
 

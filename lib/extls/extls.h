@@ -181,6 +181,18 @@ int  extls_leggi(void *t, unsigned char *dst, unsigned int max,
                  unsigned int ms);
 int  extls_scrivi(void *t, const unsigned char *src, unsigned int n);
 
+/* ! QUANTI BYTE IN CHIARO SONO GIA' PRONTI, e non ancora letti. Rende 0 se non
+ * ce n'e' — e allora una lettura andrebbe ad aspettare — e -1 se la
+ * connessione e' finita.
+ *
+ * ! SERVE A CHI ASPETTA PER CONTO D'ALTRI. `extls_leggi` di suo non sa dire
+ * «non c'e' ancora niente» senza bloccarsi, e chi legge dentro un ciclo di
+ * messaggi ha bisogno di saperlo PRIMA: e' l'unico modo di andarsene a fare
+ * altro invece di dormire. Senza questa, un record gia' decifrato e non ancora
+ * consegnato resterebbe li' mentre chi lo aspetta guarda il trasporto sotto e
+ * non ci trova niente. */
+int  extls_pronto(void *t);
+
 /* Manda close_notify. Il trasporto sotto lo chiude chi l'ha aperto. */
 void extls_chiudi(void *t);
 

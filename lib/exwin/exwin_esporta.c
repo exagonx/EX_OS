@@ -52,6 +52,7 @@ static const char *const g_nomi[] = {
 
     /* il ciclo dei messaggi */
     "ex_prendi_msg",
+    "ex_msg_ora",
     "ex_smista",
     "ex_esci",
     "ex_procedura_base",
@@ -128,6 +129,7 @@ static void *const g_indirizzi[] = {
     (void *)ex_testo_prendi,
 
     (void *)ex_prendi_msg,
+    (void *)ex_msg_ora,
     (void *)ex_smista,
     (void *)ex_esci,
     (void *)ex_procedura_base,

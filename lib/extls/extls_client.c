@@ -1040,6 +1040,17 @@ int extls_leggi(void *opaco, unsigned char *dst, unsigned int max,
     return (int)q;
 }
 
+int extls_pronto(void *opaco)
+{
+    Tls *t = (Tls *)opaco;
+
+    if (!t) return -1;
+    if (t->chiuso) return -1;
+    /* Solo il chiaro gia' decifrato: quel che sta ancora nel trasporto sotto
+     * lo sa il trasporto sotto, e chi chiama lo chiede a lui. */
+    return (t->pos < t->fine) ? (int)(t->fine - t->pos) : 0;
+}
+
 int extls_scrivi(void *opaco, const unsigned char *src, unsigned int n)
 {
     Tls *t = (Tls *)opaco;

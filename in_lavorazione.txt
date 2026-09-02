@@ -182,13 +182,27 @@ DA FARE, IN ORDINE DI QUANTO PESA SU UNA PAGINA VERA
       arriva da fuori. `open(m, u, false)` resta sincera davvero.
       Le promesse hanno imparato ad aspettare: i gestori messi su una promessa
       ancora in sospeso si mettono da parte e scattano quando arriva.
-    ! QUEL CHE RESTA FERMO: mentre si fa UNA richiesta il browser e' bloccato.
-      La pagina non si blocca piu' prima di disegnarsi, e fra una richiesta e
-      l'altra il navigatore risponde, ma durante il singolo scaricamento no.
-      Il passo dopo NON e' in exdom: e' in exhttp, e vuole (a) una lettura che
-      distingua «non e' ancora arrivato niente» da «l'altro ha chiuso» —
-      tcp_leggi oggi rende -1 per tutt'e due — e (b) un modo di rientrare nel
-      ciclo dei messaggi senza bloccarsi, che ex_prendi_msg non ha.
+    ! FATTO — LA LETTURA A PEZZI, e con lei la finestra che resta viva mentre
+      scarica. TCP consegnava gia' a pezzi: quel che mancava era un modo di
+      fare altro mentre non c'era ancora niente.
+      (a) «c'e' qualcosa adesso?» si chiede allo stack con IP_MSG_TCP_STATO
+          (in_coda_rx), non provando a leggere con un timeout corto: quello non
+          si distingue da un errore e lascia una prenotazione pendente.
+          ! E PRIMA I BYTE, POI LO STATO: una connessione chiusa con byte
+            ancora in coda non e' finita, e con l'ordine rovesciato sparirebbe
+            l'ultimo pezzo delle risposte senza Content-Length.
+          ! E IL TLS HA UN SECONDO NASCONDIGLIO: un record gia' decifrato sta
+            dentro extls, non nel TCP. Da qui extls_pronto().
+      (b) exwin ha imparato ex_msg_ora(): come ex_prendi_msg ma non dorme. Le
+          due funzioni condividono il corpo — cambia una riga.
+      Il gancio e' exhttp_attesa(); rendendo 0 ANNULLA, ed e' cosi' che Esc
+      ferma uno scaricamento. Quel che era arrivato non si tiene: una pagina
+      tagliata mostrata come intera e' peggio di una pagina che non c'e'.
+      ! IL GANCIO RIENTRA IN CASA PROPRIA: chi lo registra deve impedire da se'
+        che i messaggi facciano ripartire la rete (nel browser, `g_in_rete`).
+    ! QUEL CHE RESTA FERMO, ed e' dichiarato: la stretta di mano del TLS (li'
+      non si legge, si calcola), il DNS e la connessione TCP. La stretta si
+      paga una volta per connessione e poi la connessione si riusa.
     ! LE PROMESSE SONO UNA FORMA SOLA, scritta a mano, uguale sotto i due
       motori — ExJs non le ha, QuickJS si', e due comportamenti sarebbero stati
       peggio di nessuno. `await` funziona lo stesso con QuickJS: vuole un

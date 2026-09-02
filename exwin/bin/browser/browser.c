@@ -3846,6 +3846,32 @@ static void cache_scrivi(const char *url, const unsigned char *dati,
 
 /* Una sola immagine: la scarica, la decodifica, se la copia. Rende 1 se ce
  * l'ha fatta — e su 0 non ha lasciato niente in giro. */
+/* =============================================================================
+ * QUANDO SI ASPETTA LA RETE
+ *
+ * ! OGNI ATTESA DI RETE ALZA LA BANDIERA, e non solo quella della pagina. Un
+ * foglio di stile, uno script esterno, un'immagine: sono tutte attese lunghe
+ * uguali, e dentro tutte il gancio dell'attesa smista i messaggi (vedi
+ * rete_mentre_aspetta, piu' avanti). Se la bandiera si alzasse solo per la
+ * pagina, un Esc premuto mentre arriva un'immagine non fermerebbe niente, e un
+ * clic su un collegamento farebbe partire una seconda richiesta a meta' della
+ * prima — sullo stesso buffer e sulla stessa connessione riusata.
+ * ========================================================================== */
+static int g_in_rete = 0;       /* c'e' una richiesta in corso adesso */
+static int g_ferma   = 0;       /* qualcuno ha premuto Esc */
+
+static int prendi_in_rete(const char *url, unsigned char *buf,
+                          unsigned int max, ExHttpEsito *e)
+{
+    int ok;
+
+    if (g_in_rete) return 0;
+    g_in_rete = 1;
+    ok = exhttp_prendi(url, buf, max, e);
+    g_in_rete = 0;
+    return ok;
+}
+
 static int imm_prendi(int k)
 {
     Imm         *im = &g_imm[k];
@@ -3871,7 +3897,7 @@ static int imm_prendi(int k)
             return 0;
         if (n == 0 || troncata) return 0;
     } else if (!cache_leggi(url, g_imm_buf, sizeof(g_imm_buf), &n)) {
-        if (!exhttp_prendi(url, g_imm_buf, sizeof(g_imm_buf), &e)) return 0;
+        if (!prendi_in_rete(url, g_imm_buf, sizeof(g_imm_buf), &e)) return 0;
         if (e.codice != 200 || e.byte == 0) return 0;
 
         /* ! UN FILE TRONCATO NON SI PROVA A DECODIFICARE: un PNG a meta' non
@@ -4114,7 +4140,7 @@ static void raccogli_css(void)
                 ExHttpEsito e;
 
                 dico("foglio di stile...");
-                if (!exhttp_prendi(url, g_imm_buf, sizeof(g_imm_buf), &e))
+                if (!prendi_in_rete(url, g_imm_buf, sizeof(g_imm_buf), &e))
                     continue;
                 if (e.codice != 200 || e.byte == 0) continue;
                 n = e.byte;
@@ -4227,6 +4253,42 @@ static void js_uscita(const char *t, unsigned int n, void *dato)
  * ========================================================================== */
 #define XHR_MAX  (128u * 1024u)
 
+/* =============================================================================
+ * RESTARE VIVI MENTRE SI SCARICA
+ *
+ * ! FRA UN PEZZO E L'ALTRO SI DORMIVA, e mentre si dormiva la finestra non
+ * rispondeva a niente: non si muoveva, non si ridisegnava, non si chiudeva.
+ * Su una pagina grande sono decine di secondi di schermo morto. Adesso exhttp,
+ * quando non c'e' ancora niente da leggere, chiama questo gancio.
+ *
+ * ! QUI SI RIENTRA IN CASA PROPRIA, ed e' la cosa da tenere a mente. I
+ * messaggi si smistano alla procedura della finestra — la stessa che sta
+ * girando in questo momento, dentro `vai()` — e quella procedura sa fare cose
+ * che farebbero ripartire la rete: seguire un collegamento, mandare un modulo,
+ * pompare la coda delle richieste. La bandiera `g_in_rete` glielo impedisce, e
+ * i tre punti che la guardano sono segnati uno per uno.
+ *
+ * ! E DA QUI SI PUO' FERMARE. Esc mette `g_ferma`, il gancio rende 0, exhttp
+ * annulla e la pagina di prima resta dov'era: senza questo giro non c'era
+ * proprio modo di offrirlo, perche' mentre si scaricava nessun tasto arrivava.
+ * ========================================================================== */
+static int rete_mentre_aspetta(void *dato)
+{
+    ExMsg m;
+    int   n = 0;
+
+    (void)dato;
+
+    /* ! UN PUGNO DI MESSAGGI PER GIRO, non tutti quelli che ci sono. Chi ci
+     * ha chiamati sta aspettando dei byte: svuotare la coda intera qui
+     * dentro vorrebbe dire rimandare la lettura di quanto ci mette la coda a
+     * finire, e su una pagina che ne riceve tanti sarebbe di nuovo un'attesa
+     * lunga — solo spostata di posto. */
+    while (n++ < 8 && ex_msg_ora(&m)) ex_smista(&m);
+
+    return g_ferma ? 0 : 1;
+}
+
 static unsigned char *g_xhr_buf = 0;
 
 static int rete_per_script(void *dato, ExDomRichiesta *r)
@@ -4237,6 +4299,13 @@ static int rete_per_script(void *dato, ExDomRichiesta *r)
 
     (void)dato;
     if (!r->url || !r->url[0]) return 0;
+
+    /* ! UNA RICHIESTA PER VOLTA, E QUESTA E' LA GUARDIA. Mentre exhttp
+     * aspetta, il gancio dell'attesa smista i messaggi: uno di quelli puo'
+     * far ripartire di qui: un clic su un collegamento, un modulo, un altro
+     * giro della coda. Entrarci due volte vorrebbe dire due richieste sulla
+     * stessa connessione riusata e sullo stesso buffer. */
+    if (g_in_rete) return 0;
 
     /* ! I BISCOTTI DEGLI SCRIPT SI RACCOLGONO PRIMA DI PARTIRE, non alla fine
      * della pagina, e la differenza si vede in tre righe di JavaScript:
@@ -4271,6 +4340,7 @@ static int rete_per_script(void *dato, ExDomRichiesta *r)
         unsigned int n = 0;
         int          troncata = 0;
 
+        /* Il disco non aspetta: qui la guardia non serve, e non si alza. */
         if (!locale_leggi(url, g_xhr_buf, XHR_MAX, &n, &troncata)) return 0;
         if (troncata) dico("javascript: risposta troncata");
         r->risposta = (const char *)g_xhr_buf;
@@ -4281,14 +4351,20 @@ static int rete_per_script(void *dato, ExDomRichiesta *r)
     }
 
     memset(&e, 0, sizeof(e));
-    if (post ? !exhttp_posta(url, r->corpo ? r->corpo : "",
-                             g_xhr_buf, XHR_MAX, &e)
-             : !exhttp_prendi(url, g_xhr_buf, XHR_MAX, &e)) {
-        /* ! «NON E' PARTITA» E «IL SERVER HA DETTO DI NO» SONO DUE COSE, e la
-         * differenza esce da qui: rendendo 0, fetch rifiuta la promessa e
-         * XMLHttpRequest lascia `status` a zero. Rendere 1 con codice 0
-         * direbbe a una pagina che ha ricevuto una risposta vuota. */
-        return 0;
+    g_in_rete = 1;
+    {
+        int ok = post ? exhttp_posta(url, r->corpo ? r->corpo : "",
+                                     g_xhr_buf, XHR_MAX, &e)
+                      : exhttp_prendi(url, g_xhr_buf, XHR_MAX, &e);
+
+        g_in_rete = 0;
+        if (!ok) {
+            /* ! «NON E' PARTITA» E «IL SERVER HA DETTO DI NO» SONO DUE COSE, e
+             * la differenza esce da qui: rendendo 0, fetch rifiuta la promessa
+             * e XMLHttpRequest lascia `status` a zero. Rendere 1 con codice 0
+             * direbbe a una pagina che ha ricevuto una risposta vuota. */
+            return 0;
+        }
     }
 
     if (e.troncata) dico("javascript: risposta troncata");
@@ -4459,7 +4535,7 @@ static void esegui_script(void)
                 ExHttpEsito e;
 
                 dico("script...");
-                if (!exhttp_prendi(url, g_imm_buf, sizeof(g_imm_buf), &e)) continue;
+                if (!prendi_in_rete(url, g_imm_buf, sizeof(g_imm_buf), &e)) continue;
                 if (e.codice != 200 || e.byte == 0) continue;
                 n = e.byte;
                 if (!e.troncata) cache_scrivi(url, g_imm_buf, n);
@@ -4630,6 +4706,22 @@ static int segui_location(void)
     return 1;
 }
 
+/* ! LA BANDIERA SI ALZA SOLO INTORNO ALLA RETE VERA, e questa funzione esiste
+ * per quello: dentro `vai` la chiamata stava in mezzo a una catena di `else
+ * if`, e alzarla li' voleva dire o un'espressione con le virgole — illeggibile
+ * — o due punti in cui abbassarla, uno dei quali prima o poi si dimentica. */
+static int prendi_dalla_rete(const char *url, ExHttpEsito *e)
+{
+    int ok;
+
+    g_in_rete = 1;
+    ok = g_da_postare
+         ? exhttp_posta(url, g_da_postare, g_pagina, sizeof(g_pagina), e)
+         : exhttp_prendi(url, g_pagina, sizeof(g_pagina), e);
+    g_in_rete = 0;
+    return ok;
+}
+
 static void vai(const char *url, int in_storia, int usa_cache)
 {
     ExHttpEsito  e;
@@ -4647,6 +4739,21 @@ static void vai(const char *url, int in_storia, int usa_cache)
     int          da_cache = 0;
 
     if (!url || !url[0]) { g_da_postare = 0; return; }
+
+    /* ! UNA PAGINA PER VOLTA. Da quando il gancio dell'attesa smista i
+     * messaggi mentre si scarica, un clic su un collegamento puo' arrivare
+     * QUI mentre `vai` di prima e' ancora dentro exhttp: sarebbe una seconda
+     * richiesta sullo stesso buffer e sulla stessa connessione riusata, e
+     * l'albero verrebbe rifatto sotto i piedi di chi lo sta ancora
+     * riempiendo. Si dice e si lascia finire quella che c'e'. */
+    if (g_in_rete) {
+        dico("sto ancora scaricando: Esc per fermare");
+        g_da_postare = 0;
+        return;
+    }
+
+    /* Ogni pagina nuova comincia senza nessuno che l'abbia gia' fermata. */
+    g_ferma = 0;
 
     /* Vedi segui_location: chi arriva di li' alza il conto, tutti gli altri
      * lo azzerano — e «tutti gli altri» vuol dire una persona che ha cliccato
@@ -4689,9 +4796,7 @@ static void vai(const char *url, int in_storia, int usa_cache)
         e.byte   = n;
         strncpy(e.finale, url, sizeof(e.finale) - 1);
         da_cache = 1;
-    } else if (g_da_postare
-               ? !exhttp_posta(url, g_da_postare, g_pagina, sizeof(g_pagina), &e)
-               : !exhttp_prendi(url, g_pagina, sizeof(g_pagina), &e)) {
+    } else if (!prendi_dalla_rete(url, &e)) {
         /* =====================================================================
          * ! LA RETE NON RISPONDE: SE LA COPIA SU DISCO C'E', VALE. E' il motivo
          * per cui una cache che sopravvive ai riavvii serve davvero — la pagina
@@ -4759,6 +4864,14 @@ static void vai(const char *url, int in_storia, int usa_cache)
     g_ctrl_n = 0;
     g_ctrl_fuoco = -1;
     g_opz_n = 0;
+
+    /* ! ANCHE I PEZZI DELL'IMPAGINAZIONE, e da adesso non e' facoltativo. Il
+     * gancio dell'attesa ridisegna mentre si scarica, e fra qui e impagina()
+     * c'e' esegui_script(): se uno script fa una richiesta SINCRONA — e la
+     * forma `open(m, u, false)` esiste apposta — si ridisegnerebbe con i pezzi
+     * della pagina di PRIMA sopra l'albero di ADESSO, cioe' con testi presi
+     * da nodi che non sono piu' quelli. Meglio un'area vuota per un istante. */
+    g_pez_n = 0;
 
     /* ! E GLI SLOT SI DICHIARANO DI NESSUNO, o il primo giro sulla pagina
      * NUOVA troverebbe li' dentro i numeri di nodo della pagina VECCHIA. Sono
@@ -5490,6 +5603,8 @@ static void manda_modulo(int m, int attivato)
         dico("questo campo non sta dentro nessun modulo");
         return;
     }
+    /* Come per `vai`: mentre si scarica, un modulo non parte. */
+    if (g_in_rete) { dico("sto ancora scaricando: Esc per fermare"); return; }
 
     for (i = 0; i < g_ctrl_n; i++) {
         const Ctrl *c = &g_ctrl[i];
@@ -5919,6 +6034,18 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
          * il tasto e' arrivato, spogliato di quel che lo distingueva. */
         unsigned int c = wp & KBD_KEY_MASK;
 
+        /* ! ESC FERMA LO SCARICAMENTO, E QUESTA RIGA STA PRIMA DI TUTTE LE
+         * ALTRE. Ci si arriva DENTRO una richiesta — e' il gancio dell'attesa
+         * che smista i messaggi mentre exhttp aspetta i byte — e in quel
+         * momento non c'e' nient'altro da fare: non si scrive in una casella,
+         * non si scorre. Prima di questo giro il tasto non arrivava proprio,
+         * perche' il browser dormiva dentro la lettura. */
+        if (c == 27 && g_in_rete) {
+            g_ferma = 1;
+            dico("fermo...");
+            return 0;
+        }
+
         /* ! CON UNA CASELLA A FUOCO I TASTI SONO SUOI, e le frecce non
          * scorrono piu' la pagina: e' la regola di ogni browser, e senza di
          * essa scrivere in un campo farebbe saltare il documento. */
@@ -6157,7 +6284,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
              * pagina con cinque richieste non diventa cinque secondi di
              * schermo morto. Farle tutte qui dentro sarebbe stato piu' corto e
              * avrebbe riportato il blocco dov'era. */
-            exdom_rete_pompa(g_dom);
+            if (!g_in_rete) exdom_rete_pompa(g_dom);
 
             rifai_se_cambiato();
             dopo_gli_script();
@@ -6391,6 +6518,11 @@ int main(int argc, char **argv)
     bis_azzera(&g_bis);
     if (bis_prepara()) bis_leggi_file();
     exhttp_biscotti(bis_chiedi, bis_arrivo, 0);
+
+    /* ! E IL GANCIO DELL'ATTESA, che e' quel che tiene viva la finestra mentre
+     * si scarica: senza, fra un pezzo e l'altro exhttp dorme e qui non arriva
+     * piu' niente — nemmeno il tasto per fermare. */
+    exhttp_attesa(rete_mentre_aspetta, 0);
     if (!g_home[0]) home_predefinita();
 
     ex_fuoco(g_url);

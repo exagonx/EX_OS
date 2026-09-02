@@ -1,4 +1,128 @@
-# DOVE RIPRENDERE — 2 settembre 2026
+# DOVE RIPRENDERE — 3 settembre 2026
+
+## 3 settembre 2026 — LA LETTURA A PEZZI: LA FINESTRA RESTA VIVA MENTRE SCARICA
+
+Era l'ultima riga della coda, e stava scritta cosi': «il passo dopo e' un
+trasporto che sappia consegnare a pezzi». Fatto — ma il problema non era quello
+che sembrava.
+
+### ! TCP CONSEGNA GIA' A PEZZI. IL GUAIO E' CHE FRA UN PEZZO E L'ALTRO SI DORME
+
+`exhttp_scambio` leggeva in un ciclo, e ogni `leggi` tornava appena arrivava
+qualcosa: i pezzi c'erano gia'. Quel che mancava era un modo di **fare altro**
+mentre non c'era ancora niente. Chi legge dorme dentro `leggi`, e mentre dorme
+la finestra non si muove, non si ridisegna, non si chiude, e nessun tasto
+arriva — su una pagina grande sono decine di secondi di schermo morto.
+
+### La domanda che non si poteva fare: «c'e' qualcosa adesso?»
+
+! **LA LETTURA NON SA DIRE «NON E' ANCORA ARRIVATO NIENTE».** `tcp_leggi` rende
+`-1` per un timeout e `-1` per un errore, e `0` solo quando la connessione e'
+finita. Finche' si aspettava e basta la differenza non serviva; da quando chi
+legge vuole andarsene a fare altro, e' la domanda centrale.
+
+! **E LA RISPOSTA NON SI OTTIENE PROVANDO A LEGGERE CON UN TIMEOUT CORTO.**
+Sembrava la strada piu' semplice ed era sbagliata due volte: il timeout non si
+distingue dall'errore, e — peggio — ogni tentativo lascia una **prenotazione
+pendente** dentro lo stack. Lo dice ip_proto.h: «lo stack risponde a un
+IP_MSG_TCP_RICEVI pendente e non manda dati di sua iniziativa». Due prenotazioni
+per la stessa connessione sono due risposte, e la seconda arriva quando nessuno
+l'aspetta piu'.
+
+La risposta giusta era gia' nel protocollo: **`IP_MSG_TCP_STATO`** rende
+`in_coda_rx`, i byte gia' arrivati e non ancora letti, e lo stato della
+connessione. Non prenota niente e non aspetta.
+
+! **E L'ORDINE DEI DUE CONTROLLI CONTA.** Prima i byte, poi lo stato: una
+connessione **chiusa con dei byte ancora in coda non e' finita**. Con l'ordine
+rovesciato sparirebbe l'ultimo pezzo proprio delle risposte che finiscono con
+la chiusura — quelle senza `Content-Length`, cioe' mezzo HTTP/1.0.
+
+### Il TLS ha un secondo posto dove i byte si nascondono
+
+! **UN RECORD GIA' DECIFRATO STA DENTRO extls, NON NEL TCP.** `extls_leggi`
+consegna al piu' quanto gliene chiedi e tiene il resto (`t->pos < t->fine`):
+guardando solo il trasporto sotto non ci si troverebbe niente, e chi aspetta se
+ne andrebbe a fare altro **per sempre, con la risposta gia' in casa**. Percio'
+extls ha imparato a dirlo: `extls_pronto()`.
+
+E quel che c'e' nel TCP puo' non bastare a un record intero: allora la lettura
+aspetta il resto — un record e' al piu' sedici kilobyte e il seguito arriva
+subito dopo. E' un'attesa corta, ed e' dichiarata.
+
+### Il gancio, e chi rientra in casa propria
+
+    exhttp_attesa(gancio, dato)      0 dal gancio = annulla la richiesta
+
+Quando `quanti` dice zero, exhttp chiama il gancio; il browser smista un pugno
+di messaggi e torna. Si dorme dentro `leggi` **solo quando c'e' qualcosa da
+leggere**, cioe' per un istante.
+
+! **UN PUGNO DI MESSAGGI PER GIRO, NON TUTTI.** Chi ha chiamato sta aspettando
+dei byte: svuotare la coda intera qui dentro rimanderebbe la lettura di quanto
+ci mette la coda a finire — di nuovo un'attesa lunga, solo spostata di posto.
+
+! **E QUI SI RIENTRA IN CASA PROPRIA.** I messaggi si smistano alla procedura
+della finestra, che e' la stessa che sta girando dentro `vai()`: quella
+procedura sa seguire un collegamento, mandare un modulo, pompare la coda delle
+richieste. La bandiera `g_in_rete` glielo impedisce, e i punti che la guardano
+sono segnati uno per uno. **Ogni** attesa di rete la alza — pagina, foglio di
+stile, script, immagine — perche' sono tutte lunghe uguali.
+
+! **E I PEZZI DELL'IMPAGINAZIONE SI AZZERANO PRIMA DEGLI SCRIPT.** Fra
+`html_analizza` e `impagina` c'e' `esegui_script`, e li' dentro una richiesta
+SINCRONA (`open(m, u, false)`) fa ridisegnare: con i pezzi della pagina di
+prima sopra l'albero di adesso si vedrebbero testi presi da nodi che non sono
+piu' quelli. Meglio un'area vuota per un istante.
+
+### E adesso si puo' fermare
+
+! **Esc FERMA LO SCARICAMENTO, e prima non si poteva nemmeno offrirlo**: mentre
+si scaricava nessun tasto arrivava. Il gancio rende 0, exhttp annulla, e quel
+che era arrivato **non si tiene** — una pagina tagliata mostrata come intera e'
+peggio di una pagina che non c'e'.
+
+### `ex_msg_ora`, e perche' il corpo del ciclo e' uno solo
+
+exwin aveva `ex_prendi_msg`, che dorme. Adesso c'e' anche `ex_msg_ora`, che
+guarda e torna. **Le due funzioni non sono due copie**: il corpo e' lo stesso e
+cambia una riga — quanto si aspetta dentro `poll()`, e se al giro dopo si
+riprova o si torna a mani vuote. Due copie sarebbero state due copie da tenere
+d'accordo per sempre.
+
+### Come si e' provato
+
+Un server che ritarda le immagini di venti secondi l'una
+(`RITARDO=20 python3 tools/prove/sito/servi.py`), e `con.html` che ne ha sei.
+Dentro EX-OS, da CD:
+
+    durante lo scaricamento si sposta il puntatore  -> si muove
+    la riga di stato dice «immagine 1 di 6...»      -> la finestra e' viva
+    si preme Esc                                     -> si ferma, e le
+                                                        immagini che mancano
+                                                        mostrano il loro `alt`
+
+Prima di questo lavoro nessuna delle tre cose era possibile: il puntatore
+restava incollato, la riga di stato era ferma, e il tasto non arrivava.
+
+    make prova-exjs      256 prove, 0 sbagliate
+    make prova-exdom     244 prove, 0 sbagliate
+    make prova-exqjs     244 prove, 0 sbagliate
+    make prova-biscotti   51 prove, 0 sbagliate
+    make prova-exhttp    tutto a posto
+
+### Quel che resta, dichiarato
+
+- **La stretta di mano del TLS non e' a pezzi.** Chiave effimera, catena di
+  certificati e firma su un 386 emulato sono secondi in cui la finestra e'
+  ancora ferma: li' non si legge, si calcola, e il gancio non c'entra. Il
+  guadagno vero e' che quella stretta si paga **una volta per connessione** e
+  poi la connessione si riusa.
+- **Nemmeno il DNS e la connessione TCP.** Sono corte, ma sono ferme.
+- **Il gancio non e' rientrante**: chi lo registra deve impedire da se' che i
+  messaggi facciano ripartire la rete. Il browser lo fa con una bandiera; e'
+  scritto in exhttp.h accanto alla dichiarazione, perche' e' l'unico modo di
+  saperlo prima di sbagliare.
 
 ## 2 settembre 2026 (notte fonda) — L'ASINCRONO VERO, E DOVE STA DAVVERO
 

@@ -3282,17 +3282,34 @@ static int tasto_al_fuoco(ExFinestra f, unsigned int k)
     return 1;
 }
 
-int ex_prendi_msg(ExMsg *m)
+/* ! DUE PORTE SULLO STESSO CICLO, e il corpo e' uno solo. `ex_prendi_msg`
+ * dorme finche' non succede qualcosa; `ex_msg_ora` guarda e torna. La seconda
+ * e' nata perche' un programma che sta ASPETTANDO ALTRO — una risposta dalla
+ * rete, per dirne una — deve poter restare vivo senza rinunciare a quel che
+ * sta facendo: se dormisse qui dentro, l'attesa diventerebbe due.
+ *
+ * ! E IL CORPO NON SI DUPLICA. Le due funzioni fanno le stesse otto cose —
+ * sveglie, terminali, mailbox, misure, tasti, clic — e due copie sarebbero
+ * due copie da tenere d'accordo per sempre. Cambia una riga: quanto si aspetta
+ * dentro poll(), e se al giro dopo si riprova o si torna a mani vuote. */
+static int prendi_msg(ExMsg *m, int bloccante)
 {
     IpcMessage    meta;
     unsigned char buf[IPC_MSG_MAX_DATA];
     struct pollfd v[1 + TERM_MAX];
+    int           giri = 0;
 
     for (;;) {
         WinEvento e;
         ExFinestra f;
 
         if (g_uscita) return 0;
+
+        /* ! CHI NON DORME FA UN GIRO SOLO. Tutti i «continue» qui sotto
+         * vogliono dire «non c'era niente, riprova»: per chi non blocca,
+         * riprovare vuol dire girare a vuoto, e la risposta giusta e' «adesso
+         * non c'e' niente». */
+        if (!bloccante && giri++ > 0) return 0;
 
         /* ! LE SVEGLIE SI GUARDANO PRIMA DI DORMIRE, non dopo: guardarle dopo
          * vorrebbe dire che la prima scade sempre con 200 ms di ritardo anche
@@ -3345,7 +3362,7 @@ int ex_prendi_msg(ExMsg *m)
                     nv++;
                 }
 
-            if (poll(v, (unsigned int)nv, 200) <= 0) continue;
+            if (poll(v, (unsigned int)nv, bloccante ? 200 : 0) <= 0) continue;
 
             /* Cio' che le shell hanno scritto si raccoglie prima dei
              * messaggi: se qualcosa e' cambiato, la finestra si ridisegna. */
@@ -3703,6 +3720,12 @@ int ex_prendi_msg(ExMsg *m)
         }
     }
 }
+
+int ex_prendi_msg(ExMsg *m) { return prendi_msg(m, 1); }
+
+/* ! RENDE 0 ANCHE QUANDO L'APPLICAZIONE STA USCENDO, come l'altra: chi la usa
+ * dentro un'attesa deve accorgersi che non ha piu' senso aspettare. */
+int ex_msg_ora(ExMsg *m) { return prendi_msg(m, 0); }
 
 void ex_smista(const ExMsg *m)
 {

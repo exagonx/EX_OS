@@ -237,6 +237,51 @@ static int tcp_leggi(void *st, unsigned char *dst, unsigned int max,
     return (int)max;
 }
 
+/* =============================================================================
+ * ! QUANTI BYTE CI SONO ADESSO, SENZA ASPETTARE — e senza confondere «non e'
+ * ancora arrivato niente» con «l'altro ha chiuso».
+ *
+ * La lettura, di suo, quella differenza non la sa dire: `tcp_leggi` rende -1
+ * per un timeout e -1 per un errore, e 0 solo quando la connessione e' finita.
+ * Finche' si aspettava e basta non importava; da quando chi legge vuole
+ * ANDARSENE A FARE ALTRO mentre non c'e' niente, e' la domanda centrale.
+ *
+ * ! LA RISPOSTA VIENE DALLO STACK, non da un tentativo di lettura. IP_MSG_TCP_STATO
+ * rende `in_coda_rx` — i byte gia' arrivati e non ancora letti — e lo stato
+ * della connessione. Provare a leggere con un timeout corto sarebbe sembrato
+ * piu' semplice e sarebbe stato sbagliato due volte: il timeout non si
+ * distingue dall'errore, e ogni tentativo lascia una prenotazione pendente
+ * dentro lo stack (vedi ip_proto.h: «niente viene spinto»).
+ * ========================================================================== */
+static int tcp_quanti(void *st)
+{
+    TcpStato     *s = (TcpStato *)st;
+    unsigned char buf[IPC_MSG_MAX_DATA];
+    unsigned int  len;
+    IpTcpRif      r;
+    IpTcpInfo     info;
+
+    /* Quel che e' avanzato da una lettura di prima e' gia' in mano nostra. */
+    if (s->a_pos < s->a_fine) return (int)(s->a_fine - s->a_pos);
+
+    r.id = (unsigned int)s->id;
+    if (ipc_send((unsigned int)g_pid_ip, IP_MSG_TCP_STATO, &r, sizeof(r)) < 0)
+        return -1;
+    if (attendi(IP_MSG_TCP_INFO, buf, &len, 2000) != 0) return -1;
+    if (len < sizeof(info)) return -1;
+    memcpy(&info, buf, sizeof(info));
+
+    if (info.in_coda_rx > 0) return (int)info.in_coda_rx;
+
+    /* ! UNA CONNESSIONE CHIUSA CON DEI BYTE ANCORA IN CODA NON E' FINITA: si
+     * legge prima quel che c'e' — ed e' il motivo per cui questo controllo sta
+     * DOPO. Con l'ordine rovesciato l'ultimo pezzo di una pagina sparirebbe
+     * proprio sulle risposte che finiscono con la chiusura, cioe' quelle senza
+     * Content-Length. */
+    if (info.stato != IP_TCP_APERTA) return -1;
+    return 0;
+}
+
 static int tcp_scrivi(void *st, const unsigned char *src, unsigned int n)
 {
     TcpStato     *s = (TcpStato *)st;
@@ -351,6 +396,7 @@ int exhttp_tcp(ExHttpTrasporto *t, const char *host, unsigned int porta)
     g_tcp.a_pos = g_tcp.a_fine = 0;
     t->stato    = &g_tcp;
     t->leggi  = tcp_leggi;
+    t->quanti = tcp_quanti;
     t->scrivi = tcp_scrivi;
     t->chiudi = tcp_chiudi;
     return 1;
@@ -493,6 +539,22 @@ static int tls_scrivi(void *stato, const unsigned char *src, unsigned int n)
     return extls_scrivi(((StatoTls *)stato)->tls, src, n);
 }
 
+/* ! PRIMA IL CHIARO GIA' DECIFRATO, POI IL TUBO SOTTO. Un record intero puo'
+ * essere gia' arrivato e decifrato e stare li' in attesa che qualcuno lo
+ * legga: guardando solo il TCP non ci si troverebbe niente, e chi aspetta se
+ * ne andrebbe a fare altro per sempre — con la risposta gia' in casa. */
+static int tls_quanti(void *stato)
+{
+    StatoTls *s = (StatoTls *)stato;
+    int       q = extls_pronto(s->tls);
+
+    if (q != 0) return q;
+    /* ! E QUEL CHE C'E' NEL TCP PUO' NON BASTARE A UN RECORD INTERO. Allora la
+     * lettura aspetta il resto — un record e' al piu' sedici kilobyte e il
+     * seguito arriva subito dopo — ed e' un'attesa corta e dichiarata. */
+    return s->tcp.quanti ? s->tcp.quanti(s->tcp.stato) : 0;
+}
+
 static void tls_chiudi(void *stato)
 {
     StatoTls *s = (StatoTls *)stato;
@@ -572,6 +634,7 @@ static int exhttp_tls(ExHttpTrasporto *t, const char *host, unsigned int porta)
 
     t->stato  = &g_stato_tls;
     t->leggi  = tls_leggi;
+    t->quanti = tls_quanti;
     t->scrivi = tls_scrivi;
     t->chiudi = tls_chiudi;
     return 1;
@@ -606,6 +669,73 @@ static const char *g_corpo = 0;
  * che arrivano si leggono e si buttano. Un programma che di biscotti non sa
  * niente — ftp, telnet, chi scarica un file — non deve accorgersi che esistono.
  * ========================================================================== */
+/* =============================================================================
+ * L'ATTESA — leggere a pezzi senza smettere di essere vivi
+ *
+ * ! IL PROBLEMA NON E' LEGGERE A PEZZI: TCP CONSEGNA GIA' A PEZZI. Il problema
+ * e' che fra un pezzo e l'altro chi legge DORME dentro `leggi`, e mentre dorme
+ * il programma che l'ha chiamato non risponde piu' a niente. Su una pagina da
+ * un megabyte sono decine di secondi di finestra morta.
+ *
+ * ! LA CURA E' CHIEDERE PRIMA E ADDORMENTARSI POI. `t->quanti` dice quanti
+ * byte ci sono ADESSO; se sono zero si chiama il gancio, chi ospita fa il suo
+ * giro — ridisegna, risponde al mouse — e si riprova. Si dorme dentro `leggi`
+ * solo quando c'e' qualcosa da leggere, cioe' per un istante.
+ *
+ * ! E IL GANCIO PUO' DIRE DI SMETTERE. Rendendo 0 annulla la richiesta: e' il
+ * tasto Esc di chi si e' stufato di aspettare, ed e' una cosa che senza questo
+ * giro non si poteva nemmeno offrire.
+ *
+ * ! SENZA GANCIO O SENZA `quanti` SI LEGGE COME SI E' SEMPRE LETTO. Un
+ * programma che non ha un ciclo di messaggi — ftp, telnet, chi scarica un file
+ * — non deve accorgersi che questo meccanismo esiste.
+ *
+ * ! IL TETTO DI TEMPO RESTA QUELLO DI PRIMA, dieci secondi: quando scadono si
+ * fa la lettura vera, che fallisce e da' lo stesso errore di sempre. Cosi' il
+ * comportamento di un server muto non cambia — cambia solo che nel frattempo
+ * la finestra era viva.
+ * ========================================================================== */
+static ExHttpAttesa g_attesa      = 0;
+static void        *g_attesa_dato = 0;
+
+void exhttp_attesa(ExHttpAttesa f, void *dato)
+{
+    g_attesa      = f;
+    g_attesa_dato = dato;
+}
+
+#define ATTESA_MS  10000
+
+static int leggi_a_pezzi(ExHttpTrasporto *t, unsigned char *dst,
+                         unsigned int max, int *annullata)
+{
+    unsigned int inizio;
+
+    if (annullata) *annullata = 0;
+    if (!g_attesa || !t->quanti)
+        return t->leggi(t->stato, dst, max, ATTESA_MS);
+
+    inizio = uptime_ms();
+    for (;;) {
+        int q = t->quanti(t->stato);
+
+        /* C'e' roba, oppure e' finita: in tutt'e due i casi la lettura vera
+         * risponde subito e sa dire quale dei due. */
+        if (q != 0) return t->leggi(t->stato, dst, max, ATTESA_MS);
+
+        if (!g_attesa(g_attesa_dato)) {
+            if (annullata) *annullata = 1;
+            return -1;
+        }
+
+        /* ! SCADUTO IL TEMPO SI FA LA LETTURA VERA, e fallisce come sempre.
+         * Rendere un errore da qui vorrebbe dire due strade per lo stesso
+         * guasto, con due messaggi da tenere d'accordo. */
+        if (uptime_ms() - inizio >= ATTESA_MS)
+            return t->leggi(t->stato, dst, max, ATTESA_MS);
+    }
+}
+
 static ExHttpBiscottiChiedi   g_bis_chiedi   = 0;
 static ExHttpBiscottoArrivato g_bis_arrivato = 0;
 static void                  *g_bis_dato     = 0;
@@ -681,7 +811,7 @@ int exhttp_scambio(ExHttpTrasporto *t, const HttpUrl *u,
      * un corpo tagliato e' una richiesta che il server rifiuta, o peggio
      * accetta a meta'. */
     static char   req[12 * 1024];
-    int           n, fine = 0;
+    int           n, fine = 0, annullata = 0;
     HttpPezzi     pezzi;
     unsigned int  corpo_gia = 0;
 
@@ -757,7 +887,8 @@ int exhttp_scambio(ExHttpTrasporto *t, const HttpUrl *u,
             return 0;
         }
 
-        n = t->leggi(t->stato, acc + acc_n, sizeof(acc) - acc_n, 10000);
+        n = leggi_a_pezzi(t, acc + acc_n, sizeof(acc) - acc_n, &annullata);
+        if (annullata) { strcpy(e->errore, "fermata"); return 0; }
         if (n < 0) { strcpy(e->errore, "connessione interrotta"); return 0; }
         if (n == 0) { strcpy(e->errore, "chiusa senza rispondere"); return 0; }
         acc_n += (unsigned int)n;
@@ -839,7 +970,11 @@ int exhttp_scambio(ExHttpTrasporto *t, const HttpUrl *u,
             /* ! SENZA LUNGHEZZA NE' PEZZI, LA FINE E' LA CHIUSURA, ed e'
              * legittimo: HTTP/1.0 fa cosi', e con «Connection: close» anche
              * l'1.1 puo'. Percio' una lettura che rende 0 non e' un errore. */
-            n = t->leggi(t->stato, blocco, sizeof(blocco), 10000);
+            n = leggi_a_pezzi(t, blocco, sizeof(blocco), &annullata);
+            /* ! UNA FERMATA NON E' UNA FINE: cio' che e' arrivato fin qui e'
+             * meta' pagina, e darlo per buono vorrebbe dire mostrare una
+             * pagina tagliata come se fosse intera. */
+            if (annullata) { strcpy(e->errore, "fermata"); return 0; }
             if (n <= 0) break;
 
             resto   = blocco;

@@ -45,6 +45,9 @@ static const char *const g_nomi[] = {
     /* Aggiunta il 2 settembre 2026: il gancio dei biscotti. */
     "exhttp_biscotti",
 
+    /* Aggiunta il 2 settembre 2026: il gancio dell'attesa. */
+    "exhttp_attesa",
+
     "__lib_avvio"
 };
 
@@ -56,6 +59,7 @@ static void *const g_indirizzi[] = {
 
     (void *)exhttp_posta,
     (void *)exhttp_biscotti,
+    (void *)exhttp_attesa,
 
     (void *)__libc_ponti_avvia
 };

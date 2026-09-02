@@ -322,6 +322,18 @@ const char *ex_testo_prendi(ExFinestra f);
  * chiesto di uscire.
  * --------------------------------------------------------------------------- */
 int  ex_prendi_msg(ExMsg *m);
+
+/* ! COME ex_prendi_msg MA NON DORME: rende 0 se in questo momento non c'e'
+ * niente da fare. Serve a chi sta gia' aspettando altro — una risposta dalla
+ * rete, per dirne una — e vuole restare vivo senza rinunciare a quel che sta
+ * facendo: dormendo qui dentro, le attese diventerebbero due.
+ *
+ * ! E CHI LA USA DEVE SAPERE CHE RIENTRA IN CASA PROPRIA. I messaggi si
+ * smistano alla procedura della finestra, che e' la stessa che sta girando in
+ * quel momento: se quella procedura puo' far ripartire il lavoro che si sta
+ * aspettando, chi chiama deve impedirglielo con una bandiera. Non e' un
+ * dettaglio da scoprire dopo. */
+int  ex_msg_ora(ExMsg *m);
 void ex_smista(const ExMsg *m);
 void ex_esci(int codice);
 

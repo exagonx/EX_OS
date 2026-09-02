@@ -295,13 +295,31 @@ e' il ciclo dei messaggi del navigatore, una per giro. La forma
 del codice che ci conta.
 </p>
 
+<p>
+<b>E la finestra resta viva mentre scarica.</b> Fra un pezzo e l'altro il
+navigatore chiede alla rete se c'e' gia' qualcosa da leggere; finche' non c'e',
+si ridisegna e risponde al mouse invece di dormire. La riga di stato dice a che
+punto e' &mdash; <i>«immagine 3 di 6...»</i> &mdash; e la si vede cambiare.
+</p>
+
 <p class="nota">
-<b class="manca">Quel che resta fermo, e va detto:</b> mentre il navigatore fa
-<i>una</i> richiesta e' bloccato &mdash; aspetta la risposta e non c'e' modo di
-tornare indietro a meta'. Quindi una pagina non si blocca piu' <i>prima</i> di
-disegnarsi, e fra una richiesta e l'altra il navigatore risponde di nuovo, ma
-durante il singolo scaricamento no. Il passo dopo e' un trasporto che sappia
-consegnare a pezzi.
+<b>Esc ferma lo scaricamento.</b> Quel che era arrivato non si tiene: una
+pagina tagliata mostrata come se fosse intera e' peggio di una pagina che non
+c'e'. Le immagini che mancano tornano al loro <code>alt</code>.
+</p>
+
+<p class="nota">
+<b class="manca">Quel che resta fermo:</b> la stretta di mano di <b>https</b>
+&mdash; chiave effimera, catena di certificati, firma &mdash; il DNS e la
+connessione. Li' non si aspettano byte, si calcola o si apre: sono secondi in
+cui la finestra e' ancora ferma. La stretta pero' si paga <i>una volta per
+connessione</i>, e la connessione si riusa.
+</p>
+
+<p class="nota">
+<b>E una cosa per volta.</b> Mentre si scarica, un collegamento o un modulo non
+partono: si sente dire <i>«sto ancora scaricando: Esc per fermare»</i>. Due
+richieste insieme vorrebbero dire due risposte nello stesso buffer.
 </p>
 
 <p class="nota">
