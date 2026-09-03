@@ -52,7 +52,7 @@
 
 /* +0.001 a ogni modifica, aggiunta o prova: `exide -version` la stampa.
  * Vedi EX_VERSIONE in libc.h; la stessa stringa la mostra «Informazioni su». */
-#define VERSIONE_APP "0.007"
+#define VERSIONE_APP "0.008"
 EX_VERSIONE("exide", VERSIONE_APP);
 
 /* -----------------------------------------------------------------------------
@@ -80,6 +80,7 @@ EX_VERSIONE("exide", VERSIONE_APP);
 #define ID_CANCELLA   914
 #define ID_CERCA      915
 #define ID_SOSTIT     916
+#define ID_ANNULLA    917
 
 #define ID_SORGENTE   921
 #define ID_SHELL      922
@@ -191,6 +192,16 @@ static int  g_sel = -1;             /* il controllo scelto, -1 = nessuno */
 static int  g_strum_sel = -1;       /* lo strumento armato, -1 = nessuno */
 static int  g_ridim = -1;           /* quale maniglia si sta tirando, -1 = nessuna */
 
+/* ! UNA FOTOGRAFIA PER TRASCINAMENTO, E SOLO SE QUALCOSA CAMBIA. Un
+ * trascinamento manda decine di EXM_MOUSE_MOSSO: fotografando a ognuno, i
+ * sedici passi indietro se li mangerebbe tutti un movimento solo, e si
+ * tornerebbe a mezzo pixel per volta. Fotografando invece all'inizio del
+ * trascinamento, un clic che sceglie e basta lascerebbe un passo indietro che
+ * non fa niente — e un Annulla che non fa niente e' peggio di non averlo.
+ * Percio' si fotografa al PRIMO cambiamento vero, e questa bandiera se lo
+ * ricorda per il resto del trascinamento. */
+static int  g_tras_segnato = 0;
+
 /* =============================================================================
  * LE MASCHERE — piu' di una, dal 3 settembre 2026
  *
@@ -245,6 +256,63 @@ static void form_azzera(Form *F, const char *nome, const char *titolo)
     strncpy(F->titolo, titolo, TESTO_MAX - 1);
     F->w = 400;
     F->h = 260;
+}
+
+/* =============================================================================
+ * ANNULLA — una fotografia del disegno prima di ogni modifica
+ *
+ * ! SI FOTOGRAFA TUTTO, non si registra COSA e' cambiato, ed e' una scelta
+ * fatta guardando quante cose sono «una modifica»: mettere un controllo,
+ * cancellarlo, spostarlo, ridimensionarlo, cambiargli una qualunque delle otto
+ * proprieta', cambiare le quattro della maschera, aggiungere una maschera,
+ * toglierne una che si porta via i suoi controlli. Un registro di comandi
+ * vorrebbe dire scrivere l'operazione INVERSA di ognuna di quelle, e ognuna
+ * puo' essere sbagliata in un modo suo — mentre «rimetti tutto com'era» non
+ * puo' sbagliare: e' una copia.
+ *
+ * ! E IL DISEGNO E' PICCOLO ABBASTANZA PERCHE' SIA SENSATO. Un istante pesa
+ * quanto l'elenco dei controlli piu' quello delle maschere, sedici istanti
+ * stanno in un centinaio di kilobyte di memoria azzerata, e non finiscono nel
+ * binario. Se un giorno i controlli diventassero migliaia questa scelta si
+ * riguarderebbe; con sessantaquattro non c'e' niente da bilanciare.
+ *
+ * ! LA STORIA E' UN ANELLO, e cosi' il sedicesimo passo indietro non costa una
+ * copia di tutto l'elenco per far posto: costa quanto il primo.
+ * ============================================================================= */
+#define ANNULLA_MAX  16
+
+typedef struct {
+    Ctrl ctrl[CTRL_MAX];
+    Form form[FORM_MAX];
+    int  form_sel;
+    int  sel;
+} Istante;
+
+static Istante g_storia[ANNULLA_MAX];
+static int     g_storia_n = 0;      /* quanti passi indietro si possono fare */
+static int     g_storia_testa = 0;  /* dove si scrive il prossimo */
+
+/* ! LA STORIA NON ATTRAVERSA I PROGETTI. Aprirne un altro e poi premere
+ * Annulla rimetterebbe sulla maschera i controlli di quello di prima, con i
+ * loro nomi e i loro id: un disegno che non e' mai esistito, salvato sopra
+ * quello vero. Si azzera aprendo, creando e copiando. */
+static void storia_azzera(void)
+{
+    g_storia_n = 0;
+    g_storia_testa = 0;
+}
+
+static void istante_segna(void)
+{
+    Istante *s = &g_storia[g_storia_testa];
+
+    memcpy(s->ctrl, g_ctrl, sizeof(g_ctrl));
+    memcpy(s->form, g_form, sizeof(g_form));
+    s->form_sel = g_form_sel;
+    s->sel      = g_sel;
+
+    g_storia_testa = (g_storia_testa + 1) % ANNULLA_MAX;
+    if (g_storia_n < ANNULLA_MAX) g_storia_n++;
 }
 
 /* Il progetto. */
@@ -647,14 +715,17 @@ static void prop_applica(void)
                         dico("c'e' gia' una maschera con questo nome");
                         return;
                     }
+                istante_segna();    /* dopo i controlli: si cambia da qui */
                 strcpy(forma()->nome, nuovo);
             }
             break;
         case 1:
+            istante_segna();
             strncpy(forma()->titolo, v, TESTO_MAX - 1);
             forma()->titolo[TESTO_MAX - 1] = '\0';
             break;
         default:
+            istante_segna();
             n = atoi(v);
             if (n < 80)   n = 80;
             if (n > 1000) n = 1000;
@@ -669,6 +740,33 @@ static void prop_applica(void)
     }
 
     c = &g_ctrl[g_sel];
+
+    /* ! L'EVENTO SI GUARDA PRIMA DI TOCCARE QUALUNQUE COSA. Scriverne uno che
+     * il controllo non ha non cambia niente, e prima di oggi diceva lo stesso
+     * «proprieta' applicata» e segnava il disegno da salvare — adesso lo dice
+     * e si ferma, cosi' non lascia nemmeno un passo indietro che non fa
+     * niente. */
+    if (k == 7) {
+        int e;
+
+        for (e = 0; e < EVENTI_MAX; e++)
+            if (g_strum[c->tipo].evento[e] &&
+                strcmp(g_strum[c->tipo].evento[e], v) == 0)
+                break;
+        if (e == EVENTI_MAX) {
+            dico("evento sconosciuto per questo controllo");
+            return;
+        }
+        istante_segna();
+        c->evento = e;
+        g_sporco = 1;
+        prop_mostra();
+        dico("proprieta' applicata");
+        return;
+    }
+
+    istante_segna();
+
     switch (k) {
     case 0:
         strncpy(c->nome, v, NOME_MAX - 1);
@@ -684,22 +782,7 @@ static void prop_applica(void)
     case 4: c->w = atoi(v) < MISURA_MIN ? MISURA_MIN : atoi(v); break;
     case 5: c->h = atoi(v) < MISURA_MIN ? MISURA_MIN : atoi(v); break;
     case 6: c->id = (unsigned int)atoi(v); break;
-    case 7: {
-        /* ! L'EVENTO SI SCEGLIE FRA QUELLI CHE IL CONTROLLO HA, e scriverne uno
-         * inventato non fa niente: il codice generato chiamerebbe una funzione
-         * che non verra' mai chiamata da nessuno. */
-        int e;
-
-        for (e = 0; e < EVENTI_MAX; e++)
-            if (g_strum[c->tipo].evento[e] &&
-                strcmp(g_strum[c->tipo].evento[e], v) == 0) {
-                c->evento = e;
-                break;
-            }
-        if (e == EVENTI_MAX) dico("evento sconosciuto per questo controllo");
-        break;
-    }
-    default: break;
+    default: break;                 /* l'evento, k == 7, e' gia' passato sopra */
     }
 
     g_sporco = 1;
@@ -788,6 +871,8 @@ static void ridimensiona(int mx, int my)
     if (sx == c->x && sy == c->y && dx == c->x + c->w && dy == c->y + c->h)
         return;                                 /* niente e' cambiato */
 
+    if (!g_tras_segnato) { istante_segna(); g_tras_segnato = 1; }
+
     c->x = sx;
     c->y = sy;
     c->w = dx - sx;
@@ -825,6 +910,11 @@ static int aggiungi(int tipo, int x, int y)
 
     for (i = 0; i < CTRL_MAX; i++) if (!g_ctrl[i].usato) break;
     if (i == CTRL_MAX) { dico("non c'e' posto per un altro controllo"); return -1; }
+
+    /* Dopo il controllo del posto: se non se ne aggiunge nessuno non c'e'
+     * niente da annullare, e un passo indietro che non fa niente e' peggio di
+     * non averlo. */
+    istante_segna();
 
     c = &g_ctrl[i];
     memset(c, 0, sizeof(*c));
@@ -915,6 +1005,8 @@ static void form_nuova(void)
     for (i = 0; i < FORM_MAX; i++) if (!g_form[i].usato) break;
     if (i == FORM_MAX) { dico("non c'e' posto per un'altra maschera"); return; }
 
+    istante_segna();
+
     /* Il nome: «finestra2», «finestra3»... il primo numero libero. */
     for (n = 2; ; n++) {
         int preso = 0;
@@ -962,6 +1054,8 @@ static void form_togli(void)
             return;
     }
 
+    istante_segna();                /* dopo il «si'»: annullare un no non serve */
+
     for (i = 0; i < CTRL_MAX; i++)
         if (g_ctrl[i].usato && g_ctrl[i].form == g_form_sel)
             g_ctrl[i].usato = 0;
@@ -970,6 +1064,49 @@ static void form_togli(void)
     g_sporco = 1;
     form_scegli(0);
     dico("maschera tolta");
+}
+
+/* Un passo indietro: si rimette l'ultima fotografia e la si toglie dall'anello. */
+static void annulla(void)
+{
+    Istante *s;
+    char     t[64];
+
+    if (g_storia_n == 0) { dico("non c'e' niente da annullare"); return; }
+
+    g_storia_testa = (g_storia_testa + ANNULLA_MAX - 1) % ANNULLA_MAX;
+    g_storia_n--;
+    s = &g_storia[g_storia_testa];
+
+    memcpy(g_ctrl, s->ctrl, sizeof(g_ctrl));
+    memcpy(g_form, s->form, sizeof(g_form));
+    g_form_sel = s->form_sel;
+    g_sel      = s->sel;
+
+    /* ! RESTA SPORCO ANCHE TORNANDO INDIETRO, e non e' una dimenticanza:
+     * l'unica cosa che si sa e' che il disegno in memoria non e' piu' quello
+     * scritto su disco. Contare i passi per accorgersi di essere tornati
+     * esattamente al punto salvato vorrebbe dire tenere anche il numero del
+     * salvataggio, per risparmiare a chi esce una domanda a cui puo'
+     * rispondere «no». */
+    g_sporco = 1;
+
+    /* ! IL RITORNO PUO' RIPORTARE UNA MASCHERA CHE NON C'E' PIU'. Se si e'
+     * annullato mentre si guardava una maschera tolta e poi rimessa, l'indice
+     * torna valido da solo perche' arriva dalla fotografia; se pero' punta a
+     * un posto vuoto — non dovrebbe mai, ma il disegno viene anche da un file
+     * scritto da qualcun altro — si torna sulla principale invece di
+     * disegnare una maschera che non esiste. */
+    if (g_form_sel < 0 || g_form_sel >= FORM_MAX || !g_form[g_form_sel].usato)
+        g_form_sel = 0;
+
+    form_mostra();
+    prop_mostra();
+    disegna_tela();
+    ex_aggiorna(g_f);
+
+    sprintf(t, "annullato (restano %d passi indietro)", g_storia_n);
+    dico(t);
 }
 
 /* =============================================================================
@@ -1969,6 +2106,7 @@ static void progetto_nuovo(void)
     form_azzera(&g_form[0], "principale", g_prog_nome);
     g_form_sel = 0;
     g_sel = -1;
+    storia_azzera();
 
     progetto_salva();
     progetto_titolo();
@@ -2005,6 +2143,7 @@ static void progetto_apri(void)
     g_prog_dir[PERC_MAX - 1] = '\0';
 
     if (!dis_carica()) { dico("finestra.dis non si legge"); return; }
+    storia_azzera();            /* la storia non attraversa i progetti */
 
     g_sel = -1;
     g_sporco = 0;
@@ -2322,6 +2461,33 @@ static const char *const g_manuale[] = {
 "  e h_Casella1 continuerebbe a puntare a un controllo che non c'e'",
 "  piu'.",
 "",
+"TERZO ESEMPIO: SI ESCE SOLO SE LA SPUNTA E' ACCESA",
+"",
+"  Vale per tre strumenti insieme: la Spunta che si legge, il Pulsante",
+"  che decide e l'Etichetta che spiega perche' non e' successo niente.",
+"",
+"  Metti una Spunta (chiamala Conferma, testo «sono sicuro»),",
+"  un'Etichetta (chiamala Avviso, testo vuoto) e un Pulsante",
+"  (chiamalo Esci). Doppio clic sul pulsante, e dentro Esci_Clic():",
+"",
+"      if (!ex_acceso(h_Conferma)) {",
+"          ex_testo_metti(h_Avviso, \"spunta «sono sicuro» per uscire\");",
+"          ex_procedura_base(g_form, EXM_DISEGNA, 0, 0);",
+"          return;",
+"      }",
+"      ex_esci(0);",
+"",
+"  ex_acceso rende 1 se la spunta e' accesa e 0 se e' spenta: la si",
+"  legge QUANDO SERVE, non si tiene una variabile che dica com'era -",
+"  il controllo lo sa gia', e due posti che ricordano la stessa cosa",
+"  prima o poi non sono piu' d'accordo.",
+"",
+"  ! LA SPUNTA NON HA BISOGNO DI UN HANDLER per questo. Il suo evento",
+"  Cambiato serve a chi deve REAGIRE nel momento in cui si accende;",
+"  qui non reagisce nessuno, si guarda dopo. Un handler vuoto in piu'",
+"  e' codice che non fa niente e che il giorno dopo si legge",
+"  chiedendosi cosa manca.",
+"",
 "PIU' DI UNA FINESTRA",
 "",
 "  Sopra la maschera c'e' l'elenco delle finestre del progetto, con",
@@ -2482,9 +2648,14 @@ static const char *const g_manuale[] = {
 "  File        opera sul PROGETTO, non sul singolo sorgente: nuovo,",
 "              apri, salva, salva con nome (copia tutto l'albero in",
 "              una directory nuova e ci si continua a lavorare)",
-"  Modifica    le voci classiche di un editor - copia, incolla,",
-"              taglia, cancella, cerca, sostituisci - e lavorano",
-"              DENTRO il sorgente, non sulla maschera",
+"  Modifica    Annulla (Ctrl+Z) torna indietro sul DISEGNO: fino a",
+"              sedici passi, e vale per tutto - un controllo messo,",
+"              cancellato, spostato, ridimensionato, una proprieta'",
+"              cambiata, una maschera aggiunta o tolta. La storia si",
+"              azzera aprendo o creando un progetto.",
+"              Le altre voci - copia, incolla, taglia, cancella,",
+"              cerca, sostituisci - lavorano DENTRO il sorgente, non",
+"              sulla maschera",
 "  Strumenti   Sorgente     l'editor sui tre file del disegno",
 "              Shell        una riga di comando nella directory",
 "                           del progetto",
@@ -3599,6 +3770,7 @@ static void tela_clic(int x, int y, int doppio)
 
         if (man >= 0) {
             g_ridim = man;
+            g_tras_segnato = 0;
             dico("tira per cambiare la misura");
             return;
         }
@@ -3626,6 +3798,7 @@ static void tela_clic(int x, int y, int doppio)
             return;
         }
         g_trascina = 1;
+        g_tras_segnato = 0;
         g_tras_dx  = x - (ox + g_ctrl[k].x);
         g_tras_dy  = y - (oy + g_ctrl[k].y);
         prop_mostra();
@@ -3652,6 +3825,8 @@ static void tela_clic(int x, int y, int doppio)
 static void elimina(void)
 {
     if (g_sel < 0 || !g_ctrl[g_sel].usato) { dico("non c'e' niente di scelto"); return; }
+
+    istante_segna();
 
     /* ! SI TOGLIE DAL DISEGNO E NON DAL CODICE. L'handler in finestra.c resta
      * dov'e': e' codice scritto a mano, e cancellarlo perche' un rettangolo non
@@ -3750,6 +3925,8 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         case ID_MANUALE:   manuale();       break;
         case ID_INFO:      informazioni();  break;
 
+        case ID_ANNULLA:  annulla(); break;
+
         case ID_COPIA: case ID_INCOLLA: case ID_TAGLIA:
         case ID_CANCELLA: case ID_CERCA: case ID_SOSTIT:
             dico("le voci di Modifica lavorano dentro il sorgente");
@@ -3788,6 +3965,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
             if (ny < 0) ny = 0;
 
             if (nx != g_ctrl[g_sel].x || ny != g_ctrl[g_sel].y) {
+                if (!g_tras_segnato) { istante_segna(); g_tras_segnato = 1; }
                 g_ctrl[g_sel].x = nx;
                 g_ctrl[g_sel].y = ny;
                 g_sporco = 1;
@@ -3809,6 +3987,25 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 
     case EXM_TASTO:
         if ((wp & KBD_KEY_MASK) == KBD_K_DEL) { elimina(); return 0; }
+
+        /* ! LE SCORCIATOIE SCRITTE NEL MENU ADESSO FANNO QUALCOSA. Erano
+         * etichette e basta — il menu prometteva Ctrl+S dal primo giorno e
+         * premerlo non salvava — e per Annulla la scorciatoia conta piu' che
+         * per gli altri: si annulla subito dopo aver sbagliato, con la mano
+         * ancora sulla tastiera, non aprendo un menu.
+         *
+         * Ctrl+A arriva come 'a' | KBD_MOD_CTRL (vedi kbd_proto.h); si guarda
+         * anche la maiuscola perche' con il Bloc Maiusc acceso arriva quella. */
+        if (wp & KBD_MOD_CTRL) {
+            switch (wp & KBD_KEY_MASK) {
+            case 'z': case 'Z': annulla();        return 0;
+            case 's': case 'S': progetto_salva(); return 0;
+            case 'n': case 'N': progetto_nuovo(); return 0;
+            case 'o': case 'O': progetto_apri();  return 0;
+            case 'q': case 'Q': ex_esci(0);       return 0;
+            default: break;
+            }
+        }
         return 0;
 
     case EXM_DISEGNA:
@@ -3856,6 +4053,8 @@ int main(int argc, char **argv)
     ex_menu_voce(g_menu, "File", "-",                      0);
     ex_menu_voce(g_menu, "File", "Esci\tCtrl+Q",           ID_ESCI);
 
+    ex_menu_voce(g_menu, "Modifica", "Annulla\tCtrl+Z", ID_ANNULLA);
+    ex_menu_voce(g_menu, "Modifica", "-",               0);
     ex_menu_voce(g_menu, "Modifica", "Copia\tCtrl+C",   ID_COPIA);
     ex_menu_voce(g_menu, "Modifica", "Incolla\tCtrl+V", ID_INCOLLA);
     ex_menu_voce(g_menu, "Modifica", "Taglia\tCtrl+X",  ID_TAGLIA);
@@ -3910,6 +4109,7 @@ int main(int argc, char **argv)
         strncpy(g_prog_dir, argv[1], PERC_MAX - 1);
         g_prog_dir[PERC_MAX - 1] = '\0';
         if (!dis_carica()) g_prog_dir[0] = '\0';
+        storia_azzera();
     }
 
     progetto_titolo();

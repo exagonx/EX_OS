@@ -28,6 +28,91 @@ manca» apre quello.
 
 # DOVE RIPRENDERE — 3 settembre 2026
 
+## 3 settembre 2026 (notte) — ANNULLA: SI FOTOGRAFA TUTTO, NON SI REGISTRA COSA
+
+L'ultima voce grossa di exide, e quella che si cerca per prima dopo aver
+cancellato un controllo per sbaglio. Sedici passi indietro, con Ctrl+Z.
+
+### PERCHE' UNA FOTOGRAFIA E NON UN REGISTRO DI COMANDI
+
+! **SI FOTOGRAFA TUTTO IL DISEGNO PRIMA DI OGNI MODIFICA.** L'alternativa —
+registrare COSA e' cambiato e saperlo rifare al contrario — vuol dire scrivere
+l'operazione inversa di ognuna: mettere un controllo, cancellarlo, spostarlo,
+ridimensionarlo, cambiargli una delle otto proprieta', cambiare una delle
+quattro della maschera, aggiungere una maschera, toglierne una che si porta via
+i suoi controlli. Sono nove inverse, ognuna sbagliabile in un modo suo, e
+quelle sbagliate si scoprono un mese dopo. «Rimetti tutto com'era» non puo'
+sbagliare: e' una copia.
+
+! **E IL DISEGNO E' PICCOLO ABBASTANZA PERCHE' SIA SENSATO.** Un istante e'
+l'elenco dei controlli piu' quello delle maschere: sessantaquattro controlli e
+otto maschere, sedici istanti, un centinaio di kilobyte di memoria azzerata che
+non finiscono nel binario. Se un giorno i controlli fossero migliaia la scelta
+si riguarderebbe; con questi numeri non c'e' niente da bilanciare.
+
+! **LA STORIA E' UN ANELLO**, cosi' il sedicesimo passo non costa una copia di
+tutto l'elenco per far posto: costa quanto il primo.
+
+### LE DUE COSE CHE RENDONO UN ANNULLA UTILE O INUTILE
+
+! **UNA FOTOGRAFIA PER TRASCINAMENTO, E SOLO SE QUALCOSA CAMBIA.** Un
+trascinamento manda decine di `EXM_MOUSE_MOSSO`: fotografando a ognuno, i
+sedici passi se li mangia un movimento solo e si torna indietro mezzo pixel per
+volta. Fotografando invece all'INIZIO del trascinamento, un clic che sceglie e
+basta lascia un passo indietro che non fa niente — e un Annulla che non fa
+niente e' peggio di non averlo, perche' chi lo preme crede che sia rotto.
+Percio' si fotografa al PRIMO cambiamento vero, e una bandiera se lo ricorda
+per il resto del trascinamento.
+
+Per la stessa ragione le fotografie si scattano DOPO i controlli che possono
+far fallire l'operazione: dopo il «c'e' ancora posto?» in `aggiungi()`, dopo il
+«si'» della conferma in `form_togli()`, dopo la validazione del nome in
+`prop_applica()`.
+
+! **E LA STORIA NON ATTRAVERSA I PROGETTI.** Aprirne un altro e premere
+Annulla rimetterebbe sulla maschera i controlli di quello di prima, con i loro
+nomi e i loro id: un disegno mai esistito, pronto per essere salvato sopra
+quello vero. Si azzera aprendo, creando e copiando un progetto.
+
+### UN DIFETTO TROVATO SCRIVENDOLO
+
+`prop_applica()`, scrivendo un evento che il controllo non ha, diceva «evento
+sconosciuto» **e poi** «proprieta' applicata», segnando il disegno da salvare:
+due messaggi contraddittori per un'operazione che non era avvenuta. Adesso lo
+dice e si ferma — e come effetto secondario non lascia nemmeno un passo
+indietro che non fa niente.
+
+### LE SCORCIATOIE ERANO ETICHETTE
+
+I menu promettevano `Ctrl+N`, `Ctrl+O`, `Ctrl+S`, `Ctrl+Q` dal primo giorno e
+premerli non faceva niente: nessuno le aveva mai collegate. Per Annulla la
+scorciatoia conta piu' che per gli altri — si annulla subito dopo aver
+sbagliato, con la mano ancora sulla tastiera, non aprendo un menu — e allora
+sono state collegate tutte insieme. `Ctrl+A` arriva come `'a' | KBD_MOD_CTRL`
+(kbd_proto.h); si guarda anche la maiuscola, che e' quel che arriva col Bloc
+Maiusc acceso.
+
+Restano etichette quelle della finestra «Sorgente», che non ha un
+`EXM_TASTO` suo: e' scritto in `in_lavorazione.txt`.
+
+### COME SI E' PROVATO
+
+Tre modifiche di tre tipi diversi, ognuna seguita da Ctrl+Z, dentro EX-OS:
+
+    strumento Etichetta, clic sulla maschera  -> nasce Etichetta3 (id 1005)
+    Ctrl+Z  -> sparisce, e la riga di stato dice
+               «annullato (restano 0 passi indietro)»
+    Etichetta1 trascinata di 40 pixel         -> si sposta
+    Ctrl+Z  -> torna dov'era
+    Pulsante1 scelto, tasto Canc              -> sparisce
+    Ctrl+Z  -> torna, E TORNA ANCHE SCELTO, con le sue proprieta' a destra
+
+E la prova che lega tutto: dopo i tre annullamenti, File > Salva e il
+`finestra.dis` riletto dalla shell e' **identico byte per byte** a quello di
+partenza — due maschere, i loro quattro controlli, gli stessi numeri.
+
+
+
 ## 3 settembre 2026 (notte) — LE MANIGLIE SI TIRANO, E IL MANUALE SPIEGA DAVVERO
 
 Due cose che si tenevano compagnia: il ridimensionamento col mouse — le

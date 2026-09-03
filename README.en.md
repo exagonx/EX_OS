@@ -84,6 +84,42 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### Undo: photograph everything, do not record what changed
+
+**tested** — three edits of three different kinds, each undone, and at the end
+the drawing file read back from the shell **identical to the starting one**.
+Sixteen steps back, with Ctrl+Z or Edit > Undo.
+
+**The whole drawing is photographed before every change**, instead of recording
+what changed. The alternative means writing the inverse of each operation —
+placing a control, deleting it, moving it, resizing it, changing one of its
+eight properties, changing one of the form's four, adding a form, removing one
+that takes its controls with it: nine inverses, each wrong in its own way, and
+the wrong ones surface a month later. "Put everything back as it was" cannot be
+wrong: it is a copy. And the drawing is small enough for that to make sense:
+sixteen snapshots fit in about a hundred kilobytes of zeroed memory, which never
+reach the binary.
+
+**One photograph per drag, and only if something really changed.** A drag sends
+dozens of events: photographing each one, a single movement eats all sixteen
+steps and you go back half a pixel at a time. Photographing at the *start* of
+the drag instead, a click that only selects would leave a step that does
+nothing — and an Undo that does nothing is worse than no Undo, because whoever
+presses it thinks it is broken. The photograph is taken at the first real
+change.
+
+**And the history does not cross projects**: opening another one and pressing
+Undo would put the previous project's controls back on the form, with their
+names and their ids — a drawing that never existed, ready to be saved over the
+real one.
+
+> **The shortcuts were labels.** The menus had promised Ctrl+N, Ctrl+O, Ctrl+S
+> and Ctrl+Q since day one and pressing them did nothing: nobody had ever wired
+> them. For Undo the shortcut matters more than for the others — you undo right
+> after the mistake, hand still on the keyboard, not by opening a menu — so they
+> were all wired at once. The ones in the "Source" window are still labels, and
+> now that is written down where the missing things are kept.
+
 ### The handles can be pulled, and the manual actually explains
 
 **tested** — inside EX-OS, pulling every kind of handle and reading back the

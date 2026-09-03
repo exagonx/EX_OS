@@ -85,6 +85,42 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### Annulla: si fotografa tutto, non si registra cosa
+
+**testato** — tre modifiche di tre tipi diversi, ognuna annullata, e alla fine
+il file del disegno riletto dalla shell **identico a quello di partenza**.
+Sedici passi indietro, con Ctrl+Z o Modifica > Annulla.
+
+**Si fotografa il disegno intero prima di ogni modifica**, invece di registrare
+cosa è cambiato. L'alternativa vuol dire scrivere l'operazione inversa di
+ognuna — mettere un controllo, cancellarlo, spostarlo, ridimensionarlo,
+cambiargli una delle otto proprietà, cambiare una delle quattro della maschera,
+aggiungere una maschera, toglierne una che si porta via i suoi controlli: nove
+inverse, ognuna sbagliabile in un modo suo, e quelle sbagliate si scoprono un
+mese dopo. «Rimetti tutto com'era» non può sbagliare, è una copia. E il disegno
+è piccolo abbastanza perché sia sensato: sedici istanti stanno in un centinaio
+di kilobyte di memoria azzerata, che non finiscono nel binario.
+
+**Una fotografia per trascinamento, e solo se qualcosa cambia davvero.** Un
+trascinamento manda decine di eventi: fotografando a ognuno, i sedici passi se
+li mangia un movimento solo e si torna indietro mezzo pixel per volta.
+Fotografando invece all'inizio del trascinamento, un clic che sceglie e basta
+lascerebbe un passo che non fa niente — e un Annulla che non fa niente è peggio
+di non averlo, perché chi lo preme crede che sia rotto. Si fotografa al primo
+cambiamento vero.
+
+**E la storia non attraversa i progetti**: aprirne un altro e premere Annulla
+rimetterebbe sulla maschera i controlli di quello di prima, con i loro nomi e i
+loro id — un disegno mai esistito, pronto per essere salvato sopra quello vero.
+
+> **Le scorciatoie erano etichette.** I menu promettevano Ctrl+N, Ctrl+O,
+> Ctrl+S e Ctrl+Q dal primo giorno e premerli non faceva niente: nessuno le
+> aveva mai collegate. Per Annulla la scorciatoia conta più che per gli altri —
+> si annulla subito dopo aver sbagliato, con la mano ancora sulla tastiera, non
+> aprendo un menu — e allora sono state collegate tutte insieme. Restano
+> etichette quelle della finestra «Sorgente», e adesso è scritto dove si tiene
+> quel che manca.
+
 ### Le maniglie si tirano, e il manuale spiega davvero
 
 **testato** — dentro EX-OS, tirando ogni tipo di maniglia e leggendo i numeri
