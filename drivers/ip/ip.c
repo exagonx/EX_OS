@@ -743,6 +743,7 @@ typedef struct {
     unsigned int  rcv_nxt;       /* prossimo atteso */
     unsigned int  fin_seq;       /* numero di sequenza del nostro FIN */
     unsigned int  finestra;      /* quella annunciata dall'altro */
+    unsigned int  fin_nostra;    /* l'ultima che abbiamo annunciato NOI */
 
     unsigned char tx[TCP_BUF];
     unsigned int  tx_len;        /* byte in coda, confermati compresi */
@@ -898,6 +899,7 @@ static void tcp_manda(Conn *c, unsigned int flag,
      * ricezione: dichiararne di piu' vorrebbe dire invitare l'altro a
      * mandare dati che poi butteremmo. */
     metti16(seg + 14, TCP_BUF - c->rx_len);
+    c->fin_nostra = TCP_BUF - c->rx_len;
     metti16(seg + 16, 0);                   /* somma: dopo */
     metti16(seg + 18, 0);                   /* puntatore urgente */
 
@@ -1041,6 +1043,34 @@ static void tcp_consegna(Conn *c)
     } else {
         c->rx_len = 0;
     }
+
+    /* =====================================================================
+     * ! CHI SI LIBERA DEVE DIRLO, O L'ALTRO NON RIPARTE.
+     *
+     * La finestra che annunciamo e' lo spazio libero in questo buffer, e la
+     * si annuncia solo DENTRO un ACK — cioe' solo quando arriva un segmento.
+     * Finche' chi legge tiene una prenotazione, il buffer si svuota a ogni
+     * pacchetto e la finestra resta larga: il caso non si presenta. Ma chi
+     * legge CHIEDENDO QUANTI BYTE CI SONO — e lo fa da quando la finestra deve
+     * restare viva mentre si scarica — legge a scatti, e fra uno scatto e
+     * l'altro un mittente veloce riempie quattro kilobyte in un istante.
+     *
+     * A quel punto abbiamo annunciato una finestra piccola o nulla, l'altro
+     * ha SMESSO di mandare, e quando noi svuotiamo non arriva piu' NESSUN
+     * segmento a darci l'occasione di dire che c'e' posto. Si riparte solo
+     * quando l'altro prova per conto suo, e la ritrasmissione raddoppia
+     * l'attesa ogni volta: uno, due, quattro secondi.
+     *
+     * ! IL SINTOMO ERA UNA PAGINA https CHE NON FINIVA DI ARRIVARE, e per un
+     * giorno intero e' sembrato un difetto della cassetta postale: chi legge
+     * chiedeva «quanti byte ci sono?» e la risposta era zero per sempre —
+     * mentre il server, dall'altra parte, aspettava noi.
+     *
+     * Un ACK vuoto e' due decine di byte e porta la finestra nuova.
+     * ================================================================== */
+    if ((c->stato == S_APERTA || c->stato == S_FIN_MIO) &&
+        c->fin_nostra < TCP_BUF / 2 && TCP_BUF - c->rx_len >= TCP_BUF / 2)
+        tcp_manda(c, TCP_ACK, NULL, 0);
 }
 
 /* =============================================================================

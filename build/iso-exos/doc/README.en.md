@@ -2,10 +2,10 @@
 
 [🇮🇹 Italiano](README.md) · **🇬🇧 English**
 
-**Version:** 0.205
+**Version:** 0.208
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
-**Architecture:** x86 32-bit, FAT12 1.44MB floppy
+**Architecture:** x86 32-bit — boots from floppy, from CD or from a hard disk
 
 *The two versions are kept in step: what is in one is in the other.*
 
@@ -14,10 +14,25 @@
 ## What EX-OS is
 
 EX-OS is a baremetal operating system written in C and assembly for the x86
-32-bit architecture. It boots from a 1.44MB FAT12 floppy, from a hard disk
-(FAT16/32 or ext2), and reads CDs and DVDs. The goal is an extensible
-system: the kernel is small and read-only in conventional RAM, everything
-else (drivers, shell, programs) runs in extended RAM in protected space.
+32-bit architecture. The goal is an extensible system: the kernel is small and
+read-only in conventional RAM, everything else (drivers, shell, programs) runs
+in extended RAM in protected space.
+
+**It is not a "floppy OS": the floppy is one of the ways to boot it, not where
+it lives.** There are three boot media, and they are three systems with the
+same kernel inside:
+
+| medium | what is on it | how to build it |
+|---|---|---|
+| **floppy** 1.44MB FAT12 | the minimum needed to reach a shell and install | `make floppy` -> `dist/floppy.img` |
+| bootable **CD** | the **complete** system: graphical desktop, browser, networking, drivers, fonts, documentation | `make iso-exos` -> `dist/exos.iso` |
+| **hard disk** FAT16/32 or ext2 | whatever the installer put there, and the only one you can write to | `install` (or `cdinstall` from the CD) |
+
+The floppy is 1.44MB that will not grow, and the kernel grows with everything
+it learns: since 26 August 2026 the real installer lives on the CD and only the
+frozen half stays on the floppy. **The CD is the reference medium** — it is
+what testing and installing start from — and CDs/DVDs are readable (ISO 9660
+and Joliet) whatever the boot medium is.
 
 A driver or a program crashing cannot bring the system down.
 
@@ -68,6 +83,131 @@ for **`g++`** — containers, `std::string` and exceptions included. See
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### The window stays alive while downloading, and the mailbox has an owner
+
+**tested** — from the CD, in QEMU: `https://www.google.com/` (200, 83 KB, 108
+nodes), a local page with six images each delayed by twenty seconds, and the
+host test suites (256 + 244 + 244 + 51, zero failures).
+
+**While a page was downloading, the window was dead.** Whoever reads sleeps
+inside the read, and while it sleeps the pointer does not move, the window does
+not repaint and no key arrives: on a large page that is tens of seconds of a
+frozen screen. The transport can now ask a question it could not ask before —
+*how many bytes are there right now?* — and when the answer is zero it hands the
+turn back to its host. The answer comes from the stack (`IP_MSG_TCP_STATO`,
+which reserves nothing and waits for nothing) and not from a read attempt with a
+short deadline: that one cannot tell a timeout from an error, and leaves a
+pending reservation behind for every attempt.
+
+**And so it can be stopped.** `Esc` interrupts the download and the previous page
+stays where it was; what had already arrived is *not* kept, because a truncated
+page shown as a whole one is worse than no page at all. Before this, it could not
+even be offered: while downloading, no key arrived.
+
+**The encrypted handshake says where it has got to.** Seven steps — the key, the
+ServerHello, the secret, the certificates, the signature, the chain, the end —
+written into the status line as they go by. And measured: the handshake costs
+**490 ms** in total (the 150-certificate CA store 60 ms, DNS and the TCP
+connection 320 ms). The "twenty seconds on an emulated 386" was written in three
+places and had never been measured.
+
+**The mailbox has an owner.** A graphical application receives window-server
+events *and* IP stack replies in the same mailbox, and while a page downloads
+there are two waiters: the one reading the network and the message loop. Each
+scanned the queue looking for its own and *held* what belonged to the other, to
+put it back at the end — and whoever holds something can drop it: the shelf
+things were put back onto had four slots, and nobody looked at the `-1` for when
+it was full. Now there is `ipc_scegli`: you pass a filter that says, of every
+message, **mine / someone else's / nobody's**, and what belongs to someone else
+**stays where it is**. It never passes through the hands of whoever does not
+want it, so it cannot be lost.
+
+> The shelf counts bytes, not messages, in the same six kilobytes as before. A
+> mouse click is twenty bytes: it used to take one of the four slots, now
+> twenty-four of them fit. And a message belonging to someone else is **skipped**
+> rather than put back, which removes the trap that stalled the message pump
+> every time the IP stack had a reply set aside.
+
+**And the TCP window would not reopen.** Whoever reads in bursts — instead of
+reserving and sleeping — lets the receive buffer fill up between one burst and
+the next, and a fast sender fills four kilobytes in an instant. The stack
+advertised the free space **only inside an ACK**, that is, only when a segment
+arrived: when the buffer later drained it had no way left to say so, and the
+server sat waiting for us. The symptom was an `https` page that never finished
+arriving, and for a day it looked like a mailbox defect. Now whoever frees space
+says so: an empty twenty-byte ACK, and the flow restarts.
+
+### The browser runs JavaScript, and there are two engines
+
+**tested** — 256 tests on the language, 244 on the bridge with ExJs and 244 with
+QuickJS, plus fifteen panels exercised inside EX-OS.
+
+**Two engines, one interface.** `exjs.so` is written here; `quickjs.so` is
+QuickJS compiled for EX-OS. You choose which one to load, and the bridge to the
+page — `exdom.so` — is the same for both: the 244 tests run identically on one
+and on the other, which is how you say the interface really is one.
+
+**The DOM a real page needs**: `document`, elements, attributes, classes,
+`innerHTML`, events with `addEventListener` and `preventDefault`, forms and the
+button that submits them.
+
+**`XMLHttpRequest` and `fetch`**, synchronous and asynchronous — and the
+asynchronous one is real: the request leaves, the rest of the script carries on,
+and the response arrives when the message loop delivers it. The **order** in
+which things happen is one of the fifteen panels, because it is the part that
+goes wrong silently.
+
+**A defect that did not look like its cause.** Two stubs in the same process can
+pick two different libraries: the browser opened one engine and `exdom.so` the
+other, and two engines that could not see each other were running in the same
+process. The symptom was a page fault inside the first one holding a context
+built by the second. Ring 3 cannot answer this by itself — there is no way to
+know which pages are mapped for you without trying to read them — so the loader
+answers it, with `SYS_LIB_TROVA` (0.208): the process page table *is* the list.
+
+### Cookies, both halves of them
+
+**tested** — 51 tests on the jar, plus the full round trip against a test server.
+
+A cookie is not a string to send back: it is a rule about **which domain** and
+**which path**, with an expiry. The jar keeps the rules, decides which cookies
+apply to the address being opened, and attaches them to the request — including
+requests that start inside a redirect, which is where half the web puts its
+login. It is tested on its own, with no screen and no network, because matching
+rules go wrong silently.
+
+> **Persistence is not yet tested inside EX-OS**, only on the host: nothing is
+> writable when booting from CD, and the full round trip needs an installed
+> system.
+
+### Sound: four cards and MIDI
+
+**tested** — in QEMU, by listening to the file QEMU records, not to the driver's
+own counters.
+
+Four drivers — SB16, AC'97, ES1370/ES1371 and HD Audio — behind a single
+protocol, so a program that plays sound does not know which card is there. MIDI
+on the PCI cards is audible and in tune: it is an eight-sine wavetable, that is,
+a single timbre — program change is ignored and there is no percussion. It is
+declared, and it is where the work resumes.
+
+> **What has never run is marked where it starts.** QEMU emulates the ES1370, not
+> the ES1371: the sample-rate converter and the AC'97 codec inside the ES1371
+> driver are written from the documented sequence and have never been executed,
+> on silicon or in emulation. And **recording does not exist**: all four know
+> only how to play.
+
+### Google is not a target for the browser, and now we know why
+
+**tested** — measured, and the road is closed.
+
+`google.com` opens and renders. The **results** page does not, and it is not our
+JavaScript's fault: with the User-Agent of Lynx, of w3m or of MSIE 6, Google
+answers "update your browser", and with that of a recent Firefox it sends its
+obfuscated anti-robot check. There is no third door. It is written down because
+a road tried and closed is worth as much as a feature added: whoever tries it
+again pays the same time twice.
 
 ### The desktop has a console of its own, shuts down, and speaks your language
 
@@ -1371,6 +1511,19 @@ one thing — become root knowing the password — where the setuid bit on files
 would make every executable carrying it dangerous. A permission that does
 exactly what is needed can be reasoned about; one that does more can only be
 hoped not to be used.
+
+### Syscalls added between 0.203 and 0.208
+
+| EAX | Syscall          | What it is for |
+|-----|------------------|----------------|
+| 233 | console_grafica  | who holds the graphics console, and which one it is — so Alt+Fn does not land on a black screen with no way back, and a killed server frees the console by itself |
+| 238 | lib_trova        | «do I already have this library inside me?» — ring 3 cannot answer that, and the process page table *is* the list |
+
+! **BOTH ARE STATE THAT LIVES IN THE KERNEL BECAUSE IT MUST OUTLIVE ITS USER.** A
+flag held by the window server would die with it and leave the door open onto an
+empty room; a list of libraries held by one stub would not be seen by the other
+stub in the same process — which is exactly the defect 238 was born from, two
+JavaScript engines running side by side without seeing each other.
 
 ---
 

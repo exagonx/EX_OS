@@ -2232,22 +2232,76 @@ int     ipc_recv(IpcMessage *out_meta, void *buf, unsigned int buf_len);
  * La scadenza e' arrotondata per eccesso al tick del PIT (10 ms): non
  * ha senso chiederne una piu' fine di cosi'.
  * ============================================================================= */
-/* Rimette un messaggio che si e' letto ma che non era per chi lo ha letto: la
- * prossima ipc_recv_* lo ritrova, prima di qualunque altro.
- *
- * ! SERVE PERCHE' LA MAILBOX E' UNA SOLA E I CONSUMATORI SONO PIU' D'UNO.
- * Un'applicazione grafica ci riceve gli eventi del server a finestre E le
- * risposte dello stack IP: chi aspetta le seconde scorre i messaggi e, senza
- * questa, BUTTA i primi — cioe' i clic dell'utente mentre scarica una pagina.
- * Non si puo' «non leggere» un messaggio: ipc_recv toglie dalla coda del
- * kernel, e rimetterlo da questa parte e' l'unica difesa.
- *
- * Rende 0, oppure -1 se lo scaffale e' pieno — e in quel caso il messaggio si
- * perde come si perdeva prima, non peggio. */
-int     ipc_rimetti(const IpcMessage *meta, const void *dati, unsigned int len);
-
 int     ipc_recv_timeout(IpcMessage *out_meta, void *buf, unsigned int buf_len,
                          unsigned int timeout_ms);
+
+/* =============================================================================
+ * ipc_scegli — aspettare il PROPRIO messaggio quando la cassetta e' di due
+ *
+ * ! LA MAILBOX E' UNA SOLA E I CONSUMATORI SONO PIU' D'UNO. Un'applicazione
+ * grafica riceve nella stessa coda gli eventi del server a finestre E le
+ * risposte dello stack IP; e non si puo' «non leggere» un messaggio, perche'
+ * ipc_recv lo toglie dalla coda del kernel e non c'e' modo di sbirciare.
+ *
+ * Chi aspetta passa un FILTRO, che di ogni messaggio dice una di tre cose:
+ *
+ *     IPC_MIO      e' quello che aspettavo: consegnamelo
+ *     IPC_ALTRUI   non e' mio: lascialo dov'e', lo aspetta un altro
+ *     IPC_BUTTA    non e' di nessuno: e' una risposta vecchia, si butta
+ *
+ * ! CIO' CHE E' ALTRUI NON PASSA MAI PER LE MANI DI CHI NON LO VUOLE, ed e'
+ * l'intero punto: resta sullo scaffale della libc, in ordine d'arrivo, finche'
+ * non viene a prenderselo il suo padrone. Chi legge non puo' perdere quel che
+ * non ha mai tenuto in mano.
+ *
+ * ! E NON SI RIMETTE NIENTE: un ALTRUI si SALTA. Rimettere e rileggere subito
+ * rende lo stesso messaggio all'infinito, perche' lo scaffale si serve prima
+ * della coda del kernel — la trappola che questa funzione toglie di mezzo.
+ *
+ * Rende i byte consegnati (>= 0), -ETIMEDOUT se scade, o l'errore del kernel.
+ * `ms == 0` vuol dire attesa senza scadenza, come in tutta questa libc, e la
+ * scadenza vale per TUTTA la chiamata, non per ogni singola lettura.
+ *
+ * ! E `ms == IPC_SUBITO` VUOL DIRE «SOLO QUEL CHE C'E' GIA'», che non e' la
+ * stessa cosa di una scadenza corta: la piu' corta che il kernel sappia
+ * rappresentare e' un tick del PIT, dieci millisecondi. Chi guarda la posta
+ * mentre aspetta altro — la pompa dei messaggi di una finestra durante uno
+ * scaricamento — la guarda otto volte per giro, e otto tick sono ottanta
+ * millisecondi buttati a ogni giro.
+ * ============================================================================= */
+#define IPC_ALTRUI   0
+#define IPC_MIO      1
+#define IPC_BUTTA  (-1)
+
+/* Una scadenza che vuol dire «non aspettare affatto». */
+#define IPC_SUBITO  ((unsigned int)-1)
+
+typedef int (*IpcFiltro)(const IpcMessage *meta, void *dato);
+
+int     ipc_scegli(IpcFiltro filtro, void *dato, IpcMessage *out_meta,
+                   void *buf, unsigned int buf_len, unsigned int ms);
+
+/* Quanti messaggi sono gia' sullo scaffale, cioe' quanti se ne possono avere
+ * senza chiedere niente al kernel.
+ *
+ * ! SERVE A CHI DORME SU poll(): poll guarda la coda DEL KERNEL, e un messaggio
+ * gia' messo da parte non la fa scattare. Senza questo controllo un evento
+ * lasciato sullo scaffale mentre si scaricava una pagina resterebbe li' fino al
+ * prossimo messaggio che arriva davvero — su uno schermo fermo, per sempre. */
+unsigned int ipc_pronto(void);
+
+/* Mette un messaggio sullo scaffale, come fa ipc_scegli con un IPC_ALTRUI.
+ *
+ * ! E' LA PRIMITIVA SOTTO ipc_scegli, E QUASI SEMPRE SI VUOLE QUELLA. Chi la
+ * chiama a mano deve ricordarsi che lo scaffale si serve PRIMA della coda del
+ * kernel: rimettere un messaggio e rileggere subito vuol dire ritrovarselo
+ * davanti all'infinito. E' il difetto che ha tenuto ferma la pompa dei messaggi
+ * del navigatore per tutto il tempo che uno stack IP aveva una risposta da
+ * parte.
+ *
+ * Rende 0, oppure -1 se lo scaffale e' pieno — e in quel caso il messaggio si
+ * perde. */
+int     ipc_rimetti(const IpcMessage *meta, const void *dati, unsigned int len);
 
 /* Registra il chiamante come fornitore del servizio 'name' (es. "tty",
  * "floppy"). Ritorna 0 su successo, <0 se il nome è già in uso. */

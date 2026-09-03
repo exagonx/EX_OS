@@ -1,4 +1,20 @@
-Da fare, sul suono (1 settembre 2026):
+QUEL CHE E' APERTO — 3 settembre 2026
+
+Qui c'e' SOLO quel che non e' fatto. Niente voci «FATTO»: la storia di come una
+cosa e' stata fatta, e perche' cosi', sta in RIPRENDERE.md, che e' un diario e
+si sfoglia con `tools/diario.sh` invece di leggerlo tutto.
+
+    tools/diario.sh elenco biscotti     trova la giornata
+    tools/diario.sh mostra 5            la stampa
+    tools/diario.sh cerca scaffale      cerca dentro
+
+! I RIMANDI QUI SOTTO SONO DATE, non numeri di sezione: i numeri scalano ogni
+  volta che si aggiunge una giornata in cima al diario, le date no.
+
+
+=============================================================================
+IL SUONO (aperto dal 1 settembre 2026 — diario: «IL SUONO, E TRE APERTURE»)
+=============================================================================
 
 1. L'ES1371 VERO NON E' MAI STATO ESEGUITO. QEMU emula l'ES1370, non
    l'ES1371: tutto il codice del convertitore di frequenza (SRC) e del codec
@@ -38,7 +54,10 @@ Da fare, sul suono (1 settembre 2026):
    dentro.
 
 
-Bug trovati:
+=============================================================================
+DIFETTI APERTI
+=============================================================================
+
 Da CD, un driver ogni tanto muore appena avviato (raro, non chiuso).
     Sintomo: «page fault a 0x00000000, EIP=0x00000000», e nel dump lo STACK
     del processo e' 0x0..0x0 mentre heap e VMA sono quelli di un altro
@@ -55,397 +74,127 @@ Da CD, un driver ogni tanto muore appena avviato (raro, non chiuso).
     riprodotto, quindi la misura non distingue. Se il fault ricompare, il
     [WARN] dira' se e' quella strada o un'altra.
 
+! DENTRO UN SINGOLO PASSO DELLA STRETTA TLS NON SI RESPIRA. La stretta di mano
+  adesso legge a pezzi come tutto il resto (diario: 3 settembre notte, «LA
+  CASSETTA POSTALE HA UN PADRONE»), e la finestra resta viva anche durante il
+  mezzo secondo che costa. Ma un x25519 o una verifica di firma sono un blocco
+  solo, e li' non si legge — si calcola: spezzarli vorrebbe dire un gancio
+  dentro excurva e exbig. Col pezzo piu' lungo a 150 ms non lo merita, ed e'
+  scritto in extls.h, in exhttp.h e accanto alla chiamata.
 
-Da fare, per una pagina web moderna (in ordine di quanto pesa):
-
-1. GLI SCRIPT DI COLLEGAMENTO CJK, e cioe' i font. Cinese, giapponese,
-   coreano, devanagari e thai escono come collegamenti VUOTI — sottolineati e
-   senza lettere. Non e' il lettore TrueType: ne' Liberation ne' DejaVu hanno
-   quei glifi, e chi li ha (Noto CJK) pesa venti megabyte su un CD che ne pesa
-   dieci. Le strade sono due, e nessuna e' gratis: un font CJK ridotto ai soli
-   caratteri comuni, oppure dichiararlo a schermo invece che lasciare un
-   collegamento vuoto che sembra rotto.
-
-2. @media, le unita' relative (em, %, rem) e JavaScript: dichiarati fuori.
-   Le unita' relative sono le piu' vicine a essere fattibili — `font-size`
-   accetta solo i pixel — ma vogliono la misura del contenitore, che
-   l'impaginazione a penna corrente non ha in mano quando serve.
-
-3. Le GIF animate mostrano il primo fotogramma, ed e' dichiarato: animarle
-   vorrebbe dire un orologio dentro la libreria delle immagini.
-
-4. FATTO — I BORDI DELLE TABELLE. `<table border="1">` adesso si legge e
-   disegna un filo intorno a ogni cella e intorno alla tabella. E' l'attributo,
-   non il CSS: e' come si sono disegnate le tabelle per vent'anni, e le pagine
-   che lo usano sono le stesse che non hanno un foglio di stile. I bordi stanno
-   nello stesso elenco degli sfondi — sono rettangoli sotto il testo e sopra lo
-   sfondo, esattamente come uno sfondo — cosi' non c'e' un secondo tetto da
-   scegliere ne' un secondo ritaglio da sbagliare. `border-collapse`, i colori e
-   i lati separati non ci sono.
-
-5. L'ARABO E L'EBRAICO SI VEDONO MA VANNO NEL VERSO SBAGLIATO. I glifi ci
-   sono (DejaVu), ma si impaginano da sinistra a destra come tutto il resto:
-   una riga di arabo si legge al contrario. Il BiDi non c'e' ed e' un lavoro
-   suo, non un ritocco.
-
-6. IL CURSORE NON SI PIAZZA COL MOUSE. Nelle caselle e nelle aree si muove
-   con le frecce, Home, Fine e le cancellazioni; un clic dentro il testo pero'
-   da' il fuoco alla casella e mette il cursore in fondo, non nel punto in cui
-   si e' cliccato.
+! LA FINESTRA DI RICEZIONE DI TCP E' QUATTRO KILOBYTE (TCP_BUF in
+  drivers/ip/ip.c). Da quando chi legge lo fa a scatti — chiedendo «quanti byte
+  ci sono?» invece di prenotare — quel buffer si riempie fra uno scatto e
+  l'altro, e la ripartenza costa un ACK di riapertura per volta. Funziona ed e'
+  provato; un buffer piu' grande vorrebbe dire meno giri e piu' RAM per
+  connessione, e la scelta non e' stata fatta perche' nessuno l'ha misurata.
 
 
-LO STATO DEL NAVIGATORE AL 2 SETTEMBRE 2026 — dove riprendere
+=============================================================================
+IL NAVIGATORE — QUEL CHE MANCA A UNA PAGINA VERA (in ordine di quanto pesa)
+=============================================================================
 
-Questo e' il punto in cui il browser e' stato lasciato. Le prove che contano:
+Le prove che contano, e come si lanciano:
 
-    make prova-exjs      256 prove, 0 sbagliate     il linguaggio da solo
-    make prova-exdom     244 prove, 0 sbagliate     il ponte, con ExJs sotto
-    make prova-exqjs     244 prove, 0 sbagliate     il ponte, con QuickJS sotto
-    make prova-biscotti   51 prove, 0 sbagliate     la dispensa dei cookie
-    /exwin/doc/javascript.html aperto DENTRO EX-OS:
-        i QUINDICI riquadri si riempiono, con l'uno e con l'altro motore
-    e la stessa pagina servita in rete (http://10.0.2.2:8000/script.html):
-        i riquadri 13, 14 e 15 provano XMLHttpRequest, fetch e l'ORDINE
-    http://10.0.2.2:8000/metti-biscotti — i biscotti, tutt'e due le meta':
-        quel che uno script vede, e quel che il SERVER riceve indietro
-    http://10.0.2.2:8000/invio.html — i pulsanti di un modulo: quale manda,
-        quali non devono mandare, e che cosa arriva davvero dall'altra parte
+    make prova-exjs      256 prove     il linguaggio da solo
+    make prova-exdom     244 prove     il ponte, con ExJs sotto
+    make prova-exqjs     244 prove     il ponte, con QuickJS sotto
+    make prova-biscotti   51 prove     la dispensa dei cookie
+    make prova-exhttp                  il trasporto
+    /exwin/doc/javascript.html dentro EX-OS: quindici riquadri, due motori
+    http://10.0.2.2:8000/script.html (tools/prove/sito/servi.py): i riquadri
+        13, 14 e 15 provano XMLHttpRequest, fetch e l'ORDINE
+    /tmp/exos-prove/domqjs <pagina.html> [indirizzo] — la pagina vera, che e'
+        la prova che vale di piu'. Il secondo argomento e' l'indirizzo da
+        dichiarare alla pagina: senza, `location` dice `file://...`, e mezzo
+        web guarda location.hostname prima di decidere che fare.
 
-    E LA PAGINA VERA, che e' la prova che vale di piu':
-        /tmp/exos-prove/domqjs <pagina.html> [indirizzo]
-    Il secondo argomento e' l'indirizzo da dichiarare alla pagina: senza,
-    `location` dice `file://...`, e mezzo web guarda location.hostname prima
-    di decidere che fare. Il banco stampa quale script e' morto, dove, e se
-    qualcuno ha chiesto di andare altrove.
+! E LA PROVA DENTRO QEMU SI FA COMUNQUE: il banco non impagina e non carica
+  librerie condivise, e i due difetti piu' brutti del 27 agosto vivevano
+  esattamente li' in mezzo — centoventi prove verdi e la pagina sbagliata
+  sullo schermo.
 
-CHE COSA C'E' ADESSO
+ 1. GLI SCRIPT DI COLLEGAMENTO CJK, e cioe' i font. Cinese, giapponese,
+    coreano, devanagari e thai escono come collegamenti VUOTI — sottolineati e
+    senza lettere. Non e' il lettore TrueType: ne' Liberation ne' DejaVu hanno
+    quei glifi, e chi li ha (Noto CJK) pesa venti megabyte su un CD che ne pesa
+    dieci. Le strade sono due, e nessuna e' gratis: un font CJK ridotto ai soli
+    caratteri comuni, oppure dichiararlo a schermo invece che lasciare un
+    collegamento vuoto che sembra rotto.
 
- - DUE MOTORI JAVASCRIPT, stessa interfaccia (exjs.h), scelti da
-   File > Impostazioni: ExJs (66 KB, l'ES3 scritto qui) e QuickJS
-   (594 KB, in /exwin/lib/quickjs.so). L'adattatore e' lib/exqjs/exqjs.c;
-   i sorgenti di QuickJS stanno fuori dal repository, vedi
-   tools/quickjs-exos/leggimi.md.
- - I MENU: File (Apri, Pagina iniziale, Salva con nome, Impostazioni, Esci)
-   e Aiuto (guida, documentazione, Informazioni su).
- - LO SCHEMA file:, con collegamenti relativi, fogli di stile esterni,
-   script esterni e immagini presi dal disco.
- - LE IMPOSTAZIONI in $HOME/.app/browser/impostazioni.txt: pagina iniziale,
-   JavaScript acceso/spento, motore, immagini, cache. Una chiave sconosciuta
-   si salta, cosi' le opzioni future non rompono le versioni di prima.
- - LA DOCUMENTAZIONE in /exwin/doc/, otto pagine piu' javascript.html, che
-   e' insieme spiegazione e prova.
+ 2. LE UNITA' RELATIVE (em, %, rem) e @media. Sono le piu' vicine a essere
+    fattibili — `font-size` accetta solo i pixel — ma vogliono la misura del
+    contenitore, che l'impaginazione a penna corrente non ha in mano quando
+    serve.
 
-I DUE DIFETTI CHIUSI IL 27, ED ERANO TUTT'E DUE INVISIBILI AL BANCO
+ 3. L'ARABO E L'EBRAICO SI VEDONO MA VANNO NEL VERSO SBAGLIATO. I glifi ci
+    sono (DejaVu), ma si impaginano da sinistra a destra come tutto il resto:
+    una riga di arabo si legge al contrario. Il BiDi non c'e' ed e' un lavoro
+    suo, non un ritocco.
 
- ! L'ARENA DEL DOCUMENTO ERA ANCHE QUELLA DELL'IMPAGINAZIONE. I segni degli
-   elenchi finivano nell'arena del documento e impagina() la riavvolgeva a
-   ogni giro, buttando via il testo che gli SCRIPT avevano scritto li'
-   dentro. Rovinava ogni pagina con uno script, con tutt'e due i motori.
-   Adesso l'impaginazione ha la sua arena (g_gen) e l'offset porta il bit
-   piu' alto acceso per dire da quale delle due viene.
- ! DUE STUB NELLO STESSO PROCESSO SCEGLIEVANO DUE MOTORI DIVERSI: il browser
-   apriva QuickJS ed exdom.so apriva ExJs. SYS_LIB_TROVA (238, kernel 0.208)
-   chiede al caricatore «ce l'ho gia' dentro?», e chi arriva per primo decide
-   per tutti.
+ 4. IL CURSORE NON SI PIAZZA COL MOUSE. Nelle caselle e nelle aree si muove
+    con le frecce, Home, Fine e le cancellazioni; un clic dentro il testo pero'
+    da' il fuoco alla casella e mette il cursore in fondo, non nel punto in cui
+    si e' cliccato.
 
- ! TUTT'E DUE VIVEVANO NELLA DIFFERENZA FRA IL BANCO E LA MACCHINA VERA: il
-   banco non impagina e non carica librerie condivise. Centoventi prove verdi
-   e la pagina sbagliata sullo schermo. La prova in QEMU si fa comunque.
+ 5. L'INDIRIZZO ASSOLUTO in `img.src` e `a.href`. Oggi si riflette
+    l'attributo: `src="b.png"` rende `"b.png"` e non `"http://sito/a/b.png"`.
+    Il ponte l'indirizzo della pagina ce l'ha (exdom_indirizzo), quindi manca
+    solo la risoluzione.
 
-DA FARE, IN ORDINE DI QUANTO PESA SU UNA PAGINA VERA
+ 6. `border` NEL CSS. Oggi i bordi si disegnano solo dall'attributo `border`
+    delle tabelle. `border-collapse`, i colori e i lati separati non ci sono.
 
- 1. FATTO — `el.style` COME OGGETTO, e NON passa da excss: la nota di prima
-    diceva il contrario. excss conosce dodici proprieta' e le riduce a una
-    CssStile, quindi `el.style.zIndex = 5` scritto e riletto si perderebbe in
-    silenzio. Il satellite legge e scrive l'ATTRIBUTO `style=`, che
-    css_calcola() gia' guarda: un deposito solo, e l'impaginazione se ne
-    accorge senza che exdom impari una riga di CSS.
- 2. FATTO — querySelector / querySelectorAll / matches / closest, e nemmeno
-    questi passano da excss. Un CssPezzo conosce tipo, classe e id: `[attr]`,
-    `>`, `+`, `~` e le classi multiple non ci sono, e sono meta' di quel che
-    si scrive dentro un querySelector. Le pseudo-classi NON ci sono nemmeno
-    qui, e un selettore che le contiene non trova NIENTE invece di trovare la
-    cosa sbagliata.
- 3. FATTI STRADA FACENDO, perche' senza di loro google.com non arriva in fondo
-    a un solo script: le proprieta' riflesse (img.src, a.href, input.value...
-    su un elenco di tag, non su tutti), `el.dataset`, `el.classList`,
-    `document.fonts`, `window.addEventListener`, `navigator`, `location` e
-    `document.cookie`. Le prove del ponte sono 196, verdi con tutt'e due i
-    motori.
- 4. FATTO — XMLHttpRequest e fetch, con un GANCIO: exdom non chiama exhttp,
-    lo chiama il browser (exdom_rete_metti). Cosi' il banco puo' provarli con
-    una rete finta, senza server e senza macchina accesa.
-    ! FATTO — L'ASINCRONO VERO: `send()` mette in coda e torna, e il codice
-      dopo gira PRIMA di `onload`. A mandare avanti la coda e' il ciclo dei
-      messaggi (exdom_rete_pompa), una richiesta per giro: e' la stessa regola
-      del tempo e degli eventi — adesso anche il MOMENTO in cui la rete si usa
-      arriva da fuori. `open(m, u, false)` resta sincera davvero.
-      Le promesse hanno imparato ad aspettare: i gestori messi su una promessa
-      ancora in sospeso si mettono da parte e scattano quando arriva.
-    ! FATTO — LA LETTURA A PEZZI, e con lei la finestra che resta viva mentre
-      scarica. TCP consegnava gia' a pezzi: quel che mancava era un modo di
-      fare altro mentre non c'era ancora niente.
-      (a) «c'e' qualcosa adesso?» si chiede allo stack con IP_MSG_TCP_STATO
-          (in_coda_rx), non provando a leggere con un timeout corto: quello non
-          si distingue da un errore e lascia una prenotazione pendente.
-          ! E PRIMA I BYTE, POI LO STATO: una connessione chiusa con byte
-            ancora in coda non e' finita, e con l'ordine rovesciato sparirebbe
-            l'ultimo pezzo delle risposte senza Content-Length.
-          ! E IL TLS HA UN SECONDO NASCONDIGLIO: un record gia' decifrato sta
-            dentro extls, non nel TCP. Da qui extls_pronto().
-      (b) exwin ha imparato ex_msg_ora(): come ex_prendi_msg ma non dorme. Le
-          due funzioni condividono il corpo — cambia una riga.
-      Il gancio e' exhttp_attesa(); rendendo 0 ANNULLA, ed e' cosi' che Esc
-      ferma uno scaricamento. Quel che era arrivato non si tiene: una pagina
-      tagliata mostrata come intera e' peggio di una pagina che non c'e'.
-      ! IL GANCIO RIENTRA IN CASA PROPRIA: chi lo registra deve impedire da se'
-        che i messaggi facciano ripartire la rete (nel browser, `g_in_rete`).
-    ! LA STRETTA DI MANO E' STATA MISURATA, e non e' quel che si credeva.
-      Dentro EX-OS in QEMU, verso google.com: magazzino delle CA 60 ms, DNS
-      piu' connessione 320 ms, stretta 490 ms — meno di un secondo in tutto,
-      non i «venti secondi» che stavano scritti in tre punti del codice (ora
-      corretti). Percio' NON si spezzano le sue letture: fra un passo e l'altro
-      c'e' gia' il gancio dei passi (extls_passo_metti / exhttp_passo), che
-      scrive a che punto e' e lascia respirare la finestra.
-    ! E SPEZZARLE E' STATO PROVATO TRE VOLTE E TOLTO TRE VOLTE: con le letture
-      della stretta a pezzi le pagine https smettono di aprirsi. Due cause
-      trovate e corrette (restano, sono giuste di suo), e nessuna bastava:
-        - ex_msg_ora BUTTAVA quel che non era suo, comprese le risposte dello
-          stack IP; adesso le rimette (solo nel ciclo che non dorme).
-        - attendi() BUTTAVA i IP_MSG_TCP_DATI: quei byte lo stack li ha gia'
-          tolti dalla coda, buttarli e' perderli per sempre. Adesso si
-          rimettono, e a scaffale pieno si butta un evento del server a
-          finestre al loro posto.
-      ! E UNO SBAGLIO MIO: per far posto ai dati ho alzato lo scaffale da 4 a 8,
-        e il commento accanto diceva GIA' perche' 4 — tanti quanti se ne possono
-        rimettere. Con 8, quattro su otto sparivano e il sistema non riconosceva
-        piu' la rete. Tornato a 4.
-      ! QUEL CHE RESTA: la mailbox e' profonda QUATTRO e mentre la stretta legge
-        ci sono DUE consumatori (exhttp e il ciclo dei messaggi) che non sanno
-        l'uno dell'altro. Stessa forma del difetto della tastiera. La cura non
-        e' un'altra toppa in attendi: e' decidere chi possiede la mailbox
-        mentre due attese si incrociano.
-      `stretta_leggi` e' rimasta nel file, inutilizzata: basta una riga per
-      riprovare.
-    ! DENTRO UN SINGOLO PASSO NON SI RESPIRA: un x25519 o una verifica di firma
-      sono un blocco solo, e li' non si legge — si calcola. Spezzarli vorrebbe
-      dire un gancio dentro excurva e exbig.
-    ! LE PROMESSE SONO UNA FORMA SOLA, scritta a mano, uguale sotto i due
-      motori — ExJs non le ha, QuickJS si', e due comportamenti sarebbero stati
-      peggio di nessuno. `await` funziona lo stesso con QuickJS: vuole un
-      oggetto con un `then`, non una Promise.
-    ! `setRequestHeader` ACCETTA E BUTTA: exhttp costruisce la richiesta da se'
-      e non ha dove infilarne una in piu'. Rifiutarle fermerebbe ogni pagina
-      che ne mette una. E' la meta' che manca, ed e' scritta in tre posti.
-    ! CON ExJs IL TETTO VERO E' L'ARENA del motore (96 KB nel browser), non i
-      128 KB del buffer: una risposta piu' grande diventa la stringa vuota.
-
- 4bis. FATTO STRADA FACENDO — `exjs_costruttore`, perche' `new` su una nativa
-    funzionava con ExJs e falliva con QuickJS («not a constructor»): QuickJS
-    tiene un bit sull'oggetto funzione e le native non ce l'hanno. Senza,
-    `new XMLHttpRequest()` sarebbe girato sotto un motore e morto sotto
-    l'altro, con la stessa pagina e senza che niente lo dicesse.
- 5. FATTO — LA META' HTTP DEI BISCOTTI, con un gancio come per la rete:
-    exhttp li porta (exhttp_biscotti) e il browser li tiene. La dispensa sta in
-    exwin/bin/browser/biscotti.c, l'unico pezzo del browser staccato da
-    browser.c, e il motivo e' che si prova da sola (make prova-biscotti, 51
-    prove): le sue regole si sbagliano in silenzio, e il danno e' mandare i
-    biscotti di un sito a un altro.
-    ! IL GANCIO E NON UN PARAMETRO, perche' il giro delle redirezioni lo fa
-      exhttp: «302 + Set-Cookie» insieme e' il caso NORMALE, e la richiesta
-      dopo — che parte dentro la stessa chiamata — deve gia' portarselo.
-    ! I BISCOTTI DEGLI SCRIPT SI RACCOLGONO PRIMA DI OGNI RICHIESTA, non a
-      fine pagina: `document.cookie = 'x=1'; fetch(...)` sono due righe dello
-      stesso script, e raccogliere dopo voleva dire partire senza.
-    ! IL FILE E' $HOME/.app/browser/biscotti.txt, e i biscotti di SESSIONE non
-      ci vanno: scriverli vorrebbe dire che chiudere il navigatore non chiude
-      piu' la sessione.
-    ! LA PERSISTENZA SU DISCO NON E' PROVATA DENTRO EX-OS, solo sul banco: da
-      CD non si scrive, e il giro completo vuole un sistema installato.
-
- 5bis. FATTI ANDANDO FINO IN FONDO — tre difetti dei MODULI, trovati premendo
-    «Rifiuta tutto» sulla pagina di consenso di google.com, che risponde 400.
-    ! `<input type="hidden">` SI SALTAVA, e c'era scritto «non si vede». Vero e
-      irrilevante: un campo nascosto non si disegna ma e' meta' di quel che un
-      modulo manda — i gettoni anti-falsificazione, gli identificativi di
-      sessione, il «continua a» di un consenso sono tutti nascosti.
-    ! IL CORPO DI UNA POST AVEVA LA MISURA DI UN INDIRIZZO (600 byte). Adesso
-      ne ha ottomila, e quando non ci sta NON SI MANDA.
-    ! I CONTROLLI ERANO 64 e adesso sono 192: i campi nascosti non li riempie
-      nessuno e non si contano a occhio.
-    ! FATTO — il pulsante che manda il modulo porta il suo `name=valore`, e
-      SOLO lui: mandarli tutti sarebbe come premerli tutti insieme. Il valore
-      si rilegge dall'ALBERO e non da `c->valore`, che contiene l'etichetta —
-      per un <button> il testo dentro, per un submit senza `value` la parola
-      «Invia» messa dall'impaginazione. L'Invio battuto in una casella vale
-      come il PRIMO pulsante d'invio, col suo nome: e' quel che dice la
-      specifica, ed e' come funziona la casella di google.com (`btnG`).
-    ! E DUE PULSANTI FACEVANO IL CONTRARIO DI QUEL CHE PROMETTEVANO:
-      `type="reset"` SPEDIVA il modulo invece di azzerarlo, e `type="button"`
-      — che esiste per far girare uno script e nient'altro — pure. Adesso
-      azzerare vuol dire dire ai controlli «non sei piu' mio» e rimpaginare:
-      i valori li rilegge l'impaginazione dalla pagina, che e' l'unico posto
-      che sa che cosa significano `value`, `checked` e `selected`.
-    ! `type="image"` manda `nome.x` e `nome.y`, e SONO ZERO: qui si disegna
-      come un pulsante e non come l'immagine cliccabile che dovrebbe essere,
-      quindi un punto preciso non ce l'ha.
- 6. L'INDIRIZZO ASSOLUTO in `img.src` e `a.href`. Oggi si riflette
-    l'attributo: `src="b.png"` rende `"b.png"` e non
-    `"http://sito/a/b.png"`. Adesso il ponte l'indirizzo della pagina ce l'ha
-    (exdom_indirizzo), quindi manca solo la risoluzione.
- 7. FATTO — ExJs LAVORAVA SUI PRIMI 511 CARATTERI, e nessuno l'aveva visto.
-    Ogni metodo di String copiava il soggetto in un buffer da mezzo kilobyte:
-    `pagina.indexOf('riquadro')` rendeva -1 su un testo che quella parola ce
-    l'aveva. Nessun errore, nessun avviso, la risposta sbagliata. Si e' visto
-    quando XMLHttpRequest ha cominciato a consegnare documenti interi.
-    Adesso una stringa non si copia, si punta (l'arena non si muove mai), e chi
-    PRODUCE un testo lungo scrive nell'arena col «filo»
-    (exjs_arena_apri/aggiungi/chiudi).
-    ! QUEL CHE ANCORA SI COPIA, SI COPIA CONTROLLANDO: l'ago di indexOf, il
-      separatore di split, l'ago e il ricambio di replace. Se non ci stanno, la
-      funzione RINUNCIA — un ago troncato troverebbe, e nel posto sbagliato.
-    ! RESTA `join`: il suo risultato sta ancora in mezzo kilobyte. Non passa dal
-      filo perche' fra un pezzo e l'altro chiama exjs_a_stringa sull'elemento, e
-      su un vettore annidato quella SCRIVE NELL'ARENA, cioe' in mezzo al filo
-      aperto. Farlo bene vuole prima decidere quel caso.
-
- 7bis. `exjs_a_stringa` NON CHIAMA `toString`. `String(location)` rende
-    l'indirizzo con QuickJS e "[object Object]" con ExJs: e' la conversione
-    IMPLICITA che manca, e vale per qualunque oggetto del DOM messo dentro una
-    stringa. Il posto e' val.c; vuole un'esecuzione aperta, quindi non e' una
-    riga.
- 8. `border` nel CSS. Oggi i bordi si disegnano solo dall'attributo
-    `border` delle tabelle.
- 9. Le unita' relative (em, %, rem) e @media: vedi il punto 2 dell'elenco
-    generale qui sopra.
-
-! E GOOGLE NON E' PIU' UN BERSAGLIO. google.com si apre e si vede; la pagina
-  dei RISULTATI no, e non e' colpa del nostro JavaScript: con lo User-Agent di
-  Lynx, di w3m o di MSIE 6 google risponde «Aggiorna il browser», e con quello
-  di un Firefox recente manda il suo controllo anti-robot offuscato. Non c'e'
-  una terza porta. Il dettaglio, coi numeri, sta in RIPRENDERE.md alla data del
-  2 settembre 2026 (sera).
-
-FATTI IL 25 AGOSTO 2026 (chiesti nella stessa giornata):
-
-A. FATTO — install lancia hwconfig in fondo. Il kernel.cfg appena copiato e'
-   quello del supporto d'installazione: elenca i driver che servivano a LUI,
-   non alla macchina su cui si e' appena installato. Il primo avvio da disco e'
-   proprio il momento in cui un driver mancante si paga, e li' non c'e' piu'
-   modo di lanciare hwconfig per ripararlo.
-   ! GLI SI PASSA LA RADICE DEL DISCO, non niente: senza argomento hwconfig
-   riscrive il kernel.cfg del sistema che sta GIRANDO — quello del CD — e il
-   disco resta con l'elenco sbagliato, cioe' il caso che si voleva evitare.
-   ! E SI CHIEDE, non si fa: hwconfig riscrive il file per intero, ed e' una
-   decisione. Chi dice di no se lo sente dire come rimediare.
-
-B. FATTO — la lingua, chiesta all'installazione e scritta in [kernel] di
-   kernel.cfg. Il kernel NON la usa per niente: tradurre e' lavoro dei
-   programmi, e ognuno sa quali messaggi ha. Il kernel la conserva e la
-   riconsegna con getenv("lingua"), esattamente come fa con `keymap` — cosi'
-   non ci sono due elenchi di lingue che divergono.
-   ! E hwconfig NON LA CANCELLA: sta fra le voci che si riportano com'erano,
-   insieme a `login` e `svga`.
-   ! IL DIFETTO TROVATO PROVANDO: la voce si scriveva solo sulla FUSIONE, cioe'
-   reinstallando sopra. Sull'installazione pulita — il caso normale —
-   kernel.cfg si copia e basta, quindi si chiedeva la lingua e non la si
-   scriveva da nessuna parte. Adesso anche il file appena copiato passa di li'.
-   Provato: scelto «francais», e nel kernel.cfg del disco c'e' `lingua = fr`.
-
-C. FATTO — exwin sulla console 5, ci si va e si torna.
-   Le console erano quattro e la grafica se ne prendeva una: chi lavorava in
-   testo ne aveva tre senza averlo chiesto. Adesso sono cinque, Alt+F1..F4
-   restano di chi scrive. VGA_N_CONSOLE e KBD_N_CONSOLE devono combaciare, ed
-   e' scritto in tutt'e due i posti.
-   Digitando `exwin` si passa alla grafica SUBITO, e quando la grafica si
-   spegne si torna da soli alla console di partenza.
-   ! LA CONSOLE DELLA GRAFICA ESISTE SOLO MENTRE LA GRAFICA C'E'. Finche' il
-   server non gira, Alt+F5 non fa niente: li' ci sarebbe uno schermo nero con
-   una shell che nessuno guarda, e chi ci finisce non sa come tornare. Da
-   DENTRO la grafica, Alt+F1..F4 funzionano come sempre e Alt+F5 riporta alla
-   scrivania. E se la grafica gira altrove (`exwin -c 2`) l'ultima console
-   torna a essere una console di testo come le altre.
-   Il meccanismo e' SYS_CONSOLE_GRAFICA (kernel 0.207): lo stato sta nel
-   KERNEL e non nel server, cosi' un server ucciso libera la console da solo.
-
-D. FATTO — `exit` dal program manager spegne la scrivania.
-   Prima chiudeva solo il pm e lasciava la grafica accesa senza nessuno
-   dentro: per spegnerla davvero bisognava sapere cosa uccidere. Adesso il
-   server manda a OGNI applicazione la stessa chiusura della crocetta — un
-   messaggio che sanno gia' gestire, quindi chi ha da salvare fa in tempo —
-   aspetta al massimo due secondi, rimette il modo testo e muore. Le
-   applicazioni non si uccidono: gli si CHIEDE.
-   Provato dal CD: pm chiede, wserver spegne, exwin riporta alla console di
-   partenza, e lo schermo torna 720x400 cioe' modo testo.
+ 7. LE GIF ANIMATE MOSTRANO IL PRIMO FOTOGRAMMA, ed e' dichiarato: animarle
+    vorrebbe dire un orologio dentro la libreria delle immagini.
 
 
-E. FATTO — la risoluzione, nelle impostazioni della scrivania.
+=============================================================================
+IL NAVIGATORE — LE META' CHE MANCANO A COSE GIA' FATTE
+=============================================================================
 
-   ! E IL MECCANISMO C'ERA GIA' TUTTO. Nella nota precedente avevo scritto il
-   contrario — «/bin/svga non esiste e Stage 2 sceglie da se'» — e mi ero
-   sbagliato leggendo solo il ciclo che scorre i modi VESA. Sopra quel ciclo
-   c'e' il cancello: `svgamodo`, un byte dentro Stage 2 marcato dalla firma
-   'SVGAMODE', con la tabella 1=640x480 2=800x600 3=1024x768 e 0=testo. Se
-   quel byte e' zero si resta in testo; se e' valido, la risoluzione voluta
-   finisce in vwant/hwant e il ciclo cerca QUEL modo.
-   E il programma che lo scrive c'e': e' `/dev/svga.drv`, non /bin/svga — sta
-   fra i driver perche' cosi' entra nel catalogo ed e' `hwconfig -d` a
-   installarlo. Scrive due cose che devono restare d'accordo: la voce `svga`
-   in kernel.cfg (la configurazione) e il byte dentro Stage 2 (il recapito per
-   chi si avvia prima che esista un filesystem).
+Sono limiti dichiarati dentro pezzi che funzionano. Ognuno e' scritto anche
+nel codice, dove comincia.
 
-   Mancava solo l'interfaccia, e adesso c'e': Avvio > Impostazioni... apre una
-   finestra che mostra la risoluzione di ADESSO (chiesta al server, non
-   indovinata) e i quattro modi. Premendone uno si lancia /dev/svga.drv e si
-   dice com'e' andata.
-   ! IL RIAVVIO SI DICE, perche' il modo video lo sceglie l'avvio: quando la
-   scrivania gira, quella porta e' chiusa da un pezzo.
-   ! E IL FALLIMENTO NON SI INDOVINA. Da CD non si puo' scrivere — LOADER.BIN
-   e' in sola lettura — ed e' il caso piu' comune: dire «la scheda non offre
-   quel modo» manderebbe a cercare un difetto dove non c'e'. Si dicono i due
-   casi veri e si rimanda alla console, dove svga stampa il motivo esatto.
+! `setRequestHeader` ACCETTA E BUTTA (diario: 2 settembre, «XMLHttpRequest E
+  fetch»). exhttp costruisce la richiesta da se' e non ha dove infilarne una in
+  piu'. Rifiutarle fermerebbe ogni pagina che ne mette una. E' scritto in tre
+  posti.
 
+! CON ExJs IL TETTO VERO E' L'ARENA del motore (96 KB nel browser), non i
+  128 KB del buffer: una risposta piu' grande diventa la stringa vuota.
 
-DA FARE (in coda):
+! `join` LAVORA ANCORA SU MEZZO KILOBYTE (diario: 2 settembre, il difetto dei
+  511 caratteri). Non passa dal «filo» perche' fra un pezzo e l'altro chiama
+  exjs_a_stringa sull'elemento, e su un vettore annidato quella SCRIVE
+  NELL'ARENA, cioe' in mezzo al filo aperto. Farlo bene vuole prima decidere
+  quel caso.
 
-F. FATTO — taglia/copia/incolla nei campi di un modulo del browser.
-   Selezione con Shift+frecce/Home/Fine, il tratto scelto evidenziato in blu,
-   scrivere sopra una selezione la sostituisce, Canc e Backspace tolgono il
-   tratto invece del carattere accanto.
-   DUE SCORCIATOIE, tutt'e due standard, e nessuna e' «quella giusta»:
-       Ctrl+C  Ctrl+X  Ctrl+V   Ctrl+A     (Windows e desktop moderni)
-       Ctrl+Ins  Shift+Ins  Shift+Canc     (CUA: DOS, OS/2, terminali Unix)
-       Ctrl+Canc                           (non e' CUA, ma lo chiedono le dita)
-   Le funzioni stanno in un posto solo e i tasti chiamano quelle: se fossero
-   duplicate nei due rami, il giorno che l'incolla cambia ne cambierebbe uno
-   solo, e il difetto si vedrebbe solo a chi usa l'altra scorciatoia.
-   ! E GLI APPUNTI SONO QUELLI DI TUTTA LA SCRIVANIA: `ex_appunti_metti` e
-   `ex_appunti_prendi` sono nuove in exwin.so e usano la STESSA zona di memoria
-   condivisa di `ex_area`, quindi si copia da una casella del browser e si
-   incolla in un editor. Serviranno anche all'editor RTF e all'IDE.
-   Provato dal CD: «CIAO» scelto, Ctrl+Ins, Fine, Shift+Ins -> CIAOMONDOCIAO;
-   e con Shift+Canc al posto della copia -> MONDOCIAO.
+! `exjs_a_stringa` NON CHIAMA `toString`. `String(location)` rende l'indirizzo
+  con QuickJS e "[object Object]" con ExJs: e' la conversione IMPLICITA che
+  manca, e vale per qualunque oggetto del DOM messo dentro una stringa. Il
+  posto e' val.c; vuole un'esecuzione aperta, quindi non e' una riga.
 
-G. FATTO — i riferimenti a `/bin/svga`, che non e' mai esistito.
-   Erano OTTO, non tre: bin/hwconfig/hwconfig.c (due), kernel/fs/cfg.c,
-   kernel/include/cfg.h, kernel/include/kernel.h, kernel/kernel_main.c e
-   bootloader/stage2/loader.asm (due). Il programma sta in `/dev/svga.drv`.
-   ! E C'ERA ANCHE NEI MESSAGGI CHE L'UTENTE LEGGE, che e' il posto peggiore:
-   il programma stesso stampava «Si cambia con `svga <modo>`» e scriveva
-   «la cambia `svga`» dentro il kernel.cfg che genera. In PATH non c'e' nessun
-   `svga`: chi lo digitava si sentiva rispondere «comando non trovato» e ne
-   concludeva che mancasse il programma, non la riga.
-   ! IN cfg.h RESTA UNA CITAZIONE DEL NOME SBAGLIATO, apposta: dice che
-   «/bin/svga» non e' mai esistito e spiega perche' quel programma sta in /dev
-   (l'estensione .drv lo fa entrare nel catalogo dei driver, e `hwconfig -d` lo
-   installa con gli altri). Chi cerchera' il vecchio nome finira' li' invece
-   che in un vicolo cieco — e' successo a me, ed e' costato una conclusione
-   sbagliata scritta in questo file.
-   Controllati anche gli altri percorsi citati nei commenti: /dev/wserver.drv,
-   /dev/ide.drv e /dev/tty.drv non esistono ma sono gia' spiegati dove vengono
-   nominati (il Makefile dice che wserver NON e' piu' un driver, e
-   boot/kernel.txt che un /dev/tty.drv non e' mai esistito). Il resto sono
-   esempi nei commenti o nomi di Linux usati per confronto.
+! I SELETTORI SONO META'. Un CssPezzo conosce tipo, classe e id: `[attr]`,
+  `>`, `+`, `~` e le classi multiple non ci sono. Le pseudo-classi NON ci sono
+  nemmeno, e un selettore che le contiene non trova NIENTE invece di trovare
+  la cosa sbagliata — la scelta e' voluta.
+
+! LA PERSISTENZA DEI BISCOTTI NON E' PROVATA DENTRO EX-OS, solo sul banco: da
+  CD non si scrive, e il giro completo vuole un sistema installato.
+
+! `<input type="image">` MANDA `nome.x` e `nome.y`, e SONO ZERO: qui si
+  disegna come un pulsante e non come l'immagine cliccabile che dovrebbe
+  essere, quindi un punto preciso non ce l'ha.
 
 
-Niente altro in coda.
+=============================================================================
+UNA STRADA CHIUSA, PERCHE' NON SI RIAPRA
+=============================================================================
+
+! GOOGLE NON E' UN BERSAGLIO DEL NAVIGATORE. google.com si apre e si vede; la
+  pagina dei RISULTATI no, e non e' colpa del nostro JavaScript: con lo
+  User-Agent di Lynx, di w3m o di MSIE 6 google risponde «Aggiorna il
+  browser», e con quello di un Firefox recente manda il suo controllo
+  anti-robot offuscato. Non c'e' una terza porta. I numeri stanno nel diario
+  al 2 settembre 2026 (sera).

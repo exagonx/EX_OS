@@ -1,4 +1,163 @@
+# IL DIARIO DI EX-OS
+
+Questo file e' un DIARIO, non un elenco di compiti: una sezione per giornata di
+lavoro, la piu' recente in cima. Racconta che cosa e' stato fatto, che cosa e'
+stato provato e TOLTO, e perche'. Non si legge tutto — sono mezzo megabyte, e
+crescono.
+
+**I compiti ancora aperti stanno in `in_lavorazione.txt`.** Li' non c'e' una
+riga di storia; qui non c'e' un elenco di cose da fare. Chi cerca «che cosa
+manca» apre quello.
+
+**Per sfogliare questo** c'e' `tools/diario.sh`:
+
+    tools/diario.sh elenco             tutte le sezioni, numerate
+    tools/diario.sh elenco biscotti    solo quelle che ne parlano
+    tools/diario.sh mostra 5           stampa la sezione 5
+    tools/diario.sh cerca scaffale     le righe, con la giornata accanto
+
+! I NUMERI DI SEZIONE SCALANO ogni volta che si aggiunge una giornata in cima.
+  Un rimando che deve durare si scrive con la DATA, non col numero.
+
+! E QUEL CHE E' SCRITTO QUI NON SI CANCELLA QUANDO E' FATTO. Una prova gia'
+  pagata — un numero misurato, una strada provata e chiusa, uno sbaglio e il
+  perche' — vale finche' esiste il codice che ha generato. Toglierla per
+  accorciare il file vuol dire pagarla una seconda volta.
+
+---
+
 # DOVE RIPRENDERE — 3 settembre 2026
+
+## 3 settembre 2026 (notte) — LA CASSETTA POSTALE HA UN PADRONE, E LA STRETTA SI SPEZZA
+
+Il compito era «decidere chi possiede la mailbox mentre due attese si
+incrociano», lasciato aperto poche ore prima. E' stato fatto — e la stretta di
+mano a pezzi, tolta tre volte, adesso sta dentro e funziona.
+
+! **MA LA CASSETTA POSTALE ERA UNA DELLE DUE CAUSE, NON LA CAUSA.** La voce di
+stasera diceva «LA CAUSA CHE RESTA: la mailbox e' profonda QUATTRO». Sistemata
+quella, le pagine https continuavano a fermarsi — piu' avanti di prima, ma si
+fermavano. La seconda causa non era nemmeno nello stesso programma: era la
+FINESTRA DI TCP che non si riapriva, dentro `drivers/ip/ip.c`. Con una sola
+delle due, la stretta a pezzi resta rotta.
+
+### LA REGOLA, IN UNA RIGA: CHI LEGGE NON TIENE IN MANO CIO' CHE NON E' SUO
+
+Il giro di prima era questo, in tre posti diversi (`attendi` di exhttp,
+`attendi_da` di dns, il ciclo dei messaggi di exwin): si scorreva la cassetta,
+si METTEVA DA PARTE in un vettore locale cio' che non era proprio, e alla fine
+lo si RIMETTEVA sullo scaffale della libc. Chi tiene in mano puo' lasciar
+cadere, e infatti:
+
+ - lo scaffale ha quattro posti, e i tre chiamanti ne tenevano da parte
+   quattro ciascuno **senza sapere se lo scaffale fosse gia' occupato**;
+ - `ipc_rimetti` rende -1 quando e' pieno, e **nessuno dei quattro punti di
+   chiamata guardava quel valore**: il messaggio spariva in silenzio;
+ - il ciclo dei messaggi, per non girare a vuoto, rimetteva solo quando non
+   dormiva — e rimettere e rileggere subito rende lo stesso messaggio
+   all'infinito, perche' lo scaffale si serve PRIMA della coda del kernel.
+   Risultato: **con un solo messaggio dello stack sullo scaffale, la pompa dei
+   messaggi del navigatore restava ferma li' sopra a ogni giro.**
+
+Adesso c'e' `ipc_scegli(filtro, dato, meta, buf, len, ms)` in libc.c. Il filtro
+dice, di ogni messaggio, una di tre cose:
+
+    IPC_MIO      e' quello che aspettavo: consegnamelo
+    IPC_ALTRUI   non e' mio: lascialo dov'e', lo aspetta un altro
+    IPC_BUTTA    non e' di nessuno: e' una risposta vecchia, si butta
+
+! **UN ALTRUI SI SALTA, NON SI RIMETTE**, ed e' tutto il guadagno. Lo scaffale e
+la coda del kernel si scorrono insieme; cio' che non e' del chiamante non passa
+mai per le sue mani, quindi non lo puo' perdere, e la trappola del «rimetti e
+rileggi» sparisce con lei. Il ciclo dei messaggi di exwin puo' finalmente
+tenere le risposte dello stack anche quando dorme — anzi: le tiene quando NON
+dorme (qualcun altro le aspetta) e le butta quando dorme (se dorme lui, nessun
+altro sta aspettando niente).
+
+! **LO SCAFFALE CONTA I BYTE, NON I MESSAGGI, e il numero quattro se ne va.**
+Erano quattro posti da 1536 byte: un clic del mouse — venti byte — ne occupava
+uno intero. Adesso e' un pozzo di 6144 byte e ventiquattro descrittori, cioe' la
+STESSA memoria di prima che tiene quattro risposte piene di rete OPPURE
+ventiquattro eventi del mouse. Il caso vero e' il secondo.
+
+! **E `IPC_SUBITO`, che non e' un doppione di una scadenza corta.** La scadenza
+piu' breve che il kernel sappia rappresentare e' un tick del PIT: dieci
+millisecondi. La pompa dei messaggi si chiama otto volte per giro mentre si
+scarica, e otto tick sono ottanta millisecondi buttati a ogni giro. Con
+IPC_SUBITO la cassetta si chiede a `poll()`, che risponde senza dormire.
+
+! **`ipc_rimetti` RESTA, e non ha piu' chiamanti.** Toglierla sarebbe stato un
+cambio di ABI per guadagnare niente; e' documentata come la primitiva sotto
+`ipc_scegli`, con scritto accanto qual e' la trappola di usarla a mano.
+
+### LA SECONDA CAUSA: CHI SI LIBERA DEVE DIRLO
+
+Con la mailbox sistemata, la stretta a pezzi arrivava in fondo — i sette passi
+si vedevano passare tutti — e poi il CORPO della pagina si fermava. La sonda
+diceva sempre la stessa cosa:
+
+    leggipezzi q=0  max=137        e lo scaffale VUOTO
+    attendi tipo=134 (TCP_INFO)    in_coda_rx = 0, connessione APERTA
+
+Cioe': noi aspettavamo il server, il server aspettava noi.
+
+! **LA FINESTRA SI ANNUNCIA SOLO DENTRO UN ACK.** `tcp_manda` mette in ogni
+segmento `TCP_BUF - rx_len`, e un ACK si manda quando ARRIVA qualcosa. Finche'
+chi legge tiene una prenotazione (`IP_MSG_TCP_RICEVI`) il buffer si svuota a
+ogni pacchetto e la finestra resta larga: il caso non si presenta mai. Ma chi
+legge CHIEDENDO QUANTI BYTE CI SONO legge a scatti, e fra uno scatto e l'altro
+un mittente veloce riempie i quattro kilobyte del buffer. A quel punto abbiamo
+annunciato una finestra piccola, l'altro ha smesso di mandare, e quando noi ci
+svuotiamo **non arriva piu' nessun segmento a darci l'occasione di dirlo**. Si
+riparte solo quando l'altro prova per conto suo, e la ritrasmissione raddoppia
+l'attesa ogni volta.
+
+La cura sta in `tcp_consegna`, sette righe: se avevamo annunciato meno di mezzo
+buffer e adesso ne abbiamo libero piu' di mezzo, si manda un ACK vuoto. Venti
+byte, e la finestra riparte.
+
+> Il polling e' arrivato ieri, con la lettura a pezzi. La finestra che non si
+> riapre e' un difetto vecchio quanto lo stack: prima non si vedeva perche'
+> nessuno leggeva a scatti.
+
+### I NUMERI, E COME SI SONO PRESI
+
+Dentro EX-OS, da CD, in QEMU, con `@avvio /exwin/bin/browser` temporaneo:
+
+    https://www.google.com/          200, 83 KB, 108 nodi — la pagina intera
+    http://10.0.2.2:8000/script.html 200, 6897 byte, 138 nodi
+    con.html, immagini ritardate     la finestra resta viva, Esc ferma
+
+    make prova-exjs      256 prove, 0 sbagliate
+    make prova-exdom     244 prove, 0 sbagliate
+    make prova-exqjs     244 prove, 0 sbagliate
+    make prova-biscotti   51 prove, 0 sbagliate
+    make prova-exhttp    tutto a posto
+
+! **LA MISURA CHE HA DECISO E' STATA UNA SOLA, ed e' costata una ricostruzione
+di novanta secondi.** Rimettere la riga vecchia (`sotto.leggi = tcp.leggi`) e
+rifare la stessa prova: la pagina si apriva. Quello ha diviso in due il
+problema — la mailbox nuova non c'entrava — e ha spostato la caccia dal browser
+allo stack. Senza quella prova avrei continuato a guardare la cassetta postale,
+che era gia' a posto.
+
+! **E LE SONDE SI SCRIVONO CON UN TETTO, MA IL TETTO MENTE.** `if (n++ > 200)
+return;` in una sonda dentro un ciclo da cento giri al secondo copre due
+secondi: il log finiva sempre con lo stesso pezzo di ciclo e sembrava un blocco
+eterno. Il blocco c'era davvero, ma per un pezzo l'ho creduto dimostrato da una
+riga che diceva solo «qui ho smesso di scrivere».
+
+### CHE COSA E' CAMBIATO, FILE PER FILE
+
+    lib/libc.c              lo scaffale a byte, ipc_scegli, ipc_pronto,
+                            IPC_SUBITO; ipc_rimetti sopra il nuovo scaffale
+    lib/include/libc.h      i tre valori del filtro, IpcFiltro, e il perche'
+    lib/exhttp/exhttp.c     attendi e svuota_stack diventano due filtri;
+                            la stretta legge di nuovo a pezzi
+    lib/dns.c               attendi_da diventa un filtro
+    lib/exwin/exwin.c       un filtro solo per i due cicli; poll() non vede
+                            lo scaffale, quindi lo si guarda prima
+    drivers/ip/ip.c         l'ACK di riapertura della finestra
 
 ## 3 settembre 2026 (sera) — LA STRETTA DI MANO: MISURATA, NON SPEZZATA
 
@@ -88,6 +247,12 @@ si fa **dentro** quei quattro.
 
 > Un commento che spiega un numero e' una prova gia' pagata da qualcun altro.
 > Alzarlo senza rileggerlo e' rifare l'errore che quel commento raccontava.
+
+! **SORPASSATO LA NOTTE STESSA, e si tiene scritto perche' era mezza risposta
+presa per intera.** La mailbox era davvero una delle due cause, e la cura e'
+quella che qui sotto si intuisce — `ipc_scegli`, vedi «LA CASSETTA POSTALE HA UN
+PADRONE» — ma da sola non bastava: l'altra causa era la finestra di TCP che non
+si riapriva, in `drivers/ip/ip.c`, e non e' nemmeno in questo programma.
 
 ! **QUEL CHE RESTA DA CAPIRE, per chi ci tornera'.** La mailbox di un processo
 e' profonda **quattro**, e mentre la stretta legge ci sono **due consumatori**:

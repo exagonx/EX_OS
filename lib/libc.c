@@ -442,6 +442,7 @@ typedef struct {
 #define EILSEQ       84
 #define EDOM         33
 #define EOVERFLOW    75
+#define ETIMEDOUT   110
 
 /* La lunghezza massima di un percorso: VFS_PATH_MAX del kernel, e le due
  * devono restare uguali. Duplicata anche in <limits.h> e <sys/param.h>. */
@@ -664,6 +665,17 @@ typedef struct {
     unsigned int  tipo;      /* si chiama cosi' anche in libc.h: vedi li' */
     unsigned int  len;
 } IpcMessage;
+
+/* Il filtro di ipc_scegli, e le tre risposte che puo' dare. Deve restare
+ * identico a lib/include/libc.h, dove sta anche il perche'. */
+#define IPC_ALTRUI   0
+#define IPC_MIO      1
+#define IPC_BUTTA  (-1)
+
+/* Una scadenza che vuol dire «non aspettare affatto»: vedi ipc_scegli. */
+#define IPC_SUBITO  ((unsigned int)-1)
+
+typedef int (*IpcFiltro)(const IpcMessage *meta, void *dato);
 
 /* Data e ora — deve restare identica a kernel/include/rtc.h (RtcTime)
  * e a lib/include/libc.h: attraversa l'ABI della syscall. */
@@ -5119,86 +5131,158 @@ int ipc_send(unsigned int dest_pid, unsigned int tipo,
 }
 
 /* =============================================================================
- * LO SCAFFALE DEI MESSAGGI RIMESSI
+ * LO SCAFFALE — CHI POSSIEDE LA CASSETTA POSTALE MENTRE DUE ATTESE SI INCROCIANO
  *
  * ! LA MAILBOX E' UNA SOLA E I CONSUMATORI SONO PIU' D'UNO, ed e' da qui che
- * nasce il problema. Un'applicazione grafica riceve nella stessa coda gli
- * eventi del server a finestre E le risposte dello stack IP. Chi aspetta una
- * risposta dello stack scorre i messaggi finche' non trova la sua — e quelli
- * degli altri, letti per sbaglio, finora li BUTTAVA. In un browser che scarica
- * una pagina, quelli buttati sono i clic dell'utente.
+ * nasce tutto. Un'applicazione grafica riceve nella stessa coda gli eventi del
+ * server a finestre E le risposte dello stack IP. Chi aspetta le une scorre i
+ * messaggi finche' non trova il suo, e cio' che trova per strada e' di
+ * qualcun altro.
  *
  * ! NON SI PUO' «NON LEGGERE» UN MESSAGGIO: ipc_recv toglie dalla coda del
- * kernel e non c'e' modo di sbirciare. L'unica difesa e' rimetterlo da questa
+ * kernel e non c'e' modo di sbirciare. L'unica difesa e' tenerlo da questa
  * parte, e questo scaffale e' quel posto.
  *
  * ! E STA NELLA libc, NON IN CHI FILTRA. Il problema non e' dell'HTTP ne' del
- * DNS: e' di chiunque condivida la mailbox con qualcun altro. Mettere lo
- * scaffale in ognuno vorrebbe dire tanti scaffali che non si vedono fra loro,
- * cioe' un messaggio rimesso da uno e mai visto dall'altro.
+ * DNS: e' di chiunque condivida la mailbox con qualcun altro. Uno scaffale per
+ * ognuno vorrebbe dire scaffali che non si vedono fra loro, cioe' un messaggio
+ * messo da parte da uno e mai visto dall'altro. C'e' una sola libc.so per
+ * processo — i ponti di ogni programma e di ogni .so saltano tutti li' — quindi
+ * questo scaffale e' uno solo davvero.
  *
- * ! L'ORDINE SI RISPETTA: prima cio' che e' stato rimesso, e fra quelli il
- * piu' vecchio. Un messaggio rimesso e' arrivato PRIMA di quelli che ancora
- * devono arrivare, e consegnarlo dopo vorrebbe dire riordinare una coda —
- * che per un protocollo a domanda e risposta e' un modo di far combaciare la
- * risposta sbagliata con la domanda giusta.
+ * =============================================================================
+ * ! LA REGOLA, IN UNA RIGA: CHI LEGGE NON TIENE IN MANO CIO' CHE NON E' SUO.
  *
- * ! QUATTRO POSTI, E IL PERCHE' DEL NUMERO. Chi filtra scorre pochi messaggi
- * prima di trovare il suo; quattro coprono il caso vero senza costare: sono
- * 6 KB di dati per processo, e la libreria condivisa ne da' una copia fresca a
- * ognuno. Se lo scaffale e' pieno, il messaggio si perde COME PRIMA — non
- * peggio di adesso, e si sa dal valore reso.
+ * Fino al 3 settembre 2026 ognuno faceva cosi': scorreva la cassetta, si METTEVA
+ * DA PARTE in un vettore suo cio' che non era suo, e alla fine lo RIMETTEVA
+ * qui. Metteva da parte quattro messaggi perche' quattro erano i posti dello
+ * scaffale — e se lo scaffale nel frattempo non era vuoto, `ipc_rimetti`
+ * rendeva -1 e quei messaggi sparivano in silenzio. Nessuno guardava quel -1.
+ *
+ * Adesso il giro non esiste piu': `ipc_scegli` scorre lo scaffale e la cassetta
+ * insieme e cio' che non e' del chiamante RESTA DOV'E' — non passa mai per le
+ * mani di chi non lo vuole, quindi non lo puo' perdere. Il filtro dice una di
+ * tre cose (IPC_MIO, IPC_ALTRUI, IPC_BUTTA) e questa e' l'intera decisione di
+ * proprieta': cio' che e' ALTRUI aspetta il suo padrone, cio' che e' BUTTA non
+ * ha piu' padrone.
+ *
+ * ! ED E' QUEL CHE TOGLIE LA TRAPPOLA DEL «RIMETTERE E RILEGGERE». Lo scaffale
+ * si serve PRIMA della coda del kernel: chi rimetteva un messaggio e rileggeva
+ * subito se lo ritrovava davanti all'infinito. Per questo il ciclo dei messaggi
+ * di exwin rimetteva solo quando non dormiva, e per questo — messo sullo
+ * scaffale un messaggio dello stack — la pompa della finestra si fermava li'
+ * sopra a ogni giro. Scorrere senza togliere non ha quel problema: un ALTRUI si
+ * SALTA, non si rimette.
+ *
+ * =============================================================================
+ * ! SI CONTANO I BYTE, NON I MESSAGGI, e il numero quattro se ne va.
+ *
+ * Prima erano quattro posti da 1536 byte l'uno: un clic del mouse — venti byte
+ * — ne occupava uno intero, e quattro clic riempivano lo scaffale. Adesso c'e'
+ * un pozzo di byte e una fila di descrittori: gli stessi sei kilobyte tengono
+ * quattro risposte piene di rete OPPURE ventiquattro eventi del mouse, che e'
+ * il caso vero. La misura non e' cambiata; la capienza per quel che ci finisce
+ * davvero e' cresciuta di sei volte.
+ *
+ * ! L'ORDINE SI RISPETTA: prima cio' che e' sullo scaffale, e fra quelli il
+ * piu' vecchio. Un messaggio messo da parte e' arrivato PRIMA di quelli che
+ * ancora devono arrivare, e consegnarlo dopo vorrebbe dire riordinare una
+ * coda — che per un protocollo a domanda e risposta e' il modo di far
+ * combaciare la risposta sbagliata con la domanda giusta. Saltare un ALTRUI
+ * non rompe l'ordine di NESSUNO: fra i messaggi di uno stesso padrone l'ordine
+ * resta quello d'arrivo, ed e' l'unico che conta.
+ *
+ * ! E SE LO SCAFFALE SI RIEMPIE DAVVERO si butta il piu' vecchio di quelli che
+ * non sono del chiamante. E' l'unica perdita rimasta in tutto il meccanismo, ed
+ * e' dichiarata: chi sta aspettando una risposta la aspetta per un motivo, e
+ * fermarsi qui vorrebbe dire non leggere piu' NIENTE — la cassetta piena, il
+ * mittente bloccato, e la pagina che non arriva. Un evento perso e' un clic da
+ * rifare. Perche' ci si arrivi servono ventiquattro messaggi non reclamati, e
+ * il ciclo dei messaggi ne reclama otto per giro.
  * ============================================================================= */
-#define IPC_SCAFFALE_N  4
+#define IPC_SCAFF_MSG   24      /* quanti messaggi al massimo */
+#define IPC_SCAFF_BYTE  6144    /* e quanti byte in tutto: quattro pieni */
 
 static struct {
-    IpcMessage    meta;
-    unsigned char dati[IPC_MSG_MAX_DATA];
-    unsigned int  len;
-    int           pieno;
-} g_scaffale[IPC_SCAFFALE_N];
+    IpcMessage   meta;
+    unsigned int off;           /* dove stanno i dati dentro g_scaff_dati */
+    unsigned int len;
+} g_scaff[IPC_SCAFF_MSG];
 
-static unsigned int g_scaff_testa = 0;   /* il prossimo da servire */
-static unsigned int g_scaff_coda  = 0;   /* dove mettere il prossimo */
-static unsigned int g_scaff_n     = 0;
+static unsigned char g_scaff_dati[IPC_SCAFF_BYTE];
+static unsigned int  g_scaff_n     = 0;   /* messaggi in fila, dal piu' vecchio */
+static unsigned int  g_scaff_usati = 0;   /* byte occupati nel pozzo */
 
-int ipc_rimetti(const IpcMessage *meta, const void *dati, unsigned int len)
+/* ! IL POZZO E' COMPATTO E RESTA COMPATTO. Togliere dal mezzo sposta indietro
+ * la coda dei dati e corregge gli scostamenti di chi viene dopo: sono al piu'
+ * sei kilobyte di memmove su una macchina che nel frattempo aspetta la rete.
+ * L'alternativa — un pozzo a buchi con una lista di liberi — costerebbe righe
+ * e frammentazione per risparmiare microsecondi che nessuno misurerebbe. */
+static void scaff_togli(unsigned int i)
+{
+    unsigned int off = g_scaff[i].off;
+    unsigned int len = g_scaff[i].len;
+    unsigned int j;
+
+    if (i >= g_scaff_n) return;
+
+    if (len && off + len < g_scaff_usati)
+        memmove(g_scaff_dati + off, g_scaff_dati + off + len,
+                g_scaff_usati - (off + len));
+    g_scaff_usati -= len;
+
+    for (j = i + 1; j < g_scaff_n; j++) {
+        g_scaff[j].off -= len;
+        g_scaff[j - 1]  = g_scaff[j];
+    }
+    g_scaff_n--;
+}
+
+static int scaff_metti(const IpcMessage *meta, const void *dati,
+                       unsigned int len)
 {
     if (!meta) return -1;
-    if (g_scaff_n >= IPC_SCAFFALE_N) return -1;
     if (len > IPC_MSG_MAX_DATA) return -1;
+    if (g_scaff_n >= IPC_SCAFF_MSG) return -1;
+    if (g_scaff_usati + len > IPC_SCAFF_BYTE) return -1;
 
-    g_scaffale[g_scaff_coda].meta = *meta;
-    if (len && dati) memcpy(g_scaffale[g_scaff_coda].dati, dati, len);
-    g_scaffale[g_scaff_coda].len   = len;
-    g_scaffale[g_scaff_coda].pieno = 1;
-
-    g_scaff_coda = (g_scaff_coda + 1u) % IPC_SCAFFALE_N;
+    g_scaff[g_scaff_n].meta = *meta;
+    g_scaff[g_scaff_n].off  = g_scaff_usati;
+    g_scaff[g_scaff_n].len  = len;
+    if (len && dati) memcpy(g_scaff_dati + g_scaff_usati, dati, len);
+    g_scaff_usati += len;
     g_scaff_n++;
     return 0;
 }
 
-/* Serve un messaggio dallo scaffale, se ce n'e' uno. Rende i byte, o -1. */
+int ipc_rimetti(const IpcMessage *meta, const void *dati, unsigned int len)
+{
+    return scaff_metti(meta, dati, len);
+}
+
+unsigned int ipc_pronto(void)
+{
+    return g_scaff_n;
+}
+
+/* Serve il messaggio i-esimo a chi lo ha chiesto e lo toglie. */
+static int scaff_consegna(unsigned int i, IpcMessage *out_meta,
+                          void *buf, unsigned int buf_len)
+{
+    unsigned int q = g_scaff[i].len;
+
+    if (out_meta) *out_meta = g_scaff[i].meta;
+    if (q > buf_len) q = buf_len;
+    if (q && buf) memcpy(buf, g_scaff_dati + g_scaff[i].off, q);
+    scaff_togli(i);
+    return (int)q;
+}
+
+/* Serve il primo messaggio dello scaffale, se ce n'e' uno. Rende i byte, o -1. */
 static int scaffale_prendi(IpcMessage *out_meta, void *buf, unsigned int buf_len)
 {
-    unsigned int i;
-    unsigned int q;
-
     if (g_scaff_n == 0) return -1;
-
-    i = g_scaff_testa;
-    if (!g_scaffale[i].pieno) return -1;
-
-    if (out_meta) *out_meta = g_scaffale[i].meta;
-
-    q = g_scaffale[i].len;
-    if (q > buf_len) q = buf_len;
-    if (q && buf) memcpy(buf, g_scaffale[i].dati, q);
-
-    g_scaffale[i].pieno = 0;
-    g_scaff_testa = (g_scaff_testa + 1u) % IPC_SCAFFALE_N;
-    g_scaff_n--;
-    return (int)q;
+    return scaff_consegna(0, out_meta, buf, buf_len);
 }
 
 int ipc_recv(IpcMessage *out_meta, void *buf, unsigned int buf_len)
@@ -5220,6 +5304,136 @@ int ipc_recv_timeout(IpcMessage *out_meta, void *buf, unsigned int buf_len,
     if (r >= 0) return r;
     return (int)_syscall4(SYS_IPC_RECV_TMO, (uint32_t)out_meta,
                            (uint32_t)buf, buf_len, timeout_ms);
+}
+
+/* =============================================================================
+ * ipc_scegli — aspetta il PROPRIO messaggio senza toccare quelli degli altri
+ *
+ * ! IL BUFFER DI SERVIZIO E' UNO SOLO E STA QUI, non sulla pila. Il kernel
+ * TRONCA a buf_len senza dirlo (vedi ipc_recv_timeout in kernel/ipc/ipc.c):
+ * leggere dentro il buffer del chiamante vorrebbe dire mettere sullo scaffale
+ * un messaggio di qualcun altro gia' tagliato, quando il chiamante ha chiesto
+ * meno di 1536 byte. Sono 1536 byte di dato statico dentro la libreria
+ * condivisa, non 1536 byte di pila in ogni chiamata.
+ *
+ * ! E NON E' RIENTRANTE, ne' ha motivo di esserlo: il filtro e' un predicato —
+ * guarda mittente e tipo e risponde — e non chiama la posta.
+ *
+ * ! LA SCADENZA E' UNA SOLA PER TUTTA LA CHIAMATA, e prima non lo era: il
+ * vecchio giro passava `ms` a OGNI lettura dentro un ciclo che poteva girare
+ * sessantaquattro volte, cioe' `attendi(..., 2000)` poteva stare via due
+ * minuti. Qui si scala il tempo gia' passato, e `ms == 0` continua a voler dire
+ * «senza scadenza» come in tutta questa libc.
+ *
+ * ! E IPC_SUBITO VUOL DIRE «SOLO QUEL CHE C'E' GIA'». Non e' un doppione di una
+ * scadenza corta: la scadenza piu' corta che il kernel sappia rappresentare e'
+ * un tick del PIT, dieci millisecondi, e chi guarda la posta ripetutamente
+ * mentre aspetta altro non puo' pagarli. Con IPC_SUBITO la cassetta si chiede a
+ * poll() — che risponde senza dormire — e quando e' vuota si torna scaduti.
+ * ============================================================================= */
+static unsigned char g_scegli_buf[IPC_MSG_MAX_DATA];
+
+/* ! C'E' POSTA NELLA CASSETTA DEL KERNEL? — chiesto senza aspettare. Serve solo
+ * a IPC_SUBITO: leggere con una scadenza corta non sarebbe la stessa cosa,
+ * perche' il PIT e' a 100 Hz e la scadenza piu' breve che esista e' un tick
+ * intero. Otto domande da dieci millisecondi per giro sono ottanta millisecondi
+ * di pompa che non pompa — e la pompa dei messaggi gira mentre si scarica una
+ * pagina, cioe' proprio quando quel tempo conta. */
+static int c_e_posta(void)
+{
+    struct pollfd p;
+
+    p.fd = POLL_FD_IPC;
+    p.events = POLL_IN;
+    p.revents = 0;
+    return (int)_syscall3(SYS_POLL, (uint32_t)&p, 1u, 0u) > 0;
+}
+
+int ipc_scegli(IpcFiltro filtro, void *dato, IpcMessage *out_meta,
+               void *buf, unsigned int buf_len, unsigned int ms)
+{
+    unsigned int i = 0;
+    unsigned int inizio = uptime_ms();
+
+    if (!filtro) return ipc_recv_timeout(out_meta, buf, buf_len, ms);
+
+    /* Prima lo scaffale, dal piu' vecchio: cio' che e' gia' in casa non fa
+     * aspettare nessuno. Un ALTRUI si salta e resta al suo posto. */
+    while (i < g_scaff_n) {
+        int d = filtro(&g_scaff[i].meta, dato);
+
+        if (d == IPC_MIO)   return scaff_consegna(i, out_meta, buf, buf_len);
+        if (d == IPC_BUTTA) { scaff_togli(i); continue; }
+        i++;
+    }
+
+    /* Poi la cassetta del kernel. */
+    for (;;) {
+        IpcMessage   meta;
+        unsigned int resta;
+        int          r;
+
+        if (ms == IPC_SUBITO) {
+            /* Solo quel che c'e' gia': se la cassetta e' vuota si torna
+             * subito, senza pagare nemmeno un tick. */
+            if (!c_e_posta()) return -ETIMEDOUT;
+            resta = 1;
+        } else if (ms == 0) {
+            resta = 0;                      /* senza scadenza */
+        } else {
+            unsigned int passati = uptime_ms() - inizio;
+
+            if (passati >= ms) return -ETIMEDOUT;
+            resta = ms - passati;
+        }
+
+        r = (int)_syscall4(SYS_IPC_RECV_TMO, (uint32_t)&meta,
+                           (uint32_t)g_scegli_buf, IPC_MSG_MAX_DATA, resta);
+        if (r < 0) return r;
+
+        {
+            unsigned int q = meta.len;
+            int          d;
+
+            if (q > IPC_MSG_MAX_DATA) q = IPC_MSG_MAX_DATA;
+            d = filtro(&meta, dato);
+
+            if (d == IPC_MIO) {
+                unsigned int c = q;
+
+                if (out_meta) *out_meta = meta;
+                if (c > buf_len) c = buf_len;
+                if (c && buf) memcpy(buf, g_scegli_buf, c);
+                return (int)c;
+            }
+
+            if (d == IPC_BUTTA) continue;
+
+            /* ALTRUI: aspetta il suo padrone sullo scaffale. E se non c'e'
+             * piu' posto si fa spazio buttando il piu' vecchio che non e' del
+             * chiamante — vedi il perche' in cima. */
+            while (scaff_metti(&meta, g_scegli_buf, q) < 0) {
+                unsigned int k;
+                int          buttato = 0;
+
+                /* ! IL PIU' VECCHIO CHE NON E' DEL CHIAMANTE, e se ne serve
+                 * piu' d'uno se ne butta piu' d'uno: fermarsi al primo
+                 * lascerebbe cadere in silenzio il messaggio che si sta
+                 * cercando di mettere via, che e' esattamente cio' che questa
+                 * funzione esiste per non fare. Uno dei posti si libera
+                 * sempre: quel che e' del chiamante e' gia' stato consegnato
+                 * dalla scorsa dello scaffale, qui sopra. */
+                for (k = 0; k < g_scaff_n; k++)
+                    if (filtro(&g_scaff[k].meta, dato) != IPC_MIO) {
+                        scaff_togli(k);
+                        buttato = 1;
+                        break;
+                    }
+
+                if (!buttato) break;
+            }
+        }
+    }
 }
 
 int time_now(RtcTime *t)

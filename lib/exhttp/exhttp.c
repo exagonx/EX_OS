@@ -65,109 +65,59 @@ static int ip_pronto(void)
 }
 
 /* =============================================================================
- * ! I MESSAGGI DEGLI ALTRI SI RIMETTONO A POSTO, NON SI BUTTANO. La mailbox e'
- * una sola per processo: un'applicazione grafica ci riceve gli eventi del
- * server a finestre insieme alle risposte dello stack. Buttarli vuol dire un
- * clic dell'utente mangiato mentre si scarica una pagina — e in un browser
- * capita a ogni immagine.
+ * ! I MESSAGGI DEGLI ALTRI NON SI TOCCANO, e non e' piu' questo file a
+ * doversene ricordare. La mailbox e' una sola per processo: un'applicazione
+ * grafica ci riceve gli eventi del server a finestre insieme alle risposte
+ * dello stack. Fino al 3 settembre 2026 qui dentro si SCORREVA la cassetta, si
+ * metteva da parte in un vettore locale cio' che non era nostro, e alla fine lo
+ * si rimetteva sullo scaffale della libc — quattro posti, e se lo scaffale non
+ * era vuoto i messaggi in piu' sparivano senza che nessuno guardasse il -1.
  *
- * ! E SI RIMETTONO ALLA FINE, NON APPENA LETTI, ed e' la trappola di questa
- * funzione. Lo scaffale della libc si serve PRIMA della coda del kernel:
- * rimettere e rileggere subito rende lo stesso messaggio all'infinito. Percio'
- * cio' che non e' nostro si mette da parte qui, e si restituisce tutto insieme
- * quando si e' finito — nell'ordine in cui era arrivato.
+ * Adesso il filtro lo fa `ipc_scegli`: cio' che non e' nostro RESTA DOV'E' e
+ * non passa mai per le nostre mani, quindi non lo possiamo perdere. Il perche'
+ * per esteso sta in libc.h, sopra ipc_scegli.
  *
- * ! LO SCAFFALE HA QUATTRO POSTI E QUI SE NE TENGONO QUATTRO, apposta: di piu'
- * non si potrebbero rimettere comunque, e tenerne di piu' vorrebbe dire
- * scoprire che sono persi solo al momento di restituirli.
+ * ! LE TRE RISPOSTE DEL FILTRO, E PERCHE' PROPRIO QUESTE:
+ *
+ *   IPC_MIO      la risposta che si aspettava.
+ *
+ *   IPC_ALTRUI   quel che non viene dallo stack — gli eventi della finestra —
+ *                e i IP_MSG_TCP_DATI. I dati sono ALTRUI e non BUTTA perche'
+ *                lo stack quei byte li ha gia' tolti dalla sua coda per
+ *                consegnarceli: nessuno li rimandera' piu', e chi aspettava
+ *                quella lettura aspetterebbe all'infinito senza un errore da
+ *                nessuna parte. Aspettano `tcp_leggi`, che e' il loro padrone.
+ *
+ *   IPC_BUTTA    il resto di cio' che viene dallo stack: uno STATO, un ESITO,
+ *                un'INFO in ritardo. Sono risposte che si possono RICHIEDERE,
+ *                e tenerle vorrebbe dire far combaciare la risposta di ieri
+ *                con la domanda di oggi — il difetto della redirezione che
+ *                rendeva -104, raccontato sopra svuota_stack.
+ *
+ * ! LA DISTINZIONE LA FA IL TIPO, ed e' l'unica che si puo' fare: il protocollo
+ * non numera le domande. Il giorno che le numerera', questo filtro diventa un
+ * confronto fra due interi e tutta la prudenza qui sopra se ne va con lui.
  * ============================================================================= */
-#define DA_PARTE_N  4
+static int filtro_stack(const IpcMessage *m, void *dato)
+{
+    unsigned int voluto = *(const unsigned int *)dato;
+
+    if ((int)m->sender_pid != g_pid_ip)  return IPC_ALTRUI;
+    if (m->tipo == voluto)               return IPC_MIO;
+    if (m->tipo == IP_MSG_TCP_DATI)      return IPC_ALTRUI;
+    return IPC_BUTTA;
+}
 
 static int attendi(unsigned int tipo, unsigned char *buf, unsigned int *len,
                    unsigned int ms)
 {
-    /* ! QUATTRO, E NON DI PIU', ANCHE ADESSO CHE CI FINISCONO ANCHE I DATI.
-     * Il numero non e' arbitrario: e' quanti se ne possono RIMETTERE, e
-     * tenerne di piu' vorrebbe dire scoprire che sono persi al momento di
-     * restituirli. Alzarlo a otto e' stato provato, e ha fatto smettere di
-     * funzionare persino il riconoscimento della rete — quattro messaggi su
-     * otto sparivano in silenzio. Il commento qui sopra lo diceva gia'. */
-    static IpcMessage    p_meta[DA_PARTE_N];
-    static unsigned char p_dati[DA_PARTE_N][IPC_MSG_MAX_DATA];
-    static unsigned int  p_len[DA_PARTE_N];
-
     IpcMessage meta;
-    int        i, n_parte = 0, esito_r = -1;
 
-    for (i = 0; i < 64; i++) {
-        if (ipc_recv_timeout(&meta, buf, IPC_MSG_MAX_DATA, ms) < 0) break;
+    if (ipc_scegli(filtro_stack, &tipo, &meta, buf, IPC_MSG_MAX_DATA, ms) < 0)
+        return -1;
 
-        if ((int)meta.sender_pid == g_pid_ip && meta.tipo == tipo) {
-            if (len) *len = meta.len;
-            esito_r = 0;
-            break;
-        }
-
-        /* =====================================================================
-         * ! CIO' CHE VIENE DALLO STACK MA NON E' IL TIPO ATTESO SI BUTTA — MA
-         * NON I DATI. Qui c'era scritto «e' una risposta vecchia alla nostra
-         * stessa domanda, e rimetterla vorrebbe dire ritrovarsela davanti alla
-         * prossima»: vero per uno STATO, per un ESITO, per un'INFO — sono
-         * risposte che si possono richiedere — e falso per IP_MSG_TCP_DATI.
-         *
-         * ! UN TCP_DATI BUTTATO E' PERSO PER SEMPRE. Lo stack quei byte li ha
-         * gia' tolti dalla sua coda per consegnarceli: nessuno li rimandera'
-         * piu'. Chi aspettava quella lettura aspetta all'infinito, e non c'e'
-         * un errore da nessuna parte.
-         *
-         * ! E DIVENTA POSSIBILE APPENA SI FANNO DUE DOMANDE DIVERSE. Finche'
-         * exhttp chiedeva una cosa per volta — manda, aspetta, leggi — non
-         * poteva succedere. Da quando c'e' `tcp_quanti`, che chiede
-         * IP_MSG_TCP_STATO mentre una lettura puo' avere una prenotazione
-         * ancora in volo, la risposta di ieri e la domanda di oggi si
-         * incrociano: e' cosi' che le pagine https hanno smesso di aprirsi
-         * quando la stretta di mano ha provato a leggere a pezzi.
-         *
-         * ! SI RIMETTE NEL MUCCHIO DI CHI TORNA AL SUO POSTO, non subito: qui
-         * dentro non lo si rilegge, e alla prossima lettura lo trovera' chi lo
-         * stava aspettando. La distinzione la fa il TIPO, ed e' l'unica che si
-         * puo' fare: il protocollo non numera le domande.
-         * ================================================================= */
-        if ((int)meta.sender_pid == g_pid_ip && meta.tipo != IP_MSG_TCP_DATI)
-            continue;
-
-        {
-            unsigned int q = meta.len;
-            int          dove = -1;
-
-            if (q > IPC_MSG_MAX_DATA) q = IPC_MSG_MAX_DATA;
-
-            if (n_parte < DA_PARTE_N) {
-                dove = n_parte++;
-            } else if ((int)meta.sender_pid == g_pid_ip) {
-                /* ! LO SCAFFALE E' PIENO E QUESTO E' UN TCP_DATI: si butta un
-                 * evento del server a finestre, non i byte. Un clic perso e'
-                 * un clic da rifare; un pezzo di pagina perso e' una pagina
-                 * che non si apre e non dice perche'. La scelta e' fra due
-                 * perdite, e questa e' la piu' piccola. */
-                int k;
-
-                for (k = 0; k < DA_PARTE_N; k++)
-                    if ((int)p_meta[k].sender_pid != g_pid_ip) { dove = k; break; }
-            }
-
-            if (dove >= 0) {
-                p_meta[dove] = meta;
-                if (q) memcpy(p_dati[dove], buf, q);
-                p_len[dove] = q;
-            }
-        }
-    }
-
-    for (i = 0; i < n_parte; i++)
-        ipc_rimetti(&p_meta[i], p_dati[i], p_len[i]);
-
-    return esito_r;
+    if (len) *len = meta.len;
+    return 0;
 }
 
 static int esito(unsigned int ms)
@@ -197,70 +147,37 @@ static int esito(unsigned int ms)
  * e' cosi', l'unica difesa e' non lasciarne mai indietro. dns.c lo dice gia'
  * per conto suo: «la conferma della chiusura non interessa, ma va CONSUMATA».
  *
- * ! E QUESTO NON BASTERA' PER IL BROWSER. attendi() butta i messaggi che non
- * sono dello stack, e in un'applicazione GRAFICA quei messaggi sono gli eventi
- * del server a finestre: un clic mangiato mentre si scarica una pagina. Il
- * giorno che l'HTTP gira dentro una finestra servira' un numero di richiesta
- * nel protocollo, o una mailbox per servizio. Sta scritto qui perche' e' il
- * posto dove si scoprira'.
+ * ! E QUI STAVA SCRITTO «QUESTO NON BASTERA' PER IL BROWSER», ed era vero: si
+ * buttava tutto quel che non era dello stack, e in un'applicazione GRAFICA
+ * quello e' un clic mangiato a ogni immagine. Adesso si butta solo cio' che
+ * viene dallo stack — il resto resta sullo scaffale per chi lo aspetta — e la
+ * frase che diceva «servira' un numero di richiesta nel protocollo, o una
+ * mailbox per servizio» resta valida per l'altra meta' del problema: senza un
+ * numero di richiesta, la sola difesa contro la risposta di ieri e' non
+ * lasciarne mai indietro, cioe' questa funzione.
  * ============================================================================= */
+/* Qui non c'e' niente di «mio»: si chiama per BUTTARE, e cio' che non e' dello
+ * stack resta sullo scaffale per chi lo aspetta. */
+static int filtro_pulisci(const IpcMessage *m, void *dato)
+{
+    (void)dato;
+    return (int)m->sender_pid == g_pid_ip ? IPC_BUTTA : IPC_ALTRUI;
+}
+
 static void svuota_stack(void)
 {
-    /* ! QUATTRO, E NON DI PIU', ANCHE ADESSO CHE CI FINISCONO ANCHE I DATI.
-     * Il numero non e' arbitrario: e' quanti se ne possono RIMETTERE, e
-     * tenerne di piu' vorrebbe dire scoprire che sono persi al momento di
-     * restituirli. Alzarlo a otto e' stato provato, e ha fatto smettere di
-     * funzionare persino il riconoscimento della rete — quattro messaggi su
-     * otto sparivano in silenzio. Il commento qui sopra lo diceva gia'. */
-    static IpcMessage    p_meta[DA_PARTE_N];
-    static unsigned char p_dati[DA_PARTE_N][IPC_MSG_MAX_DATA];
-    static unsigned int  p_len[DA_PARTE_N];
-
     unsigned char buf[IPC_MSG_MAX_DATA];
     IpcMessage    meta;
-    int           i, n_parte = 0;
 
     /* ! UN MILLISECONDO, NON ZERO: in questa libc `timeout_ms == 0` vuol dire
      * ATTESA SENZA SCADENZA, cioe' esattamente ipc_recv (vedi libc.h). Scritto
      * zero credendo di dire «non aspettare», questa funzione si e' piantata
      * per sempre alla prima mailbox vuota — e il sintomo era «scarica non
-     * risponde piu'», che non somiglia a «ho svuotato la posta». */
-    for (i = 0; i < 32; i++) {
-        if (ipc_recv_timeout(&meta, buf, sizeof(buf), 1) < 0) break;
-
-        /* Anche qui: cio' che non e' dello stack non e' roba da buttare. */
-        if ((int)meta.sender_pid == g_pid_ip) continue;
-
-        {
-            unsigned int q = meta.len;
-            int          dove = -1;
-
-            if (q > IPC_MSG_MAX_DATA) q = IPC_MSG_MAX_DATA;
-
-            if (n_parte < DA_PARTE_N) {
-                dove = n_parte++;
-            } else if ((int)meta.sender_pid == g_pid_ip) {
-                /* ! LO SCAFFALE E' PIENO E QUESTO E' UN TCP_DATI: si butta un
-                 * evento del server a finestre, non i byte. Un clic perso e'
-                 * un clic da rifare; un pezzo di pagina perso e' una pagina
-                 * che non si apre e non dice perche'. La scelta e' fra due
-                 * perdite, e questa e' la piu' piccola. */
-                int k;
-
-                for (k = 0; k < DA_PARTE_N; k++)
-                    if ((int)p_meta[k].sender_pid != g_pid_ip) { dove = k; break; }
-            }
-
-            if (dove >= 0) {
-                p_meta[dove] = meta;
-                if (q) memcpy(p_dati[dove], buf, q);
-                p_len[dove] = q;
-            }
-        }
-    }
-
-    for (i = 0; i < n_parte; i++)
-        ipc_rimetti(&p_meta[i], p_dati[i], p_len[i]);
+     * risponde piu'», che non somiglia a «ho svuotato la posta».
+     *
+     * ! E RENDE SEMPRE SCADUTO, perche' il filtro non dice MIO a nessuno: e'
+     * il modo di dire «scorri tutto quel che c'e' e poi torna». */
+    ipc_scegli(filtro_pulisci, 0, &meta, buf, sizeof(buf), 1);
 }
 
 static int tcp_leggi(void *st, unsigned char *dst, unsigned int max,
@@ -711,36 +628,47 @@ static int exhttp_tls(ExHttpTrasporto *t, const char *host, unsigned int porta)
 
     g_stato_tls.sotto.stato  = g_stato_tls.tcp.stato;
     /* =====================================================================
-     * ! LA STRETTA LEGGE COME HA SEMPRE LETTO, E NON A PEZZI. Non per scelta
-     * di comodo: e' stato scritto, provato tre volte e tolto tre volte —
-     * `stretta_leggi`, qui sopra, e' rimasta apposta perche' basta questa riga
-     * per riprovare.
+     * ! ANCHE LA STRETTA LEGGE A PEZZI, dal 4 settembre 2026 — e per tre volte
+     * prima di quel giorno era stata scritta, provata e TOLTA, perche' con
+     * questa riga dentro le pagine https smettevano di aprirsi: ci si fermava
+     * dentro la stretta, senza un errore da nessuna parte.
      *
-     * ! COL GANCIO DELL'ATTESA DENTRO LE LETTURE DELLA STRETTA, LE PAGINE
-     * https SMETTONO DI APRIRSI. Ci si ferma dentro la stretta — la seriale
-     * mostra i due prelievi di entropia, quindi il ClientHello e' partito — e
-     * non si torna piu'. Due cause sono state trovate e corrette lungo la
-     * strada, e nessuna delle due bastava:
+     * ! LA CAUSA NON ERA QUI, ED ERANO DUE. Nessuna delle due sta in questo
+     * file, ed e' il motivo per cui cercarla qui non ha mai reso niente:
      *
-     *   - exwin, pompando i messaggi, BUTTAVA quel che non era suo, comprese
-     *     le risposte dello stack IP (adesso le rimette: vedi ex_msg_ora);
-     *   - `attendi` qui sotto BUTTAVA i IP_MSG_TCP_DATI arrivati mentre
-     *     aspettava un'altra risposta (adesso li rimette).
+     *   1. LA CASSETTA POSTALE. Mentre la stretta legge ci sono DUE
+     *      consumatori sulla stessa mailbox — exhttp che aspetta lo stack e il
+     *      ciclo dei messaggi che aspetta il server a finestre — e ognuno dei
+     *      due, cercando il proprio, scorreva la cassetta e teneva in mano
+     *      quel che era dell'altro. Chi tiene in mano puo' lasciar cadere: lo
+     *      scaffale dove si rimetteva aveva quattro posti e nessuno guardava
+     *      il -1 di quando era pieno. Adesso la scelta la fa `ipc_scegli`
+     *      (vedi libc.h): quel che non e' di chi legge non passa MAI per le
+     *      sue mani.
      *
-     * ! E IL GUADAGNO E' PICCOLO, MISURATO: la stretta e' 490 ms in tutto —
+     *   2. LA FINESTRA DI TCP CHE NON SI RIAPRIVA. Chi legge chiedendo «quanti
+     *      byte ci sono?» invece di prenotare legge a SCATTI, e fra uno
+     *      scatto e l'altro un mittente veloce riempie i quattro kilobyte del
+     *      buffer di ricezione. Lo stack annunciava la finestra solo dentro un
+     *      ACK — cioe' solo all'arrivo di un segmento — quindi quando poi si
+     *      svuotava non aveva piu' modo di dirlo, e il server restava fermo ad
+     *      aspettare noi. Sintomo: «quanti byte ci sono?» rispondeva ZERO per
+     *      sempre. La cura sta in drivers/ip/ip.c, dentro tcp_consegna.
+     *
+     * Con tutt'e due sotto, questa riga si e' potuta rimettere.
+     *
+     * ! IL GUADAGNO E' MISURATO ED E' PICCOLO: la stretta e' 490 ms in tutto —
      * magazzino delle CA 60, DNS e connessione 320 — non i «venti secondi» che
-     * stavano scritti in tre posti. I sei PASSI la intervallano gia', e da li'
-     * la finestra respira e Esc arriva. Fra qualche centinaio di millisecondi
-     * e una caccia in fondo al meccanismo dei messaggi, si e' scelto di
-     * scrivere dove si era arrivati.
+     * stavano scritti in tre posti fino al 3 settembre. I sei PASSI la
+     * intervallavano gia'; questo aggiunge il respiro DENTRO le attese di rete
+     * di ogni passo.
      *
-     * ! CHI CI TORNERA' cominci di qui: la mailbox di un processo e' profonda
-     * QUATTRO, e mentre la stretta legge ci sono DUE consumatori — exhttp che
-     * aspetta lo stack e il ciclo dei messaggi che aspetta il server a
-     * finestre. Quattro posti in due non bastano, e nessuno dei due sa che
-     * l'altro c'e'.
+     * ! E DENTRO UN SINGOLO PASSO NON SI RESPIRA COMUNQUE. Un x25519 o una
+     * verifica di firma sono un blocco solo: li' non si legge, si calcola.
+     * Spezzarli vorrebbe dire portare un gancio dentro excurva e exbig, e con
+     * 150 ms come pezzo piu' lungo non lo merita.
      * ================================================================== */
-    g_stato_tls.sotto.leggi  = g_stato_tls.tcp.leggi;
+    g_stato_tls.sotto.leggi  = stretta_leggi;
     g_stato_tls.sotto.scrivi = g_stato_tls.tcp.scrivi;
 
     adesso_in(adesso, sizeof(adesso));

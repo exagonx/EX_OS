@@ -154,58 +154,49 @@ static unsigned int salta_nome(const unsigned char *m, unsigned int len,
 /* =============================================================================
  * Dialogo con lo stack
  * ============================================================================= */
-/* ! I MESSAGGI DEGLI ALTRI SI RIMETTONO A POSTO, NON SI BUTTANO. La mailbox e'
- * una sola per processo: dentro un'applicazione grafica, cio' che non viene
- * dallo stack sono gli eventi del server a finestre. Buttarli vuol dire un
- * clic dell'utente mangiato mentre si risolve un nome — e un browser risolve
- * un nome per ogni indirizzo che apre.
+/* ! I MESSAGGI DEGLI ALTRI NON SI TOCCANO. La mailbox e' una sola per
+ * processo: dentro un'applicazione grafica, cio' che non viene dallo stack
+ * sono gli eventi del server a finestre. Buttarli vuol dire un clic
+ * dell'utente mangiato mentre si risolve un nome — e un browser risolve un
+ * nome per ogni indirizzo che apre.
  *
- * ! E SI RIMETTONO ALLA FINE, NON APPENA LETTI: lo scaffale della libc si
- * serve PRIMA della coda del kernel, quindi rimettere e rileggere subito
- * renderebbe lo stesso messaggio all'infinito. Stessa forma di attendi() in
- * lib/exhttp/exhttp.c, e per la stessa ragione.
+ * ! LA SCELTA E' DI ipc_scegli, E IL PERCHE' STA IN libc.h. Qui si dice solo
+ * che cosa e' nostro: cio' che non lo e' resta sullo scaffale in ordine
+ * d'arrivo, e non passa mai per le mani di questa funzione. Fino al 3 settembre
+ * 2026 si metteva da parte in un vettore locale e si rimetteva alla fine, e
+ * quando lo scaffale era gia' occupato i messaggi in piu' sparivano in
+ * silenzio.
  *
  * ! CIO' CHE VIENE DALLO STACK MA NON E' IL TIPO ATTESO SI BUTTA LO STESSO:
- * e' una risposta vecchia a una nostra domanda, e rimetterla vorrebbe dire
+ * e' una risposta vecchia a una nostra domanda, e tenerla vorrebbe dire
  * ritrovarsela davanti alla prossima. */
-#define DNS_DA_PARTE_N  4
+typedef struct {
+    int          pid;
+    unsigned int tipo;
+} DnsVoglio;
+
+static int filtro_dns(const IpcMessage *m, void *dato)
+{
+    const DnsVoglio *v = (const DnsVoglio *)dato;
+
+    if ((int)m->sender_pid != v->pid) return IPC_ALTRUI;
+    return m->tipo == v->tipo ? IPC_MIO : IPC_BUTTA;
+}
 
 static int attendi_da(int pid_ip, unsigned int tipo, unsigned char *buf,
                       unsigned int *len, unsigned int ms)
 {
-    static IpcMessage    p_meta[DNS_DA_PARTE_N];
-    static unsigned char p_dati[DNS_DA_PARTE_N][IPC_MSG_MAX_DATA];
-    static unsigned int  p_len[DNS_DA_PARTE_N];
-
+    DnsVoglio  v;
     IpcMessage meta;
-    int        i, n_parte = 0, esito_r = -1;
 
-    for (i = 0; i < 32; i++) {
-        if (ipc_recv_timeout(&meta, buf, IPC_MSG_MAX_DATA, ms) < 0) break;
+    v.pid  = pid_ip;
+    v.tipo = tipo;
 
-        if ((int)meta.sender_pid == pid_ip && meta.tipo == tipo) {
-            if (len) *len = meta.len;
-            esito_r = 0;
-            break;
-        }
+    if (ipc_scegli(filtro_dns, &v, &meta, buf, IPC_MSG_MAX_DATA, ms) < 0)
+        return -1;
 
-        if ((int)meta.sender_pid == pid_ip) continue;
-
-        if (n_parte < DNS_DA_PARTE_N) {
-            unsigned int q = meta.len;
-
-            if (q > IPC_MSG_MAX_DATA) q = IPC_MSG_MAX_DATA;
-            p_meta[n_parte] = meta;
-            if (q) memcpy(p_dati[n_parte], buf, q);
-            p_len[n_parte] = q;
-            n_parte++;
-        }
-    }
-
-    for (i = 0; i < n_parte; i++)
-        ipc_rimetti(&p_meta[i], p_dati[i], p_len[i]);
-
-    return esito_r;
+    if (len) *len = meta.len;
+    return 0;
 }
 
 int dns_risolvi_da(const char *nome, unsigned char *ip, unsigned char *da)

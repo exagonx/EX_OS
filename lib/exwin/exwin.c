@@ -3292,6 +3292,42 @@ static int tasto_al_fuoco(ExFinestra f, unsigned int k)
  * sveglie, terminali, mailbox, misure, tasti, clic — e due copie sarebbero
  * due copie da tenere d'accordo per sempre. Cambia una riga: quanto si aspetta
  * dentro poll(), e se al giro dopo si riprova o si torna a mani vuote. */
+/* =============================================================================
+ * ! CHE COSA E' NOSTRO, E CHE COSA E' DI QUALCUN ALTRO
+ *
+ * La mailbox e' una sola per processo e i consumatori sono piu' d'uno: qui
+ * arrivano gli eventi del server a finestre, e nello stesso posto arrivano le
+ * risposte dello stack IP a chi sta scaricando una pagina. `ipc_scegli` prende
+ * il nostro e LASCIA DOV'E' quel che non lo e' — non lo si tiene in mano,
+ * quindi non lo si puo' perdere.
+ *
+ * ! CHI DORME PUO' BUTTARE, CHI NON DORME NO, e la differenza non e' un
+ * dettaglio di comodo. `ex_prendi_msg` dorme solo quando l'applicazione non sta
+ * aspettando nient'altro: se siamo li', nessun'altra attesa e' aperta e una
+ * risposta rimasta indietro non serve piu' a nessuno — buttarla tiene pulito lo
+ * scaffale. `ex_msg_ora` invece si chiama PROPRIO MENTRE si aspetta altro, e
+ * li' quella stessa risposta e' di qualcuno: buttarla vuol dire che chi
+ * l'aspetta aspetta per sempre. E' il guasto che ha fatto smettere di aprirsi
+ * le pagine https quando la stretta di mano ha cominciato a leggere a pezzi.
+ *
+ * ! E ADESSO ANCHE CHI NON DORME PUO' ANDARE AVANTI. Prima un messaggio non
+ * nostro si RIMETTEVA sullo scaffale e si tornava a mani vuote — ma lo scaffale
+ * si serve prima della coda del kernel, quindi al giro dopo si ritrovava
+ * davanti lo stesso messaggio, e la pompa della finestra restava ferma li'
+ * sopra per tutto il tempo che lo stack aveva una risposta da parte. Un ALTRUI
+ * si SALTA: quel che sta dietro si vede.
+ * ========================================================================== */
+static int filtro_finestra(const IpcMessage *m, void *dato)
+{
+    int bloccante = *(const int *)dato;
+
+    if (m->tipo == WIN_MSG_EVENTO || m->tipo == WIN_MSG_MISURATA ||
+        m->tipo == WIN_MSG_POSTA)
+        return IPC_MIO;
+
+    return bloccante ? IPC_BUTTA : IPC_ALTRUI;
+}
+
 static int prendi_msg(ExMsg *m, int bloccante)
 {
     IpcMessage    meta;
@@ -3351,6 +3387,12 @@ static int prendi_msg(ExMsg *m, int bloccante)
          * l'uscita della shell che compare solo quando si preme un tasto. */
         {
             int nv = 0, j;
+            /* ! poll() GUARDA LA CODA DEL KERNEL, NON LO SCAFFALE. Un messaggio
+             * lasciato da parte mentre si scaricava una pagina non la fa
+             * scattare: senza questo controllo resterebbe li' fino al prossimo
+             * messaggio che arriva davvero, e su uno schermo fermo vuol dire
+             * per sempre. */
+            int gia = (int)ipc_pronto();
 
             v[nv].fd = FD_IPC; v[nv].events = POLLIN; v[nv].revents = 0; nv++;
 
@@ -3362,7 +3404,8 @@ static int prendi_msg(ExMsg *m, int bloccante)
                     nv++;
                 }
 
-            if (poll(v, (unsigned int)nv, bloccante ? 200 : 0) <= 0) continue;
+            if (poll(v, (unsigned int)nv, (bloccante && !gia) ? 200 : 0) <= 0
+                && !gia) continue;
 
             /* Cio' che le shell hanno scritto si raccoglie prima dei
              * messaggi: se qualcosa e' cambiato, la finestra si ridisegna. */
@@ -3390,39 +3433,20 @@ static int prendi_msg(ExMsg *m, int bloccante)
                         return 1;
                     }
                 }
-                if (!(v[0].revents & POLLIN)) { if (cambiato) continue; continue; }
+                if (!(v[0].revents & POLLIN) && !gia) {
+                    if (cambiato) continue;
+                    continue;
+                }
             }
         }
 
-        if (ipc_recv_timeout(&meta, buf, sizeof(buf), 0) < 0) continue;
-
-        /* =====================================================================
-         * ! CIO' CHE NON E' NOSTRO SI RIMETTE, E SOLO QUANDO NON SI DORME.
-         *
-         * Questo ciclo prende dalla mailbox e butta via tutto quel che non e'
-         * un messaggio del server a finestre. Finche' l'unica porta era
-         * ex_prendi_msg — che si chiama quando l'applicazione non sta
-         * aspettando nient'altro — buttare via era giusto: una risposta in
-         * ritardo non serve piu' a nessuno.
-         *
-         * ! CON ex_msg_ora NON LO E' PIU'. Quella si chiama proprio MENTRE si
-         * aspetta altro: una risposta della rete, per dirne una. Buttarla
-         * vorrebbe dire che chi l'aspetta aspetta per sempre — ed e'
-         * esattamente il guasto che ha fatto smettere di aprirsi le pagine
-         * https quando la stretta di mano ha cominciato a leggere a pezzi:
-         * il navigatore, fra un pezzo e l'altro, si mangiava la risposta dello
-         * stack IP che stava per leggere lui stesso.
-         *
-         * ! E SI RIMETTE SOLO QUI PERCHE' LI' SI GIREREBBE A VUOTO. Nel ciclo
-         * che dorme, un messaggio rimesso si ritroverebbe davanti al giro
-         * dopo, all'infinito, con poll() che dice sempre «c'e' roba». Chi non
-         * dorme fa un giro solo e torna, quindi non c'e' nessun giro a vuoto.
-         * ================================================================= */
-        if (!bloccante && meta.tipo != WIN_MSG_EVENTO &&
-            meta.tipo != WIN_MSG_MISURATA && meta.tipo != WIN_MSG_POSTA) {
-            ipc_rimetti(&meta, buf, meta.len);
-            return 0;
-        }
+        /* ! IPC_SUBITO E NON UNA SCADENZA CORTA: qui si arriva solo dopo che
+         * poll() (o lo scaffale) ha detto che c'e' qualcosa, e la scadenza piu'
+         * breve che il kernel sappia rappresentare e' un tick intero — dieci
+         * millisecondi che la pompa dei messaggi, chiamata otto volte per giro
+         * mentre si scarica, non puo' pagare. */
+        if (ipc_scegli(filtro_finestra, &bloccante, &meta, buf, sizeof(buf),
+                       IPC_SUBITO) < 0) continue;
 
         /* ! LA ZONA NUOVA SI PRENDE PRIMA DI SVEGLIARE L'APPLICAZIONE, e non
          * dopo: consegnando EXM_MISURA con i pixel ancora vecchi, la prima

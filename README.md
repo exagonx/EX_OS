@@ -2,10 +2,10 @@
 
 **🇮🇹 Italiano** · [🇬🇧 English](README.en.md)
 
-**Versione:** 0.205
+**Versione:** 0.208
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
-**Architettura:** x86 32-bit, floppy FAT12 1.44MB
+**Architettura:** x86 32-bit — si avvia da floppy, da CD o da disco rigido
 
 *Le due versioni si aggiornano insieme: quello che c'è in una c'è
 nell'altra.*
@@ -15,10 +15,25 @@ nell'altra.*
 ## Che cos'è EX-OS
 
 EX-OS è un sistema operativo baremetal scritto in C e ASM per architettura
-x86 32-bit. Gira da floppy da 1.44MB formattato FAT12, da disco rigido
-(FAT16/32 o ext2) e legge CD/DVD. L'obiettivo è un sistema estensibile: il
-kernel è piccolo e read-only in RAM convenzionale, tutto il resto (driver,
-shell, programmi) gira in RAM estesa in spazio protetto.
+x86 32-bit. L'obiettivo è un sistema estensibile: il kernel è piccolo e
+read-only in RAM convenzionale, tutto il resto (driver, shell, programmi) gira
+in RAM estesa in spazio protetto.
+
+**Non è un sistema «da floppy»: il floppy è uno dei modi di avviarlo, non il
+posto dove vive.** Si parte da tre supporti, e sono tre sistemi con lo stesso
+kernel dentro:
+
+| supporto | che cosa c'è | come si fa |
+|---|---|---|
+| **floppy** 1.44MB FAT12 | il minimo per arrivare a una shell e installare | `make floppy` -> `dist/floppy.img` |
+| **CD** avviabile | il sistema **completo**: scrivania grafica, navigatore, rete, driver, font, documentazione | `make iso-exos` -> `dist/exos.iso` |
+| **disco rigido** FAT16/32 o ext2 | quello che l'installazione ci ha messo, ed è l'unico che si scrive | `install` (o `cdinstall` dal CD) |
+
+Il floppy è 1,44 MB che non crescono, e il kernel cresce a ogni cosa che
+impara: già dal 26 agosto 2026 l'installatore vero sta sul CD e sul floppy
+resta la parte congelata. **Il CD è il supporto di riferimento** — è da lì che
+si prova e si installa — e i CD/DVD si leggono comunque (ISO 9660 e Joliet)
+qualunque sia il supporto d'avvio.
 
 Un crash di un driver o di un programma non può abbattere il sistema.
 
@@ -69,6 +84,134 @@ propri header senza che nessuno glielo dica, e concatena da sé cc1, `as`,
 Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### La finestra resta viva mentre scarica, e la posta ha un padrone
+
+**testato** — dal CD, in QEMU: `https://www.google.com/` (200, 83 KB, 108 nodi),
+una pagina locale con sei immagini ritardate di venti secondi l'una, e le prove
+sul banco (256 + 244 + 244 + 51, zero sbagliate).
+
+**Mentre si scaricava, la finestra era morta.** Chi legge dorme dentro la
+lettura, e mentre dorme il puntatore non si muove, la finestra non si ridisegna
+e nessun tasto arriva: su una pagina grande sono decine di secondi di schermo
+fermo. Adesso il trasporto sa fare una domanda che prima non sapeva fare —
+*quanti byte ci sono adesso?* — e quando la risposta è zero cede il turno a chi
+ospita. La risposta viene dallo stack (`IP_MSG_TCP_STATO`, che non prenota
+niente e non aspetta) e non da un tentativo di lettura con una scadenza corta:
+quello non distingue il timeout dall'errore e lascia una prenotazione pendente
+per ogni tentativo.
+
+**E così si può fermare.** `Esc` interrompe lo scaricamento e la pagina di prima
+resta dov'era; quel che era arrivato non si tiene, perché una pagina tagliata
+mostrata come intera è peggio di una pagina che non c'è. Prima non si poteva
+nemmeno offrirlo: mentre si scaricava, nessun tasto arrivava.
+
+**La stretta di mano cifrata dice a che punto è.** Sette passi — la chiave, il
+ServerHello, il segreto, i certificati, la firma, la catena, la fine — scritti
+nella riga di stato mentre passano. E misurata: la stretta costa **490 ms** in
+tutto (magazzino delle 150 CA 60 ms, DNS e connessione TCP 320 ms). I «venti
+secondi su un 386 emulato» stavano scritti in tre posti e non erano mai stati
+misurati.
+
+**La cassetta postale ha un padrone.** Un'applicazione grafica riceve nella
+stessa mailbox gli eventi del server a finestre *e* le risposte dello stack IP,
+e mentre si scarica ci sono due che aspettano: chi legge la rete e il ciclo dei
+messaggi. Ognuno scorreva la coda cercando il proprio e teneva in mano quel che
+era dell'altro per rimetterlo alla fine — e chi tiene in mano può lasciar
+cadere: lo scaffale dove si rimetteva aveva quattro posti, e nessuno guardava il
+`-1` di quando era pieno. Adesso c'è `ipc_scegli`: si passa un filtro che di
+ogni messaggio dice **è mio / è di un altro / non è di nessuno**, e quel che è di
+un altro **resta dov'è**. Non passa mai per le mani di chi non lo vuole, quindi
+non lo può perdere.
+
+> Lo scaffale conta i byte e non i messaggi, ed è la stessa memoria di prima —
+> sei kilobyte. Un clic del mouse sono venti byte: prima ne occupava uno dei
+> quattro posti, adesso ce ne stanno ventiquattro. E un messaggio «di un altro»
+> si **salta** invece di rimetterlo, il che toglie di mezzo la trappola che
+> teneva ferma la pompa dei messaggi ogni volta che lo stack aveva una risposta
+> da parte.
+
+**E la finestra di TCP non si riapriva.** Chi legge a scatti — invece di
+prenotare e dormire — lascia che il buffer di ricezione si riempia fra uno
+scatto e l'altro, e quattro kilobyte un mittente veloce li riempie in un
+istante. Lo stack annunciava lo spazio libero **solo dentro un ACK**, cioè solo
+all'arrivo di un segmento: quando poi il buffer si svuotava non aveva più modo
+di dirlo, e il server restava fermo ad aspettare noi. Il sintomo era una pagina
+`https` che non finiva mai di arrivare, e per un giorno è sembrato un difetto
+della cassetta postale. Adesso chi si libera lo dice: un ACK vuoto di venti
+byte, e la finestra riparte.
+
+### Il navigatore esegue JavaScript, e i motori sono due
+
+**testato** — 256 prove sul linguaggio, 244 sul ponte con ExJs e 244 con
+QuickJS, più quindici riquadri provati dentro EX-OS.
+
+**Due motori, la stessa interfaccia.** `exjs.so` è scritto qui dentro;
+`quickjs.so` è QuickJS compilato per EX-OS. Si sceglie quale caricare, e il
+ponte con la pagina — `exdom.so` — è lo stesso per tutt'e due: le 244 prove
+girano identiche sull'uno e sull'altro, che è il modo di dire che
+l'interfaccia è davvero una.
+
+**Il DOM che serve a una pagina vera**: `document`, gli elementi, gli attributi,
+le classi, `innerHTML`, gli eventi con `addEventListener` e `preventDefault`, i
+moduli e il pulsante che li manda.
+
+**`XMLHttpRequest` e `fetch`**, sincroni e asincroni — e l'asincrono è vero: la
+richiesta parte, il resto dello script prosegue, e la risposta arriva quando il
+ciclo dei messaggi la consegna. L'**ordine** in cui le cose accadono è una delle
+quindici prove, perché è la parte che si sbaglia in silenzio.
+
+**Un difetto che non somigliava alla sua causa.** Due stub nello stesso processo
+possono scegliere due librerie diverse: il navigatore apriva un motore ed
+`exdom.so` l'altro, e nello stesso processo giravano due motori che non si
+vedevano. Il sintomo era un page fault dentro il primo con in mano un contesto
+costruito dal secondo. La risposta ring 3 non può darsela — non c'è modo di
+sapere quali pagine ti sono mappate senza provare a leggerle — e infatti la dà
+il caricatore, con `SYS_LIB_TROVA` (0.208): la tavola delle pagine del processo
+*è* l'elenco.
+
+### I biscotti, tutt'e due le metà
+
+**testato** — 51 prove sulla dispensa, più il giro completo contro un server di
+prova.
+
+Un cookie non è una stringa da rispedire: è una regola su **quale dominio** e
+**quale percorso**, con una scadenza. La dispensa tiene le regole, decide quali
+biscotti valgono per l'indirizzo che si sta aprendo, e li attacca alla richiesta
+— comprese quelle che partono dentro una redirezione, che è dove metà dei siti
+mette l'accesso. Si prova da sola, senza schermo e senza rete, perché le regole
+di corrispondenza si sbagliano in silenzio.
+
+> **La persistenza non è ancora provata dentro EX-OS**, solo sul banco: da CD non
+> si scrive, e il giro completo vuole un sistema installato.
+
+### Il suono: quattro schede e il MIDI
+
+**testato** — in QEMU, ascoltando il file che QEMU registra e non i contatori del
+driver.
+
+Quattro driver — SB16, AC'97, ES1370/ES1371 e HD Audio — dietro un protocollo
+solo, così un programma che suona non sa quale scheda c'è. Il MIDI sulle schede
+PCI si sente ed è intonato: è una tavola d'onde a otto seni, cioè un timbro solo
+— il cambio di strumento si ignora e la percussione non c'è. È dichiarato, ed è
+il punto da cui si riprende.
+
+> **Quel che non è mai girato è segnato dove comincia.** QEMU emula l'ES1370, non
+> l'ES1371: il convertitore di frequenza e il codec AC'97 dentro il driver
+> dell'ES1371 sono scritti sulla sequenza documentata e non sono mai stati
+> eseguiti, né su silicio né in emulazione. E la **registrazione non c'è**: tutti
+> e quattro sanno solo suonare.
+
+### Google non è un bersaglio del navigatore, e adesso si sa perché
+
+**testato** — misurato, e la strada è chiusa.
+
+`google.com` si apre e si vede. La pagina dei **risultati** no, e non è colpa del
+nostro JavaScript: con lo User-Agent di Lynx, di w3m o di MSIE 6 Google risponde
+«Aggiorna il browser», e con quello di un Firefox recente manda il suo controllo
+anti-robot offuscato. Non c'è una terza porta. Sta scritto qui perché una strada
+provata e chiusa vale quanto una funzione aggiunta: chi la riprova ci perde lo
+stesso tempo due volte.
 
 ### La scrivania ha una console sua, si spegne, e parla la tua lingua
 
@@ -1388,6 +1531,19 @@ moltissimo. `su` fa una cosa sola — diventare root sapendo la password — dov
 il bit setuid sui file renderebbe pericoloso ogni eseguibile che lo porta. Un
 permesso che fa esattamente ciò che serve si può ragionare; uno che fa di più
 si può solo sperare che nessuno lo usi.
+
+### Le syscall aggiunte dalla 0.203 alla 0.208
+
+| EAX | Syscall          | A cosa serve |
+|-----|------------------|--------------|
+| 233 | console_grafica  | chi tiene la console della grafica, e quale sia — così Alt+Fn non porta su uno schermo nero da cui non si sa tornare, e un server ucciso libera la console da solo |
+| 238 | lib_trova        | «questa libreria ce l'ho già dentro?» — la risposta ring 3 non può darsela, e la tavola delle pagine del processo *è* l'elenco |
+
+! **TUTT'E DUE SONO STATO CHE VIVE NEL KERNEL PERCHÉ DEVE SOPRAVVIVERE A CHI LO
+USA.** Una bandiera tenuta dal server grafico morirebbe con lui e lascerebbe la
+porta aperta su una stanza vuota; un elenco di librerie tenuto da uno stub non
+lo vedrebbe l'altro stub dello stesso processo — ed è esattamente il difetto da
+cui la 238 è nata, due motori JavaScript che giravano insieme senza vedersi.
 
 ---
 
