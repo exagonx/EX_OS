@@ -84,6 +84,60 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### Save as, Replace, and a name that lagged behind
+
+**tested** — inside EX-OS, with the file read back from the shell before and
+after, in the same machine run. The two entries that were at the top of
+exide's to-do list.
+
+**"Save as" copies the tree, it does not regenerate the drawing.** It could
+have meant two things: rebuilding `finestra.dis`, `finestra.h` and
+`finestra_gen.c` inside a new directory, or copying everything and carrying
+on in the copy. The first is easier to write and **throws away
+`finestra.c`**, the one file of the four the IDE does not own: it is the
+user's, the one where the IDE appends the missing handlers and never rewrites
+anything. A "save as" that loses the bodies of the functions is not a save.
+So the whole tree is copied — `src/`, `inc/`, `lib/`, `bin/`, `obj/`,
+`progetto.txt`, `compila.sh` — after saving any open editors, and **the
+original is left untouched**: it is a copy, not a move.
+
+**"Replace" changes one occurrence at a time, like Find.** In source code the
+same sequence of characters lives inside strings, inside comments and inside
+identifiers: `msg` is also part of `message`. A "replace all" changes all
+three silently, and whoever ran it finds out at compile time, or later. It is
+in both editors — the source one and the file editor — and in the toolkit
+`ex_area_riga_metti()` was born, which rewrites one line in the middle of the
+document: sixteen lines that go through `area_tocca()`, so the colouriser's
+state chain is invalidated from that row down. That is exactly why such a
+primitive belongs in the toolkit: an application rewriting the row from
+outside would leave the old colour behind, and only sometimes.
+
+**And then rereading found what the happy path never touches.** Three defects,
+all in the same blind spot — the paths where something goes wrong. The worst:
+**copying a file onto itself deletes it, and the copy reports success**. Not a
+suspicion, it is in `kernel/fs/vfs.c`: opening with `O_TRUNC` empties the file
+without checking who else holds it open, so the read that follows finds zero
+bytes, the loop never runs, and the function returns success. Anyone typing
+the current project's path into the dialog field ended up with every file at
+zero and a status line saying "project copied". The check is now in two
+places, and a directory that already holds a project is not silently
+overwritten. Alongside it: no return value from `mkdir` or from the copy was
+ever checked — on a read-only disk exide moved to the new directory anyway,
+one that did not exist. Now there is the same write test "New project" uses,
+the copy counts the files that did not make it, and **if even one is missing
+the IDE does not move**: half a copy plus an IDE pointing into it means the
+next Save turns it into the original.
+
+> **A defect found by the test, not by rereading the code.** `progetto.txt`
+> is copied as it was, `nome = ...` line included, and the project card was
+> reading the name from there: the directory was `prg6-copia` while the card
+> still said `prg6` — and the window title, which derives the name from the
+> directory, said the right one. Two places answering the same question
+> differently; the same would have happened renaming the directory from
+> outside. The cure is not to keep them in sync: it is to remove one. The name
+> now **always** comes from the directory, and the file is still written, so
+> the first Save puts it right by itself.
+
 ### Files and Directory: one new window, and one that did not need writing
 
 **tested** — listing, opening, editing, saving, closing again, and checking

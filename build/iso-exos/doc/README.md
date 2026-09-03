@@ -85,6 +85,61 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### Salva con nome, Sostituisci, e un nome che restava indietro
+
+**testato** — dentro EX-OS, con il file riletto dalla shell prima e dopo,
+nello stesso giro di macchina. Le due voci che erano in cima all'elenco delle
+cose da fare di exide.
+
+**«Salva con nome» copia l'albero, non rigenera il disegno.** Poteva voler
+dire due cose: rifare `finestra.dis`, `finestra.h` e `finestra_gen.c` dentro
+una directory nuova, oppure copiare tutto e continuare a lavorare sulla copia.
+La prima è più facile da scrivere e **butta via `finestra.c`**, che è l'unico
+dei quattro file che l'IDE non possiede: è quello dell'utente, quello in cui
+l'IDE aggiunge gli handler mancanti e non riscrive mai niente. Un «salva con
+nome» che perde il corpo delle funzioni non è un salvataggio. Si copia
+l'albero intero — `src/`, `inc/`, `lib/`, `bin/`, `obj/`, `progetto.txt`,
+`compila.sh` — dopo aver salvato gli editor aperti, e **l'originale resta
+intatto**: è una copia, non uno spostamento.
+
+**«Sostituisci» cambia una occorrenza per volta, come Cerca.** In un sorgente
+la stessa sequenza di caratteri sta dentro le stringhe, dentro i commenti e
+dentro i nomi: `msg` sta anche in `messaggio`. Un «sostituisci tutto» le
+cambia in silenzio tutte e tre, e chi lo lancia se ne accorge alla
+compilazione o dopo. C'è in tutt'e due gli editor — quello del sorgente e il
+file-editor — e nel toolkit è nato `ex_area_riga_metti()`, che riscrive una
+riga in mezzo al documento: sedici righe che passano da `area_tocca()`, così
+la catena del coloritore si invalida da lì in giù. Una primitiva del genere
+va nel toolkit proprio per questo: un'applicazione che riscrivesse la riga da
+fuori lascerebbe il colore vecchio, e solo qualche volta.
+
+**E poi la rilettura ha trovato quel che la prova felice non tocca.** Tre
+difetti, tutti nello stesso punto cieco — i percorsi in cui qualcosa va
+storto. Il più grave: **copiare un file su se stesso lo cancella, e la copia
+dice «riuscito»**. Non è un sospetto, sta in `kernel/fs/vfs.c`: l'apertura con
+`O_TRUNC` azzera il file senza guardare chi altro lo tiene aperto, quindi la
+lettura che segue trova zero byte, il ciclo non gira e la funzione riporta
+successo. Chi riscriveva nel campo del dialogo il percorso del progetto
+corrente si ritrovava ogni file a zero e la riga di stato che diceva
+«progetto copiato». Adesso il controllo c'è in due posti, e una directory dove
+c'è già un progetto non si sovrascrive in silenzio. Insieme a quello: nessun
+ritorno di `mkdir` o della copia veniva guardato — col disco in sola lettura
+exide si spostava comunque sulla directory nuova, che non esisteva. Ora c'è la
+stessa prova di scrittura di «Nuovo progetto», la copia conta i file che non
+sono arrivati, e **se ne manca uno solo l'IDE non si sposta**: mezza copia più
+un IDE che ci punta dentro vuol dire che il prossimo Salva la trasforma
+nell'originale.
+
+> **Un difetto trovato dalla prova, non dalla rilettura del codice.**
+> `progetto.txt` viene copiato com'era, riga `nome = ...` compresa, e la
+> scheda del progetto la leggeva da lì: la directory era `prg6-copia` e la
+> scheda diceva ancora `prg6`, mentre il titolo della finestra — che il nome
+> lo ricava dalla directory — diceva quello giusto. Due posti che rispondono
+> alla stessa domanda in modo diverso; lo stesso sarebbe successo rinominando
+> la directory da fuori. La cura non è sincronizzarli: è toglierne uno. Adesso
+> il nome viene **sempre** dalla directory, e il file continua a scriverlo, così
+> il primo Salva lo rimette a posto da sé.
+
 ### Files e Directory: una finestra nuova, e una che non serviva scrivere
 
 **testato** — elenco, apertura, modifica, salvataggio, richiusura e verifica

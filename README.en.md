@@ -112,6 +112,22 @@ state chain is invalidated from that row down. That is exactly why such a
 primitive belongs in the toolkit: an application rewriting the row from
 outside would leave the old colour behind, and only sometimes.
 
+**And then rereading found what the happy path never touches.** Three defects,
+all in the same blind spot — the paths where something goes wrong. The worst:
+**copying a file onto itself deletes it, and the copy reports success**. Not a
+suspicion, it is in `kernel/fs/vfs.c`: opening with `O_TRUNC` empties the file
+without checking who else holds it open, so the read that follows finds zero
+bytes, the loop never runs, and the function returns success. Anyone typing
+the current project's path into the dialog field ended up with every file at
+zero and a status line saying "project copied". The check is now in two
+places, and a directory that already holds a project is not silently
+overwritten. Alongside it: no return value from `mkdir` or from the copy was
+ever checked — on a read-only disk exide moved to the new directory anyway,
+one that did not exist. Now there is the same write test "New project" uses,
+the copy counts the files that did not make it, and **if even one is missing
+the IDE does not move**: half a copy plus an IDE pointing into it means the
+next Save turns it into the original.
+
 > **A defect found by the test, not by rereading the code.** `progetto.txt`
 > is copied as it was, `nome = ...` line included, and the project card was
 > reading the name from there: the directory was `prg6-copia` while the card

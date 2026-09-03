@@ -1516,10 +1516,36 @@ static void editori_salva_tutti(void);
  * progetto che ci mette sottocartelle dentro va oltre quel che questa
  * funzione sa seguire — la stessa scelta di «Files», per la stessa ragione.
  * ============================================================================= */
+/* ! UN PERCORSO TAGLIATO NON SI USA, e non e' pignoleria: un percorso tagliato
+ * non e' «quasi giusto», e' il nome di un file DIVERSO — che poi si apre con
+ * O_TRUNC. Qui i pezzi non sono piu' i nomi corti decisi da noi come nel resto
+ * del programma: `PERC_MAX` e' 320 e un nome trovato da listdir_from puo'
+ * essere lungo 256 (DIRENT_NAME_MAX), quindi la somma puo' non starci. snprintf
+ * rende quanto SAREBBE servito (vedi u_car in lib/libc.c), ed e' l'unico modo
+ * che ha il chiamante di accorgersene. */
+static int perc_unisci(char *dst, unsigned int dim, const char *a,
+                       const char *b, const char *c)
+{
+    int n = c ? snprintf(dst, dim, "%s/%s/%s", a, b, c)
+              : snprintf(dst, dim, "%s/%s", a, b);
+
+    return n > 0 && (unsigned int)n < dim;
+}
+
 static int copia_file(const char *da, const char *a)
 {
     char buf[1024];
     int  fd_in, fd_out, n = 0;
+
+    /* ! MAI UN FILE SU SE STESSO, ed e' la differenza fra una copia e una
+     * distruzione. Il VFS tronca all'APERTURA — vfs.c, il ramo O_TRUNC chiama
+     * ext2_truncate(...,0) — e non guarda chi altro tiene quel file aperto:
+     * con `da` uguale ad `a` il file e' gia' vuoto quando la lettura comincia,
+     * la read rende 0, il ciclo non gira nemmeno una volta e questa funzione
+     * direbbe RIUSCITO di un file che ha appena azzerato. Chi chiama lo
+     * controlla piu' in grande; qui c'e' lo stesso, perche' costa una riga e
+     * perche' e' il posto in cui il danno accadrebbe. */
+    if (strcmp(da, a) == 0) return 0;
 
     fd_in = open(da, O_RDONLY, 0);
     if (fd_in < 0) return 0;
@@ -1534,52 +1560,146 @@ static int copia_file(const char *da, const char *a)
     return n >= 0;
 }
 
-static void copia_sottodir(const char *dest, const char *nome)
+/* Rende QUANTI FILE NON SONO ARRIVATI: zero vuol dire che la sottodirectory
+ * e' copiata tutta. Prima non rendeva niente, e un errore di scrittura non
+ * aveva nessun modo di farsi vedere. */
+static int copia_sottodir(const char *dest, const char *nome)
 {
     char     srcdir[PERC_MAX], da[PERC_MAX], a[PERC_MAX];
     DirEntry v[8];
-    int      start = 0, n, i;
+    int      start = 0, n, i, guasti = 0;
 
-    sprintf(srcdir, "%s/%s", g_prog_dir, nome);
+    if (!perc_unisci(srcdir, sizeof(srcdir), g_prog_dir, nome, 0)) return 1;
+
     while ((n = listdir_from(srcdir, v, 8, start)) > 0) {
         for (i = 0; i < n; i++) {
             if (v[i].is_dir) continue;      /* un livello solo, vedi sopra */
             if (v[i].name[0] == '.' && v[i].name[1] == '\0') continue;
-            sprintf(da, "%s/%s/%s", g_prog_dir, nome, v[i].name);
-            sprintf(a,  "%s/%s/%s", dest, nome, v[i].name);
-            copia_file(da, a);
+
+            if (!perc_unisci(da, sizeof(da), g_prog_dir, nome, v[i].name) ||
+                !perc_unisci(a,  sizeof(a),  dest,       nome, v[i].name)) {
+                guasti++;
+                continue;
+            }
+            if (!copia_file(da, a)) guasti++;
         }
         start += n;
         if (n < 8) break;
     }
+    return guasti;
 }
 
 static void progetto_salva_come(const char *nuova)
 {
     static const char *const sotto[] = { "src", "inc", "lib", "bin", "obj", 0 };
-    char p[PERC_MAX], q[PERC_MAX];
-    int  i;
+    char         dest[PERC_MAX], p[PERC_MAX], q[PERC_MAX];
+    char         avviso[2 * PERC_MAX + 220];
+    unsigned int l;
+    int          i, fd, guasti = 0;
 
     if (g_prog_dir[0] == '\0') { dico("prima apri o crea un progetto"); return; }
+
+    /* ! LA BARRA FINALE NON CAMBIA LA DIRECTORY MA CAMBIA strcmp, e qui sotto
+     * e' proprio uno strcmp a decidere se la destinazione e' quella di adesso:
+     * «/disk/prg6/» e «/disk/prg6» sono lo stesso posto. Si toglie prima. */
+    strncpy(dest, nuova, PERC_MAX - 1);
+    dest[PERC_MAX - 1] = '\0';
+    l = (unsigned int)strlen(dest);
+    while (l > 1 && dest[l - 1] == '/') dest[--l] = '\0';
+    if (dest[0] == '\0') { dico("serve un percorso"); return; }
+
+    /* ! COPIARE UN PROGETTO SU SE STESSO LO CANCELLA — vedi copia_file qui
+     * sopra. Il campo del dialogo nasce riempito con «<dir>-copia», ma resta
+     * un campo di testo: chi ci riscrive dentro il percorso di adesso, senza
+     * questa riga, si ritroverebbe ogni file a zero byte e la riga di stato
+     * che dice «progetto copiato». */
+    if (strcmp(dest, g_prog_dir) == 0) {
+        dico("e' la directory di adesso: per una copia serve un nome diverso");
+        return;
+    }
+
+    /* ! UN PROGETTO CHE C'E' GIA' NON SI SOVRASCRIVE IN SILENZIO, ed e' la
+     * stessa prudenza con cui progetto_crea() si rifiuta di riscrivere una
+     * scheda gia' esistente. Si guarda con una lettura, che non tocca niente.
+     * Bastano i due segni che fanno un progetto: il disegno e la scheda. */
+    if ((perc_unisci(p, sizeof(p), dest, "src", "finestra.dis") &&
+         (fd = open(p, O_RDONLY, 0)) >= 0) ||
+        (perc_unisci(p, sizeof(p), dest, "progetto.txt", 0) &&
+         (fd = open(p, O_RDONLY, 0)) >= 0)) {
+        close(fd);
+        snprintf(avviso, sizeof(avviso),
+                 "In %s c'e' gia' un progetto.\n\n"
+                 "«Salva con nome» non lo sovrascrive: i sorgenti scritti a "
+                 "mano che ci sono dentro andrebbero persi, e non c'e' modo "
+                 "di riaverli. Scegli una directory che non esiste ancora, "
+                 "oppure sposta altrove quella di prima.", dest);
+        ex_dlg_avviso("C'e' gia' un progetto", avviso);
+        dico("non copiato: li' dentro c'e' gia' un progetto");
+        return;
+    }
 
     editori_salva_tutti();
     if (!progetto_salva()) return;      /* il disegno in memoria, sul vecchio progetto */
 
-    mkdir(nuova, 0755);
+    mkdir(dest, 0755);
     for (i = 0; sotto[i]; i++) {
-        sprintf(p, "%s/%s", nuova, sotto[i]);
+        if (!perc_unisci(p, sizeof(p), dest, sotto[i], 0)) { guasti++; continue; }
         mkdir(p, 0755);
     }
-    for (i = 0; sotto[i]; i++) copia_sottodir(nuova, sotto[i]);
 
-    sprintf(p, "%s/progetto.txt", g_prog_dir);
-    sprintf(q, "%s/progetto.txt", nuova);
-    copia_file(p, q);
-    sprintf(p, "%s/compila.sh", g_prog_dir);
-    sprintf(q, "%s/compila.sh", nuova);
-    copia_file(p, q);                   /* se non c'e' ancora, non e' un errore */
+    /* ! LA PROVA CHE CONTA E' SCRIVERE, non chiedere — la stessa di
+     * progetto_crea(), e per la stessa ragione: mkdir non si lamenta quando il
+     * disco e' in sola lettura, e senza questa prova la copia «riuscirebbe»
+     * lasciando l'IDE puntato su una directory che non esiste. Il file di
+     * prova si toglie subito: se restasse, un secondo tentativo sulla stessa
+     * destinazione la troverebbe e la scambierebbe per un progetto gia' li'. */
+    if (!perc_unisci(p, sizeof(p), dest, "src", "prova.tmp") ||
+        (fd = open(p, O_WRONLY | O_CREAT | O_TRUNC, 0644)) < 0) {
+        snprintf(avviso, sizeof(avviso),
+                 "Non riesco a scrivere in %s.\n\n"
+                 "Il progetto NON e' stato copiato: si continua a lavorare "
+                 "in %s, che non e' stato toccato.", dest, g_prog_dir);
+        ex_dlg_avviso("Non si puo' scrivere", avviso);
+        dico("non copiato: non si puo' scrivere li'");
+        return;
+    }
+    close(fd);
+    unlink(p);
 
-    strncpy(g_prog_dir, nuova, PERC_MAX - 1);
+    for (i = 0; sotto[i]; i++) guasti += copia_sottodir(dest, sotto[i]);
+
+    if (perc_unisci(p, sizeof(p), g_prog_dir, "progetto.txt", 0) &&
+        perc_unisci(q, sizeof(q), dest,       "progetto.txt", 0))
+        guasti += !copia_file(p, q);
+    else
+        guasti++;
+
+    /* compila.sh puo' non esserci ancora — lo scrive la finestra del
+     * compilatore la prima volta. La sua assenza non e' un guasto; la sua
+     * presenza sfortunata si'. */
+    if (perc_unisci(p, sizeof(p), g_prog_dir, "compila.sh", 0) &&
+        perc_unisci(q, sizeof(q), dest,       "compila.sh", 0)) {
+        fd = open(p, O_RDONLY, 0);
+        if (fd >= 0) { close(fd); guasti += !copia_file(p, q); }
+    }
+
+    /* ! SE QUALCOSA NON E' ARRIVATO, NON CI SI SPOSTA. Mezza copia piu' un IDE
+     * che punta alla mezza copia vuol dire che il prossimo Salva scrive li'
+     * dentro, e da quel momento la mezza copia E' il progetto. Restando dove
+     * si era, quello buono resta buono e la copia incompleta e' li' da
+     * guardare — che e' l'unica cosa utile da fare, dopo. */
+    if (guasti) {
+        snprintf(avviso, sizeof(avviso),
+                 "%d file non sono arrivati in %s.\n\n"
+                 "Si continua a lavorare in %s, che non e' stato toccato. La "
+                 "copia incompleta e' rimasta dov'e': guardala prima di "
+                 "riprovare.", guasti, dest, g_prog_dir);
+        ex_dlg_avviso("Copia incompleta", avviso);
+        dico("copia incompleta: si resta nel progetto di prima");
+        return;
+    }
+
+    strncpy(g_prog_dir, dest, PERC_MAX - 1);
     g_prog_dir[PERC_MAX - 1] = '\0';
     {
         const char *n = strrchr(g_prog_dir, '/');

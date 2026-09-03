@@ -113,6 +113,23 @@ la catena del coloritore si invalida da lì in giù. Una primitiva del genere
 va nel toolkit proprio per questo: un'applicazione che riscrivesse la riga da
 fuori lascerebbe il colore vecchio, e solo qualche volta.
 
+**E poi la rilettura ha trovato quel che la prova felice non tocca.** Tre
+difetti, tutti nello stesso punto cieco — i percorsi in cui qualcosa va
+storto. Il più grave: **copiare un file su se stesso lo cancella, e la copia
+dice «riuscito»**. Non è un sospetto, sta in `kernel/fs/vfs.c`: l'apertura con
+`O_TRUNC` azzera il file senza guardare chi altro lo tiene aperto, quindi la
+lettura che segue trova zero byte, il ciclo non gira e la funzione riporta
+successo. Chi riscriveva nel campo del dialogo il percorso del progetto
+corrente si ritrovava ogni file a zero e la riga di stato che diceva
+«progetto copiato». Adesso il controllo c'è in due posti, e una directory dove
+c'è già un progetto non si sovrascrive in silenzio. Insieme a quello: nessun
+ritorno di `mkdir` o della copia veniva guardato — col disco in sola lettura
+exide si spostava comunque sulla directory nuova, che non esisteva. Ora c'è la
+stessa prova di scrittura di «Nuovo progetto», la copia conta i file che non
+sono arrivati, e **se ne manca uno solo l'IDE non si sposta**: mezza copia più
+un IDE che ci punta dentro vuol dire che il prossimo Salva la trasforma
+nell'originale.
+
 > **Un difetto trovato dalla prova, non dalla rilettura del codice.**
 > `progetto.txt` viene copiato com'era, riga `nome = ...` compresa, e la
 > scheda del progetto la leggeva da lì: la directory era `prg6-copia` e la

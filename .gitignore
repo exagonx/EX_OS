@@ -173,6 +173,28 @@
 /dist/exos.iso
 /dist/parti/
 
+# ! E NEMMENO L'ALBERO DA CUI L'ISO SI COSTRUISCE. build/iso/ e' tracciato —
+# ci stanno gli stub, gli header e i file piccoli che servono a chi compila
+# dentro EX-OS — ma `make iso` ci copia dentro anche gli INTERNI DI GCC, che
+# sono la stessa roba che la regola qui sopra tiene fuori: cc1 da solo pesa
+# 33 MB. Sono arrivati in cronologia il 3 settembre 2026 (commit 9e2eda1,
+# 1100 file e 558 mila righe) perche' nessuna riga li nominava e gitupdate.sh
+# fa `git add .`.
+#
+# ! IGNORARLI NON BASTA A TOGLIERLI: un file GIA' TRACCIATO continua a essere
+# seguito anche se compare qui. Serve, una volta sola:
+#
+#     git rm -r --cached build/iso/exos/libexec build/iso/exos/lib/gcc \
+#                        build/iso/exos/i386-exos build/iso/exos/include/c++
+#
+# Come per le ISO, la copia gia' in cronologia RESTA: toglierla vorrebbe dire
+# riscrivere ogni hash del repository, ed e' la scelta gia' fatta piu' su.
+# Questa regola vale da qui in avanti.
+/build/iso/exos/libexec/
+/build/iso/exos/lib/gcc/
+/build/iso/exos/i386-exos/
+/build/iso/exos/include/c++/
+
 # Le cache di Python: tools/schermo.py importa qemu_drive come modulo.
 __pycache__/
 

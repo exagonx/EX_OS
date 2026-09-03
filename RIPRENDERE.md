@@ -148,6 +148,81 @@ Di «Salva con nome» era gia' stata verificata la parte che conta, con `ls` e
 commento scritto a mano nel `finestra.c` **ancora al suo posto nella copia**,
 e l'originale identico a com'era.
 
+### LA REVISIONE: TRE COSE CHE LA PROVA FELICE NON TOCCA
+
+Riletto il codice di «Salva con nome» prima di consegnarlo, e sono venuti
+fuori tre difetti — tutti nello stesso punto cieco, e nessuno visibile
+facendo la cosa giusta.
+
+! **COPIARE UN FILE SU SE STESSO LO CANCELLA, E LA COPIA DICE «RIUSCITO».**
+E' il piu' grave, e non e' un sospetto: sta scritto in `kernel/fs/vfs.c`, nel
+ramo `O_TRUNC` dell'apertura, che chiama `ext2_truncate(..., 0)` **senza
+guardare chi altro tiene quel file aperto**. Quindi in `copia_file(da, a)` con
+`da` uguale ad `a`:
+
+    fd_in  = open(x, O_RDONLY)                  ok
+    fd_out = open(x, O_WRONLY|O_CREAT|O_TRUNC)  il file e' ora 0 byte
+    read(fd_in, ...)                            rende 0: i dati non ci sono
+    return n >= 0                               1, cioe' «riuscito»
+
+Il campo del dialogo nasce riempito con `<dir>-copia`, ma resta un campo di
+testo: chi ci riscrive dentro il percorso di adesso si ritrovava **ogni file
+del progetto a zero byte** e la riga di stato che diceva «progetto copiato».
+Adesso il controllo c'e' in due posti: in `progetto_salva_come()`, che
+confronta i percorsi (togliendo prima la barra finale — `/disk/prg6/` e
+`/disk/prg6` sono lo stesso posto ma non lo stesso `strcmp`), e dentro
+`copia_file()` stessa, che e' il punto in cui il danno accadrebbe.
+
+! **E UNA DIRECTORY DOVE C'E' GIA' UN PROGETTO NON SI SOVRASCRIVE IN
+SILENZIO.** Stessa famiglia: non c'era nessun controllo, e «Salva con nome»
+puntato su un altro progetto ne riscriveva i file uno per uno. Adesso si
+guarda con una lettura — che non tocca niente, la stessa prudenza con cui
+`progetto_crea()` si rifiuta di riscrivere una scheda gia' esistente — e si
+rifiuta spiegando perche'.
+
+! **NESSUN RITORNO VENIVA GUARDATO.** `mkdir` e `copia_file` rendono un
+valore che non leggeva nessuno: con il disco in sola lettura, o con un
+percorso il cui genitore non esiste, exide spostava comunque `g_prog_dir`
+sulla nuova directory e annunciava «ora si lavora nella nuova directory» — su
+una directory che non c'era. E' **esattamente il difetto gia' corretto una
+volta** in questo stesso programma (piu' avanti, in questo diario: «mkdir e'
+fallito» non vuol dire «c'era gia'»), ricomparso in una funzione nuova.
+Adesso c'e' la stessa prova di `progetto_crea()` — si scrive un file di prova
+e lo si toglie subito, perche' se restasse un secondo tentativo lo
+scambierebbe per un progetto gia' li' — `copia_sottodir()` rende quanti file
+non sono arrivati, e **se ne manca anche uno solo l'IDE non si sposta**:
+mezza copia piu' un IDE che punta alla mezza copia vuol dire che il prossimo
+Salva scrive li' dentro, e da quel momento la mezza copia E' il progetto.
+
+Quarta cosa, minore: i percorsi si costruivano con `sprintf` in buffer da
+`PERC_MAX` (320) mettendoci dentro nomi che possono essere lunghi 256
+(`DIRENT_NAME_MAX`). Altrove in exide i pezzi sono nomi fissi e corti; in
+`copia_sottodir()` uno dei pezzi arriva per la prima volta da `listdir_from`,
+cioe' da quel che c'e' sul disco. Adesso passano da `perc_unisci()`, che usa
+`snprintf` e **guarda il ritorno**: un percorso tagliato non e' «quasi
+giusto», e' il nome di un file diverso — che poi si aprirebbe con `O_TRUNC`.
+
+### COME SI SONO PROVATE LE CORREZIONI
+
+Quattro casi, tutti dentro EX-OS, col dialogo guidato da tastiera (`ex_dlg_riga`
+prende il fuoco sulla casella e conferma con Invio, quindi bastano i
+backspace e il percorso):
+
+    destinazione = /disk/prg6 (quella di adesso)
+        -> «e' la directory di adesso: per una copia serve un nome diverso»
+        -> ls /disk/prg6/src: 63, 406, 763, 439 byte — INTATTI
+    destinazione = /disk/prg6-copia (un progetto che c'e' gia')
+        -> avviso «C'e' gia' un progetto», niente toccato
+    destinazione = /disk/manca/prg9 (il genitore non esiste)
+        -> «Non riesco a scrivere ... si continua a lavorare in /disk/prg6,
+            che non e' stato toccato», e il titolo resta /disk/prg6
+    destinazione = /disk/prg7 (nuova)
+        -> copiata: quattro file con le stesse misure, titolo /disk/prg7,
+           e NESSUN prova.tmp rimasto in src/
+
+Il primo caso e' quello che conta: prima di questa correzione avrebbe
+lasciato quattro file da zero byte e detto che era andato tutto bene.
+
 ### TRE COSE IMPARATE SUL PILOTA, CHE VALGONO PER LA PROSSIMA VOLTA
 
 ! **exide PRENDE LA DIRECTORY DEL PROGETTO COME ARGOMENTO.** `main()` lo fa
