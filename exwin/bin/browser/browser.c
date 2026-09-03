@@ -417,6 +417,12 @@ static HtmlAttr      g_attr[ATTR_MAX];
 static char          g_arena[ARENA_MAX];
 static HtmlDoc       g_doc;
 
+/* ! L'ANCORA ASPETTA L'IMPAGINAZIONE. Arrivando da «pagina.html#punto» il
+ * salto non si puo' fare al momento del clic: la pagina non e' ancora stata
+ * letta, e i pezzi su cui si misura l'altezza non esistono. Si tiene qui il
+ * nome, e ci si salta appena impagina() ha finito. */
+static char          g_ancora[64] = "";
+
 static Pezzo         g_pez[PEZZI_MAX];
 static int           g_pez_n = 0;
 
@@ -430,6 +436,74 @@ static const char *link_url(int k)
 {
     if (k < 0 || k >= g_link_n) return "";
     return g_link_arena + g_link_off[k];
+}
+
+/* =============================================================================
+ * LE ANCORE — «#qualcosa», cioe' un punto DENTRO la pagina
+ *
+ * ! FINO A OGGI UN «#qualcosa» NON FACEVA NIENTE, ed era scritto qui accanto
+ * che non fare niente era la risposta piu' onesta finche' il salto non
+ * c'era. Adesso c'e', e serve a una cosa precisa: un documento lungo con
+ * l'indice in cima — la guida di EX-OS, il manuale di exide — dove si preme
+ * una voce e ci si trova sul paragrafo.
+ *
+ * ! IL PEZZO DA CUI RIPARTIRE LO SI TROVA DAL NODO, non dal testo. Ogni pezzo
+ * impaginato sa gia' da quale nodo del documento viene (il campo `nodo`, che
+ * c'era per gli script): trovare l'elemento con quell'id e poi il primo pezzo
+ * che ne discende e' un giro sull'albero e uno sull'impaginato, senza
+ * impaginare una seconda volta.
+ *
+ * ! E SI GUARDA ANCHE `name`, non solo `id`. Le pagine scritte prima che l'id
+ * fosse la regola marcano i paragrafi con `<a name="x">`, e sono ancora la
+ * maggioranza di quelle che questo navigatore riesce ad aprire.
+ * ============================================================================= */
+
+/* L'elemento marcato con quel nome, o -1. */
+static int nodo_di_ancora(const char *nome)
+{
+    unsigned int i;
+
+    if (!nome || !nome[0]) return -1;
+
+    for (i = 0; i < g_doc.nodi_n; i++) {
+        const char *v;
+
+        if (g_doc.nodi[i].tipo != HTML_ELEMENTO) continue;
+
+        v = html_attr(&g_doc, (int)i, "id");
+        if (v && strcmp(v, nome) == 0) return (int)i;
+
+        v = html_attr(&g_doc, (int)i, "name");
+        if (v && strcmp(v, nome) == 0) return (int)i;
+    }
+    return -1;
+}
+
+/* `nodo` sta dentro `avo` (o e' lui)? */
+static int discende_da(int nodo, int avo)
+{
+    int i;
+
+    /* Il tetto sui passi e' contro un albero che si fosse chiuso ad anello:
+     * non deve succedere, e se succede si esce invece di girare per sempre. */
+    for (i = 0; nodo >= 0 && i < (int)NODI_MAX; i++) {
+        if (nodo == avo) return 1;
+        nodo = g_doc.nodi[nodo].padre;
+    }
+    return 0;
+}
+
+/* Il primo pezzo impaginato che viene da quel nodo o da un suo discendente. */
+static int pezzo_del_nodo(int nodo)
+{
+    int i;
+
+    /* ! I PEZZI SONO IN ORDINE DI IMPAGINAZIONE, quindi il primo che risponde
+     * e' anche il piu' in alto: non serve cercarne il minimo. */
+    for (i = 0; i < g_pez_n; i++)
+        if (g_pez[i].nodo >= 0 && discende_da(g_pez[i].nodo, nodo)) return i;
+
+    return -1;
 }
 
 static char          g_storia[STORIA_MAX][EXHTTP_URL_MAX];
@@ -4711,6 +4785,7 @@ static int g_js_salti  = 0;
 static int g_js_salta  = 0;
 
 static void vai(const char *url, int in_storia, int usa_cache);
+static int  ancora_vai(const char *nome);
 
 /* Rende 1 se ha davvero cambiato pagina: chi chiama deve sapere che l'albero
  * che aveva in mano un istante fa non c'e' piu'. */
@@ -4763,10 +4838,43 @@ static void vai(const char *url, int in_storia, int usa_cache)
      * arrivato e non c'entrava niente. */
     char         msg[320];
     char         stato_codice[16];
+    char         senza[EXHTTP_URL_MAX];
     unsigned int n = 0;
     int          da_cache = 0;
 
     if (!url || !url[0]) { g_da_postare = 0; return; }
+
+    /* ! L'ANCORA SI STACCA PRIMA DI CHIEDERE LA PAGINA, e non e' un ritocco:
+     * «#punto» non fa parte dell'indirizzo del documento — un server non lo
+     * riceve nemmeno, e un percorso locale con quella coda attaccata e' un
+     * file che non esiste. Si stacca qui, una volta, cosi' la richiesta, la
+     * cache e la storia parlano tutte dello stesso documento. */
+    {
+        const char *cancelletto = strchr(url, '#');
+
+        g_ancora[0] = '\0';
+        if (cancelletto) {
+            unsigned int quanti = (unsigned int)(cancelletto - url);
+
+            if (quanti >= sizeof(senza)) quanti = sizeof(senza) - 1;
+            memcpy(senza, url, quanti);
+            senza[quanti] = '\0';
+
+            strncpy(g_ancora, cancelletto + 1, sizeof(g_ancora) - 1);
+            g_ancora[sizeof(g_ancora) - 1] = '\0';
+
+            /* Un indirizzo che e' SOLO un'ancora non ha una pagina da
+             * chiedere: e' la pagina di adesso. Puo' arrivare qui da uno
+             * script che scrive location.hash. */
+            if (senza[0] == '\0') {
+                if (!ancora_vai(g_ancora)) dico("quel punto qui non c'e'");
+                g_ancora[0] = '\0';
+                g_da_postare = 0;
+                return;
+            }
+            url = senza;
+        }
+    }
 
     /* ! UNA PAGINA PER VOLTA. Da quando il gancio dell'attesa smista i
      * messaggi mentre si scarica, un clic su un collegamento puo' arrivare
@@ -4920,6 +5028,18 @@ static void vai(const char *url, int in_storia, int usa_cache)
     raccogli_css();
     impagina();
     g_vista = html_versione(&g_doc);
+
+    /* ! ADESSO CHE I PEZZI CI SONO, si puo' saltare al punto chiesto. Prima di
+     * impagina() non c'era niente su cui misurare un'altezza; dopo, il salto
+     * e' una scorsa sola sull'impaginato. Se quel nome nella pagina non c'e'
+     * si resta in cima — dove si era gia' — senza dire niente: un indirizzo
+     * con l'ancora puo' venire da un segnalibro vecchio, e una pagina che si
+     * apre con un avviso invece che col suo contenuto e' peggio del salto che
+     * non e' avvenuto. */
+    if (g_ancora[0]) {
+        ancora_vai(g_ancora);
+        g_ancora[0] = '\0';
+    }
 
     /* ! E SI SCRIVE CON snprintf, non con sprintf: la riga qui sotto e' fatta
      * di pezzi che dipendono dalla pagina, e nessuno di loro ha una lunghezza
@@ -5450,9 +5570,21 @@ static void home_predefinita(void)
 static void segui(int k)
 {
     char nuovo[EXHTTP_URL_MAX];
+    const char *rif;
 
     if (k < 0 || k >= g_link_n) return;
-    if (!risolvi(link_url(k), nuovo, sizeof(nuovo))) return;
+    rif = link_url(k);
+
+    /* ! UN'ANCORA DELLA PAGINA DI ADESSO NON RICARICA NIENTE. La pagina e'
+     * gia' qui e gia' impaginata: ricaricarla per poi saltare vorrebbe dire
+     * un giro di rete (o di disco), l'albero rifatto e i moduli riempiti a
+     * mano azzerati — tutto per muovere la barra di scorrimento. */
+    if (rif[0] == '#') {
+        if (!ancora_vai(rif + 1)) dico("in questa pagina non c'e' quel punto");
+        return;
+    }
+
+    if (!risolvi(rif, nuovo, sizeof(nuovo))) return;
 
     vai(nuovo, 1, 0);
 }
@@ -5952,6 +6084,36 @@ static void scorri(int quanto)
     if (g_scorri < 0) g_scorri = 0;
     if (g_scorri > max) g_scorri = max;
     disegna();
+}
+
+static void scorri_a(int y);
+
+/* Porta la pagina sull'ancora `nome`. Rende 0 se quel nome non c'e' — e
+ * allora chi chiama lo dice, invece di lasciare la pagina ferma senza
+ * spiegazioni. */
+static int ancora_vai(const char *nome)
+{
+    int nodo = nodo_di_ancora(nome);
+    int p;
+
+    if (nodo < 0) return 0;
+    p = pezzo_del_nodo(nodo);
+    if (p < 0) return 0;
+
+    /* ! LA y DI UN PEZZO E' GIA' IN COORDINATE DELLA FINESTRA, non del
+     * documento: l'impaginazione comincia da area_y(), cioe' sotto la barra
+     * dell'indirizzo, e il disegno fa `g_pez[i].y - g_scorri` senza
+     * aggiungere altro. Scorrendo alla y del pezzo com'e', quel pezzo
+     * finisce a sei pixel dal bordo della FINESTRA, cioe' nascosto dietro la
+     * barra, e a schermo si vede la riga che viene due righe dopo — che e'
+     * esattamente cosa faceva questa funzione prima di questa riga. Misurato:
+     * il titolo cercato stava a y 870 e la pagina scorreva a 864.
+     *
+     * ! QUALCHE PIXEL SOPRA, e non e' un vezzo: portando la riga esattamente
+     * a filo, un titolo con un po' di margine sembra tagliato a meta'.
+     * scorri_a ferma da solo i numeri negativi. */
+    scorri_a(g_pez[p].y - area_y() - 6);
+    return 1;
 }
 
 /* Porta la cima della finestra a `y` del documento. */

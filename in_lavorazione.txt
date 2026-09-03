@@ -233,6 +233,14 @@ Le prove che contano, e come si lanciano:
         dichiarare alla pagina: senza, `location` dice `file://...`, e mezzo
         web guarda location.hostname prima di decidere che fare.
 
+! LE ANCORE CI SONO, dal 3 settembre 2026 (diario: «LE ANCORE: UN LINK CHE
+  PORTA A UN PUNTO DELLA PAGINA»): «#punto» salta dentro la pagina senza
+  ricaricarla, un indirizzo con la coda carica e poi salta, e si guarda sia
+  `id` che il vecchio `<a name>`. Quel che manca ancora: l'indirizzo NON
+  conserva l'ancora (la barra mostra il documento, e tornando indietro si
+  riparte dalla cima) e location.hash da uno script fa il salto ma non
+  aggiorna la barra.
+
 ! E LA PROVA DENTRO QEMU SI FA COMUNQUE: il banco non impagina e non carica
   librerie condivise, e i due difetti piu' brutti del 27 agosto vivevano
   esattamente li' in mezzo — centoventi prove verdi e la pagina sbagliata

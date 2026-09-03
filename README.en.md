@@ -84,6 +84,37 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### Anchors: a link that goes to a point in the page
+
+**tested** — four cases inside EX-OS: an anchor in the same page, one that does
+not exist, an address with a fragment typed in the bar, and a link that changes
+page *and* lands on the paragraph. It was needed for the documentation: a long
+manual with an index at the top, where you press an entry and find yourself at
+the explanation.
+
+The browser did not go there, and had been saying so for months in a comment:
+"this browser cannot jump to a point inside a document yet; until the jump
+exists, doing nothing is the most honest answer". Now the jump exists.
+
+**The piece to restart from is found from the node, not from the text.** Every
+laid-out piece already knows which document node it came from — a field added
+back when a script needed to be told *where* a click landed — so the jump is
+one walk over the tree (the element with that `id`, or an old `<a name>`) and
+one over the layout, without laying the page out a second time. An anchor in
+the current page reloads nothing: reloading in order to jump would mean a
+network round trip, the tree rebuilt and hand-filled forms cleared, all to move
+a scrollbar.
+
+> **The defect needed a measurement, not a guess.** On the first run the jump
+> landed two lines below the heading: it looked like a wrong margin, or the
+> font baseline, or line rounding — three plausible guesses, all wrong. Instead
+> of trying them I printed the numbers on the status line: `node 86, piece 152,
+> y 870, scroll 0`. The piece found was the right one, it was the heading.
+> **A piece's `y` is already in window coordinates**, not document ones: layout
+> starts below the address bar, so scrolling to the piece's `y` puts that piece
+> *behind* the bar and you see the line after it. With the numbers in hand it
+> took two minutes.
+
 ### Undo: photograph everything, do not record what changed
 
 **tested** — three edits of three different kinds, each undone, and at the end

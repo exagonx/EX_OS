@@ -85,6 +85,37 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### Le ancore: un link che porta a un punto della pagina
+
+**testato** — quattro casi dentro EX-OS: un'ancora della stessa pagina, una che
+non esiste, un indirizzo con la coda scritto nella barra, e un link che cambia
+pagina *e* atterra sul paragrafo. Serviva alla documentazione: un manuale lungo
+con l'indice in cima, dove si preme una voce e ci si trova sulla spiegazione.
+
+Il navigatore non ci andava, e lo diceva da mesi in un commento: «questo browser
+non sa ancora saltare a un punto dentro un documento; finché il salto non c'è,
+non fare niente è la risposta più onesta». Adesso il salto c'è.
+
+**Il pezzo da cui ripartire si trova dal nodo, non dal testo.** Ogni pezzo
+impaginato sa già da quale nodo del documento viene — un campo aggiunto a suo
+tempo per dire a uno script *dove* si è cliccato — quindi il salto è un giro
+sull'albero (l'elemento con quell'`id`, o un vecchio `<a name>`) e uno
+sull'impaginato, senza impaginare una seconda volta. Un'ancora della pagina
+corrente non ricarica niente: ricaricare per poi saltare vorrebbe dire un giro
+di rete, l'albero rifatto e i moduli riempiti a mano azzerati, tutto per
+muovere una barra di scorrimento.
+
+> **Il difetto ha richiesto una misura, non un'ipotesi.** Al primo giro il
+> salto atterrava due righe sotto il titolo: sembrava un margine sbagliato, o
+> la linea di base del carattere, o l'arrotondamento della riga — tre ipotesi
+> plausibili e tutte sbagliate. Invece di provarle ho fatto stampare i numeri
+> sulla riga di stato: `nodo 86, pezzo 152, y 870, scorri 0`. Il pezzo trovato
+> era giusto, era il titolo. **Le `y` dei pezzi sono già in coordinate della
+> finestra**, non del documento: l'impaginazione comincia sotto la barra
+> dell'indirizzo, quindi scorrendo alla `y` del pezzo quel pezzo finisce
+> *dietro* la barra e si vede la riga dopo. Con i numeri in mano ci sono voluti
+> due minuti.
+
 ### Annulla: si fotografa tutto, non si registra cosa
 
 **testato** — tre modifiche di tre tipi diversi, ognuna annullata, e alla fine

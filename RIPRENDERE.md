@@ -28,6 +28,85 @@ manca» apre quello.
 
 # DOVE RIPRENDERE — 3 settembre 2026
 
+## 3 settembre 2026 (notte) — LE ANCORE: UN LINK CHE PORTA A UN PUNTO DELLA PAGINA
+
+Serviva per la documentazione: un manuale lungo con l'indice in cima, dove si
+preme una voce e ci si trova sul paragrafo. Il navigatore, fino a stanotte,
+non ci andava — e lo diceva, in un commento che stava li' da mesi:
+
+    /* ! UN RIFERIMENTO CHE E' SOLO UN'ANCORA («#qualcosa») PUNTA ALLA PAGINA
+     * CHE SI STA GIA' GUARDANDO, e questo browser non sa ancora saltare a un
+     * punto dentro un documento. [...] Finche' il salto non c'e', non fare
+     * niente e' la risposta piu' onesta. */
+    if (rif[0] == '#') return 0;
+
+### IL PEZZO DA CUI RIPARTIRE SI TROVA DAL NODO, NON DAL TESTO
+
+Ogni pezzo impaginato sa gia' da quale nodo del documento viene — il campo
+`nodo`, che era stato aggiunto per dire a uno script DOVE si e' cliccato.
+Percio' il salto e' un giro sull'albero (l'elemento con quell'`id`) e uno
+sull'impaginato (il primo pezzo che ne discende), senza impaginare una
+seconda volta.
+
+! **SI GUARDA ANCHE `name`, NON SOLO `id`.** Le pagine scritte prima che l'id
+fosse la regola marcano i paragrafi con `<a name="x">`, e sono ancora la
+maggioranza di quelle che questo navigatore riesce ad aprire — la stessa
+ragione per cui esiste il resto del suo codice.
+
+! **UN'ANCORA DELLA PAGINA DI ADESSO NON RICARICA NIENTE.** La pagina e' gia'
+qui e gia' impaginata: ricaricarla per poi saltare vorrebbe dire un giro di
+rete o di disco, l'albero rifatto e i moduli riempiti a mano azzerati — tutto
+per muovere una barra di scorrimento.
+
+! **E L'ANCORA SI STACCA DALL'INDIRIZZO PRIMA DI CHIEDERE LA PAGINA.**
+«#punto» non fa parte dell'indirizzo del documento: un server non lo riceve
+nemmeno, e un percorso locale con quella coda attaccata e' un file che non
+esiste. Si stacca una volta sola, all'inizio di `vai()`, cosi' la richiesta,
+la cache e la storia parlano tutte dello stesso documento; il nome resta da
+parte e il salto si fa **dopo `impagina()`**, che e' il primo momento in cui
+esiste qualcosa su cui misurare un'altezza.
+
+### IL DIFETTO CHE HA RICHIESTO UNA MISURA, NON UN'IPOTESI
+
+Al primo giro il salto atterrava **due righe sotto** il titolo cercato.
+Sembrava un margine sbagliato, o la linea di base del carattere, o
+l'arrotondamento della riga: tre ipotesi plausibili e tutte sbagliate. Invece
+di provarle una per una ho fatto stampare i numeri sulla riga di stato:
+
+    DIAG due: nodo 86, pezzo 152, y 870, scorri 0
+
+Il pezzo trovato era **giusto** — era il titolo — e la pagina scorreva a 864.
+
+! **LE `y` DEI PEZZI SONO GIA' IN COORDINATE DELLA FINESTRA, non del
+documento.** L'impaginazione comincia da `area_y()`, cioe' sotto la barra
+dell'indirizzo, e il disegno fa `g_pez[i].y - g_scorri` senza aggiungere
+altro. Scorrendo alla `y` del pezzo com'e', quel pezzo finisce a sei pixel dal
+bordo della FINESTRA — cioe' dietro la barra — e a schermo si vede la riga che
+viene due righe dopo. La correzione e' `g_pez[p].y - area_y() - 6`, e i sei
+pixel di margine ci sono perche' un titolo a filo esatto sembra tagliato.
+
+Con i numeri in mano ci sono voluti due minuti; con le ipotesi ci sarebbero
+volute tre ricostruzioni.
+
+### COME SI E' PROVATO
+
+Una pagina con l'indice in cima, tre sezioni con `id` e una voce che punta a
+un'ancora che non esiste. Quattro casi, tutti dentro EX-OS:
+
+    clic su «#due»                  -> «SEZIONE DUE» esattamente in cima
+    clic su «#manca»                -> la pagina NON si muove e la riga di
+                                       stato dice «in questa pagina non c'e'
+                                       quel punto»
+    indirizzo «...prova-ancore.html#due» scritto nella barra
+                                    -> carica e salta, e la barra mostra
+                                       l'indirizzo senza la coda
+    da un'altra pagina, un link a «prova-ancore.html#tre»
+                                    -> cambia pagina E atterra sul titolo
+
+Le pagine di prova sono state tolte dopo: non c'e' motivo di spedirle.
+
+
+
 ## 3 settembre 2026 (notte) — ANNULLA: SI FOTOGRAFA TUTTO, NON SI REGISTRA COSA
 
 L'ultima voce grossa di exide, e quella che si cerca per prima dopo aver
