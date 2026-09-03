@@ -28,6 +28,322 @@ manca» apre quello.
 
 # DOVE RIPRENDERE — 3 settembre 2026
 
+## 3 settembre 2026 (sera tarda) — LA SCHEDA DEL PROGETTO, E UNA RISCRITTURA CHE NON DOVEVA ESSERCI
+
+Strumenti > Progetto, dentro exide. L'ultima voce del menu Strumenti che
+diceva ancora «in arrivo» fra quelle chieste all'inizio.
+
+### COME E' FATTA
+
+! **RILEGGE LO STESSO progetto.txt CHE `progetto_crea()` GIA' SCRIVE.** Non
+un secondo formato: le stesse cinque chiavi (`nome`, `autore`, `versione`,
+`creato`, `descrizione`), una per riga, e in coda un marcatore `[nota]` dopo
+il quale tutto — comprese le righe vuote — e' il testo libero della nota.
+
+! **IL NOME E LA DATA DI CREAZIONE NON SI EDITANO**, e non e' una
+dimenticanza. Il nome viene dalla directory: riscriverlo in un campo non
+rinominerebbe niente, e un campo che non fa quel che promette e' peggio di un
+campo assente. La data di creazione, per definizione, non e' correggibile
+senza smettere di essere vera. Sono etichette, non caselle.
+
+! **LA NOTA E' L'UNICO CAMPO SU PIU' RIGHE**, ed e' per questo che vive fuori
+dalle `chiave = valore` del resto del file, dopo `[nota]`: le altre chiavi
+stanno su una riga sola apposta, e dare anche a loro il permesso di andare a
+capo vorrebbe dire non sapere piu' dove finisce un valore e comincia il
+prossimo.
+
+! **CHIUDERE LA FINESTRA SALVA DA SOLO**, come l'editor — e per la stessa
+ragione contraria a quella del compilatore: qui non c'e' niente da poter
+rompere restando aggiornati. E' una scheda di dati a basso rischio, e
+chiedere conferma per un'informazione a basso rischio e' una domanda che si
+impara a schiacciare senza leggerla.
+
+### IL DIFETTO CHE C'ERA GIA', TROVATO PROVANDO PROPRIO QUESTA FINESTRA
+
+**«Nuovo progetto» su una directory gia' esistente cancellava la scheda.**
+`progetto_crea()` apriva `finestra.dis` senza `O_TRUNC` — un file che c'era
+gia' restava byte per byte quello che era — ma apriva `progetto.txt` CON
+`O_TRUNC`, sempre: la stessa azione trattava due file dello stesso progetto
+in due modi diversi. Il disegno sopravviveva, la scheda no. Si e' visto
+provando esattamente il giro che questa finestra doveva rendere sicuro:
+salvata una nota, richiamato «Nuovo progetto» sulla stessa directory (un
+gesto che chi riapre un vecchio progetto puo' fare per abitudine, invece di
+«Apri»), e la nota era sparita senza nessun avviso.
+
+> La cura non e' stata smettere di scrivere `progetto.txt` alla creazione —
+> un progetto nuovo davvero DEVE nascere con una scheda. E' stata controllare
+> PRIMA se il file c'e' gia' (una lettura, che non lo tocca) e scrivere i
+> valori di partenza solo quando manca. E il formato scritto la' e quello che
+> scrive «Salva» sono diventati lo stesso, marcatore `[nota]` compreso: un
+> file appena nato e uno appena salvato dalla finestra devono essere
+> indistinguibili, o restano due formati da tenere d'accordo.
+
+### COME SI E' PROVATO
+
+    File > Nuovo progetto -> /disk/prg2
+    Strumenti > Progetto -> versione 0.005, descrizione "Persistente",
+        nota "riga unica", Salva, Chiudi
+
+    cat /disk/prg2/progetto.txt
+        nome = prg2
+        autore = Graziano Falcone
+        versione = 0.005
+        creato = 2026-09-03
+        descrizione = Persistente
+
+        [nota]
+        riga unica
+
+    File > Nuovo progetto -> /disk/prg2 (LA STESSA DIRECTORY, di nuovo)
+    Strumenti > Progetto
+        -> versione 0.005, descrizione "Persistente", nota "riga unica":
+           tutto ancora li'. Prima di questa correzione sarebbe tornato a
+           0.001, vuoto, senza nota.
+
+! **IL DIFETTO E' SALTATO FUORI DA UN GIRO DI PROVA PIU' SEVERO DEL NECESSARIO,
+non da un sospetto.** Salvare e richiudere nella stessa sessione bastava a
+dire che il salvataggio funzionava — e infatti `cat progetto.txt` lo
+confermava subito. Per provare anche la RIAPERTURA si e' riavviato QEMU da
+zero, e lo script di prova per riaprire un progetto era lo stesso di prima:
+«Nuovo progetto» sulla stessa directory. La' la scheda risultava vuota. Il
+file sul disco (verificato con `cat`, prima del riavvio) era gia' quello
+giusto — quindi non era il salvataggio a non funzionare, era il passo dopo a
+riscriverlo sopra. Si e' visto perche' si e' controllato il file a meta'
+strada, non solo all'inizio e alla fine.
+
+## 3 settembre 2026 (sera) — LA FINESTRA DEL COMPILATORE, E DUE DIFETTI CHE SI VEDEVANO SOLO GIRANDOLA
+
+Strumenti > Compilatore e Strumenti > Librerie, dentro exide. Erano le ultime
+due voci del menu che dicevano ancora «in arrivo» fra quelle previste nella
+richiesta originale, e la prova che contava non era una fotografia della
+finestra: era GCC vero, del CD strumenti, che compila un progetto vero dentro
+EX-OS e produce un binario che gira nella scrivania.
+
+### COME E' FATTA
+
+! **LA RIGA DI COMPILAZIONE FINISCE IN UN FILE, e il file e' il prodotto.**
+`compila.sh` sta nella directory del progetto, si legge, si corregge a mano e
+si lancia dalla shell come qualunque altro script: il pulsante «Compila» non
+fa niente che non si potrebbe fare digitando. Un ambiente che compila con una
+riga che nessuno puo' vedere e' un ambiente in cui, il giorno che qualcosa non
+torna, non si ha nessun appiglio.
+
+! **LA RADICE DEGLI STRUMENTI E' UN CAMPO SOLO** (di norma `/cdrom/exos`, o
+`/exos` dopo `toolinst`). Da li' si ricavano il compilatore, gli header, lo
+start.S, i ponti della libc e il linker script: sei percorsi da tenere
+d'accordo sarebbero sei modi di sbagliarne uno.
+
+! **UNA LIBRERIA CONDIVISA SI COLLEGA CON IL SUO STUB, non con un archivio.**
+In EX-OS una `.so` non si linka: si compila dentro il programma un file di
+poche righe che alla prima chiamata apre la libreria e risolve i nomi.
+«Scegliere una libreria» nella finestra Librerie vuol dire «aggiungere il suo
+stub alla riga di compilazione», e niente altro — nessun `-l`, nessun percorso
+di ricerca. `exwin` c'e' sempre e non si toglie: un programma disegnato con
+questo ambiente e' fatto di finestre, e senza il toolkit non si collega.
+
+! **SI ASPETTA SENZA MORIRE.** cc1 e' un programma da quaranta megabyte, e una
+finestra ferma per un minuto sembra un programma piantato. `aspetta_vivo()`
+guarda se il figlio e' finito con `waitpid(..., WNOHANG)`, smista un pugno di
+messaggi, dorme un istante — la stessa forma dell'attesa di rete del
+navigatore — con un tetto di cinque minuti oltre il quale si smette di
+aspettare e si dice, invece di aspettare per sempre un compilatore impiccato.
+
+! **L'USCITA VA IN UN FILE (`obj/compila.log`), non in una pipe.** Una pipe
+vorrebbe dire leggerla mentre il figlio scrive, e chi legge una pipe piena
+mentre il figlio ne riempie un'altra si blocca. Un file lo si rilegge dopo,
+tutto insieme, e resta li' anche dopo — che e' quel che serve a chi vuole
+rileggere l'errore con calma.
+
+### IL CD DEGLI STRUMENTI NON PORTAVA QUEL CHE SERVIVA A COMPILARE DENTRO EX-OS
+
+Prima di arrivare alla finestra, il giro di prova si e' fermato su un CD che
+non aveva ne' gli stub delle librerie condivise ne' un linker script da
+consegnare. Sistemato nel Makefile: `ESOS_STUB` copia sul CD `exwin_stub.c` e
+gli stub di exdlg, exhttp, exhtml, excss, exjs, exdom con i rispettivi header;
+`lib/programma.ld` — lo stesso linker script che usa ogni programma del
+repository, con un nome che non presume un albero locale — finisce in
+`/exos/programma.ld`.
+
+### DUE DIFETTI TROVATI GIRANDO IL COMPILATORE VERO, E NESSUNO DEI DUE SI VEDEVA LEGGENDO IL CODICE
+
+**1. Le opzioni finivano tagliate a meta', e il taglio produceva un errore che
+non gli somigliava.** La casella delle opzioni e' un controllo "testo", e
+"testo" tiene al massimo 63 caratteri (`TESTO_LEN` in `exwin.c`) — non i 160
+del campo C che lo leggeva. Il valore di partenza era settantadue caratteri:
+alla creazione `ex_testo_metti` li ha TRONCATI a 63, tagliando `-fno-pie` a un
+trattino solitario in fondo alla riga. Per gcc un `-` da solo vuol dire «leggi
+da stdin», e il messaggio vero era «-E o -x richiesto quando l'ingresso e' lo
+standard input» — che non somiglia per niente a «un'opzione e' stata tagliata
+a meta'».
+
+> La cura non e' stata allargare la casella: e' stata TOGLIERE dalla casella
+> quel che non ci doveva stare. `-ffreestanding -fno-builtin -nostdlib
+> -fno-pic -fno-pie` non sono un gusto di chi compila — sono il patto con il
+> caricatore ELF (lo stesso di `programma.ld`, il codice non scrivibile) e con
+> l'assenza di una libc ospite. Adesso sono fisse, `CC_OBBLIGATORIE` scritte
+> nel programma, e la casella resta per quel che e' davvero facoltativo:
+> ottimizzazione, avvisi, definizioni. Vuota va benissimo.
+
+**2. Il figlio compilava nella directory sbagliata, che era anche una in sola
+lettura.** `spawn_ex` non prende una directory di lavoro per parametro: il
+figlio eredita quella del padre. exide non l'aveva mai cambiata, quindi
+restava quella da cui era partito — la radice del CD. `compila.sh` scrive
+percorsi RELATIVI apposta (`src/finestra.c`, `-o bin/...`), pensato per girare
+«da dentro» il progetto; e gcc, oltre agli oggetti, scrive dei file
+temporanei nella directory corrente. Il sintomo: «Cannot create temporary
+file in ./: filesystem in sola lettura», con il progetto giusto scelto e il
+disco giusto montato — perche' il cwd non era ne' l'uno ne' l'altro.
+
+> La cura: `chdir(g_prog_dir)` subito prima di `spawn_ex`, `chdir` di ritorno
+> subito dopo — riuscito o no il lancio. exide non deve restare «dentro» un
+> progetto per un dettaglio di implementazione: il resto del programma non se
+> lo aspetta.
+
+### COME SI E' PROVATO
+
+Da CD servono DUE cose insieme: un disco ext2 scrivibile per il progetto, e il
+CD degli strumenti per il compilatore.
+
+    cp dischi/hd.img /tmp/hd-prova.img
+    EXOS_QEMU_EXTRA="-drive file=/tmp/hd-prova.img,format=raw,if=ide,index=0 \
+                     -drive file=dist/exos-tools.iso,media=cdrom,if=ide,index=3" \
+    python3 tools/qemu_drive.py "mount hd0p1 /disk@6" "mount cd1 /cdrom@6" ...
+
+Col mouse dentro exide: progetto nuovo su `/disk/prova`, un Pulsante sulla
+maschera, Strumenti > Compilatore, «Compila» — e la prima volta si e' fermato
+con l'errore dello stdin, corretto il codice, ricostruito, riprovato:
+
+    fatto: bin/prova
+
+    ls -l /disk/prova/bin
+    -r-xr-xr-x 0 0 32136  2026-09-03  prova
+
+    cat /disk/prova/obj/compila.log
+    /cdrom/exos/bin/gcc -m32 -ffreestanding -fno-builtin -nostdlib -fno-pic
+    -fno-pie -O2 -Wall -I /cdrom/exos/include -I inc -T
+    /cdrom/exos/programma.ld /cdrom/exos/start.S src/finestra.c
+    src/finestra_gen.c /cdrom/exos/include/exwin_stub.c
+    /cdrom/exos/libc_ponti_*.o -o bin/prova
+
+    /disk/prova/bin/prova &     -> la finestra "prova" si apre nella
+                                   scrivania, col Pulsante1 dove l'avevo
+                                   messo col mouse
+
+! **LA PROVA CHE CONTA E' IL BINARIO CHE GIRA, non il registro pulito.** Un
+log senza errori dice che gcc ha finito; solo aprire il programma prodotto
+dice che il giro — disegno, generazione, compilazione, collegamento,
+caricamento — e' intero.
+
+### QUEL CHE RESTA
+
+La finestra Librerie si disegna giusta (spunte, elenco, pulsanti) ma il clic
+sulle righe non e' stato riprovato pixel per pixel dopo l'ultima modifica:
+passa dallo stesso codice di lista gia' provato altrove (winprova, il
+pannello strumenti di exide), quindi il rischio e' basso, ma non e' la stessa
+cosa di averlo visto scattare.
+
+
+
+Tre segnalazioni, tutte da uso vero, tutte fuori dal posto in cui sembravano.
+
+### 1. LA TENDINA DEL MENU SPARIVA MUOVENDO IL MOUSE
+
+! **NON ERA IL SERVER, ERA L'ORDINE DEL DISEGNO.** `ex_procedura_base` disegna i
+controlli e poi la tendina; ma un'applicazione che disegna anche DEL PROPRIO —
+il navigatore con la pagina, exide con la maschera, chiunque abbia una tela — lo
+fa DOPO aver chiamato la base, e ci passa sopra. Col mouse fermo non si notava:
+e' il movimento che fa arrivare EXM_MOUSE_MOSSO, e quindi un ridisegno.
+
+! **E IL POSTO GIUSTO E' `ex_aggiorna()`, non «alla fine del disegno».** Quella
+funzione e' la riga con cui CHIUNQUE dice «ho finito, mostralo»: qualunque cosa
+si sia disegnata, e chiunque l'abbia disegnata, la tendina viene dopo. Non c'e'
+un altro punto del toolkit che abbia questa proprieta'.
+
+> Provato sul navigatore, che e' il caso peggiore: menu File aperto, puntatore
+> dentro la tendina, la pagina sotto. Prima spariva, adesso resta.
+
+### 2. EXIDE APRIVA L'EDITOR VUOTO — E LA COLPA ERA DI UN mkdir
+
+Il sintomo: doppio clic su un controllo, si apre la finestra del sorgente, e
+dentro non c'e' niente.
+
+! **«MKDIR E' FALLITO» NON VUOL DIRE «C'ERA GIA'», e questo programma ha creduto
+di si' dal primo giorno.** Avviando EX-OS DAL CD non si scrive da nessuna parte:
+la creazione del progetto falliva a ogni passo, nessun passo si lamentava, e
+exide arrivava fino ad aprire l'editor su un file che non era mai stato scritto.
+
+    mkdir /progetti      -> filesystem in sola lettura
+    (exide: «la directory c'era gia': ci scrivo dentro»)   <- la bugia
+    ... tutto il resto fallisce in silenzio ...
+    editor aperto, vuoto
+
+! **LA PROVA CHE CONTA E' SCRIVERE, NON CHIEDERE.** Un filesystem puo' rifiutare
+per mille ragioni — sola lettura, permessi, spazio — e distinguerle costerebbe
+piu' di quanto serva. Adesso si prova a creare il file, e se non riesce si dice
+E SI FERMA, con scritto anche come rimediare:
+
+    «Avviando EX-OS dal CD non si puo' scrivere da nessuna parte: serve un
+     disco montato in lettura e scrittura, per esempio mount hd0p1 /disk»
+
+E l'editor non si apre piu' vuoto: se il sorgente non si legge lo dice e si
+chiude, invece di mostrare una finestra bianca che sembra un difetto suo.
+
+> **Il difetto vero era il mio giro di prova, non il codice.** Avevo provato
+> exide con un disco ext2 montato — l'unico modo di provarlo davvero — e cosi'
+> non ho mai visto la strada che prende chi lo lancia dal CD, che e' come lo
+> lancia chiunque la prima volta.
+
+### 3. L'INSTALLATORE CHIEDEVA LA LINGUA E LASCIAVA LA TASTIERA AMERICANA
+
+`lingua = it` finiva in kernel.cfg, `keymap = us` restava quello del CD. Il
+sistema installato parlava italiano e scriveva americano: le lettere al posto
+giusto e la punteggiatura no — il modo peggiore di sbagliare, perche' sembra un
+difetto del programma che si sta usando.
+
+! **LA TASTIERA NON E' LA LINGUA, ED E' PER QUESTO CHE SONO DUE COLONNE.**
+L'inglese si scrive su una «us», e domani qualcuno vorra' l'inglese su una «uk»:
+legarle con una regola implicita vorrebbe dire non poterle piu' separare. La
+tavola delle lingue ha adesso una colonna in piu'.
+
+! **E `keymap` SI SOVRASCRIVE, al contrario di tutte le altre voci.** La regola
+di questo installatore e' «presente vuol dire SCELTA, si lascia» — giusta per
+tutto il resto, sbagliata qui: il valore che si trova non e' la scelta di
+nessuno, e' quello del supporto d'installazione copiato un momento prima. Ci
+voleva una `cfg_sostituisci()`, che finora non era mai servita a nessuno.
+
+! **E CAMBIA SUBITO, non solo nel sistema installato.** Le domande che vengono
+dopo sono le password, e una password battuta con la disposizione sbagliata si
+scopre al primo accesso — quando non si entra piu' e non si sa perche'.
+
+### LA PROVA CHE LO DIMOSTRA E' UN ERRORE DI BATTITURA
+
+Rifatto il disco con `tools/mkhd.sh` e riavviato, i comandi mandati dal pilota
+sono usciti storti:
+
+    keymap -p            -> keymap 'p
+    cat /boot/kernel.cfg -> cat -boot-kernel.cfg
+
+! **E' LA PROVA MIGLIORE CHE POTESSI AVERE.** `qemu_drive.py` manda SCANCODE, e
+li sceglie con la disposizione americana: se `-` esce `'` e `/` esce `-`, dentro
+c'e' una tastiera italiana. Il driver poi lo conferma a parole: «Disposizione
+attiva: it (Italiana (QWERTY))».
+
+! **E DA ADESSO IL DISCO DI PROVA HA LA TASTIERA ITALIANA**, il che vuol dire
+che pilotarlo con qemu_drive richiede attenzione: la punteggiatura non e' piu'
+quella che si scrive. Chi ne vuole uno facile da pilotare lo rifa' con
+`EXOS_LINGUA=2 bash tools/mkhd.sh` (english/us).
+
+### QUEL CHE HANNO IN COMUNE
+
+Tre difetti in tre programmi diversi, e nessuno stava dove sembrava:
+
+  - la tendina che sparisce non era del server ma dell'ordine di disegno;
+  - l'editor vuoto non era dell'editor ma di un `mkdir` che mentiva;
+  - la tastiera americana non era del driver ma di una regola giusta —
+    «presente vuol dire scelta» — applicata a una voce che scelta non era.
+
+> Tutt'e tre si vedono in mezzo minuto usando il programma, e nessuno dei tre si
+> vede leggendo il codice che lo contiene.
 ## 3 settembre 2026 (notte fonda) — EXIDE: SI DISEGNA UNA FINESTRA, ESCE DEL C CHE GIRA
 
 Il primo giro completo dell'ambiente di sviluppo visuale, e la prova che conta

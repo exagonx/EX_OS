@@ -4171,7 +4171,25 @@ FB_CD_DOC := $(wildcard $(TOOLS_DIR)/freebasic-exos/MODIFICHE-FBC.md) \
              $(wildcard $(TOOLS_DIR)/freebasic-exos/PORTING-$(FB_VERSIONE).it.txt) \
              $(wildcard $(TOOLS_DIR)/freebasic-exos/PORTING-$(FB_VERSIONE).en.txt)
 
-$(ISO_IMG): Makefile $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_PROVE) \
+# =============================================================================
+# GLI STUB E GLI HEADER CHE VANNO SUL CD DEGLI STRUMENTI
+#
+# ! UNO STUB PER LIBRERIA CONDIVISA, con accanto il suo header pubblico: sono
+# quel che serve a chi compila DENTRO EX-OS per collegarsi alle librerie gia'
+# installate in /exwin/lib invece di ricompilarsele dentro. eximg non ha uno
+# stub — la si apre a mano con exlib — ma il suo header serve lo stesso.
+# =============================================================================
+ESOS_STUB := lib/exwin/exwin_stub.c \
+             lib/exdlg/exdlg_stub.c   lib/exdlg/exdlg.h \
+             lib/exhttp/exhttp_stub.c lib/exhttp/exhttp.h \
+             lib/exhtml/exhtml_stub.c lib/exhtml/html.h \
+             lib/excss/excss_stub.c   lib/excss/css.h \
+             lib/exjs/exjs_stub.c     lib/exjs/exjs.h \
+             lib/exdom/exdom_stub.c   lib/exdom/exdom.h \
+             lib/eximg/eximg.h
+
+$(ISO_IMG): Makefile $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_PROVE) $(ESOS_STUB) \
+            lib/programma.ld \
             $(LIBC_SRC) $(LIBC_HDR) $(LIBC_START) \
             $(EXWIN_HDR) $(EXWIN_SRC) $(WIN_PROTO) \
             $(ISO_DOC) $(FB_CD_FILE) $(FB_CD_DOC) $(LIBC_PONTI_OBJ) $(LIBC_SO)
@@ -4201,6 +4219,22 @@ $(ISO_IMG): Makefile $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_PROVE) \
 	@# fa gia' con libc.c.
 	@cp $(EXWIN_HDR) $(EXWIN_SRC) $(ISO_ROOT)/exos/include/ 2>/dev/null || true
 	@cp $(WIN_PROTO) $(ISO_ROOT)/exos/include/ 2>/dev/null || true
+	@# ! E GLI STUB DELLE LIBRERIE CONDIVISE, dal 3 settembre 2026. Senza,
+	@# chi compila dentro EX-OS poteva solo tirarsi dentro exwin.c INTERO —
+	@# diciassette kilobyte di toolkit in ogni programma — mentre la
+	@# libreria condivisa e' gia' installata in /exwin/lib. Lo stub e' il
+	@# pezzo che manca perche' un programma compilato QUI si colleghi a
+	@# QUELLA: sono poche righe per libreria, e senza di loro il CD degli
+	@# strumenti non basta a costruire un programma grafico.
+	@#
+	@# ! E il .h accanto allo stub, per ognuna: uno stub senza il suo header
+	@# non compila, e l'errore parla di tipi che non esistono.
+	@for f in $(ESOS_STUB); do cp $$f $(ISO_ROOT)/exos/include/; done
+	@# ! IL LINKER SCRIPT E' L'ALTRO PEZZO CHE MANCAVA. Senza -T il
+	@# collegatore mette il programma dove gli pare, e il caricatore ELF di
+	@# EX-OS lo cerca a 0x08000000: si ottiene un binario che non parte, con
+	@# un messaggio che parla di ELF e non di indirizzi.
+	@cp lib/programma.ld $(ISO_ROOT)/exos/programma.ld
 	@cp $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(ISO_ROOT)/exos/
 	@# Il catalogo degli strumenti: lo legge `toolinst` (cioe' anche
 	@# `install -tools`) per sapere cosa c'e' sul CD e cosa si puo'

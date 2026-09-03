@@ -84,6 +84,74 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### The compiler window: real GCC, inside EX-OS, from a drawing
+
+**tested** — a real project, drawn in exide, compiled with GCC from the tools
+CD *inside EX-OS*, linked and **launched on the desktop**.
+
+**The compile line ends up in a file, and the file is the product.**
+`compila.sh` lives in the project directory, can be read, hand-edited and run
+like any other script: the «Compila» button does nothing you could not do by
+typing. **Output goes to a file** (`obj/compila.log`), not a pipe — it can be
+reread at leisure, which is what someone reviewing an error needs.
+
+**A shared library links through its stub**, not an archive: in EX-OS a `.so`
+is never linked, a few lines get compiled into the program that resolve names
+on first call. The Libraries window picks which stubs join the command line —
+`exwin` always, the rest by checkbox.
+
+**And it waits without dying**: cc1 weighs forty megabytes, and a window
+frozen for a minute looks hung. It polls whether the child is done with
+`WNOHANG`, dispatches a handful of messages, sleeps an instant — the same
+shape as the browser's network wait — with a five-minute ceiling past which it
+stops waiting for a compiler that hanged.
+
+> **Two defects found by running the real compiler, neither visible reading
+> the code.** Options came out truncated halfway — the field is a "testo"
+> control holding 63 characters, not the C buffer's 160 — and the cut
+> produced an error that looked nothing like its cause: `-fno-pie` mangled
+> into a lone dash, and to gcc a bare `-` means "read from stdin". The fix
+> was not widening the box: it was **removing** from the box what did not
+> belong there — the mandatory flags (`-ffreestanding -fno-builtin -nostdlib
+> -fno-pic -fno-pie`) are now fixed in the program, not editable by accident.
+> The second: the child compiled in the wrong directory — the one exide had
+> started from, read-only — because `spawn_ex` inherits the parent's *cwd*
+> and nothing changed it before launching.
+
+### Three defects found by using it, and none was where it seemed
+
+**tested** — on the browser, on exide booted from CD, and on a disk installed
+from scratch.
+
+**The menu drop-down vanished when the mouse moved.** It was not the server: it
+was the drawing order. The base procedure draws the controls and *then* the
+drop-down, but an application that also draws its own — the browser with the
+page, exide with the form — does so **after** calling the base, and paints over
+it. With the mouse still you never noticed: it is movement that delivers
+`EXM_MOUSE_MOSSO` and hence a repaint. The drop-down is now drawn inside
+`ex_aggiorna()`, the line with which *anyone* says "I am done drawing, show it":
+whatever was drawn, the drop-down comes after.
+
+**exide opened an empty editor.** "`mkdir` failed" does not mean "it was already
+there", and the program believed it did from day one: booted from CD nothing is
+writable, project creation failed at every step *silently*, and the editor opened
+on a file that had never been written. The proof that counts is **writing, not
+asking**: now it tries, and if it fails it says so and stops — explaining that a
+read-write mounted disk is needed.
+
+**The installer asked for the language and left the keyboard American.** The
+installed system spoke Italian and typed American: letters in the right place and
+punctuation not. The language table now has a column for the layout — **a
+keyboard is not a language**, English is typed on a `us` and tomorrow someone
+will want English on a `uk` — and `keymap` is *overwritten*, unlike every other
+setting: that value was nobody's choice, it was the installation medium's, copied
+a moment earlier.
+
+> **And the best proof is a typo.** From the freshly installed disk the driver's
+> commands come out crooked: `keymap -p` becomes `keymap 'p`. The tool sends
+> American scancodes — if the punctuation comes out shifted, there is an Italian
+> keyboard in there.
+
 ### EX-IDE: draw a window, out comes C that runs
 
 **tested** — from the CD in QEMU with an ext2 disk mounted, and the proof that

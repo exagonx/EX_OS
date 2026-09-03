@@ -118,37 +118,46 @@ decide se il progetto sopravvive — e' il punto in cui VB6 si rompeva:
     finestra.c        lo scrivi solo tu; l'IDE ci AGGIUNGE gli handler che
                       mancano e non riscrive mai quel che c'e'
 
+! IL COMPILATORE E LE LIBRERIE CI SONO, dal 3 settembre 2026 (diario: «LA
+  FINESTRA DEL COMPILATORE, E DUE DIFETTI CHE SI VEDEVANO SOLO GIRANDOLA»).
+  Strumenti > Compilatore scrive src/compila.sh, lo lancia con /bin/sh e
+  legge obj/compila.log; Strumenti > Librerie sceglie quali stub aggiungere
+  alla riga (exwin c'e' sempre e non si toglie). Provato fino in fondo:
+  un progetto vero, compilato con GCC del CD strumenti dentro EX-OS, dà un
+  binario che gira nella scrivania.
+
+! LA SCHEDA DEL PROGETTO C'E', dal 3 settembre 2026 (diario: «LA SCHEDA DEL
+  PROGETTO, E UNA RISCRITTURA CHE NON DOVEVA ESSERCI»). Strumenti > Progetto
+  mostra nome e data di creazione (etichette, non si editano — cambiarli qui
+  non cambierebbe la directory ne' il passato), autore/versione/descrizione
+  modificabili, e un riquadro di testo per la nota su piu' righe. Chiudere la
+  finestra salva da solo, come l'editor. Provato: scritto, chiuso, riaperto,
+  tutto tornava; e «File > Nuovo progetto» puntato su una directory gia'
+  esistente non cancella piu' la scheda (prima la riscriveva sempre — un
+  difetto trovato provando proprio questa finestra).
+
 QUEL CHE MANCA, in ordine di quanto serve:
 
- 1. LA FINESTRA DEL COMPILATORE (Strumenti > Compilatore). Deve montare la riga
-    di comando: comando, opzioni, e in automatico le librerie scelte in
-    «Librerie»; il binario va in bin/. Oggi la voce dice «in arrivo».
-    ! E IL COMPILATORE VERO PESA 40 MB (cc1): su una macchina da 32 MB e'
-      strettissimo, quindi exide deve restare usabile anche SENZA — genera e
-      basta, e chi ha il CD strumenti installato preme «Compila».
-
- 2. LIBRERIE. Un elenco delle librerie di sistema gia' usate (quelle del
-    toolkit) piu' quelle scegliibili con una spunta, piu' la possibilita' di
-    aggiungerne di proprie. Il risultato entra nella riga di compilazione.
-
- 3. FILES e DIRECTORY. Una finestra con i file del progetto: doppio clic apre
+ 1. FILES e DIRECTORY. Una finestra con i file del progetto: doppio clic apre
     il sorgente nell'editor. Directory mostra anche quel che sorgente non e'.
 
- 4. PROGETTO. Descrizione, autore, data di creazione, versione e una nota, tutti
-    modificabili: il file progetto.txt c'e' gia' e lo scrive progetto_crea().
+ 2. SALVA CON NOME per il progetto, e SOSTITUISCI nell'editor.
 
- 5. SALVA CON NOME per il progetto, e SOSTITUISCI nell'editor.
-
- 6. LE FINESTRE SECONDARIE sulla maschera. Adesso si disegna una finestra sola;
+ 3. LE FINESTRE SECONDARIE sulla maschera. Adesso si disegna una finestra sola;
     per disegnarne piu' d'una serve l'MDI DENTRO il disegnatore — che dal 3
     settembre c'e' nel toolkit, quindi e' un lavoro suo e non un pezzo che
     manca.
 
- 7. IL RIDIMENSIONAMENTO DEI CONTROLLI COL MOUSE. Le maniglie si disegnano ma
+ 4. IL RIDIMENSIONAMENTO DEI CONTROLLI COL MOUSE. Le maniglie si disegnano ma
     non si tirano: la misura si cambia dalle proprieta'.
 
- 8. ANNULLA. Non c'e', ed e' la prima cosa che si cerca dopo aver cancellato un
+ 5. ANNULLA. Non c'e', ed e' la prima cosa che si cerca dopo aver cancellato un
     controllo per sbaglio.
+
+! E DAL CD EXIDE NON PUO' FARE NIENTE, ed e' giusto che lo dica: adesso quando
+  la creazione del progetto non riesce lo spiega e si ferma, invece di aprire
+  un editor vuoto. Serve un disco montato in lettura e scrittura — e per
+  COMPILARE serve anche il CD degli strumenti montato, oltre al disco.
 
 
 =============================================================================

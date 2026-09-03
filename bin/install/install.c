@@ -81,6 +81,7 @@
  * ============================================================================= */
 #include "libc.h"
 #include "exuser.h"
+#include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `install -version` la stampa. Vedi EX_VERSIONE in libc.h. */
 EX_VERSIONE("install", "0.001");
@@ -671,14 +672,27 @@ static int cerca_componenti(const char *punto)
 #define LINGUA_MAX 8
 
 static char g_lingua[LINGUA_MAX] = "";
+static char g_keymap[KBD_MAP_NOME_MAX] = "";
 
-static const struct { const char *sigla, *nome; } LINGUE[] = {
-    { "it", "italiano" },
-    { "en", "english"  },
-    { "fr", "francais" },
-    { "de", "deutsch"  },
-    { "es", "espanol"  },
-    { 0, 0 }
+/* =============================================================================
+ * ! LA LINGUA SI PORTA DIETRO LA TASTIERA, e per un po' non l'ha fatto: chi
+ * sceglieva «italiano» si ritrovava un sistema installato che scriveva in
+ * italiano e una tastiera americana — le lettere al posto giusto e la
+ * punteggiatura no, che e' il modo peggiore di sbagliare perche' sembra un
+ * difetto del programma che si sta usando.
+ *
+ * ! E LA DISPOSIZIONE NON E' LA LINGUA, ed e' il motivo per cui sono due
+ * colonne e non una sola: l'inglese si scrive su una tastiera «us», e domani
+ * qualcuno vorra' l'inglese su una «uk». Legarle con una regola implicita
+ * vorrebbe dire non poterle piu' separare.
+ * ========================================================================== */
+static const struct { const char *sigla, *nome, *keymap; } LINGUE[] = {
+    { "it", "italiano", "it" },
+    { "en", "english",  "us" },
+    { "fr", "francais", "fr" },
+    { "de", "deutsch",  "de" },
+    { "es", "espanol",  "es" },
+    { 0, 0, 0 }
 };
 
 static char chiedi(const char *domanda)
@@ -714,7 +728,34 @@ static void chiedi_lingua(void)
 
     strncpy(g_lingua, LINGUE[i].sigla, LINGUA_MAX - 1);
     g_lingua[LINGUA_MAX - 1] = '\0';
-    printf("  = %s (%s)\n", LINGUE[i].nome, g_lingua);
+    strncpy(g_keymap, LINGUE[i].keymap, sizeof(g_keymap) - 1);
+    g_keymap[sizeof(g_keymap) - 1] = '\0';
+    printf("  = %s (%s), tastiera %s\n", LINGUE[i].nome, g_lingua, g_keymap);
+
+    /* ! E LA TASTIERA CAMBIA SUBITO, non solo nel sistema installato: le
+     * domande che vengono DOPO questa sono le password, e una password battuta
+     * con la disposizione sbagliata si scopre al primo accesso — quando non si
+     * entra piu' e non si sa perche'. Se il driver non c'e' non e' un errore:
+     * il ripiego dentro il kernel conosce solo la «us», e lo si dice. */
+    {
+        KbdSetMap sm;
+        int       pid = ipc_lookup(KBD_SERVICE_NAME);
+
+        memset(&sm, 0, sizeof(sm));
+        strncpy(sm.nome, g_keymap, sizeof(sm.nome) - 1);
+
+        if (pid > 0 && ipc_send((unsigned int)pid, KBD_MSG_SETMAP,
+                                &sm, sizeof(sm)) >= 0) {
+            IpcMessage    meta;
+            unsigned char buf[IPC_MSG_MAX_DATA];
+
+            (void)ipc_recv_timeout(&meta, buf, sizeof(buf), 2000);
+            printf("  tastiera %s: attiva da adesso\n", g_keymap);
+        } else if (strcmp(g_keymap, "us") != 0) {
+            printf("  ! la tastiera resta americana fino al riavvio:\n"
+                   "    il driver /dev/kbd.drv non e' in ascolto.\n");
+        }
+    }
 }
 
 /* `modo`: 0 = chiedi, 1 = minimale senza chiedere, 2 = tutto senza chiedere. */
@@ -1241,6 +1282,63 @@ static int cfg_cerca(const char *testo, const char *sez, const char *chiave,
     return -1;
 }
 
+/* =============================================================================
+ * ! CAMBIARE UN VALORE CHE C'E' GIA' — e finora non serviva a nessuno.
+ *
+ * Tutte le altre voci qui seguono la regola «presente vuol dire SCELTA»: se la
+ * chiave c'e', si lascia. Per `keymap` non va bene, e la ragione e' che il
+ * valore che si trova NON e' una scelta di nessuno: e' quello del supporto
+ * d'installazione, copiato un momento fa insieme al resto di kernel.cfg, e vale
+ * «us» perche' cosi' esce il CD. Lasciarlo vorrebbe dire che chi ha appena
+ * scelto «italiano» si tiene la tastiera americana — che e' esattamente il
+ * difetto per cui questa funzione e' stata scritta.
+ * ============================================================================= */
+static int cfg_sostituisci(char *testo, unsigned int max, const char *sez,
+                           const char *chiave, const char *valore)
+{
+    static char coda[CFG_MAX_BYTE];     /* statico: sulla pila sarebbero 8 KB */
+    char *p = testo;
+    int   dentro = 0;
+
+    while (*p) {
+        char *r  = (char *)cfg_bianchi(p);
+        char *pr = (char *)cfg_riga_dopo(p);
+
+        if (*r == '[') {
+            char nome[CFG_NOME_MAX];
+
+            if (dentro) return 0;       /* la sezione e' finita */
+            cfg_parola(r + 1, ']', nome, sizeof(nome));
+            dentro = cfg_uguale(nome, sez);
+            p = pr;
+            continue;
+        }
+
+        if (dentro && *r != '#' && *r != '\n' && *r != '\r' && *r != '\0') {
+            char k[CFG_NOME_MAX];
+
+            cfg_parola(r, '=', k, sizeof(k));
+            if (cfg_uguale(k, chiave)) {
+                char *v = r;
+
+                while (*v && *v != '=' && *v != '\n') v++;
+                if (*v != '=') return 0;
+
+                strncpy(coda, pr, sizeof(coda) - 1);
+                coda[sizeof(coda) - 1] = '\0';
+
+                if ((unsigned int)(v - testo) + strlen(valore) +
+                    strlen(coda) + 4 > max) return 0;
+
+                sprintf(v, "= %s\n%s", valore, coda);
+                return 1;
+            }
+        }
+        p = pr;
+    }
+    return 0;
+}
+
 /* Infila `riga` allo scostamento `dove`. Rende 0 se non ci sta: e non farla
  * stare e' un esito, non un incidente — vedi il tetto di 8191. */
 static int cfg_inserisci(char *testo, unsigned int max, unsigned int dove,
@@ -1418,6 +1516,42 @@ static void aggiorna_kernel_cfg(const char *perc)
             }
             if (!stretto)
                 printf("    + [kernel] lingua = %s\n", g_lingua);
+        }
+    }
+
+    /* ! LA TASTIERA SEGUE LA LINGUA E SI SOVRASCRIVE, al contrario di tutte le
+     * altre voci: il perche' sta sopra cfg_sostituisci(). */
+    if (g_keymap[0]) {
+        unsigned int coda = 0;
+        int          dove = cfg_cerca(testo, "kernel", "keymap",
+                                      valore, sizeof(valore), &coda);
+
+        if (dove == 1) {
+            if (cfg_uguale(valore, g_keymap)) {
+                printf("    [kernel] keymap = %s  (era gia' cosi')\n", g_keymap);
+            } else if (cfg_sostituisci(testo, sizeof(testo), "kernel",
+                                       "keymap", g_keymap)) {
+                printf("    ~ [kernel] keymap = %s  (era %s: la cambio, hai"
+                       " scelto %s)\n", g_keymap, valore, g_lingua);
+                aggiunte++;
+            } else {
+                stretto = 1;
+            }
+        } else {
+            riga[0] = '\0';
+            strncat(riga, "keymap      = ", sizeof(riga) - strlen(riga) - 1);
+            strncat(riga, g_keymap, sizeof(riga) - strlen(riga) - 1);
+            strncat(riga, "\n", sizeof(riga) - strlen(riga) - 1);
+
+            if (dove == 0) {
+                if (!cfg_inserisci(testo, sizeof(testo), coda, riga)) stretto = 1;
+                else aggiunte++;
+            } else {
+                if (!cfg_appendi_sezione(testo, sizeof(testo), "kernel", riga))
+                    stretto = 1;
+                else aggiunte++;
+            }
+            if (!stretto) printf("    + [kernel] keymap = %s\n", g_keymap);
         }
     }
 

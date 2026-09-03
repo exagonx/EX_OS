@@ -52,7 +52,7 @@
 
 /* +0.001 a ogni modifica, aggiunta o prova: `exide -version` la stampa.
  * Vedi EX_VERSIONE in libc.h; la stessa stringa la mostra «Informazioni su». */
-#define VERSIONE_APP "0.001"
+#define VERSIONE_APP "0.003"
 EX_VERSIONE("exide", VERSIONE_APP);
 
 /* -----------------------------------------------------------------------------
@@ -88,6 +88,24 @@ EX_VERSIONE("exide", VERSIONE_APP);
 
 #define ID_MANUALE    931
 #define ID_INFO       932
+
+/* La finestra del compilatore e quella delle librerie. */
+#define ID_CC_RADICE  951
+#define ID_CC_OPZ     952
+#define ID_CC_NOME    953
+#define ID_CC_SCRIVI  954
+#define ID_CC_COMPILA 955
+#define ID_CC_CHIUDI  956
+#define ID_CC_USCITA  957
+#define ID_LIB_ELENCO 961
+#define ID_LIB_AGG    962
+#define ID_LIB_CHIUDI 963
+#define ID_PR_AUTORE  971
+#define ID_PR_VERS    972
+#define ID_PR_DESCR   973
+#define ID_PR_NOTA    974
+#define ID_PR_SALVA   975
+#define ID_PR_CHIUDI  976
 
 /* La finestra dell'editor: il suo menu e i suoi controlli. */
 #define ID_ED_SALVA   941
@@ -186,6 +204,72 @@ static ExFinestra g_f, g_lst_strum, g_lst_prop, g_val, g_stato, g_menu;
 #define GRIGLIA   4
 
 static void dico(const char *s) { ex_testo_metti(g_stato, s); }
+
+/* =============================================================================
+ * LE LIBRERIE — quel che si collega insieme al progetto
+ *
+ * ! UNA LIBRERIA CONDIVISA SI COLLEGA CON IL SUO STUB, non con un archivio. In
+ * EX-OS una .so non si linka: si collega dentro il programma un file di poche
+ * righe — lo stub — che alla prima chiamata apre la libreria e risolve i nomi.
+ * Percio' «scegliere una libreria» qui vuol dire «aggiungere il suo stub alla
+ * riga di compilazione», e niente altro: nessun -l, nessun percorso di ricerca.
+ *
+ * ! exwin C'E' SEMPRE E NON SI TOGLIE. Un programma disegnato con questo
+ * ambiente e' fatto di finestre: senza il toolkit non si collega, e offrire di
+ * levarlo sarebbe offrire di rompere il progetto.
+ *
+ * ! E GLI STUB STANNO SUL CD DEGLI STRUMENTI dal 3 settembre 2026: prima non
+ * c'erano, e chi compilava dentro EX-OS poteva solo tirarsi dentro exwin.c
+ * intero. Il percorso e' <radice degli strumenti>/include/<nome>_stub.c.
+ * ============================================================================= */
+#define LIB_MAX      12
+#define LIB_NOME_MAX 40
+
+static struct {
+    char nome[LIB_NOME_MAX];    /* come si legge nel pannello */
+    char stub[PERC_MAX];        /* il file da compilare; vuoto = solo un nome */
+    int  base;                  /* 1 = c'e' sempre */
+    int  scelta;
+} g_lib[LIB_MAX] = {
+    { "exwin   finestre e controlli", "include/exwin_stub.c",  1, 1 },
+    { "exdlg   dialoghi (apri, salva)", "include/exdlg_stub.c",  0, 0 },
+    { "exhttp  rete e http",          "include/exhttp_stub.c", 0, 0 },
+    { "exhtml  albero HTML",          "include/exhtml_stub.c", 0, 0 },
+    { "excss   fogli di stile",       "include/excss_stub.c",  0, 0 },
+    { "exjs    JavaScript",           "include/exjs_stub.c",   0, 0 },
+    { "exdom   il ponte JS-pagina",   "include/exdom_stub.c",  0, 0 },
+};
+
+static int g_lib_n = 7;
+
+/* La radice dell'albero degli strumenti: da qui si ricava tutto il resto —
+ * il compilatore, gli header, lo start.S, i ponti della libc, il linker
+ * script. Un campo solo invece di sei, e i due casi veri sono due valori. */
+static char g_cc_radice[PERC_MAX] = "/cdrom/exos";
+
+/* ! LE OPZIONI OBBLIGATORIE NON STANNO NELLA CASELLA, e c'e' un motivo preciso.
+ * La casella e' un controllo "testo", e "testo" tiene al massimo 63 caratteri
+ * (TESTO_LEN in exwin.c) — non i 160 del campo che la legge. La prima versione
+ * ci aveva scritto settantadue caratteri: alla creazione ex_testo_metti li ha
+ * TRONCATI a 63, tagliando "-fno-pie" a un "-" solitario in fondo alla riga.
+ * Per gcc, un "-" da solo vuol dire «leggi da stdin» — ed e' la ragione vera
+ * dietro «-E o -x richiesto quando l'ingresso e' lo standard input»: non
+ * un'opzione sbagliata, un'opzione TAGLIATA A META'.
+ *
+ * ! E NON E' SOLO UN LIMITE DA RISPETTARE: e' anche giusto che siano fisse.
+ * -ffreestanding, -fno-builtin, -nostdlib, -fno-pic, -fno-pie non sono un
+ * gusto di chi compila — sono il patto con il caricatore ELF (vedi il perche'
+ * in lib/programma.ld, il codice non scrivibile) e con l'assenza di una libc
+ * ospite. Lasciarle in una casella modificabile vorrebbe dire poterle spegnere
+ * per sbaglio scrivendoci sopra, e il sintomo sarebbe un binario che il
+ * caricatore rifiuta — o peggio, uno col codice scrivibile.
+ *
+ * La casella resta per quel che e' davvero facoltativo: ottimizzazione,
+ * avvisi, definizioni. Vuota va benissimo. */
+#define CC_OBBLIGATORIE \
+    "-m32 -ffreestanding -fno-builtin -nostdlib -fno-pic -fno-pie"
+static char g_cc_opzioni[100] = "-O2 -Wall";
+static char g_cc_nome[NOME_MAX] = "";
 
 static int arrotonda(int v) { return (v + GRIGLIA / 2) / GRIGLIA * GRIGLIA; }
 
@@ -536,25 +620,66 @@ static void percorso(char *out, const char *file)
     sprintf(out, "%s/src/%s", g_prog_dir, file);
 }
 
+/* =============================================================================
+ * ! «MKDIR E' FALLITO» NON VUOL DIRE «C'ERA GIA'», e per un giorno intero
+ * questo programma ha creduto di si'. Avviando EX-OS dal CD non si puo'
+ * scrivere DA NESSUNA PARTE: la creazione del progetto falliva a ogni passo, e
+ * poiche' nessun passo si lamentava, exide arrivava fino ad aprire l'editor —
+ * VUOTO, perche' il file da leggere non era mai stato scritto. Il sintomo era
+ * «l'IDE si apre vuoto», che non somiglia affatto a «il disco e' in sola
+ * lettura».
+ *
+ * ! LA PROVA CHE CONTA E' SCRIVERE, non chiedere. Un filesystem puo' rifiutare
+ * per mille ragioni — sola lettura, permessi, spazio finito — e distinguerle
+ * costerebbe piu' di quanto serva: quel che conta e' se il file c'e' dopo che
+ * si e' provato a farlo. Percio' si prova, e se non riesce si dice E SI FERMA.
+ * ============================================================================= */
 static int progetto_crea(const char *dir)
 {
-    char p[PERC_MAX];
+    char p[PERC_MAX], avviso[PERC_MAX + 120];
     static const char *const sotto[] = { "src", "inc", "lib", "bin", "obj", 0 };
     int i, fd;
     RtcTime ora;
 
-    if (mkdir(dir, 0755) != 0) {
-        /* Esiste gia': non e' un errore, si riusa. Un progetto si riapre. */
-        dico("la directory c'era gia': ci scrivo dentro");
-    }
+    mkdir(dir, 0755);                   /* se c'era gia', si riusa */
     for (i = 0; sotto[i]; i++) {
         sprintf(p, "%s/%s", dir, sotto[i]);
         mkdir(p, 0755);
     }
 
-    /* La scheda del progetto: chi, quando, quale versione. La legge «Progetto»
-     * e la puo' riscrivere. */
+    /* La prova: se questo file non si scrive, li' dentro non si scrive niente. */
+    sprintf(p, "%s/src/finestra.dis", dir);
+    fd = open(p, O_WRONLY | O_CREAT, 0644);
+    if (fd < 0) {
+        sprintf(avviso,
+                "Non riesco a scrivere in %s.\n\n"
+                "Avviando EX-OS dal CD non si puo' scrivere da nessuna "
+                "parte: serve un disco montato in lettura e scrittura, per "
+                "esempio  mount hd0p1 /disk  e poi un progetto in /disk.", dir);
+        ex_dlg_avviso("Non si puo' scrivere", avviso);
+        dico("il progetto non e' stato creato: non si puo' scrivere li'");
+        return 0;
+    }
+    close(fd);
+
+    /* ! LA SCHEDA SI SCRIVE SOLO SE NON C'ERA GIA', e non e' la stessa regola
+     * di finestra.dis qui sopra: quella si apre senza O_TRUNC e non scrive
+     * niente, quindi un file gia' presente resta byte per byte quello che
+     * era. progetto.txt aveva l'O_TRUNC — «Nuovo progetto» puntato su una
+     * directory gia' esistente RISCRIVEVA la scheda ogni volta, cancellando
+     * l'autore, la versione, la descrizione e la nota che si erano appena
+     * salvate dalla finestra «Progetto». Il disegno restava intatto, la
+     * scheda no: la stessa azione trattava due file dello stesso progetto
+     * in due modi diversi, e chi riapriva un progetto per sbagliarci sopra
+     * un «Nuovo progetto» invece che un «Apri» si ritrovava la nota persa
+     * senza nessun avviso.
+     *
+     * Si guarda prima se il file esiste — con una lettura, che non lo tocca
+     * — e si scrive SOLO se manca. */
     sprintf(p, "%s/progetto.txt", dir);
+    fd = open(p, O_RDONLY, 0);
+    if (fd >= 0) { close(fd); return 1; }       /* c'era gia': non si tocca */
+
     fd = open(p, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd >= 0) {
         char riga[256];
@@ -563,8 +688,13 @@ static int progetto_crea(const char *dir)
         n = n ? n + 1 : dir;
         memset(&ora, 0, sizeof(ora));
         time_now(&ora);
+        /* ! LO STESSO FORMATO CHE SCRIVE progetto_scheda_salva(), campo per
+         * campo — compreso il marcatore [nota] con la nota vuota dopo. Un
+         * file appena nato e uno appena salvato dalla finestra «Progetto»
+         * devono essere indistinguibili: due formati per lo stesso file
+         * sarebbero due posti da tenere d'accordo. */
         sprintf(riga, "nome = %s\nautore = %s\nversione = 0.001\n"
-                      "creato = %04u-%02u-%02u\ndescrizione = \nnota =\n",
+                      "creato = %04u-%02u-%02u\ndescrizione = \n\n[nota]\n",
                 n, EXINFO_AUTORE,
                 (unsigned int)ora.anno, (unsigned int)ora.mese,
                 (unsigned int)ora.giorno);
@@ -1156,7 +1286,23 @@ static void editor_apri(int quale, int riga)
 
     ex_area_colora(g_ed_cod, ex_colora_c, 0);
 
-    ed_carica(quale);
+    /* ! UN EDITOR VUOTO NON DICE NIENTE A NESSUNO. Se il file non c'e' — e non
+     * c'e' quando il progetto non si e' potuto scrivere — si chiude e si dice
+     * perche', invece di mostrare una finestra bianca che sembra un difetto
+     * dell'editor. */
+    if (!ed_carica(quale)) {
+        char avviso[PERC_MAX + 80];
+
+        sprintf(avviso, "Non riesco a leggere %s/src/%s.\n\n"
+                        "Il progetto e' stato creato davvero? Da CD non si "
+                        "puo' scrivere: serve un disco montato in lettura e "
+                        "scrittura.", g_prog_dir, g_ed_nomi[quale]);
+        ex_distruggi(g_ed);
+        g_ed = 0;
+        ex_dlg_avviso("Il sorgente non c'e'", avviso);
+        dico("il sorgente non si legge");
+        return;
+    }
     ex_voce_scegli(g_ed_tab, (unsigned int)quale);
     if (riga >= 0) ex_area_vai(g_ed_cod, (unsigned int)riga, 0);
     ex_fuoco(g_ed_cod);
@@ -1389,6 +1535,697 @@ static void informazioni(void)
 }
 
 /* =============================================================================
+ * LA FINESTRA DEL COMPILATORE
+ *
+ * ! LA RIGA DI COMPILAZIONE FINISCE IN UN FILE, E IL FILE E' IL PRODOTTO.
+ * `compila.sh` sta nella directory del progetto, si legge, si corregge a mano e
+ * si lancia dalla shell come qualunque altro script: il pulsante «Compila» non
+ * fa niente di diverso da quel che si potrebbe fare digitando. Un ambiente che
+ * compila con una riga che nessuno puo' vedere e' un ambiente in cui, il giorno
+ * che qualcosa non torna, non si ha nessun appiglio.
+ *
+ * ! E LA RADICE DEGLI STRUMENTI E' UN CAMPO SOLO. Da li' si ricavano il
+ * compilatore, gli header, lo start.S, i ponti della libc e il linker script:
+ * sono cinque percorsi che stanno o tutti sul CD (/cdrom/exos) o tutti sul
+ * disco dopo `toolinst` (/exos). Sei campi da tenere d'accordo sarebbero sei
+ * modi di sbagliarne uno.
+ *
+ * ! IL COMPILATORE VA CHIAMATO CON IL SUO PERCORSO DENTRO L'ALBERO, e non dal
+ * PATH: GCC si calcola dove stanno le proprie cose da DOVE STA LUI. Lanciato
+ * come /cdrom/bin/gcc cerca gli header in /cdrom/lib/gcc e non trova niente;
+ * lanciato come /cdrom/exos/bin/gcc torna tutto al suo posto. Sta scritto nel
+ * leggimi del CD degli strumenti, ed e' la ragione per cui qui si compone il
+ * percorso invece di scrivere «gcc».
+ * ============================================================================= */
+static ExFinestra g_cc, g_cc_f_radice, g_cc_f_opz, g_cc_f_nome, g_cc_uscita,
+                  g_cc_stato;
+
+/* Il nome del binario: se non l'ha scelto nessuno, e' quello del progetto. */
+static const char *binario(void)
+{
+    if (g_cc_nome[0]) return g_cc_nome;
+    return g_prog_nome[0] ? g_prog_nome : "programma";
+}
+
+/* Compone la riga di compilazione. Rende quanti caratteri ha scritto. */
+static unsigned int riga_compila(char *out, unsigned int max)
+{
+    char r[PERC_MAX];
+    int  i;
+
+    strncpy(r, g_cc_radice, sizeof(r) - 1);
+    r[sizeof(r) - 1] = '\0';
+
+    out[0] = '\0';
+    snprintf(out, max,
+             "%s/bin/gcc " CC_OBBLIGATORIE " %s -I %s/include -I inc"
+             " -T %s/programma.ld %s/start.S"
+             " src/finestra.c src/finestra_gen.c",
+             r, g_cc_opzioni, r, r, r);
+
+    for (i = 0; i < g_lib_n; i++) {
+        if (!g_lib[i].scelta || g_lib[i].stub[0] == '\0') continue;
+        strncat(out, " ", max - strlen(out) - 1);
+        /* Uno stub dell'albero degli strumenti si scrive relativo alla radice;
+         * una libreria aggiunta a mano e' gia' un percorso intero. */
+        if (g_lib[i].stub[0] != '/') {
+            strncat(out, r, max - strlen(out) - 1);
+            strncat(out, "/", max - strlen(out) - 1);
+        }
+        strncat(out, g_lib[i].stub, max - strlen(out) - 1);
+    }
+
+    strncat(out, " ", max - strlen(out) - 1);
+    strncat(out, r, max - strlen(out) - 1);
+    strncat(out, "/libc_ponti_asm.o ", max - strlen(out) - 1);
+    strncat(out, r, max - strlen(out) - 1);
+    strncat(out, "/libc_ponti_c.o ", max - strlen(out) - 1);
+    strncat(out, r, max - strlen(out) - 1);
+    strncat(out, "/libc_ponti_avvio.o ", max - strlen(out) - 1);
+    strncat(out, r, max - strlen(out) - 1);
+    strncat(out, "/libc_ponti_exlib.o -o bin/", max - strlen(out) - 1);
+    strncat(out, binario(), max - strlen(out) - 1);
+
+    return (unsigned int)strlen(out);
+}
+
+/* Scrive compila.sh nella directory del progetto. */
+static int scrivi_script(void)
+{
+    static char riga[2048];
+    char p[PERC_MAX], testa[512];
+    int  fd;
+
+    if (g_prog_dir[0] == '\0') { dico("prima apri o crea un progetto"); return 0; }
+
+    riga_compila(riga, sizeof(riga));
+
+    sprintf(p, "%s/compila.sh", g_prog_dir);
+    fd = open(p, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) { dico("non riesco a scrivere compila.sh"); return 0; }
+
+    sprintf(testa,
+            "# GENERATO DA EXIDE - si riscrive a ogni «Scrivi compila.sh».\n"
+            "#\n"
+            "# Si puo' lanciare anche a mano, dalla directory del progetto:\n"
+            "#     cd %s\n"
+            "#     sh compila.sh\n"
+            "#\n"
+            "# Il compilatore va chiamato con il suo percorso DENTRO l'albero\n"
+            "# degli strumenti: GCC calcola dove stanno le proprie cose da dove\n"
+            "# sta lui, e da /bin non troverebbe ne' cc1 ne' gli header.\n\n",
+            g_prog_dir);
+    write(fd, testa, strlen(testa));
+    write(fd, riga, strlen(riga));
+    write(fd, "\n", 1);
+    close(fd);
+    return 1;
+}
+
+/* Rilegge il registro dell'ultima compilazione dentro la lista. */
+static void carica_uscita(void)
+{
+    char p[PERC_MAX], buf[512], riga[200];
+    int  fd, n, i;
+    unsigned int col = 0, righe = 0;
+
+    ex_lista_svuota(g_cc_uscita);
+    sprintf(p, "%s/obj/compila.log", g_prog_dir);
+
+    fd = open(p, O_RDONLY, 0);
+    if (fd < 0) { ex_lista_aggiungi(g_cc_uscita, "(nessun registro)"); return; }
+
+    while ((n = (int)read(fd, buf, sizeof(buf))) > 0)
+        for (i = 0; i < n; i++) {
+            if (buf[i] == '\r') continue;
+            if (buf[i] != '\n') {
+                if (col + 1 < sizeof(riga)) riga[col++] = buf[i];
+                continue;
+            }
+            riga[col] = '\0';
+            col = 0;
+            if (!ex_lista_aggiungi(g_cc_uscita, riga)) goto fine;
+            righe++;
+        }
+    riga[col] = '\0';
+    if (col) ex_lista_aggiungi(g_cc_uscita, riga);
+fine:
+    close(fd);
+    if (righe == 0 && col == 0)
+        ex_lista_aggiungi(g_cc_uscita, "(il compilatore non ha detto niente:"
+                                       " e' andata bene)");
+}
+
+/* =============================================================================
+ * ! SI ASPETTA SENZA MORIRE, e non con un waitpid che blocca. Una compilazione
+ * dentro EX-OS non e' istantanea — cc1 e' un programma da quaranta megabyte —
+ * e una finestra ferma per un minuto sembra un programma piantato. Si guarda se
+ * il figlio e' finito con WNOHANG, si smista un pugno di messaggi, si dorme un
+ * istante: e' la stessa forma dell'attesa di rete del navigatore.
+ * ============================================================================= */
+static int aspetta_vivo(int pid)
+{
+    unsigned int inizio = uptime_ms();
+    int stato = 0;
+
+    for (;;) {
+        ExMsg m;
+        int   n = 0;
+        int   r = waitpid(pid, &stato, WNOHANG);
+
+        if (r == pid) return stato;
+        if (r < 0)    return -1;
+
+        while (n++ < 8 && ex_msg_ora(&m)) ex_smista(&m);
+        usleep(20000);
+
+        /* Un tetto c'e', e generoso: cinque minuti. Oltre, si smette di
+         * aspettare e si dice — meglio di una finestra che aspetta per
+         * sempre un compilatore che si e' impiccato. */
+        if (uptime_ms() - inizio > 300000u) return -2;
+    }
+}
+
+static void compila(void)
+{
+    char        p[PERC_MAX], log[PERC_MAX], msg[120];
+    char        prima[PERC_MAX];
+    char       *argv[3];
+    SpawnRedir  red[2];
+    int         pid, stato;
+
+    if (g_prog_dir[0] == '\0') { dico("prima apri o crea un progetto"); return; }
+    if (!progetto_salva()) return;
+    if (!scrivi_script()) return;
+
+    sprintf(p, "%s/compila.sh", g_prog_dir);
+    sprintf(log, "%s/obj/compila.log", g_prog_dir);
+
+    /* ! L'USCITA VA IN UN FILE, non in una pipe: una pipe vorrebbe dire
+     * leggerla mentre il figlio scrive, e chi legge una pipe piena mentre il
+     * figlio ne riempie un'altra si blocca. Un file lo si rilegge dopo, tutto
+     * insieme, e resta li' anche dopo — che e' quel che serve a chi vuole
+     * rileggere l'errore con calma. */
+    red[0].fd = 1; red[0].flags = O_WRONLY | O_CREAT | O_TRUNC;
+    red[0].percorso = log; red[0].fd_padre = -1;
+    red[1].fd = 2; red[1].flags = O_WRONLY | O_CREAT;
+    red[1].percorso = log; red[1].fd_padre = -1;
+
+    argv[0] = "sh";
+    argv[1] = p;
+    argv[2] = 0;
+
+    ex_testo_metti(g_cc_stato, "compilo...");
+    ex_procedura_base(g_cc, EXM_DISEGNA, 0, 0);
+
+    /* ! IL FIGLIO EREDITA LA NOSTRA DIRECTORY DI LAVORO, e spawn_ex non ne
+     * prende una per parametro: se non ci si sposta prima, `sh` — e con lui
+     * gcc — restano nella directory da cui e' partito exide, che e' la radice
+     * del CD in sola lettura. compila.sh scrive percorsi RELATIVI apposta
+     * (src/finestra.c, -o bin/...) perche' e' pensato per girare "da dentro"
+     * il progetto, come se lo si lanciasse a mano dopo un `cd`; e gcc, oltre
+     * agli oggetti, scrive anche dei file temporanei nella directory corrente
+     * — che e' il punto in cui il difetto si vedeva: "Cannot create temporary
+     * file in ./: filesystem in sola lettura", con il progetto giusto scelto
+     * e il disco giusto montato, perche' il cwd non era ne' l'uno ne' l'altro. */
+    prima[0] = '\0';
+    getcwd(prima, sizeof(prima));
+    if (chdir(g_prog_dir) != 0) {
+        ex_testo_metti(g_cc_stato, "non riesco a entrare nella directory del progetto");
+        return;
+    }
+
+    pid = spawn_ex("/bin/sh", argv, environ, red, 2);
+
+    /* Si torna subito da dove si era, riuscito o no il lancio: exide non deve
+     * restare "dentro" un progetto per un dettaglio di implementazione — il
+     * resto del programma (dialoghi, l'editor) non se lo aspetta. */
+    if (prima[0]) chdir(prima);
+
+    if (pid < 0) {
+        ex_testo_metti(g_cc_stato, "non riesco ad avviare /bin/sh");
+        return;
+    }
+
+    stato = aspetta_vivo(pid);
+    carica_uscita();
+
+    if (stato == -2) strcpy(msg, "il compilatore non e' tornato in cinque minuti");
+    else if (stato == 0) sprintf(msg, "fatto: bin/%s", binario());
+    else sprintf(msg, "il compilatore si e' fermato (esito %d): guarda qui sotto",
+                 stato);
+
+    ex_testo_metti(g_cc_stato, msg);
+    dico(msg);
+    ex_procedura_base(g_cc, EXM_DISEGNA, 0, 0);
+}
+
+static long proc_cc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+{
+    static char riga[2048];
+
+    switch (msg) {
+    case EXM_COMANDO:
+        switch (wp) {
+        case ID_CC_RADICE:
+            strncpy(g_cc_radice, ex_testo_prendi(g_cc_f_radice),
+                    sizeof(g_cc_radice) - 1);
+            g_cc_radice[sizeof(g_cc_radice) - 1] = '\0';
+            break;
+        case ID_CC_OPZ:
+            strncpy(g_cc_opzioni, ex_testo_prendi(g_cc_f_opz),
+                    sizeof(g_cc_opzioni) - 1);
+            g_cc_opzioni[sizeof(g_cc_opzioni) - 1] = '\0';
+            break;
+        case ID_CC_NOME:
+            strncpy(g_cc_nome, ex_testo_prendi(g_cc_f_nome),
+                    sizeof(g_cc_nome) - 1);
+            g_cc_nome[sizeof(g_cc_nome) - 1] = '\0';
+            break;
+        case ID_CC_SCRIVI:
+            /* I campi si rileggono sempre: chi ha scritto e non ha premuto
+             * Invio si aspetta lo stesso che valga quel che vede. */
+            strncpy(g_cc_radice, ex_testo_prendi(g_cc_f_radice), sizeof(g_cc_radice) - 1);
+            strncpy(g_cc_opzioni, ex_testo_prendi(g_cc_f_opz), sizeof(g_cc_opzioni) - 1);
+            strncpy(g_cc_nome, ex_testo_prendi(g_cc_f_nome), sizeof(g_cc_nome) - 1);
+            if (scrivi_script()) {
+                riga_compila(riga, sizeof(riga));
+                ex_lista_svuota(g_cc_uscita);
+                ex_lista_aggiungi(g_cc_uscita, "compila.sh scritto:");
+                ex_lista_aggiungi(g_cc_uscita, riga);
+                ex_testo_metti(g_cc_stato, "compila.sh scritto nel progetto");
+            }
+            break;
+        case ID_CC_COMPILA:
+            strncpy(g_cc_radice, ex_testo_prendi(g_cc_f_radice), sizeof(g_cc_radice) - 1);
+            strncpy(g_cc_opzioni, ex_testo_prendi(g_cc_f_opz), sizeof(g_cc_opzioni) - 1);
+            strncpy(g_cc_nome, ex_testo_prendi(g_cc_f_nome), sizeof(g_cc_nome) - 1);
+            compila();
+            break;
+        case ID_CC_CHIUDI:
+            ex_distruggi(f);
+            g_cc = 0;
+            ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
+            return 0;
+        default: break;
+        }
+        return 0;
+
+    case EXM_CHIUDI:
+        ex_distruggi(f);
+        g_cc = 0;
+        ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
+        return 0;
+
+    default: break;
+    }
+    return ex_procedura_base(f, msg, wp, lp);
+}
+
+static void compilatore_apri(void)
+{
+    if (g_prog_dir[0] == '\0') { dico("prima apri o crea un progetto"); return; }
+    if (g_cc) { ex_procedura_base(g_cc, EXM_DISEGNA, 0, 0); return; }
+
+    g_cc = ex_crea("finestra", "Compilatore",
+                   EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_MODALE,
+                   40, 40, 700, 440, 0, 0, proc_cc);
+    if (g_cc == 0) { dico("non riesco ad aprire il compilatore"); return; }
+
+    ex_crea("etichetta", "radice degli strumenti:", EX_FIGLIO,
+            10, 12, 190, 16, g_cc, 0, 0);
+    g_cc_f_radice = ex_crea("testo", g_cc_radice, EX_FIGLIO,
+                            206, 8, 470, 22, g_cc, ID_CC_RADICE, 0);
+
+    ex_crea("etichetta", "opzioni:", EX_FIGLIO, 10, 42, 190, 16, g_cc, 0, 0);
+    g_cc_f_opz = ex_crea("testo", g_cc_opzioni, EX_FIGLIO,
+                         206, 38, 470, 22, g_cc, ID_CC_OPZ, 0);
+
+    ex_crea("etichetta", "nome del binario (in bin/):", EX_FIGLIO,
+            10, 72, 190, 16, g_cc, 0, 0);
+    g_cc_f_nome = ex_crea("testo", binario(), EX_FIGLIO,
+                          206, 68, 200, 22, g_cc, ID_CC_NOME, 0);
+
+    ex_crea("pulsante", "Scrivi compila.sh", EX_FIGLIO,
+            10, 102, 150, 26, g_cc, ID_CC_SCRIVI, 0);
+    ex_crea("pulsante", "Compila", EX_FIGLIO,
+            168, 102, 100, 26, g_cc, ID_CC_COMPILA, 0);
+    ex_crea("pulsante", "Chiudi", EX_FIGLIO,
+            276, 102, 100, 26, g_cc, ID_CC_CHIUDI, 0);
+
+    ex_crea("intestazione", "Uscita del compilatore", EX_FIGLIO,
+            10, 136, 666, 20, g_cc, 0, 0);
+    g_cc_uscita = ex_crea("lista", "", EX_FIGLIO, 10, 158, 666, 220,
+                          g_cc, ID_CC_USCITA, 0);
+    g_cc_stato = ex_crea("etichetta", "", EX_FIGLIO, 10, 386, 666, 16,
+                         g_cc, 0, 0);
+
+    carica_uscita();
+    ex_procedura_base(g_cc, EXM_DISEGNA, 0, 0);
+}
+
+/* =============================================================================
+ * LA FINESTRA DELLE LIBRERIE
+ *
+ * ! LA SPUNTA STA DENTRO LA RIGA, e non e' un ripiego: una lista di controlli
+ * «spunta» uno sotto l'altro sarebbe una lista che non scorre — i controlli
+ * stanno dove sono stati messi, e dodici righe piu' l'aggiunta a mano non ci
+ * starebbero in una finestra ragionevole. Cliccare la riga la accende: e' quel
+ * che fa chiunque, e la parentesi quadra dice com'e' messa.
+ * ============================================================================= */
+static ExFinestra g_libf, g_lib_lista;
+
+static void lib_mostra(void)
+{
+    char riga[LIB_NOME_MAX + 8];
+    int  i;
+
+    ex_lista_svuota(g_lib_lista);
+    for (i = 0; i < g_lib_n; i++) {
+        sprintf(riga, "[%c] %s", g_lib[i].scelta ? 'x' : ' ', g_lib[i].nome);
+        ex_lista_aggiungi(g_lib_lista, riga);
+    }
+}
+
+static void lib_aggiungi(void)
+{
+    char perc[PERC_MAX] = "";
+
+    if (g_lib_n >= LIB_MAX) { dico("non c'e' posto per un'altra libreria"); return; }
+    if (!ex_dlg_riga("Libreria tua", "percorso dello stub (.c):",
+                     perc, sizeof(perc))) return;
+    if (perc[0] == '\0') return;
+
+    strncpy(g_lib[g_lib_n].stub, perc, PERC_MAX - 1);
+    g_lib[g_lib_n].stub[PERC_MAX - 1] = '\0';
+    strncpy(g_lib[g_lib_n].nome, perc, LIB_NOME_MAX - 1);
+    g_lib[g_lib_n].nome[LIB_NOME_MAX - 1] = '\0';
+    g_lib[g_lib_n].base = 0;
+    g_lib[g_lib_n].scelta = 1;
+    g_lib_n++;
+    lib_mostra();
+}
+
+static long proc_lib(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+{
+    switch (msg) {
+    case EXM_COMANDO:
+        if (wp == ID_LIB_ELENCO) {
+            unsigned int k = ex_lista_scelta(g_lib_lista);
+
+            if ((int)k < g_lib_n) {
+                if (g_lib[k].base) {
+                    dico("exwin serve sempre: non si toglie");
+                } else {
+                    g_lib[k].scelta = !g_lib[k].scelta;
+                    lib_mostra();
+                    ex_lista_scegli(g_lib_lista, k);
+                }
+            }
+        } else if (wp == ID_LIB_AGG) {
+            lib_aggiungi();
+        } else if (wp == ID_LIB_CHIUDI) {
+            ex_distruggi(f);
+            g_libf = 0;
+            ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
+            return 0;
+        }
+        return 0;
+
+    case EXM_CHIUDI:
+        ex_distruggi(f);
+        g_libf = 0;
+        ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
+        return 0;
+
+    default: break;
+    }
+    return ex_procedura_base(f, msg, wp, lp);
+}
+
+static void librerie_apri(void)
+{
+    if (g_libf) { ex_procedura_base(g_libf, EXM_DISEGNA, 0, 0); return; }
+
+    g_libf = ex_crea("finestra", "Librerie",
+                     EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_MODALE,
+                     120, 80, 420, 320, 0, 0, proc_lib);
+    if (g_libf == 0) { dico("non riesco ad aprire le librerie"); return; }
+
+    ex_crea("etichetta", "clicca una riga per accenderla o spegnerla",
+            EX_FIGLIO, 10, 10, 400, 16, g_libf, 0, 0);
+    g_lib_lista = ex_crea("lista", "", EX_FIGLIO, 10, 32, 396, 210,
+                          g_libf, ID_LIB_ELENCO, 0);
+    ex_crea("pulsante", "Aggiungi...", EX_FIGLIO, 10, 250, 120, 26,
+            g_libf, ID_LIB_AGG, 0);
+    ex_crea("pulsante", "Chiudi", EX_FIGLIO, 138, 250, 100, 26,
+            g_libf, ID_LIB_CHIUDI, 0);
+
+    lib_mostra();
+    ex_procedura_base(g_libf, EXM_DISEGNA, 0, 0);
+}
+
+/* =============================================================================
+ * LA SCHEDA DEL PROGETTO
+ *
+ * ! IL FILE E' LO STESSO CHE progetto_crea() HA GIA' SCRITTO. Questa finestra
+ * non inventa un secondo formato: rilegge progetto.txt, lascia modificare
+ * quel che ha senso modificare, e lo riscrive. Chi apre il file con un editor
+ * qualunque — o con «Sorgente», che non lo sa leggere ma lo mostrerebbe come
+ * testo — vede la stessa cosa che vede questa finestra.
+ *
+ * ! IL NOME E LA DATA DI CREAZIONE NON SI EDITANO QUI, e non e' una
+ * dimenticanza: il nome viene dalla directory del progetto — riscriverlo in
+ * questo campo non rinominerebbe niente, e un campo che non fa quel che
+ * promette e' peggio di un campo assente. La data di creazione, per
+ * definizione, non e' qualcosa che si possa correggere senza che smetta di
+ * essere vera. Si mostrano come etichette, non come caselle.
+ *
+ * ! LA NOTA E' L'UNICO CAMPO SU PIU' RIGHE, ed e' per questo che vive fuori
+ * dalle «chiave = valore» del resto del file: dopo la riga «[nota]» tutto cio'
+ * che segue, fino alla fine del file, e' la nota — comprese le righe vuote.
+ * Le altre chiavi si scambiano sulla stessa riga apposta per restare un
+ * formato a una riga per campo; darle anche loro il permesso di andare a capo
+ * vorrebbe dire non sapere piu' dove finisce un valore e comincia il prossimo.
+ * ============================================================================= */
+#define PRG_CAMPO_MAX 64   /* = TESTO_LEN di exwin.c: quanto una casella regge
+                            * DAVVERO. Scriverne una piu' grande qui non
+                            * aiuterebbe: la casella la taglierebbe lo stesso —
+                            * vedi il difetto delle opzioni del compilatore. */
+
+static ExFinestra g_prgf, g_prg_e_nome, g_prg_e_creato,
+                  g_prg_c_autore, g_prg_c_vers, g_prg_c_descr, g_prg_c_nota,
+                  g_prg_stato;
+
+static char g_prg_nome[PRG_CAMPO_MAX]    = "";
+static char g_prg_creato[PRG_CAMPO_MAX]  = "";
+
+static void progetto_percorso(char *out)
+{
+    sprintf(out, "%s/progetto.txt", g_prog_dir);
+}
+
+/* Il valore dopo il primo '=' di "chiave = valore", con gli spazi tolti da
+ * tutt'e due i lati. Rende 0 se sulla riga non c'e' nessun '='. */
+static int prg_valore(const char *riga, const char *chiave, char *out,
+                      unsigned int max)
+{
+    unsigned int kl = (unsigned int)strlen(chiave);
+    const char  *eq;
+    const char  *v;
+    unsigned int n;
+
+    if (strncmp(riga, chiave, kl) != 0) return 0;
+    eq = riga + kl;
+    while (*eq == ' ' || *eq == '\t') eq++;
+    if (*eq != '=') return 0;
+
+    v = eq + 1;
+    while (*v == ' ' || *v == '\t') v++;
+
+    n = (unsigned int)strlen(v);
+    while (n > 0 && (v[n - 1] == ' ' || v[n - 1] == '\t')) n--;
+    if (n >= max) n = max - 1;
+
+    memcpy(out, v, n);
+    out[n] = '\0';
+    return 1;
+}
+
+static void progetto_leggi(void)
+{
+    char p[PERC_MAX], buf[512], riga[300];
+    char autore[PRG_CAMPO_MAX] = "", vers[PRG_CAMPO_MAX] = "0.001";
+    char descr[PRG_CAMPO_MAX]  = "";
+    int  fd, n, i, nota = 0;
+    unsigned int col = 0;
+
+    g_prg_nome[0] = '\0';
+    g_prg_creato[0] = '\0';
+    ex_area_svuota(g_prg_c_nota);
+
+    progetto_percorso(p);
+    fd = open(p, O_RDONLY, 0);
+    if (fd < 0) {
+        /* Nessun file: si propone com'era in progetto_crea(), ma non si
+         * scrive — solo Salva scrive. */
+        const char *dn = strrchr(g_prog_dir, '/');
+        RtcTime     ora;
+
+        strncpy(g_prg_nome, dn ? dn + 1 : g_prog_dir, PRG_CAMPO_MAX - 1);
+        strncpy(autore, EXINFO_AUTORE, PRG_CAMPO_MAX - 1);
+        memset(&ora, 0, sizeof(ora));
+        time_now(&ora);
+        sprintf(g_prg_creato, "%04u-%02u-%02u", (unsigned int)ora.anno,
+                (unsigned int)ora.mese, (unsigned int)ora.giorno);
+    } else {
+        while ((n = (int)read(fd, buf, sizeof(buf))) > 0)
+            for (i = 0; i < n; i++) {
+                if (buf[i] == '\r') continue;
+                if (buf[i] != '\n') {
+                    if (col + 1 < sizeof(riga)) riga[col++] = buf[i];
+                    continue;
+                }
+                riga[col] = '\0';
+                col = 0;
+
+                if (nota) {
+                    ex_area_aggiungi(g_prg_c_nota, riga);
+                    continue;
+                }
+                if (strcmp(riga, "[nota]") == 0) { nota = 1; continue; }
+
+                if (prg_valore(riga, "nome", g_prg_nome, sizeof(g_prg_nome))) continue;
+                if (prg_valore(riga, "autore", autore, sizeof(autore))) continue;
+                if (prg_valore(riga, "versione", vers, sizeof(vers))) continue;
+                if (prg_valore(riga, "creato", g_prg_creato, sizeof(g_prg_creato))) continue;
+                if (prg_valore(riga, "descrizione", descr, sizeof(descr))) continue;
+            }
+        if (col && nota) { riga[col] = '\0'; ex_area_aggiungi(g_prg_c_nota, riga); }
+        close(fd);
+    }
+
+    ex_testo_metti(g_prg_e_nome, g_prg_nome);
+    ex_testo_metti(g_prg_e_creato, g_prg_creato[0] ? g_prg_creato : "(non ancora salvata)");
+    ex_testo_metti(g_prg_c_autore, autore);
+    ex_testo_metti(g_prg_c_vers, vers);
+    ex_testo_metti(g_prg_c_descr, descr);
+    ex_area_pulita(g_prg_c_nota);
+}
+
+static void progetto_scheda_salva(void)
+{
+    char p[PERC_MAX], riga[PRG_CAMPO_MAX + 32];
+    int  fd, i, n;
+
+    progetto_percorso(p);
+    fd = open(p, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) { ex_testo_metti(g_prg_stato, "non riesco a scrivere progetto.txt"); return; }
+
+    sprintf(riga, "nome = %s\n", g_prg_nome);
+    write(fd, riga, strlen(riga));
+    sprintf(riga, "autore = %s\n", ex_testo_prendi(g_prg_c_autore));
+    write(fd, riga, strlen(riga));
+    sprintf(riga, "versione = %s\n", ex_testo_prendi(g_prg_c_vers));
+    write(fd, riga, strlen(riga));
+    sprintf(riga, "creato = %s\n", g_prg_creato);
+    write(fd, riga, strlen(riga));
+    sprintf(riga, "descrizione = %s\n", ex_testo_prendi(g_prg_c_descr));
+    write(fd, riga, strlen(riga));
+
+    write(fd, "\n[nota]\n", 8);
+    n = (int)ex_area_righe(g_prg_c_nota);
+    for (i = 0; i < n; i++) {
+        const char  *r = ex_area_riga(g_prg_c_nota, (unsigned int)i);
+        unsigned int l = (unsigned int)strlen(r);
+
+        if (l) write(fd, r, l);
+        write(fd, "\n", 1);
+    }
+    close(fd);
+
+    ex_testo_metti(g_prg_stato, "salvato: progetto.txt");
+    dico("scheda del progetto salvata");
+}
+
+static long proc_prg(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+{
+    switch (msg) {
+    case EXM_COMANDO:
+        if (wp == ID_PR_SALVA) {
+            progetto_scheda_salva();
+        } else if (wp == ID_PR_CHIUDI) {
+            progetto_scheda_salva();
+            ex_distruggi(f);
+            g_prgf = 0;
+            ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
+            return 0;
+        }
+        return 0;
+
+    case EXM_CHIUDI:
+        /* ! LA X CHIUDE COME «CHIUDI», salvando: e' una scheda di dati, non
+         * codice — non c'e' niente da poter rompere restando aggiornati,
+         * e chiedere conferma per un'informazione a basso rischio sarebbe
+         * una domanda che si impara a schiacciare senza leggerla. */
+        progetto_scheda_salva();
+        ex_distruggi(f);
+        g_prgf = 0;
+        ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
+        return 0;
+
+    default: break;
+    }
+    return ex_procedura_base(f, msg, wp, lp);
+}
+
+static void progetto_scheda_apri(void)
+{
+    if (g_prog_dir[0] == '\0') { dico("prima apri o crea un progetto"); return; }
+    if (g_prgf) { ex_procedura_base(g_prgf, EXM_DISEGNA, 0, 0); return; }
+
+    g_prgf = ex_crea("finestra", "Progetto",
+                     EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_MODALE,
+                     100, 60, 520, 420, 0, 0, proc_prg);
+    if (g_prgf == 0) { dico("non riesco ad aprire la scheda del progetto"); return; }
+
+    ex_crea("etichetta", "nome:", EX_FIGLIO, 10, 12, 90, 16, g_prgf, 0, 0);
+    g_prg_e_nome = ex_crea("etichetta", "", EX_FIGLIO, 110, 12, 380, 16,
+                           g_prgf, 0, 0);
+
+    ex_crea("etichetta", "autore:", EX_FIGLIO, 10, 38, 90, 16, g_prgf, 0, 0);
+    g_prg_c_autore = ex_crea("testo", "", EX_FIGLIO, 110, 34, 380, 22,
+                             g_prgf, ID_PR_AUTORE, 0);
+
+    ex_crea("etichetta", "versione:", EX_FIGLIO, 10, 68, 90, 16, g_prgf, 0, 0);
+    g_prg_c_vers = ex_crea("testo", "", EX_FIGLIO, 110, 64, 120, 22,
+                           g_prgf, ID_PR_VERS, 0);
+
+    ex_crea("etichetta", "creato:", EX_FIGLIO, 250, 68, 60, 16, g_prgf, 0, 0);
+    g_prg_e_creato = ex_crea("etichetta", "", EX_FIGLIO, 310, 68, 180, 16,
+                             g_prgf, 0, 0);
+
+    ex_crea("etichetta", "descrizione:", EX_FIGLIO, 10, 98, 90, 16, g_prgf, 0, 0);
+    g_prg_c_descr = ex_crea("testo", "", EX_FIGLIO, 110, 94, 380, 22,
+                            g_prgf, ID_PR_DESCR, 0);
+
+    ex_crea("intestazione", "Nota", EX_FIGLIO, 10, 128, 480, 20, g_prgf, 0, 0);
+    g_prg_c_nota = ex_crea("areatesto", "", EX_FIGLIO, 10, 150, 480, 190,
+                           g_prgf, ID_PR_NOTA, 0);
+
+    ex_crea("pulsante", "Salva", EX_FIGLIO, 10, 350, 90, 26,
+            g_prgf, ID_PR_SALVA, 0);
+    ex_crea("pulsante", "Chiudi", EX_FIGLIO, 108, 350, 90, 26,
+            g_prgf, ID_PR_CHIUDI, 0);
+    g_prg_stato = ex_crea("etichetta", "", EX_FIGLIO, 10, 384, 480, 16,
+                          g_prgf, 0, 0);
+
+    progetto_leggi();
+    ex_fuoco(g_prg_c_autore);
+    ex_procedura_base(g_prgf, EXM_DISEGNA, 0, 0);
+}
+
+/* =============================================================================
  * LA SHELL NELLA DIRECTORY DEL PROGETTO
  *
  * ! LA DIRECTORY SI CAMBIA PRIMA DI CREARE IL CONTROLLO, e non si passa al
@@ -1451,7 +2288,7 @@ static void tela_clic(int x, int y, int doppio)
                 prop_mostra();
                 return;
             }
-            progetto_salva();
+            if (!progetto_salva()) return;   /* il perche' l'ha gia' detto */
             riga = handler_assicura(&g_ctrl[k]);
             editor_apri(0, riga);
             return;
@@ -1552,11 +2389,11 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 
         case ID_SORGENTE:  editor_apri(0, -1);   break;
         case ID_SHELL:     shell_progetto();     break;
-        case ID_COMPILA:
-        case ID_LIBRERIE:
+        case ID_COMPILA:   compilatore_apri();   break;
+        case ID_LIBRERIE:  librerie_apri();      break;
+        case ID_PROGETTO:  progetto_scheda_apri(); break;
         case ID_FILES:
         case ID_DIRECTORY:
-        case ID_PROGETTO:
             dico("questa voce e' in arrivo: vedi Aiuto > Manuale");
             break;
 

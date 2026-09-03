@@ -85,6 +85,75 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### La finestra del compilatore: GCC vero, dentro EX-OS, da un disegno
+
+**testato** — un progetto vero, disegnato in exide, compilato con GCC del CD
+degli strumenti *dentro EX-OS*, collegato e **avviato nella scrivania**.
+
+**La riga di compilazione finisce in un file, e il file è il prodotto.**
+`compila.sh` sta nella directory del progetto, si legge, si corregge a mano e
+si lancia come qualunque altro script: il pulsante «Compila» non fa niente che
+non si potrebbe fare digitando. **L'uscita va in un file** (`obj/compila.log`),
+non in una pipe — che si rilegge con calma, ed è quel che serve a chi vuole
+rivedere l'errore.
+
+**Una libreria condivisa si collega con il suo stub**, non con un archivio: in
+EX-OS una `.so` non si linka, si compila dentro il programma un file di poche
+righe che risolve i nomi alla prima chiamata. La finestra Librerie sceglie
+quali stub entrano nella riga — `exwin` sempre, il resto a spunta.
+
+**E si aspetta senza morire**: cc1 pesa quaranta megabyte, e una finestra
+ferma per un minuto sembra piantata. Si guarda se il figlio è finito con
+`WNOHANG`, si smista un pugno di messaggi, si dorme un istante — la stessa
+forma dell'attesa di rete del navigatore — con un tetto di cinque minuti oltre
+il quale si smette di aspettare un compilatore impiccato.
+
+> **Due difetti trovati girando il compilatore vero, e nessuno si vedeva
+> leggendo il codice.** Le opzioni finivano tagliate a metà — la casella è un
+> controllo "testo" che tiene 63 caratteri, non i 160 del campo C che la
+> leggeva — e il taglio produceva un errore che non gli somigliava affatto:
+> `-fno-pie` mozzato a un trattino solitario, e per gcc un `-` da solo vuol
+> dire «leggi da stdin». La cura non è stata allargare la casella: è stata
+> **togliere** dalla casella quel che non doveva starci — i flag obbligatori
+> (`-ffreestanding -fno-builtin -nostdlib -fno-pic -fno-pie`) sono adesso
+> fissi nel programma, non modificabili per sbaglio. Il secondo: il figlio
+> compilava nella directory sbagliata — quella da cui era partito exide, in
+> sola lettura — perché `spawn_ex` eredita il *cwd* del padre e nessuno lo
+> cambiava prima di lanciarlo.
+
+### Tre difetti visti usandolo, e nessuno stava dove sembrava
+
+**testato** — sul navigatore, su exide dal CD, e su un disco installato da zero.
+
+**La tendina del menu spariva muovendo il mouse.** Non era il server: era
+l'ordine del disegno. La procedura di base disegna i controlli e *poi* la
+tendina, ma un'applicazione che disegna anche del proprio — il navigatore con la
+pagina, exide con la maschera — lo fa **dopo** aver chiamato la base, e ci passa
+sopra. Col mouse fermo non si notava: è il movimento che fa arrivare
+`EXM_MOUSE_MOSSO` e quindi un ridisegno. Ora la tendina si disegna dentro
+`ex_aggiorna()`, la riga con cui *chiunque* dice «ho finito, mostralo»: qualunque
+cosa si sia disegnata, la tendina viene dopo.
+
+**exide apriva l'editor vuoto.** «`mkdir` è fallito» non vuol dire «c'era già», e
+il programma ha creduto di sì dal primo giorno: avviando dal CD non si scrive da
+nessuna parte, la creazione del progetto falliva a ogni passo *in silenzio*, e
+l'editor si apriva su un file mai scritto. La prova che conta è **scrivere, non
+chiedere**: ora si prova, e se non riesce lo dice e si ferma — spiegando che
+serve un disco montato in lettura e scrittura.
+
+**L'installatore chiedeva la lingua e lasciava la tastiera americana.** Il
+sistema installato parlava italiano e scriveva americano: le lettere al posto
+giusto e la punteggiatura no. Ora la tavola delle lingue ha una colonna per la
+disposizione — **la tastiera non è la lingua**, l'inglese si scrive su una `us` e
+domani qualcuno vorrà l'inglese su una `uk` — e `keymap` si *sovrascrive*, al
+contrario di ogni altra voce: quel valore non era la scelta di nessuno, era
+quello del supporto d'installazione copiato un momento prima.
+
+> **E la prova migliore è un errore di battitura.** Dal disco appena installato i
+> comandi del pilota escono storti: `keymap -p` diventa `keymap 'p`. Lo strumento
+> manda scancode americani — se la punteggiatura esce spostata, dentro c'è una
+> tastiera italiana.
+
 ### EX-IDE: si disegna una finestra, esce del C che gira
 
 **testato** — dal CD in QEMU con un disco ext2 montato, e la prova che conta non
