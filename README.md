@@ -85,6 +85,47 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### Finestre dentro una finestra: il contenitore MDI
+
+**testato** — dal CD, in QEMU, con `winprova -m`: tre finestre in un contenitore,
+ognuna con la sua procedura, e ogni comando sulla seriale con il **nome della
+procedura** che l'ha ricevuto.
+
+**Una finestra figlia non è una finestra del server**, ed è la decisione da cui
+discende tutto il resto. Dargliene una vera vorrebbe dire una zona di memoria
+condivisa per ognuna, un giro di richieste a ogni apertura e — soprattutto —
+finestre che possono uscire dal contenitore, perché il server non sa che
+dovrebbero starci dentro. Qui la figlia è un *controllo*: pixel dentro la zona
+del padre, disegnati dalla libreria. Il prezzo è dichiarato — trascinandola si
+ferma al bordo — ed è esattamente quel che un MDI deve fare.
+
+**Il ritaglio, che in quattro mesi di toolkit non era mai servito.** Il disegno
+si ritagliava su una cosa sola: la zona di pixel della finestra di primo livello.
+Bastava, perché un controllo sta dove lo si è messo e non si muove. Una finestra
+MDI *si muove*, e un controllo più grande del suo client si disegnerebbe sopra il
+telaio — un difetto che si vede solo trascinando, cioè tardi. Ora ogni figlia si
+disegna due volte ritagliata: il telaio dentro il contenitore, il contenuto
+dentro la propria area del client. Costa un confronto per pixel quando è acceso,
+e **zero quando è spento** — cioè in ogni finestra che non usa l'MDI.
+
+**Attivare e poi fare è un gesto solo.** Cliccando un pulsante di una finestra
+dietro, quel pulsante si preme: la finestra viene davanti *e* il clic arriva dove
+è caduto.
+
+**I comandi vanno alla procedura della figlia**, non a quella dell'applicazione:
+è cio che rende l'MDI utile invece che decorativo. E se la figlia non ha una
+procedura vanno all'applicazione come sempre.
+
+**Chiudere una figlia non chiude il programma** — la distinzione sta dove finisce
+chi non gestisce la chiusura, altrimenti quel pulsante spegnerebbe l'applicazione
+intera al primo clic. E **Tab gira dentro la finestra attiva**: altrimenti si
+vedrebbe un cursore lampeggiare in una finestra che non si sta guardando.
+
+> **Per la seconda volta in un giorno l'occhio ha sbagliato.** Dopo F6 sembravano
+> attive due finestre; misurati i pixel, `(30,77,125)` e `(128,128,128)` — attiva
+> e inattiva, esatte. La regola, adesso che è costata due volte: una fotografia si
+> guarda per capire *dove* guardare, e poi si contano i pixel.
+
 ### Il testo colorato, e una seconda area di testo che non è nata
 
 **testato** — dal CD, in QEMU, con `winprova -c`: un pezzo di C scelto per

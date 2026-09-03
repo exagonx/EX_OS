@@ -132,6 +132,10 @@ static const char *const g_nomi[] = {
     "ex_area_colora",
     "ex_colora_c",
 
+    /* Il contenitore MDI. */
+    "ex_mdi_attivo",
+    "ex_mdi_attiva",
+
     /* L'avvio della libreria: lo chiama chi la apre, non l'applicazione. */
     "__lib_avvio"
 };
@@ -218,6 +222,9 @@ static void *const g_indirizzi[] = {
     (void *)ex_area_vai,
     (void *)ex_area_colora,
     (void *)ex_colora_c,
+
+    (void *)ex_mdi_attivo,
+    (void *)ex_mdi_attiva,
 
     (void *)__libc_ponti_avvia
 };

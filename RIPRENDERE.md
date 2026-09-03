@@ -28,6 +28,129 @@ manca» apre quello.
 
 # DOVE RIPRENDERE — 3 settembre 2026
 
+## 3 settembre 2026 (sera tardi) — L'MDI: FINESTRE DENTRO UNA FINESTRA, E IL RITAGLIO CHE NON C'ERA
+
+Ultimo pezzo del toolkit prima di `exide`: un contenitore che tiene le finestre
+dell'ambiente raggruppate sotto una sola.
+
+### ! UNA FINESTRA FIGLIA NON E' UNA FINESTRA DEL SERVER
+
+E' la decisione da cui discende tutto il resto. Il server sa di zone di pixel
+condivise: dargliene una per ogni finestra figlia vorrebbe dire una zona di
+memoria in piu' per ognuna, un giro di richieste a ogni apertura, e —
+soprattutto — finestre che possono uscire dal contenitore, perche' il server non
+sa che dovrebbero starci dentro.
+
+Qui la figlia e' un CONTROLLO: pixel dentro la zona del padre, disegnati dalla
+libreria. E' la stessa scelta della tendina del menu, per le stesse ragioni. Il
+prezzo e' dichiarato — una figlia non puo' uscire dal contenitore, e trascinandola
+si ferma al bordo — ed **e' esattamente quel che un MDI deve fare**.
+
+    "mdi"          il contenitore: un ripiano scuro che rientra
+    "mdifiglio"    una finestra, con telaio, barra del titolo e chiusura
+
+### IL RITAGLIO, CHE IN QUATTRO MESI DI TOOLKIT NON ERA MAI SERVITO
+
+! **IL DISEGNO SI RITAGLIAVA SU UNA COSA SOLA: la zona di pixel della finestra
+di primo livello.** Bastava, perche' un controllo sta dove chi scrive il
+programma l'ha messo e non si muove. Una finestra MDI si MUOVE, e un controllo
+piu' grande del client della sua finestra si disegnerebbe sopra il telaio e
+oltre — un difetto che si vede solo trascinando, cioe' tardi.
+
+Adesso `punto()` e `punto_fuso()` guardano un rettangolo di ritaglio, e ogni
+figlia si disegna due volte ritagliata: il telaio dentro il contenitore, il
+contenuto dentro l'area del client della figlia.
+
+! **E' UNO SOLO E NON UNA PILA, apposta.** I livelli sono due — contenitore e
+figlie — e chi disegna calcola l'INTERSEZIONE prima di posarlo. Una pila sarebbe
+un'altra struttura da svuotare quando qualcuno esce da un ramo per errore.
+
+! **IL COSTO E' UN CONFRONTO PER PIXEL QUANDO E' ACCESO, e zero quando e'
+spento** — cioe' in ogni finestra che non usa l'MDI, che oggi sono tutte.
+
+### LE DECISIONI, E PERCHE' COSI'
+
+! **LA MISURA DI UNA FIGLIA E' QUELLA DI FUORI, telaio compreso, e QUI E' DIVERSO
+da una finestra di primo livello** — dove w e h sono l'area del client e il
+telaio lo aggiunge il server intorno. La ragione e' che una figlia si trascina e
+si deve fermare al bordo: con la misura di dentro, «ci sta?» vorrebbe dire
+sommare il telaio a ogni confronto, in ogni punto in cui lo si chiede. Con la
+misura di fuori la domanda e' un rettangolo dentro un rettangolo.
+
+! **I CONTROLLI DENTRO PARTONO DALL'AREA DEL CLIENT**, come in qualunque
+finestra: `origine()` somma il telaio quando l'antenato e' una figlia MDI. Senza,
+un pulsante a (10,10) finirebbe sotto la barra del titolo e ogni applicazione
+dovrebbe sommare quei due numeri da se'.
+
+! **ATTIVARE E POI FARE E' UN GESTO SOLO.** Cliccando un pulsante di una finestra
+dietro, quel pulsante si preme: la finestra viene davanti E il clic arriva dove
+e' caduto. Chiedere due clic e' quel che fanno alcuni sistemi e che nessuno ha
+mai chiesto.
+
+! **I COMANDI VANNO ALLA PROCEDURA DELLA FIGLIA**, non a quella
+dell'applicazione: e' cio' che rende l'MDI utile invece che decorativo — ogni
+finestra si occupa dei suoi controlli, senza una procedura sola che smisti gli id
+di tutte. E se la figlia non ha una procedura il comando va all'applicazione
+come sempre: chi usa l'MDI come raggruppamento visivo non deve scoprire che i
+suoi pulsanti hanno smesso di rispondere.
+
+! **CHIUDERE UNA FIGLIA NON CHIUDE IL PROGRAMMA**, e la distinzione sta dentro
+`ex_procedura_base`, che e' dove finisce chi non gestisce la chiusura. Senza,
+il pulsante di chiusura di una finestra MDI spegnerebbe l'applicazione intera —
+un difetto che si scopre al primo clic e costa il lavoro non salvato.
+
+! **TAB GIRA DENTRO LA FINESTRA ATTIVA.** In un MDI i controlli sono quelli di
+tutte le finestre messi insieme, e un Tab che ne uscisse lascerebbe un cursore
+che lampeggia in una finestra che non si sta guardando.
+
+! **E LA SCORCIATOIA PER GIRARE FRA LE FINESTRE NON LA SCEGLIE IL TOOLKIT.** F6,
+Ctrl+Tab o una voce di menu e' una decisione di chi scrive il programma:
+`ex_mdi_attiva()` la fa, e la prova la chiama con F6.
+
+### CHI STA DAVANTI E' UN NUMERO CHE SALE
+
+Un campo `z` per oggetto e un contatore. Attivare da' il prossimo numero; il
+disegno mette in fila dal piu' basso. Non c'e' nessun vettore ordinato da tenere
+aggiornato a ogni clic, e «portala davanti» resta un'operazione da una riga
+anche con otto finestre.
+
+### COME SI E' PROVATO
+
+`winprova -m`: tre finestre in un contenitore, ognuna con la sua procedura, e
+ogni comando finisce sulla seriale con il NOME della procedura che l'ha ricevuto.
+
+    clic sul pulsante della finestra A, che stava DIETRO
+        -> A viene davanti E «finestra A: comando id=401» — un gesto solo
+    barra del titolo di A trascinata in basso a destra
+        -> si ferma esatta al bordo del contenitore
+    pulsante di chiusura della finestra C, due volte
+        -> la prima la procedura di C dice di no; la seconda si chiude, e il
+           programma resta aperto
+    Tab e spazio con A attiva
+        -> «finestra A: comando id=402» due volte, e mai un comando di B o C:
+           il giro non esce dalla finestra attiva
+    F6 -> ex_mdi_attiva, e la barra del titolo cambia colore
+
+! **E LA LISTA DELLA FINESTRA B E' PIU' ALTA DEL SUO CLIENT, apposta:** senza
+ritaglio si disegnerebbe oltre il telaio e sopra quel che c'e' sotto. Nella
+fotografia e' tagliata esatta al bordo di dentro, ed e' la prova che serve —
+perche' e' l'unico modo di sbagliare che non si vede finche' non capita.
+
+! **E IL RESTO NON SI E' ROTTO**: i cinque controlli di stamattina, l'area del
+codice con i suoi colori (misurati: rosso 160,0,0 per le stringhe, viola 96,0,96
+per le funzioni, blu 0,0,192 per le chiavi), il navigatore su
+`/exwin/doc/javascript.html` e l'editor su `/boot/kernel.cfg`.
+
+### DI NUOVO L'OCCHIO, DI NUOVO I PIXEL
+
+! **PER LA SECONDA VOLTA IN UN GIORNO HO LETTO MALE UNA FOTOGRAFIA.** Dopo F6
+sembravano attive DUE finestre — due barre blu. Misurati i pixel: (30,77,125)
+sulla prima, (128,128,128) sull'altra, cioe' esattamente attiva e inattiva. A
+schermo rimpicciolito il blu della barra attiva e il grigio di quella inattiva si
+somigliano piu' di quanto dovrebbero.
+
+> La regola, adesso che e' costata due volte in un giorno: **una fotografia si
+> guarda per capire dove guardare, e poi si contano i pixel.**
 ## 3 settembre 2026 (pomeriggio) — IL TESTO COLORATO, E UNA SECONDA AREA CHE NON E' NATA
 
 Secondo pezzo di `exide`: l'area del codice. Era il blocco vero — la colorazione

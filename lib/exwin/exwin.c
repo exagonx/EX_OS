@@ -56,6 +56,14 @@ typedef struct {
     unsigned int  massimo;      /* scorrimento: il valore piu' alto */
     unsigned int  pagina;       /* scorrimento: quanto se ne vede in una volta */
 
+    /* ! CHI STA DAVANTI, FRA I FIGLI DI UN CONTENITORE MDI. Il numero non ha
+     * un significato suo: conta solo che sia piu' alto di quello degli altri.
+     * Attivare una finestra le da' il prossimo numero di un contatore che
+     * sale, e il disegno le mette in fila da quello piu' basso. E' l'unico
+     * modo in cui «portala davanti» resta un'operazione da una riga anche
+     * quando le finestre sono otto. */
+    unsigned int  z;
+
     /* La sveglia periodica: vedi ex_sveglia(). Zero = nessuna. */
     unsigned int  sveglia_ms;
     unsigned int  sveglia_quando;    /* uptime_ms della prossima */
@@ -77,6 +85,8 @@ typedef struct {
 #define CL_SCORRI      14
 #define CL_COMBO       15
 #define CL_TAB         16
+#define CL_MDI         17
+#define CL_MDIFIGLIO   18
 
 /* =============================================================================
  * ! AGGIUNGERE UN CONTROLLO: I SETTE POSTI, E SONO SEMPRE QUESTI
@@ -225,6 +235,10 @@ static ExFinestra g_combo_aperto = 0;
 /* A che punto del cursore si e' posato il dito: senza, il cursore salterebbe
  * col suo inizio sotto il puntatore al primo pixel di trascinamento. */
 static int g_scorri_presa = 0;
+
+/* La finestra MDI che si sta trascinando, e dove la si e' presa. */
+static ExFinestra g_mdi_trascina = 0;
+static int        g_mdi_dx = 0, g_mdi_dy = 0;
 
 /* =============================================================================
  * L'AREA DI TESTO MULTIRIGA — CL_AREA
@@ -654,8 +668,44 @@ static unsigned int classe_da_nome(const char *c)
     if (strcmp(c, "scorrimento")  == 0) return CL_SCORRI;
     if (strcmp(c, "combo")        == 0) return CL_COMBO;
     if (strcmp(c, "tab")          == 0) return CL_TAB;
+    if (strcmp(c, "mdi")          == 0) return CL_MDI;
+    if (strcmp(c, "mdifiglio")    == 0) return CL_MDIFIGLIO;
     return 0;
 }
+
+/* =============================================================================
+ * IL CONTENITORE MDI — finestre dentro una finestra
+ *
+ * ! UNA FINESTRA MDI NON E' UNA FINESTRA DEL SERVER, ed e' la decisione da cui
+ * discende tutto il resto. Il server sa di zone di pixel condivise: dargliene
+ * una per ogni finestra figlia vorrebbe dire una zona di memoria in piu' per
+ * ognuna, un giro di richieste a ogni apertura, e — soprattutto — finestre che
+ * possono uscire dal loro contenitore, perche' il server non sa che dovrebbero
+ * starci dentro. Qui il figlio e' un CONTROLLO come gli altri: pixel dentro la
+ * zona del padre, disegnati dalla libreria. E' la stessa scelta della tendina
+ * del menu, per le stesse ragioni.
+ *
+ * ! IL PREZZO E' DICHIARATO: un figlio non puo' uscire dal contenitore, e
+ * trascinandolo si ferma al bordo. Che e' esattamente quello che un MDI deve
+ * fare — ed e' il motivo per cui lo si vuole.
+ *
+ * ! IL TELAIO SI DISEGNA COME QUELLO DEL SERVER, con gli stessi numeri e gli
+ * stessi colori (drivers/wserver/wserver.c, funzione cornice): barra alta 20,
+ * bordo 2, il blu della barra attiva, il pulsante di chiusura che sporge con
+ * dentro il quadratino rosso. Due telai diversi nella stessa scrivania si
+ * notano subito, e chi guarda non saprebbe dire perche'.
+ * ============================================================================= */
+#define MDI_BARRA_H     20
+#define MDI_BORDO        2
+#define MDI_C_ATTIVA    0x001E4D7D
+#define MDI_C_INATTIVA  0x00808080
+#define MDI_C_TITOLO    0x00FFFFFF
+#define MDI_C_TIT_INA   0x00E0E0E0
+#define MDI_C_CHIUDI    0x00C04040
+#define MDI_C_FONDO     0x00505050  /* il fondo del contenitore, sotto tutto */
+
+/* Il contatore che decide chi sta davanti: vedi il campo `z` di Oggetto. */
+static unsigned int g_mdi_z = 0;
 
 /* Lo spostamento di un oggetto rispetto all'AREA DEL CLIENT della sua
  * finestra: i controlli possono stare dentro un riquadro, e allora si sommano
@@ -684,6 +734,15 @@ static void origine(Oggetto *o, int *ox, int *oy)
     while (p && p->padre) {
         x += p->x;
         y += p->y;
+        /* ! DENTRO UNA FINESTRA MDI SI PARTE DALL'AREA DEL CLIENT, non
+         * dall'angolo del telaio: chi mette un pulsante a (10,10) dentro una
+         * finestra figlia lo vuole a dieci pixel dal bordo di DENTRO, come in
+         * qualunque finestra. Senza questi due termini finirebbe sotto la
+         * barra del titolo, e ogni applicazione dovrebbe sommarli da se'. */
+        if (p->classe == CL_MDIFIGLIO) {
+            x += MDI_BORDO;
+            y += MDI_BARRA_H + MDI_BORDO;
+        }
         p = ogg(p->padre);
     }
     *ox = x; *oy = y;
@@ -795,9 +854,26 @@ void ex_fuoco(ExFinestra f)
 }
 
 /* Il prossimo controllo che accetta il fuoco, in ordine di creazione. */
+/* La finestra MDI che contiene questo oggetto, se ce n'e' una: definita piu'
+ * avanti, insieme alle altre di servizio dell'MDI. */
+static ExFinestra mdi_di(ExFinestra c);
+
+/* ! TAB GIRA DENTRO LA FINESTRA ATTIVA, non per tutta l'applicazione. In un
+ * MDI i controlli sono quelli di tutte le finestre messi insieme, e un Tab che
+ * uscisse dalla finestra su cui si sta lavorando per finire in una dietro
+ * sarebbe un fuoco che si perde: si vedrebbe un cursore lampeggiare in una
+ * finestra che non si sta guardando. Il giro si chiude dentro quella attiva. */
+static ExFinestra fuoco_mdi_di(ExFinestra f)
+{
+    Oggetto *r = radice(f);
+
+    return r ? mdi_di(r->fuoco) : 0;
+}
+
 static void fuoco_avanti(ExFinestra f)
 {
     Oggetto *r = radice(f);
+    ExFinestra dentro = fuoco_mdi_di(f);
     int i, partenza = -1, primo = -1;
 
     if (!r) return;
@@ -806,11 +882,60 @@ static void fuoco_avanti(ExFinestra f)
         if (!g_ogg[i].usato || g_ogg[i].padre == 0) continue;
         if (radice((ExFinestra)(i + 1)) != r) continue;
         if (!accetta_fuoco(&g_ogg[i])) continue;
+        if (mdi_di((ExFinestra)(i + 1)) != dentro) continue;
         if (primo < 0) primo = i;
         if ((ExFinestra)(i + 1) == r->fuoco) { partenza = i; continue; }
         if (partenza >= 0) { fuoco_metti(f, (ExFinestra)(i + 1)); return; }
     }
     if (primo >= 0) fuoco_metti(f, (ExFinestra)(primo + 1));
+}
+
+/* =============================================================================
+ * IL RITAGLIO — una finestra dentro una finestra deve stare dentro
+ *
+ * ! FINO A OGGI IL DISEGNO SI RITAGLIAVA SU UNA COSA SOLA: la zona di pixel
+ * della finestra di primo livello. Bastava, perche' un controllo sta dove chi
+ * scrive il programma l'ha messo e non si muove. Una finestra MDI si MUOVE, e
+ * puo' essere trascinata mezza fuori dal suo contenitore: senza ritaglio, la
+ * meta' di fuori si disegnerebbe sopra i controlli che stanno accanto al
+ * contenitore — e il difetto si vedrebbe solo trascinando.
+ *
+ * ! E' UNO SOLO E NON UNA PILA, apposta. Un ritaglio annidato servirebbe se il
+ * disegno fosse ricorsivo su piu' livelli di finestre dentro finestre; qui i
+ * livelli sono due — il contenitore e i suoi figli — e chi disegna calcola
+ * l'INTERSEZIONE dei due prima di posarlo. Una pila sarebbe un'altra struttura
+ * da svuotare quando qualcuno esce da un ramo per errore.
+ *
+ * ! IL COSTO E' UN CONFRONTO PER PIXEL QUANDO E' ACCESO, e zero quando e'
+ * spento — il caso di ogni finestra che non usa l'MDI.
+ * ============================================================================= */
+static int g_clip = 0;
+static int g_clip_x1, g_clip_y1, g_clip_x2, g_clip_y2;
+
+static void clip_metti(int x, int y, int w, int h)
+{
+    g_clip = 1;
+    g_clip_x1 = x; g_clip_y1 = y;
+    g_clip_x2 = x + w; g_clip_y2 = y + h;
+}
+
+/* L'intersezione con quello che c'e' gia': chi disegna dentro un figlio non
+ * deve ricordarsi del contenitore. */
+static void clip_stringi(int x, int y, int w, int h)
+{
+    if (!g_clip) { clip_metti(x, y, w, h); return; }
+    if (x > g_clip_x1) g_clip_x1 = x;
+    if (y > g_clip_y1) g_clip_y1 = y;
+    if (x + w < g_clip_x2) g_clip_x2 = x + w;
+    if (y + h < g_clip_y2) g_clip_y2 = y + h;
+}
+
+static void clip_togli(void) { g_clip = 0; }
+
+static int clip_dentro(int x, int y)
+{
+    if (!g_clip) return 1;
+    return x >= g_clip_x1 && y >= g_clip_y1 && x < g_clip_x2 && y < g_clip_y2;
 }
 
 /* -----------------------------------------------------------------------------
@@ -820,6 +945,7 @@ static void punto(Oggetto *r, int x, int y, unsigned int c)
 {
     if (!r || !r->pix) return;
     if (x < 0 || y < 0 || x >= r->w || y >= r->h) return;
+    if (!clip_dentro(x, y)) return;
     r->pix[(unsigned int)y * r->passo_px + (unsigned int)x] = c;
 }
 
@@ -852,6 +978,7 @@ static void punto_fuso(Oggetto *r, int x, int y, unsigned int c, unsigned int a)
 
     if (!r || !r->pix) return;
     if (x < 0 || y < 0 || x >= r->w || y >= r->h) return;
+    if (!clip_dentro(x, y)) return;
     if (a == 0) return;
 
     i = (unsigned int)y * r->passo_px + (unsigned int)x;
@@ -911,6 +1038,7 @@ void ex_pixmap(ExFinestra f, int x, int y, int w, int h,
         unsigned int *dst;
 
         if (ry < 0 || ry >= r->h) continue;
+        if (g_clip && (ry < g_clip_y1 || ry >= g_clip_y2)) continue;
 
         src = px + (unsigned int)j * passo;
         dst = r->pix + (unsigned int)ry * r->passo_px;
@@ -918,6 +1046,7 @@ void ex_pixmap(ExFinestra f, int x, int y, int w, int h,
         for (i = 0; i < w; i++) {
             int rx = x + i;
             if (rx < 0 || rx >= r->w) continue;
+            if (g_clip && (rx < g_clip_x1 || rx >= g_clip_x2)) continue;
             dst[rx] = src[i];
         }
     }
@@ -2195,6 +2324,109 @@ static int menu_tasto(ExFinestra f, unsigned int k, unsigned int *cmd)
 }
 
 /* =============================================================================
+ * MDI — le funzioni di servizio
+ *
+ * ! LA MISURA DI UNA FINESTRA FIGLIA E' QUELLA DI FUORI, telaio compreso, e
+ * QUI E' DIVERSA da una finestra di primo livello — dove w e h sono l'area del
+ * client e il telaio lo aggiunge il server INTORNO. La ragione e' che una
+ * finestra figlia si trascina dentro un contenitore e si deve fermare al
+ * bordo: con la misura di dentro, «sta dentro?» vorrebbe dire sommare il
+ * telaio a ogni confronto, in ogni punto in cui lo si chiede. Con la misura di
+ * fuori la domanda e' un rettangolo dentro un rettangolo.
+ * ============================================================================= */
+static void mdi_client(Oggetto *o, int *cx, int *cy, int *cw, int *ch)
+{
+    int ox, oy;
+
+    origine(o, &ox, &oy);
+    *cx = ox + o->x + MDI_BORDO;
+    *cy = oy + o->y + MDI_BARRA_H + MDI_BORDO;
+    *cw = o->w - 2 * MDI_BORDO;
+    *ch = o->h - MDI_BARRA_H - 2 * MDI_BORDO;
+    if (*cw < 0) *cw = 0;
+    if (*ch < 0) *ch = 0;
+}
+
+/* Il figlio davanti a tutti, cioe' quello con z piu' alto. Rende 0 se il
+ * contenitore e' vuoto. */
+static ExFinestra mdi_attivo(ExFinestra cont)
+{
+    ExFinestra   scelto = 0;
+    unsigned int zmax = 0;
+    int          i;
+
+    for (i = 0; i < OGGETTI_MAX; i++)
+        if (g_ogg[i].usato && g_ogg[i].classe == CL_MDIFIGLIO &&
+            g_ogg[i].padre == cont && (g_ogg[i].stile & EX_VISIBILE) &&
+            (scelto == 0 || g_ogg[i].z >= zmax)) {
+            scelto = (ExFinestra)(i + 1);
+            zmax   = g_ogg[i].z;
+        }
+    return scelto;
+}
+
+/* Il figlio piu' in alto che contiene il punto. */
+static ExFinestra mdi_figlio_in(ExFinestra cont, int x, int y)
+{
+    ExFinestra   scelto = 0;
+    unsigned int zmax = 0;
+    int          i, ox, oy;
+
+    for (i = 0; i < OGGETTI_MAX; i++) {
+        Oggetto *o = &g_ogg[i];
+
+        if (!o->usato || o->classe != CL_MDIFIGLIO || o->padre != cont) continue;
+        if (!(o->stile & EX_VISIBILE)) continue;
+
+        origine(o, &ox, &oy);
+        if (x < ox + o->x || x >= ox + o->x + o->w) continue;
+        if (y < oy + o->y || y >= oy + o->y + o->h) continue;
+
+        if (scelto == 0 || o->z >= zmax) {
+            scelto = (ExFinestra)(i + 1);
+            zmax   = o->z;
+        }
+    }
+    return scelto;
+}
+
+/* ! IL CONTENITORE SI CERCA RISALENDO, e non si tiene in una variabile: un
+ * programma puo' averne piu' d'uno — due pannelli affiancati, ognuno con le
+ * sue finestre — e una variabile sola sarebbe il limite piu' stupido da
+ * scoprire il giorno che serve il secondo. */
+static ExFinestra mdi_contenitore_in(ExFinestra f, int x, int y)
+{
+    int i, ox, oy;
+
+    for (i = 0; i < OGGETTI_MAX; i++) {
+        Oggetto *o = &g_ogg[i];
+
+        if (!o->usato || o->classe != CL_MDI) continue;
+        if (radice((ExFinestra)(i + 1)) != ogg(f)) continue;
+        if (!(o->stile & EX_VISIBILE)) continue;
+
+        origine(o, &ox, &oy);
+        if (x >= ox + o->x && x < ox + o->x + o->w &&
+            y >= oy + o->y && y < oy + o->y + o->h)
+            return (ExFinestra)(i + 1);
+    }
+    return 0;
+}
+
+/* La finestra MDI che contiene questo oggetto, se ce n'e' una. */
+static ExFinestra mdi_di(ExFinestra c)
+{
+    Oggetto *o = ogg(c);
+
+    while (o) {
+        if (o->classe == CL_MDIFIGLIO) return (ExFinestra)(o - g_ogg + 1);
+        if (!o->padre) break;
+        o = ogg(o->padre);
+    }
+    return 0;
+}
+
+/* =============================================================================
  * LA CATENA DEGLI STATI, E LA TAVOLOZZA
  *
  * ! COLORARE UNA RIGA VUOL DIRE SAPERE COME E' FINITA QUELLA PRIMA. Un
@@ -2883,6 +3115,66 @@ static void disegna_oggetto(Oggetto *o)
         break;
     }
 
+    /* =====================================================================
+     * ! IL FONDO DEL CONTENITORE E' SCURO E RIENTRA, e non e' un vezzo: dice
+     * che li' dentro non si disegna e non si clicca — e' il ripiano su cui
+     * stanno le finestre. Un contenitore grigio come il pannello non si
+     * distinguerebbe dal resto della finestra, e chi guarda non capirebbe
+     * perche' una finestra figlia si ferma a quel bordo.
+     * ================================================================= */
+    case CL_MDI:
+        ex_riempi(o->padre, x, y, o->w, o->h, MDI_C_FONDO);
+        ex_incavo(o->padre, x, y, o->w, o->h);
+        break;
+
+    /* =====================================================================
+     * ! IL TELAIO E' QUELLO DEL SERVER, con gli stessi numeri e gli stessi
+     * colori: barra alta venti, bordo due, il blu dell'attiva e il grigio
+     * delle altre, il pulsante di chiusura che sporge col quadratino rosso
+     * dentro. Due telai diversi nella stessa scrivania si notano subito, e chi
+     * guarda non saprebbe dire perche'.
+     *
+     * ! E LA BARRA DICE CHI E' ATTIVA, che in un MDI e' l'unica cosa che lo
+     * dice: le finestre figlie non si sovrappongono per forza — in un IDE
+     * stanno spesso affiancate — quindi «sta davanti» non si vede. Il colore
+     * della barra si', anche da lontano.
+     * ================================================================= */
+    case CL_MDIFIGLIO: {
+        ExFinestra io = (ExFinestra)(o - g_ogg + 1);
+        int attiva = (mdi_attivo(o->padre) == io);
+        int cx, cy, cw, ch;
+
+        mdi_client(o, &cx, &cy, &cw, &ch);
+
+        ex_riempi(o->padre, x, y, o->w, o->h, EX_GRIGIO);
+        ex_rilievo(o->padre, x, y, o->w, o->h);
+        ex_incavo(o->padre, x + 1, y + 1, o->w - 2, o->h - 2);
+
+        ex_riempi(o->padre, x + MDI_BORDO, y + MDI_BORDO,
+                  o->w - 2 * MDI_BORDO, MDI_BARRA_H,
+                  attiva ? MDI_C_ATTIVA : MDI_C_INATTIVA);
+        ex_rilievo(o->padre, x + MDI_BORDO, y + MDI_BORDO,
+                   o->w - 2 * MDI_BORDO, MDI_BARRA_H);
+        ex_scrivi(o->padre, x + MDI_BORDO + 5,
+                  y + MDI_BORDO + (MDI_BARRA_H - 16) / 2, o->titolo,
+                  attiva ? MDI_C_TITOLO : MDI_C_TIT_INA);
+
+        if (o->stile & EX_CHIUDI) {
+            int bl = MDI_BARRA_H - 4;
+            int bx = x + o->w - MDI_BORDO - bl - 1;
+            int by = y + MDI_BORDO + 2;
+
+            ex_riempi(o->padre, bx, by, bl, bl, EX_GRIGIO);
+            ex_rilievo(o->padre, bx, by, bl, bl);
+            ex_riempi(o->padre, bx + 4, by + 4, bl - 8, bl - 8, MDI_C_CHIUDI);
+            ex_incavo(o->padre, bx + 4, by + 4, bl - 8, bl - 8);
+        }
+
+        /* Il fondo del client: i controlli di dentro ci si disegnano sopra. */
+        ex_riempi(o->padre, cx, cy, cw, ch, EX_GRIGIO);
+        break;
+    }
+
     /* La barra dei menu. La TENDINA no: quella la disegna menu_sopra(), dopo
      * tutti gli altri controlli — vedi il commento li'. */
     case CL_MENU: {
@@ -2989,13 +3281,15 @@ static void combo_sopra(ExFinestra f)
  * rende l'indice della voce scelta AUMENTATO DI UNO, cosi' che zero voglia dire
  * «nessuna»: la voce zero e' una voce come le altre e non puo' fare da «no».
  * ============================================================================= */
-static int combo_clic(ExFinestra f, int x, int y, unsigned int *id, int *scelto)
+static int combo_clic(ExFinestra f, int x, int y, unsigned int *id, int *scelto,
+                      ExFinestra *quale)
 {
     Oggetto *o = ogg(g_combo_aperto);
     Voci    *V;
     int      tx, ty, tw, th;
 
     *scelto = 0;
+    *quale  = g_combo_aperto;
     if (!o || o->classe != CL_COMBO) return 0;
     if (radice(o->padre) != ogg(f)) return 0;
 
@@ -3017,9 +3311,214 @@ static int combo_clic(ExFinestra f, int x, int y, unsigned int *id, int *scelto)
     return 1;
 }
 
+/* =============================================================================
+ * ! I FIGLI DI UN CONTENITORE MDI NON SI DISEGNANO IN ORDINE DI CREAZIONE, ma
+ * dal z piu' basso al piu' alto: e' l'unico ordine in cui «portala davanti»
+ * vuol dire qualcosa. Per tutti gli altri controlli l'ordine resta quello di
+ * creazione, che e' l'unico che chi scrive l'applicazione puo' prevedere
+ * leggendo il proprio codice.
+ *
+ * ! E OGNI FIGLIO SI RITAGLIA DUE VOLTE: il telaio dentro il contenitore, il
+ * contenuto dentro l'area del client del figlio — che a sua volta e' gia'
+ * dentro il contenitore. Senza il primo, una finestra trascinata mezza fuori
+ * si disegna sui controlli accanto; senza il secondo, un'area di testo dentro
+ * una finestra piccola scrive sopra il telaio della finestra stessa.
+ * ============================================================================= */
+/* =============================================================================
+ * IL CLIC DENTRO UN CONTENITORE MDI
+ *
+ * ! ATTIVARE E POI FARE E' UN GESTO SOLO, e non due. Cliccando un pulsante di
+ * una finestra dietro, quel pulsante si preme: la finestra viene davanti E il
+ * clic arriva dove e' caduto. Chiedere due clic — uno per attivare, uno per
+ * fare — e' quello che fanno alcuni sistemi e che nessuno ha mai chiesto.
+ *
+ * Rende: 0 = non e' roba dell'MDI; 1 = consumato qui; 2 = attivata, e adesso il
+ * clic va ai controlli di quella finestra.
+ * ============================================================================= */
+static void mdi_fuoco_dentro(ExFinestra f, ExFinestra figlio)
+{
+    Oggetto *r = radice(f);
+    int i;
+
+    if (!r) return;
+    if (mdi_di(r->fuoco) == figlio) return;     /* c'e' gia' */
+
+    for (i = 0; i < OGGETTI_MAX; i++)
+        if (g_ogg[i].usato && accetta_fuoco(&g_ogg[i]) &&
+            mdi_di((ExFinestra)(i + 1)) == figlio) {
+            fuoco_metti(f, (ExFinestra)(i + 1));
+            return;
+        }
+    /* Una finestra senza controlli non si prende il fuoco: lasciarlo dov'era
+     * e' meglio che toglierlo a chi lo stava usando. */
+}
+
+/* =============================================================================
+ * ! CHI RICEVE UN COMANDO NATO DENTRO UNA FINESTRA MDI E' QUELLA FINESTRA, non
+ * l'applicazione. E' cio' che rende l'MDI utile invece che decorativo: ogni
+ * finestra figlia ha la sua procedura e si occupa dei suoi controlli, senza che
+ * una procedura sola debba smistare gli id di tutte.
+ *
+ * ! E SE LA FINESTRA FIGLIA NON HA UNA PROCEDURA, IL COMANDO VA COMUNQUE
+ * ALL'APPLICAZIONE. Chi apre una finestra figlia senza procedura sta usando
+ * l'MDI come un raggruppamento visivo — legittimo — e non deve scoprire che i
+ * suoi pulsanti hanno smesso di rispondere.
+ * ============================================================================= */
+static ExFinestra destinatario(ExFinestra controllo)
+{
+    ExFinestra fig = mdi_di(controllo);
+    Oggetto   *o   = ogg(fig);
+
+    if (fig && o && o->proc) return fig;
+    return radice_h(controllo);
+}
+
+/* Il comando che nasce da un TASTO: e' l'unico posto del toolkit in cui la
+ * procedura si chiama direttamente invece di passare per il ciclo dei
+ * messaggi, e adesso che il destinatario puo' essere una finestra figlia val
+ * la pena che sia scritto una volta sola. */
+static void manda_comando(ExFinestra controllo, unsigned int id, long lp)
+{
+    ExFinestra d = destinatario(controllo);
+    Oggetto   *o = ogg(d);
+
+    if (o && o->proc) o->proc(d, EXM_COMANDO, id, lp);
+}
+
+static int mdi_clic(ExFinestra f, int x, int y, ExFinestra *chiudi)
+{
+    ExFinestra cont = mdi_contenitore_in(f, x, y);
+    ExFinestra fig;
+    Oggetto   *o;
+    int        ox, oy, fx, fy;
+
+    *chiudi = 0;
+    if (cont == 0) return 0;
+
+    fig = mdi_figlio_in(cont, x, y);
+    if (fig == 0) return 1;             /* il ripiano vuoto: si consuma */
+
+    o = ogg(fig);
+    origine(o, &ox, &oy);
+    fx = ox + o->x;
+    fy = oy + o->y;
+
+    if (mdi_attivo(cont) != fig) o->z = ++g_mdi_z;
+    mdi_fuoco_dentro(f, fig);
+
+    /* La barra del titolo: chiudere, oppure prendere e trascinare. */
+    if (y < fy + MDI_BORDO + MDI_BARRA_H) {
+        if (o->stile & EX_CHIUDI) {
+            int bl = MDI_BARRA_H - 4;
+            int bx = fx + o->w - MDI_BORDO - bl - 1;
+            int by = fy + MDI_BORDO + 2;
+
+            if (x >= bx && x < bx + bl && y >= by && y < by + bl) {
+                *chiudi = fig;
+                return 1;
+            }
+        }
+        g_mdi_trascina = fig;
+        g_mdi_dx = x - fx;
+        g_mdi_dy = y - fy;
+        return 1;
+    }
+
+    return 2;                           /* dentro: il clic e' dei controlli */
+}
+
+/* Il trascinamento, con la finestra che si ferma ai bordi del contenitore. */
+static void mdi_sposta(ExFinestra fig, int x, int y)
+{
+    Oggetto *o = ogg(fig);
+    Oggetto *c;
+    int      ox, oy, nx, ny;
+
+    if (!o) return;
+    c = ogg(o->padre);
+    if (!c) return;
+
+    origine(o, &ox, &oy);
+    nx = x - g_mdi_dx - ox;
+    ny = y - g_mdi_dy - oy;
+
+    /* ! CI SI FERMA AL BORDO, e non e' una limitazione: e' la definizione di
+     * «dentro un contenitore». Una finestra che sporgesse verrebbe tagliata dal
+     * ritaglio del disegno, e si vedrebbe mezza — che sembra un difetto. */
+    if (nx < 0) nx = 0;
+    if (ny < 0) ny = 0;
+    if (nx + o->w > c->w) nx = c->w - o->w;
+    if (ny + o->h > c->h) ny = c->h - o->h;
+    if (nx < 0) nx = 0;
+    if (ny < 0) ny = 0;
+
+    o->x = nx;
+    o->y = ny;
+}
+
+static void disegna_figli(ExFinestra padre);
+
+static void disegna_mdi(ExFinestra cont)
+{
+    Oggetto *c = ogg(cont);
+    int      ox, oy, cx0, cy0;
+    unsigned int fatti = 0;
+
+    if (!c) return;
+    origine(c, &ox, &oy);
+    cx0 = ox + c->x;
+    cy0 = oy + c->y;
+
+    /* Selezione per z: si cerca ogni volta il piu' basso non ancora
+     * disegnato. Con otto finestre sono sessantaquattro confronti, e non
+     * serve un vettore ordinato da tenere aggiornato a ogni clic. */
+    for (;;) {
+        int          scelto = -1;
+        unsigned int zmin = 0;
+        int          i;
+
+        for (i = 0; i < OGGETTI_MAX; i++) {
+            Oggetto *o = &g_ogg[i];
+
+            if (!o->usato || o->classe != CL_MDIFIGLIO || o->padre != cont)
+                continue;
+            if (!(o->stile & EX_VISIBILE)) continue;
+            if (fatti & (1u << (i & 31))) continue;
+            if (scelto < 0 || o->z < zmin) { scelto = i; zmin = o->z; }
+        }
+        if (scelto < 0) break;
+        fatti |= (1u << (scelto & 31));
+
+        {
+            Oggetto *o = &g_ogg[scelto];
+            int      fx, fy, fcx, fcy, fcw, fch;
+
+            origine(o, &fx, &fy);
+            fx += o->x;
+            fy += o->y;
+
+            clip_metti(cx0, cy0, c->w, c->h);
+            disegna_oggetto(o);
+
+            mdi_client(o, &fcx, &fcy, &fcw, &fch);
+            clip_metti(cx0, cy0, c->w, c->h);
+            clip_stringi(fcx, fcy, fcw, fch);
+            disegna_figli((ExFinestra)(scelto + 1));
+            clip_togli();
+        }
+    }
+    clip_togli();
+}
+
 static void disegna_figli(ExFinestra padre)
 {
     int i;
+
+    {
+        Oggetto *p = ogg(padre);
+
+        if (p && p->classe == CL_MDI) { disegna_mdi(padre); return; }
+    }
 
     /* ! IN ORDINE DI CREAZIONE, e non e' indifferente: chi si sovrappone a
      * qualcosa creato prima ci finisce sopra, che e' l'unico ordine che chi
@@ -3110,6 +3609,14 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
         Oggetto *r = radice(padre);
         if (r && r->fuoco == 0 && accetta_fuoco(o))
             r->fuoco = (ExFinestra)(i + 1);
+    }
+
+    /* ! UNA FINESTRA FIGLIA NASCE DAVANTI, che e' quello che si aspetta
+     * chiunque apra una finestra: se nascesse dietro a quelle gia' aperte,
+     * aprirne una sembrerebbe non aver fatto niente. */
+    if (cl == CL_MDIFIGLIO) {
+        o->z = ++g_mdi_z;
+        return (ExFinestra)(i + 1);
     }
 
     if (cl == CL_AREA) {
@@ -3358,10 +3865,12 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
 
 void ex_distruggi(ExFinestra f)
 {
-    Oggetto *o = ogg(f);
+    Oggetto   *o = ogg(f);
+    ExFinestra rh;
     int i;
 
     if (!o) return;
+    rh = radice_h(f);           /* prima di sganciare: dopo non si trova piu' */
 
     for (i = 0; i < OGGETTI_MAX; i++)
         if (g_ogg[i].usato && g_ogg[i].padre == f)
@@ -3388,8 +3897,22 @@ void ex_distruggi(ExFinestra f)
         if (V) V->usato = 0;
     }
     if (g_combo_aperto == f) g_combo_aperto = 0;
+    if (g_mdi_trascina == f) g_mdi_trascina = 0;
 
     o->usato = 0;
+
+    /* ! IL FUOCO NON RESTA SU QUALCOSA CHE NON C'E' PIU'. Chiudendo una
+     * finestra MDI si distrugge anche il controllo che aveva i tasti: il
+     * numero resterebbe scritto nella radice, e Tab ricomincerebbe da capo
+     * senza che si capisca perche'. Si sposta su cio' che e' rimasto davanti. */
+    {
+        Oggetto *r = ogg(rh);
+
+        if (r && r->fuoco && !ogg(r->fuoco)) {
+            r->fuoco = 0;
+            fuoco_avanti(rh);
+        }
+    }
 }
 
 void ex_titolo(ExFinestra f, const char *s)
@@ -3653,6 +4176,30 @@ static int lista_colonna(Oggetto *co, int x)
     return (c < 0) ? 0 : c;
 }
 
+/* ! QUEL CHE SI VEDE SI PUO' TOCCARE, E QUEL CHE E' COPERTO NO. Un controllo
+ * dentro una finestra MDI si raggiunge solo se QUELLA finestra e' quella davanti
+ * nel punto in cui si e' cliccato, e solo dentro la sua area del client: un
+ * pulsante di una finestra dietro, o la meta' di un pulsante che sporge fuori
+ * dal telaio, si vedono tagliati e non si devono poter premere. Senza questo
+ * controllo il clic passerebbe ATTRAVERSO le finestre, che e' il difetto che si
+ * nota per primo e si spiega per ultimo. */
+static int mdi_toccabile(Oggetto *o, ExFinestra padre, int x, int y)
+{
+    ExFinestra mio = mdi_di((ExFinestra)(o - g_ogg + 1));
+    Oggetto   *f;
+    int        cx, cy, cw, ch;
+
+    if (mio == 0) return 1;                 /* non sta in un MDI: sempre */
+
+    f = ogg(mio);
+    if (!f) return 0;
+    if (mdi_figlio_in(f->padre, x, y) != mio) return 0;   /* ce n'e' una sopra */
+
+    (void)padre;
+    mdi_client(f, &cx, &cy, &cw, &ch);
+    return x >= cx && x < cx + cw && y >= cy && y < cy + ch;
+}
+
 static ExFinestra controllo_in(ExFinestra padre, int x, int y)
 {
     int i;
@@ -3665,6 +4212,11 @@ static ExFinestra controllo_in(ExFinestra padre, int x, int y)
         if (radice((ExFinestra)(i + 1)) != ogg(padre)) continue;
         if (o->classe == CL_RIQUADRO || o->classe == CL_SEPARATORE ||
             o->classe == CL_ETICHETTA || o->classe == CL_INTESTAZIONE) continue;
+        /* Il contenitore e le finestre figlie li tratta mdi_clic, prima di qui:
+         * se arrivassero fin qui si prenderebbero il clic al posto dei loro
+         * stessi controlli. */
+        if (o->classe == CL_MDI || o->classe == CL_MDIFIGLIO) continue;
+        if (!mdi_toccabile(o, padre, x, y)) continue;
 
         origine(o, &ox, &oy);
         if (x >= ox + o->x && x < ox + o->x + o->w &&
@@ -3993,9 +4545,7 @@ static int tasto_al_fuoco(ExFinestra f, unsigned int k)
     if (o->classe == CL_SPUNTA || o->classe == CL_RADIO) {
         if (c != ' ') return 0;
         spunta_scatta(o);
-        if (r->proc)
-            r->proc(radice_h((ExFinestra)(o - g_ogg + 1)),
-                    EXM_COMANDO, o->id, (long)o->valore);
+        manda_comando((ExFinestra)(o - g_ogg + 1), o->id, (long)o->valore);
         return 1;
     }
 
@@ -4015,9 +4565,8 @@ static int tasto_al_fuoco(ExFinestra f, unsigned int k)
         default: return 0;
         }
 
-        if (o->valore != prima && r->proc)
-            r->proc(radice_h((ExFinestra)(o - g_ogg + 1)),
-                    EXM_COMANDO, o->id, (long)o->valore);
+        if (o->valore != prima)
+            manda_comando((ExFinestra)(o - g_ogg + 1), o->id, (long)o->valore);
         return 1;
     }
 
@@ -4042,9 +4591,8 @@ static int tasto_al_fuoco(ExFinestra f, unsigned int k)
         default: return 0;
         }
 
-        if (V->sel != prima && r->proc)
-            r->proc(radice_h((ExFinestra)(o - g_ogg + 1)),
-                    EXM_COMANDO, o->id, (long)V->sel);
+        if (V->sel != prima)
+            manda_comando((ExFinestra)(o - g_ogg + 1), o->id, (long)V->sel);
         return 1;
     }
 
@@ -4061,9 +4609,8 @@ static int tasto_al_fuoco(ExFinestra f, unsigned int k)
         default: return 0;
         }
 
-        if (V->sel != prima && r->proc)
-            r->proc(radice_h((ExFinestra)(o - g_ogg + 1)),
-                    EXM_COMANDO, o->id, (long)V->sel);
+        if (V->sel != prima)
+            manda_comando((ExFinestra)(o - g_ogg + 1), o->id, (long)V->sel);
         return 1;
     }
 
@@ -4091,15 +4638,11 @@ static int tasto_al_fuoco(ExFinestra f, unsigned int k)
          * imparare un secondo modo di sentire le cose. */
         case '\n':
         case '\r': {
-            Oggetto *r = radice(o->padre);
             lista_segui(L);
             /* L'ultimo argomento e' il bit che EX_APRIRE legge. I bit della
              * colonna restano a zero, ed e' cio' che fa dire -1 a EX_COL: da
-             * tastiera una colonna non c'e'. E' l'unico posto del toolkit che
-             * manda un comando venuto da un tasto. */
-            if (r && r->proc)
-                r->proc(radice_h((ExFinestra)(o - g_ogg + 1)),
-                        EXM_COMANDO, o->id, 1);
+             * tastiera una colonna non c'e'. */
+            manda_comando((ExFinestra)(o - g_ogg + 1), o->id, 1);
             return 1;
         }
 
@@ -4407,6 +4950,17 @@ static int prendi_msg(ExMsg *m, int bloccante)
         case WIN_EV_MOUSE_MOSSO: {
             Oggetto *co = ogg(g_trascinato);
 
+            /* ! LA FINESTRA TRASCINATA SI SERVE PRIMA DI TUTTO, e non sveglia
+             * l'applicazione: spostare una finestra figlia e' lavoro del
+             * toolkit, e un messaggio per ogni pixel percorso sarebbe un fiume
+             * per chi non lo guarda — la stessa regola della selezione in una
+             * lista. */
+            if (g_mdi_trascina) {
+                mdi_sposta(g_mdi_trascina, (int)e.x, (int)e.y);
+                ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                continue;
+            }
+
             /* ! IL PULSANTE SI ALZA SE IL DITO SCIVOLA VIA, e si riabbassa se
              * torna. Senza, «scivolare fuori per annullare» resterebbe una
              * cosa vera che non si vede: il pulsante continuerebbe a sembrare
@@ -4448,6 +5002,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
                                 g_scorri_presa);
                 if (co->valore == prima) continue;
                 ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                m->finestra = destinatario(g_trascinato);
                 m->msg = EXM_COMANDO;
                 m->wp  = co->id;
                 m->lp  = (long)co->valore;
@@ -4469,6 +5024,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
         }
 
         case WIN_EV_MOUSE_SU: {
+            g_mdi_trascina = 0;
             /* =================================================================
              * ! QUI PARTE IL COMANDO, ed e' il rilascio a farlo partire.
              *
@@ -4484,6 +5040,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
              * ============================================================= */
             unsigned int cmd_id = 0;
             long         cmd_lp = 0;
+            ExFinestra   cmd_h  = 0;
             {
                 Oggetto *pr = ogg(g_premuto);
                 int j, cambiato = 0;
@@ -4493,6 +5050,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
                      pr->classe == CL_RADIO) &&
                     controllo_in(f, (int)e.x, (int)e.y) == g_premuto) {
                     cmd_id = pr->id;
+                    cmd_h  = g_premuto;
                     /* ! E' QUI CHE LA SPUNTA CAMBIA, non alla pressione: fino
                      * a questo istante il dito poteva ancora scivolare via. */
                     if (pr->classe != CL_PULSANTE) {
@@ -4517,6 +5075,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
              * lo stesso, o domani lo sceglie il caso. */
             if (cmd_id) {
                 g_trascinato = 0;
+                m->finestra = destinatario(cmd_h);
                 m->msg = EXM_COMANDO;
                 m->wp  = cmd_id;
                 m->lp  = cmd_lp;
@@ -4532,8 +5091,11 @@ static int prendi_msg(ExMsg *m, int bloccante)
                 Oggetto *co = ogg(g_trascinato);
                 Lista   *L  = co ? lista_di(co) : 0;
 
+                ExFinestra quale = g_trascinato;
+
                 g_trascinato = 0;
                 if (L && L->sel != g_tras_sel) {
+                    m->finestra = destinatario(quale);
                     m->msg = EXM_COMANDO;
                     m->wp  = co->id;
                     m->lp  = 0;         /* ne' aperto ne' su una colonna */
@@ -4575,14 +5137,41 @@ static int prendi_msg(ExMsg *m, int bloccante)
             {
                 unsigned int cid = 0;
                 int scelto = 0;
+                ExFinestra quale = 0;
 
-                if (combo_clic(f, (int)e.x, (int)e.y, &cid, &scelto)) {
+                if (combo_clic(f, (int)e.x, (int)e.y, &cid, &scelto, &quale)) {
                     ex_procedura_base(f, EXM_DISEGNA, 0, 0);
                     if (!scelto) continue;
+                    m->finestra = destinatario(quale);
                     m->msg = EXM_COMANDO;
                     m->wp  = cid;
                     m->lp  = (long)(scelto - 1);
                     return 1;
+                }
+            }
+
+            /* ! E POI IL CONTENITORE MDI: una finestra figlia copre quel che
+             * ha sotto esattamente come una tendina, e in piu' il clic la
+             * porta davanti. Vedi mdi_clic. */
+            {
+                ExFinestra chiudi = 0;
+                int esito = mdi_clic(f, (int)e.x, (int)e.y, &chiudi);
+
+                if (esito != 0) {
+                    ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                    if (chiudi) {
+                        /* ! LA CHIUSURA VA ALLA FINESTRA FIGLIA, non
+                         * all'applicazione: e' lei che deve poter dire di no,
+                         * o salvare prima di andarsene. Chi non la gestisce
+                         * ricade sulla base, che la distrugge — e NON esce dal
+                         * programma, come farebbe per una finestra vera. */
+                        m->finestra = chiudi;
+                        m->msg = EXM_CHIUDI;
+                        m->wp  = 0;
+                        m->lp  = 0;
+                        return 1;
+                    }
+                    if (esito == 1) continue;
                 }
             }
 
@@ -4653,6 +5242,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
                     continue;               /* preso il cursore: niente e' cambiato */
                 }
                 ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                m->finestra = destinatario(c);
                 m->msg = EXM_COMANDO;
                 m->wp  = co->id;
                 m->lp  = (long)co->valore;
@@ -4666,6 +5256,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
                 if (k < 0 || !V) continue;
                 V->sel = (unsigned int)k;
                 ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                m->finestra = destinatario(c);
                 m->msg = EXM_COMANDO;
                 m->wp  = co->id;
                 m->lp  = (long)k;
@@ -4708,6 +5299,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
                 L = lista_di(co);
                 g_tras_sel = L ? L->sel : 0;
                 ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                m->finestra = destinatario(c);
                 m->msg = EXM_COMANDO;
                 m->wp  = co->id;
                 /* La colonna sta nei bit alti aumentata di uno, il «aprire»
@@ -4777,10 +5369,32 @@ long ex_procedura_base(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 
     switch (msg) {
     case EXM_CHIUDI:
+        /* ! CHIUDERE UNA FINESTRA FIGLIA NON CHIUDE IL PROGRAMMA, e la
+         * distinzione va fatta QUI perche' e' qui che finisce chi non gestisce
+         * la chiusura: senza, il pulsante di chiusura di una finestra MDI
+         * spegnerebbe l'applicazione intera — un difetto che si scopre al primo
+         * clic e costa il lavoro non salvato. */
+        if (o->classe == CL_MDIFIGLIO) {
+            ExFinestra r = radice_h(f);
+
+            ex_distruggi(f);
+            ex_procedura_base(r, EXM_DISEGNA, 0, 0);
+            return 0;
+        }
         ex_esci(0);
         return 0;
 
     case EXM_DISEGNA:
+        /* ! UNA FINESTRA FIGLIA NON SI RIDISEGNA DA SOLA: i suoi pixel stanno
+         * nella zona del padre e sopra di lei possono essercene altre.
+         * Ridisegnare solo lei la farebbe comparire davanti a chi la copre — e
+         * `ex_riempi(f, 0, 0, ...)` per giunta dipingerebbe nell'angolo della
+         * finestra vera, non nel suo. Si ridisegna tutto. */
+        if (o->classe == CL_MDIFIGLIO) {
+            ex_procedura_base(radice_h(f), EXM_DISEGNA, 0, 0);
+            return 0;
+        }
+
         /* Lo sfondo dell'area del client, e poi i controlli sopra. */
         ex_riempi(f, 0, 0, o->w, o->h, EX_GRIGIO);
         disegna_figli(f);
@@ -4911,6 +5525,35 @@ const char *ex_lista_testo(ExFinestra f, unsigned int i)
 
     if (!L || i >= L->n) return "";
     return &L->voci[i * LISTA_TESTO_MAX];
+}
+
+/* =============================================================================
+ * IL CONTENITORE MDI — l'API
+ *
+ * ! DUE FUNZIONI SOLE, e non serve altro: chiedere chi e' davanti e portarci
+ * qualcuno. Aprire, chiudere, spostare e ridisegnare sono gia' `ex_crea`,
+ * `ex_distruggi`, `ex_sposta` e il ridisegno di sempre — una finestra figlia e'
+ * un oggetto come gli altri, ed e' il motivo per cui l'MDI e' costato poche
+ * righe invece di un sottosistema.
+ * ============================================================================= */
+ExFinestra ex_mdi_attivo(ExFinestra contenitore)
+{
+    Oggetto *o = ogg(contenitore);
+
+    if (!o || o->classe != CL_MDI) return 0;
+    return mdi_attivo(contenitore);
+}
+
+void ex_mdi_attiva(ExFinestra figlio)
+{
+    Oggetto *o = ogg(figlio);
+
+    if (!o || o->classe != CL_MDIFIGLIO) return;
+    o->z = ++g_mdi_z;
+
+    /* ! E IL FUOCO LA SEGUE, come quando la si porta davanti col mouse: una
+     * finestra attiva che non riceve i tasti e' attiva solo di nome. */
+    mdi_fuoco_dentro(radice_h(figlio), figlio);
 }
 
 /* =============================================================================

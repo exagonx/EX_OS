@@ -84,6 +84,47 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### Windows inside a window: the MDI container
+
+**tested** — from the CD, in QEMU, with `winprova -m`: three windows in one
+container, each with its own procedure, and every command on the serial line with
+the **name of the procedure** that received it.
+
+**A child window is not a server window**, and everything else follows from that.
+Giving each one a real window would mean a shared memory zone apiece, a round of
+requests on every open, and — above all — windows that can leave the container,
+because the server does not know they should stay inside. Here a child is a
+*control*: pixels inside the parent's zone, drawn by the library. The price is
+stated — drag one and it stops at the edge — and that is exactly what an MDI is
+for.
+
+**Clipping, which four months of toolkit had never needed.** Drawing was clipped
+against one thing only: the top-level window's pixel zone. That was enough,
+because a control sits where you put it and does not move. An MDI window *moves*,
+and a control larger than its client area would draw over the frame — a defect
+you only see while dragging, which is to say late. Now every child is drawn
+clipped twice: its frame inside the container, its contents inside its own client
+area. It costs one comparison per pixel when on, and **nothing when off** — that
+is, in every window that does not use MDI.
+
+**Activate-then-act is a single gesture.** Click a button in a window that is
+behind, and that button is pressed: the window comes to the front *and* the click
+lands where it fell.
+
+**Commands go to the child's procedure**, not the application's: that is what
+makes MDI useful rather than decorative. And if the child has no procedure they
+go to the application as always.
+
+**Closing a child does not close the program** — the distinction lives where
+whoever does not handle the close ends up, or that button would shut the whole
+application down on the first click. And **Tab cycles inside the active window**:
+otherwise you would watch a cursor blink in a window you are not looking at.
+
+> **For the second time in one day the eye was wrong.** After F6 two windows
+> looked active; measured, the pixels were `(30,77,125)` and `(128,128,128)` —
+> active and inactive, exactly. The rule, now that it has cost twice: look at a
+> screenshot to work out *where* to look, then count the pixels.
+
 ### Coloured text, and a second text area that was never born
 
 **tested** — from the CD, in QEMU, with `winprova -c`: a piece of C chosen to

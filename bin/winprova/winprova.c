@@ -17,6 +17,7 @@
  *                              barra di scorrimento, elenco a discesa, tab
  *     /bin/winprova -c         l'area del codice: testo colorato, l'elenco
  *                              delle funzioni, e il cursore che ci salta
+ *     /bin/winprova -m         il contenitore MDI: tre finestre dentro una
  *
  * ! NON E' UN ESEMPIO, E' UNA PROVA. Serve a far vedere che ogni controllo si
  * disegna dove e' stato messo e che un clic su un pulsante torna indietro come
@@ -30,7 +31,7 @@
 #include "exwin.h"
 
 /* +0.001 a ogni modifica: `winprova -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("winprova", "0.003");
+EX_VERSIONE("winprova", "0.006");
 
 #define ID_OK       101
 #define ID_ANNULLA  102
@@ -48,6 +49,12 @@ EX_VERSIONE("winprova", "0.003");
 
 #define ID_FUNZ     301     /* l'elenco delle funzioni, a sinistra */
 #define ID_CODICE   302
+
+/* Le tre finestre dentro il contenitore MDI, e i loro controlli. */
+#define ID_BOT_A    401
+#define ID_SPU_A    402
+#define ID_LIS_B    403
+#define ID_BOT_C    404
 
 #define PASSO       40      /* di quanto cresce a ogni freccia */
 
@@ -343,6 +350,144 @@ static int finestra_codice(void)
     return 0;
 }
 
+/* =============================================================================
+ * LA PROVA DEL CONTENITORE MDI
+ *
+ * ! OGNI FINESTRA FIGLIA HA LA SUA PROCEDURA, ed e' la cosa che questa prova
+ * deve far vedere: il comando di un pulsante dentro la finestra A arriva alla
+ * procedura di A, non a quella dell'applicazione. Sulla seriale si legge QUALE
+ * procedura ha ricevuto cosa, che e' un fatto e non un'impressione.
+ *
+ * ! E LA CHIUSURA SI INTERCETTA. La finestra C dice di no la prima volta e si
+ * lascia chiudere la seconda: e' il caso vero — «hai delle modifiche non
+ * salvate» — e la prova che EXM_CHIUDI arriva alla figlia e non spegne il
+ * programma.
+ * ========================================================================== */
+static ExFinestra g_mdi_cont, g_mdi_a, g_mdi_b, g_mdi_c, g_mdi_eco;
+static int g_c_insiste = 0;
+
+static void mdi_dico(const char *chi, unsigned int wp, long lp)
+{
+    char riga[96];
+
+    sprintf(riga, "winprova: %s: comando id=%u valore=%ld", chi, wp, lp);
+    log_seriale(riga);
+    ex_testo_metti(g_mdi_eco, riga + 10);
+}
+
+static long proc_a(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+{
+    if (msg == EXM_COMANDO) { mdi_dico("finestra A", wp, lp); return 0; }
+    return ex_procedura_base(f, msg, wp, lp);
+}
+
+static long proc_b(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+{
+    if (msg == EXM_COMANDO) { mdi_dico("finestra B", wp, lp); return 0; }
+    return ex_procedura_base(f, msg, wp, lp);
+}
+
+static long proc_c(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+{
+    if (msg == EXM_COMANDO) { mdi_dico("finestra C", wp, lp); return 0; }
+
+    if (msg == EXM_CHIUDI && !g_c_insiste) {
+        g_c_insiste = 1;
+        log_seriale("winprova: finestra C: la prima chiusura si rifiuta");
+        ex_testo_metti(g_mdi_eco, "la finestra C ha detto di no: riprova");
+        return 0;                       /* gestito: non si chiude */
+    }
+    return ex_procedura_base(f, msg, wp, lp);
+}
+
+static long procedura_mdi(ExFinestra f, unsigned int msg, unsigned int wp,
+                          long lp)
+{
+    if (msg == EXM_COMANDO) { mdi_dico("applicazione", wp, lp); return 0; }
+    if (msg == EXM_CHIUDI)  { ex_esci(0); return 0; }
+
+    /* ! F6 GIRA FRA LE FINESTRE, e lo fa l'APPLICAZIONE con ex_mdi_attiva: il
+     * toolkit non si prende una scorciatoia di tastiera per conto suo. Quale
+     * tasto sia — F6, Ctrl+Tab, una voce di menu — e' una decisione di chi
+     * scrive il programma, e il toolkit non deve indovinarla. */
+    if (msg == EXM_TASTO && (wp & KBD_KEY_MASK) == KBD_K_F(6)) {
+        ExFinestra ora = ex_mdi_attivo(g_mdi_cont);
+        ExFinestra giro[3];
+        int i, k = 0;
+
+        giro[0] = g_mdi_a; giro[1] = g_mdi_b; giro[2] = g_mdi_c;
+        for (i = 0; i < 3; i++) if (giro[i] == ora) k = i;
+        for (i = 1; i <= 3; i++)
+            if (giro[(k + i) % 3] != 0) {
+                ex_mdi_attiva(giro[(k + i) % 3]);
+                log_seriale("winprova: F6: girata la finestra attiva");
+                break;
+            }
+        return 0;
+    }
+    return ex_procedura_base(f, msg, wp, lp);
+}
+
+static int finestra_mdi(void)
+{
+    ExFinestra f;
+
+    f = ex_crea("finestra", "Contenitore MDI",
+                EX_TITOLO | EX_BORDO | EX_CHIUDI, 30, 30, 700, 470,
+                0, 0, procedura_mdi);
+    if (f == 0) {
+        printf("winprova: il server a finestre non risponde.\n");
+        printf("          Avvialo con:  exwin\n");
+        return 1;
+    }
+
+    g_mdi_cont = ex_crea("mdi", "", EX_FIGLIO, 6, 6, 688, 430, f, 0, 0);
+    if (g_mdi_cont == 0) {
+        printf("winprova: il contenitore MDI non si e' aperto\n");
+        return 1;
+    }
+
+    g_mdi_eco = ex_crea("etichetta", "nessun comando ancora", EX_FIGLIO,
+                        8, 444, 680, 16, f, 0, 0);
+
+    g_mdi_a = ex_crea("mdifiglio", "A - sorgente.c", EX_TITOLO | EX_CHIUDI,
+                      10, 10, 320, 180, g_mdi_cont, 0, proc_a);
+    ex_crea("pulsante", "compila", EX_FIGLIO, 12, 12, 90, 26,
+            g_mdi_a, ID_BOT_A, 0);
+    ex_crea("spunta", "salva prima", EX_FIGLIO, 12, 48, 180, 20,
+            g_mdi_a, ID_SPU_A, 0);
+
+    g_mdi_b = ex_crea("mdifiglio", "B - proprieta'", EX_TITOLO | EX_CHIUDI,
+                      150, 90, 300, 200, g_mdi_cont, 0, proc_b);
+    {
+        /* ! LA LISTA E' PIU' ALTA DELL'AREA DEL CLIENT, ed e' apposta: senza
+         * ritaglio si disegnerebbe oltre il telaio della finestra B e sopra a
+         * quel che c'e' sotto. Tagliata al bordo di dentro, e' la prova che il
+         * ritaglio del disegno funziona — e la prova che serve, perche' e'
+         * l'unico modo di sbagliare che non si vede finche' non capita. */
+        ExFinestra l = ex_crea("lista", "", EX_FIGLIO, 8, 8, 280, 220,
+                               g_mdi_b, ID_LIS_B, 0);
+
+        ex_lista_aggiungi(l, "nome");
+        ex_lista_aggiungi(l, "posizione");
+        ex_lista_aggiungi(l, "misura");
+        ex_lista_aggiungi(l, "colore");
+    }
+
+    g_mdi_c = ex_crea("mdifiglio", "C - uscita", EX_TITOLO | EX_CHIUDI,
+                      60, 230, 360, 150, g_mdi_cont, 0, proc_c);
+    ex_crea("etichetta", "chiudimi: la prima volta dico di no", EX_FIGLIO,
+            12, 14, 330, 16, g_mdi_c, 0, 0);
+    ex_crea("pulsante", "esegui", EX_FIGLIO, 12, 40, 90, 26,
+            g_mdi_c, ID_BOT_C, 0);
+
+    ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+    printf("winprova: tre finestre dentro un contenitore MDI.\n"
+           "          Trascina una barra del titolo, clicca una finestra\n"
+           "          dietro, prova a chiudere la C.\n");
+    return 0;
+}
+
 static long procedura(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
@@ -394,13 +539,14 @@ int main(int argc, char **argv)
     ExFinestra f, riq;
     ExMsg m;
     const char *sfondo = 0;
-    int i, terminale = 0, nuovi = 0, codice = 0;
+    int i, terminale = 0, nuovi = 0, codice = 0, mdi = 0;
 
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-s") == 0 && i + 1 < argc) sfondo = argv[++i];
         if (strcmp(argv[i], "-t") == 0) terminale = 1;
         if (strcmp(argv[i], "-n") == 0) nuovi = 1;
         if (strcmp(argv[i], "-c") == 0) codice = 1;
+        if (strcmp(argv[i], "-m") == 0) mdi = 1;
     }
 
     if (nuovi) {
@@ -411,6 +557,12 @@ int main(int argc, char **argv)
 
     if (codice) {
         if (finestra_codice() != 0) return 1;
+        while (ex_prendi_msg(&m)) ex_smista(&m);
+        return 0;
+    }
+
+    if (mdi) {
+        if (finestra_mdi() != 0) return 1;
         while (ex_prendi_msg(&m)) ex_smista(&m);
         return 0;
     }

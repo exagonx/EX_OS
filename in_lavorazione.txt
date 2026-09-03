@@ -131,17 +131,32 @@ progetto sopravvive — e' il punto in cui VB6 si rompeva:
     - Il coloritore non distingue una VARIABILE da un nome qualunque: per farlo
       servirebbe sapere che cosa e' stato dichiarato, cioe' un'altra cosa.
 
+! E C'E' IL CONTENITORE MDI: «mdi» e «mdifiglio», con il telaio uguale a quello
+  del server, il trascinamento che si ferma al bordo, i comandi che vanno alla
+  procedura della finestra figlia, Tab che gira dentro quella attiva e il
+  ritaglio del disegno. Restano i LIMITI DICHIARATI:
+
+    - UNA FINESTRA FIGLIA NON SI RIDIMENSIONA col mouse: non ha la presa
+      nell'angolo. Si sposta e basta. ex_misura funziona da programma.
+    - NIENTE RIDUCI A ICONA, INGRANDISCI, RIPRISTINA. Per un IDE «ingrandisci»
+      e' quello che serve per primo, e vuole ricordare la misura di prima.
+    - NIENTE MENU «FINESTRA» ne' disposizione a cascata o affiancata: sono
+      quattro conti sui rettangoli, e li fa l'applicazione con ex_sposta.
+    - LA SCORCIATOIA PER GIRARE FRA LE FINESTRE LA SCEGLIE L'APPLICAZIONE
+      (ex_mdi_attiva): il toolkit non si prende un tasto per conto suo.
+
+! IL TOOLKIT E' PRONTO: il prossimo lavoro e' exide stesso — la finestra con le
+  tre aree, il file di progetto, la generazione del sorgente. Quel che resta qui
+  sotto sono rifiniture del toolkit, non pezzi che mancano per cominciare.
+
 Quel che manca, in ordine:
 
- 1. IL CONTENITORE MDI. Non esiste ne' nel toolkit ne' nel server a finestre.
-    Serve a tenere le finestre di exide raggruppate sotto una sola.
-
- 2. LE FRECCE DENTRO UN GRUPPO DI RADIO. Oggi si scatta con la barra
+ 1. LE FRECCE DENTRO UN GRUPPO DI RADIO. Oggi si scatta con la barra
     spaziatrice e si gira con Tab. La convenzione completa e' «Tab entra nel
     gruppo, le frecce muovono dentro, Tab esce»: meta' di quella convenzione e'
     peggio di niente, quindi o si fa tutta o si lascia questa.
 
- 3. IL LIMITE DELLE VOCI: trentadue voci da trentadue caratteri per combo e
+ 2. IL LIMITE DELLE VOCI: trentadue voci da trentadue caratteri per combo e
     tab, sei controlli a voci per programma (VOCI_* in exwin.c). Chi ne vuole
     di piu' oggi deve usare una «lista».
 

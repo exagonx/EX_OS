@@ -213,6 +213,8 @@ typedef long (*ExProcedura)(ExFinestra, unsigned int, unsigned int, long);
  *     "lista"         un elenco che scorre, con una riga scelta
  *     "areatesto"     un'area di testo multiriga, con il cursore
  *     "terminale"     una griglia di testo con dentro un programma
+ *     "mdi"           il contenitore: un ripiano su cui stanno le finestre
+ *     "mdifiglio"     una finestra dentro un contenitore MDI
  *     "spunta"        una casella da spuntare, con la sua scritta accanto
  *     "radio"         una scelta fra fratelli: accenderne uno spegne gli altri
  *     "scorrimento"   una barra: verticale o orizzontale secondo la FORMA
@@ -506,6 +508,49 @@ void ex_pixmap(ExFinestra f, int x, int y, int w, int h,
  * Rende 1 se l'ha disegnata, 0 se il formato non e' (ancora) riconosciuto.
  * --------------------------------------------------------------------------- */
 int ex_immagine(ExFinestra f, const char *percorso, int x, int y);
+
+/* =============================================================================
+ * IL CONTENITORE MDI — finestre dentro una finestra
+ *
+ *     ExFinestra cont = ex_crea("mdi", "", EX_FIGLIO, 0, 24, 800, 500, f, 0, 0);
+ *     ExFinestra ed   = ex_crea("mdifiglio", "sorgente.c",
+ *                               EX_TITOLO | EX_CHIUDI,
+ *                               10, 10, 400, 300, cont, 0, proc_editor);
+ *     ex_crea("areacodice", "", EX_FIGLIO, 4, 4, 380, 260, ed, ID_COD, 0);
+ *
+ * ! UNA FINESTRA FIGLIA NON E' UNA FINESTRA DEL SERVER: e' un controllo, con i
+ * suoi pixel dentro la zona del padre e disegnato dalla libreria. Da questo
+ * discende tutto il resto — non puo' uscire dal contenitore (e trascinandola si
+ * ferma al bordo), non compare nella barra delle applicazioni, e se ne possono
+ * aprire quante ne stanno negli oggetti senza chiedere niente al server.
+ *
+ * ! LA MISURA E' QUELLA DI FUORI, telaio compreso, e QUI E' DIVERSO da una
+ * finestra di primo livello — dove w e h sono l'area del client e il telaio lo
+ * aggiunge il server intorno. La ragione e' che una finestra figlia si trascina
+ * e si deve fermare al bordo del contenitore: con la misura di dentro, «ci
+ * sta?» vorrebbe dire sommare il telaio a ogni confronto. Il client e' 4 pixel
+ * piu' stretto e 24 piu' basso.
+ *
+ * ! I CONTROLLI DENTRO PARTONO DALL'AREA DEL CLIENT, come in qualunque
+ * finestra: un pulsante a (10,10) sta a dieci pixel dal bordo di dentro, non
+ * sotto la barra del titolo.
+ *
+ * ! E I COMANDI DEI SUOI CONTROLLI VANNO ALLA SUA PROCEDURA, non a quella
+ * dell'applicazione: e' cio' che rende l'MDI utile invece che decorativo — ogni
+ * finestra si occupa dei suoi controlli, senza una procedura sola che smisti
+ * gli id di tutte. Se la finestra figlia non ha una procedura, i comandi vanno
+ * all'applicazione come sempre.
+ *
+ * ! IL PULSANTE DI CHIUSURA MANDA EXM_CHIUDI ALLA FINESTRA FIGLIA, e chi non lo
+ * gestisce se la vede distrutta — NON esce dal programma, come farebbe una
+ * finestra vera. Chi ha da salvare intercetta quel messaggio.
+ *
+ * ! TAB GIRA DENTRO LA FINESTRA ATTIVA. In un MDI i controlli sono quelli di
+ * tutte le finestre messi insieme, e un Tab che ne uscisse lascerebbe un
+ * cursore che lampeggia in una finestra che non si sta guardando.
+ * ============================================================================= */
+ExFinestra ex_mdi_attivo(ExFinestra contenitore);
+void       ex_mdi_attiva(ExFinestra figlio);
 
 /* -----------------------------------------------------------------------------
  * La spunta e il radio: acceso o spento

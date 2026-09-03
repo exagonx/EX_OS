@@ -134,6 +134,8 @@ static struct {
     void         (*area_vai)(ExFinestra, unsigned int, unsigned int);
     void         (*area_colora)(ExFinestra, ExColora, void *);
     unsigned int (*colora_c)(void *, const char *, unsigned char *, unsigned int);
+    ExFinestra   (*mdi_attivo)(ExFinestra);
+    void         (*mdi_attiva)(ExFinestra);
 } P;
 
 static void *chiedi(const ExLibTesta *t, const char *nome)
@@ -270,6 +272,8 @@ static void assicura(void)
     P.colora_c      = (unsigned int (*)(void *, const char *, unsigned char *,
                                         unsigned int))
                       chiedi(t, "ex_colora_c");
+    P.mdi_attivo    = (ExFinestra (*)(ExFinestra)) chiedi(t, "ex_mdi_attivo");
+    P.mdi_attiva    = (void (*)(ExFinestra))       chiedi(t, "ex_mdi_attiva");
 
     P.pronto = 1;
 }
@@ -441,3 +445,6 @@ void ex_area_colora(ExFinestra c, ExColora fn, void *dato)
 unsigned int ex_colora_c(void *dato, const char *riga, unsigned char *ruoli,
                          unsigned int stato)
 { assicura(); return P.colora_c(dato, riga, ruoli, stato); }
+
+ExFinestra ex_mdi_attivo(ExFinestra c) { assicura(); return P.mdi_attivo(c); }
+void       ex_mdi_attiva(ExFinestra c) { assicura(); P.mdi_attiva(c); }
