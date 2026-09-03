@@ -52,7 +52,7 @@
 
 /* +0.001 a ogni modifica, aggiunta o prova: `exide -version` la stampa.
  * Vedi EX_VERSIONE in libc.h; la stessa stringa la mostra «Informazioni su». */
-#define VERSIONE_APP "0.005"
+#define VERSIONE_APP "0.006"
 EX_VERSIONE("exide", VERSIONE_APP);
 
 /* -----------------------------------------------------------------------------
@@ -63,6 +63,9 @@ EX_VERSIONE("exide", VERSIONE_APP);
 #define ID_VALORE      12   /* la casella in cui si scrive il valore */
 #define ID_APPLICA     13
 #define ID_ELIMINA     14
+#define ID_FORM        15   /* l'elenco a discesa delle maschere */
+#define ID_FORM_NUOVA  16
+#define ID_FORM_TOGLI  17
 
 #define ID_NUOVO      901
 #define ID_APRI       902
@@ -168,13 +171,14 @@ static const Strumento g_strum[] = {
 /* =============================================================================
  * IL DISEGNO — i controlli messi sulla maschera
  * ============================================================================= */
-#define CTRL_MAX   48
+#define CTRL_MAX   64
 #define NOME_MAX   24
 #define TESTO_MAX  48
 
 typedef struct {
     int          usato;
     int          tipo;              /* quale riga di g_strum */
+    int          form;              /* di quale maschera fa parte */
     char         nome[NOME_MAX];
     char         testo[TESTO_MAX];
     int          x, y, w, h;        /* dentro la maschera */
@@ -186,9 +190,61 @@ static Ctrl g_ctrl[CTRL_MAX];
 static int  g_sel = -1;             /* il controllo scelto, -1 = nessuno */
 static int  g_strum_sel = -1;       /* lo strumento armato, -1 = nessuno */
 
-/* La maschera: la finestra che si sta disegnando. */
-static char g_form_titolo[TESTO_MAX] = "Finestra";
-static int  g_form_w = 400, g_form_h = 260;
+/* =============================================================================
+ * LE MASCHERE — piu' di una, dal 3 settembre 2026
+ *
+ * ! I CONTROLLI RESTANO IN UN ELENCO SOLO, con dentro il numero della maschera
+ * a cui appartengono. L'altra strada — un elenco di controlli dentro ogni
+ * maschera — sembra piu' ordinata e costa di piu' in ogni punto che oggi
+ * funziona: il nome libero, l'id libero e il giro che assicura gli handler
+ * guardano TUTTI i controlli del programma, non quelli di una maschera, e con
+ * gli elenchi annidati diventerebbero due cicli invece di uno. Un campo in
+ * piu' e un `continue` dove si disegna: e' tutta la differenza.
+ *
+ * ! I NOMI RESTANO UNICI IN TUTTO IL PROGRAMMA, non dentro la maschera. Il
+ * nome di un controllo diventa un `#define ID_...`, una variabile `h_...` e
+ * un nome di funzione in finestra.h, che e' un file solo: due «Pulsante1» in
+ * due maschere diverse sarebbero due definizioni con lo stesso nome. Non
+ * serve controllarlo da nessuna parte proprio perche' id_libero() e il
+ * generatore di nomi guardano gia' tutto l'elenco.
+ *
+ * ! LA MASCHERA 0 E' QUELLA PRINCIPALE E NON SI TOGLIE. E' l'unica che il
+ * programma generato apre da solo (finestra_crea, che sta scritto dentro il
+ * main di finestra.c da quando exide esiste): togliere quella vorrebbe dire
+ * un programma senza finestre.
+ * ============================================================================= */
+#define FORM_MAX   8
+
+typedef struct {
+    int  usato;
+    char nome[NOME_MAX];            /* diventa un nome di funzione: unico */
+    char titolo[TESTO_MAX];         /* quel che si legge nella barra */
+    int  w, h;
+} Form;
+
+static Form g_form[FORM_MAX];
+static int  g_form_sel = 0;         /* quale si sta disegnando */
+
+/* ! LA PRIMA TIENE I NOMI DI SEMPRE — `g_form`, `finestra_crea()`,
+ * `finestra_proc()` — e le altre no. Non e' un'incoerenza: il finestra.c di
+ * ogni progetto gia' scritto chiama `finestra_crea()` dal suo main, e quel
+ * file exide non lo riscrive MAI. Cambiare quei tre nomi per simmetria
+ * vorrebbe dire che ogni progetto fatto prima di oggi non compila piu'. */
+static int form_e_principale(int f) { return f == 0; }
+
+/* La maschera che si sta disegnando adesso. */
+static Form *forma(void) { return &g_form[g_form_sel]; }
+
+/* Il valore di partenza, uguale per la prima e per quelle aggiunte dopo. */
+static void form_azzera(Form *F, const char *nome, const char *titolo)
+{
+    memset(F, 0, sizeof(*F));
+    F->usato = 1;
+    strncpy(F->nome, nome, NOME_MAX - 1);
+    strncpy(F->titolo, titolo, TESTO_MAX - 1);
+    F->w = 400;
+    F->h = 260;
+}
 
 /* Il progetto. */
 static char g_prog_dir[PERC_MAX]  = "";     /* la directory del progetto */
@@ -197,6 +253,7 @@ static int  g_sporco = 0;                   /* c'e' qualcosa da salvare */
 
 /* Le finestre e i controlli di exide. */
 static ExFinestra g_f, g_lst_strum, g_lst_prop, g_val, g_stato, g_menu;
+static ExFinestra g_cmb_form;       /* l'elenco a discesa delle maschere */
 
 /* L'area della maschera dentro la finestra di exide. */
 #define TELA_X   164
@@ -379,15 +436,25 @@ static void disegna_tela(void)
     ex_incavo(g_f, TELA_X, TELA_Y, TELA_W, TELA_H);
 
     /* La maschera: telaio, barra del titolo, area del client. */
-    ex_riempi(g_f, TELA_X + 6, TELA_Y + 6, g_form_w + 4, g_form_h + 24,
+    ex_riempi(g_f, TELA_X + 6, TELA_Y + 6, forma()->w + 4, forma()->h + 24,
               EX_GRIGIO);
-    ex_rilievo(g_f, TELA_X + 6, TELA_Y + 6, g_form_w + 4, g_form_h + 24);
-    ex_riempi(g_f, TELA_X + 8, TELA_Y + 8, g_form_w, 20, EX_BLU);
-    ex_scrivi(g_f, TELA_X + 13, TELA_Y + 10, g_form_titolo, EX_BIANCO);
-    ex_riempi(g_f, ox, oy, g_form_w, g_form_h, EX_GRIGIO);
+    ex_rilievo(g_f, TELA_X + 6, TELA_Y + 6, forma()->w + 4, forma()->h + 24);
+    ex_riempi(g_f, TELA_X + 8, TELA_Y + 8, forma()->w, 20, EX_BLU);
+    ex_scrivi(g_f, TELA_X + 13, TELA_Y + 10, forma()->titolo, EX_BIANCO);
+    ex_riempi(g_f, ox, oy, forma()->w, forma()->h, EX_GRIGIO);
 
+    /* ! SI DISEGNA UNA MASCHERA PER VOLTA, e non e' un ripiego rispetto a
+     * mostrarle tutte insieme dentro un contenitore MDI. Il ripiano e' 436x396
+     * e una maschera nasce 400x260: due finestre di quella misura, li' dentro,
+     * si coprirebbero quasi per intero e si passerebbe il tempo a spostarle per
+     * vedere quella sotto. E si disegna una cosa sola per volta anche perche'
+     * i controlli qui sono DISEGNATI, non vivi (vedi disegna_controllo): due
+     * maschere insieme vorrebbero dire decidere a ogni clic in quale delle due
+     * e' caduto, che e' lavoro in piu' per una cosa che non serve a chi
+     * disegna — si lavora su una finestra per volta comunque. */
     for (i = 0; i < CTRL_MAX; i++)
-        if (g_ctrl[i].usato) disegna_controllo(&g_ctrl[i], ox, oy);
+        if (g_ctrl[i].usato && g_ctrl[i].form == g_form_sel)
+            disegna_controllo(&g_ctrl[i], ox, oy);
 
     if (g_sel >= 0 && g_ctrl[g_sel].usato)
         disegna_maniglie(&g_ctrl[g_sel], ox, oy);
@@ -435,6 +502,27 @@ static void prop_valore(int k, char *out, unsigned int max)
     }
 }
 
+/* Le proprieta' della MASCHERA, che si vedono quando non c'e' nessun controllo
+ * scelto. Il nome c'e' da quando le maschere sono piu' d'una: e' quello che
+ * diventa `opzioni_crea()` nel codice generato, quindi si deve poter cambiare. */
+#define FPROP_N  4
+
+static const char *const g_fprop_nome[FPROP_N] = {
+    "nome", "titolo", "larghezza", "altezza"
+};
+
+static void fprop_valore(int k, char *out, unsigned int max)
+{
+    out[0] = '\0';
+    switch (k) {
+    case 0: strncpy(out, forma()->nome, max - 1);   out[max - 1] = '\0'; break;
+    case 1: strncpy(out, forma()->titolo, max - 1); out[max - 1] = '\0'; break;
+    case 2: sprintf(out, "%d", forma()->w); break;
+    case 3: sprintf(out, "%d", forma()->h); break;
+    default: break;
+    }
+}
+
 static void prop_mostra(void)
 {
     int k;
@@ -443,10 +531,17 @@ static void prop_mostra(void)
     ex_lista_svuota(g_lst_prop);
 
     if (g_sel < 0 || !g_ctrl[g_sel].usato) {
-        ex_lista_aggiungi(g_lst_prop, "titolo");
-        ex_lista_aggiungi(g_lst_prop, "larghezza");
-        ex_lista_aggiungi(g_lst_prop, "altezza");
-        ex_testo_metti(g_val, "");
+        /* ! CON IL VALORE ACCANTO, come per i controlli. Prima qui c'erano i
+         * soli nomi: si vedeva «larghezza» e bisognava sceglierla per sapere
+         * quanto fosse, mentre due righe piu' in la' le proprieta' di un
+         * pulsante si leggevano tutte insieme. */
+        for (k = 0; k < FPROP_N; k++) {
+            fprop_valore(k, val, sizeof(val));
+            sprintf(riga, "%-10s %s", g_fprop_nome[k], val);
+            ex_lista_aggiungi(g_lst_prop, riga);
+        }
+        fprop_valore((int)ex_lista_scelta(g_lst_prop), val, sizeof(val));
+        ex_testo_metti(g_val, val);
         return;
     }
 
@@ -476,6 +571,10 @@ static void nome_pulito(char *s)
     if (s[0] >= '0' && s[0] <= '9') s[0] = '_';
 }
 
+/* Definita piu' avanti, con le altre operazioni sulle maschere: qui serve
+ * perche' cambiare il nome dalla scheda deve aggiornare anche l'elenco. */
+static void form_mostra(void);
+
 static void prop_applica(void)
 {
     Ctrl *c;
@@ -485,16 +584,55 @@ static void prop_applica(void)
 
     if (g_sel < 0 || !g_ctrl[g_sel].usato) {
         /* Senza controllo scelto le proprieta' sono quelle della maschera. */
-        if (k == 0) {
-            strncpy(g_form_titolo, v, TESTO_MAX - 1);
-            g_form_titolo[TESTO_MAX - 1] = '\0';
-        } else {
+        switch (k) {
+        case 0:
+            /* ! IL NOME DELLA MASCHERA DIVENTA UN NOME DI FUNZIONE, come
+             * quello di un controllo: stessa ripulitura, per la stessa
+             * ragione. E due maschere non possono chiamarsi uguale, o il
+             * generatore scriverebbe due volte la stessa funzione. */
+            if (v[0] == '\0') { dico("il nome non puo' essere vuoto"); return; }
+            {
+                char nuovo[NOME_MAX];
+                int  i;
+
+                strncpy(nuovo, v, NOME_MAX - 1);
+                nuovo[NOME_MAX - 1] = '\0';
+                nome_pulito(nuovo);
+
+                /* ! «finestra» E' PRENOTATO DALLA PRINCIPALE. I suoi nomi
+                 * generati sono finestra_crea() e finestra_proc() (vedi
+                 * form_crea_fn): una maschera secondaria chiamata cosi'
+                 * genererebbe le stesse due funzioni una seconda volta, e a
+                 * fermarsi sarebbe il compilatore su un file che nessuno ha
+                 * scritto a mano. */
+                if (!form_e_principale(g_form_sel) &&
+                    strcmp(nuovo, "finestra") == 0) {
+                    dico("«finestra» e' il nome della maschera principale");
+                    return;
+                }
+                for (i = 0; i < FORM_MAX; i++)
+                    if (i != g_form_sel && g_form[i].usato &&
+                        strcmp(g_form[i].nome, nuovo) == 0) {
+                        dico("c'e' gia' una maschera con questo nome");
+                        return;
+                    }
+                strcpy(forma()->nome, nuovo);
+            }
+            break;
+        case 1:
+            strncpy(forma()->titolo, v, TESTO_MAX - 1);
+            forma()->titolo[TESTO_MAX - 1] = '\0';
+            break;
+        default:
             n = atoi(v);
             if (n < 80)   n = 80;
             if (n > 1000) n = 1000;
-            if (k == 1) g_form_w = n; else g_form_h = n;
+            if (k == 2) forma()->w = n; else forma()->h = n;
+            break;
         }
         g_sporco = 1;
+        form_mostra();
+        prop_mostra();
         dico("maschera aggiornata");
         return;
     }
@@ -550,7 +688,7 @@ static int ctrl_in(int x, int y)
     for (i = CTRL_MAX - 1; i >= 0; i--) {
         Ctrl *c = &g_ctrl[i];
 
-        if (!c->usato) continue;
+        if (!c->usato || c->form != g_form_sel) continue;
         if (x >= ox + c->x && x < ox + c->x + c->w &&
             y >= oy + c->y && y < oy + c->y + c->h)
             return i;
@@ -583,6 +721,7 @@ static int aggiungi(int tipo, int x, int y)
     memset(c, 0, sizeof(*c));
     c->usato = 1;
     c->tipo  = tipo;
+    c->form  = g_form_sel;          /* nasce nella maschera che si sta disegnando */
     c->x = arrotonda(x);
     c->y = arrotonda(y);
     c->w = g_strum[tipo].w;
@@ -606,6 +745,122 @@ static int aggiungi(int tipo, int x, int y)
 
     g_sporco = 1;
     return i;
+}
+
+/* =============================================================================
+ * LE MASCHERE — aggiungerne una, sceglierla, toglierla
+ * ============================================================================= */
+static void form_mostra(void)
+{
+    char riga[NOME_MAX + TESTO_MAX + 8];
+    int  i, quale = 0, n = 0;
+
+    if (g_cmb_form == 0) return;    /* si chiama anche prima che esista */
+
+    ex_voci_svuota(g_cmb_form);
+    for (i = 0; i < FORM_MAX; i++) {
+        if (!g_form[i].usato) continue;
+        /* Il nome e' quello che conta nel codice generato; il titolo e' quello
+         * che si legge a schermo. Qui servono tutti e due: si sceglie col
+         * primo e ci si riconosce col secondo. */
+        sprintf(riga, "%s - %s", g_form[i].nome, g_form[i].titolo);
+        ex_voce_aggiungi(g_cmb_form, riga);
+        if (i == g_form_sel) quale = n;
+        n++;
+    }
+    ex_voce_scegli(g_cmb_form, (unsigned int)quale);
+}
+
+/* Dalla riga scelta nell'elenco alla maschera: non coincidono appena se ne
+ * toglie una di mezzo, perche' l'elenco salta i buchi e l'indice no. */
+static int form_da_riga(int riga)
+{
+    int i, n = 0;
+
+    for (i = 0; i < FORM_MAX; i++) {
+        if (!g_form[i].usato) continue;
+        if (n == riga) return i;
+        n++;
+    }
+    return 0;
+}
+
+static void form_scegli(int quale)
+{
+    if (quale < 0 || quale >= FORM_MAX || !g_form[quale].usato) return;
+
+    g_form_sel = quale;
+    g_sel = -1;                     /* la scelta non attraversa le maschere */
+    form_mostra();
+    prop_mostra();
+    disegna_tela();
+    ex_aggiorna(g_f);
+    dico(g_form[quale].titolo);
+}
+
+static void form_nuova(void)
+{
+    char nome[NOME_MAX], titolo[TESTO_MAX];
+    int  i, k, n;
+
+    for (i = 0; i < FORM_MAX; i++) if (!g_form[i].usato) break;
+    if (i == FORM_MAX) { dico("non c'e' posto per un'altra maschera"); return; }
+
+    /* Il nome: «finestra2», «finestra3»... il primo numero libero. */
+    for (n = 2; ; n++) {
+        int preso = 0;
+
+        sprintf(nome, "finestra%d", n);
+        for (k = 0; k < FORM_MAX; k++)
+            if (g_form[k].usato && strcmp(g_form[k].nome, nome) == 0)
+                { preso = 1; break; }
+        if (!preso) break;
+    }
+    sprintf(titolo, "Finestra %d", n);
+
+    form_azzera(&g_form[i], nome, titolo);
+    g_sporco = 1;
+    form_scegli(i);
+    dico("maschera nuova: si apre dal codice con <nome>_crea()");
+}
+
+static void form_togli(void)
+{
+    int i, quanti = 0;
+
+    /* ! LA PRINCIPALE NON SI TOGLIE: e' quella che il programma apre da solo. */
+    if (form_e_principale(g_form_sel)) {
+        dico("la maschera principale non si toglie");
+        return;
+    }
+
+    for (i = 0; i < CTRL_MAX; i++)
+        if (g_ctrl[i].usato && g_ctrl[i].form == g_form_sel) quanti++;
+
+    /* ! SI CHIEDE, PERCHE' PORTA VIA ANCHE I CONTROLLI. Cancellare un
+     * controllo per sbaglio costa un controllo; cancellare una maschera ne
+     * costa dieci, e finche' non c'e' Annulla non si torna indietro. Il
+     * codice scritto a mano nei suoi handler resta comunque in finestra.c —
+     * exide non cancella mai quello. */
+    {
+        char avviso[160];
+
+        sprintf(avviso, "Togliere la maschera «%s» e i %d controlli che ci "
+                        "stanno dentro?\n\nGli handler gia' scritti in "
+                        "finestra.c restano dove sono.",
+                g_form[g_form_sel].titolo, quanti);
+        if (!ex_dlg_conferma("Togliere la maschera", avviso, "Togli", "Lascia"))
+            return;
+    }
+
+    for (i = 0; i < CTRL_MAX; i++)
+        if (g_ctrl[i].usato && g_ctrl[i].form == g_form_sel)
+            g_ctrl[i].usato = 0;
+
+    g_form[g_form_sel].usato = 0;
+    g_sporco = 1;
+    form_scegli(0);
+    dico("maschera tolta");
 }
 
 /* =============================================================================
@@ -718,27 +973,44 @@ static int progetto_crea(const char *dir)
  * e le virgolette vogliono dire cosa succede a chi ne scrive una nel testo.
  * Mettendolo per ultimo la domanda non esiste: il resto della riga E' il testo.
  * --------------------------------------------------------------------------- */
+/* ! LE MASCHERE SONO PIU' D'UNA, E IL FORMATO NON E' CAMBIATO PER QUESTO. Una
+ * riga «F» apre una maschera e le righe «c» che seguono sono sue, fino alla
+ * «F» dopo: e' lo stesso ordine che il file aveva gia' quando la maschera era
+ * una sola. La riga vecchia si chiamava «f» e non aveva il nome; si continua a
+ * leggerla (vedi dis_carica) e si smette di scriverla, cosi' un progetto fatto
+ * prima di oggi si apre senza accorgersi di niente.
+ *
+ * ! IL NOME PRIMA DEL TITOLO, e non e' un dettaglio: il titolo puo' contenere
+ * spazi ed e' per questo che sta in fondo alla riga. Il nome no — nome_pulito()
+ * lo garantisce — quindi puo' stare in mezzo. */
 static int dis_salva(void)
 {
     char p[PERC_MAX], riga[256];
-    int  fd, i;
+    int  fd, i, k;
 
     percorso(p, "finestra.dis");
     fd = open(p, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd < 0) { dico("non riesco a scrivere finestra.dis"); return 0; }
 
-    sprintf(riga, "# exide 0.001 - lo scrive e lo legge solo exide\n"
-                  "f %d %d %s\n", g_form_w, g_form_h, g_form_titolo);
+    sprintf(riga, "# exide 0.002 - lo scrive e lo legge solo exide\n");
     write(fd, riga, strlen(riga));
 
-    for (i = 0; i < CTRL_MAX; i++) {
-        Ctrl *c = &g_ctrl[i];
+    for (k = 0; k < FORM_MAX; k++) {
+        if (!g_form[k].usato) continue;
 
-        if (!c->usato) continue;
-        sprintf(riga, "c %s %s %u %d %d %d %d %d %s\n",
-                g_strum[c->tipo].classe, c->nome, c->id,
-                c->x, c->y, c->w, c->h, c->evento, c->testo);
+        sprintf(riga, "F %s %d %d %s\n",
+                g_form[k].nome, g_form[k].w, g_form[k].h, g_form[k].titolo);
         write(fd, riga, strlen(riga));
+
+        for (i = 0; i < CTRL_MAX; i++) {
+            Ctrl *c = &g_ctrl[i];
+
+            if (!c->usato || c->form != k) continue;
+            sprintf(riga, "c %s %s %u %d %d %d %d %d %s\n",
+                    g_strum[c->tipo].classe, c->nome, c->id,
+                    c->x, c->y, c->w, c->h, c->evento, c->testo);
+            write(fd, riga, strlen(riga));
+        }
     }
     close(fd);
     return 1;
@@ -760,6 +1032,8 @@ static int dis_carica(void)
 {
     char p[PERC_MAX], buf[512], riga[256], w[64];
     int  fd, n, i;
+    int  corrente = 0;          /* la maschera a cui appartengono le «c» */
+    int  vista_una = 0;         /* la prima «F» riempie la principale */
     unsigned int col = 0;
 
     percorso(p, "finestra.dis");
@@ -767,6 +1041,10 @@ static int dis_carica(void)
     if (fd < 0) return 0;
 
     memset(g_ctrl, 0, sizeof(g_ctrl));
+    memset(g_form, 0, sizeof(g_form));
+    form_azzera(&g_form[0], "principale", "Finestra");
+    g_form_sel = 0;
+    corrente = 0;
     g_sel = -1;
 
     while ((n = (int)read(fd, buf, sizeof(buf))) > 0) {
@@ -783,14 +1061,47 @@ static int dis_carica(void)
             if (riga[0] == '#' || riga[0] == '\0') continue;
             s = parola(riga, w, sizeof(w));
 
+            /* La riga vecchia, senza nome: e' sempre la maschera principale.
+             * Un file scritto prima del 3 settembre 2026 ha solo questa. */
             if (strcmp(w, "f") == 0) {
-                s = parola(s, w, sizeof(w)); g_form_w = atoi(w);
-                s = parola(s, w, sizeof(w)); g_form_h = atoi(w);
-                strncpy(g_form_titolo, s, TESTO_MAX - 1);
-                g_form_titolo[TESTO_MAX - 1] = '\0';
+                s = parola(s, w, sizeof(w)); g_form[0].w = atoi(w);
+                s = parola(s, w, sizeof(w)); g_form[0].h = atoi(w);
+                strncpy(g_form[0].titolo, s, TESTO_MAX - 1);
+                g_form[0].titolo[TESTO_MAX - 1] = '\0';
+                corrente = 0;
+                continue;
+            }
+
+            /* La riga nuova: nome, misura, titolo. La prima riempie la
+             * principale — che c'e' gia' — e le altre aprono una maschera. */
+            if (strcmp(w, "F") == 0) {
+                int k;
+
+                if (!vista_una) { k = 0; vista_una = 1; }
+                else {
+                    for (k = 0; k < FORM_MAX; k++) if (!g_form[k].usato) break;
+                    /* ! PIU' DI FORM_MAX: SI SALTA LA MASCHERA E ANCHE I SUOI
+                     * CONTROLLI. Lasciando `corrente` dov'era, le righe «c»
+                     * che seguono finirebbero nella maschera PRECEDENTE —
+                     * controlli che spuntano dentro una finestra che non e'
+                     * la loro, che e' peggio di non vederli affatto. */
+                    if (k == FORM_MAX) { corrente = -1; continue; }
+                }
+
+                memset(&g_form[k], 0, sizeof(g_form[k]));
+                g_form[k].usato = 1;
+                s = parola(s, g_form[k].nome, NOME_MAX);
+                s = parola(s, w, sizeof(w)); g_form[k].w = atoi(w);
+                s = parola(s, w, sizeof(w)); g_form[k].h = atoi(w);
+                strncpy(g_form[k].titolo, s, TESTO_MAX - 1);
+                g_form[k].titolo[TESTO_MAX - 1] = '\0';
+                if (g_form[k].nome[0] == '\0')
+                    sprintf(g_form[k].nome, "finestra%d", k + 1);
+                corrente = k;
                 continue;
             }
             if (strcmp(w, "c") != 0) continue;
+            if (corrente < 0) continue;     /* la sua maschera non c'e' entrata */
 
             {
                 int k, tipo = -1;
@@ -808,6 +1119,7 @@ static int dis_carica(void)
                 memset(c, 0, sizeof(*c));
                 c->usato = 1;
                 c->tipo  = tipo;
+                c->form  = corrente;
                 s = parola(s, c->nome, NOME_MAX);
                 s = parola(s, w, sizeof(w)); c->id = (unsigned int)atoi(w);
                 s = parola(s, w, sizeof(w)); c->x = atoi(w);
@@ -855,10 +1167,35 @@ static void nome_handler(const Ctrl *c, char *out)
     sprintf(out, "%s_%s", c->nome, g_strum[c->tipo].evento[c->evento]);
 }
 
+/* ! I NOMI DELLA MASCHERA PRINCIPALE NON HANNO IL SUO NOME DENTRO, e quelli
+ * delle altre si'. Sarebbe piu' simmetrico chiamarle tutte allo stesso modo —
+ * `principale_crea()`, `opzioni_crea()` — e ogni progetto fatto prima di oggi
+ * smetterebbe di compilare: il suo finestra.c, che exide non riscrive MAI,
+ * chiama `finestra_crea()` dal main. Fra la simmetria e i progetti che
+ * continuano ad aprirsi non c'e' partita. */
+static void form_var(int k, char *out)
+{
+    if (form_e_principale(k)) strcpy(out, "g_form");
+    else sprintf(out, "g_form_%s", g_form[k].nome);
+}
+
+static void form_crea_fn(int k, char *out)
+{
+    if (form_e_principale(k)) strcpy(out, "finestra_crea");
+    else sprintf(out, "%s_crea", g_form[k].nome);
+}
+
+static void form_proc_fn(int k, char *out)
+{
+    if (form_e_principale(k)) strcpy(out, "finestra_proc");
+    else sprintf(out, "%s_proc", g_form[k].nome);
+}
+
 static int gen_h(void)
 {
     char p[PERC_MAX], riga[256], idn[NOME_MAX + 8], hn[NOME_MAX + 32];
-    int  fd, i;
+    char fn[NOME_MAX + 16], pn[NOME_MAX + 16];
+    int  fd, i, k;
 
     percorso(p, "finestra.h");
     fd = open(p, O_WRONLY | O_CREAT | O_TRUNC, 0644);
@@ -877,17 +1214,42 @@ static int gen_h(void)
             SCRIVI(riga);
         }
 
-    SCRIVI("\nextern ExFinestra g_form;\n");
+    SCRIVI("\n");
+    for (k = 0; k < FORM_MAX; k++)
+        if (g_form[k].usato) {
+            form_var(k, fn);
+            sprintf(riga, "extern ExFinestra %s;\n", fn);
+            SCRIVI(riga);
+        }
+
     for (i = 0; i < CTRL_MAX; i++)
         if (g_ctrl[i].usato) {
             sprintf(riga, "extern ExFinestra h_%s;\n", g_ctrl[i].nome);
             SCRIVI(riga);
         }
 
-    SCRIVI("\nvoid finestra_crea(void);\n"
-           "long finestra_proc(ExFinestra f, unsigned int msg,\n"
-           "                   unsigned int wp, long lp);\n\n"
-           "/* Gli handler degli eventi: li scrivi tu in finestra.c. */\n");
+    SCRIVI("\n/* La principale la apre il main di finestra.c. LE ALTRE LE APRI\n"
+           " * TU, chiamando la loro <nome>_crea() da dove serve — di solito\n"
+           " * dall'handler di un pulsante. Chiamarla due volte non apre due\n"
+           " * finestre: se c'e' gia', la ridisegna e basta.\n"
+           " *\n"
+           " * Chiudendone una col suo pulsante, la finestra viene distrutta e\n"
+           " * il suo handle torna a zero: il programma NON esce. Esce solo\n"
+           " * chiudendo la principale. */\n");
+
+    for (k = 0; k < FORM_MAX; k++)
+        if (g_form[k].usato) {
+            form_crea_fn(k, fn);
+            form_proc_fn(k, pn);
+            sprintf(riga, "void %s(void);\n", fn);
+            SCRIVI(riga);
+            sprintf(riga, "long %s(ExFinestra f, unsigned int msg,\n"
+                          "%*sunsigned int wp, long lp);\n",
+                    pn, (int)strlen(pn) + 6, "");
+            SCRIVI(riga);
+        }
+
+    SCRIVI("\n/* Gli handler degli eventi: li scrivi tu in finestra.c. */\n");
 
     for (i = 0; i < CTRL_MAX; i++)
         if (g_ctrl[i].usato && ha_evento(&g_ctrl[i])) {
@@ -905,7 +1267,8 @@ static int gen_h(void)
 static int gen_c(void)
 {
     char p[PERC_MAX], riga[320], idn[NOME_MAX + 8], hn[NOME_MAX + 32];
-    int  fd, i;
+    char fn[NOME_MAX + 16], pn[NOME_MAX + 16], vn[NOME_MAX + 16];
+    int  fd, i, k;
 
     percorso(p, "finestra_gen.c");
     fd = open(p, O_WRONLY | O_CREAT | O_TRUNC, 0644);
@@ -914,8 +1277,14 @@ static int gen_c(void)
 #define SCRIVI(s) write(fd, (s), strlen(s))
     SCRIVI("/* GENERATO DA EXIDE - non modificare: si riscrive a ogni\n"
            " * salvataggio. Il tuo codice sta in finestra.c. */\n\n"
-           "#include \"libc.h\"\n#include \"finestra.h\"\n\n"
-           "ExFinestra g_form;\n");
+           "#include \"libc.h\"\n#include \"finestra.h\"\n\n");
+
+    for (k = 0; k < FORM_MAX; k++)
+        if (g_form[k].usato) {
+            form_var(k, vn);
+            sprintf(riga, "ExFinestra %s;\n", vn);
+            SCRIVI(riga);
+        }
 
     for (i = 0; i < CTRL_MAX; i++)
         if (g_ctrl[i].usato) {
@@ -923,46 +1292,88 @@ static int gen_c(void)
             SCRIVI(riga);
         }
 
-    SCRIVI("\nvoid finestra_crea(void)\n{\n");
-    sprintf(riga, "    g_form = ex_crea(\"finestra\", \"%s\",\n"
-                  "                     EX_TITOLO | EX_BORDO | EX_CHIUDI,\n"
-                  "                     EX_AUTO, EX_AUTO, %d, %d, 0, 0,\n"
-                  "                     finestra_proc);\n"
-                  "    if (g_form == 0) return;\n\n",
-            g_form_titolo, g_form_w, g_form_h);
-    SCRIVI(riga);
+    for (k = 0; k < FORM_MAX; k++) {
+        if (!g_form[k].usato) continue;
 
-    for (i = 0; i < CTRL_MAX; i++) {
-        Ctrl *c = &g_ctrl[i];
+        form_var(k, vn);
+        form_crea_fn(k, fn);
+        form_proc_fn(k, pn);
 
-        if (!c->usato) continue;
-        nome_id(c, idn);
-        sprintf(riga, "    h_%s = ex_crea(\"%s\", \"%s\", EX_FIGLIO,\n"
-                      "        %d, %d, %d, %d, g_form, %s, 0);\n",
-                c->nome, g_strum[c->tipo].classe, c->testo,
-                c->x, c->y, c->w, c->h, idn);
+        /* ! CHIAMARLA DUE VOLTE NON APRE DUE FINESTRE. Una finestra si apre
+         * dall'handler di un pulsante, e un pulsante si preme piu' di una
+         * volta: senza questa riga il decimo clic darebbe la decima copia
+         * della stessa finestra, tutte vive e tutte con gli stessi id. */
+        sprintf(riga, "\nvoid %s(void)\n{\n"
+                      "    if (%s) {\n"
+                      "        ex_procedura_base(%s, EXM_DISEGNA, 0, 0);\n"
+                      "        return;\n    }\n\n", fn, vn, vn);
         SCRIVI(riga);
-    }
 
-    SCRIVI("\n    ex_procedura_base(g_form, EXM_DISEGNA, 0, 0);\n}\n\n"
-           "long finestra_proc(ExFinestra f, unsigned int msg,\n"
-           "                   unsigned int wp, long lp)\n{\n"
-           "    if (msg == EXM_COMANDO) {\n"
-           "        switch (wp) {\n");
-
-    for (i = 0; i < CTRL_MAX; i++) {
-        Ctrl *c = &g_ctrl[i];
-
-        if (!c->usato || !ha_evento(c)) continue;
-        nome_id(c, idn);
-        nome_handler(c, hn);
-        sprintf(riga, "        case %s: %s(); return 0;\n", idn, hn);
+        sprintf(riga, "    %s = ex_crea(\"finestra\", \"%s\",\n"
+                      "        EX_TITOLO | EX_BORDO | EX_CHIUDI,\n"
+                      "        EX_AUTO, EX_AUTO, %d, %d, 0, 0, %s);\n"
+                      "    if (%s == 0) return;\n\n",
+                vn, g_form[k].titolo, g_form[k].w, g_form[k].h, pn, vn);
         SCRIVI(riga);
-    }
 
-    SCRIVI("        default: break;\n        }\n    }\n\n"
-           "    if (msg == EXM_CHIUDI) { ex_esci(0); return 0; }\n"
-           "    return ex_procedura_base(f, msg, wp, lp);\n}\n");
+        for (i = 0; i < CTRL_MAX; i++) {
+            Ctrl *c = &g_ctrl[i];
+
+            if (!c->usato || c->form != k) continue;
+            nome_id(c, idn);
+            sprintf(riga, "    h_%s = ex_crea(\"%s\", \"%s\", EX_FIGLIO,\n"
+                          "        %d, %d, %d, %d, %s, %s, 0);\n",
+                    c->nome, g_strum[c->tipo].classe, c->testo,
+                    c->x, c->y, c->w, c->h, vn, idn);
+            SCRIVI(riga);
+        }
+
+        sprintf(riga, "\n    ex_procedura_base(%s, EXM_DISEGNA, 0, 0);\n}\n\n",
+                vn);
+        SCRIVI(riga);
+
+        sprintf(riga, "long %s(ExFinestra f, unsigned int msg,\n"
+                      "%*sunsigned int wp, long lp)\n{\n"
+                      "    if (msg == EXM_COMANDO) {\n"
+                      "        switch (wp) {\n",
+                pn, (int)strlen(pn) + 6, "");
+        SCRIVI(riga);
+
+        for (i = 0; i < CTRL_MAX; i++) {
+            Ctrl *c = &g_ctrl[i];
+
+            if (!c->usato || c->form != k || !ha_evento(c)) continue;
+            nome_id(c, idn);
+            nome_handler(c, hn);
+            sprintf(riga, "        case %s: %s(); return 0;\n", idn, hn);
+            SCRIVI(riga);
+        }
+
+        SCRIVI("        default: break;\n        }\n    }\n\n");
+
+        if (form_e_principale(k)) {
+            SCRIVI("    if (msg == EXM_CHIUDI) { ex_esci(0); return 0; }\n");
+        } else {
+            /* ! CHIUDERE UNA SECONDARIA NON ESCE DAL PROGRAMMA, e gli handle
+             * tornano a zero. Il secondo pezzo conta quanto il primo: senza,
+             * h_Casella1 continuerebbe a puntare a un controllo distrutto, e
+             * chi lo tocca da un handler della finestra rimasta aperta
+             * lavorerebbe su un fantasma. Riaprendola, <nome>_crea() li
+             * riempie di nuovo. */
+            sprintf(riga, "    if (msg == EXM_CHIUDI) {\n"
+                          "        ex_distruggi(%s);\n"
+                          "        %s = 0;\n", vn, vn);
+            SCRIVI(riga);
+            for (i = 0; i < CTRL_MAX; i++)
+                if (g_ctrl[i].usato && g_ctrl[i].form == k) {
+                    sprintf(riga, "        h_%s = 0;\n", g_ctrl[i].nome);
+                    SCRIVI(riga);
+                }
+            SCRIVI("        return 0;\n    }\n");
+        }
+
+        SCRIVI("    return ex_procedura_base(f, msg, wp, lp);\n}\n");
+    }
 #undef SCRIVI
     close(fd);
     return 1;
@@ -1445,12 +1856,14 @@ static void progetto_nuovo(void)
     g_prog_nome[NOME_MAX - 1] = '\0';
 
     memset(g_ctrl, 0, sizeof(g_ctrl));
+    memset(g_form, 0, sizeof(g_form));
+    form_azzera(&g_form[0], "principale", g_prog_nome);
+    g_form_sel = 0;
     g_sel = -1;
-    strcpy(g_form_titolo, g_prog_nome);
-    g_form_w = 400; g_form_h = 260;
 
     progetto_salva();
     progetto_titolo();
+    form_mostra();
     prop_mostra();
     dico("progetto creato: src, inc, lib, bin, obj");
 }
@@ -1487,6 +1900,7 @@ static void progetto_apri(void)
     g_sel = -1;
     g_sporco = 0;
     progetto_titolo();
+    form_mostra();
     prop_mostra();
     dico("progetto aperto");
 }
@@ -1762,6 +2176,34 @@ static const char *const g_manuale[] = {
 "",
 "  I nomi h_Casella1 e h_Casella2 li ha dichiarati finestra.h: il nome",
 "  del controllo con h_ davanti.",
+"",
+"PIU' DI UNA FINESTRA",
+"",
+"  Sopra la maschera c'e' l'elenco delle finestre del progetto, con",
+"  «Nuova» e «Togli». Si disegna una finestra per volta: si sceglie",
+"  quale dall'elenco e la maschera cambia sotto.",
+"",
+"  La finestra principale la apre il programma da solo. LE ALTRE LE",
+"  APRI TU dal codice, chiamando la loro funzione <nome>_crea() -",
+"  di solito dall'handler di un pulsante:",
+"",
+"      /* Pulsante1: Clic */",
+"      void Pulsante1_Clic(void)",
+"      {",
+"          finestra2_crea();",
+"      }",
+"",
+"  Il nome della finestra (proprieta' nome, quando non c'e' nessun",
+"  controllo scelto) e' quello che finisce dentro finestra2_crea:",
+"  chiamandola «opzioni» la funzione diventa opzioni_crea().",
+"",
+"  Chiamarla due volte non apre due finestre: se e' gia' aperta la",
+"  ridisegna e basta. Chiudendola col suo pulsante il programma NON",
+"  esce - esce solo chiudendo la principale - e i puntatori ai suoi",
+"  controlli tornano a zero finche' non la si riapre.",
+"",
+"  La principale tiene i nomi di sempre (g_form, finestra_crea): il",
+"  suo nome nell'elenco e' solo un'etichetta per riconoscerla.",
 "",
 "GLI STRUMENTI, E A COSA SERVONO",
 "",
@@ -2959,8 +3401,12 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 
         case ID_PROPRIETA: {
             char v[64];
+            int  k = (int)ex_lista_scelta(g_lst_prop);
 
-            prop_valore((int)ex_lista_scelta(g_lst_prop), v, sizeof(v));
+            /* Senza controllo scelto l'elenco e' quello della maschera, e i
+             * valori vanno letti da li': prop_valore risponderebbe vuoto. */
+            if (g_sel < 0 || !g_ctrl[g_sel].usato) fprop_valore(k, v, sizeof(v));
+            else                                   prop_valore(k, v, sizeof(v));
             ex_testo_metti(g_val, v);
             ex_fuoco(g_val);
             break;
@@ -2969,6 +3415,12 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         case ID_VALORE:
         case ID_APPLICA:  prop_applica(); break;
         case ID_ELIMINA:  elimina();      break;
+
+        /* L'elenco a discesa manda la riga scelta in lp, non l'indice della
+         * maschera: fra le due c'e' di mezzo quale posto e' libero. */
+        case ID_FORM:       form_scegli(form_da_riga((int)lp)); break;
+        case ID_FORM_NUOVA: form_nuova(); break;
+        case ID_FORM_TOGLI: form_togli(); break;
 
         case ID_NUOVO:      progetto_nuovo();  break;
         case ID_APRI:       progetto_apri();   break;
@@ -3043,8 +3495,10 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 
             if (nx < 0) nx = 0;
             if (ny < 0) ny = 0;
-            if (nx + g_ctrl[g_sel].w > g_form_w) nx = g_form_w - g_ctrl[g_sel].w;
-            if (ny + g_ctrl[g_sel].h > g_form_h) ny = g_form_h - g_ctrl[g_sel].h;
+            if (nx + g_ctrl[g_sel].w > forma()->w)
+                nx = forma()->w - g_ctrl[g_sel].w;
+            if (ny + g_ctrl[g_sel].h > forma()->h)
+                ny = forma()->h - g_ctrl[g_sel].h;
             if (nx < 0) nx = 0;
             if (ny < 0) ny = 0;
 
@@ -3088,6 +3542,11 @@ int main(int argc, char **argv)
     ExMsg m;
     int   i;
 
+    /* ! LA MASCHERA PRINCIPALE ESISTE DA PRIMA DEL PROGETTO. Senza, exide
+     * appena aperto disegnerebbe una finestra 0x0 senza titolo: si apre
+     * SEMPRE su un disegno, anche quando non c'e' niente da salvare. */
+    form_azzera(&g_form[0], "principale", "Finestra");
+
     g_f = ex_crea("finestra", "EX-IDE - nessun progetto",
                   EX_TITOLO | EX_BORDO | EX_CHIUDI, 4, 24, 780, 486, 0, 0, proc);
     if (g_f == 0) {
@@ -3130,6 +3589,18 @@ int main(int argc, char **argv)
     for (i = 0; i < STRUM_N; i++)
         ex_lista_aggiungi(g_lst_strum, g_strum[i].etichetta);
 
+    /* ! LA STRISCIA SOPRA LA TELA ERA VUOTA, ed e' esattamente larga quanto
+     * la tela: 436 pixel fra il pannello degli strumenti e quello delle
+     * proprieta'. L'elenco delle maschere sta li' perche' e' li' che si
+     * guarda quando ci si chiede «quale sto disegnando» — sopra il disegno,
+     * non in un menu che bisogna aprire per sapere la risposta. */
+    g_cmb_form = ex_crea("combo", "", EX_FIGLIO, TELA_X, 24, 256, 22,
+                         g_f, ID_FORM, 0);
+    ex_crea("pulsante", "Nuova", EX_FIGLIO, TELA_X + 262, 24, 84, 22,
+            g_f, ID_FORM_NUOVA, 0);
+    ex_crea("pulsante", "Togli", EX_FIGLIO, TELA_X + 350, 24, 84, 22,
+            g_f, ID_FORM_TOGLI, 0);
+
     ex_crea("intestazione", "Proprieta'", EX_FIGLIO, 606, 24, 168, 20,
             g_f, 0, 0);
     g_lst_prop = ex_crea("lista", "", EX_FIGLIO, 606, 46, 168, 340,
@@ -3150,6 +3621,7 @@ int main(int argc, char **argv)
     }
 
     progetto_titolo();
+    form_mostra();
     prop_mostra();
     dico(g_prog_dir[0] ? "progetto aperto"
                        : "File > Nuovo progetto per cominciare");

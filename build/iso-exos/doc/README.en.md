@@ -84,6 +84,52 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### More than one window: the designer learns to count
+
+**tested** — from the drawing to the running program: two windows drawn,
+generated, compiled with real GCC inside EX-OS, and the second one opening when
+a button on the first is pressed. An exide project could draw **one window
+only**; now it draws eight.
+
+**The drawing format did not change to make room.** It already had the right
+shape — one line for the form, then the lines of its controls — and all it took
+was letting there be more than one form:
+
+```
+F principale 400 260 prg6
+c etichetta Etichetta1 1001 76 52 90 16 0 Etichetta1
+F finestra2 400 260 Finestra 2
+c spunta Spunta1 1003 76 124 140 20 0 Spunta1
+```
+
+The old line was called `f` and **is still read**: it had no name — it did not
+need one, there was a single form — and slipping one in the middle would have
+made the first word of the *title* be read as the name. So the new line got a
+letter of its own. Projects made before open without noticing a thing.
+
+**The main window keeps the names it always had**, and the others do not:
+`g_form`, `finestra_crea()`, `finestra_proc()` against `g_form_opzioni`,
+`opzioni_crea()`, `opzioni_proc()`. Naming them all alike would be more
+symmetric, and **every project made before today would stop compiling**: its
+`finestra.c` — the one the IDE never rewrites — calls `finestra_crea()` from
+main. Secondary windows are opened by your code, usually from a button handler.
+
+Three details the generator writes and a hand-writer forgets: calling
+`<nome>_crea()` twice **does not open two windows** (a button gets pressed more
+than once); closing a secondary window **does not quit the program**, only the
+main one does; and on closing, the pointers to its controls **go back to zero**,
+because `ex_distruggi` takes the children with it and those names would point
+at nothing.
+
+> **One form at a time, and not an MDI container — against what I had written
+> in the to-do list myself.** The MDI had been in the toolkit since the day
+> before and was the marked road; the numbers decided otherwise: the designer's
+> canvas is 436x396 and a form is born 400x260. Two windows that size in there
+> cover each other almost entirely — you would spend your time dragging them
+> apart to see the one underneath, to gain seeing at once two things you work on
+> one at a time anyway. It stays the right road the day the canvas grows, or the
+> day you want to drag a control from one window into another.
+
 ### Save as, Replace, and a name that lagged behind
 
 **tested** — inside EX-OS, with the file read back from the shell before and

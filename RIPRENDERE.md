@@ -28,6 +28,142 @@ manca» apre quello.
 
 # DOVE RIPRENDERE — 3 settembre 2026
 
+## 3 settembre 2026 (notte) — PIU' DI UNA FINESTRA: IL DISEGNATORE IMPARA A CONTARE
+
+Era la prima voce rimasta in `in_lavorazione.txt`: un progetto poteva disegnare
+UNA finestra sola. Adesso ne disegna otto, il codice generato le apre quando
+glielo si chiede, e chiuderne una non fa uscire il programma.
+
+### LA DECISIONE PIU' GRANDE E' IL FORMATO, NON L'INTERFACCIA
+
+Il modello: i controlli restano in un elenco solo, `g_ctrl[64]`, con dentro il
+numero della maschera a cui appartengono. L'altra strada — un elenco di
+controlli dentro ogni maschera — sembra piu' ordinata e costa di piu' in ogni
+punto che gia' funzionava: `id_libero()`, il generatore dei nomi e il giro che
+assicura gli handler guardano TUTTI i controlli del programma, non quelli di
+una finestra, e con gli elenchi annidati diventavano due cicli invece di uno.
+Un campo in piu' e un `continue` dove si disegna: e' tutta la differenza.
+
+! **I NOMI RESTANO UNICI IN TUTTO IL PROGRAMMA, non dentro la maschera**, e
+non e' una restrizione arbitraria: il nome di un controllo diventa un
+`#define ID_...`, una variabile `h_...` e un nome di funzione dentro
+`finestra.h`, che e' **un file solo**. Due «Pulsante1» in due finestre diverse
+sarebbero due definizioni con lo stesso nome. Non e' servito controllare niente
+proprio perche' i due generatori di nomi guardavano gia' tutto l'elenco.
+
+### IL FORMATO NON E' CAMBIATO PER FARE POSTO A PIU' FINESTRE
+
+Il file del disegno aveva gia' la forma giusta: una riga per la maschera,
+poi le righe dei suoi controlli. Bastava che le maschere potessero essere piu'
+d'una, e che le `c` appartenessero all'ultima `F` letta:
+
+    F principale 400 260 prg6
+    c etichetta Etichetta1 1001 76 52 90 16 0 Etichetta1
+    F finestra2 400 260 Finestra 2
+    c etichetta Etichetta2 1002 76 52 90 16 0 Etichetta2
+    c spunta Spunta1 1003 76 124 140 20 0 Spunta1
+
+! **LA RIGA VECCHIA SI CHIAMAVA `f` E SI CONTINUA A LEGGERLA.** Non aveva il
+nome — non serviva, la maschera era una — e aggiungere un campo in mezzo
+avrebbe fatto leggere la prima parola del TITOLO come nome. Percio' la riga
+nuova ha una lettera sua, `F`: i progetti fatti prima si aprono senza
+accorgersi di niente, e si risalvano nel formato nuovo. Provato proprio cosi',
+su un `prg6` scritto ieri.
+
+### I NOMI GENERATI: LA SIMMETRIA PERDE CONTRO I PROGETTI CHE GIA' ESISTONO
+
+La maschera principale genera `g_form`, `finestra_crea()`, `finestra_proc()`;
+le altre `g_form_<nome>`, `<nome>_crea()`, `<nome>_proc()`. Sarebbe piu'
+simmetrico chiamarle tutte allo stesso modo — `principale_crea()` — e **ogni
+progetto fatto prima di oggi smetterebbe di compilare**: il suo `finestra.c`,
+che exide non riscrive MAI, chiama `finestra_crea()` dal main. Fra la simmetria
+e i progetti che continuano ad aprirsi non c'e' partita. Il nome della
+principale, nell'elenco, e' solo un'etichetta per riconoscerla.
+
+Di conseguenza `finestra` e' un nome PRENOTATO: una secondaria chiamata cosi'
+genererebbe `finestra_crea()` una seconda volta, e a fermarsi sarebbe il
+compilatore su un file che nessuno ha scritto a mano. Si rifiuta al momento di
+scriverlo.
+
+### QUEL CHE IL GENERATORE SCRIVE, E CHE UN UMANO DIMENTICHEREBBE
+
+Ogni finestra ha la sua `crea()` e la sua `proc()`. Tre dettagli che non sono
+decorazione:
+
+! **CHIAMARLA DUE VOLTE NON APRE DUE FINESTRE.** Una finestra secondaria si
+apre dall'handler di un pulsante, e un pulsante si preme piu' di una volta:
+senza il controllo in testa a `crea()`, il decimo clic darebbe la decima copia
+della stessa finestra, tutte vive e tutte con gli stessi id.
+
+! **CHIUDERE UNA SECONDARIA NON ESCE DAL PROGRAMMA.** La principale fa
+`ex_esci(0)`; le altre si distruggono e basta. Sono due comportamenti diversi
+per lo stesso messaggio, ed e' esattamente il genere di differenza che chi
+scrive a mano scopre il giorno che chiude la finestra sbagliata.
+
+! **E GLI HANDLE TORNANO A ZERO.** `ex_distruggi` porta via anche i figli
+(l'ho verificato: e' ricorsiva), quindi dopo la chiusura `h_Casella1`
+punterebbe a un controllo che non c'e' piu'. La `proc` generata li azzera uno
+per uno; riaprendo, `<nome>_crea()` li riempie di nuovo.
+
+### L'INTERFACCIA: UNA MASCHERA PER VOLTA, E IL PERCHE'
+
+Sopra la tela c'era una striscia vuota larga esattamente quanto la tela: li'
+adesso c'e' l'elenco a discesa delle finestre, con «Nuova» e «Togli». Si
+disegna una finestra per volta.
+
+! **E NON UN CONTENITORE MDI CON DENTRO TUTTE LE MASCHERE, che pure c'e' nel
+toolkit dal 3 settembre e che in `in_lavorazione.txt` avevo scritto io stesso
+come la strada.** I numeri dicono un'altra cosa: il ripiano e' **436x396** e
+una maschera nasce **400x260**. Due finestre di quella misura, li' dentro, si
+coprono quasi per intero — si passerebbe il tempo a spostarle per vedere quella
+sotto, e si guadagnerebbe di vedere insieme due cose su cui comunque si lavora
+una per volta. In piu' i controlli, sulla tela, sono DISEGNATI e non vivi (e'
+la regola del disegnatore dal primo giorno): due maschere insieme vorrebbero
+dire decidere a ogni clic in quale delle due e' caduto. L'MDI resta la strada
+giusta il giorno che la tela diventa grande o che si vuole trascinare un
+controllo da una finestra all'altra; oggi costerebbe di piu' e mostrerebbe di
+meno.
+
+«Togli» chiede conferma e dice quanti controlli porta via — cancellare un
+controllo costa un controllo, cancellare una maschera ne costa dieci, e finche'
+non c'e' Annulla non si torna indietro. Gli handler gia' scritti in
+`finestra.c` restano dove sono: quelli non si cancellano mai.
+
+### COME SI E' PROVATO — FINO AL PROGRAMMA CHE GIRA
+
+Il giro intero, dentro EX-OS, su un progetto scritto ieri:
+
+    1. exide su /disk/prg6 (formato vecchio) -> si apre, l'elenco dice
+       «principale - prg6»
+    2. «Nuova» -> finestra2; ci si mettono dentro una Etichetta e una Spunta
+    3. Salva -> finestra.dis ha due «F», ognuna coi suoi controlli
+    4. un Pulsante sulla principale, doppio clic -> si apre finestra.c su
+       Pulsante1_Clic(), dentro si scrive  finestra2_crea();
+    5. Strumenti > Compilatore > Compila, con GCC vero dal CD strumenti
+       -> bin/programma, 32456 byte
+    6. /disk/prg6/bin/programma &  -> la finestra «prg6» si apre
+    7. clic su Pulsante1            -> si apre «Finestra 2», con dentro
+                                       Etichetta2 e Spunta1 dove erano
+                                       state disegnate
+    8. clic sul suo pulsante di chiusura -> «Finestra 2» sparisce e IL
+                                       PROGRAMMA RESTA VIVO
+    9. clic di nuovo su Pulsante1   -> si riapre (gli handle erano a zero)
+   10. e ancora clic                -> NON se ne apre una seconda copia
+
+I passi 8, 9 e 10 sono le tre righe di codice generato che un umano
+dimenticherebbe, viste funzionare invece che rilette.
+
+! **DUE VOLTE HO SBAGLIATO LE COORDINATE, E TUTT'E DUE DALLA STESSA PARTE.**
+La finestra di exide nasce in `(4,24)`: un figlio a `y=24` sta sullo schermo a
+`y=48`, non a 24. Ieri avevo scritto qui che le coordinate si CALCOLANO invece
+di misurarle in fotografia, ed e' vero — ma il calcolo comincia dall'angolo
+della finestra, che ieri (una scheda a `(100,60)`) avevo sommato e oggi ho
+dimenticato. E la seconda: un controllo nasce col suo ANGOLO dove si e'
+cliccato, non col suo centro; per fare doppio clic sopra bisogna mirare al
+centro, che sta mezza misura piu' in la'.
+
+
+
 ## 3 settembre 2026 (notte fonda) — SALVA CON NOME, SOSTITUISCI, E UN NOME CHE RESTAVA INDIETRO
 
 Le due voci che in `in_lavorazione.txt` stavano in cima: «Salva con nome» per

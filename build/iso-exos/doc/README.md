@@ -85,6 +85,54 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### Più di una finestra: il disegnatore impara a contare
+
+**testato** — dal disegno al programma che gira: due finestre disegnate,
+generate, compilate con GCC vero dentro EX-OS, e la seconda che si apre
+premendo un pulsante della prima. Un progetto di exide poteva disegnare **una
+finestra sola**; adesso ne disegna otto.
+
+**Il formato del disegno non è cambiato per fare posto.** Aveva già la forma
+giusta — una riga per la maschera, poi le righe dei suoi controlli — e bastava
+che le maschere potessero essere più d'una:
+
+```
+F principale 400 260 prg6
+c etichetta Etichetta1 1001 76 52 90 16 0 Etichetta1
+F finestra2 400 260 Finestra 2
+c spunta Spunta1 1003 76 124 140 20 0 Spunta1
+```
+
+La riga vecchia si chiamava `f` e **si continua a leggerla**: non aveva il nome
+— non serviva, la maschera era una — e infilarne uno in mezzo avrebbe fatto
+leggere la prima parola del *titolo* come nome. Perciò la riga nuova ha una
+lettera sua. I progetti fatti prima si aprono senza accorgersi di niente.
+
+**La finestra principale tiene i nomi di sempre**, e le altre no: `g_form`,
+`finestra_crea()`, `finestra_proc()` contro `g_form_opzioni`, `opzioni_crea()`,
+`opzioni_proc()`. Sarebbe più simmetrico chiamarle tutte allo stesso modo, e
+**ogni progetto fatto prima di oggi smetterebbe di compilare**: il suo
+`finestra.c` — quello che l'IDE non riscrive mai — chiama `finestra_crea()` dal
+main. Le secondarie le apre il tuo codice, di solito dall'handler di un
+pulsante.
+
+Tre dettagli che il generatore scrive e che chi scrive a mano dimentica:
+chiamare `<nome>_crea()` due volte **non apre due finestre** (un pulsante si
+preme più di una volta); chiudere una secondaria **non fa uscire dal
+programma**, esce solo la principale; e alla chiusura i puntatori ai suoi
+controlli **tornano a zero**, perché `ex_distruggi` porta via anche i figli e
+quei nomi punterebbero al vuoto.
+
+> **Una maschera per volta, e non un contenitore MDI — contro quel che avevo
+> scritto io stesso nell'elenco delle cose da fare.** L'MDI c'è nel toolkit
+> dal giorno prima ed era la strada segnata; a decidere sono stati i numeri: il
+> ripiano del disegnatore è 436x396 e una maschera nasce 400x260. Due finestre
+> di quella misura lì dentro si coprono quasi per intero — si passerebbe il
+> tempo a spostarle per vedere quella sotto, per guadagnare di vedere insieme
+> due cose su cui si lavora comunque una per volta. Resta la strada giusta il
+> giorno che la tela diventa grande, o che si vorrà trascinare un controllo da
+> una finestra all'altra.
+
 ### Salva con nome, Sostituisci, e un nome che restava indietro
 
 **testato** — dentro EX-OS, con il file riletto dalla shell prima e dopo,

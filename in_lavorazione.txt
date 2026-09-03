@@ -154,18 +154,34 @@ decide se il progetto sopravvive — e' il punto in cui VB6 si rompeva:
   e' nato ex_area_riga_metti(), che riscrive una riga in mezzo al documento e
   invalida la catena del coloritore da li' in giu'.
 
+! PIU' DI UNA FINESTRA SI PUO', dal 3 settembre 2026 (diario: «PIU' DI UNA
+  FINESTRA: IL DISEGNATORE IMPARA A CONTARE»). Fino a otto maschere per
+  progetto: l'elenco a discesa sopra la tela le cambia, «Nuova» e «Togli» le
+  aggiungono e le levano. Si disegna UNA MASCHERA PER VOLTA — non tutte
+  insieme dentro un contenitore MDI, che pure c'e' nel toolkit: il ripiano e'
+  436x396 e una maschera nasce 400x260, quindi due si coprirebbero quasi per
+  intero. L'MDI torna utile il giorno che la tela diventa grande o che si
+  vuole trascinare un controllo da una finestra all'altra.
+  Nel codice generato ogni maschera ha la sua <nome>_crea() e la sua
+  <nome>_proc(); la principale tiene i nomi di sempre (g_form, finestra_crea,
+  finestra_proc) perche' il finestra.c di ogni progetto gia' fatto chiama
+  quella dal main. Le secondarie le apre il TUO codice; chiamarle due volte
+  non apre due finestre, chiuderne una non fa uscire il programma e i suoi
+  handle tornano a zero. Nel file del disegno la riga «F» porta il nome; la
+  vecchia «f», senza nome, si legge ancora.
+
 QUEL CHE MANCA, in ordine di quanto serve:
 
- 1. LE FINESTRE SECONDARIE sulla maschera. Adesso si disegna una finestra sola;
-    per disegnarne piu' d'una serve l'MDI DENTRO il disegnatore — che dal 3
-    settembre c'e' nel toolkit, quindi e' un lavoro suo e non un pezzo che
-    manca.
-
- 2. IL RIDIMENSIONAMENTO DEI CONTROLLI COL MOUSE. Le maniglie si disegnano ma
+ 1. IL RIDIMENSIONAMENTO DEI CONTROLLI COL MOUSE. Le maniglie si disegnano ma
     non si tirano: la misura si cambia dalle proprieta'.
 
- 3. ANNULLA. Non c'e', ed e' la prima cosa che si cerca dopo aver cancellato un
-    controllo per sbaglio.
+ 2. ANNULLA. Non c'e', ed e' la prima cosa che si cerca dopo aver cancellato un
+    controllo per sbaglio — e da adesso anche dopo aver tolto una maschera, che
+    ne porta via i controlli (per questo «Togli» chiede conferma e dice quanti).
+
+ 3. UN CONTROLLO NON SI SPOSTA DA UNA MASCHERA ALL'ALTRA. Si cancella di qua e
+    si rifa' di la'. Vorrebbe dire un «taglia e incolla» del disegno, che non
+    c'e' per niente — nemmeno dentro la stessa maschera.
 
 ! E DAL CD EXIDE NON PUO' FARE NIENTE, ed e' giusto che lo dica: adesso quando
   la creazione del progetto non riesce lo spiega e si ferma, invece di aprire
