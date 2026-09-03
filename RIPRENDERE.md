@@ -28,6 +28,140 @@ manca» apre quello.
 
 # DOVE RIPRENDERE — 3 settembre 2026
 
+## 3 settembre 2026 (notte fonda) — EXIDE: SI DISEGNA UNA FINESTRA, ESCE DEL C CHE GIRA
+
+Il primo giro completo dell'ambiente di sviluppo visuale, e la prova che conta
+non e' una fotografia: e' un binario da 18 KB, generato dal disegno, che si apre
+dentro EX-OS con i controlli dove li avevo messi col mouse.
+
+    disegno -> finestra.dis -> finestra.h + finestra_gen.c -> gcc -> ld -> gira
+
+### LE TRE AREE, E QUATTRO FILE DI CUI UNO SOLO E' TUO
+
+A sinistra gli strumenti, in mezzo la maschera, a destra le proprieta'. Doppio
+clic su un controllo e si apre l'editor DENTRO la funzione che il suo evento
+chiamera'.
+
+    finestra.dis      lo scrive e lo legge solo exide
+    finestra.h        gli id, i puntatori, i prototipi — generato
+    finestra_gen.c    crea i controlli e smista gli eventi — generato
+    finestra.c        IL TUO: exide ci AGGIUNGE gli handler che mancano, in
+                      fondo, e non riscrive mai quel che c'e'
+
+! **E' IL PUNTO IN CUI VB6 SI ROMPEVA**: un file solo, scritto a meta' dal
+generatore e a meta' a mano, e ogni rigenerazione era una scommessa. Qui il
+generato e lo scritto non si toccano mai. E' il modello di Qt (`.ui` ->
+`ui_form.h`), l'unico che regge dopo mesi di modifiche a mano.
+
+! **LA GIUNTURA E' L'ID, E C'ERA GIA'.** `ex_crea(..., padre, ID, 0)` da' a ogni
+controllo un numero e l'evento torna come EXM_COMANDO con quel numero dentro:
+nel disegno il pulsante E' `ID_PULSANTE1`, nel sorgente c'e' `case
+ID_PULSANTE1:`. exide e' fattibile qui piu' che altrove perche' ExWin era gia'
+fatto a forma di VB6 — non c'era niente da inventare, c'era da SCRIVERE quel che
+il disegno dice.
+
+### UNA TAVOLA SOLA PER OGNI STRUMENTO
+
+Quattordici righe, una per controllo: classe, etichetta del pannello, prefisso
+del nome, misura di nascita, eventi possibili. Il pannello di sinistra, il
+disegno sulla maschera, il nome predefinito e il codice generato leggono tutti
+da li'. Sparpagliare le stesse informazioni in cinque `switch` vorrebbe dire
+cinque posti da tenere d'accordo, e il quinto che se ne dimentica genera codice
+che non compila.
+
+### I CONTROLLI SI DISEGNANO, NON SI CREANO VIVI
+
+Un pulsante vero dentro la tela risponderebbe al clic invece di farsi scegliere
+e trascinare, e un'area di testo si mangerebbe i tasti. Sulla maschera sono
+rettangoli che SOMIGLIANO a quel che saranno — e la misura e' quella vera, che
+e' l'unica cosa che deve essere esatta.
+
+### IL DIFETTO CHE SI VEDEVA SOLO COMPILANDO
+
+! **GLI HANDLER NASCEVANO SOLO COL DOPPIO CLIC**, e finestra.h li dichiarava
+tutti. Due controlli sulla maschera, doppio clic su uno solo, e il progetto non
+si collegava: `undefined reference to Casella1_Cambiato`. L'errore arriva dal
+collegatore, che dice «undefined reference» e non «fai doppio clic sulla
+casella».
+
+Adesso il salvataggio assicura l'handler di OGNI controllo che ha un evento, e
+il doppio clic resta il modo di ARRIVARCI, non il modo di crearlo.
+
+### E UN DIFETTO DEL TOOLKIT, TROVATO PERCHE' SERVIVA A ME
+
+! **LE LISTE E LE AREE NON LIBERAVANO IL LORO POSTO ALLA DISTRUZIONE.** Una
+finestra con dentro una lista, aperta e chiusa quattro volte, esauriva i quattro
+posti delle liste: alla quinta la lista non si apriva piu'. Nessun errore, un
+elenco vuoto, e si scopre solo usando il programma a lungo — che e' esattamente
+quel che fa un IDE, che apre e chiude l'editor cento volte al giorno.
+
+Il buffer non si puo' restituire (free() qui non restituisce niente), quindi
+adesso il POSTO si libera e il BUFFER resta agganciato: `ex_crea` riusa il posto
+CON il suo buffer, e aprire e chiudere mille volte costa quanto aprire una.
+
+> Era li' da mesi e non lo aveva trovato nessuno, perche' nessun programma
+> apriva e chiudeva la stessa finestra abbastanza volte. Il primo che l'ha fatto
+> e' stato exide, il giorno stesso in cui e' nato.
+
+### DUE SBAGLI MIEI, E TUTT'E DUE VECCHI
+
+! **IL LINKER SCRIPT E' NATO VUOTO, e il collegamento e' riuscito lo stesso.**
+`open(f,'w').write(open(f).read().replace(...))` — la `open` in scrittura TRONCA
+il file prima che la `read` interna venga eseguita. Il risultato e' un `.ld` di
+zero byte, e `ld -T vuoto` non protesta: butta via tutto e produce un ELF di 256
+byte senza segmenti. Il sintomo era «ELF load fallito» a runtime, che non
+somiglia affatto a «il tuo script del collegatore e' vuoto».
+
+! **E GLI ACCENTI TIPOGRAFICI NELLE STRINGHE, che una nota diceva gia' di non
+mettere.** Il titolo della finestra e' uscito `EX-IDE ZCo nessun progetto`: la
+console e' code page 437 e il trattino lungo dell'UTF-8 sono tre byte che li'
+dentro non vogliono dire niente. Nei commenti si scrive come si vuole, in cio'
+che va a video solo ASCII.
+
+### COME SI E' PROVATO, E LA PROVA CHE CONTA
+
+! **DA CD NON SI SCRIVE NIENTE**, e un ambiente di sviluppo senza un posto dove
+scrivere non si puo' provare. La ricetta e' avviare dal CD con un disco ext2
+ATTACCATO — `dischi/hd.img`, quello di `tools/mkhd.sh` — e montarlo:
+
+    EXOS_QEMU_EXTRA="-drive file=/tmp/hd-prova.img,format=raw,if=ide,index=0"
+    ... "mount hd0p1 /disk@8" ...
+
+Poi, col mouse dentro exide:
+
+    File > Nuovo progetto -> /disk/prova
+        -> src, inc, lib, bin, obj e progetto.txt con autore e data
+    Pulsante dal pannello, clic sulla maschera
+        -> Pulsante1, id 1001, evento Clic, con le maniglie
+    Casella, clic piu' in basso  -> Casella1, id 1002, evento Cambiato
+    doppio clic sul pulsante
+        -> finestra.c creato con main(), l'handler aggiunto in fondo,
+           l'editor aperto CON IL CURSORE SU QUELLA RIGA, colorato
+
+E poi la prova vera, fuori da EX-OS e poi dentro:
+
+    i tre file generati, compilati e collegati con gcc e ld dell'host
+        -> /tmp/.../prova, ELF da 18 KB, nessun errore
+    lo stesso binario messo su un CD e avviato dentro EX-OS
+        -> la finestra «prova» si apre, con Pulsante1 a (104,52) e
+           Casella1 a (104,132) — dove li avevo messi col mouse
+
+> Un disegnatore che genera codice si prova solo cosi'. Una fotografia della
+> maschera dice che il DISEGNATORE funziona; solo il programma generato che si
+> apre dice che funziona EXIDE.
+
+### QUEL CHE C'E' E QUEL CHE NON C'E'
+
+C'e': i quattordici strumenti, mettere, scegliere, trascinare con la griglia da
+quattro, eliminare, le otto proprieta' modificabili, il progetto (nuovo, apri,
+salva, chiudi), i tre file generati, l'editor modale col codice colorato e
+l'elenco delle funzioni, le linguette dei tre file, Cerca, la shell nella
+directory del progetto, il manuale e le informazioni.
+
+Non c'e' ancora: il Compilatore (la finestra che monta la riga di comando), le
+Librerie, Files, Directory, Progetto, «Salva con nome», Sostituisci, e le
+finestre secondarie sulla maschera — che vogliono l'MDI dentro il disegnatore, e
+adesso che l'MDI c'e' sono un lavoro suo.
 ## 3 settembre 2026 (sera tardi) — L'MDI: FINESTRE DENTRO UNA FINESTRA, E IL RITAGLIO CHE NON C'ERA
 
 Ultimo pezzo del toolkit prima di `exide`: un contenitore che tiene le finestre

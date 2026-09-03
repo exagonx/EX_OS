@@ -3627,18 +3627,40 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
         int   codice = (strcmp(classe, "areacodice") == 0);
         int   j;
 
-        for (j = 0; j < AREA_MAX; j++) if (!g_area[j].usato) { A = &g_area[j]; break; }
+        unsigned int rmax = codice ? CODICE_RIGHE_MAX : AREA_RIGHE_MAX;
+        unsigned int cmax = codice ? CODICE_COL_MAX   : AREA_COL_MAX;
+        char         *avanzo = 0;
+        unsigned char *st_avanzo = 0;
+
+        /* ! PRIMA UN POSTO CHE HA GIA' IL BUFFER DELLA MISURA GIUSTA, e non e'
+         * un'ottimizzazione: e' l'unico modo di poter aprire due volte la
+         * stessa finestra. free() in questo sistema non restituisce niente,
+         * quindi un buffer chiesto alla prima apertura e buttato alla chiusura
+         * sarebbe memoria persa per sempre — e alla terza apertura l'area non
+         * si aprirebbe piu'. Il posto si libera, il buffer resta attaccato. */
+        for (j = 0; j < AREA_MAX; j++)
+            if (!g_area[j].usato && g_area[j].testo &&
+                g_area[j].righe_max == rmax && g_area[j].col_max == cmax) {
+                A = &g_area[j];
+                avanzo    = A->testo;
+                st_avanzo = A->stato;
+                break;
+            }
+        if (!A)
+            for (j = 0; j < AREA_MAX; j++)
+                if (!g_area[j].usato && !g_area[j].testo) { A = &g_area[j]; break; }
         if (!A) { o->usato = 0; return 0; }
 
         memset(A, 0, sizeof(*A));
         A->ogg       = (ExFinestra)(i + 1);
-        A->righe_max = codice ? CODICE_RIGHE_MAX : AREA_RIGHE_MAX;
-        A->col_max   = codice ? CODICE_COL_MAX   : AREA_COL_MAX;
+        A->righe_max = rmax;
+        A->col_max   = cmax;
         A->righe = (unsigned int)(h / AREA_RIGA_H);
         A->cols  = (unsigned int)((w - 4) / AREA_CAR_W);
         if (A->righe == 0 || A->cols == 0) { o->usato = 0; return 0; }
 
-        A->testo = (char *)malloc(A->righe_max * A->col_max);
+        A->testo = avanzo ? avanzo : (char *)malloc(A->righe_max * A->col_max);
+        A->stato = st_avanzo;
         if (!A->testo) { o->usato = 0; return 0; }
         memset(A->testo, 0, A->righe_max * A->col_max);
 
@@ -3648,7 +3670,8 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
          * cosa che nessuno usera' mai. Se non si ottiene non si muore: senza
          * catena si colora comunque, solo che un commento a blocco lungo
          * ricomincia da capo a ogni riga visibile. */
-        if (codice) A->stato = (unsigned char *)malloc(A->righe_max);
+        if (codice && !A->stato)
+            A->stato = (unsigned char *)malloc(A->righe_max);
         A->stati_validi = 0;
 
         A->n = 1;                       /* un'area vuota ha una riga vuota */
@@ -3701,10 +3724,22 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
         Lista *L = 0;
         int j;
 
-        for (j = 0; j < LISTA_MAX; j++) if (!g_lista[j].usato) { L = &g_lista[j]; break; }
+        char *avanzo = 0;
+
+        /* Stessa regola dell'area: prima un posto col buffer gia' pronto. */
+        for (j = 0; j < LISTA_MAX; j++)
+            if (!g_lista[j].usato && g_lista[j].voci) {
+                L = &g_lista[j];
+                avanzo = L->voci;
+                break;
+            }
+        if (!L)
+            for (j = 0; j < LISTA_MAX; j++)
+                if (!g_lista[j].usato && !g_lista[j].voci) { L = &g_lista[j]; break; }
         if (!L) { o->usato = 0; return 0; }
 
         memset(L, 0, sizeof(*L));
+        L->voci  = avanzo;
         L->ogg   = (ExFinestra)(i + 1);
         L->righe = (unsigned int)(h / LISTA_RIGA_H);
 
@@ -3713,8 +3748,9 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
          * perche' l'elenco e' vuoto. */
         if (L->righe == 0) { o->usato = 0; return 0; }
 
-        L->voci = (char *)malloc(LISTA_VOCI_MAX * LISTA_TESTO_MAX);
+        if (!L->voci) L->voci = (char *)malloc(LISTA_VOCI_MAX * LISTA_TESTO_MAX);
         if (!L->voci) { o->usato = 0; return 0; }
+        memset(L->voci, 0, LISTA_VOCI_MAX * LISTA_TESTO_MAX);
 
         L->usato = 1;
         return (ExFinestra)(i + 1);
@@ -3891,10 +3927,25 @@ void ex_distruggi(ExFinestra f)
      * crea-distruggi: meglio un posto che resta occupato di una perdita che
      * cresce. Le voci stanno in una tabella statica: non c'e' niente da
      * perdere, quindi il posto torna libero. */
+    /* ! IL POSTO SI LIBERA, IL BUFFER RESTA ATTACCATO — e fino a oggi non si
+     * liberava niente. Una finestra con dentro una lista, aperta e chiusa
+     * quattro volte, esauriva i quattro posti delle liste e alla quinta la
+     * lista non si apriva piu': un difetto che non da' nessun errore, si vede
+     * come un elenco vuoto, e si scopre solo usando il programma a lungo.
+     *
+     * Il buffer non si puo' restituire — free() qui non restituisce niente —
+     * quindi resta agganciato al posto, e ex_crea riusa il posto CON il suo
+     * buffer. Cosi' aprire e chiudere mille volte costa quanto aprire una. */
     {
-        Voci *V = voci_di(o);
+        Voci  *V = voci_di(o);
+        Lista *L = lista_di(o);
+        Area  *A = area_di(o);
+        Menu  *M = menu_di(o);
 
         if (V) V->usato = 0;
+        if (L) L->usato = 0;
+        if (A) A->usato = 0;
+        if (M) M->usato = 0;
     }
     if (g_combo_aperto == f) g_combo_aperto = 0;
     if (g_mdi_trascina == f) g_mdi_trascina = 0;

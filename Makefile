@@ -172,7 +172,7 @@ PROGRAMMI_FLOPPY := shell id chmod shutdown ls mem stack disk fdisk mkfs mkswap 
 # =============================================================================
 PROGRAMMI_CD := cdinstall swaptest libctest hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp scarica telnet telnetd sshd xcp winprova exwincmd audio
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
-PROGRAMMI_EXWIN := exwin_so exdlg_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr edit term fontprova orologio browser
+PROGRAMMI_EXWIN := exwin_so exdlg_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr edit term fontprova orologio browser exide
 
 # I driver, con la stessa regola dei programmi. Quelli di base stanno gia'
 # dentro PROGRAMMI_FLOPPY (floppy_drv, kbd_drv): sul floppy servono a
@@ -1921,6 +1921,38 @@ $(EDIT_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(EDIT_SRC) $(EDIT_LD) $(EXWIN_STUB) $(
 .PHONY: edit
 edit: dirs $(EDIT_BIN)
 
+# --- /exwin/bin/exide: l'ambiente di sviluppo visuale ------------------------
+#
+# ! STESSI PEZZI DELL'EDITOR, e non e' un caso: exide e' un editor con davanti
+# un disegnatore. exwin per le finestre, exdlg per i dialoghi (apri, salva, una
+# riga, conferma), exinfo per «Informazioni su». Non apre URL e non decodifica
+# immagini, quindi non si porta dietro ne' exhttp ne' eximg.
+EXIDE_SRC := exwin/bin/exide/exide.c
+EXIDE_BIN := $(BUILD_EXWIN_BIN)/exide
+EXIDE_LD  := exwin/bin/exide/exide.ld
+
+$(EXIDE_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(EXIDE_SRC) $(EXIDE_LD) \
+              $(EXWIN_STUB) $(EXLIB_SRC) $(EXLIB_HDR) $(EXWIN_HDR) \
+              $(EXDLG_STUB) $(EXDLG_HDR) \
+              $(WIN_PROTO) $(FONT_SRC) $(LIBC_PONTI_OBJ) $(LIBC_SO) \
+              $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /exwin/bin/exide ==="
+	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -I lib/exinfo -I drivers/wserver -I drivers/kbd -c $(EXIDE_SRC) -o $(BUILD_OBJ)/exide_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exinfo -c $(EXINFO_SRC) -o $(BUILD_OBJ)/exide_info.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/exide_exwin.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exdlg -c $(EXDLG_STUB) -o $(BUILD_OBJ)/exide_exdlg.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/exide_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(EXIDE_LD) \
+	    $(BUILD_OBJ)/exide_start.o $(BUILD_OBJ)/exide_main.o \
+	    $(BUILD_OBJ)/exide_exwin.o \
+	    $(BUILD_OBJ)/exide_exdlg.o $(BUILD_OBJ)/exide_info.o \
+	    $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] exide compilato: $@"
+
+.PHONY: exide
+exide: dirs $(EXIDE_BIN)
+
 # --- /exwin/bin/term: il terminale in finestra -------------------------------
 #
 # ! E' QUASI TUTTO NEL TOOLKIT. Il controllo «terminale» apre le due pipe,
@@ -2069,7 +2101,7 @@ browser: dirs $(BROWSER_BIN)
 # dentro: senza, le applicazioni finirebbero sull'immagine e la libreria no —
 # tre programmi che partono e si fermano subito dicendo che non la trovano.
 EXWIN_OUT := $(PM_BIN) $(FILEMGR_BIN) $(EDIT_BIN) $(TERM_BIN) $(FONTPROVA_BIN) \
-             $(OROLOGIO_BIN) $(BROWSER_BIN) $(EXHTTP_SO) \
+             $(OROLOGIO_BIN) $(BROWSER_BIN) $(EXIDE_BIN) $(EXHTTP_SO) \
              $(EXWIN_SO) $(EXDLG_SO) \
              $(EXTTF_SO) \
              $(EXIMG_SO)

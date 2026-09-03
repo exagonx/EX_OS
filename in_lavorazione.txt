@@ -94,71 +94,61 @@ Da CD, un driver ogni tanto muore appena avviato (raro, non chiuso).
 EXIDE — L'AMBIENTE DI SVILUPPO VISUALE (aperto il 3 settembre 2026)
 =============================================================================
 
-Un IDE visuale tipo VB6 che gira dentro ExWin e GENERA SORGENTI C. Sta in
-exwin/bin/exide. Tre aree: gli strumenti a sinistra, il disegno della finestra
-in mezzo, le proprieta' a destra; doppio clic su un controllo apre l'editor
-sull'handler del suo evento.
+Sta in exwin/bin/exide, si avvia da /exwin/bin/exide o dal menu Avvio. Il primo
+giro completo c'e' (diario: 3 settembre notte fonda, «EXIDE: SI DISEGNA UNA
+FINESTRA, ESCE DEL C CHE GIRA»): si disegna, si genera, si compila, gira.
 
-Il formato del progetto e' a tre file, ed e' la decisione che decide se il
-progetto sopravvive — e' il punto in cui VB6 si rompeva:
+! COME SI PROVA, perche' non e' ovvio: DA CD NON SI SCRIVE NIENTE, e un
+  ambiente di sviluppo senza un posto dove scrivere non si prova. Si avvia dal
+  CD con un disco ext2 attaccato e lo si monta:
+
+    cp dischi/hd.img /tmp/hd-prova.img
+    EXOS_NO_FLOPPY=1 EXOS_CDROM=dist/exos.iso \
+    EXOS_QEMU_EXTRA="-drive file=/tmp/hd-prova.img,format=raw,if=ide,index=0" \
+    python3 tools/qemu_drive.py "mount hd0p1 /disk@8" "exwin@20" ...
+
+  e dentro exide si fa File > Nuovo progetto su /disk/qualcosa.
+
+Il formato del progetto e' a tre file piu' il disegno, ed e' la decisione che
+decide se il progetto sopravvive — e' il punto in cui VB6 si rompeva:
 
     finestra.dis      lo scrive e legge solo l'IDE
-    finestra_gen.c    lo scrive SOLO l'IDE, mai a mano
-    finestra.c        lo scrivi solo tu; l'IDE ci AGGIUNGE gli handler vuoti
-                      e ci salta dentro, e non lo riscrive mai
+    finestra.h        gli id, i puntatori, i prototipi — generato
+    finestra_gen.c    crea i controlli e smista gli eventi — generato
+    finestra.c        lo scrivi solo tu; l'IDE ci AGGIUNGE gli handler che
+                      mancano e non riscrive mai quel che c'e'
 
-! IL DOPPIO CLIC AGGIUNGE SOLO SE NON C'E'. Su un controllo che ha gia' la sua
-  funzione, il doppio clic porta il cursore su quella riga e basta.
+QUEL CHE MANCA, in ordine di quanto serve:
 
-! I CONTROLLI DI BASE CI SONO TUTTI, dal 3 settembre 2026: spunta, radio,
-  scorrimento, combo e tab sono in exwin.so, e i sette posti da toccare per
-  aggiungerne un altro stanno scritti in exwin.c sopra i numeri CL_*.
+ 1. LA FINESTRA DEL COMPILATORE (Strumenti > Compilatore). Deve montare la riga
+    di comando: comando, opzioni, e in automatico le librerie scelte in
+    «Librerie»; il binario va in bin/. Oggi la voce dice «in arrivo».
+    ! E IL COMPILATORE VERO PESA 40 MB (cc1): su una macchina da 32 MB e'
+      strettissimo, quindi exide deve restare usabile anche SENZA — genera e
+      basta, e chi ha il CD strumenti installato preme «Compila».
 
-! E C'E' L'AREA DEL CODICE: «areacodice» e' la stessa area di testo con 3000
-  righe da 240 colonne e un gancio che la colora (ex_area_colora), piu'
-  ex_area_vai per portarci il cursore. Il coloritore del C e' gia' fatto
-  (ex_colora_c). Restano i LIMITI DICHIARATI di quella scelta:
+ 2. LIBRERIE. Un elenco delle librerie di sistema gia' usate (quelle del
+    toolkit) piu' quelle scegliibili con una spunta, piu' la possibilita' di
+    aggiungerne di proprie. Il risultato entra nella riga di compilazione.
 
-    - 3000 righe da 240 colonne sono 720 KB per area, chiesti alla creazione, e
-      una riga di 40 caratteri ne paga 240. La griglia rettangolare e' la
-      conseguenza dell'allocatore a bump: righe di lunghezza variabile
-      riallocate a ogni tasto perderebbero memoria per sempre. Un sorgente piu'
-      lungo di 3000 righe — browser.c ne ha 6700, exwin.c 4400 — oggi si
-      tronca, e ex_area_aggiungi lo dice rendendo 0.
-    - AREA_MAX e' 2: due aree per programma, e un IDE che tenesse un'area per
-      ogni file aperto le finirebbe subito. La strada e' una sola area e il
-      contenuto che si scambia al cambio di linguetta.
-    - Il coloritore non distingue una VARIABILE da un nome qualunque: per farlo
-      servirebbe sapere che cosa e' stato dichiarato, cioe' un'altra cosa.
+ 3. FILES e DIRECTORY. Una finestra con i file del progetto: doppio clic apre
+    il sorgente nell'editor. Directory mostra anche quel che sorgente non e'.
 
-! E C'E' IL CONTENITORE MDI: «mdi» e «mdifiglio», con il telaio uguale a quello
-  del server, il trascinamento che si ferma al bordo, i comandi che vanno alla
-  procedura della finestra figlia, Tab che gira dentro quella attiva e il
-  ritaglio del disegno. Restano i LIMITI DICHIARATI:
+ 4. PROGETTO. Descrizione, autore, data di creazione, versione e una nota, tutti
+    modificabili: il file progetto.txt c'e' gia' e lo scrive progetto_crea().
 
-    - UNA FINESTRA FIGLIA NON SI RIDIMENSIONA col mouse: non ha la presa
-      nell'angolo. Si sposta e basta. ex_misura funziona da programma.
-    - NIENTE RIDUCI A ICONA, INGRANDISCI, RIPRISTINA. Per un IDE «ingrandisci»
-      e' quello che serve per primo, e vuole ricordare la misura di prima.
-    - NIENTE MENU «FINESTRA» ne' disposizione a cascata o affiancata: sono
-      quattro conti sui rettangoli, e li fa l'applicazione con ex_sposta.
-    - LA SCORCIATOIA PER GIRARE FRA LE FINESTRE LA SCEGLIE L'APPLICAZIONE
-      (ex_mdi_attiva): il toolkit non si prende un tasto per conto suo.
+ 5. SALVA CON NOME per il progetto, e SOSTITUISCI nell'editor.
 
-! IL TOOLKIT E' PRONTO: il prossimo lavoro e' exide stesso — la finestra con le
-  tre aree, il file di progetto, la generazione del sorgente. Quel che resta qui
-  sotto sono rifiniture del toolkit, non pezzi che mancano per cominciare.
+ 6. LE FINESTRE SECONDARIE sulla maschera. Adesso si disegna una finestra sola;
+    per disegnarne piu' d'una serve l'MDI DENTRO il disegnatore — che dal 3
+    settembre c'e' nel toolkit, quindi e' un lavoro suo e non un pezzo che
+    manca.
 
-Quel che manca, in ordine:
+ 7. IL RIDIMENSIONAMENTO DEI CONTROLLI COL MOUSE. Le maniglie si disegnano ma
+    non si tirano: la misura si cambia dalle proprieta'.
 
- 1. LE FRECCE DENTRO UN GRUPPO DI RADIO. Oggi si scatta con la barra
-    spaziatrice e si gira con Tab. La convenzione completa e' «Tab entra nel
-    gruppo, le frecce muovono dentro, Tab esce»: meta' di quella convenzione e'
-    peggio di niente, quindi o si fa tutta o si lascia questa.
-
- 2. IL LIMITE DELLE VOCI: trentadue voci da trentadue caratteri per combo e
-    tab, sei controlli a voci per programma (VOCI_* in exwin.c). Chi ne vuole
-    di piu' oggi deve usare una «lista».
+ 8. ANNULLA. Non c'e', ed e' la prima cosa che si cerca dopo aver cancellato un
+    controllo per sbaglio.
 
 
 =============================================================================

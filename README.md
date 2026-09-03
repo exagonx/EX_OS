@@ -85,6 +85,53 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### EX-IDE: si disegna una finestra, esce del C che gira
+
+**testato** — dal CD in QEMU con un disco ext2 montato, e la prova che conta non
+è una fotografia della maschera: è un binario da 18 KB, **generato dal disegno**,
+che si apre dentro EX-OS con i controlli dove li avevo messi col mouse.
+
+```
+disegno -> finestra.dis -> finestra.h + finestra_gen.c -> gcc -> ld -> gira
+```
+
+**Tre aree, come in Visual Basic**: a sinistra i quattordici strumenti del
+toolkit, in mezzo la maschera su cui si dispongono, a destra le proprietà di
+quello scelto. Doppio clic su un controllo e si apre l'editor **dentro la
+funzione che il suo evento chiamerà**.
+
+**Quattro file, e uno solo è tuo.**
+
+| file | chi lo scrive |
+|---|---|
+| `finestra.dis` | solo exide: il disegno |
+| `finestra.h` | solo exide: gli id, i puntatori, i prototipi |
+| `finestra_gen.c` | solo exide: crea i controlli e smista gli eventi |
+| `finestra.c` | **solo tu**: exide ci *aggiunge* gli handler che mancano e non riscrive mai quel che c'è |
+
+È il punto in cui VB6 si rompeva — un file solo, scritto a metà dal generatore e
+a metà a mano, e ogni rigenerazione era una scommessa. Qui il generato e lo
+scritto non si toccano mai.
+
+**La giuntura è l'id, e c'era già.** `ex_crea(..., padre, ID, 0)` dà a ogni
+controllo un numero e l'evento torna come `EXM_COMANDO` con quel numero dentro:
+nel disegno il pulsante *è* `ID_PULSANTE1`, nel sorgente c'è `case
+ID_PULSANTE1:`. exide è fattibile qui più che altrove perché ExWin era già fatto
+a forma di VB6.
+
+**E un difetto del toolkit, trovato perché serviva a lui.** Le liste e le aree
+non liberavano il loro posto alla distruzione: una finestra con dentro una lista,
+aperta e chiusa quattro volte, esauriva i quattro posti e alla quinta la lista
+non si apriva più — nessun errore, un elenco vuoto. Era lì da mesi e non l'aveva
+trovato nessuno, perché nessun programma apriva e chiudeva la stessa finestra
+abbastanza volte. Il primo è stato exide, il giorno in cui è nato.
+
+> **Il linker script è nato vuoto, e il collegamento è riuscito lo stesso.**
+> `open(f,'w').write(open(f).read()...)` tronca il file prima di leggerlo; `ld -T`
+> con uno script vuoto non protesta, butta via tutto e produce un ELF di 256 byte
+> senza segmenti. Il sintomo era «ELF load fallito» a runtime — che non somiglia
+> affatto alla sua causa.
+
 ### Finestre dentro una finestra: il contenitore MDI
 
 **testato** — dal CD, in QEMU, con `winprova -m`: tre finestre in un contenitore,

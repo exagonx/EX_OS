@@ -84,6 +84,53 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### EX-IDE: draw a window, out comes C that runs
+
+**tested** — from the CD in QEMU with an ext2 disk mounted, and the proof that
+counts is not a screenshot of the form: it is an 18 KB binary, **generated from
+the drawing**, that opens inside EX-OS with the controls where I had put them
+with the mouse.
+
+```
+drawing -> finestra.dis -> finestra.h + finestra_gen.c -> gcc -> ld -> runs
+```
+
+**Three panes, like Visual Basic**: the toolkit's fourteen tools on the left, the
+form in the middle, the selected control's properties on the right. Double-click
+a control and the editor opens **inside the function its event will call**.
+
+**Four files, and only one is yours.**
+
+| file | who writes it |
+|---|---|
+| `finestra.dis` | exide only: the drawing |
+| `finestra.h` | exide only: the ids, the handles, the prototypes |
+| `finestra_gen.c` | exide only: creates the controls and dispatches events |
+| `finestra.c` | **you only**: exide *adds* the handlers that are missing and never rewrites what is there |
+
+This is where VB6 broke — one file, half written by the generator and half by
+hand, and every regeneration was a gamble. Here the generated and the written
+never touch.
+
+**The joint is the id, and it was already there.** `ex_crea(..., parent, ID, 0)`
+gives every control a number and the event comes back as `EXM_COMANDO` carrying
+it: in the drawing the button *is* `ID_PULSANTE1`, in the source there is `case
+ID_PULSANTE1:`. exide is feasible here more than elsewhere because ExWin was
+already shaped like VB6.
+
+**And a toolkit defect, found because it needed it.** Lists and text areas did
+not release their slot when destroyed: a window containing a list, opened and
+closed four times, used up all four slots and on the fifth the list would not
+open — no error, just an empty box. It had been there for months and nobody had
+found it, because no program opened and closed the same window often enough. The
+first one to do so was exide, on the day it was born.
+
+> **The linker script was born empty, and the link succeeded anyway.**
+> `open(f,'w').write(open(f).read()...)` truncates the file before reading it;
+> `ld -T` with an empty script does not complain — it throws everything away and
+> produces a 256-byte ELF with no segments. The symptom was "ELF load failed" at
+> runtime, which looks nothing like its cause.
+
 ### Windows inside a window: the MDI container
 
 **tested** — from the CD, in QEMU, with `winprova -m`: three windows in one
