@@ -52,7 +52,7 @@
 
 /* +0.001 a ogni modifica, aggiunta o prova: `exide -version` la stampa.
  * Vedi EX_VERSIONE in libc.h; la stessa stringa la mostra «Informazioni su». */
-#define VERSIONE_APP "0.006"
+#define VERSIONE_APP "0.007"
 EX_VERSIONE("exide", VERSIONE_APP);
 
 /* -----------------------------------------------------------------------------
@@ -189,6 +189,7 @@ typedef struct {
 static Ctrl g_ctrl[CTRL_MAX];
 static int  g_sel = -1;             /* il controllo scelto, -1 = nessuno */
 static int  g_strum_sel = -1;       /* lo strumento armato, -1 = nessuno */
+static int  g_ridim = -1;           /* quale maniglia si sta tirando, -1 = nessuna */
 
 /* =============================================================================
  * LE MASCHERE — piu' di una, dal 3 settembre 2026
@@ -265,6 +266,11 @@ static ExFinestra g_cmb_form;       /* l'elenco a discesa delle maschere */
  * messi «alla stessa altezza» ci stanno davvero. A mano si sbaglia di un
  * pixel, e un pixel di disallineamento si vede su una fila di pulsanti. */
 #define GRIGLIA   4
+
+/* La misura minima di un controllo, tirandolo col mouse o scrivendola nelle
+ * proprieta': un numero solo, o le due strade si fermerebbero in due posti
+ * diversi e chi scrive 4 nella casella otterrebbe quel che tirando non puo'. */
+#define MISURA_MIN 8
 
 static void dico(const char *s) { ex_testo_metti(g_stato, s); }
 
@@ -409,21 +415,46 @@ static void disegna_controllo(const Ctrl *c, int ox, int oy)
  * confonde con quello del controllo, otto quadratini neri agli angoli e a meta'
  * lato no. E' la convenzione di ogni disegnatore mai scritto, e chi la vede sa
  * gia' cosa vuol dire. */
+/* =============================================================================
+ * LE OTTO MANIGLIE
+ *
+ * ! DOVE SONO LO DICE UNA FUNZIONE SOLA, e la usano sia il disegno che il
+ * clic. Erano otto coppie di numeri scritte a mano in un posto solo finche'
+ * servivano solo a disegnarle; adesso che si possono anche PRENDERE, tenerne
+ * due copie vorrebbe dire che il giorno in cui una si sposta le maniglie si
+ * disegnano dove non si possono afferrare — e il sintomo sarebbe «il mouse non
+ * le prende», che non somiglia affatto a «i due elenchi non sono piu' uguali».
+ *
+ * ! IL LATO CHE SI DISEGNA E QUELLO CHE SI PRENDE NON SONO LO STESSO. Cinque
+ * pixel sono giusti da vedere — piu' grandi coprirebbero il controllo — e sono
+ * pochi da colpire col mouse. La presa e' 11, cioe' tre pixel di margine per
+ * lato: si mira al quadratino e si prende comunque.
+ * ============================================================================= */
+#define MAN_LATO   5        /* il quadratino che si vede */
+#define MAN_PRESA 11        /* quanto e' largo il bersaglio del mouse */
+
+/* Per ogni maniglia: quale bordo muove, in orizzontale e in verticale.
+ * -1 = quello di sinistra/sopra, 0 = nessuno (sta in mezzo), 1 = destra/sotto. */
+static const int g_man_x[8] = { -1,  0,  1, -1,  1, -1,  0,  1 };
+static const int g_man_y[8] = { -1, -1, -1,  0,  0,  1,  1,  1 };
+
+/* Il centro della maniglia i, in coordinate della finestra di exide. */
+static void maniglia_centro(const Ctrl *c, int i, int ox, int oy,
+                            int *cx, int *cy)
+{
+    *cx = ox + c->x + (g_man_x[i] < 0 ? 0 : g_man_x[i] > 0 ? c->w : c->w / 2);
+    *cy = oy + c->y + (g_man_y[i] < 0 ? 0 : g_man_y[i] > 0 ? c->h : c->h / 2);
+}
+
 static void disegna_maniglie(const Ctrl *c, int ox, int oy)
 {
-    int x = ox + c->x, y = oy + c->y, i;
-    int px[8], py[8];
+    int i, cx, cy;
 
-    px[0] = x - 2;              py[0] = y - 2;
-    px[1] = x + c->w / 2 - 2;   py[1] = y - 2;
-    px[2] = x + c->w - 2;       py[2] = y - 2;
-    px[3] = x - 2;              py[3] = y + c->h / 2 - 2;
-    px[4] = x + c->w - 2;       py[4] = y + c->h / 2 - 2;
-    px[5] = x - 2;              py[5] = y + c->h - 2;
-    px[6] = x + c->w / 2 - 2;   py[6] = y + c->h - 2;
-    px[7] = x + c->w - 2;       py[7] = y + c->h - 2;
-
-    for (i = 0; i < 8; i++) ex_riempi(g_f, px[i], py[i], 5, 5, EX_NERO);
+    for (i = 0; i < 8; i++) {
+        maniglia_centro(c, i, ox, oy, &cx, &cy);
+        ex_riempi(g_f, cx - MAN_LATO / 2, cy - MAN_LATO / 2,
+                  MAN_LATO, MAN_LATO, EX_NERO);
+    }
 }
 
 static void disegna_tela(void)
@@ -650,8 +681,8 @@ static void prop_applica(void)
         break;
     case 2: c->x = atoi(v); break;
     case 3: c->y = atoi(v); break;
-    case 4: c->w = atoi(v) < 8 ? 8 : atoi(v); break;
-    case 5: c->h = atoi(v) < 8 ? 8 : atoi(v); break;
+    case 4: c->w = atoi(v) < MISURA_MIN ? MISURA_MIN : atoi(v); break;
+    case 5: c->h = atoi(v) < MISURA_MIN ? MISURA_MIN : atoi(v); break;
     case 6: c->id = (unsigned int)atoi(v); break;
     case 7: {
         /* ! L'EVENTO SI SCEGLIE FRA QUELLI CHE IL CONTROLLO HA, e scriverne uno
@@ -694,6 +725,84 @@ static int ctrl_in(int x, int y)
             return i;
     }
     return -1;
+}
+
+/* Quale maniglia del controllo SCELTO sta sotto (x,y), o -1. */
+static int maniglia_in(int x, int y)
+{
+    int ox = TELA_X + 8, oy = TELA_Y + 28;
+    int i, cx, cy;
+
+    if (g_sel < 0 || !g_ctrl[g_sel].usato) return -1;
+
+    for (i = 0; i < 8; i++) {
+        maniglia_centro(&g_ctrl[g_sel], i, ox, oy, &cx, &cy);
+        if (x >= cx - MAN_PRESA / 2 && x <= cx + MAN_PRESA / 2 &&
+            y >= cy - MAN_PRESA / 2 && y <= cy + MAN_PRESA / 2)
+            return i;
+    }
+    return -1;
+}
+
+/* -----------------------------------------------------------------------------
+ * ! SI TIRA IL BORDO CHE LA MANIGLIA RAPPRESENTA, E GLI ALTRI RESTANO DOVE
+ * SONO. E' tutta la differenza fra ridimensionare e spostare: tirando la
+ * maniglia di sinistra cambiano `x` E `larghezza` insieme, perche' il bordo
+ * DESTRO non si deve muovere. Cambiando la sola larghezza il controllo
+ * scivolerebbe a destra mentre lo si tira a sinistra.
+ *
+ * ! E I LIMITI SI APPLICANO AL BORDO CHE SI MUOVE, non alla misura. Se la
+ * misura minima si facesse rispettare accorciando «da destra» mentre si tira
+ * il bordo sinistro, il controllo si metterebbe a scappare appena arrivato al
+ * minimo. Qui il bordo tirato si ferma e l'altro non si muove mai.
+ * --------------------------------------------------------------------------- */
+static void ridimensiona(int mx, int my)
+{
+    int   ox = TELA_X + 8, oy = TELA_Y + 28;
+    Ctrl *c = &g_ctrl[g_sel];
+    int   sx = c->x, sy = c->y;                 /* i bordi: sinistro e alto */
+    int   dx = c->x + c->w, dy = c->y + c->h;   /* destro e basso */
+    int   px = arrotonda(mx - ox), py = arrotonda(my - oy);
+
+    if (g_man_x[g_ridim] < 0) sx = px;
+    if (g_man_x[g_ridim] > 0) dx = px;
+    if (g_man_y[g_ridim] < 0) sy = py;
+    if (g_man_y[g_ridim] > 0) dy = py;
+
+    /* Dentro la maschera. */
+    if (sx < 0) sx = 0;
+    if (sy < 0) sy = 0;
+    if (dx > forma()->w) dx = forma()->w;
+    if (dy > forma()->h) dy = forma()->h;
+
+    /* E mai piu' piccolo del minimo: si ferma il bordo che si sta tirando. */
+    if (dx - sx < MISURA_MIN) {
+        if (g_man_x[g_ridim] < 0) sx = dx - MISURA_MIN;
+        else                      dx = sx + MISURA_MIN;
+    }
+    if (dy - sy < MISURA_MIN) {
+        if (g_man_y[g_ridim] < 0) sy = dy - MISURA_MIN;
+        else                      dy = sy + MISURA_MIN;
+    }
+
+    if (sx == c->x && sy == c->y && dx == c->x + c->w && dy == c->y + c->h)
+        return;                                 /* niente e' cambiato */
+
+    c->x = sx;
+    c->y = sy;
+    c->w = dx - sx;
+    c->h = dy - sy;
+    g_sporco = 1;
+
+    {
+        char t[64];
+
+        sprintf(t, "%s: %d x %d", c->nome, c->w, c->h);
+        dico(t);
+    }
+    prop_mostra();
+    disegna_tela();
+    ex_aggiorna(g_f);
 }
 
 static unsigned int id_libero(void)
@@ -2144,9 +2253,12 @@ static const char *const g_manuale[] = {
 "   src, inc, lib, bin e obj, piu' progetto.txt con autore e data.",
 "2. Si sceglie uno strumento nell'elenco a sinistra e si clicca sulla",
 "   maschera: il controllo nasce li', con un nome e un id suoi.",
-"3. Lo si sposta trascinandolo. Le proprieta' a destra dicono nome,",
-"   testo, posizione, misura, id ed evento: si sceglie la riga, si",
-"   scrive nella casella e si preme Applica.",
+"3. Lo si sposta trascinandolo, e lo si RIDIMENSIONA tirando una delle",
+"   otto maniglie nere che gli compaiono attorno quando e' scelto:",
+"   gli angoli cambiano due lati insieme, quelle in mezzo ai bordi",
+"   uno solo. Il bordo opposto non si muove. Le proprieta' a destra",
+"   dicono nome, testo, posizione, misura, id ed evento: si sceglie",
+"   la riga, si scrive nella casella e si preme Applica.",
 "4. Doppio clic sul controllo: si apre il sorgente dentro la funzione",
 "   che l'evento chiamera'. Se non c'era, exide la aggiunge vuota.",
 "5. File > Salva scrive finestra.dis, finestra.h e finestra_gen.c.",
@@ -2159,7 +2271,7 @@ static const char *const g_manuale[] = {
 "  finestra.c       IL TUO: exide ci aggiunge in fondo gli handler che",
 "                   mancano e non riscrive mai quel che c'e' gia'",
 "",
-"UN ESEMPIO: DUE CASELLE CHE SI SCAMBIANO IL TESTO",
+"PRIMO ESEMPIO: DUE CASELLE CHE SI SCAMBIANO IL TESTO",
 "",
 "  Metti sulla maschera due Casella e un Pulsante.",
 "  Chiama le caselle Casella1 e Casella2 (proprieta' nome).",
@@ -2176,6 +2288,39 @@ static const char *const g_manuale[] = {
 "",
 "  I nomi h_Casella1 e h_Casella2 li ha dichiarati finestra.h: il nome",
 "  del controllo con h_ davanti.",
+"",
+"  ! LA COPIA IN t SERVE DAVVERO. ex_testo_prendi rende un puntatore",
+"  AL TESTO DEL CONTROLLO, non una copia: scrivendo prima dentro",
+"  Casella1 si perderebbe quel che si voleva leggere, e le due",
+"  caselle finirebbero uguali invece che scambiate.",
+"",
+"  ! E L'ULTIMA RIGA RIDISEGNA. Cambiare il testo cambia il dato, non",
+"  i pixel: senza quella riga le caselle restano come si vedevano",
+"  finche' qualcos'altro non fa ridisegnare la finestra.",
+"",
+"SECONDO ESEMPIO: UN PULSANTE CHE CHIUDE LA FINESTRA",
+"",
+"  Metti un Pulsante, chiamalo Chiudi (proprieta' nome) e scrivici",
+"  «Chiudi» nel testo. Doppio clic, e dentro Chiudi_Clic():",
+"",
+"      ex_esci(0);",
+"",
+"  Nella finestra PRINCIPALE e' tutto qui: ex_esci fa finire il ciclo",
+"  dei messaggi dentro il main, e il programma esce - la stessa cosa",
+"  che fa il pulsante di chiusura della barra del titolo.",
+"",
+"  In una finestra SECONDARIA no: li' chiudere vuol dire far sparire",
+"  quella finestra e basta, non uscire dal programma. Si chiama la",
+"  procedura generata, che sa gia' come si fa:",
+"",
+"      /* dentro un handler della finestra «opzioni» */",
+"      opzioni_proc(g_form_opzioni, EXM_CHIUDI, 0, 0);",
+"",
+"  Cosi' passa dalla stessa strada del pulsante di chiusura: distrugge",
+"  la finestra e rimette a zero gli handle dei suoi controlli. Scrivere",
+"  a mano ex_distruggi() funzionerebbe a meta' - la finestra sparirebbe",
+"  e h_Casella1 continuerebbe a puntare a un controllo che non c'e'",
+"  piu'.",
 "",
 "PIU' DI UNA FINESTRA",
 "",
@@ -2205,32 +2350,152 @@ static const char *const g_manuale[] = {
 "  La principale tiene i nomi di sempre (g_form, finestra_crea): il",
 "  suo nome nell'elenco e' solo un'etichetta per riconoscerla.",
 "",
-"GLI STRUMENTI, E A COSA SERVONO",
+"LE PROPRIETA', UNA PER UNA",
 "",
-"  Pulsante      si preme e chiama il suo handler (evento Clic)",
-"  Etichetta     testo e basta, non si puo' scrivere dentro",
-"  Casella       una riga di testo modificabile",
-"  Spunta        acceso o spento, indipendente dalle altre",
+"  Si scelgono nell'elenco a destra, si scrive nella casella sotto e",
+"  si preme Applica. Senza nessun controllo scelto - un clic sul vuoto",
+"  della maschera - l'elenco diventa quello della FINESTRA.",
+"",
+"  Di un controllo:",
+"    nome        diventa h_<nome> in finestra.h, ID_<NOME> fra i",
+"                #define e <nome>_<evento>() come handler. Puo'",
+"                contenere solo lettere, cifre e _: il resto viene",
+"                sostituito, perche' e' un nome di funzione C",
+"    testo       quel che ci si legge dentro (o accanto, per Spunta",
+"                e Radio). Lo cambia anche ex_testo_metti() a",
+"                programma acceso",
+"    x, y        l'angolo in alto a sinistra, dentro la finestra",
+"    larghezza   la misura. Minimo 8. Si cambiano anche tirando",
+"    altezza     le maniglie col mouse",
+"    id          il numero che arriva alla procedura quando l'evento",
+"                scatta. exide ne da' uno libero: cambiarlo serve solo",
+"                se lo si vuole uguale a qualcosa di gia' scritto",
+"    evento      QUALE evento chiama il tuo handler, fra quelli che",
+"                quel controllo ha (l'elenco e' qui sotto). Scriverne",
+"                uno che non c'e' non fa niente e lo dice",
+"",
+"  Della finestra:",
+"    nome        diventa <nome>_crea() e <nome>_proc() nel codice.",
+"                La principale tiene i suoi nomi di sempre e questo",
+"                le fa solo da etichetta nell'elenco",
+"    titolo      quel che si legge nella barra del titolo",
+"    larghezza   la misura dell'AREA INTERNA: la barra e il bordo",
+"    altezza     stanno fuori e li aggiunge il sistema",
+"",
+"GLI STRUMENTI, UNO PER UNO",
+"",
+"  Per ognuno: a cosa serve, quali eventi ha (il primo e' quello con",
+"  cui nasce) e con quali funzioni si comanda da dentro finestra.c.",
+"",
+"  Pulsante      si preme e chiama il suo handler.",
+"                eventi: Clic, SulMouse",
+"                ex_testo_metti/prendi per l'etichetta sopra",
+"                Il comando parte quando si ALZA il dito, non quando",
+"                si preme: scivolare via prima di alzarlo annulla",
+"",
+"  Etichetta     testo e basta, non ci si scrive dentro.",
+"                eventi: SulMouse, Clic",
+"                ex_testo_metti per cambiarla a programma acceso",
+"",
+"  Casella       una riga di testo modificabile.",
+"                eventi: Cambiato (a ogni tasto), Invio",
+"                ex_testo_prendi per leggerla, ex_testo_metti per",
+"                riempirla, ex_fuoco per portarci il cursore",
+"                ! TIENE 63 CARATTERI: per un testo lungo serve",
+"                un'Area testo",
+"",
+"  Spunta        acceso o spento, indipendente dalle altre.",
+"                eventi: Cambiato",
+"                ex_acceso(h) rende 1 o 0, ex_accendi(h, 1) la accende",
+"",
 "  Radio         una scelta fra fratelli: accenderne uno spegne gli",
-"                altri che hanno lo STESSO PADRE (mettili in un",
-"                Riquadro per fare due gruppi separati)",
+"                altri CHE HANNO LO STESSO PADRE. Per due gruppi",
+"                separati si mettono dentro due Riquadro diversi.",
+"                eventi: Cambiato",
+"                ex_acceso / ex_accendi, come la Spunta",
+"",
 "  Riquadro      una cornice con un titolo: raggruppa, e fa da padre",
-"  Separatore    una riga incisa",
-"  Intestazione  una fascia blu con un titolo",
-"  Lista         un elenco che scorre, con una riga scelta",
-"  Area testo    testo su piu' righe, con cursore e selezione",
-"  Area codice   come l'area testo, ma piu' capiente e colorabile",
-"  Elenco        a discesa: si vede la scelta, si apre l'elenco",
-"  Linguette     una fila di tab, una scelta",
-"  Scorrimento   una barra: verticale o orizzontale secondo la forma",
+"                ai controlli che ci stanno dentro.",
+"                eventi: nessuno",
+"",
+"  Separatore    una riga incisa, per dividere. Nessun evento",
+"",
+"  Intestazione  una fascia col titolo, per intestare una zona.",
+"                Nessun evento",
+"",
+"  Lista         un elenco che scorre, con una riga scelta.",
+"                eventi: Scelta, Apertura (il doppio clic e l'Invio)",
+"                ex_lista_svuota, ex_lista_aggiungi(h, \"riga\"),",
+"                ex_lista_quante, ex_lista_scelta (quale riga),",
+"                ex_lista_scegli(h, i), ex_lista_testo(h, i)",
+"",
+"  Area testo    testo su piu' righe, con cursore, selezione e",
+"                appunti (Ctrl+C, Ctrl+V, Ctrl+X).",
+"                eventi: Cambiato",
+"                ex_area_svuota, ex_area_aggiungi(h, \"riga\"),",
+"                ex_area_righe, ex_area_riga(h, i),",
+"                ex_area_riga_metti(h, i, \"nuova\"),",
+"                ex_area_vai(h, riga, colonna) porta il cursore,",
+"                ex_area_modificato dice se si e' scritto dentro e",
+"                ex_area_pulita azzera quella risposta dopo un salva",
+"                ! DUE AREE PER PROGRAMMA AL MASSIMO",
+"",
+"  Area codice   come l'Area testo ma piu' capiente, e si puo'",
+"                colorare: ex_area_colora(h, ex_colora_c, 0) accende",
+"                la colorazione del C.",
+"                eventi: Cambiato",
+"",
+"  Elenco        a discesa: si vede la scelta, si apre l'elenco.",
+"                eventi: Scelta",
+"                ex_voci_svuota, ex_voce_aggiungi(h, \"voce\"),",
+"                ex_voci_quante, ex_voce_scelta, ex_voce_scegli(h, i),",
+"                ex_voce_testo(h, i)",
+"",
+"  Linguette     una fila di tab, una scelta. Stesse funzioni",
+"                dell'Elenco (ex_voce_*): sono lo stesso elenco",
+"                disegnato in un altro modo.",
+"                eventi: Scelta",
+"                Il contenuto di ogni linguetta lo mostri tu, con",
+"                ex_mostra(h, 1) e ex_mostra(h, 0) sui controlli",
+"",
+"  Scorrimento   una barra: VERTICALE O ORIZZONTALE SECONDO LA FORMA",
+"                che le dai - piu' alta che larga viene verticale.",
+"                eventi: Scorso (a ogni pixel, mentre si trascina)",
+"                ex_scorri_limiti(h, massimo, pagina),",
+"                ex_scorri_dove(h), ex_scorri_vai(h, dove)",
+"",
+"QUALCHE FUNZIONE CHE VALE PER TUTTI",
+"",
+"  ex_mostra(h, 0/1)         nascondi o mostra un controllo",
+"  ex_fuoco(h)               portagli il cursore della tastiera",
+"  ex_sposta(h, x, y)        spostalo a programma acceso",
+"  ex_misura(h, w, h)        cambiagli la misura",
+"  ex_titolo(finestra, s)    cambia il titolo di una finestra",
+"  ex_procedura_base(finestra, EXM_DISEGNA, 0, 0)   ridisegna",
+"",
+"  ! CAMBIARE UN DATO NON RIDISEGNA. Le funzioni qui sopra cambiano",
+"  quel che il controllo E'; i pixel si rifanno con l'ultima riga.",
+"  E' il motivo per cui quasi tutti gli esempi finiscono cosi'.",
 "",
 "IL MENU",
 "",
-"  File        opera sul PROGETTO, non sul singolo sorgente",
-"  Modifica    le voci classiche di un editor (dentro il sorgente)",
-"  Strumenti   Sorgente apre l'editor; Shell una riga di comando nella",
-"              directory del progetto; Compilatore, Librerie, Files,",
-"              Directory e Progetto sono in arrivo",
+"  File        opera sul PROGETTO, non sul singolo sorgente: nuovo,",
+"              apri, salva, salva con nome (copia tutto l'albero in",
+"              una directory nuova e ci si continua a lavorare)",
+"  Modifica    le voci classiche di un editor - copia, incolla,",
+"              taglia, cancella, cerca, sostituisci - e lavorano",
+"              DENTRO il sorgente, non sulla maschera",
+"  Strumenti   Sorgente     l'editor sui tre file del disegno",
+"              Shell        una riga di comando nella directory",
+"                           del progetto",
+"              Compilatore  scrive src/compila.sh, lo lancia con",
+"                           GCC e mostra quel che dice",
+"              Librerie     quali librerie condivise aggiungere",
+"                           alla riga di compilazione",
+"              Files        i file di src/, e un doppio clic ne apre",
+"                           uno in un editor a parte",
+"              Directory    apre il file manager sul progetto",
+"              Progetto     la scheda: autore, versione, nota",
 "  Aiuto       questo manuale e le informazioni sul programma",
 0
 };
@@ -3323,6 +3588,22 @@ static void tela_clic(int x, int y, int doppio)
     if (x < TELA_X || x >= TELA_X + TELA_W ||
         y < TELA_Y || y >= TELA_Y + TELA_H) return;
 
+    /* ! LE MANIGLIE SI GUARDANO PRIMA DEL CONTROLLO, e non e' un dettaglio
+     * d'ordine: stanno a cavallo del bordo, quindi meta' di ognuna cade
+     * DENTRO il controllo. Cercando prima il controllo, un clic sull'angolo
+     * comincerebbe uno spostamento e la maniglia non si potrebbe prendere
+     * mai — con il risultato che le maniglie si vedono e non servono a
+     * niente, che e' come stavano fino a oggi. */
+    if (!doppio) {
+        int man = maniglia_in(x, y);
+
+        if (man >= 0) {
+            g_ridim = man;
+            dico("tira per cambiare la misura");
+            return;
+        }
+    }
+
     k = ctrl_in(x, y);
 
     if (k >= 0) {
@@ -3488,6 +3769,10 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         return 0;
 
     case EXM_MOUSE_MOSSO:
+        if (g_ridim >= 0 && g_sel >= 0 && g_ctrl[g_sel].usato) {
+            ridimensiona(EX_X(lp), EX_Y(lp));
+            return 0;
+        }
         if (g_trascina && g_sel >= 0 && g_ctrl[g_sel].usato) {
             int ox = TELA_X + 8, oy = TELA_Y + 28;
             int nx = arrotonda(EX_X(lp) - g_tras_dx - ox);
@@ -3507,12 +3792,19 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
                 g_ctrl[g_sel].y = ny;
                 g_sporco = 1;
                 prop_mostra();
+                /* ! IL DISEGNO SI RIFA' QUI, e prima non lo faceva nessuno:
+                 * EXM_DISEGNA non arriva da solo mentre si trascina, e il
+                 * controllo si vedeva saltare nel posto nuovo solo quando
+                 * qualcos'altro faceva ridisegnare la finestra. */
+                disegna_tela();
+                ex_aggiorna(g_f);
             }
         }
         return 0;
 
     case EXM_MOUSE_SU:
         g_trascina = 0;
+        g_ridim = -1;
         return 0;
 
     case EXM_TASTO:

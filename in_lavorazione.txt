@@ -170,16 +170,25 @@ decide se il progetto sopravvive — e' il punto in cui VB6 si rompeva:
   handle tornano a zero. Nel file del disegno la riga «F» porta il nome; la
   vecchia «f», senza nome, si legge ancora.
 
+! LE MANIGLIE SI TIRANO, dal 3 settembre 2026 (diario: «LE MANIGLIE SI TIRANO,
+  E IL MANUALE SPIEGA DAVVERO»). Otto maniglie: gli angoli cambiano due lati
+  insieme, quelle in mezzo ai bordi uno solo, e IL BORDO OPPOSTO NON SI MUOVE —
+  si tira un bordo, non una misura, o il controllo scivolerebbe mentre lo si
+  tira. Minimo 8 pixel (MISURA_MIN, lo stesso numero che rispettano le
+  proprieta'), e ci si ferma dentro la maschera. La presa e' 11 pixel mentre il
+  quadratino nero ne misura 5: cinque sono giusti da vedere e pochi da colpire.
+  Nello stesso giro il manuale dentro il programma e' diventato un manuale:
+  per ogni strumento gli eventi e le funzioni con cui si comanda, le proprieta'
+  una per una, e due esempi completi (le due caselle che si scambiano il testo,
+  e il pulsante che chiude la finestra - diverso fra principale e secondaria).
+
 QUEL CHE MANCA, in ordine di quanto serve:
 
- 1. IL RIDIMENSIONAMENTO DEI CONTROLLI COL MOUSE. Le maniglie si disegnano ma
-    non si tirano: la misura si cambia dalle proprieta'.
-
- 2. ANNULLA. Non c'e', ed e' la prima cosa che si cerca dopo aver cancellato un
+ 1. ANNULLA. Non c'e', ed e' la prima cosa che si cerca dopo aver cancellato un
     controllo per sbaglio — e da adesso anche dopo aver tolto una maschera, che
     ne porta via i controlli (per questo «Togli» chiede conferma e dice quanti).
 
- 3. UN CONTROLLO NON SI SPOSTA DA UNA MASCHERA ALL'ALTRA. Si cancella di qua e
+ 2. UN CONTROLLO NON SI SPOSTA DA UNA MASCHERA ALL'ALTRA. Si cancella di qua e
     si rifa' di la'. Vorrebbe dire un «taglia e incolla» del disegno, che non
     c'e' per niente — nemmeno dentro la stessa maschera.
 

@@ -85,6 +85,45 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### Le maniglie si tirano, e il manuale spiega davvero
+
+**testato** — dentro EX-OS, tirando ogni tipo di maniglia e leggendo i numeri
+che finiscono nel file del disegno. I controlli si ridimensionano col mouse:
+le otto maniglie si disegnavano dal primo giorno e non servivano a niente.
+
+**Il problema non era tirarle, era prenderle.** Metà di ogni maniglia cade
+*dentro* il controllo, e il clic cercava prima il controllo — l'ordine
+naturale: così un clic sull'angolo cominciava uno spostamento e la maniglia non
+si prendeva mai. Ora le maniglie si guardano per prime. E il quadratino che si
+vede è 5 pixel — di più coprirebbe il controllo — mentre il bersaglio del mouse
+è 11: si mira al quadratino e si prende comunque.
+
+**Si tira un bordo, non una misura.** Tirando la maniglia di sinistra cambiano
+`x` **e** larghezza insieme, perché il bordo destro non si deve muovere:
+cambiando la sola larghezza il controllo scivolerebbe a destra mentre lo si
+tira a sinistra. Lo stesso vale per i limiti — la misura minima ferma il bordo
+che si sta tirando, non accorcia dall'altra parte, o il controllo scapperebbe
+appena arrivato al minimo.
+
+**Il manuale dentro il programma è diventato un manuale.** Per ogni strumento
+dice a cosa serve, quali eventi ha e **con quali funzioni si comanda** da
+`finestra.c`: `ex_acceso`/`ex_accendi` per Spunta e Radio, i sei `ex_lista_*`,
+i sei `ex_voce_*` che Elenco e Linguette condividono, `ex_scorri_*`; più le
+proprietà una per una — cosa diventa ognuna nel codice generato — e due esempi
+completi. Uno c'era: due caselle che si scambiano il testo, ora con scritto
+perché la copia d'appoggio serve davvero (`ex_testo_prendi` rende un
+*puntatore* al testo del controllo, non una copia). L'altro mancava: **un
+pulsante che chiude la finestra**, che nella principale è `ex_esci(0)` e in una
+secondaria no — lì si chiama la procedura generata con `EXM_CHIUDI`, che
+distrugge la finestra *e* azzera gli handle dei suoi controlli.
+
+> **Un difetto vecchio, trovato scrivendone uno nuovo.** Aggiungendo il
+> ridisegno al ridimensionamento è saltato fuori che lo *spostamento* non ne
+> aveva mai avuto uno: trascinando un controllo cambiavano `x` e `y` e nessuno
+> ridisegnava la tela, così il controllo si vedeva saltare nel posto nuovo solo
+> quando qualcos'altro faceva ridisegnare la finestra. Adesso tutti e due i
+> trascinamenti finiscono con un ridisegno.
+
 ### Più di una finestra: il disegnatore impara a contare
 
 **testato** — dal disegno al programma che gira: due finestre disegnate,

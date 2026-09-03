@@ -28,6 +28,106 @@ manca» apre quello.
 
 # DOVE RIPRENDERE — 3 settembre 2026
 
+## 3 settembre 2026 (notte) — LE MANIGLIE SI TIRANO, E IL MANUALE SPIEGA DAVVERO
+
+Due cose che si tenevano compagnia: il ridimensionamento col mouse — le
+maniglie si disegnavano dal primo giorno e non servivano a niente — e il
+manuale dentro il programma, che elencava gli strumenti senza dire come si
+usano e prometteva ancora «in arrivo» cose fatte da giorni.
+
+### LE MANIGLIE: IL PROBLEMA NON ERA TIRARLE, ERA PRENDERLE
+
+! **DOVE SONO LE OTTO MANIGLIE ADESSO LO DICE UNA FUNZIONE SOLA.** Erano otto
+coppie di numeri scritte a mano dentro `disegna_maniglie()`, e andavano bene
+finche' servivano solo a disegnare. Dal momento in cui si possono anche
+PRENDERE, quei numeri servono in due posti: il giorno che se ne sposta uno, le
+maniglie si disegnano dove non si possono afferrare — e il sintomo sarebbe «il
+mouse non le prende», che non somiglia per niente a «i due elenchi non sono
+piu' uguali». Adesso c'e' `maniglia_centro()`, e disegno e clic la chiamano
+tutt'e due.
+
+! **IL LATO CHE SI VEDE E QUELLO CHE SI PRENDE NON SONO LO STESSO.** Cinque
+pixel sono giusti da guardare — piu' grandi coprirebbero il controllo — e sono
+pochi da colpire col mouse. La presa e' 11: tre pixel di margine per lato, si
+mira al quadratino e si prende comunque.
+
+! **E LE MANIGLIE SI GUARDANO PRIMA DEL CONTROLLO.** Stanno a cavallo del
+bordo, quindi meta' di ognuna cade DENTRO il controllo: cercando prima il
+controllo — che e' l'ordine naturale, ed era quello che c'era — un clic
+sull'angolo comincia uno spostamento e la maniglia non si prende mai. E'
+esattamente il motivo per cui si vedevano e non servivano.
+
+### SI TIRA IL BORDO, NON LA MISURA
+
+! **TIRANDO LA MANIGLIA DI SINISTRA CAMBIANO `x` E `larghezza` INSIEME**,
+perche' il bordo DESTRO non si deve muovere. Cambiando la sola larghezza il
+controllo scivolerebbe a destra mentre lo si tira a sinistra. Il modello e'
+quello: ogni maniglia dice quale bordo muove — `g_man_x[]` e `g_man_y[]`,
+gli stessi due vettori che ne danno la posizione — e si lavora sui quattro
+bordi invece che su posizione+misura.
+
+! **E ANCHE I LIMITI SI APPLICANO AL BORDO CHE SI MUOVE.** Se la misura minima
+si facesse rispettare accorciando «da destra» mentre si tira il bordo
+sinistro, il controllo scapperebbe appena arrivato al minimo. Qui il bordo
+tirato si ferma e l'altro non si muove: provato tirando l'angolo in alto a
+sinistra ben oltre quello opposto — il controllo si e' fermato a 8x8 con
+l'angolo in basso a destra fermo dov'era.
+
+### UN DIFETTO CHE STAVA LI' DAL PRIMO GIORNO
+
+Scrivendo il ridisegno del ridimensionamento mi sono accorto che **lo
+spostamento non ne aveva uno**: `EXM_MOUSE_MOSSO` cambiava `x` e `y`, e
+nessuno ridisegnava la tela. Il controllo si vedeva saltare nel posto nuovo
+solo quando qualcos'altro faceva ridisegnare la finestra. Adesso tutt'e due i
+trascinamenti finiscono con `disegna_tela()` e `ex_aggiorna()`.
+
+### IL MANUALE: DA ELENCO A MANUALE
+
+Era una pagina di elenchi. Adesso, per ogni strumento, dice **a cosa serve,
+quali eventi ha e con quali funzioni si comanda** da dentro `finestra.c` —
+`ex_acceso`/`ex_accendi` per Spunta e Radio, i sei `ex_lista_*`, i sei
+`ex_voce_*` che Elenco e Linguette condividono («sono lo stesso elenco
+disegnato in un altro modo»), `ex_scorri_*`, e il fatto che la Casella tiene
+63 caratteri e le aree sono al massimo due per programma. Piu' una sezione
+sulle proprieta' — cosa diventa ognuna nel codice generato — e due esempi
+completi:
+
+  - **due caselle che si scambiano il testo**, che c'era gia', ora con scritto
+    perche' la copia in `t` serve davvero (`ex_testo_prendi` rende un
+    PUNTATORE al testo del controllo, non una copia: scrivendo prima dentro
+    Casella1 si perde quel che si voleva leggere, e le due caselle finiscono
+    uguali invece che scambiate);
+  - **un pulsante che chiude la finestra**, che mancava. Nella principale e'
+    `ex_esci(0)`; in una secondaria no, e la riga giusta e'
+    `opzioni_proc(g_form_opzioni, EXM_CHIUDI, 0, 0)` — si passa dalla stessa
+    strada del pulsante di chiusura, che distrugge la finestra E rimette a
+    zero gli handle dei suoi controlli. Scrivere `ex_distruggi()` a mano
+    funzionerebbe a meta': la finestra sparirebbe e `h_Casella1` continuerebbe
+    a puntare a un controllo che non c'e' piu'.
+
+E le voci «in arrivo» sono sparite: il menu Strumenti e' completo da giorni e
+il manuale diceva ancora il contrario.
+
+! **IL MANUALE STA IN UN'AREA DI TESTO, E LE AREE HANNO UN TETTO.** 252 righe
+su `AREA_RIGHE_MAX` 512, larghe al massimo 70 caratteri su 200: ci sta, ed e'
+un numero da ricontrollare prima di allungarlo ancora, perche' oltre il tetto
+`ex_area_aggiungi` rende 0 e il manuale si troncherebbe in silenzio.
+
+### COME SI E' PROVATO
+
+    Pulsante1 90x26, tirata la maniglia in basso a destra
+        -> 132x68, e l'angolo in alto a sinistra fermo a (76,104)
+        -> la riga di stato dice «Pulsante1: 132 x 68» MENTRE si tira,
+           e le proprieta' a destra cambiano insieme
+    tirata quella in alto a sinistra di +30,+20
+        -> x 108, y 124, 100x48: si muovono ANCHE x e y
+    e poi tirata oltre l'angolo opposto
+        -> 200 164 8 8: fermo al minimo, angolo opposto immobile
+    File > Salva, e finestra.dis ha i numeri nuovi
+    Aiuto > Manuale, sfogliato: c'e' tutto e le righe non sono tagliate
+
+
+
 ## 3 settembre 2026 (notte) — PIU' DI UNA FINESTRA: IL DISEGNATORE IMPARA A CONTARE
 
 Era la prima voce rimasta in `in_lavorazione.txt`: un progetto poteva disegnare

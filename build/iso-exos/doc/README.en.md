@@ -84,6 +84,45 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### The handles can be pulled, and the manual actually explains
+
+**tested** — inside EX-OS, pulling every kind of handle and reading back the
+numbers that end up in the drawing file. Controls can be resized with the
+mouse: the eight handles had been drawn since day one and were good for
+nothing.
+
+**The problem was not pulling them, it was grabbing them.** Half of every
+handle falls *inside* the control, and the click looked for the control first —
+the natural order: so a click on the corner started a move and the handle could
+never be taken. Handles are now looked at first. And the little square you see
+is 5 pixels — any bigger would cover the control — while the mouse target is
+11: you aim at the square and grab it anyway.
+
+**You pull an edge, not a size.** Pulling the left handle changes `x` **and**
+width together, because the right edge must not move: changing the width alone
+would make the control slide right while you drag it left. The same goes for
+the limits — the minimum size stops the edge being pulled instead of shortening
+from the other side, or the control would run away the moment it hit the
+minimum.
+
+**The in-program manual became a manual.** For every tool it now says what it
+is for, which events it has and **which functions drive it** from `finestra.c`:
+`ex_acceso`/`ex_accendi` for Check and Radio, the six `ex_lista_*`, the six
+`ex_voce_*` that Combo and Tabs share, `ex_scorri_*`; plus the properties one
+by one — what each becomes in the generated code — and two complete examples.
+One was there: two boxes swapping their text, now with the reason the scratch
+copy is really needed (`ex_testo_prendi` returns a *pointer* into the control's
+text, not a copy). The other was missing: **a button that closes the window**,
+which in the main window is `ex_esci(0)` and in a secondary one is not — there
+you call the generated procedure with `EXM_CHIUDI`, which destroys the window
+*and* zeroes the handles of its controls.
+
+> **An old defect, found while writing a new one.** Adding the repaint to the
+> resize turned up that *moving* had never had one: dragging a control changed
+> `x` and `y` and nobody repainted the canvas, so the control was seen jumping
+> to its new place only when something else caused the window to redraw. Both
+> drags now end with a repaint.
+
 ### More than one window: the designer learns to count
 
 **tested** — from the drawing to the running program: two windows drawn,
