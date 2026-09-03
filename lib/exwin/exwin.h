@@ -571,6 +571,56 @@ unsigned int ex_voce_scelta(ExFinestra c);
 void         ex_voce_scegli(ExFinestra c, unsigned int i);
 const char  *ex_voce_testo(ExFinestra c, unsigned int i);
 
+/* =============================================================================
+ * IL TESTO COLORATO — «areacodice», e il gancio che lo colora
+ *
+ * ! E' LA STESSA AREA DI TESTO CON UN'ALTRA CAPIENZA. `ex_crea("areacodice",
+ * ...)` da' un'area da 3000 righe per 240 colonne invece di 512 per 200; tutto
+ * il resto — il cursore, la selezione, gli appunti, il clic, ex_area_* — e'
+ * identico, perche' e' lo stesso controllo. Non c'e' una seconda serie di
+ * funzioni da imparare.
+ *
+ * ! E IL COLORITORE NON STA NEL TOOLKIT, STA IN CHI SA LA LINGUA. Questo
+ * controllo sa disegnare del testo colorato; quali parole siano chiavi e dove
+ * finisca un commento lo sa chi scrive l'editor. Il gancio riceve UNA RIGA
+ * INTERA e riempie un ruolo per carattere:
+ *
+ *     unsigned int mio_colore(void *dato, const char *riga,
+ *                             unsigned char *ruoli, unsigned int stato)
+ *
+ * `stato` e' com'era finita la riga PRIMA (0 alla prima riga), e cio' che si
+ * rende e' come finisce questa: e' il modo in cui un commento a blocco
+ * attraversa le righe. Chi non ne ha bisogno rende sempre 0.
+ *
+ * ! I RUOLI SONO RUOLI, NON COLORI, e la differenza conta: il toolkit decide
+ * la tavolozza in un punto solo, quindi due editor diversi non colorano le
+ * chiavi di due blu diversi — e il giorno che si vorranno i temi, la tavolozza
+ * e' una tabella sola da cambiare.
+ *
+ * Per il C c'e' gia' `ex_colora_c`, che si passa cosi':
+ *
+ *     ex_area_colora(area, ex_colora_c, 0);
+ * ============================================================================= */
+#define EX_COD_NORMALE   0
+#define EX_COD_CHIAVE    1      /* if, while, return... */
+#define EX_COD_TIPO      2      /* int, char, unsigned... */
+#define EX_COD_STRINGA   3      /* "..." e '.' */
+#define EX_COD_NUMERO    4
+#define EX_COD_COMMENTO  5
+#define EX_COD_PREPROC   6      /* la riga che comincia con # */
+#define EX_COD_FUNZIONE  7      /* un nome seguito da ( */
+#define EX_COD_SIMBOLO   8      /* punteggiatura e operatori */
+
+typedef unsigned int (*ExColora)(void *dato, const char *riga,
+                                 unsigned char *ruoli, unsigned int stato);
+
+void ex_area_colora(ExFinestra area, ExColora fn, void *dato);
+
+/* Il coloritore del C, pronto: chiavi, tipi, stringhe, numeri, commenti (anche
+ * a blocco, su piu' righe), preprocessore e nomi seguiti da parentesi. */
+unsigned int ex_colora_c(void *dato, const char *riga,
+                         unsigned char *ruoli, unsigned int stato);
+
 /* -----------------------------------------------------------------------------
  * La lista a scorrimento
  *
@@ -620,6 +670,14 @@ const char  *ex_area_riga(ExFinestra area, unsigned int i);
 int          ex_area_modificato(ExFinestra area);
 void         ex_area_pulita(ExFinestra area);
 void         ex_area_cursore(ExFinestra area, unsigned int *riga, unsigned int *col);
+
+/* ! IL CURSORE SI PORTA, e non solo si legge. E' quel che serve a una colonna
+ * che elenca le funzioni di un sorgente: cliccarci sopra e finire su quella
+ * riga. Porta con se' la vista — la riga cercata finisce a meta' altezza, non
+ * incollata in cima — e toglie la selezione, perche' arrivando da un'altra
+ * parte del documento il tasto dopo cancellerebbe un pezzo di testo lontano da
+ * dove si sta guardando. */
+void         ex_area_vai(ExFinestra area, unsigned int riga, unsigned int col);
 
 /* -----------------------------------------------------------------------------
  * La selezione e gli appunti

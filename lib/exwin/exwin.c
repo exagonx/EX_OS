@@ -247,10 +247,45 @@ static int g_scorri_presa = 0;
 #define AREA_RIGA_H     16
 #define AREA_CAR_W      8
 
+/* =============================================================================
+ * ! «areacodice» E' LA STESSA AREA CON UN'ALTRA CAPIENZA E UN COLORITORE, e
+ * non e' un secondo controllo. Un editor di sorgenti ha il cursore che si muove
+ * in due direzioni, la selezione, gli appunti, il clic che posiziona: sono le
+ * stesse mille righe gia' scritte per l'area di testo, e una seconda copia
+ * sarebbe una copia da tenere d'accordo per sempre — la ragione per cui questa
+ * libreria esiste.
+ *
+ * Cambiano due cose, e sono tutt'e due NUMERI dell'istanza:
+ *
+ *   la capienza   512x200 per un'area di testo, 3000x240 per un sorgente
+ *   il coloritore un gancio, che l'area di testo non ha e il codice si'
+ *
+ * ! LA CAPIENZA E' PER ISTANZA E NON PIU' UNA COSTANTE, ed e' il motivo per cui
+ * si e' potuto fare cosi'. Prima area_riga() moltiplicava per AREA_COL_MAX:
+ * adesso moltiplica per A->col_max, e la stessa funzione serve tutt'e due.
+ *
+ * ! 3000 RIGHE DA 240 COLONNE SONO 720 KB, chiesti una volta alla creazione.
+ * La griglia rettangolare spreca — una riga di codice ne occupa quaranta e ne
+ * paga 240 — ma l'allocatore di EX-OS e' a bump e free() non restituisce
+ * niente: righe di lunghezza variabile riallocate a ogni tasto perderebbero
+ * memoria per sempre. E' la stessa scelta dell'area di testo, con i numeri
+ * portati alla misura di un sorgente vero.
+ *
+ * ! CHI SUPERA I LIMITI LO SA: ex_area_aggiungi rende 0 quando l'area e' piena,
+ * e chi carica un file DEVE guardarlo — caricarne meta' e poi salvarlo
+ * cancellerebbe il resto senza averlo mai mostrato.
+ * ============================================================================= */
+#define CODICE_RIGHE_MAX 3000
+#define CODICE_COL_MAX    240
+
+/* Il piu' largo dei due: e' la misura dei buffer di servizio sulla pila. */
+#define AREA_COL_TETTO   CODICE_COL_MAX
+
 typedef struct {
     unsigned int usato;
     ExFinestra   ogg;
-    char        *testo;                 /* AREA_RIGHE_MAX * AREA_COL_MAX */
+    char        *testo;                 /* righe_max * col_max */
+    unsigned int righe_max, col_max;    /* la capienza di QUESTA area */
     unsigned int n;                     /* quante righe ci sono (>= 1) */
     unsigned int cx, cy;                /* il cursore */
     unsigned int top, left;             /* la prima riga e colonna visibili */
@@ -262,6 +297,26 @@ typedef struct {
      * sbagliato. L'ordine si fa quando serve, in area_sel_ordina(). */
     int          sel;                   /* 1 = c'e' un'ancora posata */
     unsigned int ax, ay;                /* dove l'ancora e' stata posata */
+
+    /* =====================================================================
+     * ! IL COLORITORE NON STA NELLA LIBRERIA, STA IN CHI SA LA LINGUA. Questo
+     * controllo sa DISEGNARE del testo colorato; quali parole siano chiavi e
+     * dove finisca un commento lo sa chi scrive l'editor. Un gancio invece di
+     * una regola incorporata vuol dire che lo stesso controllo serve al C, a
+     * un file di configurazione e — il giorno che ci sara' — all'editor RTF,
+     * che i suoi colori se li tiene per conto suo invece di dedurli.
+     *
+     * ! E LO STATO DI FINE RIGA SI TIENE, UNO PER RIGA. Un commento a blocco
+     * comincia in una riga e finisce in un'altra: per colorare la riga 900
+     * bisogna sapere come e' finita la 899. Ricalcolare da capo a ogni
+     * ridisegno vorrebbe dire tremila chiamate per ogni tasto premuto; qui si
+     * ricalcola solo da dove il testo e' cambiato in giu', e `stati_validi`
+     * dice fin dove la catena e' buona.
+     * ================================================================= */
+    ExColora       colora;
+    void          *colora_dato;
+    unsigned char *stato;               /* uno per riga, o 0 se non si colora */
+    unsigned int   stati_validi;        /* quante righe di `stato` valgono */
 } Area;
 
 static Area g_area[AREA_MAX];
@@ -483,7 +538,7 @@ static Area *area_da_h(ExFinestra f)
 
 static char *area_riga(Area *A, unsigned int r)
 {
-    return &A->testo[r * AREA_COL_MAX];
+    return &A->testo[r * A->col_max];
 }
 
 static unsigned int area_lung(Area *A, unsigned int r)
@@ -590,6 +645,9 @@ static unsigned int classe_da_nome(const char *c)
     if (strcmp(c, "terminale")    == 0) return CL_TERMINALE;
     if (strcmp(c, "lista")        == 0) return CL_LISTA;
     if (strcmp(c, "areatesto")    == 0) return CL_AREA;
+    /* ! LA STESSA CLASSE, e la differenza e' solo la capienza: vedi ex_crea e
+     * il commento sopra CODICE_RIGHE_MAX. */
+    if (strcmp(c, "areacodice")   == 0) return CL_AREA;
     if (strcmp(c, "menu")         == 0) return CL_MENU;
     if (strcmp(c, "spunta")       == 0) return CL_SPUNTA;
     if (strcmp(c, "radio")        == 0) return CL_RADIO;
@@ -2137,6 +2195,66 @@ static int menu_tasto(ExFinestra f, unsigned int k, unsigned int *cmd)
 }
 
 /* =============================================================================
+ * LA CATENA DEGLI STATI, E LA TAVOLOZZA
+ *
+ * ! COLORARE UNA RIGA VUOL DIRE SAPERE COME E' FINITA QUELLA PRIMA. Un
+ * commento a blocco aperto alla riga 10 tinge anche la 11 e la 12, e chi
+ * disegna la 900 non ha modo di indovinarlo guardandola. Percio' si tiene lo
+ * stato di fine riga — un byte, quello che il coloritore rende — e si ricalcola
+ * solo la parte che serve.
+ *
+ * ! DA DOVE, LO DICE area_tocca(): quando si scrive nella riga 40, la catena
+ * vale fino alla 40 e non oltre. Scendendo a video si allunga, e il conto
+ * scorre in avanti una riga per volta. Ricalcolare tutto a ogni ridisegno
+ * vorrebbe dire tremila chiamate al coloritore per ogni tasto premuto.
+ * ============================================================================= */
+static void area_stati(Area *A, unsigned int fino)
+{
+    unsigned char ruoli[AREA_COL_TETTO];
+    unsigned int  i;
+
+    if (!A->colora || !A->stato) return;
+    if (fino >= A->n) fino = A->n ? A->n - 1 : 0;
+
+    for (i = A->stati_validi; i <= fino && i < A->n; i++) {
+        unsigned int st = (i == 0) ? 0u : A->stato[i - 1];
+
+        A->stato[i] = (unsigned char)A->colora(A->colora_dato,
+                                               area_riga(A, i), ruoli, st);
+    }
+    if (i > A->stati_validi) A->stati_validi = i;
+}
+
+/* Lo stato con cui COMINCIA la riga r. */
+static unsigned int area_stato_di(Area *A, unsigned int r)
+{
+    if (!A->colora || !A->stato || r == 0) return 0;
+    if (r > A->stati_validi) return 0;      /* catena corta: si riparte da zero */
+    return A->stato[r - 1];
+}
+
+/* =============================================================================
+ * ! I RUOLI SONO RUOLI, I COLORI STANNO QUI, e in un punto solo. Chi colora
+ * dice «questa e' una chiave», non «questa e' blu»: cosi' due editor diversi
+ * non colorano le chiavi di due blu diversi, e il giorno che si vorranno i temi
+ * questa tabella e' l'unica cosa da cambiare.
+ * ============================================================================= */
+static unsigned int ruolo_colore(unsigned int ruolo)
+{
+    switch (ruolo) {
+    case EX_COD_CHIAVE:   return 0x000000C0u;   /* blu */
+    case EX_COD_TIPO:     return 0x00007070u;   /* verde-azzurro */
+    case EX_COD_STRINGA:  return 0x00A00000u;   /* rosso scuro */
+    case EX_COD_NUMERO:   return 0x00C05000u;   /* arancio scuro */
+    case EX_COD_COMMENTO: return 0x00008000u;   /* verde */
+    case EX_COD_PREPROC:  return 0x00808000u;   /* oliva */
+    case EX_COD_FUNZIONE: return 0x00600060u;   /* viola */
+    case EX_COD_SIMBOLO:  return 0x00404040u;   /* grigio scuro */
+    default:              return EX_NERO;
+    }
+}
+
+/* =============================================================================
  * I PEZZI DI DISEGNO CHE NON SONO RETTANGOLI
  *
  * ! IL TOOLKIT SA RIEMPIRE RETTANGOLI, E BASTA. Un radio e' un cerchio e una
@@ -2431,12 +2549,17 @@ static void disegna_oggetto(Oggetto *o)
             unsigned int sy1 = 0, sx1 = 0, sy2 = 0, sx2 = 0;
             int c_e_sel = area_sel_ordina(A, &sy1, &sx1, &sy2, &sx2);
 
+            /* Prima di disegnare, la catena dei colori deve arrivare fin dove
+             * si guarda: vedi area_stati(). */
+            area_stati(A, A->top + A->righe);
+
             for (k = 0; k < A->righe && A->top + k < A->n; k++) {
                 unsigned int riga = A->top + k;
                 const char  *src = area_riga(A, riga);
                 unsigned int l   = (unsigned int)strlen(src);
-                char         vis[AREA_COL_MAX];
-                unsigned int c;
+                char          vis[AREA_COL_TETTO];
+                unsigned char ruoli[AREA_COL_TETTO];
+                unsigned int  c;
                 int          ry = y + 2 + (int)k * AREA_RIGA_H;
                 int          da = -1, a = -1;   /* la parte scelta, in colonne */
 
@@ -2450,6 +2573,14 @@ static void disegna_oggetto(Oggetto *o)
                     vis[c] = (ch == '\t') ? ' ' : ch;
                 }
                 vis[c] = '\0';
+
+                /* ! IL COLORITORE VEDE LA RIGA INTERA, non il pezzo visibile:
+                 * una stringa aperta prima del bordo sinistro colora anche cio'
+                 * che si vede, e dandogli mezza riga direbbe il falso proprio
+                 * quando si scorre in orizzontale. */
+                memset(ruoli, EX_COD_NORMALE, sizeof(ruoli));
+                if (A->colora)
+                    A->colora(A->colora_dato, src, ruoli, area_stato_di(A, riga));
 
                 /* ! LA SELEZIONE E' UN FONDO, e le righe di mezzo si tingono
                  * FINO AL BORDO — anche dove non c'e' testo. E' cosi' che si
@@ -2473,32 +2604,42 @@ static void disegna_oggetto(Oggetto *o)
 
                 if (!vis[0]) continue;
 
-                if (da < 0) {
-                    ex_scrivi(o->padre, x + 2, ry, vis, EX_NERO);
-                } else {
-                    /* Tre pezzi: prima, dentro, dopo. Scriverli tutti in nero
-                     * e poi ripassare quello dentro in bianco lascerebbe il
-                     * nero SOTTO, perche' ex_scrivi disegna solo i pixel del
-                     * carattere e non il fondo. */
-                    char pezzo[AREA_COL_MAX];
-                    int  lung = (int)strlen(vis);
-                    int  fine = (a > lung) ? lung : a;
+                /* =========================================================
+                 * ! SI DISEGNA A TRATTI DELLO STESSO COLORE, e i tre pezzi di
+                 * prima — prima, dentro e dopo la selezione — sono un caso
+                 * particolare di questo: senza coloritore i tratti sono
+                 * esattamente quei tre. Una riga per carattere costerebbe
+                 * duecento chiamate; un tratto per colore ne costa quante sono
+                 * le parole.
+                 *
+                 * ! E DENTRO LA SELEZIONE IL COLORE NON VALE: li' si scrive in
+                 * bianco sul fondo blu, sempre. Un commento verde su fondo blu
+                 * non si legge, e la selezione deve restare leggibile — e' il
+                 * momento in cui si sta guardando proprio quel testo.
+                 * ===================================================== */
+                {
+                    int lung = (int)strlen(vis);
+                    int p = 0;
+                    char pezzo[AREA_COL_TETTO];
 
-                    if (da > 0) {
-                        int q = (da > lung) ? lung : da;
-                        memcpy(pezzo, vis, (unsigned int)q); pezzo[q] = '\0';
-                        ex_scrivi(o->padre, x + 2, ry, pezzo, EX_NERO);
-                    }
-                    if (fine > da) {
-                        memcpy(pezzo, vis + da, (unsigned int)(fine - da));
-                        pezzo[fine - da] = '\0';
-                        ex_scrivi(o->padre, x + 2 + da * AREA_CAR_W, ry,
-                                  pezzo, EX_BIANCO);
-                    }
-                    if (lung > a) {
-                        strcpy(pezzo, vis + a);
-                        ex_scrivi(o->padre, x + 2 + a * AREA_CAR_W, ry,
-                                  pezzo, EX_NERO);
+                    while (p < lung) {
+                        int sel_p = (da >= 0 && p >= da && p < a);
+                        unsigned int col = sel_p ? EX_BIANCO
+                                                 : ruolo_colore(ruoli[A->left + (unsigned int)p]);
+                        int q = p;
+
+                        while (q < lung) {
+                            int sel_q = (da >= 0 && q >= da && q < a);
+                            unsigned int cq = sel_q ? EX_BIANCO
+                                                    : ruolo_colore(ruoli[A->left + (unsigned int)q]);
+                            if (cq != col || sel_q != sel_p) break;
+                            q++;
+                        }
+
+                        memcpy(pezzo, vis + p, (unsigned int)(q - p));
+                        pezzo[q - p] = '\0';
+                        ex_scrivi(o->padre, x + 2 + p * AREA_CAR_W, ry, pezzo, col);
+                        p = q;
                     }
                 }
             }
@@ -2973,21 +3114,36 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
 
     if (cl == CL_AREA) {
         Area *A = 0;
-        int j;
+        /* ! LA CAPIENZA LA DECIDE IL NOME DELLA CLASSE, e qui e' l'unico posto
+         * in cui «areatesto» e «areacodice» sono due cose diverse: da qui in
+         * poi sono lo stesso controllo. */
+        int   codice = (strcmp(classe, "areacodice") == 0);
+        int   j;
 
         for (j = 0; j < AREA_MAX; j++) if (!g_area[j].usato) { A = &g_area[j]; break; }
         if (!A) { o->usato = 0; return 0; }
 
         memset(A, 0, sizeof(*A));
-        A->ogg   = (ExFinestra)(i + 1);
+        A->ogg       = (ExFinestra)(i + 1);
+        A->righe_max = codice ? CODICE_RIGHE_MAX : AREA_RIGHE_MAX;
+        A->col_max   = codice ? CODICE_COL_MAX   : AREA_COL_MAX;
         A->righe = (unsigned int)(h / AREA_RIGA_H);
         A->cols  = (unsigned int)((w - 4) / AREA_CAR_W);
         if (A->righe == 0 || A->cols == 0) { o->usato = 0; return 0; }
 
-        A->testo = (char *)malloc(AREA_RIGHE_MAX * AREA_COL_MAX);
+        A->testo = (char *)malloc(A->righe_max * A->col_max);
         if (!A->testo) { o->usato = 0; return 0; }
+        memset(A->testo, 0, A->righe_max * A->col_max);
 
-        memset(A->testo, 0, AREA_RIGHE_MAX * AREA_COL_MAX);
+        /* ! LA CATENA DEGLI STATI SI CHIEDE SOLO PER IL CODICE, ed e' un byte
+         * per riga: tremila byte accanto a settecento kilobyte non si vedono,
+         * ma in un'area di testo normale sarebbero cinquecento byte per una
+         * cosa che nessuno usera' mai. Se non si ottiene non si muore: senza
+         * catena si colora comunque, solo che un commento a blocco lungo
+         * ricomincia da capo a ogni riga visibile. */
+        if (codice) A->stato = (unsigned char *)malloc(A->righe_max);
+        A->stati_validi = 0;
+
         A->n = 1;                       /* un'area vuota ha una riga vuota */
         A->usato = 1;
         return (ExFinestra)(i + 1);
@@ -3520,25 +3676,37 @@ static ExFinestra controllo_in(ExFinestra padre, int x, int y)
 
 /* -----------------------------------------------------------------------------
  * Le modifiche al testo dentro l'area
+ *
+ * ! OGNI MODIFICA PASSA DI QUI, E QUI SI SEGNANO DUE COSE INSIEME: che il testo
+ * e' cambiato e da quale riga la catena dei colori non vale piu'. Erano cinque
+ * `A->modificato = 1` sparsi; con la colorazione sarebbero diventati cinque
+ * posti in cui ricordarsi anche dell'altra meta', e il quinto che se ne
+ * dimentica da' un commento colorato a meta' che nessuno sa spiegare.
  * --------------------------------------------------------------------------- */
+static void area_tocca(Area *A, unsigned int prima_riga)
+{
+    A->modificato = 1;
+    if (A->stati_validi > prima_riga) A->stati_validi = prima_riga;
+}
+
 static void area_inserisci(Area *A, char c)
 {
     char        *r = area_riga(A, A->cy);
     unsigned int l = area_lung(A, A->cy), i;
 
-    if (l >= AREA_COL_MAX - 1) return;      /* riga piena: si ignora */
+    if (l >= A->col_max - 1) return;        /* riga piena: si ignora */
 
     for (i = l + 1; i > A->cx; i--) r[i] = r[i - 1];
     r[A->cx] = c;
     A->cx++;
-    A->modificato = 1;
+    area_tocca(A, A->cy);
 }
 
 static void area_spezza(Area *A)
 {
     unsigned int i;
 
-    if (A->n >= AREA_RIGHE_MAX) return;
+    if (A->n >= A->righe_max) return;
 
     for (i = A->n; i > A->cy + 1; i--)
         strcpy(area_riga(A, i), area_riga(A, i - 1));
@@ -3549,7 +3717,7 @@ static void area_spezza(Area *A)
     A->n++;
     A->cy++;
     A->cx = 0;
-    A->modificato = 1;
+    area_tocca(A, A->cy - 1);
 }
 
 /* Toglie il carattere PRIMA del cursore; a inizio riga unisce con quella
@@ -3564,7 +3732,7 @@ static void area_indietro(Area *A)
 
         for (i = A->cx - 1; i < l; i++) r[i] = r[i + 1];
         A->cx--;
-        A->modificato = 1;
+        area_tocca(A, A->cy);
         return;
     }
     if (A->cy == 0) return;
@@ -3572,7 +3740,7 @@ static void area_indietro(Area *A)
     {
         unsigned int sopra = area_lung(A, A->cy - 1);
 
-        if (sopra + area_lung(A, A->cy) >= AREA_COL_MAX - 1) return;
+        if (sopra + area_lung(A, A->cy) >= A->col_max - 1) return;
 
         strcat(area_riga(A, A->cy - 1), area_riga(A, A->cy));
         for (i = A->cy; i + 1 < A->n; i++)
@@ -3580,7 +3748,7 @@ static void area_indietro(Area *A)
         A->n--;
         A->cy--;
         A->cx = sopra;
-        A->modificato = 1;
+        area_tocca(A, A->cy);
     }
 }
 
@@ -3592,7 +3760,7 @@ static void area_avanti(Area *A)
         unsigned int i, l = area_lung(A, A->cy);
 
         for (i = A->cx; i < l; i++) r[i] = r[i + 1];
-        A->modificato = 1;
+        area_tocca(A, A->cy);
         return;
     }
     if (A->cy + 1 >= A->n) return;
@@ -4951,7 +5119,8 @@ void ex_area_svuota(ExFinestra f)
 {
     Area *A = area_da_h(f);
     if (!A) return;
-    memset(A->testo, 0, AREA_RIGHE_MAX * AREA_COL_MAX);
+    memset(A->testo, 0, A->righe_max * A->col_max);
+    A->stati_validi = 0;
     A->n = 1;
     A->cx = A->cy = A->top = A->left = 0;
     A->modificato = 0;
@@ -4969,15 +5138,16 @@ int ex_area_aggiungi(ExFinestra f, const char *riga)
     /* La prima riga di un'area vuota c'e' gia' ed e' vuota: si riempie quella
      * invece di aggiungerne una seconda. */
     if (A->n == 1 && area_riga(A, 0)[0] == '\0') {
-        strncpy(area_riga(A, 0), riga, AREA_COL_MAX - 1);
-        area_riga(A, 0)[AREA_COL_MAX - 1] = '\0';
+        strncpy(area_riga(A, 0), riga, A->col_max - 1);
+        area_riga(A, 0)[A->col_max - 1] = '\0';
         return 1;
     }
 
-    if (A->n >= AREA_RIGHE_MAX) return 0;
+    if (A->n >= A->righe_max) return 0;
 
-    strncpy(area_riga(A, A->n), riga, AREA_COL_MAX - 1);
-    area_riga(A, A->n)[AREA_COL_MAX - 1] = '\0';
+    strncpy(area_riga(A, A->n), riga, A->col_max - 1);
+    area_riga(A, A->n)[A->col_max - 1] = '\0';
+    if (A->stati_validi > A->n) A->stati_validi = A->n;
     A->n++;
     return 1;
 }
@@ -5074,6 +5244,214 @@ int ex_area_incolla(ExFinestra f)
     if (!A || !ap || ap->n == 0) return 0;
     area_incolla(A);
     return (int)ap->n;
+}
+
+/* =============================================================================
+ * ! IL CURSORE SI LEGGE E SI PORTA, e fino a oggi si poteva solo leggere.
+ *
+ * Una colonna che elenca le funzioni di un sorgente serve a UNA cosa: cliccarci
+ * sopra e finire su quella riga. Senza questa funzione l'elenco si poteva
+ * disegnare e non poteva fare niente — e la mancanza non si vedeva finche'
+ * l'unico uso dell'area era un editor senza indice.
+ *
+ * ! E PORTARE IL CURSORE TOGLIE LA SELEZIONE, apposta: si arriva da un'altra
+ * parte del documento, e trascinarsi dietro cio' che era scelto prima vorrebbe
+ * dire che il tasto dopo — una lettera qualunque — cancella un pezzo di testo
+ * lontano da dove si sta guardando.
+ * ============================================================================= */
+void ex_area_vai(ExFinestra f, unsigned int riga, unsigned int col)
+{
+    Area *A = area_da_h(f);
+    unsigned int l;
+
+    if (!A) return;
+    if (A->n == 0) return;
+    if (riga >= A->n) riga = A->n - 1;
+
+    A->cy = riga;
+    l = area_lung(A, riga);
+    A->cx = (col > l) ? l : col;
+    A->sel = 0;
+
+    /* ! LA RIGA CERCATA VA A META' ALTEZZA, e non basta trascinarsi dietro la
+     * vista: `area_segui` la porterebbe al primo bordo utile — in cima
+     * saltando all'indietro, in fondo saltando in avanti — e una riga incollata
+     * al bordo non mostra quello che le sta intorno, che e' meta' del motivo
+     * per cui ci si e' saltati.
+     *
+     * ! IN FONDO AL DOCUMENTO SI SMETTE DI CENTRARE, o si vedrebbe mezzo
+     * schermo di niente sotto l'ultima riga. */
+    if (A->cy >= A->righe / 2) {
+        A->top = A->cy - A->righe / 2;
+        if (A->top + A->righe > A->n)
+            A->top = (A->n > A->righe) ? A->n - A->righe : 0;
+    } else {
+        A->top = 0;
+    }
+
+    /* E la colonna, che il centraggio non tocca. */
+    area_segui(A);
+}
+
+void ex_area_colora(ExFinestra f, ExColora fn, void *dato)
+{
+    Area *A = area_da_h(f);
+
+    if (!A) return;
+    A->colora      = fn;
+    A->colora_dato = dato;
+    A->stati_validi = 0;        /* la catena di prima non vale piu' */
+}
+
+/* =============================================================================
+ * IL COLORITORE DEL C
+ *
+ * ! STA NEL TOOLKIT E IL GANCIO RESTA GENERICO, ed e' una scelta e non una
+ * scorciatoia. Il gancio esiste perche' il controllo non deve sapere nessuna
+ * lingua — e infatti non la sa: questa funzione e' un cliente del gancio come
+ * un altro, e chiunque puo' passarne una sua. Sta qui, e non in chi la usa,
+ * perche' su questo sistema il testo colorato e' quasi sempre C e riscrivere
+ * un lessico in ogni programma e' il difetto che le librerie condivise
+ * esistono per togliere.
+ *
+ * ! E NON E' UN COMPILATORE: legge una riga per volta e non sa niente di cosa
+ * significhi. Un nome seguito da parentesi lo chiama funzione anche quando e'
+ * una macro, e una variabile resta un nome normale — distinguerla vorrebbe dire
+ * sapere che cosa e' stato dichiarato, cioe' un'altra cosa. Colorare e'
+ * riconoscere le FORME, non capire il programma.
+ *
+ * Lo stato che attraversa le righe e' uno solo: 1 = si e' dentro un commento
+ * a blocco.
+ * ============================================================================= */
+static const char *const g_c_chiavi[] = {
+    "if", "else", "for", "while", "do", "switch", "case", "default", "break",
+    "continue", "return", "goto", "sizeof", "typedef", "struct", "union",
+    "enum", "static", "extern", "const", "volatile", "register", "inline",
+    "auto", "restrict", 0
+};
+
+static const char *const g_c_tipi[] = {
+    "void", "char", "short", "int", "long", "float", "double", "signed",
+    "unsigned", "size_t", "ptrdiff_t", "va_list", "FILE", 0
+};
+
+static int c_lettera(char c)
+{
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+}
+
+static int c_cifra(char c) { return c >= '0' && c <= '9'; }
+
+static int c_nella(const char *const *tab, const char *p, unsigned int n)
+{
+    int i;
+
+    for (i = 0; tab[i]; i++)
+        if (strlen(tab[i]) == n && strncmp(tab[i], p, n) == 0) return 1;
+    return 0;
+}
+
+unsigned int ex_colora_c(void *dato, const char *riga, unsigned char *ruoli,
+                         unsigned int stato)
+{
+    unsigned int n = (unsigned int)strlen(riga);
+    unsigned int i = 0;
+    int blocco = (stato == 1u);
+    int pp = 0;
+
+    (void)dato;
+
+    /* Il preprocessore si riconosce dal primo carattere che non e' uno spazio,
+     * e vale per tutta la riga: e' l'unica regola del C che guarda la riga
+     * intera invece del carattere. */
+    {
+        unsigned int k = 0;
+
+        while (k < n && (riga[k] == ' ' || riga[k] == '\t')) k++;
+        if (k < n && riga[k] == '#') pp = 1;
+    }
+
+    while (i < n) {
+        unsigned int inizio = i;
+        unsigned int ruolo  = EX_COD_NORMALE;
+
+        if (blocco) {
+            while (i < n) {
+                if (riga[i] == '*' && i + 1 < n && riga[i + 1] == '/') {
+                    i += 2;
+                    blocco = 0;
+                    break;
+                }
+                i++;
+            }
+            ruolo = EX_COD_COMMENTO;
+        } else if (riga[i] == '/' && i + 1 < n && riga[i + 1] == '*') {
+            blocco = 1;
+            i += 2;
+            while (i < n) {
+                if (riga[i] == '*' && i + 1 < n && riga[i + 1] == '/') {
+                    i += 2;
+                    blocco = 0;
+                    break;
+                }
+                i++;
+            }
+            ruolo = EX_COD_COMMENTO;
+        } else if (riga[i] == '/' && i + 1 < n && riga[i + 1] == '/') {
+            i = n;
+            ruolo = EX_COD_COMMENTO;
+        } else if (riga[i] == '"' || riga[i] == '\'') {
+            char chiusura = riga[i];
+
+            i++;
+            while (i < n) {
+                if (riga[i] == '\\' && i + 1 < n) { i += 2; continue; }
+                if (riga[i] == chiusura) { i++; break; }
+                i++;
+            }
+            ruolo = EX_COD_STRINGA;
+        } else if (c_cifra(riga[i])) {
+            /* Un numero comincia con una cifra e prosegue con quel che il C
+             * ammette dentro: lettere (0x, la e dell'esponente, i suffissi
+             * U e L) e il punto. */
+            while (i < n && (c_cifra(riga[i]) || c_lettera(riga[i]) ||
+                             riga[i] == '.')) i++;
+            ruolo = EX_COD_NUMERO;
+        } else if (c_lettera(riga[i])) {
+            unsigned int lung;
+
+            while (i < n && (c_lettera(riga[i]) || c_cifra(riga[i]))) i++;
+            lung = i - inizio;
+
+            if (c_nella(g_c_chiavi, riga + inizio, lung)) {
+                ruolo = EX_COD_CHIAVE;
+            } else if (c_nella(g_c_tipi, riga + inizio, lung)) {
+                ruolo = EX_COD_TIPO;
+            } else {
+                unsigned int k = i;
+
+                while (k < n && (riga[k] == ' ' || riga[k] == '\t')) k++;
+                ruolo = (k < n && riga[k] == '(') ? EX_COD_FUNZIONE
+                                                  : EX_COD_NORMALE;
+            }
+        } else if (riga[i] == ' ' || riga[i] == '\t') {
+            while (i < n && (riga[i] == ' ' || riga[i] == '\t')) i++;
+            ruolo = EX_COD_NORMALE;
+        } else {
+            i++;
+            ruolo = EX_COD_SIMBOLO;
+        }
+
+        /* ! DENTRO UNA RIGA DEL PREPROCESSORE VINCE IL PREPROCESSORE, tranne
+         * che sulle stringhe e sui commenti: `#include "stdio.h"` deve mostrare
+         * il nome del file come una stringa, che e' quello che e'. */
+        if (pp && ruolo != EX_COD_COMMENTO && ruolo != EX_COD_STRINGA)
+            ruolo = EX_COD_PREPROC;
+
+        while (inizio < i && inizio < n) ruoli[inizio++] = (unsigned char)ruolo;
+    }
+
+    return blocco ? 1u : 0u;
 }
 
 void ex_area_cursore(ExFinestra f, unsigned int *riga, unsigned int *col)

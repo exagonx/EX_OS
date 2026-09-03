@@ -126,6 +126,12 @@ static const char *const g_nomi[] = {
     "ex_voce_scegli",
     "ex_voce_testo",
 
+    /* Il testo colorato: «areacodice», il cursore che si porta, il gancio del
+     * coloritore e quello del C gia' fatto. */
+    "ex_area_vai",
+    "ex_area_colora",
+    "ex_colora_c",
+
     /* L'avvio della libreria: lo chiama chi la apre, non l'applicazione. */
     "__lib_avvio"
 };
@@ -208,6 +214,10 @@ static void *const g_indirizzi[] = {
     (void *)ex_voce_scelta,
     (void *)ex_voce_scegli,
     (void *)ex_voce_testo,
+
+    (void *)ex_area_vai,
+    (void *)ex_area_colora,
+    (void *)ex_colora_c,
 
     (void *)__libc_ponti_avvia
 };

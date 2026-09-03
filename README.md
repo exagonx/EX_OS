@@ -85,6 +85,45 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### Il testo colorato, e una seconda area di testo che non è nata
+
+**testato** — dal CD, in QEMU, con `winprova -c`: un pezzo di C scelto per
+toccare ogni ruolo, e i colori verificati leggendo i **pixel** della fotografia,
+non guardandola.
+
+**La cosa più importante è quella che non si è scritta.** La strada ovvia era un
+controllo nuovo con dentro il suo cursore, la sua selezione, i suoi appunti, il
+suo clic che posiziona: mille righe già scritte una volta per l'area di testo, e
+la seconda copia sarebbe stata una copia da tenere d'accordo per sempre.
+`areacodice` **non è un controllo nuovo: è la stessa area con altri due numeri** —
+3000 righe da 240 colonne invece di 512 da 200, più un coloritore. La classe è la
+stessa, e da `ex_crea` in poi non c'è nessuna differenza: stesso disegno, stessi
+tasti, stesse `ex_area_*`.
+
+**Il coloritore sta in chi sa la lingua, non nel toolkit.** Il controllo sa
+*disegnare* del testo colorato; quali parole siano chiavi e dove finisca un
+commento lo sa chi scrive l'editor. Il gancio riceve una riga e riempie **un
+ruolo per carattere** — chiave, tipo, stringa, numero, commento, preprocessore,
+funzione — e i ruoli sono ruoli, non colori: la tavolozza è una tabella sola,
+quindi due editor non colorano le chiavi di due blu diversi.
+
+**E un commento a blocco attraversa le righe.** Il coloritore rende anche *come
+finisce* la riga, e il controllo tiene quello stato: un byte per riga. Si
+ricalcola solo da dove il testo è cambiato in giù — da capo a ogni ridisegno
+sarebbero tremila chiamate per ogni tasto premuto. Scrivendo `/*` a metà
+documento, le righe sotto diventano verdi mentre si batte.
+
+**Il cursore adesso si porta**, e prima si poteva solo leggere: `ex_area_vai` è
+quel che serve a una colonna che elenca le funzioni di un sorgente — cliccarci
+sopra e finire su quella riga, a metà altezza, con il contesto intorno.
+
+> **Un'ora persa a leggere una fotografia.** Le sonde dicevano «commento» e lo
+> schermo sembrava dire di no; il difetto è stato cercato in tre posti prima di
+> misurare i pixel del PPM e trovarci `(0,128,0)` — il verde della tavolozza. Le
+> righe erano verdi da sempre: a 800x600 rimpicciolito, il verde di un commento e
+> il blu di una parola chiave si somigliano. Una fotografia si guarda; i suoi
+> numeri si contano.
+
 ### Il toolkit impara cinque controlli, e il posto dove si aggiungono
 
 **testato** — dal CD, in QEMU, con `winprova -n`: ogni comando finisce sulla

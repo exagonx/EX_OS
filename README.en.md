@@ -84,6 +84,44 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### Coloured text, and a second text area that was never born
+
+**tested** — from the CD, in QEMU, with `winprova -c`: a piece of C chosen to
+touch every role, and the colours checked by reading the **pixels** of the
+screenshot rather than looking at it.
+
+**The most important part is the part that was not written.** The obvious route
+was a new control with its own cursor, its own selection, its own clipboard, its
+own click-to-position: a thousand lines already written once for the text area,
+and the second copy would have been a copy to keep in step forever. `areacodice`
+**is not a new control: it is the same area with two different numbers** — 3000
+lines of 240 columns instead of 512 of 200, plus a colouriser. The class is the
+same, and past `ex_crea` there is no difference at all: same drawing, same keys,
+same `ex_area_*`.
+
+**The colouriser lives with whoever knows the language, not in the toolkit.** The
+control knows how to *draw* coloured text; which words are keywords and where a
+comment ends is known by whoever writes the editor. The hook receives a line and
+fills in **one role per character** — keyword, type, string, number, comment,
+preprocessor, function — and roles are roles, not colours: the palette is a
+single table, so two editors do not colour keywords two different blues.
+
+**And a block comment crosses lines.** The colouriser also returns *how the line
+ends*, and the control keeps that state: one byte per line. It is recomputed only
+from where the text changed downwards — from scratch on every repaint would be
+three thousand calls for every keystroke. Type `/*` halfway through a document
+and the lines below turn green as you type.
+
+**The cursor can now be moved**, where before it could only be read:
+`ex_area_vai` is what a column listing a source file's functions needs — click a
+name and land on that line, at mid-height, with its context around it.
+
+> **An hour lost reading a screenshot.** The probes said "comment" and the screen
+> seemed to disagree; the defect was hunted in three places before measuring the
+> PPM's pixels and finding `(0,128,0)` there — the palette's green. The lines had
+> been green all along: scaled down at 800x600, a comment's green and a keyword's
+> blue look alike. A screenshot is looked at; its numbers are counted.
+
 ### The toolkit learns five controls, and where new ones go
 
 **tested** — from the CD, in QEMU, with `winprova -n`: every command lands on the

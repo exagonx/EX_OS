@@ -28,6 +28,125 @@ manca» apre quello.
 
 # DOVE RIPRENDERE — 3 settembre 2026
 
+## 3 settembre 2026 (pomeriggio) — IL TESTO COLORATO, E UNA SECONDA AREA CHE NON E' NATA
+
+Secondo pezzo di `exide`: l'area del codice. Era il blocco vero — la colorazione
+per token, con l'interfaccia di ieri, NON SI POTEVA SCRIVERE: `ex_area` si
+disegna dentro la libreria e dall'applicazione non c'era modo di dire «questa
+parola in blu».
+
+### ! LA COSA PIU' IMPORTANTE E' QUELLA CHE NON SI E' SCRITTA
+
+La strada ovvia era un controllo nuovo, `areacodice`, con dentro il suo cursore,
+la sua selezione, i suoi appunti, il suo clic che posiziona. Sono mille righe
+gia' scritte una volta per l'area di testo, e la seconda copia sarebbe stata una
+copia da tenere d'accordo per sempre.
+
+**Non e' un controllo nuovo: e' la stessa area con altri due numeri.**
+
+    "areatesto"    512 righe da 200 colonne
+    "areacodice"   3000 righe da 240 colonne, piu' un coloritore
+
+`classe_da_nome` rende `CL_AREA` per tutt'e due, e l'unico posto in cui i due
+nomi sono cose diverse e' la riga di `ex_crea` che sceglie la capienza. Da li'
+in poi sono lo stesso controllo: stesso disegno, stessi tasti, stesso clic,
+stesse `ex_area_*`. Chi le usa non ha una seconda serie di funzioni da imparare.
+
+! **E LA CAPIENZA E' DIVENTATA UN CAMPO DELL'ISTANZA.** Prima `area_riga()`
+moltiplicava per `AREA_COL_MAX`; adesso per `A->col_max`, e la stessa funzione
+serve tutt'e due le misure. Sono sedici posti in tutto — erano le uniche due
+costanti che il codice dell'area usava davvero.
+
+### IL COLORITORE STA IN CHI SA LA LINGUA, NON NEL TOOLKIT
+
+    unsigned int colora(void *dato, const char *riga,
+                        unsigned char *ruoli, unsigned int stato);
+
+Il controllo sa DISEGNARE del testo colorato; quali parole siano chiavi e dove
+finisca un commento lo sa chi scrive l'editor. Un gancio invece di una regola
+incorporata vuol dire che lo stesso controllo serve al C, a un file di
+configurazione e — il giorno che ci sara' — all'editor RTF, che i suoi colori se
+li tiene per conto suo invece di dedurli.
+
+! **I RUOLI SONO RUOLI, NON COLORI.** Chi colora dice «questa e' una chiave»,
+non «questa e' blu». Cosi' due editor diversi non colorano le chiavi di due blu
+diversi, e il giorno che si vorranno i temi la tavolozza e' una tabella sola —
+`ruolo_colore()` — invece di essere sparsa in ogni programma.
+
+! **E IL COLORITORE DEL C STA COMUNQUE NELLA LIBRERIA** (`ex_colora_c`), ed e'
+una scelta e non una scorciatoia: e' un CLIENTE del gancio come un altro, e
+chiunque puo' passarne uno suo. Sta li' perche' su questo sistema il testo
+colorato e' quasi sempre C, e riscrivere un lessico in ogni programma e' il
+difetto che le librerie condivise esistono per togliere.
+
+! **E NON E' UN COMPILATORE.** Legge una riga per volta e non sa niente di cosa
+significhi: un nome seguito da parentesi lo chiama funzione anche quando e' una
+macro, e una variabile resta un nome normale — distinguerla vorrebbe dire sapere
+che cosa e' stato dichiarato. Colorare e' riconoscere le FORME.
+
+### LA CATENA DEGLI STATI, CHE E' LA PARTE CHE SI SBAGLIA
+
+Un commento a blocco comincia in una riga e finisce in un'altra: per colorare la
+riga 900 bisogna sapere come e' finita la 899. Percio' si tiene lo stato di fine
+riga — un byte per riga, tremila in tutto — e il coloritore lo rende insieme ai
+colori.
+
+! **RICALCOLARE DA CAPO A OGNI RIDISEGNO SAREBBE COSTATO TREMILA CHIAMATE PER
+OGNI TASTO PREMUTO.** Si ricalcola solo da dove il testo e' cambiato in giu':
+`area_tocca()` abbassa `stati_validi` alla riga toccata, e il disegno allunga la
+catena fin dove guarda.
+
+! **E LE CINQUE MARCATURE SONO DIVENTATE UNA.** C'erano cinque `A->modificato =
+1` sparsi nelle primitive di modifica; con la colorazione sarebbero diventati
+cinque posti in cui ricordarsi anche dell'altra meta', e il quinto che se ne
+dimentica da' un commento colorato a meta' che nessuno sa spiegare. Adesso c'e'
+`area_tocca(A, riga)`, che segna tutt'e due le cose insieme.
+
+### IL CURSORE SI PORTA, E PRIMA SI POTEVA SOLO LEGGERE
+
+`ex_area_cursore()` lo leggeva soltanto. Una colonna che elenca le funzioni di
+un sorgente serve a UNA cosa — cliccarci sopra e finire su quella riga — e senza
+`ex_area_vai()` quell'elenco si poteva disegnare e non poteva fare niente.
+
+! **E LA RIGA CERCATA VA A META' ALTEZZA.** Trascinarsi dietro la vista con
+`area_segui` non basta: quella porta la riga al primo bordo utile — in cima
+saltando all'indietro, in fondo saltando in avanti — e una riga incollata al
+bordo non mostra quel che le sta intorno, che e' meta' del motivo per cui ci si
+e' saltati. La prima versione centrava solo saltando all'indietro, e si vedeva:
+cliccando una funzione piu' in basso finiva sull'ultima riga dello schermo.
+
+### UN'ORA PERSA A LEGGERE UNA FOTOGRAFIA
+
+! **LE SONDE DICEVANO CHE ANDAVA E LO SCHERMO DICEVA DI NO, E AVEVA RAGIONE LA
+SONDA.** Scritto `/*` a meta' documento, le righe sotto dovevano diventare
+verdi; nella fotografia sembravano colorate come prima, e ho cercato il difetto
+in tre posti diversi — la catena degli stati, l'invalidazione, il lessico —
+mentre le sonde ripetevano `st=1 r0=5`, cioe' «commento». Erano verdi davvero: a
+800x600 rimpicciolito, il verde di un commento e il blu di una parola chiave si
+somigliano.
+
+> La misura che ha chiuso la questione: leggere i PIXEL del PPM invece di
+> guardarlo. `(0,128,0)` sulla riga del `while` — cioe' esattamente il verde
+> della tavolozza. Una fotografia si guarda; i suoi numeri si contano.
+
+### COME SI E' PROVATO
+
+`winprova -c` apre una finestra con l'elenco delle funzioni a sinistra e l'area
+del codice a destra, con dentro un pezzo di C scelto per toccare ogni ruolo.
+
+    dal CD, in QEMU:
+      il commento a blocco delle prime due righe        verde su tutt'e due
+      #include con "exwin.h"                            oliva, e la stringa rossa
+      chiavi blu, tipi verde-azzurro, numeri arancio
+      printf, saluta, somma_pari, lunghezza             viola (nome + parentesi)
+      clic su «void saluta(void)» nell'elenco           salto alla riga 30
+      clic su «int main(...)»                           salto alla riga 36, centrata
+      scritto « /* aperto» alla riga 13                 le righe 14..23 diventano
+                                                        verdi mentre si batte
+
+! **E L'AREA DI TESTO NORMALE NON SI E' ROTTA**: `edit` apre `/boot/kernel.cfg`,
+85 righe, testo nero, cursore a 1/1. E i cinque controlli di stamattina
+rispondono ancora (id 202, 205, 206).
 ## 3 settembre 2026 (mattina) — CINQUE CONTROLLI CHE MANCAVANO, E IL POSTO DOVE SI AGGIUNGONO
 
 Primo passo verso `exide`, l'ambiente di sviluppo visuale: prima dell'IDE

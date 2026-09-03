@@ -114,25 +114,34 @@ progetto sopravvive — e' il punto in cui VB6 si rompeva:
   scorrimento, combo e tab sono in exwin.so, e i sette posti da toccare per
   aggiungerne un altro stanno scritti in exwin.c sopra i numeri CL_*.
 
+! E C'E' L'AREA DEL CODICE: «areacodice» e' la stessa area di testo con 3000
+  righe da 240 colonne e un gancio che la colora (ex_area_colora), piu'
+  ex_area_vai per portarci il cursore. Il coloritore del C e' gia' fatto
+  (ex_colora_c). Restano i LIMITI DICHIARATI di quella scelta:
+
+    - 3000 righe da 240 colonne sono 720 KB per area, chiesti alla creazione, e
+      una riga di 40 caratteri ne paga 240. La griglia rettangolare e' la
+      conseguenza dell'allocatore a bump: righe di lunghezza variabile
+      riallocate a ogni tasto perderebbero memoria per sempre. Un sorgente piu'
+      lungo di 3000 righe — browser.c ne ha 6700, exwin.c 4400 — oggi si
+      tronca, e ex_area_aggiungi lo dice rendendo 0.
+    - AREA_MAX e' 2: due aree per programma, e un IDE che tenesse un'area per
+      ogni file aperto le finirebbe subito. La strada e' una sola area e il
+      contenuto che si scambia al cambio di linguetta.
+    - Il coloritore non distingue una VARIABILE da un nome qualunque: per farlo
+      servirebbe sapere che cosa e' stato dichiarato, cioe' un'altra cosa.
+
 Quel che manca, in ordine:
 
- 1. IL CONTROLLO DEL CODICE COLORATO. `ex_area` disegna se stessa dentro
-    exwin.so e non c'e' nessun modo, dall'applicazione, di dire «questa parola
-    in blu»: la colorazione per token oggi NON E' SCRIVIBILE. Serve un
-    controllo nuovo — «areacodice» — con il testo colorabile, un buffer che non
-    sia 512 righe da 200 colonne, e un modo di PORTARE il cursore a una riga
-    (oggi ex_area_cursore lo legge soltanto, quindi la colonna delle funzioni
-    non ha dove saltare). E' anche il pezzo che servira' all'editor RTF.
-
- 2. IL CONTENITORE MDI. Non esiste ne' nel toolkit ne' nel server a finestre.
+ 1. IL CONTENITORE MDI. Non esiste ne' nel toolkit ne' nel server a finestre.
     Serve a tenere le finestre di exide raggruppate sotto una sola.
 
- 3. LE FRECCE DENTRO UN GRUPPO DI RADIO. Oggi si scatta con la barra
+ 2. LE FRECCE DENTRO UN GRUPPO DI RADIO. Oggi si scatta con la barra
     spaziatrice e si gira con Tab. La convenzione completa e' «Tab entra nel
     gruppo, le frecce muovono dentro, Tab esce»: meta' di quella convenzione e'
     peggio di niente, quindi o si fa tutta o si lascia questa.
 
- 4. IL LIMITE DELLE VOCI: trentadue voci da trentadue caratteri per combo e
+ 3. IL LIMITE DELLE VOCI: trentadue voci da trentadue caratteri per combo e
     tab, sei controlli a voci per programma (VOCI_* in exwin.c). Chi ne vuole
     di piu' oggi deve usare una «lista».
 

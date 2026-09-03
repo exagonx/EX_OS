@@ -131,6 +131,9 @@ static struct {
     unsigned int (*voce_scelta)(ExFinestra);
     void         (*voce_scegli)(ExFinestra, unsigned int);
     const char  *(*voce_testo)(ExFinestra, unsigned int);
+    void         (*area_vai)(ExFinestra, unsigned int, unsigned int);
+    void         (*area_colora)(ExFinestra, ExColora, void *);
+    unsigned int (*colora_c)(void *, const char *, unsigned char *, unsigned int);
 } P;
 
 static void *chiedi(const ExLibTesta *t, const char *nome)
@@ -260,6 +263,13 @@ static void assicura(void)
                       chiedi(t, "ex_voce_scegli");
     P.voce_testo    = (const char *(*)(ExFinestra, unsigned int))
                       chiedi(t, "ex_voce_testo");
+    P.area_vai      = (void (*)(ExFinestra, unsigned int, unsigned int))
+                      chiedi(t, "ex_area_vai");
+    P.area_colora   = (void (*)(ExFinestra, ExColora, void *))
+                      chiedi(t, "ex_area_colora");
+    P.colora_c      = (unsigned int (*)(void *, const char *, unsigned char *,
+                                        unsigned int))
+                      chiedi(t, "ex_colora_c");
 
     P.pronto = 1;
 }
@@ -417,3 +427,17 @@ unsigned int ex_voce_scelta(ExFinestra c) { assicura(); return P.voce_scelta(c);
 void ex_voce_scegli(ExFinestra c, unsigned int i) { assicura(); P.voce_scegli(c, i); }
 const char *ex_voce_testo(ExFinestra c, unsigned int i)
 { assicura(); return P.voce_testo(c, i); }
+
+void ex_area_vai(ExFinestra c, unsigned int riga, unsigned int col)
+{ assicura(); P.area_vai(c, riga, col); }
+void ex_area_colora(ExFinestra c, ExColora fn, void *dato)
+{ assicura(); P.area_colora(c, fn, dato); }
+
+/* ! CHI SCRIVE `ex_area_colora(a, ex_colora_c, 0)` PASSA QUESTO PONTE, non la
+ * funzione dentro la libreria: l'indirizzo che il programma conosce e' questo.
+ * Funziona — la libreria chiama qui e questo rimbalza di la' — e costa un salto
+ * in piu' per riga disegnata, cioe' una trentina per ridisegno. Si dice perche'
+ * chi misurera' i tempi lo trovera' nel mezzo e non deve stupirsi. */
+unsigned int ex_colora_c(void *dato, const char *riga, unsigned char *ruoli,
+                         unsigned int stato)
+{ assicura(); return P.colora_c(dato, riga, ruoli, stato); }
