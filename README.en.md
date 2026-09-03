@@ -84,6 +84,80 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### Save as, Replace, and a name that lagged behind
+
+**tested** — inside EX-OS, with the file read back from the shell before and
+after, in the same machine run. The two entries that were at the top of
+exide's to-do list.
+
+**"Save as" copies the tree, it does not regenerate the drawing.** It could
+have meant two things: rebuilding `finestra.dis`, `finestra.h` and
+`finestra_gen.c` inside a new directory, or copying everything and carrying
+on in the copy. The first is easier to write and **throws away
+`finestra.c`**, the one file of the four the IDE does not own: it is the
+user's, the one where the IDE appends the missing handlers and never rewrites
+anything. A "save as" that loses the bodies of the functions is not a save.
+So the whole tree is copied — `src/`, `inc/`, `lib/`, `bin/`, `obj/`,
+`progetto.txt`, `compila.sh` — after saving any open editors, and **the
+original is left untouched**: it is a copy, not a move.
+
+**"Replace" changes one occurrence at a time, like Find.** In source code the
+same sequence of characters lives inside strings, inside comments and inside
+identifiers: `msg` is also part of `message`. A "replace all" changes all
+three silently, and whoever ran it finds out at compile time, or later. It is
+in both editors — the source one and the file editor — and in the toolkit
+`ex_area_riga_metti()` was born, which rewrites one line in the middle of the
+document: sixteen lines that go through `area_tocca()`, so the colouriser's
+state chain is invalidated from that row down. That is exactly why such a
+primitive belongs in the toolkit: an application rewriting the row from
+outside would leave the old colour behind, and only sometimes.
+
+> **A defect found by the test, not by rereading the code.** `progetto.txt`
+> is copied as it was, `nome = ...` line included, and the project card was
+> reading the name from there: the directory was `prg6-copia` while the card
+> still said `prg6` — and the window title, which derives the name from the
+> directory, said the right one. Two places answering the same question
+> differently; the same would have happened renaming the directory from
+> outside. The cure is not to keep them in sync: it is to remove one. The name
+> now **always** comes from the directory, and the file is still written, so
+> the first Save puts it right by itself.
+
+### Files and Directory: one new window, and one that did not need writing
+
+**tested** — listing, opening, editing, saving, closing again, and checking
+against the real file, inside EX-OS. The last two Strumenti menu entries that
+still said "coming soon": with this round the menu is complete.
+
+**"Files" is not the "Source" window**, and that is a choice, not a
+shortcut. "Source" knows exactly three names — `finestra.c`,
+`finestra_gen.c`, `finestra.h` — and half the program is written knowing they
+are those three; slipping in a fourth arbitrary name would have meant
+carrying that certainty everywhere. A separate window, with Save/Find/Close
+and nothing else, costs less and risks nothing to what already works.
+
+**It is scoped to `<project>/src` only**, not the whole tree: it is the only
+reading of "files" compatible with "a double-click opens it as source" — a
+double-click on a `.o` inside `obj/` would open nothing readable. The
+colouriser is chosen from the name (`.c`/`.h` get `ex_colora_c`, everything
+else none) and is **explicitly turned off on every open**: the same area
+stays alive from one file to the next, and without resetting it a `.txt`
+read after a `.c` would appear coloured as if it were C.
+
+**"Directory" does not rewrite a second file manager.** exide knows how to
+draw rectangles and lists; it does not know how to copy, move or delete files
+safely — `filemgr` already does, with the same tree-plus-list layout this
+entry has promised since the original request. Twelve lines look for
+`filemgr` (first in `/exwin/bin`, then `/cdrom/exwin/bin`) and launch it with
+the project directory as an argument — the same one it already accepts from
+the Applications menu.
+
+> **And search was not rewritten a second time.** The file editor wanted a
+> "Find" too, identical to the one already proven in the "Source" window —
+> only *which* area and *which* status line changed. `ed_cerca()` became
+> `area_cerca(area, status)`, and the original stayed a one-line wrapper: two
+> copies of the same loop would have been two copies to keep in step for the
+> exact same algorithm.
+
 ### The project card, and a rewrite that should not have happened
 
 **tested** — written, closed, reopened: everything came back. And a real

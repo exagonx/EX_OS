@@ -85,6 +85,69 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### Files e Directory: una finestra nuova, e una che non serviva scrivere
+
+**testato** — elenco, apertura, modifica, salvataggio, richiusura e verifica
+dal file vero, dentro EX-OS. Le ultime due voci del menu Strumenti che
+dicevano ancora «in arrivo»: con questo giro il menu è completo.
+
+**«Files» non è la finestra di «Sorgente»**, ed è una scelta e non una
+scorciatoia. «Sorgente» conosce esattamente tre nomi — `finestra.c`,
+`finestra_gen.c`, `finestra.h` — e mezzo programma è scritto sapendo che sono
+quelli; infilarci un quarto nome qualunque avrebbe voluto dire portare quella
+certezza dappertutto. Una finestra a parte, con Salva/Cerca/Chiudi e niente
+altro, costa meno e non rischia di rompere quella che già funziona.
+
+**È scoperta solo su `<progetto>/src`**, non su tutto l'albero: è l'unica
+lettura di «files» compatibile con «un doppio clic apre come sorgente» — un
+doppio clic su un `.o` dentro `obj/` non aprirebbe niente di leggibile. Il
+coloritore si decide dal nome (`.c`/`.h` prendono `ex_colora_c`, il resto
+niente) e **si spegne esplicitamente a ogni apertura**: la stessa area resta
+in vita da un file all'altro, e senza azzerarlo un `.txt` letto dopo un `.c`
+si vedrebbe colorato come se fosse C.
+
+**«Directory» non riscrive un secondo file manager.** exide sa disegnare
+rettangoli e liste; non sa copiare, spostare o cancellare file in sicurezza —
+`filemgr` lo sa già fare, con la stessa struttura ad albero più elenco che
+questa voce promette fin dalla richiesta originale. Dodici righe cercano
+`filemgr` (prima in `/exwin/bin`, poi in `/cdrom/exwin/bin`) e lo lanciano con
+la directory del progetto come argomento — lo stesso che accetta già dal menu
+Applicazioni.
+
+> **E la ricerca non si è riscritta una seconda volta.** Il file-editor voleva
+> anche lui un «Cerca», identico a quello già provato nella finestra
+> «Sorgente» — cambiava solo *quale* area e *quale* riga di stato usare.
+> `ed_cerca()` è diventata `area_cerca(area, stato)`, e l'originale resta un
+> involucro di una riga: due copie dello stesso ciclo sarebbero state due
+> copie da tenere d'accordo per lo stesso identico algoritmo.
+
+### La scheda del progetto, e una riscrittura che non doveva esserci
+
+**testato** — scritta, chiusa, riaperta: tutto tornava. E un difetto vero
+trovato provando esattamente questo.
+
+**Rilegge lo stesso `progetto.txt` che il progetto già scrive alla nascita.**
+Non un secondo formato: cinque chiavi `chiave = valore` — nome, autore,
+versione, creato, descrizione — e in coda un marcatore `[nota]` dopo il quale
+tutto, righe vuote comprese, è il testo libero della nota.
+
+**Il nome e la data di creazione non si editano**, e non è una dimenticanza:
+il nome viene dalla directory — riscriverlo qui non rinominerebbe niente — e
+la data di creazione, per definizione, non è correggibile senza smettere di
+essere vera. Sono etichette, non caselle. **Chiudere la finestra salva da
+solo**, come l'editor: è una scheda a basso rischio, e chiedere conferma per
+un'informazione a basso rischio è una domanda che si impara a schiacciare
+senza leggerla.
+
+> **«Nuovo progetto» su una directory già esistente cancellava la scheda.**
+> Il disegno (`finestra.dis`) si apriva senza troncare — un file già presente
+> restava quello che era — ma `progetto.txt` si troncava sempre: la stessa
+> azione trattava due file dello stesso progetto in due modi diversi. Trovato
+> riavviando per provare la *riapertura* di un progetto, non solo il
+> salvataggio: il file sul disco era già corretto, verificato con `cat` prima
+> di riavviare — era il passo dopo, non il salvataggio, a riscriverlo sopra.
+> La cura: si controlla prima se il file c'è già, e si scrive solo se manca.
+
 ### La finestra del compilatore: GCC vero, dentro EX-OS, da un disegno
 
 **testato** — un progetto vero, disegnato in exide, compilato con GCC del CD

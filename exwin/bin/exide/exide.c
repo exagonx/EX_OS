@@ -52,7 +52,7 @@
 
 /* +0.001 a ogni modifica, aggiunta o prova: `exide -version` la stampa.
  * Vedi EX_VERSIONE in libc.h; la stessa stringa la mostra «Informazioni su». */
-#define VERSIONE_APP "0.003"
+#define VERSIONE_APP "0.005"
 EX_VERSIONE("exide", VERSIONE_APP);
 
 /* -----------------------------------------------------------------------------
@@ -106,6 +106,12 @@ EX_VERSIONE("exide", VERSIONE_APP);
 #define ID_PR_NOTA    974
 #define ID_PR_SALVA   975
 #define ID_PR_CHIUDI  976
+#define ID_FL_ELENCO  981
+#define ID_FL_CHIUDI  982
+#define ID_FE_SALVA   983
+#define ID_FE_CERCA   984
+#define ID_FE_CHIUDI  985
+#define ID_FE_SOSTIT  986
 
 /* La finestra dell'editor: il suo menu e i suoi controlli. */
 #define ID_ED_SALVA   941
@@ -1162,7 +1168,12 @@ static int ed_salva(void)
     return 1;
 }
 
-static void ed_cerca(void)
+/* ! GENERALIZZATA SU QUALE AREA E QUALE RIGA DI STATO, dal momento che il
+ * file-editor (piu' avanti, aperto da «Files») ha bisogno della stessa
+ * ricerca sulla sua propria area. La ricerca da capo e la riga trovata non
+ * cambiano da un'area all'altra; scriverla due volte avrebbe voluto dire due
+ * copie da tenere d'accordo per lo stesso identico ciclo. */
+static void area_cerca(ExFinestra area, ExFinestra stato)
 {
     static char cosa[64] = "";
     unsigned int i, n, r0 = 0, c0 = 0;
@@ -1170,21 +1181,82 @@ static void ed_cerca(void)
     if (!ex_dlg_riga("Cerca", "testo da cercare:", cosa, sizeof(cosa))) return;
     if (cosa[0] == '\0') return;
 
-    ex_area_cursore(g_ed_cod, &r0, &c0);
-    n = ex_area_righe(g_ed_cod);
+    ex_area_cursore(area, &r0, &c0);
+    n = ex_area_righe(area);
 
     for (i = 1; i <= n; i++) {
         unsigned int k = (r0 + i) % n;
-        const char *r = ex_area_riga(g_ed_cod, k);
+        const char *r = ex_area_riga(area, k);
         const char *t = strstr(r, cosa);
 
         if (t) {
-            ex_area_vai(g_ed_cod, k, (unsigned int)(t - r));
-            ex_testo_metti(g_ed_stato, "trovato");
+            ex_area_vai(area, k, (unsigned int)(t - r));
+            ex_testo_metti(stato, "trovato");
             return;
         }
     }
-    ex_testo_metti(g_ed_stato, "non trovato");
+    ex_testo_metti(stato, "non trovato");
+}
+
+static void ed_cerca(void) { area_cerca(g_ed_cod, g_ed_stato); }
+
+/* =============================================================================
+ * ! CERCA UNA VOLTA SOLA, SOSTITUISCE UNA VOLTA SOLA — la stessa scelta,
+ * fatta due volte. Un «sostituisci tutto» che gira da solo su un intero file
+ * e' comodo finche' funziona e un disastro silenzioso il giorno che «cerca»
+ * trova qualcosa che non ci si aspettava: e in un sorgente C, dove lo stesso
+ * pezzo di testo puo' comparire dentro una stringa, un commento e un nome di
+ * variabile, capita piu' spesso di quanto sembri. Una sostituzione alla
+ * volta, con il risultato visibile subito, e' la stessa prudenza di «Cerca»
+ * applicata a chi scrive invece che a chi legge.
+ *
+ * ! DUE DOMANDE, NON UN DIALOGO SOLO: ExDlg ha `ex_dlg_riga`, che chiede una
+ * parola per volta, e non un modulo con due caselle — e non vale la pena
+ * scriverne uno apposta per due righe. Chi vuole annullare puo' farlo dopo
+ * la prima domanda quanto dopo la seconda.
+ * ============================================================================= */
+static void area_sostituisci(ExFinestra area, ExFinestra stato)
+{
+    static char cerca[64]  = "";
+    static char cambia[64] = "";
+    unsigned int i, n, r0 = 0, c0 = 0;
+
+    if (!ex_dlg_riga("Sostituisci", "cerca:", cerca, sizeof(cerca))) return;
+    if (cerca[0] == '\0') return;
+    if (!ex_dlg_riga("Sostituisci", "sostituisci con:", cambia, sizeof(cambia)))
+        return;
+
+    ex_area_cursore(area, &r0, &c0);
+    n = ex_area_righe(area);
+
+    for (i = 1; i <= n; i++) {
+        unsigned int k = (r0 + i) % n;
+        const char *r = ex_area_riga(area, k);
+        const char *t = strstr(r, cerca);
+
+        if (t) {
+            /* ! IL PEZZO DOPO SI LEGGE DA `r` PRIMA DI SCRIVERE, non dopo:
+             * ex_area_riga_metti sostituisce il contenuto della riga, e `r`
+             * punta DENTRO quel contenuto. Costruire prima l'intera riga
+             * nuova in un buffer nostro — e solo poi scriverla — e' cio' che
+             * evita di leggere da un posto che si e' appena riscritto. */
+            char         nuova[512];
+            unsigned int prima = (unsigned int)(t - r);
+            unsigned int dopo  = prima + (unsigned int)strlen(cerca);
+
+            if (prima >= sizeof(nuova)) prima = sizeof(nuova) - 1;
+            memcpy(nuova, r, prima);
+            nuova[prima] = '\0';
+            strncat(nuova, cambia, sizeof(nuova) - strlen(nuova) - 1);
+            strncat(nuova, r + dopo, sizeof(nuova) - strlen(nuova) - 1);
+
+            ex_area_riga_metti(area, k, nuova);
+            ex_area_vai(area, k, prima + (unsigned int)strlen(cambia));
+            ex_testo_metti(stato, "sostituito");
+            return;
+        }
+    }
+    ex_testo_metti(stato, "non trovato");
 }
 
 static long proc_ed(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
@@ -1204,9 +1276,7 @@ static long proc_ed(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         case ID_TAGLIA:    ex_area_taglia(g_ed_cod);   break;
         case ID_CANCELLA:  ex_area_cancella(g_ed_cod); break;
         case ID_CERCA:     ed_cerca();                 break;
-        case ID_SOSTIT:
-            ex_testo_metti(g_ed_stato, "Sostituisci: non ancora");
-            break;
+        case ID_SOSTIT:    area_sostituisci(g_ed_cod, g_ed_stato); break;
         case ID_ED_TAB: {
             /* ! SI SALVA PRIMA DI CAMBIARE LINGUETTA: l'area del codice e' una
              * sola, e il testo di prima sparisce nel momento in cui si carica
@@ -1419,6 +1489,108 @@ static void progetto_apri(void)
     progetto_titolo();
     prop_mostra();
     dico("progetto aperto");
+}
+
+/* Definita vicino al file-editor, dove sia «Sorgente» che «Files» sono gia'
+ * dichiarati: la usa progetto_salva_come(), qui sotto. */
+static void editori_salva_tutti(void);
+
+/* =============================================================================
+ * SALVA CON NOME — copia l'INTERO progetto in una directory nuova
+ *
+ * ! NON E' «SALVA IL DISEGNO IN UN ALTRO POSTO», e la differenza conta. Un
+ * progetto e' una directory intera — sorgenti scritti a mano compresi — e un
+ * «Salva con nome» che rigenerasse solo finestra.dis/.h/_gen.c nella nuova
+ * sede perderebbe silenziosamente finestra.c: esattamente il file che il
+ * resto di exide si guarda bene dal toccare mai. Si copia tutto, si passa al
+ * progetto copiato, e da li' in poi si lavora sulla copia — e' quello che
+ * «Salva con nome» vuol dire in ogni altro programma.
+ *
+ * ! GLI EDITOR APERTI SI SVUOTANO PRIMA DI COPIARE (editori_salva_tutti()).
+ * Se «Sorgente» o un file aperto da «Files» hanno modifiche non ancora
+ * scritte su disco, copiare adesso porterebbe nella copia la versione
+ * VECCHIA — e chi ha appena scritto qualcosa non se lo aspetta.
+ *
+ * ! UN LIVELLO SOLO DENTRO OGNI SOTTODIRECTORY, ed e' un limite dichiarato:
+ * src, inc, lib, bin, obj sono pensate piatte da progetto_crea() in poi, e un
+ * progetto che ci mette sottocartelle dentro va oltre quel che questa
+ * funzione sa seguire — la stessa scelta di «Files», per la stessa ragione.
+ * ============================================================================= */
+static int copia_file(const char *da, const char *a)
+{
+    char buf[1024];
+    int  fd_in, fd_out, n = 0;
+
+    fd_in = open(da, O_RDONLY, 0);
+    if (fd_in < 0) return 0;
+    fd_out = open(a, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd_out < 0) { close(fd_in); return 0; }
+
+    while ((n = (int)read(fd_in, buf, sizeof(buf))) > 0)
+        if (write(fd_out, buf, (unsigned int)n) != n) { n = -1; break; }
+
+    close(fd_in);
+    close(fd_out);
+    return n >= 0;
+}
+
+static void copia_sottodir(const char *dest, const char *nome)
+{
+    char     srcdir[PERC_MAX], da[PERC_MAX], a[PERC_MAX];
+    DirEntry v[8];
+    int      start = 0, n, i;
+
+    sprintf(srcdir, "%s/%s", g_prog_dir, nome);
+    while ((n = listdir_from(srcdir, v, 8, start)) > 0) {
+        for (i = 0; i < n; i++) {
+            if (v[i].is_dir) continue;      /* un livello solo, vedi sopra */
+            if (v[i].name[0] == '.' && v[i].name[1] == '\0') continue;
+            sprintf(da, "%s/%s/%s", g_prog_dir, nome, v[i].name);
+            sprintf(a,  "%s/%s/%s", dest, nome, v[i].name);
+            copia_file(da, a);
+        }
+        start += n;
+        if (n < 8) break;
+    }
+}
+
+static void progetto_salva_come(const char *nuova)
+{
+    static const char *const sotto[] = { "src", "inc", "lib", "bin", "obj", 0 };
+    char p[PERC_MAX], q[PERC_MAX];
+    int  i;
+
+    if (g_prog_dir[0] == '\0') { dico("prima apri o crea un progetto"); return; }
+
+    editori_salva_tutti();
+    if (!progetto_salva()) return;      /* il disegno in memoria, sul vecchio progetto */
+
+    mkdir(nuova, 0755);
+    for (i = 0; sotto[i]; i++) {
+        sprintf(p, "%s/%s", nuova, sotto[i]);
+        mkdir(p, 0755);
+    }
+    for (i = 0; sotto[i]; i++) copia_sottodir(nuova, sotto[i]);
+
+    sprintf(p, "%s/progetto.txt", g_prog_dir);
+    sprintf(q, "%s/progetto.txt", nuova);
+    copia_file(p, q);
+    sprintf(p, "%s/compila.sh", g_prog_dir);
+    sprintf(q, "%s/compila.sh", nuova);
+    copia_file(p, q);                   /* se non c'e' ancora, non e' un errore */
+
+    strncpy(g_prog_dir, nuova, PERC_MAX - 1);
+    g_prog_dir[PERC_MAX - 1] = '\0';
+    {
+        const char *n = strrchr(g_prog_dir, '/');
+
+        strncpy(g_prog_nome, n ? n + 1 : g_prog_dir, NOME_MAX - 1);
+        g_prog_nome[NOME_MAX - 1] = '\0';
+    }
+
+    g_sporco = 0;
+    progetto_titolo();
+    dico("progetto copiato: ora si lavora nella nuova directory");
 }
 
 /* =============================================================================
@@ -2060,7 +2232,20 @@ static void progetto_leggi(void)
     int  fd, n, i, nota = 0;
     unsigned int col = 0;
 
-    g_prg_nome[0] = '\0';
+    /* Il nome viene SEMPRE dalla directory, mai dal file: e' cosi' che lo
+     * mostra il titolo della finestra principale (progetto_nuovo/apri/
+     * salva_come derivano g_prog_dir allo stesso modo), e non c'e' un
+     * secondo posto dove possa restare vecchio. Se leggessimo "nome" dal
+     * file, una copia fatta con "Salva con nome" mostrerebbe qui il nome
+     * DEL PROGETTO ORIGINALE — la directory e' prg6-copia ma la scheda
+     * direbbe ancora prg6, perche' progetto.txt e' stato copiato cosi'
+     * com'era. Derivarlo qui lo tiene sempre allineato, e il prossimo Salva
+     * lo riscrive nel file da solo. */
+    {
+        const char *dn = strrchr(g_prog_dir, '/');
+        strncpy(g_prg_nome, dn ? dn + 1 : g_prog_dir, PRG_CAMPO_MAX - 1);
+        g_prg_nome[PRG_CAMPO_MAX - 1] = '\0';
+    }
     g_prg_creato[0] = '\0';
     ex_area_svuota(g_prg_c_nota);
 
@@ -2069,10 +2254,8 @@ static void progetto_leggi(void)
     if (fd < 0) {
         /* Nessun file: si propone com'era in progetto_crea(), ma non si
          * scrive — solo Salva scrive. */
-        const char *dn = strrchr(g_prog_dir, '/');
-        RtcTime     ora;
+        RtcTime ora;
 
-        strncpy(g_prg_nome, dn ? dn + 1 : g_prog_dir, PRG_CAMPO_MAX - 1);
         strncpy(autore, EXINFO_AUTORE, PRG_CAMPO_MAX - 1);
         memset(&ora, 0, sizeof(ora));
         time_now(&ora);
@@ -2095,7 +2278,6 @@ static void progetto_leggi(void)
                 }
                 if (strcmp(riga, "[nota]") == 0) { nota = 1; continue; }
 
-                if (prg_valore(riga, "nome", g_prg_nome, sizeof(g_prg_nome))) continue;
                 if (prg_valore(riga, "autore", autore, sizeof(autore))) continue;
                 if (prg_valore(riga, "versione", vers, sizeof(vers))) continue;
                 if (prg_valore(riga, "creato", g_prg_creato, sizeof(g_prg_creato))) continue;
@@ -2223,6 +2405,313 @@ static void progetto_scheda_apri(void)
     progetto_leggi();
     ex_fuoco(g_prg_c_autore);
     ex_procedura_base(g_prgf, EXM_DISEGNA, 0, 0);
+}
+
+/* =============================================================================
+ * IL FILE-EDITOR — UN SORGENTE QUALUNQUE, non i tre del disegno
+ *
+ * ! NON E' LA STESSA FINESTRA DI «Sorgente», ed e' una scelta e non una
+ * scorciatoia. La finestra di «Sorgente» conosce esattamente tre nomi —
+ * finestra.c, finestra_gen.c, finestra.h — e mezzo programma (gli handler, il
+ * salvataggio generato) e' scritto sapendo che sono quelli. Infilarci un
+ * quarto nome qualunque vorrebbe dire portare quella certezza dappertutto:
+ * ogni punto che oggi scrive `g_ed_nomi[quale]` dovrebbe imparare a gestire
+ * anche «non e' uno dei tre». Una finestra a parte, piu' piccola e piu'
+ * semplice, costa meno e non rischia di rompere quella che gia' funziona.
+ *
+ * ! IL COLORITORE SI DECIDE DAL NOME, e si spegne per chi non lo vuole. La
+ * stessa area «areacodice» resta in vita da un file all'altro — riaprirla
+ * ogni volta vorrebbe dire perdere il posto nel toolkit che gia' non si
+ * libera (vedi il perche' in exwin.c) — e se non si azzera il coloritore un
+ * file .txt aperto dopo un .c si vede colorato come se fosse C.
+ * ============================================================================= */
+static ExFinestra g_fe_f, g_fe_cod, g_fe_stato;
+static char       g_fe_nome[64] = "";     /* relativo a <progetto>/src */
+
+static void file_percorso(char *out, const char *nome)
+{
+    sprintf(out, "%s/src/%s", g_prog_dir, nome);
+}
+
+static int fe_estensione_c(const char *nome)
+{
+    unsigned int n = (unsigned int)strlen(nome);
+
+    return (n > 2 && strcmp(nome + n - 2, ".c") == 0) ||
+           (n > 2 && strcmp(nome + n - 2, ".h") == 0);
+}
+
+static int fe_carica(const char *nome)
+{
+    char p[PERC_MAX], buf[512], riga[300];
+    int  fd, n, i;
+    unsigned int col = 0;
+
+    file_percorso(p, nome);
+    ex_area_svuota(g_fe_cod);
+    ex_area_colora(g_fe_cod, fe_estensione_c(nome) ? ex_colora_c : 0, 0);
+
+    fd = open(p, O_RDONLY, 0);
+    if (fd < 0) { ex_testo_metti(g_fe_stato, "il file non c'e'"); return 0; }
+
+    while ((n = (int)read(fd, buf, sizeof(buf))) > 0)
+        for (i = 0; i < n; i++) {
+            if (buf[i] == '\r') continue;
+            if (buf[i] != '\n') {
+                if (col + 1 < sizeof(riga)) riga[col++] = buf[i];
+                continue;
+            }
+            riga[col] = '\0';
+            col = 0;
+            if (!ex_area_aggiungi(g_fe_cod, riga)) goto pieno;
+        }
+    riga[col] = '\0';
+    if (col) ex_area_aggiungi(g_fe_cod, riga);
+pieno:
+    close(fd);
+    ex_area_pulita(g_fe_cod);
+
+    strncpy(g_fe_nome, nome, sizeof(g_fe_nome) - 1);
+    g_fe_nome[sizeof(g_fe_nome) - 1] = '\0';
+    ex_titolo(g_fe_f, nome);
+    return 1;
+}
+
+static int fe_salva(void)
+{
+    char p[PERC_MAX];
+    int  fd;
+    unsigned int i, n;
+
+    if (!ex_area_modificato(g_fe_cod)) return 1;
+
+    file_percorso(p, g_fe_nome);
+    fd = open(p, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) { ex_testo_metti(g_fe_stato, "non riesco a scrivere"); return 0; }
+
+    n = ex_area_righe(g_fe_cod);
+    for (i = 0; i < n; i++) {
+        const char  *r = ex_area_riga(g_fe_cod, i);
+        unsigned int l = (unsigned int)strlen(r);
+
+        if (l) write(fd, r, l);
+        write(fd, "\n", 1);
+    }
+    close(fd);
+    ex_area_pulita(g_fe_cod);
+    ex_testo_metti(g_fe_stato, "salvato");
+    return 1;
+}
+
+/* ! SVUOTA VERSO IL DISCO OGNI EDITOR RIMASTO APERTO, e sta qui — non prima,
+ * vicino a «Salva con nome» che la chiama — perche' e' qui che «Sorgente» E
+ * il file-editor sono gia' tutt'e due dichiarati. Serve a chi copia l'intero
+ * progetto: copiare mentre una finestra tiene ancora in memoria una riga non
+ * scritta vorrebbe dire portare nella copia la versione VECCHIA. */
+static void editori_salva_tutti(void)
+{
+    if (g_ed)   ed_salva();
+    if (g_fe_f) fe_salva();
+}
+
+static long proc_fe(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+{
+    switch (msg) {
+    case EXM_COMANDO:
+        switch (wp) {
+        case ID_FE_SALVA:  fe_salva(); break;
+        case ID_FE_CERCA:  area_cerca(g_fe_cod, g_fe_stato); break;
+        case ID_FE_SOSTIT: area_sostituisci(g_fe_cod, g_fe_stato); break;
+        case ID_FE_CHIUDI:
+            fe_salva();
+            ex_distruggi(f);
+            g_fe_f = 0;
+            ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
+            return 0;
+        default: break;
+        }
+        return 0;
+
+    case EXM_CHIUDI:
+        fe_salva();
+        ex_distruggi(f);
+        g_fe_f = 0;
+        ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
+        return 0;
+
+    default: break;
+    }
+    return ex_procedura_base(f, msg, wp, lp);
+}
+
+/* Apre `nome` (un file dentro <progetto>/src) nel file-editor. Se la finestra
+ * e' gia' aperta su un ALTRO file lo salva prima di cambiarlo — la stessa
+ * regola delle linguette del sorgente principale. */
+static void file_editor_apri(const char *nome)
+{
+    if (g_fe_f) {
+        if (strcmp(g_fe_nome, nome) != 0) fe_salva();
+        fe_carica(nome);
+        ex_fuoco(g_fe_cod);
+        ex_procedura_base(g_fe_f, EXM_DISEGNA, 0, 0);
+        return;
+    }
+
+    g_fe_f = ex_crea("finestra", nome,
+                     EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_MODALE,
+                     60, 40, 640, 460, 0, 0, proc_fe);
+    if (g_fe_f == 0) { dico("non riesco ad aprire il file"); return; }
+
+    g_fe_cod = ex_crea("areacodice", "", EX_FIGLIO, 4, 4, 632, 400,
+                       g_fe_f, 0, 0);
+    ex_crea("pulsante", "Salva", EX_FIGLIO, 4, 408, 90, 26, g_fe_f, ID_FE_SALVA, 0);
+    ex_crea("pulsante", "Cerca", EX_FIGLIO, 102, 408, 90, 26, g_fe_f, ID_FE_CERCA, 0);
+    ex_crea("pulsante", "Sostituisci", EX_FIGLIO, 200, 408, 110, 26,
+            g_fe_f, ID_FE_SOSTIT, 0);
+    ex_crea("pulsante", "Chiudi", EX_FIGLIO, 318, 408, 90, 26, g_fe_f, ID_FE_CHIUDI, 0);
+    g_fe_stato = ex_crea("etichetta", "", EX_FIGLIO, 4, 440, 630, 16, g_fe_f, 0, 0);
+
+    fe_carica(nome);
+    ex_fuoco(g_fe_cod);
+    ex_procedura_base(g_fe_f, EXM_DISEGNA, 0, 0);
+}
+
+/* =============================================================================
+ * LA FINESTRA FILES — i sorgenti del progetto, un doppio clic e si aprono
+ *
+ * ! SCOPE: SOLO <progetto>/src, non tutto l'albero. E' il posto dove stanno i
+ * sorgenti veri, ed e' l'unica lettura di «files» compatibile con «un doppio
+ * clic apre come sorgente» — un doppio clic su un file .o dentro obj/ non
+ * aprirebbe niente di leggibile. Chi vuole vedere anche bin/ e obj/ ha
+ * «Directory», qui accanto, che mostra tutto.
+ * ============================================================================= */
+#define FL_MAX      64
+#define FL_NOME_MAX 64
+
+static ExFinestra   g_flf, g_fl_lista;
+static char         g_fl_nome[FL_MAX][FL_NOME_MAX];
+static unsigned int g_fl_n;
+
+static void files_mostra(void)
+{
+    char         srcdir[PERC_MAX], riga[80];
+    DirEntry     v[8];
+    int          start = 0, n, i;
+    unsigned int dim[FL_MAX];
+
+    sprintf(srcdir, "%s/src", g_prog_dir);
+    ex_lista_svuota(g_fl_lista);
+    g_fl_n = 0;
+
+    while ((n = listdir_from(srcdir, v, 8, start)) > 0) {
+        for (i = 0; i < n && g_fl_n < FL_MAX; i++) {
+            if (v[i].is_dir) continue;      /* qui si aprono file, non cartelle */
+            if (v[i].name[0] == '.' && v[i].name[1] == '\0') continue;
+            strncpy(g_fl_nome[g_fl_n], v[i].name, FL_NOME_MAX - 1);
+            g_fl_nome[g_fl_n][FL_NOME_MAX - 1] = '\0';
+            dim[g_fl_n] = v[i].size;
+            g_fl_n++;
+        }
+        start += n;
+        if (n < 8) break;
+    }
+
+    for (i = 0; i < (int)g_fl_n; i++) {
+        sprintf(riga, "%-40s %8u", g_fl_nome[i], dim[i]);
+        ex_lista_aggiungi(g_fl_lista, riga);
+    }
+    if (g_fl_n == 0) ex_lista_aggiungi(g_fl_lista, "(src/ e' vuota)");
+}
+
+static long proc_fl(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+{
+    switch (msg) {
+    case EXM_COMANDO:
+        if (wp == ID_FL_ELENCO) {
+            unsigned int k = ex_lista_scelta(g_fl_lista);
+
+            /* ! SOLO IL DOPPIO CLIC O L'INVIO APRONO, come in ogni lista di
+             * questo toolkit — EX_APRIRE(lp). Una riga scelta con le frecce
+             * non deve gia' aprire un file: chi scorre l'elenco per leggere i
+             * nomi non sta chiedendo di aprirli tutti uno per uno. */
+            if (EX_APRIRE(lp) && k < g_fl_n) file_editor_apri(g_fl_nome[k]);
+        } else if (wp == ID_FL_CHIUDI) {
+            ex_distruggi(f);
+            g_flf = 0;
+            ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
+            return 0;
+        }
+        return 0;
+
+    case EXM_CHIUDI:
+        ex_distruggi(f);
+        g_flf = 0;
+        ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
+        return 0;
+
+    default: break;
+    }
+    return ex_procedura_base(f, msg, wp, lp);
+}
+
+static void files_apri(void)
+{
+    if (g_prog_dir[0] == '\0') { dico("prima apri o crea un progetto"); return; }
+    if (g_flf) { files_mostra(); ex_procedura_base(g_flf, EXM_DISEGNA, 0, 0); return; }
+
+    g_flf = ex_crea("finestra", "Files",
+                    EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_MODALE,
+                    140, 90, 420, 340, 0, 0, proc_fl);
+    if (g_flf == 0) { dico("non riesco ad aprire la finestra dei file"); return; }
+
+    ex_crea("etichetta", "doppio clic per aprire un sorgente:", EX_FIGLIO,
+            10, 10, 400, 16, g_flf, 0, 0);
+    g_fl_lista = ex_crea("lista", "", EX_FIGLIO, 10, 32, 396, 250,
+                         g_flf, ID_FL_ELENCO, 0);
+    ex_crea("pulsante", "Chiudi", EX_FIGLIO, 10, 292, 100, 26,
+            g_flf, ID_FL_CHIUDI, 0);
+
+    files_mostra();
+    ex_procedura_base(g_flf, EXM_DISEGNA, 0, 0);
+}
+
+/* =============================================================================
+ * LA VOCE DIRECTORY — tutto l'albero, comprese le cose che non sono sorgenti
+ *
+ * ! NON SI RISCRIVE UN SECONDO FILE MANAGER, SE C'E' GIA' QUELLO VERO. exide
+ * sa disegnare rettangoli e liste, non copiare, spostare o cancellare file in
+ * sicurezza — filemgr lo sa gia' fare, con la sua stessa struttura ad albero
+ * piu' elenco che la voce Directory promette. Riscriverlo qui dentro sarebbe
+ * la stessa copia che l'esistenza delle librerie condivise serve a togliere,
+ * solo fatta di sorgente invece che di .so.
+ *
+ * ! SI PASSA LA DIRECTORY DEL PROGETTO COME ARGOMENTO, non si apre sulla
+ * radice: filemgr accetta gia' un percorso di partenza (lo stesso argomento
+ * che usa chi lo avvia dal menu Applicazioni), e chi ha chiesto «Directory»
+ * voleva vedere il SUO progetto, non ripartire da /.
+ * ============================================================================= */
+static void directory_apri(void)
+{
+    static const char *const dove[] = {
+        "/exwin/bin/filemgr",
+        "/cdrom/exwin/bin/filemgr"
+    };
+    int k;
+
+    if (g_prog_dir[0] == '\0') { dico("prima apri o crea un progetto"); return; }
+
+    for (k = 0; k < 2; k++) {
+        char *av[3];
+
+        av[0] = (char *)dove[k];
+        av[1] = g_prog_dir;
+        av[2] = 0;
+        if (spawn_ex(av[0], av, environ, 0, 0) >= 0) {
+            dico("file manager aperto sulla directory del progetto");
+            return;
+        }
+    }
+    dico("non trovo filemgr (ne' in /exwin ne' in /cdrom/exwin)");
 }
 
 /* =============================================================================
@@ -2364,9 +2853,19 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         case ID_NUOVO:      progetto_nuovo();  break;
         case ID_APRI:       progetto_apri();   break;
         case ID_SALVA:      progetto_salva();  break;
-        case ID_SALVA_COME:
-            dico("Salva con nome: per ora si usa File > Nuovo progetto");
+        case ID_SALVA_COME: {
+            char dir[PERC_MAX];
+
+            if (g_prog_dir[0] == '\0') { dico("prima apri o crea un progetto"); break; }
+            strncpy(dir, g_prog_dir, PERC_MAX - 1);
+            dir[PERC_MAX - 1] = '\0';
+            strncat(dir, "-copia", PERC_MAX - strlen(dir) - 1);
+
+            if (ex_dlg_riga("Salva con nome", "nuova directory del progetto:",
+                            dir, sizeof(dir)) && dir[0])
+                progetto_salva_come(dir);
             break;
+        }
         case ID_CHIUDI:
             if (g_sporco && !ex_dlg_conferma("Modifiche non salvate",
                                              "Chiudere il progetto senza "
@@ -2392,10 +2891,8 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         case ID_COMPILA:   compilatore_apri();   break;
         case ID_LIBRERIE:  librerie_apri();      break;
         case ID_PROGETTO:  progetto_scheda_apri(); break;
-        case ID_FILES:
-        case ID_DIRECTORY:
-            dico("questa voce e' in arrivo: vedi Aiuto > Manuale");
-            break;
+        case ID_FILES:     files_apri();           break;
+        case ID_DIRECTORY: directory_apri();       break;
 
         case ID_MANUALE:   manuale();       break;
         case ID_INFO:      informazioni();  break;

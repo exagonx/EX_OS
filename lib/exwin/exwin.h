@@ -724,6 +724,14 @@ void         ex_area_cursore(ExFinestra area, unsigned int *riga, unsigned int *
  * dove si sta guardando. */
 void         ex_area_vai(ExFinestra area, unsigned int riga, unsigned int col);
 
+/* ! UNA RIGA INTERA SI SOSTITUISCE IN UN COLPO, senza passare da un tasto per
+ * volta: e' quel che serve a un «cerca e sostituisci», che cambia un pezzo di
+ * riga senza che nessuno lo stia scrivendo a tastiera. Si tronca alla
+ * capienza dell'area come qualunque altra scrittura, e invalida la catena dei
+ * colori da questa riga in giu' come ogni altra modifica. */
+void         ex_area_riga_metti(ExFinestra area, unsigned int riga,
+                                const char *testo);
+
 /* -----------------------------------------------------------------------------
  * La selezione e gli appunti
  *

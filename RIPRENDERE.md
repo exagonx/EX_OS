@@ -28,6 +28,237 @@ manca» apre quello.
 
 # DOVE RIPRENDERE — 3 settembre 2026
 
+## 3 settembre 2026 (notte fonda) — SALVA CON NOME, SOSTITUISCI, E UN NOME CHE RESTAVA INDIETRO
+
+Le due voci che in `in_lavorazione.txt` stavano in cima: «Salva con nome» per
+il progetto e «Sostituisci» negli editor — in tutt'e due, ora che ce ne sono
+due. Piu' un difetto trovato provando la prima, che c'entra con la seconda
+solo perche' e' stata la stessa prova a scoprirlo.
+
+### SALVA CON NOME: SI COPIA LA DIRECTORY, NON SI RIGENERA IL DISEGNO
+
+! **LA LETTURA INGENUA PERDEVA IL CODICE SCRITTO A MANO.** «Salva con nome»
+poteva voler dire due cose: rigenerare il disegno dentro una directory nuova
+— cioe' rifare `finestra.dis`, `finestra.h`, `finestra_gen.c` da capo — oppure
+copiare tutto l'albero e continuare a lavorare sulla copia. La prima e' piu'
+facile da scrivere e butta via `finestra.c`, che e' l'unico dei quattro file
+che l'IDE non possiede: e' quello dell'utente, quello in cui l'IDE aggiunge
+gli handler che mancano e non riscrive mai niente (vedi la giornata del
+disegnatore). Un «salva con nome» che perde il corpo delle funzioni non e' un
+salvataggio, e' una perdita silenziosa con un nome rassicurante.
+
+Percio': `copia_file()` + `copia_sottodir()`, e si copia l'albero intero —
+`src/`, `inc/`, `lib/`, `bin/`, `obj/`, `progetto.txt`, `compila.sh` — poi
+`g_prog_dir` passa alla copia. **L'originale resta dov'era, intatto**: e' una
+copia, non uno spostamento, e questo si e' verificato rileggendo il file
+originale dopo l'operazione, non deducendolo.
+
+Prima di copiare si salvano gli editor aperti (`editori_salva_tutti()`): se
+uno ha del testo non ancora scritto su disco, quel testo deve finire nella
+copia, non restare solo nella finestra.
+
+### SOSTITUISCI: UNA OCCORRENZA PER VOLTA, COME CERCA
+
+! **NON E' UN «SOSTITUISCI TUTTO», E NON PER PIGRIZIA.** In un sorgente la
+stessa sequenza di caratteri compare dentro le stringhe, dentro i commenti e
+dentro i nomi: `msg` sta anche in `messaggio`. Un «tutto» cambia in silenzio
+le tre cose insieme e chi lo lancia se ne accorge alla compilazione, o dopo.
+Una per volta, con il cursore che si porta sulla riga toccata, si vede cosa e'
+successo — ed e' la stessa regola gia' scelta per Cerca, che e' meta' della
+ragione: due comandi vicini che si comportano in modo diverso confondono piu'
+di quanto aiutino.
+
+Il dialogo e' `ex_dlg_riga` due volte di fila — prima il testo da cercare,
+poi quello da metterci — perche' ExDlg non ha un dialogo a due campi e
+scriverlo per questo solo caso non valeva. Se il primo si annulla, il secondo
+non si apre.
+
+### IL PEZZO CHE MANCAVA NEL TOOLKIT: ex_area_riga_metti()
+
+L'area di testo sapeva aggiungere una riga in fondo, leggerla, svuotarsi,
+muovere il cursore — ma non sapeva **riscriverne una nel mezzo**. Non c'era
+modo di fare una sostituzione senza smontare e rimontare tutto il documento.
+
+    void ex_area_riga_metti(ExFinestra area, unsigned int riga,
+                            const char *testo);
+
+Sedici righe, e usa `area_tocca()` come tutte le altre: segna il documento
+modificato e **invalida la catena del coloritore da quella riga in giu'**, che
+e' esattamente la ragione per cui una primitiva del genere va nel toolkit e
+non nell'applicazione. Un'applicazione che riscrivesse la riga da fuori non
+saprebbe che c'e' una catena di stati da buttare, e il colore resterebbe
+quello di prima — sbagliato, e solo qualche volta.
+
+E' la stessa storia di `ex_area_vai()` di poche ore fa: quando serve una cosa
+che il toolkit non fa, si aggiunge **la primitiva minima** e la si esporta in
+fondo agli elenchi di `exwin_esporta.c`. Aggiungere non rompe niente.
+
+### IL DIFETTO: IL NOME DELLA SCHEDA VENIVA DAL FILE, NON DALLA DIRECTORY
+
+Trovato provando «Salva con nome», e non e' un dettaglio estetico quanto
+sembra.
+
+`progetto.txt` viene copiato **com'era**, e dentro c'e' una riga `nome = ...`.
+La scheda del progetto (Strumenti > Progetto) la leggeva da li'. Risultato:
+la directory era `/disk/prg6-copia` e la scheda diceva ancora `prg6`. Il
+titolo della finestra principale, intanto, diceva `prg6-copia` — perche'
+`g_prog_nome` si ricava sempre da `strrchr(g_prog_dir, '/')`, in
+`progetto_nuovo()`, in `progetto_apri()` e adesso in `progetto_salva_come()`.
+
+! **DUE POSTI CHE RISPONDONO ALLA STESSA DOMANDA IN MODO DIVERSO, ed e' il
+difetto vero — non lo scarto di una parola.** Lo stesso sarebbe successo
+rinominando la directory da fuori, che nessuno vieta. La cura non e'
+sincronizzare i due valori: e' toglierne uno. Adesso `progetto_leggi()`
+ricava il nome dalla directory **sempre**, come faceva gia' nel ramo «il file
+non c'e' ancora» — quel ramo era gia' giusto, ed era anche gia' provato,
+perche' e' quello che si percorre a ogni «Nuovo progetto». Il ramo «il file
+c'e'» adesso fa la stessa cosa: la riga `nome` del file non si legge piu'.
+
+Si continua a **scrivere**, pero', e questo la ripara da se': il primo Salva
+della scheda riscrive `nome` col valore giusto. Un file lasciato leggibile a
+chi lo apre con un editor, senza che nessuno lo creda una fonte di verita'.
+
+### COME SI E' PROVATO
+
+Disco ext2 scrivibile con dentro il progetto `prg6` gia' fatto e la copia
+gia' prodotta dalla versione vecchia — cioe' con `nome = prg6` scritto
+davvero dentro `/disk/prg6-copia/progetto.txt`, che e' il caso peggiore.
+
+    EXOS_QEMU_EXTRA="-drive file=<disco>,format=raw,if=ide,index=0" \
+    EXOS_NO_FLOPPY=1 EXOS_CDROM=dist/exos.iso EXOS_RAM=64M \
+    python3 tools/qemu_drive.py \
+        "mount hd0p1 /disk@5" "cat /disk/prg6-copia/progetto.txt@3" \
+        "exwin@10" "key:alt-f1@2" \
+        "/exwin/bin/exide /disk/prg6-copia &@6" "key:alt-f5@3" \
+        <mouse: Strumenti > Progetto, poi il pulsante Salva> \
+        "key:alt-f1@2" "cat /disk/prg6-copia/progetto.txt@4"
+
+Le due letture dello stesso file, prima e dopo, **nello stesso giro**:
+
+    nome = prg6            <- quel che c'era sul disco entrando
+    nome = prg6-copia      <- dopo aver aperto la scheda e premuto Salva
+
+E la fotografia in mezzo, che e' la prova della lettura e non della scrittura:
+la scheda mostrava `nome: prg6-copia` **mentre il file diceva ancora `prg6`**.
+Le due cose insieme dicono tutto: la lettura non guarda piu' il file, e la
+scrittura lo rimette a posto.
+
+Di «Salva con nome» era gia' stata verificata la parte che conta, con `ls` e
+`cat` dentro la macchina: quattro file copiati con le misure giuste, il
+commento scritto a mano nel `finestra.c` **ancora al suo posto nella copia**,
+e l'originale identico a com'era.
+
+### TRE COSE IMPARATE SUL PILOTA, CHE VALGONO PER LA PROSSIMA VOLTA
+
+! **exide PRENDE LA DIRECTORY DEL PROGETTO COME ARGOMENTO.** `main()` lo fa
+da sempre (`if (argc >= 2)`), ma per due prove di fila l'avevo aperto a mano
+con File > Apri, che e' un dialogo di scelta file da navigare col mouse.
+`/exwin/bin/exide /disk/prg6-copia &` e la maschera e' gia' li'.
+
+! **DOPO `exwin` LE BATTUTE VANNO ALLA CONSOLE GRAFICA, non alla shell**, e
+non se ne accorge nessuno perche' nessuno si lamenta: la riga digitata sparisce
+e basta. Si torna alla shell con `key:alt-f1`, si lancia, e si rientra con
+`key:alt-f5`. Il primo giro di questa prova e' andato perso cosi', il secondo
+per un `exide` senza percorso — non e' nel PATH, sta in `/exwin/bin`.
+
+! **LE COORDINATE DEI CONTROLLI SI CALCOLANO, NON SI MISURANO A OCCHIO.** In
+`wserver.c` la finestra ha `f->x`/`f->y` sull'angolo dell'**area client**: la
+barra del titolo (`BARRA_H` 20) e il bordo (`BORDO` 2) stanno FUORI, sopra e
+intorno. Percio' un figlio creato in `(10, 350)` dentro una finestra nata in
+`(100, 60)` sta sullo schermo in `(110, 410)` — si sommano e basta. Il
+pulsante Salva della scheda e' stato colpito al primo colpo con un numero
+uscito da `ex_crea()`, senza fotografie di mezzo. La fotografia serve dove i
+numeri non ci sono: le voci di un menu a tendina, che le disegna il toolkit.
+
+## 3 settembre 2026 (notte) — FILES E DIRECTORY: UNA FINESTRA NUOVA, E UNA CHE NON SERVIVA SCRIVERE
+
+Strumenti > Files e Strumenti > Directory, dentro exide. Le ultime due voci
+del menu Strumenti che dicevano ancora «in arrivo» fra quelle chieste
+all'inizio: con questo giro il menu e' completo.
+
+### FILES — UNA FINESTRA NUOVA, E UNA SCELTA DI PROPOSITO
+
+! **NON E' LA STESSA FINESTRA DI «SORGENTE», ed e' una scelta e non una
+scorciatoia.** La finestra «Sorgente» conosce esattamente tre nomi —
+`finestra.c`, `finestra_gen.c`, `finestra.h` — e mezzo programma (gli
+handler, il salvataggio generato) e' scritto sapendo che sono quelli.
+Infilarci un quarto nome qualunque, per far aprire da li' un file scelto in
+«Files», avrebbe voluto dire portare quella certezza dappertutto: ogni punto
+che oggi scrive `g_ed_nomi[quale]` avrebbe dovuto imparare a gestire anche
+«non e' uno dei tre». Una finestra a parte — piu' piccola, con Salva, Cerca,
+Chiudi e niente altro — costa meno e non rischia di rompere quella che gia'
+funziona e gia' e' provata.
+
+! **SCOPE: SOLO `<progetto>/src`, non tutto l'albero.** E' il posto dove
+stanno i sorgenti veri, ed e' l'unica lettura di «files» compatibile con «un
+doppio clic apre come sorgente» — un doppio clic su un `.o` dentro `obj/` non
+aprirebbe niente di leggibile. Chi vuole vedere anche `bin/` e `obj/` ha
+Directory, qui accanto.
+
+! **IL COLORITORE SI DECIDE DAL NOME, e si spegne per chi non lo vuole.**
+`.c` e `.h` prendono `ex_colora_c`; tutto il resto niente. La stessa area
+`areacodice` resta in vita da un file all'altro — riaprirla ogni volta
+vorrebbe dire perdere il posto nel toolkit che gia' non si libera (vedi
+exwin.c) — e se non si azzera il coloritore esplicitamente a ogni apertura,
+un `.txt` letto dopo un `.c` si vedrebbe colorato come se fosse C.
+
+### LA RICERCA NON SI E' RISCRITTA UNA SECONDA VOLTA
+
+Il file-editor voleva anche lui un «Cerca», e la ricerca che gia' esisteva
+(nella finestra «Sorgente») era gia' tutto cio' che serviva — cambiava solo
+QUALE area e QUALE riga di stato usare. `ed_cerca()` e' diventata
+`area_cerca(area, stato)`, parametrizzata sui due handle, e `ed_cerca()`
+resta come un involucro di una riga che la chiama con i suoi. Due copie dello
+stesso ciclo di ricerca sarebbero state due copie da tenere d'accordo per lo
+stesso identico algoritmo.
+
+### DIRECTORY — NON SI RISCRIVE UN SECONDO FILE MANAGER
+
+! **SE C'E' GIA' QUELLO VERO, NON SE NE FA UNO FINTO.** exide sa disegnare
+rettangoli e liste; non sa copiare, spostare o cancellare file in sicurezza —
+`filemgr` lo sa gia' fare, con la sua stessa struttura ad albero piu' elenco
+che la voce «Directory» promette fin dalla richiesta originale
+("mostra una finestra con la struttura e l'elenco files anche non
+sorgenti" — che e' `filemgr` descritto parola per parola). Riscriverlo
+dentro exide sarebbe stata la stessa copia che l'esistenza delle librerie
+condivise serve a togliere, solo fatta di sorgente invece che di `.so`.
+
+`directory_apri()` sono dodici righe: cerca `filemgr` in `/exwin/bin` e poi
+in `/cdrom/exwin/bin` (lo stesso doppio tentativo che il program manager usa
+gia' per l'orologio), e lo lancia con la directory del progetto come primo
+argomento — `filemgr` la accetta gia', e' lo stesso argomento con cui parte
+dal menu Applicazioni.
+
+### COME SI E' PROVATO
+
+    File > Nuovo progetto -> /disk/prg3, File > Salva (senza aggiungere
+        controlli: basta a far nascere finestra.c/.h/_gen.c/.dis)
+    Strumenti > Files
+        -> elenca finestra.dis (63), finestra.h (406), finestra_gen.c (763),
+           finestra.c (410) — le dimensioni vere, lette da listdir_from
+    doppio clic su finestra.c
+        -> file-editor aperto, titolo "finestra.c", testo colorato
+           (commento verde, #include oliva, tipi verde-azzurro)
+    scritta una riga in fondo, Salva, Chiudi
+        -> torna alla finestra Files, ancora aperta, con finestra.c
+           ancora selezionata
+
+    cat /disk/prg3/src/finestra.c
+        -> la riga aggiunta c'e', dopo la '}' di main(), esattamente dove
+           il cursore l'aveva messa
+
+    Strumenti > Directory (su un progetto nuovo, /disk/prg4)
+        -> si apre "File manager", albero a sinistra con prg4 gia' scelto,
+           elenco a destra con [src] [inc] [lib] [bin] [obj] e
+           progetto.txt (98 byte) — la directory del progetto, non la
+           radice del disco
+
+! **E IL GIRO INTERO — elenco, apertura, modifica, salvataggio, richiusura,
+verifica dal file vero — e' stato provato dentro EX-OS, non solo disegnato.**
+E' la stessa regola di ogni pezzo di exide finora: una fotografia della
+finestra dice che il pannello si disegna, solo il file riletto dalla shell
+dice che il giro e' intero.
+
 ## 3 settembre 2026 (sera tarda) — LA SCHEDA DEL PROGETTO, E UNA RISCRITTURA CHE NON DOVEVA ESSERCI
 
 Strumenti > Progetto, dentro exide. L'ultima voce del menu Strumenti che

@@ -85,6 +85,80 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### Salva con nome, Sostituisci, e un nome che restava indietro
+
+**testato** — dentro EX-OS, con il file riletto dalla shell prima e dopo,
+nello stesso giro di macchina. Le due voci che erano in cima all'elenco delle
+cose da fare di exide.
+
+**«Salva con nome» copia l'albero, non rigenera il disegno.** Poteva voler
+dire due cose: rifare `finestra.dis`, `finestra.h` e `finestra_gen.c` dentro
+una directory nuova, oppure copiare tutto e continuare a lavorare sulla copia.
+La prima è più facile da scrivere e **butta via `finestra.c`**, che è l'unico
+dei quattro file che l'IDE non possiede: è quello dell'utente, quello in cui
+l'IDE aggiunge gli handler mancanti e non riscrive mai niente. Un «salva con
+nome» che perde il corpo delle funzioni non è un salvataggio. Si copia
+l'albero intero — `src/`, `inc/`, `lib/`, `bin/`, `obj/`, `progetto.txt`,
+`compila.sh` — dopo aver salvato gli editor aperti, e **l'originale resta
+intatto**: è una copia, non uno spostamento.
+
+**«Sostituisci» cambia una occorrenza per volta, come Cerca.** In un sorgente
+la stessa sequenza di caratteri sta dentro le stringhe, dentro i commenti e
+dentro i nomi: `msg` sta anche in `messaggio`. Un «sostituisci tutto» le
+cambia in silenzio tutte e tre, e chi lo lancia se ne accorge alla
+compilazione o dopo. C'è in tutt'e due gli editor — quello del sorgente e il
+file-editor — e nel toolkit è nato `ex_area_riga_metti()`, che riscrive una
+riga in mezzo al documento: sedici righe che passano da `area_tocca()`, così
+la catena del coloritore si invalida da lì in giù. Una primitiva del genere
+va nel toolkit proprio per questo: un'applicazione che riscrivesse la riga da
+fuori lascerebbe il colore vecchio, e solo qualche volta.
+
+> **Un difetto trovato dalla prova, non dalla rilettura del codice.**
+> `progetto.txt` viene copiato com'era, riga `nome = ...` compresa, e la
+> scheda del progetto la leggeva da lì: la directory era `prg6-copia` e la
+> scheda diceva ancora `prg6`, mentre il titolo della finestra — che il nome
+> lo ricava dalla directory — diceva quello giusto. Due posti che rispondono
+> alla stessa domanda in modo diverso; lo stesso sarebbe successo rinominando
+> la directory da fuori. La cura non è sincronizzarli: è toglierne uno. Adesso
+> il nome viene **sempre** dalla directory, e il file continua a scriverlo, così
+> il primo Salva lo rimette a posto da sé.
+
+### Files e Directory: una finestra nuova, e una che non serviva scrivere
+
+**testato** — elenco, apertura, modifica, salvataggio, richiusura e verifica
+dal file vero, dentro EX-OS. Le ultime due voci del menu Strumenti che
+dicevano ancora «in arrivo»: con questo giro il menu è completo.
+
+**«Files» non è la finestra di «Sorgente»**, ed è una scelta e non una
+scorciatoia. «Sorgente» conosce esattamente tre nomi — `finestra.c`,
+`finestra_gen.c`, `finestra.h` — e mezzo programma è scritto sapendo che sono
+quelli; infilarci un quarto nome qualunque avrebbe voluto dire portare quella
+certezza dappertutto. Una finestra a parte, con Salva/Cerca/Chiudi e niente
+altro, costa meno e non rischia di rompere quella che già funziona.
+
+**È scoperta solo su `<progetto>/src`**, non su tutto l'albero: è l'unica
+lettura di «files» compatibile con «un doppio clic apre come sorgente» — un
+doppio clic su un `.o` dentro `obj/` non aprirebbe niente di leggibile. Il
+coloritore si decide dal nome (`.c`/`.h` prendono `ex_colora_c`, il resto
+niente) e **si spegne esplicitamente a ogni apertura**: la stessa area resta
+in vita da un file all'altro, e senza azzerarlo un `.txt` letto dopo un `.c`
+si vedrebbe colorato come se fosse C.
+
+**«Directory» non riscrive un secondo file manager.** exide sa disegnare
+rettangoli e liste; non sa copiare, spostare o cancellare file in sicurezza —
+`filemgr` lo sa già fare, con la stessa struttura ad albero più elenco che
+questa voce promette fin dalla richiesta originale. Dodici righe cercano
+`filemgr` (prima in `/exwin/bin`, poi in `/cdrom/exwin/bin`) e lo lanciano con
+la directory del progetto come argomento — lo stesso che accetta già dal menu
+Applicazioni.
+
+> **E la ricerca non si è riscritta una seconda volta.** Il file-editor voleva
+> anche lui un «Cerca», identico a quello già provato nella finestra
+> «Sorgente» — cambiava solo *quale* area e *quale* riga di stato usare.
+> `ed_cerca()` è diventata `area_cerca(area, stato)`, e l'originale resta un
+> involucro di una riga: due copie dello stesso ciclo sarebbero state due
+> copie da tenere d'accordo per lo stesso identico algoritmo.
+
 ### La scheda del progetto, e una riscrittura che non doveva esserci
 
 **testato** — scritta, chiusa, riaperta: tutto tornava. E un difetto vero

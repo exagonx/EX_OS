@@ -132,6 +132,7 @@ static struct {
     void         (*voce_scegli)(ExFinestra, unsigned int);
     const char  *(*voce_testo)(ExFinestra, unsigned int);
     void         (*area_vai)(ExFinestra, unsigned int, unsigned int);
+    void         (*area_riga_metti)(ExFinestra, unsigned int, const char *);
     void         (*area_colora)(ExFinestra, ExColora, void *);
     unsigned int (*colora_c)(void *, const char *, unsigned char *, unsigned int);
     ExFinestra   (*mdi_attivo)(ExFinestra);
@@ -267,6 +268,8 @@ static void assicura(void)
                       chiedi(t, "ex_voce_testo");
     P.area_vai      = (void (*)(ExFinestra, unsigned int, unsigned int))
                       chiedi(t, "ex_area_vai");
+    P.area_riga_metti = (void (*)(ExFinestra, unsigned int, const char *))
+                        chiedi(t, "ex_area_riga_metti");
     P.area_colora   = (void (*)(ExFinestra, ExColora, void *))
                       chiedi(t, "ex_area_colora");
     P.colora_c      = (unsigned int (*)(void *, const char *, unsigned char *,
@@ -434,6 +437,9 @@ const char *ex_voce_testo(ExFinestra c, unsigned int i)
 
 void ex_area_vai(ExFinestra c, unsigned int riga, unsigned int col)
 { assicura(); P.area_vai(c, riga, col); }
+
+void ex_area_riga_metti(ExFinestra c, unsigned int riga, const char *testo)
+{ assicura(); P.area_riga_metti(c, riga, testo); }
 void ex_area_colora(ExFinestra c, ExColora fn, void *dato)
 { assicura(); P.area_colora(c, fn, dato); }
 

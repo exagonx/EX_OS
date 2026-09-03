@@ -6019,6 +6019,40 @@ void ex_area_vai(ExFinestra f, unsigned int riga, unsigned int col)
     area_segui(A);
 }
 
+/* =============================================================================
+ * ! UNA RIGA INTERA SI SOSTITUISCE IN UN COLPO, e non lettera per lettera.
+ * Le uniche modifiche che l'API pubblica sapeva fare erano quelle di chi
+ * scrive al tastierino — un carattere, un Invio, un Backspace — perche' fino
+ * a oggi nessuno aveva bisogno d'altro. Un «cerca e sostituisci» ha bisogno
+ * di cambiare un pezzo di riga senza passare da un tasto per volta, ed e'
+ * quel che questa funzione fa: la stessa mancanza di ex_area_vai, la stessa
+ * ragione — un pezzo del toolkit che si scopre serve solo quando nasce chi
+ * ne ha bisogno.
+ *
+ * ! LA RIGA SI TRONCA ALLA CAPIENZA DELL'AREA, come qualunque altra
+ * scrittura — vedi area_inserisci() — e non e' un limite nuovo: e' lo stesso
+ * di sempre, reso esplicito qui perche' chi sostituisce un pezzo di riga con
+ * un testo piu' lungo dell'originale deve saperlo.
+ *
+ * ! E INVALIDA LA CATENA DEI COLORI DA QUESTA RIGA IN GIU', esattamente come
+ * ogni altra modifica (area_tocca): un cambiamento fatto scavalcando la
+ * tastiera non deve scavalcare anche quella regola, o un commento a blocco
+ * che attraversa la riga sostituita colorerebbe ancora cio' che c'era prima.
+ * ============================================================================= */
+void ex_area_riga_metti(ExFinestra f, unsigned int riga, const char *testo)
+{
+    Area *A = area_da_h(f);
+    char *r;
+
+    if (!A || riga >= A->n || !testo) return;
+
+    r = area_riga(A, riga);
+    strncpy(r, testo, A->col_max - 1);
+    r[A->col_max - 1] = '\0';
+
+    area_tocca(A, riga);
+}
+
 void ex_area_colora(ExFinestra f, ExColora fn, void *dato)
 {
     Area *A = area_da_h(f);

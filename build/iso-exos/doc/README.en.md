@@ -84,6 +84,70 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### Files and Directory: one new window, and one that did not need writing
+
+**tested** — listing, opening, editing, saving, closing again, and checking
+against the real file, inside EX-OS. The last two Strumenti menu entries that
+still said "coming soon": with this round the menu is complete.
+
+**"Files" is not the "Source" window**, and that is a choice, not a
+shortcut. "Source" knows exactly three names — `finestra.c`,
+`finestra_gen.c`, `finestra.h` — and half the program is written knowing they
+are those three; slipping in a fourth arbitrary name would have meant
+carrying that certainty everywhere. A separate window, with Save/Find/Close
+and nothing else, costs less and risks nothing to what already works.
+
+**It is scoped to `<project>/src` only**, not the whole tree: it is the only
+reading of "files" compatible with "a double-click opens it as source" — a
+double-click on a `.o` inside `obj/` would open nothing readable. The
+colouriser is chosen from the name (`.c`/`.h` get `ex_colora_c`, everything
+else none) and is **explicitly turned off on every open**: the same area
+stays alive from one file to the next, and without resetting it a `.txt`
+read after a `.c` would appear coloured as if it were C.
+
+**"Directory" does not rewrite a second file manager.** exide knows how to
+draw rectangles and lists; it does not know how to copy, move or delete files
+safely — `filemgr` already does, with the same tree-plus-list layout this
+entry has promised since the original request. Twelve lines look for
+`filemgr` (first in `/exwin/bin`, then `/cdrom/exwin/bin`) and launch it with
+the project directory as an argument — the same one it already accepts from
+the Applications menu.
+
+> **And search was not rewritten a second time.** The file editor wanted a
+> "Find" too, identical to the one already proven in the "Source" window —
+> only *which* area and *which* status line changed. `ed_cerca()` became
+> `area_cerca(area, status)`, and the original stayed a one-line wrapper: two
+> copies of the same loop would have been two copies to keep in step for the
+> exact same algorithm.
+
+### The project card, and a rewrite that should not have happened
+
+**tested** — written, closed, reopened: everything came back. And a real
+defect found by testing exactly that.
+
+**It reads the same `progetto.txt` a project already writes at birth.** Not a
+second format: five `key = value` lines — name, author, version, created,
+description — followed by a `[nota]` marker after which everything, blank
+lines included, is the note's free text.
+
+**The name and creation date are not editable**, and that is not an
+oversight: the name comes from the directory — rewriting it here would not
+rename anything — and a creation date, by definition, cannot be corrected
+without ceasing to be true. They are labels, not boxes. **Closing the window
+saves on its own**, like the editor: it is a low-risk data card, and asking
+for confirmation on low-risk information is a question people learn to
+dismiss without reading.
+
+> **"New project" pointed at an already-existing directory used to wipe the
+> card.** The drawing (`finestra.dis`) was opened without truncating — a file
+> already there stayed exactly what it was — but `progetto.txt` was always
+> truncated: the same action treated two files of the same project two
+> different ways. Found by restarting to test *reopening* a project, not just
+> saving: the file on disk was already correct, checked with `cat` before the
+> restart — it was the next step, not the save, overwriting it. The fix:
+> check first whether the file already exists, and write only when it is
+> missing.
+
 ### The compiler window: real GCC, inside EX-OS, from a drawing
 
 **tested** — a real project, drawn in exide, compiled with GCC from the tools

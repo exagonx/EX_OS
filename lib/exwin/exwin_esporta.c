@@ -129,6 +129,7 @@ static const char *const g_nomi[] = {
     /* Il testo colorato: «areacodice», il cursore che si porta, il gancio del
      * coloritore e quello del C gia' fatto. */
     "ex_area_vai",
+    "ex_area_riga_metti",
     "ex_area_colora",
     "ex_colora_c",
 
@@ -220,6 +221,7 @@ static void *const g_indirizzi[] = {
     (void *)ex_voce_testo,
 
     (void *)ex_area_vai,
+    (void *)ex_area_riga_metti,
     (void *)ex_area_colora,
     (void *)ex_colora_c,
 

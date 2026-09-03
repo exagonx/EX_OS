@@ -136,22 +136,35 @@ decide se il progetto sopravvive — e' il punto in cui VB6 si rompeva:
   esistente non cancella piu' la scheda (prima la riscriveva sempre — un
   difetto trovato provando proprio questa finestra).
 
+! FILES E DIRECTORY CI SONO, dal 3 settembre 2026 (diario: «FILES E
+  DIRECTORY: UNA FINESTRA NUOVA, E UNA CHE NON SERVIVA SCRIVERE»). Strumenti >
+  Files elenca i file di <progetto>/src e un doppio clic apre quello scelto in
+  un file-editor colorato (a parte da «Sorgente», che resta solo per la terna
+  finestra.c/.h/_gen.c); Strumenti > Directory apre filemgr — quello vero, gia'
+  nel sistema — sulla directory del progetto, invece di rifare un secondo
+  navigatore di file dentro exide.
+
+! SALVA CON NOME E SOSTITUISCI CI SONO, dal 3 settembre 2026 (diario: «SALVA
+  CON NOME, SOSTITUISCI, E UN NOME CHE RESTAVA INDIETRO»). File > Salva con
+  nome COPIA l'albero intero e passa a lavorare sulla copia — non rigenera il
+  disegno altrove, perche' rigenerare butterebbe via finestra.c, che e' il file
+  dell'utente. L'originale resta intatto. Sostituisci c'e' in tutt'e due gli
+  editor, una occorrenza per volta come Cerca: un «sostituisci tutto» in un
+  sorgente cambierebbe in silenzio anche le stringhe e i commenti. Nel toolkit
+  e' nato ex_area_riga_metti(), che riscrive una riga in mezzo al documento e
+  invalida la catena del coloritore da li' in giu'.
+
 QUEL CHE MANCA, in ordine di quanto serve:
 
- 1. FILES e DIRECTORY. Una finestra con i file del progetto: doppio clic apre
-    il sorgente nell'editor. Directory mostra anche quel che sorgente non e'.
-
- 2. SALVA CON NOME per il progetto, e SOSTITUISCI nell'editor.
-
- 3. LE FINESTRE SECONDARIE sulla maschera. Adesso si disegna una finestra sola;
+ 1. LE FINESTRE SECONDARIE sulla maschera. Adesso si disegna una finestra sola;
     per disegnarne piu' d'una serve l'MDI DENTRO il disegnatore — che dal 3
     settembre c'e' nel toolkit, quindi e' un lavoro suo e non un pezzo che
     manca.
 
- 4. IL RIDIMENSIONAMENTO DEI CONTROLLI COL MOUSE. Le maniglie si disegnano ma
+ 2. IL RIDIMENSIONAMENTO DEI CONTROLLI COL MOUSE. Le maniglie si disegnano ma
     non si tirano: la misura si cambia dalle proprieta'.
 
- 5. ANNULLA. Non c'e', ed e' la prima cosa che si cerca dopo aver cancellato un
+ 3. ANNULLA. Non c'e', ed e' la prima cosa che si cerca dopo aver cancellato un
     controllo per sbaglio.
 
 ! E DAL CD EXIDE NON PUO' FARE NIENTE, ed e' giusto che lo dica: adesso quando
