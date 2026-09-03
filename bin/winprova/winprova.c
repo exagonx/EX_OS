@@ -13,6 +13,8 @@
  *
  *     /bin/winprova            apre la finestra
  *     /bin/winprova -s FILE    apre anche uno sfondo con quell'immagine
+ *     /bin/winprova -n         i controlli aggiunti dopo: spunta, radio,
+ *                              barra di scorrimento, elenco a discesa, tab
  *
  * ! NON E' UN ESEMPIO, E' UNA PROVA. Serve a far vedere che ogni controllo si
  * disegna dove e' stato messo e che un clic su un pulsante torna indietro come
@@ -26,10 +28,21 @@
 #include "exwin.h"
 
 /* +0.001 a ogni modifica: `winprova -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("winprova", "0.001");
+EX_VERSIONE("winprova", "0.002");
 
 #define ID_OK       101
 #define ID_ANNULLA  102
+
+/* I controlli nuovi, tutti nella stessa finestra: vedi finestra_nuovi(). */
+#define ID_TAB      201
+#define ID_SP1      202
+#define ID_SP2      203
+#define ID_RAD1     204
+#define ID_RAD2     205
+#define ID_RAD3     206
+#define ID_COMBO    207
+#define ID_SCV      208
+#define ID_SCO      209
 
 #define PASSO       40      /* di quanto cresce a ogni freccia */
 
@@ -64,6 +77,104 @@ static void rifai_disposizione(int w, int h)
 
     ex_sposta(g_ok,  w - 190, h - 42);
     ex_sposta(g_ann, w - 100, h - 42);
+}
+
+/* =============================================================================
+ * LA PROVA DEI CONTROLLI AGGIUNTI IL 3 SETTEMBRE 2026
+ *
+ * ! OGNI COMANDO SI SCRIVE SULLA SERIALE CON L'ID E IL VALORE, e non e' un
+ * di piu': una spunta che si accende si vede anche a occhio, ma «l'ho premuta e
+ * mi e' arrivato l'id 202 con valore 1» e' un numero che si confronta. La
+ * differenza fra una prova e una dimostrazione sta tutta li'.
+ *
+ * ! E I TRE RADIO STANNO DENTRO UN RIQUADRO APPOSTA: il gruppo di un radio sono
+ * i fratelli, cioe' i controlli con lo stesso padre. Il riquadro che si vede E'
+ * il gruppo che vale, e questa finestra e' anche la prova che le due cose
+ * coincidono — accendendone uno si spegne solo chi sta nella stessa cornice.
+ * ========================================================================== */
+static ExFinestra g_nuovi_eco, g_nuovi_scv, g_nuovi_sco, g_nuovi_combo;
+static ExFinestra g_nuovi_sp1, g_nuovi_r1, g_nuovi_r2, g_nuovi_r3;
+
+static long procedura_nuovi(ExFinestra f, unsigned int msg, unsigned int wp,
+                            long lp)
+{
+    char riga[96];
+
+    switch (msg) {
+    case EXM_COMANDO:
+        sprintf(riga, "winprova: comando id=%u valore=%ld", wp, lp);
+        log_seriale(riga);
+        ex_testo_metti(g_nuovi_eco, riga + 10);
+
+        /* La spunta accende e spegne la barra orizzontale: e' il modo di far
+         * vedere che ex_accendi e ex_scorri_* fanno davvero quel che dicono. */
+        if (wp == ID_SP1)
+            ex_scorri_limiti(g_nuovi_sco, lp ? 300u : 0u, 40u);
+        return 0;
+
+    case EXM_CHIUDI:
+        ex_esci(0);
+        return 0;
+    }
+    return ex_procedura_base(f, msg, wp, lp);
+}
+
+static int finestra_nuovi(void)
+{
+    ExFinestra f, riq, tab;
+
+    f = ex_crea("finestra", "Controlli nuovi",
+                EX_TITOLO | EX_BORDO | EX_CHIUDI, 100, 70, 440, 300,
+                0, 0, procedura_nuovi);
+    if (f == 0) {
+        printf("winprova: il server a finestre non risponde.\n");
+        printf("          Avvialo con:  exwin\n");
+        return 1;
+    }
+
+    tab = ex_crea("tab", "", EX_FIGLIO, 0, 0, 440, 24, f, ID_TAB, 0);
+    ex_voce_aggiungi(tab, "Generale");
+    ex_voce_aggiungi(tab, "Aspetto");
+    ex_voce_aggiungi(tab, "Avanzate");
+
+    g_nuovi_sp1 = ex_crea("spunta", "barra orizzontale accesa", EX_FIGLIO,
+                          16, 40, 220, 20, f, ID_SP1, 0);
+    ex_crea("spunta", "salva uscendo", EX_FIGLIO, 16, 66, 220, 20, f, ID_SP2, 0);
+
+    riq = ex_crea("riquadro", "Allineamento", EX_FIGLIO,
+                  16, 96, 200, 96, f, 0, 0);
+    g_nuovi_r1 = ex_crea("radio", "a sinistra", EX_FIGLIO,
+                         12, 22, 170, 20, riq, ID_RAD1, 0);
+    g_nuovi_r2 = ex_crea("radio", "in mezzo",   EX_FIGLIO,
+                         12, 46, 170, 20, riq, ID_RAD2, 0);
+    g_nuovi_r3 = ex_crea("radio", "a destra",   EX_FIGLIO,
+                         12, 70, 170, 20, riq, ID_RAD3, 0);
+    ex_accendi(g_nuovi_r1, 1);
+
+    ex_crea("etichetta", "Carattere:", EX_FIGLIO, 232, 44, 90, 16, f, 0, 0);
+    g_nuovi_combo = ex_crea("combo", "", EX_FIGLIO,
+                            232, 64, 170, 22, f, ID_COMBO, 0);
+    ex_voce_aggiungi(g_nuovi_combo, "serif");
+    ex_voce_aggiungi(g_nuovi_combo, "sans");
+    ex_voce_aggiungi(g_nuovi_combo, "monospazio");
+    ex_voce_aggiungi(g_nuovi_combo, "di sistema");
+
+    /* Verticale perche' e' piu' alta che larga; orizzontale l'altra. Non c'e'
+     * nessun bit da mettere d'accordo con la misura. */
+    g_nuovi_scv = ex_crea("scorrimento", "", EX_FIGLIO,
+                          412, 96, 16, 120, f, ID_SCV, 0);
+    ex_scorri_limiti(g_nuovi_scv, 200, 20);
+
+    g_nuovi_sco = ex_crea("scorrimento", "", EX_FIGLIO,
+                          16, 226, 390, 16, f, ID_SCO, 0);
+
+    g_nuovi_eco = ex_crea("etichetta", "nessun comando ancora", EX_FIGLIO,
+                          16, 252, 400, 16, f, 0, 0);
+
+    ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+    printf("winprova: controlli nuovi. Ogni comando finisce sulla seriale;\n"
+           "          Tab gira fra i controlli, spazio scatta le spunte.\n");
+    return 0;
 }
 
 static long procedura(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
@@ -117,11 +228,18 @@ int main(int argc, char **argv)
     ExFinestra f, riq;
     ExMsg m;
     const char *sfondo = 0;
-    int i, terminale = 0;
+    int i, terminale = 0, nuovi = 0;
 
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-s") == 0 && i + 1 < argc) sfondo = argv[++i];
         if (strcmp(argv[i], "-t") == 0) terminale = 1;
+        if (strcmp(argv[i], "-n") == 0) nuovi = 1;
+    }
+
+    if (nuovi) {
+        if (finestra_nuovi() != 0) return 1;
+        while (ex_prendi_msg(&m)) ex_smista(&m);
+        return 0;
     }
 
     /* ! UNA SHELL DENTRO UNA FINESTRA, e non e' un esempio in piu': e' la

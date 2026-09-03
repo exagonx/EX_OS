@@ -44,6 +44,18 @@ typedef struct {
     ExFinestra    fuoco;        /* solo per il primo livello: chi ha i tasti */
     unsigned int  cursore;      /* posizione del cursore in una casella */
 
+    /* ! IL VALORE DI UN CONTROLLO CHE NE HA UNO, e sono tre campi e non tre
+     * strutture a parte. Una spunta e un radio sono acceso o spento; una barra
+     * di scorrimento e' «dove sta», «fin dove puo' arrivare» e «quanto se ne
+     * vede». Sono dodici byte per oggetto, cioe' meno di un kilobyte in tutto:
+     * una tabella laterale come quella della lista o dell'area costerebbe piu'
+     * codice di quanto risparmi memoria, e le tabelle laterali esistono per
+     * chi ha bisogno di un BUFFER — non per chi ha bisogno di un numero. */
+    unsigned int  valore;       /* spunta/radio: 0 o 1. scorrimento: dove sta.
+                                 * combo: 1 se la tendina e' aperta. */
+    unsigned int  massimo;      /* scorrimento: il valore piu' alto */
+    unsigned int  pagina;       /* scorrimento: quanto se ne vede in una volta */
+
     /* La sveglia periodica: vedi ex_sveglia(). Zero = nessuna. */
     unsigned int  sveglia_ms;
     unsigned int  sveglia_quando;    /* uptime_ms della prossima */
@@ -60,6 +72,37 @@ typedef struct {
 #define CL_LISTA        9
 #define CL_AREA        10
 #define CL_MENU        11
+#define CL_SPUNTA      12
+#define CL_RADIO       13
+#define CL_SCORRI      14
+#define CL_COMBO       15
+#define CL_TAB         16
+
+/* =============================================================================
+ * ! AGGIUNGERE UN CONTROLLO: I SETTE POSTI, E SONO SEMPRE QUESTI
+ *
+ * La classe e' una stringa e non un enum apposta — aggiungere un controllo non
+ * deve voler dire ricompilare chi non lo usa — ma il numero qui sopra serve
+ * dentro, e i posti da toccare sono sempre gli stessi. Sono elencati qui una
+ * volta sola perche' il modo di sbagliare non e' scrivere male uno di questi
+ * sette: e' dimenticarne uno, e accorgersene dal fatto che il controllo si
+ * vede ma non si clicca, oppure si clicca ma Tab non ci arriva.
+ *
+ *   1. il numero CL_* qui sopra
+ *   2. classe_da_nome()      la stringa che l'applicazione scrive
+ *   3. disegna_oggetto()     come si vede
+ *   4. accetta_fuoco()       se i tasti hanno senso per lui
+ *   5. tasto_al_fuoco()      quali tasti, se li accetta
+ *   6. WIN_EV_MOUSE_GIU/SU   che cosa fa il clic, e che comando manda
+ *   7. exwin.h + exwin_esporta.c + exwin_stub.c   le funzioni pubbliche
+ *
+ * ! E CHI NON HA BISOGNO DI UN BUFFER NON HA BISOGNO DI UNA TABELLA. La lista,
+ * l'area e il terminale hanno una tabella laterale perche' hanno megabyte di
+ * roba dentro; la spunta, il radio e la barra hanno tre interi, e stanno in
+ * Oggetto. Le voci di un combo o di una barra di tab stanno in una tabella
+ * piccola e statica (Voci, qui sotto): sono trentadue stringhe corte, non un
+ * documento.
+ * ============================================================================= */
 
 /* =============================================================================
  * IL TERMINALE — una shell dentro una finestra
@@ -143,6 +186,45 @@ typedef struct {
 } Lista;
 
 static Lista g_lista[LISTA_MAX];
+
+/* =============================================================================
+ * LE VOCI DI UN COMBO O DI UNA BARRA DI TAB — CL_COMBO, CL_TAB
+ *
+ * ! SONO DUE CONTROLLI DIVERSI CON LO STESSO CONTENUTO: un elenco corto di
+ * stringhe corte, con una scelta. Il combo lo mostra chiuso e apre una tendina;
+ * la barra di tab le mostra tutte in fila. Quel che cambia e' il disegno e il
+ * clic, non cio' che tengono dentro — e due tabelle uguali sarebbero due
+ * tabelle da tenere d'accordo.
+ *
+ * ! E NON RIUSANO QUELLA DELLA LISTA, che tiene 512 voci da 64 caratteri
+ * chieste con malloc: sono 32 KB per un elenco a discesa di cinque valori, e in
+ * un pannello di proprieta' i combo sono molti. Qui sono 4 KB statici in tutto,
+ * senza malloc, cioe' senza niente da liberare in un allocatore che non libera.
+ * ============================================================================= */
+#define VOCI_MAX         6      /* quanti controlli a voci per programma */
+#define VOCI_N_MAX      32      /* quante voci per controllo */
+#define VOCI_TESTO_MAX  32
+#define VOCI_RIGA_H     16      /* l'altezza di una riga nella tendina */
+
+typedef struct {
+    unsigned int usato;
+    ExFinestra   ogg;
+    unsigned int n;
+    unsigned int sel;
+    char         testo[VOCI_N_MAX][VOCI_TESTO_MAX];
+} Voci;
+
+static Voci g_voci[VOCI_MAX];
+
+/* ! UNA TENDINA APERTA PER VOLTA, IN TUTTO IL PROGRAMMA. Due tendine aperte
+ * insieme non le apre nessuno apposta, e se capitasse per un difetto sarebbero
+ * due rettangoli sovrapposti in cui il clic finisce in quello sbagliato. Con un
+ * handle solo la domanda «quale?» non esiste. */
+static ExFinestra g_combo_aperto = 0;
+
+/* A che punto del cursore si e' posato il dito: senza, il cursore salterebbe
+ * col suo inizio sotto il puntatore al primo pixel di trascinamento. */
+static int g_scorri_presa = 0;
 
 /* =============================================================================
  * L'AREA DI TESTO MULTIRIGA — CL_AREA
@@ -441,6 +523,22 @@ static Lista *lista_da_h(ExFinestra f)
     return o ? lista_di(o) : 0;
 }
 
+static Voci *voci_di(const Oggetto *o)
+{
+    int i;
+    ExFinestra h = (ExFinestra)(o - g_ogg + 1);
+
+    for (i = 0; i < VOCI_MAX; i++)
+        if (g_voci[i].usato && g_voci[i].ogg == h) return &g_voci[i];
+    return 0;
+}
+
+static Voci *voci_da_h(ExFinestra f)
+{
+    Oggetto *o = ogg(f);
+    return o ? voci_di(o) : 0;
+}
+
 /* La vista insegue la scelta: senza, le frecce muoverebbero una riga che non
  * si vede, e chi guarda crede che il tasto non funzioni. */
 static void lista_segui(Lista *L)
@@ -493,6 +591,11 @@ static unsigned int classe_da_nome(const char *c)
     if (strcmp(c, "lista")        == 0) return CL_LISTA;
     if (strcmp(c, "areatesto")    == 0) return CL_AREA;
     if (strcmp(c, "menu")         == 0) return CL_MENU;
+    if (strcmp(c, "spunta")       == 0) return CL_SPUNTA;
+    if (strcmp(c, "radio")        == 0) return CL_RADIO;
+    if (strcmp(c, "scorrimento")  == 0) return CL_SCORRI;
+    if (strcmp(c, "combo")        == 0) return CL_COMBO;
+    if (strcmp(c, "tab")          == 0) return CL_TAB;
     return 0;
 }
 
@@ -544,7 +647,9 @@ static int accetta_fuoco(const Oggetto *o)
 {
     return o->classe == CL_TESTO || o->classe == CL_PULSANTE ||
            o->classe == CL_TERMINALE || o->classe == CL_LISTA ||
-           o->classe == CL_AREA;
+           o->classe == CL_AREA || o->classe == CL_SPUNTA ||
+           o->classe == CL_RADIO || o->classe == CL_SCORRI ||
+           o->classe == CL_COMBO || o->classe == CL_TAB;
 }
 
 static void fuoco_metti(ExFinestra f, ExFinestra c)
@@ -2031,6 +2136,197 @@ static int menu_tasto(ExFinestra f, unsigned int k, unsigned int *cmd)
     return 1;
 }
 
+/* =============================================================================
+ * I PEZZI DI DISEGNO CHE NON SONO RETTANGOLI
+ *
+ * ! IL TOOLKIT SA RIEMPIRE RETTANGOLI, E BASTA. Un radio e' un cerchio e una
+ * freccia e' un triangolo: si fanno una riga per volta, che e' come si sono
+ * sempre fatti quando l'unica primitiva era il rettangolo. Costano una decina
+ * di ex_riempi l'uno e si disegnano quando qualcosa cambia, non a ogni giro.
+ * ============================================================================= */
+static void disco(ExFinestra f, int cx, int cy, int r, unsigned int col)
+{
+    int dy;
+
+    for (dy = -r; dy <= r; dy++) {
+        int w = -1, dx;
+
+        for (dx = 0; dx <= r; dx++)
+            if (dx * dx + dy * dy <= r * r) w = dx;
+        if (w >= 0) ex_riempi(f, cx - w, cy + dy, 2 * w + 1, 1, col);
+    }
+}
+
+/* Un triangolo pieno dentro un quadrato di lato `lato`. verso: 0 su, 1 giu',
+ * 2 sinistra, 3 destra. */
+static void triangolino(ExFinestra f, int x, int y, int lato, int verso,
+                        unsigned int col)
+{
+    int n = lato / 2, i;
+
+    if (n < 2) n = 2;
+    for (i = 0; i < n; i++) {
+        int lun = 2 * i + 1;                    /* la riga i-esima dalla punta */
+        int off = (lato - lun) / 2;
+        int p   = (lato - n) / 2 + i;
+
+        switch (verso) {
+        case 0: ex_riempi(f, x + off, y + p, lun, 1, col); break;
+        case 1: ex_riempi(f, x + off, y + lato - 1 - p, lun, 1, col); break;
+        case 2: ex_riempi(f, x + p, y + off, 1, lun, col); break;
+        default: ex_riempi(f, x + lato - 1 - p, y + off, 1, lun, col); break;
+        }
+    }
+}
+
+/* =============================================================================
+ * LA BARRA DI SCORRIMENTO — CL_SCORRI
+ *
+ * ! L'ORIENTAMENTO LO DICE LA FORMA, non un bit di stile. Una barra piu' larga
+ * che alta e' orizzontale; una piu' alta che larga e' verticale. Un bit in piu'
+ * vorrebbe dire poterlo mettere in disaccordo con la misura — una barra
+ * dichiarata verticale e disegnata larga 200 e alta 16 — e allora bisogna
+ * decidere chi dei due ha ragione. Cosi' la domanda non esiste.
+ *
+ * ! IL MODELLO E' massimo + pagina, come ovunque: `valore` va da 0 a `massimo`,
+ * e `pagina` e' quanto se ne vede in una volta. Serve a due cose diverse e
+ * tutt'e due visibili: la lunghezza del cursore — che dice a colpo d'occhio
+ * quanto e' lungo il documento — e di quanto si salta cliccando nella gola.
+ * Con la sola coppia minimo/massimo il cursore sarebbe sempre della stessa
+ * misura, e una barra cosi' non dice piu' niente.
+ *
+ * ! LA GEOMETRIA LA CALCOLA UNA FUNZIONE SOLA, e la usano il disegno E il clic.
+ * Due copie della stessa aritmetica vogliono dire un cursore che si disegna in
+ * un posto e si prende in un altro: si trascina e salta, e il difetto sembra
+ * del mouse.
+ * ============================================================================= */
+static int scorri_geo(const Oggetto *o, int *spess, int *gola,
+                      int *cur_p, int *cur_l)
+{
+    int oriz = (o->w > o->h);
+    int sp   = oriz ? o->h : o->w;
+    int tot  = (oriz ? o->w : o->h) - 2 * sp;
+    unsigned int ampiezza = o->massimo + o->pagina;
+    int cl, cp;
+
+    if (sp < 4)  sp = 4;
+    if (tot < 8) tot = 8;
+
+    cl = (ampiezza > 0) ? (int)((unsigned int)tot * o->pagina / ampiezza) : tot;
+    if (cl < 8)   cl = 8;
+    if (cl > tot) cl = tot;
+
+    cp = (o->massimo > 0)
+       ? (int)((unsigned int)(tot - cl) * o->valore / o->massimo) : 0;
+
+    *spess = sp; *gola = tot; *cur_p = cp; *cur_l = cl;
+    return oriz;
+}
+
+/* Il valore nuovo quando il cursore viene trascinato fino a `pos` — che e' la
+ * posizione del PUNTO PRESO dentro la gola, non l'inizio del cursore. */
+static void scorri_trascina(Oggetto *o, int pos, int presa)
+{
+    int spess, gola, cp, cl;
+    int libero, nuovo;
+
+    scorri_geo(o, &spess, &gola, &cp, &cl);
+    libero = gola - cl;
+    if (libero <= 0 || o->massimo == 0) { o->valore = 0; return; }
+
+    nuovo = pos - presa;
+    if (nuovo < 0) nuovo = 0;
+    if (nuovo > libero) nuovo = libero;
+
+    o->valore = (unsigned int)((long)nuovo * (long)o->massimo / libero);
+}
+
+static void scorri_muovi(Oggetto *o, int quanto)
+{
+    long v = (long)o->valore + quanto;
+
+    if (v < 0) v = 0;
+    if (v > (long)o->massimo) v = (long)o->massimo;
+    o->valore = (unsigned int)v;
+}
+
+/* =============================================================================
+ * ! IL RADIO SPEGNE I FRATELLI, E I FRATELLI SONO QUELLI CON LO STESSO PADRE.
+ *
+ * Non serve un «gruppo» dichiarato: chi mette due gruppi di radio nella stessa
+ * finestra li mette dentro due riquadri — che e' come si disegnano da sempre,
+ * perche' un gruppo di scelte senza una cornice intorno non si legge come un
+ * gruppo. E il riquadro E' gia' il padre, perche' i controlli dentro un
+ * riquadro hanno il riquadro per padre. La regola visiva e la regola logica
+ * sono la stessa cosa, e non possono andare in disaccordo.
+ *
+ * ! E UN RADIO NON SI SPEGNE CLICCANDOLO. Una spunta si', perche' e' una
+ * domanda a cui si puo' rispondere di no; un radio e' «quale dei tre», e non
+ * poter rispondere nessuno dei tre e' uno stato che nessuno ha chiesto. Si
+ * spegne accendendone un altro, o da programma con ex_accendi.
+ * ============================================================================= */
+static void spunta_scatta(Oggetto *o)
+{
+    if (o->classe == CL_SPUNTA) {
+        o->valore = o->valore ? 0u : 1u;
+        return;
+    }
+
+    {
+        int i;
+
+        for (i = 0; i < OGGETTI_MAX; i++)
+            if (g_ogg[i].usato && g_ogg[i].classe == CL_RADIO &&
+                g_ogg[i].padre == o->padre)
+                g_ogg[i].valore = 0;
+    }
+    o->valore = 1;
+}
+
+/* Il clic su una barra. Rende 1 se il dito si e' posato SUL CURSORE — e allora
+ * comincia un trascinamento, e `presa` dice a che punto del cursore — 0 se ha
+ * gia' fatto tutto quel che c'era da fare (una freccia, un salto di pagina). */
+static int scorri_clic(Oggetto *o, int x, int y, int *presa)
+{
+    int spess, gola, cp, cl, ox, oy;
+    int oriz = scorri_geo(o, &spess, &gola, &cp, &cl);
+    int p;                                  /* dove ha premuto, lungo la barra */
+
+    origine(o, &ox, &oy);
+    p = oriz ? (x - ox - o->x) : (y - oy - o->y);
+
+    if (p < spess)                          { scorri_muovi(o, -1); return 0; }
+    if (p >= (oriz ? o->w : o->h) - spess)  { scorri_muovi(o, +1); return 0; }
+
+    p -= spess;                             /* adesso e' dentro la gola */
+    if (p < cp)       { scorri_muovi(o, -(int)o->pagina); return 0; }
+    if (p >= cp + cl) { scorri_muovi(o, +(int)o->pagina); return 0; }
+
+    *presa = p - cp;
+    return 1;
+}
+
+/* Quale linguetta sta sotto x. Rende -1 se nessuna. */
+static int tab_indice(const Oggetto *o, int x)
+{
+    Voci *V = voci_di(o);
+    int ox, oy, px;
+    unsigned int i;
+
+    if (!V) return -1;
+    origine((Oggetto *)o, &ox, &oy);
+    px = ox + o->x;
+
+    for (i = 0; i < V->n; i++) {
+        int lw = larg(V->testo[i]) + 16;
+
+        if (px + lw > ox + o->x + o->w) break;
+        if (x >= px && x < px + lw) return (int)i;
+        px += lw;
+    }
+    return -1;
+}
+
 static void disegna_oggetto(Oggetto *o)
 {
     int ox, oy, x, y;
@@ -2289,6 +2585,163 @@ static void disegna_oggetto(Oggetto *o)
         ex_scrivi(o->padre, x + 6, y + (o->h - 16) / 2, o->titolo, EX_BIANCO);
         break;
 
+    /* =====================================================================
+     * ! LA SPUNTA E IL RADIO SONO LO STESSO CONTROLLO CON DUE DISEGNI, e la
+     * differenza vera non e' quadrato contro tondo: e' che una spunta e'
+     * indipendente e un radio ESCLUDE i suoi fratelli. La forma serve a dirlo
+     * prima di premere — quadrato «puoi accenderne quante vuoi», tondo «una
+     * sola» — ed e' una convenzione che nessuno ha bisogno di imparare.
+     *
+     * ! IL RIQUADRO SI RIEMPIE, LA SCRITTA NO. Riempire tutto il controllo
+     * vorrebbe dire un fondo grigio piantato sopra qualunque cosa ci sia
+     * sotto; il riquadro invece deve cancellare il segno di prima quando si
+     * spegne, e quello si riempie sempre. E' la stessa regola dell'etichetta,
+     * che il suo sfondo non lo tocca.
+     * ================================================================= */
+    case CL_SPUNTA: {
+        Oggetto *r = radice(o->padre);
+        int lato = 13;
+        int by   = y + (o->h - lato) / 2;
+        int i;
+
+        /* Premuto: il riquadro si fa grigio. E' il «sta succedendo» di una
+         * spunta, che non ha un rilievo da scambiare come un pulsante. */
+        ex_riempi(o->padre, x, by, lato, lato,
+                  o->premuto ? EX_GRIGIO : EX_BIANCO);
+        ex_incavo(o->padre, x, by, lato, lato);
+
+        if (o->valore) {
+            /* Il segno: due tratti, come una V storta. */
+            for (i = 0; i < 3; i++)
+                ex_riempi(o->padre, x + 3 + i, by + 5 + i, 2, 2, EX_NERO);
+            for (i = 0; i < 4; i++)
+                ex_riempi(o->padre, x + 6 + i, by + 7 - i, 2, 2, EX_NERO);
+        }
+
+        ex_scrivi(o->padre, x + lato + 5, y + (o->h - 16) / 2, o->titolo,
+                  EX_NERO);
+        if (r && r->fuoco == (ExFinestra)(o - g_ogg + 1))
+            ex_riquadro_disegna(o->padre, x + lato + 3, y + (o->h - 16) / 2 - 1,
+                                larg(o->titolo) + 4, 18, EX_BLU);
+        break;
+    }
+
+    case CL_RADIO: {
+        Oggetto *r = radice(o->padre);
+        int lato = 13;
+        int cx = x + lato / 2;
+        int cy = y + o->h / 2;
+
+        disco(o->padre, cx, cy, lato / 2,     EX_GRIGIO_SC);
+        disco(o->padre, cx, cy, lato / 2 - 1,
+              o->premuto ? EX_GRIGIO : EX_BIANCO);
+        if (o->valore) disco(o->padre, cx, cy, 2, EX_NERO);
+
+        ex_scrivi(o->padre, x + lato + 5, y + (o->h - 16) / 2, o->titolo,
+                  EX_NERO);
+        if (r && r->fuoco == (ExFinestra)(o - g_ogg + 1))
+            ex_riquadro_disegna(o->padre, x + lato + 3, y + (o->h - 16) / 2 - 1,
+                                larg(o->titolo) + 4, 18, EX_BLU);
+        break;
+    }
+
+    case CL_SCORRI: {
+        int spess, gola, cp, cl;
+        int oriz = scorri_geo(o, &spess, &gola, &cp, &cl);
+
+        /* La gola rientra, le frecce e il cursore sporgono: e' la regola di
+         * sempre — sporge cio' che si preme, rientra cio' in cui sta. */
+        ex_riempi(o->padre, x, y, o->w, o->h, EX_GRIGIO_SC);
+
+        if (oriz) {
+            ex_riempi(o->padre, x, y, spess, spess, EX_GRIGIO);
+            ex_rilievo(o->padre, x, y, spess, spess);
+            triangolino(o->padre, x + 4, y + 4, spess - 8, 2, EX_NERO);
+
+            ex_riempi(o->padre, x + o->w - spess, y, spess, spess, EX_GRIGIO);
+            ex_rilievo(o->padre, x + o->w - spess, y, spess, spess);
+            triangolino(o->padre, x + o->w - spess + 4, y + 4, spess - 8, 3,
+                        EX_NERO);
+
+            ex_riempi(o->padre, x + spess + cp, y, cl, spess, EX_GRIGIO);
+            ex_rilievo(o->padre, x + spess + cp, y, cl, spess);
+        } else {
+            ex_riempi(o->padre, x, y, spess, spess, EX_GRIGIO);
+            ex_rilievo(o->padre, x, y, spess, spess);
+            triangolino(o->padre, x + 4, y + 4, spess - 8, 0, EX_NERO);
+
+            ex_riempi(o->padre, x, y + o->h - spess, spess, spess, EX_GRIGIO);
+            ex_rilievo(o->padre, x, y + o->h - spess, spess, spess);
+            triangolino(o->padre, x + 4, y + o->h - spess + 4, spess - 8, 1,
+                        EX_NERO);
+
+            ex_riempi(o->padre, x, y + spess + cp, spess, cl, EX_GRIGIO);
+            ex_rilievo(o->padre, x, y + spess + cp, spess, cl);
+        }
+        break;
+    }
+
+    /* L'elenco a discesa CHIUSO. La tendina la disegna combo_sopra(), dopo
+     * tutti gli altri controlli — stessa ragione del menu. */
+    case CL_COMBO: {
+        Oggetto *r = radice(o->padre);
+        Voci    *V = voci_di(o);
+        int      bw = 17;
+
+        ex_riempi(o->padre, x, y, o->w, o->h, EX_BIANCO);
+        ex_incavo(o->padre, x, y, o->w, o->h);
+        if (r && r->fuoco == (ExFinestra)(o - g_ogg + 1))
+            ex_riquadro_disegna(o->padre, x + 1, y + 1, o->w - 2, o->h - 2,
+                                EX_BLU);
+
+        if (V && V->sel < V->n)
+            ex_scrivi(o->padre, x + 4, y + (o->h - 16) / 2, V->testo[V->sel],
+                      EX_NERO);
+
+        ex_riempi(o->padre, x + o->w - bw - 2, y + 2, bw, o->h - 4, EX_GRIGIO);
+        ex_rilievo(o->padre, x + o->w - bw - 2, y + 2, bw, o->h - 4);
+        triangolino(o->padre, x + o->w - bw + 2, y + (o->h - 8) / 2, 8, 1,
+                    EX_NERO);
+        break;
+    }
+
+    /* =====================================================================
+     * ! LA LINGUETTA SCELTA E' PIU' ALTA E NON HA IL FONDO, e sono la stessa
+     * cosa detta due volte: piu' alta perche' viene avanti, senza fondo
+     * perche' si apre su cio' che sta sotto. Una linguetta scelta disegnata
+     * uguale alle altre e colorata diversamente sembra una linguetta
+     * disabilitata — l'occhio legge la profondita' prima del colore.
+     * ================================================================= */
+    case CL_TAB: {
+        Voci        *V = voci_di(o);
+        unsigned int i;
+        int          px = x;
+
+        ex_riempi(o->padre, x, y, o->w, o->h, EX_GRIGIO);
+        /* La riga di fondo, che la linguetta scelta interrompe. */
+        ex_riempi(o->padre, x, y + o->h - 1, o->w, 1, EX_OMBRA);
+        if (!V) break;
+
+        for (i = 0; i < V->n; i++) {
+            int lw = larg(V->testo[i]) + 16;
+            int su = (i == V->sel) ? 0 : 2;
+
+            if (px + lw > x + o->w) break;      /* quel che non ci sta non c'e' */
+
+            ex_riempi(o->padre, px, y + su, lw, o->h - su, EX_GRIGIO);
+            ex_riempi(o->padre, px, y + su, lw, 1, EX_LUCE);
+            ex_riempi(o->padre, px, y + su, 1, o->h - su, EX_LUCE);
+            ex_riempi(o->padre, px + lw - 1, y + su, 1, o->h - su, EX_OMBRA);
+            if (i != V->sel)
+                ex_riempi(o->padre, px, y + o->h - 1, lw, 1, EX_OMBRA);
+
+            ex_scrivi(o->padre, px + 8, y + su + (o->h - su - 16) / 2,
+                      V->testo[i], EX_NERO);
+            px += lw;
+        }
+        break;
+    }
+
     /* La barra dei menu. La TENDINA no: quella la disegna menu_sopra(), dopo
      * tutti gli altri controlli — vedi il commento li'. */
     case CL_MENU: {
@@ -2319,6 +2772,110 @@ static void disegna_oggetto(Oggetto *o)
     }
 }
 
+/* =============================================================================
+ * LA TENDINA DELL'ELENCO A DISCESA
+ *
+ * ! STESSA SCELTA DEL MENU, E PER LE STESSE RAGIONI: la tendina si disegna
+ * dentro la zona di pixel della finestra, non in una finestra a se'. Una
+ * finestra in piu' per ogni combo aperto vorrebbe dire una zona di memoria
+ * condivisa, un giro di richieste al server a ogni apertura, e la domanda «chi
+ * la chiude se il programma muore mentre e' aperta?». Il prezzo dichiarato e'
+ * lo stesso: una tendina piu' alta di quel che resta sotto viene TAGLIATA.
+ *
+ * ! E SI APRE VERSO L'ALTO SE SOTTO NON C'E' POSTO. Il menu non ne ha bisogno
+ * — sta sempre in cima alla finestra — un combo si', perche' in un pannello di
+ * proprieta' l'ultimo della colonna e' a un pixel dal bordo di sotto.
+ * ============================================================================= */
+static int combo_tendina_dove(Oggetto *o, int *tx, int *ty, int *tw, int *th)
+{
+    Voci    *V = voci_di(o);
+    Oggetto *r = radice(o->padre);
+    int ox, oy, x, y, alt;
+
+    if (!V || V->n == 0 || !r) return 0;
+
+    origine(o, &ox, &oy);
+    x = ox + o->x;
+    y = oy + o->y;
+
+    alt = (int)V->n * VOCI_RIGA_H + 4;
+
+    *tx = x;
+    *tw = o->w;
+    if (y + o->h + alt <= r->h) *ty = y + o->h;   /* sotto, come si aspetta */
+    else if (y - alt >= 0)      *ty = y - alt;    /* sopra, se sotto non ci sta */
+    else                        *ty = y + o->h;   /* ne' l'uno ne' l'altro: si taglia */
+    *th = alt;
+    return 1;
+}
+
+static void combo_sopra(ExFinestra f)
+{
+    Oggetto     *o = ogg(g_combo_aperto);
+    Voci        *V;
+    int          tx, ty, tw, th;
+    unsigned int i;
+
+    if (!o || o->classe != CL_COMBO) return;
+    if (radice(o->padre) != ogg(f)) return;      /* aperto in un'altra finestra */
+    if (!combo_tendina_dove(o, &tx, &ty, &tw, &th)) return;
+
+    V = voci_di(o);
+    ex_riempi(f, tx, ty, tw, th, EX_BIANCO);
+    ex_rilievo(f, tx, ty, tw, th);
+
+    for (i = 0; i < V->n; i++) {
+        int ry = ty + 2 + (int)i * VOCI_RIGA_H;
+        unsigned int colore = EX_NERO;
+
+        if (i == V->sel) {
+            ex_riempi(f, tx + 2, ry, tw - 4, VOCI_RIGA_H, EX_BLU);
+            colore = EX_BIANCO;
+        }
+        ex_scrivi(f, tx + 4, ry, V->testo[i], colore);
+    }
+}
+
+/* =============================================================================
+ * ! IL CLIC CON UNA TENDINA APERTA E' SEMPRE ROBA DELLA TENDINA, dovunque
+ * cada. Dentro sceglie una voce, fuori la chiude e basta — e non cade sul
+ * controllo che c'e' sotto. E' l'unico comportamento che non stupisce: chi
+ * clicca fuori da una tendina aperta sta chiudendo la tendina, non premendo
+ * quel che si trova sotto; e se quel che c'e' sotto fosse «Esci» se ne
+ * accorgerebbe tardi.
+ *
+ * Rende 1 se il clic era della tendina — cioe' se ce n'era una aperta. `scelto`
+ * rende l'indice della voce scelta AUMENTATO DI UNO, cosi' che zero voglia dire
+ * «nessuna»: la voce zero e' una voce come le altre e non puo' fare da «no».
+ * ============================================================================= */
+static int combo_clic(ExFinestra f, int x, int y, unsigned int *id, int *scelto)
+{
+    Oggetto *o = ogg(g_combo_aperto);
+    Voci    *V;
+    int      tx, ty, tw, th;
+
+    *scelto = 0;
+    if (!o || o->classe != CL_COMBO) return 0;
+    if (radice(o->padre) != ogg(f)) return 0;
+
+    g_combo_aperto = 0;                     /* comunque vada, si chiude */
+
+    if (!combo_tendina_dove(o, &tx, &ty, &tw, &th)) return 1;
+    V = voci_di(o);
+    if (!V) return 1;
+
+    if (x >= tx && x < tx + tw && y >= ty + 2 && y < ty + th - 2) {
+        unsigned int i = (unsigned int)((y - ty - 2) / VOCI_RIGA_H);
+
+        if (i < V->n) {
+            V->sel  = i;
+            *id     = o->id;
+            *scelto = (int)i + 1;
+        }
+    }
+    return 1;
+}
+
 static void disegna_figli(ExFinestra padre)
 {
     int i;
@@ -2341,7 +2898,12 @@ static void disegna_figli(ExFinestra padre)
     {
         Oggetto *p = ogg(padre);
 
-        if (p && p->classe == CL_FINESTRA) menu_sopra(padre);
+        if (p && p->classe == CL_FINESTRA) {
+            menu_sopra(padre);
+            /* E la tendina di un combo dopo il menu: se per disgrazia si
+             * sovrapponessero, quella aperta per ultima e' la tendina. */
+            combo_sopra(padre);
+        }
     }
 }
 
@@ -2428,6 +2990,32 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
         memset(A->testo, 0, AREA_RIGHE_MAX * AREA_COL_MAX);
         A->n = 1;                       /* un'area vuota ha una riga vuota */
         A->usato = 1;
+        return (ExFinestra)(i + 1);
+    }
+
+    /* ! LA BARRA NASCE CON IL CURSORE CHE RIEMPIE LA GOLA, e non e' un
+     * dettaglio estetico: `massimo` a zero vuol dire «non c'e' niente da
+     * scorrere», ed e' esattamente cio' che si vede — una barra che non si
+     * puo' muovere. Chi la crea le dara' i limiti veri con ex_scorri_limiti
+     * quando sapra' quanto e' lungo il documento, e fino ad allora la barra
+     * dice la verita' invece di mostrare un cursore piccolo che non scorre. */
+    if (cl == CL_SCORRI) {
+        o->valore  = 0;
+        o->massimo = 0;
+        o->pagina  = 1;
+        return (ExFinestra)(i + 1);
+    }
+
+    if (cl == CL_COMBO || cl == CL_TAB) {
+        Voci *V = 0;
+        int j;
+
+        for (j = 0; j < VOCI_MAX; j++) if (!g_voci[j].usato) { V = &g_voci[j]; break; }
+        if (!V) { o->usato = 0; return 0; }
+
+        memset(V, 0, sizeof(*V));
+        V->ogg   = (ExFinestra)(i + 1);
+        V->usato = 1;
         return (ExFinestra)(i + 1);
     }
 
@@ -2630,6 +3218,21 @@ void ex_distruggi(ExFinestra f)
         (void)ipc_send((unsigned int)g_server, WIN_MSG_DISTRUGGI, &w, sizeof(w));
         if (o->pix) shm_chiudi((void *)o->pix);
     }
+
+    /* ! IL POSTO DELLE VOCI SI LIBERA, quello della lista e dell'area no, e la
+     * differenza non e' una svista. Lista e area tengono un buffer chiesto con
+     * malloc, e in un allocatore a bump liberare il POSTO senza poter liberare
+     * il BUFFER vorrebbe dire perdere quella memoria a ogni giro di
+     * crea-distruggi: meglio un posto che resta occupato di una perdita che
+     * cresce. Le voci stanno in una tabella statica: non c'e' niente da
+     * perdere, quindi il posto torna libero. */
+    {
+        Voci *V = voci_di(o);
+
+        if (V) V->usato = 0;
+    }
+    if (g_combo_aperto == f) g_combo_aperto = 0;
+
     o->usato = 0;
 }
 
@@ -3213,6 +3816,89 @@ static int tasto_al_fuoco(ExFinestra f, unsigned int k)
         return A ? area_tasto(A, k) : 0;
     }
 
+    /* =====================================================================
+     * ! DA TASTIERA LA SPUNTA SCATTA CON LA BARRA SPAZIATRICE, ed e' l'unico
+     * tasto che ha senso: Invio, ovunque, e' «conferma il modulo» e non «cambia
+     * questa opzione». Chi arriva con Tab su una spunta e preme Invio si
+     * aspetta di aver risposto alla finestra, non di aver acceso una casella.
+     * ================================================================= */
+    if (o->classe == CL_SPUNTA || o->classe == CL_RADIO) {
+        if (c != ' ') return 0;
+        spunta_scatta(o);
+        if (r->proc)
+            r->proc(radice_h((ExFinestra)(o - g_ogg + 1)),
+                    EXM_COMANDO, o->id, (long)o->valore);
+        return 1;
+    }
+
+    if (o->classe == CL_SCORRI) {
+        unsigned int prima = o->valore;
+        int pagina = (int)(o->pagina ? o->pagina : 1);
+
+        switch (c) {
+        case KBD_K_UP:
+        case KBD_K_LEFT:  scorri_muovi(o, -1);      break;
+        case KBD_K_DOWN:
+        case KBD_K_RIGHT: scorri_muovi(o, +1);      break;
+        case KBD_K_PGUP:  scorri_muovi(o, -pagina); break;
+        case KBD_K_PGDN:  scorri_muovi(o, +pagina); break;
+        case KBD_K_HOME:  o->valore = 0;            break;
+        case KBD_K_END:   o->valore = o->massimo;   break;
+        default: return 0;
+        }
+
+        if (o->valore != prima && r->proc)
+            r->proc(radice_h((ExFinestra)(o - g_ogg + 1)),
+                    EXM_COMANDO, o->id, (long)o->valore);
+        return 1;
+    }
+
+    /* ! CON LA TENDINA CHIUSA LE FRECCE CAMBIANO VALORE, e non aprono niente.
+     * E' cio' che fanno dappertutto, ed e' anche il modo piu' veloce di
+     * scorrere tre valori senza guardare. La barra spaziatrice apre. */
+    if (o->classe == CL_COMBO) {
+        Voci *V = voci_di(o);
+        unsigned int prima;
+
+        if (!V || V->n == 0) return 0;
+        prima = V->sel;
+
+        switch (c) {
+        case ' ':
+            g_combo_aperto = (ExFinestra)(o - g_ogg + 1);
+            return 1;
+        case KBD_K_UP:   if (V->sel > 0) V->sel--;            break;
+        case KBD_K_DOWN: if (V->sel + 1 < V->n) V->sel++;     break;
+        case KBD_K_HOME: V->sel = 0;                          break;
+        case KBD_K_END:  V->sel = V->n - 1;                   break;
+        default: return 0;
+        }
+
+        if (V->sel != prima && r->proc)
+            r->proc(radice_h((ExFinestra)(o - g_ogg + 1)),
+                    EXM_COMANDO, o->id, (long)V->sel);
+        return 1;
+    }
+
+    if (o->classe == CL_TAB) {
+        Voci *V = voci_di(o);
+        unsigned int prima;
+
+        if (!V || V->n == 0) return 0;
+        prima = V->sel;
+
+        switch (c) {
+        case KBD_K_LEFT:  if (V->sel > 0) V->sel--;        break;
+        case KBD_K_RIGHT: if (V->sel + 1 < V->n) V->sel++; break;
+        default: return 0;
+        }
+
+        if (V->sel != prima && r->proc)
+            r->proc(radice_h((ExFinestra)(o - g_ogg + 1)),
+                    EXM_COMANDO, o->id, (long)V->sel);
+        return 1;
+    }
+
     if (o->classe == CL_LISTA) {
         Lista *L = lista_di(o);
         unsigned int passo;
@@ -3562,7 +4248,9 @@ static int prendi_msg(ExMsg *m, int bloccante)
             {
                 Oggetto *pr = ogg(g_premuto);
 
-                if (pr && pr->usato && pr->classe == CL_PULSANTE) {
+                if (pr && pr->usato &&
+                    (pr->classe == CL_PULSANTE || pr->classe == CL_SPUNTA ||
+                     pr->classe == CL_RADIO)) {
                     unsigned int giu =
                         (controllo_in(f, (int)e.x, (int)e.y) == g_premuto);
 
@@ -3571,6 +4259,31 @@ static int prendi_msg(ExMsg *m, int bloccante)
                         ex_procedura_base(f, EXM_DISEGNA, 0, 0);
                     }
                 }
+            }
+
+            /* ! IL TRASCINAMENTO DI UNA BARRA SVEGLIA L'APPLICAZIONE A OGNI
+             * PIXEL, e qui la regola della lista si rovescia apposta. Una
+             * lista trascinata dice «ho scelto» una volta sola, al rilascio,
+             * perche' le righe attraversate non interessano a nessuno; una
+             * barra trascinata E' il documento che scorre, e mandarne notizia
+             * solo al rilascio vorrebbe dire un cursore che si muove sopra una
+             * pagina ferma. */
+            if (co && co->classe == CL_SCORRI) {
+                int spess, gola, cp, cl, ox, oy;
+                int oriz = scorri_geo(co, &spess, &gola, &cp, &cl);
+                unsigned int prima = co->valore;
+
+                origine(co, &ox, &oy);
+                scorri_trascina(co,
+                                (oriz ? ((int)e.x - ox - co->x)
+                                      : ((int)e.y - oy - co->y)) - spess,
+                                g_scorri_presa);
+                if (co->valore == prima) continue;
+                ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                m->msg = EXM_COMANDO;
+                m->wp  = co->id;
+                m->lp  = (long)co->valore;
+                return 1;
             }
 
             if (co && co->classe == CL_AREA) {
@@ -3602,13 +4315,23 @@ static int prendi_msg(ExMsg *m, int bloccante)
              * un pulsante schiacciato per sempre.
              * ============================================================= */
             unsigned int cmd_id = 0;
+            long         cmd_lp = 0;
             {
                 Oggetto *pr = ogg(g_premuto);
                 int j, cambiato = 0;
 
-                if (pr && pr->usato && pr->classe == CL_PULSANTE &&
-                    controllo_in(f, (int)e.x, (int)e.y) == g_premuto)
+                if (pr && pr->usato &&
+                    (pr->classe == CL_PULSANTE || pr->classe == CL_SPUNTA ||
+                     pr->classe == CL_RADIO) &&
+                    controllo_in(f, (int)e.x, (int)e.y) == g_premuto) {
                     cmd_id = pr->id;
+                    /* ! E' QUI CHE LA SPUNTA CAMBIA, non alla pressione: fino
+                     * a questo istante il dito poteva ancora scivolare via. */
+                    if (pr->classe != CL_PULSANTE) {
+                        spunta_scatta(pr);
+                        cmd_lp = (long)pr->valore;
+                    }
+                }
 
                 g_premuto = 0;
 
@@ -3628,7 +4351,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
                 g_trascinato = 0;
                 m->msg = EXM_COMANDO;
                 m->wp  = cmd_id;
-                m->lp  = 0;
+                m->lp  = cmd_lp;
                 return 1;
             }
 
@@ -3678,6 +4401,23 @@ static int prendi_msg(ExMsg *m, int bloccante)
                 }
             }
 
+            /* ! E SUBITO DOPO LA TENDINA DI UN COMBO, per la stessa ragione
+             * per cui il menu guarda per primo: e' aperta, copre, e il clic e'
+             * suo dovunque cada. Vedi combo_clic. */
+            {
+                unsigned int cid = 0;
+                int scelto = 0;
+
+                if (combo_clic(f, (int)e.x, (int)e.y, &cid, &scelto)) {
+                    ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                    if (!scelto) continue;
+                    m->msg = EXM_COMANDO;
+                    m->wp  = cid;
+                    m->lp  = (long)(scelto - 1);
+                    return 1;
+                }
+            }
+
             c  = controllo_in(f, (int)e.x, (int)e.y);
             co = ogg(c);
 
@@ -3716,6 +4456,57 @@ static int prendi_msg(ExMsg *m, int bloccante)
             if (co && co->classe == CL_PULSANTE) {
                 co->premuto = 1;
                 g_premuto   = c;
+                ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                continue;
+            }
+
+            /* ! LA SPUNTA E IL RADIO SI ARMANO COME UN PULSANTE, e cambiano
+             * valore solo quando il dito si alza ancora sopra: e' la stessa
+             * regola di qui sopra, e vale a maggior ragione per una spunta —
+             * un'opzione accesa per sbaglio non si vede finche' non fa danno,
+             * mentre un pulsante premuto per sbaglio almeno succede subito. */
+            if (co && (co->classe == CL_SPUNTA || co->classe == CL_RADIO)) {
+                co->premuto = 1;
+                g_premuto   = c;
+                ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                continue;
+            }
+
+            /* ! LA BARRA INVECE AGISCE SUBITO, e non e' un'incoerenza: una
+             * freccia tenuta premuta deve scorrere, e il cursore si prende e
+             * si trascina — non c'e' niente da «armare». Chi tiene premuto su
+             * una freccia si aspetta che scorra, non che aspetti il rilascio. */
+            if (co && co->classe == CL_SCORRI) {
+                int presa = 0;
+
+                if (scorri_clic(co, (int)e.x, (int)e.y, &presa)) {
+                    g_trascinato   = c;
+                    g_scorri_presa = presa;
+                    continue;               /* preso il cursore: niente e' cambiato */
+                }
+                ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                m->msg = EXM_COMANDO;
+                m->wp  = co->id;
+                m->lp  = (long)co->valore;
+                return 1;
+            }
+
+            if (co && co->classe == CL_TAB) {
+                int k = tab_indice(co, (int)e.x);
+                Voci *V = voci_di(co);
+
+                if (k < 0 || !V) continue;
+                V->sel = (unsigned int)k;
+                ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                m->msg = EXM_COMANDO;
+                m->wp  = co->id;
+                m->lp  = (long)k;
+                return 1;
+            }
+
+            /* Aprire la tendina non e' scegliere: non si manda niente. */
+            if (co && co->classe == CL_COMBO) {
+                g_combo_aperto = c;
                 ex_procedura_base(f, EXM_DISEGNA, 0, 0);
                 continue;
             }
@@ -3952,6 +4743,131 @@ const char *ex_lista_testo(ExFinestra f, unsigned int i)
 
     if (!L || i >= L->n) return "";
     return &L->voci[i * LISTA_TESTO_MAX];
+}
+
+/* =============================================================================
+ * LA SPUNTA, IL RADIO — l'API
+ *
+ * ! DUE FUNZIONI SOLE PER DUE CONTROLLI, e non quattro: da fuori sono la stessa
+ * domanda — «e' acceso?» — e la differenza fra i due sta in cosa succede agli
+ * ALTRI quando si accende questo. Chi scrive l'applicazione non ha motivo di
+ * imparare due nomi per leggere un bit.
+ * ============================================================================= */
+int ex_acceso(ExFinestra c)
+{
+    Oggetto *o = ogg(c);
+
+    if (!o || (o->classe != CL_SPUNTA && o->classe != CL_RADIO)) return 0;
+    return o->valore ? 1 : 0;
+}
+
+void ex_accendi(ExFinestra c, int acceso)
+{
+    Oggetto *o = ogg(c);
+
+    if (!o) return;
+    if (o->classe == CL_SPUNTA) { o->valore = acceso ? 1u : 0u; return; }
+    if (o->classe != CL_RADIO) return;
+
+    /* ! ACCENDERE UN RADIO DA PROGRAMMA SPEGNE I FRATELLI COME LO SPEGNEREBBE
+     * UN CLIC: se non lo facesse, un'applicazione che imposta i valori
+     * iniziali potrebbe lasciarne accesi due — uno stato che dal disegno si
+     * legge come «il toolkit e' rotto». */
+    if (acceso) { spunta_scatta(o); return; }
+    o->valore = 0;
+}
+
+/* =============================================================================
+ * LA BARRA DI SCORRIMENTO — l'API. Il modello sta accanto a scorri_geo().
+ * ============================================================================= */
+void ex_scorri_limiti(ExFinestra c, unsigned int massimo, unsigned int pagina)
+{
+    Oggetto *o = ogg(c);
+
+    if (!o || o->classe != CL_SCORRI) return;
+    o->massimo = massimo;
+    o->pagina  = pagina ? pagina : 1;
+
+    /* ! IL VALORE SI RIPORTA DENTRO, e non e' pedanteria: una finestra che si
+     * rimpicciolisce mentre e' scorsa in fondo lascerebbe la barra oltre il
+     * suo massimo, cioe' un cursore disegnato fuori dalla gola. */
+    if (o->valore > o->massimo) o->valore = o->massimo;
+}
+
+unsigned int ex_scorri_dove(ExFinestra c)
+{
+    Oggetto *o = ogg(c);
+
+    if (!o || o->classe != CL_SCORRI) return 0;
+    return o->valore;
+}
+
+void ex_scorri_vai(ExFinestra c, unsigned int dove)
+{
+    Oggetto *o = ogg(c);
+
+    if (!o || o->classe != CL_SCORRI) return;
+    o->valore = (dove > o->massimo) ? o->massimo : dove;
+}
+
+/* =============================================================================
+ * LE VOCI DI UN COMBO O DI UNA BARRA DI TAB — l'API
+ *
+ * ! SONO LE STESSE FUNZIONI PER TUTT'E DUE, e il nome lo dice: si chiamano
+ * ex_voce_* e non ex_combo_*. Chi aggiunge una voce a un elenco a discesa e chi
+ * aggiunge una linguetta a una barra stanno facendo la stessa cosa, e due serie
+ * di nomi identici sarebbero due serie da tenere d'accordo per sempre.
+ * ============================================================================= */
+void ex_voci_svuota(ExFinestra c)
+{
+    Voci *V = voci_da_h(c);
+
+    if (!V) return;
+    V->n   = 0;
+    V->sel = 0;
+}
+
+int ex_voce_aggiungi(ExFinestra c, const char *testo)
+{
+    Voci *V = voci_da_h(c);
+
+    if (!V || !testo) return 0;
+    if (V->n >= VOCI_N_MAX) return 0;       /* piena: si dice, non si tronca */
+
+    strncpy(V->testo[V->n], testo, VOCI_TESTO_MAX - 1);
+    V->testo[V->n][VOCI_TESTO_MAX - 1] = '\0';
+    V->n++;
+    return 1;
+}
+
+unsigned int ex_voci_quante(ExFinestra c)
+{
+    Voci *V = voci_da_h(c);
+
+    return V ? V->n : 0;
+}
+
+unsigned int ex_voce_scelta(ExFinestra c)
+{
+    Voci *V = voci_da_h(c);
+
+    return V ? V->sel : 0;
+}
+
+void ex_voce_scegli(ExFinestra c, unsigned int i)
+{
+    Voci *V = voci_da_h(c);
+
+    if (!V || i >= V->n) return;
+    V->sel = i;
+}
+
+const char *ex_voce_testo(ExFinestra c, unsigned int i)
+{
+    Voci *V = voci_da_h(c);
+
+    if (!V || i >= V->n) return "";
+    return V->testo[i];
 }
 
 /* =============================================================================

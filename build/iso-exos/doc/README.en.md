@@ -84,6 +84,41 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### The toolkit learns five controls, and where new ones go
+
+**tested** — from the CD, in QEMU, with `winprova -n`: every command lands on the
+serial line with its id and value, which is a number to compare rather than an
+impression.
+
+**They were missing, and the gap was already written in the code.** Next to the
+browser's settings window stood: "the toolkit has no check box, and drawing one
+by hand in here would mean a control that lives in a single program". That is why
+the settings switches are buttons that change their label. Now there are
+**`spunta`, `radio`, `scorrimento`, `combo` and `tab`** (check box, radio,
+scrollbar, drop-down and tab strip) — the first step towards `exide`, the visual
+development environment.
+
+**A scrollbar's orientation is told by its shape**, not by a style bit: wider
+than tall is horizontal, taller than wide is vertical. One more bit could
+disagree with the size, and then you would have to decide which of the two is
+right.
+
+**A radio's group is its siblings** — the controls with the same parent. There is
+no group to declare: two sets of choices go inside two `riquadro` frames, which
+is how they have always been drawn. The frame you see *is* the group that counts,
+so the visual rule and the logical rule cannot disagree.
+
+**A check box arms on press and fires on release**, like a button: sliding off
+before lifting cancels. **A scrollbar acts at once instead** — an arrow held down
+must scroll — and dragging its thumb wakes the application on every pixel, where
+a dragged list says "I chose" only once: a dragged scrollbar *is* the document
+scrolling.
+
+**And the seven places to touch when adding another one** are written down in a
+single spot, above the class numbers: the way to get this wrong is not writing a
+control badly, it is forgetting one of them — and finding out because the control
+draws but does not click, or clicks but Tab never reaches it.
+
 ### The window stays alive while downloading, and the mailbox has an owner
 
 **tested** — from the CD, in QEMU: `https://www.google.com/` (200, 83 KB, 108

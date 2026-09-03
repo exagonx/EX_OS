@@ -28,6 +28,134 @@ manca» apre quello.
 
 # DOVE RIPRENDERE — 3 settembre 2026
 
+## 3 settembre 2026 (mattina) — CINQUE CONTROLLI CHE MANCAVANO, E IL POSTO DOVE SI AGGIUNGONO
+
+Primo passo verso `exide`, l'ambiente di sviluppo visuale: prima dell'IDE
+servono i pezzi con cui l'IDE stesso e' fatto. Il toolkit aveva undici classi e
+nessuna di queste cinque.
+
+    "spunta"        una casella da spuntare
+    "radio"         una scelta fra fratelli
+    "scorrimento"   una barra, verticale o orizzontale
+    "combo"         un elenco a discesa
+    "tab"           una fila di linguette
+
+! **E NON E' UNA MANCANZA CHE SI SCOPRE ADESSO: era gia' scritta nel codice.**
+In `browser.c`, sopra la finestra delle impostazioni, c'era «nel toolkit una
+casella di spunta non c'e', e disegnarne una a mano qui dentro vorrebbe dire un
+controllo che vive in un programma solo». Per questo gli interruttori delle
+impostazioni sono pulsanti che cambiano scritta, e per questo le spunte dei
+moduli HTML il navigatore se le disegna da se'. La ricetta dei pixel esisteva:
+mancava il posto dove metterla.
+
+### LE DECISIONI, E PERCHE' COSI'
+
+! **L'ORIENTAMENTO DELLA BARRA LO DICE LA FORMA, non un bit di stile.** Piu'
+larga che alta e' orizzontale, piu' alta che larga e' verticale. Un bit in piu'
+si potrebbe mettere in disaccordo con la misura — una barra dichiarata
+verticale, disegnata larga 200 e alta 16 — e allora bisogna decidere chi dei due
+ha ragione. Cosi' la domanda non esiste.
+
+! **IL GRUPPO DI UN RADIO SONO I FRATELLI, cioe' i controlli con lo stesso
+padre.** Non c'e' nessun «gruppo» da dichiarare: chi mette due gruppi di scelte
+nella stessa finestra li mette dentro due `riquadro`, che e' come si disegnano
+da sempre — un gruppo di scelte senza una cornice intorno non si legge come un
+gruppo. E il riquadro E' gia' il padre. **La regola visiva e la regola logica
+sono la stessa cosa, e non possono andare in disaccordo.**
+
+! **UN RADIO NON SI SPEGNE CLICCANDOLO, una spunta si'.** Una spunta e' una
+domanda a cui si puo' rispondere di no; un radio e' «quale dei tre», e «nessuno
+dei tre» e' uno stato che nessuno ha chiesto.
+
+! **LA SPUNTA SI ARMA PREMENDO E SCATTA ALZANDO IL DITO**, come il pulsante e
+per la stessa ragione — scivolare via prima di alzarlo annulla. **La barra
+invece agisce subito**, e non e' un'incoerenza: una freccia tenuta premuta deve
+scorrere e il cursore si prende e si trascina; li' non c'e' niente da armare.
+
+! **E IL TRASCINAMENTO DELLA BARRA SVEGLIA L'APPLICAZIONE A OGNI PIXEL**, dove
+la lista trascinata dice «ho scelto» una volta sola al rilascio. La regola si
+rovescia apposta: le righe attraversate da una lista non interessano a nessuno,
+mentre una barra trascinata E' il documento che scorre — dirlo solo al rilascio
+vorrebbe dire un cursore che si muove sopra una pagina ferma.
+
+! **IL CLIC CON UNA TENDINA APERTA E' SEMPRE ROBA DELLA TENDINA, dovunque
+cada.** Dentro sceglie, fuori chiude e basta, e non cade sul controllo che c'e'
+sotto. E' la stessa regola del menu, ed e' l'unico comportamento che non
+stupisce: se sotto ci fosse «Esci», chi chiude una tendina se ne accorgerebbe
+tardi.
+
+### DOVE STA IL VALORE, E DOVE STANNO LE VOCI
+
+! **TRE INTERI IN `Oggetto`, NON TRE TABELLE LATERALI.** La lista, l'area e il
+terminale hanno una tabella a parte perche' hanno un BUFFER — kilobyte chiesti
+con malloc. La spunta, il radio e la barra hanno un numero: `valore`, `massimo`,
+`pagina` stanno dentro l'oggetto, dodici byte per oggetto, meno di un kilobyte
+in tutto. Una tabella laterale sarebbe costata piu' codice di quanta memoria
+risparmiava.
+
+! **E LE VOCI DI UN COMBO NON RIUSANO LA TABELLA DELLA LISTA**, che tiene 512
+voci da 64 caratteri chieste con malloc: sono 32 KB per un elenco a discesa di
+cinque valori, e in un pannello di proprieta' i combo sono molti. La tabella
+`Voci` e' 4 KB statici in tutto — trentadue voci da trentadue caratteri per
+sei controlli — cioe' niente da liberare in un allocatore che non libera.
+
+> **E il posto delle voci si libera davvero, alla distruzione.** Quello della
+> lista e dell'area no, e la differenza non e' una svista: liberare il POSTO
+> senza poter liberare il BUFFER vorrebbe dire perdere quella memoria a ogni
+> giro di crea-distruggi. Le voci sono statiche, quindi non c'e' niente da
+> perdere.
+
+### I SETTE POSTI, SCRITTI UNA VOLTA SOLA
+
+! **IL MODO DI SBAGLIARE NON E' SCRIVERE MALE UN CONTROLLO: E' DIMENTICARE UNO
+DEI POSTI** — e accorgersene dal fatto che il controllo si vede ma non si
+clicca, oppure si clicca ma Tab non ci arriva. Adesso l'elenco sta in `exwin.c`,
+sopra i numeri `CL_*`, e sono sette: il numero, `classe_da_nome`,
+`disegna_oggetto`, `accetta_fuoco`, `tasto_al_fuoco`, il clic in
+`WIN_EV_MOUSE_GIU/SU`, e i tre file dell'API (`exwin.h`, `exwin_esporta.c`,
+`exwin_stub.c`).
+
+! **LA CLASSE E' UNA STRINGA, ED E' PER QUESTO CHE SI PUO' AGGIUNGERNE.** Un
+programma gia' compilato continua a funzionare quando la libreria impara una
+classe nuova: non c'e' nessun enum condiviso da tenere allineato. E per le
+funzioni nuove vale il patto della .so — si aggiunge quanto si vuole, non si
+toglie.
+
+### COME SI E' PROVATO, E CON QUALI NUMERI
+
+`winprova -n` apre una finestra con tutti e cinque, e **ogni comando finisce
+sulla seriale con l'id e il valore**: una spunta che si accende si vede anche a
+occhio, ma «id=202 valore=1» e' un numero che si confronta.
+
+    dal CD, in QEMU:
+      clic sulla prima spunta       id=202 valore=1
+      clic sul radio «in mezzo»     id=205 valore=1   (e «a sinistra» si spegne)
+      clic sulla linguetta «Aspetto» id=201 valore=1
+      clic sulla freccia della barra id=208 valore=1
+      tendina aperta, scelta la terza voce  id=207 valore=2
+      cursore della barra trascinato        id=208 valore=20
+      Tab, spazio                    id=202 valore=1
+      Tab, spazio                    id=203 valore=1
+
+E la spunta accende i limiti della barra orizzontale (`ex_scorri_limiti`): nella
+fotografia dopo il clic il cursore si accorcia, che e' la prova che l'API fa
+davvero quel che dice e non solo che il disegno c'e'.
+
+! **E IL RESTO NON SI E' ROTTO**: `winprova` senza argomenti si ridimensiona
+ancora con le frecce (360x220 -> 400x260), e il navigatore apre
+`/exwin/doc/javascript.html` con i suoi quindici riquadri pieni.
+
+### QUEL CHE RESTA DICHIARATO
+
+ - **Le frecce non muovono dentro un gruppo di radio**: si scatta con la barra
+   spaziatrice e si gira con Tab. La convenzione completa — Tab entra nel
+   gruppo, le frecce muovono dentro, Tab esce — e' un'altra cosa, e meta' di
+   quella convenzione e' peggio di niente.
+ - **Trentadue voci da trentadue caratteri** per combo e tab, sei controlli a
+   voci per programma. Chi ne vuole di piu' vuole una `lista`.
+ - **Il contenitore MDI non c'e'**: e' il pezzo che manca per tenere le finestre
+   di `exide` raggruppate sotto una sola, ed e' il prossimo lavoro insieme al
+   controllo del codice colorato.
 ## 3 settembre 2026 (notte) — LA CASSETTA POSTALE HA UN PADRONE, E LA STRETTA SI SPEZZA
 
 Il compito era «decidere chi possiede la mailbox mentre due attese si

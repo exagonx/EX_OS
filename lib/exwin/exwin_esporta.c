@@ -112,6 +112,20 @@ static const char *const g_nomi[] = {
     "ex_appunti_metti",
     "ex_appunti_prendi",
 
+    /* Aggiunti il 3 settembre 2026: la spunta, il radio, la barra di
+     * scorrimento, l'elenco a discesa e le linguette. */
+    "ex_acceso",
+    "ex_accendi",
+    "ex_scorri_limiti",
+    "ex_scorri_dove",
+    "ex_scorri_vai",
+    "ex_voci_svuota",
+    "ex_voce_aggiungi",
+    "ex_voci_quante",
+    "ex_voce_scelta",
+    "ex_voce_scegli",
+    "ex_voce_testo",
+
     /* L'avvio della libreria: lo chiama chi la apre, non l'applicazione. */
     "__lib_avvio"
 };
@@ -182,6 +196,18 @@ static void *const g_indirizzi[] = {
     (void *)ex_spegni_scrivania,
     (void *)ex_appunti_metti,
     (void *)ex_appunti_prendi,
+
+    (void *)ex_acceso,
+    (void *)ex_accendi,
+    (void *)ex_scorri_limiti,
+    (void *)ex_scorri_dove,
+    (void *)ex_scorri_vai,
+    (void *)ex_voci_svuota,
+    (void *)ex_voce_aggiungi,
+    (void *)ex_voci_quante,
+    (void *)ex_voce_scelta,
+    (void *)ex_voce_scegli,
+    (void *)ex_voce_testo,
 
     (void *)__libc_ponti_avvia
 };

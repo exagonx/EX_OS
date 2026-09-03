@@ -91,6 +91,53 @@ Da CD, un driver ogni tanto muore appena avviato (raro, non chiuso).
 
 
 =============================================================================
+EXIDE — L'AMBIENTE DI SVILUPPO VISUALE (aperto il 3 settembre 2026)
+=============================================================================
+
+Un IDE visuale tipo VB6 che gira dentro ExWin e GENERA SORGENTI C. Sta in
+exwin/bin/exide. Tre aree: gli strumenti a sinistra, il disegno della finestra
+in mezzo, le proprieta' a destra; doppio clic su un controllo apre l'editor
+sull'handler del suo evento.
+
+Il formato del progetto e' a tre file, ed e' la decisione che decide se il
+progetto sopravvive — e' il punto in cui VB6 si rompeva:
+
+    finestra.dis      lo scrive e legge solo l'IDE
+    finestra_gen.c    lo scrive SOLO l'IDE, mai a mano
+    finestra.c        lo scrivi solo tu; l'IDE ci AGGIUNGE gli handler vuoti
+                      e ci salta dentro, e non lo riscrive mai
+
+! IL DOPPIO CLIC AGGIUNGE SOLO SE NON C'E'. Su un controllo che ha gia' la sua
+  funzione, il doppio clic porta il cursore su quella riga e basta.
+
+! I CONTROLLI DI BASE CI SONO TUTTI, dal 3 settembre 2026: spunta, radio,
+  scorrimento, combo e tab sono in exwin.so, e i sette posti da toccare per
+  aggiungerne un altro stanno scritti in exwin.c sopra i numeri CL_*.
+
+Quel che manca, in ordine:
+
+ 1. IL CONTROLLO DEL CODICE COLORATO. `ex_area` disegna se stessa dentro
+    exwin.so e non c'e' nessun modo, dall'applicazione, di dire «questa parola
+    in blu»: la colorazione per token oggi NON E' SCRIVIBILE. Serve un
+    controllo nuovo — «areacodice» — con il testo colorabile, un buffer che non
+    sia 512 righe da 200 colonne, e un modo di PORTARE il cursore a una riga
+    (oggi ex_area_cursore lo legge soltanto, quindi la colonna delle funzioni
+    non ha dove saltare). E' anche il pezzo che servira' all'editor RTF.
+
+ 2. IL CONTENITORE MDI. Non esiste ne' nel toolkit ne' nel server a finestre.
+    Serve a tenere le finestre di exide raggruppate sotto una sola.
+
+ 3. LE FRECCE DENTRO UN GRUPPO DI RADIO. Oggi si scatta con la barra
+    spaziatrice e si gira con Tab. La convenzione completa e' «Tab entra nel
+    gruppo, le frecce muovono dentro, Tab esce»: meta' di quella convenzione e'
+    peggio di niente, quindi o si fa tutta o si lascia questa.
+
+ 4. IL LIMITE DELLE VOCI: trentadue voci da trentadue caratteri per combo e
+    tab, sei controlli a voci per programma (VOCI_* in exwin.c). Chi ne vuole
+    di piu' oggi deve usare una «lista».
+
+
+=============================================================================
 IL NAVIGATORE — QUEL CHE MANCA A UNA PAGINA VERA (in ordine di quanto pesa)
 =============================================================================
 

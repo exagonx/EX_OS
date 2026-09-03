@@ -213,6 +213,11 @@ typedef long (*ExProcedura)(ExFinestra, unsigned int, unsigned int, long);
  *     "lista"         un elenco che scorre, con una riga scelta
  *     "areatesto"     un'area di testo multiriga, con il cursore
  *     "terminale"     una griglia di testo con dentro un programma
+ *     "spunta"        una casella da spuntare, con la sua scritta accanto
+ *     "radio"         una scelta fra fratelli: accenderne uno spegne gli altri
+ *     "scorrimento"   una barra: verticale o orizzontale secondo la FORMA
+ *     "combo"         un elenco a discesa: si vede la scelta, si apre l'elenco
+ *     "tab"           una fila di linguette, una scelta
  *
  * Per una finestra di primo livello: `padre` = 0, `id` = 0, `proc` = la
  * procedura. Per un controllo: `padre` = la finestra, `id` = il numero con cui
@@ -233,6 +238,13 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
                    int x, int y, int w, int h,
                    ExFinestra padre, unsigned int id, ExProcedura proc);
 
+/* =============================================================================
+ * ! AGGIUNGERE UN CONTROLLO E' UNA COSA CHE SI FA, e i posti da toccare sono
+ * sette: stanno elencati in exwin.c, sopra i numeri CL_*. Qui basta sapere che
+ * la classe e' una stringa apposta — un programma gia' compilato continua a
+ * funzionare quando la libreria ne impara una nuova, perche' non c'e' nessun
+ * enum condiviso da tenere allineato.
+ * ============================================================================= */
 void       ex_distruggi(ExFinestra f);
 void       ex_titolo(ExFinestra f, const char *s);
 void       ex_sposta(ExFinestra f, int x, int y);
@@ -494,6 +506,70 @@ void ex_pixmap(ExFinestra f, int x, int y, int w, int h,
  * Rende 1 se l'ha disegnata, 0 se il formato non e' (ancora) riconosciuto.
  * --------------------------------------------------------------------------- */
 int ex_immagine(ExFinestra f, const char *percorso, int x, int y);
+
+/* -----------------------------------------------------------------------------
+ * La spunta e il radio: acceso o spento
+ *
+ * ! DUE CONTROLLI, DUE FUNZIONI, ed e' voluto: da fuori sono la stessa domanda.
+ * La differenza sta in cosa succede agli ALTRI — accendere un radio spegne i
+ * suoi fratelli, cioe' i controlli "radio" che hanno lo STESSO PADRE. Due
+ * gruppi nella stessa finestra si fanno con due "riquadro", che e' anche come
+ * si disegnano: la cornice che si vede E' il gruppo che vale.
+ *
+ * ! UN RADIO NON SI SPEGNE CLICCANDOLO, una spunta si'. «Nessuno dei tre» non
+ * e' una risposta che un gruppo di radio sappia dare; ex_accendi(c, 0) lo puo'
+ * fare da programma, dove chi lo scrive sa cosa sta facendo.
+ *
+ * Il clic e la barra spaziatrice mandano EXM_COMANDO con l'id del controllo, e
+ * in `lp` c'e' il valore NUOVO — cosi' chi gestisce il messaggio non deve
+ * richiamare ex_acceso per sapere cos'e' appena successo.
+ * --------------------------------------------------------------------------- */
+int  ex_acceso(ExFinestra c);
+void ex_accendi(ExFinestra c, int acceso);
+
+/* -----------------------------------------------------------------------------
+ * La barra di scorrimento
+ *
+ * ! L'ORIENTAMENTO LO DICE LA FORMA: piu' larga che alta e' orizzontale, piu'
+ * alta che larga e' verticale. Un bit di stile in piu' si potrebbe mettere in
+ * disaccordo con la misura, e allora bisognerebbe decidere chi ha ragione.
+ *
+ * ! IL MODELLO E' `massimo` PIU' `pagina`. Il valore va da 0 a `massimo`;
+ * `pagina` e' quanto se ne vede in una volta, e serve a due cose che si vedono
+ * tutt'e due: quanto e' lungo il cursore — cioe' quanto e' lungo il documento,
+ * a colpo d'occhio — e di quanto si salta cliccando nella gola. Una barra
+ * appena creata ha massimo 0, cioe' un cursore che riempie la gola: dice la
+ * verita' — non c'e' niente da scorrere — finche' non le si danno i limiti.
+ *
+ * Ogni movimento manda EXM_COMANDO con l'id e il valore nuovo in `lp`, ANCHE
+ * durante il trascinamento: una barra che dicesse la sua solo al rilascio
+ * vorrebbe dire un cursore che si muove sopra una pagina ferma.
+ * --------------------------------------------------------------------------- */
+void         ex_scorri_limiti(ExFinestra c, unsigned int massimo,
+                              unsigned int pagina);
+unsigned int ex_scorri_dove(ExFinestra c);
+void         ex_scorri_vai(ExFinestra c, unsigned int dove);
+
+/* -----------------------------------------------------------------------------
+ * Le voci di un elenco a discesa o di una barra di linguette
+ *
+ * ! LE STESSE FUNZIONI PER TUTT'E DUE, e per questo si chiamano ex_voce_* e non
+ * ex_combo_*: aggiungere una voce a un elenco a discesa e aggiungere una
+ * linguetta a una barra sono la stessa cosa, e due serie di nomi identici
+ * sarebbero due serie da tenere d'accordo per sempre.
+ *
+ * Trentadue voci da trentadue caratteri, in una tabella statica: sono elenchi
+ * corti per definizione — i valori di una proprieta', i file aperti — e non un
+ * documento. Chi ne ha bisogno di piu' vuole una "lista".
+ *
+ * La scelta arriva come EXM_COMANDO con l'id del controllo e l'INDICE in `lp`.
+ * --------------------------------------------------------------------------- */
+void         ex_voci_svuota(ExFinestra c);
+int          ex_voce_aggiungi(ExFinestra c, const char *testo);
+unsigned int ex_voci_quante(ExFinestra c);
+unsigned int ex_voce_scelta(ExFinestra c);
+void         ex_voce_scegli(ExFinestra c, unsigned int i);
+const char  *ex_voce_testo(ExFinestra c, unsigned int i);
 
 /* -----------------------------------------------------------------------------
  * La lista a scorrimento

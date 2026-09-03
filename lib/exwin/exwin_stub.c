@@ -117,6 +117,20 @@ static struct {
     void         (*scrivi_con)(ExFinestra, unsigned int, int, int,
                                const char *, unsigned int);
     void         (*sveglia)(ExFinestra, unsigned int);
+
+    /* La spunta, il radio, la barra, le voci di un combo o di una barra di
+     * linguette: aggiunti il 3 settembre 2026. */
+    int          (*acceso)(ExFinestra);
+    void         (*accendi)(ExFinestra, int);
+    void         (*scorri_limiti)(ExFinestra, unsigned int, unsigned int);
+    unsigned int (*scorri_dove)(ExFinestra);
+    void         (*scorri_vai)(ExFinestra, unsigned int);
+    void         (*voci_svuota)(ExFinestra);
+    int          (*voce_aggiungi)(ExFinestra, const char *);
+    unsigned int (*voci_quante)(ExFinestra);
+    unsigned int (*voce_scelta)(ExFinestra);
+    void         (*voce_scegli)(ExFinestra, unsigned int);
+    const char  *(*voce_testo)(ExFinestra, unsigned int);
 } P;
 
 static void *chiedi(const ExLibTesta *t, const char *nome)
@@ -229,6 +243,23 @@ static void assicura(void)
                         chiedi(t, "ex_scrivi_con");
     P.sveglia         = (void (*)(ExFinestra, unsigned int))
                         chiedi(t, "ex_sveglia");
+
+    P.acceso        = (int (*)(ExFinestra))            chiedi(t, "ex_acceso");
+    P.accendi       = (void (*)(ExFinestra, int))      chiedi(t, "ex_accendi");
+    P.scorri_limiti = (void (*)(ExFinestra, unsigned int, unsigned int))
+                      chiedi(t, "ex_scorri_limiti");
+    P.scorri_dove   = (unsigned int (*)(ExFinestra))   chiedi(t, "ex_scorri_dove");
+    P.scorri_vai    = (void (*)(ExFinestra, unsigned int))
+                      chiedi(t, "ex_scorri_vai");
+    P.voci_svuota   = (void (*)(ExFinestra))           chiedi(t, "ex_voci_svuota");
+    P.voce_aggiungi = (int (*)(ExFinestra, const char *))
+                      chiedi(t, "ex_voce_aggiungi");
+    P.voci_quante   = (unsigned int (*)(ExFinestra))   chiedi(t, "ex_voci_quante");
+    P.voce_scelta   = (unsigned int (*)(ExFinestra))   chiedi(t, "ex_voce_scelta");
+    P.voce_scegli   = (void (*)(ExFinestra, unsigned int))
+                      chiedi(t, "ex_voce_scegli");
+    P.voce_testo    = (const char *(*)(ExFinestra, unsigned int))
+                      chiedi(t, "ex_voce_testo");
 
     P.pronto = 1;
 }
@@ -369,3 +400,20 @@ void ex_scrivi_con(ExFinestra w, ExFont f, int x, int y,
 { assicura(); P.scrivi_con(w, f, x, y, s, c); }
 
 void ex_sveglia(ExFinestra f, unsigned int ms) { assicura(); P.sveglia(f, ms); }
+
+int  ex_acceso(ExFinestra c)             { assicura(); return P.acceso(c); }
+void ex_accendi(ExFinestra c, int a)     { assicura(); P.accendi(c, a); }
+
+void ex_scorri_limiti(ExFinestra c, unsigned int massimo, unsigned int pagina)
+{ assicura(); P.scorri_limiti(c, massimo, pagina); }
+unsigned int ex_scorri_dove(ExFinestra c) { assicura(); return P.scorri_dove(c); }
+void ex_scorri_vai(ExFinestra c, unsigned int d) { assicura(); P.scorri_vai(c, d); }
+
+void ex_voci_svuota(ExFinestra c)         { assicura(); P.voci_svuota(c); }
+int  ex_voce_aggiungi(ExFinestra c, const char *t)
+{ assicura(); return P.voce_aggiungi(c, t); }
+unsigned int ex_voci_quante(ExFinestra c) { assicura(); return P.voci_quante(c); }
+unsigned int ex_voce_scelta(ExFinestra c) { assicura(); return P.voce_scelta(c); }
+void ex_voce_scegli(ExFinestra c, unsigned int i) { assicura(); P.voce_scegli(c, i); }
+const char *ex_voce_testo(ExFinestra c, unsigned int i)
+{ assicura(); return P.voce_testo(c, i); }

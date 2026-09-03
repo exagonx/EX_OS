@@ -85,6 +85,40 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### Il toolkit impara cinque controlli, e il posto dove si aggiungono
+
+**testato** — dal CD, in QEMU, con `winprova -n`: ogni comando finisce sulla
+seriale con l'id e il valore, che è un numero da confrontare e non un'impressione.
+
+**Mancavano, e la mancanza era già scritta nel codice.** Accanto alla finestra
+delle impostazioni del navigatore c'era: «nel toolkit una casella di spunta non
+c'è, e disegnarne una a mano qui dentro vorrebbe dire un controllo che vive in un
+programma solo». Per questo gli interruttori delle impostazioni sono pulsanti che
+cambiano scritta. Adesso ci sono: **`spunta`, `radio`, `scorrimento`, `combo` e
+`tab`**, e sono il primo passo verso `exide`, l'ambiente di sviluppo visuale.
+
+**L'orientamento della barra lo dice la forma**, non un bit di stile: più larga
+che alta è orizzontale, più alta che larga è verticale. Un bit in più si potrebbe
+mettere in disaccordo con la misura, e allora bisognerebbe decidere chi ha
+ragione.
+
+**Il gruppo di un radio sono i fratelli** — i controlli con lo stesso padre. Non
+c'è nessun gruppo da dichiarare: due gruppi di scelte si mettono dentro due
+`riquadro`, che è come si disegnano da sempre. La cornice che si vede *è* il
+gruppo che vale, quindi la regola visiva e quella logica non possono andare in
+disaccordo.
+
+**La spunta si arma premendo e scatta alzando il dito**, come un pulsante:
+scivolare via prima di alzarlo annulla. **La barra invece agisce subito** — una
+freccia tenuta premuta deve scorrere — e il suo trascinamento sveglia
+l'applicazione a ogni pixel, dove una lista trascinata dice «ho scelto» una volta
+sola: una barra trascinata *è* il documento che scorre.
+
+**E i sette posti da toccare per aggiungerne un altro** stanno scritti in un
+punto solo, sopra i numeri delle classi: il modo di sbagliare non è scrivere male
+un controllo, è dimenticarne uno — e accorgersene dal fatto che il controllo si
+vede ma non si clicca, o si clicca ma Tab non ci arriva.
+
 ### La finestra resta viva mentre scarica, e la posta ha un padrone
 
 **testato** — dal CD, in QEMU: `https://www.google.com/` (200, 83 KB, 108 nodi),
