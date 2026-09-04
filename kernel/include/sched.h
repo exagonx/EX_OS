@@ -488,6 +488,16 @@ typedef struct Process {
      * ai propri `fds` per un processo e a quelli del capogruppo per un filo —
      * e tutto il kernel usa `fdt`, mai `fds` direttamente.
      * ========================================================================= */
+    /* ! L'IMMAGINE INIZIALE DEL BLOCCO TLS, per poterlo RIFARE a ogni filo.
+     * Non si tiene una copia in memoria: si tengono le tre coordinate dentro
+     * l'eseguibile, che resta aperto comunque per il caricamento su richiesta
+     * (exe_handle). Rileggere qualche decina di byte da un file gia' aperto
+     * costa meno che portarsi dietro una copia per tutta la vita di ogni
+     * processo — e la copia sarebbe identica al file. */
+    uint32_t        tls_off;        /* scostamento del PT_TLS nell'eseguibile */
+    uint32_t        tls_filesz;     /* quanti byte ne sono inizializzati */
+    uint32_t        tls_dim;        /* la misura del blocco, gia' allineata */
+
     uint32_t        tgid;           /* pid del capogruppo (== pid se non e' un filo) */
     FileDescriptor *fdt;            /* la tabella VERA: propria o del capogruppo */
     uint32_t        filo_posto;     /* quale piazzola di stack occupa (0 = capogruppo) */

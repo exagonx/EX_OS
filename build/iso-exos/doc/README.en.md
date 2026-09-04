@@ -84,6 +84,57 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### Threads: several flows inside the same program
+
+**tested** — and the proof is not that the count adds up, it is that **without
+the lock it does not**:
+
+```
+filiprova: 4 threads, 20000 rounds each
+  with the lock   80000   expected  80000   exact
+  without         20000   expected  80000   lost on the way
+  hand-offs       80000   the threads really do interleave
+```
+
+Sixty thousand lost increments are four flows treading on each other in the
+same memory. If the threads were fake — if `thread_crea` ran the function
+inside the caller — that number would be 80000 like the other one, and the test
+would have passed without proving anything.
+
+**The difference between a process and a thread is one line: the page
+directory.** `proc_create` allocates a new one, `proc_thread_crea` copies the
+group leader's. Not one line of the scheduler was touched: same run queue, same
+quantum, same `context_switch` — which already took CR3 as a parameter. And
+`tgid` (the first member's pid) equals `pid` for a normal process, so all the
+kernel that knows nothing about threads keeps working without a single `if`.
+
+**File descriptors are shared by pointer, not by copy**: two threads opening
+and closing files must see the same table. The PCB gained `fdt`, and the 153
+occurrences of `->fds[` in the kernel became `->fdt[` with a mechanical
+substitution — for a normal process `fdt == fds` and nothing changes.
+
+**Stacks are not shared**: 64 KB per thread, in a band reserved for *every*
+process at startup — even for one that will never make a thread. They are
+addresses, not pages. The alternative (reserving it when the first thread is
+born) would mean lowering the heap ceiling under memory the heap might already
+have taken: either you refuse the thread, or you put its stack on top of
+somebody else's data.
+
+> **Whoever exits takes the group with them**, like `exit_group` on Linux and
+> for the same reason: the other threads live in this process's memory, and
+> letting them run while the address space goes away means code running over
+> freed pages. Tested on purpose: a program that creates three endless threads
+> and exits without joining them leaves the machine healthy and the prompt
+> comes back.
+
+**What is not per-thread, written down rather than discovered:** `__thread`
+variables and `errno` are per *process* — the TLS block is shared. Giving each
+thread its own means copying in the initial image from the ELF; zeroing it
+instead would start a variable initialised to five at zero, silently. Between a
+written limit and a wrong value there is no contest. And the lock spins yielding
+the CPU: fine for a short critical section, not for waiting — a futex is the
+next step.
+
 ### The editor shortcuts, and something I had written wrong
 
 **tested** — a line typed in the editor and only Ctrl+S pressed: the status line

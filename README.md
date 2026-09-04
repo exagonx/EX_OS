@@ -136,6 +136,25 @@ Fra un limite scritto e un valore sbagliato non c'è partita. E il lucchetto
 gira cedendo la CPU: va bene per una sezione critica corta, non per aspettare —
 un futex è il passo dopo.
 
+
+**E poi il blocco TLS per filo.** Nella prima ora i fili condividevano quello
+del processo; nella seconda è stato tolto anche quel limite: **ogni filo ha il
+suo**, in cima al proprio stack — dove quelle pagine sono già mappate e nessun
+altro può arrivarci, che è anche dove lo mette glibc. L'immagine iniziale si
+**rilegge dal file**, non si copia da quella del capogruppo: copiare la sua
+vorrebbe dire far partire il filo con i valori *di adesso* di un altro flusso —
+un contatore a metà, un puntatore a un oggetto in uso. Nel PCB sono comparse le
+tre coordinate del `PT_TLS`, e l'eseguibile è già aperto per il caricamento su
+richiesta.
+
+> **La prova parte da sette, non da zero**, ed è l'unico modo di distinguere
+> «blocco copiato» da «blocco azzerato»: un blocco azzerato passa qualunque
+> prova che parta da zero. Ogni filo controlla di trovarci 7, ci scrive il suo
+> numero, cede la CPU due volte e ricontrolla; il filo principale, alla fine,
+> ritrova il suo 42 intatto. Resta fuori `errno`, che vive dentro `libc.so`
+> dove `__thread` non funziona — e adesso ha una strada scritta per smettere di
+> esserlo.
+
 ### Le scorciatoie degli editor, e una cosa che avevo scritto sbagliata
 
 **testato** — scritta una riga nell'editor e premuto solo Ctrl+S: la riga di

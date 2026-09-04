@@ -118,16 +118,45 @@ sezione critica corta, non per aspettare un file. Un futex — bloccarsi su un
 indirizzo e farsi svegliare — e' il passo successivo, e ha senso solo quando
 servira'.
 
-### QUEL CHE NON E' PER FILO, E PERCHE' E' SCRITTO INVECE CHE SCOPERTO
+### E POI IL BLOCCO TLS PER FILO, CHE ERA IL PRIMO LIMITE DELL'ELENCO
 
-! **LE VARIABILI `__thread` E `errno` SONO PER PROCESSO, NON PER FILO.** Il
-blocco TLS e' in comune. Darne uno per filo vuol dire copiarci dentro
-l'immagine iniziale che sta nell'ELF, e finche' non la si tiene da parte
-l'unica alternativa sarebbe azzerarlo — cioe' far partire a zero una variabile
-che il programma ha inizializzato a cinque, in silenzio. Fra un limite scritto
-e un valore sbagliato non c'e' partita. `errno` passa da `__errno_dove()`,
-quindi il giorno che il blocco sara' per filo lo diventera' anche lui senza
-toccare una riga di chi lo usa.
+Nella prima ora i fili condividevano il blocco TLS del processo, e questo
+paragrafo diceva perche' era un limite accettabile. Nella seconda e' stato
+tolto: **ogni filo ha il suo blocco**, e `__thread` vuol dire di nuovo quel che
+promette.
+
+! **L'IMMAGINE INIZIALE SI RILEGGE DAL FILE, non si copia da quella del
+capogruppo.** Copiare la sua vorrebbe dire far partire il filo con i VALORI DI
+ADESSO di un altro flusso — un contatore a meta', un puntatore a un oggetto che
+il capogruppo sta usando. Quel che serve e' lo stato iniziale, e lo stato
+iniziale sta nell'eseguibile, che resta aperto comunque per il caricamento su
+richiesta. Nel PCB sono comparse le tre coordinate del segmento `PT_TLS`
+(scostamento, filesz, misura allineata): rileggere qualche decina di byte da un
+file gia' aperto costa meno che portarsi dietro una copia per tutta la vita di
+ogni processo — e la copia sarebbe identica al file.
+
+! **E IL BLOCCO STA IN CIMA ALLO STACK DEL FILO**, che e' il posto che non
+costa niente: quelle pagine sono gia' mappate, lo spazio e' gia' suo, nessun
+altro puo' arrivarci. E' anche dove lo mette glibc. Lo stack comincia sotto il
+blocco, quindi crescendo se ne allontana.
+
+! **LA PROVA PARTE DA SETTE, NON DA ZERO**, ed e' l'unico modo di distinguere
+«blocco copiato» da «blocco azzerato»: un blocco azzerato passa qualunque prova
+che parta da zero. Ogni filo controlla di trovarci 7 all'inizio, ci scrive il
+suo numero, cede la CPU due volte e ricontrolla — se i blocchi fossero in
+comune ci troverebbe quello di qualcun altro. E il filo principale, alla fine,
+ritrova il suo 42 intatto.
+
+### QUEL CHE ANCORA NON E' PER FILO
+
+! **`errno` LO E' RIMASTO**, e adesso ha una strada per smettere di esserlo:
+sta dentro `libc.so`, e li' `__thread` non funziona — il TLS dinamico non c'e'
+(lo dice il commento nel kernel). La via e' `__errno_dove()`, che gia' oggi e'
+una funzione: puo' leggere il thread pointer da `%gs:0` e usarlo come chiave in
+una tabellina. Vuole pero' che OGNI processo abbia un blocco TLS anche senza
+variabili `__thread` — oggi chi non ne ha si ritrova la base di `%gs` a zero, e
+leggere `%gs:0` sarebbe un fault. E' una pagina per processo e sta scritto in
+`in_lavorazione.txt`.
 
 ### COME SI E' PROVATO — TRE CASI, NON UNO
 
@@ -138,6 +167,8 @@ toccare una riga di chi lo usa.
     filiprova abbandona  crea tre fili che non finiscono mai e ESCE senza
                          aspettarli -> il prompt torna, e il comando dopo
                          gira: il kernel se li e' portati via
+    filiprova tls        ogni filo parte da 7, scrive il suo, cede la CPU due
+                         volte e lo ritrova; il principale ritrova 42
 
 E due volte di fila, con i PCB riusati (tid 15-18, poi 20-23), piu' un `hello`
 dopo per vedere che la macchina sia sana.

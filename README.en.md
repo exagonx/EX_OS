@@ -135,6 +135,23 @@ written limit and a wrong value there is no contest. And the lock spins yielding
 the CPU: fine for a short critical section, not for waiting — a futex is the
 next step.
 
+
+**And then the per-thread TLS block.** In the first hour threads shared the
+process's one; in the second that limit went too: **each thread has its own**,
+at the top of its own stack — where those pages are already mapped and nobody
+else can reach, which is also where glibc puts it. The initial image is **read
+back from the file**, not copied from the leader's: copying that one would mean
+starting the thread with another flow's *current* values — a half-updated
+counter, a pointer to an object in use. The PCB gained the three `PT_TLS`
+coordinates, and the executable is already open for demand loading.
+
+> **The test starts from seven, not from zero**, which is the only way to tell
+> "block copied" from "block zeroed": a zeroed block passes any test that starts
+> at zero. Each thread checks it finds 7, writes its own number, yields twice
+> and checks again; the main thread, at the end, finds its 42 untouched. What is
+> left out is `errno`, which lives inside `libc.so` where `__thread` does not
+> work — and it now has a written way out.
+
 ### The editor shortcuts, and something I had written wrong
 
 **tested** — a line typed in the editor and only Ctrl+S pressed: the status line

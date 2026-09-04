@@ -1055,16 +1055,95 @@ int proc_thread_crea(uint32_t entry, uint32_t arg)
     filo->heap_end       = capo->heap_end;
     filo->heap_max       = capo->heap_max;
 
-    /* ! E LO STESSO BLOCCO TLS DEL CAPOGRUPPO, che vuol dire che le variabili
-     * __thread NON sono per filo ma per PROCESSO. E' un limite dichiarato, non
-     * una svista: darne uno per filo vuol dire copiarci dentro l'immagine
-     * iniziale che sta nell'ELF, e finche' non la si tiene da parte l'unica
-     * alternativa sarebbe azzerarlo — cioe' far partire a zero una variabile
-     * che il programma ha inizializzato a cinque, in silenzio. Fra un limite
-     * scritto e un valore sbagliato non c'e' partita. Vale anche per errno,
-     * che passa da __errno_dove(). */
-    filo->tls_tp   = capo->tls_tp;
-    filo->tls_base = capo->tls_base;
+    /* =====================================================================
+     * IL BLOCCO TLS DEL FILO — in cima al suo stack
+     *
+     * ! OGNI FILO HA IL SUO, e non e' un lusso: `__thread` vuol dire «una
+     * copia per flusso», e condividerne una sola fra piu' fili e' proprio la
+     * cosa che quella parola promette di non fare. Il codice di terzi la usa
+     * senza chiedere il permesso — bfd dichiara `static TLS bfd_error_type
+     * bfd_error` — e la std di Rust ci costruisce sopra i suoi thread-local.
+     *
+     * ! E L'IMMAGINE INIZIALE SI RILEGGE DAL FILE, non si copia da quella del
+     * capogruppo. Copiare la sua vorrebbe dire far partire il filo con i
+     * VALORI DI ADESSO di un altro flusso — un contatore a meta', un
+     * puntatore a un oggetto che il capogruppo sta usando. Quel che serve e'
+     * lo stato iniziale, e lo stato iniziale sta nell'eseguibile, che e'
+     * ancora aperto (exe_handle) per il caricamento su richiesta.
+     *
+     * ! STA IN CIMA ALLO STACK DEL FILO, ed e' il posto che non costa niente:
+     * quelle pagine sono gia' mappate, lo spazio e' gia' suo, e nessun altro
+     * puo' arrivarci. E' anche dove lo mette glibc. Lo stack comincia sotto
+     * il blocco, quindi crescendo si allontana invece di avvicinarsi.
+     * ===================================================================== */
+    if (capo->tls_dim > 0) {
+        static uint8_t buf[TLS_MAX];    /* si legge a pezzi da 4 KB */
+        uint32_t tot  = ALIGN_UP(capo->tls_dim + TLS_TCB_SIZE, 16);
+        uint32_t tbase, tp;
+
+        if (tot > FILO_STACK_SIZE / 4) {
+            klog(LOG_ERROR, "SCHED: blocco TLS di %u byte: troppo per lo "
+                            "stack di un filo", tot);
+            proc_kill(filo->pid);
+            return ERR(ENOMEM);
+        }
+
+        tbase = (cima - tot) & ~15u;
+        tp    = tbase + capo->tls_dim;
+
+        /* La parte inizializzata dal file, poi il resto resta a zero: le
+         * pagine dello stack sono state azzerate quando le abbiamo mappate. */
+        if (capo->tls_filesz > 0 && capo->exe_handle >= 0) {
+            uint32_t fatti = 0;
+
+            while (fatti < capo->tls_filesz) {
+                uint32_t quanti = capo->tls_filesz - fatti;
+                int      letti;
+                uint32_t k;
+
+                if (quanti > PAGE_SIZE) quanti = PAGE_SIZE;
+                letti = vfs_read(capo->exe_handle, buf, quanti,
+                                 capo->tls_off + fatti);
+                if (letti <= 0) {
+                    klog(LOG_ERROR, "SCHED: non riesco a rileggere l'immagine "
+                                    "TLS per il filo");
+                    proc_kill(filo->pid);
+                    return ERR(EIO);
+                }
+                for (k = 0; k < (uint32_t)letti; k++) {
+                    uint32_t va  = tbase + fatti + k;
+                    uint32_t fis = paging_get_physical(capo->page_directory,
+                                                       va & ~(PAGE_SIZE - 1));
+                    uint8_t *dst;
+
+                    if (fis == 0) { proc_kill(filo->pid); return ERR(EFAULT); }
+                    dst = (uint8_t *)paging_finestra_apri(fis);
+                    dst[va % PAGE_SIZE] = buf[k];
+                    paging_finestra_chiudi();
+                }
+                fatti += (uint32_t)letti;
+            }
+        }
+
+        /* Il puntatore a se stesso in testa al TCB: %gs:0 legge questo. */
+        {
+            uint32_t fis = paging_get_physical(capo->page_directory,
+                                               tp & ~(PAGE_SIZE - 1));
+            uint32_t *tcb;
+
+            if (fis == 0) { proc_kill(filo->pid); return ERR(EFAULT); }
+            tcb = (uint32_t *)paging_finestra_apri(fis);
+            tcb[(tp % PAGE_SIZE) / 4] = tp;
+            paging_finestra_chiudi();
+        }
+
+        filo->tls_base = tbase;
+        filo->tls_tp   = tp;
+        cima           = tbase;     /* lo stack del filo comincia sotto */
+    } else {
+        filo->tls_tp   = 0;
+        filo->tls_base = 0;
+    }
 
     str_copy(filo->cwd, capo->cwd, VFS_PATH_MAX);
 

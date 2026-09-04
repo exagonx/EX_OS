@@ -64,6 +64,67 @@ static void lavoro(void *arg)
     thread_esci(io);
 }
 
+/* =============================================================================
+ * LA PROVA DEL TLS
+ *
+ * ! IL VALORE INIZIALE NON E' ZERO, APPOSTA. Un blocco TLS azzerato invece che
+ * copiato dall'immagine dell'eseguibile passerebbe qualunque prova che parta da
+ * zero: il difetto si vede solo se il valore di partenza e' diverso. Sette lo
+ * e'.
+ *
+ * ! E OGNI FILO SCRIVE IL SUO, POI CEDE LA CPU, POI RILEGGE. Se i blocchi
+ * fossero in comune, dopo aver ceduto la CPU si troverebbe il numero di
+ * qualcun altro: e' l'unico modo di distinguere «una copia per filo» da «una
+ * copia sola che nessuno ha ancora sovrascritto».
+ * ============================================================================= */
+static __thread int g_mio = 7;
+
+static void filo_tls(void *arg)
+{
+    int io       = (int)(long)arg;
+    int iniziale = g_mio;           /* deve essere 7 per tutti */
+
+    g_mio = 100 + io;
+    sched_yield();
+    sched_yield();
+
+    if (iniziale != 7) {
+        printf("  filo %d: partiva da %d invece che da 7\n", io, iniziale);
+        thread_esci(1);
+    }
+    if (g_mio != 100 + io) {
+        printf("  filo %d: ci trovo %d invece di %d — blocco condiviso\n",
+               io, g_mio, 100 + io);
+        thread_esci(1);
+    }
+    thread_esci(0);
+}
+
+static int prova_tls(void)
+{
+    int tid[FILI], i, codice, esito = 0;
+
+    g_mio = 42;                     /* il filo principale marca il suo */
+    printf("filiprova: ogni filo deve avere il SUO blocco TLS\n");
+
+    for (i = 0; i < FILI; i++) {
+        tid[i] = thread_crea(filo_tls, (void *)(long)i);
+        if (tid[i] < 0) { printf("  thread_crea: errno %d\n", errno); return 1; }
+    }
+    for (i = 0; i < FILI; i++) {
+        codice = -1;
+        thread_attendi(tid[i], &codice);
+        if (codice != 0) esito = 1;
+    }
+
+    printf("  il filo principale ci ritrova %d (atteso 42)   %s\n",
+           g_mio, g_mio == 42 ? "intatto" : "SOVRASCRITTO");
+    if (g_mio != 42) esito = 1;
+
+    printf("\nfiliprova tls: %s\n", esito ? "QUALCOSA NON VA" : "tutto a posto");
+    return esito;
+}
+
 /* Un filo che non finisce mai: serve alla prova dell'abbandono. */
 static void per_sempre(void *arg)
 {
@@ -111,6 +172,7 @@ int main(int argc, char **argv)
 {
     if (argc > 1 && strcmp(argv[1], "abbandona") == 0) return abbandona();
     if (argc > 1 && strcmp(argv[1], "troppi") == 0)    return troppi();
+    if (argc > 1 && strcmp(argv[1], "tls") == 0)       return prova_tls();
     {
     int tid[FILI];
     int i, codice, esito = 0;

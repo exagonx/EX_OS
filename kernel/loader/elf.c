@@ -651,6 +651,11 @@ if (n <= 0) {
             proc->tls_base = base;
             proc->tls_tp   = tp;
 
+            /* Le coordinate per rifarlo a ogni filo: vedi proc_thread_crea. */
+            proc->tls_off    = tls->p_offset;
+            proc->tls_filesz = tls->p_filesz;
+            proc->tls_dim    = dim_tls;
+
             klog(LOG_INFO, "ELF: TLS 0x%08x-0x%08x, tp=0x%08x "
                  "(memsz=%u filesz=%u align=%u)",
                  base, base + totale, tp,

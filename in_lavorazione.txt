@@ -259,12 +259,17 @@ senza argomenti, «troppi» e «abbandona».
 
 QUEL CHE MANCA, in ordine di quanto pesa:
 
- 1. LE VARIABILI __thread E errno SONO PER PROCESSO, NON PER FILO. Il blocco
-    TLS e' in comune. Per farlo per filo bisogna tenere da parte l'immagine
-    iniziale del segmento PT_TLS (oggi la legge elf_load e la dimentica) e
-    copiarla in un blocco nuovo a ogni thread_crea: azzerarlo e basta NON va
-    bene, farebbe partire a zero una variabile inizializzata a cinque, in
-    silenzio. errno passa gia' da __errno_dove(), quindi seguira' da solo.
+ 1. errno E' ANCORA PER PROCESSO. Le variabili __thread dei PROGRAMMI invece
+    sono per filo dal 4 settembre 2026: ogni filo ha il suo blocco, in cima al
+    suo stack, con l'immagine iniziale RILETTA DAL FILE (le coordinate del
+    PT_TLS stanno nel PCB). errno no, perche' vive dentro libc.so e li'
+    __thread non funziona: manca il TLS dinamico.
+    LA STRADA: __errno_dove() e' gia' una funzione, e puo' leggere il thread
+    pointer da %gs:0 usandolo come chiave in una tabellina di sedici posti.
+    Vuole pero' che OGNI processo abbia un blocco TLS anche quando non ha
+    variabili __thread — oggi chi non ne ha si ritrova la base di %gs a zero e
+    leggere %gs:0 sarebbe un page fault. E' una pagina per processo in
+    elf_load, piu' la tabellina con l'inserimento fatto con xchg.
 
  2. NIENTE CHE DORMA DAVVERO. mutex_prendi gira cedendo la CPU: va bene per una
     sezione critica corta, non per aspettare un file o un altro filo. Serve un

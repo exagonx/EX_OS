@@ -85,6 +85,57 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### I fili: più flussi dentro lo stesso programma
+
+**testato** — e la prova non è che il conto torni, è che **senza lucchetto non
+torna**:
+
+```
+filiprova: 4 fili, 20000 giri l'uno
+  col lucchetto   80000   atteso  80000   esatto
+  senza           20000   atteso  80000   perso per strada
+  scambi di mano  80000   i fili si alternano davvero
+```
+
+Sessantamila incrementi persi sono quattro flussi che si pestano i piedi sulla
+stessa memoria. Se i fili fossero finti — se `thread_crea` eseguisse la
+funzione dentro chi chiama — quel numero sarebbe 80000 come l'altro, e la prova
+sarebbe passata senza provare niente.
+
+**La differenza fra un processo e un filo è una riga: la page directory.**
+`proc_create` ne alloca una nuova, `proc_thread_crea` copia quella del
+capogruppo. Non c'è una riga dello scheduler che sia stata toccata: stessa run
+queue, stesso quanto, stesso `context_switch` — che riceveva già il CR3 come
+parametro. E `tgid` (il pid del primo del gruppo) vale `pid` per un processo
+normale, così tutto il kernel che non sa niente di fili continua a funzionare
+senza un solo `if`.
+
+**I descrittori si condividono per puntatore, non per copia**: due fili che
+aprono e chiudono file devono vedere la stessa tabella. Nel PCB è comparso
+`fdt`, e le 153 occorrenze di `->fds[` nel kernel sono diventate `->fdt[` con
+una sostituzione meccanica — per un processo normale `fdt == fds` e non cambia
+niente.
+
+**Lo stack no**: 64 KB per filo, in una banda riservata *a tutti* i processi
+all'avvio — anche a chi un filo non lo farà mai. Sono indirizzi, non pagine.
+L'alternativa (riservarla quando nasce il primo filo) vorrebbe dire abbassare
+il tetto dello heap sotto memoria che lo heap potrebbe già avere preso: o si
+rifiuta il filo, o gli si mette lo stack sopra la roba di qualcun altro.
+
+> **Chi esce porta via il gruppo**, come `exit_group` su Linux e per la stessa
+> ragione: gli altri fili vivono nella memoria di questo processo, e lasciarli
+> correre mentre lo spazio di indirizzamento se ne va vuol dire codice che gira
+> sopra pagine liberate. Provato apposta: un programma che crea tre fili
+> infiniti ed esce senza aspettarli lascia la macchina sana e il prompt torna.
+
+**Quel che non è per filo, ed è scritto invece che scoperto:** le variabili
+`__thread` e `errno` sono per *processo* — il blocco TLS è in comune. Darne uno
+per filo vuol dire copiarci l'immagine iniziale che sta nell'ELF; azzerarlo e
+basta farebbe partire a zero una variabile inizializzata a cinque, in silenzio.
+Fra un limite scritto e un valore sbagliato non c'è partita. E il lucchetto
+gira cedendo la CPU: va bene per una sezione critica corta, non per aspettare —
+un futex è il passo dopo.
+
 ### Le scorciatoie degli editor, e una cosa che avevo scritto sbagliata
 
 **testato** — scritta una riga nell'editor e premuto solo Ctrl+S: la riga di
