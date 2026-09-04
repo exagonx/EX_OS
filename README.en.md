@@ -183,6 +183,33 @@ not finished being built. The rule that follows holds for any kernel: **between
 creating a task and the moment it is ready there must be nothing that can
 block.**
 
+
+**And the wait that really sleeps.** `attesa_dormi`/`attesa_sveglia`: a thread
+leaves the scheduler's queue and comes back when somebody calls it — by the
+**address** it stopped on, not by pid, which is what lets a lock be just an
+integer, with no queue of names to remember.
+
+**The expected value closes the race**, and that is why the call takes three
+arguments instead of two: between the moment a waiter looks at the lock and the
+moment it falls asleep there is a window, and a wake-up arriving in there would
+be lost — the thread would sleep forever. The comparison is done by the
+*kernel*, with interrupts off. And the page is touched *before* turning them
+off: reading user memory can trigger a page fault that wants the disk, and a
+disk awaited with interrupts off is a stopped machine.
+
+**The lock has three states** — free, taken, taken-with-sleepers — and the third
+exists for whoever *releases*: without it they would have to call the wake on
+every unlock, just in case somebody is asleep. With the 2, a releaser holding a
+1 knows nobody is there: **with no contention the lock does not cost even one
+system call.**
+
+> **The test is a stopwatch, because nothing else tells them apart.** A wait
+> that spins and one that sleeps look the same from outside. Two measurements
+> with opposite outcomes are needed: with nobody waking and a 300 ms deadline it
+> came back after **310 ms** — it slept; woken by a thread after 100 ms with the
+> deadline at 2000, it came back after **100 ms** — the thread woke it, not the
+> clock.
+
 ### The editor shortcuts, and something I had written wrong
 
 **tested** — a line typed in the editor and only Ctrl+S pressed: the status line

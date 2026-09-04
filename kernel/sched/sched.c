@@ -1211,6 +1211,40 @@ int proc_thread_crea(uint32_t entry, uint32_t arg)
     return (int)filo->pid;
 }
 
+/* =============================================================================
+ * L'ATTESA CHE DORME
+ *
+ * ! CHI ASPETTA NON CONSUMA NIENTE, ed e' tutta la differenza con il lucchetto
+ * che gira cedendo la CPU: quello resta READY e lo scheduler continua a
+ * sceglierlo per scoprire ogni volta che non puo' fare niente. Qui il filo
+ * esce dalla coda e non ci torna finche' qualcuno non lo chiama per nome —
+ * cioe' per l'indirizzo su cui si e' fermato.
+ *
+ * ! E CHI SVEGLIA NON SA CHI STA SVEGLIANDO: cerca l'indirizzo, non il pid.
+ * E' cio' che permette a un lucchetto di essere un intero e basta, senza
+ * doversi ricordare chi c'e' in coda.
+ * ============================================================================= */
+int proc_attesa_sveglia(uint32_t dove, int quanti)
+{
+    uint32_t i, tgid = g_current ? g_current->tgid : 0;
+    int      svegliati = 0;
+
+    for (i = 0; i < MAX_PROCESSES; i++) {
+        Process *p = &g_process_pool[i];
+
+        if (quanti > 0 && svegliati >= quanti) break;
+        if (p->state != PROC_BLOCKED) continue;
+        if (p->attesa_dove != dove)   continue;
+        if (p->tgid != tgid)          continue;   /* l'indirizzo vale nel gruppo */
+
+        p->attesa_dove = 0;
+        p->block_until = 0;
+        sched_unblock_locked(p->pid);
+        svegliati++;
+    }
+    return svegliati;
+}
+
 void proc_gruppo_termina(uint32_t tgid, uint32_t risparmia_pid)
 {
     uint32_t i;

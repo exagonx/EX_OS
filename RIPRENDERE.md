@@ -184,6 +184,63 @@ sbaglia in un modo (EBADF), tutti i fili in un altro (ENOENT), e alla fine il
 principale deve ritrovare il SUO. E' il verso in cui la domanda ha una risposta
 che puo' essere no.
 
+### E L'ATTESA CHE DORME DAVVERO — il lucchetto smette di girare
+
+Nella quarta ora e' arrivata l'ultima cosa che mancava perche' i fili siano
+utili e non solo possibili: `attesa_dormi` e `attesa_sveglia`, cioe' due
+chiamate che fanno uscire un filo dalla coda dello scheduler e ce lo rimettono
+quando serve.
+
+! **CHI ASPETTA NON CONSUMA NIENTE**, ed e' tutta la differenza col lucchetto
+di prima: quello restava READY, e lo scheduler continuava a sceglierlo per
+scoprire ogni volta che non poteva fare niente. Adesso esce dalla coda e non ci
+torna finche' qualcuno non lo chiama — per l'INDIRIZZO su cui si e' fermato,
+non per il pid. E' cio' che permette a un lucchetto di essere un intero e basta,
+senza doversi ricordare chi c'e' in fila.
+
+! **IL VALORE ATTESO CHIUDE LA CORSA, ed e' la ragione per cui la chiamata ha
+tre argomenti invece di due.** Fra il momento in cui chi aspetta guarda il
+lucchetto e quello in cui si addormenta c'e' una finestra: se il padrone lo
+lascia proprio li' in mezzo, la sveglia arriva prima che ci sia qualcuno da
+svegliare, e il filo dorme per sempre. Il confronto lo fa il KERNEL, a
+interruzioni spente: o il valore e' ancora quello e allora si dorme, o e'
+cambiato e allora non si dorme affatto.
+
+! **E LA PAGINA SI TOCCA PRIMA DI SPEGNERE LE INTERRUZIONI.** Leggere memoria
+utente puo' far scattare un page fault che vuole il disco, e un disco che si
+aspetta a interruzioni spente e' una macchina ferma. Si legge una volta fuori —
+che e' cio' che la fa caricare — e poi si rilegge dentro, dove il confronto
+conta. E' la stessa lezione del task a meta' qui sotto, vista da un'altra parte:
+**quel che puo' bloccare va fatto prima di entrare nel pezzo che non puo'.**
+
+### IL LUCCHETTO HA TRE STATI, E IL TERZO E' PER CHI LASCIA
+
+    0 = libero    1 = preso, nessuno aspetta    2 = preso, c'e' chi dorme
+
+! **SENZA IL 2, CHI LASCIA DOVREBBE CHIAMARE LA SVEGLIA OGNI VOLTA** per il
+dubbio che qualcuno dorma — cioe' una chiamata di sistema a ogni sblocco, anche
+su un lucchetto che non ha mai avuto contesa. Con il 2, chi lasciando si
+ritrova in mano un 1 sa che non c'e' nessuno e non chiama niente: **senza
+contesa il lucchetto non costa nemmeno una chiamata di sistema.**
+
+! **E CHI SI ADDORMENTA METTE 2 PRIMA DI DORMIRE, SEMPRE**, anche se trovava 1:
+e' la promessa che chi lascia trovera' il 2 e chiamera' la sveglia. Metterlo
+«solo se serve» e' il modo classico di perdere un risveglio.
+
+### LA PROVA E' UN CRONOMETRO, PERCHE' NIENT'ALTRO DISTINGUE
+
+Un'attesa che gira a vuoto e una che dorme, viste da fuori, fanno la stessa
+cosa: il programma prosegue. Si distinguono solo col tempo, e servono DUE
+misure con esiti opposti:
+
+    nessuno sveglia, scadenza 300 ms   -> tornata dopo 310 ms
+                                          (se tornasse subito non avrebbe
+                                           dormito affatto)
+    un filo sveglia dopo 100 ms,
+    scadenza 2000 ms                   -> tornata dopo 100 ms
+                                          (se tornasse a 2000 a svegliarla
+                                           sarebbe stato l'orologio, non lui)
+
 ### IL DIFETTO PIU' ISTRUTTIVO: UN TASK A META' CHE VIENE ESEGUITO
 
 Aggiunto il TLS per filo, `filiprova` ha cominciato a morire **una volta su
@@ -233,6 +290,8 @@ mie (falliscono tutte sul «non riesco a creare il file di prova»).
                          volte e lo ritrova; il principale ritrova 42
     filiprova errno      il principale sbaglia con EBADF, i quattro fili con
                          ENOENT, e alla fine il principale ritrova il suo 9
+    filiprova attesa     310 ms con la scadenza a 300 e nessuno che sveglia;
+                         100 ms quando un filo sveglia e la scadenza e' 2000
 
 E due volte di fila, con i PCB riusati (tid 15-18, poi 20-23), piu' un `hello`
 dopo per vedere che la macchina sia sana.

@@ -251,7 +251,10 @@ STESSO PROGRAMMA»)
 =============================================================================
 
 Ci sono: thread_crea/thread_esci/thread_attendi nella libc (syscall 201-203),
-piu' Mutex/mutex_prendi/mutex_lascia. IL TLS E' PER FILO (ogni filo ha il suo
+piu' Mutex/mutex_prendi/mutex_lascia, che DORME (attesa_dormi/attesa_sveglia,
+syscall 204-205: si dorme su un indirizzo e si e' svegliati da chi lo cambia;
+senza contesa il lucchetto non costa nemmeno una chiamata di sistema).
+IL TLS E' PER FILO (ogni filo ha il suo
 blocco in cima al proprio stack, con l'immagine iniziale riletta dall'ELF) e
 ANCHE errno LO E': __errno_dove() legge il thread pointer da %gs:0 e lo usa
 come chiave in una tabella di sedici posti. Per questo elf_load fa un blocco
@@ -264,10 +267,11 @@ senza argomenti, «troppi» e «abbandona».
 
 QUEL CHE MANCA, in ordine di quanto pesa:
 
- 1. NIENTE CHE DORMA DAVVERO. mutex_prendi gira cedendo la CPU: va bene per una
-    sezione critica corta, non per aspettare un file o un altro filo. Serve un
-    futex — bloccarsi su un indirizzo, essere svegliati da chi lo cambia — e
-    con lui variabili di condizione e semafori.
+ 1. NON CI SONO ANCORA VARIABILI DI CONDIZIONE NE' SEMAFORI. Il mattone c'e'
+    (attesa_dormi/attesa_sveglia, e il lucchetto ci dorme sopra): mancano le
+    due cose che ci si costruiscono sopra, e sono poche righe di libc ciascuna.
+    Una variabile di condizione vuole «lascia il lucchetto, dormi, riprendilo»
+    fatto senza finestre in mezzo; un semaforo e' un contatore piu' l'attesa.
 
  2. OTTO FILI PER PROCESSO (FILO_MAX), capogruppo compreso, perche' tante sono
     le piazzole nella banda. Alzarlo vuol dire allargare la banda, cioe'

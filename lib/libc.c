@@ -237,6 +237,8 @@ typedef struct {
 #define SYS_THREAD_CREA    201
 #define SYS_THREAD_ESCI    202
 #define SYS_THREAD_ATTENDI 203
+#define SYS_ATTESA_DORMI   204
+#define SYS_ATTESA_SVEGLIA 205
 #define SYS_GETPID      20
 /* ! I NUMERI SONO DUPLICATI DA kernel/include/syscall.h, come tutti gli altri
  * qui sopra: libc.c non include quell'header. Sono quelli di Linux. */
@@ -4154,19 +4156,69 @@ static int mutex_xchg(volatile int *dove, int valore)
     return valore;
 }
 
-int mutex_prova(volatile int *m)
+/* ! `cmpxchg` VUOLE IL PREFISSO `lock`, a differenza di `xchg` che lo ha per
+ * costruzione. Su una macchina a un processore non cambierebbe niente;
+ * scriverlo giusto adesso costa un prefisso. */
+static int mutex_cmpxchg(volatile int *dove, int atteso, int nuovo)
 {
-    return mutex_xchg(m, 1) == 0;
+    __asm__ __volatile__("lock cmpxchgl %2, %1"
+                         : "+a"(atteso), "+m"(*dove)
+                         : "r"(nuovo)
+                         : "memory");
+    return atteso;
 }
 
+int attesa_dormi(volatile int *dove, int atteso, unsigned int ms)
+{
+    return err_posix(_syscall3(SYS_ATTESA_DORMI, (uint32_t)dove,
+                               (uint32_t)atteso, ms));
+}
+
+int attesa_sveglia(volatile int *dove, int quanti)
+{
+    return err_posix(_syscall2(SYS_ATTESA_SVEGLIA, (uint32_t)dove,
+                               (uint32_t)quanti));
+}
+
+int mutex_prova(volatile int *m)
+{
+    return mutex_cmpxchg(m, 0, 1) == 0;
+}
+
+/* -----------------------------------------------------------------------------
+ * IL LUCCHETTO CHE DORME — tre stati, e nessuna chiamata di sistema quando non
+ * c'e' contesa
+ *
+ *   0 = libero
+ *   1 = preso, e nessuno sta aspettando
+ *   2 = preso, e c'e' ALMENO UNO che dorme
+ *
+ * ! IL TERZO STATO ESISTE PER CHI LASCIA, non per chi prende: senza, chi
+ * lascia dovrebbe chiamare la sveglia ogni volta per il dubbio che qualcuno
+ * dorma — cioe' una chiamata di sistema a ogni sblocco, anche quando il
+ * lucchetto non l'ha mai voluto nessuno. Con il 2, chi lasciando si ritrova in
+ * mano un 1 sa che non c'e' nessuno e non chiama niente.
+ *
+ * ! E CHI SI ADDORMENTA METTE 2 PRIMA DI DORMIRE, sempre, anche se era 1: e'
+ * la promessa che chi lascia trovera' il 2 e chiamera' la sveglia. Metterlo
+ * solo «se serve» e' il modo classico di perdere un risveglio.
+ * --------------------------------------------------------------------------- */
 void mutex_prendi(volatile int *m)
 {
-    while (mutex_xchg(m, 1) != 0) sched_yield();
+    int v = mutex_cmpxchg(m, 0, 1);
+
+    if (v == 0) return;                 /* libero: preso senza chiedere niente */
+
+    if (v != 2) v = mutex_xchg(m, 2);
+    while (v != 0) {
+        attesa_dormi(m, 2, 0);
+        v = mutex_xchg(m, 2);
+    }
 }
 
 void mutex_lascia(volatile int *m)
 {
-    mutex_xchg(m, 0);   /* MUTEX_LIBERO, vedi libc.h */
+    if (mutex_xchg(m, 0) == 2) attesa_sveglia(m, 1);
 }
 
 int wait(int *stato)

@@ -783,6 +783,13 @@ typedef struct {
 #define SYS_THREAD_ESCI   202   /* ebx = codice            -> non ritorna */
 #define SYS_THREAD_ATTENDI 203  /* ebx = tid, ecx = int*   -> 0 o negativo */
 
+/* L'attesa che DORME, su cui si costruiscono lucchetti e variabili di
+ * condizione: si dorme su un indirizzo finche' qualcuno non sveglia chi
+ * aspetta LI'. Il valore atteso serve a chiudere la corsa fra «ho guardato» e
+ * «mi sono addormentato»: se nel frattempo e' cambiato, non si dorme affatto. */
+#define SYS_ATTESA_DORMI   204  /* ebx = indirizzo, ecx = valore, edx = ms */
+#define SYS_ATTESA_SVEGLIA 205  /* ebx = indirizzo, ecx = quanti (0 = tutti) */
+
 #define SYS_SU            254
 
 /* La mailbox IPC come sorgente. MAX_FD e' il primo numero che un descrittore
@@ -1236,6 +1243,8 @@ int32_t sys_waitpid(InterruptFrame *f);
 int32_t sys_thread_crea(InterruptFrame *f);
 int32_t sys_thread_esci(InterruptFrame *f);
 int32_t sys_thread_attendi(InterruptFrame *f);
+int32_t sys_attesa_dormi(InterruptFrame *f);
+int32_t sys_attesa_sveglia(InterruptFrame *f);
 int32_t sys_getpid(InterruptFrame *f);
 int32_t sys_getppid(InterruptFrame *f);
 int32_t sys_mmap(InterruptFrame *f);

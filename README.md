@@ -186,6 +186,33 @@ esecuzione un filo non finito di costruire. La regola che ne esce vale per
 qualunque kernel: **fra la creazione di un task e il momento in cui è pronto
 non ci deve stare niente che possa bloccare.**
 
+
+**E l'attesa che dorme davvero.** `attesa_dormi`/`attesa_sveglia`: un filo esce
+dalla coda dello scheduler e ci rientra quando qualcuno lo chiama — per
+l'**indirizzo** su cui si è fermato, non per il pid, ed è ciò che permette a un
+lucchetto di essere un intero e basta, senza doversi ricordare chi c'è in fila.
+
+**Il valore atteso chiude la corsa**, ed è la ragione per cui la chiamata ha tre
+argomenti invece di due: fra il momento in cui chi aspetta guarda il lucchetto e
+quello in cui si addormenta c'è una finestra, e una sveglia arrivata lì in mezzo
+si perderebbe — il filo dormirebbe per sempre. Il confronto lo fa il *kernel*, a
+interruzioni spente. E la pagina si tocca *prima* di spegnerle: leggere memoria
+utente può far scattare un page fault che vuole il disco, e un disco che si
+aspetta a interruzioni spente è una macchina ferma.
+
+**Il lucchetto ha tre stati** — libero, preso, preso-con-gente-che-dorme — e il
+terzo esiste per chi *lascia*: senza, dovrebbe chiamare la sveglia a ogni
+sblocco per il dubbio che qualcuno dorma. Con il 2, chi lasciando si ritrova in
+mano un 1 sa che non c'è nessuno: **senza contesa il lucchetto non costa nemmeno
+una chiamata di sistema.**
+
+> **La prova è un cronometro, perché nient'altro distingue.** Un'attesa che gira
+> a vuoto e una che dorme, viste da fuori, fanno la stessa cosa. Servono due
+> misure con esiti opposti: senza nessuno che svegli, con scadenza 300 ms, è
+> tornata dopo **310 ms** — ha dormito; svegliata da un filo dopo 100 ms con la
+> scadenza a 2000, è tornata dopo **100 ms** — l'ha svegliata lui, non
+> l'orologio.
+
 ### Le scorciatoie degli editor, e una cosa che avevo scritto sbagliata
 
 **testato** — scritta una riga nell'editor e premuto solo Ctrl+S: la riga di

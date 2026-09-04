@@ -194,6 +194,61 @@ static int prova_errno(void)
     return esito;
 }
 
+/* =============================================================================
+ * LA PROVA CHE L'ATTESA DORMA DAVVERO
+ *
+ * ! IL CRONOMETRO E' L'UNICO TESTIMONE ONESTO. Un'attesa che gira a vuoto e
+ * una che dorme fanno la stessa cosa vista da fuori — il programma prosegue —
+ * e si distinguono solo guardando QUANTO tempo passa e se il risveglio arriva
+ * dall'esterno o dalla scadenza. Percio' due misure con esiti opposti:
+ *
+ *   1. nessuno sveglia, scadenza 300 ms -> deve tornare DOPO ~300, non subito:
+ *      se tornasse subito vorrebbe dire che non ha dormito affatto;
+ *   2. un filo sveglia dopo ~100 ms, scadenza 2000 -> deve tornare MOLTO prima
+ *      della scadenza: se tornasse a 2000 vorrebbe dire che la sveglia non e'
+ *      arrivata e a svegliarlo e' stato l'orologio.
+ * ============================================================================= */
+static volatile int g_posto = 0;
+
+static void filo_sveglia(void *arg)
+{
+    (void)arg;
+    usleep(100000);                  /* 100 ms */
+    attesa_sveglia(&g_posto, 1);
+    thread_esci(0);
+}
+
+static int prova_attesa(void)
+{
+    unsigned t0, dt;
+    int tid, esito = 0;
+
+    printf("filiprova: l'attesa deve DORMIRE, non girare\n");
+
+    /* 1. nessuno sveglia: deve arrivare la scadenza */
+    t0 = uptime_ms();
+    attesa_dormi(&g_posto, 0, 300);
+    dt = uptime_ms() - t0;
+    printf("  senza nessuno che sveglia, scadenza 300 ms: tornata dopo %u ms  %s\n",
+           dt, (dt >= 250 && dt < 900) ? "ha dormito" : "NON HA DORMITO");
+    if (dt < 250 || dt >= 900) esito = 1;
+
+    /* 2. qualcuno sveglia dopo 100 ms, con la scadenza lontana */
+    tid = thread_crea(filo_sveglia, 0);
+    if (tid < 0) { printf("  thread_crea: errno %d\n", errno); return 1; }
+
+    t0 = uptime_ms();
+    attesa_dormi(&g_posto, 0, 2000);
+    dt = uptime_ms() - t0;
+    printf("  svegliata da un filo, scadenza 2000 ms: tornata dopo %u ms  %s\n",
+           dt, (dt >= 50 && dt < 900) ? "svegliata, non scaduta" : "SBAGLIATO");
+    if (dt < 50 || dt >= 900) esito = 1;
+    thread_attendi(tid, 0);
+
+    printf("\nfiliprova attesa: %s\n", esito ? "QUALCOSA NON VA" : "tutto a posto");
+    return esito;
+}
+
 /* Un filo che non finisce mai: serve alla prova dell'abbandono. */
 static void per_sempre(void *arg)
 {
@@ -243,6 +298,7 @@ int main(int argc, char **argv)
     if (argc > 1 && strcmp(argv[1], "troppi") == 0)    return troppi();
     if (argc > 1 && strcmp(argv[1], "tls") == 0)       return prova_tls();
     if (argc > 1 && strcmp(argv[1], "errno") == 0)     return prova_errno();
+    if (argc > 1 && strcmp(argv[1], "attesa") == 0)    return prova_attesa();
     {
     int tid[FILI];
     int i, codice, esito = 0;

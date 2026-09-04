@@ -913,6 +913,67 @@ int32_t sys_thread_attendi(InterruptFrame *frame)
 }
 
 /* =============================================================================
+ * L'ATTESA CHE DORME — SYS_ATTESA_DORMI (204), SYS_ATTESA_SVEGLIA (205)
+ *
+ * ! IL VALORE ATTESO CHIUDE LA CORSA, ed e' l'unica ragione per cui questa
+ * chiamata ha tre argomenti invece di due. Senza, fra il momento in cui chi
+ * aspetta guarda il lucchetto e quello in cui si addormenta ci sta una
+ * finestra: se il padrone lo lascia proprio li' in mezzo, la sveglia arriva
+ * prima che ci sia qualcuno da svegliare e il filo dorme per sempre. Qui il
+ * confronto lo fa il KERNEL, a interruzioni spente: o il valore e' ancora
+ * quello e allora si dorme, o e' cambiato e allora non si dorme affatto.
+ *
+ * ! E LA PAGINA SI TOCCA PRIMA DI SPEGNERE LE INTERRUZIONI. Leggere memoria
+ * utente puo' far scattare un page fault che vuole il disco, e un disco che si
+ * aspetta a interruzioni spente e' una macchina ferma. Si legge una volta
+ * fuori — che e' cio' che la fa caricare — e poi si rilegge dentro, dove il
+ * confronto conta.
+ * ============================================================================= */
+int32_t sys_attesa_dormi(InterruptFrame *frame)
+{
+    uint32_t  dove   = frame->ebx;
+    int32_t   atteso = (int32_t)frame->ecx;
+    uint32_t  ms     = frame->edx;
+    Process  *self   = proc_get_current();
+    int32_t   ora;
+
+    if (!syscall_verify_ptr((void *)dove, sizeof(int32_t))) return ERR(EFAULT);
+
+    ora = *(volatile int32_t *)dove;        /* fuori dal cli: fa caricare la pagina */
+
+    interrupts_disable();
+    if (*(volatile int32_t *)dove != atteso) {
+        interrupts_enable();
+        return ERR(EAGAIN);                 /* e' gia' cambiato: non si dorme */
+    }
+    (void)ora;
+
+    self->attesa_dove = dove;
+    self->block_until = ms ? (g_ticks + (ms / 10) + 1) : 0;
+
+    sched_block(PROC_BLOCKED);              /* riaccende lui le interruzioni */
+
+    /* Svegliati: o da proc_attesa_sveglia, o dalla scadenza, o da un segnale. */
+    self->attesa_dove = 0;
+    self->block_until = 0;
+    return 0;
+}
+
+int32_t sys_attesa_sveglia(InterruptFrame *frame)
+{
+    uint32_t dove   = frame->ebx;
+    int32_t  quanti = (int32_t)frame->ecx;
+    int32_t  n;
+
+    if (!syscall_verify_ptr((void *)dove, sizeof(int32_t))) return ERR(EFAULT);
+
+    interrupts_disable();
+    n = proc_attesa_sveglia(dove, quanti);
+    interrupts_enable();
+    return n;
+}
+
+/* =============================================================================
  * SYS_CONSOLE_SETFG (232) -- Dichiara il processo in primo piano
  *
  * ebx = pid (0 = nessuno)

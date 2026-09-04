@@ -501,6 +501,19 @@ typedef struct Process {
     uint32_t        tgid;           /* pid del capogruppo (== pid se non e' un filo) */
     FileDescriptor *fdt;            /* la tabella VERA: propria o del capogruppo */
     uint32_t        filo_posto;     /* quale piazzola di stack occupa (0 = capogruppo) */
+
+    /* ! DOVE STA ASPETTANDO, per l'attesa che DORME davvero (4 settembre
+     * 2026). E' l'indirizzo virtuale su cui il filo si e' addormentato: chi
+     * sveglia cerca proprio quel numero. Vale 0 per chi non aspetta niente.
+     *
+     * ! L'INDIRIZZO E' VIRTUALE E VALE DENTRO IL GRUPPO, non fra processi
+     * diversi. Due processi che condividono una pagina la vedono a indirizzi
+     * diversi, quindi per farli aspettare sullo stesso posto servirebbe
+     * l'indirizzo FISICO — che pero' cambia se la pagina va sul disco, e un
+     * risveglio perso e' un programma fermo per sempre. Dentro un gruppo di
+     * fili lo spazio di indirizzamento e' lo stesso e la domanda non esiste:
+     * e' li' che servono i lucchetti. */
+    uint32_t        attesa_dove;
     uint32_t        fili_banda;     /* cima della banda degli stack dei fili */
 
     /* Console virtuale di appartenenza (0..VGA_N_CONSOLE-1).
@@ -704,6 +717,8 @@ void     proc_reap_zombie(Process *p); /* Libera risorse zombie, segna UNUSED */
  * proc_thread_crea() rende il tid (che e' un pid) o un numero negativo.
  * `entry` e `arg` sono indirizzi utente: la partenza e il suo argomento. */
 int      proc_thread_crea(uint32_t entry, uint32_t arg);
+/* L'attesa che dorme: rende quanti fili sono stati svegliati. */
+int      proc_attesa_sveglia(uint32_t dove, int quanti);
 /* Quanti membri VIVI ha il gruppo di `tgid` (zombie esclusi). */
 int      proc_gruppo_vivi(uint32_t tgid);
 /* Termina tutti gli altri membri del gruppo: lo chiama chi esce dal processo. */

@@ -654,9 +654,10 @@ void    sched_yield(void);
  * pestano i piedi: chi ha bisogno del motivo di un errore lo legga dal valore
  * di ritorno, che nelle nostre funzioni c'e' sempre.
  *
- * ! E NON C'E' NIENTE CHE DORMA IN ATTESA: mutex_prendi() gira cedendo la CPU.
- * Va bene per una sezione critica corta — un contatore, una lista — e non va
- * bene per aspettare un file. Per quello c'e' l'IPC, che blocca davvero.
+ * ! IL LUCCHETTO DORME DAVVERO, dal 4 settembre 2026: chi non riesce a
+ * prenderlo esce dalla coda dello scheduler invece di girare cedendo la CPU, e
+ * ci rientra quando chi lo teneva lo lascia. Senza contesa non costa nemmeno
+ * una chiamata di sistema — vedi i tre stati in libc.c.
  * ============================================================================= */
 #define FILI_MAX_PER_PROCESSO  8   /* capogruppo compreso */
 
@@ -673,6 +674,20 @@ int     thread_attendi(int tid, int *codice); /* 0, oppure -1 con errno */
  * e' l'unica forma che non si puo' dimenticare di chiamare. */
 typedef volatile int Mutex;
 #define MUTEX_LIBERO  0
+
+/* ! L'ATTESA CHE DORME, ed e' quel che sta sotto al lucchetto. Si dorme su un
+ * indirizzo finche' qualcuno non sveglia chi aspetta LI'.
+ *
+ * `atteso` chiude la corsa fra «ho guardato» e «mi sono addormentato»: il
+ * confronto lo fa il kernel a interruzioni spente, e se il valore nel
+ * frattempo e' cambiato non si dorme affatto (rende -1 con EAGAIN). Senza,
+ * una sveglia arrivata in quella finestra si perderebbe e il filo dormirebbe
+ * per sempre.
+ *
+ * `ms` a zero vuol dire senza scadenza. L'indirizzo vale DENTRO il gruppo di
+ * fili: due processi diversi non si aspettano a vicenda cosi'. */
+int     attesa_dormi(volatile int *dove, int atteso, unsigned int ms);
+int     attesa_sveglia(volatile int *dove, int quanti);  /* 0 = tutti */
 
 void    mutex_prendi(Mutex *m);
 int     mutex_prova(Mutex *m);   /* 1 se preso, 0 se era occupato */
