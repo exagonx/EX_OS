@@ -54,6 +54,11 @@
 #define BARRA_H     30          /* la riga dell'indirizzo, sotto i menu */
 #define BARRA_Y     MENU_H      /* dove comincia */
 #define MARGINE     8
+/* La casella «Cerca» nella barra, misurata dalla destra come i due pulsanti:
+ * cosi' aggiungerne uno sposta solo l'indirizzo. 150 pixel sono una ventina
+ * di caratteri — quanti ne ha una ricerca vera. */
+#define CERCA_W     150
+#define CERCA_X     (FIN_W - MARGINE - 24 - 4 - 44 - 4 - CERCA_W)
 #define PERC_MAX    192
 #define ID_URL      1
 #define ID_VAI      2
@@ -66,12 +71,14 @@
 #define ID_DOC      9
 #define ID_HOME     10
 #define ID_IMPOST   11
+#define ID_CERCA    12
 #define ID_IMP_HOME    720
 #define ID_IMP_ORA     721
 #define ID_IMP_JS      722
 #define ID_IMP_IMG     723
 #define ID_IMP_CACHE   724
 #define ID_IMP_MOTORE  727
+#define ID_IMP_RICERCA 728
 #define ID_IMP_SALVA   725
 #define ID_IMP_ANNULLA 726
 #define PAGINA_MAX  (1024u * 1024u)

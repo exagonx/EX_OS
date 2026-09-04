@@ -152,6 +152,24 @@ Da CD, un driver ogni tanto muore appena avviato (raro, non chiuso).
     riprodotto, quindi la misura non distingue. Se il fault ricompare, il
     [WARN] dira' se e' quella strada o un'altra.
 
+! E UNA VOLTA SU QUATTORDICI, IN AVVIO DA CD CON LA RETE, IL KERNEL VA IN
+  PANIC. Visto il 4 settembre 2026, una volta su quattordici avvii contati:
+
+      Page Fault non gestito in ring0 a 0x0421308c (EIP=0x00109610)
+
+  succede subito dopo «pci: servizio 'pci' attivo», cioe' mentre /boot/avvio.sh
+  accende la rete, e prima che parta qualunque cosa grafica. L'EIP si risolve
+  con `nm build/kernel.elf` ed e' dentro kfree, al controllo del footer
+  0xdeadbeef: kfree ha ricevuto un blocco la cui INTESTAZIONE dice una misura
+  sballata, e leggendo il footer e' finito fuori dalle pagine mappate.
+  L'indirizzo letto sta nella zona delle tabelle delle librerie condivise
+  (0x4000000 e 0x4200000), cioe' e' un indirizzo UTENTE arrivato dove ci
+  vorrebbe un blocco dell'heap del kernel.
+  ! NON E' PROVATO CHE SIA LO STESSO DIFETTO DEI DRIVER QUI SOPRA: la firma e'
+  diversa (li' un fault utente a 0, qui un panic in ring0), la frequenza e' la
+  stessa e il momento anche. Non e' stato riprodotto in nove avvii di fila
+  fatti apposta.
+
 ! DENTRO UN SINGOLO PASSO DELLA STRETTA TLS NON SI RESPIRA. La stretta di mano
   adesso legge a pezzi come tutto il resto (diario: 3 settembre notte, «LA
   CASSETTA POSTALE HA UN PADRONE»), e la finestra resta viva anche durante il
@@ -617,7 +635,13 @@ UNA STRADA CHIUSA, PERCHE' NON SI RIAPRA
   BROWSER»). Mojeek invece manda un Captcha; marginalia e wikipedia rispondono
   in HTML semplice come DuckDuckGo.
 
-! QUEL CHE MANCA ADESSO E' LA COMODITA', NON LA POSSIBILITA': si cerca
-  scrivendo l'indirizzo a mano. Una casella «Cerca» che componga l'indirizzo
-  del motore scelto — e la scelta del motore nelle impostazioni — sono poche
-  righe, e sono il prossimo passo naturale.
+! E LA CASELLA «CERCA» C'E', dal 4 settembre 2026 (diario: «LA CASELLA CERCA,
+  E DUE CASELLE NELLA STESSA BARRA»). Sta a destra nella barra dell'indirizzo:
+  si scrivono le parole, si preme Invio, e il navigatore compone l'indirizzo del
+  motore scelto. I motori sono tre — duckduckgo (predefinito), wikipedia,
+  marginalia — e si scelgono in File > Impostazioni; la chiave nel file e'
+  «ricerca». Sono tutti e tre provati in rete dentro EX-OS.
+  ! INVIO FA DUE COSE DIVERSE, e la differenza e' il fuoco: nella casella di
+  sinistra apre l'indirizzo, in quella di destra cerca. Il messaggio del tasto
+  non dice da quale casella arrivi — per saperlo e' nato ex_fuoco_chi() nel
+  toolkit.

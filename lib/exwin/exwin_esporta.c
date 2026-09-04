@@ -108,6 +108,9 @@ static const char *const g_nomi[] = {
     "ex_font_nome",
 
     "ex_fuoco_via",
+    /* Aggiunta il 4 settembre 2026: due caselle nella stessa barra vogliono
+     * sapere quale ha il fuoco — vedi la casella «Cerca» del navigatore. */
+    "ex_fuoco_chi",
     "ex_spegni_scrivania",
     "ex_appunti_metti",
     "ex_appunti_prendi",
@@ -204,6 +207,7 @@ static void *const g_indirizzi[] = {
     (void *)ex_font_nome,
 
     (void *)ex_fuoco_via,
+    (void *)ex_fuoco_chi,
     (void *)ex_spegni_scrivania,
     (void *)ex_appunti_metti,
     (void *)ex_appunti_prendi,

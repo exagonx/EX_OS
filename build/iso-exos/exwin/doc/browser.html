@@ -42,6 +42,9 @@
 <tr><th>Voglio...</th><th>Come si fa</th></tr>
 <tr><td>aprire un sito</td>
     <td>scrivi l'indirizzo in alto e premi <b>Invio</b></td></tr>
+<tr><td>cercare in rete</td>
+    <td>scrivi le parole nella casella <b>Cerca</b>, a destra della barra, e
+        premi <b>Invio</b></td></tr>
 <tr><td>aprire un file HTML del disco</td>
     <td><b>File &gt; Apri...</b>, oppure <code>Ctrl+O</code></td></tr>
 <tr><td>salvare la pagina che sto guardando</td>
@@ -56,7 +59,8 @@
         cima alla pagina</td></tr>
 <tr><td>tornare alla pagina iniziale</td>
     <td><b>File &gt; Pagina iniziale</b>, oppure <code>Ctrl+H</code></td></tr>
-<tr><td>cambiare pagina iniziale, o spegnere JavaScript</td>
+<tr><td>cambiare pagina iniziale, il motore di ricerca, o spegnere
+        JavaScript</td>
     <td><b>File &gt; Impostazioni...</b></td></tr>
 <tr><td>uscire</td>
     <td><b>File &gt; Esci</b>, oppure <code>Ctrl+Q</code></td></tr>
@@ -70,6 +74,49 @@ la rete e' <code>exhttp</code>, l'albero della pagina e' <code>exhtml</code>,
 i fogli di stile <code>excss</code>, le immagini <code>eximg</code>,
 JavaScript <code>exjs</code> con il ponte <code>exdom</code>, e i caratteri
 li misura e li disegna <code>exfont</code>.
+</p>
+
+<h2>Cercare</h2>
+
+<p>
+La casella <b>Cerca</b> sta a destra nella stessa barra dell'indirizzo: si
+scrivono le parole e si preme <b>Invio</b>. Il navigatore compone l'indirizzo
+del motore scelto e ci va &mdash; e' la stessa cosa che scriverlo a mano, senza
+scriverlo a mano. Le parole si codificano come quelle di un modulo, quindi
+<code>pane &amp; vino</code> arriva intero invece di diventare due campi.
+</p>
+
+<p class="nota">
+<b>Invio fa due cose diverse, e la differenza e' dove sta il cursore:</b> nella
+casella di sinistra apre l'indirizzo, in quella di destra cerca. Con
+<code>Tab</code> si passa da una all'altra.
+</p>
+
+<p>
+I motori sono tre, e si scelgono in <b>File &gt; Impostazioni...</b>:
+</p>
+
+<table border="1">
+<tr><th>Motore</th><th>Che cosa rende</th></tr>
+<tr><td><b>duckduckgo</b></td>
+    <td>quello predefinito. <code>html.duckduckgo.com</code> risponde in HTML
+        semplice &mdash; dieci risultati, nessuno script &mdash; ed e' il
+        motivo per cui e' il primo.</td></tr>
+<tr><td><b>wikipedia</b></td>
+    <td>cerca dentro Wikipedia in italiano, e su un titolo esatto ci porta
+        dritto.</td></tr>
+<tr><td><b>marginalia</b></td>
+    <td>un motore piccolo che indicizza pagine scritte a mano: risponde in
+        HTML semplice come DuckDuckGo, e trova cose diverse.</td></tr>
+</table>
+
+<p class="nota">
+<b>Google non c'e', e non e' una dimenticanza.</b> <code>google.com</code>
+risponde con novantamila byte, tre script e <i>zero</i> collegamenti di
+risultato dentro l'HTML: i risultati li costruisce il JavaScript, quindi non
+c'e' browser senza JS che possa vederli &mdash; nemmeno portandone uno di terze
+parti. Mojeek, provato lo stesso giorno, manda un Captcha. I tre qui sopra sono
+quelli che rispondono davvero.
 </p>
 
 <h2>Aprire una pagina</h2>
@@ -139,7 +186,7 @@ qui si rivede la stessa pagina soltanto se non aveva nulla di tutto cio'.
 <h2>Le impostazioni</h2>
 
 <p>
-<b>File &gt; Impostazioni...</b> apre una schermata con quattro cose. Si
+<b>File &gt; Impostazioni...</b> apre una schermata con cinque cose. Si
 lavora su una copia: niente cambia finche' non si preme <b>Salva</b>.
 </p>
 
@@ -161,6 +208,10 @@ lavora su una copia: niente cambia finche' non si preme <b>Salva</b>.
         <code>try/catch</code>, ES2017 &mdash; e sta in
         <code>/exwin/lib/quickjs.so</code>, che si puo' anche non aver
         installato. Vale dalla pagina successiva.</td></tr>
+<tr><td><b>Cerca con</b></td>
+    <td>quale motore usa la casella <b>Cerca</b>:
+        <b>duckduckgo</b>, <b>wikipedia</b> o <b>marginalia</b>. Il pulsante
+        gira fra i tre e la scritta dice quello di adesso.</td></tr>
 <tr><td><b>Immagini</b></td>
     <td>spente, al loro posto si legge il testo alternativo &mdash; che e'
         esattamente cio' a cui l'attributo <code>alt</code> serve. Su una rete
@@ -191,7 +242,10 @@ la prima che sbaglia.
 
 <table border="1">
 <tr><th>Tasto</th><th>Cosa fa</th></tr>
-<tr><td><code>Invio</code></td><td>va all'indirizzo scritto</td></tr>
+<tr><td><code>Invio</code></td>
+    <td>nella casella dell'indirizzo va all'indirizzo scritto; in quella
+        <b>Cerca</b> cerca le parole scritte</td></tr>
+<tr><td><code>Tab</code></td><td>passa da una casella all'altra</td></tr>
 <tr><td><code>Su</code> / <code>Giu'</code></td><td>scorre di una riga</td></tr>
 <tr><td><code>PagSu</code> / <code>PagGiu'</code></td><td>scorre di una schermata</td></tr>
 <tr><td><code>Inizio</code> / <code>Fine</code></td><td>cima e fondo della pagina</td></tr>

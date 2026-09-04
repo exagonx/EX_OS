@@ -293,6 +293,18 @@ void        ex_fuoco(ExFinestra controllo);
  * EXM_TASTO, e chi li vuole se li gestisce. */
 void        ex_fuoco_via(ExFinestra finestra);
 
+/* ! CHI HA IL FUOCO ADESSO, e l'ha chiesto il navigatore quando nella barra
+ * sono comparse DUE caselle: l'indirizzo e la ricerca. Invio arriva
+ * all'applicazione come EXM_TASTO — la casella lascia passare Invio apposta —
+ * ma il messaggio non dice da quale casella arrivi, e il fuoco lo sa solo il
+ * toolkit. Senza questa, l'unico modo era indovinarlo guardando quale testo e'
+ * cambiato: cioe' sbagliarlo il giorno che uno cerca due volte la stessa cosa.
+ *
+ * Rende il controllo che ha il fuoco dentro `finestra` (la radice: il fuoco e'
+ * della finestra di primo livello, non del singolo controllo), oppure 0 se non
+ * ce l'ha nessuno — che e' anche il caso dopo ex_fuoco_via. */
+ExFinestra  ex_fuoco_chi(ExFinestra finestra);
+
 /* ! SPEGNE LA SCRIVANIA INTERA, non questa finestra. Chiede al server di
  * mandare a ogni applicazione la stessa chiusura della crocetta, di aspettare
  * che se ne vadano, di rimettere il modo testo e di morire.

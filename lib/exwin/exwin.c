@@ -853,6 +853,15 @@ void ex_fuoco(ExFinestra f)
     fuoco_metti(radice_h(f), f);
 }
 
+/* Chi ha il fuoco adesso, o 0. Vale la radice, non il controllo che si passa:
+ * il fuoco e' un campo della finestra di primo livello. */
+ExFinestra ex_fuoco_chi(ExFinestra f)
+{
+    Oggetto *r = radice(f);
+
+    return r ? r->fuoco : 0;
+}
+
 /* Il prossimo controllo che accetta il fuoco, in ordine di creazione. */
 /* La finestra MDI che contiene questo oggetto, se ce n'e' una: definita piu'
  * avanti, insieme alle altre di servizio dell'MDI. */
@@ -2762,11 +2771,25 @@ static void disegna_oggetto(Oggetto *o)
 
     case CL_TESTO: {
         Oggetto *r = radice(o->padre);
-        /* ! IL CURSORE STA DOPO IL TESTO SCRITTO, e la sua x e' la LARGHEZZA
-         * di quel testo — non il numero di lettere per otto. Con un font
-         * proporzionale la seconda si allontanerebbe dalla prima di piu' a
-         * ogni lettera battuta. */
-        int col = larg(o->titolo);
+        /* ! IL TESTO PIU' LUNGO DELLA CASELLA SI MOSTRA DALLA CODA, e prima si
+         * mostrava tutto: ex_scrivi non taglia niente, quindi le lettere in
+         * piu' finivano SOPRA il controllo accanto. Finche' le caselle erano
+         * larghe non mordeva; si e' visto il giorno in cui nella barra del
+         * navigatore ne sono comparse due — un indirizzo lungo scriveva sopra
+         * l'etichetta «Cerca».
+         *
+         * ! E SI MOSTRA LA CODA, NON LA TESTA, perche' qui il cursore sta
+         * SEMPRE in fondo: questa casella non ha modo di muoverlo in mezzo
+         * (vedi tasto_al_fuoco: si aggiunge e si cancella dalla fine). Chi
+         * scrive deve vedere quel che sta scrivendo, non l'inizio di un
+         * indirizzo che ha gia' finito di battere. Il giorno che il cursore si
+         * potra' spostare, questa finestra dovra' seguire LUI. */
+        const char *t = o->titolo;
+        int         dentro = o->w - 6;      /* i 3 pixel di bordo, due volte */
+        int         col;
+
+        while (*t && larg(t) > dentro) t++;
+        col = larg(t);
 
         ex_riempi(o->padre, x, y, o->w, o->h, EX_BIANCO);
         /* ! IL BORDO DICE CHI HA I TASTI. Senza, chi guarda non sa dove
@@ -2774,7 +2797,7 @@ static void disegna_oggetto(Oggetto *o)
         ex_riquadro_disegna(o->padre, x, y, o->w, o->h,
                             (r && r->fuoco == (ExFinestra)(o - g_ogg + 1))
                             ? EX_BLU : EX_GRIGIO_SC);
-        ex_scrivi(o->padre, x + 3, y + (o->h - 16) / 2, o->titolo, EX_NERO);
+        ex_scrivi(o->padre, x + 3, y + (o->h - 16) / 2, t, EX_NERO);
 
         if (r && r->fuoco == (ExFinestra)(o - g_ogg + 1))
             ex_riempi(o->padre, x + 3 + col, y + 3, 1, o->h - 6, EX_NERO);

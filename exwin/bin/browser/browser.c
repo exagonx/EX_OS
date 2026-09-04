@@ -409,6 +409,9 @@ static char          g_storia[STORIA_MAX][EXHTTP_URL_MAX];
 static int           g_storia_n = 0;
 
 ExFinestra    g_f, g_url, g_stato;
+/* La casella della ricerca, accanto a quella dell'indirizzo: non e' esportata
+ * perche' la guarda solo la procedura della finestra. */
+static ExFinestra g_cerca;
 ExFont        g_font_testo = 0, g_font_titolo = 0;
 int           g_scorri = 0, g_altezza = 0;
 static char          g_qui[EXHTTP_URL_MAX] = "";
@@ -441,6 +444,40 @@ static int           g_cache_accesa = 1;
  * sempre, mentre quickjs.so e' mezzo megabyte che si puo' non aver
  * installato. */
 static int           g_qjs = 0;
+
+/* -----------------------------------------------------------------------------
+ * I MOTORI DI RICERCA — un nome e un pezzo di indirizzo
+ *
+ * ! CERCARE SI POTEVA GIA', scrivendo a mano
+ * `html.duckduckgo.com/html/?q=pane+e+vino`. Quel che mancava era la comodita',
+ * e questa e' tutta qui: una casella che mette davanti il pezzo giusto e
+ * codifica quel che si e' scritto.
+ *
+ * ! IL MODELLO FINISCE CON LA QUERY, e non ha un segnaposto in mezzo. Tutti e
+ * tre i motori mettono le parole in fondo, quindi comporre e' concatenare; il
+ * giorno che ne serva uno con qualcosa DOPO le parole, questo diventa un
+ * secondo campo «coda» e non un linguaggio di modelli.
+ *
+ * ! E SONO SOLO MOTORI CHE RISPONDONO IN HTML SEMPLICE, che qui non e' un
+ * gusto ma l'unica cosa che funziona: google.com risponde 200 con novantamila
+ * byte, tre script e ZERO link di risultato dentro l'HTML — i risultati li
+ * costruisce il JavaScript — e Mojeek manda un Captcha. Sono misure, e stanno
+ * nel diario al 2 e al 4 settembre 2026. Metterli qui vorrebbe dire una voce
+ * che promette una ricerca e rende una pagina vuota.
+ * --------------------------------------------------------------------------- */
+typedef struct {
+    const char *nome;           /* quel che si scrive nel file e si legge nel menu */
+    const char *modello;        /* l'indirizzo, fino a subito prima delle parole */
+} Motore;
+
+static const Motore g_motori[] = {
+    { "duckduckgo", "https://html.duckduckgo.com/html/?q="            },
+    { "wikipedia",  "https://it.wikipedia.org/w/index.php?search="    },
+    { "marginalia", "https://old-search.marginalia.nu/search?query="  },
+};
+#define MOTORI_N ((int)(sizeof(g_motori) / sizeof(g_motori[0])))
+
+static int           g_ricerca = 0;     /* quale dei tre: il primo e' il provato */
 
 /* -----------------------------------------------------------------------------
  * Le immagini
@@ -1609,6 +1646,18 @@ static void imp_riga(char *riga)
         else if (v[0] == 'e' || v[0] == 'E') g_qjs = 0;
         return;
     }
+    if (uguale(k, "ricerca")) {
+        /* ! IL NOME SI CONFRONTA CON LA TAVOLA, e un nome che non c'e' lascia
+         * le cose come stanno: e' la stessa regola della chiave sconosciuta,
+         * applicata al VALORE. Un file scritto da una versione con un motore
+         * in piu' non deve far cadere la scelta di questa. */
+        int i;
+
+        for (i = 0; i < MOTORI_N; i++) {
+            if (uguale(v, g_motori[i].nome)) { g_ricerca = i; return; }
+        }
+        return;
+    }
     /* una chiave che non conosciamo: si salta, e non e' un errore */
 }
 
@@ -1661,11 +1710,13 @@ static int imp_scrivi(void)
              "home       = %s\n"
              "javascript = %s\n"
              "motore     = %s\n"
+             "ricerca    = %s\n"
              "immagini   = %s\n"
              "cache      = %s\n",
              g_home,
              g_js_acceso    ? "si" : "no",
              g_qjs          ? "quickjs" : "exjs",
+             g_motori[g_ricerca].nome,
              g_img_accese   ? "si" : "no",
              g_cache_accesa ? "si" : "no");
 
@@ -3452,9 +3503,9 @@ static void informazioni(void)
  * indietro — cioe' tenere la copia lo stesso, ma nel posto piu' scomodo.
  * ============================================================================= */
 static ExFinestra g_imp_f, g_imp_campo, g_imp_bjs, g_imp_bimg, g_imp_bcache;
-static ExFinestra g_imp_bmotore;
+static ExFinestra g_imp_bmotore, g_imp_bricerca;
 static int        g_imp_fatto;          /* 0 = aperta, 1 = salva, 2 = annulla */
-static int        g_imp_js, g_imp_img, g_imp_cache, g_imp_qjs;
+static int        g_imp_js, g_imp_img, g_imp_cache, g_imp_qjs, g_imp_ricerca;
 
 static void imp_etichette(void)
 {
@@ -3468,6 +3519,12 @@ static void imp_etichette(void)
     snprintf(t, sizeof(t), "Motore:  %s", g_imp_qjs ? "QuickJS (594 KB)"
                                                     : "ExJs (66 KB)");
     ex_titolo(g_imp_bmotore, t);
+    /* ! IL PULSANTE GIRA FRA I TRE, e la scritta dice quello di ADESSO. Con
+     * tre voci una spunta non basta piu' e una lista sarebbe un controllo in
+     * piu' per tre righe: premere e vedere il nome cambiare e' la stessa cosa
+     * che si fa con gli altri interruttori qui accanto. */
+    snprintf(t, sizeof(t), "Cerca con:  %s", g_motori[g_imp_ricerca].nome);
+    ex_titolo(g_imp_bricerca, t);
     snprintf(t, sizeof(t), "Immagini:  %s", g_imp_img ? "accese" : "spente");
     ex_titolo(g_imp_bimg, t);
     snprintf(t, sizeof(t), "Cache su disco:  %s",
@@ -3492,6 +3549,11 @@ static long imp_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         if (wp == ID_IMP_IMG)   { g_imp_img   = !g_imp_img;   imp_etichette(); return 0; }
         if (wp == ID_IMP_CACHE) { g_imp_cache = !g_imp_cache; imp_etichette(); return 0; }
         if (wp == ID_IMP_MOTORE){ g_imp_qjs   = !g_imp_qjs;   imp_etichette(); return 0; }
+        if (wp == ID_IMP_RICERCA) {
+            g_imp_ricerca = (g_imp_ricerca + 1) % MOTORI_N;
+            imp_etichette();
+            return 0;
+        }
 
         /* ! «USA LA PAGINA DI ADESSO» E' L'UNICO MODO COMODO DI RIEMPIRE QUEL
          * CAMPO. Nessuno ricopia a mano un indirizzo lungo guardandolo nella
@@ -3535,6 +3597,7 @@ static void impostazioni(void)
     g_imp_img   = g_img_accese;
     g_imp_cache = g_cache_accesa;
     g_imp_qjs   = g_qjs;
+    g_imp_ricerca = g_ricerca;
     g_imp_fatto = 0;
 
     g_imp_f = ex_crea("finestra", "Impostazioni",
@@ -3559,6 +3622,8 @@ static void impostazioni(void)
                            g_imp_f, ID_IMP_CACHE, 0);
     g_imp_bmotore = ex_crea("pulsante", "", EX_FIGLIO, 240, 116, 188, 24,
                             g_imp_f, ID_IMP_MOTORE, 0);
+    g_imp_bricerca = ex_crea("pulsante", "", EX_FIGLIO, 240, 146, 188, 24,
+                             g_imp_f, ID_IMP_RICERCA, 0);
 
     ex_crea("etichetta", "Si scrivono in $HOME/.app/browser/impostazioni.txt",
             EX_FIGLIO, 12, 214, 416, 16, g_imp_f, 0, 0);
@@ -3586,6 +3651,7 @@ static void impostazioni(void)
         g_img_accese   = g_imp_img;
         g_cache_accesa = g_imp_cache;
         g_qjs          = g_imp_qjs;
+        g_ricerca      = g_imp_ricerca;
 
         ex_distruggi(g_imp_f);
         g_imp_f = 0;
@@ -3732,6 +3798,52 @@ static int aggiungi_codificato(char *out, int pos, int max, const char *s)
         }
     }
     return pos;
+}
+
+/* =============================================================================
+ * CERCARE — comporre l'indirizzo del motore scelto
+ *
+ * ! LA CODIFICA E' LA STESSA DEI MODULI, e non e' un riuso di comodo: cercare
+ * «pane & vino» dalla casella e mandarlo da un modulo HTML sono la stessa
+ * operazione vista da due porte diverse, e due codificatori sarebbero due da
+ * tenere d'accordo — con lo stesso difetto da trovare due volte.
+ *
+ * ! GLI SPAZI IN FONDO E DAVANTI NON SI MANDANO. Una parola copiata da una
+ * pagina si porta dietro uno spazio quasi sempre, e `+pane` non e' `pane` per
+ * tutti i motori: si toglie qui, dove costa quattro righe, invece che nel
+ * momento in cui qualcuno si chiedera' perche' quella ricerca non trova niente.
+ * ========================================================================== */
+static void cerca(const char *parole)
+{
+    char url[EXHTTP_URL_MAX];
+    int  pos, fine;
+
+    while (*parole == ' ' || *parole == '\t') parole++;
+    fine = (int)strlen(parole);
+    while (fine > 0 && (parole[fine - 1] == ' ' || parole[fine - 1] == '\t')) fine--;
+
+    if (fine <= 0) {
+        dico("scrivi che cosa cercare nella casella «Cerca»");
+        return;
+    }
+
+    pos = (int)strlen(g_motori[g_ricerca].modello);
+    if (pos >= (int)sizeof(url)) return;        /* non ci sta: non succede */
+    memcpy(url, g_motori[g_ricerca].modello, (unsigned int)pos);
+
+    {
+        /* aggiungi_codificato vuole una stringa: le parole tagliate della coda
+         * si copiano in un appoggio invece di codificare anche gli spazi. */
+        char q[512];
+        int  n = fine < (int)sizeof(q) - 1 ? fine : (int)sizeof(q) - 1;
+
+        memcpy(q, parole, (unsigned int)n);
+        q[n] = '\0';
+        pos = aggiungi_codificato(url, pos, (int)sizeof(url) - 1, q);
+    }
+    url[pos] = '\0';
+
+    vai(url, 1, 0);
 }
 
 
@@ -4267,6 +4379,12 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
             if (t && t[0]) vai(t, 1, 0);
             return 0;
         }
+        if (wp == ID_CERCA) {
+            const char *t = ex_testo_prendi(g_cerca);
+
+            cerca(t ? t : "");
+            return 0;
+        }
         if (wp == ID_INFO)  { informazioni(); return 0; }
         if (wp == ID_APRI)  { apri_locale();  return 0; }
         if (wp == ID_SALVA) { salva_pagina(); return 0; }
@@ -4514,10 +4632,24 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
             if (c == 'h' || c == 'H') { vai_a_casa();   return 0; }
         }
 
+        /* ! INVIO FA DUE COSE DIVERSE, E LA DIFFERENZA E' IL FUOCO. Nella
+         * barra ci sono due caselle, e il messaggio del tasto non dice da
+         * quale arrivi: la casella lascia passare Invio apposta, e chi ce
+         * l'ha lo sa solo il toolkit — ex_fuoco_chi(). Indovinarlo guardando
+         * quale testo e' cambiato vorrebbe dire sbagliarlo il giorno che uno
+         * cerca due volte la stessa cosa. */
         if (c == '\n' || c == '\r') {
-            const char *t = ex_testo_prendi(g_url);
+            if (ex_fuoco_chi(g_f) == g_cerca) {
+                const char *t = ex_testo_prendi(g_cerca);
 
-            if (t && t[0]) vai(t, 1, 0);
+                cerca(t ? t : "");
+                return 0;
+            }
+            {
+                const char *t = ex_testo_prendi(g_url);
+
+                if (t && t[0]) vai(t, 1, 0);
+            }
             return 0;
         }
         if (c == KBD_K_DOWN)  { scorri(24);  return 0; }
@@ -4756,8 +4888,22 @@ int main(int argc, char **argv)
             24, 22, g_f, ID_INFO, 0);
     ex_crea("pulsante", "Vai", EX_FIGLIO, FIN_W - MARGINE - 24 - 4 - 44,
             BARRA_Y + 4, 44, 22, g_f, ID_VAI, 0);
+
+    /* ! LA CASELLA DELLA RICERCA STA A DESTRA, PRIMA DI «VAI», e si misura
+     * anch'essa dalla destra: e' l'indirizzo a restringersi, che e' l'unico
+     * pezzo che puo' farlo senza diventare inutile — resta largo 436 pixel su
+     * 760, cioe' una sessantina di caratteri.
+     *
+     * ! E L'ETICHETTA C'E' PERCHE' UNA CASELLA VUOTA NON DICE COS'E'. Due
+     * caselle bianche una accanto all'altra sono due misteri; con «Cerca»
+     * davanti, la seconda si spiega da sola e la prima resta l'indirizzo. */
+    ex_crea("etichetta", "Cerca", EX_FIGLIO, CERCA_X - 44, BARRA_Y + 7,
+            40, 16, g_f, 0, 0);
+    g_cerca = ex_crea("testo", "", EX_FIGLIO, CERCA_X, BARRA_Y + 4,
+                      CERCA_W, 22, g_f, ID_CERCA, 0);
+
     g_url = ex_crea("testo", "", EX_FIGLIO, MARGINE + 32, BARRA_Y + 4,
-                    FIN_W - MARGINE - 24 - 4 - 44 - 4 - (MARGINE + 32), 22,
+                    CERCA_X - 44 - 4 - (MARGINE + 32), 22,
                     g_f, ID_URL, 0);
 
     g_stato = ex_crea("etichetta", "", EX_FIGLIO,
@@ -4793,7 +4939,7 @@ int main(int argc, char **argv)
     if (!g_home[0]) home_predefinita();
 
     ex_fuoco(g_url);
-    dico("scrivi un indirizzo e premi Invio. http, https e file locali.");
+    dico("un indirizzo a sinistra, delle parole in «Cerca», e Invio.");
     ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
     disegna();
 

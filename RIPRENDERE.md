@@ -28,6 +28,105 @@ manca» apre quello.
 
 # DOVE RIPRENDERE — 4 settembre 2026
 
+## 4 settembre 2026 — LA CASELLA «CERCA», E DUE CASELLE NELLA STESSA BARRA
+
+Cercare si poteva gia' dal 4 settembre mattina: `html.duckduckgo.com` risponde
+in HTML semplice e il navigatore lo mostra. Quel che mancava era **la
+comodita'** — si scriveva l'indirizzo del motore a mano — e adesso c'e' una
+casella **Cerca** a destra nella barra: parole, Invio, risultati.
+
+    https://html.duckduckgo.com/html/?q=gatti+persiani
+
+e' quel che il navigatore compone da solo quando nella casella si scrive
+`gatti persiani`.
+
+### TRE MOTORI, E SONO TRE PERCHE' TRE RISPONDONO
+
+    duckduckgo   html.duckduckgo.com/html/?q=        il predefinito
+    wikipedia    it.wikipedia.org/w/index.php?search=
+    marginalia   old-search.marginalia.nu/search?query=
+
+! **SONO SOLO MOTORI CHE RISPONDONO IN HTML SEMPLICE**, e non e' un gusto:
+`google.com` risponde 200 con novantamila byte, tre script e **zero**
+collegamenti di risultato dentro l'HTML — i risultati li costruisce il
+JavaScript — e Mojeek manda un Captcha. Sono misure gia' pagate (2 e 4
+settembre): metterli in elenco vorrebbe dire una voce che promette una ricerca
+e rende una pagina vuota. Tutti e tre quelli in tavola sono stati provati **in
+rete, dentro EX-OS**, non sulla carta.
+
+! **IL MODELLO FINISCE CON LA QUERY, e non ha un segnaposto in mezzo.** Tutti e
+tre mettono le parole in fondo, quindi comporre e' concatenare. Il giorno che
+ne serva uno con qualcosa DOPO le parole, quello diventa un secondo campo
+«coda» — non un linguaggio di modelli.
+
+! **E LA CODIFICA E' QUELLA DEI MODULI**, la stessa `aggiungi_codificato()` che
+usa `<form>`: cercare «pane & vino» dalla casella e mandarlo da un modulo sono
+la stessa operazione vista da due porte, e due codificatori sarebbero due da
+tenere d'accordo — con lo stesso difetto da trovare due volte.
+
+### INVIO FA DUE COSE DIVERSE, E LA DIFFERENZA E' IL FUOCO
+
+Nella barra adesso ci sono due caselle. Invio, in una casella del toolkit,
+**arriva all'applicazione come `EXM_TASTO`** — la casella lo lascia passare
+apposta — ma il messaggio **non dice da quale casella arrivi**, e il fuoco lo
+sa solo il toolkit.
+
+! **PERCIO' E' NATA `ex_fuoco_chi()`**, otto righe: rende il controllo che ha
+il fuoco dentro una finestra. L'alternativa era indovinarlo guardando quale
+testo e' cambiato dall'ultima volta — cioe' sbagliarlo il giorno che qualcuno
+cerca due volte la stessa cosa.
+
+### E UN DIFETTO DEL TOOLKIT CHE NON MORDEVA FINCHE' LE CASELLE ERANO LARGHE
+
+Con la seconda casella, l'indirizzo si e' ristretto da 636 a 436 pixel. Alla
+prima pagina di Wikipedia il difetto era in fotografia: l'indirizzo lungo
+**scriveva sopra l'etichetta «Cerca»**.
+
+! **`ex_scrivi` NON TAGLIA NIENTE, e `CL_TESTO` non lo chiedeva a nessuno**: il
+testo piu' lungo della casella usciva dal riquadro e finiva sopra il controllo
+accanto. Non e' un difetto nato oggi — e' nato oggi il primo posto in cui due
+controlli sono cosi' vicini.
+
+! **SI MOSTRA LA CODA, NON LA TESTA**, e la ragione e' che in questa casella il
+cursore sta SEMPRE in fondo: non c'e' modo di spostarlo in mezzo (si aggiunge e
+si cancella dalla fine, vedi `tasto_al_fuoco`). Chi scrive deve vedere quel che
+sta scrivendo, non l'inizio di un indirizzo che ha gia' finito di battere. Il
+giorno che il cursore si potra' muovere, quella finestra dovra' seguire LUI —
+ed e' scritto li'.
+
+### COME SI E' PROVATO — TUTTO DENTRO EX-OS, IN RETE
+
+La ricetta e' quella solita (avvio automatico temporaneo in
+`applicazioni.txt`, rimesso subito; `netdetect -c` con venti secondi):
+
+    Tab, Tab, Tab, Tab       porta il fuoco dalla barra alla casella Cerca
+    «gatti persiani» + Invio l'indirizzo diventa html.duckduckgo.com/html/?q=...
+                             e i risultati si vedono: 200, 41864 byte, 769 nodi
+    F10, giu' x3, Invio      apre le Impostazioni: «Cerca con: duckduckgo»
+    due clic sul pulsante    duckduckgo -> wikipedia -> marginalia
+    Invio (salva) e cerca    l'indirizzo diventa old-search.marginalia.nu/...
+                             «Showing 25 search results»
+
+Wikipedia e marginalia provati anche a mano, uno per volta, per non mettere in
+elenco un motore che non risponde.
+
+### E UN PANIC VISTO UNA VOLTA SU QUATTORDICI, CHE NON E' DI OGGI
+
+Durante queste prove, un avvio da CD **con la rete** e' finito in
+
+    Page Fault non gestito in ring0 a 0x0421308c (EIP=0x00109610)
+
+subito dopo `pci: servizio 'pci' attivo`, prima di qualunque cosa grafica.
+`nm build/kernel.elf` dice che quell'EIP e' dentro **`kfree`**, al controllo del
+footer `0xdeadbeef`: il blocco aveva un'intestazione con una misura sballata, e
+leggendo il footer si e' finiti fuori dalle pagine mappate — su un indirizzo
+che sta nella zona delle tabelle delle librerie condivise, cioe' **utente**.
+
+! **NON SI E' RIPRODOTTO IN NOVE AVVII DI FILA** fatti apposta (piu' quattro
+riusciti prima e uno dopo: 13 su 14). Sta in `in_lavorazione.txt` sotto DIFETTI
+APERTI, accanto al fratello che gli somiglia — un driver che ogni tanto muore
+appena avviato — con scritto che **non e' provato** che siano lo stesso.
+
 ## 4 settembre 2026 — LA DIRECTORY E' DI TUTTI E DUE (e l'ambiente lo era gia')
 
 Un `chdir` dentro un filo adesso lo vedono gli altri. Era l'ultimo pezzo di

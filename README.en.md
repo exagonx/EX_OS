@@ -84,6 +84,36 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### The «Cerca» box, and two boxes in the same bar
+
+**tested, on the network, inside EX-OS** — searching already worked:
+`html.duckduckgo.com` answers in plain HTML and the browser renders it. What was
+missing was the *convenience* — you typed the engine's address by hand — and now
+there is a **Cerca** box on the right of the bar: words, Enter, results.
+
+There are three engines, chosen in **File > Impostazioni**: **duckduckgo**
+(default), **wikipedia**, **marginalia**. **There are three because three
+answer:** `google.com` sends ninety thousand bytes, three scripts and *zero*
+result links inside the HTML — JavaScript builds the results, so no browser
+without JS can ever see them — and Mojeek sends a Captcha. Listing them would
+mean an entry that promises a search and returns an empty page.
+
+**Enter does two different things, and the difference is the focus.** In a
+toolkit text box Enter reaches the application as `EXM_TASTO` — the box lets it
+through on purpose — but the message **does not say which box it came from**,
+and only the toolkit knows where the focus is. Hence `ex_fuoco_chi()`, eight
+lines: the alternative was guessing from which text had changed, that is,
+getting it wrong the day somebody searches for the same thing twice.
+
+> **And a toolkit defect that did not bite while the boxes were wide.** With the
+> second box the address field shrank from 636 to 436 pixels, and on the first
+> long page the defect was there in the screenshot: the address was **writing
+> over the «Cerca» label**. `ex_scrivi` clips nothing and `CL_TESTO` never asked
+> it to — the defect is not new, what is new is the first place where two
+> controls sit that close. Now the box shows the **tail** and not the head,
+> because its cursor is always at the end: whoever is typing must see what they
+> are typing, not the beginning of an address they have already finished.
+
 ### The working directory belongs to both (and the environment already did)
 
 **tested** — a `chdir` inside a thread is now seen by the others, and it is one

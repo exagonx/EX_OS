@@ -85,6 +85,38 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### La casella «Cerca», e due caselle nella stessa barra
+
+**testato, in rete, dentro EX-OS** — cercare si poteva già: `html.duckduckgo.com`
+risponde in HTML semplice e il navigatore lo mostra. Mancava la *comodità* — si
+scriveva l'indirizzo del motore a mano — e adesso c'è una casella **Cerca** a
+destra nella barra: parole, Invio, risultati.
+
+I motori sono tre, e si scelgono in **File > Impostazioni**: **duckduckgo**
+(predefinito), **wikipedia**, **marginalia**. **Sono tre perché tre
+rispondono:** `google.com` manda novantamila byte, tre script e *zero*
+collegamenti di risultato dentro l'HTML — i risultati li costruisce il
+JavaScript, quindi non c'è browser senza JS che possa vederli — e Mojeek manda
+un Captcha. Metterli in elenco vorrebbe dire una voce che promette una ricerca
+e rende una pagina vuota.
+
+**Invio fa due cose diverse, e la differenza è il fuoco.** In una casella del
+toolkit Invio arriva all'applicazione come `EXM_TASTO` — la casella lo lascia
+passare apposta — ma il messaggio **non dice da quale casella arrivi**, e il
+fuoco lo sa solo il toolkit. Per questo è nata `ex_fuoco_chi()`, otto righe:
+l'alternativa era indovinarlo guardando quale testo è cambiato, cioè sbagliarlo
+il giorno che qualcuno cerca due volte la stessa cosa.
+
+> **E un difetto del toolkit che non mordeva finché le caselle erano larghe.**
+> Con la seconda casella l'indirizzo si è ristretto da 636 a 436 pixel, e alla
+> prima pagina lunga il difetto era in fotografia: l'indirizzo **scriveva sopra
+> l'etichetta «Cerca»**. `ex_scrivi` non taglia niente e `CL_TESTO` non lo
+> chiedeva a nessuno — non è un difetto nato oggi, è nato oggi il primo posto in
+> cui due controlli sono così vicini. Adesso si mostra la **coda** e non la
+> testa, perché in quella casella il cursore sta sempre in fondo: chi scrive
+> deve vedere quel che sta scrivendo, non l'inizio di un indirizzo che ha già
+> finito di battere.
+
 ### La directory è di tutti e due (e l'ambiente lo era già)
 
 **testato** — un `chdir` dentro un filo adesso lo vedono gli altri, ed è una

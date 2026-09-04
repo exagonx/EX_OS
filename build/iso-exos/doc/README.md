@@ -85,6 +85,38 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### La directory è di tutti e due (e l'ambiente lo era già)
+
+**testato** — un `chdir` dentro un filo adesso lo vedono gli altri, ed è una
+riga: `filo->cwdt = capo->cwdt;` invece di copiare il percorso. **È lo stesso
+mestiere che fa `fdt` per i descrittori**, con lo stesso idioma: nel PCB c'è il
+campo `cwd` e c'è il puntatore `cwdt`, che per un processo punta al proprio
+campo e per un filo a quello del capogruppo. Tutto il kernel usa `cwdt` — sono
+cinque posti in croce — e **fra processi non cambia niente**: la directory
+resta una per ciascuno, ereditata dal padre a `spawn` come prima.
+
+**Il motivo è lo stesso di quando la directory diventò una per processo, letto
+all'incontrario.** Allora il difetto era che `cd` dentro un programma spostava
+tutti gli altri; qui è che due fili **sono un programma solo**, e una funzione
+che entra in una directory, apre un file relativo e torna indietro fa la cosa
+giusta o quella sbagliata a seconda di quale filo la esegue — senza errore,
+aprendo un file nel posto sbagliato.
+
+**E l'ambiente non passa dal kernel: quello era da controllare, non da fare.**
+L'elenco diceva «cwd ed env sono copiati», e per `env` non era vero: `environ`
+sta nei dati di `libc.so`, che i fili condividono perché condividono la
+memoria, e il campo `env[]` del PCB non lo usa nessuno. Non c'era niente da
+aggiustare; c'era da *guardare*, che è un'altra cosa dal darlo per buono.
+
+> **La prova guarda nei due versi, e uno solo non basterebbe.** Con la
+> directory copiata alla creazione, il verso «il principale si sposta e il filo
+> se ne accorge» passerebbe lo stesso ogni volta che il filo nasce *dopo* il
+> cambio: è il filo che si sposta e il principale che deve vederlo a dire
+> «condivisa» invece di «copiata al momento giusto». Rimessa la copia di prima
+> per un giro, falliscono tutt'e due i versi — e l'ambiente passa in tutt'e due
+> i casi, che è la conferma che quella metà non è mai stata un problema del
+> kernel.
+
 ### Fermare un filo è chiederglielo
 
 **testato** — uccidere un filo si poteva già (il tid è un pid, e `kill`
