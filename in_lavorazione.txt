@@ -251,7 +251,12 @@ STESSO PROGRAMMA»)
 =============================================================================
 
 Ci sono: thread_crea/thread_esci/thread_attendi nella libc (syscall 201-203),
-piu' Mutex/mutex_prendi/mutex_lascia. Un filo e' un task che CONDIVIDE la page
+piu' Mutex/mutex_prendi/mutex_lascia. IL TLS E' PER FILO (ogni filo ha il suo
+blocco in cima al proprio stack, con l'immagine iniziale riletta dall'ELF) e
+ANCHE errno LO E': __errno_dove() legge il thread pointer da %gs:0 e lo usa
+come chiave in una tabella di sedici posti. Per questo elf_load fa un blocco
+TLS anche ai programmi senza variabili __thread: senza, %gs avrebbe base zero
+e quella lettura sarebbe un fault. Un filo e' un task che CONDIVIDE la page
 directory e i descrittori del gruppo e ha uno stack suo (64 KB, in una banda
 riservata sotto il TLS). Il tid E' un pid; `tgid` dice il gruppo. Chi esce dal
 processo porta via tutti i fili. Provato con /bin/filiprova, che ha tre modi:
@@ -259,34 +264,22 @@ senza argomenti, «troppi» e «abbandona».
 
 QUEL CHE MANCA, in ordine di quanto pesa:
 
- 1. errno E' ANCORA PER PROCESSO. Le variabili __thread dei PROGRAMMI invece
-    sono per filo dal 4 settembre 2026: ogni filo ha il suo blocco, in cima al
-    suo stack, con l'immagine iniziale RILETTA DAL FILE (le coordinate del
-    PT_TLS stanno nel PCB). errno no, perche' vive dentro libc.so e li'
-    __thread non funziona: manca il TLS dinamico.
-    LA STRADA: __errno_dove() e' gia' una funzione, e puo' leggere il thread
-    pointer da %gs:0 usandolo come chiave in una tabellina di sedici posti.
-    Vuole pero' che OGNI processo abbia un blocco TLS anche quando non ha
-    variabili __thread — oggi chi non ne ha si ritrova la base di %gs a zero e
-    leggere %gs:0 sarebbe un page fault. E' una pagina per processo in
-    elf_load, piu' la tabellina con l'inserimento fatto con xchg.
-
- 2. NIENTE CHE DORMA DAVVERO. mutex_prendi gira cedendo la CPU: va bene per una
+ 1. NIENTE CHE DORMA DAVVERO. mutex_prendi gira cedendo la CPU: va bene per una
     sezione critica corta, non per aspettare un file o un altro filo. Serve un
     futex — bloccarsi su un indirizzo, essere svegliati da chi lo cambia — e
     con lui variabili di condizione e semafori.
 
- 3. OTTO FILI PER PROCESSO (FILO_MAX), capogruppo compreso, perche' tante sono
+ 2. OTTO FILI PER PROCESSO (FILO_MAX), capogruppo compreso, perche' tante sono
     le piazzole nella banda. Alzarlo vuol dire allargare la banda, cioe'
     abbassare heap_max: e' un numero, non un lavoro.
 
- 4. NON C'E' UNA CANCELLAZIONE. Si puo' uccidere un filo con kill (il tid e' un
+ 3. NON C'E' UNA CANCELLAZIONE. Si puo' uccidere un filo con kill (il tid e' un
     pid) ma non c'e' un modo ordinato di chiedergli di fermarsi.
 
- 5. cwd ED ENV SONO COPIATI ALLA CREAZIONE, non condivisi: un chdir dentro un
+ 4. cwd ED ENV SONO COPIATI ALLA CREAZIONE, non condivisi: un chdir dentro un
     filo non lo vedono gli altri. I descrittori invece sono in comune davvero.
 
- 6. LO STACK DI UN FILO E' IMPEGNATO TUTTO SUBITO (64 KB di RAM vera, non di
+ 5. LO STACK DI UN FILO E' IMPEGNATO TUTTO SUBITO (64 KB di RAM vera, non di
     soli indirizzi) perche' page_fault_handler sa far crescere un solo stack.
     Farlo crescere su richiesta vuol dire insegnargli a riconoscere a quale
     filo appartiene una pagina mancante dentro la banda.

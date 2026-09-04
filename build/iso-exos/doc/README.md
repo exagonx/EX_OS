@@ -136,6 +136,56 @@ Fra un limite scritto e un valore sbagliato non c'è partita. E il lucchetto
 gira cedendo la CPU: va bene per una sezione critica corta, non per aspettare —
 un futex è il passo dopo.
 
+
+**E poi il blocco TLS per filo.** Nella prima ora i fili condividevano quello
+del processo; nella seconda è stato tolto anche quel limite: **ogni filo ha il
+suo**, in cima al proprio stack — dove quelle pagine sono già mappate e nessun
+altro può arrivarci, che è anche dove lo mette glibc. L'immagine iniziale si
+**rilegge dal file**, non si copia da quella del capogruppo: copiare la sua
+vorrebbe dire far partire il filo con i valori *di adesso* di un altro flusso —
+un contatore a metà, un puntatore a un oggetto in uso. Nel PCB sono comparse le
+tre coordinate del `PT_TLS`, e l'eseguibile è già aperto per il caricamento su
+richiesta.
+
+> **La prova parte da sette, non da zero**, ed è l'unico modo di distinguere
+> «blocco copiato» da «blocco azzerato»: un blocco azzerato passa qualunque
+> prova che parta da zero. Ogni filo controlla di trovarci 7, ci scrive il suo
+> numero, cede la CPU due volte e ricontrolla; il filo principale, alla fine,
+> ritrova il suo 42 intatto. Resta fuori `errno`, che vive dentro `libc.so`
+> dove `__thread` non funziona — e adesso ha una strada scritta per smettere di
+> esserlo.
+
+
+**E anche `errno` è per filo.** Dentro `libc.so` non si può scrivere
+`__thread` — manca il TLS dinamico — ma il thread pointer si può *leggere*:
+`%gs:0` contiene un numero diverso per ogni filo, buono come chiave in una
+tabellina di sedici posti, dove il posto si prende con `xchg` e non con «se è
+libero allora scrivilo». Per questo il blocco TLS ora si fa a *tutti* i
+processi, anche a quelli senza una sola variabile `__thread`: ridotto al solo
+TCB, otto byte in una pagina — senza, la base di quel descrittore vale zero e
+`movl %gs:0` non dà un valore sbagliato, dà un page fault all'indirizzo 0.
+
+> **Il difetto uscito da lì vale più della funzione.** Messa la tabella,
+> `close(999)` ha cominciato a rispondere `errno 0` su una chiamata che
+> fallisce di sicuro: **dentro `libc.c` la parola `errno` non è la macro**,
+> perché quel file non include `libc.h` — sta scritto in testa che si compila
+> senza `-I lib/include`. `err_posix` scriveva la variabile globale mentre il
+> programma leggeva il posto del suo filo. E la prova che l'ha trovato era
+> stata rifatta apposta: la prima versione faceva sbagliare il filo principale
+> con una chiamata che rispondeva zero, e zero non cambia mai — sarebbe passata
+> per sempre senza provare niente.
+
+**E il difetto più istruttivo: un task a metà che viene eseguito.** Aggiunto il
+TLS per filo, il programma di prova moriva *una volta su tre* con un page fault
+all'ingresso della funzione del filo. La diagnosi è arrivata in un giro solo
+facendo stampare i numeri: il filo andava in fault **prima che la sua riga di
+creazione fosse stampata**, col contesto che `proc_create` gli aveva costruito —
+ESP a zero. In mezzo c'era una `vfs_read`, cioè una chiamata **che può
+bloccare**: mentre il capogruppo aspettava il disco, lo scheduler metteva in
+esecuzione un filo non finito di costruire. La regola che ne esce vale per
+qualunque kernel: **fra la creazione di un task e il momento in cui è pronto
+non ci deve stare niente che possa bloccare.**
+
 ### Le scorciatoie degli editor, e una cosa che avevo scritto sbagliata
 
 **testato** — scritta una riga nell'editor e premuto solo Ctrl+S: la riga di

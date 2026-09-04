@@ -170,7 +170,14 @@ static int cifra_valore(int c);
  * mount() — tengono il -errno, perche' li' nessuno arriva con
  * un'aspettativa da standard e il numero e' piu' informativo.
  * ============================================================================= */
-int errno = 0;
+/* ! DENTRO QUESTO FILE `errno` E' UNA MACRO, non questa variabile, dal 4
+ * settembre 2026: vedi la riga subito sotto. Questa resta come posto di
+ * scorta — per chi non ha un blocco TLS — e come definizione unica del
+ * simbolo. */
+int errno_condiviso = 0;
+
+int *__errno_dove(void);
+#define errno (*__errno_dove())
 
 /* Dichiarata qui e non accanto a __libc_distruttori_registra(): la usa exit(),
  * che in questo file viene molto prima. */
@@ -4102,6 +4109,8 @@ int waitpid(int pid, int *stato, int opzioni)
 /* =============================================================================
  * I FILI
  * ============================================================================= */
+static void errno_posto_lascia(void);   /* piu' avanti, accanto a __errno_dove */
+
 int thread_crea(void (*fn)(void *), void *arg)
 {
     return err_posix(_syscall2(SYS_THREAD_CREA, (uint32_t)fn, (uint32_t)arg));
@@ -4109,6 +4118,7 @@ int thread_crea(void (*fn)(void *), void *arg)
 
 void thread_esci(int codice)
 {
+    errno_posto_lascia();
     _syscall1(SYS_THREAD_ESCI, (uint32_t)codice);
     for (;;) { }                /* non ci si arriva */
 }
@@ -4133,7 +4143,7 @@ int thread_attendi(int tid, int *codice)
  * lavorare: si sbloccherebbe solo allo scadere del quanto. `sched_yield()`
  * trasforma un'attesa di dieci millisecondi in una di pochi microsecondi.
  * --------------------------------------------------------------------------- */
-void sched_yield(void);     /* piu' avanti in questo file */
+void sched_yield(void);         /* piu' avanti in questo file */
 
 static int mutex_xchg(volatile int *dove, int valore)
 {
@@ -6562,7 +6572,82 @@ char **environ = NULL;
  * comportamento invece di due che divergono. Il costo e' una chiamata in piu'
  * per accesso, e a errno non ci si accede in un ciclo stretto.
  * ============================================================================= */
-int    *__errno_dove(void)   { return &errno; }
+/* =============================================================================
+ * errno PER FILO — trovato dal thread pointer (4 settembre 2026)
+ *
+ * ! DENTRO libc.so NON SI PUO' SCRIVERE `__thread`, e non e' una scelta: il
+ * TLS dinamico non c'e' (lo dice kernel/include/sched.h). Le variabili
+ * thread-local funzionano nei PROGRAMMI, che sono collegati staticamente e
+ * usano il modello local-exec; una libreria condivisa vorrebbe
+ * __tls_get_addr, che qui non esiste.
+ *
+ * ! MA IL THREAD POINTER SI PUO' LEGGERE, ed e' l'unica cosa che serve: ogni
+ * filo ha il suo blocco TLS, e `%gs:0` contiene l'indirizzo del suo TCB — un
+ * numero diverso per ogni filo, buono come chiave. La tabella qui sotto
+ * associa quel numero a un errno, e la sua misura e' quella dei fili possibili
+ * per processo con qualcosa di margine.
+ *
+ * ! IL POSTO SI PRENDE CON UN xchg, non con «se e' libero allora scrivilo»:
+ * due fili che nascono insieme guarderebbero lo stesso posto vuoto e
+ * scriverebbero tutti e due. Lo scambio atomico rende il valore di prima: chi
+ * si ritrova in mano lo zero ha vinto, gli altri passano oltre.
+ *
+ * ! E IL BLOCCO C'E' SEMPRE, anche nei programmi senza variabili __thread: da
+ * oggi elf_load ne fa uno del solo TCB a tutti, apposta per questa lettura.
+ * Il ramo `tp == 0` resta per i casi che quel caricatore non ha preparato — un
+ * task del kernel — dove un errno condiviso e' comunque meglio di un fault.
+ * ============================================================================= */
+#define ERRNO_POSTI  16
+
+static struct { volatile int tp; int valore; } g_errno_posti[ERRNO_POSTI];
+
+/* ! QUI DENTRO LA MACRO SI SPEGNE, o `&errno_condiviso` diventerebbe
+ * `&(*__errno_dove())` — cioe' questa funzione che chiama se stessa. Si
+ * riaccende subito dopo, perche' tutto il resto del file la vuole. */
+#undef errno
+int *__errno_dove(void)
+{
+    unsigned int tp;
+    int          i;
+
+    __asm__ __volatile__("movl %%gs:0, %0" : "=r"(tp));
+    if (tp == 0) return &errno_condiviso;        /* nessun blocco: quello di scorta */
+
+    for (i = 0; i < ERRNO_POSTI; i++)
+        if ((unsigned int)g_errno_posti[i].tp == tp) return &g_errno_posti[i].valore;
+
+    for (i = 0; i < ERRNO_POSTI; i++)
+        if (g_errno_posti[i].tp == 0 &&
+            mutex_xchg(&g_errno_posti[i].tp, (int)tp) == 0) {
+            g_errno_posti[i].valore = 0;
+            return &g_errno_posti[i].valore;
+        }
+
+    /* Tabella piena: si torna a quello di scorta invece di rifiutare. Un errno
+     * condiviso e' impreciso; non averne uno e' un puntatore nullo. */
+    return &errno_condiviso;
+}
+
+/* Un filo che finisce lascia libero il suo posto: senza, un programma che crea
+ * e aspetta fili in un ciclo riempirebbe la tabella e da li' in poi tornerebbe
+ * all'errno condiviso senza dirlo a nessuno. */
+#define errno (*__errno_dove())
+
+static void errno_posto_lascia(void)
+{
+    unsigned int tp;
+    int          i;
+
+    __asm__ __volatile__("movl %%gs:0, %0" : "=r"(tp));
+    if (tp == 0) return;
+    for (i = 0; i < ERRNO_POSTI; i++)
+        if ((unsigned int)g_errno_posti[i].tp == tp) {
+            g_errno_posti[i].valore = 0;
+            g_errno_posti[i].tp     = 0;
+            return;
+        }
+}
+
 FILE  **__stdin_dove(void)   { return &stdin; }
 FILE  **__stdout_dove(void)  { return &stdout; }
 FILE  **__stderr_dove(void)  { return &stderr; }

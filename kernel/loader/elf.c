@@ -562,9 +562,18 @@ if (n <= 0) {
             }
         }
 
-        if (tls != NULL) {
-            uint32_t align   = (tls->p_align < 4) ? 4 : tls->p_align;
-            uint32_t dim_tls = ALIGN_UP(tls->p_memsz, align);
+        /* ! IL BLOCCO SI FA ANCHE A CHI NON HA VARIABILI __thread, dal 4
+         * settembre 2026, e ridotto al solo TCB: otto byte in una pagina.
+         *
+         * Serve alla libc, che tiene errno per filo e per trovarlo legge il
+         * thread pointer da `%gs:0`. Con un processo senza blocco, la base di
+         * quel descrittore vale ZERO e leggere `%gs:0` non da' un valore
+         * sbagliato: da' un page fault all'indirizzo 0. Una pagina per
+         * processo e' il prezzo di poter scrivere quella lettura senza un
+         * «se». */
+        {
+            uint32_t align   = tls ? ((tls->p_align < 4) ? 4 : tls->p_align) : 4;
+            uint32_t dim_tls = tls ? ALIGN_UP(tls->p_memsz, align) : 0;
             uint32_t totale  = ALIGN_UP(dim_tls + TLS_TCB_SIZE, PAGE_SIZE);
             uint32_t guardia = proc->user_stack_limit - PAGE_SIZE;
             uint32_t base    = ALIGN_DOWN(guardia - totale, PAGE_SIZE);
@@ -596,7 +605,7 @@ if (n <= 0) {
             /* L'immagine iniziale (.tdata) si legge dal file: qui non si
              * puo' fare altrimenti, perche' con il caricamento su richiesta
              * il segmento non e' in RAM da nessuna parte. */
-            if (tls->p_filesz > 0) {
+            if (tls != NULL && tls->p_filesz > 0) {
                 uint32_t rimasti = tls->p_filesz;
                 uint32_t off     = tls->p_offset;
                 uint32_t vaddr   = base;
@@ -652,8 +661,8 @@ if (n <= 0) {
             proc->tls_tp   = tp;
 
             /* Le coordinate per rifarlo a ogni filo: vedi proc_thread_crea. */
-            proc->tls_off    = tls->p_offset;
-            proc->tls_filesz = tls->p_filesz;
+            proc->tls_off    = tls ? tls->p_offset : 0;
+            proc->tls_filesz = tls ? tls->p_filesz  : 0;
             proc->tls_dim    = dim_tls;
 
             klog(LOG_INFO, "ELF: TLS 0x%08x-0x%08x, tp=0x%08x "

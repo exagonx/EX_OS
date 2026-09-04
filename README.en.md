@@ -152,6 +152,37 @@ coordinates, and the executable is already open for demand loading.
 > left out is `errno`, which lives inside `libc.so` where `__thread` does not
 > work — and it now has a written way out.
 
+
+**And `errno` is per-thread too.** Inside `libc.so` you cannot write
+`__thread` — there is no dynamic TLS — but the thread pointer can be *read*:
+`%gs:0` holds a different number for each thread, good as a key into a
+sixteen-slot table where the slot is claimed with `xchg` and not with "if it is
+free then write it". That is why the TLS block is now made for *every* process,
+even those without a single `__thread` variable: cut down to the TCB alone,
+eight bytes in a page — without it that descriptor's base is zero and
+`movl %gs:0` does not give a wrong value, it gives a page fault at address 0.
+
+> **The defect that came out of it is worth more than the feature.** With the
+> table in place, `close(999)` started answering `errno 0` on a call that
+> always fails: **inside `libc.c` the word `errno` is not the macro**, because
+> that file does not include `libc.h` — it says so at the top, it compiles
+> without `-I lib/include`. `err_posix` was writing the global while the
+> program read its thread's slot. And the test that caught it had been rewritten
+> on purpose: the first version made the main thread fail with a call that
+> answered zero, and zero never changes — it would have passed forever without
+> testing anything.
+
+**And the most instructive defect: a half-built task being run.** With
+per-thread TLS added, the test program died *one time in three* with a page
+fault at the entry of the thread function. The diagnosis came in a single run by
+printing the numbers: the thread faulted **before its own creation line was
+printed**, with the context `proc_create` had built for it — ESP at zero. In
+between there was a `vfs_read`, that is, a call **that can block**: while the
+group leader waited for the disk, the scheduler was running a thread that was
+not finished being built. The rule that follows holds for any kernel: **between
+creating a task and the moment it is ready there must be nothing that can
+block.**
+
 ### The editor shortcuts, and something I had written wrong
 
 **tested** — a line typed in the editor and only Ctrl+S pressed: the status line

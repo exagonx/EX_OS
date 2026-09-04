@@ -147,16 +147,78 @@ suo numero, cede la CPU due volte e ricontrolla — se i blocchi fossero in
 comune ci troverebbe quello di qualcun altro. E il filo principale, alla fine,
 ritrova il suo 42 intatto.
 
-### QUEL CHE ANCORA NON E' PER FILO
+### E ANCHE errno E' PER FILO
 
-! **`errno` LO E' RIMASTO**, e adesso ha una strada per smettere di esserlo:
-sta dentro `libc.so`, e li' `__thread` non funziona — il TLS dinamico non c'e'
-(lo dice il commento nel kernel). La via e' `__errno_dove()`, che gia' oggi e'
-una funzione: puo' leggere il thread pointer da `%gs:0` e usarlo come chiave in
-una tabellina. Vuole pero' che OGNI processo abbia un blocco TLS anche senza
-variabili `__thread` — oggi chi non ne ha si ritrova la base di `%gs` a zero, e
-leggere `%gs:0` sarebbe un fault. E' una pagina per processo e sta scritto in
-`in_lavorazione.txt`.
+Non e' rimasto fuori: nella terza ora e' entrato anche lui, ed e' stato il
+pezzo che ha insegnato di piu'.
+
+! **DENTRO `libc.so` `__thread` NON SI PUO' SCRIVERE** — manca il TLS dinamico —
+**ma il thread pointer si puo' LEGGERE.** Ogni filo ha il suo blocco, quindi
+`%gs:0` contiene un numero diverso per ognuno: buono come chiave. Una tabellina
+di sedici posti associa quel numero a un errno, e il posto si prende con
+`xchg` — non con «se e' libero allora scrivilo», che con due fili che nascono
+insieme darebbe lo stesso posto a tutti e due.
+
+! **E IL BLOCCO ADESSO SI FA A TUTTI I PROCESSI**, anche a quelli senza una
+sola variabile `__thread`: ridotto al solo TCB, otto byte in una pagina. Senza,
+la base di quel descrittore vale zero e `movl %gs:0` non da' un valore
+sbagliato — da' un page fault all'indirizzo 0. Una pagina per processo e' il
+prezzo di poter scrivere quella lettura senza un «se».
+
+! **IL DIFETTO CHE E' USCITO DA QUI VALE PIU' DELLA FUNZIONE.** Messa la
+tabella, `close(999)` ha cominciato a rispondere `errno 0` — cioe' nessun
+errore, su una chiamata che fallisce di sicuro. La ragione: **dentro `libc.c`
+la parola `errno` non e' la macro**, perche' quel file non include `libc.h`
+(sta scritto in testa: si compila senza `-I lib/include`). Quindi `err_posix`
+scriveva nella variabile globale mentre il programma leggeva il posto del suo
+filo: due indirizzi diversi, e ogni errore diventava zero. Adesso `libc.c`
+definisce la stessa macro subito dopo la variabile — che resta come posto di
+scorta — e la spegne per le tre righe di `__errno_dove`, o quella funzione
+chiamerebbe se stessa.
+
+! **E LA PROVA CHE L'HA TROVATO ERA STATA RIFATTA APPOSTA.** La prima versione
+faceva sbagliare il filo principale con `unlink` di un file inesistente e
+guardava che il numero non cambiasse: rispondeva zero, e zero non cambia mai —
+sarebbe passata per sempre senza provare niente. Rifatta cosi': il principale
+sbaglia in un modo (EBADF), tutti i fili in un altro (ENOENT), e alla fine il
+principale deve ritrovare il SUO. E' il verso in cui la domanda ha una risposta
+che puo' essere no.
+
+### IL DIFETTO PIU' ISTRUTTIVO: UN TASK A META' CHE VIENE ESEGUITO
+
+Aggiunto il TLS per filo, `filiprova` ha cominciato a morire **una volta su
+tre** con un page fault a `0xfffffffc` all'ingresso della funzione del filo.
+Intermittente, cioe' il tipo di guasto che si insegue per ore.
+
+La diagnosi e' arrivata in un giro solo, facendo stampare i numeri della
+creazione:
+
+    [ERROR] DIAG filo 15 posto 1: ... esp 0xbffbbfd8
+    [FAULT] PID 16: page fault a 0xfffffffc, EIP=0x08000030
+    [ERROR] DIAG filo 16 posto 2: ... esp 0xbffaafd8
+
+**Il filo 16 va in fault PRIMA che la sua riga di creazione sia stampata**, e
+`0x08000030` e' l'indirizzo della sua funzione: era partito col contesto che
+`proc_create` gli aveva costruito — entry giusta, ESP a ZERO, perche'
+`user_stack_top` non era ancora stato scritto.
+
+! **IN MEZZO C'ERA UNA `vfs_read`, CIOE' UNA CHIAMATA CHE PUO' BLOCCARE.**
+Leggevo l'immagine iniziale del TLS dopo aver creato il task: mentre il
+capogruppo aspettava il disco, lo scheduler poteva mettere in esecuzione un
+filo che non era finito di costruire.
+
+! **LA REGOLA CHE NE ESCE, e vale per qualunque kernel: fra la creazione di un
+task e il momento in cui e' pronto non ci deve stare NIENTE che possa
+bloccare.** Tutto cio' che vuole aspettare si fa PRIMA, quando un task a meta'
+non esiste ancora. L'immagine TLS adesso si legge prima di `proc_create`, e
+dopo si scrive e basta. Cinque giri di prova di fila, nessun fault.
+
+### QUEL CHE HO CONTROLLATO DI NON AVER ROTTO
+
+`errno` e' la cosa piu' trasversale che ci sia in una libc, quindi la suite:
+`libctest` da' **201 prove superate e 15 fallite** — e le stesse 15 le da'
+anche rimettendo per una riga il vecchio errno condiviso. Sono di prima, non
+mie (falliscono tutte sul «non riesco a creare il file di prova»).
 
 ### COME SI E' PROVATO — TRE CASI, NON UNO
 
@@ -169,6 +231,8 @@ leggere `%gs:0` sarebbe un fault. E' una pagina per processo e sta scritto in
                          gira: il kernel se li e' portati via
     filiprova tls        ogni filo parte da 7, scrive il suo, cede la CPU due
                          volte e lo ritrova; il principale ritrova 42
+    filiprova errno      il principale sbaglia con EBADF, i quattro fili con
+                         ENOENT, e alla fine il principale ritrova il suo 9
 
 E due volte di fila, con i PCB riusati (tid 15-18, poi 20-23), piu' un `hello`
 dopo per vedere che la macchina sia sana.

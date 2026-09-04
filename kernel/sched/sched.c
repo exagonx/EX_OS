@@ -978,6 +978,11 @@ static uint32_t filo_posto_libero(uint32_t tgid)
     return 0;
 }
 
+/* Il buffer dell'immagine TLS. Statico perche' TLS_MAX e' 64 KB e sullo stack
+ * del kernel non ci starebbero; uno solo perche' proc_thread_crea gira dentro
+ * una chiamata di sistema e finisce prima che un'altra cominci. */
+static uint8_t g_tls_buf[TLS_MAX];
+
 int proc_thread_crea(uint32_t entry, uint32_t arg)
 {
     Process *capo, *filo;
@@ -1030,6 +1035,43 @@ int proc_thread_crea(uint32_t entry, uint32_t arg)
         }
     }
 
+    /* =====================================================================
+     * ! L'IMMAGINE TLS SI LEGGE PRIMA DI CREARE IL TASK, e non e' un
+     * riordino estetico: e' la correzione di un difetto che si vedeva una
+     * volta su tre.
+     *
+     * vfs_read PUO' BLOCCARE. Leggendola dopo proc_create, il filo esisteva
+     * gia' — con il contesto che proc_create gli aveva costruito, cioe' con
+     * ESP a zero perche' user_stack_top non era ancora stato scritto — e in
+     * quella finestra lo scheduler poteva metterlo in esecuzione. Il sintomo
+     * era un page fault a 0xfffffffc all'ingresso della funzione del filo:
+     * la prima `push` con lo stack a zero. Intermittente, perche' dipendeva
+     * da dove il disco decideva di far aspettare chi leggeva.
+     *
+     * ! LA REGOLA CHE NE ESCE: fra la creazione di un task e il momento in
+     * cui e' pronto non ci deve stare NIENTE che possa bloccare. Tutto quel
+     * che vuole aspettare si fa prima, quando un task a meta' non esiste
+     * ancora.
+     * ===================================================================== */
+    if (capo->tls_tp != 0 && capo->tls_filesz > 0 && capo->exe_handle >= 0) {
+        uint32_t fatti = 0;
+
+        while (fatti < capo->tls_filesz && fatti < TLS_MAX) {
+            uint32_t quanti = capo->tls_filesz - fatti;
+            int      letti;
+
+            if (quanti > PAGE_SIZE) quanti = PAGE_SIZE;
+            letti = vfs_read(capo->exe_handle, g_tls_buf + fatti, quanti,
+                             capo->tls_off + fatti);
+            if (letti <= 0) {
+                klog(LOG_ERROR, "SCHED: non riesco a leggere l'immagine TLS "
+                                "per il filo");
+                return ERR(EIO);
+            }
+            fatti += (uint32_t)letti;
+        }
+    }
+
     filo = proc_create(capo->name, entry, capo->priority, 0);
     if (filo == NULL) return ERR(EAGAIN);   /* pool dei PCB esaurito */
 
@@ -1076,8 +1118,10 @@ int proc_thread_crea(uint32_t entry, uint32_t arg)
      * puo' arrivarci. E' anche dove lo mette glibc. Lo stack comincia sotto
      * il blocco, quindi crescendo si allontana invece di avvicinarsi.
      * ===================================================================== */
-    if (capo->tls_dim > 0) {
-        static uint8_t buf[TLS_MAX];    /* si legge a pezzi da 4 KB */
+    /* Anche quando il programma non ha variabili __thread il blocco si fa: sono
+     * gli otto byte del TCB, e servono alla libc per trovare errno (vedi
+     * elf_load, dove per la stessa ragione lo si fa a tutti i processi). */
+    if (capo->tls_tp != 0) {
         uint32_t tot  = ALIGN_UP(capo->tls_dim + TLS_TCB_SIZE, 16);
         uint32_t tbase, tp;
 
@@ -1091,37 +1135,23 @@ int proc_thread_crea(uint32_t entry, uint32_t arg)
         tbase = (cima - tot) & ~15u;
         tp    = tbase + capo->tls_dim;
 
-        /* La parte inizializzata dal file, poi il resto resta a zero: le
-         * pagine dello stack sono state azzerate quando le abbiamo mappate. */
-        if (capo->tls_filesz > 0 && capo->exe_handle >= 0) {
-            uint32_t fatti = 0;
+        /* La parte inizializzata, copiata dal buffer letto PRIMA di creare il
+         * task; il resto resta a zero, perche' le pagine dello stack sono
+         * state azzerate quando le abbiamo mappate. Qui non si blocca piu'
+         * niente: si scrive e basta. */
+        {
+            uint32_t k;
 
-            while (fatti < capo->tls_filesz) {
-                uint32_t quanti = capo->tls_filesz - fatti;
-                int      letti;
-                uint32_t k;
+            for (k = 0; k < capo->tls_filesz && k < TLS_MAX; k++) {
+                uint32_t va  = tbase + k;
+                uint32_t fis = paging_get_physical(capo->page_directory,
+                                                   va & ~(PAGE_SIZE - 1));
+                uint8_t *dst;
 
-                if (quanti > PAGE_SIZE) quanti = PAGE_SIZE;
-                letti = vfs_read(capo->exe_handle, buf, quanti,
-                                 capo->tls_off + fatti);
-                if (letti <= 0) {
-                    klog(LOG_ERROR, "SCHED: non riesco a rileggere l'immagine "
-                                    "TLS per il filo");
-                    proc_kill(filo->pid);
-                    return ERR(EIO);
-                }
-                for (k = 0; k < (uint32_t)letti; k++) {
-                    uint32_t va  = tbase + fatti + k;
-                    uint32_t fis = paging_get_physical(capo->page_directory,
-                                                       va & ~(PAGE_SIZE - 1));
-                    uint8_t *dst;
-
-                    if (fis == 0) { proc_kill(filo->pid); return ERR(EFAULT); }
-                    dst = (uint8_t *)paging_finestra_apri(fis);
-                    dst[va % PAGE_SIZE] = buf[k];
-                    paging_finestra_chiudi();
-                }
-                fatti += (uint32_t)letti;
+                if (fis == 0) { proc_kill(filo->pid); return ERR(EFAULT); }
+                dst = (uint8_t *)paging_finestra_apri(fis);
+                dst[va % PAGE_SIZE] = g_tls_buf[k];
+                paging_finestra_chiudi();
             }
         }
 
@@ -1175,8 +1205,9 @@ int proc_thread_crea(uint32_t entry, uint32_t arg)
     proc_set_entry(filo, entry, esp);
     proc_set_ready(filo);
 
-    klog(LOG_INFO, "SCHED: filo %u del gruppo %u, stack 0x%08x-0x%08x",
-         filo->pid, filo->tgid, base, cima);
+    klog(LOG_INFO, "SCHED: filo %u del gruppo %u, posto %u, stack 0x%08x-0x%08x, "
+                   "tls 0x%08x", filo->pid, filo->tgid, posto, base, cima,
+         filo->tls_tp);
     return (int)filo->pid;
 }
 

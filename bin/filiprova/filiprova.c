@@ -125,6 +125,75 @@ static int prova_tls(void)
     return esito;
 }
 
+/* =============================================================================
+ * LA PROVA DI errno
+ *
+ * ! DUE FILI CHE SBAGLIANO IN MODI DIVERSI, ed e' l'unico modo di vedere la
+ * differenza: se errno fosse in comune, il secondo errore cancellerebbe il
+ * primo e uno dei due fili si ritroverebbe il motivo sbagliato — che e'
+ * esattamente il danno, perche' un programma che chiede «perche' e' fallito?»
+ * riceverebbe la risposta di qualcun altro.
+ *
+ * ! E SI CEDE LA CPU IN MEZZO, cinquanta volte: senza, i due fili potrebbero
+ * non incrociarsi mai e la prova passerebbe anche con un errno solo.
+ * ============================================================================= */
+static void filo_errno(void *arg)
+{
+    int io = (int)(long)arg;
+    int mio, i;
+
+    /* ! TUTTI I FILI SBAGLIANO ALLO STESSO MODO, e il PRINCIPALE in un altro:
+     * cosi' un errno condiviso si vede dal filo principale, che ci ritroverebbe
+     * il motivo dei figli invece del suo. E' il verso in cui la prova e'
+     * decisiva — fra fili che scrivono lo stesso numero non si distinguerebbe
+     * niente. */
+    open("/non-c-e-proprio", 0, 0);   /* ENOENT */
+    mio = errno;
+
+    for (i = 0; i < 50; i++) sched_yield();
+
+    if (errno != mio) {
+        printf("  filo %d: errno era %d e adesso e' %d — condiviso\n",
+               io, mio, errno);
+        thread_esci(1);
+    }
+    thread_esci(0);
+}
+
+static int prova_errno(void)
+{
+    int tid[FILI], i, codice, esito = 0, mio_main;
+
+    /* Il principale si sporca il suo con un errore DIVERSO da quello dei fili. */
+    close(999);                       /* EBADF */
+    mio_main = errno;
+
+    printf("filiprova: errno deve essere di ciascuno\n");
+    printf("  il principale ha errno %d (EBADF), i fili avranno ENOENT\n",
+           mio_main);
+    if (mio_main == 0) {
+        printf("  ATTENZIONE: close(999) non ha impostato errno, prova nulla\n");
+        return 1;
+    }
+
+    for (i = 0; i < FILI; i++) {
+        tid[i] = thread_crea(filo_errno, (void *)(long)i);
+        if (tid[i] < 0) { printf("  thread_crea: errno %d\n", errno); return 1; }
+    }
+    for (i = 0; i < FILI; i++) {
+        codice = -1;
+        thread_attendi(tid[i], &codice);
+        if (codice != 0) esito = 1;
+    }
+
+    printf("  il principale ci ritrova %d (atteso %d)   %s\n",
+           errno, mio_main, errno == mio_main ? "intatto" : "SOVRASCRITTO");
+    if (errno != mio_main) esito = 1;
+
+    printf("\nfiliprova errno: %s\n", esito ? "QUALCOSA NON VA" : "tutto a posto");
+    return esito;
+}
+
 /* Un filo che non finisce mai: serve alla prova dell'abbandono. */
 static void per_sempre(void *arg)
 {
@@ -173,6 +242,7 @@ int main(int argc, char **argv)
     if (argc > 1 && strcmp(argv[1], "abbandona") == 0) return abbandona();
     if (argc > 1 && strcmp(argv[1], "troppi") == 0)    return troppi();
     if (argc > 1 && strcmp(argv[1], "tls") == 0)       return prova_tls();
+    if (argc > 1 && strcmp(argv[1], "errno") == 0)     return prova_errno();
     {
     int tid[FILI];
     int i, codice, esito = 0;
