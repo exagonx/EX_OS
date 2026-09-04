@@ -85,6 +85,143 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### I fili: più flussi dentro lo stesso programma
+
+**testato** — e la prova non è che il conto torni, è che **senza lucchetto non
+torna**:
+
+```
+filiprova: 4 fili, 20000 giri l'uno
+  col lucchetto   80000   atteso  80000   esatto
+  senza           20000   atteso  80000   perso per strada
+  scambi di mano  80000   i fili si alternano davvero
+```
+
+Sessantamila incrementi persi sono quattro flussi che si pestano i piedi sulla
+stessa memoria. Se i fili fossero finti — se `thread_crea` eseguisse la
+funzione dentro chi chiama — quel numero sarebbe 80000 come l'altro, e la prova
+sarebbe passata senza provare niente.
+
+**La differenza fra un processo e un filo è una riga: la page directory.**
+`proc_create` ne alloca una nuova, `proc_thread_crea` copia quella del
+capogruppo. Non c'è una riga dello scheduler che sia stata toccata: stessa run
+queue, stesso quanto, stesso `context_switch` — che riceveva già il CR3 come
+parametro. E `tgid` (il pid del primo del gruppo) vale `pid` per un processo
+normale, così tutto il kernel che non sa niente di fili continua a funzionare
+senza un solo `if`.
+
+**I descrittori si condividono per puntatore, non per copia**: due fili che
+aprono e chiudono file devono vedere la stessa tabella. Nel PCB è comparso
+`fdt`, e le 153 occorrenze di `->fds[` nel kernel sono diventate `->fdt[` con
+una sostituzione meccanica — per un processo normale `fdt == fds` e non cambia
+niente.
+
+**Lo stack no**: 64 KB per filo, in una banda riservata *a tutti* i processi
+all'avvio — anche a chi un filo non lo farà mai. Sono indirizzi, non pagine.
+L'alternativa (riservarla quando nasce il primo filo) vorrebbe dire abbassare
+il tetto dello heap sotto memoria che lo heap potrebbe già avere preso: o si
+rifiuta il filo, o gli si mette lo stack sopra la roba di qualcun altro.
+
+> **Chi esce porta via il gruppo**, come `exit_group` su Linux e per la stessa
+> ragione: gli altri fili vivono nella memoria di questo processo, e lasciarli
+> correre mentre lo spazio di indirizzamento se ne va vuol dire codice che gira
+> sopra pagine liberate. Provato apposta: un programma che crea tre fili
+> infiniti ed esce senza aspettarli lascia la macchina sana e il prompt torna.
+
+**Quel che non è per filo, ed è scritto invece che scoperto:** le variabili
+`__thread` e `errno` sono per *processo* — il blocco TLS è in comune. Darne uno
+per filo vuol dire copiarci l'immagine iniziale che sta nell'ELF; azzerarlo e
+basta farebbe partire a zero una variabile inizializzata a cinque, in silenzio.
+Fra un limite scritto e un valore sbagliato non c'è partita. E il lucchetto
+gira cedendo la CPU: va bene per una sezione critica corta, non per aspettare —
+un futex è il passo dopo.
+
+### Le scorciatoie degli editor, e una cosa che avevo scritto sbagliata
+
+**testato** — scritta una riga nell'editor e premuto solo Ctrl+S: la riga di
+stato dice «salvato», e il file riletto dalla shell la contiene. Era l'ultima
+voce dell'elenco di EX-IDE: il menu della finestra «Sorgente» prometteva
+Ctrl+S, Ctrl+C, Ctrl+V, Ctrl+X e Ctrl+F dal primo giorno, e non le aveva
+collegate nessuno.
+
+**Il toolkit non le mangia, apposta.** In `exwin.c`, nel giro dei tasti: «per
+ogni altro controllo un Ctrl+lettera è una scorciatoia dell'applicazione e non
+deve essere mangiata» — l'unica eccezione è il terminale, dove Ctrl+C è il byte
+3 e deve arrivare al pty. I Ctrl arrivavano già; mancava che qualcuno li
+guardasse.
+
+> **E quel che avevo scritto nel manuale era sbagliato.** Sotto «Area testo»
+> c'era «con cursore, selezione e appunti (Ctrl+C, Ctrl+V, Ctrl+X)», come se i
+> tasti li facesse il toolkit. Il toolkit dà le *funzioni* —
+> `ex_area_copia/taglia/incolla` — e lascia i tasti a chi scrive il programma.
+> La riga adesso lo dice, e dice anche come si fa: è esattamente ciò che serve a
+> chi con EX-IDE scrive un editor suo.
+
+**Il disegno si rifà a mano, da tastiera.** È la trappola di questo lavoro:
+premendo «Taglia» nel menu il toolkit ridisegna la finestra chiudendo la
+tendina, quindi il testo cambiato si vede; da tastiera non si chiude niente, e
+senza un `EXM_DISEGNA` esplicito il testo cambia e lo schermo resta com'era. Le
+due strade passano dalle stesse funzioni e non hanno lo stesso contorno.
+
+### Taglia e incolla: un controllo si sposta fra le maschere
+
+**testato** — copiato e incollato nella stessa maschera, e poi tagliato,
+cambiata maschera e incollato: il file del disegno mostra il controllo passato
+sotto l'altra finestra, stessa posizione e stesso nome. Era l'ultima voce grossa
+di EX-IDE, e la sua ragione vera non era copiare: era che un controllo messo
+sulla maschera sbagliata si poteva solo cancellare e rifare a mano di là.
+
+**Gli appunti del disegno non sono quelli di sistema.** Dentro c'è un
+*controllo*, non del testo: quelli di ExWin portano caratteri e li usano già gli
+editor per passarsi pezzi di sorgente. Infilarci un controllo vorrebbe dire
+inventare un formato testuale per un rettangolo e farlo rileggere anche a chi ci
+scrive dentro nel frattempo. Nella finestra principale Ctrl+C parla del disegno,
+che è quel che quella finestra è.
+
+**Il nome e l'id non si copiano, si rifanno**: sono unici in tutto il progetto
+perché diventano `ID_...`, `h_...` e un nome di funzione dentro `finestra.h`,
+che è un file solo. Con una conseguenza gradevole che non era cercata —
+tagliando, il nome torna disponibile e il controllo se lo riprende: **uno
+spostamento non rinomina niente**.
+
+**E il codice non si copia affatto.** L'handler dell'originale resta
+dell'originale; la copia avrà il suo, vuoto, al primo doppio clic. Copiare anche
+il corpo vorrebbe dire che exide scrive dentro `finestra.c` cose che non ha
+scritto nessuno — l'unica regola che questo programma non rompe mai.
+
+> **Nella stessa maschera l'incollato si scosta di otto pixel, in un'altra no.**
+> Metterlo esattamente sopra l'originale lo nasconderebbe: si vedrebbe un
+> controllo e ce ne sarebbero due, e il clic prenderebbe sempre quello di sopra.
+> In un'altra maschera invece quel posto è libero, ed è esattamente dove lo si
+> vuole.
+
+### Rifai: la stessa funzione con le due pile scambiate
+
+**testato** — annullato, rifatto, e verificato il caso che conta di più: dopo un
+Annulla, una modifica nuova butta il ramo rifatto.
+
+**Quel che si annulla non si butta, si mette dall'altra parte.** Due pile invece
+di una, e *una funzione sola che le scambia*: `passo(da, verso)` prende il
+presente, lo mette nella pila `verso`, e rimette il disegno che stava in cima a
+`da`. Annulla è `passo(indietro, avanti)`, Rifai è `passo(avanti, indietro)` —
+due righe l'uno, e il giorno che si aggiunge un campo al disegno il posto in cui
+ricordarsene è uno. Per la stessa ragione la cattura e il ripristino sono
+diventati due funzioni invece delle tre `memcpy` copiate nei tre posti che le
+usano.
+
+**Una modifica nuova butta il ramo rifatto**, ed è l'unica regola che questa
+cosa deve avere: se dopo tre passi indietro si disegna qualcosa, quell'«avanti»
+è un futuro nato da un passato che non c'è più, e tenerlo vorrebbe dire un Rifai
+che riporta a un disegno mai esistito. Lo fanno tutti i programmi così, e la
+ragione è questa — non l'abitudine.
+
+> **La pila scorre quando è piena**, invece di rifiutare l'istante nuovo: il
+> passo più vecchio è quello che serve meno, e perdere il più *recente* vorrebbe
+> dire un Annulla che non annulla l'ultima cosa fatta. Costo misurato con
+> `size`: la BSS di exide passa da 140.384 a 261.888 byte — centoventuno
+> kilobyte, cioè la seconda pila di sedici istanti, memoria azzerata e non byte
+> nel binario.
+
 ### Si cerca davvero, e non serviva portare un browser
 
 **testato** — dal vivo, in HTTPS: `html.duckduckgo.com/html/?q=exos` si apre

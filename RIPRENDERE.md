@@ -28,6 +28,267 @@ manca» apre quello.
 
 # DOVE RIPRENDERE — 4 settembre 2026
 
+## 4 settembre 2026 — I FILI: PIU' FLUSSI DENTRO LO STESSO PROGRAMMA
+
+EX-OS non aveva thread. Adesso li ha, e la prova non e' che il conto torni: e'
+che **senza lucchetto NON torna**.
+
+    filiprova: 4 fili, 20000 giri l'uno
+      col lucchetto   80000   atteso  80000   esatto
+      senza           20000   atteso  80000   perso per strada
+      scambi di mano  80000   i fili si alternano davvero
+
+Sessantamila incrementi persi sono quattro flussi che si pestano i piedi sulla
+stessa memoria: se i fili fossero finti — se `thread_crea` eseguisse la
+funzione dentro chi chiama — quel numero sarebbe 80000 come l'altro, e la prova
+sarebbe passata senza provare niente.
+
+### LA DIFFERENZA FRA UN PROCESSO E UN FILO E' UNA RIGA
+
+! **PER LO SCHEDULER UN FILO E' UN TASK**, e non c'e' una riga dello scheduler
+che sia stata toccata: stessa run queue, stesso quanto, stesso
+`context_switch`. L'unica cosa che si fa diversamente e' **non allocare una
+page directory nuova**: si copia quella del capogruppo, e da quel momento i due
+task vedono la stessa memoria. `context_switch` riceveva gia' il CR3 come
+parametro — passargli due volte lo stesso valore e' esattamente cio' che serve,
+e su x86 ricaricare CR3 con lo stesso valore non svuota nemmeno il TLB.
+
+! **`tgid` DICE A QUALE GRUPPO SI APPARTIENE**, ed e' il pid del primo. Per un
+processo normale `tgid == pid`: con questa sola convenzione tutto il kernel che
+non sa niente di fili continua a funzionare senza un `if` — le condizioni «sono
+un filo?» sono false dappertutto da sole.
+
+! **E IL tid E' UN pid.** Non e' una comodita' di implementazione: lo scheduler
+non distingue, quindi non distinguono nemmeno i log, il registro dei processi e
+`kill`. Chi vuole sapere se due tid appartengono allo stesso programma guarda
+il gruppo.
+
+### LE TRE COSE CHE SI CONDIVIDONO, E COME
+
+**La memoria**: la page directory, per copia del puntatore.
+
+**I descrittori, per PUNTATORE e non per copia.** Due fili che aprono e
+chiudono file devono vedere la stessa tabella — un file aperto da uno e chiuso
+dall'altro e' cio' che ci si aspetta. Nel PCB e' comparso `fdt`, che punta ai
+propri `fds` per un processo e a quelli del capogruppo per un filo; le 153
+occorrenze di `->fds[` in kernel/ sono diventate `->fdt[` con una sostituzione
+meccanica, e per un processo normale non cambia niente perche' `fdt == fds`.
+
+**Lo stack no**: ogni filo ha il suo, 64 KB dentro una banda riservata.
+
+! **LA BANDA SI RISERVA ALL'AVVIO, ANCHE A CHI UN FILO NON LO FARA' MAI**, e
+sono INDIRIZZI, non pagine: mezzo megabyte di spazio di indirizzamento su tre
+giga. L'alternativa — riservarla quando nasce il primo filo — vorrebbe dire
+abbassare `heap_max` sotto memoria che lo heap potrebbe gia' avere preso, e
+allora o si rifiuta il filo, o gli si mette lo stack sopra lo heap di qualcun
+altro. Il primo e' un limite che salta fuori a caso, il secondo e' memoria
+corrotta in silenzio.
+
+    heap ... heap_max | guardia | banda dei fili | TLS | riserva stack | 3GB
+
+! **E LO STACK DI UN FILO SI IMPEGNA TUTTO SUBITO**, al contrario di quello del
+processo che cresce su richiesta. Il motivo e' `page_fault_handler`: sa far
+crescere UNO stack — quello descritto da `user_stack_limit` nel PCB — e non
+saprebbe dire a quale filo appartiene una pagina mancante dentro la banda.
+Sessantaquattro kilobyte impegnati sono il prezzo onesto di non dover insegnare
+al gestore dei fault una cosa che si puo' evitare del tutto.
+
+### CHI ESCE PORTA VIA IL GRUPPO
+
+! **E' L'UNICA SEMANTICA SICURA.** Gli altri fili vivono nella memoria di
+questo processo: lasciarli correre mentre lo spazio di indirizzamento se ne va
+vuol dire codice che gira sopra pagine liberate. E' la stessa scelta di
+`exit_group` su Linux, presa per la stessa ragione. Un FILO che esce invece non
+porta via nessuno.
+
+! **E LA PAGE DIRECTORY SI LIBERA QUANDO NON RESTA NESSUNO**, contando i vivi
+del gruppo dentro `proc_reap_zombie`: il capogruppo puo' essere raccolto prima
+che i PCB dei suoi fili lo siano, e liberare la memoria li' vorrebbe dire
+liberarla sotto i piedi di chi deve ancora essere raccolto.
+
+### IL LUCCHETTO STA NELLA LIBC, E GIRA CEDENDO LA CPU
+
+`xchg` e' atomico senza `lock` — l'unica istruzione x86 che lo sia per
+costruzione — e chi aspetta chiama `sched_yield()` invece di girare a vuoto:
+con un processore solo, un ciclo che non cede aspetta chi ha il lucchetto senza
+mai lasciarlo lavorare, e si sbloccherebbe solo allo scadere del quanto.
+
+! **NON C'E' NIENTE CHE DORMA DAVVERO**, ed e' dichiarato: va bene per una
+sezione critica corta, non per aspettare un file. Un futex — bloccarsi su un
+indirizzo e farsi svegliare — e' il passo successivo, e ha senso solo quando
+servira'.
+
+### QUEL CHE NON E' PER FILO, E PERCHE' E' SCRITTO INVECE CHE SCOPERTO
+
+! **LE VARIABILI `__thread` E `errno` SONO PER PROCESSO, NON PER FILO.** Il
+blocco TLS e' in comune. Darne uno per filo vuol dire copiarci dentro
+l'immagine iniziale che sta nell'ELF, e finche' non la si tiene da parte
+l'unica alternativa sarebbe azzerarlo — cioe' far partire a zero una variabile
+che il programma ha inizializzato a cinque, in silenzio. Fra un limite scritto
+e un valore sbagliato non c'e' partita. `errno` passa da `__errno_dove()`,
+quindi il giorno che il blocco sara' per filo lo diventera' anche lui senza
+toccare una riga di chi lo usa.
+
+### COME SI E' PROVATO — TRE CASI, NON UNO
+
+    filiprova            4 fili, 20000 giri: 80000 col lucchetto (esatto),
+                         20000 senza (60000 persi), 80000 scambi di mano
+    filiprova troppi     ne chiede dodici: ne crea 7 (FILO_MAX meno il
+                         capogruppo) e si ferma con errno 11 = EAGAIN
+    filiprova abbandona  crea tre fili che non finiscono mai e ESCE senza
+                         aspettarli -> il prompt torna, e il comando dopo
+                         gira: il kernel se li e' portati via
+
+E due volte di fila, con i PCB riusati (tid 15-18, poi 20-23), piu' un `hello`
+dopo per vedere che la macchina sia sana.
+
+! **UN DIFETTO TROVATO DALLA PROVA:** «troppi» diceva `errno 3`, cioe' ESRCH,
+perche' `proc_thread_crea` rendeva numeri di comodo (-1..-5) invece degli
+errori veri. In `libc.h` avevo gia' scritto quali dovevano essere — EAGAIN,
+ENOMEM, EFAULT — e il codice diceva un'altra cosa: adesso rende quelli.
+
+## 4 settembre 2026 — LE SCORCIATOIE DEGLI EDITOR, E UNA COSA CHE AVEVO SCRITTO SBAGLIATA
+
+Ultima voce dell'elenco di exide: il menu della finestra «Sorgente» prometteva
+Ctrl+S, Ctrl+C, Ctrl+V, Ctrl+X e Ctrl+F dal primo giorno, e non le aveva
+collegate nessuno. Erano etichette.
+
+! **E IL TOOLKIT NON LE MANGIA, APPOSTA.** In `exwin.c`, nel giro dei tasti:
+«per ogni altro controllo un Ctrl+lettera e' una scorciatoia dell'applicazione
+e non deve essere mangiata» — l'unica eccezione e' il terminale, dove Ctrl+C e'
+il byte 3 e deve arrivare al pty. Quindi i Ctrl arrivano gia' all'applicazione:
+mancava solo che qualcuno li guardasse.
+
+! **QUINDI QUEL CHE AVEVO SCRITTO NEL MANUALE ERA SBAGLIATO.** Sotto «Area
+testo» c'era «con cursore, selezione e appunti (Ctrl+C, Ctrl+V, Ctrl+X)», come
+se i tasti li facesse il toolkit. Il toolkit da' le FUNZIONI —
+`ex_area_copia/taglia/incolla` — e lascia i tasti a chi scrive il programma. La
+riga adesso lo dice, e dice anche come si fa: e' esattamente cio' che serve a
+chi con exide scrive un editor suo.
+
+### IL DISEGNO SI RIFA' A MANO, DA TASTIERA
+
+! **DALLA VOCE DI MENU NO, DA TASTIERA SI'**, ed e' la trappola di questo
+lavoro: premendo «Taglia» nel menu, il toolkit ridisegna la finestra chiudendo
+la tendina, quindi il testo cambiato si vede. Da tastiera non si chiude niente,
+e senza un `ex_procedura_base(f, EXM_DISEGNA, 0, 0)` esplicito il testo cambia e
+lo schermo resta com'era. Le due strade passano dalle stesse funzioni e NON
+hanno lo stesso contorno.
+
+Collegate in tutt'e due gli editor — quello del sorgente e il file-editor —
+perche' chi passa da una finestra all'altra non deve ricordarsi in quale delle
+due funzionano.
+
+### COME SI E' PROVATO
+
+    doppio clic su Etichetta1 -> si apre «Sorgente» dentro il suo handler
+    si scrive una riga, poi Ctrl+S (mai toccato il pulsante Salva)
+        -> la riga di stato dice «salvato»
+        -> e dalla shell:  cat /disk/prg6/src/finestra.c
+           mostra  /* scritto e salvato con Ctrl+S */  dentro
+           Etichetta1_SulMouse()
+
+## 4 settembre 2026 — TAGLIA E INCOLLA: UN CONTROLLO SI SPOSTA FRA LE MASCHERE
+
+Era l'ultima voce grossa rimasta a exide, e la sua ragione vera non era
+copiare: era che un controllo, una volta messo sulla maschera sbagliata, si
+poteva solo cancellare e rifare a mano di la'.
+
+### GLI APPUNTI DEL DISEGNO NON SONO QUELLI DI SISTEMA
+
+! **DENTRO C'E' UN CONTROLLO, NON DEL TESTO.** Gli appunti di ExWin
+(`ex_appunti_metti`) portano caratteri, e li usano gia' gli editor per passarsi
+pezzi di sorgente. Infilarci un controllo vorrebbe dire inventare un formato
+testuale per un rettangolo e farlo rileggere anche a chi ci scrive dentro nel
+frattempo. Sono due appunti diversi perche' sono due cose diverse, e nella
+finestra principale Ctrl+C parla del DISEGNO — che e' quel che quella finestra
+e'.
+
+### QUEL CHE NON SI COPIA, E PERCHE'
+
+! **IL NOME E L'ID NON SI COPIANO, SI RIFANNO.** Sono unici in tutto il
+progetto — diventano `ID_...`, `h_...` e un nome di funzione dentro
+finestra.h, che e' un file solo: due «Pulsante1» sarebbero due definizioni con
+lo stesso nome. Incollare da' quindi il primo nome libero, come se il
+controllo fosse appena nato. Con una conseguenza gradevole che non era
+cercata: **tagliando e incollando altrove, il nome torna disponibile e il
+controllo se lo riprende** — uno spostamento non rinomina niente.
+
+! **E IL CODICE NON SI COPIA AFFATTO.** L'handler dell'originale resta
+dell'originale; la copia avra' il suo, vuoto, al primo doppio clic. Copiare
+anche il corpo vorrebbe dire che exide scrive dentro finestra.c cose che non ha
+scritto nessuno — l'unica regola che questo programma non rompe mai.
+
+### DOVE SI INCOLLA, E LO SCOSTAMENTO
+
+Si incolla SEMPRE nella maschera che si sta disegnando: e' cio' che rende lo
+spostamento fra finestre un taglia, un cambio di maschera e un incolla.
+
+! **NELLA STESSA MASCHERA SI SCOSTA DI OTTO PIXEL, IN UN'ALTRA NO.** Incollando
+dove il controllo era gia', metterlo esattamente sopra l'originale lo
+nasconderebbe: si vedrebbe un controllo e ce ne sarebbero due, e il clic
+prenderebbe sempre quello di sopra. In un'altra maschera invece quel posto e'
+libero, ed e' esattamente dove lo si vuole.
+
+### COME SI E' PROVATO
+
+    Pulsante1 scelto, Ctrl+C, Ctrl+V (stessa maschera)
+        -> nasce Pulsante2, id 1005, in (208,172) cioe' otto pixel piu' in
+           la', col TESTO dell'originale, e la riga di stato dice
+           «incollato come Pulsante2 (l'handler e' suo, e nasce vuoto)»
+
+    Pulsante1 scelto, Ctrl+X, si cambia maschera dall'elenco, Ctrl+V
+        -> e nel finestra.dis salvato:
+
+           F principale 400 260 prg6
+           c etichetta Etichetta1 ...
+           F finestra2 400 260 Finestra 2
+           c pulsante Pulsante1 1005 200 164 8 8 0 Pulsante1     <- spostato
+           c etichetta Etichetta2 ...
+
+       stessa posizione, stesso nome, dentro l'altra maschera.
+
+## 4 settembre 2026 — RIFAI: LA STESSA FUNZIONE CON LE DUE PILE SCAMBIATE
+
+Annulla c'era da ieri, Rifai no. Adesso c'e', e sono la stessa cosa guardata
+dall'altra parte.
+
+### QUEL CHE SI ANNULLA NON SI BUTTA, SI METTE DALL'ALTRA PARTE
+
+! **DUE PILE INVECE DI UNA, E UNA FUNZIONE SOLA CHE LE SCAMBIA.** `passo(da,
+verso)` prende il presente, lo mette nella pila `verso`, e rimette il disegno
+che stava in cima a `da`. Annulla e' `passo(indietro, avanti)`, Rifai e'
+`passo(avanti, indietro)`: due righe l'uno, e il giorno che si aggiunge un
+campo al disegno il posto in cui ricordarsene e' uno.
+
+Per la stessa ragione la cattura e il ripristino sono diventati due funzioni —
+`istante_prendi` e `istante_rimetti` — invece delle tre `memcpy` copiate nei
+tre posti che le usano.
+
+! **UNA MODIFICA NUOVA BUTTA IL RAMO RIFATTO**, ed e' l'unica regola che
+questa cosa deve avere. Se dopo tre passi indietro si disegna qualcosa, quel
+«avanti» e' un futuro nato da un passato che non c'e' piu': tenerlo vorrebbe
+dire un Rifai che riporta a un disegno che non e' mai esistito. Lo fanno tutti
+i programmi cosi', e la ragione e' questa — non l'abitudine.
+
+! **LA PILA SCORRE QUANDO E' PIENA**, invece di rifiutare l'istante nuovo: il
+passo piu' vecchio e' quello che serve meno, e perdere il piu' RECENTE
+vorrebbe dire un Annulla che non annulla l'ultima cosa fatta.
+
+Costo, misurato con `size`: la BSS di exide passa da 140.384 a 261.888 byte —
+centoventuno kilobyte, cioe' la seconda pila di sedici istanti. Memoria
+azzerata, non byte nel binario.
+
+### COME SI E' PROVATO
+
+    Etichetta3 posata sulla maschera
+    Ctrl+Z  -> sparisce
+    Ctrl+Y  -> torna, con i suoi valori (id 1005, x 224, y 204), e la riga
+               di stato dice «rifatto (indietro 1, avanti 0)»
+    Ctrl+Z, poi si posa una Spunta2 (modifica NUOVA), poi Ctrl+Y
+            -> «non c'e' niente da rifare», e l'etichetta non torna:
+               il ramo rifatto e' stato buttato, come deve
+
 ## 4 settembre 2026 — SI CERCA DAVVERO, E NON SERVIVA PORTARE UN BROWSER
 
 La domanda era: portiamo Firefox, o NetSurf, per poter cercare? La risposta e'

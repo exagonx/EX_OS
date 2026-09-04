@@ -84,6 +84,90 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### The editor shortcuts, and something I had written wrong
+
+**tested** — a line typed in the editor and only Ctrl+S pressed: the status line
+says "saved", and the file read back from the shell contains it. It was the last
+item on EX-IDE's list: the "Source" window's menu had promised Ctrl+S, Ctrl+C,
+Ctrl+V, Ctrl+X and Ctrl+F since day one, and nobody had ever wired them.
+
+**The toolkit does not eat them, on purpose.** In `exwin.c`, in the key path:
+"for every other control a Ctrl+letter is an application shortcut and must not
+be eaten" — the only exception is the terminal, where Ctrl+C is byte 3 and must
+reach the pty. The Ctrls were already arriving; what was missing was someone
+looking at them.
+
+> **And what I had written in the manual was wrong.** Under "Text area" it said
+> "with cursor, selection and clipboard (Ctrl+C, Ctrl+V, Ctrl+X)", as if the
+> keys were the toolkit's doing. The toolkit provides the *functions* —
+> `ex_area_copia/taglia/incolla` — and leaves the keys to whoever writes the
+> program. The line now says so, and says how it is done: exactly what someone
+> writing their own editor with EX-IDE needs.
+
+**The repaint is manual, from the keyboard.** That is this job's trap: pressing
+"Cut" in the menu makes the toolkit repaint the window as the dropdown closes,
+so the changed text shows; from the keyboard nothing closes, and without an
+explicit `EXM_DISEGNA` the text changes and the screen stays as it was. The two
+paths go through the same functions and do not have the same surroundings.
+
+### Cut and paste: a control moves between forms
+
+**tested** — copied and pasted within the same form, then cut, form switched and
+pasted: the drawing file shows the control moved under the other window, same
+position and same name. It was the last big item left in EX-IDE, and its real
+reason was not copying: it was that a control placed on the wrong form could
+only be deleted and redone by hand over there.
+
+**The drawing clipboard is not the system one.** It holds a *control*, not text:
+ExWin's own clipboard carries characters and the editors already use it to pass
+pieces of source around. Putting a control in there would mean inventing a
+textual format for a rectangle and having it read back by whoever else writes
+into it meanwhile. In the main window Ctrl+C talks about the drawing, which is
+what that window is.
+
+**The name and the id are not copied, they are made anew**: they are unique
+across the whole project because they become `ID_...`, `h_...` and a function
+name inside `finestra.h`, which is a single file. With a pleasant consequence
+that was not aimed for — on a cut the name becomes free again and the control
+takes it back: **a move renames nothing**.
+
+**And the code is not copied at all.** The original's handler stays the
+original's; the copy will get its own, empty, on the first double click. Copying
+the body too would mean exide writing into `finestra.c` things nobody wrote —
+the one rule this program never breaks.
+
+> **Within the same form the pasted control shifts by eight pixels, in another
+> one it does not.** Placing it exactly over the original would hide it: you
+> would see one control and there would be two, and the click would always take
+> the top one. In another form that spot is free, and it is exactly where you
+> want it.
+
+### Redo: the same function with the two stacks swapped
+
+**tested** — undone, redone, and the case that matters most verified: after an
+Undo, a new change discards the redo branch.
+
+**What you undo is not thrown away, it is moved to the other side.** Two stacks
+instead of one, and *a single function that swaps them*: `passo(from, to)` takes
+the present, pushes it onto `to`, and restores the drawing on top of `from`.
+Undo is `passo(back, forward)`, Redo is `passo(forward, back)` — two lines each,
+and the day a field is added to the drawing there is one place to remember it.
+For the same reason capture and restore became two functions instead of the
+three `memcpy` blocks copied into the three places that use them.
+
+**A new change discards the redo branch**, and that is the only rule this thing
+needs: if after three steps back you draw something, that "forward" is a future
+born of a past that no longer exists, and keeping it would mean a Redo that
+restores a drawing which never existed. Every program does it this way, and this
+is the reason — not habit.
+
+> **The stack slides when full**, instead of refusing the new snapshot: the
+> oldest step is the one needed least, and losing the most *recent* one would
+> mean an Undo that does not undo the last thing done. Cost measured with
+> `size`: exide's BSS goes from 140,384 to 261,888 bytes — a hundred and
+> twenty-one kilobytes, the second stack of sixteen snapshots, zeroed memory and
+> not bytes in the binary.
+
 ### Search actually works, and no browser port was needed
 
 **tested** — live, over HTTPS: `html.duckduckgo.com/html/?q=exos` opens in the

@@ -105,6 +105,9 @@ void syscall_init(void)
     syscall_table[SYS_DUP2]        = sys_dup2;
     syscall_table[SYS_FCNTL]       = sys_fcntl;
     syscall_table[SYS_WAITPID]     = sys_waitpid;
+    syscall_table[SYS_THREAD_CREA]    = sys_thread_crea;
+    syscall_table[SYS_THREAD_ESCI]    = sys_thread_esci;
+    syscall_table[SYS_THREAD_ATTENDI] = sys_thread_attendi;
     syscall_table[SYS_GETPID]      = sys_getpid;
     syscall_table[SYS_GETPPID]     = sys_getppid;
     syscall_table[SYS_MMAP]        = sys_mmap;

@@ -138,6 +138,25 @@
 /freebasic/
 
 # =============================================================================
+# Rust — l'albero dei sorgenti del compilatore
+#
+# 424 MB di codice di terzi (MIT / Apache-2.0), versione 1.100.0, che si
+# scaricano da rust-lang.org: stessa regola di /gcc/, /openssl/ e
+# /FreeBASIC-.../ qui sopra. Nella cronologia di questo repository non ci
+# devono stare — e qui la ragione e' piu' forte che altrove, perche' dentro
+# c'e' anche LLVM come sottomodulo, cioe' un altro albero grande quanto tutto
+# il resto messo insieme.
+#
+# ! CIO' CHE SARA' NOSTRO va in tools/rust-exos/, che e' tracciata: il
+# bersaglio i686-unknown-exos, l'allocatore, gli involucri sulle chiamate di
+# sistema e la ricetta per rifare tutto. Come per GCC in tools/gcc-exos/ e per
+# FreeBASIC in tools/freebasic-exos/.
+#
+# ! ANCORATO ALLA RADICE, come tutti gli altri.
+# =============================================================================
+/rust/
+
+# =============================================================================
 # LE ISO NON SI PUBBLICANO — nessuna delle due, e nemmeno a pezzi
 #
 # dist/exos-tools.iso e' 58 MB e cresce a ogni ricostruzione; dist/exos.iso

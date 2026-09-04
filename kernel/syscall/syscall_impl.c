@@ -137,7 +137,7 @@ static int find_free_fd(Process *proc)
 {
     int i;
     for (i = 0; i < MAX_FD; i++) {
-        if (proc->fds[i].type == FD_UNUSED) return i;
+        if (proc->fdt[i].type == FD_UNUSED) return i;
     }
     return -1;
 }
@@ -338,13 +338,13 @@ int32_t sys_read(InterruptFrame *frame)
 
     if (fd < 0 || fd >= MAX_FD)                         return ERR(EBADF);
     if (!syscall_verify_ptr(buf, count))                 return ERR(EFAULT);
-    if (proc->fds[fd].type == FD_UNUSED)                return ERR(EBADF);
+    if (proc->fdt[fd].type == FD_UNUSED)                return ERR(EBADF);
 
     /* stdin: tastiera, tramite il driver TTY compilato staticamente nel
      * kernel (drivers/tty/tty.c, inizializzato al PASSO 14 con
      * extern drv_init() -- non e' un modulo dinamico nel driver manager,
      * quindi le sue funzioni sono simboli globali del kernel). */
-    if (proc->fds[fd].type == FD_STDIN) {
+    if (proc->fdt[fd].type == FD_STDIN) {
         extern int drv_read(void *buf, size_t n);
         uint32_t fg = sched_console_fg(proc->console);
 
@@ -381,28 +381,28 @@ int32_t sys_read(InterruptFrame *frame)
      * vuota e c'e' ancora uno scrittore, si aspetta. Ritorna 0 solo
      * quando non c'e' piu' nessuno che possa scrivere. Vedi
      * kernel/ipc/pipe.c. */
-    if (proc->fds[fd].type == FD_PIPE_R) {
-        return pipe_leggi((int)proc->fds[fd].inode, buf, count);
+    if (proc->fdt[fd].type == FD_PIPE_R) {
+        return pipe_leggi((int)proc->fdt[fd].inode, buf, count);
     }
 
     /* ! Leggere dall'estremita' SBAGLIATA e' un errore, non un'attesa. */
-    if (proc->fds[fd].type == FD_PIPE_W) return ERR(EBADF);
+    if (proc->fdt[fd].type == FD_PIPE_W) return ERR(EBADF);
 
     /* Le due estremita' di un pty. Sono due strade diverse e non una con un
      * flag: vedi FD_PTY_M in sched.h. */
-    if (proc->fds[fd].type == FD_PTY_M)
-        return pty_leggi_master((int)proc->fds[fd].inode, buf, count);
-    if (proc->fds[fd].type == FD_PTY_S)
-        return pty_leggi_slave((int)proc->fds[fd].inode, buf, count);
+    if (proc->fdt[fd].type == FD_PTY_M)
+        return pty_leggi_master((int)proc->fdt[fd].inode, buf, count);
+    if (proc->fdt[fd].type == FD_PTY_S)
+        return pty_leggi_slave((int)proc->fdt[fd].inode, buf, count);
 
     /* file FAT12 */
-    if (proc->fds[fd].type == FD_FILE) {
+    if (proc->fdt[fd].type == FD_FILE) {
         /* Il driver scrivera' dentro `buf`: le sue pagine devono essere
          * gia' in RAM, o il fault avverrebbe con il lucchetto del VFS in
          * mano. Vedi vm_precarica_utente(). */
         vm_precarica_utente((uint32_t)buf, count);
-        int32_t n = vfs_read((int)proc->fds[fd].inode, buf, count, proc->fds[fd].offset);
-        if (n >= 0) proc->fds[fd].offset += (uint32_t)n;
+        int32_t n = vfs_read((int)proc->fdt[fd].inode, buf, count, proc->fdt[fd].offset);
+        if (n >= 0) proc->fdt[fd].offset += (uint32_t)n;
         return n;
     }
 
@@ -428,14 +428,14 @@ int32_t sys_write(InterruptFrame *frame)
 
     if (fd < 0 || fd >= MAX_FD)              return ERR(EBADF);
     if (!syscall_verify_ptr(buf, count))      return ERR(EFAULT);
-    if (proc->fds[fd].type == FD_UNUSED)     return ERR(EBADF);
+    if (proc->fdt[fd].type == FD_UNUSED)     return ERR(EBADF);
 
     /* stdout / stderr: scrivi sulla console DEL PROCESSO, non su quella
      * visibile. Un programma che gira su una console nascosta continua a
      * disegnare nel proprio buffer e si ritrova lo schermo intatto
      * quando l'utente ci torna sopra con Alt+Fn. */
-    if (proc->fds[fd].type == FD_STDOUT ||
-        proc->fds[fd].type == FD_STDERR) {
+    if (proc->fdt[fd].type == FD_STDOUT ||
+        proc->fdt[fd].type == FD_STDERR) {
         for (i = 0; i < count; i++) {
             vga_putchar_su(proc->console, buf[i]);
         }
@@ -446,23 +446,23 @@ int32_t sys_write(InterruptFrame *frame)
      * e' pieno, e ritorna -EPIPE se non c'e' piu' nessun lettore. La
      * scrittura puo' essere PARZIALE: il chiamante deve guardare il
      * valore di ritorno e richiamare. Vedi kernel/ipc/pipe.c. */
-    if (proc->fds[fd].type == FD_PIPE_W) {
-        return pipe_scrivi((int)proc->fds[fd].inode, buf, count);
+    if (proc->fdt[fd].type == FD_PIPE_W) {
+        return pipe_scrivi((int)proc->fdt[fd].inode, buf, count);
     }
 
     /* ! Scrivere sull'estremita' SBAGLIATA e' un errore. */
-    if (proc->fds[fd].type == FD_PIPE_R) return ERR(EBADF);
+    if (proc->fdt[fd].type == FD_PIPE_R) return ERR(EBADF);
 
     /* ! SCRIVERE NEL MASTER VUOL DIRE BATTERE UN TASTO, non stampare: quei
      * byte passano dalla disciplina di linea. Scrivere nello slave e' l'uscita
      * di un programma, e non viene toccata da nessuno. */
-    if (proc->fds[fd].type == FD_PTY_M)
-        return pty_scrivi_master((int)proc->fds[fd].inode, buf, count);
-    if (proc->fds[fd].type == FD_PTY_S)
-        return pty_scrivi_slave((int)proc->fds[fd].inode, buf, count);
+    if (proc->fdt[fd].type == FD_PTY_M)
+        return pty_scrivi_master((int)proc->fdt[fd].inode, buf, count);
+    if (proc->fdt[fd].type == FD_PTY_S)
+        return pty_scrivi_slave((int)proc->fdt[fd].inode, buf, count);
 
     /* file FAT12 */
-    if (proc->fds[fd].type == FD_FILE) {
+    if (proc->fdt[fd].type == FD_FILE) {
         /* =====================================================================
          * O_APPEND: si scrive sempre IN FONDO, e la posizione si rilegge a
          * ogni scrittura.
@@ -482,19 +482,19 @@ int32_t sys_write(InterruptFrame *frame)
          * quando i due capitano insieme, cioe' di rado e senza un motivo
          * visibile.
          * ===================================================================== */
-        if (proc->fds[fd].flags & O_APPEND) {
+        if (proc->fdt[fd].flags & O_APPEND) {
             VfsStat st;
 
-            if (vfs_fstat((int)proc->fds[fd].inode, &st) == 0)
-                proc->fds[fd].offset = st.dimensione;
+            if (vfs_fstat((int)proc->fdt[fd].inode, &st) == 0)
+                proc->fdt[fd].offset = st.dimensione;
         }
 
         /* Stessa ragione di sys_read, dall'altro verso: il driver LEGGE
          * da `buf`, e una pagina assente farebbe faultare lui. */
         vm_precarica_utente((uint32_t)buf, count);
-        int32_t n = vfs_write((int)proc->fds[fd].inode, buf, count,
-                              proc->fds[fd].offset);
-        if (n >= 0) proc->fds[fd].offset += (uint32_t)n;
+        int32_t n = vfs_write((int)proc->fdt[fd].inode, buf, count,
+                              proc->fdt[fd].offset);
+        if (n >= 0) proc->fdt[fd].offset += (uint32_t)n;
         return n;
     }
 
@@ -531,10 +531,10 @@ int32_t sys_open(InterruptFrame *frame)
     }
     if (inode < 0) return (int32_t)inode;  /* Propaga errore */
 
-    proc->fds[free_fd].type   = FD_FILE;
-    proc->fds[free_fd].flags  = flags;
-    proc->fds[free_fd].offset = 0;
-    proc->fds[free_fd].inode  = (uint32_t)inode;
+    proc->fdt[free_fd].type   = FD_FILE;
+    proc->fdt[free_fd].flags  = flags;
+    proc->fdt[free_fd].offset = 0;
+    proc->fdt[free_fd].inode  = (uint32_t)inode;
 
     klog(LOG_DEBUG, "SYSCALL open('%s') -> fd=%d", path, free_fd);
     return free_fd;
@@ -551,28 +551,28 @@ int32_t sys_close(InterruptFrame *frame)
     Process *proc = proc_get_current();
 
     if (fd < 0 || fd >= MAX_FD)          return ERR(EBADF);
-    if (proc->fds[fd].type == FD_UNUSED) return ERR(EBADF);
+    if (proc->fdt[fd].type == FD_UNUSED) return ERR(EBADF);
     /* Non chiudere stdin/stdout/stderr */
     if (fd <= 2)                          return ERR(EBADF);
 
-    if (proc->fds[fd].type == FD_FILE) {
-        vfs_close((int)proc->fds[fd].inode);
+    if (proc->fdt[fd].type == FD_FILE) {
+        vfs_close((int)proc->fdt[fd].inode);
     }
 
     /* ! CHIUDERE UN'ESTREMITA' DI PIPE NON E' SOLO CONTABILITA': e' anche
      * cio' che sveglia chi dorme dall'altra parte. Senza, `cmd1 | cmd2`
      * con cmd1 che finisce lascia cmd2 fermo per sempre ad aspettare byte
      * che nessuno scrivera'. Vedi kernel/ipc/pipe.c. */
-    if (proc->fds[fd].type == FD_PIPE_R) pipe_chiudi_lettore((int)proc->fds[fd].inode);
-    if (proc->fds[fd].type == FD_PIPE_W) pipe_chiudi_scrittore((int)proc->fds[fd].inode);
-    if (proc->fds[fd].type == FD_PTY_M)  pty_chiudi((int)proc->fds[fd].inode, 1);
-    if (proc->fds[fd].type == FD_PTY_S)  pty_chiudi((int)proc->fds[fd].inode, 0);
+    if (proc->fdt[fd].type == FD_PIPE_R) pipe_chiudi_lettore((int)proc->fdt[fd].inode);
+    if (proc->fdt[fd].type == FD_PIPE_W) pipe_chiudi_scrittore((int)proc->fdt[fd].inode);
+    if (proc->fdt[fd].type == FD_PTY_M)  pty_chiudi((int)proc->fdt[fd].inode, 1);
+    if (proc->fdt[fd].type == FD_PTY_S)  pty_chiudi((int)proc->fdt[fd].inode, 0);
 
-    proc->fds[fd].type        = FD_UNUSED;
-    proc->fds[fd].flags       = 0;
-    proc->fds[fd].offset      = 0;
-    proc->fds[fd].inode       = 0;
-    proc->fds[fd].driver_data = NULL;
+    proc->fdt[fd].type        = FD_UNUSED;
+    proc->fdt[fd].flags       = 0;
+    proc->fdt[fd].offset      = 0;
+    proc->fdt[fd].inode       = 0;
+    proc->fdt[fd].driver_data = NULL;
 
     return 0;
 }
@@ -611,38 +611,38 @@ static int32_t fd_duplica(Process *proc, int vecchio, int nuovo)
 {
     if (vecchio < 0 || vecchio >= MAX_FD || nuovo < 0 || nuovo >= MAX_FD)
         return ERR(EBADF);
-    if (proc->fds[vecchio].type == FD_UNUSED) return ERR(EBADF);
+    if (proc->fdt[vecchio].type == FD_UNUSED) return ERR(EBADF);
     if (vecchio == nuovo) return nuovo;
 
     /* Il riferimento in piu' si prende PRIMA di chiudere il vecchio
      * contenuto di `nuovo`: se i due fd guardassero lo stesso file, farlo
      * al contrario lo chiuderebbe e il dup successivo troverebbe un handle
      * morto. */
-    if (proc->fds[vecchio].type == FD_FILE) {
-        int r = vfs_dup((int)proc->fds[vecchio].inode);
+    if (proc->fdt[vecchio].type == FD_FILE) {
+        int r = vfs_dup((int)proc->fdt[vecchio].inode);
         if (r < 0) return (int32_t)r;
     }
     /* Le pipe hanno il loro conteggio, uno per estremita': duplicare un
      * descrittore di pipe senza incrementarlo farebbe credere alla pipe di
      * avere meno estremita' aperte di quante ne ha, e la prima close()
      * annuncerebbe la fine dei dati a chi legge. */
-    if (proc->fds[vecchio].type == FD_PIPE_R)
-        pipe_apri_lettore((int)proc->fds[vecchio].inode);
-    if (proc->fds[vecchio].type == FD_PIPE_W)
-        pipe_apri_scrittore((int)proc->fds[vecchio].inode);
+    if (proc->fdt[vecchio].type == FD_PIPE_R)
+        pipe_apri_lettore((int)proc->fdt[vecchio].inode);
+    if (proc->fdt[vecchio].type == FD_PIPE_W)
+        pipe_apri_scrittore((int)proc->fdt[vecchio].inode);
 
     /* Qui `nuovo` puo' essere 0, 1 o 2: e' il caso della redirezione, ed e'
      * l'unico modo di farla. sys_close li rifiuta apposta, perche' un
      * programma che chiude stdout e basta resterebbe senza uscita; chi
      * arriva da dup2 una sostituzione ce l'ha gia' pronta. */
-    if (proc->fds[nuovo].type == FD_FILE)
-        vfs_close((int)proc->fds[nuovo].inode);
-    if (proc->fds[nuovo].type == FD_PIPE_R)
-        pipe_chiudi_lettore((int)proc->fds[nuovo].inode);
-    if (proc->fds[nuovo].type == FD_PIPE_W)
-        pipe_chiudi_scrittore((int)proc->fds[nuovo].inode);
+    if (proc->fdt[nuovo].type == FD_FILE)
+        vfs_close((int)proc->fdt[nuovo].inode);
+    if (proc->fdt[nuovo].type == FD_PIPE_R)
+        pipe_chiudi_lettore((int)proc->fdt[nuovo].inode);
+    if (proc->fdt[nuovo].type == FD_PIPE_W)
+        pipe_chiudi_scrittore((int)proc->fdt[nuovo].inode);
 
-    proc->fds[nuovo] = proc->fds[vecchio];
+    proc->fdt[nuovo] = proc->fdt[vecchio];
     return nuovo;
 }
 
@@ -679,24 +679,24 @@ int32_t sys_pipe(InterruptFrame *frame)
     }
     /* Si occupa subito il posto, o find_free_fd lo ridarebbe una seconda
      * volta per l'estremita' di scrittura. */
-    proc->fds[r].type        = FD_PIPE_R;
-    proc->fds[r].flags       = O_RDONLY;
-    proc->fds[r].offset      = 0;
-    proc->fds[r].inode       = (uint32_t)h;
-    proc->fds[r].driver_data = NULL;
+    proc->fdt[r].type        = FD_PIPE_R;
+    proc->fdt[r].flags       = O_RDONLY;
+    proc->fdt[r].offset      = 0;
+    proc->fdt[r].inode       = (uint32_t)h;
+    proc->fdt[r].driver_data = NULL;
 
     w = find_free_fd(proc);
     if (w < 0) {
-        proc->fds[r].type = FD_UNUSED;
+        proc->fdt[r].type = FD_UNUSED;
         pipe_chiudi_lettore(h);
         pipe_chiudi_scrittore(h);
         return ERR(EMFILE);
     }
-    proc->fds[w].type        = FD_PIPE_W;
-    proc->fds[w].flags       = O_WRONLY;
-    proc->fds[w].offset      = 0;
-    proc->fds[w].inode       = (uint32_t)h;
-    proc->fds[w].driver_data = NULL;
+    proc->fdt[w].type        = FD_PIPE_W;
+    proc->fdt[w].flags       = O_WRONLY;
+    proc->fdt[w].offset      = 0;
+    proc->fdt[w].inode       = (uint32_t)h;
+    proc->fdt[w].driver_data = NULL;
 
     ufd[0] = r;
     ufd[1] = w;
@@ -712,7 +712,7 @@ int32_t sys_dup(InterruptFrame *frame)
     int      fd   = (int)frame->ebx;
     int      libero;
 
-    if (fd < 0 || fd >= MAX_FD || proc->fds[fd].type == FD_UNUSED)
+    if (fd < 0 || fd >= MAX_FD || proc->fdt[fd].type == FD_UNUSED)
         return ERR(EBADF);
 
     libero = find_free_fd(proc);
@@ -735,7 +735,7 @@ int32_t sys_fcntl(InterruptFrame *frame)
     uint32_t cmd  = frame->ecx;
     uint32_t arg  = frame->edx;
 
-    if (fd < 0 || fd >= MAX_FD || proc->fds[fd].type == FD_UNUSED)
+    if (fd < 0 || fd >= MAX_FD || proc->fdt[fd].type == FD_UNUSED)
         return ERR(EBADF);
 
     switch (cmd) {
@@ -745,7 +745,7 @@ int32_t sys_fcntl(InterruptFrame *frame)
         int i;
         if (arg >= (uint32_t)MAX_FD) return ERR(EINVAL);
         for (i = (int)arg; i < MAX_FD; i++) {
-            if (proc->fds[i].type == FD_UNUSED)
+            if (proc->fdt[i].type == FD_UNUSED)
                 return fd_duplica(proc, fd, i);
         }
         return ERR(EMFILE);
@@ -756,13 +756,13 @@ int32_t sys_fcntl(InterruptFrame *frame)
     case F_GETFD:  return 0;
     case F_SETFD:  return 0;
 
-    case F_GETFL:  return (int32_t)proc->fds[fd].flags;
+    case F_GETFL:  return (int32_t)proc->fdt[fd].flags;
 
     case F_SETFL:
         /* La modalita' di accesso di un file aperto non si cambia: e' cio'
          * che dice POSIX, e qui sarebbe anche una bugia — il driver ha
          * gia' aperto il file come gli e' stato chiesto. */
-        proc->fds[fd].flags = (proc->fds[fd].flags & ~(O_APPEND | O_NONBLOCK))
+        proc->fdt[fd].flags = (proc->fdt[fd].flags & ~(O_APPEND | O_NONBLOCK))
                             | (arg & (O_APPEND | O_NONBLOCK));
         return 0;
 
@@ -838,6 +838,77 @@ int32_t sys_waitpid(InterruptFrame *frame)
 
         sched_block(PROC_BLOCKED);
         /* Svegliato da proc_exit di un figlio → riprova */
+    }
+}
+
+/* =============================================================================
+ * I FILI — SYS_THREAD_CREA (201), SYS_THREAD_ESCI (202), SYS_THREAD_ATTENDI (203)
+ *
+ * ! IL tid E' UN pid, e cosi' l'attesa di un filo puo' essere quasi la stessa
+ * cosa dell'attesa di un figlio: si guarda lo stesso pool, si raccoglie lo
+ * stesso zombie. Quel che cambia e' il legame — non «e' mio figlio?» ma «e'
+ * del mio gruppo?» — perche' un filo lo puo' aspettare qualunque altro filo,
+ * non solo chi l'ha creato.
+ * ============================================================================= */
+int32_t sys_thread_crea(InterruptFrame *frame)
+{
+    uint32_t entry = frame->ebx;
+    uint32_t arg   = frame->ecx;
+
+    /* ! LA PARTENZA DEVE STARE NELLO SPAZIO UTENTE, e si guarda qui: un
+     * indirizzo kernel messo li' dentro sarebbe codice privilegiato eseguito
+     * su richiesta di un programma. */
+    if (entry == 0 || entry >= USER_SPACE_END) return ERR(EFAULT);
+
+    return proc_thread_crea(entry, arg);
+}
+
+int32_t sys_thread_esci(InterruptFrame *frame)
+{
+    /* proc_exit sa gia' distinguere: se chi esce e' un filo non porta via ne'
+     * la memoria ne' i descrittori del gruppo. Non ritorna. */
+    proc_exit((int32_t)frame->ebx);
+    return 0;
+}
+
+int32_t sys_thread_attendi(InterruptFrame *frame)
+{
+    uint32_t  tid    = frame->ebx;
+    int32_t  *codice = (int32_t *)frame->ecx;
+    Process  *self   = proc_get_current();
+    uint32_t  i;
+
+    if (codice && !syscall_verify_ptr(codice, sizeof(int32_t)))
+        return ERR(EFAULT);
+    if (tid == self->pid) return ERR(EINVAL);   /* aspettare se stessi: mai */
+
+    for (;;) {
+        Process *filo = NULL;
+
+        for (i = 0; i < MAX_PROCESSES; i++) {
+            Process *p = &g_process_pool[i];
+
+            if (p->state == PROC_UNUSED) continue;
+            if (p->pid != tid)           continue;
+            /* ! DEVE ESSERE DEL NOSTRO GRUPPO. Aspettare un task qualunque
+             * sarebbe un modo per sapere quando muore un programma altrui. */
+            if (p->tgid != self->tgid)   return ERR(ESRCH);
+            filo = p;
+            break;
+        }
+        if (filo == NULL) return ERR(ESRCH);
+
+        if (filo->state == PROC_ZOMBIE) {
+            if (codice) *codice = filo->exit_code;
+            proc_reap_zombie(filo);
+            return 0;
+        }
+
+        /* ! CI SI FA TROVARE COME PADRE PRIMA DI DORMIRE: proc_exit di un filo
+         * sveglia il suo ppid, e senza questa riga chi aspetta non verrebbe
+         * svegliato da nessuno — resterebbe bloccato con il filo gia' morto. */
+        filo->ppid = self->pid;
+        sched_block(PROC_BLOCKED);
     }
 }
 
@@ -1113,13 +1184,13 @@ int32_t sys_ioctl(InterruptFrame *frame)
     extern int drv_ioctl(int cmd, void *arg);
 
     if (fd < 0 || fd >= MAX_FD)          return ERR(EBADF);
-    if (proc->fds[fd].type == FD_UNUSED) return ERR(EBADF);
+    if (proc->fdt[fd].type == FD_UNUSED) return ERR(EBADF);
 
     /* I tre descrittori standard sono tutti la console: non c'è ancora
      * un concetto di terminale distinto dal TTY del kernel. */
-    is_tty = (proc->fds[fd].type == FD_STDIN  ||
-              proc->fds[fd].type == FD_STDOUT ||
-              proc->fds[fd].type == FD_STDERR);
+    is_tty = (proc->fdt[fd].type == FD_STDIN  ||
+              proc->fdt[fd].type == FD_STDOUT ||
+              proc->fdt[fd].type == FD_STDERR);
 
     if (!is_tty) {
         klog(LOG_DEBUG, "SYSCALL ioctl(fd=%d, req=0x%x): non e' un terminale", fd, request);
@@ -1789,15 +1860,15 @@ return ERR(ENOMEM); }
         int sfd;
 
         for (sfd = 0; sfd < 3; sfd++) {
-            child->fds[sfd] = parent->fds[sfd];
+            child->fdt[sfd] = parent->fdt[sfd];
 
             /* Un capo condiviso in piu' va contato, o il primo dei due che
              * chiude convincerebbe l'altro che non c'e' piu' nessuno. */
-            switch (parent->fds[sfd].type) {
-            case FD_PIPE_R: pipe_apri_lettore((int)parent->fds[sfd].inode);   break;
-            case FD_PIPE_W: pipe_apri_scrittore((int)parent->fds[sfd].inode); break;
-            case FD_PTY_M:  pty_apri_riferimento((int)parent->fds[sfd].inode, 1); break;
-            case FD_PTY_S:  pty_apri_riferimento((int)parent->fds[sfd].inode, 0); break;
+            switch (parent->fdt[sfd].type) {
+            case FD_PIPE_R: pipe_apri_lettore((int)parent->fdt[sfd].inode);   break;
+            case FD_PIPE_W: pipe_apri_scrittore((int)parent->fdt[sfd].inode); break;
+            case FD_PTY_M:  pty_apri_riferimento((int)parent->fdt[sfd].inode, 1); break;
+            case FD_PTY_S:  pty_apri_riferimento((int)parent->fdt[sfd].inode, 0); break;
 
             /* ! UN FILE APERTO NON SI EREDITA, E VA DETTO. Il figlio si
              * ritroverebbe la posizione di lettura del padre e un secondo
@@ -1806,11 +1877,11 @@ return ERR(ENOMEM); }
              * per intero. Qui si torna alla console. */
             case FD_FILE:
             case FD_DRIVER:
-                child->fds[sfd].type        = (sfd == 0) ? FD_STDIN :
+                child->fdt[sfd].type        = (sfd == 0) ? FD_STDIN :
                                               (sfd == 1) ? FD_STDOUT : FD_STDERR;
-                child->fds[sfd].inode       = 0;
-                child->fds[sfd].offset      = 0;
-                child->fds[sfd].driver_data = NULL;
+                child->fdt[sfd].inode       = 0;
+                child->fdt[sfd].offset      = 0;
+                child->fdt[sfd].driver_data = NULL;
                 break;
 
             default:
@@ -2012,44 +2083,44 @@ uint32_t usp       = res.user_stack_top;
                 int pf = (int)az->fd_padre;
 
                 if (pf < 0 || pf >= MAX_FD ||
-                    parent->fds[pf].type == FD_UNUSED) {
+                    parent->fdt[pf].type == FD_UNUSED) {
                     klog(LOG_ERROR, "SYSCALL spawn: fd %d del padre non valido",
                          pf);
                     goto spawn_fail;
                 }
-                if (parent->fds[pf].type == FD_DRIVER) {
+                if (parent->fdt[pf].type == FD_DRIVER) {
                     klog(LOG_ERROR, "SYSCALL spawn: un fd di driver non si "
                          "eredita (fd %d)", pf);
                     goto spawn_fail;
                 }
 
-                if (parent->fds[pf].type == FD_FILE) {
-                    int r = vfs_dup((int)parent->fds[pf].inode);
+                if (parent->fdt[pf].type == FD_FILE) {
+                    int r = vfs_dup((int)parent->fdt[pf].inode);
                     if (r < 0) {
                         klog(LOG_ERROR, "SYSCALL spawn: vfs_dup del fd %d "
                              "fallita (%d)", pf, r);
                         goto spawn_fail;
                     }
-                } else if (parent->fds[pf].type == FD_PIPE_R) {
-                    pipe_apri_lettore((int)parent->fds[pf].inode);
-                } else if (parent->fds[pf].type == FD_PIPE_W) {
-                    pipe_apri_scrittore((int)parent->fds[pf].inode);
-                } else if (parent->fds[pf].type == FD_PTY_M) {
-                    pty_apri_riferimento((int)parent->fds[pf].inode, 1);
-                } else if (parent->fds[pf].type == FD_PTY_S) {
+                } else if (parent->fdt[pf].type == FD_PIPE_R) {
+                    pipe_apri_lettore((int)parent->fdt[pf].inode);
+                } else if (parent->fdt[pf].type == FD_PIPE_W) {
+                    pipe_apri_scrittore((int)parent->fdt[pf].inode);
+                } else if (parent->fdt[pf].type == FD_PTY_M) {
+                    pty_apri_riferimento((int)parent->fdt[pf].inode, 1);
+                } else if (parent->fdt[pf].type == FD_PTY_S) {
                     /* ! IL CONTEGGIO SALE ANCHE QUI, e dimenticarlo sarebbe il
                      * difetto piu' difficile da vedere di tutto il pty: il
                      * figlio userebbe lo slave, il padre chiuderebbe il suo, il
                      * conteggio andrebbe a zero e il master leggerebbe «fine
                      * dei dati» mentre dall'altra parte una shell viva sta
                      * ancora scrivendo. */
-                    pty_apri_riferimento((int)parent->fds[pf].inode, 0);
+                    pty_apri_riferimento((int)parent->fdt[pf].inode, 0);
                 }
 
-                child->fds[az->fd] = parent->fds[pf];
+                child->fdt[az->fd] = parent->fdt[pf];
 
                 klog(LOG_INFO, "SYSCALL spawn: fd %u del figlio = fd %d del "
-                     "padre (tipo %d)", az->fd, pf, (int)parent->fds[pf].type);
+                     "padre (tipo %d)", az->fd, pf, (int)parent->fdt[pf].type);
                 continue;
             }
 
@@ -2070,11 +2141,11 @@ uint32_t usp       = res.user_stack_top;
                 goto spawn_fail;
             }
 
-            child->fds[az->fd].type        = FD_FILE;
-            child->fds[az->fd].flags       = az->flags;
-            child->fds[az->fd].offset      = 0;
-            child->fds[az->fd].inode       = (uint32_t)h;
-            child->fds[az->fd].driver_data = NULL;
+            child->fdt[az->fd].type        = FD_FILE;
+            child->fdt[az->fd].flags       = az->flags;
+            child->fdt[az->fd].offset      = 0;
+            child->fdt[az->fd].inode       = (uint32_t)h;
+            child->fdt[az->fd].driver_data = NULL;
 
             klog(LOG_INFO, "SYSCALL spawn: fd %u del figlio -> '%s'",
                  az->fd, abs);
@@ -2436,8 +2507,8 @@ int32_t sys_lseek(InterruptFrame *frame)
     uint32_t new_off;
 
     if (fd < 0 || fd >= MAX_FD)          return ERR(EBADF);
-    if (proc->fds[fd].type == FD_UNUSED) return ERR(EBADF);
-    if (proc->fds[fd].type != FD_FILE)   return ERR(EBADF);
+    if (proc->fdt[fd].type == FD_UNUSED) return ERR(EBADF);
+    if (proc->fdt[fd].type != FD_FILE)   return ERR(EBADF);
 
     switch (whence) {
         case 0: /* SEEK_SET */
@@ -2449,9 +2520,9 @@ int32_t sys_lseek(InterruptFrame *frame)
              * interi senza segno diventerebbe una posizione enorme, e la
              * lettura successiva fallirebbe con un errore che non
              * assomiglia alla causa. */
-            if (offset < 0 && (uint32_t)(-offset) > proc->fds[fd].offset)
+            if (offset < 0 && (uint32_t)(-offset) > proc->fdt[fd].offset)
                 return ERR(EINVAL);
-            new_off = proc->fds[fd].offset + (uint32_t)offset;
+            new_off = proc->fdt[fd].offset + (uint32_t)offset;
             break;
         case 2: {
             /* SEEK_END — la dimensione si chiede al VFS, che la sa per
@@ -2460,7 +2531,7 @@ int32_t sys_lseek(InterruptFrame *frame)
              * rispondeva ENOSYS nessuna libc poteva offrire un ftell()
              * sulla fine. */
             VfsStat vs;
-            int32_t r = vfs_fstat((int)proc->fds[fd].inode, &vs);
+            int32_t r = vfs_fstat((int)proc->fdt[fd].inode, &vs);
 
             if (r != 0) return r;
             if (offset < 0 && (uint32_t)(-offset) > vs.dimensione)
@@ -2473,7 +2544,7 @@ int32_t sys_lseek(InterruptFrame *frame)
             return ERR(EINVAL);
     }
 
-    proc->fds[fd].offset = new_off;
+    proc->fdt[fd].offset = new_off;
     return (int32_t)new_off;
 }
 
@@ -3702,7 +3773,7 @@ static int puo_spegnere(void)
     if (self == NULL || self->uid == 0) return 1;      /* root, o il kernel */
 
     /* Una console vera: chi ha la macchina davanti. */
-    if (self->fds[0].type == FD_STDIN) return 1;
+    if (self->fdt[0].type == FD_STDIN) return 1;
 
     klog(LOG_WARN, "SYSCALL reboot: rifiutata al PID %u (uid %u): "
          "non e' root e non e' su una console di questa macchina",
@@ -4453,23 +4524,23 @@ int32_t sys_pty_apri(InterruptFrame *frame)
     m = find_free_fd(proc);
     if (m < 0) { pty_chiudi(h, 1); pty_chiudi(h, 0); return ERR(EMFILE); }
 
-    proc->fds[m].type        = FD_PTY_M;
-    proc->fds[m].flags       = O_RDWR;
-    proc->fds[m].offset      = 0;
-    proc->fds[m].inode       = (uint32_t)h;
-    proc->fds[m].driver_data = NULL;
+    proc->fdt[m].type        = FD_PTY_M;
+    proc->fdt[m].flags       = O_RDWR;
+    proc->fdt[m].offset      = 0;
+    proc->fdt[m].inode       = (uint32_t)h;
+    proc->fdt[m].driver_data = NULL;
 
     sl = find_free_fd(proc);
     if (sl < 0) {
-        proc->fds[m].type = FD_UNUSED;
+        proc->fdt[m].type = FD_UNUSED;
         pty_chiudi(h, 1); pty_chiudi(h, 0);
         return ERR(EMFILE);
     }
-    proc->fds[sl].type        = FD_PTY_S;
-    proc->fds[sl].flags       = O_RDWR;
-    proc->fds[sl].offset      = 0;
-    proc->fds[sl].inode       = (uint32_t)h;
-    proc->fds[sl].driver_data = NULL;
+    proc->fdt[sl].type        = FD_PTY_S;
+    proc->fdt[sl].flags       = O_RDWR;
+    proc->fdt[sl].offset      = 0;
+    proc->fdt[sl].inode       = (uint32_t)h;
+    proc->fdt[sl].driver_data = NULL;
 
     ufd[0] = m;
     ufd[1] = sl;
@@ -4503,10 +4574,10 @@ int32_t sys_pty_ctl(InterruptFrame *frame)
     Process  *proc = proc_get_current();
 
     if (fd < 0 || fd >= MAX_FD) return ERR(EBADF);
-    if (proc->fds[fd].type != FD_PTY_M && proc->fds[fd].type != FD_PTY_S)
+    if (proc->fdt[fd].type != FD_PTY_M && proc->fdt[fd].type != FD_PTY_S)
         return ERR(ENOTTY);
 
-    return pty_ctl((int)proc->fds[fd].inode, cmd, arg);
+    return pty_ctl((int)proc->fdt[fd].inode, cmd, arg);
 }
 
 /* =============================================================================
@@ -4865,11 +4936,11 @@ static int poll_guarda(Process *self, struct pollfd *v)
 
     if (v->fd == FD_IPC) {
         if (self->ipc_count > 0) pronto |= POLLIN;
-    } else if (v->fd >= MAX_FD || self->fds[v->fd].type == FD_UNUSED) {
+    } else if (v->fd >= MAX_FD || self->fdt[v->fd].type == FD_UNUSED) {
         v->revents = POLLNVAL;
         return 1;
     } else {
-        FileDescriptor *d = &self->fds[v->fd];
+        FileDescriptor *d = &self->fdt[v->fd];
 
         switch (d->type) {
         case FD_PIPE_R: {
@@ -4956,7 +5027,7 @@ static int poll_registra(Process *self, struct pollfd *v, uint32_t n)
         if (v[i].fd == FD_IPC) continue;
         if (v[i].fd >= MAX_FD) continue;
 
-        d = &self->fds[v[i].fd];
+        d = &self->fdt[v[i].fd];
 
         if (d->type == FD_PIPE_R && (v[i].events & POLLIN)) {
             if (!pipe_attesa_registra_locked((int)d->inode, 1, self->pid))
@@ -4988,7 +5059,7 @@ static void poll_disregistra(Process *self, struct pollfd *v, uint32_t n)
 
         if (v[i].fd < 0 || v[i].fd == FD_IPC || v[i].fd >= MAX_FD) continue;
 
-        d = &self->fds[v[i].fd];
+        d = &self->fdt[v[i].fd];
 
         if      (d->type == FD_PIPE_R) pipe_attesa_togli_locked((int)d->inode, 1, self->pid);
         else if (d->type == FD_PIPE_W) pipe_attesa_togli_locked((int)d->inode, 0, self->pid);

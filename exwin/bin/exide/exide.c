@@ -52,7 +52,7 @@
 
 /* +0.001 a ogni modifica, aggiunta o prova: `exide -version` la stampa.
  * Vedi EX_VERSIONE in libc.h; la stessa stringa la mostra «Informazioni su». */
-#define VERSIONE_APP "0.009"
+#define VERSIONE_APP "0.012"
 EX_VERSIONE("exide", VERSIONE_APP);
 
 /* -----------------------------------------------------------------------------
@@ -81,6 +81,7 @@ EX_VERSIONE("exide", VERSIONE_APP);
 #define ID_CERCA      915
 #define ID_SOSTIT     916
 #define ID_ANNULLA    917
+#define ID_RIFAI      918
 
 #define ID_SORGENTE   921
 #define ID_SHELL      922
@@ -278,6 +279,19 @@ static void form_azzera(Form *F, const char *nome, const char *titolo)
  *
  * ! LA STORIA E' UN ANELLO, e cosi' il sedicesimo passo indietro non costa una
  * copia di tutto l'elenco per far posto: costa quanto il primo.
+ *
+ * ! E RIFAI E' LA STESSA COSA GUARDATA DALL'ALTRA PARTE, dal 4 settembre 2026.
+ * Due pile invece di una: quel che si annulla non si butta, si mette
+ * DALL'ALTRA PARTE. Annulla sposta un istante da «indietro» ad «avanti», Rifai
+ * lo riporta di la': sono la stessa riga di codice con i due nomi scambiati, e
+ * per questo la cattura e il ripristino stanno in due funzioni sole invece che
+ * copiate in tre posti.
+ *
+ * ! UNA MODIFICA NUOVA BUTTA IL RAMO RIFATTO, e non e' una perdita: se dopo
+ * tre passi indietro si disegna qualcosa, quel «avanti» e' un futuro che non
+ * c'e' piu' — tenerlo vorrebbe dire un Rifai che riporta a un disegno nato da
+ * un passato diverso da quello di adesso. Tutti i programmi fanno cosi', e la
+ * ragione e' questa.
  * ============================================================================= */
 #define ANNULLA_MAX  16
 
@@ -288,31 +302,64 @@ typedef struct {
     int  sel;
 } Istante;
 
-static Istante g_storia[ANNULLA_MAX];
-static int     g_storia_n = 0;      /* quanti passi indietro si possono fare */
-static int     g_storia_testa = 0;  /* dove si scrive il prossimo */
+static Istante g_indietro[ANNULLA_MAX];     /* si torna qui con Annulla */
+static int     g_indietro_n = 0;
+static Istante g_avanti[ANNULLA_MAX];       /* e si riparte da qui con Rifai */
+static int     g_avanti_n = 0;
 
 /* ! LA STORIA NON ATTRAVERSA I PROGETTI. Aprirne un altro e poi premere
  * Annulla rimetterebbe sulla maschera i controlli di quello di prima, con i
  * loro nomi e i loro id: un disegno che non e' mai esistito, salvato sopra
- * quello vero. Si azzera aprendo, creando e copiando. */
+ * quello vero. Si azzera aprendo, creando e copiando — e vale per tutt'e due
+ * le pile: anche un Rifai preso da un altro progetto sarebbe lo stesso danno. */
 static void storia_azzera(void)
 {
-    g_storia_n = 0;
-    g_storia_testa = 0;
+    g_indietro_n = 0;
+    g_avanti_n   = 0;
 }
 
-static void istante_segna(void)
+/* Il disegno di adesso, dentro un istante; e un istante, di nuovo sul disegno.
+ * Sono due funzioni perche' i posti che le usano sono tre — segna, annulla e
+ * rifai — e tre copie della stessa memcpy sono tre copie da tenere d'accordo. */
+static void istante_prendi(Istante *s)
 {
-    Istante *s = &g_storia[g_storia_testa];
-
     memcpy(s->ctrl, g_ctrl, sizeof(g_ctrl));
     memcpy(s->form, g_form, sizeof(g_form));
     s->form_sel = g_form_sel;
     s->sel      = g_sel;
+}
 
-    g_storia_testa = (g_storia_testa + 1) % ANNULLA_MAX;
-    if (g_storia_n < ANNULLA_MAX) g_storia_n++;
+static void istante_rimetti(const Istante *s)
+{
+    memcpy(g_ctrl, s->ctrl, sizeof(g_ctrl));
+    memcpy(g_form, s->form, sizeof(g_form));
+    g_form_sel = s->form_sel;
+    g_sel      = s->sel;
+}
+
+/* ! LA PILA SCORRE QUANDO E' PIENA, invece di rifiutare l'istante nuovo: il
+ * passo piu' vecchio e' quello che serve meno, e perdere il piu' RECENTE
+ * vorrebbe dire un Annulla che non annulla l'ultima cosa fatta. Sedici
+ * istanti da settemila byte sono centoventi kilobyte per pila: si scorre a
+ * memoria, e a sedici passi indietro nessuno ci arriva per sbaglio. */
+static void pila_metti(Istante *pila, int *n, const Istante *s)
+{
+    if (*n == ANNULLA_MAX) {
+        memmove(&pila[0], &pila[1], (ANNULLA_MAX - 1) * sizeof(Istante));
+        (*n)--;
+    }
+    pila[(*n)++] = *s;
+}
+
+/* Prima di ogni modifica: il presente va nella pila di dietro, e il ramo
+ * rifatto — se c'era — smette di esistere. */
+static void istante_segna(void)
+{
+    Istante s;
+
+    istante_prendi(&s);
+    pila_metti(g_indietro, &g_indietro_n, &s);
+    g_avanti_n = 0;
 }
 
 /* Il progetto. */
@@ -903,9 +950,32 @@ static unsigned int id_libero(void)
     return id;
 }
 
+/* Il primo nome libero per quel tipo: prefisso piu' il primo numero non preso.
+ * `escluso` e' il posto che si sta riempiendo, che non deve confrontarsi con
+ * se stesso.
+ *
+ * ! I NOMI SI GUARDANO IN TUTTO IL PROGETTO, non nella maschera: finiscono in
+ * finestra.h, che e' un file solo. E' anche la ragione per cui incollare non
+ * puo' tenere il nome dell'originale. */
+static void nome_libero(int tipo, int escluso, char *out)
+{
+    int n = 1;
+
+    for (;;) {
+        int k, preso = 0;
+
+        sprintf(out, "%s%d", g_strum[tipo].prefisso, n);
+        for (k = 0; k < CTRL_MAX; k++)
+            if (k != escluso && g_ctrl[k].usato &&
+                strcmp(g_ctrl[k].nome, out) == 0) { preso = 1; break; }
+        if (!preso) return;
+        n++;
+    }
+}
+
 static int aggiungi(int tipo, int x, int y)
 {
-    int i, n = 1;
+    int i;
     Ctrl *c;
 
     for (i = 0; i < CTRL_MAX; i++) if (!g_ctrl[i].usato) break;
@@ -928,22 +998,102 @@ static int aggiungi(int tipo, int x, int y)
     c->id = id_libero();
     c->evento = 0;
 
-    /* Il nome: prefisso piu' il primo numero libero. */
-    for (;;) {
-        int k, preso = 0;
-
-        sprintf(c->nome, "%s%d", g_strum[tipo].prefisso, n);
-        for (k = 0; k < CTRL_MAX; k++)
-            if (k != i && g_ctrl[k].usato && strcmp(g_ctrl[k].nome, c->nome) == 0)
-                { preso = 1; break; }
-        if (!preso) break;
-        n++;
-    }
+    nome_libero(tipo, i, c->nome);
     strncpy(c->testo, c->nome, TESTO_MAX - 1);
     c->testo[TESTO_MAX - 1] = '\0';
 
     g_sporco = 1;
     return i;
+}
+
+/* =============================================================================
+ * GLI APPUNTI DEL DISEGNO — un controllo, non del testo
+ *
+ * ! NON SONO GLI APPUNTI DI SISTEMA, e non e' una svista. Quelli
+ * (`ex_appunti_metti`) portano TESTO, e sono gia' usati dagli editor per
+ * copiare pezzi di sorgente fra una finestra e l'altra. Qui si copia un
+ * controllo: tipo, misura, testo, evento. Infilarlo negli appunti di sistema
+ * vorrebbe dire inventarsi un formato testuale per un rettangolo, e farlo
+ * leggere a chiunque altro ci scriva dentro nel frattempo.
+ *
+ * ! IL NOME E L'ID NON SI COPIANO, SI RIFANNO. Sono unici in tutto il
+ * progetto perche' diventano `ID_...`, `h_...` e un nome di funzione dentro
+ * finestra.h, che e' un file solo: due «Pulsante1» sarebbero due definizioni
+ * con lo stesso nome. Incollare da' quindi il primo nome libero, come se il
+ * controllo fosse appena nato.
+ *
+ * ! E IL CODICE NON SI COPIA AFFATTO. L'handler dell'originale —
+ * `Pulsante1_Clic()` in finestra.c — resta dell'originale; la copia si chiama
+ * altrimenti e avra' il suo, vuoto, al primo doppio clic. Copiare anche il
+ * corpo vorrebbe dire che exide scrive dentro finestra.c cose che non ha
+ * scritto nessuno, ed e' l'unica regola che questo programma non rompe mai.
+ *
+ * ! GLI APPUNTI ATTRAVERSANO I PROGETTI, al contrario della storia di Annulla.
+ * La differenza e' che qui non si rimette in piedi un passato: si crea un
+ * controllo NUOVO, col suo nome e il suo id, in un disegno che lo accetta
+ * com'e' — copiare un pulsante da un progetto all'altro e' utile e non
+ * ricostruisce niente che non sia mai esistito.
+ * ============================================================================= */
+static Ctrl g_app;                  /* il controllo copiato */
+static int  g_app_pieno = 0;
+static int  g_app_form  = -1;       /* da quale maschera veniva */
+
+static void ctrl_copia(void)
+{
+    if (g_sel < 0 || !g_ctrl[g_sel].usato) { dico("non c'e' niente di scelto"); return; }
+
+    g_app       = g_ctrl[g_sel];
+    g_app_pieno = 1;
+    g_app_form  = g_form_sel;
+    dico("copiato: Incolla lo mette nella maschera che si sta disegnando");
+}
+
+static void ctrl_incolla(void)
+{
+    int   i;
+    Ctrl *c;
+
+    if (!g_app_pieno) { dico("gli appunti del disegno sono vuoti"); return; }
+
+    for (i = 0; i < CTRL_MAX; i++) if (!g_ctrl[i].usato) break;
+    if (i == CTRL_MAX) { dico("non c'e' posto per un altro controllo"); return; }
+
+    istante_segna();
+
+    c = &g_ctrl[i];
+    *c = g_app;
+    c->form = g_form_sel;           /* si incolla SEMPRE dove si sta disegnando */
+    c->id   = id_libero();
+    nome_libero(c->tipo, i, c->nome);
+
+    /* ! NELLA STESSA MASCHERA SI SCOSTA, IN UN'ALTRA NO. Incollando dove il
+     * controllo era gia', metterlo esattamente sopra l'originale lo
+     * nasconderebbe: si vedrebbe un controllo e ce ne sarebbero due, e il
+     * clic prenderebbe sempre quello di sopra. Incollando in un'ALTRA
+     * maschera si tiene la posizione, perche' li' quel posto e' libero ed e'
+     * esattamente cio' che serve per spostare un controllo da una finestra
+     * all'altra: taglia, cambia maschera, incolla. */
+    if (g_app_form == g_form_sel) {
+        c->x += GRIGLIA * 2;
+        c->y += GRIGLIA * 2;
+    }
+    if (c->x + c->w > forma()->w) c->x = forma()->w - c->w;
+    if (c->y + c->h > forma()->h) c->y = forma()->h - c->h;
+    if (c->x < 0) c->x = 0;
+    if (c->y < 0) c->y = 0;
+
+    g_sel    = i;
+    g_sporco = 1;
+    prop_mostra();
+    disegna_tela();
+    ex_aggiorna(g_f);
+
+    {
+        char t[80];
+
+        sprintf(t, "incollato come %s (l'handler e' suo, e nasce vuoto)", c->nome);
+        dico(t);
+    }
 }
 
 /* =============================================================================
@@ -1066,22 +1216,23 @@ static void form_togli(void)
     dico("maschera tolta");
 }
 
-/* Un passo indietro: si rimette l'ultima fotografia e la si toglie dall'anello. */
-static void annulla(void)
+/* ! ANNULLA E RIFAI SONO LA STESSA FUNZIONE CON LE DUE PILE SCAMBIATE, e
+ * tenerle davvero cosi' — una che chiama l'altra con i parametri girati —
+ * costa meno di due funzioni gemelle: il giorno che si aggiunge un campo al
+ * disegno, il posto in cui ricordarsene e' uno.
+ *
+ * `da` e' la pila da cui si prende il passo, `verso` quella in cui va a finire
+ * il presente. Rende 0 se quella pila e' vuota. */
+static int passo(Istante *da, int *da_n, Istante *verso, int *verso_n)
 {
-    Istante *s;
-    char     t[64];
+    Istante ora;
 
-    if (g_storia_n == 0) { dico("non c'e' niente da annullare"); return; }
+    if (*da_n == 0) return 0;
 
-    g_storia_testa = (g_storia_testa + ANNULLA_MAX - 1) % ANNULLA_MAX;
-    g_storia_n--;
-    s = &g_storia[g_storia_testa];
+    istante_prendi(&ora);                       /* il presente diventa il futuro */
+    pila_metti(verso, verso_n, &ora);
 
-    memcpy(g_ctrl, s->ctrl, sizeof(g_ctrl));
-    memcpy(g_form, s->form, sizeof(g_form));
-    g_form_sel = s->form_sel;
-    g_sel      = s->sel;
+    istante_rimetti(&da[--(*da_n)]);
 
     /* ! RESTA SPORCO ANCHE TORNANDO INDIETRO, e non e' una dimenticanza:
      * l'unica cosa che si sa e' che il disegno in memoria non e' piu' quello
@@ -1104,8 +1255,30 @@ static void annulla(void)
     prop_mostra();
     disegna_tela();
     ex_aggiorna(g_f);
+    return 1;
+}
 
-    sprintf(t, "annullato (restano %d passi indietro)", g_storia_n);
+static void annulla(void)
+{
+    char t[80];
+
+    if (!passo(g_indietro, &g_indietro_n, g_avanti, &g_avanti_n)) {
+        dico("non c'e' niente da annullare");
+        return;
+    }
+    sprintf(t, "annullato (indietro %d, avanti %d)", g_indietro_n, g_avanti_n);
+    dico(t);
+}
+
+static void rifai(void)
+{
+    char t[80];
+
+    if (!passo(g_avanti, &g_avanti_n, g_indietro, &g_indietro_n)) {
+        dico("non c'e' niente da rifare");
+        return;
+    }
+    sprintf(t, "rifatto (indietro %d, avanti %d)", g_indietro_n, g_avanti_n);
     dico(t);
 }
 
@@ -1958,6 +2131,42 @@ static long proc_ed(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         ed_indice();
         return 0;
 
+    /* ! LE SCORCIATOIE SCRITTE NEL MENU ADESSO FANNO QUALCOSA, anche qui. Il
+     * menu di questa finestra prometteva Ctrl+S, Ctrl+C, Ctrl+V, Ctrl+X e
+     * Ctrl+F dal primo giorno, e nessuno le aveva mai collegate: erano
+     * etichette. In un editor pesano piu' che altrove — si salva con la mano
+     * sulla tastiera, non aprendo un menu.
+     *
+     * ! E IL TOOLKIT NON LE MANGIA, apposta: in exwin.c, «per ogni altro
+     * controllo un Ctrl+lettera e' una scorciatoia dell'applicazione e non
+     * deve essere mangiata» — l'unica eccezione e' il terminale, dove Ctrl+C
+     * e' un carattere. Quindi qui arrivano, ed e' l'applicazione che deve
+     * decidere cosa farne. */
+    case EXM_TASTO:
+        if (wp & KBD_MOD_CTRL) {
+            switch (wp & KBD_KEY_MASK) {
+            case 's': case 'S': ed_salva(); ed_indice(); return 0;
+            case 'f': case 'F': ed_cerca();              return 0;
+            case 'c': case 'C': ex_area_copia(g_ed_cod); return 0;
+            case 'x': case 'X':
+                ex_area_taglia(g_ed_cod);
+                ed_indice();
+                /* ! IL DISEGNO SI RIFA' A MANO, e dalla voce di menu no: li'
+                 * ridisegna il toolkit chiudendo la tendina. Da tastiera non
+                 * chiude niente nessuno, e senza questa riga il testo cambia
+                 * e lo schermo resta com'era. */
+                ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                return 0;
+            case 'v': case 'V':
+                ex_area_incolla(g_ed_cod);
+                ed_indice();
+                ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                return 0;
+            default: break;
+            }
+        }
+        return 0;
+
     case EXM_CHIUDI:
         ed_salva();
         ex_distruggi(f);
@@ -2405,7 +2614,14 @@ static const char *const g_manuale[] = {
 "5. File > Salva scrive finestra.dis, finestra.h e finestra_gen.c.",
 "6. Strumenti > Compilatore, e il pulsante Compila.",
 "",
-"Ctrl+Z annulla, fino a sedici passi indietro.",
+"Ctrl+Z annulla, fino a sedici passi indietro; Ctrl+Y rifa' quel",
+"che si e' annullato. Una modifica nuova butta il ramo rifatto.",
+"",
+"Ctrl+C, Ctrl+X e Ctrl+V copiano, tagliano e incollano un CONTROLLO.",
+"Si incolla sempre nella maschera che si sta disegnando: taglia,",
+"cambia maschera dall'elenco, incolla, ed e' li'. Il nome e l'id si",
+"rifanno (sono unici in tutto il progetto) e l'handler della copia",
+"nasce vuoto: il codice dell'originale resta dell'originale.",
 "",
 "I QUATTRO FILE, E QUALE E' TUO",
 "",
@@ -3361,6 +3577,29 @@ static long proc_fe(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         }
         return 0;
 
+    /* Le stesse scorciatoie dell'altro editor: chi passa da una finestra
+     * all'altra non deve ricordarsi in quale delle due funzionano. Qui non
+     * c'e' un menu che le prometta, e proprio per questo vanno scritte nel
+     * manuale: una scorciatoia che nessuno annuncia non la trova nessuno. */
+    case EXM_TASTO:
+        if (wp & KBD_MOD_CTRL) {
+            switch (wp & KBD_KEY_MASK) {
+            case 's': case 'S': fe_salva();                        return 0;
+            case 'f': case 'F': area_cerca(g_fe_cod, g_fe_stato);  return 0;
+            case 'c': case 'C': ex_area_copia(g_fe_cod);           return 0;
+            case 'x': case 'X':
+                ex_area_taglia(g_fe_cod);
+                ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                return 0;
+            case 'v': case 'V':
+                ex_area_incolla(g_fe_cod);
+                ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                return 0;
+            default: break;
+            }
+        }
+        return 0;
+
     case EXM_CHIUDI:
         fe_salva();
         ex_distruggi(f);
@@ -3653,6 +3892,12 @@ static void tela_clic(int x, int y, int doppio)
     prop_mostra();
 }
 
+/* ! TAGLIA E' COPIA PIU' ELIMINA, e si scrive cosi' invece di rifare le due
+ * cose: elimina() fotografa gia' per Annulla e dice gia' che l'handler resta
+ * in finestra.c. Qui si cambia solo il messaggio, perche' «tolto dal disegno»
+ * e «tagliato, incollalo dove vuoi» sono due cose diverse per chi legge. */
+static void ctrl_taglia(void);
+
 static void elimina(void)
 {
     if (g_sel < 0 || !g_ctrl[g_sel].usato) { dico("non c'e' niente di scelto"); return; }
@@ -3668,6 +3913,15 @@ static void elimina(void)
     g_sporco = 1;
     prop_mostra();
     dico("controllo tolto dal disegno (l'handler in finestra.c resta)");
+}
+
+static void ctrl_taglia(void)
+{
+    if (g_sel < 0 || !g_ctrl[g_sel].usato) { dico("non c'e' niente di scelto"); return; }
+
+    ctrl_copia();
+    elimina();
+    dico("tagliato: Incolla lo rimette, anche in un'altra maschera");
 }
 
 static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
@@ -3757,10 +4011,19 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         case ID_INFO:      informazioni();  break;
 
         case ID_ANNULLA:  annulla(); break;
+        case ID_RIFAI:    rifai();   break;
 
-        case ID_COPIA: case ID_INCOLLA: case ID_TAGLIA:
-        case ID_CANCELLA: case ID_CERCA: case ID_SOSTIT:
-            dico("le voci di Modifica lavorano dentro il sorgente");
+        /* ! QUI DENTRO COPIA E INCOLLA PARLANO DEL DISEGNO, non del testo, e
+         * non e' un'ambiguita': la finestra principale E' il disegnatore. Il
+         * testo si copia dentro l'editor, che ha il suo menu e i suoi
+         * appunti — quelli di sistema, che portano caratteri. */
+        case ID_COPIA:    ctrl_copia();   break;
+        case ID_TAGLIA:   ctrl_taglia();  break;
+        case ID_INCOLLA:  ctrl_incolla(); break;
+        case ID_CANCELLA: elimina();      break;
+
+        case ID_CERCA: case ID_SOSTIT:
+            dico("Cerca e Sostituisci lavorano dentro il sorgente");
             break;
 
         default: break;
@@ -3830,6 +4093,10 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         if (wp & KBD_MOD_CTRL) {
             switch (wp & KBD_KEY_MASK) {
             case 'z': case 'Z': annulla();        return 0;
+            case 'y': case 'Y': rifai();          return 0;
+            case 'c': case 'C': ctrl_copia();     return 0;
+            case 'x': case 'X': ctrl_taglia();    return 0;
+            case 'v': case 'V': ctrl_incolla();   return 0;
             case 's': case 'S': progetto_salva(); return 0;
             case 'n': case 'N': progetto_nuovo(); return 0;
             case 'o': case 'O': progetto_apri();  return 0;
@@ -3885,6 +4152,7 @@ int main(int argc, char **argv)
     ex_menu_voce(g_menu, "File", "Esci\tCtrl+Q",           ID_ESCI);
 
     ex_menu_voce(g_menu, "Modifica", "Annulla\tCtrl+Z", ID_ANNULLA);
+    ex_menu_voce(g_menu, "Modifica", "Rifai\tCtrl+Y",   ID_RIFAI);
     ex_menu_voce(g_menu, "Modifica", "-",               0);
     ex_menu_voce(g_menu, "Modifica", "Copia\tCtrl+C",   ID_COPIA);
     ex_menu_voce(g_menu, "Modifica", "Incolla\tCtrl+V", ID_INCOLLA);

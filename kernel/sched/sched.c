@@ -192,22 +192,22 @@ static void proc_chiudi_fd(Process *p)
     int fd;
 
     for (fd = 0; fd < MAX_FD; fd++) {
-        switch (p->fds[fd].type) {
+        switch (p->fdt[fd].type) {
             case FD_FILE:
-                vfs_close((int)p->fds[fd].inode);
+                vfs_close((int)p->fdt[fd].inode);
                 break;
             case FD_PIPE_R:
-                pipe_chiudi_lettore_locked((int)p->fds[fd].inode);
+                pipe_chiudi_lettore_locked((int)p->fdt[fd].inode);
                 break;
             case FD_PIPE_W:
-                pipe_chiudi_scrittore_locked((int)p->fds[fd].inode);
+                pipe_chiudi_scrittore_locked((int)p->fdt[fd].inode);
                 break;
             default:
                 continue;   /* stdin/stdout/stderr e i driver: niente da fare */
         }
-        p->fds[fd].type        = FD_UNUSED;
-        p->fds[fd].inode       = 0;
-        p->fds[fd].driver_data = NULL;
+        p->fdt[fd].type        = FD_UNUSED;
+        p->fdt[fd].inode       = 0;
+        p->fdt[fd].driver_data = NULL;
     }
 }
 
@@ -331,6 +331,14 @@ Process *proc_create(const char *name, uint32_t entry_point,
     /* PID */
     proc->pid  = g_next_pid++;
     proc->ppid = g_current ? g_current->pid : 0;
+
+    /* ! OGNI PROCESSO E' CAPOGRUPPO DI SE STESSO, e i descrittori sono i suoi.
+     * Con queste due righe tutto il kernel che non sa niente di fili continua
+     * a funzionare: `fdt` punta a `fds`, `tgid` vale `pid`, e le condizioni
+     * «sono un filo?» sono false dappertutto senza un solo caso speciale. */
+    proc->tgid       = proc->pid;
+    proc->fdt        = proc->fds;
+    proc->filo_posto = 0;
 
     /* Nome */
     str_copy(proc->name, name, PROCESS_NAME_LEN);
@@ -499,9 +507,9 @@ for (uint32_t pi = 0; pi < npages; pi++) {
     proc->kernel_esp = (uint32_t)sp;
 
     /* File descriptors: 0=stdin, 1=stdout, 2=stderr vuoti per ora */
-    proc->fds[0].type = FD_STDIN;
-    proc->fds[1].type = FD_STDOUT;
-    proc->fds[2].type = FD_STDERR;
+    proc->fdt[0].type = FD_STDIN;
+    proc->fdt[1].type = FD_STDOUT;
+    proc->fdt[2].type = FD_STDERR;
 
     /* Timing */
     proc->created_tick = g_ticks;
@@ -922,6 +930,196 @@ void sched_sleep(uint32_t ms)
     /* Ritorna dopo sleep_until tick */
 }
 
+/* =============================================================================
+ * I FILI
+ *
+ * ! PER LO SCHEDULER UN FILO E' UN TASK, e non c'e' una riga qui sotto che lo
+ * cambi: stessa run queue, stesso quanto, stesso context_switch. L'unica cosa
+ * che si fa diversamente e' NON allocare una page directory nuova — si copia
+ * quella del capogruppo, e da quel momento i due task vedono la stessa
+ * memoria. context_switch riceve gia' il CR3 come parametro, quindi passare
+ * due volte lo stesso valore e' esattamente cio' che serve e non costa niente:
+ * su x86 ricaricare CR3 con lo stesso valore non svuota nemmeno il TLB.
+ *
+ * ! LO STACK DEL FILO STA IN UNA PIAZZOLA SUA, dentro la banda riservata da
+ * elf_load. Non si cerca «un posto libero qualunque» nello spazio di
+ * indirizzamento: si numerano le piazzole, e il numero e' anche il modo di
+ * sapere quale e' occupata — basta guardare i membri del gruppo.
+ * ============================================================================= */
+
+/* Quanti membri vivi (non zombie, non liberi) ha il gruppo. */
+int proc_gruppo_vivi(uint32_t tgid)
+{
+    uint32_t i;
+    int      n = 0;
+
+    for (i = 0; i < MAX_PROCESSES; i++)
+        if (g_process_pool[i].state != PROC_UNUSED &&
+            g_process_pool[i].state != PROC_ZOMBIE &&
+            g_process_pool[i].tgid  == tgid)
+            n++;
+    return n;
+}
+
+/* La prima piazzola libera, o 0 se sono tutte prese. */
+static uint32_t filo_posto_libero(uint32_t tgid)
+{
+    uint32_t posto, i;
+
+    for (posto = 1; posto < FILO_MAX; posto++) {
+        int preso = 0;
+
+        for (i = 0; i < MAX_PROCESSES; i++)
+            if (g_process_pool[i].state != PROC_UNUSED &&
+                g_process_pool[i].tgid       == tgid &&
+                g_process_pool[i].filo_posto == posto) { preso = 1; break; }
+        if (!preso) return posto;
+    }
+    return 0;
+}
+
+int proc_thread_crea(uint32_t entry, uint32_t arg)
+{
+    Process *capo, *filo;
+    uint32_t posto, cima, base, pg;
+    uint32_t esp;
+
+    if (g_current == NULL) return ERR(ESRCH);
+
+    capo = proc_get_by_pid(g_current->tgid);
+    if (capo == NULL) return ERR(ESRCH);
+
+    /* ! LA BANDA LA PREPARA elf_load, e se non c'e' non si inventa: un
+     * processo il cui spazio di indirizzamento non e' stato preparato da li'
+     * (un task kernel, o qualcosa costruito a mano) non ha una banda, e
+     * mettere uno stack «da qualche parte» vorrebbe dire sovrascrivere lo
+     * heap di qualcun altro. */
+    if (capo->fili_banda == 0) return ERR(ENOSYS);
+
+    posto = filo_posto_libero(capo->tgid);
+    if (posto == 0) return ERR(EAGAIN);     /* piazzole finite: FILO_MAX */
+
+    cima = capo->fili_banda - (posto - 1) * (FILO_STACK_SIZE + PAGE_SIZE);
+    base = cima - FILO_STACK_SIZE;
+
+    /* ! LO STACK DI UN FILO SI IMPEGNA TUTTO SUBITO, al contrario di quello
+     * del processo che cresce su richiesta. Il motivo e' page_fault_handler:
+     * sa far crescere UNO stack — quello descritto da user_stack_limit nel
+     * PCB — e non saprebbe dire a quale filo appartiene una pagina mancante
+     * dentro la banda. Sessantaquattro kilobyte impegnati sono il prezzo
+     * onesto di non dover insegnare al gestore dei fault una cosa che si puo'
+     * evitare del tutto. */
+    for (pg = 0; pg < FILO_STACK_SIZE / PAGE_SIZE; pg++) {
+        uint32_t fis = pmm_alloc_page();
+
+        if (fis == 0) {
+            klog(LOG_ERROR, "SCHED: memoria finita creando lo stack del filo");
+            while (pg--) {
+                uint32_t v = base + pg * PAGE_SIZE;
+                uint32_t f = paging_get_physical(capo->page_directory, v);
+                paging_unmap_page(capo->page_directory, v);
+                if (f) pmm_free_page(f);
+            }
+            return ERR(ENOMEM);
+        }
+        paging_azzera_fisica(fis);
+        if (paging_map_page(capo->page_directory, base + pg * PAGE_SIZE, fis,
+                            PG_PRESENT | PG_WRITABLE | PG_USER) != 0) {
+            pmm_free_page(fis);
+            return ERR(ENOMEM);
+        }
+    }
+
+    filo = proc_create(capo->name, entry, capo->priority, 0);
+    if (filo == NULL) return ERR(EAGAIN);   /* pool dei PCB esaurito */
+
+    /* ! LA PAGE DIRECTORY NUOVA CHE proc_create HA APPENA FATTO SI BUTTA, e
+     * non e' uno spreco da correggere: chiedergli di non farla vorrebbe dire
+     * un parametro in piu' su una funzione usata da mezzo kernel. Una pagina
+     * allocata e liberata subito costa una manciata di istruzioni; un
+     * parametro in piu' costa a chi legge, per sempre. */
+    if (filo->page_directory &&
+        filo->page_directory != paging_get_kernel_directory())
+        paging_destroy_directory(filo->page_directory);
+
+    filo->page_directory = capo->page_directory;
+    filo->tgid           = capo->tgid;
+    filo->fdt            = capo->fdt;          /* i descrittori sono in comune */
+    filo->filo_posto     = posto;
+    filo->fili_banda     = 0;                  /* la banda e' del capogruppo */
+    filo->ppid           = capo->ppid;
+    filo->console        = capo->console;
+    filo->uid            = capo->uid;
+    filo->gid            = capo->gid;
+    filo->heap_start     = capo->heap_start;
+    filo->heap_end       = capo->heap_end;
+    filo->heap_max       = capo->heap_max;
+
+    /* ! E LO STESSO BLOCCO TLS DEL CAPOGRUPPO, che vuol dire che le variabili
+     * __thread NON sono per filo ma per PROCESSO. E' un limite dichiarato, non
+     * una svista: darne uno per filo vuol dire copiarci dentro l'immagine
+     * iniziale che sta nell'ELF, e finche' non la si tiene da parte l'unica
+     * alternativa sarebbe azzerarlo — cioe' far partire a zero una variabile
+     * che il programma ha inizializzato a cinque, in silenzio. Fra un limite
+     * scritto e un valore sbagliato non c'e' partita. Vale anche per errno,
+     * che passa da __errno_dove(). */
+    filo->tls_tp   = capo->tls_tp;
+    filo->tls_base = capo->tls_base;
+
+    str_copy(filo->cwd, capo->cwd, VFS_PATH_MAX);
+
+    filo->user_stack_base  = base;
+    filo->user_stack_top   = cima;
+    filo->user_stack_limit = 0;     /* impegnato tutto: niente crescita */
+
+    /* L'argomento sullo stack, come lo vuole una funzione C: alla partenza
+     * ESP punta all'indirizzo di ritorno, e l'argomento sta subito sopra.
+     * L'indirizzo di ritorno e' zero apposta — un filo che torna dalla sua
+     * funzione invece di chiamare thread_esci() salta a 0 e si prende un
+     * fault che si vede, invece di proseguire dentro memoria a caso. */
+    esp = (cima - 16) & ~15u;
+    {
+        uint32_t fis  = paging_get_physical(capo->page_directory, esp - PAGE_SIZE);
+        uint32_t *pila;
+        uint32_t off;
+
+        esp -= 8;
+        fis = paging_get_physical(capo->page_directory, esp & ~(PAGE_SIZE - 1));
+        if (fis == 0) { proc_kill(filo->pid); return ERR(ENOMEM); }
+        off  = esp % PAGE_SIZE;
+        pila = (uint32_t *)paging_finestra_apri(fis);
+        pila[off / 4]     = 0;      /* indirizzo di ritorno: nessuno */
+        pila[off / 4 + 1] = arg;    /* il primo argomento */
+        paging_finestra_chiudi();
+    }
+
+    proc_set_entry(filo, entry, esp);
+    proc_set_ready(filo);
+
+    klog(LOG_INFO, "SCHED: filo %u del gruppo %u, stack 0x%08x-0x%08x",
+         filo->pid, filo->tgid, base, cima);
+    return (int)filo->pid;
+}
+
+void proc_gruppo_termina(uint32_t tgid, uint32_t risparmia_pid)
+{
+    uint32_t i;
+
+    for (i = 0; i < MAX_PROCESSES; i++) {
+        Process *p = &g_process_pool[i];
+
+        if (p->state == PROC_UNUSED || p->state == PROC_ZOMBIE) continue;
+        if (p->tgid != tgid || p->pid == risparmia_pid) continue;
+
+        /* ! NON SI CHIUDONO I SUOI DESCRITTORI: sono quelli del gruppo, e chi
+         * resta li sta ancora usando. Li chiude il capogruppo uscendo. */
+        p->state     = PROC_ZOMBIE;
+        p->exit_code = 0;
+        runq_remove(p);
+        klog(LOG_DEBUG, "SCHED: filo %u terminato col suo gruppo", p->pid);
+    }
+}
+
 void proc_exit(int32_t exit_code)
 {
     interrupts_disable();
@@ -937,6 +1135,30 @@ void proc_exit(int32_t exit_code)
      * tentativo, cioe' un prompt vivo che non accetta piu' un comando. */
     if (sched_console_fg(g_current->console) == g_current->pid) {
         sched_set_console_fg(g_current->console, 0);
+    }
+
+    /* ! CHI ESCE PORTA CON SE' TUTTO IL GRUPPO, ed e' l'unica semantica
+     * sicura: gli altri fili vivono nella MEMORIA DI QUESTO PROCESSO, e
+     * lasciarli correre mentre lo spazio di indirizzamento se ne va vuol dire
+     * codice che gira sopra pagine liberate. E' la stessa scelta di exit_group
+     * su Linux, presa per la stessa ragione.
+     *
+     * Un FILO che esce invece non porta via nessuno: e' il caso normale di
+     * thread_esci(), e da qui in poi questa funzione non deve fare quasi
+     * niente — i descrittori sono del gruppo, la memoria e' del gruppo. */
+    if (g_current->pid == g_current->tgid) {
+        proc_gruppo_termina(g_current->tgid, g_current->pid);
+    } else {
+        g_current->state = PROC_ZOMBIE;
+        g_proc_count--;
+        runq_remove(g_current);
+        /* Sveglia chi lo stesse aspettando con thread_attendi(). */
+        if (g_current->ppid != 0) sched_unblock_locked(g_current->ppid);
+        {
+            Process *dopo = sched_pick_next();
+            sched_switch_to(dopo);
+        }
+        return;                     /* non si torna */
     }
 
     /* I descrittori vanno via ADESSO, non al waitpid del padre: vedi
@@ -1041,6 +1263,12 @@ void proc_reap_zombie(Process *p)
      *
      * Qui e non in sys_exit: un processo terminato da un fault non passa
      * da sys_exit, e sono proprio quelli che i file li lasciano aperti. */
+    /* ! UN FILO NON CHIUDE LA TABELLA DEI DESCRITTORI: non e' sua, e chi resta
+     * nel gruppo la sta ancora usando. Si riporta il puntatore sulla propria —
+     * che e' vuota, perche' il PCB nasce azzerato — cosi' la spazzata qui
+     * sotto passa a vuoto invece di chiudere i file dei fratelli. */
+    if (p->fdt != p->fds) p->fdt = p->fds;
+
     /* ! SPAZZATA DI SICUREZZA, non la chiusura vera. I descrittori li
      * rilascia proc_chiudi_fd() nel momento in cui il processo muore
      * (proc_exit / proc_kill), perche' con una pipe aperta aspettare il
@@ -1051,9 +1279,17 @@ void proc_reap_zombie(Process *p)
      * e non chiude niente due volte. */
     proc_chiudi_fd(p);
 
-    if (p->page_directory && p->page_directory != paging_get_kernel_directory()) {
+    /* ! LO SPAZIO DI INDIRIZZAMENTO E' DEL GRUPPO, non del PCB, e si libera
+     * quando non resta nessuno a usarlo. Un filo che finisce non deve portarsi
+     * via la memoria dei suoi fratelli; e il capogruppo, che quando esce li
+     * termina tutti, potrebbe comunque essere raccolto PRIMA che i loro PCB
+     * siano stati raccolti. Contare i vivi e' l'unico modo di sapere se questa
+     * page directory serve ancora a qualcuno. */
+    if (p->page_directory && p->page_directory != paging_get_kernel_directory() &&
+        proc_gruppo_vivi(p->tgid) == 0) {
         paging_destroy_directory(p->page_directory);
     }
+    p->page_directory = NULL;
     if (p->kernel_stack_base) {
         for (uint32_t pj = 0; pj < KERNEL_STACK_SIZE / PAGE_SIZE; pj++)
             pmm_free_page(p->kernel_stack_base + pj * PAGE_SIZE);

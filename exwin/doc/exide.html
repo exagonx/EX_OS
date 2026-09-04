@@ -64,6 +64,7 @@ COMPILARE serve anche il CD degli strumenti montato su <code>/cdrom</code>.
   <a href="#linguette">Linguette</a>,
   <a href="#scorrimento">Scorrimento</a>
 </li>
+<li><a href="#appunti">Copiare, tagliare, spostare un controllo</a></li>
 <li><a href="#esempi">Gli esempi</a>
   &mdash;
   <a href="#es-scambio">scambiare due caselle</a>,
@@ -113,6 +114,9 @@ in <code>bin/</code>, e lo si lancia dalla shell o dal file manager.</li>
 Sbagliato qualcosa? <b>Modifica &gt; Annulla</b> (Ctrl+Z) torna indietro fino
 a sedici passi, e vale per tutto: un controllo messo, cancellato, spostato,
 ridimensionato, una proprieta' cambiata, una finestra aggiunta o tolta.
+<b>Rifai</b> (Ctrl+Y) rimette quel che si e' annullato — ma una modifica nuova
+butta il ramo rifatto: se dopo tre passi indietro si disegna qualcosa, quel
+&laquo;avanti&raquo; e' un futuro che non c'e' piu'.
 </p>
 
 <h2 id="file">I quattro file, e quale e' tuo</h2>
@@ -290,8 +294,14 @@ doppio clic e l'Invio).
 
 <h3 id="areatesto">Area testo</h3>
 <p>
-Testo su piu' righe, con cursore, selezione e appunti (Ctrl+C, Ctrl+V,
-Ctrl+X). <b>Eventi:</b> Cambiato.
+Testo su piu' righe, con cursore e selezione. <b>Eventi:</b> Cambiato.
+Gli appunti ci sono come FUNZIONI &mdash; <code>ex_area_copia</code>,
+<code>ex_area_taglia</code>, <code>ex_area_incolla</code> &mdash; ma
+<b>i tasti li colleghi tu</b>: il toolkit lascia passare ogni Ctrl+lettera
+all'applicazione, apposta, perche' una scorciatoia e' roba di chi scrive il
+programma. Negli editor di exide sono collegati (Ctrl+C, Ctrl+X, Ctrl+V,
+Ctrl+S, Ctrl+F): nel tuo programma si fa allo stesso modo, guardando
+<code>EXM_TASTO</code> e <code>KBD_MOD_CTRL</code>.
 <code>ex_area_svuota</code>, <code>ex_area_aggiungi(h, "riga")</code>,
 <code>ex_area_righe</code>, <code>ex_area_riga(h, i)</code>,
 <code>ex_area_riga_metti(h, i, "nuova")</code>,
@@ -332,6 +342,40 @@ mentre si trascina).
 <code>ex_scorri_limiti(h, massimo, pagina)</code>,
 <code>ex_scorri_dove(h)</code>, <code>ex_scorri_vai(h, dove)</code>.
 </p>
+
+<h2 id="appunti">Copiare, tagliare, spostare un controllo</h2>
+
+<p>
+<b>Ctrl+C</b> copia il controllo scelto, <b>Ctrl+X</b> lo taglia, <b>Ctrl+V</b>
+lo incolla &mdash; e lo incolla <b>sempre nella maschera che si sta
+disegnando</b>. E' anche il modo di spostare un controllo da una finestra
+all'altra: taglia, cambia maschera dall'elenco in cima, incolla, ed e' li'.
+</p>
+
+<ul>
+<li>Incollando nella <b>stessa</b> maschera il controllo si scosta di qualche
+pixel, o coprirebbe l'originale: si vedrebbe un controllo e ce ne sarebbero
+due.</li>
+<li>Incollando in un'<b>altra</b> maschera la posizione si mantiene, perche' li'
+quel posto e' libero.</li>
+<li>Il <b>nome</b> e l'<b>id</b> non si copiano, si rifanno: sono unici in tutto
+il progetto perche' diventano <code>ID_...</code>, <code>h_...</code> e un nome
+di funzione dentro <code>finestra.h</code>, che e' un file solo.</li>
+<li>E il <b>codice non si copia</b>: l'handler dell'originale resta
+dell'originale, la copia avra' il suo &mdash; vuoto &mdash; al primo doppio
+clic. exide non scrive dentro <code>finestra.c</code> cose che non ha scritto
+nessuno.</li>
+</ul>
+
+<div class="nota">
+<p>
+Sono gli appunti <b>del disegno</b>, non quelli di sistema: dentro c'e' un
+controllo, non del testo. Il testo si copia dentro l'editor, che ha i suoi
+(Ctrl+C, Ctrl+V, Ctrl+X su un'<a href="#areatesto">Area testo</a>). Gli appunti
+del disegno restano pieni anche cambiando progetto: incollare crea un controllo
+NUOVO, quindi non ricostruisce niente che non sia mai esistito.
+</p>
+</div>
 
 <h2 id="esempi">Gli esempi</h2>
 
@@ -455,7 +499,10 @@ quasi tutti gli <a href="#esempi">esempi</a> finiscono cosi'.
         a lavorare)</td></tr>
 <tr><td><b>Modifica</b></td>
     <td><b>Annulla</b> (Ctrl+Z) torna indietro sul DISEGNO, fino a sedici
-        passi. Le altre voci &mdash; copia, incolla, taglia, cancella, cerca,
+        passi, e <b>Rifai</b> (Ctrl+Y) rimette quel che si e' annullato: una
+        modifica nuova butta il ramo rifatto. Copia (Ctrl+C), Taglia (Ctrl+X)
+        e Incolla (Ctrl+V) lavorano su un CONTROLLO (vedi
+        <a href="#appunti">spostare un controllo</a>). Le altre voci &mdash; copia, incolla, taglia, cancella, cerca,
         sostituisci &mdash; lavorano DENTRO il sorgente</td></tr>
 <tr><td><b>Strumenti</b></td>
     <td><b>Sorgente</b> l'editor sui tre file del disegno;
@@ -473,10 +520,6 @@ quasi tutti gli <a href="#esempi">esempi</a> finiscono cosi'.
 <h2 id="limiti">Quel che non c'e'</h2>
 
 <ul>
-<li class="manca">Un controllo non si sposta da una finestra all'altra: si
-cancella di qua e si rifa' di la'.</li>
-<li class="manca">Non c'e' &laquo;Rifai&raquo;: c'e' Annulla e non il suo
-contrario.</li>
 <li class="manca">Le scorciatoie della finestra &laquo;Sorgente&raquo; sono
 etichette: nella finestra principale Ctrl+Z, Ctrl+N, Ctrl+O, Ctrl+S e Ctrl+Q
 funzionano, in quella dell'editor no.</li>

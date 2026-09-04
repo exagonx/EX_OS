@@ -686,6 +686,26 @@ if (n <= 0) {
         {
             uint32_t soffitto = proc->tls_base ? proc->tls_base
                                                : proc->user_stack_limit;
+
+            /* =============================================================
+             * ! SOTTO IL SOFFITTO SI RISERVA LA BANDA DEGLI STACK DEI FILI,
+             * e la si riserva A TUTTI — anche a un programma che un filo non
+             * lo fara' mai.
+             *
+             * Sono INDIRIZZI, non pagine: mezzo megabyte di spazio di
+             * indirizzamento in meno per uno heap che ne ha tre giga. La
+             * scelta si capisce guardando l'alternativa: riservarla quando
+             * nasce il primo filo vorrebbe dire abbassare heap_max sotto
+             * memoria che lo heap potrebbe GIA' avere preso — e allora o si
+             * rifiuta il filo, o si mette il suo stack sopra lo heap di
+             * qualcun altro. Il primo caso e' un limite che salta fuori a
+             * caso, il secondo e' memoria corrotta in silenzio.
+             *
+             *   heap ... heap_max | guardia | banda dei fili | TLS | stack
+             * ============================================================= */
+            proc->fili_banda = (soffitto > FILI_BANDA) ? soffitto - PAGE_SIZE : 0;
+            if (proc->fili_banda) soffitto = proc->fili_banda - FILI_BANDA;
+
             proc->heap_max = (soffitto > PAGE_SIZE) ? soffitto - PAGE_SIZE : 0;
         }
 

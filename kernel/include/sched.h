@@ -127,6 +127,25 @@ typedef struct IpcMessage {
  * istruzioni che toccano memoria sotto il puntatore di stack.
  * ============================================================================= */
 #define USER_STACK_MAX      262144  /* 256KB riservati (spazio, non RAM) */
+
+/* =============================================================================
+ * LA BANDA DEGLI STACK DEI FILI
+ *
+ * ! SI RISERVA ALL'AVVIO, ANCHE A CHI NON FARA' MAI UN FILO, ed e' la scelta
+ * che rende tutto il resto semplice: lo spazio di indirizzamento e' gratis —
+ * sono INDIRIZZI, non pagine — mentre spostare il tetto dello heap quando il
+ * primo filo nasce vorrebbe dire abbassarlo sotto memoria che lo heap potrebbe
+ * gia' avere preso. Meglio mezzo megabyte di indirizzi in meno per tutti che
+ * un caso raro che si guasta in silenzio.
+ *
+ * La banda sta SOTTO il blocco TLS e la riserva dello stack principale, e lo
+ * heap si ferma una pagina piu' sotto ancora (vedi elf_load).
+ *
+ *   heap ... heap_max | GUARDIA | banda dei fili | TLS | riserva stack | 3GB
+ * ============================================================================= */
+#define FILO_STACK_SIZE     65536   /* 64KB per filo, come lo stack iniziale */
+#define FILO_MAX            8       /* capogruppo compreso: sette fili in piu' */
+#define FILI_BANDA          ((FILO_MAX - 1) * (FILO_STACK_SIZE + 4096))
 #define USER_STACK_INIT     8192    /* 8KB impegnati al caricamento */
 
 /* =============================================================================
@@ -449,6 +468,31 @@ typedef struct Process {
     /* --- File descriptors --- */
     FileDescriptor  fds[MAX_FD];
 
+    /* =========================================================================
+     * I FILI — un thread e' un task che CONDIVIDE lo spazio di indirizzamento
+     *
+     * ! LA DIFFERENZA FRA UN PROCESSO E UN FILO E' UNA SOLA RIGA: la page
+     * directory. proc_create() ne alloca una nuova; proc_thread_crea() copia
+     * quella di chi chiama. Tutto il resto — il PCB, lo stack kernel, il
+     * quanto, lo scheduler — e' identico, ed e' il motivo per cui questa cosa
+     * si puo' aggiungere senza toccare lo scheduler: per lui un filo E' un
+     * task.
+     *
+     * ! `tgid` DICE A QUALE GRUPPO SI APPARTIENE, ed e' il pid del primo. Per
+     * un processo normale tgid == pid: cosi' il codice che non sa niente di
+     * fili continua a funzionare senza un solo `if`.
+     *
+     * ! I DESCRITTORI SI CONDIVIDONO PER PUNTATORE, e non copiandoli. Due fili
+     * che aprono e chiudono file devono vedere la stessa tabella: un file
+     * aperto da uno e chiuso dall'altro e' cio' che ci si aspetta. `fdt` punta
+     * ai propri `fds` per un processo e a quelli del capogruppo per un filo —
+     * e tutto il kernel usa `fdt`, mai `fds` direttamente.
+     * ========================================================================= */
+    uint32_t        tgid;           /* pid del capogruppo (== pid se non e' un filo) */
+    FileDescriptor *fdt;            /* la tabella VERA: propria o del capogruppo */
+    uint32_t        filo_posto;     /* quale piazzola di stack occupa (0 = capogruppo) */
+    uint32_t        fili_banda;     /* cima della banda degli stack dei fili */
+
     /* Console virtuale di appartenenza (0..VGA_N_CONSOLE-1).
      *
      * È il terminale del processo: dove finisce ciò che scrive su stdout
@@ -645,6 +689,15 @@ void     proc_exit(int32_t exit_code);
 void     proc_set_ready(Process *proc);   /* BLOCKED → READY, aggiunge alla run queue */
 void     proc_kill(uint32_t pid);
 void     proc_reap_zombie(Process *p); /* Libera risorse zombie, segna UNUSED */
+
+/* --- I fili ---------------------------------------------------------------
+ * proc_thread_crea() rende il tid (che e' un pid) o un numero negativo.
+ * `entry` e `arg` sono indirizzi utente: la partenza e il suo argomento. */
+int      proc_thread_crea(uint32_t entry, uint32_t arg);
+/* Quanti membri VIVI ha il gruppo di `tgid` (zombie esclusi). */
+int      proc_gruppo_vivi(uint32_t tgid);
+/* Termina tutti gli altri membri del gruppo: lo chiama chi esce dal processo. */
+void     proc_gruppo_termina(uint32_t tgid, uint32_t risparmia_pid);
 
 extern Process *g_init_task;  /* task reaper (PID 2), adotta gli orfani */
 Process *proc_get_by_pid(uint32_t pid);

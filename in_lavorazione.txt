@@ -182,6 +182,24 @@ decide se il progetto sopravvive — e' il punto in cui VB6 si rompeva:
   una per una, e due esempi completi (le due caselle che si scambiano il testo,
   e il pulsante che chiude la finestra - diverso fra principale e secondaria).
 
+! TAGLIA E INCOLLA CI SONO, dal 4 settembre 2026 (diario: «TAGLIA E INCOLLA:
+  UN CONTROLLO SI SPOSTA FRA LE MASCHERE»). Ctrl+C, Ctrl+X, Ctrl+V nella
+  finestra principale lavorano su un CONTROLLO — sono appunti del DISEGNO, non
+  quelli di sistema che portano testo. Si incolla sempre nella maschera che si
+  sta disegnando: taglia, cambia maschera, incolla, ed e' li'. Nome e id si
+  RIFANNO (sono unici in tutto il progetto), e tagliando il nome torna libero,
+  quindi uno spostamento non rinomina niente. Il codice non si copia: l'handler
+  della copia nasce vuoto. Nella stessa maschera l'incollato si scosta di otto
+  pixel, in un'altra tiene la posizione.
+
+! RIFAI C'E', dal 4 settembre 2026 (diario: «RIFAI: LA STESSA FUNZIONE CON LE
+  DUE PILE SCAMBIATE»). Ctrl+Y o Modifica > Rifai. Due pile e una funzione
+  sola che le scambia: Annulla e' passo(indietro, avanti), Rifai e'
+  passo(avanti, indietro). UNA MODIFICA NUOVA BUTTA IL RAMO RIFATTO — un
+  futuro nato da un passato che non c'e' piu' non si tiene. Costa 121 KB di
+  BSS in piu' (140.384 -> 261.888, misurati): la seconda pila di sedici
+  istanti.
+
 ! ANNULLA C'E', dal 3 settembre 2026 (diario: «ANNULLA: SI FOTOGRAFA TUTTO,
   NON SI REGISTRA COSA»). Sedici passi indietro con Ctrl+Z o Modifica >
   Annulla, e valgono per tutto: un controllo messo, cancellato, spostato,
@@ -218,26 +236,86 @@ decide se il progetto sopravvive — e' il punto in cui VB6 si rompeva:
 
 QUEL CHE MANCA, in ordine di quanto serve:
 
- 1. UN CONTROLLO NON SI SPOSTA DA UNA MASCHERA ALL'ALTRA. Si cancella di qua e
-    si rifa' di la'. Vorrebbe dire un «taglia e incolla» del disegno, che non
-    c'e' per niente — nemmeno dentro la stessa maschera.
-
- 2. NIENTE RIFAI. C'e' Annulla e non il suo contrario: tornare indietro di un
-    passo di troppo si ripaga rifacendo la modifica a mano. L'anello degli
-    istanti ce l'ha gia' dentro (basta non buttare quelli scavalcati), ma
-    vuole decidere cosa succede se dopo un Annulla si modifica qualcosa —
-    li' il ramo rifatto va buttato, e va buttato in un punto solo.
-
- 3. LE SCORCIATOIE DELLA FINESTRA «SORGENTE» SONO ETICHETTE. Nella finestra
-    principale Ctrl+Z/N/O/S/Q adesso funzionano; il menu dell'editor promette
-    Ctrl+S e Ctrl+F e nessuno li ha collegati — proc_ed non ha un EXM_TASTO.
-    Copia/incolla/taglia dentro un'area li fa gia' il toolkit.
+ (niente di grosso: l'elenco si e' svuotato il 4 settembre 2026. Restano le
+  due note qui sopra — i tetti e il clic di «Librerie» mai riprovato.)
 
 ! E DAL CD EXIDE NON PUO' FARE NIENTE, ed e' giusto che lo dica: adesso quando
   la creazione del progetto non riesce lo spiega e si ferma, invece di aprire
   un editor vuoto. Serve un disco montato in lettura e scrittura — e per
   COMPILARE serve anche il CD degli strumenti montato, oltre al disco.
 
+
+=============================================================================
+I FILI (aperti il 4 settembre 2026 — diario: «I FILI: PIU' FLUSSI DENTRO LO
+STESSO PROGRAMMA»)
+=============================================================================
+
+Ci sono: thread_crea/thread_esci/thread_attendi nella libc (syscall 201-203),
+piu' Mutex/mutex_prendi/mutex_lascia. Un filo e' un task che CONDIVIDE la page
+directory e i descrittori del gruppo e ha uno stack suo (64 KB, in una banda
+riservata sotto il TLS). Il tid E' un pid; `tgid` dice il gruppo. Chi esce dal
+processo porta via tutti i fili. Provato con /bin/filiprova, che ha tre modi:
+senza argomenti, «troppi» e «abbandona».
+
+QUEL CHE MANCA, in ordine di quanto pesa:
+
+ 1. LE VARIABILI __thread E errno SONO PER PROCESSO, NON PER FILO. Il blocco
+    TLS e' in comune. Per farlo per filo bisogna tenere da parte l'immagine
+    iniziale del segmento PT_TLS (oggi la legge elf_load e la dimentica) e
+    copiarla in un blocco nuovo a ogni thread_crea: azzerarlo e basta NON va
+    bene, farebbe partire a zero una variabile inizializzata a cinque, in
+    silenzio. errno passa gia' da __errno_dove(), quindi seguira' da solo.
+
+ 2. NIENTE CHE DORMA DAVVERO. mutex_prendi gira cedendo la CPU: va bene per una
+    sezione critica corta, non per aspettare un file o un altro filo. Serve un
+    futex — bloccarsi su un indirizzo, essere svegliati da chi lo cambia — e
+    con lui variabili di condizione e semafori.
+
+ 3. OTTO FILI PER PROCESSO (FILO_MAX), capogruppo compreso, perche' tante sono
+    le piazzole nella banda. Alzarlo vuol dire allargare la banda, cioe'
+    abbassare heap_max: e' un numero, non un lavoro.
+
+ 4. NON C'E' UNA CANCELLAZIONE. Si puo' uccidere un filo con kill (il tid e' un
+    pid) ma non c'e' un modo ordinato di chiedergli di fermarsi.
+
+ 5. cwd ED ENV SONO COPIATI ALLA CREAZIONE, non condivisi: un chdir dentro un
+    filo non lo vedono gli altri. I descrittori invece sono in comune davvero.
+
+ 6. LO STACK DI UN FILO E' IMPEGNATO TUTTO SUBITO (64 KB di RAM vera, non di
+    soli indirizzi) perche' page_fault_handler sa far crescere un solo stack.
+    Farlo crescere su richiesta vuol dire insegnargli a riconoscere a quale
+    filo appartiene una pagina mancante dentro la banda.
+
+=============================================================================
+RUST SU EX-OS (aperto il 4 settembre 2026)
+=============================================================================
+
+I sorgenti (1.100.0, 424 MB) stanno in /rust/ e sono IGNORATI da git, come
+/gcc/, /openssl/ e /freebasic/. Cio' che e' nostro sta in tools/rust-exos/:
+c'e' gia' il bersaglio i686-unknown-exos.json e la ricetta in leggimi.md.
+
+! NIENTE E' ANCORA STATO COSTRUITO: quello e' un piano, non uno stato.
+
+I quattro passi, e i primi tre non toccano EX-OS:
+
+ 0. UN PROGRAMMA no_std CHE GIRA, compilato da Linux col bersaglio nostro e
+    collegato con la STESSA riga ld dei programmi C (programma.ld, start.o, i
+    ponti della libc). Si fa in una sera e si prova subito.
+ 1. alloc, cioe' un GlobalAlloc sopra la malloc che c'e' gia'.
+ 2. libexos: gli involucri su file, processi, IPC e finestre.
+ 3. La std: un sys nuovo dentro library/std, coi THREAD DICHIARATI NON
+    SUPPORTATI (esiste sys/pal/unsupported apposta). Da qui funziona cargo.
+
+ 4. RUSTC SUL CD DEGLI STRUMENTI, accanto a gcc e fbc. Il muro dei thread e'
+    CADUTO il 4 settembre 2026 (vedi la sezione «I FILI» qui sopra), ma la std
+    di Rust non vuole solo che i thread esistano: vuole TLS per filo — che qui
+    ancora non c'e' — e primitive che bloccano davvero, cioe' i punti 1 e 2 di
+    quell'elenco. Il resto della salita resta quello di prima: LLVM, la
+    memoria, e una std portata.
+
+! QUEL CHE MANCA ANCORA A UN PORTING DI TERZE PARTI, misurato: fork, i socket
+  BSD, dlopen/dlsym, sem_init e iconv. Ci sono invece mmap, poll, select,
+  signal, il C++ 17 sul CD e — da oggi — i thread.
 
 =============================================================================
 L'IMPAGINATO NON E' UNA LIBRERIA — e quando conviene che lo diventi

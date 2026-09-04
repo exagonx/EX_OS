@@ -84,6 +84,141 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### Threads: several flows inside the same program
+
+**tested** — and the proof is not that the count adds up, it is that **without
+the lock it does not**:
+
+```
+filiprova: 4 threads, 20000 rounds each
+  with the lock   80000   expected  80000   exact
+  without         20000   expected  80000   lost on the way
+  hand-offs       80000   the threads really do interleave
+```
+
+Sixty thousand lost increments are four flows treading on each other in the
+same memory. If the threads were fake — if `thread_crea` ran the function
+inside the caller — that number would be 80000 like the other one, and the test
+would have passed without proving anything.
+
+**The difference between a process and a thread is one line: the page
+directory.** `proc_create` allocates a new one, `proc_thread_crea` copies the
+group leader's. Not one line of the scheduler was touched: same run queue, same
+quantum, same `context_switch` — which already took CR3 as a parameter. And
+`tgid` (the first member's pid) equals `pid` for a normal process, so all the
+kernel that knows nothing about threads keeps working without a single `if`.
+
+**File descriptors are shared by pointer, not by copy**: two threads opening
+and closing files must see the same table. The PCB gained `fdt`, and the 153
+occurrences of `->fds[` in the kernel became `->fdt[` with a mechanical
+substitution — for a normal process `fdt == fds` and nothing changes.
+
+**Stacks are not shared**: 64 KB per thread, in a band reserved for *every*
+process at startup — even for one that will never make a thread. They are
+addresses, not pages. The alternative (reserving it when the first thread is
+born) would mean lowering the heap ceiling under memory the heap might already
+have taken: either you refuse the thread, or you put its stack on top of
+somebody else's data.
+
+> **Whoever exits takes the group with them**, like `exit_group` on Linux and
+> for the same reason: the other threads live in this process's memory, and
+> letting them run while the address space goes away means code running over
+> freed pages. Tested on purpose: a program that creates three endless threads
+> and exits without joining them leaves the machine healthy and the prompt
+> comes back.
+
+**What is not per-thread, written down rather than discovered:** `__thread`
+variables and `errno` are per *process* — the TLS block is shared. Giving each
+thread its own means copying in the initial image from the ELF; zeroing it
+instead would start a variable initialised to five at zero, silently. Between a
+written limit and a wrong value there is no contest. And the lock spins yielding
+the CPU: fine for a short critical section, not for waiting — a futex is the
+next step.
+
+### The editor shortcuts, and something I had written wrong
+
+**tested** — a line typed in the editor and only Ctrl+S pressed: the status line
+says "saved", and the file read back from the shell contains it. It was the last
+item on EX-IDE's list: the "Source" window's menu had promised Ctrl+S, Ctrl+C,
+Ctrl+V, Ctrl+X and Ctrl+F since day one, and nobody had ever wired them.
+
+**The toolkit does not eat them, on purpose.** In `exwin.c`, in the key path:
+"for every other control a Ctrl+letter is an application shortcut and must not
+be eaten" — the only exception is the terminal, where Ctrl+C is byte 3 and must
+reach the pty. The Ctrls were already arriving; what was missing was someone
+looking at them.
+
+> **And what I had written in the manual was wrong.** Under "Text area" it said
+> "with cursor, selection and clipboard (Ctrl+C, Ctrl+V, Ctrl+X)", as if the
+> keys were the toolkit's doing. The toolkit provides the *functions* —
+> `ex_area_copia/taglia/incolla` — and leaves the keys to whoever writes the
+> program. The line now says so, and says how it is done: exactly what someone
+> writing their own editor with EX-IDE needs.
+
+**The repaint is manual, from the keyboard.** That is this job's trap: pressing
+"Cut" in the menu makes the toolkit repaint the window as the dropdown closes,
+so the changed text shows; from the keyboard nothing closes, and without an
+explicit `EXM_DISEGNA` the text changes and the screen stays as it was. The two
+paths go through the same functions and do not have the same surroundings.
+
+### Cut and paste: a control moves between forms
+
+**tested** — copied and pasted within the same form, then cut, form switched and
+pasted: the drawing file shows the control moved under the other window, same
+position and same name. It was the last big item left in EX-IDE, and its real
+reason was not copying: it was that a control placed on the wrong form could
+only be deleted and redone by hand over there.
+
+**The drawing clipboard is not the system one.** It holds a *control*, not text:
+ExWin's own clipboard carries characters and the editors already use it to pass
+pieces of source around. Putting a control in there would mean inventing a
+textual format for a rectangle and having it read back by whoever else writes
+into it meanwhile. In the main window Ctrl+C talks about the drawing, which is
+what that window is.
+
+**The name and the id are not copied, they are made anew**: they are unique
+across the whole project because they become `ID_...`, `h_...` and a function
+name inside `finestra.h`, which is a single file. With a pleasant consequence
+that was not aimed for — on a cut the name becomes free again and the control
+takes it back: **a move renames nothing**.
+
+**And the code is not copied at all.** The original's handler stays the
+original's; the copy will get its own, empty, on the first double click. Copying
+the body too would mean exide writing into `finestra.c` things nobody wrote —
+the one rule this program never breaks.
+
+> **Within the same form the pasted control shifts by eight pixels, in another
+> one it does not.** Placing it exactly over the original would hide it: you
+> would see one control and there would be two, and the click would always take
+> the top one. In another form that spot is free, and it is exactly where you
+> want it.
+
+### Redo: the same function with the two stacks swapped
+
+**tested** — undone, redone, and the case that matters most verified: after an
+Undo, a new change discards the redo branch.
+
+**What you undo is not thrown away, it is moved to the other side.** Two stacks
+instead of one, and *a single function that swaps them*: `passo(from, to)` takes
+the present, pushes it onto `to`, and restores the drawing on top of `from`.
+Undo is `passo(back, forward)`, Redo is `passo(forward, back)` — two lines each,
+and the day a field is added to the drawing there is one place to remember it.
+For the same reason capture and restore became two functions instead of the
+three `memcpy` blocks copied into the three places that use them.
+
+**A new change discards the redo branch**, and that is the only rule this thing
+needs: if after three steps back you draw something, that "forward" is a future
+born of a past that no longer exists, and keeping it would mean a Redo that
+restores a drawing which never existed. Every program does it this way, and this
+is the reason — not habit.
+
+> **The stack slides when full**, instead of refusing the new snapshot: the
+> oldest step is the one needed least, and losing the most *recent* one would
+> mean an Undo that does not undo the last thing done. Cost measured with
+> `size`: exide's BSS goes from 140,384 to 261,888 bytes — a hundred and
+> twenty-one kilobytes, the second stack of sixteen snapshots, zeroed memory and
+> not bytes in the binary.
+
 ### Search actually works, and no browser port was needed
 
 **tested** — live, over HTTPS: `html.duckduckgo.com/html/?q=exos` opens in the

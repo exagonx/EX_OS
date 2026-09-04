@@ -226,6 +226,10 @@ typedef struct {
 #define SYS_CLOSE       6
 #define SYS_SPAWN        2
 #define SYS_WAITPID      7
+/* I fili (4 settembre 2026): stessi numeri di kernel/include/syscall.h. */
+#define SYS_THREAD_CREA    201
+#define SYS_THREAD_ESCI    202
+#define SYS_THREAD_ATTENDI 203
 #define SYS_GETPID      20
 /* ! I NUMERI SONO DUPLICATI DA kernel/include/syscall.h, come tutti gli altri
  * qui sopra: libc.c non include quell'header. Sono quelli di Linux. */
@@ -4093,6 +4097,66 @@ int waitpid(int pid, int *stato, int opzioni)
 {
     return err_posix(_syscall3(SYS_WAITPID, (uint32_t)pid,
                              (uint32_t)stato, (uint32_t)opzioni));
+}
+
+/* =============================================================================
+ * I FILI
+ * ============================================================================= */
+int thread_crea(void (*fn)(void *), void *arg)
+{
+    return err_posix(_syscall2(SYS_THREAD_CREA, (uint32_t)fn, (uint32_t)arg));
+}
+
+void thread_esci(int codice)
+{
+    _syscall1(SYS_THREAD_ESCI, (uint32_t)codice);
+    for (;;) { }                /* non ci si arriva */
+}
+
+int thread_attendi(int tid, int *codice)
+{
+    return err_posix(_syscall2(SYS_THREAD_ATTENDI, (uint32_t)tid,
+                               (uint32_t)codice));
+}
+
+/* -----------------------------------------------------------------------------
+ * IL LUCCHETTO
+ *
+ * ! `xchg` E' ATOMICO SENZA `lock`, ed e' l'unica istruzione x86 che lo sia
+ * per costruzione: scambiando con la memoria il processore alza il segnale di
+ * blocco da solo. Su una macchina a un processore basterebbe anche meno, ma
+ * scriverlo giusto ora costa una riga e il giorno che i processori saranno due
+ * non ci sara' niente da rileggere.
+ *
+ * ! E CHI ASPETTA CEDE LA CPU, non gira a vuoto. Con un processore solo, un
+ * ciclo che gira senza cedere aspetta chi ha il lucchetto senza mai lasciarlo
+ * lavorare: si sbloccherebbe solo allo scadere del quanto. `sched_yield()`
+ * trasforma un'attesa di dieci millisecondi in una di pochi microsecondi.
+ * --------------------------------------------------------------------------- */
+void sched_yield(void);     /* piu' avanti in questo file */
+
+static int mutex_xchg(volatile int *dove, int valore)
+{
+    __asm__ __volatile__("xchgl %0, %1"
+                         : "+r"(valore), "+m"(*dove)
+                         :
+                         : "memory");
+    return valore;
+}
+
+int mutex_prova(volatile int *m)
+{
+    return mutex_xchg(m, 1) == 0;
+}
+
+void mutex_prendi(volatile int *m)
+{
+    while (mutex_xchg(m, 1) != 0) sched_yield();
+}
+
+void mutex_lascia(volatile int *m)
+{
+    mutex_xchg(m, 0);   /* MUTEX_LIBERO, vedi libc.h */
 }
 
 int wait(int *stato)

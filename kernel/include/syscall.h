@@ -768,6 +768,21 @@ typedef struct {
  *
  * ebx = nome, ecx = password. Rende 0, oppure -EPERM.
  * ============================================================================= */
+/* =============================================================================
+ * I FILI — 201, 202, 203 (4 settembre 2026)
+ *
+ * Un filo e' un task che condivide lo spazio di indirizzamento con chi lo
+ * crea: stessa memoria, stessi descrittori, stack suo. Vedi proc_thread_crea()
+ * in kernel/sched/sched.c e thread_crea() nella libc.
+ *
+ * ! IL tid E' UN pid, e non e' una comodita': lo scheduler non distingue, e
+ * quindi non lo distinguono nemmeno kill, il registro dei processi e i log.
+ * Chi vuole sapere se due tid sono dello stesso programma guarda il tgid.
+ * ============================================================================= */
+#define SYS_THREAD_CREA   201   /* ebx = entry, ecx = arg  -> tid o negativo */
+#define SYS_THREAD_ESCI   202   /* ebx = codice            -> non ritorna */
+#define SYS_THREAD_ATTENDI 203  /* ebx = tid, ecx = int*   -> 0 o negativo */
+
 #define SYS_SU            254
 
 /* La mailbox IPC come sorgente. MAX_FD e' il primo numero che un descrittore
@@ -1218,6 +1233,9 @@ int32_t sys_rename(InterruptFrame *f);
 int32_t sys_dup2(InterruptFrame *f);
 int32_t sys_fcntl(InterruptFrame *f);
 int32_t sys_waitpid(InterruptFrame *f);
+int32_t sys_thread_crea(InterruptFrame *f);
+int32_t sys_thread_esci(InterruptFrame *f);
+int32_t sys_thread_attendi(InterruptFrame *f);
 int32_t sys_getpid(InterruptFrame *f);
 int32_t sys_getppid(InterruptFrame *f);
 int32_t sys_mmap(InterruptFrame *f);

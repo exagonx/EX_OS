@@ -634,6 +634,51 @@ char   *realpath(const char *path, char *resolved);
 void    sched_yield(void);
 
 /* =============================================================================
+ * I FILI — piu' flussi dentro lo stesso programma (4 settembre 2026)
+ *
+ * Un filo condivide con chi lo crea la memoria, i descrittori e la directory
+ * corrente; ha soltanto il suo stack (64 KB) e i suoi registri. Il `tid` che
+ * si ottiene E' un pid: lo si vede in `ps`, e chi vuole sapere se due tid sono
+ * dello stesso programma guarda il gruppo.
+ *
+ * ! LA FUNZIONE DEL FILO NON DEVE TORNARE. Chi arriva in fondo salta a un
+ * indirizzo di ritorno che vale ZERO, apposta: e' un fault che si vede subito,
+ * invece di un salto in memoria a caso che si vede tre giorni dopo. Si esce
+ * con thread_esci(), oppure — se si vuole tornare — lo si scrive cosi':
+ *
+ *     void filo(void *arg) { lavoro(arg); thread_esci(0); }
+ *
+ * ! QUEL CHE NON E' PER FILO, ed e' dichiarato invece che scoperto: le
+ * variabili `__thread` e `errno` sono per PROCESSO, non per filo (il blocco
+ * TLS e' in comune). Due fili che guardano errno nello stesso momento si
+ * pestano i piedi: chi ha bisogno del motivo di un errore lo legga dal valore
+ * di ritorno, che nelle nostre funzioni c'e' sempre.
+ *
+ * ! E NON C'E' NIENTE CHE DORMA IN ATTESA: mutex_prendi() gira cedendo la CPU.
+ * Va bene per una sezione critica corta — un contatore, una lista — e non va
+ * bene per aspettare un file. Per quello c'e' l'IPC, che blocca davvero.
+ * ============================================================================= */
+#define FILI_MAX_PER_PROCESSO  8   /* capogruppo compreso */
+
+/* Crea un filo che parte da `fn(arg)`. Rende il tid, o -1 con errno:
+ *   EAGAIN  non ci sono piu' piazzole (FILI_MAX_PER_PROCESSO)
+ *   ENOMEM  memoria finita mentre si allocava il suo stack
+ *   EFAULT  `fn` non e' un indirizzo di codice utente */
+int     thread_crea(void (*fn)(void *), void *arg);
+void    thread_esci(int codice);             /* non ritorna */
+int     thread_attendi(int tid, int *codice); /* 0, oppure -1 con errno */
+
+/* ! UN LUCCHETTO CHE GIRA, e il tipo e' un intero apposta: si azzera con
+ * MUTEX_LIBERO e non ha bisogno di nessuna funzione di inizializzazione, che
+ * e' l'unica forma che non si puo' dimenticare di chiamare. */
+typedef volatile int Mutex;
+#define MUTEX_LIBERO  0
+
+void    mutex_prendi(Mutex *m);
+int     mutex_prova(Mutex *m);   /* 1 se preso, 0 se era occupato */
+void    mutex_lascia(Mutex *m);
+
+/* =============================================================================
  * ! sleep RITORNA unsigned int, E NON void — corretto ad agosto 2026
  *
  * POSIX dice che sleep() ritorna **i secondi che restavano da dormire**

@@ -170,7 +170,7 @@ PROGRAMMI_FLOPPY := shell id chmod shutdown ls mem stack disk fdisk mkfs mkswap 
 # `make verifica-programmi` — che le due ISO eseguono da sole — confronta
 # le liste con il contenuto di bin/ e si ferma dicendo quali mancano.
 # =============================================================================
-PROGRAMMI_CD := cdinstall swaptest libctest hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp scarica telnet telnetd sshd xcp winprova exwincmd audio
+PROGRAMMI_CD := cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp scarica telnet telnetd sshd xcp winprova exwincmd audio
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
 PROGRAMMI_EXWIN := exwin_so exdlg_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr edit term fontprova orologio browser exide
 
@@ -2879,6 +2879,30 @@ EXCRYPT_HDR := lib/excrypt/excrypt.h lib/excrypt/fe25519.h
 # --- /bin/crypttest (solo CD) -------------------------------------------------
 # I vettori degli RFC girati sulla macchina vera: a terra la stessa matematica
 # gira su x86-64, qui su i386 con gli interi a 64 bit emulati.
+# --- /bin/filiprova: la prova dei fili ---------------------------------------
+#
+# ! NON PROVA SOLO CHE IL CONTO TORNI, e la differenza conta: un contatore
+# protetto viene giusto anche se i fili fossero finti — cioe' se thread_crea
+# eseguisse la funzione nel chiamante. Percio' il programma conta anche quante
+# volte il testimone passa di mano, che senza concorrenza vera sarebbe zero.
+FILIPROVA_SRC := bin/filiprova/filiprova.c
+FILIPROVA_BIN := $(BUILD_BIN_CD)/filiprova
+FILIPROVA_LD  := bin/filiprova/filiprova.ld
+
+$(FILIPROVA_BIN): $(FILIPROVA_SRC) $(FILIPROVA_LD) \
+                  $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/filiprova ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -c $(FILIPROVA_SRC) -o $(BUILD_OBJ)/filiprova_main.o
+	$(CC) -m32 -c $(LIBC_START) -o $(BUILD_OBJ)/filiprova_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(FILIPROVA_LD) \
+	    $(BUILD_OBJ)/filiprova_start.o $(BUILD_OBJ)/filiprova_main.o \
+	    $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] filiprova compilato: $@"
+
+.PHONY: filiprova
+filiprova: dirs $(FILIPROVA_BIN)
+
 CRYPTTEST_SRC := bin/crypttest/crypttest.c
 CRYPTTEST_BIN := $(BUILD_BIN_CD)/crypttest
 CRYPTTEST_LD  := bin/crypttest/crypttest.ld
@@ -5523,7 +5547,7 @@ ISOX_IMG  := $(DIST_DIR)/exos.iso
 # c'era perche' un elenco lungo scritto a mano e' il posto dove le cose si
 # dimenticano. Le variabili sono definite piu' sopra, accanto alle rispettive
 # regole, e qui sono tutte gia' note perche' questa riga make la legge dopo.
-BINARI_SOLO_CD := $(NETDETECT_BIN) $(NETTEST_BIN) $(PING_BIN) $(IPCFG_BIN) \
+BINARI_SOLO_CD := $(CRYPTTEST_BIN) $(FILIPROVA_BIN) $(NETDETECT_BIN) $(NETTEST_BIN) $(PING_BIN) $(IPCFG_BIN) \
                   $(TCPSERV_BIN) $(TELNETD_BIN) $(CRYPTTEST_BIN) $(SSHD_BIN) \
                   $(DHCP_BIN) $(HOST_BIN) $(TCPTEST_BIN) $(FTP_BIN) \
                   $(TELNET_BIN) $(XCP_BIN) $(WINPROVA_BIN) $(EXWINCMD_BIN) \
