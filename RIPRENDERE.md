@@ -28,6 +28,244 @@ manca» apre quello.
 
 # DOVE RIPRENDERE — 4 settembre 2026
 
+## 4 settembre 2026 — FERMARE UN FILO E' CHIEDERGLIELO
+
+Uccidere un filo si poteva gia': il tid e' un pid, e `kill` funziona. Il punto
+e' che **non si deve**. Un filo ucciso dove capita lascia i lucchetti presi, i
+file aperti a meta' e le strutture come stavano — e dentro un processo solo
+quelle non sono le sue, sono **di tutti**. Non e' un processo che muore male:
+e' un programma che continua a girare su strutture rotte.
+
+Adesso c'e' il modo ordinato, e sono due chiamate di sistema (206, 207) piu'
+due parole nel PCB:
+
+    thread_ferma(tid)          lascia un messaggio: «quando ti torna comodo»
+    thread_devo_fermarmi()     lo legge, dove il filo decide
+
+    while (!thread_devo_fermarmi()) { ...un pezzo di lavoro... }
+    ...lascia i lucchetti, chiudi quel che hai aperto...
+    thread_esci(0);
+
+### DUE PAROLE, E FANNO DUE MESTIERI DIVERSI
+
+! **`ferma` E' IL MESSAGGIO, E RESTA.** Lo mette chi chiede, lo legge il filo
+quando gli pare, e nessuno lo toglie: una richiesta letta una volta vale anche
+la seconda.
+
+! **`scuoti` E' LA SCROLLATA, E SI CONSUMA.** Serve a chiudere l'unica finestra
+che questa cosa ha: **fra il momento in cui il filo guarda `ferma` e quello in
+cui si addormenta su un'attesa**. Se la richiesta arriva li' in mezzo, il filo
+dorme *dopo* aver guardato e non se ne accorge piu' — la stessa corsa del
+risveglio perso, e la stessa cura. Chi chiede, se il filo non sta gia'
+dormendo, lascia scritto che la prossima attesa non deve dormire;
+`sys_attesa_dormi` la trova **dentro lo stesso `cli` che protegge il valore
+atteso**, e torna con EINTR invece di bloccarsi.
+
+! **E SI CONSUMA UNA VOLTA SOLA, non e' un «non dormire mai piu'».** Un filo
+che sta uscendo ha ancora del lavoro da fare — lasciare lucchetti, chiudere
+file — e se ogni attesa gli tornasse subito per sempre, quella pulizia
+girerebbe a vuoto invece di dormire. Una scrollata basta: dopo quella il filo
+ha guardato, e sa.
+
+Il kernel fa solo le due cose che da fuori non si possono fare: mettere il
+messaggio dove il filo lo trovera', e svegliare chi dorme. Fermare davvero non
+lo fa nessuno — lo fa il filo.
+
+### LA PROVA PASSAVA ANCHE SENZA LA COSA CHE DOVEVA PROVARE
+
+E' il difetto piu' istruttivo della giornata, ed era **nella prova, non nel
+codice**. Il terzo caso di `filiprova ferma` doveva colpire proprio quella
+finestra: creare un filo, chiedergli subito di fermarsi, e vedere se se ne
+accorgeva. Passava. Poi ho tolto la scrollata dal kernel — una riga, `if (0 &&
+...)` — e **passava lo stesso**.
+
+! **PERCHE' LA FINESTRA NON LA COLPIVA MAI.** Con un processore solo, creando
+un filo e fermandolo subito si finisce sempre in uno dei due casi *facili*: o
+la richiesta arriva prima che il filo abbia guardato — e allora quando guarda
+la trova — o arriva a filo gia' addormentato, e allora c'e' la sveglia per
+indirizzo. Il caso di mezzo dura poche istruzioni e a caso non ci si casca.
+
+! **LA CURA E' ALLARGARE LA FINESTRA A COMANDO**, non provare piu' volte
+sperando. Il filo di prova adesso, fra l'occhiata e il sonno, **cede la CPU** e
+alza una bandierina; chi comanda aspetta la bandierina e solo allora chiede.
+Cosi' la richiesta cade **sempre** dentro la finestra, e la prova smette di
+dipendere dalla fortuna.
+
+    con la scrollata      20 corse in  60-180 ms
+    senza la scrollata    20 corse in    20200 ms   e la prova FALLISCE
+
+Ventimila e duecento millisecondi sono venti scadenze da un secondo, una per
+corsa: senza la scrollata *ogni singola* corsa finisce nel caso peggiore. La
+differenza e' di **336 volte** — e prima di allargare la finestra era di zero.
+
+### COME SI E' PROVATO — TRE CASI, E OGNUNO PUO' FALLIRE INVECE DI FERMARSI
+
+    tre fili che lavorano   fermati in 0-10 ms, dopo 2000-4000 giri fatti
+    un filo che DORME       su una condizione che nessuno segnalera' mai:
+                            sveglio e uscito in 0 ms
+    venti corse             60-180 ms (20200 senza la scrollata)
+    un tid che non c'e'     -1 con ESRCH
+
+! **OGNI FILO DI QUESTA PROVA HA UNA SCADENZA SUA, ED ESCE CON UN CODICE
+DIVERSO** — 0 se si e' fermato perche' glielo hanno chiesto, 1 se se n'e'
+andato per stanchezza. Senza, un filo che non si ferma lascerebbe
+`thread_attendi` bloccato per sempre: la macchina resta li' e non c'e' niente
+da leggere. La differenza fra «funziona» e «non funziona» dev'essere un numero
+stampato, non un prompt che non torna.
+
+### QUEL CHE NON FA, ED E' SCRITTO
+
+! **IL FILO SI ACCORGE SOLO DOVE GUARDA.** Un'attesa dentro
+`condizione_aspetta` va bene, perche' si aspetta sempre dentro un `while` e li'
+si puo' guardare anche il messaggio; ma `semaforo_prendi` senza scadenza **non
+e' un punto di controllo**, e nemmeno una lettura da tastiera o da rete. Chi
+vuole potersi fermare li' usa le varianti con scadenza. Sta scritto in
+`libc.h`, con lo schema del ciclo accanto.
+
+! **E LA LETTURA COSTA UNA CHIAMATA DI SISTEMA.** Si vede solo se il pezzo di
+lavoro fra un'occhiata e l'altra e' piu' corto della chiamata. La strada per
+toglierla e' che il kernel scriva il messaggio in una parola del **blocco
+TLS** invece che nel PCB: il filo la leggerebbe con un `movl %gs:...` e
+nessuna chiamata. Costa una parola di ABI del blocco TLS, cioe' una decisione
+che non si torna indietro a prendere — e vale la stessa regola dei semafori
+qui sotto: non si paga un'ABI per un'ottimizzazione che nessuno ha misurato.
+
+### QUEL CHE HO CONTROLLATO DI NON AVER ROTTO
+
+`sys_attesa_dormi` e' toccata da tutti i lucchetti del sistema, quindi tutti e
+nove i modi di `filiprova` di fila piu' un `hello`, e `libctest`: **201
+superate, 15 fallite**, le stesse quindici.
+
+## 4 settembre 2026 — LE CONDIZIONI E I SEMAFORI, SOPRA L'ATTESA CHE DORME
+
+L'attesa che dorme (`attesa_dormi`/`attesa_sveglia`, la giornata qui sotto) era
+il mattone. Mancavano le due cose che ci si costruiscono sopra, e adesso ci
+sono: **otto funzioni di libc, nessuna riga di kernel**.
+
+    condizione_aspetta(&c, &m)         lascia il lucchetto, dormi, riprendilo
+    condizione_aspetta_ms(&c, &m, ms)  la stessa, con una rete
+    condizione_segnala(&c)             uno
+    condizione_segnala_tutti(&c)       tutti
+    semaforo_prendi(&s)                aspetta un posto e prendilo
+    semaforo_prendi_ms(&s, ms)         0, oppure -1 con ETIMEDOUT
+    semaforo_prova(&s)                 1 se c'era subito, 0 se era a zero
+    semaforo_lascia(&s)                alza il conto e sveglia uno
+
+I due tipi sono **interi**, come `Mutex`: `Condizione c = CONDIZIONE_ZERO;`,
+`Semaforo posti = 1;`. Nessuna funzione di inizializzazione, che e' l'unica
+forma che non si puo' dimenticare di chiamare.
+
+### UNA CONDIZIONE E' UN CONTATORE DI SEGNALI, E BASTA
+
+Non tiene la lista di chi aspetta: quella e' gia' nel kernel, ed e' la coda di
+chi dorme su quell'indirizzo. Aspettare e' tre righe:
+
+    int visto = *c;          /* PRIMA di lasciare il lucchetto */
+    mutex_lascia(m);
+    attesa_dormi(c, visto, ms);
+    mutex_prendi(m);
+
+! **LA PRIMA RIGA E' L'UNICA CHE CONTA.** Fra il «lascia» e il «dormi» c'e' una
+finestra in cui chi segnala puo' passare, e quel segnale arriverebbe prima che
+ci sia qualcuno da svegliare: il filo dormirebbe per sempre. Avendo letto il
+contatore PRIMA, se qualcuno segnala li' in mezzo il valore non e' piu' quello
+e `attesa_dormi` non dorme affatto — torna subito, e la condizione si
+ricontrolla. **La finestra non si chiude: si rende innocua.** E' lo stesso
+mestiere che fa il valore atteso per il lucchetto, ma qui si vede meglio
+perche' il lucchetto lo si molla per davvero.
+
+! **PERCIO' SI ASPETTA DENTRO UN `while`, MAI DENTRO UN `if`.** Il risveglio
+dice «guarda di nuovo», non «adesso c'e'». Chi controlla una volta sola prima o
+poi prosegue con la condizione falsa, ed e' il difetto che non si riproduce.
+
+! **LA SCADENZA NON SI DISTINGUE DAL RISVEGLIO**, ed e' dichiarato: il kernel
+non lo dice, `sys_attesa_dormi` rende 0 in tutti e due i casi. Col `while` non
+serve saperlo — la scadenza li' dentro e' una RETE, non un esito. Il giorno che
+servisse davvero, e' una riga in `sys_attesa_dormi` che confronti `g_ticks` con
+`block_until`. Il semaforo invece lo sa dire, perche' il tempo se lo misura da
+solo con `uptime_ms()` e non lo chiede a nessuno.
+
+### UN SEMAFORO NON HA UN PADRONE, ED E' TUTTA LA DIFFERENZA
+
+Prendere = se il conto e' maggiore di zero scalalo (cmpxchg), se e' zero
+dormici sopra col valore atteso zero. Lasciare = alzalo e sveglia uno.
+
+! **CHI LASCIA PUO' NON ESSERE CHI HA PRESO**, e non e' una licenza: e'
+esattamente cio' che serve fra un produttore e un consumatore, dove il posto
+libero lo consuma uno e lo restituisce l'altro. Un lucchetto li' non si puo'
+usare, e infatti la prova col semaforo non ne ha nessuno.
+
+! **SI RIPROVA IN CERCHIO E NON UNA VOLTA SOLA:** fra il risveglio e il
+cmpxchg un altro filo puo' essersi preso il posto. Svegliarsi non e' avere.
+
+! **E UNA SPESA L'HO LASCIATA LI', SCRITTA:** chi lascia un semaforo chiama la
+sveglia SEMPRE, anche quando non dorme nessuno — una chiamata di sistema per
+ogni `lascia`. Il lucchetto quella spesa la evita col terzo stato, ma li' il
+numero E' lo stato del lucchetto e ci sta dentro anche «c'e' chi dorme»; qui il
+contatore conta posti e non ha dove metterlo. La via c'e' ed e' scritta accanto
+al codice — un secondo campo `dormienti`, alzato con `lock` prima di
+addormentarsi e guardato da chi lascia dopo aver alzato il conto, cosi' i due
+`lock` si fanno da barriera a vicenda e almeno uno vede l'altro — ma vuole una
+struttura al posto di un intero, cioe' un tipo nuovo nell'ABI. **Non si paga un
+tipo nuovo per un'ottimizzazione che nessuno ha ancora misurato.**
+
+### IL `lock` SU UN INCREMENTO
+
+`atomico_piu_uno()` e' `lock incl`. Il prefisso non serve solo per il giorno in
+cui i processori saranno due: un incremento e' leggi-modifica-scrivi, e due
+fili che segnalano insieme, interrotti in mezzo, conterebbero **un segnale
+solo**. Un segnale perso e' un filo che non si sveglia piu'.
+
+### LA PROVA: UNA CODA DI UN POSTO, E TRE MISURE CHE POSSONO FALLIRE
+
+`filiprova condizione` e `filiprova semaforo`. Un produttore, un consumatore,
+mille elementi, e la coda tiene **un elemento solo**.
+
+! **LA CODA E' DI UN POSTO APPOSTA.** Con dieci posti i due si incrociano poco
+e la prova diventa quasi sequenziale; con uno ognuno dei mille elementi
+costringe l'altro ad aspettare — cioe' apre mille volte la finestra fra
+«lascia» e «dormi», che e' l'unica cosa che qui si sta provando.
+
+    elementi passati  1000   atteso  1000   tutti
+    somma            500500   attesa 500500   esatta
+    giri a vuoto: consumatore 0, produttore 0   nessuno
+    1000 passaggi in 20 ms   e' andata a segnali
+
+Le tre misure guardano guasti diversi:
+
+1. **LA SOMMA**, non il conteggio: perderne uno e leggerne un altro due volte
+   darebbe lo stesso numero di giri e una somma diversa.
+2. **I GIRI A VUOTO, E DEVONO ESSERE ZERO**, non «pochi»: c'e' un consumatore
+   solo e un produttore solo, quindi chi si sveglia trova sempre la roba —
+   nessun altro puo' avergliela portata via. Uno solo vuol dire che ci si e'
+   svegliati per la scadenza, cioe' che un segnale s'era perso.
+3. **IL CRONOMETRO**, che e' il testimone del punto 2.
+
+! **LA RETE SERVE PERCHE' LA PROVA POSSA FALLIRE INVECE DI FERMARSI.** Un
+segnale perso, senza scadenza, e' una macchina ferma per sempre: la prova non
+«fallisce», resta li' e bisogna andare a vedere. Con la scadenza di mezzo
+secondo dentro l'attesa, un segnale perso costa 500 ms e si vede nel numero
+finale. **La riga di giudizio sta a 400 ms**: mille passaggi ne costano fra 20
+e 60 — misurato tre volte, e balla di tre volte perche' dipende da come cadono
+i quanti — mentre una sola scadenza ne costerebbe 500. Fra i due numeri non
+c'e' niente, quindi la riga puo' stare comoda sopra la misura e restare capace
+di distinguere.
+
+E il sonno del semaforo si misura come quello dell'attesa, col cronometro:
+
+    presa di un semaforo a zero, scadenza 200 ms:
+        rende -1 errno 110 dopo 210 ms      ha dormito e l'ha detto
+
+### QUEL CHE HO CONTROLLATO DI NON AVER ROTTO
+
+Tutti e otto i modi di `filiprova` di fila piu' un `hello` dopo (il lucchetto
+80000/20000/80000 scambi, tls, errno, attesa 310 e 100 ms, condizione,
+semaforo, troppi che si ferma a 7 con EAGAIN, abbandona che lascia tornare il
+prompt), e `libctest`: **201 superate, 15 fallite**, le stesse quindici di
+prima. La libc condivisa esporta 360 funzioni invece di 352 — e non e' un
+problema per i binari gia' fatti, perche' `libc.so` si risolve per NOME e
+l'ordine della tabella non e' parte dell'ABI (sta scritto in `genlibc.py`).
+
 ## 4 settembre 2026 — I FILI: PIU' FLUSSI DENTRO LO STESSO PROGRAMMA
 
 EX-OS non aveva thread. Adesso li ha, e la prova non e' che il conto torni: e'

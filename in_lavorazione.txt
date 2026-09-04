@@ -12,6 +12,81 @@ si sfoglia con `tools/diario.sh` invece di leggerlo tutto.
   volta che si aggiunge una giornata in cima al diario, le date no.
 
 
+#############################################################################
+# DA COMPLETARE — URGENTE (scritto il 4 settembre 2026, per riprendere da qui)
+#############################################################################
+
+DOVE SI ERA ARRIVATI
+
+I FILI CI SONO E FUNZIONANO, provati: creazione, gruppo, attesa (join),
+terminazione del gruppo, TLS per filo, errno per filo, l'attesa che DORME
+(attesa_dormi/attesa_sveglia, syscall 204-205) con il lucchetto che ci sta
+sopra a tre stati, e da oggi le VARIABILI DI CONDIZIONE E I SEMAFORI che ci si
+costruiscono sopra (otto funzioni di libc, nessuna riga di kernel). Committato
+fino a 6eec5da, piu' le condizioni e i semafori. La sezione «I FILI» piu'
+avanti in questo file racconta com'e' fatto; il diario (RIPRENDERE.md, 4
+settembre, «LE CONDIZIONI E I SEMAFORI») racconta perche'.
+
+IL PROSSIMO PASSO, IN ORDINE
+
+ Quel che resta e' scritto nella sezione «I FILI» qui sotto, ed e' in ordine:
+ otto fili per processo (e' un numero, non un lavoro), cwd/env condivisi
+ invece che copiati, lo stack del filo che cresca su richiesta. Nessuno dei
+ tre e' un mattone che manca: sono limiti.
+
+COME SI PROVANO I FILI, SENZA RICOSTRUIRE IL RAGIONAMENTO
+
+    make -j2 kernel && make filiprova && make -j2 iso-exos
+    EXOS_NO_FLOPPY=1 EXOS_CDROM=dist/exos.iso EXOS_RAM=64M \
+      python3 tools/qemu_drive.py "filiprova@25" "filiprova tls@10" \
+        "filiprova errno@10" "filiprova attesa@15" "filiprova condizione@25" \
+        "filiprova semaforo@25" "filiprova ferma@40" "filiprova troppi@8" \
+        "filiprova abbandona@8" "hello@5"
+
+  I nove modi e cosa dimostrano:
+    (nessuno)   80000 col lucchetto, ~20000 senza: le corse ci sono davvero
+    tls         ogni filo parte da 7 e ritrova il suo; il principale ritrova 42
+    errno       principale EBADF, fili ENOENT, e il principale ritrova il suo 9
+    attesa      310 ms con scadenza 300; 100 ms se un filo sveglia
+    condizione  1000 elementi in una coda di UN posto: somma 500500, zero giri
+                a vuoto, 20-60 ms (la riga di giudizio e' a 400: una sola
+                scadenza persa ne costerebbe 500)
+    semaforo    la stessa coda senza lucchetto, e una presa a vuoto che torna
+                dopo 210 ms con ETIMEDOUT
+    ferma       tre fili che lavorano si fermano in 0-10 ms; uno che DORME
+                viene scrollato dal kernel; e venti corse fra «guardo» e «mi
+                addormento» costano 60-180 ms invece di 20200 (misurato
+                togliendo la scrollata: la prova fallisce, e di 336 volte)
+    troppi      ne crea 7 e si ferma con errno 11 (EAGAIN)
+    abbandona   esce senza aspettare: il prompt torna e hello gira dopo
+
+  ! E DOPO OGNI MODIFICA ALLA libc SI RIFA' libctest: deve dare 201 superate e
+    15 fallite. Le 15 sono di prima (non riescono a creare il file di prova) —
+    misurate rimettendo per una riga il vecchio errno condiviso.
+
+DUE REGOLE IMPARATE QUI, CHE VALGONO OLTRE I FILI
+
+  ! FRA LA CREAZIONE DI UN TASK E IL MOMENTO IN CUI E' PRONTO NON CI DEVE
+    STARE NIENTE CHE POSSA BLOCCARE. Una vfs_read in mezzo faceva eseguire un
+    filo a meta' — ESP a zero — una volta su tre.
+
+  ! DENTRO lib/libc.c LA PAROLA `errno` NON E' LA MACRO: quel file non include
+    libc.h. Va definita li' dentro a mano, o si scrive nel globale mentre il
+    programma legge il posto del suo filo.
+
+DA FARE UNA VOLTA SOLA, ED E' DI CHI HA IL REPOSITORY (non l'ho fatto io)
+
+    git rm -r --cached build/iso/exos/libexec build/iso/exos/lib/gcc \
+                       build/iso/exos/i386-exos build/iso/exos/include/c++
+
+  Gli interni di GCC (cc1 da solo pesa 33 MB) sono finiti in cronologia col
+  commit 9e2eda1: il .gitignore adesso li nomina, ma ignorare NON basta a
+  togliere dall'indice quel che e' gia' tracciato. Il perche' sta scritto nel
+  .gitignore stesso.
+
+#############################################################################
+
+
 =============================================================================
 IL SUONO (aperto dal 1 settembre 2026 — diario: «IL SUONO, E TRE APERTURE»)
 =============================================================================
@@ -262,28 +337,46 @@ TLS anche ai programmi senza variabili __thread: senza, %gs avrebbe base zero
 e quella lettura sarebbe un fault. Un filo e' un task che CONDIVIDE la page
 directory e i descrittori del gruppo e ha uno stack suo (64 KB, in una banda
 riservata sotto il TLS). Il tid E' un pid; `tgid` dice il gruppo. Chi esce dal
-processo porta via tutti i fili. Provato con /bin/filiprova, che ha tre modi:
-senza argomenti, «troppi» e «abbandona».
+processo porta via tutti i fili. Provato con /bin/filiprova, che ha nove modi
+(l'elenco e' nella sezione URGENTE, in cima a questo file).
+
+CI SONO ANCHE LE VARIABILI DI CONDIZIONE E I SEMAFORI, dal 4 settembre 2026
+(diario: «LE CONDIZIONI E I SEMAFORI, SOPRA L'ATTESA CHE DORME»). Tutt'e due
+sono un intero, come il lucchetto, e non hanno inizializzazione:
+condizione_aspetta/_ms/_segnala/_segnala_tutti, semaforo_prendi/_ms/_prova/
+_lascia. Si aspetta SEMPRE dentro un `while`, mai dentro un `if`: il risveglio
+dice «guarda di nuovo», non «adesso c'e'».
+    ! DUE COSE DICHIARATE, tutt'e due scritte accanto al codice: la scadenza di
+    condizione_aspetta_ms NON si distingue da un risveglio (il kernel non lo
+    dice; col `while` non serve), e semaforo_lascia chiama la sveglia SEMPRE,
+    anche senza nessuno che dorma — una chiamata di sistema per volta. La via
+    per evitarla (un campo «dormienti») e' scritta in libc.c e vuole un tipo
+    nuovo nell'ABI: non si paga prima di aver misurato.
+
+C'E' ANCHE LA CANCELLAZIONE ORDINATA, dal 4 settembre 2026 (diario: «FERMARE
+UN FILO E' CHIEDERGLIELO»). thread_ferma(tid) lascia un messaggio e
+thread_devo_fermarmi() lo legge: non uccide e non interrompe niente, perche' un
+filo interrotto dove capita lascerebbe i lucchetti presi e le strutture a
+meta', che dentro un processo solo sono quelle di tutti. Il kernel fa le due
+cose che da fuori non si possono fare: mette il messaggio nel PCB (`ferma`) e
+SCROLLA chi dorme — sveglia chi e' fermo su un'attesa, e a chi sta per
+addormentarsi lascia scritto che la prossima attesa non deve dormire
+(`scuoti`, consumata da sys_attesa_dormi con EINTR).
+    ! IL FILO SI ACCORGE SOLO DOVE GUARDA: un semaforo_prendi senza scadenza
+    non e' un punto di controllo, e nemmeno una lettura da tastiera o da rete.
+    Chi vuole potersi fermare li' usa le varianti con scadenza. E' scritto in
+    libc.h con lo schema del ciclo accanto.
 
 QUEL CHE MANCA, in ordine di quanto pesa:
 
- 1. NON CI SONO ANCORA VARIABILI DI CONDIZIONE NE' SEMAFORI. Il mattone c'e'
-    (attesa_dormi/attesa_sveglia, e il lucchetto ci dorme sopra): mancano le
-    due cose che ci si costruiscono sopra, e sono poche righe di libc ciascuna.
-    Una variabile di condizione vuole «lascia il lucchetto, dormi, riprendilo»
-    fatto senza finestre in mezzo; un semaforo e' un contatore piu' l'attesa.
-
- 2. OTTO FILI PER PROCESSO (FILO_MAX), capogruppo compreso, perche' tante sono
+ 1. OTTO FILI PER PROCESSO (FILO_MAX), capogruppo compreso, perche' tante sono
     le piazzole nella banda. Alzarlo vuol dire allargare la banda, cioe'
     abbassare heap_max: e' un numero, non un lavoro.
 
- 3. NON C'E' UNA CANCELLAZIONE. Si puo' uccidere un filo con kill (il tid e' un
-    pid) ma non c'e' un modo ordinato di chiedergli di fermarsi.
-
- 4. cwd ED ENV SONO COPIATI ALLA CREAZIONE, non condivisi: un chdir dentro un
+ 2. cwd ED ENV SONO COPIATI ALLA CREAZIONE, non condivisi: un chdir dentro un
     filo non lo vedono gli altri. I descrittori invece sono in comune davvero.
 
- 5. LO STACK DI UN FILO E' IMPEGNATO TUTTO SUBITO (64 KB di RAM vera, non di
+ 3. LO STACK DI UN FILO E' IMPEGNATO TUTTO SUBITO (64 KB di RAM vera, non di
     soli indirizzi) perche' page_fault_handler sa far crescere un solo stack.
     Farlo crescere su richiesta vuol dire insegnargli a riconoscere a quale
     filo appartiene una pagina mancante dentro la banda.
@@ -309,14 +402,14 @@ I quattro passi, e i primi tre non toccano EX-OS:
     SUPPORTATI (esiste sys/pal/unsupported apposta). Da qui funziona cargo.
 
  4. RUSTC SUL CD DEGLI STRUMENTI, accanto a gcc e fbc. Il muro dei thread e'
-    CADUTO il 4 settembre 2026 (vedi la sezione «I FILI» qui sopra), ma la std
-    di Rust non vuole solo che i thread esistano: vuole TLS per filo — che qui
-    ancora non c'e' — e primitive che bloccano davvero, cioe' i punti 1 e 2 di
-    quell'elenco. Il resto della salita resta quello di prima: LLVM, la
-    memoria, e una std portata.
+    CADUTO il 4 settembre 2026 (vedi la sezione «I FILI» qui sopra), e con lui
+    le due cose che la std di Rust chiedeva oltre ai thread: il TLS PER FILO
+    c'e', e le PRIMITIVE CHE BLOCCANO DAVVERO — lucchetto, condizione, semaforo
+    — pure. Quel che resta della salita e' quello di sempre, ed e' il grosso:
+    LLVM, la memoria, e una std portata.
 
 ! QUEL CHE MANCA ANCORA A UN PORTING DI TERZE PARTI, misurato: fork, i socket
-  BSD, dlopen/dlsym, sem_init e iconv. Ci sono invece mmap, poll, select,
+  BSD, dlopen/dlsym, sem_init (il mattone c'e', manca il nome POSIX) e iconv. Ci sono invece mmap, poll, select,
   signal, il C++ 17 sul CD e — da oggi — i thread.
 
 =============================================================================

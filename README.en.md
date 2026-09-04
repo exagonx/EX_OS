@@ -84,6 +84,106 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### Stopping a thread means asking it to
+
+**tested** — killing a thread was already possible (the tid is a pid, and
+`kill` works), but you **must not**: a thread killed wherever it happened to be
+leaves the locks taken, files half open and structures as they were, and inside
+a single process those are not its own — they belong to **everybody**. Now
+there is the orderly way:
+
+```c
+while (!thread_devo_fermarmi()) { ...a piece of work... }
+...release the locks, close what you opened...
+thread_esci(0);
+```
+
+`thread_ferma(tid)` leaves a message, `thread_devo_fermarmi()` reads it where
+the thread decides. **The kernel only does the two things that cannot be done
+from outside**: putting the message where the thread will find it, and *shaking*
+whoever is asleep — because a sleeping thread looks at nothing.
+
+**Two words in the PCB, doing two different jobs.** `ferma` is the message and
+it stays: a request read once is still true the second time. `scuoti` is the
+shake and it **is consumed**, and it closes the one window this thing has:
+between the moment the thread looks and the moment it falls asleep on a wait.
+If the request lands in there the thread sleeps *after* having looked — the
+same race as a lost wake-up, and the same cure: the asker leaves it written
+that the next wait must not sleep, and `sys_attesa_dormi` finds it inside the
+very `cli` that protects the expected value. One shake, not a "never sleep
+again": a thread on its way out still has cleaning up to do, and with every
+wait returning at once that cleanup would spin instead of sleeping.
+
+> **And the test passed even without the thing it was supposed to prove** — the
+> most instructive defect of the day, and it was *in the test*. With the shake
+> taken out of the kernel for one line, the case meant to hit that window
+> passed all the same: on a single CPU, creating a thread and stopping it right
+> away always lands in one of the two easy cases — either the request arrives
+> before the thread has looked, or with the thread already asleep. The case in
+> between lasts a handful of instructions and **you never hit it by chance**.
+> The cure is to widen the window on command instead of hoping: between the
+> look and the sleep the thread yields the CPU and raises a flag, and the
+> caller waits for that flag. Twenty races now cost **60-180 ms** with the
+> shake and **20200 without** — twenty one-second deadlines, one per race — and
+> the test fails. Before, the difference was zero.
+
+**What it does not do, and it is written down:** the thread notices only where
+it looks. A `semaforo_prendi` with no deadline is not a cancellation point, and
+neither is a read from the keyboard or the network; whoever wants to be
+stoppable there uses the timed variants. And reading the message costs a system
+call: removing it would mean a word of ABI inside the TLS block, which is a
+one-way decision nobody has measured yet.
+
+### Condition variables and semaphores, on top of the sleeping wait
+
+**tested** — the sleeping wait was the brick; now the two things you build on
+top of it are there, and they are **eight libc functions, not one line of
+kernel**: `condizione_aspetta` (plus the timed variant), `condizione_segnala`,
+`condizione_segnala_tutti`, `semaforo_prendi` (idem), `semaforo_prova`,
+`semaforo_lascia`. Both types are **a plain int**, like the lock:
+`Condizione c = CONDIZIONE_ZERO;`, `Semaforo posti = 1;` — no init function,
+which is the only shape you cannot forget to call.
+
+**A condition variable is a counter of signals, and nothing else.** It does not
+hold the list of who is waiting: that is already in the kernel, and it is the
+queue of whoever sleeps on that address. Waiting is three lines — read the
+counter, release the lock, sleep on that value, take the lock back — and **the
+first one is the only one that matters**: between the release and the sleep
+there is a window a signaller can walk through, and that signal would arrive
+before there is anybody to wake. Having read the counter *first*, if somebody
+signals in there the value is no longer that one and you do not sleep at all.
+The window is not closed: it is made harmless.
+
+> **Which is why you wait inside a `while`, never inside an `if`.** Waking up
+> says "look again", not "it is here now": it can come from a signal, from the
+> deadline, or because a signal had already gone by. Whoever checks once will
+> eventually carry on with the condition false, and that is the defect that
+> does not reproduce.
+
+**A semaphore has no owner**, and that is not a licence: the one who releases
+need not be the one who took it, which is exactly what a producer and a
+consumer need — one consumes the free slot, the other gives it back. One cost
+was left in, written next to the code: releasing always calls the wake-up, even
+when nobody is asleep. The lock avoids that cost with its third state, but
+there the number *is* the state of the lock, while here the counter counts
+slots and has nowhere to put it. The way out exists (a second `dormienti`
+field) and wants a new type in the ABI: **you do not pay for a new type for an
+optimisation nobody has measured yet.**
+
+> **The test is a one-slot queue, and it can fail in three different ways.** A
+> thousand items between one producer and one consumer: with ten slots the two
+> barely interleave and the test becomes almost sequential, with one slot each
+> of the thousand items forces the other to wait. It watches the **sum**
+> (losing one and reading another twice would give the same number of rounds),
+> the **empty rounds** — and they must be *zero*, not "few": with a single
+> consumer, whoever wakes always finds the goods — and the **stopwatch**, which
+> is the witness for the empty rounds. Inside the wait there is a half-second
+> deadline that is a *net*, not a way of working: without it a lost signal
+> would be a machine stopped forever, and the test would not fail, it would
+> just sit there. A thousand hand-offs cost between **20 and 60 ms** measured,
+> one single deadline would cost 500: the judgement line sits at 400, well
+> above the measurement and still able to tell the two apart.
+
 ### Threads: several flows inside the same program
 
 **tested** — and the proof is not that the count adds up, it is that **without

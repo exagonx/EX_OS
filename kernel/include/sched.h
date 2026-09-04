@@ -516,6 +516,32 @@ typedef struct Process {
     uint32_t        attesa_dove;
     uint32_t        fili_banda;     /* cima della banda degli stack dei fili */
 
+    /* =========================================================================
+     * LA CANCELLAZIONE ORDINATA — due numeri, e fanno due mestieri diversi
+     *
+     * ! `ferma` E' IL MESSAGGIO, E RESTA. Lo mette chi chiede, lo legge il
+     * filo quando gli pare (SYS_THREAD_FERMARSI): nessuno lo toglie, perche'
+     * una richiesta di fermarsi letta una volta vale anche la seconda. Non
+     * uccide niente e non interrompe niente — dice soltanto «quando ti torna
+     * comodo, smetti», ed e' il filo a decidere dove sono i punti comodi.
+     *
+     * ! `scuoti` E' LA SCROLLATA, E SI CONSUMA. Serve a chiudere l'unica
+     * finestra che questa cosa ha: fra il momento in cui il filo guarda
+     * `ferma` e quello in cui si addormenta su un'attesa. Se la richiesta
+     * arriva li' in mezzo, il filo dorme DOPO aver guardato e non se ne
+     * accorge piu' — la stessa corsa del risveglio perso, e la stessa cura:
+     * chi chiede, se il filo non sta gia' dormendo, lascia scritto che la
+     * PROSSIMA attesa non deve dormire. sys_attesa_dormi la trova a
+     * interruzioni spente e torna con EINTR invece di bloccarsi.
+     *
+     * ! E SI CONSUMA UNA VOLTA SOLA, non e' un «non dormire mai piu'»: un
+     * filo che sta uscendo ha ancora del lavoro da fare — lasciare lucchetti,
+     * chiudere file — e se ogni attesa tornasse subito per sempre, quel
+     * lavoro girerebbe a vuoto invece di dormire. Una scrollata basta: dopo
+     * quella il filo ha guardato, e sa. */
+    uint32_t        ferma;
+    uint32_t        scuoti;
+
     /* Console virtuale di appartenenza (0..VGA_N_CONSOLE-1).
      *
      * È il terminale del processo: dove finisce ciò che scrive su stdout
@@ -723,6 +749,9 @@ int      proc_attesa_sveglia(uint32_t dove, int quanti);
 int      proc_gruppo_vivi(uint32_t tgid);
 /* Termina tutti gli altri membri del gruppo: lo chiama chi esce dal processo. */
 void     proc_gruppo_termina(uint32_t tgid, uint32_t risparmia_pid);
+/* CHIEDE a un filo del proprio gruppo di fermarsi: 0, oppure -ESRCH.
+ * Va chiamata a interruzioni spente, come proc_attesa_sveglia. */
+int      proc_filo_ferma(uint32_t tid);
 
 extern Process *g_init_task;  /* task reaper (PID 2), adotta gli orfani */
 Process *proc_get_by_pid(uint32_t pid);

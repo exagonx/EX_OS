@@ -1245,6 +1245,62 @@ int proc_attesa_sveglia(uint32_t dove, int quanti)
     return svegliati;
 }
 
+/* =============================================================================
+ * LA CANCELLAZIONE ORDINATA — si CHIEDE, non si impone
+ *
+ * ! UCCIDERE UN FILO SI POTEVA GIA': il tid e' un pid, e `kill` funziona. Il
+ * punto e' che non si DEVE — un filo ucciso lascia i lucchetti presi, i file
+ * aperti a meta' e la memoria che stava sistemando com'era. Dentro un processo
+ * solo, dove tutti vedono le stesse pagine, quello non e' un processo che muore
+ * male: e' un programma che continua a girare su strutture rotte.
+ *
+ * ! PERCIO' QUI NON SI FERMA NIENTE: si lascia un messaggio, e il filo lo
+ * legge dove gli fa comodo. Il kernel fa due cose sole, e sono quelle che dal
+ * di fuori non si possono fare: mettere il messaggio dove il filo lo trovera',
+ * e SCROLLARE chi sta dormendo — perche' un filo addormentato non guarda
+ * niente, e senza una scrollata la richiesta arriverebbe solo il giorno che
+ * qualcun altro lo sveglia per un altro motivo.
+ * ============================================================================= */
+int proc_filo_ferma(uint32_t tid)
+{
+    Process *self = g_current;
+    uint32_t i;
+
+    if (self == NULL) return ERR(ESRCH);
+
+    for (i = 0; i < MAX_PROCESSES; i++) {
+        Process *p = &g_process_pool[i];
+
+        if (p->state == PROC_UNUSED || p->state == PROC_ZOMBIE) continue;
+        if (p->pid != tid) continue;
+
+        /* ! DEVE ESSERE DEL NOSTRO GRUPPO, come per thread_attendi: chiedere a
+         * un task altrui di fermarsi sarebbe un modo per disturbare un
+         * programma che non e' nostro. */
+        if (p->tgid != self->tgid) return ERR(ESRCH);
+
+        p->ferma = 1;
+
+        if (p->state == PROC_BLOCKED && p->attesa_dove != 0) {
+            /* Dorme su un'attesa: lo si sveglia adesso, e la scrollata e'
+             * questa. Al risveglio ricontrollera' la sua condizione — e chi
+             * vuole potersi fermare guarda `ferma` nella stessa occhiata. */
+            p->attesa_dove = 0;
+            p->block_until = 0;
+            sched_unblock_locked(p->pid);
+        } else {
+            /* ! NON DORME ANCORA, ED E' IL CASO PERICOLOSO: puo' aver appena
+             * guardato `ferma` e stare per addormentarsi. La scrollata si
+             * lascia scritta, e la raccogliera' la sua prossima attesa —
+             * altrimenti dormirebbe dopo aver guardato, e la richiesta
+             * resterebbe li' senza nessuno che la legga. */
+            p->scuoti = 1;
+        }
+        return 0;
+    }
+    return ERR(ESRCH);
+}
+
 void proc_gruppo_termina(uint32_t tgid, uint32_t risparmia_pid)
 {
     uint32_t i;

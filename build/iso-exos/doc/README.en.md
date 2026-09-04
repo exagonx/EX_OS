@@ -84,6 +84,56 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### Condition variables and semaphores, on top of the sleeping wait
+
+**tested** — the sleeping wait was the brick; now the two things you build on
+top of it are there, and they are **eight libc functions, not one line of
+kernel**: `condizione_aspetta` (plus the timed variant), `condizione_segnala`,
+`condizione_segnala_tutti`, `semaforo_prendi` (idem), `semaforo_prova`,
+`semaforo_lascia`. Both types are **a plain int**, like the lock:
+`Condizione c = CONDIZIONE_ZERO;`, `Semaforo posti = 1;` — no init function,
+which is the only shape you cannot forget to call.
+
+**A condition variable is a counter of signals, and nothing else.** It does not
+hold the list of who is waiting: that is already in the kernel, and it is the
+queue of whoever sleeps on that address. Waiting is three lines — read the
+counter, release the lock, sleep on that value, take the lock back — and **the
+first one is the only one that matters**: between the release and the sleep
+there is a window a signaller can walk through, and that signal would arrive
+before there is anybody to wake. Having read the counter *first*, if somebody
+signals in there the value is no longer that one and you do not sleep at all.
+The window is not closed: it is made harmless.
+
+> **Which is why you wait inside a `while`, never inside an `if`.** Waking up
+> says "look again", not "it is here now": it can come from a signal, from the
+> deadline, or because a signal had already gone by. Whoever checks once will
+> eventually carry on with the condition false, and that is the defect that
+> does not reproduce.
+
+**A semaphore has no owner**, and that is not a licence: the one who releases
+need not be the one who took it, which is exactly what a producer and a
+consumer need — one consumes the free slot, the other gives it back. One cost
+was left in, written next to the code: releasing always calls the wake-up, even
+when nobody is asleep. The lock avoids that cost with its third state, but
+there the number *is* the state of the lock, while here the counter counts
+slots and has nowhere to put it. The way out exists (a second `dormienti`
+field) and wants a new type in the ABI: **you do not pay for a new type for an
+optimisation nobody has measured yet.**
+
+> **The test is a one-slot queue, and it can fail in three different ways.** A
+> thousand items between one producer and one consumer: with ten slots the two
+> barely interleave and the test becomes almost sequential, with one slot each
+> of the thousand items forces the other to wait. It watches the **sum**
+> (losing one and reading another twice would give the same number of rounds),
+> the **empty rounds** — and they must be *zero*, not "few": with a single
+> consumer, whoever wakes always finds the goods — and the **stopwatch**, which
+> is the witness for the empty rounds. Inside the wait there is a half-second
+> deadline that is a *net*, not a way of working: without it a lost signal
+> would be a machine stopped forever, and the test would not fail, it would
+> just sit there. A thousand hand-offs cost between **20 and 60 ms** measured,
+> one single deadline would cost 500: the judgement line sits at 400, well
+> above the measurement and still able to tell the two apart.
+
 ### Threads: several flows inside the same program
 
 **tested** — and the proof is not that the count adds up, it is that **without

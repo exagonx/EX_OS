@@ -239,6 +239,8 @@ typedef struct {
 #define SYS_THREAD_ATTENDI 203
 #define SYS_ATTESA_DORMI   204
 #define SYS_ATTESA_SVEGLIA 205
+#define SYS_THREAD_FERMA    206
+#define SYS_THREAD_FERMARSI 207
 #define SYS_GETPID      20
 /* ! I NUMERI SONO DUPLICATI DA kernel/include/syscall.h, come tutti gli altri
  * qui sopra: libc.c non include quell'header. Sono quelli di Linux. */
@@ -4132,6 +4134,30 @@ int thread_attendi(int tid, int *codice)
 }
 
 /* -----------------------------------------------------------------------------
+ * LA CANCELLAZIONE ORDINATA — si chiede, e la risposta la da' il filo
+ *
+ * ! NON C'E' NIENTE DA FARE QUI DENTRO, ed e' il punto: sono due chiamate di
+ * sistema secche. Il messaggio sta nel PCB perche' e' la' che lo puo' mettere
+ * chi chiede senza sapere niente di dove sia arrivato il filo, e perche' il
+ * kernel e' l'unico che possa scrollare chi dorme. Il perche' delle due parole
+ * sta in kernel/include/sched.h.
+ *
+ * ! E NON ESISTE UN «FERMATI ADESSO», apposta: un filo interrotto dove capita
+ * lascia i lucchetti presi e le strutture a meta', e dentro un processo solo
+ * quelle sono le strutture di tutti. Chi vuole davvero uccidere un filo puo'
+ * ancora farlo con kill — il tid e' un pid — e si prende quel che ne viene.
+ * --------------------------------------------------------------------------- */
+int thread_ferma(int tid)
+{
+    return err_posix(_syscall1(SYS_THREAD_FERMA, (uint32_t)tid));
+}
+
+int thread_devo_fermarmi(void)
+{
+    return (int)_syscall1(SYS_THREAD_FERMARSI, 0);
+}
+
+/* -----------------------------------------------------------------------------
  * IL LUCCHETTO
  *
  * ! `xchg` E' ATOMICO SENZA `lock`, ed e' l'unica istruzione x86 che lo sia
@@ -4219,6 +4245,137 @@ void mutex_prendi(volatile int *m)
 void mutex_lascia(volatile int *m)
 {
     if (mutex_xchg(m, 0) == 2) attesa_sveglia(m, 1);
+}
+
+/* ! IL PREFISSO `lock` SERVE ANCHE PER UN INCREMENTO, e non solo il giorno che
+ * i processori saranno due: leggi-modifica-scrivi e' fatto di tre passi, e due
+ * fili che segnalano insieme, interrotti in mezzo, conterebbero un segnale
+ * solo. Un segnale perso e' un filo che non si sveglia piu'. */
+static void atomico_piu_uno(volatile int *dove)
+{
+    __asm__ __volatile__("lock incl %0" : "+m"(*dove) : : "memory");
+}
+
+/* -----------------------------------------------------------------------------
+ * LE VARIABILI DI CONDIZIONE — «lascia il lucchetto, dormi, riprendilo»
+ *
+ * La condizione E' un contatore di segnali, e non ha altro stato: si dorme su
+ * quel contatore, e segnalare vuol dire cambiarlo.
+ *
+ * ! IL CONTATORE SI LEGGE PRIMA DI LASCIARE IL LUCCHETTO, ed e' l'unica riga
+ * che conta davvero. Fra il «lascia» e il «dormi» c'e' una finestra in cui chi
+ * segnala puo' passare: senza il valore atteso, quel segnale arriverebbe prima
+ * che ci sia qualcuno da svegliare e il filo dormirebbe per sempre. Avendolo
+ * letto prima, se qualcuno segnala li' in mezzo il contatore non e' piu' quello
+ * e attesa_dormi non dorme affatto — torna subito, e la condizione si
+ * ricontrolla. La finestra non si chiude: si rende innocua.
+ *
+ * ! PERCIO' SI ASPETTA DENTRO UN `while`, MAI DENTRO UN `if`. Il risveglio
+ * dice «guarda di nuovo», non «adesso c'e'»: puo' tornare per un segnale, per
+ * la scadenza, o perche' il contatore era gia' cambiato. Chi controlla una
+ * volta sola prima o poi prosegue senza che la condizione sia vera.
+ *
+ * ! E IL LUCCHETTO TORNA IN MANO A CHI ESCE, sempre, anche quando non si e'
+ * dormito: chi chiama continua a leggere lo stato protetto come se non fosse
+ * successo niente, che e' tutto il senso di questa funzione.
+ *
+ * ! LA SCADENZA NON SI DISTINGUE DAL RISVEGLIO, perche' il kernel non lo dice
+ * (sys_attesa_dormi rende 0 in tutti e due i casi). Non e' un problema per chi
+ * usa il `while`: e' una rete, non un esito. Distinguerla vorrebbe una riga
+ * dentro sys_attesa_dormi che confronti g_ticks con block_until.
+ * --------------------------------------------------------------------------- */
+void condizione_aspetta_ms(volatile int *c, volatile int *m, unsigned int ms)
+{
+    int visto = *c;             /* PRIMA di lasciare: e' tutta qui la corsa */
+
+    mutex_lascia(m);
+    attesa_dormi(c, visto, ms);
+    mutex_prendi(m);
+}
+
+void condizione_aspetta(volatile int *c, volatile int *m)
+{
+    condizione_aspetta_ms(c, m, 0);
+}
+
+void condizione_segnala(volatile int *c)
+{
+    atomico_piu_uno(c);
+    attesa_sveglia(c, 1);
+}
+
+void condizione_segnala_tutti(volatile int *c)
+{
+    atomico_piu_uno(c);
+    attesa_sveglia(c, 0);
+}
+
+/* -----------------------------------------------------------------------------
+ * I SEMAFORI — un contatore, piu' l'attesa
+ *
+ * Prendere = se e' maggiore di zero, decrementalo; se e' zero, dormici sopra.
+ * Lasciare = incrementalo e sveglia uno.
+ *
+ * ! IL VALORE ATTESO E' ZERO, e chiude la stessa finestra di sempre: fra il
+ * momento in cui si vede il contatore a zero e quello in cui ci si addormenta,
+ * chi lascia puo' averlo portato a uno. Il kernel lo rilegge a interruzioni
+ * spente, vede che non e' piu' zero e non fa dormire nessuno; il giro dopo il
+ * cmpxchg riesce.
+ *
+ * ! SI RIPROVA IN CERCHIO E NON UNA VOLTA SOLA, perche' fra il risveglio e il
+ * cmpxchg un altro filo puo' essersi preso il posto: svegliarsi non e' avere.
+ *
+ * ! CHI LASCIA CHIAMA LA SVEGLIA SEMPRE, anche quando non dorme nessuno — cioe'
+ * una chiamata di sistema per ogni `lascia`. Il lucchetto quella spesa la evita
+ * col terzo stato, ma li' il numero E' lo stato del lucchetto e ci sta dentro
+ * anche il «c'e' chi dorme»; qui il contatore e' un conto di posti e non ha
+ * dove metterlo. La via, il giorno che qualcuno la misuri, e' un secondo campo
+ * «dormienti» incrementato con `lock` prima di addormentarsi e guardato da chi
+ * lascia dopo aver incrementato: due `lock` che si fanno da barriera a vicenda,
+ * cosi' almeno uno dei due vede l'altro. E' una struttura al posto di un
+ * intero, cioe' un tipo nuovo nell'ABI: non si fa prima di avere il numero.
+ * --------------------------------------------------------------------------- */
+int semaforo_prova(volatile int *s)
+{
+    int v = *s;
+
+    while (v > 0) {
+        if (mutex_cmpxchg(s, v, v - 1) == v) return 1;
+        v = *s;                 /* qualcuno ci e' arrivato prima: rileggi */
+    }
+    return 0;
+}
+
+void semaforo_prendi(volatile int *s)
+{
+    for (;;) {
+        if (semaforo_prova(s)) return;
+        attesa_dormi(s, 0, 0);
+    }
+}
+
+int semaforo_prendi_ms(volatile int *s, unsigned int ms)
+{
+    unsigned int fine = uptime_ms() + ms;
+
+    for (;;) {
+        unsigned int ora;
+
+        if (semaforo_prova(s)) return 0;
+
+        /* ! LA DIFFERENZA SI GUARDA COL SEGNO, non i due numeri fra loro:
+         * uptime_ms() gira dopo quarantanove giorni, e `ora > fine` di la'
+         * direbbe il contrario di quel che e'. */
+        ora = uptime_ms();
+        if ((int)(ora - fine) >= 0) { errno = ETIMEDOUT; return -1; }
+        attesa_dormi(s, 0, fine - ora);
+    }
+}
+
+void semaforo_lascia(volatile int *s)
+{
+    atomico_piu_uno(s);
+    attesa_sveglia(s, 1);
 }
 
 int wait(int *stato)

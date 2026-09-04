@@ -790,6 +790,13 @@ typedef struct {
 #define SYS_ATTESA_DORMI   204  /* ebx = indirizzo, ecx = valore, edx = ms */
 #define SYS_ATTESA_SVEGLIA 205  /* ebx = indirizzo, ecx = quanti (0 = tutti) */
 
+/* LA CANCELLAZIONE ORDINATA: si CHIEDE a un filo di fermarsi e lui lo legge
+ * dove gli fa comodo. Non uccide e non interrompe niente — un filo ucciso
+ * lascerebbe i lucchetti presi e la memoria a meta', e sono quelle di tutti.
+ * Il perche' delle due parole che servono (`ferma` e `scuoti`) sta in sched.h. */
+#define SYS_THREAD_FERMA    206 /* ebx = tid              -> 0 o negativo */
+#define SYS_THREAD_FERMARSI 207 /* niente                 -> 1 se e' stato chiesto */
+
 #define SYS_SU            254
 
 /* La mailbox IPC come sorgente. MAX_FD e' il primo numero che un descrittore
@@ -1245,6 +1252,8 @@ int32_t sys_thread_esci(InterruptFrame *f);
 int32_t sys_thread_attendi(InterruptFrame *f);
 int32_t sys_attesa_dormi(InterruptFrame *f);
 int32_t sys_attesa_sveglia(InterruptFrame *f);
+int32_t sys_thread_ferma(InterruptFrame *f);
+int32_t sys_thread_fermarsi(InterruptFrame *f);
 int32_t sys_getpid(InterruptFrame *f);
 int32_t sys_getppid(InterruptFrame *f);
 int32_t sys_mmap(InterruptFrame *f);

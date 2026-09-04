@@ -249,6 +249,376 @@ static int prova_attesa(void)
     return esito;
 }
 
+/* =============================================================================
+ * LA PROVA DELLE VARIABILI DI CONDIZIONE — un produttore, un consumatore, e una
+ * coda di UN posto
+ *
+ * ! LA CODA E' DI UN POSTO APPOSTA. Con dieci posti i due si incrociano poco e
+ * la prova diventa quasi sequenziale; con uno solo ognuno dei mille elementi
+ * costringe l'altro ad aspettare, cioe' apre mille volte la finestra fra
+ * «lascia il lucchetto» e «dormi» che e' l'unica cosa che qui si sta provando.
+ *
+ * ! E LE TRE MISURE SONO SCELTE PER POTER FALLIRE, ognuna su un guasto diverso:
+ *
+ *   1. LA SOMMA. Il consumatore somma quel che legge; se un elemento va perso o
+ *      viene letto due volte il totale non torna. Un conteggio da solo non
+ *      basterebbe: perderne uno e leggerne un altro due volte darebbe lo stesso
+ *      numero di giri.
+ *   2. I GIRI A VUOTO. Qui devono essere ZERO, e non «pochi»: c'e' un solo
+ *      consumatore e un solo produttore, quindi chi si sveglia trova sempre la
+ *      roba — nessun altro puo' avergliela portata via. Un numero maggiore di
+ *      zero vuol dire che ci si e' svegliati per la scadenza, cioe' che un
+ *      segnale si e' perso.
+ *   3. IL CRONOMETRO, ed e' il testimone del punto 2. L'attesa qui dentro ha
+ *      una scadenza di mezzo secondo — una RETE, non un modo di funzionare: se
+ *      un segnale si perde, il giro costa 500 ms invece di frazioni di
+ *      millisecondo. Senza quella rete un segnale perso sarebbe una macchina
+ *      ferma per sempre e la prova non «fallirebbe», resterebbe li'.
+ * ============================================================================= */
+#define ELEMENTI  1000
+
+static Mutex       q_lucchetto = MUTEX_LIBERO;
+static Condizione  q_piena     = CONDIZIONE_ZERO;   /* c'e' roba da prendere */
+static Condizione  q_vuota     = CONDIZIONE_ZERO;   /* c'e' posto dove mettere */
+static volatile int q_valore;
+static volatile int q_c_e;          /* 0 = vuota, 1 = piena */
+static volatile int q_somma;
+static volatile int q_presi;
+static volatile int q_vuoto_cons;   /* svegliato e non c'era niente */
+static volatile int q_vuoto_prod;   /* svegliato e non c'era posto */
+
+static void filo_consuma(void *arg)
+{
+    int i;
+
+    (void)arg;
+    for (i = 0; i < ELEMENTI; i++) {
+        mutex_prendi(&q_lucchetto);
+        while (!q_c_e) {
+            condizione_aspetta_ms(&q_piena, &q_lucchetto, 500);
+            if (!q_c_e) q_vuoto_cons++;
+        }
+        q_somma += q_valore;
+        q_presi++;
+        q_c_e = 0;
+        mutex_lascia(&q_lucchetto);
+
+        /* Si segnala FUORI dal lucchetto: chi si sveglia dentro lo troverebbe
+         * in mano a chi l'ha svegliato e si riaddormenterebbe subito. */
+        condizione_segnala(&q_vuota);
+    }
+    thread_esci(0);
+}
+
+static int prova_condizione(void)
+{
+    unsigned t0, dt;
+    int      tid, i, codice = -1, esito = 0;
+    int      atteso = ELEMENTI * (ELEMENTI + 1) / 2;
+
+    printf("filiprova: un produttore, un consumatore, una coda di un posto\n");
+
+    tid = thread_crea(filo_consuma, 0);
+    if (tid < 0) { printf("  thread_crea: errno %d\n", errno); return 1; }
+
+    t0 = uptime_ms();
+    for (i = 1; i <= ELEMENTI; i++) {
+        mutex_prendi(&q_lucchetto);
+        while (q_c_e) {
+            condizione_aspetta_ms(&q_vuota, &q_lucchetto, 500);
+            if (q_c_e) q_vuoto_prod++;
+        }
+        q_valore = i;
+        q_c_e    = 1;
+        mutex_lascia(&q_lucchetto);
+        condizione_segnala(&q_piena);
+    }
+    thread_attendi(tid, &codice);
+    dt = uptime_ms() - t0;
+
+    printf("  elementi passati %5d   atteso %5d   %s\n",
+           q_presi, ELEMENTI, q_presi == ELEMENTI ? "tutti" : "NE MANCA");
+    printf("  somma            %5d   attesa %5d   %s\n",
+           q_somma, atteso,
+           q_somma == atteso ? "esatta" : "PERSI O LETTI DUE VOLTE");
+    printf("  giri a vuoto: consumatore %d, produttore %d   %s\n",
+           q_vuoto_cons, q_vuoto_prod,
+           (q_vuoto_cons == 0 && q_vuoto_prod == 0)
+               ? "nessuno" : "UN SEGNALE SI E' PERSO");
+    /* ! IL 400 NON E' A CASO: mille passaggi ne costano fra 20 e 60 (misurato
+     * tre volte, e balla di tre volte perche' dipende da come cadono i quanti),
+     * e una SOLA scadenza ne costerebbe 500. Fra i due numeri non c'e' niente,
+     * quindi la riga puo' stare comoda sopra la misura e restare capace di
+     * distinguere. */
+    printf("  %d passaggi in %u ms   %s\n", ELEMENTI, dt,
+           dt < 400 ? "e' andata a segnali" : "TROPPO: sono scadenze");
+
+    if (q_presi != ELEMENTI)  esito = 1;
+    if (q_somma != atteso)    esito = 1;
+    if (q_vuoto_cons || q_vuoto_prod) esito = 1;
+    if (dt >= 400)            esito = 1;
+
+    printf("\nfiliprova condizione: %s\n",
+           esito ? "QUALCOSA NON VA" : "tutto a posto");
+    return esito;
+}
+
+/* =============================================================================
+ * LA PROVA DEI SEMAFORI — la stessa coda, senza lucchetto
+ *
+ * ! DUE SEMAFORI E NESSUN MUTEX, ed e' il punto: `posti` comincia a uno e
+ * `roba` a zero, e il posto stesso fa da lucchetto — dentro la coda non ci puo'
+ * essere piu' di uno per volta perche' i posti sono uno. Se il semaforo
+ * contasse male, due fili entrerebbero insieme e il valore si sovrascriverebbe:
+ * la somma lo direbbe.
+ *
+ * ! E QUI IL SONNO SI MISURA DAVVERO, col cronometro sulla presa a vuoto: un
+ * semaforo a zero preso con scadenza 200 ms deve tornare DOPO ~200 con
+ * ETIMEDOUT. Se tornasse subito non avrebbe dormito; se tornasse riuscendo
+ * avrebbe contato un posto che non c'era.
+ * ============================================================================= */
+static Semaforo    s_posti = 1;                 /* un posto libero */
+static Semaforo    s_roba  = SEMAFORO_ZERO;     /* niente dentro */
+static volatile int s_valore;
+static volatile int s_somma;
+static volatile int s_presi;
+
+static void filo_consuma_sem(void *arg)
+{
+    int i;
+
+    (void)arg;
+    for (i = 0; i < ELEMENTI; i++) {
+        semaforo_prendi(&s_roba);
+        s_somma += s_valore;
+        s_presi++;
+        semaforo_lascia(&s_posti);
+    }
+    thread_esci(0);
+}
+
+static int prova_semaforo(void)
+{
+    unsigned t0, dt;
+    int      tid, i, codice = -1, esito = 0, r;
+    int      atteso = ELEMENTI * (ELEMENTI + 1) / 2;
+    Semaforo vuoto  = SEMAFORO_ZERO;
+    Semaforo tre    = 3;
+
+    printf("filiprova: la stessa coda, con due semafori e nessun lucchetto\n");
+
+    /* Il contatore, senza nessuno che aspetti: tre prese riescono, la quarta no. */
+    r = semaforo_prova(&tre) + semaforo_prova(&tre) + semaforo_prova(&tre);
+    printf("  un semaforo da 3: prese riuscite %d, la quarta %s\n", r,
+           semaforo_prova(&tre) ? "RIESCE (sbagliato)" : "no, ed e' giusto");
+    if (r != 3) esito = 1;
+
+    tid = thread_crea(filo_consuma_sem, 0);
+    if (tid < 0) { printf("  thread_crea: errno %d\n", errno); return 1; }
+
+    t0 = uptime_ms();
+    for (i = 1; i <= ELEMENTI; i++) {
+        semaforo_prendi(&s_posti);
+        s_valore = i;
+        semaforo_lascia(&s_roba);
+    }
+    thread_attendi(tid, &codice);
+    dt = uptime_ms() - t0;
+
+    printf("  elementi passati %5d   atteso %5d   %s\n",
+           s_presi, ELEMENTI, s_presi == ELEMENTI ? "tutti" : "NE MANCA");
+    printf("  somma            %5d   attesa %5d   %s\n",
+           s_somma, atteso, s_somma == atteso ? "esatta" : "SBAGLIATA");
+    printf("  %d passaggi in %u ms\n", ELEMENTI, dt);
+    if (s_presi != ELEMENTI) esito = 1;
+    if (s_somma != atteso)   esito = 1;
+
+    /* La presa a vuoto: deve dormire fino alla scadenza e dirlo. */
+    errno = 0;
+    t0 = uptime_ms();
+    r  = semaforo_prendi_ms(&vuoto, 200);
+    dt = uptime_ms() - t0;
+    printf("  presa di un semaforo a zero, scadenza 200 ms: rende %d errno %d "
+           "dopo %u ms  %s\n", r, errno, dt,
+           (r == -1 && errno == ETIMEDOUT && dt >= 150 && dt < 900)
+               ? "ha dormito e l'ha detto" : "SBAGLIATO");
+    if (r != -1 || errno != ETIMEDOUT || dt < 150 || dt >= 900) esito = 1;
+
+    printf("\nfiliprova semaforo: %s\n",
+           esito ? "QUALCOSA NON VA" : "tutto a posto");
+    return esito;
+}
+
+/* =============================================================================
+ * LA PROVA DELLA CANCELLAZIONE ORDINATA — tre casi, e il terzo e' quello vero
+ *
+ * ! OGNI CASO HA UNA VIA D'USCITA CHE NON E' QUELLA GIUSTA, ed e' l'unico modo
+ * di far FALLIRE una prova che altrimenti si limiterebbe a non finire. Un filo
+ * che non si ferma quando glielo si chiede lascia thread_attendi bloccato per
+ * sempre: la macchina resta li' e non c'e' niente da leggere. Percio' ogni filo
+ * di questa prova ha anche una scadenza sua, e ESCE CON UN CODICE DIVERSO —
+ *
+ *     0 = mi hanno chiesto di fermarmi e mi sono fermato
+ *     1 = non me l'ha chiesto nessuno, me ne sono andato per stanchezza
+ *
+ * — cosi' la differenza fra «funziona» e «non funziona» e' un numero stampato,
+ * non un prompt che non torna.
+ *
+ *   1. UN FILO CHE LAVORA. Tre fili che contano in cerchio guardando il
+ *      messaggio a ogni giro: devono uscire tutti con 0, e in fretta.
+ *   2. UN FILO CHE DORME dentro una condizione che nessuno segnalera' mai. Qui
+ *      il messaggio da solo non basterebbe: chi dorme non guarda niente, e
+ *      senza la scrollata del kernel resterebbe fermo fino alla scadenza.
+ *   3. LA CORSA FRA «GUARDO» E «MI ADDORMENTO», venti volte di fila con
+ *      l'attimo spostato ogni volta. E' la finestra che la parola `scuoti`
+ *      esiste per chiudere: se la richiesta arriva fra l'occhiata e il sonno,
+ *      il filo dorme DOPO aver guardato e la scrollata deve raccoglierla la
+ *      sua prossima attesa. Un solo caso perso costa un secondo di scadenza,
+ *      e venti giri che ne costano meno di uno dicono che non se ne perde.
+ * ============================================================================= */
+#define FERMA_SCADENZA  3000        /* la stanchezza: il filo esce da solo */
+#define FERMA_GIRI      20          /* quante volte si prova la corsa */
+
+static Mutex        f_lucchetto = MUTEX_LIBERO;
+static Condizione   f_mai       = CONDIZIONE_ZERO;  /* nessuno la segnala mai */
+static volatile int f_lavoro;
+
+static void filo_lavora(void *arg)
+{
+    unsigned t0 = uptime_ms();
+
+    (void)arg;
+    while (!thread_devo_fermarmi()) {
+        mutex_prendi(&f_lucchetto);
+        f_lavoro++;
+        mutex_lascia(&f_lucchetto);
+        sched_yield();
+        if (uptime_ms() - t0 >= FERMA_SCADENZA) thread_esci(1);
+    }
+    thread_esci(0);
+}
+
+static void filo_dorme(void *arg)
+{
+    (void)arg;
+    mutex_prendi(&f_lucchetto);
+    while (!thread_devo_fermarmi())
+        condizione_aspetta_ms(&f_mai, &f_lucchetto, FERMA_SCADENZA);
+    mutex_lascia(&f_lucchetto);      /* si esce PULITI: il lucchetto si lascia */
+    thread_esci(0);
+}
+
+/* Come filo_dorme, ma la richiesta arriva DENTRO la finestra: se la scrollata
+ * si perde, questo filo costa un secondo intero, e venti di questi si vedono
+ * nel cronometro senza doverli cercare. */
+static volatile int f_guardato;   /* il filo ha guardato ed e' li' li' per dormire */
+
+static void filo_corsa(void *arg)
+{
+    (void)arg;
+    mutex_prendi(&f_lucchetto);
+    while (!thread_devo_fermarmi()) {
+        /* ! LA FINESTRA SI ALLARGA A COMANDO, ed e' l'unico modo di provarla.
+         * Fra l'occhiata qui sopra e il sonno qui sotto ci puo' stare
+         * qualunque cosa, ma colpirla per caso vuol dire una prova che
+         * dipende dalla fortuna — e infatti, provando a creare i fili e a
+         * fermarli subito, non ci si cascava MAI: o la richiesta arrivava
+         * prima che il filo guardasse, o a filo gia' addormentato, cioe'
+         * sempre in uno dei due casi facili. Cedendo la CPU proprio li' in
+         * mezzo, la richiesta cade sempre dentro la finestra. */
+        f_guardato = 1;
+        sched_yield();
+        condizione_aspetta_ms(&f_mai, &f_lucchetto, 1000);
+    }
+    mutex_lascia(&f_lucchetto);
+    thread_esci(0);
+}
+
+static int prova_ferma(void)
+{
+    int      tid[3], i, codice, esito = 0;
+    unsigned t0, dt;
+
+    printf("filiprova: fermare un filo e' CHIEDERGLIELO\n");
+
+    /* 1. Tre fili che lavorano. */
+    for (i = 0; i < 3; i++) {
+        tid[i] = thread_crea(filo_lavora, 0);
+        if (tid[i] < 0) { printf("  thread_crea: errno %d\n", errno); return 1; }
+    }
+    usleep(50000);                              /* lasciali lavorare un po' */
+
+    t0 = uptime_ms();
+    for (i = 0; i < 3; i++) {
+        if (thread_ferma(tid[i]) != 0) {
+            printf("  thread_ferma %d: errno %d\n", tid[i], errno);
+            esito = 1;
+        }
+    }
+    for (i = 0; i < 3; i++) {
+        codice = -1;
+        thread_attendi(tid[i], &codice);
+        if (codice != 0) {
+            printf("  il filo %d e' uscito con %d: non si e' fermato perche' "
+                   "gliel'ho chiesto\n", tid[i], codice);
+            esito = 1;
+        }
+    }
+    dt = uptime_ms() - t0;
+    printf("  tre fili che lavorano: fermati in %u ms, %d giri fatti   %s\n",
+           dt, f_lavoro, (dt < 500 && f_lavoro > 0) ? "subito" : "SBAGLIATO");
+    if (dt >= 500 || f_lavoro <= 0) esito = 1;
+
+    /* 2. Un filo che dorme su una condizione che nessuno segnalera' mai. */
+    tid[0] = thread_crea(filo_dorme, 0);
+    if (tid[0] < 0) { printf("  thread_crea: errno %d\n", errno); return 1; }
+    usleep(100000);                             /* il tempo di addormentarsi */
+
+    t0 = uptime_ms();
+    thread_ferma(tid[0]);
+    codice = -1;
+    thread_attendi(tid[0], &codice);
+    dt = uptime_ms() - t0;
+    printf("  un filo che DORME: sveglio e uscito in %u ms   %s\n", dt,
+           dt < 500 ? "il kernel l'ha scrollato" : "HA DORMITO FINO ALLA SCADENZA");
+    if (dt >= 500) esito = 1;
+
+    /* 3. La corsa: si chiede di fermarsi mentre il filo sta per dormire. */
+    t0 = uptime_ms();
+    for (i = 0; i < FERMA_GIRI; i++) {
+        int t;
+
+        f_guardato = 0;
+        t = thread_crea(filo_corsa, 0);
+        if (t < 0) { printf("  thread_crea: errno %d\n", errno); return 1; }
+
+        /* Si aspetta che il filo ABBIA GUARDATO e non dorma ancora: da qui in
+         * poi ogni richiesta cade dentro la finestra, e non per fortuna. */
+        while (!f_guardato) sched_yield();
+
+        thread_ferma(t);
+        codice = -1;
+        thread_attendi(t, &codice);
+        if (codice != 0) esito = 1;
+    }
+    dt = uptime_ms() - t0;
+    printf("  %d corse fra «guardo» e «mi addormento»: %u ms   %s\n",
+           FERMA_GIRI, dt,
+           dt < 1000 ? "nessuna scrollata persa"
+                     : "UNA SCROLLATA PERSA (e' costata una scadenza)");
+    if (dt >= 1000) esito = 1;
+
+    /* Un tid che non e' del gruppo non si ferma. */
+    if (thread_ferma(999999) != -1 || errno != ESRCH) {
+        printf("  fermare un tid inesistente doveva dare ESRCH, ha dato "
+               "errno %d\n", errno);
+        esito = 1;
+    }
+
+    printf("\nfiliprova ferma: %s\n", esito ? "QUALCOSA NON VA" : "tutto a posto");
+    return esito;
+}
+
 /* Un filo che non finisce mai: serve alla prova dell'abbandono. */
 static void per_sempre(void *arg)
 {
@@ -299,6 +669,9 @@ int main(int argc, char **argv)
     if (argc > 1 && strcmp(argv[1], "tls") == 0)       return prova_tls();
     if (argc > 1 && strcmp(argv[1], "errno") == 0)     return prova_errno();
     if (argc > 1 && strcmp(argv[1], "attesa") == 0)    return prova_attesa();
+    if (argc > 1 && strcmp(argv[1], "condizione") == 0) return prova_condizione();
+    if (argc > 1 && strcmp(argv[1], "semaforo") == 0)  return prova_semaforo();
+    if (argc > 1 && strcmp(argv[1], "ferma") == 0)     return prova_ferma();
     {
     int tid[FILI];
     int i, codice, esito = 0;

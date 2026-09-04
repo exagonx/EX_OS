@@ -669,6 +669,39 @@ int     thread_crea(void (*fn)(void *), void *arg);
 void    thread_esci(int codice);             /* non ritorna */
 int     thread_attendi(int tid, int *codice); /* 0, oppure -1 con errno */
 
+/* ! FERMARE UN FILO E' CHIEDERGLIELO, e non c'e' modo di imporlo: un filo
+ * interrotto dove capita lascerebbe i lucchetti presi, i file a meta' e le
+ * strutture come stavano — e dentro un processo solo quelle sono le strutture
+ * di TUTTI. thread_ferma lascia un messaggio; e' il filo a scegliere dove
+ * leggerlo, e a uscire con thread_esci quando ha finito di mettere a posto.
+ *
+ *     while (!thread_devo_fermarmi()) {
+ *         ...un pezzo di lavoro...
+ *     }
+ *     ...lascia i lucchetti, chiudi quel che hai aperto...
+ *     thread_esci(0);
+ *
+ * ! CHI DORME VIENE SCROLLATO, altrimenti non guarderebbe mai: se il filo sta
+ * dormendo su un'attesa, thread_ferma lo sveglia; se sta per addormentarsi, la
+ * sua prossima attesa non dorme (torna -1 con EINTR). Una scrollata sola —
+ * quel che serve perche' guardi — e non un «non dormire mai piu'», che
+ * farebbe girare a vuoto la pulizia che il filo deve ancora fare.
+ *
+ * ! E IL FILO SI ACCORGE SOLO DOVE GUARDA. Un'attesa dentro condizione_aspetta
+ * va bene, perche' si aspetta sempre dentro un `while` e li' si puo' guardare
+ * anche questo:
+ *
+ *     while (!c_e_roba && !thread_devo_fermarmi())
+ *         condizione_aspetta(&piena, &m);
+ *
+ * ma un semaforo_prendi senza scadenza NON e' un punto di controllo: chi vuole
+ * potersi fermare li' usa semaforo_prendi_ms e riguarda a ogni giro. Una
+ * lettura da tastiera o da rete, allo stesso modo, non si interrompe.
+ *
+ * thread_ferma rende 0, oppure -1 con ESRCH se quel tid non e' del gruppo. */
+int     thread_ferma(int tid);
+int     thread_devo_fermarmi(void);   /* 1 se qualcuno l'ha chiesto */
+
 /* ! UN LUCCHETTO CHE GIRA, e il tipo e' un intero apposta: si azzera con
  * MUTEX_LIBERO e non ha bisogno di nessuna funzione di inizializzazione, che
  * e' l'unica forma che non si puo' dimenticare di chiamare. */
@@ -692,6 +725,53 @@ int     attesa_sveglia(volatile int *dove, int quanti);  /* 0 = tutti */
 void    mutex_prendi(Mutex *m);
 int     mutex_prova(Mutex *m);   /* 1 se preso, 0 se era occupato */
 void    mutex_lascia(Mutex *m);
+
+/* ! UNA CONDIZIONE E' UN CONTATORE DI SEGNALI, e anche qui il tipo e' un intero
+ * apposta: si azzera con CONDIZIONE_ZERO e non c'e' nessuna inizializzazione da
+ * dimenticare. Non tiene la lista di chi aspetta — quella sta nel kernel, ed e'
+ * la coda di chi dorme su quell'indirizzo.
+ *
+ * SI ASPETTA COSI', E NON ALTRIMENTI:
+ *
+ *     mutex_prendi(&m);
+ *     while (!c_e_roba)                       <-- `while`, non `if`
+ *         condizione_aspetta(&piena, &m);
+ *     ...si prende la roba...
+ *     mutex_lascia(&m);
+ *
+ * Il risveglio dice «guarda di nuovo», non «adesso c'e'»: puo' arrivare per un
+ * segnale, per la scadenza, o perche' un segnale era gia' passato. Chi guarda
+ * una volta sola, prima o poi prosegue con la condizione falsa.
+ *
+ * condizione_aspetta LASCIA il lucchetto mentre dorme e lo RIPRENDE prima di
+ * tornare; chi segnala non ha bisogno di tenerlo. `ms` a zero non ha scadenza,
+ * e la scadenza non si distingue da un risveglio (col `while` non serve). */
+typedef volatile int Condizione;
+#define CONDIZIONE_ZERO  0
+
+void    condizione_aspetta(Condizione *c, Mutex *m);
+void    condizione_aspetta_ms(Condizione *c, Mutex *m, unsigned int ms);
+void    condizione_segnala(Condizione *c);        /* uno */
+void    condizione_segnala_tutti(Condizione *c);  /* tutti */
+
+/* ! UN SEMAFORO E' UN CONTATORE DI POSTI, e si inizializza col numero di posti
+ * che ci sono: `Semaforo posti_liberi = 1;` e' una coda di un posto,
+ * SEMAFORO_ZERO e' una coda che comincia vuota. Prendere aspetta finche' il
+ * conto non e' maggiore di zero, e allora lo scala di uno; lasciare lo alza e
+ * sveglia uno di quelli che aspettano.
+ *
+ * A differenza del lucchetto NON HA UN PADRONE: chi lascia puo' non essere chi
+ * ha preso, ed e' proprio quel che serve fra un produttore e un consumatore. */
+typedef volatile int Semaforo;
+#define SEMAFORO_ZERO  0
+
+void    semaforo_prendi(Semaforo *s);
+/* ! QUI `ms` A ZERO VUOL DIRE «NON ASPETTARE», al contrario di attesa_dormi
+ * dove vuol dire «senza scadenza»: la scadenza la conta questa funzione con
+ * uptime_ms(), e un'attesa senza fine ha gia' il suo nome, semaforo_prendi. */
+int     semaforo_prendi_ms(Semaforo *s, unsigned int ms); /* 0, o -1 ETIMEDOUT */
+int     semaforo_prova(Semaforo *s);   /* 1 se preso subito, 0 se era a zero */
+void    semaforo_lascia(Semaforo *s);
 
 /* =============================================================================
  * ! sleep RITORNA unsigned int, E NON void — corretto ad agosto 2026

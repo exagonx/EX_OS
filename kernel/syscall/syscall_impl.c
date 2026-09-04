@@ -948,6 +948,17 @@ int32_t sys_attesa_dormi(InterruptFrame *frame)
     }
     (void)ora;
 
+    /* ! E QUI SI RACCOGLIE LA SCROLLATA, dentro lo stesso `cli` che protegge il
+     * valore atteso e per la stessa identica ragione: qualcuno puo' aver
+     * chiesto a questo filo di fermarsi FRA la sua ultima occhiata e adesso.
+     * Se dormisse, la richiesta resterebbe senza lettore. Si consuma — vedi
+     * `scuoti` in sched.h: una scrollata sola, non un «non dormire mai piu'». */
+    if (self->scuoti) {
+        self->scuoti = 0;
+        interrupts_enable();
+        return ERR(EINTR);
+    }
+
     self->attesa_dove = dove;
     self->block_until = ms ? (g_ticks + (ms / 10) + 1) : 0;
 
@@ -971,6 +982,40 @@ int32_t sys_attesa_sveglia(InterruptFrame *frame)
     n = proc_attesa_sveglia(dove, quanti);
     interrupts_enable();
     return n;
+}
+
+/* =============================================================================
+ * LA CANCELLAZIONE ORDINATA — SYS_THREAD_FERMA (206), SYS_THREAD_FERMARSI (207)
+ *
+ * Il perche' sta in proc_filo_ferma(), in kernel/sched/sched.c: qui non
+ * succede niente che valga la pena raccontare due volte.
+ * ============================================================================= */
+int32_t sys_thread_ferma(InterruptFrame *frame)
+{
+    uint32_t tid = frame->ebx;
+    int32_t  r;
+
+    interrupts_disable();
+    r = proc_filo_ferma(tid);
+    interrupts_enable();
+    return r;
+}
+
+/* ! E' UNA LETTURA, E COSTA UNA CHIAMATA DI SISTEMA. Il filo la fa dove
+ * decide lui — a ogni giro di un ciclo che lavora, la spesa e' quella di una
+ * `int 0x80` ogni volta che si fa un pezzo di lavoro vero, e si vede solo se
+ * il pezzo di lavoro e' piu' corto della chiamata. La strada per toglierla,
+ * il giorno che qualcuno la misuri, e' che il kernel scriva il messaggio in
+ * una parola del blocco TLS invece che nel PCB: il filo la leggerebbe con un
+ * `movl %gs:...` e nessuna chiamata. Costa una parola di ABI del blocco TLS,
+ * cioe' una decisione che non si torna indietro a prendere: non si paga
+ * un'ABI per un'ottimizzazione che nessuno ha ancora misurato. */
+int32_t sys_thread_fermarsi(InterruptFrame *frame)
+{
+    Process *self = proc_get_current();
+
+    (void)frame;
+    return self ? (int32_t)self->ferma : 0;
 }
 
 /* =============================================================================

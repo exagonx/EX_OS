@@ -85,6 +85,104 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### Fermare un filo è chiederglielo
+
+**testato** — uccidere un filo si poteva già (il tid è un pid, e `kill`
+funziona), ma **non si deve**: un filo ucciso dove capita lascia i lucchetti
+presi, i file aperti a metà e le strutture come stavano, e dentro un processo
+solo quelle non sono le sue — sono **di tutti**. Adesso c'è il modo ordinato:
+
+```c
+while (!thread_devo_fermarmi()) { ...un pezzo di lavoro... }
+...lascia i lucchetti, chiudi quel che hai aperto...
+thread_esci(0);
+```
+
+`thread_ferma(tid)` lascia un messaggio, `thread_devo_fermarmi()` lo legge dove
+il filo decide. **Il kernel fa solo le due cose che da fuori non si possono
+fare**: mettere il messaggio dove il filo lo troverà, e *scrollare* chi dorme —
+perché un filo addormentato non guarda niente.
+
+**Due parole nel PCB, e fanno due mestieri diversi.** `ferma` è il messaggio e
+resta: una richiesta letta una volta vale anche la seconda. `scuoti` è la
+scrollata e **si consuma**, e serve a chiudere l'unica finestra che questa cosa
+ha: fra il momento in cui il filo guarda e quello in cui si addormenta. Se la
+richiesta arriva lì in mezzo il filo dorme *dopo* aver guardato — la stessa
+corsa del risveglio perso, e la stessa cura: chi chiede lascia scritto che la
+prossima attesa non deve dormire, e `sys_attesa_dormi` lo trova dentro lo
+stesso `cli` che protegge il valore atteso. Una scrollata sola, non un «non
+dormire mai più»: un filo che sta uscendo ha ancora una pulizia da fare, e con
+ogni attesa che torna subito quella girerebbe a vuoto.
+
+> **E la prova passava anche senza la cosa che doveva provare** — il difetto più
+> istruttivo della giornata, e stava *nella prova*. Tolta la scrollata dal
+> kernel per una riga, il caso che doveva colpire quella finestra passava lo
+> stesso: con un processore solo, creando un filo e fermandolo subito si finisce
+> sempre in uno dei due casi facili — o la richiesta arriva prima che il filo
+> abbia guardato, o a filo già addormentato. Il caso di mezzo dura poche
+> istruzioni e **a caso non ci si casca**. La cura è allargare la finestra a
+> comando invece di sperare: il filo, fra l'occhiata e il sonno, cede la CPU e
+> alza una bandierina, e chi comanda aspetta quella. Adesso venti corse costano
+> **60-180 ms** con la scrollata e **20200 senza** — venti scadenze da un
+> secondo, una per corsa — e la prova fallisce. Prima la differenza era di zero.
+
+**Quel che non fa, ed è scritto:** il filo si accorge solo dove guarda. Un
+`semaforo_prendi` senza scadenza non è un punto di controllo, e nemmeno una
+lettura da tastiera o da rete; chi vuole potersi fermare lì usa le varianti con
+scadenza. E la lettura del messaggio costa una chiamata di sistema: toglierla
+vorrebbe dire una parola di ABI dentro il blocco TLS, che è una decisione a
+senso unico e nessuno l'ha ancora misurata.
+
+### Le condizioni e i semafori, sopra l'attesa che dorme
+
+**testato** — l'attesa che dorme era il mattone; adesso ci sono le due cose che
+ci si costruiscono sopra, e sono **otto funzioni di libc, nessuna riga di
+kernel**: `condizione_aspetta` (con la variante a scadenza), `condizione_segnala`,
+`condizione_segnala_tutti`, `semaforo_prendi` (idem), `semaforo_prova`,
+`semaforo_lascia`. Tutt'e due i tipi sono **un intero**, come il lucchetto:
+`Condizione c = CONDIZIONE_ZERO;`, `Semaforo posti = 1;` — nessuna funzione di
+inizializzazione, che è l'unica forma che non si può dimenticare di chiamare.
+
+**Una condizione è un contatore di segnali, e basta.** Non tiene la lista di
+chi aspetta: quella è già nel kernel, ed è la coda di chi dorme su
+quell'indirizzo. Aspettare è tre righe — leggi il contatore, lascia il
+lucchetto, dormi su quel valore, riprendi il lucchetto — e **la prima è l'unica
+che conta**: fra il «lascia» e il «dormi» c'è una finestra in cui chi segnala
+può passare, e quel segnale arriverebbe prima che ci sia qualcuno da svegliare.
+Avendo letto il contatore *prima*, se qualcuno segnala lì in mezzo il valore
+non è più quello e non si dorme affatto. La finestra non si chiude: si rende
+innocua.
+
+> **Perciò si aspetta dentro un `while`, mai dentro un `if`.** Il risveglio
+> dice «guarda di nuovo», non «adesso c'è»: può arrivare per un segnale, per
+> la scadenza, o perché un segnale era già passato. Chi controlla una volta
+> sola prima o poi prosegue con la condizione falsa, ed è il difetto che non si
+> riproduce.
+
+**Un semaforo non ha un padrone**, e non è una licenza: chi lascia può non
+essere chi ha preso, ed è esattamente ciò che serve fra un produttore e un
+consumatore, dove il posto libero lo consuma uno e lo restituisce l'altro. Una
+spesa è rimasta lì, scritta accanto al codice: chi lascia chiama la sveglia
+*sempre*, anche quando non dorme nessuno — il lucchetto quella spesa la evita
+col terzo stato, ma lì il numero *è* lo stato del lucchetto, mentre qui il
+contatore conta posti e non ha dove metterlo. La via c'è (un secondo campo
+«dormienti») e vuole un tipo nuovo nell'ABI: **non si paga un tipo nuovo per
+un'ottimizzazione che nessuno ha ancora misurato.**
+
+> **La prova è una coda di UN posto, e può fallire in tre modi diversi.** Mille
+> elementi fra un produttore e un consumatore: con dieci posti i due si
+> incrociano poco e la prova diventa quasi sequenziale, con uno solo ognuno dei
+> mille costringe l'altro ad aspettare. Si guarda la **somma** (perderne uno e
+> leggerne un altro due volte darebbe lo stesso numero di giri), i **giri a
+> vuoto** — e devono essere *zero*, non «pochi»: con un consumatore solo, chi si
+> sveglia trova sempre la roba — e il **cronometro**, che è il testimone dei
+> giri a vuoto. Dentro l'attesa c'è una scadenza di mezzo secondo che è una
+> *rete*, non un modo di funzionare: senza, un segnale perso sarebbe una
+> macchina ferma per sempre e la prova non fallirebbe, resterebbe lì. Mille
+> passaggi ne costano fra **20 e 60 ms** misurati, una sola scadenza ne
+> costerebbe 500: la riga di giudizio sta a 400, comoda sopra la misura e
+> ancora capace di distinguere.
+
 ### I fili: più flussi dentro lo stesso programma
 
 **testato** — e la prova non è che il conto torni, è che **senza lucchetto non

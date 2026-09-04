@@ -85,6 +85,56 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### Le condizioni e i semafori, sopra l'attesa che dorme
+
+**testato** — l'attesa che dorme era il mattone; adesso ci sono le due cose che
+ci si costruiscono sopra, e sono **otto funzioni di libc, nessuna riga di
+kernel**: `condizione_aspetta` (con la variante a scadenza), `condizione_segnala`,
+`condizione_segnala_tutti`, `semaforo_prendi` (idem), `semaforo_prova`,
+`semaforo_lascia`. Tutt'e due i tipi sono **un intero**, come il lucchetto:
+`Condizione c = CONDIZIONE_ZERO;`, `Semaforo posti = 1;` — nessuna funzione di
+inizializzazione, che è l'unica forma che non si può dimenticare di chiamare.
+
+**Una condizione è un contatore di segnali, e basta.** Non tiene la lista di
+chi aspetta: quella è già nel kernel, ed è la coda di chi dorme su
+quell'indirizzo. Aspettare è tre righe — leggi il contatore, lascia il
+lucchetto, dormi su quel valore, riprendi il lucchetto — e **la prima è l'unica
+che conta**: fra il «lascia» e il «dormi» c'è una finestra in cui chi segnala
+può passare, e quel segnale arriverebbe prima che ci sia qualcuno da svegliare.
+Avendo letto il contatore *prima*, se qualcuno segnala lì in mezzo il valore
+non è più quello e non si dorme affatto. La finestra non si chiude: si rende
+innocua.
+
+> **Perciò si aspetta dentro un `while`, mai dentro un `if`.** Il risveglio
+> dice «guarda di nuovo», non «adesso c'è»: può arrivare per un segnale, per
+> la scadenza, o perché un segnale era già passato. Chi controlla una volta
+> sola prima o poi prosegue con la condizione falsa, ed è il difetto che non si
+> riproduce.
+
+**Un semaforo non ha un padrone**, e non è una licenza: chi lascia può non
+essere chi ha preso, ed è esattamente ciò che serve fra un produttore e un
+consumatore, dove il posto libero lo consuma uno e lo restituisce l'altro. Una
+spesa è rimasta lì, scritta accanto al codice: chi lascia chiama la sveglia
+*sempre*, anche quando non dorme nessuno — il lucchetto quella spesa la evita
+col terzo stato, ma lì il numero *è* lo stato del lucchetto, mentre qui il
+contatore conta posti e non ha dove metterlo. La via c'è (un secondo campo
+«dormienti») e vuole un tipo nuovo nell'ABI: **non si paga un tipo nuovo per
+un'ottimizzazione che nessuno ha ancora misurato.**
+
+> **La prova è una coda di UN posto, e può fallire in tre modi diversi.** Mille
+> elementi fra un produttore e un consumatore: con dieci posti i due si
+> incrociano poco e la prova diventa quasi sequenziale, con uno solo ognuno dei
+> mille costringe l'altro ad aspettare. Si guarda la **somma** (perderne uno e
+> leggerne un altro due volte darebbe lo stesso numero di giri), i **giri a
+> vuoto** — e devono essere *zero*, non «pochi»: con un consumatore solo, chi si
+> sveglia trova sempre la roba — e il **cronometro**, che è il testimone dei
+> giri a vuoto. Dentro l'attesa c'è una scadenza di mezzo secondo che è una
+> *rete*, non un modo di funzionare: senza, un segnale perso sarebbe una
+> macchina ferma per sempre e la prova non fallirebbe, resterebbe lì. Mille
+> passaggi ne costano fra **20 e 60 ms** misurati, una sola scadenza ne
+> costerebbe 500: la riga di giudizio sta a 400, comoda sopra la misura e
+> ancora capace di distinguere.
+
 ### I fili: più flussi dentro lo stesso programma
 
 **testato** — e la prova non è che il conto torni, è che **senza lucchetto non
