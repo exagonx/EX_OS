@@ -623,8 +623,21 @@ typedef struct Process {
  * ! NON E' UN CAMBIO DI ABI: il PCB e' memoria del kernel e nessun
  * programma lo vede. Costa PERCORSO_MAX byte per processo — 320 x 64
  * PCB = 20 KB in tutto, dentro un pool che il kernel ha gia'.
- * ============================================================================= */
+ *
+ * ! MA I FILI DI UNO STESSO PROGRAMMA NE HANNO UNA SOLA, dal 4 settembre 2026,
+ * ed e' lo stesso mestiere che fa `fdt` per i descrittori: `cwdt` punta alla
+ * PROPRIA per un processo e a quella del capogruppo per un filo, e tutto il
+ * kernel usa `cwdt`, mai `cwd` direttamente. Il motivo e' lo stesso che ha
+ * reso la directory una per processo invece che una per sistema, letto
+ * all'incontrario: due fili sono UN programma, e un `cd` fatto da uno che gli
+ * altri non vedono e' la stessa sorpresa di prima, dentro un processo solo.
+ * Una funzione che cambia directory, apre un file relativo e torna indietro
+ * fa la cosa giusta o quella sbagliata a seconda di quale filo la esegue.
+ *
+ * ! E LA COPIA RESTA PER I PROCESSI, che la ereditano dal padre e poi sono
+ * fatti loro: e' il puntatore a decidere, non il campo. */
     char            cwd[VFS_PATH_MAX];
+    char           *cwdt;           /* la directory VERA: propria o del capogruppo */
 
     /* --- Environment --- */
     char            env[MAX_ENV_VARS][ENV_VAR_LEN];

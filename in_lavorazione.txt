@@ -30,9 +30,9 @@ settembre, «LE CONDIZIONI E I SEMAFORI») racconta perche'.
 IL PROSSIMO PASSO, IN ORDINE
 
  Quel che resta e' scritto nella sezione «I FILI» qui sotto, ed e' in ordine:
- otto fili per processo (e' un numero, non un lavoro), cwd/env condivisi
- invece che copiati, lo stack del filo che cresca su richiesta. Nessuno dei
- tre e' un mattone che manca: sono limiti.
+ otto fili per processo (e' un numero, non un lavoro) e lo stack del filo che
+ cresca su richiesta. Nessuno dei due e' un mattone che manca: sono limiti,
+ e tutt'e due si pagano in memoria, non in codice.
 
 COME SI PROVANO I FILI, SENZA RICOSTRUIRE IL RAGIONAMENTO
 
@@ -40,10 +40,10 @@ COME SI PROVANO I FILI, SENZA RICOSTRUIRE IL RAGIONAMENTO
     EXOS_NO_FLOPPY=1 EXOS_CDROM=dist/exos.iso EXOS_RAM=64M \
       python3 tools/qemu_drive.py "filiprova@25" "filiprova tls@10" \
         "filiprova errno@10" "filiprova attesa@15" "filiprova condizione@25" \
-        "filiprova semaforo@25" "filiprova ferma@40" "filiprova troppi@8" \
-        "filiprova abbandona@8" "hello@5"
+        "filiprova semaforo@25" "filiprova ferma@40" "filiprova cwd@20" \
+        "filiprova troppi@8" "filiprova abbandona@8" "hello@5"
 
-  I nove modi e cosa dimostrano:
+  I dieci modi e cosa dimostrano:
     (nessuno)   80000 col lucchetto, ~20000 senza: le corse ci sono davvero
     tls         ogni filo parte da 7 e ritrova il suo; il principale ritrova 42
     errno       principale EBADF, fili ENOENT, e il principale ritrova il suo 9
@@ -57,6 +57,9 @@ COME SI PROVANO I FILI, SENZA RICOSTRUIRE IL RAGIONAMENTO
                 viene scrollato dal kernel; e venti corse fra «guardo» e «mi
                 addormento» costano 60-180 ms invece di 20200 (misurato
                 togliendo la scrollata: la prova fallisce, e di 336 volte)
+    cwd         il filo fa cd /bin e il principale lo vede; il principale fa
+                cd /dev e il filo lo vede; e l'ambiente passa nei due versi
+                (rimettendo la copia di prima falliscono tutt'e due i versi)
     troppi      ne crea 7 e si ferma con errno 11 (EAGAIN)
     abbandona   esce senza aspettare: il prompt torna e hello gira dopo
 
@@ -337,7 +340,7 @@ TLS anche ai programmi senza variabili __thread: senza, %gs avrebbe base zero
 e quella lettura sarebbe un fault. Un filo e' un task che CONDIVIDE la page
 directory e i descrittori del gruppo e ha uno stack suo (64 KB, in una banda
 riservata sotto il TLS). Il tid E' un pid; `tgid` dice il gruppo. Chi esce dal
-processo porta via tutti i fili. Provato con /bin/filiprova, che ha nove modi
+processo porta via tutti i fili. Provato con /bin/filiprova, che ha dieci modi
 (l'elenco e' nella sezione URGENTE, in cima a questo file).
 
 CI SONO ANCHE LE VARIABILI DI CONDIZIONE E I SEMAFORI, dal 4 settembre 2026
@@ -367,16 +370,24 @@ addormentarsi lascia scritto che la prossima attesa non deve dormire
     Chi vuole potersi fermare li' usa le varianti con scadenza. E' scritto in
     libc.h con lo schema del ciclo accanto.
 
+LA DIRECTORY E' DEL GRUPPO, dal 4 settembre 2026 (diario: «LA DIRECTORY E' DI
+TUTTI E DUE»). Un chdir dentro un filo lo vedono gli altri, ed e' lo stesso
+mestiere che fa `fdt` per i descrittori: nel PCB c'e' `cwdt`, che punta alla
+propria per un processo e a quella del capogruppo per un filo. Tutto il kernel
+usa `cwdt`, mai `cwd` direttamente. Fra PROCESSI resta una per ciascuno: e' il
+puntatore a decidere, non il campo.
+    ! E L'AMBIENTE ERA GIA' IN COMUNE, e non passa dal kernel: `environ` sta
+    nei dati di libc.so, che i fili condividono perche' condividono la memoria.
+    Il campo `env[]` del PCB non lo usa nessuno — e' rimasto li' da prima.
+    Adesso e' controllato invece che dato per buono (filiprova cwd).
+
 QUEL CHE MANCA, in ordine di quanto pesa:
 
  1. OTTO FILI PER PROCESSO (FILO_MAX), capogruppo compreso, perche' tante sono
     le piazzole nella banda. Alzarlo vuol dire allargare la banda, cioe'
     abbassare heap_max: e' un numero, non un lavoro.
 
- 2. cwd ED ENV SONO COPIATI ALLA CREAZIONE, non condivisi: un chdir dentro un
-    filo non lo vedono gli altri. I descrittori invece sono in comune davvero.
-
- 3. LO STACK DI UN FILO E' IMPEGNATO TUTTO SUBITO (64 KB di RAM vera, non di
+ 2. LO STACK DI UN FILO E' IMPEGNATO TUTTO SUBITO (64 KB di RAM vera, non di
     soli indirizzi) perche' page_fault_handler sa far crescere un solo stack.
     Farlo crescere su richiesta vuol dire insegnargli a riconoscere a quale
     filo appartiene una pagina mancante dentro la banda.

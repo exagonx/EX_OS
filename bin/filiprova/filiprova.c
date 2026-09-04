@@ -619,6 +619,97 @@ static int prova_ferma(void)
     return esito;
 }
 
+/* =============================================================================
+ * LA PROVA CHE LA DIRECTORY E L'AMBIENTE SIANO DEL GRUPPO
+ *
+ * ! DUE FILI SONO UN PROGRAMMA SOLO, e questa e' la prova che il kernel la
+ * pensi allo stesso modo. Un `cd` fatto da un filo che gli altri non vedono
+ * non e' una comodita' in meno: e' una funzione che, chiamata da un filo
+ * diverso, apre un file in un posto diverso — senza errore.
+ *
+ * ! SI GUARDA NEI DUE VERSI, perche' uno solo non basterebbe: il filo cambia e
+ * il principale se ne accorge, POI il principale cambia e il filo se ne
+ * accorge. Con la directory copiata alla creazione il secondo verso passerebbe
+ * lo stesso finche' il filo nasce dopo il cambio — e' il primo verso quello
+ * che distingue «condivisa» da «copiata al momento giusto».
+ *
+ * ! E L'AMBIENTE NON PASSA DAL KERNEL: `environ` sta nei dati di libc.so, che
+ * i fili condividono perche' condividono la memoria. Qui non c'e' niente da
+ * aggiustare — c'e' da CONTROLLARE che sia davvero cosi', che e' un'altra
+ * cosa dal darlo per buono.
+ * ============================================================================= */
+static volatile int c_passo;       /* il testimone fra i due */
+static char         c_visto[256];  /* quel che il filo ha visto */
+static const char  *c_env_visto;
+
+static void filo_cwd(void *arg)
+{
+    (void)arg;
+
+    /* 1. il filo si sposta, e il principale deve accorgersene */
+    if (chdir("/bin") != 0) { c_passo = -1; thread_esci(1); }
+    c_passo = 1;
+
+    /* 2. aspetta che il principale si sposti, e deve accorgersene lui */
+    while (c_passo != 2) sched_yield();
+    getcwd(c_visto, sizeof(c_visto));
+    c_env_visto = getenv("FILOPROVA");
+    setenv("FILODICE", "riposto", 1);
+    c_passo = 3;
+    thread_esci(0);
+}
+
+static int prova_cwd(void)
+{
+    char  dove[256];
+    int   tid, codice = -1, esito = 0;
+    const char *v;
+
+    printf("filiprova: la directory e l'ambiente sono del GRUPPO\n");
+
+    chdir("/");
+    setenv("FILOPROVA", "dal-principale", 1);
+
+    tid = thread_crea(filo_cwd, 0);
+    if (tid < 0) { printf("  thread_crea: errno %d\n", errno); return 1; }
+
+    while (c_passo == 0) sched_yield();
+    if (c_passo < 0) { printf("  il filo non e' riuscito a fare chdir\n"); return 1; }
+
+    /* Verso 1: il filo ha fatto cd /bin, e lo deve vedere il principale. */
+    dove[0] = 0;
+    getcwd(dove, sizeof(dove));
+    printf("  il filo fa cd /bin, il principale ci trova «%s»   %s\n", dove,
+           strcmp(dove, "/bin") == 0 ? "condivisa" : "COPIATA (non la vede)");
+    if (strcmp(dove, "/bin") != 0) esito = 1;
+
+    /* Verso 2: adesso si sposta il principale, e lo deve vedere il filo. */
+    chdir("/dev");
+    c_passo = 2;
+    while (c_passo != 3) sched_yield();
+    thread_attendi(tid, &codice);
+
+    printf("  il principale fa cd /dev, il filo ci trova «%s»   %s\n", c_visto,
+           strcmp(c_visto, "/dev") == 0 ? "condivisa" : "COPIATA (non la vede)");
+    if (strcmp(c_visto, "/dev") != 0) esito = 1;
+
+    printf("  l'ambiente del principale, letto dal filo: «%s»   %s\n",
+           c_env_visto ? c_env_visto : "(niente)",
+           (c_env_visto && strcmp(c_env_visto, "dal-principale") == 0)
+               ? "in comune" : "NON LO VEDE");
+    if (!c_env_visto || strcmp(c_env_visto, "dal-principale") != 0) esito = 1;
+
+    v = getenv("FILODICE");
+    printf("  e quel che il filo ci ha messo, letto dal principale: «%s»   %s\n",
+           v ? v : "(niente)",
+           (v && strcmp(v, "riposto") == 0) ? "in comune" : "NON LO VEDE");
+    if (!v || strcmp(v, "riposto") != 0) esito = 1;
+
+    chdir("/");
+    printf("\nfiliprova cwd: %s\n", esito ? "QUALCOSA NON VA" : "tutto a posto");
+    return esito;
+}
+
 /* Un filo che non finisce mai: serve alla prova dell'abbandono. */
 static void per_sempre(void *arg)
 {
@@ -672,6 +763,7 @@ int main(int argc, char **argv)
     if (argc > 1 && strcmp(argv[1], "condizione") == 0) return prova_condizione();
     if (argc > 1 && strcmp(argv[1], "semaforo") == 0)  return prova_semaforo();
     if (argc > 1 && strcmp(argv[1], "ferma") == 0)     return prova_ferma();
+    if (argc > 1 && strcmp(argv[1], "cwd") == 0)       return prova_cwd();
     {
     int tid[FILI];
     int i, codice, esito = 0;

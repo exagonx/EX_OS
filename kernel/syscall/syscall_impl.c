@@ -126,8 +126,8 @@ static const char *cwd_corrente(void)
 {
     Process *p = proc_get_current();
 
-    if (p == NULL || p->cwd[0] == '\0') return "/";
-    return p->cwd;
+    if (p == NULL || p->cwdt == NULL || p->cwdt[0] == '\0') return "/";
+    return p->cwdt;
 }
 
 /* =============================================================================
@@ -2022,7 +2022,8 @@ return ERR(ENOMEM); }
      * Finche' la directory era una sola per il sistema questa riga non
      * serviva: il figlio la trovava gia' buona perche' era di tutti. E'
      * l'altra faccia di quel difetto — vedi Process.cwd in sched.h. */
-    kstrcpy(child->cwd, parent->cwd[0] ? parent->cwd : "/", sizeof(child->cwd));
+    kstrcpy(child->cwd, (parent->cwdt && parent->cwdt[0]) ? parent->cwdt : "/",
+            sizeof(child->cwd));
 
 /* ! SI DICE A elf_load QUANTO STACK SERVE, e si dice PRIMA di caricare.
  * Qui sotto le stringhe di argv e i due array di puntatori vengono scritti
@@ -2540,8 +2541,11 @@ int32_t sys_chdir(InterruptFrame *frame)
         {
             Process *p = proc_get_current();
 
-            if (p == NULL) return ERR(ESRCH);
-            kstrcpy(p->cwd, abs, sizeof(p->cwd));
+            if (p == NULL || p->cwdt == NULL) return ERR(ESRCH);
+            /* ! SI SCRIVE DOVE PUNTA `cwdt`, che per un filo e' la directory
+             * del gruppo: un `cd` dentro un filo lo vedono tutti, ed e' il
+             * comportamento giusto perche' sono un programma solo. */
+            kstrcpy(p->cwdt, abs, VFS_PATH_MAX);
         }
     }
 

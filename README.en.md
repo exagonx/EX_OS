@@ -84,6 +84,38 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### The working directory belongs to both (and the environment already did)
+
+**tested** — a `chdir` inside a thread is now seen by the others, and it is one
+line: `filo->cwdt = capo->cwdt;` instead of copying the path. **It is the same
+job `fdt` does for file descriptors**, with the same idiom: the PCB has the
+`cwd` field and the `cwdt` pointer, which for a process points at its own field
+and for a thread at the group leader's. The whole kernel uses `cwdt` — five
+places in all — and **nothing changes between processes**: the directory stays
+one per process, inherited from the parent at `spawn` as before.
+
+**The reason is the same one that made the directory per-process, read
+backwards.** Back then the defect was that `cd` inside one program moved every
+other one; here it is that two threads **are one program**, and a function that
+steps into a directory, opens a relative file and steps back does the right
+thing or the wrong thing depending on which thread runs it — no error, just a
+file opened in the wrong place.
+
+**And the environment does not go through the kernel: that one was to be
+checked, not built.** The list said "cwd and env are copied", and for `env` it
+was not true: `environ` lives in `libc.so`'s data, which threads share because
+they share the memory, and the PCB's `env[]` field is used by nobody. There was
+nothing to fix; there was something to *look at*, which is not the same as
+assuming it.
+
+> **The test looks in both directions, and one alone would not do.** With the
+> directory copied at creation, the "the main thread moves and the thread
+> notices" direction would pass anyway whenever the thread is born *after* the
+> change: it is the thread moving and the main thread having to see it that
+> tells "shared" from "copied at the right moment". With the old copy put back
+> for one run, both directions fail — and the environment passes in both cases,
+> which confirms that half was never a kernel matter.
+
 ### Stopping a thread means asking it to
 
 **tested** — killing a thread was already possible (the tid is a pid, and

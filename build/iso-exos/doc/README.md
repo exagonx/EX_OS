@@ -85,6 +85,54 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### Fermare un filo è chiederglielo
+
+**testato** — uccidere un filo si poteva già (il tid è un pid, e `kill`
+funziona), ma **non si deve**: un filo ucciso dove capita lascia i lucchetti
+presi, i file aperti a metà e le strutture come stavano, e dentro un processo
+solo quelle non sono le sue — sono **di tutti**. Adesso c'è il modo ordinato:
+
+```c
+while (!thread_devo_fermarmi()) { ...un pezzo di lavoro... }
+...lascia i lucchetti, chiudi quel che hai aperto...
+thread_esci(0);
+```
+
+`thread_ferma(tid)` lascia un messaggio, `thread_devo_fermarmi()` lo legge dove
+il filo decide. **Il kernel fa solo le due cose che da fuori non si possono
+fare**: mettere il messaggio dove il filo lo troverà, e *scrollare* chi dorme —
+perché un filo addormentato non guarda niente.
+
+**Due parole nel PCB, e fanno due mestieri diversi.** `ferma` è il messaggio e
+resta: una richiesta letta una volta vale anche la seconda. `scuoti` è la
+scrollata e **si consuma**, e serve a chiudere l'unica finestra che questa cosa
+ha: fra il momento in cui il filo guarda e quello in cui si addormenta. Se la
+richiesta arriva lì in mezzo il filo dorme *dopo* aver guardato — la stessa
+corsa del risveglio perso, e la stessa cura: chi chiede lascia scritto che la
+prossima attesa non deve dormire, e `sys_attesa_dormi` lo trova dentro lo
+stesso `cli` che protegge il valore atteso. Una scrollata sola, non un «non
+dormire mai più»: un filo che sta uscendo ha ancora una pulizia da fare, e con
+ogni attesa che torna subito quella girerebbe a vuoto.
+
+> **E la prova passava anche senza la cosa che doveva provare** — il difetto più
+> istruttivo della giornata, e stava *nella prova*. Tolta la scrollata dal
+> kernel per una riga, il caso che doveva colpire quella finestra passava lo
+> stesso: con un processore solo, creando un filo e fermandolo subito si finisce
+> sempre in uno dei due casi facili — o la richiesta arriva prima che il filo
+> abbia guardato, o a filo già addormentato. Il caso di mezzo dura poche
+> istruzioni e **a caso non ci si casca**. La cura è allargare la finestra a
+> comando invece di sperare: il filo, fra l'occhiata e il sonno, cede la CPU e
+> alza una bandierina, e chi comanda aspetta quella. Adesso venti corse costano
+> **60-180 ms** con la scrollata e **20200 senza** — venti scadenze da un
+> secondo, una per corsa — e la prova fallisce. Prima la differenza era di zero.
+
+**Quel che non fa, ed è scritto:** il filo si accorge solo dove guarda. Un
+`semaforo_prendi` senza scadenza non è un punto di controllo, e nemmeno una
+lettura da tastiera o da rete; chi vuole potersi fermare lì usa le varianti con
+scadenza. E la lettura del messaggio costa una chiamata di sistema: toglierla
+vorrebbe dire una parola di ABI dentro il blocco TLS, che è una decisione a
+senso unico e nessuno l'ha ancora misurata.
+
 ### Le condizioni e i semafori, sopra l'attesa che dorme
 
 **testato** — l'attesa che dorme era il mattone; adesso ci sono le due cose che

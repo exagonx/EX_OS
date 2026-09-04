@@ -338,6 +338,7 @@ Process *proc_create(const char *name, uint32_t entry_point,
      * «sono un filo?» sono false dappertutto senza un solo caso speciale. */
     proc->tgid       = proc->pid;
     proc->fdt        = proc->fds;
+    proc->cwdt       = proc->cwd;
     proc->filo_posto = 0;
 
     /* Nome */
@@ -1175,7 +1176,11 @@ int proc_thread_crea(uint32_t entry, uint32_t arg)
         filo->tls_base = 0;
     }
 
-    str_copy(filo->cwd, capo->cwd, VFS_PATH_MAX);
+    /* ! LA DIRECTORY NON SI COPIA PIU', SI CONDIVIDE (4 settembre 2026): due
+     * fili sono un programma solo, e un `cd` che gli altri non vedono e' una
+     * sorpresa che si paga dentro una funzione qualunque. Come per `fdt`, e' il
+     * PUNTATORE a dire dov'e' quella vera. */
+    filo->cwdt = capo->cwdt;
 
     filo->user_stack_base  = base;
     filo->user_stack_top   = cima;

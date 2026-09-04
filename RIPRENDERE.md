@@ -28,6 +28,66 @@ manca» apre quello.
 
 # DOVE RIPRENDERE — 4 settembre 2026
 
+## 4 settembre 2026 — LA DIRECTORY E' DI TUTTI E DUE (e l'ambiente lo era gia')
+
+Un `chdir` dentro un filo adesso lo vedono gli altri. Era l'ultimo pezzo di
+stato che i fili si **copiavano** invece di condividere, ed e' una riga:
+
+    filo->cwdt = capo->cwdt;      /* invece di str_copy(filo->cwd, capo->cwd) */
+
+! **E' LO STESSO MESTIERE CHE FA `fdt` PER I DESCRITTORI**, con lo stesso
+idioma: nel PCB c'e' il campo `cwd` e c'e' il puntatore `cwdt`, che per un
+processo punta al proprio campo e per un filo a quello del capogruppo. Tutto il
+kernel usa `cwdt` — sono cinque posti in croce — e **fra processi non cambia
+niente**: e' il puntatore a decidere, non il campo. La directory resta una per
+processo, ereditata dal padre a `spawn` come prima.
+
+! **IL MOTIVO E' LO STESSO DI QUANDO LA DIRECTORY DIVENTO' UNA PER PROCESSO,
+letto all'incontrario.** Allora il difetto era che `cd` dentro un programma
+spostava tutti gli altri; qui e' che due fili **sono un programma solo**, e una
+funzione che entra in una directory, apre un file relativo e torna indietro fa
+la cosa giusta o quella sbagliata a seconda di quale filo la esegue — senza
+errore, aprendo un file nel posto sbagliato. E' lo stesso guasto visto dall'
+altra parte.
+
+### L'AMBIENTE NON PASSA DAL KERNEL, E QUESTO ERA DA CONTROLLARE, NON DA FARE
+
+L'elenco diceva «cwd ed env sono copiati». Per `env` **non era vero**:
+`environ` sta nei dati di `libc.so`, che i fili condividono perche' condividono
+la memoria, e il campo `env[]` del PCB **non lo usa nessuno** — e' rimasto li'
+da prima. Non c'era niente da aggiustare; c'era da *guardare*, che e' un'altra
+cosa dal darlo per buono. Adesso la prova lo guarda nei due versi.
+
+### LA PROVA GUARDA NEI DUE VERSI, E UNO SOLO NON BASTEREBBE
+
+    il filo fa cd /bin, il principale ci trova «/bin»   condivisa
+    il principale fa cd /dev, il filo ci trova «/dev»   condivisa
+    l'ambiente del principale, letto dal filo: «dal-principale»   in comune
+    e quel che il filo ci ha messo, letto dal principale: «riposto»  in comune
+
+! **IL PRIMO VERSO E' QUELLO CHE DISTINGUE.** Con la directory copiata alla
+creazione, il secondo verso — il principale si sposta e il filo se ne accorge —
+passerebbe lo stesso ogni volta che il filo nasce *dopo* il cambio. E' il filo
+che si sposta e il principale che deve vederlo a dire «condivisa» invece di
+«copiata al momento giusto».
+
+Controprova, rimessa la copia di prima per un giro:
+
+    il filo fa cd /bin, il principale ci trova «/»      COPIATA (non la vede)
+    il principale fa cd /dev, il filo ci trova «/bin»   COPIATA (non la vede)
+    l'ambiente: in comune tutt'e due i versi
+
+— cioe' la prova fallisce dove deve, e l'ambiente passa in tutt'e due i casi,
+che e' la conferma che quella meta' non e' mai stata un problema del kernel.
+
+### QUEL CHE HO CONTROLLATO DI NON AVER ROTTO
+
+Che i PROCESSI restino ognuno a casa propria, perche' e' esattamente quel che
+si stava per rompere: `cd /bin`, `pwd`, `cd /`, `pwd` nella shell, e un
+`filiprova cwd` che si sposta in `/dev` da dentro — **la shell resta dove
+stava**. Poi tutti e dieci i modi di `filiprova` di fila piu' un `hello`, e
+`libctest` (che chdir e getcwd li usa): **201 superate, 15 fallite**.
+
 ## 4 settembre 2026 — FERMARE UN FILO E' CHIEDERGLIELO
 
 Uccidere un filo si poteva gia': il tid e' un pid, e `kill` funziona. Il punto
