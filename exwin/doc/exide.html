@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>EX-IDE &mdash; EX-OS</title>
+<link rel="stylesheet" href="stile.css">
+<!-- Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>  GPL-2.0-or-later
+     ! SOLO ASCII: apostrofi al posto degli accenti.
+     ! OGNI SEZIONE HA UN id, e l'indice qui sotto ci punta: e' il motivo per
+       cui questa pagina esiste come pagina invece che come finestrella di
+       testo dentro il programma. Aggiungendo una sezione, si aggiunge la voce
+       nell'indice - un indice che non nomina meta' della pagina e' peggio di
+       nessun indice. -->
+</head>
+<body>
+
+<p class="navi">
+<a href="index.html">Documentazione</a> |
+<a href="sistema.html">Il sistema</a> |
+<a href="comandi.html">Comandi</a> |
+<a href="exwin.html">Scrivania</a> |
+<a href="sviluppo.html">Sviluppo</a> &mdash; EX-IDE |
+<a href="browser.html">Navigatore</a>
+</p>
+
+<h1 id="cima">EX-IDE, l'ambiente di sviluppo visuale</h1>
+
+<p>
+Si disegna una finestra col mouse, si scrive il codice degli eventi, si
+compila e il programma gira. EX-IDE sta in <code>/exwin/bin/exide</code> e si
+apre anche dal menu Avvio.
+</p>
+
+<div class="nota">
+<p>
+<b>Da CD non si puo' scrivere.</b> Un ambiente di sviluppo ha bisogno di un
+posto dove salvare: si monta un disco in lettura e scrittura
+(<code>mount hd0p1 /disk</code>) e si crea il progetto dentro quello. Per
+COMPILARE serve anche il CD degli strumenti montato su <code>/cdrom</code>.
+</p>
+</div>
+
+<h2 id="indice">Indice</h2>
+
+<ul>
+<li><a href="#comincia">Come si fa un programma</a></li>
+<li><a href="#file">I quattro file, e quale e' tuo</a></li>
+<li><a href="#finestre">Piu' di una finestra</a></li>
+<li><a href="#proprieta">Le proprieta'</a></li>
+<li><a href="#strumenti">Gli strumenti, uno per uno</a>
+  &mdash;
+  <a href="#pulsante">Pulsante</a>,
+  <a href="#etichetta">Etichetta</a>,
+  <a href="#casella">Casella</a>,
+  <a href="#spunta">Spunta</a>,
+  <a href="#radio">Radio</a>,
+  <a href="#riquadro">Riquadro</a>,
+  <a href="#separatore">Separatore</a>,
+  <a href="#intestazione">Intestazione</a>,
+  <a href="#lista">Lista</a>,
+  <a href="#areatesto">Area testo</a>,
+  <a href="#areacodice">Area codice</a>,
+  <a href="#elenco">Elenco</a>,
+  <a href="#linguette">Linguette</a>,
+  <a href="#scorrimento">Scorrimento</a>
+</li>
+<li><a href="#esempi">Gli esempi</a>
+  &mdash;
+  <a href="#es-scambio">scambiare due caselle</a>,
+  <a href="#es-chiudi">chiudere la finestra</a>,
+  <a href="#es-spunta">uscire solo se la spunta e' accesa</a>,
+  <a href="#es-apri">aprire una seconda finestra</a>
+</li>
+<li><a href="#funzioni">Qualche funzione che vale per tutti</a></li>
+<li><a href="#menu">Il menu</a></li>
+<li><a href="#limiti">Quel che non c'e'</a></li>
+</ul>
+
+<div class="nota">
+<p>
+<b>Gli esempi valgono per piu' di uno strumento.</b> Lo scambio fra due
+caselle e' un esempio di <a href="#casella">Casella</a> tanto quanto di
+<a href="#pulsante">Pulsante</a>; l'uscita con la conferma vale per
+<a href="#spunta">Spunta</a>, Pulsante e per come si esce. Percio' stanno
+tutti insieme <a href="#esempi">in fondo</a>, e ogni strumento ci rimanda.
+</p>
+</div>
+
+<h2 id="comincia">Come si fa un programma</h2>
+
+<ol>
+<li><b>File &gt; Nuovo progetto</b>, e si da' una directory: exide ci crea
+dentro <code>src</code>, <code>inc</code>, <code>lib</code>, <code>bin</code>
+e <code>obj</code>, piu' <code>progetto.txt</code> con autore e data.</li>
+<li>Si sceglie uno <a href="#strumenti">strumento</a> nell'elenco a sinistra e
+si clicca sulla maschera: il controllo nasce li', con un nome e un id suoi.</li>
+<li>Lo si sposta trascinandolo, e lo si RIDIMENSIONA tirando una delle otto
+maniglie nere che gli compaiono attorno quando e' scelto: gli angoli cambiano
+due lati insieme, quelle in mezzo ai bordi uno solo, e il bordo opposto non si
+muove.</li>
+<li>Le <a href="#proprieta">proprieta'</a> a destra dicono nome, testo,
+posizione, misura, id ed evento: si sceglie la riga, si scrive nella casella e
+si preme Applica.</li>
+<li><b>Doppio clic</b> sul controllo: si apre il sorgente dentro la funzione
+che l'evento chiamera'. Se non c'era, exide la aggiunge vuota.</li>
+<li><b>File &gt; Salva</b> scrive <code>finestra.dis</code>,
+<code>finestra.h</code> e <code>finestra_gen.c</code>.</li>
+<li><b>Strumenti &gt; Compilatore</b>, e il pulsante Compila: esce il binario
+in <code>bin/</code>, e lo si lancia dalla shell o dal file manager.</li>
+</ol>
+
+<p>
+Sbagliato qualcosa? <b>Modifica &gt; Annulla</b> (Ctrl+Z) torna indietro fino
+a sedici passi, e vale per tutto: un controllo messo, cancellato, spostato,
+ridimensionato, una proprieta' cambiata, una finestra aggiunta o tolta.
+</p>
+
+<h2 id="file">I quattro file, e quale e' tuo</h2>
+
+<table border="1">
+<tr><th>file</th><th>chi lo scrive</th></tr>
+<tr><td><code>src/finestra.dis</code></td>
+    <td>il disegno: lo legge e lo scrive <b>solo exide</b></td></tr>
+<tr><td><code>src/finestra.h</code></td>
+    <td>gli id, i puntatori ai controlli e i prototipi &mdash; <b>generato</b>,
+        si riscrive a ogni salvataggio</td></tr>
+<tr><td><code>src/finestra_gen.c</code></td>
+    <td>crea i controlli e smista gli eventi &mdash; <b>generato</b></td></tr>
+<tr><td><code>src/finestra.c</code></td>
+    <td><b>IL TUO.</b> exide ci AGGIUNGE in fondo gli handler che mancano e non
+        riscrive mai quel che c'e' gia'</td></tr>
+</table>
+
+<div class="nota">
+<p>
+E' la decisione che decide se il progetto sopravvive, ed e' il punto in cui
+Visual Basic si rompeva: <b>quel che e' generato e quel che e' scritto a mano
+stanno in file diversi</b>. Il tuo non viene mai riscritto &mdash; nemmeno
+l'handler di un controllo che hai cancellato dalla maschera: cancellare del
+codice scritto a mano perche' un rettangolo non c'e' piu' sarebbe la cosa
+peggiore che un generatore possa fare.
+</p>
+</div>
+
+<h2 id="finestre">Piu' di una finestra</h2>
+
+<p>
+Sopra la maschera c'e' l'elenco a discesa delle finestre del progetto, con
+<b>Nuova</b> e <b>Togli</b>: fino a otto. Si disegna una finestra per volta
+&mdash; si sceglie quale dall'elenco e la maschera cambia sotto.
+</p>
+
+<p>
+La finestra principale la apre il programma da solo. <b>Le altre le apri
+tu</b>, chiamando la loro <code>&lt;nome&gt;_crea()</code> dal codice: vedi
+l'esempio <a href="#es-apri">aprire una seconda finestra</a>. Il nome della
+finestra (proprieta' <code>nome</code>, quando non c'e' nessun controllo
+scelto) e' quello che finisce dentro il nome della funzione: chiamandola
+&laquo;opzioni&raquo; diventa <code>opzioni_crea()</code>.
+</p>
+
+<ul>
+<li>Chiamarla due volte <b>non apre due finestre</b>: se e' gia' aperta la
+ridisegna e basta.</li>
+<li>Chiudendola col suo pulsante <b>il programma NON esce</b> &mdash; esce solo
+chiudendo la principale &mdash; e i puntatori ai suoi controlli tornano a zero
+finche' non la si riapre.</li>
+<li>La principale tiene i nomi di sempre (<code>g_form</code>,
+<code>finestra_crea()</code>): il suo nome nell'elenco e' solo un'etichetta per
+riconoscerla, e <code>finestra</code> non si puo' dare a un'altra.</li>
+</ul>
+
+<h2 id="proprieta">Le proprieta'</h2>
+
+<p>
+Si scelgono nell'elenco a destra, si scrive nella casella sotto e si preme
+Applica. Senza nessun controllo scelto &mdash; un clic sul vuoto della maschera
+&mdash; l'elenco diventa quello della <b>finestra</b>.
+</p>
+
+<h3>Di un controllo</h3>
+<table border="1">
+<tr><th>proprieta'</th><th>cosa diventa</th></tr>
+<tr><td><code>nome</code></td>
+    <td><code>h_&lt;nome&gt;</code> in finestra.h, <code>ID_&lt;NOME&gt;</code>
+        fra i #define e <code>&lt;nome&gt;_&lt;evento&gt;()</code> come
+        handler. Solo lettere, cifre e <code>_</code>: il resto viene
+        sostituito, perche' e' un nome di funzione C</td></tr>
+<tr><td><code>testo</code></td>
+    <td>quel che ci si legge dentro (o accanto, per Spunta e Radio). Lo cambia
+        anche <code>ex_testo_metti()</code> a programma acceso</td></tr>
+<tr><td><code>x</code>, <code>y</code></td>
+    <td>l'angolo in alto a sinistra, dentro la finestra</td></tr>
+<tr><td><code>larghezza</code>, <code>altezza</code></td>
+    <td>la misura. Minimo 8. Si cambiano anche tirando le maniglie</td></tr>
+<tr><td><code>id</code></td>
+    <td>il numero che arriva alla procedura quando l'evento scatta. exide ne
+        da' uno libero: cambiarlo serve solo se lo si vuole uguale a qualcosa
+        di gia' scritto</td></tr>
+<tr><td><code>evento</code></td>
+    <td>QUALE evento chiama il tuo handler, fra quelli che quel controllo ha.
+        Scriverne uno che non c'e' non fa niente, e lo dice</td></tr>
+</table>
+
+<h3>Della finestra</h3>
+<table border="1">
+<tr><th>proprieta'</th><th>cosa diventa</th></tr>
+<tr><td><code>nome</code></td>
+    <td><code>&lt;nome&gt;_crea()</code> e <code>&lt;nome&gt;_proc()</code></td></tr>
+<tr><td><code>titolo</code></td>
+    <td>quel che si legge nella barra del titolo</td></tr>
+<tr><td><code>larghezza</code>, <code>altezza</code></td>
+    <td>la misura dell'AREA INTERNA: la barra e il bordo stanno fuori e li
+        aggiunge il sistema</td></tr>
+</table>
+
+<h2 id="strumenti">Gli strumenti, uno per uno</h2>
+
+<p>
+Per ognuno: a cosa serve, quali eventi ha (il primo e' quello con cui nasce) e
+con quali funzioni si comanda da dentro <code>finestra.c</code>.
+</p>
+
+<h3 id="pulsante">Pulsante</h3>
+<p>
+Si preme e chiama il suo handler. <b>Eventi:</b> Clic, SulMouse.
+<code>ex_testo_metti</code>/<code>ex_testo_prendi</code> per l'etichetta sopra.
+Il comando parte quando si ALZA il dito, non quando si preme: scivolare via
+prima di alzarlo annulla.
+Esempi: <a href="#es-scambio">scambiare due caselle</a>,
+<a href="#es-chiudi">chiudere la finestra</a>,
+<a href="#es-spunta">uscire con la conferma</a>,
+<a href="#es-apri">aprire una seconda finestra</a>.
+</p>
+
+<h3 id="etichetta">Etichetta</h3>
+<p>
+Testo e basta, non ci si scrive dentro. <b>Eventi:</b> SulMouse, Clic.
+<code>ex_testo_metti</code> per cambiarla a programma acceso.
+Esempio: <a href="#es-spunta">uscire con la conferma</a>, dove l'etichetta
+spiega perche' non e' successo niente.
+</p>
+
+<h3 id="casella">Casella</h3>
+<p>
+Una riga di testo modificabile. <b>Eventi:</b> Cambiato (a ogni tasto), Invio.
+<code>ex_testo_prendi</code> per leggerla, <code>ex_testo_metti</code> per
+riempirla, <code>ex_fuoco</code> per portarci il cursore.
+<b>Tiene 63 caratteri</b>: per un testo lungo serve un'<a href="#areatesto">Area
+testo</a>.
+Esempio: <a href="#es-scambio">scambiare due caselle</a>.
+</p>
+
+<h3 id="spunta">Spunta</h3>
+<p>
+Accesa o spenta, indipendente dalle altre. <b>Eventi:</b> Cambiato.
+<code>ex_acceso(h)</code> rende 1 o 0, <code>ex_accendi(h, 1)</code> la accende.
+Esempio: <a href="#es-spunta">uscire solo se la spunta e' accesa</a>.
+</p>
+
+<h3 id="radio">Radio</h3>
+<p>
+Una scelta fra fratelli: accenderne uno spegne gli altri <b>che hanno lo stesso
+padre</b>. Per due gruppi separati si mettono dentro due
+<a href="#riquadro">Riquadro</a> diversi. <b>Eventi:</b> Cambiato.
+Stesse funzioni della <a href="#spunta">Spunta</a>.
+</p>
+
+<h3 id="riquadro">Riquadro</h3>
+<p>
+Una cornice con un titolo: raggruppa, e fa da padre ai controlli che ci stanno
+dentro &mdash; ed e' cosi' che si separano due gruppi di
+<a href="#radio">Radio</a>. Nessun evento.
+</p>
+
+<h3 id="separatore">Separatore</h3>
+<p>Una riga incisa, per dividere. Nessun evento.</p>
+
+<h3 id="intestazione">Intestazione</h3>
+<p>Una fascia col titolo, per intestare una zona. Nessun evento.</p>
+
+<h3 id="lista">Lista</h3>
+<p>
+Un elenco che scorre, con una riga scelta. <b>Eventi:</b> Scelta, Apertura (il
+doppio clic e l'Invio).
+<code>ex_lista_svuota</code>, <code>ex_lista_aggiungi(h, "riga")</code>,
+<code>ex_lista_quante</code>, <code>ex_lista_scelta</code> (quale riga),
+<code>ex_lista_scegli(h, i)</code>, <code>ex_lista_testo(h, i)</code>.
+</p>
+
+<h3 id="areatesto">Area testo</h3>
+<p>
+Testo su piu' righe, con cursore, selezione e appunti (Ctrl+C, Ctrl+V,
+Ctrl+X). <b>Eventi:</b> Cambiato.
+<code>ex_area_svuota</code>, <code>ex_area_aggiungi(h, "riga")</code>,
+<code>ex_area_righe</code>, <code>ex_area_riga(h, i)</code>,
+<code>ex_area_riga_metti(h, i, "nuova")</code>,
+<code>ex_area_vai(h, riga, colonna)</code> porta il cursore,
+<code>ex_area_modificato</code> dice se si e' scritto dentro e
+<code>ex_area_pulita</code> azzera quella risposta dopo un salva.
+<b>Due aree per programma al massimo.</b>
+</p>
+
+<h3 id="areacodice">Area codice</h3>
+<p>
+Come l'<a href="#areatesto">Area testo</a> ma piu' capiente, e si puo'
+colorare: <code>ex_area_colora(h, ex_colora_c, 0)</code> accende la
+colorazione del C. <b>Eventi:</b> Cambiato.
+</p>
+
+<h3 id="elenco">Elenco</h3>
+<p>
+A discesa: si vede la scelta, si apre l'elenco. <b>Eventi:</b> Scelta.
+<code>ex_voci_svuota</code>, <code>ex_voce_aggiungi(h, "voce")</code>,
+<code>ex_voci_quante</code>, <code>ex_voce_scelta</code>,
+<code>ex_voce_scegli(h, i)</code>, <code>ex_voce_testo(h, i)</code>.
+</p>
+
+<h3 id="linguette">Linguette</h3>
+<p>
+Una fila di tab, una scelta. <b>Stesse funzioni dell'<a href="#elenco">Elenco</a></b>
+(<code>ex_voce_*</code>): sono lo stesso elenco disegnato in un altro modo.
+<b>Eventi:</b> Scelta. Il contenuto di ogni linguetta lo mostri tu, con
+<code>ex_mostra(h, 1)</code> e <code>ex_mostra(h, 0)</code> sui controlli.
+</p>
+
+<h3 id="scorrimento">Scorrimento</h3>
+<p>
+Una barra: <b>verticale o orizzontale secondo la forma</b> che le dai &mdash;
+piu' alta che larga viene verticale. <b>Eventi:</b> Scorso (a ogni pixel,
+mentre si trascina).
+<code>ex_scorri_limiti(h, massimo, pagina)</code>,
+<code>ex_scorri_dove(h)</code>, <code>ex_scorri_vai(h, dove)</code>.
+</p>
+
+<h2 id="esempi">Gli esempi</h2>
+
+<h3 id="es-scambio">Due caselle che si scambiano il testo</h3>
+<p>
+Vale per <a href="#casella">Casella</a> e per <a href="#pulsante">Pulsante</a>.
+Metti sulla maschera due Casella e un Pulsante, chiama le caselle Casella1 e
+Casella2, doppio clic sul pulsante e dentro <code>Pulsante1_Clic()</code>:
+</p>
+<pre>    char t[64];
+
+    strncpy(t, ex_testo_prendi(h_Casella1), sizeof(t) - 1);
+    t[sizeof(t) - 1] = 0;
+    ex_testo_metti(h_Casella1, ex_testo_prendi(h_Casella2));
+    ex_testo_metti(h_Casella2, t);
+    ex_procedura_base(g_form, EXM_DISEGNA, 0, 0);</pre>
+<div class="nota">
+<p>
+<b>La copia in <code>t</code> serve davvero.</b> <code>ex_testo_prendi</code>
+rende un puntatore AL TESTO DEL CONTROLLO, non una copia: scrivendo prima
+dentro Casella1 si perderebbe quel che si voleva leggere, e le due caselle
+finirebbero uguali invece che scambiate.
+</p>
+<p>
+<b>E l'ultima riga ridisegna.</b> Cambiare il testo cambia il dato, non i
+pixel: senza quella riga le caselle restano come si vedevano finche'
+qualcos'altro non fa ridisegnare la finestra.
+</p>
+</div>
+
+<h3 id="es-chiudi">Un pulsante che chiude la finestra</h3>
+<p>
+Vale per <a href="#pulsante">Pulsante</a> e per
+<a href="#finestre">le finestre secondarie</a>. Nella finestra PRINCIPALE:
+</p>
+<pre>    ex_esci(0);</pre>
+<p>
+<code>ex_esci</code> fa finire il ciclo dei messaggi dentro il main e il
+programma esce &mdash; la stessa cosa che fa il pulsante di chiusura della
+barra del titolo. In una finestra SECONDARIA no: li' chiudere vuol dire far
+sparire quella finestra e basta. Si chiama la procedura generata, che sa gia'
+come si fa:
+</p>
+<pre>    /* dentro un handler della finestra &laquo;opzioni&raquo; */
+    opzioni_proc(g_form_opzioni, EXM_CHIUDI, 0, 0);</pre>
+<p>
+Cosi' passa dalla stessa strada del pulsante di chiusura: distrugge la finestra
+E rimette a zero gli handle dei suoi controlli. Scrivere a mano
+<code>ex_distruggi()</code> funzionerebbe a meta' &mdash; la finestra sparirebbe
+e <code>h_Casella1</code> continuerebbe a puntare a un controllo che non c'e'
+piu'.
+</p>
+
+<h3 id="es-spunta">Si esce solo se la spunta e' accesa</h3>
+<p>
+Vale per tre strumenti insieme: la <a href="#spunta">Spunta</a> che si legge,
+il <a href="#pulsante">Pulsante</a> che decide e l'<a href="#etichetta">Etichetta</a>
+che spiega perche' non e' successo niente. Metti una Spunta (chiamala Conferma,
+testo &laquo;sono sicuro&raquo;), un'Etichetta (chiamala Avviso, testo vuoto) e
+un Pulsante (chiamalo Esci). Dentro <code>Esci_Clic()</code>:
+</p>
+<pre>    if (!ex_acceso(h_Conferma)) {
+        ex_testo_metti(h_Avviso, "spunta 'sono sicuro' per uscire");
+        ex_procedura_base(g_form, EXM_DISEGNA, 0, 0);
+        return;
+    }
+    ex_esci(0);</pre>
+<div class="nota">
+<p>
+<code>ex_acceso</code> si legge QUANDO SERVE: non si tiene una variabile che
+dica com'era la spunta &mdash; il controllo lo sa gia', e due posti che
+ricordano la stessa cosa prima o poi non sono piu' d'accordo.
+</p>
+<p>
+<b>E la spunta non ha bisogno di un handler per questo.</b> Il suo evento
+Cambiato serve a chi deve REAGIRE nel momento in cui si accende; qui non
+reagisce nessuno, si guarda dopo. Un handler vuoto in piu' e' codice che non fa
+niente e che il giorno dopo si legge chiedendosi cosa manca.
+</p>
+</div>
+
+<h3 id="es-apri">Un pulsante che apre una seconda finestra</h3>
+<p>
+Vale per <a href="#pulsante">Pulsante</a> e per
+<a href="#finestre">piu' di una finestra</a>. Fatta la finestra
+&laquo;finestra2&raquo; con Nuova, dentro <code>Pulsante1_Clic()</code>:
+</p>
+<pre>    finestra2_crea();</pre>
+<p>
+Premendolo dieci volte la finestra resta una: se e' gia' aperta, quella
+chiamata la ridisegna e basta.
+</p>
+
+<h2 id="funzioni">Qualche funzione che vale per tutti</h2>
+
+<table border="1">
+<tr><th>funzione</th><th>cosa fa</th></tr>
+<tr><td><code>ex_mostra(h, 0/1)</code></td><td>nascondi o mostra un controllo</td></tr>
+<tr><td><code>ex_fuoco(h)</code></td><td>portagli il cursore della tastiera</td></tr>
+<tr><td><code>ex_sposta(h, x, y)</code></td><td>spostalo a programma acceso</td></tr>
+<tr><td><code>ex_misura(h, w, h)</code></td><td>cambiagli la misura</td></tr>
+<tr><td><code>ex_titolo(finestra, s)</code></td><td>cambia il titolo di una finestra</td></tr>
+<tr><td><code>ex_procedura_base(finestra, EXM_DISEGNA, 0, 0)</code></td><td>ridisegna</td></tr>
+</table>
+
+<div class="nota">
+<p>
+<b>Cambiare un dato non ridisegna.</b> Le funzioni qui sopra cambiano quel che
+il controllo E'; i pixel si rifanno con l'ultima riga. E' il motivo per cui
+quasi tutti gli <a href="#esempi">esempi</a> finiscono cosi'.
+</p>
+</div>
+
+<h2 id="menu">Il menu</h2>
+
+<table border="1">
+<tr><th>menu</th><th>cosa c'e' dentro</th></tr>
+<tr><td><b>File</b></td>
+    <td>opera sul PROGETTO, non sul singolo sorgente: nuovo, apri, salva, salva
+        con nome (copia tutto l'albero in una directory nuova e ci si continua
+        a lavorare)</td></tr>
+<tr><td><b>Modifica</b></td>
+    <td><b>Annulla</b> (Ctrl+Z) torna indietro sul DISEGNO, fino a sedici
+        passi. Le altre voci &mdash; copia, incolla, taglia, cancella, cerca,
+        sostituisci &mdash; lavorano DENTRO il sorgente</td></tr>
+<tr><td><b>Strumenti</b></td>
+    <td><b>Sorgente</b> l'editor sui tre file del disegno;
+        <b>Shell</b> una riga di comando nella directory del progetto;
+        <b>Compilatore</b> scrive src/compila.sh, lo lancia con GCC e mostra
+        quel che dice; <b>Librerie</b> quali librerie condivise aggiungere alla
+        riga di compilazione; <b>Files</b> i file di src/, e un doppio clic ne
+        apre uno in un editor a parte; <b>Directory</b> apre il file manager
+        sul progetto; <b>Progetto</b> la scheda con autore, versione e
+        nota</td></tr>
+<tr><td><b>Aiuto</b></td>
+    <td>questa pagina, e le informazioni sul programma</td></tr>
+</table>
+
+<h2 id="limiti">Quel che non c'e'</h2>
+
+<ul>
+<li class="manca">Un controllo non si sposta da una finestra all'altra: si
+cancella di qua e si rifa' di la'.</li>
+<li class="manca">Non c'e' &laquo;Rifai&raquo;: c'e' Annulla e non il suo
+contrario.</li>
+<li class="manca">Le scorciatoie della finestra &laquo;Sorgente&raquo; sono
+etichette: nella finestra principale Ctrl+Z, Ctrl+N, Ctrl+O, Ctrl+S e Ctrl+Q
+funzionano, in quella dell'editor no.</li>
+</ul>
+
+<hr>
+<p class="navi">
+<a href="index.html">Torna alla documentazione</a> |
+<a href="sviluppo.html">&lt; Scrivere programmi</a> |
+<a href="#cima">Torna in cima</a>
+</p>
+<p class="piede">
+EX-OS &mdash; Graziano Falcone, exagonx@hotmail.com &mdash; GNU GPL v2.
+</p>
+
+</body>
+</html>

@@ -191,6 +191,31 @@ decide se il progetto sopravvive — e' il punto in cui VB6 si rompeva:
   vale UN passo, e solo se qualcosa e' cambiato davvero. La storia si azzera
   aprendo, creando o copiando un progetto — non deve attraversarli.
 
+! IL MANUALE E' UNA PAGINA, dal 3 settembre 2026 (diario: «GLI ID IN EXIDE»).
+  Aiuto > Manuale apre /exwin/doc/exide.html nel navigatore: indice in cima,
+  un id per ogni sezione e per ogni strumento, e gli esempi rimandano agli
+  strumenti che usano e viceversa - lo scambio fra due caselle vale come
+  esempio di Casella e di Pulsante insieme. La pagina sta nella guida con le
+  altre nove, stessa barra di navigazione e stesso foglio di stile.
+
+! E IL MANUALE DENTRO IL PROGRAMMA E' RIMASTO, come scorta per quando la
+  pagina non c'e' (componente /exwin non installato, CD montato a meta', solo
+  il binario copiato) - ma ACCORCIATO A PROMEMORIA: da 289 righe a 61, con
+  dentro come si comincia, i quattro file, le finestre e la tavola degli
+  strumenti coi loro eventi. Gli esempi, le proprieta' e il menu stanno solo
+  nella pagina: sono la parte lunga, cioe' quella che diverge per prima.
+
+! I TETTI DI EXIDE, da sapere prima di sbatterci: 64 CONTROLLI IN TUTTO il
+  progetto (non per maschera) e 8 MASCHERE. I nomi dei controlli sono unici in
+  tutto il progetto, non dentro la maschera, perche' finiscono in finestra.h
+  che e' un file solo. Le aree di testo sono al massimo due per programma
+  generato (AREA_MAX del toolkit), e una casella «testo» tiene 63 caratteri.
+
+! IL CLIC SULLE RIGHE DELLA FINESTRA «LIBRERIE» NON E' MAI STATO RIPROVATO
+  PIXEL PER PIXEL dopo l'ultima modifica (3 settembre 2026). Passa dallo stesso
+  codice di lista gia' provato altrove — winprova, il pannello strumenti — e
+  quindi il rischio e' basso, ma non e' la stessa cosa di averlo visto scattare.
+
 QUEL CHE MANCA, in ordine di quanto serve:
 
  1. UN CONTROLLO NON SI SPOSTA DA UNA MASCHERA ALL'ALTRA. Si cancella di qua e
@@ -212,6 +237,63 @@ QUEL CHE MANCA, in ordine di quanto serve:
   la creazione del progetto non riesce lo spiega e si ferma, invece di aprire
   un editor vuoto. Serve un disco montato in lettura e scrittura — e per
   COMPILARE serve anche il CD degli strumenti montato, oltre al disco.
+
+
+=============================================================================
+L'IMPAGINATO NON E' UNA LIBRERIA — e quando conviene che lo diventi
+=============================================================================
+
+lib/exhtml e' SOLO il parser: «da testo ad albero», 999 righe. Impaginare —
+le righe, i font, le tabelle, i link, il disegno, il colpo del mouse — sta
+dentro exwin/bin/browser/browser.c, 6748 righe, e non e' esportato da nessuna
+parte. E' il motivo per cui exide, per mostrare un manuale formattato, LANCIA
+il navigatore invece di disegnarlo in casa (3 settembre 2026): l'alternativa
+era duplicare un impaginatore, cioe' la copia da tenere d'accordo con quella
+vera.
+
+! IL COSTO DI OGGI, MISURATO: aprire il manuale vuol dire un secondo processo
+  con 5,2 MB di BSS (gli array dei nodi, dell'arena, dei pezzi e il buffer
+  della pagina) piu' la sua finestra. Su una macchina da 32 MB e' un sesto
+  della RAM finche' resta aperto. In cambio il manuale ha i link, il tasto
+  indietro e sta dentro l'insieme della guida.
+
+! E IL COSTO DI ESTRARLA, MISURATO: la zona dell'impaginazione (righe
+  1245-2959 circa) tocca 34 DELLE 89 GLOBALI del navigatore — g_ctrl, g_ctrl_n
+  e g_ctrl_fuoco (i controlli dei moduli, che si impaginano IN LINEA col
+  testo), g_mod*, g_imm (le immagini), g_js_acceso, g_doc, g_css, i font, i
+  link, la finestra g_f. Non e' «spostare millesettecento righe»: e' tagliare
+  trentaquattro legami e decidere per ognuno se diventa parametro, callback o
+  resta fuori.
+
+I clienti potenziali sono tre — il navigatore, la finestra del manuale dentro
+exide, e l'editor RTF quando si fara' (vedi la giornata del 3 settembre sulla
+domanda RTF). Con tre clienti l'estrazione si ripaga; con uno solo sarebbe
+stata prematura.
+
+LA STRADA, IN DUE PASSI E NON IN UNO:
+
+ 1. FATTO il 3 settembre 2026 (diario: «L'IMPAGINATO ESCE DA browser.c»).
+    browser.c 6749 -> 4824 righe, browser_impagina.c 1836, browser_priv.h 222.
+    La prova che non e' cambiato niente: la stessa pagina fotografata prima e
+    dopo differisce in dieci righe di pixel, dalla 582 alla 591, che sono
+    l'orologio della barra in basso — sopra, niente.
+    La giuntura, misurata: 21 variabili condivise, 11 funzioni chieste al
+    navigatore, 3 sole offerte a lui (impagina, disegna, uguale).
+
+ 2. RESTA DA FARE: guardare quell'elenco e decidere cosa puo' diventare
+    lib/exvista. I tre legami da tagliare sono scritti in browser_priv.h e
+    sono sempre gli stessi: i MODULI, le IMMAGINI e gli SCRIPT. Passano di li'
+    perche' un <input> si impagina IN LINEA col testo, e la riga che lo
+    contiene non si puo' misurare senza sapere quanto e' largo il controllo.
+    La forma della risposta e' nota: l'impaginato non deve sapere COSA sia quel
+    pezzo estraneo, deve poter chiedere a qualcuno quanto e' largo e alto, e
+    poi dirgli di disegnarsi. Sono due callback, non un trasloco.
+
+! E IL TAGLIO SI RIFA' CON LO SCRIPT, NON A MANO. tools non lo tiene (e' stato
+  usa e getta), ma il metodo si': si costruisce la mappa del file — definizioni
+  di primo livello, chi chiama chi, chi tocca quali globali — e si lascia dire
+  alla macchina dove passa il confine. A occhio, su seimila righe, il gruppo
+  «contiguo da font_di a disegna» non si vede.
 
 
 =============================================================================
@@ -274,6 +356,14 @@ Le prove che contano, e come si lanciano:
     Il ponte l'indirizzo della pagina ce l'ha (exdom_indirizzo), quindi manca
     solo la risoluzione.
 
+! I TETTI DEL CSS SONO STATI ALZATI il 4 settembre 2026, perche' un foglio
+  vero non ci stava: quello di DuckDuckGo e' 105.607 byte con 1652 selettori e
+  2207 dichiarazioni, contro tetti di 24 KB, 600 e 2000. Adesso sono 160 KB,
+  2400 e 5000, e costano 284 KB di BSS (misurati: 5.202.460 -> 5.492.956).
+  ! E IL TRONCAMENTO NON E' INNOCUO: con meta' foglio applicato la pagina di
+  DuckDuckGo spariva del tutto, schermo bianco. «stile troncato» nella riga di
+  stato e' il primo posto da guardare quando una pagina arriva e non si vede.
+
  6. `border` NEL CSS. Oggi i bordi si disegnano solo dall'attributo `border`
     delle tabelle. `border-collapse`, i colori e i lati separati non ci sono.
 
@@ -328,5 +418,22 @@ UNA STRADA CHIUSA, PERCHE' NON SI RIAPRA
   pagina dei RISULTATI no, e non e' colpa del nostro JavaScript: con lo
   User-Agent di Lynx, di w3m o di MSIE 6 google risponde «Aggiorna il
   browser», e con quello di un Firefox recente manda il suo controllo
-  anti-robot offuscato. Non c'e' una terza porta. I numeri stanno nel diario
-  al 2 settembre 2026 (sera).
+  anti-robot offuscato. I numeri stanno nel diario al 2 settembre 2026 (sera).
+
+  RIMISURATO IL 4 SETTEMBRE 2026, e adesso si sa anche PERCHE': google.com
+  risponde 200 con 91980 byte, tre script e ZERO link di risultato dentro
+  l'HTML — i risultati li costruisce il JavaScript, quindi non c'e' browser
+  senza JS che possa vederli. Nemmeno NetSurf: portare un motore di terze
+  parti non sposta questo problema di un millimetro.
+
+! LA TERZA PORTA C'E', ED E' UN ALTRO MOTORE. html.duckduckgo.com/html/?q=...
+  risponde in HTML semplice — dieci risultati con <h2><a class="result__a">,
+  nessuno script — e dal 4 settembre 2026 il nostro navigatore la mostra
+  DAVVERO, in HTTPS (diario: «SI CERCA DAVVERO, E NON SERVIVA PORTARE UN
+  BROWSER»). Mojeek invece manda un Captcha; marginalia e wikipedia rispondono
+  in HTML semplice come DuckDuckGo.
+
+! QUEL CHE MANCA ADESSO E' LA COMODITA', NON LA POSSIBILITA': si cerca
+  scrivendo l'indirizzo a mano. Una casella «Cerca» che componga l'indirizzo
+  del motore scelto — e la scelta del motore nelle impostazioni — sono poche
+  righe, e sono il prossimo passo naturale.

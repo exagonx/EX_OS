@@ -85,6 +85,122 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### Si cerca davvero, e non serviva portare un browser
+
+**testato** — dal vivo, in HTTPS: `html.duckduckgo.com/html/?q=exos` si apre
+nel navigatore di EX-OS e mostra i risultati, con titoli, indirizzi e testi di
+anteprima.
+
+La domanda era se portare Firefox, o NetSurf, per poter cercare. La risposta è
+venuta da cinque richieste HTTP, non da un preventivo — una per motore, con
+l'User-Agent vero di EX-OS:
+
+| motore | cosa risponde |
+|---|---|
+| google.com/search | 200, 91.980 byte, **tre script e zero link di risultato**: i risultati li costruisce il JavaScript |
+| mojeek.com/search | 200, `<title>Captcha</title>` |
+| html.duckduckgo.com | 200, 33.784 byte, **dieci risultati in HTML semplice** |
+| marginalia, wikipedia | HTML semplice |
+
+**Quindi NetSurf non risolve Google, e non è colpa sua**: NetSurf non esegue
+JavaScript, e Google i risultati in HTML non li manda a nessuno. Portare un
+motore di terze parti — mesi per NetSurf, un secondo sistema operativo per
+Firefox, che senza thread e senza Rust non parte nemmeno — non avrebbe spostato
+di un millimetro il problema che si voleva risolvere.
+
+**Poi il difetto vero.** La pagina di DuckDuckGo arrivava (TLS a posto, `200,
+31671 byte, 738 nodi`) e lo schermo restava bianco. La riga di stato diceva
+anche «stile troncato», ed era lì la risposta: la stessa pagina salvata in
+locale *senza* foglio di stile si disegnava subito. **Il foglio di DuckDuckGo è
+105.607 byte e il tetto era 24.576**: il navigatore ne leggeva un quarto e si
+fermava a metà di una regola, e con mezzo foglio applicato la pagina spariva.
+
+I tre numeri che servivano davvero — 1652 selettori, 2207 dichiarazioni, 105 KB
+— contro tetti di 600, 2000 e 24 KB. Alzati a 2400, 5000 e 160 KB: costano
+**284 kilobyte di BSS** su un programma che ne aveva già 5,2 MB, misurati con
+`size` e non stimati.
+
+> **Si cerca dal proprio navigatore senza fingersi nessuno.** Non serviva
+> un'impronta identica a Chrome, né il jitter umano, né un motore di terze
+> parti: serviva un motore che risponde in HTML e un tetto alzato. E il terzo
+> risultato che DuckDuckGo ha restituito era `github.com/exagonx/EX_OS` — cioè
+> questo progetto.
+
+### L'impaginato esce da browser.c, e la prova è che non si vede
+
+**testato** — la stessa pagina fotografata prima e dopo: dieci righe di pixel
+diverse su seicento, dalla 582 alla 591, e sono **l'orologio** della barra in
+basso. Sopra, niente. Primo dei due passi verso una libreria di testo
+formattato: si spezza il file prima di spezzare la libreria.
+
+```
+browser.c            6749 -> 4824 righe
+browser_impagina.c        1836 righe   (l'impaginato, uscito da lì)
+browser_priv.h             222 righe   (la giuntura, che prima non c'era)
+```
+
+**Il taglio se l'è fatto dire dalla macchina.** Prima di spostare una riga ho
+fatto costruire la mappa del file — centotrentotto definizioni, chi chiama chi,
+chi tocca quali variabili globali — e il gruppo dell'impaginazione è venuto
+fuori da solo: ventotto funzioni, 1588 righe, *contigue*. A occhio, su seimila
+righe, non si vedeva.
+
+E soprattutto è venuta fuori la misura del taglio, che era la domanda vera: 21
+variabili condivise, 11 funzioni chieste al navigatore e **3 sole offerte a
+lui**. Verso l'esterno l'impaginato è quasi chiuso; quel che lo tiene legato
+non sono le chiamate, sono le variabili — esattamente il genere di legame che
+non si vede finché tutto sta in un file solo.
+
+> **Tre errori dello script, tutti dello stesso tipo.** Per una funzione
+> scritta su una riga sola la firma veniva tagliata all'*ultima* parentesi, che
+> sta dentro il corpo: nell'intestazione finiva una graffa aperta. Una
+> dichiarazione che finisce con un commento invece che col punto e virgola
+> faceva inghiottire la riga dopo. E i globali dichiarati più d'uno per riga non
+> venivano visti affatto. Ogni volta: rimetti il file com'era, correggi lo
+> *script*, rifai il taglio da capo — correggere il risultato invece dello
+> script avrebbe voluto dire un taglio che non si sa più rifare, e questo taglio
+> va rifatto il giorno del passo 2.
+
+### Il manuale di EX-IDE diventa una pagina, con l'indice
+
+**testato** — Aiuto > Manuale apre il navigatore su
+`/exwin/doc/exide.html`, e un clic sull'indice porta esattamente sul
+paragrafo. Ventimila byte, ventinove `id`, cinquantasei rimandi interni.
+
+**Non si riscrive un visualizzatore**, è la stessa decisione con cui
+«Directory» non riscrive un file manager ma lancia `filemgr`: il navigatore
+c'è, impagina, colora, segue i link e lo fa già per le altre nove pagine della
+guida. Il manuale di EX-IDE è diventato la decima pagina di quell'insieme —
+stessa barra di navigazione, stesso foglio di stile, una riga nell'indice della
+documentazione — e le barre delle altre pagine ora lo nominano.
+
+**Gli esempi sono condivisi, ed è il motivo per cui serviva l'indice.** Lo
+scambio fra due caselle è un esempio di *Casella* tanto quanto di *Pulsante*;
+l'uscita con la conferma vale per *Spunta*, per *Pulsante* e per «come si
+esce». Ripeterlo sotto ognuno vorrebbe dire tre copie da tenere d'accordo;
+metterlo sotto uno solo vorrebbe dire che chi cerca l'altro non lo trova.
+Perciò gli esempi stanno tutti in fondo, con un `id` per uno, e **ogni
+strumento ci rimanda** — e ogni esempio dice per quali strumenti vale. È
+l'unica struttura in cui la stessa cosa è scritta una volta sola e si raggiunge
+da tutti i posti da cui la si cerca; senza il salto all'ancora sarebbe stata un
+elenco di titoli e «scorri finché non lo trovi».
+
+> **Il manuale dentro il programma è rimasto**, ed è la ragione per cui era
+> stato scritto: un manuale che sta in un file è un manuale che un giorno non
+> c'è — il componente `/exwin` non installato, un CD montato a metà, il solo
+> binario copiato. Adesso è la seconda scelta invece che l'unica, e la sua
+> prima riga dice dov'è quello buono. Ma sono due copie dello stesso testo e
+> prima o poi divergeranno: la strada, scritta fra le cose da fare, è
+> accorciare quella interna a un promemoria e lasciare alla pagina il testo
+> lungo.
+
+**E il manuale interno è diventato un promemoria**, da 289 righe a 61: come si
+comincia, i quattro file, le finestre e la tavola degli strumenti coi loro
+eventi. Gli esempi, le proprietà una per una e il menu stanno solo nella
+pagina — sono la parte lunga, cioè quella che diverge per prima. Il binario di
+exide cala di undici kilobyte, e la prima riga del promemoria dice che se lo
+stai leggendo vuol dire che la pagina non c'era.
+
 ### Le ancore: un link che porta a un punto della pagina
 
 **testato** — quattro casi dentro EX-OS: un'ancora della stessa pagina, una che

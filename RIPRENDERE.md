@@ -26,7 +26,215 @@ manca» apre quello.
 
 ---
 
+# DOVE RIPRENDERE — 4 settembre 2026
+
+## 4 settembre 2026 — SI CERCA DAVVERO, E NON SERVIVA PORTARE UN BROWSER
+
+La domanda era: portiamo Firefox, o NetSurf, per poter cercare? La risposta e'
+venuta da cinque richieste HTTP, non da un preventivo.
+
+### PRIMA LA MISURA: CHE COSA RISPONDE OGNUNO A UN CLIENT ONESTO
+
+Cinque motori, una richiesta ciascuno, con l'User-Agent vero di EX-OS — che e'
+`EX-OS`, perche' il navigatore non ne imposta uno e exhttp mette quello:
+
+    google.com/search    HTTP 200, 91980 byte, TRE script e ZERO link di
+                         risultato nell'HTML: e' un guscio, i risultati li
+                         costruisce il JavaScript
+    mojeek.com/search    HTTP 200 ... <title>Captcha</title>
+    html.duckduckgo.com  HTTP 200, 33784 byte, DIECI risultati veri in HTML
+                         semplice: <h2><a class="result__a" href=...>
+    marginalia           HTTP 200, HTML semplice
+    wikipedia            HTTP 200, HTML semplice
+
+! **QUINDI NETSURF NON RISOLVE GOOGLE, E NON E' COLPA SUA.** NetSurf non
+esegue JavaScript (o lo fa a meta' con Duktape), e Google i risultati non li
+manda in HTML a nessuno. Portare un browser di terze parti — 6 mesi per
+NetSurf, un secondo sistema operativo per Firefox, che senza thread e senza
+Rust non parte nemmeno — non sposta di un millimetro il problema che ci si
+voleva risolvere.
+
+! **E IL TERZO RISULTATO DI DUCKDUCKGO ERA github.com/exagonx/EX_OS.** Cioe'
+questo progetto. Il motore che risponde in HTML semplice conosce EX-OS meglio
+di quello che pretende JavaScript.
+
+### POI IL DIFETTO VERO: LA PAGINA ARRIVAVA E RESTAVA BIANCA
+
+Aperta `html.duckduckgo.com/html/?q=exos` col navigatore di EX-OS: TLS a
+posto, `200, 31671 byte, 738 nodi` nella riga di stato — e lo schermo bianco.
+La riga diceva anche «stile troncato», ed era li' la risposta.
+
+Isolato in due passi, senza indovinare: la stessa pagina salvata in locale
+**senza** il foglio di stile si e' disegnata subito, coi risultati leggibili.
+Quindi non era l'HTML: era il CSS.
+
+! **IL FOGLIO DI DUCKDUCKGO E' 105.607 BYTE, E IL TETTO ERA 24.576.** Il
+navigatore ne leggeva un quarto e si fermava a meta' di una regola; con meta'
+foglio applicato la pagina spariva. Contati i tre numeri che servivano
+davvero:
+
+    selettori     1652  (tetto 600)
+    dichiarazioni 2207  (tetto 2000)
+    arena          105 KB (tetto 24 KB)
+
+Nuovi tetti: 2400 selettori, 5000 dichiarazioni, 160 KB di arena. **Costano
+284 kilobyte di BSS** su un programma che ne aveva gia' 5,2 MB — misurati con
+`size`, non stimati: 5.202.460 -> 5.492.956.
+
+### LA PROVA
+
+Con i tetti nuovi, dal vivo e in rete: `https://html.duckduckgo.com/html/?q=exos`
+si apre e mostra i risultati — titoli, indirizzi verdi, testi di anteprima, la
+casella con dentro la query — e la riga di stato dice «connessione cifrata».
+E le pagine locali restano identiche: il manuale di exide fotografato prima e
+dopo differisce nelle solite dieci righe dell'orologio, e in nient'altro.
+
+! **SI CERCA DAL PROPRIO NAVIGATORE, SENZA FINGERSI NESSUNO.** Non serve
+un'impronta uguale a Chrome, non serve il jitter umano, non serve un motore di
+terze parti: serviva un motore che risponde in HTML e un tetto alzato.
+
 # DOVE RIPRENDERE — 3 settembre 2026
+
+## 3 settembre 2026 (notte) — L'IMPAGINATO ESCE DA browser.c, E LA PROVA E' CHE NON SI VEDE
+
+Primo dei due passi verso una libreria di testo formattato (l'altro sta in
+`in_lavorazione.txt`): **si spezza il file prima di spezzare la libreria**.
+
+    browser.c            6749 -> 4824 righe
+    browser_impagina.c        1836 righe   (l'impaginato, uscito da li')
+    browser_priv.h             222 righe   (la giuntura, che prima non c'era)
+
+### IL TAGLIO SI E' FATTO DIRE DALLA MACCHINA, NON DECIDERE A OCCHIO
+
+Prima di spostare una riga ho fatto costruire la mappa del file: le
+centotrentotto definizioni di primo livello, chi chiama chi, e quale funzione
+tocca quale variabile globale. Da li' il gruppo dell'impaginazione e' venuto
+fuori da solo — ventotto funzioni, 1588 righe, **contigue**: da `font_di` a
+`disegna`, senza niente di estraneo in mezzo.
+
+E soprattutto e' venuta fuori la misura del taglio, che era la domanda vera:
+
+    19 + 2 variabili condivise   (i moduli, i controlli, le immagini, il
+                                  documento, il CSS, i font, i link, la
+                                  finestra, lo scorrimento)
+    11 funzioni chieste al navigatore   (area_x/y/w/h, i font, le immagini,
+                                         la barra, i margini della riga)
+     3 funzioni offerte a lui           (impagina, disegna, uguale)
+
+! **TRE SOLE FUNZIONI ESCONO DAL GRUPPO**, e questo e' il numero che dice che
+l'estrazione ha senso: verso l'esterno l'impaginato e' quasi chiuso. Quel che
+lo tiene legato non sono le CHIAMATE, sono le VARIABILI — ed e' esattamente il
+genere di legame che non si vede finche' tutto sta in un file solo.
+
+### LA PROVA: LA STESSA PAGINA, GLI STESSI PIXEL
+
+Spezzare un file «senza cambiare niente» e' una promessa che si verifica o non
+vale. Stessa pagina — il manuale di exide, che ha titoli, tabelle, codice
+colorato, riquadri e link — fotografata prima e dopo:
+
+    righe diverse in tutto: 10, dalla 582 alla 591
+    righe diverse sopra la barra delle applicazioni: NESSUNA
+
+Le dieci righe sono **l'orologio** della barra in basso: gli scatti distano un
+quarto d'ora. Tutto il resto e' identico byte per byte. E il salto all'ancora
+— che attraversa la giuntura, perche' `ancora_vai` sta in browser.c e legge i
+pezzi che scrive l'impaginato — funziona come prima.
+
+### TRE ERRORI DELLO SCRIPT, TUTTI DELLO STESSO TIPO
+
+Il taglio l'ha fatto uno script, e tre volte ha sbagliato prendendo la riga
+per il suo aspetto invece che per la sua grammatica:
+
+  - per una funzione scritta **su una riga sola** —
+    `static int riga_x(void) { return area_x() + g_marg_sx; }` — la firma
+    veniva tagliata all'ULTIMA parentesi tonda, che sta dentro il corpo:
+    nell'intestazione finiva una graffa aperta, e da li' in poi il compilatore
+    credeva che tutto il file fosse dentro `riga_x`;
+  - una dichiarazione che finisce **con un commento** invece che con il punto
+    e virgola faceva inghiottire allo script anche la riga dopo;
+  - e i globali dichiarati **piu' d'uno per riga** (`static int g_marg_sx,
+    g_marg_dx;`) non venivano visti affatto dalla ricerca.
+
+! **SI RIPARTE SEMPRE DALLA COPIA INTATTA.** Ogni giro e' stato: rimetti
+`browser.c` com'era, correggi lo script, rifai il taglio da capo. Correggere il
+risultato invece dello script avrebbe voluto dire un taglio che non si sa piu'
+rifare — e questo taglio va rifatto, il giorno del passo 2.
+
+### QUEL CHE RESTA (ed e' scritto anche in browser_priv.h)
+
+Non e' una libreria e non finge di esserlo: di qui passano ancora i moduli, le
+immagini e gli script, perche' un `<input>` si impagina IN LINEA col testo e la
+riga che lo contiene non si puo' misurare senza sapere quanto e' largo quel
+controllo. Sono i tre legami che il passo 2 dovra' tagliare — e adesso sono
+scritti in un file invece che sparsi in seimila righe.
+
+
+
+## 3 settembre 2026 (notte) — GLI ID IN EXIDE: IL MANUALE DIVENTA UNA PAGINA
+
+Il manuale di exide era un elenco di stringhe dentro il programma: si apriva
+in una finestrella di testo, si leggeva una volta e la seconda si cercava la
+riga scorrendo. Adesso e' `/exwin/doc/exide.html` — ventimila byte,
+ventinove `id`, cinquantasei rimandi interni — e Aiuto > Manuale lo apre nel
+navigatore.
+
+### NON SI RISCRIVE UN VISUALIZZATORE
+
+! **E' LA STESSA DECISIONE DI «DIRECTORY», che non riscrive un file manager
+ma lancia `filemgr`.** Il navigatore c'e', impagina, colora, segue i link, e
+lo fa gia' per le altre nove pagine della guida; e da stanotte sa saltare
+alle ancore, che era il pezzo che mancava perche' un indice servisse a
+qualcosa. Il manuale di exide e' diventato la decima pagina di quell'insieme:
+stessa barra di navigazione, stesso `stile.css`, e una riga nella tabella di
+`index.html`. Le barre delle altre pagine adesso lo nominano — otto file
+toccati, una riga per uno.
+
+### GLI ESEMPI SONO CONDIVISI, ED E' IL MOTIVO DELL'INDICE
+
+! **UN ESEMPIO VALE PER PIU' DI UNO STRUMENTO.** Lo scambio fra due caselle e'
+un esempio di Casella tanto quanto di Pulsante; l'uscita con la conferma vale
+per Spunta, per Pulsante e per «come si esce». Ripeterlo sotto ognuno vorrebbe
+dire tre copie da tenere d'accordo; metterlo sotto uno solo vorrebbe dire che
+chi cerca l'altro non lo trova. Percio' gli esempi stanno tutti in fondo, con
+un `id` per uno, e **ogni strumento ci rimanda** — e ogni esempio dice per
+quali strumenti vale, con il rimando all'indietro.
+
+E' l'unica struttura in cui la stessa cosa e' scritta una volta sola e si
+raggiunge da tutti i posti da cui la si cerca. Senza il salto all'ancora non
+sarebbe stata possibile: sarebbe stato un elenco di titoli e «scorri finche'
+non lo trovi».
+
+### QUEL CHE E' RIMASTO, E IL SUO COSTO
+
+Il manuale dentro il programma **e' rimasto**, ed e' la ragione per cui era
+stato scritto: un manuale che sta in un file e' un manuale che un giorno non
+c'e' — il componente `/exwin` non installato, un CD montato a meta', il solo
+binario copiato. Adesso e' la seconda scelta invece che l'unica, e la sua
+prima riga dice dov'e' quello buono.
+
+! **ERANO DUE COPIE DELLO STESSO TESTO, e sono state ridotte a una.** Tenerne
+due lunghe vuol dire due che divergono: quella dentro il programma e' passata
+da **289 righe a 61** — come si comincia, i quattro file, le finestre, e la
+tavola degli strumenti con i loro eventi e le funzioni che li comandano — e la
+sua prima riga dice che il manuale vero e' la pagina, e che se stai leggendo
+quello vuol dire che la pagina non c'era. Gli esempi, le proprieta' una per
+una e il menu stanno solo nella pagina: sono la parte lunga, cioe' quella che
+diverge per prima. Il binario di exide cala di undici kilobyte.
+
+### COME SI E' PROVATO
+
+    Aiuto > Manuale dentro exide  -> si apre il navigatore su
+                                     file:///exwin/doc/exide.html, 1091 nodi
+    clic su «Le proprieta'» nell'indice
+                                  -> il titolo esattamente in cima, e le
+                                     tabelle disegnate col foglio di stile
+                                     (intestazioni azzurre, code in bruno)
+    clic dove non c'e' un link    -> non succede niente, come deve
+
+Il file di prova delle ancore, quello di ieri sera, e' stato tolto anche
+dall'albero dell'ISO: c'era rimasto.
+
+
 
 ## 3 settembre 2026 (notte) — LE ANCORE: UN LINK CHE PORTA A UN PUNTO DELLA PAGINA
 

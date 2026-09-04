@@ -84,6 +84,118 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### Search actually works, and no browser port was needed
+
+**tested** — live, over HTTPS: `html.duckduckgo.com/html/?q=exos` opens in the
+EX-OS browser and shows the results, with titles, addresses and snippets.
+
+The question was whether to port Firefox, or NetSurf, in order to search. The
+answer came from five HTTP requests rather than an estimate — one per engine,
+with EX-OS's real User-Agent:
+
+| engine | what it answers |
+|---|---|
+| google.com/search | 200, 91,980 bytes, **three scripts and zero result links**: the results are built by JavaScript |
+| mojeek.com/search | 200, `<title>Captcha</title>` |
+| html.duckduckgo.com | 200, 33,784 bytes, **ten results in plain HTML** |
+| marginalia, wikipedia | plain HTML |
+
+**So NetSurf does not solve Google, and that is not its fault**: NetSurf does
+not run JavaScript, and Google sends result HTML to nobody. Porting a
+third-party engine — months for NetSurf, a second operating system for Firefox,
+which without threads and without Rust does not even start — would not have
+moved the actual problem an inch.
+
+**Then the real defect.** The DuckDuckGo page arrived (TLS fine, `200, 31671
+bytes, 738 nodes`) and the screen stayed blank. The status line also said "style
+truncated", and that was the answer: the same page saved locally *without* its
+stylesheet drew immediately. **DuckDuckGo's stylesheet is 105,607 bytes and the
+cap was 24,576**: the browser read a quarter of it and stopped halfway through a
+rule, and with half a stylesheet applied the page vanished.
+
+The three numbers that actually mattered — 1652 selectors, 2207 declarations,
+105 KB — against caps of 600, 2000 and 24 KB. Raised to 2400, 5000 and 160 KB:
+they cost **284 kilobytes of BSS** on a program that already had 5.2 MB,
+measured with `size` rather than guessed.
+
+> **You can search from your own browser without impersonating anyone.** No
+> Chrome-identical fingerprint was needed, no human jitter, no third-party
+> engine: what was needed was an engine that answers in HTML, and a raised cap.
+> And the third result DuckDuckGo returned was `github.com/exagonx/EX_OS` —
+> this project.
+
+### The layout leaves browser.c, and the proof is that you cannot see it
+
+**tested** — the same page photographed before and after: ten rows of pixels
+differ out of six hundred, from 582 to 591, and they are **the clock** in the
+taskbar. Above that, nothing. First of the two steps towards a formatted-text
+library: split the file before splitting the library.
+
+```
+browser.c            6749 -> 4824 lines
+browser_impagina.c        1836 lines   (the layout, moved out of it)
+browser_priv.h             222 lines   (the seam, which did not exist before)
+```
+
+**The machine was asked where to cut.** Before moving a single line I had a map
+of the file built — a hundred and thirty-eight definitions, who calls whom, who
+touches which global — and the layout group fell out by itself: twenty-eight
+functions, 1588 lines, *contiguous*. By eye, over six thousand lines, it was
+not visible.
+
+And above all it produced the measure of the cut, which was the real question:
+21 shared variables, 11 functions asked of the browser and **only 3 offered
+back**. Outwards the layout is nearly closed; what ties it down are not the
+calls but the variables — exactly the kind of tie you cannot see while
+everything lives in one file.
+
+> **Three script mistakes, all of the same kind.** For a one-line function the
+> signature was cut at the *last* parenthesis, which sits inside the body: an
+> open brace ended up in the header. A declaration ending in a comment instead
+> of a semicolon swallowed the next line. And globals declared several per line
+> were not seen at all. Every time: restore the file, fix the *script*, redo the
+> cut from scratch — fixing the output instead of the script would have meant a
+> cut nobody can reproduce, and this cut must be reproduced on the day of step 2.
+
+### The EX-IDE manual becomes a page, with an index
+
+**tested** — Help > Manual opens the browser on `/exwin/doc/exide.html`, and a
+click on the index lands exactly on the paragraph. Twenty thousand bytes,
+twenty-nine `id`s, fifty-six internal links.
+
+**You do not rewrite a viewer**: it is the same decision by which "Directory"
+does not rewrite a file manager but launches `filemgr`. The browser is there,
+it lays out, colours and follows links, and already does so for the other nine
+pages of the guide. The EX-IDE manual has become the tenth page of that set —
+same navigation bar, same stylesheet, one row in the documentation index — and
+the other pages' bars now name it.
+
+**The examples are shared, and that is why the index was needed.** Swapping two
+text boxes is as much a *Text box* example as a *Button* one; quitting with a
+confirmation counts for *Check*, for *Button* and for "how you quit". Repeating
+it under each would mean three copies to keep in agreement; putting it under
+only one would mean whoever looks for the other never finds it. So the examples
+all live at the end, one `id` each, and **every tool links to them** — and every
+example says which tools it covers. It is the only structure where the same
+thing is written once and reachable from every place you look for it; without
+anchor jumping it would have been a list of titles and "scroll until you find
+it".
+
+> **The in-program manual stayed**, and that is why it was written: a manual
+> that lives in a file is a manual that one day is not there — the `/exwin`
+> component not installed, a CD half mounted, only the binary copied. It is now
+> the second choice instead of the only one, and its first line says where the
+> good one is. But they are two copies of the same text and will drift: the way
+> out, written down among the open items, is to shorten the internal one to a
+> reminder and leave the long text to the page.
+
+**And the in-program manual became a reminder**, from 289 lines to 61: how to
+start, the four files, the windows and the table of tools with their events.
+The examples, the properties one by one and the menu live only in the page —
+they are the long part, the part that drifts first. The exide binary loses
+eleven kilobytes, and the reminder's first line says that if you are reading it
+the page was not there.
+
 ### Anchors: a link that goes to a point in the page
 
 **tested** — four cases inside EX-OS: an anchor in the same page, one that does
