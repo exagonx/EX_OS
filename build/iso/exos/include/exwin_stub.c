@@ -66,6 +66,7 @@ static struct {
     void        (*mostra)(ExFinestra, int);
     void        (*fuoco)(ExFinestra);
     void        (*fuoco_via)(ExFinestra);
+    ExFinestra  (*fuoco_chi)(ExFinestra);
     void        (*spegni)(void);
     unsigned int (*app_metti)(const char *, unsigned int);
     unsigned int (*app_prendi)(char *, unsigned int);
@@ -179,6 +180,7 @@ static void assicura(void)
     P.mostra         = (void (*)(ExFinestra, int))         chiedi(t, "ex_mostra");
     P.fuoco          = (void (*)(ExFinestra))              chiedi(t, "ex_fuoco");
     P.fuoco_via      = (void (*)(ExFinestra))              chiedi(t, "ex_fuoco_via");
+    P.fuoco_chi      = (ExFinestra (*)(ExFinestra))        chiedi(t, "ex_fuoco_chi");
     P.spegni         = (void (*)(void))                    chiedi(t, "ex_spegni_scrivania");
     P.app_metti      = (unsigned int (*)(const char *, unsigned int)) chiedi(t, "ex_appunti_metti");
     P.app_prendi     = (unsigned int (*)(char *, unsigned int))       chiedi(t, "ex_appunti_prendi");
@@ -316,6 +318,7 @@ void ex_incavo(ExFinestra f, int x, int y, int w, int h)
 void ex_mostra(ExFinestra f, int v)        { assicura(); P.mostra(f, v); }
 void ex_fuoco(ExFinestra f)                { assicura(); P.fuoco(f); }
 void ex_fuoco_via(ExFinestra f)            { assicura(); P.fuoco_via(f); }
+ExFinestra ex_fuoco_chi(ExFinestra f)      { assicura(); return P.fuoco_chi(f); }
 void ex_spegni_scrivania(void)             { assicura(); P.spegni(); }
 unsigned int ex_appunti_metti(const char *t, unsigned int n)
                                            { assicura(); return P.app_metti(t, n); }

@@ -13,7 +13,136 @@ si sfoglia con `tools/diario.sh` invece di leggerlo tutto.
 
 
 #############################################################################
-# DA COMPLETARE — URGENTE (scritto il 4 settembre 2026, per riprendere da qui)
+# COME SI LEGGE QUESTO FILE — l'INDICE, poi UN compito solo
+#############################################################################
+
+Questo file e' lungo ottocento righe e cresce. Leggerlo tutto per scegliere
+cosa fare vuol dire spendere il contesto in cose che non si faranno oggi.
+
+    sed -n '/^INDICE/,/^# FINE INDICE/p' in_lavorazione.txt
+        l'indice, e basta questo per scegliere
+
+    tools/locali/lavori.sh elenco           lo stesso indice
+    tools/locali/lavori.sh elenco 1         solo il livello 1
+    tools/locali/lavori.sh mostra SUONO-REG un compito solo, per intero
+    tools/locali/lavori.sh cerca mixer      cerca, dicendo di chi e' la riga
+    tools/locali/lavori.sh controlla        l'indice promette quel che il
+                                            file mantiene? (da rifare dopo
+                                            ogni compito chiuso)
+
+! SE `tools/locali/` NON C'E', NON E' UN GUASTO: e' ignorata da git apposta
+  (vedi «COME SI LAVORA QUI» qui sotto) e un `git clean` se la porta via. Il
+  file resta leggibile con `sed`, e lo script si riscrive in un minuto — e' per
+  questo che li' dentro non ci sono fatti, solo attrezzi.
+
+Ogni compito ha un'ETICHETTA che comincia con una chiocciola — @SUONO-REG —
+e non cambia mai. I rimandi si scrivono con quella, non col numero di riga.
+
+    sed -n '/@SUONO-REG/,/^ *@/p' in_lavorazione.txt
+
+
+#############################################################################
+# COME SI LAVORA QUI — due regole, e valgono prima di ogni compito
+#############################################################################
+
+! 1. IL TEMPO SI SPENDE, IL CONTESTO NO. Questa macchina e' dedicata al 100% a
+  questo lavoro: la sua CPU non serve a nient'altro e non costa niente. La
+  risorsa scarsa e' il CONTESTO — quel che entra ed esce dalla finestra di
+  chi lavora. Fra una strada che costa dieci minuti di macchina e una che
+  costa mille righe lette, si prende SEMPRE la prima, anche quando la seconda
+  sembra piu' diretta. Aspettare una compilazione, rilanciare una prova in
+  QEMU, far girare uno script su tutto l'albero: sono tutte gratis.
+
+! 2. QUEL CHE NON RICHIEDE UN RAGIONAMENTO LO FA UNA MACCHINA. Cercare con una
+  condizione, contare, estrarre, confrontare due elenchi, sostituire in cento
+  posti, costruire la mappa di un file grosso: sono compiti da `grep`, `sed`,
+  `awk` o venti righe di Python. Farli leggendo i file dentro il contesto vuol
+  dire spendere la risorsa scarsa per risparmiare quella abbondante, che e'
+  l'errore esattamente al contrario.
+
+  E LO SCRIPT SI CONSERVA, in `tools/locali/` (ignorata da git, vedi il blocco
+  in fondo a .gitignore). Uno script gia' scritto costa zero la seconda volta;
+  rifarlo costa quanto la prima.
+
+  ! QUESTA REGOLA E' NATA DA UN COSTO GIA' PAGATO, ed e' scritto nella sezione
+    @VISTA: «IL TAGLIO SI RIFA' CON LO SCRIPT, NON A MANO. tools non lo tiene
+    (e' stato usa e getta), ma il metodo si'». Quello script serviva di nuovo
+    la settimana dopo, e non c'era piu'.
+
+  ! E IN `tools/locali/` NON CI VANNO FATTI, SOLO ATTREZZI. Quel che si impara
+    va in RIPRENDERE.md o qui, che sono tracciati: una directory ignorata la
+    cancella un `git clean -xdf` senza chiedere niente a nessuno.
+
+  QUEL CHE C'ERA IL 4 SETTEMBRE 2026 (l'elenco sta qui, che e' tracciato; il
+  codice sta li', che non lo e' — se sparisce si riscrive in un minuto):
+
+    lavori.sh     legge questo file senza leggerlo tutto: elenco, mostra, cerca
+    mappa_c.py    la mappa di un sorgente C grosso — definizioni di primo
+                  livello, chi chiama chi, chi tocca quali globali — e
+                  `--confine a,b,c` che MISURA cosa costerebbe tagliare li'
+    sost.py       cerca e sostituisce in piu' file, prova a vuoto per
+                  predefinito, con `--solo-se` e `--tranne-se` per le
+                  sostituzioni condizionate
+
+
+INDICE — I COMPITI, IN ORDINE DI LIVELLO
+#############################################################################
+
+! IL LIVELLO NON E' L'IMPORTANZA: E' L'ORDINE IN CUI SI PUO' FARE. Livello 1
+  vuol dire «si puo' cominciare adesso, non aspetta niente». Livello 2 vuol
+  dire che aspetta un livello 1, e cosi' via. Se per fare il programma X serve
+  la libreria Y, la libreria e' 1 e il programma e' 2 — non perche' conti di
+  piu', ma perche' senza di lei l'altro non si puo' nemmeno cominciare.
+  Dentro lo stesso livello l'ordine e' quello di quanto pesa.
+
+! E IL LIVELLO CAMBIA. Finito un compito, quel che lo aspettava scende di uno:
+  chi chiude un livello 1 guarda subito se qualche 2 e' appena diventato 1, e
+  lo scrive qui. E' l'unica manutenzione che questo indice chiede.
+
+LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
+---  ---------------  -----------------------------------------------------
+ --  @RIPRESA         dove si era arrivati, e come si riprovano i fili
+ --  @CHIUSA          una strada chiusa, scritta perche' non si riapra
+
+  1  @ABI-BERSAGLIO   il bersaglio e' indietro rispetto alla libc: libcrypto e'
+                      stata rifatta, il resto no
+  1  @DIF-DRIVER      da CD un driver ogni tanto muore appena avviato
+  1  @DIF-PANIC       una volta su quattordici il kernel va in panic in kfree
+  1  @FILI-FAULT      un filo che muore di page fault non porta via il processo
+  1  @FILI-ZOMBIE     lo zombie di un filo che nessuno aspetta lo prende la shell
+  1  @VISTA           l'impaginato non e' una libreria: due callback, non un trasloco
+  1  @SUONO-REG       la registrazione non c'e': nessun driver accende AUDIO_CAP_REGISTRA
+  1  @SUONO-MIX       un client alla volta: il secondo che suona riceve -EBUSY
+  1  @SUONO-CAMPIONI  la tavola d'onde e' otto seni: servono campioni da file
+  1  @NAV-CJK         cinese, giapponese e coreano: mancano i font
+  1  @NAV-UNITA       le unita' relative del CSS (em, %, rem) e @media
+  1  @NAV-BIDI        l'arabo e l'ebraico si vedono ma vanno nel verso sbagliato
+  1  @NAV-CURSORE     il cursore non si piazza col mouse dentro le caselle
+  1  @NAV-URL         l'indirizzo assoluto in img.src e a.href
+  1  @NAV-BORDER      `border` nel CSS: oggi i bordi si fanno solo dall'attributo
+  1  @NAV-GIF         le GIF animate mostrano il primo fotogramma
+  1  @NAVMETA         sette meta' che mancano a cose gia' fatte (una sezione sola)
+  1  @DIF-TLS         dentro un singolo passo della stretta TLS non si respira
+  1  @DIF-TCPBUF      la finestra di ricezione TCP e' quattro kilobyte
+  1  @FILI-MAX        otto fili per processo: e' un numero, non un lavoro
+  1  @EXIDE-TETTI     i tetti di exide, da sapere prima di sbatterci
+  1  @EXIDE-LIBRERIE  il clic sulle righe di «Librerie» mai riprovato pixel per pixel
+  1  @SUONO-ES1371    l'ES1371 vero non e' mai stato eseguito (serve una scheda)
+  1  @SUONO-HDA       l'HD Audio provato solo sul codec finto di QEMU (idem)
+  1  @GIT-GCC         togliere dall'indice gli interni di GCC (chi ha il repository)
+  1  @RUST-0          un programma no_std che gira, compilato da Linux
+
+  2  @SUONO-EMU8000   l'EMU8000 di una AWE32 resta spento    <- @SUONO-CAMPIONI
+  2  @RUST-1          alloc: un GlobalAlloc sopra la malloc  <- @RUST-0
+  3  @RUST-2          libexos: file, processi, IPC, finestre <- @RUST-1
+  4  @RUST-3          la std: un sys nuovo dentro library/std <- @RUST-2
+  5  @RUST-4          rustc sul CD degli strumenti           <- @RUST-3
+
+# FINE INDICE
+#############################################################################
+
+#############################################################################
+# @RIPRESA DA DOVE SI RIPRENDE (scritto il 4 settembre 2026)
 #############################################################################
 
 DOVE SI ERA ARRIVATI
@@ -90,7 +219,7 @@ DUE REGOLE IMPARATE QUI, CHE VALGONO OLTRE I FILI
     libc.h. Va definita li' dentro a mano, o si scrive nel globale mentre il
     programma legge il posto del suo filo.
 
-DA FARE UNA VOLTA SOLA, ED E' DI CHI HA IL REPOSITORY (non l'ho fatto io)
+@GIT-GCC DA FARE UNA VOLTA SOLA, ED E' DI CHI HA IL REPOSITORY
 
     git rm -r --cached build/iso/exos/libexec build/iso/exos/lib/gcc \
                        build/iso/exos/i386-exos build/iso/exos/include/c++
@@ -104,10 +233,10 @@ DA FARE UNA VOLTA SOLA, ED E' DI CHI HA IL REPOSITORY (non l'ho fatto io)
 
 
 =============================================================================
-IL SUONO (aperto dal 1 settembre 2026 — diario: «IL SUONO, E TRE APERTURE»)
+@SUONO IL SUONO (aperto dal 1 settembre 2026 — diario: «IL SUONO, E TRE APERTURE»)
 =============================================================================
 
-1. L'ES1371 VERO NON E' MAI STATO ESEGUITO. QEMU emula l'ES1370, non
+1. @SUONO-ES1371 L'ES1371 VERO NON E' MAI STATO ESEGUITO. QEMU emula l'ES1370, non
    l'ES1371: tutto il codice del convertitore di frequenza (SRC) e del codec
    AC'97 dentro drivers/es1371/es1371.c e' scritto sulla sequenza documentata
    e non e' mai girato ne' su silicio ne' su emulazione. E' segnato nel file
@@ -115,7 +244,7 @@ IL SUONO (aperto dal 1 settembre 2026 — diario: «IL SUONO, E TRE APERTURE»)
    sbagliata o non esce, si comincia a guardare da li'. La parte ES1370 --
    quella provata -- e' invece completa e funziona.
 
-2. L'HD AUDIO E' PROVATO SOLO SUL CODEC FINTO DI QEMU, che ha una topologia
+2. @SUONO-HDA L'HD AUDIO E' PROVATO SOLO SUL CODEC FINTO DI QEMU, che ha una topologia
    semplice: un convertitore, una presa, e nient'altro. Un Realtek ALC vero
    ha quindici prese, miscelatori e selettori in mezzo, e la scelta dei due
    widget (trova_widget in hdaudio.c) prende il primo convertitore d'uscita e
@@ -123,22 +252,22 @@ IL SUONO (aperto dal 1 settembre 2026 — diario: «IL SUONO, E TRE APERTURE»)
    suono non esce, il posto e' quello, e la strada e' seguire la lista di
    connessione invece di sperare che siano adiacenti.
 
-3. LA REGISTRAZIONE NON C'E'. AUDIO_CAP_REGISTRA e' dichiarato nel
+3. @SUONO-REG LA REGISTRAZIONE NON C'E'. AUDIO_CAP_REGISTRA e' dichiarato nel
    protocollo e nessun driver lo accende: tutti e quattro sanno solo suonare.
    Il motore DMA per l'ingresso e' lo stesso, quindi il lavoro e' quasi tutto
    nella meta' comune -- un secondo anello che va nel verso opposto.
 
-4. UN CLIENT ALLA VOLTA. Il secondo programma che chiede di suonare riceve
+4. @SUONO-MIX UN CLIENT ALLA VOLTA. Il secondo programma che chiede di suonare riceve
    -EBUSY. Mescolare due flussi vuol dire un mixer software, che e' un lavoro
    vero e non una riga, e va fatto quando serve invece che inventato di
    nascosto dentro il driver della scheda.
 
-5. LA TAVOLA D'ONDE E' OTTO SENI. Il MIDI sulle schede PCI si sente ed e'
+5. @SUONO-CAMPIONI LA TAVOLA D'ONDE E' OTTO SENI. Il MIDI sulle schede PCI si sente ed e'
    intonato, ma e' un timbro solo: il cambio di strumento si ignora e la
    percussione non esiste. Il passo successivo e' leggere dei campioni da un
    file, non aggiungere armoniche.
 
-6. L'EMU8000 DI UNA AWE32/AWE64 NON SI USA. La scheda si riconosce e si guida
+6. @SUONO-EMU8000 L'EMU8000 DI UNA AWE32/AWE64 NON SI USA. La scheda si riconosce e si guida
    come una SB16 -- la riproduzione PCM e' identica -- ma il sintetizzatore a
    tavola d'onde a bordo resta spento, e il MIDI lo fa l'OPL. Per accenderlo
    servirebbe una settima finestra di porte (0x620) e i campioni da caricarci
@@ -146,10 +275,55 @@ IL SUONO (aperto dal 1 settembre 2026 — diario: «IL SUONO, E TRE APERTURE»)
 
 
 =============================================================================
-DIFETTI APERTI
+@ABI-BERSAGLIO IL BERSAGLIO E' INDIETRO RISPETTO ALLA LIBC (4 settembre 2026)
 =============================================================================
 
-Da CD, un driver ogni tanto muore appena avviato (raro, non chiuso).
+IL 4 SETTEMBRE 2026 `make iso` NON ARRIVAVA PIU' IN FONDO. Si fermava
+collegando /bin/provassl:
+
+    libcrypto.a(o_str.o): undefined reference to `errno'
+
+e la causa e' scritta nel nome: dallo stesso giorno `errno` non e' piu' un
+simbolo globale ma una macro che chiama __errno_dove() (diario: «E ANCHE errno
+E' PER FILO»). libcrypto.a era stata costruita PRIMA, e dentro aveva ancora il
+riferimento al simbolo che non c'e' piu'.
+
+! LIBCRYPTO E' STATA RIFATTA (4 settembre 2026) e il CD si costruisce di nuovo.
+  IL RESTO NO: cc1, as, ld, ar, gmp, mpfr, mpc, libm, libstdc++ e fbc sono
+  ancora quelli di prima. Non falliscono il collegamento — nessuno di loro
+  nomina `errno` — ma la forma di `tm` e' passata da 36 a 44 byte, e chi
+  chiama localtime() dentro EX-OS scrive quattro byte oltre la struttura che
+  il chiamante ha preparato. Non e' stato visto succedere: e' quello che dice
+  il conto delle forme.
+
+! LO DICEVA GIA', E NESSUNO L'HA ASCOLTATO. tools/ricostruisci-bersaglio.sh
+  --verifica lo stampa a ogni `make iso` — «la libc e' CAMBIATA dopo l'ultima
+  ricostruzione del bersaglio: tm 36 -> 44» — ed e' un AVVISO, non un errore,
+  perche' un CD con dentro roba vecchia si fa comunque purche' chi lo fa lo
+  sappia. Adesso non si fa piu': il collegamento fallisce davvero.
+
+  Quel controllo guarda le FORME dei tipi (tm e' passato da 36 a 44 byte) e
+  non i simboli, quindi la sparizione di `errno` non l'ha vista nessuno finche'
+  il collegatore non ci ha sbattuto.
+
+QUEL CHE VA RIFATTO, e sono tutti costruiti fuori da questo Makefile:
+
+    libcrypto.a   FATTO il 4 settembre 2026: tools/openssl-exos/prepara-openssl.sh,
+                  poi cd ~/openssl-build-exos && make -j2 build_libs
+    cc1, cc1plus  tools/gcc-exos/prepara-cc1.sh
+    as, ld, ar    tools/binutils-exos/ (i nativi)
+    gmp, mpfr, mpc, libm, libstdc++
+    fbc           tools/freebasic-exos/prepara-fb.sh
+
+! FINCHE' NON SONO RIFATTI, `make iso OPENSSL_BUILD=/non-esiste` costruisce il
+  CD senza OpenSSL: serve a provare tutto il resto (ed e' cosi' che e' stato
+  provato NASM il 4 settembre 2026), non a consegnarlo.
+
+=============================================================================
+@DIFETTI DIFETTI APERTI
+=============================================================================
+
+@DIF-DRIVER Da CD, un driver ogni tanto muore appena avviato (raro, non chiuso).
     Sintomo: «page fault a 0x00000000, EIP=0x00000000», e nel dump lo STACK
     del processo e' 0x0..0x0 mentre heap e VMA sono quelli di un altro
     programma. Visto tre volte su una cinquantina di avvii da CD, sempre sul
@@ -165,8 +339,8 @@ Da CD, un driver ogni tanto muore appena avviato (raro, non chiuso).
     riprodotto, quindi la misura non distingue. Se il fault ricompare, il
     [WARN] dira' se e' quella strada o un'altra.
 
-! E UNA VOLTA SU QUATTORDICI, IN AVVIO DA CD CON LA RETE, IL KERNEL VA IN
-  PANIC. Visto il 4 settembre 2026, una volta su quattordici avvii contati:
+! @DIF-PANIC E UNA VOLTA SU QUATTORDICI, IN AVVIO DA CD CON LA RETE, IL
+  KERNEL VA IN PANIC. Visto il 4 settembre 2026, una volta su quattordici avvii contati:
 
       Page Fault non gestito in ring0 a 0x0421308c (EIP=0x00109610)
 
@@ -196,7 +370,7 @@ Da CD, un driver ogni tanto muore appena avviato (raro, non chiuso).
   UN FILO CRESCE SU RICHIESTA»), e le volte dopo la prima ripercorreva
   tabelle gia' liberate restituendo al PMM pagine di qualcun altro.
 
-! DENTRO UN SINGOLO PASSO DELLA STRETTA TLS NON SI RESPIRA. La stretta di mano
+! @DIF-TLS DENTRO UN SINGOLO PASSO DELLA STRETTA TLS NON SI RESPIRA. La stretta di mano
   adesso legge a pezzi come tutto il resto (diario: 3 settembre notte, «LA
   CASSETTA POSTALE HA UN PADRONE»), e la finestra resta viva anche durante il
   mezzo secondo che costa. Ma un x25519 o una verifica di firma sono un blocco
@@ -204,7 +378,7 @@ Da CD, un driver ogni tanto muore appena avviato (raro, non chiuso).
   dentro excurva e exbig. Col pezzo piu' lungo a 150 ms non lo merita, ed e'
   scritto in extls.h, in exhttp.h e accanto alla chiamata.
 
-! LA FINESTRA DI RICEZIONE DI TCP E' QUATTRO KILOBYTE (TCP_BUF in
+! @DIF-TCPBUF LA FINESTRA DI RICEZIONE DI TCP E' QUATTRO KILOBYTE (TCP_BUF in
   drivers/ip/ip.c). Da quando chi legge lo fa a scatti — chiedendo «quanti byte
   ci sono?» invece di prenotare — quel buffer si riempie fra uno scatto e
   l'altro, e la ripartenza costa un ACK di riapertura per volta. Funziona ed e'
@@ -213,7 +387,7 @@ Da CD, un driver ogni tanto muore appena avviato (raro, non chiuso).
 
 
 =============================================================================
-EXIDE — L'AMBIENTE DI SVILUPPO VISUALE (aperto il 3 settembre 2026)
+@EXIDE EXIDE — L'AMBIENTE DI SVILUPPO VISUALE (aperto il 3 settembre 2026)
 =============================================================================
 
 Sta in exwin/bin/exide, si avvia da /exwin/bin/exide o dal menu Avvio. Il primo
@@ -345,13 +519,14 @@ decide se il progetto sopravvive — e' il punto in cui VB6 si rompeva:
   strumenti coi loro eventi. Gli esempi, le proprieta' e il menu stanno solo
   nella pagina: sono la parte lunga, cioe' quella che diverge per prima.
 
-! I TETTI DI EXIDE, da sapere prima di sbatterci: 64 CONTROLLI IN TUTTO il
+! @EXIDE-TETTI I TETTI DI EXIDE, da sapere prima di sbatterci: 64 CONTROLLI IN TUTTO il
   progetto (non per maschera) e 8 MASCHERE. I nomi dei controlli sono unici in
   tutto il progetto, non dentro la maschera, perche' finiscono in finestra.h
   che e' un file solo. Le aree di testo sono al massimo due per programma
   generato (AREA_MAX del toolkit), e una casella «testo» tiene 63 caratteri.
 
-! IL CLIC SULLE RIGHE DELLA FINESTRA «LIBRERIE» NON E' MAI STATO RIPROVATO
+! @EXIDE-LIBRERIE IL CLIC SULLE RIGHE DELLA FINESTRA «LIBRERIE» NON E' MAI
+  STATO RIPROVATO
   PIXEL PER PIXEL dopo l'ultima modifica (3 settembre 2026). Passa dallo stesso
   codice di lista gia' provato altrove — winprova, il pannello strumenti — e
   quindi il rischio e' basso, ma non e' la stessa cosa di averlo visto scattare.
@@ -368,7 +543,7 @@ QUEL CHE MANCA, in ordine di quanto serve:
 
 
 =============================================================================
-I FILI (aperti il 4 settembre 2026 — diario: «I FILI: PIU' FLUSSI DENTRO LO
+@FILI I FILI (aperti il 4 settembre 2026 — diario: «I FILI: PIU' FLUSSI DENTRO LO
 STESSO PROGRAMMA»)
 =============================================================================
 
@@ -436,17 +611,17 @@ regala — quindi pf_cresci_stack chiede prima DI CHI e' la pagina
 
 QUEL CHE MANCA:
 
- 1. OTTO FILI PER PROCESSO (FILO_MAX), capogruppo compreso, perche' tante sono
+ 1. @FILI-MAX OTTO FILI PER PROCESSO (FILO_MAX), capogruppo compreso, perche' tante sono
     le piazzole nella banda. Alzarlo vuol dire allargare la banda, cioe'
     abbassare heap_max: e' un numero, non un lavoro.
 
- 2. UN FILO CHE MUORE DI PAGE FAULT NON PORTA VIA IL PROCESSO. Muore lui e il
+ 2. @FILI-FAULT UN FILO CHE MUORE DI PAGE FAULT NON PORTA VIA IL PROCESSO. Muore lui e il
     programma prosegue, magari con un lucchetto preso da chi non c'e' piu' —
     che e' esattamente la situazione per cui la cancellazione e' cooperativa.
     Su Linux un segnale fatale porta via tutto il gruppo. Si vede con
     `filiprova sfonda`, che oggi lo DICHIARA invece di lamentarsene.
 
- 3. LO ZOMBIE DI UN FILO CHE NESSUNO ASPETTA LO RACCOGLIE LA SHELL. Il ppid di
+ 3. @FILI-ZOMBIE LO ZOMBIE DI UN FILO CHE NESSUNO ASPETTA LO RACCOGLIE LA SHELL. Il ppid di
     un filo e' quello del capogruppo (filo->ppid = capo->ppid), e finche'
     nessuno chiama thread_attendi — che si fa trovare come padre prima di
     dormire — quel filo e' un figlio del padre del processo. Se muore prima,
@@ -457,7 +632,7 @@ QUEL CHE MANCA:
     un filo non sia figlio di nessuno fuori dal gruppo.
 
 =============================================================================
-RUST SU EX-OS (aperto il 4 settembre 2026)
+@RUST RUST SU EX-OS (aperto il 4 settembre 2026)
 =============================================================================
 
 I sorgenti (1.100.0, 424 MB) stanno in /rust/ e sono IGNORATI da git, come
@@ -468,15 +643,15 @@ c'e' gia' il bersaglio i686-unknown-exos.json e la ricetta in leggimi.md.
 
 I quattro passi, e i primi tre non toccano EX-OS:
 
- 0. UN PROGRAMMA no_std CHE GIRA, compilato da Linux col bersaglio nostro e
+ 0. @RUST-0 UN PROGRAMMA no_std CHE GIRA, compilato da Linux col bersaglio nostro e
     collegato con la STESSA riga ld dei programmi C (programma.ld, start.o, i
     ponti della libc). Si fa in una sera e si prova subito.
- 1. alloc, cioe' un GlobalAlloc sopra la malloc che c'e' gia'.
- 2. libexos: gli involucri su file, processi, IPC e finestre.
- 3. La std: un sys nuovo dentro library/std, coi THREAD DICHIARATI NON
+ 1. @RUST-1 alloc, cioe' un GlobalAlloc sopra la malloc che c'e' gia'.
+ 2. @RUST-2 libexos: gli involucri su file, processi, IPC e finestre.
+ 3. @RUST-3 La std: un sys nuovo dentro library/std, coi THREAD DICHIARATI NON
     SUPPORTATI (esiste sys/pal/unsupported apposta). Da qui funziona cargo.
 
- 4. RUSTC SUL CD DEGLI STRUMENTI, accanto a gcc e fbc. Il muro dei thread e'
+ 4. @RUST-4 RUSTC SUL CD DEGLI STRUMENTI, accanto a gcc e fbc. Il muro dei thread e'
     CADUTO il 4 settembre 2026 (vedi la sezione «I FILI» qui sopra), e con lui
     le due cose che la std di Rust chiedeva oltre ai thread: il TLS PER FILO
     c'e', e le PRIMITIVE CHE BLOCCANO DAVVERO — lucchetto, condizione, semaforo
@@ -488,7 +663,7 @@ I quattro passi, e i primi tre non toccano EX-OS:
   signal, il C++ 17 sul CD e — da oggi — i thread.
 
 =============================================================================
-L'IMPAGINATO NON E' UNA LIBRERIA — e quando conviene che lo diventi
+@VISTA L'IMPAGINATO NON E' UNA LIBRERIA — e quando conviene che lo diventi
 =============================================================================
 
 lib/exhtml e' SOLO il parser: «da testo ad albero», 999 righe. Impaginare —
@@ -545,7 +720,7 @@ LA STRADA, IN DUE PASSI E NON IN UNO:
 
 
 =============================================================================
-IL NAVIGATORE — QUEL CHE MANCA A UNA PAGINA VERA (in ordine di quanto pesa)
+@NAVPAG IL NAVIGATORE — QUEL CHE MANCA A UNA PAGINA VERA (in ordine di quanto pesa)
 =============================================================================
 
 Le prove che contano, e come si lanciano:
@@ -576,7 +751,7 @@ Le prove che contano, e come si lanciano:
   esattamente li' in mezzo — centoventi prove verdi e la pagina sbagliata
   sullo schermo.
 
- 1. GLI SCRIPT DI COLLEGAMENTO CJK, e cioe' i font. Cinese, giapponese,
+ 1. @NAV-CJK GLI SCRIPT DI COLLEGAMENTO CJK, e cioe' i font. Cinese, giapponese,
     coreano, devanagari e thai escono come collegamenti VUOTI — sottolineati e
     senza lettere. Non e' il lettore TrueType: ne' Liberation ne' DejaVu hanno
     quei glifi, e chi li ha (Noto CJK) pesa venti megabyte su un CD che ne pesa
@@ -584,22 +759,22 @@ Le prove che contano, e come si lanciano:
     caratteri comuni, oppure dichiararlo a schermo invece che lasciare un
     collegamento vuoto che sembra rotto.
 
- 2. LE UNITA' RELATIVE (em, %, rem) e @media. Sono le piu' vicine a essere
+ 2. @NAV-UNITA LE UNITA' RELATIVE (em, %, rem) e @media. Sono le piu' vicine a essere
     fattibili — `font-size` accetta solo i pixel — ma vogliono la misura del
     contenitore, che l'impaginazione a penna corrente non ha in mano quando
     serve.
 
- 3. L'ARABO E L'EBRAICO SI VEDONO MA VANNO NEL VERSO SBAGLIATO. I glifi ci
+ 3. @NAV-BIDI L'ARABO E L'EBRAICO SI VEDONO MA VANNO NEL VERSO SBAGLIATO. I glifi ci
     sono (DejaVu), ma si impaginano da sinistra a destra come tutto il resto:
     una riga di arabo si legge al contrario. Il BiDi non c'e' ed e' un lavoro
     suo, non un ritocco.
 
- 4. IL CURSORE NON SI PIAZZA COL MOUSE. Nelle caselle e nelle aree si muove
+ 4. @NAV-CURSORE IL CURSORE NON SI PIAZZA COL MOUSE. Nelle caselle e nelle aree si muove
     con le frecce, Home, Fine e le cancellazioni; un clic dentro il testo pero'
     da' il fuoco alla casella e mette il cursore in fondo, non nel punto in cui
     si e' cliccato.
 
- 5. L'INDIRIZZO ASSOLUTO in `img.src` e `a.href`. Oggi si riflette
+ 5. @NAV-URL L'INDIRIZZO ASSOLUTO in `img.src` e `a.href`. Oggi si riflette
     l'attributo: `src="b.png"` rende `"b.png"` e non `"http://sito/a/b.png"`.
     Il ponte l'indirizzo della pagina ce l'ha (exdom_indirizzo), quindi manca
     solo la risoluzione.
@@ -612,15 +787,15 @@ Le prove che contano, e come si lanciano:
   DuckDuckGo spariva del tutto, schermo bianco. «stile troncato» nella riga di
   stato e' il primo posto da guardare quando una pagina arriva e non si vede.
 
- 6. `border` NEL CSS. Oggi i bordi si disegnano solo dall'attributo `border`
+ 6. @NAV-BORDER `border` NEL CSS. Oggi i bordi si disegnano solo dall'attributo `border`
     delle tabelle. `border-collapse`, i colori e i lati separati non ci sono.
 
- 7. LE GIF ANIMATE MOSTRANO IL PRIMO FOTOGRAMMA, ed e' dichiarato: animarle
+ 7. @NAV-GIF LE GIF ANIMATE MOSTRANO IL PRIMO FOTOGRAMMA, ed e' dichiarato: animarle
     vorrebbe dire un orologio dentro la libreria delle immagini.
 
 
 =============================================================================
-IL NAVIGATORE — LE META' CHE MANCANO A COSE GIA' FATTE
+@NAVMETA IL NAVIGATORE — LE META' CHE MANCANO A COSE GIA' FATTE
 =============================================================================
 
 Sono limiti dichiarati dentro pezzi che funzionano. Ognuno e' scritto anche
@@ -659,7 +834,7 @@ nel codice, dove comincia.
 
 
 =============================================================================
-UNA STRADA CHIUSA, PERCHE' NON SI RIAPRA
+@CHIUSA UNA STRADA CHIUSA, PERCHE' NON SI RIAPRA
 =============================================================================
 
 ! GOOGLE NON E' UN BERSAGLIO DEL NAVIGATORE. google.com si apre e si vede; la

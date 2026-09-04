@@ -28,6 +28,272 @@ manca» apre quello.
 
 # DOVE RIPRENDERE — 4 settembre 2026
 
+## 4 settembre 2026 — SI', `make` COSTRUISCE DENTRO EX-OS
+
+Domanda diretta, risposta misurata: **con il CD degli strumenti di oggi, `make`
+dentro EX-OS costruisce un programma vero, dal sorgente all'eseguibile che
+gira.** La prova e' `/prova-make`, che sta sul CD apposta.
+
+    mount hd0p1 /disco
+    cd /disco/pm
+    make
+        gcc -O2 -c main.c -o main.o
+        gcc -O2 -c somma.c -o somma.o
+        gcc -O2 -c conta.c -o conta.o
+        rm -f libprova.a; ar rcs libprova.a somma.o conta.o
+        ranlib libprova.a
+        gcc -O2 -o prova main.o libprova.a
+    ./prova
+        somma dei quadrati : 385   (atteso 385)
+        occorrenze di 'c'  : 3     (attese 3)
+        esito              : tutto a posto
+    make
+        make: 'prova' is up to date.
+
+C'e' tutto quel che serve a chiamarlo *costruire* e non *compilare*: tre
+oggetti, un archivio con `ar` e `ranlib`, il collegamento, e **la seconda
+`make` che dice «up to date»** — cioe' le date dei file su ext2 sono giuste e
+la dipendenza funziona.
+
+! **E IL PROGRAMMA USCITO E' COLLEGATO CON LA libc DI OGGI**, quella con
+`errno` per filo: `libc.a` sul CD viene dal sysroot del cross, rifatto stamane.
+Il `cc1` invece e' ancora quello vecchio (`@ABI-BERSAGLIO`), e non ha dato
+nessun fastidio: quel debito e' latente, non bloccante.
+
+### UNA NOTA, E VALE MENO DI QUANTO SEMBRAVA
+
+Il primo tentativo l'ho fatto scrivendo sulla radice del **floppy**, e li'
+`make` non parte: FAT tiene i nomi in maiuscolo e la ricerca e' sensibile alle
+maiuscole, quindi `MAKEFILE` non e' nessuno dei tre nomi che GNU make cerca —
+`GNUmakefile`, `makefile`, `Makefile` — e la risposta e' «no makefile found» in
+una directory che ne ha uno.
+
+! **MA NON E' UNA TRAPPOLA CHE IL SISTEMA TI METTE DAVANTI, ed e' giusto dirlo
+invece di lasciare la nota a fare paura.** Dove si compila non e' mai FAT, per
+due motivi che vengono prima di questo:
+
+  1. **il compilatore su un floppy non ci sta.** cc1 da solo pesa 33 MB contro
+     1,44 MB di floppy: gli strumenti stanno sul CD o su un disco installato;
+  2. **l'installatore formatta solo ext2** (`cdinstall`, dal 26 agosto 2026).
+     `mkfs -t fat16` esiste, ma e' per una partizione DATI fatta a mano da chi
+     sa cosa sta facendo.
+
+Quel caso l'ho costruito io, cercando un posto scrivibile mentre gli strumenti
+erano sul CD. Resta scritto perche' e' misurato e perche' l'errore che da' non
+nomina i nomi — dice che il makefile non c'e' — ma e' **una nota, non un
+difetto**: per costruire dentro EX-OS si usa ext2, che e' quello che c'e'.
+
+---
+
+## 4 settembre 2026 — NASM DENTRO EX-OS, E L'ALTRA SINTASSI
+
+Sul CD degli strumenti c'erano `as` e `ld`, cioe' la catena che il compilatore
+usa senza che nessuno la guardi. Da oggi c'e' anche **NASM**, e non e' un
+doppione: sono **due lingue**.
+
+    as        sintassi AT&T     movl $4, %eax      fatta per ricevere l'uscita di gcc
+    nasm      sintassi Intel    mov  eax, 4        fatta per essere scritta da una persona
+
+! **E SOPRATTUTTO: QUESTO E' UN SISTEMA OPERATIVO.** Chi impara a scriverne
+uno comincia da sedici bit e da un settore di avvio, e quella roba e' scritta
+in NASM nel novantanove per cento dei casi — compreso `boot/stage1.asm`, il
+settore di avvio di EX-OS stesso. Un sistema che sa compilarsi il C ma non sa
+assemblare un `org 0x7c00` e' monco proprio nel punto in cui dovrebbe essere
+piu' forte.
+
+### DUE RIGHE, E RIGUARDANO L'OSPITE
+
+E' il porting piu' piccolo fatto finora, e il motivo si capisce guardando cosa
+NASM **non** ha: un bersaglio. I formati d'uscita — `elf32`, `bin`, `coff`,
+`macho` — li produce tutti sempre, e la scelta la fa chi lo usa con `-f`. Non
+c'e' niente da insegnargli su EX-OS: `nasm -f elf32` fa gia' quel che serve, ed
+e' proprio il formato che il nostro `ld` sa collegare. Mancava solo che
+girasse qui.
+
+    autoconf/helpers/config.sub   'exos' fra i sistemi ammessi
+    nasmlib/path.c                __exos__ fra quelli coi percorsi di Unix
+
+La seconda si e' presentata come un errore onesto e per fortuna rumoroso:
+
+    path.c:204:21: error: 'separators' undeclared (first use in this function)
+
+NASM sceglie lo stile dei percorsi dai macro del compilatore, e per un sistema
+che non riconosce prende `PATH_UNKNOWN`, dove `separators` non e' definito
+affatto. ! **La riga giusta non era far dire al nostro GCC di essere Unix** —
+non lo e' — ma dire li' che EX-OS ha i percorsi fatti come quelli di Unix: la
+barra come unico separatore, nessun concetto di volume. E' vero, e sta in una
+riga.
+
+### LA COSA CHE E' COSTATA UN GIRO DI COMPILAZIONE
+
+! **IL COMMENTO SI SCRIVE NELLA LINGUA DEL FILE.** `applica.py` mette in testa
+a ogni file toccato la riga «modificato il ... per l'ospite i386-exos», e la
+metteva sempre come `# ...`. In `config.sub` e' un commento; in `path.c` e' una
+**direttiva del preprocessore**:
+
+    path.c:1:3: error: invalid preprocessing directive #EX
+
+Adesso i file `.c` e `.h` la ricevono come `/* ... */`. E' il genere di
+sbaglio che non si vede rileggendo — il file «sembra» giusto — e che il
+compilatore trova in due secondi.
+
+### LE PROVE, E SONO DUE PERCHE' DIMOSTRANO DUE COSE DIVERSE
+
+    /cdrom/prova-nasm.asm     ELF a 32 bit: nasm -f elf32, poi ld, poi si esegue
+    /cdrom/prova-nasm16.asm   un settore di avvio: nasm -f bin, poi ndisasm
+
+La prima e' la **gemella di `prova.s`** (che e' per `as`): la stessa identica
+cosa detta nelle due sintassi, che e' il modo piu' corto di imparare la
+differenza. Dentro EX-OS:
+
+    nasm -f elf32 /cdrom/prova-nasm.asm -o /prova-nasm.o
+    ld -o /prova-nasm /prova-nasm.o
+    /prova-nasm
+    Assemblato con NASM dentro EX-OS.
+
+La seconda e' quella che dimostra **perche'** NASM sta sul CD: sedici bit,
+`org 0x7c00`, nessun linker e nessun sistema operativo sotto. E il giro
+completo, con `ndisasm`, torna indietro esatto:
+
+    00007C0B  BE207C            mov si,0x7c20
+
+`0x7c20` e non `0x0020`: e' `org` che ha fatto il suo mestiere, ed e' la cosa
+che `ld` non puo' fare al posto tuo — li' non c'e' nessun collegatore che
+metta le etichette al posto giusto.
+
+! **ndisasm viene con lui e vale il megabyte che occupa**: dentro un sistema
+operativo serve la prima volta che si guarda un settore di avvio o il dump di
+un fault senza avere il sorgente sotto mano.
+
+### E UN GUASTO TROVATO PER STRADA: IL CD NON SI COSTRUIVA PIU'
+
+`make iso` si ferma collegando `/bin/provassl`:
+
+    libcrypto.a(o_str.o): undefined reference to `errno'
+
+La causa e' di stamattina: **dal 4 settembre `errno` non e' piu' un simbolo
+globale** ma una macro che chiama `__errno_dove()` (diario: «E ANCHE errno E'
+PER FILO»). `libcrypto.a` e' stata costruita prima, e dentro ha ancora il
+riferimento al simbolo che non c'e' piu'.
+
+! **LO DICEVA GIA', E NESSUNO L'HA ASCOLTATO.** `tools/ricostruisci-bersaglio.sh
+--verifica` gira a ogni `make iso` e stampa «la libc e' CAMBIATA dopo l'ultima
+ricostruzione del bersaglio: tm 36 -> 44». E' un AVVISO e non un errore —
+apposta, perche' un CD con dentro roba vecchia si fa comunque purche' chi lo fa
+lo sappia. Solo che quel controllo guarda le **forme dei tipi**, non i simboli:
+la sparizione di `errno` non l'ha vista, e si e' presentata dritta al
+collegatore.
+
+**libcrypto e' stata rifatta** (`prepara-openssl.sh`, poi `make build_libs`) e
+il CD si costruisce di nuovo, per intero. **Il resto no**: cc1, as, ld, ar,
+gmp, mpfr, mpc, libstdc++ e fbc sono ancora quelli di prima. Non falliscono il
+collegamento — nessuno di loro nomina `errno` — ma `tm` e' passata da 36 a 44
+byte, e chi chiama `localtime()` scrive quattro byte oltre la struttura che il
+chiamante ha preparato. Non e' stato visto succedere: e' quello che dice il
+conto delle forme, ed e' scritto in `in_lavorazione.txt` come
+`@ABI-BERSAGLIO`, livello 1.
+
+! **E NEL FRATTEMPO NASM SI PROVA LO STESSO**, con
+`make iso OPENSSL_BUILD=/non-esiste`: il CD si costruisce senza OpenSSL e tutto
+il resto si prova. Serve a non restare fermi dietro a un guasto che non
+c'entra — non a consegnare un CD.
+
+---
+
+## 4 settembre 2026 — SI LEGGE L'INDICE, NON IL FILE (e gli attrezzi si tengono)
+
+`in_lavorazione.txt` era arrivato a settecento righe, e per scegliere che cosa
+fare **si leggeva tutto**. E' il costo che si paga a ogni ripresa, sempre
+uguale, per una decisione che ne consuma dieci righe: il resto e' contesto
+speso in cose che oggi non si faranno.
+
+Adesso il file comincia con un **INDICE** — una riga per compito — e ogni
+compito ha un'**etichetta** che non cambia mai.
+
+    tools/locali/lavori.sh elenco           l'indice
+    tools/locali/lavori.sh elenco 1         solo i compiti che si possono fare subito
+    tools/locali/lavori.sh mostra SUONO-REG un compito solo, per intero
+    tools/locali/lavori.sh cerca mixer      cerca, e dice di CHI e' la riga
+    tools/locali/lavori.sh controlla        l'indice promette quel che il file mantiene?
+
+Cinquantadue righe di indice al posto di ottocento: si sceglie leggendo
+l'indice, e poi si apre **un compito solo**.
+
+### IL LIVELLO NON E' L'IMPORTANZA: E' L'ORDINE IN CUI SI PUO' FARE
+
+Ogni compito ha un numero. **1** vuol dire «si puo' cominciare adesso, non
+aspetta niente»; **2** vuol dire che aspetta un livello 1, e cosi' via. Se per
+fare il programma X serve la libreria Y, la libreria e' 1 e il programma e' 2 —
+non perche' conti di piu', ma perche' senza di lei l'altro non si puo' nemmeno
+cominciare.
+
+Su questo elenco la scala si vede in due posti soli, ed e' giusto cosi': quasi
+tutto quel che resta aperto e' indipendente. I due sono
+`@SUONO-EMU8000` (aspetta i campioni da file: `@SUONO-CAMPIONI`) e la scala di
+Rust, che e' una scala vera — `@RUST-0` no_std, poi alloc, poi libexos, poi la
+std, e in cima `@RUST-4`, rustc sul CD, a livello **5**.
+
+! **E IL LIVELLO CAMBIA**: chi chiude un livello 1 guarda subito se qualche 2 e'
+appena diventato 1. E' l'unica manutenzione che l'indice chiede, e `lavori.sh
+controlla` verifica l'altra meta' — che l'indice non prometta compiti che non
+ci sono piu', e che nessun compito resti fuori dall'indice.
+
+### LE DUE REGOLE DI LAVORO, SCRITTE DOVE SI LEGGONO PRIMA DI COMINCIARE
+
+    1. IL TEMPO SI SPENDE, IL CONTESTO NO
+    2. QUEL CHE NON RICHIEDE UN RAGIONAMENTO LO FA UNA MACCHINA
+
+La macchina e' dedicata al 100% a questo lavoro: la sua CPU non costa niente,
+e aspettare una compilazione o rilanciare QEMU e' gratis. La risorsa scarsa e'
+il contesto. Fra una strada che costa dieci minuti di macchina e una che costa
+mille righe lette si prende **sempre** la prima, anche quando la seconda sembra
+piu' diretta.
+
+### E GLI ATTREZZI SI CONSERVANO: `tools/locali/`, ignorata da git
+
+La regola e' nata da un costo gia' pagato, e sta scritto nella sezione
+`@VISTA` di `in_lavorazione.txt`:
+
+> IL TAGLIO SI RIFA' CON LO SCRIPT, NON A MANO. tools non lo tiene (e' stato
+> usa e getta), ma il metodo si'.
+
+Quello script serviva di nuovo la settimana dopo, e non c'era piu'. Adesso c'e'
+una cassetta degli attrezzi, fuori dalla cronologia perche' non e' parte di
+EX-OS, con dentro tre cose che si riusano:
+
+    lavori.sh     legge in_lavorazione.txt senza leggerlo tutto
+    mappa_c.py    la mappa di un sorgente C grosso: definizioni di primo
+                  livello, chi chiama chi, chi tocca quali globali. E
+                  `--confine a,b,c`, che MISURA cosa costerebbe tagliare li'
+                  — quante globali diventano parametri, quante chiamate
+                  attraversano il taglio
+    sost.py       cerca e sostituisce in piu' file, con la prova a vuoto per
+                  predefinito e le condizioni `--solo-se` / `--tranne-se`
+
+! **LI' DENTRO NON CI VANNO FATTI, SOLO ATTREZZI.** Una directory ignorata la
+cancella un `git clean -xdf` senza chiedere niente a nessuno: se sparisce uno
+script lo si riscrive in un minuto, ma un fatto perso si ripaga con una serata.
+Per questo l'ELENCO di quel che c'e' sta in `in_lavorazione.txt`, che e'
+tracciato, e il codice sta li', che non lo e'.
+
+### DUE COSE IMPARATE FACENDO L'INDICE, TUTT'E DUE SUL MARCATORE
+
+Le etichette erano `[COSI']`, fra parentesi quadre, ed e' durato mezz'ora.
+
+! **UNA RIGA DI PROSA CHE VA A CAPO PUO' COMINCIARE CON UNA QUADRA.** In
+`@DIF-DRIVER` c'e' una frase che finisce «...il `[WARN]` dira' se e' quella
+strada o un'altra», e il `[WARN]` era andato a capo: `mostra` si fermava li',
+a meta' compito, convinto di aver trovato l'etichetta successiva. Adesso il
+marcatore e' una **chiocciola** — `@DIF-DRIVER` — che in mezzo a una parola
+italiana non capita.
+
+! **E DEVE COMINCIARE CON UNA LETTERA**: senza quel vincolo `filiprova@25` — la
+riga di comando delle prove, scritta dentro il file — diventava un'etichetta di
+nome «25». Trovato da `lavori.sh controlla`, che era stato scritto dieci minuti
+prima proprio per trovare questo genere di cose.
+
+---
+
 ## 4 settembre 2026 — LA PILA DI UN FILO CRESCE SU RICHIESTA
 
 Un filo nasceva con 64 KB di RAM vera in mano: sedici pagine allocate e

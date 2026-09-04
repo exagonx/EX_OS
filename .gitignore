@@ -157,6 +157,24 @@
 /rust/
 
 # =============================================================================
+# NASM — i sorgenti dell'assemblatore (99 MB), come gcc, openssl e freebasic
+#
+# nasm/ e' l'albero dei sorgenti di NASM 3.02, scaricato e non nostro: fuori
+# dalla cronologia come tutti gli altri alberi di terzi. Serve a costruire un
+# nasm NATIVO — che gira DENTRO EX-OS — da mettere sul CD degli strumenti
+# accanto a gcc, as, ld e fbc.
+#
+# ! CIO' CHE E' NOSTRO va in tools/nasm-exos/, che e' tracciata: la ricetta,
+# le modifiche all'albero e il perche' di ognuna. E' la stessa regola di
+# tools/gcc-exos/, tools/binutils-exos/, tools/freebasic-exos/ e
+# tools/rust-exos/: dell'albero di terzi si tiene il MODO di rifarlo, non
+# l'albero.
+#
+# ! ANCORATO ALLA RADICE, come tutti gli altri.
+# =============================================================================
+/nasm/
+
+# =============================================================================
 # LE ISO NON SI PUBBLICANO — nessuna delle due, e nemmeno a pezzi
 #
 # dist/exos-tools.iso e' 58 MB e cresce a ogni ricostruzione; dist/exos.iso
@@ -315,3 +333,19 @@ __pycache__/
 # queste righe ci entrerebbero da soli.
 /build/obj/wolf3d_*.o
 /build/obj/wolf3d-gentabelle
+
+# =============================================================================
+# GLI STRUMENTI LOCALI — script usa e getta che invece si tengono
+#
+# tools/locali/ e' la cassetta degli attrezzi di chi lavora su questa macchina:
+# script che cercano dentro i file con condizioni, che costruiscono la mappa di
+# un sorgente grosso, che fanno una sostituzione in cento posti. Non sono parte
+# di EX-OS e non si distribuiscono — per questo stanno fuori dalla cronologia —
+# ma NON si buttano dopo l'uso, che e' il punto: uno script gia' scritto costa
+# zero la seconda volta, e rifarlo costa quanto la prima.
+#
+# ! QUI DENTRO NON CI VANNO FATTI, SOLO ATTREZZI. Quel che si impara si scrive
+# in RIPRENDERE.md o in in_lavorazione.txt, che sono tracciati: una directory
+# ignorata la cancella un `git clean -xdf` senza chiedere niente a nessuno.
+# =============================================================================
+/tools/locali/

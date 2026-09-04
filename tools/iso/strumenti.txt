@@ -157,6 +157,32 @@ nota  = Le istruzioni per esteso stanno in /freebasic/leggimi.txt.
 # megabyte di .bas che non puo' compilare.
 
 
+[nasm]
+nome  = NASM
+dice  = nasm e ndisasm: l'assemblatore Intel e il disassemblatore
+prova = bin/nasm
+mbyte = 3
+solo  = bin/nasm
+solo  = bin/ndisasm
+solo  = prova-nasm.asm
+solo  = prova-nasm16.asm
+
+# !! NON VUOLE `base`, ed e' l'unico gruppo che non lo chiede. NASM non
+# chiama nessun altro programma: assembla e scrive un file. Con `-f bin` non
+# serve nemmeno `ld` — quel formato E' gia' il prodotto finito, ed e' il caso
+# del settore di avvio. Chi invece vuole arrivare a un eseguibile ELF prende
+# anche `base`, che porta `ld`.
+
+nota  = Sintassi INTEL, quella dei manuali e dei settori di avvio. `as` di
+nota  = binutils (gruppo C) parla AT&T ed e' fatto per ricevere l'uscita
+nota  = di gcc: sono due lingue, non due copie della stessa cosa.
+nota  = Le prove: /prova-nasm.asm fa un ELF a 32 bit (nasm -f elf32, poi
+nota  = ld, poi si esegue) ed e' la gemella di /prova.s, che e' la stessa
+nota  = cosa in sintassi AT&T. /prova-nasm16.asm fa un settore di avvio
+nota  = (nasm -f bin) e si rilegge con `ndisasm -b 16 -o 0x7c00`.
+nota  = !! L'uscita va scritta fuori dal CD, che e' in sola lettura.
+
+
 [ssl]
 nome  = OpenSSL
 dice  = libcrypto e i suoi header

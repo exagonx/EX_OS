@@ -106,6 +106,22 @@ Cosa c'e' dentro
                         /cdrom/bin/as -o prova.o prova.s
                         /cdrom/bin/ld -o prova prova.o
 
+                    E nasm con ndisasm, che sono l'ALTRA SINTASSI e non
+                    una seconda copia: `as` parla AT&T ed e' fatto per
+                    ricevere l'uscita di gcc, NASM parla INTEL, che e' la
+                    lingua dei manuali, dei settori di avvio e di quasi
+                    tutto l'assembly scritto da una persona.
+
+                        nasm -f elf32 /cdrom/prova-nasm.asm -o /p.o
+                        ld -o /p /p.o
+                        /p
+
+                    E con -f bin non serve nemmeno il collegatore, che e'
+                    il caso di un settore di avvio:
+
+                        nasm -f bin /cdrom/prova-nasm16.asm -o /avvio.bin
+                        ndisasm -b 16 -o 0x7c00 /avvio.bin
+
                     Se la directory contiene solo un leggimi, il CD e'
                     stato costruito senza: vedi
                     tools/binutils-exos/leggimi.md nel repository.

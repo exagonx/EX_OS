@@ -2,7 +2,7 @@
 
 **🇮🇹 Italiano** · [🇬🇧 English](README.en.md)
 
-**Versione:** 0.208
+**Versione:** 0.209
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 32-bit — si avvia da floppy, da CD o da disco rigido
@@ -84,6 +84,856 @@ propri header senza che nessuno glielo dica, e concatena da sé cc1, `as`,
 Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### NASM sul CD degli strumenti, e l'altra sintassi
+
+**testato dentro EX-OS** — sul CD c'erano `as` e `ld`, cioè la catena che il
+compilatore usa senza che nessuno la guardi. Adesso c'è anche **NASM**, e non è
+un doppione: sono **due lingue**.
+
+| | `as` (GNU) | `nasm` |
+|---|---|---|
+| sintassi | AT&T | Intel |
+| fatta per | ricevere l'uscita di `gcc` | essere scritta da una persona |
+| | `movl $4, %eax` | `mov eax, 4` |
+| | `.ascii "..."` | `db "..."` |
+
+! **E soprattutto: questo è un sistema operativo.** Chi impara a scriverne uno
+comincia da sedici bit e da un settore di avvio, e quella roba è scritta in
+NASM nel novantanove per cento dei casi — compreso `boot/stage1.asm`, il
+settore di avvio di EX-OS stesso. Un sistema che sa compilarsi il C ma non sa
+assemblare un `org 0x7c00` è monco proprio nel punto in cui dovrebbe essere più
+forte.
+
+**È il porting più piccolo fatto finora — due righe — e il motivo si capisce
+guardando ciò che NASM *non* ha: un bersaglio.** I formati d'uscita (`elf32`,
+`bin`, `coff`, `macho`) li produce tutti sempre, e la scelta la fa chi lo usa
+con `-f`: non c'è niente da insegnargli su EX-OS, perché `nasm -f elf32` fa già
+esattamente ciò che il nostro `ld` sa collegare. Mancava solo che **girasse
+qui**:
+
+```
+autoconf/helpers/config.sub   'exos' fra i sistemi ammessi
+nasmlib/path.c                __exos__ fra quelli coi percorsi di Unix
+```
+
+> La seconda si è presentata come un errore onesto e per fortuna rumoroso —
+> `path.c:204: 'separators' undeclared`. NASM sceglie lo stile dei percorsi dai
+> macro del compilatore, e per un sistema che non riconosce prende
+> `PATH_UNKNOWN`, dove `separators` non è definito affatto. **La riga giusta non
+> era far dire al nostro GCC di essere Unix** — non lo è — ma dire lì che EX-OS
+> ha i percorsi fatti come quelli di Unix: la barra come unico separatore,
+> nessun concetto di volume. È vero, e sta in una riga.
+
+**Le prove sono due perché dimostrano due cose diverse.** `prova-nasm.asm` è la
+gemella di `prova.s` (che è per `as`): la stessa identica cosa detta nelle due
+sintassi, che è il modo più corto di imparare la differenza.
+
+```
+nasm -f elf32 /cdrom/prova-nasm.asm -o /prova-nasm.o
+ld -o /prova-nasm /prova-nasm.o
+/prova-nasm
+Assemblato con NASM dentro EX-OS.
+```
+
+`prova-nasm16.asm` è quella che dimostra **perché** NASM sta sul CD: sedici
+bit, `org 0x7c00`, nessun linker e nessun sistema operativo sotto. Con
+`ndisasm` il giro torna indietro esatto:
+
+```
+nasm -f bin /cdrom/prova-nasm16.asm -o /avvio.bin
+ndisasm -b 16 -o 0x7c00 /avvio.bin
+00007C0B  BE207C            mov si,0x7c20
+```
+
+`0x7c20` e non `0x0020`: è `org` che ha fatto il suo mestiere, ed è la cosa che
+`ld` non può fare al posto tuo — lì non c'è nessun collegatore che metta le
+etichette al posto giusto. **`ndisasm` viene con lui** e vale il megabyte che
+occupa: dentro un sistema operativo serve la prima volta che si guarda un
+settore di avvio o il dump di un fault senza avere il sorgente sotto mano.
+
+> **E un guasto trovato per strada: il CD non si costruiva più.** `make iso` si
+> ferma collegando `/bin/provassl` con `libcrypto.a(o_str.o): undefined
+> reference to 'errno'`, perché da oggi `errno` non è più un simbolo globale ma
+> una macro che chiama `__errno_dove()` — e `libcrypto.a` è stata costruita
+> prima. Lo diceva già `tools/ricostruisci-bersaglio.sh --verifica` a ogni
+> `make iso` («la libc è CAMBIATA dopo l'ultima ricostruzione»), ma come
+> *avviso*: quel controllo guarda le forme dei tipi, non i simboli. Sta in
+> `in_lavorazione.txt` come `@ABI-BERSAGLIO`, con l'elenco di tutto ciò che va
+> rifatto.
+
+### La pila di un filo cresce su richiesta
+
+**testato** — un filo nasceva con 64 KB di RAM vera in mano: sedici pagine
+allocate e azzerate una per una, anche per un filo che di pila ne usa duecento
+byte. Non era una svista, era un prezzo pagato apposta, e il perché stava
+scritto nel codice: `page_fault_handler` sapeva far crescere **uno** stack —
+quello del PCB corrente — e davanti a una pagina mancante dentro la banda dei
+fili non sapeva **di chi** fosse.
+
+Adesso lo sa dire. Della piazzola si impegnano il blocco TLS e le prime otto
+pagine; il resto arriva quando il filo scende davvero, e si ferma sulla pagina
+di guardia sotto la piazzola. **Sette fili costano 980 KB invece di 1344**,
+cioè 140 a testa invece di 192 — e di quei 140, centoventotto sono lo stack di
+*kernel* del task, che con questo lavoro non c'entra: la pila utente è passata
+da 64 KB a 12.
+
+**La domanda vera non era «quanto», era «di chi».** I fili condividono la
+memoria, quindi a faultare dentro la pila di un filo può essere **qualcun
+altro**: un filo dichiara `char buf[16384]`, ne tocca solo la cima e ne passa
+il fondo a un compagno — o a una `read()`. Il fondo non è impegnato, il
+compagno ci scrive, e il fault arriva mentre gira lui; il suo ESP non dice
+niente su quell'indirizzo, perché sta in un'altra piazzola. Finché i 64 KB
+c'erano tutti il caso non esisteva. Per questo `pf_cresci_stack` è diventata
+due domande invece di una: **se** la crescita è legittima e **di chi** è la
+pila, poi `pf_cresci_pagine` impegna.
+
+> **La condizione «vicino a ESP» lì non si applica, e non è una rinuncia:**
+> sarebbe un paragone fra due piazzole diverse, cioè un numero senza
+> significato. Al suo posto c'è un confine altrettanto stretto — l'indirizzo
+> deve cadere nella riserva di un filo **vivo** dello stesso gruppo — e fra una
+> piazzola e l'altra resta la guardia, che nessuna crescita può scavalcare.
+
+**Due difetti trovati leggendo quel che si stava per toccare**, tutt'e due in
+`proc_reap_zombie`:
+
+- **sedici pagine perse a ogni filo che finisce.** Le piazzole si riusano, ma
+  le pagine di un filo morto restavano mappate fino alla fine del *processo*:
+  il filo dopo prendeva lo stesso posto e ci si mappava sopra pagine nuove —
+  `paging_map_page` sovrascrive la voce senza dire niente — con i dati di
+  quello di prima sotto i piedi. Adesso la piazzola si smonta, e nella prova si
+  legge «riassorbiti tornano 980 KB su 980»;
+- **una page directory distrutta più di una volta.** Si libera «quando non
+  resta nessuno», e nessuno si contava con `proc_gruppo_vivi()`, che gli zombie
+  non li conta; ma quando il capogruppo esce i fili diventano zombie *tutti
+  insieme*, e ognuno veniva raccolto con lo stesso puntatore in mano. Il primo
+  distruggeva la directory, i successivi la ripercorrevano da liberata. **Non è
+  provato** che fosse la causa dei due difetti rari già aperti — il panic dentro
+  `kfree`, il driver che parte con lo stack a zero — ma la forma è quella: un
+  conto che arriva altrove e molto dopo.
+
+**Le prove sono due modi nuovi di `/bin/filiprova`,** e ognuna delle tre parti
+di `pila` fallisce da sola: quanto costa un filo (la riga di giudizio è a 160 KB
+— 128 di stack kernel più *o* 64 di piazzola tutta *o* 12 impegnati a poco a
+poco: un numero in mezzo non esiste), che poi cresca (quaranta chiamate da un
+kilobyte, cinque volte quel che gli è stato dato), e che cresca **per mano di un
+altro**. `sfonda` scende senza fine e pretende che a morire sia il filo, sulla
+guardia, con codice -11, mentre il processo resta vivo.
+
+> **Nella terza parte il filo che aspetta non può chiamare niente.** Una `call`
+> scrive l'indirizzo di ritorno *sotto* l'ESP, e il fault che ne segue fa
+> impegnare tutto quel che sta fra lì e la parte già viva — cioè proprio il
+> pezzo che la prova vuole lasciare vuoto. Aspetta girando su una variabile
+> `volatile`. È anche la ragione per cui il caso è raro nella vita vera: i dati
+> vivi di un filo stanno sempre sopra il suo ESP, e sopra l'ESP è già tutto
+> impegnato.
+
+Restano dichiarati, e sono difetti veri usciti scrivendo la prova: **un filo che
+muore di page fault non porta via il processo** (muore lui, e il programma
+prosegue magari con un lucchetto preso da chi non c'è più), e **lo zombie di un
+filo che nessuno aspetta lo raccoglie la shell**, che torna al prompt con il
+programma ancora vivo.
+
+### La casella «Cerca», e due caselle nella stessa barra
+
+**testato, in rete, dentro EX-OS** — cercare si poteva già: `html.duckduckgo.com`
+risponde in HTML semplice e il navigatore lo mostra. Mancava la *comodità* — si
+scriveva l'indirizzo del motore a mano — e adesso c'è una casella **Cerca** a
+destra nella barra: parole, Invio, risultati.
+
+I motori sono tre, e si scelgono in **File > Impostazioni**: **duckduckgo**
+(predefinito), **wikipedia**, **marginalia**. **Sono tre perché tre
+rispondono:** `google.com` manda novantamila byte, tre script e *zero*
+collegamenti di risultato dentro l'HTML — i risultati li costruisce il
+JavaScript, quindi non c'è browser senza JS che possa vederli — e Mojeek manda
+un Captcha. Metterli in elenco vorrebbe dire una voce che promette una ricerca
+e rende una pagina vuota.
+
+**Invio fa due cose diverse, e la differenza è il fuoco.** In una casella del
+toolkit Invio arriva all'applicazione come `EXM_TASTO` — la casella lo lascia
+passare apposta — ma il messaggio **non dice da quale casella arrivi**, e il
+fuoco lo sa solo il toolkit. Per questo è nata `ex_fuoco_chi()`, otto righe:
+l'alternativa era indovinarlo guardando quale testo è cambiato, cioè sbagliarlo
+il giorno che qualcuno cerca due volte la stessa cosa.
+
+> **E un difetto del toolkit che non mordeva finché le caselle erano larghe.**
+> Con la seconda casella l'indirizzo si è ristretto da 636 a 436 pixel, e alla
+> prima pagina lunga il difetto era in fotografia: l'indirizzo **scriveva sopra
+> l'etichetta «Cerca»**. `ex_scrivi` non taglia niente e `CL_TESTO` non lo
+> chiedeva a nessuno — non è un difetto nato oggi, è nato oggi il primo posto in
+> cui due controlli sono così vicini. Adesso si mostra la **coda** e non la
+> testa, perché in quella casella il cursore sta sempre in fondo: chi scrive
+> deve vedere quel che sta scrivendo, non l'inizio di un indirizzo che ha già
+> finito di battere.
+
+### La directory è di tutti e due (e l'ambiente lo era già)
+
+**testato** — un `chdir` dentro un filo adesso lo vedono gli altri, ed è una
+riga: `filo->cwdt = capo->cwdt;` invece di copiare il percorso. **È lo stesso
+mestiere che fa `fdt` per i descrittori**, con lo stesso idioma: nel PCB c'è il
+campo `cwd` e c'è il puntatore `cwdt`, che per un processo punta al proprio
+campo e per un filo a quello del capogruppo. Tutto il kernel usa `cwdt` — sono
+cinque posti in croce — e **fra processi non cambia niente**: la directory
+resta una per ciascuno, ereditata dal padre a `spawn` come prima.
+
+**Il motivo è lo stesso di quando la directory diventò una per processo, letto
+all'incontrario.** Allora il difetto era che `cd` dentro un programma spostava
+tutti gli altri; qui è che due fili **sono un programma solo**, e una funzione
+che entra in una directory, apre un file relativo e torna indietro fa la cosa
+giusta o quella sbagliata a seconda di quale filo la esegue — senza errore,
+aprendo un file nel posto sbagliato.
+
+**E l'ambiente non passa dal kernel: quello era da controllare, non da fare.**
+L'elenco diceva «cwd ed env sono copiati», e per `env` non era vero: `environ`
+sta nei dati di `libc.so`, che i fili condividono perché condividono la
+memoria, e il campo `env[]` del PCB non lo usa nessuno. Non c'era niente da
+aggiustare; c'era da *guardare*, che è un'altra cosa dal darlo per buono.
+
+> **La prova guarda nei due versi, e uno solo non basterebbe.** Con la
+> directory copiata alla creazione, il verso «il principale si sposta e il filo
+> se ne accorge» passerebbe lo stesso ogni volta che il filo nasce *dopo* il
+> cambio: è il filo che si sposta e il principale che deve vederlo a dire
+> «condivisa» invece di «copiata al momento giusto». Rimessa la copia di prima
+> per un giro, falliscono tutt'e due i versi — e l'ambiente passa in tutt'e due
+> i casi, che è la conferma che quella metà non è mai stata un problema del
+> kernel.
+
+### Fermare un filo è chiederglielo
+
+**testato** — uccidere un filo si poteva già (il tid è un pid, e `kill`
+funziona), ma **non si deve**: un filo ucciso dove capita lascia i lucchetti
+presi, i file aperti a metà e le strutture come stavano, e dentro un processo
+solo quelle non sono le sue — sono **di tutti**. Adesso c'è il modo ordinato:
+
+```c
+while (!thread_devo_fermarmi()) { ...un pezzo di lavoro... }
+...lascia i lucchetti, chiudi quel che hai aperto...
+thread_esci(0);
+```
+
+`thread_ferma(tid)` lascia un messaggio, `thread_devo_fermarmi()` lo legge dove
+il filo decide. **Il kernel fa solo le due cose che da fuori non si possono
+fare**: mettere il messaggio dove il filo lo troverà, e *scrollare* chi dorme —
+perché un filo addormentato non guarda niente.
+
+**Due parole nel PCB, e fanno due mestieri diversi.** `ferma` è il messaggio e
+resta: una richiesta letta una volta vale anche la seconda. `scuoti` è la
+scrollata e **si consuma**, e serve a chiudere l'unica finestra che questa cosa
+ha: fra il momento in cui il filo guarda e quello in cui si addormenta. Se la
+richiesta arriva lì in mezzo il filo dorme *dopo* aver guardato — la stessa
+corsa del risveglio perso, e la stessa cura: chi chiede lascia scritto che la
+prossima attesa non deve dormire, e `sys_attesa_dormi` lo trova dentro lo
+stesso `cli` che protegge il valore atteso. Una scrollata sola, non un «non
+dormire mai più»: un filo che sta uscendo ha ancora una pulizia da fare, e con
+ogni attesa che torna subito quella girerebbe a vuoto.
+
+> **E la prova passava anche senza la cosa che doveva provare** — il difetto più
+> istruttivo della giornata, e stava *nella prova*. Tolta la scrollata dal
+> kernel per una riga, il caso che doveva colpire quella finestra passava lo
+> stesso: con un processore solo, creando un filo e fermandolo subito si finisce
+> sempre in uno dei due casi facili — o la richiesta arriva prima che il filo
+> abbia guardato, o a filo già addormentato. Il caso di mezzo dura poche
+> istruzioni e **a caso non ci si casca**. La cura è allargare la finestra a
+> comando invece di sperare: il filo, fra l'occhiata e il sonno, cede la CPU e
+> alza una bandierina, e chi comanda aspetta quella. Adesso venti corse costano
+> **60-180 ms** con la scrollata e **20200 senza** — venti scadenze da un
+> secondo, una per corsa — e la prova fallisce. Prima la differenza era di zero.
+
+**Quel che non fa, ed è scritto:** il filo si accorge solo dove guarda. Un
+`semaforo_prendi` senza scadenza non è un punto di controllo, e nemmeno una
+lettura da tastiera o da rete; chi vuole potersi fermare lì usa le varianti con
+scadenza. E la lettura del messaggio costa una chiamata di sistema: toglierla
+vorrebbe dire una parola di ABI dentro il blocco TLS, che è una decisione a
+senso unico e nessuno l'ha ancora misurata.
+
+### Le condizioni e i semafori, sopra l'attesa che dorme
+
+**testato** — l'attesa che dorme era il mattone; adesso ci sono le due cose che
+ci si costruiscono sopra, e sono **otto funzioni di libc, nessuna riga di
+kernel**: `condizione_aspetta` (con la variante a scadenza), `condizione_segnala`,
+`condizione_segnala_tutti`, `semaforo_prendi` (idem), `semaforo_prova`,
+`semaforo_lascia`. Tutt'e due i tipi sono **un intero**, come il lucchetto:
+`Condizione c = CONDIZIONE_ZERO;`, `Semaforo posti = 1;` — nessuna funzione di
+inizializzazione, che è l'unica forma che non si può dimenticare di chiamare.
+
+**Una condizione è un contatore di segnali, e basta.** Non tiene la lista di
+chi aspetta: quella è già nel kernel, ed è la coda di chi dorme su
+quell'indirizzo. Aspettare è tre righe — leggi il contatore, lascia il
+lucchetto, dormi su quel valore, riprendi il lucchetto — e **la prima è l'unica
+che conta**: fra il «lascia» e il «dormi» c'è una finestra in cui chi segnala
+può passare, e quel segnale arriverebbe prima che ci sia qualcuno da svegliare.
+Avendo letto il contatore *prima*, se qualcuno segnala lì in mezzo il valore
+non è più quello e non si dorme affatto. La finestra non si chiude: si rende
+innocua.
+
+> **Perciò si aspetta dentro un `while`, mai dentro un `if`.** Il risveglio
+> dice «guarda di nuovo», non «adesso c'è»: può arrivare per un segnale, per
+> la scadenza, o perché un segnale era già passato. Chi controlla una volta
+> sola prima o poi prosegue con la condizione falsa, ed è il difetto che non si
+> riproduce.
+
+**Un semaforo non ha un padrone**, e non è una licenza: chi lascia può non
+essere chi ha preso, ed è esattamente ciò che serve fra un produttore e un
+consumatore, dove il posto libero lo consuma uno e lo restituisce l'altro. Una
+spesa è rimasta lì, scritta accanto al codice: chi lascia chiama la sveglia
+*sempre*, anche quando non dorme nessuno — il lucchetto quella spesa la evita
+col terzo stato, ma lì il numero *è* lo stato del lucchetto, mentre qui il
+contatore conta posti e non ha dove metterlo. La via c'è (un secondo campo
+«dormienti») e vuole un tipo nuovo nell'ABI: **non si paga un tipo nuovo per
+un'ottimizzazione che nessuno ha ancora misurato.**
+
+> **La prova è una coda di UN posto, e può fallire in tre modi diversi.** Mille
+> elementi fra un produttore e un consumatore: con dieci posti i due si
+> incrociano poco e la prova diventa quasi sequenziale, con uno solo ognuno dei
+> mille costringe l'altro ad aspettare. Si guarda la **somma** (perderne uno e
+> leggerne un altro due volte darebbe lo stesso numero di giri), i **giri a
+> vuoto** — e devono essere *zero*, non «pochi»: con un consumatore solo, chi si
+> sveglia trova sempre la roba — e il **cronometro**, che è il testimone dei
+> giri a vuoto. Dentro l'attesa c'è una scadenza di mezzo secondo che è una
+> *rete*, non un modo di funzionare: senza, un segnale perso sarebbe una
+> macchina ferma per sempre e la prova non fallirebbe, resterebbe lì. Mille
+> passaggi ne costano fra **20 e 60 ms** misurati, una sola scadenza ne
+> costerebbe 500: la riga di giudizio sta a 400, comoda sopra la misura e
+> ancora capace di distinguere.
+
+### I fili: più flussi dentro lo stesso programma
+
+**testato** — e la prova non è che il conto torni, è che **senza lucchetto non
+torna**:
+
+```
+filiprova: 4 fili, 20000 giri l'uno
+  col lucchetto   80000   atteso  80000   esatto
+  senza           20000   atteso  80000   perso per strada
+  scambi di mano  80000   i fili si alternano davvero
+```
+
+Sessantamila incrementi persi sono quattro flussi che si pestano i piedi sulla
+stessa memoria. Se i fili fossero finti — se `thread_crea` eseguisse la
+funzione dentro chi chiama — quel numero sarebbe 80000 come l'altro, e la prova
+sarebbe passata senza provare niente.
+
+**La differenza fra un processo e un filo è una riga: la page directory.**
+`proc_create` ne alloca una nuova, `proc_thread_crea` copia quella del
+capogruppo. Non c'è una riga dello scheduler che sia stata toccata: stessa run
+queue, stesso quanto, stesso `context_switch` — che riceveva già il CR3 come
+parametro. E `tgid` (il pid del primo del gruppo) vale `pid` per un processo
+normale, così tutto il kernel che non sa niente di fili continua a funzionare
+senza un solo `if`.
+
+**I descrittori si condividono per puntatore, non per copia**: due fili che
+aprono e chiudono file devono vedere la stessa tabella. Nel PCB è comparso
+`fdt`, e le 153 occorrenze di `->fds[` nel kernel sono diventate `->fdt[` con
+una sostituzione meccanica — per un processo normale `fdt == fds` e non cambia
+niente.
+
+**Lo stack no**: 64 KB per filo, in una banda riservata *a tutti* i processi
+all'avvio — anche a chi un filo non lo farà mai. Sono indirizzi, non pagine.
+L'alternativa (riservarla quando nasce il primo filo) vorrebbe dire abbassare
+il tetto dello heap sotto memoria che lo heap potrebbe già avere preso: o si
+rifiuta il filo, o gli si mette lo stack sopra la roba di qualcun altro.
+
+> **Chi esce porta via il gruppo**, come `exit_group` su Linux e per la stessa
+> ragione: gli altri fili vivono nella memoria di questo processo, e lasciarli
+> correre mentre lo spazio di indirizzamento se ne va vuol dire codice che gira
+> sopra pagine liberate. Provato apposta: un programma che crea tre fili
+> infiniti ed esce senza aspettarli lascia la macchina sana e il prompt torna.
+
+**Quel che non è per filo, ed è scritto invece che scoperto:** le variabili
+`__thread` e `errno` sono per *processo* — il blocco TLS è in comune. Darne uno
+per filo vuol dire copiarci l'immagine iniziale che sta nell'ELF; azzerarlo e
+basta farebbe partire a zero una variabile inizializzata a cinque, in silenzio.
+Fra un limite scritto e un valore sbagliato non c'è partita. E il lucchetto
+gira cedendo la CPU: va bene per una sezione critica corta, non per aspettare —
+un futex è il passo dopo.
+
+
+**E poi il blocco TLS per filo.** Nella prima ora i fili condividevano quello
+del processo; nella seconda è stato tolto anche quel limite: **ogni filo ha il
+suo**, in cima al proprio stack — dove quelle pagine sono già mappate e nessun
+altro può arrivarci, che è anche dove lo mette glibc. L'immagine iniziale si
+**rilegge dal file**, non si copia da quella del capogruppo: copiare la sua
+vorrebbe dire far partire il filo con i valori *di adesso* di un altro flusso —
+un contatore a metà, un puntatore a un oggetto in uso. Nel PCB sono comparse le
+tre coordinate del `PT_TLS`, e l'eseguibile è già aperto per il caricamento su
+richiesta.
+
+> **La prova parte da sette, non da zero**, ed è l'unico modo di distinguere
+> «blocco copiato» da «blocco azzerato»: un blocco azzerato passa qualunque
+> prova che parta da zero. Ogni filo controlla di trovarci 7, ci scrive il suo
+> numero, cede la CPU due volte e ricontrolla; il filo principale, alla fine,
+> ritrova il suo 42 intatto. Resta fuori `errno`, che vive dentro `libc.so`
+> dove `__thread` non funziona — e adesso ha una strada scritta per smettere di
+> esserlo.
+
+
+**E anche `errno` è per filo.** Dentro `libc.so` non si può scrivere
+`__thread` — manca il TLS dinamico — ma il thread pointer si può *leggere*:
+`%gs:0` contiene un numero diverso per ogni filo, buono come chiave in una
+tabellina di sedici posti, dove il posto si prende con `xchg` e non con «se è
+libero allora scrivilo». Per questo il blocco TLS ora si fa a *tutti* i
+processi, anche a quelli senza una sola variabile `__thread`: ridotto al solo
+TCB, otto byte in una pagina — senza, la base di quel descrittore vale zero e
+`movl %gs:0` non dà un valore sbagliato, dà un page fault all'indirizzo 0.
+
+> **Il difetto uscito da lì vale più della funzione.** Messa la tabella,
+> `close(999)` ha cominciato a rispondere `errno 0` su una chiamata che
+> fallisce di sicuro: **dentro `libc.c` la parola `errno` non è la macro**,
+> perché quel file non include `libc.h` — sta scritto in testa che si compila
+> senza `-I lib/include`. `err_posix` scriveva la variabile globale mentre il
+> programma leggeva il posto del suo filo. E la prova che l'ha trovato era
+> stata rifatta apposta: la prima versione faceva sbagliare il filo principale
+> con una chiamata che rispondeva zero, e zero non cambia mai — sarebbe passata
+> per sempre senza provare niente.
+
+**E il difetto più istruttivo: un task a metà che viene eseguito.** Aggiunto il
+TLS per filo, il programma di prova moriva *una volta su tre* con un page fault
+all'ingresso della funzione del filo. La diagnosi è arrivata in un giro solo
+facendo stampare i numeri: il filo andava in fault **prima che la sua riga di
+creazione fosse stampata**, col contesto che `proc_create` gli aveva costruito —
+ESP a zero. In mezzo c'era una `vfs_read`, cioè una chiamata **che può
+bloccare**: mentre il capogruppo aspettava il disco, lo scheduler metteva in
+esecuzione un filo non finito di costruire. La regola che ne esce vale per
+qualunque kernel: **fra la creazione di un task e il momento in cui è pronto
+non ci deve stare niente che possa bloccare.**
+
+
+**E l'attesa che dorme davvero.** `attesa_dormi`/`attesa_sveglia`: un filo esce
+dalla coda dello scheduler e ci rientra quando qualcuno lo chiama — per
+l'**indirizzo** su cui si è fermato, non per il pid, ed è ciò che permette a un
+lucchetto di essere un intero e basta, senza doversi ricordare chi c'è in fila.
+
+**Il valore atteso chiude la corsa**, ed è la ragione per cui la chiamata ha tre
+argomenti invece di due: fra il momento in cui chi aspetta guarda il lucchetto e
+quello in cui si addormenta c'è una finestra, e una sveglia arrivata lì in mezzo
+si perderebbe — il filo dormirebbe per sempre. Il confronto lo fa il *kernel*, a
+interruzioni spente. E la pagina si tocca *prima* di spegnerle: leggere memoria
+utente può far scattare un page fault che vuole il disco, e un disco che si
+aspetta a interruzioni spente è una macchina ferma.
+
+**Il lucchetto ha tre stati** — libero, preso, preso-con-gente-che-dorme — e il
+terzo esiste per chi *lascia*: senza, dovrebbe chiamare la sveglia a ogni
+sblocco per il dubbio che qualcuno dorma. Con il 2, chi lasciando si ritrova in
+mano un 1 sa che non c'è nessuno: **senza contesa il lucchetto non costa nemmeno
+una chiamata di sistema.**
+
+> **La prova è un cronometro, perché nient'altro distingue.** Un'attesa che gira
+> a vuoto e una che dorme, viste da fuori, fanno la stessa cosa. Servono due
+> misure con esiti opposti: senza nessuno che svegli, con scadenza 300 ms, è
+> tornata dopo **310 ms** — ha dormito; svegliata da un filo dopo 100 ms con la
+> scadenza a 2000, è tornata dopo **100 ms** — l'ha svegliata lui, non
+> l'orologio.
+
+### Le scorciatoie degli editor, e una cosa che avevo scritto sbagliata
+
+**testato** — scritta una riga nell'editor e premuto solo Ctrl+S: la riga di
+stato dice «salvato», e il file riletto dalla shell la contiene. Era l'ultima
+voce dell'elenco di EX-IDE: il menu della finestra «Sorgente» prometteva
+Ctrl+S, Ctrl+C, Ctrl+V, Ctrl+X e Ctrl+F dal primo giorno, e non le aveva
+collegate nessuno.
+
+**Il toolkit non le mangia, apposta.** In `exwin.c`, nel giro dei tasti: «per
+ogni altro controllo un Ctrl+lettera è una scorciatoia dell'applicazione e non
+deve essere mangiata» — l'unica eccezione è il terminale, dove Ctrl+C è il byte
+3 e deve arrivare al pty. I Ctrl arrivavano già; mancava che qualcuno li
+guardasse.
+
+> **E quel che avevo scritto nel manuale era sbagliato.** Sotto «Area testo»
+> c'era «con cursore, selezione e appunti (Ctrl+C, Ctrl+V, Ctrl+X)», come se i
+> tasti li facesse il toolkit. Il toolkit dà le *funzioni* —
+> `ex_area_copia/taglia/incolla` — e lascia i tasti a chi scrive il programma.
+> La riga adesso lo dice, e dice anche come si fa: è esattamente ciò che serve a
+> chi con EX-IDE scrive un editor suo.
+
+**Il disegno si rifà a mano, da tastiera.** È la trappola di questo lavoro:
+premendo «Taglia» nel menu il toolkit ridisegna la finestra chiudendo la
+tendina, quindi il testo cambiato si vede; da tastiera non si chiude niente, e
+senza un `EXM_DISEGNA` esplicito il testo cambia e lo schermo resta com'era. Le
+due strade passano dalle stesse funzioni e non hanno lo stesso contorno.
+
+### Taglia e incolla: un controllo si sposta fra le maschere
+
+**testato** — copiato e incollato nella stessa maschera, e poi tagliato,
+cambiata maschera e incollato: il file del disegno mostra il controllo passato
+sotto l'altra finestra, stessa posizione e stesso nome. Era l'ultima voce grossa
+di EX-IDE, e la sua ragione vera non era copiare: era che un controllo messo
+sulla maschera sbagliata si poteva solo cancellare e rifare a mano di là.
+
+**Gli appunti del disegno non sono quelli di sistema.** Dentro c'è un
+*controllo*, non del testo: quelli di ExWin portano caratteri e li usano già gli
+editor per passarsi pezzi di sorgente. Infilarci un controllo vorrebbe dire
+inventare un formato testuale per un rettangolo e farlo rileggere anche a chi ci
+scrive dentro nel frattempo. Nella finestra principale Ctrl+C parla del disegno,
+che è quel che quella finestra è.
+
+**Il nome e l'id non si copiano, si rifanno**: sono unici in tutto il progetto
+perché diventano `ID_...`, `h_...` e un nome di funzione dentro `finestra.h`,
+che è un file solo. Con una conseguenza gradevole che non era cercata —
+tagliando, il nome torna disponibile e il controllo se lo riprende: **uno
+spostamento non rinomina niente**.
+
+**E il codice non si copia affatto.** L'handler dell'originale resta
+dell'originale; la copia avrà il suo, vuoto, al primo doppio clic. Copiare anche
+il corpo vorrebbe dire che exide scrive dentro `finestra.c` cose che non ha
+scritto nessuno — l'unica regola che questo programma non rompe mai.
+
+> **Nella stessa maschera l'incollato si scosta di otto pixel, in un'altra no.**
+> Metterlo esattamente sopra l'originale lo nasconderebbe: si vedrebbe un
+> controllo e ce ne sarebbero due, e il clic prenderebbe sempre quello di sopra.
+> In un'altra maschera invece quel posto è libero, ed è esattamente dove lo si
+> vuole.
+
+### Rifai: la stessa funzione con le due pile scambiate
+
+**testato** — annullato, rifatto, e verificato il caso che conta di più: dopo un
+Annulla, una modifica nuova butta il ramo rifatto.
+
+**Quel che si annulla non si butta, si mette dall'altra parte.** Due pile invece
+di una, e *una funzione sola che le scambia*: `passo(da, verso)` prende il
+presente, lo mette nella pila `verso`, e rimette il disegno che stava in cima a
+`da`. Annulla è `passo(indietro, avanti)`, Rifai è `passo(avanti, indietro)` —
+due righe l'uno, e il giorno che si aggiunge un campo al disegno il posto in cui
+ricordarsene è uno. Per la stessa ragione la cattura e il ripristino sono
+diventati due funzioni invece delle tre `memcpy` copiate nei tre posti che le
+usano.
+
+**Una modifica nuova butta il ramo rifatto**, ed è l'unica regola che questa
+cosa deve avere: se dopo tre passi indietro si disegna qualcosa, quell'«avanti»
+è un futuro nato da un passato che non c'è più, e tenerlo vorrebbe dire un Rifai
+che riporta a un disegno mai esistito. Lo fanno tutti i programmi così, e la
+ragione è questa — non l'abitudine.
+
+> **La pila scorre quando è piena**, invece di rifiutare l'istante nuovo: il
+> passo più vecchio è quello che serve meno, e perdere il più *recente* vorrebbe
+> dire un Annulla che non annulla l'ultima cosa fatta. Costo misurato con
+> `size`: la BSS di exide passa da 140.384 a 261.888 byte — centoventuno
+> kilobyte, cioè la seconda pila di sedici istanti, memoria azzerata e non byte
+> nel binario.
+
+### Si cerca davvero, e non serviva portare un browser
+
+**testato** — dal vivo, in HTTPS: `html.duckduckgo.com/html/?q=exos` si apre
+nel navigatore di EX-OS e mostra i risultati, con titoli, indirizzi e testi di
+anteprima.
+
+La domanda era se portare Firefox, o NetSurf, per poter cercare. La risposta è
+venuta da cinque richieste HTTP, non da un preventivo — una per motore, con
+l'User-Agent vero di EX-OS:
+
+| motore | cosa risponde |
+|---|---|
+| google.com/search | 200, 91.980 byte, **tre script e zero link di risultato**: i risultati li costruisce il JavaScript |
+| mojeek.com/search | 200, `<title>Captcha</title>` |
+| html.duckduckgo.com | 200, 33.784 byte, **dieci risultati in HTML semplice** |
+| marginalia, wikipedia | HTML semplice |
+
+**Quindi NetSurf non risolve Google, e non è colpa sua**: NetSurf non esegue
+JavaScript, e Google i risultati in HTML non li manda a nessuno. Portare un
+motore di terze parti — mesi per NetSurf, un secondo sistema operativo per
+Firefox, che senza thread e senza Rust non parte nemmeno — non avrebbe spostato
+di un millimetro il problema che si voleva risolvere.
+
+**Poi il difetto vero.** La pagina di DuckDuckGo arrivava (TLS a posto, `200,
+31671 byte, 738 nodi`) e lo schermo restava bianco. La riga di stato diceva
+anche «stile troncato», ed era lì la risposta: la stessa pagina salvata in
+locale *senza* foglio di stile si disegnava subito. **Il foglio di DuckDuckGo è
+105.607 byte e il tetto era 24.576**: il navigatore ne leggeva un quarto e si
+fermava a metà di una regola, e con mezzo foglio applicato la pagina spariva.
+
+I tre numeri che servivano davvero — 1652 selettori, 2207 dichiarazioni, 105 KB
+— contro tetti di 600, 2000 e 24 KB. Alzati a 2400, 5000 e 160 KB: costano
+**284 kilobyte di BSS** su un programma che ne aveva già 5,2 MB, misurati con
+`size` e non stimati.
+
+> **Si cerca dal proprio navigatore senza fingersi nessuno.** Non serviva
+> un'impronta identica a Chrome, né il jitter umano, né un motore di terze
+> parti: serviva un motore che risponde in HTML e un tetto alzato. E il terzo
+> risultato che DuckDuckGo ha restituito era `github.com/exagonx/EX_OS` — cioè
+> questo progetto.
+
+### L'impaginato esce da browser.c, e la prova è che non si vede
+
+**testato** — la stessa pagina fotografata prima e dopo: dieci righe di pixel
+diverse su seicento, dalla 582 alla 591, e sono **l'orologio** della barra in
+basso. Sopra, niente. Primo dei due passi verso una libreria di testo
+formattato: si spezza il file prima di spezzare la libreria.
+
+```
+browser.c            6749 -> 4824 righe
+browser_impagina.c        1836 righe   (l'impaginato, uscito da lì)
+browser_priv.h             222 righe   (la giuntura, che prima non c'era)
+```
+
+**Il taglio se l'è fatto dire dalla macchina.** Prima di spostare una riga ho
+fatto costruire la mappa del file — centotrentotto definizioni, chi chiama chi,
+chi tocca quali variabili globali — e il gruppo dell'impaginazione è venuto
+fuori da solo: ventotto funzioni, 1588 righe, *contigue*. A occhio, su seimila
+righe, non si vedeva.
+
+E soprattutto è venuta fuori la misura del taglio, che era la domanda vera: 21
+variabili condivise, 11 funzioni chieste al navigatore e **3 sole offerte a
+lui**. Verso l'esterno l'impaginato è quasi chiuso; quel che lo tiene legato
+non sono le chiamate, sono le variabili — esattamente il genere di legame che
+non si vede finché tutto sta in un file solo.
+
+> **Tre errori dello script, tutti dello stesso tipo.** Per una funzione
+> scritta su una riga sola la firma veniva tagliata all'*ultima* parentesi, che
+> sta dentro il corpo: nell'intestazione finiva una graffa aperta. Una
+> dichiarazione che finisce con un commento invece che col punto e virgola
+> faceva inghiottire la riga dopo. E i globali dichiarati più d'uno per riga non
+> venivano visti affatto. Ogni volta: rimetti il file com'era, correggi lo
+> *script*, rifai il taglio da capo — correggere il risultato invece dello
+> script avrebbe voluto dire un taglio che non si sa più rifare, e questo taglio
+> va rifatto il giorno del passo 2.
+
+### Il manuale di EX-IDE diventa una pagina, con l'indice
+
+**testato** — Aiuto > Manuale apre il navigatore su
+`/exwin/doc/exide.html`, e un clic sull'indice porta esattamente sul
+paragrafo. Ventimila byte, ventinove `id`, cinquantasei rimandi interni.
+
+**Non si riscrive un visualizzatore**, è la stessa decisione con cui
+«Directory» non riscrive un file manager ma lancia `filemgr`: il navigatore
+c'è, impagina, colora, segue i link e lo fa già per le altre nove pagine della
+guida. Il manuale di EX-IDE è diventato la decima pagina di quell'insieme —
+stessa barra di navigazione, stesso foglio di stile, una riga nell'indice della
+documentazione — e le barre delle altre pagine ora lo nominano.
+
+**Gli esempi sono condivisi, ed è il motivo per cui serviva l'indice.** Lo
+scambio fra due caselle è un esempio di *Casella* tanto quanto di *Pulsante*;
+l'uscita con la conferma vale per *Spunta*, per *Pulsante* e per «come si
+esce». Ripeterlo sotto ognuno vorrebbe dire tre copie da tenere d'accordo;
+metterlo sotto uno solo vorrebbe dire che chi cerca l'altro non lo trova.
+Perciò gli esempi stanno tutti in fondo, con un `id` per uno, e **ogni
+strumento ci rimanda** — e ogni esempio dice per quali strumenti vale. È
+l'unica struttura in cui la stessa cosa è scritta una volta sola e si raggiunge
+da tutti i posti da cui la si cerca; senza il salto all'ancora sarebbe stata un
+elenco di titoli e «scorri finché non lo trovi».
+
+> **Il manuale dentro il programma è rimasto**, ed è la ragione per cui era
+> stato scritto: un manuale che sta in un file è un manuale che un giorno non
+> c'è — il componente `/exwin` non installato, un CD montato a metà, il solo
+> binario copiato. Adesso è la seconda scelta invece che l'unica, e la sua
+> prima riga dice dov'è quello buono. Ma sono due copie dello stesso testo e
+> prima o poi divergeranno: la strada, scritta fra le cose da fare, è
+> accorciare quella interna a un promemoria e lasciare alla pagina il testo
+> lungo.
+
+**E il manuale interno è diventato un promemoria**, da 289 righe a 61: come si
+comincia, i quattro file, le finestre e la tavola degli strumenti coi loro
+eventi. Gli esempi, le proprietà una per una e il menu stanno solo nella
+pagina — sono la parte lunga, cioè quella che diverge per prima. Il binario di
+exide cala di undici kilobyte, e la prima riga del promemoria dice che se lo
+stai leggendo vuol dire che la pagina non c'era.
+
+### Le ancore: un link che porta a un punto della pagina
+
+**testato** — quattro casi dentro EX-OS: un'ancora della stessa pagina, una che
+non esiste, un indirizzo con la coda scritto nella barra, e un link che cambia
+pagina *e* atterra sul paragrafo. Serviva alla documentazione: un manuale lungo
+con l'indice in cima, dove si preme una voce e ci si trova sulla spiegazione.
+
+Il navigatore non ci andava, e lo diceva da mesi in un commento: «questo browser
+non sa ancora saltare a un punto dentro un documento; finché il salto non c'è,
+non fare niente è la risposta più onesta». Adesso il salto c'è.
+
+**Il pezzo da cui ripartire si trova dal nodo, non dal testo.** Ogni pezzo
+impaginato sa già da quale nodo del documento viene — un campo aggiunto a suo
+tempo per dire a uno script *dove* si è cliccato — quindi il salto è un giro
+sull'albero (l'elemento con quell'`id`, o un vecchio `<a name>`) e uno
+sull'impaginato, senza impaginare una seconda volta. Un'ancora della pagina
+corrente non ricarica niente: ricaricare per poi saltare vorrebbe dire un giro
+di rete, l'albero rifatto e i moduli riempiti a mano azzerati, tutto per
+muovere una barra di scorrimento.
+
+> **Il difetto ha richiesto una misura, non un'ipotesi.** Al primo giro il
+> salto atterrava due righe sotto il titolo: sembrava un margine sbagliato, o
+> la linea di base del carattere, o l'arrotondamento della riga — tre ipotesi
+> plausibili e tutte sbagliate. Invece di provarle ho fatto stampare i numeri
+> sulla riga di stato: `nodo 86, pezzo 152, y 870, scorri 0`. Il pezzo trovato
+> era giusto, era il titolo. **Le `y` dei pezzi sono già in coordinate della
+> finestra**, non del documento: l'impaginazione comincia sotto la barra
+> dell'indirizzo, quindi scorrendo alla `y` del pezzo quel pezzo finisce
+> *dietro* la barra e si vede la riga dopo. Con i numeri in mano ci sono voluti
+> due minuti.
+
+### Annulla: si fotografa tutto, non si registra cosa
+
+**testato** — tre modifiche di tre tipi diversi, ognuna annullata, e alla fine
+il file del disegno riletto dalla shell **identico a quello di partenza**.
+Sedici passi indietro, con Ctrl+Z o Modifica > Annulla.
+
+**Si fotografa il disegno intero prima di ogni modifica**, invece di registrare
+cosa è cambiato. L'alternativa vuol dire scrivere l'operazione inversa di
+ognuna — mettere un controllo, cancellarlo, spostarlo, ridimensionarlo,
+cambiargli una delle otto proprietà, cambiare una delle quattro della maschera,
+aggiungere una maschera, toglierne una che si porta via i suoi controlli: nove
+inverse, ognuna sbagliabile in un modo suo, e quelle sbagliate si scoprono un
+mese dopo. «Rimetti tutto com'era» non può sbagliare, è una copia. E il disegno
+è piccolo abbastanza perché sia sensato: sedici istanti stanno in un centinaio
+di kilobyte di memoria azzerata, che non finiscono nel binario.
+
+**Una fotografia per trascinamento, e solo se qualcosa cambia davvero.** Un
+trascinamento manda decine di eventi: fotografando a ognuno, i sedici passi se
+li mangia un movimento solo e si torna indietro mezzo pixel per volta.
+Fotografando invece all'inizio del trascinamento, un clic che sceglie e basta
+lascerebbe un passo che non fa niente — e un Annulla che non fa niente è peggio
+di non averlo, perché chi lo preme crede che sia rotto. Si fotografa al primo
+cambiamento vero.
+
+**E la storia non attraversa i progetti**: aprirne un altro e premere Annulla
+rimetterebbe sulla maschera i controlli di quello di prima, con i loro nomi e i
+loro id — un disegno mai esistito, pronto per essere salvato sopra quello vero.
+
+> **Le scorciatoie erano etichette.** I menu promettevano Ctrl+N, Ctrl+O,
+> Ctrl+S e Ctrl+Q dal primo giorno e premerli non faceva niente: nessuno le
+> aveva mai collegate. Per Annulla la scorciatoia conta più che per gli altri —
+> si annulla subito dopo aver sbagliato, con la mano ancora sulla tastiera, non
+> aprendo un menu — e allora sono state collegate tutte insieme. Restano
+> etichette quelle della finestra «Sorgente», e adesso è scritto dove si tiene
+> quel che manca.
+
+### Le maniglie si tirano, e il manuale spiega davvero
+
+**testato** — dentro EX-OS, tirando ogni tipo di maniglia e leggendo i numeri
+che finiscono nel file del disegno. I controlli si ridimensionano col mouse:
+le otto maniglie si disegnavano dal primo giorno e non servivano a niente.
+
+**Il problema non era tirarle, era prenderle.** Metà di ogni maniglia cade
+*dentro* il controllo, e il clic cercava prima il controllo — l'ordine
+naturale: così un clic sull'angolo cominciava uno spostamento e la maniglia non
+si prendeva mai. Ora le maniglie si guardano per prime. E il quadratino che si
+vede è 5 pixel — di più coprirebbe il controllo — mentre il bersaglio del mouse
+è 11: si mira al quadratino e si prende comunque.
+
+**Si tira un bordo, non una misura.** Tirando la maniglia di sinistra cambiano
+`x` **e** larghezza insieme, perché il bordo destro non si deve muovere:
+cambiando la sola larghezza il controllo scivolerebbe a destra mentre lo si
+tira a sinistra. Lo stesso vale per i limiti — la misura minima ferma il bordo
+che si sta tirando, non accorcia dall'altra parte, o il controllo scapperebbe
+appena arrivato al minimo.
+
+**Il manuale dentro il programma è diventato un manuale.** Per ogni strumento
+dice a cosa serve, quali eventi ha e **con quali funzioni si comanda** da
+`finestra.c`: `ex_acceso`/`ex_accendi` per Spunta e Radio, i sei `ex_lista_*`,
+i sei `ex_voce_*` che Elenco e Linguette condividono, `ex_scorri_*`; più le
+proprietà una per una — cosa diventa ognuna nel codice generato — e due esempi
+completi. Uno c'era: due caselle che si scambiano il testo, ora con scritto
+perché la copia d'appoggio serve davvero (`ex_testo_prendi` rende un
+*puntatore* al testo del controllo, non una copia). L'altro mancava: **un
+pulsante che chiude la finestra**, che nella principale è `ex_esci(0)` e in una
+secondaria no — lì si chiama la procedura generata con `EXM_CHIUDI`, che
+distrugge la finestra *e* azzera gli handle dei suoi controlli.
+
+> **Un difetto vecchio, trovato scrivendone uno nuovo.** Aggiungendo il
+> ridisegno al ridimensionamento è saltato fuori che lo *spostamento* non ne
+> aveva mai avuto uno: trascinando un controllo cambiavano `x` e `y` e nessuno
+> ridisegnava la tela, così il controllo si vedeva saltare nel posto nuovo solo
+> quando qualcos'altro faceva ridisegnare la finestra. Adesso tutti e due i
+> trascinamenti finiscono con un ridisegno.
+
+### Più di una finestra: il disegnatore impara a contare
+
+**testato** — dal disegno al programma che gira: due finestre disegnate,
+generate, compilate con GCC vero dentro EX-OS, e la seconda che si apre
+premendo un pulsante della prima. Un progetto di exide poteva disegnare **una
+finestra sola**; adesso ne disegna otto.
+
+**Il formato del disegno non è cambiato per fare posto.** Aveva già la forma
+giusta — una riga per la maschera, poi le righe dei suoi controlli — e bastava
+che le maschere potessero essere più d'una:
+
+```
+F principale 400 260 prg6
+c etichetta Etichetta1 1001 76 52 90 16 0 Etichetta1
+F finestra2 400 260 Finestra 2
+c spunta Spunta1 1003 76 124 140 20 0 Spunta1
+```
+
+La riga vecchia si chiamava `f` e **si continua a leggerla**: non aveva il nome
+— non serviva, la maschera era una — e infilarne uno in mezzo avrebbe fatto
+leggere la prima parola del *titolo* come nome. Perciò la riga nuova ha una
+lettera sua. I progetti fatti prima si aprono senza accorgersi di niente.
+
+**La finestra principale tiene i nomi di sempre**, e le altre no: `g_form`,
+`finestra_crea()`, `finestra_proc()` contro `g_form_opzioni`, `opzioni_crea()`,
+`opzioni_proc()`. Sarebbe più simmetrico chiamarle tutte allo stesso modo, e
+**ogni progetto fatto prima di oggi smetterebbe di compilare**: il suo
+`finestra.c` — quello che l'IDE non riscrive mai — chiama `finestra_crea()` dal
+main. Le secondarie le apre il tuo codice, di solito dall'handler di un
+pulsante.
+
+Tre dettagli che il generatore scrive e che chi scrive a mano dimentica:
+chiamare `<nome>_crea()` due volte **non apre due finestre** (un pulsante si
+preme più di una volta); chiudere una secondaria **non fa uscire dal
+programma**, esce solo la principale; e alla chiusura i puntatori ai suoi
+controlli **tornano a zero**, perché `ex_distruggi` porta via anche i figli e
+quei nomi punterebbero al vuoto.
+
+> **Una maschera per volta, e non un contenitore MDI — contro quel che avevo
+> scritto io stesso nell'elenco delle cose da fare.** L'MDI c'è nel toolkit
+> dal giorno prima ed era la strada segnata; a decidere sono stati i numeri: il
+> ripiano del disegnatore è 436x396 e una maschera nasce 400x260. Due finestre
+> di quella misura lì dentro si coprono quasi per intero — si passerebbe il
+> tempo a spostarle per vedere quella sotto, per guadagnare di vedere insieme
+> due cose su cui si lavora comunque una per volta. Resta la strada giusta il
+> giorno che la tela diventa grande, o che si vorrà trascinare un controllo da
+> una finestra all'altra.
+
+### Salva con nome, Sostituisci, e un nome che restava indietro
+
+**testato** — dentro EX-OS, con il file riletto dalla shell prima e dopo,
+nello stesso giro di macchina. Le due voci che erano in cima all'elenco delle
+cose da fare di exide.
+
+**«Salva con nome» copia l'albero, non rigenera il disegno.** Poteva voler
+dire due cose: rifare `finestra.dis`, `finestra.h` e `finestra_gen.c` dentro
+una directory nuova, oppure copiare tutto e continuare a lavorare sulla copia.
+La prima è più facile da scrivere e **butta via `finestra.c`**, che è l'unico
+dei quattro file che l'IDE non possiede: è quello dell'utente, quello in cui
+l'IDE aggiunge gli handler mancanti e non riscrive mai niente. Un «salva con
+nome» che perde il corpo delle funzioni non è un salvataggio. Si copia
+l'albero intero — `src/`, `inc/`, `lib/`, `bin/`, `obj/`, `progetto.txt`,
+`compila.sh` — dopo aver salvato gli editor aperti, e **l'originale resta
+intatto**: è una copia, non uno spostamento.
+
+**«Sostituisci» cambia una occorrenza per volta, come Cerca.** In un sorgente
+la stessa sequenza di caratteri sta dentro le stringhe, dentro i commenti e
+dentro i nomi: `msg` sta anche in `messaggio`. Un «sostituisci tutto» le
+cambia in silenzio tutte e tre, e chi lo lancia se ne accorge alla
+compilazione o dopo. C'è in tutt'e due gli editor — quello del sorgente e il
+file-editor — e nel toolkit è nato `ex_area_riga_metti()`, che riscrive una
+riga in mezzo al documento: sedici righe che passano da `area_tocca()`, così
+la catena del coloritore si invalida da lì in giù. Una primitiva del genere
+va nel toolkit proprio per questo: un'applicazione che riscrivesse la riga da
+fuori lascerebbe il colore vecchio, e solo qualche volta.
+
+**E poi la rilettura ha trovato quel che la prova felice non tocca.** Tre
+difetti, tutti nello stesso punto cieco — i percorsi in cui qualcosa va
+storto. Il più grave: **copiare un file su se stesso lo cancella, e la copia
+dice «riuscito»**. Non è un sospetto, sta in `kernel/fs/vfs.c`: l'apertura con
+`O_TRUNC` azzera il file senza guardare chi altro lo tiene aperto, quindi la
+lettura che segue trova zero byte, il ciclo non gira e la funzione riporta
+successo. Chi riscriveva nel campo del dialogo il percorso del progetto
+corrente si ritrovava ogni file a zero e la riga di stato che diceva
+«progetto copiato». Adesso il controllo c'è in due posti, e una directory dove
+c'è già un progetto non si sovrascrive in silenzio. Insieme a quello: nessun
+ritorno di `mkdir` o della copia veniva guardato — col disco in sola lettura
+exide si spostava comunque sulla directory nuova, che non esisteva. Ora c'è la
+stessa prova di scrittura di «Nuovo progetto», la copia conta i file che non
+sono arrivati, e **se ne manca uno solo l'IDE non si sposta**: mezza copia più
+un IDE che ci punta dentro vuol dire che il prossimo Salva la trasforma
+nell'originale.
+
+> **Un difetto trovato dalla prova, non dalla rilettura del codice.**
+> `progetto.txt` viene copiato com'era, riga `nome = ...` compresa, e la
+> scheda del progetto la leggeva da lì: la directory era `prg6-copia` e la
+> scheda diceva ancora `prg6`, mentre il titolo della finestra — che il nome
+> lo ricava dalla directory — diceva quello giusto. Due posti che rispondono
+> alla stessa domanda in modo diverso; lo stesso sarebbe successo rinominando
+> la directory da fuori. La cura non è sincronizzarli: è toglierne uno. Adesso
+> il nome viene **sempre** dalla directory, e il file continua a scriverlo, così
+> il primo Salva lo rimette a posto da sé.
 
 ### Files e Directory: una finestra nuova, e una che non serviva scrivere
 
@@ -1263,8 +2113,8 @@ Le due immagini rispondono a due domande diverse:
   `ftp`, `telnet`, `dhcp`, `host`, `netdetect`…) e tutti i driver. È
   avviabile, ed è un **superinsieme del floppy**, non un'altra cosa.
 - **`dist/exos-tools.iso`** — i **linguaggi**: `gcc`, `g++`, `cpp`, `cc1`,
-  `fbc`, `as`, `ld`, libstdc++, OpenSSL. 150 MB che si installano a parte con
-  `toolinst`.
+  `fbc`, `as`, `ld`, `nasm`, `ndisasm`, `make`, libstdc++, OpenSSL. 150 MB che
+  si installano a parte con `toolinst`.
 - **`dist/floppy.img`** — solo il **sistema di base**: avviarsi, preparare un
   disco, installarsi, leggere e scrivere file. Quello che sta in 1.44 MB.
 
@@ -1682,8 +2532,16 @@ chi non usa `__thread` non paga niente.
 
 > ! Non c'è il TLS **dinamico** (`__tls_get_addr`, variabili
 > thread-local dentro una libreria condivisa): serve a chi carica codice a
-> runtime, e qui i binari sono statici. E non ci sono i thread: questo è il
-> pezzo che serve ad averli, non loro.
+> runtime, e qui i binari sono statici.
+
+**E dal 4 settembre 2026 i fili ci sono, e il blocco TLS è di ciascuno.** Ogni
+filo ha il suo, in cima al proprio stack, con l'immagine iniziale **riletta
+dall'eseguibile** — copiare quella del capogruppo vorrebbe dire far partire il
+filo con i *valori di adesso* di un altro flusso. Anche `errno` è per filo:
+`__errno_dove()` legge il thread pointer da `%gs:0` e lo usa come chiave. È
+per questo che il blocco si fa **anche ai programmi senza variabili
+`__thread`**: senza, la base di quel descrittore varrebbe zero e quella
+lettura sarebbe un page fault all'indirizzo 0.
 
 Perché farlo, se un processo ha un filo solo e una variabile `__thread` è
 una globale con un nome più lungo? Perché il modo in cui *mancava* era il
@@ -1698,16 +2556,32 @@ muore alla terza istruzione della prima funzione che chiama.
 ```
 0x08000000  testo, dati, bss del programma
             heap ---->                             (sbrk, mmap senza MAP_FIXED)
-0xbffbc000  heap_max — il tetto
-0xbffbd000  pagina di guardia
-0xbffbd000  blocco TLS, se il programma ne ha uno
+0xbff44000  heap_max — il tetto
+0xbff44000  pagina di guardia
+0xbff45000  banda degli stack dei fili — sette piazzole da 64 KB,
+            con una pagina di guardia fra l'una e l'altra
+0xbffbc000  pagina di guardia
+0xbffbd000  blocco TLS del processo, se il programma ne ha uno
+0xbffbe000  pagina di guardia
 0xbffbf000  riserva dello stack (256 KB)   <---- lo stack cresce all'ingiù
 0xbffff000  cima dello stack
 ```
 
+*(Gli indirizzi sono quelli di un programma con un blocco TLS di una pagina:
+un blocco più grande sposta all'ingiù tutto quel che gli sta sotto.)*
+
 Lo heap comincia **subito dopo l'ultimo segmento caricato**, non a un
 indirizzo fisso. Dalla 0.156 ha anche un **tetto**: una pagina di guardia
-sotto il blocco TLS se c'è, sotto la riserva dello stack se non c'è.
+sotto il primo oggetto che c'è davvero — oggi la banda dei fili, e sotto di
+essa il blocco TLS e la riserva dello stack.
+
+! **LA BANDA SI RISERVA ALL'AVVIO, ANCHE A CHI NON FARÀ MAI UN FILO**, ed è la
+scelta che rende semplice tutto il resto: sono **indirizzi, non pagine** —
+mezzo megabyte in meno per uno heap che ne ha tre giga — mentre spostare il
+tetto dello heap quando nasce il primo filo vorrebbe dire abbassarlo sotto
+memoria che lo heap potrebbe **già** aver preso. O si rifiuta il filo, o si
+mette il suo stack sopra la roba di qualcun altro: il primo è un limite che
+salta fuori a caso, il secondo è memoria corrotta in silenzio.
 
 Prima non ce l'aveva, e l'unico limite era la RAM fisica. Sembra
 innocuo — la memoria finisce prima — ma sopra lo heap non c'è il vuoto, e
@@ -1837,6 +2711,35 @@ USA.** Una bandiera tenuta dal server grafico morirebbe con lui e lascerebbe la
 porta aperta su una stanza vuota; un elenco di librerie tenuto da uno stub non
 lo vedrebbe l'altro stub dello stesso processo — ed è esattamente il difetto da
 cui la 238 è nata, due motori JavaScript che giravano insieme senza vedersi.
+
+### Le syscall dei fili, dalla 0.208 alla 0.209
+
+| EAX | Syscall           | EBX        | ECX       | EDX | A cosa serve |
+|-----|-------------------|------------|-----------|-----|--------------|
+| 201 | thread_crea       | entry      | argomento | —   | un secondo flusso dentro lo stesso programma: rende il tid, che **è** un pid |
+| 202 | thread_esci       | codice     | —         | —   | esce dal filo, non dal processo; non ritorna |
+| 203 | thread_attendi    | tid        | `int*`    | —   | aspetta un filo del proprio gruppo e ne raccoglie il codice |
+| 204 | attesa_dormi      | indirizzo  | valore    | ms  | «dormi finché lì c'è ancora questo valore»: è su questa che stanno lucchetti, condizioni e semafori |
+| 205 | attesa_sveglia    | indirizzo  | quanti    | —   | sveglia chi dorme su quell'indirizzo (0 = tutti) |
+| 206 | thread_ferma      | tid        | —         | —   | **chiede** a un filo di fermarsi, e scrolla chi dorme |
+| 207 | thread_devo_fermarmi | —       | —         | —   | 1 se qualcuno l'ha chiesto: è il filo a scegliere dove guardare |
+
+! **UN FILO È UN TASK CHE CONDIVIDE LA PAGE DIRECTORY**, e per lo scheduler non
+c'è niente di nuovo: stessa run queue, stesso quanto, stesso `context_switch`.
+Condivide anche i descrittori e la directory di lavoro; ha di suo lo stack —
+una piazzola in una banda riservata sotto il TLS — e il proprio blocco TLS,
+`errno` compreso. Chi esce dal *processo* porta via tutti i fili.
+
+! **FERMARE UN FILO È CHIEDERGLIELO, E NON È TIMIDEZZA.** Un filo interrotto
+dove capita lascerebbe i lucchetti presi e le strutture a metà, che dentro un
+processo solo sono quelle di tutti. Il kernel fa le due cose che da fuori non
+si possono fare: mette il messaggio nel PCB e **scrolla** chi dorme.
+
+! **LE CONDIZIONI E I SEMAFORI NON SONO SYSCALL.** `condizione_aspetta`,
+`semaforo_prendi` e le altre sei stanno tutte nella libc, costruite sopra la
+204 e la 205: senza contesa non costano nemmeno una chiamata di sistema. Si
+aspetta **sempre** dentro un `while`, mai dentro un `if` — il risveglio dice
+«guarda di nuovo», non «adesso c'è».
 
 ---
 
@@ -2086,15 +2989,31 @@ exwin                       accende la grafica su una console sua
 /exwin/bin/pm               la scrivania (la avvia exwin da sola)
 /exwin/bin/filemgr [DIR]    il file manager
 /exwin/bin/edit [FILE]      l'editor di testo
+/exwin/bin/term [PROG]      il terminale in finestra (senza PROG: la shell)
+/exwin/bin/browser [URL]    il navigatore (un percorso assoluto diventa file:)
+/exwin/bin/exide [DIR]      l'ambiente di sviluppo visuale
+/exwin/bin/fontprova        la prova dei font TrueType, fatta per essere vista
+/exwin/bin/orologio         data e ora nell'angolo della barra
 ```
 
 Avviata la grafica, la shell **resta viva sulla console 0**: si continua a
 lavorare da lì e con `Alt+F2` si passa alla scrivania.
 
-! **LE APPLICAZIONI SI LANCIANO DALLA CONSOLE DELLA SHELL, POI SI COMMUTA.**
-Battendo il comando *dopo* `Alt+F2` i tasti vanno al server grafico, non alla
-shell — e sembra che il sistema si sia bloccato. È la stessa separazione che
-rende possibile tutto il resto, vista dal lato scomodo.
+**Dalla scrivania si aprono dal menu Avvio**, che legge le voci da
+`/exwin/lib/applicazioni.txt` — una riga per applicazione, `nome mostrato |
+percorso`. La voce **Applicazioni...** dello stesso menu aggiunge e toglie
+righe da quel file, e la direttiva `@avvio <percorso>` dice quale programma
+parte da solo con la scrivania (è così che l'orologio si trova già lì).
+
+! **AGGIUNGERE UN'APPLICAZIONE È UNA RIGA, NON UNA RICOMPILAZIONE**, e il file
+resta leggibile e modificabile a mano apposta: un file di configurazione che
+solo un programma sa scrivere è un file che non si può riparare quando quel
+programma non parte.
+
+! **DALLA SHELL SI LANCIANO COL COMANDO, MA PRIMA DI COMMUTARE.** Battendo il
+comando *dopo* `Alt+F2` i tasti vanno al server grafico, non alla shell — e
+sembra che il sistema si sia bloccato. È la stessa separazione che rende
+possibile tutto il resto, vista dal lato scomodo.
 
 ### L'editor
 
@@ -2125,6 +3044,84 @@ lo passa all'editor, cercandolo in `/exwin/bin` e poi in `/cdrom/exwin/bin`.
 file, quelle in cui si vuole entrare sarebbero sparse in mezzo. È l'unica cosa
 che questo elenco ordina — ordinare i nomi vorrebbe dire un confronto che
 dipende dalla lingua.
+
+### Il terminale in finestra
+
+`/exwin/bin/term` apre una shell dentro una finestra; `term /bin/gfedit` ci
+apre quel programma invece della shell. La finestra è un multiplo esatto della
+cella del font 8x16, perché il controllo «terminale» del toolkit calcola le
+colonne come larghezza/8 e le righe come altezza/16.
+
+! **LA SHELL GIRA SU UNA PIPE, NON SUL `tty` DELLA CONSOLE**, ed è tutto il
+punto del terminale in finestra. Una shell che legge il descrittore 0 della
+console si contende la tastiera con chiunque altro stia su quella console;
+dietro una pipe quella domanda non esiste — i tasti li dà il server alla
+finestra col fuoco, e da lì vanno nella pipe di *quella* shell. È così che se
+ne possono aprire due senza che si disturbino.
+
+### Il navigatore
+
+`/exwin/bin/browser [URL]`. Senza argomento parte dalla pagina di casa; con un
+percorso assoluto (`browser /exwin/doc/browser.html`) lo trasforma in un
+`file:`, che è la sola forma che il resto del programma conosce.
+
+Nella barra ci sono **due caselle**: l'indirizzo e **Cerca**, che compone da
+sola l'interrogazione del motore scelto in **File > Impostazioni**
+(duckduckgo, wikipedia, marginalia). Quel che sa fare la pagina — testo che si
+spezza e scorre, collegamenti, immagini, fogli di stile, tabelle, moduli,
+HTTPS, biscotti, JavaScript — sta nelle voci di «Novità» qui sopra, che sono
+il posto dove quel lavoro è raccontato per intero.
+
+### EX-IDE — l'ambiente di sviluppo visuale
+
+`/exwin/bin/exide [DIR]`. Con un argomento apre subito il progetto che sta in
+quella directory. Tre aree come in Visual Basic: a sinistra gli strumenti, in
+mezzo la maschera su cui si dispongono, a destra le proprietà di quello scelto;
+doppio clic su un controllo e si apre l'editor dentro la funzione che l'evento
+chiamerà.
+
+! **LA GIUNTURA FRA IL DISEGNO E IL CODICE È L'ID**, e c'era già: nel disegno
+il pulsante *è* `ID_PULSANTE1`, nel sorgente c'è `case ID_PULSANTE1:`. exide è
+fattibile qui più che altrove perché ExWin era già fatto a forma di VB6 — non
+c'è niente da inventare, c'è da *scrivere* quel che il disegno dice.
+
+Un progetto sono quattro file, e la regola che decide se sopravvive è che il
+generato e lo scritto non si tocchino mai:
+
+| file | chi lo scrive |
+|---|---|
+| `finestra.dis` | solo exide: il disegno |
+| `finestra.h` | solo exide: gli id, i puntatori, i prototipi |
+| `finestra_gen.c` | solo exide: crea i controlli e smista gli eventi |
+| `finestra.c` | **solo tu**: exide ci *aggiunge* gli handler che mancano, in fondo, e non riscrive mai quel che c'è |
+
+### La prova dei font
+
+`/exwin/bin/fontprova` disegna le stesse righe in TrueType a corpi diversi, ed
+è **fatta per essere fotografata**: le prove grafiche di questo sistema si
+misurano nei pixel. Il rasterizzatore è già confrontato con FreeType, ma quel
+confronto gira sull'host — dice che i glifi vengono giusti e non dice niente su
+`exfont.so` caricata a caldo, sulla cache, sulla fusione col fondo o sul fatto
+che i file dei font siano leggibili dal CD. Questa finestra prova il giro
+intero.
+
+! **IN CIMA C'È LA RIGA COL FONT DI SISTEMA, e serve da metro:** se il TrueType
+non si carica restano solo quella e le scritte di errore, e si capisce subito
+dove si è fermato invece di guardare una finestra vuota.
+
+### L'orologio
+
+`/exwin/bin/orologio` mette data e ora nell'angolo della barra, e sta **sopra a
+tutte** le finestre perché è un pezzo della barra. È un **processo a parte**, e
+non un filo dentro il program manager: quel che si vuole è che l'ora si
+aggiorni qualunque cosa faccia il resto del sistema, e un filo condividerebbe
+con lui la connessione al server e la coda dei messaggi — un program manager
+occupato sarebbe un orologio fermo.
+
+! **L'ORA È QUELLA UNIVERSALE**, e va detto invece di lasciarlo scoprire: la
+libc dichiara che `localtime()` è identica a `gmtime()`, perché questo sistema
+non sa in che fuso si trovi né ha un posto dove tenerlo. Un'ora locale
+inventata sarebbe peggio di quella universale, che almeno è vera.
 
 ---
 
@@ -2983,7 +3980,7 @@ Non è una scelta di stile: è ciò che i binari cercano a runtime, e si legge
 da loro (`strings gcc/cc1 | grep /exos`).
 
 ```
-/exos/bin/                            gcc, g++, cpp, fbc
+/exos/bin/                            gcc, g++, cpp, fbc, nasm, ndisasm, make
 /exos/libexec/gcc/i386-exos/17.0.0/   cc1, cc1plus, collect2
 /exos/lib/gcc/i386-exos/17.0.0/       libgcc.a, crt*.o, include/
 /exos/lib/                            libc.a, libm.a, libstdc++.a, libcrypto.a
@@ -4423,9 +5420,9 @@ utente, password e tutto quello che si scrive dopo. Il client lo dice una
 volta all'avvio invece di lasciarlo intendere. L'alternativa si chiamerà
 SSH quando ci sarà TLS — non «telnet con una toppa».
 
-**Come fa a sentire la rete e la tastiera insieme.** Non c'è `select()` e
-non ci sono i thread, ma c'è una cosa migliore per questo caso: in EX-OS
-tutto passa dalla stessa cassetta postale. Si *prenota* una ricezione allo
+**Come fa a sentire la rete e la tastiera insieme.** Non c'è `select()`, e i
+fili sono arrivati dopo questo programma, ma c'è una cosa migliore per questo
+caso: in EX-OS tutto passa dalla stessa cassetta postale. Si *prenota* una ricezione allo
 stack IP (`IP_MSG_TCP_RICEVI`), si *prenota* un tasto al servizio tastiera
 (`KBD_MSG_READKEY`), e poi si aspetta con un solo `ipc_recv_timeout()`
 guardando **chi** ha risposto. Le due prenotazioni si riarmano

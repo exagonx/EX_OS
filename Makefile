@@ -4031,6 +4031,8 @@ export PATH := $(EXOS_CROSS)/bin:$(PATH)
 OPENSSL_BUILD ?= $(HOME)/openssl-build-exos
 # GNU make per EX-OS: lo costruisce tools/make-exos/prepara-make.sh
 MAKE_NATIVO   ?= $(HOME)/exos-native/build-make
+# NASM per EX-OS: lo costruisce tools/nasm-exos/prepara-nasm.sh
+NASM_NATIVO   ?= $(HOME)/exos-native/build-nasm
 
 # =============================================================================
 # FreeBASIC — UNA VERSIONE SOLA, DICHIARATA IN UN POSTO SOLO
@@ -4150,7 +4152,8 @@ BINARI_ESTERNI := $(wildcard $(GCC_NATIVO_REL)/cc1) $(wildcard $(GCC_NATIVO_CHK)
                   $(wildcard $(OPENSSL_BUILD)/libcrypto.a) \
                   $(wildcard $(EXOS_CROSS)/i386-exos/lib/libc.a) \
                   $(wildcard $(FB_NATIVO)/fbc) \
-                  $(wildcard $(MAKE_NATIVO)/make)
+                  $(wildcard $(MAKE_NATIVO)/make) \
+                  $(wildcard $(NASM_NATIVO)/nasm)
 
 # ! TUTTO tools/iso/, NON UN ELENCO SCRITTO A MANO — 13 agosto 2026.
 #
@@ -4849,6 +4852,41 @@ $(ISO_IMG): Makefile $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_PROVE) $(ESOS_STUB) \
 	    echo "               /prova-make/ (make + gcc + as + ld + ar + ranlib insieme)"; \
 	else \
 	    echo "     GNU make assente: si costruisce con tools/make-exos/prepara-make.sh"; \
+	fi
+	@# --- NASM, l'altro assemblatore -------------------------------------
+	@#
+	@# ! NON E' UN DOPPIONE DI `as`, SONO DUE LINGUE. `as` parla AT&T ed e'
+	@# fatto per ricevere quel che sputa il compilatore; NASM parla INTEL,
+	@# che e' la sintassi dei manuali Intel e AMD, dei settori di avvio e di
+	@# quasi tutto l'assembly scritto da una persona. Un sistema che sa
+	@# compilarsi il C ma non sa assemblare un `org 0x7c00` e' monco proprio
+	@# nel punto in cui dovrebbe essere piu' forte — e questo e' un sistema
+	@# operativo, cioe' la cosa che si impara a scrivere partendo da li'.
+	@#
+	@# ! VA IN /exos/bin E ANCHE IN /bin, per la stessa ragione di make e
+	@# non per quella di gcc: e' un programma solo, senza un albero attorno
+	@# da ritrovare, e /bin e' il primo posto del PATH — `nasm` deve
+	@# rispondere subito anche quando /exos/bin non ci sta.
+	@#
+	@# ndisasm viene con lui: e' il verso opposto — da byte a istruzioni —
+	@# e dentro un sistema operativo serve la prima volta che si guarda un
+	@# settore di avvio o il dump di un fault senza avere il sorgente.
+	@if [ -x "$(NASM_NATIVO)/nasm" ]; then \
+	    mkdir -p $(ISO_ROOT)/exos/bin; \
+	    cp $(TOOLS_DIR)/iso/prova-nasm.asm $(ISO_ROOT)/prova-nasm.asm; \
+	    cp $(TOOLS_DIR)/iso/prova-nasm16.asm $(ISO_ROOT)/prova-nasm16.asm; \
+	    for b in nasm ndisasm; do \
+	        if command -v i386-exos-strip >/dev/null 2>&1; then \
+	            i386-exos-strip -o $(ISO_ROOT)/exos/bin/$$b $(NASM_NATIVO)/$$b; \
+	        else \
+	            cp $(NASM_NATIVO)/$$b $(ISO_ROOT)/exos/bin/$$b; \
+	        fi; \
+	        cp $(ISO_ROOT)/exos/bin/$$b $(ISO_ROOT)/bin/$$b; \
+	    done; \
+	    echo "     NASM: /exos/bin/nasm e /bin/nasm ($$(du -h $(ISO_ROOT)/exos/bin/nasm | cut -f1)),"; \
+	    echo "           ndisasm ($$(du -h $(ISO_ROOT)/exos/bin/ndisasm | cut -f1)), prova-nasm.asm e prova-nasm16.asm"; \
+	else \
+	    echo "     NASM assente: si costruisce con tools/nasm-exos/prepara-nasm.sh"; \
 	fi
 	@# --- Il SECONDO albero di FreeBASIC, se c'e' -------------------------
 	@#

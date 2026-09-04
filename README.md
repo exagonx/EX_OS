@@ -85,6 +85,84 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### NASM sul CD degli strumenti, e l'altra sintassi
+
+**testato dentro EX-OS** — sul CD c'erano `as` e `ld`, cioè la catena che il
+compilatore usa senza che nessuno la guardi. Adesso c'è anche **NASM**, e non è
+un doppione: sono **due lingue**.
+
+| | `as` (GNU) | `nasm` |
+|---|---|---|
+| sintassi | AT&T | Intel |
+| fatta per | ricevere l'uscita di `gcc` | essere scritta da una persona |
+| | `movl $4, %eax` | `mov eax, 4` |
+| | `.ascii "..."` | `db "..."` |
+
+! **E soprattutto: questo è un sistema operativo.** Chi impara a scriverne uno
+comincia da sedici bit e da un settore di avvio, e quella roba è scritta in
+NASM nel novantanove per cento dei casi — compreso `boot/stage1.asm`, il
+settore di avvio di EX-OS stesso. Un sistema che sa compilarsi il C ma non sa
+assemblare un `org 0x7c00` è monco proprio nel punto in cui dovrebbe essere più
+forte.
+
+**È il porting più piccolo fatto finora — due righe — e il motivo si capisce
+guardando ciò che NASM *non* ha: un bersaglio.** I formati d'uscita (`elf32`,
+`bin`, `coff`, `macho`) li produce tutti sempre, e la scelta la fa chi lo usa
+con `-f`: non c'è niente da insegnargli su EX-OS, perché `nasm -f elf32` fa già
+esattamente ciò che il nostro `ld` sa collegare. Mancava solo che **girasse
+qui**:
+
+```
+autoconf/helpers/config.sub   'exos' fra i sistemi ammessi
+nasmlib/path.c                __exos__ fra quelli coi percorsi di Unix
+```
+
+> La seconda si è presentata come un errore onesto e per fortuna rumoroso —
+> `path.c:204: 'separators' undeclared`. NASM sceglie lo stile dei percorsi dai
+> macro del compilatore, e per un sistema che non riconosce prende
+> `PATH_UNKNOWN`, dove `separators` non è definito affatto. **La riga giusta non
+> era far dire al nostro GCC di essere Unix** — non lo è — ma dire lì che EX-OS
+> ha i percorsi fatti come quelli di Unix: la barra come unico separatore,
+> nessun concetto di volume. È vero, e sta in una riga.
+
+**Le prove sono due perché dimostrano due cose diverse.** `prova-nasm.asm` è la
+gemella di `prova.s` (che è per `as`): la stessa identica cosa detta nelle due
+sintassi, che è il modo più corto di imparare la differenza.
+
+```
+nasm -f elf32 /cdrom/prova-nasm.asm -o /prova-nasm.o
+ld -o /prova-nasm /prova-nasm.o
+/prova-nasm
+Assemblato con NASM dentro EX-OS.
+```
+
+`prova-nasm16.asm` è quella che dimostra **perché** NASM sta sul CD: sedici
+bit, `org 0x7c00`, nessun linker e nessun sistema operativo sotto. Con
+`ndisasm` il giro torna indietro esatto:
+
+```
+nasm -f bin /cdrom/prova-nasm16.asm -o /avvio.bin
+ndisasm -b 16 -o 0x7c00 /avvio.bin
+00007C0B  BE207C            mov si,0x7c20
+```
+
+`0x7c20` e non `0x0020`: è `org` che ha fatto il suo mestiere, ed è la cosa che
+`ld` non può fare al posto tuo — lì non c'è nessun collegatore che metta le
+etichette al posto giusto. **`ndisasm` viene con lui** e vale il megabyte che
+occupa: dentro un sistema operativo serve la prima volta che si guarda un
+settore di avvio o il dump di un fault senza avere il sorgente sotto mano.
+
+> **E un guasto trovato per strada: il CD non si costruiva più.** `make iso` si
+> ferma collegando `/bin/provassl` con `libcrypto.a(o_str.o): undefined
+> reference to 'errno'`, perché da oggi `errno` non è più un simbolo globale ma
+> una macro che chiama `__errno_dove()` — e `libcrypto.a` è stata costruita
+> prima. Lo diceva già `tools/ricostruisci-bersaglio.sh --verifica` a ogni
+> `make iso` («la libc è CAMBIATA dopo l'ultima ricostruzione»), ma come
+> *avviso*: quel controllo guarda le forme dei tipi, non i simboli. **libcrypto
+> è stata rifatta e il CD si costruisce di nuovo**; il resto del bersaglio —
+> cc1, as, ld, fbc, le librerie di calcolo — è ancora quello di prima, e sta in
+> `in_lavorazione.txt` come `@ABI-BERSAGLIO`.
+
 ### La pila di un filo cresce su richiesta
 
 **testato** — un filo nasceva con 64 KB di RAM vera in mano: sedici pagine
@@ -2036,8 +2114,8 @@ Le due immagini rispondono a due domande diverse:
   `ftp`, `telnet`, `dhcp`, `host`, `netdetect`…) e tutti i driver. È
   avviabile, ed è un **superinsieme del floppy**, non un'altra cosa.
 - **`dist/exos-tools.iso`** — i **linguaggi**: `gcc`, `g++`, `cpp`, `cc1`,
-  `fbc`, `as`, `ld`, libstdc++, OpenSSL. 150 MB che si installano a parte con
-  `toolinst`.
+  `fbc`, `as`, `ld`, `nasm`, `ndisasm`, `make`, libstdc++, OpenSSL. 150 MB che
+  si installano a parte con `toolinst`.
 - **`dist/floppy.img`** — solo il **sistema di base**: avviarsi, preparare un
   disco, installarsi, leggere e scrivere file. Quello che sta in 1.44 MB.
 
@@ -3903,7 +3981,7 @@ Non è una scelta di stile: è ciò che i binari cercano a runtime, e si legge
 da loro (`strings gcc/cc1 | grep /exos`).
 
 ```
-/exos/bin/                            gcc, g++, cpp, fbc
+/exos/bin/                            gcc, g++, cpp, fbc, nasm, ndisasm, make
 /exos/libexec/gcc/i386-exos/17.0.0/   cc1, cc1plus, collect2
 /exos/lib/gcc/i386-exos/17.0.0/       libgcc.a, crt*.o, include/
 /exos/lib/                            libc.a, libm.a, libstdc++.a, libcrypto.a

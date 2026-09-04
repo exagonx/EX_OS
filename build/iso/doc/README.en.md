@@ -2,7 +2,7 @@
 
 [🇮🇹 Italiano](README.md) · **🇬🇧 English**
 
-**Version:** 0.208
+**Version:** 0.209
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit — boots from floppy, from CD or from a hard disk
@@ -83,6 +83,845 @@ for **`g++`** — containers, `std::string` and exceptions included. See
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### NASM on the tools CD, and the other syntax
+
+**tested inside EX-OS** — the CD carried `as` and `ld`, that is the chain the
+compiler uses without anybody looking at it. Now it carries **NASM** too, and
+it is not a duplicate: they are **two languages**.
+
+| | `as` (GNU) | `nasm` |
+|---|---|---|
+| syntax | AT&T | Intel |
+| made for | receiving `gcc`'s output | being written by a person |
+| | `movl $4, %eax` | `mov eax, 4` |
+| | `.ascii "..."` | `db "..."` |
+
+! **And above all: this is an operating system.** Whoever learns to write one
+starts from sixteen bits and a boot sector, and that stuff is written in NASM
+ninety-nine times out of a hundred — including `boot/stage1.asm`, EX-OS's own
+boot sector. A system that can compile its own C but cannot assemble an
+`org 0x7c00` is crippled exactly where it should be strongest.
+
+**It is the smallest port done so far — two lines — and the reason becomes
+clear by looking at what NASM does *not* have: a target.** It produces every
+output format (`elf32`, `bin`, `coff`, `macho`) always, and the choice is made
+by whoever runs it with `-f`: there is nothing to teach it about EX-OS, because
+`nasm -f elf32` already emits exactly what our `ld` links. All that was missing
+was for it to **run here**:
+
+```
+autoconf/helpers/config.sub   'exos' among the accepted systems
+nasmlib/path.c                __exos__ among those with Unix paths
+```
+
+> The second one showed up as an honest and, luckily, loud error —
+> `path.c:204: 'separators' undeclared`. NASM picks its path style from the
+> compiler's macros, and for a system it does not recognise it takes
+> `PATH_UNKNOWN`, where `separators` is not defined at all. **The right line was
+> not to make our GCC claim to be Unix** — it is not — but to say there that
+> EX-OS has Unix-shaped paths: the slash as the only separator, no notion of a
+> volume. That is true, and it fits in one line.
+
+**There are two tests because they prove two different things.**
+`prova-nasm.asm` is the twin of `prova.s` (which is for `as`): the very same
+thing said in the two syntaxes, which is the shortest way to learn the
+difference.
+
+```
+nasm -f elf32 /cdrom/prova-nasm.asm -o /prova-nasm.o
+ld -o /prova-nasm /prova-nasm.o
+/prova-nasm
+Assemblato con NASM dentro EX-OS.
+```
+
+`prova-nasm16.asm` is the one that shows **why** NASM belongs on the CD:
+sixteen bits, `org 0x7c00`, no linker and no operating system underneath. With
+`ndisasm` the round trip comes back exact:
+
+```
+nasm -f bin /cdrom/prova-nasm16.asm -o /avvio.bin
+ndisasm -b 16 -o 0x7c00 /avvio.bin
+00007C0B  BE207C            mov si,0x7c20
+```
+
+`0x7c20` and not `0x0020`: that is `org` doing its job, and it is the thing
+`ld` cannot do for you — there is no linker there to put the labels in the
+right place. **`ndisasm` comes with it** and earns the megabyte it takes:
+inside an operating system it is needed the first time you look at a boot
+sector, or at the dump of a fault, without the source at hand.
+
+> **And a breakage found along the way: the CD would not build any more.**
+> `make iso` stops linking `/bin/provassl` with `libcrypto.a(o_str.o):
+> undefined reference to 'errno'`, because as of today `errno` is no longer a
+> global symbol but a macro calling `__errno_dove()` — and `libcrypto.a` was
+> built before that. `tools/ricostruisci-bersaglio.sh --verifica` was already
+> saying it at every `make iso` ("the libc has CHANGED since the last target
+> rebuild"), but as a *warning*: that check looks at the shapes of types, not at
+> symbols. It is in `in_lavorazione.txt` as `@ABI-BERSAGLIO`, with the list of
+> everything that has to be rebuilt.
+
+### A thread's stack grows on demand
+
+**tested** — a thread was born holding 64 KB of real RAM: sixteen pages
+allocated and zeroed one by one, even for a thread that uses two hundred bytes
+of stack. It was not an oversight, it was a price paid on purpose, and the
+reason was written in the code: `page_fault_handler` could grow **one** stack —
+the one in the current PCB — and faced with a missing page inside the thread
+band it could not tell **whose** it was.
+
+Now it can. Of a thread's slot only the TLS block and the first eight pages are
+committed; the rest arrives when the thread really goes down, and stops at the
+guard page below the slot. **Seven threads cost 980 KB instead of 1344**, that
+is 140 each instead of 192 — and of those 140, one hundred and twenty-eight are
+the task's *kernel* stack, which this work does not touch: the user stack went
+from 64 KB to 12.
+
+**The real question was not «how much», it was «whose».** Threads share memory,
+so the one faulting inside a thread's stack may be **somebody else**: a thread
+declares `char buf[16384]`, touches only its top and hands the bottom to a
+companion — or to a `read()`. The bottom is not committed, the companion writes
+there, and the fault arrives while *it* is running; its ESP says nothing about
+that address, because it lives in another slot. As long as all 64 KB were
+committed the case did not exist. That is why `pf_cresci_stack` became two
+questions instead of one: **whether** the growth is legitimate and **whose**
+the stack is, and only then `pf_cresci_pagine` commits the pages.
+
+> **The «close to ESP» condition does not apply there, and it is not a
+> surrender:** it would compare two different slots, that is a number without
+> meaning. In its place there is an equally tight boundary — the address must
+> fall inside the reserve of a **live** thread of the same group — and between
+> one slot and the next the guard page remains, which no growth can step over.
+
+**Two defects found by reading what was about to be touched**, both in
+`proc_reap_zombie`:
+
+- **sixteen pages lost for every thread that ends.** Slots are reused, but the
+  pages of a dead thread stayed mapped until the end of the *process*: the next
+  thread took the same slot and new pages were mapped over them —
+  `paging_map_page` overwrites the entry silently — with the previous thread's
+  data underfoot. Now the slot is taken down, and the test reads "reaped, 980 KB
+  come back out of 980";
+- **a page directory destroyed more than once.** It is freed "when nobody is
+  left", and nobody was counted with `proc_gruppo_vivi()`, which does not count
+  zombies; but when the group leader exits the threads become zombies *all at
+  once*, and each was reaped holding the same pointer. The first destroyed the
+  directory, the following ones walked it after it had been freed. **It is not
+  proven** that this was the cause of the two rare defects already open — the
+  panic inside `kfree`, the driver starting with a zero stack — but the shape
+  is right: a bill that arrives elsewhere and much later.
+
+**The tests are two new modes of `/bin/filiprova`,** and each of the three
+parts of `pila` fails on its own: what a thread costs (the judgment line is at
+160 KB — 128 of kernel stack plus *either* 64 of a fully committed slot *or* 12
+committed little by little: a number in between does not exist), that it then
+grows (forty calls of one kilobyte, five times what it was given), and that it
+grows **at somebody else's hand**. `sfonda` goes down without end and demands
+that the one who dies is the thread, on the guard page, with code -11, while
+the process stays alive.
+
+> **In the third part the waiting thread cannot call anything.** A `call`
+> writes the return address *below* ESP, and the fault that follows commits
+> everything between there and the part already live — that is, exactly the
+> piece the test wants to leave empty. It waits spinning on a `volatile`
+> variable. It is also why the case is rare in real life: a thread's live data
+> always sits above its own ESP, and above ESP everything is already committed.
+
+Two real defects, found while writing the test, stay declared: **a thread that
+dies of a page fault does not take the process with it** (it dies alone, and the
+program carries on, possibly with a lock held by someone who is no longer
+there), and **the zombie of a thread nobody is waiting for is reaped by the
+shell**, which returns to the prompt with the program still running.
+
+### The «Cerca» box, and two boxes in the same bar
+
+**tested, on the network, inside EX-OS** — searching already worked:
+`html.duckduckgo.com` answers in plain HTML and the browser renders it. What was
+missing was the *convenience* — you typed the engine's address by hand — and now
+there is a **Cerca** box on the right of the bar: words, Enter, results.
+
+There are three engines, chosen in **File > Impostazioni**: **duckduckgo**
+(default), **wikipedia**, **marginalia**. **There are three because three
+answer:** `google.com` sends ninety thousand bytes, three scripts and *zero*
+result links inside the HTML — JavaScript builds the results, so no browser
+without JS can ever see them — and Mojeek sends a Captcha. Listing them would
+mean an entry that promises a search and returns an empty page.
+
+**Enter does two different things, and the difference is the focus.** In a
+toolkit text box Enter reaches the application as `EXM_TASTO` — the box lets it
+through on purpose — but the message **does not say which box it came from**,
+and only the toolkit knows where the focus is. Hence `ex_fuoco_chi()`, eight
+lines: the alternative was guessing from which text had changed, that is,
+getting it wrong the day somebody searches for the same thing twice.
+
+> **And a toolkit defect that did not bite while the boxes were wide.** With the
+> second box the address field shrank from 636 to 436 pixels, and on the first
+> long page the defect was there in the screenshot: the address was **writing
+> over the «Cerca» label**. `ex_scrivi` clips nothing and `CL_TESTO` never asked
+> it to — the defect is not new, what is new is the first place where two
+> controls sit that close. Now the box shows the **tail** and not the head,
+> because its cursor is always at the end: whoever is typing must see what they
+> are typing, not the beginning of an address they have already finished.
+
+### The working directory belongs to both (and the environment already did)
+
+**tested** — a `chdir` inside a thread is now seen by the others, and it is one
+line: `filo->cwdt = capo->cwdt;` instead of copying the path. **It is the same
+job `fdt` does for file descriptors**, with the same idiom: the PCB has the
+`cwd` field and the `cwdt` pointer, which for a process points at its own field
+and for a thread at the group leader's. The whole kernel uses `cwdt` — five
+places in all — and **nothing changes between processes**: the directory stays
+one per process, inherited from the parent at `spawn` as before.
+
+**The reason is the same one that made the directory per-process, read
+backwards.** Back then the defect was that `cd` inside one program moved every
+other one; here it is that two threads **are one program**, and a function that
+steps into a directory, opens a relative file and steps back does the right
+thing or the wrong thing depending on which thread runs it — no error, just a
+file opened in the wrong place.
+
+**And the environment does not go through the kernel: that one was to be
+checked, not built.** The list said "cwd and env are copied", and for `env` it
+was not true: `environ` lives in `libc.so`'s data, which threads share because
+they share the memory, and the PCB's `env[]` field is used by nobody. There was
+nothing to fix; there was something to *look at*, which is not the same as
+assuming it.
+
+> **The test looks in both directions, and one alone would not do.** With the
+> directory copied at creation, the "the main thread moves and the thread
+> notices" direction would pass anyway whenever the thread is born *after* the
+> change: it is the thread moving and the main thread having to see it that
+> tells "shared" from "copied at the right moment". With the old copy put back
+> for one run, both directions fail — and the environment passes in both cases,
+> which confirms that half was never a kernel matter.
+
+### Stopping a thread means asking it to
+
+**tested** — killing a thread was already possible (the tid is a pid, and
+`kill` works), but you **must not**: a thread killed wherever it happened to be
+leaves the locks taken, files half open and structures as they were, and inside
+a single process those are not its own — they belong to **everybody**. Now
+there is the orderly way:
+
+```c
+while (!thread_devo_fermarmi()) { ...a piece of work... }
+...release the locks, close what you opened...
+thread_esci(0);
+```
+
+`thread_ferma(tid)` leaves a message, `thread_devo_fermarmi()` reads it where
+the thread decides. **The kernel only does the two things that cannot be done
+from outside**: putting the message where the thread will find it, and *shaking*
+whoever is asleep — because a sleeping thread looks at nothing.
+
+**Two words in the PCB, doing two different jobs.** `ferma` is the message and
+it stays: a request read once is still true the second time. `scuoti` is the
+shake and it **is consumed**, and it closes the one window this thing has:
+between the moment the thread looks and the moment it falls asleep on a wait.
+If the request lands in there the thread sleeps *after* having looked — the
+same race as a lost wake-up, and the same cure: the asker leaves it written
+that the next wait must not sleep, and `sys_attesa_dormi` finds it inside the
+very `cli` that protects the expected value. One shake, not a "never sleep
+again": a thread on its way out still has cleaning up to do, and with every
+wait returning at once that cleanup would spin instead of sleeping.
+
+> **And the test passed even without the thing it was supposed to prove** — the
+> most instructive defect of the day, and it was *in the test*. With the shake
+> taken out of the kernel for one line, the case meant to hit that window
+> passed all the same: on a single CPU, creating a thread and stopping it right
+> away always lands in one of the two easy cases — either the request arrives
+> before the thread has looked, or with the thread already asleep. The case in
+> between lasts a handful of instructions and **you never hit it by chance**.
+> The cure is to widen the window on command instead of hoping: between the
+> look and the sleep the thread yields the CPU and raises a flag, and the
+> caller waits for that flag. Twenty races now cost **60-180 ms** with the
+> shake and **20200 without** — twenty one-second deadlines, one per race — and
+> the test fails. Before, the difference was zero.
+
+**What it does not do, and it is written down:** the thread notices only where
+it looks. A `semaforo_prendi` with no deadline is not a cancellation point, and
+neither is a read from the keyboard or the network; whoever wants to be
+stoppable there uses the timed variants. And reading the message costs a system
+call: removing it would mean a word of ABI inside the TLS block, which is a
+one-way decision nobody has measured yet.
+
+### Condition variables and semaphores, on top of the sleeping wait
+
+**tested** — the sleeping wait was the brick; now the two things you build on
+top of it are there, and they are **eight libc functions, not one line of
+kernel**: `condizione_aspetta` (plus the timed variant), `condizione_segnala`,
+`condizione_segnala_tutti`, `semaforo_prendi` (idem), `semaforo_prova`,
+`semaforo_lascia`. Both types are **a plain int**, like the lock:
+`Condizione c = CONDIZIONE_ZERO;`, `Semaforo posti = 1;` — no init function,
+which is the only shape you cannot forget to call.
+
+**A condition variable is a counter of signals, and nothing else.** It does not
+hold the list of who is waiting: that is already in the kernel, and it is the
+queue of whoever sleeps on that address. Waiting is three lines — read the
+counter, release the lock, sleep on that value, take the lock back — and **the
+first one is the only one that matters**: between the release and the sleep
+there is a window a signaller can walk through, and that signal would arrive
+before there is anybody to wake. Having read the counter *first*, if somebody
+signals in there the value is no longer that one and you do not sleep at all.
+The window is not closed: it is made harmless.
+
+> **Which is why you wait inside a `while`, never inside an `if`.** Waking up
+> says "look again", not "it is here now": it can come from a signal, from the
+> deadline, or because a signal had already gone by. Whoever checks once will
+> eventually carry on with the condition false, and that is the defect that
+> does not reproduce.
+
+**A semaphore has no owner**, and that is not a licence: the one who releases
+need not be the one who took it, which is exactly what a producer and a
+consumer need — one consumes the free slot, the other gives it back. One cost
+was left in, written next to the code: releasing always calls the wake-up, even
+when nobody is asleep. The lock avoids that cost with its third state, but
+there the number *is* the state of the lock, while here the counter counts
+slots and has nowhere to put it. The way out exists (a second `dormienti`
+field) and wants a new type in the ABI: **you do not pay for a new type for an
+optimisation nobody has measured yet.**
+
+> **The test is a one-slot queue, and it can fail in three different ways.** A
+> thousand items between one producer and one consumer: with ten slots the two
+> barely interleave and the test becomes almost sequential, with one slot each
+> of the thousand items forces the other to wait. It watches the **sum**
+> (losing one and reading another twice would give the same number of rounds),
+> the **empty rounds** — and they must be *zero*, not "few": with a single
+> consumer, whoever wakes always finds the goods — and the **stopwatch**, which
+> is the witness for the empty rounds. Inside the wait there is a half-second
+> deadline that is a *net*, not a way of working: without it a lost signal
+> would be a machine stopped forever, and the test would not fail, it would
+> just sit there. A thousand hand-offs cost between **20 and 60 ms** measured,
+> one single deadline would cost 500: the judgement line sits at 400, well
+> above the measurement and still able to tell the two apart.
+
+### Threads: several flows inside the same program
+
+**tested** — and the proof is not that the count adds up, it is that **without
+the lock it does not**:
+
+```
+filiprova: 4 threads, 20000 rounds each
+  with the lock   80000   expected  80000   exact
+  without         20000   expected  80000   lost on the way
+  hand-offs       80000   the threads really do interleave
+```
+
+Sixty thousand lost increments are four flows treading on each other in the
+same memory. If the threads were fake — if `thread_crea` ran the function
+inside the caller — that number would be 80000 like the other one, and the test
+would have passed without proving anything.
+
+**The difference between a process and a thread is one line: the page
+directory.** `proc_create` allocates a new one, `proc_thread_crea` copies the
+group leader's. Not one line of the scheduler was touched: same run queue, same
+quantum, same `context_switch` — which already took CR3 as a parameter. And
+`tgid` (the first member's pid) equals `pid` for a normal process, so all the
+kernel that knows nothing about threads keeps working without a single `if`.
+
+**File descriptors are shared by pointer, not by copy**: two threads opening
+and closing files must see the same table. The PCB gained `fdt`, and the 153
+occurrences of `->fds[` in the kernel became `->fdt[` with a mechanical
+substitution — for a normal process `fdt == fds` and nothing changes.
+
+**Stacks are not shared**: 64 KB per thread, in a band reserved for *every*
+process at startup — even for one that will never make a thread. They are
+addresses, not pages. The alternative (reserving it when the first thread is
+born) would mean lowering the heap ceiling under memory the heap might already
+have taken: either you refuse the thread, or you put its stack on top of
+somebody else's data.
+
+> **Whoever exits takes the group with them**, like `exit_group` on Linux and
+> for the same reason: the other threads live in this process's memory, and
+> letting them run while the address space goes away means code running over
+> freed pages. Tested on purpose: a program that creates three endless threads
+> and exits without joining them leaves the machine healthy and the prompt
+> comes back.
+
+**What is not per-thread, written down rather than discovered:** `__thread`
+variables and `errno` are per *process* — the TLS block is shared. Giving each
+thread its own means copying in the initial image from the ELF; zeroing it
+instead would start a variable initialised to five at zero, silently. Between a
+written limit and a wrong value there is no contest. And the lock spins yielding
+the CPU: fine for a short critical section, not for waiting — a futex is the
+next step.
+
+
+**And then the per-thread TLS block.** In the first hour threads shared the
+process's one; in the second that limit went too: **each thread has its own**,
+at the top of its own stack — where those pages are already mapped and nobody
+else can reach, which is also where glibc puts it. The initial image is **read
+back from the file**, not copied from the leader's: copying that one would mean
+starting the thread with another flow's *current* values — a half-updated
+counter, a pointer to an object in use. The PCB gained the three `PT_TLS`
+coordinates, and the executable is already open for demand loading.
+
+> **The test starts from seven, not from zero**, which is the only way to tell
+> "block copied" from "block zeroed": a zeroed block passes any test that starts
+> at zero. Each thread checks it finds 7, writes its own number, yields twice
+> and checks again; the main thread, at the end, finds its 42 untouched. What is
+> left out is `errno`, which lives inside `libc.so` where `__thread` does not
+> work — and it now has a written way out.
+
+
+**And `errno` is per-thread too.** Inside `libc.so` you cannot write
+`__thread` — there is no dynamic TLS — but the thread pointer can be *read*:
+`%gs:0` holds a different number for each thread, good as a key into a
+sixteen-slot table where the slot is claimed with `xchg` and not with "if it is
+free then write it". That is why the TLS block is now made for *every* process,
+even those without a single `__thread` variable: cut down to the TCB alone,
+eight bytes in a page — without it that descriptor's base is zero and
+`movl %gs:0` does not give a wrong value, it gives a page fault at address 0.
+
+> **The defect that came out of it is worth more than the feature.** With the
+> table in place, `close(999)` started answering `errno 0` on a call that
+> always fails: **inside `libc.c` the word `errno` is not the macro**, because
+> that file does not include `libc.h` — it says so at the top, it compiles
+> without `-I lib/include`. `err_posix` was writing the global while the
+> program read its thread's slot. And the test that caught it had been rewritten
+> on purpose: the first version made the main thread fail with a call that
+> answered zero, and zero never changes — it would have passed forever without
+> testing anything.
+
+**And the most instructive defect: a half-built task being run.** With
+per-thread TLS added, the test program died *one time in three* with a page
+fault at the entry of the thread function. The diagnosis came in a single run by
+printing the numbers: the thread faulted **before its own creation line was
+printed**, with the context `proc_create` had built for it — ESP at zero. In
+between there was a `vfs_read`, that is, a call **that can block**: while the
+group leader waited for the disk, the scheduler was running a thread that was
+not finished being built. The rule that follows holds for any kernel: **between
+creating a task and the moment it is ready there must be nothing that can
+block.**
+
+
+**And the wait that really sleeps.** `attesa_dormi`/`attesa_sveglia`: a thread
+leaves the scheduler's queue and comes back when somebody calls it — by the
+**address** it stopped on, not by pid, which is what lets a lock be just an
+integer, with no queue of names to remember.
+
+**The expected value closes the race**, and that is why the call takes three
+arguments instead of two: between the moment a waiter looks at the lock and the
+moment it falls asleep there is a window, and a wake-up arriving in there would
+be lost — the thread would sleep forever. The comparison is done by the
+*kernel*, with interrupts off. And the page is touched *before* turning them
+off: reading user memory can trigger a page fault that wants the disk, and a
+disk awaited with interrupts off is a stopped machine.
+
+**The lock has three states** — free, taken, taken-with-sleepers — and the third
+exists for whoever *releases*: without it they would have to call the wake on
+every unlock, just in case somebody is asleep. With the 2, a releaser holding a
+1 knows nobody is there: **with no contention the lock does not cost even one
+system call.**
+
+> **The test is a stopwatch, because nothing else tells them apart.** A wait
+> that spins and one that sleeps look the same from outside. Two measurements
+> with opposite outcomes are needed: with nobody waking and a 300 ms deadline it
+> came back after **310 ms** — it slept; woken by a thread after 100 ms with the
+> deadline at 2000, it came back after **100 ms** — the thread woke it, not the
+> clock.
+
+### The editor shortcuts, and something I had written wrong
+
+**tested** — a line typed in the editor and only Ctrl+S pressed: the status line
+says "saved", and the file read back from the shell contains it. It was the last
+item on EX-IDE's list: the "Source" window's menu had promised Ctrl+S, Ctrl+C,
+Ctrl+V, Ctrl+X and Ctrl+F since day one, and nobody had ever wired them.
+
+**The toolkit does not eat them, on purpose.** In `exwin.c`, in the key path:
+"for every other control a Ctrl+letter is an application shortcut and must not
+be eaten" — the only exception is the terminal, where Ctrl+C is byte 3 and must
+reach the pty. The Ctrls were already arriving; what was missing was someone
+looking at them.
+
+> **And what I had written in the manual was wrong.** Under "Text area" it said
+> "with cursor, selection and clipboard (Ctrl+C, Ctrl+V, Ctrl+X)", as if the
+> keys were the toolkit's doing. The toolkit provides the *functions* —
+> `ex_area_copia/taglia/incolla` — and leaves the keys to whoever writes the
+> program. The line now says so, and says how it is done: exactly what someone
+> writing their own editor with EX-IDE needs.
+
+**The repaint is manual, from the keyboard.** That is this job's trap: pressing
+"Cut" in the menu makes the toolkit repaint the window as the dropdown closes,
+so the changed text shows; from the keyboard nothing closes, and without an
+explicit `EXM_DISEGNA` the text changes and the screen stays as it was. The two
+paths go through the same functions and do not have the same surroundings.
+
+### Cut and paste: a control moves between forms
+
+**tested** — copied and pasted within the same form, then cut, form switched and
+pasted: the drawing file shows the control moved under the other window, same
+position and same name. It was the last big item left in EX-IDE, and its real
+reason was not copying: it was that a control placed on the wrong form could
+only be deleted and redone by hand over there.
+
+**The drawing clipboard is not the system one.** It holds a *control*, not text:
+ExWin's own clipboard carries characters and the editors already use it to pass
+pieces of source around. Putting a control in there would mean inventing a
+textual format for a rectangle and having it read back by whoever else writes
+into it meanwhile. In the main window Ctrl+C talks about the drawing, which is
+what that window is.
+
+**The name and the id are not copied, they are made anew**: they are unique
+across the whole project because they become `ID_...`, `h_...` and a function
+name inside `finestra.h`, which is a single file. With a pleasant consequence
+that was not aimed for — on a cut the name becomes free again and the control
+takes it back: **a move renames nothing**.
+
+**And the code is not copied at all.** The original's handler stays the
+original's; the copy will get its own, empty, on the first double click. Copying
+the body too would mean exide writing into `finestra.c` things nobody wrote —
+the one rule this program never breaks.
+
+> **Within the same form the pasted control shifts by eight pixels, in another
+> one it does not.** Placing it exactly over the original would hide it: you
+> would see one control and there would be two, and the click would always take
+> the top one. In another form that spot is free, and it is exactly where you
+> want it.
+
+### Redo: the same function with the two stacks swapped
+
+**tested** — undone, redone, and the case that matters most verified: after an
+Undo, a new change discards the redo branch.
+
+**What you undo is not thrown away, it is moved to the other side.** Two stacks
+instead of one, and *a single function that swaps them*: `passo(from, to)` takes
+the present, pushes it onto `to`, and restores the drawing on top of `from`.
+Undo is `passo(back, forward)`, Redo is `passo(forward, back)` — two lines each,
+and the day a field is added to the drawing there is one place to remember it.
+For the same reason capture and restore became two functions instead of the
+three `memcpy` blocks copied into the three places that use them.
+
+**A new change discards the redo branch**, and that is the only rule this thing
+needs: if after three steps back you draw something, that "forward" is a future
+born of a past that no longer exists, and keeping it would mean a Redo that
+restores a drawing which never existed. Every program does it this way, and this
+is the reason — not habit.
+
+> **The stack slides when full**, instead of refusing the new snapshot: the
+> oldest step is the one needed least, and losing the most *recent* one would
+> mean an Undo that does not undo the last thing done. Cost measured with
+> `size`: exide's BSS goes from 140,384 to 261,888 bytes — a hundred and
+> twenty-one kilobytes, the second stack of sixteen snapshots, zeroed memory and
+> not bytes in the binary.
+
+### Search actually works, and no browser port was needed
+
+**tested** — live, over HTTPS: `html.duckduckgo.com/html/?q=exos` opens in the
+EX-OS browser and shows the results, with titles, addresses and snippets.
+
+The question was whether to port Firefox, or NetSurf, in order to search. The
+answer came from five HTTP requests rather than an estimate — one per engine,
+with EX-OS's real User-Agent:
+
+| engine | what it answers |
+|---|---|
+| google.com/search | 200, 91,980 bytes, **three scripts and zero result links**: the results are built by JavaScript |
+| mojeek.com/search | 200, `<title>Captcha</title>` |
+| html.duckduckgo.com | 200, 33,784 bytes, **ten results in plain HTML** |
+| marginalia, wikipedia | plain HTML |
+
+**So NetSurf does not solve Google, and that is not its fault**: NetSurf does
+not run JavaScript, and Google sends result HTML to nobody. Porting a
+third-party engine — months for NetSurf, a second operating system for Firefox,
+which without threads and without Rust does not even start — would not have
+moved the actual problem an inch.
+
+**Then the real defect.** The DuckDuckGo page arrived (TLS fine, `200, 31671
+bytes, 738 nodes`) and the screen stayed blank. The status line also said "style
+truncated", and that was the answer: the same page saved locally *without* its
+stylesheet drew immediately. **DuckDuckGo's stylesheet is 105,607 bytes and the
+cap was 24,576**: the browser read a quarter of it and stopped halfway through a
+rule, and with half a stylesheet applied the page vanished.
+
+The three numbers that actually mattered — 1652 selectors, 2207 declarations,
+105 KB — against caps of 600, 2000 and 24 KB. Raised to 2400, 5000 and 160 KB:
+they cost **284 kilobytes of BSS** on a program that already had 5.2 MB,
+measured with `size` rather than guessed.
+
+> **You can search from your own browser without impersonating anyone.** No
+> Chrome-identical fingerprint was needed, no human jitter, no third-party
+> engine: what was needed was an engine that answers in HTML, and a raised cap.
+> And the third result DuckDuckGo returned was `github.com/exagonx/EX_OS` —
+> this project.
+
+### The layout leaves browser.c, and the proof is that you cannot see it
+
+**tested** — the same page photographed before and after: ten rows of pixels
+differ out of six hundred, from 582 to 591, and they are **the clock** in the
+taskbar. Above that, nothing. First of the two steps towards a formatted-text
+library: split the file before splitting the library.
+
+```
+browser.c            6749 -> 4824 lines
+browser_impagina.c        1836 lines   (the layout, moved out of it)
+browser_priv.h             222 lines   (the seam, which did not exist before)
+```
+
+**The machine was asked where to cut.** Before moving a single line I had a map
+of the file built — a hundred and thirty-eight definitions, who calls whom, who
+touches which global — and the layout group fell out by itself: twenty-eight
+functions, 1588 lines, *contiguous*. By eye, over six thousand lines, it was
+not visible.
+
+And above all it produced the measure of the cut, which was the real question:
+21 shared variables, 11 functions asked of the browser and **only 3 offered
+back**. Outwards the layout is nearly closed; what ties it down are not the
+calls but the variables — exactly the kind of tie you cannot see while
+everything lives in one file.
+
+> **Three script mistakes, all of the same kind.** For a one-line function the
+> signature was cut at the *last* parenthesis, which sits inside the body: an
+> open brace ended up in the header. A declaration ending in a comment instead
+> of a semicolon swallowed the next line. And globals declared several per line
+> were not seen at all. Every time: restore the file, fix the *script*, redo the
+> cut from scratch — fixing the output instead of the script would have meant a
+> cut nobody can reproduce, and this cut must be reproduced on the day of step 2.
+
+### The EX-IDE manual becomes a page, with an index
+
+**tested** — Help > Manual opens the browser on `/exwin/doc/exide.html`, and a
+click on the index lands exactly on the paragraph. Twenty thousand bytes,
+twenty-nine `id`s, fifty-six internal links.
+
+**You do not rewrite a viewer**: it is the same decision by which "Directory"
+does not rewrite a file manager but launches `filemgr`. The browser is there,
+it lays out, colours and follows links, and already does so for the other nine
+pages of the guide. The EX-IDE manual has become the tenth page of that set —
+same navigation bar, same stylesheet, one row in the documentation index — and
+the other pages' bars now name it.
+
+**The examples are shared, and that is why the index was needed.** Swapping two
+text boxes is as much a *Text box* example as a *Button* one; quitting with a
+confirmation counts for *Check*, for *Button* and for "how you quit". Repeating
+it under each would mean three copies to keep in agreement; putting it under
+only one would mean whoever looks for the other never finds it. So the examples
+all live at the end, one `id` each, and **every tool links to them** — and every
+example says which tools it covers. It is the only structure where the same
+thing is written once and reachable from every place you look for it; without
+anchor jumping it would have been a list of titles and "scroll until you find
+it".
+
+> **The in-program manual stayed**, and that is why it was written: a manual
+> that lives in a file is a manual that one day is not there — the `/exwin`
+> component not installed, a CD half mounted, only the binary copied. It is now
+> the second choice instead of the only one, and its first line says where the
+> good one is. But they are two copies of the same text and will drift: the way
+> out, written down among the open items, is to shorten the internal one to a
+> reminder and leave the long text to the page.
+
+**And the in-program manual became a reminder**, from 289 lines to 61: how to
+start, the four files, the windows and the table of tools with their events.
+The examples, the properties one by one and the menu live only in the page —
+they are the long part, the part that drifts first. The exide binary loses
+eleven kilobytes, and the reminder's first line says that if you are reading it
+the page was not there.
+
+### Anchors: a link that goes to a point in the page
+
+**tested** — four cases inside EX-OS: an anchor in the same page, one that does
+not exist, an address with a fragment typed in the bar, and a link that changes
+page *and* lands on the paragraph. It was needed for the documentation: a long
+manual with an index at the top, where you press an entry and find yourself at
+the explanation.
+
+The browser did not go there, and had been saying so for months in a comment:
+"this browser cannot jump to a point inside a document yet; until the jump
+exists, doing nothing is the most honest answer". Now the jump exists.
+
+**The piece to restart from is found from the node, not from the text.** Every
+laid-out piece already knows which document node it came from — a field added
+back when a script needed to be told *where* a click landed — so the jump is
+one walk over the tree (the element with that `id`, or an old `<a name>`) and
+one over the layout, without laying the page out a second time. An anchor in
+the current page reloads nothing: reloading in order to jump would mean a
+network round trip, the tree rebuilt and hand-filled forms cleared, all to move
+a scrollbar.
+
+> **The defect needed a measurement, not a guess.** On the first run the jump
+> landed two lines below the heading: it looked like a wrong margin, or the
+> font baseline, or line rounding — three plausible guesses, all wrong. Instead
+> of trying them I printed the numbers on the status line: `node 86, piece 152,
+> y 870, scroll 0`. The piece found was the right one, it was the heading.
+> **A piece's `y` is already in window coordinates**, not document ones: layout
+> starts below the address bar, so scrolling to the piece's `y` puts that piece
+> *behind* the bar and you see the line after it. With the numbers in hand it
+> took two minutes.
+
+### Undo: photograph everything, do not record what changed
+
+**tested** — three edits of three different kinds, each undone, and at the end
+the drawing file read back from the shell **identical to the starting one**.
+Sixteen steps back, with Ctrl+Z or Edit > Undo.
+
+**The whole drawing is photographed before every change**, instead of recording
+what changed. The alternative means writing the inverse of each operation —
+placing a control, deleting it, moving it, resizing it, changing one of its
+eight properties, changing one of the form's four, adding a form, removing one
+that takes its controls with it: nine inverses, each wrong in its own way, and
+the wrong ones surface a month later. "Put everything back as it was" cannot be
+wrong: it is a copy. And the drawing is small enough for that to make sense:
+sixteen snapshots fit in about a hundred kilobytes of zeroed memory, which never
+reach the binary.
+
+**One photograph per drag, and only if something really changed.** A drag sends
+dozens of events: photographing each one, a single movement eats all sixteen
+steps and you go back half a pixel at a time. Photographing at the *start* of
+the drag instead, a click that only selects would leave a step that does
+nothing — and an Undo that does nothing is worse than no Undo, because whoever
+presses it thinks it is broken. The photograph is taken at the first real
+change.
+
+**And the history does not cross projects**: opening another one and pressing
+Undo would put the previous project's controls back on the form, with their
+names and their ids — a drawing that never existed, ready to be saved over the
+real one.
+
+> **The shortcuts were labels.** The menus had promised Ctrl+N, Ctrl+O, Ctrl+S
+> and Ctrl+Q since day one and pressing them did nothing: nobody had ever wired
+> them. For Undo the shortcut matters more than for the others — you undo right
+> after the mistake, hand still on the keyboard, not by opening a menu — so they
+> were all wired at once. The ones in the "Source" window are still labels, and
+> now that is written down where the missing things are kept.
+
+### The handles can be pulled, and the manual actually explains
+
+**tested** — inside EX-OS, pulling every kind of handle and reading back the
+numbers that end up in the drawing file. Controls can be resized with the
+mouse: the eight handles had been drawn since day one and were good for
+nothing.
+
+**The problem was not pulling them, it was grabbing them.** Half of every
+handle falls *inside* the control, and the click looked for the control first —
+the natural order: so a click on the corner started a move and the handle could
+never be taken. Handles are now looked at first. And the little square you see
+is 5 pixels — any bigger would cover the control — while the mouse target is
+11: you aim at the square and grab it anyway.
+
+**You pull an edge, not a size.** Pulling the left handle changes `x` **and**
+width together, because the right edge must not move: changing the width alone
+would make the control slide right while you drag it left. The same goes for
+the limits — the minimum size stops the edge being pulled instead of shortening
+from the other side, or the control would run away the moment it hit the
+minimum.
+
+**The in-program manual became a manual.** For every tool it now says what it
+is for, which events it has and **which functions drive it** from `finestra.c`:
+`ex_acceso`/`ex_accendi` for Check and Radio, the six `ex_lista_*`, the six
+`ex_voce_*` that Combo and Tabs share, `ex_scorri_*`; plus the properties one
+by one — what each becomes in the generated code — and two complete examples.
+One was there: two boxes swapping their text, now with the reason the scratch
+copy is really needed (`ex_testo_prendi` returns a *pointer* into the control's
+text, not a copy). The other was missing: **a button that closes the window**,
+which in the main window is `ex_esci(0)` and in a secondary one is not — there
+you call the generated procedure with `EXM_CHIUDI`, which destroys the window
+*and* zeroes the handles of its controls.
+
+> **An old defect, found while writing a new one.** Adding the repaint to the
+> resize turned up that *moving* had never had one: dragging a control changed
+> `x` and `y` and nobody repainted the canvas, so the control was seen jumping
+> to its new place only when something else caused the window to redraw. Both
+> drags now end with a repaint.
+
+### More than one window: the designer learns to count
+
+**tested** — from the drawing to the running program: two windows drawn,
+generated, compiled with real GCC inside EX-OS, and the second one opening when
+a button on the first is pressed. An exide project could draw **one window
+only**; now it draws eight.
+
+**The drawing format did not change to make room.** It already had the right
+shape — one line for the form, then the lines of its controls — and all it took
+was letting there be more than one form:
+
+```
+F principale 400 260 prg6
+c etichetta Etichetta1 1001 76 52 90 16 0 Etichetta1
+F finestra2 400 260 Finestra 2
+c spunta Spunta1 1003 76 124 140 20 0 Spunta1
+```
+
+The old line was called `f` and **is still read**: it had no name — it did not
+need one, there was a single form — and slipping one in the middle would have
+made the first word of the *title* be read as the name. So the new line got a
+letter of its own. Projects made before open without noticing a thing.
+
+**The main window keeps the names it always had**, and the others do not:
+`g_form`, `finestra_crea()`, `finestra_proc()` against `g_form_opzioni`,
+`opzioni_crea()`, `opzioni_proc()`. Naming them all alike would be more
+symmetric, and **every project made before today would stop compiling**: its
+`finestra.c` — the one the IDE never rewrites — calls `finestra_crea()` from
+main. Secondary windows are opened by your code, usually from a button handler.
+
+Three details the generator writes and a hand-writer forgets: calling
+`<nome>_crea()` twice **does not open two windows** (a button gets pressed more
+than once); closing a secondary window **does not quit the program**, only the
+main one does; and on closing, the pointers to its controls **go back to zero**,
+because `ex_distruggi` takes the children with it and those names would point
+at nothing.
+
+> **One form at a time, and not an MDI container — against what I had written
+> in the to-do list myself.** The MDI had been in the toolkit since the day
+> before and was the marked road; the numbers decided otherwise: the designer's
+> canvas is 436x396 and a form is born 400x260. Two windows that size in there
+> cover each other almost entirely — you would spend your time dragging them
+> apart to see the one underneath, to gain seeing at once two things you work on
+> one at a time anyway. It stays the right road the day the canvas grows, or the
+> day you want to drag a control from one window into another.
+
+### Save as, Replace, and a name that lagged behind
+
+**tested** — inside EX-OS, with the file read back from the shell before and
+after, in the same machine run. The two entries that were at the top of
+exide's to-do list.
+
+**"Save as" copies the tree, it does not regenerate the drawing.** It could
+have meant two things: rebuilding `finestra.dis`, `finestra.h` and
+`finestra_gen.c` inside a new directory, or copying everything and carrying
+on in the copy. The first is easier to write and **throws away
+`finestra.c`**, the one file of the four the IDE does not own: it is the
+user's, the one where the IDE appends the missing handlers and never rewrites
+anything. A "save as" that loses the bodies of the functions is not a save.
+So the whole tree is copied — `src/`, `inc/`, `lib/`, `bin/`, `obj/`,
+`progetto.txt`, `compila.sh` — after saving any open editors, and **the
+original is left untouched**: it is a copy, not a move.
+
+**"Replace" changes one occurrence at a time, like Find.** In source code the
+same sequence of characters lives inside strings, inside comments and inside
+identifiers: `msg` is also part of `message`. A "replace all" changes all
+three silently, and whoever ran it finds out at compile time, or later. It is
+in both editors — the source one and the file editor — and in the toolkit
+`ex_area_riga_metti()` was born, which rewrites one line in the middle of the
+document: sixteen lines that go through `area_tocca()`, so the colouriser's
+state chain is invalidated from that row down. That is exactly why such a
+primitive belongs in the toolkit: an application rewriting the row from
+outside would leave the old colour behind, and only sometimes.
+
+**And then rereading found what the happy path never touches.** Three defects,
+all in the same blind spot — the paths where something goes wrong. The worst:
+**copying a file onto itself deletes it, and the copy reports success**. Not a
+suspicion, it is in `kernel/fs/vfs.c`: opening with `O_TRUNC` empties the file
+without checking who else holds it open, so the read that follows finds zero
+bytes, the loop never runs, and the function returns success. Anyone typing
+the current project's path into the dialog field ended up with every file at
+zero and a status line saying "project copied". The check is now in two
+places, and a directory that already holds a project is not silently
+overwritten. Alongside it: no return value from `mkdir` or from the copy was
+ever checked — on a read-only disk exide moved to the new directory anyway,
+one that did not exist. Now there is the same write test "New project" uses,
+the copy counts the files that did not make it, and **if even one is missing
+the IDE does not move**: half a copy plus an IDE pointing into it means the
+next Save turns it into the original.
+
+> **A defect found by the test, not by rereading the code.** `progetto.txt`
+> is copied as it was, `nome = ...` line included, and the project card was
+> reading the name from there: the directory was `prg6-copia` while the card
+> still said `prg6` — and the window title, which derives the name from the
+> directory, said the right one. Two places answering the same question
+> differently; the same would have happened renaming the directory from
+> outside. The cure is not to keep them in sync: it is to remove one. The name
+> now **always** comes from the directory, and the file is still written, so
+> the first Save puts it right by itself.
 
 ### Files and Directory: one new window, and one that did not need writing
 
@@ -1245,8 +2084,8 @@ The two images answer two different questions:
   (`ping`, `ftp`, `telnet`, `dhcp`, `host`, `netdetect`…) and every driver. It
   is bootable, and it is a **superset of the floppy**, not a different thing.
 - **`dist/exos-tools.iso`** — the **languages**: `gcc`, `g++`, `cpp`, `cc1`,
-  `fbc`, `as`, `ld`, libstdc++, OpenSSL. 150 MB installed separately with
-  `toolinst`.
+  `fbc`, `as`, `ld`, `nasm`, `ndisasm`, `make`, libstdc++, OpenSSL. 150 MB
+  installed separately with `toolinst`.
 - **`dist/floppy.img`** — the **base system** only: boot, prepare a disk,
   install itself, read and write files. What fits in 1.44 MB.
 
@@ -1662,8 +2501,16 @@ so anyone not using `__thread` pays nothing.
 
 > ! There is no **dynamic** TLS (`__tls_get_addr`, thread-local variables
 > inside a shared library): that serves code loaded at run time, and here the
-> binaries are static. And there are no threads: this is the piece needed in
-> order to have them, not the threads themselves.
+> binaries are static.
+
+**And since 4 September 2026 threads do exist, and the TLS block belongs to
+each of them.** Every thread has its own, at the top of its own stack, with the
+initial image **read again from the executable** — copying the group leader's
+would mean starting the thread with another flow's *current* values. `errno` is
+per thread too: `__errno_dove()` reads the thread pointer from `%gs:0` and uses
+it as a key. That is why the block is made **even for programs with no
+`__thread` variables**: without it the descriptor's base would be zero and that
+read would be a page fault at address 0.
 
 Why do it, if a process has a single thread and a `__thread` variable is a
 global with a longer name? Because the way it was *missing* was the worst
@@ -1678,16 +2525,33 @@ instruction of the first function it calls.
 ```
 0x08000000  program text, data, bss
             heap ---->                             (sbrk, mmap without MAP_FIXED)
-0xbffbc000  heap_max — the ceiling
-0xbffbd000  guard page
-0xbffbd000  TLS block, if the program has one
+0xbff44000  heap_max — the ceiling
+0xbff44000  guard page
+0xbff45000  band of the thread stacks — seven 64 KB slots,
+            with a guard page between one and the next
+0xbffbc000  guard page
+0xbffbd000  the process's TLS block, if the program has one
+0xbffbe000  guard page
 0xbffbf000  stack reservation (256 KB)   <---- the stack grows downwards
 0xbffff000  top of the stack
 ```
 
+*(The addresses are those of a program with a one-page TLS block: a larger
+block pushes everything below it further down.)*
+
 The heap starts **right after the last loaded segment**, not at a fixed
-address. Since 0.156 it also has a **ceiling**: a guard page below the TLS
-block if there is one, below the stack reservation if there is not.
+address. Since 0.156 it also has a **ceiling**: a guard page below the first
+object that is really there — today the thread band, and below it the TLS block
+and the stack reservation.
+
+! **THE BAND IS RESERVED AT LOAD TIME, EVEN FOR A PROGRAM THAT WILL NEVER MAKE
+A THREAD**, and it is the choice that keeps everything else simple: they are
+**addresses, not pages** — half a megabyte less for a heap that has three
+gigabytes — whereas moving the heap ceiling when the first thread is born would
+mean lowering it below memory the heap may **already** have taken. Either you
+refuse the thread, or you put its stack on top of somebody else's things: the
+first is a limit that shows up at random, the second is silently corrupted
+memory.
 
 Before, it had none, and the only limit was physical RAM. That sounds
 harmless — memory runs out first — but above the heap there is no void, and
@@ -1817,6 +2681,36 @@ flag held by the window server would die with it and leave the door open onto an
 empty room; a list of libraries held by one stub would not be seen by the other
 stub in the same process — which is exactly the defect 238 was born from, two
 JavaScript engines running side by side without seeing each other.
+
+### The thread syscalls, from 0.208 to 0.209
+
+| EAX | Syscall           | EBX        | ECX      | EDX | What it is for |
+|-----|-------------------|------------|----------|-----|----------------|
+| 201 | thread_crea       | entry      | argument | —   | a second flow inside the same program: returns the tid, which **is** a pid |
+| 202 | thread_esci       | code       | —        | —   | leaves the thread, not the process; does not return |
+| 203 | thread_attendi    | tid        | `int*`   | —   | waits for a thread of its own group and collects its code |
+| 204 | attesa_dormi      | address    | value    | ms  | "sleep while that address still holds this value": locks, condition variables and semaphores all stand on it |
+| 205 | attesa_sveglia    | address    | how many | —   | wakes those sleeping on that address (0 = all) |
+| 206 | thread_ferma      | tid        | —        | —   | **asks** a thread to stop, and shakes it if it is asleep |
+| 207 | thread_devo_fermarmi | —       | —        | —   | 1 if somebody asked: it is the thread that chooses where to look |
+
+! **A THREAD IS A TASK THAT SHARES THE PAGE DIRECTORY**, and for the scheduler
+there is nothing new: same run queue, same quantum, same `context_switch`. It
+also shares the descriptors and the working directory; of its own it has the
+stack — a slot in a band reserved below the TLS — and its own TLS block,
+`errno` included. Whoever leaves the *process* takes every thread with them.
+
+! **STOPPING A THREAD MEANS ASKING IT, AND IT IS NOT TIMIDITY.** A thread
+interrupted wherever it happens to be would leave locks held and structures
+half-built, and inside a single process those belong to everybody. The kernel
+does the two things that cannot be done from outside: it puts the message in
+the PCB and **shakes** the sleeper awake.
+
+! **CONDITION VARIABLES AND SEMAPHORES ARE NOT SYSCALLS.**
+`condizione_aspetta`, `semaforo_prendi` and the other six all live in the libc,
+built on top of 204 and 205: with no contention they do not even cost a system
+call. You always wait inside a `while`, never inside an `if` — waking up says
+"look again", not "it is there now".
 
 ---
 
@@ -2067,12 +2961,27 @@ exwin                       brings up graphics on a console of its own
 /exwin/bin/pm               the desktop (exwin starts it by itself)
 /exwin/bin/filemgr [DIR]    the file manager
 /exwin/bin/edit [FILE]      the text editor
+/exwin/bin/term [PROG]      the terminal in a window (no PROG: the shell)
+/exwin/bin/browser [URL]    the browser (an absolute path becomes a file:)
+/exwin/bin/exide [DIR]      the visual development environment
+/exwin/bin/fontprova        the TrueType font test, made to be looked at
+/exwin/bin/orologio         date and time in the corner of the bar
 ```
 
 Once graphics are up, the shell **stays alive on console 0**: you keep working
 there and switch to the desktop with `Alt+F2`.
 
-! **APPLICATIONS ARE LAUNCHED FROM THE SHELL'S CONSOLE, THEN YOU SWITCH.**
+**From the desktop they open from the Avvio menu**, which reads its entries
+from `/exwin/lib/applicazioni.txt` — one line per application, `displayed name |
+path`. The **Applicazioni...** item of that same menu adds and removes lines
+from that file, and the `@avvio <path>` directive says which program starts by
+itself with the desktop (that is how the clock is already there).
+
+! **ADDING AN APPLICATION IS ONE LINE, NOT A RECOMPILATION**, and the file
+stays readable and editable by hand on purpose: a configuration file only a
+program can write is a file you cannot repair when that program will not start.
+
+! **FROM THE SHELL YOU LAUNCH THEM WITH THE COMMAND, BUT BEFORE SWITCHING.**
 Typing the command *after* `Alt+F2` sends the keys to the graphical server, not
 to the shell — and it looks as if the system had frozen. It is the same
 separation that makes everything else possible, seen from the awkward side.
@@ -2107,6 +3016,84 @@ hands it to the editor, looked for in `/exwin/bin` and then in
 hundred files, the ones you want to enter would be scattered among them. It is
 the only thing this list sorts — sorting names would mean a comparison that
 depends on the language.
+
+### The terminal in a window
+
+`/exwin/bin/term` opens a shell inside a window; `term /bin/gfedit` opens that
+program there instead of the shell. The window is an exact multiple of the 8x16
+font cell, because the toolkit's "terminal" control computes columns as
+width/8 and rows as height/16.
+
+! **THE SHELL RUNS ON A PIPE, NOT ON THE CONSOLE'S `tty`**, and that is the
+whole point of a terminal in a window. A shell reading descriptor 0 of the
+console competes for the keyboard with anyone else on that console; behind a
+pipe that question does not exist — the server gives the keys to the focused
+window, and from there they go into *that* shell's pipe. That is how two of
+them can be open without disturbing each other.
+
+### The browser
+
+`/exwin/bin/browser [URL]`. With no argument it starts from the home page; with
+an absolute path (`browser /exwin/doc/browser.html`) it turns it into a `file:`,
+which is the only form the rest of the program knows.
+
+The bar carries **two boxes**: the address and **Cerca**, which composes the
+query for the engine chosen in **File > Impostazioni** (duckduckgo, wikipedia,
+marginalia) by itself. What the page can do — text that wraps and scrolls,
+links, images, style sheets, tables, forms, HTTPS, cookies, JavaScript — is in
+the "What's new" entries above, which are where that work is told in full.
+
+### EX-IDE — the visual development environment
+
+`/exwin/bin/exide [DIR]`. With an argument it opens the project living in that
+directory straight away. Three areas as in Visual Basic: the tools on the left,
+in the middle the form they are dropped onto, on the right the properties of
+the selected one; double-click a control and the editor opens inside the
+function its event will call.
+
+! **THE JOINT BETWEEN THE DRAWING AND THE CODE IS THE ID**, and it was already
+there: in the drawing the button *is* `ID_PULSANTE1`, in the source there is
+`case ID_PULSANTE1:`. exide is feasible here more than elsewhere because ExWin
+was already shaped like VB6 — there is nothing to invent, there is what the
+drawing says to *write*.
+
+A project is four files, and the rule that decides whether it survives is that
+the generated and the written never touch:
+
+| file | who writes it |
+|---|---|
+| `finestra.dis` | exide only: the drawing |
+| `finestra.h` | exide only: the ids, the pointers, the prototypes |
+| `finestra_gen.c` | exide only: creates the controls and dispatches the events |
+| `finestra.c` | **you only**: exide *adds* the missing handlers at the end, and never rewrites what is there |
+
+### The font test
+
+`/exwin/bin/fontprova` draws the same lines in TrueType at different sizes, and
+is **made to be photographed**: this system's graphical tests are measured in
+pixels. The rasterizer has already been compared against FreeType, but that
+comparison runs on the host — it says the glyphs come out right and says
+nothing about `exfont.so` loaded at run time, about the cache, about blending
+with the background, or about the font files being readable from the CD. This
+window tests the whole round trip.
+
+! **THE TOP LINE USES THE SYSTEM FONT, AND IT IS THE YARDSTICK:** if TrueType
+does not load, only that line and the error messages remain, and you see at
+once where it stopped instead of staring at an empty window.
+
+### The clock
+
+`/exwin/bin/orologio` puts date and time in the corner of the bar, and stays
+**above every** window because it is a piece of the bar. It is a **separate
+process**, not a thread inside the program manager: what you want is the time
+to keep up whatever the rest of the system is doing, and a thread would share
+the server connection and the message queue with it — a busy program manager
+would be a stopped clock.
+
+! **THE TIME IS UNIVERSAL TIME**, and that has to be said rather than left to
+be discovered: the libc declares `localtime()` identical to `gmtime()`, because
+this system does not know what zone it is in nor has anywhere to keep it. A
+made-up local time would be worse than universal time, which is at least true.
 
 ---
 
@@ -2967,7 +3954,7 @@ It is not a matter of taste: it is what the binaries look for at runtime,
 and it can be read off them (`strings gcc/cc1 | grep /exos`).
 
 ```
-/exos/bin/                            gcc, g++, cpp, fbc
+/exos/bin/                            gcc, g++, cpp, fbc, nasm, ndisasm, make
 /exos/libexec/gcc/i386-exos/17.0.0/   cc1, cc1plus, collect2
 /exos/lib/gcc/i386-exos/17.0.0/       libgcc.a, crt*.o, include/
 /exos/lib/                            libc.a, libm.a, libstdc++.a, libcrypto.a
@@ -4400,8 +5387,8 @@ once at startup instead of leaving it to be inferred. The alternative will
 be called SSH when there is TLS — not «telnet with a patch».
 
 **How it listens to the network and the keyboard at once.** There is no
-`select()` and there are no threads, but there is something better for this
-case: in EX-OS everything comes through the same mailbox. You *book* a
+`select()`, and threads arrived after this program, but there is something
+better for this case: in EX-OS everything comes through the same mailbox. You *book* a
 receive from the IP stack (`IP_MSG_TCP_RICEVI`), you *book* a key from the
 keyboard service (`KBD_MSG_READKEY`), and then you wait with a single
 `ipc_recv_timeout()` and look at **who** answered. The two bookings re-arm
