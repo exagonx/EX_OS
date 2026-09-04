@@ -176,6 +176,45 @@ come si deve non si e' piu' visto in sette giri di fila. La misura non
 distingue, ma la circostanza e' annotata: **due programmi che usano fili vivi
 insieme**.
 
+### E LA VERSIONE DEL KERNEL ERA RIMASTA INDIETRO DI SETTE SYSCALL
+
+`version.h` dice che `EXOS_VERSION` va alzata **a ogni** modifica del kernel, e
+i fili non l'hanno alzata: le syscall 201-207 — creare, uscire, aspettare,
+dormire, svegliare, fermare, chiedersi se fermarsi — sono nate tutte dopo la
+0.208, e nessuna delle cinque giornate le ha contate. Un programma che chiedeva
+al kernel la versione per sapere se poteva creare un filo riceveva una risposta
+che non lo diceva.
+
+Adesso la versione e' **0.209**, la voce nel changelog racconta anche quel che
+non era stato scritto a suo tempo, e i due README dicono 0.209 in testa.
+
+! **SI RIPARA DICENDO COM'E' ANDATA, non riscrivendo la storia.** Alzare la
+versione sette volte all'indietro avrebbe inventato sette giornate che non
+esistono; una sola, che dichiara di essere la prima a nominare quelle syscall,
+e' vera.
+
+### QUEL CHE E' STATO SCRITTO NEI README (tutt'e due)
+
+Le due versioni si aggiornano insieme, ed e' andata cosi':
+
+    Novita'                    la voce di oggi, per intero
+    Syscall                    la tavola delle 201-207, che non c'era
+    Architettura kernel        la mappa dello spazio di un processo aveva
+                               ancora heap_max a 0xbffbc000: la banda dei fili
+                               lo ha spostato a 0xbff44000, e nel disegno non
+                               c'era. Sistemate anche le due guardie che il
+                               vecchio schema non mostrava
+    Il thread pointer          diceva «e non ci sono i thread: questo e' il
+                               pezzo che serve ad averli». Adesso ci sono
+    La grafica in pratica      l'elenco fermo a pm/filemgr/edit: aggiunti
+                               term, browser, exide, fontprova, orologio, il
+                               menu Avvio e /exwin/lib/applicazioni.txt
+    telnet                     «non ci sono i thread» -> «i fili sono arrivati
+                               dopo questo programma»
+    orologio.c                 stessa riga, nel sorgente: il motivo per cui
+                               l'orologio e' un processo non era la mancanza
+                               dei fili, ed e' rimasto valido
+
 ### LE MISURE, TUTTE PRESE IN QEMU
 
     filiprova pila        7 fili: 980 KB (140 l'uno), tutti restituiti;

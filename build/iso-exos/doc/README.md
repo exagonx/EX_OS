@@ -2,7 +2,7 @@
 
 **🇮🇹 Italiano** · [🇬🇧 English](README.en.md)
 
-**Versione:** 0.208
+**Versione:** 0.209
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 32-bit — si avvia da floppy, da CD o da disco rigido
@@ -84,6 +84,78 @@ propri header senza che nessuno glielo dica, e concatena da sé cc1, `as`,
 Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### La pila di un filo cresce su richiesta
+
+**testato** — un filo nasceva con 64 KB di RAM vera in mano: sedici pagine
+allocate e azzerate una per una, anche per un filo che di pila ne usa duecento
+byte. Non era una svista, era un prezzo pagato apposta, e il perché stava
+scritto nel codice: `page_fault_handler` sapeva far crescere **uno** stack —
+quello del PCB corrente — e davanti a una pagina mancante dentro la banda dei
+fili non sapeva **di chi** fosse.
+
+Adesso lo sa dire. Della piazzola si impegnano il blocco TLS e le prime otto
+pagine; il resto arriva quando il filo scende davvero, e si ferma sulla pagina
+di guardia sotto la piazzola. **Sette fili costano 980 KB invece di 1344**,
+cioè 140 a testa invece di 192 — e di quei 140, centoventotto sono lo stack di
+*kernel* del task, che con questo lavoro non c'entra: la pila utente è passata
+da 64 KB a 12.
+
+**La domanda vera non era «quanto», era «di chi».** I fili condividono la
+memoria, quindi a faultare dentro la pila di un filo può essere **qualcun
+altro**: un filo dichiara `char buf[16384]`, ne tocca solo la cima e ne passa
+il fondo a un compagno — o a una `read()`. Il fondo non è impegnato, il
+compagno ci scrive, e il fault arriva mentre gira lui; il suo ESP non dice
+niente su quell'indirizzo, perché sta in un'altra piazzola. Finché i 64 KB
+c'erano tutti il caso non esisteva. Per questo `pf_cresci_stack` è diventata
+due domande invece di una: **se** la crescita è legittima e **di chi** è la
+pila, poi `pf_cresci_pagine` impegna.
+
+> **La condizione «vicino a ESP» lì non si applica, e non è una rinuncia:**
+> sarebbe un paragone fra due piazzole diverse, cioè un numero senza
+> significato. Al suo posto c'è un confine altrettanto stretto — l'indirizzo
+> deve cadere nella riserva di un filo **vivo** dello stesso gruppo — e fra una
+> piazzola e l'altra resta la guardia, che nessuna crescita può scavalcare.
+
+**Due difetti trovati leggendo quel che si stava per toccare**, tutt'e due in
+`proc_reap_zombie`:
+
+- **sedici pagine perse a ogni filo che finisce.** Le piazzole si riusano, ma
+  le pagine di un filo morto restavano mappate fino alla fine del *processo*:
+  il filo dopo prendeva lo stesso posto e ci si mappava sopra pagine nuove —
+  `paging_map_page` sovrascrive la voce senza dire niente — con i dati di
+  quello di prima sotto i piedi. Adesso la piazzola si smonta, e nella prova si
+  legge «riassorbiti tornano 980 KB su 980»;
+- **una page directory distrutta più di una volta.** Si libera «quando non
+  resta nessuno», e nessuno si contava con `proc_gruppo_vivi()`, che gli zombie
+  non li conta; ma quando il capogruppo esce i fili diventano zombie *tutti
+  insieme*, e ognuno veniva raccolto con lo stesso puntatore in mano. Il primo
+  distruggeva la directory, i successivi la ripercorrevano da liberata. **Non è
+  provato** che fosse la causa dei due difetti rari già aperti — il panic dentro
+  `kfree`, il driver che parte con lo stack a zero — ma la forma è quella: un
+  conto che arriva altrove e molto dopo.
+
+**Le prove sono due modi nuovi di `/bin/filiprova`,** e ognuna delle tre parti
+di `pila` fallisce da sola: quanto costa un filo (la riga di giudizio è a 160 KB
+— 128 di stack kernel più *o* 64 di piazzola tutta *o* 12 impegnati a poco a
+poco: un numero in mezzo non esiste), che poi cresca (quaranta chiamate da un
+kilobyte, cinque volte quel che gli è stato dato), e che cresca **per mano di un
+altro**. `sfonda` scende senza fine e pretende che a morire sia il filo, sulla
+guardia, con codice -11, mentre il processo resta vivo.
+
+> **Nella terza parte il filo che aspetta non può chiamare niente.** Una `call`
+> scrive l'indirizzo di ritorno *sotto* l'ESP, e il fault che ne segue fa
+> impegnare tutto quel che sta fra lì e la parte già viva — cioè proprio il
+> pezzo che la prova vuole lasciare vuoto. Aspetta girando su una variabile
+> `volatile`. È anche la ragione per cui il caso è raro nella vita vera: i dati
+> vivi di un filo stanno sempre sopra il suo ESP, e sopra l'ESP è già tutto
+> impegnato.
+
+Restano dichiarati, e sono difetti veri usciti scrivendo la prova: **un filo che
+muore di page fault non porta via il processo** (muore lui, e il programma
+prosegue magari con un lucchetto preso da chi non c'è più), e **lo zombie di un
+filo che nessuno aspetta lo raccoglie la shell**, che torna al prompt con il
+programma ancora vivo.
 
 ### La casella «Cerca», e due caselle nella stessa barra
 
@@ -2383,8 +2455,16 @@ chi non usa `__thread` non paga niente.
 
 > ! Non c'è il TLS **dinamico** (`__tls_get_addr`, variabili
 > thread-local dentro una libreria condivisa): serve a chi carica codice a
-> runtime, e qui i binari sono statici. E non ci sono i thread: questo è il
-> pezzo che serve ad averli, non loro.
+> runtime, e qui i binari sono statici.
+
+**E dal 4 settembre 2026 i fili ci sono, e il blocco TLS è di ciascuno.** Ogni
+filo ha il suo, in cima al proprio stack, con l'immagine iniziale **riletta
+dall'eseguibile** — copiare quella del capogruppo vorrebbe dire far partire il
+filo con i *valori di adesso* di un altro flusso. Anche `errno` è per filo:
+`__errno_dove()` legge il thread pointer da `%gs:0` e lo usa come chiave. È
+per questo che il blocco si fa **anche ai programmi senza variabili
+`__thread`**: senza, la base di quel descrittore varrebbe zero e quella
+lettura sarebbe un page fault all'indirizzo 0.
 
 Perché farlo, se un processo ha un filo solo e una variabile `__thread` è
 una globale con un nome più lungo? Perché il modo in cui *mancava* era il
@@ -2399,16 +2479,32 @@ muore alla terza istruzione della prima funzione che chiama.
 ```
 0x08000000  testo, dati, bss del programma
             heap ---->                             (sbrk, mmap senza MAP_FIXED)
-0xbffbc000  heap_max — il tetto
-0xbffbd000  pagina di guardia
-0xbffbd000  blocco TLS, se il programma ne ha uno
+0xbff44000  heap_max — il tetto
+0xbff44000  pagina di guardia
+0xbff45000  banda degli stack dei fili — sette piazzole da 64 KB,
+            con una pagina di guardia fra l'una e l'altra
+0xbffbc000  pagina di guardia
+0xbffbd000  blocco TLS del processo, se il programma ne ha uno
+0xbffbe000  pagina di guardia
 0xbffbf000  riserva dello stack (256 KB)   <---- lo stack cresce all'ingiù
 0xbffff000  cima dello stack
 ```
 
+*(Gli indirizzi sono quelli di un programma con un blocco TLS di una pagina:
+un blocco più grande sposta all'ingiù tutto quel che gli sta sotto.)*
+
 Lo heap comincia **subito dopo l'ultimo segmento caricato**, non a un
 indirizzo fisso. Dalla 0.156 ha anche un **tetto**: una pagina di guardia
-sotto il blocco TLS se c'è, sotto la riserva dello stack se non c'è.
+sotto il primo oggetto che c'è davvero — oggi la banda dei fili, e sotto di
+essa il blocco TLS e la riserva dello stack.
+
+! **LA BANDA SI RISERVA ALL'AVVIO, ANCHE A CHI NON FARÀ MAI UN FILO**, ed è la
+scelta che rende semplice tutto il resto: sono **indirizzi, non pagine** —
+mezzo megabyte in meno per uno heap che ne ha tre giga — mentre spostare il
+tetto dello heap quando nasce il primo filo vorrebbe dire abbassarlo sotto
+memoria che lo heap potrebbe **già** aver preso. O si rifiuta il filo, o si
+mette il suo stack sopra la roba di qualcun altro: il primo è un limite che
+salta fuori a caso, il secondo è memoria corrotta in silenzio.
 
 Prima non ce l'aveva, e l'unico limite era la RAM fisica. Sembra
 innocuo — la memoria finisce prima — ma sopra lo heap non c'è il vuoto, e
@@ -2538,6 +2634,35 @@ USA.** Una bandiera tenuta dal server grafico morirebbe con lui e lascerebbe la
 porta aperta su una stanza vuota; un elenco di librerie tenuto da uno stub non
 lo vedrebbe l'altro stub dello stesso processo — ed è esattamente il difetto da
 cui la 238 è nata, due motori JavaScript che giravano insieme senza vedersi.
+
+### Le syscall dei fili, dalla 0.208 alla 0.209
+
+| EAX | Syscall           | EBX        | ECX       | EDX | A cosa serve |
+|-----|-------------------|------------|-----------|-----|--------------|
+| 201 | thread_crea       | entry      | argomento | —   | un secondo flusso dentro lo stesso programma: rende il tid, che **è** un pid |
+| 202 | thread_esci       | codice     | —         | —   | esce dal filo, non dal processo; non ritorna |
+| 203 | thread_attendi    | tid        | `int*`    | —   | aspetta un filo del proprio gruppo e ne raccoglie il codice |
+| 204 | attesa_dormi      | indirizzo  | valore    | ms  | «dormi finché lì c'è ancora questo valore»: è su questa che stanno lucchetti, condizioni e semafori |
+| 205 | attesa_sveglia    | indirizzo  | quanti    | —   | sveglia chi dorme su quell'indirizzo (0 = tutti) |
+| 206 | thread_ferma      | tid        | —         | —   | **chiede** a un filo di fermarsi, e scrolla chi dorme |
+| 207 | thread_devo_fermarmi | —       | —         | —   | 1 se qualcuno l'ha chiesto: è il filo a scegliere dove guardare |
+
+! **UN FILO È UN TASK CHE CONDIVIDE LA PAGE DIRECTORY**, e per lo scheduler non
+c'è niente di nuovo: stessa run queue, stesso quanto, stesso `context_switch`.
+Condivide anche i descrittori e la directory di lavoro; ha di suo lo stack —
+una piazzola in una banda riservata sotto il TLS — e il proprio blocco TLS,
+`errno` compreso. Chi esce dal *processo* porta via tutti i fili.
+
+! **FERMARE UN FILO È CHIEDERGLIELO, E NON È TIMIDEZZA.** Un filo interrotto
+dove capita lascerebbe i lucchetti presi e le strutture a metà, che dentro un
+processo solo sono quelle di tutti. Il kernel fa le due cose che da fuori non
+si possono fare: mette il messaggio nel PCB e **scrolla** chi dorme.
+
+! **LE CONDIZIONI E I SEMAFORI NON SONO SYSCALL.** `condizione_aspetta`,
+`semaforo_prendi` e le altre sei stanno tutte nella libc, costruite sopra la
+204 e la 205: senza contesa non costano nemmeno una chiamata di sistema. Si
+aspetta **sempre** dentro un `while`, mai dentro un `if` — il risveglio dice
+«guarda di nuovo», non «adesso c'è».
 
 ---
 
@@ -2787,15 +2912,31 @@ exwin                       accende la grafica su una console sua
 /exwin/bin/pm               la scrivania (la avvia exwin da sola)
 /exwin/bin/filemgr [DIR]    il file manager
 /exwin/bin/edit [FILE]      l'editor di testo
+/exwin/bin/term [PROG]      il terminale in finestra (senza PROG: la shell)
+/exwin/bin/browser [URL]    il navigatore (un percorso assoluto diventa file:)
+/exwin/bin/exide [DIR]      l'ambiente di sviluppo visuale
+/exwin/bin/fontprova        la prova dei font TrueType, fatta per essere vista
+/exwin/bin/orologio         data e ora nell'angolo della barra
 ```
 
 Avviata la grafica, la shell **resta viva sulla console 0**: si continua a
 lavorare da lì e con `Alt+F2` si passa alla scrivania.
 
-! **LE APPLICAZIONI SI LANCIANO DALLA CONSOLE DELLA SHELL, POI SI COMMUTA.**
-Battendo il comando *dopo* `Alt+F2` i tasti vanno al server grafico, non alla
-shell — e sembra che il sistema si sia bloccato. È la stessa separazione che
-rende possibile tutto il resto, vista dal lato scomodo.
+**Dalla scrivania si aprono dal menu Avvio**, che legge le voci da
+`/exwin/lib/applicazioni.txt` — una riga per applicazione, `nome mostrato |
+percorso`. La voce **Applicazioni...** dello stesso menu aggiunge e toglie
+righe da quel file, e la direttiva `@avvio <percorso>` dice quale programma
+parte da solo con la scrivania (è così che l'orologio si trova già lì).
+
+! **AGGIUNGERE UN'APPLICAZIONE È UNA RIGA, NON UNA RICOMPILAZIONE**, e il file
+resta leggibile e modificabile a mano apposta: un file di configurazione che
+solo un programma sa scrivere è un file che non si può riparare quando quel
+programma non parte.
+
+! **DALLA SHELL SI LANCIANO COL COMANDO, MA PRIMA DI COMMUTARE.** Battendo il
+comando *dopo* `Alt+F2` i tasti vanno al server grafico, non alla shell — e
+sembra che il sistema si sia bloccato. È la stessa separazione che rende
+possibile tutto il resto, vista dal lato scomodo.
 
 ### L'editor
 
@@ -2826,6 +2967,84 @@ lo passa all'editor, cercandolo in `/exwin/bin` e poi in `/cdrom/exwin/bin`.
 file, quelle in cui si vuole entrare sarebbero sparse in mezzo. È l'unica cosa
 che questo elenco ordina — ordinare i nomi vorrebbe dire un confronto che
 dipende dalla lingua.
+
+### Il terminale in finestra
+
+`/exwin/bin/term` apre una shell dentro una finestra; `term /bin/gfedit` ci
+apre quel programma invece della shell. La finestra è un multiplo esatto della
+cella del font 8x16, perché il controllo «terminale» del toolkit calcola le
+colonne come larghezza/8 e le righe come altezza/16.
+
+! **LA SHELL GIRA SU UNA PIPE, NON SUL `tty` DELLA CONSOLE**, ed è tutto il
+punto del terminale in finestra. Una shell che legge il descrittore 0 della
+console si contende la tastiera con chiunque altro stia su quella console;
+dietro una pipe quella domanda non esiste — i tasti li dà il server alla
+finestra col fuoco, e da lì vanno nella pipe di *quella* shell. È così che se
+ne possono aprire due senza che si disturbino.
+
+### Il navigatore
+
+`/exwin/bin/browser [URL]`. Senza argomento parte dalla pagina di casa; con un
+percorso assoluto (`browser /exwin/doc/browser.html`) lo trasforma in un
+`file:`, che è la sola forma che il resto del programma conosce.
+
+Nella barra ci sono **due caselle**: l'indirizzo e **Cerca**, che compone da
+sola l'interrogazione del motore scelto in **File > Impostazioni**
+(duckduckgo, wikipedia, marginalia). Quel che sa fare la pagina — testo che si
+spezza e scorre, collegamenti, immagini, fogli di stile, tabelle, moduli,
+HTTPS, biscotti, JavaScript — sta nelle voci di «Novità» qui sopra, che sono
+il posto dove quel lavoro è raccontato per intero.
+
+### EX-IDE — l'ambiente di sviluppo visuale
+
+`/exwin/bin/exide [DIR]`. Con un argomento apre subito il progetto che sta in
+quella directory. Tre aree come in Visual Basic: a sinistra gli strumenti, in
+mezzo la maschera su cui si dispongono, a destra le proprietà di quello scelto;
+doppio clic su un controllo e si apre l'editor dentro la funzione che l'evento
+chiamerà.
+
+! **LA GIUNTURA FRA IL DISEGNO E IL CODICE È L'ID**, e c'era già: nel disegno
+il pulsante *è* `ID_PULSANTE1`, nel sorgente c'è `case ID_PULSANTE1:`. exide è
+fattibile qui più che altrove perché ExWin era già fatto a forma di VB6 — non
+c'è niente da inventare, c'è da *scrivere* quel che il disegno dice.
+
+Un progetto sono quattro file, e la regola che decide se sopravvive è che il
+generato e lo scritto non si tocchino mai:
+
+| file | chi lo scrive |
+|---|---|
+| `finestra.dis` | solo exide: il disegno |
+| `finestra.h` | solo exide: gli id, i puntatori, i prototipi |
+| `finestra_gen.c` | solo exide: crea i controlli e smista gli eventi |
+| `finestra.c` | **solo tu**: exide ci *aggiunge* gli handler che mancano, in fondo, e non riscrive mai quel che c'è |
+
+### La prova dei font
+
+`/exwin/bin/fontprova` disegna le stesse righe in TrueType a corpi diversi, ed
+è **fatta per essere fotografata**: le prove grafiche di questo sistema si
+misurano nei pixel. Il rasterizzatore è già confrontato con FreeType, ma quel
+confronto gira sull'host — dice che i glifi vengono giusti e non dice niente su
+`exfont.so` caricata a caldo, sulla cache, sulla fusione col fondo o sul fatto
+che i file dei font siano leggibili dal CD. Questa finestra prova il giro
+intero.
+
+! **IN CIMA C'È LA RIGA COL FONT DI SISTEMA, e serve da metro:** se il TrueType
+non si carica restano solo quella e le scritte di errore, e si capisce subito
+dove si è fermato invece di guardare una finestra vuota.
+
+### L'orologio
+
+`/exwin/bin/orologio` mette data e ora nell'angolo della barra, e sta **sopra a
+tutte** le finestre perché è un pezzo della barra. È un **processo a parte**, e
+non un filo dentro il program manager: quel che si vuole è che l'ora si
+aggiorni qualunque cosa faccia il resto del sistema, e un filo condividerebbe
+con lui la connessione al server e la coda dei messaggi — un program manager
+occupato sarebbe un orologio fermo.
+
+! **L'ORA È QUELLA UNIVERSALE**, e va detto invece di lasciarlo scoprire: la
+libc dichiara che `localtime()` è identica a `gmtime()`, perché questo sistema
+non sa in che fuso si trovi né ha un posto dove tenerlo. Un'ora locale
+inventata sarebbe peggio di quella universale, che almeno è vera.
 
 ---
 
@@ -5124,9 +5343,9 @@ utente, password e tutto quello che si scrive dopo. Il client lo dice una
 volta all'avvio invece di lasciarlo intendere. L'alternativa si chiamerà
 SSH quando ci sarà TLS — non «telnet con una toppa».
 
-**Come fa a sentire la rete e la tastiera insieme.** Non c'è `select()` e
-non ci sono i thread, ma c'è una cosa migliore per questo caso: in EX-OS
-tutto passa dalla stessa cassetta postale. Si *prenota* una ricezione allo
+**Come fa a sentire la rete e la tastiera insieme.** Non c'è `select()`, e i
+fili sono arrivati dopo questo programma, ma c'è una cosa migliore per questo
+caso: in EX-OS tutto passa dalla stessa cassetta postale. Si *prenota* una ricezione allo
 stack IP (`IP_MSG_TCP_RICEVI`), si *prenota* un tasto al servizio tastiera
 (`KBD_MSG_READKEY`), e poi si aspetta con un solo `ipc_recv_timeout()`
 guardando **chi** ha risposto. Le due prenotazioni si riarmano

@@ -2,7 +2,7 @@
 
 [🇮🇹 Italiano](README.md) · **🇬🇧 English**
 
-**Version:** 0.208
+**Version:** 0.209
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit — boots from floppy, from CD or from a hard disk
@@ -83,6 +83,78 @@ for **`g++`** — containers, `std::string` and exceptions included. See
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### A thread's stack grows on demand
+
+**tested** — a thread was born holding 64 KB of real RAM: sixteen pages
+allocated and zeroed one by one, even for a thread that uses two hundred bytes
+of stack. It was not an oversight, it was a price paid on purpose, and the
+reason was written in the code: `page_fault_handler` could grow **one** stack —
+the one in the current PCB — and faced with a missing page inside the thread
+band it could not tell **whose** it was.
+
+Now it can. Of a thread's slot only the TLS block and the first eight pages are
+committed; the rest arrives when the thread really goes down, and stops at the
+guard page below the slot. **Seven threads cost 980 KB instead of 1344**, that
+is 140 each instead of 192 — and of those 140, one hundred and twenty-eight are
+the task's *kernel* stack, which this work does not touch: the user stack went
+from 64 KB to 12.
+
+**The real question was not «how much», it was «whose».** Threads share memory,
+so the one faulting inside a thread's stack may be **somebody else**: a thread
+declares `char buf[16384]`, touches only its top and hands the bottom to a
+companion — or to a `read()`. The bottom is not committed, the companion writes
+there, and the fault arrives while *it* is running; its ESP says nothing about
+that address, because it lives in another slot. As long as all 64 KB were
+committed the case did not exist. That is why `pf_cresci_stack` became two
+questions instead of one: **whether** the growth is legitimate and **whose**
+the stack is, and only then `pf_cresci_pagine` commits the pages.
+
+> **The «close to ESP» condition does not apply there, and it is not a
+> surrender:** it would compare two different slots, that is a number without
+> meaning. In its place there is an equally tight boundary — the address must
+> fall inside the reserve of a **live** thread of the same group — and between
+> one slot and the next the guard page remains, which no growth can step over.
+
+**Two defects found by reading what was about to be touched**, both in
+`proc_reap_zombie`:
+
+- **sixteen pages lost for every thread that ends.** Slots are reused, but the
+  pages of a dead thread stayed mapped until the end of the *process*: the next
+  thread took the same slot and new pages were mapped over them —
+  `paging_map_page` overwrites the entry silently — with the previous thread's
+  data underfoot. Now the slot is taken down, and the test reads "reaped, 980 KB
+  come back out of 980";
+- **a page directory destroyed more than once.** It is freed "when nobody is
+  left", and nobody was counted with `proc_gruppo_vivi()`, which does not count
+  zombies; but when the group leader exits the threads become zombies *all at
+  once*, and each was reaped holding the same pointer. The first destroyed the
+  directory, the following ones walked it after it had been freed. **It is not
+  proven** that this was the cause of the two rare defects already open — the
+  panic inside `kfree`, the driver starting with a zero stack — but the shape
+  is right: a bill that arrives elsewhere and much later.
+
+**The tests are two new modes of `/bin/filiprova`,** and each of the three
+parts of `pila` fails on its own: what a thread costs (the judgment line is at
+160 KB — 128 of kernel stack plus *either* 64 of a fully committed slot *or* 12
+committed little by little: a number in between does not exist), that it then
+grows (forty calls of one kilobyte, five times what it was given), and that it
+grows **at somebody else's hand**. `sfonda` goes down without end and demands
+that the one who dies is the thread, on the guard page, with code -11, while
+the process stays alive.
+
+> **In the third part the waiting thread cannot call anything.** A `call`
+> writes the return address *below* ESP, and the fault that follows commits
+> everything between there and the part already live — that is, exactly the
+> piece the test wants to leave empty. It waits spinning on a `volatile`
+> variable. It is also why the case is rare in real life: a thread's live data
+> always sits above its own ESP, and above ESP everything is already committed.
+
+Two real defects, found while writing the test, stay declared: **a thread that
+dies of a page fault does not take the process with it** (it dies alone, and the
+program carries on, possibly with a lock held by someone who is no longer
+there), and **the zombie of a thread nobody is waiting for is reaped by the
+shell**, which returns to the prompt with the program still running.
 
 ### The «Cerca» box, and two boxes in the same bar
 
@@ -2352,8 +2424,16 @@ so anyone not using `__thread` pays nothing.
 
 > ! There is no **dynamic** TLS (`__tls_get_addr`, thread-local variables
 > inside a shared library): that serves code loaded at run time, and here the
-> binaries are static. And there are no threads: this is the piece needed in
-> order to have them, not the threads themselves.
+> binaries are static.
+
+**And since 4 September 2026 threads do exist, and the TLS block belongs to
+each of them.** Every thread has its own, at the top of its own stack, with the
+initial image **read again from the executable** — copying the group leader's
+would mean starting the thread with another flow's *current* values. `errno` is
+per thread too: `__errno_dove()` reads the thread pointer from `%gs:0` and uses
+it as a key. That is why the block is made **even for programs with no
+`__thread` variables**: without it the descriptor's base would be zero and that
+read would be a page fault at address 0.
 
 Why do it, if a process has a single thread and a `__thread` variable is a
 global with a longer name? Because the way it was *missing* was the worst
@@ -2368,16 +2448,33 @@ instruction of the first function it calls.
 ```
 0x08000000  program text, data, bss
             heap ---->                             (sbrk, mmap without MAP_FIXED)
-0xbffbc000  heap_max — the ceiling
-0xbffbd000  guard page
-0xbffbd000  TLS block, if the program has one
+0xbff44000  heap_max — the ceiling
+0xbff44000  guard page
+0xbff45000  band of the thread stacks — seven 64 KB slots,
+            with a guard page between one and the next
+0xbffbc000  guard page
+0xbffbd000  the process's TLS block, if the program has one
+0xbffbe000  guard page
 0xbffbf000  stack reservation (256 KB)   <---- the stack grows downwards
 0xbffff000  top of the stack
 ```
 
+*(The addresses are those of a program with a one-page TLS block: a larger
+block pushes everything below it further down.)*
+
 The heap starts **right after the last loaded segment**, not at a fixed
-address. Since 0.156 it also has a **ceiling**: a guard page below the TLS
-block if there is one, below the stack reservation if there is not.
+address. Since 0.156 it also has a **ceiling**: a guard page below the first
+object that is really there — today the thread band, and below it the TLS block
+and the stack reservation.
+
+! **THE BAND IS RESERVED AT LOAD TIME, EVEN FOR A PROGRAM THAT WILL NEVER MAKE
+A THREAD**, and it is the choice that keeps everything else simple: they are
+**addresses, not pages** — half a megabyte less for a heap that has three
+gigabytes — whereas moving the heap ceiling when the first thread is born would
+mean lowering it below memory the heap may **already** have taken. Either you
+refuse the thread, or you put its stack on top of somebody else's things: the
+first is a limit that shows up at random, the second is silently corrupted
+memory.
 
 Before, it had none, and the only limit was physical RAM. That sounds
 harmless — memory runs out first — but above the heap there is no void, and
@@ -2507,6 +2604,36 @@ flag held by the window server would die with it and leave the door open onto an
 empty room; a list of libraries held by one stub would not be seen by the other
 stub in the same process — which is exactly the defect 238 was born from, two
 JavaScript engines running side by side without seeing each other.
+
+### The thread syscalls, from 0.208 to 0.209
+
+| EAX | Syscall           | EBX        | ECX      | EDX | What it is for |
+|-----|-------------------|------------|----------|-----|----------------|
+| 201 | thread_crea       | entry      | argument | —   | a second flow inside the same program: returns the tid, which **is** a pid |
+| 202 | thread_esci       | code       | —        | —   | leaves the thread, not the process; does not return |
+| 203 | thread_attendi    | tid        | `int*`   | —   | waits for a thread of its own group and collects its code |
+| 204 | attesa_dormi      | address    | value    | ms  | "sleep while that address still holds this value": locks, condition variables and semaphores all stand on it |
+| 205 | attesa_sveglia    | address    | how many | —   | wakes those sleeping on that address (0 = all) |
+| 206 | thread_ferma      | tid        | —        | —   | **asks** a thread to stop, and shakes it if it is asleep |
+| 207 | thread_devo_fermarmi | —       | —        | —   | 1 if somebody asked: it is the thread that chooses where to look |
+
+! **A THREAD IS A TASK THAT SHARES THE PAGE DIRECTORY**, and for the scheduler
+there is nothing new: same run queue, same quantum, same `context_switch`. It
+also shares the descriptors and the working directory; of its own it has the
+stack — a slot in a band reserved below the TLS — and its own TLS block,
+`errno` included. Whoever leaves the *process* takes every thread with them.
+
+! **STOPPING A THREAD MEANS ASKING IT, AND IT IS NOT TIMIDITY.** A thread
+interrupted wherever it happens to be would leave locks held and structures
+half-built, and inside a single process those belong to everybody. The kernel
+does the two things that cannot be done from outside: it puts the message in
+the PCB and **shakes** the sleeper awake.
+
+! **CONDITION VARIABLES AND SEMAPHORES ARE NOT SYSCALLS.**
+`condizione_aspetta`, `semaforo_prendi` and the other six all live in the libc,
+built on top of 204 and 205: with no contention they do not even cost a system
+call. You always wait inside a `while`, never inside an `if` — waking up says
+"look again", not "it is there now".
 
 ---
 
@@ -2757,12 +2884,27 @@ exwin                       brings up graphics on a console of its own
 /exwin/bin/pm               the desktop (exwin starts it by itself)
 /exwin/bin/filemgr [DIR]    the file manager
 /exwin/bin/edit [FILE]      the text editor
+/exwin/bin/term [PROG]      the terminal in a window (no PROG: the shell)
+/exwin/bin/browser [URL]    the browser (an absolute path becomes a file:)
+/exwin/bin/exide [DIR]      the visual development environment
+/exwin/bin/fontprova        the TrueType font test, made to be looked at
+/exwin/bin/orologio         date and time in the corner of the bar
 ```
 
 Once graphics are up, the shell **stays alive on console 0**: you keep working
 there and switch to the desktop with `Alt+F2`.
 
-! **APPLICATIONS ARE LAUNCHED FROM THE SHELL'S CONSOLE, THEN YOU SWITCH.**
+**From the desktop they open from the Avvio menu**, which reads its entries
+from `/exwin/lib/applicazioni.txt` — one line per application, `displayed name |
+path`. The **Applicazioni...** item of that same menu adds and removes lines
+from that file, and the `@avvio <path>` directive says which program starts by
+itself with the desktop (that is how the clock is already there).
+
+! **ADDING AN APPLICATION IS ONE LINE, NOT A RECOMPILATION**, and the file
+stays readable and editable by hand on purpose: a configuration file only a
+program can write is a file you cannot repair when that program will not start.
+
+! **FROM THE SHELL YOU LAUNCH THEM WITH THE COMMAND, BUT BEFORE SWITCHING.**
 Typing the command *after* `Alt+F2` sends the keys to the graphical server, not
 to the shell — and it looks as if the system had frozen. It is the same
 separation that makes everything else possible, seen from the awkward side.
@@ -2797,6 +2939,84 @@ hands it to the editor, looked for in `/exwin/bin` and then in
 hundred files, the ones you want to enter would be scattered among them. It is
 the only thing this list sorts — sorting names would mean a comparison that
 depends on the language.
+
+### The terminal in a window
+
+`/exwin/bin/term` opens a shell inside a window; `term /bin/gfedit` opens that
+program there instead of the shell. The window is an exact multiple of the 8x16
+font cell, because the toolkit's "terminal" control computes columns as
+width/8 and rows as height/16.
+
+! **THE SHELL RUNS ON A PIPE, NOT ON THE CONSOLE'S `tty`**, and that is the
+whole point of a terminal in a window. A shell reading descriptor 0 of the
+console competes for the keyboard with anyone else on that console; behind a
+pipe that question does not exist — the server gives the keys to the focused
+window, and from there they go into *that* shell's pipe. That is how two of
+them can be open without disturbing each other.
+
+### The browser
+
+`/exwin/bin/browser [URL]`. With no argument it starts from the home page; with
+an absolute path (`browser /exwin/doc/browser.html`) it turns it into a `file:`,
+which is the only form the rest of the program knows.
+
+The bar carries **two boxes**: the address and **Cerca**, which composes the
+query for the engine chosen in **File > Impostazioni** (duckduckgo, wikipedia,
+marginalia) by itself. What the page can do — text that wraps and scrolls,
+links, images, style sheets, tables, forms, HTTPS, cookies, JavaScript — is in
+the "What's new" entries above, which are where that work is told in full.
+
+### EX-IDE — the visual development environment
+
+`/exwin/bin/exide [DIR]`. With an argument it opens the project living in that
+directory straight away. Three areas as in Visual Basic: the tools on the left,
+in the middle the form they are dropped onto, on the right the properties of
+the selected one; double-click a control and the editor opens inside the
+function its event will call.
+
+! **THE JOINT BETWEEN THE DRAWING AND THE CODE IS THE ID**, and it was already
+there: in the drawing the button *is* `ID_PULSANTE1`, in the source there is
+`case ID_PULSANTE1:`. exide is feasible here more than elsewhere because ExWin
+was already shaped like VB6 — there is nothing to invent, there is what the
+drawing says to *write*.
+
+A project is four files, and the rule that decides whether it survives is that
+the generated and the written never touch:
+
+| file | who writes it |
+|---|---|
+| `finestra.dis` | exide only: the drawing |
+| `finestra.h` | exide only: the ids, the pointers, the prototypes |
+| `finestra_gen.c` | exide only: creates the controls and dispatches the events |
+| `finestra.c` | **you only**: exide *adds* the missing handlers at the end, and never rewrites what is there |
+
+### The font test
+
+`/exwin/bin/fontprova` draws the same lines in TrueType at different sizes, and
+is **made to be photographed**: this system's graphical tests are measured in
+pixels. The rasterizer has already been compared against FreeType, but that
+comparison runs on the host — it says the glyphs come out right and says
+nothing about `exfont.so` loaded at run time, about the cache, about blending
+with the background, or about the font files being readable from the CD. This
+window tests the whole round trip.
+
+! **THE TOP LINE USES THE SYSTEM FONT, AND IT IS THE YARDSTICK:** if TrueType
+does not load, only that line and the error messages remain, and you see at
+once where it stopped instead of staring at an empty window.
+
+### The clock
+
+`/exwin/bin/orologio` puts date and time in the corner of the bar, and stays
+**above every** window because it is a piece of the bar. It is a **separate
+process**, not a thread inside the program manager: what you want is the time
+to keep up whatever the rest of the system is doing, and a thread would share
+the server connection and the message queue with it — a busy program manager
+would be a stopped clock.
+
+! **THE TIME IS UNIVERSAL TIME**, and that has to be said rather than left to
+be discovered: the libc declares `localtime()` identical to `gmtime()`, because
+this system does not know what zone it is in nor has anywhere to keep it. A
+made-up local time would be worse than universal time, which is at least true.
 
 ---
 
@@ -5090,8 +5310,8 @@ once at startup instead of leaving it to be inferred. The alternative will
 be called SSH when there is TLS — not «telnet with a patch».
 
 **How it listens to the network and the keyboard at once.** There is no
-`select()` and there are no threads, but there is something better for this
-case: in EX-OS everything comes through the same mailbox. You *book* a
+`select()`, and threads arrived after this program, but there is something
+better for this case: in EX-OS everything comes through the same mailbox. You *book* a
 receive from the IP stack (`IP_MSG_TCP_RICEVI`), you *book* a key from the
 keyboard service (`KBD_MSG_READKEY`), and then you wait with a single
 `ipc_recv_timeout()` and look at **who** answered. The two bookings re-arm

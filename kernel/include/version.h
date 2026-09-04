@@ -194,7 +194,40 @@
  * Lo usa anche `exwin`, che con questa voce sa quando la grafica e' finita e
  * riporta l'utente alla console da cui era partito.
  */
-#define EXOS_VERSION    "0.208"
+/* 0.208 -> 0.209: I FILI, e la loro pila che cresce su richiesta.
+ *
+ * ! LE SYSCALL DEI FILI SONO ARRIVATE SENZA ALZARE LA VERSIONE, ed e' un
+ * pezzo di storia che va detto invece di essere lisciato: SYS_THREAD_CREA
+ * (201), SYS_THREAD_ESCI (202), SYS_THREAD_ATTENDI (203), SYS_ATTESA_DORMI
+ * (204), SYS_ATTESA_SVEGLIA (205), SYS_THREAD_FERMA (206) e
+ * SYS_THREAD_FERMARSI (207) sono state scritte il 4 settembre 2026, tutte fra
+ * la 0.208 e questa riga, e nessuna di quelle modifiche ha toccato questo
+ * file. La 0.209 e' la prima versione che le DICHIARA: un programma che chiede
+ * la versione al kernel per sapere se puo' creare un filo, fino a ieri
+ * riceveva una risposta che non lo diceva.
+ *
+ * E la novita' vera di questa voce e' che LA PILA DI UN FILO CRESCE SU
+ * RICHIESTA. Della piazzola si impegnano il blocco TLS e le prime otto pagine;
+ * il resto arriva quando il filo scende davvero e si ferma sulla guardia sotto
+ * la piazzola. Sette fili costano 980 KB invece di 1344.
+ *
+ * ! IL PEZZO CHE NON E' OVVIO E' «DI CHI E' LA PAGINA». I fili condividono la
+ * memoria, quindi a faultare dentro la pila di un filo puo' essere QUALCUN
+ * ALTRO — un buffer grande di cui il padrone ha toccato solo la cima e regalato
+ * il fondo. Per questo pf_cresci_stack chiede prima di chi e' la pila
+ * (proc_filo_dello_stack) e poi la impegna, e li' la condizione «vicino a ESP»
+ * non si applica: sarebbe un paragone fra due piazzole diverse.
+ *
+ * ! E DUE COSE CHE SI PAGAVANO ALTROVE, tutt'e due in proc_reap_zombie: la
+ * piazzola di un filo morto restava mappata fino alla fine del processo (le
+ * piazzole si riusano: sedici pagine perse per filo, e i suoi dati sotto i
+ * piedi di chi arriva), e la page directory di un gruppo veniva distrutta UNA
+ * VOLTA PER OGNI zombie che la condivideva — le volte dopo la prima
+ * ripercorrendo tabelle gia' liberate. Non e' provato che fosse la causa dei
+ * due difetti rari aperti (il panic in kfree, il driver con lo stack a zero),
+ * ma la forma e' quella.
+ */
+#define EXOS_VERSION    "0.209"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

@@ -11,15 +11,15 @@
  *
  * La data e l'ora nell'angolo della barra
  *
- * ! E' UN PROCESSO A PARTE, E NON UN THREAD, PERCHE' I THREAD NON ESISTONO.
- * EX-OS ha processi: non c'e' pthread_create, non c'e' clone, non c'e' nessuna
- * chiamata di sistema che crei un secondo filo dentro lo stesso programma.
+ * ! E' UN PROCESSO A PARTE, E NON UN FILO. Quando questo file e' nato i fili
+ * non c'erano; dal 4 settembre 2026 ci sono (thread_crea, syscall 201), e la
+ * scelta resta quella, perche' il motivo non era la mancanza.
  *
- * ! E ANCHE SE CI FOSSERO, UN PROCESSO SAREBBE MEGLIO QUI. Quello che si vuole
- * e' che l'ora si aggiorni «qualunque cosa faccia il resto del sistema»: un
- * thread dentro il program manager condividerebbe con lui la connessione al
- * server a finestre e la sua coda di messaggi, quindi un program manager
- * occupato sarebbe un orologio fermo. Un processo separato lo scheduler lo fa
+ * ! UN PROCESSO E' MEGLIO QUI. Quello che si vuole e' che l'ora si aggiorni
+ * «qualunque cosa faccia il resto del sistema»: un filo dentro il program
+ * manager condividerebbe con lui la connessione al server a finestre e la sua
+ * coda di messaggi, quindi un program manager occupato sarebbe un orologio
+ * fermo. Un processo separato lo scheduler lo fa
  * girare per conto suo, e se muore si porta via solo l'orologio.
  *
  * ! LA FINESTRA STA SOPRA A TUTTE, come la barra: e' un pezzo della barra, e
