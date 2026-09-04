@@ -979,6 +979,41 @@ static uint32_t filo_posto_libero(uint32_t tgid)
     return 0;
 }
 
+/* =============================================================================
+ * proc_filo_dello_stack — di CHI e' questa pagina mancante?
+ *
+ * La domanda se la fa page_fault_handler quando un fault cade dentro la banda
+ * degli stack dei fili e non appartiene al PCB corrente. Succede davvero, e
+ * non e' un caso storto: i fili condividono la memoria, quindi un filo puo'
+ * passare a un altro — o a una chiamata di sistema — un puntatore al PROPRIO
+ * stack, in una parte che non ha ancora toccato. Chi fa il fault e' allora
+ * qualcun altro, e l'ESP di chi fa il fault non c'entra niente.
+ *
+ * Finche' la piazzola era impegnata tutta la domanda non si poneva: quelle
+ * pagine c'erano comunque. Da quando cresce su richiesta, non rispondere
+ * vorrebbe dire uccidere un programma corretto.
+ *
+ * Si guarda solo fra i VIVI: la piazzola di uno zombie e' ancora mappata ma
+ * non e' piu' di nessuno, e proc_reap_zombie sta per smontarla.
+ * ============================================================================= */
+Process *proc_filo_dello_stack(uint32_t tgid, uint32_t indirizzo)
+{
+    uint32_t i;
+
+    for (i = 0; i < MAX_PROCESSES; i++) {
+        Process *m = &g_process_pool[i];
+
+        if (m->state == PROC_UNUSED || m->state == PROC_ZOMBIE) continue;
+        if (m->tgid != tgid || m->filo_posto == 0)              continue;
+        if (m->user_stack_limit == 0 || m->user_stack_base == 0) continue;
+
+        if (indirizzo >= m->user_stack_limit &&
+            indirizzo <  m->user_stack_base)
+            return m;
+    }
+    return NULL;
+}
+
 /* Il buffer dell'immagine TLS. Statico perche' TLS_MAX e' 64 KB e sullo stack
  * del kernel non ci starebbero; uno solo perche' proc_thread_crea gira dentro
  * una chiamata di sistema e finisce prima che un'altra cominci. */
@@ -988,6 +1023,7 @@ int proc_thread_crea(uint32_t entry, uint32_t arg)
 {
     Process *capo, *filo;
     uint32_t posto, cima, base, pg;
+    uint32_t tls_tot, impegno, prima;
     uint32_t esp;
 
     if (g_current == NULL) return ERR(ESRCH);
@@ -1008,20 +1044,45 @@ int proc_thread_crea(uint32_t entry, uint32_t arg)
     cima = capo->fili_banda - (posto - 1) * (FILO_STACK_SIZE + PAGE_SIZE);
     base = cima - FILO_STACK_SIZE;
 
-    /* ! LO STACK DI UN FILO SI IMPEGNA TUTTO SUBITO, al contrario di quello
-     * del processo che cresce su richiesta. Il motivo e' page_fault_handler:
-     * sa far crescere UNO stack — quello descritto da user_stack_limit nel
-     * PCB — e non saprebbe dire a quale filo appartiene una pagina mancante
-     * dentro la banda. Sessantaquattro kilobyte impegnati sono il prezzo
-     * onesto di non dover insegnare al gestore dei fault una cosa che si puo'
-     * evitare del tutto. */
-    for (pg = 0; pg < FILO_STACK_SIZE / PAGE_SIZE; pg++) {
+    /* Quanto grande sara' il blocco TLS: serve saperlo ADESSO perche' sta in
+     * cima alla piazzola ed e' parte di cio' che si impegna subito. Il
+     * controllo del tetto si fa qui e non piu' avanti, cosi' un blocco
+     * assurdo si rifiuta prima di aver allocato una pagina. */
+    tls_tot = (capo->tls_tp != 0)
+                ? ALIGN_UP(capo->tls_dim + TLS_TCB_SIZE, 16) : 0;
+    if (tls_tot > FILO_STACK_SIZE / 4) {
+        klog(LOG_ERROR, "SCHED: blocco TLS di %u byte: troppo per lo "
+                        "stack di un filo", tls_tot);
+        return ERR(ENOMEM);
+    }
+
+    /* =====================================================================
+     * ! ANCHE LO STACK DI UN FILO SI IMPEGNA A POCO A POCO (4 settembre
+     * 2026). Prima si allocavano tutti i 64 KB della piazzola — RAM vera,
+     * azzerata pagina per pagina — e il motivo era che page_fault_handler
+     * sapeva far crescere UNO stack solo, quello del PCB corrente, e davanti
+     * a una pagina mancante dentro la banda non sapeva DI CHI fosse.
+     *
+     * Adesso lo sa: la piazzola di ogni filo e' scritta nel suo PCB
+     * (user_stack_limit e' il fondo, user_stack_base la parte gia'
+     * impegnata), e proc_filo_dello_stack la ritrova partendo
+     * dall'indirizzo. Qui restano il blocco TLS — che si scrive subito,
+     * quindi le sue pagine servono comunque — e le prime USER_STACK_INIT
+     * di stack; il resto arriva quando il filo scende davvero.
+     *
+     * Sette fili passano cosi' da 448 KB di RAM impegnata a una trentina.
+     * ===================================================================== */
+    impegno = ALIGN_UP(tls_tot + USER_STACK_INIT, PAGE_SIZE);
+    if (impegno > FILO_STACK_SIZE) impegno = FILO_STACK_SIZE;
+    prima = cima - impegno;
+
+    for (pg = 0; pg < impegno / PAGE_SIZE; pg++) {
         uint32_t fis = pmm_alloc_page();
 
         if (fis == 0) {
             klog(LOG_ERROR, "SCHED: memoria finita creando lo stack del filo");
             while (pg--) {
-                uint32_t v = base + pg * PAGE_SIZE;
+                uint32_t v = prima + pg * PAGE_SIZE;
                 uint32_t f = paging_get_physical(capo->page_directory, v);
                 paging_unmap_page(capo->page_directory, v);
                 if (f) pmm_free_page(f);
@@ -1029,7 +1090,7 @@ int proc_thread_crea(uint32_t entry, uint32_t arg)
             return ERR(ENOMEM);
         }
         paging_azzera_fisica(fis);
-        if (paging_map_page(capo->page_directory, base + pg * PAGE_SIZE, fis,
+        if (paging_map_page(capo->page_directory, prima + pg * PAGE_SIZE, fis,
                             PG_PRESENT | PG_WRITABLE | PG_USER) != 0) {
             pmm_free_page(fis);
             return ERR(ENOMEM);
@@ -1123,15 +1184,8 @@ int proc_thread_crea(uint32_t entry, uint32_t arg)
      * gli otto byte del TCB, e servono alla libc per trovare errno (vedi
      * elf_load, dove per la stessa ragione lo si fa a tutti i processi). */
     if (capo->tls_tp != 0) {
-        uint32_t tot  = ALIGN_UP(capo->tls_dim + TLS_TCB_SIZE, 16);
+        uint32_t tot  = tls_tot;    /* misurato e controllato piu' sopra */
         uint32_t tbase, tp;
-
-        if (tot > FILO_STACK_SIZE / 4) {
-            klog(LOG_ERROR, "SCHED: blocco TLS di %u byte: troppo per lo "
-                            "stack di un filo", tot);
-            proc_kill(filo->pid);
-            return ERR(ENOMEM);
-        }
 
         tbase = (cima - tot) & ~15u;
         tp    = tbase + capo->tls_dim;
@@ -1182,9 +1236,16 @@ int proc_thread_crea(uint32_t entry, uint32_t arg)
      * PUNTATORE a dire dov'e' quella vera. */
     filo->cwdt = capo->cwdt;
 
-    filo->user_stack_base  = base;
+    /* Le tre coordinate della piazzola, che sono anche quel che il gestore
+     * dei fault legge per farla crescere:
+     *   limit  il fondo, cioe' dove finisce la riserva e comincia la guardia
+     *   base   la pagina piu' bassa gia' impegnata (scende a ogni crescita)
+     *   top    la cima utile, cioe' sotto il blocco TLS
+     * ! `limit` NON E' PIU' ZERO: era il modo di dire «impegnato tutto,
+     * niente crescita», e adesso dice dove la crescita si deve fermare. */
+    filo->user_stack_base  = prima;
     filo->user_stack_top   = cima;
-    filo->user_stack_limit = 0;     /* impegnato tutto: niente crescita */
+    filo->user_stack_limit = base;
 
     /* L'argomento sullo stack, come lo vuole una funzione C: alla partenza
      * ESP punta all'indirizzo di ritorno, e l'argomento sta subito sopra.
@@ -1210,9 +1271,10 @@ int proc_thread_crea(uint32_t entry, uint32_t arg)
     proc_set_entry(filo, entry, esp);
     proc_set_ready(filo);
 
-    klog(LOG_INFO, "SCHED: filo %u del gruppo %u, posto %u, stack 0x%08x-0x%08x, "
-                   "tls 0x%08x", filo->pid, filo->tgid, posto, base, cima,
-         filo->tls_tp);
+    klog(LOG_INFO, "SCHED: filo %u del gruppo %u, posto %u, stack 0x%08x-0x%08x "
+                   "(%u KB impegnati su %u), tls 0x%08x",
+         filo->pid, filo->tgid, posto, base, cima,
+         impegno / 1024, (unsigned)(FILO_STACK_SIZE / 1024), filo->tls_tp);
     return (int)filo->pid;
 }
 
@@ -1484,6 +1546,35 @@ void proc_reap_zombie(Process *p)
      * e non chiude niente due volte. */
     proc_chiudi_fd(p);
 
+    /* =========================================================================
+     * ! LA PIAZZOLA DI UN FILO SI SMONTA QUANDO IL FILO MUORE, e non basta
+     * aspettare che muoia il gruppo.
+     *
+     * Le piazzole SI RIUSANO: filo_posto_libero guarda chi e' vivo, quindi
+     * appena questo PCB torna UNUSED il posto e' di chi lo chiede dopo. Se le
+     * pagine di adesso restassero mappate, il filo nuovo se le troverebbe
+     * sotto — con dentro i dati di questo — e proc_thread_crea ne mapperebbe
+     * altre sopra: paging_map_page sovrascrive la voce senza dire niente, e
+     * quelle di prima sarebbero perse per sempre. Sedici pagine per filo, a
+     * ogni giro.
+     *
+     * Si passa tutta la piazzola e non solo la parte impegnata: sono sedici
+     * giri, e cosi' non dipende da quanto lo stack fosse cresciuto.
+     * ========================================================================= */
+    if (p->filo_posto != 0 && p->page_directory != NULL &&
+        p->user_stack_limit != 0) {
+        uint32_t v;
+
+        for (v = p->user_stack_limit;
+             v < p->user_stack_limit + FILO_STACK_SIZE; v += PAGE_SIZE) {
+            uint32_t f = paging_get_physical(p->page_directory, v);
+
+            if (f == 0) continue;
+            paging_unmap_page(p->page_directory, v);
+            pmm_free_page(f);
+        }
+    }
+
     /* ! LO SPAZIO DI INDIRIZZAMENTO E' DEL GRUPPO, non del PCB, e si libera
      * quando non resta nessuno a usarlo. Un filo che finisce non deve portarsi
      * via la memoria dei suoi fratelli; e il capogruppo, che quando esce li
@@ -1492,7 +1583,25 @@ void proc_reap_zombie(Process *p)
      * page directory serve ancora a qualcuno. */
     if (p->page_directory && p->page_directory != paging_get_kernel_directory() &&
         proc_gruppo_vivi(p->tgid) == 0) {
-        paging_destroy_directory(p->page_directory);
+        PDE     *pd = p->page_directory;
+        uint32_t k;
+
+        /* ! E SI DISTRUGGE UNA VOLTA SOLA, non una per PCB. «Nessun vivo» non
+         * vuol dire «nessun altro PCB»: quando il capogruppo esce, i fili
+         * diventano zombie tutti insieme e vengono raccolti uno dopo l'altro,
+         * ognuno con lo STESSO puntatore in mano. Senza questo giro, il primo
+         * riassorbimento distruggeva la directory e i successivi la
+         * ripercorrevano da liberata — leggendo tabelle che nel frattempo
+         * possono gia' essere di qualcun altro, e restituendo al PMM pagine
+         * che non c'entrano niente. Il conto arriva altrove e molto dopo.
+         *
+         * Il puntatore basta a riconoscere il gruppo: una page directory ce
+         * l'ha uno solo, e chi la condivide e' per definizione del gruppo. */
+        for (k = 0; k < MAX_PROCESSES; k++)
+            if (&g_process_pool[k] != p && g_process_pool[k].page_directory == pd)
+                g_process_pool[k].page_directory = NULL;
+
+        paging_destroy_directory(pd);
     }
     p->page_directory = NULL;
     if (p->kernel_stack_base) {

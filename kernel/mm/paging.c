@@ -1048,6 +1048,11 @@ PDE *paging_get_current_directory(void)
  * l'iret rieseguira' l'istruzione che ha faultato), 0 se non era un caso di
  * crescita e va trattato come un errore vero.
  *
+ * Sono due funzioni perche' sono due domande: pf_cresci_stack decide SE la
+ * crescita e' legittima e DI CHI e' lo stack, pf_cresci_pagine impegna le
+ * pagine. La seconda domanda esiste da quando anche i fili crescono su
+ * richiesta: chi fa il fault non e' per forza il padrone della piazzola.
+ *
  * QUESTA FUNZIONE PUO' TRASFORMARE UN BUG IN CORRUZIONE SILENZIOSA, ed e'
  * scritta per non farlo. Il gestore dei fault ha oggi una proprieta'
  * preziosa: qualunque accesso inatteso termina il processo con una
@@ -1084,24 +1089,12 @@ PDE *paging_get_current_directory(void)
  * fault ring0->ring0 la CPU non impila SS:ESP, quindi frame->user_esp non
  * contiene l'ESP utente e leggerlo darebbe un valore arbitrario.
  * ============================================================================= */
-static int pf_cresci_stack(Process *p, InterruptFrame *frame,
-                           uint32_t fault_addr, uint32_t err, int from_user)
+/* Le pagine, una volta deciso CHE la crescita e' legittima e DI CHI e' lo
+ * stack. `p` e' il proprietario della piazzola, che non e' per forza chi ha
+ * fatto il fault: vedi pf_cresci_stack qui sotto. */
+static int pf_cresci_pagine(Process *p, uint32_t fault_addr, int from_user)
 {
     uint32_t pagina, ind;
-
-    if (p == NULL)                          return 0;
-    if (err & 0x1)                          return 0;   /* 1: non "assente" */
-    if (p->user_stack_limit == 0)           return 0;   /* 2: nessuna riserva */
-    if (p->user_stack_base  == 0)           return 0;
-    if (fault_addr >= p->user_stack_base)   return 0;   /* 3: gia' mappato */
-    if (fault_addr <  p->user_stack_limit)  return 0;   /* 4: esaurito */
-
-    /* 5: vicinanza a ESP, solo dove ESP e' davvero disponibile.
-     * Nessun rischio di overflow nella somma: fault_addr e' gia' stato
-     * confinato fra limit e base, entrambi ampiamente sotto 0xC0000000. */
-    if (from_user && fault_addr + USER_STACK_SLACK < frame->user_esp) {
-        return 0;
-    }
 
     /* Impegna TUTTE le pagine da quella che ha faultato fino alla base
      * attuale, non solo quella. Un programma puo' scendere di parecchie
@@ -1156,6 +1149,60 @@ static int pf_cresci_stack(Process *p, InterruptFrame *frame,
          from_user ? "ring3" : "ring0");
 
     return 1;
+}
+
+static int pf_cresci_stack(Process *p, InterruptFrame *frame,
+                           uint32_t fault_addr, uint32_t err, int from_user)
+{
+    Process *padrone;
+
+    if (p == NULL)                          return 0;
+    if (err & 0x1)                          return 0;   /* 1: non "assente" */
+
+    /* IL PROPRIO STACK — il caso di sempre, con tutte e cinque le condizioni. */
+    if (p->user_stack_limit != 0 && p->user_stack_base != 0 &&
+        fault_addr <  p->user_stack_base &&     /* 3: sopra e' gia' mappato */
+        fault_addr >= p->user_stack_limit) {    /* 4: sotto e' esaurimento  */
+
+        /* 5: vicinanza a ESP, solo dove ESP e' davvero disponibile.
+         * Nessun rischio di overflow nella somma: fault_addr e' gia' stato
+         * confinato fra limit e base, entrambi ampiamente sotto 0xC0000000. */
+        if (from_user && fault_addr + USER_STACK_SLACK < frame->user_esp)
+            return 0;
+
+        return pf_cresci_pagine(p, fault_addr, from_user);
+    }
+
+    /* =========================================================================
+     * LO STACK DI UN ALTRO FILO DELLO STESSO PROGRAMMA (4 settembre 2026)
+     *
+     * ! LA CONDIZIONE 5 QUI NON SI APPLICA, e non e' una rinuncia: l'ESP di
+     * chi fa il fault sta in un'ALTRA piazzola, quindi confrontarlo con
+     * l'indirizzo non direbbe niente di vero. Al suo posto c'e' un confine
+     * altrettanto stretto — l'indirizzo deve cadere dentro la riserva di un
+     * filo VIVO del proprio gruppo, cioe' in mezzo megabyte di banda che il
+     * kernel ha riservato lui — e resta la guardia fra una piazzola e
+     * l'altra, che nessuna crescita puo' scavalcare.
+     *
+     * Perche' serve: i fili condividono la memoria. Un filo che dichiara
+     * `char buf[8192]` senza toccarlo e ne passa l'indirizzo a un altro — o a
+     * una read() — fa faultare qualcun ALTRO dentro la propria piazzola.
+     * Finche' i 64 KB erano impegnati tutti il caso non esisteva.
+     * ========================================================================= */
+    if (p->tgid == 0) return 0;
+
+    /* ! E PRIMA DI CERCARE, UN CONTROLLO CHE NON COSTA NIENTE. Da qui passa
+     * OGNI page fault, compresi i mille del caricamento su richiesta, e
+     * scorrere il pool dei PCB per ognuno sarebbe un prezzo pagato dove non
+     * c'e' niente da trovare. La banda dei fili sta SOPRA il tetto dello heap
+     * (elf_load: heap ... heap_max | guardia | banda | TLS | stack), quindi un
+     * indirizzo sotto quel tetto non e' la pila di nessun filo. */
+    if (fault_addr < p->heap_max) return 0;
+
+    padrone = proc_filo_dello_stack(p->tgid, fault_addr);
+    if (padrone == NULL || padrone == p) return 0;
+
+    return pf_cresci_pagine(padrone, fault_addr, from_user);
 }
 
 /* =============================================================================
@@ -1420,9 +1467,13 @@ void page_fault_handler(InterruptFrame *frame)
         if (p != NULL && p->user_stack_limit != 0 &&
             fault_addr <  p->user_stack_limit &&
             fault_addr >= p->user_stack_limit - USER_STACK_MAX) {
+            /* La riserva si MISURA, non si scrive: un processo ne ha 256 KB
+             * e un filo i 64 della sua piazzola, e dire il numero sbagliato
+             * manda a cercare il guasto dalla parte sbagliata. */
             klog(LOG_ERROR, "PF: PID %u '%s' ha esaurito lo stack "
                  "(riserva di %u KB fino a 0x%08x, richiesto 0x%08x)",
-                 p->pid, p->name, USER_STACK_MAX / 1024,
+                 p->pid, p->name,
+                 (p->user_stack_top - p->user_stack_limit) / 1024,
                  p->user_stack_limit, fault_addr);
         }
 

@@ -143,6 +143,9 @@ typedef struct IpcMessage {
  *
  *   heap ... heap_max | GUARDIA | banda dei fili | TLS | riserva stack | 3GB
  * ============================================================================= */
+/* ! 64 KB SONO LA RISERVA, NON LA RAM: della piazzola si impegnano subito il
+ * blocco TLS e USER_STACK_INIT byte di stack, e il resto arriva su richiesta
+ * come per lo stack del processo (vedi proc_thread_crea e pf_cresci_stack). */
 #define FILO_STACK_SIZE     65536   /* 64KB per filo, come lo stack iniziale */
 #define FILO_MAX            8       /* capogruppo compreso: sette fili in piu' */
 #define FILI_BANDA          ((FILO_MAX - 1) * (FILO_STACK_SIZE + 4096))
@@ -760,6 +763,11 @@ int      proc_thread_crea(uint32_t entry, uint32_t arg);
 int      proc_attesa_sveglia(uint32_t dove, int quanti);
 /* Quanti membri VIVI ha il gruppo di `tgid` (zombie esclusi). */
 int      proc_gruppo_vivi(uint32_t tgid);
+/* Quale filo vivo del gruppo ha `indirizzo` nella riserva del proprio stack,
+ * o NULL. La usa page_fault_handler per far crescere la piazzola di un filo
+ * quando a faultare e' stato qualcun altro (un puntatore passato in giro, o
+ * il kernel dentro una chiamata di sistema). */
+Process *proc_filo_dello_stack(uint32_t tgid, uint32_t indirizzo);
 /* Termina tutti gli altri membri del gruppo: lo chiama chi esce dal processo. */
 void     proc_gruppo_termina(uint32_t tgid, uint32_t risparmia_pid);
 /* CHIEDE a un filo del proprio gruppo di fermarsi: 0, oppure -ESRCH.

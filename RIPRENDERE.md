@@ -28,6 +28,165 @@ manca» apre quello.
 
 # DOVE RIPRENDERE — 4 settembre 2026
 
+## 4 settembre 2026 — LA PILA DI UN FILO CRESCE SU RICHIESTA
+
+Un filo nasceva con 64 KB di RAM vera in mano: sedici pagine allocate e
+azzerate una per una, anche per un filo che di pila ne usa duecento byte. Non
+era una svista, era un prezzo pagato apposta, e nel codice c'era scritto
+perche':
+
+> LO STACK DI UN FILO SI IMPEGNA TUTTO SUBITO, al contrario di quello del
+> processo che cresce su richiesta. Il motivo e' page_fault_handler: sa far
+> crescere UNO stack — quello descritto da user_stack_limit nel PCB — e non
+> saprebbe dire a quale filo appartiene una pagina mancante dentro la banda.
+
+Adesso lo sa dire, e il prezzo non si paga piu': **sette fili costano 980 KB
+invece di 1344**, cioe' 140 a testa invece di 192. Di quei 140, centoventotto
+sono lo stack di KERNEL del task, che con questo lavoro non c'entra e non e'
+cambiato; la pila utente e' passata da 64 KB a 12.
+
+### LA DOMANDA VERA NON ERA «QUANTO», ERA «DI CHI»
+
+Far crescere la piazzola del filo che sta girando non e' un lavoro: il PCB
+corrente ce l'ha in mano il gestore dei fault, bastano tre coordinate al posto
+di uno zero. Il punto e' un altro, e si vede solo scrivendo la prova:
+
+**i fili condividono la memoria, quindi a faultare dentro la pila di un filo
+puo' essere qualcun altro.** Un filo dichiara `char buf[16384]`, ne tocca
+solo la cima, e ne passa il fondo a un compagno — o a una `read()`. Il fondo
+non e' impegnato, il compagno ci scrive, e il fault arriva mentre gira LUI. Il
+suo ESP non dice niente su quell'indirizzo: sta in un'altra piazzola.
+
+Finche' i 64 KB c'erano tutti il caso non esisteva. Da oggi esiste, ed e' il
+motivo per cui `pf_cresci_stack` si e' spezzata in due domande invece di una:
+
+    pf_cresci_stack    SE la crescita e' legittima, e DI CHI e' la pila
+    pf_cresci_pagine   impegna le pagine, per il padrone che gli si dice
+
+La prima strada resta quella di sempre, con tutte e cinque le condizioni,
+vicinanza a ESP compresa. La seconda — `proc_filo_dello_stack(tgid, indirizzo)`
+— cerca fra i fili VIVI del proprio gruppo quello che ha l'indirizzo dentro la
+riserva della sua piazzola.
+
+! **LA CONDIZIONE 5 LI' NON SI APPLICA, e non e' una rinuncia**: confrontare
+l'indirizzo con l'ESP di chi ha faultato sarebbe un paragone fra due piazzole
+diverse, cioe' un numero senza significato. Al suo posto c'e' un confine
+altrettanto stretto: l'indirizzo deve cadere nella riserva di un filo vivo
+DELLO STESSO GRUPPO — mezzo megabyte di banda che ha riservato il kernel — e
+fra una piazzola e l'altra resta la pagina di guardia, che nessuna crescita
+puo' scavalcare.
+
+! **E SI GUARDA SOLO FRA I VIVI.** La piazzola di uno zombie e' ancora mappata
+ma non e' piu' di nessuno: servire un fault li' vorrebbe dire far crescere la
+pila di un morto.
+
+### QUEL CHE LA PROVA HA TROVATO STRADA FACENDO: DUE PAGINE PERSE PER FILO
+
+Le piazzole si riusano — `filo_posto_libero` guarda chi e' vivo — e le pagine
+di un filo morto restavano mappate fino alla fine del PROCESSO. Il filo dopo
+prendeva lo stesso posto, `proc_thread_crea` ci mappava sopra pagine nuove, e
+`paging_map_page` sovrascrive la voce senza dire niente: **sedici pagine perse
+a ogni filo che finisce**, piu' i suoi dati lasciati sotto i piedi di chi
+arriva. Non si vedeva perche' nessuno aveva mai misurato la memoria di un
+processo che crea e distrugge fili.
+
+Adesso `proc_reap_zombie` smonta la piazzola. Nella prova si legge cosi':
+
+    7 fili costano 980 KB, cioe' 140 per filo   impegnata a poco a poco
+    e riassorbiti tornano 980 KB su 980
+
+La seconda riga e' quella che non c'era: **tornano tutti**.
+
+### E UNA PAGE DIRECTORY DISTRUTTA PIU' DI UNA VOLTA
+
+Sempre in `proc_reap_zombie`, e sempre trovato leggendo quel che si stava per
+toccare. Lo spazio di indirizzamento e' del gruppo e si libera «quando non
+resta nessuno», e nessuno si contava con `proc_gruppo_vivi()`, che gli zombie
+non li conta. Ma quando il capogruppo esce, i fili diventano zombie **tutti
+insieme** e vengono raccolti uno dopo l'altro, ognuno con lo STESSO puntatore
+in mano: il primo distruggeva la directory, i successivi la ripercorrevano da
+liberata — leggendo tabelle che nel frattempo possono gia' essere di qualcun
+altro, e restituendo al PMM pagine che non c'entrano niente.
+
+! **IL CONTO DI UN GUASTO COSI' ARRIVA ALTROVE E MOLTO DOPO**, ed e' esattamente
+la forma dei due difetti aperti in `in_lavorazione.txt`: un panic dentro `kfree`
+su un blocco con l'intestazione sballata, un driver che parte con lo stack a
+zero. Non e' provato che fosse questa la causa — non e' stato riprodotto ne'
+prima ne' dopo — ma una strada che portava li' adesso e' chiusa: chi distrugge
+la directory azzera prima il puntatore in tutti i PCB che la condividono, e
+distruggerla e' un'operazione sola.
+
+### LA PROVA: `filiprova pila`, in tre parti che falliscono da sole
+
+    1. QUANTO COSTA UN FILO   sette fili, kilobyte liberi prima e dopo.
+       La riga di giudizio e' a 160 per filo, e sta li' perche' in mezzo non
+       c'e' niente: 128 di stack kernel + 64 di piazzola tutta fanno 192,
+       128 + 12 impegnati a poco a poco fanno 140. Un numero fra i due non
+       esiste.
+    2. CHE POI CRESCA         un filo scende per 40 chiamate da 1 KB — cinque
+       volte quel che gli e' stato dato — e deve tornare col conto giusto.
+       Senza la crescita si prenderebbe un fault alla nona.
+    3. CHE CRESCA PER MANO DI UN ALTRO   il caso qui sopra: un filo tocca la
+       cima di un buffer da 16 KB e ne regala il fondo. Se il kernel non
+       sapesse risalire dalla pagina al suo filo, qui il programma non
+       fallirebbe: morirebbe.
+
+! **NELLA TERZA PARTE IL FILO CHE ASPETTA NON PUO' CHIAMARE NIENTE**, e questo
+e' costato un ragionamento. Una `call` scrive l'indirizzo di ritorno SOTTO
+l'ESP; il fault che ne segue fa impegnare tutto quel che sta fra li' e la parte
+gia' viva — cioe' **proprio il pezzo che la prova vuole lasciare vuoto**.
+`sched_yield()` avrebbe cancellato il caso da provare. Percio' quel filo
+aspetta girando su una variabile `volatile`, senza chiamare, e la prova sta in
+piedi solo perche' lo scheduler e' a prelazione.
+
+Ed e' anche la ragione per cui il caso e' raro nella vita vera: i dati VIVI di
+un filo stanno sempre sopra il suo ESP, e sopra l'ESP e' gia' tutto impegnato.
+Ci si arriva solo regalando un pezzo di pila che il padrone non ha ancora
+toccato — che e' legittimo, e succede con i buffer grandi.
+
+### E CHE IL FONDO TENGA: `filiprova sfonda`
+
+Il guasto peggiore che questa crescita puo' fare non e' morire: e' **non**
+morire, e mangiarsi la piazzola del vicino. Percio' c'e' una prova che scende
+senza fine e pretende che a morire sia il filo, sulla guardia sotto la sua
+piazzola, con codice -11.
+
+    il filo e' uscito con -11, atteso -11 (page fault)   fermato dalla guardia
+    e il processo e' vivo: la piazzola di sotto non e' stata toccata
+
+! **CHE MUOIA SOLO LUI E' LA SEMANTICA DI ADESSO, non una scelta difesa**: un
+filo che sbaglia un puntatore lascia in piedi un programma con dentro un flusso
+morto, magari con un lucchetto in mano. E' la stessa ragione per cui la
+cancellazione e' cooperativa, ed e' finita fra le cose aperte.
+
+! **E IL FILO ASPETTA UN DECIMO DI SECONDO PRIMA DI SCENDERE.** Finche' nessuno
+lo aspetta, il ppid di un filo e' quello del processo padre — la shell — e una
+morte istantanea la faceva raccogliere a lei: il prompt tornava con il
+programma ancora vivo, e il comando dopo partiva sopra quello di prima.
+`thread_attendi` si fa trovare come padre, ma deve arrivarci prima. E' un
+difetto vero, non un dettaglio della prova, ed e' scritto fra le cose aperte.
+
+! **UNA VOLTA, IN QUELLA CONFUSIONE, E' USCITO UN PANIC.** La prima versione di
+`sfonda` non aspettava il filo e restava a girare per sempre: la shell
+raccoglieva lo zombie del filo, tornava al prompt, e il comando successivo
+partiva mentre il vecchio processo era ancora vivo. In quel giro — e in uno
+solo — un task e' partito con **ESP a zero e stack 0x0..0x0**, che e' la firma
+del difetto raro gia' scritto in `in_lavorazione.txt`. Con la prova rifatta
+come si deve non si e' piu' visto in sette giri di fila. La misura non
+distingue, ma la circostanza e' annotata: **due programmi che usano fili vivi
+insieme**.
+
+### LE MISURE, TUTTE PRESE IN QEMU
+
+    filiprova pila        7 fili: 980 KB (140 l'uno), tutti restituiti;
+                          40 KB di discesa: somma 1640 esatta;
+                          scrittura incrociata: arrivata
+    filiprova sfonda      il filo muore con -11, il processo continua
+    i dieci modi di prima tutti «tutto a posto»
+    libctest              201 superate, 15 fallite — come prima
+
+---
+
 ## 4 settembre 2026 — LA CASELLA «CERCA», E DUE CASELLE NELLA STESSA BARRA
 
 Cercare si poteva gia' dal 4 settembre mattina: `html.duckduckgo.com` risponde

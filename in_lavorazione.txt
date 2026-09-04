@@ -1,4 +1,4 @@
-QUEL CHE E' APERTO — 3 settembre 2026
+QUEL CHE E' APERTO — 4 settembre 2026
 
 Qui c'e' SOLO quel che non e' fatto. Niente voci «FATTO»: la storia di come una
 cosa e' stata fatta, e perche' cosi', sta in RIPRENDERE.md, che e' un diario e
@@ -21,18 +21,21 @@ DOVE SI ERA ARRIVATI
 I FILI CI SONO E FUNZIONANO, provati: creazione, gruppo, attesa (join),
 terminazione del gruppo, TLS per filo, errno per filo, l'attesa che DORME
 (attesa_dormi/attesa_sveglia, syscall 204-205) con il lucchetto che ci sta
-sopra a tre stati, e da oggi le VARIABILI DI CONDIZIONE E I SEMAFORI che ci si
-costruiscono sopra (otto funzioni di libc, nessuna riga di kernel). Committato
-fino a 6eec5da, piu' le condizioni e i semafori. La sezione «I FILI» piu'
-avanti in questo file racconta com'e' fatto; il diario (RIPRENDERE.md, 4
-settembre, «LE CONDIZIONI E I SEMAFORI») racconta perche'.
+sopra a tre stati, le VARIABILI DI CONDIZIONE E I SEMAFORI che ci si
+costruiscono sopra (otto funzioni di libc, nessuna riga di kernel), la
+cancellazione ordinata, la directory di gruppo, e da oggi LA PILA CHE CRESCE
+SU RICHIESTA anche per i fili. La sezione «I FILI» piu' avanti racconta
+com'e' fatto; il diario (RIPRENDERE.md, 4 settembre, «LA PILA DI UN FILO
+CRESCE SU RICHIESTA») racconta perche'.
 
 IL PROSSIMO PASSO, IN ORDINE
 
- Quel che resta e' scritto nella sezione «I FILI» qui sotto, ed e' in ordine:
- otto fili per processo (e' un numero, non un lavoro) e lo stack del filo che
- cresca su richiesta. Nessuno dei due e' un mattone che manca: sono limiti,
- e tutt'e due si pagano in memoria, non in codice.
+ Dei due limiti che restavano, quello che pesava e' stato tolto: la piazzola
+ di un filo non e' piu' impegnata tutta (sette fili costano 980 KB invece di
+ 1344). Quel che resta e' scritto nella sezione «I FILI» qui sotto: otto fili
+ per processo, che e' un numero e non un lavoro, piu' due difetti veri
+ trovati scrivendo la prova — un filo che muore di fault non porta via il
+ processo, e lo zombie di un filo che nessuno aspetta lo raccoglie la shell.
 
 COME SI PROVANO I FILI, SENZA RICOSTRUIRE IL RAGIONAMENTO
 
@@ -41,9 +44,10 @@ COME SI PROVANO I FILI, SENZA RICOSTRUIRE IL RAGIONAMENTO
       python3 tools/qemu_drive.py "filiprova@25" "filiprova tls@10" \
         "filiprova errno@10" "filiprova attesa@15" "filiprova condizione@25" \
         "filiprova semaforo@25" "filiprova ferma@40" "filiprova cwd@20" \
+        "filiprova pila@40" "filiprova sfonda@25" \
         "filiprova troppi@8" "filiprova abbandona@8" "hello@5"
 
-  I dieci modi e cosa dimostrano:
+  I dodici modi e cosa dimostrano:
     (nessuno)   80000 col lucchetto, ~20000 senza: le corse ci sono davvero
     tls         ogni filo parte da 7 e ritrova il suo; il principale ritrova 42
     errno       principale EBADF, fili ENOENT, e il principale ritrova il suo 9
@@ -60,6 +64,15 @@ COME SI PROVANO I FILI, SENZA RICOSTRUIRE IL RAGIONAMENTO
     cwd         il filo fa cd /bin e il principale lo vede; il principale fa
                 cd /dev e il filo lo vede; e l'ambiente passa nei due versi
                 (rimettendo la copia di prima falliscono tutt'e due i versi)
+    pila        sette fili costano 980 KB (140 l'uno) e li restituiscono
+                tutti; un filo scende di 40 KB e torna col conto giusto; e un
+                filo scrive nella pila di un ALTRO, sotto la parte viva
+                (la riga di giudizio e' 160 KB per filo: 128 sono lo stack di
+                kernel, poi o 64 di piazzola tutta o 12 impegnati a poco a
+                poco — un numero in mezzo non esiste)
+    sfonda      un filo scende senza fine e muore sulla guardia con -11,
+                mentre il processo resta vivo: e' la prova che il fondo della
+                piazzola tiene e che il vicino non viene toccato
     troppi      ne crea 7 e si ferma con errno 11 (EAGAIN)
     abbandona   esce senza aspettare: il prompt torna e hello gira dopo
 
@@ -169,6 +182,19 @@ Da CD, un driver ogni tanto muore appena avviato (raro, non chiuso).
   diversa (li' un fault utente a 0, qui un panic in ring0), la frequenza e' la
   stessa e il momento anche. Non e' stato riprodotto in nove avvii di fila
   fatti apposta.
+
+! E UNA CIRCOSTANZA IN PIU' PER TUTT'E DUE I DIFETTI QUI SOPRA, vista il 4
+  settembre 2026: DUE PROGRAMMI CHE USANO FILI VIVI INSIEME. Con la prima
+  versione di `filiprova sfonda` (che restava a girare per sempre, quindi la
+  shell tornava al prompt e faceva partire il comando dopo sopra il programma
+  ancora vivo) un task e' partito con ESP A ZERO e stack 0x0..0x0 — la firma
+  del primo difetto — ed e' finito in panic. UNA VOLTA SOLA; con la prova
+  rifatta come si deve non si e' piu' visto in sette giri di fila, quindi la
+  misura non distingue. Nello stesso giro e' stata chiusa una strada che ci
+  portava: proc_reap_zombie distruggeva la page directory di un gruppo UNA
+  VOLTA PER OGNI zombie che la condivideva (diario, 4 settembre, «LA PILA DI
+  UN FILO CRESCE SU RICHIESTA»), e le volte dopo la prima ripercorreva
+  tabelle gia' liberate restituendo al PMM pagine di qualcun altro.
 
 ! DENTRO UN SINGOLO PASSO DELLA STRETTA TLS NON SI RESPIRA. La stretta di mano
   adesso legge a pezzi come tutto il resto (diario: 3 settembre notte, «LA
@@ -399,16 +425,36 @@ puntatore a decidere, non il campo.
     Il campo `env[]` del PCB non lo usa nessuno — e' rimasto li' da prima.
     Adesso e' controllato invece che dato per buono (filiprova cwd).
 
-QUEL CHE MANCA, in ordine di quanto pesa:
+E LA PILA DI UN FILO CRESCE SU RICHIESTA, dal 4 settembre 2026 (diario: «LA
+PILA DI UN FILO CRESCE SU RICHIESTA»). Della piazzola si impegnano il blocco
+TLS e le prime otto pagine; il resto arriva quando il filo scende davvero, e
+si ferma sulla guardia sotto la piazzola. Sette fili costano 980 KB invece di
+1344. Il pezzo che non e' ovvio e' che a faultare dentro la pila di un filo
+puo' essere UN ALTRO — i fili condividono la memoria, e un buffer grande si
+regala — quindi pf_cresci_stack chiede prima DI CHI e' la pagina
+(proc_filo_dello_stack) e poi la impegna.
+
+QUEL CHE MANCA:
 
  1. OTTO FILI PER PROCESSO (FILO_MAX), capogruppo compreso, perche' tante sono
     le piazzole nella banda. Alzarlo vuol dire allargare la banda, cioe'
     abbassare heap_max: e' un numero, non un lavoro.
 
- 2. LO STACK DI UN FILO E' IMPEGNATO TUTTO SUBITO (64 KB di RAM vera, non di
-    soli indirizzi) perche' page_fault_handler sa far crescere un solo stack.
-    Farlo crescere su richiesta vuol dire insegnargli a riconoscere a quale
-    filo appartiene una pagina mancante dentro la banda.
+ 2. UN FILO CHE MUORE DI PAGE FAULT NON PORTA VIA IL PROCESSO. Muore lui e il
+    programma prosegue, magari con un lucchetto preso da chi non c'e' piu' —
+    che e' esattamente la situazione per cui la cancellazione e' cooperativa.
+    Su Linux un segnale fatale porta via tutto il gruppo. Si vede con
+    `filiprova sfonda`, che oggi lo DICHIARA invece di lamentarsene.
+
+ 3. LO ZOMBIE DI UN FILO CHE NESSUNO ASPETTA LO RACCOGLIE LA SHELL. Il ppid di
+    un filo e' quello del capogruppo (filo->ppid = capo->ppid), e finche'
+    nessuno chiama thread_attendi — che si fa trovare come padre prima di
+    dormire — quel filo e' un figlio del padre del processo. Se muore prima,
+    la waitpid della shell lo raccoglie, torna al prompt con il programma
+    ancora vivo, e il comando successivo parte sopra quello di prima. Visto il
+    4 settembre 2026 scrivendo `filiprova sfonda`, e aggirato nella prova
+    facendo aspettare il filo un decimo di secondo. La strada giusta e' che
+    un filo non sia figlio di nessuno fuori dal gruppo.
 
 =============================================================================
 RUST SU EX-OS (aperto il 4 settembre 2026)

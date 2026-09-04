@@ -710,6 +710,246 @@ static int prova_cwd(void)
     return esito;
 }
 
+/* =============================================================================
+ * LA PILA DI UN FILO CRESCE SU RICHIESTA — e la prova ha tre parti
+ *
+ * Fino al 4 settembre 2026 la piazzola di un filo (64 KB) veniva impegnata
+ * tutta alla creazione: RAM vera, azzerata pagina per pagina, anche per un
+ * filo che di stack ne usa duecento byte. Adesso si impegnano il blocco TLS e
+ * le prime otto pagine, e il resto arriva quando il filo scende davvero.
+ *
+ * Le tre parti guardano tre cose diverse, e ognuna fallisce da sola:
+ *
+ *   1. QUANTO COSTA UN FILO. Si contano i kilobyte liberi prima e dopo aver
+ *      creato sette fili. La riga di giudizio e' a 160 KB per filo, e sta li'
+ *      perche' in mezzo non c'e' niente: 128 sono lo stack di kernel del task
+ *      (che non c'entra con questo lavoro e non cambia), piu' 64 di piazzola
+ *      impegnata tutta fanno 192; piu' dodici impegnati a poco a poco fanno
+ *      centoquaranta. Un numero fra i due non esiste.
+ *
+ *   2. CHE POI CRESCA. Un filo scende per quaranta chiamate da un kilobyte
+ *      l'una — cinque volte piu' di quel che gli e' stato dato — e deve
+ *      tornare col conto giusto. Senza la crescita si prenderebbe un fault
+ *      alla nona.
+ *
+ *   3. CHE POSSA CRESCERE PER MANO DI UN ALTRO. I fili condividono la
+ *      memoria: un filo puo' passare a un altro un puntatore dentro la
+ *      PROPRIA pila, in una parte che non ha ancora toccato. A faultare e'
+ *      allora qualcun altro, e l'ESP di chi fa il fault non dice niente su
+ *      quell'indirizzo. Se il kernel non sapesse risalire dalla pagina al suo
+ *      filo, qui il programma morirebbe — non fallirebbe: morirebbe.
+ *
+ *      ! IL FILO CHE ASPETTA NON PUO' CHIAMARE NIENTE, e non e' un vezzo:
+ *      una `call` scrive l'indirizzo di ritorno SOTTO l'ESP, il fault che ne
+ *      segue fa impegnare tutto quel che sta fra li' e la parte gia' viva —
+ *      cioe' proprio il pezzo che questa prova vuole lasciare vuoto. Percio'
+ *      aspetta girando su una variabile volatile, senza chiamare.
+ * ============================================================================= */
+#define PILA_FILI   7               /* quanti se ne creano nella parte 1 */
+#define PILA_COSTO  160             /* KB per filo: la riga di giudizio */
+#define PILA_GIRI   40              /* quante chiamate da 1 KB nella parte 2 */
+
+static volatile int p_fermi;        /* i fili della parte 1 stanno fermi qui */
+
+/* Un filo che aspetta senza chiamare niente: vedi la nota qui sopra. */
+static void filo_fermo(void *arg)
+{
+    (void)arg;
+    while (p_fermi == 0) { }
+    thread_esci(0);
+}
+
+/* Scende di PILA_GIRI kilobyte e risale rendendo la somma di quel che ha
+ * scritto: se una pagina non fosse arrivata, non si tornerebbe affatto.
+ * `volatile` sulla zavorra perche' il compilatore non abbia la tentazione di
+ * non allocarla: e' proprio lo spazio, non il valore, quel che si prova. */
+static int scendi(int n)
+{
+    volatile char zavorra[1024];
+
+    zavorra[0]    = (char)(n & 0x7f);
+    zavorra[1023] = (char)(n & 0x7f);
+
+    if (n == 0) return 0;
+    return zavorra[0] + zavorra[1023] + scendi(n - 1);
+}
+
+static volatile int p_fondo;        /* quanto ha reso scendi() */
+
+static void filo_scende(void *arg)
+{
+    (void)arg;
+    p_fondo = scendi(PILA_GIRI);
+    thread_esci(0);
+}
+
+static volatile int   x_passo;
+static volatile char *x_buf;
+
+/* Tocca la CIMA di un buffer grande e regala il FONDO, che resta vuoto. */
+static void filo_regala(void *arg)
+{
+    volatile char buf[16384];
+
+    (void)arg;
+    buf[16000] = 'A';           /* l'unica pagina di buf che questo filo tocca */
+    x_buf      = buf;           /* ...e il fondo, sedici kilobyte piu' giu' */
+    x_passo    = 1;
+
+    while (x_passo != 2) { }    /* ! senza chiamare niente: vedi la nota */
+
+    if (buf[0] != 'B' || buf[4095] != 'C' || buf[16000] != 'A') x_passo = -1;
+    else                                                        x_passo = 3;
+
+    while (x_passo != 4) { }
+    thread_esci(0);
+}
+
+static int prova_pila(void)
+{
+    MemInfo mi;
+    int     tid[PILA_FILI];
+    int     i, esito = 0;
+    unsigned prima, dopo, costo;
+
+    printf("filiprova: la pila di un filo cresce su richiesta\n");
+
+    /* --- 1. quanto costa un filo ------------------------------------- */
+    if (meminfo(&mi) != 0) { printf("  meminfo non risponde\n"); return 1; }
+    prima = mi.free_kb;
+
+    p_fermi = 0;
+    for (i = 0; i < PILA_FILI; i++) {
+        tid[i] = thread_crea(filo_fermo, 0);
+        if (tid[i] < 0) {
+            printf("  thread_crea %d: errno %d\n", i, errno);
+            p_fermi = 1;
+            return 1;
+        }
+    }
+
+    if (meminfo(&mi) != 0) { p_fermi = 1; printf("  meminfo\n"); return 1; }
+    dopo  = mi.free_kb;
+    costo = (prima > dopo) ? (prima - dopo) / PILA_FILI : 0;
+
+    printf("  %d fili costano %u KB, cioe' %u per filo   %s\n",
+           PILA_FILI, prima - dopo, costo,
+           costo < PILA_COSTO ? "impegnata a poco a poco" : "IMPEGNATA TUTTA");
+    if (costo >= PILA_COSTO) esito = 1;
+
+    p_fermi = 1;
+    for (i = 0; i < PILA_FILI; i++) thread_attendi(tid[i], 0);
+
+    if (meminfo(&mi) == 0)
+        printf("  e riassorbiti tornano %u KB su %u\n",
+               mi.free_kb - dopo, prima - dopo);
+
+    /* --- 2. che poi cresca ------------------------------------------- */
+    p_fondo = -1;
+    tid[0]  = thread_crea(filo_scende, 0);
+    if (tid[0] < 0) { printf("  thread_crea: errno %d\n", errno); return 1; }
+    thread_attendi(tid[0], 0);
+
+    {
+        int atteso = 0;
+        for (i = PILA_GIRI; i > 0; i--) atteso += 2 * (i & 0x7f);
+
+        printf("  un filo scende di %d KB e rende %d, atteso %d   %s\n",
+               PILA_GIRI, p_fondo, atteso,
+               p_fondo == atteso ? "cresciuta" : "SBAGLIATO");
+        if (p_fondo != atteso) esito = 1;
+    }
+
+    /* --- 3. che cresca per mano di un altro --------------------------- */
+    x_passo = 0;
+    x_buf   = 0;
+    tid[0]  = thread_crea(filo_regala, 0);
+    if (tid[0] < 0) { printf("  thread_crea: errno %d\n", errno); return 1; }
+
+    while (x_passo == 0) sched_yield();
+
+    /* Questa scrittura cade nella piazzola dell'ALTRO filo, sotto la parte
+     * che lui ha impegnato. Se il kernel non sapesse di chi e' quella pagina,
+     * il programma finirebbe qui con un page fault. */
+    x_buf[0]    = 'B';
+    x_buf[4095] = 'C';
+    x_passo     = 2;
+
+    while (x_passo == 2) sched_yield();
+    printf("  un filo scrive nella pila di un altro, sotto la parte viva   %s\n",
+           x_passo == 3 ? "arrivata" : "NON E' ARRIVATA");
+    if (x_passo != 3) esito = 1;
+
+    x_passo = 4;
+    thread_attendi(tid[0], 0);
+
+    printf("\nfiliprova pila: %s\n", esito ? "QUALCOSA NON VA" : "tutto a posto");
+    return esito;
+}
+
+/* =============================================================================
+ * E CHE IL FONDO TENGA — il guasto peggiore che questa crescita puo' fare
+ *
+ * Una piazzola cresce verso il basso, e sotto c'e' quella del filo dopo. Se il
+ * kernel sbagliasse il confine, una ricorsione senza fine non morirebbe: si
+ * mangerebbe la pila del vicino, e il vicino sbaglierebbe altrove, molto dopo,
+ * senza un motivo visibile. Percio' qui si scende senza fine, e quel che si
+ * pretende e' che a morire sia IL FILO, sulla pagina di guardia sotto la sua
+ * piazzola — con il codice -11, che il kernel da' a chi muore di page fault.
+ *
+ * ! CHE MUOIA SOLO LUI E' LA SEMANTICA DI ADESSO, non una scelta difesa: un
+ * filo che sbaglia un puntatore lascia in piedi un programma con dentro un
+ * flusso morto — magari con un lucchetto in mano. E' la stessa ragione per cui
+ * la cancellazione e' cooperativa, e sta scritta fra le cose aperte.
+ *
+ * ! IL FILO ASPETTA UN DECIMO DI SECONDO PRIMA DI SCENDERE, e non e' pigrizia:
+ * finche' nessuno lo aspetta il suo ppid e' quello del PROCESSO PADRE — la
+ * shell — e una morte istantanea la farebbe raccogliere a lei, che tornerebbe
+ * al prompt credendo finito il programma. thread_attendi si fa trovare come
+ * padre, ma deve arrivarci prima.
+ * ========================================================================== */
+static void filo_sfonda(void *arg)
+{
+    volatile char zavorra[1024];
+
+    zavorra[0] = 1;
+    filo_sfonda(arg);           /* senza fondo, e senza uscita */
+    thread_esci(0);
+}
+
+static void filo_giu(void *arg)
+{
+    usleep(100000);             /* il tempo che il principale lo aspetti */
+    filo_sfonda(arg);
+}
+
+static int sfonda(void)
+{
+    int tid, codice = 0, esito = 0;
+
+    printf("filiprova: un filo scende senza fondo; deve morire lui, sulla "
+           "guardia sotto la sua piazzola\n");
+
+    tid = thread_crea(filo_giu, 0);
+    if (tid < 0) { printf("  thread_crea: errno %d\n", errno); return 1; }
+
+    if (thread_attendi(tid, &codice) != 0) {
+        printf("  thread_attendi: errno %d\n", errno);
+        return 1;
+    }
+
+    printf("  il filo e' uscito con %d, atteso -11 (page fault)   %s\n",
+           codice, codice == -11 ? "fermato dalla guardia" : "NON E' QUELLO");
+    if (codice != -11) esito = 1;
+
+    /* Che si stampi questa riga e' meta' della prova: il processo e' ancora
+     * qui, con la sua pila intatta, dopo che uno dei suoi fili e' morto. */
+    printf("  e il processo e' vivo: la piazzola di sotto non e' stata toccata\n");
+
+    printf("\nfiliprova sfonda: %s\n", esito ? "QUALCOSA NON VA" : "tutto a posto");
+    return esito;
+}
+
 /* Un filo che non finisce mai: serve alla prova dell'abbandono. */
 static void per_sempre(void *arg)
 {
@@ -764,6 +1004,8 @@ int main(int argc, char **argv)
     if (argc > 1 && strcmp(argv[1], "semaforo") == 0)  return prova_semaforo();
     if (argc > 1 && strcmp(argv[1], "ferma") == 0)     return prova_ferma();
     if (argc > 1 && strcmp(argv[1], "cwd") == 0)       return prova_cwd();
+    if (argc > 1 && strcmp(argv[1], "pila") == 0)      return prova_pila();
+    if (argc > 1 && strcmp(argv[1], "sfonda") == 0)    return sfonda();
     {
     int tid[FILI];
     int i, codice, esito = 0;
