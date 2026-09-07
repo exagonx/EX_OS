@@ -754,6 +754,19 @@ static void print_uint(uint32_t v)
     print(buf);
 }
 
+/* Come print_uint, ma col segno.
+ *
+ * ! SERVE PERCHE' UN CODICE DI USCITA PUO' ESSERE NEGATIVO. Il kernel usa la
+ * convenzione dei segnali col meno davanti — -11 per chi muore di page fault,
+ * -4 per un'istruzione illecita — e stampato senza segno diventa
+ * «4294967285», che non somiglia a niente e non si cerca da nessuna parte.
+ * Visto il 7 settembre 2026 provando un filo che muore di guasto. */
+static void print_int(int32_t v)
+{
+    if (v < 0) { print("-"); v = -v; }
+    print_uint((uint32_t)v);
+}
+
 /* =============================================================================
  * Colori ANSI (il driver TTY li interpreta)
  *
@@ -1640,7 +1653,7 @@ static void job_raccogli(void)
             print("] terminato: ");
             print(g_jobs[i].cmd);
             print(" (codice ");
-            print_uint((uint32_t)status);
+            print_int(status);
             print(")\n");
         } else {
             /* -ECHILD: qualcun altro l'ha gia' raccolto, o non e' mai

@@ -83,7 +83,7 @@ void syscall_handler(InterruptFrame *frame)
 
         klog(LOG_INFO, "SYSCALL: PID %u interrotto, esce", p ? p->pid : 0);
         vfs_sync();
-        proc_exit(130);         /* 128 + 2, come Unix riporta un Ctrl+C */
+        proc_esci_fatale(130);  /* 128 + 2, come Unix riporta un Ctrl+C */
     }
 }
 

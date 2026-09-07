@@ -897,22 +897,27 @@ static int prova_pila(void)
  * pretende e' che a morire sia IL FILO, sulla pagina di guardia sotto la sua
  * piazzola — con il codice -11, che il kernel da' a chi muore di page fault.
  *
- * ! CHE MUOIA SOLO LUI E' LA SEMANTICA DI ADESSO, non una scelta difesa: un
- * filo che sbaglia un puntatore lascia in piedi un programma con dentro un
- * flusso morto — magari con un lucchetto in mano. E' la stessa ragione per cui
- * la cancellazione e' cooperativa, e sta scritta fra le cose aperte.
+ * ! E PORTA VIA IL PROCESSO, dal 7 settembre 2026. Fino a quel giorno moriva
+ * solo il filo e il programma proseguiva — con dentro un flusso morto, magari
+ * con un lucchetto in mano preso da chi non c'e' piu'. Era esattamente la
+ * situazione per cui la cancellazione qui e' cooperativa: da fuori un filo non
+ * si puo' interrompere senza lasciare le strutture a meta', quindi un filo che
+ * muore male non lascia scelta. Su Linux un segnale fatale porta via tutto il
+ * thread group, per la stessa ragione.
+ *
+ * ! PERCIO' QUESTA PROVA SI LEGGE AL CONTRARIO DELLE ALTRE: non stampa «tutto
+ * a posto», perche' se va bene NON ARRIVA A STAMPARE NIENTE. Il verdetto sta
+ * fuori — nella riga [FAULT] del kernel, nel prompt che torna, e nel comando
+ * dopo che parte pulito. Se invece si vede la riga «NON CI SI DOVEVA
+ * ARRIVARE», il gruppo e' sopravvissuto a un filo morto di guasto, e il
+ * difetto e' tornato.
  *
  * ! E SCENDE SUBITO, senza aspettare. Fino al 7 settembre 2026 qui c'era una
  * usleep(100000) con scritto perche': finche' nessuno lo aspettava, il ppid di
  * un filo era quello del PROCESSO PADRE — la shell — e una morte istantanea la
  * faceva raccogliere a lei, che tornava al prompt credendo finito il
- * programma. Il decimo di secondo serviva a far arrivare prima
- * thread_attendi, che si fa trovare come padre.
- *
- * Adesso il ppid di un filo resta dentro il gruppo e sys_waitpid i fili li
- * salta: togliere l'attesa non e' una pulizia, e' LA PROVA. Se il prompt
- * torna prima della riga «e il processo e' vivo», o se il comando dopo parte
- * sopra questo, il difetto e' tornato.
+ * programma. Adesso il ppid di un filo resta dentro il gruppo e sys_waitpid i
+ * fili li salta, quindi l'attesa non serve piu'.
  * ========================================================================== */
 static void filo_sfonda(void *arg)
 {
@@ -930,29 +935,26 @@ static void filo_giu(void *arg)
 
 static int sfonda(void)
 {
-    int tid, codice = 0, esito = 0;
+    int tid, codice = 0;
 
-    printf("filiprova: un filo scende senza fondo; deve morire lui, sulla "
-           "guardia sotto la sua piazzola\n");
+    printf("filiprova: un filo scende senza fondo. Deve morire sulla guardia "
+           "sotto la sua piazzola,\n");
+    printf("           e portare via il processo con se'. Se dopo questa riga "
+           "ne compare un'altra,\n");
+    printf("           il gruppo e' sopravvissuto a un filo morto di guasto.\n");
 
     tid = thread_crea(filo_giu, 0);
     if (tid < 0) { printf("  thread_crea: errno %d\n", errno); return 1; }
 
-    if (thread_attendi(tid, &codice) != 0) {
-        printf("  thread_attendi: errno %d\n", errno);
-        return 1;
-    }
+    /* Da qui non si torna: il filo sfonda la guardia, il kernel lo ammazza
+     * con -11 e porta via tutto il gruppo — questo compreso. Il codice sotto
+     * esiste per essere STAMPATO se un giorno smettera' di essere cosi'. */
+    thread_attendi(tid, &codice);
 
-    printf("  il filo e' uscito con %d, atteso -11 (page fault)   %s\n",
-           codice, codice == -11 ? "fermato dalla guardia" : "NON E' QUELLO");
-    if (codice != -11) esito = 1;
-
-    /* Che si stampi questa riga e' meta' della prova: il processo e' ancora
-     * qui, con la sua pila intatta, dopo che uno dei suoi fili e' morto. */
-    printf("  e il processo e' vivo: la piazzola di sotto non e' stata toccata\n");
-
-    printf("\nfiliprova sfonda: %s\n", esito ? "QUALCOSA NON VA" : "tutto a posto");
-    return esito;
+    printf("\n  NON CI SI DOVEVA ARRIVARE: il filo e' uscito con %d e il "
+           "processo e' ancora qui.\n", codice);
+    printf("filiprova sfonda: QUALCOSA NON VA\n");
+    return 1;
 }
 
 /* Un filo che non finisce mai: serve alla prova dell'abbandono. */

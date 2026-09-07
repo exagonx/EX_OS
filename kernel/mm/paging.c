@@ -1531,7 +1531,7 @@ void page_fault_handler(InterruptFrame *frame)
         /* proc_exit() non ritorna: fa il context switch verso il
          * prossimo processo pronto da qui stesso, esattamente come fa
          * sys_exit() per un'uscita volontaria. */
-        proc_exit(-11); /* convenzione stile SIGSEGV */
+        proc_esci_fatale(-11); /* convenzione stile SIGSEGV */
         /* mai raggiunto */
     }
 

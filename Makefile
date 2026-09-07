@@ -5924,6 +5924,57 @@ $(HD_IMG):
 	@false
 
 # =============================================================================
+# usb — LA CHIAVETTA: L'AMBIENTE INTERO, SU UN SUPPORTO CHE SI SCRIVE
+#
+#     make usb DISPOSITIVO=/dev/sdX [MB=1024]
+#
+# Il quarto supporto, e l'unico che mette insieme le due cose che finora
+# stavano su dischi diversi: gli strumenti (che sono sul CD, in sola lettura) e
+# un posto dove scrivere (che il CD non puo' essere). Su una chiavetta il
+# compilatore e la directory di lavoro stanno sullo stesso volume.
+#
+# ! LA CHIAVETTA VIENE FORMATTATA, e per questo la voce non parte da sola: il
+# dispositivo va NOMINATO, e prima di toccare un settore lo script dice cosa
+# sta per cancellare e aspetta che si BATTA la parola «confirm». Non un tasto:
+# un [s/n] si risponde col dito prima che con la testa, e qui il costo di
+# sbagliare non e' una costruzione da rifare, e' il disco di qualcuno.
+#
+# NON fa parte di `make all`, per la stessa ragione del CD e del disco: dentro
+# c'e' un giro completo in QEMU, anzi due.
+# =============================================================================
+.PHONY: usb
+usb: $(FLOPPY_IMG)
+	@chmod +x $(TOOLS_DIR)/mkusb.sh
+	@$(TOOLS_DIR)/mkusb.sh "$(DISPOSITIVO)" $(MB)
+
+# =============================================================================
+# netinst — IL SISTEMA DA PUBBLICARE SU UN SERVER
+#
+#     make netinst      -> dist/netinst/
+#
+# Il quinto supporto, e l'unico che non e' un supporto: una directory da
+# appoggiare su un server FTP o HTTP, che `netupdate` legge da dentro EX-OS per
+# aggiornare il sistema e installare le applicazioni.
+#
+# ! DIPENDE DA iso-exos E NON RIFA' L'ELENCO. build/iso-exos E' il sistema
+# intero, e sa gia' quali programmi, driver, librerie e font ci vanno. Un
+# secondo elenco qui vorrebbe dire che il giorno in cui un programma nuovo
+# entra nel primo e non nel secondo il CD ce l'ha e la rete no — e il difetto
+# si vede sei mesi dopo, come «quel comando, sul disco installato dalla rete,
+# non c'e'».
+#
+# ! dist/netinst/ E' IGNORATA DA GIT (vedi .gitignore): dentro c'e' il sistema
+# intero, cioe' roba costruita, piu' gli strumenti se ci sono. E' un prodotto,
+# non una sorgente.
+#
+# NON fa parte di `make all`: e' una pubblicazione, non una compilazione.
+# =============================================================================
+.PHONY: netinst
+netinst: iso-exos
+	@chmod +x $(TOOLS_DIR)/mknetinst.sh
+	@$(TOOLS_DIR)/mknetinst.sh
+
+# =============================================================================
 # ESECUZIONE E DEBUG
 # =============================================================================
 

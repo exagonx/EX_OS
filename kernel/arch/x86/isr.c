@@ -456,7 +456,7 @@ void isr_handler(InterruptFrame *frame)
 
         /* proc_exit() non ritorna: fa il context switch verso il prossimo
          * processo pronto da qui stesso. */
-        proc_exit(-4);   /* convenzione stile SIGILL/SIGSEGV */
+        proc_esci_fatale(-4);   /* convenzione stile SIGILL/SIGSEGV */
         /* mai raggiunto */
     }
 

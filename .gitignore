@@ -210,6 +210,13 @@
 /dist/exos.iso
 /dist/parti/
 
+# ! E dist/netinst/, per la stessa ragione moltiplicata: dentro c'e' il sistema
+# intero in chiaro, file per file, piu' gli strumenti se ci sono — cioe' le
+# stesse centinaia di megabyte delle ISO, ma senza nemmeno il vantaggio di
+# essere un file solo. Si costruisce con `make netinst` e si pubblica; nella
+# cronologia non ci deve entrare mai.
+/dist/netinst/
+
 # ! E NEMMENO L'ALBERO DA CUI L'ISO SI COSTRUISCE. build/iso/ e' tracciato —
 # ci stanno gli stub, gli header e i file piccoli che servono a chi compila
 # dentro EX-OS — ma `make iso` ci copia dentro anche gli INTERNI DI GCC, che

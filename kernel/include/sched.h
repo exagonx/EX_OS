@@ -751,6 +751,12 @@ Process *proc_create(const char *name, uint32_t entry_point,
                      uint32_t priority, int is_kernel_task);
 void     proc_set_entry(Process *proc, uint32_t entry_point, uint32_t user_stack_top);
 void     proc_exit(int32_t exit_code);
+
+/* Come proc_exit, ma per un GUASTO: porta via tutto il gruppo anche se a
+ * morire e' un filo, e scrive il codice di uscita sul capogruppo — che e' il
+ * pid che il padre aspetta. La chiamano i gestori di eccezione e
+ * l'interruzione da tastiera; un'uscita volontaria usa proc_exit. */
+void     proc_esci_fatale(int32_t exit_code);
 void     proc_set_ready(Process *proc);   /* BLOCKED → READY, aggiunge alla run queue */
 void     proc_kill(uint32_t pid);
 void     proc_reap_zombie(Process *p); /* Libera risorse zombie, segna UNUSED */

@@ -107,7 +107,11 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
 
   1  @DIF-DRIVER      da CD un driver ogni tanto muore appena avviato
   1  @DIF-PANIC       chi scrive oltre il proprio blocco dello heap del kernel
-  1  @FILI-FAULT      un filo che muore di page fault non porta via il processo
+  1  @USB             `make usb` c'e': manca la prova su una chiavetta VERA
+  1  @NETINST         `make netinst`: dist/netinst/, il sistema da pubblicare
+  1  @NET-DB          il catalogo e il registro di cio' che e' installato
+  1  @NET-SET         netupdate -set: il file di configurazione in /boot
+  1  @NET-TARGZ       tar.gz per le app: inflate c'e' gia', mancano due lettori
   1  @VISTA           l'impaginato non e' una libreria: due callback, non un trasloco
   1  @SUONO-REG       la registrazione non c'e': nessun driver accende AUDIO_CAP_REGISTRA
   1  @SUONO-MIX       un client alla volta: il secondo che suona riceve -EBUSY
@@ -130,6 +134,8 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @GIT-GCC         togliere dall'indice gli interni di GCC (chi ha il repository)
   1  @RUST-0          un programma no_std che gira, compilato da Linux
 
+  2  @NET-CHECK       netupdate -check                        <- @NETINST @NET-DB @NET-SET
+  2  @NET-APP         netupdate -install / -remove            <- @NETINST @NET-DB @NET-SET
   2  @SUONO-EMU8000   l'EMU8000 di una AWE32 resta spento    <- @SUONO-CAMPIONI
   2  @RUST-1          alloc: un GlobalAlloc sopra la malloc  <- @RUST-0
   3  @RUST-2          libexos: file, processi, IPC, finestre <- @RUST-1
@@ -159,11 +165,13 @@ IL PROSSIMO PASSO, IN ORDINE
 
  Dei due limiti che restavano, quello che pesava e' stato tolto: la piazzola
  di un filo non e' piu' impegnata tutta (sette fili costano 980 KB invece di
- 1344). Dei due difetti veri trovati scrivendo la prova, quello dello zombie
- raccolto dalla shell e' chiuso (7 settembre 2026: un filo non e' figlio di
- nessuno fuori dal gruppo). Quel che resta e' scritto nella sezione «I FILI»
- qui sotto: otto fili per processo, che e' un numero e non un lavoro, e un
- filo che muore di fault e non porta via il processo.
+ 1344). E i due difetti veri trovati scrivendo la prova sono chiusi tutt'e due
+ il 7 settembre 2026: lo zombie raccolto dalla shell (un filo non e' figlio di
+ nessuno fuori dal gruppo) e il filo che moriva di fault senza portare via il
+ processo. Nello stesso giorno, e per caso, e' venuto fuori il terzo: un filo
+ poteva partire con la PILA A ZERO, perche' proc_thread_crea lo rendeva
+ eseguibile prima di costruirgliela — diario, 7 settembre. Quel che resta e'
+ un numero e non un lavoro: otto fili per processo.
 
 COME SI PROVANO I FILI, SENZA RICOSTRUIRE IL RAGIONAMENTO
 
@@ -323,6 +331,224 @@ QUEL CHE C'E' GIA' PRONTO DA PROVARE, sul CD:
   c'e' apposta. Nel PATH del sistema /cdrom/exos/bin c'e' gia', quindi dentro
   un makefile basta scrivere `gcc`.
 =============================================================================
+@USB `make usb` — QUEL CHE RESTA DA FARE (aperto il 7 settembre 2026)
+=============================================================================
+
+! LA VOCE C'E' ED E' PROVATA — `make usb DISPOSITIVO=/dev/sdX [MB=1024]`,
+  tools/mkusb.sh. Qui resta soltanto cio' che non si e' potuto verificare su
+  questa macchina, che non ha nessun dispositivo rimovibile. Come funziona e
+  perche' e' fatta cosi' sta nel diario, 7 settembre 2026.
+
+ 1. NON E' MAI STATA SCRITTA UNA CHIAVETTA VERA. E' stata scritta una
+    chiavetta FINTA — un file da 1,2 GB con un /sys finto accanto — e per
+    quella strada lo script fa tutto: rifiuti, conferma, tabella delle
+    partizioni, formattazione e sistema dentro EX-OS, strumenti dal CD, e la
+    scrittura finale. Quel che manca alla prova e' esattamente cio' che una
+    chiavetta ha e un file no:
+      - il BIOS che ci si avvia davvero (l'immagine parte in QEMU, ma un BIOS
+        vero puo' rifiutare una chiavetta che parte da ext2: e' proprio la
+        cosa che va scoperta provando, ed e' il motivo per cui la partizione
+        oggi e' UNA sola. Se un BIOS si rifiuta, la strada e' due partizioni,
+        una FAT piccola per l'avvio);
+      - i tempi veri di `dd` su USB, che qui sono quelli di un file;
+      - il controllo `removable`, che qui e' stato provato solo col /sys finto
+        e col rifiuto su /dev/sda.
+
+ 2. LA CHIAVETTA SI USA TUTTA SOLO SE LO SI CHIEDE. L'immagine e' grande MB
+    (1024 di default) e il resto della chiavetta resta inutilizzato. Non c'e'
+    modo di far crescere la partizione dopo: EX-OS non sa ridimensionare un
+    ext2. Le vie sono due, e nessuna e' stata presa: leggere la dimensione del
+    dispositivo e costruire l'immagine grande cosi' (semplice, ma `dd` di 32 GB
+    su una chiavetta da 32 GB e' mezz'ora di scrittura per lo piu' di zeri),
+    oppure scrivere l'immagine e POI allargare partizione e filesystem con gli
+    strumenti di Linux — che pero' e' esattamente la strada che tools/mkhd.sh
+    ha chiuso, e per la ragione scritta li'.
+
+ 3. GLI STRUMENTI CI METTONO VENTI MINUTI, dentro QEMU: 1417 file, 150 MB,
+    copiati da un CD emulato su un ext2 emulato. Non e' un difetto ed e' il
+    grosso del tempo di `make usb`. Se un giorno desse fastidio, la strada e'
+    non passare da EX-OS per la copia — ma allora servirebbe un ext2 scritto da
+    Linux, che e' la cosa che mkhd.sh spiega perche' non si fa.
+
+=============================================================================
+@RETE L'AGGIORNAMENTO DALLA RETE (aperto il 7 settembre 2026)
+=============================================================================
+
+L'IDEA IN UNA RIGA: il sistema si pubblica su un server FTP o HTTP, e da dentro
+EX-OS `netupdate` lo aggiorna e ci installa sopra le applicazioni, con le loro
+librerie e senza portarsi via quelle che servono a qualcun altro.
+
+! IL CATALOGO NON SI INVENTA: C'E' GIA'. tools/iso/strumenti.txt e' un catalogo
+  di pacchetti con le dipendenze, letto da `toolinst`, e ha gia' le chiavi che
+  servono qui:
+
+      nome   come si chiama, per chi installa
+      dice   cosa contiene, in una riga
+      prova  un percorso che, se c'e', dice che il pacchetto c'e' davvero
+      vuole  un pacchetto da cui questo dipende  <- LE DIPENDENZE
+      mbyte  quanto pesa, per dirlo PRIMA di cominciare
+      sempre si -> non si puo' togliere
+      solo   un percorso che appartiene SOLO a questo pacchetto
+      file   un NOME di file che appartiene solo a questo, ovunque stia
+      nota   un avvertimento da stampare a chi lo sceglie
+
+  Ed ha gia' la regola che conta: si dichiara che cosa e' SOLO di un gruppo,
+  non che cosa va copiato — cosi' un file nuovo non resta indietro in silenzio.
+  Partire da qui vuol dire un formato solo, gia' scritto e gia' provato, invece
+  di due che divergono. La spiegazione per esteso e' in testa a quel file.
+
+-----------------------------------------------------------------------------
+ 1. @NETINST `make netinst` — LA DIRECTORY DA PUBBLICARE
+
+    Crea dist/netinst/ (da mettere in .gitignore, come il resto di dist/) con
+    dentro il sistema INTERO, gia' compilato e funzionante, nella forma in cui
+    va appoggiato su un server FTP o HTTP: i file, il catalogo dei pacchetti, e
+    un file di versione che netupdate legge per primo.
+
+    QUEL CHE VA DECISO PRIMA DI SCRIVERE UNA RIGA:
+
+      - il file di versione. Deve dire almeno: versione del sistema, data,
+        e per OGNI file pubblicato la sua versione e la sua impronta. Senza
+        impronta un aggiornamento interrotto a meta' non si distingue da uno
+        riuscito, e la volta dopo non si riscarica.
+      - kernel e bootloader NON sono file come gli altri: vedi @NET-CHECK.
+
+    ! SI CONFRONTA FILE PER FILE, NON PACCHETTO PER PACCHETTO, ed e' la ragione
+      per cui elenco.txt ha un'impronta per OGNI file invece di una per
+      pacchetto. Se sul server sono cambiati solo `ls` e `fdisk`, netupdate
+      deve proporre — e scaricare — solo quei due. Un confronto per pacchetto
+      farebbe riscaricare l'intero sistema per due programmi, e su una linea
+      lenta e' la differenza fra un aggiornamento che si fa e uno che si
+      rimanda per sempre.
+
+ 2. @NET-DB IL CATALOGO E IL REGISTRO
+
+    Due cose diverse, e confonderle e' il primo modo di sbagliare:
+
+      IL CATALOGO sta sul SERVER e dice cosa esiste: nomi, versioni, pesi,
+      dipendenze. E' strumenti.txt allargato.
+
+      IL REGISTRO sta sulla MACCHINA e dice cosa c'e' installato: per ogni
+      pacchetto la versione, e L'ELENCO DEI FILE che gli appartengono. Serve
+      a `-remove` (che senza non sa cosa togliere) e a `-check` (che senza non
+      sa cosa confrontare). Va riscritto a ogni installazione, aggiornamento e
+      rimozione, o mente — e un registro che mente e' peggio di nessun
+      registro, perche' `-remove` cancella quel che ci trova scritto.
+
+    ! LE LIBRERIE CONDIVISE SI CONTANO, NON SI INDOVINANO. Se xlib serve a
+      xapp e a yapp, togliere xapp non deve portarsela via. La forma minima e'
+      che il registro sappia rispondere a «chi usa xlib?»: si toglie solo cio'
+      che non risponde nessuno, e per il resto si stampa la riga «xlib resta:
+      la usano yapp, zapp». Dirlo e' parte del lavoro, non un extra: chi non
+      lo vede pensa che la rimozione sia fallita.
+
+ 3. @NET-SET `netupdate -set` — IL FILE DI CONFIGURAZIONE
+
+    Scrive /boot/netupdate.cnf chiedendo:
+
+      - il TIPO: FTP, FTPS, HTTP, HTTPS
+      - l'URL da cui leggere il file di versione, l'elenco e il resto
+      - se controllare AUTOMATICAMENTE al primo accesso, o solo quando lo si
+        chiede dalla riga di comando
+
+    ! FTPS E HTTPS VOGLIONO LA TLS, e la TLS oggi ha un limite scritto qui
+      sotto (@DIF-TLS): dentro un singolo passo della stretta non si respira.
+      Vanno previsti nel formato del file — un campo si scrive una volta — ma
+      il primo che deve funzionare e' HTTP, e poi FTP.
+
+ 4. @NET-CHECK `netupdate -check` — AGGIORNARE SENZA RESTARE A PIEDI
+
+    Legge la configurazione, si collega, confronta le versioni, mostra cosa e'
+    aggiornabile e CHIEDE se procedere. Poi scarica e installa.
+
+    ! LA PARTE DIFFICILE E' UNA SOLA, E NON E' LA RETE: aggiornare kernel,
+      bootloader e sistema di base lasciando una macchina che RIPARTE. Su ext2
+      il kernel non e' contiguo, e il settore di avvio contiene la MAPPA DEI
+      SETTORI del file: copiare sopra il kernel senza rifare la mappa da' un
+      disco che non parte piu' — e' il patto LILO, scritto in tools/mkhd.sh e
+      gia' pagato una volta.
+
+      Quindi la sequenza non puo' essere «sovrascrivo e spero». La forma che
+      regge e':
+
+        - si scarica il kernel nuovo in un file NUOVO, accanto al vecchio;
+        - si verifica l'impronta PRIMA di toccare qualunque cosa;
+        - si scrive la mappa dei settori del file nuovo nel settore di avvio;
+        - il kernel vecchio RESTA, e il suo nome resta noto, cosi' che si possa
+          tornare indietro.
+
+      E l'ordine e' obbligatorio: il settore di avvio si tocca per ULTIMO,
+      quando il file nuovo e' gia' li' ed e' gia' stato verificato. Una
+      macchina che si spegne durante l'aggiornamento deve ritrovarsi o il
+      sistema vecchio o quello nuovo, mai un mezzo dei due.
+
+ 5. @NET-APP `netupdate -install` E `-remove`
+
+        netupdate -install:list tes     mostra le app il cui nome contiene «tes»
+        netupdate -install:nomeapp      l'app e tutto cio' che le serve
+        netupdate -remove:nomeapp       l'app e le librerie che non servono ad altri
+
+    `-install:nomeapp` verifica PRIMA che ci sia tutto quel che serve a farla
+    funzionare (le `vuole` del catalogo, in catena), dice cosa scarichera' e
+    quanto pesa, chiede conferma, e solo allora scarica e installa. Esempio
+    dell'utente: `-install:gcc` installa l'intero pacchetto che fa funzionare
+    il compilatore, non il solo binario — che e' esattamente cio' che toolinst
+    gia' sa fare per il CD, e per la ragione scritta li' dentro (gcc si cerca
+    addosso, non nel PATH).
+
+    `-remove:nomeapp` toglie l'app e le sue librerie SE non le usa nessun
+    altro, e per quelle che restano stampa chi le tiene in vita.
+
+-----------------------------------------------------------------------------
+ 6. @NET-TARGZ GLI ARCHIVI: tar.gz, E COSTA MENO DI QUANTO SEMBRI
+
+    Un'applicazione e' una o piu' directory con dentro uno o piu' file, e
+    scaricarli uno per uno vuol dire un giro di rete per ognuno. Per le APP
+    conviene un archivio.
+
+    ! E IL PEZZO DIFFICILE C'E' GIA'. lib/eximg/inflate.c fa DEFLATE (RFC
+      1951) ed e' in uso da mesi — lo usano PNG e GIF — e lib/exhttp/http.c
+      ha perfino il commento «che sapremmo pure srotolare, inflate c'e'».
+      gzip e' un'intestazione di dieci byte, un flusso DEFLATE e un CRC32 in
+      coda; tar e' un'intestazione di 512 byte per file, in ASCII ottale.
+      Quindi tar.gz non e' «portare dentro zlib»: sono due lettori piccoli
+      sopra una cosa che gia' funziona, e non serve nessun sorgente esterno.
+
+    ! MA inflate() NON ALLOCA E NON FA STREAMING: vuole il buffer d'uscita dal
+      chiamante, tutto in una volta (sta scritto in lib/eximg/inflate.h, ed e'
+      voluto: su EX-OS free() non restituisce niente, quindi allocare dentro
+      un ciclo e' una perdita permanente). La misura da usare c'e', ed e' negli
+      ultimi quattro byte del gzip (ISIZE), ma resta il fatto che un archivio
+      si srotola INTERO IN MEMORIA.
+
+      Conseguenza pratica, e va decisa: tar.gz va bene per un'app normale —
+      qualche megabyte — e NON va bene per gli strumenti, che sono 150 MB.
+      Quindi le due strade convivono e non si escludono:
+
+          file per file   il sistema di base, e gli alberi grossi
+          tar.gz          una app e le sue librerie, in un giro solo
+
+      Se un giorno servisse anche per i grossi, la strada e' un inflate che
+      lavora a pezzi — e allora conviene guardarlo li', non riscrivere tutto.
+
+    ! zip NON E' PIU' SEMPLICE, e sembra: il suo indice sta in FONDO al file,
+      quindi per sapere cosa c'e' dentro bisogna avere gia' scaricato tutto o
+      saper leggere all'indietro. Su una connessione e' un giro in piu'. tar.gz
+      si legge dall'inizio alla fine, che e' come arriva dalla rete.
+
+-----------------------------------------------------------------------------
+QUEL CHE C'E' GIA', e non va riscritto:
+
+    tools/iso/strumenti.txt   il catalogo con le dipendenze, e la sua idea
+    bin/toolinst              legge il catalogo, risolve i gruppi, copia
+    bin/ftp                   un client FTP
+    il navigatore             sa parlare HTTP (e sa fare una GET)
+    libssl / libcrypto        la TLS, coi limiti di @DIF-TLS
+    lib/eximg/inflate.c       DEFLATE (RFC 1951), gia' in uso da PNG e GIF
+    bin/install               scrive MBR, settore di avvio e mappa dei settori
+    kernel/include/version.h  la versione, una sola e vera
+
+=============================================================================
 @DIFETTI DIFETTI APERTI
 =============================================================================
 
@@ -339,8 +565,26 @@ QUEL CHE C'E' GIA' PRONTO DA PROVARE, sul CD:
     stato e' PROC_NASCENTE e nessuna via di risveglio lo conosce; in piu'
     sched_unblock_locked scrive un [WARN] se qualcuno ci prova.
     NON E' PROVATO CHE FOSSE QUELLA: 18 avvii senza la correzione non l'hanno
-    riprodotto, quindi la misura non distingue. Se il fault ricompare, il
-    [WARN] dira' se e' quella strada o un'altra.
+    riprodotto, quindi la misura non distingue.
+
+    ! IL 7 SETTEMBRE 2026 IL FAULT E' RICOMPARSO, E IL [WARN] NON C'ERA. Quindi
+      la strada del risveglio per PID non e' quella, e resta chiusa. Ma il
+      fault visto quel giorno NON era di un driver: era un FILO, e la sua causa
+      e' stata trovata e corretta (diario, 7 settembre: «UN FILO PARTIVA CON LA
+      PILA A ZERO»). proc_thread_crea passava a proc_create un `entry` diverso
+      da zero, e con quello proc_create mette il task in coda di esecuzione
+      SUBITO: il filo partiva con l'EIP giusto e ESP a zero, perche' nel
+      contesto iniziale ECX riceve `proc->user_stack_top`, che di un PCB appena
+      nato e' zero.
+
+    ! PERCIO' LA FIRMA «stack 0x0..0x0» ADESSO HA DUE PADRI POSSIBILI, e uno e'
+      chiuso. Per un DRIVER resta aperta, perche' sys_spawn il contratto di
+      proc_create lo rispettava gia' (passa entry=0, carica l'ELF, e solo
+      allora proc_set_ready). Chi riprende cerchi UN ALTRO posto dove un task
+      diventa eseguibile prima di essere pronto — e la strada per provarlo a
+      comando adesso c'e': una sched_yield() messa apposta nella finestra
+      sospetta trasforma la corsa in una certezza, che e' come e' stato
+      inchiodato il difetto dei fili.
 
 ! @DIF-PANIC IL PANIC NON C'E' PIU', MA CHI SCRIVEVA LA MISURA SBAGLIATA
   FORSE SI'. Riscritto il 7 settembre 2026; quel che segue e' com'era e cosa
@@ -658,11 +902,6 @@ QUEL CHE MANCA:
     le piazzole nella banda. Alzarlo vuol dire allargare la banda, cioe'
     abbassare heap_max: e' un numero, non un lavoro.
 
- 2. @FILI-FAULT UN FILO CHE MUORE DI PAGE FAULT NON PORTA VIA IL PROCESSO. Muore lui e il
-    programma prosegue, magari con un lucchetto preso da chi non c'e' piu' —
-    che e' esattamente la situazione per cui la cancellazione e' cooperativa.
-    Su Linux un segnale fatale porta via tutto il gruppo. Si vede con
-    `filiprova sfonda`, che oggi lo DICHIARA invece di lamentarsene.
 
 =============================================================================
 @RUST RUST SU EX-OS (aperto il 4 settembre 2026)

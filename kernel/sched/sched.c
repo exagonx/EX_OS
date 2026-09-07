@@ -1149,7 +1149,34 @@ int proc_thread_crea(uint32_t entry, uint32_t arg)
         }
     }
 
-    filo = proc_create(capo->name, entry, capo->priority, 0);
+    /* ! L'ENTRY SI PASSA ZERO, E NON E' UNA SVISTA CORRETTA: e' il contratto
+     * di proc_create, che con entry != 0 mette il task in coda di esecuzione
+     * SUBITO. Il commento di proc_create lo dice da sempre — «processo utente
+     * con entry=0: NASCENTE, il chiamante deve fare elf_load() e
+     * proc_set_entry() prima di proc_set_ready(), cosi' lo scheduler non salta
+     * al processo prima che entry point e stack siano pronti» — e sys_spawn lo
+     * rispetta. Questa funzione no, e per questo un filo poteva partire con
+     *
+     *     ESP = 0
+     *
+     * Il perche' e' in proc_create: nel contesto iniziale ECX riceve
+     * `proc->user_stack_top`, che di questo PCB e' ancora ZERO — la piazzola
+     * del filo la costruisce questa funzione, cento righe piu' sotto. EAX
+     * invece riceve l'entry, che e' giusta. Quindi il filo partiva con l'EIP
+     * BUONO e la pila a zero: scendeva sotto zero, l'indirizzo girava intorno,
+     * e moriva a 0xfffffff0 — mentre nel PCB user_stack_limit e top erano
+     * ancora 0x0 e 0x0, che e' la firma con cui il difetto era stato
+     * registrato senza spiegazione.
+     *
+     * L'entry vera e l'ESP vero li mette proc_set_entry(), in fondo, subito
+     * prima di proc_set_ready(): li' c'erano gia', ed erano gia' nell'ordine
+     * giusto. Mancava solo che nessuno potesse eseguire il filo prima.
+     *
+     * ! LA CORSA SI RIPRODUCE A COMANDO mettendo una sched_yield() qui in
+     * mezzo: senza questa riga a zero il filo muore ogni volta, con
+     * «stack 0x00000000..0x00000000»; con questa riga a zero la stessa
+     * sched_yield() non cambia niente. Misurato il 7 settembre 2026. */
+    filo = proc_create(capo->name, 0, capo->priority, 0);
     if (filo == NULL) return ERR(EAGAIN);   /* pool dei PCB esaurito */
 
     /* ! LA PAGE DIRECTORY NUOVA CHE proc_create HA APPENA FATTO SI BUTTA, e
@@ -1415,8 +1442,24 @@ void proc_gruppo_termina(uint32_t tgid, uint32_t risparmia_pid)
     }
 }
 
-void proc_exit(int32_t exit_code)
+/* Il corpo di proc_exit() e di proc_esci_fatale(): la differenza e' una sola
+ * domanda — questa uscita e' un GUASTO? — e sta scritta qui sotto, dov'e' la
+ * riga che la usa.
+ *
+ * ! «CHI ESCE» E «PERCHE' ESCE» SONO DUE COSE DIVERSE, e fino al 7 settembre
+ * 2026 questa funzione ne guardava una sola. Decideva se portare via il gruppo
+ * in base a CHI stava uscendo — capogruppo si', filo no — e per un'uscita
+ * volontaria e' giusto: thread_esci() e' un filo che ha finito il suo lavoro.
+ * Ma un page fault non e' un'uscita volontaria, e per un guasto la risposta
+ * dipende dal PERCHE': muore uno e restano gli altri, magari con un lucchetto
+ * in mano preso da chi non c'e' piu' — che e' esattamente la situazione per
+ * cui la cancellazione qui e' cooperativa e non si puo' fare altrimenti. Su
+ * Linux un segnale fatale porta via tutto il thread group, per la stessa
+ * ragione. */
+static void proc_esci(int32_t exit_code, int fatale)
 {
+    uint32_t ppid_erede = 0;    /* chi aspetta il gruppo, se a morire e' un filo */
+
     interrupts_disable();
 
     klog(LOG_INFO, "SCHED: PID %u '%s' terminato con codice %d",
@@ -1428,7 +1471,13 @@ void proc_exit(int32_t exit_code)
      * lascerebbe la console con un primo piano che non esiste piu': la
      * shell tornerebbe al prompt e leggerebbe la fine dell'input a ogni
      * tentativo, cioe' un prompt vivo che non accetta piu' un comando. */
-    if (sched_console_fg(g_current->console) == g_current->pid) {
+    if (sched_console_fg(g_current->console) == g_current->pid ||
+        (fatale && sched_console_fg(g_current->console) == g_current->tgid)) {
+        /* ! E SE A MORIRE E' UN FILO, IL PRIMO PIANO E' DEL CAPOGRUPPO. Il
+         * confronto col proprio pid non lo troverebbe mai, e la console
+         * resterebbe con in primo piano un programma che sta per non esserci
+         * piu': la shell tornerebbe al prompt e leggerebbe la fine
+         * dell'input a ogni tentativo. */
         sched_set_console_fg(g_current->console, 0);
     }
 
@@ -1443,6 +1492,37 @@ void proc_exit(int32_t exit_code)
      * niente — i descrittori sono del gruppo, la memoria e' del gruppo. */
     if (g_current->pid == g_current->tgid) {
         proc_gruppo_termina(g_current->tgid, g_current->pid);
+    } else if (fatale) {
+        /* ! UN FILO CHE MUORE DI GUASTO PORTA VIA IL GRUPPO, e il codice di
+         * uscita si scrive sul CAPOGRUPPO: e' il suo pid che il padre sta
+         * aspettando con waitpid, non quello del filo (un filo non e' figlio
+         * di nessuno fuori dal gruppo — vedi proc_thread_crea). Senza questa
+         * riga il padre leggerebbe zero da un programma morto di page fault.
+         *
+         * ! E IL PADRE DA SVEGLIARE E' QUELLO DEL CAPOGRUPPO. Il `ppid` di un
+         * filo sta dentro il gruppo e punta a un task che fra due righe sara'
+         * zombie anche lui: svegliare quello vorrebbe dire non svegliare
+         * nessuno, e la shell resterebbe ferma in waitpid con tutto il gruppo
+         * gia' morto. */
+        Process *capo = proc_get_by_pid(g_current->tgid);
+
+        if (capo != NULL) ppid_erede = capo->ppid;
+
+        klog(LOG_ERROR, "SCHED: il filo %u e' morto di guasto (%d): porta via "
+             "il gruppo %u", g_current->pid, exit_code, g_current->tgid);
+
+        /* Da qui in poi si prosegue come se a uscire fosse il capogruppo: i
+         * descrittori del gruppo si chiudono, e il padre si sveglia. */
+        proc_gruppo_termina(g_current->tgid, g_current->pid);
+
+        /* ! IL CODICE SI SCRIVE DOPO, e la prima volta era scritto prima —
+         * con l'effetto che la shell leggeva «codice 0» da un programma morto
+         * di page fault. proc_gruppo_termina AZZERA l'exit_code di ogni membro
+         * che porta via, capogruppo compreso: e' giusto per i fili, che non
+         * sono morti di niente, ma il capogruppo qui e' il portavoce del
+         * guasto — e' il suo pid che il padre aspetta, ed e' il suo exit_code
+         * che il padre legge. */
+        if (capo != NULL) capo->exit_code = exit_code;
     } else {
         g_current->state = PROC_ZOMBIE;
         g_proc_count--;
@@ -1488,8 +1568,8 @@ void proc_exit(int32_t exit_code)
      * Nota: usiamo sched_unblock_locked() perche' siamo gia' dentro una
      * sezione cli (vedi interrupts_disable() in cima a questa funzione): la
      * sched_unblock() pubblica farebbe sti() troppo presto. */
-    if (g_current->ppid != 0) {
-        uint32_t ppid = g_current->ppid;
+    if (ppid_erede != 0 || g_current->ppid != 0) {
+        uint32_t ppid = ppid_erede ? ppid_erede : g_current->ppid;
         int parent_alive = 0;
         uint32_t j;
         for (j = 0; j < MAX_PROCESSES; j++) {
@@ -1500,7 +1580,7 @@ void proc_exit(int32_t exit_code)
                 break;
             }
         }
-        if (!parent_alive && g_init_task != NULL) {
+        if (!parent_alive && g_init_task != NULL && ppid_erede == 0) {
             klog(LOG_DEBUG, "SCHED: PID %u orfano, adottato da init (PID %u)",
                  g_current->pid, g_init_task->pid);
             g_current->ppid = g_init_task->pid;
@@ -1517,6 +1597,21 @@ void proc_exit(int32_t exit_code)
 
     /* Non ritorna */
     for (;;) __asm__ volatile ("hlt");
+}
+
+/* Uscita VOLONTARIA. Il capogruppo porta via il gruppo (e' exit_group), un
+ * filo se ne va da solo (e' thread_esci). */
+void proc_exit(int32_t exit_code)
+{
+    proc_esci(exit_code, 0);
+}
+
+/* Uscita per GUASTO: page fault, eccezione, interruzione da tastiera. Porta
+ * via il gruppo chiunque sia a morire — vedi il commento in testa a
+ * proc_esci(). */
+void proc_esci_fatale(int32_t exit_code)
+{
+    proc_esci(exit_code, 1);
 }
 
 /* =============================================================================

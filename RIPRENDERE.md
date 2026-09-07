@@ -28,6 +28,283 @@ manca» apre quello.
 
 # DOVE RIPRENDERE — 7 settembre 2026
 
+## 7 settembre 2026 — `make usb`: L'AMBIENTE INTERO SU UNA CHIAVETTA, E LA PAROLA DA BATTERE
+
+Voce nuova nel Makefile:
+
+    make usb DISPOSITIVO=/dev/sdX [MB=1024]
+
+Prepara una chiavetta avviabile con sopra il sistema, i programmi, i driver e
+gli strumenti di sviluppo — gcc, as, ld, make, nasm, le librerie.
+
+### PERCHE' SERVE
+
+Gli strumenti stanno sul CD, che e' in SOLA LETTURA. Per compilare dentro EX-OS
+bisogna comunque procurarsi altrove un ext2 dove scrivere, e la ricetta per
+farlo e' un compito a se' (@PROVE-STRUMENTI, e costa mezz'ora ogni volta che la
+si ritrova). Su una chiavetta il compilatore e la directory di lavoro stanno
+sullo stesso volume, e la ricetta sparisce. E' anche l'unico modo di far girare
+EX-OS su una macchina vera senza toccarne il disco.
+
+### LA PAROLA DA BATTERE, E PERCHE' NON E' UN TASTO
+
+La chiavetta viene FORMATTATA: partizione, filesystem, file, tutto perso. Non
+c'e' un modo gentile di farlo — serve una tabella delle partizioni nostra, un
+settore di avvio nostro e un ext2 nostro — quindi la sola cosa che si puo' fare
+e' non farlo mai per sbaglio. Prima di toccare un settore lo script stampa
+dispositivo, modello, dimensione e cosa ci trova sopra, e poi aspetta che si
+BATTA la parola `confirm`.
+
+! UN [s/n] SI RISPONDE COL DITO PRIMA CHE CON LA TESTA. Chi ha appena battuto
+  tre comandi di fila batte anche il quarto. Una parola da COPIARE obbliga a
+  leggere la riga in cui e' scritta, che e' proprio la riga dove c'e' il nome
+  del dispositivo. Il costo di sbagliare qui non e' una costruzione da rifare:
+  e' il disco di qualcuno.
+
+! E SI LEGGE DA UN TERMINALE. Una conferma che si puo' mandare da una pipe non
+  e' una conferma: e' un parametro, e domani finisce dentro uno script che se
+  la scrive da sola. Se stdin non e' un terminale, non si procede.
+
+### I RIFIUTI, TUTTI PRIMA DI COSTRUIRE
+
+    manca DISPOSITIVO        e non si cerca da solo: un programma che indovina
+                             su quale disco scrivere prima o poi indovina male
+    non e' un blocco         serve il disco, /dev/sdb
+    e' una PARTIZIONE        /dev/sdb1 -> «usa /dev/sdb»: tabella e settore di
+                             avvio si scrivono sul disco
+    non e' rimovibile        il caso normale dev'essere impossibile; c'e' uno
+                             sblocco esplicito (EXOS_USB_FORZA=1) per chi sa
+    e' MONTATO               con l'elenco di dove
+    e' il disco del repo     no
+    non ci posso scrivere    «sudo make usb ...», detto ADESSO e non dopo
+    e' piu' piccola di MB
+
+! TUTTI PRIMA DI COSTRUIRE, E NON PRIMA DI SCRIVERE. Mezz'ora di costruzione
+  che finisce con «questo dispositivo non va bene» e' mezz'ora buttata, e la
+  volta dopo si e' tentati di saltare il controllo. Vale anche per il permesso
+  di scrittura, che serve solo all'ultima riga.
+
+### SI COSTRUISCE UN'IMMAGINE, E SOLO ALLA FINE SI SCRIVE
+
+QEMU non tocca mai la chiavetta. Formattare e installare vogliono decine di
+comandi dentro EX-OS, e ognuno e' un'occasione di sbagliare bersaglio: farli su
+un file dentro `dischi/` vuol dire che il momento pericoloso e' UNO, e' alla
+fine, ed e' una riga sola. Se qualcosa va storto prima, la chiavetta non e'
+stata nemmeno aperta.
+
+Quattro passi:
+
+    1/4  qemu-img + sfdisk: una partizione primaria tipo 83, attiva, a 2048
+    2/4  QEMU: mkfs -t ext2, mount, install -t     (il sistema, dal floppy)
+    3/4  QEMU: mount, toolinst -y                  (gli strumenti, dal CD)
+    4/4  dd sull'unico momento pericoloso
+
+! DUE GIRI DI QEMU E NON UNO, ed e' voluto: `install` guarda cosa trova sul
+  supporto per proporre i componenti opzionali, e col CD degli strumenti gia'
+  attaccato si troverebbe davanti un albero che non e' suo. Il sistema si
+  installa dal floppy, gli strumenti dal loro CD, e ognuno vede solo il proprio.
+
+! E LA FORMATTAZIONE LA FA EX-OS, NON LINUX. La ragione e' scritta per esteso
+  in tools/mkhd.sh e vale identica: `mke2fs` accende di serie estensioni che il
+  driver di EX-OS rifiuta, e ogni versione di e2fsprogs ne accende di nuove. E
+  `install` non copia solo file — scrive l'MBR, il settore di avvio della
+  partizione e la MAPPA DEI SETTORI del kernel, che su ext2 non e' contiguo.
+  Rifare quel calcolo da Linux vorrebbe dire due implementazioni dello stesso
+  formato, e la seconda sbaglierebbe in silenzio.
+
+### LA RIGA DEL SUCCESSO SI E' LETTA NEL SORGENTE, NON INDOVINATA
+
+Il controllo che `toolinst` sia andato bene cerca «Fatto. Al prossimo avvio»,
+che e' cio' che toolinst.c stampa davvero, e in piu' guarda se ha contato
+errori («Finito con N errori»): toolinst arriva in fondo lo stesso, ma un
+compilatore installato a meta' non e' installato.
+
+! UN CONTROLLO CHE CERCA UNA PAROLA CHE IL PROGRAMMA NON STAMPA MAI FALLISCE
+  SEMPRE, e allora si finisce per toglierlo — cioe' per non controllare piu'
+  niente. Costava trenta secondi aprire il sorgente.
+
+### COME E' STATO PROVATO, E COSA NON LO E'
+
+Su questa macchina non c'e' nessun dispositivo rimovibile, quindi:
+
+  - i rifiuti sono stati provati uno per uno su cose vere: un file qualunque,
+    /dev/sda2 (partizione), /dev/sda (non rimovibile, poi montato, poi disco
+    del repository), e senza permesso di scrittura;
+  - la conferma e' stata provata nei tre modi — da pipe (rifiutata), parola
+    sbagliata (rifiutata, «non e' stato toccato niente»), parola giusta;
+  - e lo script INTERO, dal `confirm` al `dd`, e' stato fatto girare su una
+    CHIAVETTA FINTA: un file sparso da 1,2 GB con accanto un /sys finto che
+    dice `removable=1`. Per quella strada fa tutto, e il `dd` finale scrive
+    davvero — su un file.
+
+! QUEL CHE RESTA DA PROVARE E' SCRITTO IN in_lavorazione.txt (@USB) e non qui:
+  una chiavetta vera, e soprattutto un BIOS vero che ci si avvii. La partizione
+  oggi e' UNA sola, ext2; se un BIOS si rifiutasse di partire da li', la strada
+  e' due partizioni con una FAT piccola per l'avvio — e questo si scopre
+  provando, non ragionando.
+
+! GLI STRUMENTI CI METTONO VENTI MINUTI dentro QEMU: 1417 file, 150 MB, da un
+  CD emulato a un ext2 emulato. Misurato, non stimato.
+
+
+## 7 settembre 2026 — UN FILO PARTIVA CON LA PILA A ZERO, E ADESSO SI SA PERCHE'
+
+Trovato per caso, provando `@FILI-FAULT`: lanciando `filiprova sfonda &` — in
+SOTTOFONDO — una volta e' morto cosi'
+
+    [FAULT] PID 15 '/bin/filiprova': page fault a 0xfffffff0 (pagina assente,
+            scrittura, EIP=0x0800096b) - processo terminato
+    [ERROR] PF:  heap 0x08005000..0x08005000 (tetto 0xbff44000),
+                 stack 0x00000000..0x00000000
+
+invece che sulla guardia. E' la firma che il file dei lavori registrava senza
+spiegazione dal 24 agosto: «lo STACK del processo e' 0x0..0x0».
+
+### IL CONTO DICE CHE ESP ERA ZERO
+
+`0x0800096b` sta dentro `filo_sfonda`, ed e'
+
+    8000960:  sub    $0x241c,%esp
+    8000966:  mov    0x8004008,%eax
+    800096b:  mov    %eax,0x240c(%esp)     <- qui
+
+Se l'indirizzo che fallisce e' `esp + 0x240c = 0xfffffff0`, allora
+`esp = 0xffffdbe4`, e prima del `sub` era `0xffffdbe4 + 0x241c`, cioe' ZERO
+esatto (modulo 2^32). Il filo non ha sfondato la pila: non ne aveva una.
+
+### E IL [WARN] CHE DOVEVA DIRCELO NON C'ERA
+
+Il file dei lavori diceva: «se il fault ricompare, il [WARN] dira' se e' quella
+strada o un'altra», riferendosi al risveglio PER PID di un task ancora
+NASCENTE, chiuso il 24 agosto. Nel registro di quell'avvio quel [WARN] NON
+C'E'. Quindi era un'altra strada, e la strada chiusa resta chiusa.
+
+### DOV'ERA: proc_thread_crea NON RISPETTAVA IL CONTRATTO DI proc_create
+
+`proc_create` decide da se' se il task e' gia' eseguibile:
+
+    if (is_kernel_task || entry_point != 0) { proc->state = PROC_READY; runq_add(proc); }
+    else                                    { proc->state = PROC_NASCENTE; }
+
+e il commento accanto lo dice per esteso: con `entry = 0` il chiamante deve
+fare `elf_load()` e `proc_set_entry()` PRIMA di `proc_set_ready()`, «cosi' lo
+scheduler non salta al processo prima che entry point e stack siano pronti».
+`sys_spawn` lo rispetta: passa 0, carica l'ELF, e solo alla fine mette pronto.
+
+`proc_thread_crea` passava `entry` — l'indirizzo della funzione del filo, che
+non e' zero. Quindi il filo entrava in coda di esecuzione SUBITO, e la sua
+piazzola, il suo TLS e il suo ESP venivano costruiti cento righe piu' sotto.
+
+E il dettaglio che spiega la firma sta dentro `proc_create`, dove si costruisce
+il contesto iniziale:
+
+    *(--sp) = entry_point;                              /* EAX: entry point */
+    *(--sp) = is_kernel_task ? 0 : proc->user_stack_top;  /* ECX: user esp   */
+
+EAX riceve l'entry, che e' GIUSTA. ECX riceve `proc->user_stack_top`, che di un
+PCB appena nato e' ZERO — la piazzola non esiste ancora. Ecco perche' il filo
+partiva con l'EIP buono e la pila a zero, invece di saltare a zero e basta.
+
+### LA CURA E' UN ARGOMENTO
+
+    filo = proc_create(capo->name, 0, capo->priority, 0);
+
+e nient'altro: in fondo alla funzione `proc_set_entry(filo, entry, esp)` e
+`proc_set_ready(filo)` c'erano gia', ed erano gia' nell'ordine giusto.
+Mancava solo che nessuno potesse eseguire il filo prima.
+
+### PROVATO A COMANDO, NON ASPETTANDO CHE RICAPITI
+
+Una `sched_yield()` messa apposta fra `proc_create` e il resto trasforma la
+corsa in una certezza:
+
+    con `entry` diverso da zero, e la sched_yield:   MUORE OGNI VOLTA
+        [FAULT] PID 15 ... page fault a 0x080000b0
+        [ERROR] PF:  heap 0x0..0x0 (tetto 0x0), stack 0x00000000..0x00000000
+
+    con `entry` a zero, e la STESSA sched_yield:     filiprova tls: tutto a posto
+                                                     filiprova:     tutto a posto
+
+Poi la sched_yield e' stata tolta, e i dodici modi di `filiprova` passano tutti.
+
+! NON CHIUDE @DIF-DRIVER. Il difetto del driver che muore appena avviato ha la
+  stessa firma, ma sys_spawn il contratto lo rispettava gia': quella strada
+  resta aperta e va cercata altrove. Quel che si chiude e' la riga del 4
+  settembre che diceva «un task e' partito con ESP A ZERO... UNA VOLTA SOLA»
+  provando i fili: quella era questa.
+
+## 7 settembre 2026 — UN FILO CHE MUORE DI GUASTO PORTA VIA IL GRUPPO
+
+`@FILI-FAULT`. Un filo che moriva di page fault se ne andava da solo, e il
+programma proseguiva — con dentro un flusso morto, magari con un lucchetto in
+mano preso da chi non c'e' piu'. E' esattamente la situazione per cui la
+cancellazione qui e' cooperativa: da fuori un filo non si puo' interrompere
+senza lasciare le strutture a meta', quindi un filo che muore male non lascia
+scelta. Su Linux un segnale fatale porta via tutto il thread group, per la
+stessa ragione.
+
+### «CHI ESCE» E «PERCHE' ESCE» SONO DUE COSE DIVERSE
+
+`proc_exit` guardava solo la prima: capogruppo si', filo no. Per un'uscita
+VOLONTARIA e' giusto — `thread_esci()` e' un filo che ha finito. Per un GUASTO
+la risposta dipende dal perche', non da chi.
+
+Quindi il corpo e' diventato `proc_esci(codice, fatale)` con due porte:
+
+    proc_exit(codice)          uscita volontaria: sys_exit, thread_esci
+    proc_esci_fatale(codice)   guasto: page fault, eccezione, Ctrl+C
+
+e i tre chiamanti che sono guasti — `page_fault_handler`, l'handler delle
+eccezioni in isr.c, e l'interruzione da tastiera in syscall.c — usano la
+seconda. (Anche Ctrl+C su un programma a piu' fili adesso li porta via tutti,
+che e' quel che fa qualunque shell.)
+
+### TRE DETTAGLI CHE SI PAGANO SE SI SBAGLIANO
+
+  - **Il codice di uscita si scrive sul CAPOGRUPPO**, perche' e' il suo pid che
+    il padre aspetta con waitpid — un filo non e' figlio di nessuno fuori dal
+    gruppo. E si scrive DOPO `proc_gruppo_termina`, non prima: quella azzera
+    l'exit_code di ogni membro che porta via, capogruppo compreso. Scrivendolo
+    prima, la shell leggeva «codice 0» da un programma morto di page fault —
+    visto, e corretto.
+
+  - **Il padre da svegliare e' quello del capogruppo.** Il `ppid` di un filo
+    sta dentro il gruppo e punta a un task che fra due righe sara' zombie anche
+    lui: svegliare quello vorrebbe dire non svegliare nessuno, e la shell
+    resterebbe ferma in waitpid con tutto il gruppo gia' morto.
+
+  - **Il primo piano della console e' del capogruppo.** Il confronto col
+    proprio pid non lo trova mai, e la console resterebbe con in primo piano un
+    programma che non c'e' piu'.
+
+### E LA SHELL ADESSO STAMPA IL SEGNO
+
+    [3] terminato: filiprova sfonda (codice 4294967285)   <- prima
+    [3] terminato: filiprova sfonda (codice -11)          <- adesso
+
+`print_uint` su un `int32_t` negativo da' un numero che non somiglia a niente e
+non si cerca da nessuna parte. Aggiunta `print_int` accanto, quattro righe.
+
+### LA PROVA SI LEGGE AL CONTRARIO DELLE ALTRE
+
+`filiprova sfonda` non stampa piu' «tutto a posto»: se va bene NON ARRIVA A
+STAMPARE NIENTE, perche' il processo muore insieme al filo. Il verdetto sta
+fuori — la riga [FAULT], la riga «il filo N e' morto di guasto: porta via il
+gruppo M», il prompt che torna, e il comando dopo che parte pulito. Se invece
+compare «NON CI SI DOVEVA ARRIVARE», il gruppo e' sopravvissuto e il difetto e'
+tornato.
+
+    ex-os:/> filiprova sfonda
+    filiprova: un filo scende senza fondo. Deve morire sulla guardia...
+    [FAULT] PID 73 '/bin/filiprova': page fault a 0xbffa9ee8 ... terminato
+    [ERROR] SCHED: il filo 73 e' morto di guasto (-11): porta via il gruppo 72
+    ex-os:/> hello
+    Ciao da /bin/hello!
+
+I dodici modi di `filiprova` passano, e `libctest` resta 201 superate e 15
+fallite.
+
+
 ## 7 settembre 2026 — IL BERSAGLIO E' TORNATO ALLINEATO ALLA libc
 
 `@ABI-BERSAGLIO` e' chiuso. `tools/ricostruisci-bersaglio.sh` ha rifatto tutto
