@@ -132,6 +132,35 @@ int main(int argc, char **argv)
     }
     printf("blocchi presi: %d\n", n);
 
+    /* Con BANCO_MODO=rotta si riproduce @DIF-PANIC alla lettera: a un blocco
+     * si SOVRASCRIVE la misura nell'intestazione con un numero assurdo — che
+     * e' quel che fa chi scrive oltre il proprio blocco — e poi lo si libera.
+     *
+     * Prima del 7 settembre 2026 kfree calcolava `blocco + intestazione +
+     * misura`, ci andava a leggere la firma, e moriva li':
+     *
+     *     Page Fault non gestito in ring0 a 0x0421308c (EIP=0x00109610)
+     *     cmpl $0xdeadbeef,0x4(%ebx,%eax,1)     <- questa riga
+     *
+     * Adesso la misura non ci sta nella regione, kfree non la segue, e lo
+     * DICE — perche' la misura sbagliata resta, ed e' l'unico indizio di chi
+     * l'ha scritta. */
+    {
+        const char *modo = getenv("BANCO_MODO");
+
+        if (modo != NULL && modo[0] == 'r' && n > 2) {
+            uint32_t *intestazione = (uint32_t *)a[1] - 5;   /* size, magic, ... */
+
+            printf("\nrompo l'intestazione di %p: misura %u -> %u\n",
+                   a[1], intestazione[0], 0x4206000u);
+            intestazione[0] = 0x4206000u;      /* ~66 MB in una regione da 256 KB */
+            kfree(a[1]);
+            printf("SOPRAVVISSUTO alla misura inventata\n");
+            kmalloc_stats();
+            return 0;
+        }
+    }
+
     /* Con BANCO_ORDINE=primo si libera nell'ordine di presa, che e' il caso
      * che mette alla prova la coalescenza ALL'INDIETRO (quella in avanti li'
      * non trova mai un vicino gia' libero). Serve a verificare che le regioni

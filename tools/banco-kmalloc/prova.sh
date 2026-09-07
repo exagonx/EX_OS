@@ -57,3 +57,8 @@ BANCO_ORDINE=primo "$TMP/banco" || echo ">>> esito $?"
 echo
 echo "=== 3. lo stesso, ma con le guardie LEGGIBILI: quanto heap si rimette insieme ==="
 BANCO_CIECA_LEGGIBILE=1 BANCO_ORDINE=primo "$TMP/banco" -v 2>&1 | tail -8
+
+echo
+echo "=== 4. @DIF-PANIC alla lettera: un'intestazione con una misura inventata ==="
+echo "    (prima del 7 settembre 2026: page fault in ring0 dentro kfree)"
+BANCO_CIECA_LEGGIBILE=1 BANCO_MODO=rotta "$TMP/banco" -v 2>&1 | tail -12 || echo ">>> esito $?"

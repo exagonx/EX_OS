@@ -26,6 +26,181 @@ manca» apre quello.
 
 ---
 
+# DOVE RIPRENDERE — 7 settembre 2026
+
+## 7 settembre 2026 — IL BERSAGLIO E' TORNATO ALLINEATO ALLA libc
+
+`@ABI-BERSAGLIO` e' chiuso. `tools/ricostruisci-bersaglio.sh` ha rifatto tutto
+in un colpo — libc e header nel sysroot, GMP, MPFR, MPC, openlibm, libgcc,
+libstdc++, as e ld nativi, cc1/xgcc/cpp col canadian cross a -j1, OpenSSL, e il
+CD degli strumenti — e adesso
+
+    ABI: il bersaglio e' allineato alla libc corrente
+         (69 forme confrontate, nessuna cambiata).
+
+Prima diceva `tm 36 -> 44`. Il CD degli strumenti e' rifatto e verificato:
+`/exos/bin/gcc` (2 MB) e `/exos/libexec/gcc/i386-exos/17.0.0/cc1` ci sono.
+
+! CIRCA TRE ORE DI MACCHINA, e la parte del leone e' `cc1`, che va a -j1
+  perche' su 4 GB due `gimple-match-*.cc` insieme fanno intervenire il killer
+  OOM. Il resto e' minuti.
+
+! E MENTRE GIRAVA NON SI E' COMPILATO NIENT'ALTRO. Non e' scaramanzia: una
+  build morta per OOM dice «Terminato», che sembra un errore di compilazione e
+  non lo e', e si ricomincia da capo.
+
+## 7 settembre 2026 — LO HEAP DEL KERNEL NON E' UN TRATTO SOLO, E kfree CREDEVA DI SI'
+
+`@DIF-PANIC` diceva: una volta su quattordici, avviando da CD con la rete,
+
+    Page Fault non gestito in ring0 a 0x0421308c (EIP=0x00109610)
+
+### PRIMA COSA: L'EIP SI RISOLVE, E DICE ESATTAMENTE QUALE RIGA
+
+`build/kernel.elf` e' tracciato, quindi il kernel di quel giorno c'e' ancora.
+In `daeec1f` (4 settembre) l'indirizzo cade dentro `kfree`, e l'istruzione e'
+
+    109610:  81 7c 03 04 ef be ad de   cmpl $0xdeadbeef,0x4(%ebx,%eax,1)
+
+con `%ebx` = il puntatore da liberare e `%eax` = `block->size`. Cioe'
+`(%ebx,%eax,1)` = `block + intestazione + block->size` = **`block_next_phys`**,
+e il `+4` e' il campo della firma: e' `block_valid(next_phys)`, la coalescenza
+in avanti. La nota diceva il vero.
+
+! E DICE ANCHE UNA SECONDA COSA, CHE NESSUNO AVEVA LETTO. Per arrivare a
+  0x0421308c partendo da un blocco dello heap serve una `block->size` di circa
+  66 MB. L'intestazione era GIA' rotta prima che kfree la leggesse: il fault e'
+  la conseguenza, non la causa.
+
+! ATTENZIONE A CONTRO QUALE BINARIO SI RISOLVE. In `904b170` — lo stesso
+  giorno, tre commit dopo — 0x109610 e' dentro `kmalloc`, e la lettura diventa
+  un `mov 0xc(%esp),%eax`: una risposta plausibile e completamente sbagliata,
+  che manda a cercare uno stack di kernel invece di un blocco dell'heap.
+  Ci sono cascato. Il commit giusto e' quello che GIRAVA, non quello del giorno.
+
+### DOV'ERA: heap_expand CHIEDE LE PAGINE DA CAPO, OGNI VOLTA
+
+`heap_expand()` chiama `pmm_alloc_pages_kernel()`, che cerca pagine contigue
+DOVE LE TROVA dentro `0..USER_SPACE_BASE`. Due espansioni danno quasi sempre
+due tratti lontani, con in mezzo roba che heap non e': stack di kernel, page
+directory, page table, buffer dei driver.
+
+I blocchi si incastrano uno dietro l'altro dentro un tratto, e per passare al
+successivo basta `b + intestazione + b->size`. Ma il tratto FINISCE, e quel
+calcolo non lo sa. kfree dereferenziava l'indirizzo cosi' ottenuto in due
+punti: la coalescenza in avanti (la riga del panic) e la scansione
+all'indietro, che partiva da `g_heap_start` — dal primo blocco del PRIMO
+tratto — e camminava finche' non trovava `block`. Se `block` stava in un altro
+tratto, `nx` non era mai uguale a lui: la scansione usciva dal primo tratto e
+proseguiva su quel che c'era dopo.
+
+Da li' una delle due:
+
+  - l'indirizzo e' oltre la RAM (`paging_init` mappa in identita' fino a
+    `pmm_get_total_pages()`, non oltre): page fault in ring0 dentro kfree;
+  - l'indirizzo e' dentro la RAM e per caso ci trova `0xDEADBEEF`: la firma
+    "vale", e kfree FONDE un blocco con memoria che heap non e'. `block->size`
+    diventa una misura inventata — ed e' proprio l'intestazione rotta che il
+    conto dell'EIP chiedeva.
+
+### PROVATO SUL BANCO, A COMANDO, PRIMA DI TOCCARE IL KERNEL
+
+`tools/banco-kmalloc/prova.sh` compila `kernel/mm/kmalloc.c` SULL'OSPITE con un
+PMM finto che consegna quattro tratti non attaccati e una pagina `PROT_NONE`
+subito dopo ognuno — che e' la stessa cosa di «oltre la RAM, non mappato».
+
+Contro il kmalloc.c di prima, e contro quello di adesso:
+
+    prova                                    prima            adesso
+    ---------------------------------------  ---------------  --------------
+    1. libera dall'ULTIMO, guardie cieche    SIGSEGV (139)    pulito
+    2. libera dal PRIMO, guardie cieche      SIGSEGV (139)    pulito
+    3. libera dal PRIMO, guardie leggibili   46 blocchi lib.  4 blocchi lib.
+    4. intestazione con misura di 66 MB      SIGSEGV (139)    lo dice e vive
+
+Il caso 4 e' @DIF-PANIC alla lettera: si sovrascrive `block->size` con
+0x4206000 e si libera. Prima, SIGSEGV subito dopo «KFREE: liberati 69230592
+byte» — cioe' sulla riga del `cmpl $0xdeadbeef`. Adesso:
+
+    KFREE: 0xf7c3a430 dice di essere lungo 69230592 byte, ma la sua regione
+           0xf7c3a000-0xf7c4a000 finisce prima: intestazione rotta
+
+! IL CASO 3 E' LA SECONDA META' DEL DIFETTO, e non se ne sapeva niente. 46
+  blocchi liberi invece di 4: la coalescenza all'indietro non funzionava per
+  NIENTE fuori dal primo tratto — usciva, leggeva zeri, e rinunciava in
+  silenzio. Il panic e' la faccia rara; questa era quella di tutti i giorni.
+
+### LA CURA: OGNI REGIONE SA DOVE FINISCE
+
+Due parole in testa a ogni tratto — dove finisce, e la regione dopo — in una
+lista che sta dentro le regioni stesse (nessun tetto da indovinare, otto byte
+per regione). kfree chiede la regione PRIMA di leggere la firma, non
+dereferenzia mai un indirizzo fuori, e la scansione all'indietro parte dal
+primo blocco della REGIONE DI `block`. Due tratti che si TOCCANO non fanno due
+regioni: si allunga quella di prima, o si frammenterebbe lungo un confine che
+nella memoria non esiste.
+
+E i due modi di stare fuori non sono la stessa cosa: **esattamente** sulla fine
+della regione vuol dire «questo blocco e' l'ultimo», e si tace; **oltre** la
+fine vuol dire intestazione rotta, e lo si dice con l'indirizzo e la misura.
+Adesso il kernel non muore piu' li' — ma chi ha scritto quella misura sta
+ancora scrivendo dove non deve, e il numero resta a dirlo.
+
+### QUEL CHE NON E' PROVATO, DETTO CHIARO
+
+  - **Venti avvii da CD con la rete, tutti puliti.** Non vuol dire niente: la
+    nota dice che anche diciotto avvii SENZA la correzione erano stati puliti.
+    La misura non distingue, e va scritto invece di far finta di si'.
+
+  - **In un avvio normale lo heap resta UNA regione sola.** Misurato mettendo
+    per un giro `kmalloc_stats()` dentro il reaper di init: dopo la rete e la
+    shell sono 64 KB, una regione, 34 allocazioni e 33 liberazioni. Con una
+    regione sola le due letture fuori si riducono al solo bordo in coda, e i
+    contatori dicevano 0 e 0. Quindi **da dove venisse la misura di 66 MB in
+    quell'avvio non e' dimostrato**: puo' essere il bordo in coda che quella
+    volta ha trovato `0xDEADBEEF`, o puo' essere qualcun altro che scrive
+    oltre il proprio blocco. La riga «intestazioni ROTTE» adesso lo dira'.
+
+## 7 settembre 2026 — UN FILO NON E' FIGLIO DELLA SHELL
+
+`@FILI-ZOMBIE`. Il ppid di un filo era `capo->ppid`, cioe' il padre del
+capogruppo. Detto cosi' sembra innocuo; quel che voleva dire e' che UN FILO ERA
+UN FIGLIO DELLA SHELL. Se moriva senza che nessuno lo aspettasse con
+`thread_attendi`, la `waitpid` della shell lo raccoglieva, la shell tornava al
+prompt convinta che il programma fosse finito, e il comando successivo partiva
+sopra un programma ancora vivo.
+
+Tre righe, in tre posti, piu' una quarta che senza le altre non serviva:
+
+  - `proc_thread_crea`: il ppid di un filo e' il pid del CAPOGRUPPO. Resta
+    dentro il gruppo, e serve ancora a sapere chi svegliare quando il filo
+    esce — `thread_attendi` ci si mette al posto suo prima di dormire.
+  - `sys_waitpid`: un task con `tgid != pid` e' un filo, e i fili si saltano.
+    Un filo non e' un figlio: si aspetta con `thread_attendi`, e con
+    nient'altro.
+  - `sys_getppid`: per un filo risponde il ppid del capogruppo. «Chi mi ha
+    lanciato» ha una risposta sola, e non cambia perche' a chiedere e' un filo.
+  - il reaper di init raccoglie anche i fili di un gruppo di cui non resta
+    nessun vivo. Prima li raccoglieva la shell per sbaglio; adesso che non lo
+    fa piu', qualcuno deve, o sono slot del pool persi uno per volta. Finche'
+    il gruppo e' vivo restano li', ed e' giusto: e' un filo che si puo' ancora
+    aspettare, come un thread joinable su Linux.
+
+! LA PROVA E' `filiprova sfonda`, DA CUI E' STATA TOLTA L'ATTESA. C'era una
+  `usleep(100000)` col commento che spiegava perche': far arrivare
+  `thread_attendi` PRIMA che il filo morisse, o se lo prendeva la shell.
+  Toglierla non e' una pulizia, e' la prova. In QEMU, da CD:
+
+      filiprova: un filo scende senza fondo; deve morire lui...
+      [FAULT] PID 73 '/bin/filiprova': page fault a 0xbffa9ee8 ... terminato
+        il filo e' uscito con -11, atteso -11 (page fault)   fermato dalla guardia
+        e il processo e' vivo: la piazzola di sotto non e' stata toccata
+      filiprova sfonda: tutto a posto
+
+Tutti e dodici i modi di `filiprova` passano, e `libctest` resta 201 superate e
+15 fallite.
+
+
 # DOVE RIPRENDERE — 5 settembre 2026
 
 ## 5 settembre 2026 — L'ERRORE DEL COMPILATORE ANDAVA A FINIRE SU UNA CONSOLE CHE NESSUNO GUARDAVA

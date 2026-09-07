@@ -158,9 +158,10 @@ settore di avvio o il dump di un fault senza avere il sorgente sotto mano.
 > una macro che chiama `__errno_dove()` — e `libcrypto.a` è stata costruita
 > prima. Lo diceva già `tools/ricostruisci-bersaglio.sh --verifica` a ogni
 > `make iso` («la libc è CAMBIATA dopo l'ultima ricostruzione»), ma come
-> *avviso*: quel controllo guarda le forme dei tipi, non i simboli. Sta in
-> `in_lavorazione.txt` come `@ABI-BERSAGLIO`, con l'elenco di tutto ciò che va
-> rifatto.
+> *avviso*: quel controllo guarda le forme dei tipi, non i simboli. **libcrypto
+> è stata rifatta e il CD si costruisce di nuovo**; il resto del bersaglio —
+> cc1, as, ld, fbc, le librerie di calcolo — è ancora quello di prima, e sta in
+> `in_lavorazione.txt` come `@ABI-BERSAGLIO`.
 
 ### La pila di un filo cresce su richiesta
 

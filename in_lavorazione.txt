@@ -1,4 +1,4 @@
-QUEL CHE E' APERTO — 4 settembre 2026
+QUEL CHE E' APERTO — 7 settembre 2026
 
 Qui c'e' SOLO quel che non e' fatto. Niente voci «FATTO»: la storia di come una
 cosa e' stata fatta, e perche' cosi', sta in RIPRENDERE.md, che e' un diario e
@@ -105,12 +105,9 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
  --  @CHIUSA          una strada chiusa, scritta perche' non si riapra
  --  @PROVE-STRUMENTI come si prova un compilatore (o make, o nasm) dentro EX-OS
 
-  1  @ABI-BERSAGLIO   il bersaglio e' indietro rispetto alla libc: libcrypto e'
-                      stata rifatta, il resto no
   1  @DIF-DRIVER      da CD un driver ogni tanto muore appena avviato
-  1  @DIF-PANIC       una volta su quattordici il kernel va in panic in kfree
+  1  @DIF-PANIC       chi scrive oltre il proprio blocco dello heap del kernel
   1  @FILI-FAULT      un filo che muore di page fault non porta via il processo
-  1  @FILI-ZOMBIE     lo zombie di un filo che nessuno aspetta lo prende la shell
   1  @VISTA           l'impaginato non e' una libreria: due callback, non un trasloco
   1  @SUONO-REG       la registrazione non c'e': nessun driver accende AUDIO_CAP_REGISTRA
   1  @SUONO-MIX       un client alla volta: il secondo che suona riceve -EBUSY
@@ -162,10 +159,11 @@ IL PROSSIMO PASSO, IN ORDINE
 
  Dei due limiti che restavano, quello che pesava e' stato tolto: la piazzola
  di un filo non e' piu' impegnata tutta (sette fili costano 980 KB invece di
- 1344). Quel che resta e' scritto nella sezione «I FILI» qui sotto: otto fili
- per processo, che e' un numero e non un lavoro, piu' due difetti veri
- trovati scrivendo la prova — un filo che muore di fault non porta via il
- processo, e lo zombie di un filo che nessuno aspetta lo raccoglie la shell.
+ 1344). Dei due difetti veri trovati scrivendo la prova, quello dello zombie
+ raccolto dalla shell e' chiuso (7 settembre 2026: un filo non e' figlio di
+ nessuno fuori dal gruppo). Quel che resta e' scritto nella sezione «I FILI»
+ qui sotto: otto fili per processo, che e' un numero e non un lavoro, e un
+ filo che muore di fault e non porta via il processo.
 
 COME SI PROVANO I FILI, SENZA RICOSTRUIRE IL RAGIONAMENTO
 
@@ -324,52 +322,6 @@ QUEL CHE C'E' GIA' PRONTO DA PROVARE, sul CD:
   il driver calcola il proprio prefisso da dove sta lui. Sul CD /bin/gcc non
   c'e' apposta. Nel PATH del sistema /cdrom/exos/bin c'e' gia', quindi dentro
   un makefile basta scrivere `gcc`.
-
-=============================================================================
-@ABI-BERSAGLIO IL BERSAGLIO E' INDIETRO RISPETTO ALLA LIBC (4 settembre 2026)
-=============================================================================
-
-IL 4 SETTEMBRE 2026 `make iso` NON ARRIVAVA PIU' IN FONDO. Si fermava
-collegando /bin/provassl:
-
-    libcrypto.a(o_str.o): undefined reference to `errno'
-
-e la causa e' scritta nel nome: dallo stesso giorno `errno` non e' piu' un
-simbolo globale ma una macro che chiama __errno_dove() (diario: «E ANCHE errno
-E' PER FILO»). libcrypto.a era stata costruita PRIMA, e dentro aveva ancora il
-riferimento al simbolo che non c'e' piu'.
-
-! LIBCRYPTO E' STATA RIFATTA (4 settembre 2026) e il CD si costruisce di nuovo.
-  IL RESTO NO: cc1, as, ld, ar, gmp, mpfr, mpc, libm, libstdc++ e fbc sono
-  ancora quelli di prima. Non falliscono il collegamento — nessuno di loro
-  nomina `errno` — ma la forma di `tm` e' passata da 36 a 44 byte, e chi
-  chiama localtime() dentro EX-OS scrive quattro byte oltre la struttura che
-  il chiamante ha preparato. Non e' stato visto succedere: e' quello che dice
-  il conto delle forme.
-
-! LO DICEVA GIA', E NESSUNO L'HA ASCOLTATO. tools/ricostruisci-bersaglio.sh
-  --verifica lo stampa a ogni `make iso` — «la libc e' CAMBIATA dopo l'ultima
-  ricostruzione del bersaglio: tm 36 -> 44» — ed e' un AVVISO, non un errore,
-  perche' un CD con dentro roba vecchia si fa comunque purche' chi lo fa lo
-  sappia. Adesso non si fa piu': il collegamento fallisce davvero.
-
-  Quel controllo guarda le FORME dei tipi (tm e' passato da 36 a 44 byte) e
-  non i simboli, quindi la sparizione di `errno` non l'ha vista nessuno finche'
-  il collegatore non ci ha sbattuto.
-
-QUEL CHE VA RIFATTO, e sono tutti costruiti fuori da questo Makefile:
-
-    libcrypto.a   FATTO il 4 settembre 2026: tools/openssl-exos/prepara-openssl.sh,
-                  poi cd ~/openssl-build-exos && make -j2 build_libs
-    cc1, cc1plus  tools/gcc-exos/prepara-cc1.sh
-    as, ld, ar    tools/binutils-exos/ (i nativi)
-    gmp, mpfr, mpc, libm, libstdc++
-    fbc           tools/freebasic-exos/prepara-fb.sh
-
-! FINCHE' NON SONO RIFATTI, `make iso OPENSSL_BUILD=/non-esiste` costruisce il
-  CD senza OpenSSL: serve a provare tutto il resto (ed e' cosi' che e' stato
-  provato NASM il 4 settembre 2026), non a consegnarlo.
-
 =============================================================================
 @DIFETTI DIFETTI APERTI
 =============================================================================
@@ -390,19 +342,59 @@ QUEL CHE VA RIFATTO, e sono tutti costruiti fuori da questo Makefile:
     riprodotto, quindi la misura non distingue. Se il fault ricompare, il
     [WARN] dira' se e' quella strada o un'altra.
 
-! @DIF-PANIC E UNA VOLTA SU QUATTORDICI, IN AVVIO DA CD CON LA RETE, IL
-  KERNEL VA IN PANIC. Visto il 4 settembre 2026, una volta su quattordici avvii contati:
+! @DIF-PANIC IL PANIC NON C'E' PIU', MA CHI SCRIVEVA LA MISURA SBAGLIATA
+  FORSE SI'. Riscritto il 7 settembre 2026; quel che segue e' com'era e cosa
+  se n'e' capito.
+
+  COM'ERA. Una volta su quattordici, avviando da CD con la rete:
 
       Page Fault non gestito in ring0 a 0x0421308c (EIP=0x00109610)
 
-  succede subito dopo «pci: servizio 'pci' attivo», cioe' mentre /boot/avvio.sh
-  accende la rete, e prima che parta qualunque cosa grafica. L'EIP si risolve
-  con `nm build/kernel.elf` ed e' dentro kfree, al controllo del footer
-  0xdeadbeef: kfree ha ricevuto un blocco la cui INTESTAZIONE dice una misura
-  sballata, e leggendo il footer e' finito fuori dalle pagine mappate.
-  L'indirizzo letto sta nella zona delle tabelle delle librerie condivise
-  (0x4000000 e 0x4200000), cioe' e' un indirizzo UTENTE arrivato dove ci
-  vorrebbe un blocco dell'heap del kernel.
+  subito dopo «pci: servizio 'pci' attivo», cioe' mentre /boot/avvio.sh accende
+  la rete, e prima di qualunque cosa grafica.
+
+  L'EIP SI RISOLVE, E DICE LA RIGA. build/kernel.elf e' tracciato, quindi il
+  kernel di quel giorno c'e' ancora. In `daeec1f`:
+
+      109610:  cmpl $0xdeadbeef,0x4(%ebx,%eax,1)    ebx = ptr, eax = block->size
+
+  cioe' `block + intestazione + block->size` piu' quattro: e' esattamente
+  `block_valid(next_phys)`, la coalescenza in avanti di kfree.
+
+  ! E SI RISOLVE CONTRO IL BINARIO CHE GIRAVA, NON CONTRO QUELLO DEL GIORNO. In
+    `904b170` — stesso giorno, tre commit dopo — 0x109610 e' dentro `kmalloc`,
+    su un `mov 0xc(%esp),%eax`: una risposta plausibile e sbagliata, che manda
+    a cercare uno stack di kernel invece di un blocco dell'heap.
+
+  QUEL CHE E' STATO CORRETTO. kfree usciva dalla propria regione dello heap —
+  lo heap del kernel e' fatto di tratti NON attaccati, perche' ogni
+  heap_expand chiede le pagine da capo al PMM. Adesso ogni regione sa dove
+  finisce e kfree non dereferenzia mai un indirizzo fuori. Il diario del 7
+  settembre 2026 racconta com'e' fatto; `tools/banco-kmalloc/prova.sh` lo
+  riproduce a comando, sull'ospite, in quattro casi — e il quarto e' questo
+  panic alla lettera.
+
+  QUEL CHE RESTA APERTO, ED E' IL VERO COMPITO. Per arrivare a 0x0421308c
+  serve una `block->size` di circa 66 MB: l'intestazione era GIA' rotta prima
+  che kfree la leggesse. Adesso kfree non ci muore piu' sopra e invece LO DICE:
+
+      KFREE: 0x... dice di essere lungo N byte, ma la sua regione
+             0x...-0x... finisce prima: intestazione rotta
+
+  e kmalloc_stats stampa «! intestazioni ROTTE: N». Chi scrive quella misura
+  puo' essere la lettura fuori regione di prima (che trovando per caso
+  0xDEADBEEF fondeva un blocco con memoria che heap non e'), oppure qualcun
+  altro che scrive oltre il proprio blocco. NON E' DECISO.
+
+  ! E VENTI AVVII PULITI NON DECIDONO NIENTE: anche diciotto avvii SENZA la
+    correzione erano stati puliti. La misura non distingue.
+
+  ! IN UN AVVIO NORMALE LO HEAP RESTA UNA REGIONE SOLA — 64 KB, 34
+    allocazioni, 33 liberazioni dopo la rete e la shell (misurato mettendo per
+    un giro kmalloc_stats dentro il reaper di init). Con una regione sola le
+    letture fuori si riducono al solo bordo in coda, e i contatori dicevano 0
+    e 0. Se il panic ricompare, la riga delle statistiche dira' subito se lo
+    heap si era sparso o se l'intestazione l'ha rotta qualcun altro.
   ! NON E' PROVATO CHE SIA LO STESSO DIFETTO DEI DRIVER QUI SOPRA: la firma e'
   diversa (li' un fault utente a 0, qui un panic in ring0), la frequenza e' la
   stessa e il momento anche. Non e' stato riprodotto in nove avvii di fila
@@ -671,16 +663,6 @@ QUEL CHE MANCA:
     che e' esattamente la situazione per cui la cancellazione e' cooperativa.
     Su Linux un segnale fatale porta via tutto il gruppo. Si vede con
     `filiprova sfonda`, che oggi lo DICHIARA invece di lamentarsene.
-
- 3. @FILI-ZOMBIE LO ZOMBIE DI UN FILO CHE NESSUNO ASPETTA LO RACCOGLIE LA SHELL. Il ppid di
-    un filo e' quello del capogruppo (filo->ppid = capo->ppid), e finche'
-    nessuno chiama thread_attendi — che si fa trovare come padre prima di
-    dormire — quel filo e' un figlio del padre del processo. Se muore prima,
-    la waitpid della shell lo raccoglie, torna al prompt con il programma
-    ancora vivo, e il comando successivo parte sopra quello di prima. Visto il
-    4 settembre 2026 scrivendo `filiprova sfonda`, e aggirato nella prova
-    facendo aspettare il filo un decimo di secondo. La strada giusta e' che
-    un filo non sia figlio di nessuno fuori dal gruppo.
 
 =============================================================================
 @RUST RUST SU EX-OS (aperto il 4 settembre 2026)

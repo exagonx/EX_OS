@@ -158,8 +158,9 @@ sector, or at the dump of a fault, without the source at hand.
 > built before that. `tools/ricostruisci-bersaglio.sh --verifica` was already
 > saying it at every `make iso` ("the libc has CHANGED since the last target
 > rebuild"), but as a *warning*: that check looks at the shapes of types, not at
-> symbols. It is in `in_lavorazione.txt` as `@ABI-BERSAGLIO`, with the list of
-> everything that has to be rebuilt.
+> symbols. **libcrypto has been rebuilt and the CD builds again**; the rest of
+> the target — cc1, as, ld, fbc, the arithmetic libraries — is still the old
+> one, and it is in `in_lavorazione.txt` as `@ABI-BERSAGLIO`.
 
 ### A thread's stack grows on demand
 

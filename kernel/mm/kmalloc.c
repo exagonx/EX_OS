@@ -104,6 +104,14 @@ static uint32_t    g_free_count  = 0;       /* Totale liberazioni */
 static uint32_t    g_stop_avanti   = 0;
 static uint32_t    g_stop_indietro = 0;
 
+/* Quante intestazioni dicevano una misura che nella loro regione non ci sta.
+ * ! QUESTO NON E' UN CONFINE RISPETTATO, E' UN GUASTO. Un blocco che si
+ * dichiara piu' lungo della regione che lo contiene ha l'intestazione
+ * sovrascritta: prima del 7 settembre 2026 il kernel ci moriva sopra
+ * (@DIF-PANIC), adesso sopravvive — ma il numero va guardato, perche' chi ha
+ * scritto quella misura sta ancora scrivendo dove non deve. */
+static uint32_t    g_intestazioni_rotte = 0;
+
 /* =============================================================================
  * Funzioni helper
  * ============================================================================= */
@@ -454,9 +462,25 @@ void kfree(void *ptr)
      * ! SE `block` E' L'ULTIMO DELLA REGIONE, next_phys NON E' UN BLOCCO: e'
      * il primo indirizzo fuori. Leggerne la firma vuol dire leggere memoria
      * di qualcun altro, o oltre la RAM — vedi il commento sulle regioni in
-     * cima. Qui ci si ferma, e si conta. */
+     * cima. Qui ci si ferma, e si conta.
+     *
+     * ! E I DUE MODI DI STARE FUORI NON SONO LA STESSA COSA. Esattamente
+     * sulla fine della regione vuol dire «questo blocco e' l'ultimo», ed e'
+     * normale: si tace. OLTRE la fine vuol dire che `block->size` dice una
+     * misura che nella regione non ci sta — cioe' l'intestazione e' ROTTA, e
+     * qualcuno ha scritto dove non doveva. E' il caso di @DIF-PANIC: il
+     * kernel moriva proprio su questa riga, a leggere la firma di un
+     * indirizzo calcolato con una misura di 66 MB dentro una regione da 64
+     * KB. Adesso non ci muore piu', ma tacere sarebbe peggio: la misura
+     * sbagliata resta, ed e' l'unico indizio di chi l'ha scritta. */
     next_phys = block_next_phys(block);
     if (!dentro_regione(regione, next_phys)) {
+        if ((uint32_t)next_phys > regione->fine) {
+            klog(LOG_ERROR, "KFREE: 0x%08x dice di essere lungo %u byte, ma la "
+                 "sua regione 0x%08x-0x%08x finisce prima: intestazione rotta",
+                 (uint32_t)ptr, block->size, (uint32_t)regione, regione->fine);
+            g_intestazioni_rotte++;
+        }
         g_stop_avanti++;
         next_phys = NULL;
     }
@@ -595,5 +619,8 @@ void kmalloc_stats(void)
         klog(LOG_INFO, "  Regioni     : %u (letture fuori evitate: %u in "
              "coda a una regione, %u fuori dalla prima)",
              n, g_stop_avanti, g_stop_indietro);
+        if (g_intestazioni_rotte)
+            klog(LOG_ERROR, "  ! intestazioni ROTTE: %u — qualcuno scrive "
+                 "oltre il proprio blocco", g_intestazioni_rotte);
     }
 }
