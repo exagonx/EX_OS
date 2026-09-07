@@ -803,6 +803,19 @@ int32_t sys_waitpid(InterruptFrame *frame)
             Process *p = &g_process_pool[i];
 
             if (p->state == PROC_UNUSED)  continue;
+
+            /* ! UN FILO NON E' UN FIGLIO, e va detto qui perche' e' qui che
+             * costava. Il ppid di un filo e' quello del suo capogruppo (o di
+             * chi lo sta aspettando con thread_attendi, che si fa trovare come
+             * padre prima di dormire): senza questa riga la waitpid del
+             * capogruppo si porterebbe via un filo che qualcun altro del
+             * gruppo sta aspettando, e prima del 7 settembre 2026 — quando il
+             * ppid di un filo era quello del PADRE del capogruppo — se lo
+             * portava via addirittura la SHELL, che tornava al prompt con il
+             * programma ancora vivo. Un filo si aspetta con thread_attendi, e
+             * con nient'altro. */
+            if (p->tgid  != p->pid)       continue;
+
             if (p->ppid  != current->pid) continue;
             if (pid_wait != -1 && (int32_t)p->pid != pid_wait) continue;
 
@@ -1104,8 +1117,22 @@ int32_t sys_getpid(InterruptFrame *frame)
  * ============================================================================= */
 int32_t sys_getppid(InterruptFrame *frame)
 {
+    Process *self = proc_get_current();
+
     (void)frame;
-    return (int32_t)proc_get_current()->ppid;
+
+    /* ! PER UN FILO E' IL PADRE DEL GRUPPO, non il suo. Dal 7 settembre 2026
+     * il ppid di un filo sta dentro il gruppo (vedi proc_thread_crea), e
+     * quello serve al kernel per sapere chi svegliare: a chi CHIEDE «chi mi
+     * ha lanciato» la risposta giusta resta una sola, la stessa che avrebbe
+     * il processo. */
+    if (self->tgid != self->pid) {
+        Process *capo = proc_get_by_pid(self->tgid);
+
+        if (capo != NULL) return (int32_t)capo->ppid;
+    }
+
+    return (int32_t)self->ppid;
 }
 
 /* =============================================================================
@@ -1966,6 +1993,8 @@ return ERR(ENOMEM); }
         int sfd;
 
         for (sfd = 0; sfd < 3; sfd++) {
+            int alla_console = 0;
+
             child->fdt[sfd] = parent->fdt[sfd];
 
             /* Un capo condiviso in piu' va contato, o il primo dei due che
@@ -1976,22 +2005,63 @@ return ERR(ENOMEM); }
             case FD_PTY_M:  pty_apri_riferimento((int)parent->fdt[sfd].inode, 1); break;
             case FD_PTY_S:  pty_apri_riferimento((int)parent->fdt[sfd].inode, 0); break;
 
-            /* ! UN FILE APERTO NON SI EREDITA, E VA DETTO. Il figlio si
-             * ritroverebbe la posizione di lettura del padre e un secondo
-             * riferimento nella VFS da chiudere: chi vuole passare un file lo
-             * fa con una redirezione esplicita, che quella strada la percorre
-             * per intero. Qui si torna alla console. */
+            /* ! ANCHE UN FILE SI EREDITA, dal 5 settembre 2026, e fino a
+             * quel giorno no: qui si tornava alla console, e la ragione
+             * scritta era «il figlio si ritroverebbe la posizione del padre
+             * e un secondo riferimento nella VFS da chiudere».
+             *
+             * Il secondo riferimento e' esattamente quel che fa vfs_dup, ed
+             * e' gia' quel che si fa poco piu' sotto per una redirezione
+             * esplicita (SPAWN_AZ_FD): non era un ostacolo, era il lavoro
+             * da fare. E la posizione ereditata NON e' un difetto — e' cio'
+             * che fa un fork su qualunque Unix.
+             *
+             * ! QUEL CHE COSTAVA E' CHE UNA REDIREZIONE NON PASSAVA AL NIPOTE.
+             *   `sh compila.sh > log 2>&1` metteva la shell sul file, ma il
+             *   compilatore che la shell lanciava tornava alla CONSOLE: nel
+             *   registro finiva la riga di comando (l'ha scritta la shell) e
+             *   NON l'errore di gcc (l'ha scritto lui). Chi guardava leggeva
+             *   «il compilatore si e' fermato, guarda qui sotto» e sotto non
+             *   c'era niente — l'unica cosa che serviva era finita su una
+             *   console che nessuno stava guardando. Visto dentro exide, ma
+             *   e' di tutti: vale per `make > log`, per una pipe di script,
+             *   per qualunque comando che ne lanci un altro.
+             *
+             * ! UN DRIVER INVECE NO, e resta com'era: `driver_data` e' stato
+             * privato di chi ha aperto il device, e due processi sopra lo
+             * stesso stato sono un guasto. Stessa regola di SPAWN_AZ_FD, che
+             * si rifiuta di ereditare un FD_DRIVER.
+             *
+             * ! E LA POSIZIONE NON E' CONDIVISA (vedi dup() in libc.h): padre
+             * e figlio scrivono ognuno dalla propria. Per un registro che il
+             * padre riempie mentre il figlio scrive, la forma giusta e'
+             * O_APPEND — il kernel rilegge la fine a ogni write, e allora le
+             * due scritture non si sovrappongono mai. */
             case FD_FILE:
+                if (vfs_dup((int)parent->fdt[sfd].inode) >= 0) break;
+
+                /* Non si e' potuto prendere il riferimento in piu': meglio la
+                 * console che un descrittore che il figlio crede suo e non
+                 * lo e'. */
+                klog(LOG_ERROR, "SYSCALL spawn: vfs_dup dello std %d fallita: "
+                     "il figlio va alla console", sfd);
+                alla_console = 1;
+                break;
+
             case FD_DRIVER:
+                alla_console = 1;
+                break;
+
+            default:
+                break;
+            }
+
+            if (alla_console) {
                 child->fdt[sfd].type        = (sfd == 0) ? FD_STDIN :
                                               (sfd == 1) ? FD_STDOUT : FD_STDERR;
                 child->fdt[sfd].inode       = 0;
                 child->fdt[sfd].offset      = 0;
                 child->fdt[sfd].driver_data = NULL;
-                break;
-
-            default:
-                break;
             }
         }
     }

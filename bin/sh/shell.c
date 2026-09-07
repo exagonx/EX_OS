@@ -1186,8 +1186,15 @@ troppo_lunga:
 
 /* Definita piu' in basso (il motore degli script sta vicino all'autoexec,
  * che e' il suo primo utente), ma serve al dispatch dei built-in qui
- * sopra. In un file solo l'ordine non puo' accontentare tutti. */
-static int esegui_script(const char *nome, const char *etichetta);
+ * sopra. In un file solo l'ordine non puo' accontentare tutti.
+ *
+ * `obbligatorio` dice cosa fare se il file non si apre. L'autoexec che non
+ * c'e' non e' un errore — la maggior parte dei sistemi non ne ha uno — ma
+ * uno script NOMINATO DA CHI SCRIVE LA RIGA si', e tacere li' e' il modo
+ * peggiore di fallire: la shell torna al prompt come se avesse eseguito
+ * qualcosa. */
+static int esegui_script(const char *nome, const char *etichetta,
+                         int obbligatorio);
 
 /* =============================================================================
  * Comandi built-in
@@ -2098,6 +2105,49 @@ static void print_banner(void)
     println("  Digita 'help' per l'elenco dei comandi.\n");
 }
 
+/* Vero se `nome` finisce in «.sh»: e' un file di comandi, non un programma.
+ *
+ * ! STA IN UNA FUNZIONE PERCHE' I POSTI CHE LO CHIEDONO SONO DUE, e finche'
+ * erano due copie del confronto ne e' esistita una sola: esegui_builtin
+ * sapeva eseguire uno script, e_builtin non sapeva che fosse roba sua, e
+ * siccome e' e_builtin a decidere chi entra in esegui_builtin, quel ramo non
+ * si e' mai raggiunto. Battere `prova.sh` rispondeva «comando non trovato»
+ * mentre `source prova.sh` funzionava — cioe' il motore c'era e la porta
+ * era murata. Adesso la domanda e' una sola e la rispondono nello stesso
+ * modo per costruzione. */
+static int e_script(const char *nome)
+{
+    int l = 0;
+
+    while (nome[l]) l++;
+    return (l > 3 && nome[l-3] == '.' && nome[l-2] == 's' && nome[l-1] == 'h');
+}
+
+/* Esegue uno script NOMINATO SULLA RIGA DI COMANDO — `prova.sh` battuto, o
+ * `source prova.sh`.
+ *
+ * ! SI CERCA DOVE SI E' E POI NEL PATH, in quest'ordine. Un file di comandi
+ * lo si scrive quasi sempre nella cartella in cui si sta lavorando, e li'
+ * lo cerca chi lo batte; ma /bin puo' contenerne (l'installazione ne mette),
+ * e un nome nudo che sta nel PATH deve poter partire come qualunque altro
+ * comando. L'ordine e' l'opposto di quello dei programmi apposta: per un
+ * ELF la cartella corrente non si guarda affatto — e' la regola di execvp,
+ * vedi ha_barra — mentre per uno script la si guarda per prima, perche' li'
+ * il rischio di lanciare un omonimo al posto giusto non esiste: chi scrive
+ * `prova.sh` nella propria cartella intende quel file.
+ *
+ * Un nome con una barra dentro e' gia' un percorso e si usa com'e'. */
+static int esegui_script_nominato(const char *nome)
+{
+    char percorso[PATH_MAX_SH];
+
+    if (!ha_barra(nome) && !file_esiste(nome) &&
+        cerca_nel_path(nome, percorso, PATH_MAX_SH) == 0)
+        return esegui_script(percorso, nome, 1);
+
+    return esegui_script(nome, nome, 1);
+}
+
 /* =============================================================================
  * Esegue UN comando semplice: i built-in, oppure un programma.
  *
@@ -2130,7 +2180,7 @@ static int esegui_builtin(int argc, char **argv, int background,
      * sulle shell vere. */
     if (sh_strcmp(cmd, "source") == 0) {
         if (argc < 2) { printerr("uso: source <file.sh>"); return 0; }
-        return esegui_script(argv[1], argv[1]);
+        return esegui_script_nominato(argv[1]);
     }
 
     /* ! UN NOME CHE FINISCE IN .sh E' UNO SCRIPT, e si decide QUI e non
@@ -2142,12 +2192,7 @@ static int esegui_builtin(int argc, char **argv, int background,
      *
      * Il prezzo dichiarato: un eseguibile ELF chiamato `qualcosa.sh` non
      * si lancia piu' per nome. E' un nome che nessuno da' a un binario. */
-    {
-        int l = 0;
-        while (cmd[l]) l++;
-        if (l > 3 && cmd[l-3] == '.' && cmd[l-2] == 's' && cmd[l-1] == 'h')
-            return esegui_script(cmd, cmd);
-    }
+    if (e_script(cmd)) return esegui_script_nominato(cmd);
 
     /* `help helpconfig` e `helpconfig` da solo fanno la stessa cosa: chi
      * ha letto la riga nell'aiuto prova l'una, chi se l'e' sentita dire
@@ -2242,7 +2287,14 @@ static int e_builtin(const char *cmd)
     int i;
 
     for (i = 0; nomi[i]; i++) if (sh_strcmp(cmd, nomi[i]) == 0) return 1;
-    return 0;
+
+    /* ! UNO SCRIPT E' ROBA DELLA SHELL come lo e' `cd`, e va detto QUI. Non
+     * e' un programma da lanciare: e' un file che questa shell legge riga per
+     * riga, e chi smista i comandi decide guardando questo elenco. Dentro una
+     * pipe la regola che ne segue e' quella giusta senza aggiungere niente —
+     * `prova.sh | grep x` si rilancia come `/bin/sh -c prova.sh`, che e'
+     * l'unico modo di far finire nella pipe l'uscita di un built-in. */
+    return e_script(cmd);
 }
 
 /* =============================================================================
@@ -3291,7 +3343,8 @@ static int g_script_livello = 0;
 /* Esegue un file di comandi. `etichetta` e' il prefisso mostrato davanti
  * a ogni riga eseguita; NULL usa il nome del file.
  * Ritorna 0, oppure -1 se lo script ha chiesto `exit`. */
-static int esegui_script(const char *nome, const char *etichetta)
+static int esegui_script(const char *nome, const char *etichetta,
+                         int obbligatorio)
 {
     /* ! IL BUFFER E' UNA FINESTRA SUL FILE, NON IL FILE. Fino al 24 agosto
      * 2026 lo script si leggeva TUTTO IN UNA VOLTA in questi 2 KB, e il resto
@@ -3310,6 +3363,13 @@ static int esegui_script(const char *nome, const char *etichetta)
      * memoria in gioco e' la stessa di prima. */
     char        buf[2048];
     char        riga[MAX_LINE];
+    /* ! L'ETICHETTA SI COPIA, non si tiene il puntatore. Quando lo script
+     * l'ha nominato l'utente, `etichetta` punta dentro argv[0] — cioe'
+     * dentro il buffer di riga della shell, che esegui_riga qui sotto
+     * RISCRIVE alla prima riga eseguita. Senza copia il prefisso cambia da
+     * solo a meta' script: `prova.sh> echo UNO` e poi `echo> pwd`, con il
+     * nome del comando appena eseguito al posto di quello del file. */
+    char        etic[64];
     int         fd, r = 0;
     int         zitto_sempre = 0;
     int         pieno = 0;          /* byte validi in buf */
@@ -3322,9 +3382,21 @@ static int esegui_script(const char *nome, const char *etichetta)
     }
 
     fd = syscall3(SYS_OPEN, (uint32_t)nome, 0, 0);
-    if (fd < 0) return 0;           /* non c'e': non e' un errore */
+    if (fd < 0) {
+        /* Chi l'ha nominato deve sapere che non e' successo niente; per
+         * l'autoexec e l'avvio, che si chiamano sempre, l'assenza e' il
+         * caso normale e non si stampa nulla. Il 127 e' lo stesso stato
+         * che si da' a un comando che non c'e', perche' e' la stessa
+         * cosa: un nome che non si e' potuto eseguire. */
+        if (obbligatorio) {
+            print("sh: script non trovato: ");
+            printerr(nome);
+            g_ultimo_stato = 127;
+        }
+        return 0;
+    }
 
-    if (etichetta == 0) etichetta = nome;
+    sh_strcpy(etic, (etichetta == 0) ? nome : etichetta, sizeof(etic));
     g_script_livello++;
 
     for (;;) {
@@ -3396,7 +3468,7 @@ static int esegui_script(const char *nome, const char *etichetta)
 
         if (!zitto && !zitto_sempre) {
             print(CLR_CYAN);
-            print(etichetta);
+            print(etic);
             print("> ");
             print(CLR_RESET);
             println(riga);
@@ -3440,7 +3512,7 @@ static void esegui_avvio(void)
     v = env_get("EXOS_LOGIN");
     if (v && v[0]) return;
 
-    esegui_script(AVVIO_PREDEFINITO, "avvio");
+    esegui_script(AVVIO_PREDEFINITO, "avvio", 0);
 }
 
 static void esegui_autoexec(void)
@@ -3470,7 +3542,7 @@ static void esegui_autoexec(void)
         return;                     /* disattivato di proposito */
     }
 
-    esegui_script(nome, "autoexec");
+    esegui_script(nome, "autoexec", 0);
 }
 
 /* =============================================================================
@@ -3534,7 +3606,7 @@ int shell_main(int argc, char **argv, char **envp)
     if (argc >= 3 && sh_strcmp(argv[1], "-f") == 0) {
         env_init();
         env_eredita(envp);
-        esegui_script(argv[2], "avvio");
+        esegui_script(argv[2], "avvio", 1);
         sh_exit(0);
     }
 
@@ -3579,7 +3651,7 @@ int shell_main(int argc, char **argv, char **envp)
     /* Un argomento che non è un'opzione è il nome di uno script. */
     if (argc >= 2 && argv[1][0] != '-') {
         sh_setfg(sh_getpid());
-        esegui_script(argv[1], NULL);
+        esegui_script(argv[1], NULL, 1);
         sh_exit(g_ultimo_stato);
     }
 

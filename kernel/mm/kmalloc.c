@@ -37,15 +37,72 @@ typedef struct KHeapBlock {
 #define BLOCK_HEADER_SIZE   sizeof(KHeapBlock)
 
 /* =============================================================================
+ * LE REGIONI: LO HEAP NON E' UN TRATTO SOLO
+ *
+ * ! E FINO AL 7 SETTEMBRE 2026 IL CODICE CREDEVA DI SI'. heap_expand() chiede
+ * le pagine a pmm_alloc_pages_kernel(), che le cerca dove le trova dentro
+ * 0..USER_SPACE_BASE: due espansioni danno quasi sempre due tratti LONTANI,
+ * con in mezzo roba che heap non e' — stack di kernel, page directory, page
+ * table, i buffer dei driver.
+ *
+ * I blocchi si incastrano uno dietro l'altro DENTRO un tratto, e basta
+ * `b + header + b->size` per passare al successivo. Ma il tratto finisce, e
+ * quel calcolo non lo sa: sull'ULTIMO blocco di una regione rende un
+ * indirizzo che con lo heap non c'entra niente. kfree lo dereferenziava per
+ * leggerne la firma — due volte, in avanti e all'indietro — e da li'
+ * succedeva una delle due:
+ *
+ *   - l'indirizzo e' oltre la RAM, che il kernel non mappa (paging_init
+ *     mappa in identita' fino a pmm_get_total_pages(), non oltre), e allora
+ *     e' un PAGE FAULT IN RING0 dentro kfree: il kernel muore mentre libera
+ *     memoria, che e' il posto meno somigliante alla causa;
+ *
+ *   - l'indirizzo e' dentro la RAM e per caso ci trova 0xDEADBEEF. Allora la
+ *     firma "vale", e kfree FONDE un blocco dello heap con memoria che heap
+ *     non e': `block->size` diventa una misura inventata, e il guasto non si
+ *     vede adesso — si vede alla kfree DOPO, che con quella misura calcola un
+ *     indirizzo qualunque e muore li'. E' esattamente la firma registrata in
+ *     in_lavorazione.txt (@DIF-PANIC): «kfree ha ricevuto un blocco la cui
+ *     INTESTAZIONE dice una misura sballata».
+ *
+ * La cura e' sapere DOVE FINISCE il tratto. Ogni regione tiene in testa a se'
+ * stessa due parole — dove finisce, e la prossima regione — e kfree non
+ * dereferenzia mai un indirizzo che sta fuori dalla propria.
+ *
+ * ! LA LISTA STA DENTRO LE REGIONI, e non in un vettore con un tetto, per la
+ * ragione di sempre: un tetto o e' troppo alto (memoria sprecata) o e' troppo
+ * basso il giorno che serve, e quel giorno l'errore torna a essere «lo heap
+ * non si espande» senza dire perche'. Otto byte per regione non li sente
+ * nessuno.
+ * ============================================================================= */
+typedef struct KHeapRegion {
+    struct KHeapRegion *next;   /* la regione successiva, in ordine di nascita */
+    uint32_t            fine;   /* primo indirizzo FUORI dalla regione */
+} KHeapRegion;
+
+#define REGION_HEADER_SIZE  sizeof(KHeapRegion)
+
+/* =============================================================================
  * Stato heap
  * ============================================================================= */
 static KHeapBlock *g_heap_start = NULL;     /* Primo blocco heap */
 static KHeapBlock *g_heap_end   = NULL;     /* Puntatore fine heap corrente */
 static KHeapBlock *g_free_list  = NULL;     /* Testa della free list */
+static KHeapRegion *g_regioni   = NULL;     /* Testa della lista delle regioni */
+static KHeapRegion *g_prima_regione = NULL; /* La prima nata: quella di g_heap_start */
 static uint32_t    g_heap_base  = 0;        /* Indirizzo fisico base heap */
 static uint32_t    g_heap_size  = 0;        /* Dimensione heap corrente in byte */
 static uint32_t    g_alloc_count = 0;       /* Totale allocazioni */
 static uint32_t    g_free_count  = 0;       /* Totale liberazioni */
+
+/* Quante volte il confine di una regione ha fermato una lettura che il codice
+ * di prima del 7 settembre 2026 avrebbe fatto fuori dallo heap.
+ *
+ * ! SERVE A MISURARE, NON A DECORARE. «Puo' succedere» e «succede 1400 volte
+ * in un avvio» sono due frasi diverse, e finche' non si conta la seconda non
+ * si sa quale delle due e' vera. kmalloc_stats le stampa. */
+static uint32_t    g_stop_avanti   = 0;
+static uint32_t    g_stop_indietro = 0;
 
 /* =============================================================================
  * Funzioni helper
@@ -88,6 +145,39 @@ static void free_list_add(KHeapBlock *b)
     g_free_list = b;
 }
 
+/* La regione che contiene `p`, oppure NULL se `p` nello heap non c'e'.
+ *
+ * La lista e' corta — un avvio ne fa una manciata, e le regioni attaccate si
+ * fondono qui sotto in heap_expand — e la si percorre solo in kfree, che gia'
+ * paga una scansione ben piu' lunga. */
+static KHeapRegion *regione_di(const void *p)
+{
+    KHeapRegion *r;
+
+    for (r = g_regioni; r != NULL; r = r->next)
+        if ((uint32_t)p >= (uint32_t)r && (uint32_t)p < r->fine)
+            return r;
+
+    return NULL;
+}
+
+/* Il primo blocco di una regione: subito dopo le sue due parole di testa.
+ * ! ANCHE PER UNA REGIONE ALLUNGATA: quando due tratti si toccano non nasce
+ * una regione nuova, si sposta `fine` — quindi la testa resta una sola e i
+ * blocchi restano una catena sola dall'inizio alla fine. */
+static KHeapBlock *regione_primo(KHeapRegion *r)
+{
+    return (KHeapBlock *)((uint8_t *)r + REGION_HEADER_SIZE);
+}
+
+/* Vero se a `b` ci sta dentro un'intestazione di blocco, tutta, prima della
+ * fine di `r`. E' la domanda che va fatta PRIMA di leggere b->magic. */
+static inline int dentro_regione(KHeapRegion *r, KHeapBlock *b)
+{
+    return ((uint32_t)b >= (uint32_t)regione_primo(r) &&
+            (uint32_t)b + BLOCK_HEADER_SIZE <= r->fine);
+}
+
 /* =============================================================================
  * heap_expand — Aggiunge pagine al heap dal PMM
  *
@@ -110,9 +200,55 @@ static KHeapBlock *heap_expand(uint32_t pages)
     }
 
     size_bytes = pages * PAGE_SIZE;
-    new_block  = (KHeapBlock *)phys;
 
-    new_block->size  = size_bytes - BLOCK_HEADER_SIZE;
+    /* Il tratto nuovo attacca esattamente dove ne finisce uno gia' noto?
+     * Allora non e' una regione nuova: e' quella che si allunga.
+     *
+     * ! E NON E' UN'OTTIMIZZAZIONE. Due tratti attaccati tenuti per due
+     * regioni distinte sarebbero due mondi separati, e i loro blocchi non si
+     * fonderebbero MAI: lo heap si frammenterebbe lungo un confine che nella
+     * memoria non esiste. Qui invece l'ultimo blocco del tratto di prima e il
+     * primo del tratto nuovo sono adiacenti davvero, e la coalescenza
+     * all'indietro di kfree li unisce come qualunque altra coppia. */
+    {
+        KHeapRegion *r;
+
+        for (r = g_regioni; r != NULL; r = r->next) {
+            if (r->fine == phys) {
+                r->fine    = phys + size_bytes;
+                new_block  = (KHeapBlock *)phys;
+                new_block->size  = size_bytes - BLOCK_HEADER_SIZE;
+                new_block->magic = HEAP_MAGIC;
+                new_block->flags = BLOCK_FREE;
+                new_block->prev  = NULL;
+                new_block->next  = NULL;
+
+                g_heap_size += size_bytes;
+                g_heap_end   = new_block;
+
+                klog(LOG_DEBUG, "KMALLOC: regione allungata a 0x%08x "
+                     "(+%u pagine, fine 0x%08x)", (uint32_t)r, pages, r->fine);
+                return new_block;
+            }
+        }
+    }
+
+    /* Regione nuova: le sue due parole di testa stanno nella regione stessa,
+     * e i blocchi cominciano subito dopo. REGION_HEADER_SIZE e' 8, cioe' un
+     * multiplo di HEAP_ALIGN: l'allineamento dei blocchi resta quello che
+     * sarebbe stato senza. */
+    {
+        KHeapRegion *r = (KHeapRegion *)phys;
+
+        r->fine   = phys + size_bytes;
+        r->next   = g_regioni;
+        g_regioni = r;
+        if (g_prima_regione == NULL) g_prima_regione = r;
+
+        new_block = regione_primo(r);
+    }
+
+    new_block->size  = size_bytes - REGION_HEADER_SIZE - BLOCK_HEADER_SIZE;
     new_block->magic = HEAP_MAGIC;
     new_block->flags = BLOCK_FREE;
     new_block->prev  = NULL;
@@ -140,10 +276,15 @@ void kmalloc_init(void)
 
     klog(LOG_INFO, "KMALLOC: inizializzazione heap kernel...");
 
-    /* Calcola indirizzo base heap: subito dopo la fine del kernel + bitmap PMM
-     * La bitmap occupa (total_pages / 8) byte dopo _kernel_end.
-     * Usiamo un indirizzo fisso noto: KERNEL_HEAP_BASE = 0x400000 (4MB)
-     * Questo è sicuro perché il kernel+bitmap stanno abbondantemente sotto 4MB. */
+    /* ! g_heap_base NON E' DOVE STA LO HEAP, ED E' SEMPRE STATO COSI'. Qui
+     * c'era scritto che l'heap parte a KERNEL_HEAP_BASE (4 MB) «subito dopo
+     * il kernel + la bitmap»: non e' vero e non lo e' mai stato. Le pagine le
+     * sceglie pmm_alloc_pages_kernel(), che cerca dove trova dentro la fascia
+     * 0..USER_SPACE_BASE — e ogni espansione le cerca di nuovo, quindi lo
+     * heap e' sparso. Il valore resta perche' kmalloc_stats lo stampa da
+     * sempre, ma vale quanto un'etichetta: DOVE si e' davvero lo dicono le
+     * regioni (vedi il commento in cima), e la riga «Regioni» delle
+     * statistiche dice quante sono. */
     g_heap_base = KERNEL_HEAP_BASE;
     g_heap_size = 0;
     g_free_list = NULL;
@@ -273,13 +414,26 @@ void *kmalloc_aligned(size_t size, size_t alignment)
  * ============================================================================= */
 void kfree(void *ptr)
 {
-    KHeapBlock *block;
-    KHeapBlock *next_phys;
+    KHeapBlock  *block;
+    KHeapBlock  *next_phys;
+    KHeapRegion *regione;
 
     if (ptr == NULL) return;
 
     /* Recupera header dal payload */
     block = (KHeapBlock *)ptr - 1;
+
+    /* ! LA REGIONE PRIMA DELLA FIRMA, e non e' pignoleria: un puntatore che
+     * nello heap non sta puo' avere per caso 0xDEADBEEF davanti, e allora
+     * block_valid dice di si' e da li' in poi si lavora su memoria di
+     * qualcun altro. Chiedendo prima la regione, un puntatore estraneo si
+     * ferma qui con un messaggio che dice il suo indirizzo, invece di
+     * spegnere la macchina tre kfree piu' tardi in un posto che non c'entra. */
+    regione = regione_di(block);
+    if (regione == NULL) {
+        kpanic("KFREE: 0x%08x non sta in nessuna regione dello heap",
+               (uint32_t)ptr);
+    }
 
     if (!block_valid(block)) {
         kpanic("KFREE: puntatore non valido o heap corrotto: 0x%08x", (uint32_t)ptr);
@@ -295,9 +449,18 @@ void kfree(void *ptr)
 
     klog(LOG_DEBUG, "KFREE: liberati %u byte da 0x%08x", block->size, (uint32_t)ptr);
 
-    /* Coalescenza con il blocco successivo fisicamente adiacente (forward) */
+    /* Coalescenza con il blocco successivo fisicamente adiacente (forward).
+     *
+     * ! SE `block` E' L'ULTIMO DELLA REGIONE, next_phys NON E' UN BLOCCO: e'
+     * il primo indirizzo fuori. Leggerne la firma vuol dire leggere memoria
+     * di qualcun altro, o oltre la RAM — vedi il commento sulle regioni in
+     * cima. Qui ci si ferma, e si conta. */
     next_phys = block_next_phys(block);
-    if (block_valid(next_phys) && next_phys->flags == BLOCK_FREE) {
+    if (!dentro_regione(regione, next_phys)) {
+        g_stop_avanti++;
+        next_phys = NULL;
+    }
+    if (next_phys != NULL && block_valid(next_phys) && next_phys->flags == BLOCK_FREE) {
         /* Unisci block e next_phys */
         free_list_remove(next_phys);
         block->size += BLOCK_HEADER_SIZE + next_phys->size;
@@ -311,24 +474,56 @@ void kfree(void *ptr)
      *
      * La struttura KHeapBlock non ha un campo prev_phys (aggiungerne uno
      * richiederebbe modifiche al layout e ai punti di allocazione), quindi
-     * troviamo il predecessore con una scansione lineare dal g_heap_start.
-     * Costo O(n) per numero di blocchi nell'heap; accettabile dato che
-     * kfree è chiamata raramente in bulk e l'heap kernel è piccolo (<1MB). */
+     * troviamo il predecessore con una scansione lineare.
+     * Costo O(n) per numero di blocchi nella REGIONE; accettabile dato che
+     * kfree è chiamata raramente in bulk e l'heap kernel è piccolo (<1MB).
+     *
+     * ! SI PARTE DALLA REGIONE DI `block`, NON DA g_heap_start. Partendo dal
+     * primo blocco dello heap la scansione arrivava in fondo alla PRIMA
+     * regione e proseguiva oltre — `nx` non e' mai uguale a `block` finche'
+     * `block` sta altrove — leggendo la firma di quel che c'era dopo. Che a
+     * volte e' un'altra regione (e allora, per puro caso, funzionava), a
+     * volte e' memoria di qualcun altro, e a volte non e' mappato affatto.
+     * Dentro una regione i blocchi si toccano tutti: partendo dal suo primo,
+     * il predecessore o si trova o non c'e'. */
     {
-        KHeapBlock *scan = g_heap_start;
+        KHeapBlock *scan = regione_primo(regione);
         KHeapBlock *prev_phys_blk = NULL;
 
-        while (block_valid(scan) && scan < block) {
-            KHeapBlock *nx = block_next_phys(scan);
+        /* ! QUESTA E' LA MISURA DEL DIFETTO, e conta una cosa sola: liberare
+         * un blocco che non sta nella PRIMA regione. Ogni volta che succede,
+         * il codice di prima partiva da g_heap_start, arrivava in fondo alla
+         * prima regione e proseguiva fuori. Non «poteva»: lo faceva. */
+        if (regione != g_prima_regione) g_stop_indietro++;
+
+        while (scan < block) {
+            KHeapBlock *nx;
+
+            if (!dentro_regione(regione, scan)) break;   /* non ci si arriva */
+
+            /* Dentro una regione i blocchi si incastrano senza buchi: una
+             * firma sbagliata qui vuol dire che qualcuno ha scritto oltre il
+             * proprio blocco. Non si va avanti a indovinare — e non si va
+             * nemmeno in panic, perche' la coalescenza all'indietro e' un
+             * risparmio, non un obbligo: si rinuncia, e lo si dice. */
+            if (!block_valid(scan)) {
+                klog(LOG_ERROR, "KMALLOC: firma rotta a 0x%08x nella regione "
+                     "0x%08x-0x%08x (libero 0x%08x): niente coalescenza "
+                     "all'indietro", (uint32_t)scan, (uint32_t)regione,
+                     regione->fine, (uint32_t)ptr);
+                break;
+            }
+
+            nx = block_next_phys(scan);
             if (nx == block) {
                 prev_phys_blk = scan;
                 break;
             }
+            if (nx <= scan) break;      /* size a zero: non si avanza mai */
             scan = nx;
         }
 
         if (prev_phys_blk != NULL &&
-            block_valid(prev_phys_blk) &&
             prev_phys_blk->flags == BLOCK_FREE) {
 
             /* Unisci prev_phys_blk con block (che ora include già next_phys) */
@@ -381,9 +576,24 @@ void kmalloc_stats(void)
     (void)used_bytes;
 
     klog(LOG_INFO, "KMALLOC statistiche:");
-    klog(LOG_INFO, "  Heap base   : 0x%08x", g_heap_base);
+    klog(LOG_INFO, "  Heap base   : 0x%08x (nominale)", g_heap_base);
     klog(LOG_INFO, "  Heap size   : %u KB", g_heap_size / 1024);
     klog(LOG_INFO, "  Blocchi lib.: %u (%u byte)", free_blocks, free_bytes);
     klog(LOG_INFO, "  Allocazioni : %u totali", g_alloc_count);
     klog(LOG_INFO, "  Liberazioni : %u totali", g_free_count);
+
+    /* Le regioni, e quante volte il loro confine ha fermato una lettura.
+     * Una riga sola, ma dice due cose che prima non si sapevano: quanti
+     * tratti separati e' davvero lo heap, e quanto spesso kfree arrivava al
+     * bordo — cioe' quante occasioni al secondo aveva il difetto di
+     * @DIF-PANIC per farsi vivo. */
+    {
+        KHeapRegion *r;
+        uint32_t     n = 0;
+
+        for (r = g_regioni; r != NULL; r = r->next) n++;
+        klog(LOG_INFO, "  Regioni     : %u (letture fuori evitate: %u in "
+             "coda a una regione, %u fuori dalla prima)",
+             n, g_stop_avanti, g_stop_indietro);
+    }
 }

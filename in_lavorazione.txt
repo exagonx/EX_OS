@@ -103,6 +103,7 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
 ---  ---------------  -----------------------------------------------------
  --  @RIPRESA         dove si era arrivati, e come si riprovano i fili
  --  @CHIUSA          una strada chiusa, scritta perche' non si riapra
+ --  @PROVE-STRUMENTI come si prova un compilatore (o make, o nasm) dentro EX-OS
 
   1  @ABI-BERSAGLIO   il bersaglio e' indietro rispetto alla libc: libcrypto e'
                       stata rifatta, il resto no
@@ -273,6 +274,56 @@ DUE REGOLE IMPARATE QUI, CHE VALGONO OLTRE I FILI
    servirebbe una settima finestra di porte (0x620) e i campioni da caricarci
    dentro.
 
+
+=============================================================================
+@PROVE-STRUMENTI COME SI PROVA UN COMPILATORE (O make, O nasm) DENTRO EX-OS
+=============================================================================
+
+Non e' ovvio e costa mezz'ora a ritrovarlo, percio' sta scritto qui. Il
+problema e' uno solo: gli strumenti stanno sul CD, che e' in sola lettura, e
+per compilare serve un posto DOVE SCRIVERE che sia ext2.
+
+    SP=/tmp/...                       # una directory qualunque fuori dal repo
+    cp dischi/hd.img $SP/hd-prova.img # ! sulla COPIA, non sull'originale
+
+    EXOS_CDROM=dist/exos-tools.iso EXOS_RAM=256M EXOS_ISTANZA=mk \
+    EXOS_QEMU_EXTRA="-drive file=$SP/hd-prova.img,format=raw,if=ide,index=0,media=disk" \
+    python3 tools/qemu_drive.py "mount hd0p1 /disco@12" "cd /disco/pm@5" "make@240"
+
+! SI AVVIA DAL FLOPPY, NON DAL DISCO, e la ragione e' che il disco installato
+  CHIEDE L'ACCESSO: avviandolo con qemu_drive la shell non arriva mai al
+  prompt e la prova scade con «TIMEOUT: la shell non ha raggiunto il prompt»,
+  che non dice affatto che sta aspettando una password. Avviando dal floppy
+  con il CD attaccato non c'e' login, e la partizione la si monta a mano.
+
+! IL CD DEGLI STRUMENTI NON E' AVVIABILE, quindi EXOS_CDROM=exos-tools.iso non
+  fa partire il CD: il BIOS ripiega sul floppy ed e' esattamente cio' che
+  serve. Il CD si trova montato su /cdrom.
+
+! EXOS_RAM=256M, non 32: cc1 pesa 40 MB e il caricamento e' su richiesta, ma
+  le pagine che tocca davvero devono starci.
+
+! E SI SCRIVE SU ext2, MAI SUL FLOPPY. Su FAT i nomi tornano in MAIUSCOLO e la
+  ricerca e' sensibile: `make` non trova nemmeno il makefile e dice «no
+  makefile found» in una directory che ce l'ha (diario, 4 settembre, «SI',
+  make COSTRUISCE DENTRO EX-OS»). Non capita mai per davvero — il compilatore
+  su un floppy non ci starebbe e cdinstall formatta solo ext2 — ma capita a chi
+  cerca un posto scrivibile di fretta, che e' esattamente questa prova.
+
+QUEL CHE C'E' GIA' PRONTO DA PROVARE, sul CD:
+
+    /cdrom/prova-make/        make + gcc + as + ld + ar + ranlib insieme:
+                              si copia su ext2, `make`, e ./prova dice 385
+    /cdrom/prova-nasm.asm     nasm -f elf32, poi ld, poi si esegue
+    /cdrom/prova-nasm16.asm   nasm -f bin, poi ndisasm -b 16 -o 0x7c00
+    /cdrom/prova.s            la stessa cosa della prima, per `as`
+    /cdrom/prova-cc1.c        cc1 da solo
+    /cdrom/prova-ssl.c        libcrypto
+
+! IL PERCORSO DI gcc CONTA: /cdrom/exos/bin/gcc funziona, /cdrom/bin/gcc no —
+  il driver calcola il proprio prefisso da dove sta lui. Sul CD /bin/gcc non
+  c'e' apposta. Nel PATH del sistema /cdrom/exos/bin c'e' gia', quindi dentro
+  un makefile basta scrivere `gcc`.
 
 =============================================================================
 @ABI-BERSAGLIO IL BERSAGLIO E' INDIETRO RISPETTO ALLA LIBC (4 settembre 2026)

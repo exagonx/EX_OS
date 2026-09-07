@@ -26,7 +26,242 @@ manca» apre quello.
 
 ---
 
+# DOVE RIPRENDERE — 5 settembre 2026
+
+## 5 settembre 2026 — L'ERRORE DEL COMPILATORE ANDAVA A FINIRE SU UNA CONSOLE CHE NESSUNO GUARDAVA
+
+Segnalazione: «exide da' errore quando compilo un progetto con una finestra e un
+solo pulsante». Riprodotto, e il difetto non era dove sembrava: **il progetto
+compilava benissimo**. Quel che non funzionava era il MESSAGGIO.
+
+    il compilatore si e' fermato (esito 1): guarda qui sotto
+
+e sotto, nel riquadro «Uscita del compilatore», c'era soltanto la riga di
+comando. L'errore di gcc non c'era. Chi lo legge non ha nessun appiglio: sa che
+qualcosa non e' andato e non sa cosa, e la sola cosa che poteva dirglielo era
+stata scritta da un'altra parte.
+
+### DOV'ERA FINITA: LE TRE STANDARD NON PASSAVANO AL NIPOTE
+
+exide lancia `/bin/sh compila.sh` con l'uscita e gli errori su
+`obj/compila.log`. La shell ci scrive la riga che sta per eseguire, e fin qui
+tutto bene. Poi la shell lancia **gcc** — ed e' li' che si perdeva: in
+`sys_spawn` (kernel/syscall/syscall_impl.c) le tre standard si ereditavano dal
+padre, ma con un'eccezione scritta a chiare lettere:
+
+> ! UN FILE APERTO NON SI EREDITA, E VA DETTO. [...] Qui si torna alla console.
+
+Quindi `sh` scriveva nel registro e `gcc`, nato da lei, tornava alla CONSOLE. Il
+registro conteneva la riga di comando (l'aveva scritta la shell) e non l'errore
+(l'aveva scritto gcc, sulla console di testo, sotto la grafica, dove nessuno
+poteva vederlo).
+
+! **E NON E' UN FATTO DI exide.** Vale per `make > registro`, per uno script che
+  lancia programmi, per qualunque comando che ne lanci un altro: la redirezione
+  si fermava al figlio e non arrivava al nipote. E' una cosa che ogni Unix fa da
+  cinquant'anni, e non farla non si vede finche' non serve leggere proprio
+  quell'output.
+
+**La cura**: un `FD_FILE` si eredita davvero, con `vfs_dup()` per il riferimento
+in piu' — che e' esattamente quel che gia' faceva `SPAWN_AZ_FD` per una
+redirezione esplicita, due funzioni piu' sotto nello stesso file. Il motivo
+scritto nel vecchio commento («il figlio si ritroverebbe la posizione del padre
+e un secondo riferimento da chiudere») non era un ostacolo: era il lavoro da
+fare. `FD_DRIVER` invece resta come prima e torna alla console — `driver_data` e'
+stato privato di chi ha aperto il device, e due processi sopra lo stesso stato
+sono un guasto; e' la stessa regola che `SPAWN_AZ_FD` applica rifiutandosi di
+ereditarlo.
+
+    ex-os:/disk> echo ls /dev > nipote.sh
+    ex-os:/disk> sh nipote.sh > nip.txt
+    ex-os:/disk> cat nip.txt
+    nipote.sh> ls /dev
+    ac97.drv     32684        <- prima di oggi queste righe non c'erano
+    e1000.drv    23168
+    ...
+
+### E DUE COSE IN exide, TROVATE STRADA FACENDO
+
+**1. Lo stesso file aperto due volte sono DUE POSIZIONI.** Le redirezioni erano
+
+    fd 1 -> obj/compila.log   (O_TRUNC)
+    fd 2 -> obj/compila.log   (una seconda apertura)
+
+In EX-OS l'offset sta nel descrittore, non in un oggetto «file aperto» condiviso
+(vedi il commento su `dup()` in libc.h): due aperture dello stesso percorso
+partono **tutte e due da zero** e si scrivono addosso. Il registro era leggibile
+solo quando gcc non diceva niente, cioe' quando andava bene; appena c'era un
+errore da leggere diventava un miscuglio delle due scritture:
+
+    /cdrom/exos/bin/gcc
+    mpila.sh> ←[0m/cdrom/exos/bin/gcc -m32 -ffreestanding -fno-buil
+    exec: comando non trovato:
+
+Adesso il file si azzera una volta sola e tutti e due i descrittori sono in
+**O_APPEND**, che qui non e' un dettaglio: il kernel rilegge la fine del file a
+ogni write, quindi due descrittori che accodano non si sovrappongono mai.
+
+**2. I colori della shell finivano nella lista.** Il registro lo scrive
+`/bin/sh`, che stampa ogni riga dello script col nome del file in ciano, cioe'
+con dentro `ESC [96m`. Una lista non sa cosa farsene e li mostra come
+caratteri. Si buttano via leggendo il registro, non nella shell: con `cat` quei
+colori sono giusti.
+
+### E IL CASO PIU' COMUNE DI TUTTI: IL COMPILATORE CHE NON C'E'
+
+La radice predefinita e' `/cdrom/exos`, cioe' il CD DEGLI STRUMENTI montato su
+`/cdrom`. Avviando dal CD di sistema su `/cdrom` non c'e' niente (il sistema sta
+in `/`, e il suo `/exos` contiene solo `ssl`), e chi ha usato `toolinst` ha gli
+strumenti in `/exos`. In tutti e due i casi la riga partiva lo stesso, la shell
+rispondeva «comando non trovato» e l'utente leggeva «il compilatore si e'
+fermato (esito 127)»: un errore che parla del compilatore quando il compilatore
+non e' mai partito.
+
+Adesso exide guarda se `<radice>/bin/gcc` c'e', PRIMA di lanciare, e se non c'e'
+lo dice e dice cosa fare:
+
+    Il compilatore non c'e':
+    /cdrom/exos/bin/gcc
+
+    Sta sul CD DEGLI STRUMENTI, che e' un secondo CD: montalo e
+    riprova.    mount cd1 /cdrom
+
+    Se invece li hai gia' installati sul disco con `toolinst`,
+    scrivi /exos nella radice qui sopra.
+
+### COME SI E' PROVATO (e come si rifa', perche' non e' ovvio)
+
+Il progetto di prova si prepara DA FUORI e si mette dentro l'immagine ext2 con
+`debugfs` — exide apre una directory di progetto passata come argomento, e il
+disegno e' un file di testo di tre righe:
+
+    # exide 0.002 - lo scrive e lo legge solo exide
+    F principale 400 260 prova2
+    c pulsante Pulsante1 1001 40 40 90 26 0 Pulsante
+
+    cp dischi/hd.img $SP/hd-prova.img
+    debugfs -w -R "mkdir /prova2" "$SP/hd-prova.img?offset=1048576"
+    ...  (src, inc, bin, obj, poi `write` del .dis in /prova2/src)
+
+! **E SI PILOTA COSI', che e' la parte che costa trovare.** Tre cose, tutte e
+  tre necessarie:
+
+    1. exwin si avvia DA UNO SCRIPT, non a mano: `exwin &`, `sleep 8`,
+       `/exwin/bin/exide /disk/prova2 &`. Battuto a mano dopo `exwin`, il
+       comando non arriva alla shell — i tasti sono gia' della grafica.
+    2. PRIMA UN CLIC DENTRO LA FINESTRA, o i tasti non le arrivano: il server
+       li manda alla finestra col fuoco, che appena aperta e' la scrivania.
+       Il clic va su un punto morto (la barra di stato in fondo): sulla barra
+       del TITOLO comincia un trascinamento e la finestra se ne va.
+    3. Poi il MENU CON I TASTI, non col mouse: F10 apre, frecce si muovono,
+       Invio sceglie (lib/exwin/exwin.c, menu_tasto). Il mouse relativo di
+       QEMU perde una manciata di pixel per strada — con `passi_a 110 531` il
+       puntatore arriva a (80,505) — e un titolo di menu e' un bersaglio da
+       trenta pixel: si sbaglia, e non si capisce perche'.
+
+    File > Salva            = F10, giu', giu', Invio
+    Strumenti > Compilatore = F10, destra, destra, giu', giu', Invio
+
+Provato tutto e tre volte: senza CD degli strumenti (esce il messaggio nuovo),
+con un errore di sintassi messo apposta in `finestra.c` (nel riquadro compare
+«src/finestra.c:19:13: error: expected expression before ';' token», con la riga
+e il caret), e con il progetto giusto (`fatto: bin/programma`, 32780 byte).
+
+! **E IL PROGETTO CON UNA FINESTRA E UN PULSANTE COMPILAVA GIA' PRIMA.** Il
+  codice che exide genera e' identico, riga per riga, a quello che si scriverebbe
+  a mano, e gcc del CD lo prende senza un avviso. Il difetto era tutto nel non
+  poter LEGGERE cosa fosse andato storto quando qualcosa andava storto.
+
 # DOVE RIPRENDERE — 4 settembre 2026
+
+## 4 settembre 2026 — `prova.sh` SI ESEGUE, e prima no: il motore c'era, la porta era murata
+
+Segnalazione secca: «su EX-OS non riesco a eseguire i file .sh». E infatti:
+
+    ex-os:/> prova.sh
+    exec: comando non trovato: prova.sh
+    ex-os:/> source prova.sh
+    prova.sh> echo UNO
+    UNO
+
+Le due righe insieme dicono tutto. L'interprete degli script c'era da sempre —
+`esegui_script()` in `bin/sh/shell.c`, quello che fa girare `/boot/avvio.sh` e
+`/boot/autoexec.sh` a ogni accensione — e dentro `esegui_builtin()` c'era anche
+il ramo che gli manda un nome che finisce in `.sh`, con sopra un commento che
+spiega perche' si decide li' e non dopo il fallimento della spawn.
+
+**Quel ramo non si e' mai raggiunto.** Chi smista i comandi e' `esegui_comando`,
+e la prima cosa che fa e':
+
+    if (!e_builtin(argv[0])) { run_program(...); return 0; }
+
+`e_builtin()` e' un elenco di NOMI — `cd`, `echo`, `source`, `exit` — e
+`prova.sh` non e' in elenco. Quindi il nome usciva verso `run_program`, che lo
+cercava nel PATH come un ELF, non lo trovava, e diceva la sua riga. Il ramo
+degli script stava dopo una porta di cui nessuno gli aveva dato la chiave.
+
+! **ED ERA IL DIFETTO CHE IL COMMENTO SOPRA `e_builtin` DESCRIVE.** C'e'
+scritto, da prima di oggi: «questo elenco deve restare allineato al dispatch;
+un nome che manca qui e c'e' la' e' un anello di pipe che non produce niente e
+non lo dice». E' successo esattamente cosi', con l'aggravante che il nome non
+era un nome ma una FORMA — «finisce in .sh» — e una forma in un elenco di
+stringhe non ci si mette. Adesso la domanda sta in una funzione sola,
+`e_script()`, e la chiamano tutti e due: allineati per costruzione, non per
+disciplina.
+
+### Quel che si e' aggiunto attorno, perche' senza non bastava
+
+**Il file non trovato adesso lo dice.** `esegui_script()` apriva, e se non
+riusciva tornava zero in silenzio, con il commento «non c'e': non e' un
+errore» — vero per l'autoexec, che la maggior parte dei sistemi non ha; falso
+per uno script che l'utente ha appena nominato, dove il silenzio vuol dire una
+shell che torna al prompt come se avesse eseguito qualcosa. Ora la funzione
+prende `obbligatorio`: 0 per avvio e autoexec, 1 per chi lo nomina, e in quel
+caso «sh: script non trovato: X» e stato 127, lo stesso di un comando che non
+c'e', perche' e' la stessa cosa.
+
+**Si cerca prima dove si e', poi nel PATH** (`esegui_script_nominato`). E'
+l'ordine OPPOSTO a quello dei programmi, apposta: per un ELF la cartella
+corrente non si guarda affatto — regola di execvp, vedi `ha_barra` — mentre uno
+script lo si scrive quasi sempre dove si sta lavorando, e chi batte `prova.sh`
+li' intende quel file. Un nome con una barra dentro resta un percorso e si usa
+com'e'.
+
+**L'etichetta si copia.** Alla seconda riga lo script si presentava cosi':
+
+    prova.sh> echo UNO
+    UNO
+    echo> pwd            <-- e da dove esce «echo»?
+
+`etichetta` puntava dentro `argv[0]`, cioe' dentro il buffer di riga della
+shell, che `esegui_riga` RISCRIVE alla prima riga eseguita: il prefisso
+diventava il nome dell'ultimo comando. Adesso e' una copia in `etic[64]` sullo
+stack di `esegui_script`, che vive quanto lo script.
+
+### Provato in QEMU, floppy e CD
+
+    prova.sh                tre righe: echo, pwd, cd /bin
+    pwd                     -> /bin      il `cd` e' rimasto: gira in QUESTA shell
+    manca.sh                -> sh: script non trovato: manca.sh
+    pth.sh (in /bin)        parte da /boot: trovato nel PATH
+    uno.sh che chiama pth.sh    annidamento, etichette giuste a ogni livello
+    /uno.sh                 percorso assoluto
+    prova.sh > out.txt      la redirezione prende l'output di tutte le righe
+    prova.sh | cat          nella pipe si rilancia come `/bin/sh -c`, e passa
+
+Dal CD (`dist/exos.iso`, sola lettura) `/boot/autoexec.sh` battuto a mano
+riesegue le sue righe, `#` e `@` compresi.
+
+! **QUEL CHE UNO SCRIPT ANCORA NON FA**, e va detto perche' e' la prossima
+domanda di chi ci scrive dentro: niente `$1`, niente `$VAR` — la shell non
+espande il dollaro da nessuna parte, `export` prepara l'ambiente dei figli e
+basta — niente `if`, niente `for`, niente `while`. Una riga = un comando, con
+tutto quel che la riga di comando sa gia' fare: virgolette, jolly, `&`, pipe,
+redirezioni, `;`. E' un file di comandi, non un linguaggio.
+
+`boot/help.txt`, sotto `[source]`, prometteva gia' «un nome che finisce in .sh
+basta da solo»: era l'unico posto dove la cosa era scritta giusta. Adesso e'
+anche vera, e dice dove il file si cerca.
 
 ## 4 settembre 2026 — SI', `make` COSTRUISCE DENTRO EX-OS
 

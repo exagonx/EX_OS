@@ -270,7 +270,10 @@ esegue uno script in questa shell
   source prova.sh
   prova.sh                 un nome che finisce in .sh basta da solo
 
-`!silenced` dentro lo script nasconde i comandi, non il loro output.
+Il file si cerca prima nella cartella in cui si e', poi nel PATH; se non
+c'e', lo dice. Dentro, una riga = un comando: `#` commenta una riga, `@`
+davanti a un comando lo esegue senza stamparlo, `!silenced` da li' in poi
+nasconde i comandi, non il loro output.
 
 [jobs]
 elenca i programmi lanciati con '&'

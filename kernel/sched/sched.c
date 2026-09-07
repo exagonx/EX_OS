@@ -261,9 +261,24 @@ static void init_reaper_task(void)
     for (;;) {
         for (i = 0; i < MAX_PROCESSES; i++) {
             Process *p = &g_process_pool[i];
-            if (p->state == PROC_ZOMBIE && p->ppid == g_init_task->pid) {
+
+            if (p->state != PROC_ZOMBIE) continue;
+
+            /* ! E ANCHE I FILI DI UN GRUPPO CHE NON C'E' PIU'. Un filo non e'
+             * figlio di nessuno fuori dal suo gruppo (vedi proc_thread_crea e
+             * sys_waitpid): se nessuno lo ha aspettato con thread_attendi, il
+             * suo PCB non lo raccoglie nessuno. Finche' il gruppo e' vivo va
+             * bene cosi' — e' un filo che si puo' ancora aspettare, ed e' quel
+             * che fa anche Linux con un thread joinable — ma quando del gruppo
+             * non resta nessun vivo, aspettare vuol dire aspettare per sempre,
+             * e sono slot del pool (MAX_PROCESSES) persi uno per volta. */
+            if (p->ppid == g_init_task->pid) {
                 klog(LOG_DEBUG, "INIT: riassorbo orfano PID %u ('%s')",
                      p->pid, p->name);
+                proc_reap_zombie(p);
+            } else if (p->tgid != p->pid && proc_gruppo_vivi(p->tgid) == 0) {
+                klog(LOG_DEBUG, "INIT: riassorbo il filo %u di '%s', gruppo %u "
+                     "esaurito", p->pid, p->name, p->tgid);
                 proc_reap_zombie(p);
             }
         }
@@ -1151,7 +1166,20 @@ int proc_thread_crea(uint32_t entry, uint32_t arg)
     filo->fdt            = capo->fdt;          /* i descrittori sono in comune */
     filo->filo_posto     = posto;
     filo->fili_banda     = 0;                  /* la banda e' del capogruppo */
-    filo->ppid           = capo->ppid;
+
+    /* ! IL PADRE DI UN FILO E' IL CAPOGRUPPO, e fino al 7 settembre 2026 era
+     * il padre del capogruppo — cioe' la shell che ha lanciato il programma.
+     * Detto cosi' sembra innocuo; quel che voleva dire e' che un filo era un
+     * FIGLIO DELLA SHELL. Se moriva senza che nessuno lo aspettasse con
+     * thread_attendi, la waitpid della shell lo raccoglieva, la shell tornava
+     * al prompt convinta che il programma fosse finito, e il comando
+     * successivo partiva sopra un programma ancora vivo.
+     *
+     * Adesso il ppid resta dentro il gruppo, e sys_waitpid salta i fili in
+     * ogni caso (un filo non e' un figlio: si aspetta con thread_attendi).
+     * Chi raccoglie il PCB di un filo che nessuno ha aspettato e' il reaper
+     * di init, quando del gruppo non resta piu' nessuno vivo. */
+    filo->ppid           = capo->pid;
     filo->console        = capo->console;
     filo->uid            = capo->uid;
     filo->gid            = capo->gid;

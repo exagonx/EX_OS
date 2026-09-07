@@ -902,11 +902,17 @@ static int prova_pila(void)
  * flusso morto — magari con un lucchetto in mano. E' la stessa ragione per cui
  * la cancellazione e' cooperativa, e sta scritta fra le cose aperte.
  *
- * ! IL FILO ASPETTA UN DECIMO DI SECONDO PRIMA DI SCENDERE, e non e' pigrizia:
- * finche' nessuno lo aspetta il suo ppid e' quello del PROCESSO PADRE — la
- * shell — e una morte istantanea la farebbe raccogliere a lei, che tornerebbe
- * al prompt credendo finito il programma. thread_attendi si fa trovare come
- * padre, ma deve arrivarci prima.
+ * ! E SCENDE SUBITO, senza aspettare. Fino al 7 settembre 2026 qui c'era una
+ * usleep(100000) con scritto perche': finche' nessuno lo aspettava, il ppid di
+ * un filo era quello del PROCESSO PADRE — la shell — e una morte istantanea la
+ * faceva raccogliere a lei, che tornava al prompt credendo finito il
+ * programma. Il decimo di secondo serviva a far arrivare prima
+ * thread_attendi, che si fa trovare come padre.
+ *
+ * Adesso il ppid di un filo resta dentro il gruppo e sys_waitpid i fili li
+ * salta: togliere l'attesa non e' una pulizia, e' LA PROVA. Se il prompt
+ * torna prima della riga «e il processo e' vivo», o se il comando dopo parte
+ * sopra questo, il difetto e' tornato.
  * ========================================================================== */
 static void filo_sfonda(void *arg)
 {
@@ -919,7 +925,6 @@ static void filo_sfonda(void *arg)
 
 static void filo_giu(void *arg)
 {
-    usleep(100000);             /* il tempo che il principale lo aspetti */
     filo_sfonda(arg);
 }
 

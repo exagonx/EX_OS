@@ -2864,6 +2864,7 @@ static void carica_uscita(void)
 {
     char p[PERC_MAX], buf[512], riga[200];
     int  fd, n, i;
+    int  salta = 0;                 /* dentro una sequenza di colore */
     unsigned int col = 0, righe = 0;
 
     ex_lista_svuota(g_cc_uscita);
@@ -2875,6 +2876,23 @@ static void carica_uscita(void)
     while ((n = (int)read(fd, buf, sizeof(buf))) > 0)
         for (i = 0; i < n; i++) {
             if (buf[i] == '\r') continue;
+
+            /* ! I COLORI DELLA SHELL SI BUTTANO VIA QUI. Il registro lo
+             * scrive /bin/sh, che stampa ogni riga dello script preceduta
+             * dal nome del file IN CIANO — cioe' con dentro un ESC [96m.
+             * Una lista non sa cosa farsene: li mostra come caratteri, e la
+             * prima riga del registro diventa «<-[96m/disk/prova/compila.sh>
+             * <-[0m/cdrom/...». Chi la guarda sta cercando l'errore del
+             * compilatore, e trova prima un rebus.
+             *
+             * Si toglie qui e non nella shell: il registro si legge anche
+             * con `cat`, e li' i colori sono giusti. */
+            if (buf[i] == 27) { salta = 1; continue; }
+            if (salta) {
+                if (buf[i] >= '@' && buf[i] <= '~' && buf[i] != '[') salta = 0;
+                continue;
+            }
+
             if (buf[i] != '\n') {
                 if (col + 1 < sizeof(riga)) riga[col++] = buf[i];
                 continue;
@@ -2938,14 +2956,79 @@ static void compila(void)
     sprintf(p, "%s/compila.sh", g_prog_dir);
     sprintf(log, "%s/obj/compila.log", g_prog_dir);
 
+    /* ! SI GUARDA SE IL COMPILATORE C'E', PRIMA DI LANCIARLO, e la ragione
+     * e' quel che si vede quando non c'e'. La radice predefinita e'
+     * /cdrom/exos, cioe' il CD degli strumenti montato su /cdrom: se non lo
+     * e' — ed e' il caso NORMALE, perche' avviando dal CD di sistema su
+     * /cdrom non c'e' niente, e chi ha usato `toolinst` ha gli strumenti in
+     * /exos — la riga partiva lo stesso e finiva nella shell, che rispondeva
+     * «comando non trovato». Chi guardava leggeva «il compilatore si e'
+     * fermato (esito 127)» e sotto un pezzo di quel messaggio: un errore che
+     * parla del compilatore quando il compilatore non e' mai partito.
+     *
+     * Qui invece si dice la cosa vera e si dice COSA FARE. Non e' una
+     * cortesia: e' l'unica differenza fra un ambiente che si puo' usare e
+     * uno in cui bisogna gia' sapere la risposta. */
+    {
+        char cc[PERC_MAX];
+
+        sprintf(cc, "%s/bin/gcc", g_cc_radice);
+        if (access(cc, F_OK) != 0) {
+            ex_lista_svuota(g_cc_uscita);
+            ex_lista_aggiungi(g_cc_uscita, "Il compilatore non c'e':");
+            ex_lista_aggiungi(g_cc_uscita, cc);
+            ex_lista_aggiungi(g_cc_uscita, "");
+            ex_lista_aggiungi(g_cc_uscita,
+                "Sta sul CD DEGLI STRUMENTI, che e' un secondo CD: montalo e");
+            ex_lista_aggiungi(g_cc_uscita,
+                "riprova.    mount cd1 /cdrom");
+            ex_lista_aggiungi(g_cc_uscita, "");
+            ex_lista_aggiungi(g_cc_uscita,
+                "Se invece li hai gia' installati sul disco con `toolinst`,");
+            ex_lista_aggiungi(g_cc_uscita,
+                "scrivi /exos nella radice qui sopra.");
+            ex_testo_metti(g_cc_stato,
+                           "il compilatore non c'e': guarda qui sotto");
+            dico("il compilatore non c'e' nella radice degli strumenti");
+            ex_procedura_base(g_cc, EXM_DISEGNA, 0, 0);
+            return;
+        }
+    }
+
     /* ! L'USCITA VA IN UN FILE, non in una pipe: una pipe vorrebbe dire
      * leggerla mentre il figlio scrive, e chi legge una pipe piena mentre il
      * figlio ne riempie un'altra si blocca. Un file lo si rilegge dopo, tutto
      * insieme, e resta li' anche dopo — che e' quel che serve a chi vuole
-     * rileggere l'errore con calma. */
-    red[0].fd = 1; red[0].flags = O_WRONLY | O_CREAT | O_TRUNC;
+     * rileggere l'errore con calma.
+     *
+     * ! MA LO STESSO FILE APERTO DUE VOLTE SONO DUE POSIZIONI, e questo e'
+     * costato il registro. Il figlio aveva l'uscita e gli ERRORI su due
+     * aperture distinte dello stesso percorso: in EX-OS l'offset sta nel
+     * descrittore (vedi il commento su dup() in libc.h), quindi tutti e due
+     * partivano da zero e si scrivevano addosso. Il risultato era leggibile
+     * solo quando gcc non diceva niente — cioe' quando andava bene. Appena
+     * c'era un errore da leggere, il registro diventava un miscuglio delle
+     * due scritture, con mezza riga di una dentro l'altra: proprio nel
+     * momento in cui serviva.
+     *
+     * La cura e' O_APPEND SU TUTTI E DUE, che qui non e' un dettaglio: il
+     * kernel rilegge la fine del file a ogni write (syscall_impl.c), quindi
+     * due descrittori che accodano allo stesso file non si sovrappongono
+     * mai. Il file si azzera una volta sola, prima — ed e' anche il modo di
+     * accorgersi che obj/ non c'e' PRIMA di lanciare il compilatore. */
+    {
+        int t = open(log, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+
+        if (t < 0) {
+            ex_testo_metti(g_cc_stato, "non riesco a scrivere obj/compila.log");
+            return;
+        }
+        close(t);
+    }
+
+    red[0].fd = 1; red[0].flags = O_WRONLY | O_CREAT | O_APPEND;
     red[0].percorso = log; red[0].fd_padre = -1;
-    red[1].fd = 2; red[1].flags = O_WRONLY | O_CREAT;
+    red[1].fd = 2; red[1].flags = O_WRONLY | O_CREAT | O_APPEND;
     red[1].percorso = log; red[1].fd_padre = -1;
 
     argv[0] = "sh";
