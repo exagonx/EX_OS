@@ -58,8 +58,9 @@ DISPOSITIVO="$1"
 MB="${2:-1024}"
 IMG="dischi/usb-${MB}.img"
 
-FLOPPY=dist/floppy.img
+CD_SISTEMA=dist/exos.iso
 CD_STRUMENTI=dist/exos-tools.iso
+FLOPPY=dist/floppy.img          # serve al secondo giro, per gli strumenti
 
 rifiuta() {
     echo "" >&2
@@ -225,6 +226,10 @@ echo ""
 # =============================================================================
 
 [ -f "$FLOPPY" ] || rifiuta "manca $FLOPPY." "Lancia prima 'make'."
+[ -f "$CD_SISTEMA" ] || rifiuta \
+    "manca $CD_SISTEMA." \
+    "Lancia prima 'make iso-exos': e' il CD da cui si installa, e da cui" \
+    "dipende QUANTI programmi finiscono sulla chiavetta."
 [ -f "$CD_STRUMENTI" ] || rifiuta \
     "manca $CD_STRUMENTI." \
     "Lancia prima 'make iso' (e' il CD degli strumenti: gcc, as, ld, make)."
@@ -248,10 +253,19 @@ echo "[OK] hd0p1, tipo 83, attiva"
 
 # --- il sistema -------------------------------------------------------------
 #
+# ! SI PARTE DAL CD DI SISTEMA, NON DAL FLOPPY, e questa riga e' costata una
+# chiavetta sbagliata. `install` copia IL SUPPORTO DA CUI SI E' AVVIATI: dal
+# floppy copia i 40 programmi che ci stanno in 1,44 MB, e la chiavetta usciva
+# senza rete (ping, dhcp, ftp, telnet), senza grafica (exwin e le sue
+# applicazioni) e senza netupdate — cioe' senza le cose per cui una chiavetta
+# serve. Dal CD ne copia 69, piu' l'ambiente grafico. Il difetto non si vedeva
+# alla costruzione: la chiavetta si avviava benissimo, e mancava solo tutto.
+#
 # ! DUE GIRI DI QEMU E NON UNO, ed e' voluto. `install` guarda cosa trova sul
-# supporto per proporre i componenti opzionali: con il CD degli strumenti gia'
+# supporto per proporre i componenti opzionali: col CD degli strumenti gia'
 # attaccato si troverebbe davanti un albero che non e' suo. Il sistema si
-# installa dal floppy, gli strumenti dal loro CD, e ognuno vede solo il proprio.
+# installa dal CD di sistema, gli strumenti dal loro CD, e ognuno vede solo il
+# proprio.
 # ! ALL'ULTIMA DOMANDA SI RISPONDE «no», E NON E' FRETTA. L'installatore
 # chiede se lanciare `hwconfig`, che guarda l'hardware e riscrive kernel.cfg
 # con i driver di QUESTA macchina. Su un disco fisso e' la cosa giusta; su una
@@ -287,7 +301,7 @@ LINGUA="${EXOS_LINGUA:-1}"
 
 echo ""
 echo "=== 2/4  formattazione e sistema, DENTRO EX-OS (qualche minuto) ==="
-EXOS_ISTANZA=usb1 \
+EXOS_ISTANZA=usb1 EXOS_NO_FLOPPY=1 EXOS_CDROM="$CD_SISTEMA" \
 EXOS_QEMU_EXTRA="-drive file=$IMG,format=raw,if=ide" \
     python3 tools/qemu_drive.py \
         "mkfs -t ext2 -L exos hd0p1@4" \
@@ -356,6 +370,11 @@ echo ""
 echo "     Per entrare:  root / $PW_ROOT   oppure   $UTENTE / $PW_UTENTE"
 echo "     Il compilatore e' in /exos/bin/gcc, ed e' gia' nel PATH."
 echo ""
+# ! I BACKTICK QUI DENTRO SONO UN COMANDO, NON UNA CITAZIONE. La prima
+# versione di questa riga scriveva  «serve `MB=` piu\' grande»  e la shell ha
+# eseguito `MB=` come comando, lasciando un buco nel messaggio: si legge «serve
+#  piu\' grande», che non vuol dire niente. Le virgolette semplici non bastano,
+# perche\' la stringa e\' fra doppi apici.
 echo "! LA CHIAVETTA E' GRANDE $GB GB MA LA PARTIZIONE E' ${MB} MB: il resto"
-echo "  non e' usato. Per prenderselo tutto serve `MB=` piu' grande, o far"
+echo "  non e' usato. Per prenderselo tutto serve MB= piu' grande, o far"
 echo "  crescere la partizione a mano — che EX-OS oggi non sa fare."

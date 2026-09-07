@@ -104,14 +104,15 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
  --  @RIPRESA         dove si era arrivati, e come si riprovano i fili
  --  @CHIUSA          una strada chiusa, scritta perche' non si riapra
  --  @PROVE-STRUMENTI come si prova un compilatore (o make, o nasm) dentro EX-OS
+ --  @RETE           l'aggiornamento dalla rete: cosa c'e' gia' e cosa manca
 
   1  @DIF-DRIVER      da CD un driver ogni tanto muore appena avviato
   1  @DIF-PANIC       chi scrive oltre il proprio blocco dello heap del kernel
   1  @USB             `make usb` c'e': manca la prova su una chiavetta VERA
-  1  @NETINST         `make netinst`: dist/netinst/, il sistema da pubblicare
-  1  @NET-DB          il catalogo e il registro di cio' che e' installato
-  1  @NET-SET         netupdate -set: il file di configurazione in /boot
+  1  @NET-CHECK       netupdate -check: aggiornare senza restare a piedi
+  1  @NET-APP         netupdate -install / -remove
   1  @NET-TARGZ       tar.gz per le app: inflate c'e' gia', mancano due lettori
+  1  @DIF-FDC         un floppy montato a macchina accesa legge a passo d'uomo
   1  @VISTA           l'impaginato non e' una libreria: due callback, non un trasloco
   1  @SUONO-REG       la registrazione non c'e': nessun driver accende AUDIO_CAP_REGISTRA
   1  @SUONO-MIX       un client alla volta: il secondo che suona riceve -EBUSY
@@ -134,8 +135,6 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @GIT-GCC         togliere dall'indice gli interni di GCC (chi ha il repository)
   1  @RUST-0          un programma no_std che gira, compilato da Linux
 
-  2  @NET-CHECK       netupdate -check                        <- @NETINST @NET-DB @NET-SET
-  2  @NET-APP         netupdate -install / -remove            <- @NETINST @NET-DB @NET-SET
   2  @SUONO-EMU8000   l'EMU8000 di una AWE32 resta spento    <- @SUONO-CAMPIONI
   2  @RUST-1          alloc: un GlobalAlloc sopra la malloc  <- @RUST-0
   3  @RUST-2          libexos: file, processi, IPC, finestre <- @RUST-1
@@ -172,6 +171,12 @@ IL PROSSIMO PASSO, IN ORDINE
  poteva partire con la PILA A ZERO, perche' proc_thread_crea lo rendeva
  eseguibile prima di costruirgliela — diario, 7 settembre. Quel che resta e'
  un numero e non un lavoro: otto fili per processo.
+
+ E DA LI' IL LAVORO SI E' SPOSTATO SULLA RETE (@RETE, aperto il 7 settembre).
+ Di quella strada ci sono gia' i due capi e il centro: `make netinst` pubblica,
+ `netupdate -set` dice da dove, e il catalogo e il registro sanno chi possiede
+ cosa e chi dipende da chi. Quel che manca e' il pezzo che li unisce, cioe' la
+ rete: @NET-CHECK e @NET-APP, tutt'e due adesso di livello 1.
 
 COME SI PROVANO I FILI, SENZA RICOSTRUIRE IL RAGIONAMENTO
 
@@ -378,6 +383,38 @@ L'IDEA IN UNA RIGA: il sistema si pubblica su un server FTP o HTTP, e da dentro
 EX-OS `netupdate` lo aggiorna e ci installa sopra le applicazioni, con le loro
 librerie e senza portarsi via quelle che servono a qualcun altro.
 
+! QUEL CHE C'E' GIA', E MANCA SOLO LA RETE IN MEZZO. Dal 7 settembre 2026
+  (diario: «netupdate -set, E LA CHIAVETTA SI FACEVA DAL FLOPPY» e «IL
+  CATALOGO E IL REGISTRO»):
+
+      make netinst        tools/mknetinst.sh -> dist/netinst/, con versione.txt,
+                          catalogo.txt (i pacchetti: avvio, sistema, e i gruppi
+                          degli strumenti presi da tools/iso/strumenti.txt),
+                          elenco.txt (percorso, byte, sha256, PACCHETTO: una
+                          riga per file) e file/
+      netupdate -set      -> /boot/netupdate.cnf, da dove ci si aggiorna
+      netupdate -registro -> legge /boot/netupdate.reg: pacchetti, versioni,
+                          dipendenze, file, e «chi usa questo?»
+      netupdate -registro:crea <albero>
+                          scrive il registro da una copia locale dell'albero
+                          pubblicato, ed e' la stessa routine che -check
+                          chiamera' dopo aver scaricato i tre file
+
+  La «versione per file» che si voleva all'inizio E' l'impronta: due risposte
+  alla stessa domanda si contraddicono, e quella che conta e' l'unica che sa
+  distinguere uno scaricamento finito da uno interrotto a meta'.
+
+! E DUE COSE IMPARATE SCRIVENDOLO, che valgono per chi fa -check:
+
+  - KERNEL E CARICATORE CAMBIANO NOME FRA CD E DISCO. Sul CD sono /KERNEL.BIN
+    e /LOADER.BIN, su un disco installato /boot/kernel.bin e /boot/stage2.bin
+    (bin/install/install.c). L'albero pubblicato adesso li mette gia' col nome
+    del disco, e stanno in un pacchetto loro, [avvio], con scritto sopra che
+    non sono file come gli altri.
+  - IL REGISTRO DICE COSA C'E', NON COSA DOVREBBE ESSERCI. Sulla chiavetta di
+    prova 30 file dell'elenco non c'erano: non e' un guasto, sono i componenti
+    opzionali che chi ha installato non ha scelto. Vedi @NET-CHECK.
+
 ! IL CATALOGO NON SI INVENTA: C'E' GIA'. tools/iso/strumenti.txt e' un catalogo
   di pacchetti con le dipendenze, letto da `toolinst`, e ha gia' le chiavi che
   servono qui:
@@ -398,65 +435,7 @@ librerie e senza portarsi via quelle che servono a qualcun altro.
   di due che divergono. La spiegazione per esteso e' in testa a quel file.
 
 -----------------------------------------------------------------------------
- 1. @NETINST `make netinst` — LA DIRECTORY DA PUBBLICARE
-
-    Crea dist/netinst/ (da mettere in .gitignore, come il resto di dist/) con
-    dentro il sistema INTERO, gia' compilato e funzionante, nella forma in cui
-    va appoggiato su un server FTP o HTTP: i file, il catalogo dei pacchetti, e
-    un file di versione che netupdate legge per primo.
-
-    QUEL CHE VA DECISO PRIMA DI SCRIVERE UNA RIGA:
-
-      - il file di versione. Deve dire almeno: versione del sistema, data,
-        e per OGNI file pubblicato la sua versione e la sua impronta. Senza
-        impronta un aggiornamento interrotto a meta' non si distingue da uno
-        riuscito, e la volta dopo non si riscarica.
-      - kernel e bootloader NON sono file come gli altri: vedi @NET-CHECK.
-
-    ! SI CONFRONTA FILE PER FILE, NON PACCHETTO PER PACCHETTO, ed e' la ragione
-      per cui elenco.txt ha un'impronta per OGNI file invece di una per
-      pacchetto. Se sul server sono cambiati solo `ls` e `fdisk`, netupdate
-      deve proporre — e scaricare — solo quei due. Un confronto per pacchetto
-      farebbe riscaricare l'intero sistema per due programmi, e su una linea
-      lenta e' la differenza fra un aggiornamento che si fa e uno che si
-      rimanda per sempre.
-
- 2. @NET-DB IL CATALOGO E IL REGISTRO
-
-    Due cose diverse, e confonderle e' il primo modo di sbagliare:
-
-      IL CATALOGO sta sul SERVER e dice cosa esiste: nomi, versioni, pesi,
-      dipendenze. E' strumenti.txt allargato.
-
-      IL REGISTRO sta sulla MACCHINA e dice cosa c'e' installato: per ogni
-      pacchetto la versione, e L'ELENCO DEI FILE che gli appartengono. Serve
-      a `-remove` (che senza non sa cosa togliere) e a `-check` (che senza non
-      sa cosa confrontare). Va riscritto a ogni installazione, aggiornamento e
-      rimozione, o mente — e un registro che mente e' peggio di nessun
-      registro, perche' `-remove` cancella quel che ci trova scritto.
-
-    ! LE LIBRERIE CONDIVISE SI CONTANO, NON SI INDOVINANO. Se xlib serve a
-      xapp e a yapp, togliere xapp non deve portarsela via. La forma minima e'
-      che il registro sappia rispondere a «chi usa xlib?»: si toglie solo cio'
-      che non risponde nessuno, e per il resto si stampa la riga «xlib resta:
-      la usano yapp, zapp». Dirlo e' parte del lavoro, non un extra: chi non
-      lo vede pensa che la rimozione sia fallita.
-
- 3. @NET-SET `netupdate -set` — IL FILE DI CONFIGURAZIONE
-
-    Scrive /boot/netupdate.cnf chiedendo:
-
-      - il TIPO: FTP, FTPS, HTTP, HTTPS
-      - l'URL da cui leggere il file di versione, l'elenco e il resto
-      - se controllare AUTOMATICAMENTE al primo accesso, o solo quando lo si
-        chiede dalla riga di comando
-
-    ! FTPS E HTTPS VOGLIONO LA TLS, e la TLS oggi ha un limite scritto qui
-      sotto (@DIF-TLS): dentro un singolo passo della stretta non si respira.
-      Vanno previsti nel formato del file — un campo si scrive una volta — ma
-      il primo che deve funzionare e' HTTP, e poi FTP.
-
- 4. @NET-CHECK `netupdate -check` — AGGIORNARE SENZA RESTARE A PIEDI
+ 1. @NET-CHECK `netupdate -check` — AGGIORNARE SENZA RESTARE A PIEDI
 
     Legge la configurazione, si collega, confronta le versioni, mostra cosa e'
     aggiornabile e CHIEDE se procedere. Poi scarica e installa.
@@ -482,7 +461,39 @@ librerie e senza portarsi via quelle che servono a qualcun altro.
       macchina che si spegne durante l'aggiornamento deve ritrovarsi o il
       sistema vecchio o quello nuovo, mai un mezzo dei due.
 
- 5. @NET-APP `netupdate -install` E `-remove`
+    ! L'IMPRONTA NON SI PUO' RICALCOLARE SUL DISCO, E VA SAPUTO PRIMA DI
+      SCRIVERE UNA RIGA. `sha256()` della libc vuole il buffer INTERO in
+      memoria — una chiamata sola, lib/libc.c — e cc1 pesa 33 MB su una
+      macchina che ne ha 32. Da qui due conseguenze:
+        - il registro porta l'impronta che il file AVEVA quando e' stato
+          scritto, e «-» quando non si sa: e' il motivo per cui
+          `-registro:crea` confronta la DIMENSIONE e non l'impronta;
+        - per verificare cio' che si scarica serve una sha256 A PASSI
+          (init/update/final). Oggi non c'e'. Finche' non c'e', i file
+          grossi o si verificano a pezzi con qualcos'altro o non si
+          verificano affatto — e «non si verificano affatto» va detto a chi
+          aggiorna, non lasciato implicito.
+
+    ! UN FILE CHE MANCA NON E' PER FORZA UN GUASTO. Sulla chiavetta di prova
+      del 7 settembre 30 file dell'elenco non c'erano, e non era rotto niente:
+      sono i componenti opzionali che chi ha installato non ha scelto (`install`
+      chiede quali directory di primo livello copiare). Quindi `-check` non puo'
+      trattare «manca» e «e' diverso» allo stesso modo: il secondo e' un
+      aggiornamento, il primo e' una PROPOSTA DI INSTALLARE qualcosa che non
+      c'era, e va chiesta a parte o la macchina si riempie di roba che il suo
+      padrone aveva detto di no.
+
+    ! IL CD POTREBBE PORTARSI DIETRO IL PROPRIO MANIFESTO, e sarebbe il modo
+      piu' semplice di dare un registro a chi ha installato da CD senza mai
+      collegarsi: bastano i tre file (versione, catalogo, elenco) dentro
+      /netinst sul CD, e `netupdate -registro:crea /cdrom/netinst` fa il resto
+      — provato cosi' il 7 settembre, mettendoceli a mano. Non e' stato fatto
+      sul serio perche' vuol dire generare il manifesto DENTRO la ricetta di
+      `iso-exos` (escludendo netinst/ da se stesso) e far leggere a mknetinst.sh
+      quello invece di rifarlo: un lavoro solo, ma da fare per intero, o i
+      manifesti diventano due e divergono.
+
+ 2. @NET-APP `netupdate -install` E `-remove`
 
         netupdate -install:list tes     mostra le app il cui nome contiene «tes»
         netupdate -install:nomeapp      l'app e tutto cio' che le serve
@@ -500,7 +511,7 @@ librerie e senza portarsi via quelle che servono a qualcun altro.
     altro, e per quelle che restano stampa chi le tiene in vita.
 
 -----------------------------------------------------------------------------
- 6. @NET-TARGZ GLI ARCHIVI: tar.gz, E COSTA MENO DI QUANTO SEMBRI
+ 3. @NET-TARGZ GLI ARCHIVI: tar.gz, E COSTA MENO DI QUANTO SEMBRI
 
     Un'applicazione e' una o piu' directory con dentro uno o piu' file, e
     scaricarli uno per uno vuol dire un giro di rete per ognuno. Per le APP
@@ -664,6 +675,27 @@ QUEL CHE C'E' GIA', e non va riscritto:
   solo, e li' non si legge — si calcola: spezzarli vorrebbe dire un gancio
   dentro excurva e exbig. Col pezzo piu' lungo a 150 ms non lo merita, ed e'
   scritto in extls.h, in exhttp.h e accanto alla chiamata.
+
+! @DIF-FDC UN FLOPPY MONTATO A MACCHINA ACCESA LEGGE A PASSO D'UOMO. Su un
+  sistema avviato DA DISCO (o da CD), `mount fd0 /mnt` riesce, ma ogni singola
+  lettura stampa
+
+      FAT12: IRQ6 non ricevuto su READ LBA=n - proseguo con il polling di MSR
+
+  e paga prima il timeout dell'attesa. Misurato il 7 settembre 2026 provando
+  netupdate: leggere un file di SEDICI KILOBYTE ha richiesto piu' di cinque
+  minuti, e la prova e' stata rifatta mettendo gli stessi file su un CD, dove
+  gli stessi 16 KB si leggono in un istante.
+  Il ripiego a polling e' voluto e documentato (kernel/fs/fat12.c: «se l'IRQ
+  non arriva si prosegue con un warning invece di appendere il boot»), quindi
+  qui non c'e' niente di rotto: c'e' che l'IRQ6 non arriva MAI in questo caso,
+  e nessuno ha ancora guardato perche'. fat12_init registra l'handler e
+  smaschera l'IRQ6 anche quando il montaggio avviene a macchina accesa, quindi
+  il posto da guardare e' fra quello e il PIC — o QEMU, che con `-boot c` puo'
+  non instradarlo affatto. Chi lo tocca lo verifichi su una macchina VERA
+  prima di dare la colpa all'emulatore.
+  ! E INTANTO, PER CHI PROVA: i file di prova si passano dal CD, non dal
+    floppy. Vedi il diario del 7 settembre.
 
 ! @DIF-TCPBUF LA FINESTRA DI RICEZIONE DI TCP E' QUATTRO KILOBYTE (TCP_BUF in
   drivers/ip/ip.c). Da quando chi legge lo fa a scatti — chiedendo «quanti byte

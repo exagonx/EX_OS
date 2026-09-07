@@ -90,16 +90,72 @@ mkdir -p "$FUORI/file"
 # scarica non parte. Si paga lo spazio una volta.
 cp -a "$ALBERO"/. "$FUORI/file/"
 
+# --- kernel e secondo stadio: i due file che cambiano nome ------------------
+#
+# ! SUL CD STANNO ALLA RADICE, SU UN DISCO INSTALLATO STANNO IN /boot E CON UN
+# ALTRO NOME. `install` copia /KERNEL.BIN in /boot/kernel.bin e /LOADER.BIN in
+# /boot/stage2.bin (bin/install/install.c), perche' sul CD il caricatore li
+# cerca dove El Torito li mette e su ext2 no. Pubblicandoli com'erano, l'elenco
+# prometteva due percorsi CHE SU NESSUNA MACCHINA INSTALLATA ESISTONO: il
+# registro li segnava «non ci sono» e un aggiornamento li avrebbe scritti alla
+# radice, dove non li guarda nessuno.
+#
+# Qui si pubblicano col nome che avranno: la riga in testa a questo file — «i
+# percorsi sotto file/ sono quelli che avranno sul disco» — o e' vera per
+# tutti o non serve a niente.
+AVVIO="boot/kernel.bin boot/stage2.bin"
+mkdir -p "$FUORI/file/boot"
+[ -f "$FUORI/file/KERNEL.BIN" ] && mv "$FUORI/file/KERNEL.BIN" "$FUORI/file/boot/kernel.bin"
+[ -f "$FUORI/file/LOADER.BIN" ] && mv "$FUORI/file/LOADER.BIN" "$FUORI/file/boot/stage2.bin"
+
+# ! CHI E' DEL SISTEMA SI SEGNA ADESSO, PRIMA CHE GLI STRUMENTI SI STENDANO
+# SOPRA. Dividere i due alberi guardando il percorso — «sotto exos/ e' degli
+# strumenti» — sembra ovvio e SBAGLIA: il sistema ha un exos/ suo, ci tiene
+# per esempio exos/ssl/certi.pem, i 150 certificati per https. Con la regola
+# del percorso quel file finiva nel pacchetto del compilatore C, e chi avesse
+# tolto il C si sarebbe ritrovato senza https senza capire perche'. Qui
+# l'origine si sa per certo, e sapere costa una `find`.
+TEMP=$(mktemp -d)
+trap 'rm -rf "$TEMP"' EXIT INT TERM
+( cd "$FUORI/file" && find . -type f -printf '%P\n' | LC_ALL=C sort ) > "$TEMP/sistema"
+
 # Gli strumenti, se ci sono. Vanno sotto /exos, che e' il percorso in cui
 # `toolinst` li mette e da cui gcc calcola il proprio prefisso — vedi il
 # commento in testa a bin/toolinst/toolinst.c: cambiarlo vuol dire un
 # compilatore che non parte.
+# ! LA PROVA E' gcc, NON «la directory esiste». Prima qui c'era «exos/ non e'
+# vuota», e non bastava: build/iso/exos contiene header, stub e libc.so anche
+# quando i compilatori non ci sono, quindi il controllo diceva di si' e si
+# pubblicavano 74 file di strumenti SENZA UN SOLO COMPILATORE. Chi lo scarica
+# non se ne accorge finche' non prova a compilare. E' la stessa idea della
+# chiave `prova` del catalogo: un percorso che, se c'e', dice che il gruppo
+# c'e' DAVVERO.
 STRUM_CI_SONO=no
-if [ -d "$STRUMENTI/exos" ] && [ -n "$(ls -A "$STRUMENTI/exos" 2>/dev/null)" ]; then
+if [ -x "$STRUMENTI/exos/bin/gcc" ]; then
     mkdir -p "$FUORI/file/exos"
     cp -a "$STRUMENTI/exos"/. "$FUORI/file/exos/"
     STRUM_CI_SONO=si
 fi
+
+# --- chi possiede cosa -------------------------------------------------------
+#
+# ! IL PACCHETTO DI UN FILE SI DEDUCE DAL CATALOGO, NON SI SCRIVE DUE VOLTE.
+# Prima qui c'era «tutto quel che sta sotto exos/ e' del pacchetto strumenti»,
+# e strumenti NON ESISTEVA nel catalogo: elenco.txt e catalogo.txt dicevano due
+# cose diverse sulla stessa directory, e chi legge il primo non trova nel
+# secondo il pacchetto che gli viene nominato. Adesso l'assegnazione segue le
+# stesse chiavi che legge toolinst — `solo` (un percorso che appartiene SOLO a
+# quel gruppo) e `file` (un NOME di file, ovunque stia) — con la stessa regola
+# di chiusura: quel che nessuno rivendica e' della base.
+#
+# ! E LA BASE E' DIVERSA NEI DUE ALBERI: sotto exos/ e' [base] degli strumenti
+# (il C: gcc, as, ld), fuori e' [sistema]. Sono due cataloghi cuciti in uno.
+REGOLE=$(awk '
+    /^\[/                    { id = $0; gsub(/[][]/, "", id); next }
+    /^[ \t]*solo[ \t]*=/     { sub(/^[^=]*=[ \t]*/, ""); print "solo " id ":" $0 }
+    /^[ \t]*file[ \t]*=/     { sub(/^[^=]*=[ \t]*/, ""); print "file " id ":" $0 }
+' tools/iso/strumenti.txt 2>/dev/null || true)
+printf '%s\n' "$REGOLE" > "$TEMP/regole"
 
 # --- il catalogo ------------------------------------------------------------
 #
@@ -108,6 +164,13 @@ fi
 # di presenza (`prova`) e i pesi, ed e' gia' letto da toolinst. Due formati per
 # la stessa cosa vuol dire due parser, e il secondo sbaglia dove il primo
 # aveva gia' imparato.
+#
+# ! IL SISTEMA SI CHIAMA [sistema] E NON [base], e la ragione e' che [base]
+# ESISTE GIA': e' il gruppo C del CD degli strumenti. Due blocchi con la stessa
+# etichetta nello stesso catalogo vuol dire che il secondo cancella il primo,
+# e nessuno se ne accorge finche' `-install:base` non installa la cosa
+# sbagliata. Gli id dei gruppi degli strumenti restano quelli del CD: due nomi
+# per la stessa cosa e' il modo di far divergere due elenchi.
 CAT="$FUORI/catalogo.txt"
 {
     echo "# ============================================================="
@@ -117,11 +180,28 @@ CAT="$FUORI/catalogo.txt"
     echo "# vuole, mbyte, sempre. Le righe che non cominciano con una chiave"
     echo "# nota si ignorano, cosi' un catalogo scritto per un netupdate piu'"
     echo "# nuovo non rompe quello vecchio."
+    echo "#"
+    echo "# I percorsi di prova e solo sono quelli che i file avranno SUL"
+    echo "# DISCO, senza la barra davanti: la stessa forma di elenco.txt."
     echo "# ============================================================="
     echo ""
-    echo "[base]"
+    echo "[avvio]"
+    echo "nome   = Avvio"
+    echo "dice   = il kernel e il secondo stadio del caricatore"
+    echo "prova  = boot/kernel.bin"
+    echo "sempre = si"
+    echo "mbyte  = 1"
+    echo "nota   = ! QUESTI DUE NON SONO FILE COME GLI ALTRI. Su ext2 il"
+    echo "nota   = kernel non e' contiguo, e il settore di avvio contiene la"
+    echo "nota   = MAPPA DEI SETTORI del file: copiarci sopra senza rifare la"
+    echo "nota   = mappa da' un disco che non parte piu'. Si scarica accanto,"
+    echo "nota   = si verifica, si rifa' la mappa, e il settore di avvio si"
+    echo "nota   = tocca per ULTIMO."
+    echo ""
+    echo "[sistema]"
     echo "nome   = Sistema di base"
-    echo "dice   = kernel, avvio, shell, programmi, driver, librerie"
+    echo "dice   = shell, programmi, driver, librerie, configurazione"
+    echo "vuole  = avvio"
     echo "prova  = bin/sh"
     echo "sempre = si"
     echo "mbyte  = $(du -sm "$FUORI/file" | cut -f1)"
@@ -129,9 +209,17 @@ CAT="$FUORI/catalogo.txt"
     if [ "$STRUM_CI_SONO" = si ] && [ -f tools/iso/strumenti.txt ]; then
         echo "# --- gli strumenti di sviluppo, dal catalogo del CD ---"
         echo "# Copiato da tools/iso/strumenti.txt: e' lo stesso elenco, e"
-        echo "# tenerne uno solo e' il punto."
+        echo "# tenerne uno solo e' il punto. Cambiano tre cose e solo quelle:"
+        echo "# i percorsi di prova/solo prendono davanti exos/, che e' dove"
+        echo "# l'albero vive sul disco, e la riga «sempre» se ne va — li'"
+        echo "# voleva dire «se prendi gli strumenti prendi anche il C», qui"
+        echo "# vorrebbe dire «non si puo' togliere», che e' un'altra cosa e"
+        echo "# non e' vera: a tenere in piedi le dipendenze ci pensa vuole."
         echo ""
-        sed -n '/^\[/,$p' tools/iso/strumenti.txt | sed 's|^solo *= *|solo   = exos/|'
+        sed -n '/^\[/,$p' tools/iso/strumenti.txt \
+            | sed -e 's|^solo *= *|solo   = exos/|' \
+                  -e 's|^prova *= *|prova  = exos/|' \
+                  -e '/^sempre *= */d'
     fi
 } > "$CAT"
 
@@ -142,21 +230,61 @@ CAT="$FUORI/catalogo.txt"
 # file troncato ha la data giusta e la dimensione sbagliata, e la volta dopo
 # non viene riscaricato perche' «c'e' gia'».
 ELE="$FUORI/elenco.txt"
+
+( cd "$FUORI/file" && find . -type f -printf '%P\n' | LC_ALL=C sort ) > "$TEMP/tutti"
+
+# La mappa percorso -> pacchetto, in un passo solo. In fondo c'e' la regola di
+# chiusura del catalogo degli strumenti: quel che nessun gruppo rivendica e'
+# della base, che li' dentro e' il C.
+awk -v R="$TEMP/regole" -v S="$TEMP/sistema" -v AVVIO="$AVVIO" '
+    FILENAME == R {
+        tipo = $1
+        sub(/^[^ ]+ +/, "")
+        i = index($0, ":")
+        if (i == 0) next
+        id = substr($0, 1, i - 1)
+        val = substr($0, i + 1)
+        if (tipo == "solo") { n_solo++; solo_id[n_solo] = id; solo_p[n_solo] = val }
+        if (tipo == "file") { n_nome++; nome_id[n_nome] = id; nome_n[n_nome] = val }
+        next
+    }
+    FILENAME == S { sis[$0] = 1; next }
+    BEGIN { n = split(AVVIO, a, " "); for (i = 1; i <= n; i++) avvio[a[i]] = 1 }
+    {
+        p = $0
+        if (p in avvio) { print p "\tavvio"; next }
+        if (p in sis)   { print p "\tsistema"; next }
+
+        rel = p;  sub(/^exos\//, "", rel)
+        base = rel;  sub(/.*\//, "", base)
+
+        for (i = 1; i <= n_solo; i++)
+            if (rel == solo_p[i] || index(rel, solo_p[i] "/") == 1) {
+                print p "\t" solo_id[i]; next
+            }
+        for (i = 1; i <= n_nome; i++)
+            if (base == nome_n[i]) { print p "\t" nome_id[i]; next }
+
+        print p "\tbase"
+    }
+' "$TEMP/regole" "$TEMP/sistema" "$TEMP/tutti" > "$TEMP/mappa"
+
 {
     echo "# percorso<TAB>byte<TAB>sha256<TAB>pacchetto"
-    ( cd "$FUORI/file" && find . -type f -printf '%P\n' | LC_ALL=C sort ) |
-    while IFS= read -r p; do
+    while IFS='	' read -r p pac; do
         b=$(stat -c %s "$FUORI/file/$p")
         h=$(sha256sum "$FUORI/file/$p" | cut -d' ' -f1)
-        case "$p" in
-            exos/*) pac=strumenti ;;
-            *)      pac=base ;;
-        esac
         printf '%s\t%s\t%s\t%s\n' "$p" "$b" "$h" "$pac"
-    done
+    done < "$TEMP/mappa"
 } > "$ELE"
 
 N_FILE=$(grep -vc '^#' "$ELE" || true)
+
+# ! IL CONTO PER PACCHETTO SI STAMPA, e non e' decorazione: un pacchetto del
+# catalogo che non possiede NESSUN file e' un errore che si vede solo cosi'
+# — vuol dire che i suoi `solo` non combaciano piu' con l'albero, e chi lo
+# installasse scaricherebbe zero file credendo di averlo installato.
+CONTI=$(grep -v '^#' "$ELE" | cut -f4 | LC_ALL=C sort | uniq -c | sort -rn)
 
 # --- il file di versione ----------------------------------------------------
 #
@@ -177,8 +305,30 @@ N_FILE=$(grep -vc '^#' "$ELE" || true)
 echo ""
 cat "$FUORI/versione.txt" | grep -v '^#' | sed 's/^/  /'
 echo ""
+echo "  i file, per pacchetto:"
+printf '%s\n' "$CONTI" | sed 's/^/    /'
+
+# I pacchetti dichiarati nel catalogo che non possiedono nessun file. Vedi il
+# commento sopra CONTI: si vedono solo contando.
+VUOTI=""
+for id in $(grep '^\[' "$CAT" | tr -d '[]'); do
+    printf '%s\n' "$CONTI" | awk -v i="$id" '$2 == i { trovato = 1 }
+                                              END { exit !trovato }' || VUOTI="$VUOTI $id"
+done
+if [ -n "$VUOTI" ]; then
+    echo ""
+    echo "  ! PACCHETTI SENZA NESSUN FILE:$VUOTI"
+    echo "    Sono nel catalogo e non possiedono niente: i loro 'solo' non"
+    echo "    combaciano con l'albero. Chi li installasse scaricherebbe zero"
+    echo "    file credendo di aver installato qualcosa."
+fi
+echo ""
 echo "[OK] $FUORI pronto: $N_FILE file, $(du -sh "$FUORI" | cut -f1)"
-[ "$STRUM_CI_SONO" = si ] || echo "     ! senza gli strumenti: build/iso/exos e' vuoto (serve 'make iso')"
+if [ "$STRUM_CI_SONO" != si ]; then
+    echo "     ! SENZA GLI STRUMENTI: $STRUMENTI/exos/bin/gcc non c'e'."
+    echo "       Il sistema di base e' pubblicato e si aggiorna; per i"
+    echo "       compilatori serve prima 'make iso'."
+fi
 echo ""
 echo "Da pubblicare cosi' com'e': la radice del server e' $FUORI,"
 echo "e netupdate cerchera' versione.txt, catalogo.txt, elenco.txt e file/."

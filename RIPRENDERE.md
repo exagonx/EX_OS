@@ -28,6 +28,295 @@ manca» apre quello.
 
 # DOVE RIPRENDERE — 7 settembre 2026
 
+## 7 settembre 2026 — IL CATALOGO E IL REGISTRO (@NET-DB, chiuso)
+
+Due cose diverse, e confonderle e' il primo modo di sbagliare:
+
+    IL CATALOGO   sta sul SERVER e dice COSA ESISTE: nomi, pesi, dipendenze
+    IL REGISTRO   sta sulla MACCHINA e dice COSA C'E' INSTALLATO: per ogni
+                  pacchetto la versione, da cosa dipende, e i suoi file
+
+Il primo lo scrive `make netinst`, il secondo `netupdate`. Comandi nuovi:
+
+    netupdate -registro                cosa c'e' installato qui
+    netupdate -registro:<pacchetto>    uno solo, coi suoi file
+    netupdate -registro:crea <albero>  il registro da una copia locale
+
+### IL CATALOGO E L'ELENCO SI CONTRADDICEVANO, E NESSUNO L'AVEVA GUARDATO
+
+`elenco.txt` marcava come pacchetto `strumenti` tutto cio' che stava sotto
+`exos/` — e `strumenti` NEL CATALOGO NON ESISTEVA. Chi legge l'elenco trova
+nominato un pacchetto che nell'altro file non c'e'. Peggio: il catalogo aveva
+**due blocchi `[base]`**, il sistema e il gruppo C del CD degli strumenti, e in
+un formato a blocchi il secondo cancella il primo.
+
+Adesso il pacchetto di ogni file si DEDUCE dal catalogo, con le stesse chiavi
+che legge `toolinst`: `solo` (un percorso che appartiene solo a quel gruppo),
+`file` (un nome di file, ovunque stia), e la regola di chiusura — quel che
+nessuno rivendica e' della base. Il sistema si chiama `[sistema]`; gli id dei
+gruppi degli strumenti restano quelli del CD, perche' due nomi per la stessa
+cosa e' il modo di far divergere due elenchi.
+
+! **E LA DIVISIONE FRA I DUE ALBERI NON SI FA COL PERCORSO.** «Sotto exos/ e'
+  degli strumenti» sembra ovvio e sbaglia: il sistema ha un `exos/` suo, ci
+  tiene `exos/ssl/certi.pem`, i 150 certificati per https. Con la regola del
+  percorso quel file finiva nel pacchetto del compilatore C, e chi avesse tolto
+  il C si sarebbe ritrovato senza https senza capire perche'. La lista di cosa
+  e' del sistema si prende PRIMA di stendere gli strumenti sopra: l'origine si
+  sa per certo, e sapere costa una `find`.
+
+! **E I PACCHETTI SI CONTANO A FINE COSTRUZIONE**, per pacchetto. Un pacchetto
+  del catalogo che non possiede NESSUN file e' un errore che si vede solo cosi'
+  — vuol dire che i suoi `solo` non combaciano piu' con l'albero, e chi lo
+  installasse scaricherebbe zero file credendo di aver installato qualcosa.
+
+### KERNEL E CARICATORE CAMBIANO NOME FRA CD E DISCO, E IL MANIFESTO MENTIVA
+
+Sul CD sono `/KERNEL.BIN` e `/LOADER.BIN`; su un disco installato sono
+`/boot/kernel.bin` e `/boot/stage2.bin`, perche' e' li' che `install` li mette
+(bin/install/install.c). L'albero pubblicato li copiava com'erano, e quindi
+`elenco.txt` prometteva **due percorsi che su nessuna macchina installata
+esistono**: il registro li segnava «non ci sono», e un aggiornamento li avrebbe
+scritti alla radice, dove non li guarda nessuno.
+
+Adesso si pubblicano col nome che avranno sul disco, e stanno in un pacchetto
+loro, `[avvio]`, con scritto sopra perche' non sono file come gli altri: su
+ext2 il kernel non e' contiguo e il settore di avvio ne contiene la mappa dei
+settori — copiarci sopra senza rifare la mappa da' un disco che non parte piu'.
+La riga in testa a `mknetinst.sh` — «i percorsi sotto file/ sono quelli che
+avranno sul disco» — o e' vera per tutti o non serve a niente.
+
+### IL REGISTRO: /boot/netupdate.reg
+
+Stesso formato del catalogo — un lettore solo per i due file, perche' sono la
+stessa specie di cosa vista da due parti. Per ogni pacchetto: `nome`, `dice`,
+`versione`, `data` dell'albero da cui viene, `prova`, le righe `vuole`, e una
+riga `file` per ogni file, «impronta percorso».
+
+Tre regole, e sono tutte e tre conseguenze di una frase sola — **un registro
+che mente e' peggio di nessun registro, perche' `-remove` cancella quel che ci
+trova scritto**:
+
+ 1. **si riscrive intero**, mai a pezzi;
+ 2. **si scrive accanto e si sostituisce alla fine** (`netupdate.new`, poi
+    `remove` + `rename`): il caso peggiore e' restare senza registro, che si
+    rifa' in un comando, e non con mezzo registro che sembra intero;
+ 3. **un'impronta che non si sa non si inventa**: si scrive `-`.
+
+! **LE DIPENDENZE STANNO NEL REGISTRO E NON SOLO NEL CATALOGO**, ed e' voluto:
+  `-remove` deve funzionare SENZA RETE. Se «chi usa xlib?» si potesse rispondere
+  solo scaricando il catalogo, togliere un'applicazione da una macchina
+  scollegata vorrebbe dire indovinare — e indovinare qui vuol dire portarsi via
+  una libreria che serve a qualcun altro. La risposta e' `chi_usa()`, e si vede
+  nella colonna «LO USANO» di `-registro`.
+
+! **L'IMPRONTA NON SI RICALCOLA, E NON E' PIGRIZIA.** `sha256()` della libc
+  vuole il buffer intero in memoria (una chiamata sola), e cc1 pesa 33 MB su
+  una macchina che ne ha 32. Quindi l'impronta si PRENDE dall'elenco, e la si
+  scrive solo se il file sul disco ha la dimensione che l'elenco dichiara;
+  altrimenti `-`. Conseguenza per @NET-CHECK, scritta li': per verificare cio'
+  che si scarica servira' una sha256 A PASSI, che oggi non c'e'.
+
+! **I FILE NON SI TENGONO IN MEMORIA.** Sono millecinquecento righe con gli
+  strumenti; l'elenco si riscorre una volta per pacchetto. Su EX-OS `free()`
+  non restituisce niente al sistema, quindi mezzo megabyte tenuto per comodita'
+  e' mezzo megabyte perso per sempre — leggere due volte un file di
+  centoquaranta kilobyte costa incomparabilmente meno.
+
+### LA PROVA, E COSA HA DETTO
+
+Sulla chiavetta di prova (`dischi/usb-1024.img`), col CD attaccato per avere il
+binario nuovo senza reinstallare, e con i tre file del manifesto messi a mano
+in `/netinst` sul CD:
+
+    /cdrom/bin/netupdate -registro              -> «non c'e' nessun registro»,
+                                                   e dice come farlo
+    /cdrom/bin/netupdate -registro:crea /cdrom/netinst
+        avvio             2 file
+        sistema         137 file, 30 che non ci sono, 2 diversi dall'elenco
+        /boot/netupdate.reg scritto: 2 pacchetti, 139 file.
+    /cdrom/bin/netupdate -registro              -> la tabella, con «LO USANO
+                                                   sistema» accanto ad avvio
+    /cdrom/bin/netupdate -registro:avvio        -> i due file, con l'impronta
+    /cdrom/bin/netupdate -registro:pippo        -> «non risulta installato»,
+                                                   e l'elenco di quelli che ci sono
+    ls /boot                                    -> netupdate.reg 13845, e
+                                                   nessun netupdate.new rimasto
+
+! **I 30 FILE CHE NON C'ERANO NON SONO UN GUASTO**: sono i componenti
+  opzionali che chi ha installato non ha scelto — `install` chiede quali
+  directory di primo livello copiare. E' il primo fatto che `-check` dovra'
+  trattare con cura: «manca» e «e' diverso» non sono la stessa cosa. Il secondo
+  e' un aggiornamento; il primo e' la proposta di installare qualcosa a cui il
+  padrone della macchina aveva gia' detto di no.
+
+! **I 2 FILE DIVERSI ERANO VERI**: `bin/netupdate` sul disco e' quello di
+  stamattina, l'elenco descrive quello di adesso. Registrati senza impronta,
+  che e' esattamente cio' che devono essere.
+
+### E UNA PROVA CHE E' STATA RIFATTA IN UN ALTRO MODO
+
+I tre file del manifesto erano su un floppy FAT, montato a macchina accesa. Non
+si e' potuto finire: su un sistema avviato DA DISCO l'IRQ6 del controller non
+arriva mai, ogni lettura paga il timeout e poi ripiega sul polling di MSR, e
+leggere SEDICI KILOBYTE ha richiesto piu' di cinque minuti. Il ripiego e' voluto
+e documentato in `kernel/fs/fat12.c`; quel che non si sa e' perche' l'IRQ non
+arrivi mai in questo caso. E' segnato come @DIF-FDC.
+
+Gli stessi file su un CD si leggono in un istante, ed e' cosi' che la prova e'
+stata fatta. **Per chi prova: i file di prova si passano dal CD, non dal
+floppy.**
+
+## 7 settembre 2026 — `netupdate -set`, E LA CHIAVETTA SI FACEVA DAL FLOPPY
+
+Programma nuovo sul CD di sistema:
+
+    netupdate -set              scrive /boot/netupdate.cnf, chiedendo
+    netupdate -check            dichiarato, non ancora fatto
+    netupdate -install:<app>    idem
+    netupdate -remove:<app>     idem
+
+E' il primo pezzo di @NET: da dove il sistema si aggiorna. Dall'altra parte
+c'e' gia' `make netinst`, che prepara `dist/netinst/` — la directory da
+appoggiare su un server perche' questo programma la legga.
+
+### QUEL CHE E' STATO DECISO, E PERCHE'
+
+**Il file sta in `/boot`, non in `$HOME`.** Aggiornare il sistema e' una cosa
+della MACCHINA, non di chi ci ha fatto l'accesso: un `netupdate.cnf` per utente
+vorrebbe dire un sistema che si aggiorna o no a seconda di chi entra, e un
+controllo automatico «al primo accesso» che dipende da QUALE primo accesso. In
+`/boot` c'e' gia' `kernel.cfg`, che e' la stessa specie di cosa.
+
+**Il formato e' quello di `kernel.cfg`** — `chiave = valore`, `#` commenta —
+perche' e' quello che c'e'. Un secondo formato vuol dire un secondo lettore, e
+il secondo sbaglia dove il primo aveva gia' imparato. E una chiave che non si
+conosce si IGNORA: un file scritto da un netupdate piu' nuovo non deve rompere
+quello vecchio.
+
+**Lo schema si toglie dall'indirizzo, non si tiene.** Chi scrive
+`http://esempio.org/exos/` dice due volte la stessa cosa — il trasporto l'ha
+appena scelto dal menu — e le due potrebbero contraddirsi. Si tiene la scelta
+esplicita e l'indirizzo si riduce a cio' che e': un host e un percorso. Anche
+la barra finale se ne va, perche' i percorsi si compongono con UNA sola.
+
+**HTTPS e FTPS si possono scegliere, e chi li sceglie viene avvisato.** La
+stretta di TLS ha un limite noto (@DIF-TLS: dentro un singolo passo non si
+respira), quindi oggi la strada che funziona e' HTTP. Ma un campo del file di
+configurazione si scrive UNA volta: toglierlo adesso vorrebbe dire migrare i
+file gia' scritti quando la TLS sara' pronta. Sta li', e la scelta stampa
+l'avviso.
+
+**`-check`, `-install` e `-remove` sono DICHIARATI, non dimenticati.** Dicono
+«non c'e' ancora» ed escono con 2. Un comando che accetta un'opzione e non fa
+niente e' peggio di uno che la rifiuta, perche' chi lo usa crede di aver
+aggiornato.
+
+### IL RIFIUTO ARRIVA PRIMA DELLE DOMANDE, E L'HA INSEGNATO IL CD
+
+Provandolo su un sistema avviato da CD, `-set` faceva tutte e tre le domande,
+aspettava le tre risposte, e SOLO ALLORA diceva:
+
+    netupdate: non riesco a scrivere /boot/netupdate.cnf (filesystem in sola lettura)
+
+Da CD `/boot` E' il CD. E' la stessa regola dei rifiuti di `make usb` — tutti
+prima di cominciare, mai a lavoro fatto — e qui vale di piu', perche' cio' che
+si butta via e' quel che ha appena battuto qualcuno. Adesso la prima riga di
+`-set` e' `boot_si_scrive()`, e da CD la risposta e' immediata:
+
+    netupdate: non posso scrivere /boot/netupdate.cnf (filesystem in sola lettura).
+               Non chiedo niente: le risposte andrebbero
+               perse. Se questo EX-OS e' partito dal CD,
+               /boot e' il CD: la configurazione vuole un
+               sistema installato su disco o su chiavetta.
+
+! **E LA PROVA E' UNA SCRITTURA VERA, SU UN NOME DI SERVIZIO** (`netupdate.prova`,
+  cancellato subito). `access()` non serve a niente qui: senza permessi da
+  controllare rende «si» per qualunque file esista — sta scritto in
+  `lib/libc.c` — e il solo caso che conta, il montaggio in sola lettura, si
+  scopre soltanto aprendo. E il nome di servizio c'e' perche' provare
+  scrivendo su `netupdate.cnf` vorrebbe dire TRONCARE quello buono a chi poi
+  risponde male a una domanda e non arriva mai a riscriverlo.
+
+### `make usb` COPIAVA IL FLOPPY: 40 PROGRAMMI INVECE DI 69
+
+Il difetto e' saltato fuori cercando `netupdate` sulla chiavetta appena fatta e
+non trovandolo. `install` copia **il supporto da cui si e' avviati**, e
+`mkusb.sh` avviava il primo giro DAL FLOPPY: la chiavetta usciva con i 40
+programmi che stanno in 1,44 MB, cioe' senza rete (ping, dhcp, ftp, telnet),
+senza ambiente grafico e senza netupdate — senza le cose per cui una chiavetta
+serve.
+
+! **NON SI VEDEVA ALLA COSTRUZIONE.** Lo script finiva bene, la chiavetta si
+  avviava benissimo, e mancava solo tutto. Un difetto che non fa fallire niente
+  si trova solo andando a guardare se c'e' quel che deve esserci — che e'
+  esattamente cio' che ha fatto la prova di netupdate.
+
+Adesso il primo giro parte da `dist/exos.iso` (`EXOS_NO_FLOPPY=1
+EXOS_CDROM=...`), e restano due giri di QEMU e non uno: il sistema dal CD di
+sistema, gli strumenti dal CD degli strumenti, e ognuno vede solo il proprio.
+
+### `make netinst`: LA PROVA DEGLI STRUMENTI E' `gcc`, NON «LA DIRECTORY C'E'»
+
+`mknetinst.sh` decideva se pubblicare gli strumenti guardando se
+`build/iso/exos` fosse non vuota. Non basta: quella directory contiene header,
+stub e `libc.so` anche quando i compilatori non ci sono, quindi il controllo
+diceva di si' e si pubblicavano **74 file di strumenti senza un solo
+compilatore**. Chi li scarica non se ne accorge finche' non prova a compilare.
+Ora la prova e' `[ -x build/iso/exos/bin/gcc ]`, che e' la stessa idea della
+chiave `prova` del catalogo: un percorso che, se c'e', dice che il gruppo c'e'
+DAVVERO.
+
+### E UN BACKTICK CHE ERA UN COMANDO
+
+L'ultima riga di `mkusb.sh` diceva ``serve `MB=` piu' grande``: dentro doppi
+apici quei backtick sono una SOSTITUZIONE DI COMANDO, la shell ha eseguito
+`MB=` e ha lasciato un buco nel messaggio — «serve  piu' grande», che non vuol
+dire niente. Le virgolette semplici non bastano quando la stringa e' fra doppi
+apici.
+
+### COME SI E' PROVATO
+
+Da CD, che il rifiuto arrivi prima di chiedere:
+
+    EXOS_NO_FLOPPY=1 EXOS_CDROM=dist/exos.iso EXOS_RAM=64M \
+      python3 tools/qemu_drive.py "netupdate -set@5" "ls /boot@4"
+
+Su un sistema installato e scrivibile (la chiavetta, col CD attaccato per
+avere il binario nuovo senza reinstallare):
+
+    EXOS_NO_FLOPPY=1 EXOS_MARCA="utente:" EXOS_RAM=64M \
+    EXOS_QEMU_EXTRA="-drive file=dischi/usb-1024.img,format=raw,if=ide \
+                     -drive file=dist/exos.iso,format=raw,if=ide,media=cdrom" \
+      python3 tools/qemu_drive.py "root@3" "root@5" "keymap us@3" \
+        "/cdrom/bin/netupdate -set@4" "2@2" "ftp.esempio.org/pub/exos@2" "si@3" \
+        "cat /boot/netupdate.cnf@4" "ls /boot@4"
+
+Provati: la scrittura, lo schema tolto, la barra finale tolta, la rilettura
+(Invio tiene i valori di prima), l'avviso della TLS scegliendo HTTPS, il
+rifiuto in sola lettura, `-check` che dice di non esserci, l'uso senza
+argomenti. E in `/boot` non resta nessun `netupdate.prova`.
+
+! **UN SISTEMA INSTALLATO HA LA TASTIERA ITALIANA, E `qemu_drive.py` BATTE
+  AMERICANO.** `install` scrive `keymap = it` in `kernel.cfg` quando si sceglie
+  l'italiano, e da quel momento il pilota manda `slash` e sullo schermo arriva
+  `-`: `ls /bin/netupdate` diventa `ls -bin-netupdate` e la prova sembra
+  fallita quando invece non e' mai partita. **Il primo comando di ogni prova su
+  un sistema installato e' `keymap us`** — vale finche' la macchina resta
+  accesa e non tocca `kernel.cfg`.
+
+### CHIUSI, E COSA RESTA
+
+In `in_lavorazione.txt` se ne vanno **@NETINST** e **@NET-SET**: i due capi
+della strada ci sono. La «versione per file» che @NETINST chiedeva all'inizio
+E' l'impronta — due risposte alla stessa domanda si contraddicono, e quella che
+conta e' l'unica capace di distinguere uno scaricamento finito da uno
+interrotto a meta'.
+
+Il prossimo passo e' **@NET-DB**, il registro di cio' che e' installato: senza,
+ne' `-check` sa cosa confrontare ne' `-remove` sa cosa togliere.
+
+
 ## 7 settembre 2026 — `make usb`: L'AMBIENTE INTERO SU UNA CHIAVETTA, E LA PAROLA DA BATTERE
 
 Voce nuova nel Makefile:

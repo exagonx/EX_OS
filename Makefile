@@ -170,7 +170,7 @@ PROGRAMMI_FLOPPY := shell id chmod shutdown ls mem stack disk fdisk mkfs mkswap 
 # `make verifica-programmi` — che le due ISO eseguono da sole — confronta
 # le liste con il contenuto di bin/ e si ferma dicendo quali mancano.
 # =============================================================================
-PROGRAMMI_CD := cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp scarica telnet telnetd sshd xcp winprova exwincmd audio
+PROGRAMMI_CD := cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp scarica telnet telnetd sshd xcp winprova exwincmd audio netupdate
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
 PROGRAMMI_EXWIN := exwin_so exdlg_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr edit term fontprova orologio browser exide
 
@@ -812,6 +812,37 @@ $(TOOLINST_BIN): $(TOOLINST_SRC) $(TOOLINST_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(L
 
 .PHONY: toolinst
 toolinst: dirs $(TOOLINST_BIN)
+
+# --- /bin/netupdate: il sistema si aggiorna dalla rete ------------------------
+#
+# ! STA SUL CD DI SISTEMA E NON SUL FLOPPY. Il floppy e' 1,44 MB che non
+# crescono mai, e netupdate non serve ad avviare niente: serve a una macchina
+# gia' installata e gia' collegata. E' la stessa divisione di `toolinst`.
+#
+# Dall'altra parte c'e' `make netinst`, che prepara dist/netinst/ — la
+# directory da appoggiare su un server perche' questo programma la legga.
+NETUPDATE_SRC := bin/netupdate/netupdate.c
+NETUPDATE_BIN := $(BUILD_BIN_CD)/netupdate
+NETUPDATE_LD  := bin/netupdate/netupdate.ld
+
+# ! COLLEGA LO STUB DI exhttp, come /bin/scarica. La libreria vera e'
+# /exwin/lib/exhttp.so e si carica quando serve: `-check` parla HTTP, e non c'e'
+# ragione di avere due client HTTP in un sistema che ne ha gia' uno provato.
+$(NETUPDATE_BIN): $(NETUPDATE_SRC) $(NETUPDATE_LD) $(EXHTTP_STUB) $(EXHTTP_HDR) \
+                  $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/netupdate ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhttp -c $(NETUPDATE_SRC) -o $(BUILD_OBJ)/netupdate_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhttp -c $(EXHTTP_STUB) -o $(BUILD_OBJ)/netupdate_stub.o
+	$(CC) -m32 -c $(LIBC_START)          -o $(BUILD_OBJ)/netupdate_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(NETUPDATE_LD) \
+	    $(BUILD_OBJ)/netupdate_start.o $(BUILD_OBJ)/netupdate_main.o \
+	    $(BUILD_OBJ)/netupdate_stub.o \
+	    $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] netupdate compilato: $@"
+
+.PHONY: netupdate
+netupdate: dirs $(NETUPDATE_BIN)
 
 # --- /bin/login: chiede chi sei e lancia la shell -----------------------------
 # Sistema di base: senza, una macchina con l'autenticazione accesa non si
@@ -5591,7 +5622,7 @@ BINARI_SOLO_CD := $(CRYPTTEST_BIN) $(FILIPROVA_BIN) $(NETDETECT_BIN) $(NETTEST_B
                   $(TELNET_BIN) $(XCP_BIN) $(WINPROVA_BIN) $(EXWINCMD_BIN) \
                   $(SCARICA_BIN) \
                   $(CDINSTALL_BIN) $(SWAPTEST_BIN) $(LIBCTEST_BIN) $(HELLO_BIN) \
-                  $(AUDIO_BIN)
+                  $(AUDIO_BIN) $(NETUPDATE_BIN)
 # ! QUESTA LISTA E' LA DIPENDENZA DELL'ISO, E VA TENUTA ALLINEATA A
 # DRIVER_CD. Sono due elenchi della stessa cosa: DRIVER_CD dice COSA
 # COSTRUIRE (nomi di bersagli .PHONY), questo dice DA COSA DIPENDE L'IMMAGINE
