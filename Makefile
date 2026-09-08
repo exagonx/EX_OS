@@ -828,16 +828,21 @@ NETUPDATE_LD  := bin/netupdate/netupdate.ld
 # ! COLLEGA LO STUB DI exhttp, come /bin/scarica. La libreria vera e'
 # /exwin/lib/exhttp.so e si carica quando serve: `-check` parla HTTP, e non c'e'
 # ragione di avere due client HTTP in un sistema che ne ha gia' uno provato.
+# ! inflate.c SI COMPILA QUI DENTRO, e non e' un doppione: e' lo stesso file
+# che sta in eximg.so, compilato una seconda volta dentro un programma che non
+# carica la libreria grafica per srotolare un tar.gz. Trecento righe senza
+# dipendenze — nessun include oltre al proprio — e nessuna copia del sorgente.
 $(NETUPDATE_BIN): $(NETUPDATE_SRC) $(NETUPDATE_LD) $(EXHTTP_STUB) $(EXHTTP_HDR) \
-                  $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+                  $(EXIMG_INFLATE) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione /bin/netupdate ==="
 	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhttp -c $(NETUPDATE_SRC) -o $(BUILD_OBJ)/netupdate_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhttp -I lib/eximg -c $(NETUPDATE_SRC) -o $(BUILD_OBJ)/netupdate_main.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhttp -c $(EXHTTP_STUB) -o $(BUILD_OBJ)/netupdate_stub.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -c $(EXIMG_INFLATE) -o $(BUILD_OBJ)/netupdate_inflate.o
 	$(CC) -m32 -c $(LIBC_START)          -o $(BUILD_OBJ)/netupdate_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(NETUPDATE_LD) \
 	    $(BUILD_OBJ)/netupdate_start.o $(BUILD_OBJ)/netupdate_main.o \
-	    $(BUILD_OBJ)/netupdate_stub.o \
+	    $(BUILD_OBJ)/netupdate_stub.o $(BUILD_OBJ)/netupdate_inflate.o \
 	    $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] netupdate compilato: $@"
 

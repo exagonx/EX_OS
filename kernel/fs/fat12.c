@@ -1353,12 +1353,66 @@ static int fdc_rw_sector_once(uint16_t lba, uint8_t *buf, int write)
  * ============================================================================= */
 #define FDC_MAX_TENTATIVI  5
 
+/* =============================================================================
+ * fdc_prepara — IL CONTROLLER SI ACCENDE ALLA PRIMA LETTURA, NON ALL'AVVIO
+ *
+ * ! CHI AVVIA DA DISCO NON INIZIALIZZAVA MAI L'FDC, e la conseguenza si vedeva
+ * soltanto montando un floppy a macchina accesa. kernel_main.c sonda il floppy
+ * solo se il supporto d'avvio e' un floppy — ed e' giusto: sondarlo sempre
+ * costa dodici righe di errore rosso a ogni avvio da disco, su un controller
+ * che magari non c'e'. Ma cosi' `fat12_init` non veniva chiamata mai, e con
+ * lei restavano non fatte tre cose: registrare l'handler dell'IRQ6,
+ * smascherarlo nel PIC, e azzerare il controller.
+ *
+ * Il risultato era un floppy che funzionava LO STESSO — perche' ogni lettura,
+ * dopo aver aspettato invano l'interrupt, ripiegava sul polling di MSR — ma a
+ * passo d'uomo: tre secondi di attesa a ogni settore, e SEDICI KILOBYTE letti
+ * in piu' di cinque minuti (misurato l'8 settembre 2026, montando un floppy
+ * con dei file di prova su un sistema avviato da chiavetta). Il ripiego e' la
+ * rete di sicurezza per un chipset che non instrada l'IRQ; qui invece l'IRQ
+ * non poteva arrivare perche' non lo aspettava nessuno.
+ *
+ * ! ED E' ESATTAMENTE LA SEPARAZIONE CHE IL COMMENTO IN kernel_main.c
+ * PRESCRIVEVA: «montarlo richiedera' di separare inizializza l'FDC da monta la
+ * root, che oggi fat12_init fa insieme». Adesso sono due: questa prepara il
+ * controller e basta, e la chiama chi tocca il ferro — la prima volta e una
+ * volta sola. Chi avvia da disco non paga niente finche' non monta un floppy.
+ * ========================================================================== */
+static int g_fdc_pronto = 0;
+
+static void fdc_prepara(void)
+{
+    extern void pic_unmask_irq(uint8_t irq);
+
+    if (g_fdc_pronto) return;
+
+    /* ! IL FLAG SI ALZA PRIMA, non dopo: il reset e la ricalibratura qui
+     * sotto passano dalle stesse funzioni che chiamano questa, e senza il
+     * flag alzato si rientrerebbe qui dentro all'infinito. */
+    g_fdc_pronto = 1;
+
+    irq_register_handler(6, fdc_irq6_handler);
+    pic_unmask_irq(6);
+
+    fdc_reset_controller();
+
+    fdc_entra();
+    fdc_motor_on();
+    fdc_recalibrate();
+    fdc_esce();
+}
+
 static int fdc_rw_sector(uint16_t lba, uint8_t *buf, int write)
 {
     int tentativo;
     int esito = -1;
 
     int massimo = g_sondaggio ? 1 : FDC_MAX_TENTATIVI;
+
+    /* ! IL CONTROLLER SI PREPARA QUI, e non altrove: questo e' l'unico punto
+     * da cui si parla davvero al ferro, quindi e' l'unico che non si puo'
+     * dimenticare. Costa un confronto per settore. */
+    fdc_prepara();
 
     /* Da qui il controller e' nostro: il tick del timer non tocchera' il
      * motore finche' non si esce, ritenti e ricalibrature comprese. */
@@ -1657,13 +1711,11 @@ int fat12_init(uint8_t drive)
 {
     uint32_t i;
 
-    extern void pic_unmask_irq(uint8_t irq);
-
-    /* Handler IRQ6 registrato PRIMA dello smascheramento e prima del
-     * reset del controller: il reset stesso genera un IRQ, e vogliamo
-     * poterlo attendere invece di tirare a indovinare quanto dura. */
-    irq_register_handler(6, fdc_irq6_handler);
-    pic_unmask_irq(6);  /* IRQ6 = floppy */
+    /* ! IL CONTROLLER LO PREPARA fdc_prepara(), che sa farlo una volta sola.
+     * Qui dentro resta il MONTAGGIO: geometria, FAT e root directory in RAM.
+     * Erano una cosa sola fino all'8 settembre 2026, ed e' il motivo per cui
+     * un floppy montato a macchina accesa leggeva a passo d'uomo. */
+    fdc_prepara();
 
     if (!g_sondaggio) klog(LOG_INFO, "FAT12: inizializzazione driver kernel...");
 
@@ -1680,50 +1732,6 @@ int fat12_init(uint8_t drive)
         g_cache[i].lba      = 0;
         g_cache[i].last_use = 0;
     }
-
-    /* Reset FDC.
-     *
-     * BUG RESIDUO CORRETTO (luglio 2026): qui c'erano ancora due loop di
-     * NOP a conteggio fisso (`for (d=0; d<100000; d++) nop;`), sfuggiti
-     * alla bonifica di giugno che aveva sostituito gli altri tre con
-     * fdc_delay_ms(). Stesso identico difetto: la durata dipende dalla
-     * velocita' della CPU, quindi su hardware diverso da quello su cui
-     * erano stati tarati il controller puo' non aver completato il reset
-     * quando gli si parla. Ora sono attese in tempo reale. */
-    /* ! LA SEQUENZA DI RESET STA IN fdc_reset_controller(), NON PIU' QUI.
-     * Era scritta a mano dentro questa funzione e quindi si poteva eseguire
-     * una volta sola, all'avvio — mentre il momento in cui serve davvero e'
-     * DOPO, quando una fase di risultato interrotta ha lasciato il
-     * controller in uno stato che nessun SEEK rimette a posto. Adesso la
-     * chiamano tutt'e due: l'avvio e la scala dei ritenti. */
-    fdc_reset_controller();
-
-    /* MOTORE ACCESO PRIMA DEL RECALIBRATE (luglio 2026).
-     *
-     * Prima il RECALIBRATE partiva con DOR=0x0C, cioe' unita' selezionata
-     * ma motore fermo. In emulazione funziona: il controller virtuale
-     * ignora lo stato del motore. Su un drive vero e' una scommessa —
-     * la testina viene mossa da un motore passo-passo distinto da quello
-     * del mandrino, ma il rilevamento della traccia 0 e la validita' dei
-     * segnali dipendono dal fatto che l'unita' sia davvero attiva, ed e'
-     * il motivo per cui BIOS, DOS e Linux accendono sempre il motore
-     * prima. Se il recalibrate non riesce qui, ogni SEEK successivo parte
-     * da una posizione sbagliata e tutte le letture oltre il cilindro 0
-     * (cioe' tutto tranne FAT e root directory) leggono la traccia
-     * sbagliata.
-     *
-     * Non costa nulla in piu': i 300 ms di stabilizzazione andavano
-     * comunque pagati alla prima lettura, qui vengono solo anticipati. */
-    fdc_entra();
-    fdc_motor_on();
-
-    /* Riporta la testina al cilindro 0: il BIOS ha gia' letto vari
-     * settori durante stage1/stage2 (fino a cilindro >0), e senza
-     * questo passo la posizione fisica della testina resta
-     * desincronizzata dai parametri C/H/S che invieremo nei comandi
-     * READ successivi. */
-    fdc_recalibrate();
-    fdc_esce();
 
     /* Leggi FAT1 in RAM */
     if (!g_sondaggio) klog(LOG_INFO, "FAT12: caricamento FAT in RAM...");

@@ -157,78 +157,6 @@ REGOLE=$(awk '
 ' tools/iso/strumenti.txt 2>/dev/null || true)
 printf '%s\n' "$REGOLE" > "$TEMP/regole"
 
-# --- il catalogo ------------------------------------------------------------
-#
-# ! IL FORMATO E' QUELLO DI tools/iso/strumenti.txt, e non e' pigrizia: quel
-# file e' gia' un catalogo di pacchetti con le dipendenze (`vuole`), le prove
-# di presenza (`prova`) e i pesi, ed e' gia' letto da toolinst. Due formati per
-# la stessa cosa vuol dire due parser, e il secondo sbaglia dove il primo
-# aveva gia' imparato.
-#
-# ! IL SISTEMA SI CHIAMA [sistema] E NON [base], e la ragione e' che [base]
-# ESISTE GIA': e' il gruppo C del CD degli strumenti. Due blocchi con la stessa
-# etichetta nello stesso catalogo vuol dire che il secondo cancella il primo,
-# e nessuno se ne accorge finche' `-install:base` non installa la cosa
-# sbagliata. Gli id dei gruppi degli strumenti restano quelli del CD: due nomi
-# per la stessa cosa e' il modo di far divergere due elenchi.
-CAT="$FUORI/catalogo.txt"
-{
-    echo "# ============================================================="
-    echo "# catalogo.txt — i pacchetti pubblicati, per netupdate"
-    echo "#"
-    echo "# Stesse chiavi di tools/iso/strumenti.txt: nome, dice, prova,"
-    echo "# vuole, mbyte, sempre. Le righe che non cominciano con una chiave"
-    echo "# nota si ignorano, cosi' un catalogo scritto per un netupdate piu'"
-    echo "# nuovo non rompe quello vecchio."
-    echo "#"
-    echo "# I percorsi di prova e solo sono quelli che i file avranno SUL"
-    echo "# DISCO, senza la barra davanti: la stessa forma di elenco.txt."
-    echo "# ============================================================="
-    echo ""
-    echo "[avvio]"
-    echo "nome   = Avvio"
-    echo "dice   = il kernel e il secondo stadio del caricatore"
-    echo "prova  = boot/kernel.bin"
-    echo "sempre = si"
-    echo "mbyte  = 1"
-    echo "nota   = ! QUESTI DUE NON SONO FILE COME GLI ALTRI. Su ext2 il"
-    echo "nota   = kernel non e' contiguo, e il settore di avvio contiene la"
-    echo "nota   = MAPPA DEI SETTORI del file: copiarci sopra senza rifare la"
-    echo "nota   = mappa da' un disco che non parte piu'. Si scarica accanto,"
-    echo "nota   = si verifica, si rifa' la mappa, e il settore di avvio si"
-    echo "nota   = tocca per ULTIMO."
-    echo ""
-    echo "[sistema]"
-    echo "nome   = Sistema di base"
-    echo "dice   = shell, programmi, driver, librerie, configurazione"
-    echo "vuole  = avvio"
-    echo "prova  = bin/sh"
-    echo "sempre = si"
-    echo "mbyte  = $(du -sm "$FUORI/file" | cut -f1)"
-    echo ""
-    if [ "$STRUM_CI_SONO" = si ] && [ -f tools/iso/strumenti.txt ]; then
-        echo "# --- gli strumenti di sviluppo, dal catalogo del CD ---"
-        echo "# Copiato da tools/iso/strumenti.txt: e' lo stesso elenco, e"
-        echo "# tenerne uno solo e' il punto. Cambiano tre cose e solo quelle:"
-        echo "# i percorsi di prova/solo prendono davanti exos/, che e' dove"
-        echo "# l'albero vive sul disco, e la riga «sempre» se ne va — li'"
-        echo "# voleva dire «se prendi gli strumenti prendi anche il C», qui"
-        echo "# vorrebbe dire «non si puo' togliere», che e' un'altra cosa e"
-        echo "# non e' vera: a tenere in piedi le dipendenze ci pensa vuole."
-        echo ""
-        sed -n '/^\[/,$p' tools/iso/strumenti.txt \
-            | sed -e 's|^solo *= *|solo   = exos/|' \
-                  -e 's|^prova *= *|prova  = exos/|' \
-                  -e '/^sempre *= */d'
-    fi
-} > "$CAT"
-
-# --- l'elenco dei file ------------------------------------------------------
-#
-# ! L'IMPRONTA C'E' PER OGNI FILE, e serve a una cosa sola ma indispensabile:
-# distinguere uno scaricamento riuscito da uno interrotto a meta'. Senza, un
-# file troncato ha la data giusta e la dimensione sbagliata, e la volta dopo
-# non viene riscaricato perche' «c'e' gia'».
 ELE="$FUORI/elenco.txt"
 
 ( cd "$FUORI/file" && find . -type f -printf '%P\n' | LC_ALL=C sort ) > "$TEMP/tutti"
@@ -269,6 +197,160 @@ awk -v R="$TEMP/regole" -v S="$TEMP/sistema" -v AVVIO="$AVVIO" '
     }
 ' "$TEMP/regole" "$TEMP/sistema" "$TEMP/tutti" > "$TEMP/mappa"
 
+# --- gli archivi: un giro di rete invece di trenta ---------------------------
+#
+# ! UN'APPLICAZIONE E' UNA DIRECTORY, NON UN FILE. Scaricarne i pezzi uno per
+# uno vuol dire un giro di rete per ognuno: su una linea lenta e' la differenza
+# fra installare e rinunciare. Per i pacchetti che ci stanno si pubblica anche
+# un tar.gz, e chi installa fa UN giro.
+#
+# ! MA NON PER TUTTI, E LA RIGA DI TAGLIO E' LA MEMORIA. inflate() vuole il
+# buffer d'uscita INTERO dal chiamante (lib/eximg/inflate.h: su EX-OS free()
+# non restituisce niente, quindi allocare dentro un ciclo e' una perdita
+# permanente), e netupdate tiene l'archivio compresso in un buffer da due
+# megabyte. Quindi: archivio per una app, file per file per il sistema di base
+# e per gli alberi grossi — gli strumenti sono 150 MB e non ci staranno mai.
+# Le due strade convivono, e non e' un ripiego: sono due casi diversi.
+#
+# ! E IL SISTEMA NON HA ARCHIVIO NEMMENO SE CI STESSE. [sistema] e [avvio] si
+# aggiornano FILE PER FILE, perche' `-check` deve poter scaricare i due che
+# sono cambiati e non i centosettanta che ci sono.
+ARC_TETTO=1572864          # 1,5 MB: sta comodo nel buffer di netupdate
+mkdir -p "$FUORI/pacchetti"
+: > "$TEMP/archivi"
+
+for id in $(cut -f2 "$TEMP/mappa" | LC_ALL=C sort -u); do
+    case "$id" in sistema|avvio) continue ;; esac
+
+    awk -F'\t' -v p="$id" '$2 == p { print $1 }' "$TEMP/mappa" > "$TEMP/lista"
+    [ -s "$TEMP/lista" ] || continue
+
+    # ! FORMATO ustar E NIENTE ESTENSIONI GNU: il lettore dall'altra parte e'
+    # un'intestazione da 512 byte letta in ottale, e deve restare tale. Se un
+    # percorso non ci sta, tar lo dice e l'archivio non si pubblica — meglio
+    # un pacchetto senza archivio che un archivio che il lettore non sa aprire.
+    if ! tar --format=ustar -czf "$FUORI/pacchetti/$id.tar.gz" \
+             -C "$FUORI/file" -T "$TEMP/lista" 2>/dev/null; then
+        rm -f "$FUORI/pacchetti/$id.tar.gz"
+        echo "     ! $id: tar non riesce a fare l'archivio (percorsi troppo lunghi?)"
+        continue
+    fi
+
+    arcb=$(stat -c %s "$FUORI/pacchetti/$id.tar.gz")
+    if [ "$arcb" -gt "$ARC_TETTO" ]; then
+        rm -f "$FUORI/pacchetti/$id.tar.gz"
+        continue                    # troppo grosso: resta il file per file
+    fi
+    srot=$(while IFS= read -r f; do stat -c %s "$FUORI/file/$f"; done < "$TEMP/lista" \
+           | awk '{ s += $1 } END { print s + 0 }')
+    printf '%s\t%s\t%s\t%s\n' "$id" "$arcb" \
+        "$(sha256sum "$FUORI/pacchetti/$id.tar.gz" | cut -d' ' -f1)" "$srot" \
+        >> "$TEMP/archivi"
+done
+
+# --- il catalogo ------------------------------------------------------------
+#
+# ! IL FORMATO E' QUELLO DI tools/iso/strumenti.txt, e non e' pigrizia: quel
+# file e' gia' un catalogo di pacchetti con le dipendenze (`vuole`), le prove
+# di presenza (`prova`) e i pesi, ed e' gia' letto da toolinst. Due formati per
+# la stessa cosa vuol dire due parser, e il secondo sbaglia dove il primo
+# aveva gia' imparato.
+#
+# ! IL SISTEMA SI CHIAMA [sistema] E NON [base], e la ragione e' che [base]
+# ESISTE GIA': e' il gruppo C del CD degli strumenti. Due blocchi con la stessa
+# etichetta nello stesso catalogo vuol dire che il secondo cancella il primo,
+# e nessuno se ne accorge finche' `-install:base` non installa la cosa
+# sbagliata. Gli id dei gruppi degli strumenti restano quelli del CD: due nomi
+# per la stessa cosa e' il modo di far divergere due elenchi.
+CAT="$FUORI/catalogo.txt"
+{
+    echo "# ============================================================="
+    echo "# catalogo.txt — i pacchetti pubblicati, per netupdate"
+    echo "#"
+    echo "# Stesse chiavi di tools/iso/strumenti.txt: nome, dice, prova,"
+    echo "# vuole, mbyte, sempre. Le righe che non cominciano con una chiave"
+    echo "# nota si ignorano, cosi' un catalogo scritto per un netupdate piu'"
+    echo "# nuovo non rompe quello vecchio."
+    echo "#"
+    echo "# I percorsi di prova e solo sono quelli che i file avranno SUL"
+    echo "# DISCO, senza la barra davanti: la stessa forma di elenco.txt."
+    echo "#"
+    echo "# Un pacchetto che ha anche un ARCHIVIO porta quattro chiavi in piu':"
+    echo "#   archivio      dove sta il tar.gz, sotto la radice del server"
+    echo "#   arcbyte       quanto pesa compresso"
+    echo "#   arcimpronta   la sua sha256"
+    echo "#   arcsrotolato  quanto occupa aperto: chi lo apre deve sapere"
+    echo "#                 PRIMA se ci sta in memoria"
+    echo "# Chi non ce le ha si scarica file per file, ed e' il caso del"
+    echo "# sistema di base: -check deve poter prendere i due file cambiati e"
+    echo "# non i centosettanta che ci sono."
+    echo "# ============================================================="
+    echo ""
+    echo "[avvio]"
+    echo "nome   = Avvio"
+    echo "dice   = il kernel e il secondo stadio del caricatore"
+    echo "prova  = boot/kernel.bin"
+    echo "sempre = si"
+    echo "mbyte  = 1"
+    echo "nota   = ! QUESTI DUE NON SONO FILE COME GLI ALTRI. Su ext2 il"
+    echo "nota   = kernel non e' contiguo, e il settore di avvio contiene la"
+    echo "nota   = MAPPA DEI SETTORI del file: copiarci sopra senza rifare la"
+    echo "nota   = mappa da' un disco che non parte piu'. Si scarica accanto,"
+    echo "nota   = si verifica, si rifa' la mappa, e il settore di avvio si"
+    echo "nota   = tocca per ULTIMO."
+    echo ""
+    echo "[sistema]"
+    echo "nome   = Sistema di base"
+    echo "dice   = shell, programmi, driver, librerie, configurazione"
+    echo "vuole  = avvio"
+    echo "prova  = bin/sh"
+    echo "sempre = si"
+    echo "mbyte  = $(du -sm "$FUORI/file" | cut -f1)"
+    echo ""
+    if [ "$STRUM_CI_SONO" = si ] && [ -f tools/iso/strumenti.txt ]; then
+        echo "# --- gli strumenti di sviluppo, dal catalogo del CD ---"
+        echo "# Copiato da tools/iso/strumenti.txt: e' lo stesso elenco, e"
+        echo "# tenerne uno solo e' il punto. Cambiano tre cose e solo quelle:"
+        echo "# i percorsi di prova/solo prendono davanti exos/, che e' dove"
+        echo "# l'albero vive sul disco, e la riga «sempre» se ne va — li'"
+        echo "# voleva dire «se prendi gli strumenti prendi anche il C», qui"
+        echo "# vorrebbe dire «non si puo' togliere», che e' un'altra cosa e"
+        echo "# non e' vera: a tenere in piedi le dipendenze ci pensa vuole."
+        echo ""
+        sed -n '/^\[/,$p' tools/iso/strumenti.txt \
+            | sed -e 's|^solo *= *|solo   = exos/|' \
+                  -e 's|^prova *= *|prova  = exos/|' \
+                  -e '/^sempre *= */d' \
+            | awk -v A="$TEMP/archivi" '
+                BEGIN {
+                    while ((getline riga < A) > 0) {
+                        split(riga, c, "\t")
+                        arc[c[1]] = c[2] "\t" c[3] "\t" c[4]
+                    }
+                }
+                /^\[/ {
+                    print
+                    id = $0; gsub(/[][]/, "", id)
+                    if (id in arc) {
+                        split(arc[id], c, "\t")
+                        print "archivio = pacchetti/" id ".tar.gz"
+                        print "arcbyte  = " c[1]
+                        print "arcimpronta = " c[2]
+                        print "arcsrotolato = " c[3]
+                    }
+                    next
+                }
+                { print }
+            '
+    fi
+} > "$CAT"
+
+# --- l'elenco dei file ------------------------------------------------------
+#
+# ! L'IMPRONTA C'E' PER OGNI FILE, e serve a una cosa sola ma indispensabile:
+# distinguere uno scaricamento riuscito da uno interrotto a meta'. Senza, un
+# file troncato ha la data giusta e la dimensione sbagliata, e la volta dopo
+# non viene riscaricato perche' «c'e' gia'».
 {
     echo "# percorso<TAB>byte<TAB>sha256<TAB>pacchetto"
     while IFS='	' read -r p pac; do
@@ -277,6 +359,10 @@ awk -v R="$TEMP/regole" -v S="$TEMP/sistema" -v AVVIO="$AVVIO" '
         printf '%s\t%s\t%s\t%s\n' "$p" "$b" "$h" "$pac"
     done < "$TEMP/mappa"
 } > "$ELE"
+
+# Se nessun pacchetto ha meritato un archivio, la directory non ci va: una
+# directory vuota su un server e' una domanda a cui nessuno sa rispondere.
+rmdir "$FUORI/pacchetti" 2>/dev/null || true
 
 N_FILE=$(grep -vc '^#' "$ELE" || true)
 
@@ -324,6 +410,13 @@ if [ -n "$VUOTI" ]; then
 fi
 echo ""
 echo "[OK] $FUORI pronto: $N_FILE file, $(du -sh "$FUORI" | cut -f1)"
+if [ -s "$TEMP/archivi" ]; then
+    echo ""
+    echo "  archivi (un giro di rete invece di tanti):"
+    while IFS='	' read -r id arcb arch srot; do
+        echo "    $(printf '%-12s' "$id") $((arcb / 1024)) KB compresso, $((srot / 1024)) KB aperto"
+    done < "$TEMP/archivi"
+fi
 if [ "$STRUM_CI_SONO" != si ]; then
     echo "     ! SENZA GLI STRUMENTI: $STRUMENTI/exos/bin/gcc non c'e'."
     echo "       Il sistema di base e' pubblicato e si aggiorna; per i"

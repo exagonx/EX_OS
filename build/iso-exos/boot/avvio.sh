@@ -45,3 +45,14 @@ netdetect -c
 dhcp
 
 echo Rete pronta: 'ipcfg' mostra la configurazione, 'ping' la prova.
+
+# Un'occhiata al server degli aggiornamenti. Non chiede niente, non installa
+# niente e NON STAMPA NIENTE se non c'e' niente da dire: fa qualcosa solo se
+# /boot/netupdate.cnf esiste e dice «automatico = si», e molla dopo cinque
+# secondi se il server non risponde. Si configura con `netupdate -set`.
+#
+# ! LA STESSA RIGA STA ANCHE DENTRO hwconfig (componi_avvio, in
+# bin/hwconfig/hwconfig.c): questo file ha DUE scrittori, e `hwconfig` lo
+# riscrive tutto. Chi cambia una riga qui la cambia anche li', o alla prima
+# configurazione dell'hardware sparisce senza che nessuno se ne accorga.
+netupdate -auto

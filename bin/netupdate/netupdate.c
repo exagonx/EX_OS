@@ -40,9 +40,10 @@
  * ============================================================================= */
 #include "libc.h"
 #include "exhttp.h"
+#include "inflate.h"
 
 /* +0.001 a ogni modifica: `netupdate -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("netupdate", "0.005");
+EX_VERSIONE("netupdate", "0.010");
 
 /* =============================================================================
  * IL FILE DI CONFIGURAZIONE
@@ -392,6 +393,14 @@ typedef struct {
     char prova[PERC_MAX];       /* un percorso che, se c'e', dice che c'e'    */
     char versione[16];
     char data[32];
+    /* L'archivio, quando c'e': quattro chiavi che stanno insieme o non
+     * servono. `arcsrotolato` e' quanto occupa APERTO, e si legge prima di
+     * scaricare: inflate() vuole tutto in memoria, e la decisione si prende
+     * con quel numero in mano. */
+    char archivio[PERC_MAX];
+    long arcbyte;
+    char arcimpronta[IMPR_MAX];
+    long arcsrotolato;
     char vuole[VUOLE_MAX][ID_MAX];
     int  n_vuole;
     long mbyte;
@@ -490,6 +499,10 @@ static int blocchi_leggi(const char *percorso, Pacchetto *v, int max)
         if ((val = valore_se(r, "versione")) != NULL) { copia_str(p->versione, val, 16); continue; }
         if ((val = valore_se(r, "data"))     != NULL) { copia_str(p->data, val, 32); continue; }
         if ((val = valore_se(r, "mbyte"))    != NULL) { p->mbyte = atol(val); continue; }
+        if ((val = valore_se(r, "archivio")) != NULL) { copia_str(p->archivio, val, PERC_MAX); continue; }
+        if ((val = valore_se(r, "arcbyte"))  != NULL) { p->arcbyte = atol(val); continue; }
+        if ((val = valore_se(r, "arcimpronta"))  != NULL) { copia_str(p->arcimpronta, val, IMPR_MAX); continue; }
+        if ((val = valore_se(r, "arcsrotolato")) != NULL) { p->arcsrotolato = atol(val); continue; }
         if ((val = valore_se(r, "sempre"))   != NULL) {
             p->sempre = (val[0] == 's' || val[0] == 'S' || val[0] == '1');
             continue;
@@ -527,13 +540,20 @@ static Pacchetto *cerca(Pacchetto *v, int n, const char *id)
  * funzione, e va anche STAMPATA: chi non vede la riga «xlib resta: la usano
  * yapp, zapp» pensa che la rimozione sia fallita.
  * --------------------------------------------------------------------------- */
-static int chi_usa(Pacchetto *v, int n, const char *id, char *out, int max)
+static int fra(char elenco[][ID_MAX], int n, const char *id);
+
+/* `via`/`nvia` sono i pacchetti che stanno per andarsene: NON contano come
+ * utilizzatori. Senza questa esclusione, `-remove` direbbe che una libreria
+ * resta viva grazie a un pacchetto che sta cancellando nello stesso comando. */
+static int chi_usa_salvo(Pacchetto *v, int n, const char *id,
+                         char via[][ID_MAX], int nvia, char *out, int max)
 {
     int i, j, quanti = 0;
 
     out[0] = '\0';
     for (i = 0; i < n; i++) {
         if (strcmp(v[i].id, id) == 0) continue;
+        if (nvia > 0 && fra(via, nvia, v[i].id)) continue;
         for (j = 0; j < v[i].n_vuole; j++) {
             if (strcmp(v[i].vuole[j], id) != 0) continue;
             if (out[0] != '\0' && (int)strlen(out) < max - 3) strcat(out, ", ");
@@ -544,6 +564,11 @@ static int chi_usa(Pacchetto *v, int n, const char *id, char *out, int max)
     }
     if (quanti == 0) copia_str(out, "nessuno", max);
     return quanti;
+}
+
+static int chi_usa(Pacchetto *v, int n, const char *id, char *out, int max)
+{
+    return chi_usa_salvo(v, n, id, NULL, 0, out, max);
 }
 
 /* -----------------------------------------------------------------------------
@@ -901,6 +926,9 @@ static int comando_registro_crea(const char *albero)
         fprintf(out, "versione = %s\n", versione);
         fprintf(out, "data     = %s\n", data);
         if (v[i].prova[0]) fprintf(out, "prova    = %s\n", v[i].prova);
+        /* ! `sempre` VA NEL REGISTRO, non solo nel catalogo: e' `-remove` a
+         * doverlo sapere, e -remove non tocca la rete. */
+        if (v[i].sempre)   fprintf(out, "sempre   = si\n");
         for (k = 0; k < v[i].n_vuole; k++)
             fprintf(out, "vuole    = %s\n", v[i].vuole[k]);
 
@@ -915,8 +943,10 @@ static int comando_registro_crea(const char *albero)
         }
 
         printf("  %-12s %6ld file", v[i].id, scritti);
-        if (mancano) printf(", %ld che non ci sono", mancano);
-        if (diversi) printf(", %ld diversi dall'elenco", diversi);
+        if (mancano) printf(", %ld che non c%s", mancano,
+                            mancano == 1 ? "'e'" : "i sono");
+        if (diversi) printf(", %ld divers%c dall'elenco", diversi,
+                            diversi == 1 ? 'o' : 'i');
         if (scritti == 0) printf("   ! il catalogo lo dichiara e l'elenco non gli da' niente");
         printf("\n");
 
@@ -949,11 +979,17 @@ static int comando_registro_crea(const char *albero)
         printf("  ! %d pacchetti del catalogo non hanno una `prova`: saltati.\n",
                senza_prova);
     if (tot_mancano)
-        printf("  ! %ld file dell'elenco non ci sono su questo disco: non li ho\n"
-               "    scritti nel registro. `-check` li proporra'.\n", tot_mancano);
+        printf("  ! %ld file dell'elenco su questo disco non %s: fuori dal\n"
+               "    registro, e `-check` %s proporra'.\n", tot_mancano,
+               tot_mancano == 1 ? "c'e'" : "ci sono",
+               tot_mancano == 1 ? "lo" : "li");
     if (tot_diversi)
-        printf("  ! %ld file ci sono con un'altra dimensione: registrati senza\n"
-               "    impronta. Non sono quelli dell'elenco.\n", tot_diversi);
+        printf("  ! %ld file %s con un'altra dimensione: registrat%c senza\n"
+               "    impronta, perche' non %s quell%c dell'elenco.\n", tot_diversi,
+               tot_diversi == 1 ? "c'e' ma" : "ci sono ma",
+               tot_diversi == 1 ? 'o' : 'i',
+               tot_diversi == 1 ? "e'" : "sono",
+               tot_diversi == 1 ? 'o' : 'i');
     printf("\n  Adesso:  netupdate -registro\n");
     return 0;
 }
@@ -998,6 +1034,32 @@ static int comando_registro_crea(const char *albero)
  * macchina con 32 MB di RAM non puo' prometterne 33. */
 #define BUF_MAX  (2u * 1024 * 1024)
 static unsigned char g_buf[BUF_MAX];
+
+/* ! IL SILENZIO E' UNA MODALITA', NON UN'OPZIONE DI STAMPA. `-auto` gira a
+ * OGNI AVVIO, prima che qualcuno abbia chiesto niente: un messaggio a ogni
+ * accensione — «la rete non e' pronta», «il server non risponde» — e' rumore
+ * che dopo tre giorni si smette di leggere, e il giorno che dice qualcosa di
+ * vero nessuno lo vede. Quando g_zitto e' acceso, netupdate parla SOLO se ha
+ * una novita' da dire; tutto il resto lo scopre chi lancia `-check` a mano,
+ * che e' il momento in cui ha senso raccontarlo. */
+static int g_zitto = 0;
+
+/* La scadenza del giro di rete, in colpi di clock(). Zero = nessuna.
+ *
+ * ! UN CONTROLLO ALL'AVVIO NON PUO' TENERE FERMA UNA MACCHINA. Senza scadenza,
+ * un server irraggiungibile costerebbe il timeout del TCP a ogni accensione, e
+ * quella e' la ragione per cui la gente spegne gli aggiornamenti automatici.
+ * Cinque secondi: se non risponde in cinque secondi, se ne parla al prossimo
+ * avvio. exhttp_attesa() chiama `respiro` durante le attese, e uno zero
+ * annulla la richiesta. */
+static long g_scadenza = 0;
+
+static int respiro(void *dato)
+{
+    (void)dato;
+    if (g_scadenza == 0) return 1;
+    return clock() < g_scadenza;
+}
 
 /* Il registro caricato per il confronto. Un'arena e un indice invece di
  * millecinquecento malloc: su EX-OS la memoria non torna indietro. */
@@ -1091,16 +1153,16 @@ static long prendi(const char *url)
     ExHttpEsito e;
 
     if (!exhttp_prendi(url, g_buf, BUF_MAX, &e)) {
-        printf("  ! %s\n", e.errore[0] ? e.errore : "non riuscito");
+        if (!g_zitto) printf("  ! %s\n", e.errore[0] ? e.errore : "non riuscito");
         return -1;
     }
     if (e.codice != 200) {
-        printf("  ! %s: il server risponde %d\n", url, e.codice);
+        if (!g_zitto) printf("  ! %s: il server risponde %d\n", url, e.codice);
         return -1;
     }
     if (e.troncata) {
-        printf("  ! %s: piu' grande di %u byte, non lo posso tenere\n",
-               url, BUF_MAX);
+        if (!g_zitto) printf("  ! %s: piu' grande di %u byte, non lo posso tenere\n",
+                             url, BUF_MAX);
         return -1;
     }
     return (long)e.byte;
@@ -1145,12 +1207,15 @@ static int prendi_verifica_scrivi(const Config *c, const char *coda,
     if (n < 0) return -1;
 
     if (attesa != NULL && !impronta_e(g_buf, n, attesa)) {
-        printf("  ! %s non ha l'impronta che versione.txt dichiara.\n", coda);
-        printf("    Il server si contraddice: non tocco niente.\n");
+        if (!g_zitto) {
+            printf("  ! %s non ha l'impronta che versione.txt dichiara.\n", coda);
+            printf("    Il server si contraddice: non tocco niente.\n");
+        }
         return -1;
     }
     if (scrivi_file(dove, g_buf, n) != 0) {
-        printf("  ! non riesco a scrivere %s (%s)\n", dove, strerror(errno));
+        if (!g_zitto)
+            printf("  ! non riesco a scrivere %s (%s)\n", dove, strerror(errno));
         return -1;
     }
     return 0;
@@ -1320,13 +1385,159 @@ static int fase_avvio(int kernel, int stage2)
         printf("    E QUESTO E' IL CASO BRUTTO: il kernel nuovo e' al suo\n");
         printf("    posto ma la mappa vecchia punta ai settori di quello\n");
         printf("    vecchio. Per tornare indietro, da un altro supporto:\n");
-        printf("      rinomina /boot/kernel.old in /boot/kernel.bin\n");
+        printf("      rinomina /boot/kernel.bin.old in /boot/kernel.bin\n");
         printf("    oppure rilancia `install <punto>` che la mappa la rifa'.\n");
         return -1;
     }
     printf("  = settore di avvio riscritto: kernel a LBA %u, %u settori\n",
            info.k_lba, info.k_cnt);
-    printf("  = il kernel di prima resta in /boot/kernel.old\n");
+    printf("  = il kernel di prima resta in /boot/kernel.bin.old\n");
+    return 0;
+}
+
+/* -----------------------------------------------------------------------------
+ * manifesto — la configurazione, la rete, e i tre file che dicono cosa c'e'
+ *
+ * Riempie ver/cat/ele con i percorsi LOCALI dei tre file scaricati, e
+ * versione/data con quel che dice il server. Rende 0 se e' andata.
+ *
+ * ! LE DUE IMPRONTE DENTRO versione.txt SONO IL SUO MESTIERE. Un elenco
+ * arrivato a meta' — o servito da un proxy che si e' inventato qualcosa —
+ * porterebbe a confrontare impronte con niente: o si riscarica tutto, o non si
+ * riscarica niente, e in tutt'e due i casi senza un errore. Se non tornano, ci
+ * si ferma qui, prima di guardare un solo file.
+ * --------------------------------------------------------------------------- */
+static int manifesto(Config *c, char *ver, char *cat, char *ele,
+                     char *versione, char *data)
+{
+    char h_cat[72], h_ele[72];
+
+    if (!config_leggi(c)) {
+        if (!g_zitto) {
+            printf("netupdate: non so da dove aggiornare (%s non c'e').\n\n", CNF);
+            printf("  Prima:  netupdate -set\n");
+        }
+        return 1;
+    }
+    if (strcasecmp(c->tipo, "HTTP") != 0) {
+        if (!g_zitto) {
+            printf("netupdate: la configurazione dice %s, e oggi so fare solo HTTP.\n\n",
+                   c->tipo);
+            printf("  FTP non c'e' ancora; HTTPS e FTPS vogliono la TLS, che ha un\n");
+            printf("  limite noto. Si cambia con `netupdate -set`.\n");
+        }
+        return 1;
+    }
+    if (!boot_si_scrive()) {
+        if (!g_zitto) {
+            printf("netupdate: non posso scrivere in /boot (%s).\n\n", strerror(errno));
+            printf("  Un sistema che gira da CD non si aggiorna: /boot e' il CD.\n");
+        }
+        return 1;
+    }
+
+    mkdir("/tmp", 0755);
+    mkdir(TMPDIR, 0755);
+    snprintf(ver, PERC_MAX, "%s/versione.txt", TMPDIR);
+    snprintf(cat, PERC_MAX, "%s/catalogo.txt", TMPDIR);
+    snprintf(ele, PERC_MAX, "%s/elenco.txt",   TMPDIR);
+
+    if (!g_zitto) printf("Guardo http://%s\n\n", c->url);
+
+    if (prendi_verifica_scrivi(c, "versione.txt", NULL, ver) != 0) {
+        if (!g_zitto) {
+            printf("\n  Non ho potuto leggere versione.txt. Se l'indirizzo e'\n");
+            printf("  giusto e la rete c'e', controlla che il server pubblichi la\n");
+            printf("  RADICE dell'albero fatto da `make netinst`.\n");
+        }
+        return 1;
+    }
+    if (chiave_da_file(ver, "versione", versione, 16) != 0) {
+        if (!g_zitto) {
+            printf("  ! versione.txt non dice nessuna versione: non e' un albero\n");
+            printf("    pubblicato da `make netinst`.\n");
+        }
+        return 1;
+    }
+    if (chiave_da_file(ver, "data", data, 40) != 0)
+        copia_str(data, "?", 40);
+
+    if (chiave_da_file(ver, "catalogo", h_cat, sizeof(h_cat)) != 0 ||
+        chiave_da_file(ver, "elenco",   h_ele, sizeof(h_ele)) != 0) {
+        if (!g_zitto) {
+            printf("  ! versione.txt non porta le impronte di catalogo.txt e\n");
+            printf("    elenco.txt: senza, non posso sapere se quel che scarico\n");
+            printf("    e' arrivato intero. Mi fermo.\n");
+        }
+        return 1;
+    }
+    if (prendi_verifica_scrivi(c, "catalogo.txt", h_cat, cat) != 0) return 1;
+    if (prendi_verifica_scrivi(c, "elenco.txt",   h_ele, ele) != 0) return 1;
+
+    if (!g_zitto) printf("  server: sistema %s del %s\n", versione, data);
+    return 0;
+}
+
+/* -----------------------------------------------------------------------------
+ * scarica_e_metti — un file solo: dalla rete al suo posto
+ *
+ * Rende  0 = installato, 1 = saltato (troppo grosso), 2 = messo da parte
+ * perche' e' dell'avvio, -1 = non riuscito. Lo usano `-check` e `-install`:
+ * scaricare, verificare e sostituire e' la stessa cosa in tutt'e due, e
+ * scriverla due volte vorrebbe dire due ordini di operazioni che col tempo
+ * divergono — cioe' due modi diversi di rompere una macchina.
+ * --------------------------------------------------------------------------- */
+static int scarica_e_metti(Config *c, const char *p, long byte,
+                           const char *impronta, int *kernel, int *stage2)
+{
+    char dest[PERC_MAX], temp[PERC_MAX], coda[PERC_MAX + 8];
+    char url[URL_MAX + PERC_MAX + 16];
+    long n;
+
+    /* ! UN FILE PIU' GRANDE DEL BUFFER NON SI SCARICA, E SI DICE. exhttp vuole
+     * il corpo intero in memoria: e' il tetto scritto in cima. Il sistema ci
+     * sta tutto; gli strumenti no, e chi aggiorna deve saperlo adesso e non
+     * scoprirlo con un compilatore a meta'. */
+    if (byte > (long)BUF_MAX) {
+        printf("  - %s: %ld byte, piu' del tetto di %u. SALTATO.\n", p, byte, BUF_MAX);
+        return 1;
+    }
+
+    snprintf(coda, sizeof(coda), "file/%s", p);
+    url_componi(url, sizeof(url), c, coda);
+    n = prendi(url);
+    if (n < 0) return -1;
+
+    if (!impronta_e(g_buf, n, impronta)) {
+        printf("  ! %s: l'impronta non torna, NON lo installo\n", p);
+        return -1;
+    }
+
+    unisci(dest, sizeof(dest), "/", p);
+
+    if (e_avvio(p)) {
+        /* I due dell'avvio si mettono da parte col nome che bootverify si
+         * aspetta, e si sostituiscono per ULTIMI. */
+        snprintf(temp, sizeof(temp), "/boot/%s.new",
+                 strcmp(p, "boot/kernel.bin") == 0 ? "kernel" : "stage2");
+        if (scrivi_file(temp, g_buf, n) != 0) {
+            printf("  ! %s: non riesco a scriverlo (%s)\n", temp, strerror(errno));
+            return -1;
+        }
+        if (strcmp(p, "boot/kernel.bin") == 0) *kernel = 1;
+        else                                   *stage2 = 1;
+        printf("  = %s scaricato e verificato (per ultimo)\n", p);
+        return 2;
+    }
+
+    crea_strada(dest);
+    snprintf(temp, sizeof(temp), "%s.new", dest);
+    if (scrivi_file(temp, g_buf, n) != 0) {
+        printf("  ! %s: non riesco a scriverlo (%s)\n", temp, strerror(errno));
+        return -1;
+    }
+    if (sostituisci(dest, temp) != 0) return -1;
+    printf("  + %s (%ld byte)\n", p, n);
     return 0;
 }
 
@@ -1348,102 +1559,69 @@ static long pulisci_vecchi(void)
     return tolti;
 }
 
-static int comando_check(void)
+/* =============================================================================
+ * guarda — il confronto, e nient'altro
+ *
+ * ! GUARDARE E AGIRE SONO DUE COSE, e tenerle separate non e' eleganza: serve
+ * a `-check:guarda` (dimmi cosa cambierebbe e non toccare niente), serve a
+ * `-auto` (che gira a ogni avvio e non puo' chiedere niente a nessuno), e
+ * servira' a chiunque debba dire COSA FARA' prima di farlo. Una funzione sola
+ * che guarda e agisce insieme obbliga ogni chiamante nuovo a copiarne meta'.
+ *
+ * Riempie `k` coi conti, e i tre percorsi col manifesto scaricato. Rende 0 se
+ * ha potuto guardare davvero.
+ * ============================================================================= */
+typedef struct {
+    long uguali, cambiati, verif, nuovi, scon, config;
+    long byte_cambiati, byte_nuovi;
+} Conti;
+
+static int guarda(Config *c, char *ver, char *cat, char *ele,
+                  char *versione, char *data, Conti *k)
 {
-    Config c;
-    char   ver[PERC_MAX], cat[PERC_MAX], ele[PERC_MAX];
-    char   versione[16], data[40], h_cat[72], h_ele[72];
-    char   riga[RIGA_MAX], dest[PERC_MAX], temp[PERC_MAX], coda[PERC_MAX + 8];
-    FILE  *f;
-    long   n_uguali = 0, n_cambiati = 0, n_verif = 0, n_nuovi = 0, n_scon = 0;
-    long   n_config = 0;
-    long   byte_cambiati = 0, byte_nuovi = 0;
-    long   fatti = 0, falliti = 0, saltati = 0;
-    int    mostrati = 0, kernel_nuovo = 0, stage2_nuovo = 0;
-    int    fai_cambiati, fai_nuovi;
+    char  riga[RIGA_MAX];
+    FILE *f;
+    int   mostrati = 0;
 
-    if (!config_leggi(&c)) {
-        printf("netupdate: non so da dove aggiornare (%s non c'e').\n\n", CNF);
-        printf("  Prima:  netupdate -set\n");
-        return 1;
-    }
-    if (strcasecmp(c.tipo, "HTTP") != 0) {
-        printf("netupdate: la configurazione dice %s, e oggi so fare solo HTTP.\n\n",
-               c.tipo);
-        printf("  FTP non c'e' ancora; HTTPS e FTPS vogliono la TLS, che ha un\n");
-        printf("  limite noto. Si cambia con `netupdate -set`.\n");
-        return 1;
-    }
-    if (!boot_si_scrive()) {
-        printf("netupdate: non posso scrivere in /boot (%s).\n\n", strerror(errno));
-        printf("  Un sistema che gira da CD non si aggiorna: /boot e' il CD.\n");
-        return 1;
-    }
+    memset(k, 0, sizeof(*k));
 
-    mkdir("/tmp", 0755);
-    mkdir(TMPDIR, 0755);
-    snprintf(ver, sizeof(ver), "%s/versione.txt", TMPDIR);
-    snprintf(cat, sizeof(cat), "%s/catalogo.txt", TMPDIR);
-    snprintf(ele, sizeof(ele), "%s/elenco.txt",   TMPDIR);
+    if (manifesto(c, ver, cat, ele, versione, data) != 0) return 1;
 
-    printf("Guardo http://%s\n\n", c.url);
-
-    /* --- 1. il manifesto, e la sua coerenza ------------------------------- */
-    if (prendi_verifica_scrivi(&c, "versione.txt", NULL, ver) != 0) {
-        printf("\n  Non ho potuto leggere versione.txt. Se l'indirizzo e'\n");
-        printf("  giusto e la rete c'e', controlla che il server pubblichi la\n");
-        printf("  RADICE dell'albero fatto da `make netinst`.\n");
-        return 1;
-    }
-    if (chiave_da_file(ver, "versione", versione, sizeof(versione)) != 0) {
-        printf("  ! versione.txt non dice nessuna versione: non e' un albero\n");
-        printf("    pubblicato da `make netinst`.\n");
-        return 1;
-    }
-    if (chiave_da_file(ver, "data", data, sizeof(data)) != 0)
-        copia_str(data, "?", sizeof(data));
-
-    /* ! LE DUE IMPRONTE DENTRO versione.txt SONO IL SUO MESTIERE. Un elenco
-     * scaricato a meta' — o servito da un proxy che si e' inventato qualcosa —
-     * porterebbe a confrontare impronte con niente, cioe' a riscaricare tutto
-     * o a non riscaricare niente, e in tutt'e due i casi senza un errore. */
-    if (chiave_da_file(ver, "catalogo", h_cat, sizeof(h_cat)) != 0 ||
-        chiave_da_file(ver, "elenco",   h_ele, sizeof(h_ele)) != 0) {
-        printf("  ! versione.txt non porta le impronte di catalogo.txt e\n");
-        printf("    elenco.txt: senza, non posso sapere se quel che scarico\n");
-        printf("    e' arrivato intero. Mi fermo.\n");
-        return 1;
-    }
-    if (prendi_verifica_scrivi(&c, "catalogo.txt", h_cat, cat) != 0) return 1;
-    if (prendi_verifica_scrivi(&c, "elenco.txt",   h_ele, ele) != 0) return 1;
-
-    printf("  server: sistema %s del %s\n", versione, data);
-
-    /* --- 2. il registro di questa macchina -------------------------------- */
+    /* --- il registro di questa macchina ----------------------------------- */
     {
         Pacchetto v[PACCHETTI_MAX];
         int       n = blocchi_leggi(REG, v, PACCHETTI_MAX);
 
         if (n < 0) {
+            /* ! IL REGISTRO NON SI SCRIVE DI NASCOSTO. Quando parla, `-check`
+             * lo crea e lo dice; quando tace — cioe' all'avvio — non tocca
+             * niente e lascia decidere a chi c'e'. Un file nuovo in /boot
+             * comparso durante un'accensione e' esattamente il genere di cosa
+             * che nessuno collega piu' a niente. */
+            if (g_zitto) return 1;
             printf("\nQui il registro non c'e' ancora: lo scrivo adesso, dal\n");
             printf("manifesto appena scaricato. E' quel che serve per sapere\n");
             printf("cosa confrontare — e da adesso in poi c'e'.\n\n");
             if (comando_registro_crea(TMPDIR) != 0) return 1;
             printf("\n");
-        } else if (n > 0) {
+        } else if (n > 0 && !g_zitto) {
             printf("  qui:    sistema %s\n", v[0].versione[0] ? v[0].versione : "?");
         }
     }
     if (registro_carica() < 0) {
-        printf("netupdate: il registro non si legge. Rifallo con -registro:crea.\n");
+        if (!g_zitto)
+            printf("netupdate: il registro non si legge. Rifallo con -registro:crea.\n");
         return 1;
     }
 
-    /* --- 3. il confronto, file per file ----------------------------------- */
+    /* --- il confronto, file per file -------------------------------------- */
     f = fopen(ele, "r");
-    if (f == NULL) { printf("netupdate: %s sparito\n", ele); return 1; }
+    if (f == NULL) {
+        if (!g_zitto) printf("netupdate: %s sparito\n", ele);
+        return 1;
+    }
 
-    printf("\nDa aggiornare:\n");
+    if (!g_zitto) printf("\nDa aggiornare:\n");
     while (fgets(riga, sizeof(riga), f) != NULL) {
         char *p, *impronta, *pac;
         long  byte;
@@ -1452,19 +1630,16 @@ static int comando_check(void)
         if (!riga_elenco(riga, &p, &byte, &impronta, &pac)) continue;
         v = verdetto(p, impronta);
 
-        if (v == UGUALE)         { n_uguali++; continue; }
-        if (v == MAI_INSTALLATO) { n_nuovi++; byte_nuovi += byte; continue; }
+        if (v == UGUALE)         { k->uguali++; continue; }
+        if (v == MAI_INSTALLATO) { k->nuovi++; k->byte_nuovi += byte; continue; }
+        if (e_configurazione(p)) { k->config++; continue; }
 
-        if (e_configurazione(p)) {
-            n_config++;
-            continue;
-        }
+        if (v == CAMBIATO)      k->cambiati++;
+        if (v == DA_VERIFICARE) k->verif++;
+        if (v == SCONOSCIUTO)   k->scon++;
+        k->byte_cambiati += byte;
 
-        if (v == CAMBIATO)      n_cambiati++;
-        if (v == DA_VERIFICARE) n_verif++;
-        if (v == SCONOSCIUTO)   n_scon++;
-        byte_cambiati += byte;
-
+        if (g_zitto) continue;
         if (mostrati < 12) {
             printf("    %s%s (%ld byte)\n", p,
                    v == DA_VERIFICARE ? " [da verificare]" :
@@ -1474,27 +1649,46 @@ static int comando_check(void)
         } else if (mostrati == 12) { printf("    ...\n"); mostrati++; }
     }
     fclose(f);
+    if (g_zitto) return 0;
 
     if (mostrati == 0) printf("    niente\n");
 
     printf("\n  %ld uguali, %ld da aggiornare (%ld KB da scaricare)",
-           n_uguali, n_cambiati + n_verif + n_scon, (byte_cambiati + 1023) / 1024);
-    if (n_verif) printf(",\n  di cui %ld da verificare (impronta sconosciuta)", n_verif);
-    if (n_scon)  printf(",\n  e %ld che il registro non conosce", n_scon);
+           k->uguali, k->cambiati + k->verif + k->scon,
+           (k->byte_cambiati + 1023) / 1024);
+    if (k->verif) printf(",\n  di cui %ld da verificare (impronta sconosciuta)", k->verif);
+    if (k->scon)  printf(",\n  e %ld che il registro non conosce", k->scon);
     printf(".\n");
-    if (n_nuovi)
+    if (k->nuovi)
         printf("  E %ld file che qui non ci sono MAI STATI (%ld KB).\n",
-               n_nuovi, (byte_nuovi + 1023) / 1024);
-    if (n_config) {
-        printf("  E %ld file di CONFIGURAZIONE, diversi dal server e NON toccati:\n",
-               n_config);
-        printf("  sono di questa macchina (driver, tastiera, montaggi). Per\n");
-        printf("  fonderli con quelli nuovi c'e' `install`, che sa farlo.\n");
+               k->nuovi, (k->byte_nuovi + 1023) / 1024);
+    if (k->config) {
+        printf("  E %ld file di CONFIGURAZIONE che il server ha divers%c e che\n",
+               k->config, k->config == 1 ? 'o' : 'i');
+        printf("  NON tocco: %s di questa macchina (driver, tastiera,\n",
+               k->config == 1 ? "e'" : "sono");
+        printf("  montaggi). La fusione con quella nuova la sa fare `install`.\n");
     }
+    return 0;
+}
 
-    if (n_cambiati + n_verif + n_scon + n_nuovi == 0) {
+static int comando_check(void)
+{
+    Config c;
+    Conti  k;
+    char   ver[PERC_MAX], cat[PERC_MAX], ele[PERC_MAX];
+    char   versione[16], data[40];
+    char   riga[RIGA_MAX];
+    FILE  *f;
+    long   fatti = 0, falliti = 0, saltati = 0;
+    int    kernel_nuovo = 0, stage2_nuovo = 0;
+    int    fai_cambiati, fai_nuovi;
+
+    if (guarda(&c, ver, cat, ele, versione, data, &k) != 0) return 1;
+
+    if (k.cambiati + k.verif + k.scon + k.nuovi == 0) {
         printf("\nNiente da fare");
-        if (n_config) printf(" (a parte la configurazione, che e' tua)");
+        if (k.config) printf(" (a parte la configurazione, che e' tua)");
         printf(".\n");
         return 0;
     }
@@ -1504,11 +1698,11 @@ static int comando_check(void)
      * HA VOLUTO — install chiede quali directory copiare — e riportarlo dentro
      * con la scusa dell'aggiornamento vuol dire riempire una macchina di roba
      * a cui il suo padrone aveva gia' detto di no. */
-    fai_cambiati = (n_cambiati + n_verif + n_scon > 0)
+    fai_cambiati = (k.cambiati + k.verif + k.scon > 0)
         ? chiedi_si("Aggiorno i file cambiati?", 1) : 0;
     fai_nuovi = 0;
-    if (n_nuovi > 0) {
-        printf("\n  I %ld file mai installati possono essere componenti che\n", n_nuovi);
+    if (k.nuovi > 0) {
+        printf("\n  I %ld file mai installati possono essere componenti che\n", k.nuovi);
         printf("  chi ha installato non ha voluto (doc, applicazioni grafiche,\n");
         printf("  font). Aggiornare non vuol dire aggiungerli.\n");
         fai_nuovi = chiedi_si("Installo anche quelli?", 0);
@@ -1532,7 +1726,7 @@ static int comando_check(void)
 
     while (fgets(riga, sizeof(riga), f) != NULL) {
         char *p, *impronta, *pac;
-        long  byte, n;
+        long  byte;
         int   v;
 
         if (!riga_elenco(riga, &p, &byte, &impronta, &pac)) continue;
@@ -1543,59 +1737,12 @@ static int comando_check(void)
         if (v == MAI_INSTALLATO && !fai_nuovi) continue;
         if (v != MAI_INSTALLATO && !fai_cambiati) continue;
 
-        /* ! UN FILE PIU' GRANDE DEL BUFFER NON SI SCARICA, E SI DICE. exhttp
-         * vuole il corpo intero in memoria: e' il tetto scritto in cima. Il
-         * sistema ci sta tutto; gli strumenti no, e chi aggiorna deve saperlo
-         * adesso e non scoprirlo con un compilatore a meta'. */
-        if (byte > (long)BUF_MAX) {
-            printf("  - %s: %ld byte, piu' del tetto di %u. SALTATO.\n",
-                   p, byte, BUF_MAX);
-            saltati++;
-            continue;
+        switch (scarica_e_metti(&c, p, byte, impronta, &kernel_nuovo, &stage2_nuovo)) {
+        case 0:  fatti++;   break;
+        case 1:  saltati++; break;
+        case 2:             break;    /* messo da parte: e' dell'avvio */
+        default: falliti++; break;
         }
-
-        snprintf(coda, sizeof(coda), "file/%s", p);
-        {
-            char url[URL_MAX + PERC_MAX + 16];
-
-            url_componi(url, sizeof(url), &c, coda);
-            n = prendi(url);
-        }
-        if (n < 0) { falliti++; continue; }
-
-        if (!impronta_e(g_buf, n, impronta)) {
-            printf("  ! %s: l'impronta non torna, NON lo installo\n", p);
-            falliti++;
-            continue;
-        }
-
-        unisci(dest, sizeof(dest), "/", p);
-        if (e_avvio(p)) {
-            /* I due dell'avvio si mettono da parte col nome che bootverify si
-             * aspetta, e si sostituiscono per ULTIMI. */
-            snprintf(temp, sizeof(temp), "/boot/%s.new",
-                     strcmp(p, "boot/kernel.bin") == 0 ? "kernel" : "stage2");
-            if (scrivi_file(temp, g_buf, n) != 0) {
-                printf("  ! %s: non riesco a scriverlo (%s)\n", temp, strerror(errno));
-                falliti++;
-                continue;
-            }
-            if (strcmp(p, "boot/kernel.bin") == 0) kernel_nuovo = 1;
-            else                                   stage2_nuovo = 1;
-            printf("  = %s scaricato e verificato (per ultimo)\n", p);
-            continue;
-        }
-
-        crea_strada(dest);
-        snprintf(temp, sizeof(temp), "%s.new", dest);
-        if (scrivi_file(temp, g_buf, n) != 0) {
-            printf("  ! %s: non riesco a scriverlo (%s)\n", temp, strerror(errno));
-            falliti++;
-            continue;
-        }
-        if (sostituisci(dest, temp) != 0) { falliti++; continue; }
-        printf("  + %s (%ld byte)\n", p, n);
-        fatti++;
     }
     fclose(f);
 
@@ -1618,11 +1765,881 @@ static int comando_check(void)
 
     if (kernel_nuovo || stage2_nuovo)
         printf("\n! IL KERNEL E' CAMBIATO: riavvia. Quello di prima e' in\n"
-               "  /boot/kernel.old, e il settore di avvio punta al nuovo.\n");
+               "  /boot/kernel.bin.old, e il settore di avvio punta al nuovo.\n");
     else if (fatti > 0)
         printf("\n! I programmi gia' in esecuzione stanno ancora usando i file\n"
                "  di prima, che sono li' col nome .old. Riavvia quando puoi:\n"
                "  il prossimo -check li togliera'.\n");
+    return 0;
+}
+
+
+
+/* -----------------------------------------------------------------------------
+ * -check:guarda — dimmi cosa cambierebbe, e non toccare niente
+ *
+ * ! ESISTE PERCHE' «GUARDARE» E' UNA DOMANDA LEGITTIMA. Chi amministra una
+ * macchina vuole poter sapere cosa arriverebbe prima di decidere quando farlo
+ * arrivare — magari non adesso, magari non da questa console. Con il solo
+ * `-check` l'unico modo di saperlo e' arrivare alla domanda e rispondere no,
+ * che funziona ma obbliga a fidarsi di aver risposto giusto.
+ * --------------------------------------------------------------------------- */
+static int comando_check_guarda(void)
+{
+    Config c;
+    Conti  k;
+    char   ver[PERC_MAX], cat[PERC_MAX], ele[PERC_MAX];
+    char   versione[16], data[40];
+
+    if (guarda(&c, ver, cat, ele, versione, data, &k) != 0) return 1;
+
+    printf("\n");
+    if (k.cambiati + k.verif + k.scon + k.nuovi == 0)
+        printf("Niente da fare, e non ho toccato niente comunque.\n");
+    else
+        printf("Non ho toccato niente: per farlo, `netupdate -check`.\n");
+    return 0;
+}
+
+/* =============================================================================
+ * -auto — l'occhiata all'avvio, quella che nessuno ha chiesto
+ *
+ * La esegue /boot/avvio.sh a ogni accensione, subito dopo la rete. Fa qualcosa
+ * SOLO se il file di configurazione dice `automatico = si`.
+ *
+ * ! TRE REGOLE, E SONO TUTTE E TRE «NON DISTURBARE».
+ *
+ *   TACE SE NON HA NOVITA'. Un programma che a ogni accensione dice «tutto a
+ *   posto» insegna a non leggere quella riga, e il giorno che ne scrive
+ *   un'altra non la vede nessuno.
+ *
+ *   TACE SE NON PUO' GUARDARE. Nessuna configurazione, rete spenta, server
+ *   irraggiungibile, /boot in sola lettura: sono tutte condizioni NORMALI a
+ *   un avvio, e nessuna e' un guaio da annunciare. Chi vuole la diagnosi
+ *   lancia `-check` a mano, ed e' li' che netupdate racconta tutto.
+ *
+ *   NON TIENE FERMA LA MACCHINA. Cinque secondi di scadenza sul giro di rete:
+ *   un server che non risponde non deve costare il timeout del TCP a ogni
+ *   accensione. E' esattamente il motivo per cui la gente spegne gli
+ *   aggiornamenti automatici.
+ *
+ * ! E NON INSTALLA NIENTE DA SOLO. Dice che c'e' qualcosa e come guardarlo.
+ * Scaricare e sostituire file su una macchina il cui padrone non ha chiesto
+ * niente — e magari non e' nemmeno davanti — e' una decisione che questo
+ * programma non ha titolo di prendere.
+ * ============================================================================= */
+static int comando_auto(void)
+{
+    Config c;
+    Conti  k;
+    char   ver[PERC_MAX], cat[PERC_MAX], ele[PERC_MAX];
+    char   versione[16], data[40];
+    long   da_fare;
+
+    if (!config_leggi(&c) || !c.automatico) return 0;   /* zitto, e basta */
+
+    g_zitto   = 1;
+    g_scadenza = clock() + 5 * CLOCKS_PER_SEC;
+    exhttp_attesa(respiro, NULL);
+
+    if (guarda(&c, ver, cat, ele, versione, data, &k) != 0) return 0;
+
+    da_fare = k.cambiati + k.verif + k.scon;
+    if (da_fare == 0 && k.nuovi == 0) return 0;
+
+    /* L'unica riga che questo comando ha il diritto di stampare. */
+    printf("netupdate: sul server c'e' qualcosa di nuovo");
+    if (da_fare) printf(" (%ld file da aggiornare", da_fare);
+    if (da_fare && k.nuovi) printf(", %ld mai installati)", k.nuovi);
+    else if (da_fare)       printf(")");
+    else                    printf(" (%ld file mai installati)", k.nuovi);
+    printf(". Guarda con `netupdate -check`.\n");
+    return 0;
+}
+
+
+/* =============================================================================
+ * gzip E tar — DUE LETTORI PICCOLI SOPRA UNA COSA CHE GIA' FUNZIONA
+ *
+ * Un'applicazione e' una directory, e scaricarne i file uno per uno vuol dire
+ * un giro di rete per ognuno. Con un archivio se ne fa uno solo.
+ *
+ * ! E IL PEZZO DIFFICILE C'ERA GIA'. lib/eximg/inflate.c fa DEFLATE (RFC 1951)
+ * ed e' in uso da mesi: lo usano PNG, GIF e i font. gzip e' un'intestazione di
+ * dieci byte, un flusso DEFLATE e otto byte in coda (CRC32 e ISIZE); tar e'
+ * un'intestazione di 512 byte per file, scritta in ottale ASCII. Quindi qui
+ * non si e' portato dentro zlib: si sono scritti due lettori piccoli sopra una
+ * cosa che gia' funzionava, e nessun sorgente esterno e' entrato nel sistema.
+ *
+ * ! STANNO IN QUESTO PROGRAMMA E NON IN UNA LIBRERIA, per adesso: l'unico che
+ * li usa e' netupdate. Il giorno che serviranno a un secondo — un comando
+ * `tar` per aprire i sorgenti di qualcun altro e' il candidato ovvio — si
+ * spostano, e quello e' il momento giusto per farlo: una libreria con un solo
+ * utente e' una libreria di cui non si conosce ancora la forma.
+ *
+ * ! LA MEMORIA E' IL LIMITE, ED E' DICHIARATA PRIMA. inflate() vuole il buffer
+ * d'uscita INTERO dal chiamante e non fa streaming (lib/eximg/inflate.h, ed e'
+ * voluto: su EX-OS free() non restituisce niente al sistema). Quindi un
+ * archivio si apre TUTTO IN MEMORIA, e il catalogo dice quanto occupa aperto
+ * — `arcsrotolato` — proprio perche' si possa decidere PRIMA di scaricarlo.
+ * ============================================================================= */
+/* CRC32 di gzip (polinomio 0xEDB88320), a bit e senza tabella: la tabella
+ * sarebbe un kilobyte per far risparmiare qualche decimo di secondo su un
+ * archivio che si scarica in molto di piu'. */
+static unsigned long crc32_gz(const unsigned char *d, long n)
+{
+    unsigned long c = 0xFFFFFFFFul;
+    long i;
+    int  k;
+
+    for (i = 0; i < n; i++) {
+        c ^= d[i];
+        for (k = 0; k < 8; k++)
+            c = (c >> 1) ^ (0xEDB88320ul & (unsigned long)(-(long)(c & 1)));
+    }
+    return c ^ 0xFFFFFFFFul;
+}
+
+static unsigned long quattro_byte(const unsigned char *p)
+{
+    return (unsigned long)p[0] | ((unsigned long)p[1] << 8) |
+           ((unsigned long)p[2] << 16) | ((unsigned long)p[3] << 24);
+}
+
+/* Apre un gzip. Alloca il buffer d'uscita e lo mette in *fuori: chi chiama non
+ * lo libera, perche' questo programma finisce subito dopo — e su EX-OS free()
+ * non restituirebbe comunque niente al sistema.
+ *
+ * Rende 0, oppure -1 dicendo perche'. */
+static int gzip_apri(const unsigned char *d, long n,
+                     unsigned char **fuori, long *quanti)
+{
+    long          i = 10;
+    unsigned long isize, crc_letto, crc_fatto;
+    unsigned int  prodotti = 0;
+    unsigned char flg;
+
+    if (n < 20 || d[0] != 0x1f || d[1] != 0x8b) {
+        printf("  ! non e' un gzip (i primi due byte non tornano)\n");
+        return -1;
+    }
+    if (d[2] != 8) {
+        printf("  ! gzip con metodo %d: so leggere solo DEFLATE\n", d[2]);
+        return -1;
+    }
+    flg = d[3];
+
+    if (flg & 0x04) {                       /* FEXTRA */
+        if (i + 2 > n) return -1;
+        i += 2 + (long)d[i] + ((long)d[i+1] << 8);
+    }
+    if (flg & 0x08) while (i < n && d[i++] != 0) { }    /* FNAME    */
+    if (flg & 0x10) while (i < n && d[i++] != 0) { }    /* FCOMMENT */
+    if (flg & 0x02) i += 2;                             /* FHCRC    */
+    if (i >= n - 8) {
+        printf("  ! gzip troncato: l'intestazione si mangia tutto\n");
+        return -1;
+    }
+
+    /* ! LA MISURA STA IN CODA, ED E' L'UNICA CHE C'E'. Gli ultimi quattro byte
+     * sono ISIZE, la dimensione da aperto: senza, non si saprebbe quanto
+     * allocare, e inflate() non sa dirlo prima di provarci. */
+    isize     = quattro_byte(d + n - 4);
+    crc_letto = quattro_byte(d + n - 8);
+
+    if (isize == 0 || isize > 64ul * 1024 * 1024) {
+        printf("  ! l'archivio dice di occupare %lu byte aperto: non ci credo\n",
+               isize);
+        return -1;
+    }
+
+    *fuori = (unsigned char *)malloc((size_t)isize);
+    if (*fuori == NULL) {
+        printf("  ! non c'e' memoria per aprirlo (%lu byte)\n", isize);
+        return -1;
+    }
+
+    if (inflate(d + i, (unsigned int)(n - i - 8), *fuori,
+                (unsigned int)isize, &prodotti) != 0) {
+        printf("  ! l'archivio non si apre: DEFLATE si e' fermato\n");
+        return -1;
+    }
+    if ((unsigned long)prodotti != isize) {
+        printf("  ! aperto ne da' %u e ne dichiara %lu: non e' intero\n",
+               prodotti, isize);
+        return -1;
+    }
+
+    crc_fatto = crc32_gz(*fuori, (long)isize);
+    if (crc_fatto != crc_letto) {
+        printf("  ! il CRC32 non torna: l'archivio e' rovinato\n");
+        return -1;
+    }
+
+    *quanti = (long)isize;
+    return 0;
+}
+
+/* -----------------------------------------------------------------------------
+ * tar: intestazioni da 512 byte in ottale ASCII
+ * --------------------------------------------------------------------------- */
+#define TAR_BLOCCO 512
+
+static long ottale(const unsigned char *p, int max)
+{
+    long v = 0;
+    int  i;
+
+    for (i = 0; i < max && (p[i] == ' ' || p[i] == '0'); i++) { }
+    for (; i < max && p[i] >= '0' && p[i] <= '7'; i++) v = v * 8 + (p[i] - '0');
+    return v;
+}
+
+/* La somma di controllo dell'intestazione: tutti i 512 byte, con il campo
+ * della somma contato come otto spazi. E' l'unica verifica che il formato
+ * offra, e costa otto righe: si fa. */
+static int tar_somma_torna(const unsigned char *h)
+{
+    long somma = 0, dichiarata = ottale(h + 148, 8);
+    int  i;
+
+    for (i = 0; i < TAR_BLOCCO; i++)
+        somma += (i >= 148 && i < 156) ? ' ' : h[i];
+    return somma == dichiarata;
+}
+
+/* Scorre l'archivio aperto e mette ogni file al suo posto. Rende quanti ne ha
+ * messi; conta a parte quelli che non ce l'hanno fatta. */
+static long tar_estrai(unsigned char *d, long n, long *falliti)
+{
+    char dest[PERC_MAX], temp[PERC_MAX];
+    long i = 0, messi = 0;
+
+    while (i + TAR_BLOCCO <= n) {
+        const unsigned char *h = d + i;
+        long  dim;
+        int   tipo;
+        char  nome[256];
+
+        if (h[0] == 0) break;               /* i blocchi di zeri: e' finita */
+
+        if (!tar_somma_torna(h)) {
+            printf("  ! l'intestazione a %ld non ha la somma giusta: mi fermo\n", i);
+            (*falliti)++;
+            return messi;
+        }
+
+        /* ustar: il nome puo' essere spezzato in `prefix` e `name`. */
+        nome[0] = '\0';
+        if (h[345] != 0) {
+            copia_str(nome, (const char *)h + 345, 156 > (int)sizeof(nome) ?
+                      (int)sizeof(nome) : 156);
+            if (nome[0]) strcat(nome, "/");
+        }
+        {
+            char corto[101];
+
+            copia_str(corto, (const char *)h + 0, 101);
+            if ((int)strlen(nome) + (int)strlen(corto) < (int)sizeof(nome))
+                strcat(nome, corto);
+        }
+
+        dim  = ottale(h + 124, 12);
+        tipo = h[156];
+        i   += TAR_BLOCCO;
+
+        if (tipo == '5') {                  /* una directory */
+            unisci(dest, sizeof(dest), "/", nome);
+            mkdir(dest, 0755);
+            continue;
+        }
+        if (tipo != '0' && tipo != '\0') {
+            /* Collegamenti, dispositivi, roba di GNU: l'albero pubblicato non
+             * ne contiene, e installare cio' che non si e' capito e' peggio
+             * che saltarlo dicendolo. */
+            printf("  - %s: tipo '%c', saltato\n", nome, tipo ? tipo : '?');
+            i += (dim + TAR_BLOCCO - 1) / TAR_BLOCCO * TAR_BLOCCO;
+            continue;
+        }
+        if (i + dim > n) {
+            printf("  ! %s: l'archivio finisce prima del file\n", nome);
+            (*falliti)++;
+            return messi;
+        }
+
+        unisci(dest, sizeof(dest), "/", nome);
+        crea_strada(dest);
+        snprintf(temp, sizeof(temp), "%s.new", dest);
+
+        if (scrivi_file(temp, d + i, dim) != 0) {
+            printf("  ! %s: non riesco a scriverlo (%s)\n", temp, strerror(errno));
+            (*falliti)++;
+        } else if (sostituisci(dest, temp) != 0) {
+            (*falliti)++;
+        } else {
+            printf("  + %s (%ld byte)\n", nome, dim);
+            messi++;
+        }
+
+        i += (dim + TAR_BLOCCO - 1) / TAR_BLOCCO * TAR_BLOCCO;
+    }
+    return messi;
+}
+
+/* =============================================================================
+ * -install e -remove — UNA APPLICAZIONE PER VOLTA, CON CIO' CHE LE SERVE
+ *
+ * ! LE DIPENDENZE SI CHIUDONO IN CATENA, NON A UN PASSO. Se fbsrc vuole build
+ * e build vuole base, chiedere fbsrc vuol dire prendere tutt'e tre: fermarsi
+ * al primo livello installerebbe qualcosa che non parte, e la scoperta
+ * arriverebbe alla prima esecuzione invece che adesso.
+ *
+ * ! E ALLA RIMOZIONE SI GUARDA DALL'ALTRA PARTE: non «da cosa dipende questo»
+ * ma «chi dipende da questo». Sono due domande diverse sullo stesso grafo, e
+ * confonderle vuol dire o portarsi via una libreria che serve a qualcun altro,
+ * o lasciare in giro roba che non serve piu' a nessuno.
+ *
+ * ! -remove NON TOCCA LA RETE. Tutto quel che gli serve — chi possiede cosa,
+ * chi dipende da chi — sta nel registro, ed e' la ragione per cui il registro
+ * si porta dentro le `vuole` invece di andarsele a rileggere dal catalogo.
+ * Una macchina scollegata deve poter disinstallare.
+ * ============================================================================= */
+
+/* Mette in `fuori` l'id e tutto cio' che vuole, in catena. Rende quanti.
+ * L'ordine e' quello in cui vanno installati: le dipendenze prima. */
+static int catena_vuole(Pacchetto *v, int n, const char *id,
+                        char fuori[][ID_MAX], int max)
+{
+    int quanti = 0, i, k, giro;
+
+    copia_str(fuori[quanti++], id, ID_MAX);
+
+    /* Si passa e ripassa finche' non si aggiunge piu' niente: la catena e'
+     * corta (una manciata di pacchetti) e cosi' non serve la ricorsione, che
+     * su un catalogo scritto male sarebbe infinita. Un ciclo fra due `vuole`
+     * qui non e' un guaio: si fermano tutt'e due dentro l'elenco. */
+    for (giro = 0; giro < PACCHETTI_MAX; giro++) {
+        int aggiunti = 0;
+
+        for (i = 0; i < quanti; i++) {
+            Pacchetto *p = cerca(v, n, fuori[i]);
+
+            if (p == NULL) continue;
+            for (k = 0; k < p->n_vuole; k++) {
+                int j, c_e = 0;
+
+                for (j = 0; j < quanti; j++)
+                    if (strcmp(fuori[j], p->vuole[k]) == 0) { c_e = 1; break; }
+                if (c_e) continue;
+                if (quanti >= max) return quanti;
+                copia_str(fuori[quanti++], p->vuole[k], ID_MAX);
+                aggiunti++;
+            }
+        }
+        if (!aggiunti) break;
+    }
+
+    /* Le dipendenze prima: si rovescia, perche' sono state aggiunte dopo. */
+    for (i = 0; i < quanti / 2; i++) {
+        char t[ID_MAX];
+
+        copia_str(t, fuori[i], ID_MAX);
+        copia_str(fuori[i], fuori[quanti - 1 - i], ID_MAX);
+        copia_str(fuori[quanti - 1 - i], t, ID_MAX);
+    }
+    return quanti;
+}
+
+static int fra(char elenco[][ID_MAX], int n, const char *id)
+{
+    int i;
+
+    for (i = 0; i < n; i++)
+        if (strcmp(elenco[i], id) == 0) return 1;
+    return 0;
+}
+
+/* -----------------------------------------------------------------------------
+ * -install:list — cosa c'e' sul server, e cosa c'e' gia' qui
+ * --------------------------------------------------------------------------- */
+static int comando_install_list(const char *pezzo)
+{
+    Config    c;
+    Pacchetto v[PACCHETTI_MAX], r[PACCHETTI_MAX];
+    char      ver[PERC_MAX], cat[PERC_MAX], ele[PERC_MAX];
+    char      versione[16], data[40];
+    int       n, nr, i, mostrati = 0;
+
+    if (manifesto(&c, ver, cat, ele, versione, data) != 0) return 1;
+
+    n = blocchi_leggi(cat, v, PACCHETTI_MAX);
+    if (n <= 0) {
+        printf("  ! il catalogo non nomina nessun pacchetto.\n");
+        return 1;
+    }
+    nr = blocchi_leggi(REG, r, PACCHETTI_MAX);
+    if (nr < 0) nr = 0;
+
+    printf("\n  %-12s %-11s %5s  %s\n", "PACCHETTO", "STATO", "MB", "COS'E'");
+    for (i = 0; i < n; i++) {
+        if (pezzo != NULL && pezzo[0] != '\0' &&
+            strstr(v[i].id, pezzo) == NULL && strstr(v[i].nome, pezzo) == NULL)
+            continue;
+        printf("  %-12s %-11s %5ld  %s\n", v[i].id,
+               cerca(r, nr, v[i].id) ? "installato" : "no",
+               v[i].mbyte, v[i].nome);
+        if (v[i].dice[0]) printf("  %-12s %-11s %5s  %s\n", "", "", "", v[i].dice);
+        mostrati++;
+    }
+
+    if (mostrati == 0) {
+        printf("  (nessuno: «%s» non compare in nessun nome)\n",
+               pezzo ? pezzo : "");
+        return 1;
+    }
+    printf("\n  %d pacchett%s. Per installarne uno:  netupdate -install:<nome>\n",
+           mostrati, mostrati == 1 ? "o" : "i");
+    return 0;
+}
+
+/* -----------------------------------------------------------------------------
+ * Un pacchetto in un giro solo, quando si puo'.
+ *
+ * Rende 1 se il pacchetto e' stato messo a posto dall'archivio, 0 se
+ * l'archivio non c'e' o non ci sta (e allora si va file per file), -1 se
+ * l'archivio c'era e non ha funzionato — e anche in quel caso si ripiega,
+ * perche' un pacchetto a meta' e' peggio di un giro di rete in piu'.
+ *
+ * ! L'IMPRONTA SI CONTROLLA PRIMA DI APRIRLO, non dopo. Aprire un archivio
+ * vuol dire allocare quanto dice lui e fidarsi delle sue intestazioni: se i
+ * byte non sono quelli che il catalogo dichiara, non c'e' motivo di guardarci
+ * dentro. E l'impronta dell'archivio vale per TUTTI i file che contiene: e' il
+ * modo in cui il giro solo mantiene la stessa promessa del file per file.
+ * --------------------------------------------------------------------------- */
+static int prova_archivio(Config *c, Pacchetto *q, long *fatti, long *falliti)
+{
+    unsigned char *aperto = NULL;
+    char           url[URL_MAX + PERC_MAX + 16];
+    long           n, quanti = 0, messi, f_qui = 0;
+
+    if (q == NULL || q->archivio[0] == '\0' || q->arcbyte <= 0) return 0;
+
+    if (q->arcbyte > (long)BUF_MAX) {
+        printf("  - %s: l'archivio e' %ld byte, piu' del tetto: vado file per file\n",
+               q->id, q->arcbyte);
+        return 0;
+    }
+
+    printf("  = %s: un archivio da %ld KB (%ld KB aperto), un giro solo\n",
+           q->id, (q->arcbyte + 1023) / 1024, (q->arcsrotolato + 1023) / 1024);
+
+    url_componi(url, sizeof(url), c, q->archivio);
+    n = prendi(url);
+    if (n < 0) return -1;
+
+    if (q->arcimpronta[0] && !impronta_e(g_buf, n, q->arcimpronta)) {
+        printf("  ! l'archivio non ha l'impronta che il catalogo dichiara.\n");
+        return -1;
+    }
+
+    if (gzip_apri(g_buf, n, &aperto, &quanti) != 0) return -1;
+
+    messi = tar_estrai(aperto, quanti, &f_qui);
+    *fatti   += messi;
+    *falliti += f_qui;
+
+    if (f_qui > 0) {
+        printf("  ! %ld file dell'archivio non sono andati a posto.\n", f_qui);
+        return -1;
+    }
+    return 1;
+}
+
+/* -----------------------------------------------------------------------------
+ * -install:<pacchetto> — l'app e tutto cio' che le serve
+ * --------------------------------------------------------------------------- */
+static int comando_install(const char *id)
+{
+    Config     c;
+    Pacchetto  v[PACCHETTI_MAX], r[PACCHETTI_MAX];
+    Pacchetto *p;
+    char       ver[PERC_MAX], cat[PERC_MAX], ele[PERC_MAX];
+    char       versione[16], data[40], riga[RIGA_MAX];
+    char       scelti[PACCHETTI_MAX][ID_MAX], da_fare[PACCHETTI_MAX][ID_MAX];
+    FILE      *f;
+    int        n, nr, i, nscelti, nda = 0, gia = 0;
+    long       n_file = 0, byte = 0, troppo_grossi = 0;
+    long       fatti = 0, falliti = 0, saltati = 0;
+    int        kernel_nuovo = 0, stage2_nuovo = 0;
+
+    if (manifesto(&c, ver, cat, ele, versione, data) != 0) return 1;
+
+    n = blocchi_leggi(cat, v, PACCHETTI_MAX);
+    if (n <= 0) { printf("  ! il catalogo non nomina nessun pacchetto.\n"); return 1; }
+
+    p = cerca(v, n, id);
+    if (p == NULL) {
+        printf("\nnetupdate: «%s» non c'e' nel catalogo di questo server.\n\n", id);
+        printf("  Per vedere cosa c'e':  netupdate -install:list\n");
+        return 1;
+    }
+
+    nr = blocchi_leggi(REG, r, PACCHETTI_MAX);
+    if (nr < 0) {
+        printf("\n  Il registro non c'e': lo scrivo adesso, o non saprei cosa\n");
+        printf("  hai gia'.\n\n");
+        if (comando_registro_crea(TMPDIR) != 0) return 1;
+        nr = blocchi_leggi(REG, r, PACCHETTI_MAX);
+        if (nr < 0) return 1;
+    }
+
+    /* --- la catena, e chi di quella catena c'e' gia' ---------------------- */
+    nscelti = catena_vuole(v, n, id, scelti, PACCHETTI_MAX);
+    for (i = 0; i < nscelti; i++) {
+        if (cerca(r, nr, scelti[i]) != NULL) { gia++; continue; }
+        copia_str(da_fare[nda++], scelti[i], ID_MAX);
+    }
+
+    printf("\n%s — %s\n", p->id, p->nome);
+    if (p->dice[0]) printf("%s\n", p->dice);
+
+    if (nscelti > 1) {
+        printf("\n  Vuole, in catena:");
+        for (i = 0; i < nscelti; i++)
+            if (strcmp(scelti[i], id) != 0) printf(" %s", scelti[i]);
+        printf("\n");
+    }
+    if (gia > 0) {
+        printf("  Gia' qui:");
+        for (i = 0; i < nscelti; i++)
+            if (cerca(r, nr, scelti[i]) != NULL) printf(" %s", scelti[i]);
+        printf("\n");
+    }
+
+    if (nda == 0) {
+        printf("\nC'e' gia' tutto: %s e cio' che vuole sono installati.\n", id);
+        printf("Per vedere se sono AGGIORNATI:  netupdate -check\n");
+        return 0;
+    }
+
+    /* --- quanto pesa, prima di cominciare --------------------------------- */
+    if (registro_carica() < 0) return 1;
+
+    f = fopen(ele, "r");
+    if (f == NULL) { printf("netupdate: %s sparito\n", ele); return 1; }
+    while (fgets(riga, sizeof(riga), f) != NULL) {
+        char *fp, *impronta, *pac;
+        long  fb;
+
+        if (!riga_elenco(riga, &fp, &fb, &impronta, &pac)) continue;
+        if (!fra(da_fare, nda, pac)) continue;
+        if (verdetto(fp, impronta) == UGUALE) continue;
+        n_file++;
+        byte += fb;
+        if (fb > (long)BUF_MAX) troppo_grossi++;
+    }
+    fclose(f);
+
+    printf("\n  Da installare:");
+    for (i = 0; i < nda; i++) printf(" %s", da_fare[i]);
+    printf("\n  %ld file, %ld KB sul disco.\n", n_file, (byte + 1023) / 1024);
+
+    /* Quali arrivano in un giro solo, e quali no: si dice PRIMA, perche' su
+     * una linea lenta e' la differenza fra un minuto e mezz'ora. */
+    for (i = 0; i < nda; i++) {
+        Pacchetto *q = cerca(v, n, da_fare[i]);
+
+        if (q != NULL && q->archivio[0] && q->arcbyte > 0 &&
+            q->arcbyte <= (long)BUF_MAX)
+            printf("  %s: archivio da %ld KB, un giro di rete solo.\n",
+                   q->id, (q->arcbyte + 1023) / 1024);
+    }
+
+    if (n_file == 0) {
+        printf("\n  Il catalogo li dichiara e l'elenco non gli da' nessun file:\n");
+        printf("  non c'e' niente da scaricare. Il server e' incoerente.\n");
+        return 1;
+    }
+    /* ! IL TETTO SI DICE PRIMA, NON A META' STRADA. Chi chiede il compilatore
+     * deve sapere ADESSO che cc1 da solo e' piu' grande di quel che questo
+     * programma sa scaricare, e non ritrovarsi un pacchetto a meta'. */
+    if (troppo_grossi > 0) {
+        printf("\n  ! %ld di quei file sono piu' grandi del tetto di %u byte e\n",
+               troppo_grossi, BUF_MAX);
+        printf("    NON si possono scaricare cosi': il pacchetto resterebbe a\n");
+        printf("    meta'. Per gli strumenti grossi la strada e' il CD\n");
+        printf("    (`toolinst`), finche' non ci sara' un lettore a pezzi.\n");
+    }
+
+    if (!chiedi_si("Procedo?", troppo_grossi == 0)) {
+        printf("\nNon ho toccato niente.\n");
+        return 0;
+    }
+
+    /* --- si scarica: un pacchetto per volta, in un giro se si puo' --------- */
+    printf("\nScarico\n");
+    for (i = 0; i < nda; i++) {
+        Pacchetto *q = cerca(v, n, da_fare[i]);
+
+        if (prova_archivio(&c, q, &fatti, &falliti) == 1) continue;
+
+        /* ! IL RIPIEGO NON E' UN'ECCEZIONE, E' L'ALTRA META' DEL PIANO. Il
+         * sistema di base non ha archivio per costruzione — `-check` deve
+         * poter prendere i due file cambiati e non i centosettanta — e gli
+         * alberi grossi non ce l'hanno perche' in memoria non ci starebbero.
+         * Le due strade convivono, e questo ciclo e' quella lunga. */
+        f = fopen(ele, "r");
+        if (f == NULL) { printf("netupdate: %s sparito\n", ele); return 1; }
+        while (fgets(riga, sizeof(riga), f) != NULL) {
+            char *fp, *impronta, *pac;
+            long  fb;
+
+            if (!riga_elenco(riga, &fp, &fb, &impronta, &pac)) continue;
+            if (strcmp(pac, da_fare[i]) != 0) continue;
+            if (verdetto(fp, impronta) == UGUALE) continue;
+
+            switch (scarica_e_metti(&c, fp, fb, impronta, &kernel_nuovo, &stage2_nuovo)) {
+            case 0:  fatti++;   break;
+            case 1:  saltati++; break;
+            case 2:             break;
+            default: falliti++; break;
+            }
+        }
+        fclose(f);
+    }
+
+    if (kernel_nuovo || stage2_nuovo) fase_avvio(kernel_nuovo, stage2_nuovo);
+
+    printf("\n%ld file installati", fatti);
+    if (falliti) printf(", %ld non riusciti", falliti);
+    if (saltati) printf(", %ld saltati perche' troppo grossi", saltati);
+    printf(".\n");
+
+    if (fatti > 0) {
+        printf("\nRiscrivo il registro.\n\n");
+        comando_registro_crea(TMPDIR);
+    }
+    return (falliti || saltati) ? 1 : 0;
+}
+
+/* -----------------------------------------------------------------------------
+ * Il registro senza certi pacchetti: si copia saltandoli, e si sostituisce
+ * alla fine. Stesso patto di -registro:crea — il caso peggiore e' restare
+ * senza registro, non con mezzo registro che sembra intero.
+ * --------------------------------------------------------------------------- */
+static int registro_togli(char via[][ID_MAX], int nvia)
+{
+    FILE *in, *out;
+    char  riga[RIGA_MAX], copia[RIGA_MAX];
+    int   salta = 0;
+
+    in = fopen(REG, "r");
+    if (in == NULL) return -1;
+    out = fopen(REG_NEW, "w");
+    if (out == NULL) { fclose(in); return -1; }
+
+    while (fgets(riga, sizeof(riga), in) != NULL) {
+        copia_str(copia, riga, sizeof(copia));
+        {
+            char *r = ripulisci(copia);
+
+            if (r[0] == '[') {
+                char *fine = r;
+
+                while (*fine && *fine != ']') fine++;
+                if (*fine == ']') {
+                    *fine = '\0';
+                    salta = fra(via, nvia, ripulisci(r + 1));
+                }
+            }
+        }
+        if (!salta) fputs(riga, out);
+    }
+    fclose(in);
+    if (fclose(out) != 0) { remove(REG_NEW); return -1; }
+
+    remove(REG);
+    if (rename(REG_NEW, REG) != 0) return -1;
+    return 0;
+}
+
+/* Cancella dal disco i file dei pacchetti indicati, leggendoli dal registro.
+ * Toglie anche i «.old»: un vecchio che sopravvive al suo pacchetto e' spazio
+ * occupato da qualcosa che nessuno sa piu' cosa sia. */
+static long cancella_file(char via[][ID_MAX], int nvia, long *non_tolti)
+{
+    FILE *f = fopen(REG, "r");
+    char  riga[RIGA_MAX], b[PERC_MAX];
+    long  tolti = 0;
+    int   dentro = 0;
+
+    if (f == NULL) return -1;
+
+    while (fgets(riga, sizeof(riga), f) != NULL) {
+        char *r = ripulisci(riga), *val, *sp;
+
+        if (r[0] == '[') {
+            char *fine = r;
+
+            while (*fine && *fine != ']') fine++;
+            if (*fine == ']') {
+                *fine = '\0';
+                dentro = fra(via, nvia, ripulisci(r + 1));
+            }
+            continue;
+        }
+        if (!dentro) continue;
+        if ((val = valore_se(r, "file")) == NULL) continue;
+
+        sp = val;
+        while (*sp && *sp != ' ' && *sp != '\t') sp++;
+        if (*sp == '\0') continue;
+        *sp++ = '\0';
+        while (*sp == ' ' || *sp == '\t') sp++;
+
+        unisci(b, sizeof(b), "/", sp);
+        if (remove(b) == 0) tolti++;
+        else                (*non_tolti)++;
+
+        if ((int)strlen(b) + 4 < PERC_MAX) { strcat(b, ".old"); remove(b); }
+    }
+    fclose(f);
+    return tolti;
+}
+
+/* -----------------------------------------------------------------------------
+ * -remove:<pacchetto> — l'app, e le librerie che non servono a nessun altro
+ *
+ * ! SI GUARDA CHI DIPENDE DA QUESTO, non da cosa dipende questo. E cio' che
+ * resta si NOMINA: chi non vede la riga «xlib resta: la usano yapp, zapp»
+ * pensa che la rimozione sia fallita, e la rifa'.
+ * --------------------------------------------------------------------------- */
+static int comando_remove(const char *id)
+{
+    Pacchetto  r[PACCHETTI_MAX];
+    Pacchetto *p;
+    char       via[PACCHETTI_MAX][ID_MAX], usato[256];
+    int        nr, nvia = 0, i, k, giro;
+    long       n_file = 0, tolti, non_tolti = 0;
+
+    nr = blocchi_leggi(REG, r, PACCHETTI_MAX);
+    if (nr < 0) return niente_registro();
+
+    p = cerca(r, nr, id);
+    if (p == NULL) {
+        printf("netupdate: «%s» non risulta installato.\n\n", id);
+        printf("  Ci sono:");
+        for (i = 0; i < nr; i++) printf(" %s", r[i].id);
+        printf("\n");
+        return 1;
+    }
+    if (p->sempre) {
+        printf("netupdate: «%s» non si toglie: %s\n\n", id, p->nome);
+        printf("  E' segnato «sempre» nel catalogo, e vuol dire che senza di\n");
+        printf("  lui questa macchina non e' piu' una macchina.\n");
+        return 1;
+    }
+
+    chi_usa(r, nr, id, usato, sizeof(usato));
+    if (strcmp(usato, "nessuno") != 0) {
+        printf("netupdate: «%s» non si puo' togliere: lo usano %s.\n\n", id, usato);
+        printf("  Togli prima quelli, o resterebbero a meta'.\n");
+        return 1;
+    }
+
+    copia_str(via[nvia++], id, ID_MAX);
+
+    /* Gli orfani: le sue `vuole` che, tolto lui, non le usa piu' nessuno. Si
+     * ripassa finche' non se ne aggiungono altri — togliere una libreria puo'
+     * rendere orfana quella sotto. */
+    for (giro = 0; giro < PACCHETTI_MAX; giro++) {
+        int aggiunti = 0;
+
+        for (i = 0; i < nvia; i++) {
+            Pacchetto *q = cerca(r, nr, via[i]);
+
+            if (q == NULL) continue;
+            for (k = 0; k < q->n_vuole; k++) {
+                Pacchetto *dip = cerca(r, nr, q->vuole[k]);
+
+                if (dip == NULL || dip->sempre) continue;
+                if (fra(via, nvia, dip->id)) continue;
+                if (chi_usa_salvo(r, nr, dip->id, via, nvia, usato, sizeof(usato)))
+                    continue;                      /* serve ancora a qualcuno */
+                if (nvia >= PACCHETTI_MAX) break;
+                copia_str(via[nvia++], dip->id, ID_MAX);
+                aggiunti++;
+            }
+        }
+        if (!aggiunti) break;
+    }
+
+    printf("Tolgo %s — %s\n", p->id, p->nome);
+    for (i = 0; i < nvia; i++) {
+        Pacchetto *q = cerca(r, nr, via[i]);
+
+        if (q == NULL) continue;
+        n_file += q->n_file;
+        if (i > 0) printf("  porta via anche %s (%s): non lo usa piu' nessuno\n",
+                          q->id, q->nome);
+    }
+
+    /* E quel che RESTA, con chi lo tiene in vita. DIRLO E' PARTE DEL LAVORO:
+     * chi non vede la riga «base resta: la usano cpp, fb» pensa che la
+     * rimozione sia fallita, e la rifa'.
+     *
+     * ! SI GUARDANO LE `vuole` DI TUTTA LA CATENA CHE SE NE VA, non solo del
+     * pacchetto chiesto. La prima versione guardava solo quelle di fbsrc, e
+     * quindi non diceva NIENTE di base — che e' voluta da build, cioe' dal
+     * pacchetto che se ne andava insieme. Proprio la riga che serviva. */
+    {
+        int detti[PACCHETTI_MAX], ndetti = 0, w;
+
+        for (i = 0; i < nvia; i++) {
+            Pacchetto *q = cerca(r, nr, via[i]);
+
+            for (k = 0; q != NULL && k < q->n_vuole; k++) {
+                Pacchetto *dip = cerca(r, nr, q->vuole[k]);
+                int        gia_detto = 0;
+
+                if (dip == NULL || fra(via, nvia, dip->id)) continue;
+                for (w = 0; w < ndetti; w++)
+                    if (detti[w] == (int)(dip - r)) gia_detto = 1;
+                if (gia_detto) continue;
+                if (ndetti < PACCHETTI_MAX) detti[ndetti++] = (int)(dip - r);
+
+                chi_usa_salvo(r, nr, dip->id, via, nvia, usato, sizeof(usato));
+                printf("  %s RESTA: %s\n", dip->id,
+                       dip->sempre ? "e' del sistema" : usato);
+            }
+        }
+    }
+
+    printf("\n  %ld file da cancellare.\n", n_file);
+    if (!chiedi_si("Procedo?", 0)) {
+        printf("\nNon ho toccato niente.\n");
+        return 0;
+    }
+
+    /* ! PRIMA I FILE, POI IL REGISTRO. Al contrario, una macchina che si
+     * spegne in mezzo si ritroverebbe i file sul disco e nessuno che sa piu'
+     * a chi appartengono: roba che non si puo' piu' togliere. Cosi' invece il
+     * caso peggiore e' un registro che promette file che non ci sono, e
+     * `-check` lo dice al primo giro. */
+    tolti = cancella_file(via, nvia, &non_tolti);
+    if (tolti < 0) { printf("netupdate: il registro non si legge.\n"); return 1; }
+
+    if (registro_togli(via, nvia) != 0) {
+        printf("\n! %ld file cancellati, MA IL REGISTRO NON E' STATO RISCRITTO.\n",
+               tolti);
+        printf("  Dice ancora che ci sono. Rifallo con:\n");
+        printf("      netupdate -registro:crea <albero>\n");
+        return 1;
+    }
+
+    printf("\n%ld file cancellati", tolti);
+    if (non_tolti) printf(", %ld non c'erano piu'", non_tolti);
+    printf(". Il registro non li nomina piu'.\n");
     return 0;
 }
 
@@ -1633,6 +2650,9 @@ static void uso(void)
 {
     printf("uso: netupdate -set                     da dove ci si aggiorna\n");
     printf("     netupdate -check                   cosa e' cambiato sul server\n");
+    printf("     netupdate -check:guarda            lo stesso, senza toccare niente\n");
+    printf("     netupdate -auto                    l'occhiata dell'avvio: zitta,\n");
+    printf("                                        e solo se automatico = si\n");
     printf("     netupdate -registro                cosa c'e' installato qui\n");
     printf("     netupdate -registro:<pacchetto>    uno solo, coi suoi file\n");
     printf("     netupdate -registro:crea <albero>  il registro da una copia locale\n");
@@ -1676,15 +2696,41 @@ int main(int argc, char **argv)
 
     if (strcmp(argv[1], "-check") == 0) return comando_check();
 
+    /* ! «guarda» E' UNA PAROLA RISERVATA DOPO I DUE PUNTI, come «crea» per
+     * -registro e «list» per -install. */
+    if (strcmp(argv[1], "-check:guarda") == 0) return comando_check_guarda();
+
+    if (strcmp(argv[1], "-auto") == 0) return comando_auto();
+
+    if (strncmp(argv[1], "-install:", 9) == 0) {
+        const char *coda = argv[1] + 9;
+
+        /* ! «list» E' UNA PAROLA RISERVATA DOPO I DUE PUNTI, come «crea» per
+         * -registro. Sta scritto qui perche' chi un giorno pubblichera' un
+         * pacchetto che si chiama «list» sappia dove sbatte. */
+        if (strcmp(coda, "list") == 0)
+            return comando_install_list(argc > 2 ? argv[2] : "");
+        if (coda[0] == '\0') { uso(); return 1; }
+        return comando_install(coda);
+    }
+
+    if (strncmp(argv[1], "-remove:", 8) == 0) {
+        const char *coda = argv[1] + 8;
+
+        if (coda[0] == '\0') { uso(); return 1; }
+        return comando_remove(coda);
+    }
+
     if (strncmp(argv[1], "-install", 8) == 0 ||
         strncmp(argv[1], "-remove", 7) == 0) {
         /* ! DICHIARATO, NON DIMENTICATO. Queste due non ci sono ancora, e
          * dirlo cosi' costa una riga: un comando che accetta un'opzione e non
          * fa niente e' peggio di uno che la rifiuta, perche' chi lo usa crede
          * di aver installato. Il lavoro e' in in_lavorazione.txt, @NET-APP. */
-        printf("netupdate: «%s» non c'e' ancora.\n", argv[1]);
-        printf("           Il sistema si aggiorna (-check); le applicazioni\n");
-        printf("           una per una non ancora.\n");
+        printf("netupdate: «%s» vuole i due punti e un nome.\n\n", argv[1]);
+        printf("           netupdate -install:list [pezzo di nome]\n");
+        printf("           netupdate -install:<pacchetto>\n");
+        printf("           netupdate -remove:<pacchetto>\n");
         return 2;
     }
 

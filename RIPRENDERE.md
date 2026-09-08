@@ -26,7 +26,567 @@ manca» apre quello.
 
 ---
 
-# DOVE RIPRENDERE — 7 settembre 2026
+# DOVE RIPRENDERE — 8 settembre 2026
+
+## 8 settembre 2026 — IL CONTROLLER DEL FLOPPY SI ACCENDE ALLA PRIMA LETTURA (@DIF-FDC, chiuso)
+
+Da >5 minuti a **meno di 5 secondi** per leggere sedici kilobyte da un floppy
+montato a macchina accesa. E zero avvisi invece di uno per settore.
+
+### IL DIFETTO ERA GIA' SCRITTO NEL KERNEL, COME CONSEGUENZA NOTA
+
+`kernel_main.c`, nel passo che sonda il floppy all'avvio:
+
+    Conseguenza da sapere: avviando da disco il floppy NON e' raggiungibile.
+    Montarlo richiedera' di separare "inizializza l'FDC" da "monta la root",
+    che oggi fat12_init fa insieme.
+
+Era vero, ed era la spiegazione completa. Avviando da disco `fat12_init` non
+veniva chiamata mai — e giustamente: sondare un floppy che magari non c'e'
+costa dodici righe rosse a ogni accensione. Ma dentro quella funzione c'erano
+tre cose che non riguardano il montaggio:
+
+    irq_register_handler(6, fdc_irq6_handler);   /* chi aspetta l'interrupt */
+    pic_unmask_irq(6);                           /* la linea, nel PIC       */
+    fdc_reset_controller();                      /* il controller, azzerato */
+
+Senza di loro l'IRQ6 **non poteva arrivare**: non era mascherato per sbaglio,
+non era instradato male dal chipset — non lo aspettava nessuno.
+
+### E IL SISTEMA FUNZIONAVA LO STESSO, CHE E' IL PUNTO
+
+Ogni lettura aspettava l'interrupt per tre secondi, non lo riceveva, e poi
+ripiegava sul polling di MSR — la rete di sicurezza scritta a luglio per un
+chipset che l'IRQ6 non lo instrada. Il floppy si leggeva. Solo che un settore
+costava tre secondi, e un file di sedici kilobyte piu' di cinque minuti.
+
+! **UN GUASTO CHE NON ROMPE NIENTE E RALLENTA TUTTO E' IL TIPO PEGGIORE**, ed
+  e' la seconda volta che questo sistema lo incontra: la prima fu la scheda di
+  rete su IRQ11 che non riceveva notifiche e andava lo stesso, perche' il
+  driver guardava anche a scadenza (agosto 2026, il commento sta in
+  `pic_unmask_irq`). Tutt'e due si sono visti solo CONTANDO: allora le
+  notifiche, stavolta i minuti.
+
+! **E IL RIPIEGO NASCONDEVA IL DIFETTO PROPRIO PERCHE' FUNZIONA.** Va tenuto —
+  serve a chi ha un chipset che non instrada l'IRQ — ma il suo warning deve
+  restare leggibile: adesso che l'interrupt arriva quando puo' arrivare, se
+  quel warning ricompare vuol dire di nuovo qualcosa.
+
+### LA CURA E' LA SEPARAZIONE CHE IL COMMENTO CHIEDEVA
+
+Adesso `fdc_prepara()` fa il controller e basta, una volta sola, e la chiama
+`fdc_rw_sector()` — **l'unico punto da cui si parla davvero al ferro**, quindi
+l'unico che non ci si puo' dimenticare. `fat12_init` resta il montaggio:
+geometria, FAT e root directory in RAM.
+
+    chi avvia da floppy   come prima: sonda, prepara, monta
+    chi avvia da disco    non paga niente finche' non tocca il floppy;
+                          al primo settore il controller si accende
+
+! **IL FLAG SI ALZA PRIMA DEL LAVORO, non dopo**: il reset e la ricalibratura
+  passano dalle stesse funzioni che chiamano `fdc_prepara()`, e con il flag
+  alzato dopo si rientrerebbe li' dentro all'infinito.
+
+### LA PROVA, E COME SI E' POTUTA FARE
+
+Serviva un sistema installato su disco, col kernel NUOVO, e un floppy
+attaccato. Non si poteva avviare dal CD — con l'emulazione floppy di El Torito
+il dischetto attaccato prende il posto di quello emulato, e la macchina cerca
+`/bin/sh` sul floppy sbagliato. Quindi il kernel nuovo e' stato messo sulla
+chiavetta **dalla rete, con netupdate**:
+
+    server: sistema 0.210 del ...        qui: sistema 0.209
+    Da aggiornare: bin/netupdate, boot/kernel.bin
+    = verifica: 505 settori in 2 intervalli, si puo' sostituire
+    = settore di avvio riscritto: kernel a LBA 45532, 505 settori
+
+cioe' il primo aggiornamento di kernel VERO — non quello del 7 settembre, che
+era lo stesso kernel con un byte in piu' per farlo sembrare diverso. La
+macchina ha riavviato e ha detto `EX-OS exos 0.210 i686`.
+
+E allora, con quel kernel:
+
+    mount fd0 /mnt                    nessun avviso, montato subito
+    cat /mnt/elenco.txt > /tmp/e.txt  16125 byte in meno di cinque secondi
+    grep -c IRQ6 sul seriale          0
+
+Prima, sulla stessa immagine e con lo stesso floppy: cinque avvisi per il solo
+montaggio, e la lettura non finiva.
+
+Regressione, perche' e' il caso che si usa tutti i giorni: **l'avvio dal floppy
+funziona come prima**, e senza avvisi.
+
+## 8 settembre 2026 — UN GIRO DI RETE INVECE DI TRENTA (@NET-TARGZ, chiuso: e con lui tutta la rete)
+
+Un'applicazione e' una directory, e scaricarne i file uno per uno vuol dire un
+giro di rete per ognuno. Adesso i pacchetti che ci stanno si pubblicano anche
+come **tar.gz**, e chi installa fa un giro solo.
+
+    make netinst   ->  pacchetti/<id>.tar.gz, e quattro chiavi nel catalogo
+    netupdate -install:<app>  ->  se c'e' l'archivio e ci sta, un giro solo
+
+Con questo **@RETE e' finita**: aperta il 7 settembre, chiusa l'8.
+
+### IL PEZZO DIFFICILE C'ERA GIA', ED E' IL PUNTO DELLA GIORNATA
+
+`lib/eximg/inflate.c` fa DEFLATE (RFC 1951) ed e' in uso da mesi: lo usano PNG,
+GIF e i font. gzip e' **un'intestazione di dieci byte, un flusso DEFLATE e otto
+byte in coda** (CRC32 e ISIZE); tar e' **un'intestazione di 512 byte per file,
+in ottale ASCII**. Quindi qui non si e' portato dentro zlib: si sono scritti
+due lettori piccoli sopra una cosa che gia' funzionava, e **nessun sorgente
+esterno e' entrato nel sistema**.
+
+`inflate.c` si compila una seconda volta dentro netupdate — trecento righe
+senza dipendenze, un solo include, nessuna malloc e nessuna printf — invece di
+far caricare la libreria grafica a un programma che deve srotolare un tar.gz.
+
+### LA MEMORIA E' LA RIGA DI TAGLIO, E SI DICHIARA NEL CATALOGO
+
+`inflate()` vuole il buffer d'uscita INTERO dal chiamante e non fa streaming
+(sta scritto in `inflate.h`, ed e' voluto: su EX-OS `free()` non restituisce
+niente al sistema). Quindi un archivio si apre **tutto in memoria**, e la
+decisione va presa PRIMA di scaricarlo. Da qui le quattro chiavi nuove:
+
+    archivio      dove sta il tar.gz, sotto la radice del server
+    arcbyte       quanto pesa compresso
+    arcimpronta   la sua sha256
+    arcsrotolato  quanto occupa APERTO
+
+! **E IL SISTEMA DI BASE NON HA ARCHIVIO NEMMENO SE CI STESSE.** `[sistema]` e
+  `[avvio]` si aggiornano file per file, perche' `-check` deve poter scaricare
+  i DUE file cambiati e non i centosettanta che ci sono. Le due strade
+  convivono e non e' un ripiego: sono due casi diversi, ed e' esattamente cio'
+  che il compito diceva il 7 settembre.
+
+Chi non ha archivio — il sistema, e gli alberi grossi come gli strumenti, dove
+un solo file (cc1, 33 MB) e' piu' grande di tutto il buffer — passa dal file
+per file, che e' rimasto li' dov'era.
+
+### L'IMPRONTA SI CONTROLLA PRIMA DI APRIRE, NON DOPO
+
+Aprire un archivio vuol dire **allocare quanto dice lui** e fidarsi delle sue
+intestazioni. Se i byte non sono quelli che il catalogo dichiara, non c'e'
+motivo di guardarci dentro. E l'impronta dell'archivio vale per tutti i file
+che contiene: e' il modo in cui il giro solo mantiene la stessa promessa del
+file per file.
+
+Dentro, poi, si verifica anche quel che il formato offre da se':
+
+    gzip   il CRC32 in coda, e ISIZE contro quanto inflate ha davvero prodotto
+    tar    la somma di controllo di OGNI intestazione, che costa otto righe
+
+! **E SE L'ARCHIVIO NON VA, SI RIPIEGA SUL FILE PER FILE.** Un pacchetto a
+  meta' e' peggio di un giro di rete in piu'.
+
+### LA PROVA, E QUELLA CHE VALE DI PIU'
+
+Con l'albero degli strumenti finti (la struttura vera del catalogo, file da sei
+byte):
+
+    -install:nasm      «archivio da 1 KB, un giro di rete solo», e i quattro
+                       file escono dal tar al loro posto
+    ls /exos/bin       ci sono
+    il registro        nasm: 4 file, nessuno «diverso» — cioe' quel che e'
+                       uscito dall'archivio combacia con l'elenco
+
+E poi la prova che conta davvero: **un byte aggiunto in fondo a
+`pacchetti/fbsrc.tar.gz`**, senza toccare il catalogo.
+
+    = fbsrc: un archivio da 1 KB (1 KB aperto), un giro solo
+    ! l'archivio non ha l'impronta che il catalogo dichiara.
+    + exos/freebasic/makefile (6 byte)
+    + exos/freebasic/src.bas (6 byte)
+
+L'archivio viene rifiutato **prima di essere aperto**, e i due file arrivano
+per l'altra strada. Il pacchetto e' installato lo stesso, e nessuno ha aperto
+un archivio di cui non ci si fidava.
+
+### UN INCIAMPO DA RICORDARE: L'AVVIO ADESSO E' PIU' LENTO
+
+`qemu_drive.py` aspetta il prompt per 90 secondi, e una prova e' fallita con
+`TIMEOUT` senza che niente fosse rotto: da quando `/boot/avvio.sh` accende la
+rete E fa l'occhiata di `netupdate -auto`, un avvio con il CD attaccato ci
+mette di piu'. La macchina stava benissimo — riavviata da sola, arrivava al
+prompt.
+
+! **UN TIMEOUT DEL PILOTA NON E' UN DIFETTO DEL SISTEMA**, e la differenza si
+  vede in una riga: se il file seriale finisce a meta' dell'avvio, e' lento;
+  se finisce con un messaggio del kernel, e' rotto. Qui bastava puntare la
+  configurazione a un server raggiungibile — o mettere `automatico = no` — per
+  tornare dentro i 90 secondi.
+
+## 8 settembre 2026 — L'OCCHIATA DELL'AVVIO (@NET-AUTO, chiuso)
+
+Il campo `automatico` di `netupdate.cnf` c'era dal 7 settembre, `-set` lo
+chiedeva e lo scriveva, e **nessuno lo leggeva**. Adesso lo legge
+`netupdate -auto`, che `/boot/avvio.sh` lancia a ogni accensione subito dopo
+la rete.
+
+    netupdate -check:guarda    il confronto, senza toccare niente
+    netupdate -auto            l'occhiata dell'avvio, zitta
+
+### PRIMA IL LAVORO VERO: GUARDARE E AGIRE SONO DUE COSE
+
+`comando_check` faceva tutto insieme — scarica il manifesto, confronta,
+stampa, chiede, installa — e quindi ogni nuovo chiamante avrebbe dovuto
+copiarne meta'. Adesso c'e' `guarda()`, che scarica il manifesto, confronta col
+registro e riempie i conti; `-check` ci mette sopra le domande e lo
+scaricamento, `-check:guarda` non ci mette niente, e `-auto` lo chiama in
+silenzio. E' lo stesso spezzare che serviva a `-install` per dire cosa
+scarichera' prima di scaricarlo.
+
+### TRE REGOLE, E SONO TUTTE E TRE «NON DISTURBARE»
+
+`-auto` gira a ogni avvio, prima che qualcuno abbia chiesto niente.
+
+**1. Tace se non ha novita'.** Un programma che a ogni accensione dice «tutto a
+posto» insegna a non leggere quella riga, e il giorno che ne scrive un'altra non
+la vede nessuno.
+
+**2. Tace se non puo' guardare.** Nessuna configurazione, `automatico = no`,
+rete spenta, server irraggiungibile, `/boot` in sola lettura: sono tutte
+condizioni NORMALI a un avvio, e nessuna e' un guaio da annunciare. Chi vuole
+la diagnosi lancia `-check` a mano, ed e' li' che netupdate racconta tutto.
+
+! Per questo il silenzio e' una MODALITA' (`g_zitto`) e non un `printf` in
+  meno: passa attraverso `manifesto()`, `prendi()` e `guarda()`, cioe' per
+  tutte le strade da cui potrebbe uscire una parola.
+
+**3. Non tiene ferma la macchina.** Cinque secondi di scadenza sul giro di rete
+(`exhttp_attesa`, con `clock()`): un server che non risponde non deve costare
+il timeout del TCP a ogni accensione. E' esattamente il motivo per cui la gente
+spegne gli aggiornamenti automatici.
+
+! **E NON INSTALLA NIENTE DA SOLO.** Dice che c'e' qualcosa e come guardarlo:
+
+      netupdate: sul server c'e' qualcosa di nuovo (2 file da aggiornare,
+      29 mai installati). Guarda con `netupdate -check`.
+
+  Scaricare e sostituire file su una macchina il cui padrone non ha chiesto
+  niente — e magari non e' nemmeno davanti — non e' una decisione che questo
+  programma abbia titolo di prendere.
+
+! **E IL REGISTRO NON SI SCRIVE DI NASCOSTO.** Quando parla, `-check` crea il
+  registro se manca e lo dice; quando tace — cioe' all'avvio — non tocca
+  niente. Un file nuovo comparso in /boot durante un'accensione e' esattamente
+  il genere di cosa che nessuno collega piu' a niente.
+
+### LA RIGA IN avvio.sh HA DUE SCRITTORI, E QUESTO E' IL PUNTO DA RICORDARE
+
+`/boot/avvio.sh` lo esegue `login` PRIMA dell'accesso, da root, una volta per
+avvio: e' il posto giusto — la rete l'ha appena accesa lui. Ma quel file lo
+scrivono in DUE:
+
+    boot/avvio.sh                      la copia che va sul CD e su un sistema
+                                       appena installato
+    componi_avvio(), in hwconfig.c     che lo RISCRIVE TUTTO quando si
+                                       configura l'hardware
+
+Una riga aggiunta di là e non di qua sparisce al primo `hwconfig`, e nessuno
+collega le due cose. La riga sta in tutt'e due, e in tutt'e due c'e' scritto
+che l'altra esiste.
+
+! **E IL TETTO DI 2 KB DEGLI SCRIPT NON C'E' PIU'** — il motore legge a pezzi
+  dal 24 agosto 2026 — altrimenti questa riga, che sta in fondo, sarebbe stata
+  tagliata in silenzio: `avvio.sh` adesso e' 2717 byte. Vale la pena saperlo
+  prima di aggiungerne un'altra.
+
+### LA PROVA
+
+Su una chiavetta installata, col server sull'host:
+
+    -check:guarda            stampa il confronto e chiude con «Non ho toccato
+                             niente: per farlo, `netupdate -check`»
+    -auto, automatico = si   UNA riga: «sul server c'e' qualcosa di nuovo
+                             (2 file da aggiornare, 29 mai installati)»
+    -auto, automatico = no   niente, e codice 0
+    -auto, server 10.0.2.99  niente, e torna subito: la scadenza regge
+    riavvio, automatico = si la riga esce da sola dopo «Rete pronta», prima
+                             del prompt di accesso
+    riavvio, automatico = no dopo «Rete pronta» si va dritti all'accesso
+
+! **UNA LETTURA SBAGLIATA, E VALE PIU' DELLE ALTRE.** A meta' prova sembrava
+  che `-auto` parlasse anche con `automatico = no`. Non era vero: stavo
+  leggendo `/tmp/exos/serialnp4.txt` MENTRE la macchina nuova stava per
+  ricrearlo, e quel che vedevo era l'avvio PRECEDENTE. E' il difetto scritto
+  nel diario del 5 agosto — due prove che si contendono lo stesso file
+  seriale — ripresentato in una forma nuova: non due QEMU insieme, ma un
+  `grep` che corre più veloce del QEMU che deve produrre l'output.
+  **Chi legge un file seriale aspetti che la macchina sia spenta.**
+
+## 8 settembre 2026 — UNA APPLICAZIONE PER VOLTA (@NET-APP, chiuso)
+
+    netupdate -install:list [pezzo di nome]   cosa c'e' sul server, e cosa c'e' qui
+    netupdate -install:<pacchetto>            l'app e tutto cio' che le serve
+    netupdate -remove:<pacchetto>             l'app e le librerie di nessun altro
+
+Con questo @RETE e' completo nel giro che conta: si pubblica, si dice da dove,
+si sa cosa c'e' installato, si aggiorna il sistema, e si mette o si toglie una
+applicazione per volta.
+
+### DUE DOMANDE DIVERSE SULLO STESSO GRAFO
+
+Installare chiede **da cosa dipende questo**; togliere chiede **chi dipende da
+questo**. Sono due direzioni della stessa freccia, e confonderle vuol dire o
+installare qualcosa che non parte, o portarsi via una libreria che serviva a
+qualcun altro.
+
+**All'installazione la catena si chiude tutta.** Se `fbsrc` vuole `build` e
+`build` vuole `base`, chiedere fbsrc vuol dire prendere tutt'e tre: fermarsi al
+primo livello installerebbe qualcosa che non funziona, e la scoperta
+arriverebbe alla prima esecuzione invece che adesso. La chiusura e' un ciclo
+che ripassa finche' non aggiunge piu' niente, non una ricorsione: la catena e'
+corta, e su un catalogo scritto male una ricorsione sarebbe infinita mentre il
+ciclo si ferma dentro l'elenco.
+
+**Alla rimozione si guarda all'indietro**, e cio' che resta si NOMINA:
+
+    Tolgo cpp — C++
+      base RESTA: fb, ssl
+
+! **DIRLO E' PARTE DEL LAVORO, NON UN EXTRA.** Chi non vede quella riga pensa
+  che la rimozione sia fallita — «ho tolto il C++ e la libreria c'e' ancora» —
+  e la rifa', o peggio la cancella a mano.
+
+### -remove NON TOCCA LA RETE, ED E' IL MOTIVO PER CUI IERI SI E' FATTO COSI'
+
+Tutto quel che serve — chi possiede cosa, chi dipende da chi, cosa non si puo'
+togliere — sta nel registro. E' la ragione per cui il registro si porta dentro
+le `vuole` invece di andarsele a rileggere dal catalogo: **una macchina
+scollegata deve poter disinstallare.** Oggi si e' aggiunto anche `sempre`, che
+mancava: senza, `-remove:sistema` non avrebbe saputo di dover dire di no.
+
+I tre rifiuti, tutti prima di toccare un file:
+
+    -remove:sistema   «non si toglie»: e' segnato sempre nel catalogo
+    -remove:build     «lo usano fbsrc»: togli prima quelli
+    -remove:pippo     «non risulta installato», e dice quali ci sono
+
+### DUE DIFETTI TROVATI PROVANDO, E TUTT'E DUE ERANO LA RIGA CHE CONTA
+
+**1. La riga «RESTA» non usciva mai.** Guardava soltanto le `vuole` del
+pacchetto CHIESTO. Ma `fbsrc` vuole `build`, e `base` e' voluta da build —
+cioe' dal pacchetto che se ne andava insieme: quindi di base non si diceva
+niente, proprio nel caso in cui serviva dirlo. Adesso si guardano le `vuole` di
+tutta la catena che se ne va.
+
+**2. Chi sta per essere cancellato non tiene in vita nessuno.** `chi_usa()`
+contava anche i pacchetti in partenza, quindi avrebbe risposto «base resta: la
+usa build» mentre build lo stava cancellando nello stesso comando. Adesso c'e'
+`chi_usa_salvo()`, con l'elenco di chi se ne sta andando; il calcolo degli
+orfani usa la stessa funzione, cosi' la regola sta in UN posto solo invece che
+in due che col tempo divergono.
+
+### L'ORDINE DELLE OPERAZIONI, ANCHE QUI
+
+Alla rimozione: **prima i file, poi il registro.** Al contrario, una macchina
+che si spegne in mezzo si ritroverebbe i file sul disco e nessuno che sappia
+piu' a chi appartengono — roba che non si puo' piu' togliere. Cosi' invece il
+caso peggiore e' un registro che promette file che non ci sono, e `-check` lo
+dice al primo giro.
+
+E il registro si riscrive copiandolo senza i blocchi tolti, con lo stesso patto
+di `-registro:crea`: si scrive accanto, si sostituisce alla fine.
+
+### IL TETTO SI DICE PRIMA, NON A META' STRADA
+
+`-install` conta quanti file del pacchetto superano i due megabyte che exhttp
+puo' tenere, e lo dice PRIMA di chiedere se procedere:
+
+    ! 3 di quei file sono piu' grandi del tetto di 2097152 byte e
+      NON si possono scaricare cosi': il pacchetto resterebbe a meta'.
+
+Chi chiede il compilatore deve saperlo adesso — cc1 da solo e' 33 MB — e non
+ritrovarsi mezzo pacchetto. Per gli strumenti grossi la strada resta il CD
+(`toolinst`) finche' non ci sara' un lettore a pezzi.
+
+### COME SI E' PROVATO, VISTO CHE IL CATALOGO VERO HA DUE PACCHETTI
+
+Il sistema pubblicato ha solo `[avvio]` e `[sistema]`, tutt'e due `sempre`:
+niente dipendenze da chiudere e niente da togliere. Gli strumenti veri non
+sono compilati su questa macchina.
+
+Quindi si e' pubblicato un albero di prova con **gli strumenti finti**: la
+struttura vera del catalogo — gli stessi id, le stesse `vuole`, gli stessi
+`solo` di `tools/iso/strumenti.txt` — con dentro file da sei byte. Il grafo
+delle dipendenze e' quello vero (`fbsrc -> build -> base`, `cpp -> base`,
+`ssl -> base`), che e' l'unica cosa che questa prova deve toccare.
+
+    tools/mknetinst.sh, con STRUMENTI=<albero finto>  ->  9 pacchetti
+    python3 -m http.server 8000 --bind 127.0.0.1     (dentro quell'albero)
+
+E dentro EX-OS, su una chiavetta installata:
+
+    -install:list           i 9 pacchetti, con «installato» o «no» accanto
+    -install:list fb        due soli: fb e fbsrc
+    -install:nasm           4 file, nessuna dipendenza, installati
+    -install:fbsrc          «Vuole, in catena: base build» / «Gia' qui: base
+                            build» -> scarica solo i 2 file di fbsrc
+    -remove:sistema         rifiutato: e' sempre
+    -remove:build           rifiutato: lo usa fbsrc
+    -remove:pippo           rifiutato: non risulta installato
+    -remove:fbsrc           9 file: fbsrc, e build che resta orfano
+    -remove:cpp             «base RESTA: fb, ssl», e alla risposta «no» non
+                            tocca niente
+    -remove:nasm            4 file, senza dipendenze
+    -registro               6 pacchetti, e base con «LO USANO cpp, fb, ssl»
+
+! **E IL REGISTRO DOPO OGNI COMANDO DICEVA LA VERITA'**, che e' l'unica cosa
+  che rende usabile tutto il resto: `-install` lo riscrive dal manifesto,
+  `-remove` lo riscrive da se stesso senza i blocchi tolti.
+
+## 7 settembre 2026 — `netupdate -check`: IL SISTEMA SI AGGIORNA DALLA RETE (@NET-CHECK, chiuso)
+
+    netupdate -check
+
+Legge la configurazione, si collega, confronta il proprio registro con
+l'elenco del server, mostra cosa cambia, CHIEDE, e poi scarica, verifica,
+sostituisce e — per ultimo, sempre per ultimo — rifa' il settore di avvio.
+
+Provato per davvero: un kernel aggiornato dalla rete su una macchina
+installata, e la macchina RIPARTE.
+
+### L'ORDINE E' LA SOSTANZA
+
+    1. si scaricano i TRE file del manifesto, e si verificano fra loro
+    2. si confronta l'elenco del server con il registro di questa macchina
+    3. si mostra e si chiede
+    4. ogni file si scarica ACCANTO al suo posto e si verifica PRIMA di
+       toccare quello che funziona
+    5. si sostituisce, e il vecchio non muore
+    6. kernel e caricatore per ULTIMI, con la mappa dei settori rifatta
+
+! **versione.txt PORTA L'IMPRONTA DEGLI ALTRI DUE, ED E' LI' PER QUESTO.** Un
+  elenco arrivato a meta' — o servito da un proxy che si e' inventato qualcosa
+  — porterebbe a confrontare impronte con niente: o si riscarica tutto, o non
+  si riscarica niente, e in tutt'e due i casi senza un errore. Se le due
+  impronte non tornano, `-check` si ferma prima di guardare qualunque file.
+
+! **LA MAPPA DEI SETTORI SI VERIFICA MENTRE IL VECCHIO E' ANCORA AL SUO
+  POSTO.** `bootverify()` dice se i file nuovi sarebbero mappabili senza
+  scrivere niente; solo dopo che ha detto di si' si scambiano i nomi, e solo
+  alla fine `bootinstall()` riscrive il settore di avvio. Se la verifica dice
+  di no, la macchina e' rimasta esattamente com'era e parte ancora.
+
+### TRE COSE CHE LA PROVA HA INSEGNATO, E CHE IL CODICE ADESSO SA
+
+**1. LA CONFIGURAZIONE NON SI SOVRASCRIVE.** Il primo confronto vero ha messo
+`boot/kernel.cfg` fra i file «da aggiornare». Quello sul server e' la copia del
+CD; quello sulla macchina e' il risultato dell'installazione e di `hwconfig` —
+i driver da caricare, la tastiera italiana, i montaggi. Copiarci sopra
+significa spegnere la rete e cambiare la tastiera a chi ha appena aggiornato,
+per «gentilezza». Adesso `e_configurazione()` li salta e LO DICE: un file
+saltato in silenzio e' un file che qualcuno credera' aggiornato. A FONDERLO ci
+sa gia' pensare `install` (aggiorna_kernel_cfg), e riscrivere quella fusione
+qui vorrebbe dire due fusioni che divergono.
+
+**2. IL VECCHIO SI RINOMINA, NON SI CANCELLA.** In EX-OS i programmi si
+paginano SU RICHIESTA dal loro file, che resta APERTO (kernel/loader/elf.c):
+cancellare `/bin/sh` mentre la shell gira vuol dire togliergli da sotto le
+pagine che non ha ancora letto. Quindi ogni file sostituito lascia un `.old`,
+che il `-check` successivo — quello dopo il riavvio — porta via. E' anche il
+modo per tornare indietro sul kernel.
+
+**3. UNA MACCHINA SENZA IL DRIVER DI RETE NON SI AGGIORNA.** Sulla chiavetta di
+prova `/dev/ne2k.drv` era fra i «mai installati»: niente driver, niente rete,
+niente netupdate. E' un cerchio che si chiude solo mettendo i driver di rete
+fra le cose che si installano SEMPRE — vale per `make usb` e per `install`. Per
+la prova il driver e' stato copiato a mano dal CD.
+
+### COSA VUOL DIRE «CAMBIATO», E PERCHE' NON BASTA UNA PAROLA SOLA
+
+Il verdetto per ogni file dell'elenco e' uno di questi cinque:
+
+    uguale             l'impronta del registro e quella del server combaciano
+    cambiato           combaciano no: il server ne ha uno nuovo
+    da verificare      il registro non sa che impronta abbia (ci sta «-»)
+    mai installato     il registro non lo conosce e sul disco non c'e'
+    sconosciuto        non e' nel registro ma sul disco c'e'
+
+! **«MANCA» E «E' DIVERSO» NON SONO LA STESSA COSA, e si chiedono a parte.** Un
+  file che non c'e' puo' essere un componente che chi ha installato NON HA
+  VOLUTO — `install` chiede quali directory copiare — e riportarlo dentro con
+  la scusa dell'aggiornamento vuol dire riempire una macchina di roba a cui il
+  suo padrone aveva gia' detto di no. Quindi due domande: «aggiorno i file
+  cambiati?» (predefinito si) e «installo anche quelli mai installati?»
+  (predefinito no).
+
+### IL TETTO, E CHE COSA RESTA FUORI
+
+`exhttp_prendi` vuole il corpo intero in un buffer di chi chiama, quindi c'e'
+un tetto: **due megabyte**. Ci sta tutto il sistema — il file piu' grosso e' un
+font da 760 KB, il kernel ne pesa 258 — e NON ci stanno gli strumenti, dove cc1
+da solo e' 33 MB. Un file piu' grande del tetto non si scarica e **si dice**,
+con il suo nome: chi aggiorna deve saperlo mentre succede, non scoprirlo con un
+compilatore a meta'.
+
+### COME E' STATO PROVATO IL PEZZO CHE FA PAURA
+
+Il kernel. Per provarlo senza rischiare di lasciare una macchina che non parte,
+il server ha pubblicato un kernel **diverso nel file e identico nei settori che
+si caricano**: un byte in piu' nell'ultimo settore, che e' quasi tutto
+riempimento (258088 byte -> 258089, 505 settori in tutt'e due i casi). Cosi'
+`-check` lo vede cambiato per davvero — impronta diversa — lo scarica, lo
+verifica, rifa' la mappa e riscrive il settore di avvio, mentre cio' che il
+caricatore legge non cambia di un bit.
+
+    = verifica: 505 settori in 2 intervalli, si puo' sostituire
+    = settore di avvio riscritto: kernel a LBA 328608, 505 settori
+    = il kernel di prima resta in /boot/kernel.bin.old
+
+E poi la prova che conta: **riavviata la macchina, e riparte** — accesso,
+prompt, `uname`.
+
+! **E IL FILE TENUTO DA PARTE SI CHIAMA `kernel.bin.old`, NON `kernel.old`.**
+  I messaggi dicevano il secondo, il disco mostrava il primo: `sostituisci()`
+  aggiunge «.old» al nome INTERO, che e' la regola buona per tutti i file
+  (`ls.old`, `sh.old`), e i tre messaggi del kernel erano rimasti indietro. Una
+  riga di istruzioni che nomina un file inesistente e' peggio di nessuna
+  istruzione: la si segue, non funziona, e si perde tempo a cercare l'errore
+  altrove.
+
+### LA PROVA, PER INTERO
+
+Sull'host, la radice pubblicata servita da un HTTP qualunque:
+
+    python3 -m http.server 8000 --bind 127.0.0.1   (dentro dist/netinst)
+
+In EX-OS, su una chiavetta installata (col CD attaccato per avere il binario
+nuovo senza reinstallare, e la scheda di rete di QEMU):
+
+    EXOS_QEMU_EXTRA="-drive file=dischi/usb-check.img,format=raw,if=ide \
+      -drive file=dist/exos.iso,format=raw,if=ide,media=cdrom \
+      -netdev user,id=n1 -device ne2k_pci,netdev=n1" \
+    EXOS_NO_FLOPPY=1 EXOS_MARCA="utente:" EXOS_RAM=64M \
+      python3 tools/qemu_drive.py "root@3" "root@5" "keymap us@3" \
+        "/dev/pci.drv &@6" "netdetect -c@15" "/dev/ip.drv &@6" "dhcp@12" \
+        "/cdrom/bin/netupdate -check@120" "si@5" "no@90"
+
+Cosa ha detto, e cosa si e' visto:
+
+    la rete spenta          «la rete non e' pronta», e la catena da accendere
+    tipo FTP in cnf         rifiuta prima di collegarsi: oggi solo HTTP
+    il confronto            136 uguali, 3 da aggiornare (318 KB), 29 mai
+                            installati, 1 di configurazione non toccato
+    il verdetto per file    «da verificare» e «il registro non lo conosce»
+                            stampati accanto al nome
+    lo scaricamento         ogni file verificato prima di sostituire
+    l'avvio                 bootverify, scambio, bootinstall, e kernel.bin.old
+    il registro riscritto   140 file, e l'unico senza impronta e' kernel.cfg
+                            — che e' esattamente cio' che deve essere
+
+! **IL REGISTRO SENZA IMPRONTA SU kernel.cfg NON E' UN DIFETTO**: quel file
+  sulla macchina e' diverso da quello del server per costruzione, e il registro
+  dice la verita' scrivendo «non so cosa sia». E' la stessa onesta' del giorno
+  prima, vista dall'altro lato.
+
+### E UNA COSA CHE MANCA, DETTA A CHI LA CHIEDE
+
+Il campo `automatico` di `netupdate.cnf` c'e', `-set` lo chiede e lo scrive, e
+**nessuno lo legge ancora**. Adesso `-set` lo dice a chi risponde, invece di
+lasciarglielo scoprire non vedendo mai partire un controllo. Il lavoro e'
+@NET-AUTO, e il pezzo vero e' spezzare il confronto in due — guarda / agisci —
+che serve comunque a `-install`.
 
 ## 7 settembre 2026 — IL CATALOGO E IL REGISTRO (@NET-DB, chiuso)
 

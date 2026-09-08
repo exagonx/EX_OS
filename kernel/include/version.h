@@ -227,7 +227,27 @@
  * due difetti rari aperti (il panic in kfree, il driver con lo stack a zero),
  * ma la forma e' quella.
  */
-#define EXOS_VERSION    "0.209"
+/* 0.209 -> 0.210: IL CONTROLLER DEL FLOPPY SI ACCENDE ALLA PRIMA LETTURA.
+ *
+ * Avviando da disco, `fat12_init` non veniva chiamata mai — e giustamente, che
+ * sondare un floppy inesistente costa dodici righe rosse a ogni avvio. Ma con
+ * lei restavano non fatte tre cose: registrare l'handler dell'IRQ6,
+ * smascherarlo nel PIC e azzerare il controller. Chi montava un floppy a
+ * macchina accesa lo leggeva LO STESSO, perche' ogni settore, dopo aver
+ * aspettato invano l'interrupt, ripiegava sul polling di MSR — ma a passo
+ * d'uomo: sedici kilobyte in piu' di cinque minuti.
+ *
+ * Adesso «prepara il controller» e «monta il volume» sono due cose:
+ * fdc_prepara() gira una volta sola, alla prima lettura vera, e la chiama
+ * fdc_rw_sector — l'unico punto da cui si parla al ferro, quindi l'unico che
+ * non si puo' dimenticare. Chi avvia da disco non paga niente finche' non
+ * monta un floppy; chi lo monta trova il controller pronto.
+ *
+ * ! IL RIPIEGO A POLLING RESTA, E DEVE RESTARE: e' la rete per un chipset che
+ * l'IRQ6 non lo instrada. Quel che e' cambiato e' che adesso, quando l'IRQ
+ * puo' arrivare, arriva — e il warning torna a voler dire qualcosa.
+ */
+#define EXOS_VERSION    "0.210"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

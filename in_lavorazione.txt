@@ -104,15 +104,10 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
  --  @RIPRESA         dove si era arrivati, e come si riprovano i fili
  --  @CHIUSA          una strada chiusa, scritta perche' non si riapra
  --  @PROVE-STRUMENTI come si prova un compilatore (o make, o nasm) dentro EX-OS
- --  @RETE           l'aggiornamento dalla rete: cosa c'e' gia' e cosa manca
 
   1  @DIF-DRIVER      da CD un driver ogni tanto muore appena avviato
   1  @DIF-PANIC       chi scrive oltre il proprio blocco dello heap del kernel
   1  @USB             `make usb` c'e': manca la prova su una chiavetta VERA
-  1  @NET-CHECK       netupdate -check: aggiornare senza restare a piedi
-  1  @NET-APP         netupdate -install / -remove
-  1  @NET-TARGZ       tar.gz per le app: inflate c'e' gia', mancano due lettori
-  1  @DIF-FDC         un floppy montato a macchina accesa legge a passo d'uomo
   1  @VISTA           l'impaginato non e' una libreria: due callback, non un trasloco
   1  @SUONO-REG       la registrazione non c'e': nessun driver accende AUDIO_CAP_REGISTRA
   1  @SUONO-MIX       un client alla volta: il secondo che suona riceve -EBUSY
@@ -172,11 +167,21 @@ IL PROSSIMO PASSO, IN ORDINE
  eseguibile prima di costruirgliela — diario, 7 settembre. Quel che resta e'
  un numero e non un lavoro: otto fili per processo.
 
- E DA LI' IL LAVORO SI E' SPOSTATO SULLA RETE (@RETE, aperto il 7 settembre).
- Di quella strada ci sono gia' i due capi e il centro: `make netinst` pubblica,
- `netupdate -set` dice da dove, e il catalogo e il registro sanno chi possiede
- cosa e chi dipende da chi. Quel che manca e' il pezzo che li unisce, cioe' la
- rete: @NET-CHECK e @NET-APP, tutt'e due adesso di livello 1.
+ E DA LI' IL LAVORO SI E' SPOSTATO SULLA RETE, che ADESSO E' FINITA: aperta il
+ 7 settembre 2026 e chiusa l'8. `make netinst` pubblica, `netupdate -set` dice
+ da dove, il registro sa cosa c'e' su questa macchina, `-check` confronta,
+ scarica, verifica, sostituisce e rifa' il settore di avvio (provato
+ aggiornando un kernel e riavviando la macchina), `-install` e `-remove`
+ mettono e tolgono una applicazione per volta con le sue dipendenze — in un
+ giro di rete solo, quando c'e' un tar.gz — e `-auto` guarda da solo a ogni
+ avvio, se qualcuno gliel'ha chiesto.
+
+ ! NON C'E' PIU' UNA SEZIONE PER LA RETE QUI DENTRO, perche' qui ci sta solo cio'
+   che non e' fatto. La storia, le scelte e i limiti stanno nel diario:
+   7 settembre (netupdate -set, il catalogo e il registro, -check) e 8
+   settembre (-install/-remove, -auto, gli archivi). I limiti che restano
+   sono scritti dove servono: @DIF-TLS per https, @USB per i driver di rete
+   che una chiavetta appena fatta non ha.
 
 COME SI PROVANO I FILI, SENZA RICOSTRUIRE IL RAGIONAMENTO
 
@@ -359,7 +364,15 @@ QUEL CHE C'E' GIA' PRONTO DA PROVARE, sul CD:
       - il controllo `removable`, che qui e' stato provato solo col /sys finto
         e col rifiuto su /dev/sda.
 
- 2. LA CHIAVETTA SI USA TUTTA SOLO SE LO SI CHIEDE. L'immagine e' grande MB
+ 2. SENZA I DRIVER DI RETE LA CHIAVETTA NON SI AGGIORNA, e ci si arriva in
+    silenzio. Su quella di prova `/dev/ne2k.drv` non c'era — `install` copia i
+    componenti che si scelgono, e i driver del CD non erano fra quelli — quindi
+    niente scheda, niente rete, niente `netupdate`. E' un cerchio: lo strumento
+    che porta i pezzi mancanti ha bisogno di uno dei pezzi mancanti. La strada
+    e' mettere i driver di rete fra le cose che si installano SEMPRE, e vale
+    anche per `install` su disco fisso.
+
+ 3. LA CHIAVETTA SI USA TUTTA SOLO SE LO SI CHIEDE. L'immagine e' grande MB
     (1024 di default) e il resto della chiavetta resta inutilizzato. Non c'e'
     modo di far crescere la partizione dopo: EX-OS non sa ridimensionare un
     ext2. Le vie sono due, e nessuna e' stata presa: leggere la dimensione del
@@ -369,195 +382,11 @@ QUEL CHE C'E' GIA' PRONTO DA PROVARE, sul CD:
     strumenti di Linux — che pero' e' esattamente la strada che tools/mkhd.sh
     ha chiuso, e per la ragione scritta li'.
 
- 3. GLI STRUMENTI CI METTONO VENTI MINUTI, dentro QEMU: 1417 file, 150 MB,
+ 4. GLI STRUMENTI CI METTONO VENTI MINUTI, dentro QEMU: 1417 file, 150 MB,
     copiati da un CD emulato su un ext2 emulato. Non e' un difetto ed e' il
     grosso del tempo di `make usb`. Se un giorno desse fastidio, la strada e'
     non passare da EX-OS per la copia — ma allora servirebbe un ext2 scritto da
     Linux, che e' la cosa che mkhd.sh spiega perche' non si fa.
-
-=============================================================================
-@RETE L'AGGIORNAMENTO DALLA RETE (aperto il 7 settembre 2026)
-=============================================================================
-
-L'IDEA IN UNA RIGA: il sistema si pubblica su un server FTP o HTTP, e da dentro
-EX-OS `netupdate` lo aggiorna e ci installa sopra le applicazioni, con le loro
-librerie e senza portarsi via quelle che servono a qualcun altro.
-
-! QUEL CHE C'E' GIA', E MANCA SOLO LA RETE IN MEZZO. Dal 7 settembre 2026
-  (diario: «netupdate -set, E LA CHIAVETTA SI FACEVA DAL FLOPPY» e «IL
-  CATALOGO E IL REGISTRO»):
-
-      make netinst        tools/mknetinst.sh -> dist/netinst/, con versione.txt,
-                          catalogo.txt (i pacchetti: avvio, sistema, e i gruppi
-                          degli strumenti presi da tools/iso/strumenti.txt),
-                          elenco.txt (percorso, byte, sha256, PACCHETTO: una
-                          riga per file) e file/
-      netupdate -set      -> /boot/netupdate.cnf, da dove ci si aggiorna
-      netupdate -registro -> legge /boot/netupdate.reg: pacchetti, versioni,
-                          dipendenze, file, e «chi usa questo?»
-      netupdate -registro:crea <albero>
-                          scrive il registro da una copia locale dell'albero
-                          pubblicato, ed e' la stessa routine che -check
-                          chiamera' dopo aver scaricato i tre file
-
-  La «versione per file» che si voleva all'inizio E' l'impronta: due risposte
-  alla stessa domanda si contraddicono, e quella che conta e' l'unica che sa
-  distinguere uno scaricamento finito da uno interrotto a meta'.
-
-! E DUE COSE IMPARATE SCRIVENDOLO, che valgono per chi fa -check:
-
-  - KERNEL E CARICATORE CAMBIANO NOME FRA CD E DISCO. Sul CD sono /KERNEL.BIN
-    e /LOADER.BIN, su un disco installato /boot/kernel.bin e /boot/stage2.bin
-    (bin/install/install.c). L'albero pubblicato adesso li mette gia' col nome
-    del disco, e stanno in un pacchetto loro, [avvio], con scritto sopra che
-    non sono file come gli altri.
-  - IL REGISTRO DICE COSA C'E', NON COSA DOVREBBE ESSERCI. Sulla chiavetta di
-    prova 30 file dell'elenco non c'erano: non e' un guasto, sono i componenti
-    opzionali che chi ha installato non ha scelto. Vedi @NET-CHECK.
-
-! IL CATALOGO NON SI INVENTA: C'E' GIA'. tools/iso/strumenti.txt e' un catalogo
-  di pacchetti con le dipendenze, letto da `toolinst`, e ha gia' le chiavi che
-  servono qui:
-
-      nome   come si chiama, per chi installa
-      dice   cosa contiene, in una riga
-      prova  un percorso che, se c'e', dice che il pacchetto c'e' davvero
-      vuole  un pacchetto da cui questo dipende  <- LE DIPENDENZE
-      mbyte  quanto pesa, per dirlo PRIMA di cominciare
-      sempre si -> non si puo' togliere
-      solo   un percorso che appartiene SOLO a questo pacchetto
-      file   un NOME di file che appartiene solo a questo, ovunque stia
-      nota   un avvertimento da stampare a chi lo sceglie
-
-  Ed ha gia' la regola che conta: si dichiara che cosa e' SOLO di un gruppo,
-  non che cosa va copiato — cosi' un file nuovo non resta indietro in silenzio.
-  Partire da qui vuol dire un formato solo, gia' scritto e gia' provato, invece
-  di due che divergono. La spiegazione per esteso e' in testa a quel file.
-
------------------------------------------------------------------------------
- 1. @NET-CHECK `netupdate -check` — AGGIORNARE SENZA RESTARE A PIEDI
-
-    Legge la configurazione, si collega, confronta le versioni, mostra cosa e'
-    aggiornabile e CHIEDE se procedere. Poi scarica e installa.
-
-    ! LA PARTE DIFFICILE E' UNA SOLA, E NON E' LA RETE: aggiornare kernel,
-      bootloader e sistema di base lasciando una macchina che RIPARTE. Su ext2
-      il kernel non e' contiguo, e il settore di avvio contiene la MAPPA DEI
-      SETTORI del file: copiare sopra il kernel senza rifare la mappa da' un
-      disco che non parte piu' — e' il patto LILO, scritto in tools/mkhd.sh e
-      gia' pagato una volta.
-
-      Quindi la sequenza non puo' essere «sovrascrivo e spero». La forma che
-      regge e':
-
-        - si scarica il kernel nuovo in un file NUOVO, accanto al vecchio;
-        - si verifica l'impronta PRIMA di toccare qualunque cosa;
-        - si scrive la mappa dei settori del file nuovo nel settore di avvio;
-        - il kernel vecchio RESTA, e il suo nome resta noto, cosi' che si possa
-          tornare indietro.
-
-      E l'ordine e' obbligatorio: il settore di avvio si tocca per ULTIMO,
-      quando il file nuovo e' gia' li' ed e' gia' stato verificato. Una
-      macchina che si spegne durante l'aggiornamento deve ritrovarsi o il
-      sistema vecchio o quello nuovo, mai un mezzo dei due.
-
-    ! L'IMPRONTA NON SI PUO' RICALCOLARE SUL DISCO, E VA SAPUTO PRIMA DI
-      SCRIVERE UNA RIGA. `sha256()` della libc vuole il buffer INTERO in
-      memoria — una chiamata sola, lib/libc.c — e cc1 pesa 33 MB su una
-      macchina che ne ha 32. Da qui due conseguenze:
-        - il registro porta l'impronta che il file AVEVA quando e' stato
-          scritto, e «-» quando non si sa: e' il motivo per cui
-          `-registro:crea` confronta la DIMENSIONE e non l'impronta;
-        - per verificare cio' che si scarica serve una sha256 A PASSI
-          (init/update/final). Oggi non c'e'. Finche' non c'e', i file
-          grossi o si verificano a pezzi con qualcos'altro o non si
-          verificano affatto — e «non si verificano affatto» va detto a chi
-          aggiorna, non lasciato implicito.
-
-    ! UN FILE CHE MANCA NON E' PER FORZA UN GUASTO. Sulla chiavetta di prova
-      del 7 settembre 30 file dell'elenco non c'erano, e non era rotto niente:
-      sono i componenti opzionali che chi ha installato non ha scelto (`install`
-      chiede quali directory di primo livello copiare). Quindi `-check` non puo'
-      trattare «manca» e «e' diverso» allo stesso modo: il secondo e' un
-      aggiornamento, il primo e' una PROPOSTA DI INSTALLARE qualcosa che non
-      c'era, e va chiesta a parte o la macchina si riempie di roba che il suo
-      padrone aveva detto di no.
-
-    ! IL CD POTREBBE PORTARSI DIETRO IL PROPRIO MANIFESTO, e sarebbe il modo
-      piu' semplice di dare un registro a chi ha installato da CD senza mai
-      collegarsi: bastano i tre file (versione, catalogo, elenco) dentro
-      /netinst sul CD, e `netupdate -registro:crea /cdrom/netinst` fa il resto
-      — provato cosi' il 7 settembre, mettendoceli a mano. Non e' stato fatto
-      sul serio perche' vuol dire generare il manifesto DENTRO la ricetta di
-      `iso-exos` (escludendo netinst/ da se stesso) e far leggere a mknetinst.sh
-      quello invece di rifarlo: un lavoro solo, ma da fare per intero, o i
-      manifesti diventano due e divergono.
-
- 2. @NET-APP `netupdate -install` E `-remove`
-
-        netupdate -install:list tes     mostra le app il cui nome contiene «tes»
-        netupdate -install:nomeapp      l'app e tutto cio' che le serve
-        netupdate -remove:nomeapp       l'app e le librerie che non servono ad altri
-
-    `-install:nomeapp` verifica PRIMA che ci sia tutto quel che serve a farla
-    funzionare (le `vuole` del catalogo, in catena), dice cosa scarichera' e
-    quanto pesa, chiede conferma, e solo allora scarica e installa. Esempio
-    dell'utente: `-install:gcc` installa l'intero pacchetto che fa funzionare
-    il compilatore, non il solo binario — che e' esattamente cio' che toolinst
-    gia' sa fare per il CD, e per la ragione scritta li' dentro (gcc si cerca
-    addosso, non nel PATH).
-
-    `-remove:nomeapp` toglie l'app e le sue librerie SE non le usa nessun
-    altro, e per quelle che restano stampa chi le tiene in vita.
-
------------------------------------------------------------------------------
- 3. @NET-TARGZ GLI ARCHIVI: tar.gz, E COSTA MENO DI QUANTO SEMBRI
-
-    Un'applicazione e' una o piu' directory con dentro uno o piu' file, e
-    scaricarli uno per uno vuol dire un giro di rete per ognuno. Per le APP
-    conviene un archivio.
-
-    ! E IL PEZZO DIFFICILE C'E' GIA'. lib/eximg/inflate.c fa DEFLATE (RFC
-      1951) ed e' in uso da mesi — lo usano PNG e GIF — e lib/exhttp/http.c
-      ha perfino il commento «che sapremmo pure srotolare, inflate c'e'».
-      gzip e' un'intestazione di dieci byte, un flusso DEFLATE e un CRC32 in
-      coda; tar e' un'intestazione di 512 byte per file, in ASCII ottale.
-      Quindi tar.gz non e' «portare dentro zlib»: sono due lettori piccoli
-      sopra una cosa che gia' funziona, e non serve nessun sorgente esterno.
-
-    ! MA inflate() NON ALLOCA E NON FA STREAMING: vuole il buffer d'uscita dal
-      chiamante, tutto in una volta (sta scritto in lib/eximg/inflate.h, ed e'
-      voluto: su EX-OS free() non restituisce niente, quindi allocare dentro
-      un ciclo e' una perdita permanente). La misura da usare c'e', ed e' negli
-      ultimi quattro byte del gzip (ISIZE), ma resta il fatto che un archivio
-      si srotola INTERO IN MEMORIA.
-
-      Conseguenza pratica, e va decisa: tar.gz va bene per un'app normale —
-      qualche megabyte — e NON va bene per gli strumenti, che sono 150 MB.
-      Quindi le due strade convivono e non si escludono:
-
-          file per file   il sistema di base, e gli alberi grossi
-          tar.gz          una app e le sue librerie, in un giro solo
-
-      Se un giorno servisse anche per i grossi, la strada e' un inflate che
-      lavora a pezzi — e allora conviene guardarlo li', non riscrivere tutto.
-
-    ! zip NON E' PIU' SEMPLICE, e sembra: il suo indice sta in FONDO al file,
-      quindi per sapere cosa c'e' dentro bisogna avere gia' scaricato tutto o
-      saper leggere all'indietro. Su una connessione e' un giro in piu'. tar.gz
-      si legge dall'inizio alla fine, che e' come arriva dalla rete.
-
------------------------------------------------------------------------------
-QUEL CHE C'E' GIA', e non va riscritto:
-
-    tools/iso/strumenti.txt   il catalogo con le dipendenze, e la sua idea
-    bin/toolinst              legge il catalogo, risolve i gruppi, copia
-    bin/ftp                   un client FTP
-    il navigatore             sa parlare HTTP (e sa fare una GET)
-    libssl / libcrypto        la TLS, coi limiti di @DIF-TLS
-    lib/eximg/inflate.c       DEFLATE (RFC 1951), gia' in uso da PNG e GIF
-    bin/install               scrive MBR, settore di avvio e mappa dei settori
-    kernel/include/version.h  la versione, una sola e vera
 
 =============================================================================
 @DIFETTI DIFETTI APERTI
@@ -675,27 +504,6 @@ QUEL CHE C'E' GIA', e non va riscritto:
   solo, e li' non si legge — si calcola: spezzarli vorrebbe dire un gancio
   dentro excurva e exbig. Col pezzo piu' lungo a 150 ms non lo merita, ed e'
   scritto in extls.h, in exhttp.h e accanto alla chiamata.
-
-! @DIF-FDC UN FLOPPY MONTATO A MACCHINA ACCESA LEGGE A PASSO D'UOMO. Su un
-  sistema avviato DA DISCO (o da CD), `mount fd0 /mnt` riesce, ma ogni singola
-  lettura stampa
-
-      FAT12: IRQ6 non ricevuto su READ LBA=n - proseguo con il polling di MSR
-
-  e paga prima il timeout dell'attesa. Misurato il 7 settembre 2026 provando
-  netupdate: leggere un file di SEDICI KILOBYTE ha richiesto piu' di cinque
-  minuti, e la prova e' stata rifatta mettendo gli stessi file su un CD, dove
-  gli stessi 16 KB si leggono in un istante.
-  Il ripiego a polling e' voluto e documentato (kernel/fs/fat12.c: «se l'IRQ
-  non arriva si prosegue con un warning invece di appendere il boot»), quindi
-  qui non c'e' niente di rotto: c'e' che l'IRQ6 non arriva MAI in questo caso,
-  e nessuno ha ancora guardato perche'. fat12_init registra l'handler e
-  smaschera l'IRQ6 anche quando il montaggio avviene a macchina accesa, quindi
-  il posto da guardare e' fra quello e il PIC — o QEMU, che con `-boot c` puo'
-  non instradarlo affatto. Chi lo tocca lo verifichi su una macchina VERA
-  prima di dare la colpa all'emulatore.
-  ! E INTANTO, PER CHI PROVA: i file di prova si passano dal CD, non dal
-    floppy. Vedi il diario del 7 settembre.
 
 ! @DIF-TCPBUF LA FINESTRA DI RICEZIONE DI TCP E' QUATTRO KILOBYTE (TCP_BUF in
   drivers/ip/ip.c). Da quando chi legge lo fa a scatti — chiedendo «quanti byte

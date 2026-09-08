@@ -899,6 +899,13 @@ static void componi_kernel_cfg(char *out, unsigned int max, const char *vecchio)
  * ognuna deve stare ad aspettare il proprio fornitore. Su una macchina lenta
  * quelle attese scadono e la rete resta spenta fino al riavvio dopo — cioe' il
  * difetto peggiore da cercare, perche' la volta dopo funziona.
+ *
+ * ! QUESTO FILE HA DUE SCRITTORI, e vanno tenuti allineati a mano: c'e' la
+ * copia in boot/avvio.sh — quella che finisce sul CD e su un sistema appena
+ * installato — e c'e' questa funzione, che la RISCRIVE TUTTA quando qualcuno
+ * lancia `hwconfig`. Una riga aggiunta di la' e non di qua sparisce alla prima
+ * configurazione dell'hardware, e nessuno collega le due cose. Oggi le righe
+ * che devono combaciare sono la catena della rete e `netupdate -auto`.
  * ============================================================================= */
 static void componi_avvio(char *out, unsigned int max)
 {
@@ -946,7 +953,13 @@ static void componi_avvio(char *out, unsigned int max)
              * la faccia. (Il «Ret» che usciva al posto di «Rete pronta» non
              * era colpa loro: era il tetto di 2 KB del motore degli script,
              * che tagliava il file in mezzo all'ultima riga.) */
-            "echo Rete pronta: 'ipcfg' la mostra, 'ping' la prova.\n",
+            "echo Rete pronta: 'ipcfg' la mostra, 'ping' la prova.\n"
+            "\n"
+            "# Un'occhiata al server degli aggiornamenti: non chiede niente, non\n"
+            "# installa niente e non stampa niente se non c'e' niente da dire.\n"
+            "# Fa qualcosa solo se /boot/netupdate.cnf dice «automatico = si»,\n"
+            "# e molla dopo cinque secondi se il server non risponde.\n"
+            "netupdate -auto\n",
             g_t.rete_driver);
         strncat(out, riga, max - 1 - strlen(out));
     } else {
