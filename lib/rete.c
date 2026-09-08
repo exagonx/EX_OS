@@ -46,6 +46,25 @@ static const ReteScheda g_note[] = {
     { 0x1106, 0x0926, "VIA VT86C926 Amazon - NE2000 PCI",           "/dev/ne2k.drv"  },
     { 0x8E2E, 0x3000, "KTI ET32P2 - NE2000 PCI",                    "/dev/ne2k.drv"  },
 
+    /* ! LE SCHEDE SENZA FILI NON SONO SCHEDE DI RETE PIU' LENTE, e la
+     * differenza va detta qui perche' e' qui che si guarda. Una scheda
+     * Ethernet, appena accesa, consegna pacchetti; una wireless prima deve
+     * cercare le reti, agganciarsi a una, autenticarsi e scambiare le chiavi
+     * — e solo dopo somiglia a una scheda. Percio' un driver wireless non
+     * puo' limitarsi a parlare la lingua di net_proto.h: gli servono i
+     * comandi in piu' (-showlist, -connect:SSID, -status), che sono gli
+     * stessi per TUTTE le schede senza fili.
+     *
+     * ! E LA BROADCOM E' IL CASO PEGGIORE, non un caso qualunque. Broadcom
+     * non ha mai pubblicato i registri di questo chip: il driver libero che
+     * esiste su Linux (b43) e' nato decompilando quello di Windows. E
+     * soprattutto la scheda NON FA NIENTE senza un firmware proprietario che
+     * non si puo' ridistribuire — su Linux lo si estrae dal driver Broadcom
+     * con b43-fwcutter. Riconoscerla dagli ID PCI, come si fa qui, e'
+     * immediato; farla trasmettere e' un altro paio di maniche, e chi ci
+     * prova deve saperlo prima di cominciare, non dopo. */
+    { 0x14E4, 0x4318, "Broadcom BCM4318 802.11g (AirForce One 54g)", NULL },
+
     /* Modelli noti ma senza driver: dirlo per nome evita di far cercare
      * un guasto a chi ha semplicemente una scheda che non gestiamo. */
     { 0x8086, 0x1229, "Intel 82557/8/9 (EtherExpress Pro/100)",     NULL },

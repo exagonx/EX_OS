@@ -126,6 +126,7 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @SUONO-ES1371    l'ES1371 vero non e' mai stato eseguito (serve una scheda)
   1  @SUONO-HDA       l'HD Audio provato solo sul codec finto di QEMU (idem)
   1  @GIT-GCC         togliere dall'indice gli interni di GCC (chi ha il repository)
+  1  @WIFI-4318       la radio della Broadcom: manca il firmware, non la voglia
   1  @RUST-0          un programma no_std che gira, compilato da Linux
 
   2  @SUONO-EMU8000   l'EMU8000 di una AWE32 resta spento    <- @SUONO-CAMPIONI
@@ -385,6 +386,48 @@ QUEL CHE C'E' GIA' PRONTO DA PROVARE, sul CD:
     grosso del tempo di `make usb`. Se un giorno desse fastidio, la strada e'
     non passare da EX-OS per la copia — ma allora servirebbe un ext2 scritto da
     Linux, che e' la cosa che mkhd.sh spiega perche' non si fa.
+
+=============================================================================
+@WIFI-4318 LA SCHEDA SENZA FILI (aperto l'8 settembre 2026)
+=============================================================================
+
+L'obiettivo e' far funzionare una Broadcom BCM4318 (14E4:4318, 802.11g). La
+scheda e' un dato: non si cambia.
+
+FATTO L'8 SETTEMBRE 2026, e non e' poco:
+
+  - la scheda si riconosce per nome (tabella in lib/rete.c);
+  - drivers/net/wifi_proto.h: il protocollo delle schede senza fili;
+  - /bin/wifi con -showlist, -connect:<SSID>, -status, -stacca, -h;
+  - lib/excrypt: AES (128/192/256), AES-CCM, SHA-1, HMAC-SHA1, PBKDF2 —
+    provati contro FIPS-197, RFC 3610, RFC 3174, RFC 2202, RFC 6070 e
+    802.11-2007 H.4, sia a terra (`make prova-wpa`, 17 vettori) sia dentro
+    EX-OS (`crypttest`, 23 prove);
+  - drv_prop/ (ignorata da git) per il driver che dipende dal firmware, e la
+    regola che i compilati si pubblicano in netinst/nonfree/.
+
+! IL DRIVER REGISTRA DUE SERVIZI, e la scelta e' gia' presa: come «rete0»
+  parla net_proto.h e lo stack IP non sa di avere sotto una radio; come
+  «wifi0» parla wifi_proto.h, e ci parla solo il comando `wifi`.
+
+QUEL CHE MANCA, IN ORDINE:
+
+  1. il firmware. Senza, la BCM4318 non trasmette un bit. Non si puo'
+     ridistribuire: lo deve mettere l'utente sul disco, e il driver lo carica
+     da li' (come fa b43 su Linux con b43-fwcutter).
+  2. lo strato hardware: SSB, reset dei core, SPROM (da cui si legge il MAC),
+     G-PHY e radio 2050. Broadcom non ha mai pubblicato i registri: l'unica
+     fonte sono le bcm-specs e il codice di b43, che e' GPL-2.0 e quindi si
+     puo' portare tenendo le note di copyright.
+  3. sopra il MAC: scansione (beacon e probe response), autenticazione,
+     associazione, e il riconoscimento della difesa dagli information element.
+  4. l'EAPOL a quattro vie per WPA/WPA2. La crittografia c'e' gia' tutta.
+  5. WPA3, cioe' SAE: aritmetica su curva, e lib/excurva c'e'.
+
+! LA COSA DA NON DIMENTICARE: il sorgente che si scrive E' distribuibile. Fuori
+  restano il firmware, un sorgente che se lo porti dentro, e il codice nato dal
+  decompilare il driver altrui. Un driver portato da b43 (GPL-2.0) potrebbe
+  stare in git: e' la strada che tiene fuori solo il blob.
 
 =============================================================================
 @DIFETTI DIFETTI APERTI

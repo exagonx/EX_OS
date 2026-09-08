@@ -210,6 +210,86 @@ int main(void)
     }
 
     /* =====================================================================
+     * I PEZZI DEL Wi-Fi: AES-CCM e la PSK di WPA
+     *
+     * ! GLI STESSI VETTORI DI `make prova-wpa`, MA QUI GIRANO SUL BERSAGLIO.
+     * A terra si compila con gcc a 64 bit e le stesse righe possono
+     * comportarsi diversamente: uno spostamento su un tipo largo, un accesso
+     * non allineato, una struttura impacchettata in un altro modo. La prova
+     * sull'host dice che la matematica e' giusta; questa dice che e' giusta
+     * DOVE deve girare.
+     * ===================================================================== */
+    {
+        static const unsigned char k[16] = {
+            0xc0,0xc1,0xc2,0xc3,0xc4,0xc5,0xc6,0xc7,
+            0xc8,0xc9,0xca,0xcb,0xcc,0xcd,0xce,0xcf };
+        static const unsigned char nonce[13] = {
+            0x00,0x00,0x00,0x03,0x02,0x01,0x00,0xa0,
+            0xa1,0xa2,0xa3,0xa4,0xa5 };
+        static const unsigned char aad[8] = {
+            0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07 };
+        static const unsigned char msg[23] = {
+            0x08,0x09,0x0a,0x0b,0x0c,0x0d,0x0e,0x0f,
+            0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,
+            0x18,0x19,0x1a,0x1b,0x1c,0x1d,0x1e };
+        static const unsigned char att[31] = {
+            0x58,0x8c,0x97,0x9a,0x61,0xc6,0x63,0xd2,
+            0xf0,0x66,0xd0,0xc2,0xc0,0xf9,0x89,0x80,
+            0x6d,0x5f,0x6b,0x61,0xda,0xc3,0x84,
+            0x17,0xe8,0xd1,0x2c,0xfd,0xf9,0x26,0xe0 };
+        static const unsigned char aes128_k[16] = {
+            0x2b,0x7e,0x15,0x16,0x28,0xae,0xd2,0xa6,
+            0xab,0xf7,0x15,0x88,0x09,0xcf,0x4f,0x3c };
+        static const unsigned char aes128_in[16] = {
+            0x32,0x43,0xf6,0xa8,0x88,0x5a,0x30,0x8d,
+            0x31,0x31,0x98,0xa2,0xe0,0x37,0x07,0x34 };
+        static const unsigned char aes128_att[16] = {
+            0x39,0x25,0x84,0x1d,0x02,0xdc,0x09,0xfb,
+            0xdc,0x11,0x85,0x97,0x19,0x6a,0x0b,0x32 };
+        static const unsigned char psk_att[32] = {
+            0xf4,0x2c,0x6f,0xc5,0x2d,0xf0,0xeb,0xef,0x9e,0xbb,0x4b,0x90,
+            0xb3,0x8a,0x5f,0x90,0x2e,0x83,0xfe,0x1b,0x13,0x5a,0x70,0xe2,
+            0x3a,0xed,0x76,0x2e,0x97,0x10,0xa1,0x2e };
+        static const unsigned char sha1_att[20] = {
+            0xa9,0x99,0x3e,0x36,0x47,0x06,0x81,0x6a,0xba,0x3e,
+            0x25,0x71,0x78,0x50,0xc2,0x6c,0x9c,0xd0,0xd8,0x9d };
+        AesChiave     ac;
+        unsigned char cif[23], tagc[8], chiaro[23], blocco[16], psk[32], imp[20];
+
+        printf("\n  -- i pezzi del Wi-Fi --\n");
+
+        aes_chiave(&ac, aes128_k, 16);
+        aes_cifra(&ac, aes128_in, blocco);
+        esito("AES-128 (FIPS-197)", memcmp(blocco, aes128_att, 16) == 0);
+
+        sha1("abc", 3, imp);
+        esito("SHA-1 (RFC 3174)", memcmp(imp, sha1_att, 20) == 0);
+
+        aes_chiave(&ac, k, 16);
+        aes_ccm_cifra(&ac, nonce, 13, aad, 8, msg, cif, 23, tagc, 8);
+        esito("AES-CCM, il cifrato (RFC 3610)", memcmp(cif, att, 23) == 0);
+        esito("AES-CCM, il tag (RFC 3610)", memcmp(tagc, att + 23, 8) == 0);
+        esito("e si decifra",
+              aes_ccm_decifra(&ac, nonce, 13, aad, 8, cif, chiaro, 23,
+                              tagc, 8) == 0 && memcmp(chiaro, msg, 23) == 0);
+
+        cif[7] ^= 0x01;
+        esito("un bit cambiato non si decifra",
+              aes_ccm_decifra(&ac, nonce, 13, aad, 8, cif, chiaro, 23,
+                              tagc, 8) != 0);
+
+        /* ! QUESTA E' LENTA, ED E' GIUSTO CHE LO SIA: 4096 giri di HMAC-SHA1
+         * sono cio' che rende costoso provare le password a tappeto. Se un
+         * giorno questa riga diventasse istantanea, vorrebbe dire che
+         * qualcuno ha abbassato i giri — e la rete si aprirebbe in un
+         * pomeriggio invece che in un anno. */
+        pbkdf2_sha1((const unsigned char *)"password", 8,
+                    (const unsigned char *)"IEEE", 4, 4096, psk, 32);
+        esito("la PSK di WPA (802.11-2007 H.4)",
+              memcmp(psk, psk_att, 32) == 0);
+    }
+
+    /* =====================================================================
      * QUANTO COSTA UN BLOCCO CHE NON SI PUO' SPEZZARE
      *
      * ! NON E' UNA PROVA, E' UNA MISURA, e serve a una domanda precisa:

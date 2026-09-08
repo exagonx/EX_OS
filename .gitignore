@@ -356,3 +356,41 @@ __pycache__/
 # ignorata la cancella un `git clean -xdf` senza chiedere niente a nessuno.
 # =============================================================================
 /tools/locali/
+
+# =============================================================================
+# exagonx/ — IL SERVER DI PUBBLICAZIONE, E LE SUE CHIAVI
+#
+# Dentro ci sono gli script che caricano dist/netinst sul sito da cui EX-OS si
+# aggiorna, e il file con l'utente e la password dell'FTP. QUELLE NON DEVONO
+# ENTRARE NELLA CRONOLOGIA: questo repository e' pubblico, e una credenziale
+# committata resta leggibile in ogni copia clonata anche dopo che la si e'
+# cancellata dal ramo — l'unico rimedio vero e' cambiare la password.
+#
+# ! E NON E' SOLO IL FILE DELLE CHIAVI A STARE FUORI, MA TUTTA LA DIRECTORY.
+# Ignorare solo `exagonx/server.cnf` funziona finche' qualcuno non scrive un
+# secondo script con l'indirizzo dentro, o un log, o una copia di prova: la
+# regola stretta e' piu' facile da rispettare di quella precisa.
+#
+# ! QUINDI UN `git clean -xdf` LA PORTA VIA SENZA CHIEDERE. Quel che vale la
+# pena tenere — come si pubblica, e perche' serve il .htaccess — sta scritto
+# anche in RIPRENDERE.md, che e' tracciato.
+# =============================================================================
+/exagonx/
+
+# =============================================================================
+# drv_prop/ — I DRIVER CHE NON POSSONO STARE QUI
+#
+# Dentro ci vanno sorgenti e binari dei driver che dipendono da materiale
+# proprietario: il caso che ha aperto questa directory e' la Broadcom BCM4318
+# (14E4:4318), che non trasmette un bit senza un firmware che Broadcom non
+# lascia ridistribuire.
+#
+# ! NON E' UNA DIRECTORY DI COMODO, E' UN CONFINE. Questo repository e' GPL e
+# pubblico: un blob senza licenza dentro la cronologia non si toglie piu' —
+# resta in ogni copia clonata anche dopo che lo si e' cancellato dal ramo.
+#
+# ! I COMPILATI SI PUBBLICANO LO STESSO, ma in un posto che lo dice: vanno in
+# netinst/nonfree/ sul server degli aggiornamenti. Chi li scarica sa cosa sta
+# prendendo perche' sta scritto nel percorso, non in una nota a pie' di pagina.
+# =============================================================================
+/drv_prop/

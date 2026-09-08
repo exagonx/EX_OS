@@ -170,7 +170,7 @@ PROGRAMMI_FLOPPY := shell id chmod shutdown ls mem stack disk fdisk mkfs mkswap 
 # `make verifica-programmi` — che le due ISO eseguono da sole — confronta
 # le liste con il contenuto di bin/ e si ferma dicendo quali mancano.
 # =============================================================================
-PROGRAMMI_CD := cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp scarica telnet telnetd sshd xcp winprova exwincmd audio netupdate
+PROGRAMMI_CD := cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp scarica telnet telnetd sshd xcp winprova exwincmd audio netupdate wifi
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
 PROGRAMMI_EXWIN := exwin_so exdlg_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr edit term fontprova orologio browser exide
 
@@ -2751,6 +2751,42 @@ $(NETTEST_BIN): $(NETTEST_SRC) $(NETTEST_LD) $(NET_PROTO) $(DNS_SRC) $(DNS_HDR) 
 .PHONY: nettest
 nettest: dirs $(NETTEST_BIN)
 
+# --- /bin/wifi (solo CD) ------------------------------------------------------
+# Le reti senza fili: quali si sentono, a quale attaccarsi, come va.
+#
+# ! NON CONOSCE NESSUNA SCHEDA, ed e' il punto. Parla il protocollo di
+# drivers/net/wifi_proto.h con il servizio 'wifi0', e chi risponde puo' essere
+# qualunque driver wireless. La stessa divisione che c'e' fra ip.drv e le
+# schede Ethernet: il comando si scrive una volta sola.
+#
+# ! E SI COLLEGA A exuser PER UNA COSA SOLA: chiedere la password senza
+# mostrarla. Quella funzione sta li' perche' la usano login, su e install, e
+# rifarla qui vorrebbe dire una seconda implementazione di una cosa che, se
+# sbagliata, mostra una password a schermo.
+WIFI_SRC := bin/wifi/wifi.c
+WIFI_BIN := $(BUILD_BIN_CD)/wifi
+WIFI_LD  := bin/wifi/wifi.ld
+WIFI_PROTO := drivers/net/wifi_proto.h
+WIFI_LIB   := lib/wifi.c
+
+$(WIFI_BIN): $(WIFI_SRC) $(WIFI_LD) $(WIFI_PROTO) $(WIFI_LIB) \
+             $(EXUSER_SRC) $(EXUSER_HDR) \
+             $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/wifi ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I lib/exuser -c $(WIFI_SRC) -o $(BUILD_OBJ)/wifi_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -c $(WIFI_LIB) -o $(BUILD_OBJ)/wifi_nomi.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exuser -I drivers/kbd -c $(EXUSER_SRC) -o $(BUILD_OBJ)/wifi_exuser.o
+	$(CC) -m32 -c $(LIBC_START) -o $(BUILD_OBJ)/wifi_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(WIFI_LD) \
+	    $(BUILD_OBJ)/wifi_start.o $(BUILD_OBJ)/wifi_main.o \
+	    $(BUILD_OBJ)/wifi_nomi.o $(BUILD_OBJ)/wifi_exuser.o \
+	    $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] wifi compilato: $@"
+
+.PHONY: wifi
+wifi: dirs $(WIFI_BIN)
+
 # --- /bin/ping e /bin/ipcfg (solo CD) -----------------------------------------
 # Client sottili dello stack IP: non conoscono ICMP ne' ARP, mandano un
 # messaggio a /dev/ip.drv e stampano la risposta. Il protocollo sta tutto
@@ -2907,9 +2943,19 @@ telnetd: dirs $(TELNETD_BIN)
 # resto non funziona. Una .so in piu' vuol dire un file in piu' da avere al
 # posto giusto perche' una connessione cifrata parta — e il giorno che manca,
 # il messaggio parla di simboli, non di crittografia.
+# ! L'ORDINE NON CONTA MA IL NUMERO SI': le regole che collegano questi file
+# li nominano uno per uno (crypttest_c1..cN, sshd_c1..cN), e aggiungerne uno
+# qui senza aggiungere la riga la' da' un simbolo mancante al collegamento —
+# rumoroso, per fortuna, e non silenzioso.
+#
+# ! aes.c E sha1.c SONO ARRIVATI COL Wi-Fi. WPA2 e' AES-CCM e le chiavi si
+# derivano con PBKDF2-HMAC-SHA1: senza quei due non esiste una rete senza fili
+# protetta. SHA-1 e' rotto e lo si scrive lo stesso — il perche', e perche' non
+# contraddice il rifiuto di SHA-1 nei certificati, sta in sha1.c.
 EXCRYPT_SRC := lib/excrypt/chacha20.c lib/excrypt/poly1305.c \
                lib/excrypt/fe25519.c lib/excrypt/x25519.c \
-               lib/excrypt/sha512.c lib/excrypt/ed25519.c
+               lib/excrypt/sha512.c lib/excrypt/ed25519.c \
+               lib/excrypt/aes.c lib/excrypt/sha1.c
 EXCRYPT_HDR := lib/excrypt/excrypt.h lib/excrypt/fe25519.h
 
 # --- /bin/crypttest (solo CD) -------------------------------------------------
@@ -2958,6 +3004,7 @@ $(CRYPTTEST_BIN): $(CRYPTTEST_SRC) $(CRYPTTEST_LD) $(EXCRYPT_SRC) $(EXCRYPT_HDR)
 	    $(BUILD_OBJ)/crypttest_c1.o $(BUILD_OBJ)/crypttest_c2.o \
 	    $(BUILD_OBJ)/crypttest_c3.o $(BUILD_OBJ)/crypttest_c4.o \
 	    $(BUILD_OBJ)/crypttest_c5.o $(BUILD_OBJ)/crypttest_c6.o \
+	    $(BUILD_OBJ)/crypttest_c7.o $(BUILD_OBJ)/crypttest_c8.o \
 	    $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] crypttest compilato: $@"
 
@@ -2988,6 +3035,7 @@ $(SSHD_BIN): $(SSHD_SRC) $(SSHD_LD) $(IP_PROTO) $(RETE_SRC) $(RETE_HDR) \
 	    $(BUILD_OBJ)/sshd_start.o $(BUILD_OBJ)/sshd_main.o $(BUILD_OBJ)/sshd_rete.o \
 	    $(BUILD_OBJ)/sshd_c1.o $(BUILD_OBJ)/sshd_c2.o $(BUILD_OBJ)/sshd_c3.o \
 	    $(BUILD_OBJ)/sshd_c4.o $(BUILD_OBJ)/sshd_c5.o $(BUILD_OBJ)/sshd_c6.o \
+	    $(BUILD_OBJ)/sshd_c7.o $(BUILD_OBJ)/sshd_c8.o \
 	    $(LIBC_PONTI_OBJ) -o $@
 	@echo "[OK] sshd compilato: $@"
 
@@ -5295,6 +5343,26 @@ verifica-excurva: $(EXCURVA_SRC) $(EXCURVA_HDR)
 	    -c $(EXCURVA_SRC) -o $(BUILD_OBJ)/excurva_prova.o
 	@echo "[OK] lib/excurva compila per i386"
 
+# =============================================================================
+# prova-wpa — i pezzi di crittografia che vuole il Wi-Fi, contro i loro vettori
+#
+# ! UN AES SBAGLIATO NON DA' UN ERRORE: da' un pacchetto che l'access point
+# scarta, e da fuori sembra un problema di antenna. I vettori sono l'unico
+# modo di sapere che questi numeri sono gli stessi del resto del mondo.
+#
+# ! E UN VETTORE TRASCRITTO MALE COSTA QUANTO UN DIFETTO DEL CODICE: la prima
+# volta questa prova ha accusato PBKDF2 mentre le due attese di RFC 6070 erano
+# scambiate. Ad accorgersene e' stato il vettore della PSK di WPA, che fa gli
+# stessi 4096 giri e passava.
+# =============================================================================
+.PHONY: prova-wpa
+prova-wpa:
+	@mkdir -p $(PROVE_HOST_DIR)
+	@cc -Wall -Wextra -O1 -o $(PROVE_HOST_DIR)/wpaprova \
+	    tools/prove/wpaprova.c lib/excrypt/aes.c lib/excrypt/sha1.c \
+	    -I lib/excrypt
+	@$(PROVE_HOST_DIR)/wpaprova
+
 .PHONY: prova-excurva
 prova-excurva:
 	@python3 tools/prove/curvaprova.py
@@ -5627,7 +5695,7 @@ BINARI_SOLO_CD := $(CRYPTTEST_BIN) $(FILIPROVA_BIN) $(NETDETECT_BIN) $(NETTEST_B
                   $(TELNET_BIN) $(XCP_BIN) $(WINPROVA_BIN) $(EXWINCMD_BIN) \
                   $(SCARICA_BIN) \
                   $(CDINSTALL_BIN) $(SWAPTEST_BIN) $(LIBCTEST_BIN) $(HELLO_BIN) \
-                  $(AUDIO_BIN) $(NETUPDATE_BIN)
+                  $(AUDIO_BIN) $(NETUPDATE_BIN) $(WIFI_BIN)
 # ! QUESTA LISTA E' LA DIPENDENZA DELL'ISO, E VA TENUTA ALLINEATA A
 # DRIVER_CD. Sono due elenchi della stessa cosa: DRIVER_CD dice COSA
 # COSTRUIRE (nomi di bersagli .PHONY), questo dice DA COSA DIPENDE L'IMMAGINE
@@ -6009,6 +6077,32 @@ usb: $(FLOPPY_IMG)
 netinst: iso-exos
 	@chmod +x $(TOOLS_DIR)/mknetinst.sh
 	@$(TOOLS_DIR)/mknetinst.sh
+
+# =============================================================================
+# netinst-img — IL FLOPPY DELLA RETE
+#
+#     make netinst-img      -> dist/netinst.img
+#
+# ! NON E' AVVIABILE, ED E' VOLUTO. Il floppy di avvio resta quello minimale,
+# che e' pieno: su 1406 KB utili ne restano ventisei liberi, e i driver di rete
+# piu' netupdate ne vogliono trecentosessanta. Farceli stare vorrebbe dire
+# togliere qualcosa dal supporto che serve a INSTALLARE il sistema, per
+# aggiungere roba che serve DOPO averlo installato.
+#
+# La strada e': si installa il sistema, si avvia, si monta questo floppy e si
+# lancia /mnt/netinst.sh — che copia driver e programmi al loro posto e accende
+# la rete. Da li' netupdate ha tutto quel che gli serve.
+#
+# ! QUESTA IMMAGINE SI COMMITTA, a differenza di dist/exos.iso: e' 1.4 MB, si
+# distribuisce accanto al floppy di avvio, e chi la scarica da GitHub deve
+# trovarci dentro esattamente i binari di quella versione.
+# =============================================================================
+NETINST_IMG := $(DIST_DIR)/netinst.img
+
+.PHONY: netinst-img
+netinst-img: iso-exos
+	@chmod +x $(TOOLS_DIR)/mknetinstimg.sh
+	@$(TOOLS_DIR)/mknetinstimg.sh
 
 # =============================================================================
 # ESECUZIONE E DEBUG

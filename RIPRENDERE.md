@@ -28,6 +28,302 @@ manca» apre quello.
 
 # DOVE RIPRENDERE — 8 settembre 2026
 
+## 8 settembre 2026 — LA CRITTOGRAFIA CHE VUOLE IL Wi-Fi, E L'IMPALCATURA SOPRA
+
+Serve far funzionare una **Broadcom BCM4318** (14E4:4318, 802.11g). La scheda
+e' un dato, non una scelta. Oggi si e' fatto tutto quello che si puo' fare
+senza il firmware, e non e' poco.
+
+### PRIMA IL CONFINE, POI IL CODICE
+
+`drv_prop/` — ignorata da git — e' il posto dei driver che dipendono da
+materiale proprietario; i compilati si pubblicano in `netinst/nonfree/`, dove
+il percorso stesso dice che cosa si sta scaricando.
+
+! **NON E' UNA DIRECTORY DI COMODO, E' UN CONFINE.** Un blob senza licenza
+  dentro la cronologia di un repository pubblico non si toglie piu': resta in
+  ogni copia clonata anche dopo che lo si e' cancellato dal ramo.
+
+! **E IL SORGENTE CHE SI SCRIVE E' DISTRIBUIBILE**, contrariamente a quel che
+  sembra. Fuori restano tre cose diverse: il firmware (di Broadcom, binario,
+  senza licenza di ridistribuzione); un sorgente che se lo porta dentro in un
+  array; e il codice nato dal decompilare il driver altrui — in Europa
+  decompilare per l'interoperabilita' e' lecito (dir. 2009/24/CE, in Italia
+  art. 64-quater L.633/1941) ma le informazioni ottenute non si comunicano a
+  terzi. Un driver portato da b43, che e' GPL-2.0, potrebbe invece stare in
+  git: e' la strada che tiene fuori solo il blob.
+
+### LA CRITTOGRAFIA, CHE SERVE QUALUNQUE SCHEDA CI SIA SOTTO
+
+`lib/excrypt` aveva ChaCha20, Poly1305, X25519, Ed25519, SHA-256/512. Per WPA
+mancava tutto: **AES, SHA-1, PBKDF2**. Adesso ci sono.
+
+! **SI SCRIVE AES DOPO AVER EVITATO RSA, e non e' una contraddizione.** In
+  `extls.h` sta scritto che RSA si e' evitato perche' c'era un'alternativa —
+  le curve. Qui alternativa non c'e': il Wi-Fi protetto **e'** AES-CCM. Quando
+  una cosa non ha alternative si fa; quando ne ha, si sceglie la piu' piccola.
+
+! **SOLO LA CIFRATURA, E NON E' UN LAVORO A META'.** CCM e' CTR piu' CBC-MAC, e
+  tutt'e due chiamano AES solo in avanti, anche per decifrare. La tabella
+  inversa sarebbe duecento righe che nessuno chiama — cioe' che nessuno prova.
+
+! **NIENTE TABELLE T.** Le quattro tabelle da un kilobyte che fondono i passi
+  sono anche quelle che perdono la chiave attraverso la cache. Qui si fa il
+  conto per colonne: piu' lento, e su 54 Mbit/s non si vede.
+
+! **SHA-1 E' ROTTO E SI SCRIVE LO STESSO**, mentre `lib/excert` continua a
+  rifiutarlo nelle firme dei certificati. Le due cose non si contraddicono: una
+  collisione serve a far passare un documento per un altro, e dentro HMAC non
+  aiuta. HMAC-SHA1 non e' rotto, e WPA deriva le chiavi cosi' dal 2004.
+
+### E UN VETTORE TRASCRITTO MALE COSTA QUANTO UN DIFETTO
+
+La prima esecuzione di `make prova-wpa`: 15 passate, **1 fallita** — PBKDF2 a
+4096 giri. Con 4096 giri usciva la risposta di 2 giri.
+
+Il codice era giusto: nel file di prova le due attese di RFC 6070 erano
+**scambiate**. Ad accorgersene e' stato il vettore accanto — la PSK di WPA
+(802.11-2007 H.4), che fa gli stessi 4096 giri e passava.
+
+! **DUE VETTORI INDIPENDENTI CHE SI CONTRADDICONO LASCIANO UNA SOLA
+  CONCLUSIONE.** Se PBKDF2 fosse rotto a 4096 giri, la PSK non poteva tornare.
+  Senza quel secondo vettore avrei cercato il difetto nel ciclo delle
+  iterazioni, che e' esattamente dove non era.
+
+Adesso la prova ha 17 vettori e ne prova tre di PBKDF2 (1, 2 e 4096 giri),
+perche' il caso che ha ingannato merita di restare.
+
+### GLI STESSI VETTORI, SUL BERSAGLIO
+
+`crypttest` li rifa' dentro EX-OS: 23 prove, 0 fallite. Non e' un doppione — a
+terra si compila a 64 bit, e uno spostamento su un tipo largo o un accesso non
+allineato si comportano diversamente. L'host dice che la matematica e' giusta;
+questo dice che e' giusta **dove** deve girare.
+
+### L'IMPALCATURA DEL WIRELESS
+
+`drivers/net/wifi_proto.h` e `/bin/wifi`, con le opzioni che l'utente ha
+fissato per tutta la famiglia: `-showlist`, `-connect:<SSID>`, `-status`.
+
+! **IL DRIVER REGISTRA DUE SERVIZI, ed e' la scelta che tiene insieme tutto.**
+  Come `rete0` parla net_proto e lo stack IP non sa nemmeno di avere sotto una
+  radio; come `wifi0` parla il protocollo nuovo, e ci parla soltanto il comando
+  `wifi`. Cosi' `ip.drv` non impara una parola nuova, e una seconda scheda
+  senza fili non cambia niente da nessuna parte.
+
+! **IL TIPO DI DIFESA NON SI CHIEDE, SI RICONOSCE**: WEP, WPA, WPA2 o WPA3
+  stanno negli information element del beacon. La password si', quella si
+  chiede — e la chiede il COMANDO, non il driver: un servizio non ha un
+  terminale, e chi ha il terminale e' chi ha scritto il comando.
+
+### DOVE SI E' ARRIVATI, E DOVE NO
+
+La scheda si riconosce per nome (`lib/rete.c`), il comando c'e' e gira, la
+crittografia e' provata. **Manca la radio**, e manca per una ragione che non e'
+la fatica: senza il firmware proprietario la BCM4318 non trasmette un bit, e
+sopra il MAC restano da scrivere la scansione, l'associazione, l'EAPOL a
+quattro vie e — per WPA3 — SAE.
+
+---
+
+## 8 settembre 2026 — LA PROVA COMPLETA: DAL DISCO NUDO AL REPOSITORY IN RETE
+
+La catena c'era tutta ma non era mai stata percorsa intera: il floppy della
+rete non si poteva provare da CD (l'emulazione El Torito si rompe se si attacca
+un floppy) e `netupdate -repo:` non poteva scrivere la configurazione, perche'
+da CD `/boot` e' un'immagine in sola lettura. Serviva un sistema installato su
+disco, ed e' stato fatto.
+
+    tools/mkhd.sh 512        disco da 512 MB, minimale installato dal floppy
+    (avvio dal disco, floppy netinst.img inserito)
+    mount fd0 /mnt
+    /mnt/netinst.sh
+    netupdate -repo:exagonx.altervista.org/exos/netinst
+    netupdate -check
+
+**Funziona.** E la prova ha trovato tre difetti che nessun ragionamento aveva
+visto — due gravi, uno estetico.
+
+### PRIMO: pci.drv NON C'E' SU UN SISTEMA INSTALLATO
+
+Il floppy della rete non portava `pci.drv`, e il commento diceva perche': «sta
+gia' nel sistema minimale (dev/pci.drv in minimale.txt), una seconda copia un
+giorno diverge». Sbagliato:
+
+    /dev/pci.drv &
+    exec: comando non trovato: /dev/pci.drv
+
+! **`minimale.txt` E' L'ELENCO DI CIO' CHE STA SUL FLOPPY, non di cio' che
+  `install` copia sul disco.** Sono due cose diverse, e il nome non lo dice.
+  Senza il bus PCI `netdetect` non trova nessuna scheda e la catena si ferma al
+  primo anello — con un messaggio corretto («il servizio pci non e' attivo»)
+  che pero' manda a cercare il guasto nel driver di rete.
+
+Adesso `pci.drv` sta sul floppy e `netinst.sh` lo copia. E cercarlo ha mostrato
+un'altra cosa: **i driver stanno in due posti**, `build/drivers-cd` quelli del
+solo CD e `build/drivers` quelli che stanno anche sul floppy. Cercando solo nel
+primo, `pci.drv` sembrava non compilato.
+
+### SECONDO: LO SCRIPT SI POTEVA LANCIARE UNA VOLTA SOLA
+
+Alla seconda esecuzione `cp` chiede «esiste gia', sovrascrivere?» e **resta li'
+ad aspettare**. Uno script che non si puo' rilanciare e' inutile proprio quando
+serve — cioe' quando qualcosa e' andato storto la prima volta. Adesso le copie
+sono `cp -y`.
+
+### TERZO: L'APOSTROFO CHIUDEVA UNA STRINGA
+
+    echo La rete e' pronta. Adesso:
+    sh: manca la apice di chiusura
+
+La shell legge l'apice come inizio di stringa. La riga non usciva. Adesso il
+testo sta fra virgolette.
+
+### CHE COSA HA DETTO IL SISTEMA, ALLA FINE
+
+    e1000: servizio 'rete0' attivo
+    dhcp: configurato.   indirizzo 10.0.2.15
+
+    netupdate -repo:exagonx.altervista.org/exos/netinst
+    Chiedo a http://exagonx.altervista.org/exos/netinst/repo.txt
+      EX-OS di exagonx
+      il sistema di base, aggiornato a ogni build
+    /boot/netupdate.cnf scritto:
+      tipo       HTTP
+      url        exagonx.altervista.org/exos/netinst
+
+    netupdate -check
+    Guardo http://exagonx.altervista.org/exos/netinst
+      server: sistema 0.212 del 2026-09-08T14:23:19Z
+    Registro: avvio 2 file, sistema 58 file, 109 che non ci sono
+    /boot/netupdate.reg scritto: 2 pacchetti, 60 file.
+
+! **I 109 FILE CHE MANCANO SONO LA RISPOSTA GIUSTA, non un guasto**: il sistema
+  installato e' il MINIMALE, 58 file su 167. `-check` li propone, ed e'
+  esattamente il lavoro per cui il repository esiste.
+
+### E UNA COSA SUL METODO, CHE E' COSTATA MEZZ'ORA
+
+`mkhd.sh` ha detto «l'installazione non e' arrivata in fondo» quando invece era
+arrivata: cerca «Installazione completata» in un file di log che, lanciando lo
+script due volte di fila, era stato troncato dalla seconda esecuzione. Il disco
+era buono — si e' visto avviandolo.
+
+! **DUE `qemu_drive.py` INSIEME SI PESTANO I PIEDI** se non hanno
+  `EXOS_ISTANZA`: stesso socket del monitor, stesso file seriale. Il secondo
+  muore con «Connection reset by peer» e il primo continua a guidare una
+  macchina di cui non legge piu' l'uscita. E' scritto nelle note di questa
+  macchina; l'ho rifatto lo stesso, perche' `mkhd.sh` non imposta l'istanza e
+  quindi la regola vale anche per lui.
+
+! **E UN GUARDIANO CHE SI CONTA DA SOLO NON SCATTA MAI**: `until [ $(pgrep -f
+  qemu-system | wc -l) -eq 0 ]` non finisce, perche' la riga di comando del
+  processo che lo esegue contiene «qemu-system». Trenta minuti fermo ad
+  aspettare se stesso.
+
+---
+
+## 8 settembre 2026 — UN REPOSITORY SI AGGIUNGE SCRIVENDONE L'INDIRIZZO (-repo:, e il floppy della rete)
+
+Il repository di aggiornamento c'e' ed e' in linea. Restavano due attriti fra
+«c'e'» e «si usa», e sono due cose diverse.
+
+### IL PRIMO: TRE DOMANDE CHE SA GIA' IL SERVER
+
+Per aggiungere un repository si lanciava `netupdate -set`, che chiede trasporto,
+radice e se controllare da solo. **Due di quelle risposte le sa chi pubblica**,
+e chi le aggiunge le puo' solo copiare da un foglietto — copiandole si sbaglia,
+e l'errore si vede tre comandi dopo come «il server non risponde».
+
+Adesso il server pubblica la propria carta d'identita', `repo.txt`, accanto a
+`versione.txt`, e c'e' un comando che la legge:
+
+    netupdate -repo:exagonx.altervista.org/exos/netinst
+
+Scarica, legge le chiavi (`nome`, `dice`, `tipo`, `url`, `automatico`) e scrive
+`/boot/netupdate.cnf` da se'. Le chiavi che non conosce le ignora, cosi' un
+`repo.txt` scritto per un netupdate piu' nuovo non rompe quelli vecchi.
+
+! **IL FILE SI PRENDE SEMPRE IN HTTP, ANCHE SE POI DICE HTTPS.** E' l'uovo e la
+  gallina: per sapere che trasporto vuole bisogna gia' averlo letto. Non e' una
+  falla come sembra — cio' che difende un aggiornamento non e' il trasporto ma
+  l'impronta di ogni file scritta in `elenco.txt`, che si verifica comunque.
+
+! **E SE IL FILE DICE UN INDIRIZZO DIVERSO DA QUELLO SCRITTO, SI DICE FORTE.**
+  Un `repo.txt` puo' mandare altrove: e' legittimo — un sito che si e' spostato
+  — ed e' anche il modo in cui si dirotta qualcuno su un server che non e'
+  quello che credeva. Non si rifiuta, perche' rifiutare vorrebbe dire non
+  potersi spostare mai piu': si scrive a schermo, e decide chi guarda.
+
+### IL SECONDO: IL SISTEMA MINIMALE NON HA LA RETE
+
+Il floppy di avvio non ha driver di rete ne' netupdate, e non e' una svista:
+**e' pieno**. Su 1406 KB utili ne restano ventisei liberi, e i driver piu'
+netupdate piu' `exhttp.so` ne vogliono trecentocinquantotto.
+
+Da oggi c'e' un secondo floppy, `dist/netinst.img` (`make netinst-img`), che
+**non si avvia** — e non deve sembrare che possa: un'immagine con un settore di
+avvio che poi non parte manda a cercare il guasto nel caricatore. Si usa su un
+sistema gia' installato:
+
+    mount fd0 /mnt
+    /mnt/netinst.sh          copia tutto al suo posto e accende la rete
+    netupdate -repo:<indirizzo>
+
+! **I FILE SI COPIANO, NON SI USANO DOVE SONO**, e la ragione sta in
+  `lib/rete.c`: la tabella che associa una scheda PCI al suo driver contiene
+  percorsi ASSOLUTI — `/dev/e1000.drv` — perche' la legge `netdetect` per fare
+  uno spawn. Un driver lasciato su `/mnt` non lo troverebbe nessuno. Percio'
+  l'immagine ha la stessa forma della destinazione (`/dev`, `/bin`,
+  `/exwin/lib`) e `netinst.sh` non fa che ricopiarla al suo posto: quattro
+  righe, nessun caso particolare.
+
+! **E `exhttp.so` DEVE ESSERCI.** netupdate parla HTTP tramite la libreria
+  condivisa `/exwin/lib/exhttp.so`, e il minimale non ha exwin. Senza, netupdate
+  muore dicendo «non trovo la libreria condivisa della rete»: un errore chiaro,
+  ma che si evita mettendocela.
+
+### CHE COSA E' PROVATO, E CHE COSA NO
+
+Provato contro il dominio vero (`exagonx.altervista.org/exos/netinst`):
+
+    netupdate -repo:exagonx.altervista.org/exos/netinst
+    Chiedo a http://exagonx.altervista.org/exos/netinst/repo.txt
+      EX-OS di exagonx
+      il sistema di base, aggiornato a ogni build
+    netupdate: non riesco a scrivere /boot/netupdate.cnf (sola lettura)
+
+Scarica, legge, stampa. Si ferma sull'ULTIMA riga, e per una ragione che non e'
+sua: **su un sistema avviato da CD `/boot` non e' la directory del CD ma il
+floppy emulato di El Torito**, sette file in sola lettura.
+
+! **E IL FLOPPY DELLA RETE NON SI PUO' PROVARE INSIEME AL CD.** Attaccarne uno a
+  una macchina che avvia da CD rompe l'emulazione El Torito — il CD *e'* il
+  drive A — e il kernel finisce per cercare `/bin/sh` sul floppy sbagliato.
+  Provato, e succede esattamente questo: cinque console che non si aprono.
+
+Per tutt'e due serve un sistema installato su disco, che e' poi il caso d'uso
+vero: netupdate aggiorna un sistema installato, non un CD. **Resta da fare
+quella prova**, ed e' l'unica cosa che manca.
+
+### E DOVE STANNO LE CHIAVI DEL SERVER
+
+In `exagonx/`, che e' **ignorata da git** — dentro c'e' la password dell'FTP e
+questo repository e' pubblico. Ci sono `makerepo.sh` (crea il repository:
+chiede i parametri, scrive la configurazione, pubblica `repo.txt` e il
+contenuto), `repo-update.sh` (compila, compone, carica i soli file cambiati,
+verifica), `pubblica.sh`, `verifica.sh` e il `.htaccess` che tiene Cloudflare
+lontano dai `.html`.
+
+! **SI IGNORA TUTTA LA DIRECTORY, NON SOLO IL FILE DELLE CHIAVI.** Ignorare
+  `exagonx/server.cnf` funziona finche' qualcuno non scrive un secondo script
+  con l'indirizzo dentro, o un log, o una copia di prova: la regola stretta e'
+  piu' facile da rispettare di quella precisa. E una credenziale committata su
+  un repository pubblico resta leggibile in ogni copia clonata anche dopo che
+  la si e' tolta dal ramo — l'unico rimedio vero e' cambiare la password.
+
+---
+
 ## 8 settembre 2026 — OTTO POSTI (@DIF-TCPBUF: non era la finestra, era la coda del driver)
 
 Stamattina @DIF-TCPBUF aveva lasciato la domanda giusta: **perche' si perdono

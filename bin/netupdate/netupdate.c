@@ -43,7 +43,7 @@
 #include "inflate.h"
 
 /* +0.001 a ogni modifica: `netupdate -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("netupdate", "0.010");
+EX_VERSIONE("netupdate", "0.011");
 
 /* =============================================================================
  * IL FILE DI CONFIGURAZIONE
@@ -1672,6 +1672,191 @@ static int guarda(Config *c, char *ver, char *cat, char *ele,
     return 0;
 }
 
+/* =============================================================================
+ * -repo:<indirizzo> — un repository si aggiunge scrivendone UNO, di indirizzo
+ *
+ * ! `-set` FA TRE DOMANDE, E DUE LE SA GIA' IL SERVER. Chi pubblica un
+ * repository sa che trasporto serve e qual e' la sua radice vera; chi lo
+ * aggiunge quelle cose le puo' solo copiare da un foglietto, e copiandole si
+ * sbaglia. Percio' il server pubblica la propria carta d'identita' — repo.txt,
+ * accanto a versione.txt — e qui si scarica e si scrive nella configurazione.
+ *
+ *     netupdate -repo:exagonx.altervista.org/exos/netinst
+ *
+ * Il file e' fatto delle stesse chiavi del file di configurazione, piu' due
+ * che servono solo a chi legge:
+ *
+ *     nome       come si chiama, per dirlo a chi lo aggiunge
+ *     dice       una riga di descrizione
+ *     tipo       HTTP, FTP, HTTPS o FTPS
+ *     url        la radice VERA, senza schema
+ *     automatico si / no  (facoltativa: se manca si tiene quella di prima)
+ *
+ * ! IL FILE SI PRENDE SEMPRE IN HTTP, ANCHE SE POI DICE HTTPS. E' l'uovo e la
+ * gallina: per sapere che trasporto vuole bisogna gia' averlo letto. Un
+ * repository che si vuole cifrato pubblichera' repo.txt in chiaro e i pacchetti
+ * no — il che va bene, perche' cio' che difende gli aggiornamenti non e' il
+ * trasporto ma l'impronta di ogni file scritta in elenco.txt.
+ *
+ * ! E SE IL FILE DICE UN INDIRIZZO DIVERSO DA QUELLO SCRITTO, SI DICE FORTE.
+ * Un repo.txt puo' mandare altrove: e' legittimo — un sito che si e' spostato
+ * — ed e' anche il modo in cui si dirotta qualcuno su un server che non e'
+ * quello che credeva. Non si rifiuta, perche' rifiutare vorrebbe dire non
+ * potersi spostare mai piu'; si SCRIVE A SCHERMO, perche' chi guarda decida.
+ * ========================================================================== */
+static int comando_repo(const char *indirizzo)
+{
+    Config      c, vecchia;
+    char        url[URL_MAX + 32];
+    char        riga[RIGA_MAX];
+    char        nome[64], dice[128], detto[URL_MAX];
+    const char *p;
+    long        n;
+    int         i, avuta_vecchia;
+
+    if (indirizzo == NULL || indirizzo[0] == '\0') {
+        printf("uso: netupdate -repo:<indirizzo>\n\n");
+        printf("  esempio:  netupdate -repo:esempio.org/exos\n\n");
+        printf("  Cerca <indirizzo>/repo.txt e ne prende trasporto e radice.\n");
+        return 1;
+    }
+
+    /* Quel che c'era prima serve a due cose: tenere `automatico` se il file
+     * non lo dice, e poter dire a chi guarda che cosa si sta sostituendo. */
+    avuta_vecchia = config_leggi(&vecchia);
+
+    memset(&c, 0, sizeof(c));
+    strcpy(c.tipo, "HTTP");
+    c.automatico = avuta_vecchia ? vecchia.automatico : 0;
+
+    /* Lo schema si toglie come in -set: qui si sa gia' che si parla HTTP. */
+    p = strstr(indirizzo, "://");
+    p = (p != NULL) ? p + 3 : indirizzo;
+    strncpy(c.url, p, sizeof(c.url) - 1);
+    c.url[sizeof(c.url) - 1] = '\0';
+    i = (int)strlen(c.url);
+    while (i > 0 && c.url[i-1] == '/') c.url[--i] = '\0';
+
+    if (c.url[0] == '\0') {
+        printf("netupdate: l'indirizzo e' vuoto.\n");
+        return 1;
+    }
+
+    url_componi(url, sizeof(url), &c, "repo.txt");
+    printf("Chiedo a %s\n\n", url);
+
+    n = prendi(url);
+    if (n < 0) {
+        printf("\n  Li' non c'e' un repo.txt. O l'indirizzo e' un altro, o\n");
+        printf("  quel repository non si presenta: allora si scrive a mano,\n");
+        printf("  con `netupdate -set`.\n");
+        return 1;
+    }
+
+    /* --- si legge, chiave per chiave ------------------------------------- */
+    nome[0] = dice[0] = detto[0] = '\0';
+    {
+        long off = 0;
+
+        while (off < n) {
+            long fine = off;
+            char *chiave, *valore, *coda;
+
+            while (fine < n && g_buf[fine] != '\n') fine++;
+            {
+                long len = fine - off;
+
+                if (len > (long)sizeof(riga) - 1) len = (long)sizeof(riga) - 1;
+                memcpy(riga, g_buf + off, (size_t)len);
+                riga[len] = '\0';
+            }
+            off = fine + 1;
+
+            chiave = riga;
+            while (*chiave == ' ' || *chiave == '\t') chiave++;
+            if (*chiave == '#' || *chiave == '\0' || *chiave == '\r') continue;
+
+            valore = strchr(chiave, '=');
+            if (valore == NULL) continue;
+            *valore++ = '\0';
+
+            coda = chiave + strlen(chiave);
+            while (coda > chiave && (coda[-1] == ' ' || coda[-1] == '\t')) *--coda = '\0';
+            while (*valore == ' ' || *valore == '\t') valore++;
+            coda = valore + strlen(valore);
+            while (coda > valore && (coda[-1] == '\r' || coda[-1] == ' ' ||
+                                     coda[-1] == '\t')) *--coda = '\0';
+
+            if (strcasecmp(chiave, "nome") == 0) {
+                strncpy(nome, valore, sizeof(nome) - 1);
+                nome[sizeof(nome) - 1] = '\0';
+            } else if (strcasecmp(chiave, "dice") == 0) {
+                strncpy(dice, valore, sizeof(dice) - 1);
+                dice[sizeof(dice) - 1] = '\0';
+            } else if (strcasecmp(chiave, "tipo") == 0) {
+                strncpy(c.tipo, valore, sizeof(c.tipo) - 1);
+                c.tipo[sizeof(c.tipo) - 1] = '\0';
+            } else if (strcasecmp(chiave, "url") == 0) {
+                strncpy(detto, valore, sizeof(detto) - 1);
+                detto[sizeof(detto) - 1] = '\0';
+            } else if (strcasecmp(chiave, "automatico") == 0) {
+                c.automatico = (valore[0] == 's' || valore[0] == 'S' ||
+                                valore[0] == '1' ||
+                                valore[0] == 'y' || valore[0] == 'Y');
+            }
+            /* ogni altra chiave si ignora: un repo.txt scritto per un
+             * netupdate piu' nuovo non deve rompere questo. */
+        }
+    }
+
+    /* Il trasporto dev'essere uno di quelli che sappiamo nominare. */
+    for (i = 0; TRASPORTI[i]; i++)
+        if (strcasecmp(c.tipo, TRASPORTI[i]) == 0) break;
+    if (TRASPORTI[i] == NULL) {
+        printf("  ! repo.txt chiede il trasporto «%s», che non conosco.\n", c.tipo);
+        printf("    Non scrivo niente.\n");
+        return 1;
+    }
+
+    /* --- l'indirizzo che il file dichiara -------------------------------- */
+    if (detto[0] != '\0') {
+        i = (int)strlen(detto);
+        while (i > 0 && detto[i-1] == '/') detto[--i] = '\0';
+
+        if (strcmp(detto, c.url) != 0) {
+            printf("  ! ATTENZIONE: quel repo.txt manda ALTROVE.\n");
+            printf("    hai scritto: %s\n", c.url);
+            printf("    lui dice:    %s\n", detto);
+            printf("    Puo' essere un sito che si e' spostato, e puo' essere\n");
+            printf("    qualcuno che ti porta su un server suo. Scrivo il suo,\n");
+            printf("    perche' e' il posto dove stanno davvero i file: se non\n");
+            printf("    ti torna, `netupdate -set` lo cambia in dieci secondi.\n\n");
+        }
+        strncpy(c.url, detto, sizeof(c.url) - 1);
+        c.url[sizeof(c.url) - 1] = '\0';
+    }
+
+    /* --- si dice cosa si e' trovato, e cosa si sostituisce --------------- */
+    if (nome[0]) printf("  %s\n", nome);
+    if (dice[0]) printf("  %s\n", dice);
+    if (nome[0] || dice[0]) printf("\n");
+
+    if (avuta_vecchia && vecchia.url[0] && strcmp(vecchia.url, c.url) != 0) {
+        printf("  ! NE PRENDE IL POSTO: qui c'era gia' %s (%s).\n",
+               vecchia.url, vecchia.tipo);
+        printf("    La configurazione ne tiene UNO solo.\n\n");
+    }
+
+    if (config_scrivi(&c) != 0) return 1;
+
+    printf("%s scritto:\n", CNF);
+    printf("  tipo       %s\n", c.tipo);
+    printf("  url        %s\n", c.url);
+    printf("  automatico %s\n", c.automatico ? "si" : "no");
+    printf("\n  Adesso:  netupdate -check\n");
+    return 0;
+}
+
 static int comando_check(void)
 {
     Config c;
@@ -2649,6 +2834,8 @@ static int comando_remove(const char *id)
 static void uso(void)
 {
     printf("uso: netupdate -set                     da dove ci si aggiorna\n");
+    printf("     netupdate -repo:<indirizzo>        lo stesso, chiedendolo\n");
+    printf("                                        al server: <indirizzo>/repo.txt\n");
     printf("     netupdate -check                   cosa e' cambiato sul server\n");
     printf("     netupdate -check:guarda            lo stesso, senza toccare niente\n");
     printf("     netupdate -auto                    l'occhiata dell'avvio: zitta,\n");
@@ -2693,6 +2880,9 @@ int main(int argc, char **argv)
         if (coda[0] == '\0') return comando_registro();
         return comando_registro_uno(coda);
     }
+
+    if (strncmp(argv[1], "-repo:", 6) == 0) return comando_repo(argv[1] + 6);
+    if (strcmp(argv[1], "-repo") == 0)      return comando_repo(NULL);
 
     if (strcmp(argv[1], "-check") == 0) return comando_check();
 
