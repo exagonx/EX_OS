@@ -96,6 +96,7 @@ const char *extls_passo_nome(int passo)
     case EXTLS_P_CERTIFICATI: return "leggo i certificati";
     case EXTLS_P_FIRMA:       return "controllo la firma";
     case EXTLS_P_CATENA:      return "verifico la catena";
+    case EXTLS_P_ANELLO:      return "un anello della catena";
     case EXTLS_P_FATTO:       return "connessione cifrata";
     default:                  return "";
     }
@@ -106,6 +107,16 @@ static int passo(int quale)
 {
     if (!g_passo) return 1;
     return g_passo(g_passo_dato, quale) ? 1 : 0;
+}
+
+/* Lo stesso, nella forma che excert vuole: la catena chiama qui una volta per
+ * anello, e chi ospita vede un EXTLS_P_ANELLO. L'indice non gli serve — la
+ * frase e' la stessa — ma excert lo passa perche' chi volesse scrivere
+ * «2 di 4» ce l'ha. */
+static int passo_anello(void *dato, unsigned int anello, unsigned int quanti)
+{
+    (void)dato; (void)anello; (void)quanti;
+    return passo(EXTLS_P_ANELLO);
 }
 
 static void bzero_(void *d, unsigned int n)
@@ -987,7 +998,15 @@ int extls_stretta(void *opaco, const ExTlsSotto *sotto, const char *host,
      * difetto nel posto sbagliato. Il codice resta leggibile con
      * extls_motivo(). */
     if (!passo(EXTLS_P_CATENA)) return EXTLS_ERR_RETE;
-    r = excert_catena_valida(catena, quanti, magazzino, adesso, &t->anello);
+    r = excert_catena_valida(catena, quanti, magazzino, adesso, &t->anello,
+                             passo_anello, 0);
+
+    /* ! ANNULLATO NON E' RIFIUTATO. Se chi ospita ha chiuso la finestra a meta'
+     * della catena, il certificato non ha nessuna colpa: dirgli
+     * EXTLS_ERR_CERTIFICATO manderebbe a cercare una CA che manca. E' la stessa
+     * uscita degli altri passi che annullano — la connessione non si e'
+     * stabilita, e questa e' la verita' piu' vicina. */
+    if (r == EXCERT_ANNULLATO) return EXTLS_ERR_RETE;
     if (r != EXCERT_OK) { t->motivo = r; return EXTLS_ERR_CERTIFICATO; }
 
     if (excert_nome_combacia(&catena[0], host) != EXCERT_OK)

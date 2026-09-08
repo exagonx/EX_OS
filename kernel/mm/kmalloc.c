@@ -193,6 +193,22 @@ static int canarino_rotto(KHeapBlock *b, const char *quando)
          "0x%08x. L'aveva allocato chi sta a 0x%08x (risolvilo con "
          "build/kernel.elf).", quando, (uint32_t)(b + 1), b->chiesti, b->size,
          *canarino_di(b), b->chi);
+
+    /* ! SE QUESTA RIGA COMPARE, LA STRADA E' SEGNATA e non va ricostruita.
+     *
+     *   1. `chi` e' un indirizzo di ritorno DENTRO il kernel: si risolve con
+     *      build/kernel.elf, che e' tracciato — e SI RISOLVE CONTRO IL
+     *      BINARIO CHE GIRAVA, non contro quello di oggi (la stessa trappola
+     *      del 7 settembre 2026: tre commit dopo, lo stesso indirizzo cadeva
+     *      dentro un'altra funzione e mandava a cercare dalla parte
+     *      sbagliata);
+     *   2. `chiesti` dice quanto quel codice aveva chiesto: il difetto e' fra
+     *      quel numero e quanto ha scritto davvero;
+     *   3. il valore trovato al posto del canarino spesso dice CHE COSA e'
+     *      stato scritto, e quindi da dove viene.
+     *
+     * La storia di questo canarino — perche' esiste, e cosa si era gia'
+     * escluso — sta nel diario, 7 e 8 settembre 2026 (@DIF-PANIC). */
     return 1;
 }
 

@@ -192,9 +192,51 @@ int extls_stretta(void *t, const ExTlsSotto *sotto, const char *host,
  *
  * ! E NON RENDE LA STRETTA INTERROMPIBILE DENTRO UN CONTO. Un x25519 o una
  * verifica di firma sono un blocco solo: fra un passo e l'altro si respira,
- * dentro no. Spezzare quelli vorrebbe dire portare un gancio dentro excurva e
- * exbig, ed e' un altro lavoro — sta scritto qui perche' chi misurera' i tempi
- * sappia che cosa sta guardando.
+ * dentro no.
+ *
+ * ! I TEMPI ADESSO SONO MISURATI, e questo gancio e' lo strumento che li ha
+ * misurati: `scarica -tempi <url>` stampa i millisecondi fra un passo e
+ * l'altro, e fra due passi non c'e' che il lavoro di quel passo. L'8 settembre
+ * 2026, dentro QEMU (la macchina delle prove):
+ *
+ *     x25519, il segreto condiviso                      30 ms
+ *     CertificateVerify, RSA-PSS                     20-30 ms
+ *     CertificateVerify, ECDSA P-256               130-150 ms
+ *     la CATENA, 3 anelli RSA (www.gnu.org)       150-170 ms
+ *     la CATENA, 4 anelli ECDSA (example.com)     830-870 ms
+ *
+ * Tre strette su example.com, due su www.gnu.org: le righe di CONTO non
+ * ballano — x25519 rende 30 ms ogni volta, la catena di example.com 830-870. Quelle che ballano sono le
+ * righe che aspettano la rete, e infatti non sono queste.
+ *
+ * ! IL NUMERO CHE STAVA SCRITTO QUI ERA 150 ms, E NON ERA STATO MISURATO.
+ * Sbagliava di sei volte, e sbagliava soprattutto BERSAGLIO: guardava una
+ * firma sola, mentre il blocco che tiene ferma la finestra e' la catena.
+ *
+ * ! E LA CATENA NON ERA UN BLOCCO SOLO: adesso e' spezzata. Il gancio arriva
+ * fino a excert_catena_valida (ExCertPasso, in excert.h) e viene chiamato una
+ * volta per anello — EXTLS_P_ANELLO qui sotto. Non e' entrata una riga in
+ * excurva ne' in exbig: e' un parametro in piu' a una funzione che gli anelli
+ * li scorreva gia' in un ciclo.
+ *
+ * Rimisurato lo stesso giorno, sulla stessa catena di quattro anelli ECDSA
+ * (i tempi sono quelli fra una chiamata del gancio e la successiva):
+ *
+ *     prima              un blocco solo               830-870 ms
+ *     dopo   anello 0    la foglia, chiave P-256      130-140 ms
+ *            anello 1    un intermedio, P-384         330-350 ms
+ *            anello 2    un intermedio, P-384         340-350 ms
+ *            la radice   cercata nel magazzino, RSA        30 ms
+ *
+ * Il pezzo piu' lungo passa da 850 a 350 ms, ed e' UNA firma P-384: il numero
+ * che prima si sapeva solo per differenza, adesso misurato — e la stima per
+ * differenza (330) era giusta. Su una catena RSA (www.gnu.org, tre anelli) il
+ * piu' lungo scende da 170 a 70 ms.
+ *
+ * ! SOTTO QUESTO NON SI SCENDE SENZA ENTRARE NEL CONTO di una firma sola, e
+ * li' si', servirebbe un gancio dentro excurva ed exbig: 350 ms di finestra
+ * ferma sono un terzo di secondo, si vedono ma non sembrano una macchina
+ * morta. La rinuncia, quella, regge — e adesso si appoggia a un numero.
  * ========================================================================== */
 #define EXTLS_P_CHIAVE       0   /* la nostra meta' dello scambio      */
 #define EXTLS_P_HELLO        1   /* il ServerHello e' arrivato         */
@@ -203,6 +245,18 @@ int extls_stretta(void *t, const ExTlsSotto *sotto, const char *host,
 #define EXTLS_P_FIRMA        4   /* la firma del server torna          */
 #define EXTLS_P_CATENA       5   /* la catena e' valida                */
 #define EXTLS_P_FATTO        6   /* si puo' parlare                    */
+
+/* ! UN PASSO CHE SI RIPETE, ED E' L'UNICO. Gli altri sei passano una volta
+ * sola e in ordine; questo arriva una volta PER ANELLO della catena, subito
+ * dopo EXTLS_P_CATENA e prima di EXTLS_P_FATTO. Chi mostra una riga di stato
+ * la riscrive uguale e non se ne accorge; chi misura vede il conto di UNA
+ * firma invece di quello di tutta la catena, che era il punto (@DIF-TLS).
+ *
+ * ! AGGIUNTO IN CODA, E NON E' UN VEZZO. I sei numeri di prima sono gia' in
+ * giro — il browser li traduce in una riga di stato, `scarica -tempi` li
+ * cronometra — e infilarlo in mezzo avrebbe spostato EXTLS_P_FATTO sotto ai
+ * piedi di chi li usa. */
+#define EXTLS_P_ANELLO       7   /* un anello della catena, uno per volta */
 
 typedef int (*ExTlsPasso)(void *dato, int passo);   /* 0 = annulla */
 

@@ -42,7 +42,7 @@
 #include "rete.h"
 
 /* +0.001 a ogni modifica: `ipcfg -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("ipcfg", "0.001");
+EX_VERSIONE("ipcfg", "0.002");
 
 static int pid_ip = 0;
 
@@ -104,6 +104,16 @@ static int mostra_stato(void)
     printf("UDP inviati       %u\n", s.udp_inviati);
     printf("UDP ricevuti      %u\n", s.udp_ricevuti);
     printf("UDP senza porta   %u\n", s.udp_senza_porta);
+
+    /* I tre di TCP dicono se la finestra di ricezione basta. «riaperture» sono
+     * gli ACK vuoti mandati per dire «adesso c'e' posto»; «finestra a zero» e'
+     * quante volte il mittente si e' dovuto fermare del tutto. Vedi
+     * @DIF-TCPBUF in in_lavorazione.txt. */
+    printf("TCP letti          %u byte\n", s.tcp_byte_letti);
+    printf("TCP riaperture     %u\n", s.tcp_riaperture);
+    printf("TCP finestra a 0   %u\n", s.tcp_fin_zero);
+    printf("TCP fuori sequenza %u\n", s.tcp_fuori_seq);
+    printf("TCP buffer pieno   %u\n", s.tcp_pieno);
     return 0;
 }
 

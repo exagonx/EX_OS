@@ -97,6 +97,23 @@ typedef struct {
     unsigned int persi_coda;     /* arrivati con la coda interna piena */
     unsigned int overflow;       /* l'anello della scheda è traboccato */
 
+    /* ! TRE POSTI DOVE UN PACCHETTO SI PERDE, E VANNO CONTATI SEPARATI. Dal
+     * più esterno al più interno: la SCHEDA lo butta perché l'anello è pieno
+     * (`persi_scheda`, e `senza_posto` è lo stesso guaio visto dall'altro
+     * capo — è arrivato mentre non c'era un descrittore libero); il DRIVER lo
+     * butta perché la sua coda interna è piena e chi legge non torna a
+     * chiedere (`persi_coda`); TCP lo ritrasmette perché uno dei due sopra
+     * l'ha buttato. Un solo numero che li somma direbbe «si perde», che è
+     * quello che già si sapeva: la domanda è DOVE, perché la cura è diversa
+     * in ognuno dei tre posti. Vedi @DIF-TCPBUF.
+     *
+     * ! E VALGONO ZERO SU CHI NON LI SA CONTARE. Li riempie il driver e1000
+     * (registri MPC e RNBC della scheda, più il bit RXO dell'ICR); ne2k e
+     * pcnet li lasciano a zero, e uno zero lì dentro vuol dire «nessuno l'ha
+     * misurato», non «non è successo». */
+    unsigned int persi_scheda;   /* MPC: la scheda non aveva dove metterlo */
+    unsigned int senza_posto;    /* RNBC: arrivato senza descrittori liberi */
+
     /* ! QUESTI DUE SEPARANO «funziona» DA «funziona per il motivo
      * giusto». Il driver guarda la scheda quando arriva un interrupt,
      * ma anche a ogni battito e dopo ogni richiesta di un client: se

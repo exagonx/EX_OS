@@ -43,7 +43,7 @@
 #include "rete.h"
 
 /* +0.001 a ogni modifica: `nettest -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("nettest", "0.001");
+EX_VERSIONE("nettest", "0.002");
 
 #define ETH_TIPO_ARP   0x0806
 #define ETH_TIPO_IP    0x0800
@@ -272,6 +272,8 @@ static int contatori(void)
     printf("troppo grandi  %u\n", c.troppo_grandi);
     printf("persi in coda  %u\n", c.persi_coda);
     printf("traboccamenti  %u\n", c.overflow);
+    printf("persi dalla scheda %u\n", c.persi_scheda);
+    printf("senza descrittori  %u\n", c.senza_posto);
     printf("notifiche IRQ  %u\n", c.notifiche_irq);
     printf("battiti        %u\n", c.battiti);
     return 0;

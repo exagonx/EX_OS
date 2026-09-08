@@ -26,7 +26,8 @@ BANCO  = "/tmp/certprova"
 
 MOTIVO = {0: "OK", -1: "MALFORMATO", -2: "FIRMA SBAGLIATA", -3: "NOME DIVERSO",
           -4: "NON E' UNA CA", -5: "SCADUTO", -6: "NON ANCORA VALIDO",
-          -7: "SENZA RADICE", -8: "ALGORITMO RIFIUTATO", -9: "TROPPO LUNGA"}
+          -7: "SENZA RADICE", -8: "ALGORITMO RIFIUTATO", -9: "TROPPO LUNGA",
+          -10: "CHIAVE RIFIUTATA", -11: "ANNULLATA DA CHI CHIAMA"}
 
 def compila():
     # ! excurva STA QUI DENTRO DA QUANDO excert SA VERIFICARE ECDSA, e per
@@ -105,8 +106,8 @@ def pki(d):
         oss("x509", "-in", "%s/%s.pem" % (d, n), "-outform", "DER",
             "-out", "%s/%s.der" % (d, n))
 
-def prova(nome, attesa, data, radici, catena):
-    r = subprocess.run([BANCO, data] + radici + ["--"] + catena,
+def prova(nome, attesa, data, radici, catena, extra=()):
+    r = subprocess.run([BANCO] + list(extra) + [data] + radici + ["--"] + catena,
                        capture_output=True, text=True)
     avuto = int(r.stdout.strip() or "999")
     ok = (avuto == attesa)
@@ -152,6 +153,32 @@ def main():
 
     # ! E LA FIRMA ROVINATA: un byte del TBSCertificate cambiato. La catena e'
     # la stessa, i nomi combaciano, le date sono buone — e la firma no.
+    # =========================================================================
+    # IL GANCIO FRA UN ANELLO E L'ALTRO
+    #
+    # ! LA CATENA SI VERIFICA UN ANELLO PER VOLTA, e da oggi lo si puo' dire a
+    # chi aspetta: su una catena di quattro anelli ECDSA erano 850 ms di
+    # finestra ferma in un pezzo solo (@DIF-TLS). Il gancio non cambia il
+    # verdetto — e queste due prove servono a tenerlo vero.
+    #
+    # ! DUE MODI DI ROMPERSI IN SILENZIO. Un gancio chiamato ZERO volte non si
+    # vede: la catena resta valida e chi aspetta continua ad aspettare come
+    # prima. E un annullamento scambiato per un rifiuto manderebbe a cercare
+    # una CA che non manca. Percio' si contano le chiamate e si guarda il
+    # codice, non solo il fatto che qualcosa sia fallito.
+    tutte.append(prova("il gancio vede due anelli (sito+media, poi la radice)",
+                       2, oggi, [D("radice")], [D("sito"), D("media")],
+                       extra=("-conta",)))
+    tutte.append(prova("annullata alla prima chiamata", -11, oggi,
+                       [D("radice")], [D("sito"), D("media")],
+                       extra=("-annulla", "1")))
+    tutte.append(prova("annullata sull'ultima, quella della radice", -11, oggi,
+                       [D("radice")], [D("sito"), D("media")],
+                       extra=("-annulla", "2")))
+    tutte.append(prova("e senza annullare resta buona", 0, oggi,
+                       [D("radice")], [D("sito"), D("media")],
+                       extra=("-annulla", "9")))
+
     b = bytearray(open(D("sito"), "rb").read())
     b[len(b) // 3] ^= 0x01
     open("%s/rovinato.der" % d, "wb").write(bytes(b))

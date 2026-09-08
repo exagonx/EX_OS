@@ -58,7 +58,7 @@
 
 /* +0.001 a ogni modifica: `ip.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ip.drv", "0.001");
+EX_VERSIONE("ip.drv", "0.002");
 
 /* =============================================================================
  * Costanti di protocollo
@@ -704,9 +704,39 @@ static int  prossimo_salto(const unsigned char *dest, unsigned char *hop);
 #define TCP_PSH   0x08
 #define TCP_ACK   0x10
 
-/* Buffer per connessione. 4 KB per verso: due connessioni FTP ne usano
- * 16 KB in tutto, che su un processo ring3 e' poco. Non e' la finestra
- * ideale per una rete veloce, ed e' il numero da alzare quando lo sara'. */
+/* Buffer per connessione. 4 KB per verso: due connessioni FTP ne usano 16 KB
+ * in tutto, che su un processo ring3 e' poco. Tutte e 24 insieme fanno 192 KB.
+ *
+ * ! ALZARLO NON SERVE, ED E' MISURATO — due volte, e la seconda ha corretto
+ * la prima. L'8 settembre 2026 (@DIF-TCPBUF), scaricando un file da 759 KB da
+ * un server locale con `scarica -i`, che da oggi stampa da solo quanto ci ha
+ * messo:
+ *
+ *     coda del driver   finestra   tempo    persi in coda   fuori sequenza
+ *          8 posti        4 KB      0,6 s         0                0
+ *          8 posti       16 KB     18,3 s        12              120
+ *         64 posti        4 KB      0,5 s         0                0
+ *         64 posti       16 KB      0,6 s         0                0
+ *
+ * ! LA FINESTRA NON C'ENTRAVA: ERA LA CODA DEL DRIVER. Con 8 posti la finestra
+ * larga faceva perdere 12 frame nel driver (CODA_N in drivers/e1000/e1000.c) e
+ * ognuno ne faceva scartare una decina dietro di se' — vedi tcp_fuori_seq —
+ * per un totale di 132 pacchetti da rifare, a colpi di RTO. Con 64 posti quel
+ * costo sparisce del tutto.
+ *
+ * ! E ALLORA PERCHE' 4096 RESTA? Perche' con la coda a posto la finestra piu'
+ * larga NON FA GUADAGNARE NIENTE: 0,5 s contro 0,6, cioe' la stessa cosa a
+ * meno della risoluzione dell'orologio. E costa: 24 connessioni per due versi
+ * fanno 192 KB a 4 KB di finestra e 768 KB a 16. Si paga tre quarti di
+ * megabyte per non guadagnare niente di misurabile.
+ *
+ * ! E LA FINESTRA DA 4 KB NON SI CHIUDE MAI: zero riaperture e zero finestre a
+ * zero in tutto lo scaricamento. Chi un giorno vorra' alzarla — perche' avra'
+ * una rete vera, con un ritardo vero — trovi qui il metodo: si misura col
+ * tempo che stampa `scarica`, e si guardano `ipcfg` (fuori sequenza, buffer
+ * pieno) e `nettest -c` (persi in coda, persi dalla scheda) PRIMA di
+ * concludere.
+ * ============================================================================= */
 #define TCP_BUF        4096
 #define TCP_MSS        1400    /* sotto i 1460 tipici: lascia margine, e
                                   non frammentiamo comunque */
@@ -749,6 +779,20 @@ typedef struct {
     unsigned int  tx_len;        /* byte in coda, confermati compresi */
     unsigned char rx[TCP_BUF];
     unsigned int  rx_len;
+    /* ! DOVE COMINCIANO I BYTE BUONI DENTRO rx. Fino all'8 settembre 2026 non
+     * c'era: i dati stavano SEMPRE all'inizio, e ogni lettura ricopiava a mano
+     * — un byte per volta — tutto quello che restava, cioe' un costo per
+     * lettura proporzionale a quanto c'era nel buffer.
+     *
+     * ! NON E' LA CAUSA DELLA LENTEZZA CHE SI CERCAVA, e va detto perche' era
+     * il primo sospetto: togliendo quel ciclo, il tempo di uno scaricamento
+     * da 759 KB non e' cambiato di un secondo — ne' a 4 KB (8 s prima, 8 s
+     * dopo) ne' a 16 KB (26 s prima, 25 s dopo). La causa e' un'altra e sta
+     * scritta sopra TCP_BUF.
+     *
+     * Resta perche' e' meno lavoro a parita' di tutto, e perche' il giorno che
+     * la finestra si potra' alzare quel ciclo tornerebbe a farsi sentire. */
+    unsigned int  rx_off;
 
     unsigned int  rto_scade;
     unsigned int  rto_ms;
@@ -834,6 +878,7 @@ static int tcp_riprendi_orfane(void)
          * col suo timeout, ed e' cio' che succede a ogni cavo staccato. */
         c->stato      = S_LIBERA;
         c->rx_len     = 0;
+        c->rx_off     = 0;
         c->tx_len     = 0;
         c->attesa_pid = 0;
         c->porta_loc  = 0;
@@ -900,6 +945,10 @@ static void tcp_manda(Conn *c, unsigned int flag,
      * mandare dati che poi butteremmo. */
     metti16(seg + 14, TCP_BUF - c->rx_len);
     c->fin_nostra = TCP_BUF - c->rx_len;
+    /* Finestra zero: da qui il mittente smette, e riparte solo col proprio
+     * timer. E' il costo vero di un buffer piccolo, ed e' quello che finora
+     * nessuno aveva contato. */
+    if (c->fin_nostra == 0) g_st.tcp_fin_zero++;
     metti16(seg + 16, 0);                   /* somma: dopo */
     metti16(seg + 18, 0);                   /* puntatore urgente */
 
@@ -1029,20 +1078,19 @@ static void tcp_consegna(Conn *c)
     d.id  = tcp_id(c);
     d.len = n;
     memcpy(msg, &d, sizeof(d));
-    if (n) memcpy(msg + sizeof(d), c->rx, n);
+    if (n) memcpy(msg + sizeof(d), c->rx + c->rx_off, n);
 
     ipc_send(c->attesa_pid, IP_MSG_TCP_DATI, msg, sizeof(d) + n);
     c->attesa_pid = 0;
+    g_st.tcp_byte_letti += n;
 
-    /* Cio' che non e' entrato scorre in testa al buffer. */
-    if (n < c->rx_len) {
-        unsigned int i;
-
-        for (i = 0; i + n < c->rx_len; i++) c->rx[i] = c->rx[i + n];
-        c->rx_len -= n;
-    } else {
-        c->rx_len = 0;
-    }
+    /* ! CIO' CHE NON E' ENTRATO NON SI SPOSTA: si sposta l'INDICE. A rimettere
+     * i byte in testa ci pensa chi accoda, e solo quando in coda non ci sta
+     * piu' un segmento — una memmove ogni tanto invece di una ricopiatura a
+     * ogni lettura. */
+    c->rx_off += n;
+    c->rx_len -= n;
+    if (c->rx_len == 0) c->rx_off = 0;
 
     /* =====================================================================
      * ! CHI SI LIBERA DEVE DIRLO, O L'ALTRO NON RIPARTE.
@@ -1069,8 +1117,10 @@ static void tcp_consegna(Conn *c)
      * Un ACK vuoto e' due decine di byte e porta la finestra nuova.
      * ================================================================== */
     if ((c->stato == S_APERTA || c->stato == S_FIN_MIO) &&
-        c->fin_nostra < TCP_BUF / 2 && TCP_BUF - c->rx_len >= TCP_BUF / 2)
+        c->fin_nostra < TCP_BUF / 2 && TCP_BUF - c->rx_len >= TCP_BUF / 2) {
+        g_st.tcp_riaperture++;
         tcp_manda(c, TCP_ACK, NULL, 0);
+    }
 }
 
 /* =============================================================================
@@ -1216,7 +1266,14 @@ static void tratta_tcp(const unsigned char *f, unsigned int ihl, unsigned int to
         if (n > 0 && seq == c->rcv_nxt) {
             unsigned int q = (n < TCP_BUF - c->rx_len) ? n : TCP_BUF - c->rx_len;
 
-            memcpy(c->rx + c->rx_len, seg + off, q);
+            /* Lo spazio libero c'e' (q e' gia' capato al totale), ma puo'
+             * essere in testa invece che in coda: allora si compatta UNA
+             * volta, con memmove, invece di ricopiare a ogni lettura. */
+            if (c->rx_off > 0 && c->rx_off + c->rx_len + q > TCP_BUF) {
+                memmove(c->rx, c->rx + c->rx_off, c->rx_len);
+                c->rx_off = 0;
+            }
+            memcpy(c->rx + c->rx_off + c->rx_len, seg + off, q);
             c->rx_len  += q;
             c->rcv_nxt += q;
             tcp_manda(c, TCP_ACK, NULL, 0);
@@ -1254,14 +1311,27 @@ static void tratta_tcp(const unsigned char *f, unsigned int ihl, unsigned int to
         if (seq != c->rcv_nxt) {
             /* ! FUORI SEQUENZA: SI SCARTA E SI RICONFERMA. Non si tiene
              * da parte (vedi ip_proto.h). Il duplicato di ACK dice
-             * all'altro dove siamo rimasti, e lui ritrasmettera'. */
+             * all'altro dove siamo rimasti, e lui ritrasmettera'.
+             *
+             * ! E SI CONTA, perche' e' uno scarto NOSTRO e per mesi e' stato
+             * invisibile. Un pacchetto perso prima fa finire qui tutti quelli
+             * che erano gia' in volo dietro di lui: con la finestra a 4 KB
+             * sono due o tre, a 16 KB sono dieci o piu', e li ritrasmette
+             * tutti il mittente. E' il moltiplicatore che trasforma poche
+             * perdite in un terzo di traffico in piu' — vedi @DIF-TCPBUF. */
+            g_st.tcp_fuori_seq++;
             tcp_manda(c, TCP_ACK, NULL, 0);
         } else if (c->rx_len + n > TCP_BUF) {
             /* Il buffer e' pieno: non si conferma quello che non si puo'
              * tenere, o l'altro lo considererebbe consegnato. */
+            g_st.tcp_pieno++;
             tcp_manda(c, TCP_ACK, NULL, 0);
         } else {
-            memcpy(c->rx + c->rx_len, seg + off, n);
+            if (c->rx_off > 0 && c->rx_off + c->rx_len + n > TCP_BUF) {
+                memmove(c->rx, c->rx + c->rx_off, c->rx_len);
+                c->rx_off = 0;
+            }
+            memcpy(c->rx + c->rx_off + c->rx_len, seg + off, n);
             c->rx_len  += n;
             c->rcv_nxt += n;
             tcp_manda(c, TCP_ACK, NULL, 0);

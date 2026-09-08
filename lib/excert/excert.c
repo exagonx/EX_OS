@@ -311,13 +311,15 @@ const char *excert_perche(int codice)
     case EXCERT_ALG_RIFIUTATO:   return "algoritmo di firma non gestito";
     case EXCERT_CHIAVE_RIFIUTATA:return "chiave di chi firma non gestita";
     case EXCERT_TROPPO_LUNGA:    return "catena troppo lunga";
+    case EXCERT_ANNULLATO:       return "verifica interrotta da chi l'aveva chiesta";
     default:                     return "motivo ignoto";
     }
 }
 
 int excert_catena_valida(const ExCert *catena, unsigned int quanti,
                          const ExMagazzino *magazzino, const char *adesso,
-                         unsigned int *anello)
+                         unsigned int *anello,
+                         ExCertPasso passo, void *passo_dato)
 {
     unsigned int i;
     int          r;
@@ -349,12 +351,26 @@ int excert_catena_valida(const ExCert *catena, unsigned int quanti,
          * un altro sito. */
         if (!padre->e_ca) return EXCERT_NON_E_CA;
 
+        /* ! IL RESPIRO STA QUI, PRIMA DELLA FIRMA E NON DOPO. Chiamarlo dopo
+         * vorrebbe dire annunciare a cose fatte: chi ha una barra di stato la
+         * aggiornerebbe quando il lavoro e' gia' finito, e chi misura leggerebbe
+         * un tempo spostato di un anello. */
+        if (passo && !passo(passo_dato, i, quanti)) return EXCERT_ANNULLATO;
+
         r = excert_firma_valida(figlio, padre);
         if (r != EXCERT_OK) return r;
     }
 
     /* L'ultimo anello dev'essere firmato da una radice DEL MAGAZZINO. */
     if (anello) *anello = quanti - 1;
+
+    /* ! E ANCHE QUESTO E' UN ANELLO, per chi aspetta. radice_di scorre il
+     * magazzino e fa il conto della firma su ogni candidato che ha il nome
+     * giusto: costa quanto gli altri, e senza questa chiamata l'ultimo pezzo
+     * di attesa resterebbe muto — cioe' proprio quello in cui chi guarda
+     * comincia a chiedersi se sia morto. */
+    if (passo && !passo(passo_dato, quanti - 1, quanti)) return EXCERT_ANNULLATO;
+
     if (radice_di(&catena[quanti - 1], magazzino) == 0) return EXCERT_SENZA_RADICE;
 
     if (anello) *anello = 0;

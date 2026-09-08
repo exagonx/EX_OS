@@ -159,6 +159,41 @@ typedef struct {
     unsigned int  udp_inviati;
     unsigned int  udp_ricevuti;
     unsigned int  udp_senza_porta;    /* arrivati per una porta non aperta */
+
+    /* ! I TRE DI TCP SERVONO A DECIDERE UN NUMERO, non a fare bella figura in
+     * `ipcfg`: la finestra di ricezione e' 4 KB (TCP_BUF in drivers/ip/ip.c) e
+     * nessuno aveva mai misurato quanto costi. Vedi @DIF-TCPBUF.
+     *
+     *   tcp_riaperture   gli ACK vuoti mandati per dire «adesso c'e' posto»,
+     *                    cioe' quante volte chi legge e' rimasto indietro
+     *   tcp_fin_zero     quante volte la finestra annunciata era ZERO: li' il
+     *                    mittente si ferma e riparte solo col proprio timer,
+     *                    che raddoppia l'attesa ogni volta
+     *   tcp_byte_letti   quanti byte sono stati consegnati a chi legge: e' il
+     *                    denominatore, senza il quale gli altri due non
+     *                    vogliono dire niente */
+    unsigned int  tcp_riaperture;
+    unsigned int  tcp_fin_zero;
+    unsigned int  tcp_byte_letti;
+
+    /* ! E QUESTI DUE SONO GLI SCARTI SILENZIOSI DI TCP, cioe' i segmenti che
+     * arrivano interi e vengono buttati da NOI. Sono due, e sono diversi:
+     *
+     *   tcp_fuori_seq  arrivato con un numero di sequenza che non e' quello
+     *                  atteso. Non si tiene da parte niente (vedi piu' su):
+     *                  si scarta e si riconferma dove si era rimasti. Un solo
+     *                  pacchetto perso prima fa scartare TUTTI quelli gia' in
+     *                  volo dietro di lui — con una finestra larga sono dieci
+     *                  o piu', e li ritrasmette tutti il mittente
+     *   tcp_pieno      arrivato in ordine ma senza posto nel buffer: quello
+     *                  si', e' la finestra che non basta
+     *
+     * ! SENZA DI LORO «SI PERDONO PACCHETTI» NON HA UN DOVE. Sommati ai
+     * contatori del driver (persi_coda, persi_scheda) dicono in quale dei
+     * quattro punti della catena un byte sparisce, e la cura e' diversa in
+     * ognuno. Vedi @DIF-TCPBUF. */
+    unsigned int  tcp_fuori_seq;
+    unsigned int  tcp_pieno;
 } IpStato;
 
 /* Una voce della tabella ARP, come la vede un client */

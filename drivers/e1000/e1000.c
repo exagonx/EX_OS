@@ -70,7 +70,7 @@
 
 /* +0.001 a ogni modifica: `e1000.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("e1000.drv", "0.001");
+EX_VERSIONE("e1000.drv", "0.002");
 
 /* -----------------------------------------------------------------------------
  * La scheda
@@ -120,6 +120,22 @@ EX_VERSIONE("e1000.drv", "0.001");
 #define REG_RAL0          0x5400      /* indirizzo MAC ricevuto, 32 bit bassi */
 #define REG_RAH0          0x5404      /* alti + bit di validita' */
 
+/* -----------------------------------------------------------------------------
+ * I CONTATORI DELLA SCHEDA: QUANTI PACCHETTI HA BUTTATO LEI
+ *
+ * ! SI AZZERANO LEGGENDOLI, e questo cambia come si usano: ogni lettura va
+ * SOMMATA a quel che si teneva, non copiata. Copiarli darebbe «quanti se ne
+ * sono persi dall'ultima volta che ho guardato», che e' un numero diverso e
+ * dipende da quando si guarda.
+ *
+ * ! E SI POSSONO LASCIARE LI' SENZA PERDERE NIENTE: la scheda continua a
+ * contare per conto suo fino a 32 bit. Percio' si leggono quando comodo — a
+ * ogni battito e quando qualcuno chiede i conteggi — e non nel giro caldo
+ * della ricezione, dove due letture MMIO in piu' a ogni frame si pagherebbero.
+ * --------------------------------------------------------------------------- */
+#define REG_MPC           0x4010      /* frame persi: non c'era posto */
+#define REG_RNBC          0x40A0      /* frame arrivati senza descrittori liberi */
+
 /* Bit di CTRL */
 #define CTRL_FD           (1u << 0)   /* full duplex */
 #define CTRL_ASDE         (1u << 5)   /* auto-negoziazione della velocita' */
@@ -161,6 +177,13 @@ EX_VERSIONE("e1000.drv", "0.001");
 #define ICR_RXDMT0        (1u << 4)   /* l'anello RX si sta svuotando */
 #define ICR_RXT0          (1u << 7)   /* frame ricevuto (timer) */
 
+/* ! QUESTO BIT LA SCHEDA LO ALZAVA E NOI LO BUTTAVAMO. E' l'unico modo che ha
+ * di dire «e' arrivata roba e non avevo dove metterla»: l'anello RX era pieno.
+ * Costa zero — l'ICR si legge gia' a ogni giro, e si azzera leggendolo — e
+ * senza di lui la domanda «perche' si perdono pacchetti in raffica?» non aveva
+ * un posto da cui cominciare. Vedi @DIF-TCPBUF. */
+#define ICR_RXO           (1u << 6)   /* l'anello RX e' traboccato */
+
 /* -----------------------------------------------------------------------------
  * Anelli e buffer
  *
@@ -191,7 +214,44 @@ EX_VERSIONE("e1000.drv", "0.001");
 #define DMA_BYTE          (OFF_TX_BUF + TX_N * BUF_LEN)
 
 #define PERIODO_MS        50
-#define CODA_N            8
+
+/* ! LA CODA FRA LA SCHEDA E CHI LEGGE, E QUANTO DEVE ESSERE PROFONDA.
+ * L'anello della scheda si svuota tutto a ogni giro; questi sono i frame gia'
+ * tolti dall'anello che aspettano di essere consegnati allo stack IP, uno per
+ * ogni NET_MSG_RICEVI. Quando e' piena si butta il piu' vecchio e si conta in
+ * `persi_coda`.
+ *
+ * ! ERA 8, ED ERA QUI CHE SI PERDEVANO I PACCHETTI — non nell'anello della
+ * scheda, che era l'imputato numero uno. Misurato l'8 settembre 2026
+ * (@DIF-TCPBUF) scaricando 759 KB con la finestra TCP portata a 16 KB:
+ *
+ *     coda 8, finestra 16 KB     18,3 s   12 persi qui, 120 scartati fuori
+ *                                         sequenza, 684 frame per farne 532
+ *     coda 64, finestra 16 KB     0,6 s   zero persi, zero fuori sequenza,
+ *                                         534 frame: il minimo indispensabile
+ *
+ * E i tre contatori della scheda (MPC, RNBC, il bit RXO dell'ICR) sono rimasti
+ * a ZERO in tutt'e due i casi: l'anello da 32 descrittori non ha mai
+ * traboccato, perche' svuota_rx lo svuota tutto a ogni giro. Il collo di
+ * bottiglia era il passaggio DOPO.
+ *
+ * ! E OGNI FRAME BUTTATO QUI NE FA SCARTARE UNA DECINA DIETRO DI SE'. Quelli
+ * che erano gia' in volo arrivano fuori sequenza, e TCP non li tiene da parte:
+ * 12 perdite qui sono diventate 132 pacchetti da rifare. E' il moltiplicatore
+ * che rende questo numero piu' importante di quanto sembri.
+ *
+ * ! IL NUMERO NON E' A CASO: dev'essere almeno la finestra TCP divisa per un
+ * frame — con 16 KB di finestra sono 12 pacchetti in volo, e 8 posti non li
+ * contengono. 64 ne tiene 64 KB, cioe' quattro volte la finestra piu' grande
+ * che si sia provata, e lascia margine per una seconda connessione che arrivi
+ * nello stesso momento. Costa 64 x 1514 = 97 KB nel driver, ed e' RAM di un
+ * processo in ring 3, non del kernel.
+ *
+ * ! CON LA FINESTRA A 4 KB NON CAMBIA NIENTE, e va detto: 0,6 s con 8 posti,
+ * 0,5 con 64, cioe' la stessa cosa a meno della risoluzione dell'orologio.
+ * Questo numero non serve OGGI — serve perche' il giorno che qualcuno alza
+ * TCP_BUF, o apre due connessioni veloci insieme, il pavimento non ceda. */
+#define CODA_N            64
 
 /* -----------------------------------------------------------------------------
  * Stato
@@ -593,11 +653,23 @@ static int trasmetti(const unsigned char *f, unsigned int len)
 /* =============================================================================
  * Servizio
  * ========================================================================== */
+/* Somma quello che la scheda ha buttato da sola. Vedi REG_MPC. */
+static void conta_perse(void)
+{
+    g_cont.persi_scheda += reg_leggi(REG_MPC);
+    g_cont.senza_posto  += reg_leggi(REG_RNBC);
+}
+
 static void servi_scheda(void)
 {
     unsigned int icr = reg_leggi(REG_ICR);       /* leggere azzera */
 
-    (void)icr;      /* si guarda l'anello comunque: piu' robusto del bit */
+    /* ! L'ANELLO SI SVUOTA COMUNQUE, e il bit si guarda lo stesso. Fidarsi del
+     * bit per decidere se leggere l'anello sarebbe fragile — un'interruzione
+     * persa fermerebbe la rete; ma il bit dice una cosa che l'anello non dice
+     * piu': che mentre non guardavamo e' arrivato qualcosa che non e' entrato. */
+    if (icr & ICR_RXO) g_cont.overflow++;
+
     svuota_rx();
 }
 
@@ -768,6 +840,7 @@ static void servi(void)
 
         if (r < 0) {
             g_cont.battiti++;
+            conta_perse();
             servi_scheda();
             irq_done(g_irq);
             consegna();
@@ -816,6 +889,7 @@ static void servi(void)
             break;
 
         case NET_MSG_CONTATORI:
+            conta_perse();      /* prima di rispondere: sono clear-on-read */
             ipc_send(meta.sender_pid, NET_MSG_CONTEGGI,
                      &g_cont, sizeof(g_cont));
             break;

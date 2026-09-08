@@ -2485,11 +2485,17 @@ static void js_uscita(const char *t, unsigned int n, void *dato)
  * e' arrivati e si smistano i messaggi — cosi' la finestra si ridisegna e Esc
  * arriva anche durante la stretta.
  *
- * ! DENTRO UN SINGOLO PASSO PERO' NON SI RESPIRA. Un x25519 o una verifica di
- * firma sono un blocco solo, e li' non si legge: si calcola. Spezzarli
- * vorrebbe dire portare un gancio dentro excurva e exbig, ed e' un altro
- * lavoro. Sta scritto qui, in extls.h e in exhttp.h, perche' chi guardera' i
- * tempi sappia che cosa sta guardando. */
+ * ! DENTRO UNA SINGOLA FIRMA PERO' NON SI RESPIRA. Un x25519 o una verifica
+ * sono un blocco solo, e li' non si legge: si calcola.
+ *
+ * ! LA CATENA INVECE SI E' SPEZZATA, ed e' il passo che si ripete. Fino all'8
+ * settembre 2026 la verifica della catena arrivava qui come UN passo solo:
+ * 850 ms misurati su quattro anelli ECDSA, in cui questa funzione non veniva
+ * chiamata — cioe' la finestra non si ridisegnava e Esc non arrivava. Adesso
+ * il gancio scende fino a excert_catena_valida e torna qui UNA VOLTA PER
+ * ANELLO: la frase e' sempre «un anello della catena», ma i messaggi si
+ * smistano quattro volte invece di una, e l'attesa piu' lunga senza risposta
+ * e' 350 ms — una firma P-384. La tabella sta in extls.h. */
 static int rete_a_che_punto(void *dato, const char *cosa)
 {
     ExMsg m;

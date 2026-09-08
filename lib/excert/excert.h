@@ -86,6 +86,14 @@ void sha256(const void *dati, unsigned int len, unsigned char out[32]);
  * quale dei due si sta guardando. */
 #define EXCERT_CHIAVE_RIFIUTATA -10
 
+/* ! CHI OSPITA HA DETTO DI SMETTERE, e non e' un guasto del certificato. Vedi
+ * ExCertPasso piu' in basso: chi guarda una catena mentre si verifica puo'
+ * chiudere la finestra, e questo codice e' il modo di dire «non l'ho
+ * rifiutata, non l'ho nemmeno finita». Confonderlo con EXCERT_FIRMA_SBAGLIATA
+ * vorrebbe dire scrivere «la firma non torna» di un certificato che nessuno ha
+ * guardato fino in fondo. */
+#define EXCERT_ANNULLATO       -11
+
 /* ! I NOVE CASI HANNO NOVE FRASI, e servono davvero. Il codice si teneva gia'
  * — extls lo mette in `motivo` apposta — ma nessuno lo traduceva, e quello che
  * arrivava all'utente era sempre «certificato non verificabile»: una frase che
@@ -123,9 +131,40 @@ int excert_firma_valida(const ExCert *figlio, const ExCert *padre);
  * vero per una catena di quattro e non dice quale dei quattro, che e'
  * esattamente cio' che serve sapere per capire se il guasto e' nel sito o
  * nel nostro magazzino. */
+/* =============================================================================
+ * ! UNA CATENA NON E' UN BLOCCO SOLO, E ADESSO SI PUO' DIRE FRA UN ANELLO E
+ * L'ALTRO
+ *
+ * Verificare una catena vuol dire fare una firma per anello. Chi chiama —
+ * fino al TLS, e da li' fino a una finestra — resta fermo per tutta la durata,
+ * e su una catena di quattro anelli ECDSA sono 850 ms misurati (@DIF-TLS,
+ * 8 settembre 2026): quasi un secondo in cui un programma grafico non
+ * ridisegna.
+ *
+ * `passo` viene chiamato PRIMA di ogni firma, con l'indice dell'anello e
+ * quanti sono. Rendendo 0 la verifica si ferma con EXCERT_ANNULLATO.
+ *
+ * ! IL GANCIO STA FRA UNA FIRMA E L'ALTRA, NON DENTRO. Dentro il conto di una
+ * firma non si respira: quello vorrebbe dire un gancio dentro excurva ed
+ * exbig, ed e' un altro lavoro. Qui si scende dal tempo di TUTTA la catena al
+ * tempo di UNA firma, che e' il salto che si paga poco.
+ *
+ * ! E L'ULTIMA CHIAMATA E' PER LA RADICE, che non e' un anello della catena
+ * ricevuta ma costa come gli altri: cercare l'emittente fra duecento
+ * certificati del magazzino vuol dire fare il conto della firma su quelli che
+ * hanno il nome giusto. `anello` vale allora `quanti - 1`, cioe' l'ultimo
+ * ricevuto: e' l'anello di cui si sta cercando il padre.
+ *
+ * Passando 0 come `passo` non cambia niente: e' il caso di chi non ha una
+ * finestra da tenere viva, come le prove sull'host.
+ * ========================================================================== */
+typedef int (*ExCertPasso)(void *dato, unsigned int anello,
+                           unsigned int quanti);   /* 0 = smetti */
+
 int excert_catena_valida(const ExCert *catena, unsigned int quanti,
                          const ExMagazzino *magazzino, const char *adesso,
-                         unsigned int *anello);
+                         unsigned int *anello,
+                         ExCertPasso passo, void *passo_dato);
 
 /* =============================================================================
  * Il nome: questo certificato e' di QUESTO sito?

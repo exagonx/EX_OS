@@ -28,6 +28,419 @@ manca» apre quello.
 
 # DOVE RIPRENDERE — 8 settembre 2026
 
+## 8 settembre 2026 — OTTO POSTI (@DIF-TCPBUF: non era la finestra, era la coda del driver)
+
+Stamattina @DIF-TCPBUF aveva lasciato la domanda giusta: **perche' si perdono
+pacchetti in raffica?**, con due candidati — l'anello di ricezione della scheda
+(32 descrittori) e il tempo fra una raccolta e l'altra.
+
+Nessuno dei due. Si perdevano in una coda da **otto posti** dentro il driver
+e1000, fra la scheda e lo stack IP.
+
+### PRIMA IL RILEVATORE, E UNO C'ERA GIA' — SPENTO
+
+`NetContatori` ha da sempre un campo `overflow`, «l'anello della scheda e'
+traboccato». ne2k lo riempie, pcnet lo riempie, **l'e1000 no**: nessuna riga lo
+incrementava. Cioe' sulla scheda che si usa davvero quel numero era zero per
+costruzione, e leggerlo avrebbe detto «l'anello sta bene» qualunque cosa
+succedesse.
+
+! UN CONTATORE CHE NON PUO' SALIRE E' PEGGIO DI UN CONTATORE CHE NON C'E'.
+  Assente, si va a cercare; a zero, si tira una conclusione.
+
+E il bit che serviva la scheda lo alzava gia': `servi_scheda` leggeva l'ICR e
+lo buttava — `(void)icr` — mentre dentro c'e' RXO, «e' arrivata roba e non
+avevo dove metterla». Adesso RXO si conta, e con lui i due contatori hardware
+della scheda: **MPC** (frame persi per mancanza di posto) e **RNBC** (arrivati
+senza descrittori liberi). Si azzerano leggendoli, quindi si SOMMANO a ogni
+lettura — copiarli darebbe «quanti dall'ultima volta che ho guardato», che
+dipende da quando si guarda.
+
+! E LEGGERLI COSTA, QUINDI NON NEL GIRO CALDO: due letture MMIO in piu' per
+  ogni frame si pagherebbero. La scheda continua a contare per conto suo fino a
+  32 bit, percio' si leggono a ogni battito e prima di rispondere a chi chiede
+  i conteggi.
+
+### POI I DUE SCARTI DI TCP, CHE NESSUNO CONTAVA
+
+Un segmento che arriva fuori sequenza viene buttato e riconfermato — questo
+stack non tiene niente da parte. Un segmento che arriva in ordine ma senza
+posto nel buffer, idem. Due scarti **nostri**, invisibili: `tcp_fuori_seq` e
+`tcp_pieno`, e `ipcfg` li stampa.
+
+### LA MISURA
+
+759 KB da un server locale, e da oggi il tempo lo stampa `scarica` invece di
+prenderlo chi guarda:
+
+    coda del driver   finestra   tempo    persi in coda   fuori sequenza
+         8 posti        4 KB      0,6 s         0                0
+         8 posti       16 KB     18,3 s        12              120
+        64 posti        4 KB      0,5 s         0                0
+        64 posti       16 KB      0,6 s         0                0
+
+I tre contatori della scheda: **zero in tutte e quattro le righe**. L'anello da
+32 descrittori non ha mai traboccato, perche' `svuota_rx` lo svuota TUTTO a
+ogni giro — il collo di bottiglia stava nel passaggio dopo.
+
+! DODICI PERDITE NE COSTANO CENTOTRENTADUE. Un frame buttato nella coda fa
+  arrivare fuori sequenza tutti quelli che erano gia' in volo dietro di lui: 12
+  perduti + 120 scartati = 132 pacchetti da rifare, ognuno pagato col timeout
+  del mittente. E' il moltiplicatore che rende otto posti un numero grave.
+
+### LA PRIMA MISURA NON SI RIPRODUCE, E RESTA SCRITTO
+
+Stamattina la tabella diceva 8 s a 4 KB e 25 s a 16. Oggi, con l'orologio
+**dentro** `scarica`, sono 0,6 e 18,3. La forma e' la stessa — 4 KB bene, 16 KB
+male — ma i valori assoluti no, e non so dire perche': la prima volta il tempo
+non l'ha preso il programma.
+
+! E' ESATTAMENTE IL MOTIVO PER CUI ADESSO LO STAMPA. Una misura che dipende da
+  chi guarda l'orologio non e' rifacibile, e una misura non rifacibile e'
+  un'opinione con un numero attaccato. Le due tabelle si tengono tutte e due:
+  la prima ha fatto la domanda giusta, la seconda ha risposto.
+
+### COSA CAMBIA
+
+`CODA_N` da 8 a 64 (97 KB in un processo ring 3). **`TCP_BUF` resta 4096**, e
+adesso per un motivo misurato: con la coda a posto la finestra larga non fa
+guadagnare niente (0,5 contro 0,6 s) e costerebbe 768 KB invece di 192 nel
+driver ip — tre quarti di megabyte per niente.
+
+! LA CODA A 64 OGGI NON SERVE, e va detto lo stesso: con 4 KB di finestra non
+  si perdeva niente nemmeno con otto posti. Serve il giorno che qualcuno alza
+  TCP_BUF o apre due connessioni veloci insieme — e il criterio per
+  dimensionarla (almeno una finestra intera di pacchetti, con margine) sta
+  accanto alla costante, cosi' chi la cambia sa contro cosa la sta misurando.
+
+---
+
+## 8 settembre 2026 — LA CATENA SI SPEZZA IN QUATTRO (@DIF-TLS, la cura)
+
+La misura di stamattina diceva: il blocco che tiene ferma la finestra e' la
+verifica della **catena**, 850 ms su quattro anelli ECDSA — e che spezzarla non
+richiedeva di entrare in excurva o in exbig, come la voce sosteneva da mesi,
+perche' `excert_catena_valida` gli anelli li scorreva **gia'** in un ciclo.
+
+Fatto. E il numero, rimisurato, e' quello che il conto per differenza prevedeva.
+
+### UN PARAMETRO, NON UNA RISCRITTURA
+
+`excert.h` guadagna un tipo e la funzione due argomenti:
+
+    typedef int (*ExCertPasso)(void *dato, unsigned int anello,
+                               unsigned int quanti);   /* 0 = smetti */
+
+Il gancio si chiama **prima** di ogni firma, e una volta di piu' prima di
+cercare la radice nel magazzino — che non e' un anello della catena ricevuta ma
+costa come gli altri, ed e' l'ultimo pezzo di attesa.
+
+! CHIAMATO PRIMA, NON DOPO. Dopo vorrebbe dire annunciare a cose fatte: la
+  barra di stato si aggiornerebbe quando il lavoro e' finito, e chi misura
+  leggerebbe un tempo spostato di un anello.
+
+Da li' sale: `extls_client.c` passa il proprio `passo_anello`, e chi ospita
+riceve un `EXTLS_P_ANELLO` — il settimo passo, **l'unico che si ripete**.
+Aggiunto in coda ai sei di prima, perche' quei numeri sono gia' in giro e
+infilarlo in mezzo avrebbe spostato `EXTLS_P_FATTO` sotto ai piedi di chi li
+confronta.
+
+! E ANNULLATO NON E' RIFIUTATO. Chi chiude la finestra a meta' catena riceve
+  `EXCERT_ANNULLATO` (-11), che extls traduce in `EXTLS_ERR_RETE`. Con
+  `EXCERT_FIRMA_SBAGLIATA` avremmo scritto «la firma non torna» di un
+  certificato che nessuno ha finito di guardare, e mandato a cercare una CA che
+  non manca.
+
+### IL NUMERO, DOPO
+
+Stessa catena, stesso comando (`scarica -tempi https://example.com/`), due
+strette:
+
+    prima              un blocco solo               830-870 ms
+    dopo   anello 0    la foglia, chiave P-256      130-140 ms
+           anello 1    un intermedio, P-384         330-350 ms
+           anello 2    un intermedio, P-384         340-350 ms
+           la radice   cercata nel magazzino, RSA        30 ms
+
+Il pezzo piu' lungo passa da 850 a **350 ms**, ed e' una firma P-384. La stima
+per differenza di stamattina diceva 330: era giusta, e adesso e' misurata.
+Sulla catena RSA di www.gnu.org il piu' lungo scende da 170 a 70 ms.
+
+! LA SOMMA TORNA, ed e' il controllo che vale la pena fare: 10+140+350+350+30
+  fa 880, cioe' gli 830-870 di prima. Se il totale fosse calato, il gancio
+  starebbe misurando qualcos'altro — o avremmo tolto per sbaglio una verifica.
+
+### CHI CI GUADAGNA E' IL BROWSER, E LO USAVA GIA'
+
+Stamattina avevo scritto che il gancio non lo registrava nessuno. **Falso**: lo
+registra `exwin/bin/browser/browser.c` (`rete_a_che_punto`), che a ogni passo
+scrive la frase nella riga di stato e smista otto messaggi — cosi' la finestra
+si ridisegna e Esc arriva. Quello che nessuno aveva fatto era attaccargli un
+orologio invece di una frase.
+
+Il guadagno e' quindi diretto e non teorico: durante la verifica della catena
+il browser adesso si ridisegna **quattro volte invece di una**, e un Esc premuto
+li' dentro viene raccolto entro 350 ms invece di 850.
+
+! IL COMMENTO DEL BROWSER DICEVA ANCORA LA COSA VECCHIA — «spezzarli vorrebbe
+  dire un gancio dentro excurva e exbig» — e adesso racconta il prima e il
+  dopo. Tre file dicevano la stessa frase sbagliata; cercarla per intero e non
+  a memoria e' come si trovano tutti e tre.
+
+### LE PROVE
+
+`make prova-excert` ne ha quattro in piu', e provano il **gancio**, non la
+catena: che venga chiamato il numero giusto di volte (`-conta`), che
+l'annullamento al primo anello e sull'ultimo dia -11, e che senza annullare la
+catena resti buona. Le quattordici passano.
+
+! UN GANCIO CHIAMATO ZERO VOLTE NON SI VEDE. La catena resterebbe valida, il
+  verdetto giusto, le prove verdi — e chi aspetta continuerebbe ad aspettare
+  come prima. Per questo si conta, invece di guardare solo l'esito.
+
+---
+
+## 8 settembre 2026 — IL PEZZO PIU' LUNGO NON ERA QUELLO (@DIF-TLS, misurato)
+
+@DIF-TLS diceva da settimane: dentro un x25519 o una verifica di firma la
+stretta TLS non respira, «col pezzo piu' lungo a 150 ms non lo merita». Quei
+150 ms **non li aveva cronometrati nessuno**: in `lib/extls/extls.h` la frase
+era seguita da «sta scritto qui perche' chi misurera' i tempi sappia che cosa
+sta guardando», che e' un modo onesto di dire che il numero era un'ipotesi.
+
+Misurato. Ed e' sbagliato di sei volte, ma soprattutto **guardava il pezzo
+sbagliato**.
+
+### LO STRUMENTO C'ERA GIA', E NESSUNO L'AVEVA USATO PER MISURARE
+
+`extls_passo_metti` / `exhttp_passo` chiamano un gancio fra un passo e l'altro
+della stretta — nati il 3 settembre per scrivere «verifico la catena» in una
+barra di stato, e il browser li registra davvero. Quello che nessuno aveva
+fatto era attaccargli un **orologio** invece di una frase.
+
+Ma **fra due chiamate del gancio c'e' esattamente il lavoro di quel passo**:
+lo stesso gancio, con un orologio attaccato, e' un cronometro. Da qui
+`scarica -tempi <url>` (venti righe in `bin/scarica/scarica.c`), che stampa i
+millisecondi per arrivare a ogni passo.
+
+! NON E' STATO SCRITTO NIENTE DI NUOVO PER MISURARE. Quando una misura richiede
+  di aggiungere sonde dentro il codice da misurare, le sonde cambiano quel che
+  si misura. Qui l'interfaccia esisteva ed e' esattamente quella che serviva:
+  valeva la pena cercarla prima di aprire extls.
+
+### I NUMERI (tre strette su example.com, due su www.gnu.org, dentro QEMU)
+
+    passo                                    example.com   www.gnu.org
+    preparo la chiave (DNS+connessione+CA)   380-520 ms    460-520 ms
+    il server ha risposto (rete)             130-160 ms    200-220 ms
+    concordo il segreto  = x25519                 30 ms         30 ms
+    leggo i certificati (rete)                10-20 ms         10 ms
+    controllo la firma  = CertificateVerify  130-150 ms      20-30 ms
+    verifico la catena (rete: il Finished)     0-10 ms       0-10 ms
+    connessione cifrata = LA CATENA          830-870 ms    150-170 ms
+
+example.com ha quattro anelli tutti ECDSA (P-256 il primo, P-384 i due di
+mezzo); www.gnu.org ne ha tre, tutti RSA. Le due colonne differiscono **solo
+per l'algoritmo di firma**: fra «verifico la catena» e «connessione cifrata»
+non c'e' nessuna lettura di rete — solo il conto della catena e due scritture.
+
+! LE RIGHE DI CONTO NON BALLANO, QUELLE DI RETE SI'. x25519 rende 30 ms in
+  tutte e cinque le strette; la catena di example.com 830-870 in tutte e tre. E' cosi' che si
+  vede, senza fidarsi, che quel numero e' il calcolo e non l'attesa.
+
+### QUINDI: IL BLOCCO PIU' LUNGO E' LA CATENA, ED E' QUASI UN SECONDO
+
+La voce guardava una firma sola. Il blocco che tiene ferma la finestra e' la
+verifica della **catena**, che di firme ne fa una per anello: 850 ms su una
+catena ECDSA. Un programma grafico li' non ridisegna, e 850 ms si vedono.
+
+! E LA CURA NON E' QUELLA CHE C'ERA SCRITTA. «Spezzare quei blocchi vorrebbe
+  dire portare un gancio dentro excurva e exbig»: per la catena non e' vero.
+  `excert_catena_valida` verifica gli anelli **in un ciclo**, e basta un
+  parametro in piu' a quella funzione per chiamare il gancio fra un anello e
+  l'altro — nessuna riga di excurva, nessuna di exbig. Il pezzo piu' lungo
+  passerebbe da 850 ms a una firma sola.
+
+Quanto valga una firma P-384 si sa **per differenza** fra le due catene —
+circa 330 ms — e per differenza vuol dire per conto, non per misura: e' scritto
+come tale nella voce, e si confermera' quando il gancio ci sara'.
+
+### DUE COSE FALSE TOLTE PER STRADA
+
+**`crypttest` misurava ed25519 e lo attribuiva alla stretta TLS.** Ed25519 e' la
+firma di SSH (le chiavi d'ospite di sshd): TLS 1.3 qui verifica RSA-PSS o ECDSA
+su P-256 e P-384, e `lib/excert` un Ed25519 dentro un certificato non lo
+gestisce nemmeno. Il numero (115 ms) resta perche' misura SSH; la riga che
+diceva «la stretta ne fa una per ogni certificato della catena» era falsa e se
+n'e' andata. Di quella misura sopravvive la meta' giusta: x25519, 30 ms — e la
+conferma e' che la stretta vera, cronometrata dall'esterno con tutt'altro
+strumento, da' **lo stesso numero**.
+
+**L'aiuto di `scarica` diceva «https non ancora: manca il TLS».** Il TLS c'e'
+da agosto e sta in `/exwin/lib/exhttp.so`, che e' proprio la libreria che
+`scarica` carica quando le serve — cioe' `scarica https://...` funzionava, e
+l'unico modo di scoprirlo era provarlo invece di leggere l'aiuto. Chi legge
+l'aiuto di un comando gli crede piu' che al codice.
+
+### DOVE STANNO I NUMERI, ADESSO
+
+`lib/extls/extls.h` (la tabella, accanto ai passi), `lib/exhttp/exhttp.h` e
+`lib/exhttp/exhttp.c` (dove stava il 150 ms), `bin/crypttest/crypttest.c` (che
+adesso dice quale delle due misure riguarda l'https) e `in_lavorazione.txt`,
+dove @DIF-TLS non e' piu' una rinuncia motivata da un numero inventato ma un
+lavoro con la misura davanti e i passi in ordine.
+
+---
+
+## 8 settembre 2026 — @DIF-PANIC SI CHIUDE: nessuno scrive oltre il proprio blocco
+
+Il panic era stato corretto il 7 settembre (kfree non esce piu' dalla propria
+regione dello heap). Restava aperta una domanda: **l'intestazione rotta che
+kfree trovava l'aveva scritta quella lettura fuori regione, o qualcun altro che
+scrive oltre il proprio blocco?**
+
+Oggi la domanda ha due risposte concordi, e nessuna delle due dice «qualcun
+altro».
+
+### PRIMA PROVA: QUARANTADUE AVVII COL CANARINO ARMATO
+
+Il canarino — la parola nota in coda a ogni blocco usato, piu' l'indirizzo di
+chi l'ha allocato — e' stato acceso stamattina. Poi, nelle condizioni esatte in
+cui il panic si vedeva («da CD, con la rete», una volta su quattordici):
+
+    30 avvii   0 canarini rotti, 0 intestazioni rotte, 0 panic, 0 avvii
+               che non arrivano in fondo
+    + 12 avvii della prima serie, sempre puliti
+
+! **QUARANTADUE NON SONO UNA DIMOSTRAZIONE, E VANNO LETTI PER QUEL CHE SONO.**
+  Se la causa esistesse con la stessa frequenza di prima (una su quattordici),
+  la probabilita' di non vederla mai in quarantadue avvii sarebbe sotto il
+  cinque per cento. E il canarino e' PIU' SENSIBILE del sintomo originale:
+  prende chi sconfina anche quando nessuno passerebbe di li' a scoprirlo,
+  quindi la frequenza vera sarebbe piu' alta di quella misurata allora.
+
+### SECONDA PROVA: I VENTIDUE POSTI CHE ALLOCANO, GUARDATI UNO PER UNO
+
+Fuori da kmalloc.c, il kernel chiama `kmalloc` in ventidue punti. Li ho letti
+tutti con una domanda sola: **c'e' qualcuno che chiede N byte e ne scrive piu'
+di N?**
+
+    caricatore dei driver (drvmgr.c)   nove allocazioni, tutte con la stessa
+                                       espressione fra kmalloc e vfs_read; le
+                                       tabelle di stringhe chiedono size+1 e
+                                       scrivono lo zero a [size]
+    caricatore dinamico (dynlink.c)    idem; symtab copia sym_count elementi
+                                       dove sym_count = sym_size/16, quindi la
+                                       divisione intera protegge da se'
+    elenco pagine di una libreria      cresce raddoppiando finche' ci sta, poi
+                                       copia n_pagine e scrive le nuove dopo
+    mappa dello swap                   (slot+7)/8 byte, e OGNI accesso ai bit
+                                       e' protetto da `slot >= g_testa.slot`
+    shm, elf.c, SpawnBuf               allocazione e scrittura della stessa
+                                       misura, senza terminatori aggiunti
+
+Nessuno scrive oltre quel che chiede.
+
+### QUINDI
+
+La causa era **una sola**, ed e' quella corretta il 7 settembre: kfree usciva
+dalla propria regione e trovava per caso un 0xDEADBEEF in memoria che heap non
+era. La «misura sbagliata» che poi si leggeva non l'aveva scritta nessuno: era
+gia' li', in memoria di qualcun altro, e la leggevamo noi.
+
+`@DIF-PANIC` esce da `in_lavorazione.txt`. Quel che resta non e' un lavoro da
+fare, e' una sentinella accesa:
+
+    a ogni kfree            il canarino del blocco che si libera
+    ogni cinque secondi     kmalloc_verifica() da init, su tutte le regioni
+    a ogni avvio            la stessa passata, dentro kmalloc_stats
+
+! **E ACCANTO AL MESSAGGIO C'E' SCRITTO COSA FARE**, perche' il giorno che
+  suona sara' fra mesi: risolvere `chi` con `build/kernel.elf` — e risolverlo
+  CONTRO IL BINARIO CHE GIRAVA, che e' la trappola in cui si era gia' caduti
+  il 7 settembre — guardare `chiesti`, e leggere che valore c'e' al posto del
+  canarino, perche' spesso dice da dove viene.
+
+! **UNA COSA ONESTA DA DIRE SULLA MISURA**: il canarino stesso aggiunge quattro
+  byte a ogni allocazione, quindi cambia la disposizione dello heap. Un difetto
+  che dipendesse ESATTAMENTE da quella disposizione potrebbe essersi
+  nascosto invece di essere assente. E' improbabile — chi sconfina, sconfina
+  comunque — ma va scritto, perche' e' la sola crepa in questo ragionamento.
+
+## 8 settembre 2026 — LA FINESTRA NON C'ENTRA, E ADESSO C'E' IL NUMERO (@DIF-TCPBUF)
+
+`@DIF-TCPBUF` diceva, da mesi: «la finestra di ricezione e' quattro kilobyte;
+un buffer piu' grande vorrebbe dire meno giri e piu' RAM, e **la scelta non e'
+stata fatta perche' nessuno l'ha misurata**». Oggi si e' misurata, e la
+risposta e' l'opposto di quel che ci si aspettava.
+
+### LA MISURA
+
+Un file da 759 KB preso da un server locale con `scarica -i` (che scarica tutto
+e stampa solo l'esito, invece di riversare il font sulla seriale — ci sono
+cascato la prima volta):
+
+    finestra   tempo   pacchetti ricevuti   riaperture   finestra a zero
+     4 KB       8 s          532                0              0
+    16 KB      25 s          671                0              0
+
+**Tre volte piu' lento con un buffer quattro volte piu' grande.**
+
+I pacchetti che servono sono 532 (759720 byte / 1428). A 16 KB ne arrivano
+**139 in piu'**: sono ritrasmissioni. La finestra larga fa mandare raffiche
+piu' lunghe di quante questa macchina riesca a raccoglierne, e ogni pezzo perso
+si ripaga col timeout del mittente — 139 timeout sono, a occhio, i diciassette
+secondi di differenza.
+
+! **E LA FINESTRA DA 4 KB NON SI CHIUDE MAI**: zero riaperture, zero finestre a
+  zero, in tutto lo scaricamento. Il caso che aveva fatto nascere l'ACK di
+  riapertura — chi legge a scatti e resta indietro — con questo cliente e
+  questa rete **non si presenta**. Il buffer piccolo, oggi, non costa niente.
+
+### PER MISURARE SERVIVANO I CONTATORI, E NON C'ERANO
+
+`IpStato` aveva undici contatori e nessuno di TCP. Adesso ne ha tre, e sono
+esattamente quelli che rispondono alla domanda della voce:
+
+    TCP letti        i byte consegnati a chi legge: il denominatore
+    TCP riaperture   gli ACK vuoti mandati per dire «adesso c'e' posto»,
+                     cioe' quante volte chi legge e' rimasto indietro
+    TCP finestra a 0 quante volte il mittente si e' dovuto fermare del tutto
+
+`ipcfg` li stampa. Senza di loro la domanda «la finestra basta?» non aveva
+risposta, ed e' il motivo per cui per mesi non l'ha avuta.
+
+### UNA STRADA IMBOCCATA E CHIUSA, CHE VALE QUANTO LA MISURA
+
+Il primo sospetto era il percorso di lettura: ogni lettura ricopiava a mano —
+un byte per volta — tutto quello che restava nel buffer, cioe' un costo
+proporzionale a quanto c'era dentro. Sembrava LA spiegazione: piu' grande il
+buffer, piu' costa.
+
+L'ho tolto (un indice di lettura al posto della ricopiatura, e una `memmove`
+ogni tanto invece di un ciclo a ogni lettura) e **il tempo non e' cambiato di
+un secondo**: 8 s a 4 KB prima e dopo, 26 → 25 s a 16 KB.
+
+! **UNA SPIEGAZIONE PLAUSIBILE NON E' UNA CAUSA**, e la differenza si vede solo
+  misurando dopo aver corretto. Se mi fossi fermato al «l'ho sistemato, adesso
+  e' meglio» avrei scritto nel diario una cosa falsa, e la prossima persona
+  avrebbe cercato altrove.
+
+L'indice resta — e' meno lavoro a parita' di tutto, e il giorno che la finestra
+si potra' alzare quel ciclo tornerebbe a farsi sentire — ma il suo commento
+adesso dice a chiare lettere che **non era la causa**.
+
+### COSA RESTA DA FARE, E DOVE GUARDARE
+
+La domanda non e' piu' «la finestra basta?» ma **«perche' si perdono pacchetti
+in raffica?»**. I candidati sono l'anello di ricezione della scheda (32
+descrittori sull'e1000) e il tempo che passa fra una raccolta e l'altra. Si
+guarda di li', non da TCP.
+
+E TCP_BUF resta 4096, con la tabella della misura scritta sopra la costante:
+alzarlo prima di aver sistemato quello vuol dire soltanto peggiorare, e adesso
+c'e' il numero che lo dimostra.
+
 ## 8 settembre 2026 — UNA SONDA CHE MENTE (@DIF-INIT: il difetto non c'era)
 
 `@DIF-INIT` era stato aperto poche ore prima, con una misura precisa e una

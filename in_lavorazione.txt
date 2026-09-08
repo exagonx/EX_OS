@@ -105,7 +105,6 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
  --  @CHIUSA          una strada chiusa, scritta perche' non si riapra
  --  @PROVE-STRUMENTI come si prova un compilatore (o make, o nasm) dentro EX-OS
 
-  1  @DIF-PANIC       chi scrive oltre il proprio blocco dello heap del kernel
   1  @USB             `make usb` c'e': manca la prova su una chiavetta VERA
   1  @VISTA           l'impaginato non e' una libreria: due callback, non un trasloco
   1  @SUONO-REG       la registrazione non c'e': nessun driver accende AUDIO_CAP_REGISTRA
@@ -119,8 +118,8 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @NAV-BORDER      `border` nel CSS: oggi i bordi si fanno solo dall'attributo
   1  @NAV-GIF         le GIF animate mostrano il primo fotogramma
   1  @NAVMETA         sette meta' che mancano a cose gia' fatte (una sezione sola)
-  1  @DIF-TLS         dentro un singolo passo della stretta TLS non si respira
-  1  @DIF-TCPBUF      la finestra di ricezione TCP e' quattro kilobyte
+  1  @DIF-TLS         resta una firma P-384 da 350 ms: rinuncia, non lavoro
+  1  @DIF-TCPBUF      non era la finestra: era la coda del driver, otto posti
   1  @FILI-MAX        otto fili per processo: e' un numero, non un lavoro
   1  @EXIDE-TETTI     i tetti di exide, da sapere prima di sbatterci
   1  @EXIDE-LIBRERIE  il clic sulle righe di «Librerie» mai riprovato pixel per pixel
@@ -391,122 +390,137 @@ QUEL CHE C'E' GIA' PRONTO DA PROVARE, sul CD:
 @DIFETTI DIFETTI APERTI
 =============================================================================
 
-! @DIF-PANIC IL PANIC NON C'E' PIU', MA CHI SCRIVEVA LA MISURA SBAGLIATA
-  FORSE SI'. Riscritto il 7 settembre 2026; quel che segue e' com'era e cosa
-  se n'e' capito.
+! @DIF-TLS LA CATENA TENEVA FERMA LA FINESTRA QUASI UN SECONDO: MISURATA E SPEZZATA.
+  La stretta di mano legge a pezzi come tutto il resto (diario: 3 settembre
+  notte, «LA CASSETTA POSTALE HA UN PADRONE») e chiama un gancio di
+  avanzamento fra un passo e l'altro, mai dentro un conto. La voce diceva:
+  «col pezzo piu' lungo a 150 ms non lo merita». I 150 ms non li aveva
+  cronometrati nessuno.
 
-  COM'ERA. Una volta su quattordici, avviando da CD con la rete:
+  L'8 settembre 2026 si sono cronometrati, con lo stesso gancio: `scarica
+  -tempi <url>` stampa i millisecondi fra un passo e l'altro, e fra due passi
+  non c'e' che il lavoro di quel passo. Dentro QEMU, tre strette su
+  example.com e due su www.gnu.org:
 
-      Page Fault non gestito in ring0 a 0x0421308c (EIP=0x00109610)
+      passo                                    example.com   www.gnu.org
+      preparo la chiave (DNS+connessione+CA)   380-520 ms    460-520 ms
+      il server ha risposto (rete)             130-160 ms    200-220 ms
+      concordo il segreto  = x25519                 30 ms         30 ms
+      leggo i certificati (rete)                10-20 ms         10 ms
+      controllo la firma  = CertificateVerify  130-150 ms      20-30 ms
+      verifico la catena (rete: il Finished)     0-10 ms       0-10 ms
+      connessione cifrata = LA CATENA          830-870 ms    150-170 ms
 
-  subito dopo «pci: servizio 'pci' attivo», cioe' mentre /boot/avvio.sh accende
-  la rete, e prima di qualunque cosa grafica.
+  example.com ha quattro anelli tutti ECDSA (P-256 il primo, P-384 i due di
+  mezzo); www.gnu.org ne ha tre, tutti RSA. Le due colonne differiscono solo
+  per l'algoritmo: fra «verifico la catena» e «connessione cifrata» non c'e'
+  nessuna lettura di rete, solo il conto e due scritture.
 
-  L'EIP SI RISOLVE, E DICE LA RIGA. build/kernel.elf e' tracciato, quindi il
-  kernel di quel giorno c'e' ancora. In `daeec1f`:
+  ! LE RIGHE DI CONTO NON BALLANO, quelle di rete si': x25519 rende 30 ms in
+    tutte e cinque le strette, la catena di example.com 830-870 in tutte e
+    tre. E' il modo in cui si vede che il numero e' il conto e non la rete.
 
-      109610:  cmpl $0xdeadbeef,0x4(%ebx,%eax,1)    ebx = ptr, eax = block->size
+  ! IL BERSAGLIO ERA SBAGLIATO, PRIMA ANCORA DEL NUMERO. La voce guardava una
+    firma sola; il blocco che teneva ferma la finestra era LA CATENA, che di
+    firme ne fa una per anello. 850 ms non e' «non lo merita»: e' quasi un
+    secondo in cui un programma grafico non ridisegna.
 
-  cioe' `block + intestazione + block->size` piu' quattro: e' esattamente
-  `block_valid(next_phys)`, la coalescenza in avanti di kfree.
+  E LA CATENA E' STATA SPEZZATA LO STESSO GIORNO. La cura scritta nella voce
+  («un gancio dentro excurva e exbig») non serviva: excert_catena_valida
+  scorreva gli anelli in un ciclo, e le e' bastato un parametro —
+  ExCertPasso, in excert.h — per chiamare il gancio FRA un anello e l'altro.
+  Da li' sale a extls (EXTLS_P_ANELLO, il solo passo che si ripete) e arriva
+  al browser, che lo traduceva gia' in una riga di stato e smistava i
+  messaggi. Rimisurato sulla stessa catena:
 
-  ! E SI RISOLVE CONTRO IL BINARIO CHE GIRAVA, NON CONTRO QUELLO DEL GIORNO. In
-    `904b170` — stesso giorno, tre commit dopo — 0x109610 e' dentro `kmalloc`,
-    su un `mov 0xc(%esp),%eax`: una risposta plausibile e sbagliata, che manda
-    a cercare uno stack di kernel invece di un blocco dell'heap.
+      prima              un blocco solo               830-870 ms
+      dopo   anello 0    la foglia, chiave P-256      130-140 ms
+             anello 1    un intermedio, P-384         330-350 ms
+             anello 2    un intermedio, P-384         340-350 ms
+             la radice   cercata nel magazzino, RSA        30 ms
 
-  QUEL CHE E' STATO CORRETTO. kfree usciva dalla propria regione dello heap —
-  lo heap del kernel e' fatto di tratti NON attaccati, perche' ogni
-  heap_expand chiede le pagine da capo al PMM. Adesso ogni regione sa dove
-  finisce e kfree non dereferenzia mai un indirizzo fuori. Il diario del 7
-  settembre 2026 racconta com'e' fatto; `tools/banco-kmalloc/prova.sh` lo
-  riproduce a comando, sull'ospite, in quattro casi — e il quarto e' questo
-  panic alla lettera.
+  Il piu' lungo passa da 850 a 350 ms, ed e' UNA firma P-384 — la stima per
+  differenza (330) era giusta. Sulla catena RSA di www.gnu.org il piu' lungo
+  scende da 170 a 70 ms. E il browser adesso ridisegna quattro volte invece di
+  una: Esc durante la verifica della catena arriva entro 350 ms, non 850.
 
-  QUEL CHE RESTA APERTO. Per arrivare a 0x0421308c serve una `block->size` di
-  circa 66 MB: l'intestazione era GIA' rotta prima che kfree la leggesse.
-  Adesso kfree non ci muore piu' sopra e invece LO DICE:
+  ! QUEL CHE RESTA E' UNA RINUNCIA, NON UN LAVORO. Sotto i 350 ms bisogna
+    entrare nel conto di UNA firma, cioe' portare un gancio dentro excurva ed
+    exbig — quello, si', e' un altro lavoro. Un terzo di secondo di finestra
+    ferma si vede ma non sembra una macchina morta, e adesso la rinuncia si
+    appoggia a un numero misurato invece che a uno inventato.
 
-      KFREE: 0x... dice di essere lungo N byte, ma la sua regione
-             0x...-0x... finisce prima: intestazione rotta
+  ! E L'ANNULLAMENTO HA UN CODICE SUO. Chi chiude la finestra a meta' catena
+    riceve EXCERT_ANNULLATO (-11), non EXCERT_FIRMA_SBAGLIATA: confonderli
+    vorrebbe dire mandare a cercare una CA che non manca. Le prove della
+    catena sull'host (`make prova-excert`) contano le chiamate del gancio e
+    provano l'annullamento al primo anello e sull'ultimo — un gancio chiamato
+    zero volte non si vedrebbe, perche' la catena resterebbe valida.
 
-  e kmalloc_stats stampa «! intestazioni ROTTE: N». Chi scrive quella misura
-  puo' essere la lettura fuori regione di prima (che trovando per caso
-  0xDEADBEEF fondeva un blocco con memoria che heap non e'), oppure qualcun
-  altro che scrive oltre il proprio blocco. NON E' DECISO.
+! @DIF-TCPBUF NON ERA LA FINESTRA: ERA LA CODA DEL DRIVER, OTTO POSTI.
+  Per mesi la voce ha detto «la finestra di ricezione e' quattro kilobyte, e
+  nessuno ha misurato se convenga alzarla». L'8 settembre 2026 si e' misurato
+  due volte, e la seconda misura ha corretto la prima.
 
-  ! E VENTI AVVII PULITI NON DECIDONO NIENTE: anche diciotto avvii SENZA la
-    correzione erano stati puliti. La misura non distingue.
+  LA PRIMA aveva trovato che a 16 KB lo scaricamento era TRE VOLTE PIU' LENTO
+  che a 4, e aveva lasciato la domanda giusta: PERCHE' SI PERDONO PACCHETTI IN
+  RAFFICA? I due candidati scritti erano l'anello di ricezione della scheda (32
+  descrittori sull'e1000) e il tempo fra una raccolta e l'altra.
 
-  ! DALL'8 SETTEMBRE 2026 LA DOMANDA HA UN MODO DI RISPONDERSI, ed e' l'unica
-    cosa che mancava: ogni blocco usato porta in coda un CANARINO — la parola
-    0xC0DA5EED subito dopo i byte CHIESTI — e l'indirizzo di ritorno di CHI
-    l'ha allocato. Chi sconfina cancella la parola, e allora si sa che e'
-    successo, su quale blocco, e chi era il padrone:
+  ! L'ANELLO DELLA SCHEDA E' INNOCENTE, e adesso c'e' il modo di dirlo. Il
+    driver e1000 leggeva l'ICR e lo BUTTAVA VIA: il bit RXO — «e' arrivata roba
+    e non avevo dove metterla» — non lo guardava nessuno, e il contatore
+    `overflow` che ne2k e pcnet riempiono da sempre restava a zero per
+    costruzione. Adesso l'e1000 conta RXO e somma i due contatori della scheda
+    (MPC, i frame persi per mancanza di posto, e RNBC, quelli arrivati senza
+    descrittori liberi). In tutte le prove: ZERO, ZERO, ZERO.
 
-        KHEAP: alla liberazione — il blocco 0x... (chiesti 1024 byte, blocco
-               1032) e' stato scritto OLTRE LA FINE: al posto del canarino
-               c'e' 0x... L'aveva allocato chi sta a 0x... (risolvilo con
-               build/kernel.elf).
+  ! SI PERDEVANO NELLA CODA DEL DRIVER, che stava fra la scheda e lo stack IP
+    e teneva OTTO frame. Quando e' piena si butta il piu' vecchio e si conta in
+    `persi_coda` — un contatore che c'era gia' e che nessuno aveva guardato
+    sotto carico.
 
-    Si guarda in due momenti: alla liberazione (kfree, sempre) e ogni cinque
-    secondi, dal reaper di init (kmalloc_verifica, che cammina TUTTE le regioni
-    e prende anche i blocchi che nessuno libera mai). Il quinto caso di
-    tools/banco-kmalloc/prova.sh lo dimostra sull'ospite in un secondo.
+  LA MISURA, con `scarica -i` che da oggi stampa quanto ci ha messo (759 KB da
+  un server locale, dentro QEMU):
 
-    ! CHE init GIRI DAVVERO E' STATO MISURATO, non dato per buono: 2200 giri in
-      2900 tick con la rete accesa, e i fili abbandonati raccolti (il conto dei
-      processi torna a dodici). Una guardia che non gira e' peggio di nessuna
-      guardia, perche' rassicura — quindi si controlla che giri.
+      coda del driver   finestra   tempo    persi in coda   fuori sequenza
+           8 posti        4 KB      0,6 s         0                0
+           8 posti       16 KB     18,3 s        12              120
+          64 posti        4 KB      0,5 s         0                0
+          64 posti       16 KB      0,6 s         0                0
 
-    ! E IL CANARINO PRENDE CHI SCONFINA DI SEGUITO — un memcpy, una stringa,
-      cioe' tutti i casi veri — non chi scrive un byte a caso in mezzo
-      all'arrotondamento. E' il limite, ed e' onesto dirlo.
+  ! DODICI PERDITE NE COSTANO CENTOTRENTADUE. Un frame buttato nella coda fa
+    arrivare fuori sequenza tutti quelli che erano gia' in volo dietro di lui,
+    e TCP non li tiene da parte: li scarta e riconferma dove era rimasto. 12
+    perduti + 120 scartati = 132 pacchetti da rifare, ognuno a colpi di RTO.
+    E' il moltiplicatore, e prima era invisibile: `tcp_fuori_seq` e `tcp_pieno`
+    sono nuovi, e sono i due scarti che TCP faceva senza contarli.
 
-    QUINDI IL COMPITO ADESSO E' ASPETTARE CHE SUONI, e non riprodurre: dodici
-    avvii nelle condizioni di allora (da CD, con la rete, 20 MB) non hanno
-    detto niente. Il giorno che il panic torna, il registro dira' chi e'
-    stato; se invece il canarino non suona mai, il colpevole era la lettura
-    fuori regione chiusa il 7 settembre, e questa voce si chiude.
+  ! E I NUMERI DELLA PRIMA MISURA NON SI RIPRODUCONO. Diceva 8 s a 4 KB e 25 a
+    16; oggi, con l'orologio DENTRO scarica invece che quello di chi guardava,
+    sono 0,6 e 18,3. La forma e' la stessa — 4 KB va bene, 16 KB va male — ma
+    i valori assoluti no, e non si sa perche': la prima volta il tempo non l'ha
+    preso il programma. E' il motivo per cui `scarica` adesso lo stampa.
 
-  ! IN UN AVVIO NORMALE LO HEAP RESTA UNA REGIONE SOLA — 64 KB, 34
-    allocazioni, 33 liberazioni dopo la rete e la shell (misurato mettendo per
-    un giro kmalloc_stats dentro il reaper di init). Con una regione sola le
-    letture fuori si riducono al solo bordo in coda, e i contatori dicevano 0
-    e 0. Se il panic ricompare, la riga delle statistiche dira' subito se lo
-    heap si era sparso o se l'intestazione l'ha rotta qualcun altro.
-  ! NON E' PROVATO CHE SIA LO STESSO DIFETTO DEI DRIVER QUI SOPRA: la firma e'
-  diversa (li' un fault utente a 0, qui un panic in ring0), la frequenza e' la
-  stessa e il momento anche. Non e' stato riprodotto in nove avvii di fila
-  fatti apposta.
+  COSA SI E' CAMBIATO: CODA_N da 8 a 64 in drivers/e1000/e1000.c (97 KB in un
+  processo ring 3), e i contatori che mancavano. TCP_BUF RESTA 4096, e adesso
+  per un motivo misurato invece che per prudenza: con la coda a posto la
+  finestra larga non fa guadagnare niente (0,5 contro 0,6 s) e costerebbe 768
+  KB invece di 192 nel driver ip. Si paga tre quarti di megabyte per niente.
 
-! E UNA CIRCOSTANZA IN PIU' PER TUTT'E DUE I DIFETTI QUI SOPRA, vista il 4
-  settembre 2026: DUE PROGRAMMI CHE USANO FILI VIVI INSIEME. Con la prima
-  versione di `filiprova sfonda` (che restava a girare per sempre, quindi la
-  shell tornava al prompt e faceva partire il comando dopo sopra il programma
-  ancora vivo) un task e' partito con ESP A ZERO e stack 0x0..0x0 — la firma
-  del primo difetto — ed e' finito in panic. UNA VOLTA SOLA; con la prova
-  rifatta come si deve non si e' piu' visto in sette giri di fila, quindi la
-  misura non distingue. Nello stesso giro e' stata chiusa una strada che ci
-  portava: proc_reap_zombie distruggeva la page directory di un gruppo UNA
-  VOLTA PER OGNI zombie che la condivideva (diario, 4 settembre, «LA PILA DI
-  UN FILO CRESCE SU RICHIESTA»), e le volte dopo la prima ripercorreva
-  tabelle gia' liberate restituendo al PMM pagine di qualcun altro.
+  ! LA CODA A 64 OGGI NON SERVE, e va detto: con la finestra a 4 KB non si
+    perdeva niente nemmeno con 8 posti. Serve perche' il giorno che qualcuno
+    alza TCP_BUF — o apre due connessioni veloci insieme — il pavimento non
+    ceda in silenzio. Il criterio per dimensionarla sta scritto accanto alla
+    costante: almeno una finestra intera di pacchetti, con margine.
 
-! @DIF-TLS DENTRO UN SINGOLO PASSO DELLA STRETTA TLS NON SI RESPIRA. La stretta di mano
-  adesso legge a pezzi come tutto il resto (diario: 3 settembre notte, «LA
-  CASSETTA POSTALE HA UN PADRONE»), e la finestra resta viva anche durante il
-  mezzo secondo che costa. Ma un x25519 o una verifica di firma sono un blocco
-  solo, e li' non si legge — si calcola: spezzarli vorrebbe dire un gancio
-  dentro excurva e exbig. Col pezzo piu' lungo a 150 ms non lo merita, ed e'
-  scritto in extls.h, in exhttp.h e accanto alla chiamata.
+  COME SI RIFA', SENZA RICOSTRUIRE IL RAGIONAMENTO:
 
-! @DIF-TCPBUF LA FINESTRA DI RICEZIONE DI TCP E' QUATTRO KILOBYTE (TCP_BUF in
-  drivers/ip/ip.c). Da quando chi legge lo fa a scatti — chiedendo «quanti byte
-  ci sono?» invece di prenotare — quel buffer si riempie fra uno scatto e
-  l'altro, e la ripartenza costa un ACK di riapertura per volta. Funziona ed e'
-  provato; un buffer piu' grande vorrebbe dire meno giri e piu' RAM per
-  connessione, e la scelta non e' stata fatta perche' nessuno l'ha misurata.
+      python3 -m http.server 8000        (in una cartella con un file grosso)
+      scarica -i http://10.0.2.2:8000/<file>    <- stampa il tempo
+      nettest -c                                <- persi in coda, persi dalla
+                                                   scheda, senza descrittori
+      ipcfg                                     <- fuori sequenza, buffer pieno
 
 
 =============================================================================

@@ -665,8 +665,14 @@ static int exhttp_tls(ExHttpTrasporto *t, const char *host, unsigned int porta)
      *
      * ! E DENTRO UN SINGOLO PASSO NON SI RESPIRA COMUNQUE. Un x25519 o una
      * verifica di firma sono un blocco solo: li' non si legge, si calcola.
-     * Spezzarli vorrebbe dire portare un gancio dentro excurva e exbig, e con
-     * 150 ms come pezzo piu' lungo non lo merita.
+     *
+     * ! QUI STAVA SCRITTO «con 150 ms come pezzo piu' lungo non lo merita», e
+     * i 150 ms non li aveva misurati nessuno. Misurati l'8 settembre 2026 con
+     * `scarica -tempi`: lo scambio di chiave costa 30 ms, ma LA VERIFICA DELLA
+     * CATENA costa 160 ms se gli anelli sono RSA e 850 ms se sono ECDSA.
+     * Quasi un secondo di finestra ferma non e' «non lo merita»: la tabella e
+     * la cura — un gancio fra un anello e l'altro, che non entra in excurva —
+     * stanno in extls.h e in @DIF-TLS.
      * ================================================================== */
     g_stato_tls.sotto.leggi  = stretta_leggi;
     g_stato_tls.sotto.scrivi = g_stato_tls.tcp.scrivi;

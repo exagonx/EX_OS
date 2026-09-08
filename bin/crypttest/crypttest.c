@@ -209,6 +209,75 @@ int main(void)
         }
     }
 
+    /* =====================================================================
+     * QUANTO COSTA UN BLOCCO CHE NON SI PUO' SPEZZARE
+     *
+     * ! NON E' UNA PROVA, E' UNA MISURA, e serve a una domanda precisa:
+     * @DIF-TLS dice che dentro un x25519 o una verifica di firma «non si
+     * respira» — la stretta TLS chiama il gancio di avanzamento FRA un passo e
+     * l'altro, mai dentro. La domanda e' quanto duri il piu' lungo di quei
+     * blocchi, perche' e' quello il tempo in cui un programma grafico resta
+     * fermo senza poter ridisegnare.
+     *
+     * Il numero che girava — 150 ms — non era mai stato misurato: sta scritto
+     * in extls.h «perche' chi misurera' i tempi sappia che cosa sta
+     * guardando».
+     *
+     * ! DI QUESTE DUE, SOLO LA PRIMA STA NELLA STRETTA TLS, e la distinzione
+     * costa cara a chi la salta. x25519 e' lo scambio di chiave di TLS 1.3 e
+     * il numero qui sotto e' quello vero: la stretta misurata l'8 settembre
+     * 2026 con `scarica -tempi` da' 30 ms fra «il server ha risposto» e
+     * «concordo il segreto», e in mezzo non c'e' altro che x25519.
+     *
+     * ED25519 NON C'ENTRA CON https: e' la firma di SSH (le chiavi d'ospite di
+     * sshd). TLS 1.3 qui verifica RSA-PSS oppure ECDSA su P-256 e P-384, e la
+     * catena dei certificati usa PKCS#1 v1.5 o le stesse due curve — Ed25519
+     * dentro un certificato lib/excert NON lo gestisce nemmeno. Il numero
+     * resta perche' misura SSH, non perche' misuri l'https.
+     *
+     * ! E IL BLOCCO PIU' LUNGO NON E' NESSUNO DEI DUE: e' la verifica della
+     * catena, 850 ms su una catena tutta ECDSA. Non si misura da qui, perche'
+     * qui non c'e' una catena vera: si misura con `scarica -tempi <url>`, e il
+     * risultato sta in @DIF-TLS.
+     *
+     * ! SI RIPETE PIU' VOLTE E SI DIVIDE, perche' l'orologio di EX-OS batte
+     * ogni 10 ms: una misura sola su un'operazione da 20 ms avrebbe due cifre
+     * significative e mezza.
+     * ===================================================================== */
+    {
+        unsigned char priv[32], altrui[32], segreto[32];
+        unsigned char seme[32], vpub[32], firma[64];
+        const char   *msg = "abc";
+        clock_t       t0;
+        int           i, giri;
+
+        printf("\nQuanto costa un blocco che non si puo' spezzare\n");
+
+        for (i = 0; i < 32; i++) { priv[i] = (unsigned char)(i + 1);
+                                   altrui[i] = (unsigned char)(0x40 + i); }
+        for (i = 0; i < 32; i++) seme[i] = (unsigned char)(0x80 + i);
+
+        giri = 20;
+        t0 = clock();
+        for (i = 0; i < giri; i++) x25519(segreto, priv, altrui);
+        printf("  x25519 (lo scambio di chiave)      %ld ms\n",
+               (long)((clock() - t0) * 1000 / CLOCKS_PER_SEC) / giri);
+
+        ed25519_pubblica(vpub, seme);
+        ed25519_firma(firma, (const unsigned char *)msg, 3, seme, vpub);
+
+        giri = 20;
+        t0 = clock();
+        for (i = 0; i < giri; i++)
+            ed25519_verifica(firma, (const unsigned char *)msg, 3, vpub);
+        printf("  ed25519, verifica di una firma     %ld ms  (e' di SSH)\n",
+               (long)((clock() - t0) * 1000 / CLOCKS_PER_SEC) / giri);
+
+        printf("  la stretta TLS fa due volte il primo (la chiave e il\n");
+        printf("  segreto); il secondo in TLS non c'entra. Il pezzo lungo\n");
+        printf("  e' la catena: scarica -tempi <url>, e vedi @DIF-TLS.\n");
+    }
+
     printf("\n%d prove superate, %d fallite\n", passati, falliti);
     return falliti == 0 ? 0 : 1;
 }

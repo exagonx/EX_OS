@@ -8,9 +8,17 @@
  *
  * Il banco di prova della catena, che gira SULL'HOST.
  *
- *     certprova <AAAAMMGGhhmmssZ|-> <radici...> -- <catena...>
+ *     certprova [-conta] [-annulla N] <AAAAMMGGhhmmssZ|-> <radici...> -- <catena...>
  *
  * e stampa il verdetto: 0 se la catena e' buona, altrimenti il motivo.
+ *
+ * ! I DUE INTERRUTTORI PROVANO IL GANCIO, non la catena. `-conta` stampa
+ * quante volte il gancio degli anelli e' stato chiamato invece del verdetto;
+ * `-annulla N` fa dire «smetti» alla N-esima chiamata, e allora il verdetto
+ * dev'essere EXCERT_ANNULLATO (-11) e non un rifiuto del certificato. Sono le
+ * due cose che possono rompersi in silenzio: un gancio chiamato zero volte
+ * (e nessuno se ne accorge, perche' la catena resta valida) e un annullamento
+ * scambiato per una firma sbagliata.
  *
  * ! SHA-256 LO METTE OPENSSL, e non e' una scorciatoia: dentro EX-OS lo mette
  * la libc, che ce l'ha gia'. Qui si sta provando la CATENA — chi firma chi,
@@ -20,6 +28,7 @@
  * ============================================================================= */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <openssl/sha.h>
 #include "excert.h"
@@ -44,6 +53,18 @@ void sha512(const void *dati, unsigned int len, unsigned char out[64]);
 void sha512(const void *dati, unsigned int len, unsigned char out[64])
 {
     SHA512((const unsigned char *)dati, len, out);
+}
+
+/* Il gancio degli anelli, e i due modi di guardarlo. */
+static int g_conta;
+static int g_annulla = 0;       /* 0 = non annullare mai */
+
+static int visto_anello(void *dato, unsigned int anello, unsigned int quanti)
+{
+    (void)dato;
+    g_conta++;
+    fprintf(stderr, "  gancio: anello %u di %u\n", anello, quanti);
+    return (g_annulla > 0 && g_conta == g_annulla) ? 0 : 1;
 }
 
 static unsigned char buf[64][65536];
@@ -71,15 +92,31 @@ int main(int argc, char **argv)
     static ExMagazzino m;
     static ExCert      catena[10];
     unsigned int       nc = 0;
-    int                i, dopo = 0;
+    int                i, dopo = 0, conta = 0, primo;
     const char        *adesso;
 
-    if (argc < 3) { printf("uso: certprova <data|-> <radici...> -- <catena...>\n");
-                    return 2; }
+    /* Gli interruttori stanno prima della data, e finiscono dove comincia
+     * qualcosa che non e' un interruttore. */
+    primo = 1;
+    while (primo < argc) {
+        if (strcmp(argv[primo], "-conta") == 0) { conta = 1; primo++; continue; }
+        if (strcmp(argv[primo], "-annulla") == 0 && primo + 1 < argc) {
+            g_annulla = atoi(argv[primo + 1]);
+            primo += 2;
+            continue;
+        }
+        break;
+    }
 
-    adesso = (argv[1][0] == '-') ? 0 : argv[1];
+    if (argc - primo < 2) {
+        printf("uso: certprova [-conta] [-annulla N] <data|-> "
+               "<radici...> -- <catena...>\n");
+        return 2;
+    }
 
-    for (i = 2; i < argc; i++) {
+    adesso = (argv[primo][0] == '-') ? 0 : argv[primo];
+
+    for (i = primo + 1; i < argc; i++) {
         unsigned char *p;
         unsigned int   n;
 
@@ -97,11 +134,12 @@ int main(int argc, char **argv)
 
     {
         unsigned int anello = 0;
-        int esito = excert_catena_valida(catena, nc, &m, adesso, &anello);
+        int esito = excert_catena_valida(catena, nc, &m, adesso, &anello,
+                                         visto_anello, 0);
 
         if (esito != EXCERT_OK)
             fprintf(stderr, "anello %u: %s\n", anello, excert_perche(esito));
-        printf("%d\n", esito);
+        printf("%d\n", conta ? g_conta : esito);
     }
     return 0;
 }
