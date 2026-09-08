@@ -21,6 +21,12 @@ void  kfree(void *ptr);
 void  kfree_aligned(void *ptr);
 void  kmalloc_stats(void);
 
+/* Cammina tutte le regioni e controlla firma, misura e canarino di ogni
+ * blocco. Rende quanti guai ha trovato (0 = heap sano) e li dice tutti, col
+ * nome di chi aveva allocato il blocco sconfinato. Vedi il commento sul
+ * canarino in kernel/mm/kmalloc.c. */
+uint32_t kmalloc_verifica(void);
+
 /* Alias comodi */
 #define kmalloc_page()  kmalloc_aligned(PAGE_SIZE, PAGE_SIZE)
 

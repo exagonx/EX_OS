@@ -83,16 +83,56 @@ static const uint32_t quantum_table[PRIO_MAX + 1] = {
  * ============================================================================= */
 #define SLOT_RISERVATI_ROOT   8
 
+/* =============================================================================
+ * pcb_alloc — LO SLOT SI PRENDE, NON SI GUARDA E BASTA
+ *
+ * ! QUI STAVA @DIF-DRIVER, il fault che dal 24 agosto 2026 tornava «tre volte
+ * su una cinquantina di avvii da CD». Questa funzione cercava uno slot
+ * PROC_UNUSED, lo azzerava e lo restituiva — SENZA MARCARLO e con gli
+ * interrupt aperti. Lo slot restava dichiarato libero per tutto il resto di
+ * proc_create(): l'assegnazione del PID, il nome, lo stato x87, e soprattutto
+ * l'allocazione dei 128 KB di stack kernel, che sono trentadue pagine da
+ * cercare, mappare, e un ricaricamento di CR3.
+ *
+ * Un tick del timer li' in mezzo, e un altro processo che chiama spawn,
+ * ricevevano LO STESSO PCB. Il secondo lo azzerava da capo — sopra il PID, il
+ * nome e il contesto iniziale gia' scritti dal primo — e i due proseguivano
+ * credendosi ognuno padrone di quella struttura. Ne usciva un task con il
+ * contesto azzerato DOPO proc_set_entry: EIP=0, ESP=0, e nel dump del fault lo
+ * heap e le VMA dell'ALTRO programma. E' esattamente la firma che
+ * in_lavorazione.txt registrava.
+ *
+ * Torna tutto: capitava dal CD (le letture lente allargano la finestra),
+ * capitava piu' facilmente con poca memoria (la ricerca di pagine contigue
+ * dura di piu'), capitava sul primo comando di /boot/avvio.sh (la shell lancia
+ * un driver mentre l'avvio sta ancora lavorando) e mai con loglevel=4 (ogni
+ * klog e' seriale, e cambia i tempi di tutto).
+ *
+ * ! LA CURA E' DI DUE RIGHE E NON SI PUO' SCRIVERE ALTROVE: si chiude la
+ * finestra con cli/sti e si SCRIVE LO STATO PRIMA DI RESTITUIRE lo slot.
+ * PROC_NASCENTE e' lo stato giusto — «creato, non ancora caricato» — ed e' gia'
+ * quello che proc_create assegnera' fra poco: nessuna via di risveglio lo
+ * conosce, e sched_pick_next non lo guarda nemmeno.
+ * ============================================================================= */
 static Process *pcb_alloc(void)
 {
     uint32_t i, liberi = 0;
     Process *self = g_current;
+    Process *preso = NULL;
+    uint32_t eflags;
+
+    /* Si preserva IF invece di riabilitarlo a forza: proc_create la chiamano
+     * anche l'avvio e sys_spawn, e uno dei due potrebbe un giorno arrivare
+     * gia' dentro una sezione critica. */
+    __asm__ volatile ("pushf; pop %0" : "=r"(eflags));
+    interrupts_disable();
 
     if (self != NULL && self->uid != 0) {
         for (i = 0; i < MAX_PROCESSES; i++)
             if (g_process_pool[i].state == PROC_UNUSED) liberi++;
 
         if (liberi <= SLOT_RISERVATI_ROOT) {
+            if (eflags & (1u << 9)) interrupts_enable();
             klog(LOG_WARN, "SCHED: PID %u (uid %u) rifiutato: restano %u slot, "
                  "riservati a root", self->pid, self->uid, liberi);
             return NULL;
@@ -105,10 +145,16 @@ static Process *pcb_alloc(void)
             uint8_t *p = (uint8_t *)&g_process_pool[i];
             uint32_t n = sizeof(Process);
             while (n--) *p++ = 0;
-            return &g_process_pool[i];
+
+            /* E LO PRENDE, prima di lasciare andare gli interrupt. */
+            g_process_pool[i].state = PROC_NASCENTE;
+            preso = &g_process_pool[i];
+            break;
         }
     }
-    return NULL;
+
+    if (eflags & (1u << 9)) interrupts_enable();
+    return preso;
 }
 
 /* Aggiunge un processo alla run queue del suo livello di priorità */
@@ -258,6 +304,8 @@ static void idle_task_fn(void)
 static void init_reaper_task(void)
 {
     uint32_t i;
+    uint32_t giri = 0;      /* per la guardia dello heap, ogni 50 giri */
+
     for (;;) {
         for (i = 0; i < MAX_PROCESSES; i++) {
             Process *p = &g_process_pool[i];
@@ -282,6 +330,27 @@ static void init_reaper_task(void)
                 proc_reap_zombie(p);
             }
         }
+        /* ! E OGNI CINQUE SECONDI SI GUARDA LO HEAP DEL KERNEL, che e' la rete
+         * che @DIF-PANIC chiedeva. kmalloc_verifica() cammina tutte le regioni
+         * e controlla firma, misura e canarino di ogni blocco: se qualcuno ha
+         * scritto oltre il proprio, si sa entro cinque secondi da quando l'ha
+         * fatto — e si sa CHI l'aveva allocato — invece di scoprirlo mesi dopo
+         * da un panic dentro kfree, dove del colpevole non c'e' piu' traccia.
+         *
+         * ! QUI E NON ALTROVE PERCHE' QUI SI PAGA MENO: init dorme il resto
+         * del tempo e gira a priorita' idle, quindi la passata non toglie
+         * niente a nessuno. Tace se va tutto bene (klog di DEBUG).
+         *
+         * ! E CHE init GIRI DAVVERO E' STATO MISURATO, non dato per buono:
+         * 2200 giri in 2900 tick con la rete accesa (8 settembre 2026). La
+         * prima misura diceva il contrario — «init si ferma al tick 26» — ed
+         * era sbagliata: la sonda stampava a LOG_INFO, che dopo l'avvio non si
+         * vede piu'. La riga spariva, non il processo. */
+        if (++giri >= 50) {
+            giri = 0;
+            kmalloc_verifica();
+        }
+
         sched_sleep(10);   /* cedi la CPU per ~100ms (10 tick a 100Hz) */
     }
 }

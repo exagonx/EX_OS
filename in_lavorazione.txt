@@ -105,7 +105,6 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
  --  @CHIUSA          una strada chiusa, scritta perche' non si riapra
  --  @PROVE-STRUMENTI come si prova un compilatore (o make, o nasm) dentro EX-OS
 
-  1  @DIF-DRIVER      da CD un driver ogni tanto muore appena avviato
   1  @DIF-PANIC       chi scrive oltre il proprio blocco dello heap del kernel
   1  @USB             `make usb` c'e': manca la prova su una chiavetta VERA
   1  @VISTA           l'impaginato non e' una libreria: due callback, non un trasloco
@@ -392,40 +391,6 @@ QUEL CHE C'E' GIA' PRONTO DA PROVARE, sul CD:
 @DIFETTI DIFETTI APERTI
 =============================================================================
 
-@DIF-DRIVER Da CD, un driver ogni tanto muore appena avviato (raro, non chiuso).
-    Sintomo: «page fault a 0x00000000, EIP=0x00000000», e nel dump lo STACK
-    del processo e' 0x0..0x0 mentre heap e VMA sono quelli di un altro
-    programma. Visto tre volte su una cinquantina di avvii da CD, sempre sul
-    primo comando di /boot/avvio.sh, piu' facilmente con poca memoria (16-20
-    MB) e mai con loglevel=4 — cioe' un problema di TEMPI, non di RAM.
-    Il 24 agosto 2026 e' stata chiusa la strada che lo spiega: fra
-    proc_create() e proc_set_ready() il processo stava in PROC_BLOCKED con un
-    PID gia' vivo, e chiunque svegliasse un bloccato PER PID (ipc_send, il
-    VFS, i pty) lo faceva partire con EIP=0 e senza stack. Adesso quello
-    stato e' PROC_NASCENTE e nessuna via di risveglio lo conosce; in piu'
-    sched_unblock_locked scrive un [WARN] se qualcuno ci prova.
-    NON E' PROVATO CHE FOSSE QUELLA: 18 avvii senza la correzione non l'hanno
-    riprodotto, quindi la misura non distingue.
-
-    ! IL 7 SETTEMBRE 2026 IL FAULT E' RICOMPARSO, E IL [WARN] NON C'ERA. Quindi
-      la strada del risveglio per PID non e' quella, e resta chiusa. Ma il
-      fault visto quel giorno NON era di un driver: era un FILO, e la sua causa
-      e' stata trovata e corretta (diario, 7 settembre: «UN FILO PARTIVA CON LA
-      PILA A ZERO»). proc_thread_crea passava a proc_create un `entry` diverso
-      da zero, e con quello proc_create mette il task in coda di esecuzione
-      SUBITO: il filo partiva con l'EIP giusto e ESP a zero, perche' nel
-      contesto iniziale ECX riceve `proc->user_stack_top`, che di un PCB appena
-      nato e' zero.
-
-    ! PERCIO' LA FIRMA «stack 0x0..0x0» ADESSO HA DUE PADRI POSSIBILI, e uno e'
-      chiuso. Per un DRIVER resta aperta, perche' sys_spawn il contratto di
-      proc_create lo rispettava gia' (passa entry=0, carica l'ELF, e solo
-      allora proc_set_ready). Chi riprende cerchi UN ALTRO posto dove un task
-      diventa eseguibile prima di essere pronto — e la strada per provarlo a
-      comando adesso c'e': una sched_yield() messa apposta nella finestra
-      sospetta trasforma la corsa in una certezza, che e' come e' stato
-      inchiodato il difetto dei fili.
-
 ! @DIF-PANIC IL PANIC NON C'E' PIU', MA CHI SCRIVEVA LA MISURA SBAGLIATA
   FORSE SI'. Riscritto il 7 settembre 2026; quel che segue e' com'era e cosa
   se n'e' capito.
@@ -458,9 +423,9 @@ QUEL CHE C'E' GIA' PRONTO DA PROVARE, sul CD:
   riproduce a comando, sull'ospite, in quattro casi — e il quarto e' questo
   panic alla lettera.
 
-  QUEL CHE RESTA APERTO, ED E' IL VERO COMPITO. Per arrivare a 0x0421308c
-  serve una `block->size` di circa 66 MB: l'intestazione era GIA' rotta prima
-  che kfree la leggesse. Adesso kfree non ci muore piu' sopra e invece LO DICE:
+  QUEL CHE RESTA APERTO. Per arrivare a 0x0421308c serve una `block->size` di
+  circa 66 MB: l'intestazione era GIA' rotta prima che kfree la leggesse.
+  Adesso kfree non ci muore piu' sopra e invece LO DICE:
 
       KFREE: 0x... dice di essere lungo N byte, ma la sua regione
              0x...-0x... finisce prima: intestazione rotta
@@ -472,6 +437,37 @@ QUEL CHE C'E' GIA' PRONTO DA PROVARE, sul CD:
 
   ! E VENTI AVVII PULITI NON DECIDONO NIENTE: anche diciotto avvii SENZA la
     correzione erano stati puliti. La misura non distingue.
+
+  ! DALL'8 SETTEMBRE 2026 LA DOMANDA HA UN MODO DI RISPONDERSI, ed e' l'unica
+    cosa che mancava: ogni blocco usato porta in coda un CANARINO — la parola
+    0xC0DA5EED subito dopo i byte CHIESTI — e l'indirizzo di ritorno di CHI
+    l'ha allocato. Chi sconfina cancella la parola, e allora si sa che e'
+    successo, su quale blocco, e chi era il padrone:
+
+        KHEAP: alla liberazione — il blocco 0x... (chiesti 1024 byte, blocco
+               1032) e' stato scritto OLTRE LA FINE: al posto del canarino
+               c'e' 0x... L'aveva allocato chi sta a 0x... (risolvilo con
+               build/kernel.elf).
+
+    Si guarda in due momenti: alla liberazione (kfree, sempre) e ogni cinque
+    secondi, dal reaper di init (kmalloc_verifica, che cammina TUTTE le regioni
+    e prende anche i blocchi che nessuno libera mai). Il quinto caso di
+    tools/banco-kmalloc/prova.sh lo dimostra sull'ospite in un secondo.
+
+    ! CHE init GIRI DAVVERO E' STATO MISURATO, non dato per buono: 2200 giri in
+      2900 tick con la rete accesa, e i fili abbandonati raccolti (il conto dei
+      processi torna a dodici). Una guardia che non gira e' peggio di nessuna
+      guardia, perche' rassicura — quindi si controlla che giri.
+
+    ! E IL CANARINO PRENDE CHI SCONFINA DI SEGUITO — un memcpy, una stringa,
+      cioe' tutti i casi veri — non chi scrive un byte a caso in mezzo
+      all'arrotondamento. E' il limite, ed e' onesto dirlo.
+
+    QUINDI IL COMPITO ADESSO E' ASPETTARE CHE SUONI, e non riprodurre: dodici
+    avvii nelle condizioni di allora (da CD, con la rete, 20 MB) non hanno
+    detto niente. Il giorno che il panic torna, il registro dira' chi e'
+    stato; se invece il canarino non suona mai, il colpevole era la lettura
+    fuori regione chiusa il 7 settembre, e questa voce si chiude.
 
   ! IN UN AVVIO NORMALE LO HEAP RESTA UNA REGIONE SOLA — 64 KB, 34
     allocazioni, 33 liberazioni dopo la rete e la shell (misurato mettendo per

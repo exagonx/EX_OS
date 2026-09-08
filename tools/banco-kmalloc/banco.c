@@ -149,13 +149,54 @@ int main(int argc, char **argv)
         const char *modo = getenv("BANCO_MODO");
 
         if (modo != NULL && modo[0] == 'r' && n > 2) {
-            uint32_t *intestazione = (uint32_t *)a[1] - 5;   /* size, magic, ... */
+            /* ! QUESTO -7 SEGUE L'INTESTAZIONE DI kmalloc.c, e va cambiato
+             * con lei: sono le parole {size, magic, flags, chiesti, chi,
+             * prev, next}, e `size` e' la prima. Era -5 finche' i campi erano
+             * cinque; l'8 settembre 2026 sono diventati sette (il canarino ha
+             * portato `chiesti` e `chi`) e il banco, senza questa riga
+             * aggiornata, rompeva il campo sbagliato e la prova non provava
+             * piu' niente — senza dirlo. */
+            uint32_t *intestazione = (uint32_t *)a[1] - 7;   /* size, magic, ... */
 
             printf("\nrompo l'intestazione di %p: misura %u -> %u\n",
                    a[1], intestazione[0], 0x4206000u);
             intestazione[0] = 0x4206000u;      /* ~66 MB in una regione da 256 KB */
             kfree(a[1]);
             printf("SOPRAVVISSUTO alla misura inventata\n");
+            kmalloc_stats();
+            return 0;
+        }
+    }
+
+    /* Con BANCO_MODO=oltre si prova IL CANARINO, cioe' la parte di @DIF-PANIC
+     * che il 7 settembre 2026 era rimasta aperta: l'intestazione rotta l'ha
+     * scritta la lettura fuori regione, o qualcun altro che scrive oltre il
+     * proprio blocco?
+     *
+     * Qui il colpevole c'e' e si conosce: si scrive UN BYTE oltre i byte
+     * chiesti — il caso piu' comune e piu' invisibile, perche' finisce dentro
+     * l'arrotondamento a otto e non tocca nessuna intestazione. Senza
+     * canarino non se ne accorge nessuno, mai. Con il canarino, kfree lo dice
+     * e dice anche chi aveva allocato quel blocco. */
+    {
+        const char *modo = getenv("BANCO_MODO");
+
+        if (modo != NULL && modo[0] == 'o' && n > 3) {
+            unsigned char *p = (unsigned char *)a[2];
+
+            printf("\nscrivo UN byte oltre i 1024 chiesti di %p\n", a[2]);
+            p[1024] = 0x41;          /* il byte di troppo */
+            kfree(a[2]);
+            printf("\nE il controllo completo trova anche quelli che nessuno libera:\n");
+            p = (unsigned char *)a[3];
+            /* ! DENTRO I QUATTRO BYTE DEL CANARINO, cioe' 1024..1027. Un byte
+             * solo scritto piu' in la' — a 1030, dentro l'arrotondamento —
+             * non lo vedrebbe nessuno, ed e' il limite onesto di questa
+             * difesa: prende chi sconfina di seguito (un memcpy, una stringa:
+             * cioe' tutti i casi veri), non chi tocca un byte a caso in
+             * mezzo al riempimento. */
+            p[1026] = 0x42;          /* mai liberato: lo trova solo la passata */
+            kmalloc_verifica();
             kmalloc_stats();
             return 0;
         }

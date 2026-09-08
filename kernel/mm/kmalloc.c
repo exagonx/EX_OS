@@ -17,6 +17,32 @@
  * Costanti
  * ============================================================================= */
 #define HEAP_MAGIC      0xDEADBEEF  /* Firma blocco valido */
+
+/* =============================================================================
+ * IL CANARINO — LA PAROLA CHE STA IN CODA A OGNI BLOCCO USATO
+ *
+ * ! @DIF-PANIC LASCIAVA UNA DOMANDA APERTA, ed e' questa: l'intestazione rotta
+ * che kfree trovava («dice di essere lungo N byte, ma la sua regione finisce
+ * prima») l'aveva scritta la lettura fuori regione — chiusa il 7 settembre
+ * 2026 — oppure QUALCUN ALTRO che scrive oltre il proprio blocco? La firma
+ * rotta non lo dice: quando la si trova, chi l'ha rotta e' gia' andato via.
+ *
+ * Un canarino risponde. Subito dopo i byte CHIESTI si scrive una parola nota;
+ * chi sconfina di uno la cancella, e alla liberazione — o al primo controllo —
+ * si sa TRE cose invece di una: che qualcuno ha scritto oltre, quale blocco, e
+ * SOPRATTUTTO chi l'aveva allocato (`chi` e' l'indirizzo di ritorno di chi ha
+ * chiamato kmalloc, e si risolve con build/kernel.elf).
+ *
+ * ! E STA DOPO I BYTE CHIESTI, NON ALLA FINE DEL BLOCCO. Un'allocazione viene
+ * arrotondata a otto byte, e chi scrive uno o due byte oltre cio' che ha
+ * chiesto finisce dentro quel riempimento: alla fine del blocco non lo
+ * vedrebbe nessuno, ed e' proprio il caso piu' comune.
+ *
+ * ! IL PREZZO E' QUATTRO BYTE PER ALLOCAZIONE, e vanno detti: su un avvio
+ * normale (34 blocchi vivi) sono 136 byte di heap. Il difetto che cercano si
+ * vede una volta su quattordici e spegne la macchina: e' comprato bene.
+ * ============================================================================= */
+#define HEAP_CANARINO   0xC0DA5EED
 #define HEAP_MIN_SIZE   16          /* Dimensione minima blocco payload */
 #define HEAP_ALIGN      8           /* Allineamento allocazioni (8 byte) */
 
@@ -30,6 +56,11 @@ typedef struct KHeapBlock {
     uint32_t            size;       /* Dimensione payload in byte (senza header) */
     uint32_t            magic;      /* 0xDEADBEEF */
     uint32_t            flags;      /* BLOCK_FREE o BLOCK_USED */
+    uint32_t            chiesti;    /* byte CHIESTI da chi ha allocato: dice
+                                       dove sta il canarino, e di quanto il
+                                       blocco e' piu' grande della richiesta */
+    uint32_t            chi;        /* indirizzo di ritorno di chi ha chiamato
+                                       kmalloc: e' il nome di chi sconfina */
     struct KHeapBlock  *prev;       /* Blocco precedente nella free list */
     struct KHeapBlock  *next;       /* Blocco successivo nella free list */
 } KHeapBlock;
@@ -111,6 +142,7 @@ static uint32_t    g_stop_indietro = 0;
  * (@DIF-PANIC), adesso sopravvive — ma il numero va guardato, perche' chi ha
  * scritto quella misura sta ancora scrivendo dove non deve. */
 static uint32_t    g_intestazioni_rotte = 0;
+static uint32_t    g_canarini_rotti     = 0;   /* chi ha scritto oltre la fine */
 
 /* =============================================================================
  * Funzioni helper
@@ -129,6 +161,41 @@ static inline int block_valid(KHeapBlock *b)
 }
 
 /* Blocco successivo in memoria (aritmetica puntatori) */
+/* Dove sta il canarino di un blocco usato: subito dopo i byte chiesti. */
+static inline uint32_t *canarino_di(KHeapBlock *b)
+{
+    return (uint32_t *)((uint8_t *)(b + 1) + b->chiesti);
+}
+
+/* Vero se il blocco ha spazio per il canarino. kmalloc lo garantisce sempre
+ * (chiede size+4), ma un blocco piu' vecchio del canarino, o un'intestazione
+ * gia' rotta, potrebbero non averlo: in quel caso non si legge niente. */
+static inline int canarino_c_e(KHeapBlock *b)
+{
+    return (b->flags == BLOCK_USED) && (b->chiesti + 4 <= b->size);
+}
+
+static inline void canarino_scrivi(KHeapBlock *b)
+{
+    if (canarino_c_e(b)) *canarino_di(b) = HEAP_CANARINO;
+}
+
+/* Rende 0 se il canarino e' intero (o non c'e'), 1 se qualcuno l'ha scritto
+ * sopra — e in quel caso LO DICE, col nome di chi aveva allocato. */
+static int canarino_rotto(KHeapBlock *b, const char *quando)
+{
+    if (!canarino_c_e(b))              return 0;
+    if (*canarino_di(b) == HEAP_CANARINO) return 0;
+
+    g_canarini_rotti++;
+    klog(LOG_ERROR, "KHEAP: %s — il blocco 0x%08x (chiesti %u byte, blocco "
+         "%u) e' stato scritto OLTRE LA FINE: al posto del canarino c'e' "
+         "0x%08x. L'aveva allocato chi sta a 0x%08x (risolvilo con "
+         "build/kernel.elf).", quando, (uint32_t)(b + 1), b->chiesti, b->size,
+         *canarino_di(b), b->chi);
+    return 1;
+}
+
 static inline KHeapBlock *block_next_phys(KHeapBlock *b)
 {
     return (KHeapBlock *)((uint8_t *)b + BLOCK_HEADER_SIZE + b->size);
@@ -331,8 +398,9 @@ void *kmalloc(size_t size)
 
     if (size == 0) return NULL;
 
-    /* Allinea la dimensione richiesta */
-    aligned_size = heap_align((uint32_t)size);
+    /* Allinea la dimensione richiesta, PIU' i quattro byte del canarino: e'
+     * l'unico prezzo che si paga, e si paga qui. */
+    aligned_size = heap_align((uint32_t)size + 4);
     if (aligned_size < HEAP_MIN_SIZE) aligned_size = HEAP_MIN_SIZE;
 
     /* Cerca nella free list un blocco abbastanza grande (first-fit) */
@@ -382,7 +450,13 @@ void *kmalloc(size_t size)
         block->size = aligned_size;
     }
 
-    block->flags = BLOCK_USED;
+    block->flags   = BLOCK_USED;
+    block->chiesti = (uint32_t)size;
+    /* Chi ha chiamato kmalloc. E' l'unica cosa che, il giorno che il canarino
+     * suona, dice da dove ripartire. */
+    block->chi     = (uint32_t)(uintptr_t)__builtin_return_address(0);
+    canarino_scrivi(block);
+
     g_alloc_count++;
 
     klog(LOG_DEBUG, "KMALLOC: allocati %u byte a 0x%08x (richiesti: %u)",
@@ -451,6 +525,12 @@ void kfree(void *ptr)
         klog(LOG_WARN, "KFREE: doppia liberazione a 0x%08x!", (uint32_t)ptr);
         return;
     }
+
+    /* ! SI GUARDA IL CANARINO PRIMA DI LIBERARE, e non e' una formalita': da
+     * qui in poi il blocco entra nella free list e i suoi byte diventano
+     * `prev` e `next` di qualcun altro. Se qualcuno ci ha scritto oltre, e'
+     * l'ultimo istante in cui si puo' ancora dire di CHI era il blocco. */
+    canarino_rotto(block, "alla liberazione");
 
     block->flags = BLOCK_FREE;
     g_free_count++;
@@ -578,6 +658,56 @@ void kfree_aligned(void *ptr)
 /* =============================================================================
  * kmalloc_stats — Stampa statistiche dell'heap
  * ============================================================================= */
+/* =============================================================================
+ * kmalloc_verifica — cammina TUTTE le regioni e controlla tutto
+ *
+ * ! IL CANARINO ALLA LIBERAZIONE VEDE SOLO CHI VIENE LIBERATO, e un blocco
+ * sconfinato puo' restare in mano a qualcuno per tutta la vita del sistema.
+ * Questa passa in rassegna ogni blocco di ogni regione: firma, misura che
+ * dentro la regione ci sta, e canarino. Rende quanti guai ha trovato, e li
+ * dice tutti — uno per riga, col nome di chi aveva allocato.
+ *
+ * Costa una scansione di qualche decina di blocchi: si puo' chiamare a mano
+ * nei momenti in cui si sospetta qualcosa, e la chiama kmalloc_stats.
+ * ============================================================================= */
+uint32_t kmalloc_verifica(void)
+{
+    KHeapRegion *r;
+    uint32_t     guai = 0, visti = 0;
+
+    for (r = g_regioni; r != NULL; r = r->next) {
+        KHeapBlock *b = regione_primo(r);
+
+        while (dentro_regione(r, b)) {
+            if (!block_valid(b)) {
+                klog(LOG_ERROR, "KHEAP: a 0x%08x, dentro la regione che "
+                     "finisce a 0x%08x, non c'e' nessuna firma: la catena "
+                     "dei blocchi si e' rotta qui", (uint32_t)b, r->fine);
+                guai++;
+                break;      /* da qui in poi non si sa piu' dove sono */
+            }
+
+            visti++;
+
+            if ((uint32_t)b + BLOCK_HEADER_SIZE + b->size > r->fine) {
+                klog(LOG_ERROR, "KHEAP: il blocco 0x%08x dice di essere lungo "
+                     "%u byte, ma la sua regione finisce a 0x%08x: "
+                     "intestazione rotta", (uint32_t)b, b->size, r->fine);
+                guai++;
+                break;
+            }
+
+            if (canarino_rotto(b, "al controllo")) guai++;
+
+            b = block_next_phys(b);
+        }
+    }
+
+    klog(guai ? LOG_ERROR : LOG_DEBUG,
+         "KHEAP: controllati %u blocchi, %u guai", visti, guai);
+    return guai;
+}
+
 void kmalloc_stats(void)
 {
     KHeapBlock *b;
@@ -622,5 +752,11 @@ void kmalloc_stats(void)
         if (g_intestazioni_rotte)
             klog(LOG_ERROR, "  ! intestazioni ROTTE: %u — qualcuno scrive "
                  "oltre il proprio blocco", g_intestazioni_rotte);
+        if (g_canarini_rotti)
+            klog(LOG_ERROR, "  ! canarini ROTTI: %u — e sopra c'e' scritto "
+                 "chi aveva allocato quei blocchi", g_canarini_rotti);
     }
+
+    /* E la passata completa: le statistiche dicono quanto, questa dice se. */
+    kmalloc_verifica();
 }

@@ -7,4 +7,5 @@ void  kfree(void *ptr);
 void *kmalloc_aligned(size_t size, size_t alignment);
 void  kfree_aligned(void *ptr);
 void  kmalloc_stats(void);
+uint32_t kmalloc_verifica(void);
 #endif

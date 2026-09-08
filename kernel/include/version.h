@@ -247,7 +247,53 @@
  * l'IRQ6 non lo instrada. Quel che e' cambiato e' che adesso, quando l'IRQ
  * puo' arrivare, arriva — e il warning torna a voler dire qualcosa.
  */
-#define EXOS_VERSION    "0.210"
+/* 0.210 -> 0.211: LO SLOT DI UN PROCESSO SI PRENDE, NON SI GUARDA E BASTA.
+ *
+ * pcb_alloc() cercava uno slot PROC_UNUSED, lo azzerava e lo restituiva senza
+ * marcarlo e con gli interrupt aperti: restava dichiarato LIBERO per tutto il
+ * resto di proc_create(), cioe' anche durante l'allocazione dei 128 KB di
+ * stack kernel — trentadue pagine da cercare, mappare, e un CR3 da ricaricare.
+ * Un tick li' in mezzo, e un secondo creatore riceveva LO STESSO PCB: lo
+ * azzerava da capo, sopra il contesto che il primo aveva gia' scritto, e ne
+ * usciva un task con EIP=0 ed ESP=0 — il fault a 0x00000000 di @DIF-DRIVER,
+ * aperto dal 24 agosto 2026.
+ *
+ * Adesso la ricerca e la presa stanno nella stessa sezione critica, e lo stato
+ * si scrive PRIMA di restituire lo slot.
+ *
+ * ! COME E' STATO INCHIODATO, che e' la parte che vale: una sched_yield()
+ * messa apposta nella finestra sospetta piu' un rilevatore che dice «slot n
+ * dato DUE VOLTE». Senza la cura suona; con la cura, a parita' di sonda e di
+ * carico, non suona. E' lo stesso metodo con cui a settembre era stato preso
+ * il filo che partiva con la pila a zero.
+ */
+/* 0.211 -> 0.212: UN CANARINO IN CODA A OGNI BLOCCO DELLO HEAP DEL KERNEL.
+ *
+ * @DIF-PANIC aveva lasciato una domanda aperta: l'intestazione rotta che kfree
+ * trovava l'aveva scritta la lettura fuori regione (chiusa il 7 settembre
+ * 2026) oppure qualcuno che scrive oltre il proprio blocco? La firma rotta non
+ * lo dice — quando la si trova, chi l'ha rotta e' gia' andato via.
+ *
+ * Adesso ogni blocco usato porta, subito dopo i byte CHIESTI, una parola nota
+ * (0xC0DA5EED) e l'indirizzo di ritorno di chi l'ha allocato. Chi sconfina
+ * cancella la parola, e alla liberazione — o al controllo periodico che init
+ * fa ogni cinque secondi — si sa che e' successo, su quale blocco, e CHI
+ * l'aveva chiesto. Il prezzo e' quattro byte per allocazione: su un avvio
+ * normale, 136 byte.
+ *
+ * ! CHE init GIRI DAVVERO E' STATO MISURATO: 2200 giri in 2900 tick con la
+ * rete accesa, e i fili abbandonati raccolti. Una misura precedente diceva il
+ * contrario, e mentiva: la sonda stampava a LOG_INFO, che dopo l'avvio non si
+ * vede piu' (diario, 8 settembre: «UNA SONDA CHE MENTE»).
+ *
+ * ! IL CANARINO STA DOPO I BYTE CHIESTI, NON ALLA FINE DEL BLOCCO: chi scrive
+ * uno o due byte di troppo finisce dentro l'arrotondamento a otto, e alla fine
+ * del blocco non lo vedrebbe nessuno.
+ *
+ * Il quinto caso di tools/banco-kmalloc/prova.sh lo dimostra sull'ospite in un
+ * secondo, senza QEMU.
+ */
+#define EXOS_VERSION    "0.212"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

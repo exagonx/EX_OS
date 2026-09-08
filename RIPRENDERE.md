@@ -28,6 +28,223 @@ manca» apre quello.
 
 # DOVE RIPRENDERE — 8 settembre 2026
 
+## 8 settembre 2026 — UNA SONDA CHE MENTE (@DIF-INIT: il difetto non c'era)
+
+`@DIF-INIT` era stato aperto poche ore prima, con una misura precisa e una
+conclusione sbagliata: «il reaper di init fa un giro per tick fino al tick 26,
+poi si ferma per sempre; con la rete accesa nessuno scende fino a PRIO_IDLE».
+
+**Non e' vero.** init gira: **2200 giri in 2900 tick**, con la rete accesa. E
+raccoglie: tre fili abbandonati da `filiprova abbandona`, e il conto dei
+processi torna a dodici.
+
+### PERCHE' LA PRIMA MISURA MENTIVA
+
+La sonda stampava con `klog(LOG_INFO, ...)`. Su un sistema avviato normalmente
+`verbose = 0`: **le righe INFO si vedono durante l'avvio e non piu' dopo**.
+L'ultima riga visibile era al tick 26 non perche' init si fermasse li', ma
+perche' li' finiva l'avvio.
+
+! **UNA SONDA CHE SPARISCE E UN PROCESSO CHE SI FERMA SI ASSOMIGLIANO
+  TROPPO**, e la differenza non si vede guardando la sonda: si vede solo
+  cercando qualcosa che quella riga non spieghi. Qui e' bastato mettere lo
+  stesso contatore in idle E in init e stampare a WARN: init parlava, idle no.
+
+! **E LA CONFERMA CHE VALE E' FUNZIONALE, NON DI CONTATORI**: i fili
+  abbandonati sono stati raccolti. Un contatore che sale dice che il codice
+  gira; un orfano che sparisce dice che serve a qualcosa.
+
+### L'ALTRA META' DELL'ERRORE: `stack` LETTO MALE
+
+L'accusa era anche appoggiata a due righe di `stack`:
+
+    12   /dev/ip.drv     pronto
+    11   /dev/e1000.drv  pronto
+
+«Restano PRONTI per sempre», avevo scritto. Ma i due driver aspettano con
+`ipc_recv_timeout(..., 50)`: si bloccano davvero (`sched_block(PROC_BLOCKED)`
+con `block_until`), e si svegliano venti volte al secondo. In una fotografia
+presa a caso capita benissimo di beccarli svegli — ed erano svegli perche' il
+comando `stack` che li stava fotografando era appena passato dalla rete.
+
+! **UNA FOTOGRAFIA NON E' UNA MEDIA.** `stack` dice lo stato in un istante, e
+  «pronto» in quell'istante non vuol dire «pronto sempre». Per dire «sempre»
+  serve un contatore o due fotografie lontane.
+
+### COSA RESTA, IN CONCRETO
+
+- `@DIF-INIT` esce da `in_lavorazione.txt`: non c'era niente da correggere.
+- La guardia dello heap di `@DIF-PANIC` **torna dentro init**, che era il posto
+  giusto fin dall'inizio: dorme, gira a priorita' idle, e la passata non toglie
+  niente a nessuno. Era finita in `sys_spawn` solo per via di questo fantasma.
+- Nel commento della guardia c'e' scritto che init gira **e come lo si e'
+  misurato**: la prossima volta che qualcuno sospetta il contrario, trova li'
+  il numero invece di rifare la strada.
+
+! **E LA LEZIONE PIU' CARA E' LA PRIMA**: quando una prova dice che un pezzo di
+  sistema e' morto, la prima cosa da mettere in dubbio e' la prova. Un difetto
+  aperto per sbaglio costa a chi lo raccoglie dopo — e questo era stato scritto
+  con tanto di misure, che e' proprio cio' che lo rendeva credibile.
+
+## 8 settembre 2026 — UN CANARINO IN CODA A OGNI BLOCCO (@DIF-PANIC: la domanda adesso ha una risposta)
+
+@DIF-PANIC aveva lasciato aperta una domanda sola, e non era piccola:
+l'intestazione rotta che kfree trovava — «dice di essere lungo 66 MB, ma la
+sua regione finisce prima» — l'aveva scritta la lettura fuori regione, chiusa
+il 7 settembre, **oppure qualcuno che scrive oltre il proprio blocco?**
+
+La firma rotta non lo dice. Quando la si trova, chi l'ha rotta e' gia' andato
+via da un pezzo.
+
+### IL CANARINO, E CHI HA ALLOCATO
+
+Adesso ogni blocco usato porta due cose in piu':
+
+    chiesti    i byte che chi ha allocato aveva chiesto davvero
+    chi        l'indirizzo di ritorno di chi ha chiamato kmalloc
+
+e subito dopo i byte chiesti c'e' una parola nota, `0xC0DA5EED`. Chi sconfina
+la cancella, e allora si sa TRE cose invece di una: che e' successo, su quale
+blocco, e **di chi era il blocco**.
+
+    KHEAP: alla liberazione — il blocco 0xf7c6486c (chiesti 1024 byte, blocco
+           1032) e' stato scritto OLTRE LA FINE: al posto del canarino c'e'
+           0xc0da5e41. L'aveva allocato chi sta a 0x565d6cd4 (risolvilo con
+           build/kernel.elf).
+
+! **STA DOPO I BYTE CHIESTI, NON ALLA FINE DEL BLOCCO.** Un'allocazione viene
+  arrotondata a otto byte: chi scrive uno o due byte di troppo finisce dentro
+  quel riempimento, e alla fine del blocco non lo vedrebbe nessuno. E' proprio
+  il caso piu' comune, ed e' quello che si voleva prendere.
+
+! **E IL PREZZO SI DICE**: quattro byte per allocazione. Su un avvio normale —
+  34 blocchi vivi — sono 136 byte di heap, contro un difetto che spegne la
+  macchina una volta su quattordici.
+
+! **IL LIMITE ANCHE**: il canarino prende chi sconfina DI SEGUITO (un memcpy,
+  una stringa: cioe' tutti i casi veri), non chi scrive un byte a caso in
+  mezzo all'arrotondamento. Sta scritto nel banco, accanto al caso che lo
+  prova.
+
+### SI GUARDA IN DUE MOMENTI
+
+Alla **liberazione** (in kfree, sempre) e **ogni cinque secondi** dal reaper di
+init (`kmalloc_verifica()`, che cammina tutte le regioni e prende anche i
+blocchi che nessuno libera mai). init dorme il resto del tempo e gira a
+priorita' idle: e' il posto piu' economico del sistema per una guardia
+periodica.
+
+! **UNA GUARDIA CHE NON GIRA E' PEGGIO DI NESSUNA GUARDIA, perche' rassicura.**
+  Per questo si e' misurato che giri, invece di darlo per buono: **2200 giri in
+  2900 tick** con la rete accesa, e la prova funzionale — tre fili abbandonati
+  con `filiprova abbandona`, e il conto dei processi che torna a dodici.
+
+! **E LA PRIMA MISURA DICEVA IL CONTRARIO.** Vedi la giornata qui sotto, «UNA
+  SONDA CHE MENTE»: per mezza giornata ho creduto che init si fermasse al tick
+  26, e non era vero.
+
+### COSA E' DECISO E COSA NO
+
+Non e' deciso, e non poteva esserlo oggi: **il canarino non ha ancora suonato**
+— dodici avvii nelle condizioni di allora (da CD, con la rete, 20 MB) sono
+puliti. Ma la domanda non e' piu' senza risposta possibile:
+
+    se un giorno suona     il registro dice chi era il padrone del blocco, e
+                           @DIF-PANIC si chiude leggendo una riga
+    se non suona mai       il colpevole era la lettura fuori regione chiusa il
+                           7 settembre, e la voce si chiude per esaurimento
+
+Prima non c'era nessuno dei due esiti: c'era solo un panic ogni tanto, in un
+posto che con la causa non c'entrava.
+
+### IL BANCO HA UN QUINTO CASO
+
+`tools/banco-kmalloc/prova.sh` lo dimostra sull'ospite in un secondo: si
+scrive **un byte** oltre i 1024 chiesti, e il canarino lo prende — sia alla
+liberazione, sia nella passata completa per un blocco che nessuno libera.
+
+! E il caso 4 ha smesso di funzionare per un attimo, il che vale una riga:
+  rompeva l'intestazione a `payload - 5` parole, ma l'intestazione adesso ne
+  ha sette (`chiesti` e `chi`). Rompeva il campo sbagliato e la prova non
+  provava piu' niente — **senza dirlo**. Adesso quel `-7` ha accanto scritto
+  che segue la struttura di kmalloc.c.
+
+EXOS_VERSION 0.211 -> 0.212.
+
+## 8 settembre 2026 — LO SLOT DI UN PROCESSO SI PRENDE, NON SI GUARDA E BASTA (@DIF-DRIVER, chiuso)
+
+Il fault che tornava «tre volte su una cinquantina di avvii da CD» dal 24
+agosto era una corsa dentro `pcb_alloc()`, ed era in piena vista.
+
+### LA FUNZIONE CERCAVA UNO SLOT LIBERO E NON LO PRENDEVA
+
+    for (i = 0; i < MAX_PROCESSES; i++)
+        if (g_process_pool[i].state == PROC_UNUSED) {
+            azzera il PCB;
+            return &g_process_pool[i];      /* e lo stato resta UNUSED! */
+        }
+
+Nessun `cli`, e soprattutto **nessuna marcatura**. Lo slot restava dichiarato
+libero per tutto il resto di `proc_create()`: il PID, il nome, lo stato x87, e
+soprattutto l'allocazione dei **128 KB di stack kernel** — trentadue pagine
+contigue da cercare, mappare una per una, e un `CR3` da ricaricare. Lo stato
+vero (`PROC_NASCENTE`) si scriveva solo alla fine.
+
+Un tick del timer in quella finestra, e un secondo processo che chiama spawn
+riceveva **lo stesso PCB**. Lo azzerava da capo — sopra il PID, il nome e il
+contesto iniziale che il primo aveva gia' scritto — e i due proseguivano
+credendosi ognuno padrone della stessa struttura. Ne usciva un task il cui
+contesto era stato azzerato DOPO `proc_set_entry`: **EIP=0, ESP=0**, e nel dump
+del fault lo heap e le VMA dell'ALTRO programma.
+
+! **TORNA OGNI DETTAGLIO ANNOTATO IN AGOSTO**, e nessuno di quelli era un
+  indizio inutile: capitava **dal CD** (le letture lente allargano la
+  finestra), **piu' facilmente con poca memoria** (la ricerca di pagine
+  contigue dura di piu'), **sul primo comando di /boot/avvio.sh** (la shell
+  lancia un driver mentre l'avvio sta ancora lavorando) e **mai con
+  loglevel=4** (ogni klog e' seriale, e cambia i tempi di tutto).
+
+### LA CURA E' DI DUE RIGHE, E NON SI PUO' SCRIVERE ALTROVE
+
+Ricerca e presa nella stessa sezione critica, e lo **stato scritto prima di
+restituire lo slot**. `PROC_NASCENTE` e' quello giusto — «creato, non ancora
+caricato» — ed e' gia' quello che `proc_create` assegnera' fra poco: nessuna
+via di risveglio lo conosce (la guardia del 24 agosto in
+`sched_unblock_locked`) e `sched_pick_next` non lo guarda nemmeno.
+
+### COME E' STATO INCHIODATO, CHE E' LA PARTE CHE VALE
+
+Il compito stesso prescriveva il metodo: «una sched_yield() messa apposta nella
+finestra sospetta trasforma la corsa in una certezza». Cosi' e' andata, con una
+sonda in piu' che rende l'esito leggibile senza aspettare un fault:
+
+    una sched_yield() subito dopo pcb_alloc()        la finestra, allargata
+    g_slot_in_corso[i] + un klog «slot n dato DUE VOLTE»   il rilevatore
+
+Poi quattro `filiprova troppi &` insieme (ognuno crea sette fili, e ogni
+creazione passa da `proc_create`), su un CD con 20 MB di RAM:
+
+    SENZA la cura   [ERROR] PROVA: slot 4 dato DUE VOLTE (il primo lo sta
+                    ancora preparando)
+    CON la cura     zero. Stessa sonda, stesso carico, stessa macchina.
+
+! **NON SI E' ASPETTATO IL FAULT, E NON SERVIVA.** Il fault e' l'effetto raro
+  di una causa che si puo' osservare direttamente: due creatori con lo stesso
+  slot in mano. Mettere il rilevatore sulla CAUSA trasforma un difetto da «tre
+  volte su cinquanta» in un si'/no che si legge in venti secondi.
+
+### LA REGRESSIONE, PERCHE' SI E' TOCCATO LO SCHEDULER
+
+Le dodici prove dei fili, da CD:
+
+    nove modi        «tutto a posto» (nessuno, tls, errno, attesa, condizione,
+                     semaforo, ferma, cwd, pila)
+    sfonda           il filo muore sulla guardia con -11 e porta via il gruppo
+    troppi           creati 7, poi errno 11
+    abbandona        esce senza aspettare, il prompt torna, hello gira dopo
+
+EXOS_VERSION 0.210 -> 0.211.
+
 ## 8 settembre 2026 — IL CONTROLLER DEL FLOPPY SI ACCENDE ALLA PRIMA LETTURA (@DIF-FDC, chiuso)
 
 Da >5 minuti a **meno di 5 secondi** per leggere sedici kilobyte da un floppy

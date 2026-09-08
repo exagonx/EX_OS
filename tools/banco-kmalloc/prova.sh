@@ -26,6 +26,12 @@
 #   «Blocchi lib.» dopo aver liberato tutto DAL PRIMO dice quanto heap si
 #   rimette insieme: uno per regione e' il massimo possibile, quaranta e passa
 #   vuol dire che la coalescenza all'indietro non ha funzionato.
+#
+#   Il caso 5 e' il CANARINO, ed e' la parte di @DIF-PANIC rimasta aperta fino
+#   all'8 settembre 2026: l'intestazione rotta l'aveva scritta la lettura fuori
+#   regione, o qualcuno che scrive oltre il proprio blocco? Adesso, se e'
+#   qualcuno, lo si sa mentre succede — e si sa CHI, perche' ogni blocco si
+#   porta dietro l'indirizzo di chi l'ha allocato.
 # =============================================================================
 set -e
 RADICE=$(cd "$(dirname "$0")/../.." && pwd)
@@ -62,3 +68,11 @@ echo
 echo "=== 4. @DIF-PANIC alla lettera: un'intestazione con una misura inventata ==="
 echo "    (prima del 7 settembre 2026: page fault in ring0 dentro kfree)"
 BANCO_CIECA_LEGGIBILE=1 BANCO_MODO=rotta "$TMP/banco" -v 2>&1 | tail -12 || echo ">>> esito $?"
+
+echo
+echo "=== 5. IL CANARINO: qualcuno scrive UN byte oltre quel che ha chiesto ==="
+echo "    (senza canarino non se ne accorge nessuno: il byte finisce"
+echo "     nell'arrotondamento a otto e non tocca nessuna intestazione)"
+BANCO_CIECA_LEGGIBILE=1 BANCO_MODO=oltre "$TMP/banco" -v 2>&1 \
+    | grep -E "scrivo|OLTRE LA FINE|controllo completo|controllati|canarini" \
+    || echo ">>> esito $?"
