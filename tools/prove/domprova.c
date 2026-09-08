@@ -175,6 +175,33 @@ static int rete_da_disco(void *dato, ExDomRichiesta *r)
  * browser sotto XMLHttpRequest e fetch dicono di no invece di fingere. */
 static ExDom *apparecchia_rete(const char *html, ExJsCtx **fuori, int rete);
 
+/* =============================================================================
+ * UN RISOLUTORE FINTO, come il browser ne ha uno vero
+ *
+ * ! NON RIFA' L'ARITMETICA DEGLI INDIRIZZI, e non deve: quella sta nel
+ * browser (risolvi()) ed e' provata la'. Qui serve solo a rispondere alla
+ * domanda «il ponte CHIEDE a chi sa risolvere, e usa la risposta?». Fa il caso
+ * minimo — attacca il riferimento a una base — e rifiuta le ancore, che e'
+ * l'altro comportamento da provare: quando il risolutore dice di no, il ponte
+ * deve rendere l'attributo com'e' scritto invece di una stringa vuota.
+ * ========================================================================== */
+static char g_base[256] = "http://sito/a/";
+
+static int risolutore_finto(void *dato, const char *rif, char *out,
+                            unsigned int max)
+{
+    (void)dato;
+    if (!rif || !rif[0]) return 0;
+    if (rif[0] == '#') return 0;                 /* un'ancora: non la risolvo */
+    if (strncmp(rif, "http", 4) == 0) {          /* gia' intero */
+        snprintf(out, max, "%s", rif);
+        return 1;
+    }
+    if (rif[0] == '/') { snprintf(out, max, "http://sito%s", rif); return 1; }
+    snprintf(out, max, "%s%s", g_base, rif);
+    return 1;
+}
+
 static ExDom *apparecchia(const char *html, ExJsCtx **fuori)
 {
     return apparecchia_rete(html, fuori, 1);
@@ -1292,6 +1319,85 @@ int main(int argc, char **argv)
     prova_val("classList.value scrive le classi", RFL,
               "var d = document.getElementById('cassetto');"
               "d.classList.value = 'x y'; d.getAttribute('class')", "x y");
+
+    /* =========================================================================
+     * GLI INDIRIZZI RIFLESSI — `img.src`, `a.href`, `form.action`
+     *
+     * ! IL DOM VERO RENDE L'INDIRIZZO INTERO, non l'attributo: `img.src` di
+     * un `src="b.png"` dentro «http://sito/a/» e' «http://sito/a/b.png». Le
+     * pagine ci contano — confrontano `a.href` con un indirizzo intero, e con
+     * l'attributo grezzo trovano sempre di no.
+     *
+     * ! IL PONTE NON RISOLVE: CHIEDE. Chi sa risolvere e' il browser, che ha
+     * gia' quella funzione in un posto solo. Queste prove rispondono a una
+     * domanda sola — il ponte chiede, e usa la risposta? — con un risolutore
+     * finto al posto di quello vero.
+     * ====================================================================== */
+    printf("\n--- gli indirizzi riflessi ---\n");
+    {
+        ExJsCtx *c;
+        ExDom   *D;
+        static const char PAGU[] =
+            "<html><body>"
+            "<img id=i src='b.png'>"
+            "<img id=vuota alt='niente'>"
+            "<img id=intera src='http://altro/x.png'>"
+            "<img id=radice src='/r.png'>"
+            "<a id=a href='c.html'>c</a>"
+            "<a id=ancora href='#in-fondo'>giu'</a>"
+            "<form id=f action='manda.cgi'></form>"
+            "</body></html>";
+
+        /* --- senza risolutore: l'attributo com'e' scritto ----------------- */
+        D = apparecchia(PAGU, &c);
+        exdom_indirizzo(D, "http://sito/a/pagina.html");
+        prova_gia("senza risolutore, src resta l'attributo", c,
+                  "document.getElementById('i').src", "b.png");
+
+        /* --- col risolutore: l'indirizzo intero --------------------------- */
+        D = apparecchia(PAGU, &c);
+        exdom_indirizzo(D, "http://sito/a/pagina.html");
+        exdom_risolutore(D, risolutore_finto, 0);
+
+        prova_gia("img.src e' l'indirizzo intero", c,
+                  "document.getElementById('i').src", "http://sito/a/b.png");
+        prova_gia("a.href e' l'indirizzo intero", c,
+                  "document.getElementById('a').href", "http://sito/a/c.html");
+        /* ! `action` E' UN INDIRIZZO ANCHE SE NON SI CHIAMA src NE' href, e
+         * si dimentica sempre. */
+        prova_gia("form.action e' l'indirizzo intero", c,
+                  "document.getElementById('f').action",
+                  "http://sito/a/manda.cgi");
+        prova_gia("un indirizzo gia' intero non si tocca", c,
+                  "document.getElementById('intera').src",
+                  "http://altro/x.png");
+        prova_gia("un percorso assoluto parte dalla radice del sito", c,
+                  "document.getElementById('radice').src", "http://sito/r.png");
+
+        /* ! L'ATTRIBUTO CHE NON C'E' RESTA VUOTO: risolverlo darebbe
+         * l'indirizzo della pagina, e `if (img.src)` passerebbe su un <img>
+         * senza src — il contrario di quel che chiede chi lo scrive. */
+        prova_gia("senza src si rende \"\", non l'indirizzo della pagina", c,
+                  "document.getElementById('vuota').src", "");
+
+        /* ! E SE IL RISOLUTORE DICE DI NO si rende quel che c'e' scritto: e'
+         * la verita' piu' vicina, e non una stringa vuota. */
+        prova_gia("un'ancora, che il risolutore rifiuta, resta com'e'", c,
+                  "document.getElementById('ancora').href", "#in-fondo");
+
+        /* ! GLI ALTRI ATTRIBUTI NON SI TOCCANO. Il rischio della colonna
+         * nuova e' che risolva tutto: `alt` non e' un indirizzo. */
+        prova_gia("alt non e' un indirizzo", c,
+                  "document.getElementById('vuota').alt", "niente");
+
+        /* ! E SCRIVERE METTE L'ATTRIBUTO COM'E' DATO, non risolto: e' quel
+         * che fa il DOM, e getAttribute deve continuare a vedere il grezzo. */
+        gira(c, "document.getElementById('i').src = 'd.png';", "scrivi src");
+        prova_gia("scritto, l'attributo resta relativo", c,
+                  "document.getElementById('i').getAttribute('src')", "d.png");
+        prova_gia("ma riletto e' di nuovo intero", c,
+                  "document.getElementById('i').src", "http://sito/a/d.png");
+    }
 
     /* =========================================================================
      * `location` E `navigator`

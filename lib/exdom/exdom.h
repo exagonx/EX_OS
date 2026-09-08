@@ -101,9 +101,10 @@
  *     rete e' del browser, come lo sono l'orologio, gli eventi e l'indirizzo.
  *     Vorranno un gancio, non una chiamata a exhttp da qui dentro.
  *   - la meta' HTTP dei biscotti (vedi `exdom_biscotti` piu' sotto).
- *   - l'indirizzo ASSOLUTO in `img.src` e `a.href`: qui si riflette
- *     l'attributo, e risolverlo vuole l'indirizzo della pagina — che adesso
- *     c'e' (exdom_indirizzo) ma non e' ancora usato per questo.
+ *   - (RISOLTO l'8 settembre 2026) l'indirizzo assoluto in `img.src`,
+ *     `a.href` e `form.action`: adesso si riflettono risolti, se chi ospita ha
+ *     dato un risolutore con exdom_risolutore(). Senza, si torna a riflettere
+ *     l'attributo com'e' scritto.
  * ============================================================================= */
 
 #ifndef EXDOM_H
@@ -187,6 +188,28 @@ int exdom_evento(ExDom *D, int nodo, const char *tipo, ExJsErrore *err);
 #define EXDOM_URL_MAX  640      /* >= EXHTTP_URL_MAX, che qui non si include */
 
 void exdom_indirizzo(ExDom *D, const char *url);
+
+/* =============================================================================
+ * CHI TRASFORMA «b.png» IN «http://sito/a/b.png»
+ *
+ * ! IL PONTE SA DOVE SI E', NON SA RISOLVERE, ed e' la stessa divisione della
+ * rete e dell'orologio. Risolvere un riferimento vuol dire conoscere file://,
+ * data:, le ancore, e l'aritmetica dei percorsi relativi: il browser ce l'ha
+ * gia' in risolvi(), in un posto solo. Riscriverla qui sarebbe una seconda
+ * implementazione della stessa cosa, e due copie divergono al primo caso
+ * strano — che con gli indirizzi arriva sempre.
+ *
+ * `rif` e' quel che c'e' scritto nell'attributo, `out` il posto dove mettere
+ * l'indirizzo intero. Rendendo 0 si dice «non lo risolvo»: allora il ponte
+ * riflette l'attributo com'e', che e' la verita' piu' vicina.
+ *
+ * Senza risolutore tutto continua a funzionare come prima. La prova sull'host
+ * gira cosi': non c'e' un browser, e il DOM si prova lo stesso.
+ * ========================================================================== */
+typedef int (*ExDomRisolvi)(void *dato, const char *rif,
+                            char *out, unsigned int max);
+
+void exdom_risolutore(ExDom *D, ExDomRisolvi f, void *dato);
 
 /* ! LA NAVIGAZIONE LA FA IL BROWSER, NON IL PONTE. `location.href = "..."`
  * mette da parte l'indirizzo e basta; chi ha lo schermo lo raccoglie di qui

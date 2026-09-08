@@ -2081,12 +2081,17 @@ orologio: dirs $(OROLOGIO_BIN)
 # browser se la apre da se' come fa il toolkit.
 BROWSER_SRC := exwin/bin/browser/browser.c
 
-# ! L'IMPAGINATO E' USCITO DA browser.c IL 3 SETTEMBRE 2026, e per ora e' solo
-# un file in piu' dello stesso programma: prima si spezza il FILE — con la
-# prova che il navigatore disegni le stesse pagine di prima — e solo dopo,
-# avendo i legami scritti in browser_priv.h, si decide se puo' diventare una
-# libreria condivisa (la userebbero il manuale di exide e l'editor RTF).
+# ! L'IMPAGINATO E' USCITO DA browser.c IL 3 SETTEMBRE 2026, e l'8 settembre ha
+# perso i tre legami che gli impedivano di essere una libreria: i moduli, le
+# immagini e gli script. Adesso chiede a un CLIENTE — browser_estranei.c — che
+# cosa siano i pezzi che non sa misurare, e le due domande stanno in
+# browser_vista.h. Resta un file dello stesso programma perche' restano da
+# passare le variabili condivise (browser_priv.h), non perche' resti da
+# decidere qualcosa.
 BROWSER_IMP := exwin/bin/browser/browser_impagina.c
+BROWSER_EST := exwin/bin/browser/browser_estranei.c
+BROWSER_ESTH := exwin/bin/browser/browser_estranei.h
+BROWSER_VISTA := exwin/bin/browser/browser_vista.h
 BROWSER_PRIV := exwin/bin/browser/browser_priv.h
 BROWSER_BIN := $(BUILD_EXWIN_BIN)/browser
 BROWSER_LD  := exwin/bin/browser/browser.ld
@@ -2101,6 +2106,7 @@ BROWSER_BISH := exwin/bin/browser/biscotti.h
 
 $(BROWSER_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(BROWSER_SRC) $(BROWSER_LD) \
              $(BROWSER_IMP) $(BROWSER_PRIV) \
+             $(BROWSER_EST) $(BROWSER_ESTH) $(BROWSER_VISTA) \
              $(BROWSER_BIS) $(BROWSER_BISH) $(EXWIN_STUB) $(EXLIB_SRC) \
              $(EXLIB_HDR) $(EXWIN_HDR) $(WIN_PROTO) $(EXHTTP_SRC) \
              $(EXHTTP_HTTP) $(EXHTTP_HDR) lib/eximg/eximg.h \
@@ -2114,6 +2120,7 @@ $(BROWSER_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(BROWSER_SRC) $(BROWSER_LD) \
 	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I lib/exjs -I lib/exdom -I lib/exdlg -I lib/exinfo -I exwin/bin/browser -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_SRC) -o $(BUILD_OBJ)/browser_main.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I lib/exjs -I lib/exdom -I lib/exdlg -I lib/exinfo -I exwin/bin/browser -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_IMP) -o $(BUILD_OBJ)/browser_imp.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I lib/exjs -I lib/exdom -I lib/exdlg -I lib/exinfo -I exwin/bin/browser -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_EST) -o $(BUILD_OBJ)/browser_est.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I exwin/bin/browser -c $(BROWSER_BIS) -o $(BUILD_OBJ)/browser_bis.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exdlg -c $(EXDLG_STUB) -o $(BUILD_OBJ)/browser_exdlg.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exinfo -c $(EXINFO_SRC) -o $(BUILD_OBJ)/browser_info.o
@@ -2131,6 +2138,7 @@ $(BROWSER_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(BROWSER_SRC) $(BROWSER_LD) \
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(BROWSER_LD) \
 	    $(BUILD_OBJ)/browser_start.o $(BUILD_OBJ)/browser_main.o \
 	    $(BUILD_OBJ)/browser_imp.o \
+	    $(BUILD_OBJ)/browser_est.o \
 	    $(BUILD_OBJ)/browser_bis.o \
 	    $(BUILD_OBJ)/browser_exwin.o $(BUILD_OBJ)/browser_stub.o \
 	    $(BUILD_OBJ)/browser_html.o $(BUILD_OBJ)/browser_css.o \

@@ -28,6 +28,304 @@ manca» apre quello.
 
 # DOVE RIPRENDERE — 8 settembre 2026
 
+## 8 settembre 2026 — I DRIVER DI RETE SI INSTALLANO ANCHE QUANDO NON SERVONO (@USB, punto 2)
+
+Il 7 settembre una chiavetta era uscita senza `/dev/ne2k.drv`, e quindi senza
+rete e senza `netupdate`. In `in_lavorazione.txt` era scritto come un cerchio:
+**lo strumento che porta i pezzi mancanti ha bisogno di uno dei pezzi
+mancanti.** Cercandolo si e' trovato che i difetti erano due, e il secondo si
+vedeva solo dopo aver aggiustato il primo.
+
+### PRIMO: LA DOMANDA SBAGLIATA DECIDEVA
+
+In `install.c` la scelta dei driver stava DENTRO il ramo degli strumenti:
+
+    if (g_vuole_strumenti) { copia bin; copia lib; installa_driver(); }
+    else if (!g_ha_minimale) { installa_driver(); }
+
+Chi installava da un supporto **col manifesto** — cioe' dal CD, cioe' il caso
+normale — e rispondeva NO a «vuoi anche gli strumenti?» non passava mai da
+`installa_driver()`. Restava coi soli driver elencati nel minimale, che sono
+quelli che stanno sul floppy: floppy, kbd, mouseser, pci, svga, uhci,
+vgaprova, xhci. Di rete, niente.
+
+! **ED ERANO DUE DOMANDE DIVERSE.** «Vuoi anche gli strumenti» parla di
+  programmi, e la risposta e' dell'utente. «Quali driver servono a questa
+  macchina» e' un'altra cosa, e la risposta e' dell'hardware. Una bastava a
+  spegnere la rete di un sistema appena installato, e non lo diceva a nessuno
+  perche' tutto il resto funzionava.
+
+### SECONDO: LA SONDA AVEVA RAGIONE, E ANDAVA IGNORATA LO STESSO
+
+Aggiustato il primo, il secondo e' venuto fuori subito: `hwconfig -d` lancia
+ogni driver con `-i` e installa chi risponde «servo qui». Su una macchina senza
+scheda di rete tutti e tre rispondono di no — **ed e' la risposta giusta alla
+domanda sbagliata.**
+
+! **LA MACCHINA CHE INSTALLA NON E' SEMPRE QUELLA CHE USERA' IL SISTEMA.** Una
+  chiavetta si costruisce dentro QEMU, senza scheda di rete perche' a
+  costruirla non serve, e si infila in un computer vero. Il driver di quella
+  scheda non e' mai stato in gioco.
+
+! **E VALE ANCHE SU UN DISCO FISSO, dove la macchina e' la stessa.**
+  `netupdate` e' la strada per rimediare a cio' che manca, e uno strumento di
+  rimedio non puo' dipendere da un pezzo che quel giorno non c'era. E' la
+  stessa ragione per cui in una cassetta degli attrezzi ci sta il cacciavite
+  che apre la cassetta.
+
+Il prezzo e' scritto: e1000 23 KB, ne2k 27, pcnet 27, lo stack ip 36 —
+**110 KB in tutto**, su un supporto che ne porta dodicimila.
+
+### L'ELENCO NON STA NELL'INSTALLATORE
+
+`lib/rete.c` ha gia' la tabella «scheda -> driver», la stessa che `netdetect`
+usa per riconoscerle e che `hwconfig` legge qui accanto per scrivere
+`kernel.cfg`. Si scorre e si prendono i nomi.
+
+! **UN ELENCO SCRITTO IN hwconfig SAREBBE LA SECONDA VERITA' CHE QUELLA TABELLA
+  ESISTE APPOSTA PER EVITARE**, e in questo progetto e' gia' successo: e1000 era
+  rimasto fuori da una copia dell'elenco, e su QEMU — dove quella scheda e' la
+  predefinita — `netdetect -c` diceva che il driver non c'era mentre stava nel
+  CD accanto. La tabella e' stata tirata fuori da netdetect proprio per questo.
+
+Lo stack `ip.drv` si nomina a parte, e non e' una dimenticanza: quella tabella
+elenca SCHEDE, e lo stack non e' di nessuna scheda. Risponde gia' di si' alla
+sonda su qualunque macchina, quindi la riga non cambia niente — c'e' perche'
+chi legge quella funzione deve vedere la catena intera, non tre quarti.
+
+### LA PROVA
+
+Installazione interattiva in QEMU con `-net none` — nessuna scheda di rete,
+proprio come la macchina che costruisce una chiavetta — rispondendo **no** agli
+strumenti e **no** a ExWin: il caso che prima non passava mai dalla sonda.
+
+    Driver
+      ne2k.drv
+      ne2k: nessuna scheda NE2000 sul bus PCI.
+         -> non serve QUI, e si installa lo stesso: senza la
+            rete questa macchina non si potrebbe aggiornare
+    ...
+      /drivers/e1000.drv -> /disk/dev/e1000.drv
+      /drivers/ip.drv    -> /disk/dev/ip.drv
+      /drivers/ne2k.drv  -> /disk/dev/ne2k.drv
+      /drivers/pcnet.drv -> /disk/dev/pcnet.drv
+
+! **E IL DISCO SI E' GUARDATO DA LINUX, non dal messaggio dell'installatore**:
+  `debugfs -R "ls /dev"` sull'immagine ext2 dice dodici driver, dove prima ne
+  sarebbero finiti otto e nessuno di rete. Un programma che dice «ho copiato»
+  e' la stessa fonte del difetto: se avesse sbagliato la copia, avrebbe
+  sbagliato anche il messaggio.
+
+### QUEL CHE RESTA DI @USB
+
+Il punto 1 — scrivere una chiavetta VERA e vedere se un BIOS ci si avvia — non
+si puo' fare qui: e' hardware, non lavoro. I punti 3 e 4 restano aperti.
+
+---
+
+
+## 8 settembre 2026 — L'IMPAGINATO NON SA PIU' COS'E' UN `<input>` (@VISTA, passo 2)
+
+`browser_priv.h` diceva, dal 3 settembre: «una libreria vuole che di qui non
+passino ne' i moduli, ne' le immagini, ne' gli script: qui passano ancora tutti
+e tre». Adesso non passano piu'.
+
+! **IL METRO NON E' QUANTE RIGHE SI SONO SPOSTATE.** browser_impagina.c va da
+  1836 righe a 1333 e nasce browser_estranei.c di 703, ma il conto che conta e'
+  un altro: dentro l'impaginato non si possono piu' scrivere le parole `input`,
+  `button`, `select`, `textarea`, `img` e `noscript`. Restano `table`, `br`,
+  `hr`, `a`, `li`, `pre` — cioe' come si dispone del testo. Di `<form>` resta
+  il nome nell'elenco dei blocchi, e ci resta a ragione: un modulo va a capo
+  come un `<div>`, e questo e' impaginare. Quel che se n'e' andato e' il
+  MODULO — l'azione, il metodo, i campi che gli appartengono.
+
+### DUE DOMANDE E UN «SI RICOMINCIA»
+
+`browser_vista.h` e' tutta la giuntura. L'impaginato chiede «di questo nodo che
+ne facciamo?» e riceve una di quattro risposte — non e' mio, e' un rettangolo
+w x h, al suo posto va del testo, non occupa niente — e piu' tardi dice
+«disegnati». Il riferimento che si porta dietro e' un intero **opaco**: chi
+risponde ci mette quel che gli serve, e qui dentro nessuno lo guarda.
+
+! **IL «SI RICOMINCIA» E' LA TERZA, E NON E' UNA DOMANDA IN PIU': e' l'inizio
+  della prima.** I controlli si azzerano a ogni impaginazione, e il perche' e'
+  una prova pagata cara (4 settembre: sparivano pezzi di pagina lontani dai
+  moduli). Chi chiama `impagina()` sono sei posti; il momento giusto per
+  buttare i pezzi vecchi lo conosce solo `impagina()`.
+
+### IL PEZZO CHE SI SAREBBE POTUTO SBAGLIARE: `g_mod_ora`
+
+L'impaginato teneva «il modulo aperto»: apriva a `<form>`, richiudeva dopo i
+figli, e ogni controllo prendeva quello. Era un legame in piu' — l'ORDINE
+dell'impaginazione — per una risposta che l'albero ha gia'. Adesso un controllo
+**sale** fino al suo `<form>`, che e' quel che dice il DOM (`element.form` e'
+l'antenato, non l'ultimo aperto), e i moduli si registrano quando servono: un
+`<form>` senza controlli non entra piu' nell'elenco, e non manca a nessuno.
+
+### LE TRE DIFFERENZE CHE ERANO UN CASO, E ADESSO SONO SCRITTE
+
+Un controllo si stringe alla riga, si stacca di quattro pixel e alza la riga di
+quattro; un'immagine non si stringe, non si stacca e alza la riga di **tre**.
+Erano due tratti di codice lontani, e nessuno li aveva mai visti accanto.
+
+! **IL TRE E IL QUATTRO NON HANNO UNA RAGIONE: HANNO UNA STORIA.** Scritti
+  vicini in `VistaPezzo` si possono unificare il giorno che si decide di
+  spostare dei pixel — non oggi, che la prova e' proprio che non se ne sposti
+  nessuno.
+
+### E LA PROVA DEI PIXEL HA TROVATO IL DIFETTO CHE L'OCCHIO NON VEDEVA
+
+Primo giro: la pagina sembrava identica. `confronta_ppm.py` diceva **tre righe
+di pixel diverse alla colonna 741**, che e' il pollice della barra di
+scorrimento: il documento era piu' corto di sei pixel. Erano i tre pixel di
+respiro delle due immagini, persi nel passaggio.
+
+! **A DIRLO E' STATA LA BARRA DI SCORRIMENTO, NON IL CONTENUTO.** Il contenuto
+  si era spostato di sei pixel piu' in basso nella vista scorsa — 214 righe
+  diverse — e quello si sarebbe potuto leggere come «lo scorrimento e' andato
+  un po' diverso». Il pollice no: la sua altezza e' `area_h / altezza`, cioe'
+  una misura del documento intero. Una prova che guarda solo la prima
+  schermata avrebbe detto «uguale».
+
+Dopo la correzione: **9 righe di pixel diverse su 600**, la 582-591, colonne
+769-782 — i minuti dell'orologio in basso a destra. Sopra, niente. Vale per la
+schermata in cima e per quella scorsa.
+
+### E POI IL MODULO E' STATO MANDATO DAVVERO
+
+I pixel non provano il colpo del mouse: il pezzo porta un riferimento nuovo, e
+chi cerca «quale controllo sta sotto questo punto» legge quel numero. Quindi,
+col puntatore vero dentro QEMU: clic nella casella, `CIAO` digitato, clic sulla
+spunta, clic su «Manda». Il server di prova ha ricevuto
+
+    GET /eco-modulo?t=scrittoCIAO&p=segreto&r=uno&e=beta&h=nascosto&a=due+righe+la+seconda
+
+cioe' tutto: il testo scritto a mano, la password, il radio, la scelta, il campo
+NASCOSTO (che non si impagina ma si manda), l'area — e **non** il campo che sta
+fuori da ogni modulo, che infatti non doveva esserci. L'indirizzo `/eco-modulo`
+e' quello del `<form>` giusto dei due, trovato salendo l'albero.
+
+### LA PAGINA DI PROVA ESISTE PERCHE' LA PROVA LA CHIEDEVA
+
+`tools/prove/sito/estranei.html`: ogni tipo di controllo, due moduli, un campo
+fuori da tutti, un'immagine con le misure dichiarate, una senza, una che non
+arriva, un `<noscript>`. Senza, la parte piu' rischiosa del taglio — la spunta,
+il radio, la scelta, il campo nascosto — non sarebbe stata guardata da nessuno.
+
+### E browser_priv.h ADESSO DICE IL VERO
+
+Le dichiarazioni di `g_ctrl`, `g_imm`, `g_mod`, `g_opz` e `g_js_acceso` sono
+andate in `browser_estranei.h`. Restavano nella giuntura dell'impaginato, e
+un'intestazione che promette piu' di quel che il file mantiene fa il danno che
+l'elenco doveva evitare. Con loro se ne sono andate tre dichiarazioni che non
+erano legami di nessuno — `g_url`, `g_stato`, `g_font_titolo`: le tocca solo
+browser.c, che le definisce.
+
+La giuntura, rimisurata: **14 variabili condivise** (erano 26), **9 funzioni**
+chieste al navigatore (erano 11), **3** offerte a lui.
+
+### QUEL CHE RESTA, E CHE NON E' PIU' UNA DECISIONE
+
+Le quattordici variabili sono PARAMETRI, non legami: `g_doc`, `g_css`, `g_pez`,
+il font del testo, la finestra, i margini. Farne una `lib/exvista` vuol dire
+raccoglierle in un contesto che si passa. Il pezzo che costa e' `g_pez`:
+ventiquattromila pezzi sono l'uscita dell'impaginazione e l'ingresso del
+disegno, e chi li tiene decide chi alloca i 5,2 MB di BSS misurati il
+3 settembre.
+
+! **E UN SECONDO CLIENTE ADESSO SI PUO' MISURARE.** Il manuale dentro exide e
+  l'editor RTF vogliono l'impaginato senza i moduli e senza le immagini di
+  rete: il loro cliente e' una funzione che rende sempre `VISTA_NIENTE`, cioe'
+  venti righe. Prima sarebbe stato un altro navigatore.
+
+### IL TAGLIO SI E' FATTO CON LO SCRIPT, E STAVOLTA GLI SCRIPT SI TENGONO
+
+Quattro passi in `tools/locali/`: `taglia_estranei.py` estrae i sei pezzi e
+**controlla i confini** (ogni pezzo deve cominciare e finire con le righe
+dichiarate), `monta_estranei.py` ne fa il file nuovo con le sostituzioni
+contate una per una, `rifai_impagina.py` rifa' l'impaginato dalla copia intatta,
+`sposta_priv.py` sposta le dichiarazioni. Piu' `confronta_ppm.py`, che e' la
+prova.
+
+! **IL 3 SETTEMBRE LO SCRIPT ERA STATO BUTTATO**, ed e' scritto in cima a
+  `in_lavorazione.txt` che quello e' stato un costo pagato due volte. Questi
+  restano: se fra un mese il taglio si scoprisse sbagliato, la strada e'
+  correggere lo script e rifarlo da capo — non rattoppare il risultato, che e'
+  come si perde la capacita' di rifarlo.
+
+---
+
+
+## 8 settembre 2026 — `img.src` RENDE L'INDIRIZZO INTERO (@NAV-URL, chiuso)
+
+Nel DOM vero `img.src` di un `src="b.png"` dentro `http://sito/a/` rende
+`http://sito/a/b.png`. Nel ponte rendeva `b.png`, ed era scritto nella sua
+intestazione: «risolverlo vuole l'indirizzo della pagina — che adesso c'e'
+(exdom_indirizzo) ma non e' ancora usato per questo».
+
+! **NON E' UN DETTAGLIO ESTETICO.** Le pagine confrontano `a.href` con un
+  indirizzo intero: con l'attributo grezzo trovano sempre di no. Non da' un
+  errore da nessuna parte — da' un `if` che prende la strada sbagliata, che e'
+  il difetto piu' difficile da vedere.
+
+### LA STRADA ERA GIA' SCRITTA NEL FILE, E NON ERA «RISOLVERE QUI»
+
+`exdom.h` dice, degli altri pezzi che il ponte non ha: «la rete e' del browser,
+come lo sono l'orologio, gli eventi e l'indirizzo. Vorranno un gancio, non una
+chiamata a exhttp da qui dentro». Vale identico per gli indirizzi.
+
+Risolvere un riferimento vuol dire conoscere `file://`, `data:`, le ancore e
+l'aritmetica dei percorsi relativi. Il browser ce l'ha gia' in `risolvi()`, in
+un posto solo, e sopra quella funzione c'e' scritto: «averla in una funzione
+sola vuol dire che il giorno che sbaglia, sbaglia in un posto solo».
+
+Quindi: **un gancio**, `exdom_risolutore()`, come per la rete e l'orologio. Il
+browser passa la sua `risolvi()`. Il ponte non ne ha una sua.
+
+! **SENZA GANCIO SI TORNA A PRIMA**, e serve: la prova sull'host non ha un
+  browser e deve girare lo stesso. Un ponte che senza risolutore inventasse
+  mezza aritmetica sarebbe peggio di uno che rende l'attributo com'e' scritto.
+
+### QUALI ATTRIBUTI SONO INDIRIZZI STA NELLA TABELLA
+
+La tabella `RIFLESSI` ha una colonna in piu' invece di un elenco di nomi dentro
+la funzione che legge. Sono la stessa informazione, ma nella tabella si vede
+accanto alla riga che la riguarda: chi un giorno aggiunge `poster` per `<video>`
+mette 1 nella colonna e ha finito.
+
+! **ANCHE `action` E' UN INDIRIZZO**, e si dimentica sempre perche' non si
+  chiama ne' src ne' href: `form.action` nel DOM rende l'assoluto come gli
+  altri due.
+
+### I QUATTRO CASI CHE POTEVANO ROMPERSI IN SILENZIO
+
+Undici prove nuove in `domprova`, e quattro esistono per casi che una prova
+distratta non guarda:
+
+1. **`src` assente rende `""`**, non l'indirizzo della pagina. Risolvere una
+   stringa vuota contro la base darebbe la base: `if (img.src)` passerebbe su
+   un `<img>` senza src — il contrario di quel che chiede chi lo scrive.
+2. **Un'ancora resta com'e'.** Quando il risolutore dice di no — `#in-fondo`,
+   uno schema che non segue — si rende l'attributo, che e' la verita' piu'
+   vicina, e non una stringa vuota.
+3. **`alt` non e' un indirizzo.** Il rischio della colonna nuova e' che risolva
+   tutto.
+4. **Scrivere mette l'attributo com'e' dato**, non risolto: `getAttribute` deve
+   continuare a vedere il grezzo. Riletto da `.src`, torna intero.
+
+`make prova-exdom` e `make prova-exqjs`: 255 prove, 0 sbagliate — le stesse con
+i due motori.
+
+### E IL PEZZO CHE SI DIMENTICA
+
+`exdom` e' una libreria condivisa: una funzione nuova va aggiunta in **tre**
+posti oltre al codice — `exdom_esporta.c` (la tabella dei nomi), `exdom_stub.c`
+(il campo, la richiesta del simbolo e il ponte) e l'intestazione. Saltarne uno
+non da' un errore di compilazione: da' un programma che parte e muore alla
+prima chiamata dicendo che la libreria non esporta un nome.
+
+---
+
 ## 8 settembre 2026 — LA CRITTOGRAFIA CHE VUOLE IL Wi-Fi, E L'IMPALCATURA SOPRA
 
 Serve far funzionare una **Broadcom BCM4318** (14E4:4318, 802.11g). La scheda

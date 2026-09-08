@@ -119,6 +119,14 @@ struct ExDom {
     ExJsVal      proto_xhr;
     ExDomRete    rete;
     void        *rete_dato;
+    /* ! CHI RISOLVE GLI INDIRIZZI STA FUORI, come la rete e l'orologio. Il
+     * ponte sa DOVE si e' (url), ma trasformare «b.png» in
+     * «http://sito/a/b.png» vuol dire conoscere file://, data:, le ancore e
+     * l'aritmetica dei percorsi relativi — che il browser ha gia' in
+     * risolvi(), in un posto solo. Riscriverla qui sarebbe una seconda
+     * implementazione della stessa cosa, e due copie divergono. */
+    ExDomRisolvi risolvi;
+    void        *risolvi_dato;
     InCorso      coda[RETE_CODA_MAX];
     int          rete_persa;        /* la coda era piena: e' una spia */
     char         url[EXDOM_URL_MAX];    /* dove siamo, detto da fuori   */
@@ -169,7 +177,8 @@ static int  biscotto_pezzo(const char *s, char *fuori, unsigned int max);
 static void biscotto_aggiungi(ExDom *D, const char *nuovo);
 static ExJsVal dati_oggetto(ExDom *D, Legame *L);
 static ExJsVal classi_oggetto(ExDom *D, Legame *L);
-static int riflesso_leggi(ExJsCtx *c, HtmlDoc *d, int n, const char *nome,
+static int riflesso_leggi(ExDom *D, ExJsCtx *c, HtmlDoc *d, int n,
+                          const char *nome,
                           ExJsVal *fuori);
 static int riflesso_scrivi(ExJsCtx *c, HtmlDoc *d, int n, const char *nome,
                            ExJsVal v);
@@ -484,7 +493,7 @@ static int leggi_prop(ExJsCtx *c, void *dato, const char *nome, ExJsVal *fuori)
      * anche lei (con il nome vuoto): senza questa riga `document.title`
      * diventerebbe l'attributo `title` della radice — che non esiste — invece
      * del testo del <title>, che sta trenta righe piu' giu'. */
-    if (n != d->radice && riflesso_leggi(c, d, n, nome, fuori)) return 1;
+    if (n != d->radice && riflesso_leggi(D, c, d, n, nome, fuori)) return 1;
 
     /* ! `elemento.onclick` RENDE IL GESTORE, o null. Il DOM fa cosi', e le
      * pagine ci contano per due cose: sapere se ce n'e' gia' uno, e
@@ -1724,32 +1733,41 @@ typedef struct {
     const char *prop;       /* il nome in JavaScript                        */
     const char *attr;       /* l'attributo nell'albero                      */
     const char *tag;        /* i tag ammessi, separati da '|'; 0 = tutti    */
+    /* ! QUALI SONO INDIRIZZI STA NELLA TABELLA, non in un elenco di nomi
+     * dentro la funzione che legge. Sono la stessa informazione, ma qui si
+     * vede accanto alla riga che la riguarda: chi aggiunge `poster` per
+     * <video> mette 1 nella colonna e ha finito, invece di doversi ricordare
+     * di una lista da un'altra parte. */
+    int         indirizzo;  /* 1 = si riflette RISOLTO, non com'e' scritto  */
 } Riflesso;
 
 static const Riflesso RIFLESSI[] = {
     /* comuni a ogni elemento */
-    { "title",       "title",       0 },
-    { "lang",        "lang",        0 },
-    { "dir",         "dir",         0 },
-    /* gli indirizzi */
-    { "src",         "src",         "img|script|iframe|source|video|audio|embed|input|frame|track" },
-    { "href",        "href",        "a|area|link|base" },
-    { "alt",         "alt",         "img|area|input" },
+    { "title",       "title",       0, 0 },
+    { "lang",        "lang",        0, 0 },
+    { "dir",         "dir",         0, 0 },
+    /* gli indirizzi: questi si riflettono RISOLTI */
+    { "src",         "src",         "img|script|iframe|source|video|audio|embed|input|frame|track", 1 },
+    { "href",        "href",        "a|area|link|base", 1 },
+    { "alt",         "alt",         "img|area|input", 0 },
     /* i moduli */
-    { "value",       "value",       "input|button|option|li|param|progress|meter" },
-    { "name",        "name",        "input|select|textarea|button|form|img|iframe|a|meta|param|map|object" },
-    { "type",        "type",        "input|button|script|link|style|ol|source|embed|object" },
-    { "placeholder", "placeholder", "input|textarea" },
-    { "action",      "action",      "form" },
-    { "method",      "method",      "form" },
-    { "htmlFor",     "for",         "label|output" },
+    { "value",       "value",       "input|button|option|li|param|progress|meter", 0 },
+    { "name",        "name",        "input|select|textarea|button|form|img|iframe|a|meta|param|map|object", 0 },
+    { "type",        "type",        "input|button|script|link|style|ol|source|embed|object", 0 },
+    { "placeholder", "placeholder", "input|textarea", 0 },
+    /* ! ANCHE `action` E' UN INDIRIZZO, e si dimentica sempre perche' non si
+     * chiama src ne' href: `form.action` nel DOM rende l'assoluto come gli
+     * altri due. */
+    { "action",      "action",      "form", 1 },
+    { "method",      "method",      "form", 0 },
+    { "htmlFor",     "for",         "label|output", 0 },
     /* il resto che le pagine leggono davvero */
-    { "target",      "target",      "a|area|form|base" },
-    { "rel",         "rel",         "a|area|link" },
-    { "content",     "content",     "meta" },
-    { "width",       "width",       "img|canvas|iframe|video|embed|object|table|td|th" },
-    { "height",      "height",      "img|canvas|iframe|video|embed|object" },
-    { 0, 0, 0 }
+    { "target",      "target",      "a|area|form|base", 0 },
+    { "rel",         "rel",         "a|area|link", 0 },
+    { "content",     "content",     "meta", 0 },
+    { "width",       "width",       "img|canvas|iframe|video|embed|object|table|td|th", 0 },
+    { "height",      "height",      "img|canvas|iframe|video|embed|object", 0 },
+    { 0, 0, 0, 0 }
 };
 
 /* `tag` sta nell'elenco «a|b|c»? Un elenco vuoto (0) vuol dire «qualunque». */
@@ -2084,16 +2102,45 @@ static ExJsVal classi_oggetto(ExDom *D, Legame *L)
  * viene prima nel file e non puo' vedere il tipo Riflesso. Due righe di
  * involucro costano meno di spostare mezza libreria per far tornare l'ordine
  * delle dichiarazioni. */
-static int riflesso_leggi(ExJsCtx *c, HtmlDoc *d, int n, const char *nome,
-                          ExJsVal *fuori)
+static int riflesso_leggi(ExDom *D, ExJsCtx *c, HtmlDoc *d, int n,
+                          const char *nome, ExJsVal *fuori)
 {
     const Riflesso *R = riflesso_di(d, n, nome);
+    const char     *v;
 
     if (!R) return 0;
+
     /* ! L'ATTRIBUTO CHE NON C'E' DA "", come `id` e `className` e al
      * contrario di getAttribute: e' quel che fa il DOM per le proprieta'
      * riflesse, ed e' il motivo per cui `if (img.alt)` funziona. */
-    *fuori = stringa_c(c, html_attr(d, n, R->attr));
+    v = html_attr(d, n, R->attr);
+
+    /* ! GLI INDIRIZZI SI RIFLETTONO RISOLTI, ed e' quello che fa il DOM vero:
+     * `img.src` rende «http://sito/a/b.png» anche se l'attributo dice
+     * «b.png». Le pagine ci contano — confrontano `a.href` con un indirizzo
+     * intero, e con l'attributo grezzo trovano sempre di no.
+     *
+     * ! MA SOLO SE QUALCUNO SA RISOLVERE. Senza il gancio si rende
+     * l'attributo com'e' scritto: e' quel che faceva prima, ed e' meglio di
+     * un indirizzo inventato qui dentro con mezza aritmetica. La prova
+     * sull'host gira cosi', senza browser.
+     *
+     * ! E UN ATTRIBUTO VUOTO RESTA VUOTO. Risolvere "" contro l'indirizzo
+     * della pagina darebbe l'indirizzo della pagina: `if (img.src)` passerebbe
+     * su un <img> senza src, che e' il contrario di quel che chiede chi lo
+     * scrive. */
+    if (R->indirizzo && D && D->risolvi && v && v[0]) {
+        char intero[EXDOM_URL_MAX];
+
+        if (D->risolvi(D->risolvi_dato, v, intero, sizeof(intero))) {
+            *fuori = stringa_c(c, intero);
+            return 1;
+        }
+        /* Il risolutore ha detto di no — un'ancora, uno schema che non segue:
+         * si rende quel che c'e' scritto, che e' la verita' piu' vicina. */
+    }
+
+    *fuori = stringa_c(c, v);
     return 1;
 }
 
@@ -2696,6 +2743,16 @@ static ExJsVal m_loc_stringa(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
 
     (void)questo; (void)a; (void)n_arg;
     return stringa_c(c, D->url);
+}
+
+/* ! IL RISOLUTORE SI DA' UNA VOLTA E RESTA, come la rete e l'orologio: e'
+ * una proprieta' di chi ospita, non di una pagina. Passando 0 si torna a
+ * riflettere l'attributo com'e' scritto. */
+void exdom_risolutore(ExDom *D, ExDomRisolvi f, void *dato)
+{
+    if (!D) return;
+    D->risolvi = f;
+    D->risolvi_dato = dato;
 }
 
 void exdom_indirizzo(ExDom *D, const char *url)

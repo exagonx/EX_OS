@@ -1,0 +1,33 @@
+<html><head><title>pezzi estranei</title></head><body>
+<h1>I PEZZI ESTRANEI</h1>
+<p>Questa pagina esiste per una prova sola: che l'impaginato disegni gli stessi
+pixel quando i moduli, le immagini e gli script escono da lui e passano da due
+ganci. Ogni cosa che l'impaginato non sa misurare da se' deve stare qui.</p>
+
+<form action="/eco-modulo" method="get">
+<p>testo: <input type="text" name="t" size="24" value="scritto">
+   password: <input type="password" name="p" size="10" value="segreto"></p>
+<p>spunta: <input type="checkbox" name="s" checked>
+   scelta: <input type="radio" name="r" value="uno" checked>uno
+           <input type="radio" name="r" value="due">due</p>
+<p>elenco: <select name="e"><option>alfa<option selected>beta<option>gamma</select>
+   <input type="hidden" name="h" value="nascosto"></p>
+<p>area:<br><textarea name="a">due righe
+la seconda</textarea></p>
+<p><input type="submit" value="Manda"> <input type="reset">
+   <button>Un bottone</button></p>
+</form>
+
+<form action="/eco" method="post">
+<p>secondo modulo: <input type="text" name="q" size="12"> <input type="submit"></p>
+</form>
+
+<p>fuori da ogni modulo: <input type="text" name="libero" size="8"></p>
+
+<p>con misura dichiarata: <img src="img1.png" width="64" height="64" alt="uno"></p>
+<p>senza misura: <img src="img2.png" alt="due"></p>
+<p>che non c'e', si legge l'alt: <img src="manca.png" alt="questa non arrivera' mai"></p>
+
+<noscript><p>SENZA SCRIPT si legge questa riga, con gli script no.</p></noscript>
+<p>fine.</p>
+</body></html>

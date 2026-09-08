@@ -84,6 +84,15 @@ e non cambia mai. I rimandi si scrivono con quella, non col numero di riga.
                   predefinito, con `--solo-se` e `--tranne-se` per le
                   sostituzioni condizionate
 
+  E L'8 SETTEMBRE 2026 si sono aggiunti, dal taglio dei pezzi estranei:
+
+    confronta_ppm.py  due istantanee dello schermo, riga di pixel per riga di
+                  pixel — la prova che un taglio non ha spostato niente, e
+                  quella che ha trovato i tre pixel persi di un'immagine
+    taglia_estranei.py, monta_estranei.py, rifai_impagina.py, sposta_priv.py
+                  i quattro passi di quel taglio, che si rilanciano dalle copie
+                  intatte: la regola qui sopra, applicata a se' stessa
+
 
 INDICE — I COMPITI, IN ORDINE DI LIVELLO
 #############################################################################
@@ -105,8 +114,8 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
  --  @CHIUSA          una strada chiusa, scritta perche' non si riapra
  --  @PROVE-STRUMENTI come si prova un compilatore (o make, o nasm) dentro EX-OS
 
-  1  @USB             `make usb` c'e': manca la prova su una chiavetta VERA
-  1  @VISTA           l'impaginato non e' una libreria: due callback, non un trasloco
+  1  @USB             resta la prova su una chiavetta VERA: e' hardware, non lavoro
+  1  @VISTA           i legami sono tagliati: resta da passare quattordici variabili
   1  @SUONO-REG       la registrazione non c'e': nessun driver accende AUDIO_CAP_REGISTRA
   1  @SUONO-MIX       un client alla volta: il secondo che suona riceve -EBUSY
   1  @SUONO-CAMPIONI  la tavola d'onde e' otto seni: servono campioni da file
@@ -114,7 +123,6 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @NAV-UNITA       le unita' relative del CSS (em, %, rem) e @media
   1  @NAV-BIDI        l'arabo e l'ebraico si vedono ma vanno nel verso sbagliato
   1  @NAV-CURSORE     il cursore non si piazza col mouse dentro le caselle
-  1  @NAV-URL         l'indirizzo assoluto in img.src e a.href
   1  @NAV-BORDER      `border` nel CSS: oggi i bordi si fanno solo dall'attributo
   1  @NAV-GIF         le GIF animate mostrano il primo fotogramma
   1  @NAVMETA         sette meta' che mancano a cose gia' fatte (una sezione sola)
@@ -363,13 +371,29 @@ QUEL CHE C'E' GIA' PRONTO DA PROVARE, sul CD:
       - il controllo `removable`, che qui e' stato provato solo col /sys finto
         e col rifiuto su /dev/sda.
 
- 2. SENZA I DRIVER DI RETE LA CHIAVETTA NON SI AGGIORNA, e ci si arriva in
-    silenzio. Su quella di prova `/dev/ne2k.drv` non c'era — `install` copia i
-    componenti che si scelgono, e i driver del CD non erano fra quelli — quindi
-    niente scheda, niente rete, niente `netupdate`. E' un cerchio: lo strumento
-    che porta i pezzi mancanti ha bisogno di uno dei pezzi mancanti. La strada
-    e' mettere i driver di rete fra le cose che si installano SEMPRE, e vale
-    anche per `install` su disco fisso.
+ 2. FATTO l'8 settembre 2026 (diario: «I DRIVER DI RETE SI INSTALLANO ANCHE
+    QUANDO NON SERVONO»). Erano DUE difetti, non uno, e il secondo si vedeva
+    solo cercando il primo:
+
+      - `install` chiamava la scelta dei driver DENTRO il ramo degli
+        strumenti. Chi installava da un supporto col manifesto e rispondeva NO
+        alla seconda domanda non ci passava mai, e restava coi soli driver del
+        floppy — dove la rete non ci sta. Adesso la sonda si fa sempre.
+      - e la sonda, comunque, rispondeva «non serve su questa macchina» — ed
+        era vero. La macchina che INSTALLA non e' sempre quella che USERA' il
+        sistema: una chiavetta si costruisce dentro QEMU, senza scheda di rete
+        perche' a costruirla non serve. Adesso i driver di rete si installano
+        anche quando la sonda dice di no.
+
+    L'elenco non e' scritto nell'installatore: si scorre la tabella
+    «scheda -> driver» di lib/rete.c, la stessa che netdetect usa per
+    riconoscerle. Costa 110 KB — e1000, ne2k, pcnet e lo stack ip — e compra
+    l'unica strada che rimette in piedi il resto.
+
+    La prova: installazione interattiva con `-net none`, NO agli strumenti e
+    NO a ExWin. Prima sul disco finivano otto driver e nessuno di rete; adesso
+    ce ne sono dodici, con e1000, ip, ne2k e pcnet. Letto da Linux con
+    `debugfs -R "ls /dev"` sull'immagine, non dal messaggio dell'installatore.
 
  3. LA CHIAVETTA SI USA TUTTA SOLO SE LO SI CHIEDE. L'immagine e' grande MB
     (1024 di default) e il resto della chiavetta resta inutilizzato. Non c'e'
@@ -868,20 +892,42 @@ LA STRADA, IN DUE PASSI E NON IN UNO:
     La giuntura, misurata: 21 variabili condivise, 11 funzioni chieste al
     navigatore, 3 sole offerte a lui (impagina, disegna, uguale).
 
- 2. RESTA DA FARE: guardare quell'elenco e decidere cosa puo' diventare
-    lib/exvista. I tre legami da tagliare sono scritti in browser_priv.h e
-    sono sempre gli stessi: i MODULI, le IMMAGINI e gli SCRIPT. Passano di li'
-    perche' un <input> si impagina IN LINEA col testo, e la riga che lo
-    contiene non si puo' misurare senza sapere quanto e' largo il controllo.
-    La forma della risposta e' nota: l'impaginato non deve sapere COSA sia quel
-    pezzo estraneo, deve poter chiedere a qualcuno quanto e' largo e alto, e
-    poi dirgli di disegnarsi. Sono due callback, non un trasloco.
+ 2. FATTO l'8 settembre 2026 (diario: «L'IMPAGINATO NON SA PIU' COS'E' UN
+    <input>»). I tre legami — i MODULI, le IMMAGINI, gli SCRIPT — sono tagliati
+    con due domande e un «si ricomincia», in browser_vista.h; chi risponde e'
+    browser_estranei.c, 703 righe. browser_impagina.c 1836 -> 1333.
+    Il metro non e' quante righe se ne sono andate: e' che dentro l'impaginato
+    non si possono piu' scrivere le parole input, button, select, textarea,
+    img e noscript. Restano table, br, hr, a, li, pre — cioe' testo. Di form
+    resta il nome nell'elenco dei blocchi, che e' impaginazione: quel che se
+    n'e' andato e' il MODULO, cioe' l'azione, il metodo e i campi suoi.
+    La giuntura, rimisurata: 14 variabili condivise (erano 26), 9 funzioni
+    chieste al navigatore (erano 11), 3 offerte a lui.
+    La prova: stessa pagina fotografata prima e dopo, in cima e scorsa, 9 righe
+    di pixel diverse su 600 — la 582-591, colonne 769-782, che sono i MINUTI
+    dell'orologio in basso a destra. E il modulo mandato davvero, col clic del
+    mouse: t=scrittoCIAO&p=segreto&r=uno&e=beta&h=nascosto&a=due+righe...
 
-! E IL TAGLIO SI RIFA' CON LO SCRIPT, NON A MANO. tools non lo tiene (e' stato
-  usa e getta), ma il metodo si': si costruisce la mappa del file — definizioni
-  di primo livello, chi chiama chi, chi tocca quali globali — e si lascia dire
-  alla macchina dove passa il confine. A occhio, su seimila righe, il gruppo
-  «contiguo da font_di a disegna» non si vede.
+ 3. RESTA DA FARE: le quattordici variabili condivise. Sono elencate in
+    browser_priv.h e non sono decisioni — sono PARAMETRI: g_doc, g_css, g_pez,
+    g_font_testo, g_f, i margini, lo scorrimento. Farne una lib/exvista vuol
+    dire raccoglierle in un contesto che si passa, non tagliare altri legami.
+    Il pezzo che costa e' g_pez: ventiquattromila pezzi sono l'uscita
+    dell'impaginazione e l'ingresso del disegno, e chi li tiene decide chi
+    alloca 5,2 MB di BSS — che era il costo misurato al punto 1.
+
+! IL TAGLIO SI E' FATTO CON LO SCRIPT, E GLI SCRIPT SI SONO TENUTI, in
+  tools/locali/: taglia_estranei.py (estrae i sei pezzi e controlla i confini),
+  monta_estranei.py, rifai_impagina.py, sposta_priv.py. Si rilanciano dalle
+  copie intatte dei sorgenti, e se il taglio si scoprisse sbagliato si corregge
+  lo script — non il risultato.
+
+! E LA PROVA DEI PIXEL HA TROVATO UN DIFETTO VERO, che a occhio non si vedeva:
+  un'immagine alza la riga di TRE pixel e un controllo di QUATTRO, e nel primo
+  giro il tre si era perso. La pagina sembrava identica; il documento era piu'
+  corto di sei pixel, e a dirlo e' stato il POLLICE DELLA BARRA DI
+  SCORRIMENTO — tre righe di pixel alla colonna 741. Vedi
+  tools/locali/confronta_ppm.py.
 
 
 =============================================================================
@@ -939,11 +985,6 @@ Le prove che contano, e come si lanciano:
     da' il fuoco alla casella e mette il cursore in fondo, non nel punto in cui
     si e' cliccato.
 
- 5. @NAV-URL L'INDIRIZZO ASSOLUTO in `img.src` e `a.href`. Oggi si riflette
-    l'attributo: `src="b.png"` rende `"b.png"` e non `"http://sito/a/b.png"`.
-    Il ponte l'indirizzo della pagina ce l'ha (exdom_indirizzo), quindi manca
-    solo la risoluzione.
-
 ! I TETTI DEL CSS SONO STATI ALZATI il 4 settembre 2026, perche' un foglio
   vero non ci stava: quello di DuckDuckGo e' 105.607 byte con 1652 selettori e
   2207 dichiarazioni, contro tetti di 24 KB, 600 e 2000. Adesso sono 160 KB,
@@ -952,10 +993,10 @@ Le prove che contano, e come si lanciano:
   DuckDuckGo spariva del tutto, schermo bianco. «stile troncato» nella riga di
   stato e' il primo posto da guardare quando una pagina arriva e non si vede.
 
- 6. @NAV-BORDER `border` NEL CSS. Oggi i bordi si disegnano solo dall'attributo `border`
+ 5. @NAV-BORDER `border` NEL CSS. Oggi i bordi si disegnano solo dall'attributo `border`
     delle tabelle. `border-collapse`, i colori e i lati separati non ci sono.
 
- 7. @NAV-GIF LE GIF ANIMATE MOSTRANO IL PRIMO FOTOGRAMMA, ed e' dichiarato: animarle
+ 6. @NAV-GIF LE GIF ANIMATE MOSTRANO IL PRIMO FOTOGRAMMA, ed e' dichiarato: animarle
     vorrebbe dire un orologio dentro la libreria delle immagini.
 
 

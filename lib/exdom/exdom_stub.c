@@ -51,6 +51,7 @@ static struct {
     int (*perso)(const ExDom *);
     int (*troncato)(const ExDom *);
     void (*indirizzo)(ExDom *, const char *);
+    void (*risolutore)(ExDom *, ExDomRisolvi, void *);
     int (*dove_andare)(ExDom *, char *, unsigned int);
     void (*biscotti_metti)(ExDom *, const char *);
     const char *(*biscotti)(ExDom *);
@@ -96,6 +97,8 @@ static void assicura(void)
     P.troncato     = (int (*)(const ExDom *))chiedi(t, "exdom_troncato");
     P.indirizzo    = (void (*)(ExDom *, const char *))
                      chiedi(t, "exdom_indirizzo");
+    P.risolutore   = (void (*)(ExDom *, ExDomRisolvi, void *))
+                     chiedi(t, "exdom_risolutore");
     P.dove_andare  = (int (*)(ExDom *, char *, unsigned int))
                      chiedi(t, "exdom_dove_andare");
     P.biscotti_metti = (void (*)(ExDom *, const char *))
@@ -141,6 +144,9 @@ int exdom_troncato(const ExDom *D)
 
 void exdom_indirizzo(ExDom *D, const char *url)
 { assicura(); P.indirizzo(D, url); }
+
+void exdom_risolutore(ExDom *D, ExDomRisolvi f, void *dato)
+{ assicura(); P.risolutore(D, f, dato); }
 
 int exdom_dove_andare(ExDom *D, char *fuori, unsigned int max)
 { assicura(); return P.dove_andare(D, fuori, max); }

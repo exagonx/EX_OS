@@ -18,19 +18,34 @@
  * possono tagliare. Il contrario — cominciare dalla libreria — vuol dire
  * scoprirli uno per volta col programma a meta' del guado.
  *
- * ! QUI DENTRO CI SONO ANCORA I MODULI, LE IMMAGINI E GLI SCRIPT, e non per
- * pigrizia: un <input> si impagina IN LINEA col testo che lo circonda, e la
- * riga che lo contiene non si puo' misurare senza sapere quanto e' largo quel
- * controllo. Sono i tre legami che una lib/exvista dovra' tagliare, e non si
- * tagliano spostando del codice: si tagliano decidendo che l'impaginato chiede
- * «quanto e' largo questo pezzo estraneo» a chi glielo sa dire.
+ * ! E I MODULI, LE IMMAGINI E GLI SCRIPT NON CI SONO PIU', dall'8 settembre
+ * 2026. Erano i tre legami che browser_priv.h nominava, e non si sono tagliati
+ * spostando del codice: si sono tagliati decidendo che l'impaginato CHIEDE
+ * «quanto e' largo questo pezzo estraneo» a chi glielo sa dire. Le due domande
+ * stanno in browser_vista.h, chi risponde in browser_estranei.c.
+ *
+ * ! QUI DENTRO NON SI NOMINA PIU' NESSUN TAG CHE NON SIA IMPAGINAZIONE. Restano
+ * <table>, <br>, <hr>, <a>, <li>, <pre> — cioe' come si dispone il testo — e
+ * sono spariti <input>, <button>, <select>, <textarea>, <img> e <noscript>.
+ * E' il metro del taglio: non quante righe se ne sono andate, ma quali parole
+ * non si possono piu' scrivere qui.
+ *
+ * ! DI <form> RESTA IL NOME NELL'ELENCO DEI BLOCCHI, e ci resta a ragione: un
+ * modulo va a capo come un <div>, e questo e' impaginare. Quel che se n'e'
+ * andato e' il MODULO — l'azione, il metodo, i campi che gli appartengono —
+ * che non e' una questione di righe e di margini.
+ *
+ * ! QUEL CHE MANCA ANCORA A UNA lib/exvista sta in browser_priv.h, ed e' la
+ * lista delle variabili condivise: g_doc, g_css, g_pez, i font, la finestra.
+ * Quelle sono un'altra giornata — ma sono PARAMETRI, non decisioni: nessuna di
+ * loro obbliga l'impaginato a sapere che cosa sia una casella di testo.
  * ============================================================================= */
 #include "browser_priv.h"
+#include "browser_vista.h"
 
 /* I globali che servono SOLO a impaginare: sono usciti da browser.c insieme
  * al codice che li usa, ed e' l'unica parte del taglio che riduce davvero il
  * numero dei legami invece di limitarsi a scriverli. */
-static int    g_mod_ora = -1;   /* il <form> che stiamo impaginando */
 static unsigned int  g_link_usati = 0;
 static Sfondo g_sfondi[SFONDI_MAX];
 static int    g_sfondi_n = 0;
@@ -43,6 +58,18 @@ static int g_misura = 0;
 static int g_fisso = 0;
 
 static void suggerimenti(int v, CssStile *st);   /* piu' avanti, qui sotto */
+
+/* ! IL CLIENTE PUO' NON ESSERCI, e non e' un caso di scuola: la prova
+ * dell'impaginato non ha un navigatore intorno, e senza cliente deve impaginare
+ * il testo e ignorare il resto invece di fermarsi. E' la stessa scelta del
+ * risolutore di indirizzi in exdom — un gancio che manca da' la verita' piu'
+ * vicina, non un errore. */
+static const VistaCliente *g_cliente = 0;
+
+void vista_cliente(const VistaCliente *c)
+{
+    g_cliente = c;
+}
 
 static ExFont font_di(const CssStile *st)
 {
@@ -152,8 +179,7 @@ static void parola(const char *t, unsigned int off, int n)
         g_pez[g_pez_n].colore = colore_di(&g_stile_ora);
         g_pez[g_pez_n].h = 0;
         g_pez[g_pez_n].link = (short)g_link_ora;
-        g_pez[g_pez_n].img = -1;
-        g_pez[g_pez_n].ctrl = -1;
+        g_pez[g_pez_n].rif = -1;
         g_pez[g_pez_n].nodo = g_nodo_ora;
         g_pez_n++;
     }
@@ -307,11 +333,18 @@ static void parole(const char *t, unsigned int base)
     }
 }
 
-/* Un'immagine — o il posto che le si tiene — si colloca come una parola molto
- * grande. */
-static void pezzo_immagine(int k, int w, int h)
+/* Un pezzo estraneo si colloca come una parola molto grande.
+ *
+ * ! ERA pezzo_immagine, E LA DIFFERENZA E' TUTTA NEI CAMPI DI `p`. Prima
+ * questa funzione sapeva di collocare un'immagine: prendeva il link corrente,
+ * non stringeva mai, aggiungeva tre pixel di respiro. Adesso quei tre numeri
+ * glieli porta chi ha misurato il pezzo, e lei non sa piu' che cosa sta
+ * mettendo giu'. Un controllo passa esattamente di qui, con numeri diversi. */
+static void pezzo_estraneo(int v, const VistaPezzo *p)
 {
+    int w = p->w, h = p->h;
 
+    if (p->stringi && w > riga_w()) w = riga_w();
     if (g_pen_x + w > riga_x() + riga_w() && g_pen_x > riga_x()) a_capo();
 
     if (g_pez_n < PEZZI_MAX) {
@@ -322,18 +355,17 @@ static void pezzo_immagine(int k, int w, int h)
         g_pez[g_pez_n].font = g_font_testo;
         g_pez[g_pez_n].colore = EX_NERO;
         g_pez[g_pez_n].h = (short)h;
-        g_pez[g_pez_n].link = (short)g_link_ora;
-        g_pez[g_pez_n].img = (short)k;
-        g_pez[g_pez_n].ctrl = -1;
-        g_pez[g_pez_n].nodo = g_nodo_ora;
+        g_pez[g_pez_n].link = p->nel_flusso ? (short)g_link_ora : -1;
+        g_pez[g_pez_n].rif = (short)p->rif;
+        g_pez[g_pez_n].nodo = v;
         g_pez_n++;
     }
 
-    g_pen_x += w;
+    g_pen_x += w + p->aria_dx;
 
-    /* ! LA RIGA CRESCE FINO ALL'IMMAGINE, altrimenti la riga dopo le passa
-     * sopra: l'altezza di una riga e' quella del suo pezzo piu' alto. */
-    if (h + 3 > g_riga_h) g_riga_h = h + 3;
+    /* ! LA RIGA CRESCE FINO AL PEZZO, altrimenti la riga dopo gli passa sopra:
+     * l'altezza di una riga e' quella del suo pezzo piu' alto. */
+    if (h + p->aria_giu > g_riga_h) g_riga_h = h + p->aria_giu;
 }
 
 static int blocco(const char *nome)
@@ -372,17 +404,14 @@ int uguale(const char *a, const char *b)
  * e una dal ripiego — o, peggio, fa vedere il ripiego di una pagina che gli
  * script hanno gia' costruito.
  *
- * ! SI E' VISTO SU google.com/search, ED ERA IL SINTOMO CHE SEMBRAVA UN
- * ALTRO. La pagina dei risultati ha TUTTO il contenuto dentro <noscript> —
- * «Se non vieni reindirizzato automaticamente entro alcuni secondi, fai clic
- * qui» — e i risultati veri li costruisce uno script. Il browser mostrava
- * quella riga e sembrava che il motore non girasse: girava, e quella riga non
- * doveva essere sullo schermo. */
+ * ! E <noscript> NON E' PIU' IN QUESTO ELENCO, perche' e' l'unico che dipende
+ * da una cosa che l'impaginato non ha: il motore acceso o spento. La risposta
+ * la da' il cliente, con VISTA_SALTA — e questo elenco e' tornato a essere
+ * quello che dice il suo nome, cioe' i tag il cui contenuto non e' pagina. */
 static int invisibile(const char *n)
 {
     return uguale(n, "script") || uguale(n, "style") || uguale(n, "head") ||
-           uguale(n, "title") || uguale(n, "meta") || uguale(n, "link") ||
-           (g_js_acceso && uguale(n, "noscript"));
+           uguale(n, "title") || uguale(n, "meta") || uguale(n, "link");
 }
 
 /* impagina_nodo e impagina_tabella si chiamano a vicenda: una tabella contiene
@@ -794,55 +823,6 @@ static void impagina_tabella(int v, const CssStile *mio)
     g_tab_liv--;
 }
 
-/* Il testo che sta DENTRO un elemento, messo in fila.
- *
- * ! UN <button> NON HA `value`, HA UN CONTENUTO, e la stessa cosa vale per
- * <option> e <textarea>. Con i controlli si scende nei figli una volta sola,
- * qui, e poi non ci si scende piu': se il contenuto finisse anche nel flusso
- * della pagina, l'etichetta di un pulsante comparirebbe due volte — una dentro
- * il pulsante e una accanto. */
-static void testo_dentro(int v, char *out, unsigned int max)
-{
-    unsigned int n = 0;
-    int          f;
-
-    out[0] = '\0';
-    if (v < 0) return;
-
-    for (f = g_doc.nodi[v].primo_figlio; f >= 0; f = g_doc.nodi[f].prossimo) {
-        if (g_doc.nodi[f].tipo == HTML_TESTO) {
-            const char *t = g_doc.arena + g_doc.nodi[f].testo;
-
-            while (*t && n < max - 1) {
-                /* Gli spazi multipli diventano uno solo, come nel resto. */
-                if (*t == '\n' || *t == '\r' || *t == '\t') {
-                    if (n > 0 && out[n - 1] != ' ') out[n++] = ' ';
-                } else {
-                    out[n++] = *t;
-                }
-                t++;
-            }
-        } else {
-            char dentro[CTRL_VAL_MAX];
-            unsigned int k = 0;
-
-            testo_dentro(f, dentro, sizeof(dentro));
-            while (dentro[k] && n < max - 1) out[n++] = dentro[k++];
-        }
-        if (n >= max - 1) break;
-    }
-
-    /* Via gli spazi in testa e in coda: l'HTML ne mette sempre. */
-    while (n > 0 && out[n - 1] == ' ') n--;
-    out[n] = '\0';
-    if (out[0] == ' ') {
-        unsigned int i = 0;
-        while (out[i] == ' ') i++;
-        for (n = 0; out[i]; i++) out[n++] = out[i];
-        out[n] = '\0';
-    }
-}
-
 static void impagina_nodo(int v, const CssStile *ered)
 {
     int f;
@@ -862,7 +842,6 @@ static void impagina_nodo(int v, const CssStile *ered)
     {
         const char *nome = html_nome(&g_doc, v);
         int         era_link = g_link_ora;
-        int         era_modulo = g_mod_ora;
         int         era_sx = g_marg_sx, era_dx = g_marg_dx;
         int         sfondo_mio = -1;
         CssStile    mio;
@@ -940,276 +919,46 @@ static void impagina_nodo(int v, const CssStile *ered)
         }
 
         /* =====================================================================
-         * I CONTROLLI DI UN MODULO
+         * E QUI SI CHIEDE, invece di sapere.
          *
-         * ! LA MISURA VIENE DALL'ATTRIBUTO `size` QUANDO C'E', e altrimenti da
-         * un valore ragionevole: venti caratteri e' quello che quasi tutti i
-         * browser hanno usato per trent'anni, e una casella troppo stretta si
-         * nota molto piu' di una troppo larga.
+         * ! IL POSTO NON E' INDIFFERENTE, ed e' quello dei controlli di prima:
+         * DOPO css_calcola, dopo `display: none`, dopo le tabelle e dopo <br>
+         * e <hr>. Chiedere prima vorrebbe dire un <input> con `display: none`
+         * impaginato lo stesso, e il testo di ripiego di un'immagine — l'alt —
+         * scritto con lo stile sbagliato, perche' `parole` prende g_stile_ora
+         * e g_stile_ora e' appena stato messo.
+         *
+         * ! E LE QUATTRO RISPOSTE SONO UNA SOLA DOMANDA. VISTA_SALTA e'
+         * l'elemento che non c'e' (un campo nascosto, un <noscript> con gli
+         * script accesi): niente pezzo e nemmeno i figli. VISTA_TESTO e' il
+         * ripiego di un pezzo che non e' arrivato, e si impagina con le parole
+         * di tutto il resto. VISTA_PEZZO e' un rettangolo che l'impaginato
+         * colloca senza sapere che cosa contenga. VISTA_NIENTE e' «non e' roba
+         * mia», e si tira dritto.
          * ===================================================================== */
-        if (uguale(nome, "input") || uguale(nome, "button") ||
-            uguale(nome, "select") || uguale(nome, "textarea")) {
-            const char *tipo = html_attr(&g_doc, v, "type");
-            const char *val  = html_attr(&g_doc, v, "value");
-            const char *sz   = html_attr(&g_doc, v, "size");
-            int         t    = CTRL_TESTO;
-            int         w, h;
+        if (g_cliente && g_cliente->misura) {
+            VistaPezzo p;
+            int        r;
 
-            if (uguale(nome, "button"))        t = CTRL_PULSANTE;
-            else if (uguale(nome, "select"))   t = CTRL_SCELTA;
-            else if (uguale(nome, "textarea")) t = CTRL_AREA;
-            else if (tipo) {
-                if (uguale(tipo, "submit") || uguale(tipo, "reset") ||
-                    uguale(tipo, "button") || uguale(tipo, "image"))
-                    t = CTRL_PULSANTE;
-                else if (uguale(tipo, "checkbox")) t = CTRL_SPUNTA;
-                else if (uguale(tipo, "radio"))    t = CTRL_RADIO;
-                else if (uguale(tipo, "hidden"))   t = CTRL_NASCOSTO;
-            }
+            p.w = p.h = p.rif = 0;
+            p.nel_flusso = p.stringi = p.aria_dx = p.aria_giu = 0;
+            p.testo = 0;
+            p.testo_off = 0;
 
-            if (g_ctrl_n >= CTRL_MAX || g_pez_n >= PEZZI_MAX) return;
+            r = g_cliente->misura(v, &p);
 
-            {
-                Ctrl *c = &g_ctrl[g_ctrl_n];
-                int   i = 0;
+            /* ! CHI STA NEL FLUSSO DIVENTA IL NODO CORRENTE, e vale anche
+             * quando non si impagina niente: e' cosi' che un'immagine dice
+             * «event.target qui sono io» al pallino di un elenco che venga
+             * dopo. Un controllo non lo fa, e non lo faceva nemmeno prima. */
+            if (r != VISTA_NIENTE && p.nel_flusso) g_nodo_ora = v;
 
-                const char *nm = html_attr(&g_doc, v, "name");
-
-                /* ! QUEL CHE L'UTENTE HA SCRITTO SOPRAVVIVE ALLA
-                 * REIMPAGINAZIONE. L'albero non cambia fra un'impaginazione e
-                 * l'altra, quindi i controlli escono sempre nello stesso
-                 * ordine e lo slot `i` e' sempre dello stesso nodo: se e'
-                 * ancora suo, il valore digitato e la spunta restano dov'erano.
-                 *
-                 * Senza questo, un'immagine che arriva mentre si compila un
-                 * modulo cancellerebbe il campo sotto le dita — e il colpevole
-                 * sembrerebbe la tastiera, non l'impaginazione. */
-                int   suo = (c->nodo == v);
-                short opz_prima = c->opz_ora;
-                char  scritto[CTRL_VAL_MAX];
-
-                scritto[0] = '\0';
-                if (suo) {
-                    int q = 0;
-
-                    while (c->valore[q] && q < CTRL_VAL_MAX - 1) {
-                        scritto[q] = c->valore[q]; q++;
-                    }
-                    scritto[q] = '\0';
-                }
-
-                c->tipo    = (unsigned char)t;
-                c->segreto = (unsigned char)(tipo && uguale(tipo, "password"));
-                if (!suo)
-                    c->acceso = (unsigned char)(html_attr(&g_doc, v, "checked") != 0);
-                c->nodo    = v;
-                c->valore[0] = '\0';
-
-                /* ! IL `name` SERVE AI RADIO PRIMA CHE AI MODULI. Due gruppi di
-                 * scelte nella stessa pagina sono due gruppi solo se si sa a
-                 * quale nome appartiene ognuna: senza, accenderne una spegne
-                 * anche quelle dell'altro gruppo. */
-                c->modulo  = (short)g_mod_ora;
-                c->opz_primo = -1;
-                c->opz_n     = 0;
-                c->opz_ora   = 0;
-                c->nome[0] = '\0';
-                if (nm) {
-                    int q = 0;
-
-                    while (nm[q] && q < CTRL_NOME_MAX - 1) { c->nome[q] = nm[q]; q++; }
-                    c->nome[q] = '\0';
-                }
-
-                /* Il testo dentro: `value` per gli input, il contenuto per un
-                 * <button>. Il contenuto sta nei figli, e qui non si scende:
-                 * si prende `value`, e senza quello un'etichetta onesta. */
-                if (val) {
-                    while (val[i] && i < CTRL_VAL_MAX - 1) { c->valore[i] = val[i]; i++; }
-                    c->valore[i] = '\0';
-                } else if (t == CTRL_SCELTA) {
-                    /* ! LE OPZIONI SI RACCOLGONO UNA PER UNA, e non si prende
-                     * il testo di tutto il <select>: quello darebbe le voci
-                     * incollate in una riga sola. Ognuna e' una scelta
-                     * possibile, e l'utente deve poterle avere tutte. */
-                    int f2;
-
-                    c->opz_primo = (short)g_opz_n;
-                    for (f2 = g_doc.nodi[v].primo_figlio; f2 >= 0;
-                         f2 = g_doc.nodi[f2].prossimo) {
-                        if (g_doc.nodi[f2].tipo != HTML_ELEMENTO) continue;
-                        if (!uguale(html_nome(&g_doc, f2), "option")) continue;
-                        if (g_opz_n >= OPZ_MAX) break;
-
-                        testo_dentro(f2, g_opz[g_opz_n], CTRL_VAL_MAX);
-                        if (html_attr(&g_doc, f2, "selected"))
-                            c->opz_ora = (short)(g_opz_n - c->opz_primo);
-                        g_opz_n++;
-                        c->opz_n++;
-                    }
-
-                    if (c->opz_n > 0) {
-                        int q = 0;
-                        const char *o = g_opz[c->opz_primo + c->opz_ora];
-
-                        while (o[q] && q < CTRL_VAL_MAX - 1) { c->valore[q] = o[q]; q++; }
-                        c->valore[q] = '\0';
-                    }
-                } else if (t != CTRL_TESTO) {
-                    /* <button> e <textarea> portano dentro il proprio testo. */
-                    testo_dentro(v, c->valore, CTRL_VAL_MAX);
-                }
-                if (val == 0 && t == CTRL_TESTO) c->valore[0] = '\0';
-
-                if (t == CTRL_PULSANTE && c->valore[0] == '\0') {
-                    const char *d = tipo && uguale(tipo, "reset") ? "Azzera" : "Invia";
-                    i = 0;
-                    while (d[i] && i < CTRL_VAL_MAX - 1) { c->valore[i] = d[i]; i++; }
-                    c->valore[i] = '\0';
-                }
-
-                /* ! E SOLO ADESSO SI RIMETTE QUEL CHE L'UTENTE AVEVA SCRITTO,
-                 * perche' solo adesso si conosce il tipo. Vale per le caselle
-                 * e per le aree, che sono le uniche in cui si scrive: il testo
-                 * di un pulsante e le opzioni di una scelta vengono dalla
-                 * pagina e si rifanno ogni volta, com'e' giusto. Di una scelta
-                 * si tiene invece la RIGA SCELTA, che e' quel che l'utente ha
-                 * deciso. */
-                if (suo && (t == CTRL_TESTO || t == CTRL_AREA)) {
-                    int q = 0;
-
-                    while (scritto[q] && q < CTRL_VAL_MAX - 1) {
-                        c->valore[q] = scritto[q]; q++;
-                    }
-                    c->valore[q] = '\0';
-                } else if (suo && t == CTRL_SCELTA && c->opz_n > 0) {
-                    int q = 0;
-                    const char *o;
-
-                    if (opz_prima >= 0 && opz_prima < c->opz_n)
-                        c->opz_ora = opz_prima;
-                    o = g_opz[c->opz_primo + c->opz_ora];
-                    while (o[q] && q < CTRL_VAL_MAX - 1) { c->valore[q] = o[q]; q++; }
-                    c->valore[q] = '\0';
-                }
-
-                /* ! IL CURSORE SI ANCORA QUANDO IL VALORE E' DEFINITIVO, non
-                 * prima: sopra il testo puo' ancora cambiare. Se lo slot era
-                 * gia' suo si tiene dov'era — reimpaginare mentre si scrive
-                 * non deve spostare il punto in cui si sta scrivendo — e se e'
-                 * nuovo si mette in fondo. */
-                {
-                    int q = 0;
-
-                    while (c->valore[q]) q++;
-                    if (!suo || c->cur > (short)q) c->cur = (short)q;
-                    if (c->cur < 0) c->cur = 0;
-                    if (!suo || c->sel > (short)q) c->sel = -1;
-                }
-            }
-
-            /* ! UN CAMPO NASCOSTO ENTRA NELL'ELENCO E NON NELL'IMPAGINAZIONE:
-             * niente pezzo, niente larghezza, niente penna che avanza. Da qui
-             * in giu' si parla solo di come si DISEGNA un controllo, e quello
-             * non si disegna. */
-            if (t == CTRL_NASCOSTO) { g_ctrl_n++; return; }
-
-            switch (t) {
-            case CTRL_SPUNTA:
-            case CTRL_RADIO:    w = 14; h = 14; break;
-            case CTRL_PULSANTE: {
-                int n_car = 0;
-                while (g_ctrl[g_ctrl_n].valore[n_car]) n_car++;
-                w = 16 + n_car * 8;
-                if (w < 56) w = 56;
-                h = 22;
-                break;
-            }
-            case CTRL_AREA:     w = 320; h = 88; break;
-            case CTRL_SCELTA:   w = 160; h = 22; break;
-            default: {
-                int car = sz ? atoi(sz) : 20;
-                if (car < 2)  car = 2;
-                if (car > 80) car = 80;
-                w = car * 8 + 8;
-                h = 22;
-                break;
-            }
-            }
-
-            if (w > riga_w()) w = riga_w();
-            if (g_pen_x + w > riga_x() + riga_w() && g_pen_x > riga_x()) a_capo();
-
-            g_pez[g_pez_n].x = g_pen_x;
-            g_pez[g_pez_n].y = g_pen_y;
-            g_pez[g_pez_n].w = w;
-            g_pez[g_pez_n].testo = 0;
-            g_pez[g_pez_n].font = g_font_testo;
-            g_pez[g_pez_n].colore = EX_NERO;
-            g_pez[g_pez_n].h = (short)h;
-            g_pez[g_pez_n].link = -1;
-            g_pez[g_pez_n].img = -1;
-            g_pez[g_pez_n].ctrl = (short)g_ctrl_n;
-            g_pez[g_pez_n].nodo = v;
-            g_pez_n++;
-            g_ctrl_n++;
-
-            g_pen_x += w + 4;
-            if (h + 4 > g_riga_h) g_riga_h = h + 4;
-            return;
-        }
-
-        if (uguale(nome, "img")) {
-            const char *src = html_attr(&g_doc, v, "src");
-            const char *alt;
-            int         k = (src && src[0]) ? imm_indice(v, src) : -1;
-
-            /* Un'immagine e' un pezzo suo, quindi il nodo e' lei stessa: e'
-             * il caso in cui `event.target` deve dire `IMG`. */
-            g_nodo_ora = v;
-
-            if (k >= 0 && g_imm[k].px) {
-                pezzo_immagine(k, (int)g_imm[k].w, (int)g_imm[k].h);
+            if (r == VISTA_SALTA) return;
+            if (r == VISTA_TESTO) {
+                if (p.testo && p.testo[0]) parole(p.testo, p.testo_off);
                 return;
             }
-
-            /* =================================================================
-             * ! SE LA PAGINA DICE QUANTO E' GRANDE, IL POSTO SI TIENE SUBITO.
-             *
-             * E' la differenza fra una pagina che si riassesta a ogni immagine
-             * e una che si riempie: con `width` e `height` sull'<img> la
-             * misura finale si sa PRIMA di aver scaricato un solo byte, quindi
-             * l'impaginazione e' gia' quella definitiva. Quando l'immagine
-             * arriva non si sposta niente — e infatti non si reimpagina, si
-             * ridisegna soltanto.
-             *
-             * ! ED E' TUTTA LA LENTEZZA CHE RESTAVA. Reimpaginare un documento
-             * di ventiquattromila pezzi per ognuna delle nove immagini di una
-             * voce di Wikipedia costa piu' dello scaricarle. Chi dichiara le
-             * misure — e i siti seri le dichiarano, proprio per questo — non
-             * lo paga piu'.
-             * ================================================================= */
-            if (k >= 0 && g_imm[k].stato != 2 &&
-                g_imm[k].dich_w && g_imm[k].dich_h) {
-                unsigned int rw, rh;
-
-                misura(&g_imm[k], g_imm[k].dich_w, g_imm[k].dich_h, &rw, &rh);
-                if (rw && rh) {
-                    g_imm[k].ris_w = rw;
-                    g_imm[k].ris_h = rh;
-                    pezzo_immagine(k, (int)rw, (int)rh);
-                    return;
-                }
-            }
-
-            /* ! FINCHE' L'IMMAGINE NON C'E' SI LEGGE IL SUO `alt`, ed e'
-             * esattamente il motivo per cui quell'attributo esiste. Il valore
-             * sta gia' nell'arena del documento, quindi si impagina con le
-             * stesse parole di tutto il resto. */
-            alt = html_attr(&g_doc, v, "alt");
-            if (alt && alt[0])
-                parole(alt, (unsigned int)(alt - g_doc.arena));
-            return;
+            if (r == VISTA_PEZZO) { pezzo_estraneo(v, &p); return; }
         }
 
         /* L'elenco dei blocchi resta la regola di base; `display` la
@@ -1291,24 +1040,6 @@ static void impagina_nodo(int v, const CssStile *ered)
             g_pen_x += ex_larghezza_testo(font_di(&mio), " ");
         }
 
-        /* ! IL MODULO SI APRE QUI E SI CHIUDE DOPO I FIGLI, come un
-         * collegamento: i controlli dentro ci finiscono per posizione, che e'
-         * l'unica cosa che l'HTML garantisce. (L'attributo `form` che permette
-         * a un campo di stare fuori dal suo modulo esiste, ed e' rarissimo:
-         * dichiarato fuori.) */
-        if (uguale(nome, "form") && g_mod_n < MODULI_MAX) {
-            const char *az = html_attr(&g_doc, v, "action");
-            const char *me = html_attr(&g_doc, v, "method");
-            int q = 0;
-
-            g_mod[g_mod_n].post = (me && (uguale(me, "post") || uguale(me, "POST")));
-            if (az) {
-                while (az[q] && q < AZIONE_MAX - 1) { g_mod[g_mod_n].azione[q] = az[q]; q++; }
-            }
-            g_mod[g_mod_n].azione[q] = '\0';
-            g_mod_ora = g_mod_n++;
-        }
-
         if (uguale(nome, "a")) {
             const char *h = html_attr(&g_doc, v, "href");
 
@@ -1361,7 +1092,6 @@ static void impagina_nodo(int v, const CssStile *ered)
             uguale(nome, "samp")) g_fisso--;
 
         g_link_ora = era_link;
-        if (uguale(nome, "form")) g_mod_ora = era_modulo;
 
         if (e_blocco) {
             a_capo();
@@ -1385,26 +1115,12 @@ void impagina(void)
     g_pez_n = 0;
     g_link_n = 0;
     g_link_usati = 0;
-    g_mod_n = 0;
-    g_mod_ora = -1;
 
-    /* =====================================================================
-     * ! I CONTROLLI SONO UN PRODOTTO DELL'IMPAGINAZIONE, come i pezzi e i
-     * collegamenti, e per molto tempo sono stati l'unico che non si
-     * azzerava qui. Ogni `impagina()` ne accodava una copia nuova senza
-     * buttare le vecchie: dodici reimpaginazioni di una pagina con cinque
-     * controlli ne facevano sessanta, e a CTRL_MAX (64) `impagina_nodo`
-     * cominciava a RINUNCIARE — non solo al controllo, ma a tutto il
-     * sottoalbero sotto di lui.
-     *
-     * ! E IL SINTOMO NON SOMIGLIAVA ALLA CAUSA: sparivano pezzi di pagina
-     * lontani dai moduli, e sparivano solo sulle pagine con molte immagini
-     * — cioe' quelle che si reimpaginano tante volte. Si e' visto
-     * confrontando due build sulla stessa voce di Wikipedia: quella che
-     * reimpagina di meno mostrava PIU' contenuto, che e' esattamente il
-     * contrario di quello che ci si aspetta da un'ottimizzazione.
-     * ===================================================================== */
-    g_ctrl_n = 0;
+    /* ! E CHI TIENE DEI PEZZI SUOI LI BUTTA ADESSO, nello stesso istante in cui
+     * si buttano i nostri. Il perche' — e la giornata che l'ha insegnato — sta
+     * accanto a est_azzera, in browser_estranei.c: e' una prova gia' pagata, e
+     * si e' spostata insieme al codice che la riguarda. */
+    if (g_cliente && g_cliente->azzera) g_cliente->azzera();
     g_fisso = 0;
     /* ! L'ARENA DEL DOCUMENTO NON SI RIAVVOLGE PIU', e la riga che lo faceva
      * era diventata un difetto il giorno che JavaScript ha cominciato a
@@ -1548,7 +1264,7 @@ void disegna(void)
 
     for (i = 0; i < g_pez_n; i++) {
         int y  = g_pez[i].y - g_scorri;
-        int ph = (g_pez[i].img >= 0 || g_pez[i].ctrl >= 0)
+        int ph = (g_pez[i].rif >= 0)
                  ? g_pez[i].h : ex_font_altezza(g_pez[i].font);
 
         /* ! SI DISEGNA SOLO CIO' CHE SI VEDE. Con una pagina di migliaia di
@@ -1557,244 +1273,25 @@ void disegna(void)
          * dalla finestra. */
         if (y + ph < area_y() || y > area_y() + area_h()) continue;
 
-        /* ! E UNA RIGA A META' NON SI DISEGNA AFFATTO, perche' non c'e' un
-         * ritaglio. `ex_scrivi` taglia alla FINESTRA, non all'area del
-         * documento: una riga che comincia sopra il bordo veniva dipinta
-         * SOPRA LA BARRA DELL'INDIRIZZO, e una in fondo sopra la barra di
-         * stato. Si vedeva appena il documento diventava piu' lungo della
-         * finestra — cioe' proprio quando e' arrivata la barra di
-         * scorrimento.
-         *
-         * Le immagini no: quelle un ritaglio ce l'hanno, fatto a mano qui
-         * sotto, e possono sporgere quanto vogliono. */
-        if (g_pez[i].img < 0 &&
-            (y < area_y() || y + ph > area_y() + area_h())) continue;
-
-        /* =================================================================
-         * UN CONTROLLO DI MODULO
-         *
-         * ! LA FORMA LA FA IL RILIEVO, non un bordo disegnato: `ex_incavo`
-         * per cio' in cui si scrive, `ex_rilievo` per cio' che si preme. Sono
-         * le stesse due funzioni con cui il toolkit disegna i propri
-         * controlli, ed e' il motivo per cui una pagina web dentro EX-OS
-         * sembra fatta della stessa materia del resto del sistema.
-         * ================================================================= */
-        if (g_pez[i].ctrl >= 0) {
-            Ctrl *c  = &g_ctrl[g_pez[i].ctrl];
-            int   cx = g_pez[i].x, cw = g_pez[i].w, ch = g_pez[i].h;
-            char  mostra[CTRL_VAL_MAX];
-            int   k;
-
-            for (k = 0; c->valore[k] && k < CTRL_VAL_MAX - 1; k++)
-                mostra[k] = c->segreto ? '*' : c->valore[k];
-            mostra[k] = '\0';
-
-            switch (c->tipo) {
-            case CTRL_PULSANTE:
-                ex_riempi(g_f, cx, y, cw, ch, EX_GRIGIO);
-                ex_rilievo(g_f, cx, y, cw, ch);
-                ex_scrivi(g_f,
-                          cx + (cw - ex_larghezza_testo(EX_FONT_SISTEMA, mostra)) / 2,
-                          y + (ch - 16) / 2, mostra, EX_NERO);
-                break;
-
-            case CTRL_SPUNTA:
-            case CTRL_RADIO:
-                ex_riempi(g_f, cx, y, cw, ch, EX_BIANCO);
-                ex_incavo(g_f, cx, y, cw, ch);
-                /* ! IL SEGNO E' UN QUADRATINO PIENO, e vale per tutt'e due.
-                 * Un cerchio disegnato a mano su quattordici pixel viene un
-                 * ottagono storto: peggio di un quadrato onesto. */
-                if (c->acceso)
-                    ex_riempi(g_f, cx + 3, y + 3, cw - 6, ch - 6, EX_NERO);
-                break;
-
-            case CTRL_SCELTA:
-                ex_riempi(g_f, cx, y, cw, ch, EX_BIANCO);
-                ex_incavo(g_f, cx, y, cw, ch);
-                ex_scrivi(g_f, cx + 4, y + (ch - 16) / 2, mostra, EX_NERO);
-                /* La freccia in fondo: dice che si apre, anche se non si apre
-                 * ancora. */
-                ex_riempi(g_f, cx + cw - 18, y + 2, 16, ch - 4, EX_GRIGIO);
-                ex_rilievo(g_f, cx + cw - 18, y + 2, 16, ch - 4);
-                ex_scrivi(g_f, cx + cw - 14, y + (ch - 16) / 2, "v", EX_NERO);
-                break;
-
-            case CTRL_AREA: {
-                /* ! L'AREA VA A CAPO, e non e' un vezzo: una <textarea> alta
-                 * ottantotto pixel che mostra una riga sola sembra una casella
-                 * rotta. Si spezza sui pixel e non sulle parole — un'area di
-                 * testo non e' un paragrafo — ma si vede tutto quello che c'e'
-                 * dentro, che e' il punto. */
-                int riga = 0, i0 = 0;
-                int per_riga = (cw - 8) / 8;
-
-                ex_riempi(g_f, cx, y, cw, ch, EX_BIANCO);
-                ex_incavo(g_f, cx, y, cw, ch);
-
-                if (per_riga < 1) per_riga = 1;
-                while (mostra[i0] && (riga + 1) * 18 < ch) {
-                    char pezzo[CTRL_VAL_MAX];
-                    int  q = 0;
-                    int  ini = i0;
-
-                    /* ! GLI A CAPO SCRITTI DA CHI DIGITA VALGONO, e vengono
-                     * prima del riempimento: un'area che ignora l'Invio
-                     * mostrerebbe due paragrafi come una frase sola. */
-                    while (mostra[i0] && mostra[i0] != '\n' &&
-                           q < per_riga && q < CTRL_VAL_MAX - 1)
-                        pezzo[q++] = mostra[i0++];
-                    pezzo[q] = '\0';
-                    if (mostra[i0] == '\n') i0++;
-
-                    ex_scrivi(g_f, cx + 4, y + 3 + riga * 18, pezzo, EX_NERO);
-                    riga++;
-
-                    /* ! IL CURSORE STA SULLA RIGA CHE LO CONTIENE. Questo giro
-                     * ha appena impaginato i caratteri da `ini` a `i0`: se il
-                     * punto di scrittura cade li' dentro, il cursore e' su
-                     * QUESTA riga, alla colonna che gli tocca. */
-                    if (g_pez[i].ctrl == g_ctrl_fuoco) {
-                        int cu = g_ctrl[g_pez[i].ctrl].cur;
-
-                        if (cu >= ini && (cu < i0 || !mostra[i0])) {
-                            static char prima[CTRL_VAL_MAX];
-                            int         j, cur;
-
-                            for (j = 0; j < cu - ini && j < q; j++)
-                                prima[j] = pezzo[j];
-                            prima[j] = '\0';
-
-                            cur = cx + 4 +
-                                  ex_larghezza_testo(EX_FONT_SISTEMA, prima);
-                            if (cur < cx + cw - 3)
-                                ex_riempi(g_f, cur, y + 3 + (riga - 1) * 18,
-                                          2, 15, EX_NERO);
-                        }
-                    }
-                }
-
-                if (g_pez[i].ctrl == g_ctrl_fuoco && riga == 0)
-                    ex_riempi(g_f, cx + 4, y + 3, 2, 15, EX_NERO);
-                break;
-            }
-
-            default:                     /* casella di testo */
-                ex_riempi(g_f, cx, y, cw, ch, EX_BIANCO);
-                ex_incavo(g_f, cx, y, cw, ch);
-
-                /* ! IL TRATTO SCELTO SI VEDE, e va disegnato PRIMA del testo:
-                 * e' uno sfondo, non un colore delle lettere. Dipingerlo dopo
-                 * vorrebbe dire coprire le parole che dovrebbe evidenziare. */
-                if (c->sel >= 0 && c->sel != c->cur) {
-                    static char pre[CTRL_VAL_MAX];
-                    int a = c->sel < c->cur ? c->sel : c->cur;
-                    int b = c->sel < c->cur ? c->cur : c->sel;
-                    int j, x0, x1;
-
-                    for (j = 0; j < a && mostra[j]; j++) pre[j] = mostra[j];
-                    pre[j] = '\0';
-                    x0 = cx + 4 + ex_larghezza_testo(EX_FONT_SISTEMA, pre);
-
-                    for (j = 0; j < b && mostra[j]; j++) pre[j] = mostra[j];
-                    pre[j] = '\0';
-                    x1 = cx + 4 + ex_larghezza_testo(EX_FONT_SISTEMA, pre);
-
-                    if (x1 > cx + cw - 3) x1 = cx + cw - 3;
-                    if (x1 > x0)
-                        ex_riempi(g_f, x0, y + 3, x1 - x0, ch - 6, EX_BLU);
-                }
-
-                ex_scrivi(g_f, cx + 4, y + 3, mostra, EX_NERO);
-                /* ! IL CURSORE SI VEDE SOLO DOVE SI STA SCRIVENDO. Senza, non
-                 * c'e' modo di sapere quale casella prende i tasti — e chi
-                 * scrive nel posto sbagliato pensa che la tastiera sia rotta. */
-                if (g_pez[i].ctrl == g_ctrl_fuoco) {
-                    /* ! IL CURSORE STA DOVE SI SCRIVE, non in fondo: si misura
-                     * il testo che lo PRECEDE. `mostra` ha un carattere per
-                     * ogni carattere del valore — gli asterischi di una
-                     * password compresi — quindi l'indice vale per tutt'e due. */
-                    /* ! STATICO COME `cop` QUI SOTTO, e per la stessa ragione:
-                     * `disegna` gira dentro un ciclo su ventiquattromila pezzi
-                     * e la sua cornice e' gia' grassa — mostra[], pezzo[] —
-                     * mentre lo stack impegnato al caricamento e' 8 KB. Non
-                     * c'e' ricorsione qui dentro, quindi una copia sola basta. */
-                    static char prima[CTRL_VAL_MAX];
-                    int         q = g_ctrl[g_pez[i].ctrl].cur, j;
-                    int         cur;
-
-                    if (q < 0) q = 0;
-                    for (j = 0; j < q && mostra[j]; j++) prima[j] = mostra[j];
-                    prima[j] = '\0';
-
-                    cur = cx + 4 + ex_larghezza_testo(EX_FONT_SISTEMA, prima);
-                    if (cur < cx + cw - 3)
-                        ex_riempi(g_f, cur, y + 3, 2, ch - 6, EX_NERO);
-                }
-                break;
-            }
+        /* ! UN PEZZO ESTRANEO SI DISEGNA DA SE', e il ritaglio e' suo. Qui
+         * non si sa se sporgere sia lecito: un'immagine alta trecento pixel
+         * scorsa in su deve tagliarsi da sola, una casella di testo a meta'
+         * non si deve disegnare affatto. Sono due risposte diverse alla stessa
+         * domanda, e la domanda non e' dell'impaginato. */
+        if (g_pez[i].rif >= 0) {
+            if (g_cliente && g_cliente->disegna)
+                g_cliente->disegna(g_pez[i].rif, g_pez[i].x, y,
+                                   g_pez[i].w, g_pez[i].h);
             continue;
         }
 
-        /* ! UN'IMMAGINE SI RITAGLIA A MANO, e non e' pignoleria: ex_pixmap
-         * ritaglia alla FINESTRA, non all'area del documento, quindi
-         * un'immagine alta trecento pixel scorsa in su dipingerebbe sopra la
-         * casella dell'indirizzo. Il testo se la cava perche' e' alto venti
-         * punti e sborda di poco; un'immagine no. */
-        if (g_pez[i].img >= 0) {
-            const Imm *im    = &g_imm[g_pez[i].img];
-            int        cima  = y;
-            int        salta = 0;
-            int        alta  = (int)im->h;
-
-            /* ! IL POSTO RISERVATO SI VEDE, e non e' decorazione: un buco
-             * bianco in mezzo al testo sembra un difetto di impaginazione,
-             * mentre un riquadro dice «qui sta arrivando un'immagine». E'
-             * quello che hanno sempre fatto i browser.
-             *
-             * ! E SI RITAGLIA COME L'IMMAGINE CHE ASPETTA, per la ragione
-             * scritta qui sopra: anche ex_riempi ritaglia alla FINESTRA e non
-             * all'area del documento. Disegnarlo solo quando ci sta tutto
-             * sarebbe stato piu' corto, ma un riquadro alto quanto l'area non
-             * ci sta MAI per intero: sparirebbe appena lo si scorre, cioe'
-             * proprio mentre lo si guarda. */
-            if (!im->px) {
-                int rw = g_pez[i].w;
-
-                alta = g_pez[i].h;
-                if (cima < area_y()) {
-                    salta = area_y() - cima;
-                    cima  = area_y();
-                    alta -= salta;
-                }
-                if (cima + alta > area_y() + area_h())
-                    alta = area_y() + area_h() - cima;
-
-                if (rw > 0 && alta > 0) {
-                    ex_riempi(g_f, g_pez[i].x, cima, rw, alta, EX_GRIGIO);
-
-                    /* Il bordo si incide solo quando il riquadro c'e' tutto:
-                     * un incavo tagliato a meta' disegna una riga di luce in
-                     * mezzo al testo, e si legge come un difetto. */
-                    if (salta == 0 && alta == g_pez[i].h)
-                        ex_incavo(g_f, g_pez[i].x, cima, rw, alta);
-                }
-                continue;
-            }
-
-            if (cima < area_y()) {
-                salta = area_y() - cima;
-                cima  = area_y();
-                alta -= salta;
-            }
-            if (cima + alta > area_y() + area_h())
-                alta = area_y() + area_h() - cima;
-
-            if (alta > 0)
-                ex_pixmap(g_f, g_pez[i].x, cima, (int)im->w, alta,
-                          im->px + (unsigned int)salta * im->w, im->w);
-            continue;
-        }
+        /* ! E UNA RIGA DI TESTO A META' NON SI DISEGNA AFFATTO, perche' non
+         * c'e' un ritaglio. `ex_scrivi` taglia alla FINESTRA, non all'area del
+         * documento: una riga che comincia sopra il bordo veniva dipinta SOPRA
+         * LA BARRA DELL'INDIRIZZO, e una in fondo sopra la barra di stato. Si
+         * vedeva appena il documento diventava piu' lungo della finestra —
+         * cioe' proprio quando e' arrivata la barra di scorrimento. */
+        if (y < area_y() || y + ph > area_y() + area_h()) continue;
 
         {
             ExFont       f = g_pez[i].font;

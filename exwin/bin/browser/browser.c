@@ -72,6 +72,7 @@
 #include "kbd_proto.h"
 #include "biscotti.h"
 #include "browser_priv.h"
+#include "browser_estranei.h"
 
 /* +0.001 a ogni modifica: `browser -version` la stampa. Vedi EX_VERSIONE in libc.h. */
 EX_VERSIONE("browser", VERSIONE_APP);
@@ -2627,12 +2628,28 @@ static void motore_chiudi(void)
     ex_sveglia(g_f, 0);
 }
 
+/* Il risolutore, nella forma che vuole il ponte. `dato` non serve: risolvi()
+ * lavora su g_qui, che e' dove siamo adesso. */
+static int ponte_risolvi(void *dato, const char *rif, char *out,
+                         unsigned int max)
+{
+    (void)dato;
+    return risolvi(rif, out, max);
+}
+
 /* Rende 1 se il motore c'e' ed e' agganciato al documento di adesso. */
 static int motore_apri(void)
 {
     unsigned int quanto;
 
-    if (g_js && g_dom) { exdom_indirizzo(g_dom, g_qui); return 1; }
+    /* ! ANCHE QUI VANNO RIMESSI TUTT'E DUE. Il motore riusato si porta
+     * dietro i ganci di prima, ma l'indirizzo no: e' cambiato, ed e' proprio
+     * quello che il risolutore usa per lavorare. */
+    if (g_js && g_dom) {
+        exdom_indirizzo(g_dom, g_qui);
+        exdom_risolutore(g_dom, ponte_risolvi, 0);
+        return 1;
+    }
     motore_chiudi();
 
     /* ! LA SCELTA DEL MOTORE VA FATTA QUI, PRIMA DI TUTTO IL RESTO: dopo la
@@ -2677,6 +2694,17 @@ static int motore_apri(void)
      * XMLHttpRequest e fetch ci sono lo stesso e rispondono «non e' partita»:
      * e' la verita', ed e' quel che si vede se un giorno la riga sparisce. */
     exdom_rete_metti(g_dom, rete_per_script, 0);
+
+    /* ! E CHI RISOLVE GLI INDIRIZZI, che e' questa stessa funzione risolvi()
+     * gia' usata per seguire i collegamenti e caricare le immagini. Senza,
+     * `img.src` rende «b.png» invece di «http://sito/a/b.png»: una pagina che
+     * confronta `a.href` con un indirizzo intero trova sempre di no, e non e'
+     * un errore che si veda — e' un `if` che prende la strada sbagliata.
+     *
+     * ! LA FUNZIONE E' UNA SOLA, ed e' il punto: il ponte non ne ha una sua.
+     * Il giorno che risolvi() sbaglia, sbaglia in un posto solo — per i
+     * collegamenti, per le immagini e per il DOM insieme. */
+    exdom_risolutore(g_dom, ponte_risolvi, 0);
     return 1;
 }
 
@@ -2835,8 +2863,8 @@ static int nodo_sotto(int x, int y)
 
     for (i = 0; i < g_pez_n; i++) {
         int py = g_pez[i].y - g_scorri;
-        int h  = g_pez[i].img >= 0 ? g_pez[i].h
-                                   : ex_font_altezza(g_pez[i].font);
+        int h  = EST_E_IMM(g_pez[i].rif) ? g_pez[i].h
+                                         : ex_font_altezza(g_pez[i].font);
 
         if (g_pez[i].nodo < 0) continue;
         if (x >= g_pez[i].x && x < g_pez[i].x + g_pez[i].w &&
@@ -3744,8 +3772,8 @@ static int link_sotto(int x, int y)
 
     for (i = 0; i < g_pez_n; i++) {
         int py = g_pez[i].y - g_scorri;
-        int h  = g_pez[i].img >= 0 ? g_pez[i].h
-                                   : ex_font_altezza(g_pez[i].font);
+        int h  = EST_E_IMM(g_pez[i].rif) ? g_pez[i].h
+                                         : ex_font_altezza(g_pez[i].font);
 
         if (g_pez[i].link < 0) continue;
         if (x >= g_pez[i].x && x < g_pez[i].x + g_pez[i].w &&
@@ -4218,9 +4246,9 @@ static int ctrl_sotto(int x, int y)
     for (i = 0; i < g_pez_n; i++) {
         int py = g_pez[i].y - g_scorri;
 
-        if (g_pez[i].ctrl < 0) continue;
+        if (!EST_E_CTRL(g_pez[i].rif)) continue;
         if (x >= g_pez[i].x && x < g_pez[i].x + g_pez[i].w &&
-            y >= py && y < py + g_pez[i].h) return g_pez[i].ctrl;
+            y >= py && y < py + g_pez[i].h) return EST_CHI(g_pez[i].rif);
     }
     return -1;
 }
@@ -4834,6 +4862,12 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 int main(int argc, char **argv)
 {
     ExMsg m;
+
+    /* ! IL CLIENTE DELL'IMPAGINATO SI INSTALLA PRIMA DI TUTTO, e prima vuol
+     * dire prima della finestra: senza, l'impaginato impagina il testo e
+     * ignora moduli e immagini — che e' cio' che deve fare quando il cliente
+     * non c'e', ma non e' un navigatore. Vedi browser_vista.h. */
+    vista_cliente(&g_estranei);
 
     g_f = ex_crea("finestra", "Navigatore", EX_TITOLO | EX_BORDO | EX_CHIUDI,
                   EX_AUTO, EX_AUTO, FIN_W, FIN_H, 0, 0, proc);

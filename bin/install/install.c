@@ -1970,10 +1970,24 @@ int main(int argc, char **argv)
             printf("\nIl resto degli strumenti\n");
             copia_dir("/bin", argv[1], "bin");
             copia_dir("/lib", argv[1], "lib");
-            installa_driver(argv[1]);
-        } else if (!g_ha_minimale) {
-            installa_driver(argv[1]);
         }
+
+        /* ! LA SCELTA DEI DRIVER SI FA SEMPRE, E PRIMA NON ERA COSI'. Stava
+         * dentro il ramo degli strumenti, con un `else if (!g_ha_minimale)`
+         * accanto: chi installava da un supporto col manifesto e rispondeva
+         * NO alla seconda domanda non passava mai di qui, e si ritrovava coi
+         * soli driver del floppy — cioe' senza rete, perche' sul floppy non ci
+         * stanno.
+         *
+         * ! ED ERA LA DOMANDA SBAGLIATA A DECIDERE. «Vuoi anche gli strumenti»
+         * parla di programmi; quali driver servono a questa macchina e' un'altra
+         * cosa, e la risposta non e' dell'utente ma dell'hardware. Sono due
+         * domande, e ne bastava una a spegnere la rete di un sistema appena
+         * installato — senza dire niente, perche' tutto il resto funzionava.
+         *
+         * Costa una sonda dei driver anche a chi ha chiesto il minimale: una
+         * manciata di secondi, e in cambio il sistema si sa aggiornare. */
+        installa_driver(argv[1]);
     }
 
     /* ! I COMPONENTI DOPO IL SISTEMA, e l'ordine conta: se lo spazio finisce,

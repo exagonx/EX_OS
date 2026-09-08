@@ -1198,6 +1198,78 @@ static void assicura_pci(void)
     }
 }
 
+/* Come strcmp, ma senza distinguere maiuscole e minuscole: i nomi che
+ * arrivano da una FAT sono in maiuscolo, quelli della tabella no. */
+static int uguale_nome(const char *a, const char *b)
+{
+    while (*a && *b) {
+        char x = *a, y = *b;
+
+        if (x >= 'A' && x <= 'Z') x = (char)(x - 'A' + 'a');
+        if (y >= 'A' && y <= 'Z') y = (char)(y - 'A' + 'a');
+        if (x != y) return 0;
+        a++; b++;
+    }
+    return *a == '\0' && *b == '\0';
+}
+
+/* =============================================================================
+ * I DRIVER DI RETE SI INSTALLANO ANCHE QUANDO LA SONDA DICE DI NO
+ *
+ * ! NON E' UNA DEROGA ALLA REGOLA: E' CHE LA SONDA RISPONDE A UN'ALTRA
+ * DOMANDA. `-i` chiede «servi su QUESTA macchina», e la risposta e' giusta.
+ * Ma la macchina che INSTALLA non e' sempre quella che USERA' il sistema: una
+ * chiavetta si costruisce dentro QEMU — senza scheda di rete, perche' a
+ * costruirla non serve — e si infila in un computer vero. Il driver della sua
+ * scheda non c'e' mai stato, e la sonda non aveva torto.
+ *
+ * ! E VALE ANCHE SU UN DISCO FISSO, dove la macchina e' la stessa. `netupdate`
+ * e' la strada per rimediare a cio' che manca, e uno strumento di rimedio non
+ * puo' dipendere da un pezzo che quel giorno non c'era: era un cerchio chiuso
+ * — senza il driver niente rete, senza rete niente netupdate, senza netupdate
+ * niente driver — e ci si finiva dentro IN SILENZIO, con un sistema che si
+ * avviava benissimo. Si e' visto su una chiavetta (7 settembre 2026).
+ *
+ * ! IL PREZZO E' SCRITTO: tre driver di scheda piu' lo stack, centotredici
+ * chilobyte. Su un supporto che ne porta dodici di sistema e' il costo di una
+ * pagina di manuale, e compra l'unica strada che rimette in piedi il resto.
+ *
+ * ! E L'ELENCO NON SI SCRIVE QUI. lib/rete.c ha gia' la tabella «scheda ->
+ * driver», la stessa che netdetect usa per riconoscerle e che hwconfig legge
+ * qui accanto per kernel.cfg: si scorre e si prendono i nomi. Un elenco scritto
+ * in questa funzione sarebbe la seconda verita' che quella tabella esiste
+ * apposta per evitare, e divergerebbe dalla prima scheda aggiunta — che e'
+ * esattamente come e1000 era rimasto fuori la volta scorsa.
+ * ============================================================================= */
+static int rete_sempre(const char *nome_drv)
+{
+    int i, n;
+
+    /* ! LO STACK NON STA IN QUELLA TABELLA, e non e' una dimenticanza: la
+     * tabella elenca SCHEDE, e ip.drv non e' di nessuna scheda. Risponde gia'
+     * «si'» alla sonda su qualunque macchina (vedi il suo -i), quindi qui non
+     * cambierebbe niente — si nomina perche' chi legge questa funzione deve
+     * vedere la catena intera, non tre quarti. */
+    if (uguale_nome(nome_drv, "ip.drv")) return 1;
+
+    n = rete_schede_note();
+    for (i = 0; i < n; i++) {
+        const ReteScheda *s = rete_scheda(i);
+        const char       *d, *base;
+
+        if (s == NULL || s->driver == NULL) continue;
+
+        /* La tabella scrive il percorso d'avvio, «/dev/ne2k.drv»; il catalogo
+         * ha i nomi nudi. */
+        d = s->driver;
+        base = d;
+        while (*d) { if (*d == '/') base = d + 1; d++; }
+
+        if (uguale_nome(base, nome_drv)) return 1;
+    }
+    return 0;
+}
+
 /* Sonda tutti i driver trovati e stampa l'esito. Rende quanti servono. */
 static int sonda_tutti(void)
 {
@@ -1212,6 +1284,15 @@ static int sonda_tutti(void)
         unisci(percorso, g_catalogo, g_drv[i]);
         printf("  %s\n", g_drv[i]);
         g_drv_serve[i] = sonda_driver(percorso);
+
+        if (!g_drv_serve[i] && rete_sempre(g_drv[i])) {
+            g_drv_serve[i] = 1;
+            printf("     -> non serve QUI, e si installa lo stesso: senza la\n"
+                   "        rete questa macchina non si potrebbe aggiornare\n\n");
+            quanti++;
+            continue;
+        }
+
         printf("     -> %s\n\n",
                g_drv_serve[i] ? "SERVE, verra' installato"
                               : "non serve su questa macchina");

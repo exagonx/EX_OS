@@ -39,6 +39,8 @@ static const char *const g_nomi[] = {
     "exdom_perso",
     "exdom_troncato",
     "exdom_indirizzo",
+    /* Aggiunta l'8 settembre 2026: chi risolve gli indirizzi (@NAV-URL). */
+    "exdom_risolutore",
     "exdom_dove_andare",
     "exdom_biscotti_metti",
     "exdom_biscotti",
@@ -59,6 +61,7 @@ static void *const g_indirizzi[] = {
     (void *)exdom_perso,
     (void *)exdom_troncato,
     (void *)exdom_indirizzo,
+    (void *)exdom_risolutore,
     (void *)exdom_dove_andare,
     (void *)exdom_biscotti_metti,
     (void *)exdom_biscotti,
