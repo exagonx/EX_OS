@@ -46,6 +46,9 @@
 #define BLK_TIPO_CDROM      4   /* lettore ottico ATAPI: vedi blk_supporto */
 #define BLK_TIPO_RING3      5   /* servito da un processo: vedi blkr3.h */
 
+/* Il valore di `padre` quando sotto la partizione c'e' un disco ATA. */
+#define BLK_PADRE_ATA       0xFF
+
 typedef struct {
     char     nome[BLK_NOME_MAX];  /* "fd0", "hd0", "hd0p1" */
     uint8_t  usato;
@@ -60,6 +63,15 @@ typedef struct {
      * senza che nessuno se ne accorga. Resta qui, guasto, e risponde -EIO
      * finche' non lo si smonta. */
     uint8_t  guasto;
+    /* Per una PARTIZIONE: l'indice del dispositivo che la contiene, oppure
+     * BLK_PADRE_ATA quando sotto c'e' un disco ATA e vale `disco`.
+     *
+     * ! SERVE PERCHE' UNA PARTIZIONE NON SA PIU' DA SOLA COME SI ARRIVA AI
+     * SUOI SETTORI. Finche' i dischi erano tutti ATA bastava `disco`; da
+     * quando una chiavetta USB e' un dispositivo servito da un processo, la
+     * stessa finestra puo' stare sopra due mondi diversi, e la sola cosa che
+     * li distingue e' questa riga. */
+    uint8_t  padre;
     uint64_t primo;               /* LBA di partenza nel supporto sottostante */
     uint64_t settori;             /* lunghezza della finestra */
 } BlkDev;
@@ -126,6 +138,23 @@ int  blk_registra_ring3(const char *nome, uint64_t settori, int sola_lettura);
 /* Il servente e' morto. Se nessuno lo teneva montato lo slot torna libero;
  * se qualcuno lo teneva, il dispositivo resta ma diventa GUASTO. */
 void blk_ritira(int i);
+
+/* =============================================================================
+ * Rilegge la tabella delle partizioni di un dispositivo servito da un processo
+ * e registra le sue finestre (usb0p1, usb0p2, ...).
+ *
+ * Rende quante ne ha trovate, 0 se il supporto non ha una tabella — il caso
+ * NORMALE di una chiavetta, che e' un filesystem che comincia al settore 0 —
+ * oppure -errno.
+ *
+ * ! NON SI CHIAMA DA blk_registra_ring3(), E IL PERCHE' NON E' OVVIO. Leggere
+ * il settore 0 vuol dire mandare una richiesta al servente e aspettarne la
+ * risposta; ma chi sta offrendo il dispositivo E' il servente, dentro la sua
+ * chiamata di sistema. Si aspetterebbe se stesso, e blkr3.c lo rifiuta con
+ * -EDEADLK. La scansione la chiede QUALCUN ALTRO — il sorvegliante che monta
+ * i dispositivi nuovi — a cose fatte.
+ * ============================================================================= */
+int  blk_scansiona(int i);
 
 /* =============================================================================
  * Conteggio degli usi — chi sta usando questo dispositivo

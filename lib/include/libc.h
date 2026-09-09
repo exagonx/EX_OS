@@ -1200,10 +1200,14 @@ int diskinfo(unsigned int idx, DiskInfo *di);
 #define BLKINFO_NOME_MAX    12
 typedef struct {
     char         nome[BLKINFO_NOME_MAX];
-    unsigned int tipo;          /* 1 floppy, 2 disco intero, 3 partizione */
+    unsigned int tipo;          /* 1 floppy, 2 disco, 3 partizione, 4 CD,
+                                 * 5 servito da un processo (una chiavetta) */
     unsigned int sola_lettura;
     unsigned int primo_lo, primo_hi;
     unsigned int settori_lo, settori_hi;
+    /* 1 = il driver che lo serviva e' morto mentre era montato: c'e' ancora
+     * ma ogni accesso rende errore, e va smontato. */
+    unsigned int guasto;
 } BlkInfo;
 
 int blkinfo(BlkInfo *buf, unsigned int max, unsigned int start);
@@ -2697,6 +2701,17 @@ int     blk_attendi(BlkRichiesta *r, unsigned int ms);
 
 /* Dichiara com'e' andata: `esito` 0 oppure -errno. */
 int     blk_risposta(BlkRichiesta *r, int esito);
+
+/* Rilegge la tabella delle partizioni di un dispositivo servito da un driver
+ * (usb0, ram0) e registra le sue finestre: usb0p1, usb0p2, ...
+ *
+ * Rende quante ne ha trovate, 0 se il supporto non ha una tabella — il caso
+ * normale di una chiavetta — oppure -errno.
+ *
+ * ! NON LA CHIAMA IL DRIVER CHE HA OFFERTO IL DISPOSITIVO: leggerebbe il
+ * proprio disco e si aspetterebbe da solo (-EDEADLK). La chiama chi si accorge
+ * che il dispositivo e' comparso. E' di root, come mount. */
+int     blk_scansiona(const char *nome);
 
 /* =============================================================================
  * video_info — dov'e' il framebuffer e che forma ha

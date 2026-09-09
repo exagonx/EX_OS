@@ -130,6 +130,7 @@ static int registra_partizioni(int d, const AtaDevice *a)
         b->usato        = 1;
         b->tipo         = BLK_TIPO_PART;
         b->disco        = (uint8_t)d;
+        b->padre        = BLK_PADRE_ATA;
         b->sola_lettura = 0;
         b->primo        = tab.p[p].inizio;
         b->settori      = tab.p[p].settori;
@@ -628,6 +629,11 @@ int blk_read(int i, uint64_t lba, uint32_t n, void *buf)
      * anche quella che si stacca senza avvisare. */
     if (b->tipo == BLK_TIPO_RING3) return blkr3_read(i, abs, n, buf);
 
+    /* Una partizione sopra un dispositivo servito da un processo: `abs` e'
+     * gia' l'indirizzo dentro il supporto, tradotto dalla finestra. */
+    if (b->tipo == BLK_TIPO_PART && b->padre != BLK_PADRE_ATA)
+        return blkr3_read((int)b->padre, abs, n, buf);
+
     if (b->tipo == BLK_TIPO_FLOPPY) {
         uint8_t *p = (uint8_t *)buf;
         for (k = 0; k < n; k++) {
@@ -689,15 +695,122 @@ int blk_registra_ring3(const char *nome, uint64_t settori, int sola_lettura)
     b->disco        = 0;
     b->sola_lettura = (uint8_t)(sola_lettura ? 1 : 0);
     b->guasto       = 0;
+    b->padre        = BLK_PADRE_ATA;   /* non e' una partizione: non lo usa */
     b->primo        = 0;
     b->settori      = settori;
 
     return (int)(b - g_dev);
 }
 
+/* Il lettore che mbr_leggi_da() usa per un dispositivo servito da un
+ * processo: `ctx` e' l'indice del dispositivo. */
+static int leggi_blk(void *ctx, uint64_t lba, uint8_t *sett)
+{
+    return blk_read(*(const int *)ctx, lba, 1, sett);
+}
+
+int blk_scansiona(int i)
+{
+    TabellaPartizioni tab;
+    const BlkDev     *padre;
+    char              nome_padre[BLK_NOME_MAX];
+    int               k, p, n = 0;
+
+    padre = blk_get(i);
+    if (padre == NULL || !padre->usato)      return ERR(ENODEV);
+    if (padre->tipo != BLK_TIPO_RING3)       return ERR(EINVAL);
+    if (padre->guasto)                       return ERR(EIO);
+
+    for (k = 0; k < BLK_NOME_MAX; k++) nome_padre[k] = padre->nome[k];
+
+    /* PRIMA si controlla che nessuna sia in uso, POI si libera: e' la stessa
+     * ragione di blk_rescan() qui sotto — fondere i due cicli vuol dire aver
+     * gia' smontato mezzo disco quando si scopre che il resto non si tocca. */
+    for (k = 0; k < g_n; k++) {
+        if (!g_dev[k].usato) continue;
+        if (g_dev[k].tipo != BLK_TIPO_PART) continue;
+        if (g_dev[k].padre != (uint8_t)i) continue;
+        if (g_dev[k].in_uso) {
+            klog(LOG_ERROR, "BLK: %s e' in uso: rilettura di %s rifiutata",
+                 g_dev[k].nome, nome_padre);
+            return ERR(EBUSY);
+        }
+    }
+    for (k = 0; k < g_n; k++) {
+        if (!g_dev[k].usato) continue;
+        if (g_dev[k].tipo != BLK_TIPO_PART) continue;
+        if (g_dev[k].padre != (uint8_t)i) continue;
+        g_dev[k].usato = 0;
+    }
+
+    if (mbr_leggi_da(leggi_blk, &i, padre->settori, &tab) != 0) return ERR(EIO);
+
+    /* ! NESSUNA TABELLA NON E' UN ERRORE, ED E' IL CASO NORMALE. Quasi tutte
+     * le chiavette sono un filesystem che comincia al settore 0, e i floppy
+     * USB lo sono sempre: li' non c'e' niente da registrare e il dispositivo
+     * si monta com'e'. Rendere un errore qui vorrebbe dire che il
+     * sorvegliante scarta proprio i supporti piu' comuni. */
+    if (tab.schema != PT_SCHEMA_MBR) return 0;
+
+    for (p = 0; p < tab.n; p++) {
+        BlkDev *b;
+
+        /* Le estese sono contenitori: registrarle darebbe una finestra
+         * sovrapposta alle proprie logiche. Come per i dischi ATA. */
+        if (tab.p[p].tipo == 0x05 || tab.p[p].tipo == 0x0F ||
+            tab.p[p].tipo == 0x85) continue;
+
+        if (tab.p[p].inizio >= padre->settori ||
+            tab.p[p].inizio + tab.p[p].settori > padre->settori) {
+            klog(LOG_WARN, "BLK: partizione %u di %s fuori dal supporto, ignorata",
+                 tab.p[p].numero, nome_padre);
+            continue;
+        }
+
+        b = nuovo();
+        if (b == NULL) break;
+
+        /* "usb0" + 'p' + numero: la stessa forma di hd0p1, che chi usa EX-OS
+         * ha gia' negli occhi da `disk` e da `fdisk`. */
+        nome_componi(b->nome, nome_padre, -1, 'p', tab.p[p].numero);
+        b->usato        = 1;
+        b->tipo         = BLK_TIPO_PART;
+        b->disco        = 0;
+        b->padre        = (uint8_t)i;
+        b->guasto       = 0;
+        b->sola_lettura = padre->sola_lettura;
+        b->primo        = tab.p[p].inizio;
+        b->settori      = tab.p[p].settori;
+        n++;
+    }
+
+    klog(LOG_INFO, "BLK: %s riletto, %d partizioni", nome_padre, n);
+    return n;
+}
+
 void blk_ritira(int i)
 {
+    int k;
+
     if (i < 0 || i >= g_n || !g_dev[i].usato) return;
+
+    /* ! PRIMA LE SUE PARTIZIONI, e con la stessa regola del disco: quella
+     * montata resta li' guasta, le altre spariscono. Lasciarle vive vorrebbe
+     * dire finestre che descrivono un disco che non c'e' piu', e la prima
+     * lettura andrebbe a cercare un servente morto. */
+    for (k = 0; k < g_n; k++) {
+        if (!g_dev[k].usato) continue;
+        if (g_dev[k].tipo != BLK_TIPO_PART) continue;
+        if (g_dev[k].padre != (uint8_t)i) continue;
+
+        if (g_dev[k].in_uso) {
+            g_dev[k].guasto = 1;
+            klog(LOG_ERROR, "BLK: '%s' e' sparito mentre era montato: smontalo",
+                 g_dev[k].nome);
+        } else {
+            g_dev[k].usato = 0;
+        }
+    }
 
     if (g_dev[i].in_uso) {
         /* Lo slot NON si libera: vedi il commento accanto a `guasto` in
@@ -737,6 +850,9 @@ int blk_write(int i, uint64_t lba, uint32_t n, const void *buf)
 
     if (b->tipo == BLK_TIPO_RING3) return blkr3_write(i, abs, n, buf);
 
+    if (b->tipo == BLK_TIPO_PART && b->padre != BLK_PADRE_ATA)
+        return blkr3_write((int)b->padre, abs, n, buf);
+
     if (ata_write(b->disco, abs, n, buf) != 0) return -1;
 
     /* Write-through: la copia in cache si aggiorna DOPO che il disco ha
@@ -763,6 +879,8 @@ int blk_flush(int i)
     if (b == NULL || !b->usato) return -1;
     if (b->tipo == BLK_TIPO_FLOPPY) return fat12_sync();
     if (b->tipo == BLK_TIPO_RING3)  return blkr3_flush(i);
+    if (b->tipo == BLK_TIPO_PART && b->padre != BLK_PADRE_ATA)
+        return blkr3_flush((int)b->padre);
 
     /* Un lettore ottico non ha niente da riversare: non ci si scrive.
      * Mandargli un FLUSH CACHE ATA sarebbe un comando che non conosce. */

@@ -28,6 +28,12 @@
  * ============================================================================= */
 #include "libc.h"
 
+/* +0.001 a ogni modifica: `filiprova -version` la stampa. Vedi EX_VERSIONE in
+ * libc.h. Mancava, e `make all` si fermava qui da prima del 9 settembre 2026:
+ * un cancello rosso fisso che si impara a scavalcare, ed e' esattamente cio'
+ * che quel controllo esiste per evitare. */
+EX_VERSIONE("filiprova", "0.001");
+
 #define FILI    4
 #define GIRI    20000
 

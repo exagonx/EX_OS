@@ -140,7 +140,7 @@ static void aggiungi(TabellaPartizioni *t, uint8_t attiva, uint8_t tipo,
  * sempre, cioe' si blocca a ogni avvio con quel disco collegato. Qui si
  * tengono gli LBA gia' visti e si esce segnalando l'anomalia.
  * ============================================================================= */
-static void percorri_estesa(int indice, TabellaPartizioni *t,
+static void percorri_estesa(MbrLettore leggi, void *ctx, TabellaPartizioni *t,
                             uint64_t ext_inizio, uint64_t ext_settori,
                             uint64_t disco_settori)
 {
@@ -172,7 +172,7 @@ static void percorri_estesa(int indice, TabellaPartizioni *t,
         }
         visti[n_visti++] = ebr;
 
-        if (ata_read(indice, ebr, 1, sett) != 0) {
+        if (leggi(ctx, ebr, sett) != 0) {
             t->problemi |= PT_PROB_CATENA;
             return;
         }
@@ -312,11 +312,33 @@ uint32_t mbr_valida(const Partizione *p, int n, uint64_t disco_settori)
     return pb;
 }
 
-int mbr_leggi(int indice, TabellaPartizioni *out)
+/* Il lettore per un disco ATA: `ctx` e' l'indice del disco. */
+static int leggi_ata(void *ctx, uint64_t lba, uint8_t *sett)
 {
-    const AtaDevice *d;
+    return ata_read(*(const int *)ctx, lba, 1, sett);
+}
+
+/* =============================================================================
+ * ! LA TABELLA SI LEGGE DA UN LETTORE, NON DA UN DISCO ATA — dal 9 settembre
+ * 2026.
+ *
+ * Finche' i dischi erano tutti ATA, `ata_read(indice, ...)` qui dentro era la
+ * cosa piu' semplice. Poi e' arrivato un dispositivo a blocchi servito da un
+ * processo in ring 3 (kernel/include/blkr3.h): una chiavetta, un disco USB. La
+ * loro tabella delle partizioni e' fatta identica — stesse quattro voci, stessa
+ * catena di EBR, stesse trappole — e riscriverla altrove avrebbe voluto dire
+ * due copie della parte in cui e' piu' facile sbagliare, con la seconda che
+ * non vede mai un disco storto perche' i dischi storti arrivano sempre
+ * dall'altra parte.
+ *
+ * Percio' qui si legge attraverso una funzione, e chi chiama dice come si
+ * arriva al settore. Da un disco ATA con ata_read; da una chiavetta passando
+ * dallo strato a blocchi.
+ * ============================================================================= */
+int mbr_leggi_da(MbrLettore leggi, void *ctx, uint64_t disco,
+                 TabellaPartizioni *out)
+{
     uint8_t   sett[512];
-    uint64_t  disco;
     uint64_t  ext_inizio = 0, ext_settori = 0;
     int       n_estese = 0;
     int       i;
@@ -325,11 +347,8 @@ int mbr_leggi(int indice, TabellaPartizioni *out)
     out->problemi = 0;
     out->n        = 0;
 
-    d = ata_get_device(indice);
-    if (d == NULL || !d->presente || d->tipo != ATA_TYPE_ATA) return -1;
-    disco = d->settori;
-
-    if (ata_read(indice, 0, 1, sett) != 0) return -1;
+    if (leggi == NULL || disco == 0) return -1;
+    if (leggi(ctx, 0, sett) != 0) return -1;
 
     if (sett[MBR_OFF_FIRMA] != 0x55 || sett[MBR_OFF_FIRMA + 1] != 0xAA) {
         out->problemi |= PT_PROB_FIRMA;
@@ -386,7 +405,7 @@ int mbr_leggi(int indice, TabellaPartizioni *out)
     }
 
     if (n_estese == 1 && ext_settori > 0) {
-        percorri_estesa(indice, out, ext_inizio, ext_settori, disco);
+        percorri_estesa(leggi, ctx, out, ext_inizio, ext_settori, disco);
     }
 
     /* -------------------------------------------------------------------
@@ -401,6 +420,20 @@ int mbr_leggi(int indice, TabellaPartizioni *out)
     out->problemi |= mbr_valida(out->p, out->n, disco);
 
     return 0;
+}
+
+int mbr_leggi(int indice, TabellaPartizioni *out)
+{
+    const AtaDevice *d;
+
+    out->schema   = PT_SCHEMA_NESSUNO;
+    out->problemi = 0;
+    out->n        = 0;
+
+    d = ata_get_device(indice);
+    if (d == NULL || !d->presente || d->tipo != ATA_TYPE_ATA) return -1;
+
+    return mbr_leggi_da(leggi_ata, &indice, d->settori, out);
 }
 
 /* =============================================================================

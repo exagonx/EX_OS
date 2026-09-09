@@ -184,8 +184,12 @@ mmd -i "$IMG" ::/boot  2>/dev/null || log_warn "Directory /boot già esistente"
 mmd -i "$IMG" ::/bin   2>/dev/null || log_warn "Directory /bin già esistente"
 mmd -i "$IMG" ::/lib   2>/dev/null || log_warn "Directory /lib già esistente"
 mmd -i "$IMG" ::/dev   2>/dev/null || log_warn "Directory /dev già esistente"
+# ! /USB vuota: e' la directory su cui automount monta le chiavette.
+# Il VFS monta su un nome che non esiste, ma il suo contenitore deve
+# esserci - e su un supporto in sola lettura non si puo' creare dopo.
+mmd -i "$IMG" ::/USB   2>/dev/null || log_warn "Directory /USB già esistente"
 
-log_ok "Directory create: /boot /bin /lib /dev"
+log_ok "Directory create: /boot /bin /lib /dev /USB"
 
 # --- Copia file nella root ----------------------------------------------------
 

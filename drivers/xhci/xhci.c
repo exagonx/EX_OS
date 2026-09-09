@@ -76,6 +76,7 @@
 #include "pci_proto.h"
 #include "kbd_proto.h"
 #include "usb_comune.h"
+#include "usb_massa.h"
 
 /* +0.001 a ogni modifica: `xhci.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
@@ -178,6 +179,8 @@ EX_VERSIONE("xhci.drv", "0.001");
 #define TRB_SLOT(v)     (((v) >> 24) & 0xFF)
 #define COD_OK          1
 #define COD_CORTO       13      /* «pacchetto corto»: NON e' un errore */
+#define COD_STALLO      6       /* l'endpoint e' bloccato: e' una RISPOSTA */
+#define TRB_ISP         0x00000004u     /* avvisami anche se e' corto */
 
 /* Le richieste USB, i descrittori e le classi stanno in usb_comune.h: sono
  * dello standard, non di questo controller. */
@@ -198,7 +201,7 @@ static unsigned int g_slot_max = 0;
 static unsigned int g_ctx64    = 0;     /* contesti da 64 byte invece di 32 */
 
 static unsigned int g_dma_virt = 0, g_dma_fis = 0;
-#define DMA_BYTE    (32u * 4096u)
+#define DMA_BYTE    (34u * 4096u)
 
 /* Disposizione dentro la zona DMA. Ogni pezzo a inizio pagina, cosi'
  * l'allineamento a 64 che l'xHCI pretende non e' un problema da risolvere. */
@@ -225,6 +228,20 @@ static unsigned int g_dma_virt = 0, g_dma_fis = 0;
 #define OFF_SPB0    0x10000     /* i buffer di appoggio, una pagina l'uno */
 #define SPB_MAX     15
 
+/* --- I trasferimenti bulk: le chiavette ------------------------------------
+ *
+ * ! L'ANELLO DELL'ENDPOINT IN E' LO STESSO DELL'INTERRUZIONE (OFF_EPI), e non
+ * e' un risparmio sporco: questo driver serve UN dispositivo per volta, e un
+ * dispositivo o e' un mouse o e' una chiavetta. Due anelli separati sarebbero
+ * due nomi per la stessa pagina, usata in due momenti che non si toccano mai.
+ *
+ * Quello che serve davvero in piu' e' l'anello dell'endpoint OUT — su un HID
+ * non esiste — e un buffer per i dati, che deve stare in memoria DMA perche'
+ * e' il controller ad andarselo a prendere. */
+#define OFF_EPO     0x20000     /* anello dell'endpoint bulk OUT */
+#define OFF_BULK    0x21000     /* i dati di un trasferimento bulk: 4 KB */
+#define BULK_MAX    4096
+
 #define VIRT(off)   ((volatile unsigned int *)(g_dma_virt + (off)))
 #define FIS(off)    (g_dma_fis + (off))
 
@@ -236,6 +253,10 @@ static unsigned int g_evt_i = 0, g_evt_ciclo = 1;
 static unsigned int g_ep0_i[SLOT_MAX + 1];
 static unsigned int g_ep0_ciclo[SLOT_MAX + 1];
 static unsigned int g_epi_i = 0, g_epi_ciclo = 1;
+static unsigned int g_epo_i = 0, g_epo_ciclo = 1;
+
+/* I due DCI di una chiavetta. Zero = non e' stata configurata. */
+static unsigned int g_dci_in = 0, g_dci_out = 0;
 
 /* Il dispositivo indirizzato */
 static unsigned int g_slot = 0;
@@ -765,7 +786,7 @@ static int indirizza(const XhciPosto *dove)
     memset((void *)(g_dma_virt + OFF_EP0(g_slot)), 0, 4096);
 
     /* L'anello di trasferimento dell'endpoint 0, con il suo Link in fondo. */
-    trb_scrivi(VIRT(OFF_EP0(g_slot) + (ANELLO_TRB - 1) * 4),
+    trb_scrivi(VIRT(OFF_EP0(g_slot) + (ANELLO_TRB - 1) * 16),
                FIS(OFF_EP0(g_slot)), 0, 0, TRB_TIPO(TRB_LINK) | TRB_TC);
     g_ep0_i[g_slot] = 0; g_ep0_ciclo[g_slot] = 1;
 
@@ -1041,7 +1062,7 @@ static int configura_endpoint(unsigned int ep, unsigned int maxp,
     memset((void *)(g_dma_virt + OFF_EPI), 0, 4096);
 
     /* L'anello dell'endpoint, con il suo Link in fondo. */
-    trb_scrivi(VIRT(OFF_EPI + (ANELLO_TRB - 1) * 4), FIS(OFF_EPI), 0, 0,
+    trb_scrivi(VIRT(OFF_EPI + (ANELLO_TRB - 1) * 16), FIS(OFF_EPI), 0, 0,
                TRB_TIPO(TRB_LINK) | TRB_TC);
     g_epi_i = 0; g_epi_ciclo = 1;
 
@@ -1083,6 +1104,179 @@ static int configura_endpoint(unsigned int ep, unsigned int maxp,
         return 0;
     }
     return 1;
+}
+
+/* =============================================================================
+ * ! IL TRB DI LINK VA AL BYTE 255*16, NON AL BYTE 255*4 — corretto il 9
+ * settembre 2026, e va raccontato perche' era in tre posti su quattro.
+ *
+ * L'anello dei comandi lo scriveva giusto: `&cmd[(ANELLO_TRB - 1) * 4]`, dove
+ * `cmd` e' un puntatore a unsigned int, quindi 255*4 PAROLE = 4080 byte.
+ * Copiando quella riga dove l'indirizzo si compone con VIRT(), che prende un
+ * offset in BYTE, il `* 4` e' rimasto e il Link finiva a 1020 byte — cioe' in
+ * mezzo al TRB numero 63, disallineato, mentre alla fine dell'anello restava
+ * un TRB tutto zeri.
+ *
+ * ! E NON SI VEDEVA. Un mouse non arriva mai a 255 rapporti in una sessione di
+ * prova, e i trasferimenti di controllo dell'enumerazione sono una decina: il
+ * giro dell'anello non si chiudeva mai. Con una chiavetta si chiude dopo 128
+ * comandi — tre trasferimenti l'uno — e infatti mkfs si fermava sempre intorno
+ * al settore 132, con il controller mandato a leggere l'indirizzo 0.
+ *
+ * Un difetto che aspettava soltanto qualcuno che usasse il bus sul serio.
+ * =============================================================================
+ *
+ * I DUE ENDPOINT DI UNA CHIAVETTA
+ *
+ * ! SI CONFIGURANO INSIEME, CON UN COMANDO SOLO. Un Configure Endpoint dice al
+ * controller com'e' fatto il dispositivo ADESSO: mandarne due di fila, uno per
+ * endpoint, vuol dire che il secondo descrive uno stato in cui il primo non
+ * c'e' piu'. Il campo `Add Context Flags` esiste apposta per accenderne piu'
+ * d'uno in un colpo.
+ *
+ * ! E IL NUMERO DI VOCI DELLO SLOT E' IL DCI PIU' ALTO, non il numero di
+ * endpoint. Con un IN 1 e un OUT 2 i DCI sono 3 e 4: dichiarare «due voci»
+ * lascerebbe il controller convinto che oltre la seconda non ci sia niente, e
+ * i trasferimenti sull'endpoint piu' alto non partirebbero mai — senza errori,
+ * perche' per lui quell'endpoint non esiste.
+ * ============================================================================= */
+#define DCI_OUT(n)  ((n) * 2u)
+
+static int configura_bulk(unsigned int ep_in, unsigned int maxp_in,
+                          unsigned int ep_out, unsigned int maxp_out)
+{
+    volatile unsigned int *ic, *sc, *e_in, *e_out;
+    unsigned int e[4], dci_max;
+
+    g_dci_in  = DCI_IN(ep_in);
+    g_dci_out = DCI_OUT(ep_out);
+    dci_max   = (g_dci_in > g_dci_out) ? g_dci_in : g_dci_out;
+
+    memset((void *)(g_dma_virt + OFF_IN_CTX), 0, 4096);
+    memset((void *)(g_dma_virt + OFF_EPI), 0, 4096);
+    memset((void *)(g_dma_virt + OFF_EPO), 0, 4096);
+
+    /* Ogni anello si chiude su se stesso con un Link in fondo. */
+    trb_scrivi(VIRT(OFF_EPI + (ANELLO_TRB - 1) * 16), FIS(OFF_EPI), 0, 0,
+               TRB_TIPO(TRB_LINK) | TRB_TC);
+    trb_scrivi(VIRT(OFF_EPO + (ANELLO_TRB - 1) * 16), FIS(OFF_EPO), 0, 0,
+               TRB_TIPO(TRB_LINK) | TRB_TC);
+    g_epi_i = 0; g_epi_ciclo = 1;
+    g_epo_i = 0; g_epo_ciclo = 1;
+
+    ic    = VIRT(OFF_IN_CTX);
+    sc    = VIRT(OFF_IN_CTX + CTX_B);
+    e_in  = VIRT(OFF_IN_CTX + CTX_B * (g_dci_in  + 1));
+    e_out = VIRT(OFF_IN_CTX + CTX_B * (g_dci_out + 1));
+
+    ic[1] = 1u | (1u << g_dci_in) | (1u << g_dci_out);
+
+    {
+        volatile unsigned int *dsc = VIRT(OFF_DEV_CTX(g_slot));
+        sc[0] = (dsc[0] & 0x07FFFFFFu) | (dci_max << 27);
+        sc[1] = dsc[1];
+        sc[2] = dsc[2];
+        sc[3] = dsc[3];
+    }
+
+    /* Bulk IN = tipo 6, bulk OUT = tipo 2. Tre tentativi come sull'endpoint
+     * di interruzione: e' il valore che la specifica consiglia per tutto cio'
+     * che non e' isocrono. */
+    e_in[0]  = 0;
+    e_in[1]  = (3u << 1) | (6u << 3) | (maxp_in << 16);
+    e_in[2]  = FIS(OFF_EPI) | 1;
+    e_in[3]  = 0;
+    e_in[4]  = maxp_in;
+
+    e_out[0] = 0;
+    e_out[1] = (3u << 1) | (2u << 3) | (maxp_out << 16);
+    e_out[2] = FIS(OFF_EPO) | 1;
+    e_out[3] = 0;
+    e_out[4] = maxp_out;
+
+    if (!comando_risposta(FIS(OFF_IN_CTX), 0, 0,
+                          TRB_CONFIG_EP, g_slot << 24, e)) {
+        printf("xhci: nessuna risposta a Configure Endpoint (bulk)\n");
+        return 0;
+    }
+    if (TRB_COD(e[2]) != COD_OK) {
+        printf("xhci: Configure Endpoint bulk fallito, codice %u\n",
+               TRB_COD(e[2]));
+        return 0;
+    }
+    return 1;
+}
+
+/* Un trasferimento bulk, ed e' la funzione che usb_massa.c chiama attraverso
+ * il suo puntatore. Rende i byte scambiati, USB_MASSA_STALLO se l'endpoint e'
+ * bloccato, un altro negativo se e' andata male.
+ *
+ * ! IL BUFFER DEL CHIAMANTE NON PUO' ANDARE AL CONTROLLER COSI' COM'E'. Il
+ * controller legge la RAM da solo, agli indirizzi FISICI che gli si danno, e
+ * un buffer sullo stack di usb_massa.c ha un indirizzo virtuale. Si copia
+ * dentro la pagina DMA e ritorno: e' il prezzo, ed e' quello che permette a
+ * usb_massa.c di non sapere niente di DMA.
+ *
+ * ! E ISP VA ACCESO. Senza «avvisami anche se e' corto», una lettura che
+ * riceve meno byte del previsto — il caso normale di un CSW dopo un errore —
+ * non genera nessun evento, e il driver aspetta per sempre una risposta che e'
+ * gia' arrivata. */
+static int bulk_xhci(unsigned int dev, unsigned int ep, void *dati,
+                     unsigned int len, int in)
+{
+    volatile unsigned int *t;
+    unsigned int  e[4], dci, off, cod, resto, avuti;
+    unsigned int *idx, *ciclo;
+
+    (void)dev;                      /* uno solo per volta: e' g_slot */
+
+    if (len > BULK_MAX) return -1;
+    if (g_dci_in == 0)  return -1;
+
+    if (in) { off = OFF_EPI; idx = &g_epi_i; ciclo = &g_epi_ciclo; dci = g_dci_in; }
+    else    { off = OFF_EPO; idx = &g_epo_i; ciclo = &g_epo_ciclo; dci = g_dci_out; }
+
+    (void)ep;                       /* quale sia lo dice gia' il verso */
+
+    if (!in && len > 0) memcpy((void *)(g_dma_virt + OFF_BULK), dati, len);
+
+    t = VIRT(off + *idx * 16);
+    trb_scrivi(t, FIS(OFF_BULK), 0, len,
+               TRB_TIPO(TRB_NORMALE) | TRB_IOC | TRB_ISP |
+               (*ciclo ? TRB_C : 0));
+
+    (*idx)++;
+    if (*idx == ANELLO_TRB - 1) {
+        volatile unsigned int *l = VIRT(off + (ANELLO_TRB - 1) * 16);
+        l[3] = TRB_TIPO(TRB_LINK) | TRB_TC | (*ciclo ? TRB_C : 0);
+        *idx = 0;
+        *ciclo ^= 1;
+    }
+
+    wr32(g_db, g_slot * 4, dci);
+
+    /* Cinque secondi: una chiavetta lenta ci mette il suo, e un disco a
+     * piatti che si sta svegliando anche di piu'. Meglio aspettare che
+     * dichiarare guasto qualcosa che stava solo girando. */
+    if (!evento(e, 5000)) {
+        printf("xhci: trasferimento bulk senza risposta\n");
+        return -1;
+    }
+    if (TRB_TIPO_DI(e[3]) != TRB_EV_TRASF) return -1;
+
+    cod = TRB_COD(e[2]);
+    if (cod == COD_STALLO) return USB_MASSA_STALLO;
+    if (cod != COD_OK && cod != COD_CORTO) {
+        if (g_verboso) printf("xhci: bulk, codice %u\n", cod);
+        return -1;
+    }
+
+    resto = e[2] & 0x00FFFFFFu;
+    avuti = (resto <= len) ? (len - resto) : 0;
+
+    if (in && avuti > 0) memcpy(dati, (void *)(g_dma_virt + OFF_BULK), avuti);
+
+    return (int)avuti;
 }
 
 /* Mette in coda una lettura e suona il campanello dell'endpoint.
@@ -1256,11 +1450,33 @@ static unsigned int vel_xhci(unsigned int v)
 
 /* Legge i descrittori del dispositivo appena indirizzato e, se l'endpoint 0
  * non e' quello che avevamo dichiarato a scatola chiusa, lo corregge. */
-static int conosci(void)
+static int conosci(unsigned int vel)
 {
     if (!usb_desc_corto(controllo, g_slot, &g_dev)) {
         printf("xhci: il dispositivo non risponde al primo descrittore\n");
         return 0;
+    }
+
+    /* ! A SUPER SPEED QUEL NUMERO NON E' UNA MISURA, E' UN ESPONENTE.
+     *
+     * bMaxPacketSize0 vale 8, 16, 32 o 64 fino a high speed; da USB 3 in su la
+     * specifica dice che contiene il LOGARITMO in base 2, e vale sempre 9,
+     * cioe' 512 byte. Preso alla lettera diventa «pacchetti da 9 byte»: i
+     * descrittori arrivano lo stesso perche' sono corti e il controller
+     * spezzetta, ma ogni trasferimento piu' lungo va in 57 pezzi da 9 byte —
+     * e su ferro vero non e' un rallentamento, e' roba che smette di
+     * funzionare.
+     *
+     * ! SI GUARDA LA VELOCITA', NON IL VALORE. La regola «se e' 9 allora e'
+     * un esponente» funzionerebbe (9 non e' una misura lecita), ma sarebbe
+     * vera per caso: il giorno che la specifica ammette un altro esponente,
+     * quel controllo sbaglia in silenzio. La velocita' la sappiamo, e dice la
+     * verita' senza indovinare. */
+    if (vel >= 4 && g_dev.maxp0 < 16) {
+        if (g_verboso)
+            printf("xhci: super speed: maxp0 e' l'esponente %u, cioe' %u byte\n",
+                   g_dev.maxp0, 1u << g_dev.maxp0);
+        g_dev.maxp0 = 1u << g_dev.maxp0;
     }
 
     /* ! A FULL SPEED IL maxPacketSize NON SI PUO' SAPERE PRIMA, e questa non
@@ -1299,6 +1515,53 @@ static int hid_prepara(unsigned int vel)
            g_dev.ep, g_dev.ep_maxp);
 
     return configura_endpoint(g_dev.ep, g_dev.ep_maxp, g_dev.ep_intervallo, vel);
+}
+
+/* Se il dispositivo e' una chiavetta o un disco, lo prepara e SI METTE A
+ * SERVIRLO: questa funzione non torna finche' il dispositivo c'e'.
+ *
+ * ! SI PROVA PRIMA DELL'HID, E NON PER PREFERENZA. La classe di una memoria di
+ * massa sta sull'INTERFACCIA, non sul dispositivo: g_dev.classe vale 0 sia per
+ * una chiavetta sia per un mouse, e l'unico modo di sapere quale sia e'
+ * guardare dentro la configurazione. Si guarda per prima quella che si sa
+ * riconoscere senza effetti collaterali: usb_configura_massa() non tocca
+ * niente finche' non ha trovato i due endpoint bulk.
+ *
+ * Rende 0 se non era una memoria di massa — e allora si prova l'HID — oppure
+ * se lo era e non si e' riusciti a farla parlare. */
+static int massa_prepara(void)
+{
+    UsbMassa m;
+    char     nome[40];
+
+    if (!usb_configura_massa(controllo, g_slot, &g_dev, g_verboso)) return 0;
+
+    if (!configura_bulk(g_dev.ep_in, g_dev.ep_in_maxp,
+                        g_dev.ep_out, g_dev.ep_out_maxp)) return 0;
+
+    memset(&m, 0, sizeof(m));
+    m.ctl         = controllo;
+    m.bulk        = bulk_xhci;
+    m.dev         = g_slot;
+    m.ep_in       = g_dev.ep_in;
+    m.ep_out      = g_dev.ep_out;
+    m.interfaccia = g_dev.interfaccia;
+    m.verboso     = g_verboso;
+
+    if (!usb_massa_pronta(&m)) return 0;
+
+    if (usb_massa_nome(&m, nome, sizeof(nome)) && nome[0])
+        printf("xhci: %s\n", nome);
+
+    if (!usb_massa_capacita(&m)) {
+        printf("xhci: il supporto non dice quanto e' grande\n");
+        return 0;
+    }
+
+    printf("xhci: %u blocchi da %u byte\n", m.blocchi, m.byte_blocco);
+
+    usb_massa_servi(&m, "usb0");    /* non torna finche' c'e' */
+    return 1;
 }
 
 /* -----------------------------------------------------------------------------
@@ -1362,7 +1625,7 @@ static int dietro_hub(unsigned int radice, unsigned int vel_hub)
         }
 
         if (!indirizza(&dove)) continue;
-        if (!conosci()) continue;
+        if (!conosci(vel_xhci(velp))) continue;
 
         /* ! UN SOLO LIVELLO. Gli hub si incatenano fino a cinque, e la
          * stringa di percorso avrebbe posto per tutti — quattro bit a
@@ -1620,11 +1883,14 @@ int main(int argc, char **argv)
         dove.tt_porta = 0;
 
         if (!indirizza(&dove)) return 1;
-        if (!conosci()) return 1;
+        if (!conosci(vel)) return 1;
 
         if (g_dev.classe == USB_CLASSE_HUB) {
             if (!dietro_hub(p, vel)) return 1;
         } else {
+            /* Una chiavetta si serve qui dentro e non torna piu': se torna,
+             * non era una chiavetta, e allora si prova l'HID. */
+            if (massa_prepara()) return 0;
             if (!hid_prepara(vel)) return 1;
         }
     }

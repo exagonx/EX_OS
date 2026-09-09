@@ -139,6 +139,90 @@ int usb_configura_hid(UsbControllo ctl, unsigned int dev, UsbDispositivo *d,
 }
 
 /* =============================================================================
+ * LA MEMORIA DI MASSA — trovare i due endpoint bulk
+ *
+ * ! E' LA STESSA PASSEGGIATA DI usb_configura_hid, e sarebbe stato comodo
+ * fonderle in una sola con un parametro «cosa cerchi». Non si fa: quella cerca
+ * UN endpoint e si ferma al primo, questa ne vuole DUE e deve andare avanti
+ * finche' non li ha entrambi; e la parte che segue — SET_PROTOCOL e SET_IDLE
+ * di la', niente di la' qui — non ha niente in comune. Una funzione sola con
+ * due comportamenti si sarebbe letta peggio di due funzioni che si somigliano.
+ *
+ * ! GLI ENDPOINT SI PRENDONO SOLO DALL'INTERFACCIA GIUSTA. Un disco esterno
+ * con anche un lettore di schede espone piu' interfacce, e prendere il primo
+ * endpoint bulk che passa vuol dire parlare al lettore di schede credendo di
+ * parlare al disco. `trovato` si spegne a ogni interfaccia che non e' la
+ * nostra, esattamente come nell'HID.
+ * ============================================================================= */
+int usb_configura_massa(UsbControllo ctl, unsigned int dev, UsbDispositivo *d,
+                        unsigned int verboso)
+{
+    unsigned char b[128];
+    unsigned int  tot, i, i_if = 0, trovato = 0;
+
+    d->ep_in  = 0;  d->ep_in_maxp  = 0;
+    d->ep_out = 0;  d->ep_out_maxp = 0;
+
+    if (ctl(dev, 0x80, USB_REQ_GET_DESC, (USB_DESC_CONFIG << 8), 0, b, 9, 1) != 0)
+        return 0;
+
+    tot     = (unsigned int)b[2] | ((unsigned int)b[3] << 8);
+    d->conf = b[5];
+    if (tot > sizeof(b)) tot = sizeof(b);
+
+    if (ctl(dev, 0x80, USB_REQ_GET_DESC, (USB_DESC_CONFIG << 8), 0, b, tot, 1) != 0)
+        return 0;
+
+    i = 9;
+    while (i + 2 <= tot) {
+        unsigned int len = b[i], tipo = b[i + 1];
+
+        if (len == 0) break;
+
+        if (tipo == 4 && i + 8 <= tot) {                    /* INTERFACE */
+            i_if    = b[i + 2];
+            trovato = (b[i + 5] == USB_CLASSE_MASSA &&
+                       b[i + 6] == USB_SUB_SCSI &&
+                       b[i + 7] == USB_PROTO_BULK);
+
+            if (!trovato && verboso && b[i + 5] == USB_CLASSE_MASSA)
+                printf("usb: memoria di massa %02x/%02x/%02x: non e' SCSI "
+                       "bulk-only, la lascio stare\n",
+                       b[i + 5], b[i + 6], b[i + 7]);
+
+        } else if (tipo == 5 && trovato && i + 6 <= tot) {  /* ENDPOINT */
+            unsigned int ind  = b[i + 2];
+            unsigned int attr = b[i + 3] & 0x03;
+            unsigned int maxp = (unsigned int)b[i + 4] |
+                                (((unsigned int)b[i + 5] & 0x07) << 8);
+
+            if (attr == 2) {                                /* bulk */
+                if (ind & 0x80) { d->ep_in  = ind & 0x0F; d->ep_in_maxp  = maxp; }
+                else            { d->ep_out = ind & 0x0F; d->ep_out_maxp = maxp; }
+            }
+            if (d->ep_in && d->ep_out) break;
+        }
+        i += len;
+    }
+
+    if (d->ep_in == 0 || d->ep_out == 0) {
+        if (verboso)
+            printf("usb: nessuna interfaccia di massa SCSI bulk-only\n");
+        return 0;
+    }
+
+    d->interfaccia = i_if;
+
+    if (ctl(dev, 0x00, USB_REQ_SET_CONF, d->conf, 0, 0, 0, 0) != 0) return 0;
+
+    if (verboso)
+        printf("usb: massa: interfaccia %u, bulk IN %u (%u), OUT %u (%u)\n",
+               i_if, d->ep_in, d->ep_in_maxp, d->ep_out, d->ep_out_maxp);
+
+    return 1;
+}
+
+/* =============================================================================
  * GLI HUB — le porte che non stanno sul controller
  * ========================================================================== */
 

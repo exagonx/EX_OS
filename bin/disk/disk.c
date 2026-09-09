@@ -266,11 +266,15 @@ int main(int argc, char **argv)
                 const char *t = (b[k].tipo == 1) ? "floppy"
                               : (b[k].tipo == 2) ? "disco"
                               : (b[k].tipo == 3) ? "partizione"
-                              : (b[k].tipo == 4) ? "CD/DVD" : "?";
+                              : (b[k].tipo == 4) ? "CD/DVD"
+                              : (b[k].tipo == 5) ? "da driver" : "?";
+                /* «guasto» batte «sola lettura»: e' l'unica delle due che
+                 * chiede di fare qualcosa subito. */
                 printf("  %-8s%-12s%12u%12u%10u%s\n",
                        b[k].nome, t, b[k].primo_lo, b[k].settori_lo,
                        in_mb(b[k].settori_lo, b[k].settori_hi),
-                       b[k].sola_lettura ? "  (sola lettura)" : "");
+                       b[k].guasto ? "  (GUASTO: smontalo)"
+                                   : b[k].sola_lettura ? "  (sola lettura)" : "");
             }
             start += (unsigned int)n;
             if (n < 8) break;

@@ -1883,6 +1883,13 @@ int main(int argc, char **argv)
     unisci(p, argv[1], "boot");
     crea_dir(p);
 
+    /* ! /USB VUOTA, E SERVE A `automount`. Il VFS monta su un nome che non
+     * esiste, ma la directory che lo conterra' si': senza questa, la prima
+     * chiavetta infilata su un sistema installato non si monta e l'errore
+     * (ENOENT su /USB/DRIVE0) manda a cercare il guasto nel driver USB. */
+    unisci(p, argv[1], "USB");
+    crea_dir(p);
+
     unisci(q, p, "stage2.new");
     if (copia("/LOADER.BIN", q) < 0) {
         printf("\nInstallazione interrotta: senza Stage 2 il disco non parte.\n");

@@ -820,6 +820,21 @@ typedef struct {
 #define SYS_BLK_ATTENDI   209
 #define SYS_BLK_RISPOSTA  210
 
+/* =============================================================================
+ * SYS_BLK_SCANSIONA (211) — rileggi la tabella di un dispositivo servito
+ *
+ * ebx = nome ("usb0"). Rende quante partizioni ha registrato, 0 se il
+ * supporto non ha una tabella (il caso normale di una chiavetta), o -errno.
+ *
+ * ! NON LA CHIAMA IL DRIVER CHE HA OFFERTO IL DISPOSITIVO: leggerebbe se
+ * stesso e si aspetterebbe per sempre — vedi blk_scansiona() in blk.h. La
+ * chiede chi si accorge che il dispositivo e' comparso.
+ *
+ * ! E' DI root, non dei driver: non tocca l'hardware, decide quali finestre
+ * esistono. Lo stesso permesso di mount.
+ * ============================================================================= */
+#define SYS_BLK_SCANSIONA 211
+
 #define BLKR3_LEGGI       1
 #define BLKR3_SCRIVI      2
 #define BLKR3_SVUOTA      3   /* riversa quel che il driver tiene in sospeso */
@@ -1148,6 +1163,13 @@ typedef struct {
     uint32_t sola_lettura;
     uint32_t primo_lo, primo_hi;      /* LBA di partenza nel supporto */
     uint32_t settori_lo, settori_hi;  /* lunghezza della finestra */
+    /* ! GUASTO NON E' LO STESSO DI ASSENTE, e chi monta deve saperlo. Un
+     * dispositivo servito da un processo che e' morto mentre qualcuno lo
+     * teneva montato NON sparisce dall'elenco — lo slot resta occupato apposta,
+     * o il prossimo dispositivo lo riuserebbe sotto un montaggio ancora
+     * aperto. Da fuori era indistinguibile da uno sano, e `automount` non
+     * smontava mai una chiavetta il cui driver se n'era andato. */
+    uint32_t guasto;
 } BlkInfo;
 
 /* --- Un disco servito da un processo: vedi SYS_BLK_OFFRI, piu' in alto --- */
@@ -1346,6 +1368,7 @@ int32_t sys_ipc_send(InterruptFrame *f);
 int32_t sys_blk_offri(InterruptFrame *f);
 int32_t sys_blk_attendi(InterruptFrame *f);
 int32_t sys_blk_risposta(InterruptFrame *f);
+int32_t sys_blk_scansiona(InterruptFrame *f);
 int32_t sys_ipc_recv(InterruptFrame *f);
 int32_t sys_ipc_recv_tmo(InterruptFrame *f);
 int32_t sys_time(InterruptFrame *f);

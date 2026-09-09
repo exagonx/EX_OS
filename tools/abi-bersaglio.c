@@ -206,4 +206,18 @@ CAMPO(blkrichiesta_qual, BlkRichiesta, quale)
 CAMPO(blkrichiesta_dati, BlkRichiesta, dati)
 CAMPO(blkrichiesta_max,  BlkRichiesta, dati_max)
 
+/* BlkInfo: la riempie il KERNEL e la legge il programma, come VideoInfo — e
+ * non era nell'impronta. Ci e' entrata il 9 settembre 2026, quando le si e'
+ * aggiunto `guasto`: senza questa riga, un programma compilato prima e
+ * ricollegato dopo avrebbe letto le voci sfalsate di quattro byte a partire
+ * dalla seconda, e l'impronta avrebbe detto che andava tutto bene. E' lo
+ * stesso modo di sbagliare di DirEntry, ad agosto. */
+DIM(blkinfo,            BlkInfo)
+CAMPO(blkinfo_nome,     BlkInfo, nome)
+CAMPO(blkinfo_tipo,     BlkInfo, tipo)
+CAMPO(blkinfo_sl,       BlkInfo, sola_lettura)
+CAMPO(blkinfo_primolo,  BlkInfo, primo_lo)
+CAMPO(blkinfo_setlo,    BlkInfo, settori_lo)
+CAMPO(blkinfo_guasto,   BlkInfo, guasto)
+
 DIM(jmp_buf,            jmp_buf)

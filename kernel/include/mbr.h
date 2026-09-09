@@ -109,6 +109,15 @@ typedef struct {
  * Ritorna 0 se il settore 0 e' stato letto, <0 se nemmeno quello.
  * Lo schema e le anomalie stanno dentro `out` — un ritorno 0 NON
  * significa "tabella sana", significa "sono riuscito a guardarla". */
+/* Come si arriva a un settore del supporto: rende 0, o un valore negativo.
+ * Serve a leggere la tabella di un disco che non e' ATA — una chiavetta USB
+ * servita da un processo, per esempio. Il perche' per esteso sta accanto a
+ * mbr_leggi_da() in kernel/block/mbr.c. */
+typedef int (*MbrLettore)(void *ctx, uint64_t lba, uint8_t *sett);
+
+int mbr_leggi_da(MbrLettore leggi, void *ctx, uint64_t settori,
+                 TabellaPartizioni *out);
+
 int mbr_leggi(int indice, TabellaPartizioni *out);
 
 /* Critica un INSIEME di partizioni — che venga dal disco o da una

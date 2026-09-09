@@ -56,3 +56,44 @@ echo Rete pronta: 'ipcfg' mostra la configurazione, 'ping' la prova.
 # riscrive tutto. Chi cambia una riga qui la cambia anche li', o alla prima
 # configurazione dell'hardware sparisce senza che nessuno se ne accorga.
 netupdate -auto
+
+# =============================================================================
+# Le chiavette USB: i controller, e poi chi le monta
+#
+# ! I DRIVER SI LANCIANO TUTTI E DUE, SENZA CHIEDERSI QUALE SERVE. Con `-avvio`
+# quello che non trova il proprio controller esce in silenzio, quindi il costo
+# su una macchina che ce l'ha uno solo e' un processo che parte e finisce. La
+# scelta a monte — sondare e scrivere qui solo il driver giusto — sarebbe
+# sbagliata la prima volta che si infila una scheda USB in uno slot PCI.
+#
+# EHCI e' USB 2.0, OHCI e' USB 1.1 su tutto cio' che non e' Intel. Chi ha un
+# xHCI (USB 3) usa /dev/xhci.drv, che pero' serve anche mouse e tastiere e va
+# lanciato a mano se non lo si vuole occupato da un disco.
+#
+# ! ASPETTANO: all'accensione la chiavetta non c'e' quasi mai — si accende la
+# macchina e POI si infila. I driver restano a guardare le porte.
+/dev/ehci.drv -avvio &
+/dev/ohci.drv -avvio &
+
+# ! E L'UHCI? Non sta qui, e la ragione e' che quel driver ha due mestieri: su
+# una macchina Intel serve il MOUSE, ed e' quello che fa se lo si lancia senza
+# argomenti. Metterlo qui vorrebbe dire decidere per tutti che quella presa e'
+# di un disco. Chi ha una macchina Intel con solo USB 1.1 e vuole le chiavette
+# aggiunga a mano:
+#
+#     /dev/uhci.drv -avvio &
+#
+# che ignora mouse e tastiere e aspetta una chiavetta.
+
+# Il sorvegliante: guarda i dispositivi a blocchi, non l'USB, e monta quel che
+# compare. Una chiavetta senza tabella delle partizioni finisce in
+# /USB/DRIVE0; un disco partizionato in /USB/HDD0p1, /USB/HDD0p2, ...
+#
+# ! /USB DEVE ESISTERE, e sta gia' nelle immagini: il VFS monta su un nome che
+# non esiste ma la directory che lo contiene dev'esserci, e da CD non la si
+# puo' creare.
+automount &
+
+# ! LE RIGHE QUI SOPRA STANNO ANCHE DENTRO hwconfig (componi_avvio, in
+# bin/hwconfig/hwconfig.c): questo file ha DUE scrittori. Chi ne cambia una
+# qui la cambia anche li', o alla prima configurazione dell'hardware sparisce.

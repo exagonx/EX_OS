@@ -526,44 +526,218 @@ I QUATTRO PASSI, E COME SI PROVA OGNUNO
         pezzo, e ogni richiesta aspettava i 5 secondi interi. Adesso lo stato
         del servente si guarda prima di mettersi in coda.
 
-    RESTA da fare qui: le PARTIZIONI di un disco servito da ring 3. Oggi un
-    dispositivo di tipo RING3 e' un volume intero (il caso normale di una
-    chiavetta, che una tabella non ce l'ha); un disco USB partizionato vuole
-    le sue finestre di tipo PART, ed e' anche cio' che serve all'automontaggio
-    di /USB/HDD0p1. Il posto e' registra_partizioni() in kernel/block/blk.c,
-    che oggi sa leggere solo la tabella di un disco ATA.
+ 0-bis. LE PARTIZIONI di un disco servito da ring 3 — FATTE lo stesso giorno.
 
- 1. LA CLASSE — drivers/usb/usb_massa.c, accanto a usb_comune.c: trasporto
-    bulk-only (CBW/CSW) e SCSI (INQUIRY, TEST UNIT READY, READ CAPACITY(10),
-    READ(10), WRITE(10)), piu' il trasferimento bulk nella cucitura di
-    usb_comune.h. Si appoggia sull'xHCI, che c'e' gia'.
-    Si prova in QEMU:  -device qemu-xhci -device usb-storage,drive=...
+    Un disco USB partizionato vuole le sue finestre di tipo PART, ed e' anche
+    cio' che serve all'automontaggio di /USB/HDD0p1.
 
- 2. EHCI — USB 2.0, il controller che serve all'Acer.
-    Si prova in QEMU:  -device usb-ehci
+      - mbr_leggi_da() legge la tabella attraverso un LETTORE invece che da
+        ata_read: la catena degli EBR, la protezione dal ciclo e i controlli
+        sono gli stessi per un disco ATA e per una chiavetta. Riscriverli
+        altrove avrebbe voluto dire due copie della parte in cui e' piu'
+        facile sbagliare, e la seconda non vede mai un disco storto perche' i
+        dischi storti arrivano sempre dall'altra parte.
+      - BlkDev ha un campo `padre`: una finestra puo' stare sopra un disco ATA
+        o sopra un dispositivo servito da un processo, e la sola cosa che li
+        distingue e' quella riga.
+      - blk_scansiona() + syscall 211 + `blkscan`, perche' la scansione NON la
+        puo' chiedere il driver che ha offerto il dispositivo: leggerebbe se
+        stesso (-EDEADLK). La chiede chi si accorge che e' comparso — domani
+        il sorvegliante.
 
- 3. OHCI — USB 1.1 dove non c'e' un UHCI: le tre porte 1.1 del SiS 964, e le
-    chiavette vecchie.
-    Si prova in QEMU:  -device pci-ohci
+    La prova, dal CD, con `ramdisk.drv -tabella` che nasce partizionato:
+
+        blkscan ram0                 -> ram0: 2 partizioni - ram0p1, ram0p2
+        mkfs -t ext2 -f ram0p1 ; mkfs -t ext2 -f ram0p2
+        mount ram0p1 /mnt ; mount ram0p2 /mnt2
+        cp ... /mnt/uno.txt ; cp ... /mnt2/due.txt
+        ls /mnt   -> uno.txt 3673      ls /mnt2  -> due.txt 28995
+
+    Due montaggi vivi sullo stesso supporto, ognuno dentro la sua finestra. E
+    un `blkscan ram0` con una partizione montata viene RIFIUTATO, come per un
+    disco ATA. Con -vita, il servente che muore lascia 'ram0p1' guasto: `ls`
+    dice «impossibile leggere», `umount` funziona, la macchina resta viva.
+
+    ! RESTA FUORI: scrivere una tabella su un dispositivo servito da ring 3.
+    mbr_scrivi() vuole un indice ATA, quindi `fdisk` su una chiavetta non si
+    puo' ancora — per questo la prova usa -tabella, che la tabella se la
+    scrive da se' in memoria. Serve quando si vorra' preparare una chiavetta
+    da dentro EX-OS; per leggerne una fatta altrove non serve.
+
+ 1. LA CLASSE — FATTA il 9 settembre 2026, e provata in QEMU.
+
+    drivers/usb/usb_massa.c accanto a usb_comune.c: trasporto bulk-only
+    (CBW/CSW) e SCSI (TEST UNIT READY, REQUEST SENSE, INQUIRY, READ
+    CAPACITY(10), READ(10), WRITE(10)), piu' usb_configura_massa() che trova
+    l'interfaccia 08/06/50 e i suoi due endpoint bulk. L'xHCI ha imparato a
+    configurare due endpoint insieme e a fare trasferimenti bulk.
+
+    La prova, con una chiavetta finta di QEMU:
+
+        qemu ... -device qemu-xhci,id=xhci \
+                 -drive if=none,id=stick,format=raw,file=chiavetta.img \
+                 -device usb-storage,bus=xhci.0,drive=stick
+
+        xhci.drv &      ->  QEMU QEMU HARDDISK, 16384 blocchi da 512
+        mkfs -t ext2 -f usb0 ; mount usb0 /mnt ; cp ... ; umount
+
+    E il referto vero: l'immagine letta DA LINUX con `debugfs -R "ls -l /"`
+    contiene prova.txt di 3673 byte, con dentro kernel.cfg. Con una chiavetta
+    partizionata, `blkscan usb0` da' usb0p1, si formatta e si monta quella, e
+    l'MBR resta intatto — la finestra ha tenuto.
+
+    ! DUE DIFETTI TROVATI STRADA FACENDO, ed erano tutt'e due nell'xHCI di
+    prima:
+
+      - IL TRB DI LINK STAVA AL BYTE 255*4 INVECE CHE 255*16. L'anello dei
+        comandi lo scriveva giusto (`&cmd[(ANELLO_TRB-1)*4]`, aritmetica di
+        puntatori a unsigned int); copiando quella riga dove l'indirizzo si
+        compone con VIRT(), che prende BYTE, il `*4` e' rimasto. Non si vedeva
+        perche' un mouse non arriva mai a 255 rapporti e l'enumerazione fa una
+        decina di trasferimenti: l'anello non girava mai. Una chiavetta lo fa
+        girare dopo 128 comandi, e mkfs si fermava sempre intorno al settore
+        132. Era in tre posti su quattro.
+      - A SUPER SPEED bMaxPacketSize0 E' UN ESPONENTE, non una misura: vale 9
+        e significa 512. Preso alla lettera dava «pacchetti da 9 byte». In
+        QEMU passava lo stesso; su ferro vero no.
+
+    RESTA: un dispositivo per volta (un mouse E una chiavetta insieme vogliono
+    lo stato per dispositivo invece che globale, ed e' lo stesso limite che ha
+    gia' uhci.drv), e SYNCHRONIZE CACHE su BLKR3_SVUOTA se un giorno si vorra'
+    essere sicuri fino in fondo prima di sfilare.
+
+ 2. EHCI — FATTO il 9 settembre 2026, e provato in QEMU.
+
+    drivers/ehci/ehci.c: USB 2.0, e serve SOLO memorie di massa (mouse e
+    tastiere restano di uhci/xhci). Con -device usb-ehci e una chiavetta
+    finta: mkfs, mount, cp, umount, e l'immagine riletta da Linux con
+    `debugfs` contiene prova.txt di 3673 byte.
+
+    ! LE TRE COSE CHE UN EHCI HA E GLI ALTRI NO, e che vanno fatte o non
+    funziona niente:
+
+      - LA STRETTA DI MANO COL BIOS. Su una macchina vera il BIOS usa l'EHCI
+        per la tastiera prima che parta il sistema e non lo lascia: si alza un
+        bit nella struttura «legacy support» dello spazio di configurazione
+        PCI e si aspetta che lui abbassi il suo. Serve SCRIVERE in
+        configurazione, che pci.drv non offre: il driver apre 0xCF8 per conto
+        proprio, ed e' l'unica cosa che fa alle spalle del servizio.
+      - CONFIGFLAG. Finche' vale 0 ogni presa appartiene al controller
+        COMPAGNO (OHCI o UHCI, sulle stesse prese fisiche): un EHCI
+        perfettamente inizializzato non vede NIENTE attaccato.
+      - CEDERE LE PORTE. Dopo il reset, «porta abilitata» vuol dire alta
+        velocita'; se non si abilita, il dispositivo non e' suo e va ceduto al
+        compagno col bit Padrone. Tenerselo vuol dire una presa in cui non
+        funziona piu' niente fino al riavvio.
+
+    ! E UN DIFETTO CHE VALE PER CHIUNQUE SCRIVA UN EHCI: la prima stesura
+    aspettava la fine del trasferimento guardando il bit Attivo nella
+    SOVRAPPOSIZIONE della QH — che pero' la azzeriamo noi un attimo prima. Una
+    coda che il controller non tocca resta a zero, cioe' «non attivo», cioe'
+    «finito bene»: ogni trasferimento riusciva all'istante senza trasferire
+    niente, e il primo a lamentarsi era il descrittore, tre chiamate dopo. I
+    qTD invece nascono ATTIVI, li accendiamo noi: se restano accesi vuol dire
+    che nessuno li ha eseguiti. Si guarda quelli.
+
+    Ne e' uscita anche una richiamata nuova in usb_massa.h, UsbToggleAzzera:
+    una CLEAR_FEATURE(ENDPOINT_HALT) azzera il conto dei pacchetti dalla parte
+    del DISPOSITIVO, e un controller che se lo tiene da solo — l'EHCI — deve
+    saperlo, o i due lati restano sfasati per sempre. L'xHCI la lascia nulla
+    perche' il toggle sta nel contesto dell'endpoint.
+
+    RESTA: le split transaction, cioe' i dispositivi full e low speed dietro
+    un hub. Oggi si cedono al compagno, che e' la cosa giusta finche' un OHCI
+    c'e' (passo 3).
+
+ 3. OHCI — FATTO il 9 settembre 2026, e provato in QEMU.
+
+    drivers/ohci/ohci.c: USB 1.1 dove non c'e' un UHCI. Serve solo memorie di
+    massa, come ehci.drv.
+
+    ! PERCHE' NON BASTAVA L'EHCI. Le porte USB 1.1 sono fisicamente le STESSE
+    prese, e chi le guida e' il controller COMPAGNO: ehci.drv cede al compagno
+    tutto cio' che non e' ad alta velocita', e se quel compagno non ha un
+    driver, cedere vuol dire buttare via. Sul SiS 964 dell'Acer i compagni
+    sono tre OHCI. E un lettore di dischetti USB e' full speed: dietro l'EHCI
+    non ci arriva mai.
+
+    ! UHCI E OHCI NON SONO LA STESSA COSA SCRITTA DUE VOLTE: sono due standard
+    concorrenti per lo stesso bus. Intel e VIA hanno messo UHCI, tutti gli
+    altri — SiS, ALi, NVIDIA, ATI, Apple — OHCI. Una macchina ha l'uno o
+    l'altro.
+
+    Le differenze che contano rispetto all'EHCI:
+      - la stretta di mano non passa dalla configurazione PCI ma dal
+        controller stesso: se le interruzioni vanno alla SMM (bit IR) si alza
+        OCR e si aspetta;
+      - l'intervallo di trama va SALVATO PRIMA DEL RESET e rimesso: il reset
+        lo azzera, e un controller con FrameInterval a zero non genera nessun
+        frame — cioe' non fa niente, in un modo che somiglia a un guasto;
+      - il conto dei pacchetti sta nel bit 1 di HeadP dell'ED, quindi
+        riscrivendo HeadP va conservato. UsbToggleAzzera lo azzera insieme al
+        bit «fermato» quando il dispositivo riparte da DATA0;
+      - se CBP e' zero sono passati TUTTI i byte: presa alla rovescia, quella
+        convenzione da' zero proprio nei trasferimenti riusciti per intero.
+
+    Con questo la catena e' completa: xHCI (USB 3), EHCI (2.0), OHCI (1.1
+    non-Intel), e UHCI (1.1 Intel) che ha gia' l'enumerazione e a cui manca
+    solo il bulk.
 
 ! OGNI PASSO SI PROVA QUI, PRIMA DI TOCCARE L'ACER. QEMU li emula tutti e
 quattro — verificato con `qemu-system-i386 -device help`. La macchina vera
 resta l'ultima prova, non la prima: la' un errore costa un riavvio e non lascia
 un log.
 
-! E L'UHCI CI GUADAGNA GRATIS: e' il controller piu' semplice dei quattro, e
-una volta scritta la classe gli si aggiunge il bulk in poche righe. Cioe' le
-chiavette funzionano anche sulle macchine vecchie con l'8042.
+ 4. UHCI — FATTO il 9 settembre 2026. «Gratis» era una previsione sbagliata:
+    non poche righe, ma nemmeno un driver nuovo.
+
+    ! QUI SERVONO MOLTI PIU' TD CHE ALTROVE, ed e' la differenza che si sente.
+    L'UHCI non sa spezzare un trasferimento da solo: un TD vale UN PACCHETTO, e
+    a piena velocita' un pacchetto e' 64 byte. Un settore da 512 sono otto TD,
+    i 4096 di una richiesta intera sono sessantaquattro. Sull'EHCI e sull'xHCI
+    ne bastava uno, perche' quelli la divisione se la fanno loro.
+
+    ! E IL PACCHETTO CORTO VA CHIESTO. Su una lettura si mettono in fila tanti
+    TD quanti pacchetti interi ci si aspetta; se il dispositivo ne manda meno —
+    il caso normale, un CSW di 13 byte — i TD che avanzano restano ATTIVI per
+    sempre e l'attesa scade. Il bit SPD dice «se arriva un pacchetto corto,
+    salta il resto della coda», e da li' il conto si fa sommando i TD serviti.
+    Un TD ancora attivo DOPO uno corto non e' un errore: e' esattamente cio'
+    che SPD ha appena fatto.
+
+    ! E IL TOGGLE STA NEL TOKEN DI OGNI TD: l'UHCI e' l'unico dei quattro dove
+    non c'e' nessun altro posto in cui possa stare. Lo tiene il driver, e
+    UsbToggleAzzera lo rimette a zero dopo una CLEAR_FEATURE.
+
+    ! DUE MESTIERI, E VANNO SEPARATI A COMANDO. uhci.drv serve il MOUSE su
+    ogni macchina Intel: senza argomenti continua a fare quello, e prova la
+    massa solo perche' la classe di una chiavetta sta sull'interfaccia e si
+    scopre guardando. Con `-massa` ignora mouse e tastiere e ASPETTA una
+    chiavetta; con `-avvio` fa lo stesso e tace se il controller non c'e'. Per
+    questo NON sta in avvio.sh: metterlo vorrebbe dire decidere per tutti che
+    quella presa e' di un disco. La riga commentata sta li' per chi la vuole.
+
+    La prova: -device piix3-usb-uhci con una chiavetta finta. automount l'ha
+    montata da solo in /USB/DRIVE0, e un file da 28995 byte scritto attraverso
+    l'UHCI — quattrocentocinquanta pacchetti da 64 byte, cioe' il toggle messo
+    alla prova sul serio — si rilegge da Linux con debugfs.
 
 -----------------------------------------------------------------------------
-L'AUTOMONTAGGIO — si infila la chiavetta e i file ci sono
+L'AUTOMONTAGGIO — FATTO il 9 settembre 2026: bin/automount
 
-Voluto cosi': all'avvio parte un sorvegliante; quando compare un dispositivo
-lo monta da solo. Una chiavetta a una partizione sotto /USB/DRIVE0, un disco
-rigido con le sue partizioni sotto /USB/HDD*.
+    automount &     resta a guardare, un giro al secondo
+    automount -1    una passata sola
+    automount -v    dice anche quel che salta e perche'
 
-E' fattibile, e il grosso e' gia' in piedi. Tre cose vanno decise diversamente
-da come vengono in mente, e la ragione di ognuna e' concreta.
+    /USB/DRIVE0     una chiavetta senza tabella delle partizioni
+    /USB/HDD0p1     la prima partizione del primo disco
+
+Provato in QEMU: chiavetta EHCI senza tabella -> /USB/DRIVE0, chiavetta
+partizionata -> /USB/HDD0p1, e col servente che muore (ramdisk -vita) il punto
+viene SMONTATO da solo. `disk` mostra il dispositivo come «(GUASTO: smontalo)».
+
+Le tre cose decise diversamente da come vengono in mente, e la ragione di
+ognuna:
 
  1. IL SORVEGLIANTE NON SORVEGLIA L'USB: SORVEGLIA I DISPOSITIVI A BLOCCHI.
     Chiedere al driver USB «e' arrivato qualcosa?» vorrebbe dire un
@@ -602,6 +776,54 @@ E due cose da non scoprire dopo:
 Dove parte: /boot/avvio.sh, non [modules]. Lo dice gia' kernel.cfg per la
 rete — [modules] li avvia TUTTI INSIEME, e la catena pci -> controller ->
 memoria di massa -> automontaggio vuole un ORDINE.
+! LE RIGHE IN avvio.sh CI SONO, in tutt'e due gli scrittori (boot/avvio.sh e
+componi_avvio() dentro hwconfig):
+
+    /dev/pci.drv &          il fornitore di tutti, rete o non rete
+    /dev/ehci.drv -avvio &
+    /dev/ohci.drv -avvio &
+    automount &
+
+Provato: si accende la macchina con la chiavetta gia' infilata, non si batte
+NIENTE, e `ls /USB/DRIVE0` mostra i file. Sia su EHCI sia su OHCI.
+
+Le quattro cose che sono servite perche' quella riga valesse qualcosa:
+
+  - I DRIVER ASPETTANO. All'accensione la chiavetta non c'e' quasi mai: si
+    accende la macchina e POI si infila. Un driver che guarda le porte una
+    volta sola lascia il sorvegliante senza niente da montare per sempre. Ora
+    restano a guardare, e una porta gia' provata non si riprova finche' non
+    torna vuota — o un mouse verrebbe enumerato ogni secondo.
+  - -avvio: chi non trova il proprio controller esce IN SILENZIO. Senza, ogni
+    macchina che non ha un EHCI si prende una riga di lamentela a ogni
+    accensione.
+  - IL PCI ESCE DAL BLOCCO DELLA RETE. Stava li' dentro, e su una macchina
+    senza scheda i controller USB non trovavano nessuno a cui chiedere dove
+    sono i loro registri.
+  - SI INSTALLANO SEMPRE, come i driver di rete e per la stessa ragione gia'
+    scritta: la chiavetta si infila dove il sistema si USA, e un sistema
+    costruito dentro QEMU un EHCI non ce l'ha. Ma le RIGHE si scrivono solo se
+    su quel sistema c'e' /bin/automount — una stat, non una sonda: la domanda
+    giusta non e' «questa macchina ha un EHCI» ma «ci sono i programmi per
+    farlo».
+
+! E QUEL CHE NON FA, detto qui perche' non si scopra provando: smonta cio' che
+SPARISCE dall'elenco o che diventa GUASTO — cioe' quando il driver che lo
+serviva muore. Una chiavetta sfilata di brutto non fa ne' l'una ne' l'altra
+cosa: i driver dei controller non guardano le porte mentre servono un disco,
+quindi il dispositivo resta li' e ogni accesso rende errore finche' non si
+smonta a mano. Chiudere quel caso e' lavoro dei driver, non del sorvegliante.
+
+! DUE DIFETTI TROVATI PROVANDO, e sono nel codice:
+
+  - IL PRIMO DISPOSITIVO DIVENTAVA DRIVE1. Il numero si sceglieva dopo aver
+    segnato lo slot come usato, quindi quello stesso slot risultava gia' preso
+    col numero 0. Si vede solo guardando il nome del punto di montaggio,
+    perche' funziona tutto lo stesso.
+  - LE PARTIZIONI NON SI TROVAVANO. L'elenco dei dispositivi era stato letto
+    PRIMA di blk_scansiona(), che le crea: cercarle nella copia di prima vuol
+    dire non trovarne nessuna e dire «niente da montare» su un disco
+    partizionato benissimo. L'elenco si rilegge dopo la scansione.
 
 -----------------------------------------------------------------------------
 QUEL CHE SERVE SAPERE DALL'ACER, quando si arriva al passo 2

@@ -89,6 +89,7 @@ mmd -i "$IMG" ::/boot
 mmd -i "$IMG" ::/bin
 mmd -i "$IMG" ::/dev
 mmd -i "$IMG" ::/lib
+mmd -i "$IMG" ::/USB      # dove automount monta le chiavette
 
 # --- Stage 2, con la modalita' video rimessa a TESTO -------------------------
 #

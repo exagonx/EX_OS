@@ -329,6 +329,7 @@ typedef struct {
 #define SYS_BLK_OFFRI     208
 #define SYS_BLK_ATTENDI   209
 #define SYS_BLK_RISPOSTA  210
+#define SYS_BLK_SCANSIONA 211
 
 /* ! DEVE RESTARE IDENTICA a MmioZona in kernel/include/syscall.h e in
  * lib/include/libc.h. E' la TERZA copia: questo file non include libc.h e
@@ -627,12 +628,24 @@ typedef struct {
 
 #define BLKINFO_NOME_MAX    12
 #define MOUNTINFO_PUNTO_MAX 24
+/* ! TERZA COPIA, e il 9 settembre 2026 e' stata quella dimenticata.
+ * Aggiungendo `guasto` a BlkInfo sono state corrette syscall.h e libc.h ma non
+ * questa: sys_blkinfo controlla che il chiamante dichiari la STESSA misura
+ * (`size != sizeof(BlkInfo)` -> EINVAL), quindi la libc chiedeva 40 byte a un
+ * kernel che ne voleva 44 e l'elenco tornava VUOTO. Il sintomo era «'ram0' non
+ * esiste» su un dispositivo perfettamente registrato, e `disk` che non
+ * mostrava piu' nemmeno il CD.
+ *
+ * Quel controllo ha funzionato: ha rifiutato invece di riempire una struttura
+ * della misura sbagliata. Vale la pena di ricordarlo quando si e' tentati di
+ * toglierlo. */
 typedef struct {
     char         nome[BLKINFO_NOME_MAX];
     unsigned int tipo;
     unsigned int sola_lettura;
     unsigned int primo_lo, primo_hi;
     unsigned int settori_lo, settori_hi;
+    unsigned int guasto;
 } BlkInfo;
 
 /* Montaggio attivo — deve restare identico a kernel/include/syscall.h
@@ -6484,6 +6497,11 @@ int blk_risposta(BlkRichiesta *r, int esito)
 {
     return (int)_syscall2(SYS_BLK_RISPOSTA, (unsigned int)r,
                           (unsigned int)esito);
+}
+
+int blk_scansiona(const char *nome)
+{
+    return (int)_syscall1(SYS_BLK_SCANSIONA, (unsigned int)nome);
 }
 
 /* ! STRUTTURA DUPLICATA A MANO da kernel/include/syscall.h e da libc.h, come

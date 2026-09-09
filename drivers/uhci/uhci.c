@@ -52,6 +52,7 @@
 #include "pci_proto.h"
 #include "kbd_proto.h"
 #include "usb_comune.h"
+#include "usb_massa.h"
 
 /* +0.001 a ogni modifica: `uhci.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
@@ -122,6 +123,25 @@ static unsigned int g_dma_virt = 0, g_dma_fis = 0;
 #define OFF_TDI     0x1200
 #define OFF_BUFI    0x3000
 
+/* --- Il bulk: le chiavette -------------------------------------------------
+ *
+ * ! QUI SERVONO MOLTI PIU' TD CHE ALTROVE, ed e' la differenza che si sente.
+ * L'UHCI non sa spezzare un trasferimento da solo: un TD vale UN PACCHETTO, e
+ * a piena velocita' un pacchetto e' 64 byte. Un settore da 512 sono otto TD,
+ * i 4096 di una richiesta intera sono sessantaquattro. Sull'EHCI e sull'xHCI
+ * bastava un descrittore solo, perche' quelli la divisione se la fanno loro.
+ *
+ * Sessantaquattro piu' margine: se un giorno arrivasse un dispositivo con
+ * pacchetti da 8 byte non ci starebbe, e infatti si rifiuta invece di
+ * troncare — un trasferimento troncato in silenzio e' un settore sbagliato. */
+#define OFF_QHB     0x1090      /* la QH del bulk */
+#define OFF_TDB     0x4000      /* i suoi TD: 72 da 32 byte */
+#define OFF_BUFB    0x5000      /* i dati di un trasferimento bulk */
+#define TDB_MAX     72
+#define BULKB_MAX   4096
+
+#define TD_SPD      0x20000000u /* «fermati se il pacchetto e' corto» */
+
 #define VIRT(off)   ((volatile unsigned int *)(g_dma_virt + (off)))
 #define FIS(off)    (g_dma_fis + (off))
 
@@ -133,6 +153,13 @@ static unsigned int g_dev_maxp   = 8;
 static unsigned int g_dev_proto  = 0;   /* USB_PROTO_MOUSE o _TASTIERA */
 static UsbDispositivo g_dev;            /* cio' che la meta' comune ha letto */
 static unsigned int g_ep_toggle  = 0;
+
+/* Il dispositivo trovato e' una memoria di massa, non un HID. */
+static unsigned int g_massa = 0;
+
+/* -massa: serve SOLO le chiavette, e aspetta che ne arrivi una. Vedi il
+ * commento davanti a aspetta_e_servi(). */
+static unsigned int g_solo_massa = 0;
 
 /* Stato mouse consegnato ai client (stesso protocollo del PS/2) */
 static int          g_dx = 0, g_dy = 0;
@@ -228,6 +255,167 @@ static int esegui(unsigned int n_td, unsigned int ms)
         if (td[1] & TD_STALLED) return -1;      /* il dispositivo ha detto no */
     }
     return 0;
+}
+
+/* =============================================================================
+ * IL BULK — quel che serve alle chiavette
+ *
+ * ! IL PACCHETTO CORTO FERMA LA CODA, E VA CHIESTO. Su una lettura si mettono
+ * in fila tanti TD quanti pacchetti INTERI ci si aspetta; se il dispositivo ne
+ * manda meno — il caso normale, un CSW di 13 byte dopo una lettura da 512 — i
+ * TD che avanzano restano ATTIVI per sempre e l'attesa scade. Il bit SPD dice
+ * al controller «se arriva un pacchetto corto, salta il resto della coda»: da
+ * li' in poi il conto di quanto e' passato lo si fa sommando i TD serviti.
+ *
+ * ! E UN TD ANCORA ATTIVO DOPO UNO CORTO NON E' UN ERRORE. E' esattamente cio'
+ * che SPD ha appena fatto: la funzione che li guarda deve fermarsi al primo
+ * corto, non giudicare quelli dopo.
+ * ============================================================================= */
+
+static void tdb_scrivi(unsigned int i, int ultimo, unsigned int stato,
+                       unsigned int tok, unsigned int buf_fis)
+{
+    volatile unsigned int *td = VIRT(OFF_TDB + i * 32);
+
+    td[0] = ultimo ? TD_TERM : (FIS(OFF_TDB + (i + 1) * 32) | TD_VF);
+    td[1] = stato;
+    td[2] = tok;
+    td[3] = buf_fis;
+}
+
+/* Quanti byte ha davvero mosso un TD gia' servito. */
+static unsigned int tdb_avuti(unsigned int i)
+{
+    unsigned int a = VIRT(OFF_TDB + i * 32)[1] & 0x7FF;
+    return (a == 0x7FF) ? 0 : (a + 1);
+}
+
+/* Mette la coda del bulk in lista e aspetta. Rende 0, USB_MASSA_STALLO, o -1;
+ * in `avuti` quanti byte sono passati. */
+static int esegui_bulk(unsigned int n_td, unsigned int ms, unsigned int atteso,
+                       unsigned int maxp, unsigned int *avuti)
+{
+    volatile unsigned int *qh = VIRT(OFF_QHB);
+    volatile unsigned int *fl = VIRT(OFF_FRAME);
+    unsigned int i, giri, tot = 0;
+    int corto = 0;
+
+    qh[0] = TD_TERM;
+    qh[1] = FIS(OFF_TDB);
+
+    for (i = 0; i < 1024; i++) fl[i] = FIS(OFF_QHB) | TD_QH;
+
+    for (giri = 0; giri < ms; giri++) {
+        volatile unsigned int *ultimo = VIRT(OFF_TDB + (n_td - 1) * 32);
+
+        if (!(ultimo[1] & TD_ACTIVE)) break;
+
+        /* Un pacchetto corto ha gia' chiuso il discorso: SPD ha saltato il
+         * resto della coda, e aspettare l'ultimo TD vorrebbe dire aspettare
+         * una cosa che non succedera'. */
+        for (i = 0; i < n_td; i++) {
+            volatile unsigned int *td = VIRT(OFF_TDB + i * 32);
+            if (td[1] & TD_ACTIVE) break;
+            if (tdb_avuti(i) < maxp) { corto = 1; break; }
+        }
+        if (corto) break;
+
+        usleep(1000);
+    }
+
+    for (i = 0; i < 1024; i++) fl[i] = TD_TERM;
+
+    for (i = 0; i < n_td; i++) {
+        volatile unsigned int *td = VIRT(OFF_TDB + i * 32);
+        unsigned int q;
+
+        if (td[1] & TD_STALLED) { *avuti = tot; return USB_MASSA_STALLO; }
+        if (td[1] & TD_ACTIVE) {
+            /* Attivo dopo un corto = saltato da SPD: e' finita bene. Attivo
+             * dal primo = non e' partito niente. */
+            if (i == 0) { *avuti = 0; return -1; }
+            break;
+        }
+
+        q = tdb_avuti(i);
+        tot += q;
+        if (q < maxp) break;            /* corto: il discorso finisce qui */
+    }
+
+    if (tot > atteso) tot = atteso;
+    *avuti = tot;
+    return 0;
+}
+
+/* La cucitura con usb_massa.c. */
+static unsigned int g_tog_in = 0, g_tog_out = 0;
+
+static int bulk_uhci(unsigned int dev, unsigned int ep, void *dati,
+                     unsigned int len, int in)
+{
+    unsigned int maxp = in ? g_dev.ep_in_maxp : g_dev.ep_out_maxp;
+    unsigned int *tog = in ? &g_tog_in : &g_tog_out;
+    unsigned int fatti = 0, n = 0, avuti = 0;
+    int rc;
+
+    (void)dev;
+
+    if (maxp == 0 || len > BULKB_MAX) return -1;
+
+    /* Un TD per pacchetto: e' l'UHCI che non sa dividere. */
+    while (fatti < len && n < TDB_MAX) {
+        unsigned int q = len - fatti;
+        unsigned int stato;
+
+        if (q > maxp) q = maxp;
+
+        stato = TD_ACTIVE | (3u << 27) | (g_dev_ls ? TD_LS : 0u) |
+                (in ? TD_SPD : 0u);
+
+        tdb_scrivi(n, 0, stato,
+                   token(in ? 0x69 : 0xE1, g_dev_addr, ep, *tog, q),
+                   FIS(OFF_BUFB) + fatti);
+
+        *tog ^= 1;
+        fatti += q;
+        n++;
+    }
+
+    if (fatti < len) {
+        printf("uhci: %u byte non ci stanno in %d TD da %u\n",
+               len, TDB_MAX, maxp);
+        return -1;
+    }
+
+    if (n == 0) {                       /* trasferimento di lunghezza zero */
+        tdb_scrivi(0, 1, TD_ACTIVE | (3u << 27) | (g_dev_ls ? TD_LS : 0u),
+                   token(in ? 0x69 : 0xE1, g_dev_addr, ep, *tog, 0),
+                   FIS(OFF_BUFB));
+        *tog ^= 1;
+        n = 1;
+    } else {
+        /* L'ultimo chiude la catena. */
+        VIRT(OFF_TDB + (n - 1) * 32)[0] = TD_TERM;
+    }
+
+    if (!in && len > 0) memcpy((void *)(g_dma_virt + OFF_BUFB), dati, len);
+
+    rc = esegui_bulk(n, 5000, len, maxp, &avuti);
+    if (rc == USB_MASSA_STALLO) return USB_MASSA_STALLO;
+    if (rc != 0) return -1;
+
+    if (in && avuti > 0) memcpy(dati, (void *)(g_dma_virt + OFF_BUFB), avuti);
+
+    return (int)avuti;
+}
+
+/* Dopo una CLEAR_FEATURE(ENDPOINT_HALT) il dispositivo riparte da DATA0.
+ * Sull'UHCI il conto lo teniamo noi, dentro il token di ogni TD: e' l'unico
+ * dei quattro controller dove non c'e' nessun altro posto in cui stia. */
+static void toggle_azzera(unsigned int dev, unsigned int ep, int in)
+{
+    (void)dev; (void)ep;
+    if (in) g_tog_in = 0; else g_tog_out = 0;
 }
 
 /* Trasferimento di controllo. `in` = i dati vanno dal dispositivo a noi. */
@@ -416,6 +604,23 @@ static int enumera(unsigned int p, unsigned int indirizzo)
         return hub_esplora(g_dev_addr, &prossimo);
     }
 
+    /* ! LA MASSA SI PROVA PRIMA, e non per preferenza: la classe di una
+     * chiavetta sta sull'INTERFACCIA, non sul dispositivo, quindi g_dev.classe
+     * vale 0 sia per un mouse sia per un disco e l'unico modo di distinguerli
+     * e' guardare dentro la configurazione. usb_configura_massa() non tocca
+     * niente finche' non ha trovato i due endpoint bulk, quindi provarla per
+     * prima non costa nulla a chi ha attaccato un mouse. */
+    if (usb_configura_massa(controllo, g_dev_addr, &g_dev, g_verboso)) {
+        g_massa = 1;
+        return 1;
+    }
+
+    if (g_solo_massa) {
+        if (g_verboso)
+            printf("uhci: porta %u: non e' una memoria di massa\n", p);
+        return 0;
+    }
+
     if (!usb_configura_hid(controllo, g_dev_addr, &g_dev, g_verboso)) {
         if (g_verboso) printf("uhci: porta %u: non e' un HID 'boot'\n", p);
         return 0;
@@ -591,19 +796,106 @@ static void rispondi(unsigned int pid)
     g_dx = 0; g_dy = 0; g_novita = 0;
 }
 
+/* =============================================================================
+ * SERVIRE UNA CHIAVETTA
+ * ============================================================================= */
+static int massa_prepara(void)
+{
+    UsbMassa m;
+    char     nome[40];
+
+    memset(&m, 0, sizeof(m));
+    m.ctl           = controllo;
+    m.bulk          = bulk_uhci;
+    m.toggle_azzera = toggle_azzera;
+    m.dev           = g_dev_addr;
+    m.ep_in         = g_dev.ep_in;
+    m.ep_out        = g_dev.ep_out;
+    m.interfaccia   = g_dev.interfaccia;
+    m.verboso       = g_verboso;
+
+    g_tog_in = 0;
+    g_tog_out = 0;
+
+    if (!usb_massa_pronta(&m)) return 0;
+
+    if (usb_massa_nome(&m, nome, sizeof(nome)) && nome[0])
+        printf("uhci: %s\n", nome);
+
+    if (!usb_massa_capacita(&m)) {
+        printf("uhci: il supporto non dice quanto e' grande\n");
+        return 0;
+    }
+
+    printf("uhci: %u blocchi da %u byte\n", m.blocchi, m.byte_blocco);
+    printf("uhci: ! a piena velocita' sono 12 Mbit: un settore per volta,\n");
+    printf("      otto pacchetti da 64 byte. Non e' rotto, e' USB 1.1.\n");
+
+    usb_massa_servi(&m, "usb0");        /* non torna finche' c'e' */
+    return 1;
+}
+
+/* ! ASPETTA, ED E' L'UNICO MODO CHE LA RIGA IN avvio.sh ABBIA SENSO: la
+ * chiavetta si infila DOPO aver acceso la macchina. Una porta gia' provata non
+ * si riprova finche' non torna vuota, o un mouse verrebbe enumerato ogni
+ * secondo per sempre. */
+static int aspetta_e_servi(void)
+{
+    unsigned char provata[2];
+    unsigned int  p, addr = 1;
+    int           detto = 0;
+
+    provata[0] = provata[1] = 0;
+
+    for (;;) {
+        for (p = 0; p < 2; p++) {
+            /* Bit 0 di PORTSC: c'e' qualcosa attaccato. */
+            if (!(r16(0x10 + p * 2) & 0x0001)) { provata[p] = 0; continue; }
+            if (provata[p]) continue;
+
+            provata[p] = 1;
+            g_massa = 0;
+
+            if (!porta_reset(p)) continue;
+            if (!enumera(p, addr)) continue;
+            addr++;
+
+            if (g_massa && massa_prepara()) return 0;
+        }
+
+        if (!detto) {
+            printf("uhci: aspetto una chiavetta.\n");
+            detto = 1;
+        }
+        usleep(1000000);
+    }
+}
+
 int main(int argc, char **argv)
 {
     DmaZona z;
     unsigned int irq = 0;
-    int rc, i, sonda = 0;
+    int rc, i, sonda = 0, avvio = 0;
 
     for (i = 1; i < argc; i++) {
-        if (argv[i][0] == '-' && argv[i][1] == 'v') g_verboso = 1;
-        if (argv[i][0] == '-' && argv[i][1] == 'i') sonda = 1;
+        if (strcmp(argv[i], "-v") == 0) g_verboso = 1;
+        else if (strcmp(argv[i], "-i") == 0) sonda = 1;
+        else if (strcmp(argv[i], "-massa") == 0) g_solo_massa = 1;
+        else if (strcmp(argv[i], "-avvio") == 0) { g_solo_massa = 1; avvio = 1; }
+        else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+            printf("uso: uhci.drv [-v] [-i] [-massa] [-avvio]\n");
+            printf("  -v      dice tutto quello che vede\n");
+            printf("  -i      dice se c'e' un UHCI ed esce\n");
+            printf("  -massa  ignora mouse e tastiere: serve solo le\n");
+            printf("          chiavette, e ASPETTA che ne arrivi una\n");
+            printf("  -avvio  come -massa, ma se il controller non c'e'\n");
+            printf("          esce in silenzio: e' la forma per avvio.sh\n");
+            return 0;
+        }
     }
 
     if (!cerca_uhci(&irq)) {
-        printf("uhci: nessun controller UHCI sul PCI.\n");
+        if (!avvio) printf("uhci: nessun controller UHCI sul PCI.\n");
         return 1;
     }
     if (sonda) return 0;
@@ -629,9 +921,15 @@ int main(int argc, char **argv)
     {
         unsigned int p, addr = 1, trovati = 0;
 
+        if (g_solo_massa) return aspetta_e_servi();
+
         for (p = 0; p < 2; p++) {
             if (!porta_reset(p)) continue;
             if (enumera(p, addr)) {
+                /* Una chiavetta si serve qui dentro e non si torna piu'. */
+                if (g_massa && massa_prepara()) return 0;
+                if (g_massa) return 1;
+
                 printf("uhci: porta %u: %s USB 'boot', endpoint %u\n", p,
                        g_dev_proto == USB_PROTO_MOUSE ? "mouse" : "tastiera",
                        g_dev_ep);

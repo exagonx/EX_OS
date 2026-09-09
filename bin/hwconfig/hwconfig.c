@@ -907,7 +907,27 @@ static void componi_kernel_cfg(char *out, unsigned int max, const char *vecchio)
  * configurazione dell'hardware, e nessuno collega le due cose. Oggi le righe
  * che devono combaciare sono la catena della rete e `netupdate -auto`.
  * ============================================================================= */
-static void componi_avvio(char *out, unsigned int max)
+/* 1 se sul sistema che si sta configurando c'e' `automount`.
+ *
+ * ! SI GUARDA IL FILE, NON SI SONDA L'HARDWARE. Sondare direbbe «questa
+ * macchina ha un EHCI», che e' la domanda sbagliata: la chiavetta si infila
+ * dove il sistema si USA, e chi installa da QEMU un EHCI non ce l'ha. La
+ * domanda giusta e' «ci sono i programmi per farlo?», e a quella risponde una
+ * stat. Su un sistema installato dal solo floppy non ci sono — li' non ci
+ * stanno — e scrivere quelle righe darebbe tre «comando non trovato» a ogni
+ * accensione. */
+static int c_e_automount(const char *radice)
+{
+    char        p[PERC_MAX];
+    struct stat st;
+
+    unisci(p, radice[0] ? radice : "", "bin");
+    unisci(p, p, "automount");
+
+    return (stat(p, &st) == 0);
+}
+
+static void componi_avvio(char *out, unsigned int max, const char *radice)
 {
     /* ! LA RIGA E' PIU' LUNGA DEL PARAGRAFO CHE CI SI ASPETTA, ed e' il motivo
      * per cui e' 1024: qui dentro non ci va una riga di comando, ci va tutto il
@@ -933,14 +953,22 @@ static void componi_avvio(char *out, unsigned int max)
         "!silenced\n"
         "\n", max - 1);
 
+    /* ! IL BUS PCI SERVE ANCHE SENZA RETE, da quando ci sono i driver USB:
+     * e' il fornitore di tutti e due. Prima stava dentro il blocco della rete,
+     * e su una macchina senza scheda i controller USB non trovavano nessuno a
+     * cui chiedere dove sono i loro registri. */
+    strncat(out,
+        "# Il bus PCI: lo chiedono sia le schede di rete sia i controller USB.\n"
+        "/dev/pci.drv &\n"
+        "\n", max - 1 - strlen(out));
+
     if (g_t.rete && g_t.rete_driver[0]) {
         snprintf(riga, sizeof(riga),
             "echo Accendo la rete...\n"
             "\n"
             "# L'ordine non e' modificabile: ogni passo serve al successivo, e\n"
             "# ognuno aspetta che il precedente abbia registrato il proprio\n"
-            "# servizio.\n"
-            "/dev/pci.drv &\n"
+            "# servizio. Il PCI e' gia' partito qui sopra.\n"
             "%s &\n"
             "/dev/ip.drv &\n"
             "\n"
@@ -965,9 +993,49 @@ static void componi_avvio(char *out, unsigned int max)
     } else {
         strncat(out,
             "# Nessuna scheda di rete da accendere. Se ne aggiungi una,\n"
-            "# rilancia `hwconfig`.\n"
-            "@echo Sistema pronto.\n", max - 1 - strlen(out));
+            "# rilancia `hwconfig`.\n", max - 1 - strlen(out));
     }
+
+    /* =====================================================================
+     * Le chiavette USB.
+     *
+     * ! SI SCRIVONO SEMPRE, senza chiedersi quale controller ha questa
+     * macchina, ed e' la stessa scelta gia' fatta per i driver di rete (vedi
+     * rete_sempre()): la macchina che INSTALLA non e' sempre quella che
+     * usera' il sistema, e sondare qui vorrebbe dire scrivere la
+     * configurazione giusta per il posto sbagliato. Con `-avvio` il driver
+     * che non trova il proprio controller esce in silenzio, quindi il costo
+     * di scriverli tutti e due e' un processo che parte e finisce.
+     * ===================================================================== */
+    if (!c_e_automount(radice)) {
+        strncat(out,
+            "\n"
+            "# Niente montaggio automatico delle chiavette: su questo sistema\n"
+            "# non c'e' /bin/automount. Sta sul CD di EX-OS.\n"
+            "@echo Sistema pronto.\n", max - 1 - strlen(out));
+        return;
+    }
+
+    strncat(out,
+        "\n"
+        "# Le chiavette USB: i controller, e poi chi le monta.\n"
+        "# EHCI e' USB 2.0, OHCI e' USB 1.1 su tutto cio' che non e' Intel.\n"
+        "# Con -avvio quello che non trova il suo controller esce in silenzio,\n"
+        "# e restano a guardare le porte: all'accensione la chiavetta non c'e'\n"
+        "# quasi mai - si accende la macchina e POI si infila.\n"
+        "/dev/ehci.drv -avvio &\n"
+        "/dev/ohci.drv -avvio &\n"
+        "\n"
+        "# L'UHCI non sta qui: quel driver ha due mestieri, e senza argomenti\n"
+        "# serve il MOUSE. Chi ha una macchina Intel con solo USB 1.1 e vuole\n"
+        "# le chiavette aggiunga a mano:  /dev/uhci.drv -avvio &\n"
+        "\n"
+        "# Guarda i dispositivi a blocchi, non l'USB, e monta quel che compare:\n"
+        "# una chiavetta senza tabella in /USB/DRIVE0, un disco partizionato in\n"
+        "# /USB/HDD0p1, /USB/HDD0p2, ...\n"
+        "automount &\n"
+        "\n"
+        "@echo Sistema pronto.\n", max - 1 - strlen(out));
 }
 
 static void componi_autoexec(char *out, unsigned int max)
@@ -1293,6 +1361,21 @@ static int sonda_tutti(void)
             continue;
         }
 
+        /* ! E LO STESSO VALE PER I CONTROLLER USB, per la stessa ragione: una
+         * chiavetta si infila sulla macchina che USA il sistema, non su quella
+         * che l'ha installato — e un sistema costruito dentro QEMU non ha ne'
+         * EHCI ne' OHCI. /boot/avvio.sh li lancia con -avvio, quindi dove non
+         * servono non dicono niente. */
+        if (!g_drv_serve[i] &&
+            (uguale_nome(g_drv[i], "ehci.drv") ||
+             uguale_nome(g_drv[i], "ohci.drv"))) {
+            g_drv_serve[i] = 1;
+            printf("     -> non serve QUI, e si installa lo stesso: la\n"
+                   "        chiavetta si infila dove il sistema si USA\n\n");
+            quanti++;
+            continue;
+        }
+
         printf("     -> %s\n\n",
                g_drv_serve[i] ? "SERVE, verra' installato"
                               : "non serve su questa macchina");
@@ -1511,7 +1594,7 @@ int main(int argc, char **argv)
     unisci(p_avv, boot, "avvio.sh");
 
     componi_kernel_cfg(cfg, sizeof(cfg), p_cfg);
-    componi_avvio(avv, sizeof(avv));
+    componi_avvio(avv, sizeof(avv), radice);
     componi_autoexec(aut, sizeof(aut));
 
     printf("Cosa scriverei\n\n");

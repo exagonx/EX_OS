@@ -3514,6 +3514,7 @@ int32_t sys_blkinfo(InterruptFrame *frame)
         o->primo_hi     = (uint32_t)(d->primo >> 32);
         o->settori_lo   = (uint32_t)(d->settori & 0xFFFFFFFFu);
         o->settori_hi   = (uint32_t)(d->settori >> 32);
+        o->guasto       = d->guasto;
         scritti++;
     }
 
@@ -5584,4 +5585,26 @@ int32_t sys_blk_risposta(InterruptFrame *frame)
     }
 
     return blkr3_risposta(self->pid, esito);
+}
+
+/* =============================================================================
+ * SYS_BLK_SCANSIONA (211) — le partizioni di un dispositivo servito da un
+ * processo. Il perche' della separazione da blk_offri sta in blk.h.
+ * ============================================================================= */
+int32_t sys_blk_scansiona(InterruptFrame *frame)
+{
+    const char *unome = (const char *)frame->ebx;
+    char        knome[BLKINFO_NOME_MAX];
+    int         dev;
+
+    if (!solo_root("blk_scansiona")) return ERR(EPERM);
+    if (!syscall_verify_str(unome, BLKINFO_NOME_MAX)) return ERR(EFAULT);
+
+    kstrcpy(knome, unome, sizeof(knome));
+
+    dev = blk_trova(knome);
+    if (dev < 0) return ERR(ENOENT);
+
+    klog(LOG_INFO, "SYSCALL blk_scansiona('%s')", knome);
+    return blk_scansiona(dev);
 }

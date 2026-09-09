@@ -71,6 +71,61 @@ static int            g_verboso = 0;
  * -EIO in blkr3.c) resterebbe codice mai eseguito. */
 static unsigned int   g_vita = 0;
 
+/* -tabella: all'accensione il disco nasce con una tabella delle partizioni e
+ * due voci. ! SERVE A PROVARE LA STRADA DELLE PARTIZIONI SU UN DISPOSITIVO
+ * SERVITO DA UN PROCESSO, che e' quella che un disco USB percorrera'. Scrivere
+ * una tabella da dentro EX-OS oggi si puo' solo su un disco ATA (mbr_scrivi
+ * vuole un indice ATA), quindi senza questa opzione quel pezzo di kernel non
+ * si potrebbe eseguire affatto. */
+static int            g_tabella = 0;
+
+/* Una voce della tabella, nei suoi sedici byte.
+ *
+ * ! LA CHS NON SI CALCOLA E NON SERVE. Da vent'anni si avvia in LBA, e la
+ * convenzione per dire «guarda i campi LBA, non questi» e' proprio 0xFE 0xFF
+ * 0xFF. Metterci un valore inventato ma plausibile sarebbe peggio: qualcuno
+ * potrebbe fidarsene. */
+static void voce(unsigned char *v, unsigned char tipo,
+                 unsigned int inizio, unsigned int settori)
+{
+    v[0] = 0x00;                      /* non avviabile */
+    v[1] = 0xFE; v[2] = 0xFF; v[3] = 0xFF;
+    v[4] = tipo;
+    v[5] = 0xFE; v[6] = 0xFF; v[7] = 0xFF;
+
+    v[8]  = (unsigned char)(inizio      );
+    v[9]  = (unsigned char)(inizio >>  8);
+    v[10] = (unsigned char)(inizio >> 16);
+    v[11] = (unsigned char)(inizio >> 24);
+
+    v[12] = (unsigned char)(settori      );
+    v[13] = (unsigned char)(settori >>  8);
+    v[14] = (unsigned char)(settori >> 16);
+    v[15] = (unsigned char)(settori >> 24);
+}
+
+/* Due partizioni Linux, con un buco davanti alla prima come fa qualunque
+ * partizionatore: il settore 0 e' la tabella, e una partizione che
+ * cominciasse da li' conterrebbe se stessa. */
+static void scrivi_tabella(void)
+{
+    unsigned int meta = (g_settori - 64) / 2;
+
+    if (g_settori < 256) {
+        printf("ramdisk: troppo piccolo per partizionarlo, lascio perdere\n");
+        return;
+    }
+
+    voce(g_disco + 0x1BE, 0x83, 64,          meta);
+    voce(g_disco + 0x1CE, 0x83, 64 + meta,   meta);
+
+    g_disco[510] = 0x55;
+    g_disco[511] = 0xAA;
+
+    printf("ramdisk: nato partizionato - due voci da %u settori.\n", meta);
+    printf("         Adesso:  blkscan ram0   e compaiono ram0p1 e ram0p2\n");
+}
+
 static void aiuto(void)
 {
     printf("ramdisk.drv - un disco a blocchi tenuto in memoria, servito da\n");
@@ -84,6 +139,8 @@ static void aiuto(void)
            KB_MAX);
     printf("  ramdisk.drv -vita <s>   esce dopo <s> secondi: serve a provare\n");
     printf("                          cosa succede a chi lo teneva montato\n");
+    printf("  ramdisk.drv -tabella    nasce partizionato in due: poi\n");
+    printf("                          `blkscan ram0` e ci sono ram0p1 e ram0p2\n");
     printf("\n! SI LANCIA IN SECONDO PIANO con '&': finche' gira, il disco\n");
     printf("  esiste; quando muore, sparisce - e chi lo teneva montato se lo\n");
     printf("  ritrova guasto, che e' il caso che questa prova deve mostrare.\n");
@@ -108,6 +165,7 @@ int main(int argc, char **argv)
         }
         if (strcmp(argv[i], "-h") == 0) { aiuto(); return 0; }
         if (strcmp(argv[i], "-v") == 0) { g_verboso = 1; continue; }
+        if (strcmp(argv[i], "-tabella") == 0) { g_tabella = 1; continue; }
         if (strcmp(argv[i], "-vita") == 0 && i + 1 < argc) {
             g_vita = (unsigned int)atoi(argv[++i]);
             continue;
@@ -127,6 +185,8 @@ int main(int argc, char **argv)
         return 1;
     }
     memset(g_disco, 0, kb * 1024);
+
+    if (g_tabella) scrivi_tabella();
 
     memset(&o, 0, sizeof(o));
     strcpy(o.nome, "ram0");

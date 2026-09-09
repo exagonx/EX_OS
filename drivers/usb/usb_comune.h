@@ -51,6 +51,18 @@
 
 #define USB_CLASSE_HUB      9
 #define USB_CLASSE_HID      3
+
+/* La classe che rende una chiavetta una chiavetta.
+ *
+ * ! I TRE NUMERI VANNO INSIEME, e non e' pedanteria. Classe 8 da sola dice
+ * solo «memoria di massa»: dentro ci stanno anche i lettori di floppy USB con
+ * il trasporto CBI e i vecchi dischi con protocolli propri. Cio' che si sa
+ * guidare e' la terna 08/06/50 — SCSI trasparente sopra il trasporto
+ * «bulk-only» — che e' quella di ogni chiavetta e di ogni disco esterno fatto
+ * dopo il 2000. Le altre si riconoscono e si lasciano stare, dicendolo. */
+#define USB_CLASSE_MASSA    0x08
+#define USB_SUB_SCSI        0x06    /* SCSI trasparente */
+#define USB_PROTO_BULK      0x50    /* bulk-only transport */
 #define USB_SUB_BOOT        1
 #define USB_PROTO_TASTIERA  1
 #define USB_PROTO_MOUSE     2
@@ -93,6 +105,13 @@ typedef struct {
     unsigned int ep;            /* endpoint di interruzione IN, 0 = nessuno */
     unsigned int ep_maxp;
     unsigned int ep_intervallo;
+
+    /* I due endpoint di una memoria di massa. Zero = non e' una di quelle.
+     * Sono DUE e non uno perche' il trasporto bulk-only manda il comando e i
+     * dati in uscita da una parte e riceve dati e stato dall'altra: un solo
+     * endpoint bidirezionale in USB non esiste. */
+    unsigned int ep_in,  ep_in_maxp;
+    unsigned int ep_out, ep_out_maxp;
 } UsbDispositivo;
 
 /* -----------------------------------------------------------------------------
@@ -116,6 +135,14 @@ int usb_desc_lungo(UsbControllo ctl, unsigned int dev, UsbDispositivo *d);
  * Rende 1 se il dispositivo e' un HID «boot» utilizzabile, 0 altrimenti. */
 int usb_configura_hid(UsbControllo ctl, unsigned int dev, UsbDispositivo *d,
                       unsigned int verboso);
+
+/* Come sopra, ma cerca un'interfaccia di MEMORIA DI MASSA (08/06/50) con i
+ * suoi due endpoint bulk, e se la trova la ATTIVA (SET_CONFIGURATION).
+ *
+ * Rende 1 se il dispositivo e' una chiavetta o un disco utilizzabile, 0
+ * altrimenti. Riempie ep_in/ep_out. */
+int usb_configura_massa(UsbControllo ctl, unsigned int dev, UsbDispositivo *d,
+                        unsigned int verboso);
 
 /* -----------------------------------------------------------------------------
  * Gli hub

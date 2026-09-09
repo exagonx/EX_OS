@@ -41,7 +41,6 @@ bin/uname
 boot/help.txt
 boot/kernel.cfg
 boot/kernel.txt
-dev/floppy.drv
 dev/kbd.drv
 dev/mouseser.drv
 dev/pci.drv
