@@ -115,6 +115,7 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
  --  @PROVE-STRUMENTI come si prova un compilatore (o make, o nasm) dentro EX-OS
 
   1  @USB             resta la prova su una chiavetta VERA: e' hardware, non lavoro
+  1  @USB-DISCO       le chiavette si montano: archiviazione USB in ring 3, 4 passi
   1  @VISTA           i legami sono tagliati: resta da passare quattordici variabili
   1  @SUONO-REG       la registrazione non c'e': nessun driver accende AUDIO_CAP_REGISTRA
   1  @SUONO-MIX       un client alla volta: il secondo che suona riceve -EBUSY
@@ -410,6 +411,205 @@ QUEL CHE C'E' GIA' PRONTO DA PROVARE, sul CD:
     grosso del tempo di `make usb`. Se un giorno desse fastidio, la strada e'
     non passare da EX-OS per la copia — ma allora servirebbe un ext2 scritto da
     Linux, che e' la cosa che mkhd.sh spiega perche' non si fa.
+
+=============================================================================
+@USB-DISCO L'ARCHIVIAZIONE USB, IN RING 3 (aperto il 9 settembre 2026)
+=============================================================================
+
+L'obiettivo: una chiavetta USB si infila, si monta, ci si copiano i file. Da
+li' in avanti: i log escono dalle macchine di prova, i backup si fanno, e un
+file passa da un dispositivo all'altro senza passare dalla rete.
+
+! DA DOVE VIENE. Dal portatile Acer della SiS M760GX (vedi @SIS): non ha
+seriale, il lettore di dischetti e' attaccato all'USB, e il disco fisso e' di
+Windows e non si tocca. EX-OS ci si avvia dal floppy USB — Stage 1 e Stage 2
+leggono col BIOS — e poi il kernel cerca il dischetto dove i dischetti stanno
+da sempre, il controller 82077 alle porte 0x3F0, che dietro un floppy USB non
+esiste: errori FAT12 e nessuna shell. Da li' la domanda «e se sapessimo
+leggere l'USB?», che vale molto piu' di quella macchina.
+
+-----------------------------------------------------------------------------
+COSA C'E' GIA', E COSA NO
+
+  c'e'    drivers/usb/usb_comune.c — la meta' che non dipende dal controller:
+          descrittori, configurazioni, hub. La cucitura col controller e' UN
+          puntatore a funzione (UsbControllo), quindi aggiungere un trasporto
+          non chiede di riscriverla.
+  c'e'    drivers/uhci — USB 1.1 su porte I/O. Enumera e serve un mouse.
+  c'e'    drivers/xhci — USB 3, 1659 righe: reset, anelli, comandi, eventi,
+          reset di porta, indirizzamento, trasferimenti di controllo,
+          configurazione di un endpoint di interruzione.
+  MANCA   la classe: lo stack fa solo HID. Per un disco servono il trasporto
+          bulk-only (CBW/CSW) e i comandi SCSI.
+  MANCA   OHCI (USB 1.1 non-Intel) ed EHCI (USB 2.0). Il SiS 964 dell'Acer ha
+          proprio quelli due, cioe' nessuno dei due che abbiamo.
+  MANCA   — ed e' il pezzo che non si vede — LA STRADA PER MONTARLA. Lo strato
+          a blocchi del kernel conosce ATA, floppy e CD (BLK_TIPO_* in
+          kernel/include/blk.h) e non ha nessun modo di parlare con un disco
+          servito da un processo in ring 3. Senza questo, i primi tre pezzi
+          leggono settori che nessun filesystem potra' mai montare.
+
+-----------------------------------------------------------------------------
+IL PASSO 0 E' QUELLO CHE REGGE TUTTO IL RESTO: UN BLOCCO CHE VIENE DA RING 3
+
+! E' L'UNICA COSA CHE TOCCA IL KERNEL, e va detto perche' DIREZIONE.md chiede
+di pensarci due volte. Il driver USB sta tutto in ring 3 — controller, classe,
+SCSI. Quel che il kernel guadagna non e' l'USB: e' una CUCITURA GENERICA, «un
+dispositivo a blocchi puo' essere servito da un processo». La stessa cucitura
+serve domani a un disco di rete, a un'immagine montata come file, a un ext2
+sperimentale scritto in ring 3. E' esattamente la direttiva 1: nel kernel
+resta l'arbitrato, il lavoro esce.
+
+La forma e' quella dei dischi in spazio utente che si sono gia' visti altrove
+(NBD, FUSE): tre syscall e nessuna magia.
+
+  blk_offri(nome, settori, byte_per_settore)
+        un *.drv dice «esisto, sono grande cosi'». Nasce un BlkDev di tipo
+        BLK_TIPO_RING3 che appartiene a quel PID.
+  blk_attendi(&richiesta)
+        il driver si blocca finche' non arriva una richiesta: leggi/scrivi,
+        da quale settore, quanti.
+  blk_risposta(esito)
+        il driver dice com'e' andata; il kernel copia i settori fra il buffer
+        del driver e quello del chiamante.
+
+! NON PASSA DALLA MAILBOX IPC, e la ragione e' concreta: il processo che sta
+leggendo un file e' un processo qualunque — puo' essere un client di ExWin nel
+mezzo di una sua conversazione. Fargli arrivare in mailbox le risposte del
+disco vorrebbe dire mescolare due traffici che non c'entrano niente, e il
+difetto uscirebbe solo quando due cose capitano insieme.
+
+Le tre cose da progettare subito, non dopo:
+  - il driver che MUORE con richieste in volo: chi aspetta prende -EIO, il
+    dispositivo sparisce, i montaggi si chiudono. Un processo bloccato per
+    sempre su un driver morto e' il difetto che questa strada porta con se';
+  - la SCADENZA: una richiesta senza risposta non aspetta all'infinito;
+  - il driver che legge un file SUL PROPRIO dispositivo: si blocca da solo,
+    aspettando se stesso. Va rifiutato dal kernel, non evitato per educazione.
+
+LA PROVA DEL PASSO 0 NON HA BISOGNO DI NESSUN USB: un ramdisk.drv da 1 MB in
+ring 3, mkfs, mount, copia, smonta, rimonta, rileggi. Se quella regge, tutto
+il resto e' driver.
+
+-----------------------------------------------------------------------------
+I QUATTRO PASSI, E COME SI PROVA OGNUNO
+
+ 0. LA CUCITURA — FATTA il 9 settembre 2026, e provata in QEMU.
+
+    blk_offri/blk_attendi/blk_risposta (syscall 208-210), BLK_TIPO_RING3,
+    kernel/block/blkr3.c, e ramdisk.drv che offre un disco tenuto in memoria.
+    La prova, dal CD (radice in sola lettura):
+
+        ramdisk.drv &
+        mkfs -t ext2 -f ram0
+        mount ram0 /mnt
+        cp /boot/kernel.cfg /mnt/prova.txt
+        umount /mnt ; mount ram0 /mnt ; ls /mnt   -> prova.txt 3673
+
+    ! E I DUE CASI CATTIVI SONO STATI PROVATI, non solo previsti. Con
+    `ramdisk.drv -vita 25 &` il servente se ne va da solo mentre il disco e'
+    montato: il dispositivo diventa GUASTO, chi legge prende -EIO SUBITO,
+    `umount` funziona e la macchina resta viva.
+
+    ! DUE COSE SCOPERTE PROVANDO, e sono nel codice:
+
+      - IL SERVENTE CHE MUORE FLUSCIA SE STESSO. Uscendo, il processo fa
+        chiudere i suoi file al kernel, e se sopra il suo disco c'e' un
+        filesystem montato quella chiusura diventa una scrittura SUL PROPRIO
+        dispositivo. Si aspetterebbe la risposta che deve dare lui: il
+        controllo -EDEADLK di blkr3.c l'ha fermata al primo colpo. Conseguenza
+        dichiarata: una chiavetta sfilata senza smontarla perde quel che era
+        in sospeso, ed e' giusto cosi'.
+      - IL MORTO SI RICONOSCE GUARDANDO, NON ASPETTANDO. blkr3_processo_morto()
+        la chiama proc_reap_zombie(), cioe' quando il padre raccoglie: un
+        driver lanciato con `&` da una shell occupata resta zombie per un
+        pezzo, e ogni richiesta aspettava i 5 secondi interi. Adesso lo stato
+        del servente si guarda prima di mettersi in coda.
+
+    RESTA da fare qui: le PARTIZIONI di un disco servito da ring 3. Oggi un
+    dispositivo di tipo RING3 e' un volume intero (il caso normale di una
+    chiavetta, che una tabella non ce l'ha); un disco USB partizionato vuole
+    le sue finestre di tipo PART, ed e' anche cio' che serve all'automontaggio
+    di /USB/HDD0p1. Il posto e' registra_partizioni() in kernel/block/blk.c,
+    che oggi sa leggere solo la tabella di un disco ATA.
+
+ 1. LA CLASSE — drivers/usb/usb_massa.c, accanto a usb_comune.c: trasporto
+    bulk-only (CBW/CSW) e SCSI (INQUIRY, TEST UNIT READY, READ CAPACITY(10),
+    READ(10), WRITE(10)), piu' il trasferimento bulk nella cucitura di
+    usb_comune.h. Si appoggia sull'xHCI, che c'e' gia'.
+    Si prova in QEMU:  -device qemu-xhci -device usb-storage,drive=...
+
+ 2. EHCI — USB 2.0, il controller che serve all'Acer.
+    Si prova in QEMU:  -device usb-ehci
+
+ 3. OHCI — USB 1.1 dove non c'e' un UHCI: le tre porte 1.1 del SiS 964, e le
+    chiavette vecchie.
+    Si prova in QEMU:  -device pci-ohci
+
+! OGNI PASSO SI PROVA QUI, PRIMA DI TOCCARE L'ACER. QEMU li emula tutti e
+quattro — verificato con `qemu-system-i386 -device help`. La macchina vera
+resta l'ultima prova, non la prima: la' un errore costa un riavvio e non lascia
+un log.
+
+! E L'UHCI CI GUADAGNA GRATIS: e' il controller piu' semplice dei quattro, e
+una volta scritta la classe gli si aggiunge il bulk in poche righe. Cioe' le
+chiavette funzionano anche sulle macchine vecchie con l'8042.
+
+-----------------------------------------------------------------------------
+L'AUTOMONTAGGIO — si infila la chiavetta e i file ci sono
+
+Voluto cosi': all'avvio parte un sorvegliante; quando compare un dispositivo
+lo monta da solo. Una chiavetta a una partizione sotto /USB/DRIVE0, un disco
+rigido con le sue partizioni sotto /USB/HDD*.
+
+E' fattibile, e il grosso e' gia' in piedi. Tre cose vanno decise diversamente
+da come vengono in mente, e la ragione di ognuna e' concreta.
+
+ 1. IL SORVEGLIANTE NON SORVEGLIA L'USB: SORVEGLIA I DISPOSITIVI A BLOCCHI.
+    Chiedere al driver USB «e' arrivato qualcosa?» vorrebbe dire un
+    sorvegliante per ogni controller — quattro, fra UHCI, OHCI, EHCI e xHCI —
+    e uno nuovo per ogni bus futuro. Invece l'elenco dei dispositivi a blocchi
+    ce l'ha gia' il kernel e si legge con blkinfo(): un secondo di sonno, un
+    confronto con l'elenco di prima, e chi e' comparso si monta. Vale per una
+    chiavetta come per un disco di rete, senza sapere niente di nessuno dei
+    due.
+
+ 2. IL NOME DELLE PARTIZIONI SEGUE QUELLO CHE C'E' GIA'. /USB/HDD0, HDD1,
+    HDD2 numerati per PARTIZIONE va bene finche' i dischi sono uno: al
+    secondo, le partizioni dei due si mescolano nella stessa numerazione e
+    non si sa piu' di chi e' quale. Meglio /USB/HDD0p1, /USB/HDD0p2,
+    /USB/HDD1p1 — la stessa forma di hd0p1, che `disk` e `fdisk` stampano
+    gia' e che chi usa EX-OS ha gia' negli occhi.
+    /USB/DRIVE0 resta per il caso senza tabella delle partizioni.
+
+ 3. UNA CHIAVETTA SENZA TABELLA E' LA NORMA, NON L'ECCEZIONE. Quasi tutte le
+    chiavette sono un filesystem che comincia al settore 0 — e i floppy USB
+    lo sono sempre. La regola quindi non e' «una partizione sola», e':
+    nessuna tabella -> il volume e' tutto il dispositivo -> /USB/DRIVE0;
+    una tabella -> si monta ogni partizione riconoscibile -> /USB/HDDNpM.
+
+E due cose da non scoprire dopo:
+
+  - /USB DEVE ESISTERE PRIMA. Il VFS monta su un nome che NON esiste, ma la
+    directory che lo contiene deve esserci (vfs_mount_nl in kernel/fs/vfs.c).
+    Avviando dal CD la radice e' di sola lettura e /USB non si puo' creare:
+    va messa vuota dentro le immagini — CD, floppy e installatore.
+  - NTFS ED EXT4 SI SALTANO IN SILENZIO, con una riga di log. Un disco
+    esterno di Windows ha quasi sempre una partizione che non sappiamo
+    leggere, e un errore rosso a ogni inserimento insegna solo a non guardare
+    i messaggi.
+
+Dove parte: /boot/avvio.sh, non [modules]. Lo dice gia' kernel.cfg per la
+rete — [modules] li avvia TUTTI INSIEME, e la catena pci -> controller ->
+memoria di massa -> automontaggio vuole un ORDINE.
+
+-----------------------------------------------------------------------------
+QUEL CHE SERVE SAPERE DALL'ACER, quando si arriva al passo 2
+
+Gli identificativi dei controller USB, presi da XP come quelli della video:
+Gestione periferiche, i controller USB, Dettagli -> ID hardware. Servono a
+sapere se sono davvero OHCI+EHCI e con quale revisione, prima di scrivere il
+driver che dovra' parlarci.
 
 =============================================================================
 @WIFI-4318 LA SCHEDA SENZA FILI (aperto l'8 settembre 2026)

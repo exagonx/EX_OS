@@ -185,4 +185,25 @@ CAMPO(shmzona_byte,     ShmZona, byte)
 CAMPO(shmzona_flag,     ShmZona, flag)
 CAMPO(shmzona_virt,     ShmZona, virt)
 
+/* BlkOfferta e BlkRichiesta: le riempie il DRIVER e le legge il kernel, come
+ * SpawnExtra, e il danno che fanno se divergono ha una forma tutta sua — un
+ * campo letto storto qui non da' un errore: da' un altro settore. Cioe' un
+ * filesystem che legge dati veri dal posto sbagliato, che e' il modo migliore
+ * di corrompere un disco senza che niente si lamenti. */
+DIM(blkofferta,          BlkOfferta)
+CAMPO(blkofferta_nome,   BlkOfferta, nome)
+CAMPO(blkofferta_setlo,  BlkOfferta, settori_lo)
+CAMPO(blkofferta_sethi,  BlkOfferta, settori_hi)
+CAMPO(blkofferta_byte,   BlkOfferta, byte_settore)
+CAMPO(blkofferta_sl,     BlkOfferta, sola_lettura)
+
+DIM(blkrichiesta,        BlkRichiesta)
+CAMPO(blkrichiesta_op,   BlkRichiesta, op)
+CAMPO(blkrichiesta_lbalo, BlkRichiesta, lba_lo)
+CAMPO(blkrichiesta_lbahi, BlkRichiesta, lba_hi)
+CAMPO(blkrichiesta_set,  BlkRichiesta, settori)
+CAMPO(blkrichiesta_qual, BlkRichiesta, quale)
+CAMPO(blkrichiesta_dati, BlkRichiesta, dati)
+CAMPO(blkrichiesta_max,  BlkRichiesta, dati_max)
+
 DIM(jmp_buf,            jmp_buf)

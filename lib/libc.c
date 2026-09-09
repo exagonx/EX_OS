@@ -326,6 +326,9 @@ typedef struct {
 } DmaZona;
 
 #define SYS_MMIO_MAP      241
+#define SYS_BLK_OFFRI     208
+#define SYS_BLK_ATTENDI   209
+#define SYS_BLK_RISPOSTA  210
 
 /* ! DEVE RESTARE IDENTICA a MmioZona in kernel/include/syscall.h e in
  * lib/include/libc.h. E' la TERZA copia: questo file non include libc.h e
@@ -6441,6 +6444,46 @@ int dma_alloc(DmaZona *z)
 int mmio_map(MmioZona *m)
 {
     return (int)_syscall1(SYS_MMIO_MAP, (unsigned int)m);
+}
+
+/* --- Un disco servito da questo processo: vedi libc.h ----------------------
+ *
+ * ! STRUTTURE DUPLICATE A MANO da kernel/include/syscall.h e da libc.h, come
+ * MmioZona e VideoInfo: questo file non include libc.h. Tre copie identiche,
+ * e se una diverge il kernel legge i campi nel posto sbagliato — qui vorrebbe
+ * dire leggere un settore al posto di un altro. Per questo stanno in
+ * tools/abi-bersaglio.c. */
+typedef struct {
+    char         nome[12];
+    unsigned int settori_lo, settori_hi;
+    unsigned int byte_settore;
+    unsigned int sola_lettura;
+} BlkOfferta;
+
+typedef struct {
+    unsigned int op;
+    unsigned int lba_lo;
+    unsigned int lba_hi;
+    unsigned int settori;
+    unsigned int quale;
+    void        *dati;
+    unsigned int dati_max;
+} BlkRichiesta;
+
+int blk_offri(BlkOfferta *o)
+{
+    return (int)_syscall1(SYS_BLK_OFFRI, (unsigned int)o);
+}
+
+int blk_attendi(BlkRichiesta *r, unsigned int ms)
+{
+    return (int)_syscall2(SYS_BLK_ATTENDI, (unsigned int)r, ms);
+}
+
+int blk_risposta(BlkRichiesta *r, int esito)
+{
+    return (int)_syscall2(SYS_BLK_RISPOSTA, (unsigned int)r,
+                          (unsigned int)esito);
 }
 
 /* ! STRUTTURA DUPLICATA A MANO da kernel/include/syscall.h e da libc.h, come

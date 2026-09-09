@@ -211,6 +211,9 @@ typedef struct {
  * cerca un comando nel PATH di fermarsi e dire la verita' invece di proseguire
  * e concludere «non trovato». Valore allineato a lib/include/libc.h:1371. */
 #define ENOEXEC      8
+/* Ci si aspetterebbe la propria risposta: vedi kernel/include/blkr3.h. Valore
+ * allineato a lib/include/libc.h. */
+#define EDEADLK     35
 
 /* Syscall IPC — comunicazione kernel-mediata tra task ring3 */
 /* =============================================================================
@@ -797,6 +800,39 @@ typedef struct {
 #define SYS_THREAD_FERMA    206 /* ebx = tid              -> 0 o negativo */
 #define SYS_THREAD_FERMARSI 207 /* niente                 -> 1 se e' stato chiesto */
 
+/* =============================================================================
+ * UN DISCO SERVITO DA UN PROCESSO (208, 209, 210)
+ *
+ * Il progetto sta in kernel/include/blkr3.h, e va letto prima di toccare
+ * queste tre. In breve: un driver in ring 3 dichiara un dispositivo a
+ * blocchi, poi resta in un giro «aspetta una richiesta, servila, rispondi».
+ * Da fuori quel dispositivo si monta come qualunque altro.
+ *
+ * ! SONO SOLO PER I DRIVER, come ioport_bind e mmio_map, e per la stessa
+ * ragione: chi offre un disco decide cosa il filesystem legge. Un programma
+ * qualunque potrebbe offrire un finto /dev con dentro quello che gli pare.
+ *
+ * SYS_BLK_OFFRI    ebx = BlkOfferta*     -> indice del dispositivo, o -errno
+ * SYS_BLK_ATTENDI  ebx = BlkRichiesta*, ecx = ms  -> 0, -ETIMEDOUT, -errno
+ * SYS_BLK_RISPOSTA ebx = BlkRichiesta*, ecx = esito (0 o -errno) -> 0 o -errno
+ * ============================================================================= */
+#define SYS_BLK_OFFRI     208
+#define SYS_BLK_ATTENDI   209
+#define SYS_BLK_RISPOSTA  210
+
+#define BLKR3_LEGGI       1
+#define BLKR3_SCRIVI      2
+#define BLKR3_SVUOTA      3   /* riversa quel che il driver tiene in sospeso */
+
+/* Quanti settori al massimo in una richiesta sola. Il buffer del servente
+ * deve essere almeno di tanto: il kernel spezza le richieste piu' lunghe.
+ * ! DEVE COMBACIARE con BLKR3_SETTORI_MAX in kernel/include/blkr3.h e con la
+ * copia in lib/include/libc.h. */
+#define BLKR3_SETTORI_RICHIESTA  8
+
+/* Le due strutture stanno piu' in basso, accanto a BlkInfo: usano
+ * BLKINFO_NOME_MAX, che e' definito li'. */
+
 #define SYS_SU            254
 
 /* La mailbox IPC come sorgente. MAX_FD e' il primo numero che un descrittore
@@ -1114,6 +1150,25 @@ typedef struct {
     uint32_t settori_lo, settori_hi;  /* lunghezza della finestra */
 } BlkInfo;
 
+/* --- Un disco servito da un processo: vedi SYS_BLK_OFFRI, piu' in alto --- */
+
+typedef struct {
+    char     nome[BLKINFO_NOME_MAX];  /* "usb0": come lo si montera' */
+    uint32_t settori_lo, settori_hi;
+    uint32_t byte_settore;            /* oggi solo 512 */
+    uint32_t sola_lettura;
+} BlkOfferta;
+
+typedef struct {
+    uint32_t op;            /* out: BLKR3_LEGGI, _SCRIVI o _SVUOTA */
+    uint32_t lba_lo;        /* out */
+    uint32_t lba_hi;        /* out */
+    uint32_t settori;       /* out */
+    uint32_t quale;         /* out: quale dei propri dispositivi */
+    void    *dati;          /* in:  il buffer del servente */
+    uint32_t dati_max;      /* in:  quanto e' grande, in byte */
+} BlkRichiesta;
+
 /* =============================================================================
  * Un montaggio attivo (per sys_mountinfo)
  * ============================================================================= */
@@ -1288,6 +1343,9 @@ int32_t sys_blkwrite(InterruptFrame *f);
 int32_t sys_truncate(InterruptFrame *f);
 int32_t sys_reboot(InterruptFrame *f);
 int32_t sys_ipc_send(InterruptFrame *f);
+int32_t sys_blk_offri(InterruptFrame *f);
+int32_t sys_blk_attendi(InterruptFrame *f);
+int32_t sys_blk_risposta(InterruptFrame *f);
 int32_t sys_ipc_recv(InterruptFrame *f);
 int32_t sys_ipc_recv_tmo(InterruptFrame *f);
 int32_t sys_time(InterruptFrame *f);

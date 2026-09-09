@@ -15,6 +15,7 @@
 #include "vga.h"   /* VGA_N_CONSOLE: una tabella di primo piano per console */
 #include "pmm.h"
 #include "ipc.h"
+#include "blkr3.h"
 #include "shm.h"
 #include "pipe.h"
 #include "paging.h"
@@ -1807,6 +1808,12 @@ void proc_reap_zombie(Process *p)
      * per chiunque tenti di ripartire con lo stesso nome (es. restart
      * automatico del driver). */
     ipc_cleanup_process(child_pid);
+
+    /* ! E I DISCHI CHE SERVIVA. Un driver USB che muore lascia dietro di se'
+     * un dispositivo a blocchi che nessuno serve piu' e, se qualcuno stava
+     * leggendo, un processo addormentato in attesa di una risposta che non
+     * puo' arrivare. Vedi kernel/include/blkr3.h. */
+    blkr3_processo_morto(child_pid);
 
     /* Chiude le zone di memoria condivisa che teneva aperte.
      *

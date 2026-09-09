@@ -549,12 +549,16 @@ static int trova(const char *nome, unsigned int *primo, unsigned int *settori)
         for (k = 0; k < n; k++) {
             if (strcmp(b[k].nome, nome) != 0) continue;
 
-            if (b[k].tipo != 3) {
+            /* Tipo 3 = partizione. Tipo 5 = servito da un processo, cioe'
+             * una chiavetta USB o un disco in memoria: quelli si formattano
+             * per intero, perche' quasi sempre una tabella delle partizioni
+             * non ce l'hanno. Il perche' per esteso sta accanto a
+             * blkio_apri() in kernel/syscall/syscall_impl.c. */
+            if (b[k].tipo != 3 && b[k].tipo != 5) {
                 printf("mkfs: '%s' non e' una partizione.\n\n", nome);
-                printf("Si formattano le partizioni (hd0p1, hd0p2, ...), non i\n");
-                printf("dischi interi e non il floppy. Il kernel accetta solo\n");
-                printf("quelle: e' cio' che rende la tabella delle partizioni\n");
-                printf("irraggiungibile da un formattatore.\n");
+                printf("Si formattano le partizioni (hd0p1, hd0p2, ...) e i\n");
+                printf("dispositivi rimovibili serviti da un driver (ram0,\n");
+                printf("usb0), non i dischi interi e non il floppy.\n");
                 return -1;
             }
             if (b[k].sola_lettura) {

@@ -12,6 +12,7 @@
 
 #include "kernel.h"
 #include "blk.h"
+#include "blkr3.h"
 #include "ata.h"
 #include "atapi.h"
 #include "mbr.h"
@@ -429,6 +430,10 @@ static int traduci(int i, uint64_t lba, uint32_t n, uint64_t *assoluto)
     if (b == NULL || !b->usato) return -1;
     if (n == 0) return -1;
 
+    /* Il servente e' morto sotto un montaggio ancora aperto: ogni accesso
+     * fallisce, invece di andare a finire su un disco che non c'e' piu'. */
+    if (b->guasto) return -1;
+
     /* L'overflow va controllato PRIMA della somma: lba+n puo' traboccare
      * e far sembrare interna una richiesta assurda. */
     if (lba + n < lba)      return -1;
@@ -615,6 +620,14 @@ int blk_read(int i, uint64_t lba, uint32_t n, void *buf)
 
     if (b->tipo == BLK_TIPO_CDROM) return cd_read(b, abs, n, (uint8_t *)buf);
 
+    /* ! NIENTE CACHE PER UN DISCO SERVITO DA UN PROCESSO, e non e' una
+     * dimenticanza: la cache di questo file e' indicizzata sul numero di
+     * DISCO ATA, che qui non significa niente. Farcela entrare vorrebbe dire
+     * un secondo indice e un secondo modo di invalidarlo — per un dispositivo
+     * che oggi e' una chiavetta, cioe' la cosa piu' lenta della macchina ma
+     * anche quella che si stacca senza avvisare. */
+    if (b->tipo == BLK_TIPO_RING3) return blkr3_read(i, abs, n, buf);
+
     if (b->tipo == BLK_TIPO_FLOPPY) {
         uint8_t *p = (uint8_t *)buf;
         for (k = 0; k < n; k++) {
@@ -649,6 +662,58 @@ int blk_read(int i, uint64_t lba, uint32_t n, void *buf)
     return ata_read(b->disco, abs, n, buf);
 }
 
+/* =============================================================================
+ * I dispositivi serviti da un processo — vedi blkr3.c
+ * ============================================================================= */
+
+int blk_registra_ring3(const char *nome, uint64_t settori, int sola_lettura)
+{
+    BlkDev *b;
+
+    if (nome == NULL || nome[0] == '\0') return -1;
+
+    /* ! IL NOME DEVE ESSERE LIBERO. Due dispositivi omonimi non sono un
+     * disordine: blk_trova() rende il primo, e `mount usb0 /USB/DRIVE0`
+     * monterebbe una chiavetta a caso fra le due. */
+    if (blk_trova(nome) >= 0) {
+        klog(LOG_ERROR, "BLK: '%s' esiste gia'", nome);
+        return -1;
+    }
+
+    b = nuovo();
+    if (b == NULL) return -1;
+
+    nome_copia(b->nome, nome);
+    b->usato        = 1;
+    b->tipo         = BLK_TIPO_RING3;
+    b->disco        = 0;
+    b->sola_lettura = (uint8_t)(sola_lettura ? 1 : 0);
+    b->guasto       = 0;
+    b->primo        = 0;
+    b->settori      = settori;
+
+    return (int)(b - g_dev);
+}
+
+void blk_ritira(int i)
+{
+    if (i < 0 || i >= g_n || !g_dev[i].usato) return;
+
+    if (g_dev[i].in_uso) {
+        /* Lo slot NON si libera: vedi il commento accanto a `guasto` in
+         * blk.h. Chi lo teneva montato continua a vederlo, e ogni accesso
+         * rende errore finche' non smonta. */
+        g_dev[i].guasto = 1;
+        klog(LOG_ERROR, "BLK: '%s' e' sparito mentre era montato: smontalo",
+             g_dev[i].nome);
+        return;
+    }
+
+    klog(LOG_INFO, "BLK: '%s' ritirato", g_dev[i].nome);
+    g_dev[i].usato = 0;
+    g_dev[i].guasto = 0;
+}
+
 int blk_write(int i, uint64_t lba, uint32_t n, const void *buf)
 {
     const BlkDev *b = blk_get(i);
@@ -669,6 +734,8 @@ int blk_write(int i, uint64_t lba, uint32_t n, const void *buf)
         }
         return 0;
     }
+
+    if (b->tipo == BLK_TIPO_RING3) return blkr3_write(i, abs, n, buf);
 
     if (ata_write(b->disco, abs, n, buf) != 0) return -1;
 
@@ -695,6 +762,7 @@ int blk_flush(int i)
 
     if (b == NULL || !b->usato) return -1;
     if (b->tipo == BLK_TIPO_FLOPPY) return fat12_sync();
+    if (b->tipo == BLK_TIPO_RING3)  return blkr3_flush(i);
 
     /* Un lettore ottico non ha niente da riversare: non ci si scrive.
      * Mandargli un FLUSH CACHE ATA sarebbe un comando che non conosce. */

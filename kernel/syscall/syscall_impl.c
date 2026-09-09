@@ -39,6 +39,7 @@ extern void vga_putchar(char c);
 #include "mbr.h"
 #include "vol.h"
 #include "blk.h"
+#include "blkr3.h"
 #include "fat.h"
 #include "vfs.h"
 #include "bootinst.h"
@@ -3794,7 +3795,24 @@ static int32_t blkio_apri(const char *unome, uint32_t lba, uint32_t n,
      * irraggiungibile da userspace: il settore 0 sta fuori da ogni
      * finestra di tipo PART, e i dispositivi che lo contengono non sono
      * nominabili qui. */
-    if (b->tipo != BLK_TIPO_PART) {
+    /* ! E I DISCHI SERVITI DA UN PROCESSO, che partizioni non sono.
+     *
+     * Una chiavetta USB e' quasi sempre un volume SENZA tabella delle
+     * partizioni — un filesystem che comincia al settore 0. Applicarle la
+     * riga qui sopra vorrebbe dire un sistema che sa leggere le chiavette e
+     * non sa prepararne una: `mkfs` rifiuterebbe l'unico nome che quel
+     * dispositivo ha.
+     *
+     * E cio' che la riga qui sopra protegge — la tabella delle partizioni —
+     * su un dispositivo cosi' non c'e'. Quando ce n'e' una, il disco viene
+     * registrato con le sue finestre di tipo PART, ed e' li' che si
+     * formatta: scrivere sul disco INTERO resta una cosa che si fa
+     * conoscendone il nome, non per sbaglio.
+     *
+     * ! IL PATTO E' DICHIARATO: un `mkfs usb0` su una chiavetta partizionata
+     * le porta via la tabella. E' lo stesso patto di `dd` su Linux, ed e' il
+     * prezzo di poter preparare un supporto rimovibile da dentro EX-OS. */
+    if (b->tipo != BLK_TIPO_PART && b->tipo != BLK_TIPO_RING3) {
         klog(LOG_ERROR, "BLKIO: '%s' non e' una partizione: rifiutato", knome);
         return ERR(EPERM);
     }
@@ -5453,4 +5471,117 @@ int32_t sys_mmio_map(InterruptFrame *frame)
     klog(LOG_INFO, "SYSCALL mmio_map: PID %u, fisico 0x%08x -> virt 0x%08x "
          "(%u pagine, non cacheabili)", proc->pid, z->fisico, z->virt, pagine);
     return 0;
+}
+
+/* =============================================================================
+ * SYS_BLK_OFFRI (208) / SYS_BLK_ATTENDI (209) / SYS_BLK_RISPOSTA (210)
+ * Un disco servito da un processo in ring 3.
+ *
+ * Qui c'e' SOLO IL CONFINE — verificare i puntatori dell'utente e copiare i
+ * settori nella direzione giusta. Il meccanismo, e il perche' di ogni sua
+ * parte, stanno in kernel/block/blkr3.c e kernel/include/blkr3.h.
+ * ============================================================================= */
+
+static void kcopia_byte(uint8_t *dst, const uint8_t *src, uint32_t n)
+{
+    uint32_t i;
+    for (i = 0; i < n; i++) dst[i] = src[i];
+}
+
+int32_t sys_blk_offri(InterruptFrame *frame)
+{
+    BlkOfferta *u    = (BlkOfferta *)frame->ebx;
+    Process    *self = proc_get_current();
+    char        nome[BLKINFO_NOME_MAX];
+    uint64_t    settori;
+    uint32_t    byte_settore, sola_lettura;
+
+    /* ! SOLO PER I DRIVER, come ioport_bind e mmio_map. Chi offre un disco
+     * decide cosa il filesystem ci legge dentro: un programma qualunque
+     * potrebbe presentare un finto volume e farci montare quello che gli
+     * pare. Passa dallo stesso varco degli altri accessi all'hardware. */
+    if (!e_un_driver(self, "blk_offri")) return ERR(EPERM);
+    if (!syscall_verify_ptr(u, sizeof(BlkOfferta))) return ERR(EFAULT);
+
+    kstrcpy(nome, u->nome, sizeof(nome));
+    settori      = ((uint64_t)u->settori_hi << 32) | (uint64_t)u->settori_lo;
+    byte_settore = u->byte_settore;
+    sola_lettura = u->sola_lettura;
+
+    return blkr3_offri(self->pid, nome, settori, byte_settore,
+                       sola_lettura ? 1 : 0);
+}
+
+int32_t sys_blk_attendi(InterruptFrame *frame)
+{
+    BlkRichiesta *u    = (BlkRichiesta *)frame->ebx;
+    uint32_t      ms   = frame->ecx;
+    Process      *self = proc_get_current();
+    uint32_t      op = 0, n = 0, quale = 0, max = 0;
+    uint64_t      lba = 0;
+    void         *dati;
+    uint8_t      *sorgente;
+    int32_t       rc;
+
+    if (!e_un_driver(self, "blk_attendi")) return ERR(EPERM);
+    if (!syscall_verify_ptr(u, sizeof(BlkRichiesta))) return ERR(EFAULT);
+
+    dati = u->dati;
+    max  = u->dati_max;
+
+    /* Il buffer del servente si controlla PRIMA di dormire: scoprire che non
+     * e' valido dopo aver preso una richiesta vorrebbe dire lasciarla in mano
+     * a nessuno, con il chiamante che aspetta. */
+    if (max > 0 && !syscall_verify_ptr(dati, max)) return ERR(EFAULT);
+
+    rc = blkr3_attendi(self->pid, &op, &lba, &n, &quale, ms);
+    if (rc != 0) return rc;
+
+    u->op      = op;
+    u->lba_lo  = (uint32_t)(lba & 0xFFFFFFFFu);
+    u->lba_hi  = (uint32_t)(lba >> 32);
+    u->settori = n;
+    u->quale   = quale;
+
+    /* In scrittura i byte da mettere sul disco viaggiano ORA: il servente li
+     * trova gia' nel proprio buffer quando questa chiamata rende. */
+    if (op == BLKR3_SCRIVI && n > 0) {
+        sorgente = (uint8_t *)blkr3_dati(self->pid, NULL);
+        if (sorgente == NULL) return ERR(EIO);
+        if (n * 512u > max) return ERR(EINVAL);
+        kcopia_byte((uint8_t *)dati, sorgente, n * 512u);
+    }
+
+    return 0;
+}
+
+int32_t sys_blk_risposta(InterruptFrame *frame)
+{
+    BlkRichiesta *u     = (BlkRichiesta *)frame->ebx;
+    int32_t       esito = (int32_t)frame->ecx;
+    Process      *self  = proc_get_current();
+    uint8_t      *dest;
+    uint32_t      n, max;
+    void         *dati;
+
+    if (!e_un_driver(self, "blk_risposta")) return ERR(EPERM);
+    if (!syscall_verify_ptr(u, sizeof(BlkRichiesta))) return ERR(EFAULT);
+
+    dati = u->dati;
+    max  = u->dati_max;
+    n    = u->settori;
+
+    /* In lettura i settori tornano indietro ORA. ! SOLO SE E' ANDATA BENE:
+     * copiare il buffer di un servente che ha appena detto «errore» vorrebbe
+     * dire consegnare al filesystem dei byte che non sono mai stati letti da
+     * nessun disco — e quelli hanno l'aria di dati veri. */
+    if (esito == 0 && blkr3_op_in_corso(self->pid) == BLKR3_LEGGI && n > 0) {
+        if (max > 0 && !syscall_verify_ptr(dati, max)) return ERR(EFAULT);
+        if (n * 512u > max) return ERR(EINVAL);
+        dest = (uint8_t *)blkr3_dati(self->pid, NULL);
+        if (dest == NULL) return ERR(ENOENT);
+        kcopia_byte(dest, (const uint8_t *)dati, n * 512u);
+    }
+
+    return blkr3_risposta(self->pid, esito);
 }

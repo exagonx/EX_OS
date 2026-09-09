@@ -182,10 +182,10 @@ PROGRAMMI_EXWIN := exwin_so exdlg_so eximg_so exfont_so exhttp_so exhtml_so excs
 # solo di rimbalzo, perche' la ricetta di exos.iso lo nominava fra le
 # proprie prerequisite. `make all` non lo faceva, e chi costruiva senza
 # passare dalla ISO si ritrovava un driver in meno senza un messaggio.
-DRIVER_CD := ne2k_drv pcnet_drv e1000_drv ip_drv sb_drv es1371_drv ac97_drv hdaudio_drv
+DRIVER_CD := ne2k_drv pcnet_drv e1000_drv ip_drv sb_drv es1371_drv ac97_drv hdaudio_drv sonda_drv ramdisk_drv
 
 # I driver che sul floppy NON devono comparire. Serve a `make verify`.
-DRIVER_SOLO_CD := pci.drv ne2k.drv pcnet.drv ip.drv sb.drv es1371.drv ac97.drv hdaudio.drv
+DRIVER_SOLO_CD := pci.drv ne2k.drv pcnet.drv ip.drv sb.drv es1371.drv ac97.drv hdaudio.drv sonda.drv ramdisk.drv
 
 # Directory di drivers/ che NON producono un .drv, con il perche'. Serve a
 # verifica-programmi, che senza le segnalerebbe come driver dimenticati.
@@ -268,6 +268,9 @@ KERNEL_ELF  := $(BUILD_DIR)/kernel.elf
 KERNEL_BIN  := $(BUILD_DIR)/kernel.bin
 
 FLOPPY_IMG  := $(DIST_DIR)/floppy.img
+# Il dischetto della sonda: si avvia, scrive il referto della macchina e si
+# ferma. Vedi tools/mksonda.sh.
+SONDA_IMG   := $(DIST_DIR)/sonda.img
 
 # --- Colori output ------------------------------------------------------------
 RED    := \033[0;31m
@@ -973,6 +976,66 @@ $(VGAPROVA_OUT): $(VGAPROVA_SRC) $(VGAPROVA_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(L
 
 .PHONY: vgaprova_drv
 vgaprova_drv: dirs $(VGAPROVA_OUT)
+
+# --- /dev/sonda.drv: il referto della macchina -------------------------------
+#
+# Non e' un driver nemmeno lei, ed e' .drv per la stessa ragione di vgaprova:
+# le porte I/O passano da quel varco, e senza porte non si legge ne' il bus PCI
+# ne' un registro VGA.
+#
+# Serve a scrivere driver per macchine che non si hanno sotto mano: si avvia
+# dal dischetto, guarda dentro la macchina e lascia il referto su un file. La
+# prima e' la SiS M760GX di un portatile Acer, che nessun emulatore sa fare.
+SONDA_SRC := drivers/sonda/sonda.c
+# ! IN drivers-cd, NON IN drivers. mkfloppy.sh copia sul dischetto TUTTO quel
+# che trova in build/drivers/, e sul floppy restano ventiseimila byte liberi
+# contro i ventisettemila di questo file: ci finirebbe dentro a forza,
+# lasciando fuori qualcos'altro. Sta sul CD e sul dischetto suo — dist/sonda.img
+# — che se lo prende dove sta.
+SONDA_OUT := $(BUILD_DRIVERS_CD)/sonda.drv
+SONDA_LD  := drivers/sonda/sonda.ld
+
+$(SONDA_OUT): $(SONDA_SRC) $(SONDA_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione strumento di diagnosi sonda.drv ==="
+	@mkdir -p $(BUILD_DRIVERS_CD)
+	$(CC) $(CFLAGS_USER) -I lib/include -c $(SONDA_SRC) -o $(BUILD_DRIVERS_CD)/sonda_main.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)   -o $(BUILD_DRIVERS_CD)/sonda_libc.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_DRIVERS_CD)/sonda_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(SONDA_LD) \
+	    $(BUILD_DRIVERS_CD)/sonda_start.o \
+	    $(BUILD_DRIVERS_CD)/sonda_main.o  \
+	    $(BUILD_DRIVERS_CD)/sonda_libc.o  \
+	    -o $@
+	@echo "[OK] sonda.drv compilato: $@"
+
+.PHONY: sonda_drv
+sonda_drv: dirs $(SONDA_OUT)
+
+# --- /dev/ramdisk.drv: un disco a blocchi tenuto in memoria ------------------
+#
+# La prova della cucitura di kernel/block/blkr3.c: se mkfs, mount e cp
+# funzionano su un disco servito da un processo in ring 3, la strada per le
+# chiavette USB e' aperta e tutto il resto e' driver. Sta sul CD, non sul
+# floppy: e' uno strumento, e sul dischetto non ci sono 27 KB da regalare.
+RAMDISK_SRC := drivers/ramdisk/ramdisk.c
+RAMDISK_OUT := $(BUILD_DRIVERS_CD)/ramdisk.drv
+RAMDISK_LD  := drivers/ramdisk/ramdisk.ld
+
+$(RAMDISK_OUT): $(RAMDISK_SRC) $(RAMDISK_LD) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione ramdisk.drv ==="
+	@mkdir -p $(BUILD_DRIVERS_CD)
+	$(CC) $(CFLAGS_USER) -I lib/include -c $(RAMDISK_SRC) -o $(BUILD_DRIVERS_CD)/ramdisk_main.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)   -o $(BUILD_DRIVERS_CD)/ramdisk_libc.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_DRIVERS_CD)/ramdisk_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(RAMDISK_LD) \
+	    $(BUILD_DRIVERS_CD)/ramdisk_start.o \
+	    $(BUILD_DRIVERS_CD)/ramdisk_main.o  \
+	    $(BUILD_DRIVERS_CD)/ramdisk_libc.o  \
+	    -o $@
+	@echo "[OK] ramdisk.drv compilato: $@"
+
+.PHONY: ramdisk_drv
+ramdisk_drv: dirs $(RAMDISK_OUT)
 
 # --- /dev/mouseser.drv: mouse seriale, protocollo Microsoft ------------------
 #
@@ -3847,6 +3910,7 @@ KERNEL_C_SRC   := $(KERNEL_DIR)/arch/x86/gdt.c \
                   $(KERNEL_DIR)/block/mbr.c \
                   $(KERNEL_DIR)/block/vol.c \
                   $(KERNEL_DIR)/block/blk.c \
+                  $(KERNEL_DIR)/block/blkr3.c \
                   $(KERNEL_DIR)/fs/cfg.c \
                   $(KERNEL_DIR)/crypto/sha256.c \
                   $(KERNEL_DIR)/loader/elf.c \
@@ -4062,6 +4126,21 @@ $(FLOPPY_IMG): Makefile $(STAGE1_BIN) $(STAGE2_BIN) $(KERNEL_BIN) \
 # avevano una risposta sola.
 .PHONY: floppy
 floppy: $(PROGRAMMI_FLOPPY) $(FLOPPY_IMG)
+
+# --- Il dischetto della sonda ------------------------------------------------
+#
+# Serve a scrivere driver per una macchina che non si ha sotto mano: si avvia
+# la', guarda dentro se stessa e lascia il referto su un file del dischetto.
+# Non dipende da $(FLOPPY_IMG): e' un'immagine sua, con dentro il minimo.
+$(SONDA_IMG): $(STAGE1_BIN) $(STAGE2_BIN) $(KERNEL_BIN) $(SONDA_OUT) \
+              $(SHELL_BIN) $(LS_BIN) $(KEYMAP_BIN) $(HWINFO_BIN) \
+              $(KBD_DRV_OUT) $(SVGA_DRV_OUT) $(TOOLS_DIR)/mksonda.sh | dirs
+	@echo "=== Creazione del dischetto della sonda ==="
+	@chmod +x $(TOOLS_DIR)/mksonda.sh
+	@$(TOOLS_DIR)/mksonda.sh
+
+.PHONY: sonda
+sonda: $(SONDA_IMG)
 
 .PHONY: img
 img: floppy
@@ -5727,7 +5806,8 @@ DRIVER_SOLO_CD_OUT := $(NE2K_DRV_OUT) $(PCNET_DRV_OUT) \
                       $(E1000_DRV_OUT) \
                       $(IP_DRV_OUT) \
                       $(SB_DRV_OUT) $(ES1371_DRV_OUT) \
-                      $(AC97_DRV_OUT) $(HDAUDIO_DRV_OUT)
+                      $(AC97_DRV_OUT) $(HDAUDIO_DRV_OUT) \
+                      $(SONDA_OUT) $(RAMDISK_OUT)
 
 # ! verifica-programmi E' UNA PREREQUISITA D'ORDINE (dopo la barra).
 # Cosi' viene eseguita prima di costruire il CD — e ferma tutto se un

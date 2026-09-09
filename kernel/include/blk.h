@@ -44,6 +44,7 @@
 #define BLK_TIPO_DISCO      2   /* disco ATA intero */
 #define BLK_TIPO_PART       3   /* partizione: finestra su un disco ATA */
 #define BLK_TIPO_CDROM      4   /* lettore ottico ATAPI: vedi blk_supporto */
+#define BLK_TIPO_RING3      5   /* servito da un processo: vedi blkr3.h */
 
 typedef struct {
     char     nome[BLK_NOME_MAX];  /* "fd0", "hd0", "hd0p1" */
@@ -52,6 +53,13 @@ typedef struct {
     uint8_t  disco;               /* indice ATA (per DISCO e PART) */
     uint8_t  sola_lettura;
     uint8_t  in_uso;              /* montaggi attivi: vedi blk_acquisisci */
+    /* ! GUASTO NON E' LO STESSO DI LIBERO. Un dispositivo servito da un
+     * processo che e' morto mentre qualcuno lo teneva montato non puo'
+     * sparire e basta: lo slot verrebbe riusato dal prossimo dispositivo, e
+     * il montaggio rimasto appeso si ritroverebbe a leggere UN ALTRO disco
+     * senza che nessuno se ne accorga. Resta qui, guasto, e risponde -EIO
+     * finche' non lo si smonta. */
+    uint8_t  guasto;
     uint64_t primo;               /* LBA di partenza nel supporto sottostante */
     uint64_t settori;             /* lunghezza della finestra */
 } BlkDev;
@@ -102,6 +110,22 @@ int  blk_flush(int i);
  * ATA `disco`. Ritorna -1 se non registrata (per esempio perche' era
  * fuori dal disco, o perche' e' un contenitore esteso). */
 int  blk_per_partizione(int disco, int numero);
+
+/* =============================================================================
+ * I DISPOSITIVI SERVITI DA UN PROCESSO — le due porte per blkr3.c
+ *
+ * Stanno qui e non dentro blkr3.c perche' l'unica cosa che sa allocare uno
+ * slot di questa tabella e' questo file, e deve restare cosi': un secondo
+ * posto che registra dispositivi e' un secondo posto in cui sbagliare i nomi
+ * o riusare un indice ancora vivo.
+ * ============================================================================= */
+
+/* Registra un dispositivo servito da un processo. Rende l'indice, o <0. */
+int  blk_registra_ring3(const char *nome, uint64_t settori, int sola_lettura);
+
+/* Il servente e' morto. Se nessuno lo teneva montato lo slot torna libero;
+ * se qualcuno lo teneva, il dispositivo resta ma diventa GUASTO. */
+void blk_ritira(int i);
 
 /* =============================================================================
  * Conteggio degli usi — chi sta usando questo dispositivo
