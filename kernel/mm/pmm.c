@@ -286,6 +286,16 @@ void pmm_init(BootInfo *info)
     /* BootInfo (0xC000-0xC0FF) — FIX BUG #3: era 0xB000 */
     pmm_mark_used(0x0000C000, PAGE_SIZE);
 
+    /* ! IL VOLUME IN RAM, se Stage 2 ce n'e' messo uno. E820 lo dichiara
+     * memoria libera — perche' lo e', fino a un istante fa — e senza questa
+     * riga il PMM lo consegnerebbe al primo che chiede pagine: la radice del
+     * sistema riscritta da un processo qualunque, un pezzo per volta. */
+    if (info != NULL && info->rd_addr != 0 && info->rd_byte != 0) {
+        pmm_mark_used(info->rd_addr, info->rd_byte);
+        klog(LOG_INFO, "PMM: volume in RAM protetto: 0x%08x - 0x%08x",
+             info->rd_addr, info->rd_addr + info->rd_byte);
+    }
+
     /* La pagina della finestra di rimappatura fisica non deve essere
      * allocata a nessuno: il kernel ne riscrive la PTE a piacere, quindi
      * il suo contenuto non e' affidabile. Vedi paging_finestra_apri(). */

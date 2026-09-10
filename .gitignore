@@ -217,6 +217,53 @@
 # cronologia non ci deve entrare mai.
 /dist/netinst/
 
+# =============================================================================
+# I DRIVER ALTRUI NON ENTRANO NELLA CRONOLOGIA. MAI.
+#
+# drv_prop/ e' dove si appoggiano i driver Windows di una scheda mentre se ne
+# studia il funzionamento per scriverne uno nostro. Leggerli e' legittimo — in
+# Europa la Direttiva 2009/24/CE articolo 6 chiama per nome l'eccezione di
+# interoperabilita', ed e' il modo in cui e' nato mezzo kernel Linux —
+# RIDISTRIBUIRLI NO: sono di chi li ha scritti, e questo repository e'
+# pubblico.
+#
+# ! LA DIFFERENZA E' FRA LEGGERE UN LIBRO E FOTOCOPIARLO. Da tools/scava.py
+# esce una DESCRIZIONE — quali porte, quali valori, in che ordine — e quella
+# si tiene, si discute e si committa. Il binario da cui e' uscita resta sul
+# disco di chi l'ha scaricato.
+#
+# ! E NEMMENO IL CODICE RICOPIATO. Un driver scritto guardando l'assembler
+# altrui e ricopiandone le istruzioni e' un'opera derivata, per quanto lo si
+# sia tradotto in C. Quello che si prende sono i FATTI — che a 0x3C4 va scritto
+# 0x86 per sbloccare, che quel registro vuole quel valore — e i fatti non sono
+# di nessuno.
+# =============================================================================
+/drv_prop/
+
+# =============================================================================
+# IN dist/ SI TIENE SOLO CIO' CHE SI DISTRIBUISCE, E SONO TRE IMMAGINI
+#
+#   floppy.img    il sistema di base minimale
+#   sonda.img     legge l'hardware e scrive i referti da cui nascono i driver
+#   netinst.img   il disco di appoggio per l'installazione dalla rete
+#
+# ! TUTTO IL RESTO IN dist/ E' MATERIALE DA PROVA. Il floppy verboso, quello
+# di diagnostica, le ISO della sonda in testo e in 800x600, le immagini
+# test_aa3k* del portatile SiS: nascono da una make, servono a una prova,
+# si rifanno in un minuto e pesano 1,4 MB l'una. In cronologia non ci devono
+# stare - e' la stessa regola delle ISO qui sopra, «niente artefatti che
+# crescono», applicata anche quando l'artefatto e' piccolo ma si moltiplica.
+#
+# ! SI ELENCA CIO' CHE ENTRA, NON CIO' CHE RESTA FUORI. La prossima immagine
+# di prova nascera' con un nome che oggi non esiste - test_aa3k_1024.img e'
+# nata cosi', tre giorni dopo test_aa3k.img - e una lista di esclusioni la
+# lascerebbe passare senza che nessuno se ne accorga.
+# =============================================================================
+/dist/*
+!/dist/floppy.img
+!/dist/sonda.img
+!/dist/netinst.img
+
 # ! E NEMMENO L'ALBERO DA CUI L'ISO SI COSTRUISCE. build/iso/ e' tracciato —
 # ci stanno gli stub, gli header e i file piccoli che servono a chi compila
 # dentro EX-OS — ma `make iso` ci copia dentro anche gli INTERNI DI GCC, che

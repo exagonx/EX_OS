@@ -73,7 +73,7 @@
 
 /* +0.001 a ogni modifica: `automount -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("automount", "0.001");
+EX_VERSIONE("automount", "0.002");
 
 #define TIPO_PART     3
 #define TIPO_RING3    5
@@ -82,6 +82,7 @@ EX_VERSIONE("automount", "0.001");
 #define MAX_SEGUITI   8      /* dispositivi serviti seguiti insieme */
 #define MAX_MONTAGGI  4      /* punti per dispositivo: quattro primarie */
 #define PERIODO_MS    1000
+#define TENTATIVI_MAX 5      /* riletture della tabella prima di arrendersi */
 
 typedef struct {
     char nome[BLKINFO_NOME_MAX];              /* "usb0" */
@@ -89,6 +90,7 @@ typedef struct {
     int  visto;                               /* c'e' ancora in questo giro */
     int  numero;                              /* il suo posto: DRIVE<n>/HDD<n> */
     int  n_punti;
+    int  tentativi;                           /* riletture gia' fatte */
     char punto[MAX_MONTAGGI][32];
 } Seguito;
 
@@ -167,12 +169,30 @@ static void monta(Seguito *s, const char *dev, const char *punto)
         return;
     }
 
-    /* ! UN FILESYSTEM CHE NON SAPPIAMO LEGGERE NON E' UN GUASTO. NTFS, ext4,
-     * una partizione di scambio: si saltano. Il rumore lo si fa solo con -v. */
-    if (g_verboso || (r != -EINVAL && r != -EIO))
-        printf("automount: %s su %s: %s\n", dev, punto,
-               (r == -EINVAL) ? "filesystem che non so leggere, salto"
-                              : "non si monta");
+    /* ! IL NUMERO SI DICE SEMPRE, e la prima volta non c'era: «non si monta»
+     * copre sei cause diverse — il punto che esiste gia', la directory che lo
+     * contiene che manca, il dispositivo occupato, il volume non riconosciuto
+     * — e su una macchina lontana costa un giro di domande per ognuna. Il
+     * numero le distingue in un colpo.
+     *
+     * ! MA UN FILESYSTEM CHE NON SAPPIAMO LEGGERE RESTA UNA COSA A PARTE: NTFS
+     * ed ext4 su un disco esterno di Windows sono la norma, e un allarme a
+     * ogni inserimento insegna solo a non guardare i messaggi. Quello si dice
+     * a bassa voce. */
+    if (r == -EINVAL) {
+        if (g_verboso)
+            printf("automount: %s: filesystem che non so leggere, salto\n", dev);
+        return;
+    }
+
+    printf("automount: %s su %s non si monta: %s (errore %d)\n", dev, punto,
+           (r == -ENOENT)     ? "manca la directory che lo contiene"
+         : (r == -EEXIST)     ? "quel nome esiste gia'"
+         : (r == -EBUSY)      ? "il dispositivo e' gia' montato"
+         : (r == -ENOMEDIUM)  ? "il supporto non c'e'"
+         : (r == -EIO)        ? "errore di lettura"
+         : (r == -EMFILE)     ? "troppi montaggi aperti"
+         : "motivo non previsto", r);
 }
 
 /* L'elenco dei dispositivi a blocchi, tutto in una volta. Rende quanti. */
@@ -224,8 +244,15 @@ static void arrivato(const char *nome)
     n = blk_scansiona(nome);
 
     if (n < 0) {
-        printf("automount: %s: non riesco a leggerne la tabella (%d)\n", nome, n);
-        s->usato = 0;
+        /* ! LO SLOT SI TIENE ANCHE QUANDO LA LETTURA FALLISCE. Liberandolo,
+         * il giro dopo il dispositivo risultava di nuovo NUOVO: «e' comparso
+         * usb0», «non riesco a leggerne la tabella», una volta al secondo,
+         * per sempre. Un sorvegliante parla quando cambia qualcosa, e un
+         * errore che si ripete identico non e' un cambiamento.
+         *
+         * Si riprova lo stesso, in silenzio: una chiavetta appena infilata
+         * puo' non essere pronta al primo giro. Vedi riprova(). */
+        s->tentativi = 1;
         return;
     }
 
@@ -254,10 +281,58 @@ static void arrivato(const char *nome)
         }
     }
 
-    if (s->n_punti == 0) {
-        printf("automount: %s: niente da montare\n", nome);
-        /* Si tiene comunque in elenco: cosi' non si riprova ogni secondo. */
+    /* ! IL «NIENTE DA MONTARE» SI DICE UNA VOLTA SOLA, ALLA FINE. Dirlo al
+     * primo giro e poi riprovare vorrebbe dire annunciare una resa e poi
+     * continuare a lavorare: lo dice riprova(), quando i tentativi sono
+     * finiti davvero. */
+    if (s->n_punti == 0) s->tentativi = 1;
+}
+
+/* La seconda occasione, e le tre dopo. Stessa strada di arrivato(), ma senza
+ * annunci: chi legge il log ha gia' visto «e' comparso», e quello che gli
+ * interessa e' se alla fine e' stato montato oppure no.
+ *
+ * ! E SI SMETTE DI PROVARE. Cinque giri sono cinque secondi: se dopo cinque
+ * secondi la tabella non si legge, non e' un dispositivo lento, e' un
+ * dispositivo che non risponde. Continuare vorrebbe dire una syscall al
+ * secondo per sempre su un supporto rotto. */
+static void riprova(Seguito *s)
+{
+    BlkInfo dopo[16];
+    char    punto[32];
+    int     i, n, quanti;
+
+    s->tentativi++;
+    n = blk_scansiona(s->nome);
+
+    if (n < 0) {
+        if (s->tentativi >= TENTATIVI_MAX)
+            printf("automount: %s: la tabella non si legge (%d), lascio "
+                   "perdere\n", s->nome, n);
+        return;
     }
+
+    if (n == 0) {
+        snprintf(punto, sizeof(punto), "%s/DRIVE%d", RADICE, s->numero);
+        monta(s, s->nome, punto);
+    } else {
+        quanti = elenco(dopo, 16);
+
+        for (i = 0; i < quanti; i++) {
+            const char  *p = dopo[i].nome;
+            unsigned int l = (unsigned int)strlen(s->nome);
+
+            if (dopo[i].tipo != TIPO_PART) continue;
+            if (strncmp(p, s->nome, l) != 0 || p[l] != 'p') continue;
+
+            snprintf(punto, sizeof(punto), "%s/HDD%dp%s", RADICE, s->numero,
+                     p + l + 1);
+            monta(s, p, punto);
+        }
+    }
+
+    if (s->n_punti == 0 && s->tentativi >= TENTATIVI_MAX)
+        printf("automount: %s: niente da montare\n", s->nome);
 }
 
 /* Un dispositivo e' sparito: il driver che lo serviva se n'e' andato. */
@@ -315,6 +390,13 @@ static void giro(void)
 
     for (i = 0; i < MAX_SEGUITI; i++)
         if (g_seg[i].usato && !g_seg[i].visto) sparito(&g_seg[i]);
+
+    /* Chi c'e' ancora ma non e' montato: un altro tentativo, in silenzio. */
+    for (i = 0; i < MAX_SEGUITI; i++)
+        if (g_seg[i].usato && g_seg[i].visto &&
+            g_seg[i].n_punti == 0 && g_seg[i].tentativi > 0 &&
+            g_seg[i].tentativi < TENTATIVI_MAX)
+            riprova(&g_seg[i]);
 }
 
 int main(int argc, char **argv)

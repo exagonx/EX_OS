@@ -116,6 +116,8 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
 
   1  @USB             resta la prova su una chiavetta VERA: e' hardware, non lavoro
   1  @USB-DISCO       le chiavette si montano: archiviazione USB in ring 3, 4 passi
+ --  @RADICE-RAM      il volume in RAM: avviarsi dove il lettore sta sull'USB
+  1  @SIS            l'Acer e' identificato: SiS 760, 6330, 900, OHCI+EHCI
   1  @VISTA           i legami sono tagliati: resta da passare quattordici variabili
   1  @SUONO-REG       la registrazione non c'e': nessun driver accende AUDIO_CAP_REGISTRA
   1  @SUONO-MIX       un client alla volta: il secondo che suona riceve -EBUSY
@@ -832,6 +834,189 @@ Gli identificativi dei controller USB, presi da XP come quelli della video:
 Gestione periferiche, i controller USB, Dettagli -> ID hardware. Servono a
 sapere se sono davvero OHCI+EHCI e con quale revisione, prima di scrivere il
 driver che dovra' parlarci.
+
+=============================================================================
+@SIS LA MACCHINA DELL'ACER, IDENTIFICATA (referto del 9 settembre 2026)
+=============================================================================
+
+! IL REFERTO C'E', ed e' in sonda/acer_aspire_3000.TXT — generato dal
+dischetto della sonda sulla macchina vera, con la radice in RAM. Da qui in
+avanti non si indovina piu' niente: ogni numero qui sotto e' letto dal ferro.
+
+Acer Aspire 3000, AMD (i quattro ponti 1022:110x del K8), chipset SiS:
+
+  00:00.0  1039:0760 rev 03   ponte nord: e' un SiS 760, non un 661 ne' un 741
+  01:00.0  1039:6330 rev 00   la VGA integrata, sottosistema 1025:0083
+             BAR0 0xe8000000 (prefetch)  il framebuffer, memoria condivisa
+             BAR1 0xe2100000             i registri del motore 2D
+             BAR2 0xa000 (porte)         LA FINESTRA RILOCATA, 128 byte:
+                                         li' dentro stanno i registri del
+                                         ponte video, cioe' il pannello LCD
+  00:03.0  1039:7001 classe 0c0310   OHCI  (USB 1.1)
+  00:03.1  1039:7001 classe 0c0310   OHCI  (USB 1.1)
+  00:03.2  1039:7002 classe 0c0320   EHCI  (USB 2.0)
+  00:04.0  1039:0900 rev 91          SiS 900 Ethernet, porte 0x1800, IRQ 3
+  00:02.5  1039:5513                 IDE ai porti di sempre (0x1F0/0x170)
+  00:02.7  1039:7012                 audio AC97  (ac97.drv esiste gia')
+  00:0b.0  14e4:4318                 la Broadcom di @WIFI-4318: stessa macchina
+  00:06.0  104c:ac50                 CardBus TI
+
+! I CONTROLLER USB SONO OHCI+EHCI, cioe' esattamente i due che @USB-DISCO ha
+scritto e nessuno dei due che c'era prima. La scelta era giusta, e adesso e'
+un fatto invece di una previsione.
+
+! LA VGA E' GIA' SBLOCCATA DAL BIOS: SR05 vale a1 prima ancora di scrivergli
+0x86. I registri estesi si leggono tutti — SR 06-3f e CR 19-ff hanno valori
+veri, non 0xff — e la finestra rilocata risponde. Tutto quello che serve al
+modeset nativo e' raggiungibile.
+
+! E IL CONTROLLO DELLA DOPPIA LETTURA HA FATTO IL SUO LAVORO: CR24 e' uscito
+00 e poi 80. E' il cursore del kernel che scrive su 0x3D4 mentre leggiamo, ed
+e' l'unico registro di cui non ci si puo' fidare in quel referto.
+
+RESTA DA PRENDERE: il secondo referto, in 800x600. La differenza fra i due e'
+la ricetta del modeset. Sul dischetto della sonda: `svga.drv 800x600`, riavvio,
+`sonda.drv -auto`, e il secondo file e' li'.
+
+-----------------------------------------------------------------------------
+FATTO IL 10 SETTEMBRE 2026: QUELLA MACCHINA LEGGE UNA CHIAVETTA
+
+    ehci: porta 3: dispositivo ad alta velocita'
+    ehci: dispositivo  USB 2.00  venditore 18a5 prodotto 0302
+    ehci: Verbatim STORE N GO
+    ehci: 30322688 blocchi da 512 byte
+    massa: usb0 offerto, 30322688 settori (14806 MB)
+    automount: usb0 -> /USB/DRIVE0
+
+Avviata dal floppy USB con la radice in RAM. E' la catena intera — @RADICE-RAM,
+i quattro passi di @USB-DISCO, il sorvegliante — che regge sul ferro vero.
+
+! LA STRETTA DI MANO CON LA SMM HA FUNZIONATO AL PRIMO COLPO, ed era scritta
+alla cieca: «ohci: il controller e' della SMM, glielo chiedo» / «l'ha
+lasciato». Su QEMU quel ramo non si esegue mai, perche' li' nessuno tiene il
+controller.
+
+! E IL GIRO VELOCE E' APERTO. Un .drv copiato sulla chiavetta da Linux si
+esegue direttamente sull'Acer:
+
+    /USB/DRIVE0/nome.drv
+
+Provato in QEMU: il file preso dalla chiavetta ottiene il varco dei driver
+(offre un dispositivo a blocchi) e funziona. Da qui in avanti un giro di prova
+non e' piu' un dischetto riscritto: e' un file copiato.
+
+RESTA APERTO: sulla porta 2 del secondo OHCI c'e' un dispositivo full speed —
+quasi certamente il lettore di dischetti stesso — che non rispondeva al primo
+descrittore. L'attesa dopo il reset di porta e' passata da venti a cento
+millisecondi e il descrittore si chiede tre volte: da riprovare li'.
+
+-----------------------------------------------------------------------------
+L'AVVIO DA LETTORE USB: COS'E' LENTO E PERCHE' (10 settembre 2026)
+
+Ogni INT 13h dietro l'emulazione di un floppy USB e' un giro completo sul bus.
+Contarle e' quindi la sola cosa che conta:
+
+  Stage 1        ~29 chiamate  root dir, FAT, LOADER.BIN — un settore l'una,
+                               e non vale la pena toccarle
+  Stage 2 kernel  ~30 chiamate  ERANO 521: un cluster di floppy e' un settore
+                               e se ne leggeva uno per volta. Adesso si
+                               leggono i cluster CONSECUTIVI in un colpo
+  Stage 2 volume  160 chiamate  una traccia per volta, con ripiego a un
+                               settore se il BIOS non regge i 18
+
+! E LO SI VEDE: un puntino per traccia mentre carica il volume, e tutto anche
+sulla seriale. Senza, «motore che gira e testina ferma» era indistinguibile da
+una macchina piantata — ed e' quello che e' successo.
+
+-----------------------------------------------------------------------------
+E DA QUI IN POI NIENTE SI PUO' PROVARE QUI
+
+QEMU non emula nessun SiS: ne' la VGA, ne' la scheda di rete, ne' il chipset.
+Verificato con `qemu-system-i386 -device help`. Ogni driver per quella
+macchina si scrive alla cieca e si prova SOLO li', e ogni giro costa un
+dischetto riscritto.
+
+! PER QUESTO IL PRIMO LAVORO E' FAR MONTARE LA CHIAVETTA. Con quella montata
+il giro diventa: si compila qui, si copia il .drv sulla chiavetta da Linux, si
+accende l'Acer e si lancia — senza riscrivere il floppy. Da tre minuti a venti
+secondi, su un lavoro che ne vuole decine di giri.
+
+L'ORDINE, di conseguenza:
+  1. la chiavetta che si monta      (serve il numero dell'errore: automount
+                                     adesso lo stampa)
+  2. SiS 900, la scheda di rete     porte 0x1800, rev 91: il MAC si fa
+                                     ricaricare dalla EEPROM con CR|RELOAD e
+                                     si legge dai registri del filtro. Con la
+                                     rete i log escono dalla macchina, e non
+                                     serve piu' fotografare niente
+  3. il modeset SiS                  dopo il secondo referto
+
+=============================================================================
+@RADICE-RAM IL VOLUME IN RAM (aperto e FATTO il 9 settembre 2026)
+=============================================================================
+
+! IL PROBLEMA, IN UNA RIGA: il BIOS sa leggere un lettore USB, il kernel no.
+
+Sul portatile Acer di @SIS il lettore di dischetti e' USB, e anche quello dei
+CD. Stage 1 e Stage 2 lavorano con INT 13h e si caricano benissimo; poi il
+kernel passa in modo protetto e va a cercare quel supporto dove i supporti
+stanno da sempre — l'FDC alle porte 0x3F0, il bus IDE — e li' non c'e' niente.
+Errori di filesystem, nessuna shell, e una macchina che ha caricato tutto e non
+puo' fare niente. Provato due volte, con due supporti diversi.
+
+LA STRADA: Stage 2 copia il volume intero in RAM finche' il BIOS e' ancora
+disponibile, e il kernel ci monta sopra la radice. Da quel momento non gli
+importa piu' di com'e' fatto il lettore.
+
+    make RAMDISCO=1          lo accende (spento di suo)
+    make sonda-cd            il CD gia' pronto per quella macchina
+
+! IL SISTEMA NON CAMBIA. E' una terza strada per avere una radice, e chi non
+l'accende non si accorge che esiste: con RAMDISCO=0 — il predefinito — il byte
+dentro Stage 2 vale zero, il kernel legge rd_addr = 0 e tutto va come prima.
+Verificato: avvio da floppy normale, «VFS: root '/' sul floppy (fat12.c)».
+
+I pezzi:
+  bootloader/stage2/loader.asm   `ramdisco`, e la firma 'RAMDISCO' con cui si
+                                 accende il byte (come 'SVGAMODE')
+  kernel/include/kernel.h        rd_addr e rd_byte in BootInfo
+  kernel/mm/pmm.c                quelle pagine si riservano, o il PMM le
+                                 consegnerebbe: la radice riscritta da un
+                                 processo qualunque, un pezzo per volta
+  kernel/block/blk.c             BLK_TIPO_RAM: "rd0", letto con una copia
+  kernel/fs/vfs.c                se c'e', viene PRIMA di tutto
+
+! IL MODO REALE NON ARRIVA A 32 MB, ed e' la parte che ha voluto il lavoro. Un
+segmento reale vede 64 KB. Si usa il «modo reale grande»: si entra un istante
+in modo protetto, si carica ES con un descrittore che copre 4 GB, si esce — e
+la CPU tiene il limite nuovo nella cache del segmento anche in modo reale. Ma
+INT 13h vuole ES:BX, e ES ce l'ha grande: percio' a ogni traccia si fa il giro
+due volte, ES normale per leggere nel rimbalzo a 512 KB, ES grande per copiare
+in alto. Centosessanta giri, uno per traccia.
+
+! E UN DIFETTO CHE VALE LA PENA RICORDARE: la destinazione si legge PRIMA di
+cambiare DS. `rddst` e' una variabile di Stage 2; un istante dopo DS punta al
+rimbalzo, e la stessa riga leggeva due parole a caso dentro i dati appena letti
+dal disco. Con un EDI cosi' la copia va ovunque, e la macchina si ferma prima
+di poter dire qualunque cosa: sulla seriale restavano tre lettere.
+
+! COSA NON RESTA: la radice in RAM si scrive come le altre e sparisce con la
+corrente. Per questo il CD della sonda si porta dietro i driver USB e
+`automount`: il referto si scrive in RAM e poi si COPIA sulla chiavetta, che
+allo spegnimento resta.
+
+LA PROVA INTERA, in QEMU, che e' esattamente lo scenario dell'Acer:
+
+    avvio da dist/sonda.iso   ->  VFS: root '/' sul volume in RAM (FAT12)
+    l'autoexec scrive         ->  /SONDA1.TXT
+    chiavetta USB infilata    ->  automount: usb0 -> /USB/DRIVE0
+    cp /SONDA1.TXT /USB/DRIVE0/REFERTO.TXT
+    e da Linux: REFERTO.TXT, 13361 byte, sulla chiavetta.
+
+RESTA: leggere il CD vero (non l'immagine d'avvio) da quella macchina. Oggi il
+volume in RAM e' l'immagine El Torito — 1,44 MB — non i dodici megabyte del
+disco ottico. Per quelli servirebbe leggere il CD con INT 13h esteso sul suo
+numero di unita', che e' un altro capitolo.
 
 =============================================================================
 @WIFI-4318 LA SCHEDA SENZA FILI (aperto l'8 settembre 2026)

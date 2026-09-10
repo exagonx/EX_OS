@@ -1,0 +1,192 @@
+===============================================================================
+  /freebasic - i sorgenti di FreeBASIC 1.07.3, da ricostruire DENTRO EX-OS
+===============================================================================
+
+  Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>
+  SPDX-License-Identifier: GPL-2.0-or-later
+  FreeBASIC e' di FreeBASIC Development Team, GPL v2 / LGPL v2.1.
+
+-------------------------------------------------------------------------------
+COSA C'E' QUI
+
+  makefile        quello di FreeBASIC, NON modificato
+  version.mk      la versione
+  src/compiler/   i .bas del compilatore  (li compila fbc)
+  src/rtlib/      i .c della runtime      (li compila gcc)
+  src/gfxlib2/    la grafica              (NON si costruisce: vedi sotto)
+  lib/fbextra.x   lo script di link che fbc passa a ld a ogni collegamento
+
+  NON c'e' bootstrap/: quei .asm servono a fare un fbc senza avere un fbc,
+  e qui un fbc c'e' gia' (/exos/bin/fbc).
+
+  NON ci sono le directory obj/: contenevano gli oggetti della build su
+  Linux. Sul CD sarebbero peggio che inutili - make li troverebbe piu'
+  nuovi dei sorgenti e non ricompilerebbe niente.
+
+-------------------------------------------------------------------------------
+COME SI COSTRUISCE
+
+Il CD e' in sola lettura e make deve scrivere, quindi si copia prima. Serve
+un disco ext2: su FAT i nomi tornano in maiuscolo e i modelli del makefile
+non li riconoscono piu'.
+
+  mount hd0p1 /disk
+  export PATH=/bin:/cdrom/exos/bin:/cdrom/bin
+  mkdir /disk/fb
+  cp -r /cdrom/freebasic /disk/fb
+  cd /disk/fb/freebasic
+
+  make TARGET_OS=exos TARGET_ARCH=x86 DISABLE_MT=1 \
+       CFLAGS="-O2 -DDISABLE_FFI" rtlib
+  make TARGET_OS=exos TARGET_ARCH=x86 DISABLE_MT=1 compiler
+
+!! IL MAKEFILE C'E' E make DICE CHE NON C'E'?  Sei su FAT.
+
+  ex-os:/fat> ls
+  MAKEFILE     3349            <- FAT rende il nome in MAIUSCOLO
+  ex-os:/fat> make
+  make: *** No targets specified and no makefile found.  Stop.
+
+I tre nomi che make cerca da solo sono GNUmakefile, makefile e Makefile:
+MAKEFILE non e' nessuno dei tre, e il confronto lo fa leggendo la
+directory, dove le maiuscole contano. `make -f MAKEFILE` funziona (il file
+lo apre e basta, e l'apertura su FAT e' insensibile al caso) ma e' un
+cerotto: subito dopo `$(wildcard *.c)` rende MAIN.C, che il
+`$(filter-out main.c,...)` non toglie piu', e `main` finisce due volte nel
+link.
+
+E se sei sul FLOPPY non c'e' rimedio: il driver FAT12 accetta directory
+solo nella radice, quindi src/compiler/ non puo' proprio esistere.
+
+Si lavora su ext2. Se il disco non ne ha una:
+
+  mkfs -t ext2 -L exos hd0p1        !! cancella il volume
+  mount hd0p1 /disk
+
+!! LE DUE VARIABILI SERVONO. Senza, il makefile chiama `uname`, non
+riconosce la risposta e lascia TARGET_OS vuoto: cercherebbe la runtime in
+src/rtlib/ e basta, saltando src/rtlib/exos, e il link fallirebbe su
+funzioni che non c'entrano con il file che stava compilando.
+
+!! DISABLE_MT=1 SERVE, e non e' un'ottimizzazione. Senza, il makefile
+costruisce anche libfbmt.a: altri 427 file, quasi tre ore, per una runtime
+con i thread che EX-OS non ha. Il makefile ha il flag apposta (lo usa gia'
+per Xbox) e il cross su Linux libfbmt.a non l'ha mai costruita.
+
+!! -DDISABLE_FFI SERVE. src/rtlib/thread_call.c include <ffi.h> per
+costruire chiamate con firma decisa a tempo di esecuzione. libffi su EX-OS
+non c'e'; il define spegne quel file, come fa il makefile da se' per Xbox e
+per DOS. Si perde THREADCALL, che senza thread non servirebbe comunque.
+
+!! NON lanciare `make` senza bersaglio. Il bersaglio predefinito include
+gfxlib2, che vuole X11, il framebuffer di Linux o OpenGL: nessuno dei tre
+esiste qui, e la costruzione si fermerebbe su un header mancante dopo aver
+fatto tutto il resto. `rtlib` e `compiler` sono i due che servono.
+
+-------------------------------------------------------------------------------
+QUANTO CI METTE
+
+Tanto, e vale la pena saperlo prima di cominciare. La runtime sono 427 file
+C, il compilatore 145 .bas. Misurato dentro QEMU, con 512 MB e il CD
+montato: circa 2 file e mezzo al minuto, cioe' quasi TRE ORE per `rtlib`.
+Su ferro vero e' un'altra cosa, ma l'ordine di grandezza e' quello.
+
+Conviene lanciarlo su una console e passare a un'altra con Alt+F2 mentre
+lavora: il sistema resta usabile.
+
+`make -j2` funziona. Su una macchina con una CPU sola non fa guadagnare
+molto — i lavori si alternano invece di andare insieme — e ogni gcc si
+porta dietro un cc1, che e' il file piu' grande che EX-OS carichi.
+
+!! Se si interrompe, si riprende: `make` rifa' solo cio' che manca. E' la
+ragione per cui esiste.
+
+-------------------------------------------------------------------------------
+COSA SI OTTIENE
+
+  lib/freebasic/exos-x86/libfb.a     la runtime
+  lib/freebasic/exos-x86/fbrt0.o     l'avvio dei programmi FreeBASIC
+  bin/fbc                            il compilatore
+
+Per usarli al posto di quelli del CD si copiano dove fbc li cerca, cioe'
+<prefisso>/lib/freebasic/exos-x86/ e <prefisso>/bin/ - dove <prefisso> e'
+la directory di fbc meno `bin`. Con gli strumenti installati sul disco
+(`install -tools`) e' /exos.
+
+-------------------------------------------------------------------------------
+PROVARE L'fbc APPENA COSTRUITO, SENZA INSTALLARLO
+
+!! Il compilatore nuovo sta in bin/fbc, quindi il suo prefisso e' l'albero
+di costruzione - non /exos. Li' dentro trova gia' lib/freebasic/exos-x86,
+ma NON crt0.o, libc.a, libm.a, libgcc.a e gli header: quelli fbc li cerca
+sempre sotto il proprio prefisso, e senza il link fallisce parlando di
+simboli che non c'entrano con il programma.
+
+  cd /disk/fb/freebasic
+  cp /cdrom/exos/lib/crt0.o   lib/crt0.o
+  cp /cdrom/exos/lib/libc.a   lib/libc.a
+  cp /cdrom/exos/lib/libm.a   lib/libm.a
+  cp /cdrom/exos/lib/libgcc.a lib/libgcc.a
+  mkdir -p include
+  cp -r /cdrom/exos/include/freebasic include
+
+  bin/fbc -version
+  cp /cdrom/prova-fb.bas /disk/p.bas
+  bin/fbc /disk/p.bas -x /disk/pnew
+  /disk/pnew                          -> deve dire 385
+
+Fatto l'11 agosto 2026, e ha funzionato:
+
+  FreeBASIC Compiler - Version 1.07.3 (2026-08-11), built for exos-x86 (32bit)
+
+  prova-fb - compilato dentro EX-OS
+    quadrati     385
+    esito       tutto a posto
+
+!! I due avvisi di `ld` al collegamento (`fbextra.x contains output
+sections` e `missing .note.GNU-stack`) sono noti e innocui: li da' anche
+FreeBASIC a monte con binutils recenti.
+
+-------------------------------------------------------------------------------
+RICOSTRUIRE fbc CON SE STESSO (il punto fisso)
+
+  cp bin/fbc /disk/fbc-precedente        per il confronto
+  rm -r src/compiler/obj/exos-x86
+  make TARGET_OS=exos TARGET_ARCH=x86 DISABLE_MT=1 FBC=bin/fbc compiler
+
+!! `FBC=bin/fbc` E' LA RIGA CHE RENDE LA PROVA UNA PROVA. Il valore
+predefinito e' `fbc`, che il PATH risolve su /cdrom/exos/bin/fbc: senza,
+si ricostruirebbe sempre con il compilatore del CD e non si proverebbe
+niente.
+
+Fatto il 12 agosto 2026, tre generazioni:
+
+  gen1 (dal CD)        1.837.832
+  gen2 (dalla gen1)    1.837.860
+  gen3 (dalla gen2)    1.837.860   <- uguale: punto fisso
+
+!! NON confrontare byte a byte. `fb.bi` fa `const FB_BUILD_DATE =
+__DATE__`: la data di costruzione e' compilata dentro, quindi due
+generazioni fatte in giorni diversi non saranno mai identiche. La
+lunghezza e' fissa, percio' il confronto giusto e' la DIMENSIONE.
+
+!! I 28 byte fra gen1 e gen2 non sono un difetto: gen1 e' collegata contro
+la libfb.a del CD, dove fb_ExecEx e fb_hShell stanno in un oggetto solo;
+gen2 contro quella del makefile, dove stanno in due. Che fosse quello lo
+dice la gen3, uscita uguale alla gen2.
+
+-------------------------------------------------------------------------------
+!! SE SI INTERROMPE UNA COSTRUZIONE, CANCELLARE IL FILE A META'
+
+EX-OS non consegna segnali, quindi make non puo' accorgersi di essere
+stato interrotto e non cancella il bersaglio che stava scrivendo. Su Linux
+il Ctrl-C glielo fa fare; qui no.
+
+Fermare la macchina mentre gira `ar` lascia una libreria di 8 byte - la
+sola firma `!<arch>` - ed e' PIU' RECENTE dei propri oggetti: la
+costruzione dopo la accetta come buona e va al link con un archivio vuoto,
+con centinaia di simboli mancanti che parlano d'altro.
+
+  rm -f lib/freebasic/exos-x86/libfb.a lib/freebasic/exos-x86/st*.tmp
+
+e si rilancia `make rtlib`.

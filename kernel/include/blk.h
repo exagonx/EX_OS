@@ -45,6 +45,8 @@
 #define BLK_TIPO_PART       3   /* partizione: finestra su un disco ATA */
 #define BLK_TIPO_CDROM      4   /* lettore ottico ATAPI: vedi blk_supporto */
 #define BLK_TIPO_RING3      5   /* servito da un processo: vedi blkr3.h */
+/* Il volume che Stage 2 ha copiato in memoria: vedi rd_addr in kernel.h. */
+#define BLK_TIPO_RAM        6
 
 /* Il valore di `padre` quando sotto la partizione c'e' un disco ATA. */
 #define BLK_PADRE_ATA       0xFF
@@ -155,6 +157,10 @@ void blk_ritira(int i);
  * i dispositivi nuovi — a cose fatte.
  * ============================================================================= */
 int  blk_scansiona(int i);
+
+/* Registra il volume che Stage 2 ha lasciato in memoria. Rende l'indice del
+ * dispositivo ("rd0"), o <0. La chiama blk_init() leggendo BootInfo. */
+int  blk_registra_ram(uint32_t fisico, uint32_t byte);
 
 /* =============================================================================
  * Conteggio degli usi — chi sta usando questo dispositivo

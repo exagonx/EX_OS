@@ -37,6 +37,14 @@ static const AudioScheda g_schede[] = {
     { 0x1102, 0x0004, "Creative CA0102 (Sound Blaster Audigy)",  0 },
 
     /* --- Controller AC'97: sopra ci sta quasi sempre un codec Realtek ---- */
+    /* ! LA SiS 7012 SI GUIDA COME UNA ICH, e a dirlo e' il costruttore: nel
+     * pacchetto di driver dell'Acer Aspire 3000 l'.inf la installa con la
+     * stessa sezione degli Intel, mentre alla VIA ne dedica una sua. Le due
+     * differenze note — SR e PICB scambiati, e PICB in byte invece che in
+     * campioni — le tratta /dev/ac97.drv in due righe. */
+    { 0x1039, 0x7012, "SiS 7012 AC'97 (integrata)",             "/dev/ac97.drv" },
+    { 0x1039, 0x7013, "SiS 7013 AC'97",                         "/dev/ac97.drv" },
+
     { 0x8086, 0x2415, "Intel 82801AA AC'97",                    "/dev/ac97.drv" },
     { 0x8086, 0x2425, "Intel 82801AB AC'97",                    "/dev/ac97.drv" },
     { 0x8086, 0x2445, "Intel 82801BA AC'97",                    "/dev/ac97.drv" },

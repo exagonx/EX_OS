@@ -30,7 +30,10 @@
 
 set -e
 
-IMG="dist/sonda.img"
+# Il nome si puo' dare da fuori: `tools/mksonda.sh dist/test_aa3k.img` fa la
+# stessa immagine con un altro nome. Serve a tenere separati i dischetti di
+# prova di una macchina dalla sonda di sempre, senza due script che divergono.
+IMG="${1:-dist/sonda.img}"
 BOOT_SECTOR="build/stage1.bin"
 LOADER="build/stage2.bin"
 KERNEL="build/kernel.bin"
@@ -47,11 +50,31 @@ FLOPPY_SECTORS=2880
 #   shutdown  per fermarla come si deve invece di staccare la corrente
 #   hwinfo    dice a schermo quel che la sonda scrive su file: serve quando
 #             si vuole guardare al volo senza spegnere
-PROGRAMMI="sh ls keymap shutdown hwinfo"
+#   blkscan   rilegge le partizioni di una chiavetta appena comparsa
+#   automount la monta da sola in /USB/DRIVE0
+#   mount     montare a mano quando l'automatismo non ce la fa: e' lui a
+#             stampare il NUMERO dell'errore, che e' la sola cosa che
+#             distingue sei cause diverse
+#   disk      dice quali dispositivi a blocchi esistono e quanto sono grandi
+PROGRAMMI="sh ls cp keymap shutdown hwinfo mount disk"
+PROGRAMMI_CD="blkscan automount netdetect ipcfg ping audio"
 
 # I driver. kbd serve per battere qualcosa, svga per cambiare modalita' fra
 # un referto e l'altro, sonda e' il motivo per cui questo dischetto esiste.
-DRIVER="kbd.drv svga.drv"
+DRIVER="kbd.drv svga.drv pci.drv uhci.drv"
+
+# I driver che stanno in build/drivers-cd. Il PCI e' il fornitore di tutti; i
+# tre controller USB coprono qualunque macchina di quell'epoca.
+#
+# ! CI STANNO PERCHE' QUESTO DISCHETTO E' QUASI VUOTO: novecentomila byte
+# liberi contro i diciottomila del floppy normale. E servono: su una macchina
+# il cui lettore sta sull'USB, la chiavetta e' l'unico posto dove il referto
+# puo' restare dopo lo spegnimento.
+# ! sis900.drv STA QUI PERCHE' QUESTO DISCHETTO VA SU QUELLA MACCHINA. QEMU
+# non emula la SiS 900 — `qemu-system-i386 -device help` non la nomina — quindi
+# l'unico posto dove quel driver si puo' provare e' l'Acer, e l'unico modo di
+# portarcelo e' questo dischetto.
+DRIVER_CD="ehci.drv ohci.drv sonda.drv sis.drv mappa.drv sis900.drv ip.drv ac97.drv cardbus.drv"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
 log_info() { echo -e "${BLUE}[INFO]${NC}  $1"; }
@@ -98,24 +121,40 @@ mmd -i "$IMG" ::/USB      # dove automount monta le chiavette
 # configurazione che si legge, il byte dentro LOADER.BIN e' il recapito che
 # viene ubbidito (il perche' per esteso sta in testa a drivers/svga/svga.c).
 #
-# build/stage2.bin porta il byte dell'ultima prova fatta qui. Senza azzerarlo,
-# il primo referto uscirebbe nella modalita' di ieri invece che in testo — e i
-# due referti da sottrarre sarebbero due volte lo stesso.
+# build/stage2.bin porta il byte dell'ultima prova fatta qui, e qui lo si mette
+# a quello che serve a QUESTA immagine.
+#
+# ! E DA QUANDO LA RADICE STA IN RAM, QUESTO E' L'UNICO POSTO DA CUI SI PUO'
+# CAMBIARE. `svga.drv` scrive dentro /LOADER.BIN della radice, che li' e' una
+# copia in memoria: al riavvio non e' cambiato niente. Il 10 settembre 2026 due
+# referti presi «in due modalita' diverse» sono usciti identici per questo.
+#
+#   MODO_VIDEO=0  testo 80x25 (predefinito)
+#   MODO_VIDEO=1  640x480     2  800x600     3  1024x768
+MODO_VIDEO="${MODO_VIDEO:-0}"
+case "$MODO_VIDEO" in
+    0) MODO_NOME="testo 80x25" ;;
+    1) MODO_NOME="640x480" ;;
+    2) MODO_NOME="800x600" ;;
+    3) MODO_NOME="1024x768" ;;
+    *) log_err "MODO_VIDEO=$MODO_VIDEO: sono 0, 1, 2 o 3" ;;
+esac
+
 TMPS2=$(mktemp)
 cp "$LOADER" "$TMPS2"
-python3 - "$TMPS2" <<'PY'
+python3 - "$TMPS2" "$MODO_VIDEO" <<'PY'
 import sys
 p = sys.argv[1]
 d = bytearray(open(p, 'rb').read())
 k = d.find(b'SVGAMODE')
 if k < 0 or k + 8 >= len(d):
     sys.exit("firma SVGAMODE non trovata in stage2.bin")
-d[k + 8] = 0            # 0 = console di testo 80x25
+d[k + 8] = int(sys.argv[2])
 open(p, 'wb').write(d)
 PY
 mcopy -i "$IMG" "$TMPS2" ::/LOADER.BIN
 rm -f "$TMPS2"
-log_ok "stage2 copiato con la modalita' video azzerata (testo 80x25)"
+log_ok "stage2 copiato, modalita' video $MODO_VIDEO ($MODO_NOME)"
 
 mcopy -i "$IMG" "$KERNEL" ::/KERNEL.BIN
 
@@ -185,8 +224,18 @@ echo  SONDA - scrivo il referto di questa macchina sul dischetto
 echo ===============================================================
 sonda.drv -auto
 echo
+echo
+echo Accendo l USB: se infili una chiavetta la monto in /USB/DRIVE0
+/dev/pci.drv &
+/dev/ehci.drv -avvio &
+/dev/ohci.drv -avvio &
+/dev/uhci.drv -avvio &
+automount &
+echo
 echo Adesso:
 echo   ls /              vedere che il referto ci sia
+echo   ls /USB/DRIVE0    la chiavetta, quando l hai infilata
+echo   cp /SONDA1.TXT /USB/DRIVE0/    portarsi via il referto
 echo   svga.drv 800x600  cambiare modo, riavviare, e farne un secondo
 echo   shutdown          fermare la macchina
 AUT
@@ -203,6 +252,22 @@ for p in $PROGRAMMI; do
     fi
 done
 
+# umount e' lo stesso binario di mount: guarda argv[0]. Copiarlo due volte
+# costa dodici KB su un dischetto che ne ha settecentomila liberi.
+if [ -f build/bin/mount ]; then
+    mcopy -i "$IMG" build/bin/mount ::/bin/umount
+    log_ok "  /bin/umount"
+fi
+
+for p in $PROGRAMMI_CD; do
+    if [ -x "build/bin-cd/$p" ]; then
+        mcopy -i "$IMG" "build/bin-cd/$p" "::/bin/$p"
+        log_ok "  /bin/$p"
+    else
+        log_warn "  build/bin-cd/$p non c'e': saltato"
+    fi
+done
+
 # ! SENZA /lib/libc.so I PROGRAMMI NON PARTONO. La libc e' condivisa: `ls`
 # rispondeva «non trovo la libreria condivisa /lib/libc.so» e usciva con 1.
 # La sonda no — nei .drv la libc e' dentro — ma un dischetto su cui non si
@@ -214,8 +279,14 @@ else
     log_err "manca build/lib/libc.so — senza, /bin non funziona"
 fi
 
-mcopy -i "$IMG" "$SONDA_DRV" ::/dev/sonda.drv
-log_ok "  /dev/sonda.drv"
+for d in $DRIVER_CD; do
+    if [ -f "build/drivers-cd/$d" ]; then
+        mcopy -i "$IMG" "build/drivers-cd/$d" "::/dev/$d"
+        log_ok "  /dev/$d"
+    else
+        log_warn "  build/drivers-cd/$d non c'e': saltato"
+    fi
+done
 
 for d in $DRIVER; do
     if [ -f "build/drivers/$d" ]; then

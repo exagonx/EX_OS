@@ -43,6 +43,14 @@
 %define VBEMODE 0xE200  ; ModeInfoBlock, 256 byte  -> 0xE300
 %define GDTB    0xE400  ; GDT: 3 descrittori + puntatore
 
+; --- Il disco in RAM -------------------------------------------------------
+; Dove finisce il volume, quanto e' grande, e da dove si passa.
+%define RDDEST  0x02000000  ; 32 MB: dentro la fascia che il kernel mappa
+%define RDSEG   0x8000      ; il rimbalzo, a 512 KB: sotto c'e' il kernel
+%define RDTRACK 160         ; 80 cilindri x 2 testine
+%define RDSPT   18          ; settori per traccia
+%define RDBYTE  (RDTRACK * RDSPT * 512)
+
 ; -----------------------------------------------------------------------------
 ; Mappa di memoria E820, costruita qui e letta dal kernel (pmm_init).
 ;
@@ -206,11 +214,129 @@ _start:
     mov  word [koff], 0
 
     ; ---- Carica catena cluster -> 0x10000 (segmento kseg:koff) --------
+    ;
+    ; ! SI LEGGE A TRATTI, NON A SETTORI, dal 10 settembre 2026, e su un
+    ; lettore USB e' la differenza fra minuti e secondi.
+    ;
+    ; Un cluster di un floppy e' UN settore: la prima stesura faceva una
+    ; INT 13h per ognuno, cioe' oltre cinquecento chiamate per un kernel di
+    ; 260 KB. Su un controller vero non si sente; dietro l'emulazione di un
+    ; floppy USB ogni chiamata e' un giro completo sul bus, e il risultato e'
+    ; un minuto abbondante di motore che gira senza che la testina si muova —
+    ; cioe' una macchina che sembra piantata mentre sta lavorando.
+    ;
+    ; La catena FAT sta gia' tutta in memoria a 0xA000, quindi guardare avanti
+    ; non costa niente: si contano i cluster CONSECUTIVI e si leggono in un
+    ; colpo. Un file appena scritto e' quasi sempre contiguo, quindi in pratica
+    ; si legge una traccia per volta.
+    ;
+    ; ! TRE LIMITI, E NESSUNO E' FACOLTATIVO:
+    ;   - non oltre la fine della TRACCIA: una lettura CHS non la attraversa;
+    ;   - non oltre i 64 KB del segmento di destinazione, o l'offset a 16 bit
+    ;     ricomincerebbe da capo in mezzo al trasferimento;
+    ;   - non piu' di 18 settori, che e' una traccia intera.
 .kload:
     cmp  ax, 0xFF8
     jae  .kdone
     cmp  ax, 2
     jb   .kdone
+
+    ; ---- quanti cluster consecutivi seguono ----------------------------
+    mov  [kprimo], ax
+    mov  [kult], ax
+    mov  word [kcnt], 1
+.krun:
+    cmp  word [kcnt], 18
+    jae  .krun_fine
+    mov  ax, [kult]
+    call fat_next               ; AX = il cluster dopo [kult]
+    mov  bx, [kult]
+    inc  bx
+    cmp  ax, bx                 ; e' proprio quello subito dopo?
+    jne  .krun_fine
+    mov  [kult], ax
+    inc  word [kcnt]
+    jmp  .krun
+.krun_fine:
+
+    ; ---- LBA del primo settore, e CHS ----------------------------------
+    mov  ax, [kprimo]
+    sub  ax, 2
+    add  ax, 33                 ; LBA = (cluster - 2) + 33
+    xor  dx, dx
+    mov  cx, 18
+    div  cx                     ; AX = lba/18, DX = settore 0-based
+    mov  [ksett], dx            ; da qui in poi serve solo il resto
+    xor  dx, dx
+    mov  cx, 2
+    div  cx                     ; AX = cilindro, DX = testina
+    mov  [kcil], ax
+    mov  [ktesta], dx
+
+    ; ---- primo limite: la fine della traccia ---------------------------
+    mov  ax, 18
+    sub  ax, [ksett]
+    cmp  ax, [kcnt]
+    jae  .klim2
+    mov  [kcnt], ax
+.klim2:
+    ; ---- secondo limite: i 64 KB del segmento --------------------------
+    ; (0x10000 - koff) / 512, con koff = 0 che vuol dire «ci sta tutto»
+    mov  ax, [koff]
+    or   ax, ax
+    jz   .kleggi                ; segmento appena cominciato: nessun limite
+    neg  ax                     ; 0x10000 - koff, in aritmetica a 16 bit
+    shr  ax, 9
+    cmp  ax, [kcnt]
+    jae  .kleggi
+    mov  [kcnt], ax
+
+.kleggi:
+    push bx
+    push cx
+    push dx
+    push es
+    mov  ax, [kseg]
+    mov  es, ax
+    mov  bx, [koff]
+    mov  ch, byte [kcil]
+    mov  cl, byte [ksett]
+    inc  cl                     ; i settori si contano da uno
+    mov  dh, byte [ktesta]
+    mov  dl, [drv]
+    mov  ah, 0x02
+    mov  al, byte [kcnt]
+    int  0x13
+    pop  es
+    pop  dx
+    pop  cx
+    pop  bx
+    jc   .halt
+
+    ; ---- avanza destinazione e catena ----------------------------------
+    mov  ax, [kcnt]
+    shl  ax, 9                  ; byte letti = settori * 512
+    add  [koff], ax
+    jnc  .nw2
+    add  word [kseg], 0x1000
+.nw2:
+    ; ! SI AVANZA DI QUANTI SE NE SONO LETTI, NON FINO ALL'ULTIMO DEL TRATTO.
+    ;
+    ; Il tratto contato e' quello dei cluster CONSECUTIVI; quanti se ne leggono
+    ; davvero lo decidono i limiti qui sopra, e possono essere meno. Ripartendo
+    ; dal successore dell'ultimo CONTATO si saltavano i cluster in mezzo: con
+    ; un tratto di 18 e un limite di traccia a 10, otto settori per giro non
+    ; venivano mai letti. Il kernel si caricava «senza errori» e non partiva —
+    ; Stage 2 arrivava a saltarci dentro e li' finiva tutto.
+    mov  cx, [kcnt]
+    mov  ax, [kprimo]
+.kavanza:
+    call fat_next
+    loop .kavanza
+    jmp  .kload
+
+    ; --- la vecchia strada, un settore per volta, non si usa piu' -------
+.kvecchio:
     push ax
     sub  ax, 2
     add  ax, 33            ; LBA = (cluster-2)+33
@@ -365,8 +491,13 @@ _start:
     mov  word  [es:di+33], 0      ; fb_width
     mov  word  [es:di+35], 0      ; fb_height
     mov  byte  [es:di+37], 0      ; fb_bpp
+    mov  dword [es:di+38], 0      ; rd_addr: nessun disco in RAM
+    mov  dword [es:di+42], 0      ; rd_byte
     xor  ax, ax
     mov  es, ax
+
+    ; ---- Il volume in RAM, se qualcuno l'ha chiesto --------------------
+    call ramdisco
 
     ; =====================================================================
     ; MODALITA' GRAFICA VESA — l'unico posto da cui si puo' fare
@@ -453,20 +584,33 @@ _start:
     ; video si raggiunge solo a finestre di 64 KB da commutare a ogni
     ; banco, e il kernel dovrebbe cambiare banco per disegnare: qui si
     ; scartano quei modi e basta.
+    inc  word [vmodi]             ; quanti modi la scheda ha elencato
+
     mov  ax, [es:0]
     test ax, 0x0001
     jz   .mloop
     test ax, 0x0010
     jz   .mloop
-    test ax, 0x0080
-    jz   .mloop
 
+    ; ! LA RISOLUZIONE SI CONFRONTA PRIMA DEL FRAMEBUFFER LINEARE, e l'ordine
+    ; conta solo per una ragione: sapere PERCHE' si e' rinunciato. Scartando
+    ; per attributi prima di guardare la misura, «questa scheda non ha
+    ; 800x600» e «ce l'ha ma solo a banchi» diventano lo stesso silenzio — e
+    ; sono due problemi con due rimedi diversi.
     mov  ax, [es:0x12]            ; XResolution
     cmp  ax, [vwant]
     jne  .mloop
     mov  ax, [es:0x14]            ; YResolution
     cmp  ax, [hwant]
     jne  .mloop
+
+    mov  byte [vres], 1           ; la misura c'e'
+
+    mov  ax, [es:0]
+    test ax, 0x0080               ; framebuffer lineare
+    jz   .mloop
+
+    mov  byte [vlfb], 1           ; ...e anche lineare
 
     ; ! NON SI PRENDE IL PRIMO CHE COMBACIA, si tiene il migliore.
     ; La stessa risoluzione viene offerta a piu' profondita' di colore, e
@@ -534,6 +678,36 @@ _start:
     xor  ax, ax
     mov  es, ax
 
+    ; ! SI DICE PERCHE', o «lo schermo e' rimasto in testo» resta un mistero.
+    ; Le tre risposte hanno tre rimedi diversi: nessun VBE vuol dire che la
+    ; scheda non lo offre affatto; nessuna misura vuol dire chiedere un'altra
+    ; risoluzione; solo a banchi vuol dire che quella misura c'e' ma senza
+    ; framebuffer lineare, e li' il rimedio e' un'altra risoluzione ancora.
+    cmp  byte [svgamodo], 0
+    je   .vfine                   ; nessuno aveva chiesto la grafica
+
+    mov  si, msg_v1
+    call print
+    mov  ax, [vmodi]
+    call numero
+    mov  si, msg_v2
+    call print
+
+    cmp  byte [vres], 0
+    jne  .vlfb
+    mov  si, msg_vnores
+    jmp  .vdimmi
+.vlfb:
+    cmp  byte [vlfb], 0
+    jne  .vaddr
+    mov  si, msg_vnolfb
+    jmp  .vdimmi
+.vaddr:
+    mov  si, msg_vnobpp
+.vdimmi:
+    call print
+.vfine:
+
     ; ---- A20 fast gate --------------------------------------------------
     in   al, 0x92
     or   al, 2
@@ -596,6 +770,365 @@ _start:
     dw   0x10
     jmp  .pmloop         ; non dovrebbe mai arrivare qui
 
+; =============================================================================
+; IL VOLUME IN RAM — l'unica strada per una macchina il cui lettore sta sull'USB
+;
+; ! IL PROBLEMA, IN UNA RIGA: il BIOS sa leggere un lettore USB, il kernel no.
+; Stage 1 e Stage 2 lavorano con INT 13h e si caricano benissimo da un floppy o
+; da un CD attaccati all'USB; poi il kernel passa in modo protetto e va a
+; cercare quel supporto dove i supporti stanno da sempre — il controller
+; dell'FDC, il bus IDE — e li' non c'e' niente. Errori di filesystem, nessuna
+; shell, e una macchina che ha caricato tutto e non puo' fare niente.
+;
+; Qui il volume intero si copia in RAM FINCHE' IL BIOS E' ANCORA DISPONIBILE, e
+; il kernel ci monta sopra la radice. Da quel momento non gli importa piu' di
+; come sia fatto il lettore: qualunque cosa il BIOS sappia leggere diventa un
+; sistema che si avvia.
+;
+; ! E' SPENTO DI SUO. Costa 1,44 MB di memoria e qualche secondo di
+; caricamento, e su una macchina che il suo lettore ce l'ha per davvero non
+; serve a niente. Si accende a costruzione, come la risoluzione: il byte lo
+; trova la firma 'RAMDISCO' qui sotto.
+;
+; ! IL MODO REALE NON ARRIVA A 32 MB, e questa e' la parte che va spiegata.
+; Un segmento reale vede 64 KB, e la destinazione sta a trentadue milioni di
+; byte. Si usa il «modo reale grande»: si entra un istante in modo protetto,
+; si carica ES con un descrittore che copre 4 GB, si esce — e la CPU tiene il
+; limite nuovo nella cache del segmento anche in modo reale. Da li' `movsd`
+; con indirizzi a 32 bit ci arriva.
+;
+; ! MA INT 13h VUOLE ES:BX, e ES ce l'ha grande. Percio' a ogni traccia si fa
+; il giro due volte: ES normale per leggere nel rimbalzo a 512 KB, ES grande
+; per copiare in alto. Sono centosessanta giri, e ognuno costa dieci
+; istruzioni: meno di quanto costi la lettura stessa.
+;
+; ! E SE UNA TRACCIA NON SI LEGGE, IL DISCO IN RAM NON SI FA. Meglio un avvio
+; che si ferma dicendo perche', che una radice con un buco in mezzo: quella
+; darebbe file troncati e errori che sembrano di tutt'altro.
+; =============================================================================
+ramdisco:
+    mov  al, [rdflag]
+    or   al, al
+    jz   .no                      ; 0 = non richiesto
+
+    ; Da disco rigido non serve: quello il kernel lo legge da se'.
+    mov  al, [drv]
+    cmp  al, 0x80
+    jae  .no
+
+    ; ! LA MEMORIA SI CONTA PRIMA. Il volume va a 32 MB: su una macchina che
+    ; ne ha meno si scriverebbe nel nulla, e il sintomo sarebbe una radice
+    ; piena di zeri. mem_upper e' in KB oltre il primo MB.
+    push es
+    mov  ax, BINFO >> 4
+    mov  es, ax
+    mov  eax, [es:9]
+    pop  es
+    cmp  eax, 40 * 1024           ; servono ~34 MB, se ne chiedono 41
+    jb   .pocamem
+
+    mov  si, msg_rd
+    call print
+
+    ; A20: senza, l'indirizzo 0x2000000 si ripiegherebbe su se stesso.
+    in   al, 0x92
+    or   al, 2
+    and  al, 0xFE
+    out  0x92, al
+
+    call gdt_prepara
+
+    mov  word [rdtrk], 0
+    mov  dword [rddst], RDDEST
+
+.giro:
+    mov  ax, [rdtrk]
+    cmp  ax, RDTRACK
+    jae  .fatto
+
+    ; cilindro = traccia / 2, testina = traccia & 1
+    mov  bx, ax
+    shr  ax, 1
+    mov  ch, al                   ; CH = cilindro
+    and  bl, 1
+    mov  dh, bl                   ; DH = testina
+
+    mov  cl, 1                    ; settore 1 (i settori partono da uno)
+    mov  ax, RDSEG
+    mov  es, ax
+    xor  bx, bx
+
+    ; ! UN PUNTO PER TRACCIA, e non e' decorazione. Su un lettore USB la
+    ; lettura del volume dura decine di secondi: senza un segno, lo schermo
+    ; resta fermo con un cursore che lampeggia, ed e' indistinguibile da una
+    ; macchina piantata. Chi guarda deve poter dire «sta andando avanti» o
+    ; «e' fermo», e la differenza sono centosessanta puntini.
+    mov  al, '.'
+    call carattere
+
+    ; --- prima si prova la traccia intera ------------------------------
+    mov  al, RDSPT
+    call leggi_tratto
+    jnc  .letta
+
+    ; --- ripiego: un settore per volta ---------------------------------
+    ;
+    ; ! NON TUTTI I BIOS LEGGONO DICIOTTO SETTORI IN UN COLPO da un floppy
+    ; EMULATO sull'USB. Quando non ce la fanno rispondono errore, e con i soli
+    ; tentativi ripetuti si perde un secondo per traccia in reset del
+    ; controller — cioe' minuti buoni, con lo schermo fermo. Sceso a un settore
+    ; per volta il giro e' piu' lungo ma FUNZIONA, ed e' meglio di un avvio che
+    ; non arriva. La 's' a schermo dice che si e' passati di qui.
+    mov  al, 's'
+    call carattere
+
+    mov  byte [rdsett], 1         ; settore corrente, 1..18
+.uno:
+    mov  cl, [rdsett]
+    mov  al, 1
+    call leggi_tratto
+    jc   .guasto
+
+    add  bx, 512                  ; il prossimo settore dopo, nel rimbalzo
+    inc  byte [rdsett]
+    cmp  byte [rdsett], RDSPT
+    jbe  .uno
+
+    xor  bx, bx                   ; la copia riparte dall'inizio del rimbalzo
+
+.letta:
+    call unreal_es                ; ES = 4 GB
+
+    ; ! LA DESTINAZIONE SI LEGGE PRIMA DI CAMBIARE DS. `rddst` e' una variabile
+    ; di Stage 2, cioe' sta nel segmento dati di qui; un istante dopo DS punta
+    ; al rimbalzo, e la stessa riga leggerebbe due parole a caso dentro i dati
+    ; appena letti dal disco. Con un EDI cosi' la copia va a finire ovunque, e
+    ; la macchina si ferma prima di dire qualunque cosa.
+    mov  edi, [rddst]
+
+    push ds
+    mov  ax, RDSEG
+    mov  ds, ax                   ; sorgente: il rimbalzo
+    xor  esi, esi
+    mov  ecx, (RDSPT * 512) / 4
+    a32 rep movsd
+    pop  ds
+
+    add  dword [rddst], RDSPT * 512
+    inc  word [rdtrk]
+    jmp  .giro
+
+.fatto:
+    ; Il kernel lo saprà da qui.
+    push es
+    mov  ax, BINFO >> 4
+    mov  es, ax
+    mov  dword [es:38], RDDEST
+    mov  dword [es:42], RDBYTE
+    pop  es
+
+    mov  si, msg_rdok
+    call print
+    xor  ax, ax
+    mov  es, ax
+    ret
+
+.guasto:
+    mov  si, msg_rderr
+    call print
+    xor  ax, ax
+    mov  es, ax
+    ret
+
+.pocamem:
+    mov  si, msg_rdmem
+    call print
+.no:
+    ret
+
+; Una riga a schermo. Stage 2 e' silenzioso di suo — un avvio riuscito non ha
+; niente da dire — ma il caricamento del volume dura qualche secondo, e uno
+; schermo fermo senza spiegazioni e' il modo in cui si presenta una macchina
+; piantata.
+print:
+    push ax
+.pl:
+    lodsb
+    or   al, al
+    jz   .pfine
+    call carattere
+    jmp  .pl
+.pfine:
+    pop  ax
+    ret
+
+; Il cluster che segue AX, letto dalla FAT gia' in memoria a 0xA000.
+; Rende il prossimo in AX. Non tocca altro.
+;
+; ! LA FAT12 IMPACCHETTA UNA VOCE E MEZZA OGNI TRE BYTE, ed e' il motivo per
+; cui questa funzione esiste invece di essere una lettura: la voce di un
+; cluster PARI sta nei dodici bit bassi della parola, quella di un DISPARI nei
+; dodici alti. Sbagliare meta' vuol dire seguire una catena che esiste ma non
+; e' quella del file.
+fat_next:
+    push bx
+    push cx
+    push si
+    mov  si, ax
+    mov  cx, ax
+    shr  cx, 1
+    add  si, cx
+    add  si, FAT
+    mov  cx, [si]
+    test ax, 1
+    jz   .fn_pari
+    shr  cx, 4
+    jmp  .fn_fine
+.fn_pari:
+    and  cx, 0x0FFF
+.fn_fine:
+    mov  ax, cx
+    pop  si
+    pop  cx
+    pop  bx
+    ret
+
+; Un numero decimale (AX) a schermo e sulla seriale.
+numero:
+    push ax
+    push bx
+    push cx
+    push dx
+    mov  bx, 10
+    xor  cx, cx
+.n_div:
+    xor  dx, dx
+    div  bx
+    push dx
+    inc  cx
+    or   ax, ax
+    jnz  .n_div
+.n_out:
+    pop  ax
+    add  al, '0'
+    call carattere
+    loop .n_out
+    pop  dx
+    pop  cx
+    pop  bx
+    pop  ax
+    ret
+
+; Legge AL settori da CH/CL/DH in ES:BX, con tre tentativi e un reset del
+; controller in mezzo. CF=1 se non ce l'ha fatta. Non tocca BX.
+leggi_tratto:
+    push cx
+    push dx
+    push di
+    mov  di, 3
+    mov  ah, 0x02
+.lt_prova:
+    push ax
+    push cx
+    push dx
+    mov  dl, [drv]
+    int  0x13
+    pop  dx
+    pop  cx
+    pop  ax
+    jnc  .lt_ok
+
+    ; Il reset rimette a posto un lettore che ha perso il passo. Su un
+    ; lettore USB costa parecchio: e' il motivo per cui non ci si appoggia.
+    push ax
+    xor  ah, ah
+    mov  dl, [drv]
+    int  0x13
+    pop  ax
+    mov  ah, 0x02
+    dec  di
+    jnz  .lt_prova
+
+    pop  di
+    pop  dx
+    pop  cx
+    stc
+    ret
+.lt_ok:
+    pop  di
+    pop  dx
+    pop  cx
+    clc
+    ret
+
+; Un carattere a schermo E sulla seriale, senza toccare niente.
+;
+; ! ANCHE SULLA SERIALE, perche' e' l'unico modo di sapere cosa fa Stage 2
+; quando lo schermo non basta: qui non c'e' nessun registro da rileggere dopo,
+; e un avvio che si ferma a meta' non lascia altra traccia. Stage 1 la porta
+; l'ha gia' accesa (vedi bootloader/stage1/boot.asm), quindi costa due
+; istruzioni.
+carattere:
+    push ax
+    push bx
+    push dx
+    mov  ah, 0x0E
+    mov  bx, 0x0007
+    int  0x10
+    pop  dx
+    pop  bx
+    pop  ax
+
+    push ax
+    push dx
+    mov  dx, 0x3F8
+    out  dx, al
+    pop  dx
+    pop  ax
+    ret
+
+; Costruisce la GDT a GDTB. Serve al modo reale grande, e la rifara' anche il
+; passaggio a modo protetto piu' sotto: farla due volte non costa niente e
+; toglie di mezzo la dipendenza fra i due pezzi.
+gdt_prepara:
+    push ax
+    xor  ax, ax
+    mov  [GDTB+0x00], ax
+    mov  [GDTB+0x02], ax
+    mov  [GDTB+0x04], ax
+    mov  [GDTB+0x06], ax
+    mov  word  [GDTB+0x08], 0xFFFF
+    mov  word  [GDTB+0x0A], 0x0000
+    mov  byte  [GDTB+0x0C], 0x00
+    mov  byte  [GDTB+0x0D], 0x92
+    mov  byte  [GDTB+0x0E], 0xCF
+    mov  byte  [GDTB+0x0F], 0x00
+    mov  word  [GDTB+0x1E], 23
+    mov  dword [GDTB+0x20], GDTB
+    pop  ax
+    ret
+
+; ES = un descrittore che copre 4 GB, e si resta in modo reale.
+;
+; ! NON C'E' NESSUN SALTO LONTANO, ed e' voluto: CS non cambia, quindi il
+; codice continua a girare esattamente dov'era. L'unica cosa che cambia e' cio'
+; che la CPU si ricorda del segmento ES.
+unreal_es:
+    push ax
+    cli
+    lgdt [GDTB+0x1E]
+    mov  eax, cr0
+    or   al, 1
+    mov  cr0, eax
+    mov  ax, 0x08
+    mov  es, ax
+    mov  eax, cr0
+    and  al, 0xFE
+    mov  cr0, eax
+    sti
+    pop  ax
+    ret
+
 ; -----------------------------------------------------------------------------
 ; La modalita' grafica voluta, e la firma con cui /dev/svga.drv la trova.
 ;
@@ -620,6 +1153,43 @@ svgamodo  db SVGAMODO ; 0=testo 1=640x480 2=800x600 3=1024x768
 svgatab   dw 640, 480
           dw 800, 600
           dw 1024, 768
+
+; ! LA FIRMA, come per SVGAMODE e per la stessa ragione: un offset fisso
+; dentro il binario cambierebbe a ogni riga aggiunta qui sopra.
+ramdiscomagic db 'RAMDISCO'
+%ifndef RAMDISCO
+%define RAMDISCO 0
+%endif
+rdflag    db RAMDISCO   ; 0 = niente, 1 = il volume si carica in RAM
+
+rdtrk     dw 0
+rdsett    db 1
+
+; Il tratto di kernel che si sta leggendo: primo cluster, ultimo, quanti
+; settori, e il suo CHS.
+kprimo    dw 0
+kult      dw 0
+kcnt      dw 0
+kcil      dw 0
+ktesta     dw 0
+ksett     dw 0
+
+; Perche' la grafica non e' partita: tre risposte, tre rimedi diversi.
+vmodi     dw 0        ; quanti modi la scheda ha elencato
+vres      db 0        ; 1 = la risoluzione voluta esiste
+vlfb      db 0        ; 1 = ...e con framebuffer lineare
+
+msg_v1    db 13, 10, 'VESA: ', 0
+msg_v2    db ' modi elencati, ', 0
+msg_vnores  db 'nessuno alla risoluzione chiesta.', 13, 10, 0
+msg_vnolfb  db 'quella risoluzione c e ma solo a banchi.', 13, 10, 0
+msg_vnobpp  db 'c e ma non a 16, 24 o 32 bit.', 13, 10, 0
+rddst     dd 0
+
+msg_rd    db 'Carico il volume in RAM...', 13, 10, 0
+msg_rdok  db 'Volume in RAM: la radice non dipende piu dal lettore.', 13, 10, 0
+msg_rderr db 'Lettura fallita: niente disco in RAM.', 13, 10, 0
+msg_rdmem db 'Memoria insufficiente per il disco in RAM.', 13, 10, 0
 
 vwant dw 0
 hwant dw 0

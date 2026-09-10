@@ -188,6 +188,12 @@ void exhttp_attesa(ExHttpAttesa f, void *dato);
  * ! NON RENDE LA STRETTA INTERROMPIBILE DENTRO UN CONTO. Un x25519 o una
  * verifica di firma sono un blocco solo: fra un passo e l'altro si respira,
  * dentro no. E' scritto anche in extls.h, dove i passi si chiamano.
+ *
+ * ! E QUEL BLOCCO ARRIVA A 850 ms, misurati l'8 settembre 2026 su una catena
+ * di quattro certificati tutti ECDSA: e' la verifica della catena, non lo
+ * scambio di chiave (30 ms). La tabella intera sta in extls.h; lo strumento
+ * che l'ha fatta e' `scarica -tempi <url>`, che non e' altro che questo
+ * gancio con un orologio attaccato.
  * ========================================================================== */
 typedef int (*ExHttpPasso)(void *dato, const char *cosa);  /* 0 = annulla */
 

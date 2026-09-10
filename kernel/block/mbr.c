@@ -355,6 +355,43 @@ int mbr_leggi_da(MbrLettore leggi, void *ctx, uint64_t disco,
         return 0;    /* letto, ma non e' un MBR */
     }
 
+    /* =====================================================================
+     * ! UN SETTORE DI AVVIO DI UN FILESYSTEM NON E' UNA TABELLA, e ha la
+     * STESSA firma 0x55AA. E' il modo piu' comune di sbagliarsi, e capita su
+     * ogni chiavetta USB: quelle di fabbrica non sono partizionate — il
+     * filesystem comincia al settore 0 — e li' dove una tabella avrebbe le
+     * sue quattro voci c'e' il codice di avvio del FAT.
+     *
+     * Letto come tabella, quel codice produce voci con numeri assurdi. Il
+     * sintomo visto su una chiavetta vera:
+     *
+     *     BLK: partizione 1 di usb0 ... fuori dal supporto, ignorata
+     *     BLK: partizione 2 di usb0 ... fuori dal supporto, ignorata
+     *     usb0 riletto, 0 partizioni
+     *
+     * Il risultato finale era giusto — zero partizioni, e il volume si monta
+     * intero — ma due righe di allarme per una cosa normale mandano a cercare
+     * un guasto che non c'e'.
+     *
+     * ! LE QUATTRO CONDIZIONE VANNO INSIEME. Un MBR vero puo' cominciare con
+     * un salto (GRUB lo fa), quindi il salto da solo non basta: si chiede
+     * anche che i byte del BPB siano quelli di un BPB — misura del settore,
+     * settori per cluster potenza di due, da uno a quattro FAT. Tutte e
+     * quattro insieme, nel codice di avvio di un MBR, non capitano.
+     * ===================================================================== */
+    if ((sett[0] == 0xEB && sett[2] == 0x90) || sett[0] == 0xE9) {
+        uint32_t bps = (uint32_t)sett[11] | ((uint32_t)sett[12] << 8);
+        uint32_t spc = sett[13];
+        uint32_t nfat = sett[16];
+
+        if ((bps == 512 || bps == 1024 || bps == 2048 || bps == 4096) &&
+            spc != 0 && (spc & (spc - 1)) == 0 && spc <= 128 &&
+            nfat >= 1 && nfat <= 4) {
+            out->schema = PT_SCHEMA_NESSUNO;
+            return 0;   /* e' un volume, non una tabella */
+        }
+    }
+
     /* MBR PROTETTIVO = disco GPT. Va riconosciuto PRIMA di leggere le
      * voci come partizioni vere: un disco GPT ha una sola voce di tipo
      * 0xEE che copre l'intero disco, e trattarla come una partizione

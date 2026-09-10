@@ -947,6 +947,55 @@ static int clip_dentro(int x, int y)
     return x >= g_clip_x1 && y >= g_clip_y1 && x < g_clip_x2 && y < g_clip_y2;
 }
 
+/* =============================================================================
+ * ritaglia() — i limiti si calcolano UNA VOLTA, non una volta per pixel
+ *
+ * ! E' LA DIFFERENZA FRA MEZZO MILIONE DI CONFRONTI E QUATTRO. Il disegno di
+ * questo toolkit passava da punto(), che per OGNI pixel fa due controlli sul
+ * puntatore, quattro confronti di limiti e una chiamata a clip_dentro(). Un
+ * riempimento a schermo pieno sono 480000 chiamate di funzione con cinque
+ * salti condizionali ciascuna, per scrivere 480000 parole: il lavoro utile
+ * era la parte piccola.
+ *
+ * Un rettangolo pero' o e' dentro o e' fuori nella stessa misura per tutti i
+ * suoi pixel. Si interseca una volta con l'oggetto e con il ritaglio attivo,
+ * e quello che resta si scrive senza piu' chiedere niente a nessuno.
+ *
+ * Rende 0 se dell'intersezione non resta niente — e allora non si scrive
+ * proprio, che e' l'altra meta' del guadagno: una finestra coperta non paga
+ * un ciclo.
+ *
+ * ! IL RETTANGOLO SI MODIFICA SUL POSTO. Chi chiama deve tenersi da parte
+ * l'angolo di partenza se gli serve — ex_pixmap lo fa, perche' di quanto il
+ * ritaglio ha spostato l'angolo si deve spostare anche la sorgente.
+ * ============================================================================= */
+static int ritaglia(const Oggetto *r, int *x, int *y, int *w, int *h)
+{
+    int x1, y1, x2, y2;
+
+    if (!r || !r->pix) return 0;
+    if (*w <= 0 || *h <= 0) return 0;
+
+    x1 = *x; y1 = *y; x2 = *x + *w; y2 = *y + *h;
+
+    if (x1 < 0)     x1 = 0;
+    if (y1 < 0)     y1 = 0;
+    if (x2 > r->w)  x2 = r->w;
+    if (y2 > r->h)  y2 = r->h;
+
+    if (g_clip) {
+        if (x1 < g_clip_x1) x1 = g_clip_x1;
+        if (y1 < g_clip_y1) y1 = g_clip_y1;
+        if (x2 > g_clip_x2) x2 = g_clip_x2;
+        if (y2 > g_clip_y2) y2 = g_clip_y2;
+    }
+
+    if (x1 >= x2 || y1 >= y2) return 0;
+
+    *x = x1; *y = y1; *w = x2 - x1; *h = y2 - y1;
+    return 1;
+}
+
 /* -----------------------------------------------------------------------------
  * Disegnare
  * --------------------------------------------------------------------------- */
@@ -1005,12 +1054,18 @@ static void punto_fuso(Oggetto *r, int x, int y, unsigned int c, unsigned int a)
 
 void ex_riempi(ExFinestra f, int x, int y, int w, int h, unsigned int c)
 {
-    Oggetto *r = radice(f);
-    int i, j;
+    Oggetto      *r = radice(f);
+    unsigned int *riga;
+    int           i, j;
 
-    for (j = 0; j < h; j++)
-        for (i = 0; i < w; i++)
-            punto(r, x + i, y + j, c);
+    if (!ritaglia(r, &x, &y, &w, &h)) return;
+
+    riga = r->pix + (unsigned int)y * r->passo_px + (unsigned int)x;
+
+    for (j = 0; j < h; j++) {
+        for (i = 0; i < w; i++) riga[i] = c;
+        riga += r->passo_px;
+    }
 }
 
 /* =============================================================================
@@ -1034,31 +1089,27 @@ void ex_pixmap(ExFinestra f, int x, int y, int w, int h,
                const unsigned int *px, unsigned int passo)
 {
     Oggetto *r = radice(f);
-    int j, i;
+    int j;
+
+    int x0 = x, y0 = y;
 
     if (!r || !r->pix || !px || w <= 0 || h <= 0) return;
     if (passo == 0) passo = (unsigned int)w;
 
-    /* Il ritaglio si fa QUI e non nel ciclo: un confronto per pixel su
-     * mezzo milione di pixel e' mezzo milione di confronti. */
-    for (j = 0; j < h; j++) {
-        int ry = y + j;
-        const unsigned int *src;
-        unsigned int *dst;
+    /* ! IL RITAGLIO SI FA UNA VOLTA, E POI SI COPIA PER RIGHE INTERE. Prima
+     * il ritaglio orizzontale era dentro il ciclo dei pixel: due confronti
+     * per pixel, cioe' un milione di confronti per un'immagine a schermo
+     * pieno, per copiare mezzo milione di parole. */
+    if (!ritaglia(r, &x, &y, &w, &h)) return;
 
-        if (ry < 0 || ry >= r->h) continue;
-        if (g_clip && (ry < g_clip_y1 || ry >= g_clip_y2)) continue;
+    /* Di quanto il ritaglio ha spostato l'angolo si sposta anche la
+     * sorgente, altrimenti si posa il pezzo sbagliato dell'immagine. */
+    px += (unsigned int)(y - y0) * passo + (unsigned int)(x - x0);
 
-        src = px + (unsigned int)j * passo;
-        dst = r->pix + (unsigned int)ry * r->passo_px;
-
-        for (i = 0; i < w; i++) {
-            int rx = x + i;
-            if (rx < 0 || rx >= r->w) continue;
-            if (g_clip && (rx < g_clip_x1 || rx >= g_clip_x2)) continue;
-            dst[rx] = src[i];
-        }
-    }
+    for (j = 0; j < h; j++)
+        memcpy(r->pix + (unsigned int)(y + j) * r->passo_px + (unsigned int)x,
+               px + (unsigned int)j * passo,
+               (unsigned int)w * sizeof(unsigned int));
 }
 
 void ex_riquadro_disegna(ExFinestra f, int x, int y, int w, int h, unsigned int c)

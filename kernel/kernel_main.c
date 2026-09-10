@@ -368,6 +368,13 @@ klog(LOG_INFO, "[PASSO 11] Syscall OK");
          * tabelle delle partizioni e registra i lettori) e dopo
          * fat12_init (registra fd0). */
         blk_init();
+
+        /* ! IL VOLUME IN RAM SI REGISTRA QUI, dopo gli altri: e' un
+         * dispositivo a blocchi come loro, e diventa la radice solo se
+         * vfs_init lo trova (kernel/fs/vfs.c). Su una macchina normale
+         * rd_addr vale zero e questa riga non fa niente. */
+        if (info->rd_addr != 0 && info->rd_byte != 0)
+            blk_registra_ram(info->rd_addr, info->rd_byte);
     }
 
     /* Lo strato di montaggio va PRIMA di chiunque apra un file: da qui in

@@ -40,6 +40,16 @@ static const ReteScheda g_note[] = {
     { 0x8086, 0x100F, "Intel 82545EM (e1000)",                      "/dev/e1000.drv" },
     { 0x8086, 0x10D3, "Intel 82574L (e1000e)",                      "/dev/e1000.drv" },
 
+    /* ! LA SiS 900 E' L'UNICA DI QUESTA TABELLA IL CUI DRIVER NON VIENE DA UN
+     * DOCUMENTO. SiS non ha mai pubblicato i registri: la mappa e' stata
+     * misurata sul driver Windows del portatile con tools/scava.py, cercando
+     * le chiamate a WRITE_PORT_ULONG e l'offset sommato alla base prima di
+     * ognuna. Le due righe coprono la stessa scheda con i due identificativi
+     * che usa: 0900 da sola, 7016 quando il ponte sud la presenta insieme al
+     * proprio. */
+    { 0x1039, 0x0900, "SiS 900 10/100 (integrata)",                 "/dev/sis900.drv" },
+    { 0x1039, 0x7016, "SiS 7016 10/100",                            "/dev/sis900.drv" },
+
     /* Famiglia NE2000 PCI: schede diverse, stessa programmazione */
     { 0x10EC, 0x8029, "Realtek RTL8029(AS) - NE2000 PCI",           "/dev/ne2k.drv"  },
     { 0x1050, 0x0940, "Winbond W89C940 - NE2000 PCI",               "/dev/ne2k.drv"  },

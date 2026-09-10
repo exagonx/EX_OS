@@ -66,7 +66,7 @@
 #include "pci_proto.h"
 
 /* +0.001 a ogni modifica: `ac97.drv -version` la stampa. */
-EX_VERSIONE("ac97.drv", "0.001");
+EX_VERSIONE("ac97.drv", "0.002");
 
 /* =============================================================================
  * BAR0 — i registri del codec (spiazzamenti standard AC'97)
@@ -89,8 +89,27 @@ EX_VERSIONE("ac97.drv", "0.001");
 #define B_BDBAR         0x00    /* + B_PCM_OUT: indirizzo della lista       */
 #define B_CIV           0x04    /* voce in corso (sola lettura)             */
 #define B_LVI           0x05    /* ultima voce valida                       */
-#define B_SR            0x06    /* stato                                    */
-#define B_PICB          0x08    /* campioni che restano nella voce in corso */
+/* ! SR E PICB SI SCAMBIANO DI POSTO SULLA SiS 7012, e non e' un'opinione: e'
+ * la stessa eccezione che il driver intel8x0 di Linux applica da vent'anni, e
+ * la ragione per cui questi due non sono #define ma variabili.
+ *
+ *   su Intel ICH:  0x06 = stato,  0x08 = quanto resta
+ *   su SiS 7012:   0x06 = quanto resta,  0x08 = stato
+ *
+ * ! E IL SINTOMO DI SBAGLIARLO NON E' IL SILENZIO, che sarebbe onesto: e' un
+ * driver che parte, dice di suonare, e riporta posizioni assurde perche' legge
+ * lo stato dove c'e' un contatore. Percio' lo scambio si fa in un posto solo,
+ * qui, e tutto il resto del file non sa che esista.
+ *
+ * ! LA SECONDA DIFFERENZA E' L'UNITA': la SiS conta BYTE dove Intel conta
+ * campioni. Vedi g_picb_byte piu' sotto. */
+static unsigned int B_SR   = 0x06;   /* stato                                */
+static unsigned int B_PICB = 0x08;   /* quanto resta nella voce in corso     */
+
+/* Vero sulla SiS: PICB e' in byte, non in campioni. A 16 bit stereo un
+ * campione sono quattro byte, quindi il numero va diviso per due per avere la
+ * stessa grandezza che il resto del driver si aspetta. */
+static int g_picb_byte = 0;
 #define B_PIV           0x0A
 #define B_CR            0x0B    /* controllo                                */
 
@@ -188,7 +207,19 @@ static int pci_risposta(unsigned int atteso, void *out, unsigned int len)
     return -1;
 }
 
-static const struct { unsigned short v, d; const char *nome; } g_modelli[] = {
+/* ! LA COLONNA `sis` NON E' UN NOME, E' UN COMPORTAMENTO. Il driver del
+ * costruttore, sull'Acer Aspire 3000, installa la SiS 7012 con la STESSA
+ * sezione degli Intel — AC97AUD — mentre alla VIA ne dedica una sua (AC97VIA).
+ * Verificato negli .inf del pacchetto: e' il costruttore stesso a dire che
+ * questa scheda si guida come una ICH. Le due differenze note stanno tutte
+ * nelle due righe qui sopra, e sono quelle che questa colonna accende. */
+static const struct {
+    unsigned short v, d;
+    const char    *nome;
+    int            sis;
+} g_modelli[] = {
+    { 0x1039, 0x7012, "SiS 7012 AC'97 (integrata)", 1 },
+    { 0x1039, 0x7013, "SiS 7013 AC'97", 1 },
     { 0x8086, 0x2415, "Intel 82801AA AC'97", },
     { 0x8086, 0x2425, "Intel 82801AB AC'97", },
     { 0x8086, 0x2445, "Intel 82801BA AC'97", },
@@ -225,6 +256,17 @@ static int trova_scheda(PciDispositivo *out)
             if (g_modelli[i].v == out->venditore &&
                 g_modelli[i].d == out->dispositivo) {
                 strncpy(g_nome, g_modelli[i].nome, sizeof(g_nome) - 1);
+
+                /* ! LO SCAMBIO SI FA QUI, UNA VOLTA, appena si sa che scheda
+                 * e'. Farlo piu' avanti vorrebbe dire un pezzo di codice che
+                 * legge i registri giusti e un altro che legge quelli di
+                 * prima, e sarebbe un guasto che si vede solo a suono
+                 * partito. */
+                if (g_modelli[i].sis) {
+                    B_SR        = 0x08;
+                    B_PICB      = 0x06;
+                    g_picb_byte = 1;
+                }
                 g_nome[sizeof(g_nome) - 1] = 0;
                 return 0;
             }
@@ -511,6 +553,10 @@ static int ac_irq(void)
 static unsigned int ac_avanzamento(void)
 {
     int v = bus_r16(B_PCM_OUT + B_PICB);
+
+    /* Sulla SiS quel numero e' in byte: quattro per campione a 16 bit
+     * stereo, contro i due che conta una ICH. */
+    if (g_picb_byte) v /= 2;
     return (v < 0) ? 0 : (unsigned int)v;
 }
 

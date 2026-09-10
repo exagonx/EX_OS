@@ -1,1 +1,0 @@
-kbprova -stato

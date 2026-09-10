@@ -1200,10 +1200,14 @@ int diskinfo(unsigned int idx, DiskInfo *di);
 #define BLKINFO_NOME_MAX    12
 typedef struct {
     char         nome[BLKINFO_NOME_MAX];
-    unsigned int tipo;          /* 1 floppy, 2 disco intero, 3 partizione */
+    unsigned int tipo;          /* 1 floppy, 2 disco, 3 partizione, 4 CD,
+                                 * 5 servito da un processo (una chiavetta) */
     unsigned int sola_lettura;
     unsigned int primo_lo, primo_hi;
     unsigned int settori_lo, settori_hi;
+    /* 1 = il driver che lo serviva e' morto mentre era montato: c'e' ancora
+     * ma ogni accesso rende errore, e va smontato. */
+    unsigned int guasto;
 } BlkInfo;
 
 int blkinfo(BlkInfo *buf, unsigned int max, unsigned int start);
@@ -2627,6 +2631,87 @@ typedef struct {
 } MmioZona;
 
 int     mmio_map(MmioZona *m);
+
+/* =============================================================================
+ * UN DISCO SERVITO DA QUESTO PROCESSO — blk_offri / blk_attendi / blk_risposta
+ *
+ * ! A COSA SERVE. Un driver in ring 3 — una chiavetta USB, domani un disco di
+ * rete — dichiara «esisto, sono grande cosi'», e da quel momento il suo
+ * dispositivo si monta come qualunque altro: `mount usb0 /USB/DRIVE0`, e poi
+ * `ls`, `cp`, tutto. Senza questo, un driver USB leggerebbe settori che
+ * nessun filesystem puo' montare.
+ *
+ * Il giro e' sempre lo stesso, e sta in tre righe:
+ *
+ *     BlkOfferta o = { "usb0", settori, 0, 512, 0 };
+ *     blk_offri(&o);
+ *
+ *     BlkRichiesta r;
+ *     r.dati = buffer;  r.dati_max = sizeof(buffer);
+ *     while (blk_attendi(&r, 0) == 0) {
+ *         int esito = (r.op == BLKR3_LEGGI) ? leggi(r.lba_lo, r.settori, buffer)
+ *                                           : scrivi(r.lba_lo, r.settori, buffer);
+ *         blk_risposta(&r, esito);
+ *     }
+ *
+ * ! IL BUFFER DEV'ESSERE DI ALMENO BLKR3_SETTORI_RICHIESTA SETTORI. Il kernel
+ * spezza le richieste piu' lunghe, ma non quelle: se `dati_max` e' piu'
+ * piccolo, blk_attendi() rende -EINVAL su una scrittura, e il filesystem si
+ * ritrova un errore di I/O che sembra un guasto del disco.
+ *
+ * ! E NON SI LEGGE UN FILE SUL PROPRIO DISPOSITIVO. Si aspetterebbe la
+ * risposta che si deve dare da soli: il kernel lo rifiuta con -EDEADLK invece
+ * di lasciar credere a una macchina piantata.
+ *
+ * ! SOLO PER I DRIVER, come ioport_bind e mmio_map: chi offre un disco decide
+ * cosa il filesystem ci legge dentro.
+ *
+ * STRUTTURE DUPLICATE A MANO da kernel/include/syscall.h, come VideoInfo e
+ * ShmZona: stanno anche in tools/abi-bersaglio.c.
+ * ============================================================================= */
+
+#define BLKR3_LEGGI               1
+#define BLKR3_SCRIVI              2
+#define BLKR3_SVUOTA              3
+#define BLKR3_SETTORI_RICHIESTA   8   /* il buffer non sia piu' piccolo di 8*512 */
+
+typedef struct {
+    char         nome[12];        /* "usb0": il nome con cui si montera' */
+    unsigned int settori_lo, settori_hi;
+    unsigned int byte_settore;    /* oggi solo 512 */
+    unsigned int sola_lettura;
+} BlkOfferta;
+
+typedef struct {
+    unsigned int op;              /* out: BLKR3_LEGGI, _SCRIVI o _SVUOTA */
+    unsigned int lba_lo;          /* out */
+    unsigned int lba_hi;          /* out */
+    unsigned int settori;         /* out */
+    unsigned int quale;           /* out: quale dei propri dispositivi */
+    void        *dati;            /* in:  il buffer */
+    unsigned int dati_max;        /* in:  quanto e' grande, in byte */
+} BlkRichiesta;
+
+/* Rende l'indice del dispositivo (>= 0) o -errno. */
+int     blk_offri(BlkOfferta *o);
+
+/* Aspetta la prossima richiesta. `ms` a 0 = senza scadenza.
+ * Rende 0, -ETIMEDOUT, o un altro -errno. */
+int     blk_attendi(BlkRichiesta *r, unsigned int ms);
+
+/* Dichiara com'e' andata: `esito` 0 oppure -errno. */
+int     blk_risposta(BlkRichiesta *r, int esito);
+
+/* Rilegge la tabella delle partizioni di un dispositivo servito da un driver
+ * (usb0, ram0) e registra le sue finestre: usb0p1, usb0p2, ...
+ *
+ * Rende quante ne ha trovate, 0 se il supporto non ha una tabella — il caso
+ * normale di una chiavetta — oppure -errno.
+ *
+ * ! NON LA CHIAMA IL DRIVER CHE HA OFFERTO IL DISPOSITIVO: leggerebbe il
+ * proprio disco e si aspetterebbe da solo (-EDEADLK). La chiama chi si accorge
+ * che il dispositivo e' comparso. E' di root, come mount. */
+int     blk_scansiona(const char *nome);
 
 /* =============================================================================
  * video_info — dov'e' il framebuffer e che forma ha

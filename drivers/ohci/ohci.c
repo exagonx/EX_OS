@@ -104,10 +104,17 @@ EX_VERSIONE("ohci.drv", "0.001");
  * spiazzamenti multipli di 256 e non ci si pensa piu'. */
 #define DMA_BYTE        (8u * 4096u)
 
-#define OFF_HCCA        0x0000      /* 256 byte */
-#define OFF_ED_CTRL     0x0100
-#define OFF_ED_IN       0x0110
-#define OFF_ED_OUT      0x0120
+/* ! UNA HCCA PER CONTROLLER, e servono davvero. Un chipset SiS ne ha DUE di
+ * OHCI, ognuno con le sue tre porte, e stanno accesi tutti e due insieme:
+ * ognuno scrive il numero di trama dentro la propria area, quindi non si puo'
+ * dargliene una sola. Gli ED e i TD invece si condividono — con un
+ * dispositivo per volta, chi lavora e' sempre uno. */
+#define OFF_HCCA(i)     ((i) * 0x100u)      /* 256 byte l'una, allineate */
+#define OHCI_MAX        4
+
+#define OFF_ED_CTRL     0x0400
+#define OFF_ED_IN       0x0410
+#define OFF_ED_OUT      0x0420
 #define OFF_TD          0x0200      /* otto TD da 16 byte */
 #define OFF_SETUP       0x0300
 #define OFF_BUF         0x1000
@@ -115,6 +122,23 @@ EX_VERSIONE("ohci.drv", "0.001");
 
 #define TD_N            8
 #define TD_CODA         7           /* il TD finto che chiude ogni lista */
+
+/* I controller trovati, e quello a cui stiamo parlando adesso.
+ *
+ * ! IL DISPOSITIVO PUO' STARE SULL'ALTRO, ed e' successo alla prima prova su
+ * ferro vero: l'EHCI ha ceduto la porta 4 al compagno — «non e' alta
+ * velocita'» — ma il compagno di QUELLA porta era il secondo OHCI, mentre il
+ * driver ne guidava solo il primo. Il sintomo: «ohci: aspetto una chiavetta»
+ * per sempre, con la chiavetta attaccata. */
+typedef struct {
+    volatile unsigned char *reg;
+    unsigned int porte;
+    unsigned int bus, slot, fn;
+} Ohci;
+
+static Ohci g_ohci[OHCI_MAX];
+static int  g_n_ohci = 0;
+static int  g_corrente = 0;
 
 static volatile unsigned char *g_reg = 0;
 static unsigned int g_dma_virt = 0, g_dma_fis = 0;
@@ -406,13 +430,13 @@ static int hc_avvia(void)
     wr(R_FMINTERVAL, fminterval | (0x2778u << 16));
     wr(R_PERIODICSTART, (fminterval & 0x3FFF) * 9 / 10);
 
-    memset((void *)(g_dma_virt + OFF_HCCA), 0, 256);
+    memset((void *)(g_dma_virt + OFF_HCCA(g_corrente)), 0, 256);
 
     ed_prepara(OFF_ED_CTRL, 0, 0, 0, 8);
     ed_prepara(OFF_ED_IN,   0, 0, 2, 64);
     ed_prepara(OFF_ED_OUT,  0, 0, 1, 64);
 
-    wr(R_HCCA, FIS(OFF_HCCA));
+    wr(R_HCCA, FIS(OFF_HCCA(g_corrente)));
     wr(R_CTRLHEADED, FIS(OFF_ED_CTRL));
     wr(R_BULKHEADED, FIS(OFF_ED_IN));
     VIRT(OFF_ED_IN)[3] = FIS(OFF_ED_OUT);   /* le due bulk in fila */
@@ -456,7 +480,14 @@ static int porta_prepara(unsigned int p)
         usleep(2000);
     }
     wr(R_RHPORT(p), RH_PRSC);       /* il cambiamento si azzera scrivendoci 1 */
-    usleep(20000);
+
+    /* ! CENTO MILLISECONDI, NON VENTI. La specifica ne chiede dieci dopo il
+     * reset, e venti sembravano abbondanti; su ferro vero un lettore di
+     * dischetti USB attaccato a questo controller non rispondeva al primo
+     * descrittore — «trasferimento senza risposta» — mentre la chiavetta sulla
+     * stessa macchina andava. Un dispositivo lento a svegliarsi non da' un
+     * errore: tace, e tacere somiglia a un guasto del driver. */
+    usleep(100000);
 
     v = rd(R_RHPORT(p));
     if (!(v & RH_PES)) {
@@ -475,9 +506,19 @@ static int porta_prepara(unsigned int p)
  * --------------------------------------------------------------------------- */
 static int conosci(void)
 {
-    if (!usb_desc_corto(controllo, 0, &g_dev)) {
-        printf("ohci: il dispositivo non risponde al primo descrittore\n");
-        return 0;
+    int giro;
+
+    /* ! TRE TENTATIVI, E NON E' PIGRIZIA. Il primo descrittore e' la prima
+     * parola che si scambia con un dispositivo appena resettato: se arriva un
+     * attimo troppo presto non risponde, e rinunciare li' vuol dire dichiarare
+     * assente qualcosa che c'e'. Fra un tentativo e l'altro si aspetta. */
+    for (giro = 0; giro < 3; giro++) {
+        if (usb_desc_corto(controllo, 0, &g_dev)) break;
+        if (giro == 2) {
+            printf("ohci: il dispositivo non risponde al primo descrittore\n");
+            return 0;
+        }
+        usleep(100000);
     }
 
     ed_indirizzo(OFF_ED_CTRL, 0, 0, 0, g_dev.maxp0);
@@ -543,6 +584,7 @@ static int massa_prepara(void)
 /* -----------------------------------------------------------------------------
  * Il controller sul bus
  * --------------------------------------------------------------------------- */
+/* Riempie bar[] con i BAR di tutti gli OHCI trovati. Rende quanti. */
 static int cerca_ohci(unsigned int *bar)
 {
     PciRichiesta   r;
@@ -571,28 +613,45 @@ static int cerca_ohci(unsigned int *bar)
         r.venditore   = PCI_QUALUNQUE;
         r.dispositivo = PCI_QUALUNQUE;
 
-        if (ipc_send((unsigned int)pid, PCI_MSG_CERCA, &r, sizeof(r)) < 0) return 0;
+        /* ! SI RENDE QUANTI SE NE SONO TROVATI, NON ZERO. Qui prima c'era
+         * `return 0` — copiato da un driver che si fermava al primo — e
+         * bastava che il servizio PCI dicesse «finito» perche' tutti i
+         * controller gia' raccolti sparissero. Il sintomo era perfetto nel
+         * suo genere: due righe «controller in 00:04.0, 00:05.0» e subito
+         * dopo «nessun controller OHCI su questa macchina». */
+        if (ipc_send((unsigned int)pid, PCI_MSG_CERCA, &r, sizeof(r)) < 0)
+            return g_n_ohci;
 
         for (t = 0; t < 8; t++) {
-            if (ipc_recv_timeout(&meta, buf, sizeof(buf), 2000) < 0) return 0;
+            if (ipc_recv_timeout(&meta, buf, sizeof(buf), 2000) < 0)
+                return g_n_ohci;
             if ((int)meta.sender_pid != pid) continue;
-            if (meta.tipo == PCI_MSG_FINE) return 0;
+            if (meta.tipo == PCI_MSG_FINE) return g_n_ohci;
             if (meta.tipo == PCI_MSG_DISPOSITIVO && meta.len >= sizeof(d)) {
                 memcpy(&d, buf, sizeof(d));
                 avuto = 1;
             }
             break;
         }
-        if (!avuto) return 0;
+        if (!avuto) return g_n_ohci;
 
         if (d.interfaccia != 0x10) continue;     /* 0x10 = OHCI */
 
         if (d.bar[0] == 0 || d.bar_io[0]) {
             printf("ohci: BAR0 non e' memoria: non so dove sono i registri\n");
-            return 0;
+            continue;
         }
 
-        *bar = d.bar[0];
+        if (g_n_ohci >= OHCI_MAX) break;
+
+        g_ohci[g_n_ohci].reg   = 0;
+        g_ohci[g_n_ohci].porte = 0;
+        g_ohci[g_n_ohci].bus   = d.bus;
+        g_ohci[g_n_ohci].slot  = d.slot;
+        g_ohci[g_n_ohci].fn    = d.funzione;
+        bar[g_n_ohci]          = d.bar[0];
+        g_n_ohci++;
+
         printf("ohci: controller in %02x:%02x.%u, registri a 0x%x, IRQ %u\n",
                d.bus, d.slot, d.funzione, d.bar[0], d.irq_linea);
 
@@ -604,9 +663,10 @@ static int cerca_ohci(unsigned int *bar)
             ipc_send((unsigned int)pid, PCI_MSG_ABILITA, &a, sizeof(a));
             (void)ipc_recv_timeout(&meta, buf, sizeof(buf), 2000);
         }
-        return 1;
     }
-    return 0;
+
+    /* ! SI PRENDONO TUTTI, NON IL PRIMO. Vedi il commento accanto a g_ohci. */
+    return g_n_ohci;
 }
 
 
@@ -627,32 +687,42 @@ static int cerca_ohci(unsigned int *bar)
  * ============================================================================= */
 static int aspetta_e_servi(const char *chi)
 {
-    unsigned char provata[16];
+    unsigned char provata[OHCI_MAX][16];
     unsigned int  p;
-    int           detto = 0;
+    int           c, detto = 0;
 
-    for (p = 0; p < 16; p++) provata[p] = 0;
+    for (c = 0; c < OHCI_MAX; c++)
+        for (p = 0; p < 16; p++) provata[c][p] = 0;
 
     for (;;) {
-        for (p = 0; p < g_porte && p < 16; p++) {
-            if (!porta_collegata(p)) { provata[p] = 0; continue; }
-            if (provata[p]) continue;
+        /* ! SI GIRA SU TUTTI I CONTROLLER, non solo sul primo. Le porte di
+         * una macchina sono divise fra loro, e la chiavetta finisce su quello
+         * che capita: guardarne uno solo vuol dire trovarla una volta su due
+         * e aspettare per sempre l'altra. */
+        for (c = 0; c < g_n_ohci; c++) {
+            g_corrente = c;
+            g_reg      = g_ohci[c].reg;
+            g_porte    = g_ohci[c].porte;
 
-            provata[p] = 1;
+            for (p = 0; p < g_porte && p < 16; p++) {
+                if (!porta_collegata(p)) { provata[c][p] = 0; continue; }
+                if (provata[c][p]) continue;
 
-            if (!porta_prepara(p)) continue;
-            if (!conosci()) continue;
+                provata[c][p] = 1;
 
-            if (massa_prepara()) return 0;  /* servita: di qui non si torna */
+                if (!porta_prepara(p)) continue;
+                if (!conosci()) continue;
 
-            printf("%s: sulla porta %u non c'e' una memoria di massa.\n",
-                   chi, p + 1);
-            printf("      Questo driver serve solo quelle: per mouse e\n");
-            printf("      tastiere c'e' uhci/xhci.\n");
+                if (massa_prepara()) return 0;  /* servita: non si torna */
+
+                printf("%s: controller %d porta %u: non e' una memoria di "
+                       "massa.\n", chi, c + 1, p + 1);
+            }
         }
 
         if (!detto) {
-            printf("%s: aspetto una chiavetta.\n", chi);
+            printf("%s: aspetto una chiavetta su %d controller.\n",
+                   chi, g_n_ohci);
             detto = 1;
         }
         usleep(1000000);
@@ -661,7 +731,7 @@ static int aspetta_e_servi(const char *chi)
 
 int main(int argc, char **argv)
 {
-    unsigned int bar = 0, solo_sonda = 0;
+    unsigned int bar[OHCI_MAX], solo_sonda = 0;
     MmioZona m;
     DmaZona  z;
     int i;
@@ -680,25 +750,12 @@ int main(int argc, char **argv)
         }
     }
 
-    if (!cerca_ohci(&bar)) {
+    if (cerca_ohci(bar) == 0) {
         if (!g_avvio)
             printf("ohci: nessun controller OHCI su questa macchina\n");
         return 1;
     }
     if (solo_sonda) return 0;
-
-    m.fisico = bar;
-    m.byte   = 0x1000;
-    if (mmio_map(&m) != 0) {
-        printf("ohci: mmio_map rifiutata. Il file dev'essere un .drv\n");
-        return 1;
-    }
-    g_reg = (volatile unsigned char *)m.virt;
-
-    printf("ohci: revisione %u.%u\n", (rd(R_REVISION) >> 4) & 0xF,
-           rd(R_REVISION) & 0xF);
-
-    if (!prendi_dal_bios()) return 1;
 
     z.byte = DMA_BYTE;
     if (dma_alloc(&z) != 0) {
@@ -709,11 +766,33 @@ int main(int argc, char **argv)
     g_dma_fis  = z.fisico;
     memset((void *)g_dma_virt, 0, DMA_BYTE);
 
-    if (!hc_avvia()) return 1;
+    /* Ognuno si mappa, si prende dal BIOS e si accende per conto suo: hanno
+     * registri diversi e una HCCA ciascuno. */
+    for (i = 0; i < g_n_ohci; i++) {
+        m.fisico = bar[i];
+        m.byte   = 0x1000;
+        if (mmio_map(&m) != 0) {
+            printf("ohci: mmio_map rifiutata per il controller %d\n", i + 1);
+            return 1;
+        }
 
-    g_porte = rd(R_RHDESCA) & 0xFF;
-    if (g_porte == 0 || g_porte > 15) g_porte = 2;
-    printf("ohci: controller acceso, %u porte\n", g_porte);
+        g_corrente     = i;
+        g_reg          = (volatile unsigned char *)m.virt;
+        g_ohci[i].reg  = g_reg;
+
+        if (g_verboso)
+            printf("ohci: controller %d, revisione %u.%u\n", i + 1,
+                   (rd(R_REVISION) >> 4) & 0xF, rd(R_REVISION) & 0xF);
+
+        if (!prendi_dal_bios()) return 1;
+        if (!hc_avvia()) return 1;
+
+        g_porte = rd(R_RHDESCA) & 0xFF;
+        if (g_porte == 0 || g_porte > 15) g_porte = 2;
+        g_ohci[i].porte = g_porte;
+
+        printf("ohci: controller %d acceso, %u porte\n", i + 1, g_porte);
+    }
 
     return aspetta_e_servi("ohci");
 }

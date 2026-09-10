@@ -267,7 +267,8 @@ int main(int argc, char **argv)
                               : (b[k].tipo == 2) ? "disco"
                               : (b[k].tipo == 3) ? "partizione"
                               : (b[k].tipo == 4) ? "CD/DVD"
-                              : (b[k].tipo == 5) ? "da driver" : "?";
+                              : (b[k].tipo == 5) ? "da driver"
+                              : (b[k].tipo == 6) ? "in RAM" : "?";
                 /* «guasto» batte «sola lettura»: e' l'unica delle due che
                  * chiede di fare qualcosa subito. */
                 printf("  %-8s%-12s%12u%12u%10u%s\n",

@@ -83,6 +83,7 @@ typedef struct {
     unsigned int verboso;
 
     unsigned int tag;           /* cresce a ogni comando: lo rimanda il CSW */
+    unsigned int residuo;       /* byte non trasferiti dell'ultimo comando */
 
     /* Riempiti da usb_massa_capacita() */
     unsigned int blocchi;       /* quanti blocchi ha il supporto */

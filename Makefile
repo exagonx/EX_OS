@@ -182,10 +182,10 @@ PROGRAMMI_EXWIN := exwin_so exdlg_so eximg_so exfont_so exhttp_so exhtml_so excs
 # solo di rimbalzo, perche' la ricetta di exos.iso lo nominava fra le
 # proprie prerequisite. `make all` non lo faceva, e chi costruiva senza
 # passare dalla ISO si ritrovava un driver in meno senza un messaggio.
-DRIVER_CD := ne2k_drv pcnet_drv e1000_drv ip_drv sb_drv es1371_drv ac97_drv hdaudio_drv sonda_drv ramdisk_drv ehci_drv ohci_drv floppy_drv
+DRIVER_CD := ne2k_drv pcnet_drv sis900_drv cardbus_drv e1000_drv ip_drv sb_drv es1371_drv ac97_drv hdaudio_drv sonda_drv mappa_drv ramdisk_drv ehci_drv ohci_drv floppy_drv sis_drv
 
 # I driver che sul floppy NON devono comparire. Serve a `make verify`.
-DRIVER_SOLO_CD := pci.drv ne2k.drv pcnet.drv ip.drv sb.drv es1371.drv ac97.drv hdaudio.drv sonda.drv ramdisk.drv ehci.drv ohci.drv floppy.drv
+DRIVER_SOLO_CD := pci.drv ne2k.drv pcnet.drv ip.drv sb.drv es1371.drv ac97.drv hdaudio.drv sonda.drv ramdisk.drv ehci.drv ohci.drv floppy.drv sis.drv
 
 # Directory di drivers/ che NON producono un .drv, con il perche'. Serve a
 # verifica-programmi, che senza le segnalerebbe come driver dimenticati.
@@ -1073,6 +1073,31 @@ $(SONDA_OUT): $(SONDA_SRC) $(SONDA_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) 
 .PHONY: sonda_drv
 sonda_drv: dirs $(SONDA_OUT)
 
+# --- /dev/mappa.drv: il ritratto di un dispositivo PCI ----------------------
+# ! NON E' UN DOPPIONE DELLA SONDA. sonda.drv fotografa una MACCHINA — che
+# chipset ha, come il BIOS ha lasciato la scheda video — e serve una volta,
+# quando una macchina nuova arriva sul tavolo. Questo guarda UN DISPOSITIVO, e
+# serve tutte le volte che se ne deve scrivere il driver.
+MAPPA_SRC := drivers/mappa/mappa.c
+MAPPA_LD  := drivers/mappa/mappa.ld
+MAPPA_OUT := $(BUILD_DRIVERS_CD)/mappa.drv
+
+$(MAPPA_OUT): $(MAPPA_SRC) $(MAPPA_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione mappa.drv ==="
+	@mkdir -p $(BUILD_DRIVERS_CD)
+	$(CC) $(CFLAGS_USER) -I lib/include -c $(MAPPA_SRC) -o $(BUILD_DRIVERS_CD)/mappa_main.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC) -o $(BUILD_DRIVERS_CD)/mappa_libc.o
+	$(CC) -m32 -c $(LIBC_START)          -o $(BUILD_DRIVERS_CD)/mappa_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(MAPPA_LD) \
+	    $(BUILD_DRIVERS_CD)/mappa_start.o \
+	    $(BUILD_DRIVERS_CD)/mappa_main.o  \
+	    $(BUILD_DRIVERS_CD)/mappa_libc.o  \
+	    -o $@
+	@echo "[OK] mappa.drv compilato: $@"
+
+.PHONY: mappa_drv
+mappa_drv: dirs $(MAPPA_OUT)
+
 # --- /dev/ramdisk.drv: un disco a blocchi tenuto in memoria ------------------
 #
 # La prova della cucitura di kernel/block/blkr3.c: se mkfs, mount e cp
@@ -1252,6 +1277,36 @@ $(OHCI_OUT): $(OHCI_SRC) $(USB_COMUNE_SRC) $(USB_COMUNE_HDR) $(USB_MASSA_SRC) $(
 
 .PHONY: ohci_drv
 ohci_drv: dirs $(OHCI_OUT)
+
+# --- /dev/sis.drv: cambiare modalita' senza il BIOS, su una SiS M760GX -------
+#
+# Non serve a scegliere la risoluzione — quella la mette Stage 2 — ma a
+# RIMETTERE IL TESTO quando il server grafico e' morto: il pezzo che
+# DIREZIONE.md chiede dal 12 agosto 2026 e che vga_modo3.c dichiara di non
+# poter fare da solo su ferro vero con una VESA attiva.
+#
+# ! LE TABELLE SONO GENERATE dai referti in sonda/ con tools/sonda2tab.py, e
+# valgono per QUELLA scheda e QUEL pannello.
+SIS_SRC := drivers/sis/sis.c
+SIS_HDR := drivers/sis/sis_tab.h
+SIS_OUT := $(BUILD_DRIVERS_CD)/sis.drv
+SIS_LD  := drivers/sis/sis.ld
+
+$(SIS_OUT): $(SIS_SRC) $(SIS_HDR) drivers/sis/ponte_tab.h $(SIS_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione sis.drv ==="
+	@mkdir -p $(BUILD_DRIVERS_CD)
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/sis -c $(SIS_SRC) -o $(BUILD_DRIVERS_CD)/sis_main.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)   -o $(BUILD_DRIVERS_CD)/sis_libc.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_DRIVERS_CD)/sis_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(SIS_LD) \
+	    $(BUILD_DRIVERS_CD)/sis_start.o \
+	    $(BUILD_DRIVERS_CD)/sis_main.o  \
+	    $(BUILD_DRIVERS_CD)/sis_libc.o  \
+	    -o $@
+	@echo "[OK] sis.drv compilato: $@"
+
+.PHONY: sis_drv
+sis_drv: dirs $(SIS_OUT)
 
 # --- /bin/winprova: la prova del toolkit ExWin -------------------------------
 EXWIN_SRC := lib/exwin/exwin.c
@@ -3782,6 +3837,64 @@ $(PCNET_DRV_OUT): $(PCNET_DRV_SRC) $(NET_PROTO) $(PCI_DRV_PROTO) $(PCNET_DRV_LD)
 .PHONY: pcnet_drv
 pcnet_drv: dirs $(PCNET_DRV_OUT)
 
+# --- Driver ring3: sis900.drv (solo CD) --------------------------------------
+# La scheda di rete integrata dell'Acer Aspire 3000 (1039:0900). Bus master
+# come la PCnet, quindi stesse due richieste: il bit bus master nel comando
+# PCI e SYS_DMA_ALLOC per gli anelli di descrittori.
+#
+# ! LA MAPPA DEI REGISTRI E' MISURATA, NON DOCUMENTATA. SiS non ha mai
+# pubblicato le specifiche di questa scheda: gli offset vengono dal driver
+# Windows del portatile, letto con tools/scava.py cercando le chiamate a
+# WRITE_PORT_ULONG e l'offset sommato alla base prima di ognuna. Il perche'
+# sia legittimo, e cosa si e' preso e cosa no, stanno in drv_prop/leggimi.md.
+SIS900_DRV_SRC := drivers/sis900/sis900.c
+SIS900_DRV_OUT := $(BUILD_DRIVERS_CD)/sis900.drv
+SIS900_DRV_LD  := drivers/sis900/sis900.ld
+
+$(SIS900_DRV_OUT): $(SIS900_DRV_SRC) $(NET_PROTO) $(PCI_DRV_PROTO) $(SIS900_DRV_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione driver ring3 sis900.drv ==="
+	@mkdir -p $(BUILD_DRIVERS_CD)
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/pci -I drivers/net -c $(SIS900_DRV_SRC) -o $(BUILD_DRIVERS_CD)/sis900_main.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)   -o $(BUILD_DRIVERS_CD)/sis900_libc.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_DRIVERS_CD)/sis900_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(SIS900_DRV_LD) \
+	    $(BUILD_DRIVERS_CD)/sis900_start.o \
+	    $(BUILD_DRIVERS_CD)/sis900_main.o  \
+	    $(BUILD_DRIVERS_CD)/sis900_libc.o  \
+	    -o $@
+	@echo "[OK] sis900.drv compilato: $@"
+
+.PHONY: sis900_drv
+sis900_drv: dirs $(SIS900_DRV_OUT)
+
+# --- Driver ring3: cardbus.drv (solo CD) -------------------------------------
+# Il ponte CardBus, cioe' lo slot PCMCIA di un portatile. A differenza di
+# sis900.drv questo NON e' nato da un reverse engineering: la specifica Yenta
+# e' pubblica, e l'intestazione PCI di tipo 2 e' definita dal PCI stesso.
+#
+# ! SUL PORTATILE DELLA SiS IL BIOS NON LO CONFIGURA: comando a zero, base dei
+# registri di socket a zero, numeri di bus a zero. Lo slot c'e' e non lo vede
+# nessuno finche' qualcuno non gli assegna le risorse.
+CARDBUS_DRV_SRC := drivers/cardbus/cardbus.c
+CARDBUS_DRV_OUT := $(BUILD_DRIVERS_CD)/cardbus.drv
+CARDBUS_DRV_LD  := drivers/cardbus/cardbus.ld
+
+$(CARDBUS_DRV_OUT): $(CARDBUS_DRV_SRC) $(PCI_DRV_PROTO) $(CARDBUS_DRV_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione driver ring3 cardbus.drv ==="
+	@mkdir -p $(BUILD_DRIVERS_CD)
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/pci -c $(CARDBUS_DRV_SRC) -o $(BUILD_DRIVERS_CD)/cardbus_main.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)   -o $(BUILD_DRIVERS_CD)/cardbus_libc.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_DRIVERS_CD)/cardbus_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(CARDBUS_DRV_LD) \
+	    $(BUILD_DRIVERS_CD)/cardbus_start.o \
+	    $(BUILD_DRIVERS_CD)/cardbus_main.o  \
+	    $(BUILD_DRIVERS_CD)/cardbus_libc.o  \
+	    -o $@
+	@echo "[OK] cardbus.drv compilato: $@"
+
+.PHONY: cardbus_drv
+cardbus_drv: dirs $(CARDBUS_DRV_OUT)
+
 # --- Driver ring3 e1000.drv: la scheda PREDEFINITA di QEMU (solo CD) ---------
 #
 # ! QUESTA SCHEDA NON SI GUIDA COME LE ALTRE DUE. NE2000 e PCnet rispondono
@@ -3936,13 +4049,37 @@ SVGA_MODO := $(strip \
 # a dire che un tempo si era costruito in un altro modo.
 STAGE2_SVGA_SEGNO := $(BUILD_STAGE2)/.svga-$(SVGA_MODO)
 
+# =============================================================================
+# IL VOLUME IN RAM — `make RAMDISCO=1`
+#
+# Stage 2 copia in memoria l'intero supporto da cui si e' partiti, e il kernel
+# ci monta sopra la radice. Serve alle macchine il cui lettore sta sull'USB: il
+# BIOS lo sa usare, il kernel no (il perche' per esteso sta accanto a
+# `ramdisco` in bootloader/stage2/loader.asm).
+#
+# ! SPENTO DI SUO, e non per prudenza: costa 1,44 MB di memoria e qualche
+# secondo a ogni avvio, e su una macchina che il suo lettore ce l'ha davvero
+# non serve a niente. Chi non lo accende non si accorge che esiste.
+#
+# ! E IL SEGNO STA NEL NOME DEL FILE, come per SVGA: cambiando il valore cambia
+# il nome, il segno non c'e' e Stage 2 si riassembla. Senza, `make RAMDISCO=1`
+# dopo un `make` normale non ricostruirebbe niente — make non ha modo di
+# sapere che e' cambiata una variabile.
+RAMDISCO ?= 0
+STAGE2_RD_SEGNO := $(BUILD_STAGE2)/.ramdisco-$(RAMDISCO)
+
+$(STAGE2_RD_SEGNO):
+	@mkdir -p $(BUILD_STAGE2)
+	@rm -f $(BUILD_STAGE2)/.ramdisco-*
+	@touch $@
+
 $(STAGE2_SVGA_SEGNO):
 	@mkdir -p $(BUILD_STAGE2)
 	@rm -f $(BUILD_STAGE2)/.svga-*
 	@touch $@
 	@printf '%s\n' "$(SVGA)" > $(SVGA_FILE)
 
-$(STAGE2_BIN): $(STAGE2_ASM_SRC) $(STAGE2_SVGA_SEGNO) $(SEGNO_FLAG)
+$(STAGE2_BIN): $(STAGE2_ASM_SRC) $(STAGE2_SVGA_SEGNO) $(STAGE2_RD_SEGNO) $(SEGNO_FLAG)
 	@echo "=== Assemblo Stage 2 (flat binary 16-bit) ==="
 	@mkdir -p $(BUILD_STAGE2)
 	@if [ "$(SVGA_MODO)" = "ERRORE" ]; then \
@@ -3951,7 +4088,7 @@ $(STAGE2_BIN): $(STAGE2_ASM_SRC) $(STAGE2_SVGA_SEGNO) $(SEGNO_FLAG)
 	    echo "         (niente = console di testo 80x25, il predefinito)."; \
 	    exit 1; \
 	fi
-	$(AS) -f bin -DSVGAMODO=$(SVGA_MODO) $(STAGE2_ASM_SRC) -o $@
+	$(AS) -f bin -DSVGAMODO=$(SVGA_MODO) -DRAMDISCO=$(RAMDISCO) $(STAGE2_ASM_SRC) -o $@
 	@if [ "$(SVGA_MODO)" != "0" ]; then \
 	    echo "     risoluzione all'avvio: $(SVGA) (modo $(SVGA_MODO))"; \
 	fi
@@ -4265,15 +4402,108 @@ floppy: $(PROGRAMMI_FLOPPY) $(FLOPPY_IMG)
 # Serve a scrivere driver per una macchina che non si ha sotto mano: si avvia
 # la', guarda dentro se stessa e lascia il referto su un file del dischetto.
 # Non dipende da $(FLOPPY_IMG): e' un'immagine sua, con dentro il minimo.
+# ! LE DIPENDENZE SONO TUTTE QUELLE CHE mksonda.sh COPIA DENTRO, e non solo
+# quelle di cui il dischetto non puo' fare a meno per avviarsi. Con l'elenco
+# corto l'immagine risultava «aggiornata» dopo aver ricompilato automount, e ci
+# finiva dentro la versione di prima — lo stesso modo di sbagliare dell'ISO che
+# non si rifaceva.
 $(SONDA_IMG): $(STAGE1_BIN) $(STAGE2_BIN) $(KERNEL_BIN) $(SONDA_OUT) \
-              $(SHELL_BIN) $(LS_BIN) $(KEYMAP_BIN) $(HWINFO_BIN) \
-              $(KBD_DRV_OUT) $(SVGA_DRV_OUT) $(TOOLS_DIR)/mksonda.sh | dirs
+              $(SHELL_BIN) $(LS_BIN) $(CP_BIN) $(KEYMAP_BIN) $(HWINFO_BIN) \
+              $(SHUTDOWN_BIN) $(BLKSCAN_BIN) $(AUTOMOUNT_BIN) \
+              $(KBD_DRV_OUT) $(SVGA_DRV_OUT) $(PCI_DRV_OUT) $(UHCI_OUT) \
+              $(EHCI_OUT) $(OHCI_OUT) $(TOOLS_DIR)/mksonda.sh | dirs
 	@echo "=== Creazione del dischetto della sonda ==="
 	@chmod +x $(TOOLS_DIR)/mksonda.sh
 	@$(TOOLS_DIR)/mksonda.sh
 
+# ! `make sonda` FORZA RAMDISCO=1, e non e' una comodita'. Questo dischetto
+# esiste per le macchine il cui lettore il kernel non sa usare — e' nato per un
+# portatile che ha il floppy sull'USB — quindi senza il volume in RAM si
+# avvierebbe fino al kernel e poi si fermerebbe senza radice, che e' esattamente
+# il guasto che deve aggirare. Chi lo vuole senza sa gia' cosa scrivere:
+#     make RAMDISCO=0 dist/sonda.img
 .PHONY: sonda
-sonda: $(SONDA_IMG)
+sonda:
+	@$(MAKE) --no-print-directory RAMDISCO=1 kernel $(SONDA_IMG)
+
+# --- Il dischetto di prova dell'Acer Aspire 3000 -----------------------------
+#
+# Stessa immagine della sonda, altro nome: serve a tenere separato il dischetto
+# con cui si prova QUELLA macchina da quello di sempre. Anche questo con la
+# radice in RAM, perche' li' il lettore sta sull'USB e senza non si arriva a
+# una shell.
+TEST_AA3K_IMG := $(DIST_DIR)/test_aa3k.img
+
+.PHONY: test-aa3k
+test-aa3k:
+	@$(MAKE) --no-print-directory RAMDISCO=1 kernel $(SONDA_OUT) $(SHELL_BIN) \
+	    $(LS_BIN) $(CP_BIN) $(KEYMAP_BIN) $(HWINFO_BIN) $(SHUTDOWN_BIN) \
+	    $(MOUNT_BIN) $(DISK_BIN) $(BLKSCAN_BIN) $(AUTOMOUNT_BIN) \
+	    $(KBD_DRV_OUT) $(SVGA_DRV_OUT) $(PCI_DRV_OUT) $(UHCI_OUT) \
+	    $(EHCI_OUT) $(OHCI_OUT) $(SIS_OUT)
+	@MODO_VIDEO=0 $(TOOLS_DIR)/mksonda.sh $(TEST_AA3K_IMG)
+
+# --- Lo stesso dischetto, ma che parte in 800x600 ----------------------------
+#
+# ! SERVE PERCHE' `svga.drv` NON PUO' PIU' FARLO. Quel comando scrive il byte
+# dentro /LOADER.BIN della RADICE, e con la radice in RAM quella e' una copia
+# che sparisce allo spegnimento: il 10 settembre 2026 due referti presi «in due
+# modalita'» sono usciti identici, tutti e due in testo, perche' la scrittura
+# era riuscita su un disco che non esisteva piu'.
+#
+# La sottrazione fra i due referti e' la ricetta del modeset nativo (@SIS), e
+# per averli servono due DISCHETTI diversi, non due comandi.
+TEST_AA3K_800 := $(DIST_DIR)/test_aa3k_800.img
+
+.PHONY: test-aa3k-800
+test-aa3k-800: test-aa3k
+	@MODO_VIDEO=2 $(TOOLS_DIR)/mksonda.sh $(TEST_AA3K_800)
+	@echo "     ! questo parte in 800x600: il referto che ne esce e' quello"
+	@echo "       della modalita' grafica, da sottrarre a quello in testo."
+
+# --- Le tre risoluzioni insieme ----------------------------------------------
+#
+# ! SERVONO TUTTE E TRE PERCHE' NON SI SA QUALE OFFRA QUELLA SCHEDA. Una VGA
+# integrata elenca i modi che il suo BIOS ha deciso di elencare, e non e' detto
+# che ci sia quello che chiediamo — ne' che sia lineare. Stage 2 adesso dice
+# perche' ha rinunciato («nessuno alla risoluzione chiesta», «solo a banchi»,
+# «non a 16, 24 o 32 bit»), ma la risposta la da' la macchina: tanto vale avere
+# i tre dischetti pronti e provarli in fila.
+.PHONY: test-aa3k-video
+test-aa3k-video: test-aa3k
+	@MODO_VIDEO=1 $(TOOLS_DIR)/mksonda.sh $(DIST_DIR)/test_aa3k_640.img
+	@MODO_VIDEO=2 $(TOOLS_DIR)/mksonda.sh $(TEST_AA3K_800)
+	@MODO_VIDEO=3 $(TOOLS_DIR)/mksonda.sh $(DIST_DIR)/test_aa3k_1024.img
+	@echo ""
+	@echo "  Tre dischetti, una risoluzione l'uno:"
+	@echo "    dist/test_aa3k_640.img    640x480"
+	@echo "    dist/test_aa3k_800.img    800x600"
+	@echo "    dist/test_aa3k_1024.img   1024x768"
+	@echo "  Se lo schermo resta in testo, Stage 2 dice perche' in una riga"
+	@echo "  che comincia con 'VESA:'. E' quella la cosa da riportare."
+
+# --- Il CD della sonda: per le macchine il cui lettore sta sull'USB ----------
+#
+# ! E' UN CD LA CUI IMMAGINE D'AVVIO E' UN SISTEMA INTERO. Il CD di EX-OS
+# normale usa dist/floppy.img come immagine El Torito e poi PASSA al CD: il
+# sistema che gira e' quello sul disco ottico. Qui no — su quella macchina il
+# CD, dopo il modo protetto, non si legge piu'. Percio' l'immagine d'avvio e'
+# dist/sonda.img, che si porta dentro tutto quel che serve, e il volume finisce
+# in RAM (RAMDISCO=1): da li' in poi il lettore puo' anche sparire.
+#
+# Si costruisce sempre con RAMDISCO=1, perche' senza non avrebbe senso:
+#     make sonda-cd
+SONDA_ISO := $(DIST_DIR)/sonda.iso
+
+.PHONY: sonda-cd
+sonda-cd:
+	@$(MAKE) --no-print-directory RAMDISCO=1 kernel sonda
+	@echo "=== CD della sonda (radice in RAM) ==="
+	@python3 $(ISO_MKISO) $(SONDA_ISO) --da $(ISOX_ROOT) \
+	    --avvio $(SONDA_IMG) --etichetta "EXOS SONDA"
+	@echo "[OK] CD della sonda: $(SONDA_ISO)"
+	@echo "     ! il sistema che gira e' quello DENTRO l'immagine d'avvio,"
+	@echo "       copiato in RAM: il lettore serve solo fino al kernel."
 
 .PHONY: img
 img: floppy
@@ -5936,12 +6166,13 @@ BINARI_SOLO_CD := $(CRYPTTEST_BIN) $(FILIPROVA_BIN) $(NETDETECT_BIN) $(NETTEST_B
 # due cose si somigliano abbastanza da far credere di essere coperti.
 # Il controllo che manca lo fa `verifica-dipendenze-cd` qui sotto.
 DRIVER_SOLO_CD_OUT := $(NE2K_DRV_OUT) $(PCNET_DRV_OUT) \
+                      $(SIS900_DRV_OUT) $(CARDBUS_DRV_OUT) \
                       $(E1000_DRV_OUT) \
                       $(IP_DRV_OUT) \
                       $(SB_DRV_OUT) $(ES1371_DRV_OUT) \
                       $(AC97_DRV_OUT) $(HDAUDIO_DRV_OUT) \
                       $(SONDA_OUT) $(RAMDISK_OUT) $(EHCI_OUT) $(OHCI_OUT) \
-                      $(FLOPPY_DRV_OUT)
+                      $(FLOPPY_DRV_OUT) $(SIS_OUT) $(MAPPA_OUT)
 
 # ! verifica-programmi E' UNA PREREQUISITA D'ORDINE (dopo la barra).
 # Cosi' viene eseguita prima di costruire il CD — e ferma tutto se un

@@ -122,7 +122,7 @@
 
 /* +0.001 a ogni modifica: `sonda.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("sonda.drv", "0.001");
+EX_VERSIONE("sonda.drv", "0.009");
 
 #define FILE_PRED     "/SONDA.TXT"
 
@@ -355,6 +355,16 @@ static void dump_funzione(unsigned int bus, unsigned int slot, unsigned int fn)
  * schermo di un portatile. */
 static unsigned int g_vga_io = 0;
 
+/* La finestra di REGISTRI IN MEMORIA della scheda video: la BAR di memoria
+ * NON prefetchable. Quella prefetchable e' il framebuffer — grande, e senza
+ * effetti collaterali a leggerla — mentre questa e' il blocco dei registri, e
+ * su una SiS della serie 315 e' li' che sta il motore 2D. */
+static unsigned int g_vga_mmio = 0;
+
+/* E il framebuffer: la BAR di memoria PREFETCHABLE. Non serve a leggere
+ * registri, serve a fare da CONTROLLO — vedi dump_mmio(). */
+static unsigned int g_vga_fb = 0;
+
 static void scandisci_pci(void)
 {
     unsigned int bus, slot, fn, v, hdr, classe, i, bar;
@@ -402,13 +412,21 @@ static void scandisci_pci(void)
 
                 if (classe != 0x03 || g_vga_io != 0) continue;
 
-                /* La scheda video: si tiene da parte la sua finestra a
-                 * porte, per il capitolo del ponte. */
+                /* La scheda video: si tengono da parte le sue finestre — a
+                 * porte per il capitolo del ponte, in memoria per quello del
+                 * motore 2D. */
                 for (i = 0; i < 6; i++) {
                     bar = cfg_leggi(bus, slot, fn, 0x10 + i * 4);
-                    if ((bar & 1) == 0) continue;
-                    g_vga_io = bar & 0xFFFC;
-                    break;
+                    if (bar == 0 || bar == 0xFFFFFFFFu) continue;
+
+                    if (bar & 1) {
+                        if (g_vga_io == 0) g_vga_io = bar & 0xFFFC;
+                    } else if ((bar & 0x08) == 0) {
+                        /* non prefetchable: i registri, non il framebuffer */
+                        if (g_vga_mmio == 0) g_vga_mmio = bar & 0xFFFFFFF0u;
+                    } else {
+                        if (g_vga_fb == 0) g_vga_fb = bar & 0xFFFFFFF0u;
+                    }
                 }
             }
         }
@@ -450,7 +468,17 @@ static void banco_attributo(unsigned char *out, unsigned int n)
          * ogni volta: qui in mezzo puo' esserci passato chiunque. */
         (void)ioport_in(0x3DA);
         (void)ioport_in(0x3BA);
-        ioport_out(VGA_AC_IDX, i | 0x20);   /* ! bit 5, o lo schermo si spegne */
+
+        /* ! IL BIT 5 SI SPEGNE PER LEGGERE, E SI RIACCENDE ALLA FINE.
+         *
+         * Acceso, la tavolozza interna dell'attributo (AR00..AR0F) NON e'
+         * raggiungibile dalla CPU e la scheda rende sempre lo stesso byte:
+         * i referti presi prima del 10 settembre 2026 hanno sedici 04 in
+         * fila li' dentro, e non e' quello che c'e' nella scheda. Spento,
+         * i registri si leggono davvero e lo schermo resta buio finche'
+         * non si rimette — cosa che si fa due righe piu' sotto, ed e' il
+         * motivo per cui questa sonda legge tutto prima di stampare. */
+        ioport_out(VGA_AC_IDX, i);
         out[i] = (unsigned char)ioport_in(VGA_AC_DAT);
     }
     (void)ioport_in(0x3DA);
@@ -617,14 +645,413 @@ static void dump_ponte(void)
     }
     emetti("! offset presunti (da sisfb), non da un documento SiS.\n");
 
+    /* ! SI SVUOTA IL BUFFER PRIMA DI TOCCARE IL PONTE, e di nuovo dopo ogni
+     * banco. Quello che viene dopo e' l'unico punto del referto in cui si
+     * SCRIVE su registri di cui non abbiamo il documento: se una di quelle
+     * scritture ferma la macchina, tutto cio' che era gia' stato letto deve
+     * essere gia' sul dischetto. Costa cinque write() in piu' e salva un
+     * referto intero. */
+    svuota();
+
     for (p = 0; p < sizeof(parti) / sizeof(parti[0]); p++) {
+        unsigned int off = parti[p].off;
+        unsigned char a, b, c;
+
+        /* ! PRIMA SI CHIEDE SE E' UN BANCO, E COSTA TRE SCRITTURE INVECE DI
+         * CENTOVENTOTTO.
+         *
+         * Un banco indicizzato risponde diversamente a indici diversi. Se a
+         * tre indici lontani rende sempre lo stesso byte, quella coppia non e'
+         * indice/dato: e' altro, e scriverci dentro centoventotto numeri
+         * significa infilarli in registri veri, alla cieca.
+         *
+         * Su questa scheda e' il caso di Part5: 128 indici, 128 volte 06.
+         * Ci abbiamo scritto sopra, e ha spostato lo schermo in un modo che
+         * nessun altro registro spiegava. Meglio saltare un banco che non
+         * c'e' che leggerne uno che non esiste. */
+        ioport_out(g_vga_io + off, 0x00);
+        a = (unsigned char)ioport_in(g_vga_io + off + 1);
+        ioport_out(g_vga_io + off, 0x01);
+        b = (unsigned char)ioport_in(g_vga_io + off + 1);
+        ioport_out(g_vga_io + off, 0x30);
+        c = (unsigned char)ioport_in(g_vga_io + off + 1);
+
+        if (a == b && b == c) {
+            emetti("\n");
+            emetti("%s: si rilegge sempre %02x - non e' un banco "
+                   "indicizzato, saltato.\n", parti[p].nome, a);
+            svuota();
+            continue;
+        }
+
         for (i = 0; i < 128; i++) {
-            ioport_out(g_vga_io + parti[p].off, i);
-            v[i] = (unsigned char)ioport_in(g_vga_io + parti[p].off + 1);
+            ioport_out(g_vga_io + off, i);
+            v[i] = (unsigned char)ioport_in(g_vga_io + off + 1);
         }
         emetti("\n");
         emetti_banco(parti[p].nome, v, 128);
+        svuota();
     }
+}
+
+/* =============================================================================
+ * I REGISTRI IN MEMORIA, E IL MOTORE 2D — si fa solo se lo chiedi
+ *
+ * ! PERCHE' NON E' ACCESO DI SUO. Qui non si scrive niente, ma si LEGGE una
+ * finestra di cui non abbiamo il documento, e una lettura non e' sempre senza
+ * conseguenze: certi registri sono code, e leggerli le fa avanzare. Il
+ * referto normale non ci mette piede.
+ *
+ * ! COSA CI ASPETTIAMO DI TROVARE. Su una SiS della serie 315 il motore 2D
+ * sta a +0x8200 dentro questa finestra: base e passo della sorgente e della
+ * destinazione, rettangolo, colore, operazione, comando, e uno stato che dice
+ * se il motore e' fermo. E' quello che serve per far riempire un rettangolo
+ * alla scheda invece che alla CPU.
+ *
+ * ! E CHE COSA SIGNIFICA UN BLOCCO DI ff. Vuol dire che la finestra non
+ * decodifica: BAR sbagliata, o scheda spenta. Un blocco di 00 vuol dire che
+ * decodifica e il motore e' a riposo. Sono le due risposte che distinguono
+ * «non c'e'» da «c'e' e non fa niente», ed e' l'unica cosa che questo
+ * capitolo deve stabilire.
+ * ========================================================================== */
+/* Il registro che accende i moduli della scheda.
+ *
+ * ! IL NUMERO VIENE DAL DRIVER DI LINUX, NON DA UN DOCUMENTO SiS. In sisfb
+ * l'indice 0x1E del sequenziatore si chiama IND_SIS_MODULE_ENABLE e il bit
+ * 0x40 SIS_2D_ENABLE. Su questa macchina SR1E si legge 20: il bit non c'e',
+ * cioe' il motore 2D e' spento — ed e' per questo che la finestra dei
+ * registri in memoria si rilegge tutta ff. */
+#define SR_MODULI     0x1E
+#define MODULO_2D     0x40
+
+static unsigned char sr_leggi(unsigned int i)
+{
+    ioport_out(VGA_SEQ_IDX, i);
+    return (unsigned char)ioport_in(VGA_SEQ_DAT);
+}
+
+static void sr_scrivi(unsigned int i, unsigned int v)
+{
+    ioport_out(VGA_SEQ_IDX, i);
+    ioport_out(VGA_SEQ_DAT, v);
+}
+
+static void dump_mmio(int accendi)
+{
+    static const struct { unsigned int off; const char *che; } zone[] = {
+        { 0x0000, "generali"            },
+        { 0x8200, "motore 2D"           },
+        { 0x8280, "motore 2D (seguito)" },
+        { 0x8500, "coda comandi"        },
+    };
+    MmioZona     m;
+    volatile unsigned int *reg;
+    unsigned char v[64];
+    unsigned int z, i, d;
+    unsigned char sr1e_prima, sr1e_dopo, sr05_prima;
+
+    emetti("\n");
+    emetti("=============================================================\n");
+    emetti("[MMIO] i registri in memoria della scheda video\n");
+    emetti("=============================================================\n");
+
+    if (g_vga_mmio == 0) {
+        emetti("nessuna BAR di memoria non prefetchable: niente da leggere.\n");
+        return;
+    }
+
+    /* ! IL LUCCHETTO VA RIAPERTO QUI. dump_vga() lo RIMETTE COM'ERA quando ha
+     * finito — e fa bene, una sonda non lascia la macchina diversa da come
+     * l'ha trovata — ma da bloccato SR1E si rilegge ff. La prima volta l'ho
+     * letto cosi': ff, «motore acceso», e la conclusione era esattamente
+     * rovesciata. Il banco letto da sbloccato nello stesso referto diceva 20. */
+    sr05_prima = sr_leggi(0x05);
+    sr_scrivi(0x05, 0x86);
+
+    sr1e_prima = sr_leggi(SR_MODULI);
+    emetti("SR1E (moduli) = %02x: motore 2D %s\n", sr1e_prima,
+           (sr1e_prima & MODULO_2D) ? "ACCESO" : "spento");
+
+    if (accendi) {
+        /* ! ff NON E' UN VALORE, E' UN NON-RISPOSTA, e non ci si scrive sopra.
+         * sr1e_prima | 0x40 con sr1e_prima a ff vuol dire scrivere ff, cioe'
+         * accendere OGNI modulo della scheda alla cieca. E' quello che questa
+         * sonda ha fatto la prima volta. Se il registro non risponde, la cosa
+         * giusta e' dirlo e non toccare niente. */
+        if (sr1e_prima == 0xFF) {
+            emetti("SR1E si rilegge ff anche da sbloccato: non ci scrivo.\n");
+        } else {
+            /* Accendere un modulo non cambia la modalita' video: non tocca
+             * temporizzazioni, non tocca il pannello. Ma il nome di questo
+             * registro ce l'ha dato un altro driver, non un documento. */
+            sr_scrivi(SR_MODULI, sr1e_prima | MODULO_2D);
+            sr1e_dopo = sr_leggi(SR_MODULI);
+            emetti("acceso il bit %02x: SR1E adesso %02x%s\n", MODULO_2D,
+                   sr1e_dopo,
+                   (sr1e_dopo & MODULO_2D) ? "" : "  (NON ha attecchito!)");
+        }
+    }
+
+    m.fisico = g_vga_mmio;
+    m.byte   = 0x10000;          /* 64 KB: il motore 2D ci sta dentro */
+    m.virt   = 0;
+
+    if (mmio_map(&m) != 0) {
+        emetti("base 0x%08x: mmio_map fallita.\n", g_vga_mmio);
+        sr_scrivi(0x05, sr05_prima);
+        return;
+    }
+
+    emetti("base 0x%08x, mappata a 0x%08x, 64 KB.\n", g_vga_mmio, m.virt);
+    emetti("! tutto ff = la finestra non decodifica; tutto 00 = decodifica\n");
+    emetti("  e il motore e' a riposo.\n");
+
+    /* ! SI SVUOTA PRIMA DI LEGGERE, come per il ponte: se una di queste
+     * letture ferma la macchina, il referto dev'essere gia' sul dischetto. */
+    svuota();
+
+    reg = (volatile unsigned int *)m.virt;
+
+    for (z = 0; z < sizeof(zone) / sizeof(zone[0]); z++) {
+        char nome[24];
+
+        /* 16 registri da 32 bit per zona, letti in byte per stamparli con lo
+         * stesso emettitore di tutti gli altri banchi. */
+        for (i = 0; i < 16; i++) {
+            d = reg[(zone[z].off >> 2) + i];
+            v[i * 4]     = (unsigned char)(d & 0xFF);
+            v[i * 4 + 1] = (unsigned char)((d >> 8) & 0xFF);
+            v[i * 4 + 2] = (unsigned char)((d >> 16) & 0xFF);
+            v[i * 4 + 3] = (unsigned char)((d >> 24) & 0xFF);
+        }
+
+        emetti("\n");
+        emetti("--- +0x%04x  %s\n", zone[z].off, zone[z].che);
+        snprintf(nome, sizeof(nome), "M%04x", zone[z].off);
+        emetti_banco(nome, v, 64);
+        svuota();
+    }
+
+    /* =========================================================================
+     * IL SETACCIO: 64 KB interi, alla ricerca di un solo dword che non sia ff
+     *
+     * ! QUATTRO FINESTRE DA SESSANTAQUATTRO BYTE NON SONO UNA RISPOSTA. Se il
+     * motore 2D non fosse a +0x8200 — l'offset ce l'ha dato sisfb, non un
+     * documento SiS — quattro assaggi di ff direbbero «l'apertura e' morta»
+     * quando la verita' e' «abbiamo guardato nel posto sbagliato». Sono due
+     * conclusioni opposte a partire dallo stesso dato.
+     *
+     * Sedicimilatrecentottantaquattro letture costano meno di un battito di
+     * ciglia e tolgono di mezzo la differenza: se in tutti i 64 KB non c'e' un
+     * dword diverso da ffffffff, l'apertura non decodifica e non c'e' niente
+     * da cercare. Se invece qualcosa risponde, il referto dice DOVE.
+     * ===================================================================== */
+    {
+        unsigned int vivi = 0, mostrati = 0, blocchi = 0, b;
+        unsigned int primo_di_blocco;
+
+        emetti("\n");
+        emetti("--- setaccio: tutti i 64 KB, in cerca di qualcosa che non sia ff\n");
+        svuota();
+
+        for (b = 0; b < 16; b++) {          /* 16 blocchi da 4 KB */
+            primo_di_blocco = 0;
+
+            for (i = 0; i < 1024; i++) {
+                d = reg[b * 1024 + i];
+                if (d == 0xFFFFFFFFu) continue;
+
+                vivi++;
+                if (!primo_di_blocco) { blocchi++; primo_di_blocco = 1; }
+
+                if (mostrati < 24) {
+                    emetti("  +0x%04x = %08x\n", (b * 1024 + i) * 4, d);
+                    mostrati++;
+                }
+            }
+            svuota();
+        }
+
+        if (vivi == 0)
+            emetti("  16384 dword su 16384 sono ffffffff: l'apertura non\n"
+                   "  decodifica, e non e' questione di offset sbagliato.\n");
+        else
+            emetti("  %u dword su 16384 rispondono, in %u blocchi da 4 KB su 16.\n",
+                   vivi, blocchi);
+        svuota();
+    }
+
+    /* =========================================================================
+     * IL CONTROLLO: si mappa il FRAMEBUFFER e si guarda se si legge.
+     *
+     * ! SENZA QUESTO, UN BLOCCO DI ff NON DICE NIENTE. Puo' voler dire che la
+     * finestra dei registri non decodifica — la cosa che si vuole sapere — ma
+     * anche che mmio_map() non ha mappato quello che credevamo, e allora
+     * l'intero capitolo sopra e' aria fritta.
+     *
+     * Il framebuffer e' l'unica finestra della scheda di cui sappiamo per
+     * certo che risponde: e' quella in cui il sistema sta disegnando in questo
+     * momento. Se questa si legge e quella no, la differenza e' nella scheda e
+     * non in noi.
+     * ===================================================================== */
+    emetti("\n");
+    emetti("--- controllo: il framebuffer, che sappiamo rispondere\n");
+
+    if (g_vga_fb == 0) {
+        emetti("nessuna BAR prefetchable: controllo non fatto.\n");
+        sr_scrivi(0x05, sr05_prima);
+        return;
+    }
+
+    m.fisico = g_vga_fb;
+    m.byte   = 0x1000;
+    m.virt   = 0;
+
+    if (mmio_map(&m) != 0) {
+        emetti("base 0x%08x: mmio_map fallita.\n", g_vga_fb);
+        sr_scrivi(0x05, sr05_prima);
+        return;
+    }
+
+    reg = (volatile unsigned int *)m.virt;
+    for (i = 0; i < 16; i++) {
+        d = reg[i];
+        v[i * 4]     = (unsigned char)(d & 0xFF);
+        v[i * 4 + 1] = (unsigned char)((d >> 8) & 0xFF);
+        v[i * 4 + 2] = (unsigned char)((d >> 16) & 0xFF);
+        v[i * 4 + 3] = (unsigned char)((d >> 24) & 0xFF);
+    }
+
+    emetti("base 0x%08x, mappata a 0x%08x.\n", g_vga_fb, m.virt);
+    emetti_banco("FB", v, 64);
+
+    /* ! LEGGERE ZERI NON DIMOSTRA NIENTE, e la prima volta ho preso quaranta
+     * righe di 00 per una prova che mmio_map funzionava. Lo zero e' anche
+     * quello che si legge da una pagina nuova che non e' mappata dove
+     * crediamo, ed e' anche il colore del primo pixel di uno schermo con lo
+     * sfondo scuro: tre spiegazioni per lo stesso dato.
+     *
+     * Si scrive e si rilegge. Un valore che torna indietro e' memoria vera,
+     * e nessuna delle altre due spiegazioni lo produce. Poi si rimette quello
+     * che c'era: e' un pixel dello schermo, e una sonda non lascia segni. */
+    {
+        unsigned int orig  = reg[0];
+        unsigned int rilet;
+
+        reg[0] = 0xA5C31E7Fu;
+        rilet  = reg[0];
+        reg[0] = orig;
+
+        emetti("prova scrittura: scritto a5c31e7f, riletto %08x  -> %s\n",
+               rilet,
+               (rilet == 0xA5C31E7Fu) ? "mmio_map funziona, la finestra dei"
+                                        " registri e' spenta dalla scheda"
+                                      : "NON e' memoria della scheda: il"
+                                        " guasto e' in mmio_map");
+    }
+
+    svuota();
+
+    /* Il lucchetto si rimette com'era: dump_vga() lo fa, e questo capitolo
+     * non deve essere quello che se ne dimentica. */
+    sr_scrivi(0x05, sr05_prima);
+}
+
+/* =============================================================================
+ * LA ROM DEL BIOS VIDEO — il pezzo che sa gia' fare tutto
+ *
+ * ! E' IL BERSAGLIO GIUSTO PER IL MODESET, e ci sono voluti dieci referti per
+ * arrivarci. Dentro questa ROM ci sono le tabelle di modalita' di QUESTA
+ * scheda e il codice che le applica: e' quello che Stage 2 chiama con INT 10h
+ * all'accensione, ed e' l'unica cosa su questa macchina che il pannello lo sa
+ * pilotare per intero. Sottrarre due referti dice COSA cambia fra due
+ * modalita'; qui dentro c'e' scritto PERCHE'.
+ *
+ * Sono trentadue o sessantaquattro kilobyte — la lunghezza la dichiara la ROM
+ * stessa nel terzo byte, in blocchi da 512 — contro i megabyte di un driver
+ * Windows, e sono codice a 16 bit che ndisasm disassembla senza storie.
+ *
+ * ! SI SCRIVE GREZZA, NON IN ESADECIMALE. Sessantaquattro kilobyte in
+ * esadecimale sono quasi trecento kilobyte di testo e un dischetto pieno: qui
+ * il file e' esattamente la ROM, byte per byte, e tools/scava.py lo legge cosi'
+ * com'e'.
+ *
+ * ! E LEGGERE UNA ROM NON HA EFFETTI COLLATERALI. E' l'unica cosa in questa
+ * sonda di cui si possa dirlo con certezza: e' memoria di sola lettura, e
+ * nessuno dei suoi byte e' un registro.
+ * ========================================================================== */
+static int dump_rom(const char *perc)
+{
+    MmioZona       m;
+    volatile unsigned char *rom;
+    unsigned char  intestazione[3];
+    unsigned int   blocchi, byte, i, scritti = 0;
+    static unsigned char pezzo[4096];
+    int            fd;
+
+    m.fisico = 0xC0000;
+    m.byte   = 0x10000;          /* 64 KB: la ROM video non e' mai piu' lunga */
+    m.virt   = 0;
+
+    if (mmio_map(&m) != 0) {
+        printf("sonda: mmio_map(0xC0000) fallita: la ROM non si legge.\n");
+        return 1;
+    }
+
+    rom = (volatile unsigned char *)m.virt;
+
+    for (i = 0; i < 3; i++) intestazione[i] = rom[i];
+
+    /* ! LA FIRMA SI CONTROLLA PRIMA DI SCRIVERE 64 KB. 55 AA e' l'inizio di
+     * ogni ROM di espansione dal 1981: se non c'e', quello che sta a 0xC0000
+     * non e' una ROM video, e salvarlo vorrebbe dire riempire il dischetto di
+     * qualcos'altro. */
+    if (intestazione[0] != 0x55 || intestazione[1] != 0xAA) {
+        printf("sonda: a 0xC0000 c'e' %02x %02x invece di 55 aa:\n",
+               intestazione[0], intestazione[1]);
+        printf("       non e' una ROM di espansione. Non scrivo niente.\n");
+        return 1;
+    }
+
+    blocchi = intestazione[2];
+    byte    = blocchi * 512;
+
+    if (byte == 0 || byte > 0x10000) {
+        printf("sonda: la ROM dichiara %u blocchi (%u byte): non ha senso.\n",
+               blocchi, byte);
+        return 1;
+    }
+
+    fd = open(perc, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        printf("sonda: non riesco a creare %s (%d)\n", perc, fd);
+        return 1;
+    }
+
+    printf("sonda: ROM video, %u blocchi = %u byte. Scrivo %s ...\n",
+           blocchi, byte, perc);
+
+    /* Si copia in un pezzo normale prima di scrivere: write() vuole memoria
+     * sua, e questa e' una finestra mappata su una ROM. */
+    while (scritti < byte) {
+        unsigned int q = byte - scritti;
+
+        if (q > sizeof(pezzo)) q = sizeof(pezzo);
+        for (i = 0; i < q; i++) pezzo[i] = rom[scritti + i];
+
+        if (write(fd, pezzo, q) != (ssize_t)q) {
+            printf("sonda: la scrittura si e' fermata a %u byte.\n", scritti);
+            printf("       dischetto pieno, o protetto in scrittura?\n");
+            close(fd);
+            return 1;
+        }
+        scritti += q;
+    }
+
+    close(fd);
+    printf("sonda: fatto. %s e' la ROM, byte per byte (%u).\n", perc, byte);
+    printf("       Da leggere con tools/scava.py su Linux.\n");
+    return 0;
 }
 
 /* -----------------------------------------------------------------------------
@@ -668,7 +1095,8 @@ static void aiuto(void)
 {
     printf("sonda.drv - scrive su file tutto quel che serve per scrivere\n");
     printf("            un driver per questa macchina.\n\n");
-    printf("  sonda.drv [-auto] [-f] [-ponte] [-schermo] [file]\n\n");
+    printf("  sonda.drv [-auto] [-f] [-ponte] [-mmio] [-motore]\n");
+    printf("            [-schermo] [file]\n\n");
     printf("  file      dove scrivere (predefinito %s). Nome in 8.3:\n",
            FILE_PRED);
     printf("            su FAT i nomi lunghi sono in sola lettura.\n");
@@ -683,13 +1111,24 @@ static void aiuto(void)
     printf("  -ponte    aggiunge i banchi del ponte video. Scrive su\n");
     printf("            registri di cui non abbiamo il documento: si fa\n");
     printf("            DOPO aver messo al sicuro il primo referto.\n");
+    printf("  -rom F    salva in F la ROM del BIOS video, grezza. E'\n");
+    printf("            trentadue o sessantaquattro kilobyte, e dentro ci\n");
+    printf("            sono le tabelle di modalita' di QUESTA scheda: si\n");
+    printf("            legge con tools/scava.py su Linux.\n");
+    printf("  -mmio     aggiunge i registri in memoria, motore 2D compreso.\n");
+    printf("            Non scrive niente, ma legge una finestra di cui non\n");
+    printf("            abbiamo il documento: stessa prudenza.\n");
+    printf("  -motore   come -mmio, ma prima ACCENDE il modulo 2D (SR1E bit\n");
+    printf("            40). Serve perche' da spento quella finestra si\n");
+    printf("            rilegge tutta ff. Non cambia la modalita' video.\n");
 }
 
 int main(int argc, char **argv)
 {
     const char  *perc = FILE_PRED;
     char         autonome[16];
-    int          forza = 0, ponte = 0, autom = 0, i;
+    int          forza = 0, ponte = 0, mmio = 0, motore = 0, rom = 0;
+    int          autom = 0, i;
     struct stat  st;
 
     for (i = 1; i < argc; i++) {
@@ -711,6 +1150,9 @@ int main(int argc, char **argv)
         if (strcmp(argv[i], "-auto") == 0)  { autom = 1; continue; }
         if (strcmp(argv[i], "-f") == 0)     { forza = 1; continue; }
         if (strcmp(argv[i], "-ponte") == 0) { ponte = 1; continue; }
+        if (strcmp(argv[i], "-mmio") == 0)  { mmio = 1; continue; }
+        if (strcmp(argv[i], "-rom") == 0)   { rom = 1; continue; }
+        if (strcmp(argv[i], "-motore") == 0) { mmio = 1; motore = 1; continue; }
         if (argv[i][0] == '-') {
             printf("sonda: opzione sconosciuta: %s\n", argv[i]);
             return 1;
@@ -734,6 +1176,7 @@ int main(int argc, char **argv)
         dump_vga();
         dump_finestra_rilocata();
         if (ponte) dump_ponte();
+        if (mmio)  dump_mmio(motore);
 
         printf("\n-- fine del referto --\n");
         return 0;
@@ -784,6 +1227,15 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    /* ! LA ROM SI PRENDE PRIMA DEL REFERTO. E' il pezzo piu' prezioso e il
+     * meno rischioso: se il dischetto si riempie, meglio che si riempia dopo
+     * aver salvato quella. */
+    if (rom) {
+        close(g_fd);
+        g_fd = -1;
+        return dump_rom(perc);
+    }
+
     printf("sonda: scrivo %s ...\n", perc);
 
     /* Da qui in poi non si stampa piu' niente fino alla fine: ogni riga a
@@ -795,6 +1247,7 @@ int main(int argc, char **argv)
     dump_finestra_rilocata();
 
     if (ponte) dump_ponte();
+    if (mmio)  dump_mmio(motore);
 
     svuota();
     close(g_fd);

@@ -569,6 +569,21 @@ static int porta_prepara(unsigned int p)
         usleep(2000);
     }
 
+    /* ! DOPO IL RESET SI ASPETTA, e non e' prudenza generica: e' il caso di
+     * una chiavetta GIA' INFILATA all'accensione.
+     *
+     * Infilata a macchina accesa, il driver la trova al giro d'attesa dopo —
+     * un secondo pieno — e a quel punto e' sveglia da un pezzo. Trovata subito
+     * all'avvio, invece, le si chiede il primo descrittore un attimo dopo il
+     * reset, e lei non risponde: «il dispositivo non risponde al primo
+     * descrittore» su una chiavetta che due minuti dopo funziona benissimo.
+     *
+     * Visto su un Acer Aspire 3000 il 10 settembre 2026, e non e' un caso
+     * strano: e' il caso NORMALE, perche' la gente accende la macchina con la
+     * chiavetta gia' dentro. La specifica concede 10 ms dopo il reset; cento
+     * costano niente e coprono anche i dispositivi lenti. */
+    usleep(100000);
+
     v = rd32(g_op, O_PORTSC(p));
 
     /* ! DOPO IL RESET, «ABILITATA» VUOL DIRE ALTA VELOCITA'. E' cosi' che
@@ -603,9 +618,19 @@ static void qh_indirizzo(unsigned int off, unsigned int indirizzo,
 
 static int conosci(void)
 {
-    if (!usb_desc_corto(controllo, 0, &g_dev)) {
-        printf("ehci: il dispositivo non risponde al primo descrittore\n");
-        return 0;
+    int giro;
+
+    /* ! TRE TENTATIVI, per la stessa ragione dell'attesa qui sopra: il primo
+     * descrittore e' la prima parola che si scambia con un dispositivo appena
+     * resettato, e se arriva troppo presto quello tace. Rinunciare al primo no
+     * vuol dire dichiarare assente una chiavetta che c'e'. */
+    for (giro = 0; giro < 3; giro++) {
+        if (usb_desc_corto(controllo, 0, &g_dev)) break;
+        if (giro == 2) {
+            printf("ehci: il dispositivo non risponde al primo descrittore\n");
+            return 0;
+        }
+        usleep(100000);
     }
 
     /* Ad alta velocita' l'endpoint 0 e' sempre da 64 byte; si rilegge lo

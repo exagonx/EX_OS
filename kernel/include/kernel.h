@@ -83,6 +83,27 @@ typedef struct PACKED {
     uint16_t    fb_width;       /* pixel in orizzontale */
     uint16_t    fb_height;      /* pixel in verticale */
     uint8_t     fb_bpp;         /* bit per pixel: 16, 24 o 32 */
+
+    /* =====================================================================
+     * IL VOLUME IN RAM — riempito da Stage 2, e quasi sempre zero
+     *
+     * ! rd_addr == 0 VUOL DIRE «niente», ed e' il caso normale. Quando c'e',
+     * dentro quella memoria sta una copia intera del supporto da cui si e'
+     * partiti, letta col BIOS finche' era disponibile, e il kernel ci monta
+     * sopra la radice.
+     *
+     * ! SERVE A UNA MACCHINA IL CUI LETTORE STA SULL'USB. Il BIOS lo sa
+     * usare, il kernel no: Stage 1 e Stage 2 si caricano benissimo da un CD
+     * o da un floppy attaccati all'USB, e poi il kernel va a cercare quel
+     * supporto sull'FDC o sul bus IDE, dove non c'e'. Il perche' per esteso
+     * sta accanto a `ramdisco` in bootloader/stage2/loader.asm.
+     *
+     * ! E NON RESTA NIENTE ALLO SPEGNIMENTO. Una radice in RAM si scrive
+     * come le altre e sparisce con la corrente: e' un patto, non un difetto,
+     * e va detto a chi ci salva qualcosa.
+     * ===================================================================== */
+    uint32_t    rd_addr;        /* dove sta il volume, 0 = non c'e' */
+    uint32_t    rd_byte;        /* quanto e' grande */
 } BootInfo;
 
 #define BOOTINFO_MAGIC  0x4D594F53  /* "EXOS" */

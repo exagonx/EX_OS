@@ -25,6 +25,10 @@
  * perche' gli indici sono in mano ai montaggi (vedi blk.h). Chiunque
  * scorra l'array DEVE saltare le voci con usato == 0. */
 static BlkDev g_dev[BLK_MAX_DEV];
+
+/* Dove sta il volume in RAM. Uno solo: ce n'e' uno per avvio, e mettere qui
+ * un array vorrebbe dire far finta che un giorno ce ne saranno due. */
+static uint32_t g_ram_base = 0;
 static int    g_n = 0;
 
 /* Dichiarata qui perche' la usano blk_rescan() e blk_ripartiziona(), che
@@ -629,6 +633,16 @@ int blk_read(int i, uint64_t lba, uint32_t n, void *buf)
      * anche quella che si stacca senza avvisare. */
     if (b->tipo == BLK_TIPO_RING3) return blkr3_read(i, abs, n, buf);
 
+    /* ! IL VOLUME IN RAM SI LEGGE CON UNA COPIA E BASTA, e si puo' perche' il
+     * kernel mappa per identita' i primi 64 MB (vedi PSE in paging.c): quello
+     * sta a 32, quindi l'indirizzo fisico E' l'indirizzo che si scrive. Il
+     * giorno che lo si spostasse piu' in alto, qui servirebbe una finestra. */
+    if (b->tipo == BLK_TIPO_RAM) {
+        copia((uint8_t *)buf, (const uint8_t *)(g_ram_base + abs * 512u),
+              n * 512u);
+        return 0;
+    }
+
     /* Una partizione sopra un dispositivo servito da un processo: `abs` e'
      * gia' l'indirizzo dentro il supporto, tradotto dalla finestra. */
     if (b->tipo == BLK_TIPO_PART && b->padre != BLK_PADRE_ATA)
@@ -671,6 +685,32 @@ int blk_read(int i, uint64_t lba, uint32_t n, void *buf)
 /* =============================================================================
  * I dispositivi serviti da un processo — vedi blkr3.c
  * ============================================================================= */
+
+int blk_registra_ram(uint32_t fisico, uint32_t byte)
+{
+    BlkDev *b;
+
+    if (fisico == 0 || byte < 512) return -1;
+
+    b = nuovo();
+    if (b == NULL) return -1;
+
+    nome_copia(b->nome, "rd0");
+    b->usato        = 1;
+    b->tipo         = BLK_TIPO_RAM;
+    b->disco        = 0;
+    b->padre        = BLK_PADRE_ATA;
+    b->guasto       = 0;
+    b->sola_lettura = 0;
+    b->primo        = 0;
+    b->settori      = byte / 512;
+
+    g_ram_base = fisico;
+
+    klog(LOG_INFO, "BLK: volume in RAM a 0x%08x, %u settori",
+         fisico, (uint32_t)b->settori);
+    return (int)(b - g_dev);
+}
 
 int blk_registra_ring3(const char *nome, uint64_t settori, int sola_lettura)
 {
@@ -760,10 +800,18 @@ int blk_scansiona(int i)
         if (tab.p[p].tipo == 0x05 || tab.p[p].tipo == 0x0F ||
             tab.p[p].tipo == 0x85) continue;
 
+        /* ! I NUMERI VANNO DETTI, e la prima volta mancavano. «Fuori dal
+         * supporto» ha due cause opposte — una tabella sbagliata, o una
+         * capacita' letta male — e senza le tre cifre non si distinguono. Su
+         * una chiavetta vera il messaggio nudo ha mandato a cercare il guasto
+         * nella tabella, mentre era la capacita' a essere venuta 1. */
         if (tab.p[p].inizio >= padre->settori ||
             tab.p[p].inizio + tab.p[p].settori > padre->settori) {
-            klog(LOG_WARN, "BLK: partizione %u di %s fuori dal supporto, ignorata",
-                 tab.p[p].numero, nome_padre);
+            klog(LOG_WARN, "BLK: partizione %u di %s: comincia a %u e dura %u, "
+                 "ma %s dice di avere %u settori - ignorata",
+                 tab.p[p].numero, nome_padre, (uint32_t)tab.p[p].inizio,
+                 (uint32_t)tab.p[p].settori, nome_padre,
+                 (uint32_t)padre->settori);
             continue;
         }
 
@@ -783,6 +831,15 @@ int blk_scansiona(int i)
         b->settori      = tab.p[p].settori;
         n++;
     }
+
+    /* ! ZERO PARTIZIONI DA UNA TABELLA CHE NE AVEVA E' UN'ALTRA COSA da zero
+     * partizioni perche' non c'e' nessuna tabella, e chi legge il registro
+     * deve poterle distinguere: la prima vuol dire che qualcosa non torna, la
+     * seconda e' il caso normale di una chiavetta. */
+    if (n == 0 && tab.n > 0)
+        klog(LOG_WARN, "BLK: %s ha una tabella con %d voci e nessuna e' "
+             "utilizzabile: o la tabella non e' una tabella, o la capacita' "
+             "e' sbagliata", nome_padre, tab.n);
 
     klog(LOG_INFO, "BLK: %s riletto, %d partizioni", nome_padre, n);
     return n;
@@ -850,6 +907,12 @@ int blk_write(int i, uint64_t lba, uint32_t n, const void *buf)
 
     if (b->tipo == BLK_TIPO_RING3) return blkr3_write(i, abs, n, buf);
 
+    if (b->tipo == BLK_TIPO_RAM) {
+        copia((uint8_t *)(g_ram_base + abs * 512u), (const uint8_t *)buf,
+              n * 512u);
+        return 0;
+    }
+
     if (b->tipo == BLK_TIPO_PART && b->padre != BLK_PADRE_ATA)
         return blkr3_write((int)b->padre, abs, n, buf);
 
@@ -879,6 +942,7 @@ int blk_flush(int i)
     if (b == NULL || !b->usato) return -1;
     if (b->tipo == BLK_TIPO_FLOPPY) return fat12_sync();
     if (b->tipo == BLK_TIPO_RING3)  return blkr3_flush(i);
+    if (b->tipo == BLK_TIPO_RAM)    return 0;   /* la memoria E' il disco */
     if (b->tipo == BLK_TIPO_PART && b->padre != BLK_PADRE_ATA)
         return blkr3_flush((int)b->padre);
 

@@ -1,0 +1,183 @@
+/* ==============================================================================
+ * drivers/sis/sis_tab.h — le due modalita', lette dal ferro
+ *
+ * ! GENERATO da tools/sonda2tab.py dai referti in sonda/. Non si modifica a
+ * mano: i valori vengono da una macchina vera.
+ *
+ * ! E L'ELENCO DEI REGISTRI E' UNA MISURA FATTA SU SEI REFERTI, non su due:
+ * trentatre registri di questa scheda cambiano da un avvio all'altro NELLA
+ * STESSA modalita' — riportano stati, non impostazioni — e con un referto per
+ * modalita' finivano dentro la tabella come se contassero. L'ultimo a cadere
+ * e' stato CR1a, che aveva superato due misure uguali e alla terza ha cambiato
+ * valore: il rumore non si dimostra in due misure.
+ *
+ * ! E LA TAVOLOZZA DELL'ATTRIBUTO (AR00..AR0F) NON C'E', APPOSTA. Nel referto
+ * sono sedici 04 in fila, in tutte e sei le letture, perche' con il bit 5
+ * dell'indice acceso quei registri non sono leggibili dalla CPU. Scritti, gli
+ * sedici colori del testo finiscono tutti sull'indice 4 del DAC — rosso — e lo
+ * schermo diventa rosso pieno. La tavolozza del testo la rimette il kernel.
+ * ============================================================================= */
+
+typedef struct { unsigned char indice, valore; } SisReg;
+
+/* Generato da tools/sonda2tab.py: NON si modifica a mano. */
+/* Sorgente: sonda/acer_aspire_3000.TXT */
+
+#define MISC_TESTO 0x67
+
+static const SisReg sr_testo[] = {
+    { 0x00, 0x03 },
+    { 0x01, 0x01 },
+    { 0x02, 0x03 },
+    { 0x03, 0x00 },
+    { 0x04, 0x02 },
+    { 0x06, 0x00 },
+    { 0x08, 0xae },
+    { 0x09, 0x00 },
+    { 0x0a, 0x00 },
+    { 0x0c, 0x00 },
+    { 0x0e, 0x00 },
+    { 0x10, 0x21 },
+    { 0x20, 0x20 },
+    { 0x21, 0x63 },
+    { 0x3d, 0x00 },
+};
+#define SR_TESTO_N ((int)(sizeof(sr_testo) / sizeof(sr_testo[0])))
+
+static const SisReg cr_testo[] = {
+    { 0x00, 0x5f },
+    { 0x01, 0x4f },
+    { 0x02, 0x50 },
+    { 0x03, 0x82 },
+    { 0x04, 0x55 },
+    { 0x05, 0x81 },
+    { 0x06, 0xbf },
+    { 0x07, 0x1f },
+    { 0x08, 0x00 },
+    { 0x09, 0x4f },
+    { 0x0a, 0x0e },
+    { 0x0b, 0x0f },
+    { 0x0c, 0x00 },
+    { 0x0d, 0x00 },
+    { 0x0e, 0x07 },
+    { 0x0f, 0x80 },
+    { 0x10, 0x9c },
+    { 0x12, 0x8f },
+    { 0x13, 0x28 },
+    { 0x14, 0x1f },
+    { 0x15, 0x96 },
+    { 0x16, 0xb9 },
+    { 0x17, 0xa3 },
+    { 0x18, 0xff },
+    { 0x22, 0xff },
+    { 0x34, 0x03 },
+    { 0xd1, 0xf7 },
+    { 0xd2, 0xff },
+    { 0xd4, 0xfb },
+    { 0xd9, 0xbf },
+};
+#define CR_TESTO_N ((int)(sizeof(cr_testo) / sizeof(cr_testo[0])))
+
+static const SisReg gr_testo[] = {
+    { 0x00, 0x00 },
+    { 0x01, 0x00 },
+    { 0x02, 0x00 },
+    { 0x03, 0x00 },
+    { 0x04, 0x00 },
+    { 0x05, 0x10 },
+    { 0x06, 0x0e },
+    { 0x07, 0x00 },
+    { 0x08, 0xff },
+};
+#define GR_TESTO_N ((int)(sizeof(gr_testo) / sizeof(gr_testo[0])))
+
+static const SisReg ar_testo[] = {
+    { 0x10, 0x0c },
+    { 0x11, 0x00 },
+    { 0x12, 0x0f },
+    { 0x13, 0x00 },
+    { 0x14, 0x00 },
+};
+#define AR_TESTO_N ((int)(sizeof(ar_testo) / sizeof(ar_testo[0])))
+
+
+/* Generato da tools/sonda2tab.py: NON si modifica a mano. */
+/* Sorgente: sonda/SONDA3.TXT */
+
+#define MISC_GRAFICA 0x2f
+
+static const SisReg sr_grafica[] = {
+    { 0x00, 0x03 },
+    { 0x01, 0x01 },
+    { 0x02, 0x0f },
+    { 0x03, 0x00 },
+    { 0x04, 0x0e },
+    { 0x06, 0x12 },
+    { 0x08, 0xef },
+    { 0x09, 0x1f },
+    { 0x0a, 0x20 },
+    { 0x0c, 0x06 },
+    { 0x0e, 0x61 },
+    { 0x10, 0x33 },
+    { 0x20, 0xa0 },
+    { 0x21, 0xa3 },
+    { 0x3d, 0x01 },
+};
+#define SR_GRAFICA_N ((int)(sizeof(sr_grafica) / sizeof(sr_grafica[0])))
+
+static const SisReg cr_grafica[] = {
+    { 0x00, 0x7f },
+    { 0x01, 0x63 },
+    { 0x02, 0x63 },
+    { 0x03, 0x83 },
+    { 0x04, 0x6c },
+    { 0x05, 0x1c },
+    { 0x06, 0x72 },
+    { 0x07, 0xf0 },
+    { 0x08, 0x00 },
+    { 0x09, 0x60 },
+    { 0x0a, 0x0e },
+    { 0x0b, 0x0f },
+    { 0x0c, 0x00 },
+    { 0x0d, 0x00 },
+    { 0x0e, 0x07 },
+    { 0x0f, 0x80 },
+    { 0x10, 0x58 },
+    { 0x12, 0x57 },
+    { 0x13, 0x90 },
+    { 0x14, 0x4f },
+    { 0x15, 0x57 },
+    { 0x16, 0x73 },
+    { 0x17, 0xa3 },
+    { 0x18, 0xff },
+    { 0x22, 0x00 },
+    { 0x34, 0x63 },
+    { 0xd1, 0xf6 },
+    { 0xd2, 0xfe },
+    { 0xd4, 0xfa },
+    { 0xd9, 0x3f },
+};
+#define CR_GRAFICA_N ((int)(sizeof(cr_grafica) / sizeof(cr_grafica[0])))
+
+static const SisReg gr_grafica[] = {
+    { 0x00, 0x00 },
+    { 0x01, 0x00 },
+    { 0x02, 0x00 },
+    { 0x03, 0x00 },
+    { 0x04, 0x00 },
+    { 0x05, 0x00 },
+    { 0x06, 0x05 },
+    { 0x07, 0x0f },
+    { 0x08, 0xff },
+};
+#define GR_GRAFICA_N ((int)(sizeof(gr_grafica) / sizeof(gr_grafica[0])))
+
+static const SisReg ar_grafica[] = {
+    { 0x10, 0x01 },
+    { 0x11, 0x00 },
+    { 0x12, 0x00 },
+    { 0x13, 0x00 },
+    { 0x14, 0x00 },
+};
+#define AR_GRAFICA_N ((int)(sizeof(ar_grafica) / sizeof(ar_grafica[0])))
+

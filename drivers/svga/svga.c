@@ -434,6 +434,34 @@ static void uso(void)
     printf("lasciare uno schermo nero.\n");
 }
 
+/* La radice sta in RAM? Rende 1 se si', 0 se no o se non si sa.
+ *
+ * ! SERVE PERCHE' QUI SI SCRIVE SU UN FILE, E QUEL FILE PUO' EVAPORARE.
+ * Quando Stage 2 copia il volume in memoria (vedi rd_addr in
+ * kernel/include/kernel.h), la radice e' un disco che sparisce con la
+ * corrente: questo programma scrive dentro /LOADER.BIN, dice «fatto», e al
+ * riavvio non e' cambiato niente.
+ *
+ * ! E' SUCCESSO, il 10 settembre 2026: due referti della sonda presi in due
+ * modalita' diverse sono usciti IDENTICI, tutti e due in modo testo. Il
+ * comando aveva funzionato — su un disco che non esisteva piu'. Un lavoro che
+ * riesce e non lascia traccia e' il modo peggiore di fallire, perche' non
+ * assomiglia a un errore. */
+static int radice_in_ram(void)
+{
+    MountInfo m[4];
+    int n, i;
+
+    n = mountinfo(m, 4, 0);
+    if (n <= 0) return 0;
+
+    for (i = 0; i < n; i++) {
+        if (m[i].punto[0] != '/' || m[i].punto[1] != '\0') continue;
+        return (strcmp(m[i].dev, "rd0") == 0);
+    }
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     const char *voluto = NULL;
@@ -479,6 +507,24 @@ int main(int argc, char **argv)
            g_s2, pos_firma + 8);
 
     if (opt_n) { printf("\n(-n: non ho scritto niente)\n"); return 0; }
+
+    /* ! SI AVVISA PRIMA DI SCRIVERE, non dopo. Vedi radice_in_ram(). */
+    if (radice_in_ram()) {
+        printf("\n  ====================================================\n");
+        printf("   ! LA RADICE STA IN RAM, E QUELLO CHE SCRIVO QUI\n");
+        printf("     SPARISCE ALLO SPEGNIMENTO.\n");
+        printf("\n");
+        printf("   Questo sistema e' partito da un supporto che il kernel\n");
+        printf("   non sa rileggere — un lettore sull'USB — e Stage 2 ne ha\n");
+        printf("   copiato il volume in memoria. /LOADER.BIN che sto per\n");
+        printf("   cambiare e' quella copia, non il dischetto.\n");
+        printf("\n");
+        printf("   Scrivo lo stesso (la modalita' vale fino allo spegnimento\n");
+        printf("   se qualcosa la rilegge), ma per un cambio che RESTA il\n");
+        printf("   modo e' un altro: si costruisce l'immagine gia' con la\n");
+        printf("   risoluzione voluta.  make test-aa3k SVGA=800x600\n");
+        printf("  ====================================================\n");
+    }
 
     immagine[pos_firma + 8] = (unsigned char)modo;
     if (salva_stage2() != 0) return 1;

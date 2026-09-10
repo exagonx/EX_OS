@@ -404,6 +404,39 @@ void vfs_init(uint8_t boot_drive)
     g_mnt[0].usato        = 1;
     g_mnt[0].sola_lettura = 0;
 
+    /* =====================================================================
+     * IL VOLUME IN RAM VIENE PRIMA DI TUTTO, e non e' una preferenza: se c'e',
+     * qualcuno l'ha chiesto apposta, e l'ha chiesto perche' il supporto vero
+     * questo kernel non lo sa leggere — il lettore sta sull'USB, e dopo il
+     * modo protetto il BIOS non c'e' piu'. Provare prima il floppy o il CD
+     * vorrebbe dire fallire rumorosamente su una macchina dove il rimedio e'
+     * gia' in memoria.
+     * ===================================================================== */
+    {
+        int ird = blk_trova("rd0");
+
+        if (ird >= 0) {
+            int mnt = fat_mount(ird);
+
+            if (mnt >= 0) {
+                blk_acquisisci(ird);
+                g_mnt[0].tipo   = VFS_FS_FAT;
+                g_mnt[0].mnt    = mnt;
+                g_mnt[0].blkdev = ird;
+                v_copia(g_mnt[0].dev, "rd0", BLK_NOME_MAX);
+                klog(LOG_INFO, "VFS: root '/' sul volume in RAM (FAT%d)",
+                     fat_tipo(mnt));
+                return;
+            }
+
+            /* Non si prosegue in silenzio: il volume in RAM c'e' perche'
+             * qualcuno ha deciso che serviva, e se non si monta il sistema
+             * finira' comunque senza radice — meglio dirlo qui. */
+            klog(LOG_ERROR, "VFS: il volume in RAM non contiene un FAT "
+                            "montabile: provo le altre strade");
+        }
+    }
+
     /* --- avviati da disco? --- */
     if (boot_drive >= 0x80) {
         /* Il primo disco ATA. E' un'assunzione, e va detta: il BIOS
