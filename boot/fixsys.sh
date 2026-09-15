@@ -58,14 +58,42 @@
 #
 # =============================================================================
 
+# ! NELLE RIGHE ESEGUITE NON CI VA UN SOLO APOSTROFO. La shell lo tratta come
+# APICE DI QUOTATURA: in /boot/avvio.sh si legge `echo Rete pronta: 'ipcfg'
+# mostra la configurazione`, cioe' a coppie. Un «e'» da solo apre una quotatura
+# che non si chiude, e il dischetto accoglie con «sh: manca la apice di
+# chiusura». Visto su una macchina vera il 15 settembre 2026. Nei commenti
+# invece gli apostrofi vanno bene: queste righe la shell non le esegue.
+
 echo Riparazione del sistema installato.
 echo Monto la prima partizione del primo disco.
 
 mount hd0p1 /disk
 
-echo Aggiorno il sistema di base. Elenca prima che cosa cambia.
+echo Aggiorno il sistema di base. Prima elenca che cosa cambia.
 
 install -a /disk
+
+# =============================================================================
+# ! I DRIVER install NON LI TOCCA, E QUI INVECE SERVONO.
+#
+# `install -a` salta /dev apposta: sul disco i driver sono un sottoinsieme
+# SCELTO — quelli che su quella macchina trovano il proprio hardware — e
+# riportarli tutti indietro disferebbe la scelta a ogni aggiornamento. Li
+# rifa' hwconfig, che e' l'unico a sapere quali servono.
+#
+# ! MA kbd.drv E' UN CASO A PARTE: e' la TASTIERA. Se quello sul disco e'
+# rotto, dopo il riavvio non c'e' modo di battere il comando che lo
+# aggiornerebbe — la stessa trappola per cui esiste questo dischetto. I tre
+# che stanno qui dentro si copiano, e sono gli stessi tre che servono ad avere
+# una tastiera su qualunque macchina: kbd, e pci+uhci per chi ce l'ha USB.
+# =============================================================================
+
+echo Copio i driver della tastiera, che install non tocca.
+
+cp /dev/kbd.drv /disk/dev/kbd.drv
+cp /dev/pci.drv /disk/dev/pci.drv
+cp /dev/uhci.drv /disk/dev/uhci.drv
 
 umount /disk
 
@@ -76,9 +104,9 @@ umount /disk
 # stampate lo stesso. Meglio una frase vera in tutt'e due i casi che un «fatto»
 # che a volte mente.
 echo
-echo Se qui sopra install ha elencato e copiato i file, e' andata:
+echo Se qui sopra install ha elencato e copiato i file, ha funzionato:
 echo togli il dischetto e riavvia.
-echo Se invece ha detto che non e' un volume montato, guarda con  disk
+echo Se invece ha detto che /disk non risulta montato, guarda con  disk
 echo come si chiama la partizione e rifai i tre passi a mano.
 echo
 echo Dopo il riavvio, dal sistema:  netupdate -check

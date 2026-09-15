@@ -170,7 +170,7 @@ PROGRAMMI_FLOPPY := shell id chmod shutdown ls mem stack disk fdisk mkfs mkswap 
 # `make verifica-programmi` — che le due ISO eseguono da sole — confronta
 # le liste con il contenuto di bin/ e si ferma dicendo quali mancano.
 # =============================================================================
-PROGRAMMI_CD := cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp scarica telnet telnetd sshd senderror xcp winprova exwincmd audio netupdate wifi blkscan automount
+PROGRAMMI_CD := cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror xcp winprova exwincmd audio netupdate wifi blkscan automount eject
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
 PROGRAMMI_EXWIN := exwin_so exdlg_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr edit term fontprova orologio browser exide
 
@@ -3318,6 +3318,64 @@ $(FTP_BIN): $(FTP_SRC) $(FTP_LD) $(IP_PROTO) $(DNS_SRC) $(DNS_HDR) $(RETE_SRC) $
 .PHONY: ftp
 ftp: dirs $(FTP_BIN)
 
+# --- /bin/ftpswap (solo CD) ---------------------------------------------------
+# Tiene allineata una directory con un server FTP. Usa lib/exftp, che e' il
+# client FTP condiviso: bin/ftp ha ancora il suo, e passarcelo sopra e' un
+# lavoro a se' (vedi il commento in cima a lib/exftp/exftp.h).
+EXFTP_SRC := lib/exftp/exftp.c
+EXFTP_HDR := lib/exftp/exftp.h
+
+FTPSWAP_SRC := bin/ftpswap/ftpswap.c
+FTPSWAP_BIN := $(BUILD_BIN_CD)/ftpswap
+FTPSWAP_LD  := bin/ftpswap/ftpswap.ld
+
+$(FTPSWAP_BIN): $(FTPSWAP_SRC) $(FTPSWAP_LD) $(EXFTP_SRC) $(EXFTP_HDR) $(IP_PROTO) \
+                $(DNS_SRC) $(DNS_HDR) $(RETE_SRC) $(RETE_HDR) $(LIBC_HDR) \
+                $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/ftpswap ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exftp -I drivers/net -I drivers/pci -c $(FTPSWAP_SRC) -o $(BUILD_OBJ)/ftpswap_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exftp -I drivers/net -I drivers/pci -c $(EXFTP_SRC)   -o $(BUILD_OBJ)/ftpswap_exftp.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(DNS_SRC)  -o $(BUILD_OBJ)/ftpswap_dns.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(RETE_SRC) -o $(BUILD_OBJ)/ftpswap_rete.o
+	$(CC) -m32 -c $(LIBC_START)                        -o $(BUILD_OBJ)/ftpswap_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(FTPSWAP_LD) \
+	    $(BUILD_OBJ)/ftpswap_start.o $(BUILD_OBJ)/ftpswap_main.o \
+	    $(BUILD_OBJ)/ftpswap_exftp.o $(BUILD_OBJ)/ftpswap_dns.o \
+	    $(BUILD_OBJ)/ftpswap_rete.o $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] ftpswap compilato: $@"
+
+.PHONY: ftpswap
+ftpswap: dirs $(FTPSWAP_BIN)
+
+# --- /bin/soccorso (solo CD) --------------------------------------------------
+# ! QUESTO SI COLLEGA CON LA libc DENTRO, NON CON I PONTI, e non e' una svista:
+# e' l'unico programma che deve partire quando /lib/libc.so e' sbagliata o non
+# c'e'. Vedi la testa di bin/soccorso/soccorso.c: se dipendesse dalla libreria
+# condivisa dipenderebbe proprio da cio' che deve riparare. Stessa forma dei
+# driver, che per la stessa ragione compilano lib/libc.c dentro di se'.
+SOCCORSO_SRC := bin/soccorso/soccorso.c
+SOCCORSO_BIN := $(BUILD_BIN_CD)/soccorso
+SOCCORSO_LD  := bin/soccorso/soccorso.ld
+
+$(SOCCORSO_BIN): $(SOCCORSO_SRC) $(SOCCORSO_LD) $(LIBC_SRC) $(LIBC_HDR) $(IP_PROTO) \
+                 $(DNS_SRC) $(DNS_HDR) $(RETE_SRC) $(RETE_HDR) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/soccorso (statico) ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(SOCCORSO_SRC) -o $(BUILD_OBJ)/soccorso_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(DNS_SRC)  -o $(BUILD_OBJ)/soccorso_dns.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/net -I drivers/pci -c $(RETE_SRC) -o $(BUILD_OBJ)/soccorso_rete.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)                -o $(BUILD_OBJ)/soccorso_libc.o
+	$(CC) -m32 -c $(LIBC_START)                        -o $(BUILD_OBJ)/soccorso_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(SOCCORSO_LD) \
+	    $(BUILD_OBJ)/soccorso_start.o $(BUILD_OBJ)/soccorso_main.o \
+	    $(BUILD_OBJ)/soccorso_dns.o $(BUILD_OBJ)/soccorso_rete.o \
+	    $(BUILD_OBJ)/soccorso_libc.o -o $@
+	@echo "[OK] soccorso compilato: $@"
+
+.PHONY: soccorso
+soccorso: dirs $(SOCCORSO_BIN)
+
 # --- /bin/scarica: prende una pagina da un URL (solo CD) ---------------------
 #
 # ! ESISTE PER PROVARE L'HTTP PRIMA CHE CI SIA UN BROWSER. Fra «i conti sulle
@@ -3539,6 +3597,29 @@ $(MOUNT_BIN): $(MOUNT_SRC) $(MOUNT_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) 
 
 .PHONY: mount_prog
 mount_prog: dirs $(MOUNT_BIN)
+
+# --- Programma utente /bin/eject (solo CD) ------------------------------------
+# Toglie una chiavetta invece di strapparla: smonta quel che ci sta sopra e poi
+# la RITIRA dallo strato a blocchi, cosi' il driver torna a guardare le porte e
+# la stessa chiavetta rimessa viene ripresa. Vedi bin/eject/eject.c in testa.
+EJECT_SRC := bin/eject/eject.c
+EJECT_BIN := $(BUILD_BIN_CD)/eject
+EJECT_LD  := bin/eject/eject.ld
+
+$(EJECT_BIN): $(EJECT_SRC) $(EJECT_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/eject ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -c $(EJECT_SRC) -o $(BUILD_OBJ)/eject_main.o
+	$(CC) -m32 -c $(LIBC_START)                         -o $(BUILD_OBJ)/eject_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(EJECT_LD) \
+	    $(BUILD_OBJ)/eject_start.o \
+	    $(BUILD_OBJ)/eject_main.o  \
+	    $(LIBC_PONTI_OBJ)  \
+	    -o $@
+	@echo "[OK] eject compilato: $@"
+
+.PHONY: eject
+eject: dirs $(EJECT_BIN)
 
 # --- Programma utente /bin/mkdir ----------------------------------------------
 MKDIR_SRC := bin/mkdir/mkdir.c
@@ -4421,7 +4502,7 @@ FIXSYS_IMG := $(DIST_DIR)/fixsys.img
 # perche' non era in lista.
 FIXSYS_CONTENUTO := $(STAGE1_BIN) $(STAGE2_BIN) $(KERNEL_BIN) $(LIBC_SO) \
                     $(SHELL_BIN) $(INSTALL_BIN) $(MOUNT_BIN) $(DISK_BIN) $(LS_BIN) \
-                    $(KBD_DRV_OUT) $(PCI_DRV_OUT) $(UHCI_OUT)
+                    $(KBD_DRV_OUT) $(PCI_DRV_OUT) $(UHCI_OUT) $(CP_BIN)
 
 # =============================================================================
 # ! IL DISCHETTO DI SOCCORSO SI COSTRUISCE CON RAMDISCO=1, E NON E' UN DI PIU'.
@@ -6342,7 +6423,8 @@ BINARI_SOLO_CD := $(CRYPTTEST_BIN) $(FILIPROVA_BIN) $(NETDETECT_BIN) $(NETTEST_B
                   $(TELNET_BIN) $(XCP_BIN) $(WINPROVA_BIN) $(EXWINCMD_BIN) \
                   $(SCARICA_BIN) $(SENDERROR_BIN) \
                   $(CDINSTALL_BIN) $(SWAPTEST_BIN) $(LIBCTEST_BIN) $(HELLO_BIN) \
-                  $(AUDIO_BIN) $(NETUPDATE_BIN) $(WIFI_BIN) $(BLKSCAN_BIN) $(AUTOMOUNT_BIN)
+                  $(AUDIO_BIN) $(NETUPDATE_BIN) $(WIFI_BIN) $(BLKSCAN_BIN) $(AUTOMOUNT_BIN) \
+                  $(EJECT_BIN) $(FTPSWAP_BIN) $(SOCCORSO_BIN)
 # ! QUESTA LISTA E' LA DIPENDENZA DELL'ISO, E VA TENUTA ALLINEATA A
 # DRIVER_CD. Sono due elenchi della stessa cosa: DRIVER_CD dice COSA
 # COSTRUIRE (nomi di bersagli .PHONY), questo dice DA COSA DIPENDE L'IMMAGINE

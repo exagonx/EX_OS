@@ -43,7 +43,7 @@
 #include "inflate.h"
 
 /* +0.001 a ogni modifica: `netupdate -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("netupdate", "0.021");
+EX_VERSIONE("netupdate", "0.022");
 
 /* =============================================================================
  * IL FILE DI CONFIGURAZIONE
@@ -789,6 +789,38 @@ static int chiave_da_file(const char *percorso, const char *chiave,
  *   1. le librerie si installano PRIMA di qualunque binario;
  *   2. se una NON arriva, non si tocca piu' niente.
  * ========================================================================== */
+/* =============================================================================
+ * ! L'IMPRONTA DI UN FILE LOCALE ADESSO SI PUO' CALCOLARE, e fino al 15
+ * settembre 2026 non si poteva.
+ *
+ * Il commento sopra registro_scrivi() spiega perche' l'impronta si PRENDEVA
+ * dall'elenco invece di ricalcolarla: sha256() della libc voleva il buffer
+ * INTERO in memoria, e su una macchina con 32 MB un file da 33 MB non ci sta.
+ * Da quando esiste la SHA-256 incrementale — sha256_avvia/dai/fine, arrivata
+ * con la ripresa degli scaricamenti — un file si legge a pezzi da 4 KB e
+ * l'impronta si costruisce mentre passa: la memoria non c'entra piu'.
+ *
+ * Rende 0 e riempie `esa`, oppure -1 se il file non si e' potuto leggere tutto.
+ * ========================================================================== */
+static int impronta_locale(const char *perc, char esa[65])
+{
+    static unsigned char pezzo[4096];
+    Sha256 sha;
+    int    fd, n;
+
+    fd = open(perc, O_RDONLY);
+    if (fd < 0) return -1;
+
+    sha256_avvia(&sha);
+    while ((n = (int)read(fd, pezzo, sizeof(pezzo))) > 0)
+        sha256_dai(&sha, pezzo, (size_t)n);
+    close(fd);
+
+    if (n < 0) return -1;
+    sha256_fine_esa(&sha, esa);
+    return 0;
+}
+
 static int e_libreria(const char *p)
 {
     unsigned int n = (unsigned int)strlen(p);
@@ -2480,6 +2512,50 @@ static int comando_check(void)
             /* Giro 0: solo le librerie. Giro 1: tutto il resto. */
             if (giro == 0 && !e_libreria(p)) continue;
             if (giro == 1 &&  e_libreria(p)) continue;
+
+            /* =================================================================
+             * ! PER LE LIBRERIE NON CI SI FIDA DEL REGISTRO: SI GUARDA IL FILE.
+             *
+             * `verdetto()` risponde leggendo /boot/netupdate.reg, cioe' quel che
+             * questa macchina CREDE di avere. Se quel registro e' vecchio,
+             * incompleto, o e' stato scritto quando un aggiornamento si e'
+             * interrotto, una libreria sbagliata risulta «uguale» e non viene
+             * toccata — e i programmi nuovi che la chiamano non partono.
+             *
+             * ! E' SUCCESSO DUE VOLTE IN UN GIORNO, sulla stessa macchina: prima
+             * con lib/libc.so, poi con exwin/lib/exhttp.so. La seconda ha
+             * ucciso proprio netupdate, che quella libreria la usa: «exhttp: la
+             * libreria condivisa non esporta un nome che serve a questo
+             * programma», e da li' la macchina non poteva piu' aggiornarsi da
+             * sola.
+             *
+             * Qui l'impronta si RICALCOLA sui byte che stanno sul disco. Costa
+             * la lettura di qualche centinaio di kilobyte — le librerie sono
+             * poche e piccole — e in cambio toglie di mezzo l'unico caso in cui
+             * un aggiornamento puo' lasciare una macchina che non si aggiorna
+             * piu'. Sui file normali il registro va benissimo: quelli, se
+             * restano indietro, non impediscono di riprovare.
+             * ================================================================= */
+            if (giro == 0) {
+                char esa[72], assoluto[PERC_MAX];
+
+                unisci(assoluto, sizeof(assoluto), "/", p);
+
+                if (impronta_locale(assoluto, esa) == 0 &&
+                    strcasecmp(esa, impronta) == 0)
+                    continue;                 /* quella sul disco e' gia' giusta */
+
+                printf("  = %s: la controllo sui byte, non sul registro\n", p);
+
+                switch (scarica_e_metti(&c, p, byte, impronta,
+                                        &kernel_nuovo, &stage2_nuovo)) {
+                case 0:  fatti++;   break;
+                case 1:  saltati++; break;
+                case 2:             break;
+                default: falliti++; break;
+                }
+                continue;
+            }
 
             v = verdetto(p, impronta);
 

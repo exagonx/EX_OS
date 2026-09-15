@@ -110,6 +110,24 @@ static int tcp_leggi(int id, unsigned char *dst, unsigned int max, unsigned int 
 
     memcpy(&d, buf, sizeof(d));
     if (d.len == 0) return 0;
+    /* =========================================================================
+     * ! IL BUFFER DI CHI LEGGE DEV'ESSERE GRANDE QUANTO UNA CONSEGNA INTERA,
+     * E IL 15 SETTEMBRE 2026 NON LO ERA.
+     *
+     * Lo stack consegna fino a IP_TCP_DATI_MAX byte in un colpo (1520: un
+     * messaggio IPC meno l'intestazione). Con un buffer da 1024 la riga qui
+     * sotto tagliava il resto e non lo diceva a nessuno: i byte in piu' non
+     * finivano da nessuna parte e la prenotazione era gia' stata consumata.
+     *
+     * ! IL SINTOMO NON SOMIGLIAVA A UNA PERDITA DI DATI: `soccorso` elencava
+     * SETTE librerie invece di dodici, e le cinque mancanti erano CONSECUTIVE —
+     * cioe' mezzo kilobyte di elenco sparito in mezzo. Sembrava un difetto del
+     * riconoscimento dei nomi, e invece era un buco nel testo.
+     *
+     * Adesso chi chiama passa un buffer da IPC_MSG_MAX_DATA e questa riga non
+     * scatta mai; resta come rete, perche' un buffer piccolo non deve
+     * diventare una corruzione silenziosa.
+     * ========================================================================= */
     if (d.len > max) d.len = max;
     if (d.len > len - sizeof(d)) d.len = len - (unsigned int)sizeof(d);
 
@@ -674,7 +692,7 @@ static void mlsd_una(const char *r, ExFtpVoce *v)
 int exftp_elenco(ExFtp *f, const char *dir, ExFtpElenca g, void *dato)
 {
     char          r[EXFTP_RIGA_MAX];
-    unsigned char buf[1024];
+    unsigned char buf[IPC_MSG_MAX_DATA];
     char          acc[EXFTP_ACC_MAX];
     unsigned int  acc_len = 0;
     int           dati, asc, n, righe = 0;
@@ -740,7 +758,7 @@ int exftp_elenco(ExFtp *f, const char *dir, ExFtpElenca g, void *dato)
  * --------------------------------------------------------------------------- */
 int exftp_scarica(ExFtp *f, const char *remoto, const char *locale)
 {
-    unsigned char buf[1024];
+    unsigned char buf[IPC_MSG_MAX_DATA];
     int           dati, asc, fd, n, guaio = 0;
 
     fd = open(locale, O_WRONLY | O_CREAT | O_TRUNC);
@@ -779,7 +797,7 @@ int exftp_scarica(ExFtp *f, const char *remoto, const char *locale)
 
 int exftp_carica(ExFtp *f, const char *locale, const char *remoto)
 {
-    unsigned char buf[1024];
+    unsigned char buf[IPC_MSG_MAX_DATA];
     int           dati, asc, fd, n, guaio = 0;
 
     fd = open(locale, O_RDONLY);

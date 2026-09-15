@@ -9,11 +9,11 @@
  * See the LICENSE file in the project root for the full license text.
  * =============================================================================
  *
- * soccorso — rimette a posto /lib/libc.so quando non parte piu' niente
+ * soccorso — rimette a posto le librerie condivise quando non parte piu niente
  *
- *     soccorso                 la prende dal server dell'aggiornamento
+ *     soccorso                 le prende dal server dell'aggiornamento
  *     soccorso -url <radice>   da un indirizzo dato a mano
- *     soccorso -guarda         dice solo che cosa farebbe
+ *     soccorso -guarda         dice solo quali rifarebbe, e non tocca niente
  *
  * -----------------------------------------------------------------------------
  * ! PERCHE' ESISTE, E PERCHE' E' STATICO
@@ -40,10 +40,23 @@
  * close», Content-Length — e va bene cosi': deve scaricare un file da un
  * server che conosciamo, non navigare.
  *
- * ! L'IMPRONTA SI CONTROLLA LO STESSO. Una libc sbagliata e' peggio di una
- * libc vecchia: si prende `elenco.txt`, si cerca la riga di lib/libc.so, e si
- * confrontano dimensione e SHA-256 mentre il file arriva. Se non tornano, il
- * .new si butta e non si tocca niente.
+ * ! L'IMPRONTA SI CONTROLLA LO STESSO. Una libreria sbagliata e' peggio di una
+ * vecchia: si prende `elenco.txt`, si cercano le righe che finiscono per `.so`,
+ * e si confrontano dimensione e SHA-256 mentre il file arriva. Se non tornano,
+ * il .new si butta e non si tocca niente.
+ *
+ * ! E NON SOLO LA libc: TUTTE LE LIBRERIE CONDIVISE. Il 15 settembre 2026 la
+ * stessa macchina si e' rotta due volte nello stesso modo — prima per
+ * lib/libc.so, poi per exwin/lib/exhttp.so. La seconda ha ucciso proprio
+ * netupdate, che quella libreria la usa: «exhttp: la libreria condivisa non
+ * esporta un nome che serve a questo programma», e da li' la macchina non
+ * poteva piu' aggiornarsi da sola. Riparare solo la libc avrebbe lasciato in
+ * piedi meta' del guaio.
+ *
+ * ! E SI GUARDANO I BYTE, NON IL REGISTRO. Una libreria si controlla
+ * ricalcolando la sua impronta sul file che sta sul disco: il registro degli
+ * aggiornamenti dice quel che la macchina CREDE di avere, ed e' esattamente
+ * cio' che in questo caso non si puo' credere.
  * ============================================================================= */
 #include "libc.h"
 #include "ip_proto.h"
@@ -51,7 +64,7 @@
 #include "dns.h"
 
 /* +0.001 a ogni modifica: `soccorso -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("soccorso", "0.001");
+EX_VERSIONE("soccorso", "0.002");
 
 #define CNF        "/boot/netupdate.cnf"
 #define LIBC       "/lib/libc.so"
@@ -60,7 +73,8 @@ EX_VERSIONE("soccorso", "0.001");
 
 #define URL_MAX    256
 #define RIGA_MAX   512
-#define BLOCCO     1024
+#define BLOCCO     1024                  /* quanto si scrive per volta */
+#define LETTURA    IPC_MSG_MAX_DATA      /* quanto puo' arrivare in una consegna */
 
 static int  g_pid_ip = 0;
 static int  g_guarda = 0;
@@ -139,6 +153,24 @@ static int tcp_leggi(int id, unsigned char *dst, unsigned int max, unsigned int 
 
     memcpy(&d, buf, sizeof(d));
     if (d.len == 0) return 0;
+    /* =========================================================================
+     * ! IL BUFFER DI CHI LEGGE DEV'ESSERE GRANDE QUANTO UNA CONSEGNA INTERA,
+     * E IL 15 SETTEMBRE 2026 NON LO ERA.
+     *
+     * Lo stack consegna fino a IP_TCP_DATI_MAX byte in un colpo (1520: un
+     * messaggio IPC meno l'intestazione). Con un buffer da 1024 la riga qui
+     * sotto tagliava il resto e non lo diceva a nessuno: i byte in piu' non
+     * finivano da nessuna parte e la prenotazione era gia' stata consumata.
+     *
+     * ! IL SINTOMO NON SOMIGLIAVA A UNA PERDITA DI DATI: `soccorso` elencava
+     * SETTE librerie invece di dodici, e le cinque mancanti erano CONSECUTIVE —
+     * cioe' mezzo kilobyte di elenco sparito in mezzo. Sembrava un difetto del
+     * riconoscimento dei nomi, e invece era un buco nel testo.
+     *
+     * Adesso chi chiama passa un buffer da IPC_MSG_MAX_DATA e questa riga non
+     * scatta mai; resta come rete, perche' un buffer piccolo non deve
+     * diventare una corruzione silenziosa.
+     * ========================================================================= */
     if (d.len > max) d.len = max;
     if (d.len > len - sizeof(d)) d.len = len - (unsigned int)sizeof(d);
 
@@ -233,7 +265,7 @@ static long http_prendi(const Indirizzo *a, const char *coda,
                         char *in_memoria, long max,
                         int *codice, char impronta_esa[65])
 {
-    unsigned char ip[4], buf[BLOCCO];
+    unsigned char ip[4], buf[LETTURA];
     char          req[URL_MAX + 256];
     Sha256        sha;
     long          corpo = 0, dichiarata = -1;
@@ -365,21 +397,57 @@ static long http_prendi(const Indirizzo *a, const char *coda,
     return corpo;
 }
 
+/* L'impronta di un file che sta sul disco, letto a pezzi: la SHA-256
+ * incrementale non ha bisogno di tenerlo in memoria. Rende 0, o -1 se il file
+ * non c'e' o non si e' potuto leggere tutto. */
+static int impronta_locale(const char *perc, char esa[65])
+{
+    static unsigned char pezzo[BLOCCO];
+    Sha256 sha;
+    int    fd, n;
+
+    fd = open(perc, O_RDONLY);
+    if (fd < 0) return -1;
+
+    sha256_avvia(&sha);
+    while ((n = (int)read(fd, pezzo, sizeof(pezzo))) > 0)
+        sha256_dai(&sha, pezzo, (size_t)n);
+    close(fd);
+
+    if (n < 0) return -1;
+    sha256_fine_esa(&sha, esa);
+    return 0;
+}
+
 /* -----------------------------------------------------------------------------
- * La riga di lib/libc.so dentro elenco.txt
+ * Le righe delle librerie dentro elenco.txt
  * --------------------------------------------------------------------------- */
-static int elenco_cerca_libc(const Indirizzo *a, long *byte, char impronta[65])
+/* =============================================================================
+ * LE LIBRERIE, UNA PER UNA
+ *
+ * Si scarica `elenco.txt`, si guardano le righe che finiscono per `.so`, e per
+ * ognuna si RICALCOLA l'impronta del file che sta sul disco. Quelle che non
+ * combaciano si riportano a posto.
+ *
+ * ! SI GUARDANO I BYTE E NON IL REGISTRO, per la ragione scritta in testa: il
+ * registro dice quel che la macchina crede di avere, e qui si e' arrivati
+ * proprio perche' quella convinzione era sbagliata.
+ * ========================================================================== */
+static int ripara_librerie(const Indirizzo *a)
 {
     static char elenco[400 * 1024];
     long        n;
-    int         codice;
+    int         codice, guardate = 0, riparate = 0, guai = 0;
     char       *p;
 
     printf("  chiedo l'elenco...\n");
     n = http_prendi(a, "/elenco.txt", 0, 0, elenco, (long)sizeof(elenco) - 1,
                     &codice, 0);
     if (n < 0) return -1;
-    if (codice != 200) { printf("  ! elenco.txt: il server risponde %d\n", codice); return -1; }
+    if (codice != 200) {
+        printf("  ! elenco.txt: il server risponde %d\n", codice);
+        return -1;
+    }
     if (n >= (long)sizeof(elenco) - 1) {
         printf("  ! elenco.txt non ci sta in memoria (%ld byte)\n", n);
         return -1;
@@ -387,34 +455,90 @@ static int elenco_cerca_libc(const Indirizzo *a, long *byte, char impronta[65])
     elenco[n] = '\0';
 
     for (p = elenco; *p; ) {
-        char *riga = p, *fine = p;
+        char *riga = p, *fine = p, *sdim, *simp, *t;
+        char  assoluto[URL_MAX], coda[URL_MAX], nuovo[URL_MAX], prima[URL_MAX];
+        char  esa[65], avuto[65];
+        long  byte, presi;
+        unsigned int lung;
 
         while (*fine && *fine != '\n') fine++;
         if (*fine == '\n') *fine++ = '\0';
         p = fine;
 
-        if (strncmp(riga, "lib/libc.so\t", 12) != 0) continue;
+        /* percorso<TAB>byte<TAB>impronta<TAB>pacchetto */
+        sdim = strchr(riga, '\t');
+        if (sdim == 0) continue;
+        *sdim++ = '\0';
 
-        {
-            char *sdim = riga + 12, *simp;
+        lung = (unsigned int)strlen(riga);
+        if (lung < 4 || strcmp(riga + lung - 3, ".so") != 0) continue;
 
-            simp = strchr(sdim, '\t');
-            if (simp == 0) return -1;
-            *simp++ = '\0';
+        simp = strchr(sdim, '\t');
+        if (simp == 0) continue;
+        *simp++ = '\0';
+        t = strchr(simp, '\t');
+        if (t) *t = '\0';
 
-            *byte = (long)strtoul(sdim, 0, 10);
-            strncpy(impronta, simp, 64);
-            impronta[64] = '\0';
-            {
-                char *t = strchr(impronta, '\t');
-                if (t) *t = '\0';
-            }
-            return 0;
+        byte = (long)strtoul(sdim, 0, 10);
+        guardate++;
+
+        snprintf(assoluto, sizeof(assoluto), "/%s", riga);
+
+        if (impronta_locale(assoluto, esa) == 0 && strcmp(esa, simp) == 0) {
+            printf("    %-28s a posto\n", assoluto);
+            continue;
         }
+
+        printf("    %-28s DA RIFARE (%ld byte)\n", assoluto, byte);
+        if (g_guarda) continue;
+
+        snprintf(coda,  sizeof(coda),  "/file/%s", riga);
+        snprintf(nuovo, sizeof(nuovo), "%s.new", assoluto);
+        snprintf(prima, sizeof(prima), "%s.prima", assoluto);
+
+        presi = http_prendi(a, coda, 1, nuovo, 0, 0, &codice, avuto);
+        if (presi < 0 || codice != 200) {
+            printf("      ! non arrivata (codice %d)\n", codice);
+            remove(nuovo);
+            guai++;
+            continue;
+        }
+        if (presi != byte || strcmp(avuto, simp) != 0) {
+            printf("      ! %ld byte su %ld, o impronta diversa: NON la installo\n",
+                   presi, byte);
+            remove(nuovo);
+            guai++;
+            continue;
+        }
+
+        /* ! LA VECCHIA SI TIENE DA PARTE, non si cancella: se la nuova avesse
+         * qualcosa che non va, l'unica via di ritorno e' quel file. */
+        remove(prima);
+        if (rename(assoluto, prima) != 0 && errno != ENOENT)
+            printf("      ! non riesco a mettere da parte la vecchia (%s)\n",
+                   strerror(errno));
+
+        if (rename(nuovo, assoluto) != 0) {
+            printf("      ! non riesco a metterla al suo posto (%s)\n",
+                   strerror(errno));
+            rename(prima, assoluto);
+            guai++;
+            continue;
+        }
+
+        printf("      rimessa a posto, la vecchia e' in %s\n", prima);
+        riparate++;
     }
 
-    printf("  ! nell'elenco non c'e' lib/libc.so\n");
-    return -1;
+    printf("\n  %d librerie guardate, %d rifatte", guardate, riparate);
+    if (guai) printf(", %d non riuscite", guai);
+    printf(".\n");
+
+    if (guardate == 0) {
+        printf("  ! nell'elenco non c'e' nessuna libreria: indirizzo giusto?\n");
+        return -1;
+    }
+    return guai ? -1 : riparate;
 }
 
 /* -----------------------------------------------------------------------------
@@ -457,25 +581,27 @@ static int cnf_url(char *out, unsigned int max)
 
 static void uso(void)
 {
-    printf("soccorso - rimette a posto %s quando non parte piu' niente\n\n", LIBC);
-    printf("  soccorso                prende la libc dal server degli aggiornamenti\n");
+    printf("soccorso - rimette a posto le librerie condivise quando non\n");
+    printf("           parte piu' niente\n\n");
+    printf("  soccorso                le controlla tutte e rifa' quelle sbagliate\n");
     printf("  soccorso -url <radice>  da un indirizzo dato a mano\n");
-    printf("  soccorso -guarda        dice che cosa farebbe, senza toccare\n\n");
-    printf("A che serve: i programmi di EX-OS chiamano la libc per NOME, e un\n");
-    printf("programma nuovo con una libc vecchia non parte affatto. Se un\n");
-    printf("aggiornamento si interrompe fra i due, ogni comando risponde «la\n");
-    printf("libreria condivisa non ha la funzione ...» e non resta niente con\n");
-    printf("cui rimediare. Questo programma NON usa la libc condivisa: se la\n");
-    printf("porta dentro, e percio' parte comunque.\n");
+    printf("  soccorso -guarda        dice quali rifarebbe, senza toccare\n\n");
+    printf("A che serve: i programmi di EX-OS chiamano le librerie per NOME, e\n");
+    printf("un programma nuovo con una libreria vecchia non parte affatto. Se\n");
+    printf("un aggiornamento si interrompe fra i due, i comandi rispondono «la\n");
+    printf("libreria condivisa non ha la funzione ...» oppure «non esporta un\n");
+    printf("nome che serve a questo programma», e non resta niente con cui\n");
+    printf("rimediare. Questo programma NON usa nessuna libreria condivisa: se\n");
+    printf("le porta dentro, e percio' parte comunque.\n\n");
+    printf("Guarda i BYTE dei file, non il registro degli aggiornamenti: qui si\n");
+    printf("arriva proprio quando quel registro dice il falso.\n");
 }
 
 int main(int argc, char **argv)
 {
     Indirizzo a;
     char      url[URL_MAX] = "";
-    char      atteso[65], avuto[65];
-    long      byte = 0, presi;
-    int       i, codice;
+    int       i;
 
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -491,7 +617,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    printf("soccorso %s\n\n", "0.001");
+    printf("soccorso %s\n\n", "0.002");
 
     if (url[0] == '\0' && cnf_url(url, sizeof(url)) != 0) {
         printf("  Non so da dove prenderla: %s non c'e' o non dice l'url.\n", CNF);
@@ -510,50 +636,26 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    if (elenco_cerca_libc(&a, &byte, atteso) != 0) return 1;
-    printf("  la libc buona: %ld byte\n", byte);
+    {
+        int rc = ripara_librerie(&a);
 
-    if (g_guarda) {
-        printf("\n  -guarda: mi fermo qui senza toccare niente.\n");
-        return 0;
+        if (rc < 0) return 1;
+
+        if (g_guarda) {
+            printf("\n  -guarda: mi sono fermato prima di toccare qualunque cosa.\n");
+            return 0;
+        }
+
+        if (rc == 0) {
+            printf("\n  Le librerie erano gia' tutte a posto: il guasto e'\n");
+            printf("  da un'altra parte. Se un comando non parte, guarda che\n");
+            printf("  cosa dice esattamente.\n");
+            return 0;
+        }
+
+        printf("\n  FATTO. Adesso i comandi ripartono.\n");
+        printf("  Se l'aggiornamento si era interrotto, finiscilo:\n");
+        printf("      netupdate -check\n");
     }
-
-    printf("  la scarico...\n");
-    presi = http_prendi(&a, "/file/lib/libc.so", 1, LIBC_NEW, 0, 0, &codice, avuto);
-    if (presi < 0) return 1;
-    if (codice != 200) {
-        printf("  ! il server risponde %d\n", codice);
-        remove(LIBC_NEW);
-        return 1;
-    }
-
-    if (presi != byte) {
-        printf("  ! %ld byte invece di %ld: NON la installo\n", presi, byte);
-        remove(LIBC_NEW);
-        return 1;
-    }
-    if (strcmp(avuto, atteso) != 0) {
-        printf("  ! l'impronta non torna: NON la installo\n");
-        printf("    attesa %s\n    avuta  %s\n", atteso, avuto);
-        remove(LIBC_NEW);
-        return 1;
-    }
-
-    /* ! LA VECCHIA SI TIENE DA PARTE, non si cancella. Se la nuova avesse
-     * qualcosa che non va, l'unica via di ritorno e' quel file. */
-    remove(LIBC_PRIMA);
-    if (rename(LIBC, LIBC_PRIMA) != 0 && errno != ENOENT)
-        printf("  ! non riesco a mettere da parte la vecchia (%s)\n", strerror(errno));
-
-    if (rename(LIBC_NEW, LIBC) != 0) {
-        printf("  ! non riesco a metterla al suo posto (%s)\n", strerror(errno));
-        rename(LIBC_PRIMA, LIBC);        /* si rimette com'era */
-        return 1;
-    }
-
-    printf("\n  FATTO: %s e' quella giusta (%ld byte).\n", LIBC, byte);
-    printf("  La vecchia e' in %s.\n\n", LIBC_PRIMA);
-    printf("  Adesso i comandi ripartono. Se l'aggiornamento si era\n");
-    printf("  interrotto, finiscilo:  netupdate -check\n");
     return 0;
 }

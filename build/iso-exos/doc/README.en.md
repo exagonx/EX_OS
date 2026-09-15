@@ -2,7 +2,7 @@
 
 [🇮🇹 Italiano](README.md) · **🇬🇧 English**
 
-**Version:** 0.209
+**Version:** 0.217
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit — boots from floppy, from CD or from a hard disk
@@ -83,6 +83,105 @@ for **`g++`** — containers, `std::string` and exceptions included. See
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### USB sticks get ejected, not yanked: `eject`
+
+**tested in QEMU, the whole round trip** — `automount` already mounted them by
+itself under `/USB/DRIVE0`; the other direction was missing. The driver serving
+a disk sits inside `blk_attendi()` and **stops watching the ports**: pulling the
+stick left a mount point answering errors, and putting it back produced nothing,
+because nobody was looking.
+
+    eject                  what can be removed
+    eject /USB/DRIVE0      unmount and withdraw
+
+It unmounts whatever sits on top and then **withdraws** the device
+(`SYS_BLK_ESPELLI`): the driver's wait returns `-ENODEV`, it goes back to the
+port loop, and the same stick put back in is picked up again. The order cannot
+be reversed: a device withdrawn while still mounted does not disappear, it stays
+FAULTY — which is why the syscall refuses with `-EBUSY`.
+
+! **And it uncovered an old defect that could not be seen before**: the `ehci`
+control QH was still pointing at the previous stick's address, and a
+freshly-plugged device answers only address zero. With one stick for the whole
+life of the process it never showed; now that the driver goes back to watching,
+the second stick is the first to pay for it.
+
+### A remote session that goes neither deaf nor mute: `telnetd` 0.008
+
+**tested on the real machine** — two different defects, both found on a laptop
+at the other end of a real network, neither reproducible in emulation on the
+first try.
+
+*The deafness*: while `tcp_scrivi()` waited for its own result, `attendi()`
+**threw away** the messages it was not looking for — including the keys typed at
+the other end. And the stack delivers to whoever booked, **consuming the
+booking**: with the delivery thrown away, the session never made another one.
+The symptom: the prompt appears and from then on nothing responds.
+
+*The muteness*: `ipc_recv_timeout(..., 0)` does not mean "do not wait", it means
+**wait forever** — and the mailbox can be empty even when `poll` said otherwise,
+because between the two there is someone else fishing. The loop stopped there,
+and since `telnetd` serves one session at a time, from that moment port 23
+accepted connections without sending a byte.
+
+### A half-finished update must not leave a dead machine
+
+**the failure really happened; the protection is written and still to be proven
+in the field** — programs call the libc **by name**, and that produces an
+asymmetry that decides everything:
+
+| | |
+|---|---|
+| OLD binary + NEW libc | works: the old names are still there |
+| NEW binary + OLD libc | **nothing starts**: one name is missing |
+
+An update interrupted between the two leaves the machine in the second case: it
+boots, the network is fine, and there is not a single command left to fix it
+with — `scarica`, `dhcp`, `ipcfg`, `netupdate` all answer "the shared library
+does not have the function ...". Hence three things:
+
+- **`netupdate` 0.021**: two passes over the list, shared libraries first and
+  everything else after; and if a library **does not arrive**, nothing else is
+  touched and it says so. The machine stays old and alive.
+- **`/bin/soccorso`**: static, with the libc compiled in like the drivers, so it
+  runs even when nothing else does. It puts `/lib/libc.so` back, taking it from
+  the server and checking size and hash as it streams.
+- **`dist/fixsys.img`** (`make fixsys`): a bootable rescue floppy with `sh`,
+  `install`, `mount`, `disk`, `cp`, the libc and the keyboard drivers. It is
+  built with `RAMDISCO=1` because it boots from a USB drive, where the BIOS can
+  read and the kernel cannot.
+
+### Big files over lines that drop: resuming
+
+**tested on the real machine** — `cc1plus` is thirty-seven megabytes, and at
+forty kilobytes a second that is a quarter of an hour of open connection: it
+drops more often than not. Two measurements of the same file, 33,306,298 bytes
+and then 37,550,104: different numbers, so not a ceiling but a drop.
+
+Now `exhttp` declares a body shorter than promised instead of returning it as a
+success, and knows how to ask for `Range: bytes=N-`; `netupdate` resumes the
+half-finished `.new` instead of throwing it away, re-chewing the hash of the
+bytes already written. And whoever asks for a piece **checks that a piece is
+what arrives**: a server that ignores `Range` answers 200 with the whole file,
+and appending that to half a file would be worse than the original fault.
+
+### `ftpswap`: a directory and an FTP server, kept in step
+
+**written and compiled, never run** — `ftpswap /mydir` keeps a directory in step
+with an FTP server: what is born on one side appears on the other, what dies on
+one side dies on the other, and on a conflict the newer one wins while the loser
+is kept aside as `<name>.prima`.
+
+The piece that decides everything is the **journal**: without memory, a file
+present on one side only is always a new file to copy, and deleting becomes
+impossible. And the journal keeps the dates of **both** sides, because on EX-OS
+`utime()` changes nothing: a freshly downloaded file carries today's date, and
+comparing the two clocks would send it up and down forever.
+
+The FTP client ended up in `lib/exftp` — MLSD, MDTM, MFMT, PASV and PORT — with
+`lib/exuser` as the precedent: two programs speaking FTP are two copies that
+drift apart.
 
 ### NASM on the tools CD, and the other syntax
 

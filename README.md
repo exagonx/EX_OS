@@ -2,7 +2,7 @@
 
 **🇮🇹 Italiano** · [🇬🇧 English](README.en.md)
 
-**Versione:** 0.209
+**Versione:** 0.217
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 32-bit — si avvia da floppy, da CD o da disco rigido
@@ -100,6 +100,106 @@ propri header senza che nessuno glielo dica, e concatena da sé cc1, `as`,
 Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### Le chiavette USB si tolgono, non si strappano: `eject`
+
+**testato in QEMU, col giro intero** — `automount` le montava gia' da solo in
+`/USB/DRIVE0`; mancava il verso opposto. Il driver che serve un disco sta fermo
+dentro `blk_attendi()` e **non guarda piu' le porte**: sfilare la chiavetta
+lasciava un punto di montaggio che risponde errore, e rimetterla non produceva
+niente perche' nessuno stava guardando.
+
+    eject                  che cosa si puo' togliere
+    eject /USB/DRIVE0      smonta e ritira
+
+Smonta quel che ci sta sopra e poi **ritira** il dispositivo (syscall
+`SYS_BLK_ESPELLI`): l'attesa del driver rende `-ENODEV`, lui torna al ciclo
+delle porte, e la stessa chiavetta rimessa viene ripresa da capo. L'ordine non
+e' invertibile: un dispositivo ritirato mentre e' montato non sparisce, resta
+GUASTO — e infatti la syscall rifiuta con `-EBUSY`.
+
+! **E ha scoperto un difetto vecchio che non si poteva vedere prima**: la QH di
+controllo di `ehci` restava puntata sull'indirizzo della chiavetta precedente, e
+un dispositivo appena infilato risponde solo allo zero. Con una chiavetta sola
+per tutta la vita del processo non si notava; da quando il driver torna a
+guardare le porte, la seconda chiavetta e' la prima a pagarlo.
+
+### Una sessione remota che non diventa sorda ne' muta: `telnetd` 0.008
+
+**testato sulla macchina vera** — due difetti diversi, tutti e due scoperti su
+un portatile dall'altra parte di una rete vera, nessuno dei due riproducibile in
+emulazione al primo colpo.
+
+*La sordita'*: mentre `tcp_scrivi()` aspettava il proprio esito, `attendi()`
+**buttava** i messaggi che non stava cercando — compresi i tasti battuti
+dall'altra parte. E lo stack consegna a chi ha prenotato **consumando la
+prenotazione**: buttata la consegna, la sessione non ne faceva mai piu' una. Il
+sintomo: l'invito compare e da li' in poi non risponde piu' niente.
+
+*La muta*: `ipc_recv_timeout(..., 0)` non vuol dire «non aspettare», vuol dire
+**aspetta per sempre** — e la casella puo' essere vuota anche se la `poll` ha
+detto di si', perche' fra le due cose c'e' chi pesca. Il ciclo si fermava li',
+e siccome `telnetd` serve una sessione per volta, da quel momento la porta 23
+accettava le connessioni senza mandare un byte.
+
+### Un aggiornamento a meta' non deve lasciare una macchina morta
+
+**il guasto e' successo per davvero; la protezione e' scritta e da provare sul
+campo** — i programmi chiamano la libc **per nome**, e questo produce
+un'asimmetria che decide tutto:
+
+| | |
+|---|---|
+| binario VECCHIO + libc NUOVA | funziona: i nomi vecchi ci sono ancora |
+| binario NUOVO + libc VECCHIA | **non parte niente**: ne manca uno |
+
+Un aggiornamento interrotto fra i due lascia la macchina nel secondo caso: si
+accende, ha la rete a posto, e non ha un solo comando con cui rimediare —
+`scarica`, `dhcp`, `ipcfg`, `netupdate` rispondono tutti «la libreria condivisa
+non ha la funzione ...». Da qui tre cose:
+
+- **`netupdate` 0.021**: due passate sull'elenco, prima le librerie condivise e
+  poi tutto il resto; e se una libreria **non arriva**, non si tocca piu' niente
+  e lo si dice. La macchina resta vecchia e viva.
+- **`/bin/soccorso`**: statico, con la libc compilata dentro come i driver,
+  quindi parte anche quando non parte nient'altro. Riporta a posto
+  `/lib/libc.so` prendendola dal server e verificando dimensione e impronta
+  mentre arriva.
+- **`dist/fixsys.img`** (`make fixsys`): un dischetto di soccorso avviabile con
+  `sh`, `install`, `mount`, `disk`, `cp`, la libc e i driver della tastiera. Si
+  costruisce con `RAMDISCO=1` perche' parte da un lettore USB, dove il BIOS sa
+  leggere e il kernel no.
+
+### File grandi su linee che cadono: la ripresa
+
+**testato sulla macchina vera** — `cc1plus` fa trentasette megabyte, e a
+quaranta kilobyte al secondo sono un quarto d'ora di connessione aperta: cade
+piu' spesso di quanto non cada. Due misure sullo stesso file, 33.306.298 byte e
+poi 37.550.104: numeri diversi, quindi non un tetto ma una caduta.
+
+Adesso `exhttp` dichiara un corpo piu' corto di quello promesso invece di
+renderlo come successo, e sa chiedere `Range: bytes=N-`; `netupdate` riprende il
+`.new` rimasto a meta' invece di ributtarlo, rimasticando l'impronta dei byte
+gia' scritti. E chi chiede un pezzo **controlla di riceverne uno**: un server
+che ignora `Range` risponde 200 con tutto il file, e accodarlo in fondo a mezzo
+file sarebbe peggio del guasto.
+
+### `ftpswap`: una directory e un server FTP, allineati
+
+**scritto e compilato, mai eseguito** — `ftpswap /miadir` tiene allineata una
+directory con un server FTP: quel che nasce da una parte compare dall'altra,
+quel che muore da una parte muore dall'altra, e in caso di conflitto vince il
+piu' recente mentre il perdente si mette da parte come `<nome>.prima`.
+
+Il pezzo che decide tutto e' il **diario**: senza memoria, un file che c'e' da
+una parte sola e' sempre un file nuovo da copiare, e cancellare diventa
+impossibile. E il diario tiene le date di **tutt'e due** le parti, perche' su
+EX-OS `utime()` non cambia niente: un file appena scaricato ha la data di
+adesso, e confrontare i due orologi lo rimanderebbe su e giu' per sempre.
+
+Il client FTP e' finito in `lib/exftp` — MLSD, MDTM, MFMT, PASV e PORT — col
+precedente di `lib/exuser`: due programmi che parlano FTP sono due copie che
+divergono.
 
 ### NASM sul CD degli strumenti, e l'altra sintassi
 

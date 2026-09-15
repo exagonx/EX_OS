@@ -129,7 +129,7 @@
 
 /* +0.001 a ogni modifica: `kbd.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("kbd.drv", "0.002");
+EX_VERSIONE("kbd.drv", "0.003");
 
 static const Keymap *g_map = &g_keymaps[0];   /* us */
 
@@ -1680,7 +1680,44 @@ int main(int argc, char **argv)
     }
 
     for (;;) {
-        if (ipc_recv(&meta, payload, sizeof(payload)) < 0) continue;
+        /* =====================================================================
+         * ! SI ASPETTA CON UNA SCADENZA, E ALLO SCADERE SI SVUOTA IL KBC.
+         *
+         * Le due porte del controller condividono UN SOLO buffer di uscita: un
+         * byte fermo li' dentro tiene alto OBF, e finche' OBF e' alto il
+         * controller NON consegna piu' NIENTE — nemmeno dalla tastiera. Quel
+         * byte lo toglie kbd_drain(), che pero' fino al 15 settembre 2026 si
+         * chiamava SOLO all'arrivo di un interrupt: se l'interrupt che doveva
+         * annunciarlo non arriva, non arriva nemmeno chi lo toglierebbe, e la
+         * tastiera resta muta per sempre.
+         *
+         * ! NON E' UN CASO DI SCUOLA: E' SUCCESSO SU UN ACER ASPIRE 3000. Da
+         * quando kbd 0.002 riprova il reset del touchpad tre volte, quel
+         * touchpad RISPONDE — al secondo giro — mentre prima veniva dichiarato
+         * assente e la sua porta si spegneva. Rispondendo, la porta resta
+         * accesa e lui comincia a mandare pacchetti: se l'IRQ12 non arriva al
+         * driver, il primo pacchetto zittisce la tastiera. Il sintomo e'
+         * proprio quello visto: compare l'invito, compare la riga «mouse PS/2:
+         * ha risposto al giro 2», e da li' in poi non risponde piu' niente.
+         *
+         * ! CINQUANTA MILLISECONDI SONO LA SCELTA, e vale la pena dire perche'.
+         * Sono abbastanza radi da non pesare — venti risvegli al secondo su un
+         * processo che per il resto dorme — e abbastanza fitti da non farsi
+         * notare: un tasto che arrivasse solo per questa strada si vedrebbe
+         * nel caso peggiore dopo cinquanta millesimi di secondo.
+         *
+         * ! E NON SOSTITUISCE GLI INTERRUPT: LI COPRE. Quando l'IRQ arriva —
+         * cioe' quasi sempre — questo giro non trova niente da fare e costa una
+         * lettura di porta.
+         * ===================================================================== */
+        if (ipc_recv_timeout(&meta, payload, sizeof(payload), 50) < 0) {
+            kbd_drain();
+            attiva_segui();
+            try_serve_reader(g_attiva);
+            try_serve_keyreader(g_attiva);
+            try_serve_mouse();
+            continue;
+        }
 
         /* ! PRIMA DI GUARDARE IL MESSAGGIO, SI GUARDA CHI E' DAVANTI. Qualunque
          * cosa questo ciclo faccia dopo — tradurre uno scancode, consegnare una

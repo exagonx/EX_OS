@@ -2,17 +2,32 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>Installare EX-OS</title>
+<title>Installare e configurare EX-OS</title>
 <link rel="stylesheet" href="stile.css">
-<!-- Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>  GPL-2.0-or-later
-     ! SOLO ASCII: apostrofi al posto degli accenti. -->
+<!--
+  exwin/doc/installa.html - EX-OS
+  Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>
+  SPDX-License-Identifier: GPL-2.0-or-later
+
+  ! SOLO ASCII, apostrofi al posto degli accenti: gli stessi file si aprono
+  con `edit` e si guardano da una console in code page 437.
+
+  ! QUESTO E' IL MANUALE, non il riassunto. Prima era una pagina di due
+  schermate che diceva "monta e lancia install"; chi doveva configurare
+  kernel.cfg, capire quale file va dove, o rimettere in piedi una macchina a
+  meta' non ci trovava niente. I fatti vengono da /boot/kernel.txt, dai
+  manuali in /doc/manuali e dal codice di install: se uno dei tre cambia,
+  questa pagina va riletta.
+-->
 </head>
 <body>
 
 <p class="navi">
-<a href="index.html">Documentazione</a> |
+Documentazione di EX-OS &mdash;
+<a href="index.html">Indice</a> |
 <a href="sistema.html">Il sistema</a> |
-<a href="comandi.html">Comandi</a> &mdash; Installazione |
+<a href="comandi.html">Comandi</a> |
+<b>Installazione</b> |
 <a href="exwin.html">Scrivania</a> |
 <a href="rete.html">Rete</a> |
 <a href="sviluppo.html">Sviluppo</a> |
@@ -20,186 +35,775 @@
 <a href="browser.html">Navigatore</a>
 </p>
 
-<h1>Installare EX-OS</h1>
-
-<h2>La via breve: <code>install</code> e basta</h2>
+<h1>Installare e configurare EX-OS</h1>
 
 <p>
-Avvia dal CD e digita:
+Questa pagina copre tutto il giro: preparare un disco, installarci il sistema,
+capire che cosa ci e' finito sopra e a che serve, configurarlo file per file, e
+rimetterlo in piedi quando qualcosa va storto.
 </p>
-
-<pre>    install</pre>
 
 <p>
-Senza argomenti l'installatore prende in mano tutto: mostra i dischi, chiede
-quanto dare al sistema, quanto all'area di scambio e se fare una terza
-partizione per i dati, partiziona, formatta, copia, scrive l'avvio e mette a
-posto <code>kernel.cfg</code>. Alla fine il disco parte da solo.
+<b>Le due strade per leggerla.</b> Se hai gia' una macchina che parte e vuoi
+solo cambiare una riga di configurazione, salta a
+<a href="#kernelcfg">kernel.cfg</a>. Se parti da un disco vuoto, si comincia
+dall'inizio.
 </p>
 
-<p class="nota">
-<b>Le tre misure si chiedono in una schermata sola</b>, con lo spazio non
-assegnato che si vede cambiare mentre le muovi. Chiederle una per volta
-vorrebbe dire far rispondere alla prima domanda senza sapere cosa resta per
-la terza.
-</p>
-
-<h3>Come si guida</h3>
-<pre>    frecce      muoversi
-    cifre       cambiare una misura
-    Invio       confermare
-    Esc         tornare indietro</pre>
-
-<p class="nota">
-<b>L'installatore non usa la grafica, e non e' pigrizia.</b> ExWin vuole il
-server a finestre, il server a finestre vuole una modalita' VESA che stage 2
-imposta solo se la configurazione e' gia' scritta &mdash; cioe' se il sistema
-e' <i>gia'</i> installato. Un installatore che pretendesse la grafica non
-girerebbe nell'unico momento in cui serve.
-</p>
-
-<h2>I due programmi, e perche' sono due</h2>
+<h2>Indice</h2>
 
 <table border="1">
-<tr><th>Programma</th><th>Dove sta</th><th>Che cosa fa</th></tr>
-<tr><td><code>/bin/install</code></td><td>anche sul floppy</td>
-    <td><b>congelato</b>: copia i file, installa l'avvio, fonde
-        <code>kernel.cfg</code>. Basta a installare da un floppy, e basta.</td></tr>
-<tr><td><code>/bin/cdinstall</code></td><td>solo sul CD</td>
-    <td>tutto il resto, adesso e in futuro: le schermate, le partizioni, lo
-        scambio.</td></tr>
+<tr><td><a href="#supporti">1. I tre supporti</a></td>
+    <td>floppy, CD, rete: da dove si installa e che differenza fa</td></tr>
+<tr><td><a href="#disco">2. Preparare il disco</a></td>
+    <td><code>disk</code>, <code>fdisk</code>, <code>mkfs</code>,
+        <code>mkswap</code>, e <code>cdinstall</code> che li fa tutti</td></tr>
+<tr><td><a href="#install">3. <code>install</code> e le sue opzioni</a></td>
+    <td>i tre passi, le opzioni una per una, l'aggiornamento</td></tr>
+<tr><td><a href="#albero">4. Che cosa c'e' sul disco</a></td>
+    <td>ogni directory, ogni file di <code>/boot</code>, e a che serve</td></tr>
+<tr><td><a href="#kernelcfg">5. <code>kernel.cfg</code></a></td>
+    <td>sezione per sezione, chiave per chiave, con gli esempi</td></tr>
+<tr><td><a href="#percorso">6. Il percorso e le variabili</a></td>
+    <td>dove la shell cerca i programmi, e come si cambia</td></tr>
+<tr><td><a href="#altricfg">7. Gli altri file di configurazione</a></td>
+    <td><code>avvio.sh</code>, <code>autoexec.sh</code>, utenti,
+        <code>telnetd.cfg</code>, <code>netupdate.cnf</code></td></tr>
+<tr><td><a href="#rete">8. Aggiornare dalla rete</a></td>
+    <td><code>netupdate</code>, i pacchetti, e perche' le librerie vanno per
+        prime</td></tr>
+<tr><td><a href="#storto">9. Quando va storto</a></td>
+    <td>i sintomi veri, con la causa e il rimedio</td></tr>
+<tr><td><a href="#supporti-creare">10. Creare i supporti</a></td>
+    <td>floppy, CD, dischetto di soccorso: i comandi di <code>make</code></td></tr>
+</table>
+
+<h2 id="supporti">1. I tre supporti</h2>
+
+<p>
+EX-OS si avvia da tre posti, e sono tre sistemi con lo stesso kernel dentro.
+Non e' un sistema &laquo;da floppy&raquo;: il floppy e' uno dei modi di
+avviarlo, non il posto dove vive.
+</p>
+
+<table border="1">
+<tr><th>Supporto</th><th>Che cosa porta</th><th>Quando si usa</th></tr>
+<tr><td><b>Floppy</b> 1.44 MB</td>
+    <td>il sistema MINIMALE: kernel, shell, la libc, una quarantina di comandi,
+        i driver di tastiera, PCI e USB</td>
+    <td>per installare su una macchina nuova, e per ripararne una</td></tr>
+<tr><td><b>CD</b> (<code>exos.iso</code>)</td>
+    <td>tutto il minimale piu' i driver di rete, i programmi di rete, ExWin, il
+        navigatore, i manuali</td>
+    <td>l'installazione normale</td></tr>
+<tr><td><b>Rete</b></td>
+    <td>quello che c'e' sul server degli aggiornamenti, compresi i compilatori
+        (37 MB di solo <code>cc1plus</code>)</td>
+    <td>per riempire e aggiornare un sistema gia' installato</td></tr>
 </table>
 
 <p>
-<b>La delega e' trasparente</b>: chi digita <code>install</code> ha in mente
-l'installazione, non quale dei due programmi la faccia. <code>install</code>
-cerca <code>cdinstall</code> e gli cede il posto; senza CD non cambia niente.
-E <code>cdinstall</code>, per la copia, richiama <code>install -diretto</code>
-&mdash; che e' l'unico posto dove quel codice esiste.
+! <b>IL FLOPPY PUO' STARE SU UN LETTORE USB.</b> Su quelle macchine il BIOS sa
+leggere il lettore e il kernel no: Stage 2 allora copia <b>tutto il volume in
+RAM</b> finche' il BIOS e' ancora disponibile, e la radice si monta li' sopra.
+Servono pero' quaranta megabyte di memoria estesa: sotto quella soglia il
+caricatore lo dice e prosegue leggendo dal lettore &mdash; che da USB non
+funziona.
 </p>
 
-<p class="nota">
-<b>Il motivo e' lo spazio, e si e' visto due volte in un giorno.</b> Il floppy
-e' 1,44 MB che non crescono; il kernel cresce a ogni cosa che impara. Un
-installatore che continuasse ad arricchirsi la' dentro sarebbe il prossimo a
-togliere spazio all'unica cosa che sul floppy <i>deve</i> starci.
-</p>
-
-<h2>La via lunga, un passo per volta</h2>
-
-<p>Serve quando si vuole decidere tutto, o quando si installa su un disco che
-ha gia' altro sopra.</p>
-
-<pre>    disk                          quali dischi ci sono, e cosa non torna
-    fdisk hd0                     creare le partizioni
-    mkfs -t ext2 -L exos hd0p1    formattare quella di sistema
-    mkswap hd0p2                  preparare l'area di scambio
-    mount hd0p1 /disco            montarla dove si vuole
-    install /disco                copiare il sistema li' dentro</pre>
+<h2 id="disco">2. Preparare il disco</h2>
 
 <p>
-Oppure, in un passaggio solo, la parte che riguarda un disco vergine:
+Prima di installare bisogna sapere che cosa c'e'. <code>disk</code> elenca i
+dispositivi come li vede il sistema:
 </p>
 
-<pre>    install -prepara hd0</pre>
+<pre>    disk
 
-<h3>Le opzioni che contano</h3>
+    hd0  canale primario, master
+      Modello       : HTS541060G9AT00
+      Capacita'     : 117210240 settori (57231 MB)
+      Schema        : MBR
+
+      n.  tipo MBR      avv      inizio       MB  filesys.  etichetta
+      1   Linux         si         2048    57230  ext2      SISTEMA</pre>
+
+<p>
+I nomi che compaiono qui sono quelli che si usano ovunque: <code>fd0</code> il
+floppy, <code>hd0</code> il primo disco intero, <code>hd0p1</code> la sua prima
+partizione, <code>cd0</code> il lettore ottico.
+</p>
+
+<p>
+! <b>LA NUMERAZIONE E' QUELLA DI fdisk</b>, non quella di chi conta: 1-4 sono
+gli SLOT delle primarie anche se qualcuno e' vuoto, e le logiche partono da 5.
+Un disco con gli slot 1 e 3 occupati da' <code>hd0p1</code> e
+<code>hd0p3</code>, non p1 e p2.
+</p>
+
+<h3>La via a schermo intero: <code>cdinstall</code></h3>
+
+<p>
+Sul CD c'e' <code>cdinstall</code>, che fa tutto il giro con l'interfaccia a
+schermo intero: mostra il disco, chiede le misure, partiziona, formatta, e poi
+chiama l'installazione vera. E' la strada consigliata quando si parte da un
+disco vuoto.
+</p>
+
+<pre>    cdinstall</pre>
+
+<h3>La via a mano</h3>
+
+<p>
+Chi vuole decidere ogni passo usa i tre comandi separati. <b>Sono
+distruttivi</b>, e per questo <code>install</code> non li fa mai da solo.
+</p>
+
+<pre>    fdisk hd0              crea la tabella delle partizioni
+    mkfs -t ext2 -L SISTEMA hd0p1    formatta
+    mkswap hd0p2           prepara un'area di scambio (facoltativa)</pre>
+
 <table border="1">
-<tr><th>Comando</th><th>Che cosa fa</th></tr>
-<tr><td><code>install</code></td><td>la procedura guidata dal CD</td></tr>
-<tr><td><code>install -prepara hd0</code></td><td>prepara un disco: partizioni, formattazione, scambio, copia</td></tr>
-<tr><td><code>install /disco</code></td><td>copia il sistema su un volume gia' montato: <b>riscrive tutto</b></td></tr>
-<tr><td><code>install -a /disco</code></td><td>aggiorna: copia solo cio' che sul supporto e' piu' nuovo</td></tr>
-<tr><td><code>install -m /disco</code></td><td>solo il sistema minimale</td></tr>
-<tr><td><code>install -t /disco</code></td><td>tutti i componenti, senza chiedere</td></tr>
-<tr><td><code>install -tools</code></td><td>gli strumenti di sviluppo, che vengono dal <b>CD tools</b> e non dal supporto d'avvio</td></tr>
+<tr><th>Filesystem</th><th>Quando</th></tr>
+<tr><td><code>ext2</code></td>
+    <td>la scelta normale per un sistema installato: tiene i <b>nomi lunghi</b>
+        in lettura e scrittura</td></tr>
+<tr><td><code>fat16</code></td>
+    <td>fino a 2 GB, per scambiare file con altri sistemi</td></tr>
+<tr><td><code>fat32</code></td>
+    <td>oltre i 2 GB, stesso mestiere</td></tr>
 </table>
 
-<p class="nota">
-<b>Con degli argomenti non si apre nessuna schermata.</b> Una procedura
-guidata in mezzo a un'automazione la blocca su una domanda che nessuno
-vedra': <code>install -m /disco</code> dentro uno script continua a
-funzionare identico.
-</p>
-
-<h2>Che cosa viene installato</h2>
-
 <p>
-<b>Il sistema minimale, sempre</b>: <code>/bin</code>, <code>/boot</code>,
-<code>/lib</code>, <code>/dev</code>, <code>/drivers</code>. E' cio' senza cui
-EX-OS non parte.
+! <b>SU FAT I NOMI LUNGHI SI LEGGONO E NON SI SCRIVONO.</b> Un sistema
+installato su FAT funziona, ma i file con nomi da piu' di otto caratteri
+diventano <code>NETDET~1</code> quando li scrive lui. Per il sistema si usa
+ext2; FAT resta per le chiavette e per gli scambi.
 </p>
 
 <p>
-<b>Tutto il resto e' un componente</b>, e i componenti non sono un elenco
-scritto dentro l'installatore: <i>qualunque</i> altra directory di primo
-livello trovata sul supporto d'avvio viene mostrata e chiesta. Oggi sono
-<code>/exwin</code> (la scrivania, i caratteri e questa documentazione) e
-<code>/doc</code>; domani basta mettere una directory sul supporto.
+Senza <code>-t</code>, <code>mkfs</code> sceglie dalla dimensione: fino a 2 GB
+FAT16, oltre FAT32. Non e' una soglia arbitraria &mdash; FAT16 arriva a 65524
+cluster.
 </p>
 
-<p class="nota">
-<b>Chi prepara un pacchetto non ha i sorgenti dell'installatore</b>, ed e' la
-ragione per cui l'elenco non e' compilato dentro. E' la stessa ragione per cui
-l'elenco delle applicazioni grafiche e' un file di testo.
+<h2 id="install">3. <code>install</code> e le sue opzioni</h2>
+
+<p>
+<code>install</code> copia un sistema su un volume <b>gia' montato in
+lettura/scrittura</b>. Non partiziona e non formatta: quelle sono operazioni
+distruttive e vanno fatte di proposito, non come effetto collaterale.
+</p>
+
+<pre>    disk                   quali dischi ci sono
+    mount hd0p1 /disk      montalo
+    install /disk          installa, in tre passi
+    umount /disk</pre>
+
+<p>
+! <b>IL PUNTO DI MONTAGGIO NON DEVE ESISTERE</b> sul supporto da cui ti sei
+avviato: e' virtuale, e compare nell'elenco della radice perche' ce lo aggiunge
+il VFS. Montare su un nome che esiste gia' viene rifiutato apposta &mdash; su
+Unix quel caso nasconde dei file senza dirlo.
 </p>
 
 <p>
-Il confine fra minimale e opzionale lo dice <code>/boot/minimale.txt</code>,
-che e' l'elenco dei file del floppy scritto <i>leggendo il floppy</i>. Un
-elenco scritto a mano nel sorgente sarebbe una seconda verita', e
-divergerebbe al primo programma aggiunto.
+! <b>E install RIFIUTA UNA DESTINAZIONE CHE NON E' MONTATA</b> (dalla 0.005).
+Scrivere dentro <code>/disk</code> senza volume vorrebbe dire riempire il
+supporto da cui ti sei avviato e lasciare il disco vuoto, con l'installatore che
+dice che e' andato tutto bene.
 </p>
 
-<h2>I driver non si copiano: si scelgono</h2>
+<h3>Le opzioni</h3>
+
+<table border="1">
+<tr><th>Forma</th><th>Che cosa fa</th></tr>
+<tr><td><code>install /disk</code></td>
+    <td>installazione completa: riscrive tutto, e chiede i componenti uno per
+        uno</td></tr>
+<tr><td><code>install -m /disk</code></td>
+    <td><b>minimale</b>: solo il sistema di base, nessun componente, non
+        chiede niente</td></tr>
+<tr><td><code>install -t /disk</code></td>
+    <td><b>tutto</b>: sistema e tutti i componenti trovati sul supporto, senza
+        chiedere</td></tr>
+<tr><td><code>install -a /disk</code></td>
+    <td><b>aggiorna</b>: confronta con il supporto, ELENCA che cosa cambierebbe,
+        e copia solo quello</td></tr>
+<tr><td><code>install -senza-conti /disk</code></td>
+    <td>non chiede di creare gli utenti: li creera' <code>login</code> al primo
+        avvio</td></tr>
+<tr><td><code>install -tools /disk</code></td>
+    <td>installa i compilatori dal CD degli strumenti</td></tr>
+</table>
 
 <p>
-L'installatore chiede a <code>hwconfig</code> quali driver servono su
-<i>questa</i> macchina e mette solo quelli, poi li dichiara nella sezione
-<code>[modules]</code> di <code>kernel.cfg</code>. Il driver di una scheda di
-rete che non c'e' sarebbe soltanto un file in piu' e una riga di errore
-all'avvio.
+! <b>-senza-conti NON E' UN RIPIEGO, E' PIU' GIUSTO</b> quando si installa da
+un'altra stanza: chi installa non deve digitare la password di chi usera' la
+macchina, e chi la usera' non deve dettargliela. I due conti li crea
+<code>login</code> al primo avvio, davanti alla tastiera di chi li sta
+scegliendo.
 </p>
 
-<h2>Aggiornare un sistema gia' installato</h2>
-
-<pre>    install -a /disco</pre>
-
-<p class="nota">
-<b>Fino alla versione 0.148 questa era la trappola peggiore.</b> La copia
-saltava i file che esistevano gia': <code>install</code> su un sistema
-installato aggiornava i file <i>nuovi</i> e lasciava indietro tutti gli altri,
-kernel compreso. Il disco continuava ad avviare la versione vecchia mentre
-l'installatore stampava &laquo;Installazione completata&raquo;. Adesso si
-riscrive sempre, e alla fine ogni file si rilegge per verificare che sul
-volume ci siano esattamente i byte che ci abbiamo scritto.
-</p>
-
-<p class="nota">
-<b>E la mappa dei settori del kernel vale finche' quel file non si sposta.</b>
-Chi ricopia a mano <code>kernel.bin</code> o <code>stage2</code> su un disco
-gia' installato <i>deve</i> rilanciare <code>install</code>, o il disco
-riparte con la versione di prima.
-</p>
-
-<h2>Dopo l'installazione</h2>
+<h3>I tre passi</h3>
 
 <ol>
-<li><code>reboot</code>, e togli il CD;</li>
-<li>entra con <code>login</code>;</li>
-<li>se serve la rete: <code>netdetect</code> e poi <code>dhcp</code> &mdash;
-    vedi <a href="rete.html">La rete</a>;</li>
-<li><code>exwin</code> accende la scrivania &mdash; vedi
-    <a href="exwin.html">La scrivania</a>.</li>
+<li><b>Il sistema minimale</b> &mdash; quello che sta su un floppy, sempre
+    installato: kernel, shell, libc, i comandi di base.</li>
+<li><b>Il resto degli strumenti</b> &mdash; driver di rete, USB, grafica, e i
+    programmi che sul floppy non ci stanno.</li>
+<li><b>ExWin</b> &mdash; il server grafico, le applicazioni, i caratteri.</li>
 </ol>
 
-<hr>
-<p class="navi">
-<a href="index.html">Torna alla documentazione</a> |
-<a href="exwin.html">La scrivania &gt;</a>
+<p>
+! <b>&laquo;MINIMALE&raquo; VUOL DIRE &laquo;QUELLO CHE STA SUL
+FLOPPY&raquo;</b>, e installando dal CD quella domanda non ha una risposta
+ovvia: il CD porta molto di piu' dentro le stesse <code>/bin</code> e
+<code>/dev</code>. L'elenco sta in <code>/boot/minimale.txt</code>, scritto DAL
+FLOPPY quando si costruisce il CD. Un elenco scritto a mano dentro
+l'installatore sarebbe una seconda verita', e divergerebbe al primo programma
+aggiunto.
 </p>
-<p class="piede">
-EX-OS &mdash; Graziano Falcone, exagonx@hotmail.com &mdash; GNU GPL v2.
+
+<h3>I driver non si copiano: si scelgono</h3>
+
+<p>
+<code>install -a</code> salta <code>/dev</code> apposta. Sul disco i driver sono
+un <b>sottoinsieme scelto</b> &mdash; quelli che su questa macchina trovano il
+proprio hardware &mdash; quindi ognuno che manca e' una decisione, non una
+differenza da sanare. Li risceglie <code>hwconfig</code>, che sonda l'hardware e
+riscrive <code>/boot/avvio.sh</code>.
+</p>
+
+<p>
+! <b>L'ECCEZIONE E' LA TASTIERA.</b> Se <code>kbd.drv</code> sul disco e'
+rotto, dopo il riavvio non c'e' modo di battere il comando che lo
+aggiornerebbe: per questo il dischetto di soccorso lo copia a mano. Vedi
+<a href="#storto">Quando va storto</a>.
+</p>
+
+<h2 id="albero">4. Che cosa c'e' sul disco</h2>
+
+<table border="1">
+<tr><th>Directory</th><th>Che cosa contiene</th></tr>
+<tr><td><code>/boot</code></td>
+    <td>il kernel, il caricatore e <b>tutta la configurazione</b></td></tr>
+<tr><td><code>/bin</code></td>
+    <td>i programmi: shell, comandi, installatore, programmi di rete</td></tr>
+<tr><td><code>/dev</code></td>
+    <td>i <b>driver</b>, che qui sono file eseguibili (<code>.drv</code>):
+        tastiera, PCI, USB, rete, audio, video</td></tr>
+<tr><td><code>/lib</code></td>
+    <td><code>libc.so</code>, la libreria condivisa che ogni programma
+        chiama</td></tr>
+<tr><td><code>/exos</code></td>
+    <td>i compilatori e le loro librerie (<code>/exos/bin</code>,
+        <code>/exos/lib</code>, <code>/exos/include</code>)</td></tr>
+<tr><td><code>/exwin</code></td>
+    <td>la scrivania: programmi grafici, librerie <code>.so</code>, caratteri,
+        e questa documentazione in <code>/exwin/doc</code></td></tr>
+<tr><td><code>/USB</code></td>
+    <td>vuota, e deve esserci: e' li' che <code>automount</code> monta le
+        chiavette</td></tr>
+<tr><td><code>/suono</code></td>
+    <td>i campioni audio di prova</td></tr>
+</table>
+
+<h3>I file di <code>/boot</code>, uno per uno</h3>
+
+<table border="1">
+<tr><th>File</th><th>A che serve</th><th>Chi lo scrive</th></tr>
+<tr><td><code>kernel.bin</code></td><td>il kernel</td><td>l'installazione</td></tr>
+<tr><td><code>stage2.bin</code></td><td>il caricatore, che carica il kernel</td>
+    <td>l'installazione</td></tr>
+<tr><td><code>kernel.cfg</code></td><td><b>la configurazione del kernel</b></td>
+    <td>tu, oppure <code>hwconfig</code></td></tr>
+<tr><td><code>kernel.txt</code></td>
+    <td>la spiegazione di ogni chiave del .cfg. Il kernel NON lo legge, quindi
+        puo' crescere quanto serve</td>
+    <td>-</td></tr>
+<tr><td><code>avvio.sh</code></td>
+    <td>i comandi del SISTEMA, eseguiti da <code>login</code> prima
+        dell'accesso</td>
+    <td><code>hwconfig</code></td></tr>
+<tr><td><code>autoexec.sh</code></td>
+    <td>i comandi di CHI ENTRA, eseguiti dalla sua shell</td>
+    <td>tu</td></tr>
+<tr><td><code>utenti</code></td><td>nome:uid:gid, leggibile da tutti</td>
+    <td><code>login</code></td></tr>
+<tr><td><code>ombra</code></td><td>nome:sale:impronta, solo di root</td>
+    <td><code>login</code></td></tr>
+<tr><td><code>telnetd.cfg</code></td><td>se e come aprire la porta 23</td>
+    <td>tu</td></tr>
+<tr><td><code>netupdate.cnf</code></td><td>da dove si aggiorna</td>
+    <td><code>netupdate -set</code></td></tr>
+<tr><td><code>netupdate.reg</code></td>
+    <td>il registro di che cosa e' arrivato dalla rete</td>
+    <td><code>netupdate</code></td></tr>
+<tr><td><code>minimale.txt</code></td>
+    <td>l'elenco dei file del sistema minimale</td>
+    <td>la costruzione del CD</td></tr>
+<tr><td><code>help.txt</code></td><td>il testo che <code>help</code> sfoglia</td>
+    <td>-</td></tr>
+</table>
+
+<h2 id="kernelcfg">5. <code>kernel.cfg</code></h2>
+
+<p>
+Formato INI: sezioni fra parentesi quadre, coppie <code>chiave = valore</code>,
+commenti col cancelletto.
+</p>
+
+<p>
+! <b>IL FILE HA UN TETTO DI 8191 BYTE.</b> Oltre, le sezioni finali vengono
+ignorate e la macchina si presenta <b>senza tastiera</b>. Per questo le
+spiegazioni lunghe stanno in <code>/boot/kernel.txt</code>, che il kernel non
+legge.
+</p>
+
+<h3>[kernel]</h3>
+
+<pre>    [kernel]
+    loglevel    = 3
+    timer_hz    = 100
+    verboseboot = 0
+    keymap      = us
+    # svga      = 800x600</pre>
+
+<table border="1">
+<tr><th>Chiave</th><th>Che cosa fa</th></tr>
+<tr><td><code>loglevel</code></td>
+    <td>quanto il kernel racconta: 0 silenzio, 3 il normale, di piu' per
+        cercare un guasto</td></tr>
+<tr><td><code>timer_hz</code></td>
+    <td>i tick del PIT al secondo. 100 vuol dire un tick ogni 10 ms, che e' la
+        risoluzione di tutte le attese del sistema</td></tr>
+<tr><td><code>verboseboot</code></td>
+    <td>0 avvio silenzioso, 1 mostra il log dell'avvio. Da mettere a 1 quando
+        una macchina non parte e si vuole sapere a quale passo si ferma</td></tr>
+<tr><td><code>keymap</code></td>
+    <td>la disposizione della tastiera: <code>us</code>, <code>it</code>,
+        <code>fr</code>, <code>de</code>, <code>es</code>, <code>uk</code></td></tr>
+<tr><td><code>svga</code></td>
+    <td>la risoluzione della console. Assente = testo 80x25. La impone Stage 2,
+        e la scrive <code>/dev/svga.drv</code></td></tr>
+</table>
+
+<h3>[env] &mdash; le variabili ereditate dai processi</h3>
+
+<pre>    [env]
+    PATH        = /bin:/dev:/exos/bin:/cdrom/exos/bin:/cdrom/bin
+    HOME        = /
+    TERM        = vga</pre>
+
+<p>
+! <b>OSNAME, OSVER e AUTHOR NON vanno messi qui</b>: li inietta il kernel, e
+scriverli a mano vorrebbe dire due verita' che divergono.
+</p>
+
+<h3>[boot] &mdash; chi parte per primo</h3>
+
+<pre>    [boot]
+    shell       = /bin/sh
+    login       = /bin/login
+    modules     = kbd</pre>
+
+<table border="1">
+<tr><th>Chiave</th><th>Che cosa fa</th></tr>
+<tr><td><code>shell</code></td>
+    <td>il primo programma utente, lanciato quando il sistema e' pronto</td></tr>
+<tr><td><code>login</code></td>
+    <td>se c'e', parte AL POSTO della shell: chiede utente e password, e poi e'
+        lui a lanciare la shell. <code>exit</code> torna al prompt d'accesso per
+        costruzione</td></tr>
+<tr><td><code>modules</code></td>
+    <td>l'elenco, separato da virgole, dei moduli da caricare. I percorsi stanno
+        in <code>[modules]</code>: qui ci sono solo i nomi</td></tr>
+</table>
+
+<p>
+! <b>NON CI SI PUO' CHIUDERE FUORI.</b> Al primo avvio, senza il file degli
+utenti, <code>login</code> entra senza chiedere niente e OBBLIGA a creare un
+utente. Attivare quella riga su una macchina senza utenti non e' una trappola.
+</p>
+
+<p>
+! <b>Il kernel usa <code>login</code> solo se la radice e' ext2.</b> Da floppy o
+da CD si entra da root senza password &mdash; che e' anche l'unico modo di poter
+installare &mdash; e su un sistema installato l'accesso e' obbligatorio.
+</p>
+
+<h3>[modules] &mdash; i driver che sono processi</h3>
+
+<pre>    [modules]
+    kbd         = /dev/kbd.drv
+    pci         = /dev/pci.drv
+    uhci        = /dev/uhci.drv</pre>
+
+<p>
+Questi non sono moduli kernel: sono <b>processi ring3 autonomi</b>, eseguibili
+come i programmi di <code>/bin</code>, caricati al passo 14b dell'avvio.
+</p>
+
+<p>
+! <b>SU UNA SCHEDA MADRE SENZA SUPPORTO LEGACY LA TASTIERA E' USB</b>, e l'8042
+non c'e': <code>kbd.drv</code> non riceve niente, e nessuno puo' battere il
+comando che avvierebbe il driver USB &mdash; e' la tastiera che quel driver deve
+far funzionare. Su quelle macchine i tre driver vanno caricati insieme, come
+nell'esempio qui sopra. Un modulo assente viene saltato con un avviso, quindi
+lasciare le righe non rompe niente su una macchina che la tastiera legacy ce
+l'ha.
+</p>
+
+<p>
+! <b>/dev/svga.drv NON va qui</b>: e' uno strumento che si lancia a mano per
+cambiare la risoluzione, non un processo da tenere vivo.
+</p>
+
+<p>
+! <b>E LA RIGA DELL'AUDIO NON SI SCRIVE A MANO</b>: la scrive
+<code>audio -i</code>, e solo DOPO aver collaudato la scheda &mdash; un tono,
+una nota MIDI, un flusso, e il controllo che gli interrupt siano arrivati
+davvero. Un driver audio che si carica senza suonare e' il guasto normale, non
+quello raro.
+</p>
+
+<h3>[mount] &mdash; i montaggi automatici</h3>
+
+<pre>    [mount]
+    /cdrom = cd0
+    # /disk  = hd0p1
+    # /dati  = hd0p2,ro</pre>
+
+<p>
+La forma e' <code>punto = dispositivo</code>, con il <b>punto a sinistra</b>:
+e' lui la chiave, e due dispositivi sullo stesso punto sarebbero un conflitto.
+Aggiungendo <code>,ro</code> il montaggio e' in sola lettura.
+</p>
+
+<p>
+! <b>UN MONTAGGIO CHE FALLISCE NON FERMA L'AVVIO</b>: viene segnalato con un
+[WARN] e il sistema prosegue. Un disco assente o cambiato non deve rendere una
+macchina non avviabile.
+</p>
+
+<p>
+! <b>PERCHE' LA RIGA DEL CD E' ATTIVA E QUELLA DEL DISCO NO.</b> Un lettore
+vuoto, o che non c'e' affatto, non produce un avviso: un CD assente
+all'accensione e' la condizione normale. Un disco rigido elencato e non
+montabile resta invece un [WARN], perche' quello e' da sapere.
+</p>
+
+<h2 id="percorso">6. Il percorso e le variabili</h2>
+
+<p>
+Il <b>percorso</b> e' l'elenco delle directory dove la shell cerca un comando
+che non ha la barra davanti. Si scrive in <code>[env]</code>, separato dai due
+punti, e i programmi lo ereditano tutti:
+</p>
+
+<pre>    [env]
+    PATH = /bin:/dev:/exos/bin:/cdrom/exos/bin:/cdrom/bin</pre>
+
+<table border="1">
+<tr><th>Voce</th><th>Perche' c'e'</th></tr>
+<tr><td><code>/bin</code></td><td>i programmi del sistema</td></tr>
+<tr><td><code>/dev</code></td>
+    <td>i driver sono eseguibili: <code>ip.drv &amp;</code> si batte cosi'</td></tr>
+<tr><td><code>/exos/bin</code></td>
+    <td>gli strumenti &mdash; gcc, cpp, as, ld, make, ar, nasm, fbc &mdash;
+        qualunque sia la strada da cui sono arrivati</td></tr>
+<tr><td><code>/cdrom/exos/bin</code>, <code>/cdrom/bin</code></td>
+    <td>gli stessi, quando il CD e' nel lettore e non li si e' installati</td></tr>
+</table>
+
+<p>
+! <b>UNA VOCE CHE MANCA E' UN PROGRAMMA INVISIBILE.</b> Prima del 14 settembre
+2026 nel percorso c'era solo <code>/cdrom/exos/bin</code>: chi prendeva
+<code>make</code> dalla rete se lo ritrovava in <code>/exos/bin</code>, e la
+shell rispondeva &laquo;comando non trovato&raquo; con il file li'. Il posto
+dove vivono gli strumenti non deve dipendere da come ci sono arrivati.
+</p>
+
+<p>
+Le altre due variabili: <code>HOME</code> e' la directory di partenza,
+<code>TERM</code> dice che terminale e' (<code>vga</code>).
+</p>
+
+<h2 id="altricfg">7. Gli altri file di configurazione</h2>
+
+<h3><code>/boot/avvio.sh</code> &mdash; i comandi del sistema</h3>
+
+<p>
+Lo esegue <code>login</code>, da root, <b>prima</b> dell'accesso, e aspetta che
+finisca: chi si trova davanti il prompt ha gia' la rete accesa. Una riga = un
+comando, come se fosse digitata.
+</p>
+
+<pre>    !silenced
+    echo Accendo la rete...
+    /dev/pci.drv &amp;
+    netdetect -c
+    /dev/ip.drv &amp;
+    dhcp
+    telnetd -auto &amp;
+    netupdate -auto
+    /dev/ehci.drv -avvio &amp;
+    automount &amp;</pre>
+
+<p>
+! <b>L'ORDINE E' QUELLO DELLE RIGHE</b>, ed e' il motivo per cui la rete sta
+qui e non in <code>[modules]</code>: quelle il kernel le avvia TUTTE INSIEME, e
+la catena pci &rarr; scheda &rarr; ip &rarr; dhcp vuole una successione. Su una
+macchina lenta le attese scadrebbero e la rete resterebbe spenta.
+</p>
+
+<p>
+! <b>QUESTO FILE LO RISCRIVE <code>hwconfig</code></b>, con i driver della
+scheda che c'e'. Una riga aggiunta a mano sparisce alla prima configurazione
+dell'hardware &mdash; ed e' il motivo per cui gli interruttori stanno nei
+<code>.cfg</code> e non qui.
+</p>
+
+<h3><code>/boot/autoexec.sh</code> &mdash; i comandi di chi entra</h3>
+
+<p>
+Lo esegue la shell di chi ha fatto l'accesso, a ogni accesso. Qui vanno le cose
+di chi USA la macchina: un programma da aprire, una variabile. La rete no: un
+utente normale un driver non lo carica.
+</p>
+
+<h3>Gli utenti</h3>
+
+<pre>    /boot/utenti    nome:uid:gid            0644, lo legge chiunque
+    /boot/ombra     nome:sale:impronta      0600, solo root</pre>
+
+<p>
+L'impronta e' lo SHA-256 di <code>sale:password</code>: la password non tocca
+mai il disco. Due file e non uno per la stessa ragione per cui Unix ha
+<code>/etc/passwd</code> e <code>/etc/shadow</code>.
+</p>
+
+<pre>    login -a        aggiunge un utente (solo root)
+    su              diventa un altro utente
+    id, whoami      chi sono adesso</pre>
+
+<h3><code>/boot/telnetd.cfg</code> &mdash; la sessione remota</h3>
+
+<pre>    avvio   = no          no | login | root
+    porta   = 23
+    shell   = /bin/login
+    #utenti = root, mario
+    #nega   = root
+    #da     = 192.168.0.0/24</pre>
+
+<p>
+! <b>L'INTERRUTTORE STA QUI E NON NELLO SCRIPT.</b> In
+<code>/boot/avvio.sh</code> c'e' sempre <code>telnetd -auto &amp;</code>, che da
+sola non apre niente: legge questa chiave e, se dice <code>no</code> &mdash; il
+valore predefinito, anche a file assente &mdash; esce in silenzio.
+</p>
+
+<p>
+! <b>E &laquo;root&raquo; VUOL DIRE CHE CHIUNQUE ARRIVI ALLA PORTA 23 E'
+AMMINISTRATORE</b>, in chiaro e senza password. Su una rete di casa e' quel che
+serve per guidare una macchina in un'altra stanza; su qualunque altra e' una
+porta spalancata. La riga <code>da</code> e' il modo di stringerla.
+</p>
+
+<h3><code>/boot/netupdate.cnf</code> &mdash; da dove si aggiorna</h3>
+
+<p>
+Non si scrive a mano: lo scrive <code>netupdate -set</code>, che chiede
+trasporto e indirizzo.
+</p>
+
+<pre>    netupdate -set
+
+      trasporto  1 (HTTP)
+      indirizzo  exagonx.altervista.org/exos/netinst</pre>
+
+<h2 id="rete">8. Aggiornare dalla rete</h2>
+
+<pre>    netupdate -check        guarda che cosa c'e' di nuovo e lo propone
+    netupdate -auto         controlla in silenzio, per /boot/avvio.sh
+    netupdate -registro     che cosa e' arrivato da qui
+    netupdate -permessi     rimette il bit di esecuzione dove manca</pre>
+
+<p>
+<code>-check</code> scarica l'elenco, confronta le impronte, e fa <b>due
+domande</b>: se aggiornare i file cambiati, e se installare anche quelli che su
+questa macchina non ci sono mai stati (i componenti che chi ha installato non
+ha voluto: documentazione, applicazioni grafiche, compilatori).
+</p>
+
+<p>
+! <b>LE LIBRERIE VANNO PER PRIME, E SE NON ARRIVANO NON SI TOCCA NIENTE</b>
+(dalla 0.021). I programmi chiamano la libc <b>per nome</b>, e questo produce
+un'asimmetria che decide tutto:
+</p>
+
+<table border="1">
+<tr><td>binario VECCHIO + libc NUOVA</td>
+    <td>funziona: i nomi vecchi ci sono ancora</td></tr>
+<tr><td>binario NUOVO + libc VECCHIA</td>
+    <td><b>non parte niente</b>, nemmeno i comandi per rimediare</td></tr>
+</table>
+
+<p>
+! <b>E UN FILE GRANDE SU UNA LINEA CHE CADE SI RIPRENDE.</b> Il
+<code>.new</code> rimasto a meta' non si butta: al giro dopo si riparte da li'
+con una richiesta <code>Range</code>, rimasticando l'impronta dei byte gia'
+scritti. Trentasette megabyte a quaranta kilobyte al secondo sono un quarto
+d'ora di connessione aperta: cade piu' spesso di quanto non cada.
+</p>
+
+<h2 id="storto">9. Quando va storto</h2>
+
+<h3>&laquo;la libreria condivisa non ha la funzione ...&raquo;</h3>
+
+<p>
+<b>Sintomo:</b> la macchina si accende, la rete c'e', e ogni comando risponde
+cosi'. <b>Causa:</b> un aggiornamento interrotto fra i programmi e la libc.
+<b>Rimedi</b>, in ordine di comodita':
+</p>
+
+<h3>Rimedio 1: <code>soccorso</code>, se c'e'</h3>
+
+<p>
+E' statico, con la libc compilata dentro, quindi parte comunque. Prende
+<code>/lib/libc.so</code> dal server degli aggiornamenti verificando dimensione
+e impronta mentre arriva.
+</p>
+
+<pre>    soccorso</pre>
+
+<h3>Rimedio 2: i file <code>.old</code></h3>
+
+<p>
+<code>netupdate</code> rinomina sempre il vecchio prima di mettere il nuovo, e
+li toglie solo al giro dopo. Sono binari vecchi, e con la libc vecchia
+funzionano:
+</p>
+
+<pre>    /bin/netdetect.old -c
+    /dev/ip.drv &amp;
+    /bin/dhcp.old
+    /bin/scarica.old &lt;url&gt;/file/lib/libc.so /lib/libc.so.new
+    /bin/mv.old /lib/libc.so.new /lib/libc.so
+    reboot</pre>
+
+<p>
+! <b>SI SCARICA SU <code>.new</code> E SI RINOMINA DOPO.</b> Scrivere dritto
+sulla libc vuol dire che una caduta a meta' ne lascia una monca &mdash; e a quel
+punto non parte piu' nemmeno un <code>.old</code>.
+</p>
+
+<h3>Rimedio 3: il dischetto di soccorso</h3>
+
+<p>
+<code>dist/fixsys.img</code>: si avvia da li' e si batte
+</p>
+
+<pre>    sh -f /boot/fixsys.sh</pre>
+
+<p>
+che monta <code>hd0p1</code>, rimette il sistema di base con
+<code>install -a</code>, copia i driver della tastiera e smonta.
+</p>
+
+<h3>La shell accetta i caratteri e non esegue mai</h3>
+
+<p>
+<b>Causa:</b> <code>kbd.drv</code> non e' stato caricato &mdash; la disciplina
+di linea, quella che consegna la RIGA quando si batte invio, vive dentro quel
+driver. All'avvio si legge <code>driver kbd non caricato</code>.
+<b>Rimedio:</b> controllare che il file ci sia in <code>/dev</code> e che sia
+elencato in <code>[modules]</code>.
+</p>
+
+<h3>La tastiera muore dopo la riga del mouse</h3>
+
+<p>
+<b>Sintomo:</b> compare l'invito, compare <code>kbd: mouse PS/2: ha risposto al
+giro 2</code>, e da li' non risponde piu' niente. <b>Causa:</b> le due porte del
+controller condividono un solo buffer di uscita, e un byte del mouse non
+raccolto tiene zitta anche la tastiera. <b>Rimedio:</b> <code>kbd.drv</code>
+0.003 o piu' nuovo, che svuota il controller anche quando l'interrupt non
+arriva.
+</p>
+
+<h3>Il montaggio non riesce</h3>
+
+<table border="1">
+<tr><th>Messaggio</th><th>Vuol dire</th></tr>
+<tr><td>dispositivo o punto inesistente</td>
+    <td>il nome non c'e': guarda con <code>disk</code></td></tr>
+<tr><td>il punto di montaggio esiste gia'</td>
+    <td>c'e' una directory con quel nome: i punti sono virtuali</td></tr>
+<tr><td>punto non valido o filesystem non riconosciuto</td>
+    <td>il volume non e' formattato, o lo e' in un modo che EX-OS non
+        legge</td></tr>
+<tr><td>metadati incoerenti, montaggio rifiutato</td>
+    <td>il filesystem c'e' ma non torna: rifarlo con <code>mkfs</code></td></tr>
+<tr><td>gia' in uso, oppure file aperti</td>
+    <td>qualcuno ci sta dentro &mdash; anche solo una shell con li' la
+        directory corrente</td></tr>
+</table>
+
+<h3>Una chiavetta USB non si toglie</h3>
+
+<p>
+Non si sfila: si <b>espelle</b>, o il driver resta a servire un disco che non
+c'e' piu' e rimetterla non produce niente.
+</p>
+
+<pre>    eject                  che cosa si puo' togliere
+    eject /USB/DRIVE0      smonta e ritira</pre>
+
+<h2 id="supporti-creare">10. Creare i supporti</h2>
+
+<p>
+Dal lato Linux, nella copia dei sorgenti:
+</p>
+
+<table border="1">
+<tr><th>Comando</th><th>Che cosa produce</th></tr>
+<tr><td><code>make floppy</code></td><td><code>dist/floppy.img</code>, il
+    sistema minimale avviabile</td></tr>
+<tr><td><code>make iso-exos</code></td><td><code>dist/exos.iso</code>, il CD di
+    sistema</td></tr>
+<tr><td><code>make fixsys</code></td><td><code>dist/fixsys.img</code>, il
+    dischetto di soccorso (con il volume in RAM acceso)</td></tr>
+<tr><td><code>make netinst</code></td><td><code>dist/netinst</code>, l'albero da
+    pubblicare per gli aggiornamenti</td></tr>
+</table>
+
+<p>
+Le immagini si scrivono su un supporto vero con <code>dd</code>:
+</p>
+
+<pre>    dd if=dist/fixsys.img of=/dev/sdX bs=512 conv=fsync</pre>
+
+<p>
+! <b>CONTROLLA <code>/dev/sdX</code> CON <code>lsblk</code> PRIMA.</b> Quel
+comando non chiede conferma e scrive dove gli si dice.
+</p>
+
+<hr>
+
+<p class="navi">
+<a href="index.html">Indice</a> |
+<a href="sistema.html">Il sistema</a> |
+<a href="comandi.html">Comandi</a> |
+<a href="rete.html">Rete</a>
+</p>
+
+<p>
+<i>La stessa materia, dalla console e senza grafica, sta in
+<code>/doc/manuali/installazione/</code> (sette capitoli) e in
+<code>/boot/kernel.txt</code>, che spiega ogni chiave della configurazione per
+esteso.</i>
 </p>
 
 </body>

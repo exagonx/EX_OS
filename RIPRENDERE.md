@@ -93,6 +93,124 @@ manca» apre quello.
 > file, 0 diversi. I referti si leggono con `exagonx/referti.sh`; sono zero.
 
 
+## 15 settembre 2026, notte — LA SECONDA LIBRERIA, E LA REGOLA CHE NE E' USCITA
+
+Rimessa in piedi la macchina, `netupdate -check` ha risposto:
+
+```
+exhttp: la libreria condivisa non esporta un nome che serve a questo programma
+```
+
+Stessa trappola della libc, un piano piu' su. `netupdate` 0.020 chiede
+`exhttp_da` — il nome aggiunto oggi per la ripresa con `Range` — e
+`exwin/lib/exhttp.so` sul disco era quella vecchia, perche' anche lei era
+rimasta fuori dall'aggiornamento interrotto. Risultato: **la macchina non
+poteva piu' aggiornarsi da sola**, perche' il programma che aggiorna e' proprio
+uno di quelli che quella libreria la usano.
+
+### LA REGOLA: PER LE LIBRERIE SI GUARDANO I BYTE, NON IL REGISTRO
+
+`netupdate` 0.022 non chiede piu' a `verdetto()` se una libreria e' a posto:
+gliela **ricalcola addosso**. Per ogni `.so` dell'elenco legge il file che sta
+sul disco, ne fa l'impronta a pezzi da 4 KB, e la confronta con quella
+dichiarata; se non torna, la rifa' &mdash; qualunque cosa dica
+`/boot/netupdate.reg`.
+
+! **ERA IMPOSSIBILE FINO A STAMATTINA**, e il commento sopra `registro_scrivi()`
+  lo diceva: `sha256()` voleva il buffer INTERO in memoria, e su una macchina
+  con 32 MB un `cc1` da 33 MB non ci sta. La SHA-256 incrementale &mdash;
+  arrivata oggi per tutt'altro, la ripresa degli scaricamenti &mdash; ha tolto
+  l'ostacolo. Una cosa fatta per un motivo ne ha reso possibile un'altra.
+
+! **E VALE SOLO PER LE LIBRERIE.** Sui file normali il registro va benissimo:
+  quelli, se restano indietro, non impediscono di riprovare. Una libreria
+  sbagliata invece impedisce di riprovare, ed e' l'unica categoria che se lo
+  puo' permettere.
+
+### IL SOCCORSO ADESSO LE RIPARA TUTTE (`soccorso` 0.002)
+
+Riparava la sola libc, e oggi la stessa macchina si e' rotta due volte &mdash;
+prima `libc.so`, poi `exhttp.so`. Ora scorre l'elenco, guarda ogni `.so` sui
+byte e rifa' quelle sbagliate, tenendo la vecchia in `.prima`.
+
+### E LA PROVA HA SCOVATO UN DIFETTO CHE NON C'ENTRAVA
+
+Alla prima esecuzione il soccorso elencava **sette librerie invece di dodici**,
+e le cinque mancanti erano **consecutive**: mezzo kilobyte di elenco sparito nel
+mezzo. Non era il riconoscimento dei nomi: era `tcp_leggi`.
+
+```c
+unsigned char buf[1024];        /* e lo stack consegna fino a 1520 */
+...
+if (d.len > max) d.len = max;   /* il resto se ne va, in silenzio */
+```
+
+Lo stack consegna fino a `IP_TCP_DATI_MAX` byte in un colpo solo, e la
+prenotazione si consuma comunque: quel che non ci sta nel buffer di chi legge
+non finisce da nessuna parte. **Lo stesso identico difetto era in
+`lib/exftp`**, cioe' dentro `ftpswap`, che non e' ancora mai stato eseguito:
+sarebbe saltato fuori la' come un elenco remoto incompleto, senza un indizio.
+Corretto in tutt'e due: il buffer di lettura e' `IPC_MSG_MAX_DATA`, e la riga
+che tronca resta come rete con scritto accanto perche'.
+
+! **E' IL SECONDO DIFETTO DELLA GIORNATA TROVATO DA UNA PROVA CHE CERCAVA
+  ALTRO.** Il primo fu la QH di `ehci`, vista solo perche' `eject` rimandava il
+  driver a guardare le porte. Qui: dodici righe attese, sette arrivate.
+
+
+## 15 settembre 2026, notte — IL TOUCHPAD CHE ZITTISCE LA TASTIERA
+
+Sintomo, su un Acer Aspire 3000: compare l'invito, compare la riga
+`kbd: mouse PS/2: ha risposto al giro 2`, il cursore va a capo e **da li' in poi
+non risponde piu' niente**. Si puo' scrivere quanto si vuole: nessun comando
+parte.
+
+### LA CATENA, CHE COMINCIA DA UNA CORREZIONE BUONA
+
+Il commento dentro `kbd.c` lo dice gia': **le due porte del controller
+condividono UN SOLO buffer di uscita**, e finche' OBF resta alto il KBC non
+consegna piu' niente — nemmeno dalla tastiera. Quel byte lo toglie
+`kbd_drain()`, che pero' si chiamava **solo all'arrivo di un interrupt**.
+
+Fino a ieri quel touchpad non rispondeva al reset, veniva dichiarato assente e
+la sua porta veniva **spenta**: nessun byte, nessun problema. Da stamattina
+`kbd.drv` 0.002 riprova tre volte e lui **risponde al secondo giro** — che era
+proprio lo scopo della correzione. Rispondendo, la porta resta accesa e il
+touchpad comincia a mandare pacchetti; se su quella macchina l'IRQ12 non arriva
+al driver, il primo pacchetto riempie il buffer e **la tastiera muore**.
+
+! **UNA CORREZIONE GIUSTA HA APERTO UN GUASTO CHE ESISTEVA GIA'.** Il difetto
+  vero — svuotare solo su interrupt — era li' da sempre, coperto dal fatto che
+  la seconda porta restava spenta. E' il genere di cosa che si vede solo quando
+  una macchina vera fa quel che l'emulatore non fa.
+
+### LA CORREZIONE (`kbd.drv` 0.003)
+
+Il ciclo principale aspetta i messaggi **con una scadenza di 50 ms** e allo
+scadere svuota comunque il controller:
+
+```c
+if (ipc_recv_timeout(&meta, payload, sizeof(payload), 50) < 0) {
+    kbd_drain();
+    ...
+}
+```
+
+Non sostituisce gli interrupt: **li copre**. Quando l'IRQ arriva — cioe' quasi
+sempre — quel giro non trova niente e costa una lettura di porta; quando non
+arriva, il byte incastrato se ne va entro un ventesimo di secondo. Venti
+risvegli al secondo su un processo che per il resto dorme.
+
+### E UN PEZZO CHE SAREBBE MANCATO ALLA RIPARAZIONE
+
+`install -a` **non tocca `/dev`**, per scelta: sul disco i driver sono un
+sottoinsieme scelto, e li risceglie `hwconfig`. Ma `kbd.drv` e' la TASTIERA: se
+quello sul disco e' rotto, dopo il riavvio non c'e' modo di battere il comando
+che lo aggiornerebbe — la stessa trappola per cui esiste il dischetto di
+soccorso. Percio' `fixsys.sh` adesso copia a mano `kbd.drv`, `pci.drv` e
+`uhci.drv`, e sull'immagine c'e' anche `cp`.
+
+
 ## 15 settembre 2026, notte — IL DISCHETTO DI SOCCORSO (`dist/fixsys.img`)
 
 `make fixsys` costruisce un floppy avviabile con dentro il minimo per rimettere

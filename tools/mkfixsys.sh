@@ -52,7 +52,7 @@ FLOPPY_SECTORS=2880          # 1.44 MB
 # Tutto il resto starebbe pure — restano piu' di ottocento kilobyte liberi — ma
 # ogni file in piu' e' un file che `install -a` copierebbe sul disco, e qui si
 # vuole toccare il minimo indispensabile: la libc e i comandi di base.
-PROGRAMMI="sh install mount disk ls"
+PROGRAMMI="sh install mount disk ls cp"
 
 # ! I DRIVER NON SONO UN DI PIU': SENZA kbd.drv NON SI BATTE NIENTE.
 #
