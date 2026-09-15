@@ -3089,4 +3089,39 @@ int     verboseboot(void);
 void sha256(const void *dati, size_t len, unsigned char out[32]);
 void sha256_esa(const void *dati, size_t len, char out[65]);
 
+/* =============================================================================
+ * LA STESSA IMPRONTA, A PEZZI — per cio' che non sta in memoria
+ *
+ * ! SERVE DA QUANDO UN FILE PUO' ESSERE PIU' GRANDE DELLA MEMORIA. sha256()
+ * vuole il messaggio intero in un buffer, e per un file di configurazione va
+ * benissimo; `netupdate` pero' deve verificare cc1plus, che fa trentasette
+ * megabyte, e quel file non si tiene in RAM su una macchina che ne ha
+ * trentadue: arriva dalla rete a pezzi e va sul disco a pezzi, e l'impronta si
+ * costruisce mentre passa.
+ *
+ *     Sha256 s;  unsigned char d[32];
+ *     sha256_avvia(&s);
+ *     ... sha256_dai(&s, pezzo, quanti); ...      quante volte si vuole
+ *     sha256_fine(&s, d);
+ *
+ * ! LO STATO E' DI CHI CHIAMA, non una variabile di libreria: due impronte in
+ * corso insieme — il file che si scarica e l'archivio che lo contiene — non si
+ * devono disturbare.
+ *
+ * ! E sha256() ADESSO E' SCRITTA SOPRA QUESTE: era duplicata al proprio
+ * interno, con il giro di compressione copiato due volte per via del blocco di
+ * coda. Due copie dello stesso conto sono due posti dove sbagliarlo.
+ * ========================================================================== */
+typedef struct {
+    unsigned int       h[8];       /* lo stato, otto parole                  */
+    unsigned char      resto[64];  /* il blocco incompleto                   */
+    unsigned int       n_resto;    /* quanti byte ci sono dentro             */
+    unsigned long long bit;        /* quanti BIT in tutto: va nella coda     */
+} Sha256;
+
+void sha256_avvia(Sha256 *s);
+void sha256_dai(Sha256 *s, const void *dati, size_t len);
+void sha256_fine(Sha256 *s, unsigned char out[32]);
+void sha256_fine_esa(Sha256 *s, char out[65]);
+
 #endif /* LIBC_H */

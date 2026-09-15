@@ -43,7 +43,7 @@
 #include "inflate.h"
 
 /* +0.001 a ogni modifica: `netupdate -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("netupdate", "0.011");
+EX_VERSIONE("netupdate", "0.019");
 
 /* =============================================================================
  * IL FILE DI CONFIGURAZIONE
@@ -1026,12 +1026,21 @@ static int comando_registro_crea(const char *albero)
  * ============================================================================= */
 #define TMPDIR   "/tmp/netupdate"
 
-/* ! IL TETTO LO METTE CHI SCARICA, NON IL SERVER — e' la stessa regola di
- * bin/scarica. Due megabyte tengono qualunque file del sistema: il piu' grosso
- * e' un font da 760 KB, il kernel ne pesa 258. NON tengono un file degli
- * strumenti (cc1 da solo e' 33 MB), e infatti quelli si rifiutano dicendolo:
- * exhttp_prendi vuole il corpo intero in un buffer di chi chiama, e una
- * macchina con 32 MB di RAM non puo' prometterne 33. */
+/* ! DAL 15 SETTEMBRE 2026 QUESTA E' UNA FINESTRA, NON UN TETTO. Qui c'era
+ * scritto che due megabyte tengono qualunque file del sistema — il font piu'
+ * grosso fa 760 KB, il kernel 258 — e che gli strumenti no, «e infatti quelli
+ * si rifiutano dicendolo». Si rifiutavano davvero: il pacchetto `build` si
+ * installava senza libcrypto.a, libstdc++.a, cc1 e cc1plus, che da solo fa
+ * 37.550.104 byte. Un gcc senza cc1plus non compila niente.
+ *
+ * Adesso il corpo non ci sta dentro tutto: exhttp_verso() lo consegna a pezzi e
+ * scarica_su_file() lo posa sul disco mentre arriva. Questi due megabyte sono
+ * il pezzo piu' grande che si maneggia per volta, e servono ancora interi a chi
+ * il corpo lo vuole in mano: elenco.txt, catalogo.txt, un archivio da aprire.
+ *
+ * ! E L'ARCHIVIO E' L'ECCEZIONE CHE RESTA. gzip_apri e tar_estrai lavorano su
+ * un buffer, non su un flusso: un pacchetto piu' grande di questo si scarica
+ * file per file, e prova_archivio lo dice. */
 #define BUF_MAX  (2u * 1024 * 1024)
 static unsigned char g_buf[BUF_MAX];
 
@@ -1135,15 +1144,51 @@ static const char *registro_impronta(const char *percorso)
 /* -----------------------------------------------------------------------------
  * La rete, in due righe: un URL e un buffer.
  * --------------------------------------------------------------------------- */
+/* =============================================================================
+ * LA CACHE DI MEZZO — perche' ogni URL porta in coda "?n=..."
+ *
+ * ! MISURATO IL 14 SETTEMBRE 2026. Dopo aver ripubblicato boot/stage2.bin, il
+ * server continuava a consegnare i byte vecchi: impronta 7aac9961..., mentre
+ * elenco.txt dichiarava 15c78a82... Il file la' sopra era giusto; a rispondere
+ * era Cloudflare, che sta davanti ad Altervista, con
+ *     cf-cache-status: HIT
+ *     Age: 16685            (quattro ore e mezza)
+ *     Cache-Control: max-age=2592000   (trenta giorni, li mette l'origine)
+ * Lo stesso URL con un parametro qualsiasi in coda tornava subito giusto.
+ *
+ * ! E' LA SPIEGAZIONE DEL "SERVER CHE SI CONTRADDICE": versione.txt, piccolo e
+ * riscritto per ultimo, usciva dalla cache prima degli altri, cosi' il
+ * catalogo appena pubblicato veniva confrontato con dei file di ieri e
+ * l'impronta non tornava. Non era il repository a essere incoerente.
+ *
+ * Il valore nasce una volta sola per esecuzione: dentro una stessa passata i
+ * file si scaricano una volta a testa, quindi non si perde nessuna cache utile,
+ * e una passata nuova (dopo una pubblicazione) ne chiede sempre di freschi.
+ * --------------------------------------------------------------------------- */
+static unsigned g_nonce = 0;
+
+static unsigned nonce(void)
+{
+    if (g_nonce == 0) {
+        g_nonce = (unsigned)time(NULL) ^ ((unsigned)getpid() << 16);
+        if (g_nonce == 0) g_nonce = 1;   /* zero vuol dire "non ancora" */
+    }
+    return g_nonce;
+}
+
 static void url_componi(char *out, int max, const Config *c, const char *coda)
 {
     int i = 0, j;
     const char *schema = "http://";
+    char cod[16];
 
     for (j = 0; schema[j] && i < max - 1; j++) out[i++] = schema[j];
     for (j = 0; c->url[j] && i < max - 1; j++) out[i++] = c->url[j];
     if (coda[0] != '/' && i < max - 1) out[i++] = '/';
     for (j = 0; coda[j] && i < max - 1; j++) out[i++] = coda[j];
+
+    snprintf(cod, sizeof(cod), "?n=%x", nonce());
+    for (j = 0; cod[j] && i < max - 1; j++) out[i++] = cod[j];
     out[i] = '\0';
 }
 
@@ -1166,6 +1211,60 @@ static long prendi(const char *url)
         return -1;
     }
     return (long)e.byte;
+}
+
+/* =============================================================================
+ * IL BIT DI ESECUZIONE — chi arriva dalla rete deve poter partire
+ *
+ * ! UN PROGRAMMA SCARICATO NASCEVA SENZA x, E NON SE NE ACCORGEVA NESSUNO.
+ * `scrivi_file` apriva con O_WRONLY|O_CREAT|O_TRUNC e basta: il file usciva
+ * 0644. Su un sistema installato da CD o da floppy il problema non c'era,
+ * perche' `install` fa chmod(0755) su quel che copia; su uno riempito dalla
+ * rete, no.
+ *
+ * ! E IL SINTOMO ACCUSAVA GLI UTENTI. Da root tutto funzionava — i controlli
+ * sui permessi a lui non si applicano — quindi sembrava che fosse un problema
+ * di permessi degli UTENTI, e si andava a cercare fra gruppi e sudo. Invece
+ * `ls -l /bin/sudo` diceva `-rw-r--r--`: quel file non era eseguibile per
+ * nessuno.
+ *
+ * ! LA REGOLA NON E' NUOVA, E' QUELLA DI install. `install` ha gia' deciso
+ * quali directory contengono programmi, e perche' 0755 (vedi
+ * e_directory_di_programmi in bin/install/install.c): «chi lo possiede lo
+ * cambia, tutti lo leggono e lo eseguono, e' quello che ci si aspetta da /bin
+ * su qualunque Unix». Qui si ripete quella regola sui percorsi dell'albero di
+ * rete, che hanno un livello in piu'. Inventarne una seconda vorrebbe dire due
+ * idee di cosa sia un programma, che prima o poi divergono.
+ *
+ * ! E CI SONO ANCHE GLI STRUMENTI, che install non vede mai: gcc, cc1, as, ld
+ * e i loro amici arrivano SOLO dalla rete, e sono la meta' del motivo per cui
+ * questo difetto fa male.
+ * ========================================================================== */
+static int e_programma(const char *rel)
+{
+    static const char *dirs[] = {
+        "bin/", "dev/", "drivers/", "exwin/bin/",
+        "exos/bin/", "exos/libexec/", "exos/i386-exos/bin/",
+        NULL
+    };
+    int i;
+
+    while (*rel == '/') rel++;
+
+    for (i = 0; dirs[i]; i++)
+        if (strncmp(rel, dirs[i], strlen(dirs[i])) == 0) return 1;
+
+    /* ! E LE LIBRERIE CONDIVISE, DOVUNQUE SIANO. Una .so si carica, non si
+     * esegue, ma il caricatore la apre come un eseguibile e su un sistema
+     * dove i permessi mordono senza x non la aprirebbe. exhttp.so sta in
+     * /exwin/lib, che non e' una directory di programmi: se si guardasse solo
+     * la cartella, netupdate resterebbe senza la libreria con cui parla. */
+    {
+        unsigned int l = (unsigned int)strlen(rel);
+
+        if (l > 3 && strcmp(rel + l - 3, ".so") == 0) return 1;
+    }
+    return 0;
 }
 
 static int scrivi_file(const char *dove, const unsigned char *dati, long n)
@@ -1210,6 +1309,27 @@ static int prendi_verifica_scrivi(const Config *c, const char *coda,
         if (!g_zitto) {
             printf("  ! %s non ha l'impronta che versione.txt dichiara.\n", coda);
             printf("    Il server si contraddice: non tocco niente.\n");
+
+            /* ! UN FILE VUOTO NON E' UN FILE CORROTTO, ED E' UN'ALTRA
+             * DIAGNOSI. Aggiunto il 14 settembre 2026, dopo che un
+             * catalogo.txt caricato male e rimasto a ZERO BYTE ha prodotto
+             * questo messaggio: corretto, e muto sulla causa. Chi lo leggeva
+             * andava a cercare un errore nel pacchetto o in netupdate, mentre
+             * bastava ricaricare un file.
+             *
+             * ! E LA DIFFERENZA SI VEDE IN UN NUMERO CHE ABBIAMO GIA'. Non
+             * costa una richiesta in piu' ne' un controllo nuovo: sono i byte
+             * che abbiamo appena scaricato, e dirli separa «il server ha
+             * qualcos'altro» da «il server non ha niente». */
+            if (n == 0) {
+                printf("\n");
+                printf("    ! E %s SUL SERVER E' VUOTO: zero byte.\n", coda);
+                printf("      Non e' un pacchetto sbagliato, e' un file che\n");
+                printf("      non e' stato caricato. Ricaricalo e riprova:\n");
+                printf("      il resto del server puo' essere a posto.\n");
+            } else {
+                printf("    (%s sul server e' di %ld byte)\n", coda, n);
+            }
         }
         return -1;
     }
@@ -1274,6 +1394,35 @@ static int e_configurazione(const char *percorso)
     static const char *SUE[] = {
         "boot/kernel.cfg",      /* driver, tastiera, montaggi: di questa macchina */
         "boot/telnetd.cfg",     /* chi puo' entrare da telnet, e come             */
+
+        /* ! E autoexec.sh, DAL 14 SETTEMBRE 2026. E' il file in cui si scrive
+         * cosa deve partire su QUESTA macchina, e viaggiava nel pacchetto
+         * `sistema` come un file qualunque: chi ci aveva aggiunto una riga —
+         * `telnetd -s &` per farsi raggiungere, un driver da accendere — se la
+         * ritrovava cancellata al primo aggiornamento.
+         *
+         * ! E SPARIVA SENZA DIRE NIENTE, che e' la parte che fa perdere tempo.
+         * L'unica traccia era un `autoexec.sh.old` accanto, e chi non sapeva
+         * di doverlo cercare concludeva che il servizio fosse morto da se'.
+         * E' successo: la shell remota e' sparita dall'avvio e si e' cercato
+         * il guasto in telnetd.
+         *
+         * Vale la stessa ragione di kernel.cfg: e' la configurazione di questa
+         * macchina, non del sistema. Chi vuole quella pubblicata la copia da
+         * /cdrom o dall'albero, a mano, sapendo cosa sta sostituendo. */
+        "boot/autoexec.sh",     /* cosa parte all'avvio: di questa macchina       */
+
+        /* ! E avvio.sh PER LA STESSA IDENTICA RAGIONE, che qui e' anche piu'
+         * forte: quel file non lo scrive una persona, lo RISCRIVE `hwconfig`
+         * con il driver della scheda di rete che c'e' in questa macchina. La
+         * copia pubblicata e' quella del CD, che nomina i driver del CD:
+         * copiarla sopra vuol dire spegnere la rete di chi aggiorna, e
+         * scoprirlo al riavvio dopo.
+         *
+         * ! NON E' UN FILE CHE MANCHERA' A NESSUNO: il sistema di base si
+         * installa sempre da floppy o da CD, con `install`, e avvio.sh arriva
+         * di li'. netupdate viene DOPO, e aggiunge - non fonda. */
+        "boot/avvio.sh",        /* lo riscrive hwconfig, scheda per scheda        */
         0
     };
     int i;
@@ -1344,6 +1493,18 @@ static int sostituisci(const char *dest, const char *temp)
         if (c_era) rename(vecchio, dest);  /* rimettiamo com'era */
         return -1;
     }
+
+    /* ! IL BIT DI ESECUZIONE SI METTE QUI, ED E' L'UNICO POSTO GIUSTO. Tutti i
+     * file che arrivano dalla rete passano da questa riga — quelli presi uno
+     * per uno e quelli tirati fuori da un archivio — e qui il percorso e'
+     * quello DEFINITIVO. Metterlo dove il file si scrive vorrebbe dire
+     * metterlo sul .new, e ci sono due posti che lo scrivono.
+     *
+     * Vedi e_programma() per quali file, e perche' la regola e' quella di
+     * install e non una nuova. */
+    if (e_programma(dest[0] == '/' ? dest + 1 : dest))
+        chmod(dest, 0755);   /* su FAT rende ENOSYS: pazienza, come in install */
+
     return 0;
 }
 
@@ -1487,32 +1648,127 @@ static int manifesto(Config *c, char *ver, char *cat, char *ele,
  * scriverla due volte vorrebbe dire due ordini di operazioni che col tempo
  * divergono — cioe' due modi diversi di rompere una macchina.
  * --------------------------------------------------------------------------- */
+/* =============================================================================
+ * IL FILE NON PASSA PIU' DALLA MEMORIA — scaricare e verificare mentre arriva
+ *
+ * ! IL TETTO C'ERA ED E' STATO TOCCATO. Qui c'era scritto: «un file piu' grande
+ * del buffer non si scarica, e si dice — il sistema ci sta tutto, gli strumenti
+ * no». Il 15 settembre 2026 gli strumenti sono arrivati davvero, e il messaggio
+ * onesto ha prodotto un pacchetto `build` installato a meta': saltati
+ * libcrypto.a, libstdc++.a, cc1 e cc1plus. cc1plus da solo fa 37.550.104 byte
+ * contro un tetto di 2.097.152, e senza cc1plus `g++` non compila niente.
+ *
+ * ! E ALLARGARE IL BUFFER NON ERA LA RISPOSTA. Trentotto megabyte di memoria
+ * ferma su un portatile del 2004 e' peggio del difetto, e il file dopo sara'
+ * piu' grande di questo. Adesso il corpo non si accumula: exhttp_verso() lo
+ * consegna a pezzi, ogni pezzo va sul disco e dentro l'impronta, e il buffer
+ * torna a essere quello che era — una finestra, non un contenitore.
+ *
+ * ! L'IMPRONTA SI COSTRUISCE SUL FLUSSO, e non e' un dettaglio: e' la sola cosa
+ * che distingue «l'ho scaricato» da «l'ho scaricato giusto». Verificarla dopo,
+ * rileggendo il file, vorrebbe dire leggerne trentasette megabyte una seconda
+ * volta; farlo mentre passa non costa niente. Vedi sha256_avvia/dai/fine.
+ *
+ * ! E IL FILE SI SCRIVE SEMPRE SUL .new, MAI SUL POSTO. Un errore a meta'
+ * scaricamento lascia un .new da buttare, non un /bin/sh monco.
+ * =========================================================================== */
+typedef struct {
+    int    fd;
+    Sha256 sha;
+    long   byte;
+    int    guaio;
+} Posa;
+
+static int posa_verso(void *dato, const unsigned char *d, unsigned int n)
+{
+    Posa *q = (Posa *)dato;
+    unsigned int fatti = 0;
+
+    while (fatti < n) {
+        int k = (int)write(q->fd, d + fatti, n - fatti);
+
+        if (k <= 0) { q->guaio = 1; return 0; }
+        fatti += (unsigned int)k;
+    }
+    sha256_dai(&q->sha, d, n);
+    q->byte += (long)n;
+    return 1;
+}
+
+/* Scarica `coda` dentro `temp`, verificando byte e impronta mentre arriva.
+ * Rende 0 se il file e' sul disco ed e' quello giusto, -1 altrimenti (e in quel
+ * caso il .new e' stato tolto: non deve restare in giro roba non verificata). */
+static int scarica_su_file(Config *c, const char *coda, const char *temp,
+                           long atteso, const char *impronta)
+{
+    char        url[URL_MAX + PERC_MAX + 64];
+    char        esa[65];
+    Posa        q;
+    ExHttpEsito e;
+    int         ok;
+
+    q.fd = open(temp, O_WRONLY | O_CREAT | O_TRUNC);
+    if (q.fd < 0) {
+        printf("  ! %s: non riesco ad aprirlo (%s)\n", temp, strerror(errno));
+        return -1;
+    }
+    sha256_avvia(&q.sha);
+    q.byte  = 0;
+    q.guaio = 0;
+
+    url_componi(url, sizeof(url), c, coda);
+
+    exhttp_verso(posa_verso, &q);
+    ok = exhttp_prendi(url, g_buf, BUF_MAX, &e);
+    /* ! SI TOGLIE SUBITO, PRIMA DI QUALUNQUE ALTRA COSA. E' un gancio globale:
+     * lasciarlo acceso vuol dire che la richiesta dopo — elenco.txt, una
+     * versione, qualunque cosa — finisce dentro questo file. */
+    exhttp_verso(0, 0);
+
+    close(q.fd);
+
+    if (!ok) {
+        printf("  ! %s\n", e.errore[0] ? e.errore : "non riuscito");
+        remove(temp);
+        return -1;
+    }
+    if (q.guaio) {
+        printf("  ! %s: la scrittura si e' fermata (%s). Disco pieno?\n",
+               temp, strerror(errno));
+        remove(temp);
+        return -1;
+    }
+    if (e.codice != 200) {
+        printf("  ! %s: il server risponde %d\n", url, e.codice);
+        remove(temp);
+        return -1;
+    }
+    /* ! I BYTE SI CONTANO ANCHE QUANDO L'IMPRONTA BASTEREBBE. Un file della
+     * lunghezza giusta con l'impronta sbagliata e uno troncato sono due guasti
+     * diversi — il primo dice «il repository mente», il secondo «la rete si e'
+     * interrotta» — e mandano a guardare in due posti diversi. */
+    if (atteso > 0 && q.byte != atteso) {
+        printf("  ! %s: %ld byte invece di %ld, NON lo installo\n",
+               temp, q.byte, atteso);
+        remove(temp);
+        return -1;
+    }
+
+    sha256_fine_esa(&q.sha, esa);
+    if (impronta != NULL && strcmp(esa, impronta) != 0) {
+        printf("  ! l'impronta non torna, NON lo installo\n");
+        remove(temp);
+        return -1;
+    }
+    return 0;
+}
+
 static int scarica_e_metti(Config *c, const char *p, long byte,
                            const char *impronta, int *kernel, int *stage2)
 {
     char dest[PERC_MAX], temp[PERC_MAX], coda[PERC_MAX + 8];
-    char url[URL_MAX + PERC_MAX + 16];
-    long n;
-
-    /* ! UN FILE PIU' GRANDE DEL BUFFER NON SI SCARICA, E SI DICE. exhttp vuole
-     * il corpo intero in memoria: e' il tetto scritto in cima. Il sistema ci
-     * sta tutto; gli strumenti no, e chi aggiorna deve saperlo adesso e non
-     * scoprirlo con un compilatore a meta'. */
-    if (byte > (long)BUF_MAX) {
-        printf("  - %s: %ld byte, piu' del tetto di %u. SALTATO.\n", p, byte, BUF_MAX);
-        return 1;
-    }
 
     snprintf(coda, sizeof(coda), "file/%s", p);
-    url_componi(url, sizeof(url), c, coda);
-    n = prendi(url);
-    if (n < 0) return -1;
-
-    if (!impronta_e(g_buf, n, impronta)) {
-        printf("  ! %s: l'impronta non torna, NON lo installo\n", p);
-        return -1;
-    }
-
     unisci(dest, sizeof(dest), "/", p);
 
     if (e_avvio(p)) {
@@ -1520,10 +1776,8 @@ static int scarica_e_metti(Config *c, const char *p, long byte,
          * aspetta, e si sostituiscono per ULTIMI. */
         snprintf(temp, sizeof(temp), "/boot/%s.new",
                  strcmp(p, "boot/kernel.bin") == 0 ? "kernel" : "stage2");
-        if (scrivi_file(temp, g_buf, n) != 0) {
-            printf("  ! %s: non riesco a scriverlo (%s)\n", temp, strerror(errno));
-            return -1;
-        }
+        if (scarica_su_file(c, coda, temp, byte, impronta) != 0) return -1;
+
         if (strcmp(p, "boot/kernel.bin") == 0) *kernel = 1;
         else                                   *stage2 = 1;
         printf("  = %s scaricato e verificato (per ultimo)\n", p);
@@ -1532,12 +1786,9 @@ static int scarica_e_metti(Config *c, const char *p, long byte,
 
     crea_strada(dest);
     snprintf(temp, sizeof(temp), "%s.new", dest);
-    if (scrivi_file(temp, g_buf, n) != 0) {
-        printf("  ! %s: non riesco a scriverlo (%s)\n", temp, strerror(errno));
-        return -1;
-    }
+    if (scarica_su_file(c, coda, temp, byte, impronta) != 0) return -1;
     if (sostituisci(dest, temp) != 0) return -1;
-    printf("  + %s (%ld byte)\n", p, n);
+    printf("  + %s (%ld byte)\n", p, byte);
     return 0;
 }
 
@@ -1557,6 +1808,138 @@ static long pulisci_vecchi(void)
         if (remove(b) == 0) tolti++;
     }
     return tolti;
+}
+
+/* =============================================================================
+ * -permessi — rimette il bit di esecuzione a quel che e' gia' installato
+ *
+ * ! SERVE PERCHE' IL DIFETTO E' STATO IN GIRO, e correggerlo non basta:
+ * scrivi_file non metteva il bit, quindi ogni programma arrivato dalla rete
+ * prima di oggi e' sul disco a 0644 e resta li' finche' non viene riscaricato.
+ * Aspettare il prossimo aggiornamento di ogni singolo file vorrebbe dire un
+ * sistema mezzo rotto per mesi.
+ *
+ * ! SI GUARDA IL DISCO, NON IL REGISTRO, ED E' UNA CORREZIONE DEL 15 SETTEMBRE
+ * 2026. La prima versione scorreva /boot/netupdate.reg, che dice cosa e'
+ * arrivato DA QUI: sembrava la fonte giusta e non lo era. Su una macchina vera
+ * il sistema si installa da CD o da floppy con `install`, e netupdate arriva
+ * dopo: il registro non esiste finche' non si e' fatto almeno un `-check`, e
+ * il comando rispondeva «non so cosa sia stato installato da qui» proprio a
+ * chi aveva il problema.
+ *
+ * ! E ANCHE CON UN REGISTRO SAREBBE STATO IL SOTTOINSIEME SBAGLIATO. Un file a
+ * 0644 non e' rotto per via di CHI ce l'ha messo: se e' in una directory di
+ * programmi e non e' eseguibile, non parte, e basta. Le directory le sa gia'
+ * e_programma(); qui si aprono e si guarda dentro.
+ *
+ * ! CIO' CHE E' GIA' A POSTO NON SI TOCCA, e il conto lo dice separato: «ne ho
+ * corretti tre» e «ne ho riscritti duecento» sono due informazioni diverse, e
+ * la prima e' quella che serve per capire quanto era grave.
+ *
+ * ! E LO PUO' LANCIARE root ANCHE SE netupdate STESSO E' A 0644, che e' il
+ * motivo per cui un comando basta a uscire dal cerchio: i controlli sui
+ * permessi a root non si applicano, quindi il programma che si ripara da solo
+ * riesce a partire.
+ * ========================================================================== */
+
+/* Una directory sola. Rende il numero di file corretti, e aggiorna i conti. */
+static void permessi_dir(const char *dir, int solo_so,
+                         long *visti, long *corretti, long *falliti,
+                         long *mostrati)
+{
+    char           b[PERC_MAX];
+    DIR           *d;
+    struct dirent *v;
+
+    d = opendir(dir);
+    if (d == NULL) return;      /* non c'e': su questa macchina non serviva */
+
+    while ((v = readdir(d)) != NULL) {
+        struct stat st;
+
+        if (strcmp(v->d_name, ".") == 0 || strcmp(v->d_name, "..") == 0)
+            continue;
+
+        if (solo_so) {
+            unsigned int l = (unsigned int)strlen(v->d_name);
+
+            if (l <= 3 || strcmp(v->d_name + l - 3, ".so") != 0) continue;
+        }
+
+        unisci(b, sizeof(b), dir, v->d_name);
+
+        /* ! SI GUARDA PRIMA COS'E'. Una sottodirectory con dentro altri file —
+         * /exos/bin ne ha — non e' un programma, e un chmod 0755 su di lei
+         * sarebbe innocuo ma falserebbe il conto. */
+        if (stat(b, &st) != 0) continue;
+        if (!S_ISREG(st.st_mode)) continue;
+
+        (*visti)++;
+
+        /* Gia' eseguibile per tutti: non c'e' niente da fare. */
+        if ((st.st_mode & 0111) == 0111) continue;
+
+        if (chmod(b, 0755) == 0) {
+            (*corretti)++;
+            if (*mostrati < 12) { printf("    %s\n", b); (*mostrati)++; }
+            else if (*mostrati == 12) { printf("    ...\n"); (*mostrati)++; }
+        } else {
+            (*falliti)++;
+            if (*falliti <= 5) printf("  ! %s: %s\n", b, strerror(errno));
+        }
+    }
+    closedir(d);
+}
+
+static int comando_permessi(void)
+{
+    /* ! LO STESSO ELENCO DI e_programma(), con la barra davanti: li' sono
+     * percorsi dell'albero del server, qui sono directory di questa macchina.
+     * Chi ne aggiunge una la aggiunge in tutt'e due i posti. */
+    static const char *DOVE[] = {
+        "/bin", "/dev", "/drivers", "/exwin/bin",
+        "/exos/bin", "/exos/libexec", "/exos/i386-exos/bin",
+        NULL
+    };
+    /* Le librerie condivise: non stanno in una directory di programmi, ma
+     * senza x il caricatore non le apre. Vedi e_programma(). */
+    static const char *LIB[] = {
+        "/exwin/lib", "/lib", "/exos/lib",
+        NULL
+    };
+    long visti = 0, corretti = 0, falliti = 0, mostrati = 0;
+    int  i;
+
+    printf("Rimetto il bit di esecuzione a quel che serve.\n\n");
+
+    for (i = 0; DOVE[i]; i++)
+        permessi_dir(DOVE[i], 0, &visti, &corretti, &falliti, &mostrati);
+    for (i = 0; LIB[i]; i++)
+        permessi_dir(LIB[i], 1, &visti, &corretti, &falliti, &mostrati);
+
+    if (visti == 0) {
+        printf("netupdate: nessuna directory di programmi trovata.\n");
+        printf("           Cercavo /bin, /dev, /exos/bin e le altre: sei\n");
+        printf("           sulla radice giusta?\n");
+        return 1;
+    }
+
+    printf("\n  programmi guardati : %ld\n", visti);
+    printf("  gia' a posto       : %ld\n", visti - corretti - falliti);
+    printf("  corretti adesso    : %ld\n", corretti);
+    if (falliti > 0) {
+        printf("  non riusciti       : %ld\n", falliti);
+        printf("\n  ! Su FAT il chmod rende ENOSYS e non e' un guasto: quel\n");
+        printf("    filesystem i permessi non li ha. Su ext2 invece guarda\n");
+        printf("    l'errore qui sopra.\n");
+        return 1;
+    }
+    if (corretti == 0) {
+        printf("\nNiente da correggere: erano gia' tutti eseguibili.\n");
+        return 0;
+    }
+    printf("\nFatto. Adesso anche un utente normale puo' eseguirli.\n");
+    return 0;
 }
 
 /* =============================================================================
@@ -2404,7 +2787,7 @@ static int comando_install_list(const char *pezzo)
 static int prova_archivio(Config *c, Pacchetto *q, long *fatti, long *falliti)
 {
     unsigned char *aperto = NULL;
-    char           url[URL_MAX + PERC_MAX + 16];
+    char           url[URL_MAX + PERC_MAX + 64];
     long           n, quanti = 0, messi, f_qui = 0;
 
     if (q == NULL || q->archivio[0] == '\0' || q->arcbyte <= 0) return 0;
@@ -2521,6 +2904,11 @@ static int comando_install(const char *id)
         if (verdetto(fp, impronta) == UGUALE) continue;
         n_file++;
         byte += fb;
+        /* ! NON E' PIU' UN TETTO, E' UN AVVISO DI TEMPO. Da quando il corpo
+         * passa dal disco invece che dalla memoria (vedi scarica_su_file) un
+         * file grosso si scarica come tutti gli altri; resta che cc1plus, 37
+         * MB su una linea di casa, sono minuti — e chi lancia il comando deve
+         * saperlo prima, non a meta'. */
         if (fb > (long)BUF_MAX) troppo_grossi++;
     }
     fclose(f);
@@ -2545,18 +2933,19 @@ static int comando_install(const char *id)
         printf("  non c'e' niente da scaricare. Il server e' incoerente.\n");
         return 1;
     }
-    /* ! IL TETTO SI DICE PRIMA, NON A META' STRADA. Chi chiede il compilatore
-     * deve sapere ADESSO che cc1 da solo e' piu' grande di quel che questo
-     * programma sa scaricare, e non ritrovarsi un pacchetto a meta'. */
+    /* ! QUANTO CI VUOLE SI DICE PRIMA, NON A META' STRADA. Qui, fino al 15
+     * settembre 2026, c'era scritto che quei file NON si potevano scaricare e
+     * che la strada era il CD: era vero, e produceva un pacchetto `build`
+     * installato a meta' — saltati libcrypto.a, libstdc++.a, cc1 e cc1plus —
+     * cioe' un `gcc` che non compila niente. Adesso arrivano; restano lunghi. */
     if (troppo_grossi > 0) {
-        printf("\n  ! %ld di quei file sono piu' grandi del tetto di %u byte e\n",
+        printf("\n  ! %ld di quei file passano i %u byte: arrivano, ma uno per\n",
                troppo_grossi, BUF_MAX);
-        printf("    NON si possono scaricare cosi': il pacchetto resterebbe a\n");
-        printf("    meta'. Per gli strumenti grossi la strada e' il CD\n");
-        printf("    (`toolinst`), finche' non ci sara' un lettore a pezzi.\n");
+        printf("    volta e senza archivio. Su una linea di casa sono minuti,\n");
+        printf("    non secondi. Se e' scomodo, `toolinst` li prende dal CD.\n");
     }
 
-    if (!chiedi_si("Procedo?", troppo_grossi == 0)) {
+    if (!chiedi_si("Procedo?", 1)) {
         printf("\nNon ho toccato niente.\n");
         return 0;
     }
@@ -2840,6 +3229,8 @@ static void uso(void)
     printf("     netupdate -check:guarda            lo stesso, senza toccare niente\n");
     printf("     netupdate -auto                    l'occhiata dell'avvio: zitta,\n");
     printf("                                        e solo se automatico = si\n");
+    printf("     netupdate -permessi                rimette il bit di esecuzione\n");
+    printf("                                        a quel che e' gia' installato\n");
     printf("     netupdate -registro                cosa c'e' installato qui\n");
     printf("     netupdate -registro:<pacchetto>    uno solo, coi suoi file\n");
     printf("     netupdate -registro:crea <albero>  il registro da una copia locale\n");
@@ -2891,6 +3282,9 @@ int main(int argc, char **argv)
     if (strcmp(argv[1], "-check:guarda") == 0) return comando_check_guarda();
 
     if (strcmp(argv[1], "-auto") == 0) return comando_auto();
+
+    if (strcmp(argv[1], "-permessi") == 0)
+        return comando_permessi();
 
     if (strncmp(argv[1], "-install:", 9) == 0) {
         const char *coda = argv[1] + 9;

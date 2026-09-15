@@ -18,6 +18,7 @@
 #include "blkr3.h"
 #include "shm.h"
 #include "pipe.h"
+#include "pty.h"
 #include "paging.h"
 #include "kmalloc.h"
 #include "gdt.h"
@@ -249,6 +250,31 @@ static void proc_chiudi_fd(Process *p)
             case FD_PIPE_W:
                 pipe_chiudi_scrittore_locked((int)p->fdt[fd].inode);
                 break;
+
+            /* ! I PTY MANCAVANO, ED E' LA CORREZIONE DEL 14 SETTEMBRE 2026.
+             * Il `default` qui sotto diceva «stdin/stdout/stderr e i driver:
+             * niente da fare», e per la console e' vero — non c'e' niente da
+             * rilasciare. Ma i tre descrittori di una shell che gira dentro
+             * una sessione remota NON sono la console: SONO UN PTY, e un pty
+             * e' una risorsa contata, quattro in tutto su questa macchina.
+             *
+             * ! IL PROCESSO NON PUO' CHIUDERLI DA SOLO: sys_close rifiuta i
+             * descrittori 0, 1 e 2 apposta. Se non li rilascia chi lo smonta,
+             * non li rilascia nessuno.
+             *
+             * ! E IL SINTOMO NON NOMINAVA I PTY. telnetd apriva una sessione,
+             * la shell usciva regolarmente con codice 0, telnetd scriveva
+             * «sessione chiusa» — tutto in ordine. Alla QUINTA connessione:
+             * «niente pty libero», e da li' in poi la macchina accettava le
+             * connessioni senza servirle. Da fuori sembrava che la rete si
+             * fosse piantata. */
+            case FD_PTY_M:
+                pty_chiudi_locked((int)p->fdt[fd].inode, 1);
+                break;
+            case FD_PTY_S:
+                pty_chiudi_locked((int)p->fdt[fd].inode, 0);
+                break;
+
             default:
                 continue;   /* stdin/stdout/stderr e i driver: niente da fare */
         }

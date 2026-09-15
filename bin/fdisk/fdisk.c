@@ -70,7 +70,7 @@
  * non un numero — EX-OS non usa la virgola mobile.
  * ============================================================================= */
 #define FD_NAME     "fdisk"
-#define FD_VERSION  "0.001"
+#define FD_VERSION  "0.003"
 
 
 /* ! LA VERSIONE STA IN UN POSTO SOLO, ed e' FD_VERSION qui sopra:
@@ -758,6 +758,96 @@ static void spiega_problemi(unsigned int pb)
         printf("  - il disco e' GPT: la sua tabella MBR non si tocca\n");
 }
 
+/* =============================================================================
+ * `z` — azzera l'intera tabella e si ricomincia
+ *
+ * ! ESISTE PER UN VICOLO CIECO VERO, trovato il 14 settembre 2026 su un disco
+ * che andava svuotato per intero. Un'ESTESA che contiene partizioni LOGICHE
+ * non si puo' cancellare con `d` ne' cambiare con `t`: tutti e due si
+ * rifiutano, e a ragione — togliere la voce dell'estesa lascerebbe la catena
+ * di EBR viva sul disco e irraggiungibile, e nessuno saprebbe piu' che c'e'.
+ *
+ * ! MA LE LOGICHE QUESTO PROGRAMMA NON LE SA CANCELLARE, perche' non scrive
+ * EBR. E il kernel non espone nemmeno l'estesa come dispositivo — c'e' hd0p5,
+ * la logica, ma hd0p3 no — quindi non si puo' nemmeno formattarla sopra per
+ * spezzare la catena. Chi arriva li' con un disco da svuotare NON HA UNA VIA
+ * D'USCITA: ogni strada e' chiusa da un rifiuto sensato preso da solo.
+ *
+ * ! QUESTA E' LA VIA, ED E' ONESTA SU COSA FA. Non finge di cancellare le
+ * logiche: dice che la catena di EBR resta li' dov'e', orfana, e che sara' il
+ * filesystem nuovo a passarci sopra. E' la differenza fra «cancello una
+ * partizione», che deve restare prudente, e «ricomincio da capo su questo
+ * disco», che e' un'altra decisione e va chiesta una volta sola.
+ *
+ * ! E NON SCRIVE NIENTE DA SE'. Come ogni altro comando qui dentro, tocca solo
+ * la proposta: il disco cambia con `w`, e non prima.
+ * ========================================================================== */
+static void cmd_azzera(void)
+{
+    char r[RIGA_MAX];
+    int  i, n_usate = 0, c_e_estesa = 0;
+
+    for (i = 0; i < PARTWRITE_MAX_VOCI; i++) {
+        if (!usata(i)) continue;
+        n_usate++;
+        if (tipo_esteso(g_tab.voce[i].tipo)) c_e_estesa = 1;
+    }
+
+    if (n_usate == 0) {
+        printf("La tabella e' gia' vuota.\n");
+        return;
+    }
+
+    printf("\n");
+    mostra();
+    printf("Questo toglie TUTTE E QUATTRO le voci della tabella.\n");
+
+    if (c_e_estesa && g_n_logiche > 0) {
+        printf("\n! C'E' UN'ESTESA CON %d PARTIZIONI LOGICHE DENTRO, e la loro\n",
+               g_n_logiche);
+        printf("  catena di EBR RESTA SCRITTA SUL DISCO: questo programma non\n");
+        printf("  la sa togliere. Diventa orfana: nessuno la trovera' piu',\n");
+        printf("  perche' sparisce la voce che diceva dove comincia, e ci\n");
+        printf("  passera' sopra il primo filesystem che creerai li'.\n");
+        printf("  Va bene se stai svuotando il disco. Non va bene se speravi\n");
+        printf("  di tenerti quello che c'e' dentro le logiche.\n");
+    }
+
+    printf("\nI DATI non vengono cancellati adesso: sparisce la mappa che\n");
+    printf("dice dove sono, e senza quella non si raggiungono piu'.\n\n");
+
+    chiedi("Azzerare la tabella? (scrivi `azzera` per confermare): ",
+           r, RIGA_MAX);
+    if (strcmp(r, "azzera") != 0) {
+        printf("Annullato. La proposta e' rimasta com'era.\n");
+        return;
+    }
+
+    for (i = 0; i < PARTWRITE_MAX_VOCI; i++)
+        memset(&g_tab.voce[i], 0, sizeof(PartVoce));
+    g_modificata = 1;
+
+    printf("Tabella azzerata NELLA PROPOSTA. Fino a `w` il disco e' intatto.\n");
+
+    /* ! CON LE LOGICHE DI MEZZO SI SCRIVE IN DUE GIRI, e va detto qui o non lo
+     * scopre nessuno. Il kernel concede di far sparire un'estesa che contiene
+     * logiche SOLO se la tabella che gli si propone e' completamente VUOTA:
+     * una proposta che la cancella e intanto crea altro e' un
+     * ripartizionamento, e li' il rifiuto vale ancora. Quindi prima si scrive
+     * il vuoto, e le nuove si fanno rientrando. */
+    if (g_n_logiche > 0) {
+        printf("\n! CI SONO PARTIZIONI LOGICHE, quindi ci vogliono DUE GIRI:\n");
+        printf("    adesso `w` e poi `q`, che scrive la tabella VUOTA;\n");
+        printf("    poi rientri con `fdisk hd%u` e fai `n` per le nuove.\n",
+               g_disco);
+        printf("  Il kernel lascia sparire un'estesa con logiche dentro solo\n");
+        printf("  verso una tabella vuota: creare e cancellare nello stesso\n");
+        printf("  colpo lo rifiuta, ed e' giusto cosi'.\n");
+    } else {
+        printf("Adesso `n` per creare le nuove, e `w` quando sei convinto.\n");
+    }
+}
+
 static void cmd_scrivi(void)
 {
     char r[RIGA_MAX];
@@ -843,6 +933,7 @@ static void cmd_aiuto(void)
     printf("  p   mostra la tabella e lo spazio libero\n");
     printf("  n   crea una partizione\n");
     printf("  d   cancella una partizione\n");
+    printf("  z   azzera TUTTA la tabella e si ricomincia\n");
     printf("  t   cambia il tipo di una partizione\n");
     printf("  a   commuta il flag avviabile\n");
     printf("  w   SCRIVE la tabella sul disco (chiede conferma)\n");
@@ -935,6 +1026,7 @@ int main(int argc, char **argv)
             case 'p': mostra();       break;
             case 'n': cmd_nuova();    break;
             case 'd': cmd_cancella(); break;
+            case 'z': cmd_azzera();   break;
             case 't': cmd_tipo();     break;
             case 'a': cmd_attiva();   break;
             case 'w': cmd_scrivi();   break;

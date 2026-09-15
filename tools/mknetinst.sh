@@ -408,6 +408,27 @@ if [ -n "$VUOTI" ]; then
     echo "    combaciano con l'albero. Chi li installasse scaricherebbe zero"
     echo "    file credendo di aver installato qualcosa."
 fi
+# =============================================================================
+# IL PUNTO DI RACCOLTA DEI REFERTI — report/
+#
+# ! VIAGGIA CON netinst PERCHE' E' LO STESSO SERVER, ed e' l'unica ragione. Non
+# c'entra niente con l'aggiornamento del sistema: e' un posto dove una macchina
+# di prova puo' POSARE un referto invece di venirlo a prendere. Ma chi pubblica
+# netinst ha gia' quella cartella sul suo spazio web, e chiedergli di caricare
+# due cose in due posti diversi vuol dire che una delle due, prima o poi, resta
+# indietro.
+#
+# ! E LO SCRIPT NON SI GENERA QUI: si copia da tools/netinst/report/. Il PHP e'
+# codice, sta nel repository e si legge come ogni altro file; scriverlo dentro
+# un heredoc qui dentro lo renderebbe invisibile a chi cerca chi scrive dove.
+if [ -d tools/netinst/report ]; then
+    mkdir -p "$FUORI/report"
+    cp -r tools/netinst/report/. "$FUORI/report/"
+    echo "     report/: il punto di raccolta dei referti (index.php)"
+else
+    echo "     ! tools/netinst/report non c'e': niente punto di raccolta."
+fi
+
 echo ""
 echo "[OK] $FUORI pronto: $N_FILE file, $(du -sh "$FUORI" | cut -f1)"
 if [ -s "$TEMP/archivi" ]; then
@@ -425,3 +446,11 @@ fi
 echo ""
 echo "Da pubblicare cosi' com'e': la radice del server e' $FUORI,"
 echo "e netupdate cerchera' versione.txt, catalogo.txt, elenco.txt e file/."
+if [ -d "$FUORI/report" ]; then
+    echo ""
+    echo "  E report/ e' il punto di raccolta dei referti:"
+    echo "    senderror <url-del-server>/report/ /SIS900.TXT"
+    echo "  Ha i suoi tetti scritti in cima a index.php - leggi"
+    echo "  report/leggimi.txt prima di pubblicarlo: e' un posto dove"
+    echo "  chiunque puo' scrivere."
+fi

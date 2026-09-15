@@ -214,6 +214,44 @@ void pty_apri_riferimento(int h, int master)
     else        p->slave_aperti++;
 }
 
+/* ! DUE VERSIONI, COME PER LE PIPE, E PER LA STESSA IDENTICA RAGIONE. Chi
+ * chiude un descrittore dal syscall gira con gli interrupt accesi e puo'
+ * chiamare sched_unblock(); chi li chiude perche' un processo sta MORENDO gira
+ * gia' in sezione critica — proc_chiudi_fd() presuppone `cli` — e li' serve la
+ * variante _locked. Chiamare quella sbagliata riaccende gli interrupt in mezzo
+ * allo smontaggio di un processo.
+ *
+ * Vedi il commento sopra proc_chiudi_fd in kernel/sched/sched.c e le
+ * pipe_chiudi_*_locked in kernel/include/pipe.h. */
+static void pty_chiudi_comune(int h, int master, int in_sezione_critica)
+{
+    Pty *p = pty_da_handle(h);
+
+    if (!p) return;
+
+    if (master) { if (p->master_aperti) p->master_aperti--; }
+    else        { if (p->slave_aperti)  p->slave_aperti--;  }
+
+    if (p->pid_att_in) {
+        if (in_sezione_critica) sched_unblock_locked(p->pid_att_in);
+        else                    sched_unblock(p->pid_att_in);
+        p->pid_att_in = 0;
+    }
+    if (p->pid_att_out) {
+        if (in_sezione_critica) sched_unblock_locked(p->pid_att_out);
+        else                    sched_unblock(p->pid_att_out);
+        p->pid_att_out = 0;
+    }
+
+    if (p->master_aperti == 0 && p->slave_aperti == 0)
+        memset(p, 0, sizeof(Pty));
+}
+
+void pty_chiudi_locked(int h, int master)
+{
+    pty_chiudi_comune(h, master, 1);
+}
+
 void pty_chiudi(int h, int master)
 {
     Pty *p = pty_da_handle(h);

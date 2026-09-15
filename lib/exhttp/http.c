@@ -163,15 +163,29 @@ static int metti(char *out, unsigned int max, unsigned int *n, const char *s)
  * andava fatta. Questa funzione ci mette intorno le due intestazioni che
  * dicono al server quanto e' lungo e di che tipo e', e basta.
  * ========================================================================== */
-int http_richiesta_corpo(char *out, unsigned int max, const HttpUrl *u,
-                         const char *agente, const char *corpo, int vivo,
+/* =============================================================================
+ * ! LE INTESTAZIONI E IL CORPO SI SCRIVONO SEPARATI, e il motivo e' una misura.
+ * Fino al 14 settembre 2026 questa funzione riceveva il corpo e lo appendeva in
+ * fondo al proprio buffer, che in exhttp.c e' di dodici kilobyte: bastava per
+ * qualunque GET — duecento byte scarsi — e per nessun invio vero. Un referto
+ * dell'hardware sta fra i cinque e i ventotto kilobyte, e codificato in
+ * percentuale cresce ancora: `senderror` non e' mai riuscito a mandarne uno.
+ *
+ * Adesso qui si scrive solo la testa, con il Content-Length del corpo che verra'
+ * dopo, e il corpo lo manda chi chiama con una seconda scrittura. Il buffer non
+ * deve piu' contenere cio' che si spedisce, e non c'e' piu' un tetto.
+ *
+ * `corpo_len` negativo vuol dire «non c'e' corpo»: e' una GET.
+ * ========================================================================== */
+int http_richiesta_testa(char *out, unsigned int max, const HttpUrl *u,
+                         const char *agente, long corpo_len, int vivo,
                          const char *biscotti)
 {
     unsigned int n = 0;
 
     if (!out || !u || max == 0) return 0;
 
-    if (!metti(out, max, &n, corpo ? "POST " : "GET ")) return 0;
+    if (!metti(out, max, &n, corpo_len >= 0 ? "POST " : "GET ")) return 0;
     if (!metti(out, max, &n, u->percorso)) return 0;
     if (!metti(out, max, &n, " HTTP/1.1\r\nHost: ")) return 0;
     if (!metti(out, max, &n, u->host)) return 0;
@@ -215,19 +229,17 @@ int http_richiesta_corpo(char *out, unsigned int max, const HttpUrl *u,
     if (!metti(out, max, &n, "\r\nAccept: */*\r\nConnection: ")) return 0;
     if (!metti(out, max, &n, vivo ? "keep-alive" : "close")) return 0;
 
-    if (corpo) {
+    if (corpo_len >= 0) {
         char cifre[12], rov[12];
-        unsigned int len = 0;
+        unsigned long len = (unsigned long)corpo_len;
         int k = 0, r = 0;
-
-        while (corpo[len]) len++;
 
         /* ! Content-Length E' OBBLIGATORIO, e sbagliarlo di un byte fa
          * aspettare il server per sempre (troppo corto) o gli fa leggere
          * l'inizio della richiesta dopo (troppo lungo). Si conta il corpo,
          * non si stima. */
         if (len == 0) { rov[r++] = '0'; }
-        else { unsigned int q = len; while (q) { rov[r++] = (char)('0' + q % 10); q /= 10; } }
+        else { unsigned long q = len; while (q) { rov[r++] = (char)('0' + q % 10); q /= 10; } }
         while (r) cifre[k++] = rov[--r];
         cifre[k] = '\0';
 
@@ -236,11 +248,34 @@ int http_richiesta_corpo(char *out, unsigned int max, const HttpUrl *u,
                    "\r\nContent-Length: ")) return 0;
         if (!metti(out, max, &n, cifre)) return 0;
         if (!metti(out, max, &n, "\r\n\r\n")) return 0;
-        if (!metti(out, max, &n, corpo)) return 0;
     } else {
         if (!metti(out, max, &n, "\r\n\r\n")) return 0;
     }
 
+    out[n] = '\0';
+    return (int)n;
+}
+
+/* ! RESTA PERCHE' E' COMODA E PERCHE' QUALCUNO LA CHIAMA, ma ha il tetto del
+ * buffer di chi la usa: il corpo ci finisce dentro tutto. Per un invio grande
+ * si usa http_richiesta_testa e si scrive il corpo a parte. */
+int http_richiesta_corpo(char *out, unsigned int max, const HttpUrl *u,
+                         const char *agente, const char *corpo, int vivo,
+                         const char *biscotti)
+{
+    unsigned int n;
+    int          t;
+    unsigned int len = 0;
+
+    if (corpo) while (corpo[len]) len++;
+
+    t = http_richiesta_testa(out, max, u, agente,
+                             corpo ? (long)len : -1L, vivo, biscotti);
+    if (t <= 0) return t;
+    if (!corpo) return t;
+
+    n = (unsigned int)t;
+    if (!metti(out, max, &n, corpo)) return 0;
     out[n] = '\0';
     return (int)n;
 }

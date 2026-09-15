@@ -56,8 +56,39 @@ FLOPPY_SECTORS=2880
 #             stampare il NUMERO dell'errore, che e' la sola cosa che
 #             distingue sei cause diverse
 #   disk      dice quali dispositivi a blocchi esistono e quanto sono grandi
-PROGRAMMI="sh ls cp keymap shutdown hwinfo mount disk"
-PROGRAMMI_CD="blkscan automount netdetect ipcfg ping audio"
+#   fdisk mkfs install  ! GLI ATTREZZI DEL DISCO, dal 14 settembre 2026.
+#             Adesso che il dischetto si fa guidare dalla rete, una
+#             installazione si puo' fare da un altra stanza: disk per vedere
+#             cosa c e, fdisk per partizionare, mkfs per formattare, install
+#             per scriverci il sistema di base. Costano centodiecimila byte
+#             su duecentoventimila liberi.
+#             ! install COPIA IL SISTEMA CHE STA GIRANDO, cioe questo
+#             dischetto: quel che ne esce e un sistema MINIMO che si avvia.
+#             Riempirlo e il passo dopo, e lo fa la rete con netupdate.
+#   mkdir     ! SERVE A install, E LA SUA ASSENZA E COSTATA UN VIAGGIO. Un
+#             sistema appena installato vuole /dev, e senza mkdir non c e
+#             modo di crearla a mano quando qualcosa va storto.
+PROGRAMMI="sh ls cp keymap shutdown hwinfo mount disk fdisk mkfs install mkdir"
+#   dhcp      ! SENZA QUESTO LA RETE NON PARTE DA SOLA. netdetect trova la
+#             scheda e avvia il driver, ip.drv monta lo stack, ma un
+#             indirizzo non se lo da' nessuno: il DHCP sta SOPRA UDP come un
+#             qualunque client, e il perche' e' in cima a drivers/net/ip_proto.h
+#             — uno stack che parla DHCP da solo e' uno stack che fa due
+#             mestieri. Costava diciottomila byte e la sua assenza e' costata
+#             un viaggio all'Acer.
+#   telnetd   ! CI STA SEMPRE, LO AVVIA SOLO REMOTO=1. Copiarlo costa
+#             ventitremila byte su un dischetto che ne ha trecentomila
+#             liberi; deciderlo qui in base a una variabile vorrebbe dire
+#             un elenco che cambia da un'invocazione all'altra, e
+#             verifica-dipendenze-sonda nel Makefile legge PROPRIO QUESTA
+#             RIGA per sapere cosa deve essere ricostruito.
+#   scarica   ! E L UNICO MODO DI CORREGGERE QUALCOSA SENZA RISCRIVERE IL
+#             DISCHETTO. Questa macchina sta in un altra stanza e ogni
+#             riscrittura del floppy costa un viaggio e un riavvio: con
+#             scarica un programma aggiornato arriva dalla rete e si mette
+#             in /bin, che tanto e in RAM. Tredicimila byte per non
+#             rifare la strada.
+PROGRAMMI_CD="blkscan automount netdetect ipcfg ping dhcp host audio telnetd scarica"
 
 # I driver. kbd serve per battere qualcosa, svga per cambiare modalita' fra
 # un referto e l'altro, sonda e' il motivo per cui questo dischetto esiste.
@@ -74,7 +105,19 @@ DRIVER="kbd.drv svga.drv pci.drv uhci.drv"
 # non emula la SiS 900 — `qemu-system-i386 -device help` non la nomina — quindi
 # l'unico posto dove quel driver si puo' provare e' l'Acer, e l'unico modo di
 # portarcelo e' questo dischetto.
-DRIVER_CD="ehci.drv ohci.drv sonda.drv sis.drv mappa.drv sis900.drv ip.drv ac97.drv cardbus.drv"
+# ! E CI SONO ANCHE LE ALTRE TRE SCHEDE DI RETE, dal 14 settembre 2026, per
+# due ragioni che vanno insieme. La prima e' che un dischetto di prova che
+# riconosce una sola scheda serve a una macchina sola: ne2k, pcnet ed e1000
+# costano settantottomila byte su trecentomila liberi e coprono quasi tutto
+# quel che si trova in giro.
+#
+# ! LA SECONDA E' CHE COSI' IL DISCHETTO SI PROVA IN QEMU PRIMA DI PORTARLO.
+# La SiS 900 QEMU non la emula, ma ne2k, pcnet ed e1000 si': con una di
+# quelle a bordo si puo' vedere QUI che netdetect trova la scheda, che il
+# DHCP prende l indirizzo e che la shell remota risponde davvero. Senza, ogni
+# modifica al dischetto si verifica solo andando alla macchina — ed e' come
+# si e' scoperto, dopo un viaggio, che netdetect non partiva affatto.
+DRIVER_CD="ehci.drv ohci.drv sonda.drv sis.drv mappa.drv sis900.drv ne2k.drv pcnet.drv e1000.drv ip.drv ac97.drv cardbus.drv"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
 log_info() { echo -e "${BLUE}[INFO]${NC}  $1"; }
@@ -131,6 +174,37 @@ mmd -i "$IMG" ::/USB      # dove automount monta le chiavette
 #
 #   MODO_VIDEO=0  testo 80x25 (predefinito)
 #   MODO_VIDEO=1  640x480     2  800x600     3  1024x768
+# =============================================================================
+# REMOTO=1 — il dischetto si fa guidare dalla rete
+#
+# ! SPENTO DI SUO, E NON PER PRUDENZA FORMALE. Con REMOTO=1 il dischetto apre
+# una shell telnet SENZA ACCESSO: chi arriva sulla porta 23 si trova un /bin/sh
+# da amministratore, e la password non c'e' perche' non c'e' niente da
+# digitare. Su una rete di casa, per provare i driver di una macchina che sta
+# in un'altra stanza, e' esattamente quel che serve; su qualunque altra rete
+# e' una porta aperta.
+#
+# ! E TELNET E' IN CHIARO comunque, password o no: e' nato prima che qualcuno
+# ascoltasse. Il commento in cima a bin/telnetd/telnetd.c lo dice meglio —
+# «su una rete di cui non ci si fida non si accende».
+#
+# Il dischetto normale della sonda non cambia: telnetd ce l'ha a bordo ma
+# nessuno lo avvia, e si puo' lanciare a mano quando serve.
+REMOTO="${REMOTO:-0}"
+
+if [ "$REMOTO" = "1" ]; then
+    RIGHE_REMOTO="echo
+echo QUESTO DISCHETTO SI FA GUIDARE DALLA RETE.
+echo L indirizzo e quello stampato qui sopra da ipcfg.
+echo Da un altra macchina:  telnet QUELL INDIRIZZO
+echo Ti trovi una shell da amministratore, senza password.
+telnetd -s &
+echo"
+else
+    RIGHE_REMOTO="echo   telnetd -s ^&      apre una shell telnet sulla porta 23,
+echo                     senza password: si fa guidare dalla rete"
+fi
+
 MODO_VIDEO="${MODO_VIDEO:-0}"
 case "$MODO_VIDEO" in
     0) MODO_NOME="testo 80x25" ;;
@@ -232,11 +306,53 @@ echo Accendo l USB: se infili una chiavetta la monto in /USB/DRIVE0
 /dev/uhci.drv -avvio &
 automount &
 echo
+echo Accendo la rete: scheda, stack IP, indirizzo
+#
+# ! LE TRE RIGHE VANNO IN QUEST ORDINE E NON E UNA FORMALITA. netdetect -c
+# trova la scheda e AVVIA IL DRIVER (netdetect da solo elenca e basta, ed e
+# l errore che viene naturale fare); ip.drv monta lo stack sopra quel driver;
+# dhcp sta SOPRA UDP come un client qualunque e chiede l indirizzo. Saltarne
+# una lascia la catena a meta, e ognuna dice quale manca.
+netdetect -c
+/dev/ip.drv &
+#
+# ! dhcp SENZA & E SENZA -r, ED E' VOLUTO. In primo piano BLOCCA finche'
+# l indirizzo non c e, e quel che viene dopo ha bisogno che ci sia: telnetd
+# chiede allo stack di mettersi in ascolto, e uno stack senza indirizzo non
+# sa su cosa. Con dhcp -r ^& la riga dopo parte subito e vince la corsa una
+# volta su due, cioe un dischetto che a volte si fa guidare e a volte no.
+# La concessione dura ore: per una sessione di prove non serve rinnovarla,
+# e se scade si rilancia dhcp -r ^& a mano.
+dhcp
+echo
+ipcfg
+echo
+AUT
+
+# ! L HEREDOC SOPRA E QUOTATO — <<'AUT' — quindi NON espande le variabili, ed
+# e' giusto cosi': dentro ci sono ^& e altri caratteri che una espansione
+# rovinerebbe. Le righe che cambiano fra un dischetto e l altro si aggiungono
+# qui in mezzo, fra due heredoc, invece di togliere le virgolette e dover poi
+# proteggere tutto il resto.
+printf '%s\n' "$RIGHE_REMOTO" >> "$TMPAUT"
+
+cat >> "$TMPAUT" <<'AUT'
 echo Adesso:
 echo   ls /              vedere che il referto ci sia
 echo   ls /USB/DRIVE0    la chiavetta, quando l hai infilata
 echo   cp /SONDA1.TXT /USB/DRIVE0/    portarsi via il referto
-echo   svga.drv 800x600  cambiare modo, riavviare, e farne un secondo
+echo   ipcfg             che indirizzo ha preso
+echo   ping 8.8.8.8      se la rete esce davvero
+echo   sis900.drv -debug   TUTTO in /SIS900.TXT: registri, le 32 righe del
+echo                       PHY, i 16 descrittori, i contatori. Con la rete
+echo                       accesa lo scrive il driver stesso, senza toccarla.
+echo                       ! la radice e in RAM: cp /SIS900.TXT /USB/DRIVE0/
+echo   sis900.drv -d     la rete: MAC, filtro, contatori, e cosa vogliono dire
+echo   sis900.drv -phy   chi risponde sul filo di gestione del PHY
+echo   sis900.drv -mac 00:11:22:33:44:55 ^& poi /dev/ip.drv ^& poi dhcp -r ^&
+echo                     se il MAC esce a zero: lo trovi con ipconfig /all
+echo   sis.drv -prova /PROVA.TXT   le quattro varianti del video
+echo   cardbus.drv       lo slot PCMCIA, senza toccarlo
 echo   shutdown          fermare la macchina
 AUT
 mcopy -i "$IMG" "$TMPAUT" ::/boot/AUTOEXEC.SH

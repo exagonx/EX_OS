@@ -293,7 +293,7 @@
  * Il quinto caso di tools/banco-kmalloc/prova.sh lo dimostra sull'ospite in un
  * secondo, senza QEMU.
  */
-#define EXOS_VERSION    "0.212"
+#define EXOS_VERSION    "0.217"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

@@ -84,7 +84,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `install -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("install", "0.001");
+EX_VERSIONE("install", "0.004");
 
 #define BLOCCO      4096
 #define PERC_MAX    128
@@ -1663,6 +1663,18 @@ int main(int argc, char **argv)
     int             aggiorna = 0;
     /* 0 = chiedi, 1 = solo il minimo, 2 = tutto senza chiedere */
     int             modo_comp = 0;
+    /* ! I CONTI SI POSSONO RIMANDARE, E SERVE DAVVERO. Chiedere una password
+     * vuol dire leggerla SENZA MOSTRARLA, e questo si puo' fare solo su una
+     * console vera: su un terminale remoto — una sessione telnet, per dire —
+     * quella lettura non torna, e l'installazione resta li' per sempre con il
+     * sistema gia' copiato e avviabile.
+     *
+     * ! E RIMANDARLI NON E' UN RIPIEGO: E' PIU' GIUSTO. Chi installa da
+     * un'altra stanza non deve digitare la password di chi usera' la
+     * macchina, e chi la usera' non deve dettargliela. Con -senza-conti
+     * l'installazione finisce e i due conti li crea `login` al primo avvio,
+     * davanti alla tastiera di chi li sta scegliendo. */
+    int             senza_conti = 0;
 
     /* =====================================================================
      * ! SE C'E' `cdinstall`, IL LAVORO E' SUO — E QUESTA E' LA COSA PIU'
@@ -1729,8 +1741,21 @@ int main(int argc, char **argv)
     if (argc >= 2 && strcmp(argv[1], "-tools") == 0)
         return installa_strumenti(argc, argv);
 
-    if (argc < 2 || argc > 3) {
-        printf("uso: install [-a|-m|-t] <punto di montaggio>\n");
+    /* ! IL TETTO A TRE ARGOMENTI L'HO LASCIATO INDIETRO, ed e' costata una
+     * prova. Quando le opzioni erano alternative fra loro ne arrivava al
+     * massimo una, quindi `argc > 3` voleva dire «argomenti di troppo». Da
+     * quando si leggono in ciclo — vedi piu' sotto — `-t -senza-conti /disco`
+     * fa quattro, e questo cancello stampava l'aiuto senza che il ciclo
+     * vedesse niente.
+     *
+     * ! E L'AIUTO ERA GIA' STATO CORRETTO, il che lo rendeva peggio: la riga
+     * d'uso mostrava `[-a|-m|-t] [-senza-conti]`, cioe' esattamente la forma
+     * che il programma stava rifiutando. Chi la leggeva la ribatteva uguale.
+     *
+     * Adesso qui si controlla solo che ci sia ALMENO un argomento: quanti
+     * sono e se hanno senso lo decide il ciclo, che e' l'unico a saperlo. */
+    if (argc < 2) {
+        printf("uso: install [-a|-m|-t] [-senza-conti] <punto di montaggio>\n");
         printf("     install -tools [opzioni] [punto di montaggio]\n\n");
         printf("Senza -a: installazione completa, riscrive tutto.\n");
         printf("Con  -a: aggiorna solo i file cambiati, e prima li elenca.\n");
@@ -1764,15 +1789,33 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    if (argc == 3) {
-        if      (strcmp(argv[1], "-a") == 0) aggiorna  = 1;
-        else if (strcmp(argv[1], "-m") == 0) modo_comp = 1;
-        else if (strcmp(argv[1], "-t") == 0) modo_comp = 2;
-        else {
-            printf("install: opzione '%s' sconosciuta.\n", argv[1]);
+    /* ! LE OPZIONI SI LEGGONO IN CICLO, E PRIMA SE NE ACCETTAVA UNA SOLA:
+     * `if (argc == 3)` guardava argv[1] e basta. Bastava finche' erano
+     * alternative fra loro — -a, -m, -t — ma -senza-conti non lo e': dice
+     * un'altra cosa, e va detta INSIEME a -t. Con il controllo vecchio
+     * `install -t -senza-conti /disco` rispondeva «opzione sconosciuta»
+     * nominando la seconda, che era l'unica scritta giusta. */
+    {
+        int a = 1;
+
+        while (a < argc && argv[a][0] == '-') {
+            if      (strcmp(argv[a], "-senza-conti") == 0) senza_conti = 1;
+            else if (strcmp(argv[a], "-a") == 0) aggiorna  = 1;
+            else if (strcmp(argv[a], "-m") == 0) modo_comp = 1;
+            else if (strcmp(argv[a], "-t") == 0) modo_comp = 2;
+            else {
+                printf("install: opzione '%s' sconosciuta.\n", argv[a]);
+                return 1;
+            }
+            a++;
+        }
+
+        if (a >= argc) {
+            printf("install: manca il punto di montaggio.\n");
+            printf("  mount hd0p1 /disco    e poi    install /disco\n");
             return 1;
         }
-        argv[1] = argv[2];
+        argv[1] = argv[a];
     }
 
     /* =====================================================================
@@ -1887,8 +1930,20 @@ int main(int argc, char **argv)
      * esiste, ma la directory che lo conterra' si': senza questa, la prima
      * chiavetta infilata su un sistema installato non si monta e l'errore
      * (ENOENT su /USB/DRIVE0) manda a cercare il guasto nel driver USB. */
-    unisci(p, argv[1], "USB");
-    crea_dir(p);
+    /* ! SI COMPONE IN `q`, NON IN `p`, ED E' LA CORREZIONE DEL 14 SETTEMBRE
+     * 2026. `p` tiene <destinazione>/boot, e le due righe qui sotto —
+     * aggiunte dopo, per creare /USB — ci scrivevano sopra. Da li' in giu'
+     * stage2.new e kernel.new venivano composti su `p`, cioe' finivano in
+     * <destinazione>/USB/, mentre bootverify() li cercava in /boot: il
+     * risultato era «i file nuovi non sono mappabili: non trovato (errore
+     * -2)» e ogni installazione su un volume nuovo si fermava li'.
+     *
+     * ! IL SINTOMO ACCUSAVA IL PEZZO SBAGLIATO. «Non mappabili» fa pensare
+     * alla frammentazione — e il messaggio subito sotto parla proprio di
+     * quella, suggerendo di riformattare — mentre i file erano interi e
+     * semplicemente altrove. Una variabile riusata a tre righe di distanza. */
+    unisci(q, argv[1], "USB");
+    crea_dir(q);
 
     unisci(q, p, "stage2.new");
     if (copia("/LOADER.BIN", q) < 0) {
@@ -1970,8 +2025,25 @@ int main(int argc, char **argv)
 
         /* ! I DRIVER DEL MINIMALE SONO QUELLI CHE STANNO SUL FLOPPY, e gli
          * altri arrivano col passo 2: installa_driver() invece li SCEGLIE
-         * sondando l'hardware, che e' un'altra domanda e viene dopo. */
-        if (g_ha_minimale) copia_dir_filtrata("/dev", argv[1], "dev", 1);
+         * sondando l'hardware, che e' un'altra domanda e viene dopo.
+         *
+         * ! E SI COPIANO SEMPRE, ANCHE SENZA MANIFESTO: e' la correzione del
+         * 14 settembre 2026. La riga diceva `if (g_ha_minimale)`, cioe' i
+         * driver si copiavano solo installando da un supporto che porta
+         * /boot/minimale.txt. Da un supporto che non ce l'ha — il dischetto
+         * della sonda, per dire — il sistema finiva sul disco SENZA UN SOLO
+         * DRIVER.
+         *
+         * ! E IL PRIMO A MANCARE E' LA TASTIERA. kernel.cfg carica
+         * [modules] kbd = /dev/kbd.drv: senza quel file la macchina si avvia
+         * e non risponde a un tasto, e da davanti non si puo' nemmeno
+         * chiedere cos'e' successo. Un sistema installato cosi' sembra rotto
+         * molto piu' di quanto sia.
+         *
+         * Le due righe qui sopra — /bin e /lib — la forma giusta ce l'hanno
+         * gia': il manifesto, quando c'e', FILTRA cosa copiare; quando non
+         * c'e' si copia tutto. Per /dev si era trasformato in un se'. */
+        copia_dir_filtrata("/dev", argv[1], "dev", g_ha_minimale);
 
         if (g_vuole_strumenti) {
             printf("\nIl resto degli strumenti\n");
@@ -2052,7 +2124,12 @@ int main(int argc, char **argv)
          * per riparare, e il tuo per lavorare — ed e' la ragione principale
          * per cui questo pezzo si e' spostato.
          * ===================================================================== */
-        {
+        if (senza_conti) {
+            printf("  = i conti si creano al primo avvio (-senza-conti).\n");
+            printf("    Accendi la macchina e `login` te li chiedera' li',\n");
+            printf("    con la tastiera davanti: root per riparare e il tuo\n");
+            printf("    per lavorare.\n\n");
+        } else {
             char nome[EXUSER_NOME_MAX], p1[EXUSER_PASS_MAX], p2[EXUSER_PASS_MAX];
             int  fatto_root = 0, fatto_utente = 0;
 

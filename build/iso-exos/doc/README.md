@@ -12,6 +12,22 @@ nell'altra.*
 
 ---
 
+## Installare EX-OS
+
+La procedura passo passo, con un capitolo per supporto, sta in
+**[manuali/installazione/](manuali/installazione/00-indice.md)**:
+
+| | |
+|---|---|
+| [Da floppy](manuali/installazione/01-da-floppy.md) | anche con il lettore sull'USB |
+| [Da CD-ROM](manuali/installazione/02-da-cdrom.md) | con `cdinstall` a schermo intero |
+| [Dalla rete](manuali/installazione/03-dalla-rete.md) | per riempire e aggiornare un sistema gia' installato |
+| [Dopo l'installazione](manuali/installazione/04-dopo-installazione.md) | conti, rete, strumenti, grafica, accesso remoto |
+| [Quando va storto](manuali/installazione/05-quando-va-storto.md) | gli errori veri, con la causa e il rimedio |
+| [Pubblicare il repository](manuali/installazione/06-pubblicare-il-repo.md) | per chi tiene il server degli aggiornamenti |
+
+---
+
 ## Che cos'è EX-OS
 
 EX-OS è un sistema operativo baremetal scritto in C e ASM per architettura

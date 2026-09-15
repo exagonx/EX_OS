@@ -170,7 +170,7 @@ PROGRAMMI_FLOPPY := shell id chmod shutdown ls mem stack disk fdisk mkfs mkswap 
 # `make verifica-programmi` — che le due ISO eseguono da sole — confronta
 # le liste con il contenuto di bin/ e si ferma dicendo quali mancano.
 # =============================================================================
-PROGRAMMI_CD := cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp scarica telnet telnetd sshd xcp winprova exwincmd audio netupdate wifi blkscan automount
+PROGRAMMI_CD := cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp scarica telnet telnetd sshd senderror xcp winprova exwincmd audio netupdate wifi blkscan automount
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
 PROGRAMMI_EXWIN := exwin_so exdlg_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr edit term fontprova orologio browser exide
 
@@ -3330,6 +3330,33 @@ ftp: dirs $(FTP_BIN)
 # http.c non tocca la rete, exhttp.c non conosce il trasporto — quindi il
 # giorno del browser e' una regola di Makefile, non una riscrittura.
 SCARICA_SRC := bin/scarica/scarica.c
+# --- /bin/senderror (solo CD) -------------------------------------------------
+#
+# ! PORTARE VIA UN FILE DA UNA MACCHINA DI PROVA E' LA PARTE DIFFICILE, ed e'
+# il motivo per cui questo programma esiste. `sis900.drv -debug` scrive un
+# referto di duecento righe; farlo arrivare a chi deve leggerlo voleva dire
+# una chiavetta e un viaggio. La rete invece attraversa le stanze: un POST e
+# venti righe di PHP dall'altra parte. Vedi tools/netinst/report/.
+SENDERROR_SRC := bin/senderror/senderror.c
+SENDERROR_BIN := $(BUILD_BIN_CD)/senderror
+SENDERROR_LD  := bin/senderror/senderror.ld
+
+$(SENDERROR_BIN): $(SENDERROR_SRC) $(SENDERROR_LD) $(EXHTTP_STUB) $(EXHTTP_HDR) \
+                  $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/senderror ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhttp -I drivers/net -c $(SENDERROR_SRC) -o $(BUILD_OBJ)/senderror_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhttp -c $(EXHTTP_STUB) -o $(BUILD_OBJ)/senderror_stub.o
+	$(CC) -m32 -c $(LIBC_START)                        -o $(BUILD_OBJ)/senderror_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(SENDERROR_LD) \
+	    $(BUILD_OBJ)/senderror_start.o $(BUILD_OBJ)/senderror_main.o \
+	    $(BUILD_OBJ)/senderror_stub.o \
+	    $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] senderror compilato: $@"
+
+.PHONY: senderror
+senderror: dirs $(SENDERROR_BIN)
+
 SCARICA_BIN := $(BUILD_BIN_CD)/scarica
 SCARICA_LD  := bin/scarica/scarica.ld
 
@@ -4407,11 +4434,86 @@ floppy: $(PROGRAMMI_FLOPPY) $(FLOPPY_IMG)
 # corto l'immagine risultava «aggiornata» dopo aver ricompilato automount, e ci
 # finiva dentro la versione di prima — lo stesso modo di sbagliare dell'ISO che
 # non si rifaceva.
-$(SONDA_IMG): $(STAGE1_BIN) $(STAGE2_BIN) $(KERNEL_BIN) $(SONDA_OUT) \
-              $(SHELL_BIN) $(LS_BIN) $(CP_BIN) $(KEYMAP_BIN) $(HWINFO_BIN) \
-              $(SHUTDOWN_BIN) $(BLKSCAN_BIN) $(AUTOMOUNT_BIN) \
-              $(KBD_DRV_OUT) $(SVGA_DRV_OUT) $(PCI_DRV_OUT) $(UHCI_OUT) \
-              $(EHCI_OUT) $(OHCI_OUT) $(TOOLS_DIR)/mksonda.sh | dirs
+# ! TUTTO QUEL CHE mksonda.sh COPIA, IN UNA LISTA SOLA. Le due regole che
+# chiamano quel copione — dist/sonda.img e test-aa3k — avevano ognuna la
+# propria lista, e tutte e due si erano fermate a prima che la rete entrasse
+# nel dischetto. Il risultato e' la quinta puntata della famiglia di difetti
+# descritta sopra $(FLOPPY_IMG), e stavolta e' costata di piu' delle altre:
+#
+# ! E' SUCCESSO, IL 14 SETTEMBRE 2026. Corretto il difetto di sis900.drv che
+# teneva ferma la ricezione, `make test-aa3k` ha detto che era tutto
+# aggiornato e ha rifatto l'immagine con IL DRIVER VECCHIO — perche'
+# sis900.drv non era fra le sue prerequisite. E il driver nuovo pesa quanto
+# quello vecchio, 31580 byte tutti e due: guardando l'elenco del dischetto
+# non si vedeva niente di strano. Ci voleva un md5.
+#
+# ! E mksonda.sh UN FILE CHE MANCA LO SALTA CON UN AVVISO, non si ferma. E'
+# giusto che sia cosi' — quel dischetto si fa anche a meta' albero — ma vuol
+# dire che l'unica difesa e' questa lista, piu' il controllo che la confronta
+# con gli elenchi dentro il copione.
+# ! STAGE1 E STAGE2 STANNO DENTRO LA LISTA, e non e' pignoleria: e' il difetto
+# trovato il 14 settembre 2026. I bersagli test-aa3k* sono finti e chiamano un
+# sub-make con `RAMDISCO=1 kernel $(SONDA_CONTENUTO)`: quel che non e' in
+# questa lista NON SI RICOSTRUISCE, e stage2 non c'era.
+#
+# ! E STAGE2 E' PROPRIO QUELLO CHE RAMDISCO CAMBIA. Il dischetto usciva con lo
+# stage2 dell'ultima make qualunque — se era una `make floppy`, cioe'
+# RAMDISCO=0, il volume in RAM non veniva creato e la radice finiva su
+# fat12.c invece che su fat.c.
+#
+# ! IL SINTOMO ERA IRRICONOSCIBILE: «comando non trovato: netdetect». fat12.c
+# i nomi lunghi non li legge affatto, e netdetect e automount sono gli unici
+# due programmi del dischetto con NOVE lettere: su FAT diventano NETDET~1 e
+# AUTOMO~1 e la shell non li trova. Tutto il resto sta in 8.3 e funzionava,
+# quindi sembrava un guasto dei due programmi invece che dell'avvio.
+SONDA_CONTENUTO := $(STAGE1_BIN) $(STAGE2_BIN) $(SONDA_OUT) \
+    $(SHELL_BIN) $(LS_BIN) $(CP_BIN) $(KEYMAP_BIN) $(SHUTDOWN_BIN) \
+    $(HWINFO_BIN) $(MOUNT_BIN) $(DISK_BIN) \
+    $(FDISK_BIN) $(MKFS_BIN) $(INSTALL_BIN) $(MKDIR_BIN) $(SCARICA_BIN) \
+    $(BLKSCAN_BIN) $(AUTOMOUNT_BIN) $(NETDETECT_BIN) $(IPCFG_BIN) \
+    $(PING_BIN) $(DHCP_BIN) $(HOST_BIN) $(AUDIO_BIN) $(TELNETD_BIN) \
+    $(KBD_DRV_OUT) $(SVGA_DRV_OUT) $(PCI_DRV_OUT) $(UHCI_OUT) \
+    $(EHCI_OUT) $(OHCI_OUT) $(SIS_OUT) $(MAPPA_OUT) \
+    $(SIS900_DRV_OUT) $(NE2K_DRV_OUT) $(PCNET_DRV_OUT) $(E1000_DRV_OUT) \
+    $(IP_DRV_OUT) $(AC97_DRV_OUT) $(CARDBUS_DRV_OUT)
+
+# ! IL CONTROLLO LEGGE GLI ELENCHI DAL COPIONE, non da una copia scritta qui.
+# La verita' su cosa finisce sul dischetto sta in tools/mksonda.sh, nelle
+# quattro righe PROGRAMMI, PROGRAMMI_CD, DRIVER e DRIVER_CD: chi ne aggiunge
+# una voce non deve ricordarsi anche del Makefile, deve solo scoprire che
+# `make` si ferma e gli dice dove aggiungerla.
+#
+# ! E' UNA PREREQUISITA D'ORDINE, dopo la barra, per la stessa ragione di
+# verifica-dipendenze-floppy: e' un bersaglio finto e fra le prerequisite
+# normali terrebbe l'immagine perennemente scaduta.
+.PHONY: verifica-dipendenze-sonda
+verifica-dipendenze-sonda:
+	@dichiarati=""; \
+	for f in $(SONDA_CONTENUTO); do \
+	    dichiarati="$$dichiarati $$(basename $$f)"; \
+	done; \
+	manca=""; \
+	for var in PROGRAMMI PROGRAMMI_CD DRIVER DRIVER_CD; do \
+	    voci=$$(sed -n "s/^$$var=\"\(.*\)\"$$/\1/p" $(TOOLS_DIR)/mksonda.sh); \
+	    for n in $$voci; do \
+	        case " $$dichiarati " in \
+	            *" $$n "*) ;; \
+	            *) manca="$$manca $$n";; \
+	        esac; \
+	    done; \
+	done; \
+	if [ -n "$$manca" ]; then \
+	    echo "[ERRORE] mksonda.sh lo copia ma non e' fra le dipendenze:$$manca"; \
+	    echo "         l'immagine non si rifa' quando cambia: resta VECCHIA,"; \
+	    echo "         senza nessun errore, e se la dimensione non cambia non"; \
+	    echo "         se ne accorge nessuno. Aggiungilo a SONDA_CONTENUTO."; \
+	    exit 1; \
+	fi; \
+	echo "[OK] ogni file di mksonda.sh e' fra le dipendenze del dischetto"
+
+$(SONDA_IMG): Makefile $(STAGE1_BIN) $(STAGE2_BIN) $(KERNEL_BIN) \
+              $(SONDA_CONTENUTO) $(TOOLS_DIR)/mksonda.sh \
+              | dirs verifica-dipendenze-sonda
 	@echo "=== Creazione del dischetto della sonda ==="
 	@chmod +x $(TOOLS_DIR)/mksonda.sh
 	@$(TOOLS_DIR)/mksonda.sh
@@ -4435,13 +4537,17 @@ sonda:
 TEST_AA3K_IMG := $(DIST_DIR)/test_aa3k.img
 
 .PHONY: test-aa3k
-test-aa3k:
-	@$(MAKE) --no-print-directory RAMDISCO=1 kernel $(SONDA_OUT) $(SHELL_BIN) \
-	    $(LS_BIN) $(CP_BIN) $(KEYMAP_BIN) $(HWINFO_BIN) $(SHUTDOWN_BIN) \
-	    $(MOUNT_BIN) $(DISK_BIN) $(BLKSCAN_BIN) $(AUTOMOUNT_BIN) \
-	    $(KBD_DRV_OUT) $(SVGA_DRV_OUT) $(PCI_DRV_OUT) $(UHCI_OUT) \
-	    $(EHCI_OUT) $(OHCI_OUT) $(SIS_OUT)
+test-aa3k: verifica-dipendenze-sonda
+	@$(MAKE) --no-print-directory RAMDISCO=1 kernel $(SONDA_CONTENUTO)
 	@MODO_VIDEO=0 $(TOOLS_DIR)/mksonda.sh $(TEST_AA3K_IMG)
+	@# ! SI DICE QUAL E' IL sis900.drv CHE STA DENTRO. E' il motivo per cui
+	@# questo dischetto esiste, e il 14 settembre 2026 e' stato rifatto con
+	@# quello vecchio senza che si vedesse: stessa dimensione al byte. Il
+	@# numero qui sotto e' l'unica cosa che lo distingue, e si confronta con
+	@#     md5sum build/drivers-cd/sis900.drv
+	@echo "     sis900.drv sul dischetto: $$(mtype -i $(TEST_AA3K_IMG) \
+	    ::/dev/sis900.drv 2>/dev/null | md5sum | cut -c1-32)"
+	@echo "     sis900.drv appena costruito: $$(md5sum $(SIS900_DRV_OUT) | cut -c1-32)" 
 
 # --- Lo stesso dischetto, ma che parte in 800x600 ----------------------------
 #
@@ -4460,6 +4566,35 @@ test-aa3k-800: test-aa3k
 	@MODO_VIDEO=2 $(TOOLS_DIR)/mksonda.sh $(TEST_AA3K_800)
 	@echo "     ! questo parte in 800x600: il referto che ne esce e' quello"
 	@echo "       della modalita' grafica, da sottrarre a quello in testo."
+
+# --- Il dischetto che si fa guidare dalla rete -------------------------------
+#
+# ! SERVE PERCHE' LA MACCHINA STA IN UN'ALTRA STANZA. L'Acer non si porta qui,
+# non ha un modo di copiare uno schermo, e ogni domanda fatta a mano costa un
+# viaggio: e' lo stesso motivo per cui esiste `sis900.drv -debug`, portato alle
+# sue conseguenze. Adesso che la rete va, la macchina si puo' guidare da qui.
+#
+# Avvia tutto come test-aa3k, poi chiede l'indirizzo col DHCP e apre una shell
+# telnet. L'indirizzo lo stampa `ipcfg` sullo schermo dell'Acer, ed e' l'unica
+# cosa che bisogna leggere di la'.
+#
+# ! LA SHELL E' SENZA PASSWORD, E VA DETTO OGNI VOLTA. Chi arriva sulla porta
+# 23 si trova un /bin/sh da amministratore. Su una rete di casa, per provare i
+# driver di una macchina che sta in un'altra stanza, e' esattamente quel che
+# serve; su qualunque altra rete e' una porta aperta. Per questo e' un
+# BERSAGLIO A PARTE e non un'aggiunta a dist/sonda.img: il dischetto della
+# sonda telnetd ce l'ha a bordo e non lo avvia nessuno.
+TEST_AA3K_REMOTO := $(DIST_DIR)/test_aa3k_remoto.img
+
+.PHONY: test-aa3k-remoto
+test-aa3k-remoto: verifica-dipendenze-sonda
+	@$(MAKE) --no-print-directory RAMDISCO=1 kernel $(SONDA_CONTENUTO)
+	@REMOTO=1 MODO_VIDEO=0 $(TOOLS_DIR)/mksonda.sh $(TEST_AA3K_REMOTO)
+	@echo ""
+	@echo "  Questo dischetto apre una shell TELNET SENZA PASSWORD sulla"
+	@echo "  porta 23. Leggi l'indirizzo che stampa ipcfg all'avvio e da qui:"
+	@echo "      telnet QUELL-INDIRIZZO"
+	@echo ""
 
 # --- Le tre risoluzioni insieme ----------------------------------------------
 #
@@ -4714,6 +4849,17 @@ ISO_PROVE := $(filter-out %/prova-make,$(wildcard $(TOOLS_DIR)/iso/*)) \
 # che li copia. KERNEL_CORE_NOTES.md finiva in doc/ senza essere una
 # dipendenza, ed e' lo stesso modo di sbagliare in piccolo.
 ISO_DOC := README.md README.en.md KERNEL_CORE_NOTES.md gpl-2.0.txt
+
+# ! I MANUALI VIAGGIANO COL CD, E IL MOTIVO E' CHE SERVONO PROPRIO LI'. La
+# procedura di installazione la legge chi sta davanti a una macchina da
+# installare: e' il momento in cui il README sul sito e' la cosa piu' lontana
+# che ci sia. Sul CD invece c'e' gia', e `ls /cdrom/doc` la trova.
+#
+# ! E' UNA DIRECTORY, NON UN ELENCO DI FILE, apposta: un capitolo aggiunto
+# domani ci finisce dentro senza che nessuno debba ricordarsi di questa riga.
+# L'elenco che invecchia in silenzio e' lo stesso difetto che questo Makefile
+# ha gia' pagato quattro volte altrove.
+ISO_MANUALI := manuali
 
 # ! IL CD PORTA I SORGENTI DI FreeBASIC, QUINDI NE DIPENDE — e non ne
 # dipendeva. Trovato in diretta il 13 agosto 2026: ripulito il porting
@@ -6143,7 +6289,7 @@ BINARI_SOLO_CD := $(CRYPTTEST_BIN) $(FILIPROVA_BIN) $(NETDETECT_BIN) $(NETTEST_B
                   $(TCPSERV_BIN) $(TELNETD_BIN) $(CRYPTTEST_BIN) $(SSHD_BIN) \
                   $(DHCP_BIN) $(HOST_BIN) $(TCPTEST_BIN) $(FTP_BIN) \
                   $(TELNET_BIN) $(XCP_BIN) $(WINPROVA_BIN) $(EXWINCMD_BIN) \
-                  $(SCARICA_BIN) \
+                  $(SCARICA_BIN) $(SENDERROR_BIN) \
                   $(CDINSTALL_BIN) $(SWAPTEST_BIN) $(LIBCTEST_BIN) $(HELLO_BIN) \
                   $(AUDIO_BIN) $(NETUPDATE_BIN) $(WIFI_BIN) $(BLKSCAN_BIN) $(AUTOMOUNT_BIN)
 # ! QUESTA LISTA E' LA DIPENDENZA DELL'ISO, E VA TENUTA ALLINEATA A
@@ -6350,6 +6496,8 @@ $(ISOX_IMG): Makefile $(FLOPPY_IMG) boot/autoexec.sh boot/avvio.sh $(DRIVER_SOLO
 	@cp boot/avvio.sh $(ISOX_ROOT)/boot/avvio.sh
 	@cp boot/autoexec.sh $(ISOX_ROOT)/boot/autoexec.sh
 	@cp README.md README.en.md HANDOFF.md KERNEL_CORE_NOTES.md gpl-2.0.txt $(ISOX_ROOT)/doc/
+	@cp -r $(ISO_MANUALI) $(ISOX_ROOT)/doc/
+	@echo "     manuali: $$(find $(ISO_MANUALI) -name '*.md' | wc -l) capitoli in /doc/manuali"
 	@# ! Anche il kernel e stage2 sulla radice: non servono ad avviare —
 	@# quelli usati stanno dentro boot.img — ma servono a `install`, che
 	@# li cerca li' per copiarli su un disco rigido.

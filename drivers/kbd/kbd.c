@@ -129,7 +129,7 @@
 
 /* +0.001 a ogni modifica: `kbd.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("kbd.drv", "0.001");
+EX_VERSIONE("kbd.drv", "0.002");
 
 static const Keymap *g_map = &g_keymaps[0];   /* us */
 
@@ -1177,9 +1177,21 @@ static int mouse_comando(unsigned char cmd)
  * errore: moltissime macchine non ne hanno uno, e il driver deve partire
  * lo stesso — la tastiera non c'entra niente.
  * ========================================================================== */
+/* ! PERCHE' IL MOUSE NON C'E'. Fino al 15 settembre 2026 questa funzione
+ * rendeva 0 e basta, e il sistema diceva «la sorgente c'e' ma non risponde
+ * nessun mouse»: una frase che vale per sei guasti diversi e non ne distingue
+ * nessuno. Sul touchpad dell'Acer Aspire 3000 e' costata un giro a vuoto.
+ *
+ * ! E' LA STESSA LEZIONE DELLA SiS 900, che e' di ieri: finche' si guardava a
+ * schermo un numero alla volta si girava in tondo; da quando il driver ha
+ * cominciato a dire A CHE PUNTO si era fermato e CON QUALE BYTE IN MANO, ogni
+ * viaggio ha chiuso un difetto. Qui il viaggio e' un riavvio in un'altra
+ * stanza, quindi la frase deve bastare da sola. */
+static char g_mouse_perche[160] = "non ancora provato";
+
 static int mouse_hw_init(void)
 {
-    int r, drain;
+    int r, drain, giro;
 
     /* ! PRIMA SI SVUOTA IL BUFFER, e non e' prudenza generica: kbd_set_leds()
      * manda 0xED piu' il valore e NON legge i due ACK che la tastiera
@@ -1207,20 +1219,78 @@ static int mouse_hw_init(void)
     kbc_wait_write();
     ioport_out(KBC_CMD, KBC_CMD_AUX_ENABLE);
 
-    /* Reset. Risponde ACK, poi 0xAA (self-test superato), poi 0x00 (id del
-     * dispositivo). I due byte dopo l'ACK si consumano qui: lasciarli nel
-     * buffer li farebbe arrivare al montatore di pacchetti come se fossero
-     * movimento. */
-    r = mouse_comando(MOUSE_CMD_RESET);
-    if (r != MOUSE_ACK) return 0;
+    /* ! TRE TENTATIVI, E NON UNO, ED E' IL SOSPETTO SCRITTO GIA' IN main():
+     * «un touchpad che risponde tardi». Il commento c'era e il codice non gli
+     * dava una seconda occasione: un solo 0xFF senza risposta e la porta si
+     * spegneva per sempre, fino al riavvio dopo.
+     *
+     * Un touchpad Synaptics in modo PS/2 sta dietro a un microcontrollore che
+     * al primo avvio ha ancora da finire le sue cose: il primo 0xFF puo' non
+     * ricevere nemmeno l'ACK. Una tastiera vera, invece, risponde sempre al
+     * primo colpo — quindi questi tre giri costano qualcosa SOLO sulle
+     * macchine che il mouse non ce l'hanno davvero, e li' costano trecento
+     * millisecondi all'avvio, una volta.
+     *
+     * ! E FRA UN GIRO E L'ALTRO SI ASPETTA DAVVERO. Ritentare subito ripete la
+     * stessa domanda allo stesso dispositivo occupato: sarebbe un tentativo
+     * che non aggiunge niente. */
+    for (giro = 0; giro < 3; giro++) {
+        if (giro > 0) {
+            usleep(100000);
+            /* Quel che e' arrivato tardi dal giro prima non deve confondere
+               questo: si rilegge e si butta. */
+            for (drain = 0; drain < 16; drain++) {
+                int st = ioport_in(KBC_STATUS);
+                if (st < 0 || !(st & KBC_OBF)) break;
+                ioport_in(KBC_DATA);
+            }
+        }
 
-    if (mouse_leggi_ms(KBC_TMO_SELFTEST) != 0xAA) return 0;
-    (void)mouse_leggi_ms(KBC_TMO_ACK);        /* id del dispositivo */
+        /* Reset. Risponde ACK, poi 0xAA (self-test superato), poi 0x00 (id del
+         * dispositivo). I due byte dopo l'ACK si consumano qui: lasciarli nel
+         * buffer li farebbe arrivare al montatore di pacchetti come se fossero
+         * movimento. */
+        r = mouse_comando(MOUSE_CMD_RESET);
+        if (r != MOUSE_ACK) {
+            snprintf(g_mouse_perche, sizeof(g_mouse_perche),
+                     "giro %d: nessun ACK al reset 0xFF (ho letto 0x%x). "
+                     "La seconda porta non risponde affatto.", giro + 1, r);
+            continue;
+        }
 
-    if (mouse_comando(MOUSE_CMD_DEFAULTS)  != MOUSE_ACK) return 0;
-    if (mouse_comando(MOUSE_CMD_REPORT_ON) != MOUSE_ACK) return 0;
+        r = mouse_leggi_ms(KBC_TMO_SELFTEST);
+        if (r != 0xAA) {
+            snprintf(g_mouse_perche, sizeof(g_mouse_perche),
+                     "giro %d: l'ACK e' arrivato ma l'autodiagnosi no "
+                     "(voluto 0xAA, letto 0x%x). Qualcosa c'e' e non e' pronto.",
+                     giro + 1, r);
+            continue;
+        }
 
-    return 1;
+        (void)mouse_leggi_ms(KBC_TMO_ACK);    /* id del dispositivo */
+
+        r = mouse_comando(MOUSE_CMD_DEFAULTS);
+        if (r != MOUSE_ACK) {
+            snprintf(g_mouse_perche, sizeof(g_mouse_perche),
+                     "giro %d: reset superato ma 0xF6 rifiutato (0x%x).",
+                     giro + 1, r);
+            continue;
+        }
+
+        r = mouse_comando(MOUSE_CMD_REPORT_ON);
+        if (r != MOUSE_ACK) {
+            snprintf(g_mouse_perche, sizeof(g_mouse_perche),
+                     "giro %d: reset superato ma 0xF4 rifiutato (0x%x): "
+                     "non comincera' mai a mandare pacchetti.", giro + 1, r);
+            continue;
+        }
+
+        snprintf(g_mouse_perche, sizeof(g_mouse_perche),
+                 "ha risposto al giro %d", giro + 1);
+        return 1;
+    }
+
+    return 0;
 }
 
 /* Consegna lo stato a `pid` e AZZERA l'accumulo. Vedi kbd_proto.h per il
@@ -1387,6 +1457,23 @@ static void kbd_hw_init(void)
             printf("kbd: configuration byte 0x%x (IRQ1, clock, traduzione)\n",
                    letto);
         }
+
+        /* ! I DUE BIT DELLA SECONDA PORTA SI SCRIVEVANO E NON SI GUARDAVANO
+         * PIU'. La verifica qui sopra controlla i tre bit della tastiera, che
+         * sono quelli per cui era stata scritta; AUX_INT e AUX_CLOCK uscivano
+         * dal ciclo senza che nessuno sapesse se il controller li avesse presi.
+         * Un mouse che non risponde perche' la sua porta non e' mai stata
+         * accesa e uno che non c'e' danno lo stesso identico silenzio. */
+        if (letto >= 0 &&
+            (!(letto & KBC_CFG_AUX_INT) || (letto & KBC_CFG_AUX_CLOCK))) {
+            printf("kbd: ! la SECONDA porta non ha preso la configurazione "
+                   "(0x%x):\n", letto);
+            if (!(letto & KBC_CFG_AUX_INT))
+                printf("     IRQ12 spento: nessun movimento verra' annunciato.\n");
+            if (letto & KBC_CFG_AUX_CLOCK)
+                printf("     clock spento: il mouse non puo' nemmeno "
+                       "rispondere.\n");
+        }
     }
 
     /* Abilita la scansione (comando alla tastiera, non al controller) */
@@ -1519,9 +1606,19 @@ int main(int argc, char **argv)
         if (rc < 0) {
             printf("kbd: irq_bind(%u) per il mouse fallita (%d) - "
                    "vado avanti senza\n", MOUSE_IRQ, rc);
+            snprintf(g_mouse_perche, sizeof(g_mouse_perche),
+                     "il mouse ha risposto, ma IRQ12 e' gia' di qualcun "
+                     "altro (%d)", rc);
             g_mouse_c_e = 0;
         }
     }
+
+    /* ! LA RAGIONE SI STAMPA SEMPRE, ANCHE QUANDO VA BENE. Una riga che compare
+     * solo in caso di guasto insegna a non leggere quel che scorre all'avvio;
+     * una che c'e' sempre si nota quando cambia. E su una macchina senza mouse
+     * questa riga e' l'unica differenza fra «non ce n'e' uno» e «ce n'e' uno e
+     * non l'ho svegliato». */
+    printf("kbd: mouse PS/2: %s\n", g_mouse_perche);
 
     /* =====================================================================
      * ! SE IL MOUSE NON C'E', LA SUA PORTA SI SPEGNE — e non e' pulizia.

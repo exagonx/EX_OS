@@ -71,6 +71,10 @@ int32_t pty_scrivi_slave(int h, const void *buf, uint32_t n);
 
 /* Chiusura di un'estremita'. `master` dice quale. */
 void    pty_chiudi(int h, int master);
+
+/* Come pty_chiudi, ma il chiamante ha gia' `cli`: la usa proc_chiudi_fd()
+ * quando un processo muore. Vedi il commento in kernel/ipc/pty.c. */
+void    pty_chiudi_locked(int h, int master);
 void    pty_apri_riferimento(int h, int master);
 
 /* Controllo: primo piano, modo, misura. Rende 0 o il valore chiesto. */

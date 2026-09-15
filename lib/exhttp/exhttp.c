@@ -272,6 +272,8 @@ static int tcp_scrivi(void *st, const unsigned char *src, unsigned int n)
     TcpStato     *s = (TcpStato *)st;
     unsigned char msg[sizeof(IpTcpDati) + IP_TCP_DATI_MAX];
     unsigned int  fatti = 0;
+    /* ! IL CONTATORE DEI GIRI SENZA UN BYTE, e sotto c'e' scritto perche'. */
+    int           fermi = 0;
 
     while (fatti < n) {
         unsigned int q = n - fatti;
@@ -295,7 +297,28 @@ static int tcp_scrivi(void *st, const unsigned char *src, unsigned int n)
          * lo dice: il suo buffer di trasmissione e' pieno. Dare per scontato
          * che li abbia presi tutti vuol dire una richiesta troncata a meta',
          * che il server non capisce e a cui non risponde. */
-        if (rc == 0) usleep(20 * 1000);
+        if (rc == 0) {
+            /* ! E SE NON NE PRENDE PIU' NEMMENO UNO, PRIMA O POI CI SI ARRENDE.
+             * Questo ciclo aspettava venti millisecondi e ritentava, per
+             * sempre: finche' lo stack risponde «zero» — coda piena, finestra
+             * dell'altro capo chiusa, connessione morta senza che nessuno lo
+             * dica — chi ha chiamato resta appeso e non c'e' un errore da
+             * nessuna parte.
+             *
+             * ! E' IL GUASTO DI `senderror`, ed e' rimasto nascosto perche' una
+             * GET non lo incontra mai: duecento byte di richiesta lo stack li
+             * prende sempre in un colpo. La prima cosa che ha scritto qualche
+             * kilobyte e' stata una POST, e la POST non tornava piu'.
+             *
+             * Settecentocinquanta giri da venti millisecondi sono quindici
+             * secondi SENZA UN SOLO BYTE ACCETTATO: una rete lenta non ci
+             * arriva mai, perche' il contatore si azzera al primo byte che
+             * passa. */
+            if (++fermi > 750) return fatti > 0 ? (int)fatti : -1;
+            usleep(20 * 1000);
+        } else {
+            fermi = 0;
+        }
         fatti += (unsigned int)rc;
     }
     return (int)fatti;
@@ -775,6 +798,29 @@ void exhttp_attesa(ExHttpAttesa f, void *dato)
     g_attesa_dato = dato;
 }
 
+/* ! IL VERSO: dove finisce il corpo quando non ci sta in memoria. La
+ * spiegazione lunga sta in exhttp.h, sopra la dichiarazione. */
+static ExHttpVerso  g_verso      = 0;
+static void        *g_verso_dato = 0;
+/* ! QUANTI BYTE SONO GIA' USCITI DAL BUFFER. Serve a una cosa sola e
+ * indispensabile: il confronto con Content-Length. Quel confronto guardava
+ * `e->byte`, cioe' «quanti ce ne sono nel buffer», e finche' il buffer non si
+ * svuotava mai le due cose coincidevano. Con un verso registrato no, e senza
+ * questo contatore un file lungo non risulterebbe mai finito.
+ *
+ * ! E NON STA DENTRO ExHttpEsito, che sarebbe il posto naturale. Quella
+ * struttura la dichiara chi chiama, sulla propria pila, e con una libreria
+ * dinamica aggiungerci un campo vuol dire che un programma costruito prima si
+ * ritrova scritto un pezzo di pila che credeva suo. Un contatore qui dentro
+ * non lo vede nessuno e non rompe niente. */
+static unsigned long g_usciti = 0;
+
+void exhttp_verso(ExHttpVerso f, void *dato)
+{
+    g_verso      = f;
+    g_verso_dato = dato;
+}
+
 #define ATTESA_MS  10000
 
 static int leggi_a_pezzi(ExHttpTrasporto *t, unsigned char *dst,
@@ -893,16 +939,22 @@ int exhttp_scambio(ExHttpTrasporto *t, const HttpUrl *u,
 {
     static unsigned char acc[16 * 1024];    /* le intestazioni, mentre arrivano */
     unsigned int  acc_n = 0;
-    /* ! DODICI KILOBYTE PERCHE' CI DEVE STARE IL CORPO DI UN POST, e i quattro
-     * di prima non bastavano: il modulo di consenso di google.com fa quasi
-     * ottomila byte da solo. Quando non ci sta si rende un errore — «richiesta
-     * troppo lunga» — invece di mandarne meta', ed e' l'unica cosa da fare:
-     * un corpo tagliato e' una richiesta che il server rifiuta, o peggio
-     * accetta a meta'. */
+    /* ! QUI CI STANNO SOLO LE INTESTAZIONI, DAL 14 SETTEMBRE 2026. Prima ci
+     * finiva dentro anche il corpo di un POST, ed era stato allargato da
+     * quattro kilobyte a dodici perche' il modulo di consenso di google.com ne
+     * fa quasi ottomila da solo: una rincorsa che non finiva: il primo referto
+     * dell'hardware, venticinque kilobyte, non ci sarebbe stato comunque.
+     * Adesso il corpo si scrive a parte (vedi sotto) e questi dodici kilobyte
+     * sono solo per la testa, che e' larghissima per qualunque richiesta.
+     *
+     * Quando anche la testa non ci sta si rende un errore — «richiesta troppo
+     * lunga» — invece di mandarne meta': una richiesta tagliata il server la
+     * rifiuta, o peggio la accetta a meta'. */
     static char   req[12 * 1024];
     int           n, fine = 0, annullata = 0;
     HttpPezzi     pezzi;
     unsigned int  corpo_gia = 0;
+    unsigned int  corpo_len = 0;
 
     if (!t || !u || !buf || !e || !r) return 0;
 
@@ -921,11 +973,29 @@ int exhttp_scambio(ExHttpTrasporto *t, const HttpUrl *u,
         if (g_bis_chiedi)
             g_bis_chiedi(g_bis_dato, u->host, u->percorso, u->cifrato,
                          bis, sizeof(bis));
-        n = http_richiesta_corpo(req, sizeof(req), u, "EX-OS", g_corpo, 1, bis);
+        /* ! LA TESTA QUI, IL CORPO DOPO, E NON E' UN DETTAGLIO DI STILE. Con
+         * http_richiesta_corpo() il corpo finiva dentro `req`, che e' di dodici
+         * kilobyte: bastava per qualunque GET e per nessun invio vero. Un
+         * referto dell'hardware sta fra i cinque e i ventotto kilobyte, e
+         * codificato in percentuale cresce ancora, quindi `senderror` usciva
+         * con «richiesta troppo lunga» senza aver mandato niente. Adesso qui
+         * si scrive solo la testa, con il Content-Length giusto, e il corpo va
+         * in una seconda scrittura: la sua dimensione non c'entra piu' niente
+         * con questo buffer. */
+        corpo_len = 0;
+        if (g_corpo) while (g_corpo[corpo_len]) corpo_len++;
+        n = http_richiesta_testa(req, sizeof(req), u, "EX-OS",
+                                 g_corpo ? (long)corpo_len : -1L, 1, bis);
     }
     if (n <= 0) { strcpy(e->errore, "richiesta troppo lunga"); return 0; }
     if (t->scrivi(t->stato, (const unsigned char *)req, (unsigned int)n) != n) {
         strcpy(e->errore, "non riesco a mandare la richiesta");
+        return 0;
+    }
+    if (g_corpo && corpo_len > 0 &&
+        t->scrivi(t->stato, (const unsigned char *)g_corpo,
+                  (unsigned int)corpo_len) != (int)corpo_len) {
+        strcpy(e->errore, "non riesco a mandare il corpo della richiesta");
         return 0;
     }
 
@@ -996,6 +1066,7 @@ int exhttp_scambio(ExHttpTrasporto *t, const HttpUrl *u,
     http_pezzi_avvia(&pezzi);
     e->byte = 0;
     e->troncata = 0;
+    g_usciti = 0;
 
     /* --- il corpo ------------------------------------------------------ */
     {
@@ -1003,13 +1074,50 @@ int exhttp_scambio(ExHttpTrasporto *t, const HttpUrl *u,
         const unsigned char *resto   = acc + fine;
         unsigned int         resto_n = corpo_gia;
 
+        /* ! IL CORPO DI UNA REDIREZIONE NON SI VERSA MAI, e la decisione si
+         * prende UNA VOLTA, qui, invece che a ogni svuotamento. Un 301 o un
+         * 302 porta spesso una paginetta di cortesia — «questo documento si e'
+         * spostato» — e chi ha registrato un verso vuole il file che sta in
+         * fondo ai salti, non l'annuncio del primo: quel pezzo di HTML in testa
+         * al file scaricato lo romperebbe in un modo che nessuna impronta
+         * spiega.
+         *
+         * ! E DEVE ESSERE UNA VARIABILE E NON UN CONTROLLO DENTRO LO
+         * SVUOTAMENTO. Con il controllo la' dentro, una paginetta di cortesia
+         * piu' grande del buffer manderebbe il ciclo a girare per sempre: non
+         * si versa, quindi non si libera posto, quindi si riprova a versare.
+         * Detto qui, il caso «non si versa» ricade sulla strada di sempre, che
+         * tronca e se ne va. */
+        int versa = (g_verso != 0) && !(e->codice >= 300 && e->codice < 400);
+
+        /* ! SVUOTA IL BUFFER NEL VERSO. Rende 0 se chi lo riceve non se l'e'
+         * preso: da li' in poi non ha piu' senso continuare a scaricare, e un
+         * disco pieno deve fermare la richiesta, non produrre un file monco. */
+        #define VERSA()                                                       \
+            do {                                                              \
+                if (versa && e->byte > 0) {                                   \
+                    if (!g_verso(g_verso_dato, buf, e->byte)) {               \
+                        strcpy(e->errore, "non riesco a posare il corpo");    \
+                        return 0;                                             \
+                    }                                                         \
+                    g_usciti += e->byte;                                      \
+                    e->byte = 0;                                              \
+                }                                                             \
+            } while (0)
+
         for (;;) {
             /* Prima si consuma cio' che si ha gia' in mano. */
             while (resto_n > 0) {
                 if (r->a_pezzi) {
                     unsigned int usati = 0;
-                    int prodotti = http_pezzi(&pezzi, resto, resto_n, &usati,
-                                              buf + e->byte, max - e->byte);
+                    int prodotti;
+
+                    /* Con un verso registrato un buffer pieno non e' una fine:
+                     * si consegna e si ricomincia da capo. */
+                    if (versa && e->byte == max) VERSA();
+
+                    prodotti = http_pezzi(&pezzi, resto, resto_n, &usati,
+                                          buf + e->byte, max - e->byte);
 
                     if (prodotti < 0) {
                         strcpy(e->errore, "corpo a pezzi malformato");
@@ -1019,12 +1127,27 @@ int exhttp_scambio(ExHttpTrasporto *t, const HttpUrl *u,
                     resto   += usati;
                     resto_n -= usati;
 
-                    /* Uscita piena e niente consumato: si tronca e si smette. */
-                    if (usati == 0 && prodotti == 0) { e->troncata = 1; return 1; }
+                    /* Uscita piena e niente consumato. Senza verso si tronca e
+                     * si smette; col verso si svuota e si riprova, e se il
+                     * buffer era gia' vuoto allora non e' una questione di
+                     * spazio e troncare e' l'unica cosa onesta. */
+                    if (usati == 0 && prodotti == 0) {
+                        if (!versa || e->byte == 0) { e->troncata = 1; return 1; }
+                        VERSA();
+                    }
                 } else {
                     unsigned int q = resto_n;
 
-                    if (q > max - e->byte) { q = max - e->byte; e->troncata = 1; }
+                    if (q > max - e->byte) {
+                        q = max - e->byte;
+                        if (versa) {
+                            /* Si riempie fino all'orlo, si consegna, si torna
+                             * a prendere il resto al giro dopo. */
+                            if (q == 0) { VERSA(); continue; }
+                        } else {
+                            e->troncata = 1;
+                        }
+                    }
                     memcpy(buf + e->byte, resto, q);
                     e->byte += q;
                     resto   += q;
@@ -1046,11 +1169,17 @@ int exhttp_scambio(ExHttpTrasporto *t, const HttpUrl *u,
              * ============================================================= */
             if (r->a_pezzi) {
                 if (pezzi.stato == HTTP_P_FATTO) {
+                    VERSA();
                     g_riusabile = !r->chiude && !e->troncata;
                     return 1;
                 }
             } else if (r->ha_lunghezza) {
-                if (e->byte >= r->lunghezza) {
+                /* ! IL CONFRONTO E' SUL TOTALE, NON SU QUEL CHE C'E' NEL
+                 * BUFFER. Sono la stessa cosa finche' il buffer non si svuota
+                 * mai; con un verso registrato no, e guardare `e->byte`
+                 * vorrebbe dire non arrivare mai in fondo a un file lungo. */
+                if (g_usciti + e->byte >= r->lunghezza) {
+                    VERSA();
                     g_riusabile = !r->chiude && !e->troncata;
                     return 1;
                 }
@@ -1069,6 +1198,11 @@ int exhttp_scambio(ExHttpTrasporto *t, const HttpUrl *u,
             resto   = blocco;
             resto_n = (unsigned int)n;
         }
+
+        /* Uscita dalla porta di servizio: il server ha chiuso, e quel che
+         * resta nel buffer va consegnato lo stesso. */
+        VERSA();
+        #undef VERSA
     }
 
     return 1;

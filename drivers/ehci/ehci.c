@@ -79,7 +79,7 @@
 
 /* +0.001 a ogni modifica: `ehci.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ehci.drv", "0.001");
+EX_VERSIONE("ehci.drv", "0.002");
 
 /* --- Registri di capacita' (all'inizio della finestra) --------------------- */
 #define C_CAPLENGTH   0x00      /* byte 0 = lunghezza, byte 2-3 = versione */
@@ -139,6 +139,13 @@ static volatile unsigned char *g_op   = 0;
 static unsigned int g_dma_virt = 0, g_dma_fis = 0;
 static unsigned int g_porte = 0;
 static unsigned int g_verboso = 0;
+
+/* ! SI PARLA SOLO SE QUALCUNO HA INFILATO QUALCOSA. Stessa correzione, stesso
+ * giorno e stessa ragione di ohci.c, dove il perche' e' scritto per esteso: il
+ * ciclo di attesa riprovava una porta ogni volta che la vedeva sparire per un
+ * istante, e a farla sparire era il reset che facciamo noi. La console si
+ * riempiva di messaggi su una macchina dove nessuno aveva toccato niente. */
+static unsigned int g_rumore = 0;
 
 /* -avvio: lanciato da /boot/avvio.sh, dove una riga di lamentela per ogni
  * macchina che quel controller non ce l'ha e' rumore a ogni accensione. */
@@ -352,7 +359,8 @@ static int esegui(unsigned int qh_off, unsigned int primo, unsigned int ultimo,
         usleep(100);
     }
 
-    printf("ehci: trasferimento senza risposta (qTD ancora attivo)\n");
+    if (g_rumore)
+        printf("ehci: trasferimento senza risposta (qTD ancora attivo)\n");
     return -1;
 }
 
@@ -545,6 +553,7 @@ static int porta_prepara(unsigned int p)
      * poi cederlo sarebbe un reset inutile su un dispositivo di un altro
      * controller. */
     if ((v & P_LINEA) == 0x0400u) {
+        if (g_rumore)
         printf("ehci: porta %u: dispositivo low speed, la cedo al compagno\n",
                p + 1);
         porta_scrivi(p, v | P_PADRONE);
@@ -591,13 +600,15 @@ static int porta_prepara(unsigned int p)
      * porta non si e' abilitata, il dispositivo non e' suo. Si cede, e la
      * presa continua a funzionare con l'altro controller. */
     if (!(v & P_ABILITATA)) {
+        if (g_rumore)
         printf("ehci: porta %u: non e' alta velocita', la cedo al compagno\n",
                p + 1);
         porta_scrivi(p, v | P_PADRONE);
         return 0;
     }
 
-    printf("ehci: porta %u: dispositivo ad alta velocita'\n", p + 1);
+    if (g_rumore)
+        printf("ehci: porta %u: dispositivo ad alta velocita'\n", p + 1);
     return 1;
 }
 
@@ -627,7 +638,9 @@ static int conosci(void)
     for (giro = 0; giro < 3; giro++) {
         if (usb_desc_corto(controllo, 0, &g_dev)) break;
         if (giro == 2) {
-            printf("ehci: il dispositivo non risponde al primo descrittore\n");
+            if (g_rumore)
+                printf("ehci: il dispositivo non risponde al primo "
+                       "descrittore\n");
             return 0;
         }
         usleep(100000);
@@ -642,14 +655,14 @@ static int conosci(void)
      * dell'enumerazione parla a nessuno. */
     g_indirizzo = 1;
     if (controllo(0, 0x00, USB_REQ_SET_ADDR, g_indirizzo, 0, 0, 0, 0) != 0) {
-        printf("ehci: SET_ADDRESS rifiutata\n");
+        if (g_rumore) printf("ehci: SET_ADDRESS rifiutata\n");
         return 0;
     }
     usleep(10000);
     qh_indirizzo(OFF_QH_CTRL, g_indirizzo, 0, g_dev.maxp0);
 
     if (!usb_desc_lungo(controllo, g_indirizzo, &g_dev)) {
-        printf("ehci: descrittore di dispositivo non credibile\n");
+        if (g_rumore) printf("ehci: descrittore di dispositivo non credibile\n");
         return 0;
     }
 
@@ -789,30 +802,57 @@ static int cerca_ehci(unsigned int *bar)
  * sempre. Il segno si cancella quando quella porta torna vuota: cosi' la
  * stessa presa, staccata e riattaccata, viene riguardata.
  * ============================================================================= */
+/* ! E «TORNATA VUOTA» VUOL DIRE VUOTA PER TRE SECONDI, non per un istante. Il
+ * perche' per esteso sta in ohci.c, sopra ASSENZE_PER_SCOLLEGATA: il segno si
+ * cancellava alla prima lettura che diceva «scollegata», e a produrne una era
+ * il reset che facciamo noi. Tre letture consecutive a un secondo l'una: uno
+ * scollegamento vero le supera tutte, un reset nostro no. */
+#define ASSENZE_PER_SCOLLEGATA 3
+
 static int aspetta_e_servi(const char *chi)
 {
     unsigned char provata[16];
+    unsigned char assenze[16];
+    unsigned char inserita[16];
     unsigned int  p;
     int           detto = 0;
 
-    for (p = 0; p < 16; p++) provata[p] = 0;
+    for (p = 0; p < 16; p++) {
+        provata[p]  = 0;
+        inserita[p] = 0;
+        assenze[p]  = 0;   /* una porta gia' piena non e' un inserimento */
+    }
 
     for (;;) {
         for (p = 0; p < g_porte && p < 16; p++) {
-            if (!porta_collegata(p)) { provata[p] = 0; continue; }
-            if (provata[p]) continue;
+            if (!porta_collegata(p)) {
+                if (assenze[p] < 255) assenze[p]++;
+                if (assenze[p] >= ASSENZE_PER_SCOLLEGATA) {
+                    provata[p]  = 0;
+                    inserita[p] = 0;
+                }
+                continue;
+            }
 
+            if (assenze[p] >= ASSENZE_PER_SCOLLEGATA) inserita[p] = 1;
+            assenze[p] = 0;
+
+            if (provata[p]) continue;
             provata[p] = 1;
+
+            g_rumore = inserita[p] || g_verboso;
 
             if (!porta_prepara(p)) continue;
             if (!conosci()) continue;
 
             if (massa_prepara()) return 0;  /* servita: di qui non si torna */
 
-            printf("%s: sulla porta %u non c'e' una memoria di massa.\n",
-                   chi, p + 1);
-            printf("      Questo driver serve solo quelle: per mouse e\n");
-            printf("      tastiere c'e' uhci/xhci.\n");
+            if (g_rumore) {
+                printf("%s: sulla porta %u non c'e' una memoria di massa.\n",
+                       chi, p + 1);
+                printf("      Questo driver serve solo quelle: per mouse e\n");
+                printf("      tastiere c'e' uhci/xhci.\n");
+            }
         }
 
         if (!detto) {

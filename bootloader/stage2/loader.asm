@@ -528,6 +528,18 @@ _start:
     mov  al, [svgamodo]
     or   al, al
     jz   .novesa                  ; 0 = modo testo: non si tocca niente
+
+    ; ! IL BIT 7 DICE «PREFERISCI 16 BPP», e non e' una preferenza estetica:
+    ; e' meta' dei byte da spostare a ogni scorrimento della console. Il
+    ; perche' per esteso sta piu' sotto, accanto alla scelta della
+    ; profondita'. I bit 0..1 restano la risoluzione, come sono sempre stati:
+    ; qui si toglie di mezzo il bit 7 prima di guardare la tabella, o un
+    ; 0x82 sembrerebbe «valore fuori tabella» e si finirebbe in testo.
+    mov  ah, al
+    and  ah, 0x80
+    mov  [want16], ah
+    and  al, 0x7F
+
     cmp  al, 3
     ja   .novesa                  ; valore fuori tabella: idem
 
@@ -619,6 +631,23 @@ _start:
     ; in la'. A 32 bpp un pixel e' una scrittura sola; a 16 va impacchettato
     ; in 5-6-5 e a 24 sono tre byte a cavallo delle parole. Meno codice nel
     ; kernel, e piu' veloce, sulla via che si percorre sempre.
+    ;
+    ; ! E QUELLA MISURA GUARDAVA META' DEL LAVORO, ed e' la correzione del 14
+    ; settembre 2026. «Un pixel e' una scrittura sola» conta il costo di
+    ; DISEGNARE un carattere, che si fa una volta per cella; la via che si
+    ; percorre davvero sempre e' lo SCORRIMENTO, che sposta lo schermo intero.
+    ;
+    ; A 800x600 sono 1,8 MB di memoria video per ogni riga scorsa — non cache,
+    ; sul bus, su una macchina del 2004. A 16 bpp sono 900 KB: meta'. E anche
+    ; disegnare costa meno, non di piu': due pixel adiacenti stanno in una
+    ; scrittura da 32 bit, e impacchettarli e' uno spostamento e un or fra
+    ; registri, contro una scrittura in memoria video che vale cento volte.
+    ;
+    ; ! MA NON SI SCEGLIE QUI PER TUTTI. Su una macchina veloce 32 bpp e' piu'
+    ; fedele — 5-6-5 butta i bit bassi di ogni componente — e la lentezza non
+    ; si sente. Chi ce l'ha lenta lo sa, e adesso puo' dirlo:
+    ; `svga.drv 800x600 -16` accende il bit 7 del byte di modo. Il
+    ; predefinito non cambia.
     mov  al, [es:0x19]            ; BitsPerPixel
     mov  ah, [fbbpp]              ; il migliore trovato finora (0 = nessuno)
     cmp  al, 32
@@ -628,8 +657,20 @@ _start:
     cmp  al, 16
     jne  .mloop
 .cand:
+    cmp  byte [want16], 0
+    je   .piubit                  ; predefinito: piu' bit = meglio
+
+    ; Con -16: si vuole il PIU' PICCOLO fra quelli buoni, e 16 e' il minimo
+    ; che la console sa disegnare. Il primo 16 trovato e' quello giusto.
+    cmp  al, 16
+    jne  .mloop                   ; qualunque altra profondita' non interessa
+    cmp  ah, 0
+    jne  .mloop                   ; ne abbiamo gia' uno: basta
+    jmp  .prendi
+.piubit:
     cmp  al, ah                   ; piu' bit = meglio
     jbe  .mloop
+.prendi:
     mov  [fbbpp], al
     mov  eax, [es:0x28]           ; PhysBasePtr
     mov  [fbaddr], eax
@@ -641,6 +682,8 @@ _start:
     mov  [fbh], ax
     mov  ax, [mcur]
     mov  [mbest], ax
+    cmp  byte [want16], 0
+    jne  .fine_lista              ; con -16 il primo 16 trovato e' quello
     cmp  byte [fbbpp], 32
     jne  .mloop                   ; meglio di 32 non c'e': si smette di cercare
 
@@ -1136,6 +1179,7 @@ unreal_es:
 ; sapere DOVE scrivere. Un offset fisso dentro il binario cambierebbe a
 ; ogni riga aggiunta qui sopra, e il comando finirebbe a scrivere in mezzo
 ; al codice — su un file che serve ad avviare la macchina.
+want16   db 0                 ; bit 7 del byte di modo: preferisci 16 bpp
 svgamagic db 'SVGAMODE'
 ; ! IL PREDEFINITO RESTA 0 = TESTO, e si sceglie a costruzione con
 ; `make SVGA=800x600`. Cambiare il predefinito vorrebbe dire che chiunque

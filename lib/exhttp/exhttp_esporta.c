@@ -49,6 +49,10 @@ static const char *const g_nomi[] = {
     "exhttp_attesa",
     "exhttp_passo",
 
+    /* Aggiunta il 15 settembre 2026: il verso, cioe' dove va il corpo quando
+     * non ci sta in memoria. Serviva a scaricare cc1plus, 37 MB. */
+    "exhttp_verso",
+
     "__lib_avvio"
 };
 
@@ -62,6 +66,8 @@ static void *const g_indirizzi[] = {
     (void *)exhttp_biscotti,
     (void *)exhttp_attesa,
     (void *)exhttp_passo,
+
+    (void *)exhttp_verso,
 
     (void *)__libc_ponti_avvia
 };

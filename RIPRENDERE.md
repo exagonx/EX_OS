@@ -26,7 +26,765 @@ manca» apre quello.
 
 ---
 
-# DOVE RIPRENDERE — 8 settembre 2026
+# DOVE RIPRENDERE — 14 settembre 2026
+
+## 14 settembre 2026, sera — LA COPIA DI MEZZO MENTIVA, E LA POST NON TORNAVA
+
+Quattro cose, e tre sono lo stesso tipo di guasto: qualcosa che aspetta per
+sempre senza produrre un errore.
+
+### CLOUDFLARE: «IL SERVER SI CONTRADDICE» NON ERA IL SERVER
+
+`exagonx/verifica.sh` accusava `file/boot/stage2.bin` di essere diverso da
+quel che `elenco.txt` dichiara. Ripubblicato una volta, poi una seconda con
+un'opzione nuova (`pubblica.sh -file`, vedi sotto): identico errore, stessa
+impronta vecchia. Il file sul server era giusto dal primo colpo.
+
+A rispondere era Cloudflare, che sta davanti ad Altervista:
+
+    cf-cache-status: HIT
+    Age: 16685                        (quattro ore e mezza)
+    Cache-Control: max-age=2592000    (trenta giorni, li mette l'origine)
+
+Lo stesso URL con un parametro qualunque in coda tornava corretto subito.
+
+! **E' LA SPIEGAZIONE DEL «CATALOGO CHE NON HA L'IMPRONTA CHE versione.txt
+  DICHIARA»**, che era gia' costato un pomeriggio qualche giorno prima.
+  `versione.txt` e' piccolo e si carica per ultimo: esce dalla cache per
+  primo. Cosi' un catalogo appena pubblicato finisce confrontato con dei file
+  di ieri, e l'impronta non torna. Il repository non e' mai stato incoerente.
+
+Tre rimedi, e si tengono tutti e tre perche' agiscono in posti diversi:
+
+  - `exagonx/htaccess` dichiara `Cache-Control: no-cache, must-revalidate` per
+    tutta la radice del repository. Verificato dopo: `cf-cache-status: DYNAMIC`.
+  - `exagonx/verifica.sh` aggiunge `?n=<data><pid>` a ogni richiesta.
+  - `netupdate` (0.016) fa lo stesso in `url_componi()`, che e' il collo di
+    bottiglia di ogni suo URL. Il valore nasce una volta per esecuzione: dentro
+    una passata ogni file si scarica una volta sola, quindi non si perde
+    nessuna cache utile, e una passata nuova ne chiede sempre di freschi.
+
+Alla fine: **1608 uguali, 0 diversi, 0 mancanti**.
+
+### DUE COSE CHE LA PUBBLICAZIONE NON POTEVA VEDERE
+
+! **`pubblica.sh -file <perc>`**, nuova. Il confronto normale guarda
+  l'`elenco.txt` pubblicato, non i file veri: un file gia' dichiarato con
+  l'impronta giusta ma arrivato rotto la' sopra non verra' ricaricato mai
+  piu'. `verifica.sh` lo scopre, e adesso c'e' il modo di rimetterlo a posto.
+
+! **`report/` si ricarica sempre.** Le voci di `elenco.txt` coprono solo cio'
+  che sta sotto `file/`: gli script del punto di raccolta non comparivano da
+  nessuna parte, quindi «cambiati» non li vedeva mai cambiare e finivano sul
+  server solo con `-tutto`. Sono tre file piccoli.
+
+### I REFERTI SI POSSONO FINALMENTE LEGGERE
+
+`report/index.php` li riceveva e nessuno poteva guardarli: `Options -Indexes`,
+e il nome lo decide il server. Adesso c'e' `report/elenco.php` — elenco,
+lettura di uno, cancellazione — e `exagonx/referti.sh` che lo guida.
+
+! **LA CHIAVE DI LETTURA NON STA IN GIT, E NON PUO' STARCI.** Quel file
+  viaggia nel repository pubblico. La chiave sta accanto, in `chiave.txt`, che
+  arriva sul server per FTP da solo; `referti.sh` la genera, la carica e se la
+  ricorda in `exagonx/server.cnf` (ignorato da git, 600). Senza `chiave.txt`,
+  `elenco.php` risponde «non c'e' niente da vedere qui» a chiunque: il caso
+  predefinito di chi pubblica il repository senza aver mai pensato ai referti
+  e' una porta chiusa.
+
+! **ED E' UNA CHIAVE DIVERSA DA QUELLA DI `senderror`.** Quella sta dentro un
+  binario che si distribuisce: ferma chi passa, non chi guarda. Leggere i
+  referti vuol dire leggere MAC, hardware e guasti di chi li ha mandati.
+
+Provato contro il server vero (qui il php non c'e'): POST, elenco, lettura,
+cancellazione. **Referti presenti: zero** — ed e' cosi' che si e' scoperto che
+`senderror` non ne ha mai consegnato uno.
+
+### LA POST NON TORNAVA: vedi @DIF-POST in in_lavorazione.txt
+
+Due guasti sovrapposti in `lib/exhttp`: un ciclo di scrittura che ritenta per
+sempre quando lo stack accetta zero byte, e il corpo del POST che doveva stare
+in un buffer da dodici kilobyte insieme alle intestazioni. Corretti tutti e
+due; **non compilati** (vedi l'avvertenza in fondo).
+
+### LA PORTA 23 CHE ACCETTA E TACE: vedi @DIF-TELNETMUTO
+
+`telnetd` serve una sessione per volta, e sessione() poteva non uscire mai.
+Corretto con una guardia a orologio invece che a giri fermi (0.006).
+
+### telnetd IN AVVIO, SENZA APRIRE UNA PORTA A CHI NON L'HA CHIESTA
+
+`/boot/avvio.sh` contiene adesso `telnetd -auto &` su ogni macchina. Da sola
+quella riga non apre niente: `-auto` legge `/boot/telnetd.cfg` e guarda la
+chiave `avvio` — `no` (predefinito, anche a file assente) esce in silenzio,
+`login` chiede nome e password, `root` da' una shell da amministratore senza
+chiedere.
+
+! **L'INTERRUTTORE STA NEL .cfg E NON NELLO SCRIPT**, e la ragione e'
+  meccanica: `avvio.sh` lo RISCRIVE `hwconfig` con il driver della scheda che
+  c'e'. Una riga aggiunta a mano la' sparisce alla prima configurazione
+  dell'hardware — e sparisce in silenzio. E' lo stesso guasto che aveva gia'
+  fatto sparire `telnetd -s &` dall'autoexec, e che aveva fatto cercare il
+  difetto dentro telnetd.
+
+Di conseguenza `boot/avvio.sh` entra nell'elenco dei file di configurazione di
+`netupdate` (0.017): il server ne pubblica la copia del CD, che nomina i
+driver del CD, e copiarla sopra vuol dire spegnere la rete di chi aggiorna.
+
+! **E `da = 10.0.0.0/24` E' STATO COMMENTATO** in `telnetd.cfg`. Quella rete e'
+  quella che QEMU da' alla macchina virtuale: su un computer vero l'indirizzo
+  arriva dal router di casa ed e' quasi sempre `192.168.qualcosa`, cosi'
+  telnetd rifiutava in silenzio ogni connessione. Una porta che non si apre mai
+  non e' piu' sicura di una filtrata: e' solo piu' difficile da capire.
+
+### ! QUEL CHE NON E' STATO COSTRUITO
+
+A meta' di questa giornata l'ambiente ha smesso di concedere `make` alla
+sessione. Sono compilati, verificati, messi sull'ISO e PUBBLICATI: `netupdate`
+0.017, `telnetd` 0.006, `hwconfig` 0.002, `boot/avvio.sh`, `boot/telnetd.cfg`,
+`report/elenco.php`.
+
+**NON sono compilati:** `lib/exhttp/http.c`, `lib/exhttp/http.h` e
+`lib/exhttp/exhttp.c` — cioe' tutto @DIF-POST. Scritti e riletti, mai passati
+sotto il compilatore. Il primo comando della prossima sessione e':
+
+    make exhttp_so && make iso-exos && make netinst && exagonx/pubblica.sh
+
+---
+
+## 14 settembre 2026 — LA RETE DELL'ACER VA (@0900: SiS 900 rev 91)
+
+La scheda di rete dell'Acer Aspire 3000 trasmetteva e non riceveva, e
+`dhcp` non prendeva mai un indirizzo. Sono venuti fuori CINQUE difetti, uno
+dietro l'altro: ognuno nascondeva il successivo, e nessuno dei cinque
+produceva un errore — producevano tutti silenzio.
+
+! **LA LEZIONE STA NEL METODO, NON NEI CINQUE DIFETTI.** Questa scheda QEMU
+  non la emula: l'unico posto dove gira e' un portatile in un'altra stanza,
+  senza rete (la rete e' quel che non va) e senza un modo di copiare uno
+  schermo. Ogni domanda costava un viaggio. Finche' si e' guardato a schermo
+  un numero alla volta si e' girato in tondo; da quando `-debug` ha
+  cominciato a scrivere TUTTO in un file, ogni viaggio ha chiuso un difetto.
+
+### IL PRIMO: D_OWN ERA ROVESCIATO IN RICEZIONE
+
+Il bit 31 del descrittore non vuol dire «e' della scheda». Vuol dire IL
+BUFFER CONTIENE DATI BUONI, e lo accende chi quei dati ce li ha messi: in
+trasmissione noi, in RICEZIONE LEI. L'anello partiva con D_OWN acceso su
+tutti e otto, cioe' alla scheda risultava gia' pieno di roba non letta: non
+aveva un posto dove scrivere. E `svuota_rx` usciva al primo giro ogni volta.
+
+In Linux `sis900_init_rx_ring` scrive `cmdsts = RX_BUF_SIZE` senza OWN, e
+`sis900_rx` cicla `while (rx_status & OWN)`.
+
+### IL SECONDO: LA RAFFICA DMA DA 512 CON EDB ACCESO
+
+Corretto il primo, la scheda continuava a non fare niente. Il referto ha
+mostrato che il bus master era acceso e che la scheda non era MAI stata
+respinta — nessun master abort, nessun target abort in seicentosettantasei
+traboccamenti. Non veniva respinta: **non ci provava**.
+
+Il bit 13 di CFG, EDB_MASTER_EN, era acceso, e in quel modo la raffica DMA
+DEVE essere da 64 byte. Linux non ne fa una questione di prestazioni, ci
+mette un `if` su quel bit. Noi chiedevamo 512, sempre.
+
+! **IL COMMENTO CHE SBAGLIAVA DICEVA UNA COSA VERA.** «0 vuol dire 512 byte,
+  il massimo: su un portatile del 2004 il bus non e' conteso da nessun
+  altro». Il ragionamento sulla contesa era giusto e la conclusione
+  sbagliata, perche' la raffica qui non e' una scelta di prestazioni: e' un
+  vincolo del chip. E il numero non e' una dimensione, e' un CODICE — 0 vuol
+  dire 512 e 5 vuol dire 64 — quindi «alzarlo per andare piu' forte» vuol
+  dire chiedere 512.
+
+### IL TERZO: IL MOTORE DI RICEZIONE SI FERMA DA SOLO
+
+Con il DMA funzionante, il referto dopo diceva `CR 0x00000000` — RX SPENTO —
+dopo che la scheda aveva riempito otto descrittori. Nessuno l'aveva spento.
+Il motore RX della SiS va in stallo quando finisce i descrittori o incontra
+un errore, e **restarci e' definitivo**: otto pacchetti nel primo giro, poi
+millesettanta traboccamenti a motore spento.
+
+Linux chiude `sis900_rx()` proprio con questo, e il commento dice perche':
+
+    /* re-enable the potentially idle receive state matchine */
+    sw32(cr, RxENA | sr32(cr));
+
+! **E SI SCRIVE IN OR.** Gli altri bit di CR sono lo stato dei motori:
+  riscrivere il registro intero col solo RxENA spegnerebbe la trasmissione a
+  ogni pacchetto ricevuto. Per la stessa ragione anche `trasmetti()` accende
+  in OR.
+
+### IL QUARTO: SI CERCAVA «E' BUONO» INVECE DI «E' ROTTO»
+
+! **E QUESTO NON E' PROVATO CHE FERMASSE QUALCOSA.** Va detto, perche' i
+  difetti bloccanti erano quattro e questo e' il quinto per numerazione, non
+  per prova. Nel referto S5 — quello a rete funzionante — un frame ricevuto
+  bene ha `cmdsts 0x9900005b`, e li' dentro D_OK E' ACCESO: su questo chip
+  quel bit in ricezione viene compilato, quindi il controllo vecchio avrebbe
+  lasciato passare quel pacchetto. Resta una correzione giusta — e' la
+  domanda che fa Linux, ed e' quella sicura — ma contarla fra le cause
+  sarebbe scrivere una prova che non c'e'.
+
+Il driver prendeva il pacchetto solo se trovava D_OK ACCESO. Linux fa il
+contrario: lo prende A MENO CHE non ci sia acceso uno dei bit di errore, e
+D_OK in ricezione non lo guarda affatto.
+
+! **SONO DUE DOMANDE DIVERSE A UN CHIP DI CUI NON ABBIAMO LE SPECIFICHE.**
+  «C'e' scritto che e' buono?» e «c'e' scritto che e' rotto?» danno la stessa
+  risposta solo se il chip compila sempre tutti e due i gruppi di bit, e
+  questo non lo sappiamo.
+
+! **E I BIT 24 E 23 NON SONO ERRORI, SONO IL DESTINATARIO**: 23 da solo vuol
+  dire «per noi», 24 multicast, tutti e due BROADCAST. Un DHCP arriva in
+  broadcast: metterli fra gli errori vorrebbe dire buttare proprio le
+  risposte che si stanno aspettando.
+
+### IL QUINTO: LA SCHEDA LEGGEVA CHE I BUFFER ERANO GRANDI ZERO
+
+Il contatore diceva «errori RX 8» e li' si fermava: un contatore dice QUANTI,
+non PERCHE'. Aggiunta la memoria degli ultimi otto `cmdsts` rifiutati —
+grezzi, otto parole di memoria — il referto dopo ha dato la risposta in una
+riga:
+
+    cmdsts 0xd0000000  len 0  err no
+    - nessun errore: lo ha buttato la LUNGHEZZA
+
+`OWN | MORE | INCCRC` con lunghezza ZERO, quattromilaotto volte, e tutti e
+otto i descrittori sempre pieni. MORE acceso con lunghezza zero vuol dire una
+cosa sola: il pacchetto non ci sta, continua nel prossimo. La scheda chiudeva
+ogni descrittore all'istante senza scriverci niente.
+
+Il driver dichiarava `BUF_LEN`, cioe' 2048 = 0x800, e **0x800 non ci sta**:
+il campo della dimensione su questo chip e' piu' stretto dei dodici bit che
+l'intestazione di Linux dichiara (`DSIZE 0x00000FFF`), quindi quel bit non
+entra e alla scheda arriva zero.
+
+! **NON ERA UN CASO ISOLATO, E LA PROVA ERA NELLO STESSO REFERTO.** `RXCFG`
+  aveva gia' troncato la soglia di svuotamento da 48 a 16 senza dire niente —
+  il registro rileggeva 0x20 invece dello 0x60 scritto. Le maschere di Linux
+  sono piu' larghe dei campi veri, e i valori che Linux usa stanno tutti
+  dentro: `RX_BUF_SIZE` vale 1536, e Linux non scrive mai 2048.
+
+Adesso i due numeri sono separati, perche' confonderli ERA il difetto:
+`BUF_LEN` 2048 e' quanto dista un buffer dal successivo in memoria,
+`RX_DICHIARATO` 1536 e' quel che si promette alla scheda.
+
+### E UNA COSA ERA GIUSTA PER SBAGLIO
+
+`TxDRNTH` vale 48 e `RxDRNTH` vale 16: sono due buffer diversi e due frazioni
+diverse. Noi scrivevamo 48 in tutti e due, e in ricezione la scheda troncava
+48 a 16 — il valore giusto, per caso. **Un valore corretto per sbaglio e' un
+valore che il prossimo cambio rompe senza dire niente**, quindi adesso e'
+scritto apposta.
+
+### LO STRUMENTO CHE HA CHIUSO IL LAVORO: `-debug`
+
+Scrive in un file tutto quel che la scheda sa dire — i registri con cosa vuol
+dire ogni bit, le trentadue righe del filo di gestione, i sedici descrittori,
+i contatori, e in fondo cosa ne segue. **Con il driver acceso lo scrive IL
+DRIVER**, che e' l'unico che puo' leggere la scheda senza far danni: il
+messaggio e' `NET_MSG_REFERTO` in `net_proto.h`, ed e' generico apposta.
+
+! **PRENDE TUTTO, NON LE TRE COSE CHE SEMBRANO UTILI ADESSO.** Un viaggio che
+  riporta venticinque numeri inutili e uno che serviva e' un viaggio
+  riuscito; uno che riporta i tre numeri giusti per la domanda di ieri e' un
+  viaggio da rifare.
+
+! **E UN'ETICHETTA SBAGLIATA IN UNO STRUMENTO DI DIAGNOSI E' PEGGIO DI UN
+  BUCO.** Il bit 5 del registro di stato PCI non e' «bus master capace», e'
+  «66 MHz capace»: nel registro di stato un bit che dica «sa fare il master»
+  NON ESISTE. Diceva NO su una scheda che il master lo sapeva fare
+  benissimo, e per un referto ha mandato a cercare nel posto sbagliato.
+
+### DUE TRAPPOLE INTORNO, COSTATE ANCH'ESSE
+
+! **`ioport_bind` NON E' ESCLUSIVA** (`sys_ioport_bind` in
+  `kernel/syscall/syscall_impl.c`): aggiunge una finestra al processo che
+  chiede e non guarda chi altro ce l'ha. Quindi `sis900.drv -l` con la rete
+  accesa faceva il reset della scheda sotto al driver che lavorava, e usciva
+  LASCIANDOLA ACCESA — RXDP puntato a una zona DMA appena restituita al
+  kernel, IER e IMR armati su un IRQ senza padrone. Adesso `-l` e `-phy` si
+  rifiutano di partire se il servizio c'e', e tutti i modi informativi
+  chiamano `spegni_scheda()` prima di uscire.
+
+! **IL DRIVER BUTTAVA VIA LA RISPOSTA DI pci.drv.** `cerca_su_pci()` mandava
+  `PCI_MSG_ABILITA` col bit di bus master, aspettava la risposta e non la
+  guardava — mentre `pci.drv` quel registro lo rilegge apposta dopo averlo
+  scritto, «perche' dire acceso quando il bit non si e' alzato manderebbe il
+  driver a cercare un guasto dove non c'e'». Era esattamente quel che stava
+  succedendo, e il commento che lo prevedeva era nel file da settembre.
+
+### E IL DISCHETTO PORTAVA IL DRIVER VECCHIO
+
+`make test-aa3k` aveva la propria lista di prerequisite, ferma a prima che la
+rete entrasse in `mksonda.sh`: `sis900.drv` non c'era dentro. Correggere il
+driver e rifare l'immagine dava un dischetto con la copia di tre giorni
+prima, e `make` diceva che era tutto aggiornato. **E il driver nuovo pesava
+31580 byte come quello vecchio**: nell'elenco del dischetto non si vedeva
+niente, ci e' voluto un `md5sum`.
+
+E' la quinta puntata della famiglia di difetti descritta sopra
+`$(FLOPPY_IMG)` nel Makefile, e si chiude come le altre: UNA lista sola
+(`SONDA_CONTENUTO`) per tutte e due le regole che chiamano `mksonda.sh`, e
+`verifica-dipendenze-sonda` che gli elenchi li legge DENTRO il copione invece
+di tenerne una copia. In piu' `make test-aa3k` stampa l'md5 del `sis900.drv`
+che ha messo sul dischetto accanto a quello appena costruito.
+
+### COM'E' FINITA, IN NUMERI
+
+Il referto S5, preso a rete funzionante:
+
+    ricevuti 1549    errori RX 0    traboccati 0
+    inviati    30    errori TX 0
+
+    RX  0..4,6,7  cmdsts 0x00000600  = 1536 dichiarati, pronti
+    RX  5         cmdsts 0x9900005b  = OWN|INCCRC|OK|MCAST, 91 byte
+    RXDP 0x003df050
+
+Sette descrittori che dichiarano 1536 e uno con dentro un frame multicast
+ricevuto bene, e RXDP che cammina nell'anello insieme a noi. Zero errori e
+zero traboccamenti dove prima ce n'erano quattromila.
+
+! **UN NUMERO DA TENERE D'OCCHIO**: `persi in coda 2`. La coda interna del
+  driver e' da sedici frame, e due volte si e' riempita prima che ip.drv la
+  svuotasse. Su millecinquecentoquarantanove ricevuti non e' un guasto, ma e'
+  il contatore che salirebbe se un giorno la rete andasse a scatti.
+
+### E POI IL DISCHETTO CHE SI FA GUIDARE DALLA RETE — `make test-aa3k-remoto`
+
+Con la rete che va, la macchina non ha piu' bisogno di stare in questa stanza.
+Il dischetto nuovo avvia tutto, chiede l'indirizzo col DHCP e apre una shell
+**telnet senza password**: da qui `telnet QUELL-INDIRIZZO` e si e' dentro.
+
+! **E' UN BERSAGLIO A PARTE, NON UN'AGGIUNTA A dist/sonda.img.** Chi arriva
+  sulla porta 23 si trova un `/bin/sh` da amministratore. Su una rete di casa,
+  per provare i driver di una macchina in un'altra stanza, e' esattamente quel
+  che serve; su qualunque altra rete e' una porta aperta. Il dischetto della
+  sonda `telnetd` ce l'ha a bordo e non lo avvia nessuno.
+
+Ci sono anche `fdisk`, `mkfs` e `install`: un'installazione si puo' guidare da
+un'altra stanza. E ne2k, pcnet ed e1000 accanto a sis900 — non solo per coprire
+piu' macchine, ma perche' **cosi' il dischetto si prova in QEMU prima di
+portarlo**: quelle tre QEMU le emula, e tutta la catena (netdetect, DHCP, la
+shell remota, gli attrezzi del disco) si verifica qui.
+
+### E IL DISCHETTO DI PROVA NON AVEVA IL VOLUME IN RAM
+
+Il primo avvio del dischetto remoto ha risposto:
+
+    exec: comando non trovato: automount
+    exec: comando non trovato: netdetect
+
+Esattamente i due programmi del dischetto con NOVE lettere. Su FAT diventano
+`AUTOMO~1` e `NETDET~1`, e **`fat12.c` i nomi lunghi non li legge affatto** —
+`fat.c`, che serve il volume in RAM, si'. Tutto il resto sta in 8.3 e
+funzionava, quindi sembrava un guasto di quei due programmi invece che
+dell'avvio.
+
+! **LA CAUSA ERA NEL Makefile, E VALE PER OGNI BERSAGLIO FINTO.** `test-aa3k`
+  chiama un sub-make con `RAMDISCO=1 kernel $(SONDA_CONTENUTO)`, e **stage2 non
+  era in quella lista**: quel che non c'e' non si ricostruisce. Il dischetto
+  usciva con lo stage2 dell'ultima make qualunque — se era una `make floppy`,
+  cioe' RAMDISCO=0, il volume in RAM non veniva creato e la radice finiva su
+  fat12.c.
+
+  `$(SONDA_IMG)` non ne era toccato, perche' li' stage1 e stage2 erano elencati
+  fra le prerequisite del FILE. E' la differenza fra un bersaglio che dice a
+  make cosa gli serve e uno che passa una lista a mano: la seconda invecchia in
+  silenzio, come la lista di `mksonda.sh` aveva gia' fatto con sis900.drv.
+
+! **E IL SINTOMO NON NOMINAVA LA CAUSA**: «comando non trovato» a due
+  programmi su venti. Fra il nome lungo, il filesystem e il bersaglio del
+  Makefile ci sono tre passaggi, e nessuno dei tre lo diceva.
+
+### DUE DIFETTI TROVATI GUIDANDO L'ACER DA QUI
+
+Il dischetto remoto ha funzionato al primo colpo: ping, telnet, `ipcfg` che
+dice 192.168.0.23 e il MAC della SiS 900. Poi si e' piantato, e i due difetti
+erano diversi da quel che sembrava.
+
+! **telnetd NON SI ACCORGEVA CHE IL CLIENT SE N'ERA ANDATO.** Il ciclo della
+  sessione usciva in tre casi: il figlio esce, il pty dice EOF, una
+  prenotazione torna con esito negativo. Ne mancava il piu' comune — chi chiude
+  il socket dall'altra parte non fa uscire la shell (quella aspetta un tasto) e
+  non produce nessun esito, perche' la prenotazione resta li'. Il ciclo girava
+  per sempre.
+
+  ! **E IL SINTOMO NOMINAVA IL COMANDO SBAGLIATO.** telnetd serve UNA SESSIONE
+    PER VOLTA: con la prima incastrata, le connessioni dopo le accetta lo stack
+    e non le serve nessuno. Da fuori si vede un socket che si apre e poi
+    silenzio. Siccome l'ultima cosa battuta era `disk`, sembrava che `disk`
+    avesse piantato la macchina sul ferro vero — e invece `disk` non c'entrava
+    niente: la macchina rispondeva al ping tutto il tempo.
+
+  Adesso il ciclo chiede `IP_MSG_TCP_STATO` ogni due secondi ed esce se la
+  connessione non e' piu' aperta. Provato in QEMU: tre sessioni di fila, tutte
+  servite.
+
+! **E I DRIVER USB PARLAVANO A VUOTO.** Il ciclo di attesa di ohci, ehci e uhci
+  cancella il segno «questa porta l'ho gia' provata» appena la vede
+  scollegata — e a farla sparire per un istante era IL RESET CHE FACCIAMO NOI,
+  il RH_PRS di `porta_prepara()`. Quindi si riarmava da solo: una porta con
+  attaccato qualcosa che non e' una memoria di massa, o niente del tutto,
+  veniva risondata ogni secondo stampando ogni volta le stesse tre righe.
+
+  Due correzioni insieme, e vanno insieme:
+
+    - «tornata vuota» adesso vuol dire vuota per TRE letture consecutive a un
+      secondo l'una. Uno scollegamento vero le supera tutte, un reset nostro no.
+    - i messaggi del sondaggio passano da `g_rumore`, che si accende solo
+      quando una porta passa da vuota a piena MENTRE STIAMO GUARDANDO: quello e'
+      qualcuno che ha infilato qualcosa, e sta aspettando una risposta. Una
+      porta gia' piena all'accensione si prova lo stesso — altrimenti una
+      chiavetta lasciata dentro non si troverebbe — ma in silenzio.
+
+  ! **IL SILENZIO NON E' COSMETICO**: una console che scorre da sola non si
+    legge, e questo dischetto serve a leggere quel che dicono gli ALTRI driver.
+    Un guasto che parla troppo ne nasconde uno che parla una volta sola.
+
+  Provato in QEMU con una chiavetta attaccata: `usb0` si trova ancora, 32 MB, e
+  il driver lo dice. Il silenzio riguarda i tentativi falliti, non i
+  ritrovamenti — che e' la differenza che conta.
+
+### E SOTTO I DUE DIFETTI CE N'ERA UN TERZO, NEL KERNEL: I PTY NON SI LIBERAVANO
+
+Corretto telnetd, la sessione si e' piantata di nuovo. Stavolta il registro
+della macchina lo diceva in chiaro:
+
+    telnetd: sessione aperta, /bin/sh ha il PID 24
+    telnetd: sessione chiusa
+    telnetd: qualcuno si e' collegato (connessione 6)
+    telnetd: niente pty libero
+
+`PTY_MAX` vale **4**, e ogni sessione ne consumava uno per sempre.
+
+! **LA CAUSA STA IN `proc_chiudi_fd`** (kernel/sched/sched.c). Rilascia
+  `FD_FILE`, `FD_PIPE_R` e `FD_PIPE_W`, e tutto il resto finisce nel
+  `default: continue;` con scritto accanto «stdin/stdout/stderr e i driver:
+  niente da fare». Per la console e' vero — non c'e' niente da rilasciare.
+
+  **Ma i tre descrittori di una shell dentro una sessione remota non sono la
+  console: sono un pty**, e un pty e' una risorsa contata. E il processo non
+  puo' chiuderli da se': `sys_close` rifiuta apposta i descrittori 0, 1 e 2. Se
+  non li rilascia chi lo smonta, non li rilascia nessuno.
+
+! **E IL SINTOMO NON NOMINAVA I PTY, NE' IL KERNEL.** La shell usciva con
+  codice 0, telnetd scriveva «sessione chiusa», tutto in ordine. Alla quinta
+  connessione la macchina cominciava ad accettare connessioni senza servirle, e
+  da fuori sembrava che la rete si fosse piantata. Tre strati — il client, il
+  demone, il kernel — e ognuno dei tre si comportava bene dal proprio punto di
+  vista.
+
+Aggiunte `FD_PTY_M` e `FD_PTY_S` a `proc_chiudi_fd`, con una
+`pty_chiudi_locked()` accanto a `pty_chiudi()`: quella funzione gira in sezione
+critica, quindi le serve `sched_unblock_locked`. E' la stessa ragione per cui
+le pipe hanno gia' le loro `_locked`, e il commento sopra `proc_chiudi_fd` la
+spiegava gia' — mancava solo di applicarla a un terzo tipo di descrittore.
+
+Provato in QEMU: **venti sessioni di fila**, dodici chiuse con `exit` e otto
+chiuse di colpo, tutte servite, zero «niente pty libero».
+
+! **E ANCHE IL CLIENT ERA MALEDUCATO**, che e' la parte piu' facile da non
+  vedere quando si guarda solo il codice della macchina. Chiudere il socket
+  senza uscire dalla shell lascia `/bin/sh` vivo ad aspettare un tasto. Adesso
+  manda `exit` prima di chiudere; le correzioni sopra fanno che non serva, ma
+  un client che chiude bene e' quello che si vuole comunque.
+
+### E UN `ls` HA FERMATO LA MACCHINA: UNA CATENA FAT CHE TORNA SU SE STESSA
+
+Con il controllo remoto finalmente stabile, il primo comando dato al disco
+dell'Acer e' stato `ls` sulla partizione FAT32 che c'era gia'. La macchina ha
+smesso di rispondere **anche al ping**: non la sessione, non la shell — tutto.
+
+! **`dir_prossimo_settore` CONTROLLAVA TRE COSE SU QUATTRO.** Cluster
+  danneggiato, fuori range, fine regolare: tutti e tre casi in cui la catena
+  SI FERMA. Una catena CICLICA non si ferma — ogni cluster e' valido, ogni
+  settore si legge, e la voce di fine directory non arriva mai. E non e' una
+  lettura che rende un errore: e' un ciclo dentro il kernel.
+
+! **NESSUN FILESYSTEM DEVE POTER FERMARE LA MACCHINA**, per malmesso che sia.
+  Un supporto che arriva da fuori — una chiavetta, il disco di qualcun altro,
+  una partizione lasciata da un altro sistema — non e' un dato fidato.
+
+! **E LA STESSA GUARDIA C'ERA GIA' NELLO STESSO FILE**, nella funzione che
+  misura una catena contigua: `if (++passi > m->n_cluster) return -1;` con
+  accanto scritto «catena ciclica». Mancava solo di applicarla alle directory.
+
+! **MA CONTARE I PASSI NON BASTAVA**, ed e' la parte che vale. La prima
+  versione della correzione faceva proprio cosi': corretta, e inutile in
+  pratica. Su cluster da 512 byte sono quattromila giri, ognuno con la sua
+  lettura, e `ls` avrebbe stampato sessantamila righe ripetute prima di
+  arrendersi. **Una macchina ferma due minuti che poi vomita spazzatura non e'
+  molto meglio di una ferma per sempre.**
+
+  Quindi la lepre e la tartaruga: `clus` avanza a ogni cluster, `lento` ogni
+  due. In una catena diritta non si incontrano mai; in una ciclica si
+  incontrano dopo un giro dell'anello, e per una catena che punta a se
+  stessa — il caso dell'Acer — al primo controllo. Costa una lettura della FAT
+  ogni due cluster e non serve ricordarsi dove si e' gia' passati.
+
+Provato costruendo il caso apposta: un FAT32 da 64 MB con venti file, la voce
+FAT del cluster di radice riscritta per puntare a se stessa, il tutto dentro
+una tabella delle partizioni. Prima: la macchina sparisce. Adesso: `ls` elenca
+le sedici voci del primo cluster, si ferma con
+
+    [ERROR] FAT: catena ciclica in una directory (cluster 2), mi fermo
+
+e il comando dopo risponde.
+
+! **E DURANTE QUELLA PROVA E' SALTATO FUORI CHE `mkfs.vfat` SU QUESTA MACCHINA
+  NON C'E'.** Era gia' stato usato — con `2>/dev/null` — per formattare la
+  finta chiavetta di una prova precedente: falliva in silenzio, e quella prova
+  girava su un'immagine di soli zeri senza che si vedesse. Le immagini di
+  prova si fanno con `mformat`, che c'e' davvero.
+
+### E ALLA FINE IL SISTEMA E' SUL DISCO, E SI GUIDA DALLA RETE
+
+L'Acer adesso parte da `hd0p1` — ext2, 57 GB, una partizione sola — accende la
+rete da solo e apre la shell remota. Da qui si raggiunge con `telnet`.
+
+Ci sono voluti tre difetti dell'installatore e uno del partizionatore, e
+nessuno dei quattro si vedeva dal codice: sono usciti tutti provando.
+
+! **`install` SCRIVEVA I FILE DI AVVIO NELLA DIRECTORY SBAGLIATA.** Compone
+  `<dest>/boot` in `p`, poi ci scrive sopra `<dest>/USB` per crearla, e da li'
+  in giu' `stage2.new` e `kernel.new` finivano in `/USB/`. `bootverify` li
+  cercava in `/boot/` e falliva con «i file nuovi non sono mappabili: non
+  trovato». Il messaggio accusava la FRAMMENTAZIONE e suggeriva di
+  riformattare, mentre i file erano interi e solo altrove: una variabile
+  riusata a tre righe di distanza. Ogni installazione su un volume nuovo si
+  fermava li'.
+
+! **E NON COPIAVA I DRIVER SE MANCAVA IL MANIFESTO.** La riga diceva
+  `if (g_ha_minimale) copia_dir_filtrata("/dev", ...)`: installando da un
+  supporto senza `/boot/minimale.txt` — il dischetto della sonda — il sistema
+  finiva sul disco SENZA UN SOLO DRIVER. E il primo a mancare e' la tastiera,
+  perche' kernel.cfg carica `[modules] kbd = /dev/kbd.drv`: la macchina si
+  avvia e non risponde a un tasto. Le righe di `/bin` e `/lib` accanto avevano
+  gia' la forma giusta — il manifesto FILTRA quando c'e' — e solo per `/dev`
+  si era trasformato in un se'.
+
+! **E LE PASSWORD BLOCCAVANO L'INSTALLAZIONE DA REMOTO.** Vanno lette senza
+  mostrarle, cosa che richiede una console vera: su un terminale remoto quella
+  lettura non torna e l'installazione resta li' con il sistema gia' copiato.
+  Aggiunto `-senza-conti`, e non e' un ripiego: chi installa da un'altra
+  stanza non deve digitare la password di chi usera' la macchina. I conti li
+  crea `login` al primo avvio, davanti alla tastiera.
+  Gia' che c'era, `install` adesso legge PIU' OPZIONI: prima ne accettava una
+  sola e `-t -senza-conti` rispondeva «opzione sconosciuta» nominando la
+  seconda, che era l'unica scritta bene.
+
+### E UN DISCO CON UN'ESTESA NON SI POTEVA SVUOTARE: `fdisk z`
+
+Il disco dell'Acer aveva tre partizioni, e la terza era un'ESTESA con dentro
+una logica. Non c'era modo di toglierla:
+
+    d  sull'estesa       si rifiuta finche' ci sono logiche
+    t                    si rifiuta per lo stesso motivo
+    le logiche           fdisk non le sa cancellare: non scrive EBR
+    formattarci sopra    il kernel non espone nemmeno l'estesa come
+                         dispositivo (c'e' hd0p5, hd0p3 no)
+
+! **OGNI RIFIUTO ERA SENSATO DA SOLO, E INSIEME FORMAVANO UN VICOLO CIECO.**
+  Chi arrivava li' con un disco da svuotare non aveva una via d'uscita.
+
+Il motivo del rifiuto sta scritto nel kernel ed e' «nessun messaggio direbbe
+all'utente che quei dati ci sono ancora». Quel motivo CADE se il messaggio
+c'e': da qui il comando `z` di `fdisk`, che mostra la tabella, dice che la
+catena di EBR resta orfana sul disco e fa scrivere `azzera` per esteso.
+
+! **E IL KERNEL CONCEDE L'ECCEZIONE SOLO ALLA TABELLA VUOTA.** Una proposta
+  che cancella l'estesa e intanto crea altro e' un ripartizionamento, e li' il
+  rifiuto vale ancora: quello si puo' fare per sbaglio. Una tabella senza
+  nessuna voce no. Da cui i DUE GIRI: prima si scrive il vuoto, poi si rientra
+  e si creano le nuove — e `fdisk` lo dice da solo quando vede delle logiche.
+
+### telnetd: TROVATO, ED ERA SCRITTO NELL'INTESTAZIONE DEL PROTOCOLLO
+
+Il difetto che ha reso inservibile il controllo remoto per tutta la giornata
+stava in `tcp_scrivi`, e `ip_proto.h` lo avvertiva sopra `IpEsito`:
+
+    ! `codice` PORTA ANCHE VALORI POSITIVI, non solo 0 o -errno: [...] per
+    IP_MSG_TCP_INVIA e' il numero di byte accettati (che puo' essere meno di
+    quelli offerti, se il buffer di trasmissione e' quasi pieno). Chi chiama
+    deve guardare il segno prima del valore.
+
+telnetd guardava SOLO il segno:
+
+    if (esito(4000) < 0) return -1;
+    d += q;  n -= q;          /* avanza di 512 qualunque cosa sia passata */
+
+! **FINCHE' L'USCITA E' CORTA IL BUFFER NON SI RIEMPIE MAI**, e il difetto non
+  si vede. Su un'uscita lunga — `mkfs`, `install` — si riempie, lo stack
+  accetta meno byte, e il resto si butta.
+
+! **E IL SINTOMO NON SEMBRAVA UNA PERDITA DI DATI.** Prima una riga troncata a
+  meta' parola; subito dopo piu' niente, perche' a buffer pieno ogni pezzo
+  veniva accettato per zero byte e scartato — e `tcp_scrivi` rendeva 0, cioe'
+  «fatto». La sessione non finiva, il comando girava fino in fondo e usciva
+  con codice 0, e siccome telnetd serve UNA SESSIONE PER VOLTA da li' in poi
+  la macchina accettava le connessioni senza servirle. Il sospetto cadeva
+  sulla rete, che era l'unica cosa a posto.
+
+Adesso si avanza di quel che e' stato preso davvero, e zero byte non e' un
+errore ma «riprova fra poco»: il buffer si svuota da solo mentre il client
+legge. Con una scadenza, pero' — un client che ha smesso di leggere non si
+distingue da uno lento se non dal tempo che passa.
+
+! **E LE TRE CORREZIONI DI PRIMA NON ERANO SBAGLIATE, ERANO INSUFFICIENTI**:
+  la connessione chiusa che nessuno notava, l'interrogazione che sotto carico
+  intasava la casella, i pty che non si liberavano. Ognuna toglieva un modo di
+  incastrarsi, e sotto ne restava un altro. La quarta e' quella che il
+  protocollo aveva scritto dall'inizio.
+
+### E UN LETTORE DI FLOPPY SULL'USB CHIUDE UNA STRADA CHE SEMBRAVA APERTA
+
+`dist/netinst.img` esiste per portare la rete su un sistema gia' installato:
+`mount fd0 /mnt` e `/mnt/netinst.sh`. Su questa macchina non funziona, e il
+perche' e' lo stesso per cui esiste il volume in RAM: **il BIOS quel lettore lo
+sa usare, il kernel no.** Dopo il modo protetto l'INT 13h non c'e' piu' e non
+c'e' nessun controller alle porte, quindi da un sistema avviato `fd0` non
+esiste. Il floppy della rete era inutilizzabile proprio dove serviva di piu'.
+
+La chiavetta invece si monta — i driver USB ci sono e `automount` la mette in
+/USB/DRIVE0 — quindi `make netinst-img` adesso produce anche
+**`dist/netinst-usb/`**, una cartella da trascinare su una chiavetta gia'
+formattata.
+
+! **UN ELENCO SOLO, DUE DESTINAZIONI.** Lo script si scrive una volta con un
+  segnaposto al posto della sorgente e si emette due volte, e i file si
+  elencano in un posto solo. Due copioni che dicono la stessa cosa sono due
+  copioni che divergono: e' la stessa regola per cui `mksonda.sh` e il
+  Makefile condividono `SONDA_CONTENUTO`.
+
+! **E NON E' UN'IMMAGINE, E' UNA CARTELLA.** Una chiavetta e' gia' formattata
+  e si scrive da qualunque sistema; dare un'immagine da riversare vorrebbe
+  dire chiedere a chi la usa di trovare il dispositivo giusto, cioe' il modo
+  in cui si formatta il disco sbagliato.
+
+Ci sono dentro anche `sis900.drv` — una macchina sola al mondo, ma e'
+esattamente la macchina per cui questo supporto esiste — e `telnetd`, che con
+la rete da installare non c'entra: c'entra con il poterla aggiornare. Su una
+macchina che si guida da un'altra stanza telnetd e' il pezzo attraverso cui
+passa tutto il resto, e se e' lui a essere vecchio non c'e' modo di
+sostituirlo se non portandocelo a mano.
+
+### E UN POSTO DOVE POSARE UN REFERTO — senderror e report/index.php
+
+! **PORTARE VIA UN FILE DA UNA MACCHINA DI PROVA E' LA PARTE DIFFICILE.**
+  `sis900.drv -debug` scrive duecento righe e fin li' e' facile; farle
+  arrivare a chi le deve leggere voleva dire una chiavetta e un viaggio. La
+  rete invece attraversa le stanze: un POST e venti righe di PHP.
+
+    senderror http://esempio.org/exos/netinst/report/ /SIS900.TXT
+
+`report/` viaggia dentro netinst per una ragione sola: e' lo stesso server, e
+chiedere di caricare due cose in due posti diversi vuol dire che una delle due
+prima o poi resta indietro.
+
+! **E' UN POSTO DOVE CHIUNQUE PUO' SCRIVERE, e non c'e' modo di renderlo
+  altrimenti.** La chiave dentro senderror sta in un binario che si
+  distribuisce: ferma uno scanner, non ferma una persona. Le difese vere sono
+  tetti — quanto grande, quanti in tutto, quanti al giorno per indirizzo — e
+  nessuno dei tre impedisce a qualcuno di riempire lo spazio: tutti e tre
+  fanno in modo che ci metta tanto e che si veda. Il nome del file lo decide
+  lo script e mai chi manda, e in `ricevuti/` un `.htaccess` spegne
+  l'esecuzione: seconda difesa, nel caso la prima avesse un buco.
+
+### E netinst.sh HA SPENTO LA RETE CHE DOVEVA SISTEMARE
+
+Prima prova della chiavetta sull'Acer: le copie riescono, e subito dopo la
+macchina sparisce — «No route to host», non risponde nemmeno al ping.
+
+Lo script finisce accendendo la rete: `pci.drv`, `netdetect -c`, `ip.drv`,
+`dhcp`. Per il FLOPPY e' giusto — arriva al punto 2 della strada scritta in
+cima al file, cioe' un sistema appena installato dove la rete non c'e' per
+costruzione. Ma **la chiavetta arriva su una macchina che la rete ce l'ha
+gia'**, e ripartire i driver sopra quelli che girano vuol dire due `pci.drv`,
+due `ip.drv` e due `netdetect` che si contendono la stessa scheda.
+
+! **UNO SCRIPT CHE ROMPE QUEL CHE E' APPENA RIUSCITO A SISTEMARE NON VA
+  BENE**, e la cosa peggiore e' che le copie erano andate: bastava riavviare,
+  ma da fuori sembrava che lo script avesse fallito.
+
+! **E NON SI PUO' CHIEDERE ALLO SCRIPT DI INDOVINARE.** La shell di EX-OS non
+  ha un `se`: «la rete e' gia' accesa?» non si risponde con una riga di comandi
+  in fila. Chi lo lancia lo sa; lo script glielo dice e si ferma li'.
+
+Adesso la coda e' diversa fra i due supporti — un segnaposto in piu' nello
+stesso script, come per la sorgente. Il floppy accende, la chiavetta dice di
+riavviare e AVVERTE di non accendere niente a mano.
+
+### E UN FTP IN MODO AUTOMATICO HA CORROTTO SETTANTATRE ESEGUIBILI SU CENTOSEI
+
+Il primo `netupdate` contro il server ha detto «catalogo.txt non ha l'impronta
+che versione.txt dichiara: il server si contraddice, non tocco niente». Aveva
+ragione, e la causa era altrove da dove sembrava.
+
+Riscaricando i file dal web e confrontandoli con l'elenco del server stesso:
+
+    bin/automount   18068 dichiarati,  18061 sul server     -7
+    bin/blkscan     13676 dichiarati,  13673 sul server     -3
+    bin/telnetd     22772 dichiarati,  22760 sul server    -12
+    bin/sh          42896 dichiarati,      0 sul server
+
+! **OGNI FILE PIU' CORTO DI UNA QUANTITA' DIVERSA**, ed e' la firma di un
+  trasferimento in modo ASCII: converte i byte 0x0D e ne toglie tanti quanti ne
+  conteneva il file. Qualcuno e' arrivato a zero.
+
+! **E IL MODO AUTOMATICO SCEGLIE ASCII PROPRIO PER I NOSTRI FILE.** Decide
+  guardando l'estensione, e i programmi di EX-OS non ce l'hanno: `sh`, `cp`,
+  `ls` sembrano testo a qualunque euristica. I `.drv` e le `.so` passano; tutto
+  `/bin` no. Un caricamento «a mano, tanto sono pochi file» li rompe tutti.
+
+! **E NESSUNO DA' UN ERRORE.** L'FTP dice che e' andato bene, il server serve i
+  file, il web risponde 200. L'unico rilevatore e' l'impronta — che e' il
+  motivo per cui `verifica.sh` esiste e riscarica dal web invece di fidarsi del
+  codice di uscita.
+
+La risposta e' che i file non si caricano a mano: `exagonx/repo-update.sh` fa
+tutto il giro — ricompila, ricompone, carica con `curl` (che in FTP e' binario
+di suo, senza opzioni da ricordare) SOLO cio' che e' cambiato, e alla fine
+riscarica e confronta. Con `-tutto` ricarica tutto, che e' quel che serve dopo
+un pasticcio come questo.
+
+### E LA PROCEDURA DI INSTALLAZIONE ADESSO E' SCRITTA — manuali/installazione/
+
+Sette capitoli con un indice: uno per supporto (floppy, CD, rete), uno per il
+dopo, uno per gli errori, uno per chi pubblica il repository.
+
+! **IL CAPITOLO DEGLI ERRORI E' QUELLO CHE VALE DI PIU'**, ed e' fatto solo di
+  cose successe davvero, con il sintomo scritto com'e' apparso: «comando non
+  trovato» per un file che c'e', l'estesa che non si cancella, «i file nuovi
+  non sono mappabili» che accusa la frammentazione mentre il guaio e'
+  un'altra cartella, i file corti di qualche byte sul server. Si cerca per
+  sintomo, perche' e' l'unica cosa che si ha in mano quando si cerca.
+
+! **E DICE COSA NON E' STATO PROVATO.** Il capitolo del CD-ROM viene dal codice
+  di `cdinstall` e non da un'installazione vista finire, e lo scrive in cima.
+  Un manuale che non distingue fra «verificato» e «dovrebbe funzionare» fa
+  perdere piu' tempo di uno che manca.
+
+I manuali viaggiano **col CD e col repository**: sono nel pacchetto `sistema` e
+finiscono in `/doc/manuali`. E' il posto dove servono — chi installa una
+macchina e' nel momento in cui il sito e' la cosa piu' lontana che ci sia. Nel
+Makefile e' una DIRECTORY e non un elenco di file, cosi' un capitolo aggiunto
+domani entra senza che nessuno debba ricordarsene: l'elenco che invecchia in
+silenzio e' lo stesso difetto pagato quattro volte altrove.
+
+### DOVE SONO I REFERTI
+
+In `sonda/`, con la data e la causa nel nome — servono a chi ripassera' di
+qui, perche' ognuno e' un viaggio gia' pagato:
+
+    S1-2026-09-14-bus-master.TXT            il PHY e' vero, il filtro e' a posto
+    S2-2026-09-14-raffica-dma.TXT           bus master acceso, nessun abort
+    S3-2026-09-14-motore-rx-fermo.TXT       il DMA va, il motore si ferma
+    S4-2026-09-14-buffer-dichiarato-zero.TXT  len 0 e MORE acceso
+    S5-2026-09-14-funziona.TXT              1549 ricevuti, zero errori
+
+---
+
 
 ## 8 settembre 2026 — I DRIVER DI RETE SI INSTALLANO ANCHE QUANDO NON SERVONO (@USB, punto 2)
 

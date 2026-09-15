@@ -46,6 +46,21 @@ dhcp
 
 echo Rete pronta: 'ipcfg' mostra la configurazione, 'ping' la prova.
 
+# La shell dalla rete, SE qualcuno l'ha chiesta.
+#
+# ! QUESTA RIGA NON APRE NIENTE DA SOLA, ed e' il motivo per cui puo' stare
+# qui su ogni macchina. Con -auto telnetd legge /boot/telnetd.cfg e guarda la
+# chiave `avvio`: se manca o dice «no» — il predefinito — esce senza stampare
+# una parola. Dice «login» e chiede nome e password; dice «root» e da' una
+# shell da amministratore a chiunque arrivi.
+#
+# ! E L'INTERRUTTORE STA NEL FILE E NON QUI PER UNA RAGIONE PRECISA: questo
+# script lo riscrive `hwconfig`, e una riga aggiunta a mano sparirebbe alla
+# prima configurazione dell'hardware. Il .cfg invece nessuno lo tocca.
+#
+# Si accende cosi', da root:   telnetd -h   spiega i valori.
+telnetd -auto &
+
 # Un'occhiata al server degli aggiornamenti. Non chiede niente, non installa
 # niente e NON STAMPA NIENTE se non c'e' niente da dire: fa qualcosa solo se
 # /boot/netupdate.cnf esiste e dice «automatico = si», e molla dopo cinque

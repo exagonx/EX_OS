@@ -117,7 +117,7 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @USB             resta la prova su una chiavetta VERA: e' hardware, non lavoro
   1  @USB-DISCO       le chiavette si montano: archiviazione USB in ring 3, 4 passi
  --  @RADICE-RAM      il volume in RAM: avviarsi dove il lettore sta sull'USB
-  1  @SIS            l'Acer e' identificato: SiS 760, 6330, 900, OHCI+EHCI
+  1  @SIS            l'Acer: video, USB e rete fatti; restano il 2D e il WiFi
   1  @VISTA           i legami sono tagliati: resta da passare quattordici variabili
   1  @SUONO-REG       la registrazione non c'e': nessun driver accende AUDIO_CAP_REGISTRA
   1  @SUONO-MIX       un client alla volta: il secondo che suona riceve -EBUSY
@@ -131,6 +131,8 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @NAVMETA         sette meta' che mancano a cose gia' fatte (una sezione sola)
   1  @DIF-TLS         resta una firma P-384 da 350 ms: rinuncia, non lavoro
   1  @DIF-TCPBUF      non era la finestra: era la coda del driver, otto posti
+  1  @DIF-POST        la POST non tornava: corretto, MAI COMPILATO NE' PROVATO
+  1  @DIF-TELNETMUTO  la porta 23 accetta e resta zitta: corretto, da provare
   1  @FILI-MAX        otto fili per processo: e' un numero, non un lavoro
   1  @EXIDE-TETTI     i tetti di exide, da sapere prima di sbatterci
   1  @EXIDE-LIBRERIE  il clic sulle righe di «Librerie» mai riprovato pixel per pixel
@@ -839,6 +841,149 @@ driver che dovra' parlarci.
 @SIS LA MACCHINA DELL'ACER, IDENTIFICATA (referto del 9 settembre 2026)
 =============================================================================
 
+#############################################################################
+# DOVE SI E' ARRIVATI — 11 settembre 2026, e da dove si riprende
+#############################################################################
+
+FATTI, e provati sul ferro:
+
+  1039:7001/7002  USB OHCI + EHCI    ohci.drv, ehci.drv
+  1039:5513       IDE                ata.c del kernel
+  1039:0002       ponte AGP          coperto da pci.drv
+  1039:6330       video              sis.drv: il testo torna A SCHERMO INTERO
+                                     dal modo grafico, senza BIOS. E' il
+                                     gradino 0 punto 4 di DIREZIONE.md,
+                                     chiuso l'11 settembre.
+
+FATTI, e mai provati sul ferro (QEMU non emula queste schede):
+
+  1039:7012       audio              ac97.drv esteso, due righe: SR e PICB
+                                     scambiati, PICB in byte. L'.inf del
+                                     costruttore installa la SiS con la
+                                     stessa sezione degli Intel, quindi si
+                                     guida come una ICH.
+  104c:ac50       CardBus            cardbus.drv nuovo. Il BIOS NON lo
+                                     configura: comando 0000, socket base 0,
+                                     bus 0. `-accendi` gli assegna tutto,
+                                     scegliendo l'indirizzo nel vuoto piu'
+                                     grande CHIUSO FRA DUE finestre note.
+
+APERTO, ed e' qui che si riprende:
+
+  ACER INSTALLATO  L'Acer parte da hd0p1 (ext2, 57 GB) e si guida dalla rete.
+  ---------------  Restano tre cose, e la prima e' la piu' seria.
+
+    ! telnetd: CHIUSO IL 14 SETTEMBRE 2026 — era il numero di byte accettati.
+      Restava da provarlo sull'Acer: in QEMU regge l'uscita di `mkfs` e di
+      `install`, che prima sparivano. Sulla macchina vera ci arriva con la
+      chiavetta (dist/netinst-usb) o con netupdate.
+
+    ! [STORICO] telnetd SI PIANTAVA SULLE USCITE LUNGHE.
+      Un comando che stampa molto — `mkfs`, `install` — parte, gira ed esce
+      con codice 0, ma la sua uscita non torna indietro e da quel momento la
+      sessione e' incastrata. telnetd serve UNA SESSIONE PER VOLTA, quindi da
+      li' la macchina accetta le connessioni senza servirle e da fuori sembra
+      che la rete sia caduta.
+
+      Corretto tre volte e mai chiuso:
+        1. non si accorgeva che il client se n'era andato -> adesso chiede
+           IP_MSG_TCP_STATO;
+        2. lo chiedeva ogni quattro giri, e sotto carico le risposte
+           intasavano la casella dei messaggi -> adesso solo A RIPOSO;
+        3. i pty non si liberavano quando il processo moriva (era nel
+           kernel, vedi proc_chiudi_fd) -> corretto.
+      Dopo le tre, in QEMU reggeva venti sessioni di fila. Sull'Acer si
+      pianta ancora su `mkfs` e `install`.
+
+      ! ADESSO SI PUO' STUDIARE SUL SERIO, ed e' il motivo per cui e' qui e
+        non fra le cose fatte: il sistema sta sul disco, non dipende piu' da
+        un floppy, e una sessione persa costa un riavvio da tastiera invece
+        che un viaggio. Il sospetto che resta e' il percorso pty -> TCP con
+        il buffer pieno: telnetd legge 512 byte per giro e fa un giro di IPC
+        per ognuno, e chi scrive intanto riempie il pty.
+
+    ! IL PING SMETTE DI RISPONDERE MENTRE IL TCP CONTINUA AD ACCETTARE.
+      Osservato piu' volte: `ping` muto e `connect()` sulla porta 23 che
+      riesce. Non e' la macchina morta — quella e' stata una mia conclusione
+      sbagliata, corretta da chi era davanti allo schermo. Vuol dire che lo
+      stack e' vivo per il TCP e non serve piu' l'ICMP, e sono due cose
+      diverse dentro ip.drv.
+
+    ! L'AUTOEXEC DEL SISTEMA INSTALLATO E' QUELLO DEL DISCHETTO, copiato di
+      peso perche' la sequenza di rete e' giusta. In cima pero' ha
+      `sonda.drv -auto`, che a ogni avvio scrive un referto dell'hardware:
+      rumore e qualche secondo, niente di rotto. Va tolto, e con lui le righe
+      di aiuto che parlano del dischetto.
+
+      ! E NON SI PUO' SCRIVERE UN FILE DA REMOTO, che e' il motivo per cui
+        e' ancora li'. `echo "..." > file` con le virgolette non si comporta
+        come ci si aspetta (provato: ne esce un nome storpiato), sul sistema
+        non c'e' un editor, e `scarica` vuole /exwin/lib/exhttp.so che sul
+        dischetto non c'era. Una delle tre va risolta, e la piu' utile e'
+        exhttp.so: con quella un file arriva dalla rete e si finisce li'.
+
+  14e4:4318  WiFi Broadcom: la cartella Broadcom del pacchetto Acer e' VUOTA,
+  ---------  e comunque servirebbe un firmware proprietario. Vedi @WIFI.
+
+  1039:7013  Modem: e' un softmodem. Il lavoro vero e' un DSP in software,
+  ---------  non un driver. Fuori portata, e detto per non riaprirlo.
+
+  TOUCHPAD Synaptics PS/2: `mouse` dice «la sorgente c'e' ma non risponde
+  ---------  nessun mouse», cioe' mouse_hw_init() in drivers/kbd/kbd.c ha
+             reso 0. Il 15 settembre 2026 quella funzione e' stata rifatta
+             (kbd.drv 0.002) su due punti:
+
+               - TRE TENTATIVI di reset invece di uno, con cento millisecondi
+                 in mezzo. Il sospetto era gia' scritto nel commento di main()
+                 — «un touchpad che risponde tardi» — e il codice non gli dava
+                 una seconda occasione: un solo 0xFF senza risposta e la
+                 seconda porta si spegneva fino al riavvio dopo. Un Synaptics
+                 in modo PS/2 sta dietro a un microcontrollore che al primo
+                 avvio ha ancora da finire le sue cose.
+
+               - LA RAGIONE SI STAMPA, sempre, anche quando va bene:
+                 «kbd: mouse PS/2: ...» dice a quale passo si e' fermato e con
+                 quale byte in mano. Prima rendeva 0 e basta, e «non risponde
+                 nessun mouse» vale per sei guasti diversi.
+
+             E i due bit della SECONDA porta nel configuration byte adesso si
+             rileggono: si scrivevano e non li guardava piu' nessuno, mentre i
+             tre della tastiera erano gia' verificati. Un mouse la cui porta
+             non e' mai stata accesa e un mouse che non c'e' danno lo stesso
+             identico silenzio.
+
+             ! NON COMPILATO NE' PROVATO (vedi @DIF-POST per il perche').
+               Se dopo `netupdate -check` e un riavvio la riga dice ancora che
+               non risponde, quella riga dice anche dove guardare.
+
+  MOTORE 2D della video: la finestra dei registri (BAR1, 0xe2100000) si
+  ---------  rilegge tutta ff anche dopo aver acceso SR1E bit 6. Provato con
+             sonda.drv -motore: mmio_map funziona (la prova di scrittura sul
+             framebuffer torna indietro identica), quindi l'apertura e'
+             spenta dalla scheda. Serve capire cosa la accende — il driver
+             Windows la mappa con VideoPortMapMemory, quindi si puo' guardare
+             li'.
+
+! GLI STRUMENTI NUOVI, che servono a tutto il resto:
+
+    tools/scava.py    legge un binario Windows o una ROM e dice cosa fa a un
+                      dispositivo: importazioni, porte, offset, tabelle. Sa
+                      anche incrociare una CARTELLA di driver con un referto
+                      e dire quale file serve a quale dispositivo.
+    mappa.drv         il ritratto di un dispositivo PCI, con le finestre
+                      misurate e letto piu' volte per separare i contatori
+                      dalle impostazioni.
+    sonda.drv -rom    salva la ROM del BIOS video, grezza, da scavare.
+    sis.drv -prova F  quattro varianti di ripristino video in un avvio, e
+                      scrive il referto da solo.
+
+! I DRIVER WINDOWS STANNO IN drv_prop/ E NON ENTRANO NEL REPOSITORY: c'e' una
+riga in .gitignore e un leggimi che spiega cosa si tiene (i fatti) e cosa no
+(il codice).
+
+#############################################################################
+
+
 ! IL REFERTO C'E', ed e' in sonda/acer_aspire_3000.TXT — generato dal
 dischetto della sonda sulla macchina vera, con la radice in RAM. Da qui in
 avanti non si indovina piu' niente: ogni numero qui sotto e' letto dal ferro.
@@ -1063,6 +1208,82 @@ QUEL CHE MANCA, IN ORDINE:
 =============================================================================
 @DIFETTI DIFETTI APERTI
 =============================================================================
+
+! @DIF-POST LA POST NON TORNAVA PIU', E LE RAGIONI ERANO DUE. (14 settembre 2026)
+
+  Il sintomo: `senderror` mandato a un punto di raccolta si piantava e con lui
+  la sessione telnet da cui era partito. Sul server non e' mai arrivato un
+  referto — si e' visto il 14 settembre, quando elenco.php ha finalmente
+  permesso di guardare dentro report/ricevuti/: zero file.
+
+  ! LA PRIMA RAGIONE E' UN CICLO SENZA USCITA, in tcp_scrivi() di
+    lib/exhttp/exhttp.c. Lo stack puo' accettare meno byte di quanti gliene si
+    danno, e il codice faceva la cosa giusta — aspetta venti millisecondi e
+    ritenta — senza mai arrendersi. Finche' la risposta e' «zero accettati»
+    (coda piena, finestra dell'altro capo chiusa, connessione morta in
+    silenzio) chi ha chiamato resta appeso e non esiste un errore da nessuna
+    parte.
+
+    ! ED E' RIMASTA NASCOSTA PERCHE' UNA GET NON LA INCONTRA MAI: duecento byte
+      di richiesta lo stack li prende sempre in un colpo. La prima cosa che ha
+      scritto qualche kilobyte e' stata una POST.
+
+    Corretto: settecentocinquanta giri senza un solo byte accettato — quindici
+    secondi — e si rende errore. Il contatore si azzera al primo byte che
+    passa, quindi una rete lenta non ci arriva.
+
+  ! LA SECONDA E' UNA MISURA, e sarebbe stato il muro dopo. http_richiesta_corpo()
+    appendeva il corpo dentro `req`, che in exhttp.c e' di dodici kilobyte. Un
+    referto dell'hardware sta fra i cinque e i ventotto kilobyte, e codificato
+    in percentuale cresce: SONDA7.TXT non ci sarebbe mai stato.
+
+    Corretto: http_richiesta_testa() (nuova, in lib/exhttp/http.c) scrive solo
+    le intestazioni con il Content-Length del corpo che verra'; il corpo lo
+    manda exhttp con una seconda t->scrivi(). http_richiesta_corpo() resta come
+    involucro per chi la chiama gia'.
+
+  ! NON E' STATO COMPILATO NE' PROVATO, E VA DETTO. Il 14 settembre 2026 la
+    sessione non ha piu' potuto lanciare `make` (l'ambiente ha smesso di
+    concederlo a meta' lavoro). Le modifiche a lib/exhttp sono scritte e
+    rilette, non costruite: e' l'unica cosa di quella giornata che non sia
+    passata sotto il compilatore. Prima di crederci:
+
+        make exhttp_so && make iso-exos && make netinst
+        exagonx/pubblica.sh
+
+    e poi, dalla macchina:  senderror <url>/report/ /SIS900.TXT
+    e da qui:               exagonx/referti.sh
+
+! @DIF-TELNETMUTO LA PORTA 23 ACCETTA E NON DICE UNA PAROLA. (14 settembre 2026)
+
+  Sull'Acer, dopo un comando che si era piantato dentro la sessione, la porta
+  23 ha continuato ad accettare connessioni TCP senza mandare nemmeno la
+  negoziazione telnet iniziale. Niente byte, in nessun verso, per sempre.
+
+  ! LA CAUSA E' CHE `telnetd` SERVE UNA SESSIONE PER VOLTA: se sessione() non
+    esce, la connessione dopo entra nella coda dello stack e li' resta. Dal di
+    fuori si vede un connect riuscito e il silenzio, che somiglia a una
+    macchina morta e invece non lo e'.
+
+  ! E SESSIONE() POTEVA NON USCIRE PIU'. Le vie d'uscita si appoggiavano tutte
+    a `fermi`, il contatore dei giri in cui la poll scade a vuoto: il
+    controllo «l'altro capo c'e' ancora?» partiva solo a fermi >= 4. Un ciclo
+    che per qualunque ragione non riposa mai — una poll che torna pronta e una
+    ricezione che non rende niente — tiene `fermi` a zero e non chiede piu'
+    niente a nessuno.
+
+    Corretto in due punti (telnetd 0.006):
+      - la domanda allo stack e' a OROLOGIO: ogni 2 s a riposo, e comunque ogni
+        15 s anche mentre i byte scorrono. Quindici secondi sono troppo pochi
+        per ingorgare la casella (era il guaio della correzione precedente) e
+        abbastanza per accorgersi di un ciclo impuntato.
+      - una casella pronta che non rende niente adesso conta come riposo,
+        invece di lasciare `fermi` inchiodato.
+
+  ! RESTA DA CAPIRE CHE COSA AVESSE PIANTATO QUELLA SESSIONE. Il candidato e'
+    @DIF-POST, che e' dello stesso pomeriggio: un `scarica` appeso dentro
+    tcp_scrivi() e' esattamente un figlio che non esce mai. Se dopo aver
+    corretto tutt'e due non succede piu', era quello.
 
 ! @DIF-TLS LA CATENA TENEVA FERMA LA FINESTRA QUASI UN SECONDO: MISURATA E SPEZZATA.
   La stretta di mano legge a pezzi come tutto il resto (diario: 3 settembre

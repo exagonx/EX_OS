@@ -1,0 +1,178 @@
+EX-OS - referto di sis900.drv
+=============================
+
+  Preso con `sis900.drv -debug`. Tutto quel che si puo' sapere in
+  un colpo solo: questa scheda QEMU non la emula, quindi ogni
+  domanda costa un viaggio alla macchina vera, e un referto che
+  risponde alla domanda di ieri e' un viaggio da rifare.
+
+== LA SCHEDA ==
+
+  modello      SiS 900 rev 91
+  PCI          00:04.0
+  revisione    91   (SiS96x: MAC dalla EEPROM in Linux)
+  porte        0x1800-0x18ff
+  IRQ          3
+  MAC          00:c0:9f:da:d9:58
+  MTU          1500
+  DMA          36864 byte, virtuale 0x08015000, fisico 0x00408000
+  anelli       8 RX, 8 TX, buffer da 2048 byte
+
+  comando PCI  0x0007   IO si, memoria si, BUS MASTER si
+
+  --- la configurazione PCI, riletta adesso ---
+
+  comando  0x0007   IO si, memoria si, BUS MASTER si
+  stato    0x0290
+      master abort ricevuto  no   (ha iniziato un ciclo e
+                                  non ha risposto nessuno)
+      target abort ricevuto  no   (ha risposto qualcuno, e
+                                  ha detto di no)
+      errore di parita' dati no
+      e' bus master capace   NO
+
+== I REGISTRI ==
+
+  CR    0x00000005   RX acceso, TX acceso
+  CFG   0x00002408   PESEL si, RND_CNT si
+  ISR   0x00000000   (letto = azzerato: questi bit il driver
+                     non li vedra' piu')
+        RXOK no  RXERR no  RXORN no
+        TXOK no  TXERR no  TXURN no
+  TXCFG 0xc0800130   soglia 48, full duplex si
+  RXCFG 0x10000030   soglia 48, accetta il proprio si
+  RFCR  0xe0000000   acceso si, broadcast si, multicast si, tutto no
+  FLCTRL 0x00000000
+  TXDP  0x00408100   (anello TX a 0x00408100)
+  RXDP  0x00408010   (anello RX a 0x00408000)
+
+== I TRE REGISTRI DEL FILTRO, RILETTI ==
+
+  Ci mette il MAC il BIOS all'accensione, e ce lo riscrive
+  inizializza_scheda(). Se qui non c'e' il MAC di sopra, il
+  filtro sta scartando anche cio' che era per noi.
+
+  parola 0    0xc000   -> 00:c0
+  parola 1    0xda9f   -> 9f:da
+  parola 2    0x58d9   -> d9:58
+
+== IL FILO DI GESTIONE (MDIO), TUTTI E TRENTADUE ==
+
+  ind   BMCR  BMSR  ID1   ID2   ANAR  ANLPAR
+    0   ffff  ffff  ffff  ffff  ffff  ffff
+    1   ffff  ffff  ffff  ffff  ffff  ffff
+    2   ffff  ffff  ffff  ffff  ffff  ffff
+    3   ffff  ffff  ffff  ffff  ffff  ffff
+    4   ffff  ffff  ffff  ffff  ffff  ffff
+    5   ffff  ffff  ffff  ffff  ffff  ffff
+    6   ffff  ffff  ffff  ffff  ffff  ffff
+    7   ffff  ffff  ffff  ffff  ffff  ffff
+    8   ffff  ffff  ffff  ffff  ffff  ffff
+    9   ffff  ffff  ffff  ffff  ffff  ffff
+   10   ffff  ffff  ffff  ffff  ffff  ffff
+   11   ffff  ffff  ffff  ffff  ffff  ffff
+   12   ffff  ffff  ffff  ffff  ffff  ffff
+   13   3100  786d  0000  8201  01e1  c5e1
+   14   ffff  ffff  ffff  ffff  ffff  ffff
+   15   ffff  ffff  ffff  ffff  ffff  ffff
+   16   ffff  ffff  ffff  ffff  ffff  ffff
+   17   ffff  ffff  ffff  ffff  ffff  ffff
+   18   ffff  ffff  ffff  ffff  ffff  ffff
+   19   ffff  ffff  ffff  ffff  ffff  ffff
+   20   ffff  ffff  ffff  ffff  ffff  ffff
+   21   ffff  ffff  ffff  ffff  ffff  ffff
+   22   ffff  ffff  ffff  ffff  ffff  ffff
+   23   ffff  ffff  ffff  ffff  ffff  ffff
+   24   ffff  ffff  ffff  ffff  ffff  ffff
+   25   ffff  ffff  ffff  ffff  ffff  ffff
+   26   ffff  ffff  ffff  ffff  ffff  ffff
+   27   ffff  ffff  ffff  ffff  ffff  ffff
+   28   ffff  ffff  ffff  ffff  ffff  ffff
+   29   ffff  ffff  ffff  ffff  ffff  ffff
+   30   ffff  ffff  ffff  ffff  ffff  ffff
+   31   ffff  ffff  ffff  ffff  ffff  ffff
+
+  Le righe che si distinguono sono i PHY veri.
+  ! SU UN PHY VERO IL BIT 0 DI BMSR VALE 1, cioe' la colonna
+    BMSR mostra un numero DISPARI. Se e' pari, la lettura e'
+    spostata e velocita' e duplex sono da buttare.
+
+  il driver ha scelto: PHY 13, 100 Mbit full duplex
+
+== GLI ANELLI ==
+
+  ! D_OWN (bit 31) NON VUOL DIRE LA STESSA COSA DALLE DUE PARTI:
+    vuol dire "il buffer contiene dati buoni". In TX lo accendiamo
+    noi, in RX lo accende LEI. Un anello RX con tutti i D_OWN
+    accesi e' un anello che alla scheda risulta pieno.
+
+  RX   n   link       cmdsts     bufptr     D_OWN  OK  lunghezza
+       0   0x00408010 0x00000800 0x00409000  no     no  2048
+       1   0x00408020 0x00000800 0x00409800  no     no  2048
+       2   0x00408030 0x00000800 0x0040a000  no     no  2048
+       3   0x00408040 0x00000800 0x0040a800  no     no  2048
+       4   0x00408050 0x00000800 0x0040b000  no     no  2048
+       5   0x00408060 0x00000800 0x0040b800  no     no  2048
+       6   0x00408070 0x00000800 0x0040c000  no     no  2048
+       7   0x00408000 0x00000800 0x0040c800  no     no  2048
+      prossimo che leggeremo: 1
+
+  TX   n   link       cmdsts     bufptr     D_OWN  OK  lunghezza
+       0   0x00408110 0x80000156 0x0040d000  SI     no  342
+       1   0x00408120 0x80000156 0x0040d800  SI     no  342
+       2   0x00408130 0x80000156 0x0040e000  SI     no  342
+       3   0x00408140 0x80000156 0x0040e800  SI     no  342
+       4   0x00408150 0x00000000 0x0040f000  no     no  0
+       5   0x00408160 0x00000000 0x0040f800  no     no  0
+       6   0x00408170 0x00000000 0x00410000  no     no  0
+       7   0x00408100 0x00000000 0x00410800  no     no  0
+      prossimo che useremo: 4
+
+  0 descrittori RX su 8 hanno dentro un pacchetto da leggere
+  4 descrittori TX su 8 sono ancora in mano alla scheda
+
+== I CONTATORI ==
+
+  inviati        4
+  ricevuti       0
+  errori TX      0
+  errori RX      1
+  troppo grandi  0
+  persi in coda  0
+  traboccati     676
+  interrupt      676
+  battiti        936
+  in coda adesso 0
+  chi aspetta    17
+
+== COSA NE SEGUE ==
+
+  IL BUS MASTER E' ACCESO MA LA SCHEDA NON LO USA.
+
+  4 descrittori TX sono stati consegnati e non sono mai
+  tornati indietro: quel bit lo spegne LEI quando ha finito, e
+  non l'ha spento. Non li ha nemmeno letti — se li avesse letti
+  e qualcosa fosse andato storto ci sarebbe TxERR in ISR.
+
+  E i 676 traboccamenti sono la stessa cosa vista da sopra:
+  i frame arrivano nella FIFO della scheda, lei non riesce a
+  versarli in memoria, la FIFO strabocca. Con l'anello RX
+  intatto e libero, come si vede qui sopra.
+
+  ! E IL REGISTRO DI STATO E' PULITO: nessun abort. La
+    scheda non e' stata respinta — NON CI HA PROVATO. I
+    cicli non partono proprio.
+
+    Da guardare, in quest'ordine:
+      1. CFG qui sopra: EDB_MASTER_EN e' il bit 13
+         (0x2000). Se e' spento, il motore DMA della
+         scheda e' fermo e il bus master del PCI non
+         basta: sono due interruttori in serie.
+      2. TXDP e RXDP: 0x00408100 e 0x00408010, e l'anello sta a
+         0x00408000. Se non combaciano, la scheda guarda
+         altrove.
+      3. il reset: TxRCMP e RxRCMP sono arrivati tutti e
+         due? Se il driver e' partito senza lamentarsi,
+         si'.
+
+-- fine del referto --

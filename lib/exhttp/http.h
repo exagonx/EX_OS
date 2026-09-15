@@ -118,6 +118,14 @@ int http_richiesta_corpo(char *out, unsigned int max, const HttpUrl *u,
                          const char *agente, const char *corpo, int vivo,
                          const char *biscotti);
 
+/* Solo la testa, con il Content-Length del corpo che verra' dopo: il corpo lo
+ * scrive chi chiama, con una seconda scrittura sul trasporto. E' cosi' che si
+ * manda qualcosa di piu' grande del buffer delle intestazioni.
+ * `corpo_len` < 0 vuol dire che non c'e' corpo, cioe' una GET. */
+int http_richiesta_testa(char *out, unsigned int max, const HttpUrl *u,
+                         const char *agente, long corpo_len, int vivo,
+                         const char *biscotti);
+
 typedef struct {
     int          codice;                    /* 200, 404, ... */
     int          ha_lunghezza;

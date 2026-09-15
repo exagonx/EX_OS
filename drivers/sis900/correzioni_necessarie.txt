@@ -1,0 +1,470 @@
+Sì, esattamente così. Hai già tutto il modello: `pci.drv` come servizio interrogabile via IPC, `dma_alloc` con i due indirizzi separati, `irq_done` per l'ack differito, `net_proto.h` condiviso con ne2k/pcnet. Quello che nel messaggio precedente descrivevo come "da fare", qui c'è.
+
+Quindi passo al codice. Ho confrontato con il driver Linux e ho trovato quattro cose, una delle quali spiega esattamente il sintomo che hai scritto nei commenti.
+
+## 1. Il bit OWN è invertito in ricezione (questo è il bug)
+
+Nel design NatSemi/SiS la semantica di OWN **non è simmetrica** fra TX e RX:
+
+- **TX**: lo metti tu a 1 per dare il descrittore alla scheda, la scheda lo azzera quando ha finito. Il tuo codice è giusto.
+- **RX**: lo azzeri tu per dare il descrittore alla scheda, **la scheda lo mette a 1** quando ci ha scritto dentro un pacchetto.
+
+Linux inizializza l'anello RX con `cmdsts = RX_BUF_SIZE` senza OWN, cicla con `while (rx_status & OWN)` e ricarica il descrittore riscrivendo `RX_BUF_SIZE` (cioè azzerando OWN).
+
+Il tuo `prepara_anelli` fa:
+
+```c
+d[1] = D_OWN | BUF_LEN;          /* pronto, e vuoto: e' della scheda */
+```
+
+e `svuota_rx` fa `if (stato & D_OWN) break;`. Risultato: tutti i descrittori RX partono con OWN a 1, `svuota_rx` esce al primo giro **sempre**, e non ricevi mai niente. È precisamente "escono e non torna niente" di `stampa_contatori`.
+
+Correzione, tre righe:
+
+```c
+/* prepara_anelli, RX */
+d[1] = BUF_LEN;                  /* OWN spento = e' della scheda */
+
+/* svuota_rx */
+if (!(stato & D_OWN)) break;     /* OWN spento = non ha ancora scritto */
+...
+d[1] = BUF_LEN;                  /* restituito alla scheda */
+```
+
+Il commento nel file va riscritto: su questa scheda D_OWN in RX vuol dire "la scheda ha finito", non "è della scheda".
+
+## 2. mii_leggi_reg: manca un colpo di clock
+
+Il turnaround MDIO è di **due** bit, tu ne consumi uno:
+
+```c
+(void)mii_legge(1);                               /* il giro */
+v = mii_legge(16);
+```
+
+Linux non legge il TA separatamente: pilota 16 bit di comando (`MIIread | phy<<7 | reg<<2`, dove i due bit bassi sono zeri che coprono il turnaround) e poi legge subito i 16 di dato. Tu piloti 14 bit e leggi 1, quindi campioni un bit-time troppo presto: quello che ti torna è `(dato_vero >> 1)` con uno zero in testa.
+
+Fix minimo: `mii_legge(2)` invece di `mii_legge(1)`.
+
+Verifica empirica: il bit 0 di BMSR (Extended Capability) vale 1 su ogni PHY reale. Se con `-phy` vedi BMSR con bit 0 a zero e un valore che assomiglia a un 0x78xx dimezzato, è questo. E spiega perché la velocità/duplex letti da ANLPAR possono essere sbagliati: con il duplex sbagliato la scheda conta come collisione ogni pacchetto ricevuto mentre trasmette, e i tuoi contatori lo direbbero.
+
+## 3. La revisione 0x91 non è il ramo che pensi
+
+Il tuo commento dice "dalla 0x82 in poi il MAC sta nel ponte sud". Linux ramifica così: rev 0x81 va sulla CMOS via ponte ISA, il ramo `sis635` copre **solo** l'intervallo maggiore di 0x81 e minore-uguale a 0x90, e c'è un ramo separato per SiS96x. `SIS96x_900_REV` è 0x91: la tua.
+
+Quel ramo legge il MAC **dalla EEPROM**, non dai registri del filtro, e deve arbitrare perché la EEPROM è condivisa con il controller 1394: si scrive EEREQ in `mear`, si aspetta EEGNT fino a 2000 microsecondi, si leggono tre word, si scrive EEDONE.
+
+Da qui segue la correzione al commento di testa del file, ed è importante perché ci hai costruito sopra un ragionamento: **0x08 è sia la EEPROM sia il PHY**. È lo stesso registro con due gruppi di bit, EECS/EECLK/EEDI/EEDO da una parte e MDC/MDDIR/MDIO dall'altra. In Linux sia `read_eeprom` che `mdio_read` scrivono su `mear`. Il nome MEAR della prima versione non era sbagliato, era incompleto.
+
+Il tuo percorso rfcr/rfdr può funzionare lo stesso se il BIOS ha lasciato il MAC lì, ma è un effetto collaterale, non il percorso previsto per questa revisione. Tieni `-mac` come rete di sicurezza e aggiungi il ramo EEPROM.
+
+## 4. Il reset non si verifica su CR
+
+Tu aspetti che il bit RESET si azzeri in `cr`. Linux guarda invece `isr` e aspetta che compaiano insieme TxRCMP e RxRCMP (senza HIBERR), e prima del reset azzera `rfcr`. Subito dopo, per le revisioni dalla 635A in su, scrive in `cfg` i bit PESEL e RND_CNT. La 0x91 rientra in quel caso e tu non lo fai: `cfg` resta come l'ha lasciato il BIOS.
+
+## Minori
+
+- `mii_trova` legge BMSR una volta sola. Il bit di link è latching-low e tu lo sai (lo scrivi in `guarda_il_phy`): leggilo due volte anche qui e in `mii_setaccia`, altrimenti la scansione può scartare un PHY vivo.
+- `svuota_rx`: `if (len >= NET_FRAME_MIN || len > 0)` è sempre vera quando `len > 0`. Serve piuttosto un tetto: `len <= BUF_LEN`, altrimenti un descrittore corrotto ti fa copiare fuori dal buffer dentro `accoda`.
+- `servi()` chiama `irq_done(g_irq)` anche dopo un normale `NET_MSG_INVIA`, quando nessun IRQ era stato mascherato. Se il kernel smaschera senza controllare, è innocuo; se tiene un conteggio, si sbilancia. Chiamalo solo sui due rami che rispondono a un interrupt o a un battito.
+
+Il primo punto è quello che sblocca la rete.
+
+Suggerimenti solo se effettivamente applicabili:
+Sì. Ho confrontato **il `sis900.c` che hai caricato** con il file `correzioni_necessarie.txt` e, soprattutto, con il driver SiS900 Linux storico. Il problema principale è abbastanza netto: **la ricezione RX è configurata con il bit `OWN` nel verso sbagliato**, quindi la scheda non viene mai lasciata realmente libera di riempire i descrittori. Nel tuo sorgente questo è alle righe relative a `prepara_anelli()` e `svuota_rx()`. 
+
+Inoltre, ho verificato che la semantica proposta nelle correzioni è coerente con il driver Linux: Linux inizializza infatti `cmdsts = RX_BUF_SIZE` senza `OWN`, e considera ricevuto il descrittore quando `OWN` viene impostato dalla scheda. ([Google Source][1])
+
+### 1. Correggi prima l'anello RX
+
+Nel tuo `prepara_anelli()` hai attualmente:
+
+```c
+d[1] = D_OWN | BUF_LEN;
+```
+
+Deve diventare:
+
+```c
+d[1] = BUF_LEN;
+```
+
+Poi in `svuota_rx()` hai:
+
+```c
+if (stato & D_OWN) break;
+```
+
+Deve diventare:
+
+```c
+if (!(stato & D_OWN)) break;
+```
+
+Infine, quando hai consumato il pacchetto:
+
+```c
+d[1] = D_OWN | BUF_LEN;
+```
+
+deve diventare:
+
+```c
+d[1] = BUF_LEN;
+```
+
+Quindi l'intera parte dovrebbe essere:
+
+```c
+static void prepara_anelli(void)
+{
+    unsigned int i;
+
+    for (i = 0; i < RX_N; i++) {
+        volatile unsigned int *d = desc(OFF_RX_DESC, i);
+
+        d[0] = g_dma_fis + OFF_RX_DESC + ((i + 1) % RX_N) * 16;
+        d[1] = BUF_LEN;                 /* RX: consegnato alla scheda */
+        d[2] = buffer_fisico(i);
+        d[3] = 0;
+    }
+
+    for (i = 0; i < TX_N; i++) {
+        volatile unsigned int *d = desc(OFF_TX_DESC, i);
+
+        d[0] = g_dma_fis + OFF_TX_DESC + ((i + 1) % TX_N) * 16;
+        d[1] = 0;
+        d[2] = buffer_fisico(RX_N + i);
+        d[3] = 0;
+    }
+
+    g_rx_prossimo = 0;
+    g_tx_prossimo = 0;
+}
+```
+
+E:
+
+```c
+static void svuota_rx(void)
+{
+    int giri;
+
+    for (giri = 0; giri < RX_N; giri++) {
+        volatile unsigned int *d = desc(OFF_RX_DESC, g_rx_prossimo);
+        unsigned int stato = d[1];
+        unsigned int len;
+
+        if (!(stato & D_OWN))
+            break;                      /* nessun pacchetto ancora */
+
+        len = stato & D_LUNGHEZZA;
+
+        if ((stato & D_OK) && len > 4) {
+            len -= 4;
+
+            if (len > 0 && len <= BUF_LEN) {
+                accoda(buffer_virt(g_rx_prossimo), len);
+                g_cont.ricevuti++;
+            } else {
+                g_cont.errori_rx++;
+            }
+        } else {
+            g_cont.errori_rx++;
+        }
+
+        d[1] = BUF_LEN;                 /* restituito alla scheda */
+        g_rx_prossimo = (g_rx_prossimo + 1) % RX_N;
+    }
+}
+```
+
+Questo è **il primo fix da fare**, perché con il codice attuale la tua `svuota_rx()` trova il primo descrittore con `D_OWN=1` e interpreta erroneamente quello stato come "la scheda lo sta ancora usando". In realtà, per RX su SiS900, quel bit indica che il descrittore contiene un frame completato. Il driver Linux usa proprio questa logica. ([Android Git Repositories][2])
+
+---
+
+### 2. Correggi il MDIO
+
+Nel tuo codice attuale:
+
+```c
+mii_manda(0x1800u | (phy << 5) | reg, 14);
+
+(void)mii_legge(1);
+v = mii_legge(16);
+(void)mii_legge(1);
+```
+
+La struttura del frame che hai implementato non è allineata a quella usata dal driver SiS.
+
+Il comando deve occupare **16 clock**, non 14 + un turnaround separato. Il Linux driver costruisce `MIIread | (phy << 5) | (reg << 0)` nella rappresentazione equivalente e trasmette tutti i 16 bit di comando, poi legge direttamente i 16 bit di dati. ([Google Source][1])
+
+Nel tuo schema attuale, dato che hai scelto di separare i bit di comando dal turnaround, la modifica minima indicata nel tuo documento è:
+
+```c
+mii_manda(0x1800u | (phy << 5) | reg, 14);
+
+(void)mii_legge(2);
+v = mii_legge(16);
+```
+
+quindi:
+
+```c
+static unsigned int mii_leggi_reg(unsigned int phy, unsigned int reg)
+{
+    unsigned int v;
+
+    mii_manda(0xFFFFFFFFu, 32);
+    mii_manda(1, 1);
+    mii_manda(0x1800u | (phy << 5) | reg, 14);
+
+    (void)mii_legge(2);       /* turnaround completo */
+    v = mii_legge(16);
+
+    reg_scrivi(SIS_MII, 0);
+    return v;
+}
+```
+
+Il tuo `correzioni_necessarie.txt` individua esattamente questo errore: stai consumando un solo clock del turnaround. 
+
+---
+
+### 3. La revisione `0x91`: qui devi correggere una cosa più importante
+
+Nel tuo `sis900.c` hai scritto esplicitamente che sulla revisione `0x91` il MAC viene preso dai registri del filtro. 
+
+Questa parte **non è corretta per una SiS96x/SiS900 revision 0x91**.
+
+Il driver Linux distingue:
+
+```c
+if (rev > 0x81 && rev <= 0x90)
+    sis635_get_mac_addr();
+
+else if (rev == SIS96x_900_REV)
+    sis96x_get_mac_addr();
+```
+
+e per `SIS96x_900_REV` usa la EEPROM condivisa con il controller 1394. ([Android Git Repositories][3])
+
+La sequenza è:
+
+```c
+MEAR = EEREQ;
+
+attendi EEGNT;
+
+leggi 3 word dalla EEPROM;
+
+MEAR = EEDONE;
+```
+
+Il codice Linux è esplicito su questo punto. ([Google Source][1])
+
+Quindi **non devi applicare la correzione "aggiungi semplicemente EEPROM" inventando i bit**: nel tuo sorgente manca proprio la definizione di `EECS`, `EECLK`, `EEDO`, `EEDI`, `EEREQ`, `EEGNT`, `EEDONE` e della routine di lettura EEPROM.
+
+I valori standard delle linee EEPROM/MII del SiS900 sono:
+
+```c
+#define EECS       0x00000008u
+#define EECLK      0x00000004u
+#define EEDO       0x00000002u
+#define EEDI       0x00000001u
+
+#define EEREQ      ...
+#define EEGNT      ...
+#define EEDONE     ...
+```
+
+mentre il registro `0x08` è effettivamente multiplexato: il Linux header identifica `mear = 0x08` e contiene sia i bit MDIO sia quelli EEPROM. ([CodeBrowser][4])
+
+**Questa è quindi una correzione da fare prima di considerare definitivo `leggi_mac()`.**
+
+---
+
+### 4. Anche il reset va corretto
+
+Il tuo codice attuale fa:
+
+```c
+reg_scrivi(SIS_CR, CR_RESET);
+
+for (i = 0; i < 1000; i++) {
+    if ((reg_leggi(SIS_CR) & CR_RESET) == 0)
+        break;
+    usleep(1000);
+}
+```
+
+Ma il driver SiS non aspetta che `CR_RESET` si cancelli.
+
+Fa:
+
+```c
+status = TxRCMP | RxRCMP;
+
+scrive:
+    RxRESET | TxRESET | RESET
+
+poi aspetta che:
+    ISR & TxRCMP
+    ISR & RxRCMP
+```
+
+e infine configura `CFG`.
+
+Questo è confermato sia dal driver Linux sia da iPXE/GRUB. ([Google Source][5])
+
+Aggiungi:
+
+```c
+#define IS_RXRCMP       0x01000000u
+#define IS_TXRCMP       0x02000000u
+```
+
+e fai il reset così:
+
+```c
+static int inizializza_scheda(void)
+{
+    unsigned int i, v;
+    unsigned int atteso = IS_TXRCMP | IS_RXRCMP;
+
+    reg_scrivi(SIS_IER, 0);
+    reg_scrivi(SIS_IMR, 0);
+    reg_scrivi(SIS_RXFILTCTRL, 0);
+
+    reg_scrivi(SIS_CR,
+               CR_RXRESET |
+               CR_TXRESET |
+               CR_RESET);
+
+    for (i = 0; i < 1000 && atteso != 0; i++) {
+        unsigned int isr = reg_leggi(SIS_ISR);
+        atteso &= ~isr;
+    }
+
+    if (atteso != 0) {
+        printf("sis900: reset non completato, ISR manca %08x\n",
+               atteso);
+        return -1;
+    }
+
+    /*
+     * Per revisioni >= SiS635A e per SiS900B:
+     * PESEL | RND_CNT
+     */
+    if (g_rev >= 0x?? /* valore SIS635A */ || g_rev == 0x??)
+        reg_scrivi(SIS_CFG, 0x00000008u | 0x00000400u);
+    else
+        reg_scrivi(SIS_CFG, 0x00000008u);
+
+    ...
+}
+```
+
+Però qui **non metterei ancora gli `??` nel codice finale**: bisogna definire correttamente le costanti di revisione che vuoi supportare. I valori dei bit sono `PESEL = 0x08` e `RND_CNT = 0x400`. ([CodeBrowser][4])
+
+Dato che la tua scheda è `rev 0x91`, comunque, sicuramente ricade nel gruppo per cui Linux applica `PESEL | RND_CNT`. ([Google Source][5])
+
+---
+
+### 5. Correggi anche questo piccolo errore RX
+
+Hai:
+
+```c
+if (len >= NET_FRAME_MIN || len > 0)
+```
+
+La seconda condizione rende inutile la prima: per qualsiasi `len > 0`, l'espressione è vera.
+
+Meglio:
+
+```c
+if (len > 0 && len <= BUF_LEN)
+```
+
+oppure, se vuoi validare anche la dimensione Ethernet:
+
+```c
+if (len >= NET_FRAME_MIN && len <= BUF_LEN)
+```
+
+Questo è particolarmente importante perché `len` arriva direttamente dal descrittore DMA. Il documento che hai allegato segnala correttamente questo problema. 
+
+---
+
+### 6. `irq_done()` non va chiamato sempre
+
+Nel tuo `servi()` attualmente fai:
+
+```c
+servi_scheda();
+irq_done(g_irq);
+consegna();
+```
+
+anche dopo `NET_MSG_INVIA`, `NET_MSG_RICEVI`, ecc. 
+
+È meglio separare:
+
+```c
+servi_scheda();
+consegna();
+```
+
+dal solo percorso IRQ:
+
+```c
+if (meta.sender_pid == IPC_SENDER_KERNEL &&
+    meta.tipo == IPC_TYPE_IRQ_NOTIFY) {
+
+    g_cont.notifiche_irq++;
+
+    servi_scheda();
+    irq_done(g_irq);
+    consegna();
+
+    continue;
+}
+```
+
+E nel timeout:
+
+```c
+if (r < 0) {
+    g_cont.battiti++;
+    servi_scheda();
+    consegna();
+    continue;
+}
+```
+
+Il tuo documento lo segnala come problema minore: il normale servizio di un messaggio non dovrebbe generare un "ack IRQ" che non corrisponde a un IRQ ricevuto. 
+
+---
+
+## Ordine in cui lo sistemerei
+
+Io procederei così, senza modificare dieci cose contemporaneamente:
+
+1. **RX `OWN`** — è il bug che impedisce materialmente la ricezione.
+2. **MDIO turnaround** — necessario per leggere correttamente BMSR/ANLPAR.
+3. **Reset via `ISR TxRCMP/RxRCMP` + `CFG`**.
+4. **MAC revision `0x91` → percorso EEPROM SiS96x**.
+5. Validazione `len`.
+6. `irq_done()` soltanto sul percorso IRQ.
+7. Solo dopo, testare DHCP.
+
+Il punto 1 è quello più immediatamente responsabile del tuo sintomo **"trasmette ma non riceve"**: il tuo `TX` invece usa correttamente `D_OWN` per consegnare il descrittore alla scheda, mentre il codice RX sta usando la stessa semantica al contrario. Il tuo stesso sorgente mostra questa differenza fra `trasmetti()` e `svuota_rx()`. 
+
+Se vuoi arrivare alla soluzione completa, **io non farei una serie di patch isolate**: conviene correggere direttamente `sis900.c` mantenendo la tua architettura EX-OS/IPC e sostituendo solo le parti hardware errate, così possiamo ottenere un `sis900.c` coerente dall'inizio alla fine.
+
+[1]: https://code.googlesource.com/linux/torvalds/linux/%2B/9f7853d7609d59172eecfc5e7ccf503bc1b690bd/drivers/net/ethernet/sis/sis900.c "drivers/net/ethernet/sis/sis900.c - linux/torvalds/linux - Git at Google"
+[2]: https://android.googlesource.com/kernel/msm/%2B/87eb367003887cdc81a5d183efea227b5b488961/drivers/net/sis900.c?utm_source=chatgpt.com "drivers/net/sis900.c - kernel/msm - Git at Google"
+[3]: https://android.googlesource.com/kernel/common/%2B/8630c59e99363c4b655788fd01134aef9bcd9264/drivers/net/ethernet/sis/sis900.c?utm_source=chatgpt.com "drivers/net/ethernet/sis/sis900.c - kernel/common - Git at Google"
+[4]: https://codebrowser.dev/linux/linux/drivers/net/ethernet/sis/sis900.h.html?utm_source=chatgpt.com "sis900.h source code [linux/drivers/net/ethernet/sis/sis900.h] - Codebrowser"
+[5]: https://code.googlesource.com/linux/torvalds/linux/%2B/9f7853d7609d59172eecfc5e7ccf503bc1b690bd/drivers/net/ethernet/sis/sis900.c?utm_source=chatgpt.com "drivers/net/ethernet/sis/sis900.c - linux/torvalds/linux - Git at Google"

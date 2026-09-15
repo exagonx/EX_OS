@@ -35,10 +35,44 @@ EX_VERSIONE("scarica", "0.003");
 
 /* ! IL TETTO LO METTE CHI SCARICA, NON IL SERVER. Un megabyte tiene qualunque
  * pagina di testo; se non basta si tronca e si dice, invece di far decidere a
- * chi sta dall'altra parte quanta memoria prendere qui. */
+ * chi sta dall'altra parte quanta memoria prendere qui.
+ *
+ * ! E VALE SOLO PER CIO' CHE FINISCE A SCHERMO, dal 15 settembre 2026. Con un
+ * file di destinazione questo buffer e' una finestra sul flusso: vedi
+ * verso_file() qui sotto. */
 #define BUF_MAX     (1024u * 1024u)
 
 static unsigned char g_buf[BUF_MAX];
+
+/* =============================================================================
+ * IL VERSO — quando si sa gia' dove va a finire, non serve tenerlo in mano
+ *
+ * ! IL DIFETTO ERA UN FILE MEZZO SALVATO. `scarica <url> <file>` accumulava
+ * tutto in g_buf e poi lo scriveva: oltre il megabyte usciva «TRONCATA: il
+ * buffer era piccolo» e sul disco restava meta' file, con un nome che diceva di
+ * essere quello giusto. Adesso ogni pezzo va sul disco appena arriva.
+ *
+ * ! IL FILE SI CANCELLA SE LA RICHIESTA NON FINISCE BENE. Meta' file con il
+ * nome giusto e' peggio di nessun file: il nome e' quello che si guarda.
+ * ========================================================================== */
+static int  g_fd      = -1;
+static long g_scritti = 0;
+static int  g_guaio   = 0;
+
+static int verso_file(void *dato, const unsigned char *d, unsigned int n)
+{
+    unsigned int fatti = 0;
+
+    (void)dato;
+    while (fatti < n) {
+        int k = (int)write(g_fd, d + fatti, n - fatti);
+
+        if (k <= 0) { g_guaio = 1; return 0; }
+        fatti += (unsigned int)k;
+    }
+    g_scritti += (long)n;
+    return 1;
+}
 
 /* =============================================================================
  * QUANTO COSTA OGNI PASSO DELLA STRETTA
@@ -130,15 +164,36 @@ int main(int argc, char **argv)
      * chi guardava, che e' il modo in cui una misura diventa un'opinione. */
     t0 = uptime_ms();
 
+    /* ! CON UNA DESTINAZIONE NON C'E' PIU' NESSUN TETTO. Fino al 15 settembre
+     * 2026 il corpo si accumulava tutto in g_buf, un megabyte, e quel che
+     * avanzava si perdeva: usciva «TRONCATA: il buffer era piccolo» e il file
+     * salvato era mezzo. Adesso, quando si sa gia' dove va a finire, ogni pezzo
+     * ci va appena arriva e il buffer torna a essere quel che deve essere —
+     * una finestra sul flusso, non il posto dove sta il file.
+     *
+     * ! SENZA DESTINAZIONE IL TETTO RESTA, ed e' giusto cosi': `scarica <url>`
+     * senza file stampa la pagina a schermo, e per stamparla bisogna averla. */
+    if (dove && !solo_info) {
+        g_fd = open(dove, O_WRONLY | O_CREAT | O_TRUNC);
+        if (g_fd < 0) { printf("scarica: non riesco a creare %s\n", dove); return 1; }
+        g_scritti = 0;
+        g_guaio   = 0;
+        exhttp_verso(verso_file, 0);
+    }
+
     if (!exhttp_prendi(url, g_buf, sizeof(g_buf), &e)) {
+        if (g_fd >= 0) { exhttp_verso(0, 0); close(g_fd); g_fd = -1; remove(dove); }
         printf("scarica: %s\n", e.errore[0] ? e.errore : "non riuscito");
         return 1;
     }
 
+    if (g_fd >= 0) exhttp_verso(0, 0);
+
     ms = uptime_ms() - t0;
 
     printf("scarica: %d, %s, %u byte in %u,%u s%s\n", e.codice,
-           e.tipo[0] ? e.tipo : "(nessun tipo)", e.byte,
+           e.tipo[0] ? e.tipo : "(nessun tipo)",
+           g_fd >= 0 ? (unsigned int)g_scritti : e.byte,
            ms / 1000u, (ms % 1000u) / 100u,
            e.troncata ? " (TRONCATA: il buffer era piccolo)" : "");
 
@@ -152,24 +207,17 @@ int main(int argc, char **argv)
     if (solo_info) return 0;
 
     if (dove) {
-        int fd = open(dove, O_WRONLY | O_CREAT | O_TRUNC);
-        unsigned int fatti = 0;
+        /* Il file e' stato scritto mentre arrivava: qui resta da chiuderlo e
+         * da dire com'e' andata. */
+        close(g_fd);
+        g_fd = -1;
 
-        if (fd < 0) { printf("scarica: non riesco a creare %s\n", dove); return 1; }
-
-        while (fatti < e.byte) {
-            int k = (int)write(fd, g_buf + fatti, e.byte - fatti);
-
-            if (k <= 0) break;
-            fatti += (unsigned int)k;
-        }
-        close(fd);
-
-        if (fatti != e.byte) {
-            printf("scarica: scritti %u byte su %u\n", fatti, e.byte);
+        if (g_guaio) {
+            printf("scarica: la scrittura si e' fermata dopo %ld byte. "
+                   "Disco pieno?\n", g_scritti);
             return 1;
         }
-        printf("         salvata in %s\n", dove);
+        printf("         salvata in %s (%ld byte)\n", dove, g_scritti);
         return 0;
     }
 

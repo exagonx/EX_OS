@@ -534,9 +534,46 @@ int mbr_scrivi(int indice, const Partizione *voci, int n, uint32_t *problemi)
                     voci[j].settori == est->settori) break;
             }
             if (est == NULL || j >= n) {
-                klog(LOG_ERROR, "MBR: hd%d ha partizioni logiche: l'estesa che le "
-                                "contiene non puo' essere spostata o rimossa", indice);
-                return ERR(EBUSY);
+                /* ! LA TABELLA VUOTA E' L'ECCEZIONE, ED E' LA CORREZIONE DEL
+                 * 14 SETTEMBRE 2026. La regola qui sopra e' giusta e resta,
+                 * ma aveva un buco: chiudeva OGNI strada.
+                 *
+                 * Un'estesa con logiche dentro non si puo' cancellare con
+                 * `d`, non si puo' cambiare con `t`, le logiche questo
+                 * kernel non le sa togliere (non scrive EBR) e nemmeno le
+                 * espone come contenitore da formattare — hd0p5 c'e', hd0p3
+                 * no. Chi arrivava li' con un disco da svuotare NON AVEVA
+                 * UNA VIA D'USCITA: ogni rifiuto era sensato da solo, e
+                 * insieme formavano un vicolo cieco.
+                 *
+                 * ! IL MOTIVO DEL RIFIUTO E' SCRITTO QUI SOPRA ED E'
+                 * «NESSUN MESSAGGIO DIREBBE ALL'UTENTE CHE QUEI DATI CI
+                 * SONO ANCORA». Quel motivo cade se il messaggio c'e': e'
+                 * esattamente cio' che fa `fdisk` col comando `z`, che
+                 * mostra la tabella, dice che la catena di EBR resta orfana
+                 * sul disco e fa scrivere «azzera» per esteso.
+                 *
+                 * ! E SI CONCEDE SOLO ALLA TABELLA VUOTA, non a una
+                 * qualunque. Una proposta che cancella l'estesa e tiene le
+                 * altre e' un ripartizionamento, e li' il rifiuto vale
+                 * ancora: qualcuno potrebbe non essersi accorto di cosa sta
+                 * perdendo. Una proposta SENZA NESSUNA VOCE e' una sola
+                 * cosa, e non la si scrive per sbaglio. */
+                int vuota = 1;
+
+                for (j = 0; j < n; j++)
+                    if (voci[j].tipo != 0x00 && voci[j].settori != 0) vuota = 0;
+
+                if (!vuota) {
+                    klog(LOG_ERROR, "MBR: hd%d ha partizioni logiche: l'estesa "
+                                    "che le contiene non puo' essere spostata o "
+                                    "rimossa", indice);
+                    return ERR(EBUSY);
+                }
+
+                klog(LOG_WARN, "MBR: hd%d azzerato con partizioni logiche "
+                               "esistenti: la loro catena di EBR resta sul "
+                               "disco, orfana", indice);
             }
         }
     }

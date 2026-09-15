@@ -56,7 +56,7 @@
 
 /* +0.001 a ogni modifica: `ohci.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ohci.drv", "0.001");
+EX_VERSIONE("ohci.drv", "0.002");
 
 /* --- I registri, a spiazzamenti fissi (qui non si legge nessun CAPLENGTH) -- */
 #define R_REVISION      0x00
@@ -144,6 +144,25 @@ static volatile unsigned char *g_reg = 0;
 static unsigned int g_dma_virt = 0, g_dma_fis = 0;
 static unsigned int g_porte = 0;
 static unsigned int g_verboso = 0;
+
+/* ! SI PARLA SOLO SE QUALCUNO HA INFILATO QUALCOSA, e questa e' la correzione
+ * del 14 settembre 2026. Il ciclo di attesa riprovava una porta ogni volta che
+ * la vedeva scollegata e poi ricollegata — e a farla sparire per un attimo era
+ * IL RESET CHE FACCIAMO NOI, il RH_PRS di porta_prepara(). Quindi si riarmava
+ * da solo, e la console si riempiva di «trasferimento senza risposta» e «il
+ * dispositivo non risponde» a ritmo di uno al secondo, per sempre, su una
+ * macchina dove nessuno aveva infilato niente.
+ *
+ * ! IL SILENZIO QUI NON E' COSMETICO. Una console che scorre da sola non si
+ * legge, e questo dischetto serve a leggere quel che dicono gli altri driver:
+ * un guasto che parla troppo ne nasconde uno che parla una volta sola.
+ *
+ * La regola e' quella chiesta da chi ci lavora: si racconta l'INSERIMENTO, non
+ * il sondaggio. Una porta gia' collegata all'accensione si prova lo stesso —
+ * altrimenti una chiavetta lasciata dentro non si troverebbe mai — ma se non
+ * ne esce niente tace, perche' nessuno ha appena fatto qualcosa e nessuno sta
+ * aspettando una risposta. */
+static unsigned int g_rumore = 0;
 
 /* -avvio: lanciato da /boot/avvio.sh, dove una riga di lamentela per ogni
  * macchina che quel controller non ce l'ha e' rumore a ogni accensione. */
@@ -279,7 +298,7 @@ static int esegui(unsigned int ed_off, unsigned int primo, unsigned int ultimo,
         usleep(100);
     }
 
-    printf("ohci: trasferimento senza risposta\n");
+    if (g_rumore) printf("ohci: trasferimento senza risposta\n");
     return -1;
 }
 
@@ -491,13 +510,14 @@ static int porta_prepara(unsigned int p)
 
     v = rd(R_RHPORT(p));
     if (!(v & RH_PES)) {
-        printf("ohci: porta %u: non si abilita\n", p + 1);
+        if (g_rumore) printf("ohci: porta %u: non si abilita\n", p + 1);
         return 0;
     }
 
     g_low = (v & RH_LSDA) ? 1 : 0;
-    printf("ohci: porta %u: dispositivo %s speed\n",
-           p + 1, g_low ? "low" : "full");
+    if (g_rumore)
+        printf("ohci: porta %u: dispositivo %s speed\n",
+               p + 1, g_low ? "low" : "full");
     return 1;
 }
 
@@ -515,7 +535,9 @@ static int conosci(void)
     for (giro = 0; giro < 3; giro++) {
         if (usb_desc_corto(controllo, 0, &g_dev)) break;
         if (giro == 2) {
-            printf("ohci: il dispositivo non risponde al primo descrittore\n");
+            if (g_rumore)
+                printf("ohci: il dispositivo non risponde al primo "
+                       "descrittore\n");
             return 0;
         }
         usleep(100000);
@@ -525,14 +547,14 @@ static int conosci(void)
 
     g_indirizzo = 1;
     if (controllo(0, 0x00, USB_REQ_SET_ADDR, g_indirizzo, 0, 0, 0, 0) != 0) {
-        printf("ohci: SET_ADDRESS rifiutata\n");
+        if (g_rumore) printf("ohci: SET_ADDRESS rifiutata\n");
         return 0;
     }
     usleep(10000);
     ed_indirizzo(OFF_ED_CTRL, g_indirizzo, 0, 0, g_dev.maxp0);
 
     if (!usb_desc_lungo(controllo, g_indirizzo, &g_dev)) {
-        printf("ohci: descrittore di dispositivo non credibile\n");
+        if (g_rumore) printf("ohci: descrittore di dispositivo non credibile\n");
         return 0;
     }
 
@@ -685,14 +707,41 @@ static int cerca_ohci(unsigned int *bar)
  * sempre. Il segno si cancella quando quella porta torna vuota: cosi' la
  * stessa presa, staccata e riattaccata, viene riguardata.
  * ============================================================================= */
+/* ! E «TORNATA VUOTA» VUOL DIRE VUOTA PER TRE SECONDI, non per un istante, ed
+ * e' la correzione del 14 settembre 2026. Il segno si cancellava alla prima
+ * lettura che diceva «scollegata», e a produrne una era IL RESET CHE FACCIAMO
+ * NOI: porta_prepara() alza RH_PRS, la porta sparisce per un attimo, al giro
+ * dopo il segno e' sparito e si ricomincia. Una porta con attaccato qualcosa
+ * che non e' una memoria di massa — o niente del tutto — veniva risondata ogni
+ * secondo, per sempre, stampando ogni volta le stesse tre righe.
+ *
+ * Tre letture consecutive a un secondo l'una: uno scollegamento vero le supera
+ * tutte, un reset nostro no.
+ *
+ * ! E DA LI' SI SA ANCHE QUANDO PARLARE. Una porta che passa da vuota a piena
+ * mentre stiamo guardando e' QUALCUNO CHE HA INFILATO QUALCOSA, e quello si
+ * racconta: chi ha appena spinto una chiavetta sta aspettando una risposta.
+ * Una porta gia' piena all'accensione si prova lo stesso — altrimenti una
+ * chiavetta lasciata dentro non si troverebbe — ma in silenzio, perche' li'
+ * non sta succedendo niente e non c'e' nessuno da informare. Vedi g_rumore. */
+#define ASSENZE_PER_SCOLLEGATA 3
+
 static int aspetta_e_servi(const char *chi)
 {
     unsigned char provata[OHCI_MAX][16];
+    unsigned char assenze[OHCI_MAX][16];
+    unsigned char inserita[OHCI_MAX][16];
     unsigned int  p;
     int           c, detto = 0;
 
     for (c = 0; c < OHCI_MAX; c++)
-        for (p = 0; p < 16; p++) provata[c][p] = 0;
+        for (p = 0; p < 16; p++) {
+            provata[c][p]  = 0;
+            inserita[c][p] = 0;
+            /* ! SI PARTE DA ZERO ASSENZE, NON DA TRE: una porta gia' piena
+             * all'accensione non deve sembrare un inserimento appena fatto. */
+            assenze[c][p]  = 0;
+        }
 
     for (;;) {
         /* ! SI GIRA SU TUTTI I CONTROLLER, non solo sul primo. Le porte di
@@ -705,18 +754,35 @@ static int aspetta_e_servi(const char *chi)
             g_porte    = g_ohci[c].porte;
 
             for (p = 0; p < g_porte && p < 16; p++) {
-                if (!porta_collegata(p)) { provata[c][p] = 0; continue; }
-                if (provata[c][p]) continue;
+                if (!porta_collegata(p)) {
+                    if (assenze[c][p] < 255) assenze[c][p]++;
+                    if (assenze[c][p] >= ASSENZE_PER_SCOLLEGATA) {
+                        provata[c][p]  = 0;   /* si potra' riguardare */
+                        inserita[c][p] = 0;
+                    }
+                    continue;
+                }
 
+                /* C'e' qualcosa. Se prima era via abbastanza a lungo da
+                 * contare come scollegata, allora QUALCUNO L'HA INFILATA
+                 * ADESSO, e da qui in poi si parla. */
+                if (assenze[c][p] >= ASSENZE_PER_SCOLLEGATA)
+                    inserita[c][p] = 1;
+                assenze[c][p] = 0;
+
+                if (provata[c][p]) continue;
                 provata[c][p] = 1;
+
+                g_rumore = inserita[c][p] || g_verboso;
 
                 if (!porta_prepara(p)) continue;
                 if (!conosci()) continue;
 
                 if (massa_prepara()) return 0;  /* servita: non si torna */
 
-                printf("%s: controller %d porta %u: non e' una memoria di "
-                       "massa.\n", chi, c + 1, p + 1);
+                if (g_rumore)
+                    printf("%s: controller %d porta %u: non e' una memoria "
+                           "di massa.\n", chi, c + 1, p + 1);
             }
         }
 

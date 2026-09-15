@@ -56,7 +56,7 @@
 
 /* +0.001 a ogni modifica: `uhci.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("uhci.drv", "0.001");
+EX_VERSIONE("uhci.drv", "0.002");
 
 /* --- Registri UHCI, spiazzamenti dalla base I/O --------------------------- */
 #define R_CMD       0x00    /* USBCMD  (16 bit) */
@@ -107,6 +107,10 @@ EX_VERSIONE("uhci.drv", "0.001");
  * --------------------------------------------------------------------------- */
 static unsigned int g_base = 0;
 static unsigned int g_verboso = 0;
+
+/* ! SI PARLA SOLO SE QUALCUNO HA INFILATO QUALCOSA. Stessa correzione, stesso
+ * giorno e stessa ragione di ohci.c, dove il perche' e' scritto per esteso. */
+static unsigned int g_rumore = 0;
 
 static unsigned int g_dma_virt = 0, g_dma_fis = 0;
 #define DMA_BYTE    (8u * 4096u)
@@ -591,6 +595,7 @@ static int enumera(unsigned int p, unsigned int indirizzo)
     g_dev_maxp = g_dev.maxp0;
 
     if (g_verboso)
+        if (g_rumore)
         printf("uhci: porta %u  USB %x.%02x  venditore %04x prodotto %04x  "
                "maxp %u%s\n", p, (g_dev.versione >> 8) & 0xFF,
                g_dev.versione & 0xFF, g_dev.venditore, g_dev.prodotto,
@@ -617,7 +622,8 @@ static int enumera(unsigned int p, unsigned int indirizzo)
 
     if (g_solo_massa) {
         if (g_verboso)
-            printf("uhci: porta %u: non e' una memoria di massa\n", p);
+            if (g_rumore)
+                printf("uhci: porta %u: non e' una memoria di massa\n", p);
         return 0;
     }
 
@@ -839,22 +845,41 @@ static int massa_prepara(void)
  * chiavetta si infila DOPO aver acceso la macchina. Una porta gia' provata non
  * si riprova finche' non torna vuota, o un mouse verrebbe enumerato ogni
  * secondo per sempre. */
+/* ! E «TORNATA VUOTA» VUOL DIRE VUOTA PER TRE SECONDI, non per un istante. Il
+ * perche' per esteso sta in ohci.c, sopra ASSENZE_PER_SCOLLEGATA. */
+#define ASSENZE_PER_SCOLLEGATA 3
+
 static int aspetta_e_servi(void)
 {
-    unsigned char provata[2];
+    unsigned char provata[2], assenze[2], inserita[2];
     unsigned int  p, addr = 1;
     int           detto = 0;
 
-    provata[0] = provata[1] = 0;
+    provata[0]  = provata[1]  = 0;
+    inserita[0] = inserita[1] = 0;
+    assenze[0]  = assenze[1]  = 0;  /* una porta gia' piena non e' un
+                                       inserimento appena fatto */
 
     for (;;) {
         for (p = 0; p < 2; p++) {
             /* Bit 0 di PORTSC: c'e' qualcosa attaccato. */
-            if (!(r16(0x10 + p * 2) & 0x0001)) { provata[p] = 0; continue; }
+            if (!(r16(0x10 + p * 2) & 0x0001)) {
+                if (assenze[p] < 255) assenze[p]++;
+                if (assenze[p] >= ASSENZE_PER_SCOLLEGATA) {
+                    provata[p]  = 0;
+                    inserita[p] = 0;
+                }
+                continue;
+            }
+
+            if (assenze[p] >= ASSENZE_PER_SCOLLEGATA) inserita[p] = 1;
+            assenze[p] = 0;
+
             if (provata[p]) continue;
 
             provata[p] = 1;
             g_massa = 0;
+            g_rumore = inserita[p] || g_verboso;
 
             if (!porta_reset(p)) continue;
             if (!enumera(p, addr)) continue;

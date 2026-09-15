@@ -8533,7 +8533,12 @@ static uint32_t sha_ruotad(uint32_t x, unsigned n)
     return (x >> n) | (x << (32 - n));
 }
 
-void sha256(const void *dati, size_t len, uint8_t out[32])
+/* ! IL GIRO DI COMPRESSIONE, UNA VOLTA SOLA. Fino al 15 settembre 2026 stava
+ * scritto DUE VOLTE dentro sha256(): una per i blocchi normali e una,
+ * copiata riga per riga, per il blocco di coda che serve quando la lunghezza
+ * non entra nell'ultimo. Sessanta righe identiche in due posti sono due posti
+ * dove sbagliarle, e nessun modo di accorgersi se divergono. */
+static void sha_blocco(uint32_t h[8], const uint8_t b[64])
 {
     static const uint32_t K[64] = {
         0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,
@@ -8548,133 +8553,134 @@ void sha256(const void *dati, size_t len, uint8_t out[32])
         0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,
         0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
     };
-    uint32_t h[8] = { 0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,
-                      0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19 };
-    const uint8_t *p = (const uint8_t *)dati;
-    uint8_t  blocco[64];
-    size_t   resta = len;
-    uint64_t bit = (uint64_t)len * 8;
-    int      finito = 0;
-    size_t   i;
+    uint32_t w[64], a, bb, c, d, e, f, g, hh, t1, t2;
+    int      t;
 
-    /* Si lavora un blocco per volta, componendo l'imbottitura sull'ultimo:
-     * cosi' non serve una copia dell'intero messaggio. */
-    while (!finito) {
-        size_t n;
-
-        if (resta >= 64) {
-            for (i = 0; i < 64; i++) blocco[i] = *p++;
-            resta -= 64;
-        } else {
-            n = resta;
-            for (i = 0; i < n; i++) blocco[i] = *p++;
-            blocco[n++] = 0x80;
-            if (n > 56) {
-                while (n < 64) blocco[n++] = 0;
-                /* La lunghezza non ci sta: questo blocco va cosi', il
-                 * prossimo e' tutto zeri piu' la lunghezza. */
-                resta = (size_t)-1;      /* segnala "manca solo la coda" */
-            } else {
-                while (n < 56) blocco[n++] = 0;
-                for (i = 0; i < 8; i++)
-                    blocco[56 + i] = (uint8_t)(bit >> (56 - 8 * i));
-                finito = 1;
-            }
-            if (resta == (size_t)-1) {
-                /* niente: il giro successivo emette il blocco di coda */
-            } else {
-                finito = 1;
-            }
-        }
-
-        {
-            uint32_t w[64], a, b, c, d, e, f, g, hh, t1, t2;
-            int      t;
-
-            for (t = 0; t < 16; t++)
-                w[t] = ((uint32_t)blocco[t*4] << 24) |
-                       ((uint32_t)blocco[t*4+1] << 16) |
-                       ((uint32_t)blocco[t*4+2] << 8) |
-                       ((uint32_t)blocco[t*4+3]);
-            for (t = 16; t < 64; t++) {
-                uint32_t s0 = sha_ruotad(w[t-15],7) ^ sha_ruotad(w[t-15],18) ^ (w[t-15] >> 3);
-                uint32_t s1 = sha_ruotad(w[t-2],17) ^ sha_ruotad(w[t-2],19) ^ (w[t-2] >> 10);
-                w[t] = w[t-16] + s0 + w[t-7] + s1;
-            }
-            a=h[0]; b=h[1]; c=h[2]; d=h[3]; e=h[4]; f=h[5]; g=h[6]; hh=h[7];
-            for (t = 0; t < 64; t++) {
-                uint32_t S1 = sha_ruotad(e,6) ^ sha_ruotad(e,11) ^ sha_ruotad(e,25);
-                uint32_t ch = (e & f) ^ ((~e) & g);
-                uint32_t S0 = sha_ruotad(a,2) ^ sha_ruotad(a,13) ^ sha_ruotad(a,22);
-                uint32_t mj = (a & b) ^ (a & c) ^ (b & c);
-
-                t1 = hh + S1 + ch + K[t] + w[t];
-                t2 = S0 + mj;
-                hh=g; g=f; f=e; e=d+t1; d=c; c=b; b=a; a=t1+t2;
-            }
-            h[0]+=a; h[1]+=b; h[2]+=c; h[3]+=d;
-            h[4]+=e; h[5]+=f; h[6]+=g; h[7]+=hh;
-        }
-
-        if (!finito && resta == (size_t)-1) {
-            for (i = 0; i < 56; i++) blocco[i] = 0;
-            for (i = 0; i < 8; i++)
-                blocco[56 + i] = (uint8_t)(bit >> (56 - 8 * i));
-            resta = 0;
-            finito = 1;
-            /* e si rifa' un giro sul blocco appena composto */
-            {
-                uint32_t w[64], a, b, c, d, e, f, g, hh, t1, t2;
-                int      t;
-
-                for (t = 0; t < 16; t++)
-                    w[t] = ((uint32_t)blocco[t*4] << 24) |
-                           ((uint32_t)blocco[t*4+1] << 16) |
-                           ((uint32_t)blocco[t*4+2] << 8) |
-                           ((uint32_t)blocco[t*4+3]);
-                for (t = 16; t < 64; t++) {
-                    uint32_t s0 = sha_ruotad(w[t-15],7) ^ sha_ruotad(w[t-15],18) ^ (w[t-15] >> 3);
-                    uint32_t s1 = sha_ruotad(w[t-2],17) ^ sha_ruotad(w[t-2],19) ^ (w[t-2] >> 10);
-                    w[t] = w[t-16] + s0 + w[t-7] + s1;
-                }
-                a=h[0]; b=h[1]; c=h[2]; d=h[3]; e=h[4]; f=h[5]; g=h[6]; hh=h[7];
-                for (t = 0; t < 64; t++) {
-                    uint32_t S1 = sha_ruotad(e,6) ^ sha_ruotad(e,11) ^ sha_ruotad(e,25);
-                    uint32_t ch = (e & f) ^ ((~e) & g);
-                    uint32_t S0 = sha_ruotad(a,2) ^ sha_ruotad(a,13) ^ sha_ruotad(a,22);
-                    uint32_t mj = (a & b) ^ (a & c) ^ (b & c);
-
-                    t1 = hh + S1 + ch + K[t] + w[t];
-                    t2 = S0 + mj;
-                    hh=g; g=f; f=e; e=d+t1; d=c; c=b; b=a; a=t1+t2;
-                }
-                h[0]+=a; h[1]+=b; h[2]+=c; h[3]+=d;
-                h[4]+=e; h[5]+=f; h[6]+=g; h[7]+=hh;
-            }
-        }
+    for (t = 0; t < 16; t++)
+        w[t] = ((uint32_t)b[t*4] << 24) | ((uint32_t)b[t*4+1] << 16) |
+               ((uint32_t)b[t*4+2] << 8) | ((uint32_t)b[t*4+3]);
+    for (t = 16; t < 64; t++) {
+        uint32_t s0 = sha_ruotad(w[t-15],7) ^ sha_ruotad(w[t-15],18) ^ (w[t-15] >> 3);
+        uint32_t s1 = sha_ruotad(w[t-2],17) ^ sha_ruotad(w[t-2],19) ^ (w[t-2] >> 10);
+        w[t] = w[t-16] + s0 + w[t-7] + s1;
     }
+
+    a=h[0]; bb=h[1]; c=h[2]; d=h[3]; e=h[4]; f=h[5]; g=h[6]; hh=h[7];
+    for (t = 0; t < 64; t++) {
+        uint32_t S1 = sha_ruotad(e,6) ^ sha_ruotad(e,11) ^ sha_ruotad(e,25);
+        uint32_t ch = (e & f) ^ ((~e) & g);
+        uint32_t S0 = sha_ruotad(a,2) ^ sha_ruotad(a,13) ^ sha_ruotad(a,22);
+        uint32_t mj = (a & bb) ^ (a & c) ^ (bb & c);
+
+        t1 = hh + S1 + ch + K[t] + w[t];
+        t2 = S0 + mj;
+        hh=g; g=f; f=e; e=d+t1; d=c; c=bb; bb=a; a=t1+t2;
+    }
+    h[0]+=a; h[1]+=bb; h[2]+=c; h[3]+=d;
+    h[4]+=e; h[5]+=f; h[6]+=g; h[7]+=hh;
+}
+
+void sha256_avvia(Sha256 *s)
+{
+    s->h[0]=0x6a09e667; s->h[1]=0xbb67ae85; s->h[2]=0x3c6ef372; s->h[3]=0xa54ff53a;
+    s->h[4]=0x510e527f; s->h[5]=0x9b05688c; s->h[6]=0x1f83d9ab; s->h[7]=0x5be0cd19;
+    s->n_resto = 0;
+    s->bit     = 0;
+}
+
+void sha256_dai(Sha256 *s, const void *dati, size_t len)
+{
+    const uint8_t *p = (const uint8_t *)dati;
+    size_t i;
+
+    s->bit += (unsigned long long)len * 8;
+
+    /* Prima si finisce il blocco lasciato a meta' dalla consegna precedente:
+     * chi consegna a pezzi non ha nessun motivo di farlo a multipli di 64. */
+    if (s->n_resto > 0) {
+        while (len > 0 && s->n_resto < 64) { s->resto[s->n_resto++] = *p++; len--; }
+        if (s->n_resto < 64) return;
+        sha_blocco(s->h, s->resto);
+        s->n_resto = 0;
+    }
+
+    while (len >= 64) {
+        /* ! SI COPIA INVECE DI PASSARE p COM'E', e non e' pigrizia: quel che
+         * arriva dalla rete non e' allineato a niente. La copia costa poco e
+         * toglie di mezzo la domanda. */
+        for (i = 0; i < 64; i++) s->resto[i] = p[i];
+        sha_blocco(s->h, s->resto);
+        p   += 64;
+        len -= 64;
+    }
+
+    for (i = 0; i < len; i++) s->resto[i] = p[i];
+    s->n_resto = (unsigned int)len;
+}
+
+void sha256_fine(Sha256 *s, uint8_t out[32])
+{
+    unsigned long long bit = s->bit;
+    unsigned int       n   = s->n_resto;
+    int i;
+
+    /* L'imbottitura: un bit a uno, poi zeri, poi la lunghezza in bit su otto
+     * byte. Se la lunghezza non ci sta in questo blocco, il blocco va com'e' e
+     * la coda si prende un blocco tutto suo. */
+    s->resto[n++] = 0x80;
+    if (n > 56) {
+        while (n < 64) s->resto[n++] = 0;
+        sha_blocco(s->h, s->resto);
+        n = 0;
+    }
+    while (n < 56) s->resto[n++] = 0;
+    for (i = 0; i < 8; i++)
+        s->resto[56 + i] = (uint8_t)(bit >> (56 - 8 * i));
+    sha_blocco(s->h, s->resto);
 
     for (i = 0; i < 8; i++) {
-        out[i*4]   = (uint8_t)(h[i] >> 24);
-        out[i*4+1] = (uint8_t)(h[i] >> 16);
-        out[i*4+2] = (uint8_t)(h[i] >> 8);
-        out[i*4+3] = (uint8_t)(h[i]);
+        out[i*4]   = (uint8_t)(s->h[i] >> 24);
+        out[i*4+1] = (uint8_t)(s->h[i] >> 16);
+        out[i*4+2] = (uint8_t)(s->h[i] >> 8);
+        out[i*4+3] = (uint8_t)(s->h[i]);
     }
+}
+
+static const char sha_cifre[] = "0123456789abcdef";
+
+void sha256_fine_esa(Sha256 *s, char out[65])
+{
+    uint8_t d[32];
+    int i;
+
+    sha256_fine(s, d);
+    for (i = 0; i < 32; i++) {
+        out[i*2]   = sha_cifre[d[i] >> 4];
+        out[i*2+1] = sha_cifre[d[i] & 0x0F];
+    }
+    out[64] = '\0';
+}
+
+/* ! E LE DUE DI SEMPRE SONO QUATTRO RIGHE SOPRA QUELLE. Stessa firma, stesso
+ * risultato: chi ha il messaggio intero in mano continua a chiamarle come
+ * prima e non deve sapere che esista uno stato. */
+void sha256(const void *dati, size_t len, uint8_t out[32])
+{
+    Sha256 s;
+
+    sha256_avvia(&s);
+    sha256_dai(&s, dati, len);
+    sha256_fine(&s, out);
 }
 
 /* L'impronta in esadecimale minuscolo, 64 caratteri piu' il terminatore. */
 void sha256_esa(const void *dati, size_t len, char out[65])
 {
-    static const char cifre[] = "0123456789abcdef";
-    uint8_t d[32];
-    int i;
+    Sha256 s;
 
-    sha256(dati, len, d);
-    for (i = 0; i < 32; i++) {
-        out[i*2]   = cifre[d[i] >> 4];
-        out[i*2+1] = cifre[d[i] & 0x0F];
-    }
-    out[64] = '\0';
+    sha256_avvia(&s);
+    sha256_dai(&s, dati, len);
+    sha256_fine_esa(&s, out);
 }
 
 /* =============================================================================

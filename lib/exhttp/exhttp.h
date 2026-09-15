@@ -175,6 +175,40 @@ typedef int (*ExHttpAttesa)(void *dato);   /* 0 = annulla la richiesta */
 void exhttp_attesa(ExHttpAttesa f, void *dato);
 
 /* =============================================================================
+ * DOVE VA IL CORPO — quando non ci sta in memoria
+ *
+ * ! IL BUFFER DI CHI CHIAMA E' UN TETTO, E PRIMA O POI SI TOCCA. netupdate ne
+ * ha uno da due megabyte e gli bastava per tutto; poi e' arrivato il
+ * compilatore, e cc1plus fa TRENTASETTE MEGABYTE. Il messaggio era onesto —
+ * «piu' grande del tetto, SALTATO» — ma il risultato era un pacchetto `build`
+ * che si installa a meta' e un `gcc` che non compila niente.
+ *
+ * ! E ALLARGARE IL BUFFER NON E' LA RISPOSTA. Trentotto megabyte di memoria
+ * ferma su una macchina che ne ha trentadue e' peggio del difetto, e il file
+ * dopo sara' piu' grande di quello.
+ *
+ * Registrando un verso, il corpo non si accumula piu': ogni volta che il
+ * buffer si riempie viene consegnato qui e ricomincia da capo. Chi lo riceve
+ * lo scrive dove vuole — un file, di solito — e rende 0 se non ci riesce, che
+ * ferma la richiesta invece di lasciarla finire su un file monco.
+ *
+ * ! IL BUFFER SERVE ANCORA, ED E' LA FINESTRA. Piu' e' grande, meno chiamate;
+ * anche di quattro kilobyte funziona. Alla fine dello scambio `e->byte` dice
+ * quanti byte sono rimasti nel buffer, NON quanti ne sono arrivati in tutto:
+ * chi conta il totale lo fa nel proprio verso, che li vede passare tutti.
+ *
+ * ! SENZA REGISTRARE NIENTE NON CAMBIA NIENTE: si accumula come sempre, e si
+ * tronca come sempre quando non ci sta. Vale la stessa regola di exhttp_attesa.
+ *
+ * ! E SI TOGLIE SEMPRE DOPO, con exhttp_verso(0, 0). E' un gancio globale come
+ * l'altro: lasciarlo acceso vuol dire che la richiesta dopo — un elenco, una
+ * versione, qualunque cosa piccola — finisce nel file di quella prima.
+ * ========================================================================== */
+typedef int (*ExHttpVerso)(void *dato, const unsigned char *d, unsigned int n);
+
+void exhttp_verso(ExHttpVerso f, void *dato);
+
+/* =============================================================================
  * A CHE PUNTO E' LA STRETTA DI MANO
  *
  * ! APRIRE UNA CONNESSIONE CIFRATA E' LUNGO, E CHI ASPETTA NON SA PERCHE'. Su

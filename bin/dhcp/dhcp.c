@@ -65,7 +65,7 @@
 #include "rete.h"
 
 /* +0.001 a ogni modifica: `dhcp -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("dhcp", "0.001");
+EX_VERSIONE("dhcp", "0.002");
 
 /* Porte fissate dalla specifica: non si scelgono. */
 #define PORTA_CLIENT   68
@@ -389,6 +389,150 @@ static int attendi_stack(void)
     }
 }
 
+/* =============================================================================
+ * Cosa c'e' dentro una risposta del server
+ *
+ * ! UNA SOLA VOLTA, PERCHE' LA USANO IN DUE. La prima richiesta e il rinnovo
+ * leggono la stessa risposta, e due copie di questo codice sarebbero due copie
+ * che col tempo divergono — quella del rinnovo per prima, perche' e' la meno
+ * guardata.
+ * ========================================================================== */
+static unsigned int g_scadenza_letta = 0;
+
+static int leggi_config(const unsigned char *risposta, unsigned int len,
+                        IpConfig *fuori)
+{
+    const unsigned char *v;
+
+    memset(fuori, 0, sizeof(*fuori));
+    memcpy(fuori->ip, risposta + 16, 4);
+
+    if (opzione(risposta, len, OPZ_MASCHERA, &v) == 4)
+        memcpy(fuori->maschera, v, 4);
+    if (opzione(risposta, len, OPZ_ROUTER, &v) >= 4)
+        memcpy(fuori->gateway, v, 4);
+    if (opzione(risposta, len, OPZ_DNS, &v) >= 4)
+        memcpy(fuori->dns, v, 4);
+
+    if (opzione(risposta, len, OPZ_SCADENZA, &v) == 4)
+        g_scadenza_letta = ((unsigned int)v[0] << 24) |
+                           ((unsigned int)v[1] << 16) |
+                           ((unsigned int)v[2] << 8)  | v[3];
+
+    /* ! SENZA MASCHERA NON SI PUO' INSTRADARE NIENTE, e certi server non la
+     * mandano se non gliela si chiede (noi lo facciamo, ma non tutti
+     * rispondono). Si mette quella implicita dalla classe dell'indirizzo: e'
+     * una regola vecchia e imprecisa, ma e' meglio di una maschera nulla, che
+     * renderebbe locale ogni indirizzo del mondo. */
+    if ((fuori->maschera[0] | fuori->maschera[1] |
+         fuori->maschera[2] | fuori->maschera[3]) == 0) {
+        fuori->maschera[0] = 255;
+        if (fuori->ip[0] >= 128) fuori->maschera[1] = 255;
+        if (fuori->ip[0] >= 192) fuori->maschera[2] = 255;
+        printf("dhcp: il server non ha mandato la maschera, uso ");
+        stampa_ip(fuori->maschera); printf("\n");
+    }
+
+    return 0;
+}
+
+/* =============================================================================
+ * IL RINNOVO — restare acceso e richiedere prima che scada
+ *
+ * ! UNA CONCESSIONE CHE NON SI RINNOVA E' UN INDIRIZZO CHE SPARISCE, e sparisce
+ * senza che nessuno lo dica. Il server lo assegna per un tempo — su una rete
+ * di casa dodici o ventiquattro ore, in un albergo anche dieci minuti — e
+ * quando quel tempo finisce lo riassegna a chi capita. La macchina resta
+ * convinta di avercelo, e da quel momento parla a vuoto: i pacchetti escono e
+ * non torna niente, che e' il guasto piu' difficile da capire perche' non
+ * assomiglia a un guasto.
+ *
+ * ! SI RINNOVA A META', NON ALLA FINE, e non e' prudenza esagerata: e' quello
+ * che dice il protocollo. Il tempo T1 della RFC 2131 e' meta' della
+ * concessione, e serve proprio perche' un rinnovo puo' fallire — il server
+ * puo' essere spento un momento, la rete staccata — e a meta' strada c'e'
+ * ancora tutta l'altra meta' per riprovare.
+ *
+ * ! E IL RINNOVO E' UN REQUEST DIRETTO AL SERVER, senza il giro del DISCOVER:
+ * si sa gia' chi ce l'ha dato e cosa ci ha dato, e si chiede di tenerlo. Se
+ * quello non risponde, allora si ricomincia da capo — ma solo allora.
+ *
+ * ! CHI RESTA ACCESO NON DEVE PARLARE, se non ha niente da dire. Un
+ * sorvegliante che scrive una riga a ogni giro copre tutto il resto del log:
+ * si dice quando l'indirizzo CAMBIA, quando un rinnovo fallisce, e basta.
+ * E' la stessa lezione di automount.
+ * ========================================================================== */
+static unsigned int g_scadenza_s = 0;   /* durata della concessione, secondi */
+
+/* Quanti secondi aspettare prima del prossimo tentativo. */
+static unsigned int meta_concessione(void)
+{
+    /* ! UN MINIMO C'E', E SERVE. Un server che desse una concessione di dieci
+     * secondi farebbe girare questo ciclo cinque volte al minuto per sempre.
+     * Sotto il minuto non si scende. */
+    unsigned int t = g_scadenza_s / 2;
+
+    if (g_scadenza_s == 0) return 3600;      /* non l'ha detto: un'ora */
+    if (t < 60) return 60;
+    return t;
+}
+
+static void sorveglia(const unsigned char *server, IpConfig *attuale)
+{
+    unsigned char risposta[600];
+    unsigned int  len;
+    int           falliti = 0;
+
+    printf("dhcp: resto acceso e rinnovo fra %u s.\n", meta_concessione());
+
+    for (;;) {
+        IpConfig nuova;
+
+        /* usleep vuole microsecondi, e un'ora ci sta in trentadue bit
+         * solo se si conta a pezzi. Si dorme un minuto per volta. */
+        unsigned int restano = meta_concessione();
+
+        while (restano > 0) {
+            unsigned int fetta = (restano > 60) ? 60 : restano;
+
+            usleep(fetta * 1000000u);
+            restano -= fetta;
+        }
+
+        /* Un identificativo nuovo per ogni scambio: due richieste con lo
+         * stesso numero sono, per il server, la stessa richiesta. */
+        g_xid = (uptime_ms() << 8) ^ ((unsigned int)getpid() << 20) ^ 0x52494E4Fu;
+
+        nuova = *attuale;
+
+        if (scambio(DHCP_REQUEST, DHCP_ACK, server, attuale->ip,
+                    risposta, &len) != 0) {
+            falliti++;
+            printf("dhcp: il rinnovo non e' riuscito (%d di fila).\n", falliti);
+
+            /* ! DOPO TRE FALLIMENTI SI RICOMINCIA DA CAPO. Il server puo'
+             * essere cambiato — un altro router, un'altra rete — e insistere
+             * con chi non c'e' piu' non porta da nessuna parte. */
+            if (falliti >= 3) {
+                printf("dhcp: ricomincio la ricerca da zero.\n");
+                return;
+            }
+            continue;
+        }
+
+        falliti = 0;
+
+        if (leggi_config(risposta, len, &nuova) == 0 &&
+            memcmp(nuova.ip, attuale->ip, 4) != 0) {
+            printf("dhcp: l'indirizzo e' cambiato: ");
+            stampa_ip(nuova.ip);
+            printf("\n");
+            applica(&nuova);
+            *attuale = nuova;
+        }
+    }
+}
+
 int main(int argc, char **argv)
 {
     unsigned char risposta[600];
@@ -397,12 +541,20 @@ int main(int argc, char **argv)
     IpConfig      precedente, vuota, nuova;
     const unsigned char *v;
     unsigned char server[4];
-    int           solo_prova = 0, rc;
+    int           solo_prova = 0, resta = 0, rc;
+    int           i;
 
-    if (argc > 1 && strcmp(argv[1], "-n") == 0) solo_prova = 1;
-    else if (argc > 1) {
+    for (i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-n") == 0) { solo_prova = 1; continue; }
+        if (strcmp(argv[i], "-r") == 0) { resta = 1; continue; }
         printf("uso: dhcp        chiede un indirizzo e lo applica\n");
-        printf("     dhcp -n     chiede e stampa, senza applicare\n");
+        printf("     dhcp -r     e poi resta acceso a rinnovarlo (con '&')\n");
+        printf("     dhcp -n     chiede e stampa, senza applicare\n\n");
+        printf("! LA CONCESSIONE SCADE. Il server assegna l'indirizzo per un\n");
+        printf("  tempo — in casa dodici ore, in un albergo dieci minuti — e\n");
+        printf("  poi lo riassegna a chi capita. Senza -r la macchina resta\n");
+        printf("  convinta di averlo e parla a vuoto, che e' il guasto piu'\n");
+        printf("  difficile da capire perche' non sembra un guasto.\n");
         return 1;
     }
 
@@ -487,35 +639,14 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    memset(&nuova, 0, sizeof(nuova));
-    memcpy(nuova.ip, risposta + 16, 4);
-    if (opzione(risposta, len, OPZ_MASCHERA, &v) == 4) memcpy(nuova.maschera, v, 4);
-    if (opzione(risposta, len, OPZ_ROUTER,   &v) >= 4) memcpy(nuova.gateway, v, 4);
-    if (opzione(risposta, len, OPZ_DNS,      &v) >= 4) memcpy(nuova.dns, v, 4);
-
-    /* ! SENZA MASCHERA NON SI PUO' INSTRADARE NIENTE, e certi server non
-     * la mandano se non gliela si chiede (noi lo facciamo, ma non tutti
-     * rispondono). Si mette quella implicita dalla classe dell'indirizzo:
-     * e' una regola vecchia e imprecisa, ma e' meglio di una maschera
-     * nulla, che renderebbe locale ogni indirizzo del mondo. */
-    if ((nuova.maschera[0] | nuova.maschera[1] |
-         nuova.maschera[2] | nuova.maschera[3]) == 0) {
-        nuova.maschera[0] = 255;
-        if (nuova.ip[0] >= 128) nuova.maschera[1] = 255;
-        if (nuova.ip[0] >= 192) nuova.maschera[2] = 255;
-        printf("dhcp: il server non ha mandato la maschera, uso ");
-        stampa_ip(nuova.maschera); printf("\n");
-    }
+    leggi_config(risposta, len, &nuova);
+    g_scadenza_s = g_scadenza_letta;
 
     printf("\n  indirizzo  "); stampa_ip(nuova.ip);
     printf("\n  maschera   "); stampa_ip(nuova.maschera);
     printf("\n  gateway    "); stampa_ip(nuova.gateway);
     printf("\n  DNS        "); stampa_ip(nuova.dns);
-    if (opzione(risposta, len, OPZ_SCADENZA, &v) == 4) {
-        unsigned int sec = ((unsigned int)v[0] << 24) | ((unsigned int)v[1] << 16)
-                         | ((unsigned int)v[2] << 8)  | v[3];
-        printf("\n  concessione %u s", sec);
-    }
+    if (g_scadenza_s) printf("\n  concessione %u s", g_scadenza_s);
     printf("\n\n");
 
     if (solo_prova) {
@@ -531,7 +662,41 @@ int main(int argc, char **argv)
     }
 
     printf("dhcp: configurato.\n");
-    printf("      !  la concessione NON viene rinnovata: quando scade,\n");
-    printf("          va rilanciato questo comando.\n");
-    return 0;
+
+    if (!resta) {
+        printf("      la concessione dura %u s e NON viene rinnovata.\n",
+               g_scadenza_s ? g_scadenza_s : 0);
+        printf("      Con `dhcp &` resto acceso e la rinnovo da solo.\n");
+        return 0;
+    }
+
+    /* ! DA QUI NON SI TORNA, e per questo va lanciato con '&'. Il ciclo si
+     * interrompe solo se il server sparisce per tre rinnovi di fila: allora
+     * si ricomincia da capo, perche' puo' essere cambiata la rete. */
+    for (;;) {
+        sorveglia(server, &nuova);
+
+        printf("dhcp: cerco di nuovo un server...\n");
+        if (scambio(DHCP_DISCOVER, DHCP_OFFER, NULL, NULL,
+                    risposta, &len) != 0) {
+            printf("dhcp: nessun server. Riprovo fra un minuto.\n");
+            usleep(60000000u);
+            continue;
+        }
+        if (opzione(risposta, len, OPZ_SERVER, &v) == 4) memcpy(server, v, 4);
+
+        if (scambio(DHCP_REQUEST, DHCP_ACK, risposta + 16, server,
+                    risposta, &len) != 0) {
+            printf("dhcp: il server ha offerto e non ha confermato.\n");
+            usleep(60000000u);
+            continue;
+        }
+
+        leggi_config(risposta, len, &nuova);
+        g_scadenza_s = g_scadenza_letta;
+        applica(&nuova);
+        printf("dhcp: nuovo indirizzo ");
+        stampa_ip(nuova.ip);
+        printf("\n");
+    }
 }

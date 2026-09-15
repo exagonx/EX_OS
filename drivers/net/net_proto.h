@@ -68,6 +68,23 @@
 #define NET_MSG_CONTATORI  4   /* -> NET_MSG_CONTEGGI */
 #define NET_MSG_ANNULLA    5   /* ritira una NET_MSG_RICEVI pendente */
 
+/* ! IL REFERTO LO SCRIVE IL DRIVER, NON CHI LO CHIEDE, e la ragione e' che
+ * l'unico processo che puo' leggere la scheda senza far danni e' quello che
+ * la sta guidando. ioport_bind non e' esclusiva: un secondo processo che
+ * apre le stesse porte per «dare un'occhiata» resetta la scheda sotto al
+ * primo. Quindi non si va a leggere — si CHIEDE, e chi possiede la scheda
+ * scrive il file.
+ *
+ * Il payload e' il percorso del file, come stringa terminata da zero. La
+ * risposta e' NET_MSG_ESITO: 0 se il file c'e', -errno se non si e' potuto
+ * scrivere. Un driver che non lo sa fare risponde -EINVAL come a qualunque
+ * messaggio che non conosce, e chi chiede lo capisce da solo.
+ *
+ * ! E' GENERICO PERCHE' IL PROBLEMA LO E'. Vale per ne2k, pcnet ed e1000
+ * quanto per sis900: il giorno che una di quelle schede non va su una
+ * macchina che non si puo' portare qui, la domanda sara' la stessa. */
+#define NET_MSG_REFERTO    6   /* payload = percorso -> NET_MSG_ESITO */
+
 /* --- Risposte (driver -> client) ---------------------------------------- */
 #define NET_MSG_STATO    128
 #define NET_MSG_FRAME    129   /* payload = frame grezzo ricevuto */

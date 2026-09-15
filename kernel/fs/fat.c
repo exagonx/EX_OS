@@ -820,6 +820,8 @@ typedef struct {
     uint32_t rimasti;     /* settori rimasti nell'area root fissa */
     uint32_t in_clus;     /* settori gia' consumati del cluster corrente */
     uint32_t idx;         /* indice della voce dentro il settore */
+    uint32_t passi;       /* cluster gia' attraversati: vedi dir_prossimo_settore */
+    uint32_t lento;       /* la tartaruga, per scoprire i cicli */
     int      fine;
 } DirIter;
 
@@ -829,6 +831,8 @@ static void dir_apri(DirIter *it, const FatMount *m, uint32_t clus)
     it->clus    = clus;
     it->idx     = 0;
     it->in_clus = 0;
+    it->passi   = 0;
+    it->lento   = clus;
     it->fine    = 0;
 
     if (clus == 0) {
@@ -870,6 +874,75 @@ static int dir_prossimo_settore(DirIter *it)
         if (p >= eoc_min(m->tipo)) return -1;      /* fine, regolare */
         if (p < 2 || p >= m->n_cluster + 2) {
             klog(LOG_ERROR, "FAT: cluster %u fuori range in una directory", p);
+            return -1;
+        }
+
+        /* ! UNA CATENA CHE TORNA SU SE STESSA NON FINISCE MAI, e questa e' la
+         * correzione del 14 settembre 2026. I controlli qui sopra coprono il
+         * cluster danneggiato, il fuori range e la fine regolare: tutti e tre
+         * casi in cui la catena SI FERMA. Una catena CICLICA non si ferma —
+         * ogni cluster e' valido, ogni settore si legge, e la voce di fine
+         * directory (quella che comincia con 0x00) non arriva mai.
+         *
+         * ! E IL KERNEL NON SI FERMA CON LEI. Non e' una lettura che rende un
+         * errore: e' un ciclo DENTRO il kernel, e la macchina smette di
+         * rispondere a tutto. Sull'Acer e' bastato un `ls` su una partizione
+         * FAT32 che stava li' da prima per fermare anche la rete — nessun
+         * messaggio, nessun errore, solo una macchina che non c'era piu'.
+         *
+         * ! NESSUN FILESYSTEM DEVE POTER FERMARE LA MACCHINA, per malmesso che
+         * sia. Un supporto che arriva da fuori — una chiavetta, il disco di
+         * qualcun altro, una partizione lasciata da un altro sistema — non e'
+         * un dato fidato, e trattarlo come tale vuol dire che chiunque puo'
+         * fermare la macchina porgendole un disco.
+         *
+         * ! E NON BASTA CHE FINISCA: DEVE ACCORGERSENE SUBITO. La prima
+         * versione di questa guardia contava i passi e si fermava dopo
+         * n_cluster: corretta, e inutile in pratica — su cluster da 512 byte
+         * sono quattromila giri, ognuno con la sua lettura, e `ls` avrebbe
+         * stampato sessantamila righe ripetute prima di arrendersi. Una
+         * macchina ferma due minuti che poi vomita spazzatura non e' molto
+         * meglio di una ferma per sempre.
+         *
+         * Quindi la lepre e la tartaruga: `clus` avanza a ogni cluster,
+         * `lento` ogni due. In una catena diritta non si incontrano mai; in
+         * una ciclica si incontrano dopo un giro dell'anello, e per una
+         * catena che punta a se stessa — il caso dell'Acer — al primo
+         * controllo. Costa una lettura della FAT ogni due cluster e non
+         * serve ricordarsi dove si e' gia' passati. */
+        /* ! E UN TETTO ANCHE PER LE CATENE LUNGHE MA DIRITTE, che la lepre e
+         * la tartaruga non prendono: quelle finiscono, ma dopo quanto? Una
+         * directory che attraversa milioni di cluster non e' una directory
+         * grande, e' una catena che punta a caso dentro un volume di cui non
+         * ci si puo' fidare — e percorrerla tutta vuol dire una macchina
+         * inchiodata per ore mentre sputa voci inventate.
+         *
+         * Il tetto non e' arbitrario: la specifica FAT limita una directory a
+         * 65536 voci, e quante ne sta in un cluster lo dice il volume. Piu' di
+         * cosi' non e' una directory, comunque sia fatta la catena. */
+        {
+            uint32_t per_clus = (m->byts_per_sec / 32) * m->sec_per_clus;
+            uint32_t tetto    = per_clus ? (65536u / per_clus) + 2u : 2u;
+
+            if (tetto > m->n_cluster) tetto = m->n_cluster;
+            if (it->passi + 1 > tetto) {
+                klog(LOG_ERROR, "FAT: directory piu' lunga di quanto una "
+                                "directory possa essere (%u cluster), mi fermo",
+                     it->passi + 1);
+                return -1;
+            }
+        }
+
+        it->passi++;
+        if ((it->passi & 1) == 0) {
+            uint32_t l = fat_voce(m, it->lento);
+
+            if (l >= 2 && l < m->n_cluster + 2 && l < eoc_min(m->tipo))
+                it->lento = l;
+        }
+        if (p == it->lento) {
+            klog(LOG_ERROR, "FAT: catena ciclica in una directory (cluster %u), "
+                            "mi fermo", p);
             return -1;
         }
 

@@ -1,0 +1,34 @@
+EX-OS - il punto di raccolta dei referti
+========================================
+
+Questa cartella va copiata sul server insieme al resto di netinst:
+
+    http://exagonx.altervista.org/exos/netinst/report/
+
+Dalla macchina che ha prodotto il referto:
+
+    senderror http://exagonx.altervista.org/exos/netinst/report/ /SIS900.TXT
+
+Lo script risponde dicendo con che nome l'ha salvato. I referti finiscono in
+report/ricevuti/, con la data, l'ora e l'indirizzo di chi li ha mandati nel
+nome, e in cima a ognuno c'e' un'intestazione con le stesse informazioni.
+
+! E' UN POSTO DOVE CHIUNQUE PUO' SCRIVERE, e non c'e' modo di renderlo un
+  posto dove puo' scrivere solo chi vuoi tu. La chiave dentro senderror sta
+  in un binario che si distribuisce: ferma uno scanner, non ferma una persona
+  che la cerca. Le difese vere sono i tetti, e sono in cima a index.php:
+
+      BYTE_MAX    quanto puo' essere grande un referto     256 KB
+      FILE_MAX    quanti possono esistere in tutto         500
+      AL_GIORNO   quanti ne puo' mandare un indirizzo      20
+
+  Se lo spazio sul server e' poco, il primo da abbassare e' FILE_MAX.
+
+! E I REFERTI VIAGGIANO IN CHIARO. Un referto dell'hardware va benissimo; un
+  file con dentro qualcosa di personale, no. senderror lo dice a chi lo lancia
+  senza l'aiuto.
+
+Per cambiare la chiave bisogna cambiarla in DUE posti, e l'ordine conta:
+prima sul server (index.php, CHIAVE), poi in bin/senderror/senderror.c
+(CHIAVE_PRED) e ricompilare. Facendolo al contrario, le macchine gia' in giro
+smettono di poter mandare referti senza che nessuno capisca perche'.

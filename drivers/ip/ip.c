@@ -58,7 +58,7 @@
 
 /* +0.001 a ogni modifica: `ip.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ip.drv", "0.002");
+EX_VERSIONE("ip.drv", "0.003");
 
 /* =============================================================================
  * Costanti di protocollo
@@ -2340,7 +2340,12 @@ static void stampa_ip(const unsigned char *p)
 
 static void stampa_config(void)
 {
-    printf("ip: indirizzo  "); stampa_ip(g_cfg.ip);      printf("\n");
+    if (ip_nullo(g_cfg.ip)) {
+        printf("ip: nessun indirizzo. Lo stack c'e' e non puo' parlare:\n");
+        printf("    lancia  dhcp  per farselo dare, o  ip.drv -a IND\n");
+    } else {
+        printf("ip: indirizzo  "); stampa_ip(g_cfg.ip);      printf("\n");
+    }
     printf("    maschera   "); stampa_ip(g_cfg.maschera); printf("\n");
     printf("    gateway    ");
     if (ip_nullo(g_cfg.gateway)) printf("nessuno\n");
@@ -2354,22 +2359,44 @@ static void uso(void)
     printf("uso: ip.drv [-a IND] [-m MASCHERA] [-g GATEWAY]\n");
     printf("     ip.drv -s        stampa la configurazione ed esce\n");
     printf("     ip.drv -i        dice se serve su questa macchina ed esce\n\n");
-    printf("Senza argomenti usa 10.0.2.15/255.255.255.0 gw 10.0.2.2,\n");
-    printf("cioe' i valori della rete 'user' di QEMU.\n");
+    printf("     ip.drv -q        i valori della rete 'user' di QEMU\n\n");
+    printf("! SENZA ARGOMENTI NON HA INDIRIZZO, ed e' apposta: glielo da'\n");
+    printf("  /bin/dhcp, oppure -a. Un indirizzo predefinito che non\n");
+    printf("  appartiene alla rete a cui si e' attaccati sembra una\n");
+    printf("  configurazione riuscita, e manda a cercare il guasto altrove.\n");
 }
 
 int main(int argc, char **argv)
 {
     int solo_stato = 0, i, rc;
 
-    /* Valori predefiniti: la rete "user" di QEMU. Non sono una scelta
-     * arbitraria — sono gli unici indirizzi utilizzabili finche' non c'e'
-     * un client DHCP, perche' lo slirp non ne assegna altri. */
-    g_cfg.ip[0] = 10; g_cfg.ip[1] = 0; g_cfg.ip[2] = 2; g_cfg.ip[3] = 15;
+    /* ! NESSUN INDIRIZZO FINCHE' NON LO DA' QUALCUNO, e questo e' cambiato
+     * l'11 settembre 2026 dopo una prova su una macchina vera.
+     *
+     * Fino a qui i valori predefiniti erano 10.0.2.15 / gw 10.0.2.2, cioe' la
+     * rete «user» di QEMU, e il commento diceva che erano «gli unici indirizzi
+     * utilizzabili finche' non c'e' un client DHCP». Era vero quando e' stato
+     * scritto; poi /bin/dhcp e' arrivato, e quella riga e' diventata dannosa.
+     *
+     * Su un portatile attaccato a una rete 192.168.0.x, ip.drv stampava
+     * «indirizzo 10.0.2.15» all'avvio — un indirizzo di un'altra rete, che
+     * pero' SEMBRA una configurazione riuscita. Se poi il DHCP non risponde,
+     * chi guarda vede un indirizzo e crede che la rete sia a posto: cerca il
+     * guasto ovunque tranne che nell'unico posto dove sta.
+     *
+     * Uno stack senza indirizzo lo dice. E' scomodo e vero, che e' meglio di
+     * comodo e falso. `-q` rimette i valori di QEMU per chi lavora senza un
+     * server DHCP. */
+    memset(g_cfg.ip, 0, 4);
     g_cfg.maschera[0] = 255; g_cfg.maschera[1] = 255;
     g_cfg.maschera[2] = 255; g_cfg.maschera[3] = 0;
-    g_cfg.gateway[0] = 10; g_cfg.gateway[1] = 0;
-    g_cfg.gateway[2] = 2;  g_cfg.gateway[3] = 2;
+
+    /* ! E NEMMENO IL GATEWAY, per la stessa ragione dell'indirizzo. Un
+     * gateway di un'altra rete e' peggio di nessun gateway: nessuno vuol dire
+     * «esce solo in locale», che e' vero e si vede; uno sbagliato vuol dire
+     * pacchetti mandati a un indirizzo che nessuno ascolta, e sembra che sia
+     * la rete a non funzionare. */
+    memset(g_cfg.gateway, 0, 4);
 
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-i") == 0) {
@@ -2387,6 +2414,15 @@ int main(int argc, char **argv)
                    "periferica propria\n");
             printf("    Si applica ovunque ci sia una scheda di rete.\n");
             return 0;
+        }
+        if (strcmp(argv[i], "-q") == 0) {
+            /* La rete «user» di QEMU: 10.0.2.15, gateway 10.0.2.2. Serve a
+             * chi prova senza un server DHCP, ed e' una richiesta esplicita
+             * invece di un valore che compare da solo. */
+            g_cfg.ip[0] = 10; g_cfg.ip[1] = 0; g_cfg.ip[2] = 2; g_cfg.ip[3] = 15;
+            g_cfg.gateway[0] = 10; g_cfg.gateway[1] = 0;
+            g_cfg.gateway[2] = 2;  g_cfg.gateway[3] = 2;
+            continue;
         }
         if (strcmp(argv[i], "-s") == 0) solo_stato = 1;
         else if (strcmp(argv[i], "-a") == 0 && i + 1 < argc) {

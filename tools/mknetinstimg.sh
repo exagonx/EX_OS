@@ -80,7 +80,11 @@ command -v mcopy   >/dev/null || log_err "manca mcopy: sudo apt install mtools"
 # `install` copia sul disco. Senza il bus PCI netdetect non trova la scheda, e
 # la catena si ferma al primo anello — con un messaggio giusto che pero' manda
 # a cercare il guasto nel driver di rete.
-DRIVER="e1000.drv ne2k.drv pcnet.drv ip.drv pci.drv"
+# ! sis900.drv C'E' DAL 14 SETTEMBRE 2026. Quel driver sta su una macchina
+# sola al mondo, e quella macchina e' esattamente il caso per cui questo
+# supporto esiste: lettore di floppy sull'USB, nessun CD leggibile dal
+# kernel, e l'unica strada che resta e' la chiavetta.
+DRIVER="e1000.drv ne2k.drv pcnet.drv ip.drv pci.drv sis900.drv"
 
 # I programmi: quelli che servono ad accendere la rete, a guardarla quando non
 # va, e ad aggiornarsi.
@@ -91,7 +95,18 @@ DRIVER="e1000.drv ne2k.drv pcnet.drv ip.drv pci.drv"
 #   nettest    i contatori della SCHEDA: persi in coda, persi dalla scheda
 #   scarica    un URL e un file: prova l'HTTP senza tirare in ballo netupdate
 #   netupdate  quello per cui esiste questo floppy
-PROGRAMMI="netdetect dhcp ipcfg ping host nettest scarica netupdate"
+#   senderror  manda un referto al server invece di andarselo a prendere:
+#              e' l'altra meta' di scarica, e sta qui per la stessa ragione
+#              di exhttp.so - senza quella libreria non parte, e chi ha
+#              questo floppy ce l'ha gia'. Su una macchina che non funziona,
+#              portare via un file e' la parte difficile.
+#   telnetd    ! NON C'ENTRA CON LA RETE DA INSTALLARE, C'ENTRA CON IL
+#              POTERLA AGGIORNARE. Su una macchina che si guida da un'altra
+#              stanza, telnetd e' il pezzo attraverso cui passa tutto il
+#              resto: se e' lui a essere vecchio, non c'e' modo di
+#              sostituirlo se non portandocelo a mano. E questo supporto e'
+#              la mano.
+PROGRAMMI="netdetect dhcp ipcfg ping host nettest scarica netupdate senderror telnetd"
 
 # La libreria condivisa della rete, che il minimale non ha.
 LIBRERIE="exwin/lib/exhttp.so"
@@ -158,6 +173,19 @@ mcopy -i "$IMG" "build/exwin/lib/exhttp.so" "::/exwin/lib/exhttp.so"
 # --- Lo script che fa il lavoro ----------------------------------------------
 TMP=$(mktemp); trap 'rm -f "$TMP" "$TMP.txt"' EXIT
 
+# ! LO SCRIPT SI SCRIVE UNA VOLTA SOLA, CON UN SEGNAPOSTO AL POSTO DELLA
+# SORGENTE, e poi si emette due volte. E' la correzione del 14 settembre 2026,
+# e nasce da una macchina il cui LETTORE DI FLOPPY STA SULL'USB.
+#
+# Il BIOS quel lettore lo sa usare — per questo il dischetto di avvio funziona,
+# vedi il volume in RAM — ma il kernel no: dopo il modo protetto l'INT 13h non
+# c'e' piu', e non c'e' nessun controller alle porte. Quindi su quella macchina
+# `mount fd0 /mnt` NON FUNZIONA, e questo floppy, che serve proprio a un
+# sistema gia' avviato, era inutilizzabile li' dove serviva di piu'.
+#
+# La chiavetta invece si monta: i driver USB ci sono e automount la mette in
+# /USB/DRIVE0. Cambia solo da dove si copia, e allora cambia solo quello:
+# un elenco solo, uno script solo, due destinazioni.
 cat > "$TMP" <<'EOF'
 # netinst.sh - porta la rete su un sistema gia' installato.
 #
@@ -168,52 +196,76 @@ cat > "$TMP" <<'EOF'
 # Provato l'8 settembre 2026: la seconda prova si e' fermata sulla prima copia.
 #
 # Si lancia dopo aver montato questo floppy:
-#     mount fd0 /mnt
-#     /mnt/netinst.sh
+@COMEMONTARE@
+#     @DA@/netinst.sh
 #
 # Copia i driver in /dev, i programmi in /bin, exhttp.so in /exwin/lib, e
 # accende la rete. I percorsi di destinazione non sono una scelta: la tabella
 # che associa una scheda al suo driver (lib/rete.c) li tiene ASSOLUTI, e la
 # libreria della rete si cerca in /exwin/lib.
 echo Copio i driver di rete...
-cp -y /mnt/dev/e1000.drv /dev/e1000.drv
-cp -y /mnt/dev/ne2k.drv /dev/ne2k.drv
-cp -y /mnt/dev/pcnet.drv /dev/pcnet.drv
-cp -y /mnt/dev/ip.drv /dev/ip.drv
+cp -y @DA@/dev/e1000.drv /dev/e1000.drv
+cp -y @DA@/dev/ne2k.drv /dev/ne2k.drv
+cp -y @DA@/dev/pcnet.drv /dev/pcnet.drv
+cp -y @DA@/dev/ip.drv /dev/ip.drv
 # Anche il bus PCI: su un sistema appena installato non c'e', e senza di lui
 # netdetect non trova nessuna scheda.
-cp -y /mnt/dev/pci.drv /dev/pci.drv
+cp -y @DA@/dev/pci.drv /dev/pci.drv
+# La SiS 900: una macchina sola, ma e' la macchina per cui esiste la chiavetta.
+cp -y @DA@/dev/sis900.drv /dev/sis900.drv
 
 echo Copio i programmi...
-cp -y /mnt/bin/netdetect /bin/netdetect
-cp -y /mnt/bin/dhcp /bin/dhcp
-cp -y /mnt/bin/ipcfg /bin/ipcfg
-cp -y /mnt/bin/ping /bin/ping
-cp -y /mnt/bin/host /bin/host
-cp -y /mnt/bin/nettest /bin/nettest
-cp -y /mnt/bin/scarica /bin/scarica
-cp -y /mnt/bin/netupdate /bin/netupdate
+cp -y @DA@/bin/netdetect /bin/netdetect
+cp -y @DA@/bin/dhcp /bin/dhcp
+cp -y @DA@/bin/ipcfg /bin/ipcfg
+cp -y @DA@/bin/ping /bin/ping
+cp -y @DA@/bin/host /bin/host
+cp -y @DA@/bin/nettest /bin/nettest
+cp -y @DA@/bin/scarica /bin/scarica
+cp -y @DA@/bin/netupdate /bin/netupdate
+cp -y @DA@/bin/senderror /bin/senderror
+# ! telnetd SI SOSTITUISCE DA QUI, e non c'e' altro modo: su una macchina che
+# si guida da un'altra stanza e' il pezzo attraverso cui passa tutto il resto.
+cp -y @DA@/bin/telnetd /bin/telnetd
 
 echo Copio la libreria della rete...
 mkdir /exwin
 mkdir /exwin/lib
-cp -y /mnt/exwin/lib/exhttp.so /exwin/lib/exhttp.so
+cp -y @DA@/exwin/lib/exhttp.so /exwin/lib/exhttp.so
 
-echo Accendo la rete...
-/dev/pci.drv &
-netdetect -c
-/dev/ip.drv &
-dhcp
-
+@ACCENDI@
 echo
 # ! NIENTE APOSTROFI FUORI DALLE VIRGOLETTE: la shell di EX-OS legge l'apice
 # come inizio di stringa e risponde «manca la apice di chiusura». Provato l'8
 # settembre 2026 con «La rete e' pronta»: la riga non usciva.
-echo "La rete e' pronta. Adesso:"
+echo "Adesso:"
 echo "  netupdate -repo:<indirizzo>   aggiunge il repository"
 echo "  netupdate -check              guarda cosa e' cambiato"
 EOF
-mcopy -i "$IMG" "$TMP" ::/netinst.sh
+
+# Il floppy copia da /mnt, la chiavetta da /USB/DRIVE0: e' l'unica differenza.
+# ! IL FLOPPY ACCENDE LA RETE, LA CHIAVETTA NO, ed e' una differenza vera fra
+# i due casi, non una svista. Il floppy arriva al punto 2 della strada scritta
+# in cima: sistema appena installato, avviato, rete ASSENTE per costruzione —
+# li' accenderla e' tutto il senso dello script.
+#
+# ! LA CHIAVETTA ARRIVA SU UNA MACCHINA CHE LA RETE CE L'HA GIA', e ripartire
+# i driver sopra quelli che girano vuol dire due pci.drv, due ip.drv e due
+# netdetect che si contendono la stessa scheda. Provato il 14 settembre 2026
+# sull'Acer: la macchina e' sparita dalla rete — «No route to host» — e le
+# copie erano gia' andate a buon fine, quindi bastava riavviare. Uno script
+# che rompe quel che e' appena riuscito a sistemare non va bene.
+#
+# ! E NON SI PUO' CHIEDERE ALLO SCRIPT DI INDOVINARE: la shell di EX-OS non ha
+# un `se`, e «la rete e' gia' accesa?» non si risponde con una riga di comandi
+# in fila. Chi lo lancia lo sa; lo script glielo dice e si ferma li'.
+ACCENDI_FLOPPY='echo Accendo la rete...\n/dev/pci.drv \&\nnetdetect -c\n/dev/ip.drv \&\ndhcp'
+ACCENDI_USB='echo "I file sono al loro posto. Adesso RIAVVIA:"\necho "  i pezzi nuovi entrano in gioco al prossimo avvio, e"\necho "  l autoexec accende la rete come ha sempre fatto."\necho\necho "! NON accendere la rete a mano adesso: se gia gira,"\necho "  una seconda copia dei driver si contende la scheda"\necho "  e la macchina sparisce dalla rete."'
+
+sed -e 's|@COMEMONTARE@|#     mount fd0 /mnt|' \
+    -e "s|@ACCENDI@|$ACCENDI_FLOPPY|" \
+    -e 's|@DA@|/mnt|g' "$TMP" > "$TMP.mnt"
+mcopy -i "$IMG" "$TMP.mnt" ::/netinst.sh
 
 cat > "$TMP.txt" <<'EOF'
 IL FLOPPY DELLA RETE DI EX-OS
@@ -272,6 +324,32 @@ echo
 mdir -i "$IMG" -b -/ :: 2>/dev/null | grep -v '/$' | sed 's|^::/|  |'
 echo
 LIBERI=$(mdir -i "$IMG" :: 2>/dev/null | tail -1 | tr -d ' ' | sed 's/bytesfree//' | tr -d '\240')
+# =============================================================================
+# LO STESSO CONTENUTO, PER UNA CHIAVETTA — dist/netinst-usb/
+#
+# ! NON E' UN'IMMAGINE, E' UNA CARTELLA, e va bene cosi'. Una chiavetta e' gia'
+# formattata in FAT e si scrive da qualunque sistema: dare un'immagine da
+# riversare vorrebbe dire cancellare quel che c'e' sopra e chiedere a chi la
+# usa di trovare il dispositivo giusto — cioe' il modo in cui si formatta il
+# disco sbagliato. Questi file si trascinano sopra e basta.
+USBDIR="dist/netinst-usb"
+rm -rf "$USBDIR"
+mkdir -p "$USBDIR/dev" "$USBDIR/bin" "$USBDIR/exwin/lib"
+
+for d in $DRIVER;    do cp "$(drv_dove "$d")" "$USBDIR/dev/$d"; done
+for p in $PROGRAMMI; do
+    if [ -f "build/bin-cd/$p" ]; then cp "build/bin-cd/$p" "$USBDIR/bin/$p"
+    else                              cp "build/bin/$p"    "$USBDIR/bin/$p"; fi
+done
+cp "build/exwin/lib/exhttp.so" "$USBDIR/exwin/lib/exhttp.so"
+sed -e 's|@COMEMONTARE@|#     (la chiavetta la monta automount in /USB/DRIVE0)|' \
+    -e "s|@ACCENDI@|$ACCENDI_USB|" \
+    -e 's|@DA@|/USB/DRIVE0|g' "$TMP" > "$USBDIR/netinst.sh"
+
+log_ok "$USBDIR pronto: copialo su una chiavetta gia' formattata"
+log_info "  su una macchina col lettore di floppy sull'USB e l'unica via:"
+log_info "    /USB/DRIVE0/netinst.sh"
+
 log_ok "$IMG pronto ($(mdir -i "$IMG" -b -/ :: 2>/dev/null | grep -cv '/$') file)"
 mdir -i "$IMG" :: 2>/dev/null | tail -2
 echo

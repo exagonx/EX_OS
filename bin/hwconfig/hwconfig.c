@@ -67,7 +67,7 @@
 #include "rete.h"
 
 /* +0.001 a ogni modifica: `hwconfig -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("hwconfig", "0.001");
+EX_VERSIONE("hwconfig", "0.002");
 
 #define PERC_MAX    256
 #define RIGHE_MAX   64
@@ -990,6 +990,21 @@ static void componi_avvio(char *out, unsigned int max, const char *radice)
             "netupdate -auto\n",
             g_t.rete_driver);
         strncat(out, riga, max - 1 - strlen(out));
+
+        /* ! QUESTA RIGA STA ANCHE IN boot/avvio.sh, che e' il gemello di
+         * questa funzione: il file ha due scrittori, e chi ne cambia uno
+         * cambia l'altro. Con -auto non apre niente da sola — telnetd legge
+         * /boot/telnetd.cfg e, se la chiave `avvio` manca o dice «no», esce
+         * senza stampare. L'interruttore sta nel .cfg proprio perche' questa
+         * funzione riscrive l'intero avvio.sh: una riga aggiunta a mano la'
+         * sparirebbe alla prima configurazione dell'hardware. */
+        strncat(out,
+            "\n"
+            "# La shell dalla rete, SE qualcuno l'ha chiesta. Da sola questa\n"
+            "# riga non apre niente: telnetd -auto legge /boot/telnetd.cfg e\n"
+            "# parte solo se la chiave `avvio` dice «login» oppure «root».\n"
+            "# Il predefinito e' «no», e in quel caso esce in silenzio.\n"
+            "telnetd -auto &\n", max - 1 - strlen(out));
     } else {
         strncat(out,
             "# Nessuna scheda di rete da accendere. Se ne aggiungi una,\n"

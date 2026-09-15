@@ -103,6 +103,17 @@ static char       g_s2[PERC_MAX] = "";
 static char       g_cfg[PERC_MAX] = "/boot/kernel.cfg";
 static int        opt_n = 0;
 
+/* ! -16 NON CAMBIA LA RISOLUZIONE, CAMBIA QUANTI BYTE SI SPOSTANO. Accende il
+ * bit 7 del byte di modo, che Stage 2 legge come «preferisci 16 bpp invece di
+ * 32». A 800x600 lo scorrimento della console passa da 1,8 MB a 900 KB per
+ * riga: su una macchina del 2004, con la memoria video sul bus e non in cache,
+ * si sente.
+ *
+ * ! E NON E' GRATIS: il 5-6-5 butta i bit bassi di ogni componente, quindi le
+ * sfumature si impastano. Su una macchina veloce non conviene, e infatti il
+ * predefinito non cambia: si chiede. */
+static int        opt_16 = 0;
+
 static unsigned char immagine[S2_MAX];
 static long        dim_imm = 0;
 static long        pos_firma = -1;
@@ -424,7 +435,11 @@ static void uso(void)
     printf("  640x480    80x30 caratteri\n");
     printf("  800x600    100x37 caratteri\n");
     printf("  1024x768   128x48 caratteri\n\n");
-    printf("  -n         dice cosa farebbe, senza scrivere niente\n\n");
+    printf("  -n         dice cosa farebbe, senza scrivere niente\n");
+    printf("  -16        16 bit per pixel invece di 32: meta' dei byte\n");
+    printf("             da spostare a ogni scorrimento, e una console\n");
+    printf("             molto piu' svelta su una macchina lenta. Si\n");
+    printf("             perdono le sfumature (5-6-5).\n\n");
     printf("Scrive la voce in /boot/kernel.cfg e ritocca il byte marcato\n");
     printf("'SVGAMODE' dentro l'immagine di Stage 2: e' da li' che la\n");
     printf("risoluzione viene impostata, prima del modo protetto, perche'\n");
@@ -483,6 +498,7 @@ int main(int argc, char **argv)
             return 0;
         }
         if      (strcmp(argv[i], "-n") == 0) opt_n = 1;
+        else if (strcmp(argv[i], "-16") == 0) opt_16 = 1;
         else if (strcmp(argv[i], "-h") == 0 ||
                  strcmp(argv[i], "-help") == 0 ||
                  strcmp(argv[i], "--help") == 0) { uso(); return 0; }
@@ -526,7 +542,10 @@ int main(int argc, char **argv)
         printf("  ====================================================\n");
     }
 
-    immagine[pos_firma + 8] = (unsigned char)modo;
+    /* ! IL BIT 7 SI SOMMA AL MODO, NON LO SOSTITUISCE: i bit 0..1 restano la
+     * risoluzione, e Stage 2 se lo toglie di mezzo prima di guardare la
+     * tabella. Vedi `want16` in bootloader/stage2/loader.asm. */
+    immagine[pos_firma + 8] = (unsigned char)(modo | (opt_16 ? 0x80 : 0));
     if (salva_stage2() != 0) return 1;
     printf("\n  scritto %s\n", g_s2);
 

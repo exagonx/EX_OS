@@ -64,7 +64,7 @@
 #include "rete.h"
 
 /* +0.001 a ogni modifica: `netdetect -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("netdetect", "0.001");
+EX_VERSIONE("netdetect", "0.002");
 
 /* -----------------------------------------------------------------------------
  * ! LA TABELLA DEI MODELLI NON STA PIU' QUI, dal 24 agosto 2026: sta in
@@ -134,12 +134,32 @@ static int chiedi(int pid_pci, unsigned int ordinale, PciDispositivo *out)
  * si e' avviati. Dire «driver disponibile» leggendo solo la tabella
  * significa promettere qualcosa che non c'e', e mandare chi legge a
  * cercare un guasto nella scheda. */
-static int driver_presente(const char *driver)
+/* ! E SI GUARDA ANCHE SUL CD, che e' la meta' che mancava. La tabella dice
+ * «/dev/e1000.drv» perche' quello e' il posto dove il driver sta su un sistema
+ * installato; avviando dal CD la radice e' il dischetto di avvio e i driver
+ * stanno in /cdrom/dev. Cercandoli in un posto solo, netdetect diceva «driver
+ * non presente su questo supporto» di un driver che era li' a due passi, e chi
+ * legge va a cercare un guasto nella scheda.
+ *
+ * Rende il percorso che esiste davvero, o NULL. */
+static const char *dove_sta(const char *driver)
 {
+    static char alt[64];
     struct stat st;
 
-    if (driver == NULL) return 0;
-    return stat(driver, &st) == 0;
+    if (driver == NULL) return NULL;
+    if (stat(driver, &st) == 0) return driver;
+
+    /* Lo stesso nome sotto /cdrom: «/dev/x.drv» -> «/cdrom/dev/x.drv» */
+    snprintf(alt, sizeof(alt), "/cdrom%s", driver);
+    if (stat(alt, &st) == 0) return alt;
+
+    return NULL;
+}
+
+static int driver_presente(const char *driver)
+{
+    return dove_sta(driver) != NULL;
 }
 
 /* -----------------------------------------------------------------------------
@@ -164,22 +184,27 @@ static int attendi_servizio(const char *nome)
 
 static int carica(const char *driver)
 {
-    char *const argv[] = { (char *)driver, NULL };
+    /* ! SI AVVIA IL PERCORSO CHE ESISTE, non quello della tabella. Su un
+     * sistema avviato dal CD sono due cose diverse, e spawn() di un file che
+     * non c'e' fallisce con un numero invece che con una spiegazione. */
+    const char *vero = dove_sta(driver);
+    char *const argv[] = { (char *)vero, NULL };
     int   pid;
 
     /* Si guarda prima se il file c'è: «/dev/ne2k.drv non esiste su questo
      * supporto» e «il driver è partito e non ha trovato la scheda» sono
      * due guasti diversi, e uno spawn fallito li confonderebbe in un
      * numero solo. */
-    if (!driver_presente(driver)) {
-        printf("netdetect: %s non c'e' su questo supporto.\n", driver);
-        printf("           I driver di rete stanno sul CD di EX-OS.\n");
+    if (vero == NULL) {
+        printf("netdetect: %s non c'e' su questo supporto,\n", driver);
+        printf("           ne' sotto /cdrom. I driver di rete stanno sul CD\n");
+        printf("           di EX-OS.\n");
         return 1;
     }
 
-    pid = spawn(driver, argv);
+    pid = spawn(vero, argv);
     if (pid < 0) {
-        printf("netdetect: impossibile avviare %s (%d)\n", driver, pid);
+        printf("netdetect: impossibile avviare %s (%d)\n", vero, pid);
         return 1;
     }
 

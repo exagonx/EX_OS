@@ -44,7 +44,7 @@
 #include "rete.h"
 
 /* +0.001 a ogni modifica: `telnetd -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("telnetd", "0.001");
+EX_VERSIONE("telnetd", "0.006");
 
 /* I comandi del protocollo, quelli che servono. */
 #define IAC     255
@@ -82,8 +82,32 @@ static int g_verboso = 0;
  * --------------------------------------------------------------------------- */
 #define CFG_LISTA_MAX   256
 
+/* =============================================================================
+ * `avvio` — l'unica riga che decide se questa macchina si fa guidare da fuori
+ *
+ * ! LA SCELTA PERICOLOSA DEVE ESSERE SCRITTA, non dedotta. /boot/avvio.sh
+ * contiene sempre la riga `telnetd -auto &`, ma quella riga da sola non apre
+ * niente: con -auto il programma legge questa chiave e, se dice «no» — ed e'
+ * il valore predefinito, anche quando il file non esiste — esce senza dire una
+ * parola. Chi vuole la porta aperta lo scrive qui, in un file che si legge,
+ * invece di aggiungere una riga a uno script che poi hwconfig riscrive.
+ *
+ *   avvio = no      non parte (predefinito)
+ *   avvio = login   parte e chiede nome e password
+ *   avvio = root    parte e da' una shell da amministratore SENZA CHIEDERE
+ *
+ * ! «root» E' TELNET, QUINDI E' IN CHIARO E SENZA PASSWORD. Su una rete di
+ * casa, per guidare una macchina che sta in un'altra stanza, e' esattamente
+ * quello che serve; su qualunque rete che non sia la propria e' una porta
+ * aperta a chiunque. La riga `da` qui sotto e' il modo di stringerla.
+ * =========================================================================== */
+#define AVVIO_NO      0
+#define AVVIO_LOGIN   1
+#define AVVIO_ROOT    2
+
 typedef struct {
     int  porta;
+    int  avvio;                   /* AVVIO_*: che farne all'accensione */
     char shell[96];
     char utenti[CFG_LISTA_MAX];   /* concessi; vuoto = tutti          */
     char nega[CFG_LISTA_MAX];     /* negati; vince sui concessi       */
@@ -158,6 +182,11 @@ static void config_leggi(Config *c)
         else if (strcmp(riga, "utenti") == 0) copia_valore(c->utenti, sizeof(c->utenti), uguale);
         else if (strcmp(riga, "nega")   == 0) copia_valore(c->nega,   sizeof(c->nega),   uguale);
         else if (strcmp(riga, "da")     == 0) copia_valore(c->da,     sizeof(c->da),     uguale);
+        else if (strcmp(riga, "avvio")  == 0) {
+            if      (strcmp(uguale, "root")  == 0) c->avvio = AVVIO_ROOT;
+            else if (strcmp(uguale, "login") == 0) c->avvio = AVVIO_LOGIN;
+            else                                   c->avvio = AVVIO_NO;
+        }
         /* Una chiave sconosciuta si salta in silenzio: un file scritto per una
          * versione piu' nuova non deve impedire di partire a una piu' vecchia. */
     }
@@ -262,13 +291,47 @@ static int esito(unsigned int ms)
 }
 
 /* Manda dei byte sulla connessione. Rende 0 o -1. */
+/* ! LO STACK PUO' PRENDERNE MENO DI QUANTI GLIENE OFFRI, E PRIMA NON SI
+ * GUARDAVA. E' il difetto che ha reso questo programma inservibile per il
+ * lavoro a cui serve, e sta scritto nero su bianco in ip_proto.h, sopra
+ * IpEsito: «per IP_MSG_TCP_INVIA e' il numero di byte accettati (che puo'
+ * essere meno di quelli offerti, se il buffer di trasmissione e' quasi
+ * pieno). Chi chiama deve guardare il segno prima del valore».
+ *
+ * Qui si guardava SOLO il segno:
+ *
+ *     if (esito(4000) < 0) return -1;
+ *     d += q;  n -= q;
+ *
+ * cioe' si avanzava di tutti e 512 i byte qualunque cosa ne fosse stato
+ * preso. Finche' l'uscita e' corta il buffer non si riempie mai e non si
+ * vede niente; su un'uscita lunga — `mkfs`, `install` — il buffer si
+ * riempie, lo stack comincia ad accettarne meno, e il resto SI BUTTA.
+ *
+ * ! IL SINTOMO NON SEMBRAVA UNA PERDITA DI DATI. La prima cosa che si
+ * vedeva era una riga troncata a meta' parola; subito dopo, piu' niente,
+ * perche' a buffer pieno ogni pezzo successivo veniva accettato per zero
+ * byte e scartato — e tcp_scrivi rendeva 0, cioe' «fatto». La sessione non
+ * finiva, il comando girava fino in fondo e usciva con codice 0, e da fuori
+ * sembrava che la macchina si fosse piantata. E siccome telnetd serve UNA
+ * SESSIONE PER VOLTA, da li' in poi accettava le connessioni senza
+ * servirle: il sospetto cadeva sulla rete, che era l'unica cosa a posto.
+ *
+ * ! ZERO BYTE PRESI NON E' UN ERRORE, E' «RIPROVA FRA POCO». Il buffer si
+ * svuota da solo mentre il client legge: basta aspettare. Si aspetta con
+ * una scadenza, pero', perche' un client che ha smesso di leggere davvero
+ * non si distingue da uno lento se non dal tempo che passa. */
+#define TCP_ATTESE_MAX  600      /* 600 x 50 ms = 30 secondi */
+
 static int tcp_scrivi(int id, const unsigned char *d, unsigned int n)
 {
     unsigned char msg[sizeof(IpTcpDati) + 512];
     IpTcpDati     h;
+    int           attese = 0;
 
     while (n > 0) {
         unsigned int q = (n > 512) ? 512 : n;
+        int          preso;
 
         h.id = (unsigned int)id;
         h.len = q;
@@ -276,10 +339,29 @@ static int tcp_scrivi(int id, const unsigned char *d, unsigned int n)
         memcpy(msg + sizeof(h), d, q);
 
         if (ipc_send(pid_ip, IP_MSG_TCP_INVIA, msg, sizeof(h) + q) < 0) return -1;
-        if (esito(4000) < 0) return -1;
 
-        d += q;
-        n -= q;
+        preso = esito(4000);
+        if (preso < 0) return -1;
+
+        if (preso == 0) {
+            /* Il buffer e' pieno: si lascia respirare la connessione e si
+             * riprova con GLI STESSI byte. */
+            if (++attese > TCP_ATTESE_MAX) {
+                if (g_verboso)
+                    printf("telnetd: il client non legge piu': rinuncio\n");
+                return -1;
+            }
+            usleep(50000);
+            continue;
+        }
+
+        attese = 0;
+
+        /* ! SI AVANZA DI QUEL CHE HA PRESO, NON DI QUEL CHE SI E' OFFERTO.
+         * Se ne ha presi meno, il resto si rioffre al giro dopo. */
+        if ((unsigned int)preso > q) preso = (int)q;   /* non dovrebbe, ma */
+        d += (unsigned int)preso;
+        n -= (unsigned int)preso;
     }
     return 0;
 }
@@ -426,6 +508,8 @@ static void sessione(int id, const Config *cfg, int con_login)
     char         *argv[6];
     const char   *prog = con_login ? cfg->shell : "/bin/sh";
     int           fd[2], figlio, prenotato = 0, i, na = 0;
+    int           fermi = 0;   /* giri di seguito senza niente da fare */
+    unsigned int  ultimo_stato;   /* quando si e' chiesto l'ultima volta */
 
     if (pty_apri(fd) != 0) {
         printf("telnetd: niente pty libero\n");
@@ -471,12 +555,68 @@ static void sessione(int id, const Config *cfg, int con_login)
 
     printf("telnetd: sessione aperta, %s ha il PID %d\n", prog, figlio);
 
+    fermi = 0;
+    ultimo_stato = uptime_ms();
+
     tcp_scrivi(id, apertura, sizeof(apertura));
 
     r.id = (unsigned int)id;
 
     for (;;) {
         int stato = 0;
+
+        /* ! SI CHIEDE ALLO STACK SE LA CONNESSIONE E' ANCORA VIVA, e prima
+         * non si chiedeva a nessuno. Le tre vie d'uscita di questo ciclo
+         * erano: il figlio esce, il pty dice EOF, una prenotazione torna con
+         * esito negativo. Ne mancava la piu' comune — IL CLIENT SE NE VA: chi
+         * chiude il socket dall'altra parte non fa uscire la shell (quella
+         * aspetta un tasto) e non produce nessun esito, perche' la
+         * prenotazione resta li'. Il ciclo girava per sempre, e siccome
+         * telnetd serve UNA SESSIONE PER VOLTA, da quel momento la macchina
+         * accettava le connessioni senza servirle.
+         *
+         * ! MA SI CHIEDE SOLO QUANDO NON PASSA NIENTE, ed e' la correzione
+         * della correzione. La prima versione interrogava ogni quattro giri
+         * del ciclo: con molto output da stampare il ciclo gira in fretta, le
+         * interrogazioni si accumulano, e ogni risposta finisce nella stessa
+         * casella da cui tcp_scrivi() aspetta il proprio esito. attendi() le
+         * scarta — non le confonde — ma intanto la casella si riempie, e
+         * quando e' piena lo stack non riesce piu' a consegnare i dati. Il
+         * sintomo era un `fdisk` che stampava la sua tabella e si fermava a
+         * META' PAROLA, e da li' la sessione non rispondeva piu'.
+         *
+         * ! E CHIEDERLO A RIPOSO NON E' UN RIPIEGO, E' IL POSTO GIUSTO. Un
+         * client che se n'e' andato non manda e non riceve niente: e'
+         * esattamente la condizione in cui il ciclo non ha nulla da fare. Se
+         * invece i byte scorrono, che la connessione sia viva lo dimostrano i
+         * byte stessi. */
+        /* ! LA CONDIZIONE E' A OROLOGIO, E NON SOLO A GIRI FERMI. Contare i
+         * giri a vuoto misura il riposo, ma se il ciclo per qualunque ragione
+         * non riposa mai — una poll che torna pronta e una ricezione che non
+         * rende niente, per dirne una — `fermi` resta a zero e non si chiede
+         * piu' niente a nessuno: la sessione non finisce mai, e siccome se ne
+         * serve UNA PER VOLTA la macchina accetta le connessioni senza
+         * rispondere una sola parola. E' successo il 14 settembre 2026: la
+         * porta 23 apriva e restava muta, nemmeno la negoziazione iniziale.
+         *
+         * ! E IL TEMPO E' ANCHE CIO' CHE IMPEDISCE L'INGORGO. La domanda a
+         * riposo resta com'era, ogni due secondi al massimo; quando invece i
+         * byte scorrono se ne fa una ogni quindici, che e' troppo poco per
+         * riempire la casella (era quello il guaio della prima correzione:
+         * una domanda ogni quattro giri, con molto da stampare, sono decine
+         * di risposte al secondo nella stessa casella dei dati) ed e'
+         * abbastanza per accorgersi entro un quarto di minuto di un ciclo
+         * che si e' impuntato. */
+        {
+            unsigned int ora   = uptime_ms();
+            unsigned int quando = (fermi >= 4) ? 2000u : 15000u;
+
+            if (ora - ultimo_stato >= quando) {
+                ultimo_stato = ora;
+                fermi = 0;
+                ipc_send(pid_ip, IP_MSG_TCP_STATO, &r, sizeof(r));
+            }
+        }
 
         /* Il figlio se n'e' andato: la sessione e' finita. */
         if (waitpid(figlio, &stato, WNOHANG) == figlio) {
@@ -501,7 +641,13 @@ static void sessione(int id, const Config *cfg, int con_login)
         v[0].fd = fd[0];  v[0].events = POLLIN; v[0].revents = 0;
         v[1].fd = FD_IPC; v[1].events = POLLIN; v[1].revents = 0;
 
-        if (poll(v, 2, 500) < 0) break;
+        {
+            int pronti = poll(v, 2, 500);
+
+            if (pronti < 0) break;
+            if (pronti == 0) fermi++;   /* scaduto senza niente: a riposo */
+            else             fermi = 0;
+        }
 
         /* Dal programma verso la rete. */
         if (v[0].revents & POLLIN) {
@@ -519,7 +665,11 @@ static void sessione(int id, const Config *cfg, int con_login)
             IpcMessage meta;
             int        got = ipc_recv_timeout(&meta, buf, sizeof(buf), 0);
 
-            if (got < 0) continue;
+            /* ! UNA CASELLA PRONTA CHE NON RENDE NIENTE CONTA COME RIPOSO.
+             * Senza questo, una poll che dice «c'e' posta» e una ricezione che
+             * non trova niente si rincorrono a giri vuoti con `fermi` inchiodato
+             * a zero: il ciclo non dorme piu' e non si chiede piu' nulla. */
+            if (got < 0) { fermi++; continue; }
             if ((int)meta.sender_pid != pid_ip) continue;
 
             if (meta.tipo == IP_MSG_TCP_DATI && meta.len >= sizeof(d)) {
@@ -533,6 +683,21 @@ static void sessione(int id, const Config *cfg, int con_login)
 
                 q = filtra(id, fd[0], buf + sizeof(d), len, pulito);
                 if (q > 0) write(fd[0], pulito, q);
+            } else if (meta.tipo == IP_MSG_TCP_INFO && meta.len >= sizeof(IpTcpInfo)) {
+                IpTcpInfo info;
+
+                memcpy(&info, buf, sizeof(info));
+
+                /* Aperta o in apertura: si continua. Qualunque altra cosa —
+                 * chiusa, in chiusura, reset — vuol dire che dall'altra parte
+                 * non c'e' piu' nessuno a cui parlare. */
+                if (info.stato != IP_TCP_APERTA &&
+                    info.stato != IP_TCP_IN_APERTURA) {
+                    if (g_verboso)
+                        printf("telnetd: il client se n'e' andato (stato %u)\n",
+                               info.stato);
+                    break;
+                }
             } else if (meta.tipo == IP_MSG_ESITO) {
                 IpEsito e;
 
@@ -563,22 +728,26 @@ int main(int argc, char **argv)
     IpTcpAscolta a;
     IpTcpAccetta ac;
     Config       cfg;
-    int          asc, con_login = 1, porta = 0, i;
+    int          asc, con_login = 1, porta = 0, i, auto_avvio = 0;
 
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-s") == 0)      con_login = 0;
+        else if (strcmp(argv[i], "-auto") == 0) auto_avvio = 1;
         else if (strcmp(argv[i], "-v") == 0) g_verboso = 1;
         else if (strcmp(argv[i], "-f") == 0 && i + 1 < argc) {
             strncpy(g_cfg_file, argv[++i], sizeof(g_cfg_file) - 1);
             g_cfg_file[sizeof(g_cfg_file) - 1] = '\0';
         }
         else if (strcmp(argv[i], "-h") == 0) {
-            printf("uso: telnetd [PORTA] [-s] [-v] [-f FILE]\n\n");
+            printf("uso: telnetd [PORTA] [-s] [-auto] [-v] [-f FILE]\n\n");
             printf("  Serve una sessione per volta su una connessione TCP.\n");
             printf("  Senza argomenti legge /boot/telnetd.cfg: porta, shell,\n");
             printf("  utenti concessi e negati, e da quali indirizzi.\n\n");
-            printf("  -s  da' la shell senza chiedere l'accesso\n");
-            printf("  -f  un'altra configurazione\n");
+            printf("  -s     da' la shell senza chiedere l'accesso\n");
+            printf("  -auto  parte solo se il file dice 'avvio = login'\n");
+            printf("         oppure 'avvio = root'; altrimenti esce zitto.\n");
+            printf("         E' la riga che sta in /boot/avvio.sh.\n");
+            printf("  -f     un'altra configurazione\n");
             printf("  La porta e -s scritti qui vincono sul file.\n\n");
             printf("  I dati viaggiano IN CHIARO, password compresa.\n");
             return 0;
@@ -587,6 +756,17 @@ int main(int argc, char **argv)
     }
 
     config_leggi(&cfg);
+
+    /* ! CON -auto DECIDE IL FILE, E IL SILENZIO E' IL PUNTO. Questa riga sta
+     * in /boot/avvio.sh su ogni macchina, compresa quella di chi non ha mai
+     * sentito nominare telnet: se la chiave non c'e' o dice «no», qui non si
+     * stampa niente e non si apre niente. Un messaggio del tipo «non parto»
+     * a ogni accensione insegnerebbe solo a non leggere piu' quel che scorre
+     * all'avvio. */
+    if (auto_avvio) {
+        if (cfg.avvio == AVVIO_NO) return 0;
+        con_login = (cfg.avvio == AVVIO_LOGIN);
+    }
 
     /* ! LA RIGA DI COMANDO VINCE SUL FILE, e vale la pena dirlo: e' la regola
      * che permette di provare una configurazione senza scriverla, e di aprire

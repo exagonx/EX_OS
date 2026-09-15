@@ -1,0 +1,10 @@
+# ! QUI DENTRO NON SI ESEGUE NIENTE, MAI.
+#
+# Lo script che scrive in questa cartella impone gia' l'estensione .txt e
+# ripulisce il nome da tutto il resto. Questa riga e' la seconda difesa: se un
+# giorno quella prima avesse un buco, un file caricato qui resterebbe comunque
+# un file, non un programma. Costa una riga e toglie di mezzo l'unico modo in
+# cui un punto di scrittura pubblico diventa un problema serio.
+php_flag engine off
+Options -Indexes -ExecCGI
+AddType text/plain .php .phtml .php3 .php4 .php5 .php7 .phps
