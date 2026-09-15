@@ -77,7 +77,7 @@
 #include "exuser.h"
 
 /* +0.001 a ogni modifica: `login -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("login", "0.001");
+EX_VERSIONE("login", "0.002");
 
 #define UTENTI     "/boot/utenti"    /* nome:uid:gid — pubblico */
 #define OMBRA      "/boot/ombra"     /* nome:sale:impronta — di root */
@@ -86,6 +86,46 @@ EX_VERSIONE("login", "0.001");
 
 /* La shell da lanciare a chi entra: la si puo' cambiare da riga di comando. */
 static char g_shell[128] = "/bin/sh";
+
+/* =============================================================================
+ * SIAMO L'ACCENSIONE DELLA MACCHINA, O UNA SESSIONE ARRIVATA DAL CAVO?
+ *
+ * ! LA DIFFERENZA E' TUTTA QUI DENTRO, E FINO AL 15 SETTEMBRE 2026 QUESTO
+ * PROGRAMMA NON SE LA PONEVA. Lo stesso login lo lancia il kernel su ogni
+ * console e lo lancia `telnetd` su uno pseudo-terminale, e le due cose si
+ * somigliano solo a guardarle da lontano: la prima e' l'avvio del SISTEMA —
+ * accende i driver, prende la tastiera, poi chiede chi sei — la seconda e' un
+ * ospite che bussa a una macchina gia' accesa.
+ *
+ * ! IL CONTROLLO C'ERA E NON BASTAVA. avvio_di_sistema() si fermava alla
+ * console 0 (`ci.mia != 0`), ma un processo nato dentro un pty la console la
+ * EREDITA da chi l'ha avviato: per telnetd lanciato all'accensione quella
+ * console e' proprio la zero, e il controllo diceva di si'. Il risultato era
+ * che ogni accesso da telnet rieseguiva /boot/avvio.sh — pci.drv, netdetect,
+ * dhcp, un SECONDO telnetd sulla porta gia' occupata, i driver USB — e login
+ * stava ad aspettare che finisse. Il sintomo, dall'altra parte del cavo: due
+ * righe di messaggi dei driver e poi il silenzio, con la sessione che non
+ * arrivava mai a chiedere il nome.
+ *
+ * ! E LA TASTIERA FISICA NON E' DI CHI ARRIVA DALLA RETE. exuser_prendi_console()
+ * dichiara il chiamante in primo piano sulla console del processo, e su un pty
+ * quella console e' ancora quella di chi sta seduto davanti alla macchina:
+ * un login remoto le rubava i tasti, e la shell locale restava a leggere zero
+ * byte — un prompt che non risponde piu', senza un messaggio.
+ *
+ * Su un pty non c'e' ne' l'una ne' l'altra cosa da fare: l'eco e la misura le
+ * fa la disciplina di linea, e il sistema e' acceso da un pezzo.
+ * ========================================================================== */
+static int su_un_pty(void)
+{
+    return pty_ctl(0, PTY_CTL_LEGGI_MISURA, 0) >= 0;
+}
+
+/* La console fisica si prende solo se e' la propria. Vedi qui sopra. */
+static void console_mia(void)
+{
+    if (!su_un_pty()) exuser_prendi_console();
+}
 
 /* ! LA CONSOLE SI RIVENDICA, NON SI EREDITA. Il driver di tastiera
  * consegna i tasti al processo dichiarato in primo piano su quella
@@ -325,7 +365,7 @@ static void avvia_shell(const char *utente, unsigned int uid, unsigned int gid)
         return;
     }
     waitpid(pid, &stato, 0);
-    exuser_prendi_console();     /* la shell l'aveva presa: se la riprende login */
+    console_mia();               /* la shell l'aveva presa: se la riprende login */
 }
 
 /* -----------------------------------------------------------------------------
@@ -411,6 +451,11 @@ static void avvio_di_sistema(void)
     char       *argv[4];
     int         pid, stato = 0;
 
+    /* ! UNA SESSIONE REMOTA NON ACCENDE NIENTE: il sistema e' gia' acceso, e
+     * rifare lo script qui dentro vuol dire riaccendere driver che ci sono
+     * gia' e restare ad aspettarli. Vedi su_un_pty(). */
+    if (su_un_pty()) return;
+
     /* Solo la console 0: le altre tre danno una shell pulita, ed e' la via
      * d'uscita se una riga dello script si blocca. */
     if (console_info(&ci) != 0 || ci.mia != 0) return;
@@ -427,7 +472,7 @@ static void avvio_di_sistema(void)
         return;
     }
     waitpid(pid, &stato, 0);
-    exuser_prendi_console();     /* la shell dello script l'aveva presa */
+    console_mia();               /* la shell dello script l'aveva presa */
 }
 
 int main(int argc, char **argv)
@@ -456,7 +501,7 @@ int main(int argc, char **argv)
                 printf("login -a: solo root puo' aggiungere un utente.\n");
                 return 1;
             }
-            exuser_prendi_console();
+            console_mia();
             crea_utente(0);          /* non e' il primo: i conti ci sono */
             return 0;
         }
@@ -474,7 +519,7 @@ int main(int argc, char **argv)
         }
     }
 
-    exuser_prendi_console();
+    console_mia();
 
     /* ! PRIMA DEL CICLO, NON DENTRO: lo script di avvio e' del SISTEMA, non
      * della sessione. Dentro il ciclo ripartirebbe a ogni `exit`. */

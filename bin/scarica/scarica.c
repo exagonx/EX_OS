@@ -31,7 +31,7 @@
 #include "exhttp.h"
 
 /* +0.001 a ogni modifica: `scarica -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("scarica", "0.003");
+EX_VERSIONE("scarica", "0.005");
 
 /* ! IL TETTO LO METTE CHI SCARICA, NON IL SERVER. Un megabyte tiene qualunque
  * pagina di testo; se non basta si tronca e si dice, invece di far decidere a
@@ -120,11 +120,18 @@ static int passo_tempo(void *dato, const char *cosa)
 
 static void uso(void)
 {
-    printf("uso: scarica [-i] [-tempi] <url> [file]\n\n");
+    printf("uso: scarica [-i] [-tempi] [-da N] <url> [file]\n\n");
     printf("  scarica http://esempio.it/           stampa la pagina\n");
     printf("  scarica http://esempio.it/ pag.html  la salva\n");
     printf("  scarica -i http://esempio.it/        solo l'esito\n");
-    printf("  scarica -tempi https://esempio.it/   i tempi della stretta\n\n");
+    printf("  scarica -tempi https://esempio.it/   i tempi della stretta\n");
+    printf("  scarica -da 1000 <url>               chiede dal byte 1000\n\n");
+    /* ! -da SERVE A PROVARE LA RIPRESA A MANO. Chi la usa per davvero e'
+     * netupdate, che finisce un .new rimasto a meta'; qui sta perche' una
+     * cosa che non si puo' chiedere da riga di comando non si prova, e una
+     * cosa che non si prova non si sa se funziona. Il server risponde 206 e
+     * manda da li' in poi; se invece risponde 200 vuol dire che il Range non
+     * lo sa fare e sta mandando tutto. */
     /* ! QUESTA RIGA HA DETTO UNA BUGIA PER SETTIMANE: «https non ancora,
      * manca il TLS». Il TLS c'e' da agosto e sta dentro exhttp.so, che e'
      * proprio la libreria che questo programma carica — bastava provarlo.
@@ -140,16 +147,23 @@ int main(int argc, char **argv)
     const char  *url = 0, *dove = 0;
     unsigned int t0, ms;
     int          solo_info = 0, tempi = 0, i;
+    unsigned long da = 0;
 
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-i") == 0)      solo_info = 1;
         else if (strcmp(argv[i], "-tempi") == 0) tempi = 1;
+        else if (strcmp(argv[i], "-da") == 0 && i + 1 < argc)
+            da = (unsigned long)strtoul(argv[++i], 0, 10);
         else if (strcmp(argv[i], "-h") == 0) { uso(); return 0; }
         else if (!url)                       url = argv[i];
         else if (!dove)                      dove = argv[i];
     }
 
     if (!url) { uso(); return 1; }
+
+    /* ! SI CHIEDE SUBITO PRIMA DELLA RICHIESTA, perche' vale per una sola:
+     * exhttp_prendi() se lo prende e lo azzera. Vedi exhttp_da. */
+    if (da > 0) exhttp_da(da);
 
     if (tempi) {
         printf("tempi della stretta (ms per ARRIVARE a ogni passo)\n");
@@ -191,11 +205,18 @@ int main(int argc, char **argv)
 
     ms = uptime_ms() - t0;
 
-    printf("scarica: %d, %s, %u byte in %u,%u s%s\n", e.codice,
+    /* ! LA CAUSA NON SI INDOVINA: LA DICE exhttp. Qui c'era scritto «TRONCATA:
+     * il buffer era piccolo», che e' uno dei due casi e non l'altro — un corpo
+     * interrotto a meta' rete avrebbe accusato il buffer, mandando a guardare
+     * nel posto sbagliato. */
+    printf("scarica: %d, %s, %u byte in %u,%u s\n", e.codice,
            e.tipo[0] ? e.tipo : "(nessun tipo)",
            g_fd >= 0 ? (unsigned int)g_scritti : e.byte,
-           ms / 1000u, (ms % 1000u) / 100u,
-           e.troncata ? " (TRONCATA: il buffer era piccolo)" : "");
+           ms / 1000u, (ms % 1000u) / 100u);
+
+    if (e.troncata)
+        printf("         ! TRONCATA: %s\n",
+               e.errore[0] ? e.errore : "il buffer era piccolo");
 
     /* ! SI DICE DOVE SI E' FINITI, se non e' dove si voleva andare. Con una
      * redirezione seguita in silenzio, chi guarda una pagina inattesa non ha

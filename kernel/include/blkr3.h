@@ -114,4 +114,9 @@ int  blkr3_flush(int i);
  * La chiama proc_reap_zombie(). */
 void blkr3_processo_morto(uint32_t pid);
 
+/* Ritira un dispositivo servito da un processo senza che il processo muoia:
+ * la sua attesa rende -ENODEV e il driver torna a guardare le porte. Rende 0
+ * o -ENODEV. Chi chiama controlla prima che non sia montato. */
+int  blkr3_espelli(int blkdev);
+
 #endif /* BLKR3_H */

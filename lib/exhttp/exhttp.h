@@ -84,7 +84,10 @@ typedef struct {
     int          codice;                    /* l'ultimo codice HTTP visto */
     char         tipo[HTTP_TIPO_MAX];       /* Content-Type */
     unsigned int byte;                      /* quanti ne ha messi nel buffer */
-    int          troncata;                  /* 1 = il buffer era piccolo */
+    /* 1 = manca qualcosa. Due casi, e li distingue `errore`: il buffer era
+     * piccolo (errore vuoto), oppure il server ha chiuso prima di mandare i
+     * byte che aveva dichiarato (errore dice quanti su quanti). */
+    int          troncata;
     int          salti;                     /* quante redirezioni seguite */
     char         finale[EXHTTP_URL_MAX];    /* l'URL a cui si e' arrivati */
     char         errore[96];                /* perche' non ha funzionato */
@@ -207,6 +210,26 @@ void exhttp_attesa(ExHttpAttesa f, void *dato);
 typedef int (*ExHttpVerso)(void *dato, const unsigned char *d, unsigned int n);
 
 void exhttp_verso(ExHttpVerso f, void *dato);
+
+/* =============================================================================
+ * exhttp_da — la prossima richiesta chiede il corpo DA un certo byte
+ *
+ * Aggiunge «Range: bytes=n-» alla richiesta che segue. Serve a finire un file
+ * che una caduta di connessione aveva lasciato a meta': con 37 MB su una linea
+ * da 40 KB/s un quarto d'ora di trasferimento cade piu' spesso di quanto non
+ * cada, e ricominciare da zero vuol dire non arrivare mai in fondo.
+ *
+ * ! IL SERVER PUO' IGNORARLO. Chi sa farlo risponde 206 e manda il pezzo; chi
+ * non sa farlo risponde 200 e manda TUTTO. Percio' chi accoda a un file gia'
+ * iniziato deve guardare `codice`: 206 vuol dire «accoda», 200 vuol dire
+ * «ricomincia da capo, quel che avevi non serve piu'».
+ *
+ * ! E VALE PER UNA CHIAMATA SOLA. A differenza di exhttp_verso(), che si toglie
+ * a mano, questo lo consuma exhttp_prendi() all'inizio: un verso dimenticato
+ * acceso si vede subito, un Range dimenticato acceso fa arrivare mezzo file
+ * senza che nessuno se ne accorga, perche' 206 e' una risposta buona.
+ * ========================================================================== */
+void exhttp_da(unsigned long primo);
 
 /* =============================================================================
  * A CHE PUNTO E' LA STRETTA DI MANO

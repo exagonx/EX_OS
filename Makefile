@@ -4399,6 +4399,57 @@ verifica-dipendenze-floppy:
 #
 # Costa una ricostruzione delle immagini a ogni modifica del Makefile. E' il
 # prezzo giusto: sono minuti, contro un'immagine che mente.
+# =============================================================================
+# IL DISCHETTO DI SOCCORSO — dist/fixsys.img
+#
+# ! ESISTE PERCHE' UN AGGIORNAMENTO INTERROTTO PUO' LASCIARE UNA MACCHINA SENZA
+# UN SOLO COMANDO CHE PARTA. I programmi chiamano la libc per nome: binari nuovi
+# con la libc vecchia non partono, e fra quelli che non partono ci sono proprio
+# `scarica`, `dhcp` e `netupdate`, cioe' tutto cio' che servirebbe a rimediare.
+# Da questo dischetto invece programmi e libc sono coerenti per costruzione.
+#
+# Dentro c'e' il minimo: sh, install, mount/umount, disk, ls, la libc. Il
+# riparatore vero e' `install -a`, che confronta, elenca e copia solo il
+# cambiato: nessun programma nuovo scritto per l'occasione.
+# =============================================================================
+FIXSYS_IMG := $(DIST_DIR)/fixsys.img
+
+# ! QUESTI SONO I FILE CHE CI VANNO DENTRO, ED E' ANCHE LA LISTA CHE IL
+# SUB-MAKE RICOSTRUISCE. Vedi la stessa trappola documentata per la sonda: un
+# bersaglio che chiama un sub-make ricostruisce SOLO cio' che gli si nomina, e
+# il 14 settembre 2026 un dischetto e' uscito con lo stage2 sbagliato proprio
+# perche' non era in lista.
+FIXSYS_CONTENUTO := $(STAGE1_BIN) $(STAGE2_BIN) $(KERNEL_BIN) $(LIBC_SO) \
+                    $(SHELL_BIN) $(INSTALL_BIN) $(MOUNT_BIN) $(DISK_BIN) $(LS_BIN) \
+                    $(KBD_DRV_OUT) $(PCI_DRV_OUT) $(UHCI_OUT)
+
+# =============================================================================
+# ! IL DISCHETTO DI SOCCORSO SI COSTRUISCE CON RAMDISCO=1, E NON E' UN DI PIU'.
+#
+# Parte da un LETTORE USB — sulle macchine che hanno bisogno di essere riparate
+# il floppy vero spesso non c'e' nemmeno — e li' vale la regola scoperta il 14
+# settembre 2026: il BIOS sa leggere quel lettore, il kernel no. Stage 1 e
+# Stage 2 lavorano con INT 13h e si caricano benissimo; poi il kernel passa in
+# modo protetto, va a cercare il supporto sul controller dell'FDC e non trova
+# niente. Con RAMDISCO=1 Stage 2 copia TUTTO IL VOLUME in RAM finche' il BIOS
+# c'e' ancora, e la radice si monta li' sopra: da quel momento com'e' fatto il
+# lettore non interessa piu' a nessuno.
+#
+# ! E STAGE2 E' PROPRIO CIO' CHE RAMDISCO CAMBIA, quindi il sub-make e'
+# obbligatorio: senza, il dischetto esce con lo stage2 dell'ultima make
+# qualunque, il volume in RAM non si crea, e il sintomo non somiglia per niente
+# alla causa.
+# =============================================================================
+.PHONY: fixsys
+fixsys:
+	@$(MAKE) --no-print-directory RAMDISCO=1 kernel $(FIXSYS_CONTENUTO)
+	@chmod +x $(TOOLS_DIR)/mkfixsys.sh
+	@$(TOOLS_DIR)/mkfixsys.sh
+	@echo "     stage2 dentro l'immagine: $$(mtype -i $(FIXSYS_IMG) \
+	    ::/LOADER.BIN 2>/dev/null | md5sum | cut -c1-32)"
+	@echo "     stage2 appena costruito:  $$(md5sum $(STAGE2_BIN) | cut -c1-32)"
+	@echo "     (se i due numeri non combaciano, il volume in RAM non c'e')"
+
 $(FLOPPY_IMG): Makefile $(STAGE1_BIN) $(STAGE2_BIN) $(KERNEL_BIN) \
                $(PROGRAMMI_FLOPPY_OUT) \
                boot/kernel.cfg boot/kernel.txt boot/help.txt \

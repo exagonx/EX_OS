@@ -2714,6 +2714,23 @@ int     blk_risposta(BlkRichiesta *r, int esito);
 int     blk_scansiona(const char *nome);
 
 /* =============================================================================
+ * blk_espelli — «questa chiavetta la tolgo»
+ *
+ * Ritira un dispositivo servito da un processo (usb0; dando una sua partizione
+ * si risale al supporto). Il driver che lo serviva torna a guardare le porte,
+ * quindi la stessa chiavetta tolta e reinfilata viene ripresa da capo.
+ *
+ * ! SMONTARE PRIMA, o rende -EBUSY: un dispositivo ritirato sotto un montaggio
+ * non sparisce, resta li' guasto — che e' peggio di lasciarlo stare. Lo fa
+ * /bin/eject, che smonta e poi chiama questa.
+ *
+ * Rende 0, -EBUSY se e' ancora montato (lui o una sua partizione), -EINVAL se
+ * non e' servito da un processo (un disco ATA non si espelle), -ENOENT se quel
+ * nome non c'e'. E' di root, come mount.
+ * ========================================================================== */
+int     blk_espelli(const char *nome);
+
+/* =============================================================================
  * video_info — dov'e' il framebuffer e che forma ha
  *
  * ! SENZA QUESTO, mmio_map() NON BASTA A DISEGNARE. Sa mappare una finestra

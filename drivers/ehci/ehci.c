@@ -631,6 +631,31 @@ static int conosci(void)
 {
     int giro;
 
+    /* =========================================================================
+     * ! LA QH DI CONTROLLO VA RIPORTATA A ZERO PRIMA DI PARLARE CON UNO
+     * SCONOSCIUTO, E FINO AL 15 SETTEMBRE 2026 NESSUNO LA RIPORTAVA.
+     *
+     * Un dispositivo appena infilato risponde SOLO all'indirizzo 0: e' lo stato
+     * in cui nasce, e il primo descrittore si chiede li'. Ma dopo aver servito
+     * una chiavetta questa QH e' rimasta puntata sull'indirizzo 1 — quello che
+     * le avevamo dato noi — e la domanda se ne va a un dispositivo che non c'e'
+     * piu'. Il sintomo e' una porta che dice «c'e' qualcuno» e un'enumerazione
+     * che non arriva in fondo, in silenzio.
+     *
+     * ! NON SI VEDEVA PERCHE' IL DRIVER NON TORNAVA MAI INDIETRO. La QH si
+     * preparava una volta sola, all'accensione (qh_prepara, piu' su): con UNA
+     * chiavetta sola per tutta la vita del processo bastava. Da quando `eject`
+     * rimanda il driver a guardare le porte, la SECONDA chiavetta e' la prima a
+     * pagarlo — e la seconda chiavetta e' esattamente il caso per cui eject
+     * esiste.
+     *
+     * 64 byte e' il valore di partenza dell'endpoint 0 ad alta velocita', lo
+     * stesso che mette qh_prepara all'accensione; quello vero lo dira' il
+     * descrittore, qualche riga piu' giu'.
+     * ========================================================================= */
+    qh_indirizzo(OFF_QH_CTRL, 0, 0, 64);
+    g_indirizzo = 0;
+
     /* ! TRE TENTATIVI, per la stessa ragione dell'attesa qui sopra: il primo
      * descrittore e' la prima parola che si scambia con un dispositivo appena
      * resettato, e se arriva troppo presto quello tace. Rinunciare al primo no
@@ -809,7 +834,12 @@ static int cerca_ehci(unsigned int *bar)
  * scollegamento vero le supera tutte, un reset nostro no. */
 #define ASSENZE_PER_SCOLLEGATA 3
 
-static int aspetta_e_servi(const char *chi)
+/* ! DA QUI NON SI TORNA PIU', E DA OGGI E' VERO SUL SERIO. Prima la via
+ * d'uscita era una sola — «servita una chiavetta, esco» — e adesso non c'e'
+ * nemmeno quella: una chiavetta espulsa riporta il driver QUI, a guardare le
+ * porte. Un driver che aspetta e' l'unica cosa che ha senso: se esce, la presa
+ * non la guarda piu' nessuno. Percio' la funzione non rende niente. */
+static void aspetta_e_servi(const char *chi)
 {
     unsigned char provata[16];
     unsigned char assenze[16];
@@ -845,7 +875,13 @@ static int aspetta_e_servi(const char *chi)
             if (!porta_prepara(p)) continue;
             if (!conosci()) continue;
 
-            if (massa_prepara()) return 0;  /* servita: di qui non si torna */
+            /* ! SE TORNA, LA CHIAVETTA E' STATA ESPULSA, e non si esce dal
+             * driver: si torna a guardare le porte. La porta resta segnata
+             * come «gia' provata», quindi quella ancora infilata non viene
+             * ripresa subito — e' la differenza fra «espulsa» e «da montare».
+             * Quando la si sfila davvero, tre letture vuote cancellano il
+             * segno e il reinserimento e' un inserimento nuovo. */
+            if (massa_prepara()) continue;
 
             if (g_rumore) {
                 printf("%s: sulla porta %u non c'e' una memoria di massa.\n",
@@ -931,5 +967,6 @@ int main(int argc, char **argv)
 
     printf("ehci: controller acceso, cerco un dispositivo\n");
 
-    return aspetta_e_servi("ehci");
+    aspetta_e_servi("ehci");
+    return 0;                  /* non ci si arriva: vedi aspetta_e_servi */
 }

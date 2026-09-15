@@ -528,6 +528,15 @@ static int conosci(void)
 {
     int giro;
 
+    /* ! L'ED DI CONTROLLO TORNA A ZERO PRIMA DI PARLARE CON UNO SCONOSCIUTO.
+     * Il perche' per esteso sta nello stesso punto di ehci.c: un dispositivo
+     * appena infilato risponde solo all'indirizzo 0, e dopo aver servito una
+     * chiavetta questo descrittore e' rimasto puntato sull'1. Si vede solo da
+     * quando `eject` rimanda il driver a guardare le porte — cioe' esattamente
+     * quando serve. */
+    ed_indirizzo(OFF_ED_CTRL, 0, 0, 0, 8);
+    g_indirizzo = 0;
+
     /* ! TRE TENTATIVI, E NON E' PIGRIZIA. Il primo descrittore e' la prima
      * parola che si scambia con un dispositivo appena resettato: se arriva un
      * attimo troppo presto non risponde, e rinunciare li' vuol dire dichiarare
@@ -726,7 +735,12 @@ static int cerca_ohci(unsigned int *bar)
  * non sta succedendo niente e non c'e' nessuno da informare. Vedi g_rumore. */
 #define ASSENZE_PER_SCOLLEGATA 3
 
-static int aspetta_e_servi(const char *chi)
+/* ! DA QUI NON SI TORNA PIU', E DA OGGI E' VERO SUL SERIO. Prima la via
+ * d'uscita era una sola — «servita una chiavetta, esco» — e adesso non c'e'
+ * nemmeno quella: una chiavetta espulsa riporta il driver QUI, a guardare le
+ * porte. Un driver che aspetta e' l'unica cosa che ha senso: se esce, la presa
+ * non la guarda piu' nessuno. Percio' la funzione non rende niente. */
+static void aspetta_e_servi(const char *chi)
 {
     unsigned char provata[OHCI_MAX][16];
     unsigned char assenze[OHCI_MAX][16];
@@ -778,7 +792,9 @@ static int aspetta_e_servi(const char *chi)
                 if (!porta_prepara(p)) continue;
                 if (!conosci()) continue;
 
-                if (massa_prepara()) return 0;  /* servita: non si torna */
+                /* Se torna, e' stata espulsa: si torna a guardare le porte.
+                 * Vedi il commento uguale in ehci.c. */
+                if (massa_prepara()) continue;
 
                 if (g_rumore)
                     printf("%s: controller %d porta %u: non e' una memoria "
@@ -860,5 +876,6 @@ int main(int argc, char **argv)
         printf("ohci: controller %d acceso, %u porte\n", i + 1, g_porte);
     }
 
-    return aspetta_e_servi("ohci");
+    aspetta_e_servi("ohci");
+    return 0;                  /* non ci si arriva: vedi aspetta_e_servi */
 }

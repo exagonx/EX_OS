@@ -43,7 +43,7 @@
 #include "inflate.h"
 
 /* +0.001 a ogni modifica: `netupdate -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("netupdate", "0.019");
+EX_VERSIONE("netupdate", "0.021");
 
 /* =============================================================================
  * IL FILE DI CONFIGURAZIONE
@@ -768,6 +768,34 @@ static int chiave_da_file(const char *percorso, const char *chiave,
     return out[0] ? 0 : -1;
 }
 
+/* =============================================================================
+ * ! UNA LIBRERIA CONDIVISA NON E' UN FILE COME GLI ALTRI, E IL 15 SETTEMBRE
+ * 2026 UNA MACCHINA VERA L'HA DIMOSTRATO.
+ *
+ * I programmi di EX-OS chiamano la libc attraverso i PONTI, che si risolvono
+ * PER NOME all'avvio del programma. Da qui viene un'asimmetria che decide tutto:
+ *
+ *     binario VECCHIO + libc NUOVA   ->  funziona: i nomi vecchi ci sono ancora
+ *     binario NUOVO   + libc VECCHIA ->  NON PARTE NIENTE: manca un nome
+ *
+ * Quel giorno l'aggiornamento ha installato ottantaquattro binari in ordine
+ * alfabetico e poi, arrivato a `lib/libc.so`, ha perso la rete. La macchina si
+ * e' ritrovata nel secondo caso: ogni comando rispondeva «la libreria condivisa
+ * non ha la funzione blk_espelli», compresi quelli che servivano a rimediare —
+ * `ipcfg`, `dhcp`, `scarica`. Senza una shell vecchia sopravvissuta per caso
+ * sarebbe stata una macchina da reinstallare.
+ *
+ * Da qui le due regole di questa versione:
+ *   1. le librerie si installano PRIMA di qualunque binario;
+ *   2. se una NON arriva, non si tocca piu' niente.
+ * ========================================================================== */
+static int e_libreria(const char *p)
+{
+    unsigned int n = (unsigned int)strlen(p);
+
+    return n > 3 && strcmp(p + n - 3, ".so") == 0;
+}
+
 /* Rende 1 se il percorso ASSOLUTO esiste, e ne mette la dimensione in *dim. */
 static int esiste(const char *percorso, long *dim)
 {
@@ -1206,8 +1234,13 @@ static long prendi(const char *url)
         return -1;
     }
     if (e.troncata) {
-        if (!g_zitto) printf("  ! %s: piu' grande di %u byte, non lo posso tenere\n",
-                             url, BUF_MAX);
+        /* ! DUE CAUSE, NON UNA: il buffer piccolo (e allora `errore` e' vuoto)
+         * o il server che ha chiuso prima della fine (e allora lo dice lui). */
+        if (!g_zitto) {
+            if (e.errore[0]) printf("  ! %s: %s\n", url, e.errore);
+            else printf("  ! %s: piu' grande di %u byte, non lo posso tenere\n",
+                        url, BUF_MAX);
+        }
         return -1;
     }
     return (long)e.byte;
@@ -1673,16 +1706,36 @@ static int manifesto(Config *c, char *ver, char *cat, char *ele,
  * scaricamento lascia un .new da buttare, non un /bin/sh monco.
  * =========================================================================== */
 typedef struct {
-    int    fd;
-    Sha256 sha;
-    long   byte;
-    int    guaio;
+    int          fd;
+    Sha256       sha;
+    long         byte;      /* TOTALE sul disco: parte da quel che c'era gia' */
+    int          guaio;
+    long         da;        /* da che byte si e' chiesto di riprendere        */
+    ExHttpEsito *e;         /* per guardare il codice al primo pezzo          */
+    int          tradito;   /* 1 = si e' chiesto un pezzo e arriva tutto      */
 } Posa;
 
 static int posa_verso(void *dato, const unsigned char *d, unsigned int n)
 {
     Posa *q = (Posa *)dato;
     unsigned int fatti = 0;
+
+    /* =========================================================================
+     * ! CHI CHIEDE UN PEZZO DEVE GUARDARE SE GLIENE MANDANO UNO. «Range:» e'
+     * una PREGHIERA: il server che la esaudisce risponde 206 e manda da li' in
+     * poi, quello che non sa farlo la ignora e risponde 200 con il file INTERO.
+     * Accodare un file intero in fondo a mezzo file fa un file della lunghezza
+     * sbagliata e del contenuto peggiore — e siccome l'impronta non torna, si
+     * butterebbe via tutto senza capire perche'.
+     *
+     * Il codice c'e' gia' quando arriva il primo pezzo (exhttp lo mette appena
+     * lette le intestazioni), quindi la domanda si fa qui e costa un confronto.
+     * Rendere 0 ferma lo scaricamento: chi ci ha mandati riparte da zero.
+     * ========================================================================= */
+    if (q->da > 0 && q->e != NULL && q->e->codice != 206) {
+        q->tradito = 1;
+        return 0;
+    }
 
     while (fatti < n) {
         int k = (int)write(q->fd, d + fatti, n - fatti);
@@ -1695,6 +1748,41 @@ static int posa_verso(void *dato, const unsigned char *d, unsigned int n)
     return 1;
 }
 
+/* ! L'IMPRONTA DI CIO' CHE C'E' GIA' VA RIFATTA, E STA SUL DISCO. Riprendendo
+ * un file a meta' si hanno i byte, non il loro SHA-256 a meta' strada: quello
+ * era in memoria del programma che e' morto. Si rileggono, e costa una lettura
+ * di disco — trenta megabyte a velocita' di disco sono un paio di secondi,
+ * contro un quarto d'ora di rete per riscaricarli.
+ *
+ * Rende 0 se e' andata, -1 se il file non si e' potuto rileggere tutto (e
+ * allora l'unica cosa onesta e' ricominciare da capo). */
+static int rimastica(const char *temp, long quanti, Sha256 *sha)
+{
+    static unsigned char pezzo[4096];
+    int  fd = open(temp, O_RDONLY);
+    long letti = 0;
+
+    if (fd < 0) return -1;
+
+    while (letti < quanti) {
+        long resta = quanti - letti;
+        int  n = (int)read(fd, pezzo,
+                           (unsigned int)(resta > (long)sizeof(pezzo)
+                                          ? (long)sizeof(pezzo) : resta));
+
+        if (n <= 0) { close(fd); return -1; }
+        sha256_dai(sha, pezzo, (size_t)n);
+        letti += n;
+    }
+    close(fd);
+    return 0;
+}
+
+/* Quante volte si riprova prima di rinunciare. Tre: la prima e' quella buona,
+ * la seconda copre la caduta singola, la terza la caduta sfortunata. Oltre,
+ * non e' piu' una linea lenta — e' una linea rotta, e insistere non aiuta. */
+#define RIPRESE_MAX 3
+
 /* Scarica `coda` dentro `temp`, verificando byte e impronta mentre arriva.
  * Rende 0 se il file e' sul disco ed e' quello giusto, -1 altrimenti (e in quel
  * caso il .new e' stato tolto: non deve restare in giro roba non verificata). */
@@ -1705,62 +1793,139 @@ static int scarica_su_file(Config *c, const char *coda, const char *temp,
     char        esa[65];
     Posa        q;
     ExHttpEsito e;
-    int         ok;
-
-    q.fd = open(temp, O_WRONLY | O_CREAT | O_TRUNC);
-    if (q.fd < 0) {
-        printf("  ! %s: non riesco ad aprirlo (%s)\n", temp, strerror(errno));
-        return -1;
-    }
-    sha256_avvia(&q.sha);
-    q.byte  = 0;
-    q.guaio = 0;
+    int         ok, giro;
+    long        gia = 0;
 
     url_componi(url, sizeof(url), c, coda);
 
-    exhttp_verso(posa_verso, &q);
-    ok = exhttp_prendi(url, g_buf, BUF_MAX, &e);
-    /* ! SI TOGLIE SUBITO, PRIMA DI QUALUNQUE ALTRA COSA. E' un gancio globale:
-     * lasciarlo acceso vuol dire che la richiesta dopo — elenco.txt, una
-     * versione, qualunque cosa — finisce dentro questo file. */
-    exhttp_verso(0, 0);
+    /* =========================================================================
+     * ! UN .new RIMASTO DA UN GIRO CADUTO NON E' SPAZZATURA: SONO I PRIMI BYTE.
+     * Fino al 15 settembre 2026 si apriva sempre con O_TRUNC e si ricominciava
+     * da zero, e su un file da trentasette megabyte a quaranta kilobyte al
+     * secondo questo vuol dire non finire mai: la connessione cade prima della
+     * fine piu' spesso di quanto non cada, e ogni caduta buttava via un quarto
+     * d'ora di scaricamento. Adesso si riparte da dove si era arrivati.
+     *
+     * ! PIU' LUNGO DELL'ATTESO VUOL DIRE CHE NON E' LUI. Un .new piu' grande
+     * del file che si aspetta e' roba di un'altra versione, o di un altro
+     * guasto: si ricomincia, che e' l'unica cosa sensata da fare con un resto
+     * che non si sa di chi sia.
+     * ========================================================================= */
+    if (!esiste(temp, &gia) || gia < 0) gia = 0;
+    if (atteso > 0 && gia >= atteso)    gia = 0;
 
-    close(q.fd);
+    for (giro = 0; giro < RIPRESE_MAX; giro++) {
+        sha256_avvia(&q.sha);
+        q.byte    = 0;
+        q.guaio   = 0;
+        q.da      = 0;
+        q.e       = &e;
+        q.tradito = 0;
 
-    if (!ok) {
-        printf("  ! %s\n", e.errore[0] ? e.errore : "non riuscito");
-        remove(temp);
-        return -1;
-    }
-    if (q.guaio) {
-        printf("  ! %s: la scrittura si e' fermata (%s). Disco pieno?\n",
-               temp, strerror(errno));
-        remove(temp);
-        return -1;
-    }
-    if (e.codice != 200) {
-        printf("  ! %s: il server risponde %d\n", url, e.codice);
-        remove(temp);
-        return -1;
-    }
-    /* ! I BYTE SI CONTANO ANCHE QUANDO L'IMPRONTA BASTEREBBE. Un file della
-     * lunghezza giusta con l'impronta sbagliata e uno troncato sono due guasti
-     * diversi — il primo dice «il repository mente», il secondo «la rete si e'
-     * interrotta» — e mandano a guardare in due posti diversi. */
-    if (atteso > 0 && q.byte != atteso) {
-        printf("  ! %s: %ld byte invece di %ld, NON lo installo\n",
-               temp, q.byte, atteso);
-        remove(temp);
-        return -1;
+        if (gia > 0 && rimastica(temp, gia, &q.sha) == 0) {
+            q.fd = open(temp, O_WRONLY);
+            if (q.fd >= 0 && lseek(q.fd, gia, SEEK_SET) == gia) {
+                q.byte = gia;
+                q.da   = gia;
+                printf("    riprendo da %ld byte\n", gia);
+                exhttp_da((unsigned long)gia);
+            } else {
+                /* Non si e' potuto mettere in coda: si ricomincia pulito. */
+                if (q.fd >= 0) close(q.fd);
+                gia  = 0;
+                q.fd = open(temp, O_WRONLY | O_CREAT | O_TRUNC);
+                sha256_avvia(&q.sha);
+                q.byte = 0;
+            }
+        } else {
+            gia  = 0;
+            q.fd = open(temp, O_WRONLY | O_CREAT | O_TRUNC);
+            sha256_avvia(&q.sha);
+        }
+
+        if (q.fd < 0) {
+            printf("  ! %s: non riesco ad aprirlo (%s)\n", temp, strerror(errno));
+            return -1;
+        }
+
+        exhttp_verso(posa_verso, &q);
+        ok = exhttp_prendi(url, g_buf, BUF_MAX, &e);
+        /* ! SI TOGLIE SUBITO, PRIMA DI QUALUNQUE ALTRA COSA. E' un gancio
+         * globale: lasciarlo acceso vuol dire che la richiesta dopo —
+         * elenco.txt, una versione, qualunque cosa — finisce dentro questo
+         * file. (Il punto di ripartenza invece se lo consuma exhttp_prendi:
+         * vale per una chiamata sola, vedi exhttp_da.) */
+        exhttp_verso(0, 0);
+        close(q.fd);
+
+        /* Il server ha ignorato il Range e ha mandato tutto: quel che c'era
+         * non serve piu', e si rifa' il giro da zero. */
+        if (q.tradito) {
+            printf("    il server manda tutto da capo: ricomincio\n");
+            remove(temp);
+            gia = 0;
+            continue;
+        }
+
+        if (q.guaio) {
+            printf("  ! %s: la scrittura si e' fermata (%s). Disco pieno?\n",
+                   temp, strerror(errno));
+            remove(temp);
+            return -1;
+        }
+        if (!ok) {
+            printf("  ! %s\n", e.errore[0] ? e.errore : "non riuscito");
+            /* ! IL PEZZO SCARICATO RESTA: e' esattamente cio' da cui si
+             * riprende al giro dopo. */
+            gia = q.byte;
+            continue;
+        }
+        if (e.codice != 200 && e.codice != 206) {
+            printf("  ! %s: il server risponde %d\n", url, e.codice);
+            remove(temp);
+            return -1;
+        }
+
+        /* ! I BYTE SI CONTANO ANCHE QUANDO L'IMPRONTA BASTEREBBE. Un file della
+         * lunghezza giusta con l'impronta sbagliata e uno troncato sono due
+         * guasti diversi — il primo dice «il repository mente», il secondo «la
+         * rete si e' interrotta» — e mandano a guardare in due posti diversi. */
+        if (atteso > 0 && q.byte != atteso) {
+            if (e.troncata && q.byte < atteso) {
+                /* Interrotto: si riprende, e il .new resta li' per questo. */
+                printf("    interrotto a %ld byte su %ld\n", q.byte, atteso);
+                gia = q.byte;
+                continue;
+            }
+            printf("  ! %s: %ld byte invece di %ld, NON lo installo\n",
+                   temp, q.byte, atteso);
+            if (e.errore[0]) printf("    %s\n", e.errore);
+            remove(temp);
+            return -1;
+        }
+
+        sha256_fine_esa(&q.sha, esa);
+        if (impronta != NULL && strcmp(esa, impronta) != 0) {
+            /* ! QUI IL .new SI BUTTA, e la differenza con il caso di sopra e'
+             * tutta qui: un file corto e' un file a cui manca la fine, e la
+             * fine si puo' andare a prendere; un file della lunghezza giusta
+             * con l'impronta sbagliata e' un file SBAGLIATO DENTRO, e
+             * riprenderlo vorrebbe dire costruirci sopra. */
+            printf("  ! l'impronta non torna, NON lo installo\n");
+            remove(temp);
+            return -1;
+        }
+        return 0;
     }
 
-    sha256_fine_esa(&q.sha, esa);
-    if (impronta != NULL && strcmp(esa, impronta) != 0) {
-        printf("  ! l'impronta non torna, NON lo installo\n");
-        remove(temp);
-        return -1;
-    }
-    return 0;
+    /* ! SI RINUNCIA PER OGGI, NON PER SEMPRE. Il .new resta sul disco con
+     * quello che si e' riusciti a portare a casa: il prossimo `netupdate`
+     * riparte da li' invece che da zero, e su una linea che cade e' cosi' che
+     * un file grande arriva — a pezzi, in piu' giri. */
+    printf("  ! %s: non e' arrivato intero in %d tentativi. Quel che c'e'\n",
+           temp, RIPRESE_MAX);
+    printf("    resta li': il prossimo giro riprende da %ld byte.\n", gia);
+    return -1;
 }
 
 static int scarica_e_metti(Config *c, const char *p, long byte,
@@ -2249,6 +2414,7 @@ static int comando_check(void)
     char   riga[RIGA_MAX];
     FILE  *f;
     long   fatti = 0, falliti = 0, saltati = 0;
+    int    giro;
     int    kernel_nuovo = 0, stage2_nuovo = 0;
     int    fai_cambiati, fai_nuovi;
 
@@ -2287,32 +2453,71 @@ static int comando_check(void)
         if (tolti > 0) printf("\n  tolti %ld file .old del giro precedente\n", tolti);
     }
 
-    /* --- 5. si scarica, si verifica, si sostituisce ------------------------ */
+    /* =====================================================================
+     * --- 5. si scarica, si verifica, si sostituisce -----------------------
+     *
+     * ! DUE PASSATE, E L'ORDINE E' LA PARTE IMPORTANTE. Prima le librerie
+     * condivise, poi tutto il resto: il perche' sta per esteso sopra
+     * e_libreria(). In due parole, una macchina con la libc NUOVA e i binari
+     * VECCHI funziona; una con i binari nuovi e la libc vecchia non accende
+     * nemmeno un comando.
+     * ===================================================================== */
     printf("\nScarico\n");
-    f = fopen(ele, "r");
-    if (f == NULL) { printf("netupdate: %s sparito\n", ele); return 1; }
 
-    while (fgets(riga, sizeof(riga), f) != NULL) {
-        char *p, *impronta, *pac;
-        long  byte;
-        int   v;
+    for (giro = 0; giro < 2; giro++) {
+        long falliti_prima = falliti;
 
-        if (!riga_elenco(riga, &p, &byte, &impronta, &pac)) continue;
-        v = verdetto(p, impronta);
+        f = fopen(ele, "r");
+        if (f == NULL) { printf("netupdate: %s sparito\n", ele); return 1; }
 
-        if (v == UGUALE) continue;
-        if (e_configurazione(p)) continue;      /* e' di questa macchina */
-        if (v == MAI_INSTALLATO && !fai_nuovi) continue;
-        if (v != MAI_INSTALLATO && !fai_cambiati) continue;
+        while (fgets(riga, sizeof(riga), f) != NULL) {
+            char *p, *impronta, *pac;
+            long  byte;
+            int   v;
 
-        switch (scarica_e_metti(&c, p, byte, impronta, &kernel_nuovo, &stage2_nuovo)) {
-        case 0:  fatti++;   break;
-        case 1:  saltati++; break;
-        case 2:             break;    /* messo da parte: e' dell'avvio */
-        default: falliti++; break;
+            if (!riga_elenco(riga, &p, &byte, &impronta, &pac)) continue;
+
+            /* Giro 0: solo le librerie. Giro 1: tutto il resto. */
+            if (giro == 0 && !e_libreria(p)) continue;
+            if (giro == 1 &&  e_libreria(p)) continue;
+
+            v = verdetto(p, impronta);
+
+            if (v == UGUALE) continue;
+            if (e_configurazione(p)) continue;      /* e' di questa macchina */
+            if (v == MAI_INSTALLATO && !fai_nuovi) continue;
+            if (v != MAI_INSTALLATO && !fai_cambiati) continue;
+
+            switch (scarica_e_metti(&c, p, byte, impronta,
+                                    &kernel_nuovo, &stage2_nuovo)) {
+            case 0:  fatti++;   break;
+            case 1:  saltati++; break;
+            case 2:             break;    /* messo da parte: e' dell'avvio */
+            default: falliti++; break;
+            }
+        }
+        fclose(f);
+
+        /* =================================================================
+         * ! SE UNA LIBRERIA NON E' ARRIVATA, QUI CI SI FERMA — e questa
+         * riga e' tutta la correzione del 15 settembre 2026.
+         *
+         * Andare avanti vorrebbe dire installare binari costruiti contro una
+         * libreria che su questo disco non c'e': ognuno di loro, al primo
+         * avvio, direbbe «la libreria condivisa non ha la funzione ...» e la
+         * macchina non avrebbe piu' un comando per rimediare. Fermarsi adesso
+         * invece la lascia esattamente com'era: vecchia e viva.
+         * ================================================================= */
+        if (giro == 0 && falliti > falliti_prima) {
+            printf("\n! UNA LIBRERIA DI SISTEMA NON E' ARRIVATA, e mi fermo qui.\n\n");
+            printf("  Non ho toccato nessun programma: la macchina resta com'era,\n");
+            printf("  con la libreria di prima e i programmi di prima, e funziona.\n");
+            printf("  Installarli senza la libreria nuova vorrebbe dire una\n");
+            printf("  macchina in cui non parte piu' nessun comando.\n\n");
+            printf("  Riprova quando la rete e' a posto: `netupdate -check`.\n");
+            return 1;
         }
     }
-    fclose(f);
 
     /* --- 6. l'avvio, per ultimo ------------------------------------------- */
     if (kernel_nuovo || stage2_nuovo) {

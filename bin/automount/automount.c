@@ -73,7 +73,7 @@
 
 /* +0.001 a ogni modifica: `automount -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("automount", "0.002");
+EX_VERSIONE("automount", "0.003");
 
 #define TIPO_PART     3
 #define TIPO_RING3    5
@@ -335,12 +335,39 @@ static void riprova(Seguito *s)
         printf("automount: %s: niente da montare\n", s->nome);
 }
 
-/* Un dispositivo e' sparito: il driver che lo serviva se n'e' andato. */
+/* Rende 1 se su `punto` c'e' ancora qualcosa montato. */
+static int ancora_montato(const char *punto)
+{
+    MountInfo    m[4];
+    unsigned int start = 0;
+    int          n, i;
+
+    while ((n = mountinfo(m, 4, start)) > 0) {
+        for (i = 0; i < n; i++)
+            if (strcmp(m[i].punto, punto) == 0) return 1;
+        start += (unsigned int)n;
+        if (n < 4) break;
+    }
+    return 0;
+}
+
+/* Un dispositivo e' sparito: il driver che lo serviva se n'e' andato, oppure
+ * qualcuno lo ha tolto di mezzo con `eject`.
+ *
+ * ! E I DUE CASI NON SI RACCONTANO ALLO STESSO MODO. Da quando c'e' `eject`, il
+ * caso normale e' che i punti siano GIA' smontati: e' proprio quello che eject
+ * fa prima di ritirare il dispositivo. Provare a smontarli lo stesso e
+ * annunciare «non si smonta (qualcuno ci sta dentro?)» accusa l'utente di una
+ * cosa che non ha fatto, e manda a cercare un file aperto che non c'e'. */
 static void sparito(Seguito *s)
 {
     int i;
 
     for (i = 0; i < s->n_punti; i++) {
+        if (!ancora_montato(s->punto[i])) {
+            if (g_verboso) printf("automount: %s era gia' smontato\n", s->punto[i]);
+            continue;
+        }
         if (umount(s->punto[i]) == 0) printf("automount: smontato %s\n", s->punto[i]);
         else printf("automount: %s non si smonta (qualcuno ci sta dentro?)\n",
                     s->punto[i]);

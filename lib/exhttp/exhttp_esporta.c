@@ -53,6 +53,10 @@ static const char *const g_nomi[] = {
      * non ci sta in memoria. Serviva a scaricare cc1plus, 37 MB. */
     "exhttp_verso",
 
+    /* Aggiunta il 15 settembre 2026, sera: da dove riprendere. Serviva allo
+     * stesso cc1plus, che in un colpo solo non ci arrivava. */
+    "exhttp_da",
+
     "__lib_avvio"
 };
 
@@ -68,6 +72,7 @@ static void *const g_indirizzi[] = {
     (void *)exhttp_passo,
 
     (void *)exhttp_verso,
+    (void *)exhttp_da,
 
     (void *)__libc_ponti_avvia
 };

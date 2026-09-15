@@ -84,7 +84,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `install -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("install", "0.004");
+EX_VERSIONE("install", "0.005");
 
 #define BLOCCO      4096
 #define PERC_MAX    128
@@ -1816,6 +1816,51 @@ int main(int argc, char **argv)
             return 1;
         }
         argv[1] = argv[a];
+    }
+
+    /* =========================================================================
+     * ! LA DESTINAZIONE DEV'ESSERE UN VOLUME MONTATO, E PRIMA NON SI GUARDAVA.
+     *
+     * `install /disco` su un nome che NON e' un punto di montaggio non fallisce:
+     * crea /disco sul supporto da cui si e' avviati e ci scrive dentro il
+     * sistema. Da un dischetto vuol dire riempirlo; da un CD, errori a ogni
+     * file; e in tutt'e due i casi il volume che si voleva installare resta
+     * vuoto, mentre l'installatore dice che e' andato tutto bene.
+     *
+     * ! L'HA TROVATO IL DISCHETTO DI SOCCORSO, il 15 settembre 2026. Il suo
+     * script fa `mount hd0p1 /disk` e poi `install -a /disk`: senza disco
+     * attaccato il montaggio falliva — giustamente — e install proseguiva
+     * elencando «8 file da creare» dentro /disk, cioe' sul dischetto stesso.
+     * La shell degli script non ha un «se il comando prima e' fallito, fermati»:
+     * la guardia deve stare QUI, dove si sa che cosa si sta per scrivere.
+     *
+     * ! E SI GUARDA L'ELENCO DEI MONTAGGI, NON SE LA DIRECTORY ESISTE. Un punto
+     * di montaggio e' virtuale: esiste PERCHE' e' montato, e se lo si chiede al
+     * filesystem si ottiene «si', c'e'» anche quando dietro non c'e' nessun
+     * volume — che e' esattamente il caso che deve essere respinto.
+     * ========================================================================= */
+    {
+        MountInfo    m[4];
+        unsigned int start = 0;
+        int          n, i, montato = 0;
+
+        while (!montato && (n = mountinfo(m, 4, start)) > 0) {
+            for (i = 0; i < n; i++)
+                if (strcmp(m[i].punto, argv[1]) == 0) { montato = 1; break; }
+            start += (unsigned int)n;
+            if (n < 4) break;
+        }
+
+        if (!montato) {
+            printf("install: %s non e' un volume montato.\n\n", argv[1]);
+            printf("  Un punto di montaggio esiste perche' e' montato: scrivere\n");
+            printf("  li' dentro senza volume vorrebbe dire riempire il supporto\n");
+            printf("  da cui ti sei avviato, e lasciare il disco vuoto.\n\n");
+            printf("    disk                 quali dischi ci sono\n");
+            printf("    mount hd0p1 %s    montalo\n", argv[1]);
+            printf("    mount                che cosa e' montato adesso\n");
+            return 1;
+        }
     }
 
     /* =====================================================================

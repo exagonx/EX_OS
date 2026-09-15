@@ -26,7 +26,622 @@ manca» apre quello.
 
 ---
 
-# DOVE RIPRENDERE — 14 settembre 2026
+# DOVE RIPRENDERE — 15 settembre 2026, sera
+
+> **I sette file del 15 settembre sono compilati, sul CD e sul server.** La
+> catena e' andata fino in fondo:
+>
+> ```
+> make exhttp_so && make iso-exos && make netinst && exagonx/pubblica.sh
+> exagonx/verifica.sh      ->  1608 uguali, 0 diversi, 0 mancanti
+> ```
+>
+> Si era fermata alla prima riga: `lib/libc.c` non compilava piu'. La SHA-256
+> incrementale era stata scritta nell'header e nel .c, ma quel file **non
+> include il proprio header** — e' autosufficiente per costruzione, il Makefile
+> lo compila senza `-I lib/include` — e il `typedef ... Sha256` andava ripetuto
+> li' dentro, come si fa gia' per `DirEntry` e `MemInfo`. Una riga di tipo, non
+> un difetto di logica.
+>
+> ! **E LA MACCHINA NON L'HA ANCORA PRESO.** Sull'Acer (192.168.0.23) serve
+> ancora:
+>
+> ```
+> netupdate -check
+> netupdate -permessi
+> ```
+> e un riavvio, per prendere il nuovo `kbd.drv`. All'avvio esce la riga
+> `kbd: mouse PS/2: ...` che dice se il touchpad ha risposto e, se no, a quale
+> passo si e' fermato.
+>
+> ! **LA MUTA DI IERI SERA E' SUCCESSA CON `telnetd 0.006`, non con un binario
+> vecchio** — `telnetd -version` sulla macchina lo ha detto. E da li' e' venuta
+> fuori la causa, che e' `telnetd` 0.008 qui sotto: **`ipc_recv_timeout(...,
+> 0)` non vuol dire «non aspettare», vuol dire «aspetta per sempre»**.
+>
+> **L'Acer e' stato aggiornato da qui, guidando `netupdate` attraverso telnet:
+> 310 file, 6393 KB, in 200 secondi**, e il registro riscritto (7 pacchetti,
+> 1426 file). **Adesso quella macchina VA RIAVVIATA**, e non e' un consiglio di
+> cortesia:
+>
+> ```
+> ex-os:/root> telnetd -version
+> libc: la libreria condivisa non ha la funzione: sha256_avvia
+>       La libc installata e' piu' vecchia di questo programma.
+> ```
+>
+> ! **UN netupdate CHE TOCCA `lib/libc.so` LASCIA LA MACCHINA A META' GUADO.**
+> I binari nuovi sono sul disco e chiedono i simboli nuovi; la libc che gira e'
+> ancora quella di prima, caricata all'avvio. Finche' non si riavvia, ogni
+> programma aggiornato si rifiuta di partire con quella riga — che almeno dice
+> la verita' invece di schiantarsi. E' la faccia a tempo di esecuzione della
+> nota «ABI della libc»: la' si ricostruisce, qui si riavvia.
+>
+> Dopo il riavvio quella macchina avra' `telnetd` 0.007; per prendere 0.008
+> serve un altro `netupdate -check` e il rilancio di telnetd (la libc non
+> cambia piu', quindi basta lui).
+>
+> **Le tre cose ancora aperte su quella macchina**, in ordine di quanto sono
+> state guardate:
+> 1. il touchpad Synaptics PS/2 — vedi `@SIS` in `in_lavorazione.txt`;
+> 2. il motore 2D della scheda video (BAR1 legge tutto `ff`) — mai risolto,
+>    stessa voce;
+> 3. `senderror` non ha mai consegnato un referto: le due cause di `@DIF-POST`
+>    adesso sono compilate e pubblicate, e aspettano una prova vera.
+>
+> **Sul server** (`exagonx.altervista.org/exos/netinst`): EX-OS 0.217, 1608
+> file, 0 diversi. I referti si leggono con `exagonx/referti.sh`; sono zero.
+
+
+## 15 settembre 2026, notte — IL DISCHETTO DI SOCCORSO (`dist/fixsys.img`)
+
+`make fixsys` costruisce un floppy avviabile con dentro il minimo per rimettere
+in sesto un sistema installato: la libc, `sh`, `install`, `mount`/`umount`,
+`disk`, `ls`, piu' `kbd.drv`, `pci.drv`, `uhci.drv`. Si avvia da li', si batte
+
+```
+sh -f /boot/fixsys.sh
+```
+
+e lo script fa i tre passi: `mount hd0p1 /disk`, `install -a /disk`, `umount`.
+
+! **NON C'E' UN PROGRAMMA NUOVO.** `install -a` faceva gia' la cosa giusta —
+  confronta, ELENCA che cosa cambierebbe, e copia solo quello. Mancava un posto
+  da cui farlo partire quando sul disco non parte piu' niente.
+
+### TRE COSE IMPARATE COSTRUENDOLO, TUTTE DA GUASTI VERI
+
+**1. Senza `kbd.drv` la shell accetta i caratteri e non esegue mai.** La prima
+versione dell'immagine aveva `/dev` vuota: il kernel diceva «driver kbd non
+caricato» e da li' in poi si poteva scrivere quanto si voleva senza che l'invio
+consegnasse la riga — la disciplina di linea vive dentro quel driver. Adesso i
+driver ci sono, e con loro `pci` e `uhci`: su una scheda madre senza 8042 la
+tastiera e' USB, e senza quei due nessuno potrebbe battere il comando che li
+avvierebbe.
+
+**2. `install` scriveva dove non c'era nessun volume** (corretto in 0.005). Lo
+script fa `mount` e poi `install -a`, ma questa shell non ha un «se il comando
+prima e' fallito, fermati»: senza disco attaccato il montaggio falliva —
+giustamente — e install proseguiva elencando «8 file da creare» dentro `/disk`,
+cioe' **sul dischetto stesso**. Adesso guarda l'elenco dei montaggi e rifiuta,
+spiegando come montare. Un punto di montaggio e' virtuale: esiste PERCHE' e'
+montato, quindi chiederlo al filesystem non basta.
+
+**3. Si costruisce con `RAMDISCO=1`, e il sub-make e' obbligatorio.** Questo
+dischetto parte da un LETTORE USB — sulle macchine da riparare il floppy vero
+spesso non c'e' — e li' vale la regola del 14 settembre: *il BIOS sa leggere
+quel lettore, il kernel no*. Con `RAMDISCO=1` Stage 2 copia tutto il volume in
+RAM finche' il BIOS c'e' ancora. Il bersaglio stampa gli **md5 dello stage2**
+dentro l'immagine e di quello appena costruito, perche' la trappola gia' pagata
+e' un'immagine uscita con lo stage2 sbagliato, identico a vedersi.
+
+! **E IL VOLUME IN RAM VUOLE ALMENO 40 MB.** Sotto quella soglia Stage 2 dice
+  «Memoria insufficiente per il disco in RAM» e prosegue leggendo dal lettore —
+  che da USB non funziona. In QEMU a 32 MB si vede proprio quel messaggio.
+
+! **E il segnaposto `.ramdisco-N` tiene pulite le altre immagini**: dopo un
+  `make fixsys`, `make floppy` ricostruisce Stage 2 con RAMDISCO=0 da solo.
+  Verificato guardando il byte dopo la firma: 1 prima, 0 dopo.
+
+
+## 15 settembre 2026, notte — UN AGGIORNAMENTO A META' LASCIA UNA MACCHINA MORTA
+
+E' successo sull'Acer, ed e' il guasto piu' istruttivo della giornata.
+
+L'aggiornamento ha installato **ottantaquattro binari** in ordine alfabetico e
+poi, arrivato a `cc1plus`, la macchina ha perso il DNS: da li' in poi solo «il
+nome non si risolve», venti volte di fila. I file rimasti fuori sono quelli in
+fondo all'elenco — e fra loro c'era **`lib/libc.so`**.
+
+### L'ASIMMETRIA CHE DECIDE TUTTO
+
+```
+binario VECCHIO + libc NUOVA   ->  funziona: i ponti si risolvono per NOME,
+                                   e i nomi vecchi ci sono ancora
+binario NUOVO   + libc VECCHIA ->  NON PARTE NIENTE: manca un nome
+```
+
+La macchina e' finita nel secondo caso: ogni comando rispondeva «la libreria
+condivisa non ha la funzione blk_espelli», **compresi quelli che servivano a
+rimediare** — `ipcfg`, `dhcp`, `scarica`, `netupdate`. Rete a posto e nessun
+modo di usarla.
+
+! **CI SI E' SALVATI PER CASO, e il caso non e' un piano.** `/bin/sh` non era
+  fra gli ottantaquattro — il suo binario e' del 7 settembre, il Makefile non lo
+  ricostruisce quando cambia la libc — quindi la shell era vecchia e girava.
+  Senza quella, la macchina non avrebbe avuto nemmeno un prompt.
+
+### LE DUE REGOLE (netupdate 0.021)
+
+1. **Le librerie condivise si installano PRIMA di qualunque binario.** Due
+   passate sull'elenco: giro 0 solo i `.so`, giro 1 tutto il resto.
+2. **Se una libreria non arriva, non si tocca piu' niente** e si esce dicendolo.
+   La macchina resta vecchia e viva, che e' infinitamente meglio di nuova e
+   morta.
+
+Quel giorno la sola regola 1 sarebbe bastata: la libc sarebbe arrivata per
+prima, e la caduta di rete avrebbe lasciato indietro dei programmi — cioe'
+niente di grave, perche' i vecchi con la libc nuova funzionano.
+
+### E IL SOCCORSO, PER QUANDO E' GIA' TARDI (`bin/soccorso` 0.001)
+
+`soccorso` rimette a posto `/lib/libc.so` prendendola dal server
+dell'aggiornamento: legge `/boot/netupdate.cnf`, scarica `elenco.txt`, trova la
+riga della libc, la scarica verificando **dimensione e SHA-256 mentre passa**, e
+solo se tornano la mette al suo posto — tenendo la vecchia in `.prima`.
+
+! **E' STATICO, ED E' TUTTO IL PUNTO.** Si compila con `lib/libc.c` DENTRO, come
+  i driver: nessun ponte da risolvere, nessuna dipendenza da cio' che deve
+  riparare. Per la stessa ragione non usa `exhttp.so` ma una GET scritta a mano —
+  «Connection: close», Content-Length, e basta.
+
+### IL RECUPERO SENZA CD, CHE FUNZIONA ANCHE SENZA `soccorso`
+
+`netupdate` rinomina sempre il vecchio in `.old` prima di mettere il nuovo, e
+`pulisci_vecchi()` li toglie solo al giro DOPO: dunque su una macchina appena
+rotta i binari vecchi ci sono ancora tutti. E i driver sono statici, quindi i
+nuovi vanno bene lo stesso:
+
+```
+/bin/netdetect.old -c
+/dev/ip.drv &
+/bin/dhcp.old
+/bin/scarica.old <url>/file/lib/libc.so /lib/libc.so.new
+/bin/mv.old /lib/libc.so.new /lib/libc.so
+reboot
+```
+
+! **SI SCARICA SU `.new` E SI RINOMINA DOPO.** Scrivere dritto su
+  `/lib/libc.so` vuol dire che una caduta a meta' lascia una libc monca — e a
+  quel punto non parte piu' nemmeno un `.old`, perche' quelli la libreria la
+  vogliono intera. Con due passi, il peggio che puo' succedere e' restare come
+  si era.
+
+
+## 15 settembre 2026, sera — `ftpswap`: UNA DIRECTORY E UN SERVER FTP, ALLINEATI
+
+`ftpswap /miadir` tiene allineata una directory con un server FTP: quel che
+nasce da una parte compare dall'altra, quel che muore da una parte muore
+dall'altra, e chi e' piu' recente vince.
+
+### IL DIARIO E' IL PEZZO CHE DECIDE TUTTO
+
+Senza memoria, un file che c'e' da una parte sola e' **sempre** un file nuovo da
+copiare — e cancellare qualcosa diventa impossibile, perche' al giro dopo torna.
+Con la memoria di com'erano le cose alla fine dell'ultimo giro, lo stesso fatto
+si legge nei due modi giusti:
+
+```
+c'e' qui, non c'e' li', e nel diario NON c'e'  ->  e' nato qui:  si copia
+c'e' qui, non c'e' li', e nel diario C'E'      ->  e' morto li': si cancella
+```
+
+! **E IL DIARIO TIENE LE DATE DELLE DUE PARTI, non una sola.** Non e' un di
+  piu': su EX-OS **`utime()` non cambia niente** — nessun filesystem sa
+  riscrivere le date, sta scritto in `libc.h`. Un file appena scaricato ha
+  percio' la data di ADESSO, cioe' e' piu' recente di quello da cui viene: un
+  confronto fra i due orologi lo rimanderebbe su al giro dopo e giu' a quello
+  dopo ancora, per sempre. Confrontando invece ogni parte **con se stessa**
+  com'era nel diario, la domanda diventa «e' cambiato da allora?», che ha una
+  risposta sola.
+
+Conflitto (cambiato di qua e di la'): vince il piu' recente — ed e' l'unico
+punto dove i due orologi si confrontano per forza — ma **il perdente non si
+perde**: finisce accanto come `<nome>.prima`, in locale, dove chi deve
+guardarlo lo trova.
+
+### DUE FILE NON SI CARICANO MAI
+
+`ftpswap.cfg` ha la **password in chiaro**: mandarlo sul server vorrebbe dire
+pubblicare la chiave della porta che si sta aprendo. Si scrive a 0600.
+`ftpswap.diario` e' lo stato di QUESTA macchina: due macchine che allineano la
+stessa directory hanno due diari diversi, e scambiarseli vuol dire raccontarsi
+cancellazioni mai avvenute. Anche i `.prima` restano a casa.
+
+### E IL CLIENT FTP E' FINITO IN UNA LIBRERIA
+
+`lib/exftp/` — il precedente e' `lib/exuser`, nato il 19 agosto quando i
+programmi che leggevano l'archivio degli utenti sono diventati tre. Qui i
+programmi che parlano FTP sono diventati due, e due copie della stessa cosa
+divergono al primo cambiamento.
+
+Cosa sa fare piu' di `bin/ftp`: **MLSD** (elenco fatto per le macchine, invece
+di LIST che cambia forma da server a server), **MDTM** e **MFMT** (leggere e
+*scrivere* la data di un file remoto), e la **modalita' attiva** (`PORT`), che
+il vecchio non aveva — EX-OS sa gia' ascoltare e accettare, lo fa `telnetd`.
+
+! **`bin/ftp` NON CI E' ANCORA PASSATO SOPRA**, e sta scritto anche in cima a
+  `exftp.h`: quel programma ha ancora il suo client. Portarcelo e' un lavoro a
+  se', da fare col programma sotto mano e provandolo contro un server vero, non
+  di straforo mentre se ne scrive un altro.
+
+! **IL SERVER DELLE PROVE SA TUTTO QUEL CHE SERVE** — `FEAT` risponde MDTM,
+  SIZE, MFMT, MLSD, REST, EPRT, PASV — quindi l'allineamento ha un
+  interlocutore vero. Le credenziali NON stanno qui ne' nel repository.
+
+
+## 15 settembre 2026, sera — UNA CHIAVETTA SI TOGLIE, NON SI STRAPPA (`eject`)
+
+Fino a oggi una chiavetta USB si sfilava e basta, sperando bene. Il perche' sta
+in cima ad `automount.c`, scritto da mesi: **il driver che serve un disco sta
+fermo dentro `blk_attendi()` e non guarda piu' le porte**. Quindi sfilarla
+lasciava un `/USB/DRIVE0` che risponde errore a ogni accesso, e **rimetterla non
+produceva niente**, perche' nessuno stava guardando.
+
+### LA CATENA, DAL KERNEL AL COMANDO
+
+Il pezzo che mancava era il modo di dire al kernel «questa la tolgo». Ritirare
+un dispositivo il kernel lo sapeva gia' fare — `blk_ritira()`, che chiama
+quando il servente muore — e non c'era modo di chiederglielo da fuori.
+
+| dove | che cosa |
+|---|---|
+| `kernel/block/blkr3.c` | `blkr3_espelli()`: come la morte del servente, ma per un dispositivo solo e senza che nessuno muoia |
+| `kernel/include/syscall.h` | `SYS_BLK_ESPELLI` (212), accanto alle altre `BLK_` |
+| `lib/libc.c`, `libc.h` | `blk_espelli(nome)` |
+| `drivers/usb/usb_massa.c` | `-ENODEV` da `blk_attendi()` non e' un guasto: e' «tolto di mezzo», e si TORNA |
+| `ehci`, `ohci`, `uhci` | dopo aver servito si **continua a guardare le porte** invece di uscire |
+| `bin/eject/eject.c` 0.001 | smonta quel che ci sta sopra, poi ritira |
+| `bin/automount` 0.003 | non accusa piu' nessuno per un punto gia' smontato |
+
+! **L'ORDINE E' SMONTA-POI-RITIRA, E NON E' INVERTIBILE.** Un dispositivo
+  ritirato mentre e' montato non sparisce: resta GUASTO, e ogni accesso rende
+  errore finche' non lo si smonta. La syscall rifiuta con `-EBUSY` e fa bene —
+  meglio un errore che qualcuno sa spiegare di un dispositivo zombie.
+
+! **E LA PORTA RESTA SEGNATA COME «GIA' PROVATA».** Dopo l'espulsione la
+  chiavetta e' ancora infilata: se il driver la riprendesse subito, `eject` non
+  servirebbe a niente. Il segno si cancella quando la porta torna vuota per tre
+  secondi — logica che il driver aveva gia' — e a quel punto rimetterla e' un
+  inserimento nuovo.
+
+### IL DIFETTO CHE E' SALTATO FUORI SOLO PERCHE' ADESSO SI TORNA
+
+La prima prova del giro completo si fermava a meta': `ehci: porta 2:
+dispositivo ad alta velocita'`, e poi silenzio. **La QH di controllo era rimasta
+puntata sull'indirizzo 1** — quello dato alla chiavetta precedente — e un
+dispositivo appena infilato risponde SOLO allo zero.
+
+! Non e' un difetto nuovo: e' un difetto vecchio che **non si poteva vedere**.
+  La QH si preparava una volta sola, all'accensione, e con una chiavetta sola
+  per tutta la vita del processo bastava. Da quando il driver torna a guardare
+  le porte, la SECONDA chiavetta e' la prima a pagarlo — ed e' esattamente il
+  caso per cui `eject` esiste. Corretto in `ehci` e in `ohci`: la QH (l'ED su
+  OHCI) torna a zero in testa a `conosci()`.
+
+### LA PROVA, IN QEMU, COL GIRO INTERO
+
+Chiavetta finta di QEMU, formattata da dentro EX-OS (una fatta con `mformat` il
+VFS la rifiuta: «metadati incoerenti»), e il monitor per sfilarla e rimetterla:
+
+```
+eject /USB/DRIVE0   ->  smontato, ritirato
+massa: usb0 e' stato espulso: la chiavetta si puo' togliere.
+ehci: aspetto una chiavetta.          <- il driver e' tornato a guardare
+[device_del ; drive_add ; device_add]
+ehci: porta 2: dispositivo ad alta velocita'
+automount: e' comparso usb0 (32768 settori)
+automount: usb0 -> /USB/DRIVE0        <- rimontata da sola
+```
+
+! **E `device_del` DA SOLO NON BASTA A RIMETTERLA**: si porta via anche il
+  supporto, e il `device_add` dopo risponde «Property 'usb-storage.drive' can't
+  find value 'stick'». Prima `drive_add 0 if=none,id=stick,format=raw,file=...`,
+  poi `device_add`. La chiavetta torna su un'altra porta, e va benissimo: il
+  driver le guarda tutte.
+
+
+## 15 settembre 2026, sera — TRENTASETTE MEGABYTE SU UNA LINEA CHE CADE
+
+`netupdate` sull'Acer: «cc1plus.new: 33306298 byte invece di 37550104, NON lo
+installo». Il messaggio e' onesto e il primo numero e' tutto: **33.306.298 non
+e' un numero tondo**, quindi non e' un tetto — e lo scaricamento a flusso
+scritto il giorno prima, mai provato su un file grande, regge.
+
+La conferma e' venuta da un secondo tentativo, lanciato da qui con `scarica`
+attraverso telnet:
+
+| tentativo | byte | tempo | velocita' |
+|---|---|---|---|
+| primo | 33.306.298 (88%) | 850 s | 39 KB/s |
+| secondo | **37.550.104 (intero)** | 767 s | 49 KB/s |
+
+Numeri diversi: non e' un limite, e' **la connessione che cade**. Un quarto
+d'ora di trasferimento aperto e' piu' di quanto Cloudflare e Altervista
+tengano viva una cosa che va piano.
+
+### IL DIFETTO NON ERA LA CADUTA: ERA IL SILENZIO
+
+`scarica` ha salvato 33 MB su 37 dichiarati e ha stampato **«200, salvata»**,
+senza una parola. A fermare l'installazione e' stato il controllo dei byte di
+`netupdate` — che pero' e' di netupdate: qualunque altro chiamante (il
+navigatore, domani chiunque) si sarebbe tenuto la meta' pagina credendola
+intera.
+
+`exhttp` adesso, quando il server chiude prima di aver mandato i byte che
+aveva dichiarato, mette `troncata` e scrive il perche' in `errore`: «corpo
+incompleto: N byte su M dichiarati». Il campo nuovo **non** si aggiunge a
+`ExHttpEsito` — la dichiara chi chiama, sulla propria pila, e un programma
+costruito prima si ritroverebbe scritto un pezzo di pila che credeva suo.
+`scarica` 0.005 di conseguenza non incolpa piu' il buffer a caso.
+
+### E POI SI RIPRENDE: `Range: bytes=N-`
+
+Ricominciare da zero a ogni caduta vuol dire non finire mai. Adesso:
+
+- `http_richiesta_testa_da()` — funzione NUOVA, non un parametro in piu' su
+  quella di prima, che la chiamano gia' exhttp e `tools/prove/httpprova.c`;
+- `exhttp_da(n)` — vale per UNA chiamata sola, e se la prende `exhttp_prendi()`
+  azzerandola subito. A differenza di `exhttp_verso()`, che si toglie a mano:
+  un verso dimenticato acceso si vede subito, un Range dimenticato acceso fa
+  arrivare mezzo file senza che nessuno se ne accorga, perche' 206 e' una
+  risposta buona;
+- `scarica -da N` — per provarla a mano, perche' una cosa che non si puo'
+  chiedere da riga di comando non si prova;
+- `netupdate` 0.020 — il `.new` rimasto a meta' non si butta piu': si
+  rimastica (l'impronta dei byte gia' scritti si rifa' rileggendo il file — un
+  paio di secondi di disco contro un quarto d'ora di rete), si accoda, e si
+  riprova fino a tre volte. Se dopo tre giri non e' intero, **il .new resta**:
+  il prossimo `netupdate` riparte da li'. Se invece l'impronta non torna il
+  .new si butta — un file corto e' un file a cui manca la fine, uno della
+  lunghezza giusta con l'impronta sbagliata e' sbagliato dentro.
+
+! **E CHI CHIEDE UN PEZZO DEVE GUARDARE SE GLIENE MANDANO UNO.** «Range» e' una
+  preghiera: chi la esaudisce risponde 206, chi non sa farlo la IGNORA e manda
+  tutto con un 200. Accodare un file intero in fondo a mezzo file fa un file
+  della lunghezza sbagliata e del contenuto peggiore. Il controllo sta nel
+  gancio di scrittura di netupdate, al primo pezzo che arriva: il codice c'e'
+  gia' (exhttp lo mette appena lette le intestazioni), e se non e' 206 si ferma
+  tutto e si ricomincia da capo.
+
+**Provato in QEMU contro il server vero**, non in teoria:
+
+```
+scarica -i http://.../file/bin/telnetd            -> 200, 22908 byte
+scarica -i -da 10000 http://.../file/bin/telnetd  -> 206, 12908 byte
+```
+
+12908 = 22908 - 10000, esatti.
+
+! **MA IL SERVER NON ACCETTA Range SU TUTTO, E VA SAPUTO.** Sui file binari
+  sotto `file/` risponde 206 con il `Content-Range` giusto; su `elenco.txt`
+  risponde **200 con tutto il file**, ignorando la richiesta (`cf-cache-status:
+  DYNAMIC`, nessun `Accept-Ranges`). Per fortuna e' l'opposto di un problema:
+  i file che valgono la pena di riprendere sono i binari grossi, e i .txt del
+  catalogo sono centoquaranta kilobyte che si riscaricano in un secondo. Chi un
+  domani vedra' «riprendo da N» seguito da un file intero sappia che non e' un
+  difetto nostro: e' questo.
+
+### cc1plus E' AL SUO POSTO, MESSO A MANO
+
+Il secondo scaricamento e' stato spostato dentro `/exos/libexec/gcc/i386-exos/
+17.0.0/cc1plus` dalla macchina stessa. Due cose imparate li':
+
+- **`mv` di 37 MB ci mette 118 secondi**: su EX-OS copia, non rinomina.
+- **La coda d'ingresso del pty butta i byte quando e' piena** (`metti()`, in
+  `kernel/ipc/pty.c`, ed e' una scelta scritta nel commento). I comandi battuti
+  mentre `mv` lavorava si sono fusi in uno solo — `rm /root/prova.bin ls
+  /exos/... netupdate -check` — perche' il primo byte che si perde e' l'a capo.
+  Chi pilota una sessione mandi **un comando per volta, aspettando l'invito**.
+
+! **E UN FILE MESSO A MANO TORNA NELL'ELENCO, per costruzione.** Al `-check`
+  dopo, cc1plus risultava di nuovo «da aggiornare»: non perche' sia sbagliato,
+  ma perche' `verdetto()` (`netupdate.c:1456`) di un file che non sta nel
+  registro e che esiste dice SCONOSCIUTO, e non ne calcola l'impronta. Non
+  avendo prova di che cosa sia, lo riscarica. E' la risposta giusta — ma chi
+  mette un file a mano deve sapere che il giro dopo se lo ritrova.
+
+
+## 15 settembre 2026, sera — LA SESSIONE TELNET CHE DIVENTA SORDA
+
+Il sintomo, raccontato da chi lo subiva: «telnetd di EX-OS, se provo ad
+accedervi con telnet appare il prompt ma non fa piu' nulla». L'invito della
+shell arriva, e da quel momento la sessione non risponde a niente: si puo' solo
+ammazzare il client.
+
+### CHI BUTTAVA I TASTI: `attendi()`
+
+`tcp_scrivi()` manda un blocco allo stack e aspetta il proprio esito con
+`esito()`, cioe' con `attendi()`. Quella funzione pescava dalla casella finche'
+non trovava il messaggio che le avevano chiesto, e **tutto il resto le passava
+fra le mani**: `continue`, e via. Fra quel resto c'e' `IP_MSG_TCP_DATI`, cioe'
+i tasti battuti dall'altra parte.
+
+! **E NON ERA IL CASO RARO: ERA QUASI LA REGOLA.** telnetd manda la
+  negoziazione, il client risponde subito, e intanto la shell ha gia' scritto il
+  suo invito. Il ciclo trova il pty pronto, chiama `tcp_scrivi()` per mandarlo e
+  si mette ad aspettare l'esito — e nella casella la risposta del client sta
+  gia' li', davanti all'esito.
+
+! **PERDERE QUEL MESSAGGIO NON PERDEVA SOLO QUEI BYTE: PERDEVA L'ORECCHIO.** Lo
+  stack consegna a chi ha prenotato e **la prenotazione si consuma a ogni
+  consegna** (`tcp_consegna()` in `drivers/ip/ip.c`: `c->attesa_pid = 0`).
+  Buttata la consegna, `sessione()` restava convinta di avere una prenotazione
+  in piedi — `prenotato` a 1 — e non ne faceva mai piu' una. Da li' in poi
+  nessun tasto arrivava piu', per sempre, con la connessione TCP viva e il
+  client senza nessun motivo di sospettare.
+
+`telnetd` 0.007: quel che arriva e non era atteso si **mette da parte** —
+una casella sola basta, perche' lo stack consegna una prenotazione per volta —
+e lo ritira il ciclo di `sessione()`, che e' il solo posto che sa che farne.
+Il filtro del protocollo e la scrittura sul pty sono passati in `consegna()`,
+che adesso ha due chiamanti: la casella letta dal ciclo e la posta messa da
+parte.
+
+### LA PROVA: IL SECONDO COLLEGAMENTO, NON IL PRIMO
+
+In QEMU una sessione sola andava bene tutte le volte, col binario vecchio e col
+nuovo: e' una questione di millisecondi, e in una macchina virtuale la risposta
+del client torna prima che la shell abbia scritto l'invito. Il caso si vede
+**al secondo collegamento di fila**, quando i tempi si spostano:
+
+| | primo collegamento | secondo collegamento |
+|---|---|---|
+| telnetd 0.006 | 11 comandi su 11 | **invito e basta: 110 byte, nessun comando eseguito** |
+| telnetd 0.007 | 11 comandi su 11 | tutti i comandi eseguiti |
+
+E nel registro del server, al secondo collegamento, con 0.006 **non compaiono
+le righe `il terminale adesso e' 80x24`**: la misura della finestra e' proprio
+uno dei messaggi che finivano nel buco.
+
+### L'ALTRO DIFETTO, TROVATO PER STRADA: `login` DA REMOTO RIACCENDEVA LA MACCHINA
+
+Provando la stessa cosa con `avvio = login` invece che con la shell nuda, la
+sessione mandava «Accendo la rete...», «pci: ipc_register('pci') fallita (-17)»
+e poi moriva li', senza arrivare a chiedere il nome.
+
+`login` esegue `/boot/avvio.sh` prima di chiedere l'accesso, e aspetta che
+finisca: e' l'accensione del sistema, e il posto e' quello giusto. La guardia
+c'era — solo la console 0 — ma **un processo nato dentro un pty la console la
+EREDITA**, e per un telnetd lanciato all'accensione quella console e' proprio la
+zero. Cosi' ogni accesso da telnet rieseguiva lo script: `pci.drv`, `netdetect`,
+`dhcp`, un **secondo telnetd sulla porta gia' occupata**, i driver USB. E
+`login` stava ad aspettare.
+
+! **E LA TASTIERA FISICA NON E' DI CHI ARRIVA DALLA RETE.**
+  `exuser_prendi_console()` dichiara il chiamante in primo piano sulla console
+  del processo, e su un pty quella console e' ancora quella di chi sta seduto
+  davanti alla macchina: un login remoto le rubava i tasti, e la shell locale
+  restava a leggere zero byte — un prompt che non risponde piu', senza un
+  messaggio.
+
+`login` 0.002: `su_un_pty()` — cioe' `pty_ctl(0, PTY_CTL_LEGGI_MISURA, 0) >= 0`,
+la stessa domanda che `lib/exuser` fa gia' per decidere come leggere una
+password — e sulle due cose che sono del SISTEMA e non della sessione: niente
+script di avvio, niente console fisica. Su una console vera `pty_ctl` rende
+`-ENOTTY`, quindi l'accensione non cambia di una virgola.
+
+Con questa, l'accesso da telnet arriva fino in fondo: nome, password con gli
+asterischi (l'eco la spegne la disciplina di linea del pty, non il driver di
+tastiera), e la shell.
+
+### E LA MUTA VERA: `ipc_recv_timeout(..., 0)` ASPETTA PER SEMPRE
+
+Sull'Acer, dopo una sessione servita bene e un client chiuso di brutto, la
+porta 23 accettava il TCP e non diceva piu' niente — nemmeno la negoziazione:
+`@DIF-TELNETMUTO`, cercata per due giorni dalla parte dello stack. La macchina,
+riavviata, ha risposto `telnetd 0.006`: la guardia a orologio c'era, quindi la
+spiegazione comoda — un binario vecchio — era chiusa, e restava da guardare
+dentro il ciclo quale chiamata puo' non tornare mai.
+
+Non e' la `write()` sul pty: `pty_scrivi_master()` non blocca mai, e quando
+l'anello e' pieno butta l'ultimo arrivato (`metti()`, `kernel/ipc/pty.c:79`,
+col commento che spiega perche'). Non e' `ipc_send()`: a casella piena ritenta
+e poi rende `-EBUSY`. E' la **ricezione**:
+
+```c
+int got = ipc_recv_timeout(&meta, buf, sizeof(buf), 0);
+if (got < 0) { fermi++; continue; }        /* non poteva succedere mai */
+```
+
+! **ZERO NON VUOL DIRE «NON ASPETTARE»: VUOL DIRE «ASPETTA PER SEMPRE».** Sta
+  scritto sopra il prototipo in `libc.h` — «timeout_ms == 0 = attesa senza
+  scadenza, cioe' esattamente ipc_recv». La riga sotto, che tratta il caso
+  «casella pronta che non rende niente», e' la prova che chi l'ha scritta
+  credeva il contrario: quel ramo non poteva essere raggiunto.
+
+! **E LA CASELLA PUO' ESSERE VUOTA ANCHE SE LA `poll` HA DETTO DI SI'.**
+  `revents` e' la fotografia di un istante fa, e fra quell'istante e questa
+  riga c'e' il ramo dal pty verso la rete: `tcp_scrivi()` → `esito()` →
+  `attendi()`, che dalla casella **pesca**. Se il messaggio che aveva fatto
+  scattare la poll era proprio quello che `attendi()` ha ritirato, qui non c'e'
+  piu' niente e il processo si ferma dentro la syscall.
+
+! **E COSI' NESSUNO PUO' PIU' ACCORGERSENE:** telnetd serve una sessione per
+  volta, e la domanda a orologio che scopre il client andato via **sta nel
+  ciclo**. Un ciclo che non gira piu' non chiede piu' niente a nessuno.
+
+I due difetti si tenevano per mano: e' `attendi()` che vuota la casella sotto
+la poll (corretto in 0.007), ed e' lo zero che trasforma una casella vuota in
+un'attesa eterna (corretto in 0.008, scadenza 100 ms). Il primo rendeva la
+sessione sorda, il secondo le impediva di finire — e la porta restava muta per
+tutte le connessioni successive.
+
+! **E IN QEMU NON SI RIPRODUCE NESSUNO DEI DUE AL PRIMO COLPO**: sono
+  millisecondi fra la risposta del client e la scrittura dell'invito. Il primo
+  si e' visto al secondo collegamento di fila; il secondo si e' visto solo
+  sulla macchina vera, dall'altra parte di una rete vera.
+
+
+## 15 settembre 2026 — TRE PRESUPPOSTI SBAGLIATI, TUTTI MIEI
+
+Giornata di correzioni a cose scritte il giorno prima. Il filo comune: ogni
+volta il codice era giusto rispetto a un presupposto, e il presupposto era
+falso su una macchina vera.
+
+### `-permessi` CERCAVA NEL POSTO SBAGLIATO
+
+Rispondeva «non c'e' nessun registro (/boot/netupdate.reg), non so cosa sia
+stato installato da qui» — proprio a chi aveva il problema. Il presupposto era
+che il sistema fosse arrivato da netupdate; su una macchina vera si installa da
+CD o da floppy con `install`, e netupdate viene dopo.
+
+! **E ANCHE CON UN REGISTRO SAREBBE STATO IL SOTTOINSIEME SBAGLIATO.** Un file
+  a 0644 non e' rotto per via di CHI ce l'ha messo: se sta in una directory di
+  programmi e non e' eseguibile, non parte. Adesso si aprono quelle directory —
+  le stesse che sa gia' `e_programma()` — e si guarda dentro. Cio' che e' gia'
+  a posto non si tocca, e il conto lo dice separato.
+
+### IL TOUCHPAD: LA RISPOSTA ERA GIA' SCRITTA NEL COMMENTO
+
+`mouse` diceva «la sorgente c'e' ma non risponde nessun mouse», cioe'
+`mouse_hw_init()` aveva reso 0. Quella funzione mandava UN solo reset 0xFF e,
+se non arrivava risposta, `main()` spegneva la seconda porta fino al riavvio
+dopo. E il commento che spiega perche' la si spegne dice, testualmente, «un
+touchpad che risponde tardi».
+
+kbd.drv 0.002: tre tentativi con cento millisecondi in mezzo, e **la ragione si
+stampa sempre** — a quale passo ci si e' fermati e con quale byte in mano. Un
+Synaptics in PS/2 sta dietro a un microcontrollore che al primo avvio ha ancora
+da finire; una tastiera vera risponde al primo colpo, quindi i tre giri costano
+solo sulle macchine senza mouse, e li' costano trecento millisecondi una volta.
+
+! **E I DUE BIT DELLA SECONDA PORTA NON LI GUARDAVA PIU' NESSUNO.** Il
+  configuration byte si riscrive verificando i tre bit della tastiera; AUX_INT
+  e AUX_CLOCK uscivano dal ciclo senza che si sapesse se il controller li
+  avesse presi. Un mouse la cui porta non e' mai stata accesa e un mouse che
+  non c'e' danno lo stesso identico silenzio.
+
+### cc1plus NON ENTRA IN MEMORIA, E NON DEVE
+
+Vedi `@DIF-GROSSI` in `in_lavorazione.txt`. In breve: `netupdate` teneva il
+corpo intero in un buffer da 2 MB e saltava libcrypto.a, libstdc++.a, cc1 e
+cc1plus — 37 MB quest'ultimo. Adesso il corpo passa dal disco mentre arriva:
+SHA-256 incrementale nella libc, `exhttp_verso()` nella libreria della rete,
+`scarica_su_file()` in netupdate, e lo stesso verso anche in `scarica`, che
+oltre il megabyte lasciava meta' file col nome giusto.
+
+! **ALLARGARE IL BUFFER ERA LA PRIMA IDEA ED ERA SBAGLIATA.** Trentotto
+  megabyte di memoria ferma su un portatile del 2004 sono peggio del difetto, e
+  il file dopo sara' piu' grande di questo.
+
+! **NIENTE DI QUESTA GIORNATA E' COMPILATO.** L'ambiente non concede `make` a
+  questa sessione dalla meta' del 14 settembre. Il primo comando della
+  prossima:
+
+    make exhttp_so && make iso-exos && make netinst && exagonx/pubblica.sh
+
+---
 
 ## 14 settembre 2026, sera — LA COPIA DI MEZZO MENTIVA, E LA POST NON TORNAVA
 

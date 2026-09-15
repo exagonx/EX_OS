@@ -150,6 +150,7 @@ void syscall_init(void)
     syscall_table[SYS_BLK_ATTENDI]  = sys_blk_attendi;
     syscall_table[SYS_BLK_RISPOSTA] = sys_blk_risposta;
     syscall_table[SYS_BLK_SCANSIONA] = sys_blk_scansiona;
+    syscall_table[SYS_BLK_ESPELLI]  = sys_blk_espelli;
     syscall_table[SYS_IPC_RECV]     = sys_ipc_recv;
     syscall_table[SYS_IPC_REGISTER] = sys_ipc_register;
     syscall_table[SYS_IPC_LOOKUP]   = sys_ipc_lookup;

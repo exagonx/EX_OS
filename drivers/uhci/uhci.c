@@ -849,7 +849,12 @@ static int massa_prepara(void)
  * perche' per esteso sta in ohci.c, sopra ASSENZE_PER_SCOLLEGATA. */
 #define ASSENZE_PER_SCOLLEGATA 3
 
-static int aspetta_e_servi(void)
+/* ! DA QUI NON SI TORNA PIU', E DA OGGI E' VERO SUL SERIO. Prima la via
+ * d'uscita era una sola — «servita una chiavetta, esco» — e adesso non c'e'
+ * nemmeno quella: una chiavetta espulsa riporta il driver QUI, a guardare le
+ * porte. Un driver che aspetta e' l'unica cosa che ha senso: se esce, la presa
+ * non la guarda piu' nessuno. Percio' la funzione non rende niente. */
+static void aspetta_e_servi(void)
 {
     unsigned char provata[2], assenze[2], inserita[2];
     unsigned int  p, addr = 1;
@@ -885,7 +890,9 @@ static int aspetta_e_servi(void)
             if (!enumera(p, addr)) continue;
             addr++;
 
-            if (g_massa && massa_prepara()) return 0;
+            /* Se torna, e' stata espulsa: si continua a guardare le porte.
+             * Vedi il commento in ehci.c. */
+            if (g_massa && massa_prepara()) continue;
         }
 
         if (!detto) {
@@ -946,7 +953,7 @@ int main(int argc, char **argv)
     {
         unsigned int p, addr = 1, trovati = 0;
 
-        if (g_solo_massa) return aspetta_e_servi();
+        if (g_solo_massa) { aspetta_e_servi(); return 0; }  /* non torna */
 
         for (p = 0; p < 2; p++) {
             if (!porta_reset(p)) continue;

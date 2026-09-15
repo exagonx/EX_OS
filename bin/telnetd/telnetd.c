@@ -44,7 +44,7 @@
 #include "rete.h"
 
 /* +0.001 a ogni modifica: `telnetd -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("telnetd", "0.006");
+EX_VERSIONE("telnetd", "0.008");
 
 /* I comandi del protocollo, quelli che servono. */
 #define IAC     255
@@ -64,6 +64,23 @@ EX_VERSIONE("telnetd", "0.006");
 
 static int pid_ip = 0;
 static int g_verboso = 0;
+
+/* =============================================================================
+ * LA POSTA MESSA DA PARTE
+ *
+ * Qui finisce cio' che arriva nella casella mentre si sta aspettando un
+ * messaggio precisa — cioe' mentre tcp_scrivi() aspetta il proprio esito. Il
+ * perche' sta per esteso sopra attendi(); in breve: sono i tasti del client, e
+ * buttarli vuol dire restare sordi per tutta la sessione.
+ *
+ * ! UNA SOLA CASELLA BASTA, e non e' un'approssimazione: lo stack consegna solo
+ * a chi ha prenotato, una prenotazione per volta, e la prossima la fa
+ * sessione() dopo aver ritirato questa.
+ * ========================================================================== */
+static unsigned char coda_msg[IPC_MSG_MAX_DATA];
+static unsigned int  coda_len;      /* 0 = niente da ritirare                */
+static int           coda_chiusa;   /* lo stack ha detto che non c'e' piu'
+                                       nessuno dall'altra parte              */
 
 /* -----------------------------------------------------------------------------
  * La configurazione — /boot/telnetd.cfg
@@ -263,6 +280,32 @@ static int indirizzo_ammesso(const char *lista, const unsigned char ip[4])
     return 0;
 }
 
+/* -----------------------------------------------------------------------------
+ * ! QUEL CHE ARRIVA MENTRE SI ASPETTA UN ESITO NON SI BUTTA, E FINO AL 15
+ * SETTEMBRE 2026 SI BUTTAVA.
+ *
+ * Questa funzione pesca dalla casella finche' non trova il messaggio che le
+ * hanno chiesto, e tutto il resto le passava fra le mani: `continue`, e via.
+ * Fra quel resto c'e' IP_MSG_TCP_DATI, cioe' I TASTI CHE IL CLIENT HA BATTUTO.
+ *
+ * ! E NON ERA IL CASO RARO: ERA QUASI LA REGOLA, ALL'INIZIO DI OGNI SESSIONE.
+ * telnetd manda la negoziazione, il client risponde subito, e intanto la shell
+ * ha scritto il suo invito: il ciclo trova il pty pronto, chiama tcp_scrivi()
+ * per mandare l'invito e si mette ad aspettare l'esito — e nella casella la
+ * risposta del client e' gia' li', davanti all'esito.
+ *
+ * ! PERDERE QUEL MESSAGGIO NON PERDEVA SOLO QUEI BYTE: PERDEVA L'ORECCHIO. Lo
+ * stack consegna a chi ha prenotato e LA PRENOTAZIONE SI CONSUMA A OGNI
+ * CONSEGNA (tcp_consegna(), drivers/ip/ip.c: `c->attesa_pid = 0`). Buttata la
+ * consegna, sessione() restava convinta di avere una prenotazione in piedi —
+ * `prenotato` a 1 — e non ne faceva mai piu' una: da quel momento nessun tasto
+ * arrivava piu', per sempre. Il sintomo era l'invito che compare e una
+ * sessione che da li' in poi non risponde a niente, mentre la connessione TCP
+ * e' viva e il client non ha nessun motivo di sospettare.
+ *
+ * Adesso il fuori programma si mette da parte e lo ritira il ciclo di
+ * sessione(), che e' il solo posto che sa che farne.
+ * --------------------------------------------------------------------------- */
 static int attendi(unsigned int tipo, unsigned char *buf, unsigned int *len,
                    unsigned int ms)
 {
@@ -272,9 +315,37 @@ static int attendi(unsigned int tipo, unsigned char *buf, unsigned int *len,
     for (i = 0; i < 32; i++) {
         if (ipc_recv_timeout(&meta, buf, IPC_MSG_MAX_DATA, ms) < 0) return -1;
         if ((int)meta.sender_pid != pid_ip) continue;
-        if (meta.tipo != tipo) continue;
-        if (len) *len = meta.len;
-        return 0;
+
+        if (meta.tipo == tipo) {
+            if (len) *len = meta.len;
+            return 0;
+        }
+
+        if (meta.tipo == IP_MSG_TCP_DATI) {
+            unsigned int n = meta.len;
+
+            if (n > sizeof(coda_msg)) n = sizeof(coda_msg);
+
+            /* Se mai ne arrivasse una seconda a casella piena si tiene la piu'
+             * vecchia: i byte di un terminale sono una fila, e scavalcarli
+             * sarebbe peggio che perderli. */
+            if (coda_len == 0 && n > 0) {
+                memcpy(coda_msg, buf, n);
+                coda_len = n;
+            }
+            continue;
+        }
+
+        if (meta.tipo == IP_MSG_TCP_INFO && meta.len >= sizeof(IpTcpInfo)) {
+            IpTcpInfo info;
+
+            /* E' la risposta alla domanda a orologio di sessione(). Vale quanto
+             * varrebbe letta la': se la connessione non c'e' piu', la sessione
+             * e' finita. */
+            memcpy(&info, buf, sizeof(info));
+            if (info.stato != IP_TCP_APERTA && info.stato != IP_TCP_IN_APERTURA)
+                coda_chiusa = 1;
+        }
     }
     return -1;
 }
@@ -485,6 +556,40 @@ static unsigned int filtra(int id, int pty, const unsigned char *d, unsigned int
 }
 
 /* -----------------------------------------------------------------------------
+ * Un blocco arrivato dalla rete: si ripulisce dal protocollo e si consegna al
+ * programma.
+ *
+ * ! STA IN UNA FUNZIONE PERCHE' I POSTI DA CUI ARRIVA SONO DUE — la casella
+ * letta dal ciclo, e la posta che attendi() ha messo da parte mentre si
+ * scriveva sulla connessione. Due copie dello stesso pezzo sarebbero due posti
+ * dove dimenticarsi del filtro, e un IAC consegnato alla shell e' spazzatura
+ * battuta da nessuno.
+ *
+ * `msg` e' il messaggio INTERO, intestazione compresa.
+ * --------------------------------------------------------------------------- */
+static void consegna(int id, int pty, const unsigned char *msg, unsigned int n)
+{
+    unsigned char pulito[IPC_MSG_MAX_DATA];
+    IpTcpDati     d;
+    unsigned int  len, q;
+
+    if (n < sizeof(d)) return;
+
+    memcpy(&d, msg, sizeof(d));
+
+    /* ! LA LUNGHEZZA DICHIARATA SI ACCORCIA A QUELLA DEL MESSAGGIO. Fidarsi di
+     * d.len vorrebbe dire filtrare byte che nel messaggio non ci sono, cioe'
+     * la coda del proprio buffer: e' lo stesso difetto che in ip.c si e'
+     * pagato con una firma SSH che non tornava. */
+    len = d.len;
+    if (len > n - sizeof(d)) len = n - (unsigned int)sizeof(d);
+    if (len > sizeof(pulito)) len = sizeof(pulito);
+
+    q = filtra(id, pty, msg + sizeof(d), len, pulito);
+    if (q > 0) write(pty, pulito, q);
+}
+
+/* -----------------------------------------------------------------------------
  * Una sessione: la connessione da una parte, un pty dall'altra
  * --------------------------------------------------------------------------- */
 static void sessione(int id, const Config *cfg, int con_login)
@@ -499,12 +604,9 @@ static void sessione(int id, const Config *cfg, int con_login)
         IAC, DO,   OPT_NAWS
     };
     unsigned char buf[IPC_MSG_MAX_DATA];
-    unsigned char pulito[IPC_MSG_MAX_DATA];
     struct pollfd v[2];
     SpawnRedir    red[3];
     IpTcpRif      r;
-    IpTcpDati     d;
-    unsigned int  len;
     char         *argv[6];
     const char   *prog = con_login ? cfg->shell : "/bin/sh";
     int           fd[2], figlio, prenotato = 0, i, na = 0;
@@ -558,12 +660,42 @@ static void sessione(int id, const Config *cfg, int con_login)
     fermi = 0;
     ultimo_stato = uptime_ms();
 
+    /* ! LA POSTA MESSA DA PARTE E' DI QUESTA SESSIONE E BASTA: quel che fosse
+     * avanzato dalla precedente riguarda una connessione che non c'e' piu', e
+     * consegnarlo vorrebbe dire scrivere sul terminale di un altro i tasti di
+     * chi se n'e' gia' andato. */
+    coda_len    = 0;
+    coda_chiusa = 0;
+
     tcp_scrivi(id, apertura, sizeof(apertura));
 
     r.id = (unsigned int)id;
 
     for (;;) {
         int stato = 0;
+
+        /* ! PRIMA DI TUTTO SI RITIRA LA POSTA MESSA DA PARTE da attendi()
+         * mentre si scriveva sulla connessione. Sono byte GIA' CONSEGNATI
+         * dallo stack: la prenotazione che li ha portati e' gia' stata
+         * consumata, e se non se ne fa un'altra non arriva piu' niente. Vedi
+         * il commento sopra attendi(). */
+        if (coda_chiusa) {
+            if (g_verboso) printf("telnetd: il client se n'e' andato\n");
+            break;
+        }
+
+        if (coda_len > 0) {
+            unsigned int n = coda_len;
+
+            coda_len  = 0;
+            prenotato = 0;          /* la consegna l'ha consumata */
+
+            /* Si copia prima di consegnare: filtra() risponde alla
+             * negoziazione, e rispondere vuol dire tcp_scrivi(), cioe' un
+             * altro giro di attendi() che in questa casella puo' scrivere. */
+            memcpy(buf, coda_msg, n);
+            consegna(id, fd[0], buf, n);
+        }
 
         /* ! SI CHIEDE ALLO STACK SE LA CONNESSIONE E' ANCORA VIVA, e prima
          * non si chiedeva a nessuno. Le tre vie d'uscita di questo ciclo
@@ -663,7 +795,38 @@ static void sessione(int id, const Config *cfg, int con_login)
         /* Dalla rete verso il programma. */
         if (v[1].revents & POLLIN) {
             IpcMessage meta;
-            int        got = ipc_recv_timeout(&meta, buf, sizeof(buf), 0);
+            /* =================================================================
+             * ! LA SCADENZA QUI NON E' UN DI PIU': E' CIO' CHE IMPEDISCE
+             * L'ATTESA ETERNA, E FINO AL 15 SETTEMBRE 2026 ERA ZERO.
+             *
+             * `ipc_recv_timeout(..., 0)` NON vuol dire «non aspettare»: vuol
+             * dire ASPETTA PER SEMPRE — e' scritto sopra il prototipo in
+             * libc.h, «timeout_ms == 0 = attesa senza scadenza, cioe'
+             * esattamente ipc_recv». Qui si arrivava convinti del contrario,
+             * tanto che la riga sotto tratta il caso «non rende niente».
+             *
+             * ! E LA CASELLA PUO' ESSERE VUOTA ANCHE SE LA poll HA DETTO DI SI'.
+             * `revents` e' la fotografia di UN ISTANTE FA, e fra quell'istante
+             * e questa riga c'e' il ramo di sopra — quello dal pty verso la
+             * rete — che chiama tcp_scrivi(), quindi attendi(), che dalla
+             * casella PESCA. Se il messaggio che aveva fatto scattare la poll
+             * era proprio quello che attendi() ha ritirato, qui non c'e' piu'
+             * niente e il processo si ferma per sempre dentro una syscall.
+             *
+             * ! COSI' MUORE UNA SESSIONE SENZA CHE NESSUNO POSSA ACCORGERSENE:
+             * telnetd serve UNA SESSIONE PER VOLTA, e la domanda a orologio che
+             * dovrebbe scoprire il client andato via sta NEL CICLO — un ciclo
+             * che non gira piu' non chiede piu' niente. Dal di fuori si vede la
+             * porta 23 che accetta il TCP e non manda un byte, nemmeno la
+             * negoziazione, per sempre. E' @DIF-TELNETMUTO, cercata per due
+             * giorni dalla parte dello stack.
+             *
+             * Cento millisecondi: abbastanza corti da non farsi sentire in una
+             * sessione interattiva, e una scadenza vale quanto un messaggio —
+             * il ciclo riprende, il contatore del riposo avanza, e la domanda
+             * allo stack riparte.
+             * ================================================================= */
+            int        got = ipc_recv_timeout(&meta, buf, sizeof(buf), 100);
 
             /* ! UNA CASELLA PRONTA CHE NON RENDE NIENTE CONTA COME RIPOSO.
              * Senza questo, una poll che dice «c'e' posta» e una ricezione che
@@ -672,17 +835,9 @@ static void sessione(int id, const Config *cfg, int con_login)
             if (got < 0) { fermi++; continue; }
             if ((int)meta.sender_pid != pid_ip) continue;
 
-            if (meta.tipo == IP_MSG_TCP_DATI && meta.len >= sizeof(d)) {
-                unsigned int q;
-
-                memcpy(&d, buf, sizeof(d));
-                prenotato = 0;
-
-                len = d.len;
-                if (len > sizeof(pulito)) len = sizeof(pulito);
-
-                q = filtra(id, fd[0], buf + sizeof(d), len, pulito);
-                if (q > 0) write(fd[0], pulito, q);
+            if (meta.tipo == IP_MSG_TCP_DATI) {
+                prenotato = 0;      /* lo stack l'ha consumata consegnando */
+                consegna(id, fd[0], buf, meta.len);
             } else if (meta.tipo == IP_MSG_TCP_INFO && meta.len >= sizeof(IpTcpInfo)) {
                 IpTcpInfo info;
 

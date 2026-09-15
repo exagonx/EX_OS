@@ -1,4 +1,11 @@
-QUEL CHE E' APERTO — 7 settembre 2026
+QUEL CHE E' APERTO — 15 settembre 2026
+
+!!! I SETTE FILE DEL 15 SETTEMBRE ADESSO COMPILANO, e sono sul server.
+    La sessione della sera li ha costruiti (mancava il typedef Sha256 in
+    lib/libc.c, che e' autosufficiente e non include il proprio header),
+    pubblicati e verificati: 1608 file, 0 diversi. Restano da PROVARE SULLA
+    MACCHINA: @DIF-POST con senderror, e il touchpad in @SIS.
+
 
 Qui c'e' SOLO quel che non e' fatto. Niente voci «FATTO»: la storia di come una
 cosa e' stata fatta, e perche' cosi', sta in RIPRENDERE.md, che e' un diario e
@@ -131,8 +138,9 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @NAVMETA         sette meta' che mancano a cose gia' fatte (una sezione sola)
   1  @DIF-TLS         resta una firma P-384 da 350 ms: rinuncia, non lavoro
   1  @DIF-TCPBUF      non era la finestra: era la coda del driver, otto posti
-  1  @DIF-POST        la POST non tornava: corretto, MAI COMPILATO NE' PROVATO
-  1  @DIF-TELNETMUTO  la porta 23 accetta e resta zitta: corretto, da provare
+  1  @DIF-POST        la POST non tornava: corretto e compilato, da provare
+  1  @PROVE-MACCHINA  ftpswap ed eject: scritti e compilati, mai eseguiti la'
+  1  @DIF-GROSSI      cc1plus non entrava in memoria: il corpo passa dal disco
   1  @FILI-MAX        otto fili per processo: e' un numero, non un lavoro
   1  @EXIDE-TETTI     i tetti di exide, da sapere prima di sbatterci
   1  @EXIDE-LIBRERIE  il clic sulle righe di «Librerie» mai riprovato pixel per pixel
@@ -1209,6 +1217,59 @@ QUEL CHE MANCA, IN ORDINE:
 @DIFETTI DIFETTI APERTI
 =============================================================================
 
+! @DIF-GROSSI IL CORPO NON PASSA PIU' DALLA MEMORIA. (15 settembre 2026)
+
+  Il sintomo, riferito dalla macchina: «netupdate ha saltato libcrypto.a,
+  libstdc++.a, cc1 e cc1plus poiche' troppo grandi; cc1plus e' 37.550.104 byte,
+  piu' del tetto di 2.097.152». Il messaggio era onesto e il risultato era un
+  pacchetto `build` installato a meta': un `gcc` senza cc1plus non compila.
+
+  ! ALLARGARE IL BUFFER NON ERA LA RISPOSTA, e vale la pena scriverlo perche'
+    e' la prima che viene in mente. Trentotto megabyte di memoria ferma su un
+    portatile del 2004 sono peggio del difetto, e il file dopo sara' piu'
+    grande di questo.
+
+  Quattro pezzi, in ordine di profondita':
+
+  1. lib/libc.c e libc.h: SHA-256 INCREMENTALE. `Sha256` piu'
+     sha256_avvia/dai/fine/fine_esa. sha256() e sha256_esa() restano com'erano
+     e adesso sono tre righe sopra quelle.
+     ! E IL GIRO DI COMPRESSIONE ERA SCRITTO DUE VOLTE dentro sha256(): una per
+       i blocchi normali e una, copiata riga per riga, per il blocco di coda.
+       Adesso e' uno: sha_blocco().
+
+  2. lib/exhttp: IL VERSO. exhttp_verso(f, dato) registra dove va il corpo;
+     quando il buffer si riempie viene consegnato li' e ricomincia da capo.
+     Senza registrare niente non cambia niente.
+     ! IL CONFRONTO CON Content-Length NON PUO' PIU' GUARDARE e->byte, che con
+       un verso registrato e' «quanti ce ne sono nel buffer» e non «quanti ne
+       sono arrivati»: c'e' un contatore a parte, g_usciti. Senza, un file
+       lungo non risulterebbe mai finito.
+     ! E IL CORPO DI UNA REDIREZIONE NON SI VERSA MAI: la paginetta di cortesia
+       di un 301 finirebbe in testa al file. La decisione si prende UNA VOLTA,
+       in una variabile, e non dentro lo svuotamento — la' dentro, una pagina
+       di cortesia piu' grande del buffer manda il ciclo a girare per sempre.
+     ! E IL CAMPO NON STA IN ExHttpEsito, che sarebbe il posto naturale: quella
+       struttura la dichiara chi chiama, sulla propria pila, e con una libreria
+       dinamica aggiungerci un campo vuol dire che un programma costruito prima
+       si ritrova scritto un pezzo di pila che credeva suo.
+
+  3. netupdate 0.019: scarica_su_file(). Apre il .new, registra il verso, e
+     ogni pezzo va sul disco E dentro l'impronta mentre passa. Verifica byte e
+     impronta prima di sostituire; se qualcosa non torna, il .new si cancella.
+     ! I BYTE SI CONTANO ANCHE SE L'IMPRONTA BASTEREBBE: lunghezza giusta con
+       impronta sbagliata dice «il repository mente», troncato dice «la rete si
+       e' interrotta». Due posti diversi dove guardare.
+     ! L'ARCHIVIO RESTA L'ECCEZIONE: gzip_apri e tar_estrai lavorano su un
+       buffer, non su un flusso. Un pacchetto piu' grande di BUF_MAX si scarica
+       file per file, e prova_archivio lo dice gia'.
+
+  4. scarica 0.004: con un file di destinazione, stesso verso. Prima oltre il
+     megabyte diceva «TRONCATA» e lasciava sul disco meta' file col nome
+     giusto, che e' peggio di nessun file.
+
+  ! NON COMPILATO NE' PROVATO. Vedi l'avvertenza in @DIF-POST.
+
 ! @DIF-POST LA POST NON TORNAVA PIU', E LE RAGIONI ERANO DUE. (14 settembre 2026)
 
   Il sintomo: `senderror` mandato a un punto di raccolta si piantava e con lui
@@ -1254,36 +1315,30 @@ QUEL CHE MANCA, IN ORDINE:
     e poi, dalla macchina:  senderror <url>/report/ /SIS900.TXT
     e da qui:               exagonx/referti.sh
 
-! @DIF-TELNETMUTO LA PORTA 23 ACCETTA E NON DICE UNA PAROLA. (14 settembre 2026)
+! @PROVE-MACCHINA DUE COMANDI NUOVI CHE LA MACCHINA VERA NON HA ANCORA VISTO.
+  (15 settembre 2026)
 
-  Sull'Acer, dopo un comando che si era piantato dentro la sessione, la porta
-  23 ha continuato ad accettare connessioni TCP senza mandare nemmeno la
-  negoziazione telnet iniziale. Niente byte, in nessun verso, per sempre.
+  `ftpswap` e `eject` sono scritti, compilati e pubblicati; `eject` e' anche
+  provato in QEMU col giro intero (montata, espulsa, sfilata, rimessa,
+  rimontata da sola). Sulla macchina vera non e' stato eseguito nessuno dei due,
+  e per due ragioni diverse:
 
-  ! LA CAUSA E' CHE `telnetd` SERVE UNA SESSIONE PER VOLTA: se sessione() non
-    esce, la connessione dopo entra nella coda dello stack e li' resta. Dal di
-    fuori si vede un connect riuscito e il silenzio, che somiglia a una
-    macchina morta e invece non lo e'.
+    - `eject` vuole il KERNEL NUOVO (la syscall 212 non c'e' in quello vecchio:
+      senza, risponde -ENOSYS). Il kernel e' rimasto fuori dall'aggiornamento
+      del 15 settembre, quello che si e' interrotto.
+    - `ftpswap` vuole solo la libc nuova, ma la sessione di prova e' saltata
+      insieme alla macchina.
 
-  ! E SESSIONE() POTEVA NON USCIRE PIU'. Le vie d'uscita si appoggiavano tutte
-    a `fermi`, il contatore dei giri in cui la poll scade a vuoto: il
-    controllo «l'altro capo c'e' ancora?» partiva solo a fermi >= 4. Un ciclo
-    che per qualunque ragione non riposa mai — una poll che torna pronta e una
-    ricezione che non rende niente — tiene `fermi` a zero e non chiede piu'
-    niente a nessuno.
+  Quando l'Acer e' di nuovo coerente: `netupdate -check` fino in fondo, un
+  riavvio per il kernel, e poi
 
-    Corretto in due punti (telnetd 0.006):
-      - la domanda allo stack e' a OROLOGIO: ogni 2 s a riposo, e comunque ogni
-        15 s anche mentre i byte scorrono. Quindici secondi sono troppo pochi
-        per ingorgare la casella (era il guaio della correzione precedente) e
-        abbastanza per accorgersi di un ciclo impuntato.
-      - una casella pronta che non rende niente adesso conta come riposo,
-        invece di lasciare `fermi` inchiodato.
+      eject                      (elenca: deve vedere la chiavetta)
+      ftpswap /root/swap         (chiede il .cfg, poi allinea)
 
-  ! RESTA DA CAPIRE CHE COSA AVESSE PIANTATO QUELLA SESSIONE. Il candidato e'
-    @DIF-POST, che e' dello stesso pomeriggio: un `scarica` appeso dentro
-    tcp_scrivi() e' esattamente un figlio che non esce mai. Se dopo aver
-    corretto tutt'e due non succede piu', era quello.
+  ! E LA PROVA DI ftpswap CHE CONTA E' LA TERZA: un file cancellato in locale
+    deve sparire anche dal server. E' quella che dimostra il diario — le prime
+    due (sale, e il secondo giro non fa niente) le supererebbe anche un
+    programma senza memoria.
 
 ! @DIF-TLS LA CATENA TENEVA FERMA LA FINESTRA QUASI UN SECONDO: MISURATA E SPEZZATA.
   La stretta di mano legge a pezzi come tutto il resto (diario: 3 settembre

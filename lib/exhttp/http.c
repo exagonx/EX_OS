@@ -181,6 +181,14 @@ int http_richiesta_testa(char *out, unsigned int max, const HttpUrl *u,
                          const char *agente, long corpo_len, int vivo,
                          const char *biscotti)
 {
+    return http_richiesta_testa_da(out, max, u, agente, corpo_len, vivo,
+                                   biscotti, 0);
+}
+
+int http_richiesta_testa_da(char *out, unsigned int max, const HttpUrl *u,
+                            const char *agente, long corpo_len, int vivo,
+                            const char *biscotti, unsigned long da)
+{
     unsigned int n = 0;
 
     if (!out || !u || max == 0) return 0;
@@ -228,6 +236,32 @@ int http_richiesta_testa(char *out, unsigned int max, const HttpUrl *u,
 
     if (!metti(out, max, &n, "\r\nAccept: */*\r\nConnection: ")) return 0;
     if (!metti(out, max, &n, vivo ? "keep-alive" : "close")) return 0;
+
+    /* ! «DA QUI IN POI», ED E' CIO' CHE RENDE SCARICABILE UN FILE GRANDE SU UNA
+     * LINEA LENTA. Trentasette megabyte a quaranta kilobyte al secondo sono un
+     * quarto d'ora di connessione aperta, e un quarto d'ora e' piu' di quanto
+     * molti server e intermediari tengano viva una cosa che va piano: cade, e
+     * senza questa intestazione si ricomincia da zero — cioe' non si finisce
+     * mai. Misurato il 15 settembre 2026: primo tentativo 33.306.298 byte su
+     * 37.550.104, secondo tentativo intero. La differenza fra i due numeri e'
+     * la prova che non e' un tetto, e' una caduta.
+     *
+     * Si chiede la forma aperta «bytes=N-»: da li' alla fine. Non si chiede un
+     * intervallo chiuso perche' non si sta leggendo un pezzo di file, si sta
+     * finendo di scaricarlo. */
+    if (da > 0) {
+        char cifre[24], rov[24];
+        unsigned long q = da;
+        int k = 0, r = 0;
+
+        while (q) { rov[r++] = (char)('0' + (q % 10)); q /= 10; }
+        while (r) cifre[k++] = rov[--r];
+        cifre[k] = '\0';
+
+        if (!metti(out, max, &n, "\r\nRange: bytes=")) return 0;
+        if (!metti(out, max, &n, cifre)) return 0;
+        if (!metti(out, max, &n, "-")) return 0;
+    }
 
     if (corpo_len >= 0) {
         char cifre[12], rov[12];

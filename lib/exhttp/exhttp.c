@@ -802,6 +802,24 @@ void exhttp_attesa(ExHttpAttesa f, void *dato)
  * spiegazione lunga sta in exhttp.h, sopra la dichiarazione. */
 static ExHttpVerso  g_verso      = 0;
 static void        *g_verso_dato = 0;
+
+/* =============================================================================
+ * DA DOVE RIPRENDERE
+ *
+ * ! UN FILE GRANDE SU UNA LINEA LENTA NON SI SCARICA IN UN COLPO, E VA MESSO IN
+ * CONTO. Trentasette megabyte a quaranta kilobyte al secondo sono un quarto
+ * d'ora di connessione aperta: cade, e chi ricomincia da zero ogni volta non
+ * finisce mai. Con `exhttp_da(n)` la richiesta dopo porta «Range: bytes=n-» e
+ * il server manda il resto.
+ *
+ * ! VALE PER UNA CHIAMATA SOLA, e non e' come exhttp_verso() che si toglie a
+ * mano. Un verso dimenticato acceso manda il corpo in un file: si vede subito.
+ * Un Range dimenticato acceso fa arrivare mezzo file e nessuno se ne accorge,
+ * perche' 206 e' una risposta buona. Percio' exhttp_prendi() se lo prende e lo
+ * azzera all'istante: chi lo vuole di nuovo lo chiede di nuovo.
+ * ========================================================================== */
+static unsigned long g_da        = 0;   /* messo da chi chiama                */
+static unsigned long g_da_attivo = 0;   /* quello della chiamata in corso     */
 /* ! QUANTI BYTE SONO GIA' USCITI DAL BUFFER. Serve a una cosa sola e
  * indispensabile: il confronto con Content-Length. Quel confronto guardava
  * `e->byte`, cioe' «quanti ce ne sono nel buffer», e finche' il buffer non si
@@ -819,6 +837,11 @@ void exhttp_verso(ExHttpVerso f, void *dato)
 {
     g_verso      = f;
     g_verso_dato = dato;
+}
+
+void exhttp_da(unsigned long primo)
+{
+    g_da = primo;
 }
 
 #define ATTESA_MS  10000
@@ -984,8 +1007,9 @@ int exhttp_scambio(ExHttpTrasporto *t, const HttpUrl *u,
          * con questo buffer. */
         corpo_len = 0;
         if (g_corpo) while (g_corpo[corpo_len]) corpo_len++;
-        n = http_richiesta_testa(req, sizeof(req), u, "EX-OS",
-                                 g_corpo ? (long)corpo_len : -1L, 1, bis);
+        n = http_richiesta_testa_da(req, sizeof(req), u, "EX-OS",
+                                    g_corpo ? (long)corpo_len : -1L, 1, bis,
+                                    g_da_attivo);
     }
     if (n <= 0) { strcpy(e->errore, "richiesta troppo lunga"); return 0; }
     if (t->scrivi(t->stato, (const unsigned char *)req, (unsigned int)n) != n) {
@@ -1203,6 +1227,36 @@ int exhttp_scambio(ExHttpTrasporto *t, const HttpUrl *u,
          * resta nel buffer va consegnato lo stesso. */
         VERSA();
         #undef VERSA
+
+        /* =====================================================================
+         * ! UN CORPO PIU' CORTO DI QUELLO DICHIARATO E' UNA PAGINA TRONCA, E
+         * FINO AL 15 SETTEMBRE 2026 PASSAVA PER BUONA.
+         *
+         * Si arriva qui quando la lettura rende zero, cioe' quando il server ha
+         * CHIUSO. Senza «Content-Length» quella e' la fine legittima del corpo
+         * (HTTP/1.0 fa cosi'), e infatti si rende 1. Ma se una lunghezza era
+         * stata dichiarata e i byte arrivati sono meno, allora non e' una fine:
+         * e' un'interruzione, e chiamarla successo vuol dire consegnare a chi
+         * chiama un file a meta' con l'aria di essere intero.
+         *
+         * ! SI E' VISTO SU UN FILE DA 37 MB: `scarica` ne ha salvati 33.306.298
+         * e ha stampato «200, salvata» senza una parola. A salvare la situazione
+         * era stato il controllo dei byte di netupdate, che pero' e' di
+         * netupdate: qualunque altro chiamante — il navigatore, un domani
+         * chiunque — si sarebbe tenuto la meta' pagina credendola intera.
+         *
+         * ! E IL PERCHE' VA NELL'`errore`, NON IN UN CAMPO NUOVO. ExHttpEsito la
+         * dichiara chi chiama, sulla propria pila: aggiungerci un campo vorrebbe
+         * dire che un programma costruito prima si ritrova scritto un pezzo di
+         * pila che credeva suo. `errore` c'e' gia', ed e' esattamente il posto
+         * dove si dice cosa non ha funzionato.
+         * ===================================================================== */
+        if (r->ha_lunghezza && g_usciti + e->byte < r->lunghezza) {
+            e->troncata = 1;
+            sprintf(e->errore, "corpo incompleto: %lu byte su %lu dichiarati",
+                    (unsigned long)(g_usciti + e->byte),
+                    (unsigned long)r->lunghezza);
+        }
     }
 
     return 1;
@@ -1299,6 +1353,12 @@ int exhttp_prendi(const char *url, unsigned char *buf, unsigned int max,
     memset(e, 0, sizeof(*e));
     strncpy(adesso, url, sizeof(adesso) - 1);
     adesso[sizeof(adesso) - 1] = '\0';
+
+    /* ! IL PUNTO DI RIPARTENZA SI PRENDE QUI E SI AZZERA SUBITO: vale per
+     * questa chiamata — redirezioni comprese, perche' il file sta in fondo ai
+     * salti — e per nessun'altra. Vedi il commento sopra g_da. */
+    g_da_attivo = g_da;
+    g_da        = 0;
 
     for (salto = 0; salto <= EXHTTP_SALTI_MAX; salto++) {
         HttpUrl         u;

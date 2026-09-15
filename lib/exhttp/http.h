@@ -126,6 +126,24 @@ int http_richiesta_testa(char *out, unsigned int max, const HttpUrl *u,
                          const char *agente, long corpo_len, int vivo,
                          const char *biscotti);
 
+/* =============================================================================
+ * La stessa testa, ma chiedendo il corpo A PARTIRE da un certo byte.
+ *
+ * `da` > 0 aggiunge «Range: bytes=da-», cioe' «mandami da li' in poi». Il
+ * server che sa farlo risponde 206 con quel pezzo; quello che non sa farlo
+ * IGNORA l'intestazione e risponde 200 con tutto — ed e' per questo che chi
+ * chiama DEVE guardare il codice prima di accodare i byte a un file che ne
+ * contiene gia' una parte.
+ *
+ * ! E' UNA FUNZIONE NUOVA E NON UN PARAMETRO IN PIU' SU QUELLA DI SOPRA. Quella
+ * la chiamano gia' exhttp e tools/prove/httpprova.c: cambiarle la forma vuol
+ * dire toccare ogni chiamante per una cosa che a quasi nessuno serve. Cosi'
+ * invece la vecchia resta identica e chiama questa con `da` = 0.
+ * ========================================================================== */
+int http_richiesta_testa_da(char *out, unsigned int max, const HttpUrl *u,
+                            const char *agente, long corpo_len, int vivo,
+                            const char *biscotti, unsigned long da);
+
 typedef struct {
     int          codice;                    /* 200, 404, ... */
     int          ha_lunghezza;

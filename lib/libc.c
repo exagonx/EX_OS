@@ -330,6 +330,7 @@ typedef struct {
 #define SYS_BLK_ATTENDI   209
 #define SYS_BLK_RISPOSTA  210
 #define SYS_BLK_SCANSIONA 211
+#define SYS_BLK_ESPELLI   212
 
 /* ! DEVE RESTARE IDENTICA a MmioZona in kernel/include/syscall.h e in
  * lib/include/libc.h. E' la TERZA copia: questo file non include libc.h e
@@ -6504,6 +6505,11 @@ int blk_scansiona(const char *nome)
     return (int)_syscall1(SYS_BLK_SCANSIONA, (unsigned int)nome);
 }
 
+int blk_espelli(const char *nome)
+{
+    return (int)_syscall1(SYS_BLK_ESPELLI, (unsigned int)nome);
+}
+
 /* ! STRUTTURA DUPLICATA A MANO da kernel/include/syscall.h e da libc.h, come
  * MmioZona e DmaZona: questo file non include libc.h. Tre copie, tutte
  * identiche — e se una diverge, il kernel scrive i campi nel posto
@@ -8579,6 +8585,18 @@ static void sha_blocco(uint32_t h[8], const uint8_t b[64])
     h[0]+=a; h[1]+=bb; h[2]+=c; h[3]+=d;
     h[4]+=e; h[5]+=f; h[6]+=g; h[7]+=hh;
 }
+
+/* ! LO STATO DELL'IMPRONTA A PEZZI, RIPETUTO QUI. Questo file non include
+ * lib/include/libc.h — e' autosufficiente per costruzione — quindi il tipo
+ * che l'header dichiara va riscritto, campo per campo e nello stesso
+ * ordine: e' la stessa convenzione gia' usata per DirEntry e MemInfo.
+ * Se cambia uno dei due, cambia l'altro. */
+typedef struct {
+    uint32_t      h[8];       /* lo stato, otto parole                  */
+    uint8_t       resto[64];  /* il blocco incompleto                   */
+    uint32_t      n_resto;    /* quanti byte ci sono dentro             */
+    uint64_t      bit;        /* quanti BIT in tutto: va nella coda     */
+} Sha256;
 
 void sha256_avvia(Sha256 *s)
 {

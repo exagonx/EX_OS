@@ -385,6 +385,60 @@ int blkr3_risposta(uint32_t pid, int esito)
  * -EIO, e il dispositivo sparisce dallo strato a blocchi.
  * --------------------------------------------------------------------------- */
 
+/* -----------------------------------------------------------------------------
+ * L'ESPULSIONE: come la morte del servente, ma per un dispositivo solo e senza
+ * che nessuno muoia.
+ *
+ * ! SERVE PERCHE' UNA CHIAVETTA SI TOGLIE, E OGGI NON C'ERA MODO DI DIRLO. Il
+ * driver che serve un disco sta fermo dentro blkr3_attendi() e non guarda piu'
+ * le porte: finche' quel dispositivo esiste, sfilare la chiavetta vuol dire
+ * lasciare un /USB/DRIVE0 che risponde errore, e reinfilarla non produce
+ * niente perche' nessuno sta guardando. Ritirando il dispositivo, l'attesa del
+ * servente rende -ENODEV e il driver torna al suo ciclo delle porte — dove
+ * «porta tornata vuota» e «porta riempita» le sa gia' distinguere.
+ *
+ * ! CHI LO TIENE MONTATO LO IMPEDISCE, e non e' questa funzione a saperlo: e'
+ * blk_ritira() che, se il dispositivo e' in uso, lo lascia li' GUASTO invece di
+ * liberarlo. Percio' chi chiama (sys_blk_espelli) guarda blk_occupato() prima,
+ * e chi deve smontare smonta.
+ *
+ * Rende 0, oppure -ENODEV se quell'indice non e' servito da nessun processo.
+ * --------------------------------------------------------------------------- */
+int blkr3_espelli(int blkdev)
+{
+    int i, trovato = 0;
+
+    interrupts_disable();
+
+    for (i = 0; i < BLKR3_MAX_DEV; i++) {
+        if (!g_r3[i].usato || g_r3[i].blkdev != blkdev) continue;
+
+        klog(LOG_INFO, "BLKR3: '%d' espulso: il servente %u torna libero",
+             blkdev, g_r3[i].pid);
+
+        /* Una richiesta in mano al servente non avra' mai risposta: chi
+         * aspettava va svegliato, o resta li' per sempre. */
+        if (g_r3[i].stato != CASELLA_LIBERA && g_r3[i].pid_chiamante != 0) {
+            g_r3[i].esito = -EIO;
+            g_r3[i].stato = CASELLA_SERVITA;
+            sched_unblock_locked(g_r3[i].pid_chiamante);
+        }
+
+        /* ! PRIMA SI TOGLIE, POI SI SVEGLIA. Il servente, appena sveglio,
+         * chiede «esisto ancora?»: se lo slot fosse ancora suo tornerebbe a
+         * dormire senza accorgersi di niente. */
+        g_r3[i].usato = 0;
+        if (g_dorme[i] != 0) { sched_unblock_locked(g_dorme[i]); g_dorme[i] = 0; }
+
+        blk_ritira(blkdev);
+        trovato = 1;
+        break;
+    }
+
+    interrupts_enable();
+    return trovato ? 0 : -ENODEV;
+}
+
 void blkr3_processo_morto(uint32_t pid)
 {
     int i;

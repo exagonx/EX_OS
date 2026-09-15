@@ -835,6 +835,28 @@ typedef struct {
  * ============================================================================= */
 #define SYS_BLK_SCANSIONA 211
 
+/* =============================================================================
+ * SYS_BLK_ESPELLI (212) — «questa chiavetta la tolgo»
+ *
+ * ebx = nome ("usb0", oppure una sua partizione: si risale al supporto).
+ * Rende 0, o -errno.
+ *
+ * ! SENZA QUESTO UNA CHIAVETTA NON SI TOGLIE, SI STRAPPA. Il driver che serve
+ * un disco sta fermo dentro blk_attendi() e non guarda piu' le porte: sfilare
+ * la chiavetta lascia un /USB/DRIVE0 che risponde errore a ogni accesso, e
+ * reinfilarla non produce niente, perche' nessuno sta guardando. Ritirato il
+ * dispositivo, l'attesa del driver rende -ENODEV e lui torna al ciclo delle
+ * porte, che «vuota per tre secondi» e «riempita» le sa gia' distinguere: la
+ * stessa chiavetta, tolta e rimessa, viene ripresa da capo.
+ *
+ * ! SI RIFIUTA SE E' ANCORA MONTATO (-EBUSY), e per le sue partizioni pure. Il
+ * dispositivo che sparisce sotto un montaggio non sparisce: resta li' GUASTO,
+ * che e' peggio di prima. Chi espelle smonta prima — lo fa /bin/eject.
+ *
+ * ! E' DI root, come mount e blk_scansiona: decide quali dispositivi esistono.
+ * ============================================================================= */
+#define SYS_BLK_ESPELLI   212
+
 #define BLKR3_LEGGI       1
 #define BLKR3_SCRIVI      2
 #define BLKR3_SVUOTA      3   /* riversa quel che il driver tiene in sospeso */
@@ -1369,6 +1391,7 @@ int32_t sys_blk_offri(InterruptFrame *f);
 int32_t sys_blk_attendi(InterruptFrame *f);
 int32_t sys_blk_risposta(InterruptFrame *f);
 int32_t sys_blk_scansiona(InterruptFrame *f);
+int32_t sys_blk_espelli(InterruptFrame *f);
 int32_t sys_ipc_recv(InterruptFrame *f);
 int32_t sys_ipc_recv_tmo(InterruptFrame *f);
 int32_t sys_time(InterruptFrame *f);

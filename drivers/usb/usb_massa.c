@@ -399,6 +399,26 @@ int usb_massa_servi(UsbMassa *m, const char *nome)
     for (;;) {
         rc = blk_attendi(&r, 0);
         if (rc == -EINTR) continue;
+
+        /* =================================================================
+         * ! -ENODEV QUI VUOL DIRE «TOLTO DI MEZZO», E NON E' UN GUASTO. Il
+         * dispositivo non esiste piu' nello strato a blocchi perche' qualcuno
+         * lo ha espulso (`eject`, cioe' blk_espelli). Non c'e' piu' niente da
+         * servire e non c'e' niente di rotto: si TORNA a chi ci ha chiamati,
+         * che e' il ciclo delle porte, e la chiavetta si puo' sfilare.
+         *
+         * ! ED E' LA DIFFERENZA FRA TOGLIERE E STRAPPARE. Finche' questo ciclo
+         * gira, il driver non guarda le porte: sfilare la chiavetta lascia un
+         * montaggio che risponde errore e un reinserimento che non se lo fila
+         * nessuno. Uscendo di qui, il driver torna a guardare — e la stessa
+         * porta, svuotata e riempita, e' un inserimento nuovo.
+         * ================================================================= */
+        if (rc == -ENODEV) {
+            printf("massa: %s e' stato espulso: la chiavetta si puo' togliere.\n",
+                   nome);
+            return 1;
+        }
+
         if (rc < 0) {
             printf("massa: blk_attendi ha risposto %d, esco\n", rc);
             return 0;

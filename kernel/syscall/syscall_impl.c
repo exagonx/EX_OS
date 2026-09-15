@@ -5591,6 +5591,63 @@ int32_t sys_blk_risposta(InterruptFrame *frame)
  * SYS_BLK_SCANSIONA (211) — le partizioni di un dispositivo servito da un
  * processo. Il perche' della separazione da blk_offri sta in blk.h.
  * ============================================================================= */
+/* =============================================================================
+ * SYS_BLK_ESPELLI (212) — ritira una chiavetta perche' la si vuole togliere
+ *
+ * Il perche' per esteso sta sopra il numero, in syscall.h. Qui restano i due
+ * controlli che fanno la differenza fra un'espulsione e uno strappo.
+ * ============================================================================= */
+int32_t sys_blk_espelli(InterruptFrame *frame)
+{
+    const char   *unome = (const char *)frame->ebx;
+    char          knome[BLKINFO_NOME_MAX];
+    const BlkDev *d;
+    int           dev, k, n;
+
+    if (!solo_root("blk_espelli")) return ERR(EPERM);
+    if (!syscall_verify_str(unome, BLKINFO_NOME_MAX)) return ERR(EFAULT);
+
+    kstrcpy(knome, unome, sizeof(knome));
+
+    dev = blk_trova(knome);
+    if (dev < 0) return ERR(ENOENT);
+    d = blk_get(dev);
+    if (d == NULL) return ERR(ENOENT);
+
+    /* ! SI ESPELLE IL SUPPORTO, NON LA FINESTRA. Chi scrive «eject /USB/HDD0p1»
+     * intende togliere la chiavetta, non smettere di vedere la sua prima
+     * partizione: una finestra senza il supporto sotto non e' niente. */
+    if (d->tipo == BLK_TIPO_PART && d->padre != BLK_PADRE_ATA) {
+        dev = (int)d->padre;
+        d   = blk_get(dev);
+        if (d == NULL) return ERR(ENOENT);
+    }
+
+    /* ! SOLO I DISPOSITIVI SERVITI DA UN PROCESSO. Un disco ATA o un floppy non
+     * si «espellono»: non c'e' nessun servente da rimandare a guardare le
+     * porte, e toglierli dallo strato a blocchi vorrebbe dire soltanto
+     * nascondere un disco che c'e'. */
+    if (d->tipo != BLK_TIPO_RING3) return ERR(EINVAL);
+
+    /* ! MONTATO VUOL DIRE NO, E LE PARTIZIONI CONTANO. blk_ritira() di un
+     * dispositivo in uso non lo libera: lo lascia GUASTO, cioe' esattamente il
+     * guaio che questa syscall esiste per evitare. Meglio un -EBUSY che chi
+     * chiama sa spiegare («smonta prima») di un dispositivo zombie. */
+    if (blk_occupato(dev)) return ERR(EBUSY);
+
+    n = blk_conta();
+    for (k = 0; k < n; k++) {
+        const BlkDev *p = blk_get(k);
+
+        if (p == NULL || !p->usato) continue;
+        if (p->tipo != BLK_TIPO_PART || p->padre != (uint8_t)dev) continue;
+        if (blk_occupato(k)) return ERR(EBUSY);
+    }
+
+    klog(LOG_INFO, "SYSCALL blk_espelli('%s')", knome);
+    return blkr3_espelli(dev);
+}
+
 int32_t sys_blk_scansiona(InterruptFrame *frame)
 {
     const char *unome = (const char *)frame->ebx;
