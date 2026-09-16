@@ -255,6 +255,26 @@ typedef struct {
 #define SYS_TIME           13   /* data e ora dall'orologio CMOS (vedi RtcTime) */
 
 /* =============================================================================
+ * SYS_TIME_SET (213) -- Rimette l'orologio CMOS
+ *
+ * ebx = const RtcTime*
+ *
+ * ! E' DI root, come mount: l'ora di sistema non e' un'impostazione
+ * personale. Un utente qualunque che la spostasse cambierebbe la data di
+ * ogni file scritto da chiunque altro, e con essa il giudizio di
+ * `netupdate -check` su che cosa e' piu' recente.
+ *
+ * ! ED E' UN NUMERO NUOVO, non un secondo modo di SYS_TIME. Una syscall che
+ * LEGGE o SCRIVE secondo il valore di un altro registro e' una syscall che
+ * un giorno scrive perche' in ecx c'era rimasto un uno.
+ *
+ * Ritorna 0, -EFAULT se il puntatore non e' valido, -EPERM se chi chiama
+ * non e' root, -EINVAL se la data non esiste (il 31 di febbraio), -ENODEV
+ * se l'orologio non risponde.
+ * ============================================================================= */
+#define SYS_TIME_SET      213   /* ebx = const RtcTime* */
+
+/* =============================================================================
  * Console virtuali (vedi kernel/arch/x86/vga.c)
  *
  * SYS_CONSOLE_WRITE esiste per UN solo cliente: il driver tastiera, che
@@ -1395,6 +1415,7 @@ int32_t sys_blk_espelli(InterruptFrame *f);
 int32_t sys_ipc_recv(InterruptFrame *f);
 int32_t sys_ipc_recv_tmo(InterruptFrame *f);
 int32_t sys_time(InterruptFrame *f);
+int32_t sys_time_set(InterruptFrame *f);
 int32_t sys_console_switch(InterruptFrame *f);
 int32_t sys_console_write(InterruptFrame *f);
 int32_t sys_console_info(InterruptFrame *f);

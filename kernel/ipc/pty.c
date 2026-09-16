@@ -50,6 +50,8 @@ typedef struct {
     uint32_t master_aperti, slave_aperti;
     uint32_t pid_att_in;        /* chi dorme aspettando di leggere lo slave  */
     uint32_t pid_att_out;       /* chi dorme aspettando di leggere il master */
+    uint32_t pid_att_spazio;    /* chi dorme aspettando POSTO nel tubo verso
+                                   il master: vedi pty_scrivi_slave          */
 
     /* ! FINE DEI DATI E' UNO STATO, NON UN BYTE. Ctrl+D non si mette nel
      * buffer: se ci finisse dentro, un programma lo leggerebbe come carattere
@@ -71,11 +73,27 @@ static Pty *pty_da_handle(int h)
  * --------------------------------------------------------------------------- */
 static void metti(uint8_t *buf, uint32_t *testa, uint32_t *quanti, uint8_t c)
 {
-    /* ! PIENO VUOL DIRE BUTTARE L'ULTIMO ARRIVATO, e qui e' la scelta giusta:
-     * l'alternativa sarebbe bloccare chi scrive, ma chi scrive nel tubo di
-     * ritorno e' il KERNEL mentre fa l'eco di un tasto. Un terminale che non
-     * legge abbastanza in fretta perde caratteri; se bloccasse, fermerebbe chi
-     * batte. */
+    /* ! PIENO VUOL DIRE BUTTARE L'ULTIMO ARRIVATO, ED E' LA SCELTA GIUSTA PER
+     * L'ECO E BASTA. Chi scrive qui dentro facendo l'eco e' il KERNEL mentre
+     * un tasto passa: se bloccasse, fermerebbe chi batte. Un terminale che non
+     * legge abbastanza in fretta perde l'eco di un carattere, e pazienza.
+     *
+     * ! MA PER L'USCITA DI UN PROGRAMMA NON VALE, e per mesi si e' applicata
+     * anche li'. pty_scrivi_slave riempiva il tubo con questa, che a tubo
+     * pieno non scrive e non lo dice, e poi rendeva n — cioe' «scritto tutto».
+     * Il risultato: un programma che stampa piu' di PTY_DIM byte piu' in
+     * fretta di quanto il master legga ne perde il resto, IN SILENZIO, e la
+     * write gli ha appena detto che e' andato tutto bene.
+     *
+     * ! E DA TELNET SEMBRAVA TUTT'ALTRO. Un referto di 1405 byte ne faceva
+     * arrivare mille e poi piu' niente; il programma pero' arrivava in fondo e
+     * la shell tornava al prompt, quindi non sembrava una perdita di dati —
+     * sembrava un programma che moriva, ogni volta a un'istruzione diversa.
+     * Mezza giornata di diagnosi su un driver che non aveva niente che non
+     * andasse. Il numero che lo dice: PTY_DIM e' 1024.
+     *
+     * Adesso pty_scrivi_slave non passa piu' di qui quando il tubo e' pieno:
+     * si ferma e aspetta posto. Vedi la' sotto. */
     if (*quanti >= PTY_DIM) return;
     buf[(*testa + *quanti) % PTY_DIM] = c;
     (*quanti)++;
@@ -242,6 +260,12 @@ static void pty_chiudi_comune(int h, int master, int in_sezione_critica)
         else                    sched_unblock(p->pid_att_out);
         p->pid_att_out = 0;
     }
+    /* ! E CHI ASPETTA POSTO, che senza l'altro capo non arrivera' mai. */
+    if (p->pid_att_spazio) {
+        if (in_sezione_critica) sched_unblock_locked(p->pid_att_spazio);
+        else                    sched_unblock(p->pid_att_spazio);
+        p->pid_att_spazio = 0;
+    }
 
     if (p->master_aperti == 0 && p->slave_aperti == 0)
         memset(p, 0, sizeof(Pty));
@@ -266,6 +290,8 @@ void pty_chiudi(int h, int master)
      * l'altro capo vuol dire fine dei dati, ma se dorme non lo scopre. */
     if (p->pid_att_in)  { sched_unblock(p->pid_att_in);  p->pid_att_in = 0; }
     if (p->pid_att_out) { sched_unblock(p->pid_att_out); p->pid_att_out = 0; }
+    if (p->pid_att_spazio) { sched_unblock(p->pid_att_spazio);
+                             p->pid_att_spazio = 0; }
 
     if (p->master_aperti == 0 && p->slave_aperti == 0) {
         memset(p, 0, sizeof(Pty));
@@ -302,28 +328,80 @@ int32_t pty_scrivi_master(int h, const void *buf, uint32_t n)
     return (int32_t)n;
 }
 
+/* =============================================================================
+ * pty_scrivi_slave — l'uscita di un programma, e perche' NON puo' perdersi
+ *
+ * ! LA REGOLA DI UN TERMINALE E' CHE CHI SCRIVE ASPETTA. Un programma che
+ * stampa piu' in fretta di quanto il terminale legga non perde l'uscita: si
+ * ferma. E' cosi' su ogni Unix, ed e' l'unico comportamento che permette a un
+ * programma di credere alla propria write.
+ *
+ * ! QUEL CHE C'ERA PRIMA riempiva il tubo con metti(), che a tubo pieno non
+ * scrive e non lo dice, e poi rendeva n. Il perche' del danno sta nel commento
+ * di metti(): in breve, oltre 1024 byte l'uscita spariva in silenzio.
+ *
+ * ! SI RENDE QUEL CHE SI E' SCRITTO, e l'attesa e' INTERROMPIBILE. Un Ctrl+C
+ * mentre un programma stampa non deve lasciarlo dentro il kernel: si torna con
+ * il conto parziale, che e' esattamente cio' che POSIX prescrive per una write
+ * interrotta dopo aver gia' trasferito qualcosa.
+ *
+ * ! E SE IL MASTER SE NE VA MENTRE ASPETTIAMO, si torna con quel che si e'
+ * scritto — o EPIPE se non si e' scritto niente. Restare a dormire aspettando
+ * posto in un tubo che nessuno svuotera' piu' e' il modo di perdere un
+ * processo per sempre.
+ *
+ * ! IL POSTO PER CHI ASPETTA E' UNO SOLO, come per le altre due attese di
+ * questo file. Se un secondo processo scrive sullo stesso slave mentre il
+ * primo dorme, NON gli si porta via il posto: si rende il conto parziale e
+ * tocca a lui riprovare. Sovrascrivere quel campo vorrebbe dire un processo
+ * che non si sveglia piu', ed e' un difetto che non si vede dove e' stato
+ * fatto.
+ * ========================================================================== */
 int32_t pty_scrivi_slave(int h, const void *buf, uint32_t n)
 {
     const uint8_t *src = (const uint8_t *)buf;
     Pty     *p;
-    uint32_t i;
+    uint32_t scritti = 0;
 
-    interrupts_disable();
-    p = pty_da_handle(h);
-    if (!p) { interrupts_enable(); return ERR(EBADF); }
+    if (n == 0) return 0;
 
-    if (p->master_aperti == 0) { interrupts_enable(); return ERR(EPIPE); }
+    for (;;) {
+        Process *cur;
 
-    for (i = 0; i < n; i++)
-        metti(p->out, &p->out_testa, &p->out_quanti, src[i]);
+        interrupts_disable();
+        p = pty_da_handle(h);
+        if (!p) { interrupts_enable(); return ERR(EBADF); }
 
-    if (p->pid_att_out) {
-        sched_unblock_locked(p->pid_att_out);
-        p->pid_att_out = 0;
+        if (p->master_aperti == 0) {
+            interrupts_enable();
+            return scritti ? (int32_t)scritti : ERR(EPIPE);
+        }
+
+        while (scritti < n && p->out_quanti < PTY_DIM)
+            metti(p->out, &p->out_testa, &p->out_quanti, src[scritti++]);
+
+        /* ! SI SVEGLIA IL LETTORE PRIMA DI ANDARE A DORMIRE, sempre: e' lui
+         * che fara' il posto che stiamo per aspettare. */
+        if (p->pid_att_out) {
+            sched_unblock_locked(p->pid_att_out);
+            p->pid_att_out = 0;
+        }
+
+        if (scritti == n) { interrupts_enable(); return (int32_t)scritti; }
+
+        cur = proc_get_current();
+        if (!cur) { interrupts_enable(); return (int32_t)scritti; }
+
+        if (p->pid_att_spazio && p->pid_att_spazio != cur->pid) {
+            interrupts_enable();
+            return (int32_t)scritti;      /* c'e' gia' qualcuno in attesa */
+        }
+
+        p->pid_att_spazio = cur->pid;
+        sched_block(PROC_BLOCKED);
+
+        if (proc_interrotto()) return (int32_t)scritti;
     }
-
-    interrupts_enable();
-    return (int32_t)n;
 }
 
 int32_t pty_leggi_slave(int h, void *buf, uint32_t n)
@@ -400,6 +478,14 @@ int32_t pty_leggi_master(int h, void *buf, uint32_t n)
     }
 
     presi = prendi(p->out, &p->out_testa, &p->out_quanti, appoggio, n);
+
+    /* ! ADESSO C'E' POSTO, E CHI ASPETTAVA VA SVEGLIATO. Senza questa riga
+     * pty_scrivi_slave dormirebbe per sempre: il posto si libera solo qui. */
+    if (p->pid_att_spazio) {
+        sched_unblock_locked(p->pid_att_spazio);
+        p->pid_att_spazio = 0;
+    }
+
     interrupts_enable();
 
     for (i = 0; i < presi; i++) dst[i] = appoggio[i];

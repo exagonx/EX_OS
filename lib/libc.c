@@ -389,6 +389,7 @@ typedef struct { unsigned int bit; } fd_set;
 
 #define SYS_IPC_RECV_TMO  228
 #define SYS_TIME           13
+#define SYS_TIME_SET      213
 #define SYS_CONSOLE_SWITCH 229
 #define SYS_CONSOLE_WRITE  230
 #define SYS_CONSOLE_INFO   231
@@ -959,14 +960,59 @@ static inline int32_t _syscall1(uint32_t n, uint32_t a)
 }
 
 /* =============================================================================
+ * mem_parola — il tipo con cui si leggono quattro byte per volta
+ *
+ * ! LEGGERE BYTE ATTRAVERSO UN uint32_t* E' ESATTAMENTE CIO' CHE LA REGOLA DI
+ * ALIASING DI C VIETA, e -O2 senza -fno-strict-aliasing e' il posto in cui
+ * quella regola si paga: il compilatore ha il diritto di dare per scontato che
+ * una scrittura a byte e una lettura a parola non tocchino la stessa memoria, e
+ * di riordinarle. may_alias glielo toglie, dichiarandolo invece di sperare che
+ * non se ne accorga. Costa una riga e toglie una classe di difetti che si
+ * manifestano lontano da dove sono stati fatti.
+ *
+ * Serve a strlen qui sotto e a tutte le funzioni memoria piu' avanti, ed e'
+ * dichiarato qui perche' il primo che lo usa e' strlen.
+ * ============================================================================= */
+typedef uint32_t __attribute__((__may_alias__)) mem_parola;
+
+/* =============================================================================
  * Funzioni stringa
  * ============================================================================= */
 
+/* ! strlen A PAROLE — il trucco di Mycroft, e perche' e' SICURO
+ *
+ * (v - 0x01010101) & ~v & 0x80808080 e' diverso da zero se e solo se una delle
+ * quattro colonne della parola vale zero: il prestito del sottrarre uno accende
+ * il bit alto di quel byte, e ~v lo tiene acceso solo dove il byte era nullo.
+ * Quattro byte esaminati con tre operazioni invece che con quattro confronti.
+ *
+ * ! LEGGERE QUATTRO BYTE DOVE IL CHIAMANTE NE HA GARANTITI MENO SAREBBE UNA
+ * LETTURA FUORI BUFFER, e la si evita in un modo solo: prima si avanza a byte
+ * fino ad allineare il puntatore a quattro, POI si legge a parole. Una parola
+ * allineata non attraversa mai il confine di una pagina, quindi o la pagina e'
+ * la stessa da cui si stava gia' leggendo, o il byte nullo si e' gia' trovato.
+ * Saltare l'allineamento fa una libreria che funziona per anni e poi prende un
+ * page fault su una stringa che finisce in fondo a una pagina.
+ *
+ * ! LA CODA TORNA AI BYTE APPOSTA: la parola dice CHE c'e' uno zero, non DOVE.
+ */
 size_t strlen(const char *s)
 {
-    size_t n = 0;
-    while (*s++) n++;
-    return n;
+    const char       *p = s;
+    const mem_parola *w;
+
+    while (((unsigned long)p & 3u) != 0) {
+        if (*p == '\0') return (size_t)(p - s);
+        p++;
+    }
+
+    for (w = (const mem_parola *)p;
+         ((*w - 0x01010101u) & ~*w & 0x80808080u) == 0;
+         w++) { }
+
+    p = (const char *)w;
+    while (*p) p++;
+    return (size_t)(p - s);
 }
 
 char *strcpy(char *dst, const char *src)
@@ -1244,12 +1290,171 @@ char *strrchr(const char *s, int c)
 
 /* =============================================================================
  * Funzioni memoria
+ *
+ * ! QUI C'ERA UN BYTE PER VOLTA, E QUANTO COSTAVA E' STATO MISURATO.
+ * `while (n--) *d++ = *s++;` in RAM non si vede — la cache assorbe, 357 MB/s —
+ * ma verso il framebuffer sono 47 MB/s contro i 375 della stessa copia fatta a
+ * otto byte: OTTO VOLTE. La misura e' di bin/fbprova sull'Acer Aspire 3000
+ * (SiS 6330, 800x600x32), 16 settembre 2026, ed e' quella che ha giustificato
+ * questa riscrittura. Il kernel la copia a parole ce l'aveva gia'
+ * (kernel/arch/x86/memfun.c): era solo lo spazio utente a pagarla.
+ *
+ * -----------------------------------------------------------------------------
+ * ! TRE STRADE, E SI SCEGLIE SULLA MISURA DEL BLOCCO, non su quella della
+ * macchina:
+ *
+ *   sotto 32 byte          byte per volta. Un blocco corto e' il caso NORMALE
+ *                          — una struttura, un nome di file, una riga — e li'
+ *                          il prologo che allinea costa piu' di quanto faccia
+ *                          risparmiare.
+ *   da 32 byte in su       parole da 32 bit.
+ *   da 256 byte in su      MMX, otto byte per store.
+ *
+ * ! LE DUE SOGLIE NON SONO TONDE PER CASO: sono i due punti in cui bin/memprova
+ * vede le curve incrociarsi. Alzarle o abbassarle senza rifare quella misura
+ * vuol dire disfare una prova gia' pagata.
+ *
+ * ! E SI ALLINEA LA DESTINAZIONE, NON LA SORGENTE. Su x86 un carico non
+ * allineato costa poco; uno STORE non allineato che attraversa una riga di
+ * cache costa, e sulla memoria video write-combining ROMPE LA COMBINAZIONE —
+ * cioe' proprio il meccanismo per cui li' MMX vale il doppio. E' la scelta di
+ * musl e di glibc, per questa ragione e non per tradizione.
+ *
+ * -----------------------------------------------------------------------------
+ * ! MMX SI PUO' USARE DENTRO UNA FUNZIONE DI LIBRERIA, E NON E' OVVIO. I
+ * registri MMX sono quelli dell'x87: sporcarli qui e' lecito solo perche'
+ *
+ *   (a) il kernel salva lo stato FPU al cambio di contesto — fnsave/fxsave con
+ *       commutazione pigra via CR0_TS — quindi due processi non se li
+ *       calpestano a vicenda;
+ *   (b) l'ABI i386 dichiara lo stack x87 VUOTO al momento della chiamata,
+ *       quindi nessun chiamante ha valori vivi li' dentro da perdere.
+ *
+ * E' lo stesso ragionamento che ha permesso MMX nel compositore di wserver.
+ *
+ * ! E SI CHIAMA emms ALLA FINE DI OGNI GIRO. Senza, la prima istruzione in
+ * virgola mobile che arriva dopo — anche in un ALTRO processo, se lo scheduler
+ * entra prima — trova uno stack x87 che non e' suo. E' l'errore classico di
+ * MMX, e non da' nessun sintomo finche' qualcuno non usa la virgola mobile.
+ *
+ * ! SI GUARDA CPUID UNA VOLTA SOLA. La CPU di base e' -march=pentium-mmx,
+ * quindi MMX ci sarebbe per definizione; si controlla lo stesso, perche' una
+ * istruzione che non c'e' non e' un numero brutto, e' una #UD. Stessa scelta,
+ * e stessa forma, di wserver.c e di fbprova.
+ *
+ * ! LE PAROLE SI LEGGONO CON mem_parola, che e' un uint32_t may_alias: il
+ * perche' sta dove e' dichiarato, sopra le funzioni stringa.
  * ============================================================================= */
+
+#define MEM_SOGLIA_PAROLA   32u     /* sotto: il byte per byte conviene */
+#define MEM_SOGLIA_MMX     256u     /* sotto: le parole bastano         */
+
+/* -1 = non ancora guardato. L'inizializzatore la porta in .data e non nel BSS,
+ * ed e' voluto: 0 vorrebbe dire «gia' guardato, e MMX non c'e'», cioe' il
+ * ripiego a byte per sempre su una macchina che MMX ce l'ha. */
+static int g_mem_mmx = -1;
+
+static int mem_ha_mmx(void)
+{
+    unsigned int a, b, c, d;
+
+    if (g_mem_mmx >= 0) return g_mem_mmx;
+
+    __asm__ __volatile__("cpuid"
+                         : "=a"(a), "=b"(b), "=c"(c), "=d"(d)
+                         : "a"(1));
+    g_mem_mmx = (d & (1u << 23)) ? 1 : 0;
+    return g_mem_mmx;
+}
+
+/* Copia a blocchi di 64 byte. La destinazione e' gia' allineata a otto; la
+ * sorgente puo' non esserlo, e movq non se ne lamenta (l'allineamento lo
+ * pretende movdqa di SSE, non MMX). */
+static void mem_copia_mmx(unsigned char *d, const unsigned char *s,
+                          unsigned int blocchi)
+{
+    __asm__ __volatile__(
+        "1:\n\t"
+        "movq   0(%1), %%mm0\n\t"
+        "movq   8(%1), %%mm1\n\t"
+        "movq  16(%1), %%mm2\n\t"
+        "movq  24(%1), %%mm3\n\t"
+        "movq  32(%1), %%mm4\n\t"
+        "movq  40(%1), %%mm5\n\t"
+        "movq  48(%1), %%mm6\n\t"
+        "movq  56(%1), %%mm7\n\t"
+        "movq  %%mm0,  0(%0)\n\t"
+        "movq  %%mm1,  8(%0)\n\t"
+        "movq  %%mm2, 16(%0)\n\t"
+        "movq  %%mm3, 24(%0)\n\t"
+        "movq  %%mm4, 32(%0)\n\t"
+        "movq  %%mm5, 40(%0)\n\t"
+        "movq  %%mm6, 48(%0)\n\t"
+        "movq  %%mm7, 56(%0)\n\t"
+        "addl  $64, %0\n\t"
+        "addl  $64, %1\n\t"
+        "decl  %2\n\t"
+        "jnz   1b\n\t"
+        "emms"
+        : "+r"(d), "+r"(s), "+r"(blocchi)
+        :
+        : "memory", "cc");
+}
+
+/* Riempimento a blocchi di 64 byte, con la parola gia' replicata negli otto
+ * byte di *q. */
+static void mem_riempi_mmx(unsigned char *d, const unsigned long long *q,
+                           unsigned int blocchi)
+{
+    __asm__ __volatile__(
+        "movq  (%2), %%mm0\n\t"
+        "1:\n\t"
+        "movq  %%mm0,  0(%0)\n\t"
+        "movq  %%mm0,  8(%0)\n\t"
+        "movq  %%mm0, 16(%0)\n\t"
+        "movq  %%mm0, 24(%0)\n\t"
+        "movq  %%mm0, 32(%0)\n\t"
+        "movq  %%mm0, 40(%0)\n\t"
+        "movq  %%mm0, 48(%0)\n\t"
+        "movq  %%mm0, 56(%0)\n\t"
+        "addl  $64, %0\n\t"
+        "decl  %1\n\t"
+        "jnz   1b\n\t"
+        "emms"
+        : "+r"(d), "+r"(blocchi)
+        : "r"(q)
+        : "memory", "cc");
+}
 
 void *memset(void *dst, int c, size_t n)
 {
     uint8_t *d = (uint8_t *)dst;
-    while (n--) *d++ = (uint8_t)c;
+    uint8_t  v = (uint8_t)c;
+
+    if (n >= MEM_SOGLIA_PAROLA) {
+        uint32_t parola;
+
+        while (((unsigned long)d & 7u) != 0) { *d++ = v; n--; }
+
+        parola = ((uint32_t)v << 24) | ((uint32_t)v << 16) |
+                 ((uint32_t)v << 8)  |  (uint32_t)v;
+
+        if (n >= MEM_SOGLIA_MMX && mem_ha_mmx()) {
+            unsigned long long q = ((unsigned long long)parola << 32) | parola;
+            unsigned int blocchi = (unsigned int)(n >> 6);
+
+            mem_riempi_mmx(d, &q, blocchi);
+            d += (size_t)blocchi << 6;
+            n -= (size_t)blocchi << 6;
+        }
+
+        while (n >= 4) {
+            *(mem_parola *)d = parola;
+            d += 4; n -= 4;
+        }
+    }
+
+    while (n--) *d++ = v;
     return dst;
 }
 
@@ -1257,27 +1462,81 @@ void *memcpy(void *dst, const void *src, size_t n)
 {
     uint8_t       *d = (uint8_t *)dst;
     const uint8_t *s = (const uint8_t *)src;
+
+    if (n >= MEM_SOGLIA_PAROLA) {
+        while (((unsigned long)d & 7u) != 0) { *d++ = *s++; n--; }
+
+        if (n >= MEM_SOGLIA_MMX && mem_ha_mmx()) {
+            unsigned int blocchi = (unsigned int)(n >> 6);
+
+            if (blocchi) {
+                mem_copia_mmx(d, s, blocchi);
+                d += (size_t)blocchi << 6;
+                s += (size_t)blocchi << 6;
+                n -= (size_t)blocchi << 6;
+            }
+        }
+
+        while (n >= 4) {
+            *(mem_parola *)d = *(const mem_parola *)s;
+            d += 4; s += 4; n -= 4;
+        }
+    }
+
     while (n--) *d++ = *s++;
     return dst;
 }
 
+/* ! memmove DEVE FUNZIONARE ANCHE QUANDO LE DUE ZONE SI SOVRAPPONGONO: copiando
+ * in avanti su una sovrapposizione si riscrivono i byte che non si sono ancora
+ * letti. In avanti non c'e' niente da inventare — e' memcpy — e all'indietro le
+ * parole si possono usare lo stesso, purche' si scenda a blocchi interi.
+ *
+ * ! E ALL'INDIETRO E' SICURO PROPRIO PERCHE' dst > src: si scrive sempre a un
+ * indirizzo PIU' ALTO di quello che si dovra' ancora leggere, quindi il blocco
+ * appena scritto non puo' coprire byte non ancora presi. Se fosse dst < src
+ * varrebbe il contrario, e infatti quel caso finisce in memcpy. */
 void *memmove(void *dst, const void *src, size_t n)
 {
     uint8_t       *d = (uint8_t *)dst;
     const uint8_t *s = (const uint8_t *)src;
-    if (d < s) {
-        while (n--) *d++ = *s++;
-    } else {
-        d += n; s += n;
-        while (n--) *--d = *--s;
+
+    if (d == s || n == 0) return dst;
+    if (d < s) return memcpy(dst, src, n);
+
+    d += n;
+    s += n;
+
+    if (n >= MEM_SOGLIA_PAROLA) {
+        while (((unsigned long)d & 3u) != 0) { *--d = *--s; n--; }
+
+        while (n >= 4) {
+            d -= 4; s -= 4; n -= 4;
+            *(mem_parola *)d = *(const mem_parola *)s;
+        }
     }
+
+    while (n--) *--d = *--s;
     return dst;
 }
 
+/* ! IL CONFRONTO A PAROLE SI FERMA SULLA PRIMA PAROLA DIVERSA E POI TORNA AI
+ * BYTE, e non e' un ripiego: memcmp deve rendere il segno del PRIMO byte
+ * diverso, e quale sia dentro la parola lo dice solo il confronto a byte. La
+ * parola serve a saltare in fretta tutto cio' che e' uguale, che nel caso
+ * normale e' quasi tutto. */
 int memcmp(const void *a, const void *b, size_t n)
 {
     const uint8_t *pa = (const uint8_t *)a;
     const uint8_t *pb = (const uint8_t *)b;
+
+    if (n >= MEM_SOGLIA_PAROLA) {
+        while (n >= 4) {
+            if (*(const mem_parola *)pa != *(const mem_parola *)pb) break;
+            pa += 4; pb += 4; n -= 4;
+        }
+    }
+
     while (n--) {
         if (*pa != *pb) return (int)*pa - (int)*pb;
         pa++; pb++;
@@ -5739,6 +5998,13 @@ int ipc_scegli(IpcFiltro filtro, void *dato, IpcMessage *out_meta,
 int time_now(RtcTime *t)
 {
     return (int)_syscall1(SYS_TIME, (uint32_t)t);
+}
+
+/* Rimette l'orologio. Come time_now, rende 0 o un -errno: e' una chiamata
+ * di EX-OS, non di POSIX — vedi la nota sui ritorni in cima a questo file. */
+int time_set(const RtcTime *t)
+{
+    return (int)_syscall1(SYS_TIME_SET, (uint32_t)t);
 }
 
 /* =============================================================================

@@ -166,3 +166,151 @@ int rtc_read(RtcTime *t)
 
     return 0;
 }
+
+/* =============================================================================
+ * SCRITTURA — dal kernel 0.218, 16 settembre 2026
+ *
+ * Fino a oggi l'orologio di EX-OS si LEGGEVA e basta, e la conseguenza si
+ * vedeva sulla macchina vera: l'Acer segnava il 2005, e ogni file che
+ * caricava sul server arrivava datato «Feb 9 2005». Non c'era modo di
+ * rimetterlo a posto da EX-OS — bisognava entrare nel BIOS.
+ *
+ * ! LE TRE TRAPPOLE DELLA LETTURA VALGONO TUTTE, PIU' UNA QUARTA.
+ *
+ * 4. NON SI SCRIVE MENTRE IL CHIP CONTA. Se l'aggiornamento cade in mezzo
+ *    ai sei registri, il chip riscrive sopra a quel che si e' appena messo:
+ *    si ottiene una data mezza vecchia e mezza nuova, e il minuto che si
+ *    voleva mettere puo' sparire del tutto. Il bit SET del registro B
+ *    (0x80) FERMA il conteggio: si alza, si scrivono i sei registri, lo si
+ *    riabbassa. Finche' e' alto il chip non tocca niente.
+ *
+ * ! E IL FORMATO LO DECIDE IL CHIP, NON NOI. Il registro B dice se i
+ * valori sono BCD o binari e se le ore sono a 12 o a 24: si scrive NEL
+ * FORMATO CHE C'E' GIA'. Cambiare il formato sarebbe piu' comodo da
+ * programmare e romperebbe la lettura del BIOS, che quel formato lo
+ * conosce dall'accensione.
+ *
+ * ! IL SECOLO SI SCRIVE SOLO SE C'E' GIA'. rtc_read non lo legge affatto
+ * (usa la convenzione «sotto 70 = 2000+»), quindi per EX-OS sarebbe
+ * inutile; ma un BIOS che invece lo usa, e che lo trovasse fermo al 20
+ * mentre le due cifre dicono 26, ripartirebbe da un anno sbagliato. Si
+ * aggiorna quindi il registro 0x32 — ma SOLO se quel che c'e' dentro
+ * adesso somiglia gia' a un secolo (19 o 20). Su una macchina dove 0x32
+ * serve ad altro, quel controllo lo lascia in pace.
+ * ============================================================================= */
+
+#define CMOS_SECOLO     0x32    /* dove c'e': vedi la trappola 3 */
+#define STATO_B_SET     0x80    /* 1 = conteggio fermo, si puo' scrivere */
+
+static void cmos_scrivi(uint8_t reg, uint8_t val)
+{
+    port_outb(CMOS_INDICE, reg & 0x7F);   /* bit 7 = NMI: vedi cmos_leggi */
+    port_outb(CMOS_DATO, val);
+}
+
+static uint8_t a_bcd(uint32_t v)
+{
+    return (uint8_t)(((v / 10) << 4) | (v % 10));
+}
+
+/* Quanti giorni ha il mese. Serve a rifiutare il 31 di febbraio PRIMA di
+ * scriverlo: il chip lo accetterebbe, e poi rtc_read troverebbe una data
+ * che il suo stesso controllo di validita' lascia passare (il giorno e'
+ * <= 31) ma che non esiste. */
+static uint32_t giorni_del_mese(uint32_t mese, uint32_t anno)
+{
+    static const uint32_t g[12] = { 31,28,31,30,31,30,31,31,30,31,30,31 };
+
+    if (mese < 1 || mese > 12) return 0;
+    if (mese == 2 && ((anno % 4 == 0 && anno % 100 != 0) || anno % 400 == 0))
+        return 29;
+    return g[mese - 1];
+}
+
+int rtc_write(const RtcTime *t)
+{
+    uint8_t  statoB, secolo_vecchio, sec_bcd;
+    uint32_t attesa;
+    uint32_t ore;
+    int      interrupt_erano_attivi;
+
+    if (t == NULL) return -1;
+
+    /* Validazione PRIMA di toccare il chip. Vedi giorni_del_mese. */
+    if (t->anno < 1980 || t->anno > 2099) return -1;
+    if (t->mese < 1 || t->mese > 12) return -1;
+    if (t->giorno < 1 || t->giorno > giorni_del_mese(t->mese, t->anno)) return -1;
+    if (t->ora > 23 || t->minuto > 59 || t->secondo > 59) return -1;
+
+    /* ! IL LIMITE E' 2099 E NON 2199 COME IN LETTURA, e non e' una svista:
+     * il chip tiene due cifre e rtc_read le rilegge con la convenzione
+     * «sotto 70 = 2000+». Scrivere il 2150 vorrebbe dire mettere 50 nel
+     * registro e rileggere 2050 — cioe' accettare in silenzio una data
+     * diversa da quella chiesta. Meglio dire di no. */
+
+    statoB = cmos_leggi(CMOS_STATO_B);
+
+    /* Aspetta la fine dell'aggiornamento in corso, come in lettura: alzare
+     * SET a meta' di un aggiornamento lo lascia a meta'. */
+    for (attesa = 0; aggiornamento_in_corso(); attesa++) {
+        if (attesa > RTC_ATTESA_MAX) return -1;   /* orologio assente o rotto */
+    }
+
+    /* ! `interrupts_disable()` QUI E' cli GREZZO, senza contatore: vedi il
+     * commento sulle varianti _locked in kernel/include/pipe.h. Si guarda
+     * il flag IF prima, e si riaccende solo se era acceso — una syscall
+     * gira con gli interrupt attivi, ma questo codice deve poter essere
+     * chiamato anche da dove non lo sono. */
+    interrupt_erano_attivi = (read_eflags() & 0x200) != 0;
+    interrupts_disable();
+
+    cmos_scrivi(CMOS_STATO_B, (uint8_t)(statoB | STATO_B_SET));
+
+    ore = t->ora;
+    if (!(statoB & STATO_B_24H)) {
+        /* Formato 12 ore: mezzanotte e mezzogiorno sono i due casi che si
+         * sbagliano sempre. 0 diventa 12 AM, 12 resta 12 PM. */
+        uint8_t pomeriggio = (ore >= 12) ? 0x80 : 0x00;
+
+        ore = ore % 12;
+        if (ore == 0) ore = 12;
+        if (statoB & STATO_B_BINARIO) ore = (uint32_t)((uint8_t)ore | pomeriggio);
+        else                          ore = (uint32_t)(a_bcd(ore) | pomeriggio);
+    } else if (!(statoB & STATO_B_BINARIO)) {
+        ore = a_bcd(ore);
+    }
+
+    if (statoB & STATO_B_BINARIO) {
+        cmos_scrivi(CMOS_SECONDI, (uint8_t)t->secondo);
+        cmos_scrivi(CMOS_MINUTI,  (uint8_t)t->minuto);
+        cmos_scrivi(CMOS_ORE,     (uint8_t)ore);
+        cmos_scrivi(CMOS_GIORNO,  (uint8_t)t->giorno);
+        cmos_scrivi(CMOS_MESE,    (uint8_t)t->mese);
+        cmos_scrivi(CMOS_ANNO,    (uint8_t)(t->anno % 100u));
+    } else {
+        cmos_scrivi(CMOS_SECONDI, a_bcd(t->secondo));
+        cmos_scrivi(CMOS_MINUTI,  a_bcd(t->minuto));
+        cmos_scrivi(CMOS_ORE,     (uint8_t)ore);
+        cmos_scrivi(CMOS_GIORNO,  a_bcd(t->giorno));
+        cmos_scrivi(CMOS_MESE,    a_bcd(t->mese));
+        cmos_scrivi(CMOS_ANNO,    a_bcd(t->anno % 100u));
+    }
+
+    /* Il secolo, solo dove c'e' gia'. Vedi il commento in testa. */
+    secolo_vecchio = cmos_leggi(CMOS_SECOLO);
+    sec_bcd        = a_bcd(t->anno / 100u);
+    if (statoB & STATO_B_BINARIO) {
+        if (secolo_vecchio == 19 || secolo_vecchio == 20)
+            cmos_scrivi(CMOS_SECOLO, (uint8_t)(t->anno / 100u));
+    } else {
+        if (secolo_vecchio == 0x19 || secolo_vecchio == 0x20)
+            cmos_scrivi(CMOS_SECOLO, sec_bcd);
+    }
+
+    /* SET giu': il chip riprende a contare dal valore appena messo. */
+    cmos_scrivi(CMOS_STATO_B, (uint8_t)(statoB & (uint8_t)~STATO_B_SET));
+
+    if (interrupt_erano_attivi) interrupts_enable();
+
+    return 0;
+}

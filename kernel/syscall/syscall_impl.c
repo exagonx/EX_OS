@@ -4143,6 +4143,49 @@ int32_t sys_time(InterruptFrame *frame)
 }
 
 /* =============================================================================
+ * SYS_TIME_SET (213) -- Rimette l'orologio CMOS
+ *
+ * ebx = const RtcTime*
+ *
+ * ! E' DI root. Vedi il commento accanto al numero, in kernel/include/syscall.h.
+ *
+ * ! E LA DATA SI VALIDA DUE VOLTE, qui e dentro rtc_write. Non e' una
+ * ripetizione inutile: qui si distingue -EINVAL (la data non esiste) da
+ * -ENODEV (il chip non risponde), e rtc_write rende -1 per tutt'e due. Senza
+ * il controllo qui, chi scrive «31 febbraio» si sentirebbe rispondere che
+ * l'orologio e' rotto.
+ * ============================================================================= */
+int32_t sys_time_set(InterruptFrame *frame)
+{
+    const RtcTime *in = (const RtcTime *)frame->ebx;
+    RtcTime t;
+
+    if (!syscall_verify_ptr((void *)in, sizeof(RtcTime))) return ERR(EFAULT);
+    if (!solo_root("time_set")) return ERR(EPERM);
+
+    t = *in;
+
+    if (t.anno < 1980 || t.anno > 2099) return ERR(EINVAL);
+    if (t.mese < 1 || t.mese > 12) return ERR(EINVAL);
+    if (t.giorno < 1 || t.giorno > 31) return ERR(EINVAL);
+    if (t.ora > 23 || t.minuto > 59 || t.secondo > 59) return ERR(EINVAL);
+
+    if (rtc_write(&t) != 0) {
+        /* Il chip ha detto di no. O e' assente, o il giorno non esiste in
+         * quel mese — l'unico controllo che qui sopra non si fa, perche'
+         * vuole l'anno bisestile. */
+        RtcTime prova;
+
+        if (rtc_read(&prova) != 0) return ERR(ENODEV);
+        return ERR(EINVAL);
+    }
+
+    klog(LOG_INFO, "SYSCALL time_set: orologio rimesso a %u-%02u-%02u %02u:%02u:%02u",
+         t.anno, t.mese, t.giorno, t.ora, t.minuto, t.secondo);
+    return 0;
+}
+
+/* =============================================================================
  * SYS_IPC_REGISTER (222) -- Registra il processo chiamante come servizio
  *
  * ebx = name*   (stringa null-terminated, max IPC_NAME_LEN-1 caratteri)

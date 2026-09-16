@@ -44,7 +44,7 @@
 #include "rete.h"
 
 /* +0.001 a ogni modifica: `telnetd -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("telnetd", "0.008");
+EX_VERSIONE("telnetd", "0.009");
 
 /* I comandi del protocollo, quelli che servono. */
 #define IAC     255
@@ -437,6 +437,70 @@ static int tcp_scrivi(int id, const unsigned char *d, unsigned int n)
     return 0;
 }
 
+/* =============================================================================
+ * DALLA PARTE NOSTRA VERSO LA RETE: il capo riga dell'NVT, e il 255
+ *
+ * ! IL PROTOCOLLO NON PARLA ASCII, PARLA NVT, e la differenza sta in due byte.
+ * RFC 854 dice che la fine di una riga sul cavo e' CR LF, DUE caratteri. Un
+ * LF da solo vuol dire «scendi di una riga», e basta: il cursore resta nella
+ * colonna dov'era. Mandando solo LF — che e' quel che questo programma ha
+ * fatto finora — ogni riga comincia dove e' finita quella prima, e l'uscita
+ * scende a scaletta verso destra.
+ *
+ * ! E SULLA CONSOLE LOCALE NON SI VEDEVA, il che e' il motivo per cui e'
+ * rimasto li' tanto: li' il capo riga lo sistema il driver di terminale, che
+ * su '\n' va a capo E torna a sinistra. Passando dal pty alla rete quella
+ * cortesia non c'e' piu'. Il difetto era quindi visibile SOLO da telnet, e
+ * sembrava un difetto del programma che stampava.
+ *
+ * ! IL CR DA SOLO DIVENTA CR NUL, e non e' pedanteria: nell'NVT il CR e' un
+ * comando («torna a sinistra»), e per dire «CR e nient'altro» si manda un NUL
+ * dietro. Senza, un client rigoroso puo' aspettare il byte dopo per decidere
+ * cosa fare. Un programma che disegna una barra di avanzamento con dei CR
+ * secchi e' esattamente il caso.
+ *
+ * ! E IL 255 SI RADDOPPIA. Il byte 255 e' IAC, l'inizio di un comando: se
+ * l'uscita di un programma ne contiene uno e lo si manda cosi' com'e', il
+ * client si mette ad aspettare un comando che non arrivera' mai e si mangia i
+ * byte che seguono. `IAC IAC` vuol dire «un 255 vero, uno solo» — e questo
+ * programma lo sapeva gia' nella direzione opposta (vedi filtra()), ma non in
+ * questa. Una direzione sola non e' un protocollo: e' meta'.
+ *
+ * ! IL BUFFER E' IL DOPPIO, perche' il caso peggiore lo e': un'uscita fatta di
+ * soli LF, o di soli 255, raddoppia esattamente.
+ *
+ * ! UN CR IN FONDO AL PEZZO SI TRATTA COME CR DA SOLO, e si puo': se il LF che
+ * lo seguiva arriva nella lettura dopo, il client vede CR NUL LF invece di
+ * CR LF — e il NUL nell'NVT non fa niente. Si vede la stessa cosa. Tenere uno
+ * stato fra una lettura e l'altra per guadagnare zero non vale il difetto che
+ * ci si nasconde dentro.
+ * ========================================================================= */
+static int nvt_scrivi(int id, const unsigned char *d, unsigned int n)
+{
+    unsigned char fuori[1024];
+    unsigned int  i, k = 0;
+
+    for (i = 0; i < n; i++) {
+        unsigned char c = d[i];
+
+        if (c == '\n') {
+            fuori[k++] = '\r';
+            fuori[k++] = '\n';
+        } else if (c == '\r') {
+            fuori[k++] = '\r';
+            if (i + 1 < n && d[i + 1] == '\n') { fuori[k++] = '\n'; i++; }
+            else                                 fuori[k++] = '\0';
+        } else if (c == IAC) {
+            fuori[k++] = IAC;
+            fuori[k++] = IAC;
+        } else {
+            fuori[k++] = c;
+        }
+    }
+
+    return tcp_scrivi(id, fuori, k);
+}
+
 /* -----------------------------------------------------------------------------
  * Il filtro del protocollo
  *
@@ -781,12 +845,17 @@ static void sessione(int id, const Config *cfg, int con_login)
             else             fermi = 0;
         }
 
-        /* Dal programma verso la rete. */
+        /* Dal programma verso la rete.
+         *
+         * ! SI LEGGONO AL PIU' 512 BYTE PERCHE' LA TRADUZIONE PUO' RADDOPPIARLI
+         * e il buffer di nvt_scrivi e' 1024. Chiedere di piu' vorrebbe dire
+         * scrivere fuori da quel buffer nel caso peggiore, che non e' raro:
+         * un'uscita fatta di righe corte e' quasi tutta capi riga. */
         if (v[0].revents & POLLIN) {
             int n = (int)read(fd[0], buf, 512);
 
             if (n > 0) {
-                if (tcp_scrivi(id, buf, (unsigned int)n) != 0) break;
+                if (nvt_scrivi(id, buf, (unsigned int)n) != 0) break;
             } else if (n == 0) {
                 break;                       /* lo slave non c'e' piu' */
             }

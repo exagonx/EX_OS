@@ -2,7 +2,7 @@
 
 **🇮🇹 Italiano** · [🇬🇧 English](README.en.md)
 
-**Versione:** 0.217
+**Versione:** 0.218
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 32-bit — si avvia da floppy, da CD o da disco rigido
@@ -101,6 +101,60 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### L'orologio si può rimettere: kernel 0.218 e `/bin/date`
+
+**testato sulla macchina vera** — da quando esiste, agosto 2026, l'orologio CMOS
+di EX-OS si **leggeva e basta**: c'era `SYS_TIME` e non c'era il suo gemello.
+Non era un buco teorico. L'Acer Aspire 3000 di prova segnava il **2005**, e ogni
+file che caricava su un server FTP arrivava datato «Feb 9 2005»: l'unico modo di
+rimetterlo era entrare nel BIOS.
+
+    date                        mercoledi' 16 settembre 2026, 16:09:20
+    date -d                     2026-09-16
+    date -t                     16:09:30
+    date -set-date:2026/09/16   la data  (serve root)
+    date -set-time:17:52:30     l'ora    (i secondi si possono omettere)
+
+`SYS_TIME_SET` (213) chiama `rtc_write()`, ed è **di root come `mount`**: chi
+sposta l'ora cambia la data di ogni file che chiunque altro scriverà, e con essa
+il giudizio di `netupdate -check` su che cosa è più recente.
+
+! **La scrittura ha una trappola in più delle tre della lettura**: non si scrive
+mentre il chip conta. Se l'aggiornamento cade in mezzo ai sei registri, il chip
+riscrive sopra a metà di quel che si è appena messo. Il bit `SET` del registro B
+ferma il conteggio per la durata della scrittura.
+
+! **Non c'è un comando `time`, ed è voluto**: su qualunque Unix `time comando`
+*misura* quanto ci mette un comando a girare. Spendere quel nome per stampare
+l'ora vorrebbe dire non averlo più il giorno in cui servirà. I dettagli — il
+formato che si conserva, il registro del secolo, il limite del 2099 — stanno
+in **[`date`](#date--che-ore-sono-e-rimetterle)**.
+
+Sul ferro: l'Acer è passato da giovedì 10 febbraio 2005 a mercoledì 16 settembre
+2026, scritto e riletto, e la data ha retto un ciclo di alimentazione.
+
+### `ls` nudo dice anche quando e che cosa
+
+**testato in QEMU** — `ls` stampava due cose, il nome e la dimensione. La data
+c'era già, ma solo sotto `-d`, `-md` o `-l`, cioè solo per chi sapeva che
+esistevano; e il tipo si deduceva dalla barra finale del nome. Le due domande
+più comuni davanti a un elenco di file sono «di quando è?» e «è una cartella?».
+
+```
+ex-os:/> ls
+data        ora    tipo    dimensione  nome
+2026-09-16  18:10  <DIR>            -  BOOT
+2026-09-16  18:10  <FILE>      270376  KERNEL.BIN
+```
+
+! **E costa una `stat()` per voce**, che il modo nudo prima non faceva: su un
+floppy si sente. Per questo il vecchio comportamento non è sparito ma sta sotto
+**`-s`**, ed è il modo da usare su un disco lento o su una directory grande.
+
+! **La data di creazione non c'è**, e non è una scelta: la voce di directory che
+FAT, ext2 e ISO 9660 consegnano al VFS tiene **una** coppia data/ora, e `struct
+stat` infatti pone `st_ctime` e `st_atime` uguali a `st_mtime`.
+
 ### Le chiavette USB si tolgono, non si strappano: `eject`
 
 **testato in QEMU, col giro intero** — `automount` le montava gia' da solo in
@@ -186,10 +240,16 @@ file sarebbe peggio del guasto.
 
 ### `ftpswap`: una directory e un server FTP, allineati
 
-**scritto e compilato, mai eseguito** — `ftpswap /miadir` tiene allineata una
+**provato su ferro vero il 16 settembre 2026** — `ftpswap /miadir` tiene allineata una
 directory con un server FTP: quel che nasce da una parte compare dall'altra,
 quel che muore da una parte muore dall'altra, e in caso di conflitto vince il
 piu' recente mentre il perdente si mette da parte come `<nome>.prima`.
+
+Cinque prove sull'Acer, contro un server FTP vero: il `.cfg` chiesto e scritto
+a 0600 al primo giro, la struttura replicata nei due versi, un file cambiato
+sul server e riletto sulla macchina, un binario da 3000 byte andato e tornato
+**identico byte per byte**, la cancellazione che passa nei due sensi, e un
+conflitto vero col perdente ritrovato nel suo `.prima`.
 
 Il pezzo che decide tutto e' il **diario**: senza memoria, un file che c'e' da
 una parte sola e' sempre un file nuovo da copiare, e cancellare diventa
@@ -2447,7 +2507,6 @@ SSE; è stato provato forzando la via lenta in QEMU, non su un 486 fisico.
 │   ├── ls           ← Elenco directory
 │   ├── hello        ← Programma di esempio
 │   ├── textline     ← Editor di testo lineare (stile edlin)
-│   ├── gfedit       ← Editor a schermo intero (stile MS-DOS EDIT)
 │   ├── mkdir        ← Crea directory
 │   ├── rmdir        ← Cancella directory vuote
 │   ├── delete       ← Cancella file (con jolly ? e *)
@@ -2458,6 +2517,13 @@ SSE; è stato provato forzando la via lenta in QEMU, non su un 486 fisico.
     ├── kbd.drv      ← Driver tastiera PS/2 (processo ring3)
     └── floppy.drv   ← Driver floppy controller (ancora ET_DYN, non caricato)
 ```
+
+! `gfedit` **non sta sul floppy**: dal 16 settembre 2026 si costruisce solo
+per il CD. L'immagine da 1,44 MB era scesa a 3072 byte liberi e lui ne
+occupa 60236. E' rimasto `textline`, che ne occupa 18184 — ed e' il
+pavimento giusto, perche' `gfedit` senza `/dev/kbd.drv` rimanda a lui
+comunque. Sul CD e su ogni sistema installato c'e' come prima.
+
 
 Il TTY non compare in `/dev`: `drivers/tty/tty.c` è compilato **dentro** il
 kernel (possiede la VGA), e per l'input fa da client del servizio `kbd`.
@@ -3023,6 +3089,13 @@ Ritorna `-ENODEV` se l'orologio non risponde o consegna una data impossibile
 (succede su hardware vecchio con la batteria del CMOS scarica): in quel caso il
 chiamante deve dire "ora ignota" invece di mostrare un orario inventato — gfedit
 scrive `--:--:--`.
+
+**E dal kernel 0.218 si può anche SCRIVERE**: `time_set()` (`SYS_TIME_SET`, 213)
+rimette l'orologio, è di root, e accetta gli anni dal 1980 al 2099. Il comando
+che la usa è `date`, con `-set-date:` e `-set-time:`; il perché di ogni scelta
+sta in **[`date`](#date--che-ore-sono-e-rimetterle)**. Fino ad allora l'orologio
+si leggeva e basta, e su una macchina con la data sbagliata non c'era modo di
+rimediare da dentro EX-OS.
 
 ! In QEMU il RTC parte in **UTC**, non in ora locale. Per vedere l'ora del fuso
 serve `-rtc base=localtime` fra i `QEMU_FLAGS` del Makefile.
@@ -5391,26 +5464,128 @@ file inesistente dal nome assurdo — il difetto era nella riga, non nel
 file. Lo stesso vale per gli argomenti oltre il sedicesimo, che prima
 sparivano senza dire niente.
 
+### `date` — che ore sono, e rimetterle
+
+```
+date                        giorno, data e ora per esteso
+date -d                     solo la data, 2026-09-16
+date -t                     solo l'ora, 17:52:31
+date -set-date:2026/09/16   rimette la data   (serve root)
+date -set-time:17:52:30     rimette l'ora     (serve root)
+```
+
+```
+ex-os:/> date
+mercoledi' 16 settembre 2026, 16:09:20
+ex-os:/> date -set-time:10:11:12
+orologio rimesso: mercoledi' 16 settembre 2026, 10:11:12
+```
+
+**L'orologio si può rimettere dal kernel 0.218, e prima no.** Da quando
+esiste — agosto 2026 — l'orologio CMOS di EX-OS si **leggeva e basta**: c'era
+`SYS_TIME` e non c'era il suo gemello. Non era un buco teorico: l'Acer Aspire
+3000 di prova segnava il **2005**, e ogni file che caricava su un server FTP
+arrivava datato «Feb 9 2005». L'unico modo di rimetterlo era entrare nel BIOS.
+
+Adesso c'è `SYS_TIME_SET` (213), che chiama `rtc_write()` in
+`kernel/arch/x86/rtc.c`.
+
+! **È di root, come `mount`.** L'ora di sistema non è un'impostazione
+personale: chi la sposta cambia la data di ogni file che chiunque altro
+scriverà, e con essa il giudizio di `netupdate -check` su che cosa è più
+recente. Da un utente qualunque si passa da `sudo date ...`.
+
+! **La scrittura ha una trappola in più delle tre della lettura.** Non si
+scrive mentre il chip conta: se l'aggiornamento cade in mezzo ai sei registri,
+il chip riscrive sopra a metà di quel che si è appena messo, e si ottiene una
+data mezza vecchia e mezza nuova. Il bit `SET` del registro B ferma il
+conteggio per la durata della scrittura.
+
+! **E si scrive nel formato che c'è già** — BCD o binario, 12 o 24 ore, come
+dice il registro B. Cambiarlo sarebbe più comodo da programmare e romperebbe
+la lettura del BIOS, che quel formato lo conosce dall'accensione.
+
+! **Il registro del secolo si aggiorna solo dove c'è già.** `rtc_read` non lo
+legge affatto (usa la convenzione «sotto 70 = 2000+»), quindi per EX-OS
+sarebbe inutile; ma un BIOS che invece lo usa, e che lo trovasse fermo al 20
+mentre le due cifre dicono 26, ripartirebbe da un anno sbagliato. Si scrive
+0x32 **solo se quel che c'è dentro somiglia già a un secolo** (19 o 20): su una
+macchina dove quel registro serve ad altro, il controllo lo lascia in pace.
+
+! **L'anno sta fra 1980 e 2099**, mentre la lettura ne accetta fino al 2199.
+Il chip tiene DUE cifre, e la lettura le interpreta con quella convenzione:
+chiedere il 2150 vorrebbe dire rileggere il 2050 senza dirlo a nessuno, e un
+errore silenzioso è peggio di un rifiuto.
+
+! **Le due metà si rimettono separate.** Chi cambia solo l'ora — l'ora legale,
+o un orologio che ha derivato di due minuti — non deve ribattere anche la data,
+e soprattutto non deve rischiare di sbagliarla. I campi che non si toccano
+vengono riletti dall'orologio, perché `time_set()` vuole una `RtcTime` intera:
+il chip non ha un modo di scrivere «solo i minuti».
+
+! **Non c'è un comando `time`, ed è voluto.** Su qualunque sistema Unix `time
+comando` MISURA quanto ci mette un comando a girare. Spendere quel nome per
+stampare l'ora vorrebbe dire non averlo più il giorno in cui servirà davvero —
+e a quel punto o si rompe chi lo usa, o si sceglie un nome peggiore. Un binario
+solo dice tutt'e due le cose, e sul floppy ne costa uno invece di due: quando
+`date` è stato scritto, sul floppy restavano 63488 byte liberi e il più piccolo
+programma di EX-OS ne pesa 13,5 KB.
+
+! **Nessun fuso orario.** L'orologio della macchina è ora locale e il sistema
+non sa dove si trova: `localtime()` e `gmtime()` fanno la stessa identica cosa.
+I secondi contati dal 1970 sono letti su quel quadrante — buoni per misurare
+intervalli e datare un file, non confrontabili con l'istante di un'altra
+macchina.
+
 ### `ls` — modi di visualizzazione
 
 ```
 ls -h              elenca tutte le opzioni
+ls                 data e ora, <DIR> o <FILE>, dimensione e nome
+ls -d              lo stesso: c'e' per chi lo ha nelle dita
+ls -s              solo nome e dimensione, senza interrogare i file
 ls -mc /bin        a colonne: solo i nomi, il piu' compatto
-ls -d              dettagli: dimensione, data e ora
-ls -md             dettagliato stile dir: aggiunge gli attributi
+ls -l              permessi, proprietario, gruppo, misura e data
+ls -md             come il modo normale, piu' gli attributi
 ls -a              mostra anche i nomi che cominciano con un punto
 ls -p              una pagina per volta (Invio avanza, q smette)
 ```
 
 ```
-ex-os:/> ls -md /
-data        ora    attr   dimensione  nome
-2026-08-04  10:51  D----       <DIR>  BOOT
-2026-08-04  10:51  D----       <DIR>  BIN
-2026-08-04  10:51  -----      180584  KERNEL.BIN
+ex-os:/> ls
+data        ora    tipo    dimensione  nome
+2026-09-16  18:10  <DIR>            -  BOOT
+2026-09-16  18:10  <DIR>            -  BIN
+2026-09-16  18:10  <FILE>        2631  LOADER.BIN
+2026-09-16  18:10  <FILE>      270376  KERNEL.BIN
 
-2 file, 181679 byte    4 directory
+2 file, 273007 byte    5 directory
 ```
+
+**Dal 16 settembre 2026 `ls` nudo dice anche QUANDO e CHE COSA.** Prima
+stampava due cose, il nome e la dimensione. La data c'era già — ma solo con
+`-d`, `-md` o `-l`, cioè solo per chi sapeva che esistevano; e il tipo si
+deduceva dalla barra finale del nome, che è una convenzione da conoscere. Le
+due domande più comuni davanti a un elenco di file sono «di quando è?» e «è
+una cartella?», e per tutt'e due la risposta era dietro un'opzione che nessuno
+batte.
+
+! **E costa una `stat()` per voce**, che il modo nudo prima non faceva. Su un
+floppy si sente, ed è esattamente per questo che `-s` esiste e non è un
+ripiego: è il modo da usare quando si vuole solo sapere quali nomi ci sono, su
+un disco lento o su una directory molto grande.
+
+! **La data è quella di MODIFICA, e quella di creazione non c'è.** Non è una
+scelta: la voce di directory che i tre filesystem consegnano al VFS tiene UNA
+coppia data/ora, e `struct stat` infatti pone `st_ctime` e `st_atime` uguali a
+`st_mtime`, dichiarandolo. Mostrare la stessa data sotto due intestazioni
+diverse sarebbe peggio che mostrarne una sola.
+
+! **Una directory non ha una dimensione da mostrare**, e adesso che la colonna
+accanto dice `<DIR>` non serve nemmeno scriverlo due volte. Il numero che i
+filesystem tengono lì è la misura della voce di directory sul disco — zero su
+FAT — non quanto pesa il contenuto. Un trattino dice «la domanda non si
+applica»; uno zero direbbe il falso.
 
 ! **`-d` qui significa «dettagli»**, non quello che significa su Unix (dove
 `ls -d` mostra la directory invece del contenuto). È una scelta di questo

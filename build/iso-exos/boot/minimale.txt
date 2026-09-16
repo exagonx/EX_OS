@@ -2,11 +2,11 @@ bin/chkdsk
 bin/chmod
 bin/cmp
 bin/cp
+bin/date
 bin/delete
 bin/disk
 bin/fdisk
 bin/fdprova
-bin/gfedit
 bin/help
 bin/hwconfig
 bin/hwinfo

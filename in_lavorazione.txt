@@ -139,7 +139,10 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @DIF-TLS         resta una firma P-384 da 350 ms: rinuncia, non lavoro
   1  @DIF-TCPBUF      non era la finestra: era la coda del driver, otto posti
   1  @DIF-POST        la POST non tornava: corretto e compilato, da provare
-  1  @PROVE-MACCHINA  ftpswap ed eject: scritti e compilati, mai eseguiti la'
+  1  @PROVE-MACCHINA  ftpswap provato la' il 16 settembre; eject aspetta una chiavetta
+  1  @GRAFICA-SCATTI  misurato: il bus non c'entra, si ridipinge troppo spesso
+  1  @TELNET-SCALA    scaletta e troncamento SISTEMATI: resta la sessione che si impianta
+  1  @SIS-2D          il motore 2D c'e' e la sua finestra tace: manca una prova sola
   1  @DIF-GROSSI      cc1plus non entrava in memoria: il corpo passa dal disco
   1  @FILI-MAX        otto fili per processo: e' un numero, non un lavoro
   1  @EXIDE-TETTI     i tetti di exide, da sapere prima di sbatterci
@@ -1315,30 +1318,333 @@ QUEL CHE MANCA, IN ORDINE:
     e poi, dalla macchina:  senderror <url>/report/ /SIS900.TXT
     e da qui:               exagonx/referti.sh
 
-! @PROVE-MACCHINA DUE COMANDI NUOVI CHE LA MACCHINA VERA NON HA ANCORA VISTO.
-  (15 settembre 2026)
+! @GRAFICA-SCATTI L'INTERFACCIA SCATTA, E IL BUS DELLA SCHEDA NON C'ENTRA.
+  (16 settembre 2026)
 
-  `ftpswap` e `eject` sono scritti, compilati e pubblicati; `eject` e' anche
-  provato in QEMU col giro intero (montata, espulsa, sfilata, rimessa,
-  rimontata da sola). Sulla macchina vera non e' stato eseguito nessuno dei due,
-  e per due ragioni diverse:
+  Misurato con `fbprova` sull'Acer (SiS 6330, 800x600x32, 1.920.000 byte a
+  fotogramma):
 
-    - `eject` vuole il KERNEL NUOVO (la syscall 212 non c'e' in quello vecchio:
-      senza, risponde -ENOSYS). Il kernel e' rimasto fuori dall'aggiornamento
-      del 15 settembre, quello che si e' interrotto.
-    - `ftpswap` vuole solo la libc nuova, ma la sessione di prova e' saltata
-      insieme alla macchina.
+      riempi MMX (8 byte)           375 MB/s    4.9 ms a fotogramma
+      copia RAM -> RAM              357 MB/s    5.1 ms
+      riga MMX (come wserver)       375 MB/s    4.9 ms
+      pixel per pixel (px)          183 MB/s   10.0 ms
+      copia RAM -> schermo (memcpy)  47 MB/s   38.2 ms
+      LETTURA dallo schermo          77 MB/s   23.5 ms
 
-  Quando l'Acer e' di nuovo coerente: `netupdate -check` fino in fondo, un
-  riavvio per il kernel, e poi
+  ! SCRIVERE NELLO SCHERMO VA COME SCRIVERE IN RAM: il framebuffer e' gia'
+    dichiarato combinabile in scrittura dal BIOS. L'ipotesi «e' UC, mancano gli
+    MTRR» e' stata misurata e SMENTITA — su UC sarebbero stati 20-40 MB/s e MMX
+    non avrebbe cambiato niente.
+
+  Quindi comporre un fotogramma intero costa fra 5 e 10 ms, cioe' fra 100 e 200
+  al secondo. Se scatta, il tempo se ne va in QUANTE VOLTE si compone.
+
+  Il lavoro vero e' restringere le regioni sporche: `sporca_tutto()` lo chiama
+  quasi tutto — una finestra che si aggiorna, che si sposta, che va in cima, un
+  bottone del mouse — e ogni volta sono 800x600 ridipinti. Il commento in testa
+  a quella sezione di wserver.c lo dice gia': va fatto un caso per volta
+  guardando i pixel. Adesso c'e' anche il numero che lo giustifica.
+
+  Da guardare, in quest'ordine:
+    - chi chiama sporca_tutto() e quale rettangolo saprebbe dichiarare
+    - quante ricomposizioni fa un trascinamento di finestra
+    - il motore 2D della SiS (BAR1 0xE2100000, MMIO): riempimenti e copie
+      schermo->schermo gratis, ed e' l'unico modo di non pagare i 23,5 ms di
+      lettura quando si sposta una finestra
+
+  ! E kernel/arch/x86/mtrr.c E' SCRITTO MA NON COLLEGATO. Sa raccontare la
+    tabella MTRR e programmare una fascia WC col rituale dell'SDM. Su questa
+    macchina non serve; serve su una il cui BIOS non la metta. Si collega
+    quando c'e' una macchina su cui provarlo.
+
+! @TELNET-SCALA I DUE DIFETTI SONO SISTEMATI; RESTA LA SESSIONE CHE SI IMPIANTA.
+  (16 settembre 2026)
+
+  ! FATTO 1 — LO SFASAMENTO A SCALETTA. Era il capo riga. Il protocollo non
+    parla ASCII, parla NVT: RFC 854 dice che la fine di una riga sul cavo e'
+    CR LF, DUE byte. telnetd mandava quel che usciva dal pty cosi' com'era,
+    cioe' un LF solo — «scendi di una riga», col cursore che resta nella
+    colonna dov'era. Sulla console locale non si vedeva perche' li' il capo
+    riga lo sistema il driver di terminale.
+
+    Corretto in bin/telnetd/telnetd.c con nvt_scrivi(): LF diventa CR LF, un CR
+    da solo diventa CR NUL (nell'NVT il CR e' un comando, e per dire «CR e
+    nient'altro» ci vuole il NUL dietro), e IL BYTE 255 SI RADDOPPIA — quella
+    direzione non lo faceva, e un 255 nell'uscita di un programma metteva il
+    client ad aspettare un comando che non arrivava mai. Il filtro in entrata
+    lo sapeva gia': una direzione sola non e' un protocollo, e' meta'.
+
+  ! FATTO 2 — IL CHILOBYTE CHE SPARIVA, e non era di telnetd: era del KERNEL.
+    kernel/ipc/pty.c, pty_scrivi_slave() versava i byte nel tubo verso il
+    master con metti(), che a tubo pieno NON SCRIVE E NON LO DICE, e poi
+    rendeva n — «scritto tutto». Il tubo e' PTY_DIM = 1024 byte. Un programma
+    che stampava di piu' piu' in fretta di quanto il master leggesse perdeva
+    il resto in silenzio, con una write che gli aveva appena detto di si'.
+
+    ! E IL SINTOMO NON SOMIGLIAVA A UNA PERDITA DI DATI: il programma arrivava
+      in fondo e la shell tornava al prompt, quindi sembrava un driver che
+      moriva, ogni volta a un'istruzione diversa. Mezza giornata buttata a
+      cercare il difetto in un driver che non ne aveva.
+
+    Corretto: adesso chi scrive ASPETTA che ci sia posto, com'e' su ogni Unix,
+    e l'attesa e' interrompibile e rende il conto parziale. Il lettore sveglia
+    chi aspetta quando fa posto, e le due chiusure lo svegliano quando l'altro
+    capo se ne va.
+
+  ! PROVATO IN QEMU, E LE PROVE RESTANO:
+
+      libctest    206 superate, 15 fallite (erano 201/15: le cinque nuove sono
+                  la prova del pty, le 15 sono le solite creazioni di file su
+                  un CD in sola lettura)
+      tools/telnet_nvt_prova.py   guarda i BYTE SUL CAVO, che un client vero
+                  nasconde: 0 capi riga LF senza CR, 426 righe su 426, ultima
+                  riga arrivata. Cioe' 19 KB attraverso un tubo da 1024.
+                  E' agganciato a tools/prova_telnet.sh.
+
+  QUEL CHE RESTA, ed e' l'unica cosa ancora aperta di questa etichetta:
+
+  ! LA SESSIONE CHE SI IMPIANTA DOPO QUATTRO O CINQUE COLLEGAMENTI. Sull'Acer,
+    dopo qualche sessione, la macchina accetta la connessione, fa l'eco del
+    comando e non esegue piu' niente; ci vuole un riavvio. E' successo due
+    volte, tutt'e due su uno `scarica`.
+
+    ! NON E' DETTO CHE SIA GUARITO. I due difetti sistemati potrebbero
+      spiegarlo — una write che perdeva byte e un client che aspettava — ma
+      NON E' PROVATO, e non lo si puo' provare in QEMU perche' li' non e' mai
+      successo. Si guarda sull'Acer, dopo che ha preso kernel nuovo e telnetd
+      nuovo, aprendo e chiudendo dieci sessioni di fila.
+
+    ! E IL KERNEL E' CAMBIATO, quindi non basta copiare telnetd: la macchina
+      vuole un aggiornamento completo e un riavvio.
+
+! @SIS-2D IL MOTORE 2D C'E', LA SUA FINESTRA TACE, E MANCA UNA PROVA SOLA.
+  (16 settembre 2026)
+
+  Il codice e' scritto e compila: drivers/sis/sis_2d.c piu' sis_2d.h, agganciati
+  a sis.drv con -2dstato, -2dprova, -2dmisura e -2ddiagnosi.
+
+  ! LA MAPPA DEI REGISTRI NON E' INDOVINATA. Viene da sisfb del kernel Linux
+    (drivers/video/fbdev/sis/, sis_accel.h e sis.h), che e' GPL come EX-OS e
+    pilota questo chip da vent'anni. La famiglia e' quella giusta: 1039:6330 e'
+    l'integrata dei chipset 661/741/760/761, nucleo derivato dalla serie 315,
+    cioe' il ramo SIS_315_VGA e le macro SiS310* — non le SiS300*, che hanno
+    un altro set di registri.
+
+  ! E IL GUADAGNO CHE SI CERCA NON E' LA VELOCITA' DI RIEMPIMENTO. fbprova dice
+    che scrivere nello schermo e' gia' al limite del bus (375 MB/s). Quello che
+    la CPU non puo' fare a buon mercato e' LEGGERE dallo schermo: 82 MB/s, 22 ms
+    a schermata. Una copia schermo->schermo — spostare una finestra, far
+    scorrere un terminale — la paga tutta; il motore 2D la fa dentro la scheda
+    senza far attraversare il bus ai pixel nemmeno una volta. E' li' il punto.
+
+  QUEL CHE SI E' STABILITO SULLA MACCHINA VERA, e non va rifatto:
+
+      1039:6330 a 01:00.0, IRQ 7, comando PCI 0x0003 (I/O + memoria)
+      BAR0  0xe8000008  prefetchable, 128 MB  -> framebuffer, RISPONDE
+      BAR1  0xe2100000  normale,      128 KB  -> registri,    TACE (tutti uno)
+      ponte 00:01.0: memoria 0xe2100000-0xe21fffff, prefetch 0xe8000000-0xefffffff
+      SR05 a1 (estesi sbloccati)  SR1E 20  SR20 a0  SR21 a3  SR26 00  SR27 74
+      north bridge 1039:0760, suo BAR0 0xe0000000, capacita' AGP 3.0 a 0xa0
+
+  Tre spiegazioni sono state provate e CHIUSE:
+
+    - non e' mmio_map: la stessa syscall mappa il framebuffer e legge quel che
+      legge fb_map.
+    - non e' il ponte: la finestra dei registri sta dentro quella che il ponte
+      inoltra.
+    - non e' la coda comandi spenta: SR26 e' stato portato da 0x00 a 0x20
+      (SIS_MMIO_CMD_ENABLE) e la finestra e' rimasta muta. Rimesso com'era.
+    - e il BAR non e' un residuo: misurato scrivendo tutti uno, rende una
+      finestra vera di 128 KB.
+
+  ! L'APERTURA DEL NORTH BRIDGE ERA UNA BELLA IPOTESI ED E' FALSA.
+    0xE0000000 + 128 MB = 0xE8000000, e l'intervallo muto ci cascava dentro
+    mentre quello che parla comincia dove finisce: sembrava fatto apposta. Due
+    misure l'hanno smontata.
+
+      - il BAR1 spostato a 0xF0000000, con la finestra del ponte spostata con
+        lui, TACE LO STESSO. (E poi tutto rimesso com'era, verificato.)
+      - il controller EHCI risponde a 0xE2004000 — dentro la stessa fascia —
+        e il suo primo registro legge 01000020, cioe' un valore SENSATO
+        (versione 0x0100, capacita' lunghe 32 byte). Se quella fascia fosse
+        sepolta sotto l'apertura, sarebbe muto anche lui.
+
+  ! E mmio_map E' PROVATA, stavolta sul serio. La prima verifica confrontava
+    due letture che erano tutt'e due zero — e zero uguale a zero non dimostra
+    niente, lo schermo era nero. Rifatta scrivendo da una mappatura e
+    rileggendo dall'altra: 0xcafebabe passa in un verso, 0x0badf00d nell'altro.
+    Le due mappature sono la stessa memoria.
+
+  ! E IL PONTE E' A POSTO, guardato per intero e non solo nelle finestre:
+
+      ponte 00:01.0 = 1039:0002
+      comando 0x0007  [io, memoria, master]      stato 0x0220
+      bus: primario 0, secondario 1, subordinato 1
+      controllo 0x000c  [VGA abilitata]
+      memoria      0xe2100000-0xe21fffff
+      prefetch     0xe8000000-0xefffffff
+      I/O          0xa000-0xafff
+
+    ! E ATTENZIONE A UN ERRORE CHE HO FATTO: «il framebuffer si vede, quindi il
+      ponte inoltra» NON REGGE. Su un chipset a memoria condivisa la finestra
+      del framebuffer la decodifica il north bridge e la gira alla RAM di
+      sistema: quei cicli sul bus 1 non ci arrivano mai. Il ponte va guardato
+      nei suoi registri, e guardato li' e' a posto.
+
+  La configurazione PCI della scheda, per il giorno in cui servira' un
+  confronto (le righe da 0x60 in su sono tutte zero):
+
+      00: 63301039 02300003 03000000 80000000
+      10: e8000008 e2100000 0000a001 00000000
+      20: 00000000 00000000 00000000 00831025
+      30: 00000000 00000040 00000000 00000107
+      40: 06025001 00000000 00000000 00000000
+      50: 00300002 ff00020b 00000000 00000000
+
+    capacita' 0x40: gestione energia, la scheda e' in D0.
+    capacita' 0x50: AGP 3.0, e il comando AGP (0x58) e' ZERO, cioe' AGP
+    spento — normale su un'integrata.
+
+  ! IL PASSO 13 E' GIRATO, E LA SEQUENZA DI sisfb NON BASTA. (16 settembre
+    2026, sera.) Soglia in SR27, RESET della coda in SR26 (0x01), il giro sui
+    puntatori READPORT/WRITEPORT, e SOLO ALLORA il bit MMIO: la finestra legge
+    ffffffff prima, durante e dopo. Quella spiegazione e' CHIUSA come le altre
+    quattro. La macchina ha detto anche quanta memoria video ha: CR79 = 0x61,
+    cioe' 64 MB condivisi, CR78 = 0xc3, nessun LFB dedicato.
+
+  ! E LA RISPOSTA PROBABILE ERA NEL PASSO 4 DA SEMPRE: DUE BIT SPENTI.
+    La diagnosi stampa SR1E = 0x20 e SR20 = 0xa0 da quando esiste, e sono
+    finiti cosi' com'erano qui dentro, fra i dati «stabiliti sulla macchina
+    vera». Erano due MISURE, e nessuno le ha lette come due MANCANZE.
+
+    In sisfb (drivers/video/fbdev/sis/sis.h) quei due registri hanno un nome:
+
+        SR20  IND_SIS_PCI_ADDRESS_SET
+                SIS_PCI_ADDR_ENABLE      0x80   c'e' gia' (0xa0)
+                SIS_MEM_MAP_IO_ENABLE    0x01   SPENTO
+        SR1E  IND_SIS_MODULE_ENABLE
+                SIS_ENABLE_2D            0x40   SPENTO (0x20)
+
+    e sisfb li accende PRIMA della coda comandi. Noi eravamo partiti dalla
+    coda, cioe' dall'ultimo passo di un'inizializzazione di cui mancava il
+    primo. Spiegherebbe anche perche' tutto il resto risultava a posto: il
+    ponte inoltra, il BAR misura 128 KB veri, mmio_map mappa la memoria
+    giusta. La finestra c'e'; la scheda non la decodifica. E ffffffff a ogni
+    offset e' quel che il bus rende quando NESSUNO risponde.
+
+    ! I NOMI DELLE COSTANTI SONO A MEMORIA, non riletti: qui non ci sono i
+      sorgenti di Linux. Combaciano con l'osservazione in un modo che non
+      somiglia a una coincidenza, ma finche' non rispondono sono un'ipotesi.
+
+  ! ACCESI INSIEME HANNO BLOCCATO LA MACCHINA, ED E' LA PROVA PIU' CARA DELLA
+    GIORNATA. La prima stesura li metteva tutt'e due in coda al passo 14 della
+    diagnosi. L'Acer si e' fermato — niente ping, ciclo di alimentazione — e
+    con lui e' sparito il chilobyte di referto ancora in viaggio nel pty: il
+    log si interrompe a META' DEL PASSO 11, undici passi prima del punto in cui
+    la macchina e' morta.
+
+    ! DUE COSE IMPARATE, E VALGONO OLTRE QUESTA SCHEDA:
+      - L'ULTIMA RIGA CHE SI LEGGE NON E' L'ULTIMA CHE IL PROGRAMMA HA
+        STAMPATO. fflush() svuota il buffer della libc, non il tubo del pty
+        ne' la finestra TCP. Chi tocca un registro che puo' fermare la
+        macchina deve stampare l'intenzione e poi ASPETTARE che esca.
+      - DUE SCRITTURE IN UNA PROVA SOLA NON SI POSSONO DISTINGUERE. Un blocco
+        e' una risposta di un bit: o dice «quello» o non dice niente.
+
+  ! ADESSO SONO DUE COMANDI SEPARATI, e la diagnosi e' tornata di sola
+    lettura (uno strumento che puo' spegnere la macchina che misura smette di
+    essere quello con cui si comincia):
+
+        sis.drv -2dsr1e    solo SR1E bit 6, e lo rimette com'era
+        sis.drv -2dsr20    solo SR20 bit 0, e lo rimette com'era
+
+    Ognuno stampa «STO PER SCRIVERE ... SE QUESTA E' L'ULTIMA RIGA CHE LEGGI,
+    E' STATO QUESTO», aspetta mezzo secondo perche' la riga arrivi davvero, e
+    solo allora scrive. Si comincia da -2dsr1e: SR1E non tocca nessuna
+    decodifica di indirizzi, SR20 si'.
+
+    ! E SI FANNO CON QUALCUNO VICINO ALL'INTERRUTTORE: dopo un blocco la
+      macchina vuole un ciclo di alimentazione, non un riavvio via rete.
+
+  ! SR1E BIT 6 E' SCAGIONATO, E DUE VOLTE. (16 settembre 2026, sera tardi.)
+    `-2dsr1e` sull'Acer: la macchina resta VIVA, il registro TIENE il bit
+    (0x20 -> 0x60, quindi non e' di sola lettura e SR05 non lo protegge), e la
+    finestra legge ffffffff come prima. Quindi SIS_ENABLE_2D da solo non
+    accende la decodifica e non e' lui ad aver bloccato la macchina.
+
+    ! PER ELIMINAZIONE E' STATO SR20 BIT 0, ed e' coerente con quel che
+      dovrebbe essere: l'unico dei due che tocca una DECODIFICA DI INDIRIZZI.
+      Un registro che non facesse niente non fermerebbe niente — il blocco
+      stesso e' un indizio che quel bit ha un effetto grosso.
+
+  ! LA PROSSIMA PROVA E' `-2dsr20`, E SPEZZA ANCORA. Scrivere SR20 e' una
+    porta VGA, che non passa da nessun bus PCI; LEGGERE la finestra e' un
+    ciclo di memoria verso un indirizzo che un attimo prima non rispondeva a
+    nessuno. Sono due gesti diversi e adesso hanno due annunci diversi
+    («se ti fermi qui, e' stata la LETTURA» / «... la SCRITTURA in memoria»),
+    con mezzo secondo di attesa fra l'annuncio e il gesto.
+
+    Senza quella separazione un blocco direbbe soltanto «SR20», che e' quel
+    che gia' si sa: ricomprerebbe un ciclo di alimentazione per una domanda
+    a cui abbiamo gia' risposto.
+
+    ! IPOTESI DA TENERE PRESENTE SE SI FERMA SULLA SCRITTURA DEL REGISTRO:
+      accendendo la decodifica, il chip potrebbe rispondere a una fascia piu'
+      larga di BAR1 — una finestra legacy a indirizzo fisso — e accavallarsi
+      alla RAM o a un'altra scheda. Quello impianta il bus senza che nessuno
+      abbia letto niente.
+
+  ! E IL VERO OSTACOLO ADESSO NON E' LA SiS: E' telnetd. Dopo quattro o cinque
+    sessioni la macchina accetta la connessione, fa l'eco del comando e non
+    esegue piu' niente; ci vuole un riavvio. E' successo due volte, tutt'e due
+    su uno `scarica`. Vedi @TELNET-SCALA.
+
+    ! QUINDI SI FA TUTTO IN UNA SESSIONE SOLA, e non e' una comodita': ogni
+      sessione in piu' avvicina il momento in cui la macchina va riavviata.
+
+          tools/locali/pilota_telnet.py 192.168.0.23 - \
+              "scarica http://<qui>:8000/sis.drv /root/sis.drv" \
+              "/root/sis.drv -2ddiagnosi > /root/diag.txt" \
+              "senderror http://<qui>:8080/report/ /root/diag.txt"
+
+! @PROVE-MACCHINA ftpswap E' PROVATO SULLA MACCHINA VERA; RESTA eject.
+  (16 settembre 2026)
+
+  ! ftpswap: FATTO, CINQUE PROVE SU FERRO VERO, tutte passate. Acer 0.217,
+    allineato (netupdate -check: 1605 uguali, 0 da aggiornare), directory
+    /root/prova contro una cartella di prova su ftp.exagonx.altervista.org,
+    pilotato da telnet un comando per volta.
+
+      1. primo giro: il .cfg non c'e', lo chiede e lo scrive a 0600; poi
+         struttura replicata nei due versi e file nuovi da tutt'e due le parti
+         (su 2, giu' 3).
+      2. file CAMBIATO sul server: scaricato e riletto sulla macchina.
+      3. un binario da 3000 byte fatto il giro server -> Acer -> server e
+         tornato IDENTICO byte per byte (cmp dall'altra parte): il modo
+         binario regge.
+      4. ! LA PROVA CHE CONTA: file cancellato in locale, sparito dal server
+         (cancellati la' 1) — e' quella che dimostra il diario. E l'inversa:
+         cancellato sul server, sparito dalla macchina (cancellati qui 1).
+      5. conflitto vero, cambiato dalle due parti: «vince il remoto, il locale
+         in .prima», e il .prima conteneva davvero il testo dell'Acer.
+
+    E ftpswap.cfg e ftpswap.diario NON sono saliti sul server: la radice remota
+    non li ha.
+
+  ! L'OROLOGIO DELL'ACER SEGNA IL 2005, e si e' visto qui. I file caricati
+    arrivano sul server datati «Feb 9 2005» (MFMT fa il suo mestiere, e' la
+    sorgente a mentire). Non tocca il caso normale — chi e' cambiato lo dice il
+    DIARIO, non l'orologio — ma nel solo punto dove i due orologi si confrontano
+    davvero, il conflitto, la macchina PERDE SEMPRE. La prova 5 e' passata anche
+    per quello. Non c'e' un comando `date` in /bin: o la pila del CMOS e' morta,
+    o l'ora non si e' mai messa.
+
+  ! RESTA eject, E VUOLE UNA CHIAVETTA INFILATA. Il kernel nuovo adesso c'e'
+    (la syscall 212 risponde), quindi manca solo il ferro:
 
       eject                      (elenca: deve vedere la chiavetta)
-      ftpswap /root/swap         (chiede il .cfg, poi allinea)
-
-  ! E LA PROVA DI ftpswap CHE CONTA E' LA TERZA: un file cancellato in locale
-    deve sparire anche dal server. E' quella che dimostra il diario — le prime
-    due (sale, e il secondo giro non fa niente) le supererebbe anche un
-    programma senza memoria.
+      eject USB/DRIVE0           (smonta, ritira il disco, si puo' sfilare)
+      e poi rimetterla: automount la deve ritrovare da sola
 
 ! @DIF-TLS LA CATENA TENEVA FERMA LA FINESTRA QUASI UN SECONDO: MISURATA E SPEZZATA.
   La stretta di mano legge a pezzi come tutto il resto (diario: 3 settembre

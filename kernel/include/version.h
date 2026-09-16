@@ -293,7 +293,32 @@
  * Il quinto caso di tools/banco-kmalloc/prova.sh lo dimostra sull'ospite in un
  * secondo, senza QEMU.
  */
-#define EXOS_VERSION    "0.217"
+/* 0.217 -> 0.218: L'OROLOGIO SI PUO' RIMETTERE.
+ *
+ * Da quando esiste (agosto 2026) l'orologio CMOS di EX-OS si LEGGEVA e basta:
+ * c'era SYS_TIME e non c'era il suo gemello. Non era un buco teorico, si
+ * vedeva sulla macchina vera — l'Acer Aspire 3000 segnava il 2005, e ogni file
+ * che caricava sul server arrivava datato «Feb 9 2005». L'unico modo di
+ * rimetterlo era entrare nel BIOS.
+ *
+ * Adesso c'e' SYS_TIME_SET (213), che chiama rtc_write() in
+ * kernel/arch/x86/rtc.c, ed e' di root come mount: l'ora di sistema non e'
+ * un'impostazione personale, e chi la sposta cambia la data di ogni file che
+ * chiunque altro scrivera' — e con essa il giudizio di `netupdate -check` su
+ * che cosa e' piu' recente.
+ *
+ * ! LA SCRITTURA HA UNA TRAPPOLA IN PIU' DELLE TRE DELLA LETTURA: non si
+ * scrive mentre il chip conta. Se l'aggiornamento cade in mezzo ai sei
+ * registri, il chip riscrive sopra a meta' di quel che si e' appena messo. Il
+ * bit SET del registro B ferma il conteggio per la durata della scrittura.
+ *
+ * ! E SI SCRIVE NEL FORMATO CHE C'E' GIA' — BCD o binario, 12 o 24 ore, come
+ * dice il registro B. Cambiarlo sarebbe piu' comodo e romperebbe la lettura
+ * del BIOS, che quel formato lo conosce dall'accensione.
+ *
+ * Il comando che la usa e' /bin/date, con -set-date: e -set-time:.
+ */
+#define EXOS_VERSION    "0.218"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

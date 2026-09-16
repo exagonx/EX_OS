@@ -2276,6 +2276,37 @@ static void prova_interruzione(void)
 /* =============================================================================
  * Lo pseudo-terminale — la disciplina di linea, che una pipe non ha
  * ============================================================================= */
+
+/* ! L'USCITA PIU' GRANDE DEL TUBO — la prova che mancava, e il difetto che ha
+ * scoperto. Il tubo verso il master e' PTY_DIM = 1024 byte. Fino al 16
+ * settembre 2026 pty_scrivi_slave ci versava dentro tutto quel che riceveva
+ * con una funzione che, a tubo pieno, NON SCRIVE E NON LO DICE — e poi rendeva
+ * n, cioe' «scritto tutto». Un programma che stampava piu' di un chilobyte
+ * piu' in fretta di quanto il master leggesse perdeva il resto in silenzio,
+ * con una write che gli aveva appena detto di si'.
+ *
+ * ! E DA TELNET NON SEMBRAVA UNA PERDITA DI DATI: il programma arrivava in
+ * fondo e la shell tornava al prompt, quindi sembrava un programma che moriva,
+ * ogni volta a un'istruzione diversa. Mezza giornata di diagnosi su un driver
+ * che non aveva niente che non andasse.
+ *
+ * ! LA PROVA VUOLE DUE FILI, e non e' un vezzo: adesso chi scrive ASPETTA che
+ * ci sia posto, che e' la regola di ogni terminale. Un solo filo che scrive
+ * 4096 byte e poi va a leggere non finirebbe mai la write — e sarebbe giusto
+ * cosi'. Il filo scrive, il capogruppo legge. */
+#define PTY_GROSSO  4096
+
+static char          g_pty_dati[PTY_GROSSO];
+static int           g_pty_slave;
+static volatile int  g_pty_reso;
+
+static void filo_uscita(void *a)
+{
+    (void)a;
+    g_pty_reso = (int)write(g_pty_slave, g_pty_dati, PTY_GROSSO);
+    thread_esci(0);
+}
+
 static void prova_pty(void)
 {
     int  fd[2];
@@ -2364,6 +2395,45 @@ static void prova_pty(void)
             esito("Ctrl+C la interrompe", waitpid(pid, &stato, 0) == pid);
             esito("ed e' uscita con 130", stato == 130);
         }
+    }
+
+    /* 8. Un'uscita piu' grande del tubo non si perde.
+     *
+     * ! SI APRE UN PTY NUOVO invece di riusare quello di sopra: li' dentro e'
+     * rimasta l'eco delle prove precedenti, e una prova che comincia da un
+     * tubo di cui non si sa il contenuto non e' una prova. */
+    {
+        int f2[2], tid = -1, letti = 0, i, giusti = 1;
+
+        for (i = 0; i < PTY_GROSSO; i++)
+            g_pty_dati[i] = (char)('A' + (i % 26));
+
+        esito("si apre un secondo pty", pty_apri(f2) == 0);
+
+        g_pty_slave = f2[1];
+        g_pty_reso  = -2;
+
+        tid = thread_crea(filo_uscita, 0);
+        esito("un filo parte a scrivere 4096 byte sullo slave", tid > 0);
+
+        while (letti < PTY_GROSSO) {
+            n = (int)read(f2[0], buf, sizeof(buf));
+            if (n <= 0) break;
+            for (i = 0; i < n; i++)
+                if (buf[i] != (char)('A' + ((letti + i) % 26))) giusti = 0;
+            letti += n;
+        }
+
+        esito("il master li rilegge tutti e quattromilanovantasei",
+              letti == PTY_GROSSO);
+        esito("e sono nell'ordine giusto, senza buchi", giusti);
+
+        if (tid > 0) thread_attendi(tid, 0);
+        esito("e la write dello slave ha reso 4096, non un numero gonfiato",
+              g_pty_reso == PTY_GROSSO);
+
+        close(f2[0]);
+        close(f2[1]);
     }
 
     close(fd[0]);

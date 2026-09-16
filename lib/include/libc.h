@@ -829,6 +829,28 @@ typedef struct {
 int time_now(RtcTime *t);
 
 /* =============================================================================
+ * Rimettere l'orologio — dal kernel 0.218
+ *
+ * Ritorna 0, oppure un -errno come time_now (non -1: e' una chiamata di
+ * EX-OS, non di POSIX):
+ *
+ *   -EPERM   chi chiama non e' root. L'ora di sistema non e'
+ *            un'impostazione personale: cambiarla cambia la data di ogni
+ *            file che chiunque scrivera' da quel momento.
+ *   -EINVAL  la data non esiste (il 31 di febbraio, un anno fuori da
+ *            1980-2099).
+ *   -ENODEV  l'orologio non risponde.
+ *
+ * ! L'ANNO MASSIMO E' 2099, mentre time_now ne accetta fino al 2199: il
+ * chip tiene DUE CIFRE, e la lettura le interpreta con la convenzione
+ * «sotto 70 = 2000+». Chiedere il 2150 vorrebbe dire rileggere il 2050.
+ *
+ * ! E NON SI CHIAMA PER CORREGGERE UNA DERIVA. Ferma il conteggio del chip
+ * per il tempo della scrittura: e' il gesto di chi rimette l'ora.
+ * ============================================================================= */
+int time_set(const RtcTime *t);
+
+/* =============================================================================
  * La stessa ora, nella forma del C standard
  *
  * DUPLICATE A MANO in lib/libc.c e ripetute in lib/include/time.h.

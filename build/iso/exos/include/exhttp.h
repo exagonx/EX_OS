@@ -84,7 +84,10 @@ typedef struct {
     int          codice;                    /* l'ultimo codice HTTP visto */
     char         tipo[HTTP_TIPO_MAX];       /* Content-Type */
     unsigned int byte;                      /* quanti ne ha messi nel buffer */
-    int          troncata;                  /* 1 = il buffer era piccolo */
+    /* 1 = manca qualcosa. Due casi, e li distingue `errore`: il buffer era
+     * piccolo (errore vuoto), oppure il server ha chiuso prima di mandare i
+     * byte che aveva dichiarato (errore dice quanti su quanti). */
+    int          troncata;
     int          salti;                     /* quante redirezioni seguite */
     char         finale[EXHTTP_URL_MAX];    /* l'URL a cui si e' arrivati */
     char         errore[96];                /* perche' non ha funzionato */
@@ -173,6 +176,60 @@ void exhttp_biscotti(ExHttpBiscottiChiedi chiedi,
 typedef int (*ExHttpAttesa)(void *dato);   /* 0 = annulla la richiesta */
 
 void exhttp_attesa(ExHttpAttesa f, void *dato);
+
+/* =============================================================================
+ * DOVE VA IL CORPO — quando non ci sta in memoria
+ *
+ * ! IL BUFFER DI CHI CHIAMA E' UN TETTO, E PRIMA O POI SI TOCCA. netupdate ne
+ * ha uno da due megabyte e gli bastava per tutto; poi e' arrivato il
+ * compilatore, e cc1plus fa TRENTASETTE MEGABYTE. Il messaggio era onesto —
+ * «piu' grande del tetto, SALTATO» — ma il risultato era un pacchetto `build`
+ * che si installa a meta' e un `gcc` che non compila niente.
+ *
+ * ! E ALLARGARE IL BUFFER NON E' LA RISPOSTA. Trentotto megabyte di memoria
+ * ferma su una macchina che ne ha trentadue e' peggio del difetto, e il file
+ * dopo sara' piu' grande di quello.
+ *
+ * Registrando un verso, il corpo non si accumula piu': ogni volta che il
+ * buffer si riempie viene consegnato qui e ricomincia da capo. Chi lo riceve
+ * lo scrive dove vuole — un file, di solito — e rende 0 se non ci riesce, che
+ * ferma la richiesta invece di lasciarla finire su un file monco.
+ *
+ * ! IL BUFFER SERVE ANCORA, ED E' LA FINESTRA. Piu' e' grande, meno chiamate;
+ * anche di quattro kilobyte funziona. Alla fine dello scambio `e->byte` dice
+ * quanti byte sono rimasti nel buffer, NON quanti ne sono arrivati in tutto:
+ * chi conta il totale lo fa nel proprio verso, che li vede passare tutti.
+ *
+ * ! SENZA REGISTRARE NIENTE NON CAMBIA NIENTE: si accumula come sempre, e si
+ * tronca come sempre quando non ci sta. Vale la stessa regola di exhttp_attesa.
+ *
+ * ! E SI TOGLIE SEMPRE DOPO, con exhttp_verso(0, 0). E' un gancio globale come
+ * l'altro: lasciarlo acceso vuol dire che la richiesta dopo — un elenco, una
+ * versione, qualunque cosa piccola — finisce nel file di quella prima.
+ * ========================================================================== */
+typedef int (*ExHttpVerso)(void *dato, const unsigned char *d, unsigned int n);
+
+void exhttp_verso(ExHttpVerso f, void *dato);
+
+/* =============================================================================
+ * exhttp_da — la prossima richiesta chiede il corpo DA un certo byte
+ *
+ * Aggiunge «Range: bytes=n-» alla richiesta che segue. Serve a finire un file
+ * che una caduta di connessione aveva lasciato a meta': con 37 MB su una linea
+ * da 40 KB/s un quarto d'ora di trasferimento cade piu' spesso di quanto non
+ * cada, e ricominciare da zero vuol dire non arrivare mai in fondo.
+ *
+ * ! IL SERVER PUO' IGNORARLO. Chi sa farlo risponde 206 e manda il pezzo; chi
+ * non sa farlo risponde 200 e manda TUTTO. Percio' chi accoda a un file gia'
+ * iniziato deve guardare `codice`: 206 vuol dire «accoda», 200 vuol dire
+ * «ricomincia da capo, quel che avevi non serve piu'».
+ *
+ * ! E VALE PER UNA CHIAMATA SOLA. A differenza di exhttp_verso(), che si toglie
+ * a mano, questo lo consuma exhttp_prendi() all'inizio: un verso dimenticato
+ * acceso si vede subito, un Range dimenticato acceso fa arrivare mezzo file
+ * senza che nessuno se ne accorga, perche' 206 e' una risposta buona.
+ * ========================================================================== */
+void exhttp_da(unsigned long primo);
 
 /* =============================================================================
  * A CHE PUNTO E' LA STRETTA DI MANO

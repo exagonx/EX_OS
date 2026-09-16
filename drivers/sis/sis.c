@@ -89,12 +89,13 @@
  * ============================================================================= */
 
 #include "libc.h"
+#include "sis_2d.h"
 #include "sis_tab.h"
 #include "ponte_tab.h"
 
 /* +0.001 a ogni modifica: `sis.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("sis.drv", "0.012");
+EX_VERSIONE("sis.drv", "0.013");
 
 #define VGA_BASE      0x3B0
 #define VGA_PORTE     0x30
@@ -864,6 +865,18 @@ static void aiuto(void)
     printf("                   ricopiare numeri da uno schermo storto\n");
     printf("  sis.drv ... F    aggiunge F a qualunque comando\n");
     printf("  sis.drv -i       dice se la scheda e' quella giusta\n");
+    printf("\n  IL MOTORE 2D (riempire e copiare senza la CPU):\n");
+    printf("  sis.drv -2dstato  legge i registri del motore e basta\n");
+    printf("  sis.drv -2dprova  disegna e RILEGGE: dice se e' venuto giusto\n");
+    printf("  sis.drv -2dmisura il motore contro la CPU, sugli stessi pixel\n");
+    printf("  sis.drv -2ddiagnosi  quattordici passi, e non scrive niente\n");
+    printf("\n! E DUE CHE POSSONO FERMARE LA MACCHINA, una per volta:\n");
+    printf("  sis.drv -2dsr1e   accende SR1E bit 6 (SIS_ENABLE_2D)\n");
+    printf("  sis.drv -2dsr20   accende SR20 bit 0 (SIS_MEM_MAP_IO_ENABLE)\n");
+    printf("  Sono i due bit che sisfb accende prima della coda comandi e che\n");
+    printf("  su questa scheda sono spenti. Il 16 settembre 2026, accesi\n");
+    printf("  INSIEME, hanno bloccato l'Acer: niente ping, interruttore. Una\n");
+    printf("  per volta, e con qualcuno vicino alla macchina.\n");
     printf("\n! LE DUE QUI SOTTO SONO ESPERIMENTI, e di suo non si fanno:\n");
     printf("  sis.drv -ponte     prova anche il resto della scalatura\n");
     printf("  sis.drv -senzaspecchi  non allinea il ponte al CRTC\n");
@@ -900,6 +913,36 @@ int main(int argc, char **argv)
         }
         /* `-test` e' l'abbreviazione che viene da digitare, e sbagliarla
          * costava un giro di riavvio: si accetta. */
+        /* ! LE OPZIONI DEL MOTORE 2D RENDONO SUBITO, e non passano da
+         * niente di quel che c'e' sotto: sotto si cambia la MODALITA', cioe'
+         * si riscrivono i registri del CRTC, e il motore 2D non c'entra
+         * niente con quel lavoro. Mescolarli vorrebbe dire che una prova del
+         * motore puo' lasciare lo schermo in un modo diverso da come l'ha
+         * trovato. */
+        if (strncmp(argv[i], "-2d", 3) == 0) {
+            if (strcmp(argv[i], "-2ddiagnosi") == 0) { sis2d_diagnosi(); return 0; }
+            /* ! LE DUE PROVE DI ACCENSIONE NON PASSANO DA sis2d_apri(), e non
+             * e' una scorciatoia: quella funzione da' per buona una finestra
+             * dei registri che risponde, ed e' proprio quello che queste due
+             * stanno cercando di ottenere. Chiamarla prima vorrebbe dire
+             * fermarsi sul difetto che si sta indagando. */
+            if (strcmp(argv[i], "-2dsr1e") == 0)
+                return sis2d_accendi(0x1E) ? 1 : 0;
+            if (strcmp(argv[i], "-2dsr20") == 0)
+                return sis2d_accendi(0x20) ? 1 : 0;
+            if (sis2d_apri(1) != 0) return 1;
+            if (strcmp(argv[i], "-2dstato") == 0)  { sis2d_stato(); return 0; }
+            if (strcmp(argv[i], "-2dprova") == 0)  {
+                sis2d_stato();
+                printf("\n");
+                return sis2d_prova() ? 1 : 0;
+            }
+            if (strcmp(argv[i], "-2dmisura") == 0) return sis2d_misura() ? 1 : 0;
+            printf("sis: non conosco %s. Ci sono -2dstato, -2dprova, "
+                   "-2dmisura,\n     -2ddiagnosi, -2dsr1e e -2dsr20.\n", argv[i]);
+            return 1;
+        }
+
         if (strcmp(argv[i], "-stato") == 0) { statoq = 1; continue; }
         if (strcmp(argv[i], "-prova") == 0) { provaq = 1; continue; }
         if (strcmp(argv[i], "-testo") == 0 ||

@@ -189,6 +189,7 @@ void syscall_init(void)
     syscall_table[SYS_RANDOM]       = sys_random;
     syscall_table[SYS_IPC_RECV_TMO] = sys_ipc_recv_tmo;
     syscall_table[SYS_TIME]         = sys_time;
+    syscall_table[SYS_TIME_SET]     = sys_time_set;
     syscall_table[SYS_CONSOLE_SWITCH] = sys_console_switch;
     syscall_table[SYS_CONSOLE_WRITE]  = sys_console_write;
     syscall_table[SYS_CONSOLE_INFO]   = sys_console_info;

@@ -1,6 +1,6 @@
 /* GENERATO DA tools/genlibc.py — NON MODIFICARE A MANO.
  *
- * I ponti verso libc.so: 371 salti indiretti, uno per funzione.
+ * I ponti verso libc.so: 372 salti indiretti, uno per funzione.
  *
  * __libc_ponti_nomi e' un BLOCCO di stringhe una dopo l'altra, nello stesso
  * ordine della tabella: si scorre avanzando di strlen+1.
@@ -15,7 +15,7 @@
     .align 4
     .globl __libc_ponti_tabella
 __libc_ponti_tabella:
-    .space 1484
+    .space 1488
 
     .section .rodata
     .align 4
@@ -333,6 +333,7 @@ __libc_ponti_nomi:
     .asciz "thread_ferma"
     .asciz "time"
     .asciz "time_now"
+    .asciz "time_set"
     .asciz "times"
     .asciz "timespec_get"
     .asciz "tmpfile"
@@ -396,7 +397,7 @@ __libc_ponti_nomi:
     .align 4
     .globl __libc_ponti_quanti
 __libc_ponti_quanti:
-    .long 371
+    .long 372
     .section .text._Exit,"ax",@progbits
     .globl _Exit
     .type _Exit, @function
@@ -2581,417 +2582,424 @@ time_now:
     jmp *__libc_ponti_tabella+1244
     .size time_now, .-time_now
 
+    .section .text.time_set,"ax",@progbits
+    .globl time_set
+    .type time_set, @function
+time_set:
+    jmp *__libc_ponti_tabella+1248
+    .size time_set, .-time_set
+
     .section .text.times,"ax",@progbits
     .globl times
     .type times, @function
 times:
-    jmp *__libc_ponti_tabella+1248
+    jmp *__libc_ponti_tabella+1252
     .size times, .-times
 
     .section .text.timespec_get,"ax",@progbits
     .globl timespec_get
     .type timespec_get, @function
 timespec_get:
-    jmp *__libc_ponti_tabella+1252
+    jmp *__libc_ponti_tabella+1256
     .size timespec_get, .-timespec_get
 
     .section .text.tmpfile,"ax",@progbits
     .globl tmpfile
     .type tmpfile, @function
 tmpfile:
-    jmp *__libc_ponti_tabella+1256
+    jmp *__libc_ponti_tabella+1260
     .size tmpfile, .-tmpfile
 
     .section .text.tmpnam,"ax",@progbits
     .globl tmpnam
     .type tmpnam, @function
 tmpnam:
-    jmp *__libc_ponti_tabella+1260
+    jmp *__libc_ponti_tabella+1264
     .size tmpnam, .-tmpnam
 
     .section .text.toascii,"ax",@progbits
     .globl toascii
     .type toascii, @function
 toascii:
-    jmp *__libc_ponti_tabella+1264
+    jmp *__libc_ponti_tabella+1268
     .size toascii, .-toascii
 
     .section .text.tolower,"ax",@progbits
     .globl tolower
     .type tolower, @function
 tolower:
-    jmp *__libc_ponti_tabella+1268
+    jmp *__libc_ponti_tabella+1272
     .size tolower, .-tolower
 
     .section .text.toupper,"ax",@progbits
     .globl toupper
     .type toupper, @function
 toupper:
-    jmp *__libc_ponti_tabella+1272
+    jmp *__libc_ponti_tabella+1276
     .size toupper, .-toupper
 
     .section .text.towlower,"ax",@progbits
     .globl towlower
     .type towlower, @function
 towlower:
-    jmp *__libc_ponti_tabella+1276
+    jmp *__libc_ponti_tabella+1280
     .size towlower, .-towlower
 
     .section .text.towupper,"ax",@progbits
     .globl towupper
     .type towupper, @function
 towupper:
-    jmp *__libc_ponti_tabella+1280
+    jmp *__libc_ponti_tabella+1284
     .size towupper, .-towupper
 
     .section .text.truncate,"ax",@progbits
     .globl truncate
     .type truncate, @function
 truncate:
-    jmp *__libc_ponti_tabella+1284
+    jmp *__libc_ponti_tabella+1288
     .size truncate, .-truncate
 
     .section .text.tty_clear,"ax",@progbits
     .globl tty_clear
     .type tty_clear, @function
 tty_clear:
-    jmp *__libc_ponti_tabella+1288
+    jmp *__libc_ponti_tabella+1292
     .size tty_clear, .-tty_clear
 
     .section .text.tty_getsize,"ax",@progbits
     .globl tty_getsize
     .type tty_getsize, @function
 tty_getsize:
-    jmp *__libc_ponti_tabella+1292
+    jmp *__libc_ponti_tabella+1296
     .size tty_getsize, .-tty_getsize
 
     .section .text.tty_raw,"ax",@progbits
     .globl tty_raw
     .type tty_raw, @function
 tty_raw:
-    jmp *__libc_ponti_tabella+1296
+    jmp *__libc_ponti_tabella+1300
     .size tty_raw, .-tty_raw
 
     .section .text.umask,"ax",@progbits
     .globl umask
     .type umask, @function
 umask:
-    jmp *__libc_ponti_tabella+1300
+    jmp *__libc_ponti_tabella+1304
     .size umask, .-umask
 
     .section .text.umount,"ax",@progbits
     .globl umount
     .type umount, @function
 umount:
-    jmp *__libc_ponti_tabella+1304
+    jmp *__libc_ponti_tabella+1308
     .size umount, .-umount
 
     .section .text.ungetc,"ax",@progbits
     .globl ungetc
     .type ungetc, @function
 ungetc:
-    jmp *__libc_ponti_tabella+1308
+    jmp *__libc_ponti_tabella+1312
     .size ungetc, .-ungetc
 
     .section .text.unlink,"ax",@progbits
     .globl unlink
     .type unlink, @function
 unlink:
-    jmp *__libc_ponti_tabella+1312
+    jmp *__libc_ponti_tabella+1316
     .size unlink, .-unlink
 
     .section .text.unsetenv,"ax",@progbits
     .globl unsetenv
     .type unsetenv, @function
 unsetenv:
-    jmp *__libc_ponti_tabella+1316
+    jmp *__libc_ponti_tabella+1320
     .size unsetenv, .-unsetenv
 
     .section .text.uptime_ms,"ax",@progbits
     .globl uptime_ms
     .type uptime_ms, @function
 uptime_ms:
-    jmp *__libc_ponti_tabella+1320
+    jmp *__libc_ponti_tabella+1324
     .size uptime_ms, .-uptime_ms
 
     .section .text.usleep,"ax",@progbits
     .globl usleep
     .type usleep, @function
 usleep:
-    jmp *__libc_ponti_tabella+1324
+    jmp *__libc_ponti_tabella+1328
     .size usleep, .-usleep
 
     .section .text.utime,"ax",@progbits
     .globl utime
     .type utime, @function
 utime:
-    jmp *__libc_ponti_tabella+1328
+    jmp *__libc_ponti_tabella+1332
     .size utime, .-utime
 
     .section .text.verboseboot,"ax",@progbits
     .globl verboseboot
     .type verboseboot, @function
 verboseboot:
-    jmp *__libc_ponti_tabella+1332
+    jmp *__libc_ponti_tabella+1336
     .size verboseboot, .-verboseboot
 
     .section .text.vfprintf,"ax",@progbits
     .globl vfprintf
     .type vfprintf, @function
 vfprintf:
-    jmp *__libc_ponti_tabella+1336
+    jmp *__libc_ponti_tabella+1340
     .size vfprintf, .-vfprintf
 
     .section .text.vfscanf,"ax",@progbits
     .globl vfscanf
     .type vfscanf, @function
 vfscanf:
-    jmp *__libc_ponti_tabella+1340
+    jmp *__libc_ponti_tabella+1344
     .size vfscanf, .-vfscanf
 
     .section .text.video_info,"ax",@progbits
     .globl video_info
     .type video_info, @function
 video_info:
-    jmp *__libc_ponti_tabella+1344
+    jmp *__libc_ponti_tabella+1348
     .size video_info, .-video_info
 
     .section .text.vprintf,"ax",@progbits
     .globl vprintf
     .type vprintf, @function
 vprintf:
-    jmp *__libc_ponti_tabella+1348
+    jmp *__libc_ponti_tabella+1352
     .size vprintf, .-vprintf
 
     .section .text.vscanf,"ax",@progbits
     .globl vscanf
     .type vscanf, @function
 vscanf:
-    jmp *__libc_ponti_tabella+1352
+    jmp *__libc_ponti_tabella+1356
     .size vscanf, .-vscanf
 
     .section .text.vsnprintf,"ax",@progbits
     .globl vsnprintf
     .type vsnprintf, @function
 vsnprintf:
-    jmp *__libc_ponti_tabella+1356
+    jmp *__libc_ponti_tabella+1360
     .size vsnprintf, .-vsnprintf
 
     .section .text.vsprintf,"ax",@progbits
     .globl vsprintf
     .type vsprintf, @function
 vsprintf:
-    jmp *__libc_ponti_tabella+1360
+    jmp *__libc_ponti_tabella+1364
     .size vsprintf, .-vsprintf
 
     .section .text.vsscanf,"ax",@progbits
     .globl vsscanf
     .type vsscanf, @function
 vsscanf:
-    jmp *__libc_ponti_tabella+1364
+    jmp *__libc_ponti_tabella+1368
     .size vsscanf, .-vsscanf
 
     .section .text.vswprintf,"ax",@progbits
     .globl vswprintf
     .type vswprintf, @function
 vswprintf:
-    jmp *__libc_ponti_tabella+1368
+    jmp *__libc_ponti_tabella+1372
     .size vswprintf, .-vswprintf
 
     .section .text.wait,"ax",@progbits
     .globl wait
     .type wait, @function
 wait:
-    jmp *__libc_ponti_tabella+1372
+    jmp *__libc_ponti_tabella+1376
     .size wait, .-wait
 
     .section .text.waitpid,"ax",@progbits
     .globl waitpid
     .type waitpid, @function
 waitpid:
-    jmp *__libc_ponti_tabella+1376
+    jmp *__libc_ponti_tabella+1380
     .size waitpid, .-waitpid
 
     .section .text.wcscat,"ax",@progbits
     .globl wcscat
     .type wcscat, @function
 wcscat:
-    jmp *__libc_ponti_tabella+1380
+    jmp *__libc_ponti_tabella+1384
     .size wcscat, .-wcscat
 
     .section .text.wcschr,"ax",@progbits
     .globl wcschr
     .type wcschr, @function
 wcschr:
-    jmp *__libc_ponti_tabella+1384
+    jmp *__libc_ponti_tabella+1388
     .size wcschr, .-wcschr
 
     .section .text.wcscmp,"ax",@progbits
     .globl wcscmp
     .type wcscmp, @function
 wcscmp:
-    jmp *__libc_ponti_tabella+1388
+    jmp *__libc_ponti_tabella+1392
     .size wcscmp, .-wcscmp
 
     .section .text.wcscpy,"ax",@progbits
     .globl wcscpy
     .type wcscpy, @function
 wcscpy:
-    jmp *__libc_ponti_tabella+1392
+    jmp *__libc_ponti_tabella+1396
     .size wcscpy, .-wcscpy
 
     .section .text.wcscspn,"ax",@progbits
     .globl wcscspn
     .type wcscspn, @function
 wcscspn:
-    jmp *__libc_ponti_tabella+1396
+    jmp *__libc_ponti_tabella+1400
     .size wcscspn, .-wcscspn
 
     .section .text.wcslen,"ax",@progbits
     .globl wcslen
     .type wcslen, @function
 wcslen:
-    jmp *__libc_ponti_tabella+1400
+    jmp *__libc_ponti_tabella+1404
     .size wcslen, .-wcslen
 
     .section .text.wcsncat,"ax",@progbits
     .globl wcsncat
     .type wcsncat, @function
 wcsncat:
-    jmp *__libc_ponti_tabella+1404
+    jmp *__libc_ponti_tabella+1408
     .size wcsncat, .-wcsncat
 
     .section .text.wcsncmp,"ax",@progbits
     .globl wcsncmp
     .type wcsncmp, @function
 wcsncmp:
-    jmp *__libc_ponti_tabella+1408
+    jmp *__libc_ponti_tabella+1412
     .size wcsncmp, .-wcsncmp
 
     .section .text.wcsncpy,"ax",@progbits
     .globl wcsncpy
     .type wcsncpy, @function
 wcsncpy:
-    jmp *__libc_ponti_tabella+1412
+    jmp *__libc_ponti_tabella+1416
     .size wcsncpy, .-wcsncpy
 
     .section .text.wcspbrk,"ax",@progbits
     .globl wcspbrk
     .type wcspbrk, @function
 wcspbrk:
-    jmp *__libc_ponti_tabella+1416
+    jmp *__libc_ponti_tabella+1420
     .size wcspbrk, .-wcspbrk
 
     .section .text.wcsrchr,"ax",@progbits
     .globl wcsrchr
     .type wcsrchr, @function
 wcsrchr:
-    jmp *__libc_ponti_tabella+1420
+    jmp *__libc_ponti_tabella+1424
     .size wcsrchr, .-wcsrchr
 
     .section .text.wcsspn,"ax",@progbits
     .globl wcsspn
     .type wcsspn, @function
 wcsspn:
-    jmp *__libc_ponti_tabella+1424
+    jmp *__libc_ponti_tabella+1428
     .size wcsspn, .-wcsspn
 
     .section .text.wcsstr,"ax",@progbits
     .globl wcsstr
     .type wcsstr, @function
 wcsstr:
-    jmp *__libc_ponti_tabella+1428
+    jmp *__libc_ponti_tabella+1432
     .size wcsstr, .-wcsstr
 
     .section .text.wcstod,"ax",@progbits
     .globl wcstod
     .type wcstod, @function
 wcstod:
-    jmp *__libc_ponti_tabella+1432
+    jmp *__libc_ponti_tabella+1436
     .size wcstod, .-wcstod
 
     .section .text.wcstol,"ax",@progbits
     .globl wcstol
     .type wcstol, @function
 wcstol:
-    jmp *__libc_ponti_tabella+1436
+    jmp *__libc_ponti_tabella+1440
     .size wcstol, .-wcstol
 
     .section .text.wcstoll,"ax",@progbits
     .globl wcstoll
     .type wcstoll, @function
 wcstoll:
-    jmp *__libc_ponti_tabella+1440
+    jmp *__libc_ponti_tabella+1444
     .size wcstoll, .-wcstoll
 
     .section .text.wcstombs,"ax",@progbits
     .globl wcstombs
     .type wcstombs, @function
 wcstombs:
-    jmp *__libc_ponti_tabella+1444
+    jmp *__libc_ponti_tabella+1448
     .size wcstombs, .-wcstombs
 
     .section .text.wcstoul,"ax",@progbits
     .globl wcstoul
     .type wcstoul, @function
 wcstoul:
-    jmp *__libc_ponti_tabella+1448
+    jmp *__libc_ponti_tabella+1452
     .size wcstoul, .-wcstoul
 
     .section .text.wcstoull,"ax",@progbits
     .globl wcstoull
     .type wcstoull, @function
 wcstoull:
-    jmp *__libc_ponti_tabella+1452
+    jmp *__libc_ponti_tabella+1456
     .size wcstoull, .-wcstoull
 
     .section .text.wctomb,"ax",@progbits
     .globl wctomb
     .type wctomb, @function
 wctomb:
-    jmp *__libc_ponti_tabella+1456
+    jmp *__libc_ponti_tabella+1460
     .size wctomb, .-wctomb
 
     .section .text.wmemchr,"ax",@progbits
     .globl wmemchr
     .type wmemchr, @function
 wmemchr:
-    jmp *__libc_ponti_tabella+1460
+    jmp *__libc_ponti_tabella+1464
     .size wmemchr, .-wmemchr
 
     .section .text.wmemcmp,"ax",@progbits
     .globl wmemcmp
     .type wmemcmp, @function
 wmemcmp:
-    jmp *__libc_ponti_tabella+1464
+    jmp *__libc_ponti_tabella+1468
     .size wmemcmp, .-wmemcmp
 
     .section .text.wmemcpy,"ax",@progbits
     .globl wmemcpy
     .type wmemcpy, @function
 wmemcpy:
-    jmp *__libc_ponti_tabella+1468
+    jmp *__libc_ponti_tabella+1472
     .size wmemcpy, .-wmemcpy
 
     .section .text.wmemmove,"ax",@progbits
     .globl wmemmove
     .type wmemmove, @function
 wmemmove:
-    jmp *__libc_ponti_tabella+1472
+    jmp *__libc_ponti_tabella+1476
     .size wmemmove, .-wmemmove
 
     .section .text.wmemset,"ax",@progbits
     .globl wmemset
     .type wmemset, @function
 wmemset:
-    jmp *__libc_ponti_tabella+1476
+    jmp *__libc_ponti_tabella+1480
     .size wmemset, .-wmemset
 
     .section .text.write,"ax",@progbits
     .globl write
     .type write, @function
 write:
-    jmp *__libc_ponti_tabella+1480
+    jmp *__libc_ponti_tabella+1484
     .size write, .-write
 
     .section .note.GNU-stack,"",@progbits

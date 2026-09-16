@@ -136,7 +136,7 @@ BUILD_BIN_CD  := $(BUILD_DIR)/bin-cd
 # kernel (kernel/block/atapi.c, kernel/fs/iso9660.c), perche' il kernel
 # deve poterci montare la radice prima che esista un processo.
 # =============================================================================
-PROGRAMMI_FLOPPY := shell id chmod shutdown ls mem stack disk fdisk mkfs mkswap trunc chkdsk rename rm_prog mv_prog uname_prog mount_prog cp_prog install_prog textline gfedit mkdir_prog rmdir_prog delete_prog hwconfig hwinfo cmp_prog shmtest polltest toolinst login sudo help_prog keymap libc testo fdprova kbprova mouse_prog kbd_drv svga_drv vgaprova_drv \
+PROGRAMMI_FLOPPY := shell id date_prog chmod shutdown ls mem stack disk fdisk mkfs mkswap trunc chkdsk rename rm_prog mv_prog uname_prog mount_prog cp_prog install_prog textline mkdir_prog rmdir_prog delete_prog hwconfig hwinfo cmp_prog shmtest polltest toolinst login sudo help_prog keymap libc testo fdprova kbprova mouse_prog kbd_drv svga_drv vgaprova_drv \
                     pci_drv mouseser_drv uhci_drv xhci_drv
 
 # =============================================================================
@@ -170,7 +170,7 @@ PROGRAMMI_FLOPPY := shell id chmod shutdown ls mem stack disk fdisk mkfs mkswap 
 # `make verifica-programmi` — che le due ISO eseguono da sole — confronta
 # le liste con il contenuto di bin/ e si ferma dicendo quali mancano.
 # =============================================================================
-PROGRAMMI_CD := cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror xcp winprova exwincmd audio netupdate wifi blkscan automount eject
+PROGRAMMI_CD := cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
 PROGRAMMI_EXWIN := exwin_so exdlg_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr edit term fontprova orologio browser exide
 
@@ -1288,19 +1288,28 @@ ohci_drv: dirs $(OHCI_OUT)
 # ! LE TABELLE SONO GENERATE dai referti in sonda/ con tools/sonda2tab.py, e
 # valgono per QUELLA scheda e QUEL pannello.
 SIS_SRC := drivers/sis/sis.c
-SIS_HDR := drivers/sis/sis_tab.h
+# ! IL MOTORE 2D STA IN UN FILE SUO, e non e' per lunghezza: sis.c riscrive i
+# registri del CRTC per cambiare MODALITA', sis_2d.c ordina disegni a un motore
+# che con la modalita' non c'entra. Sono due periferiche dentro lo stesso chip,
+# e i loro valori vengono da due posti diversi — sis.c dalla sonda su una
+# macchina vera, sis_2d.c dalla mappa di sisfb. Tenerli separati e' quel che
+# permette di dire, di ogni numero, da dove viene.
+SIS_2D_SRC := drivers/sis/sis_2d.c
+SIS_HDR := drivers/sis/sis_tab.h drivers/sis/sis_2d.h
 SIS_OUT := $(BUILD_DRIVERS_CD)/sis.drv
 SIS_LD  := drivers/sis/sis.ld
 
-$(SIS_OUT): $(SIS_SRC) $(SIS_HDR) drivers/sis/ponte_tab.h $(SIS_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+$(SIS_OUT): $(SIS_SRC) $(SIS_2D_SRC) $(SIS_HDR) drivers/sis/ponte_tab.h $(SIS_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione sis.drv ==="
 	@mkdir -p $(BUILD_DRIVERS_CD)
 	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/sis -c $(SIS_SRC) -o $(BUILD_DRIVERS_CD)/sis_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/sis -c $(SIS_2D_SRC) -o $(BUILD_DRIVERS_CD)/sis_2d.o
 	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)   -o $(BUILD_DRIVERS_CD)/sis_libc.o
 	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_DRIVERS_CD)/sis_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(SIS_LD) \
 	    $(BUILD_DRIVERS_CD)/sis_start.o \
 	    $(BUILD_DRIVERS_CD)/sis_main.o  \
+	    $(BUILD_DRIVERS_CD)/sis_2d.o    \
 	    $(BUILD_DRIVERS_CD)/sis_libc.o  \
 	    -o $@
 	@echo "[OK] sis.drv compilato: $@"
@@ -2699,6 +2708,36 @@ $(ID_BIN): $(ID_SRC) $(ID_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_ST
 .PHONY: id
 id: dirs $(ID_BIN)
 
+# --- /bin/date: che ore sono, e rimetterle ------------------------------------
+#
+# ! UN BINARIO SOLO, non `date` piu' `time`. Le due ragioni stanno in testa a
+# bin/date/date.c: il floppy (13,5 KB per binario, e ne restavano 63488 liberi)
+# e il fatto che su Unix `time comando` MISURA una durata — un nome che non si
+# spende per stampare l'ora.
+#
+# ! E VA SUL FLOPPY, non sul CD. Rimettere l'orologio e' parte del preparare una
+# macchina, non un'utilita' in piu': un sistema installato da floppy con l'ora
+# sbagliata data male ogni file che scrive, e non c'e' modo di accorgersene
+# guardando i file.
+DATE_SRC := bin/date/date.c
+DATE_BIN := $(BUILD_BIN)/date
+DATE_LD  := bin/date/date.ld
+
+$(DATE_BIN): $(DATE_SRC) $(DATE_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/date ==="
+	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -c $(DATE_SRC) -o $(BUILD_OBJ)/date_main.o
+	$(CC) -m32 -c $(LIBC_START)                        -o $(BUILD_OBJ)/date_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(DATE_LD) \
+	    $(BUILD_OBJ)/date_start.o $(BUILD_OBJ)/date_main.o $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] date compilato: $@"
+
+# ! `date_prog` E NON `date`, per la stessa ragione di `uname_prog`: un bersaglio
+# di nome `date` sarebbe un file che make crede di dover costruire ogni volta che
+# qualcuno nomina il comando.
+.PHONY: date_prog
+date_prog: dirs $(DATE_BIN)
+
 # --- /bin/shutdown (e poweroff, reboot, halt) --------------------------------
 #
 # ! UN BUILTIN NON SI PUO' PASSARE A `sudo`, ed e' tutto il motivo per cui
@@ -3510,7 +3549,23 @@ GFEDIT_SRC  := $(GFEDIT_DIR)/gf_main.c   \
                $(GFEDIT_DIR)/gf_edit.c
 GFEDIT_HDR  := $(GFEDIT_DIR)/gfedit.h drivers/kbd/kbd_proto.h lib/include/libc.h
 GFEDIT_OBJ  := $(patsubst $(GFEDIT_DIR)/%.c,$(BUILD_OBJ)/gfedit_%.o,$(GFEDIT_SRC))
-GFEDIT_BIN  := $(BUILD_BIN)/gfedit
+# ! gfedit NON STA PIU' SUL FLOPPY, DAL 16 SETTEMBRE 2026, ed e' una questione
+# di spazio misurata e non di gusto. L'immagine FAT12 da 1,44 MB era scesa a
+# 3072 byte liberi, e gfedit ne occupa 60236 — piu' del doppio di quanto
+# lasciassero liberi tutti gli altri messi insieme.
+#
+# ! E SI E' TOLTO LUI E NON textline, benche' textline sia piu' povero: gfedit
+# ha bisogno di /dev/kbd.drv per avere i tasti uno per uno, e quando quel
+# servizio non c'e' RIMANDA GIA' A textline da solo. Togliere il pavimento per
+# tenere il piano di sopra avrebbe lasciato un floppy su cui, in soccorso,
+# certe volte non si puo' correggere una riga di kernel.cfg. E textline sono
+# 18184 byte contro 60236: si sarebbe pagato tre volte tanto per averne un
+# terzo.
+#
+# Sul CD e su ogni sistema installato gfedit c'e' come prima: cambia soltanto
+# la directory di uscita, che e' cio' che mkfloppy.sh guarda (copia tutto
+# build/bin/*, e build/bin-cd/ non lo tocca).
+GFEDIT_BIN  := $(BUILD_BIN_CD)/gfedit
 GFEDIT_LD   := $(GFEDIT_DIR)/gfedit.ld
 
 $(BUILD_OBJ)/gfedit_%.o: $(GFEDIT_DIR)/%.c $(GFEDIT_HDR)
@@ -3519,7 +3574,7 @@ $(BUILD_OBJ)/gfedit_%.o: $(GFEDIT_DIR)/%.c $(GFEDIT_HDR)
 
 $(GFEDIT_BIN): $(GFEDIT_OBJ) $(GFEDIT_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione /bin/gfedit ==="
-	@mkdir -p $(BUILD_BIN) $(BUILD_OBJ)
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
 	$(CC) -m32 -c $(LIBC_START)         -o $(BUILD_OBJ)/gfedit_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(GFEDIT_LD) \
 	    $(BUILD_OBJ)/gfedit_start.o \
@@ -3620,6 +3675,52 @@ $(EJECT_BIN): $(EJECT_SRC) $(EJECT_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) 
 
 .PHONY: eject
 eject: dirs $(EJECT_BIN)
+
+# --- Programma utente /bin/fbprova (solo CD) ----------------------------------
+# Misura quanto costa scrivere nel framebuffer, e lo confronta con la stessa
+# scrittura in RAM: il RAPPORTO fra i due numeri dice se la lentezza sta nel
+# bus della scheda o nel compositore. Vedi bin/fbprova/fbprova.c in testa.
+FBPROVA_SRC := bin/fbprova/fbprova.c
+FBPROVA_BIN := $(BUILD_BIN_CD)/fbprova
+FBPROVA_LD  := bin/fbprova/fbprova.ld
+
+$(FBPROVA_BIN): $(FBPROVA_SRC) $(FBPROVA_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/fbprova ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -c $(FBPROVA_SRC) -o $(BUILD_OBJ)/fbprova_main.o
+	$(CC) -m32 -c $(LIBC_START)                           -o $(BUILD_OBJ)/fbprova_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(FBPROVA_LD) \
+	    $(BUILD_OBJ)/fbprova_start.o \
+	    $(BUILD_OBJ)/fbprova_main.o  \
+	    $(LIBC_PONTI_OBJ)  \
+	    -o $@
+	@echo "[OK] fbprova compilato: $@"
+
+.PHONY: fbprova
+fbprova: dirs $(FBPROVA_BIN)
+
+# --- Programma utente /bin/memprova (solo CD) ---------------------------------
+# Controlla e misura le funzioni memoria e strlen della libc: la versione nuova
+# contro quella a un byte per volta, che si porta dentro come metro. Vedi
+# bin/memprova/memprova.c in testa.
+MEMPROVA_SRC := bin/memprova/memprova.c
+MEMPROVA_BIN := $(BUILD_BIN_CD)/memprova
+MEMPROVA_LD  := bin/memprova/memprova.ld
+
+$(MEMPROVA_BIN): $(MEMPROVA_SRC) $(MEMPROVA_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/memprova ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -c $(MEMPROVA_SRC) -o $(BUILD_OBJ)/memprova_main.o
+	$(CC) -m32 -c $(LIBC_START)                            -o $(BUILD_OBJ)/memprova_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(MEMPROVA_LD) \
+	    $(BUILD_OBJ)/memprova_start.o \
+	    $(BUILD_OBJ)/memprova_main.o  \
+	    $(LIBC_PONTI_OBJ)  \
+	    -o $@
+	@echo "[OK] memprova compilato: $@"
+
+.PHONY: memprova
+memprova: dirs $(MEMPROVA_BIN)
 
 # --- Programma utente /bin/mkdir ----------------------------------------------
 MKDIR_SRC := bin/mkdir/mkdir.c
@@ -4411,11 +4512,11 @@ PROGRAMMI_FLOPPY_OUT := $(SHELL_BIN) $(LS_BIN) $(MEM_BIN) \
                         $(STACK_BIN) $(DISK_BIN) $(FDISK_BIN) \
                         $(MKFS_BIN) $(MKSWAP_BIN) $(TRUNC_BIN) $(CHKDSK_BIN) $(RENAME_BIN) \
                         $(RM_BIN) $(MV_BIN) $(UNAME_BIN) $(MOUNT_BIN) \
-                        $(CP_BIN) $(INSTALL_BIN) $(TEXTLINE_BIN) $(GFEDIT_BIN) \
+                        $(CP_BIN) $(INSTALL_BIN) $(TEXTLINE_BIN) \
                         $(MKDIR_BIN) $(RMDIR_BIN) $(DELETE_BIN) $(HWCONFIG_BIN) \
                         $(HWINFO_BIN) $(CMP_BIN) $(SHMTEST_BIN) $(POLLTEST_BIN) \
                         $(TOOLINST_BIN) $(LOGIN_BIN) $(SU_BIN) $(HELP_BIN) $(KEYMAP_BIN) \
-                        $(TESTO_BIN) $(FDPROVA_BIN) $(KBPROVA_BIN) $(MOUSE_BIN) $(ID_BIN) $(BUILD_BIN)/whoami $(PERM_BIN) $(BUILD_BIN)/chown $(LIBC_SO) \
+                        $(TESTO_BIN) $(FDPROVA_BIN) $(KBPROVA_BIN) $(MOUSE_BIN) $(ID_BIN) $(DATE_BIN) $(BUILD_BIN)/whoami $(PERM_BIN) $(BUILD_BIN)/chown $(LIBC_SO) \
                         $(SHUTDOWN_BIN) $(BUILD_BIN)/poweroff $(BUILD_BIN)/reboot $(BUILD_BIN)/halt \
                         $(FLOPPY_DRV_OUT) $(KBD_DRV_OUT) $(SVGA_DRV_OUT) \
                         $(VGAPROVA_OUT) $(PCI_DRV_OUT) $(MOUSESER_OUT) \
@@ -6424,7 +6525,8 @@ BINARI_SOLO_CD := $(CRYPTTEST_BIN) $(FILIPROVA_BIN) $(NETDETECT_BIN) $(NETTEST_B
                   $(SCARICA_BIN) $(SENDERROR_BIN) \
                   $(CDINSTALL_BIN) $(SWAPTEST_BIN) $(LIBCTEST_BIN) $(HELLO_BIN) \
                   $(AUDIO_BIN) $(NETUPDATE_BIN) $(WIFI_BIN) $(BLKSCAN_BIN) $(AUTOMOUNT_BIN) \
-                  $(EJECT_BIN) $(FTPSWAP_BIN) $(SOCCORSO_BIN)
+                  $(EJECT_BIN) $(FTPSWAP_BIN) $(SOCCORSO_BIN) \
+                  $(FBPROVA_BIN) $(MEMPROVA_BIN) $(GFEDIT_BIN)
 # ! QUESTA LISTA E' LA DIPENDENZA DELL'ISO, E VA TENUTA ALLINEATA A
 # DRIVER_CD. Sono due elenchi della stessa cosa: DRIVER_CD dice COSA
 # COSTRUIRE (nomi di bersagli .PHONY), questo dice DA COSA DIPENDE L'IMMAGINE

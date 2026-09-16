@@ -1,6 +1,6 @@
 /* GENERATO DA tools/genlibc.py — NON MODIFICARE A MANO.
  *
- * La tabella che libc.so mette a disposizione: 371 funzioni, ognuna col suo
+ * La tabella che libc.so mette a disposizione: 372 funzioni, ognuna col suo
  * nome. Chi la legge risolve per NOME, quindi l'ordine di questo file non e'
  * parte dell'ABI e puo' cambiare a ogni ricostruzione senza rompere niente.
  */
@@ -631,122 +631,124 @@ ln310:
 ln311:
     .asciz "time_now"
 ln312:
-    .asciz "times"
+    .asciz "time_set"
 ln313:
-    .asciz "timespec_get"
+    .asciz "times"
 ln314:
-    .asciz "tmpfile"
+    .asciz "timespec_get"
 ln315:
-    .asciz "tmpnam"
+    .asciz "tmpfile"
 ln316:
-    .asciz "toascii"
+    .asciz "tmpnam"
 ln317:
-    .asciz "tolower"
+    .asciz "toascii"
 ln318:
-    .asciz "toupper"
+    .asciz "tolower"
 ln319:
-    .asciz "towlower"
+    .asciz "toupper"
 ln320:
-    .asciz "towupper"
+    .asciz "towlower"
 ln321:
-    .asciz "truncate"
+    .asciz "towupper"
 ln322:
-    .asciz "tty_clear"
+    .asciz "truncate"
 ln323:
-    .asciz "tty_getsize"
+    .asciz "tty_clear"
 ln324:
-    .asciz "tty_raw"
+    .asciz "tty_getsize"
 ln325:
-    .asciz "umask"
+    .asciz "tty_raw"
 ln326:
-    .asciz "umount"
+    .asciz "umask"
 ln327:
-    .asciz "ungetc"
+    .asciz "umount"
 ln328:
-    .asciz "unlink"
+    .asciz "ungetc"
 ln329:
-    .asciz "unsetenv"
+    .asciz "unlink"
 ln330:
-    .asciz "uptime_ms"
+    .asciz "unsetenv"
 ln331:
-    .asciz "usleep"
+    .asciz "uptime_ms"
 ln332:
-    .asciz "utime"
+    .asciz "usleep"
 ln333:
-    .asciz "verboseboot"
+    .asciz "utime"
 ln334:
-    .asciz "vfprintf"
+    .asciz "verboseboot"
 ln335:
-    .asciz "vfscanf"
+    .asciz "vfprintf"
 ln336:
-    .asciz "video_info"
+    .asciz "vfscanf"
 ln337:
-    .asciz "vprintf"
+    .asciz "video_info"
 ln338:
-    .asciz "vscanf"
+    .asciz "vprintf"
 ln339:
-    .asciz "vsnprintf"
+    .asciz "vscanf"
 ln340:
-    .asciz "vsprintf"
+    .asciz "vsnprintf"
 ln341:
-    .asciz "vsscanf"
+    .asciz "vsprintf"
 ln342:
-    .asciz "vswprintf"
+    .asciz "vsscanf"
 ln343:
-    .asciz "wait"
+    .asciz "vswprintf"
 ln344:
-    .asciz "waitpid"
+    .asciz "wait"
 ln345:
-    .asciz "wcscat"
+    .asciz "waitpid"
 ln346:
-    .asciz "wcschr"
+    .asciz "wcscat"
 ln347:
-    .asciz "wcscmp"
+    .asciz "wcschr"
 ln348:
-    .asciz "wcscpy"
+    .asciz "wcscmp"
 ln349:
-    .asciz "wcscspn"
+    .asciz "wcscpy"
 ln350:
-    .asciz "wcslen"
+    .asciz "wcscspn"
 ln351:
-    .asciz "wcsncat"
+    .asciz "wcslen"
 ln352:
-    .asciz "wcsncmp"
+    .asciz "wcsncat"
 ln353:
-    .asciz "wcsncpy"
+    .asciz "wcsncmp"
 ln354:
-    .asciz "wcspbrk"
+    .asciz "wcsncpy"
 ln355:
-    .asciz "wcsrchr"
+    .asciz "wcspbrk"
 ln356:
-    .asciz "wcsspn"
+    .asciz "wcsrchr"
 ln357:
-    .asciz "wcsstr"
+    .asciz "wcsspn"
 ln358:
-    .asciz "wcstod"
+    .asciz "wcsstr"
 ln359:
-    .asciz "wcstol"
+    .asciz "wcstod"
 ln360:
-    .asciz "wcstoll"
+    .asciz "wcstol"
 ln361:
-    .asciz "wcstombs"
+    .asciz "wcstoll"
 ln362:
-    .asciz "wcstoul"
+    .asciz "wcstombs"
 ln363:
-    .asciz "wcstoull"
+    .asciz "wcstoul"
 ln364:
-    .asciz "wctomb"
+    .asciz "wcstoull"
 ln365:
-    .asciz "wmemchr"
+    .asciz "wctomb"
 ln366:
-    .asciz "wmemcmp"
+    .asciz "wmemchr"
 ln367:
-    .asciz "wmemcpy"
+    .asciz "wmemcmp"
 ln368:
-    .asciz "wmemmove"
+    .asciz "wmemcpy"
 ln369:
-    .asciz "wmemset"
+    .asciz "wmemmove"
 ln370:
+    .asciz "wmemset"
+ln371:
     .asciz "write"
 
     .align 4
@@ -1122,6 +1124,7 @@ libc_nomi:
     .long ln368
     .long ln369
     .long ln370
+    .long ln371
 
     .align 4
 libc_indirizzi:
@@ -1437,6 +1440,7 @@ libc_indirizzi:
     .long thread_ferma
     .long time
     .long time_now
+    .long time_set
     .long times
     .long timespec_get
     .long tmpfile
@@ -1503,7 +1507,7 @@ libc_indirizzi:
 libc_tabella:
     .long 0x424C5845        /* EXLIB_MAGIA, 'EXLB' */
     .long 1                 /* EXLIB_VERSIONE */
-    .long 371
+    .long 372
     .long libc_nomi
     .long libc_indirizzi
 

@@ -107,11 +107,16 @@ elenca i file
 
 Modi di visualizzazione - l'ultimo indicato vince:
 
+  (nessuno) data e ora, <DIR> o <FILE>, dimensione e nome
+  -d      lo stesso, per chi lo ha nelle dita
+  -s      solo nome e dimensione, senza interrogare i file:
+          il piu' svelto su un floppy o su una directory grande
   -mc     a colonne: solo i nomi, il piu' compatto
-  -d      dettagli: dimensione, data e ora
-  -md     dettagliato stile dir: aggiunge gli attributi
+  -l      permessi, proprietario, gruppo, misura e data
+  -md     come il modo normale, piu' gli attributi
 
-Senza nessuno dei tre: nome e dimensione.
+La data e' quella di MODIFICA. Quella di creazione non c'e': la voce
+di directory, su FAT come su ext2 e su ISO 9660, ne tiene una sola.
 
 Altre opzioni:
 
@@ -305,6 +310,36 @@ EX-OS, e il nome viene dal fatto che mostra anche stack e heap.
 quanta memoria c'e' e quanta se ne usa
 
 Convenzionale, superiore ed estesa, con il totale in pagine.
+
+[date]
+che giorno e' e che ore sono - e, da root, rimetterli
+
+  date                        giorno, data e ora per esteso
+  date -d                     solo la data, 2026-09-16
+  date -t                     solo l'ora, 17:52:31
+
+Rimettere l'orologio (serve essere root, cioe' `sudo date ...`):
+
+  date -set-date:2026/09/16   la data  (va bene anche 2026-09-16)
+  date -set-time:17:52:30     l'ora    (i secondi si possono omettere)
+
+Le due meta' si rimettono separate: chi cambia l'ora non deve ribattere
+la data, e viceversa. I campi che non si toccano vengono riletti
+dall'orologio.
+
+!! NON C'E' UN COMANDO `time`, ed e' voluto. Su qualunque sistema Unix
+`time comando` MISURA quanto ci mette un comando a girare: spendere quel
+nome per stampare l'ora vorrebbe dire non averlo piu' il giorno che
+servira'. `date` dice tutt'e due le cose.
+
+!! L'ANNO STA FRA 1980 E 2099. L'orologio della macchina conserva DUE
+cifre d'anno e il secolo lo mette il sistema: un 2150 tornerebbe indietro
+come 2050, e un errore silenzioso e' peggio di un rifiuto.
+
+!! NESSUN FUSO ORARIO. L'orologio e' ora locale e il sistema non sa dove
+si trova. I secondi che i programmi contano dal 1970 sono letti su quel
+quadrante: buoni per misurare intervalli e datare un file, non
+confrontabili con l'istante di un'altra macchina.
 
 [uname]
 che sistema e' questo, come lo chiede uno script

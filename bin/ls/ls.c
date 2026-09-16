@@ -14,7 +14,33 @@
  *   ls              la directory corrente
  *   ls /bin         una directory qualunque
  *   ls -mc /bin     a colonne
+ *   ls -s /bin      solo nome e dimensione, senza interrogare i file
  *   ls -md -p /bin  dettagliato, una pagina per volta
+ *
+ * -----------------------------------------------------------------------------
+ * ! DAL 16 SETTEMBRE 2026 `ls` NUDO DICE ANCHE QUANDO E CHE COSA
+ *
+ * Prima stampava due cose: il nome e la dimensione. La data c'era gia' — ma
+ * solo con `-d`, `-md` o `-l`, cioe' solo per chi sapeva che esistevano; e il
+ * tipo si deduceva dalla barra finale del nome, che e' una convenzione che
+ * bisogna conoscere. Le due domande piu' comuni davanti a un elenco di file
+ * sono «di quando e'?» e «e' una cartella?», e per tutt'e due la risposta era
+ * a portata di un'opzione che nessuno batte.
+ *
+ * Adesso il modo senza opzioni e' quello dettagliato, con una colonna che dice
+ * <DIR> o <FILE> a lettere, e il vecchio comportamento sta sotto `-s`.
+ *
+ * ! E COSTA UNA stat() PER VOCE, che prima il modo nudo non faceva. Su un
+ * floppy si sente, ed e' esattamente per questo che `-s` esiste e non e' un
+ * ripiego: e' il modo da usare quando si vuole solo sapere quali nomi ci sono,
+ * su un disco lento o su una directory molto grande.
+ *
+ * ! LA DATA E' QUELLA DI MODIFICA, e non c'e' quella di creazione. Non e' una
+ * scelta: la voce di directory che i tre filesystem consegnano al VFS ha UNA
+ * coppia data/ora (vedi Stat in libc.h, st_date e st_time), e `struct stat`
+ * infatti pone st_ctime e st_atime uguali a st_mtime, dichiarandolo. Mostrare
+ * la stessa data sotto due intestazioni diverse sarebbe peggio che mostrarne
+ * una sola.
  *
  * -----------------------------------------------------------------------------
  * ! `-d` QUI NON E' IL `-d` DI POSIX
@@ -48,7 +74,7 @@
 #include "libc.h"
 
 /* +0.001 a ogni modifica: `ls -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("ls", "0.001");
+EX_VERSIONE("ls", "0.002");
 
 /* Il blocco per chiamata e' LISTDIR_MAX_BATCH e non un numero scelto qui:
  * il kernel non ne consegna di piu' comunque, e chiederne 32 per poi
@@ -96,9 +122,9 @@ static void misura_del_terminale(void)
 /* Modi di visualizzazione. Si escludono a vicenda: vince l'ultimo
  * indicato, che e' il comportamento che ci si aspetta quando si ripete
  * un'opzione per correggersi. */
-#define MODO_SEMPLICE   0   /* nome e dimensione, una voce per riga */
+#define MODO_SEMPLICE   0   /* -s: nome e dimensione, senza stat() */
 #define MODO_COLONNE    1   /* -mc */
-#define MODO_DETTAGLI   2   /* -d  */
+#define MODO_DETTAGLI   2   /* -d, ed e' anche il modo senza opzioni */
 #define MODO_DIR        3   /* -md */
 #define MODO_LUNGO      4   /* -l  */
 
@@ -111,7 +137,8 @@ static void misura_del_terminale(void)
 #define ATTR_DIRECTORY  0x10
 #define ATTR_ARCHIVIO   0x20
 
-static int g_modo       = MODO_SEMPLICE;
+/* ! IL MODO DI PARTENZA E' DETTAGLI, non semplice: vedi in testa al file. */
+static int g_modo       = MODO_DETTAGLI;
 static int g_tutti      = 0;    /* -a */
 static int g_pagine     = 0;    /* -p */
 static int g_righe      = 0;    /* righe stampate da inizio pagina */
@@ -125,11 +152,13 @@ static void aiuto(void)
     printf("uso: ls [opzioni] [percorso]\n\n");
     printf("Elenca il contenuto di una directory. Senza percorso, quella corrente.\n\n");
     printf("Modi di visualizzazione (l'ultimo indicato vince):\n");
+    printf("  (nessuno) data e ora, <DIR> o <FILE>, dimensione e nome\n");
+    printf("  -d      lo stesso: c'e' per chi lo ha nelle dita\n");
+    printf("  -s      solo nome e dimensione, senza interrogare i file:\n");
+    printf("          il piu' svelto su un floppy o su una directory grande\n");
     printf("  -mc     a colonne: solo i nomi, il piu' compatto\n");
-    printf("  -d      dettagli: dimensione, data e ora\n");
     printf("  -l      permessi, proprietario, gruppo, misura e data\n");
-    printf("  -md     dettagliato stile dir: aggiunge gli attributi\n");
-    printf("          (senza nessuno di questi: nome e dimensione)\n\n");
+    printf("  -md     come il modo normale, piu' gli attributi\n\n");
     printf("Altre opzioni:\n");
     printf("  -a      mostra anche i nomi che cominciano con un punto\n");
     printf("          (su un CD `.` e `..` non ci sono comunque: ISO 9660\n");
@@ -140,13 +169,17 @@ static void aiuto(void)
     printf("  D directory   A archivio   S sistema   N nascosto   R sola lettura\n\n");
     printf("ATTENZIONE: -d QUI SIGNIFICA \"DETTAGLI\", non quello che significa\n");
     printf("su Unix (dove `ls -d` mostra la directory invece del contenuto).\n\n");
+    printf("La data e' quella di MODIFICA. Quella di creazione non c'e': la\n");
+    printf("voce di directory, su FAT come su ext2 e su ISO 9660, ne tiene una\n");
+    printf("sola.\n\n");
     printf("Il bit \"nascosto\" di FAT si VEDE con -md ma non nasconde niente:\n");
     printf("a nascondere e' il punto iniziale, che e' la convenzione di tutti\n");
     printf("i filesystem che EX-OS monta.\n\n");
     printf("Esempi:\n");
     printf("  ls -mc /bin        i nomi di /bin, a colonne\n");
     printf("  ls -md -p /        tutto su /, dettagliato, una pagina per volta\n");
-    printf("  ls -a -d           la directory corrente, dettagli, nascosti compresi\n");
+    printf("  ls -a              la directory corrente, nascosti compresi\n");
+    printf("  ls -s /bin         solo i nomi e le misure, svelto\n");
 }
 
 /* =============================================================================
@@ -210,6 +243,25 @@ static void data_ora(char *buf, unsigned int max, time_t t)
     }
     strncpy(buf, "----------  --:--", max - 1);
     buf[max - 1] = '\0';
+}
+
+/* =============================================================================
+ * ! <DIR> E <FILE> A LETTERE, E NON UNA BARRA IN FONDO AL NOME
+ *
+ * La barra finale — `bin/` — e' la convenzione di Unix, sta ancora nel modo a
+ * colonne e la' e' giusta: quando i nomi sono impilati fitti, un carattere e'
+ * tutto lo spazio che c'e'. In un elenco a colonne larghe no: la barra e'
+ * l'ultimo carattere di una riga che finisce dove finisce il nome, cioe' in un
+ * punto diverso a ogni riga, e per vederla bisogna gia' sapere che c'e'. Una
+ * colonna che dice <DIR> sta sempre nello stesso posto e si legge senza sapere
+ * niente.
+ *
+ * ! LA LARGHEZZA E' 6 PERCHE' <FILE> NE OCCUPA 6. Allineata a sinistra, cosi'
+ * la parentesi acuta apre tutte le righe alla stessa colonna.
+ * ============================================================================= */
+static const char *tipo_voce(int e_dir)
+{
+    return e_dir ? "<DIR>" : "<FILE>";
 }
 
 static void attributi(char *buf, unsigned short attr)
@@ -312,7 +364,12 @@ static void stampa_lungo(const char *dir, const DirEntry *e)
     }
 
     printf("%s %-8s %-8s ", perm, ut, gr);
-    if (e->is_dir) printf("%10s  %s  %s\n", "<DIR>", quando, e->name);
+    /* ! QUI IL TIPO C'E' GIA', ed e' la prima lettera dei permessi: `d` o `-`,
+     * come su Unix. Aggiungere una colonna <DIR> vorrebbe dire dire la stessa
+     * cosa due volte nella stessa riga, e questa e' la riga piu' larga di
+     * tutte. Resta il trattino al posto della dimensione, per la ragione
+     * scritta in stampa_dettagli. */
+    if (e->is_dir) printf("%10s  %s  %s\n", "-", quando, e->name);
     else           printf("%10ld  %s  %s\n", (long)st.st_size, quando, e->name);
 }
 
@@ -349,7 +406,15 @@ static void stampa_dettagli(const char *dir, const DirEntry *e, int con_attribut
         printf("%s  ", quando);
     }
 
-    if (e->is_dir) printf("%10s  %s\n", "<DIR>", e->name);
+    printf("%-6s  ", tipo_voce(e->is_dir));
+
+    /* ! UNA DIRECTORY NON HA UNA DIMENSIONE DA MOSTRARE, e adesso che la
+     * colonna accanto dice <DIR> non c'e' nemmeno piu' bisogno di scriverlo
+     * due volte. Il numero che i filesystem tengono li' e' la misura della
+     * voce di directory sul disco — zero su FAT — e non e' quello che
+     * chiederebbe chi guarda, che vuole sapere quanto pesa il contenuto. Un
+     * trattino dice «la domanda non si applica»; uno zero direbbe il falso. */
+    if (e->is_dir) printf("%10s  %s\n", "-", e->name);
     else           printf("%10ld  %s\n", (long)st.st_size, e->name);
 }
 
@@ -458,6 +523,7 @@ int main(int argc, char **argv)
         }
         if (strcmp(a, "-a")  == 0) { g_tutti  = 1;            continue; }
         if (strcmp(a, "-p")  == 0) { g_pagine = 1;            continue; }
+        if (strcmp(a, "-s")  == 0) { g_modo = MODO_SEMPLICE;  continue; }
         if (strcmp(a, "-mc") == 0) { g_modo = MODO_COLONNE;   continue; }
         if (strcmp(a, "-md") == 0) { g_modo = MODO_DIR;       continue; }
         if (strcmp(a, "-d")  == 0) { g_modo = MODO_DETTAGLI;  continue; }
@@ -491,9 +557,16 @@ int main(int argc, char **argv)
         memset(&r, 0, sizeof(r));
     }
 
+    /* ! L'INTESTAZIONE ADESSO C'E' ANCHE SENZA `-md`, perche' senza `-md` e'
+     * il modo normale — cioe' quello che vede chi batte `ls` e basta. Le
+     * colonne sono quattro e una di loro e' una data: senza una riga che le
+     * nomina, «2026-09-16  17:52» e' due numeri che si devono indovinare. */
     if (g_modo == MODO_DIR) {
-        printf("data        ora    attr   dimensione  nome\n");
+        printf("data        ora    attr   tipo    dimensione  nome\n");
         if (g_pagine) g_righe++;    /* l'intestazione occupa una riga */
+    } else if (g_modo == MODO_DETTAGLI) {
+        printf("data        ora    tipo    dimensione  nome\n");
+        if (g_pagine) g_righe++;
     }
 
     if (percorri(bersaglio, &r, 0, larghezza) != 0) {

@@ -216,10 +216,17 @@ static void sh_exit(int code)
 {
     /* ! LA CONSOLE SI RESTITUISCE COME LA SI E' TROVATA.
      *
-     * riga_modifica() tiene la console in RAW per tutta la vita della
-     * shell — e' la modalita' in cui riceve i tasti uno per uno — e fino
-     * ad agosto 2026 uscire la lasciava cosi'. Non si notava perche' dopo
-     * `exit` la console restava morta e nessuno leggeva piu' niente.
+     * riga_modifica() mette la console in RAW per leggere la riga — e' la
+     * modalita' in cui riceve i tasti uno per uno — e fino ad agosto 2026
+     * uscire la lasciava cosi'. Non si notava perche' dopo `exit` la
+     * console restava morta e nessuno leggeva piu' niente.
+     *
+     * ! DAL 16 SETTEMBRE 2026 IL RAW DURA UNA RIGA, non tutta la vita
+     * della shell: lo toglie il guscio di riga_modifica() appena la riga
+     * e' finita, prima che parta il comando. Quindi arrivati qui la
+     * console e' gia' cooked e questa chiamata non fa niente. Resta, e
+     * deve restare: e' la rete per chi esce da una strada che il guscio
+     * non attraversa.
      *
      * Con /bin/login davanti non e' piu' vero: il login riprende il
      * prompt, chiede una riga, e trova la console in raw. Il driver se ne
@@ -1023,7 +1030,7 @@ static void verbose_init(void)
  * supera i 256. Un nome che si puo' creare ed elencare ma non digitare e'
  * un nome irraggiungibile per meta'. */
 /* +0.001 a ogni modifica: `sh -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define SH_VERSIONE  "0.001"
+#define SH_VERSIONE  "0.002"
 
 #define MAX_LINE    512
 
@@ -3011,6 +3018,12 @@ static int  g_storia_p = 0;     /* prossima posizione di scrittura */
 
 static int  g_kbd_pid = -1;     /* -1 = non ancora cercato, 0 = assente */
 
+/* ! CHI HA MESSO LA CONSOLE IN RAW LA RIMETTE COME L'HA TROVATA, e questo dice
+ * se siamo stati noi. Serve perche' kbd_modo() manda comunque il messaggio, e
+ * su un pty — una sessione telnet — sh_console_info() non risponde e la
+ * richiesta finirebbe addosso alla console 0, che e' di qualcun altro. */
+static int  g_console_raw = 0;
+
 /* Aggiunge una riga alla cronologia.
  *
  * ! NON SI REGISTRANO LE RIGHE VUOTE NE' I DOPPIONI CONSECUTIVI: chi
@@ -3138,7 +3151,7 @@ static int stdin_e_console(void)
                     (uint32_t)ws) == 0;
 }
 
-static int riga_modifica(char *buf, int max)
+static int riga_modifica_raw(char *buf, int max)
 {
     int len = 0, cur = 0, sfoglia = 0;
     char salvata[MAX_LINE];
@@ -3179,6 +3192,7 @@ static int riga_modifica(char *buf, int max)
 
     kbd_modo(KBD_MODE_RAW);
     if (g_kbd_pid <= 0) return -1;
+    g_console_raw = 1;
 
     for (;;) {
         unsigned int ev = kbd_tasto();
@@ -3280,6 +3294,47 @@ static int riga_modifica(char *buf, int max)
             else         riga_ridisegna(buf, len, cur, vl, vc);
         }
     }
+}
+
+/* =============================================================================
+ * ! LA CONSOLE TORNA IN COOKED PRIMA CHE PARTA IL COMANDO.
+ *
+ * Fino al 16 settembre 2026 la shell restava in RAW per tutta la sua vita: il
+ * raw serve al suo editor di riga — frecce, cronologia, un tasto per volta —
+ * e nessuno lo toglieva prima di lanciare il programma scritto sull'invito.
+ * Cosi' il primo programma che chiedeva una RIGA la trovava in raw, e il
+ * driver stampava
+ *
+ *     kbd: READLINE su console 0 in raw, ripristino cooked
+ *
+ * ! QUELL'AVVISO E' UNA RETE DI SICUREZZA, E SCATTAVA NEL CASO NORMALE. Esiste
+ * per dire una cosa sola: un programma a schermo intero e' morto senza
+ * rimettere a posto la console. Se lo stampa a ogni programma che legge una
+ * riga, non dice piu' niente — ed e' esattamente la stessa trappola gia'
+ * descritta in sh_exit(), qui sopra, risolta per l'uscita e non per il caso
+ * ordinario.
+ *
+ * ! E NON ERA SOLO RUMORE: kbd_set_mode() butta via l'input accumulato in
+ * tutt'e due le direzioni («consegnare gli uni con le regole degli altri
+ * darebbe input inventato»), quindi quel che si era battuto in anticipo, prima
+ * che il programma chiedesse la riga, si perdeva. Adesso il passaggio avviene
+ * quando la riga e' appena finita e non c'e' niente da perdere, e il
+ * type-ahead durante il comando lo raccoglie la disciplina cooked, che e' chi
+ * lo consegnera'.
+ *
+ * Il raw lo rimette riga_modifica_raw() al giro dopo, quando la shell riprende
+ * l'invito. Chi vuole lo schermo intero — gfedit, help, telnet — se lo chiede
+ * per conto suo, e resta l'unico a poter far scattare l'avviso.
+ * ========================================================================== */
+static int riga_modifica(char *buf, int max)
+{
+    int n = riga_modifica_raw(buf, max);
+
+    if (g_console_raw) {
+        kbd_modo(KBD_MODE_COOKED);
+        g_console_raw = 0;
+    }
+    return n;
 }
 
 /* =============================================================================

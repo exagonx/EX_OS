@@ -2,13 +2,29 @@
 
 **🇮🇹 Italiano** · [🇬🇧 English](README.en.md)
 
-**Versione:** 0.209
+**Versione:** 0.218
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 32-bit — si avvia da floppy, da CD o da disco rigido
 
 *Le due versioni si aggiornano insieme: quello che c'è in una c'è
 nell'altra.*
+
+---
+
+## Installare EX-OS
+
+La procedura passo passo, con un capitolo per supporto, sta in
+**[manuali/installazione/](manuali/installazione/00-indice.md)**:
+
+| | |
+|---|---|
+| [Da floppy](manuali/installazione/01-da-floppy.md) | anche con il lettore sull'USB |
+| [Da CD-ROM](manuali/installazione/02-da-cdrom.md) | con `cdinstall` a schermo intero |
+| [Dalla rete](manuali/installazione/03-dalla-rete.md) | per riempire e aggiornare un sistema gia' installato |
+| [Dopo l'installazione](manuali/installazione/04-dopo-installazione.md) | conti, rete, strumenti, grafica, accesso remoto |
+| [Quando va storto](manuali/installazione/05-quando-va-storto.md) | gli errori veri, con la causa e il rimedio |
+| [Pubblicare il repository](manuali/installazione/06-pubblicare-il-repo.md) | per chi tiene il server degli aggiornamenti |
 
 ---
 
@@ -84,6 +100,112 @@ propri header senza che nessuno glielo dica, e concatena da sé cc1, `as`,
 Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### Le chiavette USB si tolgono, non si strappano: `eject`
+
+**testato in QEMU, col giro intero** — `automount` le montava gia' da solo in
+`/USB/DRIVE0`; mancava il verso opposto. Il driver che serve un disco sta fermo
+dentro `blk_attendi()` e **non guarda piu' le porte**: sfilare la chiavetta
+lasciava un punto di montaggio che risponde errore, e rimetterla non produceva
+niente perche' nessuno stava guardando.
+
+    eject                  che cosa si puo' togliere
+    eject /USB/DRIVE0      smonta e ritira
+
+Smonta quel che ci sta sopra e poi **ritira** il dispositivo (syscall
+`SYS_BLK_ESPELLI`): l'attesa del driver rende `-ENODEV`, lui torna al ciclo
+delle porte, e la stessa chiavetta rimessa viene ripresa da capo. L'ordine non
+e' invertibile: un dispositivo ritirato mentre e' montato non sparisce, resta
+GUASTO — e infatti la syscall rifiuta con `-EBUSY`.
+
+! **E ha scoperto un difetto vecchio che non si poteva vedere prima**: la QH di
+controllo di `ehci` restava puntata sull'indirizzo della chiavetta precedente, e
+un dispositivo appena infilato risponde solo allo zero. Con una chiavetta sola
+per tutta la vita del processo non si notava; da quando il driver torna a
+guardare le porte, la seconda chiavetta e' la prima a pagarlo.
+
+### Una sessione remota che non diventa sorda ne' muta: `telnetd` 0.008
+
+**testato sulla macchina vera** — due difetti diversi, tutti e due scoperti su
+un portatile dall'altra parte di una rete vera, nessuno dei due riproducibile in
+emulazione al primo colpo.
+
+*La sordita'*: mentre `tcp_scrivi()` aspettava il proprio esito, `attendi()`
+**buttava** i messaggi che non stava cercando — compresi i tasti battuti
+dall'altra parte. E lo stack consegna a chi ha prenotato **consumando la
+prenotazione**: buttata la consegna, la sessione non ne faceva mai piu' una. Il
+sintomo: l'invito compare e da li' in poi non risponde piu' niente.
+
+*La muta*: `ipc_recv_timeout(..., 0)` non vuol dire «non aspettare», vuol dire
+**aspetta per sempre** — e la casella puo' essere vuota anche se la `poll` ha
+detto di si', perche' fra le due cose c'e' chi pesca. Il ciclo si fermava li',
+e siccome `telnetd` serve una sessione per volta, da quel momento la porta 23
+accettava le connessioni senza mandare un byte.
+
+### Un aggiornamento a meta' non deve lasciare una macchina morta
+
+**il guasto e' successo per davvero; la protezione e' scritta e da provare sul
+campo** — i programmi chiamano la libc **per nome**, e questo produce
+un'asimmetria che decide tutto:
+
+| | |
+|---|---|
+| binario VECCHIO + libc NUOVA | funziona: i nomi vecchi ci sono ancora |
+| binario NUOVO + libc VECCHIA | **non parte niente**: ne manca uno |
+
+Un aggiornamento interrotto fra i due lascia la macchina nel secondo caso: si
+accende, ha la rete a posto, e non ha un solo comando con cui rimediare —
+`scarica`, `dhcp`, `ipcfg`, `netupdate` rispondono tutti «la libreria condivisa
+non ha la funzione ...». Da qui tre cose:
+
+- **`netupdate` 0.021**: due passate sull'elenco, prima le librerie condivise e
+  poi tutto il resto; e se una libreria **non arriva**, non si tocca piu' niente
+  e lo si dice. La macchina resta vecchia e viva.
+- **`/bin/soccorso`**: statico, con la libc compilata dentro come i driver,
+  quindi parte anche quando non parte nient'altro. Riporta a posto
+  `/lib/libc.so` prendendola dal server e verificando dimensione e impronta
+  mentre arriva.
+- **`dist/fixsys.img`** (`make fixsys`): un dischetto di soccorso avviabile con
+  `sh`, `install`, `mount`, `disk`, `cp`, la libc e i driver della tastiera. Si
+  costruisce con `RAMDISCO=1` perche' parte da un lettore USB, dove il BIOS sa
+  leggere e il kernel no.
+
+### File grandi su linee che cadono: la ripresa
+
+**testato sulla macchina vera** — `cc1plus` fa trentasette megabyte, e a
+quaranta kilobyte al secondo sono un quarto d'ora di connessione aperta: cade
+piu' spesso di quanto non cada. Due misure sullo stesso file, 33.306.298 byte e
+poi 37.550.104: numeri diversi, quindi non un tetto ma una caduta.
+
+Adesso `exhttp` dichiara un corpo piu' corto di quello promesso invece di
+renderlo come successo, e sa chiedere `Range: bytes=N-`; `netupdate` riprende il
+`.new` rimasto a meta' invece di ributtarlo, rimasticando l'impronta dei byte
+gia' scritti. E chi chiede un pezzo **controlla di riceverne uno**: un server
+che ignora `Range` risponde 200 con tutto il file, e accodarlo in fondo a mezzo
+file sarebbe peggio del guasto.
+
+### `ftpswap`: una directory e un server FTP, allineati
+
+**provato su ferro vero il 16 settembre 2026** — `ftpswap /miadir` tiene allineata una
+directory con un server FTP: quel che nasce da una parte compare dall'altra,
+quel che muore da una parte muore dall'altra, e in caso di conflitto vince il
+piu' recente mentre il perdente si mette da parte come `<nome>.prima`.
+
+Cinque prove sull'Acer, contro un server FTP vero: il `.cfg` chiesto e scritto
+a 0600 al primo giro, la struttura replicata nei due versi, un file cambiato
+sul server e riletto sulla macchina, un binario da 3000 byte andato e tornato
+**identico byte per byte**, la cancellazione che passa nei due sensi, e un
+conflitto vero col perdente ritrovato nel suo `.prima`.
+
+Il pezzo che decide tutto e' il **diario**: senza memoria, un file che c'e' da
+una parte sola e' sempre un file nuovo da copiare, e cancellare diventa
+impossibile. E il diario tiene le date di **tutt'e due** le parti, perche' su
+EX-OS `utime()` non cambia niente: un file appena scaricato ha la data di
+adesso, e confrontare i due orologi lo rimanderebbe su e giu' per sempre.
+
+Il client FTP e' finito in `lib/exftp` — MLSD, MDTM, MFMT, PASV e PORT — col
+precedente di `lib/exuser`: due programmi che parlano FTP sono due copie che
+divergono.
 
 ### NASM sul CD degli strumenti, e l'altra sintassi
 
@@ -2331,7 +2453,6 @@ SSE; è stato provato forzando la via lenta in QEMU, non su un 486 fisico.
 │   ├── ls           ← Elenco directory
 │   ├── hello        ← Programma di esempio
 │   ├── textline     ← Editor di testo lineare (stile edlin)
-│   ├── gfedit       ← Editor a schermo intero (stile MS-DOS EDIT)
 │   ├── mkdir        ← Crea directory
 │   ├── rmdir        ← Cancella directory vuote
 │   ├── delete       ← Cancella file (con jolly ? e *)
@@ -2342,6 +2463,13 @@ SSE; è stato provato forzando la via lenta in QEMU, non su un 486 fisico.
     ├── kbd.drv      ← Driver tastiera PS/2 (processo ring3)
     └── floppy.drv   ← Driver floppy controller (ancora ET_DYN, non caricato)
 ```
+
+! `gfedit` **non sta sul floppy**: dal 16 settembre 2026 si costruisce solo
+per il CD. L'immagine da 1,44 MB era scesa a 3072 byte liberi e lui ne
+occupa 60236. E' rimasto `textline`, che ne occupa 18184 — ed e' il
+pavimento giusto, perche' `gfedit` senza `/dev/kbd.drv` rimanda a lui
+comunque. Sul CD e su ogni sistema installato c'e' come prima.
+
 
 Il TTY non compare in `/dev`: `drivers/tty/tty.c` è compilato **dentro** il
 kernel (possiede la VGA), e per l'input fa da client del servizio `kbd`.
@@ -5275,26 +5403,128 @@ file inesistente dal nome assurdo — il difetto era nella riga, non nel
 file. Lo stesso vale per gli argomenti oltre il sedicesimo, che prima
 sparivano senza dire niente.
 
+### `date` — che ore sono, e rimetterle
+
+```
+date                        giorno, data e ora per esteso
+date -d                     solo la data, 2026-09-16
+date -t                     solo l'ora, 17:52:31
+date -set-date:2026/09/16   rimette la data   (serve root)
+date -set-time:17:52:30     rimette l'ora     (serve root)
+```
+
+```
+ex-os:/> date
+mercoledi' 16 settembre 2026, 16:09:20
+ex-os:/> date -set-time:10:11:12
+orologio rimesso: mercoledi' 16 settembre 2026, 10:11:12
+```
+
+**L'orologio si può rimettere dal kernel 0.218, e prima no.** Da quando
+esiste — agosto 2026 — l'orologio CMOS di EX-OS si **leggeva e basta**: c'era
+`SYS_TIME` e non c'era il suo gemello. Non era un buco teorico: l'Acer Aspire
+3000 di prova segnava il **2005**, e ogni file che caricava su un server FTP
+arrivava datato «Feb 9 2005». L'unico modo di rimetterlo era entrare nel BIOS.
+
+Adesso c'è `SYS_TIME_SET` (213), che chiama `rtc_write()` in
+`kernel/arch/x86/rtc.c`.
+
+! **È di root, come `mount`.** L'ora di sistema non è un'impostazione
+personale: chi la sposta cambia la data di ogni file che chiunque altro
+scriverà, e con essa il giudizio di `netupdate -check` su che cosa è più
+recente. Da un utente qualunque si passa da `sudo date ...`.
+
+! **La scrittura ha una trappola in più delle tre della lettura.** Non si
+scrive mentre il chip conta: se l'aggiornamento cade in mezzo ai sei registri,
+il chip riscrive sopra a metà di quel che si è appena messo, e si ottiene una
+data mezza vecchia e mezza nuova. Il bit `SET` del registro B ferma il
+conteggio per la durata della scrittura.
+
+! **E si scrive nel formato che c'è già** — BCD o binario, 12 o 24 ore, come
+dice il registro B. Cambiarlo sarebbe più comodo da programmare e romperebbe
+la lettura del BIOS, che quel formato lo conosce dall'accensione.
+
+! **Il registro del secolo si aggiorna solo dove c'è già.** `rtc_read` non lo
+legge affatto (usa la convenzione «sotto 70 = 2000+»), quindi per EX-OS
+sarebbe inutile; ma un BIOS che invece lo usa, e che lo trovasse fermo al 20
+mentre le due cifre dicono 26, ripartirebbe da un anno sbagliato. Si scrive
+0x32 **solo se quel che c'è dentro somiglia già a un secolo** (19 o 20): su una
+macchina dove quel registro serve ad altro, il controllo lo lascia in pace.
+
+! **L'anno sta fra 1980 e 2099**, mentre la lettura ne accetta fino al 2199.
+Il chip tiene DUE cifre, e la lettura le interpreta con quella convenzione:
+chiedere il 2150 vorrebbe dire rileggere il 2050 senza dirlo a nessuno, e un
+errore silenzioso è peggio di un rifiuto.
+
+! **Le due metà si rimettono separate.** Chi cambia solo l'ora — l'ora legale,
+o un orologio che ha derivato di due minuti — non deve ribattere anche la data,
+e soprattutto non deve rischiare di sbagliarla. I campi che non si toccano
+vengono riletti dall'orologio, perché `time_set()` vuole una `RtcTime` intera:
+il chip non ha un modo di scrivere «solo i minuti».
+
+! **Non c'è un comando `time`, ed è voluto.** Su qualunque sistema Unix `time
+comando` MISURA quanto ci mette un comando a girare. Spendere quel nome per
+stampare l'ora vorrebbe dire non averlo più il giorno in cui servirà davvero —
+e a quel punto o si rompe chi lo usa, o si sceglie un nome peggiore. Un binario
+solo dice tutt'e due le cose, e sul floppy ne costa uno invece di due: quando
+`date` è stato scritto, sul floppy restavano 63488 byte liberi e il più piccolo
+programma di EX-OS ne pesa 13,5 KB.
+
+! **Nessun fuso orario.** L'orologio della macchina è ora locale e il sistema
+non sa dove si trova: `localtime()` e `gmtime()` fanno la stessa identica cosa.
+I secondi contati dal 1970 sono letti su quel quadrante — buoni per misurare
+intervalli e datare un file, non confrontabili con l'istante di un'altra
+macchina.
+
 ### `ls` — modi di visualizzazione
 
 ```
 ls -h              elenca tutte le opzioni
+ls                 data e ora, <DIR> o <FILE>, dimensione e nome
+ls -d              lo stesso: c'e' per chi lo ha nelle dita
+ls -s              solo nome e dimensione, senza interrogare i file
 ls -mc /bin        a colonne: solo i nomi, il piu' compatto
-ls -d              dettagli: dimensione, data e ora
-ls -md             dettagliato stile dir: aggiunge gli attributi
+ls -l              permessi, proprietario, gruppo, misura e data
+ls -md             come il modo normale, piu' gli attributi
 ls -a              mostra anche i nomi che cominciano con un punto
 ls -p              una pagina per volta (Invio avanza, q smette)
 ```
 
 ```
-ex-os:/> ls -md /
-data        ora    attr   dimensione  nome
-2026-08-04  10:51  D----       <DIR>  BOOT
-2026-08-04  10:51  D----       <DIR>  BIN
-2026-08-04  10:51  -----      180584  KERNEL.BIN
+ex-os:/> ls
+data        ora    tipo    dimensione  nome
+2026-09-16  18:10  <DIR>            -  BOOT
+2026-09-16  18:10  <DIR>            -  BIN
+2026-09-16  18:10  <FILE>        2631  LOADER.BIN
+2026-09-16  18:10  <FILE>      270376  KERNEL.BIN
 
-2 file, 181679 byte    4 directory
+2 file, 273007 byte    5 directory
 ```
+
+**Dal 16 settembre 2026 `ls` nudo dice anche QUANDO e CHE COSA.** Prima
+stampava due cose, il nome e la dimensione. La data c'era già — ma solo con
+`-d`, `-md` o `-l`, cioè solo per chi sapeva che esistevano; e il tipo si
+deduceva dalla barra finale del nome, che è una convenzione da conoscere. Le
+due domande più comuni davanti a un elenco di file sono «di quando è?» e «è
+una cartella?», e per tutt'e due la risposta era dietro un'opzione che nessuno
+batte.
+
+! **E costa una `stat()` per voce**, che il modo nudo prima non faceva. Su un
+floppy si sente, ed è esattamente per questo che `-s` esiste e non è un
+ripiego: è il modo da usare quando si vuole solo sapere quali nomi ci sono, su
+un disco lento o su una directory molto grande.
+
+! **La data è quella di MODIFICA, e quella di creazione non c'è.** Non è una
+scelta: la voce di directory che i tre filesystem consegnano al VFS tiene UNA
+coppia data/ora, e `struct stat` infatti pone `st_ctime` e `st_atime` uguali a
+`st_mtime`, dichiarandolo. Mostrare la stessa data sotto due intestazioni
+diverse sarebbe peggio che mostrarne una sola.
+
+! **Una directory non ha una dimensione da mostrare**, e adesso che la colonna
+accanto dice `<DIR>` non serve nemmeno scriverlo due volte. Il numero che i
+filesystem tengono lì è la misura della voce di directory sul disco — zero su
+FAT — non quanto pesa il contenuto. Un trattino dice «la domanda non si
+applica»; uno zero direbbe il falso.
 
 ! **`-d` qui significa «dettagli»**, non quello che significa su Unix (dove
 `ls -d` mostra la directory invece del contenuto). È una scelta di questo

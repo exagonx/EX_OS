@@ -26,7 +26,890 @@ manca» apre quello.
 
 ---
 
-# DOVE RIPRENDERE — 15 settembre 2026, sera
+# DOVE RIPRENDERE — 16 settembre 2026, sera
+
+> **Tutto quel che c'e' nell'albero e' compilato e provato in QEMU, e NON e'
+> pubblicato.** L'ultima catena andata fino in fondo e' di stanotte:
+>
+> ```
+> exagonx/repo-update.sh   ->  VERIFICA: 1612 uguali, 0 diversi, 0 mancanti
+> ```
+>
+> ! **Da allora sono cambiati il kernel (0.217 -> 0.218), la libc, `ls`,
+> `help.txt`, e c'e' `/bin/date` nuovo — piu' lo spostamento di `gfedit` e
+> `sis.drv` col motore 2D, che non erano saliti nemmeno stanotte.** Prima di
+> toccare l'Acer serve un `./exagonx/repo-update.sh`: **lo lancia l'utente**,
+> il controllo automatico lo blocca a me.
+>
+> ! **E il kernel e' cambiato**, quindi l'Acer vuole un aggiornamento
+> completo e un riavvio, non solo i binari.
+>
+> **Il commit non e' stato fatto: lo fa l'utente con `gitupdate.sh`.**
+> `messaggio-commit.txt` e' pronto e racconta tutta la giornata.
+
+## LA MACCHINA VERA
+
+! **L'ACER E' FERMO E VUOLE UN CICLO DI ALIMENTAZIONE** (16 settembre, sera).
+Non risponde nemmeno al ping: l'hanno bloccato SR1E bit 6 e SR20 bit 0 accesi
+insieme dentro `-2ddiagnosi`. Non e' un riavvio via rete: e' l'interruttore.
+Quando torna su, l'orologio e' quello giusto — e' stato rimesso prima, dal 2005
+al 16 settembre 2026 — perche' la batteria del CMOS lo tiene.
+
+Per il resto l'Acer e' **aggiornato e coerente**, con `telnetd` in ascolto su
+**192.168.0.23**. `uname -a` dice 0.217, `netupdate -check` dice
+«niente da aggiornare». Ci si pilota con `tools/locali/pilota_telnet.py`
+(indirizzo, file delle risposte, comandi) — ! il file delle risposte contiene la
+password dell'FTP e sta FUORI dall'albero, questo repository e' pubblico.
+
+! **DUE COSE DA SAPERE PRIMA DI CREDERE A UN GUASTO.** `telnetd` serve una
+  sessione per volta: se una e' rimasta appesa, la connessione nuova non passa e
+  sembra una macchina morta. E l'orologio di quella macchina segna il **2005**:
+  i file che carica arrivano sul server datati «Feb 9 2005».
+
+## CHE COSA E' RIMASTO APERTO
+
+  - `@PROVE-MACCHINA` — `ftpswap` e' **fatto**, cinque prove tutte passate.
+    Resta `eject`, e vuole una chiavetta infilata: il kernel nuovo c'e' gia'.
+  - `@GRAFICA-SCATTI` — misurato oggi: il bus della SiS **non c'entra**, il
+    framebuffer e' gia' write-combining. Il lavoro e' restringere le regioni
+    sporche di `wserver`. I numeri stanno qui sotto.
+  - `@MEMCPY-BYTE` — **CHIUSO, misurato sull'Acer**: la copia verso il
+    framebuffer e' passata da 47 a **375 MB/s**, cioe' al limite del bus.
+  - `@TELNET-SCALA` — le righe di `telnetd` scalano a destra: capo riga LF
+    senza CR. Segnalato, non ancora guardato nel codice.
+  - ! **il floppy ha 39424 byte liberi.** Ne aveva 63488 dopo che `gfedit` e'
+    passato al CD, e 3072 prima; `/bin/date` piu' il suo blocco di `help.txt`
+    ne hanno presi 24064. Chi ci rimette qualcosa guardi prima quel numero.
+  - ! **la build di adesso NON e' quella pubblicata.** Il server ha la libc
+    nuova (l'Acer e' allineato, 1607 uguali), ma non lo spostamento di
+    `gfedit`, ne' `sis.drv` col motore 2D, ne' niente della sera del 16
+    (kernel 0.218 con la scrittura dell'orologio, `/bin/date`, `ls` 0.002,
+    `help.txt`): serve un altro `./exagonx/repo-update.sh`, **e lo lancia
+    l'utente.**
+  - `@SIS-2D` — il motore 2D e' scritto e la sua finestra MMIO tace. **Il
+    passo 13 e' girato: la sequenza di sisfb col reset NON basta.** La pista
+    adesso sono due bit spenti che la diagnosi stampava dal primo giorno —
+    SR1E bit 6 e SR20 bit 0 — e si provano UNO PER VOLTA con `-2dsr1e` e
+    `-2dsr20`: accesi insieme hanno bloccato l'Acer.
+  - `@TELNET-SCALA` — **sfasamento e troncamento sistemati e provati**. Resta
+    da vedere sull'Acer se anche la sessione che si impianta era quello.
+  - ! **l'Acer va riavviato di nuovo.** `telnetd` si impianta dopo quattro o
+    cinque sessioni: accetta la connessione, fa l'eco del comando e non
+    esegue piu' niente. E' successo due volte, tutt'e due su uno `scarica`.
+    ! **Quindi si fa tutto in UNA sessione sola** — download, prova e invio
+    del referto — e non per comodita': ogni sessione in piu' avvicina il
+    riavvio. Nessun registro e' rimasto spostato: i ripristini sono
+    verificati nei referti.
+  - `kernel/arch/x86/mtrr.c` e' scritto e **non collegato al Makefile**: su
+    questa macchina non serve, e non si prova un MTRR senza una macchina su cui
+    provarlo.
+
+## LE CARTELLE DI PROVA CHE SONO RIMASTE IN PIEDI
+
+`/root/prova` sull'Acer e `/provaftpswap` sullo spazio FTP: allineate fra loro,
+col `.cfg` e il diario gia' scritti. Sono li' apposta, per rifare un giro di
+`ftpswap` senza ricominciare da capo. Si cancellano quando non servono piu'.
+
+---
+
+---
+
+# 16 settembre 2026, sera — LA SiS: IL PASSO 13 NON BASTA, E DUE BIT SPENTI
+
+Il passo 13 e' girato sull'Acer, finalmente. **La sequenza di sisfb per intero,
+reset della coda compreso, non sveglia la finestra**: `ffffffff` prima, durante
+e dopo. Quinta spiegazione provata e chiusa. La macchina ha detto anche quanta
+memoria video ha — CR79 = 0x61, cioe' **64 MB condivisi**, CR78 = 0xc3, nessun
+LFB dedicato — e la coda avrebbe avuto la sua base a 0x03f80000.
+
+## LA RISPOSTA PROBABILE ERA NEL PASSO 4 DA SEMPRE
+
+    SR1E = 0x20        SR20 = 0xa0
+
+La diagnosi stampa quei due numeri da quando esiste. Sono finiti **in questo
+diario e in `in_lavorazione.txt`** fra i dati «stabiliti sulla macchina vera»,
+copiati come si copia una misura. Erano due misure, e nessuno le ha lette come
+due mancanze.
+
+In sisfb (`drivers/video/fbdev/sis/sis.h`) quei due registri hanno un nome, e i
+nomi dicono esattamente cio' che qui manca:
+
+    SR20  IND_SIS_PCI_ADDRESS_SET
+            SIS_PCI_ADDR_ENABLE      0x80   c'e' gia' (0xa0)
+            SIS_MEM_MAP_IO_ENABLE    0x01   SPENTO
+    SR1E  IND_SIS_MODULE_ENABLE
+            SIS_ENABLE_2D            0x40   SPENTO (0x20)
+
+e sisfb li accende **prima** della coda comandi. Noi eravamo partiti da SR26 e
+SR27 — la coda — cioe' dall'ultimo passo di un'inizializzazione di cui mancava
+il primo.
+
+! **E SPIEGHEREBBE PERCHE' TUTTO IL RESTO RISULTAVA A POSTO.** Il ponte
+inoltra, il BAR e' implementato e misura 128 KB veri, `mmio_map` mappa la
+memoria giusta — e' tutto vero, e non c'entra: la finestra c'e', la scheda non
+la decodifica. `0xffffffff` a ogni offset e' quel che il bus rende quando
+**nessuno risponde**, cioe' la stessa cosa che si legge da un indirizzo vuoto.
+
+! **I NOMI DELLE COSTANTI SONO A MEMORIA, non riletti**: qui non ci sono i
+sorgenti di Linux. Combaciano con l'osservazione in un modo che non somiglia a
+una coincidenza — due bit spenti, e si chiamano «abilita l'MMIO» e «abilita il
+2D» — ma finche' quella finestra non risponde restano un'ipotesi.
+
+## E ACCESI INSIEME HANNO BLOCCATO LA MACCHINA
+
+La prima stesura li metteva tutt'e due in coda a un passo 14 della diagnosi.
+L'Acer si e' fermato: **niente ping, ciclo di alimentazione**. E con lui e'
+sparito il referto.
+
+! **IL LOG SI INTERROMPE A META' DEL PASSO 11** — undici passi prima del punto
+in cui la macchina e' morta. Circa un chilobyte era ancora nel tubo del pty e
+nei buffer TCP, e li' e' rimasto.
+
+Due cose imparate, e valgono ben oltre questa scheda:
+
+  - ! **L'ULTIMA RIGA CHE SI LEGGE NON E' L'ULTIMA CHE IL PROGRAMMA HA
+    STAMPATO.** `fflush()` svuota il buffer della libc, non il tubo del pty ne'
+    la finestra TCP: fra «l'ho scritta» e «e' arrivata» ci sono altri due
+    passaggi. Chi tocca un registro che puo' fermare la macchina deve stampare
+    l'intenzione **e poi aspettare** che esca.
+  - ! **DUE SCRITTURE IN UNA PROVA SOLA NON SI POSSONO DISTINGUERE.** Un blocco
+    e' una risposta di un bit: o dice «quello» o non dice niente. Accesi
+    insieme, quel riavvio fisico ha comprato «uno dei due, o la coppia», che e'
+    quasi niente.
+
+## COME SONO ADESSO
+
+La diagnosi e' tornata **di sola lettura** — il passo 14 guarda i due bit, dice
+che sono spenti e dice quale comando li prova, e non scrive niente. Uno
+strumento che puo' spegnere la macchina che sta misurando smette di essere
+quello con cui si comincia.
+
+    sis.drv -2dsr1e    solo SR1E bit 6 (SIS_ENABLE_2D)
+    sis.drv -2dsr20    solo SR20 bit 0 (SIS_MEM_MAP_IO_ENABLE)
+
+Ognuno tocca **un bit solo**, stampa «STO PER SCRIVERE ... SE QUESTA E'
+L'ULTIMA RIGA CHE LEGGI, E' STATO QUESTO», aspetta mezzo secondo perche' la
+riga arrivi davvero, scrive, legge la finestra, e **rimette il registro com'era
+anche quando ha risposto**: un motore 2D acceso a meta' — decodifica accesa,
+coda mai inizializzata — e' una scheda che puo' fermarsi dopo, lontano da qui,
+e nessuno collegherebbe le due cose.
+
+Si comincia da `-2dsr1e`: SR1E non tocca nessuna decodifica di indirizzi, SR20
+si'. E si fanno **con qualcuno vicino all'interruttore**.
+
+## E SR1E BIT 6 E' SCAGIONATO
+
+`-2dsr1e` sull'Acer, a macchina riaccesa:
+
+    SR1E = 0x20, il bit 0x40 (SIS_ENABLE_2D) e' spento
+    ! STO PER SCRIVERE SR1E = 0x60.
+    viva. SR1E = 0x60
+    [0x8200] ffffffff   [0x0000] ffffffff   [0x85cc] ffffffff
+    muta come prima: questo bit da solo non c'entra.
+
+Tre cose in cinque righe. La macchina **resta viva**. Il registro **tiene il
+bit** — 0x20 diventa 0x60 — quindi non e' di sola lettura e SR05 non lo
+protegge. E la finestra legge `ffffffff` come prima.
+
+! **PER ELIMINAZIONE E' STATO SR20 BIT 0**, ed e' coerente con quel che
+dovrebbe essere: e' l'unico dei due che tocca una **decodifica di indirizzi**.
+E il blocco stesso e' un indizio a favore — un registro che non facesse niente
+non fermerebbe niente.
+
+## LA PROSSIMA PROVA SPEZZA ANCORA
+
+`-2dsr20` adesso distingue **due gesti che prima erano uno solo**: scrivere
+SR20 e' una porta VGA, che non passa da nessun bus PCI; **leggere la finestra**
+e' un ciclo di memoria verso un indirizzo che un attimo prima non rispondeva a
+nessuno. Hanno due annunci diversi — «se ti fermi qui, e' stata la LETTURA»,
+«... la SCRITTURA in memoria» — con mezzo secondo fra l'annuncio e il gesto.
+
+Senza quella separazione un blocco direbbe soltanto «SR20», che e' quel che gia'
+sappiamo: ricomprerebbe un ciclo di alimentazione per una domanda a cui abbiamo
+gia' risposto.
+
+! **E UN'IPOTESI DA TENERE PRONTA SE SI FERMA SULLA SCRITTURA DEL REGISTRO:**
+accendendo la decodifica, il chip potrebbe rispondere a una fascia piu' larga di
+BAR1 — una finestra legacy a indirizzo fisso — e accavallarsi alla RAM o a
+un'altra scheda. Quello impianta il bus senza che nessuno abbia letto niente.
+
+---
+
+---
+
+# 16 settembre 2026, sera — L'OROLOGIO SI PUO' RIMETTERE, E `ls` DICE QUANDO
+
+Due cose chieste dall'utente, e la prima e' un buco che stava li' da agosto
+senza che nessuno l'avesse mai chiamato per nome.
+
+## L'OROLOGIO SI LEGGEVA E BASTA
+
+Da quando esiste — agosto 2026 — l'orologio CMOS di EX-OS aveva `SYS_TIME` e
+non aveva il suo gemello. Non era una mancanza teorica: e' scritto DUE VOLTE
+in questo diario, con altre parole, che l'Acer segna il 2005 e che i file che
+carica arrivano sul server datati «Feb 9 2005». Era stato notato, misurato e
+raccontato — e mai chiamato «manca la scrittura dell'orologio», che era il
+nome che avrebbe fatto fare qualcosa.
+
+! **E LA SCRITTURA HA UNA TRAPPOLA IN PIU' DELLE TRE DELLA LETTURA**, che
+stanno in testa a `kernel/arch/x86/rtc.c` da quando il file esiste. La quarta
+e': **non si scrive mentre il chip conta.** Una volta al secondo il
+MC146818 riscrive i propri registri; se l'aggiornamento cade in mezzo ai sei
+che stiamo mettendo, ci scrive sopra — e il risultato e' una data mezza vecchia
+e mezza nuova, con il minuto che si voleva mettere sparito del tutto. Il bit
+`SET` del registro B (0x80) FERMA il conteggio: si alza, si scrivono i sei
+registri, lo si riabbassa.
+
+! **E SI SCRIVE NEL FORMATO CHE C'E' GIA'.** Il registro B dice se i valori
+sono BCD o binari e se le ore sono a 12 o a 24. Sarebbe piu' comodo da
+programmare imporre il binario a 24 ore e scrivere sempre nello stesso modo —
+e romperebbe la lettura del BIOS, che quel formato lo conosce dall'accensione e
+non lo rilegge.
+
+! **IL SECOLO SI AGGIORNA SOLO DOVE C'E' GIA'.** `rtc_read` non lo legge
+affatto (usa la convenzione «sotto 70 = 2000+»), quindi per EX-OS il registro
+0x32 e' inutile. Ma un BIOS che invece lo usa, e che lo trovasse fermo al 20
+mentre le due cifre dicono 26, ripartirebbe da un anno sbagliato. Si scrive
+quindi 0x32 — **ma solo se quel che c'e' dentro somiglia gia' a un secolo** (19
+o 20, nel formato del chip). L'indirizzo di quel registro cambia da macchina a
+macchina (0x32 o 0x37) e su parecchie non e' implementato affatto: quel
+controllo e' cio' che impedisce di scriverci sopra qualcos'altro.
+
+! **E IL LIMITE DELLA SCRITTURA E' IL 2099, NON IL 2199 DELLA LETTURA.** Il
+chip tiene DUE cifre d'anno. Scrivere il 2150 vorrebbe dire mettere 50 nel
+registro e rileggere 2050 — cioe' accettare in silenzio una data diversa da
+quella chiesta. La lettura accetta fino al 2199 perche' li' sta interpretando
+quel che trova; la scrittura no, perche' li' sta promettendo.
+
+`SYS_TIME_SET` (213) e' un numero NUOVO e non un secondo modo di `SYS_TIME`:
+una syscall che legge o scrive secondo il valore di un altro registro e' una
+syscall che un giorno scrive perche' in `ecx` c'era rimasto un uno. Ed e' di
+root come `mount` — l'ora di sistema non e' un'impostazione personale, e chi la
+sposta cambia la data di ogni file che chiunque altro scrivera', e con essa il
+giudizio di `netupdate -check` su che cosa e' piu' recente.
+
+Kernel 0.217 -> **0.218**.
+
+## `/bin/date`, E PERCHE' NON C'E' `/bin/time`
+
+Un binario solo, e la domanda «uno o due?» l'ha posta l'utente. Due ragioni,
+nessuna delle due di gusto.
+
+La prima e' il floppy: **63488 byte liberi** quando questo e' stato scritto, e
+il piu' piccolo programma di EX-OS ne pesa 13,5 KB. Due binari per stampare due
+meta' della stessa lettura del CMOS vorrebbero dire spendere meta' di quello
+spazio. (Il conto finale: `date` pesa 17964 byte, e col blocco nuovo di
+`help.txt` il floppy e' sceso a **39424 byte liberi**. Chi ci rimette qualcosa
+guardi prima quel numero.)
+
+La seconda e' che **`time` vuol dire un'altra cosa**: su qualunque Unix `time
+comando` MISURA quanto ci mette un comando a girare. Se `time` diventasse
+«stampa l'ora», il giorno in cui la shell vorra' il `time` vero il nome sarebbe
+gia' occupato — e a quel punto o si rompe chi lo usa, o si sceglie un nome
+peggiore.
+
+Le opzioni le ha dettate l'utente, e sono nello stile dei driver
+(`-connect:SSID`): `-set-date:AAAA/MM/GG` e `-set-time:HH:MM:SS`.
+
+! **LE DUE META' SI RIMETTONO SEPARATE**, e non e' pigrizia: chi cambia solo
+l'ora — l'ora legale, o un orologio derivato di due minuti — non deve ribattere
+anche la data, e soprattutto non deve RISCHIARE di sbagliarla. I campi che non
+si toccano si rileggono dall'orologio, perche' `time_set()` vuole una `RtcTime`
+intera: il chip non ha un modo di scrivere «solo i minuti».
+
+! **E LA VALIDAZIONE SI FA DUE VOLTE, NEL PROGRAMMA E NEL KERNEL.** Non e' una
+ripetizione inutile. Il kernel DEVE rifiutare il 31 di febbraio comunque,
+perche' non sara' `date` l'unico a chiamare `time_set()`; ma il kernel ha un
+solo modo di dire di no, `-EINVAL`, e chi lo riceve non sa se ha sbagliato
+l'anno, il mese o l'ora. Il controllo nel programma esiste per IL MESSAGGIO.
+La prima stesura non ce l'aveva, e in QEMU `date -set-time:25:00` rispondeva
+«quella data non esiste — l'anno sta fra 1980 e 2099 e il giorno dev'essere un
+giorno che quel mese ha davvero», cioe' parlava di giorni a chi aveva sbagliato
+un'ora. Adesso dice «non esistono le 25. L'ora sta fra 00 e 23: l'orologio si
+scrive su 24 ore, non su 12 con AM e PM».
+
+! **E I NUMERI SI LEGGONO A CIFRE FISSE**, non «al massimo due»: con un
+conteggio libero `2026/9/1` e `20269/1` si leggerebbero allo stesso modo, e la
+seconda e' un errore di battitura che va rifiutato, non interpretato.
+
+Il giorno della settimana lo calcola il programma invece di passare da
+`localtime()`, e la ragione e' che `localtime()` vorrebbe `time()`, cioe' una
+SECONDA lettura dell'orologio, che puo' cadere dall'altra parte di uno scatto e
+contraddire la prima.
+
+Provato in QEMU: `date`, `-d`, `-t`, la scrittura dell'ora e della data
+(rilette e giuste), il rifiuto del 30 febbraio, delle 25 e del 2150, e
+`help date`.
+
+## `ls` NUDO DICE ANCHE QUANDO E CHE COSA
+
+L'altra cosa notata dall'utente: `ls` mostrava la dimensione e **non** la data
+ne' se la voce e' un file o una directory.
+
+La data c'era gia' — ma solo con `-d`, `-md` o `-l`, cioe' solo per chi sapeva
+che esistevano; e il tipo si deduceva dalla barra finale del nome, che e' una
+convenzione che bisogna conoscere. Le due domande piu' comuni davanti a un
+elenco di file sono «di quando e'?» e «e' una cartella?», e per tutt'e due la
+risposta era dietro un'opzione che nessuno batte.
+
+Adesso il modo senza opzioni e' quello dettagliato, con una colonna che dice
+`<DIR>` o `<FILE>` a lettere:
+
+    data        ora    tipo    dimensione  nome
+    2026-09-16  18:10  <DIR>            -  BOOT
+    2026-09-16  18:10  <FILE>      270376  KERNEL.BIN
+
+! **<DIR> A LETTERE E NON UNA BARRA IN FONDO AL NOME.** La barra e' la
+convenzione di Unix, resta nel modo a colonne e li' e' giusta: quando i nomi
+sono impilati fitti, un carattere e' tutto lo spazio che c'e'. In un elenco a
+colonne larghe no: la barra e' l'ultimo carattere di una riga che finisce dove
+finisce il nome, cioe' in un punto diverso a ogni riga, e per vederla bisogna
+gia' sapere che c'e'. Una colonna sta sempre nello stesso posto.
+
+! **E COSTA UNA `stat()` PER VOCE**, che il modo nudo prima non faceva. E'
+esattamente il costo di cui avverte il commento in testa a `ls.c` a proposito
+di `statraw()` e del bit nascosto di FAT. Per questo il vecchio comportamento
+non e' sparito ma sta sotto **`-s`**, ed e' documentato come il modo da usare
+su un disco lento o su una directory molto grande — non come un ripiego.
+
+! **LA DATA DI CREAZIONE NON C'E', E NON SI PUO' AGGIUNGERE A BUON MERCATO.**
+La voce di directory che i tre filesystem consegnano al VFS tiene UNA coppia
+data/ora (`Stat.st_date` e `st_time`), e `struct stat` infatti pone `st_ctime`
+e `st_atime` uguali a `st_mtime`, dichiarandolo. Mostrare la stessa data sotto
+due intestazioni diverse sarebbe peggio che mostrarne una sola.
+
+! **E NON SI E' TOCCATA `DirEntry`**, che sarebbe stata la strada per avere la
+data senza una `stat()` per voce. Quella struttura attraversa l'ABI della
+syscall ed e' duplicata a mano in tre posti: allargarla vuol dire ricostruire
+il bersaglio, e farlo per una colonna non vale il rischio di un binario gia'
+costruito che legge campi spostati.
+
+Una directory adesso ha un trattino al posto della dimensione, non `<DIR>` due
+volte: il numero che i filesystem tengono li' e' la misura della voce di
+directory sul disco — zero su FAT — e non e' quello che chiederebbe chi guarda.
+
+`ls` 0.001 -> 0.002. `help.txt` ha un blocco `[date]` nuovo e il blocco `[ls]`
+rifatto.
+
+---
+
+---
+
+# 16 settembre 2026 — telnetd: DUE DIFETTI, E IL SECONDO ERA NEL KERNEL
+
+Lo sfasamento a scaletta delle righe, segnalato come fastidio, era il sintomo
+buono: tirandolo e' venuto su anche il difetto che mi aveva fatto perdere mezza
+giornata sul motore 2D.
+
+## 1. LA SCALETTA — il capo riga
+
+! **Il protocollo non parla ASCII, parla NVT.** RFC 854: la fine di una riga sul
+cavo e' **CR LF, due byte**. `telnetd` mandava quel che usciva dal pty cosi'
+com'era, cioe' un LF solo — che vuol dire «scendi di una riga» e basta, col
+cursore fermo nella colonna dov'era. Da qui la scaletta.
+
+! **E sulla console locale non si vedeva**, il che e' il motivo per cui e'
+rimasto li' tanto: li' il capo riga lo sistema il driver di terminale, che su
+`\n` va a capo **e** torna a sinistra. Passando dal pty alla rete quella
+cortesia non c'e' piu'.
+
+Corretto con `nvt_scrivi()`: LF diventa CR LF; un CR da solo diventa **CR NUL**
+(nell'NVT il CR e' un comando, e per dire «CR e nient'altro» ci vuole il NUL
+dietro); e **il byte 255 si raddoppia**. Quest'ultima e' la parte che sorprende:
+il filtro in ENTRATA sapeva gia' che `IAC IAC` vuol dire un 255 vero, quello in
+uscita no. Un 255 nell'uscita di un programma metteva il client ad aspettare un
+comando che non sarebbe mai arrivato. **Una direzione sola non e' un protocollo,
+e' meta'.**
+
+## 2. IL CHILOBYTE CHE SPARIVA — e non era di telnetd
+
+`kernel/ipc/pty.c`, `pty_scrivi_slave()` versava i byte nel tubo verso il master
+con `metti()`, che **a tubo pieno non scrive e non lo dice** — e poi rendeva `n`,
+cioe' «scritto tutto». Il tubo e' `PTY_DIM` = **1024 byte**.
+
+! **Il commento di `metti()` diceva perche' buttare va bene, ed era vero per
+l'altro caso.** Chi scrive li' dentro facendo l'eco e' il kernel mentre un tasto
+passa: se bloccasse, fermerebbe chi batte. Ma per l'uscita di un programma la
+regola e' l'opposta, ed e' la regola di ogni Unix: **chi scrive aspetta**.
+
+! **E IL SINTOMO NON SOMIGLIAVA A UNA PERDITA DI DATI.** Il programma arrivava in
+fondo, la shell tornava al prompt, il comando dopo funzionava. Sembrava un
+driver che moriva — e ogni volta a un'istruzione diversa, perche' quel che si
+spostava era il punto in cui finivano i mille byte. Mezza giornata a cercare un
+difetto in `sis_2d.c`, che non ne aveva.
+
+Adesso chi scrive aspetta che ci sia posto; l'attesa e' **interrompibile** e
+rende il conto parziale (che e' quel che POSIX prescrive per una write
+interrotta dopo aver gia' trasferito qualcosa); il lettore sveglia chi aspetta
+quando fa posto; e le due chiusure lo svegliano quando l'altro capo se ne va.
+
+! **Il posto per chi aspetta e' uno solo**, come per le altre due attese di quel
+file. Se un secondo processo scrive sullo stesso slave mentre il primo dorme,
+**non** gli si porta via il posto: si rende il conto parziale. Sovrascrivere quel
+campo vorrebbe dire un processo che non si sveglia piu'.
+
+## LE PROVE, E RESTANO
+
+```
+libctest                     206 superate, 15 fallite
+                             (erano 201/15: le cinque nuove sono il pty,
+                              le 15 sono le solite creazioni di file su CD)
+tools/telnet_nvt_prova.py    0 capi riga LF senza CR
+                             426 righe su 426, ultima riga arrivata
+```
+
+Il secondo e' nuovo e guarda **i byte sul cavo**, che un client telnet vero
+nasconde: molti terminali rimediano da soli a un LF nudo, quindi con un client
+vero il difetto non si vede. Fa stampare `/boot/kernel.txt` — 19 KB attraverso
+un tubo da 1024 — ed e' agganciato a `tools/prova_telnet.sh`.
+
+! E da `tools/prova_telnet.sh` e' sparito il `pkill -9 -f qemu-system`: faceva
+cadere in silenzio l'intera sessione che l'aveva lanciato, non solo il qemu.
+
+## QUEL CHE NON E' PROVATO, E VA DETTO
+
+La sessione che si impianta dopo quattro o cinque collegamenti sull'Acer **non
+si sa se sia guarita**. I due difetti sistemati potrebbero spiegarla — una write
+che perdeva byte, un client che aspettava — ma in QEMU non e' mai successa,
+quindi li' non si puo' verificare. Si guarda sull'Acer, dopo kernel e telnetd
+nuovi, aprendo e chiudendo dieci sessioni di fila.
+
+! **E il kernel e' cambiato**, quindi non basta copiare `telnetd`: la macchina
+vuole un aggiornamento completo e un riavvio.
+
+---
+
+# 16 settembre 2026 — IL MOTORE 2D DELLA SiS: TRE SPIEGAZIONI CHIUSE, UNA APERTA
+
+`drivers/sis/sis_2d.c` (nuovo, con `sis_2d.h`) e' agganciato a `sis.drv` con
+quattro opzioni: `-2dstato`, `-2dprova`, `-2dmisura`, `-2ddiagnosi`. Compila e
+gira. Quel che ancora non fa e' disegnare, e il perche' e' scritto qui.
+
+## LA MAPPA DEI REGISTRI NON E' INDOVINATA
+
+Per il cambio di modalita' (`sis.c`) i valori erano stati LETTI da una macchina
+vera con `sonda.drv`, perche' non esiste documentazione pubblica. Per il motore
+2D no: e' descritto da due sorgenti aperte che lo pilotano da vent'anni —
+`sisfb` del kernel Linux e `xf86-video-sis` — e sono GPL come EX-OS. Offset,
+ordine delle scritture e registro di stato vengono da li'.
+
+! **E LA FAMIGLIA E' QUELLA GIUSTA:** 1039:6330 e' l'integrata dei chipset
+661/741/760/761, nucleo derivato dalla serie 315. In sisfb e' il ramo
+`SIS_315_VGA`, cioe' le macro `SiS310*` — **non** le `SiS300*`, che hanno un
+altro set di registri. Sbagliare ramo vuol dire scrivere numeri sensati negli
+indirizzi sbagliati.
+
+## E IL GUADAGNO CHE SI CERCA NON E' LA VELOCITA' DI RIEMPIMENTO
+
+`fbprova` dice che scrivere nello schermo e' gia' al limite del bus: 375 MB/s,
+4,9 ms a fotogramma. Il motore 2D li' non fa guadagnare velocita', fa
+guadagnare la CPU. **Il numero che conta e' un altro: leggere dallo schermo
+costa 82 MB/s, 22,2 ms a schermata.** Una copia schermo->schermo — spostare una
+finestra, far scorrere un terminale — la paga tutta. Il motore la fa dentro la
+scheda, senza far attraversare il bus ai pixel nemmeno una volta. E' l'unico
+guadagno che la CPU non puo' prendersi in nessun modo.
+
+## QUEL CHE SI E' STABILITO SULLA MACCHINA VERA
+
+```
+1039:6330 a 01:00.0, IRQ 7, comando PCI 0x0003 (I/O + memoria decodificate)
+BAR0  0xe8000008  prefetchable, 128 MB  -> framebuffer, RISPONDE
+BAR1  0xe2100000  normale,      128 KB  -> registri,    TACE (tutti uno)
+ponte 00:01.0: memoria 0xe2100000-0xe21fffff, prefetch 0xe8000000-0xefffffff
+SR05 a1   SR1E 20   SR20 a0   SR21 a3   SR26 00   SR27 74
+north bridge 1039:0760, suo BAR0 0xe0000000, capacita' AGP 3.0 a 0xa0
+```
+
+## TRE SPIEGAZIONI PROVATE E CHIUSE
+
+  - **non e' `mmio_map`**: la stessa syscall mappa il framebuffer e legge quel
+    che legge `fb_map`.
+  - **non e' il ponte**: la finestra dei registri sta dentro quella che il
+    ponte inoltra, e il driver lo verifica leggendo i registri del ponte.
+  - **non e' la coda comandi spenta**: `SR26` valeva 0x00, cioe' nessun modo di
+    coda acceso. Portato a 0x20 (`SIS_MMIO_CMD_ENABLE`) la finestra e' rimasta
+    muta, e SR26/SR27 sono stati rimessi com'erano.
+  - **e il BAR non e' un residuo**: misurato scrivendo tutti uno con la
+    decodifica spenta, rende una finestra vera di 128 KB.
+
+## L'ADDIZIONE CHE SEMBRAVA LA RISPOSTA, E NON LO ERA
+
+```
+0xE0000000 + 128 MB = 0xE8000000
+```
+
+L'intervallo che **tace** cascava dentro il BAR del north bridge, quello che
+**parla** cominciava dove quello finisce. Sembrava fatto apposta. Due misure
+l'hanno smontata:
+
+  - BAR1 spostato a 0xF0000000, con la finestra del ponte spostata insieme:
+    **tace lo stesso**. E poi tutto rimesso com'era, verificato rileggendo.
+  - il controller **EHCI risponde a 0xE2004000** — dentro la stessa fascia — e
+    il suo primo registro legge `01000020`, cioe' un valore **sensato**
+    (versione 0x0100, capacita' lunghe 32 byte). Se quella fascia fosse
+    sepolta, sarebbe muto anche lui.
+
+! **E un numero che si riconosce vale piu' di un numero che non e' tutti uno.**
+  E' per questo che il controllo si e' fatto su un EHCI: il suo primo registro
+  ha una forma nota, quindi «risponde» e' una constatazione e non una speranza.
+
+## E mmio_map E' PROVATA, STAVOLTA SUL SERIO
+
+! **La prima verifica non dimostrava niente.** Confrontava due letture che erano
+tutt'e due zero — e zero uguale a zero non prova che due mappature siano la
+stessa memoria: lo schermo era semplicemente nero. Rifatta scrivendo da una
+parte e rileggendo dall'altra: `0xcafebabe` passa in un verso, `0x0badf00d`
+nell'altro.
+
+## IL PONTE, GUARDATO PER INTERO, E' A POSTO
+
+```
+ponte 00:01.0 = 1039:0002
+comando 0x0007  [io, memoria, master]    stato 0x0220
+bus: primario 0, secondario 1, subordinato 1
+controllo 0x000c  [VGA abilitata]
+memoria   0xe2100000-0xe21fffff
+prefetch  0xe8000000-0xefffffff
+I/O       0xa000-0xafff
+```
+
+! **E QUI HO FATTO UN ERRORE CHE VALE LA PENA SCRIVERE:** avevo dato per buono
+che «il framebuffer si vede, quindi il ponte inoltra». Non regge. Su un chipset
+a memoria condivisa la finestra del framebuffer la decodifica il **north
+bridge**, che la gira alla RAM di sistema: quei cicli sul bus 1 non ci arrivano
+mai. Il ponte va guardato nei suoi registri — e guardato li', e' a posto.
+
+## LA PROVA CHE RESTA: LA SEQUENZA DI sisfb, NELL'ORDINE
+
+`sisfb_engine_init` fa quattro cose in quest'ordine: soglia in SR27, **RESET
+della coda in SR26 (0x01)**, un giro sui puntatori READPORT/WRITEPORT, e **solo
+allora** SR26 con il bit MMIO. Io avevo scritto il bit MMIO direttamente,
+saltando il reset: se e' il reset a svegliare il blocco, quella prova non
+provava niente.
+
+E' il passo 13 di `-2ddiagnosi`. E' scritto, compila, e **non e' mai girato**:
+lo `scarica` che doveva portarlo sulla macchina si e' impiantato e l'Acer ha
+rieseguito il binario vecchio — cosa che si e' vista perche' il referto non
+aveva il passo 13. ! **Un referto che non contiene quel che ti aspetti e' un
+referto di un'altra versione: la prima cosa da guardare e' se il binario e'
+arrivato.**
+
+## DUE COSE IMPARATE SUGLI ATTREZZI, E VALGONO PIU' DI UNA GIORNATA
+
+! **DA TELNET L'USCITA SI TRONCA INTORNO AL CHILOBYTE.** Un referto di 1405
+byte ne fa arrivare circa mille e poi piu' niente — e il programma **non e'
+morto**: arriva in fondo, la shell torna al prompt, il comando dopo funziona.
+Sembrava che il driver morisse ogni volta a un'istruzione diversa, e ogni volta
+si spostava: non era il driver, era il punto in cui finivano i mille byte.
+Segnato in `@TELNET-SCALA` insieme all'effetto scala.
+
+Il giro che funziona nel frattempo:
+
+```
+comando > /root/referto.txt
+senderror http://<questa-macchina>:8080/report/ /root/referto.txt
+```
+
+! **E COSI' senderror E' STATO PROVATO SU FERRO VERO**, che era quel che
+`@DIF-POST` aspettava dal 14 settembre: 1405 byte partiti, 200, file salvato.
+
+## COM'E' RIMASTA LA MACCHINA
+
+L'Acer accetta la connessione telnet e non esegue piu' niente. ! **La prova del
+BAR non e' mai partita** — la sessione si e' impiantata sul `scarica` che la
+precedeva — quindi la macchina non ha nessun registro spostato: l'ultima cosa
+che ha fatto e' stata rimettere SR26, SR27 e i BAR com'erano, e il referto lo
+conferma. Vuole un giro di spegnimento.
+
+---
+
+# 16 settembre 2026 — LA LIBC NON COPIA PIU' UN BYTE PER VOLTA
+
+La misura della mattina (qui sotto) aveva lasciato una riga scoperta: la
+`memcpy` della libc faceva `while (n--) *d++ = *s++;`, e verso il framebuffer
+erano **47 MB/s contro i 375** della stessa copia a otto byte. Il compositore
+non la usa — ha il suo MMX — ma la paga chiunque altro copi molti byte.
+
+## CHE COSA E' CAMBIATO IN lib/libc.c
+
+`memset`, `memcpy`, `memmove`, `memcmp` e `strlen`. Tre strade, scelte sulla
+misura del BLOCCO e non su quella della macchina: sotto 32 byte si resta a byte
+(il prologo che allinea costerebbe piu' di quanto rende, e un blocco corto e' il
+caso normale), da 32 in su parole da 32 bit, da 256 in su MMX.
+
+  - **si allinea la destinazione, non la sorgente.** Su x86 un carico
+    disallineato costa poco; uno STORE disallineato che attraversa una riga di
+    cache costa, e sulla memoria video write-combining rompe la combinazione —
+    cioe' proprio il meccanismo per cui li' MMX vale il doppio.
+  - **MMX si puo' usare dentro una funzione di libreria** perche' il kernel
+    salva lo stato FPU al cambio di contesto e perche' l'ABI i386 dichiara lo
+    stack x87 vuoto alla chiamata. Con `emms` alla fine di ogni giro.
+  - **`strlen` usa il trucco di Mycroft**, ma allineando prima il puntatore a
+    quattro: una parola allineata non attraversa mai il confine di una pagina,
+    ed e' l'unica ragione per cui leggere quattro byte per volta non e' una
+    lettura fuori buffer.
+  - **`mem_parola` e' un `uint32_t` `may_alias`.** Leggere byte attraverso un
+    `uint32_t*` e' cio' che la regola di aliasing vieta, e qui si compila a -O2
+    senza `-fno-strict-aliasing`.
+
+## CONTROLLATA DUE VOLTE, E LA PRIMA E' SUL PC
+
+Le funzioni sono state estratte da `libc.c` e confrontate con quelle di sistema
+su **tutte le misure fino a 600 byte, per 8 x 8 disallineamenti**,
+sovrapposizioni di `memmove` comprese: tutto uguale. Poi `bin/memprova` (nuovo)
+rifa' lo stesso confronto **dentro EX-OS**, contro le versioni vecchie che si
+porta dentro come metro — perche' le vecchie erano lente ma giuste, e sono
+l'unica definizione di «giusto» di cui questo sistema disponga. In QEMU:
+«tutto giusto».
+
+## I NUMERI IN QEMU, E LA META' CHE NON SI PUO' LEGGERE
+
+Da 1 KB in su: `memcpy` fino a **40x**, `memset` **5x**, `memmove` **4x**,
+`memcmp` **4x**, `strlen` **5,5x**.
+
+! **SOTTO QEMU LE RIGHE CORTE MENTONO, E NON DI POCO.** Le funzioni nuove
+  stanno in `libc.so` e ci si arriva con un `jmp` INDIRETTO attraverso la
+  tabella dei ponti; le vecchie sono dentro `memprova` e si chiamano dritte.
+  Sulla CPU vera la differenza e' qualche ciclo; sotto la traduzione dinamica
+  di QEMU un salto indiretto rompe la catena dei blocchi tradotti e costa cento
+  volte tanto. A 16 byte per chiamata la tabella dice che la libc nuova e' piu'
+  lenta — e non e' vero. **Le righe corte si leggono solo su ferro vero.**
+
+## DUE TRAPPOLE DELLA MISURA, PAGATE E SCRITTE
+
+! **`memcmp` vecchia rendeva 23489 MB/s**, cioe' non veniva mai chiamata. E'
+  pura e il risultato non si guardava: GCC la cancella. `noinline` NON basta —
+  dice «non aprirla qui», non «chiamala per forza».
+
+! **E sistemato quello, la cancellava lo stesso**: gli argomenti dentro il ciclo
+  non cambiano mai, quindi una funzione pura chiamata mille volte con gli stessi
+  puntatori viene tirata FUORI dal ciclo. La cura che regge e' leggere i
+  puntatori da variabili `volatile`, che il compilatore deve rileggere a ogni
+  giro e sulle quali non puo' ragionare.
+
+## IL FLOPPY E' PIENO: 3072 BYTE LIBERI
+
+La libc e' cresciuta di **720 byte di codice**, ma il floppy si e' riempito di
+**8 KB**: i binari statici allineano le sezioni a 4 KB, quindi `kbd.drv` e
+`uhci.drv` sono cresciuti di **4140 byte l'uno** per 720 byte di codice in piu'.
+A HEAD ne restavano 11264, ora 3072.
+
+! La prima stesura aveva anche gli srotolamenti a 16 byte e **non ci stava**:
+  `Disk full` durante la copia delle librerie. Tolti — fra 32 e 255 byte
+  rendono poco, perche' sopra i 256 entra MMX — si e' passati da 940 a 720 byte
+  e il floppy si e' richiuso. **La prossima cosa che tocca `libc.c` o un driver
+  del floppy non ci sta.**
+
+## E DUE COSE TROVATE PER STRADA
+
+  - `bin/fbprova` non dichiarava la versione e fermava `make all` su
+    `verifica-versioni`: aggiunto `EX_VERSIONE`.
+  - `memprova` andava aggiunto a `BINARI_SOLO_CD`, o l'ISO non avrebbe
+    dipeso da lui. Se n'e' accorto `verifica-dipendenze-cd` da solo: e' il
+    controllo che esiste apposta.
+
+## E SUL FERRO VERO: 47 -> 375 MB/s
+
+`fbprova` sull'Acer, 800x600x32, la stessa riga di stamattina:
+
+```
+                              PRIMA      DOPO
+copia RAM -> schermo         47 MB/s   375 MB/s    38,2 ms -> 4,9 ms
+copia RAM -> RAM            357 MB/s   778 MB/s
+```
+
+! **E il punto non e' «piu' veloce»: e' che 375 E' ESATTAMENTE il riempimento
+  MMX misurato sulla stessa macchina.** La `memcpy` verso il framebuffer non e'
+  piu' il collo di bottiglia di se stessa — adesso il limite e' il bus della
+  scheda, e piu' in la' non si va senza il motore 2D.
+
+`memprova` sull'Acer dice «tutto giusto» — la correttezza e' verificata anche
+sul ferro, non solo in QEMU — e i guadagni, sui blocchi che stanno in cache:
+
+```
+              vecchia    nuova   guadagno
+memcpy  4 KB    428      8282     19,4x
+memset  4 KB   1702     11873      7,0x
+memmove 4 KB    571      2246      3,9x
+memcmp  4 KB    428      2254      5,3x
+strlen  4 KB    855      2252      2,6x
+```
+
+! **A 256 KB il guadagno scende a 1,4x, e va letto giusto**: due buffer da 256
+  KB non stanno nella cache di un Sempron, quindi li' non si misura piu' la
+  copia — si misura la memoria. Il numero che conta per chi scrive programmi e'
+  quello dei blocchi che la cache regge, cioe' quasi tutti.
+
+! **A 16 byte la nuova e' 0,9x, e va bene cosi'.** Sotto 32 byte si prende
+  apposta la strada a byte, e quel dieci per cento e' il controllo della soglia
+  piu' il salto indiretto in libc.so. Pagare un decimo sui blocchi corti per
+  prenderne diciannove sui lunghi era il patto.
+
+## E gfedit HA LASCIATO IL FLOPPY
+
+L'immagine era scesa a **3072 byte liberi** e non ci stava piu' niente. `gfedit`
+occupa **60236 byte**: spostato in `build/bin-cd/`, cioe' costruito solo per il
+CD, il floppy e' tornato a **63488 byte liberi**.
+
+! **SI E' TOLTO LUI E NON `textline`**, benche' textline sia piu' povero.
+`gfedit` ha bisogno di `/dev/kbd.drv` per avere i tasti uno per uno, e quando
+quel servizio non c'e' **rimanda gia' a textline da solo**: togliere il
+pavimento per tenere il piano di sopra avrebbe lasciato un floppy su cui, in
+soccorso, certe volte non si puo' correggere una riga di `kernel.cfg`. E
+textline sono 18184 byte contro 60236 — si sarebbe pagato tre volte tanto per
+averne un terzo. Sul CD e su ogni sistema installato `gfedit` c'e' come prima.
+
+---
+
+# 16 settembre 2026 — LA GRAFICA CHE SCATTA: IL BUS NON C'ENTRA
+
+L'interfaccia grafica sull'Acer scatta, e il sospetto naturale era il
+framebuffer: mappato con PG_PRESENT | PG_WRITABLE e nessuno ha mai toccato gli
+MTRR, quindi quell'intervallo poteva benissimo essere UC — ogni store una
+transazione sul bus per conto suo, e MMX inutile.
+
+! **E' STATO MISURATO, ED ERA FALSO.** `bin/fbprova` (nuovo) misura sul ferro
+  vero. Acer Aspire 3000, SiS 6330 a 800x600x32, 1.920.000 byte a fotogramma:
+
+    copia RAM -> RAM              357 MB/s    5.1 ms a fotogramma
+    riempi 32 bit                 192 MB/s    9.5 ms
+    riempi MMX (8 byte)           375 MB/s    4.9 ms
+    riempi SSE2 non temporale     379 MB/s    4.8 ms
+    copia RAM -> schermo (memcpy)  47 MB/s   38.2 ms
+    LETTURA dallo schermo          77 MB/s   23.5 ms
+    riga MMX (come wserver)       375 MB/s    4.9 ms
+    pixel per pixel (px)          183 MB/s   10.0 ms
+
+Scrivere nel framebuffer con MMX va **come scrivere in RAM**: 375 contro 357.
+Su memoria UC sarebbe stato dieci o venti volte piu' lento, e MMX non avrebbe
+cambiato niente. Il BIOS di questa macchina la fascia WC ce l'ha gia' messa.
+
+## QUEL CHE I NUMERI DICONO DAVVERO
+
+  - **Il bus non e' il collo di bottiglia.** Un fotogramma intero composto
+    tutto in MMX costa 4,9 ms; anche facendolo tutto pixel per pixel — la
+    strada di `px()`, chiamata compresa — costa 10 ms. Sono 100 e 200
+    fotogrammi al secondo: non e' li' che si scatta.
+
+  - ! **memcpy DELLA LIBC COPIA UN BYTE PER VOLTA** (`while (n--) *d++ = *s++;`,
+    lib/libc.c). In RAM non si vede, perche' la cache assorbe: 357 MB/s. Verso
+    il framebuffer si vede eccome: **47 MB/s, 38 ms a fotogramma**, otto volte
+    peggio della stessa copia fatta con MMX. Il compositore non la usa — ha il
+    suo MMX — ma chiunque altro scriva sullo schermo la paga, e la paga anche
+    chi copia buffer grossi in RAM senza saperlo.
+
+  - **Leggere dal framebuffer costa 23,5 ms a schermata.** Il compositore non
+    legge mai (verificato: `g_fb` compare solo come destinazione), e va tenuto
+    cosi': una sola lettura di schermo per fotogramma raddoppierebbe il costo.
+
+## DOVE CERCARE ADESSO
+
+Se comporre costa 5-10 ms e la macchina scatta, il tempo se ne va in **quante
+volte** si compone, non in quanto costa una volta. `sporca_tutto()` e' chiamato
+da quasi tutto — una finestra che si aggiorna, che si sposta, che va in cima,
+un bottone del mouse — e ogni chiamata ridipinge 800x600. Il commento in testa
+a quella sezione lo dice gia': «restringerlo e' un lavoro a se' che va fatto un
+caso per volta guardando i pixel». Quel lavoro adesso ha un numero che lo
+giustifica.
+
+## E kernel/arch/x86/mtrr.c RESTA SCRITTO MA NON COLLEGATO
+
+E' pronto — legge MTRRCAP, racconta la tabella nel log, e sa programmare una
+fascia WC sul framebuffer con la sequenza dell'SDM (cache spenta, wbinvd, MTRR
+disabilitati, scrittura, tutto riacceso) — ma **su questa macchina non serve**,
+perche' la fascia c'e' gia'. Serve su una macchina il cui BIOS non la metta, e
+li' varrebbe cinque o dieci volte. Non e' nel Makefile: va collegato quando
+esiste una macchina su cui provarlo, non prima.
+
+---
+
+# 16 settembre 2026 — ftpswap HA GIRATO SU UNA MACCHINA VERA
+
+## E PRIMA: L'AVVISO DELLA TASTIERA CHE SCATTAVA NEL CASO NORMALE
+
+Compilando ed eseguendo un programma di console compariva, a ogni programma
+che leggeva una riga:
+
+    kbd: READLINE su console 0 in raw, ripristino cooked
+
+Non era un guasto del programma: era la SHELL. `riga_modifica()` metteva la
+console in RAW per il suo editor di riga — frecce, cronologia, un tasto per
+volta — e non la rimetteva mai in cooked prima di lanciare il comando. L'unico
+`kbd_modo(KBD_MODE_COOKED)` stava in `sh_exit()`, messo ad agosto per un caso
+vicino e non per questo. Cosi' il primo programma che chiedeva una riga la
+trovava in raw, e il driver la raddrizzava da se'.
+
+! **UN AVVISO CHE SCATTA NEL CASO NORMALE SMETTE DI SEGNALARE QUELLO ANOMALO**,
+  ed e' scritto nel commento di `sh_exit()` da agosto. Quella riga esiste per
+  dire una cosa sola: un programma a schermo intero e' morto senza rimettere a
+  posto la console. Detta a ogni `scanf`, non diceva piu' niente.
+
+! **E NON ERA SOLO RUMORE.** `kbd_set_mode()` butta via l'input accumulato in
+  tutt'e due le direzioni — «consegnare gli uni con le regole degli altri
+  darebbe input inventato» — quindi quel che si era battuto in anticipo, prima
+  che il programma chiedesse la riga, si PERDEVA.
+
+`sh` 0.002: `riga_modifica()` diventa un guscio che chiama
+`riga_modifica_raw()` e poi rimette cooked. Il raw torna al giro dopo, quando
+la shell riprende l'invito.
+
+! **E SI RIMETTE COOKED SOLO SE IL RAW ERA NOSTRO** (`g_console_raw`).
+  `kbd_modo()` manda il messaggio comunque, e su un pty — una sessione telnet —
+  `sh_console_info()` non risponde: la richiesta finirebbe addosso alla console
+  0, che e' di qualcun altro.
+
+Provato in QEMU: `ftpswap /` chiede il server, la riga vuota arriva, e nel
+registro di console il messaggio compare **zero volte**. Poi freccia in su e
+Invio: il comando di prima e' tornato ed e' ripartito — l'editor in raw si
+riarma, e la cronologia non si e' persa.
+
+
+L'Acer e' tornato acceso, aggiornato e coerente: `uname -a` dice 0.217 e
+`netupdate -check` risponde **1605 uguali, 0 da aggiornare**. Che netupdate
+parta e' gia' una notizia: vuol dire che `exhttp.so` sul disco e' quella nuova,
+cioe' che il giro di soccorso del 15 ha funzionato.
+
+## LE CINQUE PROVE, TUTTE PASSATE
+
+Directory `/root/prova` sull'Acer contro una cartella di prova su
+`ftp.exagonx.altervista.org`, pilotata da telnet **un comando per volta**.
+
+1. **Il primo giro e il `.cfg`.** Non c'era: lo ha chiesto voce per voce e
+   scritto a 0600. Poi ha replicato la struttura nei due versi — `MKDIR-SU`,
+   `MKDIR-QUI` — e portato i file nuovi da tutt'e due le parti: **su 2, giu' 3**.
+2. **Un file CAMBIATO sul server**: `GIU dal_server.txt`, e il testo nuovo
+   riletto sulla macchina con `cat`.
+3. **Un binario da 3000 byte**, fatto a caso qui: server -> Acer -> server, e
+   tornato **identico byte per byte** (`cmp` da questa parte). Il modo binario
+   regge, e regge attraverso due implementazioni diverse.
+4. **La cancellazione, nei due sensi.** Tolto un file sull'Acer:
+   `CANCELLO-LI locale/solo_qui.txt`, e sul server non c'e' piu'. Tolto un file
+   sul server: `CANCELLO-QUI sotto/annidato.txt`. ! **E' LA PROVA CHE DIMOSTRA
+   IL DIARIO**: senza memoria un file che sta da una parte sola e' sempre un
+   file nuovo da copiare, e cancellare sarebbe impossibile.
+5. **Un conflitto vero**, stesso file cambiato dalle due parti:
+   `CONFLITTO dal_server.txt (vince il remoto, il locale in .prima)`, e nel
+   `.prima` c'era davvero il testo scritto sull'Acer.
+
+E `ftpswap.cfg` e `ftpswap.diario` **non sono saliti**: la radice remota non li
+ha. Era una promessa scritta nel commento in testa al programma.
+
+## ! L'OROLOGIO DELL'ACER SEGNA IL 2005
+
+I file caricati arrivano sul server datati «Feb 9 2005»: `MFMT` fa il suo
+mestiere, e' la sorgente a mentire. Non tocca il caso normale — chi e' cambiato
+lo dice il DIARIO, non l'orologio — ma nell'unico punto dove i due orologi si
+confrontano per davvero, il conflitto, **quella macchina perde sempre**. La
+prova 5 e' passata anche per quello, e va saputo leggendo il risultato. In
+`/bin` non c'e' un comando `date`: o la pila del CMOS e' finita, o l'ora non e'
+mai stata messa.
+
+Resta `eject`, che non si prova senza una chiavetta infilata. Il kernel nuovo
+adesso c'e'. Vedi `@PROVE-MACCHINA` in `in_lavorazione.txt`.
+
+---
+
+# 15 settembre 2026, sera — QUI SI RIPRENDEVA IERI (superato dal blocco in cima)
 
 > **I sette file del 15 settembre sono compilati, sul CD e sul server.** La
 > catena e' andata fino in fondo:

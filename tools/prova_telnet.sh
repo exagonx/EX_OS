@@ -19,8 +19,10 @@
 # ! UNA MACCHINA SOLA PER VOLTA, come per prova_ssh.sh.
 # =============================================================================
 cd "$(dirname "$0")/.." || exit 1
-pkill -9 -f qemu-system 2>/dev/null
-sleep 2
+# ! NIENTE pkill QUI. Fa cadere in silenzio il comando che ha lanciato questo
+# script — l'intera sessione, non solo il qemu — e non serve: qemu_drive.py si
+# ripulisce da solo alla fine, e la propria istanza la distingue con
+# EXOS_ISTANZA.
 rm -f /tmp/exos/serialtn.txt
 
 EXOS_ISTANZA=tn EXOS_NO_FLOPPY=1 EXOS_CDROM=dist/exos.iso EXOS_ATTESA_FINALE=90 \
@@ -36,6 +38,13 @@ done
 sleep 2
 
 timeout 60 python3 tools/telnet_client_prova.py 2323 > /tmp/exos/tnclient.log 2>&1
+
+# ! E POI I BYTE SUL CAVO, che il client vero non fa vedere: capo riga CR LF e
+# un'uscita lunga che non si tronca. Sono le due cose che il 16 settembre 2026
+# erano rotte tutt'e due — lo sfasamento a scaletta e il chilobyte che sparisce
+# — e un client telnet le nasconde tutt'e due.
+echo "=== BYTE SUL CAVO ==="
+timeout 90 python3 tools/telnet_nvt_prova.py 2323 /boot/kernel.txt boot/kernel.txt
 
 echo "=== SERVER ==="
 grep -a "telnetd:" /tmp/exos/serialtn.txt 2>/dev/null | tr -d '\000' | sed 's/\x1b\[[0-9;]*m//g' | tail -12

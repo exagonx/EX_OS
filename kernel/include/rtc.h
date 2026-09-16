@@ -46,4 +46,17 @@ typedef struct {
  * data impossibile (CMOS scarico su hardware vecchio). */
 int rtc_read(RtcTime *t);
 
+/* Rimette l'orologio all'ora indicata. Ritorna 0, o -1 se la data non ha
+ * senso (il 31 di febbraio, un anno fuori da 1980-2099) o se il chip non
+ * risponde.
+ *
+ * ! IL LIMITE E' 2099, non 2199 come in lettura: il chip tiene due cifre
+ * d'anno e rtc_read le rilegge con la convenzione «sotto 70 = 2000+».
+ * Scrivere il 2150 vorrebbe dire rileggere il 2050 senza dirlo a nessuno.
+ *
+ * ! NON E' NEMMENO DA PENSARE DI CHIAMARLA A OGNI TICK. Ferma il conteggio
+ * del chip per la durata della scrittura (bit SET del registro B): e' il
+ * gesto di chi rimette l'ora, non un modo per correggere una deriva. */
+int rtc_write(const RtcTime *t);
+
 #endif /* RTC_H */
