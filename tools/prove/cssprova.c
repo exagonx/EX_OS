@@ -128,7 +128,7 @@ int main(void)
     printf("\n=== quello che si SCARTA invece di indovinare ===\n");
     carica("<div><span><p>x</p></span></div>", "div > p { color: red }");
     stile_di(trova("p"), &s);
-    ok("«>» scarta la regola, non la tratta da discendenza",
+    ok("\">\" scarta la regola, non la tratta da discendenza",
        s.colore == CSS_NIENTE);
     carica("<a><b><c><d><p>x</p></d></c></b></a>",
            "a b c d p { color: red }");

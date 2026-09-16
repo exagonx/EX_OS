@@ -4170,7 +4170,7 @@ ip_drv: dirs $(IP_DRV_OUT)
 # costruire apposta in quel momento, si costruirebbe da un albero diverso da
 # quello che ha prodotto il floppy che non parte — cioe' si proverebbe
 # un'altra cosa. Costa una copia di 1.4 MB e due mcopy.
-all: dirs stage1 stage2 kernel $(PROGRAMMI_FLOPPY) $(PROGRAMMI_CD) $(PROGRAMMI_EXWIN) $(DRIVER_CD) verifica-programmi verifica-statici verifica-versioni verifica-exbig verifica-exasn1 verifica-excert verifica-excurva verifica-extls floppy diagnostic floppy-verboso
+all: dirs stage1 stage2 kernel $(PROGRAMMI_FLOPPY) $(PROGRAMMI_CD) $(PROGRAMMI_EXWIN) $(DRIVER_CD) verifica-programmi verifica-ascii verifica-statici verifica-versioni verifica-exbig verifica-exasn1 verifica-excert verifica-excurva verifica-extls floppy diagnostic floppy-verboso
 	@echo ""
 	@echo "============================================"
 	@echo " EX-OS build completata!"
@@ -6423,6 +6423,28 @@ verifica-statici: $(PROGRAMMI_FLOPPY) $(PROGRAMMI_CD) $(DRIVER_CD)
 	    exit 1; \
 	fi; \
 	echo "[OK] login, install, sh e i driver sono statici"
+
+# =============================================================================
+# verifica-ascii — le stringhe a schermo si scrivono in ASCII puro
+#
+# ! NON E' UNA QUESTIONE DI STILE, E' UN DIFETTO VISIBILE. La console di EX-OS
+# e' code page 437. Un trattino lungo UTF-8 sono tre byte — E2 80 94 — e li'
+# valgono tre glifi: Gamma, C con cediglia, o con dieresi. Il 16 settembre 2026
+# `netupdate -check` stampava «Registro da /tmp/netupdate GCo sistema 0.218», e
+# per un momento e' sembrato un registro corrotto invece di un trattino.
+#
+# ! E GUARDA SOLO DENTRO LE VIRGOLETTE. Negli accenti dei COMMENTI non c'e'
+# niente di male — la regola del progetto dice proprio che stanno li', perche'
+# quel testo non passa da nessuno schermo. Per distinguere le due cose bisogna
+# saltare commenti e caratteri come farebbe un compilatore, e infatti non e' un
+# grep: e' tools/solo_ascii.py.
+#
+# Ottantotto stringhe sono state corrette in un colpo solo il giorno che il
+# difetto e' saltato fuori. Questo bersaglio esiste per l'ottantanovesima.
+# =============================================================================
+.PHONY: verifica-ascii
+verifica-ascii:
+	@python3 tools/solo_ascii.py .
 
 .PHONY: verifica-programmi
 verifica-programmi: $(PROGRAMMI_FLOPPY) $(PROGRAMMI_CD) $(DRIVER_CD)

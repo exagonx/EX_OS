@@ -114,6 +114,157 @@ col `.cfg` e il diario gia' scritti. Sono li' apposta, per rifare un giro di
 
 ---
 
+# 16 settembre 2026, notte — QUATTRO COLONNE, E OTTANTOTTO STRINGHE ROTTE
+
+## IL FILE MANAGER HA QUATTRO COLONNE, E L'INTESTAZIONE SI CLICCA
+
+Chiesto dall'utente. `filemgr` 0.002:
+
+    Cartelle     |[Nome ^][Tipo][Dimensione][Data]
+    - /          | bin         <DIR>          -  2026-09-16 20:57
+      + bin      | boot.img    <FILE>   1474560  2026-09-16 20:57
+
+Un clic sceglie la colonna, un secondo clic sulla stessa rovescia il verso, e
+la freccia nell'etichetta dice qual e'.
+
+! **IL VERSO SE LO RICORDA OGNI COLONNA PER CONTO SUO.** Chi ordina per data
+vuole il piu' recente in cima, chi ordina per nome vuole la A: un verso solo
+per tutte costringerebbe a due clic ogni volta che si cambia colonna.
+
+! **L'INTESTAZIONE NON E' UN CONTROLLO NUOVO DEL TOOLKIT**: sono quattro
+pulsanti allineati alle colonne, e le loro coordinate escono dalle STESSE
+costanti da cui esce la riga. E' la stessa scelta dell'albero a sinistra, che
+e' «una lista con dentro l'indentazione». Scritte due volte, le larghezze si
+scollano alla prima colonna allargata — **e infatti si erano gia' scollate alla
+prima stesura**: il pulsante «Tipo» era largo un carattere di meno e finiva
+prima della sua colonna. Adesso ci sono due macro, `INT_X` e `INT_W`, e un
+numero solo da cambiare.
+
+! **E ADESSO SI TIENE TUTTO, NON PIU' SOLO IL NOME.** Prima la dimensione
+viveva in uno `static` dentro `leggi()`: bastava, perche' la riga si costruiva
+una volta sola e poi era la lista del toolkit a possederla. Da quando le
+colonne si RIORDINANO, l'elenco va ricostruito senza tornare sul disco.
+
+### TRE COSE TROVATE DALLA PROVA, E NESSUNA SI VEDEVA LEGGENDO
+
+  1. **La freccia non si ridisegnava.** L'elenco si riordinava davvero e
+     l'intestazione restava com'era — cioe' la cosa peggiore, un'indicazione
+     che dice il falso invece di non dire niente. `ex_testo_metti()` su un
+     CONTROLLO e' `ex_titolo()`, che avvisa il server **solo** per una finestra
+     di primo livello. Il contratto era gia' quello — `stato_aggiorna()` viene
+     chiamata da dentro `ridisegna()` e mai da sola — e io l'avevo saltato.
+
+  2. **«Dimensione ^» non ci stava nel suo pulsante.** Con dieci caratteri di
+     colonna il pulsante era largo esattamente quanto la parola, e la freccia
+     finiva tagliata: spariva proprio sulla colonna appena scelta. La colonna
+     e' passata a dodici — **larga per l'intestazione, non per il numero**.
+
+  3. **Ordinando per dimensione le cartelle uscivano in un ordine inspiegabile.**
+     La colonna mostra un trattino, ma il numero c'e' lo stesso ed e' la misura
+     della voce sul disco: dieci righe con lo stesso trattino, mescolate. Fra
+     due directory adesso si ordina per NOME, che e' l'unica cosa che si vede.
+
+! **E LA PROVA E' COSTATA DUE GIRI A VUOTO.** Il primo: un `mon:mouse_move` per
+argomento, un quarto di secondo l'uno, sessanta passi per clic — la prova
+finiva il tempo prima dei clic. Tutto il viaggio in UN `mon:` solo, separato da
+«;», e passa da `rapidi()`. Il secondo: `Alt+F6` da solo non arriva alla
+console grafica, ci vuole `Alt+F5` prima. Non so perche', e non l'ho indagato:
+e' l'attrezzo, non il sistema.
+
+Messi in coda, come chiesto: **@IMMAGINI** (un visualizzatore — `ex_immagine()`
+c'e' gia' nel toolkit, manca l'applicazione e manca «questa estensione si apre
+con quel programma», che e' un pezzo di sistema) e **@FIN-ICONA** (le finestre
+ridotte a icona sul desktop e sulla barra — tre programmi da toccare, e va
+deciso che l'elenco dei ridotti e' del SERVER e pm lo chiede).
+
+## OTTANTOTTO STRINGHE CHE NON SI POTEVANO STAMPARE
+
+Segnalato dall'utente, e il sintomo era questo:
+
+    Registro da /tmp/netupdate GCo sistema 0.218 del 2026-09-16T17:49:40Z
+
+Quel `GCo` sono tre glifi — Gamma, C con cediglia, o con dieresi — e non e' un
+registro corrotto: e' **un trattino lungo**. Il sorgente diceva «Registro da %s
+— sistema %s», con un trattino lungo UTF-8: tre byte, `E2 80 94`. La console di
+EX-OS e' **code page 437**, dove quei tre byte valgono esattamente quei tre
+glifi.
+
+Ce n'erano **88**, in 29 file, con due soli caratteri: il trattino lungo e le
+virgolette basse.
+
+! **E I COMMENTI NON SI TOCCANO, ED E' TUTTA LA REGOLA.** Gli accenti nei
+commenti sono voluti e vanno benissimo: quel testo non passa da nessuno
+schermo. Per distinguere le due cose bisogna saltare commenti e caratteri come
+farebbe un compilatore — non basta un grep, e infatti il correttore e' un
+parser.
+
+! **E ADESSO C'E' UNA GUARDIA.** `tools/solo_ascii.py`, bersaglio
+`verifica-ascii`, dentro `make all`. Ottantotto stringhe si correggono in un
+colpo solo; questo esiste per l'ottantanovesima — il giorno che qualcuno
+incolla del testo da un editor che mette le virgolette basse da solo.
+
+! **UNA COSA CHE NON HO TOCCATO**, per non confondere le acque: in un commento
+di `filemgr.c` c'e' scritto `\xab` come testo, e c'era gia' a HEAD. E' in un
+commento, non va a schermo.
+
+### E POI: «LA VEDO ANCHE ALL'AVVIO»
+
+Segnalato dall'utente subito dopo, ed era vero due volte.
+
+**La prima e' banale e va detta lo stesso**: la correzione era nel sorgente e
+compilata qui, e su nessuna macchina accesa. All'avvio girava — e gira ancora —
+il binario vecchio. Quel che ha visto era la stessa stringa di prima, non una
+nuova.
+
+**La seconda e' la cosa che conta**: *perche' all'avvio?* La risposta e' una
+riga sola, `boot/avvio.sh:73`:
+
+    netupdate -auto
+
+netupdate parla all'accensione, e stampa esattamente quella frase. Quindi «la
+stringa all'avvio» e «la stringa di `netupdate -check`» sono lo stesso difetto
+nello stesso programma.
+
+### MA CERCANDOLO SONO USCITE ALTRE DUE SORGENTI
+
+Il primo controllo guardava solo le stringhe dei `.c` e `.h`. All'avvio pero'
+parla anche altro, e la ricerca vera si fa **sui byte dell'immagine costruita**,
+non sui sorgenti: quel che finisce su `build/iso-exos` e' quel che si puo'
+stampare.
+
+  - ! **`boot/help.txt`: 31 caratteri.** Lo stampa `help`, riga per riga, senza
+    passare da nessuna printf: un trattino lungo li' dentro esce garbato
+    esattamente come uno dentro una stringa C. **E queste righe si MOSTRANO**,
+    non sono commenti.
+  - ! **`tools/iso/strumenti.txt`: due campi `nota`.** Li stampa `toolinst`
+    (`printf("    %s\n", g->nota[k])`). I commenti dello stesso file no.
+
+E **tre sospetti scagionati**, che e' altrettanto utile sapere:
+
+  - ! **`KERNEL.BIN` non c'entra.** Le dieci «a accentate» dentro sono
+    `81 c3 a0 30 00 00`, cioe' `add ebx, 0x30a0`: **codice macchina**. Lo
+    stesso per `login`, `sis.drv`, `netupdate` e `help`. Cercare una sequenza
+    di byte dentro un binario trova anche le istruzioni, e senza guardare il
+    contesto si finisce a correggere cose che non esistono.
+  - ! **I commenti di `avvio.sh`, `kernel.cfg`, `telnetd.cfg` non si stampano
+    MAI**, e non e' una supposizione: `bin/sh/shell.c` salta le righe che
+    cominciano con '#' prima ancora di stamparle —
+    `if (n == 0 || riga[0] == '#') continue;`. Spogliarli di accenti sarebbe
+    la stessa cosa che qui si e' deciso di NON fare per i commenti del C.
+  - ! **Le stringhe `db` dei bootloader in assembly sono pulite**, guardate
+    negli operandi fra virgolette e non nei commenti dopo il `;`.
+
+La guardia adesso copre tutt'e tre i casi — stringhe C, testi mostrati per
+intero (`help.txt`), e testi con campi mostrati (`strumenti.txt`, dove i
+commenti restano liberi). **Ed e' stata provata piantandoci un difetto apposta**:
+un trattino lungo aggiunto in coda a help.txt, `verifica-ascii` lo trova e
+rende 1; tolto, torna a zero. Una guardia che non si e' mai vista fallire non
+si sa se guarda.
+
+---
+
+---
+
 # 16 settembre 2026, sera — LA SiS: IL PASSO 13 NON BASTA, E DUE BIT SPENTI
 
 Il passo 13 e' girato sull'Acer, finalmente. **La sequenza di sisfb per intero,

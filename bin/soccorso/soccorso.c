@@ -588,9 +588,9 @@ static void uso(void)
     printf("  soccorso -guarda        dice quali rifarebbe, senza toccare\n\n");
     printf("A che serve: i programmi di EX-OS chiamano le librerie per NOME, e\n");
     printf("un programma nuovo con una libreria vecchia non parte affatto. Se\n");
-    printf("un aggiornamento si interrompe fra i due, i comandi rispondono «la\n");
-    printf("libreria condivisa non ha la funzione ...» oppure «non esporta un\n");
-    printf("nome che serve a questo programma», e non resta niente con cui\n");
+    printf("un aggiornamento si interrompe fra i due, i comandi rispondono \"la\n");
+    printf("libreria condivisa non ha la funzione ...\" oppure \"non esporta un\n");
+    printf("nome che serve a questo programma\", e non resta niente con cui\n");
     printf("rimediare. Questo programma NON usa nessuna libreria condivisa: se\n");
     printf("le porta dentro, e percio' parte comunque.\n\n");
     printf("Guarda i BYTE dei file, non il registro degli aggiornamenti: qui si\n");

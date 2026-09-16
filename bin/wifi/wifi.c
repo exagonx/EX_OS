@@ -222,7 +222,7 @@ static int comando_connect(const char *ssid)
      * difesa la dice il beacon, ed e' li' che si legge. */
     if (ipc_send(pid_wifi, WIFI_MSG_CERCA, NULL, 0) < 0) return 1;
 
-    printf("Cerco «%s»...\n", ssid);
+    printf("Cerco \"%s\"...\n", ssid);
     memset(&trovata, 0, sizeof(trovata));
     for (;;) {
         WifiRete r;
@@ -238,7 +238,7 @@ static int comando_connect(const char *ssid)
     }
 
     if (!vista) {
-        printf("\nwifi: «%s» non si sente.\n", ssid);
+        printf("\nwifi: \"%s\" non si sente.\n", ssid);
         printf("      L'elenco di quelle che si sentono:  wifi -showlist\n");
         return 1;
     }
@@ -287,7 +287,7 @@ static int comando_connect(const char *ssid)
         return 1;
     }
 
-    printf("Connessa a «%s».\n", ssid);
+    printf("Connessa a \"%s\".\n", ssid);
     printf("Adesso serve un indirizzo:  dhcp\n");
     return 0;
 }
@@ -342,7 +342,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    printf("wifi: «%s» non e' un'opzione.\n\n", argv[1]);
+    printf("wifi: \"%s\" non e' un'opzione.\n\n", argv[1]);
     uso();
     return 1;
 }

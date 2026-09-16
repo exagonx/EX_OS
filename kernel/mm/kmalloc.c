@@ -188,7 +188,7 @@ static int canarino_rotto(KHeapBlock *b, const char *quando)
     if (*canarino_di(b) == HEAP_CANARINO) return 0;
 
     g_canarini_rotti++;
-    klog(LOG_ERROR, "KHEAP: %s — il blocco 0x%08x (chiesti %u byte, blocco "
+    klog(LOG_ERROR, "KHEAP: %s - il blocco 0x%08x (chiesti %u byte, blocco "
          "%u) e' stato scritto OLTRE LA FINE: al posto del canarino c'e' "
          "0x%08x. L'aveva allocato chi sta a 0x%08x (risolvilo con "
          "build/kernel.elf).", quando, (uint32_t)(b + 1), b->chiesti, b->size,
@@ -766,10 +766,10 @@ void kmalloc_stats(void)
              "coda a una regione, %u fuori dalla prima)",
              n, g_stop_avanti, g_stop_indietro);
         if (g_intestazioni_rotte)
-            klog(LOG_ERROR, "  ! intestazioni ROTTE: %u — qualcuno scrive "
+            klog(LOG_ERROR, "  ! intestazioni ROTTE: %u - qualcuno scrive "
                  "oltre il proprio blocco", g_intestazioni_rotte);
         if (g_canarini_rotti)
-            klog(LOG_ERROR, "  ! canarini ROTTI: %u — e sopra c'e' scritto "
+            klog(LOG_ERROR, "  ! canarini ROTTI: %u - e sopra c'e' scritto "
                  "chi aveva allocato quei blocchi", g_canarini_rotti);
     }
 

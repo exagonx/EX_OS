@@ -703,7 +703,7 @@ static void impostazioni_apri(void)
                 12 + (i % 2) * 140, 58 + (i / 2) * 34, 132, 28,
                 g_impost, (unsigned int)(ID_RIS + i), 0);
 
-    ex_crea("etichetta", "«testo» spegne la grafica all'avvio.", EX_FIGLIO,
+    ex_crea("etichetta", "\"testo\" spegne la grafica all'avvio.", EX_FIGLIO,
             12, 132, 276, 18, g_impost, 0, 0);
 
     ex_procedura_base(g_impost, EXM_DISEGNA, 0, 0);

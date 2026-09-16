@@ -171,7 +171,7 @@ int main(void)
         unsigned char out[20];
 
         sha1("abc", 3, out);
-        esito("SHA-1 di «abc»", uguali(out, a1, 20, "sha1a"));
+        esito("SHA-1 di \"abc\"", uguali(out, a1, 20, "sha1a"));
 
         sha1("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq", 56, out);
         esito("SHA-1 su 56 byte (due blocchi)", uguali(out, a2, 20, "sha1b"));

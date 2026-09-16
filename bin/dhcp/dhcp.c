@@ -551,7 +551,7 @@ int main(int argc, char **argv)
         printf("     dhcp -r     e poi resta acceso a rinnovarlo (con '&')\n");
         printf("     dhcp -n     chiede e stampa, senza applicare\n\n");
         printf("! LA CONCESSIONE SCADE. Il server assegna l'indirizzo per un\n");
-        printf("  tempo — in casa dodici ore, in un albergo dieci minuti — e\n");
+        printf("  tempo - in casa dodici ore, in un albergo dieci minuti - e\n");
         printf("  poi lo riassegna a chi capita. Senza -r la macchina resta\n");
         printf("  convinta di averlo e parla a vuoto, che e' il guasto piu'\n");
         printf("  difficile da capire perche' non sembra un guasto.\n");

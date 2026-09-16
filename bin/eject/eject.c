@@ -169,7 +169,7 @@ static int smonta_sopra(const char *base, int *quanti)
         } else {
             printf("  %s non si smonta (%d)", punti[i], rc);
             if (rc == -E_BUSY)
-                printf(": qualcuno ci sta dentro — un file aperto, o una\n"
+                printf(": qualcuno ci sta dentro - un file aperto, o una\n"
                        "  shell che ha li' la directory corrente");
             printf("\n");
             guai = 1;

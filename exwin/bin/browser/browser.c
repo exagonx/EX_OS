@@ -3857,7 +3857,7 @@ static void cerca(const char *parole)
     while (fine > 0 && (parole[fine - 1] == ' ' || parole[fine - 1] == '\t')) fine--;
 
     if (fine <= 0) {
-        dico("scrivi che cosa cercare nella casella «Cerca»");
+        dico("scrivi che cosa cercare nella casella \"Cerca\"");
         return;
     }
 
@@ -4979,7 +4979,7 @@ int main(int argc, char **argv)
     if (!g_home[0]) home_predefinita();
 
     ex_fuoco(g_url);
-    dico("un indirizzo a sinistra, delle parole in «Cerca», e Invio.");
+    dico("un indirizzo a sinistra, delle parole in \"Cerca\", e Invio.");
     ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
     disegna();
 

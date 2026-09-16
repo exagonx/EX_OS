@@ -3188,10 +3188,44 @@ with the path. Arrows and Enter as well as the mouse. Pressing "Open" on a file
 hands it to the editor, looked for in `/exwin/bin` and then in
 `/cdrom/exwin/bin`.
 
+**Since 16 September 2026 the list has four columns and sorts on a click**
+(`filemgr` 0.002):
+
+```
+Cartelle     |[Nome ^][Tipo][Dimensione][Data]
+- /          | bin         <DIR>          -  2026-09-16 20:57
+  + bin      | boot.img    <FILE>   1474560  2026-09-16 20:57
+  + boot     | KERNEL.BIN  <FILE>    270376  2026-09-16 20:57
+```
+
+One click picks the column, a second click on the same one **reverses the
+direction**, and the arrow in the label says which it is: «what is it sorted
+by» and «in which direction» are two questions, and without a hint the second
+one is answered by guessing. **Each column remembers its own direction** —
+sorting by date you want the newest on top, sorting by name you want the A.
+
+! **The header is not a new toolkit control**: it is four buttons aligned to
+the columns, derived from the **same constants** the row is. It is the same
+choice as the tree on the left, which is «a list with indentation in it» and
+not a tree control. Written twice, the widths would drift apart the first time
+a column was widened — and the symptom would be a header pointing at the wrong
+column, which is a lie.
+
 ! **DIRECTORIES COME FIRST, AND IT IS NOT COSMETIC:** in a directory with a
-hundred files, the ones you want to enter would be scattered among them. It is
-the only thing this list sorts — sorting names would mean a comparison that
-depends on the language.
+hundred files, the ones you want to enter would be scattered among them. They
+stay on top **whichever column you pick**; the only one that mixes them is
+«Tipo», where separating them is exactly what the click asked for.
+
+! **Two directories are not sorted by size.** The column shows a dash — the
+number filesystems keep there is the size of the entry on disk, not how much
+the contents weigh — but the number is there all the same, and sorting on it
+left the folders in an order the viewer cannot explain. Between two dashes they
+sort by name, which is the only thing on show.
+
+! **The date costs one `stat()` per entry**, which the directory entry does not
+carry. Here the price can be paid: a directory is read when somebody enters it,
+not in a loop. It is the same date as `ls`, the **modification** one: the
+filesystems do not keep a creation date.
 
 ### The terminal in a window
 

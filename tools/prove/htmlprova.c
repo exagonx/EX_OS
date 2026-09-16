@@ -240,7 +240,7 @@ int main(int argc, char **argv)
         for (i = 0; i < g_doc.nodi_n; i++)
             if (g_doc.nodi[i].tipo == HTML_ELEMENTO &&
                 strcmp(html_nome(&g_doc, (int)i), "p") == 0) n++;
-        ok(n == 2, "il «<» del JavaScript non crea tag: restano due <p>");
+        ok(n == 2, "il \"<\" del JavaScript non crea tag: restano due <p>");
     }
     buf[0] = '\0'; testo_sotto(trova("script"), buf, sizeof(buf));
     ok(strstr(buf, "a < b && c > d") != 0,
@@ -263,7 +263,7 @@ int main(int argc, char **argv)
     printf("ROBUSTEZZA\n");
     leggi("<p>a < b</p>");
     buf[0] = '\0'; testo_sotto(g_doc.radice, buf, sizeof(buf));
-    ok(strstr(buf, "a <") != 0, "un «<» seguito da spazio e' testo, non un tag");
+    ok(strstr(buf, "a <") != 0, "un \"<\" seguito da spazio e' testo, non un tag");
 
     leggi("<div><div><div>");
     ok(g_doc.nodi_n >= 4, "tag aperti e mai chiusi non fanno danni");

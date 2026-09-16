@@ -885,8 +885,8 @@ static void aiuto(void)
     printf("  imposta solo a meta' (undici registri non li accetta), e mezza\n");
     printf("  scalatura e' peggio di nessuna. Senza, il testo sta in un\n");
     printf("  angolo e si legge - che e' quello che serve.\n\n");
-    printf("! A COSA SERVE: non a scegliere la risoluzione — quella la mette\n");
-    printf("  Stage 2 all'accensione — ma a RIMETTERE IL TESTO quando il\n");
+    printf("! A COSA SERVE: non a scegliere la risoluzione - quella la mette\n");
+    printf("  Stage 2 all'accensione - ma a RIMETTERE IL TESTO quando il\n");
     printf("  server grafico e' morto e lo schermo e' congelato. E' il pezzo\n");
     printf("  che DIREZIONE.md chiede dal 12 agosto 2026.\n\n");
     printf("! -testo SCRIVE SOLO I REGISTRI SiS e poi chiama modo_testo():\n");

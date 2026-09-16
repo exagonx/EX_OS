@@ -140,7 +140,7 @@ int main(int argc, char **argv)
     }
     if (slot > SWAP_SLOT_MAX) slot = SWAP_SLOT_MAX;
 
-    printf("mkswap: %s — %u settori, %u pagine da %u KB (%u MB di scambio)\n",
+    printf("mkswap: %s - %u settori, %u pagine da %u KB (%u MB di scambio)\n",
            dev, settori, slot, SWAP_PAGINA / 1024,
            (unsigned)((unsigned long long)slot * SWAP_PAGINA / (1024 * 1024)));
 

@@ -3230,10 +3230,44 @@ Elenco che scorre, **directory in cima**, pulsanti `Su` e `Apri`, riga di
 stato col percorso. Frecce e Invio oltre al mouse. Premendo «Apri» su un file
 lo passa all'editor, cercandolo in `/exwin/bin` e poi in `/cdrom/exwin/bin`.
 
+**Dal 16 settembre 2026 l'elenco ha quattro colonne e si ordina cliccando**
+(`filemgr` 0.002):
+
+```
+Cartelle     |[Nome ^][Tipo][Dimensione][Data]
+- /          | bin         <DIR>          -  2026-09-16 20:57
+  + bin      | boot.img    <FILE>   1474560  2026-09-16 20:57
+  + boot     | KERNEL.BIN  <FILE>    270376  2026-09-16 20:57
+```
+
+Un clic sceglie la colonna, un secondo clic sulla stessa **rovescia il verso**,
+e la freccia nell'etichetta dice qual è: «per che cosa è ordinato» e «in che
+verso» sono due domande, e la seconda senza indizi si risponde indovinando. Il
+verso se lo ricorda **ogni colonna per conto suo** — chi ordina per data vuole
+il più recente in cima, chi ordina per nome vuole la A.
+
+! **L'intestazione non è un controllo nuovo del toolkit**: sono quattro
+pulsanti allineati alle colonne, che escono dalle **stesse costanti** da cui
+esce la riga. È la stessa scelta dell'albero a sinistra, che è «una lista con
+dentro l'indentazione» e non un controllo albero. Scritte due volte, le
+larghezze si scollerebbero alla prima colonna allargata — e il sintomo sarebbe
+un'intestazione che indica la colonna sbagliata, cioè una bugia.
+
 ! **LE DIRECTORY VENGONO PRIMA, E NON È ESTETICA:** in una directory con cento
-file, quelle in cui si vuole entrare sarebbero sparse in mezzo. È l'unica cosa
-che questo elenco ordina — ordinare i nomi vorrebbe dire un confronto che
-dipende dalla lingua.
+file, quelle in cui si vuole entrare sarebbero sparse in mezzo. Restano in cima
+**qualunque colonna si scelga**; l'unica che le mescola è «Tipo», dove
+separarle è esattamente quel che si è chiesto cliccando.
+
+! **Fra due directory non si ordina per dimensione.** La colonna mostra un
+trattino — il numero che i filesystem tengono lì è la misura della voce sul
+disco, non quanto pesa il contenuto — ma il numero c'è lo stesso, e ordinandoci
+sopra le cartelle uscivano in un ordine che chi guarda non può spiegare. Fra
+due trattini si ordina per nome, che è l'unica cosa che si vede.
+
+! **La data costa una `stat()` per voce**, che la voce di directory non porta.
+Qui il prezzo si può pagare: una directory si legge quando qualcuno ci entra,
+non in un ciclo. È la stessa data di `ls`, cioè quella di **modifica**: quella
+di creazione i filesystem non la tengono.
 
 ### Il terminale in finestra
 

@@ -39,7 +39,7 @@
 
 int main(void)
 {
-    printf("GMP %s, MPFR %s, MPC %s — dentro EX-OS\n\n",
+    printf("GMP %s, MPFR %s, MPC %s - dentro EX-OS\n\n",
            gmp_version, mpfr_get_version(), mpc_get_version());
 
     /* --- GMP: interi grandi ------------------------------------------- */

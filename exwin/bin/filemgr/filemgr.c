@@ -13,16 +13,33 @@
  *
  *     /exwin/bin/filemgr [DIRECTORY]
  *
- *     +----------------------------------------------------------+
- *     | File   Comandi   Info                                    |
- *     +---------------------+------------------------------------+
- *     | - /                 | [bin]                              |
- *     |   + bin             | [dev]                              |
- *     |   - exwin           |  leggimi.txt          1024         |
- *     |     + bin           |                                    |
- *     +---------------------+------------------------------------+
- *     | /exwin  -  4 voci                                        |
- *     +----------------------------------------------------------+
+ *     +---------------------------------------------------------------+
+ *     | File   Comandi   Info                                         |
+ *     +----------------+----------------------------------------------+
+ *     | Cartelle       |[Nome ^][Tipo][Dimensione][Data]              |
+ *     +----------------+----------------------------------------------+
+ *     | - /            | bin         <DIR>          -  2026-09-16 18:10|
+ *     |   + bin        | dev         <DIR>          -  2026-09-16 18:10|
+ *     |   - exwin      | leggimi.txt <FILE>      1024  2026-09-14 09:02|
+ *     |     + bin      |                                              |
+ *     +----------------+----------------------------------------------+
+ *     | /exwin  -  4 voci                                             |
+ *     +---------------------------------------------------------------+
+ *
+ * ! LE COLONNE SI ORDINANO CLICCANDO L'INTESTAZIONE. Un clic sceglie la
+ * colonna, un secondo clic sulla stessa rovescia il verso, e la freccia
+ * nell'etichetta dice qual e' — perche' «per che cosa e' ordinato» e «in che
+ * verso» sono due domande, e la seconda senza indizi si risponde indovinando.
+ *
+ * ! E IL VERSO SE LO RICORDA OGNI COLONNA PER CONTO SUO. Chi ordina per data
+ * vuole il piu' recente in cima, chi ordina per nome vuole la A: un verso solo
+ * per tutte costringerebbe a due clic ogni volta che si cambia colonna.
+ *
+ * ! LA DATA E' QUELLA DI MODIFICA, e quella di creazione non c'e'. Non e' una
+ * scelta di questo programma: la voce di directory che FAT, ext2 e ISO 9660
+ * consegnano al VFS tiene UNA coppia data/ora, e `struct stat` infatti pone
+ * st_ctime e st_atime uguali a st_mtime, dichiarandolo. Mostrare lo stesso
+ * numero sotto due intestazioni diverse sarebbe peggio che mostrarne uno.
  *
  * ! A SINISTRA C'E' DOVE SI E', A DESTRA COSA C'E'. Con una lista sola le due
  * domande si rispondono a turno: per sapere dov'e' un file bisogna risalire, e
@@ -51,7 +68,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `filemgr -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.001"
+#define VERSIONE_APP "0.002"
 EX_VERSIONE("filemgr", VERSIONE_APP);
 
 #define VOCI_MAX    512
@@ -59,11 +76,50 @@ EX_VERSIONE("filemgr", VERSIONE_APP);
 #define PERC_MAX    192
 #define PROFONDITA  8       /* quanto in giu' vanno copia ricorsiva e ricerca */
 
-#define FIN_W       700
+#define FIN_W       740
 #define FIN_H       440
 #define MENU_H      20
 #define BASSO       24
-#define ALBERO_W    240
+#define ALBERO_W    210
+#define INTEST_H     18     /* la fascia dei pulsanti sopra le due aree */
+
+/* =============================================================================
+ * LE COLONNE DELL'ELENCO, IN CARATTERI
+ *
+ * ! SONO L'UNICA DEFINIZIONE DEL FORMATO, e da loro discendono SIA la riga SIA
+ * i pulsanti dell'intestazione. Scritte due volte — una nello sprintf e una
+ * nelle coordinate dei pulsanti — si scollerebbero alla prima colonna
+ * allargata, e il sintomo sarebbe un'intestazione che indica la colonna
+ * sbagliata: cioe' una bugia, non un disallineamento estetico.
+ *
+ * ! LA LISTA DEL TOOLKIT DISEGNA A PASSO FISSO di 8 pixel (LISTA_CAR_W in
+ * lib/exwin/exwin.c) e tiene 64 byte per riga (LISTA_TESTO_MAX). Il totale qui
+ * sotto e' 62 caratteri piu' lo zero: ci sta, e non di misura per caso —
+ * FIN_W e ALBERO_W sono stati scelti perche' ci stesse.
+ *
+ *     ' ' nome(24) ' ' tipo(6) ' ' dimensione(12) ' ' data(10) ' ' ora(5)
+ *
+ * ! LA COLONNA «dimensione» E' PIU' LARGA DEL NUMERO PIU' LUNGO, e non per il
+ * numero: e' per l'INTESTAZIONE. Con dieci caratteri il pulsante era largo
+ * esattamente quanto «Dimensione», e la freccia del verso — due caratteri in
+ * piu' — finiva tagliata. L'indicazione del verso spariva proprio sulla
+ * colonna appena scelta.
+ * ============================================================================= */
+#define C_NOME_X     1
+#define C_NOME_W    24
+#define C_TIPO_X    26
+#define C_TIPO_W     6
+#define C_DIM_X     33
+#define C_DIM_W     12
+#define C_DATA_X    46
+#define C_DATA_W    10
+#define C_ORA_X     57
+#define C_ORA_W      5
+#define RIGA_CAR    (C_ORA_X + C_ORA_W)     /* 62 */
+
+/* Quanto e' larga l'area dell'elenco, in pixel, perche' le 62 colonne ci
+ * stiano: due margini da 4 come li mette la lista, piu' il testo. */
+#define ELENCO_W    (RIGA_CAR * 8 + 8)
 
 #define ID_ALBERO    1
 #define ID_ELENCO    2
@@ -79,6 +135,17 @@ EX_VERSIONE("filemgr", VERSIONE_APP);
 
 #define ID_ISTRUZIONI 30
 #define ID_INFO       31
+
+/* I pulsanti dell'intestazione: uno per colonna ordinabile. */
+#define ID_ORD_NOME   40
+#define ID_ORD_TIPO   41
+#define ID_ORD_DIM    42
+#define ID_ORD_DATA   43
+
+#define ORD_NOME  0
+#define ORD_TIPO  1
+#define ORD_DIM   2
+#define ORD_DATA  3
 
 /* -----------------------------------------------------------------------------
  * L'albero, a sinistra
@@ -98,11 +165,32 @@ typedef struct {
 static Nodo         g_nodo[NODI_MAX];
 static unsigned int g_nodi = 0;
 
-/* L'elenco di destra. Si tiene solo cio' che la lista non sa: per ogni voce,
- * se e' una directory — perche' e' quello che decide cosa fa l'Invio. */
+/* =============================================================================
+ * L'elenco di destra
+ *
+ * ! ADESSO SI TIENE TUTTO, NON PIU' SOLO IL FLAG DI DIRECTORY. Prima qui
+ * c'erano il nome e «e' una cartella?», e la dimensione viveva in uno `static`
+ * dentro leggi(): bastava, perche' la riga si costruiva una volta sola e poi
+ * era la lista del toolkit a possederla. Da quando le colonne si possono
+ * RIORDINARE cliccando, l'elenco va ricostruito senza tornare sul disco — e
+ * per farlo i dati devono stare da qualche parte che non sia la stringa gia'
+ * impaginata. Rileggere la directory a ogni clic sarebbe un accesso al disco
+ * per un'operazione che non cambia niente di quel che c'e' sul disco.
+ * ============================================================================= */
 static unsigned char g_dir_flag[VOCI_MAX];
 static char          g_nome[VOCI_MAX][DIRENT_NAME_MAX];
+static unsigned int  g_dim[VOCI_MAX];
+static time_t        g_data[VOCI_MAX];
 static unsigned int  g_voci = 0;
+
+/* La colonna su cui si ordina, e in che verso. Il verso e' per COLONNA e non
+ * uno solo per tutte: chi ordina per data si aspetta il piu' recente in cima,
+ * chi ordina per nome si aspetta la A — e ricordarsi il verso di ognuna
+ * significa che tornare su una colonna la ritrova come la si era lasciata. */
+static int g_ord = ORD_NOME;
+static int g_giu[4] = { 0, 0, 0, 1 };   /* 1 = dal piu' grande al piu' piccolo */
+
+static ExFinestra g_int_nome, g_int_tipo, g_int_dim, g_int_data;
 
 /* ! DOPO UNA RICERCA I NOMI SONO PERCORSI INTERI, e va segnato: senza questo
  * l'Invio su un risultato cercherebbe il file dentro la directory corrente,
@@ -122,23 +210,62 @@ static char       g_avviso[120] = "";
  * in sei punti si sbagliano in almeno uno.
  * ============================================================================= */
 /* =============================================================================
- * ! UN NOME DI FILE PUO' ESSERE LUNGO 255 BYTE, E LA RIGA NE TIENE 80. Qui
- * c'era uno `sprintf(riga, "[%s]", nome)` su un buffer di 80: con un nome
- * lungo scriveva oltre la fine dello stack. Non e' mai successo perche' i nomi
- * di prova sono corti — che e' il modo in cui questi difetti restano nascosti
- * per mesi. La riga la costruisce questa, che tronca invece di traboccare.
+ * Una riga a colonne
+ *
+ * ! SI SCRIVE DENTRO UNA RIGA GIA' PIENA DI SPAZI, invece di concatenare pezzi.
+ * Concatenando, una colonna piu' larga del previsto spinge a destra tutte
+ * quelle dopo — cioe' rompe l'allineamento con l'intestazione proprio nella
+ * riga dove il dato e' interessante. Scrivendo a POSIZIONE, una colonna che
+ * sfora si tronca e le altre restano dove l'intestazione promette.
+ *
+ * `a_destra` allinea a destra dentro la colonna: e' per i numeri, dove le
+ * unita' incolonnate sono l'unico modo di confrontare due misure con l'occhio.
+ *
+ * ! E TRONCA, NON TRABOCCA, ed e' una lezione gia' pagata da questo file: qui
+ * c'era uno `sprintf(riga, "[%s]", nome)` su un buffer di 80 byte, e un nome
+ * di file puo' essere lungo 255. Scriveva oltre la fine dello stack. Non e'
+ * mai successo perche' i nomi di prova sono corti — che e' il modo in cui
+ * questi difetti restano nascosti per mesi. Il `[nome]` fra quadre e' sparito
+ * con la colonna «tipo», che dice `<DIR>` a lettere; il limite di lunghezza,
+ * che era il vero difetto, adesso lo impone la colonna.
  * ============================================================================= */
-static void riga_voce(char *out, unsigned int max, const char *nome, int e_dir)
+static void campo(char *riga, int x, int w, const char *testo, int a_destra)
 {
-    unsigned int i = 0;
+    int l = (int)strlen(testo);
+    int i, da = 0;
 
-    if (max < 4) { out[0] = '\0'; return; }
+    if (l > w) l = w;
+    if (a_destra) da = w - l;
+    for (i = 0; i < l; i++) riga[x + da + i] = testo[i];
+}
 
-    out[i++] = e_dir ? '[' : ' ';
-    out[i] = '\0';
+/* ! DI UN PERCORSO SI TIENE LA CODA, NON LA TESTA. Nei risultati di una
+ * ricerca il nome E' il percorso intero, e i primi ventisei caratteri di
+ * «/exwin/bin/...» sono uguali per tutti: troncare da destra darebbe una
+ * colonna di righe identiche. Quel che distingue sta in fondo. */
+static const char *coda(const char *s, int w)
+{
+    int l = (int)strlen(s);
 
-    strncat(out, nome, max - 3);        /* -3: la quadra e lo zero finale */
-    if (e_dir) strncat(out, "]", max - strlen(out) - 1);
+    return (l > w) ? s + (l - w) : s;
+}
+
+/* "AAAA-MM-GG" e "HH:MM", o dei trattini. Stessa regola di /bin/ls, e per la
+ * stessa ragione: un filesystem che non tiene le date darebbe 1970-01-01, che
+ * sembra una data vera e non lo e'. */
+static void data_ora(char *gg, unsigned int ng, char *hh, unsigned int nh,
+                     time_t t)
+{
+    struct tm *tm = (t != 0) ? localtime(&t) : 0;
+
+    if (tm == 0 || strftime(gg, ng, "%Y-%m-%d", tm) == 0) {
+        strncpy(gg, "----------", ng - 1); gg[ng - 1] = '\0';
+        strncpy(hh, "--:--",      nh - 1); hh[nh - 1] = '\0';
+        return;
+    }
+    if (strftime(hh, nh, "%H:%M", tm) == 0) {
+        strncpy(hh, "--:--", nh - 1); hh[nh - 1] = '\0';
+    }
 }
 
 static void unisci(char *out, unsigned int max, const char *dir, const char *nome)
@@ -274,66 +401,244 @@ static void albero_mostra(void)
 /* =============================================================================
  * L'elenco di destra
  * ============================================================================= */
+/* Due voci si scambiano di posto: tutte e quattro le colonne insieme, o le
+ * righe si mescolano fra loro. */
+static void scambia(unsigned int a, unsigned int b)
+{
+    char         n[DIRENT_NAME_MAX];
+    unsigned int d;
+    time_t       t;
+    unsigned char f;
+
+    strcpy(n, g_nome[a]); strcpy(g_nome[a], g_nome[b]); strcpy(g_nome[b], n);
+    d = g_dim[a];      g_dim[a]      = g_dim[b];      g_dim[b]      = d;
+    t = g_data[a];     g_data[a]     = g_data[b];     g_data[b]     = t;
+    f = g_dir_flag[a]; g_dir_flag[a] = g_dir_flag[b]; g_dir_flag[b] = f;
+}
+
+/* Confronto di nomi che non guarda maiuscole e minuscole.
+ *
+ * ! SERVE DAVVERO, E NON E' UN VEZZO: su FAT i nomi corti arrivano in
+ * MAIUSCOLO e su ext2 come sono stati scritti. Con uno strcmp nudo, in una
+ * directory mista tutti i nomi maiuscoli finirebbero prima di tutti i
+ * minuscoli — un ordine alfabetico che alfabetico non e', e che cambia secondo
+ * il filesystem invece che secondo i nomi. */
+static int nome_cmp(const char *a, const char *b)
+{
+    while (*a && *b) {
+        int ca = (*a >= 'a' && *a <= 'z') ? *a - 32 : *a;
+        int cb = (*b >= 'a' && *b <= 'z') ? *b - 32 : *b;
+
+        if (ca != cb) return ca - cb;
+        a++; b++;
+    }
+    return (int)((unsigned char)*a) - (int)((unsigned char)*b);
+}
+
+/* Rende <0 se `a` va prima di `b` secondo la colonna scelta. */
+static int prima_di(unsigned int a, unsigned int b)
+{
+    int r = 0;
+
+    /* ! LE DIRECTORY RESTANO SEMPRE IN CIMA, qualunque colonna si scelga, e
+     * non e' l'ordinamento a deciderlo: e' la ragione per cui esistono le due
+     * aree. A sinistra c'e' dove si e', a destra cosa c'e' — e le cartelle in
+     * cui si puo' ENTRARE sono una terza cosa, che sparsa fra cento file non
+     * si trova piu'. L'unica colonna che le mescola e' «Tipo», dove separarle
+     * e' esattamente quel che si e' chiesto cliccando. */
+    if (g_dir_flag[a] != g_dir_flag[b])
+        return g_giu[ORD_TIPO] && g_ord == ORD_TIPO
+               ? (int)g_dir_flag[a] - (int)g_dir_flag[b]
+               : (int)g_dir_flag[b] - (int)g_dir_flag[a];
+
+    switch (g_ord) {
+    case ORD_DIM:
+        /* ! FRA DUE DIRECTORY NON SI ORDINA PER DIMENSIONE, ed e' una
+         * conseguenza di averla nascosta. La colonna mostra un trattino —
+         * perche' il numero che i filesystem tengono li' non e' quanto pesa il
+         * contenuto — ma il numero c'e' lo stesso, e ordinandoci sopra le
+         * cartelle uscivano in un ordine che chi guarda non puo' spiegare:
+         * dieci righe con lo stesso trattino, mescolate. Fra due trattini si
+         * ordina per nome, che e' l'unica cosa che si vede. */
+        if (g_dir_flag[a] && g_dir_flag[b]) { r = 0; break; }
+        r = (g_dim[a] < g_dim[b]) ? -1 : (g_dim[a] > g_dim[b]) ? 1 : 0;
+        break;
+    case ORD_DATA:
+        r = (g_data[a] < g_data[b]) ? -1 : (g_data[a] > g_data[b]) ? 1 : 0;
+        break;
+    default:
+        break;
+    }
+
+    /* ! A PARITA' DI COLONNA SI ORDINA PER NOME, e non e' un di piu': in /bin
+     * decine di file hanno la stessa data al minuto, perche' li ha scritti la
+     * stessa `make`. Senza questo, due elenchi della stessa directory
+     * potrebbero uscire in ordine diverso — e un elenco che cambia da solo fa
+     * credere che sia cambiato il disco. */
+    if (r == 0 && g_ord != ORD_NOME) {
+        int n = nome_cmp(g_nome[a], g_nome[b]);
+
+        if (n != 0) return n;           /* ! il verso NON si applica qui */
+    }
+    if (g_ord == ORD_NOME || r == 0) r = nome_cmp(g_nome[a], g_nome[b]);
+
+    return g_giu[g_ord] ? -r : r;
+}
+
+/* ! UNA SELEZIONE A INSERIMENTO, E VA BENISSIMO. Le voci sono al massimo
+ * VOCI_MAX = 512 e l'ordinamento si rifa' solo a un clic dell'utente: il
+ * quadrato di 512 e' un quarto di milione di confronti, che su questa macchina
+ * sono meno di quanto costa ridisegnare la lista. Un quicksort qui sarebbe
+ * codice in piu' da rileggere per un tempo che nessuno misurerebbe. */
+static void ordina(void)
+{
+    unsigned int i, j;
+
+    for (i = 0; i + 1 < g_voci; i++)
+        for (j = i + 1; j < g_voci; j++)
+            if (prima_di(j, i) < 0) scambia(i, j);
+}
+
+/* Dai vettori alla lista del toolkit. La chiamano leggi(), la ricerca e ogni
+ * clic sull'intestazione: e' l'unico posto dove una riga si impagina. */
+static void elenco_mostra(void)
+{
+    unsigned int i;
+
+    ex_lista_svuota(g_elenco);
+
+    for (i = 0; i < g_voci; i++) {
+        char riga[RIGA_CAR + 1];
+        char gg[16], hh[8], dim[16];
+        int  k;
+
+        for (k = 0; k < RIGA_CAR; k++) riga[k] = ' ';
+        riga[RIGA_CAR] = '\0';
+
+        campo(riga, C_NOME_X, C_NOME_W,
+              g_da_ricerca ? coda(g_nome[i], C_NOME_W) : g_nome[i], 0);
+        campo(riga, C_TIPO_X, C_TIPO_W,
+              g_dir_flag[i] ? "<DIR>" : "<FILE>", 0);
+
+        /* ! UNA DIRECTORY NON HA UNA DIMENSIONE DA MOSTRARE. Il numero che i
+         * filesystem tengono li' e' la misura della voce sul disco — zero su
+         * FAT — non quanto pesa il contenuto. Un trattino dice «la domanda non
+         * si applica»; uno zero direbbe il falso. Stessa scelta di /bin/ls. */
+        if (g_dir_flag[i]) strcpy(dim, "-");
+        else               sprintf(dim, "%u", g_dim[i]);
+        campo(riga, C_DIM_X, C_DIM_W, dim, 1);
+
+        data_ora(gg, sizeof(gg), hh, sizeof(hh), g_data[i]);
+        campo(riga, C_DATA_X, C_DATA_W, gg, 0);
+        campo(riga, C_ORA_X,  C_ORA_W,  hh, 0);
+
+        ex_lista_aggiungi(g_elenco, riga);
+    }
+}
+
 static void leggi(const char *percorso)
 {
     DirEntry v[8];
     int start = 0, n, i;
-    unsigned int quante = 0, d = 0;
-    static unsigned int dim[VOCI_MAX];
+    unsigned int quante = 0;
 
-    ex_lista_svuota(g_elenco);
     g_da_ricerca = 0;
 
     while ((n = listdir_from(percorso, v, 8, start)) > 0) {
         for (i = 0; i < n && quante < VOCI_MAX; i++) {
+            char        perc[PERC_MAX];
+            struct stat st;
+
             if (v[i].name[0] == '.' && v[i].name[1] == '\0') continue;
             strncpy(g_nome[quante], v[i].name, DIRENT_NAME_MAX - 1);
             g_nome[quante][DIRENT_NAME_MAX - 1] = '\0';
-            dim[quante]        = v[i].size;
+            g_dim[quante]      = v[i].size;
             g_dir_flag[quante] = v[i].is_dir;
+
+            /* ! LA DATA COSTA UNA stat() PER VOCE, e la voce di directory non
+             * la porta: DirEntry ha nome, misura e «e' una cartella», e
+             * basta. Allargarla vorrebbe dire toccare una struttura che
+             * attraversa l'ABI della syscall ed e' duplicata a mano in tre
+             * posti — cioe' ricostruire il bersaglio per una colonna. Qui il
+             * prezzo si puo' pagare: una directory si legge quando qualcuno
+             * ci entra, non in un ciclo.
+             *
+             * ! E SE stat() FALLISCE LA VOCE RESTA. Ce l'ha appena data la
+             * directory: farla sparire perche' non se ne conosce la data
+             * farebbe credere che il file non ci sia. La data diventa zero, e
+             * zero si stampa con dei trattini. */
+            unisci(perc, sizeof(perc), percorso, v[i].name);
+            g_data[quante] = (stat(perc, &st) == 0) ? st.st_mtime : 0;
+
             quante++;
         }
         start += n;
         if (n < 8) break;
     }
 
-    /* ! LE DIRECTORY VENGONO PRIMA, e non e' estetica: in una directory con
-     * cento file, quelle in cui si vuole entrare sarebbero sparse in mezzo.
-     * E' l'unica cosa che questo elenco ordina — ordinare i nomi vorrebbe dire
-     * un confronto che dipende dalla lingua, e non e' il momento. */
-    for (i = 0; i < (int)quante; i++)
-        if (g_dir_flag[i]) {
-            char t[DIRENT_NAME_MAX];
-            unsigned int td = dim[i];
-            int k;
-
-            strcpy(t, g_nome[i]);
-            for (k = i; k > (int)d; k--) {
-                strcpy(g_nome[k], g_nome[k - 1]);
-                dim[k] = dim[k - 1];
-                g_dir_flag[k] = g_dir_flag[k - 1];
-            }
-            strcpy(g_nome[d], t);
-            dim[d] = td;
-            g_dir_flag[d] = 1;
-            d++;
-        }
-
-    for (i = 0; i < (int)quante; i++) {
-        char riga[80];
-
-        if (g_dir_flag[i]) {
-            riga_voce(riga, sizeof(riga), g_nome[i], 1);
-        } else {
-            char corto[40];
-
-            strncpy(corto, g_nome[i], sizeof(corto) - 1);
-            corto[sizeof(corto) - 1] = '\0';
-            sprintf(riga, " %-24s %8u", corto, dim[i]);
-        }
-        ex_lista_aggiungi(g_elenco, riga);
-    }
     g_voci = quante;
+    ordina();
+    elenco_mostra();
+}
+
+/* Ridisegna la finestra intera. Definita piu' sotto, insieme allo stato: qui
+ * serve perche' un'etichetta cambiata non si ridisegna da sola. */
+static void ridisegna(void);
+
+/* =============================================================================
+ * L'intestazione cliccabile
+ *
+ * ! SONO QUATTRO PULSANTI, NON UN CONTROLLO NUOVO DEL TOOLKIT. E' la stessa
+ * scelta dell'albero a sinistra, che e' «una lista con dentro l'indentazione»
+ * e non un controllo albero: un'intestazione di colonne dentro exwin.so
+ * vorrebbe dire un modello di colonne, un disegno suo, e la larghezza da
+ * tenere d'accordo con la lista — cioe' un pezzo di toolkit che UNA sola
+ * applicazione usa. Quattro pulsanti allineati alle colonne fanno la stessa
+ * cosa con quel che c'e' gia', e un pulsante si sa gia' che si preme.
+ *
+ * ! E LA FRECCIA STA NELL'ETICHETTA, non in un disegno accanto. Chi guarda un
+ * elenco ordinato deve poter rispondere a due domande — «per che cosa?» e «in
+ * che verso?» — e la seconda senza indizi si risponde solo leggendo i dati e
+ * indovinando. La freccia costa due caratteri.
+ * ============================================================================= */
+static void intestazione_aggiorna(void)
+{
+    static const char *nomi[4] = { "Nome", "Tipo", "Dimensione", "Data" };
+    ExFinestra         q[4];
+    int                i;
+
+    q[0] = g_int_nome; q[1] = g_int_tipo; q[2] = g_int_dim; q[3] = g_int_data;
+
+    for (i = 0; i < 4; i++) {
+        char t[24];
+
+        if (!q[i]) continue;
+        if (i == g_ord) sprintf(t, "%s %s", nomi[i], g_giu[i] ? "v" : "^");
+        else            sprintf(t, "%s", nomi[i]);
+        ex_testo_metti(q[i], t);
+    }
+}
+
+/* Un clic sull'intestazione. Sulla colonna gia' scelta ROVESCIA il verso; su
+ * un'altra ci si sposta tenendo il verso che quella colonna aveva.
+ *
+ * ! IL RIDISEGNO ALLA FINE NON E' DI TROPPO, ED E' COSTATO UNA PROVA. La lista
+ * si riempie da se' — ex_lista_svuota() e ex_lista_aggiungi() ridisegnano — ma
+ * ex_testo_metti() su un CONTROLLO cambia solo la stringa: e' ex_titolo(), che
+ * avvisa il server soltanto per una finestra di primo livello. Senza questa
+ * riga l'elenco si riordinava davvero e la freccia restava dov'era: cioe' la
+ * cosa peggiore, un'indicazione che dice il falso invece di non dire niente.
+ * (E' lo stesso contratto che stato_aggiorna() seguiva gia', chiamata da
+ * dentro ridisegna() e mai da sola.) */
+static void ordina_per(int colonna)
+{
+    if (colonna == g_ord) g_giu[colonna] = !g_giu[colonna];
+    else                  g_ord = colonna;
+
+    intestazione_aggiorna();
+    ordina();
+    elenco_mostra();
+    ridisegna();
 }
 
 static void stato_aggiorna(void)
@@ -604,9 +909,13 @@ static void cerca_giu(const char *dir, const char *pezzo, int giu,
             unisci(perc, sizeof(perc), dir, v[i].name);
 
             if (strstr(v[i].name, pezzo) != 0) {
+                struct stat st;
+
                 strncpy(g_nome[*quanti], perc, DIRENT_NAME_MAX - 1);
                 g_nome[*quanti][DIRENT_NAME_MAX - 1] = '\0';
                 g_dir_flag[*quanti] = v[i].is_dir;
+                g_dim[*quanti]      = v[i].size;
+                g_data[*quanti]     = (stat(perc, &st) == 0) ? st.st_mtime : 0;
                 (*quanti)++;
             }
 
@@ -620,7 +929,7 @@ static void cerca_giu(const char *dir, const char *pezzo, int giu,
 static void comando_cerca(void)
 {
     static char pezzo[64] = "";
-    unsigned int quanti = 0, i;
+    unsigned int quanti = 0;
 
     if (!ex_dlg_riga("Cerca", "Parte del nome da cercare, qui sotto:",
                      pezzo, sizeof(pezzo))) {
@@ -634,16 +943,15 @@ static void comando_cerca(void)
 
     cerca_giu(g_dir, pezzo, 0, &quanti);
 
-    ex_lista_svuota(g_elenco);
-    for (i = 0; i < quanti; i++) {
-        char riga[80];
-
-        riga_voce(riga, sizeof(riga), g_nome[i], g_dir_flag[i]);
-        ex_lista_aggiungi(g_elenco, riga);
-    }
-
     g_voci = quanti;
     g_da_ricerca = 1;
+
+    /* ! I RISULTATI SI ORDINANO COME L'ELENCO, con la colonna che l'utente ha
+     * scelto: una ricerca che rende quaranta file non e' meno bisognosa di
+     * ordine di una directory che ne ha quaranta. E le cartelle restano in
+     * cima anche qui, perche' li' si puo' entrare. */
+    ordina();
+    elenco_mostra();
     sprintf(g_avviso, "%s: %u trovati sotto %s", pezzo, quanti, g_dir);
 }
 
@@ -752,7 +1060,14 @@ static void istruzioni(void)
                   "clic espande una directory o apre un file.  Il segno + "
                   "dell'albero si preme con un clic solo.  F10 apre i menu.  "
                   "Copia chiede dove mettere quello che e' scelto a destra; "
-                  "Cerca guarda sotto la directory corrente.");
+                  "Cerca guarda sotto la directory corrente.  "
+                  "L'elenco ha quattro colonne - nome, tipo, dimensione e "
+                  "data - e la fascia di pulsanti sopra le ordina: un clic "
+                  "sceglie la colonna, un secondo clic sulla stessa rovescia "
+                  "il verso, e la freccia nell'etichetta dice qual e'.  Le "
+                  "cartelle restano in cima qualunque colonna si scelga, "
+                  "tranne quando si ordina per Tipo.  La data e' quella di "
+                  "MODIFICA: quella di creazione i filesystem non la tengono.");
 }
 
 static void informazioni(void)
@@ -763,7 +1078,9 @@ static void informazioni(void)
                  "Il file manager di EX-OS, sul toolkit ExWin.  L'albero non "
                  "e' un controllo nuovo: e' una lista con dentro "
                  "l'indentazione, e i nodi stanno in un vettore nell'ordine "
-                 "in cui si vedono.");
+                 "in cui si vedono.  E l'intestazione delle colonne non e' un "
+                 "controllo nuovo: sono quattro pulsanti allineati alle "
+                 "colonne della riga, che escono dalle stesse costanti.");
     ex_dlg_avviso("Informazioni su", t);
 }
 
@@ -809,6 +1126,11 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         if (wp == ID_COPIA)    { comando_copia(0); break; }
         if (wp == ID_COPIADIR) { comando_copia(1); break; }
         if (wp == ID_CERCA)    { comando_cerca();  break; }
+
+        if (wp == ID_ORD_NOME) { ordina_per(ORD_NOME); break; }
+        if (wp == ID_ORD_TIPO) { ordina_per(ORD_TIPO); break; }
+        if (wp == ID_ORD_DIM)  { ordina_per(ORD_DIM);  break; }
+        if (wp == ID_ORD_DATA) { ordina_per(ORD_DATA); break; }
 
         if (wp == ID_ISTRUZIONI) { istruzioni();   break; }
         if (wp == ID_INFO)       { informazioni(); break; }
@@ -876,16 +1198,66 @@ int main(int argc, char **argv)
     ex_menu_voce(g_menu, "Info", "Istruzioni",      ID_ISTRUZIONI);
     ex_menu_voce(g_menu, "Info", "Informazioni su", ID_INFO);
 
+    {
+        /* ! LE COORDINATE DEI PULSANTI ESCONO DALLE STESSE COSTANTI DELLA
+         * RIGA. C_NOME_X e compagni sono in caratteri; la lista disegna a
+         * passo di 8 pixel e lascia 4 pixel di margine a sinistra. Moltiplicare
+         * qui e' l'unico modo perche' l'intestazione indichi davvero la colonna
+         * che nomina: due serie di numeri si scollano alla prima modifica. */
+        const int ex = ALBERO_W + 10;       /* dove comincia l'area di destra */
+        const int t0 = ex + 4;              /* e dove comincia il suo testo   */
+        const int y  = MENU_H + 3;
+
+        /* ! UN PULSANTE VA DALLO SPAZIO DAVANTI ALLA SUA COLONNA ALLO SPAZIO
+         * DAVANTI ALLA PROSSIMA, estremi compresi: cosi' i quattro si toccano
+         * senza sovrapporsi e senza lasciare buchi, e ognuno copre per intero
+         * il testo che nomina. Scritte a mano quattro volte, queste due
+         * formule erano gia' sbagliate alla prima stesura — il pulsante «Tipo»
+         * era largo un carattere di meno e finiva prima della sua colonna.
+         * `dal` e' il carattere dove comincia la colonna, `al` quello dove
+         * comincia la prossima (RIGA_CAR per l'ultima). */
+#define INT_X(dal)      (t0 + ((dal) - 1) * 8)
+#define INT_W(dal, al)  (((al) - (dal) + 1) * 8)
+
+        ex_crea("etichetta", "Cartelle", EX_FIGLIO,
+                8, y + 2, ALBERO_W - 8, 14, g_f, 0, 0);
+
+        g_int_nome = ex_crea("pulsante", "Nome", EX_FIGLIO,
+                             INT_X(C_NOME_X), y,
+                             INT_W(C_NOME_X, C_TIPO_X), INTEST_H,
+                             g_f, ID_ORD_NOME, 0);
+        g_int_tipo = ex_crea("pulsante", "Tipo", EX_FIGLIO,
+                             INT_X(C_TIPO_X), y,
+                             INT_W(C_TIPO_X, C_DIM_X), INTEST_H,
+                             g_f, ID_ORD_TIPO, 0);
+        g_int_dim  = ex_crea("pulsante", "Dimensione", EX_FIGLIO,
+                             INT_X(C_DIM_X), y,
+                             INT_W(C_DIM_X, C_DATA_X), INTEST_H,
+                             g_f, ID_ORD_DIM, 0);
+        /* ! DATA E ORA SONO DUE COLONNE E UN PULSANTE SOLO: sono lo stesso
+         * numero scritto in due pezzi, e chi ordina «per ora» senza la data
+         * mescolerebbe due giorni diversi. */
+        g_int_data = ex_crea("pulsante", "Data", EX_FIGLIO,
+                             INT_X(C_DATA_X), y,
+                             INT_W(C_DATA_X, RIGA_CAR), INTEST_H,
+                             g_f, ID_ORD_DATA, 0);
+#undef INT_X
+#undef INT_W
+    }
+
     g_albero = ex_crea("lista", "", EX_FIGLIO,
-                       4, MENU_H + 4, ALBERO_W,
-                       FIN_H - MENU_H - 4 - BASSO, g_f, ID_ALBERO, 0);
+                       4, MENU_H + 4 + INTEST_H, ALBERO_W,
+                       FIN_H - MENU_H - 4 - INTEST_H - BASSO,
+                       g_f, ID_ALBERO, 0);
     g_elenco = ex_crea("lista", "", EX_FIGLIO,
-                       ALBERO_W + 10, MENU_H + 4, FIN_W - ALBERO_W - 14,
-                       FIN_H - MENU_H - 4 - BASSO, g_f, ID_ELENCO, 0);
+                       ALBERO_W + 10, MENU_H + 4 + INTEST_H, ELENCO_W,
+                       FIN_H - MENU_H - 4 - INTEST_H - BASSO,
+                       g_f, ID_ELENCO, 0);
     if (!g_albero || !g_elenco) {
         printf("filemgr: non riesco a creare le due aree\n");
         return 1;
     }
+    intestazione_aggiorna();
 
     g_stato = ex_crea("etichetta", "", EX_FIGLIO,
                       6, FIN_H - 22, FIN_W - 12, 16, g_f, 0, 0);

@@ -883,7 +883,7 @@ static void scegli_componenti(int modo, const char *punto)
     printf("\n===============================================================\n");
     printf(" COSA INSTALLARE\n");
     printf("===============================================================\n");
-    printf("\n  1. Il sistema minimale — sempre.\n");
+    printf("\n  1. Il sistema minimale - sempre.\n");
     printf("     Kernel, avvio, /bin, /lib e i driver di base: e' quello che\n");
     printf("     sta su un floppy, e basta ad accendere la macchina e a\n");
     printf("     ripararla.\n");
@@ -892,7 +892,7 @@ static void scegli_componenti(int modo, const char *punto)
         printf("\n     (su questo supporto non c'e' il manifesto del minimale:\n"
                "      si installa tutto cio' che c'e' in /bin, /lib e /dev)\n");
 
-    printf("\n  2. Il resto degli strumenti — da chiedere.\n");
+    printf("\n  2. Il resto degli strumenti - da chiedere.\n");
     printf("     I driver che sul floppy non ci stanno (rete, USB, grafica),\n");
     printf("     i programmi di rete e quelli di sviluppo.\n");
 
@@ -900,7 +900,7 @@ static void scegli_componenti(int modo, const char *punto)
     g_vuole_strumenti = (c == 's' || c == 'S');
 
     if (g_n_comp > 0) {
-        printf("\n  3. ExWin completo — da chiedere.\n");
+        printf("\n  3. ExWin completo - da chiedere.\n");
         printf("     L'interfaccia grafica: il server a finestre e le sue\n");
         printf("     applicazioni.\n\n");
         for (i = 0; i < g_n_comp; i++)
@@ -1771,9 +1771,9 @@ int main(int argc, char **argv)
         printf("  install -m /disk     solo il minimale, senza chiedere\n");
         printf("  install -t /disk     tutto, senza chiedere\n\n");
         printf("I tre passi sono: il sistema minimale (quello che sta su un\n");
-        printf("floppy, sempre installato), poi il resto degli strumenti —\n");
+        printf("floppy, sempre installato), poi il resto degli strumenti -\n");
         printf("driver di rete, USB, grafica e i programmi che sul floppy non\n");
-        printf("ci stanno — e infine ExWin completo.\n\n");
+        printf("ci stanno - e infine ExWin completo.\n\n");
         printf("Non partiziona e non formatta: sono operazioni distruttive\n");
         printf("e vanno fatte di proposito, non come effetto collaterale.\n");
         printf("Per farle c'e' /bin/cdinstall, sul CD: mostra il disco a\n");

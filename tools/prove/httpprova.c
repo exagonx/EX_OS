@@ -326,7 +326,7 @@ static void prova_pezzi(void)
             char cosa[80];
 
             n = srotola(f, passo, out, sizeof(out), &fin);
-            sprintf(cosa, "«Ciao mondo» a blocchi da %u byte", passo);
+            sprintf(cosa, "\"Ciao mondo\" a blocchi da %u byte", passo);
             ok(n == 10 && strcmp(out, "Ciao mondo") == 0 && fin, cosa);
         }
     }

@@ -237,7 +237,7 @@ static void diario_scrivi(void)
         return;
     }
 
-    fprintf(f, "# ftpswap — com'erano le cose alla fine dell'ultimo giro.\n");
+    fprintf(f, "# ftpswap - com'erano le cose alla fine dell'ultimo giro.\n");
     fprintf(f, "# Non si scrive a mano: serve a distinguere un file NUOVO da\n");
     fprintf(f, "# uno CANCELLATO. Cancellando questo file non si perde niente,\n");
     fprintf(f, "# si perde la memoria: al giro dopo torna tutto quel che c'e'\n");
@@ -367,7 +367,7 @@ static int cfg_crea(const char *perc)
         return -1;
     }
 
-    fprintf(f, "# ftpswap — con chi si allinea questa directory.\n");
+    fprintf(f, "# ftpswap - con chi si allinea questa directory.\n");
     fprintf(f, "#\n");
     fprintf(f, "# ! LA PASSWORD E' IN CHIARO QUI DENTRO. Il file e' a 0600 e\n");
     fprintf(f, "# ftpswap non lo carica mai sul server: e' la chiave della\n");

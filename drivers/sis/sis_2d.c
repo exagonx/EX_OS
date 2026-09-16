@@ -1320,13 +1320,13 @@ int sis2d_prova(void)
     if (g_mmio == 0) return -1;
     errori = 0;
 
-    printf("sis2d: prova 1 — un rettangolo pieno, e poi lo si rilegge\n");
+    printf("sis2d: prova 1 - un rettangolo pieno, e poi lo si rilegge\n");
 
     /* Prima si annerisce una fascia larga, cosi' quel che c'era sotto non
      * puo' far sembrare giusta una prova sbagliata. */
     if (sis2d_riempi(0, 0, g_larg, Y + H + 64, impacchetta(0)) != 0) {
         printf("  ! il motore non ha risposto entro l'attesa.\n");
-        printf("    Non e' «lento»: e' fermo. Guarda `-2dstato`.\n");
+        printf("    Non e' \"lento\": e' fermo. Guarda `-2dstato`.\n");
         return -1;
     }
     if (sis2d_riempi(X, Y, W, H, c1) != 0) {
@@ -1353,7 +1353,7 @@ int sis2d_prova(void)
     if (errori == 0) printf("  il riempimento e' giusto, bordi compresi.\n");
 
     /* --- prova 2: la copia schermo -> schermo --- */
-    printf("sis2d: prova 2 — la copia schermo -> schermo\n");
+    printf("sis2d: prova 2 - la copia schermo -> schermo\n");
 
     /* Una riga di verde dentro il rosso, per avere un disegno riconoscibile
      * e non una tinta piatta: una copia che sbaglia di qualche pixel su una
@@ -1377,7 +1377,7 @@ int sis2d_prova(void)
     if (errori == 0) printf("  la copia e' identica all'originale.\n");
 
     /* --- prova 3: la copia che si SOVRAPPONE --- */
-    printf("sis2d: prova 3 — la copia sovrapposta (e' quella dello "
+    printf("sis2d: prova 3 - la copia sovrapposta (e' quella dello "
            "scorrimento)\n");
 
     /* ! E' LA PROVA CHE CONTA PER wserver. Spostare una finestra e far
@@ -1470,7 +1470,7 @@ int sis2d_misura(void)
     h = g_alt / 2;
     byte = g_passo * h;
 
-    printf("\nsis2d: %ux%u a %u bit — %u byte per operazione\n\n",
+    printf("\nsis2d: %ux%u a %u bit - %u byte per operazione\n\n",
            w, h, g_bit, byte);
     printf("  operazione                   CPU     motore   guadagno\n");
     printf("  ------------------------- -------- -------- ----------\n");

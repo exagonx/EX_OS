@@ -634,7 +634,7 @@ static void uso(void)
     printf("  mkfs -t fat16 -L DATI hd0p2\n");
     printf("  mkfs -t ext2  -L SISTEMA hd0p3\n\n");
     printf("  -f  non chiede conferma. E' per chi la chiede gia' al posto\n");
-    printf("      tuo — `install -prepara` — non per fare prima.\n\n");
+    printf("      tuo - `install -prepara` - non per fare prima.\n\n");
     printf("SENZA -t: fino a 2 GB FAT16, oltre FAT32. Non e' una soglia\n");
     printf("arbitraria - FAT16 arriva a 65524 cluster, che con cluster da\n");
     printf("32 KB fanno poco piu' di 2 GB. ext2 non entra mai nella scelta\n");

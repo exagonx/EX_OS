@@ -75,7 +75,7 @@ int main(void)
     ok("mezzanotte del 2026",  bis_data("Thu, 01 Jan 2026 00:00:00 GMT") == ORA, "");
     /* ! IL 1970 E' IL MODO IN CUI MEZZO WEB CANCELLA UN BISCOTTO, e deve
      * leggersi: renderebbe 0 solo se non si capisse la data. */
-    ok("l'epoca si legge e non e' «non capita»",
+    ok("l'epoca si legge e non e' \"non capita\"",
        bis_data("Thu, 01 Jan 1970 00:00:01 GMT") == 1u, "");
     ok("un anno bisestile",
        bis_data("Mon, 29 Feb 2016 00:00:00 GMT") == 1456704000u, "");

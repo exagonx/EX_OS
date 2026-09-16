@@ -893,7 +893,7 @@ int fat12_diagnostica(FdPasso *out, unsigned int max)
     kprintf("          pausa: il disco si ferma, e la lettura dopo deve\n");
     kprintf("          rimetterlo in moto, aspettare che sia a regime e\n");
     kprintf("          ritrovare la traccia. Se qui sbaglia, la macchina\n");
-    kprintf("          funziona finche' si lavora e sbaglia dopo una pausa —\n");
+    kprintf("          funziona finche' si lavora e sbaglia dopo una pausa -\n");
     kprintf("          il guasto piu' difficile da collegare alla causa.\n");
 
     fdc_delay_ms(2000);         /* il disco deve fermarsi davvero */

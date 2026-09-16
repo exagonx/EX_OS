@@ -331,7 +331,7 @@ int main(int argc, char **argv)
     }
     memset(ram, 0x20, byte);
 
-    printf("\nfbprova: %ux%u a %u bit, passo %u — %u byte per fotogramma\n",
+    printf("\nfbprova: %ux%u a %u bit, passo %u - %u byte per fotogramma\n",
            v.larghezza, v.altezza, v.bit, v.passo, byte);
     printf("         framebuffer fisico 0x%08x, mappato a %p\n\n",
            v.fisico, (void *)fb);

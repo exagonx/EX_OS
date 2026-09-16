@@ -145,6 +145,8 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @SIS-2D          il motore 2D c'e' e la sua finestra tace: manca una prova sola
   1  @DIF-GROSSI      cc1plus non entrava in memoria: il corpo passa dal disco
   1  @FILI-MAX        otto fili per processo: e' un numero, non un lavoro
+  1  @IMMAGINI        manca un visualizzatore di immagini: il decodificatore c'e' gia'
+  1  @FIN-ICONA       le finestre non si riducono a icona, ne' sul desktop ne' sulla barra
   1  @EXIDE-TETTI     i tetti di exide, da sapere prima di sbatterci
   1  @EXIDE-LIBRERIE  il clic sulle righe di «Librerie» mai riprovato pixel per pixel
   1  @SUONO-ES1371    l'ES1371 vero non e' mai stato eseguito (serve una scheda)
@@ -2039,6 +2041,64 @@ I quattro passi, e i primi tre non toccano EX-OS:
 ! QUEL CHE MANCA ANCORA A UN PORTING DI TERZE PARTI, misurato: fork, i socket
   BSD, dlopen/dlsym, sem_init (il mattone c'e', manca il nome POSIX) e iconv. Ci sono invece mmap, poll, select,
   signal, il C++ 17 sul CD e — da oggi — i thread.
+
+=============================================================================
+@GRAFICA-CHIESTE DUE COSE CHIESTE PER ExWin (16 settembre 2026)
+=============================================================================
+
+Le ha chieste l'utente insieme alle colonne del file manager, che sono FATTE
+(vedi il diario del 16 settembre, «IL FILE MANAGER HA QUATTRO COLONNE»). Queste
+due sono rimaste in coda, in quest'ordine.
+
+! @IMMAGINI UN VISUALIZZATORE DI IMMAGINI.
+
+  ! IL GROSSO C'E' GIA', ed e' la ragione per cui questo compito e' piccolo e
+    non va confuso con «scrivere un decodificatore». lib/eximg decodifica, e
+    `ex_immagine(ExFinestra, percorso, x, y)` disegna un file dentro una
+    finestra: e' gia' nell'intestazione del toolkit (lib/exwin/exwin.h).
+    Quello che manca e' l'APPLICAZIONE — una finestra, l'apri, lo scorrimento
+    quando l'immagine e' piu' grande, e il passare al file dopo nella stessa
+    directory.
+
+  Da decidere, e la decisione va presa PRIMA di scrivere:
+    - i formati che eximg sa gia' leggere, e quelli che no. Un visualizzatore
+      che apre tre file su dieci fa sembrare rotte le immagini, non il
+      programma;
+    - se ingrandisce e rimpicciolisce, o se mostra a grandezza vera e basta.
+      La seconda e' onesta e si fa oggi; la prima vuole un ricampionamento;
+    - come ci si arriva dal file manager. Il doppio clic su un'immagine
+      dovrebbe aprirlo — cioe' serve una regola «questa estensione si apre
+      con quel programma», che oggi in EX-OS non c'e' da nessuna parte.
+      ! QUESTA E' LA PARTE CHE PUO' CRESCERE: e' un pezzo di sistema, non di
+        un'applicazione, e riguarda anche l'editor e il browser.
+
+  Va in PROGRAMMI_EXWIN e in un albero suo sotto exwin/bin/, come filemgr.
+
+! @FIN-ICONA LE FINESTRE SI RIDUCONO A ICONA — sul desktop E sulla barra.
+
+  Oggi una finestra si chiude e basta. Chiesto: un terzo gesto che la toglie di
+  mezzo SENZA buttarla via, e che lasci due modi di ritrovarla — un'icona sulla
+  scrivania e una voce sulla barra in basso.
+
+  I pezzi da toccare, e sono tre programmi diversi:
+    - drivers/wserver  il server: una finestra RIDOTTA non si compone piu', ma
+                       non e' distrutta. E' lui a sapere l'ordine delle
+                       finestre, quindi e' lui a doverlo sapere.
+    - lib/exwin        il pulsante nella barra del titolo, accanto a quello di
+                       chiusura, e il messaggio che lo dice al server.
+    - exwin/bin/pm     la scrivania e la barra: e' pm che disegna tutt'e due, e
+                       che deve mostrare chi e' ridotto e riaprirlo al clic.
+
+  ! E VA DECISO CHI POSSIEDE L'ELENCO DEI RIDOTTI. Se lo tengono sia il server
+    sia pm, i due si scollegheranno il giorno che un programma muore mentre e'
+    ridotto: la barra mostrerebbe una voce che non riapre niente. Il server e'
+    l'unico che sa quando una finestra sparisce davvero, quindi l'elenco e' suo
+    e pm lo CHIEDE.
+
+  ! LA BARRA IN BASSO E LA SCRIVANIA SONO DUE POSTI, NON UNO. Chiederle tutt'e
+    due vuol dire che la stessa finestra ridotta si vede in due punti e si
+    riapre da tutt'e due: e' una cosa sola con due rappresentazioni, non due
+    elenchi. Vedi sopra, per la stessa ragione.
 
 =============================================================================
 @VISTA L'IMPAGINATO NON E' UNA LIBRERIA — e quando conviene che lo diventi

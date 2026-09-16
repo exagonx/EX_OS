@@ -177,7 +177,7 @@ static int config_scrivi(const Config *c)
     fprintf(f, "# netupdate.cnf - da dove il sistema si aggiorna\n");
     fprintf(f, "#\n");
     fprintf(f, "# Lo scrive `netupdate -set`. Si puo' correggere a mano: una\n");
-    fprintf(f, "# chiave per riga, «chiave = valore», '#' commenta.\n");
+    fprintf(f, "# chiave per riga, \"chiave = valore\", '#' commenta.\n");
     fprintf(f, "#\n");
     fprintf(f, "# tipo        HTTP, FTP, HTTPS o FTPS\n");
     fprintf(f, "# url         la RADICE: li' dentro ci sono versione.txt,\n");
@@ -269,7 +269,7 @@ static int comando_set(void)
             strncpy(c.tipo, TRASPORTI[scelta - 1], sizeof(c.tipo) - 1);
             c.tipo[sizeof(c.tipo) - 1] = '\0';
         } else {
-            printf("  ! «%s» non e' fra 1 e %d: tengo %s\n", riga, i, c.tipo);
+            printf("  ! \"%s\" non e' fra 1 e %d: tengo %s\n", riga, i, c.tipo);
         }
     }
 
@@ -332,8 +332,8 @@ static int comando_set(void)
     if (strcasecmp(c.tipo, "HTTPS") == 0 || strcasecmp(c.tipo, "FTPS") == 0) {
         printf("\n  ! HAI SCELTO UN TRASPORTO CIFRATO, e oggi non e' pronto.\n");
         printf("    La stretta di TLS in EX-OS ha un limite noto e `-check`\n");
-        printf("    puo' fallire. Il campo e' scritto lo stesso — cambiarlo\n");
-        printf("    dopo e' una riga — ma per adesso HTTP e' la strada che\n");
+        printf("    puo' fallire. Il campo e' scritto lo stesso - cambiarlo\n");
+        printf("    dopo e' una riga - ma per adesso HTTP e' la strada che\n");
         printf("    funziona.\n");
     }
 
@@ -583,7 +583,7 @@ static int niente_registro(void)
     printf("  e `-remove` non sa cosa togliere.\n");
     printf("\n");
     printf("  Lo si scrive da una copia locale dell'albero che `make netinst`\n");
-    printf("  pubblica — un CD, una chiavetta, una directory montata:\n");
+    printf("  pubblica - un CD, una chiavetta, una directory montata:\n");
     printf("      netupdate -registro:crea <albero>\n");
     printf("  oppure lo scrivera' il primo `netupdate -check`.\n");
     return 1;
@@ -627,7 +627,7 @@ static int comando_registro(void)
     if (ign > 0) printf(", di cui %ld senza impronta", ign);
     printf(".\n");
     if (ign > 0) {
-        printf("  «Senza impronta» vuol dire: il file c'e' ma non si sa se e'\n");
+        printf("  \"Senza impronta\" vuol dire: il file c'e' ma non si sa se e'\n");
         printf("  quello dell'elenco. Il primo `-check` lo riguardera'.\n");
     }
     printf("\n  Un pacchetto per intero:  netupdate -registro:%s\n", v[0].id);
@@ -656,7 +656,7 @@ static int comando_registro_uno(const char *id)
 
     p = cerca(v, n, id);
     if (p == NULL) {
-        printf("netupdate: «%s» non risulta installato.\n\n", id);
+        printf("netupdate: \"%s\" non risulta installato.\n\n", id);
         printf("  Ci sono:");
         for (i = 0; i < n; i++) printf(" %s", v[i].id);
         printf("\n");
@@ -665,7 +665,7 @@ static int comando_registro_uno(const char *id)
 
     chi_usa(v, n, p->id, usato, sizeof(usato));
 
-    printf("%s — %s\n", p->id, p->nome);
+    printf("%s - %s\n", p->id, p->nome);
     if (p->dice[0]) printf("%s\n", p->dice);
     printf("\n");
     printf("  versione   %s\n", p->versione[0] ? p->versione : "?");
@@ -909,9 +909,9 @@ static int comando_registro_crea(const char *albero)
 
     if (chiave_da_file(ver, "versione", versione, sizeof(versione)) != 0) {
         fprintf(stderr, "netupdate: %s non c'e' o non dice la versione.\n", ver);
-        fprintf(stderr, "           «%s» non e' un albero pubblicato: dentro\n", albero);
+        fprintf(stderr, "           \"%s\" non e' un albero pubblicato: dentro\n", albero);
         fprintf(stderr, "           ci vogliono versione.txt, catalogo.txt,\n");
-        fprintf(stderr, "           elenco.txt e file/ — li fa `make netinst`.\n");
+        fprintf(stderr, "           elenco.txt e file/ - li fa `make netinst`.\n");
         return 1;
     }
     if (chiave_da_file(ver, "data", data, sizeof(data)) != 0)
@@ -932,7 +932,7 @@ static int comando_registro_crea(const char *albero)
         if (v[i].c_e) installati++;
     }
 
-    printf("Registro da %s — sistema %s del %s\n\n", albero, versione, data);
+    printf("Registro da %s - sistema %s del %s\n\n", albero, versione, data);
 
     if (installati == 0) {
         printf("  Nessuno dei %d pacchetti del catalogo risulta installato qui:\n", n);
@@ -969,8 +969,8 @@ static int comando_registro_crea(const char *albero)
     fprintf(out, "#            CONTRO COSA e' stato confrontato l'ultima volta\n");
     fprintf(out, "#   vuole    un pacchetto che deve restare finche' c'e'\n");
     fprintf(out, "#            questo (piu' righe = piu' pacchetti)\n");
-    fprintf(out, "#   file     un file che gli appartiene: «impronta percorso».\n");
-    fprintf(out, "#            Impronta «-» = il file c'e' ma non si sa se e'\n");
+    fprintf(out, "#   file     un file che gli appartiene: \"impronta percorso\".\n");
+    fprintf(out, "#            Impronta \"-\" = il file c'e' ma non si sa se e'\n");
     fprintf(out, "#            quello: il prossimo -check lo riguardera'.\n");
     fprintf(out, "# =============================================================\n");
 
@@ -2181,7 +2181,7 @@ static int guarda(Config *c, char *ver, char *cat, char *ele,
             if (g_zitto) return 1;
             printf("\nQui il registro non c'e' ancora: lo scrivo adesso, dal\n");
             printf("manifesto appena scaricato. E' quel che serve per sapere\n");
-            printf("cosa confrontare — e da adesso in poi c'e'.\n\n");
+            printf("cosa confrontare - e da adesso in poi c'e'.\n\n");
             if (comando_registro_crea(TMPDIR) != 0) return 1;
             printf("\n");
         } else if (n > 0 && !g_zitto) {
@@ -2393,7 +2393,7 @@ static int comando_repo(const char *indirizzo)
     for (i = 0; TRASPORTI[i]; i++)
         if (strcasecmp(c.tipo, TRASPORTI[i]) == 0) break;
     if (TRASPORTI[i] == NULL) {
-        printf("  ! repo.txt chiede il trasporto «%s», che non conosco.\n", c.tipo);
+        printf("  ! repo.txt chiede il trasporto \"%s\", che non conosco.\n", c.tipo);
         printf("    Non scrivo niente.\n");
         return 1;
     }
@@ -3042,7 +3042,7 @@ static int comando_install_list(const char *pezzo)
     }
 
     if (mostrati == 0) {
-        printf("  (nessuno: «%s» non compare in nessun nome)\n",
+        printf("  (nessuno: \"%s\" non compare in nessun nome)\n",
                pezzo ? pezzo : "");
         return 1;
     }
@@ -3128,7 +3128,7 @@ static int comando_install(const char *id)
 
     p = cerca(v, n, id);
     if (p == NULL) {
-        printf("\nnetupdate: «%s» non c'e' nel catalogo di questo server.\n\n", id);
+        printf("\nnetupdate: \"%s\" non c'e' nel catalogo di questo server.\n\n", id);
         printf("  Per vedere cosa c'e':  netupdate -install:list\n");
         return 1;
     }
@@ -3149,7 +3149,7 @@ static int comando_install(const char *id)
         copia_str(da_fare[nda++], scelti[i], ID_MAX);
     }
 
-    printf("\n%s — %s\n", p->id, p->nome);
+    printf("\n%s - %s\n", p->id, p->nome);
     if (p->dice[0]) printf("%s\n", p->dice);
 
     if (nscelti > 1) {
@@ -3382,22 +3382,22 @@ static int comando_remove(const char *id)
 
     p = cerca(r, nr, id);
     if (p == NULL) {
-        printf("netupdate: «%s» non risulta installato.\n\n", id);
+        printf("netupdate: \"%s\" non risulta installato.\n\n", id);
         printf("  Ci sono:");
         for (i = 0; i < nr; i++) printf(" %s", r[i].id);
         printf("\n");
         return 1;
     }
     if (p->sempre) {
-        printf("netupdate: «%s» non si toglie: %s\n\n", id, p->nome);
-        printf("  E' segnato «sempre» nel catalogo, e vuol dire che senza di\n");
+        printf("netupdate: \"%s\" non si toglie: %s\n\n", id, p->nome);
+        printf("  E' segnato \"sempre\" nel catalogo, e vuol dire che senza di\n");
         printf("  lui questa macchina non e' piu' una macchina.\n");
         return 1;
     }
 
     chi_usa(r, nr, id, usato, sizeof(usato));
     if (strcmp(usato, "nessuno") != 0) {
-        printf("netupdate: «%s» non si puo' togliere: lo usano %s.\n\n", id, usato);
+        printf("netupdate: \"%s\" non si puo' togliere: lo usano %s.\n\n", id, usato);
         printf("  Togli prima quelli, o resterebbero a meta'.\n");
         return 1;
     }
@@ -3429,7 +3429,7 @@ static int comando_remove(const char *id)
         if (!aggiunti) break;
     }
 
-    printf("Tolgo %s — %s\n", p->id, p->nome);
+    printf("Tolgo %s - %s\n", p->id, p->nome);
     for (i = 0; i < nvia; i++) {
         Pacchetto *q = cerca(r, nr, via[i]);
 
@@ -3592,7 +3592,7 @@ int main(int argc, char **argv)
          * dirlo cosi' costa una riga: un comando che accetta un'opzione e non
          * fa niente e' peggio di uno che la rifiuta, perche' chi lo usa crede
          * di aver installato. Il lavoro e' in in_lavorazione.txt, @NET-APP. */
-        printf("netupdate: «%s» vuole i due punti e un nome.\n\n", argv[1]);
+        printf("netupdate: \"%s\" vuole i due punti e un nome.\n\n", argv[1]);
         printf("           netupdate -install:list [pezzo di nome]\n");
         printf("           netupdate -install:<pacchetto>\n");
         printf("           netupdate -remove:<pacchetto>\n");
@@ -3604,7 +3604,7 @@ int main(int argc, char **argv)
         return 0;
     }
 
-    printf("netupdate: non conosco «%s»\n\n", argv[1]);
+    printf("netupdate: non conosco \"%s\"\n\n", argv[1]);
     uso();
     return 1;
 }

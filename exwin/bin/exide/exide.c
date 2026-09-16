@@ -753,7 +753,7 @@ static void prop_applica(void)
                  * scritto a mano. */
                 if (!form_e_principale(g_form_sel) &&
                     strcmp(nuovo, "finestra") == 0) {
-                    dico("«finestra» e' il nome della maschera principale");
+                    dico("\"finestra\" e' il nome della maschera principale");
                     return;
                 }
                 for (i = 0; i < FORM_MAX; i++)
@@ -1196,7 +1196,7 @@ static void form_togli(void)
     {
         char avviso[160];
 
-        sprintf(avviso, "Togliere la maschera «%s» e i %d controlli che ci "
+        sprintf(avviso, "Togliere la maschera \"%s\" e i %d controlli che ci "
                         "stanno dentro?\n\nGli handler gia' scritti in "
                         "finestra.c restano dove sono.",
                 g_form[g_form_sel].titolo, quanti);
@@ -1648,7 +1648,7 @@ static int gen_h(void)
         }
 
     SCRIVI("\n/* La principale la apre il main di finestra.c. LE ALTRE LE APRI\n"
-           " * TU, chiamando la loro <nome>_crea() da dove serve — di solito\n"
+           " * TU, chiamando la loro <nome>_crea() da dove serve - di solito\n"
            " * dall'handler di un pulsante. Chiamarla due volte non apre due\n"
            " * finestre: se c'e' gia', la ridisegna e basta.\n"
            " *\n"
@@ -2500,7 +2500,7 @@ static void progetto_salva_come(const char *nuova)
         close(fd);
         snprintf(avviso, sizeof(avviso),
                  "In %s c'e' gia' un progetto.\n\n"
-                 "«Salva con nome» non lo sovrascrive: i sorgenti scritti a "
+                 "\"Salva con nome\" non lo sovrascrive: i sorgenti scritti a "
                  "mano che ci sono dentro andrebbero persi, e non c'e' modo "
                  "di riaverli. Scegli una directory che non esiste ancora, "
                  "oppure sposta altrove quella di prima.", dest);
@@ -2842,7 +2842,7 @@ static int scrivi_script(void)
     if (fd < 0) { dico("non riesco a scrivere compila.sh"); return 0; }
 
     sprintf(testa,
-            "# GENERATO DA EXIDE - si riscrive a ogni «Scrivi compila.sh».\n"
+            "# GENERATO DA EXIDE - si riscrive a ogni \"Scrivi compila.sh\".\n"
             "#\n"
             "# Si puo' lanciare anche a mano, dalla directory del progetto:\n"
             "#     cd %s\n"

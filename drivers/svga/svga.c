@@ -531,7 +531,7 @@ int main(int argc, char **argv)
         printf("     SPARISCE ALLO SPEGNIMENTO.\n");
         printf("\n");
         printf("   Questo sistema e' partito da un supporto che il kernel\n");
-        printf("   non sa rileggere — un lettore sull'USB — e Stage 2 ne ha\n");
+        printf("   non sa rileggere - un lettore sull'USB - e Stage 2 ne ha\n");
         printf("   copiato il volume in memoria. /LOADER.BIN che sto per\n");
         printf("   cambiare e' quella copia, non il dischetto.\n");
         printf("\n");

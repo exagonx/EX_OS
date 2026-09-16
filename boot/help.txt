@@ -172,11 +172,11 @@ cancella file, con i nomi e i modi di POSIX
 !! NON espande * e ?. `rm *.o` cancella un file che si chiama davvero
 `*.o`. Per i modelli c'e' `delete`, che li fa e lo dichiara.
 
-!! Senza -r una directory e' un errore ANCHE con -f: «non lamentarti se
-non c'e'» e «cancella qualunque cosa» sono due richieste diverse.
+!! Senza -r una directory e' un errore ANCHE con -f: "non lamentarti se
+non c'e'" e "cancella qualunque cosa" sono due richieste diverse.
 
 Serve perche' i makefile scrivono `rm`, non `delete`, e `rm -f` su un file
-assente deve TACERE — se no ogni ricetta di pulizia ferma la costruzione.
+assente deve TACERE - se no ogni ricetta di pulizia ferma la costruzione.
 
 [mv]
 sposta o rinomina un file
@@ -205,7 +205,7 @@ Con -p una directory che esiste gia' NON e' un errore, e non si stampa
 niente. E' quello che i makefile si aspettano: creano le proprie directory
 degli oggetti a ogni esecuzione, e la seconda volta ci sono gia'.
 
-Senza -p si crea un livello solo, e «esiste gia'» e' un errore.
+Senza -p si crea un livello solo, e "esiste gia'" e' un errore.
 
 [rmdir]
 elimina directory vuote
@@ -350,8 +350,8 @@ che sistema e' questo, come lo chiede uno script
   uname -a                 tutto insieme
 
 !! DICE UNA PAROLA, NON UNA FRASE, ed e' il punto. Fino ad agosto 2026 era
-un built-in della shell e stampava «EX-OS version 0.176 (x86 32-bit) -
-Copyright...»: bello da leggere, e inservibile per un makefile, che scrive
+un built-in della shell e stampava "EX-OS version 0.176 (x86 32-bit) -
+Copyright...": bello da leggere, e inservibile per un makefile, che scrive
 `ifeq ($(shell uname),Linux)` e confronta con una parola.
 
 Adesso e' un programma, /bin/uname, e il built-in non c'e' piu': `uname`
@@ -359,7 +359,7 @@ non puo' rispondere due cose diverse a seconda di chi lo chiama. La frase
 per le persone e' `ver`.
 
 !! Il nome del sistema e' FISSO, non viene da OSNAME di kernel.cfg. OSNAME
-e' un nome da mostrare («EX OS», con lo spazio); `uname -s` e' un token che
+e' un nome da mostrare ("EX OS", con lo spazio); `uname -s` e' un token che
 gli script confrontano e tagliano. E se venisse da un file, cambiarlo
 cambierebbe di nascosto il ramo che ogni makefile del disco imbocca.
 Versione e nome macchina vengono dall'ambiente: quelli e' giusto cambiarli.
@@ -479,9 +479,9 @@ niente: e' il contratto di POSIX, ed e' cio' che rende usabile
 `cmp -s a b || cp a b` dentro un makefile - il modo classico di non
 ritoccare la data di un file che non e' cambiato.
 
-!! Il codice di uscita distingue TRE casi, non due: «diversi» (1) e «non ho
-potuto guardare» (2) sono cose diverse. Uno script che tratta un file
-mancante come «diverso» ricopia allegramente sopra un errore.
+!! Il codice di uscita distingue TRE casi, non due: "diversi" (1) e "non ho
+potuto guardare" (2) sono cose diverse. Uno script che tratta un file
+mancante come "diverso" ricopia allegramente sopra un errore.
 
 Confrontare le dimensioni non basta: due file possono pesare uguale e
 differire. E' il motivo per cui questo comando esiste - serviva a dire se
@@ -498,8 +498,8 @@ inventario dell'hardware, per chi deve scrivere un driver
 -s restringe il CONTENUTO, non spegne la scrittura: il file lo scrive lo
 stesso, col solo elenco dentro. Per guardare senza scrivere niente: -n.
 
-Diverso da `hwconfig`, che chiede «come accendo questa macchina». Questo
-chiede «cosa devo scrivere per pilotare questa scheda», e raccoglie i dati
+Diverso da `hwconfig`, che chiede "come accendo questa macchina". Questo
+chiede "cosa devo scrivere per pilotare questa scheda", e raccoglie i dati
 che servono a farlo: gli identificatori su cui agganciarsi, la classe, i
 BAR con lo spazio in cui rispondono, l'IRQ, e cosa il BIOS ha gia' acceso
 nel registro comando. In fondo elenca i dispositivi senza driver.
@@ -583,14 +583,14 @@ prova il drive floppy passo passo: si guarda e si ascolta
   fdprova -s                 parte subito
   fdprova -o /disco/f.log    dove scrivere il log
 
-Ogni passo dice cosa deve succedere FISICAMENTE prima di farlo — la
-spia che si accende, la testina che si sposta, il motore che si ferma —
+Ogni passo dice cosa deve succedere FISICAMENTE prima di farlo - la
+spia che si accende, la testina che si sposta, il motore che si ferma -
 e poi dice cosa ha risposto il controller. Se il rumore non corrisponde
 all'annuncio, il guasto e' fra controller e meccanica; se corrisponde e
 le letture sbagliano lo stesso, e' il dischetto.
 
-Il log va in /fdprova.log. Se non si scrive — ed e' il caso normale,
-visto che si sta provando proprio quel disco — le venti righe che
+Il log va in /fdprova.log. Se non si scrive - ed e' il caso normale,
+visto che si sta provando proprio quel disco - le venti righe che
 contano finiscono a schermo, in ordine di esecuzione.
 
 Va data da root. Esiste anche un floppy che la esegue da solo
@@ -604,7 +604,7 @@ segue il mouse e stampa movimenti e tasti
 
 ! IN MODO TESTO NON C'E' NESSUN PUNTATORE DA VEDERE, e non e' un difetto:
 la freccia la disegna il server a finestre, non la console. Qui il mouse
-esiste come SERVIZIO — chi lo vuole lo chiede — e questo comando e' il
+esiste come SERVIZIO - chi lo vuole lo chiede - e questo comando e' il
 modo di guardarlo lavorare.
 
 Il mouse PS/2 lo serve /dev/kbd.drv: e' la seconda porta dello stesso
@@ -622,7 +622,7 @@ prova la tastiera passo passo: dove si ferma, fra tasto e programma
 
 `-stato` si puo' dare anche con /dev/kbd.drv caricato: guarda soltanto
 delle variabili del kernel e la maschera del PIC, e dice su quale delle
-due strade — driver ring3 o ripiego interno — sta la tastiera. E' la
+due strade - driver ring3 o ripiego interno - sta la tastiera. E' la
 prima domanda da farsi quando nessun tasto fa niente, perche' le due
 strade si escludono a vicenda e solo una delle due e' attiva.
 
@@ -727,7 +727,7 @@ costruisce un programma da un makefile
   make -f altro.mk                 un makefile con un altro nome
   make -j2                         due comandi insieme
 
-E' GNU make 4.2. Serve il CD degli strumenti (gruppo «Costruzione» di
+E' GNU make 4.2. Serve il CD degli strumenti (gruppo "Costruzione" di
 `install -tools`), che porta anche `ar`, `ranlib`, `nm`, `strip`,
 `objcopy` e `objdump`.
 

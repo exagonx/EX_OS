@@ -341,5 +341,5 @@ void loader_main(uint8_t drive)
     jump_to_kernel(KERNEL_LOAD_ADDR, bootinfo);
 
     /* Non raggiunto */
-    print_error("jump_to_kernel() e' tornato — impossibile!");
+    print_error("jump_to_kernel() e' tornato - impossibile!");
 }

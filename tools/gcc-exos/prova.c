@@ -76,7 +76,7 @@ int main(int argc, char **argv)
     char *buf;
     int   i;
 
-    printf("provagcc — compilato con i386-exos-gcc\n");
+    printf("provagcc - compilato con i386-exos-gcc\n");
 
 #ifdef __exos__
     printf("  __exos__     definito dal bersaglio\n");

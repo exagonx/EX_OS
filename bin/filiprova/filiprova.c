@@ -99,7 +99,7 @@ static void filo_tls(void *arg)
         thread_esci(1);
     }
     if (g_mio != 100 + io) {
-        printf("  filo %d: ci trovo %d invece di %d — blocco condiviso\n",
+        printf("  filo %d: ci trovo %d invece di %d - blocco condiviso\n",
                io, g_mio, 100 + io);
         thread_esci(1);
     }
@@ -159,7 +159,7 @@ static void filo_errno(void *arg)
     for (i = 0; i < 50; i++) sched_yield();
 
     if (errno != mio) {
-        printf("  filo %d: errno era %d e adesso e' %d — condiviso\n",
+        printf("  filo %d: errno era %d e adesso e' %d - condiviso\n",
                io, mio, errno);
         thread_esci(1);
     }
@@ -608,7 +608,7 @@ static int prova_ferma(void)
         if (codice != 0) esito = 1;
     }
     dt = uptime_ms() - t0;
-    printf("  %d corse fra «guardo» e «mi addormento»: %u ms   %s\n",
+    printf("  %d corse fra \"guardo\" e \"mi addormento\": %u ms   %s\n",
            FERMA_GIRI, dt,
            dt < 1000 ? "nessuna scrollata persa"
                      : "UNA SCROLLATA PERSA (e' costata una scadenza)");
@@ -685,7 +685,7 @@ static int prova_cwd(void)
     /* Verso 1: il filo ha fatto cd /bin, e lo deve vedere il principale. */
     dove[0] = 0;
     getcwd(dove, sizeof(dove));
-    printf("  il filo fa cd /bin, il principale ci trova «%s»   %s\n", dove,
+    printf("  il filo fa cd /bin, il principale ci trova \"%s\"   %s\n", dove,
            strcmp(dove, "/bin") == 0 ? "condivisa" : "COPIATA (non la vede)");
     if (strcmp(dove, "/bin") != 0) esito = 1;
 
@@ -695,18 +695,18 @@ static int prova_cwd(void)
     while (c_passo != 3) sched_yield();
     thread_attendi(tid, &codice);
 
-    printf("  il principale fa cd /dev, il filo ci trova «%s»   %s\n", c_visto,
+    printf("  il principale fa cd /dev, il filo ci trova \"%s\"   %s\n", c_visto,
            strcmp(c_visto, "/dev") == 0 ? "condivisa" : "COPIATA (non la vede)");
     if (strcmp(c_visto, "/dev") != 0) esito = 1;
 
-    printf("  l'ambiente del principale, letto dal filo: «%s»   %s\n",
+    printf("  l'ambiente del principale, letto dal filo: \"%s\"   %s\n",
            c_env_visto ? c_env_visto : "(niente)",
            (c_env_visto && strcmp(c_env_visto, "dal-principale") == 0)
                ? "in comune" : "NON LO VEDE");
     if (!c_env_visto || strcmp(c_env_visto, "dal-principale") != 0) esito = 1;
 
     v = getenv("FILODICE");
-    printf("  e quel che il filo ci ha messo, letto dal principale: «%s»   %s\n",
+    printf("  e quel che il filo ci ha messo, letto dal principale: \"%s\"   %s\n",
            v ? v : "(niente)",
            (v && strcmp(v, "riposto") == 0) ? "in comune" : "NON LO VEDE");
     if (!v || strcmp(v, "riposto") != 0) esito = 1;

@@ -834,7 +834,7 @@ static void componi_kernel_cfg(char *out, unsigned int max, const char *vecchio)
              * root — non la shell dell'utente, che e' il difetto per cui la
              * rete era finita in [modules] la prima volta. */
             snprintf(riga, sizeof(riga),
-                     "\n# La rete: %s — si accende da /boot/avvio.sh, che\n"
+                     "\n# La rete: %s - si accende da /boot/avvio.sh, che\n"
                      "# `login` esegue prima dell'accesso e da root. Li' l'ordine\n"
                      "# e' garantito; qui non lo sarebbe.\n",
                      g_t.rete_modello);
@@ -940,11 +940,11 @@ static void componi_avvio(char *out, unsigned int max, const char *radice)
 
     strncat(out,
         "# =============================================================================\n"
-        "# avvio.sh — i comandi del SISTEMA, non di chi entra\n"
+        "# avvio.sh - i comandi del SISTEMA, non di chi entra\n"
         "#\n"
         "# Lo esegue `login` prima dell'accesso e con i privilegi di root, sulla\n"
         "# sola console 0, e aspetta che finisca. E' il posto delle cose che\n"
-        "# vogliono un ORDINE — accendere la rete e' la prima.\n"
+        "# vogliono un ORDINE - accendere la rete e' la prima.\n"
         "#\n"
         "# Se una riga qui dentro si blocca: Alt+F2 da' una shell pulita, e\n"
         "# cancellare questo file lo salta del tutto.\n"
@@ -985,7 +985,7 @@ static void componi_avvio(char *out, unsigned int max, const char *radice)
             "\n"
             "# Un'occhiata al server degli aggiornamenti: non chiede niente, non\n"
             "# installa niente e non stampa niente se non c'e' niente da dire.\n"
-            "# Fa qualcosa solo se /boot/netupdate.cnf dice «automatico = si»,\n"
+            "# Fa qualcosa solo se /boot/netupdate.cnf dice \"automatico = si\",\n"
             "# e molla dopo cinque secondi se il server non risponde.\n"
             "netupdate -auto\n",
             g_t.rete_driver);
@@ -1002,8 +1002,8 @@ static void componi_avvio(char *out, unsigned int max, const char *radice)
             "\n"
             "# La shell dalla rete, SE qualcuno l'ha chiesta. Da sola questa\n"
             "# riga non apre niente: telnetd -auto legge /boot/telnetd.cfg e\n"
-            "# parte solo se la chiave `avvio` dice «login» oppure «root».\n"
-            "# Il predefinito e' «no», e in quel caso esce in silenzio.\n"
+            "# parte solo se la chiave `avvio` dice \"login\" oppure \"root\".\n"
+            "# Il predefinito e' \"no\", e in quel caso esce in silenzio.\n"
             "telnetd -auto &\n", max - 1 - strlen(out));
     } else {
         strncat(out,
