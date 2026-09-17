@@ -142,7 +142,9 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @PROVE-MACCHINA  ftpswap provato la' il 16 settembre; eject aspetta una chiavetta
   1  @GRAFICA-SCATTI  misurato: il bus non c'entra, si ridipinge troppo spesso
   1  @TELNET-SCALA    scaletta e troncamento SISTEMATI: resta la sessione che si impianta
-  1  @SIS-2D          il motore 2D c'e' e la sua finestra tace: manca una prova sola
+  1  @SIS-2D          FATTO: il motore 2D disegna, 14x sulla copia
+  1  @ACCEL-2D        wserver lo usa via servizio; resta da provarlo sul ferro
+ --  @SIS-2D-STORIA   come ci si e' arrivati: cinque strade chiuse e un blocco
   1  @DIF-GROSSI      cc1plus non entrava in memoria: il corpo passa dal disco
   1  @FILI-MAX        otto fili per processo: e' un numero, non un lavoro
   1  @IMMAGINI        manca un visualizzatore di immagini: il decodificatore c'e' gia'
@@ -1419,8 +1421,63 @@ QUEL CHE MANCA, IN ORDINE:
     ! E IL KERNEL E' CAMBIATO, quindi non basta copiare telnetd: la macchina
       vuole un aggiornamento completo e un riavvio.
 
-! @SIS-2D IL MOTORE 2D C'E', LA SUA FINESTRA TACE, E MANCA UNA PROVA SOLA.
-  (16 settembre 2026)
+! @SIS-2D IL MOTORE 2D DISEGNA. FATTO IL 16 SETTEMBRE 2026, SULLA MACCHINA VERA.
+
+  ! CHIUSO, E MISURATO DA FREDDO. Dopo un riavvio pulito, senza nessun comando
+    di accensione prima:
+
+        sis2d: motore acceso - 65536 KB di memoria video, coda a 0x03f80000
+          il riempimento e' giusto, bordi compresi.
+          la copia e' identica all'originale.
+          la sovrapposizione e' gestita dal motore.
+        sis2d: ! TUTTO GIUSTO.
+
+        operazione                   CPU     motore   guadagno
+        riempire                     377 MB/s    734 MB/s   1.9x
+        copiare schermo->schermo      25 MB/s    356 MB/s  14.2x
+
+  ! ERANO DUE BIT, E LA DIAGNOSI LI STAMPAVA DAL PRIMO GIORNO.
+    SR20 bit 0 (SIS_MEM_MAP_IO_ENABLE) apre la finestra dei registri; SR1E
+    bit 6 (SIS_ENABLE_2D) accende il motore. La diagnosi li mostrava come
+    «SR1E = 0x20, SR20 = 0xa0» fin dalla prima stesura, e quei due numeri sono
+    finiti in questo file fra i dati «stabiliti sulla macchina vera». Erano due
+    MISURE, e nessuno le ha lette come due MANCANZE.
+
+  ! E L'ORDINE NON E' NEGOZIABILE, perche' il passo che mancava in mezzo e'
+    quello che bloccava la macchina:
+
+        1. SR20 bit 0            apre la finestra
+        2. Q_BASE_ADDR = base    DA DOVE il motore legge i comandi
+        3. SR27 0x1F, SR26 0x01  soglia e RESET della coda
+        4. WRITEPORT <- READPORT coda vuota
+        5. SR1E bit 6            IL MOTORE, per ultimo
+        6. SR26 = 0x22           coda in modo MMIO
+
+    Appena aperta la finestra, Q_BASE_ADDR vale ZERO. Accendere il motore li'
+    vuol dire farlo partire a prendere comandi dall'indirizzo zero della
+    memoria video e a scrivere dove quei comandi gli dicono: un bus master che
+    va per conto suo. Niente ping, ciclo di alimentazione. E' successo, ed e'
+    il motivo per cui il passo 2 esiste.
+
+  ! LA BASE SI CALCOLA: CR79 bit 7-4 danno i mega di memoria condivisa (64
+    sull'Acer), la coda va negli ultimi 512 KB. Se quella misura non si
+    riconosce, sis2d_apri() RINUNCIA e lascia il motore spento: una base a
+    caso e' il difetto che quella funzione esiste per evitare.
+
+  ! L'ACCENSIONE LA FA sis2d_apri(), e solo SE SERVE — cioe' se Q_STATUS legge
+    tutti uno. Se la finestra risponde gia', qualcun altro l'ha accesa e
+    rifare la sequenza vorrebbe dire RESETTARE una coda che magari lavora.
+
+  QUEL CHE RESTA, ed e' un compito diverso: **wserver non usa ancora il
+  motore**. Il guadagno di 14x sta sulla copia schermo->schermo, cioe' proprio
+  quel che fa il compositore quando sposta una finestra o fa scorrere un
+  terminale. Vedi @GRAFICA-SCATTI, che adesso ha uno strumento in piu' oltre al
+  restringere le regioni sporche.
+
+  QUI SOTTO RESTA LA STORIA DI COME CI SI E' ARRIVATI, perche' ogni strada
+  chiusa e' una prova gia' pagata.
+
+! @SIS-2D-STORIA COME CI SI E' ARRIVATI (16 settembre 2026)
 
   Il codice e' scritto e compila: drivers/sis/sis_2d.c piu' sis_2d.h, agganciati
   a sis.drv con -2dstato, -2dprova, -2dmisura e -2ddiagnosi.
@@ -1595,6 +1652,45 @@ QUEL CHE MANCA, IN ORDINE:
       larga di BAR1 — una finestra legacy a indirizzo fisso — e accavallarsi
       alla RAM o a un'altra scheda. Quello impianta il bus senza che nessuno
       abbia letto niente.
+
+  ! E SR20 BIT 0 NON BLOCCA NIENTE, MA FA QUALCOSA. (16 settembre 2026, notte.)
+    `-2dsr20` sull'Acer: la macchina resta VIVA, il registro tiene il bit
+    (0xa0 -> 0xa1), e succede la prima cosa nuova di tutta questa storia —
+
+        -2dsr1e :  [0x8200] ffffffff  [0x0000] ffffffff  [0x85cc] ffffffff
+        -2dsr20 :  [0x8200] ffffffff  [0x0000] ffffffff  [0x85cc] ff000000
+
+    0x85CC, cioe' Q_STATUS, CAMBIA VALORE per effetto di quel bit. Non e' piu'
+    la finestra che non risponde a nessuno: almeno un registro decodifica.
+
+    ! E ANCHE IL BLOCCO DI PRIMA ADESSO HA UN NOME PIU' STRETTO: presi uno per
+      volta i due bit sono innocui, quindi a fermare la macchina e' stata la
+      COPPIA, non SR20. E' un'informazione che il primo tentativo non poteva
+      dare, perche' li accendeva insieme.
+
+  ! IL PROGRAMMA PERO' HA DETTO «muta come prima», ED ERA SBAGLIATO. Il
+    verdetto guardava il solo [0x8200] e stampava tre numeri: quello cambiato
+    era il terzo. Un giudizio basato su tre letture deve guardarle tutte e tre,
+    o non e' un giudizio — e' la prima lettura con intorno due numeri per
+    bellezza. Corretto: adesso guarda tutte e tre.
+
+    ! E' LO STESSO ERRORE DEL PASSO 1 DI -2ddiagnosi, dove si confrontavano due
+      zeri e si concludeva che erano uguali. Seconda volta in questo file.
+
+  ! LE DUE PROVE CHE VENGONO ADESSO, in quest'ordine:
+
+      sis.drv -2dmappa   DI SOLA LETTURA, si puo' fare senza timori: con SR20
+                         bit 0 acceso legge OTTANTA punti della finestra PRIMA
+                         e DOPO, e dice quali cambiano. Serve a sapere se a
+                         rispondere e' un registro solo o una FASCIA — e le due
+                         cose portano a passi diversi. Tre letture non sono una
+                         mappa.
+      sis.drv -2dsr      i DUE bit insieme: e' l'esperimento che ha bloccato la
+                         macchina, rifatto con ogni gesto annunciato e mezzo
+                         secondo di attesa perche' la riga esca. L'ordine e'
+                         ROVESCIATO apposta — prima SR1E, poi SR20 — cosi' un
+                         blocco dice «SR20 mentre SR1E e' acceso», che e' una
+                         frase precisa. Vuole qualcuno vicino all'interruttore.
 
   ! E IL VERO OSTACOLO ADESSO NON E' LA SiS: E' telnetd. Dopo quattro o cinque
     sessioni la macchina accetta la connessione, fa l'eco del comando e non
@@ -2041,6 +2137,62 @@ I quattro passi, e i primi tre non toccano EX-OS:
 ! QUEL CHE MANCA ANCORA A UN PORTING DI TERZE PARTI, misurato: fork, i socket
   BSD, dlopen/dlsym, sem_init (il mattone c'e', manca il nome POSIX) e iconv. Ci sono invece mmap, poll, select,
   signal, il C++ 17 sul CD e — da oggi — i thread.
+
+=============================================================================
+@ACCEL-2D IL 2D OFFERTO A wserver, COL RAMO SOFTWARE (17 settembre 2026)
+=============================================================================
+
+Chiesto dall'utente: che wserver usi il motore 2D dove c'e' e disegni da se'
+dove non c'e'. FATTO e provato a meta'. Il disegno per esteso sta nel diario
+del 17 settembre; qui c'e' quel che serve per riprendere.
+
+! IL VINCOLO CHE DECIDE TUTTO: wserver NON E' UN DRIVER e non deve tornare a
+  esserlo. mmio_map e ioport_bind sono da driver; quei privilegi wserver li ha
+  persi APPOSTA il 19 agosto 2026, perche' /dev e' di root e quel nome teneva
+  la grafica fuori dalla multiutenza. Quindi: un SERVIZIO IPC, non una
+  libreria, e il server chiede un rettangolo invece dei privilegi.
+
+  drivers/accel/accel_proto.h   il contratto (e non e' di nessuno dei due)
+  sis.drv -2dservizio           registra 'accel2d' e serve RIEMPI/COPIA/INFO
+  sis.drv -2dchiedi             lo prova DA FUORI, come lo usa wserver
+  wserver                       ipc_lookup una volta all'avvio, poi manda
+
+! LA RIGA PIU' IMPORTANTE E' UN ipc_scegli, NON UNA ipc_recv_timeout. La regola
+  di quel server e' scritta sopra mouse_chiedi(): «LA MAILBOX LA LEGGE UN POSTO
+  SOLO». Una recv che legge qualunque cosa si mangia le richieste dei client —
+  e' gia' successo, sintomo «il server non risponde una volta su tre».
+  ipc_scegli filtra, e mentre aspetta SVUOTA la coda del kernel sullo
+  scaffale invece di lasciarla riempire: a mailbox piena (quattro messaggi)
+  ogni ipc_send verso il server fallisce, compresa la consegna di un tasto.
+
+! LA SOGLIA E' 32768 PIXEL, E IL CONTO E' A META': il motore risparmia META'
+  del tempo, non tutto, quindi il messaggio va pagato con meta' del costo del
+  rettangolo. A 4096 pixel il risparmio (21 us) era MENO del messaggio: la
+  prima stesura ce l'aveva e sarebbe stata una perdita. Misurato sull'Acer, un
+  giro di IPC con lo sfondo intero sta sotto il millisecondo.
+
+! CHE COSA RESTA, ED E' UNA MISURA SOLA: PROVARE CHE wserver LO USA DAVVERO
+  SULL'ACER. Il contatore `servite` in AccInfo esiste per questo — si avvia
+  exwin, si muovono le finestre, e `-2dchiedi` dice quante richieste il
+  servizio ha servito. Zero vorrebbe dire che il server sta disegnando da se',
+  e allora c'e' qualcosa da capire. NON E' STATO FATTO.
+
+! E IL GUADAGNO CHE CI SI PUO' ASPETTARE E' QUELLO DEL RIEMPIMENTO (1,9x), NON
+  QUELLO DELLA COPIA (14x). Nel compositore non c'e' nessuna copia
+  schermo->schermo: componi() riempie lo sfondo e poi copia le zone dei client,
+  che stanno in RAM di sistema — e quella copia e' gia' al limite del bus. Il
+  14x si prende solo cambiando strategia di composizione (spostare una finestra
+  con una blitt invece di ricomporre): vedi @GRAFICA-SCATTI.
+
+! TRE ERRORI DI METODO DA NON RIFARE, pagati il 17 settembre:
+  - `until ping` NON dimostra un riavvio: se la macchina non e' ancora andata
+    giu', il primo ping riesce. Si aspetta prima che SMETTA di rispondere.
+  - NON SI POLLA LA PORTA 23: telnetd serve una sessione per volta, e un ciclo
+    che bussa gliele occupa tutte. L'ho impiantato con la sonda che doveva
+    dirmi se era vivo.
+  - UN FILE SI GUARDA, NON SI DA' PER SCRITTO: hwconfig non aveva scritto
+    niente perche' pilota_telnet.py rispondeva solo alle domande che finiscono
+    con «: », e hwconfig chiede «Procedo? [si/no] ». Corretto nel pilota.
 
 =============================================================================
 @GRAFICA-CHIESTE DUE COSE CHIESTE PER ExWin (16 settembre 2026)

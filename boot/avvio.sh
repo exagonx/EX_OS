@@ -109,6 +109,28 @@ netupdate -auto
 # puo' creare.
 automount &
 
+# =============================================================================
+# L'acceleratore 2D della scheda grafica, se ce l'ha
+#
+# ! ESCE DA SOLO SU OGNI MACCHINA CHE NON SIA QUESTA, in silenzio: niente SiS,
+# niente BAR, niente servizio, e nessuna riga. E' voluto - questo file gira su
+# tutte le macchine, e un messaggio rivolto a nessuno in mezzo alle righe
+# d'avvio e' peggio di nessun messaggio: si impara a non leggerle, e le righe
+# d'avvio che non si leggono sono il posto dove si nasconde il guasto vero.
+#
+# ! E SE NON PARTE NON SI ROMPE NIENTE: wserver cerca il servizio una volta
+# all'avvio, non lo trova, e riempie con le sue primitive MMX. Quello e' il
+# ramo NORMALE - su VESA, sul framebuffer generico e dentro QEMU e' l'unico che
+# esiste.
+#
+# ! VA QUI E NON DENTRO exwin, e la ragione e' dei permessi: /dev e' di root,
+# quindi un utente normale non puo' eseguire /dev/sis.drv. E' la stessa
+# barriera per cui il 19 agosto 2026 wserver ha smesso di chiamarsi
+# /dev/wserver.drv. Il servizio lo accende il SISTEMA, prima che qualcuno
+# entri; chi disegna non chiede privilegi, chiede un rettangolo.
+# =============================================================================
+/dev/sis.drv -2dservizio &
+
 # ! LE RIGHE QUI SOPRA STANNO ANCHE DENTRO hwconfig (componi_avvio, in
 # bin/hwconfig/hwconfig.c): questo file ha DUE scrittori. Chi ne cambia una
 # qui la cambia anche li', o alla prima configurazione dell'hardware sparisce.

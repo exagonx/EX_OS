@@ -209,7 +209,11 @@ DRIVER_SOLO_CD := pci.drv ne2k.drv pcnet.drv ip.drv sb.drv es1371.drv ac97.drv h
 #         driver delle schede PCI. Qui sta anche audio_proto.h, cioe' il
 #         protocollo che includono i programmi che suonano. Non guida
 #         nessun hardware e non nomina nessuna scheda.
-NON_DRIVER := net tty usb wserver audio
+#   accel e' SOLO il protocollo dell'acceleratore 2D (accel_proto.h): lo
+#         includono sis.drv, che il servizio lo OFFRE, e wserver, che lo
+#         CHIEDE. Non guida nessun hardware e non lo guidera' mai — e' il
+#         contratto fra chi ha i privilegi da driver e chi disegna senza.
+NON_DRIVER := net tty usb wserver audio accel
 
 # L'archivio degli utenti e le password: un modulo compilato dentro, non una
 # .so. Il perche' sta in cima a lib/exuser/exuser.h — login, install e su
@@ -1299,11 +1303,16 @@ SIS_HDR := drivers/sis/sis_tab.h drivers/sis/sis_2d.h
 SIS_OUT := $(BUILD_DRIVERS_CD)/sis.drv
 SIS_LD  := drivers/sis/sis.ld
 
-$(SIS_OUT): $(SIS_SRC) $(SIS_2D_SRC) $(SIS_HDR) drivers/sis/ponte_tab.h $(SIS_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+# ! -I drivers/accel PERCHE' IL PROTOCOLLO DELL'ACCELERATORE E' CONDIVISO:
+# accel_proto.h lo includono sis.drv (che offre il servizio) e wserver (che lo
+# chiede). Sta in una directory sua, come win_proto.h e audio_proto.h, perche'
+# un protocollo che vive dentro una delle due parti e' un protocollo che quella
+# parte cambia senza accorgersi dell'altra.
+$(SIS_OUT): $(SIS_SRC) $(SIS_2D_SRC) $(SIS_HDR) drivers/sis/ponte_tab.h drivers/accel/accel_proto.h $(SIS_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione sis.drv ==="
 	@mkdir -p $(BUILD_DRIVERS_CD)
-	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/sis -c $(SIS_SRC) -o $(BUILD_DRIVERS_CD)/sis_main.o
-	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/sis -c $(SIS_2D_SRC) -o $(BUILD_DRIVERS_CD)/sis_2d.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/sis -I drivers/accel -c $(SIS_SRC) -o $(BUILD_DRIVERS_CD)/sis_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/sis -I drivers/accel -c $(SIS_2D_SRC) -o $(BUILD_DRIVERS_CD)/sis_2d.o
 	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)   -o $(BUILD_DRIVERS_CD)/sis_libc.o
 	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_DRIVERS_CD)/sis_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(SIS_LD) \
@@ -1369,10 +1378,14 @@ WIN_PROTO   := drivers/wserver/win_proto.h
 FONT_SRC    := kernel/arch/x86/font8x16.c
 
 $(WSERVER_OUT): $(WSERVER_SRC) $(WIN_PROTO) $(KBD_DRV_PROTO) $(WSERVER_LD) \
+                drivers/accel/accel_proto.h \
                 $(FONT_SRC) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione /exwin/bin/wserver ==="
 	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/kbd -I drivers/wserver -c $(WSERVER_SRC) -o $(BUILD_OBJ)/wserver_main.o
+	@# ! -I drivers/accel: il protocollo dell'acceleratore 2D. wserver lo
+	@# CHIEDE, sis.drv lo OFFRE, e nessuno dei due lo possiede — per la
+	@# stessa ragione per cui win_proto.h non sta dentro le applicazioni.
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/kbd -I drivers/wserver -I drivers/accel -c $(WSERVER_SRC) -o $(BUILD_OBJ)/wserver_main.o
 	@# ! LO STESSO CARATTERE DELLA CONSOLE, non una copia sua. Cosi' una
 	@# scritta dentro una finestra e una sulla console di testo hanno la
 	@# stessa forma, ed e' la stessa ragione per cui vga_modo3.c ricarica
@@ -6012,13 +6025,17 @@ STATICI_OBBLIGATI := $(BUILD_BIN)/login $(BUILD_BIN)/install $(BUILD_BIN)/sh \
 #   net, tty, usb   non sono programmi, sono codice condiviso fra driver;
 #   drivers/audio   idem — anello, protocollo e main() dei driver audio. La
 #           versione la dichiara la scheda: sb.drv, es1371.drv, ...
+#   drivers/accel   e' SOLO accel_proto.h, il contratto fra chi ha i privilegi
+#           da driver e chi disegna senza. Non c'e' un .c, quindi non c'e'
+#           niente che possa stampare una versione: quella la dichiarano i due
+#           che il protocollo lo parlano, sis.drv e wserver.
 #
 # ! LE VOCI SI POSSONO SCRIVERE COL PERCORSO, e a volte si DEVE. `audio` da
 # solo escluderebbe anche bin/audio, che una versione ce l'ha e deve
 # continuare a doverla avere: due directory diverse con lo stesso nome sono
 # due programmi diversi, e un'esenzione scritta per una non vale per l'altra.
 # =============================================================================
-SENZA_VERSIONE := hello floppy net tty usb drivers/audio
+SENZA_VERSIONE := hello floppy net tty usb drivers/audio drivers/accel
 
 # =============================================================================
 # lib/exbig — interi lunghi, il primo dei tre pezzi che mancano all'https

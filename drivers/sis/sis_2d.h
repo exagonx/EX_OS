@@ -49,4 +49,26 @@ int  sis2d_misura(void);
  * stato. Vedi il commento in testa a sis2d_accendi(). */
 int  sis2d_accendi(unsigned int quale);
 
+/* Con SR20 bit 0 acceso, legge ottanta punti della finestra PRIMA e DOPO e dice
+ * quali cambiano. Di sola lettura. Serve a sapere se a rispondere e' un
+ * registro solo o una fascia. */
+void sis2d_mappa(void);
+
+/* I due bit insieme, un gesto per volta e ognuno annunciato: e' l'esperimento
+ * che il 16 settembre 2026 ha bloccato l'Acer, rifatto in modo che un blocco
+ * dica QUALE riga. */
+void sis2d_due(void);
+
+/* Registra il servizio ACC_SERVIZIO e non torna piu': offre riempimento e copia
+ * a chi non ha i privilegi da driver — cioe' a wserver. Rende 1 e basta se la
+ * scheda non e' questa, cosi' su un'altra macchina il comando sparisce senza
+ * lasciare un errore che nessuno puo' riparare. */
+int  sis2d_servizio(void);
+
+/* Prova il servizio DA FUORI, come lo usa wserver: ipc_lookup, INFO, un
+ * riempimento grande, e si guarda l'esito. Serve perche' sulla macchina vera
+ * non c'e' uno schermo da guardare, e `-2dprova` dimostra il motore ma non il
+ * protocollo. */
+int  sis2d_chiedi(void);
+
 #endif /* SIS_2D_H */

@@ -101,6 +101,132 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### `wserver` usa il motore 2D dove c'è, e disegna da sé dove non c'è
+
+**testato in QEMU per il ramo software, sul ferro per il protocollo** — il
+server a finestre chiede i riempimenti grandi alla scheda quando c'è un motore
+2D, e li fa con MMX quando non c'è.
+
+! **E non chiede privilegi: chiede un rettangolo.** Il motore si pilota con
+`mmio_map` e `ioport_bind`, che sono da driver. `wserver` quei privilegi li ha
+persi **apposta** il 19 agosto 2026: si chiamava `/dev/wserver.drv` solo per
+ottenere `mmio_map`, e quel nome teneva la grafica fuori dalla multiutenza —
+`/dev` è di root, quindi un utente normale non poteva eseguire il server.
+Rimetterlo fra i driver per andare più forte sarebbe tornare indietro di un
+mese, e per di più dando la capacità *larga* al posto di quella stretta.
+
+Quindi un **servizio**, non una libreria:
+
+```
+drivers/accel/accel_proto.h   il contratto, e non è di nessuno dei due
+sis.drv -2dservizio           registra 'accel2d': RIEMPI, COPIA, INFO
+sis.drv -2dchiedi             lo prova DA FUORI, come lo usa wserver
+```
+
+Lo accende `/boot/avvio.sh` (lo scrive `hwconfig`), perché è il sistema a poter
+eseguire `/dev`. Su una macchina che non sia una SiS il comando **esce in
+silenzio**: niente scheda, niente servizio, nessuna riga.
+
+! **Il ramo software è il ramo NORMALE, non un ripiego.** Su VESA, sul
+framebuffer generico e dentro QEMU nessuno registra il servizio, `ipc_lookup`
+non trova niente e si riempie con MMX a 377 MB/s — cioè al limite del bus per
+la scrittura. In QEMU la riga d'avvio dice esattamente questo:
+
+```
+wserver: nessun motore 2D, riempio da me con MMX
+```
+
+! **Il protocollo passa operazioni, non pixel**, ed è ciò che lo rende
+sostenibile: un giro di IPC misurato sull'Acer — sfondo intero, 480000 pixel —
+sta **sotto il millisecondo**, e riempire lo schermo costa millisecondi.
+
+! **E c'è una soglia, perché il motore risparmia metà del tempo, non tutto.**
+Il messaggio va pagato con *metà* del costo del rettangolo. A 4096 pixel il
+risparmio è 21 µs, meno del messaggio: sarebbe una perdita netta, ed era la
+soglia della prima stesura. A 32768 il risparmio è 165 µs, e lo sfondo intero
+ne vale 2500.
+
+! **L'attesa della risposta usa `ipc_scegli`, non `ipc_recv_timeout`**, ed è la
+riga più importante del lavoro. La regola di quel server è scritta sopra
+`mouse_chiedi()`: «la mailbox la legge un posto solo». Una `recv` che prende
+qualunque messaggio si mangia le richieste dei client — è già successo, e il
+sintomo era «il server non risponde» una volta su tre. `ipc_scegli` filtra, e
+**mentre aspetta svuota** la coda del kernel sullo scaffale invece di lasciarla
+riempire: la mailbox è profonda quattro messaggi, e quando è piena ogni
+`ipc_send` verso il server fallisce — compresa la consegna di un tasto.
+
+! **Quel che resta è una misura sola:** provare che `wserver` lo usa davvero
+sulla macchina vera. Il contatore `servite` in `AccInfo` esiste per questo.
+E il guadagno da aspettarsi è quello del **riempimento (1,9x)**, non quello
+della copia: nel compositore non c'è nessuna copia schermo→schermo, perché le
+zone dei client stanno in RAM di sistema. Il 14x si prende solo cambiando
+strategia di composizione.
+
+### Il motore 2D della SiS disegna: 14x sulla copia schermo→schermo
+
+**testato sulla macchina vera, da freddo** — l'acceleratore 2D della SiS 6330
+dell'Acer Aspire 3000 funziona. Dopo un riavvio pulito, senza nessun comando di
+accensione prima:
+
+```
+sis2d: motore acceso - 65536 KB di memoria video, coda a 0x03f80000
+  il riempimento e' giusto, bordi compresi.
+  la copia e' identica all'originale.
+  la sovrapposizione e' gestita dal motore.
+
+operazione                   CPU     motore   guadagno
+riempire                     377 MB/s    734 MB/s   1.9x
+copiare schermo->schermo      25 MB/s    356 MB/s  14.2x
+```
+
+! **La riga che conta è la seconda.** Riempire lo schermo la CPU lo fa già al
+limite del bus (vedi `fbprova` più sotto); copiare schermo su schermo le costa
+una **lettura** dal framebuffer, che su questa scheda va quattro volte e mezzo
+più piano di una scrittura. Il motore la fa dentro la scheda, senza far
+attraversare il bus ai pixel nemmeno una volta. È esattamente quel che fa il
+compositore quando sposta una finestra o fa scorrere un terminale.
+
+**Erano due bit, e la diagnosi li stampava dal primo giorno:**
+
+| registro | bit | nome in sisfb | cosa accende |
+|---|---|---|---|
+| SR20 | 0x01 | `SIS_MEM_MAP_IO_ENABLE` | la finestra dei registri |
+| SR1E | 0x40 | `SIS_ENABLE_2D` | il motore |
+
+Il passo 4 di `-2ddiagnosi` mostrava «SR1E = 0x20, SR20 = 0xa0» da quando quel
+codice esiste, e quei numeri erano finiti nei referti fra i dati «stabiliti
+sulla macchina vera». Erano due **misure**, e nessuno le ha lette come due
+**mancanze** — mentre cinque spiegazioni venivano provate e chiuse.
+
+! **E l'ordine non è negoziabile**, perché il passo che mancava in mezzo è
+quello che bloccava la macchina:
+
+```
+1. SR20 bit 0            apre la finestra
+2. Q_BASE_ADDR = base    DA DOVE il motore legge i comandi
+3. SR27 0x1F, SR26 0x01  soglia e RESET della coda
+4. WRITEPORT <- READPORT coda vuota
+5. SR1E bit 6            IL MOTORE, per ultimo
+6. SR26 = 0x22           coda in modo MMIO
+```
+
+Appena aperta la finestra `Q_BASE_ADDR` vale **zero**: accendere il motore lì
+vuol dire farlo partire a prendere comandi dall'indirizzo zero della memoria
+video e a scrivere dove quei comandi gli dicono — un bus master che va per
+conto suo. La macchina si ferma e non risponde più nemmeno al ping. È successo,
+una volta, ed è il motivo per cui il passo 2 adesso c'è.
+
+! **La base si calcola, non si sceglie**: `CR79` bit 7-4 danno i mega di memoria
+condivisa (64 sull'Acer) e la coda va negli ultimi 512 KB. Se quella misura non
+si riconosce, `sis2d_apri()` **rinuncia** e lascia il motore spento.
+
+! **L'accensione la fa `sis2d_apri()`, e solo se serve** — cioè se `Q_STATUS`
+legge tutti uno. Se la finestra risponde già, qualcun altro l'ha accesa: rifare
+la sequenza vorrebbe dire resettare una coda che magari sta lavorando.
+
+! **`wserver` non lo usa ancora.** Il guadagno c'è e il compositore non lo
+prende: è il prossimo passo, e vive insieme al restringere le regioni sporche.
+
 ### L'orologio si può rimettere: kernel 0.218 e `/bin/date`
 
 **testato sulla macchina vera** — da quando esiste, agosto 2026, l'orologio CMOS

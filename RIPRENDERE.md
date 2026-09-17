@@ -26,89 +26,531 @@ manca» apre quello.
 
 ---
 
-# DOVE RIPRENDERE — 16 settembre 2026, sera
+# DOVE RIPRENDERE — 17 settembre 2026
 
-> **Tutto quel che c'e' nell'albero e' compilato e provato in QEMU, e NON e'
-> pubblicato.** L'ultima catena andata fino in fondo e' di stanotte:
+> **Tutto e' compilato, PUBBLICATO e verificato.**
 >
 > ```
-> exagonx/repo-update.sh   ->  VERIFICA: 1612 uguali, 0 diversi, 0 mancanti
+> exagonx/repo-update.sh   ->  VERIFICA: 1583 uguali, 0 diversi, 0 mancanti
 > ```
 >
-> ! **Da allora sono cambiati il kernel (0.217 -> 0.218), la libc, `ls`,
-> `help.txt`, e c'e' `/bin/date` nuovo — piu' lo spostamento di `gfedit` e
-> `sis.drv` col motore 2D, che non erano saliti nemmeno stanotte.** Prima di
-> toccare l'Acer serve un `./exagonx/repo-update.sh`: **lo lancia l'utente**,
-> il controllo automatico lo blocca a me.
+> ! **E ADESSO LA PUBBLICAZIONE LA POSSO FARE IO.** La nota vecchia diceva che
+> il controllo automatico me la bloccava; e' stata aggiunta una regola di
+> permesso e `./exagonx/repo-update.sh` gira. `-guarda` girava anche prima —
+> e' la scrittura verso l'FTP che era bloccata.
 >
-> ! **E il kernel e' cambiato**, quindi l'Acer vuole un aggiornamento
-> completo e un riavvio, non solo i binari.
->
-> **Il commit non e' stato fatto: lo fa l'utente con `gitupdate.sh`.**
-> `messaggio-commit.txt` e' pronto e racconta tutta la giornata.
+> **Il commit lo fa l'utente con `gitupdate.sh`**, e `messaggio-commit.txt` e'
+> pronto. ! Quel file **si svuota a ogni commit** — `gitupdate.sh` lo sposta in
+> `.git/ultimo-messaggio-commit.txt`. Se sembra troncato, guardare `git log`
+> prima di ricostruirlo: probabilmente e' gia' dentro un commit.
 
-## LA MACCHINA VERA
+## LA MACCHINA VERA — E COME L'HO CHIUSA FUORI
 
-! **L'ACER E' FERMO E VUOLE UN CICLO DI ALIMENTAZIONE** (16 settembre, sera).
-Non risponde nemmeno al ping: l'hanno bloccato SR1E bit 6 e SR20 bit 0 accesi
-insieme dentro `-2ddiagnosi`. Non e' un riavvio via rete: e' l'interruttore.
-Quando torna su, l'orologio e' quello giusto — e' stato rimesso prima, dal 2005
-al 16 settembre 2026 — perche' la batteria del CMOS lo tiene.
+L'Acer risponde al ping. **Lo stato di `/boot/avvio.sh` dopo il ripristino non
+e' stato verificato**: la sessione che doveva guardarlo non e' andata in porto.
 
-Per il resto l'Acer e' **aggiornato e coerente**, con `telnetd` in ascolto su
-**192.168.0.23**. `uname -a` dice 0.217, `netupdate -check` dice
-«niente da aggiornare». Ci si pilota con `tools/locali/pilota_telnet.py`
-(indirizzo, file delle risposte, comandi) — ! il file delle risposte contiene la
-password dell'FTP e sta FUORI dall'albero, questo repository e' pubblico.
+! **PRIMA COSA DA FARE: GUARDARE, NON AGIRE.**
 
-! **DUE COSE DA SAPERE PRIMA DI CREDERE A UN GUASTO.** `telnetd` serve una
-  sessione per volta: se una e' rimasta appesa, la connessione nuova non passa e
-  sembra una macchina morta. E l'orologio di quella macchina segna il **2005**:
-  i file che carica arrivano sul server datati «Feb 9 2005».
+    textline /boot/avvio.sh -v      dov'e' telnetd rispetto a netupdate?
+    textline /boot/kernel.cfg -v    `login` e' commentato?
+
+! **E NON RILANCIARE `hwconfig` SU QUELLA MACCHINA.** Riscrive i file PER
+INTERO, e il 17 settembre l'ho usato per aggiungerci una riga: ha riacceso
+`login` e ha spostato `telnetd` dopo `netupdate`, rendendo la macchina
+raggiungibile solo dalla tastiera. I due difetti sotto sono corretti nel
+sorgente (`voce_commentata()` e l'ordine), ma **su quella macchina si aggiunge
+una riga a mano**:
+
+    echo "/dev/sis.drv -2dservizio &" >> /boot/avvio.sh
+
+  (la shell di EX-OS ha `>>`: OP_APP in bin/sh/shell.c. Le virgolette servono,
+  o la `&` la prende lei come «metti in fondo».)
+
+! **E DUE MODI DI PROVARE CHE NON FUNZIONANO**, pagati lo stesso giorno:
+  - `until ping` **non dimostra un riavvio**: se la macchina non e' ancora
+    andata giu', il primo ping riesce e il ciclo esce subito. Si aspetta prima
+    che SMETTA di rispondere.
+  - **non si polla la porta 23**: `telnetd` serve una sessione per volta, e un
+    ciclo che bussa gliele occupa tutte. L'ho impiantato con la sonda che
+    doveva dirmi se era vivo.
 
 ## CHE COSA E' RIMASTO APERTO
 
-  - `@PROVE-MACCHINA` — `ftpswap` e' **fatto**, cinque prove tutte passate.
-    Resta `eject`, e vuole una chiavetta infilata: il kernel nuovo c'e' gia'.
-  - `@GRAFICA-SCATTI` — misurato oggi: il bus della SiS **non c'entra**, il
-    framebuffer e' gia' write-combining. Il lavoro e' restringere le regioni
-    sporche di `wserver`. I numeri stanno qui sotto.
-  - `@MEMCPY-BYTE` — **CHIUSO, misurato sull'Acer**: la copia verso il
-    framebuffer e' passata da 47 a **375 MB/s**, cioe' al limite del bus.
-  - `@TELNET-SCALA` — le righe di `telnetd` scalano a destra: capo riga LF
-    senza CR. Segnalato, non ancora guardato nel codice.
-  - ! **il floppy ha 39424 byte liberi.** Ne aveva 63488 dopo che `gfedit` e'
-    passato al CD, e 3072 prima; `/bin/date` piu' il suo blocco di `help.txt`
-    ne hanno presi 24064. Chi ci rimette qualcosa guardi prima quel numero.
-  - ! **la build di adesso NON e' quella pubblicata.** Il server ha la libc
-    nuova (l'Acer e' allineato, 1607 uguali), ma non lo spostamento di
-    `gfedit`, ne' `sis.drv` col motore 2D, ne' niente della sera del 16
-    (kernel 0.218 con la scrittura dell'orologio, `/bin/date`, `ls` 0.002,
-    `help.txt`): serve un altro `./exagonx/repo-update.sh`, **e lo lancia
-    l'utente.**
-  - `@SIS-2D` — il motore 2D e' scritto e la sua finestra MMIO tace. **Il
-    passo 13 e' girato: la sequenza di sisfb col reset NON basta.** La pista
-    adesso sono due bit spenti che la diagnosi stampava dal primo giorno —
-    SR1E bit 6 e SR20 bit 0 — e si provano UNO PER VOLTA con `-2dsr1e` e
-    `-2dsr20`: accesi insieme hanno bloccato l'Acer.
-  - `@TELNET-SCALA` — **sfasamento e troncamento sistemati e provati**. Resta
-    da vedere sull'Acer se anche la sessione che si impianta era quello.
-  - ! **l'Acer va riavviato di nuovo.** `telnetd` si impianta dopo quattro o
-    cinque sessioni: accetta la connessione, fa l'eco del comando e non
-    esegue piu' niente. E' successo due volte, tutt'e due su uno `scarica`.
-    ! **Quindi si fa tutto in UNA sessione sola** — download, prova e invio
-    del referto — e non per comodita': ogni sessione in piu' avvicina il
-    riavvio. Nessun registro e' rimasto spostato: i ripristini sono
-    verificati nei referti.
-  - `kernel/arch/x86/mtrr.c` e' scritto e **non collegato al Makefile**: su
-    questa macchina non serve, e non si prova un MTRR senza una macchina su cui
-    provarlo.
+  - `@ACCEL-2D` — **manca una misura sola**: che `wserver` usi davvero il
+    servizio sul ferro. Si avvia `exwin`, si muovono le finestre, e
+    `/dev/sis.drv -2dchiedi` dice quante richieste il servizio ha servito
+    (contatore `servite` in AccInfo). Zero = il server sta disegnando da se'.
+    Il ramo software e' provato in QEMU, il protocollo e' provato sull'Acer.
+  - `@SIS-2D` — **CHIUSO**: il motore disegna, 14x sulla copia schermo->schermo
+    misurato da freddo. La storia di come ci si e' arrivati sta in
+    `@SIS-2D-STORIA`.
+  - `@GRAFICA-SCATTI` — adesso ha uno strumento in piu' oltre al restringere le
+    regioni sporche. ! Ma **il 14x non si prende cosi'**: nel compositore non
+    c'e' nessuna copia schermo->schermo. Il guadagno di oggi e' quello del
+    riempimento (1,9x); il 14x vuole una strategia di composizione diversa —
+    spostare una finestra con una blitt invece di ricomporre.
+  - `@IMMAGINI` e `@FIN-ICONA` — chiesti dall'utente, in coda, mai cominciati.
+  - `@PROVE-MACCHINA` — resta `eject`, e vuole una chiavetta infilata.
+  - `@TELNET-SCALA` — resta da vedere sull'Acer se la sessione che si impianta
+    era lo stesso difetto del pty, gia' corretto.
+  - `kernel/arch/x86/mtrr.c` e' scritto e **non collegato**: su questa macchina
+    non serve, e non si prova un MTRR senza una macchina su cui provarlo.
+  - ! **il floppy ha 39424 byte liberi.** Chi ci rimette qualcosa guardi prima
+    quel numero.
 
-## LE CARTELLE DI PROVA CHE SONO RIMASTE IN PIEDI
+## GLI ATTREZZI TOCCATI OGGI
 
-`/root/prova` sull'Acer e `/provaftpswap` sullo spazio FTP: allineate fra loro,
-col `.cfg` e il diario gia' scritti. Sono li' apposta, per rifare un giro di
-`ftpswap` senza ricominciare da capo. Si cancellano quando non servono piu'.
+  - `tools/solo_ascii.py` + `make verifica-ascii`, dentro `make all`: le
+    stringhe a schermo devono essere ASCII (la console e' CP437). Guarda le
+    stringhe C, `boot/help.txt` per intero, e i campi mostrati di
+    `tools/iso/strumenti.txt`. **Provata piantandoci un difetto apposta.**
+  - `tools/locali/pilota_telnet.py` risponde adesso anche alle domande che
+    finiscono con `"] "`, non solo con `": "`. Prima restava zitto davanti a
+    «Procedo? [si/no] » e il comando aspettava fino allo scadere: il sintomo
+    era «hwconfig non ha effetto».
+
+---
+
+---
+
+# 17 settembre 2026 — HO CHIUSO FUORI LA MACCHINA, E DUE DIFETTI VERI
+
+Lanciando `hwconfig` sull'Acer per fargli scrivere la riga dell'acceleratore ho
+reso quella macchina raggiungibile **solo dalla tastiera vera**. Sotto ci sono
+due difetti che valgono oltre l'incidente, e un errore di metodo che e' mio.
+
+## 1. UNA VOCE COMMENTATA NON E' UNA VOCE ASSENTE
+
+`hwconfig` promette, in un commento suo: «l'accesso non si spegne riscrivendo un
+file... se la voce c'era si riporta com'era». Era vero per la voce **cambiata**
+e falso per la voce **commentata** — cioe' proprio per il modo in cui l'accesso
+si spegne davvero.
+
+`voce_di_prima()` salta le righe che cominciano con `#`, com'e' giusto per una
+chiave qualunque. Ma il kernel avvia `/bin/login` **solo se la riga c'e'**:
+commentarla E' il modo documentato di spegnere l'autenticazione. Vista come
+un'assenza, hwconfig cadeva nel ramo «non c'era, la metto» e riscriveva
+`login = /bin/login`.
+
+! **UN FILE DI CONFIGURAZIONE CHE RIMETTE UNA SERRATURA A CHI L'AVEVA TOLTA, E
+SENZA DIRLO.** Corretto: c'e' `voce_commentata()`, gemella della prima, e il
+`login` spento resta spento — con accanto una riga che dice che e' una
+decisione, non una dimenticanza.
+
+## 2. CIO' CHE SERVE A RIPARARE VA ACCESO PRIMA DI CIO' CHE PUO' ROMPERE
+
+`componi_avvio()` scriveva `telnetd -auto &` **dopo** `netupdate -auto`. E
+netupdate gira in PRIMO PIANO: avvio.sh lo aspetta. Se quel comando si ferma —
+server lento, uno scaricamento lungo, una domanda a cui nessuno risponde — tutto
+cio' che sta sotto non parte mai.
+
+Risultato: l'Acer risponde al ping e **non alla porta 23**, cioe' e' diventato
+irraggiungibile esattamente nel momento in cui lo si vorrebbe guardare per
+capire cos'ha combinato l'aggiornamento.
+
+! **E IL GEMELLO AVEVA GIA' RAGIONE.** `boot/avvio.sh` — quello scritto a mano —
+telnetd ce l'ha **prima** di netupdate. I due scrittori di quel file erano
+divergenti, ed e' il rischio dichiarato nel commento che sta in tutti e due:
+«questo file ha DUE scrittori, chi ne cambia uno cambia l'altro». Una divergenza
+in silenzio, trovata solo perche' e' costata l'accesso a una macchina.
+
+## 3. E L'ERRORE DI METODO E' MIO
+
+Ho lanciato `hwconfig` su una macchina gia' configurata per aggiungerci UNA
+riga. La corsa a vuoto (`hwconfig -n`) me l'aveva mostrata per intero, e io ci
+ho cercato **solo cio' che volevo trovarci**: la riga dell'acceleratore,
+`sis900.drv`, `telnetd -auto &`. Ho visto quest'ultima e mi sono tranquillizzato
+sulla raggiungibilita' senza guardare DOVE fosse finita, e senza confrontarla
+col file che stavo per sostituire — che avevo letto un'ora prima e avevo in mano.
+
+! **UNO STRUMENTO CHE RISCRIVE UN FILE PER INTERO NON SI USA PER AGGIUNGERE UNA
+RIGA.** Il file diceva «questi li sostituiscono PER INTERO», e l'ho letto.
+
+## COME SI RIMETTE IN PIEDI, DALLA CONSOLE
+
+hwconfig salva sempre il precedente. Dalla tastiera dell'Acer:
+
+    cp /boot/kernel.cfg.bak /boot/kernel.cfg     (rispondendo `s`)
+    cp /boot/avvio.sh.bak   /boot/avvio.sh       (rispondendo `s`)
+    reboot
+
+Torna esattamente la macchina che funzionava: `login` commentato e telnetd
+prima di netupdate. La riga dell'acceleratore si rimette dopo, da telnet, **una
+riga sola** — non rilanciando hwconfig.
+
+---
+
+---
+
+# 17 settembre 2026 — IL MOTORE 2D OFFERTO A wserver, E IL RAMO SOFTWARE
+
+Chiesto dall'utente: che wserver usi il 2D dove c'e', e disegni da se' dove non
+c'e'. Il vincolo che ha deciso tutto il disegno sta gia' scritto in testa a
+`drivers/wserver/wserver.c`:
+
+! **wserver NON E' UN DRIVER, E NON DEVE TORNARE A ESSERLO.** Si chiamava
+`/dev/wserver.drv` per una ragione sola — `mmio_map` e' riservata agli
+eseguibili caricati da un file `*.drv` — e quel nome teneva la grafica fuori
+dalla multiutenza: `/dev` e' di root, quindi un utente normale non poteva
+eseguire il server. Il 19 agosto 2026 il nome e' stato tolto, e la riparazione
+sbagliata era gia' allora a portata di mano: allargare i permessi di quel file.
+
+Il motore 2D vuole `mmio_map` e `ioport_bind`. Rimettere wserver fra i driver
+per andare piu' forte sarebbe tornare indietro di un mese, per di piu' dando la
+capacita' LARGA al posto di quella stretta. **Quindi il server non chiede
+privilegi: chiede un rettangolo.**
+
+## UN SERVIZIO, NON UNA LIBRERIA
+
+`drivers/accel/accel_proto.h` e' il contratto. `sis.drv -2dservizio` registra
+`accel2d` e serve RIEMPI, COPIA e INFO; wserver fa `ipc_lookup` una volta
+all'avvio e da li' in poi manda i riempimenti grandi.
+
+! **IL PROTOCOLLO PASSA OPERAZIONI, NON PIXEL**, ed e' cio' che lo rende
+sostenibile: un giro di IPC costa meno di un millisecondo — misurato sull'Acer,
+sfondo intero da 480000 pixel, «fatto in 0 ms» — e riempire lo schermo costa
+millisecondi.
+
+! **E C'E' UNA SOGLIA, PERCHE' IL MOTORE RISPARMIA META' DEL TEMPO, NON TUTTO.**
+Il messaggio va pagato con META' del costo del rettangolo, e al primo tentativo
+avevo sbagliato il conto mettendola a 4096 pixel: li' il risparmio (21 us) e'
+MENO del messaggio. A 32768 il risparmio e' 165 us, e lo sfondo intero ne vale
+2500. La soglia sta larga apposta finche' il costo dell'IPC non e' misurato
+meglio: sbagliare per eccesso costa un riempimento software, sbagliare per
+difetto costa un fotogramma piu' lento di prima.
+
+! **E PROTEGGE ANCHE DAL NUMERO DEI MESSAGGI, non solo dal costo.** Ogni
+richiesta e' un'attesa, e la mailbox di wserver e' profonda QUATTRO messaggi.
+
+## LA RIGA PIU' IMPORTANTE E' UN ipc_scegli
+
+L'attesa della risposta usa `ipc_scegli`, **non** `ipc_recv_timeout`. La regola
+di questo server la detta il commento sopra `mouse_chiedi()`: «LA MAILBOX LA
+LEGGE UN POSTO SOLO». Li' c'era una `ipc_recv_timeout()` che leggeva qualunque
+messaggio trovasse — compresa la richiesta di un client che chiedeva una
+finestra, che spariva interpretata come stato del mouse. Il sintomo era
+«il server non risponde», una volta su tre.
+
+! **E MENTRE ASPETTA, `ipc_scegli` SVUOTA.** Legge, filtra e mette sullo
+scaffale: durante l'attesa la coda del kernel si svuota invece di riempirsi.
+Un'attesa cieca avrebbe fatto il contrario, e a mailbox piena ogni `ipc_send`
+verso di noi fallisce — compresa la consegna di un tasto, e il servizio `kbd` a
+quel punto rimette la console in cooked.
+
+## QUEL CHE E' PROVATO, E QUEL CHE NO
+
+  - **Il ramo software, in QEMU: PROVATO.** «wserver: nessun motore 2D, riempio
+    da me con MMX», e la scrivania e' giusta. E' il ramo che percorre la
+    stragrande maggioranza delle macchine — VESA, framebuffer generico, QEMU —
+    e non e' codice di riserva: e' la strada normale.
+  - **Il protocollo sull'Acer: PROVATO**, con `-2dchiedi`, che fa esattamente
+    quel che fa wserver (lookup, INFO, un riempimento grande, l'esito).
+    Registrazione, richiesta, disegno e risposta: tutto.
+  - ! **CHE wserver LO USI DAVVERO SULL'ACER: NON PROVATO.** Il contatore
+    `servite` in AccInfo esiste apposta per dimostrarlo — zero dopo aver mosso
+    le finestre vorrebbe dire che il server disegna da se' — e quella misura
+    non e' stata fatta.
+
+## TRE ERRORI DI METODO, TUTTI MIEI, TUTTI COSTATI UN GIRO
+
+  1. ! **`until ping` NON DIMOSTRA UN RIAVVIO.** Se la macchina non e' ancora
+     andata giu', il primo ping riesce e il ciclo esce subito: «Acer tornato su»
+     era vero e non significava niente. Si aspetta prima che SMETTA di
+     rispondere, e poi che ricominci.
+  2. ! **NON SI POLLA LA PORTA 23.** `telnetd` serve UNA sessione per volta —
+     sta scritto in questo diario — e un ciclo che bussa in continuazione gliele
+     occupa tutte. L'ho impiantato con la sonda che doveva dirmi se era vivo.
+  3. ! **E UN FILE SI GUARDA, NON SI DA' PER SCRITTO.** `hwconfig` non aveva
+     scritto niente, e io ho passato tre sessioni a cercare nel driver un
+     difetto che non c'era. Il servizio non partiva all'avvio perche' quella
+     riga in `/boot/avvio.sh` **non c'era**.
+
+     La causa era nell'attrezzo: `pilota_telnet.py` rispondeva solo alle domande
+     che finiscono con `": "`, e hwconfig chiede «Procedo? [si/no] », che
+     finisce con `"] "`. Restava zitto, hwconfig aspettava fino allo scadere dei
+     seicento secondi, e il referto non diceva perche'. Corretto nel pilota.
+
+---
+
+---
+
+# 16 settembre 2026 — IL MOTORE 2D DELLA SiS DISEGNA
+
+Da freddo, dopo un riavvio pulito, senza nessun comando di accensione prima:
+
+    sis2d: motore acceso - 65536 KB di memoria video, coda a 0x03f80000
+      il riempimento e' giusto, bordi compresi.
+      la copia e' identica all'originale.
+      la sovrapposizione e' gestita dal motore.
+    sis2d: ! TUTTO GIUSTO.
+
+    operazione                   CPU     motore   guadagno
+    riempire                     377 MB/s    734 MB/s   1.9x
+    copiare schermo->schermo      25 MB/s    356 MB/s  14.2x
+
+**14 volte sulla copia schermo->schermo.** E' il numero che si cercava fin
+dall'inizio: riempire lo schermo la CPU lo fa gia' al limite del bus, ma
+copiare le costa una LETTURA dal framebuffer, che su questa scheda va quattro
+volte e mezzo piu' piano di una scrittura. Il motore la fa dentro la scheda
+senza far attraversare il bus ai pixel nemmeno una volta.
+
+## ERANO DUE BIT, E LA DIAGNOSI LI STAMPAVA DAL PRIMO GIORNO
+
+    SR20 bit 0   SIS_MEM_MAP_IO_ENABLE   apre la finestra dei registri
+    SR1E bit 6   SIS_ENABLE_2D           accende il motore
+
+Il passo 4 di `-2ddiagnosi` mostrava «SR1E = 0x20, SR20 = 0xa0» da quando quel
+codice esiste, e quei due numeri sono finiti nel diario e in
+`in_lavorazione.txt` fra i dati «stabiliti sulla macchina vera». **Erano due
+misure, e nessuno le ha lette come due mancanze.**
+
+E' la lezione piu' cara della giornata, e non riguarda la SiS: un dato copiato
+in un referto smette di essere una domanda. Cinque spiegazioni sono state
+provate e chiuse — mmio_map, il ponte, l'apertura del north bridge, il BAR
+residuo, la sequenza della coda — mentre la risposta stava stampata in mezzo a
+loro.
+
+## E L'ORDINE NON E' NEGOZIABILE
+
+    1. SR20 bit 0            apre la finestra
+    2. Q_BASE_ADDR = base    DA DOVE il motore legge i comandi
+    3. SR27 0x1F, SR26 0x01  soglia e RESET della coda
+    4. WRITEPORT <- READPORT coda vuota
+    5. SR1E bit 6            IL MOTORE, per ultimo
+    6. SR26 = 0x22           coda in modo MMIO
+
+! **IL PASSO 2 E' QUELLO CHE MANCAVA, ED E' QUELLO CHE BLOCCAVA LA MACCHINA.**
+Appena aperta la finestra `Q_BASE_ADDR` vale **zero**. Accendere il motore li'
+vuol dire farlo partire a prendere comandi dall'indirizzo zero della memoria
+video, e a scrivere dove quei comandi gli dicono: un bus master che va per
+conto suo. Niente ping, ciclo di alimentazione. E' successo, una volta, ed e'
+il motivo per cui quel passo adesso c'e'.
+
+! **E LA BASE SI CALCOLA, NON SI SCEGLIE**: CR79 bit 7-4 danno i mega di
+memoria condivisa — 64 sull'Acer — e la coda va negli ultimi 512 KB. Se quella
+misura non si riconosce, `sis2d_apri()` **rinuncia** e lascia il motore spento.
+
+! **L'ACCENSIONE LA FA `sis2d_apri()`, E SOLO SE SERVE**, cioe' se `Q_STATUS`
+legge tutti uno. Se la finestra risponde gia', qualcun altro l'ha accesa e
+rifare la sequenza vorrebbe dire **resettare una coda che magari sta
+lavorando**: il controllo e' la condizione, non una precauzione.
+
+## COSA HA FATTO ARRIVARE IN FONDO, IN TRE MOSSE
+
+  1. **Un bit per volta.** Accesi insieme, i due bit bloccano la macchina e un
+     blocco non dice quale sia stato. Separati: SR1E innocuo, SR20 innocuo —
+     quindi era la coppia, che e' una frase precisa.
+  2. **Annunciare il gesto e poi ASPETTARE.** L'ultima riga che si legge non e'
+     l'ultima che il programma ha stampato: `fflush()` svuota il buffer della
+     libc, non il tubo del pty ne' la finestra TCP. Mezzo secondo fra
+     l'annuncio e la scrittura, e un blocco dice dove.
+  3. **Misurare invece di dedurre.** `-2dmappa` ha letto ottanta punti prima e
+     dopo, e ha trovato che SR20 accende la fascia 0x85C0-0x863C — la CODA — e
+     non 0x8200-0x827C — il DISEGNO. Da li' e' venuto l'ordine giusto, che
+     senza quella misura non era nemmeno immaginabile.
+
+## E TRE VERDETTI SBAGLIATI, TUTTI LO STESSO SBAGLIO
+
+  - il passo 1 confrontava due letture che erano tutt'e due **zero** e
+    concludeva che erano uguali;
+  - `-2dsr20` guardava **una lettura su tre** e diceva «muta come prima»,
+    mentre la terza era cambiata;
+  - `-2dsr` rileggeva un **registro di sola scrittura**, trovava zero e diceva
+    «il disegno non scrive», mentre quello zero — al posto di `ffffffff` — era
+    proprio il segno che il blocco aveva cominciato a rispondere.
+
+! **IL FILO COMUNE: DECIDERE CON LA MISURA PIU' COMODA INVECE CHE CON QUELLA
+CHE RISPONDE ALLA DOMANDA.** Tre volte in un giorno, sullo stesso file. La
+prova vera era sempre la stessa e sempre disponibile: **far disegnare il motore
+e rileggere i PIXEL**, che non dipende da come si comporta un registro.
+
+## QUEL CHE RESTA
+
+**wserver non usa ancora il motore.** Il 14x sta sulla copia schermo->schermo,
+cioe' proprio quel che fa il compositore quando sposta una finestra o fa
+scorrere un terminale. Vedi `@GRAFICA-SCATTI`, che adesso ha uno strumento in
+piu' oltre al restringere le regioni sporche.
+
+---
+
+---
+
+# 16 settembre 2026, notte fonda — L'ORDINE GIUSTO NON BLOCCA NIENTE
+
+`-2dsr` sull'Acer, nell'ordine di sisfb: finestra, base della coda, soglia e
+reset, puntatori, **e il motore per ultimo**. Tre cose nuove in una volta.
+
+    ! 1. SR20 = 0xa1      viva. Q_BASE 00000000 ... Q_ST ff000000
+    ! 2. Q_BASE = 0x03f80000   viva. rileggo 03f80000  <- ha tenuto
+    ! 3. SR27 0x1F, SR26 0x01  viva.
+    ! 4. WRITEPORT <- READPORT viva.
+    ! 5. SR1E = 0x60 IL MOTORE viva.
+    ! 6. SR26 = 0x22           viva.
+    ! 7. [0x8200] 00000000  [0x8204] 00000000  [0x821c] 00000000
+
+  1. **Il passo 5 non fa piu' danno.** E' quello che nell'ordine sbagliato
+     aveva fermato la macchina: con la coda gia' preparata, la macchina regge.
+     L'ipotesi del motore cieco non e' piu' un'ipotesi.
+  2. **Q_BASE ha tenuto**: scritto 0x03f80000, riletto uguale. La finestra non
+     si limita a rispondere in lettura, **si scrive**.
+  3. **Il blocco del disegno decodifica**: `[0x8200]` e' `00000000`, dove con
+     SR20 da solo era `ffffffff`.
+
+## E QUI HO SBAGLIATO IL VERDETTO, PER LA SECONDA VOLTA IN UN GIORNO
+
+Il programma scriveva `0xa5a5a5a5` in PAT_FGCOLOR, lo rileggeva `00000000` e
+concludeva «il disegno non scrive ancora», rimettendo tutto com'era.
+
+! **I REGISTRI DI UN MOTORE GRAFICO SONO QUASI SEMPRE DI SOLA SCRITTURA.**
+Rileggerne zero non dice che la scrittura non sia arrivata: dice che quel
+registro non si rilegge. E **zero e ffffffff sono due risposte diverse** — la
+prima e' un bus che risponde, la seconda un bus che non risponde a nessuno.
+Quel passaggio da `ffffffff` a `00000000` era esso stesso il segno che il blocco
+adesso decodifica, e il verdetto lo trattava come un fallimento.
+
+! **E' LO STESSO MODO DI SBAGLIARE DI STANOTTE** («muta come prima», guardando
+una lettura su tre) e del passo 1 di `-2ddiagnosi` (due zeri confrontati fra
+loro). Terza volta. Il filo comune: **decidere con la misura piu' comoda invece
+che con quella che risponde alla domanda.**
+
+## LA PROVA VERA E' IL FRAMEBUFFER
+
+Si fa disegnare al motore un rettangolo e **si rileggono i pixel**: quello e' un
+fatto che non dipende da come si comporta un registro in lettura. `sis2d_prova()`
+lo fa da quando esiste — mancava solo un motore acceso su cui farla girare.
+
+`-2dsr` adesso, al passo 8, apre il motore e chiama quella. E non puo'
+appendersi: `sis2d_riempi()` passa da `attendi()`, che ha un tetto di giri e
+rende -1 dicendo «e' fermo» invece di aspettare per sempre. **Q_STATUS vale
+ff000000, e il bit 31 e' acceso**: per `attendi()` il motore risulta gia' fermo,
+cioe' pronto.
+
+---
+
+---
+
+# 16 settembre 2026, notte fonda — NON UN REGISTRO: UNA FASCIA
+
+`-2dmappa` sull'Acer, ottanta punti letti prima e dopo aver acceso SR20 bit 0.
+**Trentadue cambiano, e sono trentadue di fila:**
+
+    0x85c0  ffffffff  00000000   CAMBIATO      <- Q_BASE_ADDR
+    0x85c4  ffffffff  00000000   CAMBIATO      <- Q_WRITE_PTR
+    0x85c8  ffffffff  00000000   CAMBIATO      <- Q_READ_PTR
+    0x85cc  ffffffff  ff000000   CAMBIATO      <- Q_STATUS
+    0x85d8  ffffffff  bffc9249   CAMBIATO
+    ...
+    0x863c  ffffffff  00000000   CAMBIATO
+
+    32 cambiati, 32 che non leggono tutti uno, su 80.
+
+E **0x8200-0x827C non cambiano affatto**: restano `ffffffff`.
+
+! **QUINDI SR20 BIT 0 ACCENDE IL BLOCCO DELLA CODA, NON QUELLO DEL DISEGNO** —
+che e' esattamente quel che dicono i due nomi di sisfb: `SIS_MEM_MAP_IO_ENABLE`
+apre la finestra, `SIS_ENABLE_2D` accende il motore. I registri del disegno
+aspettano l'altro bit.
+
+## E COSI' IL BLOCCO DELLA MACCHINA HA UNA SPIEGAZIONE
+
+Con la finestra aperta e il motore ancora spento, **Q_BASE_ADDR vale ZERO**.
+
+! **ACCENDERE IL MOTORE CON UNA CODA NON PREPARATA VUOL DIRE DARGLI UN
+INDIRIZZO A CASO DA CUI LEGGERE I COMANDI.** Un motore che comincia a prendere
+comandi dall'indirizzo zero della memoria video, e a scrivere dove quei comandi
+gli dicono, e' un bus master che va per conto suo: la macchina si ferma e non
+esce piu' una riga. E' il sintomo che abbiamo visto — niente ping, interruttore.
+
+! **E SPIEGA PERCHE' NESSUNO DEI DUE BIT DA SOLO FACEVA DANNO.** SR1E senza
+finestra non ha registri da leggere; SR20 senza motore apre una coda che nessuno
+consuma. E' la COPPIA nell'ordine sbagliato a far partire un motore cieco.
+
+## L'ORDINE NUOVO, CHE E' POI QUELLO DI sisfb
+
+`-2dsr` adesso fa questo, un gesto per volta e ognuno annunciato:
+
+    1. SR20 bit 0            apro la finestra          (gia' provato: regge)
+    2. Q_BASE_ADDR = base    gli ultimi 512 KB della memoria video
+    3. SR27 = 0x1F, SR26 = 0x01   soglia e RESET della coda
+    4. WRITEPORT <- READPORT
+    5. SR1E bit 6            IL MOTORE, per ultimo
+    6. SR26 = 0x22           il modo MMIO della coda
+    7-8. leggo e scrivo il blocco del DISEGNO
+
+! **AVEVAMO PROVATO TUTTI GLI ORDINI TRANNE QUESTO**, e non per distrazione:
+fino alla mappa non si sapeva che il blocco della coda si potesse scrivere
+*prima* che il resto rispondesse. La misura ha aperto una strada che prima non
+era nemmeno immaginabile.
+
+! **E LA BASE SI CALCOLA, NON SI INDOVINA**: CR79 bit 7-4 dicono quanti mega di
+memoria condivisa (sull'Acer 64 MB), e la coda va negli ultimi 512 KB. Se quella
+misura non si riconosce, `-2dsr` **si ferma** invece di scegliere un numero: una
+base a caso e' precisamente il difetto che sta evitando.
+
+## E UNA COSA SUGLI ATTREZZI
+
+L'utente ha chiesto perche' i giri di pubblicazione li faccio fare a lui. La
+risposta, **verificata oggi e non piu' a memoria**: `./exagonx/repo-update.sh
+-guarda` gira senza problemi, la pubblicazione vera no —
+
+    Permission denied by the auto mode classifier. Reason: [External System Writes]
+
+Non e' una scelta mia: e' il controllo automatico di Claude Code sulle scritture
+verso sistemi esterni. Si toglie con una regola di permesso in
+`.claude/settings.json`, e finche' non c'e' quel passo resta suo.
+
+---
+
+---
+
+# 16 settembre 2026, notte fonda — UN REGISTRO HA RISPOSTO
+
+`-2dsr20` sull'Acer. La macchina **resta viva** — quindi SR20 bit 0 da solo non
+e' quello che l'aveva bloccata — il registro tiene il bit (0xa0 -> 0xa1), e
+succede la prima cosa nuova in tutta questa storia:
+
+    -2dsr1e :  [0x8200] ffffffff  [0x0000] ffffffff  [0x85cc] ffffffff
+    -2dsr20 :  [0x8200] ffffffff  [0x0000] ffffffff  [0x85cc] ff000000
+
+**0x85CC — Q_STATUS — cambia valore per effetto di quel bit.** Non e' piu' una
+finestra che non risponde a nessuno: almeno un registro decodifica.
+
+! **E IL BLOCCO DI PRIMA ADESSO HA UN NOME PIU' STRETTO.** Presi uno per volta i
+due bit sono innocui: SR1E non cambia niente, SR20 fa rispondere 0x85cc, e
+nessuno dei due ferma la macchina. Quindi a bloccarla e' stata **la coppia**. E'
+un'informazione che il primo tentativo non poteva dare, perche' li accendeva
+insieme — ed e' esattamente la ragione per cui li abbiamo separati.
+
+## E IL PROGRAMMA HA DETTO «MUTA COME PRIMA»
+
+Il verdetto guardava il solo `[0x8200]` e stampava tre numeri. Quello cambiato
+era il terzo.
+
+! **UN GIUDIZIO BASATO SU TRE LETTURE DEVE GUARDARLE TUTTE E TRE**, o non e' un
+giudizio: e' la prima lettura con intorno due numeri per bellezza. Se non avessi
+riletto i numeri a mano, quella riga avrebbe archiviato la scoperta come un
+fallimento.
+
+! **ED E' LA SECONDA VOLTA.** Il passo 1 di `-2ddiagnosi` confrontava due letture
+che erano tutt'e due zero e concludeva che erano uguali; sta scritto in
+`in_lavorazione.txt` da giorni, con accanto il perche'. Lo stesso modo di
+sbagliare, nello stesso file, a tre settimane di distanza.
+
+## LE DUE PROVE CHE VENGONO ADESSO
+
+    sis.drv -2dmappa   DI SOLA LETTURA. Con SR20 bit 0 acceso legge OTTANTA
+                       punti della finestra PRIMA e DOPO e dice quali cambiano.
+    sis.drv -2dsr      i DUE bit insieme, un gesto per volta.
+
+! **`-2dmappa` PRIMA, E NON PER PRUDENZA: TRE LETTURE NON SONO UNA MAPPA.** Che
+a rispondere sia un registro solo o una FASCIA porta a due passi diversi, e la
+domanda si risolve leggendo — cioe' col gesto che `-2dsr20` ha gia' dimostrato
+innocuo. E si legge **prima e dopo**: `ff000000` da solo non dimostra niente,
+potrebbe essere un valore che c'era gia'. Quel che dimostra e' la differenza.
+
+! **`-2dsr` HA L'ORDINE ROVESCIATO APPOSTA**: prima SR1E, poi SR20. Scrivendo
+per ultimo quello che da solo fa gia' qualcosa, un blocco su quella riga dice
+«SR20 mentre SR1E e' acceso» — che e' una frase precisa invece di «uno dei due».
 
 ---
 

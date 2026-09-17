@@ -62,6 +62,7 @@
 #include "libc.h"
 #include "kbd_proto.h"
 #include "win_proto.h"
+#include "accel_proto.h"
 
 /* +0.001 a ogni modifica: `wserver -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
@@ -433,6 +434,88 @@ static void px(unsigned int x, unsigned int y, unsigned int c)
     }
 }
 
+/* =============================================================================
+ * L'ACCELERATORE 2D, QUANDO C'E'
+ *
+ * ! IL RAMO SOFTWARE E' IL RAMO NORMALE, non un ripiego. La stragrande
+ * maggioranza delle schede che EX-OS incontra non ha un motore 2D pilotabile:
+ * VESA, il framebuffer generico, QEMU. Li' `ipc_lookup` non trova niente,
+ * g_acc resta zero, e si riempie con le primitive MMX qui sotto — che vanno a
+ * 377 MB/s misurati, cioe' al limite del bus per la scrittura.
+ *
+ * ! E NON SI CHIEDONO PRIVILEGI, SI CHIEDE UN RETTANGOLO. Il motore si pilota
+ * con mmio_map e ioport_bind, che sono da driver: questo server quei privilegi
+ * li ha persi APPOSTA il 19 agosto 2026, e riprenderseli per andare piu' forte
+ * sarebbe tornare indietro di un mese. Il perche' per esteso sta in testa a
+ * drivers/accel/accel_proto.h.
+ *
+ * ! IL SERVIZIO SI CERCA UNA VOLTA SOLA, ALL'AVVIO, E NON SI RICERCA PIU'.
+ * Un `ipc_lookup` dentro riempi() sarebbe una ricerca per rettangolo — decine
+ * di migliaia al secondo — per una risposta che non cambia mai: o
+ * l'acceleratore c'e' dall'inizio o non c'e' affatto.
+ * ============================================================================= */
+static int g_acc = 0;             /* il PID del servizio, 0 = disegno da me */
+
+/* =============================================================================
+ * acc_riempi — un rettangolo chiesto al motore. 1 = l'ha fatto lui.
+ *
+ * ! SI ASPETTA LA RISPOSTA, e non e' pigrizia: il motore scrive nello STESSO
+ * framebuffer in cui stiamo per scrivere noi la riga dopo. Tornare prima che
+ * abbia finito vorrebbe dire due padroni sugli stessi pixel, e il risultato
+ * dipenderebbe da chi arriva primo.
+ *
+ * ! MA SI ASPETTA CON ipc_scegli, NON CON ipc_recv_timeout, E QUESTA E' LA RIGA
+ * IMPORTANTE DI TUTTO IL FILE.
+ *
+ * La regola di questo server la detta il commento sopra mouse_chiedi(): «LA
+ * MAILBOX LA LEGGE UN POSTO SOLO». Li' c'era una ipc_recv_timeout() che leggeva
+ * QUALUNQUE messaggio trovasse — compresa la richiesta di un client che stava
+ * chiedendo una finestra, che finiva interpretata come uno stato del mouse e
+ * spariva. Una ipc_recv_timeout() qui dentro rifarebbe lo stesso difetto, con
+ * lo stesso sintomo: «il server non risponde», una volta su tre.
+ *
+ * ipc_scegli passa un FILTRO: quel che non e' l'esito che aspettiamo non ci
+ * passa mai per le mani, resta sullo scaffale della libc, e lo raccoglie il
+ * ciclo principale — che legge con ipc_recv, e ipc_recv lo scaffale lo serve
+ * PRIMA della coda del kernel (vedi lib/libc.c).
+ *
+ * ! E MENTRE ASPETTA, SVUOTA. La mailbox del kernel e' profonda QUATTRO
+ * messaggi, e quando e' piena ogni ipc_send verso di noi fallisce — compresa la
+ * consegna di un tasto, e il servizio 'kbd' a quel punto rimette la console in
+ * cooked e i tasti tornano alla shell. E' successo davvero, ed e' scritto sopra
+ * mouse_chiedi(). ipc_scegli legge, filtra e mette da parte in continuazione:
+ * durante l'attesa la coda del kernel si SVUOTA invece di riempirsi. Un'attesa
+ * cieca sarebbe stata il contrario.
+ *
+ * ! LA SCADENZA E' GENEROSA APPOSTA: 200 ms non e' quanto ci mette un
+ * riempimento (sono millisecondi), e' quanto si e' disposti ad aspettare prima
+ * di dire «questo servizio non c'e' piu'». Allo scadere si disegna da se': un
+ * motore che non risponde deve costare un fotogramma lento, non un rettangolo
+ * che non c'e'.
+ * ============================================================================= */
+static int acc_esito_mio(const IpcMessage *meta, void *dato)
+{
+    if (meta->tipo == ACC_MSG_ESITO &&
+        meta->sender_pid == *(unsigned int *)dato) return IPC_MIO;
+    return IPC_ALTRUI;
+}
+
+static int acc_riempi(unsigned int x, unsigned int y, unsigned int w,
+                      unsigned int h, unsigned int c)
+{
+    AccRiempi    r;
+    AccEsito     e;
+    IpcMessage   meta;
+    unsigned int chi = (unsigned int)g_acc;
+
+    r.x = x; r.y = y; r.w = w; r.h = h; r.colore = c;
+
+    if (ipc_send(chi, ACC_MSG_RIEMPI, &r, sizeof(r)) < 0) return 0;
+    if (ipc_scegli(acc_esito_mio, &chi, &meta, &e, sizeof(e), 200) < 0) return 0;
+
+    return (e.esito == 0);
+}
+
 /* ! LA STRADA VELOCE A 32 BIT NON E' UN LUSSO: riempire lo sfondo di
  * 800x600 con una chiamata di funzione per pixel sono 480000 chiamate a
  * fotogramma, ed e' quanto bastava a far scadere le richieste dei client.
@@ -462,6 +545,28 @@ static void riempi(unsigned int x, unsigned int y, unsigned int w,
         if (x >= g_fb_w || y >= g_fb_h) return;
         if (x + w > g_fb_w) w = g_fb_w - x;
         if (y + h > g_fb_h) h = g_fb_h - y;
+
+        /* =================================================================
+         * ! L'ACCELERATORE SOLO SOPRA LA SOGLIA, E LA SOGLIA E' IL PUNTO.
+         *
+         * Un giro di IPC — richiesta, cambio di contesto, risposta — costa
+         * qualche decina di microsecondi. Riempire 4096 pixel a 32 bit ne
+         * costa 43 alla CPU. Sotto quella misura mandare il messaggio e'
+         * una PERDITA NETTA: si pagherebbe il messaggio per risparmiare meno
+         * del messaggio. Sopra si guadagna, e lo sfondo intero — 480000
+         * pixel, 5,1 ms contro 2,6 — se li mangia senza accorgersene.
+         *
+         * ! E IL RITAGLIO E' GIA' STATO APPLICATO QUI SOPRA: quel che si manda
+         * e' il rettangolo VERO, non quello chiesto. Mandare prima del
+         * ritaglio vorrebbe dire far disegnare al motore fuori dalla regione
+         * sporca, cioe' rovinare quel che non andava ridisegnato.
+         *
+         * ! SE L'ACCELERATORE DICE DI NO SI DISEGNA LO STESSO, subito sotto.
+         * Un motore che non risponde deve costare un fotogramma lento, non un
+         * rettangolo che non c'e': chi ha chiesto crede di aver disegnato.
+         * ================================================================= */
+        if (g_acc && (unsigned int)(w * h) >= ACC_SOGLIA_PX && acc_riempi(x, y, w, h, c))
+            return;
 
         for (j = 0; j < h; j++) {
             unsigned int *p = (unsigned int *)(g_fb + (y + j) * g_fb_passo + x * 4);
@@ -1884,6 +1989,44 @@ int main(int argc, char **argv)
     /* ! SI GUARDA UNA VOLTA SOLA, ALL'AVVIO. Chiedere CPUID a ogni riga
      * costerebbe piu' di quanto MMX faccia risparmiare. */
     g_mmx = mmx_c_e();
+
+    /* =====================================================================
+     * ! L'ACCELERATORE SI CERCA UNA VOLTA SOLA, E NON TROVARLO E' IL CASO
+     * NORMALE.
+     *
+     * Su VESA, sul framebuffer generico, dentro QEMU — cioe' quasi sempre —
+     * nessuno registra ACC_SERVIZIO, `ipc_lookup` rende un errore, e da li' in
+     * poi si riempie con le primitive MMX qui sopra. Quel ramo non e' codice
+     * di riserva tenuto per scrupolo: e' la strada che percorre la
+     * stragrande maggioranza delle macchine.
+     *
+     * ! E NON SI RICERCA MAI PIU'. Un ipc_lookup dentro riempi() sarebbe una
+     * ricerca per rettangolo — decine di migliaia al secondo — per una
+     * risposta che non cambia: o il servizio c'e' dall'inizio, o non c'e'.
+     *
+     * ! SI DICE QUALE DELLE DUE STRADE SI E' PRESA, e non e' rumore: un
+     * acceleratore che non si accende non da' nessun sintomo salvo essere
+     * lento, ed e' proprio il genere di cosa di cui ci si accorge un mese
+     * dopo. Una riga sola, all'avvio, che dice quale.
+     * ===================================================================== */
+    /* ! E SI DICE SUL SERIALE, NON CON printf. In modo grafico la console di
+     * testo non la guarda nessuno: una riga stampata li' e' una riga che non
+     * esiste. Le altre notizie d'avvio di questo server passano di li' per la
+     * stessa ragione — vedi log_seriale() poco piu' sotto, per MMX. */
+    g_acc = ipc_lookup(ACC_SERVIZIO);
+    if (g_acc > 0) {
+        char r[96];
+
+        snprintf(r, sizeof(r),
+                 "wserver: motore 2D '%s' (PID %d): i riempimenti grandi"
+                 " vanno alla scheda", ACC_SERVIZIO, g_acc);
+        log_seriale(r);
+    } else {
+        g_acc = 0;
+        log_seriale(g_mmx
+            ? "wserver: nessun motore 2D, riempio da me con MMX"
+            : "wserver: nessun motore 2D e niente MMX, riempio a 32 bit");
+    }
 
     /* ! «-nommx» SPEGNE LA STRADA VELOCE, e non e' un'opzione per curiosi: la
      * strada di ripiego esiste per le macchine senza MMX, e su una macchina

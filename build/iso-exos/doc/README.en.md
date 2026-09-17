@@ -84,6 +84,133 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### `wserver` uses the 2D engine where there is one, and draws itself where there is not
+
+**tested in QEMU for the software path, on the metal for the protocol** — the
+window server asks the card for large fills when a 2D engine is there, and does
+them with MMX when it is not.
+
+! **And it does not ask for privileges: it asks for a rectangle.** The engine is
+driven with `mmio_map` and `ioport_bind`, which are a driver's. `wserver` lost
+those privileges **on purpose** on 19 August 2026: it was called
+`/dev/wserver.drv` only to get `mmio_map`, and that name kept graphics out of
+multi-user — `/dev` is root's, so an ordinary user could not run the server.
+Putting it back among the drivers to go faster would be a month backwards, and
+would hand it the *wide* capability instead of the narrow one.
+
+So a **service**, not a library:
+
+```
+drivers/accel/accel_proto.h   the contract, and it belongs to neither side
+sis.drv -2dservizio           registers 'accel2d': FILL, COPY, INFO
+sis.drv -2dchiedi             tests it FROM OUTSIDE, the way wserver uses it
+```
+
+`/boot/avvio.sh` starts it (written by `hwconfig`), because only the system can
+execute things in `/dev`. On a machine that is not a SiS the command **exits
+silently**: no card, no service, no line.
+
+! **The software path is the NORMAL path, not a fallback.** On VESA, on the
+generic framebuffer and inside QEMU nobody registers the service, `ipc_lookup`
+finds nothing, and filling is done with MMX at 377 MB/s — the bus limit for
+writing. In QEMU the boot line says exactly that:
+
+```
+wserver: nessun motore 2D, riempio da me con MMX
+```
+
+! **The protocol carries operations, not pixels**, which is what makes it
+affordable: one IPC round trip measured on the Acer — whole background, 480000
+pixels — is **under a millisecond**, and filling the screen costs milliseconds.
+
+! **And there is a threshold, because the engine saves half the time, not all
+of it.** The message must be paid for out of *half* the rectangle's cost. At
+4096 pixels the saving is 21 µs, less than the message: a net loss, and that was
+the first draft's threshold. At 32768 the saving is 165 µs, and the whole
+background is worth 2500.
+
+! **Waiting for the reply uses `ipc_scegli`, not `ipc_recv_timeout`**, and that
+is the most important line of the work. This server's rule is written above
+`mouse_chiedi()`: «one place reads the mailbox». A `recv` that takes any message
+eats the clients' requests — it has happened, and the symptom was «the server
+does not answer», one time in three. `ipc_scegli` filters, and **while it waits
+it drains** the kernel queue onto the shelf instead of letting it fill: the
+mailbox is four messages deep, and when it is full every `ipc_send` towards the
+server fails — including the delivery of a keystroke.
+
+! **What is left is a single measurement:** proving that `wserver` really uses
+it on the real machine. The `servite` counter in `AccInfo` exists for that. And
+the gain to expect is the **fill one (1.9x)**, not the copy one: the compositor
+does no screen-to-screen copy, because the clients' areas live in system RAM.
+The 14x is only reachable by changing the compositing strategy.
+
+### The SiS 2D engine draws: 14x on screen-to-screen copies
+
+**tested on the real machine, from cold** — the 2D accelerator of the Acer
+Aspire 3000's SiS 6330 works. After a clean reboot, with no bring-up command
+beforehand:
+
+```
+sis2d: motore acceso - 65536 KB di memoria video, coda a 0x03f80000
+  il riempimento e' giusto, bordi compresi.
+  la copia e' identica all'originale.
+  la sovrapposizione e' gestita dal motore.
+
+operazione                   CPU     motore   guadagno
+riempire                     377 MB/s    734 MB/s   1.9x
+copiare schermo->schermo      25 MB/s    356 MB/s  14.2x
+```
+
+! **The line that counts is the second.** Filling the screen the CPU already
+does at the limit of the bus (see `fbprova` further down); copying screen to
+screen costs it a **read** from the framebuffer, which on this card is four and
+a half times slower than a write. The engine does it inside the card, without
+the pixels crossing the bus even once. That is exactly what the compositor does
+when it moves a window or scrolls a terminal.
+
+**It was two bits, and the diagnostic had been printing them from day one:**
+
+| register | bit | name in sisfb | what it turns on |
+|---|---|---|---|
+| SR20 | 0x01 | `SIS_MEM_MAP_IO_ENABLE` | the register window |
+| SR1E | 0x40 | `SIS_ENABLE_2D` | the engine |
+
+Step 4 of `-2ddiagnosi` showed «SR1E = 0x20, SR20 = 0xa0» for as long as that
+code has existed, and those numbers had ended up in the reports among the facts
+«established on the real machine». They were two **measurements**, and nobody
+read them as two **absences** — while five explanations were tried and closed.
+
+! **And the order is not negotiable**, because the step that was missing in the
+middle is the one that hung the machine:
+
+```
+1. SR20 bit 0            open the window
+2. Q_BASE_ADDR = base    WHERE the engine reads its commands from
+3. SR27 0x1F, SR26 0x01  threshold and queue RESET
+4. WRITEPORT <- READPORT empty queue
+5. SR1E bit 6            THE ENGINE, last
+6. SR26 = 0x22           queue in MMIO mode
+```
+
+Right after the window opens `Q_BASE_ADDR` reads **zero**: turning the engine on
+there means starting it fetching commands from address zero of video memory and
+writing wherever those commands say — a bus master off on its own. The machine
+stops and no longer answers even a ping. It happened, once, and it is why step 2
+is there now.
+
+! **The base is computed, not picked**: `CR79` bits 7-4 give the megabytes of
+shared memory (64 on the Acer) and the queue goes in the last 512 KB. If that
+measurement is not recognised, `sis2d_apri()` **gives up** and leaves the engine
+off.
+
+! **The bring-up is done by `sis2d_apri()`, and only if needed** — that is, if
+`Q_STATUS` reads all ones. If the window already answers, somebody else turned
+it on: redoing the sequence would mean resetting a queue that may be working.
+
+! **`wserver` does not use it yet.** The gain is there and the compositor is not
+taking it: that is the next step, and it lives together with narrowing the dirty
+regions.
+
 ### The clock can be set: kernel 0.218 and `/bin/date`
 
 **tested on the real machine** — ever since it existed, August 2026, the EX-OS

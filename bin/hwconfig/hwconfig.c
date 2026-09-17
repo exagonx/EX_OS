@@ -560,6 +560,90 @@ static int scrivi_con_copia(const char *percorso, const char *testo)
 }
 
 /* =============================================================================
+ * voce_commentata — la stessa ricerca, ma sulle righe SPENTE
+ *
+ * ! ESISTE PERCHE' «COMMENTATA» E «ASSENTE» NON SONO LA STESSA COSA, e per
+ * `login` la differenza e' fra «si entra senza password» e «si entra con la
+ * password». Vedi il blocco di `login` in componi_cfg(), dove sta la storia.
+ *
+ * Cerca una riga della forma `#chiave = valore` (o `; chiave = ...`) dentro la
+ * sezione data, e ne rende il valore. Rende 1 se l'ha trovata.
+ *
+ * ! SI ACCETTANO GLI SPAZI DOPO IL CANCELLETTO, perche' chi commenta a mano
+ * scrive «# login = ...» tanto quanto «#login = ...», e una funzione che
+ * riconosce solo una delle due forme rimette la serratura a meta' degli
+ * utenti.
+ * ============================================================================= */
+static int voce_commentata(const char *file, const char *sezione,
+                           const char *chiave, char *out, unsigned int max)
+{
+    static char testo[4096];
+    const char *p;
+    char        dentro[64] = "";
+    int         fd, n;
+
+    out[0] = '\0';
+
+    fd = open(file, O_RDONLY);
+    if (fd < 0) return 0;
+    n = (int)read(fd, testo, sizeof(testo) - 1);
+    close(fd);
+    if (n < 0) n = 0;
+    testo[n] = '\0';
+
+    for (p = testo; *p; ) {
+        const char  *r = p, *fine;
+        char         k[64];
+        unsigned int i;
+        int          spenta = 0;
+
+        while (*p && *p != '\n') p++;
+        fine = p;
+        if (*p) p++;
+
+        while (r < fine && (*r == ' ' || *r == '\t')) r++;
+        if (r >= fine) continue;
+
+        /* ! LA SEZIONE SI SEGUE ANCHE QUI, e sulle righe VIVE: una `login`
+         * commentata dentro [env] non e' la `login` di [boot]. Senza questo,
+         * un commento in una sezione qualunque deciderebbe per un'altra. */
+        if (*r == '[') {
+            r++;
+            for (i = 0; i + 1 < sizeof(dentro) && r < fine && *r != ']'; i++)
+                dentro[i] = *r++;
+            dentro[i] = '\0';
+            continue;
+        }
+
+        if (*r == '#' || *r == ';') {
+            spenta = 1;
+            r++;
+            while (r < fine && (*r == ' ' || *r == '\t')) r++;
+        }
+        if (!spenta) continue;
+        if (strcmp(dentro, sezione) != 0) continue;
+
+        for (i = 0; i + 1 < sizeof(k) && r < fine &&
+                    *r != '=' && *r != ' ' && *r != '\t'; i++)
+            k[i] = *r++;
+        k[i] = '\0';
+        if (strcmp(k, chiave) != 0) continue;
+
+        while (r < fine && (*r == ' ' || *r == '\t')) r++;
+        if (r >= fine || *r != '=') continue;
+        r++;
+        while (r < fine && (*r == ' ' || *r == '\t')) r++;
+
+        for (i = 0; i + 1 < max && r < fine; i++) out[i] = *r++;
+        out[i] = '\0';
+        while (i > 0 && (out[i-1] == ' ' || out[i-1] == '\t' ||
+                         out[i-1] == '\r')) out[--i] = '\0';
+        return out[0] != '\0';
+    }
+    return 0;
+}
+
+/* =============================================================================
  * ! CERTE VOCI SONO DI CHI USA IL SISTEMA, E NON SI PERDONO
  *
  * Questo programma riscrive kernel.cfg PER INTERO — e' scritto anche nella
@@ -717,7 +801,36 @@ static void componi_kernel_cfg(char *out, unsigned int max, const char *vecchio)
      * facendo — e se non c'era la si mette lo stesso, purche' il programma
      * esista: il kernel lancia /bin/login SOLO se questa riga c'e', e senza si
      * entra senza password su una radice ext2. */
-    if (voce_di_prima(vecchio, "boot", "login", v, sizeof(v))) {
+    /* =====================================================================
+     * ! UNA VOCE COMMENTATA E' UNA TERZA COSA, NON UN'ASSENZA — e crederlo il
+     * contrario ha RIACCESO L'AUTENTICAZIONE su una macchina che l'aveva
+     * spenta apposta (17 settembre 2026).
+     *
+     * voce_di_prima() salta le righe che cominciano con '#', com'e' giusto per
+     * una voce qualunque. Ma commentare `login` E' IL MODO DOCUMENTATO di
+     * spegnere l'accesso: il kernel avvia /bin/login solo se la riga c'e',
+     * quindi «commentata» vuol dire «spenta DI PROPOSITO», non «mai decisa».
+     * Vista come un'assenza, hwconfig cadeva nel ramo «non c'era, la metto» e
+     * riscriveva `login = /bin/login`: un file di configurazione che rimette
+     * una serratura a chi l'aveva tolta, e senza dirlo.
+     *
+     * ! E IL COMMENTO IN TESTA A QUESTO BLOCCO LO PROMETTEVA GIA': «l'accesso
+     * non si spegne riscrivendo un file». Era vero per la voce cambiata e
+     * falso per la voce commentata — cioe' proprio per il modo in cui si
+     * spegne davvero.
+     * ===================================================================== */
+    if (voce_commentata(vecchio, "boot", "login", v, sizeof(v))) {
+        snprintf(riga, sizeof(riga),
+                 "\n# Chi si apre su ogni console al posto della shell: chiede\n"
+                 "# nome e password, e `exit` torna qui invece di lasciare la\n"
+                 "# console morta. Senza questa riga NON si autentica nessuno.\n"
+                 "#\n"
+                 "# ! ERA COMMENTATA PRIMA, E RESTA COMMENTATA: su questa\n"
+                 "#   macchina si entra da root senza password, ed e' una\n"
+                 "#   decisione, non una dimenticanza.\n"
+                 "#login       = %s\n", v);
+        strncat(out, riga, max - 1 - strlen(out));
+    } else if (voce_di_prima(vecchio, "boot", "login", v, sizeof(v))) {
         snprintf(riga, sizeof(riga),
                  "\n# Chi si apre su ogni console al posto della shell: chiede\n"
                  "# nome e password, e `exit` torna qui invece di lasciare la\n"
@@ -989,7 +1102,6 @@ static void componi_avvio(char *out, unsigned int max, const char *radice)
             "# e molla dopo cinque secondi se il server non risponde.\n"
             "netupdate -auto\n",
             g_t.rete_driver);
-        strncat(out, riga, max - 1 - strlen(out));
 
         /* ! QUESTA RIGA STA ANCHE IN boot/avvio.sh, che e' il gemello di
          * questa funzione: il file ha due scrittori, e chi ne cambia uno
@@ -998,13 +1110,42 @@ static void componi_avvio(char *out, unsigned int max, const char *radice)
          * senza stampare. L'interruttore sta nel .cfg proprio perche' questa
          * funzione riscrive l'intero avvio.sh: una riga aggiunta a mano la'
          * sparirebbe alla prima configurazione dell'hardware. */
+        /* =================================================================
+         * ! LA SHELL DALLA RETE VA PRIMA DELL'AGGIORNAMENTO, E NON E' UN
+         * DETTAGLIO DI GUSTO: E' L'UNICA VIA DI RITORNO.
+         *
+         * `netupdate -auto` gira in PRIMO PIANO, e avvio.sh lo aspetta. Se
+         * quel comando si ferma — il server lento, una domanda a cui nessuno
+         * risponde, uno scaricamento lungo — tutto cio' che sta sotto non
+         * parte MAI. Con telnetd sotto, una macchina in un'altra stanza
+         * diventa irraggiungibile proprio nel momento in cui si vorrebbe
+         * guardare cos'ha combinato l'aggiornamento.
+         *
+         * E' successo il 17 settembre 2026 sull'Acer: questa funzione scriveva
+         * telnetd DOPO netupdate, la macchina rispondeva al ping e non alla
+         * porta 23, e per rimetterla in piedi ci e' voluta la tastiera vera.
+         *
+         * ! LA REGOLA GENERALE: CIO' CHE SERVE A RIPARARE VA ACCESO PRIMA DI
+         * CIO' CHE PUO' ROMPERE. telnetd non apre niente da solo — legge
+         * /boot/telnetd.cfg e senza `avvio` esce in silenzio — quindi
+         * anticiparlo non costa niente a chi non lo usa.
+         * ================================================================= */
         strncat(out,
             "\n"
             "# La shell dalla rete, SE qualcuno l'ha chiesta. Da sola questa\n"
             "# riga non apre niente: telnetd -auto legge /boot/telnetd.cfg e\n"
             "# parte solo se la chiave `avvio` dice \"login\" oppure \"root\".\n"
             "# Il predefinito e' \"no\", e in quel caso esce in silenzio.\n"
+            "#\n"
+            "# ! STA PRIMA DI netupdate APPOSTA: quello gira in primo piano e\n"
+            "# avvio.sh lo aspetta. Se si ferma - server lento, una domanda\n"
+            "# senza risposta - tutto cio' che sta sotto non parte mai, e una\n"
+            "# macchina in un'altra stanza diventa irraggiungibile proprio\n"
+            "# quando la si vorrebbe guardare. Cio' che serve a RIPARARE si\n"
+            "# accende prima di cio' che puo' ROMPERE.\n"
             "telnetd -auto &\n", max - 1 - strlen(out));
+
+        strncat(out, riga, max - 1 - strlen(out));
     } else {
         strncat(out,
             "# Nessuna scheda di rete da accendere. Se ne aggiungi una,\n"
@@ -1049,6 +1190,16 @@ static void componi_avvio(char *out, unsigned int max, const char *radice)
         "# una chiavetta senza tabella in /USB/DRIVE0, un disco partizionato in\n"
         "# /USB/HDD0p1, /USB/HDD0p2, ...\n"
         "automount &\n"
+        "\n"
+        "# L'acceleratore 2D della scheda grafica, se ce l'ha. Esce da solo e in\n"
+        "# silenzio su ogni macchina che non sia una SiS: niente scheda, niente\n"
+        "# servizio, nessuna riga. Se non parte non si rompe niente - wserver lo\n"
+        "# cerca una volta all'avvio, non lo trova, e riempie da se' con MMX.\n"
+        "# Quello e' il ramo normale: su VESA e sul framebuffer generico e'\n"
+        "# l'unico che esiste.\n"
+        "# Va qui e non dentro exwin perche' /dev e' di root: un utente normale\n"
+        "# non puo' eseguire /dev/sis.drv. Il servizio lo accende il SISTEMA.\n"
+        "/dev/sis.drv -2dservizio &\n"
         "\n"
         "@echo Sistema pronto.\n", max - 1 - strlen(out));
 }

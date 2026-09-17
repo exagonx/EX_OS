@@ -82,6 +82,7 @@
 
 #include "libc.h"
 #include "sis_2d.h"
+#include "accel_proto.h"
 
 #define SIS_VENDITORE 0x1039
 #define SIS_6330      0x6330
@@ -109,6 +110,17 @@
 #define RIGHT_CLIP      0x8238      /* 32: basso<<16 | destra              */
 #define COMMAND_READY   0x823C      /* 32: il comando                      */
 #define FIRE_TRIGGER    0x8240      /* 32: e questo lo fa partire          */
+/* =============================================================================
+ * LA CODA DEI COMANDI — i quattro registri che l'accensione tocca
+ *
+ * ! NON SONO INDOVINATI: `-2dmappa` ha misurato sull'Acer che accendendo SR20
+ * bit 0 la fascia 0x85C0-0x863C passa da 0xffffffff a valori veri, mentre
+ * 0x8200-0x827C resta muta. Sono blocchi separati e si accendono con due bit
+ * diversi: la finestra con SR20, il motore con SR1E.
+ * ============================================================================= */
+#define Q_BASE          0x85C0      /* 32: DA DOVE il motore legge i comandi */
+#define Q_WRITE         0x85C4      /* 32: dove siamo arrivati a scrivere    */
+#define Q_READ          0x85C8      /* 32: dove e' arrivato lui a leggere    */
 #define Q_STATUS        0x85CC      /* 32: bit 31 acceso = motore fermo    */
 
 /* I pezzi del registro di comando */
@@ -1116,6 +1128,106 @@ void sis2d_diagnosi(void)
 }
 
 
+/* =============================================================================
+ * accensione — quel che il 16 settembre 2026 ha fatto disegnare il motore
+ *
+ * ! NON E' UNA SEQUENZA INDOVINATA: e' quella di sisfb, e ogni passo e' stato
+ * provato da solo sulla macchina vera prima di metterlo qui. La storia per
+ * esteso sta nel diario; qui basta sapere perche' l'ORDINE non e' negoziabile.
+ *
+ *   SR20 bit 0 (SIS_MEM_MAP_IO_ENABLE)  apre la finestra dei registri. Senza,
+ *       tutto 0xffffffff: non e' il motore fermo, e' il bus che non risponde a
+ *       nessuno. Provato da solo: fa decodificare 0x85C0-0x863C, cioe' il
+ *       blocco della CODA, e non quello del disegno.
+ *
+ *   Q_BASE_ADDR   dice al motore DA DOVE leggere i comandi, e appena aperta la
+ *       finestra vale ZERO.
+ *       ! E' IL PASSO CHE HA BLOCCATO LA MACCHINA QUANDO MANCAVA. Accendere il
+ *         motore con la coda a zero vuol dire farlo partire a prendere comandi
+ *         dall'indirizzo zero della memoria video e a scrivere dove quei
+ *         comandi gli dicono: un bus master che va per conto suo. Niente ping,
+ *         ciclo di alimentazione.
+ *
+ *   SR27 = 0x1F, SR26 = 0x01   soglia al massimo e RESET della coda.
+ *   WRITEPORT <- READPORT      i due puntatori allineati, coda vuota.
+ *
+ *   SR1E bit 6 (SIS_ENABLE_2D)  IL MOTORE, e per ULTIMO. Adesso ha un posto
+ *       legittimo da cui leggere.
+ *
+ *   SR26 = 0x22   512k, modo MMIO, autocorrezione.
+ *
+ * ! E LA BASE SI CALCOLA, NON SI SCEGLIE. CR79 bit 7-4 danno i mega di memoria
+ * condivisa (64 sull'Acer); la coda va negli ultimi 512 KB. Se quella misura
+ * non si riconosce si RINUNCIA e si lascia il motore spento: una base a caso e'
+ * precisamente il difetto che questa funzione esiste per evitare.
+ * ============================================================================= */
+static int accensione(int verboso)
+{
+    unsigned int sr1e, sr20, cr79, vram_kb = 0, base, q;
+
+    if (ioport_bind(0x3B0, 0x30) != 0) {
+        if (verboso) printf("sis2d: ioport_bind sulle porte VGA rifiutata.\n");
+        return -1;
+    }
+
+    ioport_out(0x3D4, 0x79);
+    cr79 = (unsigned int)ioport_in(0x3D5);
+    if (cr79 & 0xF0) vram_kb = (1u << ((cr79 & 0xF0u) >> 4)) * 1024u;
+    if (vram_kb < 1024u) {
+        if (verboso)
+            printf("sis2d: CR79 = 0x%02x, misura della memoria video non\n"
+                   "       riconosciuta: lascio il motore spento invece di\n"
+                   "       dare alla coda una base a caso.\n", cr79);
+        return -1;
+    }
+    base = (vram_kb - 512u) * 1024u;
+
+    ioport_out(SEQ_IDX, 0x1E);
+    sr1e = (unsigned int)ioport_in(SEQ_DAT);
+    ioport_out(SEQ_IDX, 0x20);
+    sr20 = (unsigned int)ioport_in(SEQ_DAT);
+
+    ioport_out(SEQ_IDX, 0x20);                    /* 1. la finestra      */
+    ioport_out(SEQ_DAT, (unsigned char)(sr20 | 0x01u));
+
+    mm32(Q_BASE, base);                           /* 2. da dove legge    */
+
+    ioport_out(SEQ_IDX, 0x27);                    /* 3. soglia e reset   */
+    ioport_out(SEQ_DAT, 0x1F);
+    ioport_out(SEQ_IDX, 0x26);
+    ioport_out(SEQ_DAT, 0x01);
+
+    q = mm32r(Q_READ);                            /* 4. coda vuota       */
+    mm32(Q_WRITE, q);
+
+    ioport_out(SEQ_IDX, 0x1E);                    /* 5. IL MOTORE        */
+    ioport_out(SEQ_DAT, (unsigned char)(sr1e | 0x40u));
+
+    ioport_out(SEQ_IDX, 0x26);                    /* 6. coda in MMIO     */
+    ioport_out(SEQ_DAT, 0x22);
+
+    if (verboso)
+        printf("sis2d: motore acceso - %u KB di memoria video, coda a 0x%08x\n",
+               vram_kb, base);
+    return 0;
+}
+
+/* =============================================================================
+ * ! `verboso` NON E' UN GUSTO, E DAL 16 SETTEMBRE 2026 VALE ANCHE PER GLI
+ * ERRORI.
+ *
+ * Questa funzione la chiama anche il SERVIZIO (sis2d_servizio), che parte da
+ * /boot/avvio.sh su OGNI macchina — anche su quelle senza una SiS, e anche su
+ * quelle che si avviano in modo testo. Li' non c'e' niente da riparare: il
+ * servizio semplicemente non si registra e wserver disegna da se', che e' il
+ * caso normale.
+ *
+ * Con i messaggi d'errore incondizionati, ogni avvio in modo testo di
+ * qualunque macchina avrebbe stampato «lo schermo e' in modo TESTO: scegli una
+ * risoluzione» — un consiglio rivolto a nessuno, in mezzo alle righe d'avvio,
+ * che col tempo si impara a non leggere. E le righe d'avvio che non si leggono
+ * piu' sono il posto dove si nasconde il guasto vero.
+ * ============================================================================= */
 int sis2d_apri(int verboso)
 {
     VideoInfo v;
@@ -1125,35 +1237,55 @@ int sis2d_apri(int verboso)
     if (g_mmio) return 0;                 /* gia' aperto */
 
     if (video_info(&v) != 0 || v.larghezza == 0 || v.fisico == 0) {
-        printf("sis2d: lo schermo e' in modo TESTO: il motore 2D non ha\n");
-        printf("       niente su cui lavorare. Scegli una risoluzione:\n");
-        printf("           /dev/svga.drv 800x600   e riavvia\n");
+        if (verboso) {
+            printf("sis2d: lo schermo e' in modo TESTO: il motore 2D non ha\n");
+            printf("       niente su cui lavorare. Scegli una risoluzione:\n");
+            printf("           /dev/svga.drv 800x600   e riavvia\n");
+        }
         return -1;
     }
     if (v.bit != 32 && v.bit != 16 && v.bit != 8) {
-        printf("sis2d: %u bit per pixel: il motore ne conosce 8, 16 e 32.\n",
-               v.bit);
+        if (verboso)
+            printf("sis2d: %u bit per pixel: il motore ne conosce 8, 16 e 32.\n",
+                   v.bit);
         return -1;
     }
 
     if (ioport_bind(PCI_INDIRIZZO, 8) != 0) {
-        printf("sis2d: ioport_bind sul PCI rifiutata.\n");
-        printf("       mi chiamo *.drv e giro da root? il varco e' quello.\n");
+        if (verboso) {
+            printf("sis2d: ioport_bind sul PCI rifiutata.\n");
+            printf("       mi chiamo *.drv e giro da root? il varco e' quello.\n");
+        }
         return -1;
     }
+    /* ! ED E' QUI CHE UNA MACCHINA SENZA SiS ESCE IN SILENZIO: nessun BAR
+     * della 1039:6330, nessun motore, nessuna riga. Il servizio non si
+     * registra e wserver disegna da se'. */
     if (trova_bar(v.fisico, &bar_fb, &bar_reg, verboso) != 0) {
-        printf("sis2d: non trovo i due BAR della 1039:6330.\n");
+        if (verboso) printf("sis2d: non trovo i due BAR della 1039:6330.\n");
         return -1;
     }
 
     m.fisico = bar_reg;
     m.byte   = MMIO_BYTE;
     if (mmio_map(&m) != 0) {
-        printf("sis2d: mmio_map di 0x%08x rifiutata (%s).\n",
-               bar_reg, strerror(errno));
+        if (verboso)
+            printf("sis2d: mmio_map di 0x%08x rifiutata (%s).\n",
+                   bar_reg, strerror(errno));
         return -1;
     }
     g_mmio = (volatile unsigned char *)m.virt;
+
+    /* ! L'ACCENSIONE SI FA QUI, E SOLO SE SERVE. La finestra che legge tutti
+     * uno vuol dire che la scheda non la decodifica ancora; se invece risponde
+     * gia', qualcuno l'ha accesa prima — un altro processo, o un `-2dsr` — e
+     * rifare la sequenza vorrebbe dire RESETTARE una coda che magari sta
+     * lavorando. Il controllo e' la condizione, non una precauzione. */
+    if (mm32r(Q_STATUS) == 0xFFFFFFFFu && accensione(verboso) != 0) {
+        printf("sis2d: la finestra dei registri non risponde e non sono\n"
+               "       riuscito ad accenderla. Il motore resta spento.\n");
+        return -1;
+    }
 
     g_fb = (unsigned char *)fb_map();
     if (g_fb == 0) {
@@ -1546,7 +1678,7 @@ int sis2d_accendi(unsigned int quale)
 {
     VideoInfo v;
     MmioZona  m;
-    unsigned int bar_fb, bar_reg, prima, dopo, letto;
+    unsigned int bar_fb, bar_reg, prima, dopo, letto, letto0, lettoq;
     unsigned char bit;
     const char *nome;
     volatile unsigned int *a;
@@ -1632,9 +1764,22 @@ int sis2d_accendi(unsigned int quale)
     fflush(stdout);
     usleep(500000);
 
-    letto = a[0x8200 / 4];
+    /* ! SI GUARDANO TUTTI E TRE, NON SOLO IL PRIMO, ED E' UNA LEZIONE PAGATA.
+     * La prima stesura decideva «muta o no» sul solo [0x8200]. Il 16 settembre
+     * 2026 `-2dsr20` sull'Acer ha stampato
+     *
+     *     [0x8200] ffffffff   [0x0000] ffffffff   [0x85cc] ff000000
+     *
+     * e ha concluso «muta come prima»: 0x85cc era CAMBIATO — per la prima
+     * volta in tutta la storia di questo difetto — e il verdetto guardava
+     * altrove. Un giudizio che si basa su un campione di tre letture deve
+     * guardare tutte e tre, o non e' un giudizio: e' la prima lettura con
+     * intorno due numeri per bellezza. */
+    letto  = a[0x8200 / 4];
+    letto0 = a[0];
+    lettoq = a[0x85CC / 4];
     printf("       viva. [0x8200] %08x   [0x0000] %08x   [0x85cc] %08x\n",
-           letto, a[0], a[0x85CC / 4]);
+           letto, letto0, lettoq);
 
     printf("\n       ! E ADESSO SCRIVO nella finestra. Se ti fermi qui, e'\n");
     printf("         stata la SCRITTURA in memoria, non la lettura.\n");
@@ -1647,9 +1792,13 @@ int sis2d_accendi(unsigned int quale)
 
     if (a[0x821C / 4] == 0xA5A5A5A5u)
         printf("\n       ! LA FINESTRA RISPONDE, ED E' BASTATO QUESTO BIT.\n");
-    else if (letto != 0xFFFFFFFFu)
-        printf("\n       ! non risponde ancora, ma NON legge piu' tutti uno:\n"
-               "         qualcosa e' cambiato, il bit serve ma non da solo.\n");
+    else if (letto != 0xFFFFFFFFu || letto0 != 0xFFFFFFFFu ||
+             lettoq != 0xFFFFFFFFu)
+        printf("\n       ! NON SCRIVE ANCORA, MA NON LEGGE PIU' TUTTI UNO.\n"
+               "         Almeno un registro decodifica: questo bit SERVE, e\n"
+               "         non basta da solo. Il prossimo passo e' i due\n"
+               "         insieme (-2dsr), e la mappa (-2dmappa) per sapere\n"
+               "         QUALI offset rispondono.\n");
     else
         printf("\n       muta come prima: questo bit da solo non c'entra.\n");
 
@@ -1658,5 +1807,508 @@ int sis2d_accendi(unsigned int quale)
     ioport_out(SEQ_DAT, (unsigned char)prima);
     printf("       SR%02X rimesso a 0x%02x.\n", quale, prima);
 
+    return 0;
+}
+
+
+/* =============================================================================
+ * PREPARARE LA FINESTRA — la parte comune ai due esperimenti qui sotto
+ *
+ * Trova i BAR, mappa i registri, prende le porte VGA. Rende il puntatore alla
+ * finestra, o 0 dicendo perche'.
+ * ============================================================================= */
+static volatile unsigned int *apri_finestra(unsigned int *bar_reg_out)
+{
+    VideoInfo v;
+    MmioZona  m;
+    unsigned int bar_fb, bar_reg;
+
+    if (video_info(&v) != 0 || v.fisico == 0) {
+        printf("sis2d: lo schermo e' in modo testo: non c'e' niente da\n"
+               "       guardare. Scegli una risoluzione e riavvia.\n");
+        return 0;
+    }
+    if (ioport_bind(PCI_INDIRIZZO, 8) != 0) {
+        printf("sis2d: ioport_bind sul PCI rifiutata.\n");
+        return 0;
+    }
+    if (trova_bar(v.fisico, &bar_fb, &bar_reg, 0) != 0) return 0;
+
+    m.fisico = bar_reg;
+    m.byte   = MMIO_BYTE;
+    if (mmio_map(&m) != 0) {
+        printf("sis2d: mmio_map di 0x%08x rifiutata (%s).\n",
+               bar_reg, strerror(errno));
+        return 0;
+    }
+    if (ioport_bind(0x3B0, 0x30) != 0) {
+        printf("sis2d: ioport_bind sulle porte VGA rifiutata.\n");
+        return 0;
+    }
+    if (bar_reg_out) *bar_reg_out = bar_reg;
+    return (volatile unsigned int *)m.virt;
+}
+
+/* =============================================================================
+ * sis2d_mappa — QUALI offset rispondono, con SR20 bit 0 acceso
+ *
+ * ! ESISTE PERCHE' UN SOLO REGISTRO HA CAMBIATO VALORE, E TRE LETTURE NON SONO
+ * UNA MAPPA. Il 16 settembre 2026 `-2dsr20` ha trovato [0x85cc] passare da
+ * ffffffff a ff000000 mentre [0x0000] e [0x8200] restavano tutti uno. Delle due
+ * l'una: o quel registro e' l'unico a decodificare, oppure ne decodifica una
+ * FASCIA e noi stavamo guardando tre punti scelti prima di sapere dove
+ * guardare. La differenza cambia il passo successivo, e si risolve leggendo.
+ *
+ * ! ED E' DI SOLA LETTURA. `-2dsr20` ha dimostrato che con quel bit acceso la
+ * macchina legge la finestra e resta viva: qui si rifa' quel gesto, solo in
+ * ottanta punti invece che in tre. Nessuna scrittura in memoria.
+ *
+ * ! SI LEGGE PRIMA E DOPO, e non solo dopo. «ff000000» da solo non vuol dire
+ * niente: puo' essere un registro che risponde oppure un valore che c'era gia'.
+ * Quel che dimostra qualcosa e' la DIFFERENZA fra le due letture, ed e'
+ * esattamente l'errore che questa diagnosi ha gia' fatto una volta — al passo 1,
+ * dove si confrontavano due zeri e si concludeva che erano uguali.
+ * ============================================================================= */
+static void mappa_leggi(volatile unsigned int *a, unsigned int *dove,
+                        unsigned int *val, unsigned int quanti)
+{
+    unsigned int i;
+
+    for (i = 0; i < quanti; i++) val[i] = a[dove[i] / 4];
+}
+
+void sis2d_mappa(void)
+{
+    volatile unsigned int *a;
+    unsigned int bar_reg = 0;
+    unsigned int dove[80], prima[80], dopo[80];
+    unsigned int quanti = 0, i, sr20, cambiati = 0, vivi = 0;
+
+    a = apri_finestra(&bar_reg);
+    if (a == 0) return;
+
+    /* Una spazzolata larga, e una fitta dove stanno i registri del motore. */
+    for (i = 0; i < 16; i++) dove[quanti++] = i * 0x1000u;
+    for (i = 0; i < 16; i++) dove[quanti++] = 0x8200u + i * 4u;
+    for (i = 0; i < 16; i++) dove[quanti++] = 0x8240u + i * 4u;
+    for (i = 0; i < 16; i++) dove[quanti++] = 0x85C0u + i * 4u;
+    for (i = 0; i < 16; i++) dove[quanti++] = 0x8600u + i * 4u;
+
+    printf("sis2d: la finestra sta a 0x%08x; guardo %u punti prima e dopo.\n",
+           bar_reg, quanti);
+
+    ioport_out(SEQ_IDX, 0x20);
+    sr20 = (unsigned int)ioport_in(SEQ_DAT);
+    printf("       SR20 = 0x%02x\n", sr20);
+
+    mappa_leggi(a, dove, prima, quanti);
+
+    printf("       SR20 -> 0x%02x\n", (unsigned int)(sr20 | 0x01u));
+    fflush(stdout);
+    usleep(500000);
+
+    ioport_out(SEQ_IDX, 0x20);
+    ioport_out(SEQ_DAT, (unsigned char)(sr20 | 0x01u));
+
+    mappa_leggi(a, dove, dopo, quanti);
+
+    ioport_out(SEQ_IDX, 0x20);
+    ioport_out(SEQ_DAT, (unsigned char)sr20);
+
+    printf("\n       offset     prima     dopo\n");
+    for (i = 0; i < quanti; i++) {
+        if (dopo[i] != 0xFFFFFFFFu) vivi++;
+        if (prima[i] != dopo[i]) {
+            printf("       0x%04x  %08x  %08x   CAMBIATO\n",
+                   dove[i], prima[i], dopo[i]);
+            cambiati++;
+        } else if (dopo[i] != 0xFFFFFFFFu) {
+            printf("       0x%04x  %08x  %08x   (rispondeva gia')\n",
+                   dove[i], prima[i], dopo[i]);
+        }
+    }
+
+    printf("\n       %u cambiati, %u che non leggono tutti uno, su %u.\n",
+           cambiati, vivi, quanti);
+    if (cambiati == 0)
+        printf("       ! nessuna differenza: allora ff000000 su 0x85cc era un\n"
+               "         valore che c'era gia', non una risposta al bit.\n");
+    printf("       SR20 rimesso a 0x%02x.\n", sr20);
+}
+
+/* =============================================================================
+ * sis2d_due — L'ACCENSIONE NELL'ORDINE CHE LA MAPPA HA RESO OVVIO
+ *
+ * ! LA PRIMA VERSIONE ACCENDEVA I DUE BIT E BASTA, E HA BLOCCATO LA MACCHINA.
+ * La seconda li accendeva uno per volta, annunciandoli. `-2dmappa` ha poi detto
+ * la cosa che mancava:
+ *
+ *     SR20 bit 0 fa decodificare 0x85C0-0x863C  — il blocco della CODA
+ *     e NON fa decodificare 0x8200-0x827C       — il blocco del DISEGNO
+ *
+ * cioe' esattamente quel che dicono i due nomi: `SIS_MEM_MAP_IO_ENABLE` apre la
+ * finestra, `SIS_ENABLE_2D` accende il motore. E da li' viene un'ipotesi sul
+ * blocco che nessuno dei due bit da solo spiegava:
+ *
+ * ! ACCENDERE IL MOTORE CON UNA CODA CHE NON E' STATA PREPARATA VUOL DIRE
+ *   DARGLI UN INDIRIZZO A CASO DA CUI LEGGERE I COMANDI. Q_BASE_ADDR letto
+ *   subito dopo l'accensione della finestra vale ZERO. Un motore che comincia a
+ *   prendere comandi dall'indirizzo zero della memoria video, e a scrivere dove
+ *   quei comandi gli dicono, e' un bus master che va per conto suo: la macchina
+ *   si ferma e nessuna riga esce piu'.
+ *
+ * ! QUINDI L'ORDINE E' QUELLO DI sisfb, E NON E' UNA FORMALITA'. Prima la
+ * finestra, poi la CODA — base, reset, puntatori — e il motore PER ULTIMO,
+ * quando c'e' gia' un posto legittimo da cui leggere. Noi avevamo provato tutti
+ * gli ordini tranne questo, perche' fino alla mappa non si sapeva che il blocco
+ * della coda si potesse scrivere prima del resto.
+ *
+ * Ogni gesto si annuncia e aspetta mezzo secondo che la riga esca: fra «l'ho
+ * stampata» e «e' arrivata» ci sono il tubo del pty e la finestra TCP.
+ * ============================================================================= */
+void sis2d_due(void)
+{
+    volatile unsigned int *a;
+    unsigned int bar_reg = 0, sr1e, sr20, sr26, sr27;
+    unsigned int vram_kb = 0, base, cr78, cr79, q;
+
+    a = apri_finestra(&bar_reg);
+    if (a == 0) return;
+
+    ioport_out(SEQ_IDX, 0x1E);
+    sr1e = (unsigned int)ioport_in(SEQ_DAT);
+    ioport_out(SEQ_IDX, 0x20);
+    sr20 = (unsigned int)ioport_in(SEQ_DAT);
+    ioport_out(SEQ_IDX, 0x26);
+    sr26 = (unsigned int)ioport_in(SEQ_DAT);
+    ioport_out(SEQ_IDX, 0x27);
+    sr27 = (unsigned int)ioport_in(SEQ_DAT);
+
+    printf("sis2d: SR1E %02x  SR20 %02x  SR26 %02x  SR27 %02x\n",
+           sr1e, sr20, sr26, sr27);
+
+    /* Quanta memoria video c'e', per dare alla coda una base che stia DENTRO
+     * la scheda. CR79 bit 7-4: 2^n megabyte condivisi. */
+    ioport_out(0x3D4, 0x79);
+    cr79 = (unsigned int)ioport_in(0x3D5);
+    ioport_out(0x3D4, 0x78);
+    cr78 = (unsigned int)ioport_in(0x3D5);
+    if (cr79 & 0xF0) vram_kb = (1u << ((cr79 & 0xF0u) >> 4)) * 1024u;
+    printf("       CR79 %02x CR78 %02x -> %u KB di memoria video\n",
+           cr79, cr78, vram_kb);
+    if (vram_kb < 1024u) {
+        printf("       ! misura non riconosciuta: senza sapere dov'e' la fine\n"
+               "         della memoria video non si sceglie una base, e una\n"
+               "         base a caso e' il difetto che stiamo evitando.\n");
+        return;
+    }
+    base = (vram_kb - 512u) * 1024u;      /* mezzo mega in fondo, come sisfb */
+
+    /* ---- 1. la finestra ------------------------------------------------- */
+    printf("\n       ! 1. SR20 = 0x%02x: apro la finestra. (Gia' provato da\n",
+           (unsigned int)(sr20 | 0x01u));
+    printf("            solo: la macchina regge e la coda decodifica.)\n");
+    fflush(stdout);
+    usleep(500000);
+    ioport_out(SEQ_IDX, 0x20);
+    ioport_out(SEQ_DAT, (unsigned char)(sr20 | 0x01u));
+    printf("       viva. Q_BASE %08x  Q_WR %08x  Q_RD %08x  Q_ST %08x\n",
+           a[0x85C0 / 4], a[0x85C4 / 4], a[0x85C8 / 4], a[0x85CC / 4]);
+
+    /* ---- 2. la base della coda ------------------------------------------ */
+    printf("\n       ! 2. SCRIVO Q_BASE = 0x%08x (gli ultimi 512 KB della\n", base);
+    printf("            memoria video). E' QUESTO che mancava: il motore\n");
+    printf("            leggera' i comandi da li', e finora li' c'era zero.\n");
+    fflush(stdout);
+    usleep(500000);
+    a[0x85C0 / 4] = base;
+    printf("       viva. Q_BASE rileggo %08x  %s\n", a[0x85C0 / 4],
+           (a[0x85C0 / 4] == base) ? "<- ha tenuto" : "<- NON ha tenuto");
+
+    /* ---- 3. soglia e reset della coda ----------------------------------- */
+    printf("\n       ! 3. SR27 = 0x1F (soglia) e SR26 = 0x01 (reset coda).\n");
+    fflush(stdout);
+    usleep(500000);
+    ioport_out(SEQ_IDX, 0x27);
+    ioport_out(SEQ_DAT, 0x1F);
+    ioport_out(SEQ_IDX, 0x26);
+    ioport_out(SEQ_DAT, 0x01);
+    printf("       viva. Q_ST %08x\n", a[0x85CC / 4]);
+
+    /* ---- 4. i puntatori -------------------------------------------------- */
+    printf("\n       ! 4. WRITEPORT <- READPORT.\n");
+    fflush(stdout);
+    usleep(500000);
+    q = a[0x85C8 / 4];
+    a[0x85C4 / 4] = q;
+    printf("       viva. READPORT %08x, WRITEPORT rileggo %08x\n",
+           q, a[0x85C4 / 4]);
+
+    /* ---- 5. e SOLO ADESSO il motore ------------------------------------- */
+    printf("\n       ! 5. SR1E = 0x%02x: ACCENDO IL MOTORE, con la coda\n",
+           (unsigned int)(sr1e | 0x40u));
+    printf("            gia' pronta. E' il passo che nell'ordine sbagliato\n");
+    printf("            ha bloccato la macchina. Se ti fermi qui, e' questo.\n");
+    fflush(stdout);
+    usleep(500000);
+    ioport_out(SEQ_IDX, 0x1E);
+    ioport_out(SEQ_DAT, (unsigned char)(sr1e | 0x40u));
+    printf("       viva.\n");
+
+    /* ---- 6. il modo MMIO della coda -------------------------------------- */
+    printf("\n       ! 6. SR26 = 0x22 (512k, MMIO, autocorrezione).\n");
+    fflush(stdout);
+    usleep(500000);
+    ioport_out(SEQ_IDX, 0x26);
+    ioport_out(SEQ_DAT, 0x22);
+    printf("       viva. Q_ST %08x\n", a[0x85CC / 4]);
+
+    /* ---- 7. e il blocco del disegno risponde? ---------------------------- */
+    printf("\n       ! 7. LEGGO il blocco del DISEGNO, che con SR20 da solo\n");
+    printf("            restava muto (0x8200-0x827C tutti uno).\n");
+    fflush(stdout);
+    usleep(500000);
+    printf("       viva. [0x8200] %08x  [0x8204] %08x  [0x821c] %08x\n",
+           a[0x8200 / 4], a[0x8204 / 4], a[0x821C / 4]);
+
+    /* =====================================================================
+     * ! RILEGGERE UN REGISTRO NON E' LA PROVA, ED E' UN ERRORE CHE HO GIA'
+     * FATTO. La versione di prima scriveva 0xa5a5a5a5 in PAT_FGCOLOR, lo
+     * rileggeva zero e concludeva «il disegno non scrive ancora». Ma i
+     * registri di un motore grafico sono quasi sempre DI SOLA SCRITTURA:
+     * leggerne zero non dice che la scrittura non sia arrivata, dice che
+     * quel registro non si rilegge. Zero e ffffffff sono due risposte
+     * diverse — la prima e' un bus che risponde, la seconda un bus che non
+     * risponde a nessuno — e quel passaggio da ffffffff a 00000000 era esso
+     * stesso il segno che il blocco adesso decodifica.
+     *
+     * ! LA PROVA E' IL FRAMEBUFFER. Si fa disegnare al motore un rettangolo
+     * e si RILEGGONO I PIXEL: quello e' un fatto che non dipende da come si
+     * comporta un registro in lettura. E' esattamente cio' che sis2d_prova()
+     * fa da quando esiste — mancava solo un motore acceso su cui farla girare.
+     *
+     * ! E NON PUO' APPENDERSI: sis2d_riempi() passa da attendi(), che ha un
+     * tetto di giri e rende -1 dicendo «e' fermo» invece di aspettare per
+     * sempre.
+     * ===================================================================== */
+    printf("\n       ! 8. E ADESSO LA PROVA VERA: faccio DISEGNARE il motore\n");
+    printf("            e rileggo i PIXEL. Rileggere un registro non\n");
+    printf("            dimostra niente: quelli di un motore grafico sono\n");
+    printf("            quasi sempre di sola scrittura.\n");
+    fflush(stdout);
+    usleep(500000);
+
+    if (sis2d_apri(0) != 0) {
+        printf("       ! sis2d_apri ha detto di no: non posso disegnare.\n");
+        return;
+    }
+    printf("       viva. il motore e' aperto, disegno.\n\n");
+    fflush(stdout);
+
+    if (sis2d_prova() == 0) {
+        printf("\n       ! IL MOTORE 2D DISEGNA. I bit restano accesi.\n");
+        return;
+    }
+
+    printf("\n       il motore non disegna. Rimetto tutto com'era.\n");
+    ioport_out(SEQ_IDX, 0x26);
+    ioport_out(SEQ_DAT, (unsigned char)sr26);
+    ioport_out(SEQ_IDX, 0x27);
+    ioport_out(SEQ_DAT, (unsigned char)sr27);
+    ioport_out(SEQ_IDX, 0x1E);
+    ioport_out(SEQ_DAT, (unsigned char)sr1e);
+    ioport_out(SEQ_IDX, 0x20);
+    ioport_out(SEQ_DAT, (unsigned char)sr20);
+    printf("       SR1E %02x  SR20 %02x  SR26 %02x  SR27 %02x\n",
+           sr1e, sr20, sr26, sr27);
+}
+
+
+/* =============================================================================
+ * sis2d_servizio — il motore 2D offerto a chi non ha i privilegi
+ *
+ * ! ESISTE PERCHE' wserver NON E' UN DRIVER E NON DEVE TORNARE A ESSERLO. Il
+ * perche' per esteso sta in drivers/accel/accel_proto.h; qui basta la
+ * conseguenza: il server a finestre non puo' chiamare sis2d_riempi(), perche'
+ * quella funzione vive dietro mmio_map e ioport_bind. Puo' pero' CHIEDERE un
+ * rettangolo a chi quei privilegi ce li ha, ed e' questo processo.
+ *
+ * ! E CHI NON TROVA QUESTO SERVIZIO DISEGNA DA SE'. Non e' un ripiego: su ogni
+ * scheda che non sia questa SiS — VESA, il framebuffer generico, QEMU — il
+ * servizio non c'e' e wserver usa le sue primitive MMX. Il ramo software e' il
+ * ramo NORMALE.
+ *
+ * ! SI ESCE IN SILENZIO SE LA SCHEDA NON E' LA NOSTRA, e non e' cortesia: se
+ * questo comando finisse dentro un avvio.sh condiviso, su una macchina con
+ * un'altra scheda deve sparire senza lasciare un errore che nessuno puo'
+ * riparare. Un servizio che non si registra e' esattamente cio' che il ramo
+ * software si aspetta di trovare.
+ *
+ * ! E NON SI RISPONDE MAI «FATTO» SENZA AVER FATTO. Ogni richiesta rende un
+ * esito, e chi chiede lo guarda: un riempimento che non e' avvenuto e lascia
+ * lo schermo com'era e' peggio di un errore, perche' chi ha chiesto crede di
+ * aver disegnato.
+ * ============================================================================= */
+int sis2d_servizio(void)
+{
+    IpcMessage meta;
+    unsigned char buf[64];
+    unsigned int servite = 0;
+
+    if (sis2d_apri(0) != 0) {
+        /* Niente scheda, niente motore, niente servizio: e va bene cosi'. */
+        return 1;
+    }
+
+    if (ipc_register(ACC_SERVIZIO) < 0) {
+        printf("sis2d: il nome '%s' e' gia' preso: c'e' un altro\n"
+               "       acceleratore acceso. Non ne servono due.\n",
+               ACC_SERVIZIO);
+        return 1;
+    }
+
+    printf("sis2d: servizio '%s' attivo - %ux%u a %u bit\n",
+           ACC_SERVIZIO, g_larg, g_alt, g_bit);
+
+    for (;;) {
+        int n = ipc_recv(&meta, buf, sizeof(buf));
+
+        if (n < 0) continue;
+
+        switch (meta.tipo) {
+        case ACC_MSG_RIEMPI: {
+            AccRiempi r;
+            AccEsito  e;
+
+            if (meta.len < sizeof(r)) break;
+            memcpy(&r, buf, sizeof(r));
+            e.esito = sis2d_riempi(r.x, r.y, r.w, r.h, impacchetta(r.colore));
+            if (e.esito == 0) servite++;
+            ipc_send(meta.sender_pid, ACC_MSG_ESITO, &e, sizeof(e));
+            break;
+        }
+        case ACC_MSG_COPIA: {
+            AccCopia c;
+            AccEsito e;
+
+            if (meta.len < sizeof(c)) break;
+            memcpy(&c, buf, sizeof(c));
+            e.esito = sis2d_copia(c.sx, c.sy, c.dx, c.dy, c.w, c.h);
+            if (e.esito == 0) servite++;
+            ipc_send(meta.sender_pid, ACC_MSG_ESITO, &e, sizeof(e));
+            break;
+        }
+        case ACC_MSG_INFO: {
+            AccInfo i;
+
+            memset(&i, 0, sizeof(i));
+            i.larghezza = g_larg;
+            i.altezza   = g_alt;
+            i.bit       = g_bit;
+            i.passo     = g_passo;
+            i.servite   = servite;
+            strcpy(i.nome, "sis");
+            ipc_send(meta.sender_pid, ACC_MSG_INFO_R, &i, sizeof(i));
+            break;
+        }
+        default:
+            break;
+        }
+    }
+}
+
+
+/* =============================================================================
+ * sis2d_chiedi — il servizio provato DA FUORI, come lo usa wserver
+ *
+ * ! ESISTE PERCHE' LA MACCHINA VERA NON HA UNO SCHERMO CHE POSSO GUARDARE.
+ * Sull'Acer si arriva da telnet: `-2dprova` dimostra che il MOTORE disegna, ma
+ * non dimostra niente sul PROTOCOLLO — il servizio registrato, il messaggio che
+ * arriva, l'esito che torna. Quella meta' la esercita solo un secondo processo,
+ * ed e' questo.
+ *
+ * ! E FA ESATTAMENTE QUEL CHE FA wserver, non qualcosa di simile: ipc_lookup
+ * del nome, un INFO, un riempimento grande, e si guarda l'esito. Una prova che
+ * usa una strada diversa da quella vera prova una strada diversa da quella
+ * vera.
+ *
+ * ! NON PASSA DA sis2d_apri(): e' un CLIENT. Se aprisse il motore per conto suo
+ * sarebbero due processi sullo stesso hardware, ed e' proprio la cosa che il
+ * servizio esiste per evitare.
+ * ============================================================================= */
+static int chiedi_esito_mio(const IpcMessage *meta, void *dato)
+{
+    unsigned int voluto = *(unsigned int *)dato;
+
+    if ((meta->tipo == ACC_MSG_ESITO || meta->tipo == ACC_MSG_INFO_R) &&
+        meta->sender_pid == voluto) return IPC_MIO;
+    return IPC_ALTRUI;
+}
+
+int sis2d_chiedi(void)
+{
+    AccInfo      info;
+    AccRiempi    r;
+    AccEsito     e;
+    IpcMessage   meta;
+    unsigned int chi;
+    int          pid;
+    unsigned int t0, ms;
+
+    pid = ipc_lookup(ACC_SERVIZIO);
+    if (pid <= 0) {
+        printf("sis2d: il servizio '%s' non c'e'.\n", ACC_SERVIZIO);
+        printf("       E' il caso NORMALE su una scheda qualunque: wserver\n");
+        printf("       riempie da se' con MMX. Qui invece lo si aspettava:\n");
+        printf("       lo accende /boot/avvio.sh con `-2dservizio &`.\n");
+        return 1;
+    }
+    printf("sis2d: servizio '%s' trovato, PID %d.\n", ACC_SERVIZIO, pid);
+    chi = (unsigned int)pid;
+
+    if (ipc_send(chi, ACC_MSG_INFO, &chi, sizeof(chi)) < 0) {
+        printf("       ! non riesco a mandargli un INFO.\n");
+        return 1;
+    }
+    if (ipc_scegli(chiedi_esito_mio, &chi, &meta, &info, sizeof(info), 2000) < 0) {
+        printf("       ! non risponde all'INFO entro due secondi.\n");
+        return 1;
+    }
+    printf("       dice: '%s', %ux%u a %u bit, passo %u\n",
+           info.nome, info.larghezza, info.altezza, info.bit, info.passo);
+    printf("       richieste servite finora: %u\n", info.servite);
+    if (info.servite == 0)
+        printf("       (zero e' giusto se la scrivania non e' mai partita:\n"
+               "        e' wserver il cliente vero di questo servizio)\n");
+
+    /* Un riempimento grande, cioe' quello che wserver gli manda davvero: lo
+     * sfondo della scrivania. Due volte, per vedere anche il secondo giro —
+     * il primo paga la registrazione delle pagine. */
+    r.x = 0; r.y = 0; r.w = info.larghezza; r.h = info.altezza;
+    r.colore = 0x00204060u;
+
+    printf("       gli chiedo lo sfondo intero (%u pixel, soglia %u)...\n",
+           r.w * r.h, ACC_SOGLIA_PX);
+
+    t0 = uptime_ms();
+    if (ipc_send(chi, ACC_MSG_RIEMPI, &r, sizeof(r)) < 0) {
+        printf("       ! ipc_send rifiutata.\n");
+        return 1;
+    }
+    if (ipc_scegli(chiedi_esito_mio, &chi, &meta, &e, sizeof(e), 2000) < 0) {
+        printf("       ! non risponde entro due secondi.\n");
+        return 1;
+    }
+    ms = uptime_ms() - t0;
+
+    if (e.esito != 0) {
+        printf("       ! il servizio dice di no: esito %d\n", e.esito);
+        return 1;
+    }
+
+    printf("       fatto in %u ms, giro di IPC compreso.\n", ms);
+    printf("\n       ! IL PROTOCOLLO FUNZIONA: registrazione, richiesta,\n");
+    printf("         disegno e risposta. E' la strada che wserver percorre\n");
+    printf("         per ogni riempimento sopra i %u pixel.\n", ACC_SOGLIA_PX);
     return 0;
 }

@@ -869,10 +869,16 @@ static void aiuto(void)
     printf("  sis.drv -2dstato  legge i registri del motore e basta\n");
     printf("  sis.drv -2dprova  disegna e RILEGGE: dice se e' venuto giusto\n");
     printf("  sis.drv -2dmisura il motore contro la CPU, sugli stessi pixel\n");
+    printf("  sis.drv -2dservizio  offre il motore a wserver e non torna piu'\n");
+    printf("                    (senza, il server a finestre disegna da se')\n");
+    printf("  sis.drv -2dchiedi lo prova DA FUORI, come lo usa wserver\n");
     printf("  sis.drv -2ddiagnosi  quattordici passi, e non scrive niente\n");
     printf("\n! E DUE CHE POSSONO FERMARE LA MACCHINA, una per volta:\n");
     printf("  sis.drv -2dsr1e   accende SR1E bit 6 (SIS_ENABLE_2D)\n");
     printf("  sis.drv -2dsr20   accende SR20 bit 0 (SIS_MEM_MAP_IO_ENABLE)\n");
+    printf("  sis.drv -2dmappa  con SR20 bit 0, legge 80 punti prima e dopo\n");
+    printf("                    (di SOLA LETTURA: si puo' fare)\n");
+    printf("  sis.drv -2dsr     i DUE bit insieme, un gesto per volta\n");
     printf("  Sono i due bit che sisfb accende prima della coda comandi e che\n");
     printf("  su questa scheda sono spenti. Il 16 settembre 2026, accesi\n");
     printf("  INSIEME, hanno bloccato l'Acer: niente ping, interruttore. Una\n");
@@ -921,6 +927,15 @@ int main(int argc, char **argv)
          * trovato. */
         if (strncmp(argv[i], "-2d", 3) == 0) {
             if (strcmp(argv[i], "-2ddiagnosi") == 0) { sis2d_diagnosi(); return 0; }
+            /* ! IL SERVIZIO NON PASSA DAL sis2d_apri(1) QUI SOTTO: ce l'ha
+             * dentro, e deve poter USCIRE IN SILENZIO se la scheda non e'
+             * questa. Quel sis2d_apri STAMPA, e un errore su ogni macchina con
+             * un'altra scheda grafica e' rumore che nessuno puo' riparare. */
+            if (strcmp(argv[i], "-2dservizio") == 0) return sis2d_servizio();
+            /* ! ANCHE QUESTA PRIMA DI sis2d_apri(1): e' un CLIENT, non deve
+             * aprire il motore per conto suo. Due processi sullo stesso
+             * hardware sono la cosa che il servizio esiste per evitare. */
+            if (strcmp(argv[i], "-2dchiedi") == 0) return sis2d_chiedi();
             /* ! LE DUE PROVE DI ACCENSIONE NON PASSANO DA sis2d_apri(), e non
              * e' una scorciatoia: quella funzione da' per buona una finestra
              * dei registri che risponde, ed e' proprio quello che queste due
@@ -930,6 +945,8 @@ int main(int argc, char **argv)
                 return sis2d_accendi(0x1E) ? 1 : 0;
             if (strcmp(argv[i], "-2dsr20") == 0)
                 return sis2d_accendi(0x20) ? 1 : 0;
+            if (strcmp(argv[i], "-2dmappa") == 0) { sis2d_mappa(); return 0; }
+            if (strcmp(argv[i], "-2dsr") == 0)    { sis2d_due();   return 0; }
             if (sis2d_apri(1) != 0) return 1;
             if (strcmp(argv[i], "-2dstato") == 0)  { sis2d_stato(); return 0; }
             if (strcmp(argv[i], "-2dprova") == 0)  {
