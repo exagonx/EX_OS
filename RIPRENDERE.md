@@ -95,8 +95,10 @@ una riga a mano**:
     era lo stesso difetto del pty, gia' corretto.
   - `kernel/arch/x86/mtrr.c` e' scritto e **non collegato**: su questa macchina
     non serve, e non si prova un MTRR senza una macchina su cui provarlo.
-  - ! **il floppy ha 39424 byte liberi.** Chi ci rimette qualcosa guardi prima
-    quel numero.
+  - ! **il floppy ha 30208 byte liberi** (erano 39424 il 17 settembre: il
+    kernel e' cresciuto con il reset del canale ATA, e `chkdsk` con la
+    scansione della superficie). Chi ci rimette qualcosa guardi prima quel
+    numero.
 
 ## GLI ATTREZZI TOCCATI OGGI
 

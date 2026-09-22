@@ -23,3 +23,13 @@ Questo file solo l'utente aggiunge istruzioni.
 # ---------------------------------------------------------------------------
 
 $ netupdate quando procede al download e questa procede correttamente dovrebbe avere una forma di animazione  ad esempio | / - \ | che precede la riga cosi vedendo questa barra roteare l'utente sa che tutto procede e se si ferma vuol dire che qualcosa non sta andando.
+
+! file manager di exwin su comandi bisogna aggiungere l'opzione che crea una directory dove appare una finestra modale con textbox e due pulsanti crea e annulla, la directory verra creata come sub-directory di quella selezionata nell'albero a sinistra.
+
+! exide quando crea un nuovo progetto la finestra modale dovrebbe avere un esplora directory e possibilità di crearle dove mostra l'albero e sceglie il percorso, dovrebbe avere per default la root dell'utente corrente ad esempio se l'utente è pinco la directory de default sarà /home/pinco se è root allora sarà /root , dovrebbe salvare l'ultima directory usata per la creazione del progetto ad esempio se ho creato il progetto prova dentro /home/pinco/progetti/prova salverà come directory di default /home/pinco/progetti
+
+$ su exwin l'editor di testo manca la voce cerca (apre una modale dove chiede di specificare la stringa da cercare nel testo una con la possibilità di andare in focuso anche  sulla successiva e precedente e sostituisci dove ha due modalità trova la stringa e la sostituisce e premendo F3 o facendo click sul pulsante prossimo, procede con la prossima trovata e sostituendola, la finestra ha anche una checkbox dove attivando il flag sostituisce tutte quelle trovate senza chiedere conferma.
+
+! serve un compressore / decompressore per formati ZIP standard servono due programmi uno da riga di comando stile pkzip e uno per exwin stile Winzip, sarebbe buono se si creasse una libreria che contiene le funzioni in comune e le due applicazioni che operano in ambiente diverso.
+
+! serve anche il porting di tar e gz ce una directory con nome gnu che va messa in git ignore all'interno trovi i sorgenti zippati delle mie richiesta come tar e gz
