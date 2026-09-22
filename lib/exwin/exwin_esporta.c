@@ -140,6 +140,15 @@ static const char *const g_nomi[] = {
     "ex_mdi_attivo",
     "ex_mdi_attiva",
 
+    /* Le icone: aperte una volta, disegnate a qualunque misura. */
+    "ex_lista_icona",
+    "ex_lista_margine",
+    "ex_icona_apri",
+    "ex_icona_lato",
+    "ex_icona_disegna",
+    "ex_icona_metti",
+    "ex_icona_chiudi",
+
     /* L'avvio della libreria: lo chiama chi la apre, non l'applicazione. */
     "__lib_avvio"
 };
@@ -231,6 +240,14 @@ static void *const g_indirizzi[] = {
 
     (void *)ex_mdi_attivo,
     (void *)ex_mdi_attiva,
+
+    (void *)ex_lista_icona,
+    (void *)ex_lista_margine,
+    (void *)ex_icona_apri,
+    (void *)ex_icona_lato,
+    (void *)ex_icona_disegna,
+    (void *)ex_icona_metti,
+    (void *)ex_icona_chiudi,
 
     (void *)__libc_ponti_avvia
 };

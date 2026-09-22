@@ -84,6 +84,76 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### Icons: a toolkit API, and the desktop menu that uses it
+
+**tested in QEMU** — `ex_icona_apri` / `ex_icona_disegna` / `ex_icona_metti`
+live in `exwin.so`, that is, in what every graphical program already links:
+icons belong to everybody, not to one program. The real weight — decoding PNG,
+JPG and ICO — stays in `eximg.so`, which is opened only in front of the first
+icon that is not a BMP.
+
+! **An icon is not an image drawn once**, which is why it has functions of its
+own: a menu is repainted every time it opens, and with `ex_immagine()` that
+would be ten file reads and ten decodes each time. It is opened once, kept, and
+the last rendering (size + background) stays ready.
+
+! **The scaler really was needed.** Icons are born at 64 and 128 pixels, a menu
+entry is 24 tall. It **averages** the pixels that collapse into one: taking the
+middle one, on a four-times reduction, throws away fifteen pixels out of
+sixteen and thin edges disappear in patches.
+
+! **And `eximg` was throwing the alpha away.** The code said so: *"the 1-bit
+mask is skipped... the day [the server] can blend, that is where it will be
+fetched from"*. That day was this one — what blends is not the server but the
+toolkit — and without alpha the icons came out as squares of pure background:
+invisible, that is, "they do not load" while they were being drawn perfectly,
+entirely transparent.
+
+In the **Avvio** menu: the icon before the name, and **categories** that open
+to the side. A slash in the name is enough to make one — `Strumenti/Editor` —
+and they are declared nowhere else.
+
+### ZIP archives: one library, one command and one window
+
+**tested in QEMU, and by a foreign reader** — `lib/exzip` knows about ZIP and
+knows nothing about windows; `/bin/zip` and `/exwin/bin/archivi` call the same
+nine functions.
+
+```
+zip a.zip one.txt two.txt        create
+zip -l a.zip                     list
+zip -x a.zip /disk/out           extract
+```
+
+It writes "store" and also reads **deflate**, because the hard part was already
+there: `lib/eximg/inflate.c` has been decoding DEFLATE for months for PNG, GIF
+and the fonts.
+
+! **The test that counts is the one by whoever did not write the format**: the
+archive EX-OS makes is opened by Info-ZIP's `unzip -t`. An archiver that
+re-reads its own archives only proves it is consistent with itself.
+
+### The login page no longer gets covered by the boot messages
+
+**tested in QEMU on an installed disk** — `login` waits for the console to go
+quiet (up to 1500 ms, measured) before printing the name prompt, and listens to
+the keyboard while it waits: whoever is already typing waits for nothing.
+
+! **The `waitpid` was there, and it waited for the wrong thing**: half of
+`/boot/avvio.sh` is lines ending in `&`, and those processes are
+**grandchildren** — children of the script's shell. When `waitpid` returns they
+are alive, they hold the console and they have not spoken yet.
+
+### EX-IDE's new project picks where, and remembers it
+
+**tested in QEMU, over two boots** — Ctrl+N opens the file dialog with the tree
+and the **"Nuova cartella (Ctrl+N)"** button; home is asked of `HOME` and the
+last directory used lives in `$HOME/.app/exide/`.
+
+! **The button lives in the dialog, not in the program**: `ex_dlg_salva` has it
+for everyone, and the ZIP archiver — written a few hours later — found it ready
+without doing anything.
+
 ### `wserver` uses the 2D engine where there is one, and draws itself where there is not
 
 **tested in QEMU for the software path, on the metal for the protocol** — the
@@ -2079,7 +2149,7 @@ forever.
 | `/exwin/bin/wserver` composes windows and moves the pointer, **in ring 3 and unprivileged** | tested |
 | **ExWin** toolkit, Win32-style, with headers for **C, C++ and FreeBASIC** | tested |
 | Controls: window, button, label, text box, group box, separator, header, terminal | tested |
-| `exwin` brings up graphics **on a console of its own**: Alt+F2 goes there, Alt+F1 comes back to the shell | tested |
+| `exwin` brings up graphics **on console 5**: Alt+F5 goes there, Alt+F1 comes back to the shell | tested |
 | A **shell inside a window**, over two pipes | tested |
 | Image backgrounds: BMP today, and the reader table is already the right shape for JPG, PNG and ICO | tested |
 
@@ -3102,16 +3172,23 @@ mechanisms prevent it:
 
 ---
 
-## Virtual consoles — Alt+F1 … Alt+F4
+## Virtual consoles — Alt+F1 … Alt+F5
 
-Four independent screens, only one visible at a time, each with its own shell
-started at boot. **Alt+F1..F4** switches: the program that was running is
-neither suspended nor closed, it keeps working and drawing into its own
-buffer, and finds the screen intact when you come back to it.
+**Five** independent screens (`VGA_N_CONSOLE`), only one visible at a time,
+each with its own shell — or its own `login` — started at boot. **Alt+F1..F5**
+switches: the program that was running is neither suspended nor closed, it
+keeps working and drawing into its own buffer, and finds the screen intact
+when you come back to it.
 
 It is the answer to "how do I start something else without closing this
 one": open `gfedit` on console 2, press Alt+F3, you get a clean prompt, and
 Alt+F2 takes you back to the editor exactly where you left it.
+
+! **The graphics live on console 5.** `exwin` restarts the window server up
+there and says so at startup (`grafica accesa sulla console 5`): from a text
+console you get there with **Alt+F5**, and **Alt+F1** takes you back to the
+shell. It is also why a test driving the desktop presses `Alt+F1` before
+launching an application and `Alt+F5` right after.
 
 | | |
 |---|---|
@@ -3258,8 +3335,8 @@ would not respond.
 ## The graphical interface in practice
 
 ```
-exwin                       brings up graphics on a console of its own
-                            Alt+F2 goes there, Alt+F1 returns to the shell
+exwin                       brings up graphics on console 5
+                            Alt+F5 goes there, Alt+F1 returns to the shell
 
 /exwin/bin/pm               the desktop (exwin starts it by itself)
 /exwin/bin/filemgr [DIR]    the file manager
@@ -3267,18 +3344,32 @@ exwin                       brings up graphics on a console of its own
 /exwin/bin/term [PROG]      the terminal in a window (no PROG: the shell)
 /exwin/bin/browser [URL]    the browser (an absolute path becomes a file:)
 /exwin/bin/exide [DIR]      the visual development environment
+/exwin/bin/archivi [ZIP]    ZIP archives: open, extract, create
 /exwin/bin/fontprova        the TrueType font test, made to be looked at
 /exwin/bin/orologio         date and time in the corner of the bar
 ```
 
 Once graphics are up, the shell **stays alive on console 0**: you keep working
-there and switch to the desktop with `Alt+F2`.
+there and switch to the desktop with `Alt+F5`.
 
 **From the desktop they open from the Avvio menu**, which reads its entries
-from `/exwin/lib/applicazioni.txt` — one line per application, `displayed name |
-path`. The **Applicazioni...** item of that same menu adds and removes lines
-from that file, and the `@avvio <path>` directive says which program starts by
-itself with the desktop (that is how the clock is already there).
+from `/exwin/lib/applicazioni.txt`. One line per application, with an
+**optional** third field for the icon:
+
+```
+Displayed name         | /path/executable     | /path/icon.ico
+Strumenti/Editor       | /exwin/bin/edit      | /exwin/icon/baseapp/edit_64.ico
+```
+
+! **A slash in the name makes a category.** `Strumenti/Editor` is the entry
+"Editor" inside "Strumenti": in the menu, categories sit at the top and open a
+list **to the side**, with their icons. They are declared nowhere else — they
+exist as long as an entry names them.
+
+The **Applicazioni...** item of that same menu adds and removes lines from that
+file (putting back the category and icon of what it does not show), and the
+`@avvio <path>` directive says which program starts by itself with the desktop
+(that is how the clock is already there).
 
 ! **ADDING AN APPLICATION IS ONE LINE, NOT A RECOMPILATION**, and the file
 stays readable and editable by hand on purpose: a configuration file only a

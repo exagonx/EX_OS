@@ -25,6 +25,8 @@ static const char *const g_nomi[] = {
     "ex_dlg_avviso",
     "ex_dlg_conferma",
     "ex_dlg_riga",
+    "ex_dlg_percorso",
+    "ex_dlg_chiedi",
     "__lib_avvio"
 };
 
@@ -34,6 +36,8 @@ static void *const g_indirizzi[] = {
     (void *)ex_dlg_avviso,
     (void *)ex_dlg_conferma,
     (void *)ex_dlg_riga,
+    (void *)ex_dlg_percorso,
+    (void *)ex_dlg_chiedi,
     (void *)__libc_ponti_avvia
 };
 

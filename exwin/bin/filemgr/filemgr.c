@@ -80,7 +80,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `filemgr -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.003"
+#define VERSIONE_APP "0.006"
 EX_VERSIONE("filemgr", VERSIONE_APP);
 
 #define VOCI_MAX    512
@@ -136,7 +136,28 @@ EX_VERSIONE("filemgr", VERSIONE_APP);
 
 /* Quanto e' larga l'area dell'elenco, in pixel, perche' le 62 colonne ci
  * stiano: due margini da 4 come li mette la lista, piu' il testo. */
-#define ELENCO_W    (RIGA_CAR * 8 + 8)
+#define ELENCO_W    (RIGA_CAR * 8 + 8 + LISTA_ICONE_W)
+
+/* ! LO SPAZIO DELLE ICONE SI RISERVA SEMPRE, anche quando le icone non ci
+ * sono. La corsia della lista e' larga due caratteri (lib/exwin: le righe si
+ * indentano solo se almeno una ha l'icona), e l'elenco deve poter mostrare le
+ * sue sessantadue colonne in tutt'e due i casi: senza questi sedici pixel, il
+ * giorno che le icone vengono installate l'ultima colonna finirebbe fuori dal
+ * bordo. Sedici pixel di margine a destra quando non servono si notano meno. */
+#define LISTA_ICONE_W  16
+
+/* ! LE COORDINATE DELL'INTESTAZIONE ESCONO DALLE STESSE COSTANTI DELLE RIGHE,
+ * e stanno qui perche' servono in DUE posti: a crearla e a spostarla quando la
+ * lista apre la corsia delle icone. C_NOME_X e compagni sono in caratteri; la
+ * lista disegna a passo di 8 pixel e lascia 4 pixel di margine a sinistra.
+ *
+ * `dal` e' il carattere dove comincia la colonna, `al` quello dove comincia la
+ * prossima (RIGA_CAR per l'ultima): cosi' i pulsanti si toccano senza
+ * sovrapporsi e senza lasciare buchi. */
+#define INT_T0          (ALBERO_W + 10 + 4)
+#define INT_X(dal)      (INT_T0 + ((dal) - 1) * 8)
+#define INT_W(dal, al)  (((al) - (dal) + 1) * 8)
+#define INT_Y           (MENU_H + 3)
 
 #define ID_ALBERO    1
 #define ID_ELENCO    2
@@ -157,6 +178,7 @@ EX_VERSIONE("filemgr", VERSIONE_APP);
 #define ID_SEGNA     24
 #define ID_SEGNA_TUTTI  25
 #define ID_SEGNA_NIENTE 26
+#define ID_NUOVA_DIR    27
 
 #define ID_ISTRUZIONI 30
 #define ID_INFO       31
@@ -216,6 +238,11 @@ static int g_ord = ORD_NOME;
 static int g_giu[4] = { 0, 0, 0, 1 };   /* 1 = dal piu' grande al piu' piccolo */
 
 static ExFinestra g_int_nome, g_int_tipo, g_int_dim, g_int_data;
+
+/* Di quanto l'intestazione e' gia' spostata: vedi intestazione_incolonna(). */
+static unsigned int g_int_margine = 0;
+
+static void intestazione_incolonna(void);
 
 /* ! DOPO UNA RICERCA I NOMI SONO PERCORSI INTERI, e va segnato: senza questo
  * l'Invio su un risultato cercherebbe il file dentro la directory corrente,
@@ -536,11 +563,125 @@ static void ordina(void)
 
 /* Dai vettori alla lista del toolkit. La chiamano leggi(), la ricerca e ogni
  * clic sull'intestazione: e' l'unico posto dove una riga si impagina. */
+/* Sposta i quattro pulsanti dell'intestazione di quanto la lista tiene per le
+ * icone.
+ *
+ * ! SI CHIEDE ALLA LISTA, NON SI SA. Quanto sia larga una corsia di icone e'
+ * roba del toolkit: scriverlo qui vorrebbe dire una costante copiata, e una
+ * copia sbagliata il giorno che cambia. ex_lista_margine() rende 0 quando
+ * nessuna riga ha un'icona — cioe' quando i file delle icone non sono
+ * installati — e allora l'intestazione resta dov'e' sempre stata.
+ *
+ * ! E SI SPOSTA SOLO QUANDO CAMBIA. Questa funzione la chiama ogni riempimento
+ * dell'elenco: muovere quattro controlli a ogni cambio di directory
+ * vorrebbe dire quattro ridisegni per niente. */
+static void intestazione_incolonna(void)
+{
+    unsigned int m = ex_lista_margine(g_elenco);
+    int          d;
+
+    if (m == g_int_margine) return;
+    g_int_margine = m;
+    d = (int)m;
+
+    if (g_int_nome) ex_sposta(g_int_nome, INT_X(C_NOME_X) + d, INT_Y);
+    if (g_int_tipo) ex_sposta(g_int_tipo, INT_X(C_TIPO_X) + d, INT_Y);
+    if (g_int_dim)  ex_sposta(g_int_dim,  INT_X(C_DIM_X)  + d, INT_Y);
+    if (g_int_data) ex_sposta(g_int_data, INT_X(C_DATA_X) + d, INT_Y);
+}
+
+/* =============================================================================
+ * LE ICONE PER TIPO DI FILE
+ *
+ * ! IL TIPO SI DECIDE DAL NOME, E NON E' UN BUON MODO — e' l'unico che ci sia
+ * senza aprire ogni file dell'elenco. Aprire cento file per decidere cento
+ * icone vorrebbe dire cento letture a ogni cambio di directory, e su un
+ * dischetto si sentirebbe. L'estensione mente (un .txt puo' contenere un PNG),
+ * ma mente su un'ICONA: il danno e' un disegno sbagliato, non un file aperto
+ * male.
+ *
+ * ! I FILE DELLE ICONE LI METTE CHI LI DISEGNA, in /exwin/icon/tipi/, col nome
+ * che si legge qui sotto. Se non ci sono, l'elenco resta com'e' sempre stato:
+ * il file manager deve funzionare anche il giorno prima che le icone esistano.
+ * E' la stessa regola del pannello di exide.
+ * ============================================================================= */
+#define TIPI_N  7
+
+static const char *const g_tipo_nome[TIPI_N] = {
+    "cartella", "programma", "testo", "immagine", "archivio", "sorgente", "file"
+};
+
+/* Aperte una volta sola, alla prima directory che se ne serve. */
+static ExIcona g_tipo_ic[TIPI_N];
+static int     g_tipi_cercati = 0;
+
+static void tipi_apri(void)
+{
+    static const char *const dove[] = {
+        "/exwin/icon/tipi/",
+        "/cdrom/exwin/icon/tipi/"
+    };
+    char p[PERC_MAX];
+    int  t, d;
+
+    if (g_tipi_cercati) return;
+    g_tipi_cercati = 1;
+
+    for (t = 0; t < TIPI_N; t++)
+        for (d = 0; d < 2; d++) {
+            if (snprintf(p, sizeof(p), "%s%s.ico", dove[d], g_tipo_nome[t])
+                >= (int)sizeof(p)) continue;
+            g_tipo_ic[t] = ex_icona_apri(p);
+            if (g_tipo_ic[t]) break;
+        }
+}
+
+/* L'estensione, minuscola, o "" se non ce n'e'. */
+static void estensione(const char *nome, char *out, unsigned int max)
+{
+    const char *p = strrchr(nome, '.');
+    unsigned int k = 0;
+
+    out[0] = '\0';
+    if (!p || p == nome) return;        /* ".profilo" non ha estensione */
+
+    for (p++; *p && k + 1 < max; p++, k++)
+        out[k] = (*p >= 'A' && *p <= 'Z') ? (char)(*p + 32) : *p;
+    out[k] = '\0';
+}
+
+static int tipo_di(unsigned int i)
+{
+    char e[8];
+
+    if (g_dir_flag[i]) return 0;        /* cartella */
+
+    estensione(g_nome[i], e, sizeof(e));
+
+    if (!strcmp(e, "txt") || !strcmp(e, "md")  || !strcmp(e, "cfg") ||
+        !strcmp(e, "cnf") || !strcmp(e, "log") || !strcmp(e, "dis")) return 2;
+    if (!strcmp(e, "bmp") || !strcmp(e, "png") || !strcmp(e, "jpg") ||
+        !strcmp(e, "jpeg")|| !strcmp(e, "gif") || !strcmp(e, "ico")) return 3;
+    if (!strcmp(e, "zip") || !strcmp(e, "gz")  || !strcmp(e, "tar")) return 4;
+    if (!strcmp(e, "c")   || !strcmp(e, "h")   || !strcmp(e, "s")   ||
+        !strcmp(e, "bas") || !strcmp(e, "sh")  || !strcmp(e, "py"))  return 5;
+
+    /* ! UN PROGRAMMA NON HA UN'ESTENSIONE, SU QUESTO SISTEMA, e si riconosce
+     * da dove sta: /bin, /dev e /exwin/bin. E' una regola grossolana e lo
+     * resta finche' non ci sara' un modo di chiedere al VFS «questo e'
+     * eseguibile?» — che oggi non c'e'. */
+    if (!strncmp(g_dir, "/bin", 4) || !strncmp(g_dir, "/dev", 4) ||
+        !strncmp(g_dir, "/exwin/bin", 10)) return 1;
+
+    return 6;                           /* file e basta */
+}
+
 static void elenco_mostra(void)
 {
     unsigned int i;
 
     ex_lista_svuota(g_elenco);
+    tipi_apri();
 
     for (i = 0; i < g_voci; i++) {
         char riga[RIGA_CAR + 1];
@@ -569,8 +710,15 @@ static void elenco_mostra(void)
         campo(riga, C_DATA_X, C_DATA_W, gg, 0);
         campo(riga, C_ORA_X,  C_ORA_W,  hh, 0);
 
-        ex_lista_aggiungi(g_elenco, riga);
+        if (ex_lista_aggiungi(g_elenco, riga))
+            ex_lista_icona(g_elenco, i, g_tipo_ic[tipo_di(i)]);
     }
+
+    /* ! L'INTESTAZIONE SEGUE LE RIGHE. Se c'e' almeno un'icona la lista
+     * indenta tutte le righe di due caratteri, e quattro pulsanti che
+     * restassero fermi indicherebbero la colonna sbagliata. Si chiede alla
+     * lista quanto ha tenuto: cosi' vale sia con le icone sia senza. */
+    intestazione_incolonna();
 }
 
 static void leggi(const char *percorso)
@@ -1295,6 +1443,71 @@ static void comando_cancella(void)
 }
 
 /* =============================================================================
+ * A new directory
+ *
+ * ! IT IS BORN UNDER THE ONE PICKED IN THE TREE, NOT UNDER THE ONE SHOWN ON THE
+ * RIGHT, and it was asked for that way for a reason that only shows when the
+ * two differ: after a search the list on the right shows hits scattered all
+ * over the disk, and "in here" no longer means anything. The tree, instead,
+ * always points at ONE place.
+ *
+ * ! AND THE PLACE IS WRITTEN IN THE QUESTION. Creating a directory is about to
+ * change the disk: seeing the path in the window, before typing the name, is
+ * the difference between creating it where you meant to and finding out later.
+ *
+ * ! THE DIALOG IS NOT NEW: ex_dlg_riga is exactly this window - title,
+ * question, one box, two buttons - and it is the one "Cerca" uses.
+ * ============================================================================= */
+static void comando_nuova_dir(void)
+{
+    unsigned int s = ex_lista_scelta(g_albero);
+    char  dove[PERC_MAX], perc[PERC_MAX], domanda[PERC_MAX + 64];
+    static char nome[DIRENT_NAME_MAX] = "";
+
+    if (s >= g_nodi) {
+        strcpy(g_avviso, "scegli prima una cartella nell'albero a sinistra");
+        return;
+    }
+    percorso_nodo((int)s, dove, sizeof(dove));
+
+    sprintf(domanda, "Il nome della cartella nuova, dentro %s:", dove);
+    /* ! AND THE BUTTON SAYS "CREA", not "Va bene". On 22 September 2026 it said
+     * "Va bene" because the captions of ex_dlg_riga were fixed, and it was
+     * written here that this would change the day that file was touched for
+     * something else: that day came (ex_dlg_chiedi). A button that names the
+     * action is read without re-reading the question. */
+    if (!ex_dlg_chiedi("Nuova directory", domanda, "Crea",
+                       nome, sizeof(nome))) {
+        strcpy(g_avviso, "non ho creato niente");
+        return;
+    }
+    if (!nome[0]) {
+        strcpy(g_avviso, "non hai scritto nessun nome");
+        return;
+    }
+
+    unisci(perc, sizeof(perc), dove, nome);
+
+    if (mkdir(perc, 0755) != 0) {
+        /* ! "IT ALREADY EXISTS" IS SAID, NOT SWALLOWED: whoever typed a name
+         * that is taken wants to know at once, not when they walk into it. */
+        sprintf(g_avviso, "non creata: %s", strerror(errno));
+        return;
+    }
+
+    sprintf(g_avviso, "creata %s", perc);
+
+    /* The tree has one child more: that node is closed and reopened, which is
+     * the shortest way to read it again. And the list on the right is reread
+     * only if it is looking at that very directory. */
+    if (g_nodo[s].aperto) { albero_chiudi((int)s); albero_espandi((int)s); }
+    albero_mostra();
+    ex_lista_scegli(g_albero, s);
+
+    if (strcmp(dove, g_dir) == 0) leggi(g_dir);
+}
+
+/* =============================================================================
  * I segni
  * ============================================================================= */
 static void segna_toggle(void)
@@ -1585,6 +1798,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         if (wp == ID_SEGNA)        { segna_toggle();  break; }
         if (wp == ID_SEGNA_TUTTI)  { segna_tutti(1);  break; }
         if (wp == ID_SEGNA_NIENTE) { segna_tutti(0);  break; }
+        if (wp == ID_NUOVA_DIR)    { comando_nuova_dir(); break; }
 
         if (wp == ID_ORD_NOME) { ordina_per(ORD_NOME); break; }
         if (wp == ID_ORD_TIPO) { ordina_per(ORD_TIPO); break; }
@@ -1662,6 +1876,8 @@ int main(int argc, char **argv)
     ex_menu_voce(g_menu, "File", "-",             0);
     ex_menu_voce(g_menu, "File", "Esci\tCtrl+Q",  ID_ESCI);
 
+    ex_menu_voce(g_menu, "Comandi", "Nuova directory",  ID_NUOVA_DIR);
+    ex_menu_voce(g_menu, "Comandi", "-",                0);
     ex_menu_voce(g_menu, "Comandi", "Copia\tCtrl+C",    ID_COPIA);
     ex_menu_voce(g_menu, "Comandi", "Sposta\tCtrl+X",   ID_SPOSTA);
     ex_menu_voce(g_menu, "Comandi", "Cancella\tCanc",   ID_CANCELLA);
@@ -1681,20 +1897,7 @@ int main(int argc, char **argv)
          * passo di 8 pixel e lascia 4 pixel di margine a sinistra. Moltiplicare
          * qui e' l'unico modo perche' l'intestazione indichi davvero la colonna
          * che nomina: due serie di numeri si scollano alla prima modifica. */
-        const int ex = ALBERO_W + 10;       /* dove comincia l'area di destra */
-        const int t0 = ex + 4;              /* e dove comincia il suo testo   */
-        const int y  = MENU_H + 3;
-
-        /* ! UN PULSANTE VA DALLO SPAZIO DAVANTI ALLA SUA COLONNA ALLO SPAZIO
-         * DAVANTI ALLA PROSSIMA, estremi compresi: cosi' i quattro si toccano
-         * senza sovrapporsi e senza lasciare buchi, e ognuno copre per intero
-         * il testo che nomina. Scritte a mano quattro volte, queste due
-         * formule erano gia' sbagliate alla prima stesura — il pulsante «Tipo»
-         * era largo un carattere di meno e finiva prima della sua colonna.
-         * `dal` e' il carattere dove comincia la colonna, `al` quello dove
-         * comincia la prossima (RIGA_CAR per l'ultima). */
-#define INT_X(dal)      (t0 + ((dal) - 1) * 8)
-#define INT_W(dal, al)  (((al) - (dal) + 1) * 8)
+        const int y = INT_Y;
 
         ex_crea("etichetta", "Cartelle", EX_FIGLIO,
                 8, y + 2, ALBERO_W - 8, 14, g_f, 0, 0);
@@ -1718,8 +1921,6 @@ int main(int argc, char **argv)
                              INT_X(C_DATA_X), y,
                              INT_W(C_DATA_X, RIGA_CAR), INTEST_H,
                              g_f, ID_ORD_DATA, 0);
-#undef INT_X
-#undef INT_W
     }
 
     g_albero = ex_crea("lista", "", EX_FIGLIO,

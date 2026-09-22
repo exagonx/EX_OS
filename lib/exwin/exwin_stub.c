@@ -138,6 +138,15 @@ static struct {
     unsigned int (*colora_c)(void *, const char *, unsigned char *, unsigned int);
     ExFinestra   (*mdi_attivo)(ExFinestra);
     void         (*mdi_attiva)(ExFinestra);
+
+    void         (*lista_icona)(ExFinestra, unsigned int, ExIcona);
+    unsigned int (*lista_margine)(ExFinestra);
+    ExIcona      (*icona_apri)(const char *);
+    unsigned int (*icona_lato)(ExIcona);
+    int          (*icona_disegna)(ExFinestra, ExIcona, int, int,
+                                  unsigned int, unsigned int);
+    void         (*icona_metti)(ExFinestra, ExIcona, unsigned int);
+    void         (*icona_chiudi)(ExIcona);
 } P;
 
 static void *chiedi(const ExLibTesta *t, const char *nome)
@@ -279,6 +288,18 @@ static void assicura(void)
                       chiedi(t, "ex_colora_c");
     P.mdi_attivo    = (ExFinestra (*)(ExFinestra)) chiedi(t, "ex_mdi_attivo");
     P.mdi_attiva    = (void (*)(ExFinestra))       chiedi(t, "ex_mdi_attiva");
+
+    P.lista_icona   = (void (*)(ExFinestra, unsigned int, ExIcona))
+                      chiedi(t, "ex_lista_icona");
+    P.lista_margine = (unsigned int (*)(ExFinestra))
+                      chiedi(t, "ex_lista_margine");
+    P.icona_apri    = (ExIcona (*)(const char *))  chiedi(t, "ex_icona_apri");
+    P.icona_lato    = (unsigned int (*)(ExIcona))  chiedi(t, "ex_icona_lato");
+    P.icona_disegna = (int (*)(ExFinestra, ExIcona, int, int, unsigned int,
+                               unsigned int))      chiedi(t, "ex_icona_disegna");
+    P.icona_metti   = (void (*)(ExFinestra, ExIcona, unsigned int))
+                      chiedi(t, "ex_icona_metti");
+    P.icona_chiudi  = (void (*)(ExIcona))          chiedi(t, "ex_icona_chiudi");
 
     P.pronto = 1;
 }
@@ -457,3 +478,32 @@ unsigned int ex_colora_c(void *dato, const char *riga, unsigned char *ruoli,
 
 ExFinestra ex_mdi_attivo(ExFinestra c) { assicura(); return P.mdi_attivo(c); }
 void       ex_mdi_attiva(ExFinestra c) { assicura(); P.mdi_attiva(c); }
+
+ExIcona      ex_icona_apri(const char *p)  { assicura(); return P.icona_apri(p); }
+
+void ex_lista_icona(ExFinestra f, unsigned int riga, ExIcona ic)
+{
+    assicura();
+    P.lista_icona(f, riga, ic);
+}
+
+unsigned int ex_lista_margine(ExFinestra f)
+{
+    assicura();
+    return P.lista_margine(f);
+}
+unsigned int ex_icona_lato(ExIcona ic)     { assicura(); return P.icona_lato(ic); }
+void         ex_icona_chiudi(ExIcona ic)   { assicura(); P.icona_chiudi(ic); }
+
+void ex_icona_metti(ExFinestra c, ExIcona ic, unsigned int lato)
+{
+    assicura();
+    P.icona_metti(c, ic, lato);
+}
+
+int ex_icona_disegna(ExFinestra f, ExIcona ic, int x, int y,
+                     unsigned int lato, unsigned int sfondo)
+{
+    assicura();
+    return P.icona_disegna(f, ic, x, y, lato, sfondo);
+}

@@ -67,6 +67,13 @@ typedef struct {
     /* La sveglia periodica: vedi ex_sveglia(). Zero = nessuna. */
     unsigned int  sveglia_ms;
     unsigned int  sveglia_quando;    /* uptime_ms della prossima */
+
+    /* ! L'ICONA DEL CONTROLLO, e sta QUI e non in una tabella a parte per la
+     * stessa ragione del `valore` qui sopra: sono due numeri, non un buffer.
+     * Zero vuol dire «nessuna», che e' il caso di quasi tutti i controlli di
+     * quasi tutte le finestre. Vedi ex_icona_metti(). */
+    unsigned int  icona;
+    unsigned int  icona_lato;
 } Oggetto;
 
 #define CL_FINESTRA     1
@@ -87,6 +94,7 @@ typedef struct {
 #define CL_TAB         16
 #define CL_MDI         17
 #define CL_MDIFIGLIO   18
+#define CL_IMMAGINE    19
 
 /* =============================================================================
  * ! AGGIUNGERE UN CONTROLLO: I SETTE POSTI, E SONO SEMPRE QUESTI
@@ -185,6 +193,16 @@ static Terminale g_term[TERM_MAX];
 #define LISTA_RIGA_H     16
 #define LISTA_CAR_W       8    /* il passo del carattere: vedi ex_scrivi */
 
+/* ! LA CORSIA DELLE ICONE E' LARGA DUE CARATTERI ESATTI, e non «quanto serve».
+ * Chi incolonna a mano sopra una lista — il file manager con le sue quattro
+ * colonne — calcola le posizioni in CARATTERI: una corsia larga diciotto pixel
+ * sposterebbe le righe di due caratteri e un quarto, e l'intestazione non
+ * starebbe piu' sopra la colonna che nomina. Due caratteri si sommano a mano e
+ * tornano. L'icona e' di quattordici pixel dentro i sedici, cosi' resta
+ * un'aria di un pixel per parte. */
+#define LISTA_ICONA_CAR   2
+#define LISTA_ICONA_LATO 14
+
 typedef struct {
     unsigned int usato;
     ExFinestra   ogg;
@@ -193,6 +211,17 @@ typedef struct {
     unsigned int sel;                   /* quale e' scelta */
     unsigned int primo;                 /* la prima visibile */
     unsigned int righe;                 /* quante ne stanno */
+
+    /* ! UN'ICONA PER RIGA, E ZERO VUOL DIRE NESSUNA. Sono due kilobyte per
+     * lista — quattro numeri ogni cinquecentododici righe — contro il
+     * buffer dei testi che ne occupa trentadue: e' il caso in cui una
+     * tabella laterale costerebbe piu' codice di quanto risparmi.
+     *
+     * ! E STANNO QUI E NON NEL TESTO. Mettere il percorso dell'icona dentro
+     * la riga vorrebbe dire rileggere e ridecodificare un file a ogni
+     * disegno della lista, cioe' a ogni scorrimento. Qui c'e' il numero di
+     * un'icona gia' aperta. */
+    ExIcona      ic[LISTA_VOCI_MAX];
 } Lista;
 
 static Lista g_lista[LISTA_MAX];
@@ -670,6 +699,7 @@ static unsigned int classe_da_nome(const char *c)
     if (strcmp(c, "tab")          == 0) return CL_TAB;
     if (strcmp(c, "mdi")          == 0) return CL_MDI;
     if (strcmp(c, "mdifiglio")    == 0) return CL_MDIFIGLIO;
+    if (strcmp(c, "immagine")     == 0) return CL_IMMAGINE;
     return 0;
 }
 
@@ -2804,6 +2834,8 @@ static void disegna_oggetto(Oggetto *o)
      * ===================================================================== */
     case CL_PULSANTE: {
         int dx = o->premuto ? 1 : 0;
+        int lato = (int)o->icona_lato;
+        int tx;
 
         ex_riempi(o->padre, x, y, o->w, o->h, EX_GRIGIO);
         ex_riquadro_disegna(o->padre, x, y, o->w, o->h, EX_NERO);
@@ -2811,13 +2843,73 @@ static void disegna_oggetto(Oggetto *o)
         if (o->premuto) ex_incavo(o->padre,  x + 1, y + 1, o->w - 2, o->h - 2);
         else            ex_rilievo(o->padre, x + 1, y + 1, o->w - 2, o->h - 2);
 
-        ex_scrivi(o->padre, x + dx + (o->w - larg(o->titolo)) / 2,
-                  y + dx + (o->h - 16) / 2, o->titolo, EX_NERO);
+        /* ! CON L'ICONA LA SCRITTA NON E' PIU' IN MEZZO AL PULSANTE, E' IN
+         * MEZZO A QUEL CHE RESTA. Centrare il testo sul pulsante intero e
+         * lasciare l'icona a sinistra le fa sovrapporre sui pulsanti stretti,
+         * e su quelli larghi lascia l'icona sola in un angolo: il gruppo
+         * icona + testo si centra insieme, come fa una voce di menu di
+         * qualunque sistema. */
+        if (o->icona) {
+            int tot = lato + 6 + larg(o->titolo);
+            int ix  = x + dx + (o->w - tot) / 2;
+
+            if (ix < x + dx + 3) ix = x + dx + 3;
+            ex_icona_disegna(o->padre, (ExIcona)o->icona, ix,
+                             y + dx + ((int)o->h - lato) / 2,
+                             (unsigned int)lato, EX_GRIGIO);
+            tx = ix + lato + 6;
+        } else {
+            tx = x + dx + ((int)o->w - larg(o->titolo)) / 2;
+        }
+
+        ex_scrivi(o->padre, tx, y + dx + ((int)o->h - 16) / 2, o->titolo, EX_NERO);
+        break;
+    }
+
+    /* =====================================================================
+     * ! L'IMMAGINE E' UN CONTROLLO CHE NON FA NIENTE, ED E' IL SUO MESTIERE.
+     * Non prende il fuoco, non risponde ai tasti, non manda comandi: sta li' e
+     * si fa guardare. Serve all'ornamento - un logo in un angolo, una figura
+     * accanto a un testo - e prima si faceva con un'etichetta dal testo vuoto
+     * e un'icona addosso: funzionava, ed era un trucco che si spiegava ogni
+     * volta.
+     *
+     * ! SI DISEGNA QUADRATA E CENTRATA. Le icone sono quadrate, il riquadro che
+     * l'utente tira no: allargare l'immagine al rettangolo vorrebbe dire
+     * deformarla, e un'icona deformata si nota subito. Si prende il lato piu'
+     * corto e la si mette in mezzo.
+     * ================================================================= */
+    case CL_IMMAGINE: {
+        /* ! QUI IL LATO E' QUELLO DEL RIQUADRO, NON QUELLO DI ex_icona_metti.
+         * Su un pulsante l'icona sta ACCANTO alla scritta e la sua misura e'
+         * una scelta; qui l'icona E' il controllo, e la misura e' quella che
+         * l'utente ha tirato. Percio' `icona_lato` resta scritto e non si usa:
+         * chi passa un numero a ex_icona_metti su un'immagine non sbaglia, gli
+         * si risponde semplicemente col riquadro. */
+        int lato = o->w < o->h ? (int)o->w : (int)o->h;
+
+        ex_riempi(o->padre, x, y, o->w, o->h, EX_GRIGIO);
+        if (o->icona && lato > 0)
+            ex_icona_disegna(o->padre, (ExIcona)o->icona,
+                             x + ((int)o->w - lato) / 2,
+                             y + ((int)o->h - lato) / 2,
+                             (unsigned int)lato, EX_GRIGIO);
         break;
     }
 
     case CL_ETICHETTA:
-        ex_scrivi(o->padre, x, y, o->titolo, EX_NERO);
+        /* Su un'etichetta l'icona sta a sinistra e il testo la segue: non c'e'
+         * niente da centrare, un'etichetta comincia dove comincia. */
+        if (o->icona) {
+            int lato = (int)o->icona_lato;
+
+            ex_icona_disegna(o->padre, (ExIcona)o->icona, x,
+                             y + ((int)o->h - lato) / 2,
+                             (unsigned int)lato, EX_GRIGIO);
+            ex_scrivi(o->padre, x + lato + 6, y, o->titolo, EX_NERO);
+        } else {
+            ex_scrivi(o->padre, x, y, o->titolo, EX_NERO);
+        }
         break;
 
     case CL_TESTO: {
@@ -3008,6 +3100,7 @@ static void disegna_oggetto(Oggetto *o)
         Oggetto *r = radice(o->padre);
         unsigned int k;
         int col_fuoco;
+        int gutter = 0;         /* lo spazio a sinistra per le icone */
 
         ex_riempi(o->padre, x, y, o->w, o->h, EX_BIANCO);
 
@@ -3019,6 +3112,20 @@ static void disegna_oggetto(Oggetto *o)
                                            o->w - 2, o->h - 2, EX_BLU);
         if (!L) break;
 
+        /* ! SE UNA RIGA HA UN'ICONA, LO SPAZIO LO LASCIANO TUTTE. Indentare
+         * solo quelle che ce l'hanno da' un margine sinistro frastagliato —
+         * le scritte ballano di venti pixel da una riga all'altra — e si vede
+         * subito che e' un difetto. E si guarda TUTTA la lista, non le sole
+         * righe visibili: altrimenti l'indentazione cambierebbe mentre si
+         * scorre, che e' peggio ancora. */
+        {
+            unsigned int i;
+
+            gutter = 0;
+            for (i = 0; i < L->n && i < LISTA_VOCI_MAX; i++)
+                if (L->ic[i]) { gutter = LISTA_ICONA_CAR * LISTA_CAR_W; break; }
+        }
+
         for (k = 0; k < L->righe && L->primo + k < L->n; k++) {
             unsigned int v = L->primo + k;
             int ry = y + 2 + (int)k * LISTA_RIGA_H;
@@ -3026,11 +3133,24 @@ static void disegna_oggetto(Oggetto *o)
             /* ! LA SCELTA E' UN FONDO, NON UN COLORE DEL TESTO. Su voci di
              * lunghezza diversa un testo colorato non dice dove finisce la
              * riga scelta; un fondo si'. */
-            if (v == L->sel)
-                ex_riempi(o->padre, x + 2, ry - 1, o->w - 4, LISTA_RIGA_H,
-                          col_fuoco ? EX_BLU : EX_GRIGIO_SC);
+            unsigned int fondo = EX_BIANCO;
 
-            ex_scrivi(o->padre, x + 4, ry, &L->voci[v * LISTA_TESTO_MAX],
+            if (v == L->sel) {
+                fondo = col_fuoco ? EX_BLU : EX_GRIGIO_SC;
+                ex_riempi(o->padre, x + 2, ry - 1, o->w - 4, LISTA_RIGA_H,
+                          fondo);
+            }
+
+            /* ! L'ICONA SI FONDE SUL FONDO DELLA RIGA, non sul bianco della
+             * lista: sulla riga scelta il fondo e' blu, e un'icona composta
+             * sul bianco ci lascerebbe intorno un alone chiaro — l'alfa dei
+             * bordi e' proprio dove si vedrebbe. */
+            if (v < LISTA_VOCI_MAX && L->ic[v])
+                ex_icona_disegna(o->padre, L->ic[v], x + 3, ry,
+                                 (unsigned int)LISTA_ICONA_LATO, fondo);
+
+            ex_scrivi(o->padre, x + 4 + gutter, ry,
+                      &L->voci[v * LISTA_TESTO_MAX],
                       (v == L->sel) ? EX_BIANCO : EX_NERO);
         }
         break;
@@ -5647,8 +5767,49 @@ int ex_lista_aggiungi(ExFinestra f, const char *testo)
     dst = &L->voci[L->n * LISTA_TESTO_MAX];
     strncpy(dst, testo, LISTA_TESTO_MAX - 1);
     dst[LISTA_TESTO_MAX - 1] = '\0';
+
+    /* ! LA RIGA NASCE SENZA ICONA, ANCHE SE QUELLA DI PRIMA NE AVEVA UNA. La
+     * tabella si riusa (ex_lista_svuota non la ripulisce: sarebbero duemila
+     * byte azzerati a ogni cambio di directory), quindi e' qui che si
+     * azzera — altrimenti la voce nuova erediterebbe l'icona di quella che
+     * occupava il posto prima. */
+    if (L->n < LISTA_VOCI_MAX) L->ic[L->n] = 0;
+
     L->n++;
     return 1;
+}
+
+/* Attacca un'icona a una riga. `ic` a 0 la toglie.
+ *
+ * ! SI DA' DOPO AVER AGGIUNTO LA RIGA, e non insieme, perche' e' il caso
+ * raro: quasi tutte le liste di questo sistema sono testo e basta, e una
+ * ex_lista_aggiungi() con un argomento in piu' avrebbe voluto dire toccare
+ * ogni chiamata gia' scritta per aggiungere uno zero. */
+void ex_lista_icona(ExFinestra f, unsigned int riga, ExIcona ic)
+{
+    Lista *L = lista_da_h(f);
+
+    if (!L || riga >= L->n || riga >= LISTA_VOCI_MAX) return;
+    L->ic[riga] = ic;
+}
+
+/* Quanti pixel la lista tiene a sinistra per le icone: 0 se non ne ha
+ * nessuna.
+ *
+ * ! ESISTE PERCHE' QUALCUNO INCOLONNA SOPRA DI LEI. Una lista con le colonne
+ * fatte di spazi ha un'intestazione disegnata dall'applicazione, e quella deve
+ * spostarsi insieme alle righe: senza questa domanda l'applicazione dovrebbe
+ * sapere quanto e' larga una corsia di icone — cioe' portarsi dentro una
+ * costante del toolkit, e sbagliarla il giorno che cambia. */
+unsigned int ex_lista_margine(ExFinestra f)
+{
+    Lista *L = lista_da_h(f);
+    unsigned int i;
+
+    if (!L) return 0;
+    for (i = 0; i < L->n && i < LISTA_VOCI_MAX; i++)
+        if (L->ic[i]) return LISTA_ICONA_CAR * LISTA_CAR_W;
+    return 0;
 }
 
 unsigned int ex_lista_quante(ExFinestra f)
@@ -6378,18 +6539,21 @@ static int leggi_bmp(ExFinestra f, const unsigned char *d, unsigned int n,
  *
  * ! IL PERCORSO E' DOPPIO PER LA STESSA RAGIONE DEGLI STUB: su un sistema
  * installato le librerie stanno in /exwin/lib, avviando dal CD sotto /cdrom. */
-static int leggi_eximg(ExFinestra f, const unsigned char *d, unsigned int n,
-                       int x, int y)
+/* ! LE DUE FUNZIONI DI eximg SI CERCANO UNA VOLTA SOLA E LE USANO IN DUE:
+ * leggi_eximg() per disegnare un'immagine, e le icone per tenersela. Prima
+ * questo blocco stava dentro leggi_eximg con le sue variabili statiche; averlo
+ * qui evita che la seconda strada apra una SECONDA volta la stessa libreria. */
+static int eximg_funzioni(int (**carica)(const unsigned char *, unsigned int,
+                                         EximgBitmap *),
+                          void (**libera)(EximgBitmap *))
 {
     static const char *const dove[] = {
         "/exwin/lib/eximg.so",
         "/cdrom/exwin/lib/eximg.so"
     };
-    static int (*carica)(const unsigned char *, unsigned int, EximgBitmap *);
-    static void (*libera)(EximgBitmap *);
+    static int (*f_carica)(const unsigned char *, unsigned int, EximgBitmap *);
+    static void (*f_libera)(EximgBitmap *);
     static int cercata = 0;
-
-    EximgBitmap bm;
 
     if (!cercata) {
         const ExLibTesta *t;
@@ -6398,15 +6562,29 @@ static int leggi_eximg(ExFinestra f, const unsigned char *d, unsigned int n,
                          * si torna a cercarla a ogni immagine. */
         t = exlib_apri_fra(dove, (int)(sizeof dove / sizeof dove[0]));
         if (t) {
-            carica = (int (*)(const unsigned char *, unsigned int,
-                              EximgBitmap *))exlib_simbolo(t, "eximg_carica");
-            libera = (void (*)(EximgBitmap *))exlib_simbolo(t, "eximg_libera");
+            f_carica = (int (*)(const unsigned char *, unsigned int,
+                                EximgBitmap *))exlib_simbolo(t, "eximg_carica");
+            f_libera = (void (*)(EximgBitmap *))exlib_simbolo(t, "eximg_libera");
         }
     }
 
     /* Uno dei due senza l'altro vuol dire una eximg.so piu' vecchia di questo
      * toolkit: si rinuncia al formato invece di chiamare un indirizzo nullo. */
-    if (!carica || !libera) return 0;
+    if (!f_carica || !f_libera) return 0;
+
+    *carica = f_carica;
+    *libera = f_libera;
+    return 1;
+}
+
+static int leggi_eximg(ExFinestra f, const unsigned char *d, unsigned int n,
+                       int x, int y)
+{
+    int (*carica)(const unsigned char *, unsigned int, EximgBitmap *);
+    void (*libera)(EximgBitmap *);
+    EximgBitmap bm;
+
+    if (!eximg_funzioni(&carica, &libera)) return 0;
 
     if (!carica(d, n, &bm)) return 0;
 
@@ -6418,6 +6596,288 @@ static int leggi_eximg(ExFinestra f, const unsigned char *d, unsigned int n,
 /* ! L'ORDINE CONTA: PRIMA CIO' CHE SI SA FARE IN CASA. leggi_eximg e' l'ultimo
  * perche' aprire una libreria costa, e non ha senso pagarlo per un BMP. */
 static const ExLettore g_lettori[] = { leggi_bmp, leggi_eximg, 0 };
+
+/* =============================================================================
+ * LE ICONE
+ *
+ * ! UN'ICONA SI APRE UNA VOLTA E SI DISEGNA MILLE, che e' tutta la differenza
+ * con ex_immagine(). Un menu di dieci voci si ridisegna a ogni apertura: con
+ * la strada delle immagini sarebbero dieci letture di file e dieci
+ * decodifiche ogni volta che si preme "Avvio".
+ *
+ * ! LA MISURA RICHIESTA SI TIENE ACCANTO A QUELLA VERA. Chi disegna chiede un
+ * lato, e quasi sempre chiede sempre lo stesso: si conserva l'ultima resa
+ * fatta, e finche' lato e sfondo non cambiano non si riduce piu' niente. Un
+ * menu paga UNA riduzione per icona, alla prima apertura.
+ * ============================================================================= */
+#define ICONE_MAX   32
+
+typedef struct {
+    unsigned int  usata;
+    unsigned int *px;           /* ARGB, com'e' nel file */
+    unsigned int  w, h;
+
+    unsigned int *resa;         /* l'ultima resa, gia' fusa sullo sfondo */
+    unsigned int  resa_lato;
+    unsigned int  resa_sfondo;
+} Icona;
+
+static Icona g_icone[ICONE_MAX];
+
+/* Decodifica in un buffer NOSTRO: BMP in casa, il resto a eximg.
+ *
+ * ! SI COPIA INVECE DI TENERE IL BUFFER DI eximg, e costa sedici kilobyte per
+ * un'icona da 64. In cambio la memoria dell'icona e' allocata e liberata da
+ * una parte sola: tenere quella di eximg vorrebbe dire ricordarsi per sempre
+ * quale funzione la libera, e chiamarla anche il giorno che eximg.so non
+ * c'e' piu'. */
+static int icona_decodifica(const unsigned char *d, unsigned int n,
+                            unsigned int **px, unsigned int *w, unsigned int *h)
+{
+    int (*carica)(const unsigned char *, unsigned int, EximgBitmap *);
+    void (*libera)(EximgBitmap *);
+    EximgBitmap bm;
+    unsigned int quanti;
+
+    /* Il BMP lo sa leggere il toolkit, e un .bmp non deve aprire eximg.so. */
+    if (n >= 54 && d[0] == 'B' && d[1] == 'M') {
+        unsigned int off, larg, alt, bit, riga, i, j;
+        unsigned int *out;
+
+        off  = (unsigned int)d[10] | ((unsigned int)d[11] << 8) |
+               ((unsigned int)d[12] << 16) | ((unsigned int)d[13] << 24);
+        larg = (unsigned int)d[18] | ((unsigned int)d[19] << 8) |
+               ((unsigned int)d[20] << 16) | ((unsigned int)d[21] << 24);
+        alt  = (unsigned int)d[22] | ((unsigned int)d[23] << 8) |
+               ((unsigned int)d[24] << 16) | ((unsigned int)d[25] << 24);
+        bit  = (unsigned int)d[28] | ((unsigned int)d[29] << 8);
+
+        if (bit != 24 && bit != 32) return 0;
+        if (larg == 0 || alt == 0 || larg > 512 || alt > 512) return 0;
+
+        riga = ((larg * (bit / 8)) + 3u) & ~3u;
+        if (off + riga * alt > n) return 0;
+
+        out = (unsigned int *)malloc(larg * alt * sizeof(unsigned int));
+        if (!out) return 0;
+
+        for (j = 0; j < alt; j++) {
+            /* Le righe di un BMP stanno sottosopra. */
+            const unsigned char *r = d + off + (alt - 1 - j) * riga;
+
+            for (i = 0; i < larg; i++) {
+                const unsigned char *p = r + i * (bit / 8);
+
+                /* ! UN BMP A 24 BIT E' OPACO, e l'alfa va messa a 255 a mano:
+                 * lasciarla a zero darebbe un'icona che la fusione qui sotto
+                 * rende invisibile - un difetto che sembra "l'icona non si
+                 * carica" mentre si sta disegnando benissimo, tutta
+                 * trasparente. */
+                out[j * larg + i] =
+                    ((bit == 32 ? (unsigned int)p[3] : 255u) << 24) |
+                    ((unsigned int)p[2] << 16) |
+                    ((unsigned int)p[1] << 8) | (unsigned int)p[0];
+            }
+        }
+
+        *px = out; *w = larg; *h = alt;
+        return 1;
+    }
+
+    if (!eximg_funzioni(&carica, &libera)) return 0;
+    if (!carica(d, n, &bm)) return 0;
+
+    quanti = bm.larghezza * bm.altezza;
+    *px = (unsigned int *)malloc(quanti * sizeof(unsigned int));
+    if (!*px) { libera(&bm); return 0; }
+
+    memcpy(*px, bm.px, quanti * sizeof(unsigned int));
+    *w = bm.larghezza;
+    *h = bm.altezza;
+    libera(&bm);
+    return 1;
+}
+
+ExIcona ex_icona_apri(const char *percorso)
+{
+    unsigned char *d;
+    unsigned int   cap = 256u * 1024u;
+    unsigned int   i;
+    int            fd, n;
+    unsigned int  *px = 0, w = 0, h = 0;
+
+    if (!percorso || !percorso[0]) return 0;
+
+    for (i = 0; i < ICONE_MAX; i++) if (!g_icone[i].usata) break;
+    if (i == ICONE_MAX) return 0;       /* la tavola e' piena */
+
+    fd = open(percorso, O_RDONLY);
+    if (fd < 0) return 0;
+
+    d = (unsigned char *)malloc(cap);
+    if (!d) { close(fd); return 0; }
+
+    n = (int)read(fd, d, cap);
+    close(fd);
+
+    if (n <= 0 || !icona_decodifica(d, (unsigned int)n, &px, &w, &h)) {
+        free(d);
+        return 0;
+    }
+    free(d);
+
+    memset(&g_icone[i], 0, sizeof(Icona));
+    g_icone[i].usata = 1;
+    g_icone[i].px = px;
+    g_icone[i].w  = w;
+    g_icone[i].h  = h;
+
+    return (ExIcona)(i + 1);            /* 0 resta "nessuna icona" */
+}
+
+static Icona *icona_di(ExIcona ic)
+{
+    if (ic == 0 || ic > ICONE_MAX) return 0;
+    if (!g_icone[ic - 1].usata) return 0;
+    return &g_icone[ic - 1];
+}
+
+unsigned int ex_icona_lato(ExIcona ic)
+{
+    Icona *I = icona_di(ic);
+
+    if (!I) return 0;
+    return I->w < I->h ? I->w : I->h;
+}
+
+/* La riduzione: la MEDIA dei pixel che finiscono in uno solo, alfa compresa.
+ *
+ * ! SI MEDIA ANCHE L'ALFA, E PRIMA DI FONDERE. Un bordo dove meta' dei pixel
+ * sono trasparenti deve uscire mezzo trasparente; mediando i colori e
+ * prendendo l'alfa di uno solo si ottiene un alone del colore dei pixel
+ * invisibili - che nei file veri e' il nero, e si vede benissimo.
+ *
+ * ! E IL COLORE SI MEDIA PESATO SULL'ALFA. Un pixel trasparente ha un colore
+ * qualunque sotto - spesso nero - e contarlo come gli altri sporca il bordo.
+ * Contano per quanto si vedono. */
+static void riduci(const unsigned int *src, unsigned int sw, unsigned int sh,
+                   unsigned int *dst, unsigned int lato, unsigned int sfondo)
+{
+    unsigned int x, y;
+    unsigned int sr = (sfondo >> 16) & 0xFF;
+    unsigned int sg = (sfondo >> 8) & 0xFF;
+    unsigned int sb = sfondo & 0xFF;
+
+    for (y = 0; y < lato; y++) {
+        unsigned int y0 = y * sh / lato;
+        unsigned int y1 = (y + 1) * sh / lato;
+
+        if (y1 <= y0) y1 = y0 + 1;
+
+        for (x = 0; x < lato; x++) {
+            unsigned int x0 = x * sw / lato;
+            unsigned int x1 = (x + 1) * sw / lato;
+            unsigned int i, j, quanti = 0;
+            unsigned long a = 0, r = 0, g = 0, b = 0;
+            unsigned int am, rm, gm, bm;
+
+            if (x1 <= x0) x1 = x0 + 1;
+
+            for (j = y0; j < y1 && j < sh; j++)
+                for (i = x0; i < x1 && i < sw; i++) {
+                    unsigned int c  = src[j * sw + i];
+                    unsigned int ca = (c >> 24) & 0xFF;
+
+                    a += ca;
+                    r += ((c >> 16) & 0xFF) * ca;
+                    g += ((c >> 8) & 0xFF) * ca;
+                    b += (c & 0xFF) * ca;
+                    quanti++;
+                }
+
+            if (!quanti) { dst[y * lato + x] = sfondo; continue; }
+
+            am = (unsigned int)(a / quanti);
+            if (a == 0) {
+                /* Tutto trasparente: e' sfondo, e i colori non contano. */
+                dst[y * lato + x] = sfondo;
+                continue;
+            }
+            rm = (unsigned int)(r / a);
+            gm = (unsigned int)(g / a);
+            bm = (unsigned int)(b / a);
+
+            /* La fusione sullo sfondo, che ex_pixmap non sa fare. */
+            dst[y * lato + x] =
+                (((rm * am + sr * (255 - am)) / 255) << 16) |
+                (((gm * am + sg * (255 - am)) / 255) << 8) |
+                 ((bm * am + sb * (255 - am)) / 255);
+        }
+    }
+}
+
+int ex_icona_disegna(ExFinestra f, ExIcona ic, int x, int y,
+                     unsigned int lato, unsigned int sfondo)
+{
+    Icona *I = icona_di(ic);
+
+    if (!I || lato == 0 || lato > 512) return 0;
+
+    if (!I->resa || I->resa_lato != lato || I->resa_sfondo != sfondo) {
+        unsigned int *nuova = (unsigned int *)malloc(lato * lato *
+                                                     sizeof(unsigned int));
+
+        if (!nuova) return 0;
+        riduci(I->px, I->w, I->h, nuova, lato, sfondo);
+
+        if (I->resa) free(I->resa);
+        I->resa        = nuova;
+        I->resa_lato   = lato;
+        I->resa_sfondo = sfondo;
+    }
+
+    ex_pixmap(f, x, y, (int)lato, (int)lato, I->resa, lato);
+    return 1;
+}
+
+/* ! L'ICONA SI ATTACCA AL CONTROLLO, e da quel momento la disegna LUI. E'
+ * l'unico modo perche' un pulsante con l'icona resti un pulsante: disegnarla
+ * sopra da fuori vorrebbe dire rifarlo a ogni ridisegno del padre, ricordarsi
+ * di spostarla quando il controllo si sposta, e scoprire che sotto il testo
+ * era centrato sul pulsante intero.
+ *
+ * Serve al menu della scrivania oggi, e servira' a chi genera finestre con
+ * exide: un pulsante con un'icona e' un pulsante con un campo in piu', non un
+ * controllo nuovo.
+ *
+ * `lato` a 0 sceglie da se': l'altezza del controllo meno un po' d'aria. */
+void ex_icona_metti(ExFinestra c, ExIcona ic, unsigned int lato)
+{
+    Oggetto *o = ogg(c);
+
+    if (!o) return;
+
+    o->icona = ic;
+
+    if (lato == 0) {
+        int l = (int)o->h - 6;
+
+        if (l < 8)  l = 8;
+        if (l > 64) l = 64;
+        lato = (unsigned int)l;
+    }
+    o->icona_lato = lato;
+}
+
+void ex_icona_chiudi(ExIcona ic)
+{
+    Icona *I = icona_di(ic);
+
+    if (!I) return;
+    if (I->px)   free(I->px);
+    if (I->resa) free(I->resa);
+    memset(I, 0, sizeof(Icona));
+}
 
 int ex_immagine(ExFinestra f, const char *percorso, int x, int y)
 {

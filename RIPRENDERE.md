@@ -26,92 +26,928 @@ manca» apre quello.
 
 ---
 
-# DOVE RIPRENDERE — 17 settembre 2026
+# DOVE RIPRENDERE — 22 settembre 2026
 
-> **Tutto e' compilato, PUBBLICATO e verificato.**
->
-> ```
-> exagonx/repo-update.sh   ->  VERIFICA: 1583 uguali, 0 diversi, 0 mancanti
-> ```
->
-> ! **E ADESSO LA PUBBLICAZIONE LA POSSO FARE IO.** La nota vecchia diceva che
-> il controllo automatico me la bloccava; e' stata aggiunta una regola di
-> permesso e `./exagonx/repo-update.sh` gira. `-guarda` girava anche prima —
-> e' la scrittura verso l'FTP che era bloccata.
+> **Tutto e' costruito; NON e' pubblicato e NON e' committato.** La giornata
+> del 22 settembre e' stata lunga: sette richieste smistate, cinque fatte, e
+> l'ISO e' rifatta con tutto dentro.
 >
 > **Il commit lo fa l'utente con `gitupdate.sh`**, e `messaggio-commit.txt` e'
-> pronto. ! Quel file **si svuota a ogni commit** — `gitupdate.sh` lo sposta in
-> `.git/ultimo-messaggio-commit.txt`. Se sembra troncato, guardare `git log`
-> prima di ricostruirlo: probabilmente e' gia' dentro un commit.
+> pronto (in INGLESE, vedi la regola nuova qui sotto). ! Quel file **si svuota
+> a ogni commit**: se sembra troncato, guardare `git log` prima di
+> ricostruirlo.
+>
+> **Da pubblicare quando si vuole** con `pubblica.sh`, e poi
+> `exagonx/verifica.sh` deve dire «N uguali, 0 diversi, 0 mancanti».
 
-## LA MACCHINA VERA — E COME L'HO CHIUSA FUORI
+## !! LA REGOLA NUOVA DEL 22 SETTEMBRE: L'INGLESE
 
-L'Acer risponde al ping. **Lo stato di `/boot/avvio.sh` dopo il ripristino non
-e' stato verificato**: la sessione che doveva guardarlo non e' andata in porto.
+**I commenti nel codice e i messaggi di commit si scrivono in inglese.**
+Restano in italiano questo diario, `in_lavorazione.txt`, `correzioni.txt`, i
+commenti degli script in `tools/` e **le stringhe a schermo** (per quelle
+arrivera' una versione per lingua). **L'italiano gia' scritto non si traduce.**
+La regola sta anche come **regola 0** in cima a `in_lavorazione.txt`.
 
-! **PRIMA COSA DA FARE: GUARDARE, NON AGIRE.**
+## CHE COSA E' SUCCESSO IL 22 SETTEMBRE, IN UNA RIGA PER COSA
 
-    textline /boot/avvio.sh -v      dov'e' telnetd rispetto a netupdate?
-    textline /boot/kernel.cfg -v    `login` e' commentato?
+    @FILEMGR-MKDIR   la directory che si crea, col pulsante «Crea»  FATTO
+    @EXIDE-SFOGLIA   il progetto nuovo sfoglia e si ricorda dove    FATTO
+    @AVVIO-LOGIN     la pagina d'accesso non si fa piu' coprire     FATTO
+    @ZIP             libreria + comando + finestra «Archivi»        FATTO
+    @ICONE           l'API nel toolkit, menu, exide, file manager   FATTO
+    @EXIDE-ICONE     icone come pulsanti, ornamento, pannello       FATTO
+    @GRAFICA-SCATTI  trascinamento e ridimensionamento ristretti    in parte
+    @TAR-GZ, @PAINT, @FIN-ICONA, @TASTI-SISTEMA, @GRAFICA-MODALE    da fare
 
-! **E NON RILANCIARE `hwconfig` SU QUELLA MACCHINA.** Riscrive i file PER
-INTERO, e il 17 settembre l'ho usato per aggiungerci una riga: ha riacceso
-`login` e ha spostato `telnetd` dopo `netupdate`, rendendo la macchina
-raggiungibile solo dalla tastiera. I due difetti sotto sono corretti nel
-sorgente (`voce_commentata()` e l'ordine), ma **su quella macchina si aggiunge
-una riga a mano**:
+## DA DOVE RIPRENDERE, IN ORDINE
 
-    echo "/dev/sis.drv -2dservizio &" >> /boot/avvio.sh
+  1. **`@FIN-ICONA`** — chiesto per ultimo e specificato per intero (la barra
+     con i programmi attivi, il pulsante «riduci a icona», il clic che
+     riapre). La specifica e' dentro la voce, parola per parola. ! Adesso c'e'
+     anche con che disegnarle, le icone;
+  2. **`@TAR-GZ`** — urgente, mai cominciato. Meta' della strada e' dentro
+     netupdate (`gzip_apri`, `tar_estrai`);
+  3. **`@PAINT`** — chiesto, descritto. ! Meta' e' gia' fatta: eximg LEGGE
+     png/gif/jpg; il lavoro vero e' SCRIVERE, e non c'e' un codificatore di
+     nessun formato;
+  4. **I DISEGNI DELLE ICONE** li fa chi ha chiesto il lavoro. I posti dove
+     vanno, e i nomi che devono avere:
 
-  (la shell di EX-OS ha `>>`: OP_APP in bin/sh/shell.c. Le virgolette servono,
-  o la `&` la prende lei come «metti in fondo».)
+         /exwin/icon/baseapp/<programma>_64.ico    le applicazioni
+         /exwin/icon/strumenti/<classe>.ico        il pannello di exide
+         /exwin/icon/tipi/<tipo>.ico               i file, nel file manager
+                                                   (cartella, programma, testo,
+                                                   immagine, archivio,
+                                                   sorgente, file)
 
-! **E DUE MODI DI PROVARE CHE NON FUNZIONANO**, pagati lo stesso giorno:
-  - `until ping` **non dimostra un riavvio**: se la macchina non e' ancora
-    andata giu', il primo ping riesce e il ciclo esce subito. Si aspetta prima
-    che SMETTA di rispondere.
-  - **non si polla la porta 23**: `telnetd` serve una sessione per volta, e un
-    ciclo che bussa gliele occupa tutte. L'ho impiantato con la sonda che
-    doveva dirmi se era vivo.
+     ! Mettere un file basta: nessun programma va ricompilato. E se non c'e',
+     tutto resta testo — e' lo stato di adesso per strumenti e tipi.
 
-## CHE COSA E' RIMASTO APERTO
+## QUEL CHE NON E' ANCORA COMMITTATO (fine giornata del 22 settembre)
 
-  - `@ACCEL-2D` — **manca una misura sola**: che `wserver` usi davvero il
-    servizio sul ferro. Si avvia `exwin`, si muovono le finestre, e
-    `/dev/sis.drv -2dchiedi` dice quante richieste il servizio ha servito
-    (contatore `servite` in AccInfo). Zero = il server sta disegnando da se'.
-    Il ramo software e' provato in QEMU, il protocollo e' provato sull'Acer.
-  - `@SIS-2D` — **CHIUSO**: il motore disegna, 14x sulla copia schermo->schermo
-    misurato da freddo. La storia di come ci si e' arrivati sta in
-    `@SIS-2D-STORIA`.
-  - `@GRAFICA-SCATTI` — adesso ha uno strumento in piu' oltre al restringere le
-    regioni sporche. ! Ma **il 14x non si prende cosi'**: nel compositore non
-    c'e' nessuna copia schermo->schermo. Il guadagno di oggi e' quello del
-    riempimento (1,9x); il 14x vuole una strategia di composizione diversa —
-    spostare una finestra con una blitt invece di ricomporre.
-  - `@IMMAGINI` e `@FIN-ICONA` — chiesti dall'utente, in coda, mai cominciati.
-  - `@PROVE-MACCHINA` — resta `eject`, e vuole una chiavetta infilata.
-  - `@TELNET-SCALA` — resta da vedere sull'Acer se la sessione che si impianta
-    era lo stesso difetto del pty, gia' corretto.
-  - `kernel/arch/x86/mtrr.c` e' scritto e **non collegato**: su questa macchina
-    non serve, e non si prova un MTRR senza una macchina su cui provarlo.
-  - ! **il floppy ha 30208 byte liberi** (erano 39424 il 17 settembre: il
-    kernel e' cresciuto con il reset del canale ATA, e `chkdsk` con la
-    scansione della superficie). Chi ci rimette qualcosa guardi prima quel
-    numero.
+    .gitignore                  la regola /gnu/
+    correzioni.txt              le sette richieste commentate
+    in_lavorazione.txt          le voci nuove, e la regola 0 dell'inglese
+    RIPRENDERE.md               le giornate del 22
+    messaggio-commit.txt        (ignorato da git, ma e' il testo del commit)
 
-## GLI ATTREZZI TOCCATI OGGI
+    lib/exwin/exwin.c .h        le icone (apri/disegna/metti), ex_lista_icona,
+    lib/exwin/exwin_esporta.c   la classe «immagine», la regola del ridisegno
+    lib/exwin/exwin_stub.c      accanto a ex_procedura_base()
+    lib/exdlg/*                 «Nuova cartella», ex_dlg_percorso, ex_dlg_chiedi
+    lib/eximg/ico.c             l'alfa che si tiene, e la maschera a 1 bit
+    lib/exzip/                  la libreria degli archivi (NUOVA)
 
-  - `tools/solo_ascii.py` + `make verifica-ascii`, dentro `make all`: le
-    stringhe a schermo devono essere ASCII (la console e' CP437). Guarda le
-    stringhe C, `boot/help.txt` per intero, e i campi mostrati di
-    `tools/iso/strumenti.txt`. **Provata piantandoci un difetto apposta.**
-  - `tools/locali/pilota_telnet.py` risponde adesso anche alle domande che
-    finiscono con `"] "`, non solo con `": "`. Prima restava zitto davanti a
-    «Procedo? [si/no] » e il comando aspettava fino allo scadere: il sintomo
-    era «hwconfig non ha effetto».
+    drivers/wserver/wserver.c   le regioni sporche di trascina/ridimensiona (0.002)
+    bin/login/login.c           aspetta_che_taccia() (0.003)
+    bin/zip/                    il comando zip (NUOVO)
+    exwin/bin/archivi/          l'archiviatore grafico (NUOVO)
+    exwin/bin/exide/exide.c     sfoglia, icone, immagine, pannello (0.015)
+    exwin/bin/filemgr/filemgr.c «Crea», e le icone per tipo (0.006)
+    exwin/bin/pm/pm.c           icone, categorie, sottomenu, lettore 8 KB (0.002)
+    exwin/lib/applicazioni.txt  il terzo campo e le categorie
+    exwin/doc/exide.html        il capitolo «Le icone»
+    exwin/icon/                 le icone (le fa l'utente), copiate sul CD
+    boot/help.txt               la sezione [zip unzip]
+    README.md, README.en.md     console, applicazioni, quattro novita'
+    Makefile                    exzip, zip, archivi, -I drivers/kbd, e TRE
+                                dipendenze che mancavano (browser->exdlg,
+                                ISO->exzip/archivi, ISO->icone)
+    tools/mkhd.sh               le due risposte che mancavano, EXOS_SUPPORTO=cd
+    tools/prova_exide_dove.sh   \
+    tools/prova_avvio_login.sh   | le quattro prove nuove
+    tools/prova_zip.sh           |
+    tools/prova_archivi.sh      /
+    dist/floppy.img, dist/exos.iso  ricostruiti
+    gnu/*.zip                   TOLTI DALL'INDICE (restano sul disco)
+
+! **exdlg.so, exzip.so E I LORO CLIENTI SI PUBBLICANO INSIEME.** Uno stub
+compilato oggi cerca `ex_dlg_percorso`, `ex_dlg_chiedi` e `ex_zip_*` all'avvio
+e si ferma dicendolo se non li trova: un `filemgr` nuovo sopra una `exdlg.so`
+vecchia non parte. Il contrario va bene — e' il patto della tabella dei nomi:
+si aggiunge, non si toglie.
+
+! **La rimozione dei due zip e' gia' messa in scena (`git rm --cached`)**: il
+commit successivo la porta dentro. Non vanno cancellati dal disco — servono a
+`@TAR-GZ`.
+
+## LE PROVE NUOVE, E COME SI RILANCIANO
+
+    tools/prova_zip.sh          gli archivi nei due versi (sei controlli)
+    tools/prova_archivi.sh      la finestra degli archivi (quattro)
+    tools/prova_exide_dove.sh   il progetto nuovo di exide, due avvii
+    tools/prova_avvio_login.sh  la pagina d'accesso, col ritardatario
+
+Vogliono `dist/exos.iso` aggiornato; le ultime due si costruiscono il disco da
+sole. ! `prova_zip.sh` e `prova_archivi.sh` vogliono anche **debugfs**
+(e2fsprogs): e' cosi' che i file entrano ed escono dall'immagine senza `sudo`.
+
+! **LE ICONE SONO PROVATE A FOTOGRAFIE, NON DA UNO SCRIPT.** Aprire il menu
+della scrivania vuole il mouse, e il mouse di QEMU e' relativo: un
+`mouse_move 0 590` si tronca a 255 per pacchetto e il puntatore finisce a meta'
+schermo. Una prova che si rilanci da sola resta da scrivere, e dovra' muovere a
+passi di cento.
+
+## LA MACCHINA VERA (Acer, 192.168.0.23)
+
+  - ! **il suo disco ha 744 blocchi che non si leggono su 1.831.378**, quattro
+    ogni diecimila, sparsi. Danno fisico, misurato per intero. Prima di
+    qualunque riparazione: **copiare via `/root` e `/home`**;
+  - poi `chkdsk hd0p1 -badblock -fix` dal dischetto di soccorso — adesso sa
+    rileggere, spostare quel che torna e marcare il resto (ext2 **e** FAT);
+  - il telnet **si riprende da solo**: se una sessione fa l'eco e non esegue,
+    si aspetta, non si riavvia (`@TELNET-SCALA`);
+  - restano da provare la' il `filemgr` nuovo (segni, copia, sposta, cancella,
+    nuova directory) e lo Shift nelle caselle di testo delle finestre.
+
+## LE PROVE CHE SI RIFANNO DA SE'
+
+Le immagini di prova stavano in `/tmp` e **il riavvio le porta via**. Si
+rifanno cosi':
+
+    tools/prova_filemgr.sh          rifa' l'ext2 da 32 MB e prova filemgr
+                                    (formatta, popola, e verifica da solo)
+
+    per un FAT16 di prova: qemu-img create + sfdisk (tipo 6), poi dentro EX-OS
+    `mkfs -t fat16 -L PROVA hd0p1`, `mount hd0p1 /disk`, e due `cp`.
+
+! **E GLI ERRORI DI LETTURA SI INIETTANO**, che e' come sono state provate
+tutte le storie del disco di ieri: `blkdebug` di QEMU fa fallire i settori che
+gli si dicono. Vedi la memoria e il diario del 22 settembre.
+
+## CHE COSA E' APERTO, IN ORDINE DI URGENZA
+
+  - `@TAR-GZ` — chiesto urgente, mai cominciato;
+  - `@ZIP` — FATTO tutto e provato (libreria, comando, finestra); restano
+    deflate in scrittura e l'aggiunta a un archivio esistente;
+  - `@AVVIO-LOGIN` (fatto e provato in QEMU) — resta il ferro;
+  - `@ICONE` — FATTE: l'API nel toolkit, e il menu della scrivania le usa;
+  - `@EXIDE-ICONE` — FATTO e provato: ornamento e pannello compresi;
+  - `@PAINT` — chiesto oggi, descritto, non cominciato;
+  - `@EXIDE-SFOGLIA` (fatto e provato in QEMU) — resta il ferro;
+  - `@TASTI-SISTEMA`, `@GRAFICA-MODALE`, `@FILEMGR-OPS` (fatto, da provare sul
+    ferro) — dal giro di richieste del 21;
+  - `@NETUPD-GIRA`, `@EDIT-CERCA`, `@RUNBAS`, `@FBC-110`, `@NETUPADATE-PATH` —
+    a comodo;
+  - `@EXT2-DOPPIO` si chiude da solo quando i blocchi andati saranno marcati:
+    era una bitmap letta in una zona che non risponde.
+
+! **il floppy ha 29696 byte liberi** (erano 30208 prima della sezione `[zip
+unzip]` di help.txt). Chi ci rimette qualcosa guardi prima quel numero.
 
 ---
+
+# 22 settembre 2026 (fine giornata) — LE ICONE, E IL MENU CHE SI APRE AD ALBERO
+
+Chiesto: «la libreria che mostra le icone», usata nella barra di avvio, e
+**supportata globalmente** «perche' verranno usate le API per mostrare icone
+anche da app generate dopo, in cartelle, finestre, programmi».
+
+## STA NEL TOOLKIT, ED E' QUEL «GLOBALMENTE» A DECIDERLO
+
+Non una libreria nuova: `ex_icona_*` sta in `exwin.so`, che ogni programma
+grafico collega gia'. Il peso vero — decodificare PNG, JPG e ICO — resta in
+`eximg.so`, che si apre **solo davanti alla prima icona che non sia un BMP**.
+Chi non ne disegna mai non paga niente, che e' la stessa regola per cui eximg
+e' separata.
+
+    ex_icona_apri / _lato / _disegna / _metti / _chiudi
+
+! **`ex_icona_metti` ATTACCA L'ICONA A UN CONTROLLO**, e da quel momento la
+disegna lui. E' la forma che servira' a `@EXIDE-ICONE`: un pulsante con
+l'icona resta un pulsante — si preme, si sposta, si ridisegna, e l'icona lo
+segue. Disegnarla sopra da fuori vorrebbe dire rifarla a ogni ridisegno del
+padre e scoprire poi che il testo era centrato sul pulsante intero.
+
+## IL RIDUTTORE SERVIVA, ED ERA LA DOMANDA POSTA
+
+Era chiesto di constatarlo: le icone nascono a **64 e 128**, una voce di menu
+e' alta **24**. Senza riduttore l'unica scelta sarebbe non usarle, o chiedere a
+chi le disegna una copia per ogni posto in cui compariranno.
+
+! **E FA LA MEDIA, NON PRENDE QUELLO IN MEZZO.** Su un rimpicciolimento di
+quattro volte il «piu' vicino» butta quindici pixel su sedici: i bordi sottili
+spariscono a chiazze, e un'icona diventa un'altra cosa. La media pesa anche
+l'alfa, e il colore lo pesa **sull'alfa**: un pixel trasparente ha sotto un
+colore qualunque — spesso nero — e contarlo come gli altri sporca il bordo.
+
+## E eximg BUTTAVA L'ALFA, COM'ERA SCRITTO CHE AVREBBE FATTO
+
+In `lib/eximg/ico.c` c'era: «la maschera a 1 bit si salta, come si ignora
+l'alfa del PNG: il server compone finestre opache e non c'e' niente su cui
+fondere. **Il giorno che sapra' fondere, e' li' che si andra' a prenderla**».
+
+Quel giorno era oggi, e con una differenza: a fondere non e' il server ma il
+toolkit, che l'icona la rimpicciolisce e la posa su un colore noto. Senza alfa
+le icone uscivano **quadrati di puro sfondo** — invisibili. Il sintomo era «le
+icone non si caricano» mentre si stavano disegnando benissimo, tutte
+trasparenti.
+
+! **UNA NOTA CHE DICE «IL GIORNO CHE...» VA RILETTA QUEL GIORNO**, ed e' la
+seconda volta in una giornata (l'altra e' il pulsante «Crea» del file manager).
+Adesso a 32 bit l'alfa si tiene, e sotto i 32 si legge la maschera a 1 bit in
+coda al DIB — che e' esattamente dove quella nota diceva di andarla a prendere.
+
+## LE CATEGORIE SONO UNA BARRA NEL NOME
+
+`Strumenti/Editor` e' la voce «Editor» dentro «Strumenti». Nel menu (`pm`
+0.002) le categorie stanno in cima e aprono un elenco **di fianco**, con le
+loro icone.
+
+! **E LE VERSIONI VANNO ALZATE ANCHE QUANDO SI STA PENSANDO A UN ALTRO
+PROGRAMMA.** `pm` e `wserver` sono rimasti a 0.001 per mezza giornata pur
+essendo stati cambiati tutt'e due — il primo con icone, categorie e il lettore
+riscritto, il secondo con le regioni sporche. Se n'e' accorto chi legge, non
+chi scrive: la riga «+0.001 a ogni modifica» sta nel commento sopra ogni
+`EX_VERSIONE`, e si salta proprio quando la modifica sembra piccola o quando la
+testa e' su un altro file. Adesso sono 0.002 tutt'e due.
+
+! **NON SI DICHIARANO DA NESSUN'ALTRA PARTE**: esistono finche' c'e' una voce
+che le nomina. Un elenco separato di categorie sarebbe un secondo elenco da
+tenere d'accordo col primo, e una categoria rimasta vuota perche' qualcuno ha
+tolto l'ultima applicazione che c'era dentro.
+
+! **E IL SOTTOMENU SI APRE AL CLIC, NON AL PASSAGGIO DEL PUNTATORE.** Il server
+manda il bottone giu' e il bottone su, non il movimento: `WIN_EV_MOUSE_MOSSO`
+e' nel protocollo e non lo manda ancora nessuno. Un sottomenu che si aprisse al
+passaggio, qui, non si aprirebbe mai.
+
+## IL LETTORE DI applicazioni.txt TRONCAVA IN SILENZIO
+
+Difetto latente, trovato perche' il file e' cresciuto: buffer di **2048** byte,
+file arrivato a **2897** con le righe che spiegano icone e categorie. La `read`
+si fermava in mezzo ai commenti — e le VOCI stanno in fondo. **Il menu si
+apriva senza una sola applicazione**, senza dire perche', e somigliava a «il
+file non c'e'».
+
+! Adesso il buffer e' 8 KB, si legge finche' c'e', e se il file e' piu' lungo
+**lo dice** sulla seriale. Un tetto superato che si annuncia e' un limite; uno
+che tace e' un guasto.
+
+## E I README ERANO DATATI DAVVERO
+
+Passata su tutt'e due (IT ed EN), correggendo quel che il codice smentisce e
+aggiungendo le novita' — non una riscrittura:
+
+  - **«Console virtuali — Alt+F1 … Alt+F4»**: sono **cinque**
+    (`VGA_N_CONSOLE`), e la grafica vive sulla **console 5**. Il README diceva
+    `Alt+F2` per andare alla scrivania in cinque punti diversi;
+  - l'elenco delle applicazioni grafiche non aveva `archivi`;
+  - `applicazioni.txt` era descritto come «nome | percorso», senza il terzo
+    campo ne' le categorie;
+  - quattro voci nuove in «Novita'»: icone, ZIP, la pagina d'accesso, il
+    progetto nuovo di EX-IDE.
+
+## E LE ICONE DENTRO exide, SUBITO DOPO
+
+`@EXIDE-ICONE`, chiesto mentre il resto era ancora caldo: «pulsanti e link
+cliccabili o come estetica nell'interfaccia». C'e' la proprieta' **`icona`**
+(l'ottava, in fondo, cosi' le altre non si spostano), **Strumenti > Icona del
+controllo...** che apre il dialogo dei file su `/exwin/icon/baseapp/`, il
+disegnatore che **la fa vedere**, e due righe nel codice generato:
+
+```
+    { ExIcona ic = ex_icona_apri("/exwin/icon/baseapp/edit_64.ico");
+      ex_icona_metti(h_Pulsante1, ic, 0); }
+```
+
+! **NEL .dis E' UNA RIGA «i», NON UN CAMPO IN PIU'.** Nella riga `c` il TESTO
+sta per ultimo perche' puo' contenere spazi: qualunque campo aggiunto prima di
+lui lo sposterebbe di una parola, e **ogni progetto fatto finora si aprirebbe
+con le scritte sbagliate**. Il formato si allarga, non cambia — la stessa
+regola con cui sono nate le maschere multiple.
+
+! **E IL «COLLEGAMENTO CLICCABILE» NON E' UN CONTROLLO NUOVO.** L'etichetta ha
+gia' l'evento Clic e adesso ha l'icona: un'etichetta con icona ed evento Clic
+**e'** un collegamento. Aggiungere una classe al toolkit per chiamarlo con un
+altro nome sarebbe un controllo in piu' che fa quel che ne fa gia' uno.
+
+! **PROVATO SENZA TOCCARE IL MOUSE**, e stavolta di proposito: progetto nuovo
+da exide, la riga del controllo e la riga `i` aggiunte al `.dis` **dalla
+console**, riapertura — il disegnatore mostra l'icona — `Ctrl+S`, e la riga `i`
+e' ancora al suo posto mentre `finestra_gen.c` ha le due righe. Loader,
+disegno, scrittore e generatore in un giro solo, e nessun clic.
+
+## E L'ORNAMENTO: IL CONTROLLO «IMMAGINE»
+
+Era l'ultimo pezzo della richiesta — «o come estetica nell'interfaccia» — e
+finche' non c'era si faceva con un'**Etichetta dal testo vuoto** e l'icona
+addosso: funzionava, ed era un trucco da spiegare ogni volta.
+
+Adesso e' una classe del toolkit. `lib/exwin/exwin.c` elenca in cima **i sette
+posti** da toccare per aggiungere un controllo, con scritto accanto che il modo
+di sbagliare non e' scriverne male uno — e' dimenticarne uno, «e accorgersene
+dal fatto che il controllo si vede ma non si clicca». Sono stati seguiti uno
+per uno; per l'immagine quattro dei sette sono «niente», ed e' giusto cosi':
+non prende il fuoco, non risponde ai tasti, non manda comandi.
+
+! **LA MISURA E' QUELLA DEL RIQUADRO, NON QUELLA DI `ex_icona_metti`.** Su un
+pulsante l'icona sta *accanto* alla scritta e la sua misura e' una scelta; qui
+l'icona **e'** il controllo. Si tira il riquadro e l'immagine lo riempie,
+quadrata e centrata: le icone sono quadrate, il riquadro che si tira no, e
+allargarle al rettangolo vorrebbe dire deformarle.
+
+! **E SENZA ICONA SI VEDE UN RIQUADRO TRATTEGGIATO** nel disegnatore.
+Un'immagine vuota sarebbe un buco invisibile — messa sulla maschera, non si
+riuscirebbe piu' a sceglierla col mouse per darle l'icona.
+
+## E LE ICONE NEL PANNELLO DEGLI STRUMENTI
+
+Il pannello e' una **lista**, e le liste non sapevano disegnare icone. Il pezzo
+e' andato nel toolkit — `ex_lista_icona(lista, riga, icona)` — e non dentro
+exide, per la ragione di sempre: un elenco con le icone lo vorranno anche il
+file manager (un'icona per tipo di file) e l'archiviatore.
+
+! **IL NOME DEL FILE E' LA CLASSE DEL CONTROLLO**:
+`/exwin/icon/strumenti/pulsante.ico` sta davanti a «Pulsante». Aggiungere
+l'icona di uno strumento e' **mettere un file**, non ricompilare exide — la
+stessa regola per cui `applicazioni.txt` nomina le icone per percorso. E se il
+file non c'e' la voce resta testo: **e' lo stato in cui il pannello e'
+adesso**, perche' i disegni li fa chi disegna le icone.
+
+! **SE UNA SOLA RIGA HA L'ICONA, LO SPAZIO LO LASCIANO TUTTE.** Provato con tre
+icone in prestito da `baseapp`: indentare le sole righe che ce l'hanno da' un
+margine sinistro frastagliato, con le scritte che ballano di venti pixel da una
+riga all'altra. E si guarda **tutta** la lista, non le sole righe visibili, o
+l'indentazione cambierebbe mentre si scorre — che e' peggio.
+
+! **E L'ICONA SI FONDE SUL FONDO DELLA RIGA, non sul bianco della lista.** Sulla
+riga scelta il fondo e' blu: un'icona composta sul bianco ci lascerebbe intorno
+un alone chiaro, e l'alfa dei bordi e' proprio dove si vedrebbe. E' il motivo
+per cui l'icona si da' al CONTROLLO invece di disegnarla sopra da fuori — chi
+sta fuori non sa di che colore e' la riga in quel momento.
+
+## E LE ICONE NEL FILE MANAGER, PER TIPO DI FILE
+
+`filemgr` 0.006: ogni riga dell'elenco ha l'icona del suo tipo, e i file stanno
+in `/exwin/icon/tipi/` (`cartella.ico`, `programma.ico`, `testo.ico`,
+`immagine.ico`, `archivio.ico`, `sorgente.ico`, `file.ico`).
+
+! **IL TIPO SI DECIDE DALL'ESTENSIONE, e non e' un buon modo** — e' l'unico che
+ci sia senza aprire ogni file dell'elenco. Cento file vorrebbero dire cento
+letture a ogni cambio di directory, e su un dischetto si sentirebbe.
+L'estensione mente, ma mente **su un'icona**: il danno e' un disegno sbagliato,
+non un file aperto male. (Un programma si riconosce invece da dove sta — /bin,
+/dev, /exwin/bin — finche' non ci sara' modo di chiedere al VFS «questo e'
+eseguibile?».)
+
+! **E L'INTESTAZIONE HA DOVUTO SEGUIRE LE RIGHE.** Le quattro colonne del file
+manager sono incolonnate a **caratteri**, ma i pulsanti «Nome / Tipo /
+Dimensione / Data» sono disegnati sopra la lista a **pixel**: aperta la corsia
+delle icone, le righe si spostano e i pulsanti indicherebbero la colonna
+sbagliata. Per questo la corsia e' larga **due caratteri esatti** e non «quanto
+serve», e per questo il toolkit risponde a `ex_lista_margine()` invece di
+lasciare che l'applicazione si copi la costante.
+
+## L'ACCELERATORE: STA GIA' DOVE PAGA, E IL RESTO NON CI PUO' PASSARE
+
+Chiesto di passare l'interfaccia all'acceleratore grafico. La risposta, guardata
+nel codice e nelle misure del 16 settembre:
+
+  - **il riempimento ci passa gia'** (dal 22 settembre, sopra la soglia dei
+    4096 pixel) ed e' lo sfondo, cioe' il rettangolo piu' grande che si
+    dipinga;
+  - **la copia del contenuto delle finestre NON ci puo' passare**: la sorgente
+    e' la zona condivisa del client, cioe' RAM di sistema, e un motore 2D di
+    quella generazione sa fare riempimenti e copie **schermo->schermo**. Non e'
+    una mancanza del driver;
+  - **`ACC_MSG_COPIA` c'e', e' misurata 14x, e nessuno la usa.** Serve a
+    spostare pixel gia' composti invece di ricomporli — cioe' proprio al
+    trascinamento — ma per usarla il compositore deve sapere che sotto non e'
+    cambiato nient'altro. Oggi ricompone tutto da capo a ogni fotogramma:
+    finche' e' cosi', copierebbe pixel che stanno per essere riscritti
+    comunque.
+
+! **E LA MISURA DICEVA GIA' DOVE ANDAVA IL TEMPO**: comporre un fotogramma
+costa fra 5 e 10 ms, cioe' 100-200 al secondo. Se scatta, il tempo se ne va in
+**quante volte** si compone — non in quanto costa comporre. L'acceleratore
+attacca il secondo numero; il problema era il primo.
+
+## E I DUE sporca_tutto() CHE SCATTAVANO A RITMO DI MOUSE
+
+Su tredici, due si accendono a ogni movimento del mouse: il **trascinamento** e
+il **ridimensionamento** di una finestra. Un movimento ogni dieci millisecondi
+per 800x600 ridipinti e' esattamente lo scatto di `@GRAFICA-SCATTI`.
+
+Adesso dichiarano il rettangolo che sanno: il trascinamento **l'unione fra dove
+la finestra era e dove e' andata**, il ridimensionamento il riquadro fino alla
+piu' grande fra la misura vecchia e quella nuova. La macchina per le regioni
+sporche c'era gia' — `sporca()` accumula un riquadro e il compositore ci
+ritaglia dentro: mancava solo che qualcuno le dicesse la verita'.
+
+! **IL GUADAGNO E' QUANTO SCHERMO LA FINESTRA NON COPRE**, e va detto perche'
+delude: una finestra quasi a schermo intero trascinata costa come prima. Su una
+finestra piccola si risparmia quasi tutto.
+
+! **E LA CORNICE STA FUORI DA x,y,w,h.** Quelli sono l'area del CLIENT: il
+telaio con la barra del titolo le sta intorno. Dichiarare la sola area del
+client lascerebbe il telaio vecchio dipinto dove la finestra non c'e' piu' —
+una scia grigia. C'e' `sporca_finestra()` apposta, e il rettangolo vecchio si
+dichiara **prima** di muovere la finestra, o si dichiara due volte quello nuovo.
+
+Provato trascinando una finestra grande e una piccola: nessuna scia, telaio
+intero, sfondo restituito.
+
+## E UNA TERZA DIPENDENZA CHE MANCAVA NEL Makefile
+
+Togliendo le icone di prestito, `make iso-exos` **non ha ricostruito niente**:
+il comando che copia `exwin/icon/` c'era, la dipendenza no. E' la stessa
+lacuna trovata stamattina fra `browser` ed `exdlg`, e si vede solo quando si
+cambia **soltanto** un dato: make non ha niente da rifare, l'immagine resta
+quella di prima, e si va a cercare nel codice perche' la modifica «non si
+vede». Adesso `EXWIN_ICONE` e' un `wildcard` fra le dipendenze dell'ISO —
+wildcard e non elenco, perche' le icone le aggiunge chi le disegna.
+
+## IL MANUALE DI EX-IDE HA UN CAPITOLO NUOVO
+
+`exwin/doc/exide.html` — quello vero, la pagina che «Aiuto > Manuale» apre nel
+navigatore — ha ora **«Le icone»**: dove stanno, che formati vanno bene, che
+cosa esce nel codice, le stesse funzioni chiamate a mano, e la riga `i` del
+`.dis`. La proprieta' e' entrata nella tabella delle proprieta', e Pulsante ed
+Etichetta ci rimandano. Anche il promemoria dentro il programma (quello che si
+vede quando la pagina non c'e') ha le sue sei righe.
+
+! **NON SERVE UNA COPIA PER OGNI MISURA, e il manuale lo dice**: e' la domanda
+che si farebbe chiunque veda icone da 64 in un pulsante alto 26. Il sistema le
+rimpicciolisce da se'.
+
+## QUEL CHE RESTA, SCRITTO DOVE SI TROVA
+
+  - **le icone del FILE MANAGER**: fatte (vedi sopra); mancano i disegni, che
+    vanno in `/exwin/icon/tipi/`;
+  - **`@EXIDE-ICONE`**: FATTO tutto (vedi sopra). Restano solo i DISEGNI delle
+    icone degli strumenti: il meccanismo c'e', i file si mettono in
+    `/exwin/icon/strumenti/` col nome della classe;
+  - **`@PAINT`**: il Paint Brush per ExWin. ! Meta' e' gia' fatta e va detto
+    subito — eximg LEGGE png, gif, jpg e il toolkit legge il BMP. Il lavoro
+    vero e' **scrivere**, e oggi non c'e' un codificatore di nessun formato:
+    PNG vuole DEFLATE in compressione (lo stesso che manca a `@ZIP`), JPG una
+    DCT, GIF l'LZW. BMP si scrive in un pomeriggio, ed e' da li' che si parte.
+
+! **LE ICONE SONO PROVATE A FOTOGRAFIE, NON DA UNO SCRIPT.** Aprire il menu
+vuole il mouse, e il mouse di QEMU e' relativo: un `mouse_move 0 590` si
+tronca a 255 per pacchetto e il puntatore finisce a meta' schermo — costato due
+giri oggi. Le fotografie mostrano icone, categoria, sottomenu di fianco e
+l'applicazione che parte; una prova che si rilancia da sola resta da scrivere,
+e dovra' muovere a passi di cento.
+
+---
+
+# 22 settembre 2026 (tarda notte) — L'ARCHIVIATORE DI ExWin, E UNA LEZIONE RIFATTA
+
+`@ZIP` e' finito: c'e' anche la finestra. `exwin/bin/archivi`, nel menu della
+scrivania come «Archivi».
+
+## LA PROVA CHE LA LIBRERIA ERA LA FORMA GIUSTA
+
+Il programma grafico **non contiene una riga di formato ZIP**: chiama le stesse
+nove funzioni che chiama `/bin/zip`. Sono 638 righe, e quasi tutte parlano di
+menu, colonne e messaggi — il che e' esattamente cio' che la richiesta voleva
+quando chiedeva «una libreria che contiene le funzioni in comune».
+
+E c'e' un secondo segno che i pezzi stavano nel posto giusto: il dialogo «Dove
+estrarre» e' `ex_dlg_percorso` con altre parole, e **si porta dietro «Nuova
+cartella (Ctrl+N)» senza che l'archiviatore faccia niente**. Quel pulsante e'
+stato scritto stamattina per `@EXIDE-SFOGLIA`, dentro il dialogo invece che
+dentro exide: dodici ore dopo un programma che non esisteva ancora se l'e'
+trovato pronto.
+
+## DUE STATI, E SONO QUELLI DELLA LIBRERIA
+
+O la finestra **legge** un archivio — l'elenco e' cio' che c'e' dentro e si
+estrae — o ne **costruisce** uno: l'elenco e' cio' che si e' messo, e il file
+non e' un archivio finche' «Finisci» non scrive il catalogo. E' esattamente
+quel che exzip sa fare (crea, aggiungi..., finisci).
+
+! **E CHI SE NE VA DA UN ARCHIVIO NON FINITO VIENE AVVERTITO.** Senza catalogo
+quel file non e' un archivio per nessuno: abbandonarlo in silenzio vorrebbe
+dire lasciare sul disco qualcosa che sembra fatto e non si apre.
+
+! **«Aggiungi» a un archivio gia' fatto DICE PERCHE' NON SI PUO'**, invece di
+essere una voce di menu che non fa niente. Aggiungere vuol dire rileggere il
+catalogo e riscriverlo in fondo: e' scritto in `@ZIP` come la prossima cosa.
+
+## LA STESSA LEZIONE, DUE VOLTE IN UN GIORNO
+
+La riga delle colonne spariva appena si chiudeva un dialogo. **E' identico al
+difetto trovato stamattina** nella riga del percorso di ExDlg: `ridisegna()`
+disegnava la propria roba, e il disegno dell'area scoperta dalla modale —
+fatto da `ex_procedura_base` — la spazzava via.
+
+! **UNA LEZIONE TENUTA NEL FILE DOVE E' STATA IMPARATA E' UNA LEZIONE CHE IL
+FILE DOPO NON LEGGE.** Stamattina l'ho scritta in `exdlg.c`, e poche ore dopo
+l'ho rifatta in un programma nuovo di zecca. Adesso sta accanto a
+`ex_procedura_base()` in `lib/exwin/exwin.h`, cioe' nel file che apre chiunque
+scriva una finestra, con la forma giusta scritta per esteso.
+
+## E LA PROVA SI E' SBAGLIATA PRIMA DEL PROGRAMMA
+
+Il quarto controllo di `tools/prova_archivi.sh` guarda **nei pixel** che
+l'intestazione ci sia ancora dopo il dialogo. Alla prima stesura leggeva una
+riga di pixel decisa nello script, e ha accusato il programma di aver perso una
+riga che nella fotografia si vedeva benissimo: le finestre nascono con
+`EX_AUTO`, cioe' **dove le mette il server**, a cascata.
+
+! **DOVE SIA LA FINESTRA LO DICE LA FOTOGRAFIA**, e c'e' gia' l'attrezzo che lo
+legge — `tools/misura_finestre.py --client`. E' la stessa lezione dei clic del
+file manager, ripetuta da un'altra porta: le coordinate assolute in una prova
+grafica sono un verdetto che dipende dalla fortuna.
+
+## COME SI PILOTA UN MENU DA UNA PROVA
+
+F10 apre il primo menu, la freccia destra passa al successivo, la freccia giu'
+scende di una voce e **salta i separatori** — guardato in una fotografia del
+menu aperto, non indovinato. Sono conti che cambiano se si aggiunge una voce:
+e' il prezzo di pilotare un programma interattivo, lo stesso che paga
+`tools/mkhd.sh` con l'installatore.
+
+---
+
+# 22 settembre 2026 (notte) — GLI ARCHIVI ZIP: LA LIBRERIA, E IL COMANDO
+
+`@ZIP`. Fatti la libreria e il programma da riga di comando; resta quello di
+ExWin. La forma e' quella chiesta, ed e' quella del resto del sistema: la
+libreria sa di ZIP e non sa di finestre.
+
+    lib/exzip/     exzip.so, fetta 0x04B00000 — il formato, e nient'altro
+    bin/zip/       `zip a.zip file...`, `zip -l`, `zip -x`
+
+## IL PEZZO DIFFICILE NON SI E' SCRITTO, ERA GIA' IN CASA
+
+`unzip` vero vuole DEFLATE, e DEFLATE e' la parte che costa. Non e' stata
+scritta: `lib/eximg/inflate.c` lo decodifica da mesi per PNG, GIF e i font, e
+lo usava gia' anche netupdate. **exzip e' il suo terzo utente** — nessun
+sorgente di terzi e' entrato nel sistema per avere unzip.
+
+Il rovescio e' che quel file **non fa streaming** (lo dice il suo header, ed e'
+una scelta: su EX-OS `free()` non restituisce niente al sistema). Quindi:
+«store» passa da un buffer di 4 KB nei due versi e un archivio piu' grande
+della memoria non e' un problema; una voce «deflate» costa la propria
+dimensione in memoria, **e quando non c'e' lo dice invece di morire**. La
+differenza fra un limite e un guasto e' che il limite e' scritto prima.
+
+## SI SCRIVE «STORE», E SI LEGGE ANCHE «DEFLATE»
+
+E' la strada che la voce del compito proponeva, presa alla lettera: uno ZIP in
+store lo aprono tutti e si scrive in un pomeriggio; il metodo resta **un campo,
+non un'assunzione**, quindi il compressore si aggiunge il giorno che serve
+senza toccare il formato.
+
+! **E L'ARCHIVIO SI SCRIVE LEGGENDO IL FILE DUE VOLTE.** L'intestazione locale
+porta CRC e dimensione PRIMA dei dati, e quei due numeri si sanno solo dopo
+aver letto tutto. Le alternative sono un «data descriptor» in coda — che i
+programmi vecchi leggono male — o scrivere l'intestazione e poi tornare
+indietro a rattopparla, che non si puo' fare se l'archivio e' una pipe.
+Rileggere un file dal disco non costa niente accanto a un archivio che qualcuno
+non riesce ad aprire.
+
+## L'API E' OPACA, E NON E' PIGNOLERIA
+
+`ExZip` e' un puntatore che non si guarda dentro. La tavola dei ponti di una
+libreria condivisa e' una promessa sui **nomi**, non sulle forme: una struttura
+che la attraversa non puo' piu' cambiare, o ogni binario gia' costruito legge i
+byte sbagliati **senza che niente lo dica**. Ne attraversa una sola —
+`ExZipVoce` — ed e' quella da azzeccare la prima volta.
+
+## LA PROVA CHE CONTA E' QUELLA DI CHI NON HA SCRITTO IL FORMATO
+
+`tools/prova_zip.sh`, sei controlli. Il giro completo con `cmp` a guardare i
+byte e' il minimo; il terzo e' quello vero:
+
+```
+  [OK]  python zipfile lo apre e lo verifica
+  [OK]  unzip -t di Info-ZIP: nessun errore
+```
+
+! **UN ARCHIVIATORE CHE RILEGGE I PROPRI ARCHIVI PROVA SOLO DI ESSERE COERENTE
+CON SE' STESSO**: puo' scrivere un formato inventato e non accorgersene mai.
+Nell'altro verso, un deflate fatto da Info-ZIP con dentro una sottodirectory
+viene estratto da EX-OS e i byte tornano tutti — confrontati qui fuori, non
+dichiarati dal programma provato.
+
+! **E I FILE ENTRANO ED ESCONO DALL'IMMAGINE CON `debugfs`**, che non chiede di
+essere root e non monta niente. Una prova che chiede `sudo` e' una prova che
+non si lancia.
+
+## DUE DIFESE, E SONO PROVATE ANCHE QUELLE
+
+  - **un nome che esce dalla destinazione e' rifiutato**: `../../boot/...` non
+    si estrae, e il resto dell'archivio si estrae lo stesso. Un archivio lo
+    scrive qualcun altro, e ogni archiviatore del mondo ha avuto questo difetto
+    almeno una volta;
+  - **il CRC si controlla**: un byte guastato viene riconosciuto invece che
+    estratto a caso.
+
+## DOV'E' IL PROGRAMMA, E PERCHE' NON SUL FLOPPY
+
+`zip` sta in `build/bin-cd`, cioe' sul CD e sui sistemi installati. Non e'
+questione di spazio: gli serve `/exwin/lib/exzip.so`, che sul dischetto non
+c'e'. Sul floppy sarebbe un binario di 18 KB che parte solo per dire che non
+trova la sua libreria. E' la ragione gemella per cui `gfedit` e' uscito dal
+floppy il 16 settembre.
+
+! **il floppy adesso ha 29696 byte liberi**: `help.txt` e' cresciuto di una
+sezione `[zip unzip]`, perche' un comando che non si trova e' un comando che
+nessuno usa.
+
+---
+
+# 22 settembre 2026 (sera) — LA PAGINA D'ACCESSO NON SI FA PIU' COPRIRE
+
+`@AVVIO-LOGIN`, chiesto in giornata: «all'avvio i messaggi di sistema arrivano
+a coprire il prompt e la schermata di log-in, sembra bloccato fino a quando
+l'utente non preme invio». Fatto — `login` 0.003 — e la causa non era dove
+sembrava.
+
+## LA waitpid C'ERA, ED ERA GIUSTA: ASPETTAVA LA COSA SBAGLIATA
+
+Sopra `avvio_di_sistema()` c'era scritto: «E SI ASPETTA DAVVERO. Lanciarlo e
+tirare dritto vorrebbe dire il prompt d'accesso mescolato ai messaggi dei
+driver». Vero. E falso dove conta: **meta' di `/boot/avvio.sh` sono righe che
+finiscono con `&`** — pci.drv, telnetd, e1000.drv, ip.drv, ehci.drv, ohci.drv,
+automount, sis.drv — e le ultime due partono **una riga prima** dell'echo
+finale. Quando `waitpid()` torna, quei processi sono vivi, hanno la console e
+non hanno ancora parlato.
+
+! **E NON SONO FIGLI, SONO NIPOTI**: figli della shell che esegue lo script.
+`login` non puo' aspettarli nemmeno volendo — e aspettare che ESCANO sarebbe
+sbagliato comunque, perche' telnetd e i driver sono servizi che non escono mai.
+
+! **STESSA FORMA DEL DIFETTO DI hwconfig DEL 17 SETTEMBRE**: un commento vero
+per il caso che l'autore aveva in mente, falso proprio per il caso che arriva
+alla persona davanti allo schermo. Quando una promessa scritta in un commento
+si avvera solo in un ramo, il ramo che manca e' dove va a finire il difetto.
+
+## QUEL CHE SI PUO' ASPETTARE E' IL SILENZIO
+
+`aspetta_che_taccia()`: fino a **1500 ms**, e intanto `poll()` sulla tastiera —
+chi sta gia' battendo non aspetta niente, il suo tasto resta nel buffer e la
+pagina arriva subito dopo.
+
+! **IL NUMERO E' MISURATO**: sul disco installato dal CD l'ultimo ritardatario
+(`automount`) parla entro mezzo secondo da «Sistema pronto.». 1500 ms e' tre
+volte tanto, perche' una macchina piu' lenta ci stia dentro lo stesso.
+
+! **E NON SI PULISCE LO SCHERMO, DI PROPOSITO.** Darebbe una pagina piu' pulita
+e cancellerebbe l'unica copia dei messaggi d'avvio che una persona ha — questa
+console non ha scorrimento all'indietro — e le righe che contano di piu' sono
+quelle che segnalano un guasto: `exec: comando non trovato: /dev/e1000.drv` e'
+esattamente cio' che non va nascosto. La pagina va **in fondo** al registro,
+intera; non ci va sopra.
+
+## LA PROVA SI PAGA UN RITARDATARIO, O NON PROVA NIENTE
+
+Qui sta la parte che vale oltre questo compito. Su questa macchina, **anche col
+difetto presente**, l'ultimo messaggio dell'avvio arriva un istante PRIMA che
+la pagina venga stampata: una prova che si limitasse a guardare l'ordine
+direbbe «a posto» su un sistema rotto. E' un verdetto che dipende dalla
+fortuna, cioe' non e' un verdetto.
+
+`tools/prova_avvio_login.sh` si costruisce il caso: aggiunge in fondo ad
+avvio.sh una riga che parla **dopo 900 ms** — piu' del ritardo naturale dei
+driver, meno dell'attesa di login — e controlla che la pagina venga dopo. Col
+login vecchio si legge:
+
+```
+  utente: /boot/rit.sh> echo RITARDATARIO
+RITARDATARIO
+```
+
+cioe' il difetto segnalato, nero su bianco. Col login nuovo il ritardatario
+parla per primo e la pagina resta intera.
+
+## E DUE COSE TROVATE PER STRADA, IN tools/mkhd.sh
+
+  - **era rotto da un po'**: l'installatore ha imparato a chiudere offrendo di
+    lanciare `hwconfig`, che a sua volta chiede «Procedo?». Mancavano DUE
+    risposte, lo script restava fermo sulla domanda e il verdetto finale
+    accusava l'installatore. E' la **terza volta** che succede — il file lo
+    racconta due volte da solo — e finche' `install` non prende le risposte da
+    un file, succedera' una quarta;
+  - **adesso sa installare dal CD**: `EXOS_SUPPORTO=cd`. Un disco installato
+    dal floppy non ha i driver di rete, e `hwconfig` gli scrive in avvio.sh le
+    righe per la scheda trovata — righe che poi non partono. Chi prova una cosa
+    dell'avvio su quel disco prova un avvio che non esiste su nessuna macchina
+    vera.
+
+---
+
+# 22 settembre 2026 (seguito) — IL PROGETTO NUOVO SFOGLIA, E UNA RIGA CHE SPARIVA
+
+`@EXIDE-SFOGLIA`: «quando crea un nuovo progetto la finestra modale dovrebbe
+avere un esplora directory e possibilita' di crearle». Fatto — exide 0.013 —
+e per farlo e' cresciuto il DIALOGO, non il programma.
+
+## IL PULSANTE STA NEL DIALOGO, E COSI' CE L'HANNO TUTTI
+
+Servivano due cose che non c'erano: creare una cartella mentre si sceglie, e
+parole diverse da «Salva con nome» / «Salva» in una finestra che sta creando un
+progetto. Tutt'e due stanno in `lib/exdlg/exdlg.c`:
+
+  - **«Nuova cartella (Ctrl+N)»**, in cima accanto a «Su», nel solo dialogo di
+    salvataggio — in «Apri» sarebbe un pulsante che crea una directory vuota
+    per non trovarci dentro niente da aprire. Dentro non c'e' niente di nuovo:
+    `ex_dlg_riga` piu' `mkdir`, che e' parola per parola quel che fa il file
+    manager (`@FILEMGR-MKDIR`). Scritto qui, ce l'hanno anche l'editor e il
+    navigatore il giorno che salvano;
+  - **`ex_dlg_percorso(titolo, etichetta, ok, ...)`**, cioe' lo stesso dialogo
+    con le sue tre parole scelte da fuori. `ex_dlg_salva` e' diventata una
+    riga che lo chiama con quelle di sempre. E' la stessa idea dei due
+    pulsanti di `ex_dlg_conferma`: **le parole di un dialogo le sa il
+    chiamante**, che e' l'unico a sapere che azione sta per succedere.
+
+! **E CI SI ENTRA, DOPO AVERLA CREATA.** Una cartella creata mentre si sceglie
+dove salvare e' creata per metterci dentro quello che si sta salvando:
+fermarsi fuori vorrebbe dire chiedere un doppio clic per finire il gesto.
+
+## CTRL+N NON E' UNA COMODITA': E' L'UNICA STRADA SENZA MOUSE
+
+Un pulsante che ha il fuoco **non risponde all'Invio** — `tasto_al_fuoco()` in
+`lib/exwin/exwin.c` non lo passa al controllo, perche' l'Invio e' della
+finestra. Quindi girare con Tab fino a «Nuova cartella» e premere Invio non fa
+niente, e su una macchina senza mouse quel pulsante sarebbe decorativo. La
+scorciatoia e' nel titolo del pulsante, perche' una scorciatoia che non si vede
+esiste solo per chi l'ha scritta.
+
+Il Ctrl arriva anche mentre il fuoco sta nella casella del nome: i modificatori
+viaggiano nei bit alti del tasto (`kbd_proto.h`) e una casella di testo lascia
+passare i Ctrl apposta. Per questo `exdlg.so` adesso si compila con
+`-I drivers/kbd`.
+
+## LA CASA SI CHIEDE, E LA MEMORIA STA NEL PROFILO
+
+In exide: `getenv("HOME")` la prima volta, poi `$HOME/.app/exide/ultima.txt`,
+che tiene la directory **che contiene** l'ultimo progetto — creato
+`/disk/casa/progetti/prova`, la volta dopo si propone `/disk/casa/progetti`.
+Chi ne fa due di fila li vuole fratelli, non uno dentro l'altro.
+
+! **E SE IL PROFILO NON SI PUO' SCRIVERE, NON SUCCEDE NIENTE DI GRAVE.** Da CD
+`HOME` vale «/» (la riga di `kernel.cfg`) e la radice e' in sola lettura:
+`profilo_perc()` rende 0, la memoria non c'e' e si riparte dalla casa. Una
+memoria che non si puo' tenere non e' una ragione per fermare la creazione di
+un progetto.
+
+## LA RIGA DEL PERCORSO SPARIVA PROPRIO QUANDO CAMBIAVA
+
+Difetto vero, trovato dalla prova e non dal ragionamento: creata la cartella e
+entrati dentro, **la riga del percorso sotto l'elenco restava vuota**. Il
+percorso si ridisegnava subito — lo faceva `ridisegna()` — e subito dopo
+arrivava dal server il disegno dell'area scoperta dalla modale appena chiusa.
+Quel disegno lo faceva `ex_procedura_base`, che della riga del percorso non sa
+niente: la spazzava via.
+
+! **QUEL CHE UNA FINESTRA DISEGNA DI SUO VA NEL SUO `EXM_DISEGNA`, non solo
+dopo averlo cambiato.** Finche' nessuno copriva quel dialogo non si vedeva:
+e' bastato aprirci sopra una finestra per scoprire che meta' del suo disegno
+esisteva solo per chi l'aveva fatto cambiare. Adesso `proc()` ha il suo ramo
+`EXM_DISEGNA` e `ridisegna()` passa da li'.
+
+## LA PROVA NON TOCCA IL MOUSE, E NON E' PIGRIZIA
+
+`tools/prova_exide_dove.sh` fa tutto da tastiera. Il primo giro no, e ha
+mentito: `mouse_move` di QEMU e' **relativo**, i passi si sommano dall'angolo e
+qualcuno per strada si perde. Il puntatore e' arrivato **venticinque pixel piu'
+su** del pulsante, il clic e' finito sulla barra del titolo, il nome battuto e'
+finito nella casella del dialogo sotto — e il verdetto ha accusato il programma
+di non fare una cosa che in quel giro nessuno gli aveva chiesto.
+
+! **DA TASTIERA I TASTI ARRIVANO TUTTI O NON ARRIVA NIENTE**, e una prova che
+puo' sbagliare bersaglio di venticinque pixel non prova niente: assolve o
+condanna a caso. Dove il mouse serve davvero — il doppio clic, il
+trascinamento — si continua a usarlo, ma allora la prova e' SUL mouse.
+
+La prova fa due avvii sullo stesso disco: al secondo il dialogo riparte da
+`/disk/casa/progetti`. **Una memoria si prova solo spegnendo la macchina.**
+
+## E LA PAROLA CHE MANCAVA AL FILE MANAGER: «CREA»
+
+Stamattina, chiudendo `@FILEMGR-MKDIR`, qui era scritto che i pulsanti della
+modale dicevano «Va bene» invece di «Crea» perche' le scritte di `ex_dlg_riga`
+erano fisse, e che cambiarlo **si sarebbe pagato il giorno che si fosse toccato
+`exdlg.so` per altro**. Quel giorno e' stato lo stesso: `ex_dlg_chiedi()` e'
+`ex_dlg_riga` con la scritta del pulsante scelta da chi chiama, e la tavola dei
+ponti si e' rifatta una volta per tutt'e due le richieste (filemgr 0.005).
+
+! **UNA NOTA CHE DICE «SI FA QUANDO SI PASSA DI LA'» VA RILETTA QUANDO SI PASSA
+DI LA'.** Costava dieci righe stamattina come stasera; la differenza e' solo
+che stamattina il file non era ancora aperto.
+
+## E DA OGGI I COMMENTI E I COMMIT SONO IN INGLESE
+
+Deciso a fine giornata: **commenti nel codice e messaggi di commit in inglese**,
+perche' il repository e' pubblico e il codice si legge da fuori. Restano in
+italiano questo diario, `in_lavorazione.txt`, `correzioni.txt`, i commenti degli
+script in `tools/` e **le stringhe a schermo** — per quelle arrivera' una
+versione per ogni lingua, e allora si fara' per bene.
+
+! **E L'ITALIANO GIA' SCRITTO NON SI TRADUCE**, che e' la parte che conta:
+decine di migliaia di righe di commenti sono prove gia' pagate, e una
+traduzione frettolosa le perde. Un file misto per un po' e' il prezzo, ed e'
+basso.
+
+La regola sta in cima a `in_lavorazione.txt`, come regola 0 di «COME SI LAVORA
+QUI»: e' il primo file che si apre. I commenti scritti oggi — quelli di
+`exdlg.c`, `exdlg.h`, `exide.c` e la parte nuova di `filemgr.c` — sono stati
+riscritti in inglese prima del commit, cosi' la regola comincia a valere dal
+commit che la annuncia invece che da quello dopo.
+
+## IL NAVIGATORE NON SI RICOSTRUIVA QUANDO exdlg CAMBIAVA
+
+Trovato guardando chi andava ricostruito: la regola di `browser` nel Makefile
+compila e collega `exdlg_stub.c`, ma **non lo aveva fra le dipendenze** —
+`$(EXDLG_STUB)`, `$(EXDLG_HDR)` e `$(EXDLG_SO)` mancavano dall'elenco. Cambiare
+l'header dei dialoghi lasciava il navigatore com'era.
+
+Oggi non faceva danni — il patto della tabella e' che si aggiunge e non si
+toglie, quindi un binario vecchio gira su una libreria nuova — ma e' proprio il
+genere di svista che si paga il giorno in cui si toglie o si cambia qualcosa:
+si ricostruisce tutto, uno resta indietro, e si cerca il difetto nel codice
+invece che nella lista.
+
+## E UNA GIORNATA DI QUESTO DIARIO ERA SPARITA
+
+Rileggendo il file prima di aggiungere questa sezione: la giornata del **21
+settembre** — le otto richieste, lo Shift finto, i blocchi del disco — non
+c'era piu'. Seicentocinquanta righe, tolte dalla copia di lavoro mentre si
+riscriveva il blocco «DOVE RIPRENDERE» in cima. Era ancora nel commit, e da li'
+e' tornata al suo posto.
+
+! **IL BLOCCO IN CIMA SI RISCRIVE, LE GIORNATE SOTTO NO**, ed e' la stessa
+regola scritta in testa a questo file: una prova gia' pagata vale finche'
+esiste il codice che l'ha generata. Il controllo costa una riga, e da oggi si
+fa prima di consegnare:
+
+```
+diff <(git show HEAD:RIPRENDERE.md | grep '^# ') <(grep '^# ' RIPRENDERE.md)
+```
+
+Deve mostrare **solo** le giornate aggiunte e il titolo del blocco in cima. Una
+giornata vecchia che compare fra i `<` e' una giornata persa.
+
+---
+
+# 22 settembre 2026 — SEI RICHIESTE NUOVE, E LA CARTELLA CHE SI CREA
+
+Altro giro di `correzioni.txt`: sei richieste, smistate come le prime otto —
+commentate la' con l'etichetta accanto, descritte qui dentro. `@FILEMGR-MKDIR`,
+`@EXIDE-SFOGLIA`, `@ZIP`, `@TAR-GZ` urgenti; `@NETUPD-GIRA` e `@EDIT-CERCA` a
+comodo.
+
+Le cose che ho scritto accanto alle richieste, e che valgono piu' della
+richiesta stessa:
+
+  - **`@FILEMGR-MKDIR`**: «la directory scelta NELL'ALBERO», non quella mostrata
+    a destra. Le due possono essere diverse — dopo una ricerca l'elenco di
+    destra mostra risultati sparsi per tutto il disco — e il programma le
+    distingue gia';
+  - **`@EXIDE-SFOGLIA`**: la casa **non si calcola** come «/home/» piu' il nome
+    dell'utente, si chiede a `HOME`. Chi la costruisce sbaglia su root, che sta
+    in `/root`. E l'ultima directory usata va in `$HOME/.app/exide/`, perche' e'
+    di *chi* la usa;
+  - **`@ZIP`**: la libreria condivisa che e' stata chiesta e' la forma giusta,
+    ed e' quella del resto del sistema — `eximg` decodifica e i programmi
+    disegnano. Scritta al contrario, la seconda applicazione riscrive il
+    formato e da quel giorno i due divergono;
+  - **`@TAR-GZ`**: meta' della strada c'e' gia' ed e' **nascosta dentro
+    netupdate** — `gzip_apri()` e `tar_estrai()` aprono i pacchetti degli
+    aggiornamenti. Sanno decomprimere e leggere, non scrivere, e lavorano in
+    memoria: una libreria nuova che nasce a flusso non ripete `@DIF-GROSSI`;
+  - **`@NETUPD-GIRA`**: la barra deve girare **dove arrivano i byte**, non a
+    orologio. Una barra mossa dal tempo gira anche quando la rete e' morta,
+    cioe' mente proprio nel caso in cui la si guarda.
+
+### gnu/ E' IGNORATA, MA I DUE ZIP ERANO GIA' DENTRO AL COMMIT
+
+La richiesta diceva «c'e' una directory gnu che va messa in git ignore». La
+regola c'e' — `/gnu/`, larga apposta, che e' la lezione del FreeBASIC che
+nominava la versione — ma **i due archivi erano gia' stati committati**:
+`git add .` li ha presi prima che la regola esistesse, 3,6 MB di sorgenti di
+terzi finiti in cronologia.
+
+! **UNA REGOLA IN .gitignore NON TOCCA CIO' CHE E' GIA' TRACCIATO**, e questa e'
+la parte che sorprende sempre: `git check-ignore` diceva «non ignorato» proprio
+perche' il file era nell'indice. Tolti con `git rm --cached` (restano sul
+disco): da questo commit HEAD non li porta piu'. Nella cronologia gia' spinta
+restano, e per toglierli servirebbe riscriverla e forzare il push su un
+repository pubblico — si fa per una credenziale, non per del codice di terzi.
+
+### LA CARTELLA CHE SI CREA, `filemgr` 0.004
+
+Fatta subito perche' era la piu' piccola delle urgenti: menu «Comandi», prima
+voce, «Nuova directory». Il dialogo **non e' nuovo** — `ex_dlg_riga` e'
+esattamente quella finestra, ed e' quella che usa «Cerca»: serviva chiamarla,
+non scriverla.
+
+! **E IL PERCORSO STA NELLA DOMANDA**: «Il nome della cartella nuova, dentro
+/disk/prova:». Chi crea una directory sta per cambiare il disco, e vedere
+*dove* prima di battere il nome e' la differenza fra creare dove si voleva e
+scoprirlo dopo.
+
+Provato in QEMU: F10, freccia a destra, Invio, il nome, Invio — e `ls` dice
+`<DIR> cartellanuova`. Resta una parola: i pulsanti dicono «Va bene» invece di
+«Crea», perche' le etichette di `ex_dlg_riga` sono fisse. Cambiarlo vuol dire
+una funzione nuova in `exdlg.so` e la tavola dei ponti da rifare: si paga
+quando si tocca quel file per altro.
 
 ---
 

@@ -103,10 +103,18 @@ static int leggi_dib(const unsigned char *d, unsigned int n, EximgBitmap *bm)
             unsigned int c, k;
 
             switch (bit) {
-            case 32: c = ((unsigned int)r[i*4+2] << 16) |
+            /* ! A 32 BIT L'ALFA E' NEL FILE, E SI TIENE. Buttarla dava icone
+             * che il toolkit fonde con alfa zero, cioe' quadrati di puro
+             * sfondo: un'icona «che non si carica» mentre si sta disegnando
+             * benissimo, tutta trasparente. */
+            case 32: c = ((unsigned int)r[i*4+3] << 24) |
+                         ((unsigned int)r[i*4+2] << 16) |
                          ((unsigned int)r[i*4+1] << 8)  | r[i*4];
                      break;
-            case 24: c = ((unsigned int)r[i*3+2] << 16) |
+            /* Sotto i 32 bit l'alfa non c'e': tutto opaco, e la trasparenza la
+             * dira' la maschera a 1 bit, in fondo. */
+            case 24: c = 0xFF000000u |
+                         ((unsigned int)r[i*3+2] << 16) |
                          ((unsigned int)r[i*3+1] << 8)  | r[i*3];
                      break;
             case 8:  k = r[i];                                  goto tavola;
@@ -115,7 +123,8 @@ static int leggi_dib(const unsigned char *d, unsigned int n, EximgBitmap *bm)
             default: k = (r[i>>3] >> (7 - (i & 7))) & 1u;
             tavola:
                      if (k >= n_tav) k = 0;
-                     c = ((unsigned int)tav[k*4+2] << 16) |
+                     c = 0xFF000000u |
+                         ((unsigned int)tav[k*4+2] << 16) |
                          ((unsigned int)tav[k*4+1] << 8)  | tav[k*4];
                      break;
             }
@@ -124,9 +133,36 @@ static int leggi_dib(const unsigned char *d, unsigned int n, EximgBitmap *bm)
         }
     }
 
-    /* ! LA MASCHERA A 1 BIT SI SALTA, come si ignora l'alfa del PNG: il server
-     * compone finestre opache e non c'e' niente su cui fondere. Il giorno che
-     * sapra' fondere, e' li' che si andra' a prenderla. */
+    /* ! E QUEL GIORNO E' ARRIVATO: LA MASCHERA SI LEGGE. Qui c'era scritto
+     * che la maschera a 1 bit si saltava «perche' il server compone finestre
+     * opache e non c'e' niente su cui fondere, e il giorno che sapra' fondere
+     * e' li' che si andra' a prenderla». A fondere non e' il server ma
+     * ex_icona_disegna() del toolkit, che l'icona la rimpicciolisce e la posa
+     * su un colore noto (22 settembre 2026) - e senza alfa un'icona tonda in
+     * un menu grigio ha gli angoli neri.
+     *
+     * La maschera sta subito dopo le righe dei colori, ha la stessa altezza e
+     * un bit per pixel: 1 vuol dire TRASPARENTE. Le sue righe sono allineate a
+     * 32 bit come tutte le altre. */
+    {
+        const unsigned char *mask = px + riga * alt;
+        unsigned int riga_m = ((larg + 31u) / 32u) * 4u;
+        unsigned int dati_m = (unsigned int)(mask - d);
+
+        /* Un ICO senza maschera esiste (i PNG dentro l'ICO non ce l'hanno, e
+         * qualche scrittore la omette): allora e' tutto opaco, ed e' gia' cosi'
+         * che i pixel sono usciti dal ciclo qui sopra. */
+        if (dati_m <= n && riga_m <= (n - dati_m) / alt) {
+            for (j = 0; j < alt; j++) {
+                const unsigned char *r = mask + (alt - 1u - j) * riga_m;
+
+                for (i = 0; i < larg; i++)
+                    if ((r[i >> 3] >> (7 - (i & 7))) & 1u)
+                        bm->px[j * larg + i] &= 0x00FFFFFFu;   /* trasparente */
+            }
+        }
+    }
+
     return 1;
 }
 

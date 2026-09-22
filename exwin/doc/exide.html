@@ -62,8 +62,10 @@ COMPILARE serve anche il CD degli strumenti montato su <code>/cdrom</code>.
   <a href="#areacodice">Area codice</a>,
   <a href="#elenco">Elenco</a>,
   <a href="#linguette">Linguette</a>,
-  <a href="#scorrimento">Scorrimento</a>
+  <a href="#scorrimento">Scorrimento</a>,
+  <a href="#immagine">Immagine</a>
 </li>
+<li><a href="#icone">Le icone</a></li>
 <li><a href="#appunti">Copiare, tagliare, spostare un controllo</a></li>
 <li><a href="#esempi">Gli esempi</a>
   &mdash;
@@ -204,6 +206,13 @@ Applica. Senza nessun controllo scelto &mdash; un clic sul vuoto della maschera
 <tr><td><code>evento</code></td>
     <td>QUALE evento chiama il tuo handler, fra quelli che quel controllo ha.
         Scriverne uno che non c'e' non fa niente, e lo dice</td></tr>
+<tr><td><code>icona</code></td>
+    <td>il percorso di un'icona da mostrare <b>prima della scritta</b>. La
+        usano il <a href="#pulsante">Pulsante</a> e
+        l'<a href="#etichetta">Etichetta</a>; gli altri controlli dicono
+        <code>(non ne ha)</code>. Si sceglie da <b>Strumenti &gt; Icona del
+        controllo...</b>, o si batte il percorso a mano. Vuota = nessuna.
+        Vedi <a href="#icone">Le icone</a></td></tr>
 </table>
 
 <h3>Della finestra</h3>
@@ -227,7 +236,8 @@ con quali funzioni si comanda da dentro <code>finestra.c</code>.
 
 <h3 id="pulsante">Pulsante</h3>
 <p>
-Si preme e chiama il suo handler. <b>Eventi:</b> Clic, SulMouse.
+Si preme e chiama il suo handler. Puo' avere un'<a href="#icone">icona</a>
+prima della scritta. <b>Eventi:</b> Clic, SulMouse.
 <code>ex_testo_metti</code>/<code>ex_testo_prendi</code> per l'etichetta sopra.
 Il comando parte quando si ALZA il dito, non quando si preme: scivolare via
 prima di alzarlo annulla.
@@ -239,7 +249,10 @@ Esempi: <a href="#es-scambio">scambiare due caselle</a>,
 
 <h3 id="etichetta">Etichetta</h3>
 <p>
-Testo e basta, non ci si scrive dentro. <b>Eventi:</b> SulMouse, Clic.
+Testo e basta, non ci si scrive dentro. Puo' avere un'<a href="#icone">icona</a>
+prima del testo &mdash; ed e' cosi' che si mette un'immagine in una finestra
+solo per ornamento, o si fa un collegamento cliccabile (l'etichetta ha l'evento
+<i>Clic</i>). <b>Eventi:</b> SulMouse, Clic.
 <code>ex_testo_metti</code> per cambiarla a programma acceso.
 Esempio: <a href="#es-spunta">uscire con la conferma</a>, dove l'etichetta
 spiega perche' non e' successo niente.
@@ -341,6 +354,156 @@ piu' alta che larga viene verticale. <b>Eventi:</b> Scorso (a ogni pixel,
 mentre si trascina).
 <code>ex_scorri_limiti(h, massimo, pagina)</code>,
 <code>ex_scorri_dove(h)</code>, <code>ex_scorri_vai(h, dove)</code>.
+</p>
+
+<h3 id="immagine">Immagine</h3>
+<p>
+Un'icona e basta: <b>ornamento</b>. Non si preme, non prende il fuoco e non ha
+eventi &mdash; sta li' e si fa guardare. Gli si da' la proprieta'
+<a href="#icone"><code>icona</code></a> e si tira il riquadro: l'immagine lo
+riempie, <b>quadrata e centrata</b>, perche' le icone sono quadrate e
+allargarle al rettangolo vorrebbe dire deformarle.
+</p>
+<p>
+! <b>Per una figura che si CLICCA non si usa questa</b>: si usa
+un'<a href="#etichetta">Etichetta</a> col testo vuoto e l'icona, che ha
+l'evento <i>Clic</i>. Un'etichetta con icona ed evento Clic <i>e'</i> un
+collegamento.
+</p>
+<p>
+Nel disegnatore un'Immagine senza icona si vede come un riquadro tratteggiato:
+senza, sarebbe un buco invisibile e non si riuscirebbe a sceglierla col mouse.
+</p>
+
+<h2 id="icone">Le icone</h2>
+
+<p>
+Un <b>Pulsante</b> e un'<b>Etichetta</b> possono mostrare un'icona prima della
+scritta; un'<a href="#immagine">Immagine</a> e' fatta solo di quella. Si
+sceglie il controllo, poi <b>Strumenti &gt; Icona del controllo...</b>: si apre
+il dialogo dei file, e il disegnatore mostra subito com'e' venuta.
+</p>
+
+<table border="1">
+<tr><th>controllo</th><th>dove va l'icona</th></tr>
+<tr><td>Pulsante</td><td>prima della scritta; il gruppo icona+testo si centra
+    insieme</td></tr>
+<tr><td>Etichetta</td><td>a sinistra, il testo la segue. Col testo vuoto e
+    l'evento Clic diventa un <b>collegamento</b></td></tr>
+<tr><td>Immagine</td><td>e' tutto il controllo: quadrata e centrata nel
+    riquadro</td></tr>
+</table>
+
+<p>
+Il percorso si puo' anche battere a mano nella proprieta'
+<code>icona</code> &mdash; comodo per copiarlo da un altro controllo &mdash; e
+<b>svuotarla toglie l'icona</b>.
+</p>
+
+<h3>Dove stanno</h3>
+<p>
+Le icone di sistema sono in <code>/exwin/icon/baseapp/</code>, a 64 e 128 pixel
+(<code>edit_64.ico</code>, <code>filemgr_128.ico</code>...), ed e' li' che il
+dialogo si apre la prima volta. Vanno bene anche <b>PNG</b>, <b>JPG</b>,
+<b>GIF</b> e <b>BMP</b>: il formato si riconosce dai primi byte del file, non
+dall'estensione.
+</p>
+
+<p>
+! <b>Non serve una copia per ogni misura.</b> Il sistema rimpicciolisce l'icona
+da se', facendo la media dei pixel: un'icona da 64 dentro un pulsante alto 26
+diventa 20 pixel e si vede bene. Metterne una gia' piccola non fa guadagnare
+niente.
+</p>
+
+<h3>Che cosa esce nel codice</h3>
+<p>
+Per ogni controllo con un'icona, <code>finestra_gen.c</code> guadagna due
+righe subito dopo la sua <code>ex_crea</code>:
+</p>
+
+<pre>
+    h_Pulsante1 = ex_crea("pulsante", "Premimi", EX_FIGLIO,
+        20, 20, 130, 30, g_form, ID_PULSANTE1, 0);
+    { ExIcona ic = ex_icona_apri("/exwin/icon/baseapp/edit_64.ico");
+      ex_icona_metti(h_Pulsante1, ic, 0); }
+</pre>
+
+<p>
+Lo zero di <code>ex_icona_metti</code> vuol dire <i>scegli tu la misura</i>:
+il controllo la prende dalla propria altezza. Un numero al suo posto la impone.
+</p>
+
+<p>
+! <b>Un'icona che manca non ferma il programma.</b>
+<code>ex_icona_apri</code> rende 0 se il file non c'e' o non si decodifica, e
+<code>ex_icona_metti</code> con 0 vuol dire semplicemente <i>nessuna icona</i>:
+il pulsante esce con la sola scritta. E' voluto &mdash; un programma copiato su
+una macchina dove quell'icona non e' stata installata deve partire lo stesso.
+</p>
+
+<h3>Le icone del pannello degli strumenti</h3>
+<p>
+Anche l'elenco degli strumenti, a sinistra, mostra un'icona davanti a ogni
+nome. Non c'e' niente da configurare: <b>il nome del file e' la classe del
+controllo</b>, dentro <code>/exwin/icon/strumenti/</code>.
+</p>
+
+<pre>
+/exwin/icon/strumenti/pulsante.ico      davanti a "Pulsante"
+/exwin/icon/strumenti/areatesto.ico     davanti a "Area testo"
+/exwin/icon/strumenti/immagine.ico      davanti a "Immagine"
+</pre>
+
+<p>
+! <b>Aggiungere l'icona di uno strumento e' mettere un file, non ricompilare
+exide.</b> E se il file non c'e' la voce resta testo, com'e' sempre stata: il
+pannello funziona anche il giorno prima che le icone esistano.
+</p>
+
+<p>
+! <b>Se anche una sola voce ha l'icona, lo spazio lo lasciano tutte.</b>
+Indentare le sole righe che ce l'hanno darebbe un margine sinistro
+frastagliato, con le scritte che ballano da una riga all'altra. Vale per ogni
+elenco del sistema, non solo per questo.
+</p>
+
+<h3>Le stesse funzioni, dal tuo codice</h3>
+<p>
+Dentro <code>finestra.c</code> valgono le stesse, e servono a cambiare
+un'icona mentre il programma gira:
+</p>
+
+<pre>
+    ExIcona ic = ex_icona_apri("/exwin/icon/baseapp/browser_64.ico");
+    ex_icona_metti(h_Pulsante1, ic, 0);     /* 0 = anche per toglierla */
+</pre>
+
+<p>
+! <b>L'icona si apre una volta, non a ogni disegno.</b>
+<code>ex_icona_apri</code> legge il file e lo tiene; chiamarla dentro un
+ridisegno vorrebbe dire rileggere il file ogni volta che la finestra si
+scopre. Si apre alla partenza &mdash; com'e' nel codice generato &mdash; e il
+numero che rende si conserva.
+</p>
+
+<h3>Nel file del disegno</h3>
+<p>
+In <code>finestra.dis</code> l'icona e' una riga <code>i</code> che segue il
+controllo:
+</p>
+
+<pre>
+c pulsante Pulsante1 1001 20 20 130 30 0 Premimi
+i /exwin/icon/baseapp/edit_64.ico
+</pre>
+
+<p>
+! <b>E' una riga a parte, non un campo in piu'</b>, perche' nella riga
+<code>c</code> il testo sta per ultimo e puo' contenere spazi: qualunque campo
+aggiunto prima di lui sposterebbe il testo di una parola, e ogni progetto
+fatto prima di oggi si aprirebbe con le scritte sbagliate. Un disegno senza
+righe <code>i</code> si legge esattamente come prima.
 </p>
 
 <h2 id="appunti">Copiare, tagliare, spostare un controllo</h2>

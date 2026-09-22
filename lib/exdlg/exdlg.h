@@ -49,6 +49,24 @@ extern "C" {
 int ex_dlg_apri(char *percorso, unsigned int max);
 int ex_dlg_salva(char *percorso, unsigned int max);
 
+/* The same dialog as ex_dlg_salva with its three words chosen from outside:
+ * the window title, the label beside the box and the caption of the confirming
+ * button. Passing 0 for any of them gives the "Salva con nome" wording.
+ *
+ * ! IT EXISTS BECAUSE THIS DIALOG DOES NOT ONLY PICK FILES. Creating a project
+ * means choosing a directory and giving it a name: the same gesture - browse,
+ * enter, make a folder, type a name - but a window titled "Salva con nome"
+ * holding a "Salva" button describes a different action. The words of a dialog
+ * are known to the caller; that is already true of the two buttons of
+ * ex_dlg_conferma.
+ *
+ * ! AND THE "NUOVA CARTELLA" BUTTON IS IN BOTH, because it belongs to the save
+ * dialog and not to whoever opens it: someone choosing where to put a thing
+ * finds out right there that the place does not exist yet. It answers to the
+ * mouse or to Ctrl+N, which is the only way in without one. */
+int ex_dlg_percorso(const char *titolo, const char *etichetta, const char *ok,
+                    char *percorso, unsigned int max);
+
 /* Un avviso con un solo pulsante. Rende sempre 1, ed esiste perche' finora
  * l'unico modo che un'applicazione grafica aveva di dire qualcosa era la riga
  * di stato — che chi guarda un'altra finestra non legge. */
@@ -78,6 +96,12 @@ int ex_dlg_avviso(const char *titolo, const char *testo);
  * --------------------------------------------------------------------------- */
 int ex_dlg_riga(const char *titolo, const char *domanda,
                 char *valore, unsigned int max);
+
+/* The same, with the caption of the confirming button chosen by the caller
+ * ("Crea", "Rinomina", "Cerca"): passing 0 puts "Va bene" there. Whoever knows
+ * which action is about to happen is whoever opens the dialog. */
+int ex_dlg_chiedi(const char *titolo, const char *domanda, const char *ok,
+                  char *valore, unsigned int max);
 
 int ex_dlg_conferma(const char *titolo, const char *testo,
                     const char *si, const char *no);

@@ -28,9 +28,26 @@
 # menu che non parte da sola. Legarli vorrebbe dire non poter fare ne' l'uno
 # ne' l'altro.
 
-File manager   | /exwin/bin/filemgr
-Editor         | /exwin/bin/edit
-Terminale      | /exwin/bin/term
-Prova dei font | /exwin/bin/fontprova
-Navigatore     | /exwin/bin/browser
-EX-IDE         | /exwin/bin/exide
+# ! UNA VOCE PUO' AVERE UN TERZO CAMPO: l'ICONA, e si scrive come gli altri,
+# dopo un'altra barra verticale. E' facoltativa — le righe senza restano righe
+# buone — e il percorso e' assoluto, cioe' quello che avra' dentro EX-OS.
+#
+#   Nome | /percorso/eseguibile | /percorso/icona.ico
+#
+# ! E UNA BARRA NEL NOME FA UNA CATEGORIA: «Strumenti/Editor» vuol dire la voce
+# «Editor» dentro «Strumenti», e nel menu «Strumenti...» apre un elenco DI
+# FIANCO invece di avviare qualcosa. Le categorie compaiono in cima, nell'ordine
+# in cui si incontrano qui dentro, e non si dichiarano da nessun'altra parte:
+# esistono finche' c'e' una voce che le nomina.
+#
+# Le icone di questo sistema sono a 64 e 128 pixel; il menu le rimpicciolisce
+# da se' a 16 (vedi ex_icona_disegna in lib/exwin/exwin.h), quindi non serve
+# una copia per ogni misura.
+
+File manager           | /exwin/bin/filemgr   | /exwin/icon/baseapp/filemgr_64.ico
+Navigatore             | /exwin/bin/browser   | /exwin/icon/baseapp/browser_64.ico
+Archivi                | /exwin/bin/archivi
+Strumenti/Editor       | /exwin/bin/edit      | /exwin/icon/baseapp/edit_64.ico
+Strumenti/Terminale    | /exwin/bin/term      | /exwin/icon/baseapp/term_64.ico
+Strumenti/EX-IDE       | /exwin/bin/exide     | /exwin/icon/baseapp/exide_64.ico
+Strumenti/Prova font   | /exwin/bin/fontprova

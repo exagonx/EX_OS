@@ -66,7 +66,7 @@
 
 /* +0.001 a ogni modifica: `wserver -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("wserver", "0.001");
+EX_VERSIONE("wserver", "0.002");
 
 #define FINESTRE_MAX    16
 #define BARRA_H         20
@@ -275,6 +275,20 @@ static void sporca(int x, int y, int w, int h)
 static void sporca_puntatore(int x, int y)
 {
     sporca(x - 1, y - 1, 8 + 2, 12 + 2);
+}
+
+/* Il rettangolo di una finestra CON la sua cornice, che e' quel che si vede.
+ *
+ * ! LA CORNICE STA FUORI DA x,y,w,h: quelli sono l'area del CLIENT, e il
+ * telaio con la barra del titolo le sta intorno (vedi cornice()). Dichiarare
+ * sporca la sola area del client lascerebbe sullo schermo il telaio vecchio —
+ * un bordo grigio fermo dove la finestra non c'e' piu'. */
+static void sporca_finestra(const Finestra *f, unsigned int x, unsigned int y)
+{
+    unsigned int alta = (f->stile & WIN_ST_TITOLO) ? BARRA_H : 0;
+
+    sporca((int)x - BORDO, (int)y - BORDO - (int)alta,
+           (int)f->w + BORDO * 2, (int)f->h + BORDO * 2 + (int)alta);
 }
 
 
@@ -1258,9 +1272,31 @@ static void mouse_agisci(void)
             (void)ipc_send(g_fin[g_trascino].pid, WIN_MSG_POSTA, &w, sizeof(w));
             g_trascino = -1;
         } else {
-            g_fin[g_trascino].x = (unsigned int)(g_px - g_tr_dx);
-            g_fin[g_trascino].y = (unsigned int)(g_py - g_tr_dy);
-            sporca_tutto();
+            Finestra *f = &g_fin[g_trascino];
+            unsigned int ox = f->x, oy = f->y;
+
+            f->x = (unsigned int)(g_px - g_tr_dx);
+            f->y = (unsigned int)(g_py - g_tr_dy);
+
+            /* =============================================================
+             * ! QUI C'ERA sporca_tutto(), ED E' IL POSTO DOVE COSTAVA DI PIU'.
+             * Trascinare una finestra vuol dire un movimento del mouse ogni
+             * dieci millisecondi, e ognuno ridipingeva 800x600 — misurato il
+             * 16 settembre 2026: fra 5 e 10 ms a fotogramma. Il server passava
+             * cosi' quasi tutto il tempo del trascinamento, ed e' esattamente
+             * lo scatto di @GRAFICA-SCATTI.
+             *
+             * ! E QUI SI SA COSA E' CAMBIATO: la finestra era li' e adesso e'
+             * qua. Tutto il resto dello schermo e' identico. Due rettangoli —
+             * il vecchio e il nuovo — che sporca() unisce nel suo riquadro:
+             * per un movimento di qualche pixel e' poco piu' della finestra,
+             * invece dello schermo intero.
+             *
+             * ! IL VECCHIO VA DICHIARATO PRIMA DI MUOVERLA, o si dichiara due
+             * volte quello nuovo e dove stava resta il disegno di prima.
+             * ========================================================= */
+            sporca_finestra(f, ox, oy);
+            sporca_finestra(f, f->x, f->y);
         }
         g_bottoni_prec = g_bottoni;
         return;
@@ -1281,7 +1317,18 @@ static void mouse_agisci(void)
         if (g_fin[idx2].y + (unsigned int)nh > g_fb_h)
             nh = (int)(g_fb_h - g_fin[idx2].y);
 
-        if ((unsigned int)nw != g_rw || (unsigned int)nh != g_rh) sporca_tutto();
+        /* ! COME PER IL TRASCINAMENTO: quel che cambia e' il CONTORNO, e il
+         * contorno sta dentro il riquadro che va dall'angolo della finestra
+         * alla piu' grande fra la misura vecchia e quella nuova. Lo schermo
+         * fuori di li' e' identico, e ridipingerlo era la meta' del costo di
+         * un ridimensionamento. */
+        if ((unsigned int)nw != g_rw || (unsigned int)nh != g_rh) {
+            unsigned int mw = ((unsigned int)nw > g_rw) ? (unsigned int)nw : g_rw;
+            unsigned int mh = ((unsigned int)nh > g_rh) ? (unsigned int)nh : g_rh;
+
+            sporca((int)g_fin[idx2].x - BORDO, (int)g_fin[idx2].y - BORDO - BARRA_H,
+                   (int)mw + BORDO * 2, (int)mh + BORDO * 2 + BARRA_H);
+        }
         g_rw = (unsigned int)nw;
         g_rh = (unsigned int)nh;
 

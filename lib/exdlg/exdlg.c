@@ -33,6 +33,9 @@
 #include "libc.h"
 #include "exwin.h"
 #include "exdlg.h"
+/* For KBD_MOD_CTRL: a shortcut is recognised by the modifier bit, and that bit
+ * has a name - see drivers/kbd/kbd_proto.h. */
+#include "kbd_proto.h"
 
 #define DLG_W       420
 #define DLG_H       300
@@ -48,6 +51,7 @@
 #define ID_ANNULLA  2
 #define ID_SU       3
 #define ID_LISTA    4
+#define ID_NUOVA    5
 
 /* ! SI TIENE SOLO CIO' CHE LA LISTA NON SA: per ogni voce, se e' una
  * directory — che e' quello che decide cosa succede all'Invio. Il testo e la
@@ -61,6 +65,11 @@ static char         g_nome[DIRENT_NAME_MAX];
 static ExFinestra   g_f, g_casella;
 static int          g_fatto;        /* 0 = ancora aperto, 1 = OK, 2 = annullato */
 static int          g_salva;        /* 1 = dialogo di salvataggio */
+
+/* It lives with the confirm buttons at the bottom of this file; it is needed
+ * here because the caption of the confirming button is chosen by the CALLER
+ * (ex_dlg_percorso), and "Crea" is not as wide as "Salva". */
+static int larghezza_pulsante(const char *t);
 
 /* -----------------------------------------------------------------------------
  * Leggere la directory. Le directory in cima, come nel file manager: in una
@@ -164,10 +173,14 @@ static void percorso_disegna(void)
     ex_scrivi(g_f, AREA_X + 2, AREA_Y + AREA_H + 4, g_dir, EX_NERO);
 }
 
+/* ! IT GOES THROUGH THE PROCEDURE, not through the base painting: that is
+ * where the path line is added to the drawing, in one place only (see
+ * EXM_DISEGNA in proc). */
+static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp);
+
 static void ridisegna(void)
 {
-    ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
-    percorso_disegna();
+    proc(g_f, EXM_DISEGNA, 0, 0);
     ex_aggiorna(g_f);
 }
 
@@ -207,6 +220,65 @@ static void scegli(void)
     conferma();
 }
 
+/* -----------------------------------------------------------------------------
+ * A new folder, without leaving the dialog
+ *
+ * ! WHOEVER IS CHOOSING WHERE TO SAVE FINDS OUT RIGHT THERE THAT THE PLACE IS
+ * MISSING. Until today the only answer was to cancel, open the file manager,
+ * create the directory and start over: three windows for one word, and the
+ * name already typed was lost on the way.
+ *
+ * ! THE PIECE IS NOT NEW: ex_dlg_riga plus mkdir is exactly what the file
+ * manager does since 22 September 2026. It sits here instead of in the two
+ * programs because this is the place where both of them get it - whoever opens
+ * this dialog finds it already made.
+ *
+ * ! AND THE PATH IS IN THE QUESTION, as in the file manager: creating a folder
+ * is about to change the disk, and seeing WHERE before typing the name is the
+ * difference between creating it where you meant to and finding out later.
+ * --------------------------------------------------------------------------- */
+static void nuova_cartella(void)
+{
+    static char  nome[DIRENT_NAME_MAX] = "";
+    char         perc[PERC_MAX], domanda[PERC_MAX + 64], avviso[PERC_MAX + 64];
+    unsigned int l;
+
+    sprintf(domanda, "Il nome della cartella nuova, dentro %s:", g_dir);
+    if (!ex_dlg_riga("Nuova cartella", domanda, nome, sizeof(nome))) return;
+    if (nome[0] == '\0') return;
+
+    /* ! A SLASH IN THE NAME IS NOT A NAME. "a/b" would mean two folders, and
+     * mkdir would make zero of them returning ENOENT: better to say what is
+     * wrong than to report the error of a call that should never have left. */
+    if (strchr(nome, '/')) {
+        ex_dlg_avviso("Nuova cartella",
+                      "Il nome di una cartella non puo' contenere una barra: "
+                      "si crea una cartella per volta.");
+        return;
+    }
+
+    strncpy(perc, g_dir, PERC_MAX - 1);
+    perc[PERC_MAX - 1] = '\0';
+    l = (unsigned int)strlen(perc);
+    if (l && perc[l - 1] != '/') { strcat(perc, "/"); l++; }
+    strncat(perc, nome, PERC_MAX - l - 1);
+
+    if (mkdir(perc, 0755) != 0) {
+        /* "It already exists" is said, not swallowed: whoever typed a name
+         * that is taken wants to know now, not when they walk into it. */
+        sprintf(avviso, "Non creata: %s", strerror(errno));
+        ex_dlg_avviso("Nuova cartella", avviso);
+        return;
+    }
+
+    /* ! AND WE STEP INTO IT. A folder made while choosing where to save is
+     * made to hold what is being saved: stopping outside would mean asking for
+     * a double click to finish the gesture. The path under the list says where
+     * we ended up. */
+    entra(nome);
+    nome_metti("");
+}
+
 static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
@@ -214,6 +286,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         if (wp == ID_OK)      { conferma();      break; }
         if (wp == ID_ANNULLA) { g_fatto = 2; return 0; }
         if (wp == ID_SU)      { entra(".."); nome_metti(""); break; }
+        if (wp == ID_NUOVA)   { nuova_cartella(); break; }
 
         /* ! LA LISTA MANDA IL SUO id, come un pulsante, e lp dice COME. Un clic
          * semplice sceglie e basta — un clic che entrasse subito renderebbe
@@ -241,6 +314,27 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         return 0;
 
     case EXM_TASTO:
+        /* ! CTRL+N MAKES A FOLDER, and it is not one more convenience: it is
+         * the ONLY way to get there without a mouse. A button that holds the
+         * focus does not answer Enter (see tasto_al_fuoco in exwin.c: Enter
+         * belongs to the window, not to the control), so tabbing around to
+         * "Nuova cartella" achieves nothing - and on a machine without a
+         * mouse, or with both hands on the keys, the button would be an
+         * ornament.
+         *
+         * ! AND THE BUTTON CAPTION SAYS SO. A shortcut nobody can see exists
+         * only for whoever wrote it.
+         *
+         * ! CTRL DOES NOT REACH THE CHARACTER: the key carries its modifiers in
+         * the high bits (kbd_proto.h), so this is recognised even while the
+         * focus sits in the name box - a text box lets Ctrl through on
+         * purpose. */
+        if (g_salva && (wp & KBD_MOD_CTRL) &&
+            ((wp & KBD_KEY_MASK) | 0x20) == 'n') {
+            nuova_cartella();
+            break;
+        }
+
         /* ! INVIO: SI CONFERMA QUELLO CHE SI VEDE SCRITTO. Se la casella ha un
          * nome, quello vince — e' l'unico modo di dare un nome a un file che
          * ancora non esiste. Se e' vuota, si apre cio' che e' scelto
@@ -258,6 +352,21 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         g_fatto = 2;
         return 0;
 
+    /* ! THE PATH IS REPAINTED HERE, and not only after it changes. The base
+     * painting wipes the client area and knows nothing about the path line:
+     * anything that brings this window back would erase it - and what brings
+     * it back is the server itself, when a window covering it goes away.
+     *
+     * Seen on 22 September 2026 creating a folder from inside the dialog: the
+     * path was updated (ridisegna() did it, at once), and right afterwards came
+     * the paint of the area uncovered by the dialog that had just closed, which
+     * swept it away. Result: the line vanished at the very moment it had
+     * changed, which is when it was the only thing worth looking at. */
+    case EXM_DISEGNA:
+        ex_procedura_base(f, msg, wp, lp);
+        percorso_disegna();
+        return 0;
+
     default:
         return ex_procedura_base(f, msg, wp, lp);
     }
@@ -267,9 +376,18 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 }
 
 /* -----------------------------------------------------------------------------
- * Il dialogo, che e' uno solo con due titoli
+ * The dialog, which is one with two titles - and now with three words the
+ * caller can change
+ *
+ * ! THE THREE WORDS ARE THE TITLE, THE LABEL AND THE BUTTON, and passing zero
+ * gives the usual ones. They are needed because this dialog does not only pick
+ * files: exide picks WHERE to create a project with it, and a window titled
+ * "Salva con nome" offering "Salva" to someone creating a directory is
+ * describing another action. The words of a dialog are known to the caller, as
+ * is already the case for the buttons of ex_dlg_conferma.
  * --------------------------------------------------------------------------- */
-static int dialogo(char *percorso, unsigned int max, int salva)
+static int dialogo(char *percorso, unsigned int max, int salva,
+                   const char *titolo, const char *etichetta, const char *ok)
 {
     ExMsg        m;
     unsigned int sw = 0, sh = 0;
@@ -277,6 +395,10 @@ static int dialogo(char *percorso, unsigned int max, int salva)
 
     g_salva = salva;
     g_fatto = 0;
+
+    if (!titolo)    titolo    = salva ? "Salva con nome" : "Apri";
+    if (!etichetta) etichetta = salva ? "Salva come:"    : "Nome:";
+    if (!ok)        ok        = salva ? "Salva"          : "Apri";
 
     /* La directory di partenza viene da cio' che il chiamante propone. Un
      * dialogo che ricomincia sempre da / farebbe ripercorrere ogni volta la
@@ -300,7 +422,7 @@ static int dialogo(char *percorso, unsigned int max, int salva)
     x = sw > DLG_W ? (int)(sw - DLG_W) / 2 : 0;
     y = sh > DLG_H ? (int)(sh - DLG_H) / 2 : 0;
 
-    g_f = ex_crea("finestra", salva ? "Salva con nome" : "Apri",
+    g_f = ex_crea("finestra", titolo,
                   EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_SOPRA | EX_MODALE,
                   x, y, DLG_W, DLG_H, 0, 0, proc);
     if (g_f == 0) return 0;
@@ -310,17 +432,34 @@ static int dialogo(char *percorso, unsigned int max, int salva)
     if (g_lista == 0) { ex_distruggi(g_f); return 0; }
 
     ex_crea("pulsante", "Su", EX_FIGLIO, AREA_X, 2, 44, 20, g_f, ID_SU, 0);
-    ex_crea("etichetta", salva ? "Salva come:" : "Nome:", EX_FIGLIO,
+
+    /* ! THE NEW FOLDER IS OFFERED ONLY TO WHOEVER IS CHOOSING WHERE TO PUT
+     * SOMETHING. In the "Apri" dialog it would be a button that makes an empty
+     * directory only to find nothing inside it to open. */
+    if (salva)
+        ex_crea("pulsante", "Nuova cartella (Ctrl+N)", EX_FIGLIO,
+                AREA_X + 50, 2, 192, 20, g_f, ID_NUOVA, 0);
+
+    ex_crea("etichetta", etichetta, EX_FIGLIO,
             AREA_X, AREA_Y + AREA_H + 26, 90, 16, g_f, 0, 0);
 
     g_casella = ex_crea("testo", "", EX_FIGLIO,
                         AREA_X + 92, AREA_Y + AREA_H + 22,
                         AREA_W - 92, 22, g_f, 0, 0);
 
-    ex_crea("pulsante", salva ? "Salva" : "Apri", EX_FIGLIO,
-            DLG_W - 180, DLG_H - 32, 80, 24, g_f, ID_OK, 0);
-    ex_crea("pulsante", "Annulla", EX_FIGLIO,
-            DLG_W - 92, DLG_H - 32, 80, 24, g_f, ID_ANNULLA, 0);
+    /* The two buttons are measured on their own caption - the same rule as
+     * ex_dlg_conferma, and for the same reason: one of them is chosen here by
+     * the caller, who does not know how wide a button is. With "Salva" and
+     * "Annulla" they land exactly where they were before. */
+    {
+        int wo = larghezza_pulsante(ok);
+        int wa = larghezza_pulsante("Annulla");
+
+        ex_crea("pulsante", ok, EX_FIGLIO,
+                DLG_W - 20 - wa - wo, DLG_H - 32, wo, 24, g_f, ID_OK, 0);
+        ex_crea("pulsante", "Annulla", EX_FIGLIO,
+                DLG_W - 12 - wa, DLG_H - 32, wa, 24, g_f, ID_ANNULLA, 0);
+    }
 
     /* ! IL FUOCO SI CHIEDE, non si ottiene creando i controlli in un ordine
      * strano. Fino al 17 agosto 2026 la casella si creava PRIMA del pulsante
@@ -351,8 +490,21 @@ static int dialogo(char *percorso, unsigned int max, int salva)
     return 1;
 }
 
-int ex_dlg_apri(char *percorso, unsigned int max)  { return dialogo(percorso, max, 0); }
-int ex_dlg_salva(char *percorso, unsigned int max) { return dialogo(percorso, max, 1); }
+int ex_dlg_apri(char *percorso, unsigned int max)
+{
+    return dialogo(percorso, max, 0, 0, 0, 0);
+}
+
+int ex_dlg_salva(char *percorso, unsigned int max)
+{
+    return dialogo(percorso, max, 1, 0, 0, 0);
+}
+
+int ex_dlg_percorso(const char *titolo, const char *etichetta, const char *ok,
+                    char *percorso, unsigned int max)
+{
+    return dialogo(percorso, max, 1, titolo, etichetta, ok);
+}
 
 /* -----------------------------------------------------------------------------
  * L'avviso: una finestra, un testo, un pulsante
@@ -632,6 +784,13 @@ int ex_dlg_conferma(const char *titolo, const char *testo,
  * e' stato battuto. Rende 0 se si e' annullato, e allora il buffer NON e'
  * stato toccato — chi non lo guarda si ritrova il valore di prima, che e'
  * l'unica cosa che non fa danni.
+ *
+ * ! AND THE BUTTON CAPTION CAN BE CHOSEN BY THE CALLER (ex_dlg_chiedi).
+ * "Va bene" is fine for a word to search for; in front of a window that is
+ * about to CREATE something it says less than "Crea" - which is what pressing
+ * it does. Same reason as the two buttons of ex_dlg_conferma: whoever knows
+ * which action is about to happen is whoever opens the dialog, not the
+ * dialog.
  * --------------------------------------------------------------------------- */
 #define ID_RG_OK    1
 #define ID_RG_NO    2
@@ -663,7 +822,7 @@ static long rg_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
     }
 }
 
-int ex_dlg_riga(const char *titolo, const char *domanda,
+static int riga(const char *titolo, const char *domanda, const char *ok,
                 char *valore, unsigned int max)
 {
     ExFinestra   f;
@@ -690,12 +849,12 @@ int ex_dlg_riga(const char *titolo, const char *domanda,
                            12, 50, 396, 24, f, 0, 0);
 
     {
-        int ws = larghezza_pulsante("Va bene");
+        int ws = larghezza_pulsante(ok);
         int wn = larghezza_pulsante("Annulla");
         int gap = 12;
         int x0  = (420 - (ws + gap + wn)) / 2;
 
-        ex_crea("pulsante", "Va bene", EX_FIGLIO, x0, 96, ws, 26, f, ID_RG_OK, 0);
+        ex_crea("pulsante", ok, EX_FIGLIO, x0, 96, ws, 26, f, ID_RG_OK, 0);
         ex_crea("pulsante", "Annulla", EX_FIGLIO,
                 x0 + ws + gap, 96, wn, 26, f, ID_RG_NO, 0);
     }
@@ -719,4 +878,16 @@ int ex_dlg_riga(const char *titolo, const char *domanda,
 
     ex_distruggi(f);
     return g_rg_fatto == 1;
+}
+
+int ex_dlg_riga(const char *titolo, const char *domanda,
+                char *valore, unsigned int max)
+{
+    return riga(titolo, domanda, "Va bene", valore, max);
+}
+
+int ex_dlg_chiedi(const char *titolo, const char *domanda, const char *ok,
+                  char *valore, unsigned int max)
+{
+    return riga(titolo, domanda, ok ? ok : "Va bene", valore, max);
 }

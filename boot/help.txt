@@ -699,6 +699,21 @@ trasferisce file
 
 Dentro: `get remoto [locale]` scarica, `put locale [remoto]` invia.
 
+[zip unzip]
+archivi ZIP
+
+  zip a.zip uno.txt due.txt        crea l'archivio con quei due file
+  zip -l a.zip                     elenca quello che c'e' dentro
+  zip -x a.zip /disk/fuori         estrae tutto li' dentro
+
+Comprime in «store», cioe' senza comprimere: un archivio cosi' lo aprono
+tutti. In lettura capisce anche «deflate», che e' il metodo di quasi tutti
+gli archivi veri. Un nome che esce dalla destinazione — «../../boot/...» —
+non viene estratto, e lo dice.
+
+Sta sul CD e sui sistemi installati, non sul dischetto: gli serve la
+libreria /exwin/lib/exzip.so.
+
 [nettest tcptest]
 prove dello stack di rete
 

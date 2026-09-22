@@ -41,6 +41,10 @@ static struct {
     int (*avviso)(const char *, const char *);
     int (*conferma)(const char *, const char *, const char *, const char *);
     int (*riga)(const char *, const char *, char *, unsigned int);
+    int (*percorso)(const char *, const char *, const char *,
+                    char *, unsigned int);
+    int (*chiedi)(const char *, const char *, const char *,
+                  char *, unsigned int);
 } P;
 
 static void *chiedi(const ExLibTesta *t, const char *nome)
@@ -71,6 +75,10 @@ static void assicura(void)
                           const char *)) chiedi(t, "ex_dlg_conferma");
     P.riga   = (int (*)(const char *, const char *, char *, unsigned int))
                chiedi(t, "ex_dlg_riga");
+    P.percorso = (int (*)(const char *, const char *, const char *,
+                          char *, unsigned int)) chiedi(t, "ex_dlg_percorso");
+    P.chiedi   = (int (*)(const char *, const char *, const char *,
+                          char *, unsigned int)) chiedi(t, "ex_dlg_chiedi");
 
     P.pronto = 1;
 }
@@ -105,4 +113,18 @@ int ex_dlg_riga(const char *titolo, const char *domanda,
 {
     assicura();
     return P.riga(titolo, domanda, valore, max);
+}
+
+int ex_dlg_percorso(const char *titolo, const char *etichetta, const char *ok,
+                    char *percorso, unsigned int max)
+{
+    assicura();
+    return P.percorso(titolo, etichetta, ok, percorso, max);
+}
+
+int ex_dlg_chiedi(const char *titolo, const char *domanda, const char *ok,
+                  char *valore, unsigned int max)
+{
+    assicura();
+    return P.chiedi(titolo, domanda, ok, valore, max);
 }

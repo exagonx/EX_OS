@@ -55,7 +55,9 @@ FLOPPY=dist/floppy.img
 
 mkdir -p "$(dirname "$IMG")"
 
-if [ ! -f "$FLOPPY" ]; then
+# Il supporto da cui si installa si sceglie piu' in basso (EXOS_SUPPORTO), ma
+# il controllo va fatto prima di scrivere qualunque cosa: si guarda qui.
+if [ "${EXOS_SUPPORTO:-floppy}" != "cd" ] && [ ! -f "$FLOPPY" ]; then
     echo "mkhd: manca $FLOPPY. Lancia prima 'make'." >&2
     exit 1
 fi
@@ -67,7 +69,7 @@ if [ ! -x "$SFDISK" ]; then
     exit 1
 fi
 
-echo "=== Disco avviabile EX-OS: $IMG (${MB} MB) ==="
+echo "=== Disco avviabile EX-OS: $IMG (${MB} MB, da $SUPPORTO) ==="
 
 rm -f "$IMG"
 qemu-img create -f raw "$IMG" "${MB}M" > /dev/null
@@ -101,6 +103,27 @@ echo "--- Formattazione e installazione DENTRO EX-OS (qualche minuto) ---"
 # Le credenziali sono SCRITTE IN CHIARO ed e' voluto: questo e' un disco di
 # prova, e una prova che si avvia deve sapere come entrare. Chi vuole un disco
 # vero fa `install` a mano e le sceglie lui.
+# =============================================================================
+# ! DA QUALE SUPPORTO SI INSTALLA, e non e' una preferenza: cambia COSA c'e'
+# sul disco che ne esce.
+#
+#     EXOS_SUPPORTO=floppy   (predefinito)  il sistema minimo, 1.44 MB
+#     EXOS_SUPPORTO=cd                      tutto: rete, telnetd, netupdate,
+#                                           ExWin, i driver, i manuali
+#
+# Il floppy resta il predefinito perche' e' il supporto d'avvio collaudato e
+# perche' un disco minimo basta a provare quasi tutto. Ma un disco installato
+# DAL FLOPPY non ha i driver di rete — e infatti `hwconfig` gli scrive in
+# /boot/avvio.sh le righe per la scheda che ha trovato, righe che poi
+# l'avvio non riesce a eseguire: «exec: comando non trovato: /dev/e1000.drv».
+#
+# ! CHI PROVA UNA COSA DELL'AVVIO VUOLE IL CD, quindi, o provera' un avvio in
+# cui meta' delle righe non partono — cioe' un avvio che non esiste su nessuna
+# macchina vera. Vale per @AVVIO-LOGIN, e vale per qualunque cosa riguardi
+# l'ordine in cui il sistema si accende.
+# =============================================================================
+SUPPORTO="${EXOS_SUPPORTO:-floppy}"
+
 UTENTE="${EXOS_UTENTE:-mario}"
 PW_ROOT="${EXOS_PW_ROOT:-root}"
 PW_UTENTE="${EXOS_PW_UTENTE:-mario}"
@@ -117,7 +140,28 @@ PW_UTENTE="${EXOS_PW_UTENTE:-mario}"
 # accorgersene se non guardando il registro. Finche' `install` non prende le
 # risposte da un file, questa riga va rivista ogni volta che l'installatore
 # chiede qualcosa di nuovo.
+#
+# ! ED E' SUCCESSO UNA TERZA VOLTA, il 22 settembre 2026: l'installatore adesso
+# chiude offrendo di lanciare `hwconfig` sul disco appena installato, e
+# hwconfig a sua volta chiede «Procedo?». Mancavano DUE risposte, e questo
+# script restava fermo sulla domanda finche' il timeout non lo portava via —
+# con il disco gia' avviabile ma senza la riga «Installazione completata»,
+# cioe' con un errore che accusava l'installatore.
+#
+# ! LE DUE RISPOSTE SONO «si» PER SCELTA. hwconfig riscrive /boot/kernel.cfg e
+# /boot/avvio.sh con i driver della macchina VERA su cui il disco girera': un
+# disco di prova che salta quel passo non e' il disco che si ottiene
+# installando, ed e' proprio su quel file che si provano le cose dell'avvio.
 LINGUA="${EXOS_LINGUA:-1}"
+
+if [ "$SUPPORTO" = "cd" ]; then
+    if [ ! -f dist/exos.iso ]; then
+        echo "mkhd: manca dist/exos.iso. Lancia prima 'make iso-exos'." >&2
+        exit 1
+    fi
+    export EXOS_NO_FLOPPY=1
+    export EXOS_CDROM=dist/exos.iso
+fi
 
 EXOS_QEMU_EXTRA="-drive file=$IMG,format=raw,if=ide" \
     python3 tools/qemu_drive.py \
@@ -129,6 +173,8 @@ EXOS_QEMU_EXTRA="-drive file=$IMG,format=raw,if=ide" \
         "$PW_ROOT@2" "$PW_ROOT@3" \
         "$UTENTE@2" "$PW_UTENTE@2" "$PW_UTENTE@3" \
         "si@60" \
+        "si@30" \
+        "si@90" \
     > /tmp/exos-mkhd.log 2>&1
 
 if ! grep -q "Installazione completata" /tmp/exos-mkhd.log; then

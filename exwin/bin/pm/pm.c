@@ -37,7 +37,7 @@
 #include "exinfo.h"
 
 /* +0.001 a ogni modifica: `pm -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.001"
+#define VERSIONE_APP "0.002"
 EX_VERSIONE("pm", VERSIONE_APP);
 
 #define BARRA_H     28
@@ -47,6 +47,12 @@ EX_VERSIONE("pm", VERSIONE_APP);
 
 #define ID_AVVIO    1
 #define ID_VOCE     100     /* ID_VOCE + n = la voce n del menu */
+/* ! LE CATEGORIE HANNO UNA FASCIA LORO, E LONTANA. ID_CAT + n non deve poter
+ * cadere dentro ID_VOCE + n, o premere una categoria avvierebbe un programma:
+ * sedici applicazioni al massimo (APP_MAX), quindi duecento e' fuori portata
+ * con margine. */
+#define ID_CAT      200     /* ID_CAT + n = la categoria n */
+#define ICONA_LATO   16     /* in una voce alta 24, con l'aria intorno */
 #define ID_ESCI     90
 #define ID_SPEGNI   91
 #define ID_RIAVVIA  95
@@ -73,6 +79,17 @@ EX_VERSIONE("pm", VERSIONE_APP);
 typedef struct {
     char nome[32];
     char percorso[96];
+
+    /* ! IL PERCORSO DELL'ICONA, NON L'ICONA, e la differenza conta: qui si
+     * tiene una riga di file, e l'icona si apre quando il menu si disegna la
+     * prima volta. Aprirle tutte all'avvio vorrebbe dire leggere e
+     * decodificare venti file per una scrivania che magari nessuno apre. */
+    char icona[96];
+    ExIcona ic;                 /* 0 = non ancora aperta, o non c'e' */
+
+    /* Vuota = la voce sta in cima al menu; piena = sta dentro quella
+     * categoria, che nel menu si apre di lato. */
+    char categoria[32];
 } App;
 
 static App          g_app[APP_MAX];
@@ -89,6 +106,11 @@ static char g_avvio[96]  = "";
 static char g_elenco[96] = "";
 
 static ExFinestra g_barra, g_menu = 0;
+
+/* Il sottomenu di una categoria, e quale: vedi sotto_apri(). */
+static ExFinestra   g_sotto = 0;
+static unsigned int g_sotto_cat = 0;
+static int          g_menu_y = 0;       /* dove comincia il menu, per il lato */
 
 /* ! «RIAVVIA» SI RICORDA, NON SI ESEGUE SUBITO. Il perche' sta accanto a
  * ID_RIAVVIA in barra_proc: prima la scrivania se ne va per bene, poi la
@@ -120,12 +142,42 @@ static void applicazioni_leggi(const char *percorso)
         strncpy(g_elenco, percorso, sizeof(g_elenco) - 1);
         g_elenco[sizeof(g_elenco) - 1] = '\0';
     }
-    char buf[2048];
-    int n, i, r = 0;
+    /* ! IL FILE SI LEGGE IN UN BOCCONE, E IL BOCCONE DEV'ESSERE PIU' GRANDE
+     * DEL FILE. Erano 2048 byte, e il 22 settembre 2026 il file e' arrivato a
+     * 2897 aggiungendo le righe che spiegano icone e categorie: la read si
+     * fermava a meta' del commento in testa e le VOCI, che stanno in fondo,
+     * non si leggevano nemmeno. Il menu si apriva senza una sola applicazione
+     * e senza dire niente — il difetto piu' fastidioso di tutti, perche'
+     * somiglia a «il file non c'e'».
+     *
+     * ! E ADESSO SI LEGGE FINCHE' C'E', poi si DICE se non ci stava. Un tetto
+     * resta (non si alloca), ma un tetto superato che si annuncia e' un
+     * limite; un tetto superato in silenzio e' un guasto. */
+    char buf[8192];
+    int n, i, r = 0, letti = 0;
     char riga[160];
 
     if (fd < 0) return;
-    n = (int)read(fd, buf, sizeof(buf) - 1);
+
+    while (letti < (int)sizeof(buf) - 1) {
+        int q = (int)read(fd, buf + letti, (unsigned int)((int)sizeof(buf) - 1 - letti));
+
+        if (q <= 0) break;
+        letti += q;
+    }
+    n = letti;
+
+    /* Se il file continua oltre il buffer, le voci che restano fuori
+     * sparirebbero senza un perche': lo si scrive sulla seriale, che qui e'
+     * l'unico posto dove si possa dire qualcosa. */
+    {
+        char resto[8];
+
+        if (read(fd, resto, 1) == 1)
+            log_seriale("pm: applicazioni.txt e' piu' lungo di 8 KB: "
+                        "le voci in fondo non le vedo");
+    }
+
     close(fd);
     if (n <= 0) return;
     buf[n] = '\0';
@@ -164,13 +216,53 @@ static void applicazioni_leggi(const char *percorso)
             p = barra + 1;
             while (*p == ' ' || *p == '\t') p++;
 
-            taglia(riga);
-            taglia(p);
-            if (riga[0] == '\0' || p[0] == '\0') continue;
+            /* ! IL TERZO CAMPO E' FACOLTATIVO, e le righe vecchie restano
+             * righe buone: un file scritto prima che le icone esistessero si
+             * legge tale e quale, e quelle voci semplicemente non ne hanno
+             * una. Un formato nuovo che invalidasse il file di ieri sarebbe
+             * un aggiornamento che spegne la scrivania. */
+            {
+                char *b2 = strchr(p, '|');
+                char *ico = 0;
 
-            strncpy(g_app[g_app_n].nome, riga, sizeof(g_app[0].nome) - 1);
-            strncpy(g_app[g_app_n].percorso, p, sizeof(g_app[0].percorso) - 1);
-            g_app_n++;
+                if (b2) {
+                    *b2 = '\0';
+                    ico = b2 + 1;
+                    while (*ico == ' ' || *ico == '\t') ico++;
+                    taglia(ico);
+                }
+
+                taglia(riga);
+                taglia(p);
+                if (riga[0] == '\0' || p[0] == '\0') continue;
+
+                memset(&g_app[g_app_n], 0, sizeof(App));
+
+                /* ! LA CATEGORIA E' UNA BARRA NEL NOME, e non una direttiva
+                 * nuova: «Grafica/Editor» vuol dire la voce «Editor» dentro
+                 * «Grafica». Un file che elenca le voci in ordine descrive
+                 * gia' un albero se i nomi lo dicono, e chi lo apre con un
+                 * editore di testo capisce cos'e' senza leggere niente. */
+                {
+                    char *slash = strchr(riga, '/');
+
+                    if (slash) {
+                        *slash = '\0';
+                        taglia(riga);
+                        strncpy(g_app[g_app_n].categoria, riga,
+                                sizeof(g_app[0].categoria) - 1);
+                        memmove(riga, slash + 1, strlen(slash + 1) + 1);
+                        taglia(riga);
+                        if (riga[0] == '\0') continue;
+                    }
+                }
+
+                strncpy(g_app[g_app_n].nome, riga, sizeof(g_app[0].nome) - 1);
+                strncpy(g_app[g_app_n].percorso, p, sizeof(g_app[0].percorso) - 1);
+                if (ico && ico[0])
+                    strncpy(g_app[g_app_n].icona, ico, sizeof(g_app[0].icona) - 1);
+                g_app_n++;
+            }
         }
     }
 }
@@ -252,7 +344,21 @@ static int applicazioni_scrivi(void)
     for (i = 0; ok && i < g_app_n; i++) {
         char r[160];
 
-        sprintf(r, "%s | %s\n", g_app[i].nome, g_app[i].percorso);
+        /* ! SI RISCRIVE TUTTO QUEL CHE SI E' LETTO, categoria e icona
+         * comprese: un file riscritto da questo programma che perdesse i
+         * campi che non sa mostrare sarebbe un programma che cancella il
+         * lavoro di chi ha scritto il file a mano. */
+        if (g_app[i].categoria[0] && g_app[i].icona[0])
+            sprintf(r, "%s/%s | %s | %s\n", g_app[i].categoria, g_app[i].nome,
+                    g_app[i].percorso, g_app[i].icona);
+        else if (g_app[i].categoria[0])
+            sprintf(r, "%s/%s | %s\n", g_app[i].categoria, g_app[i].nome,
+                    g_app[i].percorso);
+        else if (g_app[i].icona[0])
+            sprintf(r, "%s | %s | %s\n", g_app[i].nome, g_app[i].percorso,
+                    g_app[i].icona);
+        else
+            sprintf(r, "%s | %s\n", g_app[i].nome, g_app[i].percorso);
         ok = scrivi_tutto(fd, r);
     }
 
@@ -531,15 +637,142 @@ static long menu_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp);
 
 static void menu_chiudi(void)
 {
-    if (g_menu) { ex_distruggi(g_menu); g_menu = 0; }
+    /* ! IL SOTTOMENU SE NE VA COL PADRE. E' una finestra a se', quindi
+     * chiudere il menu senza chiudere lui lascerebbe sullo schermo un elenco
+     * che non appartiene piu' a niente - e che a premerlo avvierebbe ancora i
+     * suoi programmi. */
+    if (g_sotto) { ex_distruggi(g_sotto); g_sotto = 0; }
+    if (g_menu)  { ex_distruggi(g_menu);  g_menu = 0; }
+}
+
+/* =============================================================================
+ * LE CATEGORIE, E IL SOTTOMENU CHE SI APRE DI LATO
+ *
+ * ! LE CATEGORIE NON SONO UN ELENCO A PARTE: si ricavano dalle voci, nell'ordine
+ * in cui compaiono nel file. Tenerne una seconda lista vorrebbe dire una lista
+ * da tenere d'accordo con la prima, e una categoria rimasta vuota perche'
+ * qualcuno ha tolto l'ultima applicazione che c'era dentro.
+ * ========================================================================== */
+static char         g_cat[APP_MAX][32];
+static unsigned int g_cat_n;
+
+static void categorie_raccogli(void)
+{
+    unsigned int i, k;
+
+    g_cat_n = 0;
+    for (i = 0; i < g_app_n; i++) {
+        if (!g_app[i].categoria[0]) continue;
+
+        for (k = 0; k < g_cat_n; k++)
+            if (strcmp(g_cat[k], g_app[i].categoria) == 0) break;
+
+        if (k == g_cat_n && g_cat_n < APP_MAX) {
+            strncpy(g_cat[g_cat_n], g_app[i].categoria, sizeof(g_cat[0]) - 1);
+            g_cat[g_cat_n][sizeof(g_cat[0]) - 1] = '\0';
+            g_cat_n++;
+        }
+    }
+}
+
+/* L'icona di una voce, aperta la prima volta che serve.
+ *
+ * ! SI APRE UNA VOLTA SOLA ANCHE SE NON C'E'. Un percorso sbagliato rende 0, e
+ * senza questa memoria il menu riproverebbe ad aprire quel file a ogni
+ * disegno: una lettura fallita per voce, ogni volta. */
+static ExIcona icona_di(App *a)
+{
+    if (a->ic == 0 && a->icona[0]) {
+        a->ic = ex_icona_apri(a->icona);
+        if (a->ic == 0) a->icona[0] = '\0';   /* non ci si riprova */
+    }
+    return a->ic;
+}
+
+/* L'icona che rappresenta una categoria: quella della sua prima voce.
+ *
+ * ! UNA CATEGORIA NON HA UN FILE SUO, e darle una riga nel formato vorrebbe
+ * dire un secondo tipo di riga da spiegare a chi scrive il file a mano. La
+ * prima voce che ci sta dentro e' una scelta che si capisce da sola. */
+static ExIcona icona_categoria(unsigned int c)
+{
+    unsigned int i;
+
+    for (i = 0; i < g_app_n; i++)
+        if (strcmp(g_app[i].categoria, g_cat[c]) == 0)
+            return icona_di(&g_app[i]);
+    return 0;
+}
+
+static void sotto_chiudi(void)
+{
+    if (g_sotto) { ex_distruggi(g_sotto); g_sotto = 0; }
+}
+
+static long menu_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp);
+
+/* Apre l'elenco di una categoria ACCANTO alla sua voce.
+ *
+ * ! SI APRE AL CLIC E NON AL PASSAGGIO DEL PUNTATORE, e non e' una scelta di
+ * gusto: il server manda il bottone giu' e il bottone su, non il movimento
+ * (WIN_EV_MOUSE_MOSSO e' nel protocollo e non lo manda ancora nessuno). Un
+ * sottomenu che si aprisse al passaggio, qui, non si aprirebbe mai.
+ *
+ * ! E STA ACCANTO, NON SOPRA: il menu principale resta visibile, cosi' si vede
+ * DA DOVE si e' scesi. E' la stessa forma dei menu a cascata di ogni scrivania
+ * dal 1990 in poi. */
+static void sotto_apri(unsigned int c, int y_voce)
+{
+    unsigned int i, n = 0;
+    int h, y;
+
+    sotto_chiudi();
+    if (c >= g_cat_n) return;
+
+    for (i = 0; i < g_app_n; i++)
+        if (strcmp(g_app[i].categoria, g_cat[c]) == 0) n++;
+    if (n == 0) return;
+
+    h = (int)n * VOCE_H + 8;
+
+    /* ! SI ALZA SE NON CI STA, invece di finire sotto il bordo dello schermo.
+     * Una categoria in fondo al menu con dentro otto voci uscirebbe dallo
+     * schermo, e le ultime non si potrebbero premere. */
+    y = y_voce;
+    if (y + h > (int)g_sh - BARRA_H) y = (int)g_sh - BARRA_H - h - 2;
+    if (y < 0) y = 0;
+
+    g_sotto = ex_crea("finestra", "", EX_BORDO | EX_SOPRA,
+                      4 + MENU_W + 2, y, MENU_W, h, 0, 0, menu_proc);
+    if (!g_sotto) return;
+
+    g_sotto_cat = c;
+
+    n = 0;
+    for (i = 0; i < g_app_n; i++) {
+        ExFinestra b;
+
+        if (strcmp(g_app[i].categoria, g_cat[c]) != 0) continue;
+
+        b = ex_crea("pulsante", g_app[i].nome, EX_FIGLIO,
+                    4, 4 + (int)n * VOCE_H, MENU_W - 8, VOCE_H - 2,
+                    g_sotto, ID_VOCE + i, 0);
+        ex_icona_metti(b, icona_di(&g_app[i]), ICONA_LATO);
+        n++;
+    }
+
+    ex_procedura_base(g_sotto, EXM_DISEGNA, 0, 0);
+    ex_aggiorna(g_sotto);
 }
 
 static void menu_apri(void)
 {
-    unsigned int i;
+    unsigned int i, riga = 0;
     int h;
 
     if (g_menu) { menu_chiudi(); return; }   /* premuto due volte: si chiude */
+
+    categorie_raccogli();
 
     /* ! «ESCI» E «SPEGNI» CI SONO ANCHE SENZA APPLICAZIONI. Un menu che si
      * rifiutasse di aprirsi perche' l'elenco e' vuoto lascerebbe senza modo
@@ -549,42 +782,74 @@ static void menu_apri(void)
      * «Esci», «Spegni». */
     /* Sei voci sotto la riga: Applicazioni, Informazioni, Impostazioni,
      * Esci, Riavvia, Spegni. Il numero sta qui e non sparso nelle posizioni. */
-    h = (int)(g_app_n * VOCE_H) + 8 + 6 * VOCE_H + 6;
+    /* Quante righe in cima: una per categoria, piu' le voci che non ne hanno
+     * nessuna. Le altre stanno nei sottomenu e non occupano posto qui. */
+    {
+        unsigned int fuori = 0;
 
+        for (i = 0; i < g_app_n; i++)
+            if (!g_app[i].categoria[0]) fuori++;
+
+        h = (int)((g_cat_n + fuori) * VOCE_H) + 8 + 6 * VOCE_H + 6;
+    }
+
+    g_menu_y = (int)g_sh - BARRA_H - h - 2;
     g_menu = ex_crea("finestra", "", EX_BORDO | EX_SOPRA,
-                     4, (int)g_sh - BARRA_H - h - 2, MENU_W, h, 0, 0, menu_proc);
+                     4, g_menu_y, MENU_W, h, 0, 0, menu_proc);
     if (!g_menu) return;
 
-    for (i = 0; i < g_app_n; i++)
-        ex_crea("pulsante", g_app[i].nome, EX_FIGLIO,
-                4, 4 + (int)i * VOCE_H, MENU_W - 8, VOCE_H - 2,
-                g_menu, ID_VOCE + i, 0);
+    /* ! PRIMA LE CATEGORIE, POI LE VOCI SCIOLTE. Le prime aprono un elenco, le
+     * seconde avviano un programma: mescolarle vorrebbe dire due gesti diversi
+     * a righe alterne. La freccia in fondo al nome dice quali sono quali. */
+    for (i = 0; i < g_cat_n; i++) {
+        char        t[40];
+        ExFinestra  b;
+
+        sprintf(t, "%s...", g_cat[i]);
+        b = ex_crea("pulsante", t, EX_FIGLIO,
+                    4, 4 + (int)riga * VOCE_H, MENU_W - 8, VOCE_H - 2,
+                    g_menu, ID_CAT + i, 0);
+        ex_icona_metti(b, icona_categoria(i), ICONA_LATO);
+        riga++;
+    }
+
+    for (i = 0; i < g_app_n; i++) {
+        ExFinestra b;
+
+        if (g_app[i].categoria[0]) continue;    /* sta in un sottomenu */
+
+        b = ex_crea("pulsante", g_app[i].nome, EX_FIGLIO,
+                    4, 4 + (int)riga * VOCE_H, MENU_W - 8, VOCE_H - 2,
+                    g_menu, ID_VOCE + i, 0);
+        ex_icona_metti(b, icona_di(&g_app[i]), ICONA_LATO);
+        riga++;
+    }
 
     /* Una riga a separare le applicazioni da cio' che spegne le cose: sono
      * due categorie diverse, e un clic sbagliato costa molto di piu' da una
      * parte che dall'altra. */
     ex_crea("separatore", "", EX_FIGLIO,
-            6, 6 + (int)g_app_n * VOCE_H, MENU_W - 12, 2, g_menu, 0, 0);
+            6, 6 + (int)riga * VOCE_H, MENU_W - 12, 2, g_menu, 0, 0);
 
     /* ! «APPLICAZIONI...» STA SOTTO LA RIGA, con «Esci» e «Spegni», e non fra
      * le applicazioni: non e' un programma da avviare, e' una cosa che la
      * scrivania sa fare. Metterla in mezzo alle voci vorrebbe anche dire che
      * si sposta ogni volta che se ne aggiunge una. */
     ex_crea("pulsante", "Applicazioni...", EX_FIGLIO,
-            4, 10 + (int)g_app_n * VOCE_H, MENU_W - 8, VOCE_H - 2,
+            4, 10 + (int)riga * VOCE_H, MENU_W - 8, VOCE_H - 2,
             g_menu, ID_GESTISCI, 0);
     /* ! «INFORMAZIONI SU» STA CON LE COSE CHE SA FARE LA SCRIVANIA, sotto la
      * riga, e non fra le applicazioni: la scrivania non ha una barra dei menu
      * dove metterla — la sua barra e' quella delle finestre aperte — e questo
      * e' l'unico menu che ha. */
     ex_crea("pulsante", "Informazioni su", EX_FIGLIO,
-            4, 10 + (int)(g_app_n + 1) * VOCE_H, MENU_W - 8, VOCE_H - 2,
+            4, 10 + (int)(riga + 1) * VOCE_H, MENU_W - 8, VOCE_H - 2,
             g_menu, ID_INFO, 0);
     ex_crea("pulsante", "Impostazioni...", EX_FIGLIO,
-            4, 10 + (int)(g_app_n + 2) * VOCE_H, MENU_W - 8, VOCE_H - 2,
+            4, 10 + (int)(riga + 2) * VOCE_H, MENU_W - 8, VOCE_H - 2,
             g_menu, ID_IMPOST, 0);
     ex_crea("pulsante", "Esci", EX_FIGLIO,
-            4, 10 + (int)(g_app_n + 3) * VOCE_H, MENU_W - 8, VOCE_H - 2,
+            4, 10 + (int)(riga + 3) * VOCE_H, MENU_W - 8, VOCE_H - 2,
             g_menu, ID_ESCI, 0);
     /* ! «RIAVVIA» STA FRA «ESCI» E «SPEGNI», ed e' il posto giusto per due
      * ragioni. La prima e' l'ordine di gravita': si esce dalla scrivania, si
@@ -599,10 +864,10 @@ static void menu_apri(void)
      * comando deve stare nel menu invece che in una console di testo che chi
      * e' nella grafica non sta guardando. */
     ex_crea("pulsante", "Riavvia", EX_FIGLIO,
-            4, 10 + (int)(g_app_n + 4) * VOCE_H, MENU_W - 8, VOCE_H - 2,
+            4, 10 + (int)(riga + 4) * VOCE_H, MENU_W - 8, VOCE_H - 2,
             g_menu, ID_RIAVVIA, 0);
     ex_crea("pulsante", "Spegni", EX_FIGLIO,
-            4, 10 + (int)(g_app_n + 5) * VOCE_H, MENU_W - 8, VOCE_H - 2,
+            4, 10 + (int)(riga + 5) * VOCE_H, MENU_W - 8, VOCE_H - 2,
             g_menu, ID_SPEGNI, 0);
 
     ex_procedura_base(g_menu, EXM_DISEGNA, 0, 0);
@@ -735,6 +1000,23 @@ static void avvia(unsigned int n)
 static long menu_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 {
     if (msg == EXM_COMANDO) {
+        /* ! UNA CATEGORIA NON CHIUDE IL MENU, LO ALLARGA, ed e' l'unica voce
+         * che si comporta cosi'. Tutte le altre fanno qualcosa e se ne vanno;
+         * questa apre l'elenco accanto, e il menu deve restare per far vedere
+         * da dove si e' scesi. Per questo il controllo sta PRIMA della
+         * chiusura, invece che fra le altre voci. */
+        if (wp >= ID_CAT && wp < ID_CAT + APP_MAX) {
+            unsigned int c = wp - ID_CAT;
+
+            /* Premuta due volte: si richiude, come il pulsante «Avvio». */
+            if (g_sotto && g_sotto_cat == c) { sotto_chiudi(); return 0; }
+
+            /* La voce `c` sta alla riga `c` del menu (le categorie sono le
+             * prime): il sottomenu si apre alla sua altezza. */
+            sotto_apri(c, g_menu_y + 4 + (int)c * VOCE_H);
+            return 0;
+        }
+
         menu_chiudi();
 
         /* =================================================================

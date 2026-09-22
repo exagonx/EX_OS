@@ -101,6 +101,74 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### Le icone: un'API del toolkit, e il menu della scrivania che la usa
+
+**testato in QEMU** — `ex_icona_apri` / `ex_icona_disegna` / `ex_icona_metti`
+stanno in `exwin.so`, cioè in ciò che ogni programma grafico collega già: le
+icone sono di tutti, non di un programma solo. Il peso vero — la decodifica di
+PNG, JPG e ICO — resta in `eximg.so`, che si apre solo davanti alla prima
+icona che non sia un BMP.
+
+! **Un'icona non è un'immagine disegnata una volta**, ed è per questo che ha
+funzioni sue: un menu si ridisegna a ogni apertura, e con `ex_immagine()`
+sarebbero dieci letture di file e dieci decodifiche ogni volta. Si apre una
+volta, si tiene, e l'ultima resa (misura + sfondo) resta pronta.
+
+! **Il riduttore serviva davvero.** Le icone nascono a 64 e 128 pixel, una voce
+di menu è alta 24. Fa la **media** dei pixel che collassano in uno: prendere
+quello in mezzo, su un rimpicciolimento di quattro volte, butta quindici pixel
+su sedici e i bordi sottili spariscono a chiazze.
+
+! **E `eximg` buttava l'alfa.** Nel codice c'era scritto: *«la maschera a 1 bit
+si salta... il giorno che [il server] saprà fondere, è lì che si andrà a
+prenderla»*. Quel giorno era questo — a fondere non è il server ma il toolkit —
+e senza alfa le icone uscivano come quadrati di puro sfondo: invisibili, cioè
+«non si caricano» mentre si stavano disegnando benissimo.
+
+Nel menu **Avvio**: icona prima del nome, e **categorie** che si aprono di
+fianco. Una barra nel nome basta a farne una — `Strumenti/Editor` — e non si
+dichiarano da nessun'altra parte.
+
+### Gli archivi ZIP: una libreria, un comando e una finestra
+
+**testato in QEMU, e da un lettore estraneo** — `lib/exzip` sa di ZIP e non sa
+di finestre; `/bin/zip` e `/exwin/bin/archivi` chiamano le stesse nove
+funzioni.
+
+```
+zip a.zip uno.txt due.txt        crea
+zip -l a.zip                     elenca
+zip -x a.zip /disk/fuori         estrae
+```
+
+Scrive in «store» e legge anche **deflate**, perché il pezzo difficile c'era
+già: `lib/eximg/inflate.c` decodifica DEFLATE da mesi per PNG, GIF e i font.
+
+! **La prova che conta è quella di chi non ha scritto il formato**: l'archivio
+fatto da EX-OS lo apre `unzip -t` di Info-ZIP. Un archiviatore che rilegge i
+propri archivi prova soltanto di essere coerente con sé stesso.
+
+### La pagina d'accesso non si fa più coprire dai messaggi dell'avvio
+
+**testato in QEMU su un disco installato** — `login` aspetta che la console
+taccia (fino a 1500 ms, misurati) prima di stampare la richiesta del nome, e
+intanto ascolta la tastiera: chi sta già battendo non aspetta niente.
+
+! **La `waitpid` c'era, e aspettava la cosa sbagliata**: metà di
+`/boot/avvio.sh` sono righe che finiscono con `&`, e quei processi sono
+**nipoti** — figli della shell dello script. Quando `waitpid` torna sono vivi,
+hanno la console e non hanno ancora parlato.
+
+### Il progetto nuovo di EX-IDE sceglie dove, e se lo ricorda
+
+**testato in QEMU, su due avvii** — Ctrl+N apre il dialogo dei file con
+l'albero e il pulsante **«Nuova cartella (Ctrl+N)»**; la casa si chiede a
+`HOME` e l'ultima directory usata sta in `$HOME/.app/exide/`.
+
+! **Il pulsante sta nel dialogo, non nel programma**: `ex_dlg_salva` ce l'ha
+per tutti, e l'archiviatore ZIP — scritto poche ore dopo — se l'è trovato
+pronto senza fare niente.
+
 ### `wserver` usa il motore 2D dove c'è, e disegna da sé dove non c'è
 
 **testato in QEMU per il ramo software, sul ferro per il protocollo** — il
@@ -2110,7 +2178,7 @@ rileggere subito renderebbe lo stesso messaggio all'infinito.
 | `/exwin/bin/wserver` compone le finestre e muove il puntatore, **in ring 3 e senza privilegi** | testato |
 | Toolkit **ExWin** in stile Win32, con header per **C, C++ e FreeBASIC** | testato |
 | Controlli: finestra, pulsante, etichetta, casella di testo, riquadro, separatore, intestazione, terminale | testato |
-| `exwin` accende la grafica su una **console sua**: con Alt+F2 ci si va, con Alt+F1 si torna alla shell | testato |
+| `exwin` accende la grafica sulla **console 5**: con Alt+F5 ci si va, con Alt+F1 si torna alla shell | testato |
 | Una **shell dentro una finestra**, su due pipe | testato |
 | Sfondo da immagine: oggi BMP, e la tabella dei lettori è già quella giusta per JPG, PNG e ICO | testato |
 
@@ -2346,7 +2414,7 @@ sondaggio VBE vive: `bootloader/stage2/loader.asm`.
 Il kernel riceve indirizzo, pitch, dimensioni e profondità in `BootInfo` e
 disegna la console nel framebuffer con il font 8×16 di
 `kernel/arch/x86/font8x16.c`. Il resto del file `vga.c` non se n'è accorto:
-tutta la console — scorrimento, parser ANSI, quattro console virtuali,
+tutta la console — scorrimento, parser ANSI, cinque console virtuali,
 cancellazioni — lavora sul proprio array di celle, e sono `riversa_cella()`,
 `riversa_tutto()` e il cursore a sapere dove finiscono davvero.
 
@@ -3142,16 +3210,23 @@ un comando — la console morirebbe. Due meccanismi lo impediscono:
 
 ---
 
-## Console virtuali — Alt+F1 … Alt+F4
+## Console virtuali — Alt+F1 … Alt+F5
 
-Quattro schermi indipendenti, uno solo visibile per volta, ognuno con la propria
-shell avviata al boot. **Alt+F1..F4** commuta: il programma che stava girando
-non viene sospeso né chiuso, continua a lavorare e a disegnare nel proprio
-buffer, e si ritrova lo schermo intatto quando ci si torna sopra.
+**Cinque** schermi indipendenti (`VGA_N_CONSOLE`), uno solo visibile per volta,
+ognuno con la propria shell — o il proprio `login` — avviata al boot.
+**Alt+F1..F5** commuta: il programma che stava girando non viene sospeso né
+chiuso, continua a lavorare e a disegnare nel proprio buffer, e si ritrova lo
+schermo intatto quando ci si torna sopra.
 
 È la risposta alla domanda "come lancio un'altra cosa senza chiudere questa":
 apri `gfedit` sulla console 2, premi Alt+F3, hai un prompt pulito, e Alt+F2 ti
 riporta all'editor esattamente dove l'avevi lasciato.
+
+! **La grafica vive sulla console 5.** `exwin` fa ripartire il server a
+finestre là sopra e lo dice all'avvio (`grafica accesa sulla console 5`): da
+una console di testo ci si va con **Alt+F5**, e con **Alt+F1** si torna alla
+shell. È anche il motivo per cui una prova che pilota la scrivania batte
+`Alt+F1` prima di lanciare un'applicazione e `Alt+F5` subito dopo.
 
 | | |
 |---|---|
@@ -3299,8 +3374,8 @@ non risponderebbe.
 ## L'interfaccia grafica in pratica
 
 ```
-exwin                       accende la grafica su una console sua
-                            Alt+F2 ci va, Alt+F1 torna alla shell
+exwin                       accende la grafica sulla console 5
+                            Alt+F5 ci va, Alt+F1 torna alla shell
 
 /exwin/bin/pm               la scrivania (la avvia exwin da sola)
 /exwin/bin/filemgr [DIR]    il file manager
@@ -3308,18 +3383,32 @@ exwin                       accende la grafica su una console sua
 /exwin/bin/term [PROG]      il terminale in finestra (senza PROG: la shell)
 /exwin/bin/browser [URL]    il navigatore (un percorso assoluto diventa file:)
 /exwin/bin/exide [DIR]      l'ambiente di sviluppo visuale
+/exwin/bin/archivi [ZIP]    gli archivi ZIP: apre, estrae, crea
 /exwin/bin/fontprova        la prova dei font TrueType, fatta per essere vista
 /exwin/bin/orologio         data e ora nell'angolo della barra
 ```
 
 Avviata la grafica, la shell **resta viva sulla console 0**: si continua a
-lavorare da lì e con `Alt+F2` si passa alla scrivania.
+lavorare da lì e con `Alt+F5` si passa alla scrivania.
 
 **Dalla scrivania si aprono dal menu Avvio**, che legge le voci da
-`/exwin/lib/applicazioni.txt` — una riga per applicazione, `nome mostrato |
-percorso`. La voce **Applicazioni...** dello stesso menu aggiunge e toglie
-righe da quel file, e la direttiva `@avvio <percorso>` dice quale programma
-parte da solo con la scrivania (è così che l'orologio si trova già lì).
+`/exwin/lib/applicazioni.txt`. Una riga per applicazione, con un terzo campo
+**facoltativo** per l'icona:
+
+```
+Nome mostrato          | /percorso/eseguibile | /percorso/icona.ico
+Strumenti/Editor       | /exwin/bin/edit      | /exwin/icon/baseapp/edit_64.ico
+```
+
+! **Una barra nel nome fa una categoria.** `Strumenti/Editor` è la voce
+«Editor» dentro «Strumenti»: nel menu le categorie stanno in cima e aprono un
+elenco **di fianco**, con le loro icone. Non si dichiarano da nessun'altra
+parte — esistono finché c'è una voce che le nomina.
+
+La voce **Applicazioni...** dello stesso menu aggiunge e toglie righe da quel
+file (e rimette al loro posto categoria e icona di ciò che non mostra), e la
+direttiva `@avvio <percorso>` dice quale programma parte da solo con la
+scrivania (è così che l'orologio si trova già lì).
 
 ! **AGGIUNGERE UN'APPLICAZIONE È UNA RIGA, NON UNA RICOMPILAZIONE**, e il file
 resta leggibile e modificabile a mano apposta: un file di configurazione che
@@ -3327,7 +3416,7 @@ solo un programma sa scrivere è un file che non si può riparare quando quel
 programma non parte.
 
 ! **DALLA SHELL SI LANCIANO COL COMANDO, MA PRIMA DI COMMUTARE.** Battendo il
-comando *dopo* `Alt+F2` i tasti vanno al server grafico, non alla shell — e
+comando *dopo* `Alt+F5` i tasti vanno al server grafico, non alla shell — e
 sembra che il sistema si sia bloccato. È la stessa separazione che rende
 possibile tutto il resto, vista dal lato scomodo.
 
@@ -5522,7 +5611,7 @@ autoexec> dhcp
 Dopo l'avvio `ping` e `ftp` funzionano senza toccare niente.
 
 ! **Lo esegue solo la shell della PRIMA console.** EX-OS ne avvia una per
-ognuna delle quattro console virtuali: senza questo controllo l'autoexec
+ognuna delle cinque console virtuali: senza questo controllo l'autoexec
 girerebbe quattro volte, e per `/dev/pci.drv &` significherebbe quattro
 processi che si contendono lo stesso servizio.
 

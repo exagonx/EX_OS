@@ -137,6 +137,24 @@
 # =============================================================================
 /FreeBASIC-*-source-bootstrap/
 
+# =============================================================================
+# gnu/ — I SORGENTI DI TERZI DA CUI PORTARE, SCARICATI E BASTA
+#
+# Ci finiscono gli archivi presi da fuori mentre si decide cosa portare: il 22
+# settembre 2026 ci sono gnu_tar-master.zip e zstd-dev.zip, chiesti per il
+# porting di tar e gz (vedi @TAR-GZ in in_lavorazione.txt).
+#
+# ! STESSA REGOLA DI /gcc/, /openssl/ E DEGLI ALTRI: codice di terzi, con le
+# sue licenze e i suoi milioni di righe, non entra nella cronologia di questo
+# repository. Quel che sara' NOSTRO — il porting — nascera' sotto bin/ o
+# lib/ come tutto il resto, e quello si' che si committa.
+#
+# ! E LA REGOLA E' LARGA APPOSTA, non nomina i file: domani ci sara' un altro
+# archivio, e una regola che elenca smette di valere proprio quando serve. E'
+# la lezione del FreeBASIC qui sopra, che nominava la versione.
+# =============================================================================
+/gnu/
+
 # ! E LA DIRECTORY DOVE SI SCOMPATTANO LE ALTRE VERSIONI. Serve a provare a
 # costruire un FreeBASIC piu' nuovo dentro EX-OS senza buttare via quello che
 # gia' funziona: si scompatta li' dentro e si punta FB_SORGENTI_CD a

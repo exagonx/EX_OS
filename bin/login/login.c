@@ -77,7 +77,7 @@
 #include "exuser.h"
 
 /* +0.001 a ogni modifica: `login -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("login", "0.002");
+EX_VERSIONE("login", "0.003");
 
 #define UTENTI     "/boot/utenti"    /* nome:uid:gid — pubblico */
 #define OMBRA      "/boot/ombra"     /* nome:sale:impronta — di root */
@@ -442,8 +442,71 @@ static int utente_ammesso(const char *nome)
  * ! E SI ASPETTA DAVVERO. Lanciarlo e tirare dritto vorrebbe dire il prompt
  * d'accesso mescolato ai messaggi dei driver — e, peggio, un utente che entra
  * mentre il sistema si sta ancora accendendo.
+ *
+ * ! AND WAITING FOR THE SCRIPT IS ONLY HALF OF IT: the lines it starts with "&"
+ * outlive it and keep the console. That is what aspetta_che_taccia() is for,
+ * right below - the promise above was true for the script and false for its
+ * children, which is the case that reached the person in front of the machine.
  * ============================================================================= */
 #define AVVIO_SCRIPT  "/boot/avvio.sh"
+
+/* =============================================================================
+ * WAITING FOR THE SYSTEM TO STOP TALKING
+ *
+ * ! waitpid() ON THE SCRIPT IS NOT THE SAME AS "THE BOOT IS OVER", and the
+ * comment above used to promise it was. Half of /boot/avvio.sh is lines ending
+ * in "&" - pci.drv, telnetd, e1000.drv, ip.drv, ehci.drv, ohci.drv, automount,
+ * sis.drv - and the last two are started one line before the script's final
+ * echo. Those children belong to the script's SHELL, not to the script: when
+ * waitpid() returns they are alive, they still have the console, and they have
+ * not said their piece yet. The access page was printed straight into that
+ * stream, so a driver announcing itself landed on top of it - and the person in
+ * front of the machine saw a prompt that looked stuck until they pressed Enter
+ * and the loop drew the page again. Reported on 22 September 2026.
+ *
+ * ! SO WE WAIT FOR QUIET INSTEAD OF WAITING FOR THE SCRIPT. There is no way to
+ * ask this system "has the console gone quiet": the console has no timestamp
+ * and those children are grandchildren, so they cannot be waited for - and
+ * waiting for them to EXIT would be wrong anyway, since telnetd and the drivers
+ * are services that never exit. What is left is a measured grace period, and it
+ * is honest as long as it is measured: on the disk installed from the CD the
+ * last straggler (automount) speaks well within half a second of "Sistema
+ * pronto.". ATTESA_MS is three times that, so that a machine slower than this
+ * one still fits inside it.
+ *
+ * ! AND IT IS THE KEYBOARD THAT ENDS THE WAIT, not only the clock. Someone who
+ * is already typing has decided the page can wait: poll() on the keyboard
+ * returns at once, the keystroke stays in the buffer for exuser_leggi_riga(),
+ * and nobody is made to stare at a boot log for a second and a half for
+ * nothing.
+ *
+ * ! WHAT THIS DOES NOT DO IS CLEAR THE SCREEN, on purpose. It would give a
+ * cleaner page, and it would also wipe the only copy of the boot messages a
+ * person has - this console has no scrollback, and the lines that matter most
+ * are exactly the ones that report a failure ("exec: comando non trovato:
+ * /dev/e1000.drv" on a disk installed from floppy). The page belongs at the
+ * bottom of the log, whole; it does not belong on top of it.
+ * ============================================================================= */
+#define ATTESA_MS   1500        /* measured: the last straggler is well inside */
+#define PASSO_MS     250        /* how often we look up from the wait */
+
+static void aspetta_che_taccia(void)
+{
+    struct pollfd pf;
+    unsigned int  fine = uptime_ms() + ATTESA_MS;
+
+    pf.fd = 0;                  /* the keyboard of this console */
+    pf.events = POLLIN;
+    pf.revents = 0;
+
+    /* ! THE DIFFERENCE IS COMPUTED, NOT THE TWO SIDES COMPARED: uptime_ms()
+     * wraps around, and `uptime_ms() < fine` would stop waiting at the wrap
+     * instead of waiting. The subtraction is right on both sides of it. */
+    while ((int)(fine - uptime_ms()) > 0) {
+        if (poll(&pf, 1, PASSO_MS) > 0) return;     /* already typing: it is
+                                                       theirs, not ours */
+    }
+}
 
 static void avvio_di_sistema(void)
 {
@@ -473,6 +536,8 @@ static void avvio_di_sistema(void)
     }
     waitpid(pid, &stato, 0);
     console_mia();               /* la shell dello script l'aveva presa */
+
+    aspetta_che_taccia();
 }
 
 int main(int argc, char **argv)

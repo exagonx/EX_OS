@@ -170,9 +170,9 @@ PROGRAMMI_FLOPPY := shell id date_prog chmod shutdown ls mem stack disk fdisk mk
 # `make verifica-programmi` — che le due ISO eseguono da sole — confronta
 # le liste con il contenuto di bin/ e si ferma dicendo quali mancano.
 # =============================================================================
-PROGRAMMI_CD := cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit
+PROGRAMMI_CD := cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
-PROGRAMMI_EXWIN := exwin_so exdlg_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr edit term fontprova orologio browser exide
+PROGRAMMI_EXWIN := exwin_so exdlg_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr edit term fontprova orologio browser exide archivi
 
 # I driver, con la stessa regola dei programmi. Quelli di base stanno gia'
 # dentro PROGRAMMI_FLOPPY (floppy_drv, kbd_drv): sul floppy servono a
@@ -1853,7 +1853,7 @@ $(EXDLG_SO): $(EXDLG_SRC) $(EXDLG_ESPORTA) $(EXDLG_HDR) $(EXDLG_LD) \
              $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(SEGNO_FLAG)
 	@echo "=== Compilazione libreria condivisa /exwin/lib/exdlg.so ==="
 	@mkdir -p $(BUILD_EXWIN_LIB) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -c $(EXDLG_SRC) -o $(BUILD_OBJ)/sodlg_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -I drivers/kbd -c $(EXDLG_SRC) -o $(BUILD_OBJ)/sodlg_main.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -c $(EXDLG_ESPORTA) -o $(BUILD_OBJ)/sodlg_esporta.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -c $(EXWIN_STUB) -o $(BUILD_OBJ)/sodlg_exwin.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(EXDLG_LD) \
@@ -1875,6 +1875,89 @@ $(EXDLG_SO): $(EXDLG_SRC) $(EXDLG_ESPORTA) $(EXDLG_HDR) $(EXDLG_LD) \
 
 .PHONY: exdlg_so
 exdlg_so: dirs $(EXDLG_SO)
+
+# --- /bin/zip: gli archivi dalla riga di comando -----------------------------
+#
+# ! IL FORMATO NON STA QUI, sta in exzip.so: questo programma conosce argomenti,
+# nomi e messaggi. E' la stessa divisione di eximg e dei programmi che
+# disegnano, ed e' cio' che impedisce all'archiviatore di ExWin di riscriversi
+# un secondo lettore di ZIP.
+#
+# ! COLLEGA LO STUB, non la libreria: chi tratta archivi lo sa gia' quando lo
+# si compila. Vedi lib/exzip/exzip_stub.c.
+ZIP_SRC := bin/zip/zip.c
+# ! STA IN bin-cd E NON IN bin, cioe' SUL CD E NON SUL FLOPPY, e non e' una
+# questione di spazio: `zip` apre exzip.so, e la libreria condivisa sta in
+# /exwin/lib, che sul dischetto non c'e'. Sul floppy il programma partirebbe
+# per dire «non trovo la libreria condivisa degli archivi» — cioe' sarebbe un
+# binario che occupa 18 KB per non funzionare mai. Vedi gfedit, tolto dal
+# floppy il 16 settembre 2026 per la ragione gemella.
+ZIP_BIN := $(BUILD_BIN_CD)/zip
+ZIP_LD  := bin/zip/zip.ld
+
+$(ZIP_BIN): $(ZIP_SRC) $(ZIP_LD) $(EXZIP_STUB) $(EXZIP_HDR) $(EXZIP_SO) \
+            $(EXLIB_SRC) $(EXLIB_HDR) \
+            $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/zip ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exzip -c $(ZIP_SRC) -o $(BUILD_OBJ)/zip_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exzip -c $(EXZIP_STUB) -o $(BUILD_OBJ)/zip_exzip.o
+	$(CC) -m32 -c $(LIBC_START)          -o $(BUILD_OBJ)/zip_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(ZIP_LD) \
+	    $(BUILD_OBJ)/zip_start.o $(BUILD_OBJ)/zip_main.o \
+	    $(BUILD_OBJ)/zip_exzip.o $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] zip compilato: $@"
+
+.PHONY: zip_prog
+zip_prog: dirs $(ZIP_BIN)
+
+# --- /exwin/lib/exzip.so: il formato ZIP, e nient'altro ----------------------
+#
+# ! SERVE A DUE PROGRAMMI, ed e' per questo che e' una libreria e non due
+# copie: `zip` dalla riga di comando e quello di ExWin devono leggere e
+# scrivere LO STESSO formato. Scritto dentro le applicazioni, il secondo che
+# nasce lo riscrive, e da quel giorno i due divergono.
+#
+# ! NON DIPENDE DA exwin.so, come eximg e per la stessa ragione: un archivio e'
+# byte, non finestre. Se dipendesse, non si potrebbe aprirne uno senza avere lo
+# schermo — cioe' proprio dalla riga di comando.
+#
+# ! E SI PORTA DENTRO inflate.c INVECE DI CHIEDERLO A eximg.so. Quel file
+# decodifica DEFLATE da mesi (PNG, GIF, i font) e lo usa gia' anche netupdate:
+# e' il TERZO utente, e nessun sorgente di terzi e' entrato nel sistema per
+# avere unzip. Farsi aprire eximg.so solo per quello vorrebbe dire tirarsi
+# dentro i decodificatori d'immagine per leggere un archivio di testo.
+EXZIP_SRC     := lib/exzip/exzip.c
+EXZIP_ESPORTA := lib/exzip/exzip_esporta.c
+EXZIP_STUB    := lib/exzip/exzip_stub.c
+EXZIP_HDR     := lib/exzip/exzip.h
+EXZIP_LD      := lib/exzip/exzip.ld
+
+EXZIP_SO := $(BUILD_EXWIN_LIB)/exzip.so
+
+$(EXZIP_SO): $(EXZIP_SRC) $(EXZIP_ESPORTA) $(EXZIP_HDR) $(EXZIP_LD) \
+             $(EXIMG_INFLATE) lib/eximg/inflate.h \
+             $(EXLIB_SRC) $(EXLIB_HDR) \
+             $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(SEGNO_FLAG)
+	@echo "=== Compilazione libreria condivisa /exwin/lib/exzip.so ==="
+	@mkdir -p $(BUILD_EXWIN_LIB) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exzip -I lib/eximg -c $(EXZIP_SRC) -o $(BUILD_OBJ)/sozip_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exzip -c $(EXZIP_ESPORTA) -o $(BUILD_OBJ)/sozip_esporta.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -c $(EXIMG_INFLATE) -o $(BUILD_OBJ)/sozip_inflate.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(EXZIP_LD) \
+	    $(BUILD_OBJ)/sozip_esporta.o $(BUILD_OBJ)/sozip_main.o \
+	    $(BUILD_OBJ)/sozip_inflate.o $(LIBC_PONTI_OBJ) -o $@
+	@# L'indirizzo atteso si legge dal .ld, non si riscrive qui: vedi exdlg.
+	@atteso=$$(sed -n 's/^[[:space:]]*\.[[:space:]]*=[[:space:]]*0x0*\([0-9A-Fa-f]*\)[[:space:]]*;.*/0x\1/p' $(EXZIP_LD) | head -1 | tr 'A-F' 'a-f'); \
+	 ent=$$(LC_ALL=C readelf -h $@ | awk '/Entry point/ {print $$4}' | tr 'A-F' 'a-f'); \
+	 if [ "$$ent" != "$$atteso" ]; then \
+	     echo "[ERRORE] la tabella di exzip.so e' a $$ent invece che a $$atteso ($(EXZIP_LD))"; \
+	     exit 1; \
+	 fi; \
+	 echo "[OK] exzip.so compilata: $@ (tabella a $$ent)"
+
+.PHONY: exzip_so
+exzip_so: dirs $(EXZIP_SO)
 
 # --- verifica-testi: niente UTF-8 in cio' che va a schermo -------------------
 #
@@ -2150,6 +2233,16 @@ winprova: dirs $(WINPROVA_BIN)
 # =============================================================================
 EXWIN_APPLIST := exwin/lib/applicazioni.txt
 
+# ! LE ICONE SONO DATI, E L'ISO DEVE DIPENDERNE. Il comando che le copia c'era
+# gia'; la dipendenza no, e la differenza si vede il giorno che si cambia
+# SOLTANTO un'icona: make non ha niente da rifare, l'immagine resta quella di
+# prima e si guarda il codice per capire perche' la modifica «non si vede». E'
+# lo stesso difetto trovato oggi nelle dipendenze di browser verso exdlg.
+#
+# ! CON wildcard, NON CON UN ELENCO: le icone le aggiunge chi le disegna, e un
+# elenco scritto qui sarebbe un elenco da aggiornare a ogni file nuovo.
+EXWIN_ICONE := $(wildcard exwin/icon/*/*)
+
 PM_SRC := exwin/bin/pm/pm.c
 PM_BIN := $(BUILD_EXWIN_BIN)/pm
 PM_LD  := exwin/bin/pm/pm.ld
@@ -2223,6 +2316,43 @@ $(FILEMGR_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(FILEMGR_SRC) $(FILEMGR_LD) $(EXWIN
 filemgr: dirs $(FILEMGR_BIN)
 
 # --- /exwin/bin/edit: l'editor di testo grafico ------------------------------
+# --- /exwin/bin/archivi: l'archiviatore grafico ------------------------------
+#
+# ! E' LA META' DI ExWin DI @ZIP, e non contiene una riga di formato ZIP: il
+# formato sta in exzip.so, la stessa libreria che usa /bin/zip. Scritto al
+# contrario, il secondo programma riscriverebbe il formato e da quel giorno i
+# due non sarebbero piu' d'accordo su cosa sia un archivio.
+#
+# ! COLLEGA TRE STUB: exwin per le finestre, exdlg per i dialoghi (fra cui
+# ex_dlg_percorso, che porta dentro «Nuova cartella») ed exzip per gli archivi.
+# Sono tre librerie condivise e nessuna copia: e' tutto il punto del
+# meccanismo.
+ARCHIVI_SRC := exwin/bin/archivi/archivi.c
+ARCHIVI_BIN := $(BUILD_EXWIN_BIN)/archivi
+ARCHIVI_LD  := exwin/bin/archivi/archivi.ld
+
+$(ARCHIVI_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(ARCHIVI_SRC) $(ARCHIVI_LD) \
+             $(EXWIN_STUB) $(EXLIB_SRC) $(EXLIB_HDR) $(EXWIN_HDR) \
+             $(EXDLG_STUB) $(EXDLG_HDR) $(EXZIP_STUB) $(EXZIP_HDR) $(EXZIP_SO) \
+             $(WIN_PROTO) $(FONT_SRC) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /exwin/bin/archivi ==="
+	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -I lib/exzip -I lib/exinfo -I drivers/wserver -I drivers/kbd -c $(ARCHIVI_SRC) -o $(BUILD_OBJ)/archivi_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exinfo -c $(EXINFO_SRC) -o $(BUILD_OBJ)/archivi_info.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/archivi_exwin.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exdlg -c $(EXDLG_STUB) -o $(BUILD_OBJ)/archivi_exdlg.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exzip -c $(EXZIP_STUB) -o $(BUILD_OBJ)/archivi_exzip.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/archivi_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(ARCHIVI_LD) \
+	    $(BUILD_OBJ)/archivi_start.o $(BUILD_OBJ)/archivi_main.o \
+	    $(BUILD_OBJ)/archivi_exwin.o $(BUILD_OBJ)/archivi_exdlg.o \
+	    $(BUILD_OBJ)/archivi_exzip.o $(BUILD_OBJ)/archivi_info.o \
+	    $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] archivi compilato: $@"
+
+.PHONY: archivi
+archivi: dirs $(ARCHIVI_BIN)
+
 EDIT_SRC := exwin/bin/edit/edit.c
 EDIT_BIN := $(BUILD_EXWIN_BIN)/edit
 EDIT_LD  := exwin/bin/edit/edit.ld
@@ -2404,6 +2534,7 @@ $(BROWSER_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(BROWSER_SRC) $(BROWSER_LD) \
              $(EXCSS_STUB) $(EXCSS_HDR) $(EXCSS_SO) \
              $(EXJS_STUB) $(EXJS_HDR) $(EXJS_SO) \
              $(EXDOM_STUB) $(EXDOM_HDR) $(EXDOM_SO) \
+             $(EXDLG_STUB) $(EXDLG_HDR) $(EXDLG_SO) \
              $(IP_PROTO) $(DNS_SRC) $(RETE_SRC) \
              $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione /exwin/bin/browser ==="
@@ -2446,8 +2577,9 @@ browser: dirs $(BROWSER_BIN)
 # dentro: senza, le applicazioni finirebbero sull'immagine e la libreria no —
 # tre programmi che partono e si fermano subito dicendo che non la trovano.
 EXWIN_OUT := $(PM_BIN) $(FILEMGR_BIN) $(EDIT_BIN) $(TERM_BIN) $(FONTPROVA_BIN) \
-             $(OROLOGIO_BIN) $(BROWSER_BIN) $(EXIDE_BIN) $(EXHTTP_SO) \
-             $(EXWIN_SO) $(EXDLG_SO) \
+             $(OROLOGIO_BIN) $(BROWSER_BIN) $(EXIDE_BIN) $(ARCHIVI_BIN) \
+             $(EXHTTP_SO) \
+             $(EXWIN_SO) $(EXDLG_SO) $(EXZIP_SO) \
              $(EXTTF_SO) \
              $(EXIMG_SO)
 
@@ -6589,7 +6721,7 @@ BINARI_SOLO_CD := $(CRYPTTEST_BIN) $(FILIPROVA_BIN) $(NETDETECT_BIN) $(NETTEST_B
                   $(CDINSTALL_BIN) $(SWAPTEST_BIN) $(LIBCTEST_BIN) $(HELLO_BIN) \
                   $(AUDIO_BIN) $(NETUPDATE_BIN) $(WIFI_BIN) $(BLKSCAN_BIN) $(BLKPROVA_BIN) $(AUTOMOUNT_BIN) \
                   $(EJECT_BIN) $(FTPSWAP_BIN) $(SOCCORSO_BIN) \
-                  $(FBPROVA_BIN) $(MEMPROVA_BIN) $(GFEDIT_BIN)
+                  $(FBPROVA_BIN) $(MEMPROVA_BIN) $(GFEDIT_BIN) $(ZIP_BIN)
 # ! QUESTA LISTA E' LA DIPENDENZA DELL'ISO, E VA TENUTA ALLINEATA A
 # DRIVER_CD. Sono due elenchi della stessa cosa: DRIVER_CD dice COSA
 # COSTRUIRE (nomi di bersagli .PHONY), questo dice DA COSA DIPENDE L'IMMAGINE
@@ -6671,7 +6803,8 @@ verifica-dipendenze-cd:
 $(ISOX_IMG): Makefile $(FLOPPY_IMG) boot/autoexec.sh boot/avvio.sh $(DRIVER_SOLO_CD_OUT) \
              $(FONT_TTF) $(FONT_TTF_DIR)/LICENSE $(FONT_TTF_DIR)/LICENSE.DejaVu \
              $(EXWIN_DOC) \
-             $(EXWIN_OUT) $(EXWIN_APPLIST) $(PROVA_PNG) $(PROVA_ICO) $(PROVA_JPG) \
+             $(EXWIN_OUT) $(EXWIN_APPLIST) $(EXWIN_ICONE) \
+             $(PROVA_PNG) $(PROVA_ICO) $(PROVA_JPG) \
              $(PROVA_WAV) $(PROVA_MID) \
              $(WSERVER_OUT) \
              $(BINARI_SOLO_CD) $(ISO_MKISO) README.md README.en.md \
@@ -6718,6 +6851,25 @@ $(ISOX_IMG): Makefile $(FLOPPY_IMG) boot/autoexec.sh boot/avvio.sh $(DRIVER_SOLO
 	@mkdir -p $(ISOX_ROOT)/exwin/bin $(ISOX_ROOT)/exwin/lib $(ISOX_ROOT)/exwin/dev
 	@cp $(BUILD_EXWIN_BIN)/* $(ISOX_ROOT)/exwin/bin/ 2>/dev/null || true
 	@cp $(EXWIN_APPLIST) $(ISOX_ROOT)/exwin/lib/ 2>/dev/null || true
+	@# ! LE ICONE, E CON IL PERCORSO CHE HANNO QUI. applicazioni.txt le
+	@# nomina per percorso assoluto — /exwin/icon/baseapp/edit_64.ico — e un
+	@# elenco che punta a file che sul CD non ci sono e' un menu senza
+	@# icone che non dice perche'. Si copia l'albero intero: chi ne aggiunge
+	@# una non deve toccare anche questa riga.
+	@# ! SI SVUOTA PRIMA DI COPIARE, e vale solo per le icone. `cp -r`
+	@# aggiunge e non toglie: un'icona cancellata dai sorgenti resterebbe
+	@# sull'immagine per sempre, e si continuerebbe a vederla nel menu
+	@# chiedendosi da dove salti fuori. Costa niente — sono pochi file — e
+	@# rende la directory sull'immagine uguale a quella dei sorgenti.
+	@#
+	@# ! MA CANCELLARE UN'ICONA NON FA RIPARTIRE make DA SOLO: EXWIN_ICONE
+	@# e' un wildcard, e un file che non c'e' piu' non e' fra le dipendenze.
+	@# Chi toglie un'icona e vuole l'immagine aggiornata tocca un altro
+	@# file, o cancella $(ISOX_IMG). E' il limite del wildcard, ed e' il
+	@# prezzo per non dover elencare a mano ogni icona nuova.
+	@rm -rf $(ISOX_ROOT)/exwin/icon
+	@mkdir -p $(ISOX_ROOT)/exwin/icon
+	@cp -r exwin/icon/* $(ISOX_ROOT)/exwin/icon/ 2>/dev/null || true
 	@# ! E LA LIBRERIA CONDIVISA, che senza di lei le applicazioni grafiche
 	@# non partono affatto. E' un file di /exwin/lib come l'elenco, ma non
 	@# viene dai sorgenti: viene da build/, quindi ha una riga sua.

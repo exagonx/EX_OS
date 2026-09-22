@@ -52,7 +52,7 @@
 
 /* +0.001 a ogni modifica, aggiunta o prova: `exide -version` la stampa.
  * Vedi EX_VERSIONE in libc.h; la stessa stringa la mostra «Informazioni su». */
-#define VERSIONE_APP "0.012"
+#define VERSIONE_APP "0.015"
 EX_VERSIONE("exide", VERSIONE_APP);
 
 /* -----------------------------------------------------------------------------
@@ -90,6 +90,7 @@ EX_VERSIONE("exide", VERSIONE_APP);
 #define ID_FILES      925
 #define ID_DIRECTORY  926
 #define ID_PROGETTO   927
+#define ID_ICONA      928   /* scegliere l'icona del controllo scelto */
 
 #define ID_MANUALE    931
 #define ID_INFO       932
@@ -166,6 +167,11 @@ static const Strumento g_strum[] = {
     { "combo",        "Elenco",       "Elenco",   140, 22, { "Scelta", 0, 0 } },
     { "tab",          "Linguette",    "Linguette",200, 24, { "Scelta", 0, 0 } },
     { "scorrimento",  "Scorrimento",  "Barra",     16,120, { "Scorso", 0, 0 } },
+    /* ! L'IMMAGINE NON HA EVENTI, ed e' l'unica insieme a riquadro,
+     * separatore e intestazione: e' ornamento. Chi vuole una figura che si
+     * clicca usa un'Etichetta con l'icona — ha l'evento Clic — e infatti e'
+     * cosi' che si fa un collegamento. */
+    { "immagine",     "Immagine",     "Immagine",  64, 64, { 0, 0, 0 } },
 };
 
 #define STRUM_N ((int)(sizeof(g_strum) / sizeof(g_strum[0])))
@@ -177,6 +183,8 @@ static const Strumento g_strum[] = {
 #define NOME_MAX   24
 #define TESTO_MAX  48
 
+#define ICONA_MAX  96
+
 typedef struct {
     int          usato;
     int          tipo;              /* quale riga di g_strum */
@@ -186,6 +194,15 @@ typedef struct {
     int          x, y, w, h;        /* dentro la maschera */
     unsigned int id;
     int          evento;            /* quale voce di g_strum[tipo].evento */
+
+    /* ! L'ICONA E' UN PERCORSO, NON UN'IMMAGINE. Qui dentro sta la riga che
+     * finira' nel codice generato; l'icona vera la apre il programma generato
+     * quando parte, e la apre exide solo per FARLA VEDERE nel disegnatore.
+     * Tenere il bitmap dentro il progetto vorrebbe dire copiarlo nel .dis, e
+     * un file di disegno che si porta dentro le immagini non si legge piu' con
+     * un editore di testo. */
+    char         icona[ICONA_MAX];
+    ExIcona      ic;                /* solo per il disegnatore, non si salva */
 } Ctrl;
 
 static Ctrl g_ctrl[CTRL_MAX];
@@ -471,18 +488,70 @@ static int arrotonda(int v) { return (v + GRIGLIA / 2) / GRIGLIA * GRIGLIA; }
  * tenerla d'accordo con quella del toolkit per sempre. Quel che conta e' che si
  * riconoscano a colpo d'occhio e che la MISURA sia quella vera.
  * ============================================================================= */
+/* L'icona di un controllo, aperta la prima volta che serve al DISEGNATORE.
+ *
+ * ! SI APRE UNA VOLTA SOLA ANCHE QUANDO NON C'E'. Un percorso sbagliato rende
+ * 0, e senza questa memoria il disegnatore riproverebbe ad aprire quel file a
+ * ogni ridisegno della maschera - cioe' a ogni movimento del mouse. */
+static int icona_ctrl(const Ctrl *c)
+{
+    Ctrl *m = (Ctrl *)c;        /* la cache e' del controllo, non del disegno */
+
+    if (!m->icona[0]) return 0;
+    if (m->ic == 0) {
+        m->ic = ex_icona_apri(m->icona);
+        if (m->ic == 0) return 0;   /* il percorso resta: si corregge a mano */
+    }
+    return 1;
+}
+
 static void disegna_controllo(const Ctrl *c, int ox, int oy)
 {
     int x = ox + c->x, y = oy + c->y;
     const char *cl = g_strum[c->tipo].classe;
 
     if (strcmp(cl, "pulsante") == 0) {
+        int tx = x + 6;
+
         ex_riempi(g_f, x, y, c->w, c->h, EX_GRIGIO);
         ex_riquadro_disegna(g_f, x, y, c->w, c->h, EX_NERO);
         ex_rilievo(g_f, x + 1, y + 1, c->w - 2, c->h - 2);
-        ex_scrivi(g_f, x + 6, y + (c->h - 16) / 2, c->testo, EX_NERO);
+
+        /* ! L'ICONA SI VEDE NEL DISEGNATORE, o non si sta disegnando la
+         * finestra che uscira'. E' il senso di un disegnatore visuale:
+         * sceglierla e non vederla vorrebbe dire compilare per sapere com'e'
+         * venuta. */
+        if (icona_ctrl(c)) {
+            int lato = c->h - 6 < 8 ? 8 : (c->h - 6 > 32 ? 32 : c->h - 6);
+
+            ex_icona_disegna(g_f, c->ic, x + 4, y + (c->h - lato) / 2,
+                             (unsigned int)lato, EX_GRIGIO);
+            tx = x + 4 + lato + 6;
+        }
+
+        ex_scrivi(g_f, tx, y + (c->h - 16) / 2, c->testo, EX_NERO);
     } else if (strcmp(cl, "etichetta") == 0) {
-        ex_scrivi(g_f, x, y, c->testo, EX_NERO);
+        if (icona_ctrl(c)) {
+            int lato = c->h < 8 ? 8 : (c->h > 32 ? 32 : c->h);
+
+            ex_icona_disegna(g_f, c->ic, x, y, (unsigned int)lato, EX_GRIGIO);
+            ex_scrivi(g_f, x + lato + 6, y, c->testo, EX_NERO);
+        } else {
+            ex_scrivi(g_f, x, y, c->testo, EX_NERO);
+        }
+    } else if (strcmp(cl, "immagine") == 0) {
+        /* ! QUADRATA E CENTRATA, come la disegnera' il toolkit: un disegnatore
+         * che la mostrasse allargata al riquadro mentirebbe sul risultato. E
+         * senza icona si vede il riquadro tratteggiato — un'immagine vuota
+         * sarebbe un buco invisibile, impossibile da scegliere col mouse. */
+        int lato = c->w < c->h ? c->w : c->h;
+
+        if (icona_ctrl(c) && lato > 0)
+            ex_icona_disegna(g_f, c->ic, x + (c->w - lato) / 2,
+                             y + (c->h - lato) / 2,
+                             (unsigned int)lato, EX_GRIGIO);
+        else
+            ex_riquadro_disegna(g_f, x, y, c->w, c->h, EX_GRIGIO_SC);
     } else if (strcmp(cl, "testo") == 0 || strcmp(cl, "combo") == 0) {
         ex_riempi(g_f, x, y, c->w, c->h, EX_BIANCO);
         ex_incavo(g_f, x, y, c->w, c->h);
@@ -615,11 +684,25 @@ static void disegna_tela(void)
  * stesso difetto che ha tenuto il navigatore senza caselle di spunta per un
  * mese. Si sceglie la riga, si scrive nella casella, si preme Applica.
  * ============================================================================= */
-#define PROP_N  8
+/* ! «icona» E' L'OTTAVA PROPRIETA' E STA IN FONDO, dopo «evento»: le prime
+ * sette le ha ogni controllo, questa la usano in due (pulsante ed etichetta).
+ * Metterla in mezzo avrebbe spostato di una riga tutte le altre, e chi usa
+ * exide le trova dove le ha sempre trovate. */
+#define PROP_N  9
 
 static const char *const g_prop_nome[PROP_N] = {
-    "nome", "testo", "x", "y", "larghezza", "altezza", "id", "evento"
+    "nome", "testo", "x", "y", "larghezza", "altezza", "id", "evento", "icona"
 };
+
+/* Chi puo' avere un'icona. E' la stessa risposta del toolkit: la disegnano il
+ * pulsante e l'etichetta (vedi CL_PULSANTE e CL_ETICHETTA in lib/exwin). */
+static int prende_icona(int tipo)
+{
+    const char *cl = g_strum[tipo].classe;
+
+    return strcmp(cl, "pulsante") == 0 || strcmp(cl, "etichetta") == 0 ||
+           strcmp(cl, "immagine") == 0;
+}
 
 static void prop_valore(int k, char *out, unsigned int max)
 {
@@ -644,6 +727,25 @@ static void prop_valore(int k, char *out, unsigned int max)
         out[max - 1] = '\0';
         break;
     }
+    case 8:
+        if (!prende_icona(c->tipo)) {
+            strncpy(out, "(non ne ha)", max - 1);
+            out[max - 1] = '\0';
+        } else if (c->icona[0]) {
+            /* ! SI MOSTRA LA CODA DEL PERCORSO, non la testa: in una riga di
+             * elenco ci stanno una quarantina di caratteri, e quel che
+             * distingue due icone e' il NOME, che sta in fondo. */
+            unsigned int l = (unsigned int)strlen(c->icona);
+            const char  *t = c->icona;
+
+            if (l > max - 1) t += l - (max - 1);
+            strncpy(out, t, max - 1);
+            out[max - 1] = '\0';
+        } else {
+            strncpy(out, "(nessuna)", max - 1);
+            out[max - 1] = '\0';
+        }
+        break;
     default: break;
     }
 }
@@ -829,12 +931,121 @@ static void prop_applica(void)
     case 4: c->w = atoi(v) < MISURA_MIN ? MISURA_MIN : atoi(v); break;
     case 5: c->h = atoi(v) < MISURA_MIN ? MISURA_MIN : atoi(v); break;
     case 6: c->id = (unsigned int)atoi(v); break;
+    case 8:
+        /* ! L'ICONA SI PUO' ANCHE BATTERE A MANO, e non solo scegliere col
+         * dialogo (Strumenti > Icona del controllo...): un percorso si copia
+         * da un'altra voce, e chi sa gia' dove sta il file non deve aprire una
+         * finestra per dirlo. Vuoto = nessuna icona, che e' come si toglie. */
+        if (!prende_icona(c->tipo)) { dico("questo controllo non ha un'icona"); break; }
+        strncpy(c->icona, v, ICONA_MAX - 1);
+        c->icona[ICONA_MAX - 1] = '\0';
+        if (c->icona[0] == '(') c->icona[0] = '\0';   /* «(nessuna)» riapplicato */
+        c->ic = 0;                  /* si riapre al prossimo disegno */
+        break;
     default: break;                 /* l'evento, k == 7, e' gia' passato sopra */
     }
 
     g_sporco = 1;
     prop_mostra();
     dico("proprieta' applicata");
+}
+
+/* =============================================================================
+ * LE ICONE DEL PANNELLO DEGLI STRUMENTI
+ *
+ * ! IL NOME DEL FILE E' LA CLASSE, e non una tabella scritta qui dentro:
+ * /exwin/icon/strumenti/pulsante.ico sta davanti alla voce «Pulsante»,
+ * lista.ico davanti a «Lista». Cosi' aggiungere l'icona di uno strumento e'
+ * mettere un file con il nome giusto — non ricompilare exide — ed e' la stessa
+ * regola per cui applicazioni.txt nomina le icone per percorso invece di
+ * portarsele dentro.
+ *
+ * ! E SE IL FILE NON C'E' NON SUCCEDE NIENTE: la voce resta testo, com'e'
+ * sempre stata. Le icone degli strumenti le disegna chi disegna le icone, e il
+ * pannello deve funzionare anche il giorno prima che esistano.
+ *
+ * ! SI GUARDA UNA VOLTA SOLA, all'avvio. Quindici strumenti vogliono quindici
+ * tentativi di apertura: farli a ogni ridisegno della lista vorrebbe dire
+ * quindici file aperti ogni volta che si sceglie una voce.
+ * ============================================================================= */
+static ExIcona icona_strumento(int tipo)
+{
+    static const char *const dove[] = {
+        "/exwin/icon/strumenti/",
+        "/cdrom/exwin/icon/strumenti/"
+    };
+    char p[PERC_MAX];
+    int  d;
+
+    for (d = 0; d < 2; d++) {
+        ExIcona ic;
+
+        if (snprintf(p, sizeof(p), "%s%s.ico", dove[d],
+                     g_strum[tipo].classe) >= (int)sizeof(p)) continue;
+
+        ic = ex_icona_apri(p);
+        if (ic) return ic;
+    }
+    return 0;
+}
+
+/* =============================================================================
+ * L'ICONA DI UN CONTROLLO
+ *
+ * ! SI SCEGLIE COL DIALOGO DEI FILE, che e' quello che sa gia' sfogliare — e
+ * dal 22 settembre 2026 ha anche «Nuova cartella». Chiedere il percorso a mano
+ * in una casella vorrebbe dire ricordarselo, e le icone stanno in una
+ * directory che nessuno visita mai (/exwin/icon).
+ *
+ * ! E SI PARTE DA DOVE STANNO LE ICONE DI SISTEMA. Un dialogo che si apre
+ * sulla radice fa fare tre clic prima di vedere un file utile; e se quella
+ * directory non c'e' (avviando da un supporto senza il componente /exwin) si
+ * parte dalla radice, invece di aprire un dialogo su un posto che non esiste.
+ * ============================================================================= */
+static void icona_scegli(void)
+{
+    char p[PERC_MAX];
+    Ctrl *c;
+    int   fd;
+
+    if (g_sel < 0 || !g_ctrl[g_sel].usato) { dico("scegli prima un controllo"); return; }
+    c = &g_ctrl[g_sel];
+
+    if (!prende_icona(c->tipo)) {
+        dico("l'icona la mostrano il pulsante e l'etichetta");
+        return;
+    }
+
+    if (c->icona[0]) {
+        strncpy(p, c->icona, PERC_MAX - 1);
+        p[PERC_MAX - 1] = '\0';
+    } else {
+        strcpy(p, "/exwin/icon/baseapp/");
+        fd = open("/exwin/icon/baseapp", O_RDONLY, 0);
+        if (fd < 0) strcpy(p, "/");
+        else        close(fd);
+    }
+
+    if (!ex_dlg_apri(p, sizeof(p))) return;
+
+    if (strlen(p) >= ICONA_MAX) {
+        dico("il percorso dell'icona e' troppo lungo");
+        return;
+    }
+
+    istante_segna();
+    strcpy(c->icona, p);
+    c->ic = 0;                      /* si riapre al prossimo disegno */
+    g_sporco = 1;
+
+    /* ! SI GUARDA SUBITO SE SI APRE, e lo si dice. Un'icona che il
+     * decodificatore non capisce resterebbe un buco nel disegnatore, e chi la
+     * ha scelta penserebbe di aver sbagliato percorso. */
+    if (!icona_ctrl(c)) dico("scelta, ma non riesco ad aprirla: e' un'icona?");
+    else                dico("icona scelta");
+
+    prop_mostra();
+    form_mostra();
 }
 
 /* =============================================================================
@@ -1429,10 +1640,32 @@ static int dis_salva(void)
                     g_strum[c->tipo].classe, c->nome, c->id,
                     c->x, c->y, c->w, c->h, c->evento, c->testo);
             write(fd, riga, strlen(riga));
+
+            /* ! L'ICONA E' UNA RIGA A PARTE, E NON UN CAMPO IN PIU'. Nella
+             * riga «c» il TESTO sta per ultimo perche' puo' contenere spazi:
+             * qualunque campo aggiunto prima di lui sposterebbe il testo di
+             * una parola, e ogni progetto fatto finora si aprirebbe con le
+             * scritte sbagliate. Una riga «i» che segue il controllo si
+             * aggiunge senza toccare niente — e un file senza quelle righe si
+             * legge come si e' sempre letto. */
+            if (c->icona[0]) {
+                sprintf(riga, "i %s\n", c->icona);
+                write(fd, riga, strlen(riga));
+            }
         }
     }
     close(fd);
     return 1;
+}
+
+/* Via gli spazi e il fine-riga dalla coda: un percorso con uno spazio in fondo
+ * e' un file che non si apre, e a guardarlo sembra quello giusto. */
+static void taglia_coda(char *s)
+{
+    int i = (int)strlen(s);
+
+    while (i > 0 && (s[i - 1] == ' ' || s[i - 1] == '\t' ||
+                     s[i - 1] == '\r' || s[i - 1] == '\n')) s[--i] = '\0';
 }
 
 /* Una parola dalla riga: rende dove ricomincia il resto. */
@@ -1453,6 +1686,7 @@ static int dis_carica(void)
     int  fd, n, i;
     int  corrente = 0;          /* la maschera a cui appartengono le «c» */
     int  vista_una = 0;         /* la prima «F» riempie la principale */
+    int  ultimo = -1;           /* l'ultimo controllo letto: la riga «i» e' sua */
     unsigned int col = 0;
 
     percorso(p, "finestra.dis");
@@ -1519,6 +1753,21 @@ static int dis_carica(void)
                 corrente = k;
                 continue;
             }
+            /* ! LA RIGA «i» APPARTIENE AL CONTROLLO APPENA LETTO, e per
+             * questo `ultimo` esiste: il formato non nomina il controllo una
+             * seconda volta — sarebbe un nome da tenere d'accordo — e si
+             * appoggia all'ordine, che in un file scritto da un programma solo
+             * e' una garanzia. Una riga «i» che arrivasse per prima non ha un
+             * padrone e si butta. */
+            if (strcmp(w, "i") == 0) {
+                if (ultimo >= 0 && s[0]) {
+                    strncpy(g_ctrl[ultimo].icona, s, ICONA_MAX - 1);
+                    g_ctrl[ultimo].icona[ICONA_MAX - 1] = '\0';
+                    taglia_coda(g_ctrl[ultimo].icona);
+                }
+                continue;
+            }
+
             if (strcmp(w, "c") != 0) continue;
             if (corrente < 0) continue;     /* la sua maschera non c'e' entrata */
 
@@ -1548,6 +1797,7 @@ static int dis_carica(void)
                 s = parola(s, w, sizeof(w)); c->evento = atoi(w);
                 strncpy(c->testo, s, TESTO_MAX - 1);
                 c->testo[TESTO_MAX - 1] = '\0';
+                ultimo = k;
             }
         }
     }
@@ -1745,6 +1995,22 @@ static int gen_c(void)
                     c->nome, g_strum[c->tipo].classe, c->testo,
                     c->x, c->y, c->w, c->h, vn, idn);
             SCRIVI(riga);
+
+            /* ! L'ICONA SI APRE E SI ATTACCA, DUE RIGHE, e in un blocco suo:
+             * la variabile dell'icona non serve a nessun altro, e lasciarla
+             * fuori vorrebbe dire un nome in piu' per controllo in una
+             * funzione che ne ha gia' uno per ognuno.
+             *
+             * ! E SE L'ICONA NON C'E' NON SUCCEDE NIENTE: ex_icona_apri rende
+             * 0, ex_icona_metti con 0 toglie l'icona e basta. Un programma
+             * generato non deve morire perche' e' stato copiato su una
+             * macchina dove quel file non e' stato installato. */
+            if (c->icona[0]) {
+                sprintf(riga, "    { ExIcona ic = ex_icona_apri(\"%s\");\n"
+                              "      ex_icona_metti(h_%s, ic, 0); }\n",
+                        c->icona, c->nome);
+                SCRIVI(riga);
+            }
         }
 
         sprintf(riga, "\n    ex_procedura_base(%s, EXM_DISEGNA, 0, 0);\n}\n\n",
@@ -2288,21 +2554,146 @@ static int progetto_salva(void)
     return 1;
 }
 
+/* =============================================================================
+ * WHERE A PROJECT IS BORN - home the first time, then where the last one was
+ *
+ * ! HOME IS NOT COMPUTED, IT IS ASKED FOR: it is the HOME variable, and whoever
+ * logs the user in fills it. Building it as "/home/" plus the user name means
+ * getting root wrong - root lives in /root, not in /home/root - and getting it
+ * wrong again the day homes move somewhere else.
+ *
+ * ! AND THE MEMORY LIVES IN THE USER'S PROFILE, $HOME/.app/exide/, not in a
+ * file next to the program. It is the convention already written for every
+ * program of this system, and it is also the only one that works on a machine
+ * with more than one user: the last directory used belongs to WHOEVER uses it,
+ * and on a system booted from CD a file next to the program could not even be
+ * written.
+ * ============================================================================= */
+
+/* Builds $HOME/.app/exide/<name>, creating the directories that are missing.
+ * Returns 0 if it cannot: then the memory lasts for this session only, and that
+ * is no reason to stop anything - we start again from home. */
+static int profilo_perc(char *dst, unsigned int dim, const char *nome)
+{
+    static const char *const passi[] = { "/.app", "/exide" };
+    const char *casa = getenv("HOME");
+    char        p[PERC_MAX];
+    int         i, n;
+
+    if (!casa || !casa[0]) return 0;
+    if (strlen(casa) + 32 >= sizeof(p)) return 0;
+
+    strcpy(p, casa);
+    i = (int)strlen(p);
+    /* Off with the trailing slashes, ALL of them: with HOME equal to "/" what
+     * is left is the empty string and the pieces below give "/.app/exide", not
+     * "//.app/exide". Same line as the browser (imp_prepara in browser.c). */
+    while (i > 0 && p[i - 1] == '/') p[--i] = '\0';
+
+    for (i = 0; i < 2; i++) {
+        strncat(p, passi[i], sizeof(p) - strlen(p) - 1);
+        if (mkdir(p, 0755) != 0 && errno != EEXIST) return 0;
+    }
+
+    n = snprintf(dst, dim, "%s/%s", p, nome);
+    return n > 0 && (unsigned int)n < dim;
+}
+
+/* The directory to start from: the last one used if there is one, home
+ * otherwise. */
+static void ultima_leggi(char *dst, unsigned int dim)
+{
+    const char *casa;
+    char        p[PERC_MAX], buf[PERC_MAX];
+    int         fd, n;
+
+    if (profilo_perc(p, sizeof(p), "ultima.txt") &&
+        (fd = open(p, O_RDONLY, 0)) >= 0) {
+        n = (int)read(fd, buf, sizeof(buf) - 1);
+        close(fd);
+        if (n > 0) {
+            buf[n] = '\0';
+            while (n > 0 && (buf[n - 1] == '\n' || buf[n - 1] == '\r' ||
+                             buf[n - 1] == ' ')) buf[--n] = '\0';
+            /* ! A PATH THAT DOES NOT START WITH A SLASH IS NOT A PATH. The
+             * file sits in the user's profile, that is, somewhere an editor can
+             * open it: what makes no sense is thrown away and we start again
+             * from home, instead of proposing a made-up directory. */
+            if (buf[0] == '/') {
+                strncpy(dst, buf, dim - 1);
+                dst[dim - 1] = '\0';
+                return;
+            }
+        }
+    }
+
+    casa = getenv("HOME");
+    strncpy(dst, (casa && casa[0]) ? casa : "/", dim - 1);
+    dst[dim - 1] = '\0';
+}
+
+/* ! IT REMEMBERS THE CONTAINING DIRECTORY, NOT THE PROJECT. Having created
+ * /home/pinco/progetti/prova, next time it proposes /home/pinco/progetti: the
+ * new project is born BESIDE the previous one, not inside it - whoever makes
+ * two in a row wants them to be siblings. */
+static void ultima_scrivi(const char *dir_progetto)
+{
+    char  p[PERC_MAX], dove[PERC_MAX];
+    char *taglio;
+    int   fd;
+
+    strncpy(dove, dir_progetto, sizeof(dove) - 1);
+    dove[sizeof(dove) - 1] = '\0';
+
+    taglio = strrchr(dove, '/');
+    if (!taglio) return;
+    if (taglio == dove) dove[1] = '\0';     /* un progetto nella radice */
+    else                *taglio = '\0';
+
+    if (!profilo_perc(p, sizeof(p), "ultima.txt")) return;
+
+    fd = open(p, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) return;
+    write(fd, dove, strlen(dove));
+    write(fd, "\n", 1);
+    close(fd);
+}
+
 static void progetto_nuovo(void)
 {
-    char dir[PERC_MAX] = "/progetti/prova";
+    char dir[PERC_MAX];
     const char *n;
+    unsigned int l;
 
     if (g_sporco && !ex_dlg_conferma("Modifiche non salvate",
                                      "Il disegno e' cambiato. Cominciare "
                                      "un progetto nuovo?",
                                      "Comincia", "Annulla")) return;
 
-    if (!ex_dlg_riga("Progetto nuovo", "directory del progetto:",
-                     dir, sizeof(dir))) return;
+    /* ! NOW YOU BROWSE, INSTEAD OF TYPING A PATH FROM MEMORY. What stood here
+     * before was ex_dlg_riga with "/progetti/prova" already inside it: anyone
+     * without that directory had to know by heart where they were allowed to
+     * write, and a path typed crooked became a project created where nobody
+     * wanted it. The file dialog shows the tree, you walk into it, and since
+     * today you can make a folder there too. */
+    ultima_leggi(dir, sizeof(dir));
+
+    /* The trailing slash tells the dialog "this is the DIRECTORY, the name is
+     * still to be typed": without it the last piece would land in the name box
+     * and we would start one level higher up. */
+    l = (unsigned int)strlen(dir);
+    if (l && dir[l - 1] != '/' && l + 2 < sizeof(dir)) {
+        dir[l] = '/';
+        dir[l + 1] = '\0';
+    }
+
+    if (!ex_dlg_percorso("Progetto nuovo", "Progetto:", "Crea",
+                         dir, sizeof(dir))) return;
     if (dir[0] == '\0') return;
 
     if (!progetto_crea(dir)) { dico("non riesco a creare la directory"); return; }
+
+    ultima_scrivi(dir);
 
     strncpy(g_prog_dir, dir, PERC_MAX - 1);
     g_prog_dir[PERC_MAX - 1] = '\0';
@@ -2618,6 +3009,22 @@ static const char *const g_manuale[] = {
 "che si e' annullato. Una modifica nuova butta il ramo rifatto.",
 "",
 "Ctrl+C, Ctrl+X e Ctrl+V copiano, tagliano e incollano un CONTROLLO.",
+"",
+"LE ICONE",
+"",
+"Un Pulsante e un'Etichetta possono mostrare un'icona prima della",
+"scritta: si sceglie il controllo, poi Strumenti > Icona del",
+"controllo... Il disegnatore la fa vedere subito, e nel codice",
+"generato escono due righe - ex_icona_apri() piu' ex_icona_metti().",
+"",
+"Le icone di sistema stanno in /exwin/icon/baseapp/ a 64 e 128",
+"pixel; vanno bene anche PNG, JPG, GIF e BMP. Non serve una copia",
+"per ogni misura: il sistema le rimpicciolisce da se'.",
+"",
+"Per il solo ornamento c'e' lo strumento IMMAGINE: e' fatto solo",
+"dell'icona, non si preme e non ha eventi. Per una figura che si",
+"CLICCA si usa invece un'Etichetta col testo vuoto e l'icona, che",
+"l'evento Clic ce l'ha."
 "Si incolla sempre nella maschera che si sta disegnando: taglia,",
 "cambia maschera dall'elenco, incolla, ed e' li'. Il nome e l'id si",
 "rifanno (sono unici in tutto il progetto) e l'handler della copia",
@@ -4089,6 +4496,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         case ID_PROGETTO:  progetto_scheda_apri(); break;
         case ID_FILES:     files_apri();           break;
         case ID_DIRECTORY: directory_apri();       break;
+        case ID_ICONA:     icona_scegli();         break;
 
         case ID_MANUALE:   manuale();       break;
         case ID_INFO:      informazioni();  break;
@@ -4251,6 +4659,8 @@ int main(int argc, char **argv)
     ex_menu_voce(g_menu, "Strumenti", "Librerie",    ID_LIBRERIE);
     ex_menu_voce(g_menu, "Strumenti", "Files",       ID_FILES);
     ex_menu_voce(g_menu, "Strumenti", "Directory",   ID_DIRECTORY);
+    ex_menu_voce(g_menu, "Strumenti", "-",           0);
+    ex_menu_voce(g_menu, "Strumenti", "Icona del controllo...", ID_ICONA);
     ex_menu_voce(g_menu, "Strumenti", "Progetto",    ID_PROGETTO);
 
     ex_menu_voce(g_menu, "Aiuto", "Manuale",          ID_MANUALE);
@@ -4259,8 +4669,10 @@ int main(int argc, char **argv)
     ex_crea("intestazione", "Strumenti", EX_FIGLIO, 6, 24, 152, 20, g_f, 0, 0);
     g_lst_strum = ex_crea("lista", "", EX_FIGLIO, 6, 46, 152, 396,
                           g_f, ID_STRUMENTI, 0);
-    for (i = 0; i < STRUM_N; i++)
+    for (i = 0; i < STRUM_N; i++) {
         ex_lista_aggiungi(g_lst_strum, g_strum[i].etichetta);
+        ex_lista_icona(g_lst_strum, (unsigned int)i, icona_strumento(i));
+    }
 
     /* ! LA STRISCIA SOPRA LA TELA ERA VUOTA, ed e' esattamente larga quanto
      * la tela: 436 pixel fra il pannello degli strumenti e quello delle

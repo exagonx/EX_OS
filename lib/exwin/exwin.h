@@ -220,6 +220,24 @@ typedef long (*ExProcedura)(ExFinestra, unsigned int, unsigned int, long);
  *     "scorrimento"   una barra: verticale o orizzontale secondo la FORMA
  *     "combo"         un elenco a discesa: si vede la scelta, si apre l'elenco
  *     "tab"           una fila di linguette, una scelta
+ *     "immagine"      un'icona e basta: ornamento, non si clicca
+ *
+ * ! «immagine» NON PRENDE IL FUOCO E NON MANDA COMANDI, ed e' il suo mestiere:
+ * sta li' e si fa guardare. Gli si da' l'icona con ex_icona_metti() come a un
+ * pulsante, e la disegna QUADRATA E CENTRATA nel riquadro — le icone sono
+ * quadrate, il riquadro che si tira no, e allargarle al rettangolo vorrebbe
+ * dire deformarle. Prima dell'immagine l'ornamento si faceva con
+ * un'«etichetta» dal testo vuoto: funzionava, ed era un trucco da spiegare
+ * ogni volta.
+ *
+ * ! E LA MISURA E' QUELLA DEL CONTROLLO: il `lato` passato a ex_icona_metti()
+ * qui non conta, perche' l'icona NON sta accanto a una scritta — e' tutto il
+ * controllo. Si tira il riquadro, e l'immagine lo riempie.
+ *
+ * ! CHI VUOLE UNA FIGURA CHE SI CLICCA USA UN'«etichetta» CON L'ICONA: quella
+ * ha l'evento Clic, e un'etichetta con icona ed evento Clic e' esattamente un
+ * collegamento. Un controllo in piu' per chiamarlo con un altro nome sarebbe
+ * un controllo che fa quel che ne fa gia' uno.
  *
  * Per una finestra di primo livello: `padre` = 0, `id` = 0, `proc` = la
  * procedura. Per un controllo: `padre` = la finestra, `id` = il numero con cui
@@ -364,7 +382,28 @@ void ex_smista(const ExMsg *m);
 void ex_esci(int codice);
 
 /* Cio' che la procedura deve chiamare per tutto quello che non gestisce:
- * disegna i controlli, ridisegna la cornice, chiude su EXM_CHIUDI. */
+ * disegna i controlli, ridisegna la cornice, chiude su EXM_CHIUDI.
+ *
+ * ! WHAT YOUR WINDOW DRAWS ITSELF BELONGS IN YOUR OWN EXM_DISEGNA, not only in
+ * the function that changes it. This call wipes the client area and knows
+ * nothing about the header row, the status line or the path label you paint by
+ * hand: anything that brings your window back to the front erases them, and
+ * what brings it back is the server itself, every time a dialog opened on top
+ * of it closes.
+ *
+ * So the shape that works is this one, and the redraw helper goes through the
+ * procedure rather than around it:
+ *
+ *     case EXM_DISEGNA:
+ *         ex_procedura_base(f, msg, wp, lp);
+ *         la_mia_roba();
+ *         return 0;
+ *
+ * ! IT IS WRITTEN HERE BECAUSE IT WAS PAID FOR TWICE IN ONE DAY, on 22
+ * September 2026: the path line of ExDlg vanished the instant it changed, the
+ * defect was found and written down, and a few hours later a brand new program
+ * lost its header row to the same cause. A lesson kept in the file where it
+ * was learnt is a lesson the next file does not read. */
 long ex_procedura_base(ExFinestra f, unsigned int msg, unsigned int wp, long lp);
 
 /* -----------------------------------------------------------------------------
@@ -520,6 +559,68 @@ void ex_pixmap(ExFinestra f, int x, int y, int w, int h,
  * Rende 1 se l'ha disegnata, 0 se il formato non e' (ancora) riconosciuto.
  * --------------------------------------------------------------------------- */
 int ex_immagine(ExFinestra f, const char *percorso, int x, int y);
+
+/* -----------------------------------------------------------------------------
+ * LE ICONE — un'immagine che si tiene, e si ridisegna a qualunque misura
+ *
+ * ! UN'ICONA NON E' UN'IMMAGINE DISEGNATA UNA VOLTA, ed e' per questo che ha
+ * funzioni sue. Un'immagine si posa e si dimentica; un'icona sta in un menu che
+ * si ridisegna a ogni apertura, in una riga di un elenco che scorre, su un
+ * pulsante che si preme: decodificarla a ogni disegno vorrebbe dire leggere un
+ * file e aprire eximg.so venti volte per aprire un menu. Qui si apre una volta,
+ * si tiene, e si disegna quante volte serve.
+ *
+ * ! E SI RIDIMENSIONA, PERCHE' I FILE NON SONO DELLA MISURA CHE SERVE. Le icone
+ * di questo sistema nascono a 64 e 128 pixel; una voce di menu e' alta 24 e una
+ * riga di elenco 16. Senza un riduttore l'unica scelta sarebbe disegnarle
+ * grandi come sono - cioe' non usarle - o chiedere a chi le disegna una copia
+ * per ogni posto in cui compariranno, che e' un lavoro che si rifa' ogni volta
+ * che una misura cambia. Il riduttore fa la MEDIA dei pixel che collassano in
+ * uno solo: prendere quello in mezzo (il "piu' vicino") su un rimpicciolimento
+ * di quattro volte butta quindici pixel su sedici, e i bordi sottili spariscono
+ * a chiazze.
+ *
+ * ! IL COLORE DI FONDO SI PASSA, E NON E' UNA SCOMODITA' EVITABILE. Le icone
+ * hanno l'alfa - i bordi sono semitrasparenti, e senza alfa un tondo dentro un
+ * quadrato ha gli angoli neri - ma ex_pixmap() posa i pixel e basta: e' una
+ * memcpy, non una fusione. Finche' il server non sapra' fondere, chi disegna
+ * deve dire SU CHE COSA: il giorno che lo sapra', questo parametro diventera'
+ * facoltativo e niente di cio' che e' scritto oggi cambiera' comportamento.
+ *
+ *     ExIcona ic = ex_icona_apri("/exwin/icon/baseapp/filemgr_64.ico");
+ *     ex_icona_disegna(f, ic, 6, y, 16, EX_GRIGIO);    // 64 -> 16
+ *
+ * `ex_icona_apri` rende 0 se il file non c'e' o se nessun lettore lo riconosce,
+ * e 0 e' un'icona che non si disegna: chi non ha un'icona passa 0 e non deve
+ * scrivere un `if`. E' la stessa idea del font 0 di ex_scrivi_con().
+ * --------------------------------------------------------------------------- */
+typedef unsigned int ExIcona;
+
+ExIcona      ex_icona_apri(const char *percorso);
+
+/* Il lato dell'icona com'e' nel file, in pixel. 0 se l'icona non c'e'. */
+unsigned int ex_icona_lato(ExIcona ic);
+
+/* La disegna in un quadrato di `lato` pixel, fondendola su `sfondo`. Rende 1,
+ * o 0 se l'icona non c'e' - e allora non ha disegnato niente, che e' cio' che
+ * permette di chiamarla senza controllare. */
+int          ex_icona_disegna(ExFinestra f, ExIcona ic, int x, int y,
+                              unsigned int lato, unsigned int sfondo);
+
+/* ! CHIUDERE UN'ICONA E' RARO, e la maggior parte dei programmi non lo fara'
+ * mai: un menu tiene le sue finche' vive. Esiste per chi ne carica di nuove a
+ * ogni cambio di directory - un file manager - e senza la tavola si
+ * riempirebbe. */
+/* Attacca un'icona a un CONTROLLO — un pulsante, un'etichetta — che da quel
+ * momento se la disegna da se', a sinistra della scritta. `lato` a 0 la fa
+ * scegliere al controllo, sull'altezza che ha.
+ *
+ * ! UN PULSANTE CON L'ICONA RESTA UN PULSANTE: si preme, si sposta, si
+ * ridisegna, e l'icona lo segue. Disegnarla sopra da fuori vorrebbe dire
+ * rifarla a ogni ridisegno del padre e ricordarsi di spostarla a mano. */
+void         ex_icona_metti(ExFinestra controllo, ExIcona ic, unsigned int lato);
+
+void         ex_icona_chiudi(ExIcona ic);
 
 /* =============================================================================
  * IL CONTENITORE MDI — finestre dentro una finestra
@@ -695,6 +796,27 @@ unsigned int ex_colora_c(void *dato, const char *riga,
  * --------------------------------------------------------------------------- */
 void         ex_lista_svuota(ExFinestra lista);
 int          ex_lista_aggiungi(ExFinestra lista, const char *testo);
+
+/* Un'icona davanti a una riga; `ic` a 0 la toglie.
+ *
+ * ! SI CHIAMA DOPO ex_lista_aggiungi(), sulla riga appena messa, e non e' una
+ * scomodita': quasi tutte le liste di questo sistema sono testo e basta, e un
+ * argomento in piu' in ex_lista_aggiungi() avrebbe voluto dire uno zero
+ * aggiunto a ogni chiamata gia' scritta.
+ *
+ *     ex_lista_aggiungi(l, "Pulsante");
+ *     ex_lista_icona(l, ex_lista_quante(l) - 1, ic);
+ *
+ * ! L'ICONA SI FONDE SUL FONDO DELLA RIGA, che sulla riga scelta e' blu: lo fa
+ * il controllo, e per questo l'icona va data a lui invece di disegnarla sopra
+ * da fuori. */
+void         ex_lista_icona(ExFinestra lista, unsigned int riga, ExIcona ic);
+
+/* Quanti PIXEL la lista tiene a sinistra per le icone, 0 se non ne ha nessuna.
+ * Serve a chi disegna un'intestazione sopra una lista incolonnata a spazi: le
+ * righe si spostano, e l'intestazione deve seguirle. La corsia e' larga due
+ * caratteri esatti proprio perche' quei conti tornino. */
+unsigned int ex_lista_margine(ExFinestra lista);
 unsigned int ex_lista_quante(ExFinestra lista);
 unsigned int ex_lista_scelta(ExFinestra lista);
 void         ex_lista_scegli(ExFinestra lista, unsigned int i);
