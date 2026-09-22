@@ -554,6 +554,29 @@ $(BLKSCAN_BIN): $(BLKSCAN_SRC) $(BLKSCAN_LD) $(LIBC_SRC) $(LIBC_START) $(LIBC_HD
 .PHONY: blkscan
 blkscan: dirs $(BLKSCAN_BIN)
 
+# --- Programma utente /bin/blkprova ------------------------------------------
+# Fin dove un disco risponde, cercandolo per dimezzamenti. ! VA ANCHE SUL
+# DISCHETTO DI SOCCORSO (vedi fixsys): e' li' che serve, perche' blkread
+# rifiuta una partizione montata e il disco da esaminare e' quello di sistema.
+BLKPROVA_SRC := bin/blkprova/blkprova.c
+BLKPROVA_BIN := $(BUILD_BIN_CD)/blkprova
+BLKPROVA_LD  := bin/blkprova/blkprova.ld
+
+$(BLKPROVA_BIN): $(BLKPROVA_SRC) $(BLKPROVA_LD) $(LIBC_SRC) $(LIBC_START) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/blkprova ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -c $(BLKPROVA_SRC) -o $(BUILD_OBJ)/blkprova_main.o
+	$(CC) -m32 -c $(LIBC_START)                           -o $(BUILD_OBJ)/blkprova_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(BLKPROVA_LD) \
+	    $(BUILD_OBJ)/blkprova_start.o \
+	    $(BUILD_OBJ)/blkprova_main.o  \
+	    $(LIBC_PONTI_OBJ)  \
+	    -o $@
+	@echo "[OK] blkprova compilato: $@"
+
+.PHONY: blkprova
+blkprova: dirs $(BLKPROVA_BIN)
+
 # --- Programma utente /bin/automount -----------------------------------------
 # Guarda i dispositivi a blocchi e monta da solo quelli serviti da un driver:
 # le chiavette finiscono in /USB/DRIVE0, i dischi in /USB/HDD0p1. Non sorveglia
@@ -4616,7 +4639,8 @@ FIXSYS_IMG := $(DIST_DIR)/fixsys.img
 # perche' non era in lista.
 FIXSYS_CONTENUTO := $(STAGE1_BIN) $(STAGE2_BIN) $(KERNEL_BIN) $(LIBC_SO) \
                     $(SHELL_BIN) $(INSTALL_BIN) $(MOUNT_BIN) $(DISK_BIN) $(LS_BIN) \
-                    $(KBD_DRV_OUT) $(PCI_DRV_OUT) $(UHCI_OUT) $(CP_BIN)
+                    $(KBD_DRV_OUT) $(PCI_DRV_OUT) $(UHCI_OUT) $(CP_BIN) \
+                    $(CHKDSK_BIN) $(BLKPROVA_BIN)
 
 # =============================================================================
 # ! IL DISCHETTO DI SOCCORSO SI COSTRUISCE CON RAMDISCO=1, E NON E' UN DI PIU'.
@@ -6563,7 +6587,7 @@ BINARI_SOLO_CD := $(CRYPTTEST_BIN) $(FILIPROVA_BIN) $(NETDETECT_BIN) $(NETTEST_B
                   $(TELNET_BIN) $(XCP_BIN) $(WINPROVA_BIN) $(EXWINCMD_BIN) \
                   $(SCARICA_BIN) $(SENDERROR_BIN) \
                   $(CDINSTALL_BIN) $(SWAPTEST_BIN) $(LIBCTEST_BIN) $(HELLO_BIN) \
-                  $(AUDIO_BIN) $(NETUPDATE_BIN) $(WIFI_BIN) $(BLKSCAN_BIN) $(AUTOMOUNT_BIN) \
+                  $(AUDIO_BIN) $(NETUPDATE_BIN) $(WIFI_BIN) $(BLKSCAN_BIN) $(BLKPROVA_BIN) $(AUTOMOUNT_BIN) \
                   $(EJECT_BIN) $(FTPSWAP_BIN) $(SOCCORSO_BIN) \
                   $(FBPROVA_BIN) $(MEMPROVA_BIN) $(GFEDIT_BIN)
 # ! QUESTA LISTA E' LA DIPENDENZA DELL'ISO, E VA TENUTA ALLINEATA A

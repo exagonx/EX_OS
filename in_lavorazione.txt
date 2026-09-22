@@ -3,8 +3,18 @@ QUEL CHE E' APERTO — 15 settembre 2026
 !!! I SETTE FILE DEL 15 SETTEMBRE ADESSO COMPILANO, e sono sul server.
     La sessione della sera li ha costruiti (mancava il typedef Sha256 in
     lib/libc.c, che e' autosufficiente e non include il proprio header),
-    pubblicati e verificati: 1608 file, 0 diversi. Restano da PROVARE SULLA
-    MACCHINA: @DIF-POST con senderror, e il touchpad in @SIS.
+    pubblicati e verificati: 1608 file, 0 diversi. La POST e' PROVATA il 21
+    settembre — 25 KB dall'Acer, HTTP 200, referto sul server — e resta da
+    provare sulla macchina il touchpad in @SIS.
+
+!!! OTTO RICHIESTE ARRIVATE IL 21 SETTEMBRE, e stanno in correzioni.txt, che
+    e' il file da cui chi usa il sistema chiede le cose: «!» vuol dire urgente,
+    «$» a comodo. Sette sono diventate compiti qui dentro (TASTI-SISTEMA,
+    GRAFICA-MODALE, FILEMGR-OPS, GFEDIT-SEL, NETUPDATE-PATH, RUNBAS, FBC-110)
+    e l'ottava e' gia' fatta: .gitignore adesso ignora ogni albero
+    FreeBASIC-*-source-bootstrap/, non piu' il solo 1.07.3.
+    ! LE RIGHE PRESE IN CARICO RESTANO LA' COMMENTATE CON «#», non cancellate:
+      e' cosi' che chi le ha scritte vede che sono state lette.
 
 
 Qui c'e' SOLO quel che non e' fatto. Niente voci «FATTO»: la storia di come una
@@ -115,6 +125,11 @@ INDICE — I COMPITI, IN ORDINE DI LIVELLO
   chi chiude un livello 1 guarda subito se qualche 2 e' appena diventato 1, e
   lo scrive qui. E' l'unica manutenzione che questo indice chiede.
 
+! IL «!» IN FONDO A DESTRA E' URGENZA CHIESTA, ed e' una terza cosa ancora:
+  non «si puo' fare adesso» (quello e' il livello) e non «pesa tanto» (quello
+  e' l'ordine dentro il livello), ma «chi usa il sistema l'ha chiesta per
+  prima». Arriva da correzioni.txt, dove un «!» e' urgente e un «$» a comodo.
+
 LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
 ---  ---------------  -----------------------------------------------------
  --  @RIPRESA         dove si era arrivati, e come si riprovano i fili
@@ -138,7 +153,11 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @NAVMETA         sette meta' che mancano a cose gia' fatte (una sezione sola)
   1  @DIF-TLS         resta una firma P-384 da 350 ms: rinuncia, non lavoro
   1  @DIF-TCPBUF      non era la finestra: era la coda del driver, otto posti
-  1  @DIF-POST        la POST non tornava: corretto e compilato, da provare
+  1  @EXT2-DOPPIO     un blocco liberato due volte sull'Acer: il driver l'ha fermato
+  1  @ATA-RESET       un timeout lasciava il disco BSY: corretto e provato
+  1  @DISCO-ACER      stato=0xd0: il disco gratta su settori suoi, e sono suoi
+  1  @DISCO-RECUPERO  leggere un disco malandato: il PIO per scelta, e cosa manca
+  1  @BAD-BLOCCHI     FATTO su ext2 E su FAT: chkdsk -badblock -fix
   1  @PROVE-MACCHINA  ftpswap provato la' il 16 settembre; eject aspetta una chiavetta
   1  @GRAFICA-SCATTI  misurato: il bus non c'entra, si ridipinge troppo spesso
   1  @TELNET-SCALA    scaletta e troncamento SISTEMATI: resta la sessione che si impianta
@@ -156,6 +175,13 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @GIT-GCC         togliere dall'indice gli interni di GCC (chi ha il repository)
   1  @WIFI-4318       la radio della Broadcom: manca il firmware, non la voglia
   1  @RUST-0          un programma no_std che gira, compilato da Linux
+  1  @TASTI-SISTEMA   ! CTRL+C che chiede, e CTRL+ALT+CANC che offre tre strade
+  1  @GRAFICA-MODALE  ! l'uscita scorre come testo: ci vuole una finestra
+  1  @FILEMGR-OPS     fatto e provato in QEMU: restano Rinomina e l'avanzamento
+  1  @GFEDIT-SEL      FATTO e provato sul ferro: resta da guardare il toolkit
+  1  @NETUPDATE-PATH  gli strumenti si installano dove il PATH non guarda
+  1  @RUNBAS          eseguire un .bas: il comando runbas, e F5 dentro gfedit
+  1  @FBC-110         il CD ha FreeBASIC 1.07; l'1.10 toglie l'avviso del linker
 
   2  @SUONO-EMU8000   l'EMU8000 di una AWE32 resta spento    <- @SUONO-CAMPIONI
   2  @RUST-1          alloc: un GlobalAlloc sopra la malloc  <- @RUST-0
@@ -938,7 +964,7 @@ APERTO, ed e' qui che si riprende:
         exhttp.so: con quella un file arriva dalla rete e si finisce li'.
 
   14e4:4318  WiFi Broadcom: la cartella Broadcom del pacchetto Acer e' VUOTA,
-  ---------  e comunque servirebbe un firmware proprietario. Vedi @WIFI.
+  ---------  e comunque servirebbe un firmware proprietario. Vedi la voce WIFI-4318.
 
   1039:7013  Modem: e' un softmodem. Il lavoro vero e' un DSP in software,
   ---------  non un driver. Fuori portata, e detto per non riaprirlo.
@@ -967,7 +993,7 @@ APERTO, ed e' qui che si riprende:
              non e' mai stata accesa e un mouse che non c'e' danno lo stesso
              identico silenzio.
 
-             ! NON COMPILATO NE' PROVATO (vedi @DIF-POST per il perche').
+             ! COMPILATO E PUBBLICATO IL 15 SETTEMBRE, MAI PROVATO SUL FERRO.
                Se dopo `netupdate -check` e un riavvio la riga dice ancora che
                non risponde, quella riga dice anche dove guardare.
 
@@ -1275,52 +1301,530 @@ QUEL CHE MANCA, IN ORDINE:
      megabyte diceva «TRONCATA» e lasciava sul disco meta' file col nome
      giusto, che e' peggio di nessun file.
 
-  ! NON COMPILATO NE' PROVATO. Vedi l'avvertenza in @DIF-POST.
+  ! COMPILATO E PUBBLICATO IL 15 SETTEMBRE, E UNO DEI QUATTRO E' PROVATO: il
+    corpo della POST, 25 KB mandati dall'Acer al punto di raccolta il 21
+    settembre 2026 (HTTP 200, referto sul server — diario di quel giorno).
+    Gli altri tre aspettano un caso vero che li faccia passare.
 
-! @DIF-POST LA POST NON TORNAVA PIU', E LE RAGIONI ERANO DUE. (14 settembre 2026)
+! @EXT2-DOPPIO UN BLOCCO LIBERATO DUE VOLTE, SULL'ACER. (21 settembre 2026)
 
-  Il sintomo: `senderror` mandato a un punto di raccolta si piantava e con lui
-  la sessione telnet da cui era partito. Sul server non e' mai arrivato un
-  referto — si e' visto il 14 settembre, quando elenco.php ha finalmente
-  permesso di guardare dentro report/ricevuti/: zero file.
+  Riferito da chi guardava lo schermo della macchina, mentre di qui si
+  aggiornava bin/telnetd con netupdate:
 
-  ! LA PRIMA RAGIONE E' UN CICLO SENZA USCITA, in tcp_scrivi() di
-    lib/exhttp/exhttp.c. Lo stack puo' accettare meno byte di quanti gliene si
-    danno, e il codice faceva la cosa giusta — aspetta venti millisecondi e
-    ritenta — senza mai arrendersi. Finche' la risposta e' «zero accettati»
-    (coda piena, finestra dell'altro capo chiusa, connessione morta in
-    silenzio) chi ha chiamato resta appeso e non esiste un errore da nessuna
-    parte.
+      EXT2: blocco 38339145 gia' libero: non lo libero due volte
 
-    ! ED E' RIMASTA NASCOSTA PERCHE' UNA GET NON LA INCONTRA MAI: duecento byte
-      di richiesta lo stack li prende sempre in un colpo. La prima cosa che ha
-      scritto qualche kilobyte e' stata una POST.
+  ! IL DRIVER L'HA FERMATO, ED E' LA RAGIONE PER CUI QUESTO E' UN AVVISO E NON
+    UN DISASTRO. libera_blocco() (kernel/fs/ext2.c) guarda la bitmap prima di
+    spegnere il bit: liberare due volte lo stesso blocco lo farebbe contare due
+    volte fra i liberi, e da li' in poi l'allocatore lo darebbe a DUE file.
 
-    Corretto: settecentocinquanta giri senza un solo byte accettato — quindici
-    secondi — e si rende errore. Il contatore si azzera al primo byte che
-    passa, quindi una rete lenta non ci arriva.
+  ! MA IL NUMERO E' VERO, NON E' SPAZZATURA, e questo e' il fatto che orienta.
+    libera_blocco() rifiuta in silenzio (-1) tutto cio' che sta fuori dal
+    volume; per arrivare al klog il blocco dev'essere dentro. E ci sta:
+    hd0p1 dell'Acer e' 58.604.096 blocchi da 1 KB (57 GB), e 38.339.145 e'
+    dentro. Quindi qualcuno ha chiesto di liberare un blocco VERO che era gia'
+    libero — non un puntatore impazzito.
 
-  ! LA SECONDA E' UNA MISURA, e sarebbe stato il muro dopo. http_richiesta_corpo()
-    appendeva il corpo dentro `req`, che in exhttp.c e' di dodici kilobyte. Un
-    referto dell'hardware sta fra i cinque e i ventotto kilobyte, e codificato
-    in percentuale cresce: SONDA7.TXT non ci sarebbe mai stato.
+  Le due strade, in ordine di quanto sarebbero gravi:
+    1. il MENO grave: la stessa potatura passa due volte sullo stesso
+       puntatore. Il candidato e' il percorso «tronca e riscrivi» che netupdate
+       fa a ogni file sostituito — il VFS tronca all'apertura, e netupdate
+       taglia anche per conto suo;
+    2. il PIU' grave: due inode che puntano allo stesso blocco, e il secondo
+       che lo libera lo trova gia' libero. Vorrebbe dire che l'allocatore ha
+       consegnato due volte lo stesso blocco — cioe' un danno gia' fatto,
+       prima di oggi.
 
-    Corretto: http_richiesta_testa() (nuova, in lib/exhttp/http.c) scrive solo
-    le intestazioni con il Content-Length del corpo che verra'; il corpo lo
-    manda exhttp con una seconda t->scrivi(). http_richiesta_corpo() resta come
-    involucro per chi la chiama gia'.
+  ! CHE SIA L'UNA O L'ALTRA LO DICE chkdsk, E SI AVVIA DAL CD. I settori
+    grezzi di un volume MONTATO non si leggono, e quel volume e' la radice
+    della macchina: dal sistema installato chkdsk risponde «non riconosco il
+    formato», che sembra un disco rotto e invece e' un disco occupato.
 
-  ! NON E' STATO COMPILATO NE' PROVATO, E VA DETTO. Il 14 settembre 2026 la
-    sessione non ha piu' potuto lanciare `make` (l'ambiente ha smesso di
-    concederlo a meta' lavoro). Le modifiche a lib/exhttp sono scritte e
-    rilette, non costruite: e' l'unica cosa di quella giornata che non sia
-    passata sotto il compilatore. Prima di crederci:
+    ! DAL CD DI EX-OS INVECE FUNZIONA, ED E' PROVATO (21 settembre, in QEMU, su
+      un ext2 vero): il CD non monta il disco — lo monta a mano chi vuole — e
+      chkdsk arriva in fondo:
 
-        make exhttp_so && make iso-exos && make netinst
-        exagonx/pubblica.sh
+          Bitmap dei blocchi e degli inode
+            = le bitmap e i conteggi corrispondono a cio' che i file usano
+              davvero
 
-    e poi, dalla macchina:  senderror <url>/report/ /SIS900.TXT
-    e da qui:               exagonx/referti.sh
+      che e' ESATTAMENTE la domanda di questo compito. Quindi:
+
+          si avvia la macchina dal CD, senza montare niente
+          chkdsk hd0p1            in sola lettura, dice e basta
+          chkdsk -r hd0p1         corregge, e solo dopo aver letto il referto
+
+    ! E DAL 21 SETTEMBRE C'E' ANCHE SUL DISCHETTO DI SOCCORSO, che e' la
+      strada per le macchine il cui lettore sta sull'USB. dist/fixsys.img
+      porta chkdsk accanto a install e mount, e restano 770 KB liberi.
+
+      ! SI COSTRUISCE CON `make fixsys`, MAI LANCIANDO tools/mkfixsys.sh A
+        MANO. Lo script copia lo stage2 che trova in build/; il volume in RAM
+        e' esattamente cio' che lo stage2 decide, e solo il bersaglio del
+        Makefile fa il sub-make con RAMDISCO=1. Lanciato a mano il 21 settembre
+        ha prodotto un dischetto che NON si avviava da lettore USB — cioe' che
+        falliva nel solo caso per cui esiste. Il bersaglio stampa i due md5
+        apposta: se non combaciano, il volume in RAM non c'e'.
+
+      ! PROVATO COME SI DEVE: avviato in QEMU, ESPULSO IL DISCHETTO dal
+        monitor e poi `ls /bin` — risponde, zero errori FDC, e `chkdsk hd0p1`
+        gira sul disco non montato. Con il dischetto dentro non si prova
+        niente: il sistema leggerebbe di la' comunque.
+
+      ! E IN QEMU CI VOGLIONO ALMENO 64 MB. La copia mette il volume a 32 MB e
+        pretende 41 MB di memoria alta (loader.asm, `cmp eax, 40*1024`): con i
+        32 MB predefiniti di qemu_drive.py stage2 salta la copia IN SILENZIO e
+        la prova misura un'altra cosa. EXOS_RAM=128M.
+
+  ! E VA FATTO PRIMA DI SCRIVERCI ANCORA SOPRA. Se e' il caso 2, ogni
+    scrittura nuova puo' consegnare quel blocco a un terzo file.
+
+  ! IN QEMU NON SI RIPRODUCE COL PERCORSO OVVIO, e la prova e' gia' pagata:
+    su un ext2 da 32 MB, un file da 30 KB (trenta blocchi: dodici diretti e il
+    resto dall'indiretto) sovrascritto tre volte di fila, troncato a 100 byte e
+    infine cancellato NON ha prodotto un solo avviso. Quindi «tronca e
+    riscrivi» da solo non basta: chi riprende cerchi altrove — un volume
+    grande (sull'Acer i blocchi sono 58 milioni, cioe' si arriva al DOPPIO
+    indiretto e oltre), oppure un danno gia' presente sul disco.
+
+! @ATA-RESET UN TIMEOUT LASCIAVA IL DISCO BSY, E DA LI' NON SI LEGGEVA PIU'
+  NIENTE. (trovato e corretto il 21 settembre 2026)
+
+  Sull'Acer, avviando il dischetto di soccorso per controllare il disco:
+
+      ATA: DMA fermo a lba=1787906
+      ATA: il DMA non funziona, si continua in PIO (non si ritentera' piu')
+      ATA: timeout DRQ sul canale 0 (stato=0xd0)
+      BLKIO: lettura fallita su lba ...   (e avanti cosi')
+
+  ! LO STATO 0xD0 E' LA DIAGNOSI, e va letto bit per bit: BSY piu' DRDY. Il
+    disco e' ancora OCCUPATO dal comando di prima — quello del DMA scaduto —
+    e quindi ogni comando successivo non puo' che scadere a sua volta. Il
+    driver, dopo il timeout, fermava il bus master e tornava indietro SENZA
+    resettare il canale: un guasto solo, moltiplicato per ogni richiesta dopo.
+
+  ! E IL SINTOMO NON SOMIGLIAVA ALLA CAUSA: «chkdsk trova errori dappertutto»
+    sembra un disco che se ne va, mentre lo stesso disco, dal sistema
+    installato, si legge tutti i giorni. E' esattamente il modo in cui un
+    difetto di ripristino si fa scambiare per un guasto di ferro.
+
+  CORRETTO in kernel/block/ata.c: ata_reset_canale() — SRST alto almeno 5 us,
+  basso, e si aspetta BSY — chiamata dopo il timeout del DMA, dopo un errore
+  del bus master, dopo un DRQ scaduto in PIO e dopo un BSY che non cade.
+    ! NON dopo un settore illeggibile: li' il disco ha RISPOSTO ed e' pronto,
+      e resettarlo butterebbe via il resto della lettura per un settore solo.
+    ! E L'ATTESA E' A LETTURE DI PORTA, non col PIT: questa funzione la chiama
+      anche chi gira a interrupt spenti, e li' un'attesa su g_ticks non
+      finirebbe mai.
+
+  PROVATO IN QEMU (nessuna regressione: chkdsk pulito, mount e ls a posto) e
+  pubblicato.
+
+  ! E SULL'ACER, COL RESET, IL QUADRO E' CAMBIATO — in meglio come diagnosi e
+    in peggio come notizia. Secondo giro, riferito da chi guardava:
+
+        ATA: DMA fermo a lba=44550146     (la prima volta era 1787906)
+        ATA: timeout DRQ sul canale 0 (stato=0xd0)
+        BLKIO: lettura fallita su 51953668, 53133314, 54149122, e altri
+
+    Tre cose, e nessuna dipende piu' dal driver:
+      1. il primo indirizzo che si pianta CAMBIA fra un giro e l'altro: non e'
+         un settore preciso che e' andato;
+      2. adesso chkdsk NON muore al primo errore — ne trova altri e va avanti,
+         che e' esattamente cio' che il reset serviva a permettere;
+      3. tutti gli indirizzi nuovi stanno in alto, dai 22 GB in su, e sono
+         spaziati: 44,5M, 51,9M, 53,1M, 54,1M settori.
+
+    ! E LO STATO RESTA 0xd0, CIOE' BSY: il disco NON RISPONDE. Un settore
+      illeggibile risponde, e risponde «errore» (ERR): e' una differenza che
+      separa «un graffio» da «la testina non torna». Qui siamo nel secondo.
+
+    ! CHE LA MACCHINA FUNZIONI TUTTI I GIORNI NON LO SMENTISCE, ed e' la
+      trappola di questa diagnosi: il sistema e i file stanno nei primi
+      gigabyte, e la' il disco risponde. Quella meta' di disco non la tocca
+      nessuno TRANNE chkdsk, che le bitmap e le tavole degli inode le legge
+      per tutto il volume. Ecco anche perche' @EXT2-DOPPIO parlava di un
+      blocco a 38 milioni: e' li' sopra.
+
+! @DISCO-ACER IL DISCO RISPONDE PER INTERO: NON E' IL POSTO, E' LA MISURA.
+  (21 settembre 2026)
+
+  ! IL DISCO NON E' ROTTO, ED E' MISURATO. `blkprova hd0p1` sull'Acer:
+
+      ultimo settore che risponde:  lba 117208191  (55,8 GB)
+      primo che non risponde:       lba 117208192  -> la partizione finisce li'
+
+    Cioe' la ricerca binaria e' arrivata IN FONDO senza trovare un confine: a
+    settori singoli il disco risponde dappertutto, compresa la meta' alta dove
+    chkdsk si piantava. L'ipotesi «si sta guastando dai 22 GB in su» e'
+    SMENTITA, e va scritto perche' era la piu' naturale e la piu' cara: portava
+    a ripartizionare o a cambiare il disco.
+
+  ! QUINDI LA DIFFERENZA E' IN CIO' CHE SI CHIEDE, NON IN DOVE. blkprova legge
+    UN settore per volta; chkdsk legge blocchi da 64 settori (32 KB, il tetto
+    di blkread) e li legge DI FILA. Uno dei due passa e l'altro no sullo stesso
+    disco, negli stessi punti: allora il guasto sta nella misura, nel ritmo, o
+    in come il nostro driver imposta un trasferimento grande — cioe' e' nostro.
+
+  ! E IL PRIMO INDIRIZZO CHE SI PIANTA CAMBIA A OGNI GIRO (1787906, poi
+    44550146): un settore guasto non si sposta. Anche questo indica il
+    trasferimento, non il supporto.
+
+  ! E ANCHE LA MISURA E' STATA ESCLUSA, il 21 settembre, sulla macchina:
+
+        blkprova hd0p1 44550146            1, 2, 4 ... 64 settori: risponde tutto
+        blkprova hd0p1 -scorri 44000000 64  2048 blocchi letti, 0 falliti
+
+    Quindi allo stesso indirizzo dove chkdsk si pianta, una lettura da 32 KB
+    passa — e ne passano duemila di fila. Restano in piedi due cose sole: il
+    LAVORO ACCUMULATO (chkdsk di letture ne fa decine di migliaia) e il
+    PERCORSO che segue chi legge un filesystem invece di scorrere (indirizzi
+    non allineati ai 64 settori, misure diverse, salti da una tavola all'altra).
+
+    ! E `blkprova hd0p1 -tutto` HA DATO IL NUMERO: si pianta a lba 116864,
+      cioe' a 57 MB — DOPO MILLEOTTOCENTO LETTURE, non a ventun gigabyte.
+
+      ! ED E' IL COLPO DI GRAZIA ALL'IPOTESI DEL POSTO: lo stesso disco, nello
+        stesso giro, aveva appena letto senza un errore i sessantaquattro
+        megabyte a 21 GB. Quel che conta non e' DOVE si legge, e' DA QUANTO si
+        sta leggendo di fila: qualche secondo.
+
+  ! LA CAUSA, TROVATA GUARDANDO IL CODICE CON QUEL NUMERO IN MANO: il timeout
+    del trasferimento DMA non era a TEMPO, era a GIRI DI CICLO —
+
+        if (++scaduto > 200000u)     /* ~ qualche secondo di giri */
+
+    e quei duecentomila giri sono quattro letture di porta l'uno, un
+    microsecondo l'una: MENO DI UN SECONDO, non «qualche». Un disco portatile
+    del 2004 che ricalibra sotto sforzo, o che ritenta un settore debole, sta
+    fermo piu' di cosi' — e infatti succedeva dopo qualche secondo di lettura
+    continua, in un punto diverso ogni volta, su un disco che settore per
+    settore risponde da cima a fondo.
+
+    ! E UN CONTO DI GIRI NON E' UNA SCADENZA: quanto valga un giro dipende da
+      quanto e' lento il bus, cioe' la soglia cambiava da macchina a macchina
+      senza che nessuno lo dicesse. Ogni altra attesa di quel file e' ancorata
+      al PIT; questa no, ed era l'unica.
+
+  CORRETTO (kernel/block/ata.c, 21 settembre 2026):
+    - ATA_TMO_DMA_MS = 8000, e l'attesa ancorata a g_ticks come tutte le altre;
+    - e TRE TENTATIVI prima di buttare via il DMA per l'intera sessione: un
+      trasferimento che scade non vuol dire che il canale non sappia fare DMA,
+      e arrendersi al primo intoppo significa pagare un secondo di disco con
+      un'ora di lentezza in PIO.
+
+  ! E OTTO SECONDI NON SONO BASTATI: la prova sulla macchina ha reso
+
+        ATA: DMA fermo a lba=118984 dopo 8000 ms      (poi ritentato)
+        ATA: DMA fermo a lba=444644 dopo 8000 ms      (poi ritentato)
+        ATA: DMA fermo a lba=451109 ...               e li' ha ripiegato in PIO
+        si e' piantato a lba 449024 (219 MB) dopo 7016 letture riuscite
+
+    ! OTTO SECONDI NON LI IMPIEGA NESSUN DISCO A LEGGERE 32 KB. Quindi non era
+      lentezza: quel trasferimento NON FINIVA. E i tre tentativi hanno fatto la
+      loro parte — 7016 letture invece di 1826 — ma hanno solo spostato il
+      muro.
+
+  ! LA CAUSA VERA, E IL CICLO DI ATTESA GUARDAVA DALLA PARTE SBAGLIATA. Quando
+    il disco incontra un settore che non riesce a leggere ABORTISCE il
+    trasferimento: alza ERR nel proprio registro di stato e non manda piu' un
+    byte. Il bus master, che i byte li aspetta, resta ATTIVO per sempre — e il
+    ciclo guardava SOLO il bus master. Il disco aveva gia' detto di no, e
+    nessuno glielo chiedeva: si aspettava la scadenza, ogni volta.
+
+    ! SONO DUE GUASTI DIVERSI CON LA STESSA FACCIA: «il canale e' fermo» e «quel
+      settore non si legge». Il primo e' nostro, il secondo e' del disco, e
+      confonderli fa fare la cosa sbagliata in tutt'e due i casi.
+
+  ! E IL PRIMO TENTATIVO DI CORREZIONE E' STATO SBAGLIATO, SUL FERRO. L'idea
+    era: se nel ciclo il disco mostra ERR con BSY caduto, ha abortito, e
+    aspettare la scadenza e' tempo buttato. In QEMU filava; sulla macchina vera
+    OGNI LETTURA FALLIVA, dal settore 0. Appena dopo il comando il registro di
+    stato non e' ancora quello di QUESTO comando — c'e' una finestra in cui si
+    legge lo stato di prima — e il controllo scattava sempre.
+
+    ! E' LA REGOLA DI QUESTO FILE, NON L'ECCEZIONE: un guasto che si vede solo
+      sul ferro e non in QEMU. L'emulatore risponde subito e a comando, il
+      silicio no. Ritirato: se si riprova, il controllo va fatto DOPO aver
+      visto BSY salire almeno una volta, e va provato sulla macchina PRIMA che
+      in QEMU.
+
+  QUEL CHE RESTA, ED E' PROVATO SU TUTT'E DUE (kernel/block/ata.c):
+    1. ATA_TMO_DMA_MS = 8000, con l'attesa ancorata al PIT invece di
+       duecentomila giri che valevano meno di un secondo;
+    2. tre tentativi prima di buttare via il DMA per l'intera sessione — sono
+       quelli che hanno portato le letture da 1826 a 7016;
+    3. il reset del canale dopo una scadenza (vedi @ATA-RESET);
+    4. e nella scadenza si stampa anche COSA DICE IL DISCO:
+
+           ATA: DMA fermo a lba=N dopo 8000 ms
+                (disco: stato=0xXX errore=0xXX, bm=0xXX)
+
+       che e' la misura che manca per decidere. Tre diagnosi diverse, e costano
+       una lettura di porta:
+         - stato con BSY alto (0x80): il disco sta ANCORA lavorando, e allora
+           otto secondi non bastano perche' e' lento davvero, o perche' ritenta;
+         - stato con ERR (0x01): ha gia' risposto di no, e allora il ciclo
+           aspetta una risposta che e' gia' arrivata — ed e' la strada di
+           sopra, da rifare come si deve;
+         - 0xFF: il canale non c'e' piu'.
+
+  ! E LA RIGA HA PARLATO: stato=0xd0, cioe' BSY e DRDY, ERR A ZERO.
+
+    Il disco NON ha rifiutato: sta ancora lavorando, e lo fa da otto secondi.
+    Nessun disco sano impiega otto secondi a leggere 32 KB — quello che ci
+    mette tanto sta ritentando sul proprio supporto. Quindi:
+
+      - non e' il canale (dopo il reset il blocco dopo si legge);
+      - non e' la misura (a quegli indirizzi passano anche i 32 KB, provato);
+      - non e' il posto in senso largo (a settori singoli risponde fino a
+        55,8 GB);
+      - SONO SETTORI. Primo intoppo a lba 440064 (214 MB), poi altri a 215,
+        216, 219 MB — e piu' avanti UNO ISOLATO a lba 13059751 (6,2 GB), con
+        un timeout DRQ invece che DMA: cioe' lo stesso guasto visto dall'altro
+        percorso, perche' a quel punto il DMA era gia' stato spento.
+
+        ! E QUELL'ISOLATO CAMBIA LA CONCLUSIONE PRATICA: il danno non sta tutto
+          in una zona. Una zona si evita ripartizionando; dei settori sparsi su
+          un disco del 2004 vogliono dire che ne arriveranno altri, e allora si
+          copia via e si cambia il disco.
+
+  ! QUINDI IL DISCO HA DEL SUPPORTO ANDATO, e la risposta alla domanda di chi
+    lo usa — «possibile che ci siano settori davvero danneggiati?» — e' SI',
+    ed e' la spiegazione piu' semplice che regge a tutte le misure fatte oggi.
+    Spiega anche @EXT2-DOPPIO: una bitmap letta male in una zona che non torna
+    dice il falso su un blocco, e il driver ext2 se ne accorge quando qualcuno
+    prova a liberarlo due volte.
+
+  CORRETTO DI CONSEGUENZA (kernel/block/ata.c): una scadenza con BSY ANCORA
+  ALTO rende -2, «e' quel settore», e allora
+    - non si ritenta (il disco ha gia' ritentato lui per otto secondi, e ogni
+      nostro giro ne costa altri otto);
+    - NON si spegne il DMA per la sessione: il canale e' sano, e il blocco dopo
+      si legge alla velocita' di sempre. Prima si ripiegava in PIO, che su
+      quegli stessi settori scade a sua volta — un disco da 57 GB letto alla
+      velocita' del 1994 per colpa di una manciata di settori.
+
+    ! E QUESTO CONTROLLO E' AL SICURO DALL'ERRORE DI STAMATTINA: scatta DOPO la
+      scadenza, quando il disco il comando l'ha preso da un pezzo. Quello
+      ritirato guardava lo stato appena dato il comando, quando il registro
+      racconta ancora il comando di prima.
+
+  CHE FARE DEL DISCO, e non e' una decisione tecnica:
+    - i settori andati stanno intorno ai 214-220 MB, cioe' in una zona;
+    - quel che c'e' sotto e sopra si legge;
+    - un disco del 2004 che comincia a perdere settori ne perde altri: si copia
+      via quel che serve, e se lo si vuole tenere si ripartiziona saltando la
+      zona. Riparare la mappa del filesystem sopra dei buchi non li fa tornare.
+
+  LA PROVA CHE LO INCHIODA, e si fa dal dischetto di soccorso, in due comandi:
+
+      blkprova hd0p1 44550146          la stessa lettura a 1, 2, 4 ... 64
+                                       settori: quale misura non passa?
+      blkprova hd0p1 -scorri 44000000 64
+                                       64 MB di fila a blocchi da 32 KB, che e'
+                                       come legge chkdsk: dove si ferma?
+
+    - se il settore singolo passa e il blocco no, e' la MISURA: si guarda il
+      percorso DMA (una voce di PRDT sola, il buffer da 64 KB allineato, il
+      conteggio settori a 0 che vuol dire 256) e il ripiego in PIO multiplo;
+    - se passa tutto anche a 32 KB ma chkdsk si pianta lo stesso, allora e' il
+      RITMO — tante richieste di fila — e si guarda l'attesa fra un comando e
+      l'altro, non il comando.
+
+  ! `blkprova` (bin/blkprova, nuovo il 21 settembre) fa tutt'e tre le domande.
+    Sta sul CD e sul dischetto di soccorso.
+
+        blkprova hd0p1                    fin dove risponde (per dimezzamenti:
+                                          ventisette letture, non una scansione)
+        blkprova hd0p1 <lba>              la stessa lettura a misure diverse
+        blkprova hd0p1 <lba> <settori>    una lettura sola
+        blkprova hd0p1 -scorri <lba> <mb> di fila, come chkdsk
+
+    ! VUOLE LA PARTIZIONE NON MONTATA: blkread rifiuta un disco intero (non e'
+      una partizione) e una partizione montata (ci sta sopra una cache). Sul
+      disco di sistema vuol dire avviare dal dischetto di soccorso o dal CD.
+
+    Provato in QEMU su un disco sano: trova la fine della partizione e lo dice
+    — «non e' un guasto: oltre quel settore la partizione finisce».
+
+  ! E NON SI RIPARA NIENTE PRIMA DI AVERE LA MAPPA. `chkdsk -r` su un volume
+    cinque sesti del quale non si legge scriverebbe correzioni calcolate su
+    dati che non ci sono: e' il modo piu' rapido di perdere anche la meta'
+    buona.
+
+! @DISCO-RECUPERO LEGGERE UN DISCO MALANDATO, E RECUPERARNE I DATI.
+  (aperto il 21 settembre 2026, dalla giornata dell'Acer)
+
+  ! IL PIO ADESSO SI SCEGLIE, e prima ci si finiva solo sbagliando: era lo
+    stato in cui il driver cadeva dopo un DMA scaduto. Su un supporto con dei
+    settori andati pero' e' la strada GIUSTA — chiede un settore per volta e
+    l'errore torna SUL SETTORE, mentre un DMA che il disco non porta a termine
+    lascia il bus master ad aspettare e si esce solo a scadenza, otto secondi
+    per blocco.
+
+        [kernel]
+        atadma = 0        in /boot/kernel.cfg
+
+    ! VALE DALL'AVVIO IN POI, NON DURANTE: quel file il kernel lo legge dal
+      disco. Chi vuole il PIO da subito usa il dischetto di soccorso, che la
+      radice ce l'ha in RAM — e infatti `atadma = 0` ci sta gia' scritto, ed e'
+      il suo mestiere.
+
+    MISURATO, non dedotto (QEMU, stesso disco, stesso comando, cambia una riga):
+        atadma = 0   4534 KB/s
+        atadma = 1   6348 KB/s
+
+  ! IL DISCO DELL'ACER, MISURATO FINO IN FONDO (22 settembre 2026):
+
+        FINITA: 55,8 GB, 1830634 blocchi letti, 744 NON letti
+        744 su 1831378, cioe' QUATTRO OGNI DIECIMILA
+
+    Sono circa 24 MB che non tornano, sparsi. Danno fisico, confermato: il
+    disco risponde, sa dove sono i dati, e su quei punti gratta e non torna.
+
+  CHE COSA MANCA PER RECUPERARE DAVVERO, in ordine di quanto serve:
+
+    1. ! COPIARE QUEL CHE SI LEGGE, E SEGNARE IL RESTO. Oggi `cp` su un file
+       che sta sopra un settore andato fallisce e lascia meta' file: per un
+       recupero serve il contrario — si copia tutto il copiabile, i blocchi
+       che non tornano si riempiono di zeri, e alla fine si dice QUALI e
+       quanti. Un file recuperato al 99% con un buco dichiarato vale, uno
+       perso no.
+
+    2. LEGGERE A SETTORE, NON A BLOCCO, quando il blocco fallisce. Un blocco da
+       64 settori che non torna non vuol dire che siano andati tutti e
+       sessantaquattro: quasi sempre e' UNO. Chi recupera deve scendere di
+       misura sul blocco fallito, non buttarlo intero.
+
+    3. RITENTARE CON CRITERIO. Un settore debole a volte torna al terzo
+       tentativo, e a volte solo a freddo. Ma ogni tentativo costa la scadenza,
+       quindi il numero dev'essere una scelta di chi comanda, non del driver.
+
+    4. E UN POSTO DOVE SCRIVERE LA MAPPA. `blkprova -tutto` oggi la stampa: se
+       la scrivesse in un file, il recupero potrebbe saltare le zone gia'
+       conosciute invece di ritrovarle una per una.
+
+  ! E LA COSA DA NON FARE RESTA `chkdsk -r` SU UN DISCO COSI'. Correggere la
+    mappa di un filesystem sopra dei buchi non fa tornare i dati: li rende
+    irrecuperabili, perche' cancella l'unica traccia di dov'erano.
+
+! @BAD-BLOCCHI MARCARE I BLOCCHI ANDATI, E NON USARLI PIU'. (chiesto il 22
+  settembre 2026, dopo la scansione dell'Acer: 744 blocchi su 1831378)
+
+  ! SU ext2 IL POSTO C'E' GIA', ED E' L'INODE 1. I blocchi che il disco non sa
+    piu' leggere non si buttano: si elencano li'. L'inode 1 non e' un file e
+    non sta in nessuna directory — esiste perche' quei blocchi risultino
+    OCCUPATI e nessuno ci allochi sopra niente. E' il modo in cui un disco con
+    qualche cicatrice continua a lavorare per anni. Su FAT il posto e' la voce
+    0xFFF7 nella tabella, che vuol dire BAD.
+
+  ! E IL FONDAMENTO MANCAVA: chkdsk NON PERCORREVA L'INODE 1 (corretto il 22
+    settembre). Le bitmap qui si ricostruiscono da cio' che si e' VISTO, e i
+    blocchi dell'inode 1 non li vedeva nessuno: una riparazione li avrebbe
+    restituiti all'allocatore. Cioe' il primo file creato dopo un `chkdsk -r`
+    sarebbe finito esattamente sopra i settori rotti — col programma che si
+    chiama «controllo del disco». Adesso li percorre e li dichiara, e la riga
+    c'e' anche quando non ce ne sono: «= nessuno» e' un'informazione.
+
+  ! E STA TUTTO IN chkdsk, IN UN PROGRAMMA SOLO. La prima stesura di questo
+    compito divideva il lavoro fra blkprova (scansione) e chkdsk (marcatura),
+    con un file in mezzo. Chi usa il sistema ha chiesto perche', e aveva
+    ragione: quel file va scritto da qualche parte — e la radice del dischetto
+    di soccorso sta in RAM, quindi sparisce al riavvio — e soprattutto la cosa
+    piu' utile, DIRE QUALE FILE e' danneggiato, vuole la scansione e il giro
+    dell'albero INSIEME, in memoria. Due programmi volevano dire passarsi una
+    mappa per poi rifare comunque il giro. Il risparmio era di dieci righe di
+    ciclo.
+
+    ! E blkprova RESTA, con il suo mestiere: dice se un DISPOSITIVO risponde, a
+      che misure, a che velocita', fin dove. Sono domande sul disco, non sul
+      filesystem — e valgono anche su un disco che un filesystem non ce l'ha.
+
+  FATTO IL 22 SETTEMBRE 2026, su ext2:
+
+      chkdsk hd0p1 -badblock        legge OGNI blocco e dice quali non
+                                    tornano e IN QUALI FILE
+      chkdsk hd0p1 -badblock -fix   prova a salvarli, li sposta, e segna
+                                    i blocchi andati nell'inode 1
+
+    - la superficie si legge a pezzi da 32 KB e si SCENDE a blocco singolo
+      solo dove il pezzo fallisce: un pezzo che non torna non vuol dire
+      trentadue blocchi andati, quasi sempre e' uno;
+    - la scansione viene PRIMA del giro dell'albero, cosi' il file danneggiato
+      lo si nomina mentre lo si incontra — senza un secondo giro e senza una
+      mappa blocco->inode, che su 57 GB sarebbe un quarto di giga;
+    - con -fix ogni blocco andato si rilegge fino a sei volte (un settore
+      debole a volte torna), il contenuto si sposta in un blocco sano e il
+      puntatore nel file si aggiorna — dentro l'inode o dentro l'indiretto,
+      che e' il motivo per cui il percorritore adesso si segna DOVE sta il
+      puntatore mentre ci passa;
+    - se non torna, il blocco nuovo e' di zeri e il referto dice quale file e
+      quanti byte: un buco dichiarato si puo' ancora usare, un file che non si
+      apre no;
+    - e i blocchi andati finiscono nell'inode 1, con gli indiretti allocati
+      quando servono.
+
+  PROVATO CON ERRORI VERI INIETTATI (QEMU blkdebug, che fa fallire la lettura
+  di settori scelti), tutt'e due i rami:
+      errore persistente -> «NON recuperato: 1024 byte di zeri nel file»
+      errore che passa    -> «recuperato alla 1 lettura, ora e' il 196»
+      e la corsa dopo     -> «2 blocchi elencati come difettosi: restano
+                              occupati», cioe' l'elenco sopravvive.
+
+  ! UN DIFETTO TROVATO DALLA PROVA, E VALE PER CHIUNQUE USI blkread: rende
+    QUANTI settori ha trasferito, e un numero negativo SOLO se non ne ha letto
+    nemmeno uno. Un pezzo che fallisce a meta' torna con un conto parziale e
+    positivo: il primo controllo, scritto `< 0`, vedeva solo i guasti che
+    cominciano sul primo settore — e la scansione diceva «tutti i blocchi si
+    leggono» mentre il registro del kernel elencava le letture fallite.
+
+  FATTO ANCHE SU FAT, lo stesso giorno, con lo stesso giro:
+
+    - l'unita' e' il CLUSTER, perche' e' la grana che la FAT sa marcare: un
+      settore andato in mezzo a un cluster da 32 KB porta via tutto il
+      cluster, e leggere piu' fine darebbe una precisione che poi non si puo'
+      scrivere da nessuna parte;
+    - il valore «difettoso» e' fine_catena - 1 in tutt'e tre i formati (0xFF7,
+      0xFFF7, 0x0FFFFFF7): scritto cosi' invece che con tre costanti, chi
+      aggiungesse un quarto formato non se lo dimentica in un ramo;
+    - spostare un cluster vuol dire ricucire la CATENA, e l'ordine conta: il
+      nuovo punta dove puntava il vecchio, POI chi precede guarda il nuovo.
+      Al contrario, un'interruzione fra i due passi taglia la catena e il file
+      perde tutto quel che viene dopo, non solo il cluster rotto;
+    - ! e se il cluster andato e' il PRIMO di un file, il puntatore non sta
+      nella FAT ma nella sua voce di directory. Per questo controlla_voce
+      adesso lascia scritto dove sta la voce (settore e indice) prima di
+      percorrere la catena.
+
+  ! E LA CORSA DI VERIFICA HA TROVATO LA STESSA TRAPPOLA DELL'INODE 1, DALL'ALTRA
+    PARTE: un cluster marcato difettoso non e' libero e non e' di nessun file —
+    e `controlla_perduti` lo contava fra gli «occupati che nessuno nomina», con
+    -r lo avrebbe LIBERATO. Cioe' rimesso in circolazione un settore rotto, col
+    programma che si chiama «controllo del disco». Adesso lo salta.
+
+  ! E QUELLI GIA' MARCATI NON SONO PIU' UN PROBLEMA, SONO IL RIMEDIO: senza
+    quel conto, ogni corsa dopo una marcatura riuscita chiudeva con «problemi
+    trovati» su un volume a posto — e un controllore che grida al lupo insegna
+    a non leggerlo piu'.
+
+  PROVATO SU FAT16 con un errore iniettato dentro un file:
+      chkdsk hd0p1 -badblock       -> «PROVA/BETA.TXT: il cluster 18 non si legge»
+      chkdsk hd0p1 -badblock -fix  -> «cluster 18 NON recuperato: 2048 byte di
+                                       zeri nel file (ora e' il 33)»
+                                      «1 cluster marcati difettosi (0xFFF7)»
+      e la corsa dopo              -> «Cluster perduti = nessuno»,
+                                      «1 gia' marcati difettosi: nessuno ci
+                                       scrive sopra», «Nessun problema trovato»
+
+  RESTA un tetto da sapere: i blocchi (o cluster) da spostare stanno in un
+  vettore di 4096 posizioni. Oltre, si dice e si marca lo stesso, ma non si
+  spostano tutti in una passata.
+
+  ! E RESTA VERO CHE `chkdsk -r` SU UN DISCO COSI' NON SI FA PRIMA DI AVERE
+    COPIATO VIA I DATI. Marcare i blocchi andati serve a continuare a usare il
+    disco dopo; non ripara i file che ci stavano sopra, e non li riporta
+    indietro nessuno.
 
 ! @GRAFICA-SCATTI L'INTERFACCIA SCATTA, E IL BUS DELLA SCHEDA NON C'ENTRA.
   (16 settembre 2026)
@@ -1360,6 +1864,32 @@ QUEL CHE MANCA, IN ORDINE:
     tabella MTRR e programmare una fascia WC col rituale dell'SDM. Su questa
     macchina non serve; serve su una il cui BIOS non la metta. Si collega
     quando c'e' una macchina su cui provarlo.
+
+  ! CHIESTO DI NUOVO IL 21 SETTEMBRE, da chi lo usa, e va nello stesso lavoro
+    perche' e' questo difetto visto dall'altra parte: su hardware d'epoca
+    (S3 Trio, Virge DX, Intel 740) l'ambiente grafico e' lento. I suggerimenti
+    arrivati insieme alla richiesta:
+      - ridipingere la finestra che sta sotto il mouse, non tutto lo schermo;
+      - e finche' non cambia davvero niente, non ridipingere affatto: chi si
+        muove da solo, come l'orologio, lo dice lui.
+
+    ! SONO LE REGIONI SPORCHE DI QUI SOPRA, DETTE IN ALTRE PAROLE. «Non
+      ridipingere se non e' cambiato niente» e' sporca_tutto() chiamato meno,
+      e «solo la finestra sotto il mouse» e' un rettangolo invece di 800x600.
+      Il numero che lo giustifica e' gia' misurato: non serve altra misura,
+      serve farlo.
+
+    ! MA IL MOUSE NON E' IL CRITERIO. Si ridipinge quel che e' CAMBIATO, non
+      quel che si sta guardando: una finestra che scrive mentre il puntatore
+      e' altrove deve vedersi lo stesso, altrimenti si scambia uno scatto per
+      un programma morto. La posizione del puntatore, al massimo, dice a chi
+      dare la precedenza quando il tempo di un fotogramma non basta per tutti.
+
+    ! E SU QUELLE SCHEDE IL 2D NON C'E'. Su SiS il motore lo abbiamo (vedi
+      SIS-2D); su Trio, Virge e i740 no, quindi li' la sola strada e'
+      ridipingere meno. Guardare come lo fa X non e' fuori strada: le regioni
+      sporche, il danno accumulato e l'estensione XDamage sono questa stessa
+      idea, gia' pagata da altri.
 
 ! @TELNET-SCALA I DUE DIFETTI SONO SISTEMATI; RESTA LA SESSIONE CHE SI IMPIANTA.
   (16 settembre 2026)
@@ -1406,6 +1936,48 @@ QUEL CHE MANCA, IN ORDINE:
                   E' agganciato a tools/prova_telnet.sh.
 
   QUEL CHE RESTA, ed e' l'unica cosa ancora aperta di questa etichetta:
+
+  ! 21 SETTEMBRE, MACCHINA AGGIORNATA E RIAVVIATA: SI RIPRENDE DA SOLA. E'
+    la misura che mancava, ed e' stata fatta con sedici sessioni contate.
+
+    Prima del riavvio (macchina vecchia, senza il pty corretto) due sessioni a
+    mezz'ora di distanza hanno accettato il collegamento, fatto l'eco di
+    `uname` e non eseguito niente; in mezzo, un terzo tentativo non si e'
+    collegato affatto — la sessione appesa teneva occupato telnetd.
+
+    Dopo `netupdate -check` e il riavvio, dieci sessioni di fila, tutte
+    identiche (`uname`):
+
+        1, 2, 3   accettano, fanno l'eco, NON eseguono
+        4 ... 10  tutte a posto
+
+    ! QUINDI NON CI VUOLE UN RIAVVIO: la macchina torna a servire da sola.
+      «Ci vuole un riavvio», scritto qui sotto, era il rimedio di chi non
+      aveva aspettato abbastanza. E le sessioni 4-10 dicono anche che non e'
+      un guasto che peggiora: e' una finestra che si chiude.
+
+    ! E NON E' netupdate A INCEPPARLA. Ipotesi naturale — la sessione che ha
+      fatto piu' rete e' quella prima delle tre fallite — e SMENTITA apposta:
+      `netupdate -check` seguito subito da tre `uname` ha dato tre sessioni a
+      posto su tre. Chi riprende non rifaccia questa prova.
+
+    QUEL CHE RESTA DA SAPERE, ed e' UNA riga sullo schermo della macchina:
+    quando una sessione fa l'eco e non esegue, telnetd sulla console dice
+    «niente pty libero» oppure no?
+      - se SI': i pseudo-terminali sono quattro (PTY_MAX, kernel/include/pty.h)
+        e uno resta occupato finche' tutt'e due i capi sono chiusi. Una shell
+        che lascia un figlio vivo se lo porta via — e quattro e' esattamente
+        «dopo quattro o cinque collegamenti»;
+      - se NO: telnetd e' ancora dentro la sessione di prima, che lo stack
+        considera viva; allora il conto da guardare e' quanto ci mette una
+        connessione morta a essere dichiarata tale.
+
+    ! E DA OGGI LA PROSSIMA VOLTA LO DICE DA SOLA. telnetd, quando non trova un
+      pty, non torna piu' zitto lasciando la connessione aperta: scrive al
+      client «non c'e' un pseudo-terminale libero» e chiude. Un client che
+      riceve quella riga ha gia' la risposta alla domanda qui sopra — e chi
+      prova non confonde piu' un server che sa di non poter servire con una
+      macchina caduta. (bin/telnetd/telnetd.c, sessione())
 
   ! LA SESSIONE CHE SI IMPIANTA DOPO QUATTRO O CINQUE COLLEGAMENTI. Sull'Acer,
     dopo qualche sessione, la macchina accetta la connessione, fa l'eco del
@@ -1877,6 +2449,102 @@ QUEL CHE MANCA, IN ORDINE:
       ipcfg                                     <- fuori sequenza, buffer pieno
 
 
+! @GFEDIT-SEL SHIFT PIU' FRECCE NON SELEZIONAVA: CORRETTO NEL DRIVER E PROVATO
+  SULLA MACCHINA VERA. (chiesto, corretto e provato il 21 settembre 2026)
+
+  Riferito da chi lo usa: in gfedit, tenendo premuto Shift e muovendosi con le
+  frecce o con PagSu e PagGiu', il testo non si seleziona — quindi non si puo'
+  tagliare, copiare, incollare ne' cancellare un blocco.
+
+  ! LA SELEZIONE L'EDITOR LA SA GIA' FARE, e questo cambia dove si guarda.
+    bin/gfedit/gf_edit.c, muovi(): «Shift + movimento estende la selezione»,
+    con l'ancora piantata al primo movimento; e gf_tasto() passa il bit
+    KBD_MOD_SHIFT per tutte e otto le direzioni — frecce, Inizio, Fine, PagSu,
+    PagGiu'. Il pezzo che sembra mancare c'e': quello che non arriva e' IL BIT.
+
+  ! ED ERA LO SHIFT FINTO DELL'AT. Una tastiera AT, quando si
+    preme un tasto esteso con lo Shift giu', manda da se' un rilascio finto
+    dello Shift prima (E0 AA) e una pressione finta dopo (E0 2A): serviva ai
+    programmi DOS che leggevano il tastierino numerico. In drivers/kbd/kbd.c,
+    nel ramo dei rilasci, la riga
+
+        if (key == 0x2A || key == 0x36) g_shift = 0;
+
+    non guardava il prefisso — era_e0, li' accanto, serviva solo a distinguere
+    Alt da AltGr. Quindi E0 AA spegneva g_shift PROPRIO MENTRE la freccia
+    stava arrivando, e kbd_mods() componeva l'evento senza KBD_MOD_SHIFT:
+    l'editor riceveva una freccia nuda e abbandonava la selezione.
+
+    ! E C'ERA UN SECONDO SINTOMO, dalla stessa causa: la pressione finta E0 2A
+      che arriva al rilascio del tasto cadeva nel ramo dei tasti estesi senza
+      riaccendere niente, quindi dopo una freccia lo Shift restava spento
+      anche per le lettere, finche' non lo si ripremeva. Chi prova la
+      correzione provi anche questo — e' la seconda meta' della prova.
+
+  ! CORRETTO IN drivers/kbd/kbd.c: 0x2A e 0x36 preceduti da E0 si buttano, in
+    tutt'e due i versi. Da estesi non sono MAI un tasto vero, quindi non e' un
+    caso particolare da ricordare: e' la regola. Compilato (`make kbd_drv`),
+    e i quattro casi contano piu' della compilazione —
+      Shift vero premuto (2A senza E0)          accende, come prima
+      Shift vero rilasciato (AA senza E0)       spegne, come prima
+      shift finto premuto (E0 2A)               si butta, non toccava niente
+      shift finto rilasciato (E0 AA)            si butta: E' LA CORREZIONE
+    AltGr resta preso prima (E0 38), quindi non passa di qui.
+
+  ! PROVATO SULL'ACER, E SOLO LI' SI POTEVA: aggiornata la macchina con
+    netupdate e riavviata, chi la usa ha riferito «shift freccia funziona».
+    Lo shift finto lo manda la tastiera vera (o l'8042) e un emulatore puo'
+    non mandarlo affatto — e' questa la ragione per cui il difetto non si era
+    mai visto in QEMU, ed e' la ragione per cui una diagnosi che spiega ANCHE
+    perche' non si riproduce vale piu' di una che spiega solo il sintomo.
+
+  ! RESTA UNA COSA SOLA, E SONO DUE MINUTI: lib/exwin/exwin.c, area_ancora()
+    legge lo stesso bit, quindi le caselle di testo delle FINESTRE avevano lo
+    stesso difetto e dovrebbero essere guarite insieme. Si apre `exwin`, si
+    entra in una casella di testo e si prova Shift+frecce. Se la' non
+    selezionano lo stesso, li' c'e' dell'altro — e allora questa etichetta si
+    riapre con un sintomo nuovo invece che con quello vecchio.
+
+! @NETUPDATE-PATH GLI STRUMENTI FINISCONO DOVE IL PATH NON GUARDA.
+  (chiesto il 21 settembre 2026)
+
+  Riferito da chi lo usa: installati gcc, cpp e fbc con netupdate, i comandi
+  non si trovano. Bisogna sapere il percorso e scriverlo a mano ogni volta.
+
+  ! E I DUE ELENCHI SONO SCRITTI IN DUE POSTI CHE NON SI PARLANO.
+    bin/sh/shell.c, ENV_INHERITED:
+
+        { "PATH", "/bin:/dev:/cdrom/bin" }
+
+    mentre netupdate i programmi li mette anche in /exos/bin, /exos/libexec,
+    /exos/i386-exos/bin e /exwin/bin — l'elenco sta in comando_permessi(),
+    bin/netupdate/netupdate.c, ed e' li' perche' e' la' che rimette il bit di
+    esecuzione. Uno sa dove finiscono i programmi, l'altro dove si cercano, e
+    nessuno dei due sa dell'altro.
+
+  ! ALLUNGARE LA COSTANTE NELLA SHELL NON E' LA RISPOSTA, e vale la pena
+    scriverlo perche' e' la prima che viene in mente. Un PATH scritto dentro
+    la shell e' giusto finche' nessuno installa un pacchetto che porta una
+    directory nuova: il giorno dopo si torna qui, e intanto chi installa e'
+    netupdate. Quindi e' netupdate a dover DIRE dove ha messo le cose.
+
+  Le strade, da scegliere prima di scrivere:
+    - un file di ambiente che la shell legge all'avvio e che netupdate
+      aggiorna aggiungendo le proprie directory. La shell smette di avere
+      l'elenco in pancia, e vale anche per chi installa a mano;
+    - oppure i programmi nuovi si agganciano in /bin, che nel PATH c'e' gia'.
+      Meno codice, ma vuole i collegamenti (o le copie) e un modo di toglierli
+      quando il pacchetto si disinstalla, altrimenti restano a puntare al
+      vuoto.
+    ! IN TUTT'E DUE I CASI IL FILE SI AGGIORNA IN CODA, NON SI RISCRIVE. E' la
+      stessa regola di hwconfig: su una macchina gia' configurata, riscrivere
+      un file di configurazione per intero butta via quello che ci aveva messo
+      chi la usa.
+
+  ! LA PROVA E' QUESTA, e si fa su una macchina INSTALLATA, non avviata dal CD:
+    apri una console nuova, scrivi `gcc`, `cpp` e `fbc` senza percorso, e devono
+    partire tutt'e tre.
+
 =============================================================================
 @EXIDE EXIDE — L'AMBIENTE DI SVILUPPO VISUALE (aperto il 3 settembre 2026)
 =============================================================================
@@ -2195,12 +2863,14 @@ del 17 settembre; qui c'e' quel che serve per riprendere.
     con «: », e hwconfig chiede «Procedo? [si/no] ». Corretto nel pilota.
 
 =============================================================================
-@GRAFICA-CHIESTE DUE COSE CHIESTE PER ExWin (16 settembre 2026)
+@GRAFICA-CHIESTE LE COSE CHIESTE PER ExWin (16 e 21 settembre 2026)
 =============================================================================
 
-Le ha chieste l'utente insieme alle colonne del file manager, che sono FATTE
-(vedi il diario del 16 settembre, «IL FILE MANAGER HA QUATTRO COLONNE»). Queste
-due sono rimaste in coda, in quest'ordine.
+Le prime due le ha chieste chi usa il sistema insieme alle colonne del file
+manager, che sono FATTE (vedi il diario del 16 settembre, «IL FILE MANAGER HA
+QUATTRO COLONNE»); le ultime due sono arrivate il 21 settembre da
+correzioni.txt, e sono marcate urgenti. L'ordine qui sotto e' quello in cui
+sono arrivate, non quello in cui vanno fatte.
 
 ! @IMMAGINI UN VISUALIZZATORE DI IMMAGINI.
 
@@ -2251,6 +2921,94 @@ due sono rimaste in coda, in quest'ordine.
     due vuol dire che la stessa finestra ridotta si vede in due punti e si
     riapre da tutt'e due: e' una cosa sola con due rappresentazioni, non due
     elenchi. Vedi sopra, per la stessa ragione.
+
+! @FILEMGR-OPS COPIARE, SPOSTARE E CANCELLARE: FATTO IL 21 SETTEMBRE, PROVATO
+  IN QEMU. (chiesto e fatto il 21 settembre 2026 — diario di quel giorno)
+
+  Chiesto: copia, spostamento e cancellazione di quel che e' selezionato, e
+  possibilmente di un albero intero. filemgr 0.003 li ha tutt'e tre.
+
+  ! I SEGNI SONO UN CARATTERE NELLA RIGA, NON UN CONTROLLO NUOVO DEL TOOLKIT.
+    La barra spaziatrice segna e scende di una riga; il segno e' un «*» nella
+    colonna 0, che era gia' li' a non far niente. Una lista che sapesse tenere
+    piu' righe scelte sarebbe stata un modello di selezione, un disegno e
+    un'ABI in piu' dentro exwin.so per una cosa che usa UN programma solo.
+    ! E IL SEGNO VIAGGIA CON LA RIGA: scambia() lo scambia insieme al nome e
+      alla data, o un clic sull'intestazione sposterebbe i segni da solo.
+
+  ! UN COMANDO AGISCE SUI SEGNATI, O SULLA RIGA DOV'E' IL CURSORE. Una regola
+    sola: chi non preme mai la barra trova il programma di ieri.
+
+  Le decisioni che costerebbe caro rifare, in ordine:
+    - «Copia» e «Copia directory» sono UN comando solo: con i segni un gruppo
+      puo' contenere file e cartelle insieme;
+    - spostare prova prima rename(), che dentro la stessa directory non muove
+      un byte; fuori la nostra rende ENOSYS, e allora e' copia POI
+      cancellazione — l'ordine e' la differenza fra «e' andata male» e «l'ho
+      perso»;
+    - copiare sopra un file che esiste passa da FMTMP.TMP, poi unlink e
+      rename: il VFS tronca la destinazione quando la apre. Il nome e' in 8.3
+      maiuscolo perche' su FAT i nomi lunghi, da noi, sono in sola lettura;
+    - «dentro se stesso» si guarda PRIMA di cominciare;
+    - la cancellazione ricorsiva rilegge la directory dall'inizio a ogni giro:
+      listdir_from ha un indice, e cancellare fa scalare le voci dopo.
+
+  PROVATO IN QEMU, e la prova si tiene: tools/prova_filemgr.sh. Formatta un
+  ext2 da 32 MB dentro EX-OS (sul CD non si scrive, e il FAT12 del dischetto
+  montato fuori dalla radice rifiuta le directory annidate), apre il file
+  manager in grafica e lavora di sola tastiera. Il verdetto lo da' `ls`:
+  due righe segnate, copiate in /disk/dest — arrivate; le stesse due
+  cancellate — la directory e' vuota.
+
+  ! E LA PROVA HA TROVATO DUE DIFETTI CHE NON ERANO DI QUESTO PROGRAMMA,
+    tutt'e due in lib/exdlg e tutt'e due corretti lo stesso giorno:
+      - un percorso assoluto battuto nella casella «Salva come» veniva
+        attaccato alla directory del dialogo: «/disk//disk/dest»;
+      - ex_dlg_conferma TRONCAVA la domanda a 44 caratteri (adesso va a capo,
+        fino a quattro righe) e l'INVIO RISPONDEVA «SI'» anche col fuoco su
+        «Annulla» — in un dialogo che si apre prima di cancellare. Adesso
+        l'Invio vuol dire il pulsante che ha il fuoco, e il fuoco va al «no».
+
+  RESTA:
+    - ! RINOMINA. Spostare nella stessa directory con un altro nome gia' e' una
+      rinomina, ma passa da un dialogo di salvataggio: per cambiare due lettere
+      e' la strada lunga. Una voce «Rinomina» che chieda il solo nome e'
+      mezz'ora, ed e' l'unica delle quattro operazioni che manca.
+    - ! NON SI VEDE A CHE PUNTO E'. Su una directory grossa la finestra resta
+      ferma: il ciclo dei messaggi e' dentro la ricorsione. Per farlo serve uno
+      stato del lavoro in corso, e quello si' che e' un lavoro grosso.
+    - ! E LA PROVA SUL FERRO. In QEMU il disco e' un file: un dischetto vero,
+      lento e con FAT12, e' l'altro caso — ed e' li' che FMTMP.TMP conta.
+
+! @GRAFICA-MODALE L'USCITA E IL RIAVVIO SCORRONO COME SE FOSSE UN TERMINALE.
+  (chiesto il 21 settembre 2026)
+
+  Riferito da chi lo usa: dall'ambiente grafico, `exit` e `shutdown` si
+  comportano come in console — il testo scorre verso l'alto sopra la
+  scrivania, in un posto dove il cursore non esiste nemmeno. Chiesto: una
+  finestra modale che dica cosa sta facendo il sistema e a che punto e'.
+
+  ! NON E' UNA QUESTIONE DI BELLEZZA: e' che qualcuno sta scrivendo nel
+    framebuffer senza passare dal server delle finestre. Finche' quella strada
+    resta aperta, qualunque messaggio di un servizio o del kernel puo'
+    comparire sopra le finestre e lasciare lo schermo sporco. La prima domanda
+    e' CHI stampa — la shell, il programma che arresta, o il kernel — e la
+    risposta cambia il lavoro: i primi due si correggono, il terzo va
+    incanalato (una console di sistema che il server compone come finestra).
+
+  I pezzi:
+    - chi arresta manda un messaggio al server invece di stampare;
+    - una finestra modale del toolkit: titolo, una riga di stato che cambia
+      mentre i servizi si fermano e i dischi si sincronizzano, e nessun
+      pulsante finche' non e' finita;
+    - l'ordine dello spegnimento: se il server delle finestre muore per primo,
+      la finestra sparisce e si torna al testo esattamente nel momento in cui
+      si voleva evitarlo. Il server e' l'ULTIMO a fermarsi.
+
+  ! E LA STESSA FINESTRA SERVE ANCHE A TASTI-SISTEMA, che chiede di scegliere
+    fra riavvio, uscita dalla sessione e arresto: quella e' la domanda, questa
+    e' quel che si vede dopo aver risposto. Si fanno insieme o una guarda
+    l'altra.
 
 =============================================================================
 @VISTA L'IMPAGINATO NON E' UNA LIBRERIA — e quando conviene che lo diventi
@@ -2439,6 +3197,123 @@ nel codice, dove comincia.
   disegna come un pulsante e non come l'immagine cliccabile che dovrebbe
   essere, quindi un punto preciso non ce l'ha.
 
+
+=============================================================================
+@TASTI-SISTEMA I TASTI CHE FERMANO LE COSE (chiesto il 21 settembre 2026)
+=============================================================================
+
+Due tasti e un servizio, chiesti insieme perche' sono la stessa mancanza: in
+EX-OS, oggi, non c'e' nessun modo di dire «fermati» a qualcosa che gira.
+
+  - CTRL+C deve aprire una domanda: «fermo il programma che sta girando in
+    questa shell?». Non un'uccisione muta: una domanda, con si' e no.
+  - CTRL+ALT+CANC — che su ogni PC dal 1981 vuol dire «riavvia», e qui non
+    vuol dire niente — deve aprirne una piu' larga: riavviare, uscire dalla
+    sessione, o arrestare.
+  - a tenerle tutt'e due c'e' un servizio in background, non la shell.
+
+! LA PARTE DIFFICILE NON E' LA FINESTRA, E' CHI E' «IL PROGRAMMA DI QUESTA
+  SHELL». Nel momento in cui il tasto arriva bisogna sapere quale processo sta
+  in primo piano su quel terminale, cioe' serve un gruppo di processi per
+  terminale — che oggi in EX-OS non esiste. Senza, CTRL+C con l'ambiente
+  grafico aperto ferma qualcosa, ma non si sa cosa. E' questo il lavoro vero:
+  il resto e' una finestra con due pulsanti.
+
+! E IL TASTO LO VEDE IL DRIVER DELLA TASTIERA PRIMA DI CHIUNQUE. Se lo consuma
+  lui, un programma che vuole leggere CTRL+C come carattere non lo vede piu';
+  se non lo consuma, al servizio non arriva. La regola dei terminali veri e'
+  gia' scritta e si copia: il tasto diventa un SEGNALE se il terminale e' in
+  modo cotto, e resta un byte se il programma ha chiesto il modo crudo —
+  drivers/kbd/kbd.c sa gia' distinguere i due modi (KBD_MODE_RAW /
+  KBD_MODE_COOKED), e gfedit e' gia' un programma che chiede il crudo.
+
+! CTRL+ALT+CANC INVECE NON SI PUO' LASCIARE A UN PROGRAMMA, e la ragione e'
+  quella per cui esiste: deve funzionare anche quando quel che sta davanti non
+  risponde piu'. Se lo intercetta il servizio e il servizio e' bloccato, il
+  tasto e' inutile proprio nel caso per cui lo si e' messo. Va deciso cosa
+  succede se la domanda non riceve risposta — per esempio: la prima volta
+  chiede, la seconda entro pochi secondi riavvia e basta.
+
+! SE PESA, NON VA SUL DISCHETTO. Lo dice chi l'ha chiesto, ed e' anche la
+  ragione per cui e' un servizio separato e non un pezzo di kernel: sul
+  floppy ci sta quel che serve a rimettere in piedi una macchina, e un
+  servizio di cortesia non e' quello. Sul CD e su disco invece c'e' sempre.
+
+! LA FINESTRA CHE FA LA DOMANDA E' QUELLA DI GRAFICA-MODALE, non un'altra:
+  in console e' un riquadro di testo, in grafica e' una finestra modale del
+  toolkit. Un solo servizio, due modi di chiedere, a seconda di chi possiede
+  lo schermo in quel momento.
+
+=============================================================================
+@BASIC IL BASIC — L'INTERPRETE NUOVO E IL COMPILATORE DEL CD (21 settembre 2026)
+=============================================================================
+
+Due cose chieste lo stesso giorno, e non sono la stessa cosa: una e' la
+libreria che INTERPRETA il QBASIC, scritta da chi usa il sistema (gfbasic/:
+gf_basic.c, gf_basic.h, example_main.c); l'altra e' fbc, il compilatore
+FreeBASIC di terzi che sta sul CD degli strumenti.
+
+! @RUNBAS ESEGUIRE UN .bas: IL COMANDO runbas, E F5 DENTRO gfedit.
+
+  Chiesto:
+    - `runbas mioprog.bas` — un comando che esegue un sorgente scritto per
+      quella libreria;
+    - in gfedit, F5 e «Opzioni -> Esegui» che fanno la stessa cosa sul file
+      aperto, mostrano l'uscita e aspettano un tasto per tornare all'editor,
+      come faceva il QBASIC;
+    - ! e gfedit deve funzionare LO STESSO SE LA LIBRERIA NON C'E'. E' questa
+      la riga che decide come si fa tutto il resto.
+
+  ! «ANCHE SENZA» VUOL DIRE CHE IL LEGAME NON PUO' ESSERE STATICO. Se gfedit
+    si collega alla libreria, senza libreria non gli manca il menu: non parte
+    proprio. Quindi o la libreria e' una .so aperta al volo, e F5 compare solo
+    se l'apertura riesce; oppure runbas e' un programma a se' e gfedit si
+    limita a LANCIARLO, e se manca il menu lo dice invece di sparire. La
+    seconda costa meno, si prova subito, e ha il vantaggio che il programma
+    interpretato muore per conto suo senza portarsi via l'editor.
+
+  ! E L'USCITA DEL PROGRAMMA NON PUO' FINIRE SOPRA IL TESTO CHE SI STA
+    SCRIVENDO. Il QBASIC aveva uno schermo di uscita separato e ci tornava col
+    tasto: qui vuol dire o una console che si scambia, o una finestra. Va
+    deciso prima di scrivere, perche' decide chi possiede lo schermo mentre il
+    programma gira — ed e' lo stesso problema che ha exide.
+
+  ! OGGI gfbasic/ NON E' ANCORA IN GIT (tre file, 76 KB, non tracciati). Chi
+    riprende questo compito guardi prima se ci sono ancora: una directory non
+    tracciata la porta via un `git clean -xdf` senza chiedere niente.
+
+! @FBC-110 IL CD HA IL FreeBASIC 1.07, E IL LINKER SI LAMENTA A OGNI
+  COMPILAZIONE.
+
+  Il messaggio, riferito da chi lo usa:
+
+      ld: warning: myprog.o: missing .note.GNU-stack section implies
+                   executable stack
+      ld: NOTE: This behaviour is deprecated and will be removed in a
+                future version of the linker
+
+  ! L'AVVISO E' VERO, E OGGI NON E' GRAVE. L'oggetto che fbc produce non
+    dichiara di NON volere lo stack eseguibile, e ld, quando non trova quella
+    dichiarazione, deve supporre il peggio e lo dice. Su EX-OS oggi non cambia
+    niente — non si separano ancora i permessi delle pagine di stack — ma e'
+    rumore a ogni compilazione, e il rumore costante e' il modo in cui un
+    avviso vero, il giorno che arriva, non lo legge piu' nessuno.
+
+  Due strade, e costano molto diverso:
+    - la sveltina: `-z noexecstack` al collegamento, o far emettere quella
+      sezione al generatore di codice di fbc. Toglie l'avviso oggi e non
+      insegna niente;
+    - quella chiesta: portare il FreeBASIC 1.10 al posto dell'1.07 che sta sul
+      CD. E' il lavoro grosso — il bersaglio exos va rifatto sul sorgente
+      nuovo — e quel che e' NOSTRO sta in tools/freebasic-exos/, non
+      nell'albero dei sorgenti di terzi.
+    ! Si fa la prima SOLO se si e' deciso di non fare la seconda adesso. Due
+      volte lo stesso avviso tolto in due modi diversi e' il modo in cui si
+      perde di vista quale dei due e' in uso.
+
+  ! L'ALBERO 1.10.1 E' GIA' SCOMPATTATO ACCANTO (219 MB), e dal 21 settembre
+    .gitignore lo ignora: la regola nominava la versione — 1.07.3 — e adesso
+    dice /FreeBASIC-*-source-bootstrap/, cosi' vale anche per quella dopo.
 
 =============================================================================
 @CHIUSA UNA STRADA CHIUSA, PERCHE' NON SI RIAPRA

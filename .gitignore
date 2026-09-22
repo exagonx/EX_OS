@@ -127,8 +127,15 @@
 #
 # ! ANCORATO ALLA RADICE, come tutti gli altri: senza lo slash iniziale
 # combacerebbe anche con una directory annidata dentro roba nostra.
+#
+# ! E LA VERSIONE E' UN ASTERISCO, NON UN NUMERO. Qui c'era scritto 1.07.3, e
+# il 21 settembre 2026 un albero 1.10.1 scompattato accanto si e' presentato
+# a `git status` come 219 MB di roba da aggiungere: una regola che nomina la
+# versione smette di valere alla versione dopo, cioe' proprio quando si prova
+# un compilatore piu' nuovo. Stessa ragione per cui exagonx/ e' ignorata tutta
+# invece del solo file delle chiavi.
 # =============================================================================
-/FreeBASIC-1.07.3-source-bootstrap/
+/FreeBASIC-*-source-bootstrap/
 
 # ! E LA DIRECTORY DOVE SI SCOMPATTANO LE ALTRE VERSIONI. Serve a provare a
 # costruire un FreeBASIC piu' nuovo dentro EX-OS senza buttare via quello che

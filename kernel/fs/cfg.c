@@ -144,6 +144,16 @@ static void cfg_apply_key(KernelConfig *cfg, const char *section,
             cfg_strcpy(cfg->swap, value, sizeof(cfg->swap));
             return;
         }
+        /* ! STESSA REGOLA DI verboseboot: dev'essere un numero, e un valore
+         * che numero non e' NON e' ne' vero ne' falso — e' un errore, e la
+         * risposta a un errore e' il default. Qui il default e' 1, quindi solo
+         * uno zero scritto per bene spegne il DMA. */
+        if (cfg_strcmp(key, "atadma") == 0) {
+            cfg->ata_dma = 1;
+            if (value[0] >= '0' && value[0] <= '9' && cfg_atoi(value) == 0)
+                cfg->ata_dma = 0;
+            return;
+        }
         if (cfg_strcmp(key, "verboseboot") == 0) {
             /* Il valore predefinito è 0 (agosto 2026: prima era 1) e resta
              * 0 in tutti i casi dubbi: SOLO un numero diverso da zero fa
@@ -305,6 +315,7 @@ KernelConfig *cfg_load(void)
     g_config.loglevel     = 3;
     g_config.timer_hz     = 100;
     g_config.verbose_boot = 0;   /* default: avvio silenzioso. Vedi cfg.h */
+    g_config.ata_dma      = 1;   /* default: il DMA si usa. Vedi cfg.h */
     g_config.keymap[0]    = '\0'; /* nessuna: il driver tiene la sua */
     cfg_strcpy(g_config.shell_path, "/bin/sh", sizeof(g_config.shell_path));
 

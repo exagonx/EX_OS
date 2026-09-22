@@ -59,6 +59,22 @@ typedef struct {
      * peggio di uno rumoroso; qui non succede. */
     uint32_t    verbose_boot;
 
+    /* atadma: 1 = il DMA del disco si usa (predefinito), 0 = si legge e si
+     * scrive in PIO.
+     *
+     * ! ESISTE PER LEGGERE UN DISCO MALANDATO, e non per fare andare le cose
+     * piu' piano. Su un supporto che ha dei settori andati il DMA e' la strada
+     * fragile: un trasferimento che il disco non porta a termine lascia il bus
+     * master ad aspettare byte che non arrivano, e si esce solo a scadenza. Il
+     * PIO chiede un settore per volta e l'errore torna SUL SETTORE, che e'
+     * esattamente cio' che serve a chi sta recuperando dei dati.
+     *
+     * ! E NON PUO' AGIRE PRIMA DELL'AVVIO DEL DISCO: questo file lo legge il
+     * kernel DAL disco (o dal volume in RAM), quindi l'opzione si applica dopo
+     * — le letture dell'avvio restano in DMA. Chi vuole il PIO da subito mette
+     * l'opzione sul dischetto di soccorso, che la radice ce l'ha in RAM. */
+    uint32_t    ata_dma;
+
     /* [boot] */
     /* Disposizione della tastiera: la legge /dev/kbd.drv all'avvio con
      * SYS_GETENV. Sta in [kernel] e non in [env] perche' e' una scelta di

@@ -144,6 +144,15 @@ uint16_t ata_base_ctrl(int canale);
 /* Ritardo di ~400 ns: quattro letture dello stato ALTERNATO. */
 void ata_ritardo(int canale);
 
+/* ! IL CANALE SI RIMETTE IN PIEDI DOPO UN COMANDO SCADUTO. Un timeout lascia
+ * il disco con BSY alto, e ogni comando dopo scade a sua volta: il sintomo e'
+ * «il disco non si legge piu'», che somiglia a un disco rotto e non lo e'.
+ * SRST alto, SRST basso, e si aspetta BSY. Vedi il commento esteso in ata.c. */
+void ata_reset_canale(int canale);
+
+/* Il PIO per scelta: lo chiede `atadma = 0` in kernel.cfg. Vedi ata.c. */
+void ata_dma_spegni(void);
+
 /* Seleziona master/slave, con il ritardo obbligatorio. */
 void ata_seleziona(int canale, int unita, uint8_t testa_o_lba);
 

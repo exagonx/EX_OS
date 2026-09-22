@@ -863,6 +863,32 @@ static void kbd_process_scancode(unsigned char sc)
         unsigned char era_e0 = g_e0;
 
         g_e0 = 0;
+        /* =================================================================
+         * ! LO SHIFT FINTO DELL'AT: E0 AA NON E' UN RILASCIO DELLO SHIFT
+         *
+         * Con lo Shift premuto, una tastiera AT manda da se' un rilascio
+         * finto dello Shift PRIMA di un tasto esteso (E0 AA) e una
+         * pressione finta DOPO (E0 2A): serviva ai programmi DOS che
+         * leggevano il tastierino numerico, dove lo Shift cambiava il
+         * significato del tasto. Il tasto vero non e' stato toccato.
+         *
+         * Qui il rilascio non guardava il prefisso, quindi E0 AA spegneva
+         * g_shift proprio mentre la freccia stava arrivando: kbd_mods()
+         * componeva l'evento senza KBD_MOD_SHIFT e gfedit riceveva una
+         * freccia nuda, cioe' «abbandona la selezione». Il sintomo era
+         * «l'editor non seleziona con Shift», e l'editor era a posto.
+         *
+         * ! E IL DANNO DURAVA OLTRE IL TASTO: la pressione finta E0 2A del
+         * rilascio cadeva nel ramo dei tasti estesi senza riaccendere
+         * niente, quindi dopo una freccia lo Shift restava spento anche
+         * per le lettere, finche' non lo si ripremeva.
+         *
+         * 0x2A e 0x36 preceduti da E0 non sono MAI un tasto vero: si
+         * buttano, in tutt'e due i versi. La pressione finta e' presa piu'
+         * sotto, accanto ad AltGr.
+         * ================================================================= */
+        if (era_e0 && (key == 0x2A || key == 0x36)) return;
+
         if (key == 0x2A || key == 0x36) g_shift = 0;
         if (key == 0x1D)                g_ctrl  = 0;
         /* ! E0 38 E' AltGr, 38 DA SOLO E' Alt SINISTRO, e vanno tenuti
@@ -886,6 +912,12 @@ static void kbd_process_scancode(unsigned char sc)
      * il codice che lo gestiva c'era ed era giusto: stava solo dopo.
      * ===================================================================== */
     if (g_e0 && sc == 0x38) { g_altgr = 1; g_e0 = 0; return; }
+
+    /* L'altra meta' dello shift finto: la pressione che la tastiera manda
+     * al rilascio del tasto esteso. Si butta senza toccare g_shift — lo
+     * Shift vero, se e' premuto, non e' mai stato spento. Vedi il commento
+     * lungo nel ramo dei rilasci, qui sopra. */
+    if (g_e0 && (sc == 0x2A || sc == 0x36)) { g_e0 = 0; return; }
 
     /* =====================================================================
      * Alt+F1..F4 — COMMUTAZIONE DI CONSOLE

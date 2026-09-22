@@ -87,6 +87,17 @@
  * presenterebbe come "disco assente". */
 #define ATA_TMO_BSY_MS      5000    /* attesa che il comando finisca */
 #define ATA_TMO_DRQ_MS      3000    /* attesa dati pronti            */
+/* ! IL DMA ASPETTA A TEMPO, E ASPETTA A LUNGO. Qui c'era un conto di GIRI —
+ * duecentomila letture di porta, che il commento accanto chiamava «qualche
+ * secondo» e sono meno di uno: quattro letture ISA per giro, un microsecondo
+ * l'una. Un disco portatile del 2004 che ricalibra sotto sforzo, o che ritenta
+ * un settore debole, sta fermo piu' di cosi'. Il 21 settembre 2026 sull'Acer
+ * una lettura su circa milleottocento scadeva, sempre dopo qualche secondo di
+ * lettura continua e in un punto diverso ogni volta — e il disco, provato
+ * settore per settore, rispondeva da cima a fondo. Otto secondi sono la stessa
+ * generosita' che gia' si da' a BSY, moltiplicata per il fatto che qui, se si
+ * sbaglia, si butta via il DMA per tutta la sessione. */
+#define ATA_TMO_DMA_MS      8000    /* un trasferimento DMA, fino a       */
 #define ATA_TMO_IDENT_MS    3000
 
 /* Massimo settori per singolo comando. LBA28 usa un conteggio a 8 bit
@@ -359,6 +370,8 @@ static int ata_dma_blocco(int canale, int unita, uint64_t lba, uint32_t n,
     port_outb(bm + BM_CMD,
               (uint8_t)((scrivi ? 0 : BM_CMD_LEGGI) | BM_CMD_AVVIA));
 
+    scaduto = g_ticks + (ATA_TMO_DMA_MS + 9u) / 10u;
+
     for (;;) {
         st = port_inb(bm + BM_STATUS);
 
@@ -368,9 +381,72 @@ static int ata_dma_blocco(int canale, int unita, uint64_t lba, uint32_t n,
          * «finito» — ma la coppia (non piu' attivo) e' il segnale buono. */
         if (!(st & BM_ST_ATTIVO)) break;
 
-        if (++scaduto > 200000u) {          /* ~ qualche secondo di giri */
-            klog(LOG_ERROR, "ATA: DMA fermo a lba=%u", (uint32_t)lba);
+        /* ============================================================
+         * ! QUI NON SI GUARDA LO STATO DEL DISCO, E VA SPIEGATO PERCHE'.
+         *
+         * Il 21 settembre 2026 ci si e' provato: se il disco alza ERR e abbassa
+         * BSY, ragionava il codice, ha abortito il trasferimento e aspettare la
+         * scadenza e' tempo buttato. In QEMU filava. Sulla macchina vera OGNI
+         * LETTURA FALLIVA, dal settore 0: appena dopo il comando il registro di
+         * stato non e' ancora quello di QUESTO comando — c'e' una finestra in
+         * cui si legge lo stato di prima — e il controllo scattava sempre.
+         *
+         * ! UN GUASTO CHE SI VEDE SOLO SUL FERRO E NON IN QEMU E' LA REGOLA DI
+         * QUESTO FILE, non l'eccezione: l'emulatore risponde subito e a
+         * comando, il silicio no. Se si riprova, il controllo va fatto DOPO
+         * aver visto BSY salire almeno una volta — cioe' dopo che il disco ha
+         * davvero preso il comando — e provato la' prima che qui.
+         *
+         * Quel che il disco ha da dire lo si chiede DOPO il ciclo, dove si e'
+         * sempre fatto, e nella scadenza qui sotto, che adesso lo stampa.
+         * ============================================================ */
+
+        /* ! A TEMPO, COME OGNI ALTRA ATTESA DI QUESTO FILE, e non a giri:
+         * quanto valga un giro dipende da quanto e' lento il bus, cioe' la
+         * scadenza cambiava da macchina a macchina senza che nessuno lo
+         * dicesse. Vedi ATA_TMO_DMA_MS. */
+        if (g_ticks >= scaduto) {
+            /* ! E SI STAMPA ANCHE COSA DICE IL DISCO, perche' «fermo» da solo
+             * non distingue un disco che sta ancora lavorando (BSY alto) da uno
+             * che ha gia' risposto di no (ERR) da uno che non c'e' piu' (0xFF).
+             * Sono tre diagnosi diverse e costano una lettura di porta. */
+            uint8_t sd  = port_inb(base_ctrl(canale));
+            uint8_t err = port_inb(io + ATA_REG_ERROR);
+
+            klog(LOG_ERROR, "ATA: DMA fermo a lba=%u dopo %u ms "
+                 "(disco: stato=0x%02x errore=0x%02x, bm=0x%02x)",
+                 (uint32_t)lba, ATA_TMO_DMA_MS, sd, err, st);
             port_outb(bm + BM_CMD, 0);
+            /* ! E IL CANALE VA RIMESSO IN PIEDI PRIMA DI TORNARE: senza, il
+             * disco resta BSY e il ripiego in PIO scade su ogni settore.
+             * Vedi ata_reset_canale(). */
+            ata_reset_canale(canale);
+
+            /* =============================================================
+             * ! BSY ANCORA ALTO DOPO OTTO SECONDI VUOL DIRE «QUEL SETTORE»,
+             * NON «QUESTO CANALE», e stavolta il numero c'e'.
+             *
+             * Misurato sull'Acer il 21 settembre 2026: stato=0xd0 — BSY e
+             * DRDY, ERR a zero. Il disco non ha rifiutato: sta ancora
+             * grattando su quel settore, e lo fa da otto secondi. Nessun disco
+             * sano impiega otto secondi a leggere 32 KB; quello che ci mette
+             * tanto sta ritentando sul suo supporto, cioe' e' il SUPPORTO.
+             *
+             * Il canale, dopo il reset, e' sano — e infatti il blocco dopo si
+             * legge. Percio' non si degrada la sessione: si dice che QUEL
+             * blocco non e' tornato e si va avanti in DMA. Prima, invece, si
+             * spegneva il DMA per tutta la sessione e si ripiegava in PIO, che
+             * su quegli stessi settori scade a sua volta — un disco da 57 GB
+             * letto alla velocita' del 1994 per colpa di una manciata di
+             * settori.
+             *
+             * ! E QUESTO CONTROLLO E' AL SICURO DALL'ERRORE DI PRIMA: scatta
+             * DOPO la scadenza, cioe' dopo otto secondi, quando il disco il
+             * comando l'ha preso da un pezzo. Quello ritirato stamattina
+             * guardava lo stato appena dato il comando, quando il registro
+             * ancora racconta il comando di prima.
+             * ============================================================= */
+            if (sd != 0xFF && (sd & ATA_SR_BSY)) return -2;
             return -1;
         }
         ata_400ns(canale);
@@ -383,6 +459,7 @@ static int ata_dma_blocco(int canale, int unita, uint64_t lba, uint32_t n,
     if (st & BM_ST_ERRORE) {
         klog(LOG_ERROR, "ATA: DMA errore del bus master a lba=%u",
              (uint32_t)lba);
+        ata_reset_canale(canale);
         return -1;
     }
 
@@ -416,6 +493,45 @@ uint16_t ata_base_io(int canale)
 uint16_t ata_base_ctrl(int canale)
 {
     return (canale == 0) ? ATA_PRIMARY_CTRL : ATA_SECONDARY_CTRL;
+}
+
+/* =============================================================================
+ * ! DOPO UN COMANDO SCADUTO IL CANALE SI RESETTA, E PRIMA NON SI FACEVA.
+ *
+ * Un comando che scade lascia il disco con BSY alto e un trasferimento a
+ * meta': ogni comando dopo trova 0xD0 — BSY piu' DRDY — e scade a sua volta.
+ * Il sintomo non e' «un settore illeggibile», e' «da quel momento il disco non
+ * si legge piu'», e somiglia tutto a un disco rotto.
+ *
+ * Visto sull'Acer il 21 settembre 2026: UN timeout del DMA a lba=1787906, e da
+ * li' in poi ogni lettura PIO scaduta con stato 0xD0, con chkdsk che trovava
+ * errori dappertutto su un filesystem che il sistema installato legge tutti i
+ * giorni. Un guasto solo, moltiplicato per ogni richiesta successiva.
+ *
+ * Il ripristino e' quello dello standard: SRST alto per almeno 5 microsecondi,
+ * poi basso, poi si aspetta che BSY cada.
+ *
+ * ! L'ATTESA SI FA A LETTURE DI PORTA, NON COL PIT. Questa funzione la chiama
+ * anche chi gira a interrupt spenti: un'attesa ancorata a g_ticks li' non
+ * finirebbe mai, e il rimedio sarebbe peggio del guasto.
+ *
+ * ! E DOPO UN RESET IL DISCO SELEZIONATO E' IL PRIMO. Non e' un problema qui —
+ * ogni comando riscrive il registro DRIVE prima di partire — ma chi
+ * aggiungesse un comando che si fida della selezione precedente lo scoprirebbe
+ * nel modo peggiore.
+ * ============================================================================= */
+void ata_reset_canale(int canale)
+{
+    uint16_t ctl = ata_base_ctrl(canale);
+    int      i;
+
+    port_outb(ctl, (uint8_t)(ATA_CTRL_NIEN | ATA_CTRL_SRST));
+    for (i = 0; i < 40; i++) ata_ritardo(canale);      /* >= 5 us */
+
+    port_outb(ctl, ATA_CTRL_NIEN);
+    for (i = 0; i < 5000; i++) ata_ritardo(canale);    /* i 2 ms dello standard */
+
+    ata_attendi_non_bsy(canale, ATA_TMO_BSY_MS);
 }
 
 /* Ritardo di ~400 ns: quattro letture dello stato ALTERNATO.
@@ -741,6 +857,26 @@ static void ata_rileva(int idx, int canale, int unita)
     }
 }
 
+/* =============================================================================
+ * ata_dma_spegni — il PIO per scelta, non per fallimento
+ *
+ * ! FINO AL 21 SETTEMBRE 2026 IN PIO CI SI FINIVA SOLO SBAGLIANDO: era lo stato
+ * in cui il driver cadeva dopo un trasferimento DMA scaduto. Su un disco con
+ * dei settori andati pero' il PIO e' la strada GIUSTA, e sceglierla in anticipo
+ * e' diverso dal caderci: il PIO chiede un settore per volta e l'errore torna
+ * sul settore, mentre un DMA che il disco non porta a termine lascia il bus
+ * master ad aspettare e si esce solo a scadenza — otto secondi per blocco.
+ *
+ * La chiede `atadma = 0` in /boot/kernel.cfg, e la usa il dischetto di
+ * soccorso, che di mestiere legge dischi malandati.
+ * ============================================================================= */
+void ata_dma_spegni(void)
+{
+    if (g_dma_rotto) return;
+    g_dma_rotto = 1;
+    klog(LOG_INFO, "ATA: DMA spento per scelta (atadma = 0): si legge in PIO");
+}
+
 int ata_init(void)
 {
     int canale, unita, idx = 0;
@@ -848,6 +984,7 @@ static int ata_rw(int indice, uint64_t lba, uint32_t n, void *buf, int scrivi)
         uint32_t   r = n;
         uint8_t   *q = p;
         int        ok = 1;
+        int        supporto = 0;   /* il guasto e' del disco, non del canale */
 
         while (r > 0 && ok) {
             uint32_t b = (r > DMA_MAX_SETT) ? DMA_MAX_SETT : r;
@@ -856,9 +993,34 @@ static int ata_rw(int indice, uint64_t lba, uint32_t n, void *buf, int scrivi)
 
             if (scrivi) dma_copia(g_dma_buf, q, byte);
 
-            if (ata_dma_blocco(canale, unita, l, b, c48, scrivi) != 0) {
-                ok = 0;
-                break;
+            /* ! SI RITENTA PRIMA DI BUTTARE VIA IL DMA PER TUTTA LA SESSIONE.
+             * Un trasferimento che scade non vuol dire che il canale non sappia
+             * fare DMA: puo' essere il disco che ha avuto un momento suo — una
+             * ricalibrazione, un settore ritentato — e il canale, dopo il
+             * reset, e' pulito. Arrendersi al primo intoppo significa leggere
+             * in PIO per tutto il resto della sessione, cioe' pagare un
+             * secondo di disco con un'ora di lentezza. Tre tentativi, e poi
+             * si ripiega davvero. */
+            {
+                int tentativi = 3, esito = -1;
+
+                while (tentativi-- > 0) {
+                    esito = ata_dma_blocco(canale, unita, l, b, c48, scrivi);
+                    if (esito == 0) break;
+                    /* ! UN SETTORE SU CUI IL DISCO GRATTA NON SI RITENTA: ha
+                     * gia' ritentato lui per otto secondi, e ogni nostro giro
+                     * ne costa altri otto. Su una scansione fatta di decine di
+                     * blocchi andati, e' la differenza fra mezz'ora e un
+                     * pomeriggio. */
+                    if (esito == -2) break;
+                    klog(LOG_WARN, "ATA: DMA a lba=%u non riuscito, ritento",
+                         (uint32_t)l);
+                }
+                if (esito != 0) {
+                    ok = 0;
+                    supporto = (esito == -2);
+                    break;
+                }
             }
 
             if (!scrivi) dma_copia(q, g_dma_buf, byte);
@@ -869,6 +1031,11 @@ static int ata_rw(int indice, uint64_t lba, uint32_t n, void *buf, int scrivi)
         }
 
         if (ok) return 0;
+
+        /* ! IL SUPPORTO NON E' IL CANALE. Si rende errore a chi ha chiesto —
+         * sara' lui a dire quale indirizzo non e' tornato — e il DMA resta
+         * acceso per tutto il resto. */
+        if (supporto) return -1;
 
         g_dma_rotto = 1;
         klog(LOG_ERROR, "ATA: il DMA non funziona, si continua in PIO "
@@ -928,7 +1095,12 @@ static int ata_rw(int indice, uint64_t lba, uint32_t n, void *buf, int scrivi)
          * DRQ e' un errore classico che funziona finche' il blocco e' di
          * un settore e poi corrompe i dati. */
         for (s = 0; s < blocco; s++) {
-            if (ata_attendi_drq(canale, ATA_TMO_DRQ_MS) < 0) return -1;
+            if (ata_attendi_drq(canale, ATA_TMO_DRQ_MS) < 0) {
+                /* Stessa ragione del DMA: si torna con l'errore, ma il canale
+                 * si lascia pulito per chi viene dopo. */
+                ata_reset_canale(canale);
+                return -1;
+            }
 
             /* ! UNA ISTRUZIONE, NON UN CICLO. Fino ad agosto 2026 qui
              * c'era un ciclo che chiamava port_inw 256 volte per settore:
@@ -949,6 +1121,12 @@ static int ata_rw(int indice, uint64_t lba, uint32_t n, void *buf, int scrivi)
         if (st < 0 || ((uint8_t)st & (ATA_SR_ERR | ATA_SR_DF))) {
             klog(LOG_ERROR, "ATA: %s fallita a lba=%u (stato=0x%02x)",
                  scrivi ? "scrittura" : "lettura", (uint32_t)lba, (uint8_t)st);
+            /* ! SOLO SE E' SCADUTO, NON SE IL DISCO HA DETTO «ERRORE». Un
+             * settore illeggibile e' una risposta, e il disco e' sano e
+             * pronto: resettarlo li' vorrebbe dire buttare via il resto della
+             * lettura per un settore solo. BSY ancora alto invece vuol dire
+             * che nessuno ha risposto. */
+            if (st < 0) ata_reset_canale(canale);
             return -1;
         }
 

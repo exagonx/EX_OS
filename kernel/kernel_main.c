@@ -394,6 +394,14 @@ klog(LOG_INFO, "[PASSO 11] Syscall OK");
 KernelConfig *cfg = cfg_load();
     klog(LOG_INFO, "[PASSO 13b] Configurazione caricata");
 
+    /* ! IL PIO PER SCELTA, E SOLO DA QUI IN AVANTI. `atadma = 0` chiede di
+     * leggere il disco un settore per volta: serve a chi sta recuperando dati
+     * da un supporto con dei settori andati, dove un DMA che il disco non
+     * porta a termine costa otto secondi di attesa per blocco. Non puo' valere
+     * prima: questo file lo si e' appena letto DAL disco. Vedi ata_dma_spegni()
+     * e cfg.h. */
+    if (cfg->ata_dma == 0) ata_dma_spegni();
+
     /* =====================================================================
      * La voce `svga` di kernel.cfg contro cio' che e' successo davvero.
      *

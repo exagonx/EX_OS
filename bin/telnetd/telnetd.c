@@ -678,7 +678,33 @@ static void sessione(int id, const Config *cfg, int con_login)
     unsigned int  ultimo_stato;   /* quando si e' chiesto l'ultima volta */
 
     if (pty_apri(fd) != 0) {
-        printf("telnetd: niente pty libero\n");
+        /* ! CHI NON PUO' SERVIRE LO DICE, E CHIUDE. Prima qui c'era un printf
+         * sulla console della macchina e un `return`: la connessione restava
+         * APERTA e senza nessuno dietro, e il client — che non ha ancora
+         * ricevuto la negoziazione, quindi fa l'eco da se' — mostrava i
+         * comandi battuti e non eseguiva niente. E' il sintomo per cui si e'
+         * detto per giorni «la macchina si impianta»: sembrava caduto il
+         * sistema, ed era un server che sapeva di non poter servire e non
+         * l'aveva detto a nessuno.
+         *
+         * ! I PSEUDO-TERMINALI SONO QUATTRO (PTY_MAX, kernel/include/pty.h), e
+         * uno resta occupato finche' TUTTI e due i capi sono chiusi: se la
+         * shell di una sessione finita lascia un figlio vivo, quel pty non
+         * torna. Il numero quattro e' anche il motivo per cui il guaio si
+         * vedeva «dopo quattro o cinque collegamenti». */
+        static const char scusa[] =
+            "\r\ntelnetd: non c'e' un pseudo-terminale libero"
+            " (questo sistema ne tiene quattro).\r\n"
+            "         Riprova fra un minuto; se non passa, guarda i processi "
+            "rimasti da una sessione finita male.\r\n";
+        IpTcpRif rif;
+
+        printf("telnetd: niente pty libero: rifiuto la connessione\n");
+        tcp_scrivi(id, (const unsigned char *)scusa, sizeof(scusa) - 1);
+
+        rif.id = (unsigned int)id;
+        ipc_send(pid_ip, IP_MSG_TCP_CHIUDI, &rif, sizeof(rif));
+        esito(2000);
         return;
     }
 

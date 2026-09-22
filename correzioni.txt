@@ -1,0 +1,25 @@
+Questo file è un file di compito è strutturato nella seguente maniera:
+viene descritto un compito preceduto ogni descrizione è preceduta da un simbolo.
+
+! questo sarà un operazione che sarà aggiunta a in_lavorazione.txt come importante all'elenco delle cose da fare come urgente.
+
+$ invece  sono di secondaria importanza dovranno essere aggiunte in_lavorazione.txt alle cose da fare ma con urgenza ridotta.
+
+# commento per l'utente da ignorare non viene aggiunto.
+
+una volta aggiunto viene rimosso da questo file.
+Questo file solo l'utente aggiunge istruzioni.
+############################################################################################
+
+
+
+# [preso in carico il 21 settembre 2026 -> @FILEMGR-OPS (in_lavorazione.txt)]
+# !il file manager manca la possibilità di copiare cancellare spostare i file selezionati , magari si potrebbe implementare anche per un intero albero di directory.
+
+# ---------------------------------------------------------------------------
+# Le righe qui sopra sono state LETTE e commentate, non cancellate: cosi' chi
+# le ha scritte vede cos'e' stato preso in carico e sotto quale etichetta.
+# Per rileggerne una per intero:  tools/locali/lavori.sh mostra GFEDIT-SEL
+# ---------------------------------------------------------------------------
+
+$ netupdate quando procede al download e questa procede correttamente dovrebbe avere una forma di animazione  ad esempio | / - \ | che precede la riga cosi vedendo questa barra roteare l'utente sa che tutto procede e se si ferma vuol dire che qualcosa non sta andando.

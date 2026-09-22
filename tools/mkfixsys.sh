@@ -2,7 +2,29 @@
 # =============================================================================
 # tools/mkfixsys.sh — costruisce dist/fixsys.img, il disco di SOCCORSO
 #
-#     tools/mkfixsys.sh
+#     make fixsys          <- COSI', NON LANCIANDO QUESTO SCRIPT A MANO
+#
+# ! E LA RIGA QUI SOPRA E' LA PRIMA COSA DA LEGGERE, perche' il 21 settembre
+# 2026 questo script e' stato lanciato a mano e il dischetto che ne e' uscito
+# NON SI AVVIAVA da un lettore USB — cioe' falliva proprio nel caso per cui
+# esiste. Lo script copia lo stage2 che TROVA in build/, e il volume in RAM e'
+# esattamente cio' che lo stage2 decide: `make fixsys` fa un sub-make con
+# RAMDISCO=1 e lo riassembla, questo script no. Chi lo lancia da solo ottiene
+# un dischetto con lo stage2 dell'ultima make qualunque — di solito
+# RAMDISCO=0 — e il sintomo (errori di filesystem su una macchina dove il
+# lettore e' USB) non somiglia per niente alla causa.
+#
+# ! COME SI CONTROLLA, IN DUE RIGHE. `make fixsys` stampa l'md5 dello stage2
+# dentro l'immagine e quello appena costruito: se non combaciano, il volume in
+# RAM non c'e'. E per vederlo davvero si avvia in QEMU, SI ESPELLE IL DISCHETTO
+# (`mon:eject -f floppy0`) e si batte `ls /bin`: se risponde, la radice e' in
+# RAM; se arrivano errori FDC, no.
+#
+# ! E IN QEMU CI VOGLIONO ALMENO 64 MB. La copia mette il volume a 32 MB e
+# pretende 41 MB di memoria alta (`cmp eax, 40*1024` in loader.asm): con i
+# 32 MB predefiniti di qemu_drive.py stage2 SALTA la copia in silenzio, e la
+# prova sembra dire «non funziona» mentre sta misurando un'altra cosa.
+# Si lancia con EXOS_RAM=128M.
 #
 # Un floppy avviabile con dentro il minimo per rimettere in sesto un sistema
 # installato: la libc, la shell, `install`, e i due comandi per montare il
@@ -48,11 +70,17 @@ FLOPPY_SECTORS=2880          # 1.44 MB
 #   mount    (e umount, che e' lo stesso binario: guarda argv[0])
 #   disk     per vedere come si chiama la partizione, se non e' hd0p1
 #   ls       per guardare che cosa c'e' prima e dopo
+#   chkdsk   il controllo del filesystem, che su un disco MONTATO non si puo'
+#            fare: i settori grezzi di un volume montato non si leggono, e la
+#            radice di un sistema installato e' montata per definizione. Da qui
+#            invece il disco non lo monta nessuno — e' proprio il caso per cui
+#            questo dischetto esiste. Aggiunto il 21 settembre 2026, dopo
+#            l'avviso «EXT2: blocco ... gia' libero» su una macchina vera.
 #
 # Tutto il resto starebbe pure — restano piu' di ottocento kilobyte liberi — ma
 # ogni file in piu' e' un file che `install -a` copierebbe sul disco, e qui si
 # vuole toccare il minimo indispensabile: la libc e i comandi di base.
-PROGRAMMI="sh install mount disk ls cp"
+PROGRAMMI="sh install mount disk ls cp chkdsk blkprova"
 
 # ! I DRIVER NON SONO UN DI PIU': SENZA kbd.drv NON SI BATTE NIENTE.
 #
@@ -75,11 +103,21 @@ err()  { echo -e "${ROSSO}[ERRORE]${N} $1"; exit 1; }
 
 cd "$(dirname "$0")/.."
 
+# ! I PROGRAMMI STANNO IN DUE POSTI, E NON E' UN DISORDINE. build/bin/ e'
+# quello che finisce sul dischetto NORMALE, dove restano ventiseimila byte
+# liberi: chi non ci sta va in build/bin-cd/, che e' la roba del CD. Questo
+# dischetto ha 770 KB liberi e li prende da tutt'e due.
+dove_sta() {
+    if   [ -x "build/bin/$1" ];    then echo "build/bin/$1"
+    elif [ -x "build/bin-cd/$1" ]; then echo "build/bin-cd/$1"
+    fi
+}
+
 for f in "$BOOT_SECTOR" "$LOADER" "$KERNEL" build/lib/libc.so; do
     [ -f "$f" ] || err "manca $f: prima `make`"
 done
 for p in $PROGRAMMI; do
-    [ -x "build/bin/$p" ] || err "manca build/bin/$p"
+    [ -n "$(dove_sta "$p")" ] || err "manca $p (ne' in build/bin/ ne' in build/bin-cd/)"
 done
 
 mkdir -p dist
@@ -111,7 +149,7 @@ mcopy -i "$IMG" build/lib/libc.so ::/lib/libc.so
 ok "La libc: $(stat -c %s build/lib/libc.so) byte"
 
 for p in $PROGRAMMI; do
-    mcopy -i "$IMG" "build/bin/$p" "::/bin/$p"
+    mcopy -i "$IMG" "$(dove_sta "$p")" "::/bin/$p"
     ok "  $p"
 done
 # umount e' lo stesso binario di mount: il programma guarda argv[0].

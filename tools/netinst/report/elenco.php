@@ -65,7 +65,11 @@ if (!hash_equals($attesa, $data))
 /* --- un nome che arriva da fuori ------------------------------------------ */
 function nome_pulito($n) {
     $n = basename($n);
-    if (!preg_match('/^[A-Za-z0-9._-]+\.txt$/', $n)) return false;
+    /* ! L'ESTENSIONE NON GUARDA MAIUSCOLE E MINUSCOLE (la `i` in fondo). I
+     * referti arrivano da EX-OS, dove un nome come SONDA1.TXT e' la norma —
+     * su FAT i nomi corti sono maiuscoli — e il filesystem del server e'
+     * sensibile alle maiuscole. Vedi il glob qui sotto. */
+    if (!preg_match('/^[A-Za-z0-9._-]+\.txt$/i', $n)) return false;
     if (strpos($n, '..') !== false) return false;
     return $n;
 }
@@ -98,7 +102,14 @@ if (isset($_GET['file'])) {
 /* --- l'elenco ------------------------------------------------------------- */
 /* ! ORDINATO DAL PIU' RECENTE, perche' il referto che interessa e' quello di
  * adesso: chi guarda ha appena chiesto a qualcuno di mandarlo. */
-$v = @glob(DOVE . '/*.txt');
+/* ! IL GLOB PRENDE .txt E .TXT, e non e' pignoleria: il 21 settembre 2026 il
+ * primo referto vero e' arrivato davvero — index.php l'ha salvato come
+ * «20260921-081629-…-SONDA1.TXT» e ha contato «referti in tutto 1» — e questo
+ * elenco ha risposto «referti: 0». Chi l'ha mandato avrebbe concluso che la
+ * POST non funziona, cioe' avrebbe riaperto un difetto appena chiuso, mentre
+ * il file era sul disco a due directory di distanza. Il nome maiuscolo viene
+ * da EX-OS, dove SONDA1.TXT e' la forma normale. */
+$v = @glob(DOVE . '/*.[tT][xX][tT]');
 if ($v === false) $v = array();
 usort($v, function ($a, $b) { return filemtime($b) - filemtime($a); });
 

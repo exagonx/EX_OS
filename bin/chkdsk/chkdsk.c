@@ -73,6 +73,11 @@ EX_VERSIONE("chkdsk", "0.001");
 /* --- Il volume, letto una volta e poi usato da tutti --------------------- */
 static char         dev[64];
 static int          ripara = 0;
+/* ! LA SUPERFICIE SI LEGGE SOLO SE LA SI CHIEDE, e non e' prudenza: su un
+ * volume da 57 GB sono ore, mentre il controllo delle strutture sono minuti.
+ * Chi ha fretta di sapere se il filesystem regge non deve pagare la lettura
+ * di ogni settore; chi cerca i settori andati la chiede. */
+static int          scansiona = 0;
 static unsigned int problemi = 0, corretti = 0;
 
 static unsigned int sett_per_clus, sett_riservati, n_fat, voci_root;
@@ -80,6 +85,37 @@ static unsigned int sett_per_fat, sett_totali, primo_dato, n_cluster;
 static unsigned int root_clus;          /* FAT32 */
 static unsigned int tipo;               /* 12, 16 o 32 */
 static unsigned int fine_catena;        /* primo valore che significa "fine" */
+
+/* =============================================================================
+ * I CLUSTER CHE NON SI LEGGONO, SU FAT
+ *
+ * ! QUI L'UNITA' E' IL CLUSTER, non il settore, e non e' un dettaglio: la FAT
+ * sa dire «difettoso» di un cluster e basta. Un settore andato in mezzo a un
+ * cluster da 32 KB porta via tutto il cluster — e' il formato a decidere la
+ * grana, non noi.
+ *
+ * ! E IL VALORE «DIFETTOSO» E' fine_catena - 1 IN TUTT'E TRE I FORMATI:
+ * 0xFF7 su FAT12, 0xFFF7 su FAT16, 0x0FFFFFF7 su FAT32. Scriverlo cosi' invece
+ * di tre costanti vuol dire che chi aggiungesse un quarto formato non se lo
+ * dimentica in un ramo.
+ * ============================================================================= */
+static unsigned char *fat_bad;
+static unsigned int   fat_bad_n, fat_bad_in_uso;
+
+/* Dove sta il puntatore al PRIMO cluster di un file: nella sua voce di
+ * directory. Li' riempie controlla_voce, e servono a spostarlo. */
+static unsigned int   fat_dir_lba, fat_dir_idx;
+
+typedef struct {
+    unsigned int cluster;      /* quello andato                              */
+    unsigned int prec;         /* 0 = e' il primo: il puntatore sta nella voce */
+    unsigned int dir_lba;      /* la voce di directory, se prec e' 0          */
+    unsigned int dir_idx;
+} FatSpostare;
+
+#define FAT_SPOSTARE_MAX 4096
+static FatSpostare  fat_da_spostare[FAT_SPOSTARE_MAX];
+static unsigned int fat_da_spostare_n;
 
 /* Bitmap dei cluster gia' visti, uno per bit: serve a scoprire i condivisi
  * e i perduti. Su un volume da 512 MB con cluster da 4 KB sono 16 KB. */
@@ -438,6 +474,27 @@ static int percorri(unsigned int primo, const char *nome,
             *ultimo_buono = prec;
             return -1;
         }
+        /* ! IL FILE DANNEGGIATO SI NOMINA QUI, mentre gli si cammina sopra:
+         * la mappa dei cluster andati e' gia' pronta (la scansione viene
+         * prima) e il cluster PRECEDENTE lo sappiamo solo adesso — dopo, per
+         * risalirci, bisognerebbe ripercorrere la catena da capo. */
+        if (fat_bad && (fat_bad[c >> 3] >> (c & 7)) & 1) {
+            fat_bad_in_uso++;
+            if (fat_bad_in_uso <= 20u)
+                printf("  ! %s: il cluster %u non si legge\n", nome, c);
+            else if (fat_bad_in_uso == 21u)
+                printf("  ! (gli altri file danneggiati non li elenco)\n");
+            problemi++;
+
+            if (fat_da_spostare_n < FAT_SPOSTARE_MAX) {
+                fat_da_spostare[fat_da_spostare_n].cluster = c;
+                fat_da_spostare[fat_da_spostare_n].prec    = prec;
+                fat_da_spostare[fat_da_spostare_n].dir_lba = fat_dir_lba;
+                fat_da_spostare[fat_da_spostare_n].dir_idx = fat_dir_idx;
+                fat_da_spostare_n++;
+            }
+        }
+
         segna(c);
         n++;
         *quanti = n;
@@ -739,6 +796,11 @@ static void controlla_voce(unsigned char *v, unsigned int lba, unsigned int idx,
         return;
     }
 
+    /* Dove sta scritto il primo cluster di questo file: serve a spostarlo se
+     * proprio quello e' andato. Vedi FatSpostare. */
+    fat_dir_lba = lba;
+    fat_dir_idx = idx;
+
     if (percorri(primo, pieno, &quanti, &ultimo) != 0) {
         if (ripara && ultimo != 0) {
             if (fat_scrivi(ultimo, fine_catena | 0x7u) == 0) {
@@ -891,6 +953,16 @@ static void controlla_perduti(void)
         if (v == 0xFFFFFFFFu) continue;
         if (v == 0) continue;                    /* libero: e' giusto cosi' */
 
+        /* ! UN CLUSTER MARCATO DIFETTOSO NON E' PERDUTO, ED E' LA STESSA
+         * TRAPPOLA DELL'INODE 1 SU ext2, vista dall'altra parte. Non e' libero
+         * e non e' di nessun file — per definizione, e' proprio quello il suo
+         * mestiere — quindi questo giro lo contava come «occupato che nessuno
+         * nomina», e con -r lo avrebbe LIBERATO: cioe' rimesso in circolazione
+         * un settore rotto, col programma che si chiama «controllo del disco».
+         * Si e' visto il 22 settembre 2026, nella corsa di verifica subito
+         * dopo la prima marcatura riuscita. */
+        if (v == fine_catena - 1u) continue;
+
         perduti++;
         if (ripara && fat_scrivi(c, 0) == 0) liberati++;
     }
@@ -1020,6 +1092,40 @@ static unsigned short *e2_link_conta;    /* riferimenti trovati, per inode */
 /* Quali inode sono directory: serve a bg_used_dirs_count, che il
  * descrittore di gruppo tiene e che nessuno ricalcola mai. */
 static unsigned char  *e2_inode_dir;
+
+/* I blocchi che il disco non rende: li riempie la scansione della superficie,
+ * li legge chi attribuisce i blocchi ai file e chi ripara. */
+static unsigned char  *e2_blocchi_bad;
+static unsigned int    e2_bad_n;        /* quanti non si leggono           */
+static unsigned int    e2_bad_in_uso;   /* di quelli, quanti stanno in file */
+
+/* Il nome del file di cui si stanno percorrendo i blocchi: serve solo a dire
+ * QUALE file sta sopra un blocco andato, che e' la cosa che interessa a chi
+ * legge il referto. Un numero di inode non si puo' andare a cercare. */
+static const char     *e2_nome_corrente = "";
+
+/* =============================================================================
+ * DOVE STA IL PUNTATORE, che e' l'unica cosa che permette di SPOSTARE un blocco
+ *
+ * ! SAPERE CHE UN FILE E' DANNEGGIATO NON BASTA A RIPARARLO: per mettere i dati
+ * altrove bisogna cambiare il puntatore, e il puntatore sta o dentro l'inode
+ * (i primi dodici) o dentro un blocco di indiretti. Chi percorre l'albero lo
+ * sa mentre ci passa sopra, e dopo non lo sa piu' nessuno — percio' si segna
+ * li', non lo si ricostruisce.
+ * ============================================================================= */
+typedef struct {
+    unsigned int ino;          /* di chi e' il file                        */
+    unsigned int contenitore;  /* 0 = dentro l'inode, altrimenti il blocco  */
+    unsigned int idx;          /* quale puntatore, li' dentro               */
+    unsigned int blocco;       /* quello difettoso                          */
+} Spostare;
+
+#define SPOSTARE_MAX 4096
+static Spostare     e2_da_spostare[SPOSTARE_MAX];
+static unsigned int e2_da_spostare_n;
+
+/* Riempiti da e2_percorri_blocchi appena prima di ogni e2_usa_blocco. */
+static unsigned int e2_dove_cont, e2_dove_idx;
 
 /* ! NIENTE BUFFER GLOBALE PER I BLOCCHI DI DIRECTORY. La prima stesura ne
  * aveva uno solo, condiviso: scendendo in una sottodirectory il contenuto
@@ -1195,6 +1301,10 @@ static int e2_leggi_inode(unsigned int num, unsigned char *dst)
 
 /* Marca un blocco come usato, segnalando se lo era gia' o se e' fuori
  * dal volume. */
+/* Quanti blocchi sono stati attribuiti a QUALCUNO: serve a dire quanti ne
+ * dichiara l'inode 1, senza contare due volte quelli gia' visti. */
+static unsigned int e2_blocchi_contati;
+
 static void e2_usa_blocco(unsigned int b, unsigned int ino)
 {
     if (b == 0) return;
@@ -1215,6 +1325,31 @@ static void e2_usa_blocco(unsigned int b, unsigned int ino)
         return;
     }
     e2_segna(e2_blocchi_usati, b);
+    e2_blocchi_contati++;
+
+    /* ! E QUI SI SCOPRE CHI E' DANNEGGIATO. La mappa dei blocchi andati e'
+     * gia' pronta quando si percorre l'albero — la scansione viene prima
+     * apposta — quindi il file lo si puo' NOMINARE mentre lo si incontra,
+     * senza un secondo giro e senza tenere in memoria chi possiede cosa: su
+     * un volume da 57 GB una mappa blocco->inode sarebbe un quarto di giga. */
+    if (e2_blocchi_bad && e2_bit(e2_blocchi_bad, b)) {
+        e2_bad_in_uso++;
+        if (e2_bad_in_uso <= 20u)
+            printf("  ! %s (inode %u): il blocco %u non si legge\n",
+                   e2_nome_corrente[0] ? e2_nome_corrente : "(senza nome)",
+                   ino, b);
+        else if (e2_bad_in_uso == 21u)
+            printf("  ! (gli altri file danneggiati non li elenco)\n");
+        problemi++;
+
+        if (e2_da_spostare_n < SPOSTARE_MAX) {
+            e2_da_spostare[e2_da_spostare_n].ino         = ino;
+            e2_da_spostare[e2_da_spostare_n].contenitore = e2_dove_cont;
+            e2_da_spostare[e2_da_spostare_n].idx         = e2_dove_idx;
+            e2_da_spostare[e2_da_spostare_n].blocco      = b;
+            e2_da_spostare_n++;
+        }
+    }
 }
 
 /* =============================================================================
@@ -1241,16 +1376,24 @@ static void e2_percorri_blocchi(const unsigned char *ino_buf, unsigned int ino)
 {
     unsigned int i, j, k, punt = e2_dim_blocco / 4u;
 
-    for (i = 0; i < 12u; i++) e2_usa_blocco(le32(ino_buf + 40 + i * 4), ino);
+    for (i = 0; i < 12u; i++) {
+        e2_dove_cont = 0;                    /* dentro l'inode */
+        e2_dove_idx  = i;
+        e2_usa_blocco(le32(ino_buf + 40 + i * 4), ino);
+    }
 
     /* --- indiretto semplice --- */
     {
         unsigned int b = le32(ino_buf + 40 + 12 * 4);
         if (b != 0) {
+            e2_dove_cont = 0; e2_dove_idx = 12u;
             e2_usa_blocco(b, ino);
             if (e2_leggi_blocco(b, e2_ind1) == 0)
-                for (i = 0; i < punt; i++)
+                for (i = 0; i < punt; i++) {
+                    e2_dove_cont = b;        /* il puntatore sta qui dentro */
+                    e2_dove_idx  = i;
                     e2_usa_blocco(le32(e2_ind1 + i * 4), ino);
+                }
             else e2_incerto++;
         }
     }
@@ -1264,10 +1407,14 @@ static void e2_percorri_blocchi(const unsigned char *ino_buf, unsigned int ino)
                 for (i = 0; i < punt; i++) {
                     unsigned int b2 = le32(e2_ind1 + i * 4);
                     if (b2 == 0) continue;
+                    e2_dove_cont = b; e2_dove_idx = i;
                     e2_usa_blocco(b2, ino);
                     if (e2_leggi_blocco(b2, e2_ind2) == 0)
-                        for (j = 0; j < punt; j++)
+                        for (j = 0; j < punt; j++) {
+                            e2_dove_cont = b2;
+                            e2_dove_idx  = j;
                             e2_usa_blocco(le32(e2_ind2 + j * 4), ino);
+                        }
                     else e2_incerto++;
                 }
             } else e2_incerto++;
@@ -1371,7 +1518,9 @@ static void e2_voce(const unsigned char *v, unsigned int vino,
         return;
     }
 
+    e2_nome_corrente = pieno;
     e2_percorri_blocchi(ib, vino);
+    e2_nome_corrente = "";
 
     if ((le16(ib) & E2_MODE_TIPO) == E2_MODE_DIR) {
         e2_segna(e2_inode_dir, vino);
@@ -1451,6 +1600,346 @@ static void e2_controlla_dir(unsigned int ino, unsigned int padre,
  * piu' corto: i bit che non corrispondono a nessun blocco vanno marcati
  * occupati, o l'allocatore proverebbe a usare blocchi che non esistono.
  * ============================================================================= */
+/* =============================================================================
+ * LA SUPERFICIE: LEGGERE OGNI BLOCCO, E SEGNARE QUELLI CHE NON TORNANO
+ *
+ * ! SI LEGGE A BLOCCHI GROSSI E SI SCENDE SOLO DOVE FA MALE. Un volume da
+ * 57 GB sono cinquantotto milioni di blocchi da 1 KB: chiederli uno per uno
+ * vuol dire un giorno di lavoro. Si leggono trentadue kilobyte per volta — il
+ * massimo che blkread accetta — e SOLO quando quel pezzo non torna lo si
+ * rilegge blocco per blocco.
+ *
+ * ! ED E' LI' CHE STA LA PRECISIONE: un pezzo da 32 KB che fallisce non vuol
+ * dire trentadue blocchi andati, quasi sempre e' UNO. Marcarli tutti vorrebbe
+ * dire buttare trentun blocchi sani per ogni settore rotto — su un disco che
+ * si sta cercando di salvare.
+ *
+ * ! E LA SCANSIONE VIENE PRIMA DELL'ALBERO, non dopo. Cosi' quando si
+ * percorrono i file la mappa dei blocchi andati c'e' gia', e il file
+ * danneggiato lo si NOMINA mentre lo si incontra: senza un secondo giro e
+ * senza tenere in memoria chi possiede cosa, che su un volume cosi' sarebbe
+ * un quarto di gigabyte di tabella.
+ * ============================================================================= */
+static unsigned char e2_scan_buf[BLKIO_MAX_SETT * SETT];
+
+static void e2_scansiona_superficie(void)
+{
+    unsigned int sett_b = e2_dim_blocco / SETT;
+    unsigned int per_volta, b, tappa = 0;
+
+    if (sett_b == 0) return;
+    per_volta = BLKIO_MAX_SETT / sett_b;
+    if (per_volta == 0) per_volta = 1;
+
+    printf("\nSuperficie: leggo tutti i %u blocchi. Ogni punto e' un mega.\n  ",
+           e2_n_blocchi);
+
+    for (b = 1; b < e2_n_blocchi; ) {
+        unsigned int n = per_volta;
+
+        if (b + n > e2_n_blocchi) n = e2_n_blocchi - b;
+
+        /* ! SI CONFRONTA COL CONTO, NON COL SEGNO, e questo e' costato la
+         * prima prova. `blkread` rende QUANTI settori ha trasferito: rende un
+         * numero negativo solo se non ne ha letto nemmeno uno, e un pezzo che
+         * fallisce a meta' torna con un conto PARZIALE e positivo. Controllare
+         * `< 0` vuol dire vedere solo i guasti che cominciano sul primo
+         * settore — e nella prova con gli errori iniettati la scansione disse
+         * «tutti i blocchi si leggono» mentre il registro del kernel elencava
+         * le letture fallite. */
+        if (blkread(dev, b * sett_b, n * sett_b, e2_scan_buf) != (int)(n * sett_b)) {
+            unsigned int k;
+
+            for (k = 0; k < n; k++)
+                if (blkread(dev, (b + k) * sett_b, sett_b, e2_scan_buf)
+                        != (int)sett_b) {
+                    e2_segna(e2_blocchi_bad, b + k);
+                    e2_bad_n++;
+                }
+        }
+        b += n;
+
+        if ((b * e2_dim_blocco) / (1024u * 1024u) > tappa) {
+            tappa = (b * e2_dim_blocco) / (1024u * 1024u);
+            printf(".");
+        }
+    }
+
+    if (e2_bad_n == 0) printf("\n  = tutti i blocchi si leggono\n");
+    else {
+        printf("\n  ! %u blocchi non si leggono (%u ogni diecimila)\n",
+               e2_bad_n, (e2_bad_n * 10000u) / e2_n_blocchi);
+        problemi++;
+    }
+}
+
+/* Scrive i 128 byte di un inode. Specchio di e2_leggi_inode: stessa strada
+ * per trovarlo, legge il blocco, sostituisce e riscrive. */
+static int e2_scrivi_inode(unsigned int num, const unsigned char *src)
+{
+    unsigned int g, idx, tab, off, blocco, base, k;
+    unsigned char d[4096];
+
+    if (num == 0 || num > e2_n_inode) return -1;
+
+    g   = (num - 1u) / e2_i_per_gruppo;
+    idx = (num - 1u) % e2_i_per_gruppo;
+
+    if (e2_leggi_blocco(e2_desc_blocco + (g * 32u) / e2_dim_blocco, d) != 0)
+        return -1;
+    tab = le32(d + ((g * 32u) % e2_dim_blocco) + 8);
+
+    off    = idx * e2_dim_inode;
+    blocco = tab + off / e2_dim_blocco;
+    base   = off % e2_dim_blocco;
+
+    if (e2_leggi_blocco(blocco, d) != 0) return -1;
+    for (k = 0; k < 128u; k++) d[base + k] = src[k];
+    return e2_scrivi_blocco(blocco, d);
+}
+
+/* Un blocco libero per gli indiretti dell'elenco. ! NON PUO' ESSERE UNO DEI
+ * DIFETTOSI: si sta scrivendo la lista dei blocchi da non usare, metterla
+ * sopra uno di quelli sarebbe la prima cosa a non tornare. */
+static unsigned int e2_alloca_blocco(void)
+{
+    unsigned int b;
+
+    for (b = e2_primo_dato; b < e2_n_blocchi; b++) {
+        if (e2_bit(e2_blocchi_usati, b)) continue;
+        if (e2_bit(e2_blocchi_bad, b))   continue;
+        e2_segna(e2_blocchi_usati, b);
+        return b;
+    }
+    return 0;
+}
+
+/* =============================================================================
+ * SPOSTARE QUEL CHE SI RIESCE A LEGGERE
+ *
+ * ! UN SETTORE DEBOLE NON E' SEMPRE UN SETTORE PERSO. Il disco ritenta al suo
+ * interno e a volte, al terzo o al quinto colpo, il dato torna: e' la ragione
+ * per cui un recupero serio RILEGGE invece di arrendersi alla prima risposta
+ * negativa. Ogni tentativo pero' costa — su questo sistema una scadenza intera
+ * — quindi il numero e' una scelta scritta qui e non una speranza infinita.
+ *
+ * ! E QUEL CHE TORNA SI METTE AL SICURO SUBITO, altrove. Lasciare i dati dove
+ * sono vorrebbe dire sperare che la prossima lettura vada altrettanto bene, e
+ * un settore che ha gia' fatto fatica non migliora. Si alloca un blocco sano,
+ * ci si scrive dentro, e si cambia il puntatore nel file: da quel momento il
+ * file e' intero e il blocco andato non lo usa piu' nessuno.
+ *
+ * ! SE NON TORNA, IL BUCO SI DICHIARA. Il blocco nuovo si riempie di zeri e il
+ * referto dice quale file e quanti byte: un file col buco dichiarato si puo'
+ * ancora usare per quel che resta, mentre un file che non si apre piu' e' un
+ * file perso due volte — una dal disco e una da chi lo stava salvando.
+ * ============================================================================= */
+#define RILETTURE 6
+
+static int e2_sposta_uno(const Spostare *sp, unsigned int *recuperati,
+                         unsigned int *bucati)
+{
+    unsigned char dati[4096], ib[128], ind[4096];
+    unsigned int  sett_b = e2_dim_blocco / SETT;
+    unsigned int  nuovo, t;
+    int           letto = 0;
+
+    for (t = 0; t < RILETTURE && !letto; t++)
+        if (blkread(dev, sp->blocco * sett_b, sett_b, dati) == (int)sett_b)
+            letto = 1;
+
+    if (!letto) {
+        unsigned int k;
+        for (k = 0; k < e2_dim_blocco; k++) dati[k] = 0;
+    }
+
+    nuovo = e2_alloca_blocco();
+    if (nuovo == 0) {
+        printf("  ! inode %u: non c'e' un blocco libero dove spostare il %u\n",
+               sp->ino, sp->blocco);
+        return -1;
+    }
+
+    if (e2_scrivi_blocco(nuovo, dati) != 0) {
+        printf("  ! inode %u: il blocco nuovo %u non si scrive\n", sp->ino, nuovo);
+        return -1;
+    }
+
+    /* Il puntatore: o dentro l'inode, o dentro un blocco di indiretti. */
+    if (sp->contenitore == 0) {
+        if (e2_leggi_inode(sp->ino, ib) != 0) return -1;
+        ib[40 + sp->idx * 4 + 0] = (unsigned char)(nuovo);
+        ib[40 + sp->idx * 4 + 1] = (unsigned char)(nuovo >> 8);
+        ib[40 + sp->idx * 4 + 2] = (unsigned char)(nuovo >> 16);
+        ib[40 + sp->idx * 4 + 3] = (unsigned char)(nuovo >> 24);
+        if (e2_scrivi_inode(sp->ino, ib) != 0) return -1;
+    } else {
+        if (e2_leggi_blocco(sp->contenitore, ind) != 0) return -1;
+        ind[sp->idx * 4 + 0] = (unsigned char)(nuovo);
+        ind[sp->idx * 4 + 1] = (unsigned char)(nuovo >> 8);
+        ind[sp->idx * 4 + 2] = (unsigned char)(nuovo >> 16);
+        ind[sp->idx * 4 + 3] = (unsigned char)(nuovo >> 24);
+        if (e2_scrivi_blocco(sp->contenitore, ind) != 0) return -1;
+    }
+
+    if (letto) {
+        (*recuperati)++;
+        printf("  = inode %u: blocco %u recuperato alla %u lettura, ora e' il %u\n",
+               sp->ino, sp->blocco, t, nuovo);
+    } else {
+        (*bucati)++;
+        printf("  ! inode %u: blocco %u NON recuperato: %u byte di zeri nel "
+               "file (ora e' il %u)\n", sp->ino, sp->blocco, e2_dim_blocco, nuovo);
+    }
+    return 0;
+}
+
+static void e2_sposta_i_danneggiati(void)
+{
+    unsigned int i, recuperati = 0, bucati = 0, falliti = 0;
+
+    if (e2_da_spostare_n == 0) return;
+
+    printf("\nDati sopra i blocchi andati: provo a spostarli\n");
+    printf("  (fino a %d riletture per blocco: puo' volerci)\n", RILETTURE);
+
+    for (i = 0; i < e2_da_spostare_n; i++)
+        if (e2_sposta_uno(&e2_da_spostare[i], &recuperati, &bucati) != 0)
+            falliti++;
+
+    printf("  %u recuperati interi, %u con un buco, %u non spostati\n",
+           recuperati, bucati, falliti);
+    if (recuperati) corretti++;
+
+    /* ! E I BLOCCHI VECCHI NON SONO PIU' DI NESSUNO: il puntatore adesso guarda
+     * altrove, quindi vanno tolti dalla mappa degli occupati — o la bitmap li
+     * dichiarerebbe di un file che non li usa piu', e l'inode 1 non potrebbe
+     * prenderseli. Se li riprende e2_marca_difettosi, subito dopo. */
+    for (i = 0; i < e2_da_spostare_n; i++) {
+        unsigned int b = e2_da_spostare[i].blocco;
+        e2_blocchi_usati[b >> 3] &= (unsigned char)~(1u << (b & 7));
+    }
+}
+
+/* =============================================================================
+ * SCRIVERE L'ELENCO: I BLOCCHI ANDATI DIVENTANO L'INODE 1
+ *
+ * ! NON BASTA MARCARLI OCCUPATI NELLA BITMAP. Un blocco occupato che non
+ * appartiene a nessun inode e' un blocco PERSO, e il prossimo controllo lo
+ * libera — restituendolo all'allocatore, cioe' rimettendo un settore rotto in
+ * circolazione. L'unico posto dove un blocco puo' stare occupato per sempre
+ * senza essere di un file e' l'inode 1, che ext2 tiene apposta.
+ *
+ * ! E GLI INDIRETTI SI ALLOCANO. Dodici blocchi stanno nei puntatori diretti;
+ * il duecentosessantottesimo vuole l'indiretto semplice, e oltre i 268 il
+ * doppio. I settecentoquarantaquattro dell'Acer arrivano fin la'.
+ * ============================================================================= */
+static int e2_marca_difettosi(void)
+{
+    unsigned char ino[128];
+    unsigned int  punt = e2_dim_blocco / 4u;
+    unsigned int  b, n = 0, usati_meta = 0;
+    unsigned int  ind1 = 0, ind2 = 0, ind2_sotto = 0;
+    unsigned int  i_ind1 = 0, i_ind2 = 0;
+    unsigned int  k;
+
+    for (k = 0; k < 128u; k++) ino[k] = 0;
+
+    /* ! MODO E CONTEGGIO DI COLLEGAMENTI A ZERO, come lo scrive mke2fs:
+     * l'inode 1 non e' un file, non si apre e non si cancella. Cio' che conta
+     * e' l'elenco dei blocchi e i_blocks. */
+    for (k = 0; k < e2_dim_blocco; k++) e2_ind1[k] = 0;
+    for (k = 0; k < e2_dim_blocco; k++) e2_ind2[k] = 0;
+    for (k = 0; k < e2_dim_blocco; k++) e2_ind3[k] = 0;
+
+    for (b = 1; b < e2_n_blocchi; b++) {
+        if (!e2_bit(e2_blocchi_bad, b)) continue;
+
+        if (n < 12u) {                       /* diretti */
+            ino[40 + n * 4 + 0] = (unsigned char)(b);
+            ino[40 + n * 4 + 1] = (unsigned char)(b >> 8);
+            ino[40 + n * 4 + 2] = (unsigned char)(b >> 16);
+            ino[40 + n * 4 + 3] = (unsigned char)(b >> 24);
+        } else if (n < 12u + punt) {         /* indiretto semplice */
+            if (ind1 == 0) {
+                ind1 = e2_alloca_blocco();
+                if (ind1 == 0) return -1;
+                usati_meta++;
+                ino[40 + 12 * 4 + 0] = (unsigned char)(ind1);
+                ino[40 + 12 * 4 + 1] = (unsigned char)(ind1 >> 8);
+                ino[40 + 12 * 4 + 2] = (unsigned char)(ind1 >> 16);
+                ino[40 + 12 * 4 + 3] = (unsigned char)(ind1 >> 24);
+            }
+            e2_ind1[i_ind1 * 4 + 0] = (unsigned char)(b);
+            e2_ind1[i_ind1 * 4 + 1] = (unsigned char)(b >> 8);
+            e2_ind1[i_ind1 * 4 + 2] = (unsigned char)(b >> 16);
+            e2_ind1[i_ind1 * 4 + 3] = (unsigned char)(b >> 24);
+            i_ind1++;
+        } else {                             /* doppio indiretto */
+            if (ind2 == 0) {
+                ind2 = e2_alloca_blocco();
+                if (ind2 == 0) return -1;
+                usati_meta++;
+                ino[40 + 13 * 4 + 0] = (unsigned char)(ind2);
+                ino[40 + 13 * 4 + 1] = (unsigned char)(ind2 >> 8);
+                ino[40 + 13 * 4 + 2] = (unsigned char)(ind2 >> 16);
+                ino[40 + 13 * 4 + 3] = (unsigned char)(ind2 >> 24);
+            }
+            if (i_ind2 == 0 || i_ind2 >= punt) {   /* serve un sotto-indiretto */
+                unsigned int slot;
+
+                if (ind2_sotto != 0 &&
+                    e2_scrivi_blocco(ind2_sotto, e2_ind2) != 0) return -1;
+                for (k = 0; k < e2_dim_blocco; k++) e2_ind2[k] = 0;
+
+                ind2_sotto = e2_alloca_blocco();
+                if (ind2_sotto == 0) return -1;
+                usati_meta++;
+                slot = (n - 12u - punt) / punt;
+                if (slot >= punt) return -1;       /* oltre il doppio: no */
+                /* Il puntatore al sotto-indiretto va nel blocco DOPPIO, che
+                 * si tiene in e2_ind3 — qui non serve ad altro — e si scrive
+                 * una volta sola, alla fine. */
+                e2_ind3[slot * 4 + 0] = (unsigned char)(ind2_sotto);
+                e2_ind3[slot * 4 + 1] = (unsigned char)(ind2_sotto >> 8);
+                e2_ind3[slot * 4 + 2] = (unsigned char)(ind2_sotto >> 16);
+                e2_ind3[slot * 4 + 3] = (unsigned char)(ind2_sotto >> 24);
+                i_ind2 = 0;
+            }
+            e2_ind2[i_ind2 * 4 + 0] = (unsigned char)(b);
+            e2_ind2[i_ind2 * 4 + 1] = (unsigned char)(b >> 8);
+            e2_ind2[i_ind2 * 4 + 2] = (unsigned char)(b >> 16);
+            e2_ind2[i_ind2 * 4 + 3] = (unsigned char)(b >> 24);
+            i_ind2++;
+        }
+
+        e2_segna(e2_blocchi_usati, b);   /* occupato: la bitmap lo dira' */
+        n++;
+    }
+
+    if (n == 0) return 0;
+
+    if (ind1 != 0 && e2_scrivi_blocco(ind1, e2_ind1) != 0) return -1;
+    if (ind2_sotto != 0 && e2_scrivi_blocco(ind2_sotto, e2_ind2) != 0) return -1;
+    if (ind2 != 0 && e2_scrivi_blocco(ind2, e2_ind3) != 0) return -1;
+
+    /* i_blocks e' in unita' da 512 byte e comprende gli indiretti. */
+    {
+        unsigned int settori = (n + usati_meta) * (e2_dim_blocco / SETT);
+        ino[28] = (unsigned char)(settori);
+        ino[29] = (unsigned char)(settori >> 8);
+        ino[30] = (unsigned char)(settori >> 16);
+        ino[31] = (unsigned char)(settori >> 24);
+    }
+
+    if (e2_scrivi_inode(1u, ino) != 0) return -1;
+
+    printf("  = %u blocchi difettosi scritti nell'inode 1", n);
+    if (usati_meta) printf(" (piu' %u blocchi di elenco)", usati_meta);
+    printf("\n");
+    return 0;
+}
+
 static int e2_ripara_bitmap(void)
 {
     unsigned char d[4096], bm[4096], sb[SETT * 2];
@@ -1714,14 +2203,20 @@ static void e2_controlla(void)
     e2_inode_visti   = (unsigned char *)calloc(ib, 1);
     e2_inode_dir     = (unsigned char *)calloc(ib, 1);
     e2_link_conta    = (unsigned short *)calloc(e2_n_inode + 2u, 2);
+    e2_blocchi_bad   = scansiona ? (unsigned char *)calloc(bb, 1) : NULL;
+    e2_bad_n = e2_bad_in_uso = 0;
+    e2_blocchi_contati = 0;
+    e2_da_spostare_n = 0;
 
     if (e2_blocchi_usati == NULL || e2_inode_visti == NULL ||
-        e2_inode_dir == NULL || e2_link_conta == NULL) {
+        e2_inode_dir == NULL || e2_link_conta == NULL ||
+        (scansiona && e2_blocchi_bad == NULL)) {
         printf("\n  ! memoria insufficiente per le mappe di %u blocchi e "
                "%u inode\n", e2_n_blocchi, e2_n_inode);
         problemi++;
         free(e2_blocchi_usati); free(e2_inode_visti);
-        free(e2_inode_dir); free(e2_link_conta);
+        free(e2_inode_dir); free(e2_link_conta); free(e2_blocchi_bad);
+        e2_blocchi_bad = NULL;
         return;
     }
 
@@ -1761,6 +2256,48 @@ static void e2_controlla(void)
         }
     }
 
+    /* =====================================================================
+     * ! L'INODE 1 E' QUELLO DEI BLOCCHI DIFETTOSI, E FINO AL 22 SETTEMBRE 2026
+     * QUESTO CONTROLLORE NON LO GUARDAVA.
+     *
+     * Su ext2 i settori che il disco non sa piu' leggere non si buttano: si
+     * elencano nell'inode 1, che non e' un file e non sta in nessuna directory
+     * — esiste perche' quei blocchi risultino OCCUPATI e nessuno ci allochi
+     * sopra un file. E' il modo in cui un disco con qualche cicatrice continua
+     * a lavorare per anni.
+     *
+     * ! MA UN CONTROLLORE CHE NON LO PERCORRE LI DICHIARA LIBERI. Le bitmap
+     * qui si ricostruiscono da cio' che si e' VISTO: i blocchi dell'inode 1,
+     * non essendo raggiungibili da nessuna directory, non venivano visti da
+     * nessuno — e la riparazione li avrebbe restituiti all'allocatore. Cioe'
+     * il primo file creato dopo una riparazione sarebbe finito esattamente
+     * sopra i settori rotti, ed e' il modo piu' rapido di perdere dei dati
+     * con un programma che si chiama «controllo del disco».
+     *
+     * Percio' si percorre PRIMA della root: quel che dichiara occupato deve
+     * esserci gia' quando si contano i doppioni.
+     * ===================================================================== */
+    if (scansiona) e2_scansiona_superficie();
+
+    printf("\nBlocchi difettosi dichiarati (inode 1)\n");
+    {
+        unsigned char bb[128];
+        unsigned int  prima = e2_blocchi_contati;
+
+        e2_segna(e2_inode_visti, 1u);
+        if (e2_leggi_inode(1u, bb) == 0) {
+            e2_percorri_blocchi(bb, 1u);
+            if (e2_blocchi_contati > prima)
+                printf("  = %u blocchi elencati come difettosi: restano occupati\n",
+                       e2_blocchi_contati - prima);
+            else
+                printf("  = nessuno\n");
+        } else {
+            printf("  ! l'inode 1 non si legge\n");
+            problemi++;
+        }
+    }
+
     printf("\nAlbero delle directory\n");
     {
         unsigned char rb[128];
@@ -1776,13 +2313,39 @@ static void e2_controlla(void)
         }
     }
 
+    /* ! PRIMA DELLE BITMAP, E NON E' UN DETTAGLIO D'ORDINE: e2_marca_difettosi
+     * aggiunge i blocchi andati alla mappa degli occupati, e le bitmap si
+     * riscrivono DA QUELLA MAPPA. Invertire i due passi vorrebbe dire scrivere
+     * l'elenco nell'inode 1 e poi dichiarare liberi, nella bitmap, proprio i
+     * blocchi appena elencati. */
+    if (scansiona && e2_bad_n > 0) {
+        printf("\nBlocchi difettosi da segnare\n");
+        if (!ripara) {
+            printf("  ! %u blocchi non si leggono", e2_bad_n);
+            if (e2_bad_in_uso)
+                printf(", e %u di questi stanno dentro dei file", e2_bad_in_uso);
+            printf("\n  (con -fix provo a salvarli e li segno nell'inode 1,\n");
+            printf("   cosi' nessuno ci scrive piu' sopra)\n");
+        } else if (e2_incerto) {
+            printf("  ! non li segno: %u punti di incertezza in questo volume.\n",
+                   e2_incerto);
+            printf("    Scrivere un elenco di blocchi partendo da una mappa che\n");
+            printf("    non e' fedele vuol dire perdere dei dati veri.\n");
+        } else if ((e2_sposta_i_danneggiati(), e2_marca_difettosi()) != 0) {
+            printf("  ! l'elenco non si e' potuto scrivere\n");
+            problemi++;
+        } else {
+            corretti++;
+        }
+    }
+
     e2_controlla_bitmap();
     e2_controlla_link();
 
     free(e2_blocchi_usati); free(e2_inode_visti);
-    free(e2_inode_dir); free(e2_link_conta);
+    free(e2_inode_dir); free(e2_link_conta); free(e2_blocchi_bad);
     e2_blocchi_usati = NULL; e2_inode_visti = NULL;
-    e2_inode_dir = NULL; e2_link_conta = NULL;
+    e2_inode_dir = NULL; e2_link_conta = NULL; e2_blocchi_bad = NULL;
 }
 
 /* --- Motore FAT: riconoscimento e giro completo ------------------------- */
@@ -1791,6 +2354,171 @@ static void e2_controlla(void)
  * pochi numeri che DEVONO essere coerenti perche' un settore sia un BPB, e
  * la firma. Un volume ext2 non li supera: i suoi primi 1024 byte sono
  * l'area riservata all'avvio, di solito zeri. */
+/* =============================================================================
+ * FAT: LA SUPERFICIE, E I CLUSTER CHE NON TORNANO
+ *
+ * ! SI LEGGE UN CLUSTER PER VOLTA, e qui non serve scendere di misura come su
+ * ext2: la grana con cui questo formato sa dire «difettoso» E' il cluster, e
+ * leggere piu' fine darebbe una precisione che poi non si puo' scrivere da
+ * nessuna parte.
+ *
+ * ! E L'AREA RISERVATA SI GUARDA MA NON SI MARCA. Settore di avvio, tabelle e
+ * root di FAT12/16 non appartengono a nessun cluster: se non si leggono e' un
+ * guasto piu' grave — non c'e' nessun posto in cui scriverlo, e il volume si
+ * salva copiandolo altrove, non marcandolo. Percio' si dice e basta.
+ * ============================================================================= */
+static unsigned char fat_scan_buf[BLKIO_MAX_SETT * SETT];
+
+static void fat_scansiona_superficie(void)
+{
+    unsigned int c, tappa = 0, riservati_rotti = 0, lba;
+    unsigned int fine_ris = primo_dato;
+
+    printf("\nSuperficie: leggo tutti i %u cluster. Ogni punto e' un mega.\n  ",
+           n_cluster);
+
+    for (lba = 0; lba < fine_ris; lba++)
+        if (blkread(dev, lba, 1, fat_scan_buf) != 1) riservati_rotti++;
+
+    if (riservati_rotti) {
+        printf("\n  ! %u settori dell'area riservata non si leggono "
+               "(avvio, tabelle, root)\n", riservati_rotti);
+        printf("    Non si possono marcare: non appartengono a nessun cluster.\n  ");
+        problemi++;
+    }
+
+    for (c = 2; c < n_cluster + 2u; c++) {
+        unsigned int s0 = primo_settore_di(c);
+
+        if (blkread(dev, s0, sett_per_clus, fat_scan_buf) != (int)sett_per_clus) {
+            fat_bad[c >> 3] |= (unsigned char)(1u << (c & 7));
+            fat_bad_n++;
+        }
+
+        if ((c * sett_per_clus * SETT) / (1024u * 1024u) > tappa) {
+            tappa = (c * sett_per_clus * SETT) / (1024u * 1024u);
+            printf(".");
+        }
+    }
+
+    if (fat_bad_n == 0) printf("\n  = tutti i cluster si leggono\n");
+    else {
+        printf("\n  ! %u cluster non si leggono (%u ogni diecimila)\n",
+               fat_bad_n, (fat_bad_n * 10000u) / n_cluster);
+        problemi++;
+    }
+}
+
+/* Un cluster libero dove spostare, che non sia a sua volta difettoso. */
+static unsigned int fat_alloca_cluster(void)
+{
+    unsigned int c;
+
+    for (c = 2; c < n_cluster + 2u; c++) {
+        if ((fat_bad[c >> 3] >> (c & 7)) & 1) continue;
+        if (gia_visto(c)) continue;
+        if (fat_leggi(c) != 0) continue;
+        segna(c);
+        return c;
+    }
+    return 0;
+}
+
+static int fat_sposta_uno(const FatSpostare *sp, unsigned int *recuperati,
+                          unsigned int *bucati)
+{
+    unsigned char s[SETT];
+    unsigned int  nuovo, succ, t, k;
+    int           letto = 0;
+
+    for (t = 0; t < RILETTURE && !letto; t++)
+        if (blkread(dev, primo_settore_di(sp->cluster), sett_per_clus,
+                    fat_scan_buf) == (int)sett_per_clus) letto = 1;
+
+    if (!letto)
+        for (k = 0; k < sett_per_clus * SETT; k++) fat_scan_buf[k] = 0;
+
+    nuovo = fat_alloca_cluster();
+    if (nuovo == 0) {
+        printf("  ! non c'e' un cluster libero dove spostare il %u\n",
+               sp->cluster);
+        return -1;
+    }
+
+    if (blkwrite(dev, primo_settore_di(nuovo), sett_per_clus, fat_scan_buf)
+            != (int)sett_per_clus) {
+        printf("  ! il cluster nuovo %u non si scrive\n", nuovo);
+        return -1;
+    }
+
+    /* ! LA CATENA SI RICUCE PRIMA DI MARCARE, e in quest'ordine: il nuovo
+     * punta dove puntava il vecchio, poi chi precede guarda il nuovo. Al
+     * contrario, un'interruzione fra i due passi lascerebbe la catena tagliata
+     * — e il file perderebbe tutto quel che viene dopo, non solo il cluster
+     * rotto. */
+    succ = fat_leggi(sp->cluster);
+    if (succ == 0xFFFFFFFFu) return -1;
+    if (fat_scrivi(nuovo, succ) != 0) return -1;
+
+    if (sp->prec != 0) {
+        if (fat_scrivi(sp->prec, nuovo) != 0) return -1;
+    } else {
+        /* Il primo cluster di un file: il puntatore sta nella sua voce di
+         * directory, non nella FAT. */
+        if (blkread(dev, sp->dir_lba, 1, s) != 1) return -1;
+        s[sp->dir_idx * 32 + 26] = (unsigned char)(nuovo);
+        s[sp->dir_idx * 32 + 27] = (unsigned char)(nuovo >> 8);
+        s[sp->dir_idx * 32 + 20] = (unsigned char)(nuovo >> 16);
+        s[sp->dir_idx * 32 + 21] = (unsigned char)(nuovo >> 24);
+        if (blkwrite(dev, sp->dir_lba, 1, s) != 1) return -1;
+    }
+
+    if (letto) {
+        (*recuperati)++;
+        printf("  = cluster %u recuperato alla %u lettura, ora e' il %u\n",
+               sp->cluster, t, nuovo);
+    } else {
+        (*bucati)++;
+        printf("  ! cluster %u NON recuperato: %u byte di zeri nel file "
+               "(ora e' il %u)\n", sp->cluster, sett_per_clus * SETT, nuovo);
+    }
+    return 0;
+}
+
+static void fat_sposta_i_danneggiati(void)
+{
+    unsigned int i, recuperati = 0, bucati = 0, falliti = 0;
+
+    if (fat_da_spostare_n == 0) return;
+
+    printf("\nDati sopra i cluster andati: provo a spostarli\n");
+    printf("  (fino a %d riletture per cluster: puo' volerci)\n", RILETTURE);
+
+    for (i = 0; i < fat_da_spostare_n; i++)
+        if (fat_sposta_uno(&fat_da_spostare[i], &recuperati, &bucati) != 0)
+            falliti++;
+
+    printf("  %u recuperati interi, %u con un buco, %u non spostati\n",
+           recuperati, bucati, falliti);
+    if (recuperati) corretti++;
+}
+
+/* ! E ADESSO SI MARCANO, DOPO AVER SPOSTATO. Il valore e' fine_catena - 1 in
+ * tutt'e tre i formati. Un cluster marcato difettoso non e' libero e non e' di
+ * nessuno: l'allocatore lo salta per sempre, ed e' esattamente cio' che serve. */
+static void fat_marca_difettosi(void)
+{
+    unsigned int c, n = 0;
+
+    for (c = 2; c < n_cluster + 2u; c++) {
+        if (!((fat_bad[c >> 3] >> (c & 7)) & 1)) continue;
+        if (fat_scrivi(c, fine_catena - 1u) == 0) n++;
+    }
+
+    printf("  = %u cluster marcati difettosi (0x%X)\n", n, fine_catena - 1u);
+    if (n) corretti++;
+}
+
 static int fat_riconosce(void)
 {
     unsigned char s[SETT];
@@ -1815,15 +2543,25 @@ static void fat_controlla(void)
 {
     visto_byte = (n_cluster + 2u + 7u) / 8u;
     visto = (unsigned char *)calloc(visto_byte, 1);
-    if (visto == NULL) {
+    fat_bad = scansiona ? (unsigned char *)calloc(visto_byte, 1) : NULL;
+    fat_bad_n = fat_bad_in_uso = fat_da_spostare_n = 0;
+
+    if (visto == NULL || (scansiona && fat_bad == NULL)) {
         printf("\n  ! memoria insufficiente per la mappa di %u cluster\n",
                n_cluster);
         problemi++;
+        free(visto); free(fat_bad);
+        visto = NULL; fat_bad = NULL;
         return;
     }
 
     controlla_riservate();
     controlla_copie();
+
+    /* ! PRIMA DELLE CATENE, come su ext2 e per la stessa ragione: cosi' il
+     * file che sta sopra un cluster andato lo si nomina mentre lo si
+     * incontra, invece di tornarci sopra con un secondo giro. */
+    if (scansiona) fat_scansiona_superficie();
 
     printf("\nCatene e directory\n");
     if (tipo == 32) {
@@ -1835,8 +2573,41 @@ static void fat_controlla(void)
     }
 
     controlla_perduti();
-    free(visto);
-    visto = NULL;
+
+    if (scansiona && fat_bad_n > 0) {
+        unsigned int c, gia = 0;
+
+        /* ! QUELLI GIA' MARCATI NON SONO UN PROBLEMA, SONO IL RIMEDIO. Senza
+         * questo conto, ogni corsa dopo una marcatura riuscita ripeteva «ci
+         * sono N cluster da segnare» e chiudeva con «problemi trovati» su un
+         * volume a posto: un controllore che grida al lupo insegna a non
+         * leggerlo piu'. */
+        for (c = 2; c < n_cluster + 2u; c++)
+            if (((fat_bad[c >> 3] >> (c & 7)) & 1) &&
+                fat_leggi(c) == fine_catena - 1u) gia++;
+
+        printf("\nCluster difettosi\n");
+        if (gia) {
+            printf("  = %u gia' marcati difettosi: nessuno ci scrive sopra\n", gia);
+            problemi--;                  /* li aveva contati la scansione */
+        }
+        if (gia == fat_bad_n) {
+            /* Tutti gia' a posto: non c'e' niente da fare. */
+        } else if (!ripara) {
+            printf("  ! %u cluster non si leggono e non sono segnati",
+                   fat_bad_n - gia);
+            if (fat_bad_in_uso)
+                printf(", e %u stanno dentro dei file", fat_bad_in_uso);
+            printf("\n  (con -fix provo a salvarli e li marco, cosi' nessuno\n");
+            printf("   ci scrive piu' sopra)\n");
+        } else {
+            fat_sposta_i_danneggiati();
+            fat_marca_difettosi();
+        }
+    }
+
+    free(visto); free(fat_bad);
+    visto = NULL; fat_bad = NULL;
 }
 
 typedef struct {
@@ -1859,12 +2630,20 @@ int main(int argc, char **argv)
     int             i;
 
     for (i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "-r") == 0) ripara = 1;
+        /* ! DUE NOMI PER LA STESSA COSA, E NON E' DISORDINE: `-r` c'era e i
+         * comandi vecchi continuano a funzionare; `-fix` e' il nome che si
+         * ricorda accanto a -badblock, dove non si sta «riparando un
+         * filesystem» ma «cercando di salvare dei dati». */
+        if (strcmp(argv[i], "-r") == 0 || strcmp(argv[i], "-fix") == 0)
+            ripara = 1;
+        else if (strcmp(argv[i], "-badblock") == 0 ||
+                 strcmp(argv[i], "-bad") == 0)
+            scansiona = 1;
         else nome = argv[i];
     }
 
     if (nome == NULL) {
-        printf("uso: chkdsk [-r] <partizione>\n\n");
+        printf("uso: chkdsk <partizione> [-badblock] [-fix]\n\n");
         printf("Controlla un volume e riferisce cosa non torna. Riconosce da\n");
         printf("solo il formato: FAT12/16/32 oppure ext2.\n\n");
         printf("Con -r corregge; senza, non scrive un solo settore.\n\n");
@@ -1874,8 +2653,14 @@ int main(int argc, char **argv)
         printf("di vero.\n\n");
         printf("  disk                 elenca i dispositivi\n");
         printf("  umount /disk         smonta\n");
-        printf("  chkdsk hd0p1         controlla\n");
-        printf("  chkdsk -r hd0p1      controlla e corregge\n");
+        printf("  chkdsk hd0p1            controlla\n");
+        printf("  chkdsk -r hd0p1         controlla e corregge\n");
+        printf("  chkdsk hd0p1 -badblock       legge anche OGNI blocco e dice\n");
+        printf("                               quali non tornano e in quali file\n");
+        printf("  chkdsk hd0p1 -badblock -fix  e li segna difettosi, perche'\n");
+        printf("                               nessuno ci scriva piu' sopra\n\n");
+        printf("! -bad legge tutto il volume: su un disco grande sono ore.\n");
+        printf("  Serve quando il disco ha dei settori andati, non prima.\n");
         return 1;
     }
 

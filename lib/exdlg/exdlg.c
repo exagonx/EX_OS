@@ -133,6 +133,19 @@ static void componi(char *out, unsigned int max)
 {
     unsigned int l;
 
+    /* ! UN NOME CHE COMINCIA CON LA BARRA E' UN PERCORSO, e allora la
+     * directory del dialogo non conta. Chi batte «/disk/dest» nella casella
+     * sta dicendo dove vuole andare, non come chiamare un file dentro la
+     * directory che sta guardando: attaccarglielo dietro dava «/disk//disk/dest»
+     * — un percorso che non esiste e che nessuno ha chiesto. Il difetto si e'
+     * visto il 21 settembre 2026 provando la copia di piu' file nel file
+     * manager, e valeva per ogni programma che usa questo dialogo. */
+    if (g_nome[0] == '/') {
+        strncpy(out, g_nome, max - 1);
+        out[max - 1] = '\0';
+        return;
+    }
+
     strncpy(out, g_dir, max - 1);
     out[max - 1] = '\0';
     l = (unsigned int)strlen(out);
@@ -481,6 +494,9 @@ static int larghezza_pulsante(const char *t)
     return w < 80 ? 80 : w;     /* mai piu' stretto di un pulsante normale */
 }
 
+/* I due pulsanti, per sapere chi ha il fuoco quando arriva un Invio. */
+static ExFinestra g_cf_si, g_cf_no;
+
 static long cf_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
@@ -498,12 +514,25 @@ static long cf_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         return 0;
 
     case EXM_TASTO:
-        /* Invio conferma, Esc rifiuta: sono le due che si battono senza
-         * guardare, ed e' il motivo per cui i tasti vanno alla modale invece
-         * di essere buttati. Un pulsante col fuoco NON consuma Invio (vedi
-         * tasto_al_fuoco in exwin.c), quindi arriva fin qui. */
-        if ((wp & 0xFFFF) == '\n' || (wp & 0xFFFF) == '\r') g_cf_fatto = 1;
-        else if ((wp & 0xFFFF) == 27)                        g_cf_fatto = 2;
+        /* I tasti vanno alla modale invece di essere buttati: Invio ed Esc
+         * sono i due che si battono senza guardare. Un pulsante col fuoco NON
+         * consuma Invio (vedi tasto_al_fuoco in exwin.c), quindi arriva fin qui.
+         *
+         * ! E INVIO VUOL DIRE «IL PULSANTE CHE HA IL FUOCO», non «si'». Fino al
+         * 21 settembre 2026 qui c'era `g_cf_fatto = 1` e basta: il commento
+         * accanto ai pulsanti prometteva che il fuoco stesse su quello che non
+         * perde niente — «e' quello che risponde a chi batte Invio senza
+         * leggere» — e la promessa era falsa. Chi batteva Invio davanti a
+         * «Cancello 143 file» li cancellava, con il fuoco su «Annulla».
+         * Si e' visto provando la cancellazione del file manager.
+         *
+         * ! E SE IL FUOCO NON CE L'HA NESSUNO, LA RISPOSTA E' «NO». Vale la
+         * stessa regola della chiusura qui sopra: nel dubbio, la risposta e'
+         * quella che non fa danni. */
+        if ((wp & 0xFFFF) == '\n' || (wp & 0xFFFF) == '\r')
+            g_cf_fatto = (ex_fuoco_chi(f) == g_cf_si) ? 1 : 2;
+        else if ((wp & 0xFFFF) == 27)
+            g_cf_fatto = 2;
         return 0;
 
     default:
@@ -511,45 +540,71 @@ static long cf_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
     }
 }
 
+/* Tre righe di domanda stanno nell'altezza di prima; la quarta la allarga.
+ * Oltre, una domanda non e' piu' una domanda: e' un avviso. */
+#define CF_RIGHE  4
+#define CF_H      130
+
 int ex_dlg_conferma(const char *titolo, const char *testo,
                     const char *si, const char *no)
 {
     ExFinestra   f;
     ExMsg        m;
     unsigned int sw = 0, sh = 0;
-    int          x, y;
+    int          x, y, h, ybot;
+    char         righe[CF_RIGHE][AVVISO_COL + 1];
+    unsigned int n, i;
+
+    /* ! LA DOMANDA VA A CAPO, E PRIMA SI TRONCAVA. L'etichetta era una sola,
+     * larga 356 pixel: una domanda piu' lunga di quarantaquattro caratteri
+     * finiva tagliata a meta' parola — e la parte che si perde e' la CODA,
+     * cioe' dove sta la conseguenza. «Cancello 2 voci: 2 file, 61180 byte.
+     * Non si torna indietro.» si leggeva fino a «byte. N». Un dialogo che
+     * tronca e' peggio di uno che non c'e': quel che si legge sembra tutto.
+     * E' la stessa lezione dei pulsanti misurati sulla scritta, qui sotto. */
+    n = spezza(testo ? testo : "", righe, CF_RIGHE);
+    if (n == 0) { righe[0][0] = '\0'; n = 1; }
+
+    h = CF_H + (n > 3 ? (int)(n - 3) * 16 : 0);
 
     ex_schermo(&sw, &sh);
-    x = sw > 380 ? (int)(sw - 380) / 2 : 0;
-    y = sh > 130 ? (int)(sh - 130) / 2 : 0;
+    x = sw > AVVISO_W ? (int)(sw - AVVISO_W) / 2 : 0;
+    y = (int)sh > h   ? ((int)sh - h) / 2 : 0;
 
     g_cf_fatto = 0;
     f = ex_crea("finestra", titolo ? titolo : "Conferma",
                 EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_SOPRA | EX_MODALE,
-                x, y, 380, 130, 0, 0, cf_proc);
+                x, y, AVVISO_W, h, 0, 0, cf_proc);
     if (f == 0) return 0;       /* niente finestra, nessun consenso */
 
-    ex_crea("etichetta", testo ? testo : "", EX_FIGLIO, 12, 28, 356, 16, f, 0, 0);
+    for (i = 0; i < n; i++)
+        ex_crea("etichetta", righe[i], EX_FIGLIO,
+                12, 28 + (int)i * 16, AVVISO_W - 24, 16, f, 0, 0);
 
     /* ! I PULSANTI SI MISURANO SULLA LORO SCRITTA, e non e' pignoleria: la
      * prima prova di questo dialogo aveva «Torna al testo» che usciva dal
      * riquadro e finiva sopra lo sfondo della finestra. Una misura fissa va
      * bene finche' le scritte le sceglie chi ha scritto il dialogo — ma qui le
      * sceglie il CHIAMANTE, che non sa quanto e' largo il pulsante. */
+    ybot = h - 54;
     {
         const char *ts = si ? si : "Si'";
         const char *tn = no ? no : "No";
         int ws = larghezza_pulsante(ts);
         int wn = larghezza_pulsante(tn);
         int gap = 12;
-        int x0  = (380 - (ws + gap + wn)) / 2;
+        int x0  = (AVVISO_W - (ws + gap + wn)) / 2;
 
-        /* ! «NO» STA A DESTRA E PRENDE IL FUOCO. Il pulsante che ha il fuoco e'
-         * quello che risponde a chi batte Invio senza leggere, e in un dialogo
-         * che si apre prima di perdere qualcosa dev'essere quello che non
-         * perde niente. */
-        ex_crea("pulsante", ts, EX_FIGLIO, x0, 76, ws, 26, f, ID_SI, 0);
-        ex_crea("pulsante", tn, EX_FIGLIO, x0 + ws + gap, 76, wn, 26, f, ID_NO, 0);
+        /* ! «NO» STA A DESTRA E PRENDE IL FUOCO, E ADESSO LO PRENDE DAVVERO.
+         * Il pulsante col fuoco e' quello che risponde a chi batte Invio senza
+         * leggere, e in un dialogo che si apre prima di perdere qualcosa
+         * dev'essere quello che non perde niente. Prima era scritto qui e non
+         * era vero da nessuna parte: il fuoco andava al primo controllo che lo
+         * accetta — «si'» — e l'Invio rispondeva «si'» comunque. Vedi cf_proc. */
+        g_cf_si = ex_crea("pulsante", ts, EX_FIGLIO, x0, ybot, ws, 26, f, ID_SI, 0);
+        g_cf_no = ex_crea("pulsante", tn, EX_FIGLIO, x0 + ws + gap, ybot, wn, 26,
+                          f, ID_NO, 0);
+        ex_fuoco(g_cf_no);
     }
 
     ex_procedura_base(f, EXM_DISEGNA, 0, 0);
