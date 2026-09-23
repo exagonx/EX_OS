@@ -12,49 +12,8 @@ Questo file solo l'utente aggiunge istruzioni.
 ############################################################################################
 
 
+$ Editor di testo attualmente è molto limitato, sarebbe utile implementare strumenti come scelta di carattere, righello di formattazione, giustificazione, allineamento, testo sottolineato, insomma tutto quello che supporta il formato RTF , questa modalità si attiva dalla voce Opzioni -> Modalità RTF ( dove attiva le funzionalità avanzate citate altrimenti opera come un normale editor di testo con tutto ridotto.) sarà in grado di salvare con estensione .rtf e di conseguenza se il file che viene aperto è un .rtf  in automatico si attiva la modalità, sarebbe comoda anche la possibilità di salvare in formato html dove converte tutto il contenuto rtf in html, l'apertura di un file html resta di default al browser.
 
-# [preso in carico il 21 settembre 2026 -> @FILEMGR-OPS (in_lavorazione.txt)]
-# !il file manager manca la possibilità di copiare cancellare spostare i file selezionati , magari si potrebbe implementare anche per un intero albero di directory.
+! Browser deve cambiare nome in EXBrowser dato che verra modificato questa conta come incremento di versione, da aggiornare tutta la documentazione e i file di help e manuali.
 
-# ---------------------------------------------------------------------------
-# Le righe qui sopra sono state LETTE e commentate, non cancellate: cosi' chi
-# le ha scritte vede cos'e' stato preso in carico e sotto quale etichetta.
-# Per rileggerne una per intero:  tools/locali/lavori.sh mostra GFEDIT-SEL
-# ---------------------------------------------------------------------------
-
-# [preso in carico il 22 settembre 2026 -> @NETUPD-GIRA (in_lavorazione.txt)]
-# $ netupdate quando procede al download e questa procede correttamente dovrebbe avere una forma di animazione  ad esempio | / - \ | che precede la riga cosi vedendo questa barra roteare l'utente sa che tutto procede e se si ferma vuol dire che qualcosa non sta andando.
-
-# [preso in carico il 22 settembre 2026 -> @FILEMGR-MKDIR (in_lavorazione.txt)]
-# ! file manager di exwin su comandi bisogna aggiungere l'opzione che crea una directory dove appare una finestra modale con textbox e due pulsanti crea e annulla, la directory verra creata come sub-directory di quella selezionata nell'albero a sinistra.
-
-# [preso in carico il 22 settembre 2026 -> @EXIDE-SFOGLIA (in_lavorazione.txt)]
-# ! exide quando crea un nuovo progetto la finestra modale dovrebbe avere un esplora directory e possibilità di crearle dove mostra l'albero e sceglie il percorso, dovrebbe avere per default la root dell'utente corrente ad esempio se l'utente è pinco la directory de default sarà /home/pinco se è root allora sarà /root , dovrebbe salvare l'ultima directory usata per la creazione del progetto ad esempio se ho creato il progetto prova dentro /home/pinco/progetti/prova salverà come directory di default /home/pinco/progetti
-
-# [preso in carico il 22 settembre 2026 -> @EDIT-CERCA (in_lavorazione.txt)]
-# $ su exwin l'editor di testo manca la voce cerca (apre una modale dove chiede di specificare la stringa da cercare nel testo una con la possibilità di andare in focuso anche  sulla successiva e precedente e sostituisci dove ha due modalità trova la stringa e la sostituisce e premendo F3 o facendo click sul pulsante prossimo, procede con la prossima trovata e sostituendola, la finestra ha anche una checkbox dove attivando il flag sostituisce tutte quelle trovate senza chiedere conferma.
-
-# [preso in carico il 22 settembre 2026 -> @ZIP, nella sezione @ARCHIVI]
-# ! serve un compressore / decompressore per formati ZIP standard servono due programmi uno da riga di comando stile pkzip e uno per exwin stile Winzip, sarebbe buono se si creasse una libreria che contiene le funzioni in comune e le due applicazioni che operano in ambiente diverso.
-
-# [preso in carico il 22 settembre 2026 -> @TAR-GZ, nella sezione @ARCHIVI.
-#   E la parte del git ignore e' FATTA: /gnu/ e' in .gitignore. ! I DUE ZIP
-#   ERANO PERO' GIA' FINITI NEL COMMIT 2518231, fatto prima che la regola
-#   esistesse: li ho tolti dall'indice (restano sul disco), e la rimozione
-#   va nel prossimo commit]
-# ! serve anche il porting di tar e gz ce una directory con nome gnu che va messa in git ignore all'interno trovi i sorgenti zippati delle mie richiesta come tar e gz
-
-# [preso in carico il 22 settembre 2026 -> @AVVIO-LOGIN (in_lavorazione.txt)]
-# ! all'avvio i messaggi di sistema e altro arrivano a coprire il prompt e la schermata di log-in infatti sembra bloccato fino a quando l'utente non preme invio e appare 
-
-# [e' la seconda meta' della riga qui sopra, andata a capo: @AVVIO-LOGIN,
-#   gia' FATTO il 22 settembre 2026 (login 0.003) — login aspetta che la
-#   console taccia prima di mostrare utente e password]
-# ! l'inserimento del username e password, sarebbe opportuno aspettare che abbia completato tutto quello che deve fare prima di far apparire il log-in cosi che non venga sovrascritto da altri compiti in corso.
-
-# [preso in carico il 22 settembre 2026 -> @EXWIN-LOG (in_lavorazione.txt)]
-# ! Su exwin bisogna implementare una finestra di sistema modale di log dove mostra i messaggi cli o console quando esegue compiti di sistema perche alcune app quando vengono eseguite stampano righe nere spostando l'intera schermata in alto come se stesse scrivendo testo in nero, tutti questi messaggi devono essere deviati al gestore di LOG che potra essere mostrato nella finestra del program manager.
-
-# [preso in carico il 22 settembre 2026 -> @ICONE-APP (in_lavorazione.txt).
-#   Il menu di pm le usa gia'; ! exwin/icon/ pero' non e' ancora in git]
-# $ Su exwin le applicazioni avranno una icona con stesso nome ma estenzione _64.ico e _128.ico ad esempio filemgr avra filemgr_64.ico e filemgr_128.ico dovranno essere messe in exwin/icon/baseapp attualmente ho creato delle icone per filemanager editor exide ecc 
+! Su exbrowser sarà necessario aggiungere nuovi certificati e aggiornarne la lista perché molti siti in https non vengono accettati per via del certificato, da implementare anche la possibilità di aggiungere certificati scaricandoli.

@@ -1966,6 +1966,82 @@ void ex_aggiorna(ExFinestra f)
     (void)ipc_send((unsigned int)g_server, WIN_MSG_AGGIORNA, &w, sizeof(w));
 }
 
+/* =============================================================================
+ * ridisegna_controllo — ONE control redrawn, and only its rectangle declared
+ * (22 September 2026)
+ *
+ * Until today every change inside a window — a line of output in a
+ * terminal, a selection dragged in a text area — redrew the WHOLE window
+ * here and declared the whole window to the server, which copied it all
+ * to the screen again. For a terminal that is 640x400 pixels for a line.
+ *
+ * ! THE RECTANGLE TRAVELS IN WIN_MSG_AGGIORNA, THE SAME MESSAGE AS BEFORE,
+ * in the x/y/larghezza/altezza that until now were always the whole window.
+ * A wserver older than 0.003 ignores them and repaints everything, which is
+ * what it always did: a new toolkit on an old server still works.
+ *
+ * ! IT ONLY DOES IT WHEN IT CAN PROMISE THE RESULT, and returns 0 otherwise
+ * so the caller redraws the whole window as before. Three conditions:
+ *   - a control that paints ALL of its rectangle (terminal, text area,
+ *     list: each starts with ex_riempi of the whole of itself). One that
+ *     leaves holes would show whatever was under it;
+ *   - a direct child of the window. Inside an MDI child, siblings of the
+ *     child window may cover it (see ex_procedura_base, EXM_DISEGNA);
+ *   - no sibling created after it overlaps it: those are drawn on top of
+ *     it (disegna_figli goes in creation order), and drawing it alone would
+ *     cover them.
+ * The open menu and combo drop-downs are drawn again on top, as in
+ * ex_aggiorna(): they may lie over the control.
+ * ============================================================================= */
+static void disegna_oggetto(Oggetto *o);
+static void disegna_figli(ExFinestra padre);
+
+static int ridisegna_controllo(Oggetto *o)
+{
+    ExFinestra h, rh;
+    Oggetto   *r;
+    WinRegione w;
+    int x0, y0, x1, y1, i;
+
+    if (!o || !o->usato || !(o->stile & EX_VISIBILE) || g_server < 0) return 0;
+    if (o->classe != CL_TERMINALE && o->classe != CL_AREA &&
+        o->classe != CL_LISTA) return 0;
+
+    h  = (ExFinestra)(o - g_ogg + 1);
+    rh = radice_h(h);
+    r  = ogg(rh);
+    if (!r || o->padre != rh) return 0;
+
+    x0 = o->x; y0 = o->y; x1 = o->x + o->w; y1 = o->y + o->h;
+
+    for (i = (int)(o - g_ogg) + 1; i < OGGETTI_MAX; i++) {
+        const Oggetto *s = &g_ogg[i];
+
+        if (!s->usato || s->padre != rh || !(s->stile & EX_VISIBILE)) continue;
+        if (s->x < x1 && s->x + s->w > x0 && s->y < y1 && s->y + s->h > y0)
+            return 0;
+    }
+
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > r->w) x1 = r->w;
+    if (y1 > r->h) y1 = r->h;
+    if (x1 <= x0 || y1 <= y0) return 1;         /* nothing of it is visible */
+
+    disegna_oggetto(o);
+    disegna_figli(h);
+    menu_sopra(rh);
+    combo_sopra(rh);
+
+    w.id = r->win_id;
+    w.x = (unsigned int)x0;
+    w.y = (unsigned int)y0;
+    w.larghezza = (unsigned int)(x1 - x0);
+    w.altezza   = (unsigned int)(y1 - y0);
+    (void)ipc_send((unsigned int)g_server, WIN_MSG_AGGIORNA, &w, sizeof(w));
+    return 1;
+}
+
 /* -----------------------------------------------------------------------------
  * I controlli, disegnati dalla libreria
  *
@@ -5091,7 +5167,8 @@ static int prendi_msg(ExMsg *m, int bloccante)
 
                     if (term_leggi(&g_term[j])) {
                         cambiato = 1;
-                        ex_procedura_base(radice_h(g_term[j].ogg), EXM_DISEGNA, 0, 0);
+                        if (!ridisegna_controllo(ogg(g_term[j].ogg)))
+                            ex_procedura_base(radice_h(g_term[j].ogg), EXM_DISEGNA, 0, 0);
                     }
 
                     /* ! E SE IL PROGRAMMA DENTRO E' USCITO, SI DICE — una
@@ -5288,12 +5365,12 @@ static int prendi_msg(ExMsg *m, int bloccante)
 
             if (co && co->classe == CL_AREA) {
                 area_punta(co, (int)e.x, (int)e.y);
-                ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                if (!ridisegna_controllo(co)) ex_procedura_base(f, EXM_DISEGNA, 0, 0);
                 continue;
             }
             if (co && co->classe == CL_LISTA) {
                 lista_punta(co, (int)e.y);
-                ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+                if (!ridisegna_controllo(co)) ex_procedura_base(f, EXM_DISEGNA, 0, 0);
                 continue;
             }
             m->msg = EXM_MOUSE_MOSSO;

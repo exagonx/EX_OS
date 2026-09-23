@@ -185,7 +185,7 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @DISCO-RECUPERO  leggere un disco malandato: il PIO per scelta, e cosa manca
   1  @BAD-BLOCCHI     FATTO su ext2 E su FAT: chkdsk -badblock -fix
   1  @PROVE-MACCHINA  ftpswap provato la' il 16 settembre; eject aspetta una chiavetta
-  1  @GRAFICA-SCATTI  trascinamento e ridimensionamento ristretti; resta il resto
+  1  @GRAFICA-SCATTI  ridisegno per finestra e ciclo a eventi fatti: regioni esatte
   1  @TELNET-SCALA    scaletta e troncamento SISTEMATI: resta la sessione che si impianta
   1  @SIS-2D          FATTO: il motore 2D disegna, 14x sulla copia
   1  @ACCEL-2D        wserver lo usa via servizio; resta da provarlo sul ferro
@@ -218,8 +218,8 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @ICONE           FATTE: toolkit, menu, exide e file manager. Mancano i disegni
   1  @EXIDE-ICONE     FATTO tutto e provato: mancano solo i disegni delle icone
   1  @PAINT           ! un Paint Brush per ExWin: BMP, JPG, GIF, PNG, TIFF
-  1  @EXWIN-LOG       ! chi stampa in console scorre sopra le finestre: un registro
-  1  @ICONE-APP       i disegni _64/_128 ci sono e il menu li usa: resta git
+  1  @EXWIN-LOG       ! lo schermo non si sporca piu' (kernel); manca la finestra
+  1  @ICONE-APP       i disegni _64/_128 ci sono e il menu li usa: mancano quattro
 
   2  @SUONO-EMU8000   l'EMU8000 di una AWE32 resta spento    <- @SUONO-CAMPIONI
   2  @RUST-1          alloc: un GlobalAlloc sopra la malloc  <- @RUST-0
@@ -1980,12 +1980,75 @@ QUEL CHE MANCA, IN ORDINE:
       un programma morto. La posizione del puntatore, al massimo, dice a chi
       dare la precedenza quando il tempo di un fotogramma non basta per tutti.
 
-    ! E SU QUELLE SCHEDE IL 2D NON C'E'. Su SiS il motore lo abbiamo (vedi
-      SIS-2D); su Trio, Virge e i740 no, quindi li' la sola strada e'
-      ridipingere meno. Guardare come lo fa X non e' fuori strada: le regioni
+    ! E SU QUELLE SCHEDE IL 2D C'E' — corretto il 22 settembre: qui era
+      scritto il contrario, ed era sbagliato. La S3 Trio64 era venduta proprio
+      come «acceleratore per Windows», e ViRGE e i740 hanno anch'esse un
+      motore 2D (copia di rettangoli, riempimento, espansione dei caratteri,
+      cursore hardware). Quel che manca e' il NOSTRO driver, non il motore:
+      finche' non c'e', li' la sola strada e' ridipingere meno. Guardare come lo fa X non e' fuori strada: le regioni
       sporche, il danno accumulato e l'estensione XDamage sono questa stessa
       idea, gia' pagata da altri.
 
+
+  ! IL PIANO, DECISO IL 22 SETTEMBRE: IL METODO DI X, NON UNA FOTOGRAFIA.
+    L'utente ha proposto una «fotografia dello sfondo» in RAM da cui
+    ricostruire la parte scoperta mentre una finestra si sposta. Messa a
+    confronto con X e Windows 9x, la scelta e' quella di X: una lista di
+    rettangoli visibili per finestra (la «clip list»), e ogni pixel scritto
+    una volta sola da chi lo possiede. Qui costa MENO che in X, perche' i
+    pixel di ogni finestra sono gia' in RAM nella sua zona: una parte
+    scoperta si ricompone senza chiedere al client di ridisegnarla (in X e'
+    l'evento Expose), e non c'e' una fotografia che possa restare vecchia —
+    il rischio vero della proposta, che e' quello che ha morso i «save-under»
+    di X e il CS_SAVEBITS di Windows.
+
+    In ordine:
+      1. WIN_MSG_AGGIORNA, SPOSTA e TITOLO sporcano la finestra, non lo
+         schermo — FATTO il 22 settembre (wserver 0.003);
+      2. il ciclo dorme sulla posta invece che su usleep(20000), e il mouse
+         si chiede con attendi = 1 — FATTO lo stesso giorno. Provati in QEMU
+         da tools/prova_ridisegno.sh; il guadagno NON e' misurato;
+      3. le regioni — FATTO il 22 settembre, sera: una lista di sedici
+         rettangoli sporchi, e dentro ognuno lo sfondo solo dove non c'e'
+         nessuno e ogni finestra solo dove quelle sopra non la coprono. NON
+         c'e' una clip list tenuta da parte: i pezzi si ricalcolano per ogni
+         rettangolo, costano meno di una riga di pixel e non invecchiano.
+         Tolti anche gli ultimi sporca_tutto() che sapevano cosa dichiarare
+         (clic, porta in cima, finestra nuova, chiusa, ridimensionata); ne
+         resta uno, giusto: il ritorno sulla console della grafica;
+      4. il trascinamento a contorno come OPZIONE — FATTO: `exwin
+         -contorno`. Il contorno (e quello del ridimensionamento) dichiara
+         quattro strisce da un pixel, non il rettangolo: e' per questo che
+         i rettangoli si fondono solo se l'unione spreca poco (SP_SPRECO),
+         non piu' se sono vicini;
+      5. il cursore hardware dove c'e' (SiS, S3). Il «salva sotto» in
+         software non serve piu': con le regioni muovere il puntatore
+         ricompone due rettangoli di 10x14. Il cursore hardware e' lavoro
+         da driver, e i driver aspettano la macchina nuova;
+      6. un driver 2D per S3 Trio e ViRGE, come quello della SiS: con lui il
+         trascinamento a finestra piena diventa una copia schermo->schermo.
+         Senza, NO: una copia schermo->schermo fatta dal processore legge il
+         framebuffer (77 MB/s sull'Acer) ed e' piu' lenta di ricomporre.
+
+      7. il toolkit dichiara un PEZZO di finestra — FATTO per il terminale,
+         l'area di testo e la lista (ridisegna_controllo in exwin.c): una
+         riga d'uscita del terminale ridisegna e dichiara il terminale,
+         non la finestra. Il rettangolo viaggia nello stesso
+         WIN_MSG_AGGIORNA di prima, quindi toolkit e server nuovi e vecchi
+         si parlano in tutte e quattro le combinazioni. ! RESTA il percorso
+         dei TASTI: li' l'applicazione riceve EXM_DISEGNA e puo' disegnare
+         del suo (il browser la pagina), quindi il toolkit non puo'
+         ridisegnare il solo controllo senza cancellarglielo. Serve che
+         l'applicazione dica cosa disegna, cioe' un EXM_DISEGNA con un
+         rettangolo: e' un cambio di contratto, da fare con calma.
+
+    ! COSA NON SI PRENDE DA X, e perche': i comandi di disegno eseguiti dal
+      server al posto dei pixel. E' il cuore della velocita' di X, ma vuol
+      dire rifare protocollo e toolkit, e una mailbox da quattro messaggi
+      dovrebbe diventare una coda di comandi. I passi 1-3 danno gia' il grosso.
+
+    ! SI MISURA SULLA MACCHINA NUOVA che l'utente sta montando, non su QEMU e
+      non piu' sull'Acer soltanto.
 ! @TELNET-SCALA I DUE DIFETTI SONO SISTEMATI; RESTA LA SESSIONE CHE SI IMPIANTA.
   (16 settembre 2026)
 
@@ -3527,6 +3590,27 @@ sono arrivate, non quello in cui vanno fatte.
     quale programma ha fatto scorrere lo schermo prima di costruire il
     servizio — se sono solo i figli di pm, basta il primo pezzo.
 
+  ! LO SCHERMO NON SI SPORCA PIU': FATTO IL 22 SETTEMBRE, sera, nel KERNEL
+    (kernel/arch/x86/vga.c), e le cause erano due:
+      - vga_scroll() in grafica faceva scorrere il framebuffer SENZA
+        guardare se la console era quella a video. Qualunque console
+        arrivata in fondo — la shell di Alt+F1 che scrive dietro la
+        scrivania — spingeva in su le finestre di una riga e ci dipingeva
+        sotto la propria ultima riga. Era la «riga nera» della richiesta;
+      - la console della grafica si disegnava come testo quando era a
+        video: wserver e ogni programma lanciato dal menu (che la eredita)
+        scrivevano sopra le finestre. Adesso e_visibile() la esclude —
+        il kernel sa gia' qual e' (sys_console_grafica) — e il testo resta
+        nelle sue celle; se il server muore, anche male, torna testo.
+    Trovato perche' `wserver -conta` scrive sulla seriale con log_seriale,
+    che passa dalla console di sistema: la scrivania scorreva di una riga
+    al secondo. Provato da tools/prova_ridisegno.sh, che adesso lo fa.
+
+  RESTA la finestra del registro: il testo c'e' gia', nelle celle della
+  console della grafica, ma nessuno lo puo' leggere. Serve un modo di
+  chiederlo al kernel (o il pezzo della pipe verso un servizio, qui sopra),
+  e la finestra di pm che lo mostra.
+
 ! @ICONE-APP LE ICONE DELLE APPLICAZIONI, A 64 E A 128 PIXEL. (chiesto il 22
   settembre 2026)
 
@@ -3541,8 +3625,7 @@ sono arrivate, non quello in cui vanno fatte.
     - la Makefile copia exwin/icon/* nell'ISO (EXWIN_ICONE).
 
   QUEL CHE RESTA:
-    - ! exwin/icon/ E' ANCORA FUORI DA GIT (untracked): va aggiunto al
-      prossimo commit, o un clone pulito costruisce un menu senza icone;
+    - exwin/icon/ e' entrato in git col commit e0e8509 (22 settembre, sera);
     - mancano i disegni di archivi, fontprova, orologio e pm;
     - le _128 non le usa ancora nessuno: sono per le icone della scrivania
       e per la finestra «Informazioni su» di ogni programma.

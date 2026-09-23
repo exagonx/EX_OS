@@ -292,9 +292,26 @@ static void disegna_cursore(const Console *c, int acceso)
     g_cur_disegnato = 1;
 }
 
+/* =============================================================================
+ * ! THE CONSOLE OF THE DESKTOP IS NEVER VISIBLE AS TEXT — 22 September 2026
+ *
+ * A graphics server draws on the same framebuffer as this file. Whatever a
+ * program printed on its console — wserver itself, and every application
+ * started from the desktop menu, which inherits that console — was drawn
+ * over the windows, and at the bottom line it scrolled the whole desktop up
+ * by one row of cells, leaving a black row behind. Reported as «some apps
+ * print black lines that push the whole screen up» (@EXWIN-LOG).
+ *
+ * Now that console keeps its text in its cells and nothing more: when the
+ * server gives the console back (or dies), the text is there to be seen.
+ * ============================================================================= */
 static inline int e_visibile(const Console *c)
 {
-    return c == &g_console[g_visibile];
+    int32_t g;
+
+    if (c != &g_console[g_visibile]) return 0;
+    g = console_grafica_attuale();
+    return g < 0 || c != &g_console[g];
 }
 
 static inline void riversa_cella(const Console *c, uint32_t i)
@@ -396,6 +413,15 @@ static void vga_scroll(Console *c)
     }
 
     c->row = g_righe - 1;
+
+    /* ! ONLY THE VISIBLE CONSOLE MOVES THE FRAMEBUFFER. This check was
+     * missing — every other path here (riversa_cella, riversa_tutto, the
+     * cursor) had it — so ANY console reaching its last line scrolled the
+     * screen, whoever was on it: a shell on Alt+F1 printing behind the
+     * desktop pushed the windows up a row per line, and painted its own
+     * bottom row over them. The cells above are already updated; the
+     * console is drawn whole when it becomes visible. */
+    if (!e_visibile(c)) return;
 
     /* ! IN GRAFICA NON SI RIDISEGNA TUTTO, SI FA SCORRERE IL FRAMEBUFFER.
      *

@@ -30,7 +30,7 @@
 #include "libc.h"
 
 /* +0.001 a ogni modifica: `exwin -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("exwin", "0.001");
+EX_VERSIONE("exwin", "0.002");
 
 /* ! I PERCORSI SI CERCANO IN DUE POSTI. Su un sistema installato l'albero sta
  * nella radice; avviando dal CD sta sotto /cdrom. Cercare solo il primo
@@ -84,7 +84,7 @@ int main(int argc, char **argv)
     ConsoleInfo ci;
     VideoInfo   v;
     char        c_arg[8];
-    char       *sv[6], *pv[4];
+    char       *sv[16], *pv[4];
     int i, console = -1, n, partenza = 0;
 
     /* ! IL RAMO DELL'ATTESA PER PRIMO, e non apre niente: e' la copia lanciata
@@ -163,9 +163,18 @@ int main(int argc, char **argv)
      * vorrebbe dire una seconda verita' accanto a quella vera, e le due
      * divergono alla prima opzione aggiunta. Cosi' `exwin -nommx` arriva dove
      * deve senza che questo file sappia cosa voglia dire. */
-    for (i = 1; i < argc && n < (int)(sizeof(sv)/sizeof(sv[0])) - 1; i++) {
+    /* ! AND AN OPTION THAT DOES NOT FIT IS SAID, NOT DROPPED. The list had
+     * room for ONE option of the server (sv[6]: four fixed, one, the end):
+     * `exwin -conta -contorno` started the server without -contorno and
+     * nobody knew. Found on 22 September 2026 because the pixel counts of
+     * the two runs were identical. */
+    for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-c") == 0) { i++; continue; }
         if (strcmp(argv[i], "-s") == 0) { i++; continue; }
+        if (n >= (int)(sizeof(sv)/sizeof(sv[0])) - 1) {
+            printf("exwin: troppe opzioni, lascio fuori %s\n", argv[i]);
+            continue;
+        }
         sv[n++] = argv[i];
     }
     sv[n]   = 0;

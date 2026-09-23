@@ -66,7 +66,7 @@
 
 /* +0.001 a ogni modifica: `wserver -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("wserver", "0.002");
+EX_VERSIONE("wserver", "0.003");
 
 #define FINESTRE_MAX    16
 #define BARRA_H         20
@@ -180,6 +180,15 @@ static unsigned int g_bottoni = 0, g_bottoni_prec = 0;
 static int g_trascino = -1;             /* indice, -1 = nessuno */
 static int g_tr_dx = 0, g_tr_dy = 0;
 
+/* ! `-contorno`: DRAG AN OUTLINE, AND MOVE THE WINDOW ON RELEASE — as
+ * Windows does with «show window contents while dragging» turned off. While
+ * the mouse moves only four one-pixel lines change; the window is composed
+ * once, where it lands. It is the lightest drag there is, and the one for a
+ * card with no 2D engine: an opaque drag of a large window rewrites the
+ * whole window at every mouse event, whatever else is done right. */
+static unsigned int g_tr_contorno = 0;
+static int g_tr_x = 0, g_tr_y = 0;      /* where the outline is */
+
 /* ! IL FUOCO SI DICHIARA QUI E SI GESTISCE PIU' SOTTO, perche' lo guarda anche
  * il compositore: e' il fuoco a decidere quale barra del titolo si disegna
  * attiva. Vedi il commento in componi(). */
@@ -243,7 +252,57 @@ static int g_px_prec = 0, g_py_prec = 0;
  * ============================================================================= */
 static unsigned int g_sporco = 1;       /* c'e' qualcosa da rifare */
 static unsigned int g_sp_tutto = 1;     /* ...e non si sa cosa: tutto */
-static unsigned int g_sp_x = 0, g_sp_y = 0, g_sp_x1 = 0, g_sp_y1 = 0;
+
+/* =============================================================================
+ * A LIST OF DIRTY RECTANGLES, NOT ONE BOX — 22 September 2026
+ *
+ * Until today every change was merged into a single bounding box. Two small
+ * changes far apart — the clock in the bottom right corner and the pointer
+ * in the top left — made a box as large as the screen, and the whole screen
+ * was recomposed for two tiny things.
+ *
+ * ! TWO RECTANGLES ARE MERGED WHEN THE UNION WASTES LITTLE: at most
+ * SP_SPRECO pixels more than the two of them. The pointer moving along a
+ * line gives overlapping rectangles, and they merge — otherwise the list
+ * fills with slivers, and every rectangle costs a pass over the window
+ * stack. The four one-pixel sides of a drag outline do NOT merge, and must
+ * not: their union is the whole window, which is what the outline is there
+ * to avoid repainting.
+ *
+ * ! WHEN THE LIST IS FULL IT DOES NOT DROP ANYTHING: the new rectangle is
+ * merged into the one that grows least. A lost rectangle is old pixels on
+ * the screen; a larger one only costs time.
+ *
+ * Coordinates are half-open: [x0, x1) x [y0, y1), always inside the screen.
+ * ============================================================================= */
+typedef struct { int x0, y0, x1, y1; } Rett;
+
+#define SPORCHI_MAX  16
+#define SP_SPRECO    4096
+
+static Rett         g_sp[SPORCHI_MAX];
+static unsigned int g_n_sp = 0;
+
+static unsigned int rett_area(const Rett *r)
+{
+    return (unsigned int)(r->x1 - r->x0) * (unsigned int)(r->y1 - r->y0);
+}
+
+static void rett_unisci(Rett *a, const Rett *b)
+{
+    if (b->x0 < a->x0) a->x0 = b->x0;
+    if (b->y0 < a->y0) a->y0 = b->y0;
+    if (b->x1 > a->x1) a->x1 = b->x1;
+    if (b->y1 > a->y1) a->y1 = b->y1;
+}
+
+static int rett_vicini(const Rett *a, const Rett *b)
+{
+    Rett u = *a;
+
+    rett_unisci(&u, b);
+    return rett_area(&u) <= rett_area(a) + rett_area(b) + SP_SPRECO;
+}
 
 static void sporca_tutto(void)
 {
@@ -253,22 +312,46 @@ static void sporca_tutto(void)
 
 static void sporca(int x, int y, int w, int h)
 {
-    int x1 = x + w, y1 = y + h;
+    Rett r;
+    unsigned int i;
 
     if (w <= 0 || h <= 0) return;
-    if (x < 0) x = 0;
-    if (y < 0) y = 0;
+    r.x0 = x; r.y0 = y; r.x1 = x + w; r.y1 = y + h;
+    if (r.x0 < 0) r.x0 = 0;
+    if (r.y0 < 0) r.y0 = 0;
+    if (r.x1 > (int)g_fb_w) r.x1 = (int)g_fb_w;
+    if (r.y1 > (int)g_fb_h) r.y1 = (int)g_fb_h;
+    if (r.x1 <= r.x0 || r.y1 <= r.y0) return;
 
-    if (!g_sporco || (!g_sp_tutto && g_sp_x1 == g_sp_x)) {
-        g_sp_x = (unsigned int)x;  g_sp_y = (unsigned int)y;
-        g_sp_x1 = (unsigned int)x1; g_sp_y1 = (unsigned int)y1;
-    } else if (!g_sp_tutto) {
-        if ((unsigned int)x  < g_sp_x)  g_sp_x  = (unsigned int)x;
-        if ((unsigned int)y  < g_sp_y)  g_sp_y  = (unsigned int)y;
-        if ((unsigned int)x1 > g_sp_x1) g_sp_x1 = (unsigned int)x1;
-        if ((unsigned int)y1 > g_sp_y1) g_sp_y1 = (unsigned int)y1;
-    }
     g_sporco = 1;
+    if (g_sp_tutto) return;
+
+    /* Merge with a neighbour, and then again: the grown rectangle may now
+     * touch others that it did not touch before. */
+    for (i = 0; i < g_n_sp; i++) {
+        if (!rett_vicini(&g_sp[i], &r)) continue;
+
+        rett_unisci(&r, &g_sp[i]);
+        g_sp[i] = g_sp[--g_n_sp];
+        i = (unsigned int)-1;           /* start over */
+    }
+
+    if (g_n_sp < SPORCHI_MAX) { g_sp[g_n_sp++] = r; return; }
+
+    /* Full: into the one that grows least. */
+    {
+        unsigned int migliore = 0, costo_min = 0xFFFFFFFFu;
+
+        for (i = 0; i < g_n_sp; i++) {
+            Rett u = g_sp[i];
+            unsigned int costo;
+
+            rett_unisci(&u, &r);
+            costo = rett_area(&u) - rett_area(&g_sp[i]);
+            if (costo < costo_min) { costo_min = costo; migliore = i; }
+        }
+        rett_unisci(&g_sp[migliore], &r);
+    }
 }
 
 /* Il rettangolo del puntatore, con un pixel d'aria intorno. */
@@ -289,6 +372,25 @@ static void sporca_finestra(const Finestra *f, unsigned int x, unsigned int y)
 
     sporca((int)x - BORDO, (int)y - BORDO - (int)alta,
            (int)f->w + BORDO * 2, (int)f->h + BORDO * 2 + (int)alta);
+}
+
+/* The title bar only: what changes when a window gains or loses the focus.
+ * Declaring the whole window would repaint a full-screen editor because
+ * another window was clicked. */
+static void sporca_barra(const Finestra *f)
+{
+    if (!(f->stile & WIN_ST_TITOLO)) return;
+    sporca((int)f->x - BORDO, (int)f->y - BORDO - BARRA_H,
+           (int)f->w + BORDO * 2, BARRA_H + BORDO);
+}
+
+/* The four one-pixel sides of an outline — not the rectangle inside. */
+static void sporca_contorno(int x, int y, int w, int h)
+{
+    sporca(x, y, w, 1);
+    sporca(x, y + h - 1, w, 1);
+    sporca(x, y, 1, h);
+    sporca(x + w - 1, y, 1, h);
 }
 
 
@@ -401,6 +503,10 @@ static void mmx_copia32(unsigned int *d, const unsigned int *s, unsigned int n)
  * quella la ragione per cui e' veloce. Li' il ritaglio si applica a mano, e
  * c'e' un commento che lo dice.
  * ============================================================================= */
+/* How many pixels reached the framebuffer: `wserver -conta` prints it. */
+static unsigned int g_conta = 0;
+static unsigned int g_conta_px = 0, g_conta_fot = 0;
+
 static unsigned int g_clip_x = 0, g_clip_y = 0;
 static unsigned int g_clip_w = 0, g_clip_h = 0;   /* w=0 vuol dire «tutto» */
 
@@ -417,11 +523,6 @@ static void clip_metti(unsigned int x, unsigned int y,
     g_clip_w = w; g_clip_h = h;
 }
 
-static int clip_dentro_y(unsigned int y)
-{
-    if (g_clip_w == 0) return 1;
-    return y >= g_clip_y && y < g_clip_y + g_clip_h;
-}
 
 static void px(unsigned int x, unsigned int y, unsigned int c)
 {
@@ -433,6 +534,7 @@ static void px(unsigned int x, unsigned int y, unsigned int c)
          y < g_clip_y || y >= g_clip_y + g_clip_h)) return;
 
     p = g_fb + y * g_fb_passo + x * (g_fb_bit >> 3);
+    g_conta_px++;
 
     if (g_fb_bit == 32) {
         *(unsigned int *)p = c;
@@ -579,6 +681,7 @@ static void riempi(unsigned int x, unsigned int y, unsigned int w,
          * Un motore che non risponde deve costare un fotogramma lento, non un
          * rettangolo che non c'e': chi ha chiesto crede di aver disegnato.
          * ================================================================= */
+        g_conta_px += w * h;
         if (g_acc && (unsigned int)(w * h) >= ACC_SOGLIA_PX && acc_riempi(x, y, w, h, c))
             return;
 
@@ -732,83 +835,242 @@ static void contorno(unsigned int x, unsigned int y, unsigned int w, unsigned in
     riempi(x + w - 1, y, 1, h, C_CONTORNO);
 }
 
-static void componi(void)
+/* =============================================================================
+ * WHO OWNS EACH PIXEL — visible regions, as X does it (22 September 2026)
+ *
+ * Until today componi() painted the whole background and then every window
+ * from the bottom up: a pixel covered by three windows was written four
+ * times. Now every dirty rectangle is split first: the background gets only
+ * what no window covers, and each window only what no window above it
+ * covers. Every pixel is written once, by its owner.
+ *
+ * ! THE BOTTOM-TO-TOP ORDER STAYS, AND IT IS WHAT MAKES THIS SAFE. The
+ * splitting only REMOVES areas that a window above will paint anyway. When
+ * it cannot split (the list of pieces is full) it keeps the piece whole: the
+ * result is the old overdraw, never a hole. A hole would be old pixels on
+ * the screen; overdraw is only time.
+ *
+ * ! ONLY A WINDOW THAT PAINTS ALL OF ITS RECTANGLE HIDES WHAT IS BELOW. Three
+ * cases do not, and they are not subtracted:
+ *   - no client zone yet (zona_virt == 0): the frame is drawn, the inside not;
+ *   - the frame sticks out on the left or on top of the screen: cornice()
+ *     then drops whole bars (riempi() refuses a start outside the screen);
+ *   - the border strip of a window WITHOUT WIN_ST_BORDO: nobody paints it,
+ *     so it stays background.
+ *
+ * ! NOTHING IS CACHED. The pieces are recomputed for every dirty rectangle:
+ * with FINESTRE_MAX windows it is a few hundred comparisons, less than a
+ * single row of pixels, and a cache is one more thing that can go stale.
+ * ============================================================================= */
+#define PEZZI_MAX 64
+
+/* The rectangle a window paints over when it is drawn. */
+static int finestra_rett(const Finestra *f, Rett *r)
 {
-    unsigned int k, i, j;
+    int alta  = (f->stile & WIN_ST_TITOLO) ? BARRA_H : 0;
 
-    riempi(0, 0, g_fb_w, g_fb_h, C_SFONDO);
+    r->x0 = (int)f->x - BORDO;
+    r->y0 = (int)f->y - BORDO - alta;
+    r->x1 = (int)f->x + (int)f->w + BORDO;
+    r->y1 = (int)f->y + (int)f->h + BORDO;
+    return r->x1 > r->x0 && r->y1 > r->y0;
+}
 
-    for (k = 0; k < g_n_ordine; k++) {
-        Finestra *f = &g_fin[g_ordine[k]];
-        const unsigned int *src;
+/* The rectangle a window certainly covers, or 0 if it cannot promise one. */
+static int finestra_opaca(const Finestra *f, Rett *r)
+{
+    int alta  = (f->stile & WIN_ST_TITOLO) ? BARRA_H : 0;
+    int bordo = (f->stile & WIN_ST_BORDO) ? BORDO : 0;
 
-        if (!f->usata || !(f->stile & WIN_ST_VISIBILE)) continue;
+    if (!f->usata || !(f->stile & WIN_ST_VISIBILE) || !f->zona_virt) return 0;
 
-        /* ! «ATTIVA» VUOL DIRE «HA IL FUOCO», NON «E' L'ULTIMA DELLA PILA», e
-         * fino al 18 agosto 2026 qui c'era la seconda. Sembrava la stessa cosa
-         * e non lo era: la barra delle applicazioni ha WIN_ST_SOPRA, quindi
-         * sta SEMPRE in cima — e quindi NESSUNA finestra normale risultava mai
-         * attiva. Le barre del titolo erano tutte grigie, e non si vedeva
-         * quale finestra avrebbe ricevuto i tasti.
-         *
-         * Il fuoco lo sa gia' il server, e lo sa bene: salta lo sfondo e le
-         * finestre «sopra» apposta (vedi prende_fuoco_da_solo). */
-        cornice(f, (int)g_ordine[k] == g_fuoco);
+    r->x0 = (int)f->x - bordo;
+    r->y0 = (int)f->y - bordo - alta;
+    r->x1 = (int)f->x + (int)f->w + bordo;
+    r->y1 = (int)f->y + (int)f->h + bordo;
 
-        /* ! I PIXEL SI LEGGONO DALLA ZONA DEL CLIENT SENZA FIDARSI DELLA
-         * MISURA CHE IL CLIENT CREDE DI AVERE: il ciclo va sui numeri che
-         * abbiamo noi. La zona e' condivisa, quindi il client puo' averci
-         * scritto qualunque cosa — ma non puo' cambiarne la dimensione. */
-        src = (const unsigned int *)f->zona_virt;
-        if (!src) continue;
+    /* Outside on the left or on top: see the comment above. The x of the
+     * CLIENT is also checked, since its copy is skipped entirely when it is
+     * not on the screen. */
+    if (r->x0 < 0 || r->y0 < 0) return 0;
+    if (f->x >= g_fb_w || f->y >= g_fb_h) return 0;
+    return r->x1 > r->x0 && r->y1 > r->y0;
+}
 
-        if (g_fb_bit == 32 && f->x < g_fb_w && f->y < g_fb_h) {
-            unsigned int ww = (f->x + f->w > g_fb_w) ? g_fb_w - f->x : f->w;
-            unsigned int hh = (f->y + f->h > g_fb_h) ? g_fb_h - f->y : f->h;
-            unsigned int x0 = 0;
+static int rett_interseca(Rett *a, const Rett *b)
+{
+    if (b->x0 > a->x0) a->x0 = b->x0;
+    if (b->y0 > a->y0) a->y0 = b->y0;
+    if (b->x1 < a->x1) a->x1 = b->x1;
+    if (b->y1 < a->y1) a->y1 = b->y1;
+    return a->x1 > a->x0 && a->y1 > a->y0;
+}
 
-            /* ! QUI IL RITAGLIO SI FA A MANO, e il perche' sta accanto a
-             * clip_metti(): questa copia non passa dalle primitive apposta —
-             * va per righe intere con MMX, ed e' quello che la rende veloce.
-             * Si tagliano le colonne una volta prima del ciclo e le righe
-             * dentro, che e' lo stesso lavoro che farebbe px() ma per riga
-             * invece che per pixel. */
-            if (g_clip_w != 0) {
-                unsigned int cx1 = g_clip_x + g_clip_w;
-                unsigned int fx1 = f->x + ww;
+/* v minus b, in place. At most four pieces for each rectangle of v; when
+ * they do not fit, the rectangle stays whole (see above: overdraw, not a
+ * hole). Returns the new count. */
+static unsigned int sottrai(Rett *v, unsigned int n, const Rett *b)
+{
+    Rett         nuovi[PEZZI_MAX];
+    unsigned int m = 0, i;
 
-                if (f->x + ww <= g_clip_x || f->x >= cx1) ww = 0;
-                else {
-                    if (f->x < g_clip_x) x0 = g_clip_x - f->x;
-                    if (fx1 > cx1) fx1 = cx1;
-                    ww = fx1 - (f->x + x0);
-                }
-            }
+    for (i = 0; i < n; i++) {
+        const Rett *a = &v[i];
+        Rett        p[4];
+        unsigned int k = 0, j;
+        int y0, y1;
 
-            for (j = 0; ww && j < hh; j++) {
-                unsigned int *d;
-                const unsigned int *sr;
-
-                if (!clip_dentro_y(f->y + j)) continue;
-
-                d  = (unsigned int *)(g_fb + (f->y + j) * g_fb_passo
-                                      + (f->x + x0) * 4);
-                sr = src + j * f->w + x0;
-
-                if (g_mmx) { mmx_copia32(d, sr, ww); continue; }
-                for (i = 0; i < ww; i++) d[i] = sr[i];
-            }
-        } else {
-            for (j = 0; j < f->h; j++)
-                for (i = 0; i < f->w; i++)
-                    px(f->x + i, f->y + j, src[j * f->w + i]);
+        if (b->x0 >= a->x1 || b->x1 <= a->x0 ||
+            b->y0 >= a->y1 || b->y1 <= a->y0) {
+            if (m < PEZZI_MAX) nuovi[m++] = *a;
+            continue;
         }
 
-        /* ! DOPO I PIXEL DEL CLIENT, E QUINDI SOPRA: se si disegnasse con la
-         * cornice, la copia della zona la cancellerebbe subito. E' il prezzo
-         * dichiarato di avere la presa dentro l'area del client. */
-        if (f->stile & WIN_ST_RIDIM) presa(f);
+        y0 = (b->y0 > a->y0) ? b->y0 : a->y0;
+        y1 = (b->y1 < a->y1) ? b->y1 : a->y1;
+
+        if (b->y0 > a->y0) { p[k].x0 = a->x0; p[k].x1 = a->x1; p[k].y0 = a->y0; p[k].y1 = b->y0; k++; }
+        if (b->y1 < a->y1) { p[k].x0 = a->x0; p[k].x1 = a->x1; p[k].y0 = b->y1; p[k].y1 = a->y1; k++; }
+        if (b->x0 > a->x0) { p[k].x0 = a->x0; p[k].x1 = b->x0; p[k].y0 = y0;    p[k].y1 = y1;    k++; }
+        if (b->x1 < a->x1) { p[k].x0 = b->x1; p[k].x1 = a->x1; p[k].y0 = y0;    p[k].y1 = y1;    k++; }
+
+        if (m + k + (n - i - 1) > PEZZI_MAX) {
+            /* No room to split: keep it whole. */
+            if (m < PEZZI_MAX) nuovi[m++] = *a;
+            continue;
+        }
+        for (j = 0; j < k; j++) nuovi[m++] = p[j];
     }
+
+    for (i = 0; i < m; i++) v[i] = nuovi[i];
+    return m;
+}
+
+static void clip_rett(const Rett *r)
+{
+    clip_metti((unsigned int)r->x0, (unsigned int)r->y0,
+               (unsigned int)(r->x1 - r->x0), (unsigned int)(r->y1 - r->y0));
+}
+
+/* One window, inside the current clip: frame, client pixels, grip. */
+static void disegna_finestra(int idx)
+{
+    Finestra *f = &g_fin[idx];
+    const unsigned int *src;
+    unsigned int i, j;
+
+    /* ! «ATTIVA» VUOL DIRE «HA IL FUOCO», NON «E' L'ULTIMA DELLA PILA», e
+     * fino al 18 agosto 2026 qui c'era la seconda. Sembrava la stessa cosa
+     * e non lo era: la barra delle applicazioni ha WIN_ST_SOPRA, quindi
+     * sta SEMPRE in cima — e quindi NESSUNA finestra normale risultava mai
+     * attiva. Le barre del titolo erano tutte grigie, e non si vedeva
+     * quale finestra avrebbe ricevuto i tasti.
+     *
+     * Il fuoco lo sa gia' il server, e lo sa bene: salta lo sfondo e le
+     * finestre «sopra» apposta (vedi prende_fuoco_da_solo). */
+    cornice(f, idx == g_fuoco);
+
+    /* ! I PIXEL SI LEGGONO DALLA ZONA DEL CLIENT SENZA FIDARSI DELLA
+     * MISURA CHE IL CLIENT CREDE DI AVERE: il ciclo va sui numeri che
+     * abbiamo noi. La zona e' condivisa, quindi il client puo' averci
+     * scritto qualunque cosa — ma non puo' cambiarne la dimensione. */
+    src = (const unsigned int *)f->zona_virt;
+    if (!src) return;
+
+    if (g_fb_bit == 32 && f->x < g_fb_w && f->y < g_fb_h) {
+        unsigned int ww = (f->x + f->w > g_fb_w) ? g_fb_w - f->x : f->w;
+        unsigned int hh = (f->y + f->h > g_fb_h) ? g_fb_h - f->y : f->h;
+        unsigned int x0 = 0, j0 = 0;
+
+        /* ! QUI IL RITAGLIO SI FA A MANO, e il perche' sta accanto a
+         * clip_metti(): questa copia non passa dalle primitive apposta —
+         * va per righe intere con MMX, ed e' quello che la rende veloce.
+         * Si tagliano le colonne una volta prima del ciclo, e ora anche le
+         * righe: con un pezzo alto dieci pixel, scorrere tutte le righe
+         * della finestra per scartarle sarebbe il grosso del lavoro. */
+        if (g_clip_w != 0) {
+            unsigned int cx1 = g_clip_x + g_clip_w;
+            unsigned int cy1 = g_clip_y + g_clip_h;
+            unsigned int fx1 = f->x + ww;
+
+            if (f->x + ww <= g_clip_x || f->x >= cx1) ww = 0;
+            else {
+                if (f->x < g_clip_x) x0 = g_clip_x - f->x;
+                if (fx1 > cx1) fx1 = cx1;
+                ww = fx1 - (f->x + x0);
+            }
+
+            if (f->y + hh <= g_clip_y || f->y >= cy1) hh = 0;
+            else {
+                if (f->y < g_clip_y) j0 = g_clip_y - f->y;
+                if (f->y + hh > cy1) hh = cy1 - f->y;
+            }
+        }
+
+        for (j = j0; ww && j < hh; j++) {
+            unsigned int *d;
+            const unsigned int *sr;
+
+            d  = (unsigned int *)(g_fb + (f->y + j) * g_fb_passo
+                                  + (f->x + x0) * 4);
+            sr = src + j * f->w + x0;
+
+            if (g_mmx) mmx_copia32(d, sr, ww);
+            else for (i = 0; i < ww; i++) d[i] = sr[i];
+        }
+        if (ww && hh > j0) g_conta_px += ww * (hh - j0);
+    } else {
+        for (j = 0; j < f->h; j++)
+            for (i = 0; i < f->w; i++)
+                px(f->x + i, f->y + j, src[j * f->w + i]);
+    }
+
+    /* ! DOPO I PIXEL DEL CLIENT, E QUINDI SOPRA: se si disegnasse con la
+     * cornice, la copia della zona la cancellerebbe subito. E' il prezzo
+     * dichiarato di avere la presa dentro l'area del client. */
+    if (f->stile & WIN_ST_RIDIM) presa(f);
+}
+
+/* Everything inside one dirty rectangle. */
+static void componi_rett(const Rett *r)
+{
+    Rett         pezzi[PEZZI_MAX];
+    unsigned int n, k, q, i;
+
+    /* The background: the rectangle minus every window that hides it. */
+    pezzi[0] = *r;
+    n = 1;
+    for (k = 0; k < g_n_ordine && n; k++) {
+        Rett o;
+        if (finestra_opaca(&g_fin[g_ordine[k]], &o)) n = sottrai(pezzi, n, &o);
+    }
+    for (i = 0; i < n; i++) {
+        clip_rett(&pezzi[i]);
+        riempi((unsigned int)pezzi[i].x0, (unsigned int)pezzi[i].y0,
+               (unsigned int)(pezzi[i].x1 - pezzi[i].x0),
+               (unsigned int)(pezzi[i].y1 - pezzi[i].y0), C_SFONDO);
+    }
+
+    /* Each window: what it touches here, minus what the ones above hide. */
+    for (k = 0; k < g_n_ordine; k++) {
+        int       idx = (int)g_ordine[k];
+        Finestra *f = &g_fin[idx];
+
+        if (!f->usata || !(f->stile & WIN_ST_VISIBILE)) continue;
+        if (!finestra_rett(f, &pezzi[0]) || !rett_interseca(&pezzi[0], r)) continue;
+
+        n = 1;
+        for (q = k + 1; q < g_n_ordine && n; q++) {
+            Rett o;
+            if (finestra_opaca(&g_fin[g_ordine[q]], &o)) n = sottrai(pezzi, n, &o);
+        }
+        for (i = 0; i < n; i++) {
+            clip_rett(&pezzi[i]);
+            disegna_finestra(idx);
+        }
+    }
+
+    clip_rett(r);
 
     /* Il contorno di un ridimensionamento in corso, sopra tutte le finestre. */
     if (g_ridim >= 0 && g_fin[g_ridim].usata) {
@@ -820,6 +1082,16 @@ static void componi(void)
                  g_rh + BORDO * 2 + ((f->stile & WIN_ST_TITOLO) ? BARRA_H : 0));
     }
 
+    /* The outline of a drag with `-contorno`, over everything too. */
+    if (g_trascino >= 0 && g_tr_contorno && g_fin[g_trascino].usata) {
+        const Finestra *f = &g_fin[g_trascino];
+        unsigned int alta = (f->stile & WIN_ST_TITOLO) ? BARRA_H : 0;
+
+        contorno((unsigned int)(g_tr_x - BORDO),
+                 (unsigned int)(g_tr_y - BORDO - (int)alta),
+                 f->w + BORDO * 2, f->h + BORDO * 2 + alta);
+    }
+
     /* Il puntatore, una freccia semplice disegnata a mano. */
     {
         int a, b;
@@ -829,6 +1101,31 @@ static void componi(void)
                     px((unsigned int)(g_px + b), (unsigned int)(g_py + a),
                        (b == 0 || b == a || a == 11) ? 0x00000000 : 0x00FFFFFF);
     }
+}
+
+/* Every dirty rectangle, then the list is empty again. */
+static void componi(void)
+{
+    unsigned int i;
+
+    if (g_sp_tutto) {
+        Rett r;
+
+        r.x0 = 0; r.y0 = 0; r.x1 = (int)g_fb_w; r.y1 = (int)g_fb_h;
+        componi_rett(&r);
+    } else {
+        for (i = 0; i < g_n_sp; i++) componi_rett(&g_sp[i]);
+    }
+
+    /* ! IL RITAGLIO SI RIMETTE A «TUTTO» SUBITO DOPO, e non e' una
+     * cortesia: qualunque cosa disegni fuori da componi() troverebbe
+     * altrimenti un ritaglio lasciato li' dall'ultimo rettangolo, e
+     * sparirebbe. */
+    clip_tutto();
+    g_sporco = 0;
+    g_sp_tutto = 0;
+    g_n_sp = 0;
+    g_conta_fot++;
 }
 
 /* -----------------------------------------------------------------------------
@@ -1154,7 +1451,13 @@ static void kbd_tasto(unsigned int k)
     {
         int md = modale_di(g_fin[g_fuoco].pid);
 
-        if (md >= 0) g_fuoco = md;
+        /* The two title bars swap colour: say so, now that a click no
+         * longer repaints the whole screen and would hide the omission. */
+        if (md >= 0 && md != g_fuoco) {
+            sporca_barra(&g_fin[g_fuoco]);
+            g_fuoco = md;
+            sporca_barra(&g_fin[g_fuoco]);
+        }
     }
 
     {
@@ -1213,24 +1516,51 @@ static void mouse_trova(void)
  * ne' nella tastiera: era che ci eravamo riempiti la posta da soli. */
 static unsigned int g_mouse_chiesto = 0;
 
+/* ! THE REQUEST WAITS FOR NEWS (attendi = 1), and that is what lets the main
+ * loop sleep: with attendi = 0 the driver answered at once, every time, and
+ * the loop had to poll it on a timer. Now the answer arrives when the mouse
+ * moves, and wakes the loop exactly then.
+ *
+ * ! TWO GUARDS, BOTH NEEDED:
+ *   - an EMPTY answer is not asked again for MOUSE_PAUSA_MS. The kbd driver
+ *     answers at once when there is no mouse at all (!g_mouse_c_e): without
+ *     the pause that would be a busy loop, question and answer forever;
+ *   - a request unanswered for MOUSE_RICHIEDI_MS is sent again. The drivers
+ *     keep ONE waiter and the last one wins: if someone else (bin/mouse)
+ *     asked in between, our request is gone and the pointer would freeze.
+ *     Asking twice at worst brings two answers, and both are served. */
+#define MOUSE_PAUSA_MS     20u
+#define MOUSE_RICHIEDI_MS  1000u
+
+static unsigned int g_mouse_chiesto_ms = 0;
+static unsigned int g_mouse_vuoto_ms = 0;
+static unsigned int g_mouse_vuoto = 0;
+
 static void mouse_chiedi(void)
 {
-    unsigned int attendi = 0;
+    unsigned int attendi = 1;
+    unsigned int ora = uptime_ms();
 
-    if (g_mouse_pid < 0 || g_mouse_chiesto) return;
+    if (g_mouse_pid < 0) return;
+    if (g_mouse_chiesto && ora - g_mouse_chiesto_ms < MOUSE_RICHIEDI_MS) return;
+    if (g_mouse_vuoto && ora - g_mouse_vuoto_ms < MOUSE_PAUSA_MS) return;
+
+    g_mouse_vuoto = 0;
     if (ipc_send((unsigned int)g_mouse_pid, MOUSE_MSG_LEGGI,
-                 &attendi, sizeof(attendi)) >= 0)
+                 &attendi, sizeof(attendi)) >= 0) {
         g_mouse_chiesto = 1;
+        g_mouse_chiesto_ms = ora;
+    }
 }
 
 static void mouse_stato(const MouseStato *s)
 {
-    /* ! UN CAMBIO DI BOTTONI PUO' CAMBIARE QUALUNQUE COSA — alzare una
-     * finestra, aprire un menu — e quello che cambia lo decidono i client:
-     * qui non si sa, quindi si dichiara tutto. Il movimento invece si sa
-     * esattamente cos'e'. */
-    if (s->bottoni != g_bottoni) sporca_tutto();
-
+    /* ! A BUTTON CHANGE NO LONGER REPAINTS THE SCREEN (until 22 September
+     * 2026 it did: «a click can change anything, and the clients decide»).
+     * Every one of those changes now declares itself: a client that redraws
+     * sends WIN_MSG_AGGIORNA, a new window (a menu) comes through crea(), a
+     * raise through porta_su(), a resize through ridimensiona(). What is
+     * left here is the pointer, and its movement is known exactly. */
     if (s->dx || s->dy) sporca_puntatore(g_px, g_py);   /* dov'era */
 
     g_px += s->dx;
@@ -1249,6 +1579,24 @@ static void mouse_stato(const MouseStato *s)
  * invece che con un messaggio. */
 static void ridimensiona(int idx, unsigned int nw, unsigned int nh);
 
+/* =============================================================================
+ * porta_su — in_cima() plus what it changed on the screen
+ *
+ * ! WHAT A RAISE CHANGES IS THE RAISED WINDOW, AND ONE TITLE BAR. The window
+ * now covers whatever it overlapped: its own rectangle. And the focus moved:
+ * the title bar of whoever had it turns grey. Nothing else on the screen is
+ * different. Until 22 September 2026 every click was sporca_tutto().
+ * ============================================================================= */
+static void porta_su(int idx)
+{
+    int prima = g_fuoco;
+
+    in_cima(idx);
+    sporca_finestra(&g_fin[idx], g_fin[idx].x, g_fin[idx].y);
+    if (prima >= 0 && prima != g_fuoco && g_fin[prima].usata)
+        sporca_barra(&g_fin[prima]);
+}
+
 static void mouse_agisci(void)
 {
     unsigned int giu = (g_bottoni & MOUSE_BTN_SIN) &&
@@ -1265,6 +1613,19 @@ static void mouse_agisci(void)
              * per una cosa che serve solo quando ci si e' fermati. */
             WinRegione w;
 
+            if (g_tr_contorno) {
+                Finestra *f = &g_fin[g_trascino];
+                unsigned int alta = (f->stile & WIN_ST_TITOLO) ? BARRA_H : 0;
+
+                sporca_contorno(g_tr_x - BORDO, g_tr_y - BORDO - (int)alta,
+                                (int)f->w + BORDO * 2,
+                                (int)f->h + BORDO * 2 + (int)alta);
+                sporca_finestra(f, f->x, f->y);
+                f->x = (unsigned int)g_tr_x;
+                f->y = (unsigned int)g_tr_y;
+                sporca_finestra(f, f->x, f->y);
+            }
+
             memset(&w, 0, sizeof(w));
             w.id = g_fin[g_trascino].id;
             w.x  = g_fin[g_trascino].x;
@@ -1274,6 +1635,20 @@ static void mouse_agisci(void)
         } else {
             Finestra *f = &g_fin[g_trascino];
             unsigned int ox = f->x, oy = f->y;
+
+            if (g_tr_contorno) {
+                unsigned int alta = (f->stile & WIN_ST_TITOLO) ? BARRA_H : 0;
+                int ww = (int)f->w + BORDO * 2;
+                int hh = (int)f->h + BORDO * 2 + (int)alta;
+
+                /* Old outline and new: eight lines, nothing else. */
+                sporca_contorno(g_tr_x - BORDO, g_tr_y - BORDO - (int)alta, ww, hh);
+                g_tr_x = g_px - g_tr_dx;
+                g_tr_y = g_py - g_tr_dy;
+                sporca_contorno(g_tr_x - BORDO, g_tr_y - BORDO - (int)alta, ww, hh);
+                g_bottoni_prec = g_bottoni;
+                return;
+            }
 
             f->x = (unsigned int)(g_px - g_tr_dx);
             f->y = (unsigned int)(g_py - g_tr_dy);
@@ -1323,11 +1698,14 @@ static void mouse_agisci(void)
          * fuori di li' e' identico, e ridipingerlo era la meta' del costo di
          * un ridimensionamento. */
         if ((unsigned int)nw != g_rw || (unsigned int)nh != g_rh) {
-            unsigned int mw = ((unsigned int)nw > g_rw) ? (unsigned int)nw : g_rw;
-            unsigned int mh = ((unsigned int)nh > g_rh) ? (unsigned int)nh : g_rh;
+            /* The old outline and the new one, one pixel wide: the window
+             * under them has not changed (the size is given on release). */
+            int alta = (g_fin[idx2].stile & WIN_ST_TITOLO) ? BARRA_H : 0;
+            int ox = (int)g_fin[idx2].x - BORDO;
+            int oy = (int)g_fin[idx2].y - BORDO - alta;
 
-            sporca((int)g_fin[idx2].x - BORDO, (int)g_fin[idx2].y - BORDO - BARRA_H,
-                   (int)mw + BORDO * 2, (int)mh + BORDO * 2 + BARRA_H);
+            sporca_contorno(ox, oy, (int)g_rw + BORDO * 2, (int)g_rh + BORDO * 2 + alta);
+            sporca_contorno(ox, oy, nw + BORDO * 2, nh + BORDO * 2 + alta);
         }
         g_rw = (unsigned int)nw;
         g_rh = (unsigned int)nh;
@@ -1371,15 +1749,14 @@ static void mouse_agisci(void)
         int md = modale_di(g_fin[idx].pid);
 
         if (md >= 0 && md != idx) {
-            if (giu) { in_cima(md); sporca_tutto(); }
+            if (giu) porta_su(md);
             g_bottoni_prec = g_bottoni;
             return;
         }
     }
 
     if (giu) {
-        in_cima(idx);
-        sporca_tutto();
+        porta_su(idx);
 
         if (dove == 2) {
             manda_evento(&g_fin[idx], WIN_EV_CHIUDI, g_px, g_py, 0, 0);
@@ -1394,6 +1771,8 @@ static void mouse_agisci(void)
             g_trascino = idx;
             g_tr_dx = g_px - (int)g_fin[idx].x;
             g_tr_dy = g_py - (int)g_fin[idx].y;
+            g_tr_x  = (int)g_fin[idx].x;
+            g_tr_y  = (int)g_fin[idx].y;
         } else {
             g_giu_su  = idx;
             g_px_prec = g_px;
@@ -1494,8 +1873,7 @@ static void crea(unsigned int pid, const WinCrea *c)
         for (k = 0; k < n; k++) p[k] = C_CLIENT;
     }
 
-    in_cima(i);
-    sporca_tutto();
+    porta_su(i);
 
     r.id    = g_fin[i].id;
     r.byte  = z.byte;
@@ -1606,6 +1984,10 @@ static void ridimensiona(int idx, unsigned int nw, unsigned int nh)
 
     if (f->zona_virt) shm_chiudi((void *)f->zona_virt);
 
+    /* Where it was, before the size changes: the uncovered strip must be
+     * repainted when it shrinks. The new one is declared at the end. */
+    sporca_finestra(f, f->x, f->y);
+
     f->zona_virt = z.virt;
     f->zona_byte = z.byte;
     f->w         = nw;
@@ -1618,7 +2000,7 @@ static void ridimensiona(int idx, unsigned int nw, unsigned int nh)
                f->id, nw, nh, f->giro);
 
     dire_misura(f);
-    sporca_tutto();
+    sporca_finestra(f, f->x, f->y);
 }
 
 static void distruggi(int idx)
@@ -1626,6 +2008,10 @@ static void distruggi(int idx)
     unsigned int k, j = 0;
 
     if (idx < 0) return;
+
+    /* What it covered is what changes — declared while it still exists. */
+    if (g_fin[idx].usata && (g_fin[idx].stile & WIN_ST_VISIBILE))
+        sporca_finestra(&g_fin[idx], g_fin[idx].x, g_fin[idx].y);
 
     if (g_fin[idx].zona_virt) shm_chiudi((void *)g_fin[idx].zona_virt);
     memset(&g_fin[idx], 0, sizeof(Finestra));
@@ -1641,9 +2027,10 @@ static void distruggi(int idx)
      * g_fuoco resterebbe l'indice di uno slot azzerato: i tasti finirebbero a
      * una finestra che non c'e' piu' — cioe' da nessuna parte, e chiudere un
      * editor renderebbe muto quello rimasto aperto. */
-    if (g_fuoco == idx) fuoco_ricalcola();
-
-    sporca_tutto();
+    if (g_fuoco == idx) {
+        fuoco_ricalcola();
+        if (g_fuoco >= 0) sporca_barra(&g_fin[g_fuoco]);
+    }
 }
 
 /* -----------------------------------------------------------------------------
@@ -1713,13 +2100,25 @@ static void raccogli_morti(void)
     }
 }
 
-/* Rende 1 se ha servito un messaggio, 0 se la coda era vuota. */
-static int servi_messaggio(void)
+/* Everything is ours here: this is the one place that reads the mailbox. */
+static int tutto_mio(const IpcMessage *meta, void *dato)
+{
+    (void)meta; (void)dato;
+    return IPC_MIO;
+}
+
+/* Returns 1 if it served a message, 0 if none came within `ms`.
+ *
+ * ! ms == IPC_SUBITO MEANS «ONLY WHAT IS ALREADY HERE», and it is why this
+ * goes through ipc_scegli instead of ipc_recv_timeout: the PIT runs at
+ * 100 Hz, so the shortest real timeout is a whole tick. Draining the queue
+ * with a timeout paid up to 10 ms on the last, empty read of every loop. */
+static int servi_messaggio(unsigned int ms)
 {
     IpcMessage    meta;
     unsigned char buf[IPC_MSG_MAX_DATA];
 
-    if (ipc_recv_timeout(&meta, buf, sizeof(buf), 5) < 0) return 0;
+    if (ipc_scegli(tutto_mio, 0, &meta, buf, sizeof(buf), ms) < 0) return 0;
 
     /* La risposta del mouse arriva nella stessa coda di tutto il resto: e'
      * qui che si distingue, e da nessun'altra parte. */
@@ -1735,6 +2134,10 @@ static int servi_messaggio(void)
         g_mouse_chiesto = 0;
         if (meta.len >= sizeof(s)) {
             memcpy(&s, buf, sizeof(s));
+            if (!s.dx && !s.dy && s.bottoni == g_bottoni) {
+                g_mouse_vuoto = 1;
+                g_mouse_vuoto_ms = uptime_ms();
+            }
             mouse_stato(&s);
             mouse_agisci();
         }
@@ -1780,7 +2183,7 @@ static int servi_messaggio(void)
         for (giri = 0; giri < 100; giri++) {
             int vive = 0;
 
-            for (n = 0; n < 16 && servi_messaggio(); n++) { }
+            for (n = 0; n < 16 && servi_messaggio(IPC_SUBITO); n++) { }
             raccogli_morti();
 
             for (n = 0; n < FINESTRE_MAX; n++)
@@ -1831,9 +2234,12 @@ static int servi_messaggio(void)
         if (meta.len < sizeof(WinRegione)) break;
         idx = trova_id(w->id);
         if (idx >= 0 && g_fin[idx].pid == meta.sender_pid) {
+            /* Where it was and where it is: nothing else changed. The old
+             * one first, or the old frame stays painted (see the drag). */
+            sporca_finestra(&g_fin[idx], g_fin[idx].x, g_fin[idx].y);
             g_fin[idx].x = w->x;
             g_fin[idx].y = w->y;
-            sporca_tutto();
+            sporca_finestra(&g_fin[idx], g_fin[idx].x, g_fin[idx].y);
         }
         break;
     }
@@ -1866,7 +2272,7 @@ static int servi_messaggio(void)
         if (idx >= 0 && g_fin[idx].pid == meta.sender_pid) {
             memcpy(g_fin[idx].titolo, t->titolo, WIN_TITOLO_LEN);
             g_fin[idx].titolo[WIN_TITOLO_LEN - 1] = '\0';
-            sporca_tutto();
+            sporca_finestra(&g_fin[idx], g_fin[idx].x, g_fin[idx].y);
         }
         break;
     }
@@ -1876,7 +2282,7 @@ static int servi_messaggio(void)
         int idx;
         if (meta.len < sizeof(WinRegione)) break;
         idx = trova_id(w->id);
-        if (idx >= 0 && g_fin[idx].pid == meta.sender_pid) { in_cima(idx); sporca_tutto(); }
+        if (idx >= 0 && g_fin[idx].pid == meta.sender_pid) porta_su(idx);
         break;
     }
 
@@ -1884,7 +2290,6 @@ static int servi_messaggio(void)
         WinRegione *w = (WinRegione *)buf;
         int idx;
 
-        sporca_tutto();
         /* Il client ha finito di disegnare. Componendo a ogni giro non c'e'
          * niente da fare: resta nel protocollo perche' quando ci sara' la
          * lista delle regioni sporche sara' QUESTO il messaggio che la
@@ -1897,8 +2302,40 @@ static int servi_messaggio(void)
          * serve un messaggio in piu' per dire una cosa che si sa gia'. */
         if (meta.len < sizeof(WinRegione)) break;
         idx = trova_id(w->id);
-        if (idx >= 0 && g_fin[idx].pid == meta.sender_pid &&
-            w->larghezza == g_fin[idx].w && w->altezza == g_fin[idx].h)
+        if (idx < 0 || g_fin[idx].pid != meta.sender_pid) break;
+
+        /* ! ONLY THIS WINDOW, NOT THE SCREEN. Here was sporca_tutto(): every
+         * key typed in the editor, every tick of the clock repainted
+         * 800x600 — 5 to 10 ms each on the Acer (@GRAFICA-SCATTI). The
+         * pixels that changed are inside this window; what covers it is
+         * repainted over it by componi(), which draws the whole stack
+         * inside the clip. With the frame, because the title bar is drawn
+         * by us and a window with WIN_ST_RIDIM has its grip in the client
+         * area. */
+        {
+            Finestra *f = &g_fin[idx];
+
+            /* ! AND A PIECE OF IT, WHEN THE CLIENT SAYS WHICH. The rectangle
+             * was always in the message and always the whole window; since
+             * the toolkit of 22 September 2026 a control that redrew only
+             * itself (a line in a terminal) sends its own. Clipped here to
+             * the window: the zone is shared and the numbers are the
+             * client's. A client that sends the whole window, or something
+             * that makes no sense, gets the whole window with its frame. */
+            if (w->larghezza && w->altezza &&
+                w->x < f->w && w->y < f->h &&
+                (w->x || w->y || w->larghezza != f->w || w->altezza != f->h)) {
+                unsigned int l = w->larghezza, a = w->altezza;
+
+                if (l > f->w - w->x) l = f->w - w->x;
+                if (a > f->h - w->y) a = f->h - w->y;
+                sporca((int)(f->x + w->x), (int)(f->y + w->y), (int)l, (int)a);
+            } else {
+                sporca_finestra(f, f->x, f->y);
+            }
+        }
+
+        if (w->larghezza == g_fin[idx].w && w->altezza == g_fin[idx].h)
             g_fin[idx].da_dire = 0;
         break;
     }
@@ -1959,7 +2396,12 @@ int main(int argc, char **argv)
     for (i = 1; i < argc; i++) {
         if (argv[i][0] == '-' && argv[i][1] == 'v') g_verboso = 1;
         if (argv[i][0] == '-' && argv[i][1] == 't') g_forza_tastiera = 1;
-        if (argv[i][0] == '-' && argv[i][1] == 'c' && i + 1 < argc)
+        /* ! "-c" EXACTLY, NOT "ANYTHING STARTING WITH -c". It was matched on
+         * the second letter, and when options starting with c arrived
+         * (-conta, -contorno) the first one was taken for "-c" and ate the
+         * next as its console number: `exwin -conta -contorno` ran without
+         * the outline, silently. */
+        if (strcmp(argv[i], "-c") == 0 && i + 1 < argc)
             chiesta = atoi(argv[++i]);
     }
 
@@ -2081,8 +2523,11 @@ int main(int argc, char **argv)
      * codice di cui non si sa se funziona — e questo flag e' anche il modo di
      * provare che le due strade disegnano lo STESSO schermo, confrontando due
      * fotografie byte per byte. */
-    for (i = 1; i < argc; i++)
+    for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-nommx") == 0) g_mmx = 0;
+        if (strcmp(argv[i], "-conta") == 0) g_conta = 1;
+        if (strcmp(argv[i], "-contorno") == 0) g_tr_contorno = 1;
+    }
 
     g_fb_passo = v.passo;
     g_fb_w     = v.larghezza;
@@ -2144,37 +2589,62 @@ int main(int argc, char **argv)
 
     log_seriale("wserver: servizio attivo, entro nel ciclo");
 
-    /* ! IL CICLO NON ASPETTA A LUNGO SU NIENTE. Ha tre cose da fare — leggere
-     * il mouse, servire i client, ricomporre — e fermarsi a lungo su una vuol
-     * dire non fare le altre. Quando ci sara' la lista delle regioni sporche
-     * questo diventera' un poll() vero su FD_IPC piu' il mouse, che e'
-     * esattamente cio' per cui SYS_POLL esiste. */
+    /* ! THE LOOP SLEEPS ON THE MAILBOX, NOT ON A TIMER. Until 22 September
+     * 2026 it was usleep(20000) plus a 5 ms read: at most 40 frames a second,
+     * and every event waited on average 12 ms before being looked at. Now
+     * everything that matters arrives as a message — the mouse (asked with
+     * attendi = 1), the keys (READKEY), the clients — and the first one
+     * wakes the loop at once.
+     *
+     * ! THE WAIT STILL HAS A LIMIT, ATTESA_MS, because two things are not
+     * messages: whether our console is the visible one (kbd_giro asks the
+     * kernel), and the periodic jobs below. They are timed by the clock,
+     * not by counting loops, since a loop no longer has a fixed length.
+     *
+     * ! AND FRAMES HAVE A FLOOR, FOTOGRAMMA_MS. A client that redraws
+     * without pause would otherwise make us compose as fast as it sends, and
+     * steal the CPU from the very client we are drawing. Moves in between
+     * are not lost: the mouse sums them, the dirty rectangle grows. */
+#define ATTESA_MS      20u
+#define FOTOGRAMMA_MS  10u
     for (;;) {
-        static unsigned int giri = 0;
+        static unsigned int raccolto_ms = 0, detto_ms = 0, fotogramma_ms = 0;
+        static unsigned int contato_ms = 0;
+        unsigned int attesa = ATTESA_MS, ora;
         int n;
 
         mouse_chiedi();
         kbd_giro();
+
+        /* Something to draw: wait no longer than the next frame is due. */
+        if (g_sporco && g_visibile) {
+            unsigned int passati = uptime_ms() - fotogramma_ms;
+
+            attesa = (passati >= FOTOGRAMMA_MS) ? IPC_SUBITO
+                                                : FOTOGRAMMA_MS - passati;
+        }
 
         /* ! SI SVUOTA LA CODA, NON SE NE PRENDE UNO PER GIRO. Lasciarci
          * dentro dei messaggi vuol dire tenerla piena, e una mailbox piena
          * fa fallire chi ci scrive — che qui vuol dire perdere i tasti e,
          * peggio, farsi rimettere la console in cooked dal servizio 'kbd'.
          * Il tetto c'e' perche' un client impazzito non ci tenga fermi. */
-        for (n = 0; n < 16 && servi_messaggio(); n++) { }
+        if (servi_messaggio(attesa))
+            for (n = 1; n < 16 && servi_messaggio(IPC_SUBITO); n++) { }
 
-        /* ! UNA VOLTA AL SECONDO, NON A OGNI GIRO. Il giro e' di 20 ms e
-         * procinfo e' una syscall che copia una tabella: farla cinquanta volte
-         * al secondo per una cosa che cambia quando un'applicazione si chiude
-         * sarebbe spendere sempre per accorgersi prima di qualcosa che non ha
-         * fretta. */
-        if (++giri >= 50) { giri = 0; raccogli_morti(); }
+        ora = uptime_ms();
 
-        /* ! LA NOTIZIA DEL CAMBIO DI ZONA SI RIPETE FINCHE' NON ARRIVA, ogni
-         * dieci giri — cioe' cinque volte al secondo, non cinquanta: la
-         * mailbox del client la si riempirebbe con la cura stessa. Il perche'
-         * per esteso sta sopra ridimensiona(). */
-        if ((giri % 10) == 0) {
+        /* ! UNA VOLTA AL SECONDO, NON A OGNI GIRO: procinfo e' una syscall
+         * che copia una tabella, per una cosa che cambia quando
+         * un'applicazione si chiude e non ha fretta. */
+        if (ora - raccolto_ms >= 1000u) { raccolto_ms = ora; raccogli_morti(); }
+
+        /* ! LA NOTIZIA DEL CAMBIO DI ZONA SI RIPETE FINCHE' NON ARRIVA,
+         * cinque volte al secondo: piu' spesso la mailbox del client la si
+         * riempirebbe con la cura stessa. Il perche' per esteso sta sopra
+         * ridimensiona(). */
+        if (ora - detto_ms >= 200u) {
+            detto_ms = ora;
             for (n = 0; n < FINESTRE_MAX; n++) {
                 if (!g_fin[n].usata || !g_fin[n].da_dire) continue;
 
@@ -2186,22 +2656,26 @@ int main(int argc, char **argv)
             }
         }
 
-        if (g_sporco && g_visibile) {
-            /* ! IL RITAGLIO SI RIMETTE A «TUTTO» SUBITO DOPO, e non e' una
-             * cortesia: qualunque cosa disegni fuori da componi() — e un
-             * giorno ce ne sara' una — troverebbe altrimenti un ritaglio
-             * lasciato li' da un movimento del mouse, e sparirebbe. */
-            if (!g_sp_tutto && g_sp_x1 > g_sp_x && g_sp_y1 > g_sp_y)
-                clip_metti(g_sp_x, g_sp_y, g_sp_x1 - g_sp_x, g_sp_y1 - g_sp_y);
-
+        if (g_sporco && g_visibile && ora - fotogramma_ms >= FOTOGRAMMA_MS) {
+            fotogramma_ms = ora;
             componi();
-
-            clip_tutto();
-            g_sporco = 0;
-            g_sp_tutto = 0;
-            g_sp_x = g_sp_x1 = 0;
-            g_sp_y = g_sp_y1 = 0;
         }
-        usleep(20000);
+
+        /* `-conta`: once a second, on the SERIAL line only. A printf here
+         * would go to our own console — the one the desktop is drawn on —
+         * and scroll text over the windows (see @EXWIN-LOG). A quiet second
+         * says nothing: the silence is the measure of an idle desktop. */
+        if (g_conta && ora - contato_ms >= 1000u) {
+            contato_ms = ora;
+            if (g_conta_fot) {
+                char riga[96];
+
+                sprintf(riga, "wserver: %u fotogrammi, %u pixel al secondo",
+                        g_conta_fot, g_conta_px);
+                log_seriale(riga);
+            }
+            g_conta_fot = 0;
+            g_conta_px = 0;
+        }
     }
 }

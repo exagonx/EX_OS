@@ -57,6 +57,10 @@ La regola sta anche come **regola 0** in cima a `in_lavorazione.txt`.
     @ICONE           l'API nel toolkit, menu, exide, file manager   FATTO
     @EXIDE-ICONE     icone come pulsanti, ornamento, pannello       FATTO
     @GRAFICA-SCATTI  trascinamento e ridimensionamento ristretti    in parte
+    @GRAFICA-SCATTI  ridisegno per finestra, ciclo a eventi (0.003) FATTO
+    @GRAFICA-SCATTI  regioni, contorno, pezzi dal toolkit (sera)   FATTO
+    @EXWIN-LOG       lo schermo non si sporca piu' (kernel)          FATTO
+    @EXWIN-LOG, @ICONE-APP  prese da correzioni.txt                 da fare
     @TAR-GZ, @PAINT, @FIN-ICONA, @TASTI-SISTEMA, @GRAFICA-MODALE    da fare
 
 ## DA DOVE RIPRENDERE, IN ORDINE
@@ -83,43 +87,23 @@ La regola sta anche come **regola 0** in cima a `in_lavorazione.txt`.
      ! Mettere un file basta: nessun programma va ricompilato. E se non c'e',
      tutto resta testo — e' lo stato di adesso per strumenti e tipi.
 
-## QUEL CHE NON E' ANCORA COMMITTATO (fine giornata del 22 settembre)
+## QUEL CHE NON E' ANCORA COMMITTATO (22 settembre, dopo e0e8509)
 
-    .gitignore                  la regola /gnu/
-    correzioni.txt              le sette richieste commentate
-    in_lavorazione.txt          le voci nuove, e la regola 0 dell'inglese
-    RIPRENDERE.md               le giornate del 22
-    messaggio-commit.txt        (ignorato da git, ma e' il testo del commit)
+Il commit e0e8509 delle 22:10 ha portato dentro tutto il lavoro della giornata,
+icone comprese. Resta fuori solo quel che e' venuto dopo:
 
-    lib/exwin/exwin.c .h        le icone (apri/disegna/metti), ex_lista_icona,
-    lib/exwin/exwin_esporta.c   la classe «immagine», la regola del ridisegno
-    lib/exwin/exwin_stub.c      accanto a ex_procedura_base()
-    lib/exdlg/*                 «Nuova cartella», ex_dlg_percorso, ex_dlg_chiedi
-    lib/eximg/ico.c             l'alfa che si tiene, e la maschera a 1 bit
-    lib/exzip/                  la libreria degli archivi (NUOVA)
-
-    drivers/wserver/wserver.c   le regioni sporche di trascina/ridimensiona (0.002)
-    bin/login/login.c           aspetta_che_taccia() (0.003)
-    bin/zip/                    il comando zip (NUOVO)
-    exwin/bin/archivi/          l'archiviatore grafico (NUOVO)
-    exwin/bin/exide/exide.c     sfoglia, icone, immagine, pannello (0.015)
-    exwin/bin/filemgr/filemgr.c «Crea», e le icone per tipo (0.006)
-    exwin/bin/pm/pm.c           icone, categorie, sottomenu, lettore 8 KB (0.002)
-    exwin/lib/applicazioni.txt  il terzo campo e le categorie
-    exwin/doc/exide.html        il capitolo «Le icone»
-    exwin/icon/                 le icone (le fa l'utente), copiate sul CD
-    boot/help.txt               la sezione [zip unzip]
-    README.md, README.en.md     console, applicazioni, quattro novita'
-    Makefile                    exzip, zip, archivi, -I drivers/kbd, e TRE
-                                dipendenze che mancavano (browser->exdlg,
-                                ISO->exzip/archivi, ISO->icone)
-    tools/mkhd.sh               le due risposte che mancavano, EXOS_SUPPORTO=cd
-    tools/prova_exide_dove.sh   \
-    tools/prova_avvio_login.sh   | le quattro prove nuove
-    tools/prova_zip.sh           |
-    tools/prova_archivi.sh      /
-    dist/floppy.img, dist/exos.iso  ricostruiti
-    gnu/*.zip                   TOLTI DALL'INDICE (restano sul disco)
+    drivers/wserver/wserver.c   ridisegno per finestra, ciclo a eventi, regioni,
+                                -contorno, -conta, "-c" esatto (0.003)
+    lib/exwin/exwin.c           ridisegna_controllo(): un pezzo di finestra
+    bin/exwin/exwin.c           sedici opzioni al server, non una (0.002)
+    kernel/arch/x86/vga.c       vga_scroll guarda la visibilita', e la console
+    kernel/include/vga.h        della grafica non si disegna come testo
+    kernel/syscall/syscall_impl.c  console_grafica_attuale()
+    tools/prova_ridisegno.sh    la prova (NUOVA)
+    in_lavorazione.txt          @EXWIN-LOG, @ICONE-APP, il piano di @GRAFICA-SCATTI
+    RIPRENDERE.md               questa pagina
+    build/, dist/exos.iso       wserver ricostruito
+    messaggio-commit.txt        il testo del commit
 
 ! **exdlg.so, exzip.so E I LORO CLIENTI SI PUBBLICANO INSIEME.** Uno stub
 compilato oggi cerca `ex_dlg_percorso`, `ex_dlg_chiedi` e `ex_zip_*` all'avvio
@@ -127,9 +111,97 @@ e si ferma dicendolo se non li trova: un `filemgr` nuovo sopra una `exdlg.so`
 vecchia non parte. Il contrario va bene — e' il patto della tabella dei nomi:
 si aggiunge, non si toglie.
 
-! **La rimozione dei due zip e' gia' messa in scena (`git rm --cached`)**: il
-commit successivo la porta dentro. Non vanno cancellati dal disco — servono a
+! **La rimozione dei due zip e' entrata col commit e0e8509** (era messa in
+scena con `git rm --cached`). Non vanno cancellati dal disco — servono a
 `@TAR-GZ`.
+
+## IL COMPOSITORE CHE RIDISEGNA SOLO QUEL CHE CAMBIA (22 settembre, sera)
+
+Chiesto: rendere l'interfaccia piu' veloce. Discusso prima COME: la fotografia
+dello sfondo in RAM proposta dall'utente e' stata confrontata con quel che
+fanno X e Windows 9x (regioni visibili esatte, copia schermo->schermo, Expose,
+motore 2D della scheda, cursore hardware). La scelta e' il metodo di X, che qui
+costa meno che in X: i pixel di ogni finestra stanno GIA' in RAM nella sua
+zona, quindi una parte scoperta si ricompone senza chiedere niente al client, e
+non c'e' una fotografia che possa restare vecchia. Il piano intero sta in
+`@GRAFICA-SCATTI`; oggi sono fatti i primi due passi (wserver 0.003):
+
+  - **`WIN_MSG_AGGIORNA` sporca la finestra, non lo schermo.** Era
+    `sporca_tutto()`: ogni tasto nell'editor e ogni scatto dell'orologio
+    ridipingevano 800x600. Lo stesso per `WIN_MSG_SPOSTA` (vecchio + nuovo) e
+    `WIN_MSG_TITOLO`;
+  - **il ciclo dorme sulla posta.** Via `usleep(20000)` e la lettura da 5 ms:
+    il mouse si chiede con `attendi = 1` e la risposta sveglia il ciclo quando
+    si muove; la coda si svuota con `ipc_scegli(..., IPC_SUBITO)`, che non paga
+    il tick da 10 ms dell'ultima lettura vuota. L'attesa ha un tetto di 20 ms
+    (la console visibile non e' un messaggio) e i fotogrammi un pavimento di
+    10 ms (un client che ridisegna di continuo non si prende la CPU);
+  - ! **DUE GUARDIE SUL MOUSE**, e servono tutt'e due: una risposta vuota non
+    si richiede prima di 20 ms (senza mouse il driver `kbd` risponde subito, e
+    sarebbe un giro a vuoto infinito), e una richiesta senza risposta da un
+    secondo si rimanda (i driver tengono UN attendente, e l'ultimo vince).
+
+PROVATO in QEMU con `tools/prova_ridisegno.sh`: la riga scritta nel terminale
+compare, winprova trascinata sopra il terminale e via lo lascia intero e senza
+scia, il puntatore si muove dopo la pausa. ! **NON E' MISURATO IL GUADAGNO**:
+QEMU non e' la macchina da misurare. Si misura sulla macchina nuova che
+l'utente sta montando.
+
+! **LA GRAFICA STA SU Alt+F5, E exwin LA MOSTRA DA SOLO.** Le prime due corse
+della prova fotografavano Alt+F2, cioe' una console di testo, e battevano
+`term &` dentro la scrivania. `tools/prova_ridimensiona.sh` usa ancora Alt+F2
+(e `pkill`): va aggiornata prima di rifidarsi del suo esito.
+
+## LE REGIONI, E LA RIGA NERA CHE VENIVA DAL KERNEL (23 settembre, notte)
+
+Proseguito col piano di `@GRAFICA-SCATTI`, tutto software (i driver aspettano
+la macchina nuova, e li decide l'utente):
+
+  - **le regioni.** Una lista di sedici rettangoli sporchi al posto del
+    riquadro unico, e dentro ognuno lo sfondo solo dove non c'e' nessuno e
+    ogni finestra solo dove quelle sopra non la coprono: un pixel, uno
+    scrittore. L'ordine dal fondo alla cima resta, ed e' la rete di
+    sicurezza: se una sottrazione non entra nella lista dei pezzi si
+    ridipinge di piu', mai di meno. Tolti gli ultimi `sporca_tutto()` che
+    sapevano cosa dichiarare: clic, porta in cima (`porta_su`), finestra
+    nuova, chiusa, ridimensionata, e il cambio di bottone;
+  - **`exwin -contorno`**: si trascina un contorno, la finestra si sposta al
+    rilascio. Il contorno dichiara quattro strisce da un pixel, e per questo
+    i rettangoli si fondono solo se l'unione spreca poco (`SP_SPRECO`), non
+    piu' se sono vicini: due strisce vicine sono la finestra intera;
+  - **il toolkit dichiara un pezzo**: `ridisegna_controllo()` in exwin.c
+    ridisegna il solo terminale (o area di testo, o lista) e manda il suo
+    rettangolo nello stesso `WIN_MSG_AGGIORNA`. Vecchio e nuovo si parlano in
+    tutte le combinazioni. Il percorso dei tasti resta com'era: li'
+    l'applicazione disegna del suo, e cambiarlo e' cambiare il contratto;
+  - **`wserver -conta`**: fotogrammi e pixel al secondo sulla seriale. E' lo
+    strumento per misurare sulla macchina nuova.
+
+! **LA RIGA NERA DI @EXWIN-LOG VENIVA DAL KERNEL**, e l'ha trovata `-conta`:
+le sue righe passano dalla console di sistema, e la scrivania scorreva di una
+riga al secondo. `vga_scroll()` in grafica faceva scorrere il framebuffer
+senza guardare se la console era a video — l'unica funzione di vga.c senza
+quel controllo — e la console della grafica si disegnava come testo sopra le
+finestre. Corrette tutt'e due (vedi la voce). Resta la finestra del registro.
+
+! **DUE DIFETTI DI ARGOMENTI, e tutt'e due tacevano.** `exwin -conta
+-contorno` girava senza contorno, e l'ha detto solo il confronto dei conti,
+identici nelle due corse:
+  - wserver riconosceva `-c` dalla seconda lettera, quindi `-conta` era preso
+    per `-c <console>` e si mangiava l'opzione dopo;
+  - exwin aveva posto per UNA sola opzione del server (`sv[6]`: quattro fisse,
+    una, la fine) e le altre le buttava. Adesso sono sedici, e quella che non
+    ci sta viene detta (exwin 0.002).
+
+PROVATO in QEMU da `tools/prova_ridisegno.sh`, che adesso confronta ogni passo
+con una ricomposizione completa (Alt+F1, Alt+F5) pixel per pixel: quattro
+passi su quattro uguali, anche con `OPZ=-contorno`. E i conti di `-conta`,
+per un passo di trascinamento di winprova (360x220): circa 100.000 pixel
+trascinando la finestra piena, circa 16.000 col contorno. A scrivania ferma
+restano gli 8.000 pixel al secondo dell'orologio, contro i 480.000 per volta di
+prima. ! QEMU E' DETERMINISTICO:
+due corse con gli stessi comandi danno gli stessi conti al secondo, e il
+confronto fra due opzioni si fa riga per riga.
 
 ## LE PROVE NUOVE, E COME SI RILANCIANO
 
@@ -137,6 +209,8 @@ commit successivo la porta dentro. Non vanno cancellati dal disco — servono a
     tools/prova_archivi.sh      la finestra degli archivi (quattro)
     tools/prova_exide_dove.sh   il progetto nuovo di exide, due avvii
     tools/prova_avvio_login.sh  la pagina d'accesso, col ritardatario
+    tools/prova_ridisegno.sh    il compositore ridisegna solo quel che cambia
+                                (cinque fotografie: si guardano)
 
 Vogliono `dist/exos.iso` aggiornato; le ultime due si costruiscono il disco da
 sole. ! `prova_zip.sh` e `prova_archivi.sh` vogliono anche **debugfs**

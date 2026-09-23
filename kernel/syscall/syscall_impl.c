@@ -1073,6 +1073,24 @@ int32_t sys_console_setfg(InterruptFrame *frame)
 static int32_t g_console_grafica = -1;   /* quale console, -1 = nessuna */
 static uint32_t g_console_grafica_pid = 0;
 
+/* ! VGA.C ASKS THIS FOR EVERY CHARACTER WRITTEN ON THE VISIBLE CONSOLE, so
+ * the liveness check happens here too, and a zombie counts as dead: a
+ * server that crashed must give its console back to the text, or whatever
+ * is printed there afterwards would stay invisible for good. The lookup runs
+ * only while a graphics console exists. */
+int32_t console_grafica_attuale(void)
+{
+    if (g_console_grafica >= 0 && g_console_grafica_pid != 0) {
+        Process *p = proc_get_by_pid(g_console_grafica_pid);
+
+        if (p == NULL || p->state == PROC_ZOMBIE) {
+            g_console_grafica     = -1;
+            g_console_grafica_pid = 0;
+        }
+    }
+    return g_console_grafica;
+}
+
 int32_t sys_console_grafica(InterruptFrame *frame)
 {
     uint32_t azione = frame->ebx;

@@ -115,4 +115,9 @@ void vga_geometria(uint32_t *colonne, uint32_t *righe, uint32_t *px_w,
 void vga_info_fb(uint32_t *addr, uint32_t *pitch, uint32_t *w, uint32_t *h,
                  uint32_t *bpp);
 
+/* The console a graphics server has taken, or -1 (syscall_impl.c keeps it,
+ * and checks that its holder is still alive). vga.c never draws that
+ * console on the framebuffer: the desktop is there. */
+int32_t console_grafica_attuale(void);
+
 #endif /* VGA_H */
