@@ -75,6 +75,68 @@
 #include "browser_priv.h"
 #include "browser_estranei.h"
 
+/* =============================================================================
+ * THE VIEWS — one per document: the page, and each iframe's page
+ *
+ * ! THE DOCUMENT'S GLOBALS ARE FIELDS NOW (24 September 2026), and their old
+ * names macros to the CURRENT view: see VistaImp in browser_priv.h. A view is
+ * the layout part, the controls-and-images part, and what only this file
+ * uses: the page's bytes, its address, its engine, its scripts.
+ * vista_usa() makes one current. The page's view is g_principale, static as
+ * the globals were; an iframe's is allocated once and reused (free() gives
+ * nothing back on EX-OS).
+ * ============================================================================= */
+typedef struct Vista {
+    VistaImp       imp;
+    VistaEst       est;
+    unsigned char  pagina[PAGINA_MAX];
+    unsigned int   pagina_n;
+    char           ancora[64];
+    char           qui[EXHTTP_URL_MAX];
+    int            load_sparato;
+    ExJsCtx *      js;
+    ExDom *        dom;
+    void *         js_mem;
+    void *         dom_mem;
+    unsigned int   vista;
+    unsigned char  script_fatto[NODI_MAX];
+    int            script_n;
+} Vista;
+
+static Vista g_principale;
+static Vista *g_v  = &g_principale;
+VistaImp     *g_vi = &g_principale.imp;
+VistaEst     *g_ve = &g_principale.est;
+#define g_pagina           (g_v->pagina)
+#define g_pagina_n         (g_v->pagina_n)
+#define g_ancora           (g_v->ancora)
+#define g_qui              (g_v->qui)
+#define g_load_sparato     (g_v->load_sparato)
+#define g_js               (g_v->js)
+#define g_dom              (g_v->dom)
+#define g_js_mem           (g_v->js_mem)
+#define g_dom_mem          (g_v->dom_mem)
+#define g_vista            (g_v->vista)
+#define g_script_fatto     (g_v->script_fatto)
+#define g_script_n         (g_v->script_n)
+
+/* What a fresh view must hold that is not zero. */
+static void vista_prepara(Vista *v)
+{
+    v->est.ctrl_fuoco = -1;
+    v->imp.tab_link   = -1;
+    v->imp.tab_rif    = -1;
+}
+
+static void vista_usa(Vista *v)
+{
+    g_v  = v;
+    g_vi = &v->imp;
+    g_ve = &v->est;
+}
+
+static int cornici_da_caricare(void);     /* the iframes: see cornice_carica */
+
 /* +0.001 a ogni modifica: `browser -version` la stampa. Vedi EX_VERSIONE in libc.h. */
 EX_VERSIONE("exbrowser", VERSIONE_APP);
 
@@ -279,8 +341,6 @@ static void imm_tetto_scegli(void)
  * controllo sarebbe stata memoria buttata su ogni pagina che non ha scelte. */
 
 
-char g_opz[OPZ_MAX][CTRL_VAL_MAX];
-int  g_opz_n = 0;
 
 /* =============================================================================
  * I MODULI
@@ -298,39 +358,22 @@ int  g_opz_n = 0;
  * ========================================================================== */
 
 
-Modulo g_mod[MODULI_MAX];
-int    g_mod_n = 0;
 
-Ctrl g_ctrl[CTRL_MAX];
-int  g_ctrl_n = 0;
-int  g_ctrl_fuoco = -1;      /* quale casella prende i tasti */
 
-static unsigned char g_pagina[PAGINA_MAX];
 
 /* ! QUANTI BYTE HA LA PAGINA DI ADESSO, e fino a ieri non lo sapeva nessuno:
  * la misura viveva dentro `vai()` e moriva con lei, perche' l'unica cosa che
  * ne aveva bisogno — l'analizzatore — la riceveva li' per argomento. «Salva»
  * la vuole da fuori, e senza scriverebbe il buffer INTERO: un megabyte, di cui
  * l'HTML e' la prima parte e il resto e' la pagina di prima. */
-static unsigned int  g_pagina_n = 0;
 
-static HtmlNodo      g_nodi[NODI_MAX];
-static HtmlAttr      g_attr[ATTR_MAX];
-char          g_arena[ARENA_MAX];
-HtmlDoc       g_doc;
 
 /* ! L'ANCORA ASPETTA L'IMPAGINAZIONE. Arrivando da «pagina.html#punto» il
  * salto non si puo' fare al momento del clic: la pagina non e' ancora stata
  * letta, e i pezzi su cui si misura l'altezza non esistono. Si tiene qui il
  * nome, e ci si salta appena impagina() ha finito. */
-static char          g_ancora[64] = "";
 
-Pezzo         g_pez[PEZZI_MAX];
-int           g_pez_n = 0;
 
-char          g_link_arena[LINK_ARENA];
-unsigned int  g_link_off[LINK_MAX];
-int           g_link_n = 0;
 
 /* L'indirizzo del link `k`, o la stringa vuota. */
 static const char *link_url(int k)
@@ -415,13 +458,15 @@ ExFinestra    g_f, g_url, g_stato;
  * perche' la guarda solo la procedura della finestra. */
 static ExFinestra g_cerca;
 ExFont        g_font_testo = 0, g_font_titolo = 0;
-int           g_scorri = 0, g_altezza = 0;
-static char          g_qui[EXHTTP_URL_MAX] = "";
 
 /* ! `load` FIRES ONCE PER PAGE: prova_a_sparare_load() is called on every
  * EXM_TEMPO tick while the page sits idle, and without this flag every
  * `load` handler would run five times a second. vai() resets it. */
-static int           g_load_sparato = 0;
+
+/* ! THE TAB STOP WITH THE FOCUS, as the piece's identity and not its index:
+ * a link number (g_link) or a control's `rif`, -1 when none. Piece indexes
+ * change at every relayout; these do not while the page is the same.
+ * browser_impagina.c reads them to draw the dotted ring. */
 
 /* =============================================================================
  * LE IMPOSTAZIONI
@@ -524,13 +569,7 @@ static int           g_ricerca = 0;     /* quale dei tre: il primo e' il provato
  * secondo posto dove sbagliare l'ordine di disegno. */
 
 
-static CssRegola     g_css_reg[CSS_REGOLE_MAX];
-static CssDich       g_css_dich[CSS_DICH_MAX];
-static char          g_css_arena[CSS_ARENA_MAX];
-CssFoglio     g_css;
 
-Imm           g_imm[IMM_MAX];
-static int           g_imm_n = 0;
 static unsigned int  g_imm_px = 0;      /* quanti pixel si stanno tenendo */
 static int           g_imm_fuori = 0;   /* quante lasciate fuori: non c'era posto */
 
@@ -547,8 +586,15 @@ static int           g_imm_fuori = 0;   /* quante lasciate fuori: non c'era post
  * Con questo numero la domanda si fa una volta sola: se non c'e' stato posto
  * per N pixel, non ce n'e' per N o piu'. Quelle piu' piccole si provano ancora,
  * perche' per loro la risposta puo' essere davvero diversa. */
-static unsigned int  g_imm_px_negato = 0;
 static unsigned char g_imm_buf[IMM_BYTE_MAX];
+
+/* ! EXTERNAL SCRIPTS AND STYLE SHEETS HAVE THEIR OWN BUFFER, the size of a
+ * page. They used to borrow the images' one, 128 KB: a script engine of
+ * 846 KB and amazon.com's sheets of 262 and 564 KB came in cut, and a script
+ * cut short is a syntax error at its last line. One byte is always kept free
+ * for the zero QuickJS wants (see un_script). BSS: untouched, it costs
+ * nothing. */
+static unsigned char g_js_buf[PAGINA_MAX];
 
 static int  (*g_img_carica)(const unsigned char *, unsigned int, EximgBitmap *);
 static void (*g_img_libera)(EximgBitmap *);
@@ -570,10 +616,11 @@ static void (*g_img_libera)(EximgBitmap *);
 /* Definita piu' in basso, accanto al disegno: l'impaginazione la chiama
  * subito dopo css_calcola. */
 
-int area_x(void) { return MARGINE; }
-int area_y(void) { return BARRA_Y + BARRA_H + MARGINE; }
-int area_w(void) { return FIN_W - 2 * MARGINE - SCORRI_W; }
-int area_h(void) { return FIN_H - BARRA_Y - BARRA_H - 2 * MARGINE - 20; }
+int area_x(void) { return g_vi->cornice ? g_vi->ax : MARGINE; }
+int area_y(void) { return g_vi->cornice ? g_vi->ay : BARRA_Y + BARRA_H + MARGINE; }
+int area_w(void) { return g_vi->cornice ? g_vi->aw : FIN_W - 2 * MARGINE - SCORRI_W; }
+int area_h(void) { return g_vi->cornice ? g_vi->ah
+                                        : FIN_H - BARRA_Y - BARRA_H - 2 * MARGINE - 20; }
 
 int barra_x(void) { return area_x() + area_w() + 2; }
 
@@ -2335,8 +2382,8 @@ static void raccogli_css(void)
 {
     int i, presi = 0;
 
-    css_prepara(&g_css, g_css_reg, CSS_REGOLE_MAX, g_css_dich, CSS_DICH_MAX,
-                g_css_arena, CSS_ARENA_MAX);
+    css_prepara(&g_css, g_css_reg, CSS_REGOLE_MAX, g_css_pezzi, CSS_PEZZI_MAX,
+                g_css_dich, CSS_DICH_MAX, g_css_arena, CSS_ARENA_MAX);
     css_analizza(&g_css, CSS_DI_SISTEMA, sizeof(CSS_DI_SISTEMA) - 1,
                  CSS_ORIGINE_SISTEMA);
 
@@ -2394,21 +2441,21 @@ static void raccogli_css(void)
             if (e_locale(url)) {
                 int troncato = 0;
 
-                if (!locale_leggi(url, g_imm_buf, sizeof(g_imm_buf), &n,
+                if (!locale_leggi(url, g_js_buf, sizeof(g_js_buf) - 1, &n,
                                   &troncato)) continue;
                 if (n == 0) continue;
-            } else if (!cache_leggi(url, g_imm_buf, sizeof(g_imm_buf), &n)) {
+            } else if (!cache_leggi(url, g_js_buf, sizeof(g_js_buf) - 1, &n)) {
                 ExHttpEsito e;
 
                 dico("foglio di stile...");
-                if (!prendi_in_rete(url, g_imm_buf, sizeof(g_imm_buf), &e))
+                if (!prendi_in_rete(url, g_js_buf, sizeof(g_js_buf) - 1, &e))
                     continue;
                 if (e.codice != 200 || e.byte == 0) continue;
                 n = e.byte;
-                if (!e.troncata) cache_scrivi(url, g_imm_buf, n);
+                if (!e.troncata) cache_scrivi(url, g_js_buf, n);
             }
 
-            css_analizza(&g_css, (const char *)g_imm_buf, n,
+            css_analizza(&g_css, (const char *)g_js_buf, n,
                          CSS_ORIGINE_FOGLIO);
             presi++;
         }
@@ -2441,10 +2488,11 @@ static void raccogli_css(void)
 #define JS_ARENA      (96u * 1024u)
 #define JS_TESTO      (64u * 1024u)
 #define JS_ASCOLTI    256u
-#define JS_SCRIPT_MAX 16
+/* ! 256 SINCE 23 SEPTEMBER 2026, and 16 before: amazon.com's home page has
+ * 94 <script>. The number counts scripts run, not memory: with QuickJS the
+ * engine takes what it needs from the libc (see JS_OGGETTI above). */
+#define JS_SCRIPT_MAX 256
 
-static ExJsCtx *g_js  = 0;
-static ExDom   *g_dom = 0;
 
 /* ! UNA RIGA SOLA PER NON SPOSTARE MEZZO FILE. Le funzioni dei biscotti stanno
  * accanto alle impostazioni — e' li' che si scrive su disco — ma una di loro ha
@@ -2462,12 +2510,9 @@ static void dopo_gli_script(void)
     bis_dallo_script();
     bis_scrivi_file();
 }
-static void    *g_js_mem = 0;
-static void    *g_dom_mem = 0;
 
 /* L'ultima versione del documento che l'impaginazione ha visto. Il perche' di
  * questo confronto sta accanto al campo `versione` in html.h. */
-static unsigned int g_vista = 0;
 
 /* ! `console.log` FINISCE NELLA BARRA DI STATO, e non nel vuoto. Una pagina
  * che stampa un messaggio lo sta scrivendo per qualcuno; buttarlo via
@@ -2759,6 +2804,11 @@ static int motore_apri(void)
      * Il giorno che risolvi() sbaglia, sbaglia in un posto solo — per i
      * collegamenti, per le immagini e per il DOM insieme. */
     exdom_risolutore(g_dom, ponte_risolvi, 0);
+
+    /* The window's own objects: self, performance, storage, TextEncoder,
+     * postMessage, crypto... — see browser_preludio.c. Last, because it
+     * reads location. */
+    preludio_esegui(g_js, area_w(), area_h());
     return 1;
 }
 
@@ -2783,6 +2833,12 @@ static int e_javascript(int v)
     return 0;
 }
 
+/* ! WHICH SCRIPT IT WAS, on the console line: "riga 0" of what? Firefox's
+ * console names the file, and so does this. un_script() sets these two just
+ * before running a script, and clears them after. */
+static const char          *g_js_chi   = 0;    /* its URL, or "in linea" */
+static const unsigned char *g_js_testo = 0;    /* its first bytes, for a SyntaxError */
+
 static void js_grida(const ExJsErrore *e)
 {
     char b[160];
@@ -2790,6 +2846,23 @@ static void js_grida(const ExJsErrore *e)
     if (!e->messaggio[0]) return;
     snprintf(b, sizeof(b), "javascript, riga %d: %s", e->riga, e->messaggio);
     dico(b);
+    /* ! AND ON STANDARD OUTPUT, like a console: the status bar keeps only the
+     * last one, and a page that fails in ten places shows the tenth. On
+     * EX-OS a graphical program's output goes to the serial line, which is
+     * where the tests read it. */
+    printf("exbrowser: %s\n", b);
+    if (g_js_chi) {
+        printf("exbrowser:    in %s\n", g_js_chi);
+        if (g_js_testo && e->messaggio[0] == 'S') {       /* SyntaxError */
+            char inizio[61];
+            int  k;
+
+            for (k = 0; k < 60 && g_js_testo[k]; k++)
+                inizio[k] = (g_js_testo[k] >= 32 && g_js_testo[k] < 127) ? (char)g_js_testo[k] : '.';
+            inizio[k] = '\0';
+            printf("exbrowser:    comincia con: %s\n", inizio);
+        }
+    }
 }
 
 /* -----------------------------------------------------------------------------
@@ -2806,9 +2879,141 @@ static void js_grida(const ExJsErrore *e)
  * si vedono vuote — deve aver finito prima che si decida come impaginare, o
  * si impaginerebbe il documento senza il pezzo che quello script aggiunge.
  * --------------------------------------------------------------------------- */
+/* =============================================================================
+ * SCRIPTS THAT ARRIVE LATER
+ *
+ * ! A <script> MADE BY JAVASCRIPT RAN ONLY BY ACCIDENT. The loop below reads
+ * g_doc.nodi_n at every turn, so a script created DURING the first run landed
+ * at the end of the node vector and was reached; one created later — by a
+ * timer, a click, `load`, DOMContentLoaded, a network answer — never ran.
+ * That is how most of the web loads its code: Google's reCAPTCHA api.js does
+ * createElement('script'), sets src and inserts it (23 Sept 2026).
+ *
+ * Now, as in Gecko: a script runs ONCE, when it is attached to the document;
+ * g_script_fatto remembers which nodes have run; esegui_script_nuovi() looks
+ * again after every entry into JavaScript; an external script gets `load` on
+ * its element when it has run, `error` when it could not be fetched — the
+ * two events every script loader waits for.
+ *
+ * ! NOT YET: async/defer order (they run at the next look, in document order)
+ * and document.write.
+ * ============================================================================= */
+
+
+static int attaccato(int n)
+{
+    int giri = 0;
+
+    while (n >= 0 && giri++ < NODI_MAX) {
+        if (n == g_doc.radice) return 1;
+        n = g_doc.nodi[n].padre;
+    }
+    return 0;
+}
+
+static void script_evento(int nodo, const char *tipo)
+{
+    ExJsErrore err;
+
+    if (!g_dom) return;
+    memset(&err, 0, sizeof(err));
+    exdom_evento(g_dom, nodo, tipo, &err);
+    js_grida(&err);
+}
+
+/* Runs script node i if it should run. Returns 1 if it was handled (run, or
+ * given up for good), 0 if it must be looked at again later. */
+static int un_script(int i, int dinamico)
+{
+    const char *src;
+    ExJsErrore  err;
+    ExJsVal     r;
+    int         f;
+
+    if (g_script_fatto[i]) return 1;
+    if (g_doc.nodi[i].tipo != HTML_ELEMENTO) { g_script_fatto[i] = 1; return 1; }
+    if (!uguale(html_nome(&g_doc, i), "script")) { g_script_fatto[i] = 1; return 1; }
+    if (!attaccato(i)) return 0;                /* not in the document yet */
+    g_script_fatto[i] = 1;
+    if (!e_javascript(i)) return 1;
+    if (g_script_n >= JS_SCRIPT_MAX) return 1;
+    if (!g_js && !motore_apri()) return 1;
+
+    /* --- lo script che sta altrove ---------------------------------- */
+    src = html_attr(&g_doc, i, "src");
+    if (src && src[0]) {
+        char         url[EXHTTP_URL_MAX];
+        unsigned int n = 0;
+
+        if (!risolvi(src, url, sizeof(url))) { script_evento(i, "error"); return 1; }
+
+        /* A script cut short is never run: its end would be a syntax
+         * error, and half of a library is worse than none. */
+        if (e_locale(url)) {
+            int troncato = 0;
+
+            if (!locale_leggi(url, g_js_buf, sizeof(g_js_buf) - 1, &n,
+                              &troncato) || n == 0 || troncato) {
+                script_evento(i, "error");
+                return 1;
+            }
+        } else if (!cache_leggi(url, g_js_buf, sizeof(g_js_buf) - 1, &n)) {
+            ExHttpEsito e;
+
+            dico("script...");
+            if (!prendi_in_rete(url, g_js_buf, sizeof(g_js_buf) - 1, &e) ||
+                e.codice != 200 || e.byte == 0 || e.troncata) {
+                script_evento(i, "error");
+                return 1;
+            }
+            n = e.byte;
+            cache_scrivi(url, g_js_buf, n);
+        }
+
+        /* ! THE ZERO AFTER THE LAST BYTE, and QuickJS needs it: JS_Eval reads
+         * its input as a C string (quickjs.h: «input must be zero
+         * terminated»). The buffer is reused, and without it a small script
+         * was read together with the tail of the bigger one fetched before:
+         * on amazon.com, «SyntaxError: expecting ';'» on files that compile
+         * everywhere else (24 Sept 2026). That is why one byte is kept free. */
+        g_js_buf[n] = '\0';
+
+        memset(&err, 0, sizeof(err));
+        g_js_chi = url; g_js_testo = g_js_buf;
+        if (!exjs_esegui(g_js, (const char *)g_js_buf, n, &r, &err))
+            js_grida(&err);
+        g_js_chi = 0; g_js_testo = 0;
+        g_script_n++;
+        script_evento(i, "load");
+        (void)dinamico;
+        return 1;
+    }
+
+    /* --- lo script scritto qui -------------------------------------- */
+    for (f = g_doc.nodi[i].primo_figlio; f >= 0; f = g_doc.nodi[f].prossimo) {
+        const char  *t;
+        unsigned int n = 0;
+
+        if (g_doc.nodi[f].tipo != HTML_TESTO) continue;
+        t = html_testo(&g_doc, f);
+        while (t[n]) n++;
+        if (!n) continue;
+
+        memset(&err, 0, sizeof(err));
+        g_js_chi = "uno script in linea"; g_js_testo = (const unsigned char *)t;
+        if (!exjs_esegui(g_js, t, n, &r, &err)) js_grida(&err);
+        g_js_chi = 0; g_js_testo = 0;
+        g_script_n++;
+    }
+    return 1;
+}
+
 static void esegui_script(void)
 {
-    int i, fatti = 0, aperti = 0;
+    int i;
+
+    memset(g_script_fatto, 0, sizeof(g_script_fatto));
+    g_script_n = 0;
 
     /* ! SPENTO SI CONTROLLA QUI E NON PIU' IN BASSO, prima che il motore si
      * apra: aprirlo vuol dire chiedere alla libc mezzo megabyte e mappare due
@@ -2816,70 +3021,7 @@ static void esegui_script(void)
      * sarebbero spesi per non fare nulla. */
     if (!g_js_acceso) return;
 
-    for (i = 0; i < (int)g_doc.nodi_n && fatti < JS_SCRIPT_MAX; i++) {
-        const char *src;
-        ExJsErrore  err;
-        ExJsVal     r;
-        int         f;
-
-        if (g_doc.nodi[i].tipo != HTML_ELEMENTO) continue;
-        if (!uguale(html_nome(&g_doc, i), "script")) continue;
-        if (!e_javascript(i)) continue;
-
-        if (!aperti) {
-            if (!motore_apri()) return;
-            aperti = 1;
-        }
-
-        /* --- lo script che sta altrove ---------------------------------- */
-        src = html_attr(&g_doc, i, "src");
-        if (src && src[0]) {
-            char         url[EXHTTP_URL_MAX];
-            unsigned int n = 0;
-
-            if (!risolvi(src, url, sizeof(url))) continue;
-
-            /* ! SI RIUSA IL BUFFER DELLE IMMAGINI, come fanno i fogli di
-             * stile e per la stessa ragione: gli script si prendono PRIMA
-             * della prima impaginazione, le immagini dopo. */
-            if (e_locale(url)) {
-                int troncato = 0;
-
-                if (!locale_leggi(url, g_imm_buf, sizeof(g_imm_buf), &n,
-                                  &troncato)) continue;
-                if (n == 0) continue;
-            } else if (!cache_leggi(url, g_imm_buf, sizeof(g_imm_buf), &n)) {
-                ExHttpEsito e;
-
-                dico("script...");
-                if (!prendi_in_rete(url, g_imm_buf, sizeof(g_imm_buf), &e)) continue;
-                if (e.codice != 200 || e.byte == 0) continue;
-                n = e.byte;
-                if (!e.troncata) cache_scrivi(url, g_imm_buf, n);
-            }
-
-            memset(&err, 0, sizeof(err));
-            if (!exjs_esegui(g_js, (const char *)g_imm_buf, n, &r, &err))
-                js_grida(&err);
-            fatti++;
-            continue;
-        }
-
-        /* --- lo script scritto qui -------------------------------------- */
-        for (f = g_doc.nodi[i].primo_figlio; f >= 0; f = g_doc.nodi[f].prossimo) {
-            const char  *t;
-            unsigned int n = 0;
-
-            if (g_doc.nodi[f].tipo != HTML_TESTO) continue;
-            t = html_testo(&g_doc, f);
-            while (t[n]) n++;
-            if (!n) continue;
-
-            memset(&err, 0, sizeof(err));
-            if (!exjs_esegui(g_js, t, n, &r, &err)) js_grida(&err);
-            fatti++;
-        }
-    }
+    for (i = 0; i < (int)g_doc.nodi_n && i < NODI_MAX; i++) un_script(i, 0);
 
     /* ! LA SVEGLIA SI CHIEDE SOLO SE C'E' QUALCOSA CHE ASPETTA. Una pagina con
      * uno script che ha finito non ha motivo di svegliare il browser cinque
@@ -2888,6 +3030,80 @@ static void esegui_script(void)
     if (g_js && exjs_lavori_in_attesa(g_js)) ex_sveglia(g_f, 200);
 
     dopo_gli_script();
+}
+
+/* After a script ran: any <script> it added (or attached) runs now. A new one
+ * can add others, and the loop sees them because nodi_n is read each turn. */
+static void esegui_script_nuovi(void)
+{
+    int i;
+
+    if (!g_js_acceso || !g_js) return;
+    for (i = 0; i < (int)g_doc.nodi_n && i < NODI_MAX; i++)
+        if (!g_script_fatto[i]) un_script(i, 1);
+}
+
+/* =============================================================================
+ * THE LIVE STATE OF THE FORM CONTROLS, AND THE DOM
+ *
+ * ! WHAT THE USER TYPES LIVES IN g_ctrl, WHAT A SCRIPT READS LIVES IN THE
+ * TREE. `input.value` is the reflected `value` attribute (exdom.c, RIFLESSI)
+ * and `input.checked` its presence; the browser never wrote either, so a
+ * script reading a field the user had filled found it empty (tab.html, 23
+ * Sept 2026). ctrl_al_dom() copies the screen into the tree just before
+ * JavaScript runs — not at every key, because writing an attribute bumps the
+ * document version and that means a relayout. dom_al_ctrl() does the way
+ * back after a script: a value the SCRIPT changed goes into the control.
+ * ============================================================================= */
+static void ctrl_al_dom(void)
+{
+    int i, pari;
+
+    if (!g_dom) return;
+    pari = (html_versione(&g_doc) == g_vista);
+    for (i = 0; i < g_ctrl_n; i++) {
+        Ctrl       *c = &g_ctrl[i];
+        const char *a;
+
+        if (c->nodo < 0 || c->nodo >= (int)g_doc.nodi_n) continue;
+        if (!uguale(html_nome(&g_doc, c->nodo), "input")) continue;
+        if (c->tipo == CTRL_TESTO) {
+            a = html_attr(&g_doc, c->nodo, "value");
+            if (!a || strcmp(a, c->valore) != 0)
+                html_attr_metti(&g_doc, c->nodo, "value", c->valore);
+        } else if (c->tipo == CTRL_SPUNTA || c->tipo == CTRL_RADIO) {
+            a = html_attr(&g_doc, c->nodo, "checked");
+            if (c->acceso && !a)      html_attr_metti(&g_doc, c->nodo, "checked", "");
+            else if (!c->acceso && a) html_attr_togli(&g_doc, c->nodo, "checked");
+        }
+    }
+    /* What we wrote is what is on the screen: no relayout for it — unless
+     * one was already owed for something else. */
+    if (pari) g_vista = html_versione(&g_doc);
+}
+
+static void dom_al_ctrl(void)
+{
+    int i;
+
+    for (i = 0; i < g_ctrl_n; i++) {
+        Ctrl       *c = &g_ctrl[i];
+        const char *a;
+
+        if (c->nodo < 0 || c->nodo >= (int)g_doc.nodi_n) continue;
+        if (!uguale(html_nome(&g_doc, c->nodo), "input")) continue;
+        if (c->tipo == CTRL_TESTO) {
+            a = html_attr(&g_doc, c->nodo, "value");
+            if (a && strcmp(a, c->valore) != 0) {
+                strncpy(c->valore, a, CTRL_VAL_MAX - 1);
+                c->valore[CTRL_VAL_MAX - 1] = '\0';
+                c->cur = (short)strlen(c->valore);
+                c->sel = -1;
+            }
+        } else if (c->tipo == CTRL_SPUNTA || c->tipo == CTRL_RADIO) {
+            c->acceso = (unsigned char)(html_attr(&g_doc, c->nodo, "checked") != 0);
+        }
+    }
 }
 
 /* ! DOPO OGNI SCRIPT SI GUARDA SE IL DOCUMENTO E' CAMBIATO, e si rifa' solo
@@ -2900,6 +3116,9 @@ static void rifai_se_cambiato(void)
     if (!g_dom) return;
     if (html_versione(&g_doc) == g_vista) return;
 
+    dom_al_ctrl();      /* a script may have set a field: see ctrl_al_dom */
+    esegui_script_nuovi();  /* and it may have added a <script> */
+
     /* I fogli di stile si rileggono perche' uno script puo' aver aggiunto un
      * <style> o cambiato una classe: il calcolo dello stile guarda l'albero,
      * ma le REGOLE stanno in un'altra struttura, e quella non si aggiorna da
@@ -2908,6 +3127,8 @@ static void rifai_se_cambiato(void)
     impagina();
     g_vista = html_versione(&g_doc);
     disegna();
+    /* a script may have added an <iframe>: it loads at the next turn */
+    if (g_v == &g_principale && cornici_da_caricare()) ex_sveglia(g_f, 200);
 }
 
 /* =============================================================================
@@ -2939,6 +3160,7 @@ static void prova_a_sparare_load(void)
     }
 
     g_load_sparato = 1;
+    ctrl_al_dom();
     memset(&err, 0, sizeof(err));
     exdom_evento(g_dom, g_doc.radice, "load", &err);
     js_grida(&err);
@@ -2953,8 +3175,10 @@ static int nodo_sotto(int x, int y)
 
     for (i = 0; i < g_pez_n; i++) {
         int py = g_pez[i].y - g_scorri;
-        int h  = EST_E_IMM(g_pez[i].rif) ? g_pez[i].h
-                                         : ex_font_altezza(g_pez[i].font);
+        /* Anything foreign (image or control) has its own height; a
+         * control's piece has no font of its own to measure. */
+        int h  = (g_pez[i].rif >= 0) ? g_pez[i].h
+                                     : ex_font_altezza(g_pez[i].font);
 
         if (g_pez[i].nodo < 0) continue;
         if (x >= g_pez[i].x && x < g_pez[i].x + g_pez[i].w &&
@@ -2987,6 +3211,7 @@ static int clic_al_documento(int x, int y)
     nodo = nodo_sotto(x, y);
     if (nodo < 0) return 1;
 
+    ctrl_al_dom();
     memset(&err, 0, sizeof(err));
     seguire = exdom_evento(g_dom, nodo, "click", &err);
     js_grida(&err);
@@ -3054,7 +3279,7 @@ static int segui_location(void)
     }
     if (!risolvi(dove, assoluto, sizeof(assoluto))) return 0;
 
-    ex_testo_metti(g_url, assoluto);
+    if (g_v == &g_principale) ex_testo_metti(g_url, assoluto);
     g_js_salta = 1;
     vai(assoluto, 1, 0);
     return 1;
@@ -3495,6 +3720,374 @@ static void non_e_una_pagina_(const char *url, const char *tipo)
     }
 }
 
+/* =============================================================================
+ * A NEW DOCUMENT IN THE CURRENT VIEW — from its bytes to its first `load`
+ *
+ * ! THE MIDDLE OF vai(), made a function on 24 September 2026 so that the page
+ * and an iframe load a document by the same road: tree, scripts,
+ * DOMContentLoaded, style, layout, load. What is only the PAGE's — history,
+ * the address bar, the cache, the anchor, the status line — stays in vai().
+ * g_pagina already holds the `n` bytes.
+ * ============================================================================= */
+static void cornici_chiudi(void);
+
+static void documento_nuovo(unsigned int n)
+{
+    /* The page's iframes belong to the page that is leaving. */
+    if (g_v == &g_principale) cornici_chiudi();
+
+    if (g_v == &g_principale) imm_libera_tutte();
+
+    /* ! E CON LORO SE NE VA IL MOTORE, per lo stesso identico motivo: un
+     * contesto JavaScript e' pieno di involucri che sono indici in QUESTO
+     * albero, e fra un istante l'albero e' un altro. Tenerlo aperto vorrebbe
+     * dire uno script della pagina di prima che tocca i nodi di quella di
+     * adesso. */
+    motore_chiudi();
+
+    html_prepara(&g_doc, g_nodi, NODI_MAX, g_attr, ATTR_MAX,
+                 g_arena, ARENA_MAX);
+    html_analizza(&g_doc, (const char *)g_pagina, n);
+
+    g_scorri = 0;
+    g_ctrl_n = 0;
+    g_ctrl_fuoco = -1;
+    g_opz_n = 0;
+    g_load_sparato = 0;
+    g_tab_link = -1;
+    g_tab_rif  = -1;
+
+    /* ! ANCHE I PEZZI DELL'IMPAGINAZIONE, e da adesso non e' facoltativo. Il
+     * gancio dell'attesa ridisegna mentre si scarica, e fra qui e impagina()
+     * c'e' esegui_script(): se uno script fa una richiesta SINCRONA — e la
+     * forma `open(m, u, false)` esiste apposta — si ridisegnerebbe con i pezzi
+     * della pagina di PRIMA sopra l'albero di ADESSO, cioe' con testi presi
+     * da nodi che non sono piu' quelli. Meglio un'area vuota per un istante. */
+    g_pez_n = 0;
+
+    /* ! E GLI SLOT SI DICHIARANO DI NESSUNO, o il primo giro sulla pagina
+     * NUOVA troverebbe li' dentro i numeri di nodo della pagina VECCHIA. Sono
+     * indici in un albero che non esiste piu': uno di loro puo' benissimo
+     * combaciare per caso con un nodo di adesso, e allora il campo si
+     * riempirebbe con quel che era stato scritto su un altro sito. */
+    {
+        int q;
+
+        for (q = 0; q < CTRL_MAX; q++) g_ctrl[q].nodo = -1;
+    }
+
+    /* ! GLI SCRIPT PRIMA DEI FOGLI DI STILE E DELL'IMPAGINAZIONE. Il perche'
+     * sta accanto a esegui_script: uno script che costruisce meta' della
+     * pagina deve aver finito prima che si decida come impaginarla. */
+    esegui_script();
+
+    /* ! `DOMContentLoaded` HERE: the synchronous scripts are done, the tree is
+     * the one they left, and layout has not started — which is when a real
+     * browser fires it. It is the entry point of nearly every script on the
+     * web; until today nobody fired it, so those scripts never started. */
+    if (g_dom) {
+        ExJsErrore err;
+
+        memset(&err, 0, sizeof(err));
+        exdom_evento(g_dom, g_doc.radice, "DOMContentLoaded", &err);
+        js_grida(&err);
+        esegui_script_nuovi();
+    }
+
+    raccogli_css();
+    impagina();
+    g_vista = html_versione(&g_doc);
+
+    /* After g_vista is set: a `load` handler's changes are then seen by
+     * rifai_se_cambiato() as a new version, and laid out once. */
+    prova_a_sparare_load();
+}
+
+/* =============================================================================
+ * IFRAMES — a view drawn inside a rectangle of the page
+ *
+ * ! THE MODEL IS GECKO'S nsSubDocumentFrame (24 September 2026). The layout
+ * registers each <iframe> and reserves its rectangle (browser_estranei.c);
+ * here each one gets a view of its own — tree, pieces, controls, engine — and
+ * is loaded, drawn, clicked and pumped with that view current. The view is
+ * allocated once and reused: free() gives nothing back on EX-OS.
+ *
+ * ! TWO GEOMETRIES, AND THEY MUST NOT MIX. An iframe's view is laid out with
+ * area_*() = (x of the rectangle, 0, w, h), always: its pieces have y from 0.
+ * It is DRAWN where the rectangle is on the screen, which moves with the
+ * page's scrolling: cornice_schermo() sets g_scorri to -y and the drawing cut
+ * (tx..th) to the visible part, just before drawing or hit-testing. The
+ * layout never reads g_scorri, so a relayout started by a click inside the
+ * iframe still lays out from 0.
+ *
+ * ! NOT YET: iframes inside iframes (an empty rectangle), images inside an
+ * iframe, scrolling inside it, Tab into it, forms posting from it.
+ * ============================================================================= */
+static Vista *g_corn_v[CORNICI_MAX];
+static void   clic_pagina(int x, int y);
+
+static Vista *cornice_vista(int k)
+{
+    Vista *v;
+
+    if (k < 0 || k >= CORNICI_MAX) return 0;
+    if (g_corn_v[k]) return g_corn_v[k];
+    v = (Vista *)malloc(sizeof(Vista));
+    if (!v) return 0;
+    /* ! ONLY THE SMALL FIELDS: a memset of the whole view would touch 4.7 MB
+     * that the iframe's page may never use. The big vectors are filled by
+     * html_prepara and the layout before anyone reads them. */
+    v->imp.pez_n = v->imp.link_n = v->imp.sfondi_n = 0;
+    v->imp.gen_n = 0;
+    v->imp.scorri = v->imp.altezza = 0;
+    v->imp.doc.nodi_n = 0;
+    v->est.ctrl_n = v->est.opz_n = v->est.mod_n = v->est.imm_n = 0;
+    v->est.imm_px_negato = 0;
+    v->est.corn_n = 0;
+    v->pagina_n = 0;
+    v->ancora[0] = v->qui[0] = '\0';
+    v->load_sparato = 0;
+    v->js = 0; v->dom = 0; v->js_mem = 0; v->dom_mem = 0;
+    v->vista = 0; v->script_n = 0;
+    vista_prepara(v);
+    v->imp.cornice = 1;
+    g_corn_v[k] = v;
+    return v;
+}
+
+static void cornice_impaginazione(Vista *f, const Cornice *c)
+{
+    f->imp.cornice = 1;
+    f->imp.ax = c->lx;
+    f->imp.ay = 0;
+    f->imp.aw = c->w;
+    f->imp.ah = c->h;
+}
+
+/* With the PARENT current: set the iframe's drawing geometry for a rectangle
+ * whose top-left is (x, y) on screen. Returns 0 if none of it is visible. */
+static int cornice_schermo(Vista *f, int x, int y, int w, int h)
+{
+    int y0 = y, y1 = y + h;
+
+    if (y0 < area_y())            y0 = area_y();
+    if (y1 > area_y() + area_h()) y1 = area_y() + area_h();
+    if (y1 <= y0) return 0;
+    f->imp.tx = x;  f->imp.tw = w;
+    f->imp.ty = y0; f->imp.th = y1 - y0;
+    f->imp.scorri = -y;
+    return 1;
+}
+
+/* The page is leaving: its iframes' documents and engines go with it. */
+static void cornici_chiudi(void)
+{
+    Vista *p = g_v;
+    int    k;
+
+    for (k = 0; k < CORNICI_MAX; k++) {
+        if (!g_corn_v[k]) continue;
+        vista_usa(g_corn_v[k]);
+        motore_chiudi();
+        g_pez_n = 0;
+        g_ctrl_n = 0;
+        vista_usa(p);
+    }
+    g_principale.est.corn_n = 0;
+}
+
+/* Loads iframe k of the page, with its view current for the whole time. */
+static void cornice_carica(int k)
+{
+    Vista       *p = g_v, *f;
+    Cornice     *c = &g_ve->corn[k];
+    char         url[EXHTTP_URL_MAX];
+    ExHttpEsito  e;
+    unsigned int n = 0;
+    c->stato = 2;                           /* until it has worked */
+    if (p != &g_principale || g_in_rete) return;
+    f = cornice_vista(k);
+    if (!f) return;
+
+    url[0] = '\0';
+    if (c->src[0] && strcmp(c->src, "about:blank") != 0 &&
+        !risolvi(c->src, url, sizeof(url))) return;
+
+    vista_usa(f);
+    cornice_impaginazione(f, c);
+    memset(&e, 0, sizeof(e));
+    g_da_postare = 0;
+
+    if (!url[0]) {
+        strcpy(e.finale, "about:blank");
+    } else if (e_locale(url)) {
+        if (!locale_leggi(url, g_pagina, sizeof(g_pagina), &n, &e.troncata)) goto fine;
+        e.byte = n;
+        strncpy(e.finale, url, sizeof(e.finale) - 1);
+    } else if (!prendi_dalla_rete(url, &e) || !e_tipo_da_pagina(e.tipo)) {
+        printf("exbrowser: iframe %s: %s\n", url, e.errore[0] ? e.errore : "non e' una pagina");
+        goto fine;
+    }
+    e.finale[sizeof(e.finale) - 1] = '\0';
+    g_pagina_n = e.byte;
+    strncpy(g_qui, e.finale, sizeof(g_qui) - 1);
+    g_qui[sizeof(g_qui) - 1] = '\0';
+
+    documento_nuovo(e.byte);
+    c->stato = 1;
+fine:
+    g_da_postare = 0;           /* see vai(): a form in an iframe is not sent */
+    vista_usa(p);
+}
+
+/* The page's iframes still to load, now that the page is laid out: each one
+ * needs the x of its rectangle before it can lay out its own document. */
+static void cornici_carica(void)
+{
+    int k, i, fatto = 0;
+
+    if (g_v != &g_principale) return;
+    for (k = 0; k < g_ve->corn_n; k++) {
+        if (g_ve->corn[k].stato != 0) continue;
+        for (i = 0; i < g_pez_n; i++)
+            if (g_pez[i].rif == EST_CORN(k)) break;
+        if (i == g_pez_n) continue;             /* not laid out: hidden */
+        g_ve->corn[k].lx = g_pez[i].x;
+        cornice_carica(k);
+        fatto = 1;
+    }
+    if (fatto) disegna();
+}
+
+static int cornici_da_caricare(void)
+{
+    VistaImp *pi = &g_principale.imp;
+    int       k, i;
+
+    for (k = 0; k < g_principale.est.corn_n; k++) {
+        if (g_principale.est.corn[k].stato != 0) continue;
+        /* only one that is laid out will load: a hidden one must not keep
+         * the wake-up on for ever */
+        for (i = 0; i < pi->pez_n; i++)
+            if (pi->pez[i].rif == EST_CORN(k)) return 1;
+    }
+    return 0;
+}
+
+/* Called by the layout's client while the PARENT draws its pieces. */
+void cornice_disegna(int k, int x, int y, int w, int h)
+{
+    Vista   *p = g_v, *f = (k >= 0 && k < CORNICI_MAX) ? g_corn_v[k] : 0;
+    Cornice *c = &g_ve->corn[k];
+    int      q;
+
+    /* the border, cut to the parent's area as everything else is */
+    for (q = y - 1; q <= y + h; q++) {
+        if (q < area_y() || q >= area_y() + area_h()) continue;
+        ex_riempi(g_f, x - 1, q, 1, 1, 0x00808080);
+        ex_riempi(g_f, x + w, q, 1, 1, 0x00808080);
+        if (q == y - 1 || q == y + h) ex_riempi(g_f, x - 1, q, w + 2, 1, 0x00808080);
+    }
+    if (p != &g_principale || !f || c->stato != 1) return;
+
+    /* the rectangle moved sideways: its document lays out again */
+    if (x != c->lx) {
+        c->lx = x;
+        vista_usa(f);
+        cornice_impaginazione(f, c);
+        impagina();
+        g_vista = html_versione(&g_doc);
+        vista_usa(p);
+    }
+    if (!cornice_schermo(f, x, y, w, h)) return;
+    vista_usa(f);
+    disegna_contenuto();
+    vista_usa(p);
+}
+
+/* A click that landed on an iframe's rectangle: the iframe's document hears
+ * it, with the same clic_pagina() as the page. Returns 1 if it was one. */
+static int cornice_clic(int x, int y)
+{
+    Vista *p = g_v, *f;
+    int    i, k;
+
+    if (p != &g_principale) return 0;
+    for (i = 0; i < g_pez_n; i++) {
+        int py = g_pez[i].y - g_scorri;
+
+        if (!EST_E_CORN(g_pez[i].rif)) continue;
+        if (x < g_pez[i].x || x >= g_pez[i].x + g_pez[i].w ||
+            y < py || y >= py + g_pez[i].h) continue;
+        k = EST_CHI(g_pez[i].rif);
+        f = (k < CORNICI_MAX) ? g_corn_v[k] : 0;
+        if (!f || g_ve->corn[k].stato != 1) return 1;
+        if (!cornice_schermo(f, g_pez[i].x, py, g_pez[i].w, g_pez[i].h)) return 1;
+        vista_usa(f);
+        clic_pagina(x, y);
+        vista_usa(p);
+        disegna();
+        return 1;
+    }
+    return 0;
+}
+
+/* The iframe's document wants to go elsewhere (a link, location.href): the
+ * iframe goes, not the page. */
+static void cornice_vai(const char *url)
+{
+    Vista *f = g_v;
+    int    k;
+
+    for (k = 0; k < CORNICI_MAX; k++) if (g_corn_v[k] == f) break;
+    if (k == CORNICI_MAX) return;
+    vista_usa(&g_principale);
+    strncpy(g_ve->corn[k].src, url, EXHTTP_URL_MAX - 1);
+    g_ve->corn[k].src[EXHTTP_URL_MAX - 1] = '\0';
+    cornice_carica(k);
+    disegna();
+    vista_usa(f);
+}
+
+/* One EXM_TEMPO turn for every loaded iframe: timers, network, scripts
+ * added, load. Returns 1 if any of them is still waiting for something. */
+static int cornici_pompa(void)
+{
+    Vista *p = g_v;
+    int    k, aspetta = 0;
+
+    if (p != &g_principale) return 0;
+    for (k = 0; k < g_ve->corn_n && k < CORNICI_MAX; k++) {
+        Vista *f = g_corn_v[k];
+
+        if (!f || g_principale.est.corn[k].stato != 1) continue;
+        vista_usa(f);
+        cornice_impaginazione(f, &g_principale.est.corn[k]);
+        if (g_js) {
+            ctrl_al_dom();
+            exjs_pompa(g_js, uptime_ms());
+            if (!g_in_rete) exdom_rete_pompa(g_dom);
+            rifai_se_cambiato();
+            dopo_gli_script();
+            prova_a_sparare_load();
+            segui_location();
+            if (g_js && (exjs_lavori_in_attesa(g_js) || exdom_rete_in_attesa(g_dom)))
+                aspetta = 1;
+        }
+        vista_usa(p);
+    }
+    return aspetta;
+}
+
+void disegna_tutto(void)
+{
+    Vista *prima = g_v;
+
+    vista_usa(&g_principale);
+    disegna();
+    vista_usa(prima);
+}
+
 static void vai(const char *url, int in_storia, int usa_cache)
 {
     ExHttpEsito  e;
@@ -3513,6 +4106,14 @@ static void vai(const char *url, int in_storia, int usa_cache)
     int          da_cache = 0;
 
     if (!url || !url[0]) { g_da_postare = 0; return; }
+
+    /* From inside an iframe (a link, location.href, a form): the iframe
+     * goes, not the page. A form posted from an iframe is not sent yet. */
+    if (g_v != &g_principale) {
+        cornice_vai(url);
+        g_da_postare = 0;
+        return;
+    }
 
     /* ! L'ANCORA SI STACCA PRIMA DI CHIEDERE LA PAGINA, e non e' un ritocco:
      * «#punto» non fa parte dell'indirizzo del documento — un server non lo
@@ -3690,68 +4291,7 @@ static void vai(const char *url, int in_storia, int usa_cache)
     /* ! LE IMMAGINI DELLA PAGINA DI PRIMA SE NE VANNO QUI, prima che l'albero
      * cambi: dopo html_analizza gli indici dei nodi sono di un altro documento
      * e non vogliono piu' dire niente. */
-    imm_libera_tutte();
-
-    /* ! E CON LORO SE NE VA IL MOTORE, per lo stesso identico motivo: un
-     * contesto JavaScript e' pieno di involucri che sono indici in QUESTO
-     * albero, e fra un istante l'albero e' un altro. Tenerlo aperto vorrebbe
-     * dire uno script della pagina di prima che tocca i nodi di quella di
-     * adesso. */
-    motore_chiudi();
-
-    html_prepara(&g_doc, g_nodi, NODI_MAX, g_attr, ATTR_MAX,
-                 g_arena, ARENA_MAX);
-    html_analizza(&g_doc, (const char *)g_pagina, e.byte);
-
-    g_scorri = 0;
-    g_ctrl_n = 0;
-    g_ctrl_fuoco = -1;
-    g_opz_n = 0;
-    g_load_sparato = 0;
-
-    /* ! ANCHE I PEZZI DELL'IMPAGINAZIONE, e da adesso non e' facoltativo. Il
-     * gancio dell'attesa ridisegna mentre si scarica, e fra qui e impagina()
-     * c'e' esegui_script(): se uno script fa una richiesta SINCRONA — e la
-     * forma `open(m, u, false)` esiste apposta — si ridisegnerebbe con i pezzi
-     * della pagina di PRIMA sopra l'albero di ADESSO, cioe' con testi presi
-     * da nodi che non sono piu' quelli. Meglio un'area vuota per un istante. */
-    g_pez_n = 0;
-
-    /* ! E GLI SLOT SI DICHIARANO DI NESSUNO, o il primo giro sulla pagina
-     * NUOVA troverebbe li' dentro i numeri di nodo della pagina VECCHIA. Sono
-     * indici in un albero che non esiste piu': uno di loro puo' benissimo
-     * combaciare per caso con un nodo di adesso, e allora il campo si
-     * riempirebbe con quel che era stato scritto su un altro sito. */
-    {
-        int q;
-
-        for (q = 0; q < CTRL_MAX; q++) g_ctrl[q].nodo = -1;
-    }
-
-    /* ! GLI SCRIPT PRIMA DEI FOGLI DI STILE E DELL'IMPAGINAZIONE. Il perche'
-     * sta accanto a esegui_script: uno script che costruisce meta' della
-     * pagina deve aver finito prima che si decida come impaginarla. */
-    esegui_script();
-
-    /* ! `DOMContentLoaded` HERE: the synchronous scripts are done, the tree is
-     * the one they left, and layout has not started — which is when a real
-     * browser fires it. It is the entry point of nearly every script on the
-     * web; until today nobody fired it, so those scripts never started. */
-    if (g_dom) {
-        ExJsErrore err;
-
-        memset(&err, 0, sizeof(err));
-        exdom_evento(g_dom, g_doc.radice, "DOMContentLoaded", &err);
-        js_grida(&err);
-    }
-
-    raccogli_css();
-    impagina();
-    g_vista = html_versione(&g_doc);
-
-    /* After g_vista is set: a `load` handler's changes are then seen by
-     * rifai_se_cambiato() as a new version, and laid out once. */
-    prova_a_sparare_load();
+    documento_nuovo(e.byte);
 
     /* ! ADESSO CHE I PEZZI CI SONO, si puo' saltare al punto chiesto. Prima di
      * impagina() non c'era niente su cui misurare un'altezza; dopo, il salto
@@ -3844,6 +4384,9 @@ static void vai(const char *url, int in_storia, int usa_cache)
     }
     dico(msg);
     g_da_postare = 0;
+
+    /* The iframes, now that the page is laid out and shown. */
+    cornici_carica();
 
     /* ! IN FONDO, E NON PRIMA: se uno script della pagina appena caricata ha
      * chiesto un altro indirizzo, si va li' adesso — con l'albero, i controlli
@@ -5060,6 +5603,240 @@ static void barra_mosso(int y)
                    (long)(corsa - ph)));
 }
 
+/* =============================================================================
+ * A CLICK ON THE PAGE — from the mouse, or from Enter/Space on a Tab stop
+ *
+ * ! ONE FUNCTION FOR BOTH, so the keyboard cannot take a different road from
+ * the mouse: same controls, same JavaScript click, same preventDefault. It was
+ * the body of EXM_MOUSE_GIU until 23 September 2026.
+ * ============================================================================= */
+static void clic_pagina(int x, int y)
+{
+    int k;
+
+    /* An iframe's rectangle: its own document hears the click. */
+    if (cornice_clic(x, y)) return;
+
+
+    /* ! I CONTROLLI PRIMA DEI COLLEGAMENTI. Un `<input>` dentro un `<a>`
+     * capita, e in quel caso vince il controllo: chi clicca dentro una
+     * casella vuole scriverci, non essere portato altrove. */
+    k = ctrl_sotto(x, y);
+    if (k >= 0) {
+        Ctrl *c = &g_ctrl[k];
+
+        switch (c->tipo) {
+        case CTRL_SPUNTA:
+            /* The box flips, then the page hears the click; a
+             * preventDefault() flips it back, which is what Firefox does. */
+            c->acceso = (unsigned char)!c->acceso;
+            g_ctrl_fuoco = -1;
+            if (!clic_al_documento(x, y)) c->acceso = (unsigned char)!c->acceso;
+            if (segui_location()) return;
+            break;
+
+        case CTRL_RADIO: {
+            /* ! UNO SOLO ACCESO PER GRUPPO, E IL GRUPPO E' IL `name`. Si
+             * spengono le scelte che portano lo STESSO nome, non tutte
+             * quelle della pagina: un modulo con «spedizione» e
+             * «pagamento» ha due gruppi, e spegnerli insieme renderebbe
+             * impossibile rispondere a tutt'e due. */
+            int j;
+
+            for (j = 0; j < g_ctrl_n; j++)
+                if (g_ctrl[j].tipo == CTRL_RADIO &&
+                    confronta_nome(g_ctrl[j].nome, c->nome))
+                    g_ctrl[j].acceso = 0;
+            c->acceso = 1;
+            g_ctrl_fuoco = -1;
+            break;
+        }
+
+        case CTRL_PULSANTE: {
+            int genere = genere_pulsante(c);
+
+            g_ctrl_fuoco = -1;
+            /* ! THE PAGE HEARS THE CLICK FIRST, then the button does its
+             * job — as in Firefox. Until 23 September 2026 this branch sent
+             * the form and returned before clic_al_documento(): a
+             * <button onclick=...> never ran its handler, and
+             * preventDefault() could not stop a submit. */
+            if (!clic_al_documento(x, y)) { segui_location(); disegna(); return; }
+            if (segui_location()) return;
+            /* ! «AZZERA» AZZERA E «button» NON FA NIENTE. Prima mandavano
+             * tutt'e due il modulo: il primo faceva il contrario di quel
+             * che promette, e il secondo mandava un modulo che nessuno
+             * voleva mandare — quel tipo esiste per far girare uno script,
+             * e lo script il suo clic l'ha gia' avuto da
+             * clic_al_documento. */
+            if (genere == PULS_AZZERA) { azzera_modulo(c->modulo); return; }
+            if (genere == PULS_NULLA)  { disegna(); return; }
+            manda_modulo(c->modulo, k);
+            return;
+        }
+
+        case CTRL_SCELTA: {
+            /* L'elenco si apre sotto al controllo, dove ci si aspetta. */
+            int scelto = tendina(k, x, y + 20);
+
+            if (scelto >= 0 && scelto < c->opz_n) {
+                int q = 0;
+                const char *o = g_opz[c->opz_primo + scelto];
+
+                c->opz_ora = (short)scelto;
+                while (o[q] && q < CTRL_VAL_MAX - 1) { c->valore[q] = o[q]; q++; }
+                c->valore[q] = '\0';
+            }
+            g_ctrl_fuoco = -1;
+            break;
+        }
+
+        default:
+            /* =========================================================
+             * ! IL FUOCO SI TOGLIE ALLA CASELLA DELL'INDIRIZZO, o i tasti
+             * non arrivano MAI qui. E' il difetto vero dietro la voce
+             * «la <textarea> non ha un cursore»: non era il cursore a
+             * mancare, erano i TASTI. `ex_fuoco(g_url)` all'avvio da il
+             * fuoco a un controllo del toolkit, e da quel momento ogni
+             * tasto e' suo — i controlli della PAGINA non sono finestre
+             * del toolkit, quindi non possono averlo e non ricevevano
+             * niente. Si scriveva nella barra dell'indirizzo credendo di
+             * scrivere nel modulo.
+             *
+             * Dandolo alla finestra si toglie a ogni suo figlio, e i tasti
+             * tornano al nostro gestore, che sa dei controlli disegnati.
+             * ========================================================= */
+            ex_fuoco_via(g_f);
+            g_ctrl_fuoco = k;
+            break;
+        }
+        disegna();
+        return;
+    }
+
+    /* Un clic fuori da ogni casella toglie il fuoco: e' quello che si
+     * aspetta chi ha finito di scrivere. */
+    if (g_ctrl_fuoco >= 0) { g_ctrl_fuoco = -1; disegna(); }
+
+    /* ! IL DOCUMENTO SENTE IL CLIC PRIMA CHE IL BROWSER LO USI, ed e'
+     * l'ordine giusto: preventDefault() esiste proprio per impedire a un
+     * collegamento di essere seguito, e non potrebbe farlo se il
+     * collegamento fosse gia' stato seguito. */
+    /* ! ANCHE SE IL GESTORE HA DETTO «FERMO» SI GUARDA DOVE VUOLE
+     * ANDARE, ed e' l'accoppiata piu' comune del web: `onclick` chiama
+     * preventDefault() per non seguire l'href e poi assegna
+     * `location.href` per andare da un'altra parte. Guardare solo quando
+     * il clic prosegue vorrebbe dire perdere proprio quel caso. */
+    if (!clic_al_documento(x, y)) { segui_location(); return; }
+    /* Se lo script ha portato altrove, il collegamento sotto il dito
+     * appartiene a una pagina che non c'e' piu': non lo si segue. */
+    if (segui_location()) return;
+
+    k = link_sotto(x, y);
+    if (k >= 0) segui(k);
+}
+
+/* =============================================================================
+ * TAB — from link to link and field to field, in document order
+ *
+ * ! THE MODEL IS FIREFOX. Tab walks the links and the form controls in the
+ * order they come in the document (here: the order of the laid-out pieces,
+ * which for this layout is the same thing); Shift+Tab walks back; past the
+ * last stop the focus goes back to the address bar. Enter on a stop, and
+ * Space on a control, click it through clic_pagina() — the mouse's own road.
+ * A text field reached by Tab takes the keys at once, as in Firefox.
+ *
+ * ! NOT YET: tabindex, and hidden elements that the layout still shows (see
+ * diario_browser.txt, section 3 — until display:none works, a hidden link is
+ * a stop like any other).
+ * ============================================================================= */
+static int fermata_di(int i, int *link, int *rif)
+{
+    if (g_pez[i].link >= 0) { *link = g_pez[i].link; *rif = -1; return 1; }
+    if (EST_E_CTRL(g_pez[i].rif) &&
+        g_ctrl[EST_CHI(g_pez[i].rif)].tipo != CTRL_NASCOSTO) {
+        *link = -1; *rif = g_pez[i].rif; return 1;
+    }
+    return 0;
+}
+
+static int tab_indice(void)
+{
+    int i, l, r;
+
+    if (g_tab_link < 0 && g_tab_rif < 0) return -1;
+    for (i = 0; i < g_pez_n; i++)
+        if (fermata_di(i, &l, &r) && l == g_tab_link && r == g_tab_rif) return i;
+    return -1;
+}
+
+static int pezzo_alto(int i)
+{
+    return (g_pez[i].rif >= 0) ? g_pez[i].h : ex_font_altezza(g_pez[i].font);
+}
+
+/* Moves the focus one stop in `verso` (+1 or -1). Returns 0 when there is no
+ * stop left that way: the focus has gone back to the address bar. */
+static int tab_muovi(int verso)
+{
+    int i, l, r, da;
+
+    /* A field clicked with the mouse is where Tab starts from. */
+    if (g_tab_link < 0 && g_tab_rif < 0 && g_ctrl_fuoco >= 0) {
+        g_tab_rif = EST_CTRL(g_ctrl_fuoco);
+    }
+    da = tab_indice();
+    if (da < 0) da = (verso > 0) ? -1 : g_pez_n;
+
+    for (i = da + verso; i >= 0 && i < g_pez_n; i += verso) {
+        if (!fermata_di(i, &l, &r)) continue;
+        if (l == g_tab_link && r == g_tab_rif) continue;   /* same link, next word */
+
+        g_tab_link = l;
+        g_tab_rif  = r;
+        g_ctrl_fuoco = -1;
+        if (r >= 0) {
+            Ctrl *c = &g_ctrl[EST_CHI(r)];
+
+            if (c->tipo == CTRL_TESTO || c->tipo == CTRL_AREA) {
+                g_ctrl_fuoco = EST_CHI(r);
+                c->cur = (short)strlen(c->valore);
+                c->sel = -1;
+            }
+        }
+
+        /* Bring it into view. ! g_pez[].y is in WINDOW coordinates: to put a
+         * piece at the top one scrolls to y - area_y(). */
+        {
+            int y = g_pez[i].y - g_scorri, h = pezzo_alto(i);
+
+            if (y < area_y()) scorri_a(g_pez[i].y - area_y() - 8);
+            else if (y + h > area_y() + area_h())
+                scorri_a(g_pez[i].y + h - area_y() - area_h() + 8);
+        }
+        ex_fuoco_via(g_f);
+        disegna();
+        return 1;
+    }
+
+    g_tab_link = -1;
+    g_tab_rif  = -1;
+    g_ctrl_fuoco = -1;
+    ex_fuoco(g_url);
+    disegna();
+    return 0;
+}
+
+/* Enter or Space on the stop: a click in the middle of its first piece. */
+static void tab_premi(void)
+{
+    int i = tab_indice();
+
+    if (i < 0) return;
+    clic_pagina(g_pez[i].x + (g_pez[i].w > 2 ? g_pez[i].w / 2 : 0),
+                g_pez[i].y - g_scorri + pezzo_alto(i) / 2);
+}
+
 static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
@@ -5136,11 +5913,17 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 
             while (k->valore[n]) n++;
 
-            /* Esc o Tab: si esce dalla casella, e il fuoco torna dov'era. */
-            if (c == 27 || c == '\t') {
+            /* Esc: si esce dalla casella, e il fuoco torna dov'era. */
+            if (c == 27) {
                 g_ctrl_fuoco = -1;
+                g_tab_link = g_tab_rif = -1;
                 ex_fuoco(g_url);
                 disegna();
+                return 0;
+            }
+            /* Tab: to the next stop, as in Firefox (see tab_muovi). */
+            if (c == '\t') {
+                tab_muovi((wp & KBD_MOD_SHIFT) ? -1 : 1);
                 return 0;
             }
 
@@ -5329,6 +6112,18 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
             if (c == 'h' || c == 'H') { vai_a_casa();   return 0; }
         }
 
+        /* Tab here means the toolkit let it go (ex_tab_contenuto): the
+         * address bar's controls are done, and the page's stops begin. */
+        if (c == '\t') { tab_muovi((wp & KBD_MOD_SHIFT) ? -1 : 1); return 0; }
+
+        /* Enter on a stop, or Space on a control: click it. Only when no
+         * toolkit control has the keys — otherwise Enter is the address bar's. */
+        if ((g_tab_link >= 0 || g_tab_rif >= 0) && ex_fuoco_chi(g_f) == 0 &&
+            (c == '\n' || c == '\r' || (c == ' ' && g_tab_rif >= 0))) {
+            tab_premi();
+            return 0;
+        }
+
         /* ! INVIO FA DUE COSE DIVERSE, E LA DIFFERENZA E' IL FUOCO. Nella
          * barra ci sono due caselle, e il messaggio del tasto non dice da
          * quale arrivi: la casella lascia passare Invio apposta, e chi ce
@@ -5367,8 +6162,11 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
      * ! E LA SVEGLIA SI SPEGNE QUANDO NON ASPETTA PIU' NESSUNO. Una pagina che
      * ha finito non ha motivo di svegliare il browser cinque volte al secondo
      * per sempre. */
-    case EXM_TEMPO:
+    case EXM_TEMPO: {
+        int aspetta = 0, cornici;
+
         if (g_js) {
+            ctrl_al_dom();
             exjs_pompa(g_js, uptime_ms());
 
             /* ! UNA RICHIESTA PER GIRO, E NON TUTTE QUELLE CHE ASPETTANO.
@@ -5389,125 +6187,34 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
              * handler that calls setTimeout has just queued new work. */
             prova_a_sparare_load();
 
-            if (!exjs_lavori_in_attesa(g_js) && !exdom_rete_in_attesa(g_dom))
-                ex_sveglia(g_f, 0);
+            aspetta = exjs_lavori_in_attesa(g_js) || exdom_rete_in_attesa(g_dom);
+        }
+
+        /* ! THE IFRAMES, EVERY TURN: their timers and network, then any new
+         * one a script has added. They run even if the page itself has no
+         * engine, and the wake-up goes off only when NOBODY waits. */
+        cornici = cornici_pompa();
+        cornici_carica();
+        if (!aspetta && !cornici && !cornici_da_caricare()) ex_sveglia(g_f, 0);
+
+        if (g_js) {
             /* Un `setTimeout` che cambia indirizzo e' il modo classico di
              * scrivere una redirezione: si guarda anche qui, non solo dopo
              * gli script della pagina. */
             segui_location();
         }
         return 0;
+    }
 
     case EXM_MOUSE_GIU: {
-        int x = EX_X(lp), y = EX_Y(lp), k;
+        int x = EX_X(lp), y = EX_Y(lp);
 
         if (barra_giu(x, y)) return 0;
-
-        /* ! I CONTROLLI PRIMA DEI COLLEGAMENTI. Un `<input>` dentro un `<a>`
-         * capita, e in quel caso vince il controllo: chi clicca dentro una
-         * casella vuole scriverci, non essere portato altrove. */
-        k = ctrl_sotto(x, y);
-        if (k >= 0) {
-            Ctrl *c = &g_ctrl[k];
-
-            switch (c->tipo) {
-            case CTRL_SPUNTA:
-                c->acceso = (unsigned char)!c->acceso;
-                g_ctrl_fuoco = -1;
-                break;
-
-            case CTRL_RADIO: {
-                /* ! UNO SOLO ACCESO PER GRUPPO, E IL GRUPPO E' IL `name`. Si
-                 * spengono le scelte che portano lo STESSO nome, non tutte
-                 * quelle della pagina: un modulo con «spedizione» e
-                 * «pagamento» ha due gruppi, e spegnerli insieme renderebbe
-                 * impossibile rispondere a tutt'e due. */
-                int j;
-
-                for (j = 0; j < g_ctrl_n; j++)
-                    if (g_ctrl[j].tipo == CTRL_RADIO &&
-                        confronta_nome(g_ctrl[j].nome, c->nome))
-                        g_ctrl[j].acceso = 0;
-                c->acceso = 1;
-                g_ctrl_fuoco = -1;
-                break;
-            }
-
-            case CTRL_PULSANTE: {
-                int genere = genere_pulsante(c);
-
-                g_ctrl_fuoco = -1;
-                /* ! «AZZERA» AZZERA E «button» NON FA NIENTE. Prima mandavano
-                 * tutt'e due il modulo: il primo faceva il contrario di quel
-                 * che promette, e il secondo mandava un modulo che nessuno
-                 * voleva mandare — quel tipo esiste per far girare uno script,
-                 * e lo script il suo clic l'ha gia' avuto da
-                 * clic_al_documento. */
-                if (genere == PULS_AZZERA) { azzera_modulo(c->modulo); return 0; }
-                if (genere == PULS_NULLA)  { disegna(); return 0; }
-                manda_modulo(c->modulo, k);
-                return 0;
-            }
-
-            case CTRL_SCELTA: {
-                /* L'elenco si apre sotto al controllo, dove ci si aspetta. */
-                int scelto = tendina(k, x, y + 20);
-
-                if (scelto >= 0 && scelto < c->opz_n) {
-                    int q = 0;
-                    const char *o = g_opz[c->opz_primo + scelto];
-
-                    c->opz_ora = (short)scelto;
-                    while (o[q] && q < CTRL_VAL_MAX - 1) { c->valore[q] = o[q]; q++; }
-                    c->valore[q] = '\0';
-                }
-                g_ctrl_fuoco = -1;
-                break;
-            }
-
-            default:
-                /* =========================================================
-                 * ! IL FUOCO SI TOGLIE ALLA CASELLA DELL'INDIRIZZO, o i tasti
-                 * non arrivano MAI qui. E' il difetto vero dietro la voce
-                 * «la <textarea> non ha un cursore»: non era il cursore a
-                 * mancare, erano i TASTI. `ex_fuoco(g_url)` all'avvio da il
-                 * fuoco a un controllo del toolkit, e da quel momento ogni
-                 * tasto e' suo — i controlli della PAGINA non sono finestre
-                 * del toolkit, quindi non possono averlo e non ricevevano
-                 * niente. Si scriveva nella barra dell'indirizzo credendo di
-                 * scrivere nel modulo.
-                 *
-                 * Dandolo alla finestra si toglie a ogni suo figlio, e i tasti
-                 * tornano al nostro gestore, che sa dei controlli disegnati.
-                 * ========================================================= */
-                ex_fuoco_via(g_f);
-                g_ctrl_fuoco = k;
-                break;
-            }
-            disegna();
-            return 0;
-        }
-
-        /* Un clic fuori da ogni casella toglie il fuoco: e' quello che si
-         * aspetta chi ha finito di scrivere. */
-        if (g_ctrl_fuoco >= 0) { g_ctrl_fuoco = -1; disegna(); }
-
-        /* ! IL DOCUMENTO SENTE IL CLIC PRIMA CHE IL BROWSER LO USI, ed e'
-         * l'ordine giusto: preventDefault() esiste proprio per impedire a un
-         * collegamento di essere seguito, e non potrebbe farlo se il
-         * collegamento fosse gia' stato seguito. */
-        /* ! ANCHE SE IL GESTORE HA DETTO «FERMO» SI GUARDA DOVE VUOLE
-         * ANDARE, ed e' l'accoppiata piu' comune del web: `onclick` chiama
-         * preventDefault() per non seguire l'href e poi assegna
-         * `location.href` per andare da un'altra parte. Guardare solo quando
-         * il clic prosegue vorrebbe dire perdere proprio quel caso. */
-        if (!clic_al_documento(x, y)) { segui_location(); return 0; }
-        /* Se lo script ha portato altrove, il collegamento sotto il dito
-         * appartiene a una pagina che non c'e' piu': non lo si segue. */
-        if (segui_location()) return 0;
-
-        k = link_sotto(x, y);
-        if (k >= 0) { segui(k); return 0; }
+        /* A click moves the focus where it lands: the Tab stop is forgotten,
+         * a text field clicked takes it (clic_pagina does that). */
+        g_tab_link = -1;
+        g_tab_rif  = -1;
+        clic_pagina(x, y);
         return 0;
     }
 
@@ -5537,6 +6244,7 @@ int main(int argc, char **argv)
      * ignora moduli e immagini — che e' cio' che deve fare quando il cliente
      * non c'e', ma non e' un navigatore. Vedi browser_vista.h. */
     vista_cliente(&g_estranei);
+    vista_prepara(&g_principale);
 
     g_f = ex_crea("finestra", "EXBrowser", EX_TITOLO | EX_BORDO | EX_CHIUDI,
                   EX_AUTO, EX_AUTO, FIN_W, FIN_H, 0, 0, proc);
@@ -5652,6 +6360,8 @@ int main(int argc, char **argv)
     exhttp_passo(rete_a_che_punto, 0);
     if (!g_home[0]) home_predefinita();
 
+    /* Tab past the bar's last control goes into the page (tab_muovi). */
+    ex_tab_contenuto(g_f, 1);
     ex_fuoco(g_url);
     dico("un indirizzo a sinistra, delle parole in \"Cerca\", e Invio.");
     ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);

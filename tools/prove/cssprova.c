@@ -10,9 +10,10 @@ static HtmlAttr  g_attr[256];
 static char      g_arena[16384];
 static HtmlDoc   g_doc;
 
-static CssRegola g_reg[128];
-static CssDich   g_dich[512];
-static char      g_carena[8192];
+static CssRegola g_reg[8192];
+static CssPezzo  g_pez[16384];
+static CssDich   g_dich[8192];
+static char      g_carena[262144];
 static CssFoglio g_fog;
 
 static int falliti = 0, fatti = 0;
@@ -48,7 +49,7 @@ static void carica(const char *html, const char *css)
 {
     html_prepara(&g_doc, g_nodi, 512, g_attr, 256, g_arena, sizeof(g_arena));
     html_analizza(&g_doc, html, (unsigned int)strlen(html));
-    css_prepara(&g_fog, g_reg, 128, g_dich, 512, g_carena, sizeof(g_carena));
+    css_prepara(&g_fog, g_reg, 8192, g_pez, 16384, g_dich, 8192, g_carena, sizeof(g_carena));
     if (css) css_analizza(&g_fog, css, (unsigned int)strlen(css), CSS_ORIGINE_FOGLIO);
 }
 
@@ -128,12 +129,16 @@ int main(void)
     printf("\n=== quello che si SCARTA invece di indovinare ===\n");
     carica("<div><span><p>x</p></span></div>", "div > p { color: red }");
     stile_di(trova("p"), &s);
-    ok("\">\" scarta la regola, non la tratta da discendenza",
+    ok("\">\" e' figlio, non discendente: il nipote non si colora",
        s.colore == CSS_NIENTE);
     carica("<a><b><c><d><p>x</p></d></c></b></a>",
            "a b c d p { color: red }");
     stile_di(trova("p"), &s);
-    ok("un selettore piu' lungo del tetto si scarta", s.colore == CSS_NIENTE);
+    ok("cinque pezzi si applicano (il tetto era 4, adesso 8)", s.colore == 0xFFFF0000u);
+    carica("<a><b><c><d><e><f><g><h><p>x</p></h></g></f></e></d></c></b></a>",
+           "a b c d e f g h p { color: red }");
+    stile_di(trova("p"), &s);
+    ok("nove pezzi: oltre il tetto non si applica", s.colore == CSS_NIENTE);
 
     printf("\n=== l'ereditarieta' ===\n");
     carica("<div><p>x</p></div>", "div { color: red; background-color: blue }");
@@ -181,7 +186,15 @@ int main(void)
         int i, k = 0;
         for (i = 0; i < 400; i++)
             k += sprintf(grosso + k, ".c%d { color: red } ", i);
-        carica("<p>x</p>", grosso);
+        /* its own small tables: the bench's are big enough for a real site */
+        static CssRegola rp[128];
+        static CssPezzo  pp[128];
+        static CssDich   dp[128];
+        static char      ap[4096];
+
+        carica("<p>x</p>", 0);
+        css_prepara(&g_fog, rp, 128, pp, 128, dp, 128, ap, sizeof(ap));
+        css_analizza(&g_fog, grosso, (unsigned int)k, CSS_ORIGINE_FOGLIO);
         ok("un foglio che sfora si dichiara troncato", g_fog.troncato == 1);
     }
 
@@ -212,6 +225,98 @@ int main(void)
     carica("<p class='duetto'>x</p>", ".due { color: red }");
     stile_di(trova("p"), &s);
     ok("non basta il prefisso", s.colore == CSS_NIENTE);
+
+    printf("\n=== i selettori composti (24 settembre 2026) ===\n");
+    carica("<p class='a b'>x</p><p class='a'>y</p>", ".a.b { color: red }");
+    stile_di(trova_n("p", 0), &s); ok(".a.b su class='a b'", s.colore == 0xFFFF0000u);
+    stile_di(trova_n("p", 1), &s); ok(".a.b NON su class='a'", s.colore == CSS_NIENTE);
+
+    carica("<ul><li>1</li><li>2</li><li>3</li></ul>", "ul > li { color: red }");
+    stile_di(trova_n("li", 1), &s); ok("ul > li", s.colore == 0xFFFF0000u);
+
+    carica("<div><span><p>x</p></span></div><div><p>y</p></div>", "div > p { color: red }");
+    stile_di(trova_n("p", 0), &s); ok("div > p: il nipote no", s.colore == CSS_NIENTE);
+    stile_di(trova_n("p", 1), &s); ok("div > p: il figlio si'", s.colore == 0xFFFF0000u);
+
+    carica("<h1>t</h1><p>a</p><p>b</p>", "h1 + p { color: red } h1 ~ p { font-weight: bold }");
+    stile_di(trova_n("p", 0), &s); ok("h1 + p: il primo dopo", s.colore == 0xFFFF0000u);
+    stile_di(trova_n("p", 1), &s); ok("h1 + p: il secondo no", s.colore == CSS_NIENTE);
+    ok("h1 ~ p: anche il secondo", s.grassetto == 1);
+
+    carica("<div class='x'><section><div><p>q</p></div></section></div>",
+           ".x > section div > p { color: red }");
+    stile_di(trova("p"), &s); ok("catena mista che vuole tornare indietro", s.colore == 0xFFFF0000u);
+
+    carica("<p hidden>a</p><p>b</p>", "[hidden] { display: none }");
+    stile_di(trova_n("p", 0), &s); ok("[hidden]", s.display == CSS_DISPLAY_NIENTE);
+    stile_di(trova_n("p", 1), &s); ok("[hidden] non su chi non ce l'ha", s.display != CSS_DISPLAY_NIENTE);
+
+    carica("<a href='https://x.it/a.pdf' lang='en-US' class='ciao mondo'>l</a>",
+           "a[href^='https'] { color: red } a[href$=\".pdf\"] { font-weight: bold } "
+           "a[lang|=en] { font-style: italic } a[class~=mondo] { text-align: center }");
+    stile_di(trova("a"), &s);
+    ok("[href^=https]", s.colore == 0xFFFF0000u);
+    ok("[href$=.pdf]", s.grassetto == 1);
+    ok("[lang|=en]", s.corsivo == 1);
+    ok("[class~=mondo]", s.allineamento == CSS_ALL_CENTRO);
+
+    carica("<input type='TEXT'>", "input[type='text' i] { color: red }");
+    stile_di(trova("input"), &s); ok("[type='text' i]", s.colore == 0xFFFF0000u);
+
+    carica("<ul><li>1</li><li>2</li><li>3</li><li>4</li></ul>",
+           "li:first-child { color: red } li:last-child { font-weight: bold } "
+           "li:nth-child(2n) { font-style: italic }");
+    stile_di(trova_n("li", 0), &s); ok(":first-child", s.colore == 0xFFFF0000u);
+    stile_di(trova_n("li", 3), &s); ok(":last-child", s.grassetto == 1);
+    ok(":nth-child(2n) sul quarto", s.corsivo == 1);
+    stile_di(trova_n("li", 2), &s); ok(":nth-child(2n) non sul terzo", s.corsivo != 1);
+
+    carica("<p class='a'>x</p><p>y</p>", "p:not(.a) { color: red }");
+    stile_di(trova_n("p", 0), &s); ok(":not(.a) esclude", s.colore == CSS_NIENTE);
+    stile_di(trova_n("p", 1), &s); ok(":not(.a) prende gli altri", s.colore == 0xFFFF0000u);
+
+    carica("<a href='#'>x</a>", "a:hover { color: red } a { font-weight: bold }");
+    stile_di(trova("a"), &s);
+    ok(":hover non vale qui", s.colore == CSS_NIENTE);
+    ok("...e non si porta via la regola dopo", s.grassetto == 1);
+
+    carica("<p>x</p>", "p, p::before { color: red }");
+    stile_di(trova("p"), &s); ok("p, p::before: p si colora", s.colore == 0xFFFF0000u);
+
+    carica("<p>x</p>", "p, p:sciocchezza { color: red }");
+    stile_di(trova("p"), &s); ok("una lista con un selettore NON valido vale niente", s.colore == CSS_NIENTE);
+
+    carica("<p title='a,b'>x</p>", "p[title='a,b'] { color: red }");
+    stile_di(trova("p"), &s); ok("la virgola fra virgolette non spezza", s.colore == 0xFFFF0000u);
+
+    carica("<div class='md:flex'>x</div>", ".md\\:flex { color: red }");
+    stile_di(trova("div"), &s); ok("l'escape: .md\\:flex", s.colore == 0xFFFF0000u);
+
+    carica("<div class='10'>x</div>", ".\\31 0 { color: red }");
+    stile_di(trova("div"), &s); ok("l'escape esadecimale: .\\31 0", s.colore == 0xFFFF0000u);
+
+    carica("<p id='x' class='y'>t</p>", "#x { color: red } .y.y.y { color: blue }");
+    stile_di(trova("p"), &s); ok("un id batte tre classi", s.colore == 0xFFFF0000u);
+    printf("\n=== l'indice delle regole ===\n");
+    carica("<p class='a b'>x</p>", ".a { color: red } .b { color: blue }");
+    stile_di(trova("p"), &s); ok("pari peso in due secchi: vince la scritta dopo", s.colore == 0xFF0000FFu);
+    carica("<p class='a b'>x</p>", ".b { color: blue } .a { color: red }");
+    stile_di(trova("p"), &s); ok("...e girandole vince l'altra", s.colore == 0xFFFF0000u);
+    carica("<p id='k' class='z'>x</p>", "p#k.z { color: red }");
+    stile_di(trova("p"), &s); ok("id e classe nello stesso pezzo", s.colore == 0xFFFF0000u);
+    {
+        static char grande[400000];
+        int q, n = 0;
+
+        for (q = 0; q < 6000; q++) n += sprintf(grande + n, ".c%d { color: blue } ", q);
+        n += sprintf(grande + n, ".vera { color: red }");
+        carica("<p class='vera'>x</p>", grande);
+        stile_di(trova("p"), &s);
+        ok("seimila regole, una sola vale", s.colore == 0xFFFF0000u);
+        ok("...e il foglio non e' troncato", !g_fog.troncato);
+        ok("...e le regole sono tutte", g_fog.regole_n >= 6001);
+    }
+
 
     printf("\n%d prove, %d fallite\n", fatti, falliti);
     return falliti ? 1 : 0;

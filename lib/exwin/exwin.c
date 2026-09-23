@@ -42,6 +42,9 @@ typedef struct {
     unsigned int  passo_px;     /* pixel per riga */
     unsigned int  premuto;      /* il controllo e' giu' */
     ExFinestra    fuoco;        /* solo per il primo livello: chi ha i tasti */
+    /* ! TAB PAST THE LAST CONTROL GOES TO THE CONTENT, for a window that asked
+     * (ex_tab_contenuto). Only the top level uses it. */
+    unsigned char tab_contenuto;
     unsigned int  cursore;      /* posizione del cursore in una casella */
 
     /* ! IL VALORE DI UN CONTROLLO CHE NE HA UNO, e sono tre campi e non tre
@@ -871,6 +874,26 @@ void ex_fuoco_via(ExFinestra f)
     r->fuoco = 0;
 }
 
+/* =============================================================================
+ * ex_tab_contenuto — Tab from the last control into the window's own content
+ *
+ * ! ASKED BY THE BROWSER, 23 September 2026. The toolkit ate every Tab and
+ * cycled among its own controls, so a page drawn by the application — links
+ * and form fields that are rectangles, not toolkit objects — could never be
+ * reached from the keyboard. Firefox goes from the toolbar into the page; with
+ * this switch on, a Tab on the LAST control (or with nothing focused) takes
+ * the focus away from the toolkit and reaches the application as EXM_TASTO.
+ * The application gives it back with ex_fuoco() when its own stops end.
+ *
+ * ! OFF BY DEFAULT: a dialog made only of controls keeps cycling as before.
+ * ============================================================================= */
+void ex_tab_contenuto(ExFinestra f, int si)
+{
+    Oggetto *r = radice(f);
+
+    if (r) r->tab_contenuto = (unsigned char)(si != 0);
+}
+
 void ex_fuoco(ExFinestra f)
 {
     Oggetto *o = ogg(f);
@@ -907,6 +930,26 @@ static ExFinestra fuoco_mdi_di(ExFinestra f)
     Oggetto *r = radice(f);
 
     return r ? mdi_di(r->fuoco) : 0;
+}
+
+/* Is there a focusable control AFTER the one that has the focus now? The same
+ * walk as fuoco_avanti, without moving anything. */
+static int fuoco_ce_dopo(ExFinestra f)
+{
+    Oggetto *r = radice(f);
+    ExFinestra dentro = fuoco_mdi_di(f);
+    int i, partenza = -1;
+
+    if (!r || !r->fuoco) return 0;
+    for (i = 0; i < OGGETTI_MAX; i++) {
+        if (!g_ogg[i].usato || g_ogg[i].padre == 0) continue;
+        if (radice((ExFinestra)(i + 1)) != r) continue;
+        if (!accetta_fuoco(&g_ogg[i])) continue;
+        if (mdi_di((ExFinestra)(i + 1)) != dentro) continue;
+        if ((ExFinestra)(i + 1) == r->fuoco) { partenza = i; continue; }
+        if (partenza >= 0) return 1;
+    }
+    return 0;
 }
 
 static void fuoco_avanti(ExFinestra f)
@@ -4848,7 +4891,15 @@ static int tasto_al_fuoco(ExFinestra f, unsigned int k)
 
     if (!r) return 0;
 
-    if (c == '\t') { fuoco_avanti(f); return 1; }
+    if (c == '\t') {
+        if (r->tab_contenuto && !(k & KBD_MOD_SHIFT) &&
+            (r->fuoco == 0 || !fuoco_ce_dopo(f))) {
+            r->fuoco = 0;           /* the application takes it from here */
+            return 0;
+        }
+        fuoco_avanti(f);
+        return 1;
+    }
 
     o = ogg(r->fuoco);
 

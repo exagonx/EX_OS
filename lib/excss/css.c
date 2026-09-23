@@ -92,14 +92,22 @@ void css_stile_vuoto(CssStile *s)
 
 void css_prepara(CssFoglio *f,
                  CssRegola *regole, unsigned int regole_max,
+                 CssPezzo *pezzi, unsigned int pezzi_max,
                  CssDich *dich, unsigned int dich_max,
                  char *arena, unsigned int arena_max)
 {
+    int k;
+
     if (!f) return;
 
     f->regole     = regole;
     f->regole_max = regole_max;
     f->regole_n   = 0;
+    f->pezzi      = pezzi;
+    f->pezzi_max  = pezzi_max;
+    f->pezzi_n    = 0;
+    for (k = 0; k < CSS_SECCHI; k++) f->testa[k] = f->coda[k] = -1;
+    f->uni_testa = f->uni_coda = -1;
     f->dich       = dich;
     f->dich_max   = dich_max;
     f->dich_n     = 0;
@@ -547,73 +555,429 @@ void css_stile_inline(const char *testo, unsigned int n, CssStile *s)
  * colori applicati dove non dovevano. Scartato, quella regola semplicemente non
  * si applica — meno stile, mai stile sbagliato.
  * --------------------------------------------------------------------------- */
-static int leggi_pezzo(CssFoglio *f, const char *t, unsigned int i, unsigned int fine,
-                       CssPezzo *p, unsigned int *peso)
+/* -----------------------------------------------------------------------------
+ * I selettori — compounds, combinators, lists (24 September 2026)
+ *
+ * ! WHAT CHROMIUM AND GECKO BOTH DO, AND THE SPEC SAYS: a selector is read
+ * into compounds joined by combinators, a list is split on its top-level
+ * commas, and an INVALID selector makes the whole rule invalid. What this
+ * reader knows and cannot honour — :hover, ::before, a chain longer than
+ * CSS_SEL_PEZZI_MAX — is not invalid: that selector just never matches, and
+ * the others of its list still apply.
+ * --------------------------------------------------------------------------- */
+static int pari(const char *a, const char *b)
 {
-    int qualcosa = 0;
-
-    p->tipo = p->classe = p->id = 0;
-
-    while (i < fine) {
-        unsigned int a;
-
-        if (t[i] == '*') { i++; qualcosa = 1; continue; }
-
-        if (t[i] == '.' || t[i] == '#') {
-            char segno = t[i];
-
-            i++;
-            a = i;
-            while (i < fine && nomeok((unsigned char)t[i])) i++;
-            if (i == a) return 0;
-            if (segno == '.') { p->classe = arena_metti(f, t + a, i - a); *peso += 100; }
-            else              { p->id     = arena_metti(f, t + a, i - a); *peso += 10000; }
-            qualcosa = 1;
-            continue;
-        }
-
-        if (nomeok((unsigned char)t[i])) {
-            a = i;
-            while (i < fine && nomeok((unsigned char)t[i])) i++;
-            p->tipo = arena_metti(f, t + a, i - a);
-            *peso += 1;
-            qualcosa = 1;
-            continue;
-        }
-
-        return 0;       /* un carattere che non sappiamo leggere */
-    }
-    return qualcosa;
+    while (*a && *a == *b) { a++; b++; }
+    return *a == *b;
 }
 
-/* Un selettore intero, cioe' i suoi pezzi separati da spazi. */
+static int inizia(const char *a, const char *p)
+{
+    while (*p && *a == *p) { a++; p++; }
+    return *p == '\0';
+}
+
+/* A raw copy into the arena, zeros included: how the lists are stored. */
+static unsigned int arena_crudo(CssFoglio *f, const char *s, unsigned int n)
+{
+    unsigned int inizio = f->arena_n, i;
+
+    if (n == 0) return 0;
+    if (f->arena_n + n > f->arena_max) { f->troncato = 1; return 0; }
+    for (i = 0; i < n; i++) f->arena[f->arena_n++] = s[i];
+    return inizio;
+}
+
+/* ! A NAME, WITH ITS ESCAPES TAKEN OUT. `.md\:flex` and `.w-1\/2` are how
+ * utility frameworks write their classes, and `\31 0` a class that starts with
+ * a digit: until today every one of those rules was thrown away. A hex escape
+ * becomes its character in UTF-8, eaten with the one space that may end it.
+ * Returns the length written in `out` (0 = no name here). */
+static unsigned int leggi_nome(const char *t, unsigned int *pi, unsigned int fine,
+                               char *out, unsigned int max)
+{
+    unsigned int i = *pi, n = 0;
+
+    while (i < fine && n + 4 < max) {
+        unsigned char c = (unsigned char)t[i];
+
+        if (c == '\\' && i + 1 < fine) {
+            if (esa((unsigned char)t[i + 1]) >= 0) {
+                unsigned long cp = 0;
+                int k = 0;
+
+                i++;
+                while (i < fine && k < 6 && esa((unsigned char)t[i]) >= 0) {
+                    cp = cp * 16 + (unsigned long)esa((unsigned char)t[i]); i++; k++;
+                }
+                if (i < fine && spazio((unsigned char)t[i])) i++;
+                if (cp == 0 || cp > 0x10FFFF) cp = 0xFFFD;
+                if (cp < 0x80) out[n++] = (char)cp;
+                else if (cp < 0x800) { out[n++] = (char)(0xC0 | (cp >> 6)); out[n++] = (char)(0x80 | (cp & 63)); }
+                else if (cp < 0x10000) { out[n++] = (char)(0xE0 | (cp >> 12)); out[n++] = (char)(0x80 | ((cp >> 6) & 63)); out[n++] = (char)(0x80 | (cp & 63)); }
+                else { out[n++] = (char)(0xF0 | (cp >> 18)); out[n++] = (char)(0x80 | ((cp >> 12) & 63)); out[n++] = (char)(0x80 | ((cp >> 6) & 63)); out[n++] = (char)(0x80 | (cp & 63)); }
+                continue;
+            }
+            out[n++] = t[i + 1];
+            i += 2;
+            continue;
+        }
+        if (!nomeok(c) && c < 0x80) break;
+        out[n++] = (char)c;
+        i++;
+    }
+    *pi = i;
+    out[n] = '\0';
+    return n;
+}
+
+#define LIS_MAX 512     /* the classes, or the attribute tests, of ONE compound */
+
+static int lista_metti(char *l, unsigned int *n, const char *s, unsigned int k, int minuscolo)
+{
+    unsigned int i;
+
+    if (*n + k + 2 >= LIS_MAX) return 0;
+    for (i = 0; i < k; i++) l[(*n)++] = minuscolo ? (char)minusc((unsigned char)s[i]) : s[i];
+    return 1;
+}
+
+/* an+b for :nth-*(): "odd", "even", "3", "n", "-n+3", "2n-1". */
+static int leggi_nth(const char *t, unsigned int a, unsigned int b, short *pa, short *pb)
+{
+    int segno = 1, v = 0, cifre = 0, na = 0, nb = 0;
+
+    while (a < b && spazio((unsigned char)t[a])) a++;
+    while (b > a && spazio((unsigned char)t[b - 1])) b--;
+    if (b - a == 3 && minusc((unsigned char)t[a]) == 'o' && minusc((unsigned char)t[a + 1]) == 'd' &&
+        minusc((unsigned char)t[a + 2]) == 'd') { *pa = 2; *pb = 1; return 1; }
+    if (b - a == 4 && minusc((unsigned char)t[a]) == 'e' && minusc((unsigned char)t[a + 1]) == 'v' &&
+        minusc((unsigned char)t[a + 2]) == 'e' && minusc((unsigned char)t[a + 3]) == 'n') {
+        *pa = 2; *pb = 0; return 1;
+    }
+    if (a < b && (t[a] == '+' || t[a] == '-')) { if (t[a] == '-') segno = -1; a++; }
+    while (a < b && t[a] >= '0' && t[a] <= '9') { v = v * 10 + (t[a] - '0'); a++; cifre++; }
+    if (a < b && minusc((unsigned char)t[a]) == 'n') {
+        na = segno * (cifre ? v : 1);
+        a++;
+        while (a < b && spazio((unsigned char)t[a])) a++;
+        if (a < b) {
+            if (t[a] != '+' && t[a] != '-') return 0;
+            segno = (t[a] == '-') ? -1 : 1;
+            a++;
+            while (a < b && spazio((unsigned char)t[a])) a++;
+            v = 0; cifre = 0;
+            while (a < b && t[a] >= '0' && t[a] <= '9') { v = v * 10 + (t[a] - '0'); a++; cifre++; }
+            if (!cifre) return 0;
+            nb = segno * v;
+        }
+    } else {
+        if (!cifre) return 0;
+        nb = segno * v;
+    }
+    if (a != b) return 0;               /* "of S", and anything else */
+    *pa = (short)na; *pb = (short)nb;
+    return 1;
+}
+
+/* Valid pseudo-classes and pseudo-elements that can NEVER match in this
+ * layout: nobody hovers or focuses, no content is generated. */
+static const char *const MAI[] = {
+    "hover", "focus", "active", "visited", "focus-within", "focus-visible",
+    "target", "before", "after", "first-line", "first-letter", "selection",
+    "placeholder", "placeholder-shown", "marker", "backdrop", "indeterminate",
+    "default", "required", "optional", "valid", "invalid", "in-range",
+    "out-of-range", "read-only", "read-write", "fullscreen", "is", "where",
+    "has", "lang", "dir", "host", "defined", "autofill", "modal",
+    "popover-open", "user-invalid", "user-valid", "scope", "target-within", 0
+};
+
+/* One compound, from *pi. Returns 1 (read), 2 (read, never matches here) or
+ * 0 (not a selector: the rule is invalid). Stops on a space, a combinator or
+ * the end.
+ *
+ * The attribute list holds, for each test: op ('e' = exists, '=', '~', '|',
+ * '^', '$', '*'), the name '\0', the value '\0', the flag ('i' or 0); a zero
+ * op ends it. */
+static int leggi_composto(CssFoglio *f, const char *t, unsigned int *pi,
+                          unsigned int fine, CssPezzo *p, unsigned int *peso)
+{
+    char         cl[LIS_MAX], at[LIS_MAX], nm[128];
+    unsigned int ncl = 0, nat = 0, i = *pi, n;
+    int          esito = 1, qualcosa = 0;
+
+    p->tipo = p->id = p->classi = p->attr = p->nega = 0;
+    p->pseudo = 0; p->nth_a = p->nth_b = 0; p->comb = 0;
+
+    if (i < fine && t[i] == '*') { i++; qualcosa = 1; }
+    else if (i < fine && ((nomeok((unsigned char)t[i]) && t[i] != '-') || t[i] == '\\')) {
+        n = leggi_nome(t, &i, fine, nm, sizeof(nm));
+        if (!n) return 0;
+        p->tipo = arena_metti(f, nm, n);
+        *peso += 1;
+        qualcosa = 1;
+    }
+
+    while (i < fine) {
+        char c = t[i];
+
+        if (spazio((unsigned char)c) || c == '>' || c == '+' || c == '~' || c == '/') break;
+
+        if (c == '#' || c == '.') {
+            i++;
+            n = leggi_nome(t, &i, fine, nm, sizeof(nm));
+            if (!n) return 0;
+            if (c == '#') { p->id = arena_metti(f, nm, n); *peso += 10000; }
+            else {
+                if (!lista_metti(cl, &ncl, nm, n, 1)) return 2;
+                cl[ncl++] = '\0';
+                *peso += 100;
+            }
+            qualcosa = 1;
+            continue;
+        }
+
+        if (c == '[') {
+            char         op = 'e', flag = 0, val[256];
+            unsigned int nv = 0;
+
+            i++;
+            while (i < fine && spazio((unsigned char)t[i])) i++;
+            n = leggi_nome(t, &i, fine, nm, sizeof(nm));
+            if (!n) return 0;
+            while (i < fine && spazio((unsigned char)t[i])) i++;
+            if (i < fine && t[i] != ']') {
+                if (t[i] == '=') { op = '='; i++; }
+                else if (i + 1 < fine && t[i + 1] == '=' &&
+                         (t[i] == '~' || t[i] == '|' || t[i] == '^' || t[i] == '$' || t[i] == '*')) {
+                    op = t[i]; i += 2;
+                } else return 0;
+                while (i < fine && spazio((unsigned char)t[i])) i++;
+                if (i < fine && (t[i] == '"' || t[i] == '\'')) {
+                    char q = t[i++];
+
+                    while (i < fine && t[i] != q) {
+                        if (t[i] == '\\' && i + 1 < fine) i++;
+                        if (nv < sizeof(val) - 1) val[nv++] = t[i];
+                        i++;
+                    }
+                    if (i >= fine) return 0;
+                    i++;
+                } else {
+                    nv = leggi_nome(t, &i, fine, val, sizeof(val));
+                    if (!nv) return 0;
+                }
+                val[nv] = '\0';
+                while (i < fine && spazio((unsigned char)t[i])) i++;
+                if (i < fine && (t[i] == 'i' || t[i] == 'I' || t[i] == 's' || t[i] == 'S')) {
+                    if (t[i] == 'i' || t[i] == 'I') flag = 'i';
+                    i++;
+                    while (i < fine && spazio((unsigned char)t[i])) i++;
+                }
+            }
+            if (i >= fine || t[i] != ']') return 0;
+            i++;
+            if (nat + n + nv + 5 >= LIS_MAX) return 2;
+            at[nat++] = op;
+            lista_metti(at, &nat, nm, n, 1);
+            at[nat++] = '\0';
+            lista_metti(at, &nat, val, nv, 0);
+            at[nat++] = '\0';
+            at[nat++] = flag;
+            *peso += 100;
+            qualcosa = 1;
+            continue;
+        }
+
+        if (c == ':') {
+            int          elemento = 0, k;
+            unsigned int ba = 0, bf = 0;
+
+            i++;
+            if (i < fine && t[i] == ':') { elemento = 1; i++; }
+            n = leggi_nome(t, &i, fine, nm, sizeof(nm));
+            if (!n) return 0;
+            for (k = 0; nm[k]; k++) nm[k] = (char)minusc((unsigned char)nm[k]);
+            if (i < fine && t[i] == '(') {      /* the argument, nested parentheses */
+                int  liv = 1;
+                char q = 0;
+
+                i++; ba = i;
+                while (i < fine) {
+                    if (q) { if (t[i] == q) q = 0; }
+                    else if (t[i] == '"' || t[i] == '\'') q = t[i];
+                    else if (t[i] == '(') liv++;
+                    else if (t[i] == ')' && --liv == 0) break;
+                    i++;
+                }
+                if (i >= fine) return 0;
+                bf = i++;
+            }
+            qualcosa = 1;
+            if (elemento) { esito = 2; continue; }        /* ::anything */
+            *peso += 100;
+
+            if      (pari(nm, "first-child"))   p->pseudo |= CSS_PS_PRIMO;
+            else if (pari(nm, "last-child"))    p->pseudo |= CSS_PS_ULTIMO;
+            else if (pari(nm, "only-child"))    p->pseudo |= CSS_PS_UNICO;
+            else if (pari(nm, "first-of-type")) p->pseudo |= CSS_PS_PRIMO | CSS_PS_DI_TIPO;
+            else if (pari(nm, "last-of-type"))  p->pseudo |= CSS_PS_ULTIMO | CSS_PS_DI_TIPO;
+            else if (pari(nm, "only-of-type"))  p->pseudo |= CSS_PS_UNICO | CSS_PS_DI_TIPO;
+            else if (pari(nm, "empty"))         p->pseudo |= CSS_PS_VUOTO;
+            else if (pari(nm, "root"))          p->pseudo |= CSS_PS_RADICE;
+            else if (pari(nm, "link") || pari(nm, "any-link")) p->pseudo |= CSS_PS_LINK;
+            else if (pari(nm, "checked"))       p->pseudo |= CSS_PS_ACCESO;
+            else if (pari(nm, "disabled"))      p->pseudo |= CSS_PS_SPENTO;
+            else if (pari(nm, "enabled"))       p->pseudo |= CSS_PS_ABILITATO;
+            else if (inizia(nm, "nth-") && ba) {
+                if (!leggi_nth(t, ba, bf, &p->nth_a, &p->nth_b)) { esito = 2; continue; }
+                if      (pari(nm, "nth-child"))        p->pseudo |= CSS_PS_NTH;
+                else if (pari(nm, "nth-last-child"))   p->pseudo |= CSS_PS_NTH_ULT;
+                else if (pari(nm, "nth-of-type"))      p->pseudo |= CSS_PS_NTH | CSS_PS_DI_TIPO;
+                else if (pari(nm, "nth-last-of-type")) p->pseudo |= CSS_PS_NTH_ULT | CSS_PS_DI_TIPO;
+                else return 0;
+            } else if (pari(nm, "not") && ba) {
+                /* ! ONE SIMPLE SELECTOR ONLY — .c, #i, tag, [a...] — kept as
+                 * text and read again at match time. Anything longer does not
+                 * match here, rather than match wrongly. The specificity is the
+                 * argument's: 100 is already counted, right for a class or an
+                 * attribute; an id or a type corrects it. */
+                unsigned int x = ba, y = bf, j;
+
+                while (x < y && spazio((unsigned char)t[x])) x++;
+                while (y > x && spazio((unsigned char)t[y - 1])) y--;
+                for (j = x; j < y; j++)
+                    if (spazio((unsigned char)t[j]) || t[j] == ',' || t[j] == '>' ||
+                        t[j] == ':' || t[j] == '+' || t[j] == '~' || t[j] == '\\') break;
+                for (k = (int)x + 1; k < (int)y && j == y; k++)
+                    if (t[k] == '.' || t[k] == '#' || (t[k] == '[' && k > (int)x)) j = (unsigned int)k;
+                if (j < y || x == y || p->nega) { esito = 2; continue; }
+                if (t[x] == '#') *peso += 10000 - 100;
+                else if (t[x] != '.' && t[x] != '[' && t[x] != '*') *peso -= 99;
+                else if (t[x] == '*') *peso -= 100;
+                p->nega = arena_crudo(f, t + x, y - x);
+                if (p->nega && !arena_crudo(f, "\0", 1)) p->nega = 0;
+                if (!p->nega) esito = 2;
+            } else {
+                for (k = 0; MAI[k]; k++) if (pari(nm, MAI[k])) break;
+                if (MAI[k]) { esito = 2; continue; }
+                return 0;                       /* unknown: invalid */
+            }
+            continue;
+        }
+        return 0;                               /* a character we cannot read */
+    }
+
+    if (!qualcosa) return 0;
+    if (ncl) {
+        cl[ncl++] = '\0';
+        p->classi = arena_crudo(f, cl, ncl);
+        if (!p->classi) return 2;
+    }
+    if (nat) {
+        at[nat++] = 0;
+        p->attr = arena_crudo(f, at, nat);
+        if (!p->attr) return 2;
+    }
+    *pi = i;
+    return esito;
+}
+
+/* A whole selector. Same three answers as leggi_composto. */
 static int leggi_selettore(CssFoglio *f, const char *t, unsigned int i,
                            unsigned int fine, CssRegola *r)
 {
-    r->n_pezzi = 0;
-    r->peso    = 0;
+    int           esito = 1;
+    unsigned char comb = 0;
+
+    r->n_pezzi     = 0;
+    r->peso        = 0;
+    r->pezzo_primo = f->pezzi_n;
+    salta_vuoto(t, &i, fine);
+    if (i >= fine) return 0;
 
     while (i < fine) {
-        unsigned int a;
+        int          e;
+        unsigned int prima;
+        CssPezzo    *p;
 
+        if (r->n_pezzi >= CSS_SEL_PEZZI_MAX) return 2;
+        if (f->pezzi_n >= f->pezzi_max) { f->troncato = 1; return 2; }
+        p = &f->pezzi[f->pezzi_n];
+        e = leggi_composto(f, t, &i, fine, p, &r->peso);
+        if (e == 0) return 0;
+        if (e == 2) esito = 2;
+        p->comb = comb;
+        f->pezzi_n++;
+        r->n_pezzi++;
+
+        prima = i;
         salta_vuoto(t, &i, fine);
         if (i >= fine) break;
-
-        /* ! I COMBINATORI «>», «+», «~» NON CI SONO, e la regola si scarta
-         * invece di trattarli come uno spazio: «div > p» e «div p» non sono la
-         * stessa cosa, e far finta che lo siano applicherebbe lo stile ai
-         * nipoti. */
-        if (t[i] == '>' || t[i] == '+' || t[i] == '~') return 0;
-
-        a = i;
-        while (i < fine && !spazio((unsigned char)t[i]) &&
-               t[i] != '>' && t[i] != '+' && t[i] != '~' && t[i] != '/') i++;
-
-        if (r->n_pezzi >= CSS_SEL_PEZZI_MAX) return 0;
-        if (!leggi_pezzo(f, t, a, i, &r->pezzo[r->n_pezzi], &r->peso)) return 0;
-        r->n_pezzi++;
+        if (t[i] == '>' || t[i] == '+' || t[i] == '~') {
+            comb = (unsigned char)t[i++];
+            salta_vuoto(t, &i, fine);
+            if (i >= fine) return 0;            /* «div >» */
+        } else if (i > prima) {
+            comb = ' ';
+        } else {
+            return 0;
+        }
     }
-    return r->n_pezzi > 0;
+    return r->n_pezzi ? esito : 0;
+}
+
+/* Where the next top-level comma of a selector list is, or `fine`: commas in
+ * parentheses — :not(a, b) — or quotes — [title="x,y"] — do not split. */
+static unsigned int virgola(const char *t, unsigned int i, unsigned int fine)
+{
+    int  liv = 0;
+    char q = 0;
+
+    for (; i < fine; i++) {
+        char c = t[i];
+
+        if (q) { if (c == '\\') i++; else if (c == q) q = 0; continue; }
+        if (c == '"' || c == '\'') q = c;
+        else if (c == '(' || c == '[') liv++;
+        else if ((c == ')' || c == ']') && liv > 0) liv--;
+        else if (c == ',' && liv == 0) return i;
+    }
+    return fine;
+}
+
+/* -----------------------------------------------------------------------------
+ * L'indice delle regole (see CssFoglio)
+ * --------------------------------------------------------------------------- */
+/* FNV-1a on the kind and the name, lowercased: the arena holds names
+ * lowercased, and the element's are lowercased here the same way. */
+static unsigned int secchio(char tipo, const char *s)
+{
+    unsigned int h = 2166136261u;
+
+    h = (h ^ (unsigned char)tipo) * 16777619u;
+    while (*s && !spazio((unsigned char)*s)) {
+        h = (h ^ (unsigned char)minusc((unsigned char)*s)) * 16777619u;
+        s++;
+    }
+    return h & (CSS_SECCHI - 1);
+}
+
+static void indice_metti(CssFoglio *f, int k)
+{
+    const CssRegola *r = &f->regole[k];
+    const CssPezzo  *p = &f->pezzi[r->pezzo_primo + r->n_pezzi - 1];
+    int             *testa, *coda;
+
+    if (p->id)          { unsigned int b = secchio('#', f->arena + p->id);     testa = &f->testa[b]; coda = &f->coda[b]; }
+    else if (p->classi) { unsigned int b = secchio('.', f->arena + p->classi); testa = &f->testa[b]; coda = &f->coda[b]; }
+    else if (p->tipo)   { unsigned int b = secchio('t', f->arena + p->tipo);   testa = &f->testa[b]; coda = &f->coda[b]; }
+    else                { testa = &f->uni_testa; coda = &f->uni_coda; }
+
+    /* at the tail: every bucket stays in reading order */
+    if (*coda < 0) *testa = k;
+    else           f->regole[*coda].seguente = k;
+    *coda = k;
 }
 
 unsigned int css_analizza(CssFoglio *f, const char *testo, unsigned int n,
@@ -665,6 +1029,27 @@ unsigned int css_analizza(CssFoglio *f, const char *testo, unsigned int n,
 
         /* Un selettore per volta: «h1, h2, .box» sono tre regole con le stesse
          * dichiarazioni. */
+        /* ! AN INVALID SELECTOR INVALIDATES THE WHOLE LIST, as the spec and
+         * both engines say: «a, b:nonsense {...}» applies to nothing. So the
+         * list is read once to judge it — writing nothing that stays in the
+         * arena — and once more to make the rules. */
+        {
+            unsigned int s2 = sel_i;
+            int          valida = 1;
+
+            while (s2 <= sel_f && valida) {
+                unsigned int e2 = virgola(testo, s2, sel_f);
+                unsigned int prima = f->arena_n, prima_p = f->pezzi_n;
+                CssRegola    r2;
+
+                if (leggi_selettore(f, testo, s2, e2, &r2) == 0) valida = 0;
+                f->arena_n = prima;
+                f->pezzi_n = prima_p;
+                s2 = e2 + 1;
+            }
+            if (!valida) continue;
+        }
+
         s = sel_i;
         while (s <= sel_f) {
             unsigned int e = s;
@@ -674,9 +1059,19 @@ unsigned int css_analizza(CssFoglio *f, const char *testo, unsigned int n,
             unsigned short prop;
             unsigned int   val;
 
-            while (e < sel_f && testo[e] != ',') e++;
+            e = virgola(testo, s, sel_f);
 
-            if (!leggi_selettore(f, testo, s, e, &r)) { s = e + 1; continue; }
+            /* 1: a rule; 2: valid, never matches here (see the reader) */
+            {
+                unsigned int prima_a = f->arena_n, prima_p = f->pezzi_n;
+
+                if (leggi_selettore(f, testo, s, e, &r) != 1) {
+                    f->arena_n = prima_a;
+                    f->pezzi_n = prima_p;
+                    s = e + 1;
+                    continue;
+                }
+            }
 
             if (f->regole_n >= f->regole_max) { f->troncato = 1; return fatte; }
 
@@ -696,7 +1091,10 @@ unsigned int css_analizza(CssFoglio *f, const char *testo, unsigned int n,
                 r.origine    = origine;
                 r.ordine     = f->ordine++;
                 r.prima_dich = primo;
-                f->regole[f->regole_n++] = r;
+                r.seguente   = -1;
+                f->regole[f->regole_n] = r;
+                indice_metti(f, (int)f->regole_n);
+                f->regole_n++;
                 fatte++;
             }
 
@@ -732,50 +1130,261 @@ static int ha_classe(const char *elenco, const char *voluta)
     return 0;
 }
 
+/* The previous ELEMENT sibling, or -1. The tree knows only the next one. */
+static int fratello_prima(const HtmlDoc *d, int n)
+{
+    int p = d->nodi[n].padre, f, prima = -1;
+
+    if (p < 0) return -1;
+    for (f = d->nodi[p].primo_figlio; f >= 0 && f != n; f = d->nodi[f].prossimo)
+        if (d->nodi[f].tipo == HTML_ELEMENTO) prima = f;
+    return prima;
+}
+
+/* Where `n` stands among its element siblings (of the same type, if asked):
+ * 1-based from the front, and how many there are. */
+static void posto(const HtmlDoc *d, int n, int di_tipo, int *da_capo, int *quanti)
+{
+    int p = d->nodi[n].padre, f;
+    const char *nome = di_tipo ? html_nome(d, n) : 0;
+
+    *da_capo = 0; *quanti = 0;
+    if (p < 0) { *da_capo = *quanti = 1; return; }
+    for (f = d->nodi[p].primo_figlio; f >= 0; f = d->nodi[f].prossimo) {
+        if (d->nodi[f].tipo != HTML_ELEMENTO) continue;
+        if (di_tipo && !ug_min(html_nome(d, f), nome)) continue;
+        (*quanti)++;
+        if (f == n) *da_capo = *quanti;
+    }
+}
+
+static int nth(int a, int b, int i)
+{
+    if (a == 0) return i == b;
+    return (i - b) % a == 0 && (i - b) / a >= 0;
+}
+
+/* Does value `v` pass the test `op voluto` (flag 'i': ignoring case)? */
+static int attr_passa(const char *v, char op, const char *voluto, char flag)
+{
+    unsigned int nv = 0, nw = 0, i;
+
+    if (!v) return 0;
+    if (op == 'e') return 1;
+    while (v[nv]) nv++;
+    while (voluto[nw]) nw++;
+
+#define UGC(a, b) (flag == 'i' ? minusc((unsigned char)(a)) == minusc((unsigned char)(b)) : (a) == (b))
+    switch (op) {
+    case '=':
+        if (nv != nw) return 0;
+        for (i = 0; i < nv; i++) if (!UGC(v[i], voluto[i])) return 0;
+        return 1;
+    case '^':
+        if (nw == 0 || nv < nw) return 0;
+        for (i = 0; i < nw; i++) if (!UGC(v[i], voluto[i])) return 0;
+        return 1;
+    case '$':
+        if (nw == 0 || nv < nw) return 0;
+        for (i = 0; i < nw; i++) if (!UGC(v[nv - nw + i], voluto[i])) return 0;
+        return 1;
+    case '*': {
+        unsigned int a;
+
+        if (nw == 0 || nv < nw) return 0;
+        for (a = 0; a + nw <= nv; a++) {
+            for (i = 0; i < nw; i++) if (!UGC(v[a + i], voluto[i])) break;
+            if (i == nw) return 1;
+        }
+        return 0;
+    }
+    case '|':
+        if (nv < nw) return 0;
+        for (i = 0; i < nw; i++) if (!UGC(v[i], voluto[i])) return 0;
+        return nv == nw || v[nw] == '-';
+    case '~': {
+        unsigned int a = 0, b;
+
+        if (nw == 0) return 0;
+        while (a < nv) {
+            while (a < nv && spazio((unsigned char)v[a])) a++;
+            b = a;
+            while (b < nv && !spazio((unsigned char)v[b])) b++;
+            if (b - a == nw) {
+                for (i = 0; i < nw; i++) if (!UGC(v[a + i], voluto[i])) break;
+                if (i == nw) return 1;
+            }
+            a = b;
+        }
+        return 0;
+    }
+    }
+#undef UGC
+    return 0;
+}
+
+/* The attribute tests of a list (see leggi_composto): all must pass. */
+static int attr_tutti(const HtmlDoc *d, int nodo, const char *l)
+{
+    while (*l) {
+        char        op = *l++;
+        const char *nome = l, *val;
+        char        flag;
+
+        while (*l) l++;
+        l++;
+        val = l;
+        while (*l) l++;
+        l++;
+        flag = *l++;
+        if (!attr_passa(html_attr(d, nodo, nome), op, val, flag)) return 0;
+    }
+    return 1;
+}
+
+/* The simple selector inside :not(), read at match time: does it match? */
+static int semplice(const HtmlDoc *d, int nodo, const char *s)
+{
+    char buf[256];
+    unsigned int n = 0;
+
+    if (s[0] == '*') return 1;
+    if (s[0] == '.' || s[0] == '#') {
+        while (s[n + 1] && n < sizeof(buf) - 1) { buf[n] = (char)minusc((unsigned char)s[n + 1]); n++; }
+        buf[n] = '\0';
+        if (s[0] == '.') return ha_classe(html_attr(d, nodo, "class"), buf);
+        { const char *v = html_attr(d, nodo, "id"); return v && ug_min(v, buf); }
+    }
+    if (s[0] == '[') {
+        /* read it with the same reader, into a throw-away sheet */
+        CssFoglio    f;
+        CssPezzo     p;
+        char         ar[LIS_MAX + 16];
+        unsigned int i = 0, peso = 0, fine = 0;
+
+        while (s[fine]) fine++;
+        f.arena = ar; f.arena_max = sizeof(ar); f.arena_n = 1; f.troncato = 0; ar[0] = '\0';
+        if (leggi_composto(&f, s, &i, fine, &p, &peso) != 1 || !p.attr) return 0;
+        return attr_tutti(d, nodo, ar + p.attr);
+    }
+    { const char *nome = html_nome(d, nodo); return nome && ug_min(nome, s); }
+}
+
 static int pezzo_combacia(const CssFoglio *f, const HtmlDoc *d, int nodo,
                           const CssPezzo *p)
 {
-    if (nodo < 0 || d->nodi[nodo].tipo != HTML_ELEMENTO) return 0;
+    const char *nome;
 
-    if (p->tipo) {
-        const char *n = html_nome(d, nodo);
-        if (!n || !ug_min(n, f->arena + p->tipo)) return 0;
-    }
-    if (p->classe) {
-        if (!ha_classe(html_attr(d, nodo, "class"), f->arena + p->classe)) return 0;
-    }
+    if (nodo < 0 || d->nodi[nodo].tipo != HTML_ELEMENTO) return 0;
+    nome = html_nome(d, nodo);
+
+    if (p->tipo && (!nome || !ug_min(nome, f->arena + p->tipo))) return 0;
     if (p->id) {
         const char *v = html_attr(d, nodo, "id");
         if (!v || !ug_min(v, f->arena + p->id)) return 0;
     }
-    return 1;
-}
+    if (p->classi) {
+        const char *c = f->arena + p->classi, *elenco = html_attr(d, nodo, "class");
 
-/* ! LA CATENA SI RISALE DAL FONDO, ed e' l'unico modo che non esplode: il
- * pezzo piu' a destra e' l'elemento stesso — una prova sola — e solo se quella
- * passa si cercano gli antenati. Partendo da sinistra si dovrebbero provare
- * tutti i discendenti di ogni candidato. */
-static int regola_combacia(const CssFoglio *f, const HtmlDoc *d, int nodo,
-                           const CssRegola *r)
-{
-    int k, su;
-
-    if (r->n_pezzi == 0) return 0;
-    if (!pezzo_combacia(f, d, nodo, &r->pezzo[r->n_pezzi - 1])) return 0;
-
-    su = d->nodi[nodo].padre;
-    for (k = (int)r->n_pezzi - 2; k >= 0; k--) {
-        int trovato = 0;
-
-        while (su >= 0) {
-            if (pezzo_combacia(f, d, su, &r->pezzo[k])) { trovato = 1; break; }
-            su = d->nodi[su].padre;
+        while (*c) {
+            if (!ha_classe(elenco, c)) return 0;
+            while (*c) c++;
+            c++;
         }
-        if (!trovato) return 0;
-        su = d->nodi[su].padre;
+    }
+    if (p->attr && !attr_tutti(d, nodo, f->arena + p->attr)) return 0;
+    if (p->nega && semplice(d, nodo, f->arena + p->nega)) return 0;
+
+    if (p->pseudo) {
+        unsigned short ps = p->pseudo;
+        int di_tipo = (ps & CSS_PS_DI_TIPO) != 0, da_capo, quanti;
+
+        if (ps & (CSS_PS_PRIMO | CSS_PS_ULTIMO | CSS_PS_UNICO | CSS_PS_NTH | CSS_PS_NTH_ULT)) {
+            posto(d, nodo, di_tipo, &da_capo, &quanti);
+            if ((ps & CSS_PS_PRIMO)   && da_capo != 1) return 0;
+            if ((ps & CSS_PS_ULTIMO)  && da_capo != quanti) return 0;
+            if ((ps & CSS_PS_UNICO)   && quanti != 1) return 0;
+            if ((ps & CSS_PS_NTH)     && !nth(p->nth_a, p->nth_b, da_capo)) return 0;
+            if ((ps & CSS_PS_NTH_ULT) && !nth(p->nth_a, p->nth_b, quanti - da_capo + 1)) return 0;
+        }
+        if (ps & CSS_PS_VUOTO) {
+            int f2;
+
+            for (f2 = d->nodi[nodo].primo_figlio; f2 >= 0; f2 = d->nodi[f2].prossimo) {
+                if (d->nodi[f2].tipo == HTML_ELEMENTO) return 0;
+                if (d->nodi[f2].tipo == HTML_TESTO) {
+                    const char *tx = html_testo(d, f2);
+                    if (tx && tx[0]) return 0;
+                }
+            }
+        }
+        if ((ps & CSS_PS_RADICE) && d->nodi[nodo].padre != d->radice) return 0;
+        if (ps & CSS_PS_LINK) {
+            if (!nome || !(ug_min(nome, "a") || ug_min(nome, "area")) ||
+                !html_attr(d, nodo, "href")) return 0;
+        }
+        if (ps & CSS_PS_ACCESO) {
+            if (nome && ug_min(nome, "option")) { if (!html_attr(d, nodo, "selected")) return 0; }
+            else if (!html_attr(d, nodo, "checked")) return 0;
+        }
+        if (ps & (CSS_PS_SPENTO | CSS_PS_ABILITATO)) {
+            int modulo = nome && (ug_min(nome, "input") || ug_min(nome, "button") ||
+                                  ug_min(nome, "select") || ug_min(nome, "textarea") ||
+                                  ug_min(nome, "option") || ug_min(nome, "fieldset"));
+            int spento = html_attr(d, nodo, "disabled") != 0;
+
+            if (!modulo) return 0;
+            if ((ps & CSS_PS_SPENTO) && !spento) return 0;
+            if ((ps & CSS_PS_ABILITATO) && spento) return 0;
+        }
     }
     return 1;
 }
+
+/* ! FROM THE RIGHT, AS EVERY ENGINE DOES — and now recursive. The rightmost
+ * compound is the element itself: one test, and only if it passes are the
+ * others looked for. With descendant combinators alone the first matching
+ * ancestor was always right; with `>`, `+`, `~` in the chain it is not
+ * («a > b c»: the first `b` above may not be a child of an `a`, a higher
+ * one may), so a failure goes back and tries the next candidate. The budget
+ * stops a pathological sheet from eating the machine: past it, no match. */
+static int da_pezzo(const CssFoglio *f, const HtmlDoc *d, int nodo,
+                    const CssRegola *r, int k, int *budget)
+{
+    int su;
+
+    if (--(*budget) < 0) return 0;
+    if (!pezzo_combacia(f, d, nodo, &f->pezzi[r->pezzo_primo + k])) return 0;
+    if (k == 0) return 1;
+
+    switch (f->pezzi[r->pezzo_primo + k].comb) {
+    case '>':
+        su = d->nodi[nodo].padre;
+        return su >= 0 && da_pezzo(f, d, su, r, k - 1, budget);
+    case '+':
+        su = fratello_prima(d, nodo);
+        return su >= 0 && da_pezzo(f, d, su, r, k - 1, budget);
+    case '~':
+        for (su = fratello_prima(d, nodo); su >= 0; su = fratello_prima(d, su))
+            if (da_pezzo(f, d, su, r, k - 1, budget)) return 1;
+        return 0;
+    default:
+        for (su = d->nodi[nodo].padre; su >= 0; su = d->nodi[su].padre)
+            if (da_pezzo(f, d, su, r, k - 1, budget)) return 1;
+        return 0;
+    }
+}
+
+static int regola_combacia(const CssFoglio *f, const HtmlDoc *d, int nodo,
+                           const CssRegola *r)
+{
+    int budget = 4096;
+
+    if (r->n_pezzi == 0) return 0;
+    return da_pezzo(f, d, nodo, r, (int)r->n_pezzi - 1, &budget);
+}
+
+#define CSS_CAND_MAX 2048    /* candidate rules for one element */
 
 void css_calcola(const CssFoglio *f, const HtmlDoc *d, int nodo,
                  const CssStile *ereditato, CssStile *out)
@@ -803,11 +1412,59 @@ void css_calcola(const CssFoglio *f, const HtmlDoc *d, int nodo,
     if (!f || !d || nodo < 0) return;
     if (d->nodi[nodo].tipo != HTML_ELEMENTO) return;
 
-    for (i = 0; i < f->regole_n; i++) {
-        const CssRegola *r = &f->regole[i];
-        unsigned int     p1;
+    {
+        /* ! THE CANDIDATES, THEN IN READING ORDER: at equal weight the rule
+         * read later wins, and that rule is the one with the higher index.
+         * Collected from the buckets of the element's id, classes and type
+         * and from the universal list, sorted, duplicates dropped (two
+         * classes can share a bucket). Too many: the whole list, as before —
+         * slower, never wrong. */
+        int          cand[CSS_CAND_MAX];
+        int          nc = 0, troppe = 0, a, b;
+        const char  *nome = html_nome(d, nodo);
+        const char  *idv  = html_attr(d, nodo, "id");
+        const char  *cls  = html_attr(d, nodo, "class");
+        int          lista[3 + 64], nl = 0, q;
 
-        if (!regola_combacia(f, d, nodo, r)) continue;
+        lista[nl++] = f->uni_testa;
+        if (nome) lista[nl++] = f->testa[secchio('t', nome)];
+        if (idv && idv[0]) lista[nl++] = f->testa[secchio('#', idv)];
+        if (cls) {
+            const char *c = cls;
+
+            while (*c && nl < (int)(sizeof(lista) / sizeof(lista[0]))) {
+                while (*c && spazio((unsigned char)*c)) c++;
+                if (!*c) break;
+                lista[nl++] = f->testa[secchio('.', c)];
+                while (*c && !spazio((unsigned char)*c)) c++;
+            }
+        }
+        for (q = 0; q < nl && !troppe; q++)
+            for (a = lista[q]; a >= 0; a = f->regole[a].seguente) {
+                if (nc >= CSS_CAND_MAX) { troppe = 1; break; }
+                cand[nc++] = a;
+            }
+        if (troppe) {
+            nc = 0;
+            for (a = 0; a < (int)f->regole_n && a < CSS_CAND_MAX; a++) cand[nc++] = a;
+            if (f->regole_n > CSS_CAND_MAX) { nc = -1; }
+        } else {
+            for (a = 1; a < nc; a++) {          /* insertion sort: small lists */
+                int v = cand[a];
+
+                for (b = a - 1; b >= 0 && cand[b] > v; b--) cand[b + 1] = cand[b];
+                cand[b + 1] = v;
+            }
+        }
+
+        for (q = 0; nc < 0 ? q < (int)f->regole_n : q < nc; q++) {
+            int              ir = (nc < 0) ? q : cand[q];
+            const CssRegola *r;
+            unsigned int     p1;
+
+            if (nc >= 0 && q > 0 && cand[q] == cand[q - 1]) continue;
+            r = &f->regole[ir];
+            if (!regola_combacia(f, d, nodo, r)) continue;
 
         /* ! IL PESO DELL'ORIGINE STA SOPRA QUELLO DEL SELETTORE, e non
          * accanto: un `style=` con un selettore banale deve battere un
@@ -825,6 +1482,7 @@ void css_calcola(const CssFoglio *f, const HtmlDoc *d, int nodo,
             if (p1 < peso_di[prop]) continue;
             peso_di[prop] = p1;
             css_posa(out, prop, f->dich[k].numero);
+        }
         }
     }
 

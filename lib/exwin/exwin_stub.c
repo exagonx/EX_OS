@@ -150,6 +150,7 @@ static struct {
     unsigned int (*a_vista)(ExFinestra, unsigned int *);
     void         (*a_mostra_da)(ExFinestra, unsigned int);
     int          (*guarda_fd)(int, ExGuarda, void *);
+    void         (*tab_contenuto)(ExFinestra, int);
 } P;
 
 static void *chiedi(const ExLibTesta *t, const char *nome)
@@ -310,6 +311,8 @@ static void assicura(void)
     /* ! FACOLTATIVA: chi la usa (i download di exdlg) sa dire che manca. */
     P.guarda_fd     = (int (*)(int, ExGuarda, void *))
                       exlib_simbolo(t, "ex_guarda_fd");
+    P.tab_contenuto = (void (*)(ExFinestra, int))
+                      exlib_simbolo(t, "ex_tab_contenuto");
 
     P.pronto = 1;
 }
@@ -508,6 +511,10 @@ unsigned int ex_area_vista(ExFinestra f, unsigned int *v) { assicura(); return P
 void         ex_area_mostra_da(ExFinestra f, unsigned int r) { assicura(); P.a_mostra_da(f, r); }
 int          ex_guarda_fd(int fd, ExGuarda fn, void *dato)
 { assicura(); return P.guarda_fd ? P.guarda_fd(fd, fn, dato) : -2; }
+
+/* Optional: an older exwin.so without it just keeps Tab to itself. */
+void         ex_tab_contenuto(ExFinestra f, int si)
+{ assicura(); if (P.tab_contenuto) P.tab_contenuto(f, si); }
 
 void ex_icona_metti(ExFinestra c, ExIcona ic, unsigned int lato)
 {

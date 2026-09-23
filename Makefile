@@ -2531,6 +2531,7 @@ BROWSER_SRC := exwin/bin/exbrowser/exbrowser.c
 # decidere qualcosa.
 BROWSER_IMP := exwin/bin/exbrowser/browser_impagina.c
 BROWSER_EST := exwin/bin/exbrowser/browser_estranei.c
+BROWSER_PRE := exwin/bin/exbrowser/browser_preludio.c
 BROWSER_ESTH := exwin/bin/exbrowser/browser_estranei.h
 BROWSER_VISTA := exwin/bin/exbrowser/browser_vista.h
 BROWSER_PRIV := exwin/bin/exbrowser/browser_priv.h
@@ -2547,7 +2548,7 @@ BROWSER_BISH := exwin/bin/exbrowser/biscotti.h
 
 $(BROWSER_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(BROWSER_SRC) $(BROWSER_LD) \
              $(BROWSER_IMP) $(BROWSER_PRIV) \
-             $(BROWSER_EST) $(BROWSER_ESTH) $(BROWSER_VISTA) \
+             $(BROWSER_EST) $(BROWSER_ESTH) $(BROWSER_VISTA) $(BROWSER_PRE) \
              $(BROWSER_BIS) $(BROWSER_BISH) $(EXWIN_STUB) $(EXLIB_SRC) \
              $(EXIMG_INFLATE) lib/eximg/inflate.h \
              $(EXLIB_HDR) $(EXWIN_HDR) $(WIN_PROTO) $(EXHTTP_SRC) \
@@ -2564,6 +2565,7 @@ $(BROWSER_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(BROWSER_SRC) $(BROWSER_LD) \
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I lib/exjs -I lib/exdom -I lib/exdlg -I lib/exinfo -I exwin/bin/exbrowser -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_SRC) -o $(BUILD_OBJ)/browser_main.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I lib/exjs -I lib/exdom -I lib/exdlg -I lib/exinfo -I exwin/bin/exbrowser -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_IMP) -o $(BUILD_OBJ)/browser_imp.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I lib/exjs -I lib/exdom -I lib/exdlg -I lib/exinfo -I exwin/bin/exbrowser -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_EST) -o $(BUILD_OBJ)/browser_est.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I lib/exjs -I lib/exdom -I lib/exdlg -I lib/exinfo -I exwin/bin/exbrowser -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_PRE) -o $(BUILD_OBJ)/browser_pre.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I exwin/bin/exbrowser -c $(BROWSER_BIS) -o $(BUILD_OBJ)/browser_bis.o
 	@# ! inflate.c COMPILED IN, as netupdate and exzip do: some servers
 	@# (amazon.com, 23 Sept 2026) send a gzip body without Content-Encoding.
@@ -2584,7 +2586,7 @@ $(BROWSER_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(BROWSER_SRC) $(BROWSER_LD) \
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(BROWSER_LD) \
 	    $(BUILD_OBJ)/browser_start.o $(BUILD_OBJ)/browser_main.o \
 	    $(BUILD_OBJ)/browser_imp.o \
-	    $(BUILD_OBJ)/browser_est.o \
+	    $(BUILD_OBJ)/browser_est.o $(BUILD_OBJ)/browser_pre.o \
 	    $(BUILD_OBJ)/browser_bis.o $(BUILD_OBJ)/browser_inflate.o \
 	    $(BUILD_OBJ)/browser_exwin.o $(BUILD_OBJ)/browser_stub.o \
 	    $(BUILD_OBJ)/browser_html.o $(BUILD_OBJ)/browser_css.o \

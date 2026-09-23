@@ -103,10 +103,16 @@
 #define LINK_MAX    2048
 #define LINK_ARENA  (192u * 1024u)
 #define STORIA_MAX  32
-#define CSS_REGOLE_MAX  2400
-#define CSS_DICH_MAX    5000
-#define CSS_ARENA_MAX   (160u * 1024u)
-#define CSS_FOGLI_MAX   4       /* quanti <link rel=stylesheet> si seguono */
+/* ! RAISED ON 24 SEPTEMBER 2026 (they were 2400 rules, 5000 declarations,
+ * 160 KB, 4 sheets): amazon.com's home page links 8 sheets, two of 262 and
+ * 564 KB, and every one of them was cut. Now that pieces sit in their own
+ * vector and rules are indexed (lib/excss), the numbers can follow real
+ * sites: about 2.5 MB per view, touched only as far as a page uses it. */
+#define CSS_REGOLE_MAX  16000
+#define CSS_PEZZI_MAX   40000
+#define CSS_DICH_MAX    30000
+#define CSS_ARENA_MAX   (1024u * 1024u)
+#define CSS_FOGLI_MAX   16      /* quanti <link rel=stylesheet> si seguono */
 #define SFONDI_MAX  256
 #define SCORRI_W    16
 #define SCORRI_MIN  24          /* il pollice non scende sotto: sparirebbe */
@@ -153,18 +159,79 @@ typedef struct {
 } Sfondo;
 
 /* ------------------------------------------ quel che i tre file si dividono */
-extern char g_arena[ARENA_MAX];
-extern CssFoglio g_css;
-extern HtmlDoc g_doc;
+
+/* =============================================================================
+ * ONE DOCUMENT'S LAYOUT STATE — the page, or an iframe's page
+ *
+ * ! THESE WERE GLOBALS UNTIL 24 SEPTEMBER 2026, and their names still are:
+ * each is a macro to the field of the CURRENT view (g_vi), so no function
+ * changed. An iframe has its own view; exbrowser.c switches between them
+ * with vista_usa(). Cut by tools/locali/vista_taglio.py.
+ * ============================================================================= */
+#define GEN_MAX     (64u * 1024u)   /* the text the layout makes up: bullets, numbers */
+
+typedef struct {
+    HtmlNodo       nodi[NODI_MAX];
+    HtmlAttr       attr[ATTR_MAX];
+    char           arena[ARENA_MAX];
+    HtmlDoc        doc;
+    Pezzo          pez[PEZZI_MAX];
+    int            pez_n;
+    char           link_arena[LINK_ARENA];
+    unsigned int   link_off[LINK_MAX];
+    int            link_n;
+    CssRegola      css_reg[CSS_REGOLE_MAX];
+    CssPezzo       css_pezzi[CSS_PEZZI_MAX];
+    CssDich        css_dich[CSS_DICH_MAX];
+    char           css_arena[CSS_ARENA_MAX];
+    CssFoglio      css;
+    Sfondo         sfondi[SFONDI_MAX];
+    int            sfondi_n;
+    char           gen[GEN_MAX];
+    unsigned int   gen_n;
+    int            scorri;
+    int            altezza;
+    int            tab_link;
+    int            tab_rif;
+    /* ! AN IFRAME'S VIEW HAS ITS OWN AREA: the rectangle it is drawn in (and
+     * laid out in, with y from 0). cornice = 0 is the page: area_x() and the
+     * others return the window's constants, as they always did. */
+    int            cornice;
+    int            ax, ay, aw, ah;
+    /* ...and where its DRAWING is cut: the part of the rectangle that is on
+     * the screen, which moves when the page scrolls. The layout keeps ax..ah
+     * (y from 0); cornice_disegna() sets these and g_scorri just before
+     * drawing or hit-testing. For the page they are not used. */
+    int            tx, ty, tw, th;
+} VistaImp;
+
+extern VistaImp *g_vi;
+#define g_nodi             (g_vi->nodi)
+#define g_attr             (g_vi->attr)
+#define g_arena            (g_vi->arena)
+#define g_doc              (g_vi->doc)
+#define g_pez              (g_vi->pez)
+#define g_pez_n            (g_vi->pez_n)
+#define g_link_arena       (g_vi->link_arena)
+#define g_link_off         (g_vi->link_off)
+#define g_link_n           (g_vi->link_n)
+#define g_css_reg          (g_vi->css_reg)
+#define g_css_pezzi        (g_vi->css_pezzi)
+#define g_css_dich         (g_vi->css_dich)
+#define g_css_arena        (g_vi->css_arena)
+#define g_css              (g_vi->css)
+#define g_sfondi           (g_vi->sfondi)
+#define g_sfondi_n         (g_vi->sfondi_n)
+#define g_gen              (g_vi->gen)
+#define g_gen_n            (g_vi->gen_n)
+#define g_scorri           (g_vi->scorri)
+#define g_altezza          (g_vi->altezza)
+#define g_tab_link         (g_vi->tab_link)
+#define g_tab_rif          (g_vi->tab_rif)
+
 extern ExFinestra g_f;
 extern ExFont g_font_testo;
-extern char g_link_arena[LINK_ARENA];
-extern int g_link_n;
-extern unsigned int g_link_off[LINK_MAX];
 extern int g_marg_sx, g_marg_dx;
-extern Pezzo g_pez[PEZZI_MAX];
-extern int g_pez_n;
-extern int g_scorri, g_altezza;
 
 /* --------------------- quel che l'impaginato chiede al navigatore (9)
  *
@@ -184,6 +251,15 @@ int riga_x(void);
 /* --------------------- e quel che il navigatore chiede all'impaginato (3) */
 void impagina(void);
 void disegna(void);
+/* The document's own part of the drawing, inside area_*(): what an iframe
+ * draws in its rectangle. disegna() is this plus the window around it. */
+void disegna_contenuto(void);
+/* In exbrowser.c: redraw the whole window from the page's view, whatever view
+ * is current. disegna() calls it when the current view is an iframe's. */
+void disegna_tutto(void);
 int uguale(const char *a, const char *b);
+
+/* ------------------------------------------------ browser_preludio.c */
+void preludio_esegui(ExJsCtx *js, int dentro_w, int dentro_h);
 
 #endif /* BROWSER_PRIV_H */

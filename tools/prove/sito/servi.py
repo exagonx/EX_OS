@@ -72,7 +72,9 @@ class H(BaseHTTPRequestHandler):
         if not os.path.isfile(via):
             self.send_error(404); return
 
-        if via.endswith(".png"):
+        if via.endswith(".js"):
+            tipo = "application/javascript"
+        elif via.endswith(".png"):
             time.sleep(RITARDO)
             tipo = "image/png"
         else:

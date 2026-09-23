@@ -133,21 +133,53 @@ void css_stile_vuoto(CssStile *s);
  * Le strutture sono esposte perche' il chiamante ne alloca i vettori, come per
  * HtmlDoc. Chi le legge dovrebbe passare da css_calcola().
  * --------------------------------------------------------------------------- */
-#define CSS_SEL_PEZZI_MAX   4       /* «div ul li a» sono quattro pezzi */
+/* ! A SELECTOR IS A CHAIN OF COMPOUNDS, and each compound is everything a
+ * selector can say about ONE element: its type, its id, any number of
+ * classes and attribute tests, pseudo-classes, and how it hangs on the
+ * compound at its left (descendant, `>`, `+`, `~`). Until 24 September 2026
+ * a piece knew one type, ONE class and one id, joined only by spaces: `.a.b`,
+ * `ul > li`, `[hidden]`, `li:first-child` threw the whole rule away — which is
+ * why sites showed what their style sheets hide. The strings live in the
+ * sheet's arena; the layouts of the lists are written in css.c. */
+#define CSS_SEL_PEZZI_MAX   8       /* «div ul li a» are four; real sheets write six */
 
 typedef struct {
-    unsigned int tipo;      /* scostamento nell'arena, 0 = «*»      */
-    unsigned int classe;    /* scostamento, 0 = nessuna             */
-    unsigned int id;        /* scostamento, 0 = nessuno             */
+    unsigned int   tipo;    /* arena offset, 0 = «*»                            */
+    unsigned int   id;      /* arena offset, 0 = none                          */
+    unsigned int   classi;  /* arena: names each ended by '\0', then an empty one */
+    unsigned int   attr;    /* arena: the attribute tests (see css.c), 0 = none  */
+    unsigned int   nega;    /* arena: the simple selector inside :not(), 0 = none */
+    unsigned short pseudo;  /* CSS_PS_*                                          */
+    short          nth_a, nth_b;   /* :nth-*(an+b)                               */
+    unsigned char  comb;    /* on the compound at its LEFT: ' ' '>' '+' '~'; 0 first */
 } CssPezzo;
 
+/* The pseudo-classes that can match in a document that nobody is hovering or
+ * focusing. The -of-type flag applies to every structural one in the piece. */
+#define CSS_PS_PRIMO      0x0001    /* :first-child                 */
+#define CSS_PS_ULTIMO     0x0002    /* :last-child                  */
+#define CSS_PS_UNICO      0x0004    /* :only-child                  */
+#define CSS_PS_NTH        0x0008    /* :nth-child(an+b)             */
+#define CSS_PS_NTH_ULT    0x0010    /* :nth-last-child(an+b)        */
+#define CSS_PS_DI_TIPO    0x0020    /* ...-of-type                  */
+#define CSS_PS_VUOTO      0x0040    /* :empty                       */
+#define CSS_PS_RADICE     0x0080    /* :root                        */
+#define CSS_PS_LINK       0x0100    /* :link, :any-link             */
+#define CSS_PS_ACCESO     0x0200    /* :checked                     */
+#define CSS_PS_SPENTO     0x0400    /* :disabled                    */
+#define CSS_PS_ABILITATO  0x0800    /* :enabled                     */
+
+/* ! THE PIECES LIVE IN THE SHEET'S VECTOR (f->pezzi), not in the rule: most
+ * rules have one or two, and eight inside every rule would have made 16000
+ * rules weigh 4 MB. A rule says where its first piece is, and how many. */
 typedef struct {
-    CssPezzo     pezzo[CSS_SEL_PEZZI_MAX];
+    unsigned int  pezzo_primo;  /* index in f->pezzi                */
     unsigned char n_pezzi;      /* l'ultimo e' l'elemento stesso    */
     unsigned char origine;
     unsigned int  peso;         /* specificita': id*10000+cl*100+tp */
     unsigned int  ordine;       /* per rompere la parita'           */
     int           prima_dich;   /* indice della prima dichiarazione */
+    int           seguente;     /* the next rule in its bucket, -1  */
 } CssRegola;
 
 /* Le proprieta' riconosciute. ! AGGIUNGERNE UNA E' UNA VOCE QUI, una riga nella
@@ -174,9 +206,21 @@ typedef struct {
     unsigned int   numero;      /* colore, misura o codice          */
 } CssDich;
 
+/* ! THE RULE INDEX, as Gecko and Chromium both have one (24 September 2026):
+ * every rule goes into ONE bucket, by the rightmost compound — its id, else
+ * its first class, else its type, else the universal list. An element looks
+ * only in the buckets of its id, its classes, its type, and the universal
+ * one; before, every element was compared with every rule, and a real site
+ * (15000 rules, 2000 elements) meant thirty million tests per layout. */
+#define CSS_SECCHI  512
+
 typedef struct {
     CssRegola   *regole;
     unsigned int regole_max, regole_n;
+    CssPezzo    *pezzi;
+    unsigned int pezzi_max, pezzi_n;
+    int          testa[CSS_SECCHI], coda[CSS_SECCHI];
+    int          uni_testa, uni_coda;
     CssDich     *dich;
     unsigned int dich_max, dich_n;
     char        *arena;
@@ -196,6 +240,7 @@ typedef struct {
  * riusa per una pagina nuova senza rifare i buffer. */
 void css_prepara(CssFoglio *f,
                  CssRegola *regole, unsigned int regole_max,
+                 CssPezzo *pezzi, unsigned int pezzi_max,
                  CssDich *dich, unsigned int dich_max,
                  char *arena, unsigned int arena_max);
 

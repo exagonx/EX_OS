@@ -254,7 +254,12 @@ int  exjs_motore_ora(void);
  * Chi ospita deve chiamarla sempre, qualunque motore ci sia sotto. */
 void exjs_chiudi(ExJsCtx *c);
 
-/* Esegue `sorgente`. Rende 1 se e' andata, 0 se no — e in quel caso `err`
+/* ! `sorgente[n]` MUST BE '\0'. ExJs reads `n` bytes, QuickJS reads a C
+ * string (JS_Eval in quickjs.h), and a buffer reused without the zero hands
+ * QuickJS the tail of whatever was there before: see un_script() in
+ * exbrowser.c, 24 September 2026.
+ *
+ * Esegue `sorgente`. Rende 1 se e' andata, 0 se no — e in quel caso `err`
  * (se dato) dice dove e perche'. Il valore dell'ultima espressione, se
  * interessa, esce da `risultato`.
  *

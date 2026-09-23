@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Script aggiunti dopo</title>
+<style>
+body { font-family: sans-serif; margin: 16px; }
+.riq { border: 1px solid #888; padding: 6px; background: #f4f4f4; }
+</style>
+</head>
+<body>
+
+<h1>Script aggiunti da JavaScript, quattro riquadri</h1>
+
+<p>Ogni riquadro prova UNA cosa. «non e' successo niente» vuol dire che quel
+pezzo non ha funzionato.</p>
+
+<h2>1. uno script esterno creato in DOMContentLoaded, e il suo onload</h2>
+<div id="uno" class="riq">non e' successo niente</div>
+<div id="uno_b" class="riq">onload: non e' successo niente</div>
+
+<h2>2. uno script scritto a mano, creato da un setTimeout</h2>
+<div id="due" class="riq">non e' successo niente</div>
+
+<h2>3. un src che non esiste: onerror</h2>
+<div id="tre" class="riq">non e' successo niente</div>
+
+<h2>4. uno script creato e MAI attaccato: non deve partire</h2>
+<div id="quattro" class="riq">giusto: non e' partito</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    var s = document.createElement('script');
+    s.src = '/dinamico1.js';
+    s.onload = function () {
+        document.getElementById('uno_b').innerHTML =
+            "onload scattato, e la variabile dello script c'e': " + (typeof dinamico1_fatto);
+    };
+    document.getElementsByTagName('head')[0].appendChild(s);
+
+    var e = document.createElement('script');
+    e.src = '/non-esiste.js';
+    e.onerror = function () {
+        document.getElementById('tre').innerHTML = "onerror scattato per il file che non c'e'";
+    };
+    document.body.appendChild(e);
+
+    var mai = document.createElement('script');
+    mai.appendChild(document.createTextNode(
+        "document.getElementById('quattro').innerHTML = 'SBAGLIATO: e\\' partito senza essere attaccato';"));
+});
+
+setTimeout(function () {
+    var t = document.createElement('script');
+    t.appendChild(document.createTextNode(
+        "document.getElementById('due').innerHTML = 'lo script scritto a mano, creato dal timer, e\\' partito';"));
+    document.body.appendChild(t);
+}, 500);
+</script>
+
+</body>
+</html>

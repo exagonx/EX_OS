@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head><title>dentro</title>
+<style>body { font-family: sans-serif; margin: 4px; } .riq { background: #e0f0ff; padding: 4px; }</style>
+</head>
+<body>
+<div id="a" class="riq">DENTRO: il mio script non e' partito</div>
+<p><a id="l" href="/senza.html">clic qui: resta dentro l'iframe</a></p>
+<div id="b">clic: non ancora</div>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    document.getElementById('a').innerHTML = "DENTRO: il mio script e' partito, " +
+        (location.search ? "sono il secondo (" + location.search + ")" : "sono il primo");
+});
+document.getElementById('l').addEventListener('click', function (e) {
+    e.preventDefault();
+    document.getElementById('b').innerHTML = "clic sentito DENTRO l'iframe";
+});
+</script>
+</body>
+</html>

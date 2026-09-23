@@ -33,6 +33,7 @@ static const char *const g_dove[] = {
 static struct {
     int cercata;
     void (*prepara)(CssFoglio *, CssRegola *, unsigned int,
+                    CssPezzo *, unsigned int,
                     CssDich *, unsigned int, char *, unsigned int);
     unsigned int (*analizza)(CssFoglio *, const char *, unsigned int,
                              unsigned char);
@@ -53,6 +54,7 @@ static int assicura(void)
         t = exlib_apri_fra(g_dove, (int)(sizeof g_dove / sizeof g_dove[0]));
         if (t) {
             P.prepara  = (void (*)(CssFoglio *, CssRegola *, unsigned int,
+                                   CssPezzo *, unsigned int,
                                    CssDich *, unsigned int, char *,
                                    unsigned int))exlib_simbolo(t, "css_prepara");
             P.analizza = (unsigned int (*)(CssFoglio *, const char *,
@@ -94,11 +96,12 @@ static void vuoto_locale(CssStile *s)
 }
 
 void css_prepara(CssFoglio *f, CssRegola *regole, unsigned int regole_max,
+                 CssPezzo *pezzi, unsigned int pezzi_max,
                  CssDich *dich, unsigned int dich_max,
                  char *arena, unsigned int arena_max)
 {
-    if (assicura()) { P.prepara(f, regole, regole_max, dich, dich_max,
-                                arena, arena_max); return; }
+    if (assicura()) { P.prepara(f, regole, regole_max, pezzi, pezzi_max,
+                                dich, dich_max, arena, arena_max); return; }
     if (f) { f->regole_n = 0; f->dich_n = 0; f->arena_n = 0; f->troncato = 0;
              f->regole = 0; f->dich = 0; f->arena = 0; }
 }

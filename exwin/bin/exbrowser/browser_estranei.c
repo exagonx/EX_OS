@@ -177,6 +177,49 @@ static int est_misura(int v, VistaPezzo *p)
     if (g_js_acceso && uguale(nome, "noscript")) return VISTA_SALTA;
 
     /* =====================================================================
+     * UN IFRAME — un rettangolo, e dentro un altro documento
+     *
+     * ! It is registered here and loaded elsewhere (cornici_carica in
+     * exbrowser.c): the layout must not stop to fetch a page. A node keeps its
+     * slot across relayouts, as controls do, so a loaded iframe stays loaded.
+     * The children of <iframe> are fallback for browsers without iframes:
+     * VISTA_PEZZO skips them.
+     * ===================================================================== */
+    if (uguale(nome, "iframe") || uguale(nome, "frame")) {
+        const char *src = html_attr(&g_doc, v, "src");
+        const char *aw  = html_attr(&g_doc, v, "width");
+        const char *ah  = html_attr(&g_doc, v, "height");
+        int         k;
+
+        for (k = 0; k < g_ve->corn_n; k++)
+            if (g_ve->corn[k].nodo == v) break;
+        if (k == g_ve->corn_n) {
+            if (g_ve->corn_n >= CORNICI_MAX) return VISTA_SALTA;
+            g_ve->corn_n++;
+            g_ve->corn[k].nodo  = v;
+            g_ve->corn[k].stato = 0;
+            g_ve->corn[k].lx    = -1;
+            g_ve->corn[k].src[0] = '\0';
+        }
+        /* a script may have changed src: then it loads again */
+        if (strcmp(g_ve->corn[k].src, src ? src : "") != 0) {
+            strncpy(g_ve->corn[k].src, src ? src : "", EXHTTP_URL_MAX - 1);
+            g_ve->corn[k].src[EXHTTP_URL_MAX - 1] = '\0';
+            g_ve->corn[k].stato = 0;
+        }
+        g_ve->corn[k].w = (aw && numero(aw) > 0) ? (int)numero(aw) : 300;
+        g_ve->corn[k].h = (ah && numero(ah) > 0) ? (int)numero(ah) : 150;
+        if (g_ve->corn[k].w > riga_w()) g_ve->corn[k].w = riga_w();
+
+        p->w          = g_ve->corn[k].w;
+        p->h          = g_ve->corn[k].h;
+        p->rif        = EST_CORN(k);
+        p->nel_flusso = 1;
+        p->aria_giu   = 4;
+        return VISTA_PEZZO;
+    }
+
+    /* =====================================================================
      * I CONTROLLI DI UN MODULO
      *
      * ! LA MISURA VIENE DALL'ATTRIBUTO `size` QUANDO C'E', e altrimenti da
@@ -465,6 +508,8 @@ static int est_misura(int v, VistaPezzo *p)
  * ============================================================================= */
 static void est_disegna(int rif, int x, int y, int w, int h)
 {
+    if (EST_E_CORN(rif)) { cornice_disegna(EST_CHI(rif), x, y, w, h); return; }
+
     /* =================================================================
      * UN CONTROLLO DI MODULO
      *

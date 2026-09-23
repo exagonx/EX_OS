@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Tab</title>
+<style>
+body { font-family: sans-serif; margin: 16px; }
+.riq { border: 1px solid #888; padding: 6px; background: #f4f4f4; }
+</style>
+</head>
+<body>
+
+<h1>Tab, Invio e Spazio: tutto da tastiera</h1>
+
+<p>Si arriva qui col Tab dalla barra dell'indirizzo. Ogni riquadro dice se la
+sua cosa e' successa.</p>
+
+<p><a id="primo" href="/senza.html">primo collegamento: Invio NON deve portare via</a></p>
+<div id="uno" class="riq">non e' successo niente</div>
+
+<form action="/eco-modulo" method="get">
+<p>una casella: <input type="text" id="casella" name="c" size="20"></p>
+<p><button type="submit" id="pulsante" onclick="premuto(event)">Premi</button></p>
+<p><input type="checkbox" id="spunta" onclick="spuntato()"> una spunta</p>
+</form>
+
+<div id="due" class="riq">il pulsante non e' stato premuto</div>
+<div id="tre" class="riq">la spunta non e' stata toccata</div>
+
+<script>
+document.getElementById('primo').addEventListener('click', function (e) {
+    e.preventDefault();
+    document.getElementById('uno').innerHTML = "collegamento premuto da tastiera, e non seguito";
+});
+function premuto(e) {
+    e.preventDefault();
+    document.getElementById('due').innerHTML =
+        "il pulsante ha sentito il clic; nella casella c'era: " +
+        document.getElementById('casella').value;
+}
+function spuntato() {
+    document.getElementById('tre').innerHTML =
+        "spunta: " + (document.getElementById('spunta').checked ? "accesa" : "spenta");
+}
+</script>
+
+</body>
+</html>

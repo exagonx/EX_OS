@@ -535,6 +535,13 @@ void   ex_sveglia(ExFinestra f, unsigned int ms);
  * with no timer and no window needed. (23 September 2026) */
 typedef void (*ExGuarda)(void *dato, int fd);
 int    ex_guarda_fd(int fd, ExGuarda fn, void *dato);
+
+/* Tab on the last control (or with nothing focused) leaves the toolkit and
+ * reaches the window procedure as EXM_TASTO, so an application that draws its
+ * own focusable things — the browser's page — can take it. Off by default;
+ * the application gives the focus back with ex_fuoco(). Shift+Tab is not
+ * affected. See exwin.c. */
+void   ex_tab_contenuto(ExFinestra finestra, int si);
 void ex_aggiorna(ExFinestra f);     /* «ho finito»: lo dice al server */
 
 /* -----------------------------------------------------------------------------

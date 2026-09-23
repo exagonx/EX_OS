@@ -47,8 +47,6 @@
  * al codice che li usa, ed e' l'unica parte del taglio che riduce davvero il
  * numero dei legami invece di limitarsi a scriverli. */
 static unsigned int  g_link_usati = 0;
-static Sfondo g_sfondi[SFONDI_MAX];
-static int    g_sfondi_n = 0;
 static int  g_pen_x, g_pen_y, g_riga_h;
 static int  g_link_ora;
 static int  g_nodo_ora = -1;
@@ -244,11 +242,8 @@ static void parola(const char *t, unsigned int off, int n)
  * quindi il bit e' libero davvero — e un pezzo continua a costare quattro byte
  * di scostamento invece di un puntatore da quattro piu' un si'/no.
  * ============================================================================= */
-#define GEN_MAX     (64u * 1024u)
 #define GEN_BIT     0x80000000u
 
-static char         g_gen[GEN_MAX];
-static unsigned int g_gen_n = 0;
 
 static unsigned int genera(const char *s)
 {
@@ -1207,7 +1202,11 @@ static void suggerimenti(int v, CssStile *st)
  * --------------------------------------------------------------------------- */
 void disegna(void)
 {
-    int i;
+    /* ! FROM AN IFRAME'S VIEW, THE WHOLE WINDOW: a timer or a click inside an
+     * iframe ends in disegna() like anywhere else, and what must be redrawn is
+     * the page that contains it. disegna_tutto() makes the page current and
+     * comes back here. */
+    if (g_vi->cornice) { disegna_tutto(); return; }
 
     /* ! I CONTROLLI SI RIDISEGNANO PRIMA DEL CONTENUTO, e non basta riempire
      * di grigio. Qui c'era un ex_riempi su tutta la finestra: dipingeva SOPRA
@@ -1219,12 +1218,29 @@ void disegna(void)
      * cosa in una chiamata, e resta giusta il giorno che si aggiunge un
      * pulsante. */
     ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
-
-    ex_riempi(g_f, area_x() - 2, area_y() - 2, area_w() + 4, area_h() + 4,
-              EX_BIANCO);
-    ex_incavo(g_f, area_x() - 2, area_y() - 2, area_w() + 4, area_h() + 4);
-
     disegna_barra();
+    disegna_contenuto();
+    ex_aggiorna(g_f);
+}
+
+/* Where drawing is cut: the document's area, or for an iframe the part of its
+ * rectangle that is on screen (see tx..th in VistaImp). */
+#define T_X()  (g_vi->cornice ? g_vi->tx : area_x())
+#define T_Y()  (g_vi->cornice ? g_vi->ty : area_y())
+#define T_W()  (g_vi->cornice ? g_vi->tw : area_w())
+#define T_H()  (g_vi->cornice ? g_vi->th : area_h())
+
+void disegna_contenuto(void)
+{
+    int i;
+
+    if (g_vi->cornice) {
+        ex_riempi(g_f, T_X(), T_Y(), T_W(), T_H(), EX_BIANCO);
+    } else {
+        ex_riempi(g_f, T_X() - 2, T_Y() - 2, T_W() + 4, T_H() + 4,
+                  EX_BIANCO);
+        ex_incavo(g_f, T_X() - 2, T_Y() - 2, T_W() + 4, T_H() + 4);
+    }
 
     /* ! GLI SFONDI PRIMA DI TUTTO IL RESTO, e ritagliati a mano all'area come
      * le immagini: ex_riempi ritaglia alla FINESTRA, non al documento. */
@@ -1232,9 +1248,9 @@ void disegna(void)
         int y = g_sfondi[i].y - g_scorri;
         int h = g_sfondi[i].h;
 
-        if (y + h < area_y() || y > area_y() + area_h()) continue;
-        if (y < area_y()) { h -= area_y() - y; y = area_y(); }
-        if (y + h > area_y() + area_h()) h = area_y() + area_h() - y;
+        if (y + h < T_Y() || y > T_Y() + T_H()) continue;
+        if (y < T_Y()) { h -= T_Y() - y; y = T_Y(); }
+        if (y + h > T_Y() + T_H()) h = T_Y() + T_H() - y;
         if (h <= 0) continue;
 
         if (!g_sfondi[i].bordo) {
@@ -1255,9 +1271,9 @@ void disegna(void)
 
             ex_riempi(g_f, x, y, b, h, g_sfondi[i].colore);
             ex_riempi(g_f, x + w - b, y, b, h, g_sfondi[i].colore);
-            if (y0 >= area_y())
+            if (y0 >= T_Y())
                 ex_riempi(g_f, x, y0, w, b, g_sfondi[i].colore);
-            if (y0 + h0 <= area_y() + area_h())
+            if (y0 + h0 <= T_Y() + T_H())
                 ex_riempi(g_f, x, y0 + h0 - b, w, b, g_sfondi[i].colore);
         }
     }
@@ -1271,7 +1287,7 @@ void disegna(void)
          * righe, dipingere tutto vorrebbe dire pagare l'intero documento a
          * ogni riga di scorrimento — e per il novantanove per cento fuori
          * dalla finestra. */
-        if (y + ph < area_y() || y > area_y() + area_h()) continue;
+        if (y + ph < T_Y() || y > T_Y() + T_H()) continue;
 
         /* ! UN PEZZO ESTRANEO SI DISEGNA DA SE', e il ritaglio e' suo. Qui
          * non si sa se sporgere sia lecito: un'immagine alta trecento pixel
@@ -1291,7 +1307,7 @@ void disegna(void)
          * LA BARRA DELL'INDIRIZZO, e una in fondo sopra la barra di stato. Si
          * vedeva appena il documento diventava piu' lungo della finestra —
          * cioe' proprio quando e' arrivata la barra di scorrimento. */
-        if (y < area_y() || y + ph > area_y() + area_h()) continue;
+        if (y < T_Y() || y + ph > T_Y() + T_H()) continue;
 
         {
             ExFont       f = g_pez[i].font;
@@ -1329,5 +1345,32 @@ void disegna(void)
         }
     }
 
-    ex_aggiorna(g_f);
+    /* ! THE TAB RING, dotted, as Firefox draws it: around every piece of the
+     * stop that has the focus (a link can be several words). What the stop IS
+     * the layout does not know — only a link number and an opaque `rif`,
+     * compared as numbers. Pieces cut by the area's edge are skipped, as text
+     * is above. */
+    if (g_tab_link >= 0 || g_tab_rif >= 0) {
+        for (i = 0; i < g_pez_n; i++) {
+            int x, y, w, h, q;
+
+            if (g_tab_link >= 0 ? g_pez[i].link != g_tab_link
+                                : g_pez[i].rif != g_tab_rif) continue;
+            h = (g_pez[i].rif >= 0) ? g_pez[i].h : ex_font_altezza(g_pez[i].font);
+            x = g_pez[i].x - 2;
+            y = g_pez[i].y - g_scorri - 1;
+            w = g_pez[i].w + 4;
+            h = h + 2;
+            if (y < T_Y() || y + h > T_Y() + T_H()) continue;
+            for (q = 0; q < w; q += 2) {
+                ex_riempi(g_f, x + q, y, 1, 1, EX_NERO);
+                ex_riempi(g_f, x + q, y + h - 1, 1, 1, EX_NERO);
+            }
+            for (q = 0; q < h; q += 2) {
+                ex_riempi(g_f, x, y + q, 1, 1, EX_NERO);
+                ex_riempi(g_f, x + w - 1, y + q, 1, 1, EX_NERO);
+            }
+        }
+    }
+
 }

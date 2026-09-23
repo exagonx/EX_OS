@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Iframe</title>
+<style>
+body { font-family: sans-serif; margin: 16px; }
+.riq { border: 1px solid #888; padding: 6px; background: #f4f4f4; }
+</style>
+</head>
+<body>
+
+<h1>Iframe veri</h1>
+
+<p>Qui sotto un iframe scritto nell'HTML, largo 420 e alto 140. Dentro deve
+comparire un'altra pagina, con il suo JavaScript.</p>
+
+<iframe id="primo" src="/cornice_dentro.html" width="420" height="140"></iframe>
+
+<p>E qui un iframe creato da JavaScript, come fa reCAPTCHA:</p>
+<div id="posto"></div>
+
+<div id="stato" class="riq">script della pagina: non partito</div>
+
+<p>RIGA DOPO GLI IFRAME: deve stare sotto i due riquadri.</p>
+<p>riga per scorrere 1: con Pagina giu' gli iframe devono sparire SOTTO la barra, non sopra</p>
+<p>riga per scorrere 2: con Pagina giu' gli iframe devono sparire SOTTO la barra, non sopra</p>
+<p>riga per scorrere 3: con Pagina giu' gli iframe devono sparire SOTTO la barra, non sopra</p>
+<p>riga per scorrere 4: con Pagina giu' gli iframe devono sparire SOTTO la barra, non sopra</p>
+<p>riga per scorrere 5: con Pagina giu' gli iframe devono sparire SOTTO la barra, non sopra</p>
+<p>riga per scorrere 6: con Pagina giu' gli iframe devono sparire SOTTO la barra, non sopra</p>
+<p>riga per scorrere 7: con Pagina giu' gli iframe devono sparire SOTTO la barra, non sopra</p>
+<p>riga per scorrere 8: con Pagina giu' gli iframe devono sparire SOTTO la barra, non sopra</p>
+<p>riga per scorrere 9: con Pagina giu' gli iframe devono sparire SOTTO la barra, non sopra</p>
+<p>riga per scorrere 10: con Pagina giu' gli iframe devono sparire SOTTO la barra, non sopra</p>
+<p>riga per scorrere 11: con Pagina giu' gli iframe devono sparire SOTTO la barra, non sopra</p>
+<p>riga per scorrere 12: con Pagina giu' gli iframe devono sparire SOTTO la barra, non sopra</p>
+<p>riga per scorrere 13: con Pagina giu' gli iframe devono sparire SOTTO la barra, non sopra</p>
+<p>riga per scorrere 14: con Pagina giu' gli iframe devono sparire SOTTO la barra, non sopra</p>
+<p>riga per scorrere 15: con Pagina giu' gli iframe devono sparire SOTTO la barra, non sopra</p>
+<p>riga per scorrere 16: con Pagina giu' gli iframe devono sparire SOTTO la barra, non sopra</p>
+<p>riga per scorrere 17: con Pagina giu' gli iframe devono sparire SOTTO la barra, non sopra</p>
+<p>riga per scorrere 18: con Pagina giu' gli iframe devono sparire SOTTO la barra, non sopra</p>
+<p>riga per scorrere 19: con Pagina giu' gli iframe devono sparire SOTTO la barra, non sopra</p>
+<p>riga per scorrere 20: con Pagina giu' gli iframe devono sparire SOTTO la barra, non sopra</p>
+
+<script>
+var f = document.createElement('iframe');
+f.src = '/cornice_dentro.html?secondo=1';
+f.width = 300; f.height = 100;
+document.getElementById('posto').appendChild(f);
+document.getElementById('stato').innerHTML = "script della pagina: partito, iframe nella pagina: " +
+    document.getElementsByTagName('iframe').length;
+</script>
+
+</body>
+</html>

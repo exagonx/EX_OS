@@ -44,6 +44,9 @@ settanta movimenti diventano tre minuti.
 | `modulo.html` | una casella e un'area: cursore, selezione, appunti |
 | `perdita.html` | sei immagini senza misure e dodici caselle: i controlli che si moltiplicavano |
 | `carico.html` | `DOMContentLoaded` e `load`: che scattino, che scattino in quell'ordine, e che `load` non si ripeta a ogni giro di `EXM_TEMPO` |
+| `tab.html` | Tab, Invio e Spazio: un collegamento, una casella, un pulsante e una spunta, tutti da tastiera; il pulsante e la spunta sentono il `click`, lo script legge `value` e `checked` |
+| `dinamico.html` | script creati da JavaScript: uno esterno con `onload`, uno scritto a mano da un timer, un `src` che non c'e' (`onerror`), uno mai attaccato che non deve partire. Usa `dinamico1.js` |
+| `cornice.html` | iframe veri: uno nell'HTML e uno creato da JavaScript, ognuno con la sua pagina (`cornice_dentro.html`), il suo JavaScript e i suoi clic; la riga dopo deve stare sotto |
 
 ## `servi.py`
 

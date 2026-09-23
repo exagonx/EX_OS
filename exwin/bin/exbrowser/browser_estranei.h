@@ -30,9 +30,12 @@
 
 #define EST_IMM(k)     (k)
 #define EST_CTRL(k)    (IMM_MAX + (k))
+#define EST_CORN(k)    (IMM_MAX + CTRL_MAX + (k))     /* an iframe: 24 Sept 2026 */
 #define EST_E_IMM(r)   ((r) >= 0 && (r) < IMM_MAX)
-#define EST_E_CTRL(r)  ((r) >= IMM_MAX)
-#define EST_CHI(r)     ((r) >= IMM_MAX ? (r) - IMM_MAX : (r))
+#define EST_E_CTRL(r)  ((r) >= IMM_MAX && (r) < IMM_MAX + CTRL_MAX)
+#define EST_E_CORN(r)  ((r) >= IMM_MAX + CTRL_MAX)
+#define EST_CHI(r)     ((r) >= IMM_MAX + CTRL_MAX ? (r) - IMM_MAX - CTRL_MAX : \
+                        (r) >= IMM_MAX ? (r) - IMM_MAX : (r))
 
 /* =============================================================================
  * ! QUESTA META' DEL FILE VIENE DA browser_priv.h, e ci e' venuta l'8 settembre
@@ -98,15 +101,63 @@ typedef struct {
     unsigned char stato;            /* 0 da prendere, 1 presa, 2 rinunciata    */
     char          src[EXHTTP_URL_MAX];
 } Imm;
-extern Ctrl g_ctrl[CTRL_MAX];
-extern int g_ctrl_fuoco;
-extern int g_ctrl_n;
-extern Imm g_imm[IMM_MAX];
 extern int g_js_acceso;
-extern Modulo g_mod[MODULI_MAX];
-extern int g_mod_n;
-extern char g_opz[OPZ_MAX][CTRL_VAL_MAX];
-extern int g_opz_n;
+
+/* =============================================================================
+ * AN IFRAME, as the layout sees it: a rectangle with a document inside
+ *
+ * ! THE MODEL IS GECKO'S nsSubDocumentFrame (24 September 2026). The layout
+ * registers the <iframe> by node, like a control, and reserves its rectangle
+ * (width x height, 300 x 150 when missing, as in Firefox). Loading happens
+ * OUTSIDE the layout, in exbrowser.c (cornici_carica): the iframe's document
+ * has its own view — tree, pieces, controls, engine — and draws itself into
+ * the rectangle through cornice_disegna().
+ *
+ * ! THREE AT MOST, and only in the page: a view is 4.7 MB, allocated once and
+ * reused (free() gives nothing back on EX-OS). An iframe inside an iframe, or
+ * a fourth one, is an empty rectangle.
+ * ============================================================================= */
+#define CORNICI_MAX  3
+
+typedef struct {
+    int  nodo;                  /* the <iframe> in the parent's tree        */
+    int  w, h;                  /* its rectangle                            */
+    int  lx;                    /* the x it was laid out at                 */
+    int  stato;                 /* 0 to load, 1 loaded, 2 given up         */
+    char src[EXHTTP_URL_MAX];   /* as written in the attribute              */
+} Cornice;
+
+/* In exbrowser.c: draw iframe k of the current (parent) view in its rectangle. */
+void cornice_disegna(int k, int x, int y, int w, int h);
+
+/* One document's controls and images: see VistaImp in browser_priv.h. */
+typedef struct {
+    Ctrl           ctrl[CTRL_MAX];
+    int            ctrl_n;
+    int            ctrl_fuoco;
+    char           opz[OPZ_MAX][CTRL_VAL_MAX];
+    int            opz_n;
+    Modulo         mod[MODULI_MAX];
+    int            mod_n;
+    Imm            imm[IMM_MAX];
+    int            imm_n;
+    unsigned int   imm_px_negato;
+    /* the iframes of this document: see Cornice */
+    Cornice        corn[CORNICI_MAX];
+    int            corn_n;
+} VistaEst;
+
+extern VistaEst *g_ve;
+#define g_ctrl             (g_ve->ctrl)
+#define g_ctrl_n           (g_ve->ctrl_n)
+#define g_ctrl_fuoco       (g_ve->ctrl_fuoco)
+#define g_opz              (g_ve->opz)
+#define g_opz_n            (g_ve->opz_n)
+#define g_mod              (g_ve->mod)
+#define g_mod_n            (g_ve->mod_n)
+#define g_imm              (g_ve->imm)
+#define g_imm_n            (g_ve->imm_n)
+#define g_imm_px_negato    (g_ve->imm_px_negato)
 int imm_indice(int nodo, const char *src);
 void misura(const Imm *im, unsigned int nw, unsigned int nh,
                    unsigned int *pw, unsigned int *ph);

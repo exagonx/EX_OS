@@ -16,8 +16,8 @@ dice quale. Il CSS «completo» non e' un obiettivo; Amazon che si legge si'.
   sito            cosa si vede oggi in EXBrowser              cosa lo ferma
   --------------  ------------------------------------------  --------------------------
   google.com      homepage; ricerca -> consenso -> Rifiuta     Google: 429 «unusual traffic»
-                  tutto -> SearchGuard -> il browser torna     su questo IP; poi il reCAPTCHA,
-                  col gettone (vedi 2.1)                       che vuole iframe veri
+                  tutto -> SearchGuard -> il browser torna     su questo IP. reCAPTCHA gira
+                  col gettone (2.1)                            fino all'iframe (2.2 f, 2.3)
   amazon.com      la pagina VERA, come testo e collegamenti   il CSS: si vede anche cio'
                   (da oggi: prima era spazzatura binaria)      che Amazon nasconde (vedi 3)
   stackoverflow   la sfida di Cloudflare «Just a moment...»   la sfida, che e' JavaScript
@@ -237,13 +237,171 @@ casella Cerca, gia' provata in rete). I risultati di Google, una volta
 arrivati, sono pieni di CSS: servono le stesse cose di Amazon.
 
 
-2.2  Notato strada facendo
+2.2  Tab, pulsanti, script aggiunti dopo, e il preludio (23 settembre, notte)
 .....................................................................
 
-  - IL TAB NON SCORRE FRA I CONTROLLI DELLA PAGINA: esce soltanto dalla
-    casella a fuoco. Firefox passa di collegamento in pulsante; da noi un
-    modulo senza mouse non si puo' mandare. In QEMU, dove il mouse e'
-    relativo, e' anche il motivo per cui le prove costano tanto.
+Tutto quello che il reCAPTCHA della pagina /sorry chiede PRIMA dell'iframe, e
+che serve a ogni sito. Ogni pezzo ha la sua pagina in tools/prove/sito/.
+
+  a) IL TAB ENTRA NELLA PAGINA                      exbrowser.c, exwin.c
+     ex_tab_contenuto() nel toolkit (facoltativa: un dialogo fatto di soli
+     controlli gira come prima): un Tab sull'ultimo controllo della barra
+     passa alla finestra. Nel browser le fermate sono i collegamenti e i
+     controlli visibili, nell'ordine dell'impaginato; Shift+Tab indietro;
+     dopo l'ultima si torna alla barra; il rettangolo punteggiato lo disegna
+     l'impaginato; Invio (e Spazio sui controlli) CLICCANO la fermata per la
+     stessa strada del mouse — il gestore del clic e' diventato
+     clic_pagina(x, y). Una casella raggiunta col Tab prende i tasti.
+
+  b) IL CLIC SUI PULSANTI ARRIVA AL JAVASCRIPT      exbrowser.c
+     Il ramo CTRL_PULSANTE mandava il modulo e tornava PRIMA di
+     clic_al_documento(): un <button onclick> non chiamava mai il suo
+     gestore, e preventDefault() non fermava l'invio. Adesso, come in
+     Firefox, prima il click alla pagina e poi l'azione del pulsante. Anche
+     la spunta sente il click, e un preventDefault() la rimette com'era.
+
+  c) value E checked VEDONO QUEL CHE C'E' SULLO SCHERMO   exbrowser.c, exdom.c
+     Il testo battuto stava solo in g_ctrl, e `input.value` legge
+     l'attributo: lo script trovava vuoto un campo pieno. ctrl_al_dom()
+     copia lo stato dei controlli negli attributi un attimo PRIMA che giri
+     del JavaScript (clic, timer, rete, load) — non a ogni tasto, perche'
+     scrivere un attributo vuol dire rimpaginare; dom_al_ctrl() riporta nel
+     controllo quel che uno script ha scritto. `checked` e' un booleano nuovo
+     in exdom (presenza dell'attributo), in lettura e in scrittura.
+
+     Prova: tab.html, SOLO tastiera — Tab, Invio sul collegamento, «ciao»
+     nella casella, Invio su «Premi», Spazio sulla spunta:
+       «collegamento premuto da tastiera, e non seguito»
+       «il pulsante ha sentito il clic; nella casella c'era: ciao»
+       «spunta: accesa»          e il server NON ha visto /eco-modulo.
+     E invio.html: Tab fino a «cancella» e Invio mandano
+       /eco-modulo?testo=ciao&nascosto=c-e-sempre&azione=cancella
+     (il nascosto non e' una fermata; il pulsante manda il suo name=valore).
+
+  d) GLI SCRIPT AGGIUNTI DOPO                        exbrowser.c
+     Uno <script> creato da JavaScript girava solo per caso (se nato durante
+     il primo giro, finiva in fondo al vettore dei nodi); creato da un timer,
+     da un clic, da load o DOMContentLoaded non girava mai. E' cosi' che si
+     carica quasi tutto il web: api.js di reCAPTCHA fa createElement
+     ('script') + src + insertBefore. Adesso, come in Gecko: uno script gira
+     UNA volta, quando e' ATTACCATO al documento (g_script_fatto per nodo);
+     esegui_script_nuovi() guarda di nuovo dopo ogni ingresso nel JavaScript;
+     uno script esterno riceve `load` quando ha girato ed `error` quando non
+     arriva. Non ancora: l'ordine di async/defer, document.write.
+     In piu': gli script esterni hanno un buffer loro da 1 MB (prima quello
+     delle immagini, 128 KB: il motore di reCAPTCHA ne pesa 846) e uno
+     script arrivato troncato non si esegue; il tetto degli script per
+     pagina passa da 16 a 256 (la homepage di Amazon ne ha 94); gli errori
+     JavaScript vanno ANCHE sulla seriale, «exbrowser: javascript, riga N:
+     ...», come una console.
+     Prova: dinamico.html, quattro riquadri su quattro — esterno creato in
+     DOMContentLoaded con il suo onload, scritto a mano da un setTimeout,
+     onerror su un src che non c'e' (il server ha visto il 404), e quello mai
+     attaccato NON parte.
+
+  e) IL PRELUDIO                                      browser_preludio.c
+     Il motore di reCAPTCHA si fermava alla prima riga: «self is not
+     defined». Sul globale c'erano solo window, document, location,
+     navigator, console, i timer, fetch e XHR. Adesso, in JavaScript ES5
+     (gira anche con ExJs), eseguito appena si apre il motore: self/top/
+     parent/frames, innerWidth/innerHeight e screen con le misure vere,
+     performance (now, mark, measure), requestAnimationFrame, queueMicrotask,
+     requestIdleCallback, localStorage/sessionStorage, TextEncoder/
+     TextDecoder, atob/btoa, crypto.getRandomValues e randomUUID (dai byte
+     di getentropy(), non da Math.random), Event/CustomEvent, postMessage e
+     MessageChannel, matchMedia, getComputedStyle, MutationObserver,
+     history, e navigator.languages/onLine/webdriver.
+     ! QUEL CHE NON E' VERO LO DICE la testa del file: lo storage vive in
+     memoria e si perde alla pagina dopo; postMessage passa l'oggetto e non
+     una copia; matchMedia non scatta mai; getComputedStyle rende lo stile
+     in linea; MutationObserver non richiama; crypto.subtle non c'e' proprio.
+     Provato sull'host con lo stesso QuickJS: «perché €» va e torna in
+     UTF-8, base64, storage, getRandomValues su un Uint32Array, randomUUID,
+     matchMedia, MessageChannel e postMessage.
+
+  f) E reCAPTCHA, IN LOCALE                          (niente verso Google)
+     Una pagina come /sorry (form + div.g-recaptcha + api.js), servita
+     dall'host con copie locali di api.js e del motore (846 KB), gli
+     indirizzi google/gstatic riscritti verso il server di prova. In
+     EXBrowser, con QuickJS e EXOS_RAM=128M:
+       - la pagina carica api.js, api.js CREA lo script del motore, il motore
+         arriva e gira fino in fondo SENZA UN ERRORE;
+       - grecaptcha e' un oggetto;
+       - c'e' UN iframe nella pagina, src=.../recaptcha/api2/anchor?ar=1&k=...
+       - e il server non ha mai ricevuto /recaptcha/api2/anchor.
+     ! LA CATENA SI FERMA DOVE CI SI ASPETTAVA: l'iframe. Il prossimo pezzo.
+
+
+2.3  Gli iframe veri (24 settembre 2026)                exbrowser.c e altri
+.....................................................................
+
+! IL MODELLO: dove Chromium e Gecko hanno gia' una soluzione pubblicata, si
+  prende quella di Gecko — senza doverlo ricalcare (detto dall'utente il 24
+  settembre). Qui e' il nsSubDocumentFrame: un iframe e' un rettangolo
+  dell'impaginato con dentro un DOCUMENTO SUO.
+
+  a) PRIMA IL TAGLIO, SENZA CAMBIARE NIENTE         tools/locali/vista_taglio.py
+     Le globali di un documento (albero, pezzi, CSS, controlli, immagini,
+     pagina, indirizzo, motore, script) sono diventate campi di una struttura
+     Vista, e il loro nome una macro verso la vista corrente:
+         #define g_doc (g_vi->doc)
+     cosi' nessuna funzione e' cambiata di un carattere. Tre strutture,
+     perche' l'impaginato non deve sapere che esistono controlli e immagini:
+     VistaImp (browser_priv.h), VistaEst (browser_estranei.h), Vista
+     (exbrowser.c). Il taglio lo fa lo script, dalle copie intatte.
+     Prova: le sette pagine di riferimento (bordi, tabella, font, script,
+     modulo, con, dinamico) fotografate prima e dopo, confronta_ppm.py:
+     IDENTICHE, tranne le righe 582-591 (l'orologio della barra in fondo).
+
+  b) GLI IFRAME
+     - browser_estranei.c registra <iframe>/<frame> per nodo (come i
+       controlli: lo slot sopravvive alle rimpaginazioni) e riserva il
+       rettangolo, width x height, 300 x 150 se mancano, come Firefox.
+     - Il caricamento avviene FUORI dall'impaginazione (cornici_carica):
+       alla fine di vai() e a ogni giro di EXM_TEMPO, cosi' anche l'iframe
+       creato da JavaScript si carica. documento_nuovo() e' il pezzo di vai()
+       che pagina e iframe hanno in comune.
+     - Due geometrie che non si mescolano: l'iframe si impagina con y da 0
+       (area_* = il suo rettangolo) e si disegna dov'e' sullo schermo,
+       ritagliato alla parte visibile (tx..th) con g_scorri = -y. L'impaginato
+       non legge mai g_scorri, quindi una rimpaginazione partita da un clic
+       nell'iframe resta giusta.
+     - I clic nel rettangolo passano a clic_pagina() con la vista
+       dell'iframe corrente; un collegamento o location.href dentro l'iframe
+       naviga l'iframe, non la pagina; timer e rete di ogni iframe si pompano
+       a ogni giro, e la sveglia si spegne solo quando nessuno aspetta.
+     - Le viste degli iframe si allocano UNA volta e si riusano (free() non
+       restituisce niente su EX-OS): tre al massimo, solo nella pagina.
+       Una vista pesa 7,3 MB con le tabelle del CSS di 3.1: si tocca solo la
+       parte che la pagina usa.
+     Prova: tools/prove/sito/cornice.html (+ cornice_dentro.html), in QEMU:
+       - l'iframe nell'HTML e quello creato da JavaScript mostrano ognuno la
+         sua pagina, e il loro script e' partito («sono il primo», «sono il
+         secondo (?secondo=1)» letto da location.search);
+       - il clic sul collegamento DENTRO l'iframe fa partire il gestore
+         dell'iframe, e il suo preventDefault vale (il server non vede
+         /senza.html);
+       - scorrendo, il primo iframe si taglia al bordo alto dell'area e non
+         disegna sopra la barra dell'indirizzo;
+       - le sette pagine di riferimento restano identiche.
+     Non ancora: iframe dentro iframe, immagini nell'iframe, scorrimento
+     interno, Tab nell'iframe, moduli inviati da un iframe.
+
+  c) postMessage fra pagina e iframe: fermato. Il lavoro pensato per il
+     reCAPTCHA di Google e' stato interrotto da un controllo di sicurezza, e
+     non si riprende. In lib/exdom/exdom.c contentWindow chiede la finestra
+     dell'iframe a __exos_finestra_di() se il browser la definisce;
+     il browser oggi non la definisce, quindi rende la finestra stessa, come
+     prima.
+
+
+2.4  Notato strada facendo
+.....................................................................
+
+  - Il Tab fra i controlli: FATTO la notte stessa (2.2 a).
+  - scarica (bin/scarica) non srotola il gzip non chiesto, e nemmeno gli
+    script esterni lo fanno: gz_srotola sta in prendi_dalla_rete e vale solo
+    per la pagina. Va spostata in exhttp.
   - L'indirizzo si passa come argomento a exbrowser (vedi 1.1).
 
 
@@ -285,7 +443,8 @@ Contati nel CSS INCORPORATO della homepage (i fogli esterni ne avranno di piu'):
 
 L'ordine, e il perche':
 
-  3.1  I selettori della cascata: classi multiple, `>`, virgole, [attr].
+  3.1  FATTO il 24 settembre 2026 — vedi 3.7.
+
        Senza, le regole di Amazon non si applicano proprio, e nessuna
        proprieta' nuova servirebbe. Si parte dal riconoscitore di exdom.
   3.2  Nascondere: display:none che arriva davvero (dipende da 3.1),
@@ -300,6 +459,56 @@ L'ordine, e il perche':
   3.5  display:flex, riga senza a-capo prima di tutto: e' la forma che la
        barra di Amazon usa di piu'.
   3.6  position relative/absolute, poi grid.
+
+  3.7  I SELETTORI E L'INDICE DELLE REGOLE (24 settembre 2026)   lib/excss
+       Quel che fanno Chromium e Gecko, e dicono le specifiche:
+       - un pezzo composto sa tipo, id, PIU' classi, PIU' attributi
+         ([a] = ~= |= ^= $= *= e il segno i), pseudo-classi, e come si
+         aggancia a sinistra (spazio, >, +, ~); fino a 8 pezzi (erano 4);
+       - pseudo-classi vere: :first-child :last-child :only-child
+         :nth-child(an+b, odd, even) :nth-last-child, le -of-type, :empty,
+         :root, :link, :checked, :disabled, :enabled, :not() con UN selettore
+         semplice;
+       - :hover :focus ::before e simili sono VALIDI e qui non valgono mai:
+         non si applicano, ma non buttano le altre regole della lista; un
+         selettore NON valido rende nulla l'intera lista, come nei browser;
+       - la virgola fra parentesi o virgolette non spezza la lista;
+       - gli escape nei nomi: .md\:flex, .w-1\/2, .\31 0 (Tailwind);
+       - il confronto da destra e' RICORSIVO: con > + ~ misti il primo
+         antenato buono puo' non essere quello giusto;
+       - i pezzi stanno in un vettore del foglio (f->pezzi), non nella
+         regola; css_prepara ha un argomento in piu' (cambia l'ABI: si
+         ricostruiscono excss.so e chi lo usa);
+       - L'INDICE: ogni regola in UN secchio, per il pezzo piu' a destra
+         (id, prima classe, tipo, universale); un elemento guarda solo i
+         suoi. Le candidate si rimettono in ordine di lettura, cosi' i
+         pareggi si risolvono come prima.
+       Nel browser: 16000 regole (erano 2400), 40000 pezzi, 30000
+       dichiarazioni (5000), arena 1 MB (160 KB), 16 fogli esterni (4), e i
+       fogli nel buffer da 1 MB (erano nel buffer delle immagini, 128 KB: i
+       fogli di Amazon da 262 e 564 KB arrivavano TRONCATI).
+       Prova: make prova-excss, 77 prove, 0 fallite (40 di prima + 37 nuove,
+       fra cui il pareggio fra due secchi e seimila regole con una sola
+       buona); prova-exdom e prova-exqjs 255/255; le sette pagine di
+       riferimento identiche.
+
+  3.8  DUE GUASTI TROVATI SU AMAZON (24 settembre 2026)
+       - QuickJS vuole il testo terminato da ZERO (quickjs.h: «input must be
+         zero terminated»), e il buffer degli script esterni veniva riusato
+         senza: uno script piccolo si leggeva con la coda del grande scaricato
+         prima. Sintomo: «SyntaxError: expecting ';'» su file che sull'host
+         compilano — 79 volte, perche' il caricatore di Amazon li reinserisce
+         quando falliscono. Corretto in un_script (un byte sempre libero per
+         lo zero), e scritto nel contratto di exjs_esegui in exjs.h.
+       - Mancavano Image e HTMLElement: nel preludio, con Node, Element,
+         Text, Document (instanceof guarda nodeType, si possono estendere).
+         customElements resta ASSENTE apposta.
+       - La console dice anche QUALE script: «exbrowser:    in <indirizzo>»,
+         e per un errore di sintassi i primi byte ricevuti.
+       Il metodo che l'ha trovato: gli script in linea della pagina vera
+       compilati sull'host con lo stesso QuickJS (tutti e 90 buoni), poi
+       html.c sull'host sulla stessa pagina (testo intatto), poi il browser
+       che dice il nome dello script che fallisce.
 
 Il resto (border-radius, box-shadow, transform) e' aspetto, non leggibilita':
 viene dopo.
@@ -400,6 +609,19 @@ qui e poi e' stato tolto, per non avere due fonti. Cosa c'era di sbagliato:
     exwin/bin/exbrowser/exbrowser.c   QuickJS predefinito
     lib/exhttp/exhttp.c               svuota_stack prima del DNS
     lib/dns.c                         non butta piu' i messaggi degli altri
+  e la notte (2.2):
+    lib/exwin/exwin.c, exwin.h,
+      exwin_esporta.c, exwin_stub.c   ex_tab_contenuto()
+    exwin/bin/exbrowser/exbrowser.c   Tab, clic_pagina, click sui pulsanti,
+                                      ctrl_al_dom/dom_al_ctrl, script dopo,
+                                      buffer script, tetto 256, errori JS
+    exwin/bin/exbrowser/browser_impagina.c   il rettangolo del Tab
+    exwin/bin/exbrowser/browser_priv.h       g_tab_*, preludio_esegui
+    exwin/bin/exbrowser/browser_preludio.c   nuovo: il preludio
+    lib/exdom/exdom.c                 checked
+    Makefile                          browser_preludio.c
+    tools/prove/sito/tab.html, dinamico.html, dinamico1.js, leggimi.md,
+      servi.py (i .js come application/javascript)
 
 Le pagine scaricate per le misure (non nel repository):
     /tmp/exos-siti/estratti/{g,so,eb,am}.html   da `scarica` in EX-OS

@@ -156,6 +156,8 @@ static const char *const g_nomi[] = {
     /* Un descrittore sorvegliato dal ciclo dei messaggi. */
     "ex_guarda_fd",
 
+    "ex_tab_contenuto",
+
     /* L'avvio della libreria: lo chiama chi la apre, non l'applicazione. */
     "__lib_avvio"
 };
@@ -260,6 +262,8 @@ static void *const g_indirizzi[] = {
     (void *)ex_area_mostra_da,
 
     (void *)ex_guarda_fd,
+
+    (void *)ex_tab_contenuto,
 
     (void *)__libc_ponti_avvia
 };

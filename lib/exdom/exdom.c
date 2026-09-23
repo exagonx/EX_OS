@@ -441,11 +441,43 @@ static int leggi_prop(ExJsCtx *c, void *dato, const char *nome, ExJsVal *fuori)
      * String.prototype.replace (measured 23 Sept 2026, diario_browser.txt) —
      * and they get the same built-ins they already have. A page that really
      * loads content into the iframe does not get it: that is still missing. */
+    /* ! `checked` IS A BOOLEAN, not a reflected string: the attribute's
+     * presence. The browser writes the live state of a checkbox into the
+     * attribute before any script runs (ctrl_al_dom in exbrowser.c), so this
+     * is what the user sees on the screen. */
+    if (ugu(nome, "checked")) {
+        const char *t = html_nome(d, n);
+
+        if (t && ugu(t, "input")) {
+            *fuori = exjs_booleano(html_attr(d, n, "checked") != 0);
+            return 1;
+        }
+    }
+
     if (ugu(nome, "contentWindow") || ugu(nome, "contentDocument")) {
         const char *t = html_nome(d, n);
 
         if (t && (ugu(t, "iframe") || ugu(t, "frame"))) {
-            *fuori = (nome[7] == 'W') ? exjs_globale(D->js) : D->documento;
+            /* ! THE HOST KNOWS THE IFRAME'S WINDOW, the bridge does not: since
+             * 24 September 2026 an iframe has a document and an engine of its
+             * own (exbrowser.c), and its window is a proxy that only the host
+             * can make. If the host has put __exos_finestra_di on the global,
+             * contentWindow asks it; otherwise the answer is the global, as
+             * before — one realm. contentDocument stays this document:
+             * another engine's tree cannot be handed across. */
+            if (nome[7] == 'W') {
+                ExJsVal f = exjs_prendi(c, exjs_globale(c), "__exos_finestra_di");
+
+                if (exjs_tipo(c, f) == EXJS_FUNZIONE) {
+                    ExJsVal a = exdom_avvolgi(D, n);
+
+                    *fuori = exjs_chiama(c, f, exjs_indefinito(), &a, 1, 0);
+                    return 1;
+                }
+                *fuori = exjs_globale(D->js);
+                return 1;
+            }
+            *fuori = D->documento;
             return 1;
         }
     }
@@ -573,6 +605,12 @@ static int scrivi_prop(ExJsCtx *c, void *dato, const char *nome, ExJsVal v)
 
     if (n < 0 || n >= (int)d->nodi_n) return 0;
     elemento = (d->nodi[n].tipo == HTML_ELEMENTO);
+
+    if (elemento && ugu(nome, "checked") && ugu(html_nome(d, n), "input")) {
+        if (exjs_a_booleano(c, v)) html_attr_metti(d, n, "checked", "");
+        else                       html_attr_togli(d, n, "checked");
+        return 1;
+    }
 
     if (!elemento) {
         if (ugu(nome, "nodeValue") || ugu(nome, "data") ||
