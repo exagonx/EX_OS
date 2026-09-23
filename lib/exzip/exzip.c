@@ -31,6 +31,7 @@
 #include "libc.h"
 #include "exzip.h"
 #include "inflate.h"
+#include "deflate.h"
 
 /* The four signatures, little-endian as they sit in the file. */
 #define SIG_LOCALE      0x04034B50ul
@@ -66,6 +67,8 @@ struct ExZip {
     unsigned long  w_off[EXZIP_VOCI_MAX];     /* local header offset */
     unsigned long  w_crc[EXZIP_VOCI_MAX];
     unsigned long  w_dim[EXZIP_VOCI_MAX];
+    unsigned long  w_cdim[EXZIP_VOCI_MAX];    /* size inside the archive */
+    unsigned int   w_met[EXZIP_VOCI_MAX];     /* EXZIP_STORE or EXZIP_DEFLATE */
     unsigned int   w_data[EXZIP_VOCI_MAX];    /* DOS date and time, packed */
     unsigned long  w_nome[EXZIP_VOCI_MAX];    /* offset into the name pool */
     unsigned int   w_quante;
@@ -483,34 +486,52 @@ ExZip *ex_zip_crea(const char *percorso)
     return z;
 }
 
-/* The CRC of a file, read through. See ex_zip_aggiungi() for why it is read
- * twice. */
-static int crc_del_file(const char *file, unsigned long *crc, unsigned long *dim)
+/* The CRC of a file, read through — and, when `cdim` is given, the size it
+ * would have compressed: the compressor runs counting only. See
+ * ex_zip_aggiungi() for why the file is read twice. `cdim` stays 0 when the
+ * compressor has no memory: the file then goes in as it is. */
+static int crc_del_file(const char *file, unsigned long *crc, unsigned long *dim,
+                        unsigned long *cdim)
 {
     unsigned char buf[BUF];
     unsigned long c = 0xFFFFFFFFul, n = 0;
-    int fd, letti;
+    int fd, letti, comprimo = 0;
 
     fd = open(file, O_RDONLY, 0);
     if (fd < 0) return 0;
 
+    if (cdim) { *cdim = 0; comprimo = defl_apri(0, 0); }
+
     while ((letti = (int)read(fd, buf, BUF)) > 0) {
         c = crc32(c, buf, (unsigned long)letti);
         n += (unsigned long)letti;
+        if (comprimo) defl_dati(buf, (unsigned int)letti);
     }
     close(fd);
+
+    if (comprimo) { defl_fine(); *cdim = defl_prodotti(); }
 
     *crc = c ^ 0xFFFFFFFFul;
     *dim = n;
     return letti == 0;          /* a read error is not a zero-length file */
 }
 
+/* Where the compressor's bytes go on the second pass: the archive. */
+static int scrivi_archivio(void *chi, const unsigned char *p, unsigned int n)
+{
+    ExZip *z = (ExZip *)chi;
+
+    if ((unsigned int)write(z->fd, p, n) != n) return 0;
+    z->scritto += n;
+    return 1;
+}
+
 int ex_zip_aggiungi(ExZip *z, const char *file, const char *nome)
 {
     unsigned char h[LOC_FISSO];
     unsigned char buf[BUF];
-    unsigned long crc = 0, dim = 0;
-    unsigned int  ln;
+    unsigned long crc = 0, dim = 0, cdim = 0;
+    unsigned int  ln, metodo;
     unsigned int  data;
     int           in, letti;
 
@@ -530,7 +551,16 @@ int ex_zip_aggiungi(ExZip *z, const char *file, const char *nome)
      * header, then seeking back to patch it, which cannot be done when the
      * archive is a pipe. Reading a file twice off a disk costs nothing next to
      * an archive somebody cannot open. */
-    if (!crc_del_file(file, &crc, &dim)) { errore("il file da aggiungere non si legge"); return 0; }
+    if (!crc_del_file(file, &crc, &dim, &cdim)) { errore("il file da aggiungere non si legge"); return 0; }
+
+    /* ! DEFLATE ONLY WHEN IT MAKES THE FILE SMALLER (since 23 September
+     * 2026; before, everything was stored). A JPEG, a ZIP inside a ZIP, an
+     * already compressed font come out of deflate a little BIGGER: those go
+     * in as they are, which is what every archiver does. The size was
+     * measured on the pass above, without writing anything; the second pass
+     * below must produce exactly as many bytes, and it is checked. */
+    metodo = (cdim > 0 && cdim < dim) ? EXZIP_DEFLATE : EXZIP_STORE;
+    if (metodo == EXZIP_STORE) cdim = dim;
 
     data = data_dos();
 
@@ -538,11 +568,11 @@ int ex_zip_aggiungi(ExZip *z, const char *file, const char *nome)
     metti32(h + 0,  SIG_LOCALE);
     metti16(h + 4,  20);                /* version needed: 2.0, store and deflate */
     metti16(h + 6,  0);                 /* no flags: sizes are here and they are true */
-    metti16(h + 8,  EXZIP_STORE);
+    metti16(h + 8,  metodo);
     metti16(h + 10, data & 0xFFFF);     /* time */
     metti16(h + 12, (data >> 16) & 0xFFFF);
     metti32(h + 14, crc);
-    metti32(h + 18, dim);               /* compressed = uncompressed: store */
+    metti32(h + 18, cdim);              /* inside the archive */
     metti32(h + 22, dim);
     metti16(h + 26, ln);
     metti16(h + 28, 0);
@@ -550,6 +580,8 @@ int ex_zip_aggiungi(ExZip *z, const char *file, const char *nome)
     z->w_off[z->w_quante]  = z->scritto;
     z->w_crc[z->w_quante]  = crc;
     z->w_dim[z->w_quante]  = dim;
+    z->w_cdim[z->w_quante] = cdim;
+    z->w_met[z->w_quante]  = metodo;
     z->w_data[z->w_quante] = data;
     z->w_nome[z->w_quante] = z->nomi_usati;
     memcpy(z->nomi + z->nomi_usati, nome, ln + 1);
@@ -565,15 +597,35 @@ int ex_zip_aggiungi(ExZip *z, const char *file, const char *nome)
     in = open(file, O_RDONLY, 0);
     if (in < 0) { errore("il file da aggiungere non si apre"); return 0; }
 
-    while ((letti = (int)read(in, buf, BUF)) > 0) {
-        if (write(z->fd, buf, (unsigned int)letti) != letti) {
-            close(in);
-            errore("non riesco a scrivere: il disco e' pieno?");
+    if (metodo == EXZIP_DEFLATE) {
+        unsigned long prima = z->scritto;
+        int ok = defl_apri(scrivi_archivio, z);
+
+        while (ok && (letti = (int)read(in, buf, BUF)) > 0)
+            ok = defl_dati(buf, (unsigned int)letti);
+        close(in);
+        if (ok) ok = defl_fine();
+        if (!ok) { errore("non riesco a scrivere: il disco e' pieno?"); return 0; }
+
+        /* ! THE HEADER ALREADY SAYS HOW MANY BYTES THERE ARE, so a second
+         * pass that came out different — the file changed between the two
+         * reads — is an archive that lies. Better to say so than to finish
+         * it. */
+        if (z->scritto - prima != cdim) {
+            errore("il file e' cambiato mentre lo comprimevo: riprova");
             return 0;
         }
-        z->scritto += (unsigned long)letti;
+    } else {
+        while ((letti = (int)read(in, buf, BUF)) > 0) {
+            if (write(z->fd, buf, (unsigned int)letti) != letti) {
+                close(in);
+                errore("non riesco a scrivere: il disco e' pieno?");
+                return 0;
+            }
+            z->scritto += (unsigned long)letti;
+        }
+        close(in);
     }
-    close(in);
 
     z->w_quante++;
     return 1;
@@ -601,11 +653,11 @@ int ex_zip_finisci(ExZip *z)
         metti16(c + 4,  20);            /* version made by */
         metti16(c + 6,  20);            /* version needed */
         metti16(c + 8,  0);
-        metti16(c + 10, EXZIP_STORE);
+        metti16(c + 10, z->w_met[i]);
         metti16(c + 12, z->w_data[i] & 0xFFFF);
         metti16(c + 14, (z->w_data[i] >> 16) & 0xFFFF);
         metti32(c + 16, z->w_crc[i]);
-        metti32(c + 20, z->w_dim[i]);
+        metti32(c + 20, z->w_cdim[i]);
         metti32(c + 24, z->w_dim[i]);
         metti16(c + 28, ln);
         metti32(c + 42, z->w_off[i]);

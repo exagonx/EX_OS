@@ -42,7 +42,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `archivi -version` la stampa. Vedi EX_VERSIONE. */
-#define VERSIONE_APP "0.001"
+#define VERSIONE_APP "0.002"
 EX_VERSIONE("archivi", VERSIONE_APP);
 
 #define FIN_W       640
@@ -520,8 +520,9 @@ static void istruzioni(void)
         "Per farne uno: File, Nuovo..., poi Comandi, Aggiungi file...\n"
         "quante volte serve, e infine File, Finisci - senza quello il\n"
         "file non e' un archivio e nessuno lo aprira'.\n\n"
-        "Si scrive senza comprimere (store); in lettura capisce anche\n"
-        "deflate, che e' il metodo di quasi tutti gli archivi veri.");
+        "Si comprime in deflate, il metodo di quasi tutti gli archivi;\n"
+        "un file che compresso verrebbe piu' grande (un JPEG, uno ZIP)\n"
+        "entra com'e', in store. In lettura capisce tutt'e due.");
 }
 
 static void informazioni(void)

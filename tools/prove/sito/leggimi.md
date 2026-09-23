@@ -16,7 +16,7 @@ Dentro EX-OS la macchina host e' **10.0.2.2** (lo slirp di QEMU), quindi:
     EXOS_QEMU_EXTRA="-netdev user,id=n1 -device ne2k_pci,netdev=n1" \
     EXOS_NO_FLOPPY=1 EXOS_CDROM=dist/exos.iso \
     python3 tools/qemu_drive.py "exwin@14" "mon:sendkey alt-f1@3" \
-        "/exwin/bin/browser &@14" "mon:sendkey alt-f5@3" \
+        "/exwin/bin/exbrowser &@14" "mon:sendkey alt-f5@3" \
         "http://10.0.2.2:8000/con.html@20" "foto:/tmp/exos/x.ppm@2"
 
 ! **`exwin` SPOSTA LO SCHERMO DA SOLO** sulla console della grafica: per

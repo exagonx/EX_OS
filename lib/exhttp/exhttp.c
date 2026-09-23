@@ -471,12 +471,47 @@ static void casuale(unsigned char *b, unsigned int n)
     if (getrandom(b, n, 0) != (ssize_t)n) memset(b, 0, n);
 }
 
+/* =============================================================================
+ * I CERTIFICATI DI CHI USA IL SISTEMA — 23 settembre 2026
+ *
+ * Chiesto: poter AGGIUNGERE certificati scaricandoli. Stanno in
+ * $HOME/.app/exhttp/certi.pem, sotto il nome della LIBRERIA e non di un
+ * programma: se ne fida chiunque apra https per conto di quella persona —
+ * EXBrowser, scarica, netupdate — perche' e' la persona che ha deciso di
+ * fidarsene, non il navigatore.
+ *
+ * ! SI LEGGONO IN CODA AL MAGAZZINO DI SISTEMA, NELLO STESSO BUFFER.
+ * extls_magazzino_pem() comincia azzerando il magazzino: chiamarla una
+ * seconda volta sul file personale butterebbe via le 150 radici del CD.
+ * ============================================================================= */
+#define CERTI_MIEI_MAX  (256 * 1024)
+
+/* $HOME/.app/exhttp/certi.pem in `p`, creando le directory se `crea`. */
+static int certi_miei_percorso(char *p, unsigned int max, int crea)
+{
+    const char *casa = getenv("HOME");
+    int         i;
+
+    if (!casa || !casa[0] || strlen(casa) + 32 >= max) return 0;
+    strcpy(p, casa);
+    i = (int)strlen(p);
+    while (i > 0 && p[i - 1] == '/') p[--i] = '\0';
+    strcat(p, "/.app");
+    if (crea && mkdir(p, 0755) != 0 && errno != EEXIST) return 0;
+    strcat(p, "/exhttp");
+    if (crea && mkdir(p, 0755) != 0 && errno != EEXIST) return 0;
+    strcat(p, "/certi.pem");
+    return 1;
+}
+
 static int magazzino_carica(void)
 {
     int   fd = -1, i;
-    long  dim = 0;
+    long  dim = 0, miei = 0;
     char *pem;
     int   quanti;
+    int   fd_miei = -1;
+    char  perc_miei[160];
 
     if (g_magazzino) return 1;
 
@@ -496,11 +531,23 @@ static int magazzino_carica(void)
         return 0;
     }
 
-    pem = (char *)malloc((unsigned int)dim);
-    g_der = (unsigned char *)malloc((unsigned int)dim);
+    /* Il file personale, se c'e': si legge in coda. Troppo grande o
+     * illeggibile, si fa senza — le radici del sistema bastano ad aprire
+     * quasi tutto, e un file personale rovinato non deve chiudere il web. */
+    if (certi_miei_percorso(perc_miei, sizeof(perc_miei), 0)) {
+        fd_miei = open(perc_miei, O_RDONLY);
+        if (fd_miei >= 0) {
+            miei = fsize(fd_miei);
+            if (miei <= 0 || miei > CERTI_MIEI_MAX) { close(fd_miei); fd_miei = -1; miei = 0; }
+        }
+    }
+
+    pem = (char *)malloc((unsigned int)(dim + miei + 1));
+    g_der = (unsigned char *)malloc((unsigned int)(dim + miei + 1));
     g_magazzino = (ExMagazzino *)malloc(sizeof(ExMagazzino));
     if (!pem || !g_der || !g_magazzino) {
         close(fd);
+        if (fd_miei >= 0) close(fd_miei);
         free(pem);
         strcpy(g_tls_errore, "non c'e' memoria per il magazzino delle CA");
         g_magazzino = 0;
@@ -523,6 +570,20 @@ static int magazzino_carica(void)
         dim = fatti;
     }
 
+    if (fd_miei >= 0) {
+        long fatti = 0;
+
+        pem[dim++] = '\n';
+        while (fatti < miei) {
+            int r = (int)read(fd_miei, pem + dim + fatti, (unsigned int)(miei - fatti));
+
+            if (r <= 0) break;
+            fatti += r;
+        }
+        close(fd_miei);
+        dim += fatti;
+    }
+
     quanti = extls_magazzino_pem(g_magazzino, pem, (unsigned int)dim,
                                  g_der, (unsigned int)dim, 0);
     free(pem);
@@ -534,6 +595,182 @@ static int magazzino_carica(void)
         return 0;
     }
     return 1;
+}
+
+/* -----------------------------------------------------------------------------
+ * Esaminare e aggiungere
+ * --------------------------------------------------------------------------- */
+
+/* Il prossimo certificato di `dati` a partire da `*pos`, in `der`. Capisce il
+ * PEM (anche piu' certificati di seguito) e il DER nudo di uno solo. Rende i
+ * byte, 0 alla fine, <0 se non si legge. */
+static int prossimo_cert(const unsigned char *dati, unsigned int n, unsigned int *pos,
+                         unsigned char *der, unsigned int der_max)
+{
+    static const char apre[] = "-----BEGIN CERTIFICATE-----";
+    unsigned int i = *pos, usati = 0, acc = 0, bit = 0;
+
+    if (i == 0 && n > 0 && dati[0] == 0x30) {           /* DER nudo */
+        if (n > der_max) return -1;
+        memcpy(der, dati, n);
+        *pos = n;
+        return (int)n;
+    }
+
+    for (; i + sizeof(apre) - 1 <= n; i++)
+        if (memcmp(dati + i, apre, sizeof(apre) - 1) == 0) break;
+    if (i + sizeof(apre) - 1 > n) { *pos = n; return 0; }
+    i += sizeof(apre) - 1;
+
+    for (; i < n && dati[i] != '-'; i++) {
+        unsigned char c = dati[i];
+        int v = (c >= 'A' && c <= 'Z') ? c - 'A' :
+                (c >= 'a' && c <= 'z') ? c - 'a' + 26 :
+                (c >= '0' && c <= '9') ? c - '0' + 52 :
+                c == '+' ? 62 : c == '/' ? 63 : -1;
+
+        if (v < 0) continue;                    /* a capo, spazi, '=' */
+        acc = (acc << 6) | (unsigned int)v;
+        bit += 6;
+        if (bit >= 8) {
+            bit -= 8;
+            if (usati >= der_max) return -1;
+            der[usati++] = (unsigned char)((acc >> bit) & 0xFF);
+        }
+    }
+    while (i < n && dati[i] != '\n') i++;      /* la riga -----END */
+    *pos = i;
+    return usati ? (int)usati : -1;
+}
+
+/* Un nome distinto come lo legge una persona: «CN (O)». Solo ASCII: lo
+ * schermo e' la code page 437, e una lettera accentata diventa un '?'. */
+static void nome_leggibile(const ExDer *dn, char *out, unsigned int max)
+{
+    ExDer        seq = *dn;
+    ExDerElem    set, atv, oid, val;
+    unsigned int off = 0;
+    char         cn[80] = "", o[80] = "";
+
+    if (seq.n && seq.p[0] == 0x30) exder_dentro(dn, 0, 0x30, &seq);
+
+    while (off < seq.n && exder_leggi(&seq, off, &set) == 0) {
+        if (exder_leggi(&set.valore, 0, &atv) == 0 &&
+            exder_leggi(&atv.valore, 0, &oid) == 0 &&
+            exder_leggi(&atv.valore, oid.intestazione + oid.valore.n, &val) == 0 &&
+            oid.valore.n == 3 && oid.valore.p[0] == 0x55 && oid.valore.p[1] == 0x04) {
+            char        *dove = oid.valore.p[2] == 3 ? cn : oid.valore.p[2] == 10 ? o : 0;
+            unsigned int k;
+
+            if (dove) {
+                for (k = 0; k < val.valore.n && k < 79; k++) {
+                    unsigned char c = val.valore.p[k];
+                    dove[k] = (c >= 0x20 && c < 0x7F) ? (char)c : '?';
+                }
+                dove[k] = '\0';
+            }
+        }
+        off += set.intestazione + set.valore.n;
+    }
+
+    if (cn[0] && o[0]) snprintf(out, max, "%s (%s)", cn, o);
+    else snprintf(out, max, "%s", cn[0] ? cn : o[0] ? o : "(senza nome)");
+}
+
+static void data_leggibile(const char *d, char *out)
+{
+    /* «AAAAMMGGhhmmssZ» -> «GG/MM/AAAA» */
+    if (strlen(d) >= 8) sprintf(out, "%.2s/%.2s/%.4s", d + 6, d + 4, d);
+    else strcpy(out, "?");
+}
+
+int exhttp_certi_esamina(const unsigned char *dati, unsigned int n,
+                         char *testo, unsigned int max)
+{
+    static unsigned char der[16384];
+    unsigned int pos = 0, usato = 0;
+    int          quanti = 0, r;
+
+    if (!testo || max == 0) return -1;
+    testo[0] = '\0';
+
+    while ((r = prossimo_cert(dati, n, &pos, der, sizeof(der))) > 0) {
+        ExCert        c;
+        unsigned char h[32];
+        char          sogg[120], emit[120], dal[12], al[12], imp[100];
+        int           k, scritti;
+
+        if (excert_analizza(der, (unsigned int)r, &c) != 0) return -1;
+        nome_leggibile(&c.soggetto, sogg, sizeof(sogg));
+        nome_leggibile(&c.emittente, emit, sizeof(emit));
+        data_leggibile(c.non_prima, dal);
+        data_leggibile(c.non_dopo, al);
+        sha256(der, (unsigned int)r, h);
+        for (k = 0; k < 32; k++) sprintf(imp + k * 3, "%02X%s", h[k], k == 31 ? "" : ":");
+
+        scritti = snprintf(testo + usato, max - usato,
+                           "%s%s\n  emesso da: %s\n  valido dal %s al %s%s\n"
+                           "  SHA-256 %.47s\n          %s\n",
+                           quanti ? "\n" : "", sogg, emit, dal, al,
+                           c.e_ca ? "" : "\n  ! NON E' UNA CA: non verifica nessun sito",
+                           imp, imp + 48);
+        if (scritti < 0 || (unsigned int)scritti >= max - usato) break;
+        usato += (unsigned int)scritti;
+        quanti++;
+    }
+    return r < 0 && quanti == 0 ? -1 : quanti;
+}
+
+int exhttp_certi_aggiungi(const unsigned char *dati, unsigned int n)
+{
+    static const char b64[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    static unsigned char der[16384];
+    char         perc[160];
+    unsigned int pos = 0;
+    int          fd, r, aggiunti = 0;
+
+    if (!certi_miei_percorso(perc, sizeof(perc), 1)) return -1;
+    fd = open(perc, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (fd < 0) return -1;
+
+    while ((r = prossimo_cert(dati, n, &pos, der, sizeof(der))) > 0) {
+        ExCert       c;
+        char         riga[80], sogg[120];
+        unsigned int i, k = 0;
+
+        /* ! SOLO LE CA: un certificato che non e' una CA non verifica
+         * nessuna catena (radice_di la scarta), e tenerlo nel file vorrebbe
+         * dire un'aggiunta che non fa niente e sembra fatta. */
+        if (excert_analizza(der, (unsigned int)r, &c) != 0 || !c.e_ca) continue;
+
+        nome_leggibile(&c.soggetto, sogg, sizeof(sogg));
+        snprintf(riga, sizeof(riga), "# %s\n", sogg);
+        write(fd, riga, strlen(riga));
+        write(fd, "-----BEGIN CERTIFICATE-----\n", 28);
+        for (i = 0; i < (unsigned int)r; i += 3) {
+            unsigned int v = (unsigned int)der[i] << 16;
+            int          q = (int)((unsigned int)r - i);
+
+            if (q > 1) v |= (unsigned int)der[i + 1] << 8;
+            if (q > 2) v |= der[i + 2];
+            riga[k++] = b64[(v >> 18) & 63];
+            riga[k++] = b64[(v >> 12) & 63];
+            riga[k++] = q > 1 ? b64[(v >> 6) & 63] : '=';
+            riga[k++] = q > 2 ? b64[v & 63] : '=';
+            if (k == 64) { riga[k++] = '\n'; write(fd, riga, k); k = 0; }
+        }
+        if (k) { riga[k++] = '\n'; write(fd, riga, k); }
+        write(fd, "-----END CERTIFICATE-----\n", 26);
+        aggiunti++;
+    }
+    close(fd);
+
+    /* Il magazzino si rilegge alla prossima connessione. Quello vecchio non
+     * si libera: la connessione in corso potrebbe starlo usando, e sono
+     * duecento kilobyte una volta per aggiunta. */
+    if (aggiunti) g_magazzino = 0;
+    return aggiunti;
 }
 
 static int tls_leggi(void *stato, unsigned char *dst, unsigned int max,

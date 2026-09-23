@@ -2,9 +2,9 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>Guida del Navigatore &mdash; EX-OS</title>
+<title>Guida di EXBrowser &mdash; EX-OS</title>
 <!--
-  exwin/doc/browser.html - EX-OS
+  exwin/doc/exbrowser.html - EX-OS
   Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>
   SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -31,10 +31,16 @@
 <a href="exwin.html">Scrivania</a> |
 <a href="rete.html">Rete</a> |
 <a href="sviluppo.html">Sviluppo</a> |
-<a href="exide.html">EX-IDE</a> &mdash; Navigatore
+<a href="exide.html">EX-IDE</a> &mdash; EXBrowser
 </p>
 
-<h1>Il Navigatore di EX-OS</h1>
+<h1>EXBrowser, il navigatore di EX-OS</h1>
+
+<p><b>Fino alla versione 0.002 si chiamava <code>browser</code></b>. Dalla
+0.003 il programma e' <code>/exwin/bin/exbrowser</code>, e i suoi dati stanno
+in <code>$HOME/.app/exbrowser/</code>. Chi aveva gia' impostazioni, biscotti e
+cache nella vecchia <code>$HOME/.app/browser/</code> non perde niente: al primo
+avvio EXBrowser la sposta da se' e lo dice.</p>
 
 <h2>L'aiuto in due minuti</h2>
 
@@ -55,7 +61,7 @@
     <td>frecce, <b>PagSu</b>/<b>PagGiu'</b>, <b>Inizio</b>/<b>Fine</b>, o la
         barra a destra</td></tr>
 <tr><td>leggere la documentazione di EX-OS</td>
-    <td><b>Aiuto &gt; Guida del navigatore</b>, e da li' i collegamenti in
+    <td><b>Aiuto &gt; Guida di EXBrowser</b>, e da li' i collegamenti in
         cima alla pagina</td></tr>
 <tr><td>tornare alla pagina iniziale</td>
     <td><b>File &gt; Pagina iniziale</b>, oppure <code>Ctrl+H</code></td></tr>
@@ -134,7 +140,7 @@ Tre schemi:
 <tr><td><code>https://</code></td><td><code>https://example.com/</code></td>
     <td>TLS 1.3, con il certificato verificato davvero contro le CA di
         <code>/etc/ca</code></td></tr>
-<tr><td><code>file://</code></td><td><code>file:///exwin/doc/browser.html</code></td>
+<tr><td><code>file://</code></td><td><code>file:///exwin/doc/exbrowser.html</code></td>
     <td>un file di questo disco: nessuna rete, nessuna cache</td></tr>
 </table>
 
@@ -144,8 +150,8 @@ comando si puo' passare direttamente un percorso, e diventa un
 <code>file:</code>:
 </p>
 
-<pre>    browser /exwin/doc/browser.html
-    browser https://example.com/</pre>
+<pre>    exbrowser /exwin/doc/exbrowser.html
+    exbrowser https://example.com/</pre>
 
 <h2>I menu</h2>
 
@@ -158,6 +164,8 @@ comando si puo' passare direttamente un percorso, e diventa un
 <li><b>Salva con nome...</b> (<code>Ctrl+S</code>) &mdash; scrive su disco
     l'HTML della pagina aperta in questo momento.</li>
 <li><b>Impostazioni...</b> &mdash; la schermata qui sotto.</li>
+<li><b>Aggiungi un certificato...</b> &mdash; vedi <i>I certificati</i>, piu'
+    in basso.</li>
 <li><b>Esci</b> (<code>Ctrl+Q</code>) &mdash; chiude il navigatore. La
     scrivania resta accesa.</li>
 </ul>
@@ -171,8 +179,8 @@ qui si rivede la stessa pagina soltanto se non aveva nulla di tutto cio'.
 
 <h3>Aiuto</h3>
 <ul>
-<li><b>Guida del navigatore</b> &mdash; questa pagina, che sta in
-    <code>/exwin/doc/browser.html</code> (o in <code>/cdrom/exwin/doc/</code>
+<li><b>Guida di EXBrowser</b> &mdash; questa pagina, che sta in
+    <code>/exwin/doc/exbrowser.html</code> (o in <code>/cdrom/exwin/doc/</code>
     avviando dal CD).</li>
 <li><b>Documentazione di EX-OS</b> &mdash; l'<a href="index.html">indice</a>
     di tutte le pagine: il sistema, i comandi, l'installazione, la scrivania,
@@ -222,7 +230,7 @@ lavora su una copia: niente cambia finche' non si preme <b>Salva</b>.
 </table>
 
 <p class="nota">
-<b>Le impostazioni stanno in <code>$HOME/.app/browser/impostazioni.txt</code></b>,
+<b>Le impostazioni stanno in <code>$HOME/.app/exbrowser/impostazioni.txt</code></b>,
 non in un percorso fisso: un percorso fisso funziona per il primo utente e
 scrive addosso al secondo. E' testo, <code>chiave = valore</code>, e si puo'
 modificare a mano &mdash; un file di configurazione che solo il programma sa
@@ -412,7 +420,7 @@ script di rubare una sessione.
 
 <p>
 Quelli con una scadenza si scrivono in
-<code>$HOME/.app/browser/biscotti.txt</code> e si ritrovano al riavvio; quelli
+<code>$HOME/.app/exbrowser/biscotti.txt</code> e si ritrovano al riavvio; quelli
 <b>di sessione</b> no, e non e' una mancanza: un biscotto di sessione deve
 morire quando il navigatore si chiude, ed e' quel che promette al sito che lo
 ha messo. Il file e' leggibile e si puo' cancellare a mano.
@@ -524,6 +532,43 @@ di un browser che non parte &mdash; e per questo il conto sta in
     dice quale non si carica.</li>
 </ul>
 
+<h2>I certificati</h2>
+
+<p>
+Un sito <code>https</code> si apre se il suo certificato risale a una
+<b>CA di cui ci si fida</b>. Quelle del sistema stanno in
+<code>/exos/ssl/certi.pem</code>: sono le stesse di Debian, copiate a ogni
+costruzione del CD. Ce ne sono circa centocinquanta, e bastano per quasi tutto
+il web pubblico.
+</p>
+
+<p>
+Con <b>File &gt; Aggiungi un certificato...</b> se ne aggiungono altre: quella
+di un'azienda, di una scuola, di un apparato di casa. Si scrive un indirizzo
+(<code>http</code> o <code>https</code>) o il percorso di un file
+<code>.pem</code>, <code>.crt</code> o <code>.der</code>. Prima di chiedere
+conferma EXBrowser mostra chi e', chi l'ha emesso, fino a quando vale e
+l'<b>impronta SHA-256</b>: confrontala con quella pubblicata da chi la emette,
+perche' fidarsi di una CA vuol dire credere a <i>ogni</i> sito che firma.
+</p>
+
+<p>
+Le CA aggiunte stanno in <code>$HOME/.app/exhttp/certi.pem</code> e valgono per
+<b>ogni programma</b> che apre <code>https</code> per te &mdash; anche
+<code>scarica</code> e <code>netupdate</code> &mdash; dalla pagina successiva.
+Per toglierne una si toglie il suo blocco da quel file: ognuno comincia con una
+riga <code>#</code> che dice il suo nome.
+</p>
+
+<p class="nota">
+<b>Se un sito non si apre, di solito non e' il certificato.</b> Misurato su
+trenta siti comuni il 23 settembre 2026: uno solo era un problema di catena
+(ed e' stato corretto), gli altri erano server che parlano solo
+<b>TLS 1.2</b>, o che non accettano i cifrari che EX-OS offre. La barra di
+stato lo distingue: <i>la radice non e' nel magazzino</i> e' un certificato;
+<i>il server ha rifiutato</i> non lo e', e aggiungere una CA non lo aprirebbe.
+</p>
+
 <h2>I limiti, dichiarati</h2>
 
 <ul>
@@ -582,7 +627,7 @@ aprono con questo stesso navigatore.
 
 <p class="piede">
 EX-OS &mdash; Graziano Falcone, exagonx@hotmail.com &mdash; GNU GPL v2.
-Questa guida sta in <code>/exwin/doc/browser.html</code>.
+Questa guida sta in <code>/exwin/doc/exbrowser.html</code>.
 </p>
 
 </body>

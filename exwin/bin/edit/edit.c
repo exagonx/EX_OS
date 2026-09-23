@@ -33,7 +33,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `edit -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.001"
+#define VERSIONE_APP "0.002"
 EX_VERSIONE("edit", VERSIONE_APP);
 
 #define FIN_W       640
@@ -44,6 +44,7 @@ EX_VERSIONE("edit", VERSIONE_APP);
 #define AREA_X      4
 #define AREA_Y      (MENU_H + 4)
 #define BASSO       24          /* la riga di stato in fondo */
+#define BARRA_W     16          /* la barra di scorrimento a destra */
 
 #define PERC_MAX    192
 
@@ -64,11 +65,13 @@ EX_VERSIONE("edit", VERSIONE_APP);
 #define ID_ISTRUZIONI 20
 #define ID_INFO       21
 
+#define ID_BARRA      30
+
 static char g_perc[PERC_MAX] = "";
 static int  g_parziale = 0;     /* letto SOLO IN PARTE: non si salva */
 static char g_avviso[96] = "";
 
-static ExFinestra g_f, g_area, g_stato, g_menu;
+static ExFinestra g_f, g_area, g_stato, g_menu, g_barra;
 
 /* -----------------------------------------------------------------------------
  * Caricare
@@ -236,9 +239,36 @@ static void stato_aggiorna(void)
     ex_testo_metti(g_stato, s);
 }
 
+/* =============================================================================
+ * LA BARRA DI SCORRIMENTO — chiesta il 23 settembre 2026
+ *
+ * Senza, un testo piu' lungo della finestra si scorreva solo muovendoci
+ * dentro il cursore, e niente diceva quanto fosse lungo ne' in che punto si
+ * stesse guardando.
+ *
+ * ! LA BARRA SEGUE L'AREA, E NON IL CONTRARIO, TRANNE QUANDO LA SI TOCCA. Chi
+ * sposta la vista di solito e' il cursore — un tasto, un Invio in fondo alla
+ * pagina — e l'area lo sa gia' fare da se'. Quindi prima di ogni disegno la
+ * barra si rimette dove l'area dice (barra_allinea); e quando e' la barra ad
+ * essere trascinata, l'area parte da quella riga (ex_area_mostra_da) senza
+ * spostare il cursore: il primo tasto riporta la vista dove si scrive, come
+ * in ogni editor.
+ * ============================================================================= */
+static void barra_allinea(void)
+{
+    unsigned int vis = 0;
+    unsigned int prima = ex_area_vista(g_area, &vis);
+    unsigned int n = ex_area_righe(g_area);
+
+    if (!g_barra) return;
+    ex_scorri_limiti(g_barra, n > vis ? n - vis : 0, vis);
+    ex_scorri_vai(g_barra, prima);
+}
+
 static void ridisegna(void)
 {
     stato_aggiorna();
+    barra_allinea();
     ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
     ex_aggiorna(g_f);
 }
@@ -479,6 +509,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         }
         if (wp == ID_SELTUTTO)  { ex_area_seleziona_tutto(g_area); break; }
 
+        if (wp == ID_BARRA)      { ex_area_mostra_da(g_area, (unsigned int)lp); break; }
         if (wp == ID_ISTRUZIONI) { istruzioni();  break; }
         if (wp == ID_INFO)       { informazioni(); break; }
         return 0;
@@ -525,11 +556,26 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
     case EXM_MISURA: {
         int w = EX_X(lp), h = EX_Y(lp);
 
-        ex_misura(g_area, w - AREA_X * 2, h - AREA_Y - BASSO);
+        ex_misura(g_area, w - AREA_X * 2 - BARRA_W, h - AREA_Y - BASSO);
+        if (g_barra) {
+            ex_sposta(g_barra, w - AREA_X - BARRA_W, AREA_Y);
+            ex_misura(g_barra, BARRA_W, h - AREA_Y - BASSO);
+        }
         ex_sposta(g_stato, 6, h - 22);
         ex_misura(g_stato, w - 12, 16);
         break;
     }
+
+    /* ! IL DISEGNO CHE ARRIVA DAL TOOLKIT — dopo ogni tasto battuto
+     * nell'area — passa di qui per rimettere la barra dove l'area e' andata;
+     * senza, la barra resterebbe ferma mentre si scrive in fondo al testo. */
+    case EXM_DISEGNA:
+        /* ! E LA RIGA DI STATO CON LEI: prima di qui nessuno la rifaceva
+         * dopo un tasto battuto nell'area, e «riga 1/512» restava scritto
+         * mentre si scendeva di pagina in pagina. */
+        stato_aggiorna();
+        barra_allinea();
+        return ex_procedura_base(f, msg, wp, lp);
 
     default:
         return ex_procedura_base(f, msg, wp, lp);
@@ -588,12 +634,17 @@ int main(int argc, char **argv)
     ex_menu_voce(g_menu, "Info", "Informazioni su", ID_INFO);
 
     g_area = ex_crea("areatesto", "", EX_FIGLIO,
-                     AREA_X, AREA_Y, FIN_W - AREA_X * 2,
+                     AREA_X, AREA_Y, FIN_W - AREA_X * 2 - BARRA_W,
                      FIN_H - AREA_Y - BASSO, g_f, 0, 0);
     if (!g_area) {
         printf("edit: non riesco a creare l'area di testo\n");
         return 1;
     }
+
+    /* Piu' alta che larga: il toolkit la fa verticale da se'. */
+    g_barra = ex_crea("scorrimento", "", EX_FIGLIO,
+                      FIN_W - AREA_X - BARRA_W, AREA_Y, BARRA_W,
+                      FIN_H - AREA_Y - BASSO, g_f, ID_BARRA, 0);
 
     g_stato = ex_crea("etichetta", "", EX_FIGLIO,
                       6, FIN_H - 22, FIN_W - 12, 16, g_f, 0, 0);

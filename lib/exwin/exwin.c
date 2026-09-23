@@ -5684,6 +5684,34 @@ int ex_prendi_msg(ExMsg *m) { return prendi_msg(m, 1); }
  * dentro un'attesa deve accorgersi che non ha piu' senso aspettare. */
 int ex_msg_ora(ExMsg *m) { return prendi_msg(m, 0); }
 
+/* =============================================================================
+ * tendine_ancora_sopra — an open drop-down goes back on top of what the
+ * application drew (23 September 2026)
+ *
+ * ex_aggiorna() draws the open menu and combo drop-downs last, and that is
+ * right for everything the TOOLKIT draws. But an application that paints
+ * something of its own in its EXM_DISEGNA — archivi's header row, right
+ * under the menu bar — usually does it AFTER calling the base, and so over
+ * the drop-down that the base had just put on top. Reported as «the menu is
+ * covered by the bar below it as soon as it opens with the mouse».
+ *
+ * ! HERE, AND NOT IN EVERY APPLICATION: the same shape is in every program
+ * that draws its own pixels, and asking each of them to end with
+ * ex_aggiorna() is a rule that the next program forgets. Only when a
+ * drop-down is actually open, so it costs nothing otherwise.
+ * ============================================================================= */
+static void tendine_ancora_sopra(ExFinestra f)
+{
+    ExFinestra rh = radice_h(f);
+    Menu      *M  = menu_della_finestra(rh);
+    Oggetto   *c  = ogg(g_combo_aperto);
+    int        a, b, w, h;
+
+    if ((M && menu_tendina_dove(M, &a, &b, &w, &h)) ||
+        (c && c->classe == CL_COMBO && radice(c->padre) == ogg(rh)))
+        ex_aggiorna(rh);
+}
+
 void ex_smista(const ExMsg *m)
 {
     Oggetto *o = ogg(m->finestra);
@@ -5708,6 +5736,7 @@ void ex_smista(const ExMsg *m)
              * quelle finestre non cambia niente. */
             if (m->msg != EXM_DISEGNA)
                 o->proc(m->finestra, EXM_DISEGNA, 0, 0);
+            tendine_ancora_sopra(m->finestra);
             return;
         }
     }
@@ -6297,6 +6326,24 @@ int ex_area_incolla(ExFinestra f)
  * dire che il tasto dopo — una lettera qualunque — cancella un pezzo di testo
  * lontano da dove si sta guardando.
  * ============================================================================= */
+unsigned int ex_area_vista(ExFinestra f, unsigned int *visibili)
+{
+    Area *A = area_da_h(f);
+
+    if (visibili) *visibili = A ? A->righe : 0;
+    return A ? A->top : 0;
+}
+
+void ex_area_mostra_da(ExFinestra f, unsigned int riga)
+{
+    Area *A = area_da_h(f);
+    unsigned int massimo;
+
+    if (!A) return;
+    massimo = (A->n > A->righe) ? A->n - A->righe : 0;
+    A->top = (riga > massimo) ? massimo : riga;
+}
+
 void ex_area_vai(ExFinestra f, unsigned int riga, unsigned int col)
 {
     Area *A = area_da_h(f);

@@ -29,9 +29,10 @@
  *
  * ! WHAT IT DOES NOT DO, said here rather than discovered later:
  *
- *   - it WRITES only "store", no compression. A store-only ZIP is opened by
- *     everything, it was a single afternoon of work, and the door for deflate
- *     is already there: the method is a field, not an assumption;
+ *   - it WRITES "deflate" when that makes a file smaller, "store" when it
+ *     does not (a JPEG, a ZIP inside a ZIP). Until 23 September 2026 it
+ *     wrote only "store"; the compressor is lib/exzip/deflate.c, and it
+ *     streams like the rest;
  *   - it READS "store" and "deflate", which is what real archives are made of.
  *     Deflate goes through lib/eximg/inflate.c, which has been decoding PNG,
  *     GIF and fonts for months - no third-party source came into the system;

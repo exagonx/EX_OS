@@ -84,6 +84,40 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### Certificates: the chain stops at the first root, and more can be added
+
+**tested in QEMU, on the real network** — before changing anything it was
+measured (`tools/prova_certificati.sh`): of thirty common sites EX-OS opened
+23, and **only one** was a certificate problem. www.amazon.it sends at the end
+a *cross-signed* copy of the DigiCert root, signed by an old, retired VeriSign
+root; `excert` required the last link sent to be signed by one of our roots,
+and refused it. Now the chain stops at the first root in the store, as the big
+browsers do: Amazon opens.
+
+The other six were not certificates: three servers speak only TLS 1.2 (our
+client only 1.3), two do not accept ChaCha20 or x25519, one blocks robots.
+They are written down in `@EXBROWSER-CERT`.
+
+And **CAs can be added**: **File > Aggiungi un certificato...** in EXBrowser,
+from an address or a file; who it is and its SHA-256 fingerprint are shown
+before saying "Mi fido". They go into `$HOME/.app/exhttp/certi.pem` and apply
+to every program that opens `https`, `scarica` included — tested by
+`tools/prova_certi_aggiunti.sh`.
+
+### The browser is called EXBrowser
+
+**to be tested** — `/exwin/bin/browser` becomes `/exwin/bin/exbrowser`, at
+version 0.003: the name was chosen by its user, and it changes everywhere it is
+a name rather than a word — the window title, "About", the Start menu entry,
+the icon (`exbrowser_64.ico`), the manual (`/exwin/doc/exbrowser.html`) and the
+data in `$HOME/.app/exbrowser/`.
+
+! **THE OLD DATA MOVES BY ITSELF**: at the first start `$HOME/.app/browser/`
+becomes `$HOME/.app/exbrowser/`, with settings, cookies and cache. If it
+cannot — a home on FAT, where "exbrowser" does not fit in 8.3 — the old one
+keeps being used, and it says so: an old name is better than being logged out
+of every site.
+
 ### Icons: a toolkit API, and the desktop menu that uses it
 
 **tested in QEMU** — `ex_icona_apri` / `ex_icona_disegna` / `ex_icona_metti`
@@ -3342,7 +3376,7 @@ exwin                       brings up graphics on console 5
 /exwin/bin/filemgr [DIR]    the file manager
 /exwin/bin/edit [FILE]      the text editor
 /exwin/bin/term [PROG]      the terminal in a window (no PROG: the shell)
-/exwin/bin/browser [URL]    the browser (an absolute path becomes a file:)
+/exwin/bin/exbrowser [URL]  EXBrowser, the browser (an absolute path becomes a file:)
 /exwin/bin/exide [DIR]      the visual development environment
 /exwin/bin/archivi [ZIP]    ZIP archives: open, extract, create
 /exwin/bin/fontprova        the TrueType font test, made to be looked at
@@ -3459,10 +3493,10 @@ pipe that question does not exist — the server gives the keys to the focused
 window, and from there they go into *that* shell's pipe. That is how two of
 them can be open without disturbing each other.
 
-### The browser
+### EXBrowser, the browser
 
-`/exwin/bin/browser [URL]`. With no argument it starts from the home page; with
-an absolute path (`browser /exwin/doc/browser.html`) it turns it into a `file:`,
+`/exwin/bin/exbrowser [URL]`. With no argument it starts from the home page;
+with an absolute path (`exbrowser /exwin/doc/exbrowser.html`) it turns it into a `file:`,
 which is the only form the rest of the program knows.
 
 The bar carries **two boxes**: the address and **Cerca**, which composes the

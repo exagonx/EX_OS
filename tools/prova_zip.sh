@@ -105,6 +105,22 @@ else
     esito=1
 fi
 
+# ! E DAL 23 SETTEMBRE 2026 IL TESTO DEVE ESSERE COMPRESSO DAVVERO: la
+# libreria scrive deflate quando conviene. Senza questo controllo un archivio
+# tornato a «store» per sbaglio passerebbe tutte le prove qui sopra, perche'
+# anche uno store si apre benissimo.
+if python3 -c "
+import sys, zipfile
+i = zipfile.ZipFile('$D/a.zip').getinfo('alfa.txt')
+print('        alfa.txt: %d byte -> %d nell\'archivio, metodo %d' % (i.file_size, i.compress_size, i.compress_type))
+sys.exit(0 if i.compress_type == 8 and i.compress_size < i.file_size else 1)
+"; then
+    echo "  [OK]  il testo e' compresso in deflate"
+else
+    echo "  [NO]  il testo e' entrato senza compressione"
+    esito=1
+fi
+
 if command -v unzip > /dev/null; then
     if unzip -t "$D/a.zip" >> "$D/3-estraneo.log" 2>&1; then
         echo "  [OK]  unzip -t di Info-ZIP: nessun errore"

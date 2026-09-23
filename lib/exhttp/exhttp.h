@@ -118,6 +118,26 @@ int exhttp_posta(const char *url, const char *corpo,
                  unsigned char *buf, unsigned int max, ExHttpEsito *e);
 
 /* =============================================================================
+ * I certificati aggiunti da chi usa il sistema (23 settembre 2026)
+ *
+ * Stanno in $HOME/.app/exhttp/certi.pem e valgono per ogni programma che apre
+ * https per quella persona. `dati` e' un file .pem (anche con piu' certificati)
+ * o un .der/.crt binario di uno solo.
+ *
+ * exhttp_certi_esamina() scrive in `testo` una descrizione leggibile — chi e',
+ * chi l'ha emesso, le date, se e' una CA, l'impronta SHA-256 — ed e' quella da
+ * mostrare PRIMA di chiedere conferma: fidarsi di una CA vuol dire fidarsi di
+ * ogni sito che firma. Rende quanti certificati ha trovato, <0 se illeggibili.
+ *
+ * exhttp_certi_aggiungi() li scrive in fondo al file e fa rileggere il
+ * magazzino alla prossima connessione. Aggiunge SOLO le CA. Rende quante ne ha
+ * aggiunte, <0 se non riesce a scrivere il file.
+ * ============================================================================= */
+int exhttp_certi_esamina(const unsigned char *dati, unsigned int n,
+                         char *testo, unsigned int max);
+int exhttp_certi_aggiungi(const unsigned char *dati, unsigned int n);
+
+/* =============================================================================
  * I BISCOTTI — exhttp non li tiene, li chiede e li consegna
  *
  * ! LA DISPENSA STA IN CHI CHIAMA. Sapere che cosa e' un dominio, quando una

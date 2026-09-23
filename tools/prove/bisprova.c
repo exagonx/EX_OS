@@ -22,7 +22,7 @@
  * scegliendo che ore sono, invece di aspettare.
  *
  *     cc -Wall -Wextra -O2 -o /tmp/bisprova tools/prove/bisprova.c \
- *        exwin/bin/browser/biscotti.c -I exwin/bin/browser
+ *        exwin/bin/exbrowser/biscotti.c -I exwin/bin/exbrowser
  * ============================================================================= */
 
 #include <stdio.h>

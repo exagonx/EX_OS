@@ -100,9 +100,21 @@ def pki(d):
         "-sha256", "-extfile", conf("finto", False), "-extensions", "v3",
         "-out", "%s/finto.pem" % d)
 
+    # ! LA RADICE INCROCIATA, com'e' quella che manda www.amazon.it: la STESSA
+    # radice — stessa chiave, stesso nome — ma firmata da un'altra CA invece
+    # che da se' stessa. Nel magazzino c'e' la radice vera; in coda alla
+    # catena arriva questa copia, con byte diversi e un emittente che nel
+    # magazzino non c'e'.
+    oss("req", "-new", "-key", "%s/radice.key" % d, "-config", conf("radice", True),
+        "-out", "%s/incrociata.csr" % d)
+    oss("x509", "-req", "-in", "%s/incrociata.csr" % d, "-CA", "%s/altra.pem" % d,
+        "-CAkey", "%s/altra.key" % d, "-CAcreateserial", "-days", "365",
+        "-sha256", "-extfile", conf("radice", True), "-extensions", "v3",
+        "-out", "%s/incrociata.pem" % d)
+
     # scaduto: firmato ieri, valido un giorno... openssl non fa date passate,
     # quindi si guarda con una data di «adesso» spostata avanti.
-    for n in ("radice", "media", "sito", "furba", "finto", "altra"):
+    for n in ("radice", "media", "sito", "furba", "finto", "altra", "incrociata"):
         oss("x509", "-in", "%s/%s.pem" % (d, n), "-outform", "DER",
             "-out", "%s/%s.der" % (d, n))
 
@@ -149,6 +161,18 @@ def main():
         # openssl la considera valida.
         prova("solo la radice, che sta nel magazzino", 0, oggi,
               [D("radice")], [D("radice")]),
+        # ! IL CASO DI www.amazon.it (23 settembre 2026): la catena si ferma
+        # alla prima radice nostra, e la copia incrociata in coda non conta.
+        # Fino a quel giorno questa era «SENZA RADICE».
+        prova("radice incrociata in coda, la vera nel magazzino", 0, oggi,
+              [D("radice")], [D("sito"), D("media"), D("incrociata")]),
+        # E con la sola «altra» nel magazzino e' buona lo stesso: la copia
+        # incrociata E' firmata da lei. E' la strada che la catena ha fatto
+        # davvero, fino a una radice di cui ci si fida.
+        prova("radice incrociata, nel magazzino solo chi la firma", 0, oggi,
+              [D("altra")], [D("sito"), D("media"), D("incrociata")]),
+        prova("radice incrociata, nel magazzino nessuna delle due", -7, oggi,
+              [D("furba")], [D("sito"), D("media"), D("incrociata")]),
     ]
 
     # ! E LA FIRMA ROVINATA: un byte del TBSCertificate cambiato. La catena e'

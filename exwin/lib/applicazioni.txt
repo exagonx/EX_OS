@@ -45,7 +45,7 @@
 # una copia per ogni misura.
 
 File manager           | /exwin/bin/filemgr   | /exwin/icon/baseapp/filemgr_64.ico
-Navigatore             | /exwin/bin/browser   | /exwin/icon/baseapp/browser_64.ico
+EXBrowser              | /exwin/bin/exbrowser | /exwin/icon/baseapp/exbrowser_64.ico
 Archivi                | /exwin/bin/archivi
 Strumenti/Editor       | /exwin/bin/edit      | /exwin/icon/baseapp/edit_64.ico
 Strumenti/Terminale    | /exwin/bin/term      | /exwin/icon/baseapp/term_64.ico

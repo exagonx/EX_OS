@@ -59,7 +59,7 @@
 #include "biscotti.h"
 
 /* ------------------------------------------------------------------ i tetti */
-#define VERSIONE_APP "0.002"
+#define VERSIONE_APP "0.004"
 #define FIN_W       760
 #define MENU_H      20
 #define FIN_H       (520 + MENU_H)
@@ -84,6 +84,7 @@
 #define ID_HOME     10
 #define ID_IMPOST   11
 #define ID_CERCA    12
+#define ID_CERTI    13
 #define ID_IMP_HOME    720
 #define ID_IMP_ORA     721
 #define ID_IMP_JS      722

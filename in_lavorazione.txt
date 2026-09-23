@@ -7,6 +7,10 @@ QUEL CHE E' APERTO — 15 settembre 2026
     settembre — 25 KB dall'Acer, HTTP 200, referto sul server — e resta da
     provare sulla macchina il touchpad in @SIS.
 
+!!! IL 23 SETTEMBRE: TRE DA correzioni.txt E TRE A VOCE. Fatte e provate in
+    QEMU @EXBROWSER-NOME, @EDIT-SCORRI, @ARCHIVI-COMPRIME, @ARCHIVI-MENU;
+    aperte @EXBROWSER-CERT (urgente) e @EDIT-RTF (a comodo).
+
 !!! E ALTRE DUE, SEMPRE IL 22 SETTEMBRE: @EXWIN-LOG (urgente) e @ICONE-APP
     (a comodo). La terza riga arrivata era la coda di @AVVIO-LOGIN, gia'
     fatto.
@@ -210,7 +214,7 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @FBC-110         il CD ha FreeBASIC 1.07; l'1.10 toglie l'avviso del linker
   1  @FILEMGR-MKDIR   FATTO e provato, pulsante «Crea» compreso: da provare sul ferro
   1  @EXIDE-SFOGLIA   FATTO e provato: resta da provarlo su una macchina VERA
-  1  @ZIP             FATTO tutto e provato: restano deflate in scrittura e l'aggiunta
+  1  @ZIP             FATTO tutto e provato, deflate compreso: resta l'aggiunta
   1  @TAR-GZ          ! il porting di tar e gz (i sorgenti stanno in gnu/)
   1  @NETUPD-GIRA     la barra che gira mentre scarica: ferma = qualcosa non va
   1  @EDIT-CERCA      cerca e sostituisci mancano nell'editor di ExWin
@@ -220,6 +224,12 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @PAINT           ! un Paint Brush per ExWin: BMP, JPG, GIF, PNG, TIFF
   1  @EXWIN-LOG       ! lo schermo non si sporca piu' (kernel); manca la finestra
   1  @ICONE-APP       i disegni _64/_128 ci sono e il menu li usa: mancano quattro
+  1  @EXBROWSER-NOME  FATTO e provato in QEMU: il navigatore si chiama EXBrowser
+  1  @EXBROWSER-CERT  ! catena e CA aggiunte FATTE; restano AES-GCM, P-256 e TLS 1.2
+  1  @EDIT-RTF        la modalita' RTF dell'editor: prima il modello del documento
+  1  @EDIT-SCORRI     FATTO e provato: la barra di scorrimento dell'editor
+  1  @ARCHIVI-COMPRIME FATTO e provato: DEFLATE in scrittura, zip e Archivi
+  1  @ARCHIVI-MENU    FATTO: la tendina non si fa piu' coprire (nel toolkit)
 
   2  @SUONO-EMU8000   l'EMU8000 di una AWE32 resta spento    <- @SUONO-CAMPIONI
   2  @RUST-1          alloc: un GlobalAlloc sopra la malloc  <- @RUST-0
@@ -3083,9 +3093,9 @@ decide se il progetto sopravvive — e' il punto in cui VB6 si rompeva:
     codificatore di nessun formato:
       - BMP si scrive in un pomeriggio, ed e' il formato in cui salvare finche'
         non ci sara' altro;
-      - PNG vuole DEFLATE in COMPRESSIONE, che non c'e' (vedi @ZIP: si scrive
-        in «store» proprio per questo). Lo stesso compressore servirebbe a
-        tutt'e due;
+      - PNG vuole DEFLATE in COMPRESSIONE, che C'E' dal 23 settembre
+        (lib/exzip/deflate.c, vedi @ARCHIVI-COMPRIME): a un PNG servono in
+        piu' l'intestazione zlib, i filtri per riga e i CRC dei pezzi;
       - JPG in scrittura e' una DCT piu' le tavole di Huffman: e' un lavoro suo;
       - GIF vuole LZW, e TIFF e' una famiglia di formati piu' che un formato —
         chi lo apre deve reggere una decina di combinazioni di compressione e
@@ -3630,6 +3640,181 @@ sono arrivate, non quello in cui vanno fatte.
     - le _128 non le usa ancora nessuno: sono per le icone della scrivania
       e per la finestra «Informazioni su» di ogni programma.
 
+! @EXBROWSER-NOME IL NAVIGATORE SI CHIAMA EXBrowser: FATTO IL 23 SETTEMBRE
+  2026 (exbrowser 0.003), chiesto lo stesso giorno.
+
+  Chiesto: «Browser deve cambiare nome in EXBrowser ... conta come incremento
+  di versione, da aggiornare tutta la documentazione e i file di help e
+  manuali».
+
+  CAMBIA dove e' un NOME: /exwin/bin/exbrowser, i sorgenti in
+  exwin/bin/exbrowser/ (exbrowser.c, exbrowser.ld), il titolo della finestra,
+  «Informazioni su», «Aiuto > Guida di EXBrowser», la voce del menu Avvio,
+  l'icona (exbrowser_64/_128.ico), il manuale (/exwin/doc/exbrowser.html e i
+  collegamenti delle altre nove pagine), i README, i leggimi delle prove.
+  NON CAMBIA dove e' una PAROLA — «il navigatore», «un browser» — ne' nei
+  moduli interni (browser_*.c, gli oggetti browser_*.o), il cui nome non
+  arriva a nessuno. Il diario non si tocca: e' storia.
+
+  ! I DATI SI SPOSTANO DA SOLI: al primo avvio $HOME/.app/browser/ diventa
+    $HOME/.app/exbrowser/ con rename(). E SE NON SI PUO' — una casa su FAT,
+    dove «exbrowser» non entra in 8.3 — si continua a usare la vecchia e lo
+    si dice: ricominciare da un profilo vuoto vorrebbe dire uscire da ogni
+    sito per ubbidire a una regola sui nomi.
+
+  ! exide cerca il navigatore prima col nome nuovo e poi col vecchio (0.016):
+    un sistema aggiornato a meta' deve aprire lo stesso il manuale.
+
+  ! IL VECCHIO BINARIO NON TORNAVA SUL CD PER LA STRADA CHE CI SI ASPETTA:
+    build/ e' tracciato, e build/exwin/bin/browser e la sua copia in
+    build/iso-exos/ restavano li' a finire nell'ISO accanto al nuovo. Tolti
+    a mano; e l'ISO andava rifatta da capo (rm dist/exos.iso), perche' una
+    cancellazione non fa scattare nessuna regola di make.
+
+  PROVATO in QEMU con tools/prova_exbrowser.sh: una casa su ext2 con la
+  directory vecchia e un file dentro; EXBrowser parte, la finestra si chiama
+  col nome nuovo, lo spostamento e' detto, il file c'e', la vecchia no.
+  ! RESTA LA MACCHINA VERA, e li' c'e' ancora /exwin/bin/browser: netupdate
+    porta i file nuovi, non cancella i vecchi.
+
+! @EXBROWSER-CERT I SITI HTTPS CHE NON SI APRONO. (chiesto il 23 settembre
+  2026; misurato, corretto a meta', e il resto non e' un certificato)
+
+  Chiesto: molti siti in https non vengono accettati «per via del
+  certificato»; aggiungere certificati, aggiornare l'elenco, e poterne
+  aggiungere scaricandoli.
+
+  ! PRIMA SI E' MISURATO, con tools/prova_certificati.sh: EX-OS in QEMU sulla
+    rete vera, `scarica -i` su trenta siti comuni, e dall'host la catena che
+    ogni server manda. 23 su 30 si aprivano, e i sette no erano:
+      - www.amazon.it: «la radice non e' nel magazzino (anello 2)» — l'UNICO
+        vero caso di certificato, e il difetto era nostro. FATTO, sotto;
+      - www.corriere.it, www.gazzetta.it, www.istat.it: parlano SOLO TLS 1.2,
+        e il nostro client solo 1.3. «il server ha rifiutato»;
+      - www.ebay.it: TLS 1.3, ma NON ChaCha20 — e ChaCha20 e' l'unico
+        cifrario che offriamo. Con AES-128-GCM si apre (openssl lo prova);
+      - www.poste.it: TLS 1.3, ma non accetta lo scambio di chiavi su x25519:
+        vuole P-256 (secp256r1), e poi sceglie AES-256-GCM-SHA384;
+      - stackoverflow.com: risponde 403, e' un blocco dei robot, non TLS.
+    ! L'ELENCO DELLE RADICI NON E' VECCHIO: il CD copia quello di Debian di
+      chi costruisce (150), e non manca nessuna radice dei siti provati.
+
+  FATTO il 23 settembre 2026:
+    - LA CATENA SI FERMA ALLA PRIMA RADICE DEL MAGAZZINO (lib/excert/excert.c):
+      Amazon manda in coda una copia INCROCIATA di «DigiCert Global Root G2»
+      firmata dalla vecchia VeriSign G5; noi pretendevamo che l'ULTIMO anello
+      mandato fosse firmato da una radice nostra. Adesso a ogni anello si
+      chiede prima «ti ha firmato una radice nostra?» e ci si ferma li', come
+      i navigatori grandi; le date si guardano solo sugli anelli usati.
+      Tre prove nuove in tools/prove/certprova.py (17 su 17); amazon.it e
+      amazon.com si aprono;
+    - I CERTIFICATI AGGIUNTI: $HOME/.app/exhttp/certi.pem, letto in coda al
+      magazzino di sistema, per OGNI programma che apre https per quella
+      persona. exhttp_certi_esamina() ed exhttp_certi_aggiungi() nella
+      tabella di exhttp.so — FACOLTATIVE nello stub, perche' un netupdate
+      nuovo sopra un exhttp.so vecchio deve partire lo stesso. In EXBrowser
+      (0.004) «File > Aggiungi un certificato...»: da un indirizzo o da un
+      file, prima un avviso con chi e', chi l'ha emesso, le date e l'impronta
+      SHA-256 (la stessa di openssl, controllata), poi «Mi fido / Annulla»
+      col fuoco su Annulla. Si aggiungono solo le CA.
+      PROVATO da tools/prova_certi_aggiunti.sh: una CA di prova e un server
+      https sull'host; `scarica` prima rifiuta per la radice, poi il
+      certificato si aggiunge da EXBrowser a tastiera, e `scarica` — un
+      altro programma — lo apre.
+
+  QUEL CHE RESTA, e sono lavori di TLS, non di certificati:
+    1. AES-GCM nel client TLS 1.3 (TLS_AES_128_GCM_SHA256, e
+       TLS_AES_256_GCM_SHA384 che vuole anche SHA-384 nel key schedule):
+       apre ebay.it. Serve un AES e un GHASH; lib/excrypt ha ChaCha20 e
+       Poly1305, non AES;
+    2. lo scambio di chiavi su P-256 accanto a x25519: apre poste.it.
+       lib/exp256 sa gia' fare i conti sulla curva per verificare le firme;
+       un ECDH e' una moltiplicazione per uno scalare, la stessa;
+    3. TLS 1.2 nel client: apre corriere.it, gazzetta.it, istat.it. E' il
+       pezzo grosso — un'altra stretta di mano, la PRF, ServerKeyExchange
+       firmato, ChangeCipherSpec — e va fatto dopo 1 e 2, perche' quei
+       server offrono ECDHE-RSA con AES-GCM o ChaCha20.
+    ! Ripetere tools/prova_certificati.sh dopo ognuno: i numeri di oggi sono
+      il riferimento: 23 su 30, e 24 dopo la correzione della catena.
+
+$ @EDIT-RTF L'EDITOR IN MODALITA' RTF. (chiesto il 23 settembre 2026)
+
+  Chiesto: «Opzioni > Modalita' RTF» accende gli strumenti di un editor di
+  testo ricco — scelta del carattere, righello, giustificazione e
+  allineamento, sottolineato, «tutto quello che supporta il formato RTF»;
+  spenta, l'editor resta quello di oggi. Si salva in .rtf, e un .rtf aperto
+  la accende da solo. E si puo' salvare in HTML, convertendo; un .html aperto
+  resta del navigatore.
+
+  ! LA DIREZIONE E' GIA' SCRITTA: testo e font vanno nelle .so (vedi la nota
+    «Editor RTF e librerie dinamiche»), e il controllo areatesto ha gia' il
+    gancio per colorare che un editor ricco usera' per i suoi stili. Il
+    lavoro vero e' un modello del documento a SPEZZONI (testo + stile), che
+    l'areatesto a celle di oggi non e': si decide quello prima di disegnare
+    un solo pulsante.
+
+! @EDIT-SCORRI LA BARRA DI SCORRIMENTO DELL'EDITOR: FATTO IL 23 SETTEMBRE
+  2026 (edit 0.002), chiesto lo stesso giorno.
+
+  Una barra «scorrimento» a destra dell'area, e due funzioni nuove nel
+  toolkit che servono proprio a questo: ex_area_vista() (la prima riga
+  visibile e quante se ne vedono) ed ex_area_mostra_da() (la vista parte da
+  una riga SENZA muovere il cursore). La barra segue l'area prima di ogni
+  disegno; trascinata o cliccata, sposta la vista e il primo tasto la
+  riporta dove si scrive, come in ogni editor.
+
+  ! E LA RIGA DI STATO NON SI AGGIORNAVA DOPO UN TASTO battuto nell'area:
+    «riga 1/512» restava scritto mentre si scendeva di pagina in pagina.
+    Visto nelle fotografie della barra, corretto nello stesso punto.
+
+  ! LE DUE FUNZIONI NUOVE SONO NELLA TABELLA DI exwin.so: un edit nuovo sopra
+    un exwin.so vecchio si ferma all'avvio dicendolo. Si pubblicano insieme.
+
+  PROVATO in QEMU a fotografie: PagGiu' muove testo, barra e riga di stato;
+  un clic nella gola scende di una pagina e il cursore resta alla riga 1.
+
+! @ARCHIVI-COMPRIME ARCHIVI (E zip) COMPRIMONO: FATTO IL 23 SETTEMBRE 2026
+  (exzip.so con lib/exzip/deflate.c, zip 0.002, archivi 0.002).
+
+  Segnalato: «il programma archiviatore non comprime i file zip». Era vero e
+  dichiarato: la libreria scriveva solo «store». Adesso c'e' un compressore
+  DEFLATE scritto da zero — LZ77 su 32 KB con catene di hash e confronto
+  pigro come zlib, e per ogni blocco l'albero di Huffman piu' corto fra il
+  fisso e uno dinamico — e comprime come zlib al livello 6, a qualche byte
+  di differenza su centinaia di KB.
+
+  ! LA REGOLA DELLA LIBRERIA RESTA: niente «data descriptor» e niente
+    ritorno indietro a correggere l'intestazione. Il file si legge due volte:
+    la prima calcola il CRC e comprime SOLO CONTANDO, la seconda scrive.
+    Il compressore e' deterministico, e la seconda passata deve dare
+    esattamente i byte contati — se no l'archivio non si chiude e lo si dice
+    («il file e' cambiato mentre lo comprimevo»).
+  ! E UN FILE CHE COMPRESSO CRESCE — un JPEG, uno ZIP dentro uno ZIP — entra
+    in store, come fa ogni archiviatore.
+
+  PROVATO due volte:
+    - sull'host, tools/prova_deflate.sh: vuoto, un byte, zeri, caso, testo,
+      binari, a pezzi di misura casuale; ogni flusso lo riaprono zlib di
+      Python e il nostro inflate, e il conteggio e' uguale alla misura vera;
+    - in QEMU, tools/prova_zip.sh: l'archivio fatto da EX-OS lo verificano
+      zipfile di Python e unzip -t di Info-ZIP, e il testo e' davvero
+      deflate (31174 byte -> 12522). Le altre prove sono tutte ancora buone.
+
+! @ARCHIVI-MENU IL MENU COPERTO DALLA RIGA SOTTO: FATTO IL 23 SETTEMBRE
+  2026, nel TOOLKIT.
+
+  Segnalato: in Archivi, appena si apre un menu col mouse, la riga
+  d'intestazione sotto la barra gli si disegna sopra. Archivi dipinge quella
+  riga nel suo EXM_DISEGNA DOPO la base, cioe' dopo la tendina che la base
+  aveva appena messo in cima. Lo stesso schema e' in ogni programma che
+  disegna del suo, quindi la correzione e' in ex_smista():
+  tendine_ancora_sopra() rimette sopra la tendina aperta quando la procedura
+  dell'applicazione ha finito — e solo se una tendina e' aperta.
+
+  PROVATO in QEMU a fotografia: il menu File di Archivi si apre intero sopra
+  la riga «nome byte in .zip data». ! NON fotografato PRIMA della correzione:
+  il meccanismo si legge nel codice, la fotografia dice solo il dopo.
+
 ! @EDIT-CERCA CERCA E SOSTITUISCI NELL'EDITOR DI ExWin. (chiesto il 22
   settembre 2026)
 
@@ -3659,7 +3844,7 @@ sono arrivate, non quello in cui vanno fatte.
 
 lib/exhtml e' SOLO il parser: «da testo ad albero», 999 righe. Impaginare —
 le righe, i font, le tabelle, i link, il disegno, il colpo del mouse — sta
-dentro exwin/bin/browser/browser.c, 6748 righe, e non e' esportato da nessuna
+dentro exwin/bin/exbrowser/exbrowser.c, 6748 righe, e non e' esportato da nessuna
 parte. E' il motivo per cui exide, per mostrare un manuale formattato, LANCIA
 il navigatore invece di disegnarlo in casa (3 settembre 2026): l'alternativa
 era duplicare un impaginatore, cioe' la copia da tenere d'accordo con quella
@@ -4055,9 +4240,8 @@ un programma: il primo lavoro e' tirarla fuori.
 
   QUEL CHE MANCA:
 
-    - LA COMPRESSIONE IN SCRITTURA (deflate). Oggi si scrive in store: la porta
-      e' aperta — il metodo e' un campo, non un'assunzione — ma serve un
-      compressore, che e' un lavoro suo;
+    - (la compressione in scrittura: FATTA il 23 settembre, vedi
+      @ARCHIVI-COMPRIME);
     - NON SI AGGIUNGE A UN ARCHIVIO ESISTENTE, ne' col comando ne' con la
       finestra: si riscrive. Aggiungere vuol dire rileggere il catalogo,
       riscriverlo in fondo e tenere le voci vecchie dov'erano. La finestra lo

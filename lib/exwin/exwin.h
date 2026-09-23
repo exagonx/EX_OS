@@ -858,6 +858,16 @@ void         ex_area_cursore(ExFinestra area, unsigned int *riga, unsigned int *
  * dove si sta guardando. */
 void         ex_area_vai(ExFinestra area, unsigned int riga, unsigned int col);
 
+/* ! LA VISTA, SEPARATA DAL CURSORE (23 settembre 2026): e' quel che serve a
+ * una barra di scorrimento accanto all'area. ex_area_vista() dice la prima
+ * riga visibile, e in `visibili` quante ne stanno a video; ex_area_mostra_da()
+ * fa partire la vista da una riga SENZA muovere il cursore — come in ogni
+ * editor, trascinare la barra guarda altrove, e il primo tasto riporta la
+ * vista dove si sta scrivendo. Oltre la fine non si va: l'ultima pagina e'
+ * piena, non mezza vuota. */
+unsigned int ex_area_vista(ExFinestra area, unsigned int *visibili);
+void         ex_area_mostra_da(ExFinestra area, unsigned int riga);
+
 /* ! UNA RIGA INTERA SI SOSTITUISCE IN UN COLPO, senza passare da un tasto per
  * volta: e' quel che serve a un «cerca e sostituisci», che cambia un pezzo di
  * riga senza che nessuno lo stia scrivendo a tastiera. Si tronca alla

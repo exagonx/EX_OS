@@ -196,7 +196,7 @@ nello stub** — la manciata di ponti che ogni programma si porta dentro — non
 nelle librerie: va fatta *prima* di aprirne una.
 
     File > Impostazioni > Motore:  ExJs (66 KB) / QuickJS (594 KB)
-    $HOME/.app/browser/impostazioni.txt:   motore = quickjs
+    $HOME/.app/exbrowser/impostazioni.txt:   motore = quickjs
 
 ! **SE QUELLA CHIESTA NON C'E' SI APRE L'ALTRA, MA SI DICE.** Un sistema
 installato senza `quickjs.so` — mezzo megabyte che si puo' benissimo non aver
@@ -221,7 +221,7 @@ fra il banco e la macchina vera.
 
 Manca lo **script** che rifaccia quel giro da solo e confronti le due uscite
 senza che qualcuno guardi una fotografia. Le tappe sono note e sono cinque:
-ISO di prova con `@avvio /exwin/bin/browser`, installazione, `echo` delle
+ISO di prova con `@avvio /exwin/bin/exbrowser`, installazione, `echo` delle
 impostazioni, `exwin`, `screendump`.
 
 ### 2. Le maniglie, quando la pagina resta aperta per ore

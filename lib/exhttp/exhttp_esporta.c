@@ -57,6 +57,10 @@ static const char *const g_nomi[] = {
      * stesso cc1plus, che in un colpo solo non ci arrivava. */
     "exhttp_da",
 
+    /* Aggiunte il 23 settembre 2026: i certificati di chi usa il sistema. */
+    "exhttp_certi_esamina",
+    "exhttp_certi_aggiungi",
+
     "__lib_avvio"
 };
 
@@ -73,6 +77,9 @@ static void *const g_indirizzi[] = {
 
     (void *)exhttp_verso,
     (void *)exhttp_da,
+
+    (void *)exhttp_certi_esamina,
+    (void *)exhttp_certi_aggiungi,
 
     (void *)__libc_ponti_avvia
 };

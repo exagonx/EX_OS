@@ -101,6 +101,40 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### Certificati: la catena si ferma alla prima radice, e se ne aggiungono
+
+**testato in QEMU, sulla rete vera** — prima di cambiare qualcosa si è
+misurato (`tools/prova_certificati.sh`): su trenta siti comuni EX-OS ne apriva
+23, e **uno solo** era un problema di certificato. www.amazon.it manda in coda
+una copia *incrociata* della radice DigiCert, firmata da una vecchia VeriSign
+ritirata; `excert` pretendeva che l'ultimo anello mandato fosse firmato da una
+radice nostra, e la rifiutava. Adesso la catena si ferma alla prima radice del
+magazzino, come nei navigatori grandi: Amazon si apre.
+
+Gli altri sei non erano certificati: tre server parlano solo TLS 1.2 (il
+nostro client solo 1.3), due non accettano ChaCha20 o x25519, uno blocca i
+robot. Sono scritti in `@EXBROWSER-CERT`.
+
+E si possono **aggiungere CA**: **File > Aggiungi un certificato...** in
+EXBrowser, da un indirizzo o da un file; si vede chi è e la sua impronta
+SHA-256 prima di dire «Mi fido». Finiscono in `$HOME/.app/exhttp/certi.pem` e
+valgono per ogni programma che apre `https`, `scarica` compreso — provato da
+`tools/prova_certi_aggiunti.sh`.
+
+### Il navigatore si chiama EXBrowser
+
+**da testare** — `/exwin/bin/browser` diventa `/exwin/bin/exbrowser`, alla
+versione 0.003: il nome l'ha scelto chi lo usa, e cambia dappertutto dove è
+un nome e non una parola — il titolo della finestra, «Informazioni su», la
+voce del menu Avvio, l'icona (`exbrowser_64.ico`), il manuale
+(`/exwin/doc/exbrowser.html`) e i dati in `$HOME/.app/exbrowser/`.
+
+! **I DATI VECCHI SI SPOSTANO DA SOLI**: al primo avvio `$HOME/.app/browser/`
+diventa `$HOME/.app/exbrowser/`, con impostazioni, biscotti e cache. Se non si
+può — una casa su FAT, dove «exbrowser» non entra in 8.3 — si continua a usare
+quella vecchia e lo si dice: meglio un nome vecchio che ritrovarsi fuori da
+ogni sito.
+
 ### Le icone: un'API del toolkit, e il menu della scrivania che la usa
 
 **testato in QEMU** — `ex_icona_apri` / `ex_icona_disegna` / `ex_icona_metti`
@@ -3381,7 +3415,7 @@ exwin                       accende la grafica sulla console 5
 /exwin/bin/filemgr [DIR]    il file manager
 /exwin/bin/edit [FILE]      l'editor di testo
 /exwin/bin/term [PROG]      il terminale in finestra (senza PROG: la shell)
-/exwin/bin/browser [URL]    il navigatore (un percorso assoluto diventa file:)
+/exwin/bin/exbrowser [URL]  EXBrowser, il navigatore (un percorso assoluto diventa file:)
 /exwin/bin/exide [DIR]      l'ambiente di sviluppo visuale
 /exwin/bin/archivi [ZIP]    gli archivi ZIP: apre, estrae, crea
 /exwin/bin/fontprova        la prova dei font TrueType, fatta per essere vista
@@ -3498,10 +3532,10 @@ dietro una pipe quella domanda non esiste — i tasti li dà il server alla
 finestra col fuoco, e da lì vanno nella pipe di *quella* shell. È così che se
 ne possono aprire due senza che si disturbino.
 
-### Il navigatore
+### EXBrowser, il navigatore
 
-`/exwin/bin/browser [URL]`. Senza argomento parte dalla pagina di casa; con un
-percorso assoluto (`browser /exwin/doc/browser.html`) lo trasforma in un
+`/exwin/bin/exbrowser [URL]`. Senza argomento parte dalla pagina di casa; con un
+percorso assoluto (`exbrowser /exwin/doc/exbrowser.html`) lo trasforma in un
 `file:`, che è la sola forma che il resto del programma conosce.
 
 Nella barra ci sono **due caselle**: l'indirizzo e **Cerca**, che compone da

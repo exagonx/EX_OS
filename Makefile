@@ -172,7 +172,7 @@ PROGRAMMI_FLOPPY := shell id date_prog chmod shutdown ls mem stack disk fdisk mk
 # =============================================================================
 PROGRAMMI_CD := cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
-PROGRAMMI_EXWIN := exwin_so exdlg_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr edit term fontprova orologio browser exide archivi
+PROGRAMMI_EXWIN := exwin_so exdlg_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr edit term fontprova orologio exbrowser exide archivi
 
 # I driver, con la stessa regola dei programmi. Quelli di base stanno gia'
 # dentro PROGRAMMI_FLOPPY (floppy_drv, kbd_drv): sul floppy servono a
@@ -1458,7 +1458,7 @@ FONT_TTF      := $(wildcard $(FONT_TTF_DIR)/*.ttf)
 
 # ! LA DOCUMENTAZIONE DELLE APPLICAZIONI GRAFICHE E' FATTA DI PAGINE HTML, e
 # sta accanto a loro invece che in /doc: la voce «Aiuto» del navigatore apre
-# /exwin/doc/browser.html con il navigatore stesso. Metterla in /doc l'avrebbe
+# /exwin/doc/exbrowser.html con il navigatore stesso. Metterla in /doc l'avrebbe
 # legata a un componente diverso da quello dell'applicazione che la mostra —
 # cioe' un sistema dove il browser c'e' e la sua guida no.
 EXWIN_DOC_DIR := exwin/doc
@@ -1935,8 +1935,13 @@ EXZIP_LD      := lib/exzip/exzip.ld
 
 EXZIP_SO := $(BUILD_EXWIN_LIB)/exzip.so
 
+# ! IL COMPRESSORE E' UN FILE A PARTE (23 settembre 2026), per la stessa ragione
+# dei biscotti del navigatore: si prova da solo sull'host, contro zlib di
+# Python e contro il nostro inflate — vedi tools/prova_deflate.sh.
+EXZIP_DEFL    := lib/exzip/deflate.c lib/exzip/deflate.h
+
 $(EXZIP_SO): $(EXZIP_SRC) $(EXZIP_ESPORTA) $(EXZIP_HDR) $(EXZIP_LD) \
-             $(EXIMG_INFLATE) lib/eximg/inflate.h \
+             $(EXZIP_DEFL) $(EXIMG_INFLATE) lib/eximg/inflate.h \
              $(EXLIB_SRC) $(EXLIB_HDR) \
              $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(SEGNO_FLAG)
 	@echo "=== Compilazione libreria condivisa /exwin/lib/exzip.so ==="
@@ -1944,9 +1949,11 @@ $(EXZIP_SO): $(EXZIP_SRC) $(EXZIP_ESPORTA) $(EXZIP_HDR) $(EXZIP_LD) \
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exzip -I lib/eximg -c $(EXZIP_SRC) -o $(BUILD_OBJ)/sozip_main.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exzip -c $(EXZIP_ESPORTA) -o $(BUILD_OBJ)/sozip_esporta.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -c $(EXIMG_INFLATE) -o $(BUILD_OBJ)/sozip_inflate.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exzip -c lib/exzip/deflate.c -o $(BUILD_OBJ)/sozip_deflate.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(EXZIP_LD) \
 	    $(BUILD_OBJ)/sozip_esporta.o $(BUILD_OBJ)/sozip_main.o \
-	    $(BUILD_OBJ)/sozip_inflate.o $(LIBC_PONTI_OBJ) -o $@
+	    $(BUILD_OBJ)/sozip_inflate.o $(BUILD_OBJ)/sozip_deflate.o \
+	    $(LIBC_PONTI_OBJ) -o $@
 	@# L'indirizzo atteso si legge dal .ld, non si riscrive qui: vedi exdlg.
 	@atteso=$$(sed -n 's/^[[:space:]]*\.[[:space:]]*=[[:space:]]*0x0*\([0-9A-Fa-f]*\)[[:space:]]*;.*/0x\1/p' $(EXZIP_LD) | head -1 | tr 'A-F' 'a-f'); \
 	 ent=$$(LC_ALL=C readelf -h $@ | awk '/Entry point/ {print $$4}' | tr 'A-F' 'a-f'); \
@@ -2492,14 +2499,21 @@ $(OROLOGIO_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(OROLOGIO_SRC) $(OROLOGIO_LD) $(EX
 .PHONY: orologio
 orologio: dirs $(OROLOGIO_BIN)
 
-# --- /exwin/bin/browser: mette insieme tutto ---------------------------------
+# --- /exwin/bin/exbrowser: mette insieme tutto -------------------------------
+#
+# ! SI CHIAMAVA /exwin/bin/browser FINO AL 23 SETTEMBRE 2026, e il nome l'ha
+# cambiato chi lo usa (EXBrowser). Cambiano il programma, la directory dei
+# sorgenti, i dati in $HOME/.app/exbrowser/ (quelli vecchi si spostano da soli
+# al primo avvio), l'icona e il manuale. I moduli interni — browser_*.c e gli
+# oggetti browser_*.o — tengono il nome: sono pezzi del navigatore, e il loro
+# nome non arriva a nessuno.
 #
 # ! E' L'UNICO PROGRAMMA CHE USA CINQUE PEZZI INSIEME: exhttp per la rete,
 # exhtml per l'albero, i font per misurare e disegnare il testo, exwin per la
 # finestra, ed eximg per le immagini della pagina. Di questi solo exhtml resta
 # collegato dentro — gli altri quattro sono librerie condivise, e eximg il
 # browser se la apre da se' come fa il toolkit.
-BROWSER_SRC := exwin/bin/browser/browser.c
+BROWSER_SRC := exwin/bin/exbrowser/exbrowser.c
 
 # ! L'IMPAGINATO E' USCITO DA browser.c IL 3 SETTEMBRE 2026, e l'8 settembre ha
 # perso i tre legami che gli impedivano di essere una libreria: i moduli, le
@@ -2508,21 +2522,21 @@ BROWSER_SRC := exwin/bin/browser/browser.c
 # browser_vista.h. Resta un file dello stesso programma perche' restano da
 # passare le variabili condivise (browser_priv.h), non perche' resti da
 # decidere qualcosa.
-BROWSER_IMP := exwin/bin/browser/browser_impagina.c
-BROWSER_EST := exwin/bin/browser/browser_estranei.c
-BROWSER_ESTH := exwin/bin/browser/browser_estranei.h
-BROWSER_VISTA := exwin/bin/browser/browser_vista.h
-BROWSER_PRIV := exwin/bin/browser/browser_priv.h
-BROWSER_BIN := $(BUILD_EXWIN_BIN)/browser
-BROWSER_LD  := exwin/bin/browser/browser.ld
+BROWSER_IMP := exwin/bin/exbrowser/browser_impagina.c
+BROWSER_EST := exwin/bin/exbrowser/browser_estranei.c
+BROWSER_ESTH := exwin/bin/exbrowser/browser_estranei.h
+BROWSER_VISTA := exwin/bin/exbrowser/browser_vista.h
+BROWSER_PRIV := exwin/bin/exbrowser/browser_priv.h
+BROWSER_BIN := $(BUILD_EXWIN_BIN)/exbrowser
+BROWSER_LD  := exwin/bin/exbrowser/exbrowser.ld
 
 # ! LA DISPENSA DEI BISCOTTI E' UN FILE A PARTE, ed e' l'unico pezzo del
 # browser che lo sia. Il motivo e' che si prova da sola (make prova-biscotti):
 # le sue regole — quale biscotto vale per quale dominio e per quale percorso —
 # si sbagliano in silenzio, e non hanno bisogno ne' di uno schermo ne' di una
 # rete per essere messe alla prova.
-BROWSER_BIS := exwin/bin/browser/biscotti.c
-BROWSER_BISH := exwin/bin/browser/biscotti.h
+BROWSER_BIS := exwin/bin/exbrowser/biscotti.c
+BROWSER_BISH := exwin/bin/exbrowser/biscotti.h
 
 $(BROWSER_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(BROWSER_SRC) $(BROWSER_LD) \
              $(BROWSER_IMP) $(BROWSER_PRIV) \
@@ -2537,12 +2551,12 @@ $(BROWSER_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(BROWSER_SRC) $(BROWSER_LD) \
              $(EXDLG_STUB) $(EXDLG_HDR) $(EXDLG_SO) \
              $(IP_PROTO) $(DNS_SRC) $(RETE_SRC) \
              $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
-	@echo "=== Compilazione /exwin/bin/browser ==="
+	@echo "=== Compilazione /exwin/bin/exbrowser ==="
 	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I lib/exjs -I lib/exdom -I lib/exdlg -I lib/exinfo -I exwin/bin/browser -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_SRC) -o $(BUILD_OBJ)/browser_main.o
-	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I lib/exjs -I lib/exdom -I lib/exdlg -I lib/exinfo -I exwin/bin/browser -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_IMP) -o $(BUILD_OBJ)/browser_imp.o
-	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I lib/exjs -I lib/exdom -I lib/exdlg -I lib/exinfo -I exwin/bin/browser -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_EST) -o $(BUILD_OBJ)/browser_est.o
-	$(CC) $(CFLAGS_USER) -I lib/include -I exwin/bin/browser -c $(BROWSER_BIS) -o $(BUILD_OBJ)/browser_bis.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I lib/exjs -I lib/exdom -I lib/exdlg -I lib/exinfo -I exwin/bin/exbrowser -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_SRC) -o $(BUILD_OBJ)/browser_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I lib/exjs -I lib/exdom -I lib/exdlg -I lib/exinfo -I exwin/bin/exbrowser -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_IMP) -o $(BUILD_OBJ)/browser_imp.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I lib/exjs -I lib/exdom -I lib/exdlg -I lib/exinfo -I exwin/bin/exbrowser -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_EST) -o $(BUILD_OBJ)/browser_est.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I exwin/bin/exbrowser -c $(BROWSER_BIS) -o $(BUILD_OBJ)/browser_bis.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exdlg -c $(EXDLG_STUB) -o $(BUILD_OBJ)/browser_exdlg.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exinfo -c $(EXINFO_SRC) -o $(BUILD_OBJ)/browser_info.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/browser_exwin.o
@@ -2566,10 +2580,10 @@ $(BROWSER_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(BROWSER_SRC) $(BROWSER_LD) \
 	    $(BUILD_OBJ)/browser_js.o $(BUILD_OBJ)/browser_dom.o \
 	    $(BUILD_OBJ)/browser_exdlg.o $(BUILD_OBJ)/browser_info.o \
 	    $(LIBC_PONTI_OBJ) -o $@
-	@echo "[OK] browser compilato: $@"
+	@echo "[OK] exbrowser compilato: $@"
 
-.PHONY: browser
-browser: dirs $(BROWSER_BIN)
+.PHONY: exbrowser browser
+exbrowser browser: dirs $(BROWSER_BIN)
 
 # ! L'ELENCO E' UN FILE E VA COPIATO, non compilato dentro: aggiungere
 # un'applicazione dev'essere una riga, non una ricostruzione.
@@ -6516,8 +6530,8 @@ prova-excss:
 prova-biscotti:
 	@mkdir -p $(PROVE_HOST_DIR)
 	@cc -Wall -Wextra -O2 -o $(PROVE_HOST_DIR)/bisprova \
-	    tools/prove/bisprova.c exwin/bin/browser/biscotti.c \
-	    -I exwin/bin/browser
+	    tools/prove/bisprova.c exwin/bin/exbrowser/biscotti.c \
+	    -I exwin/bin/exbrowser
 	@$(PROVE_HOST_DIR)/bisprova
 
 .PHONY: prova-exhttp

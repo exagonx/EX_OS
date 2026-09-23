@@ -149,6 +149,10 @@ static const char *const g_nomi[] = {
     "ex_icona_metti",
     "ex_icona_chiudi",
 
+    /* La vista di un'area, per la barra di scorrimento accanto. */
+    "ex_area_vista",
+    "ex_area_mostra_da",
+
     /* L'avvio della libreria: lo chiama chi la apre, non l'applicazione. */
     "__lib_avvio"
 };
@@ -248,6 +252,9 @@ static void *const g_indirizzi[] = {
     (void *)ex_icona_disegna,
     (void *)ex_icona_metti,
     (void *)ex_icona_chiudi,
+
+    (void *)ex_area_vista,
+    (void *)ex_area_mostra_da,
 
     (void *)__libc_ponti_avvia
 };

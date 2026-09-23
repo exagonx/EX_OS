@@ -329,52 +329,65 @@ int excert_catena_valida(const ExCert *catena, unsigned int quanti,
     if (catena == 0 || magazzino == 0 || quanti == 0) return EXCERT_MALFORMATO;
     if (quanti > 10) return EXCERT_TROPPO_LUNGA;    /* nessuna catena vera e' cosi' */
 
-    /* Le date di TUTTI gli anelli, compresi gli intermedi: un intermedio
-     * scaduto e' una CA che ha smesso di essere difesa. */
+    /* =====================================================================
+     * ! LA CATENA FINISCE ALLA PRIMA RADICE DEL MAGAZZINO, non all'ultimo
+     * certificato che il server manda — corretto il 23 settembre 2026.
+     *
+     * Prima si pretendeva che l'ULTIMO anello mandato fosse firmato da una
+     * radice nostra. Ma molti server mandano in coda una copia INCROCIATA
+     * della radice: www.amazon.it manda «DigiCert Global Root G2» firmata a
+     * sua volta dalla vecchia VeriSign G5, che dai magazzini e' uscita. La
+     * nostra DigiCert Global Root G2 c'e', ma la copia ha byte diversi e un
+     * altro emittente: la catena era rifiutata con «la radice non e' nel
+     * magazzino», su un sito che ogni navigatore apre.
+     *
+     * ! QUINDI A OGNI ANELLO SI CHIEDE PRIMA «TI HA FIRMATO UNA RADICE
+     * NOSTRA?», e se si' ci si ferma: quel che viene dopo non serve a niente
+     * e non si guarda — nemmeno le date, perche' una copia incrociata
+     * scaduta in coda non rende falso quel che sta prima. E' quel che fanno
+     * i navigatori grandi. La domanda costa poco sugli anelli dove la
+     * risposta e' no: radice_di() fa il conto solo sui candidati che hanno
+     * il nome giusto, e un intermedio di solito non ne ha nessuno.
+     * ================================================================= */
     for (i = 0; i < quanti; i++) {
-        r = date_a_posto(&catena[i], adesso);
-        if (r != EXCERT_OK) { if (anello) *anello = i; return r; }
-    }
-
-    /* Da un anello al successivo. */
-    for (i = 0; i + 1 < quanti; i++) {
-        const ExCert *figlio = &catena[i], *padre = &catena[i + 1];
+        const ExCert *figlio = &catena[i];
 
         if (anello) *anello = i;
 
-        if (!excert_stesso_nome(&figlio->emittente, &padre->soggetto))
-            return EXCERT_NOME_DIVERSO;
+        /* Le date dell'anello: un intermedio scaduto e' una CA che ha
+         * smesso di essere difesa. */
+        r = date_a_posto(figlio, adesso);
+        if (r != EXCERT_OK) return r;
 
-        /* ! CHI FIRMA DEV'ESSERE UNA CA, e questo controllo e' il piu' vecchio
-         * dei difetti di X.509: senza, il certificato di un sito qualunque —
-         * che chiunque puo' farsi rilasciare — puo' firmare il certificato di
-         * un altro sito. */
-        if (!padre->e_ca) return EXCERT_NON_E_CA;
-
-        /* ! IL RESPIRO STA QUI, PRIMA DELLA FIRMA E NON DOPO. Chiamarlo dopo
-         * vorrebbe dire annunciare a cose fatte: chi ha una barra di stato la
-         * aggiornerebbe quando il lavoro e' gia' finito, e chi misura leggerebbe
-         * un tempo spostato di un anello. */
+        /* ! IL RESPIRO STA QUI, PRIMA DI OGNI CONTO E NON DOPO: chi ha una
+         * barra di stato la aggiorna mentre il lavoro si fa, non a cose
+         * fatte. */
         if (passo && !passo(passo_dato, i, quanti)) return EXCERT_ANNULLATO;
 
-        r = excert_firma_valida(figlio, padre);
-        if (r != EXCERT_OK) return r;
+        if (radice_di(figlio, magazzino) != 0) {
+            if (anello) *anello = 0;
+            return EXCERT_OK;
+        }
+
+        if (i + 1 == quanti) return EXCERT_SENZA_RADICE;
+
+        {
+            const ExCert *padre = &catena[i + 1];
+
+            if (!excert_stesso_nome(&figlio->emittente, &padre->soggetto))
+                return EXCERT_NOME_DIVERSO;
+
+            /* ! CHI FIRMA DEV'ESSERE UNA CA, e questo controllo e' il piu'
+             * vecchio dei difetti di X.509: senza, il certificato di un sito
+             * qualunque — che chiunque puo' farsi rilasciare — puo' firmare
+             * il certificato di un altro sito. */
+            if (!padre->e_ca) return EXCERT_NON_E_CA;
+
+            r = excert_firma_valida(figlio, padre);
+            if (r != EXCERT_OK) return r;
+        }
     }
-
-    /* L'ultimo anello dev'essere firmato da una radice DEL MAGAZZINO. */
-    if (anello) *anello = quanti - 1;
-
-    /* ! E ANCHE QUESTO E' UN ANELLO, per chi aspetta. radice_di scorre il
-     * magazzino e fa il conto della firma su ogni candidato che ha il nome
-     * giusto: costa quanto gli altri, e senza questa chiamata l'ultimo pezzo
-     * di attesa resterebbe muto — cioe' proprio quello in cui chi guarda
-     * comincia a chiedersi se sia morto. */
-    if (passo && !passo(passo_dato, quanti - 1, quanti)) return EXCERT_ANNULLATO;
-
-    if (radice_di(&catena[quanti - 1], magazzino) == 0) return EXCERT_SENZA_RADICE;
-
-    if (anello) *anello = 0;
-    return EXCERT_OK;
+    return EXCERT_SENZA_RADICE;
 }
 
 /* =============================================================================

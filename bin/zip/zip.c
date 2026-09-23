@@ -30,7 +30,7 @@
 #include "exzip.h"
 
 /* +0.001 a ogni modifica: `zip -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.001"
+#define VERSIONE_APP "0.002"
 EX_VERSIONE("zip", VERSIONE_APP);
 
 #define PERC_MAX  320
@@ -41,9 +41,9 @@ static void istruzioni(void)
     printf("  zip archivio.zip file...     crea l'archivio con quei file\n");
     printf("  zip -l archivio.zip          elenca quello che c'e' dentro\n");
     printf("  zip -x archivio.zip [dove]   estrae tutto (qui, o in 'dove')\n\n");
-    printf("  Comprime in 'store', cioe' senza comprimere: un archivio cosi'\n");
-    printf("  lo aprono tutti. In lettura capisce anche 'deflate', che e' il\n");
-    printf("  metodo di quasi tutti gli archivi veri.\n");
+    printf("  Comprime in 'deflate', il metodo di quasi tutti gli archivi; un\n");
+    printf("  file che compresso verrebbe piu' grande (un JPEG, uno ZIP) entra\n");
+    printf("  com'e', in 'store'. In lettura capisce tutt'e due.\n");
 }
 
 /* The last piece of a path: "/disk/prova/alfa.txt" -> "alfa.txt".

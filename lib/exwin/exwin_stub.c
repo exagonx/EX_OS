@@ -147,6 +147,8 @@ static struct {
                                   unsigned int, unsigned int);
     void         (*icona_metti)(ExFinestra, ExIcona, unsigned int);
     void         (*icona_chiudi)(ExIcona);
+    unsigned int (*a_vista)(ExFinestra, unsigned int *);
+    void         (*a_mostra_da)(ExFinestra, unsigned int);
 } P;
 
 static void *chiedi(const ExLibTesta *t, const char *nome)
@@ -300,6 +302,10 @@ static void assicura(void)
     P.icona_metti   = (void (*)(ExFinestra, ExIcona, unsigned int))
                       chiedi(t, "ex_icona_metti");
     P.icona_chiudi  = (void (*)(ExIcona))          chiedi(t, "ex_icona_chiudi");
+    P.a_vista       = (unsigned int (*)(ExFinestra, unsigned int *))
+                      chiedi(t, "ex_area_vista");
+    P.a_mostra_da   = (void (*)(ExFinestra, unsigned int))
+                      chiedi(t, "ex_area_mostra_da");
 
     P.pronto = 1;
 }
@@ -494,6 +500,8 @@ unsigned int ex_lista_margine(ExFinestra f)
 }
 unsigned int ex_icona_lato(ExIcona ic)     { assicura(); return P.icona_lato(ic); }
 void         ex_icona_chiudi(ExIcona ic)   { assicura(); P.icona_chiudi(ic); }
+unsigned int ex_area_vista(ExFinestra f, unsigned int *v) { assicura(); return P.a_vista(f, v); }
+void         ex_area_mostra_da(ExFinestra f, unsigned int r) { assicura(); P.a_mostra_da(f, r); }
 
 void ex_icona_metti(ExFinestra c, ExIcona ic, unsigned int lato)
 {

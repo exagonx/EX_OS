@@ -75,7 +75,7 @@
 #include "browser_estranei.h"
 
 /* +0.001 a ogni modifica: `browser -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("browser", VERSIONE_APP);
+EX_VERSIONE("exbrowser", VERSIONE_APP);
 
 
 /* ! LA BARRA DEI MENU NON RESTRINGE L'AREA DEL CLIENT: il toolkit la mette in
@@ -905,7 +905,7 @@ ExFont font_per(int neretto, int corsivo, int famiglia, int corpo)
     if (g_font[g_font_n].f) g_facce_si++;
     else {
         g_facce_no++;
-        printf("browser: carattere NON aperto: %s corpo %d\n",
+        printf("exbrowser: carattere NON aperto: %s corpo %d\n",
                FACCIA[k], corpo);
     }
 
@@ -1485,29 +1485,72 @@ static void cache_pota(void)
         }
     }
 
-    printf("browser: cache in %s - %u voci, %u KB", g_cache,
+    printf("exbrowser: cache in %s - %u voci, %u KB", g_cache,
            (unsigned int)n - (unsigned int)buttate, totale / 1024u);
     if (buttate) printf(", %d potate", buttate);
     printf("\n");
 }
 
-/* Crea $HOME/.app/browser/cache. Si chiama una volta, all'avvio. */
+/* =============================================================================
+ * THE DATA DIRECTORY, AND ITS MOVE — 23 September 2026
+ *
+ * The program was called `browser` until 0.002, and its data lived in
+ * $HOME/.app/browser/: settings, cookies, cache. From 0.003 it is EXBrowser,
+ * and the convention is $HOME/.app/<program>/ — so the directory moves, once,
+ * at the first start, with rename(): the same parent, so the blocks stay
+ * where they are.
+ *
+ * ! IF IT CANNOT MOVE, IT STAYS WHERE IT IS, AND IS USED THERE. The likely
+ * case is a home on FAT, where long names are read-only here and
+ * "exbrowser" does not fit in 8.3. Starting with an empty profile would lose
+ * the cookies — the user logged out of every site — to obey a naming rule.
+ * ============================================================================= */
+static const char *g_app_nome = "/exbrowser";
+
+static void dati_trasloca(void)
+{
+    const char *casa = getenv("HOME");
+    char        vecchia[CACHE_PERC_MAX], nuova[CACHE_PERC_MAX];
+    int         i;
+
+    if (!casa || !casa[0] || strlen(casa) + 24 >= sizeof(vecchia)) return;
+
+    strcpy(vecchia, casa);
+    i = (int)strlen(vecchia);
+    while (i > 0 && vecchia[i - 1] == '/') vecchia[--i] = '\0';
+    strcpy(nuova, vecchia);
+    strcat(vecchia, "/.app/browser");
+    strcat(nuova, "/.app/exbrowser");
+
+    if (access(nuova, F_OK) == 0) return;       /* already moved, or new */
+    if (access(vecchia, F_OK) != 0) return;     /* nothing to move */
+
+    if (rename(vecchia, nuova) == 0) {
+        printf("exbrowser: i dati del vecchio browser passano in %s\n", nuova);
+        return;
+    }
+    g_app_nome = "/browser";
+    printf("exbrowser: non riesco a spostare %s (%s): la uso dov'e'\n",
+           vecchia, strerror(errno));
+}
+
+/* Crea $HOME/.app/exbrowser/cache. Si chiama una volta, all'avvio. */
 static void cache_prepara(void)
 {
     const char *casa = getenv("HOME");
     char        p[CACHE_PERC_MAX];
     int         i;
 
-    static const char *const passi[] = { "/.app", "/browser", "/cache" };
+    const char *const passi[] = { "/.app", g_app_nome, "/cache" };
 
     g_cache[0] = '\0';
 
     if (!casa || !casa[0]) {
-        printf("browser: HOME non c'e', niente cache su disco.\n");
+        printf("exbrowser: HOME non c'e', niente cache su disco.\n");
         return;
     }
     if (strlen(casa) + 24 >= sizeof(p)) {
-        printf("browser: HOME troppo lungo, niente cache su disco.\n");
+        printf("exbrowser: HOME troppo lungo, niente cache su disco.\n");
         return;
     }
 
@@ -1525,7 +1568,7 @@ static void cache_prepara(void)
     for (i = 0; i < 3; i++) {
         strncat(p, passi[i], sizeof(p) - strlen(p) - 1);
         if (mkdir(p, i == 2 ? 0700 : 0755) != 0 && errno != EEXIST) {
-            printf("browser: niente cache in %s (%s), lavoro in memoria.\n",
+            printf("exbrowser: niente cache in %s (%s), lavoro in memoria.\n",
                    p, strerror(errno));
             return;
         }
@@ -1535,7 +1578,7 @@ static void cache_prepara(void)
     g_cache[sizeof(g_cache) - 1] = '\0';
 
     cache_pota();
-    printf("browser: cache in %s\n", g_cache);
+    printf("exbrowser: cache in %s\n", g_cache);
 }
 
 
@@ -1568,7 +1611,7 @@ static char g_imp_perc[IMP_PERC_MAX] = "";
  * sessione e basta, e lo si dice. */
 static int imp_prepara(void)
 {
-    static const char *const passi[] = { "/.app", "/browser" };
+    const char *const passi[] = { "/.app", g_app_nome };
     const char *casa = getenv("HOME");
     char        p[IMP_PERC_MAX];
     int         i;
@@ -3455,6 +3498,104 @@ static void salva_pagina(void)
  * manuale del navigatore e l'indice di tutta la documentazione. La ricerca nei
  * due posti resta una sola — due copie divergerebbero il giorno che se ne
  * aggiunge un terzo. */
+/* =============================================================================
+ * AGGIUNGERE UN CERTIFICATO — chiesto il 23 settembre 2026
+ *
+ * Da un indirizzo (http o https) o da un file: .pem, anche con piu'
+ * certificati, oppure .crt/.der binario. Finisce in $HOME/.app/exhttp/certi.pem
+ * e vale per ogni programma che apre https per questa persona — vedi exhttp.h.
+ *
+ * ! PRIMA SI MOSTRA, POI SI CHIEDE. Fidarsi di una CA vuol dire credere a
+ * OGNI sito che quella CA firma: e' la decisione piu' pesante che un
+ * navigatore possa far prendere. Quindi prima un avviso con chi e', chi l'ha
+ * emesso, fino a quando vale e l'impronta SHA-256 — la sola cosa che si puo'
+ * confrontare con quella pubblicata da chi la emette — e solo dopo la domanda,
+ * con «Annulla» come risposta prudente.
+ *
+ * ! E PERCHE' SERVE DAVVERO POCO SPESSO: il magazzino del CD e' quello di
+ * Debian, aggiornato a ogni costruzione, e un sito che non si apre di solito
+ * non ha una radice che manca (vedi @EXBROWSER-CERT). Serve per le CA che non
+ * sono pubbliche: quella di un'azienda, di una scuola, di un apparato di casa.
+ * ============================================================================= */
+static void certificato_aggiungi(void)
+{
+    static char          dove[256] = "https://";
+    static unsigned char buf[65536];
+    static char          testo[1200], avviso[1400];
+    unsigned int         n = 0;
+    int                  q, a;
+
+    if (!ex_dlg_chiedi("Aggiungi un certificato",
+                       "Indirizzo (http, https) o file .pem .crt .der:",
+                       "Prendi", dove, sizeof(dove)))
+        return;
+
+    if (strncmp(dove, "http://", 7) == 0 || strncmp(dove, "https://", 8) == 0) {
+        ExHttpEsito e;
+
+        memset(&e, 0, sizeof(e));
+        if (!exhttp_prendi(dove, buf, sizeof(buf), &e) || e.codice != 200) {
+            snprintf(avviso, sizeof(avviso), "Non riesco a scaricarlo.\n\n%s",
+                     e.errore[0] ? e.errore : "il server non ha risposto 200");
+            ex_dlg_avviso("Aggiungi un certificato", avviso);
+            return;
+        }
+        n = e.byte;
+    } else {
+        int fd = open(dove, O_RDONLY, 0);
+        int r;
+
+        if (fd < 0) {
+            ex_dlg_avviso("Aggiungi un certificato", "Il file non si apre.");
+            return;
+        }
+        while (n < sizeof(buf) && (r = (int)read(fd, buf + n, sizeof(buf) - n)) > 0)
+            n += (unsigned int)r;
+        close(fd);
+    }
+
+    q = exhttp_certi_esamina(buf, n, testo, sizeof(testo));
+    if (q == -2) {
+        ex_dlg_avviso("Aggiungi un certificato",
+                      "La libreria di rete di questo sistema e' di prima del\n"
+                      "23 settembre 2026 e non sa aggiungere certificati:\n"
+                      "va aggiornata insieme a EXBrowser.");
+        return;
+    }
+    if (q <= 0) {
+        ex_dlg_avviso("Aggiungi un certificato",
+                      "Non ci sono certificati leggibili in quello che e'\n"
+                      "arrivato. Serve un .pem, un .crt o un .der.");
+        return;
+    }
+
+    snprintf(avviso, sizeof(avviso), "%d certificat%s:\n\n%s", q,
+             q == 1 ? "o" : "i", testo);
+    ex_dlg_avviso("Chi e'", avviso);
+
+    if (!ex_dlg_conferma("Fidarsi?",
+                         "Ogni sito firmato da queste CA sara' creduto.\n"
+                         "Prima confronta l'impronta con quella ufficiale.",
+                         "Mi fido", "Annulla"))
+        return;
+
+    a = exhttp_certi_aggiungi(buf, n);
+    if (a > 0)
+        snprintf(avviso, sizeof(avviso),
+                 "Aggiunt%s %d certificat%s in $HOME/.app/exhttp/certi.pem.\n"
+                 "Valgono dalla prossima pagina che si apre.",
+                 a == 1 ? "o" : "i", a, a == 1 ? "o" : "i");
+    else if (a == 0)
+        snprintf(avviso, sizeof(avviso),
+                 "Non ho aggiunto niente: nessuno era una CA, e un\n"
+                 "certificato che non e' una CA non verifica nessun sito.");
+    else
+        snprintf(avviso, sizeof(avviso),
+                 "Non riesco a scrivere $HOME/.app/exhttp/certi.pem\n"
+                 "(la casa manca, o e' in sola lettura).");
+    ex_dlg_avviso("Aggiungi un certificato", avviso);
+}
+
 static void doc_apri(const char *nome)
 {
     static const char *const DOVE[] = { "/exwin/doc", "/cdrom/exwin/doc" };
@@ -3484,8 +3625,8 @@ static void informazioni(void)
     char t[900];
     char coda[128];
 
-    exinfo_testo(t, sizeof(t), "Navigatore", VERSIONE_APP,
-                 "Il browser di EX-OS.  Mette insieme exhttp per la rete, "
+    exinfo_testo(t, sizeof(t), "EXBrowser", VERSIONE_APP,
+                 "EXBrowser, il navigatore di EX-OS.  Mette insieme exhttp per la rete, "
                  "exhtml per l'albero, excss per i fogli di stile, exjs ed "
                  "exdom per JavaScript, eximg per le immagini e i font per "
                  "misurare e disegnare il testo.  http e https (TLS 1.3, "
@@ -3659,7 +3800,7 @@ static void impostazioni(void)
     g_imp_bricerca = ex_crea("pulsante", "", EX_FIGLIO, 240, 146, 188, 24,
                              g_imp_f, ID_IMP_RICERCA, 0);
 
-    ex_crea("etichetta", "Si scrivono in $HOME/.app/browser/impostazioni.txt",
+    ex_crea("etichetta", "Si scrivono in $HOME/.app/exbrowser/impostazioni.txt",
             EX_FIGLIO, 12, 214, 416, 16, g_imp_f, 0, 0);
     ex_crea("etichetta", "e si possono modificare a mano.",
             EX_FIGLIO, 12, 232, 416, 16, g_imp_f, 0, 0);
@@ -4423,8 +4564,9 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         if (wp == ID_APRI)  { apri_locale();  return 0; }
         if (wp == ID_SALVA) { salva_pagina(); return 0; }
         if (wp == ID_IMPOST) { impostazioni(); return 0; }
+        if (wp == ID_CERTI)  { certificato_aggiungi(); return 0; }
         if (wp == ID_HOME)   { vai_a_casa();   return 0; }
-        if (wp == ID_AIUTO) { doc_apri("browser.html"); return 0; }
+        if (wp == ID_AIUTO) { doc_apri("exbrowser.html"); return 0; }
         if (wp == ID_DOC)   { doc_apri("index.html");   return 0; }
 
         /* ! «ESCI» NON CHIEDE NIENTE, e qui e' giusto: un browser non ha un
@@ -4869,10 +5011,10 @@ int main(int argc, char **argv)
      * non c'e', ma non e' un navigatore. Vedi browser_vista.h. */
     vista_cliente(&g_estranei);
 
-    g_f = ex_crea("finestra", "Navigatore", EX_TITOLO | EX_BORDO | EX_CHIUDI,
+    g_f = ex_crea("finestra", "EXBrowser", EX_TITOLO | EX_BORDO | EX_CHIUDI,
                   EX_AUTO, EX_AUTO, FIN_W, FIN_H, 0, 0, proc);
     if (!g_f) {
-        printf("browser: il server a finestre non risponde.\n");
+        printf("exbrowser: il server a finestre non risponde.\n");
         printf("         Avvialo con:  exwin\n");
         return 1;
     }
@@ -4894,7 +5036,7 @@ int main(int argc, char **argv)
      * memoria e' tutta libera e nessuna tabella e' piena. Vederlo qui vuol
      * dire che il guasto e' nel caricamento dei font e non nella pagina. */
     if (!g_font_testo || !g_font_titolo)
-        printf("browser: i caratteri di base non si aprono "
+        printf("exbrowser: i caratteri di base non si aprono "
                "(testo %s, titolo %s): si disegna col font di sistema.\n",
                g_font_testo ? "ok" : "NO", g_font_titolo ? "ok" : "NO");
 
@@ -4909,10 +5051,11 @@ int main(int argc, char **argv)
         ex_menu_voce(menu, "File", "Salva con nome...\tCtrl+S",   ID_SALVA);
         ex_menu_voce(menu, "File", "-",                           0);
         ex_menu_voce(menu, "File", "Impostazioni...",             ID_IMPOST);
+        ex_menu_voce(menu, "File", "Aggiungi un certificato...",  ID_CERTI);
         ex_menu_voce(menu, "File", "-",                           0);
         ex_menu_voce(menu, "File", "Esci\tCtrl+Q",                ID_ESCI);
 
-        ex_menu_voce(menu, "Aiuto", "Guida del navigatore",       ID_AIUTO);
+        ex_menu_voce(menu, "Aiuto", "Guida di EXBrowser",         ID_AIUTO);
         ex_menu_voce(menu, "Aiuto", "Documentazione di EX-OS",    ID_DOC);
         ex_menu_voce(menu, "Aiuto", "-",                          0);
         ex_menu_voce(menu, "Aiuto", "Informazioni su",            ID_INFO);
@@ -4954,6 +5097,7 @@ int main(int argc, char **argv)
      * finestra e' ancora libera, e conterebbe come nostra. */
     imm_tetto_scegli();
 
+    dati_trasloca();
     cache_prepara();
 
     /* ! LE IMPOSTAZIONI PRIMA DI TUTTO CIO' CHE DIPENDE DA LORO, e la pagina

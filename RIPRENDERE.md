@@ -48,6 +48,33 @@ commenti degli script in `tools/` e **le stringhe a schermo** (per quelle
 arrivera' una versione per lingua). **L'italiano gia' scritto non si traduce.**
 La regola sta anche come **regola 0** in cima a `in_lavorazione.txt`.
 
+## CHE COSA E' SUCCESSO IL 23 SETTEMBRE, IN UNA RIGA PER COSA
+
+Tre richieste da `correzioni.txt` e tre a voce, nella stessa mattina:
+
+    @EXBROWSER-NOME    il navigatore si chiama EXBrowser (0.003)    FATTO
+    @EDIT-SCORRI       la barra di scorrimento dell'editor (0.002)  FATTO
+    @ARCHIVI-COMPRIME  DEFLATE in scrittura: zip e Archivi          FATTO
+    @ARCHIVI-MENU      la tendina non si fa coprire (toolkit)       FATTO
+    @EXBROWSER-CERT    la catena incrociata, e le CA aggiunte       in parte
+    @EDIT-RTF          l'editor RTF                                 da fare
+
+! **IL NUMERO CHE CONTA DEI CERTIFICATI**: su trenta siti comuni se ne aprivano
+23, e il certificato era la causa di UNO solo (amazon.it, una radice
+incrociata: corretto in excert). Gli altri erano TLS: tre server solo 1.2, uno
+senza ChaCha20 (eBay), uno senza x25519 (Poste). Il resto del lavoro e' li', in
+`@EXBROWSER-CERT`, in ordine. `tools/prova_certificati.sh` rifa' la misura.
+
+! **IL COMPRESSORE E' SCRITTO DA ZERO E COMPRIME COME zlib -6**, a pochi byte su
+centinaia di KB (`tools/prova_deflate.sh`, che rilegge ogni flusso con zlib di
+Python e col nostro inflate). Dentro exzip il file si legge due volte — la prima
+comprime solo contando — perche' la misura va nell'intestazione PRIMA dei dati.
+
+! **DUE COSE TROVATE STRADA FACENDO**: il vecchio `browser` restava nell'ISO
+accanto al nuovo (build/ e' tracciato; e una cancellazione non fa scattare
+make: l'ISO va rifatta da capo), e la riga di stato dell'editor non si
+aggiornava dopo un tasto battuto nell'area.
+
 ## CHE COSA E' SUCCESSO IL 22 SETTEMBRE, IN UNA RIGA PER COSA
 
     @FILEMGR-MKDIR   la directory che si crea, col pulsante «Crea»  FATTO
@@ -87,23 +114,37 @@ La regola sta anche come **regola 0** in cima a `in_lavorazione.txt`.
      ! Mettere un file basta: nessun programma va ricompilato. E se non c'e',
      tutto resta testo — e' lo stato di adesso per strumenti e tipi.
 
-## QUEL CHE NON E' ANCORA COMMITTATO (22 settembre, dopo e0e8509)
+## QUEL CHE NON E' ANCORA COMMITTATO (23 settembre, dopo 35f9b69)
 
-Il commit e0e8509 delle 22:10 ha portato dentro tutto il lavoro della giornata,
-icone comprese. Resta fuori solo quel che e' venuto dopo:
+Il commit 35f9b69 ha portato dentro il compositore e la riga nera del kernel.
+Fuori resta la mattina del 23:
 
-    drivers/wserver/wserver.c   ridisegno per finestra, ciclo a eventi, regioni,
-                                -contorno, -conta, "-c" esatto (0.003)
-    lib/exwin/exwin.c           ridisegna_controllo(): un pezzo di finestra
-    bin/exwin/exwin.c           sedici opzioni al server, non una (0.002)
-    kernel/arch/x86/vga.c       vga_scroll guarda la visibilita', e la console
-    kernel/include/vga.h        della grafica non si disegna come testo
-    kernel/syscall/syscall_impl.c  console_grafica_attuale()
-    tools/prova_ridisegno.sh    la prova (NUOVA)
-    in_lavorazione.txt          @EXWIN-LOG, @ICONE-APP, il piano di @GRAFICA-SCATTI
-    RIPRENDERE.md               questa pagina
-    build/, dist/exos.iso       wserver ricostruito
+    exwin/bin/exbrowser/        il navigatore rinominato (git mv: storia intera)
+    exwin/doc/exbrowser.html    il manuale rinominato, e i certificati
+    exwin/icon/baseapp/exbrowser_*.ico
+    exwin/doc/*.html, README*   i collegamenti e il nome
+    exwin/lib/applicazioni.txt  la voce EXBrowser
+    exwin/bin/exide/exide.c     il navigatore col nome nuovo, poi il vecchio (0.016)
+    exwin/bin/edit/edit.c       la barra di scorrimento, la riga di stato (0.002)
+    exwin/bin/archivi/archivi.c il testo d'aiuto (0.002)
+    bin/zip/zip.c               il testo d'aiuto (0.002)
+    lib/exzip/deflate.[ch]      il compressore (NUOVO)
+    lib/exzip/exzip.[ch]        deflate in scrittura, due passate
+    lib/exwin/exwin*.{c,h}      tendine_ancora_sopra, ex_area_vista/mostra_da
+    lib/excert/excert.c         la catena si ferma alla prima radice
+    lib/exhttp/exhttp*.{c,h}    le CA aggiunte, esamina/aggiungi
+    Makefile                    exbrowser, deflate in exzip.so
+    tools/prova_exbrowser.sh, prova_deflate.sh, prova_certificati.sh,
+    tools/prova_certi_aggiunti.sh          le quattro prove nuove
+    tools/prova_zip.sh, tools/prove/certprova.py   i controlli aggiunti
+    build/, dist/exos.iso       ricostruiti; build/.../browser TOLTI
     messaggio-commit.txt        il testo del commit
+
+! **exhttp.so, exwin.so, exzip.so E I LORO CLIENTI SI PUBBLICANO INSIEME.**
+Uno `edit` nuovo cerca `ex_area_vista` e si ferma se exwin.so e' vecchia. Le due
+funzioni dei certificati invece sono FACOLTATIVE nello stub di exhttp, apposta:
+un netupdate nuovo sopra un exhttp.so vecchio deve partire, o non potrebbe piu'
+installare la libreria nuova.
 
 ! **exdlg.so, exzip.so E I LORO CLIENTI SI PUBBLICANO INSIEME.** Uno stub
 compilato oggi cerca `ex_dlg_percorso`, `ex_dlg_chiedi` e `ex_zip_*` all'avvio
@@ -211,6 +252,10 @@ confronto fra due opzioni si fa riga per riga.
     tools/prova_avvio_login.sh  la pagina d'accesso, col ritardatario
     tools/prova_ridisegno.sh    il compositore ridisegna solo quel che cambia
                                 (cinque fotografie: si guardano)
+    tools/prova_exbrowser.sh    il nome nuovo, e i dati che lo seguono
+    tools/prova_deflate.sh      il compressore, SULL'HOST, contro zlib
+    tools/prova_certificati.sh  trenta siti https veri: quali si aprono e perche'
+    tools/prova_certi_aggiunti.sh  una CA aggiunta da EXBrowser vale per scarica
 
 Vogliono `dist/exos.iso` aggiornato; le ultime due si costruiscono il disco da
 sole. ! `prova_zip.sh` e `prova_archivi.sh` vogliono anche **debugfs**

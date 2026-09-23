@@ -52,7 +52,7 @@
 
 /* +0.001 a ogni modifica, aggiunta o prova: `exide -version` la stampa.
  * Vedi EX_VERSIONE in libc.h; la stessa stringa la mostra «Informazioni su». */
-#define VERSIONE_APP "0.015"
+#define VERSIONE_APP "0.016"
 EX_VERSIONE("exide", VERSIONE_APP);
 
 /* -----------------------------------------------------------------------------
@@ -3085,7 +3085,13 @@ static const char *const g_manuale[] = {
  * Rende 1 se il navigatore e' partito. */
 static int manuale_pagina(void)
 {
+    /* ! EXBROWSER FIRST, AND THE OLD NAME AFTER IT. The browser became
+     * EXBrowser on 23 September 2026; a system updated by halves — a new
+     * exide over an /exwin that still has only /exwin/bin/browser — must
+     * still open the manual. */
     static const char *const bin[] = {
+        "/exwin/bin/exbrowser",
+        "/cdrom/exwin/bin/exbrowser",
         "/exwin/bin/browser",
         "/cdrom/exwin/bin/browser"
     };
@@ -3103,7 +3109,7 @@ static int manuale_pagina(void)
         if (fd < 0) continue;
         close(fd);
 
-        for (b = 0; b < 2; b++) {
+        for (b = 0; b < (int)(sizeof(bin) / sizeof(bin[0])); b++) {
             char *av[3];
 
             av[0] = (char *)bin[b];
