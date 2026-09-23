@@ -84,6 +84,26 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### HTTPS: from 23 to 28 sites out of 30 — AES-GCM, P-256 and TLS 1.2
+
+**tested in QEMU, on the real network** — of the seven sites out of thirty
+that did not open, one was the certificate chain (fixed this morning) and the
+others were TLS. The client now has:
+
+- **AES-128-GCM** next to ChaCha20 (`lib/excrypt/gcm.c`, on top of the Wi-Fi's AES);
+- key exchange on **P-256**, **in constant time** (`lib/excrypt/p256.c`, not
+  `excurva`, which is for public numbers only), asked for by the server with a
+  **HelloRetryRequest** — which used to be an error;
+- **TLS 1.2**, the modern half: ECDHE with AES-GCM or ChaCha20, RSA-PSS,
+  PKCS#1 v1.5 and ECDSA signatures, Extended Master Secret, and the
+  "DOWNGRD" check.
+
+Poste, Corriere, Gazzetta and Istat open. The two left (Stack Overflow and
+eBay) open TLS and then answer 403: a robot block of theirs. Tested on the
+host (`tools/prova_gcm.sh`, `tools/prova_p256.sh`: thousands of cases against
+Python's `cryptography`) and against `openssl s_server` (`make
+prova-cliente-tls`, 20 cases).
+
 ### The Download window, in the toolkit
 
 **tested in QEMU** — EXBrowser's downloads run in a process of their own

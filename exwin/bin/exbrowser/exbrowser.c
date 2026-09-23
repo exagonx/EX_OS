@@ -62,6 +62,7 @@
 #include "exwin.h"
 #include "exlib.h"
 #include "eximg.h"
+#include "inflate.h"
 #include "exhttp.h"
 #include "html.h"
 #include "css.h"
@@ -416,6 +417,11 @@ static ExFinestra g_cerca;
 ExFont        g_font_testo = 0, g_font_titolo = 0;
 int           g_scorri = 0, g_altezza = 0;
 static char          g_qui[EXHTTP_URL_MAX] = "";
+
+/* ! `load` FIRES ONCE PER PAGE: prova_a_sparare_load() is called on every
+ * EXM_TEMPO tick while the page sits idle, and without this flag every
+ * `load` handler would run five times a second. vai() resets it. */
+static int           g_load_sparato = 0;
 
 /* =============================================================================
  * LE IMPOSTAZIONI
@@ -2899,6 +2905,42 @@ static void rifai_se_cambiato(void)
     disegna();
 }
 
+/* =============================================================================
+ * `load` — "everything has arrived", not "the document is ready"
+ *
+ * ! CALLED FROM TWO PLACES: at the end of vai(), for the page that waits for
+ * nothing (no timer, no fetch/XHR still open: `load` fires at once), and from
+ * EXM_TEMPO, for the page that was still waiting when it finished loading.
+ *
+ * ! "WAITING" MEANS TIMERS AND THE DOM'S NETWORK QUEUE, not images: <img>
+ * does not go through exdom's queue, so on a page with images still in
+ * flight `load` may fire before they are done. A known gap.
+ *
+ * ! IT RELAYS OUT BY ITSELF. At the end of vai() the page is already laid out
+ * and the wake-up may be off: a `load` handler that changes the document
+ * would change it invisibly, because nothing else would ever look at it
+ * again. That is exactly how the first version failed in QEMU. */
+static void prova_a_sparare_load(void)
+{
+    ExJsErrore err;
+
+    if (g_load_sparato || !g_js || !g_dom) return;
+
+    if (exjs_lavori_in_attesa(g_js) || exdom_rete_in_attesa(g_dom)) {
+        /* Someone is still waiting: keep the wake-up on, or a fetch or a
+         * timer queued by a DOMContentLoaded handler would never be pumped. */
+        ex_sveglia(g_f, 200);
+        return;
+    }
+
+    g_load_sparato = 1;
+    memset(&err, 0, sizeof(err));
+    exdom_evento(g_dom, g_doc.radice, "load", &err);
+    js_grida(&err);
+    rifai_se_cambiato();
+    dopo_gli_script();
+}
+
 /* Il nodo sotto il puntatore, o -1. */
 static int nodo_sotto(int x, int y)
 {
@@ -3017,15 +3059,83 @@ static int segui_location(void)
  * per quello: dentro `vai` la chiamata stava in mezzo a una catena di `else
  * if`, e alzarla li' voleva dire o un'espressione con le virgole — illeggibile
  * — o due punti in cui abbassarla, uno dei quali prima o poi si dimentica. */
+/* =============================================================================
+ * A GZIP BODY NOBODY ASKED FOR
+ *
+ * ! WE NEVER SEND Accept-Encoding, AND AMAZON COMPRESSES ANYWAY. Measured on
+ * 23 September 2026: www.amazon.com answers the "EX-OS" user agent with a
+ * gzip body (1f 8b 08 ...) and NO Content-Encoding header, so the page came
+ * out as a screen of binary noise. Real browsers sniff the magic and inflate;
+ * so do we, and only when the three bytes are there — a page that happens to
+ * start with them and is not gzip fails the CRC and is left as it was.
+ *
+ * ! THE SECOND BUFFER IS BSS AND COSTS NOTHING UNTIL USED: ELF pages load on
+ * demand, and a page that is not gzip never touches it.
+ * ============================================================================= */
+static unsigned char g_gz[PAGINA_MAX];
+
+static unsigned long gz_crc32(const unsigned char *d, unsigned int n)
+{
+    unsigned long c = 0xFFFFFFFFul;
+    unsigned int  i;
+    int           k;
+
+    for (i = 0; i < n; i++) {
+        c ^= d[i];
+        for (k = 0; k < 8; k++) c = (c >> 1) ^ (0xEDB88320ul & (0ul - (c & 1ul)));
+    }
+    return c ^ 0xFFFFFFFFul;
+}
+
+static unsigned long gz_le32(const unsigned char *p)
+{
+    return (unsigned long)p[0] | ((unsigned long)p[1] << 8) |
+           ((unsigned long)p[2] << 16) | ((unsigned long)p[3] << 24);
+}
+
+/* Inflates g_pagina in place if it holds a whole gzip member. Returns the new
+ * length, or 0 if it is not gzip or does not check out (then nothing moved). */
+static unsigned int gz_srotola(unsigned int n)
+{
+    unsigned int  i = 10, fatti = 0;
+    unsigned char flg;
+    unsigned long isize;
+
+    if (n < 18 || g_pagina[0] != 0x1f || g_pagina[1] != 0x8b || g_pagina[2] != 8)
+        return 0;
+    flg = g_pagina[3];
+    if (flg & 0x04) {                                   /* FEXTRA   */
+        if (i + 2 > n) return 0;
+        i += 2u + g_pagina[i] + ((unsigned int)g_pagina[i + 1] << 8);
+    }
+    if (flg & 0x08) while (i < n && g_pagina[i++] != 0) { }   /* FNAME    */
+    if (flg & 0x10) while (i < n && g_pagina[i++] != 0) { }   /* FCOMMENT */
+    if (flg & 0x02) i += 2;                                   /* FHCRC    */
+    if (i + 8 > n) return 0;
+
+    isize = gz_le32(g_pagina + n - 4);
+    if (isize == 0 || isize > sizeof(g_gz)) return 0;
+    if (inflate(g_pagina + i, n - i - 8, g_gz, (unsigned int)isize, &fatti) != 0 ||
+        fatti != isize || gz_crc32(g_gz, fatti) != gz_le32(g_pagina + n - 8))
+        return 0;
+
+    memcpy(g_pagina, g_gz, fatti);
+    return fatti;
+}
+
 static int prendi_dalla_rete(const char *url, ExHttpEsito *e)
 {
-    int ok;
+    int          ok;
+    unsigned int srotolati;
 
     g_in_rete = 1;
     ok = g_da_postare
          ? exhttp_posta(url, g_da_postare, g_pagina, sizeof(g_pagina), e)
          : exhttp_prendi(url, g_pagina, sizeof(g_pagina), e);
     g_in_rete = 0;
+
+    if (ok && !e->troncata && (srotolati = gz_srotola(e->byte)) != 0)
+        e->byte = srotolati;
     return ok;
 }
 
@@ -3592,6 +3702,7 @@ static void vai(const char *url, int in_storia, int usa_cache)
     g_ctrl_n = 0;
     g_ctrl_fuoco = -1;
     g_opz_n = 0;
+    g_load_sparato = 0;
 
     /* ! ANCHE I PEZZI DELL'IMPAGINAZIONE, e da adesso non e' facoltativo. Il
      * gancio dell'attesa ridisegna mentre si scarica, e fra qui e impagina()
@@ -3617,9 +3728,25 @@ static void vai(const char *url, int in_storia, int usa_cache)
      * pagina deve aver finito prima che si decida come impaginarla. */
     esegui_script();
 
+    /* ! `DOMContentLoaded` HERE: the synchronous scripts are done, the tree is
+     * the one they left, and layout has not started — which is when a real
+     * browser fires it. It is the entry point of nearly every script on the
+     * web; until today nobody fired it, so those scripts never started. */
+    if (g_dom) {
+        ExJsErrore err;
+
+        memset(&err, 0, sizeof(err));
+        exdom_evento(g_dom, g_doc.radice, "DOMContentLoaded", &err);
+        js_grida(&err);
+    }
+
     raccogli_css();
     impagina();
     g_vista = html_versione(&g_doc);
+
+    /* After g_vista is set: a `load` handler's changes are then seen by
+     * rifai_se_cambiato() as a new version, and laid out once. */
+    prova_a_sparare_load();
 
     /* ! ADESSO CHE I PEZZI CI SONO, si puo' saltare al punto chiesto. Prima di
      * impagina() non c'era niente su cui misurare un'altezza; dopo, il salto
@@ -5251,6 +5378,12 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 
             rifai_se_cambiato();
             dopo_gli_script();
+
+            /* A page that was still waiting when vai() ended gets its
+             * `load` here. ! AND THE WAKE-UP IS CHECKED AFTER IT: a `load`
+             * handler that calls setTimeout has just queued new work. */
+            prova_a_sparare_load();
+
             if (!exjs_lavori_in_attesa(g_js) && !exdom_rete_in_attesa(g_dom))
                 ex_sveglia(g_f, 0);
             /* Un `setTimeout` che cambia indirizzo e' il modo classico di

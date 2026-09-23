@@ -2549,6 +2549,7 @@ $(BROWSER_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(BROWSER_SRC) $(BROWSER_LD) \
              $(BROWSER_IMP) $(BROWSER_PRIV) \
              $(BROWSER_EST) $(BROWSER_ESTH) $(BROWSER_VISTA) \
              $(BROWSER_BIS) $(BROWSER_BISH) $(EXWIN_STUB) $(EXLIB_SRC) \
+             $(EXIMG_INFLATE) lib/eximg/inflate.h \
              $(EXLIB_HDR) $(EXWIN_HDR) $(WIN_PROTO) $(EXHTTP_SRC) \
              $(EXHTTP_HTTP) $(EXHTTP_HDR) lib/eximg/eximg.h \
              $(EXHTML_STUB) $(EXHTML_HDR) $(EXHTML_SO) \
@@ -2564,6 +2565,9 @@ $(BROWSER_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(BROWSER_SRC) $(BROWSER_LD) \
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I lib/exjs -I lib/exdom -I lib/exdlg -I lib/exinfo -I exwin/bin/exbrowser -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_IMP) -o $(BUILD_OBJ)/browser_imp.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I lib/exjs -I lib/exdom -I lib/exdlg -I lib/exinfo -I exwin/bin/exbrowser -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_EST) -o $(BUILD_OBJ)/browser_est.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I exwin/bin/exbrowser -c $(BROWSER_BIS) -o $(BUILD_OBJ)/browser_bis.o
+	@# ! inflate.c COMPILED IN, as netupdate and exzip do: some servers
+	@# (amazon.com, 23 Sept 2026) send a gzip body without Content-Encoding.
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -c $(EXIMG_INFLATE) -o $(BUILD_OBJ)/browser_inflate.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exdlg -c $(EXDLG_STUB) -o $(BUILD_OBJ)/browser_exdlg.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exinfo -c $(EXINFO_SRC) -o $(BUILD_OBJ)/browser_info.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(EXWIN_STUB) -o $(BUILD_OBJ)/browser_exwin.o
@@ -2581,7 +2585,7 @@ $(BROWSER_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(BROWSER_SRC) $(BROWSER_LD) \
 	    $(BUILD_OBJ)/browser_start.o $(BUILD_OBJ)/browser_main.o \
 	    $(BUILD_OBJ)/browser_imp.o \
 	    $(BUILD_OBJ)/browser_est.o \
-	    $(BUILD_OBJ)/browser_bis.o \
+	    $(BUILD_OBJ)/browser_bis.o $(BUILD_OBJ)/browser_inflate.o \
 	    $(BUILD_OBJ)/browser_exwin.o $(BUILD_OBJ)/browser_stub.o \
 	    $(BUILD_OBJ)/browser_html.o $(BUILD_OBJ)/browser_css.o \
 	    $(BUILD_OBJ)/browser_js.o $(BUILD_OBJ)/browser_dom.o \

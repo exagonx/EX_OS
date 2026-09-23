@@ -1,0 +1,313 @@
+DIARIO DEL BROWSER — aprire Google, Stack Overflow, eBay e Amazon
+=====================================================================
+
+Aperto il 23 settembre 2026. Qui sta SOLO il lavoro che serve a far aprire a
+EXBrowser i quattro siti veri: cosa si e' misurato, cosa si e' fatto e provato,
+cosa manca e in che ordine farlo. Ogni voce dice come si riprova.
+
+Il criterio e' uno: un pezzo si scrive perche' un sito vero lo chiede, e si
+dice quale. Il CSS «completo» non e' un obiettivo; Amazon che si legge si'.
+
+
+---------------------------------------------------------------------
+0. DOVE SIAMO, SITO PER SITO (23 settembre 2026, sera)
+---------------------------------------------------------------------
+
+  sito            cosa si vede oggi in EXBrowser              cosa lo ferma
+  --------------  ------------------------------------------  --------------------------
+  google.com      la homepage: logo, casella, «Cerca con      la ricerca: consenso UE, poi
+                  Google», Gmail, Immagini, Accedi             SearchGuard (vedi 2)
+  amazon.com      la pagina VERA, come testo e collegamenti   il CSS: si vede anche cio'
+                  (da oggi: prima era spazzatura binaria)      che Amazon nasconde (vedi 3)
+  stackoverflow   la sfida di Cloudflare «Just a moment...»   la sfida, che e' JavaScript
+                  (403, 5 KB)                                  (vedi 4)
+  ebay.com        la pagina d'errore del WAF (403, 1832 B)    l'INDIRIZZO IP di questa rete,
+                                                               non il browser (vedi 5)
+
+! AMAZON E' IL SITO PIU' VICINO, e non Google. Arriva intera, e da oggi si
+  legge: quel che manca e' il CSS, cioe' lavoro nostro con un risultato che si
+  vede a ogni passo.
+
+! GOOGLE E' PIU' VICINO DI QUANTO DICESSE LA NOTA DEL 4 SETTEMBRE, ma per la
+  ricerca non dipende solo da noi (vedi 2).
+
+
+---------------------------------------------------------------------
+1. FATTO OGGI, E PROVATO
+---------------------------------------------------------------------
+
+1.1  DOMContentLoaded e load                     exwin/bin/exbrowser/exbrowser.c
+.....................................................................
+
+Fino a oggi nessuno sparava questi due nomi: in tutto il browser l'unico
+evento generato era «click» (clic_al_documento). Un
+`document.addEventListener('DOMContentLoaded', f)` non chiamava mai f, e quasi
+ogni script vero comincia cosi'. exdom_evento() era gia' generico, e i gestori
+di window finiscono gia' sulla radice (m_win_addEventListener): mancava solo
+chi li chiamasse.
+
+  - DOMContentLoaded: in vai(), subito dopo esegui_script() e prima di
+    raccogli_css()/impagina().
+  - load: prova_a_sparare_load(), chiamata alla fine di vai() e a ogni giro
+    di EXM_TEMPO. Scatta quando exjs_lavori_in_attesa() e
+    exdom_rete_in_attesa() sono tutt'e due a zero, una volta sola per pagina
+    (g_load_sparato, riazzerata in vai()). Se qualcuno aspetta ancora,
+    riaccende la sveglia.
+
+! IL PRIMO GIRO NON FUNZIONAVA, e la foto lo diceva chiaro: il riquadro di
+  DOMContentLoaded cambiava, quello di load no. `load` scattava davvero, ma
+  DOPO impagina(), con la sveglia spenta: il documento cambiava e nessuno lo
+  rimpaginava piu'. DOMContentLoaded si vedeva solo perche' scatta prima
+  dell'impaginazione. Adesso prova_a_sparare_load() chiama da se'
+  rifai_se_cambiato() e dopo_gli_script().
+
+! LIMITE DICHIARATO: load NON aspetta le immagini. Le <img> non passano dalla
+  coda di exdom, e non c'e' un contatore da leggere. Su una pagina con immagini
+  ancora in arrivo load puo' scattare prima. Sta scritto anche nel commento
+  della funzione.
+
+Prova: tools/prove/sito/carico.html (nuova, in leggimi.md), quattro riquadri.
+
+    RITARDO=0 python3 tools/prove/sito/servi.py &
+    EXOS_ISTANZA=car EXOS_NO_FLOPPY=1 EXOS_CDROM=dist/exos.iso \
+    EXOS_QEMU_EXTRA="-netdev user,id=n1 -device ne2k_pci,netdev=n1" \
+    python3 tools/qemu_drive.py "exwin@16" "mon:sendkey alt-f1@3" \
+        "/exwin/bin/exbrowser http://10.0.2.2:8000/carico.html &@20" \
+        "mon:sendkey alt-f5@3" "foto:/tmp/c1.ppm@2" "foto:/tmp/c2.ppm@6"
+
+  Esito: 4 riquadri su 4 — DOMContentLoaded scattato, load scattato, ORDINE
+  GIUSTO, «load e' scattato 1 volta/e» in tutt'e due le foto, a sei secondi
+  di distanza (quindi trenta giri di EXM_TEMPO senza ripetersi).
+
+! L'INDIRIZZO SI PASSA COME ARGOMENTO a exbrowser, non si digita nella barra:
+  digitato dopo Alt+F5 e' finito nella shell. Stesso metodo di
+  tools/prova_certi_aggiunti.sh.
+
+
+1.2  Il corpo gzip che nessuno ha chiesto        exwin/bin/exbrowser/exbrowser.c
+.....................................................................
+
+www.amazon.com, con lo user-agent «EX-OS» e SENZA Accept-Encoding, risponde
+con un corpo gzip (1f 8b 08) e nessun Content-Encoding. In EXBrowser la pagina
+usciva come uno schermo di caratteri a caso. Non e' sempre cosi': la mattina
+`scarica` l'aveva ricevuta in chiaro. E' il server a decidere, di volta in volta.
+
+  - prendi_dalla_rete() guarda i primi tre byte; se sono gzip, gz_srotola()
+    legge l'intestazione (FEXTRA/FNAME/FCOMMENT/FHCRC), chiama inflate() e
+    controlla ISIZE e CRC32. Solo se torna tutto sostituisce la pagina;
+    altrimenti la lascia com'era.
+  - lib/eximg/inflate.c si compila dentro exbrowser, come fanno gia'
+    netupdate ed exzip (Makefile, ricetta di exbrowser: browser_inflate.o).
+  - Il secondo buffer (g_gz, 1 MB) e' BSS: finche' non si usa non costa.
+
+Prova 1, pagina gzip locale servita come text/html senza Content-Encoding:
+
+    mkdir -p /tmp/gz && cd /tmp/gz && printf '<h1>PAGINA COMPRESSA APERTA</h1>' \
+        | gzip -9 > compresso.html && python3 -m http.server 8001 &
+    ... "/exwin/bin/exbrowser http://10.0.2.2:8001/compresso.html &@20" ...
+
+  Esito: «PAGINA COMPRESSA APERTA», 175 byte, 10 nodi.
+
+Prova 2, Amazon vero: prima caratteri a caso, adesso «Skip to / Main content /
+Keyboard shortcuts / Search alt+/ / Cart ...», cioe' il testo vero della pagina.
+
+Da fare, piccolo: `scarica` (bin/scarica) ha lo stesso problema e salva il
+gzip cosi' com'e'. Il pezzo giusto sarebbe spostare gz_srotola in exhttp,
+per tutti; oggi sta nel browser perche' li' c'era il buffer.
+
+
+1.3  Nessuna regressione
+.....................................................................
+
+    make prova-exdom    255 prove, 0 sbagliate
+    make prova-exqjs    255 prove, 0 sbagliate
+    script.html in QEMU: riquadri 1-3 come prima (fotografati)
+
+
+---------------------------------------------------------------------
+2. GOOGLE
+---------------------------------------------------------------------
+
+La homepage si apre gia' (foto del 23 settembre). La ricerca fa tre passi, ed
+e' stata misurata dall'host con lo stesso user-agent «EX-OS»:
+
+  passo 1  /search?q=...   -> 302 a consent.google.com (consenso UE)
+  passo 2  consent.google.com: cinque <form> NORMALI, in POST, senza
+           JavaScript. «Rifiuta tutto» manda a /save e mette il cookie SOCS
+           su .google.com, poi riporta a /search.
+  passo 3  /search con SOCS: 91 KB, cinque script, ZERO risultati nell'HTML.
+           Il terzo script e' SearchGuard (compare «SG_SS»): calcola un
+           gettone, lo scrive in document.cookie e fa location.replace
+           sullo stesso indirizzo con &sei=...
+
+Il passo 2 e' HTML semplice: il browser deve solo mandare il modulo in POST e
+tenere il cookie di dominio .google.com, passando da consent.google.com a
+www.google.com. Moduli e biscotti ci sono gia' (invio.html, biscotti.html),
+ma questo giro preciso NON e' ancora stato provato dentro EXBrowser.
+-> PROSSIMO PASSO, ed e' una prova: aprire la ricerca in EXBrowser, premere
+   «Rifiuta tutto» e guardare se si arriva al passo 3.
+
+Il passo 3 e' JavaScript. Fatto girare sull'host dentro lo stesso QuickJS di
+EX-OS (un esecutore di 20 righe su quickjs/quickjs.c, con un DOM finto che
+annota ogni proprieta' toccata), SearchGuard arriva in fondo e chiede solo:
+
+    document.cookie (legge e scrive)      document.getElementById
+    document.createElement('iframe')      <iframe>.style.display = ...
+    document.body.appendChild / removeChild
+    <iframe>.contentWindow.String.prototype.replace      (un secondo «reame»)
+    element.setAttribute                   navigator.sendBeacon
+    setTimeout                             location.replace
+
+Quasi tutto c'e' gia' in exdom. Manca di sicuro:
+  - <iframe>.contentWindow: un oggetto con i costruttori del linguaggio. Il
+    minimo e' rendere il globale stesso: lo script vuole solo un
+    String.prototype.replace «pulito».
+  - navigator.sendBeacon: una POST che parte e non si aspetta.
+  - location.replace: da verificare che esista e che navighi.
+
+! NON SI FALSIFICA NIENTE. Il browser implementa le API standard e fa girare
+  lo script di Google per quello che e', con lo user-agent che ha. Se poi
+  Google accetta il gettone e manda i risultati, e' una decisione sua. Il
+  23 settembre si e' provato a rimandare il gettone a Google dall'host con
+  curl, per vedere se lo accettava: il passo e' stato bloccato, e a ragione,
+  perche' quello e' aggirare un controllo anti-robot e non navigare. La prova
+  va fatta DENTRO EXBrowser, quando le tre API ci sono.
+
+Se Google non accetta, la ricerca resta html.duckduckgo.com (la casella Cerca,
+gia' provata in rete). I risultati di Google, una volta arrivati, sono pieni
+di CSS: dopo il passo 3 servono le stesse cose di Amazon.
+
+
+---------------------------------------------------------------------
+3. AMAZON — il CSS che serve, nell'ordine in cui serve
+---------------------------------------------------------------------
+
+La pagina arriva intera (560 KB, 94 script, 9 fogli esterni, 2 moduli). Il
+primo difetto visibile: in cima compare il blocco «Skip to / Keyboard
+shortcuts» (<nav id="shortcut-menu" class="nav-assistant">), che Amazon
+nasconde. La regola che lo nasconde NON e' nel CSS incorporato: sta in uno
+dei nove fogli esterni.
+-> PRIMO COMPITO: scaricare i nove fogli, trovare la regola di .nav-assistant
+   e capire quale pezzo di excss la perde. Le sole cause possibili, viste le
+   mancanze elencate qui sotto, sono: una proprieta' sconosciuta (position,
+   left, clip, width/height a 1px), un selettore scartato, o una @media.
+
+Cosa legge excss oggi (lib/excss/css.c, tabella PROPRIETA[]): 13 nomi —
+color, background-color, background, font-weight, font-style, font-size,
+text-align, display (none/block/inline), margin-top/right/bottom/left,
+font-family. Tutto il resto si butta all'analisi.
+
+Selettori della cascata (CssPezzo, css.h): tipo, UNA classe, un id per pezzo,
+solo il discendente, al massimo 4 pezzi; oltre si scarta la regola intera.
+Niente `.a.b`, `>`, `+`, `~`, `[attr]`, pseudo-classi, virgole.
+! I SELETTORI DI querySelector SONO UN ALTRO MOTORE (exdom.c, dal commento a
+  riga ~1304) e sanno di piu': attributi, i quattro combinatori, classi
+  ripetute. Il lavoro sulla cascata puo' partire da li'.
+
+Le regole @ si saltano INTERE (css.c, «le regole @ si saltano per intero»),
+compresa @media.
+
+Contati nel CSS INCORPORATO della homepage (i fogli esterni ne avranno di piu'):
+
+    display:flex 35   flex-direction 30   grid-template 22   display:grid 6
+    position:relative 30   position:absolute 18   z-index 11
+    border-radius 55   box-shadow 24   transform 19   calc( 19
+    :nth-child 26   :hover 11   @media 1
+
+L'ordine, e il perche':
+
+  3.1  I selettori della cascata: classi multiple, `>`, virgole, [attr].
+       Senza, le regole di Amazon non si applicano proprio, e nessuna
+       proprieta' nuova servirebbe. Si parte dal riconoscitore di exdom.
+  3.2  Nascondere: display:none che arriva davvero (dipende da 3.1),
+       visibility:hidden, e il trucco «fuori schermo» (position:absolute con
+       left:-9999px, o clip) trattato come nascosto finche' position non c'e'.
+       E' quel che toglie di mezzo «Skip to» e i menu chiusi.
+  3.3  @media: leggere almeno min-width/max-width e applicare il blocco se
+       vale per la larghezza della finestra.
+  3.4  Box model: width, height, padding, border, box-sizing. excss li deve
+       leggere e browser_impagina.c li deve usare; oggi e' un flusso di testo
+       a una colonna (vedi la testa del file).
+  3.5  display:flex, riga senza a-capo prima di tutto: e' la forma che la
+       barra di Amazon usa di piu'.
+  3.6  position relative/absolute, poi grid.
+
+Il resto (border-radius, box-shadow, transform) e' aspetto, non leggibilita':
+viene dopo.
+
+Lato JavaScript, sempre sulla homepage: localStorage 14 volte, sessionStorage
+4, matchMedia 2, getComputedStyle 2, requestAnimationFrame 4,
+IntersectionObserver 1. Nessuno di questi c'e'. Una chiamata a localStorage
+fuori da un try ferma lo script che la contiene: la prima cosa da aggiungere
+e' uno storage in memoria (anche senza disco), poi requestAnimationFrame come
+un setTimeout da 16 ms.
+
+
+---------------------------------------------------------------------
+4. STACK OVERFLOW
+---------------------------------------------------------------------
+
+403 e la pagina «Just a moment...» di Cloudflare, sia da curl sia da EX-OS. E'
+una sfida JavaScript (challenges.cloudflare.com, con una CSP stretta) molto
+piu' pesante di SearchGuard.
+-> PROSSIMO PASSO, di sola misura: farla girare nell'esecutore QuickJS
+   dell'host con il DOM spia, come per Google, e scrivere qui la lista delle
+   API che tocca. Da quella si decide se vale la pena. Stessa regola del 2:
+   API standard, niente falsificazioni.
+
+
+---------------------------------------------------------------------
+5. EBAY
+---------------------------------------------------------------------
+
+403 e la stessa pagina d'errore byte per byte, sia da curl sull'host sia da
+`scarica` dentro EX-OS (cambia solo reference-id). E' un blocco
+sull'indirizzo di questa rete: nel browser non c'e' niente da fare.
+-> Rimisurare da un'altra rete (la macchina vera, un altro collegamento)
+   prima di dedurne altro.
+
+
+---------------------------------------------------------------------
+6. APPUNTI DELLA SESSIONE SONNET, CORRETTI
+---------------------------------------------------------------------
+
+Il lavoro e' cominciato con Sonnet (misure in QEMU, lettura del codice, il file
+EXBROWSER-MANCANZE-SITI.md) ed e' stato ripreso con Opus. Quel file e' confluito
+qui e poi e' stato tolto, per non avere due fonti. Cosa c'era di sbagliato:
+
+  - «Google non ha un form di ricerca nell'HTML»: FALSO, ce l'ha, e la foto
+    lo mostra. Il suo grep cercava il form nel modo sbagliato.
+  - «Amazon e' passato»: vero per `scarica` quella mattina, ma la stessa
+    pagina in EXBrowser arrivava gzip e si vedeva illeggibile. Serviva la 1.2.
+  - `load` scritto ma non funzionante: l'evento scattava senza
+    rimpaginazione (vedi 1.1).
+  - Commenti nel codice in italiano: dal 22 settembre 2026 si scrivono in
+    inglese. Riscritti.
+  - Una diagnostica «DBG» lasciata in exbrowser.c: tolta.
+  - Nel .md c'era un rimando [[...]] alla memoria dell'assistente, che nel
+    repository non vuol dire niente.
+  - Da VERIFICARE, non ancora provato: secondo Sonnet la sveglia si accende
+    solo alla fine di esegui_script() e in prova_a_sparare_load(), quindi un
+    setTimeout messo da un gestore di clic su una pagina altrimenti ferma non
+    scatterebbe mai. A leggere il codice sembra vero (clic_al_documento non
+    riaccende niente). Prova da scrivere: una pagina con un solo pulsante il
+    cui onclick fa setTimeout(f, 500).
+  - Resta valido il resto della sua mappa: le 13 proprieta' di excss, le
+    regole @ saltate, i selettori a due motori, l'elenco delle API assenti,
+    i conteggi su Amazon.
+
+
+---------------------------------------------------------------------
+7. FILE TOCCATI
+---------------------------------------------------------------------
+
+    exwin/bin/exbrowser/exbrowser.c   DOMContentLoaded, load, gzip
+    Makefile                          inflate.c dentro exbrowser
+    tools/prove/sito/carico.html      nuova pagina di prova
+    tools/prove/sito/leggimi.md       la sua riga
+    diario_browser.txt                questo file
+
+Le pagine scaricate per le misure (non nel repository):
+    /tmp/exos-siti/estratti/{g,so,eb,am}.html   da `scarica` in EX-OS
+    /tmp/exos-siti/am_raw.bin                   Amazon in gzip, da curl
+    /tmp/exos-siti/qjs/corri, spia.js           l'esecutore QuickJS e il DOM spia

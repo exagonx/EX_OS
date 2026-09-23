@@ -43,6 +43,7 @@ settanta movimenti diventano tre minuti.
 | `invio.html` | i pulsanti di un modulo: quale manda il suo `name=valore`, quali NON devono mandare (`reset`, `button`), l'Invio implicito. Manda a `/eco-modulo` — vedi qui sotto |
 | `modulo.html` | una casella e un'area: cursore, selezione, appunti |
 | `perdita.html` | sei immagini senza misure e dodici caselle: i controlli che si moltiplicavano |
+| `carico.html` | `DOMContentLoaded` e `load`: che scattino, che scattino in quell'ordine, e che `load` non si ripeta a ogni giro di `EXM_TEMPO` |
 
 ## `servi.py`
 

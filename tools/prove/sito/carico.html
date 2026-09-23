@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>DOMContentLoaded e load</title>
+<style>
+body { font-family: sans-serif; margin: 16px; }
+.riq { border: 1px solid #888; padding: 6px; background: #f4f4f4; }
+</style>
+</head>
+<body>
+
+<h1>DOMContentLoaded e load, quattro riquadri</h1>
+
+<p>Ogni riquadro prova UNA cosa. Se contiene ancora la scritta «non e'
+successo niente», quell'evento non e' scattato.</p>
+
+<h2>1. document.addEventListener('DOMContentLoaded', ...)</h2>
+<div id="uno" class="riq">non e' successo niente</div>
+
+<h2>2. window.addEventListener('load', ...)</h2>
+<div id="due" class="riq">non e' successo niente</div>
+
+<h2>3. l'ordine: DOMContentLoaded prima di load</h2>
+<div id="tre" class="riq">non e' successo niente</div>
+
+<h2>4. load non si ripete: fotografato due volte, deve restare a 1</h2>
+<div id="quattro" class="riq">non e' successo niente</div>
+
+<script>
+var ordine = [];
+
+document.addEventListener('DOMContentLoaded', function () {
+    document.getElementById('uno').innerHTML = "DOMContentLoaded e' scattato";
+    ordine.push('dcl');
+});
+
+var conta_load = 0;
+window.addEventListener('load', function () {
+    document.getElementById('due').innerHTML = "load e' scattato";
+    ordine.push('load');
+    document.getElementById('tre').innerHTML =
+        (ordine[0] === 'dcl' && ordine[1] === 'load')
+            ? "ORDINE GIUSTO: DOMContentLoaded prima di load"
+            : ("ORDINE SBAGLIATO: " + ordine.join(','));
+    conta_load = conta_load + 1;
+    document.getElementById('quattro').innerHTML =
+        "load e' scattato " + conta_load + " volta/e";
+});
+</script>
+
+</body>
+</html>

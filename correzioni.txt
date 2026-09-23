@@ -12,12 +12,3 @@ Questo file solo l'utente aggiunge istruzioni.
 ############################################################################################
 
 
-# [preso in carico il 23 settembre 2026 -> @EDIT-RTF (in_lavorazione.txt)]
-# $ Editor di testo attualmente è molto limitato, sarebbe utile implementare strumenti come scelta di carattere, righello di formattazione, giustificazione, allineamento, testo sottolineato, insomma tutto quello che supporta il formato RTF , questa modalità si attiva dalla voce Opzioni -> Modalità RTF ( dove attiva le funzionalità avanzate citate altrimenti opera come un normale editor di testo con tutto ridotto.) sarà in grado di salvare con estensione .rtf e di conseguenza se il file che viene aperto è un .rtf  in automatico si attiva la modalità, sarebbe comoda anche la possibilità di salvare in formato html dove converte tutto il contenuto rtf in html, l'apertura di un file html resta di default al browser.
-
-# [preso in carico e FATTO il 23 settembre 2026 -> @EXBROWSER-NOME: /exwin/bin/exbrowser,
-#   versione 0.003, manuale, menu, icona; i dati passano da soli in $HOME/.app/exbrowser/]
-# ! Browser deve cambiare nome in EXBrowser dato che verra modificato questa conta come incremento di versione, da aggiornare tutta la documentazione e i file di help e manuali.
-
-# [preso in carico il 23 settembre 2026 -> @EXBROWSER-CERT (in_lavorazione.txt)]
-# ! Su exbrowser sarà necessario aggiungere nuovi certificati e aggiornarne la lista perché molti siti in https non vengono accettati per via del certificato, da implementare anche la possibilità di aggiungere certificati scaricandoli.
