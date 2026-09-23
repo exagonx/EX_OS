@@ -76,6 +76,7 @@ COMPILARE serve anche il CD degli strumenti montato su <code>/cdrom</code>.
 </li>
 <li><a href="#funzioni">Qualche funzione che vale per tutti</a></li>
 <li><a href="#menu">Il menu</a></li>
+<li><a href="#scaricare">Scaricare file, e altre funzioni della libreria</a></li>
 <li><a href="#limiti">Quel che non c'e'</a></li>
 </ul>
 
@@ -679,6 +680,86 @@ quasi tutti gli <a href="#esempi">esempi</a> finiscono cosi'.
 <tr><td><b>Aiuto</b></td>
     <td>questa pagina, e le informazioni sul programma</td></tr>
 </table>
+
+<h2 id="scaricare">Scaricare file, e altre funzioni della libreria</h2>
+
+<p>
+Le funzioni di questa sezione stanno nelle librerie del toolkit
+(<code>exwin.so</code> ed <code>exdlg.so</code>): le usa EXBrowser, e le puo'
+usare qualunque programma fatto con exide, scrivendole in
+<code>codice.c</code>. Il file <code>principale.c</code> include gia'
+<code>exwin.h</code>; per quelle di <code>exdlg</code> si aggiunge
+<code>#include "exdlg.h"</code>.
+</p>
+
+<h3>I download</h3>
+
+<p>
+Uno scaricamento gira in un processo suo (<code>/bin/scarica</code>), quindi il
+programma resta libero mentre il file arriva. La finestra <b>Download</b> si
+apre da sola alla partenza e mostra per ognuno percentuale, misura, velocita'
+media e tempo che manca; chiuderla non ferma niente, e si riapre quando serve.
+</p>
+
+<table border="1">
+<tr><th>funzione</th><th>cosa fa</th></tr>
+<tr><td><code>ex_scarico_avvia(url, file)</code></td>
+    <td>fa partire lo scaricamento e apre la finestra; rende un numero &gt;= 0,
+        o un <code>EX_SC_ERR_*</code> negativo</td></tr>
+<tr><td><code>ex_scarichi_finestra()</code></td><td>riapre la finestra (per una voce di menu)</td></tr>
+<tr><td><code>ex_scarico_info(n, &amp;s)</code></td>
+    <td>a che punto e': <code>s.stato</code>, <code>s.fatti</code>,
+        <code>s.attesi</code> (0 se il server non l'ha detto), <code>s.ms</code></td></tr>
+<tr><td><code>ex_scarico_ferma(n)</code></td><td>lo ferma e cancella il file a meta'</td></tr>
+<tr><td><code>ex_scarichi_alla_fine(f, dato)</code></td>
+    <td><code>f(dato, n, stato)</code> quando uno finisce</td></tr>
+<tr><td><code>ex_scarichi_in_corso()</code></td><td>quanti stanno scaricando</td></tr>
+<tr><td><code>ex_scarichi_ferma_tutti()</code></td>
+    <td><b>da chiamare prima di uscire</b>: gli scaricamenti sono processi a
+        parte e da soli andrebbero avanti</td></tr>
+</table>
+
+<pre>
+    #include "exdlg.h"
+
+    static void finito(void *dato, int n, int stato)
+    {
+        if (stato == EX_SC_FATTO) ex_dlg_avviso("Fatto", "Il file e' arrivato.");
+    }
+
+    /* al clic su un pulsante: */
+    ex_scarichi_alla_fine(finito, 0);
+    if (ex_scarico_avvia("http://esempio.it/archivio.zip", "/disco/archivio.zip") &lt; 0)
+        ex_dlg_avviso("Non parte", "Manca /bin/scarica, o sono gia' sedici.");
+</pre>
+
+<h3>Altre funzioni nuove</h3>
+
+<table border="1">
+<tr><th>funzione</th><th>cosa fa</th></tr>
+<tr><td><code>ex_dlg_scegli(titolo, testo, voci, n)</code></td>
+    <td>una domanda con da una a quattro risposte; rende il numero del
+        pulsante, o -1 per Esc. L'ultima voce e' quella prudente e ha il
+        fuoco</td></tr>
+<tr><td><code>ex_guarda_fd(fd, f, dato)</code></td>
+    <td>il ciclo dei messaggi sorveglia una pipe e chiama <code>f(dato, fd)</code>
+        quando c'e' da leggere: per seguire un processo figlio senza fermare le
+        finestre. Con <code>f</code> a 0 smette</td></tr>
+<tr><td><code>ex_area_vista(area, &amp;visibili)</code></td>
+    <td>la prima riga visibile di un'area di testo, e quante se ne vedono</td></tr>
+<tr><td><code>ex_area_mostra_da(area, riga)</code></td>
+    <td>fa partire la vista da quella riga senza spostare il cursore: e' quel
+        che serve a una barra di scorrimento accanto all'area</td></tr>
+</table>
+
+<div class="nota">
+<p>
+<b>Un programma nuovo sopra librerie vecchie parte lo stesso.</b> Queste
+funzioni sono facoltative: se la libreria installata e' di prima del 23
+settembre 2026 rendono un errore (<code>EX_SC_ERR_VECCHIA</code>, -2) invece di
+fermare il programma all'avvio.
+</p>
+</div>
 
 <h2 id="limiti">Quel che non c'e'</h2>
 

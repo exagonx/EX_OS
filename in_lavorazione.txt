@@ -225,13 +225,14 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @EXWIN-LOG       ! lo schermo non si sporca piu' (kernel); manca la finestra
   1  @ICONE-APP       i disegni _64/_128 ci sono e il menu li usa: mancano quattro
   1  @EXBROWSER-NOME  FATTO e provato in QEMU: il navigatore si chiama EXBrowser
-  1  @EXBROWSER-CERT  ! catena e CA aggiunte FATTE; restano AES-GCM, P-256 e TLS 1.2
+  1  @EXBROWSER-CERT  FATTO: catena, CA aggiunte, AES-GCM, P-256, TLS 1.2
   1  @EDIT-RTF        la modalita' RTF dell'editor: prima il modello del documento
   1  @EDIT-SCORRI     FATTO e provato: la barra di scorrimento dell'editor
   1  @ARCHIVI-COMPRIME FATTO e provato: DEFLATE in scrittura, zip e Archivi
   1  @ARCHIVI-MENU    FATTO: la tendina non si fa piu' coprire (nel toolkit)
   1  @ARCHIVI-CARTELLE FATTO e provato: cartelle intere in Archivi e in zip
   1  @EXBROWSER-SCARICA FATTO e provato: apri o scarica un file non web
+  1  @EXBROWSER-DOWNLOAD FATTO e provato: la finestra Download, nel toolkit
 
   2  @SUONO-EMU8000   l'EMU8000 di una AWE32 resta spento    <- @SUONO-CAMPIONI
   2  @RUST-1          alloc: un GlobalAlloc sopra la malloc  <- @RUST-0
@@ -3725,17 +3726,46 @@ sono arrivate, non quello in cui vanno fatte.
       altro programma — lo apre.
 
   QUEL CHE RESTA, e sono lavori di TLS, non di certificati:
-    1. AES-GCM nel client TLS 1.3 (TLS_AES_128_GCM_SHA256, e
-       TLS_AES_256_GCM_SHA384 che vuole anche SHA-384 nel key schedule):
-       apre ebay.it. Serve un AES e un GHASH; lib/excrypt ha ChaCha20 e
-       Poly1305, non AES;
-    2. lo scambio di chiavi su P-256 accanto a x25519: apre poste.it.
-       lib/exp256 sa gia' fare i conti sulla curva per verificare le firme;
-       un ECDH e' una moltiplicazione per uno scalare, la stessa;
-    3. TLS 1.2 nel client: apre corriere.it, gazzetta.it, istat.it. E' il
-       pezzo grosso — un'altra stretta di mano, la PRF, ServerKeyExchange
-       firmato, ChangeCipherSpec — e va fatto dopo 1 e 2, perche' quei
-       server offrono ECDHE-RSA con AES-GCM o ChaCha20.
+    1. AES-GCM nel client TLS 1.3 — FATTO il 23 settembre, pomeriggio.
+       lib/excrypt/gcm.c (contatore e GHASH sopra l'AES del Wi-Fi), e il
+       ClientHello offre TLS_AES_128_GCM_SHA256 dopo ChaCha20. Provato
+       sull'host da tools/prova_gcm.sh (i vettori del documento di GCM e
+       5000 casi contro `cryptography` di Python) e sul vero: www.ebay.it
+       adesso completa la stretta — ma risponde 403, un blocco dei robot
+       come stackoverflow, non piu' TLS. I 24 siti di prima si aprono
+       ancora tutti. AES_256_GCM_SHA384 NON e' offerto: vorrebbe SHA-384 in
+       tutto il key schedule, e chi ha TLS 1.3 ha anche l'AES-128;
+    2. lo scambio di chiavi su P-256 — FATTO il 23 settembre, sera, con le
+       due scelte raccomandate e approvate:
+       - A TEMPO COSTANTE, in un pezzo nuovo (lib/excrypt/p256.c) e NON in
+         lib/excurva, che dichiara di essere per i soli numeri pubblici:
+         campo a otto parole fisse (Montgomery), formule COMPLETE di Renes,
+         Costello e Batina, scala di Montgomery con scambi a maschera,
+         inversione di Fermat. Il punto altrui si controlla (sulla curva, o
+         niente: l'attacco «invalid curve»);
+       - SOLO A CHI LO CHIEDE: x25519 si manda con la chiave, P-256 si
+         nomina soltanto; un server che lo vuole manda una HelloRetryRequest
+         (prima: EXTLS_ERR_HRR), e il ClientHello si rimanda uguale — stesso
+         random, stessa sessione, il cookie se c'era — col primo sostituito
+         da message_hash nella trascrizione.
+       PROVATO: tools/prova_p256.sh (mille chiavi pubbliche e mille segreti
+       contro `cryptography`, i punti non validi rifiutati), `make
+       prova-cliente-tls` (quattro casi nuovi contro openssl s_server: solo
+       AES, solo P-256, HelloRetryRequest col cookie di -stateless, e un
+       server solo P-384 che rifiuta senza guasti — 15 su 15), e sul vero:
+       www.poste.it si apre (200, 248 KB in 2,4 s);
+    3. TLS 1.2 nel client — FATTO il 23 settembre, sera. La meta' moderna
+       di 1.2 e nient'altro: ECDHE (x25519 o P-256) con AES-128-GCM o
+       ChaCha20-Poly1305, firme RSA-PSS, RSA PKCS#1 v1.5 (passa da
+       excert_firma_valida, con un «certificato» fatto dei byte firmati) ed
+       ECDSA, Extended Master Secret, renegotiation_info, e la sentinella
+       anti-declassamento «DOWNGRD». Niente CBC, niente RSA come scambio,
+       niente ripresa di sessione. Una CertificateRequest riceve un
+       Certificate vuoto.
+       PROVATO: `make prova-cliente-tls` contro openssl s_server -tls1_2
+       (RSA+AES+PKCS#1, RSA+ChaCha20+PSS, ECDSA+AES, P-256, e SENZA EMS
+       spento dal file di configurazione di OpenSSL: 20 su 20), e sul
+       vero: www.corriere.it, www.gazzetta.it, www.istat.it si aprono.
     ! Ripetere tools/prova_certificati.sh dopo ognuno: i numeri di oggi sono
       il riferimento: 23 su 30, e 24 dopo la correzione della catena.
 
@@ -3790,6 +3820,60 @@ sono arrivate, non quello in cui vanno fatte.
   PROVATO da tools/prova_apri_scarica.sh: un server sull'host, «Apri» su un
   .zip (Archivi si apre col file scaricato, fotografia) e «Scarica» su un
   indirizzo senza estensione (zip -l legge il file arrivato).
+
+! @EXBROWSER-DOWNLOAD LA FINESTRA DOWNLOAD, NEL TOOLKIT: FATTO IL 23
+  SETTEMBRE 2026 (exbrowser 0.005, scarica 0.006), chiesto lo stesso giorno a
+  voce — e subito dopo: «mettile nelle librerie del toolkit, cosi' le usano i
+  programmi di exide».
+
+  Chiesto: un gestore dei download con stato, percentuale e tempi medi; una
+  finestra che si apre da sola quando parte uno scaricamento o da
+  «Strumenti > Download»; che dipende dal navigatore (se ne va con lui) ma si
+  puo' affiancare o chiudere mentre gli scaricamenti vanno avanti.
+
+  COM'E' FATTO:
+    - OGNI SCARICAMENTO E' UN PROCESSO: /bin/scarica -avanza <url> <file>,
+      che scrive AVANZA / FINE / ERRORE sulla sua uscita. exhttp tiene lo
+      stato in variabili globali e non regge due richieste in un processo;
+      e uno scaricamento nel processo del navigatore lo bloccava fino alla
+      fine, che e' cio' che succedeva prima di oggi;
+    - LA PIPE LA LEGGE IL CICLO DEI MESSAGGI: ex_guarda_fd(), nuova in exwin,
+      aggiunge un descrittore al poll() che sorvegliava gia' la mailbox e i
+      terminali. Niente timer: un timer e' di una finestra, e lo
+      scaricamento deve andare avanti a finestra chiusa;
+    - exhttp_attesi() dice la Content-Length della risposta che arriva: e'
+      il denominatore della percentuale; senza, la finestra non ne inventa;
+    - LA FINESTRA E LE FUNZIONI stanno in lib/exdlg/scarichi.c:
+      ex_scarico_avvia/info/ferma, ex_scarichi_finestra/in_corso/
+      ferma_tutti/alla_fine. Tutte FACOLTATIVE negli stub. Documentate nel
+      manuale di exide, «Scaricare file»;
+    - in EXBrowser: «Apri» e «Scarica» passano di li' (con una libreria
+      vecchia, torna lo scaricamento di prima), la funzione di ritorno apre
+      il file col suo programma, e uscire con scaricamenti in corso chiede
+      prima e li ferma.
+
+  ! TRE DIFETTI TROVATI PROVANDO, corretti: la divisione a 64 bit non si
+    collega (niente libgcc: __udivdi3), la riga della lista si ferma a 64
+    caratteri (LISTA_TESTO_MAX) e tagliava il tempo che manca, e Invio non
+    premeva il pulsante col fuoco — nel toolkit lo fanno i dialoghi nella
+    loro procedura, e adesso anche questa (Invio, Canc = Ferma, Esc chiude).
+
+  PROVATO: tools/prova_download.sh (uno ZIP da 3 MB a 300 KB/s: la finestra
+  si apre da sola, a meta' «66% 2,0 MB/3,0 MB 284 KB/s ancora 0:03», alla
+  fine Archivi si apre sul file, la misura torna) e a mano: la finestra
+  chiusa col mouse al 33% e lo scaricamento arrivato in fondo lo stesso,
+  riaperta da Strumenti > Download con «fatto 3,0 MB in 0:10, media 297
+  KB/s»; Canc a meta' ferma, e il file a meta' non c'e'.
+  E L'USCITA A META': Esc chiude la finestra, Ctrl+Q chiede «1 download in
+  corso: uscendo si fermano», «Esci» — e il file a meta' non c'e', neanche
+  quaranta secondi dopo. ! META' PROVATO: che il processo `scarica` sia
+  davvero finito non si vede dalla shell (qui non c'e' `ps`), e un file
+  cancellato sparisce dall'elenco anche se qualcuno lo tiene aperto. La
+  fermata e' interrompi(), la stessa del pulsante Ferma.
+  ! E UN PRIMO GIRO ERA SBAGLIATO DI TEMPI, non di codice: lo scaricamento
+    finiva mentre la domanda era aperta, e il file INTERO restava — giusto
+    cosi', ma non provava niente. Il server rallentato a 100 KB/s l'ha
+    rifatta a meta'.
 
 $ @EDIT-RTF L'EDITOR IN MODALITA' RTF. (chiesto il 23 settembre 2026)
 

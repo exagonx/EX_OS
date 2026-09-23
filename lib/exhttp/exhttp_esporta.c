@@ -60,6 +60,7 @@ static const char *const g_nomi[] = {
     /* Aggiunte il 23 settembre 2026: i certificati di chi usa il sistema. */
     "exhttp_certi_esamina",
     "exhttp_certi_aggiungi",
+    "exhttp_attesi",
 
     "__lib_avvio"
 };
@@ -80,6 +81,7 @@ static void *const g_indirizzi[] = {
 
     (void *)exhttp_certi_esamina,
     (void *)exhttp_certi_aggiungi,
+    (void *)exhttp_attesi,
 
     (void *)__libc_ponti_avvia
 };

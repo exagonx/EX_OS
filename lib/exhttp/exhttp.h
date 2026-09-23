@@ -231,6 +231,13 @@ typedef int (*ExHttpVerso)(void *dato, const unsigned char *d, unsigned int n);
 
 void exhttp_verso(ExHttpVerso f, void *dato);
 
+/* How many bytes the body now arriving is declared to be (Content-Length), or
+ * 0 when the server did not say — chunked answers, or closed at the end.
+ * Valid from the first byte handed to the verso. It is what a percentage is
+ * made of (the download window of EXBrowser, `scarica -avanza`). Added on
+ * 23 September 2026. */
+unsigned long exhttp_attesi(void);
+
 /* =============================================================================
  * exhttp_da — la prossima richiesta chiede il corpo DA un certo byte
  *

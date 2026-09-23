@@ -5078,11 +5078,54 @@ static int filtro_finestra(const IpcMessage *m, void *dato)
     return bloccante ? IPC_BUTTA : IPC_ALTRUI;
 }
 
+/* =============================================================================
+ * ex_guarda_fd — a descriptor watched by the message loop (23 September 2026)
+ *
+ * The loop already slept on the IPC mailbox AND on the pipes of the terminal
+ * controls together: the thing SYS_POLL was made for. This opens the same
+ * door to anyone — a program, or a library like the downloads of exdlg —
+ * that has a pipe to read while the windows stay alive: the function is
+ * called when there is something to read (or the other end closed), from
+ * inside ex_prendi_msg, between one message and the next.
+ *
+ * ! NO TIMER, AND NO WINDOW NEEDED. The first version of the download window
+ * would have polled on EXM_TEMPO — but EXM_TEMPO belongs to a window, and a
+ * download must go on when its window is closed. A descriptor belongs to
+ * the process.
+ * ============================================================================= */
+#define GUARDATI_MAX 16
+
+static struct {
+    int        fd;
+    ExGuarda   fn;
+    void      *dato;
+} g_guardati[GUARDATI_MAX];
+static int g_n_guardati = 0;
+
+int ex_guarda_fd(int fd, ExGuarda fn, void *dato)
+{
+    int i;
+
+    for (i = 0; i < g_n_guardati; i++)
+        if (g_guardati[i].fd == fd) {
+            if (fn) { g_guardati[i].fn = fn; g_guardati[i].dato = dato; return 0; }
+            g_guardati[i] = g_guardati[--g_n_guardati];
+            return 0;
+        }
+    if (!fn) return 0;
+    if (g_n_guardati >= GUARDATI_MAX) return -1;
+    g_guardati[g_n_guardati].fd   = fd;
+    g_guardati[g_n_guardati].fn   = fn;
+    g_guardati[g_n_guardati].dato = dato;
+    g_n_guardati++;
+    return 0;
+}
+
 static int prendi_msg(ExMsg *m, int bloccante)
 {
     IpcMessage    meta;
     unsigned char buf[IPC_MSG_MAX_DATA];
-    struct pollfd v[1 + TERM_MAX];
+    struct pollfd v[1 + TERM_MAX + GUARDATI_MAX];
     int           giri = 0;
 
     for (;;) {
@@ -5154,8 +5197,33 @@ static int prendi_msg(ExMsg *m, int bloccante)
                     nv++;
                 }
 
-            if (poll(v, (unsigned int)nv, (bloccante && !gia) ? 200 : 0) <= 0
-                && !gia) continue;
+            {
+                int primo_guardato = nv, quanti = g_n_guardati, k;
+
+                for (k = 0; k < quanti && nv < (int)(sizeof(v)/sizeof(v[0])); k++) {
+                    v[nv].fd = g_guardati[k].fd;
+                    v[nv].events = POLLIN;
+                    v[nv].revents = 0;
+                    nv++;
+                }
+
+                if (poll(v, (unsigned int)nv, (bloccante && !gia) ? 200 : 0) <= 0
+                    && !gia) continue;
+
+                /* ! BY DESCRIPTOR, NOT BY POSITION: a function called here may
+                 * remove itself (ex_guarda_fd(fd, 0, 0) at the end of a
+                 * download), and the table shifts under the loop. */
+                for (k = primo_guardato; k < nv; k++) {
+                    int q;
+
+                    if (!(v[k].revents & (POLLIN | POLLHUP | POLLERR))) continue;
+                    for (q = 0; q < g_n_guardati; q++)
+                        if (g_guardati[q].fd == v[k].fd) {
+                            g_guardati[q].fn(g_guardati[q].dato, v[k].fd);
+                            break;
+                        }
+                }
+            }
 
             /* Cio' che le shell hanno scritto si raccoglie prima dei
              * messaggi: se qualcosa e' cambiato, la finestra si ridisegna. */

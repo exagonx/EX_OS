@@ -1070,6 +1070,15 @@ static unsigned long g_da_attivo = 0;   /* quello della chiamata in corso     */
  * non lo vede nessuno e non rompe niente. */
 static unsigned long g_usciti = 0;
 
+/* How long the body being received says it is (Content-Length), 0 when the
+ * server did not say. For whoever shows a percentage: see exhttp_attesi(). */
+static unsigned long g_attesi = 0;
+
+unsigned long exhttp_attesi(void)
+{
+    return g_attesi;
+}
+
 void exhttp_verso(ExHttpVerso f, void *dato)
 {
     g_verso      = f;
@@ -1328,6 +1337,7 @@ int exhttp_scambio(ExHttpTrasporto *t, const HttpUrl *u,
     e->byte = 0;
     e->troncata = 0;
     g_usciti = 0;
+    g_attesi = r->ha_lunghezza ? r->lunghezza : 0;
 
     /* --- il corpo ------------------------------------------------------ */
     {

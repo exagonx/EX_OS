@@ -37,6 +37,9 @@ SORGENTI = [
     "lib/excrypt/chacha20.c",   "lib/excrypt/poly1305.c",
     "lib/excrypt/x25519.c",     "lib/excrypt/fe25519.c",
     "lib/excrypt/sha512.c",
+    # dal 23 settembre 2026: AES-128-GCM e lo scambio su P-256
+    "lib/excrypt/aes.c",        "lib/excrypt/gcm.c",
+    "lib/excrypt/p256.c",
 ]
 INCLUDI = ["lib/extls", "lib/excert", "lib/exasn1", "lib/exbig", "lib/excrypt",
            "lib/excurva"]
@@ -123,13 +126,13 @@ def porta_libera():
     s.close()
     return p
 
-def con_server(cert, chiave, prova):
+def con_server(cert, chiave, prova, cifrari="TLS_CHACHA20_POLY1305_SHA256", altro=()):
     """Accende un s_server, esegue `prova(porta)`, lo spegne."""
     p = porta_libera()
     srv = subprocess.Popen(
         ["openssl", "s_server", "-accept", str(p), "-cert", cert,
          "-key", chiave, "-tls1_3",
-         "-ciphersuites", "TLS_CHACHA20_POLY1305_SHA256", "-www", "-quiet"],
+         "-ciphersuites", cifrari, "-www", "-quiet"] + list(altro),
         cwd=BANCO, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         for _ in range(50):
@@ -205,6 +208,79 @@ def main():
         esito("un certificato scaduto si rifiuta",
               "certificato non verificabile" in out, out.strip())
     con_server("vecchio.pem", "vecchio.key", scaduto)
+
+    # ---- i cifrari e i gruppi del 23 settembre 2026 ----------------------
+    # ! OGNUNO E' UN SERVER CHE PRIMA CI RIFIUTAVA: eBay voleva AES-GCM, Poste
+    # voleva P-256. Qui si prova ognuno da solo, e la HelloRetryRequest anche
+    # col cookie (-stateless), che va rimandato identico.
+    def solo_aes(p):
+        rc, out = cliente(p, "prova.exos", "ca.pem")
+        esito("un server che ha solo AES-128-GCM", rc == 0 and "HTTP/1.0 200" in out,
+              out.strip())
+    con_server("srv.pem", "srv.key", solo_aes, cifrari="TLS_AES_128_GCM_SHA256")
+
+    def solo_p256(p):
+        rc, out = cliente(p, "prova.exos", "ca.pem")
+        esito("un server che ha solo P-256: HelloRetryRequest, poi la stretta",
+              rc == 0 and "HTTP/1.0 200" in out, out.strip())
+    con_server("srv.pem", "srv.key", solo_p256,
+               cifrari="TLS_AES_128_GCM_SHA256", altro=("-groups", "P-256"))
+
+    def con_cookie(p):
+        rc, out = cliente(p, "prova.exos", "ca.pem")
+        esito("la HelloRetryRequest col cookie (-stateless)",
+              rc == 0 and "HTTP/1.0 200" in out, out.strip())
+    con_server("srv.pem", "srv.key", con_cookie,
+               cifrari="TLS_CHACHA20_POLY1305_SHA256", altro=("-groups", "P-256", "-stateless"))
+
+    def solo_p384(p):
+        rc, out = cliente(p, "prova.exos", "ca.pem")
+        esito("un server che ha solo P-384 (che non abbiamo) rifiuta senza guasti",
+              rc != 0 and "stretta: riuscita" not in out, out.strip())
+    con_server("srv.pem", "srv.key", solo_p384, altro=("-groups", "P-384"))
+
+    # ---- TLS 1.2 (23 settembre 2026) --------------------------------------
+    # ! I SERVER CHE PARLANO SOLO 1.2: corriere, gazzetta, istat. Ogni caso
+    # mette insieme un cifrario, una firma e un gruppo diversi, perche' sono
+    # tre strade diverse nel codice (firma12, prf12, i record).
+    def v12(nome, cert, chiave, cifrario, altro, ambiente=None):
+        def prova(p):
+            rc, out = cliente(p, "prova.exos", "ca.pem" if cert == "srv.pem" else "eca.pem")
+            esito(nome, rc == 0 and "HTTP/1.0 200" in out, out.strip())
+        p = porta_libera()
+        srv = subprocess.Popen(
+            ["openssl", "s_server", "-accept", str(p), "-cert", cert, "-key", chiave,
+             "-tls1_2", "-cipher", cifrario, "-www", "-quiet"] + list(altro),
+            cwd=BANCO, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            env=ambiente)
+        try:
+            for _ in range(50):
+                try:
+                    socket.create_connection(("127.0.0.1", p), 0.2).close(); break
+                except OSError:
+                    time.sleep(0.1)
+            prova(p)
+        finally:
+            srv.terminate(); srv.wait()
+
+    v12("1.2: RSA, AES-128-GCM, firma PKCS#1 v1.5", "srv.pem", "srv.key",
+        "ECDHE-RSA-AES128-GCM-SHA256", ("-sigalgs", "RSA+SHA256"))
+    v12("1.2: RSA, ChaCha20-Poly1305, firma RSA-PSS", "srv.pem", "srv.key",
+        "ECDHE-RSA-CHACHA20-POLY1305", ("-sigalgs", "rsa_pss_rsae_sha256"))
+    v12("1.2: ECDSA, AES-128-GCM", "esrv.pem", "esrv.key",
+        "ECDHE-ECDSA-AES128-GCM-SHA256", ())
+    v12("1.2: scambio su P-256", "srv.pem", "srv.key",
+        "ECDHE-RSA-AES128-GCM-SHA256", ("-groups", "P-256"))
+
+    # ! SENZA EXTENDED MASTER SECRET: il master secret alla vecchia maniera.
+    # s_server non ha un'opzione per spegnerlo; il file di configurazione si'.
+    cnf = os.path.join(BANCO, "noems.cnf")
+    open(cnf, "w").write("openssl_conf = default_conf\n[default_conf]\n"
+                         "ssl_conf = ssl_sect\n[ssl_sect]\nsystem_default = sd\n"
+                         "[sd]\nOptions = -ExtendedMasterSecret\n")
+    amb = dict(os.environ, OPENSSL_CONF=cnf)
+    v12("1.2: senza Extended Master Secret", "srv.pem", "srv.key",
+        "ECDHE-RSA-AES128-GCM-SHA256", (), ambiente=amb)
 
     print("\n%d prove superate, %d fallite" % (passate, fallite))
     shutil.rmtree(BANCO, ignore_errors=True)

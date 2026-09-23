@@ -60,6 +60,10 @@ Tre richieste da `correzioni.txt` e tre a voce, nella stessa mattina:
     @EDIT-RTF          l'editor RTF                                 da fare
     @ARCHIVI-CARTELLE  cartelle intere, in Archivi e in zip         FATTO
     @EXBROWSER-SCARICA apri o scarica un file che non e' una pagina FATTO
+    @EXBROWSER-DOWNLOAD la finestra Download, nel toolkit          FATTO
+    @EXBROWSER-CERT    AES-128-GCM nel TLS (eBay passa la stretta)   FATTO
+    @EXBROWSER-CERT    P-256 a tempo costante, HelloRetryRequest     FATTO
+    @EXBROWSER-CERT    TLS 1.2 (Corriere, Gazzetta, Istat): 28 su 30 FATTO
 
 ! **IL NUMERO CHE CONTA DEI CERTIFICATI**: su trenta siti comuni se ne aprivano
 23, e il certificato era la causa di UNO solo (amazon.it, una radice
@@ -116,21 +120,30 @@ aggiornava dopo un tasto battuto nell'area.
      ! Mettere un file basta: nessun programma va ricompilato. E se non c'e',
      tutto resta testo — e' lo stato di adesso per strumenti e tipi.
 
-## QUEL CHE NON E' ANCORA COMMITTATO (23 settembre, dopo a65e15d)
+## QUEL CHE NON E' ANCORA COMMITTATO (23 settembre, dopo bbc4d6a)
 
-Il commit a65e15d ha portato dentro EXBrowser, il compressore e i certificati.
-Fuori resta il pomeriggio:
+Il commit bbc4d6a ha portato dentro «apri o scarica» e le cartelle in
+Archivi. Fuori resta la finestra Download:
 
-    lib/exzip/exzip.[ch], exzip_esporta.c, exzip_stub.c
-                                ex_zip_aggiungi_albero (facoltativa nello stub)
-    lib/exdlg/exdlg.[ch], exdlg_esporta.c, exdlg_stub.c
-                                ex_dlg_scegli; la conferma a due righe
-    exwin/bin/archivi/archivi.c «Aggiungi cartella...» (0.003)
-    bin/zip/zip.c               una cartella negli argomenti (0.003)
-    exwin/bin/exbrowser/exbrowser.c  apri o scarica
-    exwin/doc/exbrowser.html, README*
-    tools/prova_zip.sh          il passo 6, le cartelle
-    tools/prova_apri_scarica.sh la prova (NUOVA)
+    lib/exdlg/scarichi.c        i download e la loro finestra (NUOVO)
+    lib/exdlg/exdlg.h, exdlg_esporta.c, exdlg_stub.c   le sette funzioni
+    lib/exwin/exwin*.{c,h}      ex_guarda_fd
+    lib/exhttp/exhttp*.{c,h}    exhttp_attesi
+    bin/scarica/scarica.c       -avanza (0.006)
+    exwin/bin/exbrowser/        Strumenti > Download, esci(), 0.005
+    exwin/doc/exbrowser.html    la finestra Download
+    exwin/doc/exide.html        «Scaricare file, e altre funzioni»
+    README*, Makefile           scarichi.c dentro exdlg.so
+    tools/prova_download.sh     la prova (NUOVA)
+    lib/excrypt/gcm.c           AES-GCM (NUOVO), excrypt.h
+    lib/extls/extls_client.c    il secondo cifrario, TLS_AES_128_GCM_SHA256
+    tools/prova_gcm.sh          la prova di GCM sull'host (NUOVA)
+    lib/excrypt/p256.c          ECDH su P-256, a tempo costante (NUOVO)
+    lib/extls/extls_client.c    ... e la HelloRetryRequest col cookie
+    tools/prova_p256.sh         la prova di P-256 sull'host (NUOVA)
+    tools/prove/clientprova.py  nove casi nuovi contro openssl s_server
+    lib/extls/extls_client.c    ... e TLS 1.2 (stretta12, prf12, i record)
+    exwin/doc/exbrowser.html    il TLS, e /exos/ssl al posto di /etc/ca
     in_lavorazione.txt, RIPRENDERE.md
     build/, dist/exos.iso       ricostruiti
     messaggio-commit.txt
@@ -252,6 +265,10 @@ confronto fra due opzioni si fa riga per riga.
     tools/prova_certificati.sh  trenta siti https veri: quali si aprono e perche'
     tools/prova_certi_aggiunti.sh  una CA aggiunta da EXBrowser vale per scarica
     tools/prova_apri_scarica.sh    EXBrowser davanti a un .zip: apri, o scarica
+    tools/prova_download.sh        la finestra Download a meta' e alla fine
+    tools/prova_gcm.sh             AES-GCM sull'host, contro cryptography
+    tools/prova_p256.sh            ECDH su P-256 sull'host, contro cryptography
+    make prova-cliente-tls         il client contro openssl s_server (15 casi)
 
 Vogliono `dist/exos.iso` aggiornato; le ultime due si costruiscono il disco da
 sole. ! `prova_zip.sh` e `prova_archivi.sh` vogliono anche **debugfs**

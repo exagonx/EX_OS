@@ -532,6 +532,59 @@ di un browser che non parte &mdash; e per questo il conto sta in
     dice quale non si carica.</li>
 </ul>
 
+<h2>I file che non sono pagine</h2>
+
+<p>
+Un collegamento a un <code>.zip</code>, a un programma, a un'immagine o a
+qualunque file che non sia una pagina non viene impaginato: EXBrowser chiede
+<b>che cosa farne</b>.
+</p>
+
+<ul>
+<li><b>Apri con Archivi</b> (per uno ZIP) o <b>Apri con l'editor</b> (per un
+    testo o un sorgente) &mdash; il file si scarica in
+    <code>$HOME/.app/exbrowser/scaricati/</code> e si apre col suo programma;</li>
+<li><b>Scarica</b> &mdash; si sceglie dove salvarlo, e parte nella finestra
+    <b>Download</b> (vedi sotto): si puo' continuare a navigare mentre
+    arriva, e il tetto di un megabyte delle pagine qui non vale;</li>
+<li><b>Annulla</b> &mdash; e' il pulsante che ha il fuoco: <code>Invio</code>
+    senza leggere non scarica niente.</li>
+</ul>
+
+<p>
+Se ne accorge in due modi: dal <b>nome</b> (<code>.../archivio.zip</code>), e
+allora chiede prima di scaricare; oppure, quando il nome non dice niente
+(<code>.../scarica?id=42</code>), dal <b>tipo</b> che dichiara il server
+(<code>application/zip</code>). Un file del disco (<code>file:</code>) che ha
+un programma si apre direttamente.
+</p>
+
+<h2>La finestra Download</h2>
+
+<p>
+Ogni scaricamento gira per conto suo, e la finestra <b>Download</b> si apre da
+sola quando ne parte uno. Per ognuno dice la percentuale, quanto e' arrivato su
+quanto, la <b>velocita' media</b> e il <b>tempo che manca</b>; alla fine, quanto
+ci ha messo e a che media.
+</p>
+
+<ul>
+<li>si puo' <b>spostare</b> accanto al navigatore, o <b>chiudere</b>: gli
+    scaricamenti vanno avanti lo stesso, e <b>Strumenti &gt; Download</b> la
+    riapre con lo stato di adesso;</li>
+<li><b>Ferma</b> (o <code>Canc</code> sulla riga scelta) interrompe e cancella il
+    file a meta'; <b>Apri la cartella</b> apre il file manager dove sta il file;
+    <b>Togli i finiti</b> pulisce l'elenco. <code>Esc</code> chiude la finestra;</li>
+<li>chiudendo EXBrowser la finestra se ne va con lui; se ci sono scaricamenti in
+    corso lo chiede prima, perche' uscendo si fermano.</li>
+</ul>
+
+<p class="nota">
+La percentuale c'e' quando il server dice quanto e' lungo il file
+(<code>Content-Length</code>). Quando non lo dice, la finestra scrive quanto e'
+arrivato e da quanto tempo, e non inventa un numero.
+</p>
+
 <h2>I certificati</h2>
 
 <p>

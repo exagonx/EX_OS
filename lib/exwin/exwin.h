@@ -527,6 +527,14 @@ void   ex_scrivi_con(ExFinestra w, ExFont f, int x, int y,
  * massimo e' un quinto di secondo; per un'animazione fluida serve un'altra
  * cosa, non questa. */
 void   ex_sveglia(ExFinestra f, unsigned int ms);
+
+/* A descriptor watched by the message loop: `fn` is called, from inside
+ * ex_prendi_msg, when there is something to read on `fd` or its other end has
+ * closed. fn == 0 stops watching it. Up to 16. It is how a program keeps
+ * reading a pipe — a child process, a download — while its windows stay alive,
+ * with no timer and no window needed. (23 September 2026) */
+typedef void (*ExGuarda)(void *dato, int fd);
+int    ex_guarda_fd(int fd, ExGuarda fn, void *dato);
 void ex_aggiorna(ExFinestra f);     /* «ho finito»: lo dice al server */
 
 /* -----------------------------------------------------------------------------

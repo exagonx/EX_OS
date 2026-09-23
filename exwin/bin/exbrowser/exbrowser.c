@@ -3148,6 +3148,76 @@ static void apri_con(const char *bin, const char *file)
     if (spawn_ex(av[0], av, environ, 0, 0) < 0) dico("il programma non parte");
 }
 
+/* =============================================================================
+ * THE DOWNLOADS ARE THE TOOLKIT'S — 23 September 2026
+ *
+ * Started with ex_scarico_avvia() (lib/exdlg/scarichi.c): each one is a
+ * process of its own, the browser stays free to browse, and the «Download»
+ * window opens by itself, closes without stopping anything, and comes back
+ * from Strumenti > Download. What the browser adds is the program to open a
+ * file with when an «Apri» download finishes: that is what g_apri_dopo holds.
+ *
+ * ! WITH AN OLD exdlg.so OR exwin.so THE OLD WAY STILL WORKS: scarica_in(),
+ * in this process, the browser waiting. Worse, but it downloads.
+ * ============================================================================= */
+static int  scarica_in(const char *url, const char *dove);
+static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp);
+
+#define APRI_MAX 16
+static const char *g_apri_dopo[APRI_MAX];
+
+static void scarico_finito(void *dato, int id, int stato)
+{
+    ExScarico s;
+    char      msg[EXSC_DOVE_MAX + 40];
+
+    (void)dato;
+    if (id < 0 || id >= APRI_MAX || !ex_scarico_info(id, &s)) return;
+    if (stato == EX_SC_FATTO) {
+        if (g_apri_dopo[id]) apri_con(g_apri_dopo[id], s.dove);
+        snprintf(msg, sizeof(msg), "scaricato: %s", s.dove);
+    } else if (stato == EX_SC_FALLITO) {
+        snprintf(msg, sizeof(msg), "non scaricato: %s", s.motivo);
+    } else {
+        snprintf(msg, sizeof(msg), "fermato: %s", s.dove);
+    }
+    g_apri_dopo[id] = 0;
+    dico(msg);
+    proc(g_f, EXM_DISEGNA, 0, 0);
+}
+
+/* Starts `url` into `dove`, then opens it with `bin` if given. */
+static void scarica_e_forse_apri(const char *url, const char *dove, const char *bin)
+{
+    int id = ex_scarico_avvia(url, dove);
+
+    if (id >= 0) {
+        if (id < APRI_MAX) g_apri_dopo[id] = bin;
+        dico("scarico nella finestra Download: si puo' continuare a navigare");
+        return;
+    }
+    /* The toolkit could not: the old way, here and now. */
+    if (scarica_in(url, dove) && bin) apri_con(bin, dove);
+}
+
+/* ! USCIRE FERMA GLI SCARICAMENTI, E LO SI CHIEDE: sono processi figli e da
+ * soli andrebbero avanti, con la finestra che li mostrava sparita insieme al
+ * navigatore. */
+static void esci(void)
+{
+    int n = ex_scarichi_in_corso();
+
+    if (n > 0) {
+        char t[120];
+
+        snprintf(t, sizeof(t), "%d download in corso: uscendo si fermano, e i "
+                 "file a meta' si cancellano.", n);
+        if (!ex_dlg_conferma("Uscire?", t, "Esci", "Resta")) return;
+        ex_scarichi_ferma_tutti();
+    }
+    ex_esci(0);
+}
+
 static int           g_scarico_fd = -1;
 static unsigned long g_scarico_n;
 
@@ -3284,7 +3354,7 @@ static void non_e_una_pagina_(const char *url, const char *tipo)
             dico("non ho dove metterlo: HOME manca o e' in sola lettura. Usa Scarica");
             return;
         }
-        if (scarica_in(url, perc)) apri_con(bin, perc);
+        scarica_e_forse_apri(url, perc, bin);
         return;
     }
     if (r != i_scarica) { dico("lasciato stare"); return; }
@@ -3298,7 +3368,8 @@ static void non_e_una_pagina_(const char *url, const char *tipo)
              cartella[strlen(cartella) - 1] == '/' ? "" : "/", nome);
     if (!ex_dlg_salva(perc, sizeof(perc))) { dico("lasciato stare"); return; }
 
-    if (scarica_in(url, perc)) {
+    scarica_e_forse_apri(url, perc, 0);
+    {
         char *barra = strrchr(perc, '/');
 
         if (barra) {
@@ -4861,7 +4932,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
     case EXM_CHIUDI:
-        ex_esci(0);
+        esci();
         return 0;
 
     case EXM_COMANDO:
@@ -4889,7 +4960,8 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         /* ! «ESCI» NON CHIEDE NIENTE, e qui e' giusto: un browser non ha un
          * lavoro non salvato da perdere. La domanda la fa l'editor, che ce
          * l'ha. */
-        if (wp == ID_ESCI)  { ex_esci(0);     return 0; }
+        if (wp == ID_ESCI)  { esci();         return 0; }
+        if (wp == ID_SCARICHI) { ex_scarichi_finestra(); return 0; }
         if (wp == ID_INDIETRO) {
             if (g_storia_n > 0) {
                 char indietro[EXHTTP_URL_MAX];
@@ -5121,7 +5193,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         if (wp & KBD_MOD_CTRL) {
             if (c == 'o' || c == 'O') { apri_locale();  return 0; }
             if (c == 's' || c == 'S') { salva_pagina(); return 0; }
-            if (c == 'q' || c == 'Q') { ex_esci(0);     return 0; }
+            if (c == 'q' || c == 'Q') { esci();         return 0; }
             if (c == 'h' || c == 'H') { vai_a_casa();   return 0; }
         }
 
@@ -5330,6 +5402,7 @@ int main(int argc, char **argv)
 
     g_f = ex_crea("finestra", "EXBrowser", EX_TITOLO | EX_BORDO | EX_CHIUDI,
                   EX_AUTO, EX_AUTO, FIN_W, FIN_H, 0, 0, proc);
+    ex_scarichi_alla_fine(scarico_finito, 0);
     if (!g_f) {
         printf("exbrowser: il server a finestre non risponde.\n");
         printf("         Avvialo con:  exwin\n");
@@ -5371,6 +5444,8 @@ int main(int argc, char **argv)
         ex_menu_voce(menu, "File", "Aggiungi un certificato...",  ID_CERTI);
         ex_menu_voce(menu, "File", "-",                           0);
         ex_menu_voce(menu, "File", "Esci\tCtrl+Q",                ID_ESCI);
+
+        ex_menu_voce(menu, "Strumenti", "Download",               ID_SCARICHI);
 
         ex_menu_voce(menu, "Aiuto", "Guida di EXBrowser",         ID_AIUTO);
         ex_menu_voce(menu, "Aiuto", "Documentazione di EX-OS",    ID_DOC);

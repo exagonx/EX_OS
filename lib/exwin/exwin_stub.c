@@ -149,6 +149,7 @@ static struct {
     void         (*icona_chiudi)(ExIcona);
     unsigned int (*a_vista)(ExFinestra, unsigned int *);
     void         (*a_mostra_da)(ExFinestra, unsigned int);
+    int          (*guarda_fd)(int, ExGuarda, void *);
 } P;
 
 static void *chiedi(const ExLibTesta *t, const char *nome)
@@ -306,6 +307,9 @@ static void assicura(void)
                       chiedi(t, "ex_area_vista");
     P.a_mostra_da   = (void (*)(ExFinestra, unsigned int))
                       chiedi(t, "ex_area_mostra_da");
+    /* ! FACOLTATIVA: chi la usa (i download di exdlg) sa dire che manca. */
+    P.guarda_fd     = (int (*)(int, ExGuarda, void *))
+                      exlib_simbolo(t, "ex_guarda_fd");
 
     P.pronto = 1;
 }
@@ -502,6 +506,8 @@ unsigned int ex_icona_lato(ExIcona ic)     { assicura(); return P.icona_lato(ic)
 void         ex_icona_chiudi(ExIcona ic)   { assicura(); P.icona_chiudi(ic); }
 unsigned int ex_area_vista(ExFinestra f, unsigned int *v) { assicura(); return P.a_vista(f, v); }
 void         ex_area_mostra_da(ExFinestra f, unsigned int r) { assicura(); P.a_mostra_da(f, r); }
+int          ex_guarda_fd(int fd, ExGuarda fn, void *dato)
+{ assicura(); return P.guarda_fd ? P.guarda_fd(fd, fn, dato) : -2; }
 
 void ex_icona_metti(ExFinestra c, ExIcona ic, unsigned int lato)
 {

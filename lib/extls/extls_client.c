@@ -161,7 +161,82 @@ typedef struct {
     unsigned char iv[12];
     unsigned long long seq;
     int           attiva;
+    GcmChiave     gcm;          /* the AES key schedule, for AES-128-GCM */
 } Direzione;
+
+/* =============================================================================
+ * TWO CIPHERS, NOT ONE — 23 September 2026
+ *
+ * Until today the ClientHello offered TLS_CHACHA20_POLY1305_SHA256 only, and a
+ * server without it answered with an alert: www.ebay.it, measured with
+ * tools/prova_certificati.sh. Now TLS_AES_128_GCM_SHA256 is offered too — the
+ * cipher every TLS 1.3 server has, since the RFC makes it mandatory — with the
+ * AES that was already here for the Wi-Fi and lib/excrypt/gcm.c.
+ *
+ * ! ChaCha20 STAYS FIRST: in software, without AES instructions, it is the
+ * faster of the two, and the order is our preference. The server chooses.
+ *
+ * ! AES_256_GCM_SHA384 IS NOT OFFERED: it would need SHA-384 in the whole
+ * key schedule, not only a longer key. A server that has TLS 1.3 has
+ * AES_128_GCM_SHA256 as well.
+ * ============================================================================= */
+#define TLS_CHACHA  0x1303
+#define TLS_AES128  0x1301
+
+/* =============================================================================
+ * TWO GROUPS, AND THE SECOND ONE ONLY WHEN ASKED — 23 September 2026
+ *
+ * x25519 is offered with its key, as before: it is cheap and nearly every
+ * server takes it. secp256r1 (P-256) is only NAMED in supported_groups. A
+ * server that wants it — www.poste.it — answers with a HelloRetryRequest,
+ * and only then the P-256 key is computed (lib/excrypt/p256.c, constant
+ * time) and the ClientHello is sent again. The price of P-256 is paid by
+ * the servers that ask for it, not by every connection.
+ *
+ * ! THE SECOND ClientHello IS THE FIRST ONE, byte for byte, but for the key
+ * share and the cookie: same random, same session id (RFC 8446, 4.1.2). And
+ * in the transcript the first one is replaced by its hash, in a synthetic
+ * message_hash message (4.4.1): that is what the Finished of both sides is
+ * computed on, and getting it wrong fails only at the very end.
+ * ============================================================================= */
+/* =============================================================================
+ * TLS 1.2 — 23 September 2026
+ *
+ * Measured with tools/prova_certificati.sh: www.corriere.it, www.gazzetta.it
+ * and www.istat.it speak ONLY TLS 1.2, and the client spoke only 1.3. So the
+ * ClientHello now also offers 1.2, and a ServerHello without
+ * supported_versions leads to stretta12().
+ *
+ * ! THE MODERN HALF OF 1.2, AND NOTHING ELSE: ECDHE (x25519 or P-256, the
+ * code of 1.3) with AES-128-GCM or ChaCha20-Poly1305, signatures RSA-PSS,
+ * RSA PKCS#1 v1.5 and ECDSA, the Extended Master Secret (RFC 7627). No CBC,
+ * no RSA key transport, no session resumption, no renegotiation: those are
+ * the parts of 1.2 that broke over the years, and the three sites measured do
+ * not need them.
+ *
+ * ! AND THE DOWNGRADE SENTINEL IS CHECKED: a server that could speak 1.3 and
+ * answers 1.2 writes «DOWNGRD\x01» at the end of its random (RFC 8446 4.1.3)
+ * when it is doing so because someone in the middle removed our 1.3 offer.
+ * ============================================================================= */
+#define TLS12_ECDHE_ECDSA_AES128   0xC02B
+#define TLS12_ECDHE_RSA_AES128     0xC02F
+#define TLS12_ECDHE_ECDSA_CHACHA   0xCCA9
+#define TLS12_ECDHE_RSA_CHACHA     0xCCA8
+
+static int e_cifrario12(unsigned int c)
+{
+    return c == TLS12_ECDHE_ECDSA_AES128 || c == TLS12_ECDHE_RSA_AES128 ||
+           c == TLS12_ECDHE_ECDSA_CHACHA || c == TLS12_ECDHE_RSA_CHACHA;
+}
+
+static int e_aes12(unsigned int c)
+{
+    return c == TLS12_ECDHE_ECDSA_AES128 || c == TLS12_ECDHE_RSA_AES128;
+}
+
+#define GR_X25519   0x001D
+#define GR_P256     0x0017
+#define COOKIE_MAX  256
 
 typedef struct {
     const ExTlsSotto *sotto;
@@ -186,6 +261,21 @@ typedef struct {
     unsigned int  tipo;          /* il tipo del record in `bin` */
 
     unsigned char bout[AVANTI + REC_MAX + DOPO];
+
+    unsigned int cifrario;  /* TLS_CHACHA or TLS_AES128, from the ServerHello */
+
+    /* What the second ClientHello must repeat after a HelloRetryRequest. */
+    unsigned char ch_random[32];
+    unsigned char ch_sessione[32];
+    unsigned char cookie[COOKIE_MAX];
+    unsigned int  cookie_n;
+    unsigned int  gruppo;       /* the group of the key share received */
+
+    /* TLS 1.2 */
+    int           v12;          /* the server chose 1.2 */
+    int           ems;          /* extended_master_secret agreed */
+    int           leggo_pronta; /* the read keys wait for the server's CCS */
+    unsigned char sh_random[32];
 
     int chiuso;
     unsigned int allarme;   /* l'ultimo codice di allarme ricevuto */
@@ -235,7 +325,8 @@ static void nonce_di(const Direzione *d, unsigned char out[12])
 
 static void tag_poly(unsigned char *buf, unsigned int testo_n,
                      const unsigned char chiave[32],
-                     const unsigned char nonce[12], unsigned char out[16])
+                     const unsigned char nonce[12], unsigned char out[16],
+                     unsigned int aad_n)
 {
     unsigned char otk[64];
     unsigned int  p = (16u - (testo_n % 16u)) % 16u;
@@ -256,7 +347,9 @@ static void tag_poly(unsigned char *buf, unsigned int testo_n,
      * «1d 00 00 00 1d 00 00 00» invece di «1d 00 00 00 00 00 00 00», il tag
      * non tornava mai, e il sintomo era «risposta che non e' TLS 1.3» su un
      * server che aveva risposto benissimo. */
-    buf[tot + 0] = 5; for (i = 1; i < 8; i++) buf[tot + i] = 0;
+    /* The AAD length: 5 in 1.3 (the record header), 13 in 1.2. Either way it
+     * sits in buf[0 .. AVANTI), padded with zeros to 16. */
+    buf[tot + 0] = (unsigned char)aad_n; for (i = 1; i < 8; i++) buf[tot + i] = 0;
     for (i = 0; i < 8; i++)
         buf[tot + 8 + i] = (i < 4)
                          ? (unsigned char)((testo_n >> (8 * i)) & 0xFF)
@@ -308,7 +401,16 @@ static int record_leggi(Tls *t, unsigned int ms)
      * significa niente: e' li' perche' certi apparati di rete chiudono le
      * connessioni che non lo vedono. Contarlo nella trascrizione o nel numero
      * di sequenza sarebbe un difetto che si vede solo dietro quegli apparati. */
-    if (h[0] == 20) { t->tipo = 20; t->pos = t->fine = 0; return EXTLS_OK; }
+    if (h[0] == 20) {
+        /* ! IN 1.2 IT DOES MEAN SOMETHING: from the next record on, the
+         * server writes with the keys. */
+        if (t->v12 && t->leggo_pronta) {
+            t->leggo.attiva = 1;
+            t->leggo.seq = 0;
+            t->leggo_pronta = 0;
+        }
+        t->tipo = 20; t->pos = t->fine = 0; return EXTLS_OK;
+    }
 
     if (!t->leggo.attiva) {
         t->tipo = h[0];
@@ -327,6 +429,42 @@ static int record_leggi(Tls *t, unsigned int ms)
         return EXTLS_OK;
     }
 
+    if (t->v12) {
+        /* ! 1.2: THE TYPE OUTSIDE IS THE REAL ONE, and the AAD is 13 bytes:
+         * sequence number, type, version, length of the PLAINTEXT. AES-GCM
+         * carries 8 bytes of explicit nonce before the ciphertext. */
+        unsigned char nonce[12], aad[13], suo[16];
+        unsigned int  tipo = h[0], ct, k, testa = e_aes12(t->cifrario) ? 8 : 0;
+        unsigned long long s = t->leggo.seq;
+
+        if (n < testa + 16) return EXTLS_ERR_PROTOCOLLO;
+        ct = n - testa - 16;
+        for (k = 0; k < 8; k++) aad[k] = (unsigned char)(s >> (56 - 8 * k));
+        aad[8] = (unsigned char)tipo; aad[9] = 3; aad[10] = 3;
+        aad[11] = (unsigned char)(ct >> 8); aad[12] = (unsigned char)ct;
+        bcopia(suo, t->bin + AVANTI + testa + ct, 16);
+
+        if (testa) {
+            bcopia(nonce, t->leggo.iv, 4);
+            bcopia(nonce + 4, t->bin + AVANTI, 8);
+            if (aes_gcm_decifra(&t->leggo.gcm, nonce, aad, 13, t->bin + AVANTI + 8,
+                                t->bin + AVANTI, ct, suo) != 0)
+                return EXTLS_ERR_PROTOCOLLO;
+        } else {
+            unsigned char atteso[16];
+
+            nonce_di(&t->leggo, nonce);
+            bcopia(t->bin, aad, 13);
+            for (k = 13; k < AVANTI; k++) t->bin[k] = 0;
+            tag_poly(t->bin, ct, t->leggo.chiave, nonce, atteso, 13);
+            if (!poly1305_uguali(atteso, suo)) return EXTLS_ERR_PROTOCOLLO;
+            chacha20(t->leggo.chiave, 1, nonce, t->bin + AVANTI, t->bin + AVANTI, ct);
+        }
+        t->leggo.seq++;
+        t->tipo = tipo;
+        t->pos  = 0;
+        t->fine = ct;
+    } else {
     /* Cifrato: fuori c'e' sempre 23, e i 16 byte finali sono il tag. */
     if (n < 17) return EXTLS_ERR_PROTOCOLLO;
     {
@@ -342,15 +480,22 @@ static int record_leggi(Tls *t, unsigned int ms)
          * verifica niente, e che passa o non passa a caso. */
         bcopia(suo, t->bin + AVANTI + ct, 16);
 
-        /* L'AAD e' l'intestazione com'e' arrivata, e sta gia' dove serve. */
-        for (k = 5; k < AVANTI; k++) t->bin[k] = 0;
+        if (t->cifrario == TLS_AES128) {
+            /* The AAD is the record header as it arrived: five bytes. */
+            if (aes_gcm_decifra(&t->leggo.gcm, nonce, h, 5,
+                                t->bin + AVANTI, t->bin + AVANTI, ct, suo) != 0)
+                return EXTLS_ERR_PROTOCOLLO;
+        } else {
+            /* L'AAD e' l'intestazione com'e' arrivata, e sta gia' dove serve. */
+            for (k = 5; k < AVANTI; k++) t->bin[k] = 0;
 
-        tag_poly(t->bin, ct, t->leggo.chiave, nonce, atteso);
-        if (!poly1305_uguali(atteso, suo))
-            return EXTLS_ERR_PROTOCOLLO;
+            tag_poly(t->bin, ct, t->leggo.chiave, nonce, atteso, 5);
+            if (!poly1305_uguali(atteso, suo))
+                return EXTLS_ERR_PROTOCOLLO;
 
-        chacha20(t->leggo.chiave, 1, nonce,
-                 t->bin + AVANTI, t->bin + AVANTI, ct);
+            chacha20(t->leggo.chiave, 1, nonce,
+                     t->bin + AVANTI, t->bin + AVANTI, ct);
+        }
         t->leggo.seq++;
 
         /* Il tipo vero e' l'ultimo byte non nullo. */
@@ -360,6 +505,7 @@ static int record_leggi(Tls *t, unsigned int ms)
         t->tipo = t->bin[AVANTI + ct - 1];
         t->pos  = 0;
         t->fine = ct - 1;
+    }
     }
 
     /* ! UN ALLARME SI GUARDA SUBITO, e non si confonde con dei dati. Il
@@ -400,6 +546,39 @@ static int record_scrivi2(Tls *t, unsigned int tipo,
         return EXTLS_OK;
     }
 
+    if (t->v12) {
+        unsigned char nonce[12], aad[13], tag[16], hdr[5], espl[8];
+        unsigned int  k, testa = e_aes12(t->cifrario) ? 8 : 0;
+        unsigned long long s = t->scrivo.seq;
+
+        for (k = 0; k < 8; k++) aad[k] = espl[k] = (unsigned char)(s >> (56 - 8 * k));
+        aad[8] = (unsigned char)tipo; aad[9] = 3; aad[10] = 3;
+        aad[11] = (unsigned char)(n >> 8); aad[12] = (unsigned char)n;
+
+        if (testa) {
+            /* The explicit nonce is the sequence number: unique by design. */
+            bcopia(nonce, t->scrivo.iv, 4);
+            bcopia(nonce + 4, espl, 8);
+            aes_gcm_cifra(&t->scrivo.gcm, nonce, aad, 13, b + AVANTI, b + AVANTI, n, tag);
+        } else {
+            nonce_di(&t->scrivo, nonce);
+            chacha20(t->scrivo.chiave, 1, nonce, b + AVANTI, b + AVANTI, n);
+            bcopia(b, aad, 13);
+            for (k = 13; k < AVANTI; k++) b[k] = 0;
+            tag_poly(b, n, t->scrivo.chiave, nonce, tag, 13);
+        }
+        bcopia(b + AVANTI + n, tag, 16);
+        t->scrivo.seq++;
+
+        hdr[0] = (unsigned char)tipo; hdr[1] = 3; hdr[2] = 3;
+        metti16(hdr + 3, testa + n + 16);
+        if (t->sotto->scrivi(t->sotto->stato, hdr, 5) != 5) return EXTLS_ERR_RETE;
+        if (testa && t->sotto->scrivi(t->sotto->stato, espl, 8) != 8) return EXTLS_ERR_RETE;
+        if (t->sotto->scrivi(t->sotto->stato, b + AVANTI, n + 16) != (int)(n + 16))
+            return EXTLS_ERR_RETE;
+        return EXTLS_OK;
+    }
+
     /* Cifrato: il tipo vero va in coda al testo, e fuori si scrive 23. */
     b[AVANTI + n] = (unsigned char)tipo;
     corpo = n + 1;
@@ -412,8 +591,13 @@ static int record_scrivi2(Tls *t, unsigned int tipo,
         unsigned char nonce[12], tag[16];
 
         nonce_di(&t->scrivo, nonce);
-        chacha20(t->scrivo.chiave, 1, nonce, b + AVANTI, b + AVANTI, corpo);
-        tag_poly(b, corpo, t->scrivo.chiave, nonce, tag);
+        if (t->cifrario == TLS_AES128) {
+            aes_gcm_cifra(&t->scrivo.gcm, nonce, b, 5,
+                          b + AVANTI, b + AVANTI, corpo, tag);
+        } else {
+            chacha20(t->scrivo.chiave, 1, nonce, b + AVANTI, b + AVANTI, corpo);
+            tag_poly(b, corpo, t->scrivo.chiave, nonce, tag, 5);
+        }
         /* Il tag va dopo il testo cifrato, e il riempimento di tag_poly
          * l'ha appena sovrascritto: si rimette a posto scrivendolo adesso. */
         bcopia(b + AVANTI + corpo, tag, 16);
@@ -540,10 +724,17 @@ static void derive_secret(const unsigned char segreto[EXTLS_IMPRONTA],
 }
 
 /* Da un segreto di traffico alle due cose che il record usa. */
-static void chiavi_da(const unsigned char segreto[EXTLS_IMPRONTA], Direzione *d)
+static void chiavi_da(const Tls *t, const unsigned char segreto[EXTLS_IMPRONTA],
+                      Direzione *d)
 {
-    extls_expand_label(segreto, "key", 0, 0, d->chiave, 32);
+    /* ! THE KEY LENGTH IS THE CIPHER'S: 16 bytes for AES-128, 32 for
+     * ChaCha20. HKDF-Expand-Label takes the length as an input, so a key of
+     * the wrong length is not a truncated right key — it is another key. */
+    unsigned int lung = (t->cifrario == TLS_AES128) ? 16 : 32;
+
+    extls_expand_label(segreto, "key", 0, 0, d->chiave, lung);
     extls_expand_label(segreto, "iv",  0, 0, d->iv, 12);
+    if (t->cifrario == TLS_AES128) gcm_chiave(&d->gcm, d->chiave, 16);
     d->seq    = 0;
     d->attiva = 1;
 }
@@ -551,29 +742,36 @@ static void chiavi_da(const unsigned char segreto[EXTLS_IMPRONTA], Direzione *d)
 /* =============================================================================
  * Il ClientHello
  * ========================================================================== */
-static int manda_hello(Tls *t, const char *host,
-                       const unsigned char pubblica[32],
-                       unsigned char sessione[32])
+static int manda_hello(Tls *t, const char *host, int secondo,
+                       unsigned int gruppo,
+                       const unsigned char *pubblica, unsigned int pub_n)
 {
-    unsigned char c[512];
+    unsigned char c[1024];
     unsigned int  i = 0, ext_inizio, ext_n;
     unsigned int  hl = lung(host);
 
     if (hl == 0 || hl > 255) return EXTLS_ERR_USO;
 
     c[i++] = 3; c[i++] = 3;                     /* legacy_version = 1.2 */
-    t->casuale(c + i, 32); i += 32;             /* random */
+    if (!secondo) t->casuale(t->ch_random, 32);
+    bcopia(c + i, t->ch_random, 32); i += 32;   /* random: the same twice */
 
     /* ! LA SESSIONE FINTA C'E' APPOSTA. In 1.3 non serve a niente, ma un
      * ClientHello senza session_id viene scartato da certi apparati che
      * credono di guardare una 1.2. Trentadue byte casuali che il server
      * rimanda indietro identici. */
     c[i++] = 32;
-    t->casuale(sessione, 32);
-    bcopia(c + i, sessione, 32); i += 32;
+    if (!secondo) t->casuale(t->ch_sessione, 32);
+    bcopia(c + i, t->ch_sessione, 32); i += 32;
 
-    metti16(c + i, 2); i += 2;                  /* cipher_suites */
-    c[i++] = 0x13; c[i++] = 0x03;               /* TLS_CHACHA20_POLY1305_SHA256 */
+    metti16(c + i, 12); i += 2;                 /* cipher_suites */
+    metti16(c + i, TLS_CHACHA); i += 2;         /* TLS_CHACHA20_POLY1305_SHA256 */
+    metti16(c + i, TLS_AES128); i += 2;         /* TLS_AES_128_GCM_SHA256 */
+    /* and for a 1.2 server: ECDHE with the same two AEADs */
+    metti16(c + i, TLS12_ECDHE_ECDSA_CHACHA); i += 2;
+    metti16(c + i, TLS12_ECDHE_RSA_CHACHA); i += 2;
+    metti16(c + i, TLS12_ECDHE_ECDSA_AES128); i += 2;
+    metti16(c + i, TLS12_ECDHE_RSA_AES128); i += 2;
 
     c[i++] = 1; c[i++] = 0;                     /* compressione: nessuna */
 
@@ -587,11 +785,12 @@ static int manda_hello(Tls *t, const char *host,
     metti16(c + i, hl); i += 2;
     bcopia(c + i, host, hl); i += hl;
 
-    /* supported_groups (10): x25519 */
+    /* supported_groups (10): x25519, then secp256r1 — see GR_P256 */
     metti16(c + i, 10); i += 2;
+    metti16(c + i, 6);  i += 2;
     metti16(c + i, 4);  i += 2;
-    metti16(c + i, 2);  i += 2;
-    metti16(c + i, 0x001D); i += 2;
+    metti16(c + i, GR_X25519); i += 2;
+    metti16(c + i, GR_P256); i += 2;
 
     /* signature_algorithms (13)
      * ! SOLO QUELLE CHE SAPPIAMO VERIFICARE, e non e' prudenza: annunciare un
@@ -611,26 +810,50 @@ static int manda_hello(Tls *t, const char *host,
      *
      * ! L'ORDINE E' UNA PREFERENZA, non un elenco: si mette per prima quella
      * che copre i siti che prima si rifiutavano. */
+    /* ! rsa_pkcs1_sha256 (0x0401) IS FOR 1.2 ONLY: TLS 1.3 forbids it in a
+     * CertificateVerify, and a 1.3 server will not pick it — while a 1.2
+     * server with an RSA certificate often signs its ServerKeyExchange so.
+     * It is verified by excert, the code of the certificate signatures. */
     metti16(c + i, 13); i += 2;
+    metti16(c + i, 10); i += 2;
     metti16(c + i, 8);  i += 2;
-    metti16(c + i, 6);  i += 2;
     metti16(c + i, 0x0403); i += 2;             /* ecdsa_secp256r1_sha256 */
     metti16(c + i, 0x0503); i += 2;             /* ecdsa_secp384r1_sha384 */
     metti16(c + i, 0x0804); i += 2;             /* rsa_pss_rsae_sha256 */
+    metti16(c + i, 0x0401); i += 2;             /* rsa_pkcs1_sha256 (1.2) */
 
-    /* supported_versions (43): solo 1.3 */
+    /* supported_versions (43): 1.3, and 1.2 after it */
     metti16(c + i, 43); i += 2;
-    metti16(c + i, 3);  i += 2;
-    c[i++] = 2;
+    metti16(c + i, 5);  i += 2;
+    c[i++] = 4;
     metti16(c + i, 0x0304); i += 2;
+    metti16(c + i, 0x0303); i += 2;
 
-    /* key_share (51): x25519 */
+    /* For 1.2 servers, and ignored by 1.3 ones:
+     *   ec_point_formats (11): uncompressed only;
+     *   extended_master_secret (23): the master secret bound to the whole
+     *     handshake (RFC 7627), against the «triple handshake» attack;
+     *   renegotiation_info (0xff01), empty: we never renegotiate, and a
+     *     server that knows RFC 5746 wants to hear it said. */
+    metti16(c + i, 11); i += 2; metti16(c + i, 2); i += 2; c[i++] = 1; c[i++] = 0;
+    metti16(c + i, 23); i += 2; metti16(c + i, 0); i += 2;
+    metti16(c + i, 0xff01); i += 2; metti16(c + i, 1); i += 2; c[i++] = 0;
+
+    /* key_share (51): one key, of the group asked (x25519 the first time) */
     metti16(c + i, 51); i += 2;
-    metti16(c + i, 38); i += 2;
-    metti16(c + i, 36); i += 2;
-    metti16(c + i, 0x001D); i += 2;
-    metti16(c + i, 32); i += 2;
-    bcopia(c + i, pubblica, 32); i += 32;
+    metti16(c + i, pub_n + 6); i += 2;
+    metti16(c + i, pub_n + 4); i += 2;
+    metti16(c + i, gruppo); i += 2;
+    metti16(c + i, pub_n); i += 2;
+    bcopia(c + i, pubblica, pub_n); i += pub_n;
+
+    /* cookie (44): echoed as it came, when the HelloRetryRequest had one */
+    if (secondo && t->cookie_n) {
+        metti16(c + i, 44); i += 2;
+        metti16(c + i, t->cookie_n + 2); i += 2;
+        metti16(c + i, t->cookie_n); i += 2;
+        bcopia(c + i, t->cookie, t->cookie_n); i += t->cookie_n;
+    }
 
     /* ALPN (16): http/1.1 — il browser parla quello, e dirlo evita che un
      * server moderno risponda in HTTP/2, che qui non si saprebbe leggere. */
@@ -649,34 +872,37 @@ static int manda_hello(Tls *t, const char *host,
 /* =============================================================================
  * Il ServerHello
  * ========================================================================== */
-static int leggi_hello(const unsigned char *p, unsigned int n,
-                       unsigned char altrui[32])
+static int leggi_hello(Tls *t, const unsigned char *p, unsigned int n,
+                       unsigned char altrui[65], unsigned int *altrui_n,
+                       int *hrr)
 {
     unsigned int i = 0, ext_n, fine;
     int          visto_chiave = 0, visto_versione = 0;
 
     if (n < 38) return EXTLS_ERR_PROTOCOLLO;
+    bcopia(t->sh_random, p + 2, 32);
     i += 2 + 32;                                /* versione + random */
 
     /* ! IL RANDOM DEL HelloRetryRequest E' UNA COSTANTE, ed e' l'unico modo di
-     * riconoscerlo: e' un ServerHello a tutti gli effetti. Non si gestisce —
-     * con un solo gruppo da offrire non ci sarebbe niente da riprovare — ma si
-     * riconosce, perche' «HRR» detto a chi legge il log e' un'informazione e
-     * «protocollo» non lo e'. */
+     * riconoscerlo: e' un ServerHello a tutti gli effetti. Dal 23 settembre
+     * 2026 si GESTISCE (vedi GR_P256): qui si riconosce e si legge, e chi
+     * chiama rimanda il ClientHello. */
     {
         static const unsigned char HRR[8] = {
             0xCF,0x21,0xAD,0x74,0xE5,0x9A,0x61,0x11
         };
         unsigned int k; int uguale = 1;
         for (k = 0; k < 8; k++) if (p[2 + k] != HRR[k]) { uguale = 0; break; }
-        if (uguale) return EXTLS_ERR_HRR;
+        *hrr = uguale;
     }
 
     if (i >= n) return EXTLS_ERR_PROTOCOLLO;
     i += 1 + p[i];                              /* legacy_session_id_echo */
     if (i + 3 > n) return EXTLS_ERR_PROTOCOLLO;
 
-    if (p[i] != 0x13 || p[i + 1] != 0x03) return EXTLS_ERR_CIFRARIO;
+    t->cifrario = be16(p + i);
+    if (t->cifrario != TLS_CHACHA && t->cifrario != TLS_AES128 &&
+        !e_cifrario12(t->cifrario)) return EXTLS_ERR_CIFRARIO;
     i += 2;
     i += 1;                                     /* compressione */
 
@@ -694,16 +920,48 @@ static int leggi_hello(const unsigned char *p, unsigned int n,
         if (tipo == 43) {                       /* supported_versions */
             if (len != 2 || be16(p + i) != 0x0304) return EXTLS_ERR_VERSIONE;
             visto_versione = 1;
-        } else if (tipo == 51) {                /* key_share */
-            if (len != 36 || be16(p + i) != 0x001D || be16(p + i + 2) != 32)
-                return EXTLS_ERR_PROTOCOLLO;
-            bcopia(altrui, p + i + 4, 32);
+        } else if (tipo == 23) {                /* extended_master_secret */
+            t->ems = 1;
+        } else if (tipo == 51 && *hrr) {        /* key_share: the group wanted */
+            if (len != 2) return EXTLS_ERR_PROTOCOLLO;
+            t->gruppo = be16(p + i);
             visto_chiave = 1;
+        } else if (tipo == 51) {                /* key_share: the server's key */
+            unsigned int kn;
+
+            if (len < 4) return EXTLS_ERR_PROTOCOLLO;
+            t->gruppo = be16(p + i);
+            kn = be16(p + i + 2);
+            if (kn + 4 != len) return EXTLS_ERR_PROTOCOLLO;
+            if (!((t->gruppo == GR_X25519 && kn == 32) ||
+                  (t->gruppo == GR_P256 && kn == 65))) return EXTLS_ERR_PROTOCOLLO;
+            bcopia(altrui, p + i + 4, kn);
+            *altrui_n = kn;
+            visto_chiave = 1;
+        } else if (tipo == 44 && *hrr) {        /* cookie, to echo */
+            if (len < 2 || be16(p + i) + 2 != len || len - 2 > COOKIE_MAX)
+                return EXTLS_ERR_PROTOCOLLO;
+            t->cookie_n = len - 2;
+            bcopia(t->cookie, p + i + 2, t->cookie_n);
         }
         i += len;
     }
 
-    if (!visto_versione) return EXTLS_ERR_VERSIONE;
+    if (!visto_versione) {
+        /* ! NO supported_versions: THE SERVER SPEAKS 1.2 (RFC 8446 4.2.1).
+         * The legacy version must then say 1.2, the cipher must be a 1.2 one,
+         * and the random must not carry the downgrade sentinel. */
+        static const unsigned char GIU[8] = { 'D','O','W','N','G','R','D',1 };
+        unsigned int k; int giu = 1;
+
+        if (p[0] != 3 || p[1] != 3 || *hrr) return EXTLS_ERR_VERSIONE;
+        if (!e_cifrario12(t->cifrario)) return EXTLS_ERR_CIFRARIO;
+        for (k = 0; k < 8; k++) if (t->sh_random[24 + k] != GIU[k]) { giu = 0; break; }
+        if (giu) return EXTLS_ERR_VERSIONE;
+        t->v12 = 1;
+        return EXTLS_OK;
+    }
+    if (e_cifrario12(t->cifrario)) return EXTLS_ERR_CIFRARIO;
     if (!visto_chiave)   return EXTLS_ERR_PROTOCOLLO;
     return EXTLS_OK;
 }
@@ -782,13 +1040,289 @@ static void contesto_firma(const unsigned char impronta[EXTLS_IMPRONTA],
 /* =============================================================================
  * La stretta di mano
  * ========================================================================== */
+/* =============================================================================
+ * TLS 1.2: the PRF, the certificates, the handshake — see TLS12_* above
+ * ========================================================================== */
+
+/* P_SHA256 (RFC 5246, 5): as many bytes as asked, from a secret, a label and
+ * a seed. */
+static void prf12(const unsigned char *segreto, unsigned int segreto_n,
+                  const char *etichetta, const unsigned char *seme,
+                  unsigned int seme_n, unsigned char *out, unsigned int n)
+{
+    unsigned char ls[96], a[EXTLS_IMPRONTA], buf[EXTLS_IMPRONTA + 96];
+    unsigned char blocco[EXTLS_IMPRONTA], nuova[EXTLS_IMPRONTA];
+    unsigned int  l = lung(etichetta), ls_n, k;
+
+    bcopia(ls, etichetta, l);
+    bcopia(ls + l, seme, seme_n);
+    ls_n = l + seme_n;
+
+    extls_hmac(segreto, segreto_n, ls, ls_n, a);            /* A(1) */
+    while (n > 0) {
+        bcopia(buf, a, EXTLS_IMPRONTA);
+        bcopia(buf + EXTLS_IMPRONTA, ls, ls_n);
+        extls_hmac(segreto, segreto_n, buf, EXTLS_IMPRONTA + ls_n, blocco);
+        k = n < EXTLS_IMPRONTA ? n : EXTLS_IMPRONTA;
+        bcopia(out, blocco, k);
+        out += k;
+        n -= k;
+        extls_hmac(segreto, segreto_n, a, EXTLS_IMPRONTA, nuova);
+        bcopia(a, nuova, EXTLS_IMPRONTA);
+    }
+}
+
+/* The Certificate of 1.2: a list of certificates, WITHOUT the request context
+ * and the per-entry extensions that 1.3 added. */
+static int leggi_certificati12(const unsigned char *p, unsigned int n,
+                               ExCert *catena, unsigned int max,
+                               unsigned int *quanti)
+{
+    unsigned int i = 3, fine;
+
+    *quanti = 0;
+    if (n < 3) return EXTLS_ERR_PROTOCOLLO;
+    fine = 3 + be24(p);
+    if (fine > n) return EXTLS_ERR_PROTOCOLLO;
+
+    while (i + 3 <= fine && *quanti < max) {
+        unsigned int len = be24(p + i);
+
+        i += 3;
+        if (i + len > fine) return EXTLS_ERR_PROTOCOLLO;
+        if (excert_analizza(p + i, len, &catena[*quanti]) != 0)
+            return EXTLS_ERR_CERTIFICATO;
+        (*quanti)++;
+        i += len;
+    }
+    if (*quanti == 0) return EXTLS_ERR_CERTIFICATO;
+    return EXTLS_OK;
+}
+
+/* The signature of the ServerKeyExchange, over client_random, server_random
+ * and the ECDH parameters.
+ *
+ * ! PKCS#1 v1.5 AND ECDSA GO THROUGH excert_firma_valida, the code that
+ * already verifies every certificate: a certificate signature and this one
+ * are the same computation on different bytes, so a «certificate» is built
+ * with the signed bytes as its body. RSA-PSS goes where 1.3 sends it. */
+static int firma12(const ExCert *sito, unsigned int alg,
+                   const unsigned char *firmato, unsigned int firmato_n,
+                   const unsigned char *firma, unsigned int firma_n)
+{
+    ExCert f;
+
+    if (alg == 0x0804) {
+        unsigned char h[EXTLS_IMPRONTA];
+
+        if (sito->tipo_chiave != EXASN1_CHIAVE_RSA) return EXTLS_ERR_FIRMA;
+        sha256(firmato, firmato_n, h);
+        return extls_rsa_pss_verifica(sito->chiave_modulo.p, sito->chiave_modulo.n,
+                                      sito->chiave_esponente.p, sito->chiave_esponente.n,
+                                      h, firma, firma_n, EXTLS_IMPRONTA) == 0
+               ? EXTLS_OK : EXTLS_ERR_FIRMA;
+    }
+
+    bzero_(&f, sizeof(f));
+    f.tbs.p = firmato;  f.tbs.n = firmato_n;
+    f.firma.p = firma;  f.firma.n = firma_n;
+    if (alg == 0x0401)      f.alg_firma = EXASN1_ALG_RSA_SHA256;
+    else if (alg == 0x0403) f.alg_firma = EXASN1_ALG_ECDSA_SHA256;
+    else if (alg == 0x0503) f.alg_firma = EXASN1_ALG_ECDSA_SHA384;
+    else return EXTLS_ERR_FIRMA;       /* not what we offered */
+
+    return excert_firma_valida(&f, sito) == EXCERT_OK ? EXTLS_OK : EXTLS_ERR_FIRMA;
+}
+
+static int stretta12(Tls *t, const char *host, const ExMagazzino *magazzino,
+                     const char *adesso, const unsigned char x_privata[32])
+{
+    ExCert        catena[8];
+    unsigned int  quanti = 0, gruppo = 0, punto_n = 0, k;
+    unsigned char punto[65], pms[32], ms[48], impronta[EXTLS_IMPRONTA];
+    int           visto_cert = 0, visto_skx = 0, chiesto_cert = 0, r;
+
+    /* --- what the server says in clear ----------------------------------- */
+    for (;;) {
+        unsigned int tipo, n;
+        const unsigned char *corpo;
+
+        r = hs_prossimo(t, &tipo, &corpo, &n, 15000);
+        if (r != EXTLS_OK) return r;
+
+        if (tipo == 11) {                       /* Certificate */
+            r = leggi_certificati12(corpo, n, catena, 8, &quanti);
+            if (r != EXTLS_OK) return r;
+            visto_cert = 1;
+            if (!passo(EXTLS_P_CERTIFICATI)) return EXTLS_ERR_RETE;
+            continue;
+        }
+        if (tipo == 22) continue;               /* CertificateStatus: not asked */
+
+        if (tipo == 12) {                       /* ServerKeyExchange */
+            unsigned char firmato[64 + 4 + 65];
+            unsigned int  par_n, alg, firma_n;
+
+            if (!visto_cert || n < 4 || corpo[0] != 3) return EXTLS_ERR_PROTOCOLLO;
+            gruppo  = be16(corpo + 1);
+            punto_n = corpo[3];
+            if (!((gruppo == GR_X25519 && punto_n == 32) ||
+                  (gruppo == GR_P256 && punto_n == 65))) return EXTLS_ERR_PROTOCOLLO;
+            par_n = 4 + punto_n;
+            if (par_n + 4 > n) return EXTLS_ERR_PROTOCOLLO;
+            alg     = be16(corpo + par_n);
+            firma_n = be16(corpo + par_n + 2);
+            if (par_n + 4 + firma_n > n) return EXTLS_ERR_PROTOCOLLO;
+
+            bcopia(firmato, t->ch_random, 32);
+            bcopia(firmato + 32, t->sh_random, 32);
+            bcopia(firmato + 64, corpo, par_n);
+            r = firma12(&catena[0], alg, firmato, 64 + par_n,
+                        corpo + par_n + 4, firma_n);
+            if (r != EXTLS_OK) return r;
+
+            bcopia(punto, corpo + 4, punto_n);
+            visto_skx = 1;
+            if (!passo(EXTLS_P_FIRMA)) return EXTLS_ERR_RETE;
+            continue;
+        }
+
+        if (tipo == 13) { chiesto_cert = 1; continue; }     /* CertificateRequest */
+
+        if (tipo == 14) break;                  /* ServerHelloDone */
+        return EXTLS_ERR_PROTOCOLLO;
+    }
+    if (!visto_cert || !visto_skx) return EXTLS_ERR_PROTOCOLLO;
+
+    /* --- the certificate is for THIS site, and comes from a real CA ------- */
+    if (!passo(EXTLS_P_CATENA)) return EXTLS_ERR_RETE;
+    r = excert_catena_valida(catena, quanti, magazzino, adesso, &t->anello,
+                             passo_anello, 0);
+    if (r == EXCERT_ANNULLATO) return EXTLS_ERR_RETE;
+    if (r != EXCERT_OK) { t->motivo = r; return EXTLS_ERR_CERTIFICATO; }
+    if (excert_nome_combacia(&catena[0], host) != EXCERT_OK) return EXTLS_ERR_NOME;
+
+    /* --- our half of ECDHE, and the pre-master secret -------------------- */
+    {
+        unsigned char nostro[66];
+        unsigned int  nostro_n;
+
+        if (gruppo == GR_P256) {
+            unsigned char priv[32];
+            int tentativi = 0;
+
+            do t->casuale(priv, 32);
+            while (p256_pubblica(priv, nostro + 1) != 0 && ++tentativi < 8);
+            if (tentativi >= 8) return EXTLS_ERR_PROTOCOLLO;
+            if (p256_condiviso(priv, punto, 65, pms) != 0) return EXTLS_ERR_PROTOCOLLO;
+            nostro_n = 65;
+        } else {
+            if (x25519_pubblica(nostro + 1, x_privata) != 0) return EXTLS_ERR_PROTOCOLLO;
+            if (x25519(pms, x_privata, punto) != 0) return EXTLS_ERR_PROTOCOLLO;
+            nostro_n = 32;
+        }
+        nostro[0] = (unsigned char)nostro_n;
+        if (!passo(EXTLS_P_SEGRETO)) return EXTLS_ERR_RETE;
+
+        /* ! A CertificateRequest GETS AN EMPTY Certificate: we have none to
+         * give, and saying so is allowed; the server decides whether it is
+         * enough. Silence would be a protocol error. */
+        if (chiesto_cert) {
+            static const unsigned char vuoto[3] = { 0, 0, 0 };
+            r = hs_manda(t, 11, vuoto, 3);
+            if (r != EXTLS_OK) return r;
+        }
+        r = hs_manda(t, 16, nostro, nostro_n + 1);          /* ClientKeyExchange */
+        if (r != EXTLS_OK) return r;
+    }
+
+    /* --- the master secret, and the keys ---------------------------------- */
+    {
+        unsigned char seme[64], blocco[88];
+        unsigned int  kl = e_aes12(t->cifrario) ? 16 : 32;
+        unsigned int  il = e_aes12(t->cifrario) ? 4 : 12;
+
+        if (t->ems) {
+            /* ! THE HASH OF THE HANDSHAKE SO FAR, ClientKeyExchange included. */
+            trascr_impronta(t, impronta);
+            prf12(pms, 32, "extended master secret", impronta, EXTLS_IMPRONTA, ms, 48);
+        } else {
+            bcopia(seme, t->ch_random, 32);
+            bcopia(seme + 32, t->sh_random, 32);
+            prf12(pms, 32, "master secret", seme, 64, ms, 48);
+        }
+
+        bcopia(seme, t->sh_random, 32);
+        bcopia(seme + 32, t->ch_random, 32);
+        prf12(ms, 48, "key expansion", seme, 64, blocco, 2 * kl + 2 * il);
+
+        bcopia(t->scrivo.chiave, blocco, kl);
+        bcopia(t->leggo.chiave, blocco + kl, kl);
+        bcopia(t->scrivo.iv, blocco + 2 * kl, il);
+        bcopia(t->leggo.iv, blocco + 2 * kl + il, il);
+        if (kl == 16) {
+            gcm_chiave(&t->scrivo.gcm, t->scrivo.chiave, 16);
+            gcm_chiave(&t->leggo.gcm, t->leggo.chiave, 16);
+        }
+        t->scrivo.seq = t->leggo.seq = 0;
+        for (k = 0; k < sizeof(blocco); k++) blocco[k] = 0;
+    }
+
+    /* --- ChangeCipherSpec, then our Finished, encrypted ------------------ */
+    {
+        unsigned char uno = 1, vd[12];
+
+        r = record_scrivi(t, 20, &uno, 1);
+        if (r != EXTLS_OK) return r;
+        t->scrivo.attiva = 1;
+
+        trascr_impronta(t, impronta);
+        prf12(ms, 48, "client finished", impronta, EXTLS_IMPRONTA, vd, 12);
+        r = hs_manda(t, 20, vd, 12);
+        if (r != EXTLS_OK) return r;
+    }
+
+    /* --- the server's ChangeCipherSpec (record_leggi turns the keys on) and
+     *     its Finished -------------------------------------------------------- */
+    t->leggo_pronta = 1;
+    {
+        unsigned int tipo, n;
+        const unsigned char *corpo;
+        unsigned char atteso[12];
+        unsigned int  salva;
+
+        r = hs_prossimo(t, &tipo, &corpo, &n, 15000);
+        if (r != EXTLS_OK) return r;
+        if (tipo != 20 || n != 12 || !t->leggo.attiva) return EXTLS_ERR_FINISHED;
+
+        salva = t->hs_off;
+        t->hs_off = salva - (n + 4);
+        trascr_impronta(t, impronta);
+        t->hs_off = salva;
+        prf12(ms, 48, "server finished", impronta, EXTLS_IMPRONTA, atteso, 12);
+        {
+            unsigned char diff = 0;
+            for (k = 0; k < 12; k++) diff |= (unsigned char)(atteso[k] ^ corpo[k]);
+            if (diff) return EXTLS_ERR_FINISHED;
+        }
+    }
+
+    for (k = 0; k < 48; k++) ms[k] = 0;
+    for (k = 0; k < 32; k++) pms[k] = 0;
+    t->trascr_n = t->hs_off = 0;
+    t->pos = t->fine = 0;
+    passo(EXTLS_P_FATTO);
+    return EXTLS_OK;
+}
+
 int extls_stretta(void *opaco, const ExTlsSotto *sotto, const char *host,
                   const ExMagazzino *magazzino, const char *adesso,
                   void (*casuale)(unsigned char *, unsigned int))
 {
     Tls *t = (Tls *)opaco;
-    unsigned char privata[32], pubblica[32], altrui[32], condiviso[32];
-    unsigned char sessione[32];
+    unsigned char privata[32], pubblica[32], altrui[65], condiviso[32];
+    unsigned int  altrui_n = 0;
+    int           hrr = 0;
     unsigned char primo[EXTLS_IMPRONTA], derivato[EXTLS_IMPRONTA];
     unsigned char stretta[EXTLS_IMPRONTA];
     unsigned char c_hs[EXTLS_IMPRONTA], s_hs[EXTLS_IMPRONTA];
@@ -811,27 +1345,85 @@ int extls_stretta(void *opaco, const ExTlsSotto *sotto, const char *host,
     casuale(privata, 32);
     if (x25519_pubblica(pubblica, privata) != 0) return EXTLS_ERR_PROTOCOLLO;
 
-    r = manda_hello(t, host, pubblica, sessione);
+    r = manda_hello(t, host, 0, GR_X25519, pubblica, 32);
     if (r != EXTLS_OK) return r;
 
     /* --- il ServerHello --------------------------------------------------- */
     {
-        unsigned int tipo, n;
+        unsigned int tipo, n, ch1_n = t->trascr_n;
         const unsigned char *corpo;
 
         r = hs_prossimo(t, &tipo, &corpo, &n, 15000);
         if (r != EXTLS_OK) return r;
         if (tipo != 2) return EXTLS_ERR_PROTOCOLLO;
 
-        r = leggi_hello(corpo, n, altrui);
+        r = leggi_hello(t, corpo, n, altrui, &altrui_n, &hrr);
         if (r != EXTLS_OK) return r;
+
+        if (hrr) {
+            unsigned int cifrario_hrr = t->cifrario, hrr_n = t->trascr_n - ch1_n, k;
+            unsigned char h1[32];
+
+            /* ! ONLY P-256 CAN BE ASKED FOR: x25519 was already given, and a
+             * request for it would be a server going round in circles. */
+            if (t->gruppo != GR_P256) return EXTLS_ERR_HRR;
+
+            /* The transcript: ClientHello1 becomes message_hash(its hash). */
+            sha256(t->trascr, ch1_n, h1);
+            for (k = 0; k < hrr_n; k++) t->trascr[36 + k] = t->trascr[ch1_n + k];
+            t->trascr[0] = 254; t->trascr[1] = 0; t->trascr[2] = 0; t->trascr[3] = 32;
+            bcopia(t->trascr + 4, h1, 32);
+            t->trascr_n = t->hs_off = 36 + hrr_n;
+
+            /* The P-256 key, now that someone wants it. A private key of zero
+             * or above the order is drawn again: it means nothing about the
+             * source, it happens once in 2^32 draws. */
+            {
+                unsigned char pub256[65];
+                int tentativi = 0;
+
+                do casuale(privata, 32);
+                while (p256_pubblica(privata, pub256) != 0 && ++tentativi < 8);
+                if (tentativi >= 8) return EXTLS_ERR_PROTOCOLLO;
+
+                r = manda_hello(t, host, 1, GR_P256, pub256, 65);
+                if (r != EXTLS_OK) return r;
+            }
+
+            r = hs_prossimo(t, &tipo, &corpo, &n, 15000);
+            if (r != EXTLS_OK) return r;
+            if (tipo != 2) return EXTLS_ERR_PROTOCOLLO;
+            r = leggi_hello(t, corpo, n, altrui, &altrui_n, &hrr);
+            if (r != EXTLS_OK) return r;
+
+            /* ! A SECOND HelloRetryRequest, ANOTHER GROUP OR ANOTHER CIPHER
+             * are all protocol errors (4.1.4): the server must stick to what
+             * it asked for. */
+            if (hrr || t->gruppo != GR_P256 || t->cifrario != cifrario_hrr)
+                return EXTLS_ERR_PROTOCOLLO;
+        } else if (t->v12) {
+            /* 1.2: the key exchange is in the ServerKeyExchange. */
+        } else if (t->gruppo != GR_X25519) {
+            /* Without a retry the only key we sent is x25519's. */
+            return EXTLS_ERR_PROTOCOLLO;
+        }
+    }
+    if (t->v12) {
+        if (!passo(EXTLS_P_HELLO)) return EXTLS_ERR_RETE;
+        return stretta12(t, host, magazzino, adesso, privata);
     }
     if (!passo(EXTLS_P_HELLO)) return EXTLS_ERR_RETE;
 
-    /* ! UN SEGRETO TUTTO ZERI SI RIFIUTA. Vuol dire che il punto ricevuto era
-     * di ordine piccolo: il «segreto» condiviso lo conoscerebbe anche chi
-     * guarda. x25519() lo dice, e qui si smette. */
-    if (x25519(condiviso, privata, altrui) != 0) return EXTLS_ERR_PROTOCOLLO;
+    if (t->gruppo == GR_P256) {
+        /* The peer point is checked inside: on the curve, or nothing. */
+        if (p256_condiviso(privata, altrui, altrui_n, condiviso) != 0)
+            return EXTLS_ERR_PROTOCOLLO;
+    } else {
+        /* ! UN SEGRETO TUTTO ZERI SI RIFIUTA. Vuol dire che il punto ricevuto
+         * era di ordine piccolo: il «segreto» condiviso lo conoscerebbe anche
+         * chi guarda. x25519() lo dice, e qui si smette. */
+        if (x25519(condiviso, privata, altrui) != 0) return EXTLS_ERR_PROTOCOLLO;
+    }
     if (!passo(EXTLS_P_SEGRETO)) return EXTLS_ERR_RETE;
 
     /* --- il calendario delle chiavi, primo giro --------------------------- */
@@ -852,7 +1444,7 @@ int extls_stretta(void *opaco, const ExTlsSotto *sotto, const char *host,
     traccia("SERVER_HANDSHAKE_TRAFFIC_SECRET", s_hs, EXTLS_IMPRONTA);
     traccia("CLIENT_HANDSHAKE_TRAFFIC_SECRET", c_hs, EXTLS_IMPRONTA);
 
-    chiavi_da(s_hs, &t->leggo);
+    chiavi_da(t, s_hs, &t->leggo);
 
     /* --- quello che il server dice sotto cifratura ------------------------ */
     {
@@ -1024,7 +1616,7 @@ int extls_stretta(void *opaco, const ExTlsSotto *sotto, const char *host,
         record_scrivi(t, 20, &uno, 1);   /* la scrittura e' ancora in chiaro */
     }
 
-    chiavi_da(c_hs, &t->scrivo);
+    chiavi_da(t, c_hs, &t->scrivo);
 
     {
         unsigned char chiave_f[EXTLS_IMPRONTA], mio[EXTLS_IMPRONTA];
@@ -1044,8 +1636,8 @@ int extls_stretta(void *opaco, const ExTlsSotto *sotto, const char *host,
     derive_secret(padrone, "c ap traffic", impronta, t->c_app);
     derive_secret(padrone, "s ap traffic", impronta, t->s_app);
 
-    chiavi_da(t->c_app, &t->scrivo);
-    chiavi_da(t->s_app, &t->leggo);
+    chiavi_da(t, t->c_app, &t->scrivo);
+    chiavi_da(t, t->s_app, &t->leggo);
 
     /* Da qui in poi la trascrizione non serve piu': il buffer resta, e serve
      * a leggere i record. */

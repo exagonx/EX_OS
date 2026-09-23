@@ -28,6 +28,13 @@ static const char *const g_nomi[] = {
     "ex_dlg_percorso",
     "ex_dlg_chiedi",
     "ex_dlg_scegli",          /* 23 settembre 2026 */
+    "ex_scarico_avvia",       /* i download, lo stesso giorno */
+    "ex_scarico_info",
+    "ex_scarico_ferma",
+    "ex_scarichi_in_corso",
+    "ex_scarichi_ferma_tutti",
+    "ex_scarichi_finestra",
+    "ex_scarichi_alla_fine",
     "__lib_avvio"
 };
 
@@ -40,6 +47,13 @@ static void *const g_indirizzi[] = {
     (void *)ex_dlg_percorso,
     (void *)ex_dlg_chiedi,
     (void *)ex_dlg_scegli,
+    (void *)ex_scarico_avvia,
+    (void *)ex_scarico_info,
+    (void *)ex_scarico_ferma,
+    (void *)ex_scarichi_in_corso,
+    (void *)ex_scarichi_ferma_tutti,
+    (void *)ex_scarichi_finestra,
+    (void *)ex_scarichi_alla_fine,
     (void *)__libc_ponti_avvia
 };
 

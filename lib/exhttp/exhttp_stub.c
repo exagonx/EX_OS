@@ -55,6 +55,7 @@ static struct {
                  ExHttpEsito *);
     int (*certi_esamina)(const unsigned char *, unsigned int, char *, unsigned int);
     int (*certi_aggiungi)(const unsigned char *, unsigned int);
+    unsigned long (*attesi)(void);
 } P;
 
 static void *chiedi(const ExLibTesta *t, const char *nome)
@@ -104,6 +105,7 @@ static void assicura(void)
                                 unsigned int))exlib_simbolo(t, "exhttp_certi_esamina");
     P.certi_aggiungi = (int (*)(const unsigned char *, unsigned int))
                        exlib_simbolo(t, "exhttp_certi_aggiungi");
+    P.attesi = (unsigned long (*)(void))exlib_simbolo(t, "exhttp_attesi");
 
     P.pronto = 1;
 }
@@ -134,6 +136,10 @@ int exhttp_certi_esamina(const unsigned char *dati, unsigned int n,
 
 int exhttp_certi_aggiungi(const unsigned char *dati, unsigned int n)
 { assicura(); return P.certi_aggiungi ? P.certi_aggiungi(dati, n) : -2; }
+
+/* Optional as well: without it the percentage is simply not known. */
+unsigned long exhttp_attesi(void)
+{ assicura(); return P.attesi ? P.attesi() : 0; }
 
 int exhttp_posta(const char *url, const char *corpo, unsigned char *buf,
                  unsigned int max, ExHttpEsito *e)

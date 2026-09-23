@@ -65,6 +65,38 @@ int  aes_ccm_decifra(const AesChiave *c,
                      const unsigned char *in, unsigned char *out, unsigned int n,
                      const unsigned char *tag, unsigned int tag_n);
 
+/* --- AES-GCM (NIST SP 800-38D), for TLS 1.3 — lib/excrypt/gcm.c ----------
+ *
+ * Nonce of 12 bytes and tag of 16, the only sizes TLS uses. `in` and `out`
+ * may be the same buffer. Decryption checks the tag FIRST and returns -1
+ * without touching `out` when it does not match. */
+typedef struct {
+    AesChiave    aes;
+    unsigned int h[4];      /* E(K, 0), the GHASH key */
+} GcmChiave;
+
+int  gcm_chiave(GcmChiave *g, const unsigned char *chiave, unsigned int byte);
+void aes_gcm_cifra(const GcmChiave *g, const unsigned char iv[12],
+                   const unsigned char *aad, unsigned int aad_n,
+                   const unsigned char *in, unsigned char *out, unsigned int n,
+                   unsigned char tag[16]);
+int  aes_gcm_decifra(const GcmChiave *g, const unsigned char iv[12],
+                     const unsigned char *aad, unsigned int aad_n,
+                     const unsigned char *in, unsigned char *out, unsigned int n,
+                     const unsigned char tag[16]);
+
+/* --- ECDH on P-256, constant time — lib/excrypt/p256.c -----------------------
+ *
+ * For the TLS key exchange on secp256r1. NOT lib/excurva, which is for
+ * public numbers only and says so: see p256.c.
+ *   p256_pubblica   0 < privata < n, big endian; pubblica = 04 || X || Y.
+ *   p256_condiviso  the X of privata * punto, 32 bytes; the peer point is
+ *                   checked (65 bytes, uncompressed, on the curve).
+ * Both return 0, or -1. */
+int  p256_pubblica(const unsigned char privata[32], unsigned char pubblica[65]);
+int  p256_condiviso(const unsigned char privata[32], const unsigned char *punto,
+                    unsigned int punto_n, unsigned char segreto[32]);
+
 /* --- SHA-1, HMAC-SHA1, PBKDF2 (RFC 3174, 2104, 2898) ------------------------
  *
  * ! SHA-1 E' ROTTO E SI SCRIVE LO STESSO, perche' WPA e WPA2 derivano le

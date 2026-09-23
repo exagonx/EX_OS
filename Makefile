@@ -1524,7 +1524,12 @@ EXTLS_CLIENT := lib/extls/extls_client.c lib/extls/extls_pem.c \
                 lib/excurva/excurva.c \
                 lib/excrypt/chacha20.c lib/excrypt/poly1305.c \
                 lib/excrypt/x25519.c lib/excrypt/fe25519.c \
-                lib/excrypt/sha512.c
+                lib/excrypt/sha512.c \
+                lib/excrypt/aes.c lib/excrypt/gcm.c lib/excrypt/p256.c
+# ! p256.c NEL TLS DAL 23 SETTEMBRE 2026, sera: lo scambio di chiavi su
+# secp256r1, a tempo costante, per chi lo chiede con una HelloRetryRequest.
+# ! aes.c E gcm.c NEL TLS DAL 23 SETTEMBRE 2026: il secondo cifrario,
+# TLS_AES_128_GCM_SHA256, per i server che non hanno ChaCha20 (eBay).
 EXTLS_INC    := -I lib/extls -I lib/excert -I lib/exasn1 -I lib/exbig \
                 -I lib/excrypt -I lib/excurva
 
@@ -1848,16 +1853,18 @@ EXDLG_LD      := lib/exdlg/exdlg.ld
 
 EXDLG_SO := $(BUILD_EXWIN_LIB)/exdlg.so
 
-$(EXDLG_SO): $(EXDLG_SRC) $(EXDLG_ESPORTA) $(EXDLG_HDR) $(EXDLG_LD) \
+$(EXDLG_SO): $(EXDLG_SRC) $(EXDLG_ESPORTA) $(EXDLG_HDR) $(EXDLG_LD) lib/exdlg/scarichi.c \
              $(EXWIN_STUB) $(EXWIN_HDR) $(EXLIB_SRC) $(EXLIB_HDR) \
              $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(SEGNO_FLAG)
 	@echo "=== Compilazione libreria condivisa /exwin/lib/exdlg.so ==="
 	@mkdir -p $(BUILD_EXWIN_LIB) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -I drivers/kbd -c $(EXDLG_SRC) -o $(BUILD_OBJ)/sodlg_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -c lib/exdlg/scarichi.c -o $(BUILD_OBJ)/sodlg_scarichi.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -c $(EXDLG_ESPORTA) -o $(BUILD_OBJ)/sodlg_esporta.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -c $(EXWIN_STUB) -o $(BUILD_OBJ)/sodlg_exwin.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(EXDLG_LD) \
 	    $(BUILD_OBJ)/sodlg_esporta.o $(BUILD_OBJ)/sodlg_main.o \
+	    $(BUILD_OBJ)/sodlg_scarichi.o \
 	    $(BUILD_OBJ)/sodlg_exwin.o $(LIBC_PONTI_OBJ) -o $@
 	@# ! L'INDIRIZZO ATTESO SI LEGGE DAL .ld, NON SI RISCRIVE QUI. Scritto
 	@# a mano era la TERZA copia della stessa mappa — il .ld, il commento
@@ -3429,7 +3436,8 @@ telnetd: dirs $(TELNETD_BIN)
 EXCRYPT_SRC := lib/excrypt/chacha20.c lib/excrypt/poly1305.c \
                lib/excrypt/fe25519.c lib/excrypt/x25519.c \
                lib/excrypt/sha512.c lib/excrypt/ed25519.c \
-               lib/excrypt/aes.c lib/excrypt/sha1.c
+               lib/excrypt/aes.c lib/excrypt/sha1.c lib/excrypt/gcm.c \
+               lib/excrypt/p256.c
 EXCRYPT_HDR := lib/excrypt/excrypt.h lib/excrypt/fe25519.h
 
 # --- /bin/crypttest (solo CD) -------------------------------------------------

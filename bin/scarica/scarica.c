@@ -31,7 +31,7 @@
 #include "exhttp.h"
 
 /* +0.001 a ogni modifica: `scarica -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("scarica", "0.005");
+EX_VERSIONE("scarica", "0.006");
 
 /* ! IL TETTO LO METTE CHI SCARICA, NON IL SERVER. Un megabyte tiene qualunque
  * pagina di testo; se non basta si tronca e si dice, invece di far decidere a
@@ -59,6 +59,36 @@ static int  g_fd      = -1;
 static long g_scritti = 0;
 static int  g_guaio   = 0;
 
+/* =============================================================================
+ * -avanza: LINES FOR A MACHINE, NOT FOR A PERSON — 23 September 2026
+ *
+ * EXBrowser's download window starts this program and reads its standard
+ * output from a pipe: a download that runs in its own process leaves the
+ * browser free to go on browsing, and has its own copy of exhttp, whose
+ * state is global and would not bear two requests in one process.
+ *
+ *     AVANZA <bytes written> <bytes expected, 0 = unknown>
+ *     FINE <http code> <bytes>
+ *     ERRORE <sentence>
+ *
+ * ! AT MOST FOUR AVANZA A SECOND: a line per 4 KB piece would fill the pipe
+ * faster than a window refreshed five times a second reads it — and a full
+ * pipe blocks the writer, that is the download.
+ * ============================================================================= */
+static int          g_avanza    = 0;
+static unsigned int g_avanza_ms = 0;
+
+static void di(const char *s)
+{
+    unsigned int n = (unsigned int)strlen(s), fatti = 0;
+
+    while (fatti < n) {
+        int k = (int)write(1, s + fatti, n - fatti);
+        if (k <= 0) return;
+        fatti += (unsigned int)k;
+    }
+}
+
 static int verso_file(void *dato, const unsigned char *d, unsigned int n)
 {
     unsigned int fatti = 0;
@@ -71,6 +101,14 @@ static int verso_file(void *dato, const unsigned char *d, unsigned int n)
         fatti += (unsigned int)k;
     }
     g_scritti += (long)n;
+
+    if (g_avanza && (g_avanza_ms == 0 || uptime_ms() - g_avanza_ms >= 250)) {
+        char riga[64];
+
+        g_avanza_ms = uptime_ms();
+        sprintf(riga, "AVANZA %ld %lu\n", g_scritti, exhttp_attesi());
+        di(riga);
+    }
     return 1;
 }
 
@@ -125,7 +163,8 @@ static void uso(void)
     printf("  scarica http://esempio.it/ pag.html  la salva\n");
     printf("  scarica -i http://esempio.it/        solo l'esito\n");
     printf("  scarica -tempi https://esempio.it/   i tempi della stretta\n");
-    printf("  scarica -da 1000 <url>               chiede dal byte 1000\n\n");
+    printf("  scarica -da 1000 <url>               chiede dal byte 1000\n");
+    printf("  scarica -avanza <url> file           righe AVANZA/FINE/ERRORE\n\n");
     /* ! -da SERVE A PROVARE LA RIPRESA A MANO. Chi la usa per davvero e'
      * netupdate, che finisce un .new rimasto a meta'; qui sta perche' una
      * cosa che non si puo' chiedere da riga di comando non si prova, e una
@@ -152,6 +191,7 @@ int main(int argc, char **argv)
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-i") == 0)      solo_info = 1;
         else if (strcmp(argv[i], "-tempi") == 0) tempi = 1;
+        else if (strcmp(argv[i], "-avanza") == 0) g_avanza = 1;
         else if (strcmp(argv[i], "-da") == 0 && i + 1 < argc)
             da = (unsigned long)strtoul(argv[++i], 0, 10);
         else if (strcmp(argv[i], "-h") == 0) { uso(); return 0; }
@@ -189,7 +229,11 @@ int main(int argc, char **argv)
      * senza file stampa la pagina a schermo, e per stamparla bisogna averla. */
     if (dove && !solo_info) {
         g_fd = open(dove, O_WRONLY | O_CREAT | O_TRUNC);
-        if (g_fd < 0) { printf("scarica: non riesco a creare %s\n", dove); return 1; }
+        if (g_fd < 0) {
+            if (g_avanza) { di("ERRORE non riesco a creare il file\n"); return 1; }
+            printf("scarica: non riesco a creare %s\n", dove);
+            return 1;
+        }
         g_scritti = 0;
         g_guaio   = 0;
         exhttp_verso(verso_file, 0);
@@ -197,11 +241,44 @@ int main(int argc, char **argv)
 
     if (!exhttp_prendi(url, g_buf, sizeof(g_buf), &e)) {
         if (g_fd >= 0) { exhttp_verso(0, 0); close(g_fd); g_fd = -1; remove(dove); }
+        if (g_avanza) {
+            char riga[128];
+            snprintf(riga, sizeof(riga), "ERRORE %s\n", e.errore[0] ? e.errore : "non riuscito");
+            di(riga);
+            return 1;
+        }
         printf("scarica: %s\n", e.errore[0] ? e.errore : "non riuscito");
         return 1;
     }
 
     if (g_fd >= 0) exhttp_verso(0, 0);
+
+    /* With -avanza the answer is one line, and a file that is not the one
+     * asked for (a 404 page, a half file) does not stay on the disk. */
+    if (g_avanza && g_fd >= 0) {
+        char riga[128];
+
+        close(g_fd);
+        g_fd = -1;
+        if (g_guaio) {
+            remove(dove);
+            di("ERRORE la scrittura si e' fermata: disco pieno?\n");
+            return 1;
+        }
+        if ((e.codice != 200 && e.codice != 206) || e.troncata) {
+            remove(dove);
+            if (e.troncata)
+                snprintf(riga, sizeof(riga), "ERRORE arrivato a meta': %s\n",
+                         e.errore[0] ? e.errore : "connessione chiusa");
+            else
+                snprintf(riga, sizeof(riga), "ERRORE il server ha risposto %d\n", e.codice);
+            di(riga);
+            return 1;
+        }
+        sprintf(riga, "FINE %d %ld\n", e.codice, g_scritti);
+        di(riga);
+        return 0;
+    }
 
     ms = uptime_ms() - t0;
 

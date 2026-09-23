@@ -101,6 +101,30 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### La finestra Download, nel toolkit
+
+**testato in QEMU** — gli scaricamenti di EXBrowser girano in un processo
+proprio (`scarica -avanza`), e il navigatore resta libero di navigare. La
+finestra **Download** si apre da sola, mostra percentuale, misura, velocità
+media e tempo che manca, si chiude senza fermare niente e torna da
+**Strumenti > Download**; **Ferma** cancella il file a metà. Sta nel toolkit
+(`lib/exdlg/scarichi.c`, con `ex_guarda_fd` in exwin), quindi la usa qualunque
+programma fatto con exide: vedi il manuale di exide, «Scaricare file»
+(`tools/prova_download.sh`).
+
+### EXBrowser chiede «apri o scarica», e Archivi prende le cartelle
+
+**testato in QEMU** — un collegamento a un file che non è una pagina (uno ZIP,
+un programma, un'immagine) non viene più impaginato come spazzatura: EXBrowser
+chiede **Apri con Archivi** (o con l'editor), **Scarica** o **Annulla**. Se ne
+accorge dal nome, prima di scaricare, oppure dal `Content-Type` del server
+quando il nome non dice niente. Lo scaricamento va sul disco mentre arriva,
+senza il tetto di 1 MB delle pagine (`tools/prova_apri_scarica.sh`).
+
+In **Archivi** c'è **Comandi > Aggiungi cartella...**, e anche `zip archivio.zip
+cartella` prende l'albero intero: ogni cartella ha la sua voce `nome/`, così
+anche quelle vuote tornano fuori all'estrazione (`tools/prova_zip.sh`, passo 6).
+
 ### Certificati: la catena si ferma alla prima radice, e se ne aggiungono
 
 **testato in QEMU, sulla rete vera** — prima di cambiare qualcosa si è

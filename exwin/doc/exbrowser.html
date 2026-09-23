@@ -138,8 +138,9 @@ Tre schemi:
 <tr><td><code>http://</code></td><td><code>http://example.com/</code></td>
     <td>in chiaro, porta 80</td></tr>
 <tr><td><code>https://</code></td><td><code>https://example.com/</code></td>
-    <td>TLS 1.3, con il certificato verificato davvero contro le CA di
-        <code>/etc/ca</code></td></tr>
+    <td>TLS 1.3, o 1.2 per i server che non hanno altro, con il certificato
+        verificato davvero contro le CA di <code>/exos/ssl/certi.pem</code>
+        (e le tue, vedi <i>I certificati</i>)</td></tr>
 <tr><td><code>file://</code></td><td><code>file:///exwin/doc/exbrowser.html</code></td>
     <td>un file di questo disco: nessuna rete, nessuna cache</td></tr>
 </table>
@@ -544,10 +545,9 @@ qualunque file che non sia una pagina non viene impaginato: EXBrowser chiede
 <li><b>Apri con Archivi</b> (per uno ZIP) o <b>Apri con l'editor</b> (per un
     testo o un sorgente) &mdash; il file si scarica in
     <code>$HOME/.app/exbrowser/scaricati/</code> e si apre col suo programma;</li>
-<li><b>Scarica</b> &mdash; si sceglie dove salvarlo, e si scrive sul disco
-    mentre arriva: il tetto di un megabyte delle pagine qui non vale, e
-    <code>Esc</code> lo ferma. Un file interrotto a meta' non resta sul
-    disco;</li>
+<li><b>Scarica</b> &mdash; si sceglie dove salvarlo, e parte nella finestra
+    <b>Download</b> (vedi sotto): si puo' continuare a navigare mentre
+    arriva, e il tetto di un megabyte delle pagine qui non vale;</li>
 <li><b>Annulla</b> &mdash; e' il pulsante che ha il fuoco: <code>Invio</code>
     senza leggere non scarica niente.</li>
 </ul>
@@ -558,6 +558,32 @@ allora chiede prima di scaricare; oppure, quando il nome non dice niente
 (<code>.../scarica?id=42</code>), dal <b>tipo</b> che dichiara il server
 (<code>application/zip</code>). Un file del disco (<code>file:</code>) che ha
 un programma si apre direttamente.
+</p>
+
+<h2>La finestra Download</h2>
+
+<p>
+Ogni scaricamento gira per conto suo, e la finestra <b>Download</b> si apre da
+sola quando ne parte uno. Per ognuno dice la percentuale, quanto e' arrivato su
+quanto, la <b>velocita' media</b> e il <b>tempo che manca</b>; alla fine, quanto
+ci ha messo e a che media.
+</p>
+
+<ul>
+<li>si puo' <b>spostare</b> accanto al navigatore, o <b>chiudere</b>: gli
+    scaricamenti vanno avanti lo stesso, e <b>Strumenti &gt; Download</b> la
+    riapre con lo stato di adesso;</li>
+<li><b>Ferma</b> (o <code>Canc</code> sulla riga scelta) interrompe e cancella il
+    file a meta'; <b>Apri la cartella</b> apre il file manager dove sta il file;
+    <b>Togli i finiti</b> pulisce l'elenco. <code>Esc</code> chiude la finestra;</li>
+<li>chiudendo EXBrowser la finestra se ne va con lui; se ci sono scaricamenti in
+    corso lo chiede prima, perche' uscendo si fermano.</li>
+</ul>
+
+<p class="nota">
+La percentuale c'e' quando il server dice quanto e' lungo il file
+(<code>Content-Length</code>). Quando non lo dice, la finestra scrive quanto e'
+arrivato e da quanto tempo, e non inventa un numero.
 </p>
 
 <h2>I certificati</h2>
@@ -590,11 +616,14 @@ riga <code>#</code> che dice il suo nome.
 
 <p class="nota">
 <b>Se un sito non si apre, di solito non e' il certificato.</b> Misurato su
-trenta siti comuni il 23 settembre 2026: uno solo era un problema di catena
-(ed e' stato corretto), gli altri erano server che parlano solo
-<b>TLS 1.2</b>, o che non accettano i cifrari che EX-OS offre. La barra di
-stato lo distingue: <i>la radice non e' nel magazzino</i> e' un certificato;
+trenta siti comuni il 23 settembre 2026: la mattina se ne aprivano 23, e uno
+solo dei sette che mancavano era un problema di catena. Gli altri erano il TLS:
+server che parlano solo <b>TLS 1.2</b>, che vogliono <b>AES-GCM</b> o lo scambio
+di chiavi su <b>P-256</b>. Adesso EXBrowser sa tutte e tre le cose. La barra di
+stato distingue i casi: <i>la radice non e' nel magazzino</i> e' un certificato;
 <i>il server ha rifiutato</i> non lo e', e aggiungere una CA non lo aprirebbe.
+Un sito che risponde <b>403</b> ha aperto la connessione e poi ha deciso di non
+servire un programma che non riconosce: e' un blocco suo.
 </p>
 
 <h2>I limiti, dichiarati</h2>
