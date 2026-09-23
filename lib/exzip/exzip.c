@@ -631,6 +631,138 @@ int ex_zip_aggiungi(ExZip *z, const char *file, const char *nome)
     return 1;
 }
 
+/* =============================================================================
+ * WHOLE DIRECTORIES — 23 September 2026
+ *
+ * Asked: in Archivi, being able to choose a directory too, not only files.
+ * It sits in the library and not in the window because /bin/zip wants the
+ * same thing (`zip a.zip cartella` failed on a directory), and two copies of
+ * a walk over a tree would diverge.
+ *
+ * ! EVERY DIRECTORY GETS ITS OWN ENTRY, "name/", before its contents. Without
+ * it an EMPTY directory would not survive the trip, and the extraction here
+ * (ex_zip_estrai) creates directories from those entries, not by guessing
+ * from the names of the files.
+ *
+ * ! ONE FILE THAT CANNOT BE READ DOES NOT STOP THE REST: it is counted, the
+ * last reason is kept, and the caller says «N not added, because...». A tree
+ * of a thousand files lost for one locked file would be the worse deal.
+ * ============================================================================= */
+#define ALBERO_FONDO  24        /* nested directories: deeper is a loop */
+
+static int voce_cartella(ExZip *z, const char *nome)
+{
+    unsigned char h[LOC_FISSO];
+    unsigned int  ln = (unsigned int)strlen(nome), data = data_dos();
+
+    if (z->w_quante >= EXZIP_VOCI_MAX) { errore("l'archivio e' pieno: 1024 voci"); return 0; }
+    if (ln == 0 || ln >= EXZIP_NOME_MAX || z->nomi_usati + ln + 1 > NOMI_POOL) {
+        errore("nome di cartella troppo lungo per l'archivio");
+        return 0;
+    }
+
+    memset(h, 0, LOC_FISSO);
+    metti32(h + 0,  SIG_LOCALE);
+    metti16(h + 4,  20);
+    metti16(h + 8,  EXZIP_STORE);
+    metti16(h + 10, data & 0xFFFF);
+    metti16(h + 12, (data >> 16) & 0xFFFF);
+    metti16(h + 26, ln);
+
+    z->w_off[z->w_quante]  = z->scritto;
+    z->w_crc[z->w_quante]  = 0;
+    z->w_dim[z->w_quante]  = 0;
+    z->w_cdim[z->w_quante] = 0;
+    z->w_met[z->w_quante]  = EXZIP_STORE;
+    z->w_data[z->w_quante] = data;
+    z->w_nome[z->w_quante] = z->nomi_usati;
+    memcpy(z->nomi + z->nomi_usati, nome, ln + 1);
+    z->nomi_usati += ln + 1;
+
+    if (write(z->fd, h, LOC_FISSO) != LOC_FISSO ||
+        (unsigned int)write(z->fd, nome, ln) != ln) {
+        errore("non riesco a scrivere nell'archivio");
+        return 0;
+    }
+    z->scritto += LOC_FISSO + ln;
+    z->w_quante++;
+    return 1;
+}
+
+static void albero(ExZip *z, const char *cartella, const char *nome, int fondo,
+                   int *messi, int *saltati, char *ultimo)
+{
+    DIR           *d;
+    struct dirent *e;
+    char           dentro[EXZIP_NOME_MAX];
+
+    if (fondo > ALBERO_FONDO) { (*saltati)++; strcpy(ultimo, "cartelle troppo annidate"); return; }
+
+    snprintf(dentro, sizeof(dentro), "%s/", nome);
+    if (!voce_cartella(z, dentro)) { (*saltati)++; strcpy(ultimo, g_err); return; }
+
+    d = opendir(cartella);
+    if (!d) { (*saltati)++; strcpy(ultimo, "una cartella non si apre"); return; }
+
+    while ((e = readdir(d)) != 0) {
+        char        perc[512], sotto[EXZIP_NOME_MAX];
+        struct stat st;
+        int         e_cartella;
+
+        if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0) continue;
+        if (snprintf(perc, sizeof(perc), "%s/%s", cartella, e->d_name) >= (int)sizeof(perc) ||
+            snprintf(sotto, sizeof(sotto), "%s/%s", nome, e->d_name) >= (int)sizeof(sotto)) {
+            (*saltati)++;
+            strcpy(ultimo, "un percorso troppo lungo");
+            continue;
+        }
+
+        e_cartella = e->d_type == DT_DIR;
+        if (e->d_type == DT_UNKNOWN && stat(perc, &st) == 0) e_cartella = S_ISDIR(st.st_mode);
+
+        if (e_cartella) {
+            albero(z, perc, sotto, fondo + 1, messi, saltati, ultimo);
+        } else if (ex_zip_aggiungi(z, perc, sotto)) {
+            (*messi)++;
+        } else {
+            (*saltati)++;
+            strcpy(ultimo, g_err);
+        }
+    }
+    closedir(d);
+}
+
+int ex_zip_aggiungi_albero(ExZip *z, const char *cartella, const char *nome,
+                           int *quanti_saltati)
+{
+    int  messi = 0, saltati = 0;
+    char ultimo[sizeof(g_err)] = "";
+    char base[EXZIP_NOME_MAX];
+    int  i;
+
+    g_err[0] = '\0';
+    if (!z || !z->scrittura) { errore("questo archivio non e' in scrittura"); return -1; }
+
+    /* The name inside the archive: no leading or trailing slash. */
+    while (*nome == '/') nome++;
+    snprintf(base, sizeof(base), "%s", nome);
+    i = (int)strlen(base);
+    while (i > 0 && base[i - 1] == '/') base[--i] = '\0';
+    if (!base[0]) { errore("la cartella ha bisogno di un nome dentro l'archivio"); return -1; }
+
+    albero(z, cartella, base, 0, &messi, &saltati, ultimo);
+    if (quanti_saltati) *quanti_saltati = saltati;
+
+    if (saltati) {
+        char t[sizeof(g_err)];
+
+        snprintf(t, sizeof(t), "%d non aggiunt%s: %s", saltati,
+                 saltati == 1 ? "o" : "i", ultimo);
+        errore(t);
+    }
+    return messi;
+}
+
 int ex_zip_finisci(ExZip *z)
 {
     unsigned char c[CEN_FISSO];

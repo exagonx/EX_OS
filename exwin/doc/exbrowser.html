@@ -532,6 +532,34 @@ di un browser che non parte &mdash; e per questo il conto sta in
     dice quale non si carica.</li>
 </ul>
 
+<h2>I file che non sono pagine</h2>
+
+<p>
+Un collegamento a un <code>.zip</code>, a un programma, a un'immagine o a
+qualunque file che non sia una pagina non viene impaginato: EXBrowser chiede
+<b>che cosa farne</b>.
+</p>
+
+<ul>
+<li><b>Apri con Archivi</b> (per uno ZIP) o <b>Apri con l'editor</b> (per un
+    testo o un sorgente) &mdash; il file si scarica in
+    <code>$HOME/.app/exbrowser/scaricati/</code> e si apre col suo programma;</li>
+<li><b>Scarica</b> &mdash; si sceglie dove salvarlo, e si scrive sul disco
+    mentre arriva: il tetto di un megabyte delle pagine qui non vale, e
+    <code>Esc</code> lo ferma. Un file interrotto a meta' non resta sul
+    disco;</li>
+<li><b>Annulla</b> &mdash; e' il pulsante che ha il fuoco: <code>Invio</code>
+    senza leggere non scarica niente.</li>
+</ul>
+
+<p>
+Se ne accorge in due modi: dal <b>nome</b> (<code>.../archivio.zip</code>), e
+allora chiede prima di scaricare; oppure, quando il nome non dice niente
+(<code>.../scarica?id=42</code>), dal <b>tipo</b> che dichiara il server
+(<code>application/zip</code>). Un file del disco (<code>file:</code>) che ha
+un programma si apre direttamente.
+</p>
+
 <h2>I certificati</h2>
 
 <p>

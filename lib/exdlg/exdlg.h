@@ -106,6 +106,12 @@ int ex_dlg_chiedi(const char *titolo, const char *domanda, const char *ok,
 int ex_dlg_conferma(const char *titolo, const char *testo,
                     const char *si, const char *no);
 
+/* One question, from one to four answers: returns the index of the button
+ * pressed, or -1 for Esc and for a closed window. The LAST answer is the
+ * prudent one — «Annulla» — and has the focus. (23 September 2026) */
+int ex_dlg_scegli(const char *titolo, const char *testo,
+                  const char *const *voci, int n);
+
 #ifdef __cplusplus
 }
 #endif

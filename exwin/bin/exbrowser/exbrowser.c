@@ -3029,6 +3029,286 @@ static int prendi_dalla_rete(const char *url, ExHttpEsito *e)
     return ok;
 }
 
+/* =============================================================================
+ * NOT A PAGE: OPEN IT, OR DOWNLOAD IT — asked on 23 September 2026
+ *
+ * Until today every address went through the page layout: a .zip came in up
+ * to the 1 MB of the page buffer and was drawn as HTML, that is as garbage,
+ * and there was no way to save it whole.
+ *
+ * ! TWO MOMENTS TO NOTICE IT, BECAUSE THERE ARE TWO KINDS OF ADDRESS. When
+ * the name says it — «.../archivio.zip» — the question comes BEFORE
+ * downloading anything. When it does not — «.../scarica?id=42» — only the
+ * Content-Type says it, after the answer: then the same question, and the
+ * answer is NOT written into the page cache, or the next visit would draw
+ * the zip from there.
+ *
+ * ! THREE ANSWERS, AND THE LAST ONE IS «ANNULLA»: open it with its program
+ * (Archivi for a zip, the editor for text and sources), download it where
+ * one chooses, or nothing. Closing the window is «nothing» too.
+ *
+ * ! THE FILE GOES TO DISK AS IT ARRIVES (exhttp_verso), so the 1 MB ceiling
+ * of the pages does not apply: a 30 MB archive is written whole, and Esc
+ * stops it like a page.
+ * ============================================================================= */
+
+/* The extension of the last piece of the path, lower case, or "" . */
+static void estensione_di(const char *url, char *ext, unsigned int max)
+{
+    const char *p = strstr(url, "://"), *ultimo, *punto = 0, *fine;
+    unsigned int k = 0;
+
+    p = p ? p + 3 : url;
+    p = strchr(p, '/');                     /* after the host */
+    ext[0] = '\0';
+    if (!p) return;
+
+    fine = p + strcspn(p, "?#");
+    ultimo = p;
+    for (; p < fine; p++) {
+        if (*p == '/') { ultimo = p + 1; punto = 0; }
+        else if (*p == '.') punto = p + 1;
+    }
+    (void)ultimo;
+    if (!punto) return;
+    while (punto < fine && k + 1 < max) {
+        char c = *punto++;
+        ext[k++] = (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c;
+    }
+    ext[k] = '\0';
+}
+
+/* The name of the file at the end of the address, for the save dialog. */
+static void nome_del_file(const char *url, char *out, unsigned int max)
+{
+    const char *p = strstr(url, "://");
+    const char *fine, *inizio;
+    unsigned int k = 0;
+
+    p = p ? p + 3 : url;
+    p = strchr(p, '/');
+    if (!p) { snprintf(out, max, "scaricato"); return; }
+    fine = p + strcspn(p, "?#");
+    inizio = fine;
+    while (inizio > p && inizio[-1] != '/') inizio--;
+    while (inizio < fine && k + 1 < max) out[k++] = *inizio++;
+    out[k] = '\0';
+    if (!out[0]) snprintf(out, max, "scaricato");
+}
+
+static int e_estensione_da_pagina(const char *ext)
+{
+    static const char *const web[] = {
+        "", "html", "htm", "xhtml", "shtml", "php", "php3", "php5", "asp",
+        "aspx", "jsp", "cgi", "pl", "txt", "xml", 0
+    };
+    int i;
+
+    for (i = 0; web[i]; i++) if (strcmp(ext, web[i]) == 0) return 1;
+    return 0;
+}
+
+static int e_tipo_da_pagina(const char *tipo)
+{
+    if (!tipo || !tipo[0]) return 1;        /* nobody said: try it as a page */
+    if (strncmp(tipo, "text/", 5) == 0) return 1;
+    return strstr(tipo, "html") || strstr(tipo, "xml") ||
+           strstr(tipo, "json") || strstr(tipo, "javascript");
+}
+
+/* Which program opens this, or 0. `quale` gets its name for the button. */
+static const char *programma_per(const char *ext, const char **quale)
+{
+    static const char *const testo[] = {
+        "c", "h", "cpp", "hpp", "md", "cfg", "ini", "log", "sh", "bas", "asm",
+        "s", "csv", "json", "js", "css", "py", "conf", 0
+    };
+    const char *bin = 0;
+    static char dove[64];
+    int i;
+
+    if (strcmp(ext, "zip") == 0) { bin = "archivi"; *quale = "Archivi"; }
+    for (i = 0; !bin && testo[i]; i++)
+        if (strcmp(ext, testo[i]) == 0) { bin = "edit"; *quale = "l'editor"; }
+    if (!bin) return 0;
+
+    snprintf(dove, sizeof(dove), "/exwin/bin/%s", bin);
+    if (access(dove, F_OK) == 0) return dove;
+    snprintf(dove, sizeof(dove), "/cdrom/exwin/bin/%s", bin);
+    return access(dove, F_OK) == 0 ? dove : 0;
+}
+
+static void apri_con(const char *bin, const char *file)
+{
+    char *av[3];
+
+    av[0] = (char *)bin;
+    av[1] = (char *)file;
+    av[2] = 0;
+    if (spawn_ex(av[0], av, environ, 0, 0) < 0) dico("il programma non parte");
+}
+
+static int           g_scarico_fd = -1;
+static unsigned long g_scarico_n;
+
+static int verso_disco(void *dato, const unsigned char *d, unsigned int n)
+{
+    unsigned int fatti = 0;
+
+    (void)dato;
+    while (fatti < n) {
+        int k = (int)write(g_scarico_fd, d + fatti, n - fatti);
+
+        if (k <= 0) return 0;
+        fatti += (unsigned int)k;
+    }
+    g_scarico_n += n;
+    return 1;
+}
+
+/* Downloads `url` into the file `dove`, as it arrives. 1 if whole. */
+static int scarica_in(const char *url, const char *dove)
+{
+    ExHttpEsito e;
+    char        msg[400];
+    int         ok;
+
+    g_scarico_fd = open(dove, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (g_scarico_fd < 0) {
+        snprintf(msg, sizeof(msg), "%s: non riesco a crearlo", dove);
+        dico(msg);
+        return 0;
+    }
+
+    snprintf(msg, sizeof(msg), "scarico in %s...  (Esc ferma)", dove);
+    dico(msg);
+    ex_procedura_base(g_f, EXM_DISEGNA, 0, 0);
+
+    memset(&e, 0, sizeof(e));
+    g_scarico_n = 0;
+    g_ferma = 0;
+    exhttp_verso(verso_disco, 0);
+    g_in_rete = 1;
+    ok = exhttp_prendi(url, g_pagina, sizeof(g_pagina), &e);
+    g_in_rete = 0;
+    exhttp_verso(0, 0);
+    close(g_scarico_fd);
+    g_scarico_fd = -1;
+
+    /* ! UN FILE A META' NON RESTA SUL DISCO: sembrerebbe scaricato. */
+    if (!ok || e.codice != 200 || e.troncata) {
+        remove(dove);
+        snprintf(msg, sizeof(msg), "non scaricato: %s",
+                 e.errore[0] ? e.errore : (ok ? "il server non ha risposto 200" : "non riuscito"));
+        dico(msg);
+        return 0;
+    }
+    snprintf(msg, sizeof(msg), "scaricato: %s, %lu byte", dove, g_scarico_n);
+    dico(msg);
+    return 1;
+}
+
+/* Where «Apri» puts the file: $HOME/.app/exbrowser/scaricati/. */
+static int dove_aprire(const char *nome, char *out, unsigned int max)
+{
+    const char *casa = getenv("HOME");
+    int         i;
+
+    if (!casa || !casa[0] || strlen(casa) + strlen(nome) + 40 >= max) return 0;
+    strcpy(out, casa);
+    i = (int)strlen(out);
+    while (i > 0 && out[i - 1] == '/') out[--i] = '\0';
+    strcat(out, "/.app");
+    if (mkdir(out, 0755) != 0 && errno != EEXIST) return 0;
+    strcat(out, g_app_nome);
+    if (mkdir(out, 0755) != 0 && errno != EEXIST) return 0;
+    strcat(out, "/scaricati");
+    if (mkdir(out, 0755) != 0 && errno != EEXIST) return 0;
+    strcat(out, "/");
+    strcat(out, nome);
+    return 1;
+}
+
+static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp);
+
+/* The question, and what follows. `tipo` is 0 when only the name spoke. */
+static void non_e_una_pagina_(const char *url, const char *tipo);
+
+/* ! AND AT THE END THE WINDOW IS REDRAWN BY ITS OWN PROCEDURE: the first
+ * address is opened from main(), outside any procedure, and there nobody
+ * redraws — the status line stayed on «scarico in...» after the file was
+ * whole. The base would repaint the controls and wipe the page, which is the
+ * application's own drawing. */
+static void non_e_una_pagina(const char *url, const char *tipo)
+{
+    non_e_una_pagina_(url, tipo);
+    proc(g_f, EXM_DISEGNA, 0, 0);
+}
+
+static void non_e_una_pagina_(const char *url, const char *tipo)
+{
+    static char   cartella[PERC_MAX] = "";
+    char          ext[16], nome[128], perc[PERC_MAX], testo[300];
+    const char   *quale = 0, *bin;
+    const char   *voci[3];
+    int           n = 0, i_apri = -1, i_scarica, r;
+
+    estensione_di(url, ext, sizeof(ext));
+    nome_del_file(url, nome, sizeof(nome));
+
+    /* ! QUANDO IL NOME NON HA ESTENSIONE, PARLA IL TIPO: «.../dammi» che il
+     * server dichiara application/zip si apre con Archivi come un .zip. Il
+     * primo giro della prova l'ha trovato: senza, il dialogo offriva solo
+     * «Scarica» per un archivio. */
+    if (!ext[0] && tipo && strstr(tipo, "zip")) strcpy(ext, "zip");
+    bin = programma_per(ext, &quale);
+
+    snprintf(testo, sizeof(testo), "%s non e' una pagina web%s%s%s.",
+             nome, tipo ? " (" : "", tipo ? tipo : "", tipo ? ")" : "");
+
+    if (bin) {
+        static char voce_apri[48];
+
+        snprintf(voce_apri, sizeof(voce_apri), "Apri con %s", quale);
+        i_apri = n;
+        voci[n++] = voce_apri;
+    }
+    i_scarica = n;
+    voci[n++] = "Scarica";
+    voci[n++] = "Annulla";
+
+    r = ex_dlg_scegli("Che cosa ne faccio?", testo, voci, n);
+
+    if (r == i_apri && i_apri >= 0) {
+        if (!dove_aprire(nome, perc, sizeof(perc))) {
+            dico("non ho dove metterlo: HOME manca o e' in sola lettura. Usa Scarica");
+            return;
+        }
+        if (scarica_in(url, perc)) apri_con(bin, perc);
+        return;
+    }
+    if (r != i_scarica) { dico("lasciato stare"); return; }
+
+    /* ! SI CHIEDE DOVE, e ci si ricorda la cartella della volta prima. */
+    if (!cartella[0]) {
+        const char *casa = getenv("HOME");
+        snprintf(cartella, sizeof(cartella), "%s", casa && casa[0] ? casa : "/");
+    }
+    snprintf(perc, sizeof(perc), "%s%s%s", cartella,
+             cartella[strlen(cartella) - 1] == '/' ? "" : "/", nome);
+    if (!ex_dlg_salva(perc, sizeof(perc))) { dico("lasciato stare"); return; }
+
+    if (scarica_in(url, perc)) {
+        char *barra = strrchr(perc, '/');
+
+        if (barra) {
+            unsigned int l = (unsigned int)(barra - perc);
+            if (l == 0) l = 1;
+            if (l < sizeof(cartella)) { memcpy(cartella, perc, l); cartella[l] = '\0'; }
+        }
+    }
+}
+
 static void vai(const char *url, int in_storia, int usa_cache)
 {
     ExHttpEsito  e;
@@ -3090,6 +3370,32 @@ static void vai(const char *url, int in_storia, int usa_cache)
         dico("sto ancora scaricando: Esc per fermare");
         g_da_postare = 0;
         return;
+    }
+
+    /* ! UN FILE CHE NON E' UNA PAGINA, DETTO DAL NOME: si chiede prima di
+     * scaricare qualunque cosa. Un file locale col suo programma si apre e
+     * basta — «scaricare» cio' che e' gia' sul disco non vuol dire niente. */
+    if (!g_da_postare) {
+        char ext[16];
+
+        estensione_di(url, ext, sizeof(ext));
+        if (!e_estensione_da_pagina(ext)) {
+            if (e_locale(url)) {
+                const char *quale = 0, *bin = programma_per(ext, &quale);
+                char        perc[PERC_MAX], msg[PERC_MAX + 40];
+
+                if (bin && percorso_di(url, perc, sizeof(perc))) {
+                    apri_con(bin, perc);
+                    snprintf(msg, sizeof(msg), "%s aperto con %s", perc, quale);
+                    dico(msg);
+                } else {
+                    dico("non e' una pagina, e non ho un programma per aprirlo");
+                }
+            } else {
+                non_e_una_pagina(url, 0);
+            }
+            return;
+        }
     }
 
     /* Ogni pagina nuova comincia senza nessuno che l'abbia gia' fermata. */
@@ -3159,6 +3465,17 @@ static void vai(const char *url, int in_storia, int usa_cache)
             dico(msg);
             return;
         }
+    } else if (!e_tipo_da_pagina(e.tipo)) {
+        /* ! IL NOME NON LO DICEVA, IL SERVER SI': non si impagina e non va
+         * nella cache. Si chiede che cosa farne, e la pagina di prima resta
+         * dov'era. Vedi non_e_una_pagina(). */
+        char tipo[HTTP_TIPO_MAX];
+
+        strncpy(tipo, e.tipo, sizeof(tipo) - 1);
+        tipo[sizeof(tipo) - 1] = '\0';
+        non_e_una_pagina(e.finale, tipo);
+        g_da_postare = 0;
+        return;
     } else if (!e.troncata) {
         /* ! LA CHIAVE E' `finale`, NON L'INDIRIZZO CHIESTO, perche' e' li' che
          * il contenuto sta davvero: dopo una redirezione i due sono diversi, e

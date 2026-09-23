@@ -84,6 +84,20 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### EXBrowser asks "open or download", and Archivi takes directories
+
+**tested in QEMU** — a link to a file that is not a page (a ZIP, a program, an
+image) is no longer laid out as garbage: EXBrowser asks **Apri con Archivi**
+(or with the editor), **Scarica** or **Annulla**. It notices from the name,
+before downloading, or from the server's `Content-Type` when the name says
+nothing. The download goes to disk as it arrives, without the 1 MB ceiling of
+pages (`tools/prova_apri_scarica.sh`).
+
+In **Archivi** there is **Comandi > Aggiungi cartella...**, and `zip
+archivio.zip cartella` takes the whole tree too: every directory has its own
+`name/` entry, so empty ones come back out on extraction (`tools/prova_zip.sh`,
+step 6).
+
 ### Certificates: the chain stops at the first root, and more can be added
 
 **tested in QEMU, on the real network** — before changing anything it was

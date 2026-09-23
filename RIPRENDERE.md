@@ -58,6 +58,8 @@ Tre richieste da `correzioni.txt` e tre a voce, nella stessa mattina:
     @ARCHIVI-MENU      la tendina non si fa coprire (toolkit)       FATTO
     @EXBROWSER-CERT    la catena incrociata, e le CA aggiunte       in parte
     @EDIT-RTF          l'editor RTF                                 da fare
+    @ARCHIVI-CARTELLE  cartelle intere, in Archivi e in zip         FATTO
+    @EXBROWSER-SCARICA apri o scarica un file che non e' una pagina FATTO
 
 ! **IL NUMERO CHE CONTA DEI CERTIFICATI**: su trenta siti comuni se ne aprivano
 23, e il certificato era la causa di UNO solo (amazon.it, una radice
@@ -114,33 +116,26 @@ aggiornava dopo un tasto battuto nell'area.
      ! Mettere un file basta: nessun programma va ricompilato. E se non c'e',
      tutto resta testo — e' lo stato di adesso per strumenti e tipi.
 
-## QUEL CHE NON E' ANCORA COMMITTATO (23 settembre, dopo 35f9b69)
+## QUEL CHE NON E' ANCORA COMMITTATO (23 settembre, dopo a65e15d)
 
-Il commit 35f9b69 ha portato dentro il compositore e la riga nera del kernel.
-Fuori resta la mattina del 23:
+Il commit a65e15d ha portato dentro EXBrowser, il compressore e i certificati.
+Fuori resta il pomeriggio:
 
-    exwin/bin/exbrowser/        il navigatore rinominato (git mv: storia intera)
-    exwin/doc/exbrowser.html    il manuale rinominato, e i certificati
-    exwin/icon/baseapp/exbrowser_*.ico
-    exwin/doc/*.html, README*   i collegamenti e il nome
-    exwin/lib/applicazioni.txt  la voce EXBrowser
-    exwin/bin/exide/exide.c     il navigatore col nome nuovo, poi il vecchio (0.016)
-    exwin/bin/edit/edit.c       la barra di scorrimento, la riga di stato (0.002)
-    exwin/bin/archivi/archivi.c il testo d'aiuto (0.002)
-    bin/zip/zip.c               il testo d'aiuto (0.002)
-    lib/exzip/deflate.[ch]      il compressore (NUOVO)
-    lib/exzip/exzip.[ch]        deflate in scrittura, due passate
-    lib/exwin/exwin*.{c,h}      tendine_ancora_sopra, ex_area_vista/mostra_da
-    lib/excert/excert.c         la catena si ferma alla prima radice
-    lib/exhttp/exhttp*.{c,h}    le CA aggiunte, esamina/aggiungi
-    Makefile                    exbrowser, deflate in exzip.so
-    tools/prova_exbrowser.sh, prova_deflate.sh, prova_certificati.sh,
-    tools/prova_certi_aggiunti.sh          le quattro prove nuove
-    tools/prova_zip.sh, tools/prove/certprova.py   i controlli aggiunti
-    build/, dist/exos.iso       ricostruiti; build/.../browser TOLTI
-    messaggio-commit.txt        il testo del commit
+    lib/exzip/exzip.[ch], exzip_esporta.c, exzip_stub.c
+                                ex_zip_aggiungi_albero (facoltativa nello stub)
+    lib/exdlg/exdlg.[ch], exdlg_esporta.c, exdlg_stub.c
+                                ex_dlg_scegli; la conferma a due righe
+    exwin/bin/archivi/archivi.c «Aggiungi cartella...» (0.003)
+    bin/zip/zip.c               una cartella negli argomenti (0.003)
+    exwin/bin/exbrowser/exbrowser.c  apri o scarica
+    exwin/doc/exbrowser.html, README*
+    tools/prova_zip.sh          il passo 6, le cartelle
+    tools/prova_apri_scarica.sh la prova (NUOVA)
+    in_lavorazione.txt, RIPRENDERE.md
+    build/, dist/exos.iso       ricostruiti
+    messaggio-commit.txt
 
-! **exhttp.so, exwin.so, exzip.so E I LORO CLIENTI SI PUBBLICANO INSIEME.**
+! **exhttp.so, exwin.so, exzip.so, exdlg.so E I LORO CLIENTI SI PUBBLICANO INSIEME.**
 Uno `edit` nuovo cerca `ex_area_vista` e si ferma se exwin.so e' vecchia. Le due
 funzioni dei certificati invece sono FACOLTATIVE nello stub di exhttp, apposta:
 un netupdate nuovo sopra un exhttp.so vecchio deve partire, o non potrebbe piu'
@@ -256,6 +251,7 @@ confronto fra due opzioni si fa riga per riga.
     tools/prova_deflate.sh      il compressore, SULL'HOST, contro zlib
     tools/prova_certificati.sh  trenta siti https veri: quali si aprono e perche'
     tools/prova_certi_aggiunti.sh  una CA aggiunta da EXBrowser vale per scarica
+    tools/prova_apri_scarica.sh    EXBrowser davanti a un .zip: apri, o scarica
 
 Vogliono `dist/exos.iso` aggiornato; le ultime due si costruiscono il disco da
 sole. ! `prova_zip.sh` e `prova_archivi.sh` vogliono anche **debugfs**

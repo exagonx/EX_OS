@@ -27,6 +27,7 @@ static const char *const g_nomi[] = {
     "ex_dlg_riga",
     "ex_dlg_percorso",
     "ex_dlg_chiedi",
+    "ex_dlg_scegli",          /* 23 settembre 2026 */
     "__lib_avvio"
 };
 
@@ -38,6 +39,7 @@ static void *const g_indirizzi[] = {
     (void *)ex_dlg_riga,
     (void *)ex_dlg_percorso,
     (void *)ex_dlg_chiedi,
+    (void *)ex_dlg_scegli,
     (void *)__libc_ponti_avvia
 };
 

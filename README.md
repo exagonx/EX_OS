@@ -101,6 +101,19 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### EXBrowser chiede «apri o scarica», e Archivi prende le cartelle
+
+**testato in QEMU** — un collegamento a un file che non è una pagina (uno ZIP,
+un programma, un'immagine) non viene più impaginato come spazzatura: EXBrowser
+chiede **Apri con Archivi** (o con l'editor), **Scarica** o **Annulla**. Se ne
+accorge dal nome, prima di scaricare, oppure dal `Content-Type` del server
+quando il nome non dice niente. Lo scaricamento va sul disco mentre arriva,
+senza il tetto di 1 MB delle pagine (`tools/prova_apri_scarica.sh`).
+
+In **Archivi** c'è **Comandi > Aggiungi cartella...**, e anche `zip archivio.zip
+cartella` prende l'albero intero: ogni cartella ha la sua voce `nome/`, così
+anche quelle vuote tornano fuori all'estrazione (`tools/prova_zip.sh`, passo 6).
+
 ### Certificati: la catena si ferma alla prima radice, e se ne aggiungono
 
 **testato in QEMU, sulla rete vera** — prima di cambiare qualcosa si è

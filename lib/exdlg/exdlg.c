@@ -717,7 +717,11 @@ int ex_dlg_conferma(const char *titolo, const char *testo,
     n = spezza(testo ? testo : "", righe, CF_RIGHE);
     if (n == 0) { righe[0][0] = '\0'; n = 1; }
 
-    h = CF_H + (n > 3 ? (int)(n - 3) * 16 : 0);
+    /* ! DUE RIGHE STANNO NELL'ALTEZZA DI PRIMA, NON TRE: con tre, la terza
+     * toccava i pulsanti (28 + 3 x 16 = 76, e i pulsanti cominciano a
+     * CF_H - 54 = 76). Visto nella fotografia del dialogo dei certificati,
+     * il 23 settembre 2026. */
+    h = CF_H + (n > 2 ? (int)(n - 2) * 16 : 0);
 
     ex_schermo(&sw, &sh);
     x = sw > AVVISO_W ? (int)(sw - AVVISO_W) / 2 : 0;
@@ -769,6 +773,102 @@ int ex_dlg_conferma(const char *titolo, const char *testo,
 
     ex_distruggi(f);
     return g_cf_fatto == 1;
+}
+
+/* =============================================================================
+ * ex_dlg_scegli — one question, from one to four answers (23 September 2026)
+ *
+ * Asked for EXBrowser: a file that is not a web page wants three answers —
+ * open it with its program, download it, or nothing. Two yes/no dialogs in a
+ * row cannot say it: closing the second one would have to mean one of the
+ * two actions, and the honest answer to a closed window is «nothing».
+ *
+ * ! THE LAST BUTTON IS THE PRUDENT ONE, BY CONTRACT, and it takes the focus:
+ * Enter pressed without reading answers with it. Closing the window and Esc
+ * return -1, which is «nothing» too — the same rule as ex_dlg_conferma.
+ * ============================================================================= */
+#define SC_MAX   4
+#define ID_SC0   100
+
+static ExFinestra g_sc_p[SC_MAX];
+static int        g_sc_n;
+static int        g_sc_scelta;      /* -2 = nothing yet, -1 = cancelled */
+
+static long sc_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+{
+    int i;
+
+    switch (msg) {
+    case EXM_COMANDO:
+        if (wp >= ID_SC0 && (int)wp < ID_SC0 + g_sc_n) g_sc_scelta = (int)wp - ID_SC0;
+        return 0;
+    case EXM_CHIUDI:
+        g_sc_scelta = -1;
+        return 0;
+    case EXM_TASTO:
+        if ((wp & 0xFFFF) == '\n' || (wp & 0xFFFF) == '\r') {
+            g_sc_scelta = -1;
+            for (i = 0; i < g_sc_n; i++)
+                if (ex_fuoco_chi(f) == g_sc_p[i]) g_sc_scelta = i;
+        } else if ((wp & 0xFFFF) == 27) {
+            g_sc_scelta = -1;
+        }
+        return 0;
+    default:
+        return ex_procedura_base(f, msg, wp, lp);
+    }
+}
+
+int ex_dlg_scegli(const char *titolo, const char *testo,
+                  const char *const *voci, int n)
+{
+    ExFinestra   f;
+    ExMsg        m;
+    unsigned int sw = 0, sh = 0;
+    int          x, y, h, i, tot = 0, gap = 10, px;
+    char         righe[CF_RIGHE][AVVISO_COL + 1];
+    unsigned int nr, k;
+
+    if (!voci || n < 1) return -1;
+    if (n > SC_MAX) n = SC_MAX;
+
+    nr = spezza(testo ? testo : "", righe, CF_RIGHE);
+    if (nr == 0) { righe[0][0] = '\0'; nr = 1; }
+    h = CF_H + (nr > 2 ? (int)(nr - 2) * 16 : 0);
+
+    ex_schermo(&sw, &sh);
+    x = sw > AVVISO_W ? (int)(sw - AVVISO_W) / 2 : 0;
+    y = (int)sh > h   ? ((int)sh - h) / 2 : 0;
+
+    g_sc_n = n;
+    g_sc_scelta = -2;
+    f = ex_crea("finestra", titolo ? titolo : "Scegli",
+                EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_SOPRA | EX_MODALE,
+                x, y, AVVISO_W, h, 0, 0, sc_proc);
+    if (f == 0) return -1;
+
+    for (k = 0; k < nr; k++)
+        ex_crea("etichetta", righe[k], EX_FIGLIO,
+                12, 28 + (int)k * 16, AVVISO_W - 24, 16, f, 0, 0);
+
+    for (i = 0; i < n; i++) tot += larghezza_pulsante(voci[i]) + (i ? gap : 0);
+    px = tot < AVVISO_W ? (AVVISO_W - tot) / 2 : 4;
+    for (i = 0; i < n; i++) {
+        int w = larghezza_pulsante(voci[i]);
+
+        g_sc_p[i] = ex_crea("pulsante", voci[i], EX_FIGLIO, px, h - 54, w, 26,
+                            f, ID_SC0 + i, 0);
+        px += w + gap;
+    }
+    ex_fuoco(g_sc_p[n - 1]);
+
+    ex_procedura_base(f, EXM_DISEGNA, 0, 0);
+    ex_aggiorna(f);
+
+    while (g_sc_scelta == -2 && ex_prendi_msg(&m)) ex_smista(&m);
+
+    ex_distruggi(f);
+    return g_sc_scelta < 0 ? -1 : g_sc_scelta;
 }
 
 /* -----------------------------------------------------------------------------

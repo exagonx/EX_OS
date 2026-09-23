@@ -49,6 +49,7 @@ static struct {
     int (*finisci)(ExZip *);
     void (*chiudi)(ExZip *);
     const char *(*errore)(void);
+    int (*albero)(ExZip *, const char *, const char *, int *);
 } P;
 
 static void *chiedi(const ExLibTesta *t, const char *nome)
@@ -81,6 +82,10 @@ static void assicura(void)
     P.finisci  = (int (*)(ExZip *))                              chiedi(t, "ex_zip_finisci");
     P.chiudi   = (void (*)(ExZip *))                             chiedi(t, "ex_zip_chiudi");
     P.errore   = (const char *(*)(void))                         chiedi(t, "ex_zip_errore");
+    /* ! FACOLTATIVA: un programma nuovo sopra un exzip.so di prima deve
+     * partire lo stesso, e senza cartelle. Vedi ex_zip_aggiungi_albero. */
+    P.albero   = (int (*)(ExZip *, const char *, const char *, int *))
+                 exlib_simbolo(t, "ex_zip_aggiungi_albero");
 
     P.pronto = 1;
 }
@@ -108,4 +113,12 @@ int ex_zip_aggiungi(ExZip *z, const char *file, const char *nome)
 {
     assicura();
     return P.aggiungi(z, file, nome);
+}
+
+int ex_zip_aggiungi_albero(ExZip *z, const char *cartella, const char *nome,
+                           int *saltati)
+{
+    assicura();
+    if (saltati) *saltati = 0;
+    return P.albero ? P.albero(z, cartella, nome, saltati) : -2;
 }

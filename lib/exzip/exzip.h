@@ -118,6 +118,15 @@ ExZip *ex_zip_crea(const char *percorso);
  * the entry simply is not in it. */
 int ex_zip_aggiungi(ExZip *z, const char *file, const char *nome);
 
+/* A whole directory, with everything under it (23 September 2026): `nome` is
+ * what it is called inside the archive, and its files become "nome/...".
+ * Every directory gets its own "nome/" entry, so empty ones survive. Returns
+ * how many FILES went in, or -1 if it could not start. A file that cannot be
+ * read does not stop the rest: `saltati` (may be 0) says how many were left
+ * out, and then ex_zip_errore() says the last reason. */
+int ex_zip_aggiungi_albero(ExZip *z, const char *cartella, const char *nome,
+                           int *saltati);
+
 /* Writes the central directory and closes. ! WITHOUT THIS THE FILE IS NOT AN
  * ARCHIVE: the entries are all there but nothing points at them, and every
  * unzip in the world will say the file is broken. Returns 1, or 0. */

@@ -30,7 +30,7 @@
 #include "exzip.h"
 
 /* +0.001 a ogni modifica: `zip -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.002"
+#define VERSIONE_APP "0.003"
 EX_VERSIONE("zip", VERSIONE_APP);
 
 #define PERC_MAX  320
@@ -39,6 +39,7 @@ static void istruzioni(void)
 {
     printf("zip %s - archivi ZIP\n\n", VERSIONE_APP);
     printf("  zip archivio.zip file...     crea l'archivio con quei file\n");
+    printf("                               (una cartella entra con tutto il suo albero)\n");
     printf("  zip -l archivio.zip          elenca quello che c'e' dentro\n");
     printf("  zip -x archivio.zip [dove]   estrae tutto (qui, o in 'dove')\n\n");
     printf("  Comprime in 'deflate', il metodo di quasi tutti gli archivi; un\n");
@@ -66,6 +67,30 @@ static int crea(const char *archivio, char **file, int quanti)
     if (!z) { printf("zip: %s\n", ex_zip_errore()); return 1; }
 
     for (i = 0; i < quanti; i++) {
+        struct stat st;
+
+        /* A directory goes in whole, under its own name. */
+        if (stat(file[i], &st) == 0 && S_ISDIR(st.st_mode)) {
+            char base[256];
+            int  k, n, saltati = 0;
+
+            snprintf(base, sizeof(base), "%s", file[i]);
+            k = (int)strlen(base);
+            while (k > 1 && base[k - 1] == '/') base[--k] = '\0';
+
+            n = ex_zip_aggiungi_albero(z, base, nome_corto(base), &saltati);
+            if (n == -2) {
+                printf("  ! %s: la libreria degli archivi e' vecchia, non sa le cartelle\n",
+                       file[i]);
+                continue;
+            }
+            if (n < 0) { printf("  ! %s: %s\n", file[i], ex_zip_errore()); continue; }
+            printf("  + %s/ (%d file)\n", nome_corto(base), n);
+            if (saltati) printf("    ! %s\n", ex_zip_errore());
+            messi += n;
+            continue;
+        }
+
         if (!ex_zip_aggiungi(z, file[i], nome_corto(file[i]))) {
             printf("  ! %s: %s\n", file[i], ex_zip_errore());
             continue;

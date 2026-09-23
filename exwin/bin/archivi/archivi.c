@@ -42,7 +42,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `archivi -version` la stampa. Vedi EX_VERSIONE. */
-#define VERSIONE_APP "0.002"
+#define VERSIONE_APP "0.003"
 EX_VERSIONE("archivi", VERSIONE_APP);
 
 #define FIN_W       640
@@ -64,6 +64,7 @@ EX_VERSIONE("archivi", VERSIONE_APP);
 #define ID_ESTRAI     10
 #define ID_ESTRAI_TUT 11
 #define ID_AGGIUNGI   12
+#define ID_AGG_CART   13
 
 #define ID_ISTRUZIONI 20
 #define ID_INFO       21
@@ -367,6 +368,71 @@ static void aggiungi(void)
     stato();
 }
 
+/* =============================================================================
+ * A WHOLE DIRECTORY — asked on 23 September 2026
+ *
+ * The dialog is the directory one (ex_dlg_percorso, the same as «Estrai
+ * tutto»), and the walk is in the library: ex_zip_aggiungi_albero, which
+ * /bin/zip uses too. The directory goes in under its own name, with every
+ * subdirectory, empty ones included.
+ * ============================================================================= */
+static void aggiungi_cartella(void)
+{
+    static char p[PERC_MAX] = "/";
+    char        nome[PERC_MAX];
+    int         n, saltati = 0;
+    unsigned int l;
+
+    if (!g_z || !g_creo) {
+        ex_dlg_avviso("Non ci posso aggiungere",
+                      "Si puo' aggiungere solo a un archivio che si sta "
+                      "creando (File, Nuovo...).");
+        return;
+    }
+
+    if (!ex_dlg_percorso("Aggiungi una cartella", "Cartella:", "Aggiungi", p, sizeof(p)))
+        return;
+
+    /* The dialog gives the directory with a trailing slash: the name inside
+     * the archive is its last piece, without it. */
+    strncpy(nome, p, sizeof(nome) - 1);
+    nome[sizeof(nome) - 1] = '\0';
+    l = (unsigned int)strlen(nome);
+    while (l > 1 && nome[l - 1] == '/') nome[--l] = '\0';
+    if (strcmp(nome, "/") == 0) {
+        ex_dlg_avviso("Non l'ho aggiunta",
+                      "La radice intera non entra in un archivio: scegli una "
+                      "cartella dentro.");
+        return;
+    }
+
+    n = ex_zip_aggiungi_albero(g_z, nome, nome_corto(nome), &saltati);
+    if (n == -2) {
+        ex_dlg_avviso("Non l'ho aggiunta",
+                      "La libreria degli archivi di questo sistema e' di prima "
+                      "del 23 settembre 2026 e non sa le cartelle: va "
+                      "aggiornata insieme ad Archivi.");
+        return;
+    }
+    if (n < 0) { ex_dlg_avviso("Non l'ho aggiunta", ex_zip_errore()); return; }
+
+    g_messi += (unsigned int)n;
+    {
+        char riga[PERC_MAX];
+
+        snprintf(riga, sizeof(riga), "%s/  (%d file)", nome_corto(nome), n);
+        ex_lista_aggiungi(g_lista, riga);
+    }
+    if (saltati) {
+        char t[256];
+
+        snprintf(t, sizeof(t), "Aggiunti %d file; %s", n, ex_zip_errore());
+        ex_dlg_avviso("Aggiunta a meta'", t);
+    }
+    sprintf(g_avviso, "aggiunta %s/ con %d file", nome_corto(nome), n);
+    stato();
+}
+
 /* Asks where to extract, once, and remembers it.
  *
  * ! LA CARTELLA SI SCEGLIE, NON SI INDOVINA, e il dialogo che lo chiede e'
@@ -518,6 +584,7 @@ static void istruzioni(void)
         "Comandi, Estrai tutto lo svuota in una cartella a scelta;\n"
         "Invio o doppio clic estraggono una riga sola.\n\n"
         "Per farne uno: File, Nuovo..., poi Comandi, Aggiungi file...\n"
+        "o Aggiungi cartella... (con tutto quello che c'e' dentro)\n"
         "quante volte serve, e infine File, Finisci - senza quello il\n"
         "file non e' un archivio e nessuno lo aprira'.\n\n"
         "Si comprime in deflate, il metodo di quasi tutti gli archivi;\n"
@@ -562,6 +629,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
         if (wp == ID_ESTRAI)     { estrai_scelto();    break; }
         if (wp == ID_ESTRAI_TUT) { estrai_tutto();     break; }
         if (wp == ID_AGGIUNGI)   { aggiungi();         break; }
+        if (wp == ID_AGG_CART)   { aggiungi_cartella(); break; }
 
         if (wp == ID_ISTRUZIONI) { istruzioni();       break; }
         if (wp == ID_INFO)       { informazioni();     break; }
@@ -649,6 +717,7 @@ int main(int argc, char **argv)
     ex_menu_voce(g_menu, "Comandi", "Estrai tutto...",              ID_ESTRAI_TUT);
     ex_menu_voce(g_menu, "Comandi", "-",                            0);
     ex_menu_voce(g_menu, "Comandi", "Aggiungi file...",             ID_AGGIUNGI);
+    ex_menu_voce(g_menu, "Comandi", "Aggiungi cartella...",         ID_AGG_CART);
 
     ex_menu_voce(g_menu, "Info", "Istruzioni",      ID_ISTRUZIONI);
     ex_menu_voce(g_menu, "Info", "Informazioni su", ID_INFO);

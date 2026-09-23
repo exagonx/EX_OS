@@ -45,6 +45,7 @@ static struct {
                     char *, unsigned int);
     int (*chiedi)(const char *, const char *, const char *,
                   char *, unsigned int);
+    int (*scegli)(const char *, const char *, const char *const *, int);
 } P;
 
 static void *chiedi(const ExLibTesta *t, const char *nome)
@@ -80,6 +81,12 @@ static void assicura(void)
     P.chiedi   = (int (*)(const char *, const char *, const char *,
                           char *, unsigned int)) chiedi(t, "ex_dlg_chiedi");
 
+    /* ! FACOLTATIVA: senza, ex_dlg_scegli ripiega su una conferma fra la
+     * prima risposta e l'ultima. Un programma nuovo sopra un exdlg.so di prima
+     * deve partire lo stesso. */
+    P.scegli = (int (*)(const char *, const char *, const char *const *, int))
+               exlib_simbolo(t, "ex_dlg_scegli");
+
     P.pronto = 1;
 }
 
@@ -106,6 +113,15 @@ int ex_dlg_conferma(const char *titolo, const char *testo,
 {
     assicura();
     return P.conferma(titolo, testo, si, no);
+}
+
+int ex_dlg_scegli(const char *titolo, const char *testo,
+                  const char *const *voci, int n)
+{
+    assicura();
+    if (P.scegli) return P.scegli(titolo, testo, voci, n);
+    if (!voci || n < 1) return -1;
+    return P.conferma(titolo, testo, voci[0], voci[n - 1]) ? 0 : -1;
 }
 
 int ex_dlg_riga(const char *titolo, const char *domanda,

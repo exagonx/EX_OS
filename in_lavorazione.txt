@@ -230,6 +230,8 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @EDIT-SCORRI     FATTO e provato: la barra di scorrimento dell'editor
   1  @ARCHIVI-COMPRIME FATTO e provato: DEFLATE in scrittura, zip e Archivi
   1  @ARCHIVI-MENU    FATTO: la tendina non si fa piu' coprire (nel toolkit)
+  1  @ARCHIVI-CARTELLE FATTO e provato: cartelle intere in Archivi e in zip
+  1  @EXBROWSER-SCARICA FATTO e provato: apri o scarica un file non web
 
   2  @SUONO-EMU8000   l'EMU8000 di una AWE32 resta spento    <- @SUONO-CAMPIONI
   2  @RUST-1          alloc: un GlobalAlloc sopra la malloc  <- @RUST-0
@@ -3736,6 +3738,58 @@ sono arrivate, non quello in cui vanno fatte.
        server offrono ECDHE-RSA con AES-GCM o ChaCha20.
     ! Ripetere tools/prova_certificati.sh dopo ognuno: i numeri di oggi sono
       il riferimento: 23 su 30, e 24 dopo la correzione della catena.
+
+! @ARCHIVI-CARTELLE LE CARTELLE NEGLI ARCHIVI: FATTO IL 23 SETTEMBRE 2026
+  (archivi 0.003, zip 0.003), chiesto lo stesso giorno a voce.
+
+  Chiesto: in Archivi poter scegliere anche le directory, non solo i file.
+  «Comandi > Aggiungi cartella...» col dialogo delle directory, e l'albero
+  lo percorre la LIBRERIA — ex_zip_aggiungi_albero() — perche' serviva uguale
+  a /bin/zip, che su una directory falliva: adesso `zip a.zip cartella`
+  prende tutto.
+
+  ! OGNI CARTELLA HA LA SUA VOCE «nome/» prima del contenuto: senza, una
+    cartella VUOTA non sopravvive al viaggio, e l'estrazione di exzip crea le
+    cartelle proprio da quelle voci.
+  ! UN FILE ILLEGGIBILE NON FERMA IL RESTO: si conta, e chi chiama dice
+    «N non aggiunti» con l'ultima ragione (il parametro `saltati`).
+  ! FACOLTATIVA NELLO STUB, come le funzioni dei certificati: un Archivi
+    nuovo sopra un exzip.so vecchio parte, e dice che le cartelle non le sa.
+
+  PROVATO: tools/prova_zip.sh passo 6 (un albero con una sottocartella e una
+  vuota: Python lo verifica, EX-OS lo estrae, la vuota c'e', i byte tornano),
+  e a mano dalla finestra, da tastiera: archivio nuovo, Aggiungi cartella,
+  Finisci, e `zip -l` elenca le cinque voci.
+  ! `zip -l` conta «5 file» anche le voci-cartella: e' una parola sbagliata,
+    non un conto sbagliato.
+
+! @EXBROWSER-SCARICA APRI O SCARICA: FATTO IL 23 SETTEMBRE 2026 (exbrowser
+  0.004), chiesto lo stesso giorno a voce.
+
+  Chiesto: quando il file ha estensione .zip o comunque non da web, proporre
+  se aprirlo o scaricarlo. Prima ogni indirizzo passava dall'impaginatore: uno
+  ZIP arrivava fino a 1 MB e si disegnava come spazzatura.
+
+  - Dal NOME, prima di scaricare; dal Content-Type, dopo, quando il nome non
+    dice niente («.../dammi» con application/zip) — e allora la risposta NON
+    va nella cache delle pagine. Il tipo vale anche per scegliere il
+    programma: un application/zip senza estensione si apre con Archivi;
+  - tre risposte con ex_dlg_scegli() (nuova in exdlg.so, facoltativa nello
+    stub: senza, ripiega su una conferma): «Apri con Archivi» o «con
+    l'editor», che scarica in $HOME/.app/exbrowser/scaricati/ e lancia il
+    programma; «Scarica», che chiede dove e si ricorda la cartella; «Annulla»,
+    col fuoco;
+  - lo scaricamento va sul disco mentre arriva (exhttp_verso): niente tetto,
+    Esc lo ferma, e un file a meta' si cancella invece di restare;
+  - un file LOCALE col suo programma si apre direttamente.
+
+  ! E IL DIALOGO DI CONFERMA AVEVA POSTO PER DUE RIGHE, NON TRE: la terza
+    toccava i pulsanti. Corretto in exdlg (visto nelle fotografie dei
+    certificati).
+
+  PROVATO da tools/prova_apri_scarica.sh: un server sull'host, «Apri» su un
+  .zip (Archivi si apre col file scaricato, fotografia) e «Scarica» su un
+  indirizzo senza estensione (zip -l legge il file arrivato).
 
 $ @EDIT-RTF L'EDITOR IN MODALITA' RTF. (chiesto il 23 settembre 2026)
 

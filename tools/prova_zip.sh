@@ -205,6 +205,42 @@ else
     esito=1
 fi
 
+# --- 6. Una cartella intera (23 settembre 2026) --------------------------------
+# ! LA CARTELLA VUOTA E' IL PUNTO: un albero con i soli file ci arriverebbe lo
+# stesso, e una cartella vuota no — se non ha la sua voce «nome/».
+echo "=== 6. una cartella intera, con una sottocartella e una vuota ==="
+timeout 400 python3 tools/qemu_drive.py \
+    "mount hd0p1 /disk@6" \
+    "mkdir /disk/albero@1" "mkdir /disk/albero/sub@1" "mkdir /disk/albero/vuota@1" \
+    "cp /boot/help.txt /disk/albero/uno.txt@3" \
+    "cp /bin/ls /disk/albero/sub/due@3" \
+    "zip /disk/b.zip /disk/albero@10" \
+    "mkdir /disk/fuori2@1" "zip -x /disk/b.zip /disk/fuori2@10" \
+    "ls /disk/fuori2/albero@3" "cmp /disk/albero/sub/due /disk/fuori2/albero/sub/due@4" \
+    "echo CARTELLA-FINITA@2" > "$D/6-cartella.log" 2>&1
+
+"$DEBUGFS" -R "dump /b.zip $D/b.zip" "$OFF" > /dev/null 2>&1
+if [ -s "$D/b.zip" ] && python3 -c "
+import sys, zipfile
+z = zipfile.ZipFile('$D/b.zip')
+nomi = sorted(z.namelist())
+print('        dentro:', ' '.join(nomi))
+voluti = {'albero/', 'albero/sub/', 'albero/vuota/', 'albero/uno.txt', 'albero/sub/due'}
+sys.exit(0 if z.testzip() is None and voluti <= set(nomi) else 1)
+"; then
+    echo "  [OK]  l'albero e' nell'archivio, cartelle vuote comprese, e si verifica"
+else
+    echo "  [NO]  l'albero non e' nell'archivio com'era (vedi $D/6-cartella.log)"
+    esito=1
+fi
+if grep -aq "CARTELLA-FINITA" "$D/6-cartella.log" && grep -aq "vuota" "$D/6-cartella.log" && \
+   ! grep -aqi "differ" "$D/6-cartella.log"; then
+    echo "  [OK]  estratto da EX-OS: c'e' anche la cartella vuota, e i byte tornano"
+else
+    echo "  [NO]  l'estrazione dell'albero non torna (vedi $D/6-cartella.log)"
+    esito=1
+fi
+
 echo ""
 echo "  I registri sono in $D/*.log"
 exit $esito
