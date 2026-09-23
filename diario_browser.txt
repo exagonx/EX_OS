@@ -15,8 +15,9 @@ dice quale. Il CSS «completo» non e' un obiettivo; Amazon che si legge si'.
 
   sito            cosa si vede oggi in EXBrowser              cosa lo ferma
   --------------  ------------------------------------------  --------------------------
-  google.com      la homepage: logo, casella, «Cerca con      la ricerca: consenso UE, poi
-                  Google», Gmail, Immagini, Accedi             SearchGuard (vedi 2)
+  google.com      homepage; ricerca -> consenso -> Rifiuta     Google: 429 «unusual traffic»
+                  tutto -> SearchGuard -> il browser torna     su questo IP; poi il reCAPTCHA,
+                  col gettone (vedi 2.1)                       che vuole iframe veri
   amazon.com      la pagina VERA, come testo e collegamenti   il CSS: si vede anche cio'
                   (da oggi: prima era spazzatura binaria)      che Amazon nasconde (vedi 3)
   stackoverflow   la sfida di Cloudflare «Just a moment...»   la sfida, che e' JavaScript
@@ -28,8 +29,8 @@ dice quale. Il CSS «completo» non e' un obiettivo; Amazon che si legge si'.
   legge: quel che manca e' il CSS, cioe' lavoro nostro con un risultato che si
   vede a ogni passo.
 
-! GOOGLE E' PIU' VICINO DI QUANTO DICESSE LA NOTA DEL 4 SETTEMBRE, ma per la
-  ricerca non dipende solo da noi (vedi 2).
+! GOOGLE: il browser fa tutto il giro fino al gettone. Il resto lo decide
+  Google, e da questa rete oggi ha detto no (vedi 2.1).
 
 
 ---------------------------------------------------------------------
@@ -140,13 +141,6 @@ e' stata misurata dall'host con lo stesso user-agent «EX-OS»:
            gettone, lo scrive in document.cookie e fa location.replace
            sullo stesso indirizzo con &sei=...
 
-Il passo 2 e' HTML semplice: il browser deve solo mandare il modulo in POST e
-tenere il cookie di dominio .google.com, passando da consent.google.com a
-www.google.com. Moduli e biscotti ci sono gia' (invio.html, biscotti.html),
-ma questo giro preciso NON e' ancora stato provato dentro EXBrowser.
--> PROSSIMO PASSO, ed e' una prova: aprire la ricerca in EXBrowser, premere
-   «Rifiuta tutto» e guardare se si arriva al passo 3.
-
 Il passo 3 e' JavaScript. Fatto girare sull'host dentro lo stesso QuickJS di
 EX-OS (un esecutore di 20 righe su quickjs/quickjs.c, con un DOM finto che
 annota ogni proprieta' toccata), SearchGuard arriva in fondo e chiede solo:
@@ -158,24 +152,99 @@ annota ogni proprieta' toccata), SearchGuard arriva in fondo e chiede solo:
     element.setAttribute                   navigator.sendBeacon
     setTimeout                             location.replace
 
-Quasi tutto c'e' gia' in exdom. Manca di sicuro:
-  - <iframe>.contentWindow: un oggetto con i costruttori del linguaggio. Il
-    minimo e' rendere il globale stesso: lo script vuole solo un
-    String.prototype.replace «pulito».
-  - navigator.sendBeacon: una POST che parte e non si aspetta.
-  - location.replace: da verificare che esista e che navighi.
-
 ! NON SI FALSIFICA NIENTE. Il browser implementa le API standard e fa girare
   lo script di Google per quello che e', con lo user-agent che ha. Se poi
-  Google accetta il gettone e manda i risultati, e' una decisione sua. Il
-  23 settembre si e' provato a rimandare il gettone a Google dall'host con
-  curl, per vedere se lo accettava: il passo e' stato bloccato, e a ragione,
-  perche' quello e' aggirare un controllo anti-robot e non navigare. La prova
-  va fatta DENTRO EXBrowser, quando le tre API ci sono.
+  Google accetta e manda i risultati, e' una decisione sua. Il 23 settembre
+  si e' provato a rimandare il gettone a Google dall'host con curl, per
+  vedere se lo accettava: il passo e' stato bloccato, e a ragione, perche'
+  quello e' aggirare un controllo anti-robot e non navigare. Le prove si
+  fanno DENTRO EXBrowser.
 
-Se Google non accetta, la ricerca resta html.duckduckgo.com (la casella Cerca,
-gia' provata in rete). I risultati di Google, una volta arrivati, sono pieni
-di CSS: dopo il passo 3 servono le stesse cose di Amazon.
+
+2.1  Il giro, provato dentro EXBrowser (23 settembre, sera)
+.....................................................................
+
+Tre modifiche, e l'esito passo per passo:
+
+  a) <iframe>.contentWindow / contentDocument     lib/exdom/exdom.c
+     Rendono il globale e il documento: qui c'e' un reame solo. Basta a chi
+     prende un built-in «pulito» da un iframe nuovo, e SearchGuard fa proprio
+     questo. ! NON E' PROVATO che senza questa riga SearchGuard fallisse:
+     potrebbe prendersi l'eccezione da solo. Un iframe che CARICA una pagina
+     vera non c'e' ancora.
+     sendBeacon e location.replace c'erano gia' (sendBeacon e' uno stub che
+     rende false: a SearchGuard serve solo per la telemetria, in un timer).
+
+  b) QuickJS diventa il motore PREDEFINITO          exbrowser.c, g_qjs = 1
+     Misura, su una copia locale della pagina dei risultati (servita da un
+     server sull'host che annota richieste e cookie):
+       ExJs     SearchGuard non finisce, pagina bianca, nessuna ricarica.
+       QuickJS  scrive SG_SS, fa location.replace con &sei=..., e la
+                richiesta dopo ARRIVA AL SERVER COL COOKIE SG_SS.
+     Senza quickjs.so exjs_motore() ripiega su ExJs da solo, e
+     «motore = exjs» nelle impostazioni lo sceglie ancora.
+
+  c) Il DNS che si prendeva la risposta di un altro   lib/exhttp/exhttp.c
+                                                      lib/dns.c
+     Premuto «Rifiuta tutto», il modulo partiva e il browser diceva
+     «https://consent.google.com/save: il nome non si risolve» — un nome
+     risolto un minuto prima. Causa: la connessione tenuta viva verso
+     consent.google.com era morta nel frattempo; exhttp la riapriva, ma
+     chiamava il DNS PRIMA di svuota_stack(), e dns.c, che aspetta un
+     IP_MSG_ESITO per aprire la porta UDP, si prendeva quello vecchio della
+     connessione morta e rinunciava. E' la stessa classe di guasto gia'
+     descritta sopra filtro_pulisci (gli esiti non hanno un numero di
+     richiesta): ne mancava un caso. Adesso svuota_stack() viene prima.
+     ! E IN PIU' dns.c, mentre aspettava la risposta, BUTTAVA i messaggi degli
+     altri processi (ipc_recv_timeout + continue): in un programma grafico
+     un clic perso a ogni nome risolto. Adesso usa ipc_scegli e li lascia
+     sullo scaffale.
+     Provato: make prova-exhttp «tutto a posto»; in QEMU host risolve
+     wikipedia e consent.google.com, dice «non esiste» per un .invalid,
+     scarica apre wikipedia e debian. dns.c e' anche in ftp, host, ping,
+     telnet, soccorso, tcptest: ricostruiti, provati solo host e scarica.
+
+L'esito sul Google vero, con i clic dati a passi di dieci col mouse di QEMU:
+
+  1. /search?q=ex-os           -> pagina del consenso, si vede bene
+  2. clic su «Rifiuta tutto»    -> POST a consent.google.com/save, riesce
+  3. /search con SOCS           -> SearchGuard gira, il browser torna con
+                                   &sg_ss=... (si legge nell'indirizzo)
+  4. risposta di Google         -> 429, /sorry/index: «Our systems have
+                                   detected unusual traffic from your
+                                   computer network», IP 151.37.107.112
+
+! IL BROWSER HA FATTO TUTTA LA SUA PARTE. Il 429 e' una decisione di Google
+  sull'INDIRIZZO, e sullo stesso indirizzo eBay risponde 403 da stamattina.
+  Va detto chiaro: le prove automatiche di oggi da qui (curl dall'host,
+  molti giri in QEMU) hanno quasi certamente pesato. Non si insiste da
+  questa rete.
+-> PROSSIMA PROVA: la stessa, fatta A MANO da una persona, sulla macchina
+   vera (Acer) e su un'altra rete, a qualche giorno di distanza.
+
+La pagina /sorry di Google di solito ha un reCAPTCHA, che una persona risolve.
+Nella foto non si vede: il reCAPTCHA vive in un <iframe> che carica una pagina
+di google.com/recaptcha, e da noi gli iframe non caricano niente. Poterlo
+risolvere A MANO e' legittimo ed e' il prossimo pezzo grosso per Google:
+
+  - <iframe src=...> che carica davvero un documento: un secondo albero, un
+    secondo contesto JavaScript, un riquadro dove disegnarlo;
+  - postMessage fra la pagina e l'iframe (e' cosi' che reCAPTCHA risponde);
+  - i clic e il Tab dentro l'iframe.
+
+Se Google non accetta nemmeno cosi', la ricerca resta html.duckduckgo.com (la
+casella Cerca, gia' provata in rete). I risultati di Google, una volta
+arrivati, sono pieni di CSS: servono le stesse cose di Amazon.
+
+
+2.2  Notato strada facendo
+.....................................................................
+
+  - IL TAB NON SCORRE FRA I CONTROLLI DELLA PAGINA: esce soltanto dalla
+    casella a fuoco. Firefox passa di collegamento in pulsante; da noi un
+    modulo senza mouse non si puo' mandare. In QEMU, dove il mouse e'
+    relativo, e' anche il motivo per cui le prove costano tanto.
+  - L'indirizzo si passa come argomento a exbrowser (vedi 1.1).
 
 
 ---------------------------------------------------------------------
@@ -268,6 +337,26 @@ sull'indirizzo di questa rete: nel browser non c'e' niente da fare.
 
 
 ---------------------------------------------------------------------
+5b. IL MODELLO E' GECKO
+---------------------------------------------------------------------
+
+Chiesto il 23 settembre 2026: prendere spunto da Gecko (Firefox), non da
+Chromium. EXBrowser e' un motore suo e segue le specifiche WHATWG/W3C, che i
+due rispettano entrambi; dove la specifica lascia scegliere, si fa come Gecko:
+
+  - l'impaginazione come albero di riquadri (i «frame» di Gecko:
+    nsBlockFrame, nsInlineFrame, nsFlexContainerFrame...) costruito dallo
+    stile calcolato, invece del flusso di testo di oggi: e' il posto dove
+    entrano box model, flex e grid (sezione 3);
+  - la cascata separata dall'impaginazione (in Gecko e' Stylo): excss calcola
+    lo stile, browser_impagina.c lo usa, e non si toccano a vicenda;
+  - il Tab fra collegamenti e controlli nell'ordine del documento (2.2);
+  - lo user-agent, quando si decidera' di cambiarlo, nella forma di Gecko
+    («Mozilla/5.0 (...; rv:...) Gecko/20100101 EXBrowser/x.y»), che dice il
+    motore di riferimento e il nome vero del browser.
+
+
+---------------------------------------------------------------------
 6. APPUNTI DELLA SESSIONE SONNET, CORRETTI
 ---------------------------------------------------------------------
 
@@ -306,6 +395,11 @@ qui e poi e' stato tolto, per non avere due fonti. Cosa c'era di sbagliato:
     tools/prove/sito/carico.html      nuova pagina di prova
     tools/prove/sito/leggimi.md       la sua riga
     diario_browser.txt                questo file
+  e la sera (2.1):
+    lib/exdom/exdom.c                 contentWindow / contentDocument
+    exwin/bin/exbrowser/exbrowser.c   QuickJS predefinito
+    lib/exhttp/exhttp.c               svuota_stack prima del DNS
+    lib/dns.c                         non butta piu' i messaggi degli altri
 
 Le pagine scaricate per le misure (non nel repository):
     /tmp/exos-siti/estratti/{g,so,eb,am}.html   da `scarica` in EX-OS

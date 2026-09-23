@@ -447,10 +447,15 @@ static int           g_cache_accesa = 1;
 
 /* ! QUALE MOTORE: 0 = ExJs, 1 = QuickJS. La scelta si fa PRIMA di aprire —
  * vedi exjs_motore() in exjs.h — quindi cambiarla vale dalla pagina dopo, come
- * per JavaScript acceso/spento. Il predefinito e' ExJs: e' quello che c'e'
- * sempre, mentre quickjs.so e' mezzo megabyte che si puo' non aver
- * installato. */
-static int           g_qjs = 0;
+ * per JavaScript acceso/spento.
+ *
+ * ! THE DEFAULT IS QuickJS SINCE 23 SEPTEMBER 2026, and it was ExJs before.
+ * Measured on a saved copy of Google's results page: with ExJs SearchGuard
+ * never finishes and the page stays white; with QuickJS it writes its cookie
+ * and reloads, as in Firefox (diario_browser.txt, section 2). A system
+ * without quickjs.so loses nothing: exjs_motore() falls back to ExJs by
+ * itself, and "motore = exjs" in the settings still picks it. */
+static int           g_qjs = 1;
 
 /* -----------------------------------------------------------------------------
  * I MOTORI DI RICERCA — un nome e un pezzo di indirizzo

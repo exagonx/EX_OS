@@ -433,6 +433,22 @@ static int leggi_prop(ExJsCtx *c, void *dato, const char *nome, ExJsVal *fuori)
     }
     if (ugu(nome, "childNodes")) { *fuori = figli_vettore(D, n, 0); return 1; }
     if (ugu(nome, "ownerDocument")) { *fuori = D->documento; return 1; }
+
+    /* ! AN IFRAME'S WINDOW IS OUR OWN WINDOW. There is one realm here, so
+     * `contentWindow` hands back the global and `contentDocument` the
+     * document. It is what scripts that borrow a clean built-in from a fresh
+     * iframe need — Google's search page does exactly that with
+     * String.prototype.replace (measured 23 Sept 2026, diario_browser.txt) —
+     * and they get the same built-ins they already have. A page that really
+     * loads content into the iframe does not get it: that is still missing. */
+    if (ugu(nome, "contentWindow") || ugu(nome, "contentDocument")) {
+        const char *t = html_nome(d, n);
+
+        if (t && (ugu(t, "iframe") || ugu(t, "frame"))) {
+            *fuori = (nome[7] == 'W') ? exjs_globale(D->js) : D->documento;
+            return 1;
+        }
+    }
     if (ugu(nome, "outerHTML"))  { *fuori = marcatore(D, n, 1); return 1; }
     if (ugu(nome, "textContent") || ugu(nome, "innerText")) {
         *fuori = contenuto_testo(D, n);

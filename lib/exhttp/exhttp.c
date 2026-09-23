@@ -377,12 +377,17 @@ int exhttp_tcp(ExHttpTrasporto *t, const char *host, unsigned int porta)
     if (!t || !host) return 0;
     if (!ip_pronto()) { g_ultimo_errore = -1; return 0; }
 
+    /* Prima di chiedere, si butta cio' che e' rimasto: vedi svuota_stack.
+     * ! AND BEFORE THE DNS, NOT AFTER IT. When a kept-alive connection has
+     * died, the stack's last word about it is still in the mailbox; dns.c
+     * waits for an IP_MSG_ESITO to open its UDP port, took that stale one and
+     * gave up — "il nome non si risolve" on consent.google.com, a name that
+     * had resolved a minute before (23 Sept 2026, Google's consent form). */
+    svuota_stack();
+
     if (!a_cifre(host, ip)) {
         if (dns_risolvi(host, ip) != 0) { g_ultimo_errore = -2; return 0; }
     }
-
-    /* Prima di chiedere, si butta cio' che e' rimasto: vedi svuota_stack. */
-    svuota_stack();
 
     memcpy(a.ip, ip, 4);
     a.porta      = porta;

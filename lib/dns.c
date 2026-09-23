@@ -183,6 +183,15 @@ static int filtro_dns(const IpcMessage *m, void *dato)
     return m->tipo == v->tipo ? IPC_MIO : IPC_BUTTA;
 }
 
+/* Anything from the stack is ours to look at; anything else is left on the
+ * shelf. ! THE ANSWER LOOP USED ipc_recv_timeout AND DROPPED what came from
+ * other processes: in a graphical program that is a click eaten for every
+ * name resolved (seen 23 Sept 2026 while chasing a DNS failure in EXBrowser). */
+static int filtro_stack(const IpcMessage *m, void *dato)
+{
+    return (int)m->sender_pid == *(const int *)dato ? IPC_MIO : IPC_ALTRUI;
+}
+
 static int attendi_da(int pid_ip, unsigned int tipo, unsigned char *buf,
                       unsigned int *len, unsigned int ms)
 {
@@ -287,9 +296,9 @@ int dns_risolvi_da(const char *nome, unsigned char *ip, unsigned char *da)
                 const unsigned char *r;
                 unsigned int         p, ancount, k;
 
-                if (ipc_recv_timeout(&meta, buf, sizeof(buf), ATTESA_MS) < 0)
+                if (ipc_scegli(filtro_stack, &pid_ip, &meta, buf, sizeof(buf),
+                               ATTESA_MS) < 0)
                     break;
-                if ((int)meta.sender_pid != pid_ip) continue;
 
                 if (meta.tipo == IP_MSG_ESITO) {
                     IpEsito e;
