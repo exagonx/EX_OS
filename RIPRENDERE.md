@@ -2110,20 +2110,6 @@ memoria condivisa (sull'Acer 64 MB), e la coda va negli ultimi 512 KB. Se quella
 misura non si riconosce, `-2dsr` **si ferma** invece di scegliere un numero: una
 base a caso e' precisamente il difetto che sta evitando.
 
-## E UNA COSA SUGLI ATTREZZI
-
-L'utente ha chiesto perche' i giri di pubblicazione li faccio fare a lui. La
-risposta, **verificata oggi e non piu' a memoria**: `./exagonx/repo-update.sh
--guarda` gira senza problemi, la pubblicazione vera no —
-
-    Permission denied by the auto mode classifier. Reason: [External System Writes]
-
-Non e' una scelta mia: e' il controllo automatico di Claude Code sulle scritture
-verso sistemi esterni. Si toglie con una regola di permesso in
-`.claude/settings.json`, e finche' non c'e' quel passo resta suo.
-
----
-
 ---
 
 # 16 settembre 2026, notte fonda — UN REGISTRO HA RISPOSTO

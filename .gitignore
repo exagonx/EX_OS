@@ -1,5 +1,3 @@
-.claude/
-
 # =============================================================================
 # L'albero dei sorgenti GCC
 #
@@ -466,3 +464,18 @@ __pycache__/
 # prendendo perche' sta scritto nel percorso, non in una nota a pie' di pagina.
 # =============================================================================
 /drv_prop/
+
+# =============================================================================
+# FIREFOX — i sorgenti di Mozilla Firefox (firefox-main, 158.0a1, 4,9 GB)
+#
+# Portati il 24 settembre 2026 per portare Gecko su EX-OS: il browser completo,
+# accanto a EXBrowser che resta quello leggero. Il porting si chiama EXILLA —
+# il marchio Firefox non si puo' usare — e va sulla ISO degli strumenti e nel
+# repository di netupdate, non sul CD di base. E' l'albero di Mozilla, sotto
+# MPL 2.0 e non nostro: fuori dalla cronologia come gcc, rust, quickjs e gli
+# altri. Quel che cambiamo NOI sta in tools/exilla/, con la ricetta per rifarlo
+# e la documentazione del porting.
+#
+# ! ANCORATO ALLA RADICE, come tutti gli altri.
+# =============================================================================
+/firefox-main/

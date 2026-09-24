@@ -7611,7 +7611,7 @@ stampata subito sopra, che la causa vera la dice.
 
 ## Il dato decisivo: dove vivono i file sul disco
 
-Mappando `dist/floppy.img` (script in scratchpad, banale da rifare):
+Mappando `dist/floppy.img` (uno script temporaneo, banale da rifare):
 
 | Cosa | LBA | Cilindri |
 |---|---|---|

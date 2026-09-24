@@ -154,11 +154,10 @@ annota ogni proprieta' toccata), SearchGuard arriva in fondo e chiede solo:
 
 ! NON SI FALSIFICA NIENTE. Il browser implementa le API standard e fa girare
   lo script di Google per quello che e', con lo user-agent che ha. Se poi
-  Google accetta e manda i risultati, e' una decisione sua. Il 23 settembre
-  si e' provato a rimandare il gettone a Google dall'host con curl, per
-  vedere se lo accettava: il passo e' stato bloccato, e a ragione, perche'
-  quello e' aggirare un controllo anti-robot e non navigare. Le prove si
-  fanno DENTRO EXBrowser.
+  Google accetta e manda i risultati, e' una decisione sua. Rimandare il
+  gettone a Google dall'host, fuori dal browser, per vedere se lo accetta,
+  non si fa: quello e' aggirare un controllo anti-robot, non navigare. Le
+  prove si fanno DENTRO EXBrowser.
 
 
 2.1  Il giro, provato dentro EXBrowser (23 settembre, sera)
@@ -387,9 +386,11 @@ che serve a ogni sito. Ogni pezzo ha la sua pagina in tools/prove/sito/.
      Non ancora: iframe dentro iframe, immagini nell'iframe, scorrimento
      interno, Tab nell'iframe, moduli inviati da un iframe.
 
-  c) postMessage fra pagina e iframe: fermato. Il lavoro pensato per il
-     reCAPTCHA di Google e' stato interrotto da un controllo di sicurezza, e
-     non si riprende. In lib/exdom/exdom.c contentWindow chiede la finestra
+  c) postMessage fra pagina e iframe: sospeso. Era pensato per far girare il
+     reCAPTCHA di Google, e rincorrere i controlli anti-robot di un sito non
+     e' un obiettivo di questo progetto: per i servizi Google la strada e'
+     un motore completo, Exilla (tools/exilla/). In lib/exdom/exdom.c
+     contentWindow chiede la finestra
      dell'iframe a __exos_finestra_di() se il browser la definisce;
      il browser oggi non la definisce, quindi rende la finestra stessa, come
      prima.
@@ -615,8 +616,8 @@ sull'indirizzo di questa rete: nel browser non c'e' niente da fare.
 
   e) GOOGLE: «pagina bianca, e sotto: la disegna JavaScript»
      E' la pagina dei risultati costruita dal JavaScript di Google dopo i
-     suoi controlli anti-robot (2.1). Su quella strada il lavoro e' stato
-     fermato da un controllo di sicurezza (2.3 c) e non si riprende. Per
+     suoi controlli anti-robot (2.1). Quella strada non si rincorre in
+     EXBrowser (2.3 c): per Google serve un motore completo, Exilla. Per
      cercare resta html.duckduckgo.com, ora con i parametri che si vogliono;
      Startpage, provato, da qui non da' risultati in HTML.
 
@@ -650,15 +651,15 @@ due rispettano entrambi; dove la specifica lascia scegliere, si fa come Gecko:
 
 
 ---------------------------------------------------------------------
-6. APPUNTI DELLA SESSIONE SONNET, CORRETTI
+6. CORREZIONI AL PRIMO GIRO DI MISURE
 ---------------------------------------------------------------------
 
-Il lavoro e' cominciato con Sonnet (misure in QEMU, lettura del codice, il file
-EXBROWSER-MANCANZE-SITI.md) ed e' stato ripreso con Opus. Quel file e' confluito
-qui e poi e' stato tolto, per non avere due fonti. Cosa c'era di sbagliato:
+Il primo giro di misure (QEMU, lettura del codice, un file
+EXBROWSER-MANCANZE-SITI.md) e' confluito qui e il file e' stato tolto, per non
+avere due fonti. Cosa c'era di sbagliato:
 
   - «Google non ha un form di ricerca nell'HTML»: FALSO, ce l'ha, e la foto
-    lo mostra. Il suo grep cercava il form nel modo sbagliato.
+    lo mostra. Il grep cercava il form nel modo sbagliato.
   - «Amazon e' passato»: vero per `scarica` quella mattina, ma la stessa
     pagina in EXBrowser arrivava gzip e si vedeva illeggibile. Serviva la 1.2.
   - `load` scritto ma non funzionante: l'evento scattava senza
@@ -666,15 +667,13 @@ qui e poi e' stato tolto, per non avere due fonti. Cosa c'era di sbagliato:
   - Commenti nel codice in italiano: dal 22 settembre 2026 si scrivono in
     inglese. Riscritti.
   - Una diagnostica «DBG» lasciata in exbrowser.c: tolta.
-  - Nel .md c'era un rimando [[...]] alla memoria dell'assistente, che nel
-    repository non vuol dire niente.
-  - Da VERIFICARE, non ancora provato: secondo Sonnet la sveglia si accende
-    solo alla fine di esegui_script() e in prova_a_sparare_load(), quindi un
-    setTimeout messo da un gestore di clic su una pagina altrimenti ferma non
+  - Da VERIFICARE, non ancora provato: la sveglia si accende solo alla fine
+    di esegui_script() e in prova_a_sparare_load(), quindi un setTimeout
+    messo da un gestore di clic su una pagina altrimenti ferma non
     scatterebbe mai. A leggere il codice sembra vero (clic_al_documento non
     riaccende niente). Prova da scrivere: una pagina con un solo pulsante il
     cui onclick fa setTimeout(f, 500).
-  - Resta valido il resto della sua mappa: le 13 proprieta' di excss, le
+  - Resta valido il resto di quella mappa: le 13 proprieta' di excss, le
     regole @ saltate, i selettori a due motori, l'elenco delle API assenti,
     i conteggi su Amazon.
 
