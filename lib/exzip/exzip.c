@@ -77,7 +77,8 @@ struct ExZip {
     unsigned long  scritto;                   /* bytes written so far */
 };
 
-#define NOMI_POOL   (64 * 1024)
+/* the names of an archive being written: 65535 of them average 64 bytes */
+#define NOMI_POOL   (4 * 1024 * 1024)
 
 /* ! ONE ERROR AT A TIME, AND IT IS A SENTENCE. Returning -errno would push onto
  * every caller the job of turning a number into something a person can read,
@@ -258,7 +259,7 @@ ExZip *ex_zip_apri(const char *percorso)
     cd_off = le32(fine + 16);
 
     if (n_voci > EXZIP_VOCI_MAX) {
-        errore("l'archivio ha piu' di 1024 file: non ci stanno");
+        errore("l'archivio ha piu' di 65535 file: serve ZIP64, che non so leggere");
         close(z->fd); free(z); return 0;
     }
     if (cd_n == 0 || cd_off + cd_n > (unsigned long)dim) {
@@ -538,7 +539,7 @@ int ex_zip_aggiungi(ExZip *z, const char *file, const char *nome)
     g_err[0] = '\0';
 
     if (!z || !z->scrittura) { errore("questo archivio non e' in scrittura"); return 0; }
-    if (z->w_quante >= EXZIP_VOCI_MAX) { errore("l'archivio e' pieno: 1024 file"); return 0; }
+    if (z->w_quante >= EXZIP_VOCI_MAX) { errore("l'archivio e' pieno: 65535 file (il limite del formato senza ZIP64)"); return 0; }
 
     ln = (unsigned int)strlen(nome);
     if (ln == 0 || ln >= EXZIP_NOME_MAX) { errore("nome non valido dentro l'archivio"); return 0; }
@@ -655,7 +656,7 @@ static int voce_cartella(ExZip *z, const char *nome)
     unsigned char h[LOC_FISSO];
     unsigned int  ln = (unsigned int)strlen(nome), data = data_dos();
 
-    if (z->w_quante >= EXZIP_VOCI_MAX) { errore("l'archivio e' pieno: 1024 voci"); return 0; }
+    if (z->w_quante >= EXZIP_VOCI_MAX) { errore("l'archivio e' pieno: 65535 voci (il limite del formato senza ZIP64)"); return 0; }
     if (ln == 0 || ln >= EXZIP_NOME_MAX || z->nomi_usati + ln + 1 > NOMI_POOL) {
         errore("nome di cartella troppo lungo per l'archivio");
         return 0;

@@ -3847,13 +3847,13 @@ static void progetto_scheda_salva(void)
 
     sprintf(riga, "nome = %s\n", g_prg_nome);
     write(fd, riga, strlen(riga));
-    sprintf(riga, "autore = %s\n", ex_testo_prendi(g_prg_c_autore));
+    snprintf(riga, sizeof(riga), "autore = %s\n", ex_testo_prendi(g_prg_c_autore));
     write(fd, riga, strlen(riga));
-    sprintf(riga, "versione = %s\n", ex_testo_prendi(g_prg_c_vers));
+    snprintf(riga, sizeof(riga), "versione = %s\n", ex_testo_prendi(g_prg_c_vers));
     write(fd, riga, strlen(riga));
     sprintf(riga, "creato = %s\n", g_prg_creato);
     write(fd, riga, strlen(riga));
-    sprintf(riga, "descrizione = %s\n", ex_testo_prendi(g_prg_c_descr));
+    snprintf(riga, sizeof(riga), "descrizione = %s\n", ex_testo_prendi(g_prg_c_descr));
     write(fd, riga, strlen(riga));
 
     write(fd, "\n[nota]\n", 8);

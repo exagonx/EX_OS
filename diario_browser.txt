@@ -521,6 +521,23 @@ e' uno storage in memoria (anche senza disco), poi requestAnimationFrame come
 un setTimeout da 16 ms.
 
 
+  3.9  DOVE VA IL TEMPO DI UNA PAGINA (24 settembre 2026)
+       La console, alla fine di ogni pagina: «tempi: rete N ms in K
+       richieste, script, css, impaginazione». Su amazon.com:
+           rete 16760 ms in 75 richieste, script 6780 ms, css 320 ms,
+           impaginazione 60 ms
+       Il tempo e' della RETE (circa 220 ms a richiesta, stretta TLS compresa),
+       quindi scaricare in parallelo servirebbe davvero: vedi 5c. Per ogni
+       foglio la console dice indirizzo, byte e regole, come la scheda Rete di
+       Firefox. I fogli ora arrivano interi (il grande: 563852 byte, 1763
+       regole). ! DA CONTROLLARE: il conteggio «(N regole)» della riga dei
+       tempi dice 190 mentre i fogli sommano circa 1900: e' un conteggio
+       sbagliato, non ancora capito.
+       E una regola senza proprieta' che capiamo restituisce i suoi pezzi:
+       sui fogli di Amazon, 5379 pezzi invece di 17648 e un'arena di 100 KB
+       invece di 326.
+
+
 ---------------------------------------------------------------------
 4. STACK OVERFLOW
 ---------------------------------------------------------------------
@@ -543,6 +560,73 @@ piu' pesante di SearchGuard.
 sull'indirizzo di questa rete: nel browser non c'e' niente da fare.
 -> Rimisurare da un'altra rete (la macchina vera, un altro collegamento)
    prima di dedurne altro.
+
+
+---------------------------------------------------------------------
+5c. RICHIESTE DEL 24 SETTEMBRE 2026
+---------------------------------------------------------------------
+
+  a) ARCHIVI SI FERMAVA SOPRA I 1024 FILE             lib/exzip, lib/exwin
+     Due tetti uno dietro l'altro: EXZIP_VOCI_MAX = 1024 nella libreria (ora
+     65535, il limite del formato senza ZIP64: il conteggio nel record di
+     coda e' a 16 bit) e LISTA_VOCI_MAX = 512 nella lista del toolkit, che
+     oltre scartava le righe in silenzio (ora parte da 512 e raddoppia fino
+     a 65536). Il deposito dei nomi in scrittura passa da 64 KB a 4 MB.
+     Prova: un .zip di 3000 file fatto da Python — `zip -l` li elenca,
+     `zip -x` li estrae tutti (l'ultimo col contenuto giusto), Archivi li
+     mostra e con Fine arriva a file2999.txt. ! Su un disco di prova da 32 MB
+     l'estrazione si ferma a 1970: sono gli inode (1984), non la libreria.
+     ! Gestione file ha un suo VOCI_MAX = 512 (filemgr.c): non ancora alzato.
+
+  b) SELEZIONA, COPIA, INCOLLA, TAGLIA, CANCELLA NELLE CASELLE   lib/exwin
+     La casella di testo del toolkit scriveva solo in fondo e cancellava solo
+     l'ultima lettera. Adesso ha il cursore (frecce, Home, Fine, Ctrl+frecce
+     a parole), la selezione (Shift, Ctrl+A), Canc e Backspace anche sulla
+     selezione, Ctrl+C / Ctrl+X / Ctrl+V sugli appunti della scrivania, il
+     clic che mette il cursore, la vista che segue il cursore, e col fuoco
+     dato da Tab il testo si seleziona tutto, come la barra di Firefox. Le
+     altre combinazioni con Ctrl restano del programma (Ctrl+O, Ctrl+S del
+     browser). E TESTO_LEN passa da 64 a 1024: la barra dell'indirizzo non
+     teneva un indirizzo vero. Vale per ogni programma ExWin.
+     ! exide aveva tre sprintf di una casella in un buffer fisso: ora
+     snprintf.
+     Prova: da tastiera, nella barra: «abc def ghi», Home, Shift+destra x3,
+     Ctrl+C, Fine, Ctrl+V -> «...ghiabo»; Ctrl+sinistra, Shift+Home, Ctrl+X,
+     Fine, Ctrl+V -> «ghiaboabout:blankabc def »; la selezione si vede in
+     blu. E nella finestra Apri di exdlg. Le sette pagine di riferimento
+     restano identiche.
+
+  c) LA RICERCA
+     In QEMU funzionava; il guaio era il pulsante «Vai» accanto a Cerca, che
+     andava all'INDIRIZZO. Adesso, con i tasti in Cerca, Vai cerca. E, come
+     in Firefox (keyword.enabled), delle parole nella barra dell'indirizzo
+     — con spazi, o senza punto, due punti e barra — si cercano col motore
+     scelto.
+
+  d) IL MOTORE DI RICERCA CONFIGURABILE
+     I motori sono MODELLI, come quelli di Firefox (OpenSearch):
+     {searchTerms} dove vanno le parole, e `%s` accettato come nelle ricerche
+     per parola chiave di Firefox. Ai tre di prima si aggiunge «personale»,
+     il cui modello si scrive in Impostazioni (casella nuova) o nel file:
+         ricerca     = personale
+         ricerca_url = https://html.duckduckgo.com/html/?q={searchTerms}&kl=it-it
+     Prova: «pane e vino» nella barra -> ?q=pane+e+vino&kl=it-it, risultati
+     in italiano; la finestra delle impostazioni fotografata.
+
+  e) GOOGLE: «pagina bianca, e sotto: la disegna JavaScript»
+     E' la pagina dei risultati costruita dal JavaScript di Google dopo i
+     suoi controlli anti-robot (2.1). Su quella strada il lavoro e' stato
+     fermato da un controllo di sicurezza (2.3 c) e non si riprende. Per
+     cercare resta html.duckduckgo.com, ora con i parametri che si vogliono;
+     Startpage, provato, da qui non da' risultati in HTML.
+
+  f) PIU' PROCESSI PER SCARICARE (proposta, non fatta)
+     Si puo': il gestore dei download lancia gia' /bin/scarica -avanza come
+     processo per ogni file, perche' exhttp tiene lo stato in globali e non
+     regge due richieste in un processo. Il browser potrebbe, dopo aver
+     letto la pagina, lanciare 3-4 scarica per fogli e script verso la
+     cache e poi leggerli da li'. La misura (3.9) dice che il tempo e' della
+     rete: e' il prossimo guadagno grosso.
 
 
 ---------------------------------------------------------------------

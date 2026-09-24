@@ -1055,6 +1055,7 @@ unsigned int css_analizza(CssFoglio *f, const char *testo, unsigned int n,
             unsigned int e = s;
             CssRegola    r;
             int          primo = -1, ultimo = -1;
+            unsigned int prima_a, prima_p;
             DichIter     it;
             unsigned short prop;
             unsigned int   val;
@@ -1062,15 +1063,13 @@ unsigned int css_analizza(CssFoglio *f, const char *testo, unsigned int n,
             e = virgola(testo, s, sel_f);
 
             /* 1: a rule; 2: valid, never matches here (see the reader) */
-            {
-                unsigned int prima_a = f->arena_n, prima_p = f->pezzi_n;
-
-                if (leggi_selettore(f, testo, s, e, &r) != 1) {
-                    f->arena_n = prima_a;
-                    f->pezzi_n = prima_p;
-                    s = e + 1;
-                    continue;
-                }
+            prima_a = f->arena_n;
+            prima_p = f->pezzi_n;
+            if (leggi_selettore(f, testo, s, e, &r) != 1) {
+                f->arena_n = prima_a;
+                f->pezzi_n = prima_p;
+                s = e + 1;
+                continue;
             }
 
             if (f->regole_n >= f->regole_max) { f->troncato = 1; return fatte; }
@@ -1086,6 +1085,11 @@ unsigned int css_analizza(CssFoglio *f, const char *testo, unsigned int n,
                 ultimo = (int)f->dich_n;
                 f->dich_n++;
             }
+
+            /* ! A RULE WITH NOTHING WE UNDERSTAND GIVES BACK ITS PIECES: most
+             * of a real sheet is properties this reader does not know yet,
+             * and on amazon.com 2400 rules had left 17600 pieces behind. */
+            if (primo < 0) { f->arena_n = prima_a; f->pezzi_n = prima_p; }
 
             if (primo >= 0) {
                 r.origine    = origine;

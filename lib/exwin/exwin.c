@@ -24,7 +24,11 @@
 extern const unsigned char font8x16[256 * 16];
 
 #define OGGETTI_MAX     64
-#define TESTO_LEN       64
+/* ! 1024 SINCE 24 SEPTEMBER 2026, and 64 before: a text box held 63
+ * characters, and the browser's address bar could not hold a real address.
+ * 64 objects times 1 KB is 64 KB; the window server gets titles cut to its
+ * own WIN_TITOLO_LEN, as it always did. */
+#define TESTO_LEN       1024
 
 typedef struct {
     unsigned int usato;
@@ -46,6 +50,11 @@ typedef struct {
      * (ex_tab_contenuto). Only the top level uses it. */
     unsigned char tab_contenuto;
     unsigned int  cursore;      /* posizione del cursore in una casella */
+    /* A text box's selection runs from `ancora` to `cursore`, when c_sel is 1;
+     * `vista` is its first character shown (the box scrolls with the caret). */
+    unsigned int  ancora;
+    unsigned char c_sel;
+    unsigned int  vista;
 
     /* ! IL VALORE DI UN CONTROLLO CHE NE HA UNO, e sono tre campi e non tre
      * strutture a parte. Una spunta e un radio sono acceso o spento; una barra
@@ -191,7 +200,13 @@ static Terminale g_term[TERM_MAX];
  * riusa.
  * ============================================================================= */
 #define LISTA_MAX        4
-#define LISTA_VOCI_MAX   512
+/* ! A LIST GROWS, since 24 September 2026: it starts with LISTA_VOCI_PRIMA
+ * rows and doubles when full, up to LISTA_VOCI_MAX. It was a fixed 512, and
+ * past that ex_lista_aggiungi() said no — an archive of 3000 files, or a big
+ * directory, showed its first 512 and nothing said the rest was missing on
+ * the screen. */
+#define LISTA_VOCI_PRIMA 512
+#define LISTA_VOCI_MAX   65536
 #define LISTA_TESTO_MAX  64
 #define LISTA_RIGA_H     16
 #define LISTA_CAR_W       8    /* il passo del carattere: vedi ex_scrivi */
@@ -209,7 +224,8 @@ static Terminale g_term[TERM_MAX];
 typedef struct {
     unsigned int usato;
     ExFinestra   ogg;
-    char        *voci;                  /* LISTA_VOCI_MAX * LISTA_TESTO_MAX */
+    char        *voci;                  /* cap * LISTA_TESTO_MAX */
+    unsigned int cap;                   /* how many rows fit now */
     unsigned int n;                     /* quante ce ne sono */
     unsigned int sel;                   /* quale e' scelta */
     unsigned int primo;                 /* la prima visibile */
@@ -224,7 +240,7 @@ typedef struct {
      * la riga vorrebbe dire rileggere e ridecodificare un file a ogni
      * disegno della lista, cioe' a ogni scorrimento. Qui c'e' il numero di
      * un'icona gia' aperta. */
-    ExIcona      ic[LISTA_VOCI_MAX];
+    ExIcona     *ic;                    /* cap of them */
 } Lista;
 
 static Lista g_lista[LISTA_MAX];
@@ -810,6 +826,11 @@ static void fuoco_metti(ExFinestra f, ExFinestra c)
     if (!r || !o || !accetta_fuoco(o)) return;
     r->fuoco = c;
     o->cursore = (unsigned int)strlen(o->titolo);
+    /* ! A TEXT BOX REACHED BY FOCUS SELECTS ITS TEXT, as Firefox's address
+     * bar does: typing then replaces it. A click puts the caret where it
+     * lands instead (see casella_clic). */
+    o->ancora = 0;
+    o->c_sel  = (o->classe == CL_TESTO && o->cursore > 0);
 }
 
 /* =============================================================================
@@ -1892,6 +1913,10 @@ static int larg(const char *s)
 {
     return (int)exfont_larghezza(&g_sistema, s);
 }
+
+/* the text box's own helpers, further down with its keys */
+static int casella_sel(const Oggetto *o, unsigned int *a, unsigned int *b);
+static int larg_n(const char *s, unsigned int k);
 
 void ex_scrivi_con(ExFinestra f, ExFont h, int x, int y,
                    const char *s, unsigned int c)
@@ -3032,37 +3057,53 @@ static void disegna_oggetto(Oggetto *o)
         break;
 
     case CL_TESTO: {
-        Oggetto *r = radice(o->padre);
-        /* ! IL TESTO PIU' LUNGO DELLA CASELLA SI MOSTRA DALLA CODA, e prima si
-         * mostrava tutto: ex_scrivi non taglia niente, quindi le lettere in
-         * piu' finivano SOPRA il controllo accanto. Finche' le caselle erano
-         * larghe non mordeva; si e' visto il giorno in cui nella barra del
-         * navigatore ne sono comparse due — un indirizzo lungo scriveva sopra
-         * l'etichetta «Cerca».
-         *
-         * ! E SI MOSTRA LA CODA, NON LA TESTA, perche' qui il cursore sta
-         * SEMPRE in fondo: questa casella non ha modo di muoverlo in mezzo
-         * (vedi tasto_al_fuoco: si aggiunge e si cancella dalla fine). Chi
-         * scrive deve vedere quel che sta scrivendo, non l'inizio di un
-         * indirizzo che ha gia' finito di battere. Il giorno che il cursore si
-         * potra' spostare, questa finestra dovra' seguire LUI. */
-        const char *t = o->titolo;
-        int         dentro = o->w - 6;      /* i 3 pixel di bordo, due volte */
-        int         col;
+        Oggetto     *r = radice(o->padre);
+        /* ! THE WINDOW OF TEXT FOLLOWS THE CARET, as the old comment here
+         * asked for «the day the caret can move»: that day is 24 September
+         * 2026. What does not fit is not drawn (ex_scrivi cuts nothing, and
+         * the letters would land on the control beside). */
+        const char  *t = o->titolo;
+        unsigned int n = (unsigned int)strlen(t), cur, vis, a = 0, b = 0;
+        int          dentro = o->w - 6;      /* i 3 pixel di bordo, due volte */
+        int          fuoco = (r && r->fuoco == (ExFinestra)(o - g_ogg + 1));
+        int          sel;
+        char         buf[TESTO_LEN];
+        int          ty = y + (o->h - 16) / 2;
 
-        while (*t && larg(t) > dentro) t++;
-        col = larg(t);
+        cur = o->cursore > n ? n : o->cursore;
+        if (o->vista > cur) o->vista = cur;
+        while (o->vista < cur && larg_n(t + o->vista, cur - o->vista) > dentro) o->vista++;
+        /* how many letters from vista fit */
+        vis = 0;
+        while (o->vista + vis < n && larg_n(t + o->vista, vis + 1) <= dentro) vis++;
 
         ex_riempi(o->padre, x, y, o->w, o->h, EX_BIANCO);
         /* ! IL BORDO DICE CHI HA I TASTI. Senza, chi guarda non sa dove
          * andra' a finire quello che batte — e Tab sembra non fare niente. */
-        ex_riquadro_disegna(o->padre, x, y, o->w, o->h,
-                            (r && r->fuoco == (ExFinestra)(o - g_ogg + 1))
-                            ? EX_BLU : EX_GRIGIO_SC);
-        ex_scrivi(o->padre, x + 3, y + (o->h - 16) / 2, t, EX_NERO);
+        ex_riquadro_disegna(o->padre, x, y, o->w, o->h, fuoco ? EX_BLU : EX_GRIGIO_SC);
 
-        if (r && r->fuoco == (ExFinestra)(o - g_ogg + 1))
-            ex_riempi(o->padre, x + 3 + col, y + 3, 1, o->h - 6, EX_NERO);
+        memcpy(buf, t + o->vista, vis);
+        buf[vis] = '\0';
+        ex_scrivi(o->padre, x + 3, ty, buf, EX_NERO);
+
+        sel = fuoco && casella_sel(o, &a, &b);
+        if (sel) {
+            unsigned int da = a < o->vista ? o->vista : a;
+            unsigned int al = b > o->vista + vis ? o->vista + vis : b;
+
+            if (al > da) {
+                int sx = larg_n(t + o->vista, da - o->vista);
+                int sw = larg_n(t + da, al - da);
+
+                ex_riempi(o->padre, x + 3 + sx, y + 3, sw, o->h - 6, EX_BLU);
+                memcpy(buf, t + da, al - da);
+                buf[al - da] = '\0';
+                ex_scrivi(o->padre, x + 3 + sx, ty, buf, EX_BIANCO);
+            }
+        }
+        if (fuoco)
+            ex_riempi(o->padre, x + 3 + larg_n(t + o->vista, cur - o->vista), y + 3, 1,
+                      o->h - 6, EX_NERO);
         break;
     }
 
@@ -3241,7 +3282,7 @@ static void disegna_oggetto(Oggetto *o)
             unsigned int i;
 
             gutter = 0;
-            for (i = 0; i < L->n && i < LISTA_VOCI_MAX; i++)
+            for (i = 0; i < L->n; i++)
                 if (L->ic[i]) { gutter = LISTA_ICONA_CAR * LISTA_CAR_W; break; }
         }
 
@@ -3264,7 +3305,7 @@ static void disegna_oggetto(Oggetto *o)
              * lista: sulla riga scelta il fondo e' blu, e un'icona composta
              * sul bianco ci lascerebbe intorno un alone chiaro — l'alfa dei
              * bordi e' proprio dove si vedrebbe. */
-            if (v < LISTA_VOCI_MAX && L->ic[v])
+            if (v < L->n && L->ic[v])
                 ex_icona_disegna(o->padre, L->ic[v], x + 3, ry,
                                  (unsigned int)LISTA_ICONA_LATO, fondo);
 
@@ -4093,9 +4134,16 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
          * perche' l'elenco e' vuoto. */
         if (L->righe == 0) { o->usato = 0; return 0; }
 
-        if (!L->voci) L->voci = (char *)malloc(LISTA_VOCI_MAX * LISTA_TESTO_MAX);
-        if (!L->voci) { o->usato = 0; return 0; }
-        memset(L->voci, 0, LISTA_VOCI_MAX * LISTA_TESTO_MAX);
+        /* A slot reused keeps what it had grown to: free() gives nothing
+         * back here, so a smaller block would only be a second one. */
+        if (!L->voci) {
+            L->voci = (char *)malloc(LISTA_VOCI_PRIMA * LISTA_TESTO_MAX);
+            L->ic   = (ExIcona *)malloc(LISTA_VOCI_PRIMA * sizeof(ExIcona));
+            L->cap  = LISTA_VOCI_PRIMA;
+        }
+        if (!L->voci || !L->ic) { o->usato = 0; return 0; }
+        memset(L->voci, 0, (size_t)L->cap * LISTA_TESTO_MAX);
+        memset(L->ic, 0, (size_t)L->cap * sizeof(ExIcona));
 
         L->usato = 1;
         return (ExFinestra)(i + 1);
@@ -4318,6 +4366,11 @@ void ex_titolo(ExFinestra f, const char *s)
     if (!o || !s) return;
     strncpy(o->titolo, s, TESTO_LEN - 1);
     o->titolo[TESTO_LEN - 1] = '\0';
+    if (o->classe == CL_TESTO) {
+        o->cursore = (unsigned int)strlen(o->titolo);
+        o->c_sel = 0;
+        o->vista = 0;
+    }
 
     if (o->classe == CL_FINESTRA && g_server >= 0) {
         WinTitolo t;
@@ -4882,12 +4935,184 @@ static int area_tasto(Area *A, unsigned int k)
  * deve arrivare all'applicazione, o non ci sarebbe modo di dare una scorciatoia
  * a un programma che ha una casella col fuoco. Il servizio 'kbd' tiene i
  * modificatori in un campo a parte apposta. */
+/* =============================================================================
+ * THE TEXT BOX — a one-line editor (24 September 2026)
+ *
+ * ! IT COULD ONLY TYPE AT THE END AND RUB OUT THE LAST LETTER: no caret to
+ * move, no Delete, no selection, no clipboard — asked for the browser's
+ * address and search boxes, and it serves every program. The keys are
+ * Firefox's: arrows, Home, End, with Shift to select, Ctrl+arrows by word,
+ * Ctrl+A, Ctrl+C, Ctrl+X, Ctrl+V on the desktop's clipboard (the same one
+ * ex_area uses), Delete and Backspace on the selection or one character.
+ * ============================================================================= */
+static int casella_sel(const Oggetto *o, unsigned int *a, unsigned int *b)
+{
+    if (!o->c_sel || o->ancora == o->cursore) return 0;
+    *a = o->ancora < o->cursore ? o->ancora : o->cursore;
+    *b = o->ancora < o->cursore ? o->cursore : o->ancora;
+    return 1;
+}
+
+static void casella_via(Oggetto *o, unsigned int a, unsigned int b)
+{
+    unsigned int n = (unsigned int)strlen(o->titolo);
+
+    if (b > n) b = n;
+    if (a >= b) return;
+    memmove(o->titolo + a, o->titolo + b, n - b + 1);
+    o->cursore = a;
+    o->c_sel = 0;
+}
+
+static int casella_via_sel(Oggetto *o)
+{
+    unsigned int a, b;
+
+    if (!casella_sel(o, &a, &b)) return 0;
+    casella_via(o, a, b);
+    return 1;
+}
+
+/* Puts `k` bytes at the caret, over the selection. A new line becomes a
+ * space: the box has one line. */
+static void casella_scrivi(Oggetto *o, const char *t, unsigned int k)
+{
+    unsigned int n, i;
+
+    casella_via_sel(o);
+    n = (unsigned int)strlen(o->titolo);
+    if (o->cursore > n) o->cursore = n;
+    if (n + k > TESTO_LEN - 1) k = TESTO_LEN - 1 - n;
+    memmove(o->titolo + o->cursore + k, o->titolo + o->cursore, n - o->cursore + 1);
+    for (i = 0; i < k; i++) {
+        char ch = t[i];
+
+        if ((unsigned char)ch < 0x20) ch = ' ';
+        o->titolo[o->cursore + i] = ch;
+    }
+    o->cursore += k;
+}
+
+static void casella_muovi(Oggetto *o, unsigned int dove, int estendi)
+{
+    if (estendi) {
+        if (!o->c_sel) { o->c_sel = 1; o->ancora = o->cursore; }
+    } else {
+        o->c_sel = 0;
+    }
+    o->cursore = dove;
+}
+
+/* The start of the word before `i`, or the end of the one after it. */
+static unsigned int casella_parola(const Oggetto *o, unsigned int i, int avanti)
+{
+    const char  *t = o->titolo;
+    unsigned int n = (unsigned int)strlen(t);
+
+    if (avanti) {
+        while (i < n && t[i] == ' ') i++;
+        while (i < n && t[i] != ' ') i++;
+    } else {
+        while (i > 0 && t[i - 1] == ' ') i--;
+        while (i > 0 && t[i - 1] != ' ') i--;
+    }
+    return i;
+}
+
+/* The keys of a text box. Returns 1 if the box used the key. */
+static int casella_tasto(Oggetto *o, unsigned int k)
+{
+    unsigned int c = k & KBD_KEY_MASK, n = (unsigned int)strlen(o->titolo), a, b;
+    int          shift = (k & KBD_MOD_SHIFT) != 0;
+
+    if (o->cursore > n) o->cursore = n;
+
+    if (k & KBD_MOD_CTRL) {
+        unsigned int l = (c < 128) ? (c | 0x20) : c;
+
+        if (c == KBD_K_LEFT)  { casella_muovi(o, casella_parola(o, o->cursore, 0), shift); return 1; }
+        if (c == KBD_K_RIGHT) { casella_muovi(o, casella_parola(o, o->cursore, 1), shift); return 1; }
+        if (l == 'a') { o->ancora = 0; o->cursore = n; o->c_sel = (n > 0); return 1; }
+        if (l == 'c' || l == 'x') {
+            if (casella_sel(o, &a, &b)) {
+                ex_appunti_metti(o->titolo + a, b - a);
+                if (l == 'x') casella_via(o, a, b);
+            }
+            return 1;
+        }
+        if (l == 'v') {
+            char         buf[TESTO_LEN];
+            unsigned int m = ex_appunti_prendi(buf, sizeof(buf));
+
+            if (m >= sizeof(buf)) m = sizeof(buf) - 1;
+            casella_scrivi(o, buf, m);
+            return 1;
+        }
+        return 0;                   /* every other Ctrl is the program's */
+    }
+
+    switch (c) {
+    case KBD_K_LEFT:
+        if (!shift && casella_sel(o, &a, &b)) casella_muovi(o, a, 0);
+        else casella_muovi(o, o->cursore ? o->cursore - 1 : 0, shift);
+        return 1;
+    case KBD_K_RIGHT:
+        if (!shift && casella_sel(o, &a, &b)) casella_muovi(o, b, 0);
+        else casella_muovi(o, o->cursore < n ? o->cursore + 1 : n, shift);
+        return 1;
+    case KBD_K_HOME: casella_muovi(o, 0, shift); return 1;
+    case KBD_K_END:  casella_muovi(o, n, shift); return 1;
+    case KBD_K_DEL:
+        if (!casella_via_sel(o) && o->cursore < n) casella_via(o, o->cursore, o->cursore + 1);
+        return 1;
+    case '\b':
+        if (!casella_via_sel(o) && o->cursore > 0) casella_via(o, o->cursore - 1, o->cursore);
+        return 1;
+    }
+    if (c == '\n' || c == '\r') return 0;         /* Invio va all'applicazione */
+    if (c < 0x20 || c > 0x7E) return 0;
+    {
+        char ch = (char)c;
+
+        casella_scrivi(o, &ch, 1);
+    }
+    return 1;
+}
+
+/* How wide the first `k` bytes of `s` are. */
+static int larg_n(const char *s, unsigned int k)
+{
+    char         buf[TESTO_LEN];
+    unsigned int i;
+
+    for (i = 0; i < k && s[i] && i < TESTO_LEN - 1; i++) buf[i] = s[i];
+    buf[i] = '\0';
+    return larg(buf);
+}
+
+/* A click at window x `mx` on a text box whose text starts at `x0`: the caret
+ * goes to the nearest gap between two letters. */
+static void casella_clic(Oggetto *o, int mx, int x0)
+{
+    unsigned int n = (unsigned int)strlen(o->titolo), i, meglio = o->vista;
+    int          dist = 1 << 30;
+
+    for (i = o->vista; i <= n; i++) {
+        int d = larg_n(o->titolo + o->vista, i - o->vista) - (mx - x0);
+
+        if (d < 0) d = -d;
+        if (d < dist) { dist = d; meglio = i; }
+        else break;
+    }
+    o->cursore = meglio;
+    o->c_sel = 0;
+}
+
 static int tasto_al_fuoco(ExFinestra f, unsigned int k)
 {
     Oggetto *r = radice(f);
     Oggetto *o;
     unsigned int c = k & KBD_KEY_MASK;
-    unsigned int n;
 
     if (!r) return 0;
 
@@ -4921,6 +5146,9 @@ static int tasto_al_fuoco(ExFinestra f, unsigned int k)
         }
         return term_tasto(t, c);
     }
+
+    /* the text box takes its own Ctrl keys (copy, cut, paste, select all) */
+    if (o && o->classe == CL_TESTO) return casella_tasto(o, k);
 
     if (k & KBD_MOD_CTRL) return 0;
 
@@ -5058,29 +5286,7 @@ static int tasto_al_fuoco(ExFinestra f, unsigned int k)
         return 1;
     }
 
-    if (o->classe != CL_TESTO) return 0;
-
-    n = (unsigned int)strlen(o->titolo);
-
-    if (c == '\b') {                        /* Backspace */
-        if (n > 0) o->titolo[n - 1] = '\0';
-        o->cursore = (unsigned int)strlen(o->titolo);
-        return 1;
-    }
-    if (c == '\n' || c == '\r') return 0;  /* Invio va all'applicazione */
-
-    /* ! SOLO I CARATTERI STAMPABILI. I tasti speciali stanno da 0x100 in su
-     * apposta per non poterli mai confondere con un carattere: infilare una
-     * freccia dentro il testo darebbe una stringa con dentro un valore che
-     * non si stampa. */
-    if (c < 0x20 || c > 0x7E) return 0;
-
-    if (n + 1 < TESTO_LEN) {
-        o->titolo[n] = (char)c;
-        o->titolo[n + 1] = '\0';
-        o->cursore = n + 1;
-    }
-    return 1;
+    return 0;
 }
 
 /* ! DUE PORTE SULLO STESSO CICLO, e il corpo e' uno solo. `ex_prendi_msg`
@@ -5666,6 +5872,12 @@ static int prendi_msg(ExMsg *m, int bloccante)
              * e' il modo in cui lo si chiede apposta invece di ottenerlo per
              * caso premendolo. */
             if (co && co->classe != CL_PULSANTE) fuoco_metti(f, c);
+            if (co && co->classe == CL_TESTO) {
+                int ox, oy;
+
+                origine(co, &ox, &oy);
+                casella_clic(co, (int)e.x, ox + co->x + 3);
+            }
 
             /* =============================================================
              * ! PREMERE NON E' ANCORA COMANDARE.
@@ -5987,7 +6199,20 @@ int ex_lista_aggiungi(ExFinestra f, const char *testo)
     /* ! PIENA SI DICE, non si sovrascrive l'ultima. Un elenco che smette in
      * silenzio di crescere fa credere che la directory abbia meno file di
      * quanti ne ha. */
-    if (L->n >= LISTA_VOCI_MAX) return 0;
+    if (L->n >= L->cap) {
+        unsigned int nuovo = L->cap * 2;
+        char        *v;
+        ExIcona     *ic;
+
+        if (nuovo > LISTA_VOCI_MAX) return 0;
+        v  = (char *)realloc(L->voci, (size_t)nuovo * LISTA_TESTO_MAX);
+        if (!v) return 0;
+        L->voci = v;
+        ic = (ExIcona *)realloc(L->ic, (size_t)nuovo * sizeof(ExIcona));
+        if (!ic) return 0;
+        L->ic  = ic;
+        L->cap = nuovo;
+    }
 
     dst = &L->voci[L->n * LISTA_TESTO_MAX];
     strncpy(dst, testo, LISTA_TESTO_MAX - 1);
@@ -5998,7 +6223,7 @@ int ex_lista_aggiungi(ExFinestra f, const char *testo)
      * byte azzerati a ogni cambio di directory), quindi e' qui che si
      * azzera — altrimenti la voce nuova erediterebbe l'icona di quella che
      * occupava il posto prima. */
-    if (L->n < LISTA_VOCI_MAX) L->ic[L->n] = 0;
+    L->ic[L->n] = 0;
 
     L->n++;
     return 1;
@@ -6014,7 +6239,7 @@ void ex_lista_icona(ExFinestra f, unsigned int riga, ExIcona ic)
 {
     Lista *L = lista_da_h(f);
 
-    if (!L || riga >= L->n || riga >= LISTA_VOCI_MAX) return;
+    if (!L || riga >= L->n) return;
     L->ic[riga] = ic;
 }
 

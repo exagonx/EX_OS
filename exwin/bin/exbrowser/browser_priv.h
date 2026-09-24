@@ -93,6 +93,7 @@
 #define ID_IMP_CACHE   724
 #define ID_IMP_MOTORE  727
 #define ID_IMP_RICERCA 728
+#define ID_IMP_URL     729     /* the «personale» engine's template */
 #define ID_IMP_SALVA   725
 #define ID_IMP_ANNULLA 726
 #define PAGINA_MAX  (1024u * 1024u)

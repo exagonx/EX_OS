@@ -57,7 +57,12 @@ extern "C" {
 #endif
 
 #define EXZIP_NOME_MAX   256    /* a name inside the archive, '\0' included */
-#define EXZIP_VOCI_MAX  1024    /* entries in one archive, reading or writing */
+/* ! 65535 SINCE 24 SEPTEMBER 2026, and 1024 before: an archive with more
+ * files did not open at all. 65535 is the format's own limit without ZIP64 —
+ * the count in the end record is 16 bits — so no ordinary .zip is refused
+ * any more. The tables it sizes live inside ExZip (about 2 MB), allocated
+ * while an archive is open. */
+#define EXZIP_VOCI_MAX  65535   /* entries in one archive, reading or writing */
 
 /* The two methods this system knows. The number is the one in the file: it is
  * the format's, not ours. */

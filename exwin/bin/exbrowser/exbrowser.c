@@ -522,19 +522,36 @@ static int           g_qjs = 1;
  * nel diario al 2 e al 4 settembre 2026. Metterli qui vorrebbe dire una voce
  * che promette una ricerca e rende una pagina vuota.
  * --------------------------------------------------------------------------- */
+/* ! A TEMPLATE, AS FIREFOX'S ENGINES ARE (OpenSearch): {searchTerms} marks
+ * where the words go, and `%s` is accepted too, as in Firefox's keyword
+ * searches. A template without either gets the words at the end. Since 24
+ * September 2026 there is a fourth engine, «personale», whose template the
+ * user writes in the settings — any site, any parameters. */
 typedef struct {
     const char *nome;           /* quel che si scrive nel file e si legge nel menu */
-    const char *modello;        /* l'indirizzo, fino a subito prima delle parole */
+    const char *modello;        /* l'indirizzo, con {searchTerms} per le parole */
 } Motore;
 
 static const Motore g_motori[] = {
-    { "duckduckgo", "https://html.duckduckgo.com/html/?q="            },
-    { "wikipedia",  "https://it.wikipedia.org/w/index.php?search="    },
-    { "marginalia", "https://old-search.marginalia.nu/search?query="  },
+    { "duckduckgo", "https://html.duckduckgo.com/html/?q={searchTerms}"          },
+    { "wikipedia",  "https://it.wikipedia.org/w/index.php?search={searchTerms}"  },
+    { "marginalia", "https://old-search.marginalia.nu/search?query={searchTerms}" },
+    { "personale",  0 },        /* g_ricerca_url */
 };
 #define MOTORI_N ((int)(sizeof(g_motori) / sizeof(g_motori[0])))
+#define MOTORE_PERSONALE (MOTORI_N - 1)
 
-static int           g_ricerca = 0;     /* quale dei tre: il primo e' il provato */
+static int           g_ricerca = 0;     /* quale: il primo e' il provato */
+static char          g_ricerca_url[EXHTTP_URL_MAX] = "";   /* «personale» */
+
+/* The template of the engine chosen now; the personal one falls back to the
+ * first when it has not been written. */
+static const char *modello_ricerca(void)
+{
+    if (g_ricerca == MOTORE_PERSONALE)
+        return g_ricerca_url[0] ? g_ricerca_url : g_motori[0].modello;
+    return g_motori[g_ricerca].modello;
+}
 
 /* -----------------------------------------------------------------------------
  * Le immagini
@@ -1748,6 +1765,11 @@ static void imp_riga(char *riga)
         else if (v[0] == 'e' || v[0] == 'E') g_qjs = 0;
         return;
     }
+    if (uguale(k, "ricerca_url")) {
+        strncpy(g_ricerca_url, v, sizeof(g_ricerca_url) - 1);
+        g_ricerca_url[sizeof(g_ricerca_url) - 1] = '\0';
+        return;
+    }
     if (uguale(k, "ricerca")) {
         /* ! IL NOME SI CONFRONTA CON LA TAVOLA, e un nome che non c'e' lascia
          * le cose come stanno: e' la stessa regola della chiave sconosciuta,
@@ -1796,7 +1818,7 @@ static void imp_leggi(void)
 /* Rende 1 se il file e' stato scritto per intero. */
 static int imp_scrivi(void)
 {
-    char t[EXHTTP_URL_MAX + 256];
+    char t[2 * EXHTTP_URL_MAX + 384];
     int  fd, n, scritti = 0;
 
     if (!g_imp_perc[0]) return 0;
@@ -1813,12 +1835,15 @@ static int imp_scrivi(void)
              "javascript = %s\n"
              "motore     = %s\n"
              "ricerca    = %s\n"
+             "# il motore «personale»: {searchTerms} dove vanno le parole\n"
+             "ricerca_url = %s\n"
              "immagini   = %s\n"
              "cache      = %s\n",
              g_home,
              g_js_acceso    ? "si" : "no",
              g_qjs          ? "quickjs" : "exjs",
              g_motori[g_ricerca].nome,
+             g_ricerca_url,
              g_img_accese   ? "si" : "no",
              g_cache_accesa ? "si" : "no");
 
@@ -2168,14 +2193,24 @@ static void cache_scrivi(const char *url, const unsigned char *dati,
 static int g_in_rete = 0;       /* c'e' una richiesta in corso adesso */
 static int g_ferma   = 0;       /* qualcuno ha premuto Esc */
 
+/* ! WHERE A PAGE'S TIME GOES, on the console at the end of vai(): asked on
+ * 24 September 2026 whether fetching in parallel would help, and the answer
+ * depends on whether the time is the network's or the machine's. Summed
+ * while the page loads, reset by vai(). */
+static unsigned int g_t_rete, g_t_rete_n, g_t_js, g_t_css, g_t_imp;
+
 static int prendi_in_rete(const char *url, unsigned char *buf,
                           unsigned int max, ExHttpEsito *e)
 {
-    int ok;
+    int          ok;
+    unsigned int t0;
 
     if (g_in_rete) return 0;
     g_in_rete = 1;
+    t0 = uptime_ms();
     ok = exhttp_prendi(url, buf, max, e);
+    g_t_rete += uptime_ms() - t0;
+    g_t_rete_n++;
     g_in_rete = 0;
     return ok;
 }
@@ -2455,8 +2490,15 @@ static void raccogli_css(void)
                 if (!e.troncata) cache_scrivi(url, g_js_buf, n);
             }
 
-            css_analizza(&g_css, (const char *)g_js_buf, n,
+{
+                unsigned int prima = g_css.regole_n;
+
+                css_analizza(&g_css, (const char *)g_js_buf, n,
                          CSS_ORIGINE_FOGLIO);
+                /* like Firefox's network tab: which sheet, how big, what it gave */
+                printf("exbrowser: foglio %s: %u byte, %u regole\n", url, n,
+                       g_css.regole_n - prima);
+            }
             presi++;
         }
     }
@@ -2980,8 +3022,13 @@ static int un_script(int i, int dinamico)
 
         memset(&err, 0, sizeof(err));
         g_js_chi = url; g_js_testo = g_js_buf;
-        if (!exjs_esegui(g_js, (const char *)g_js_buf, n, &r, &err))
-            js_grida(&err);
+        {
+            unsigned int t0 = uptime_ms();
+
+            if (!exjs_esegui(g_js, (const char *)g_js_buf, n, &r, &err))
+                js_grida(&err);
+            g_t_js += uptime_ms() - t0;
+        }
         g_js_chi = 0; g_js_testo = 0;
         g_script_n++;
         script_evento(i, "load");
@@ -3001,7 +3048,12 @@ static int un_script(int i, int dinamico)
 
         memset(&err, 0, sizeof(err));
         g_js_chi = "uno script in linea"; g_js_testo = (const unsigned char *)t;
-        if (!exjs_esegui(g_js, t, n, &r, &err)) js_grida(&err);
+        {
+            unsigned int t0 = uptime_ms();
+
+            if (!exjs_esegui(g_js, t, n, &r, &err)) js_grida(&err);
+            g_t_js += uptime_ms() - t0;
+        }
         g_js_chi = 0; g_js_testo = 0;
         g_script_n++;
     }
@@ -3359,9 +3411,15 @@ static int prendi_dalla_rete(const char *url, ExHttpEsito *e)
     unsigned int srotolati;
 
     g_in_rete = 1;
-    ok = g_da_postare
-         ? exhttp_posta(url, g_da_postare, g_pagina, sizeof(g_pagina), e)
-         : exhttp_prendi(url, g_pagina, sizeof(g_pagina), e);
+    {
+        unsigned int t0 = uptime_ms();
+
+        ok = g_da_postare
+             ? exhttp_posta(url, g_da_postare, g_pagina, sizeof(g_pagina), e)
+             : exhttp_prendi(url, g_pagina, sizeof(g_pagina), e);
+        g_t_rete += uptime_ms() - t0;
+        g_t_rete_n++;
+    }
     g_in_rete = 0;
 
     if (ok && !e->troncata && (srotolati = gz_srotola(e->byte)) != 0)
@@ -3794,8 +3852,15 @@ static void documento_nuovo(unsigned int n)
         esegui_script_nuovi();
     }
 
-    raccogli_css();
-    impagina();
+    {
+        unsigned int t0 = uptime_ms(), r0 = g_t_rete;
+
+        raccogli_css();
+        g_t_css += (uptime_ms() - t0) - (g_t_rete - r0);   /* without the network */
+        t0 = uptime_ms();
+        impagina();
+        g_t_imp += uptime_ms() - t0;
+    }
     g_vista = html_versione(&g_doc);
 
     /* After g_vista is set: a `load` handler's changes are then seen by
@@ -4114,6 +4179,7 @@ static void vai(const char *url, int in_storia, int usa_cache)
         g_da_postare = 0;
         return;
     }
+    g_t_rete = g_t_rete_n = g_t_js = g_t_css = g_t_imp = 0;
 
     /* ! L'ANCORA SI STACCA PRIMA DI CHIEDERE LA PAGINA, e non e' un ritocco:
      * «#punto» non fa parte dell'indirizzo del documento — un server non lo
@@ -4387,6 +4453,10 @@ static void vai(const char *url, int in_storia, int usa_cache)
 
     /* The iframes, now that the page is laid out and shown. */
     cornici_carica();
+
+    printf("exbrowser: tempi: rete %u ms in %u richieste, script %u ms, "
+           "css %u ms (%u regole), impaginazione %u ms\n",
+           g_t_rete, g_t_rete_n, g_t_js, g_t_css, g_css.regole_n, g_t_imp);
 
     /* ! IN FONDO, E NON PRIMA: se uno script della pagina appena caricata ha
      * chiesto un altro indirizzo, si va li' adesso — con l'albero, i controlli
@@ -4741,7 +4811,7 @@ static void informazioni(void)
  * indietro — cioe' tenere la copia lo stesso, ma nel posto piu' scomodo.
  * ============================================================================= */
 static ExFinestra g_imp_f, g_imp_campo, g_imp_bjs, g_imp_bimg, g_imp_bcache;
-static ExFinestra g_imp_bmotore, g_imp_bricerca;
+static ExFinestra g_imp_bmotore, g_imp_bricerca, g_imp_url;
 static int        g_imp_fatto;          /* 0 = aperta, 1 = salva, 2 = annulla */
 static int        g_imp_js, g_imp_img, g_imp_cache, g_imp_qjs, g_imp_ricerca;
 
@@ -4820,7 +4890,7 @@ static long imp_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 
 static void impostazioni(void)
 {
-    const int    W = 440, H = 300;
+    const int    W = 440, H = 356;
     ExMsg        m;
     unsigned int sw = 0, sh = 0;
     int          x, y;
@@ -4863,17 +4933,24 @@ static void impostazioni(void)
     g_imp_bricerca = ex_crea("pulsante", "", EX_FIGLIO, 240, 146, 188, 24,
                              g_imp_f, ID_IMP_RICERCA, 0);
 
-    ex_crea("etichetta", "Si scrivono in $HOME/.app/exbrowser/impostazioni.txt",
-            EX_FIGLIO, 12, 214, 416, 16, g_imp_f, 0, 0);
-    ex_crea("etichetta", "e si possono modificare a mano.",
-            EX_FIGLIO, 12, 232, 416, 16, g_imp_f, 0, 0);
+    /* the «personale» engine: any site, any parameters */
+    ex_crea("etichetta", "Motore personale ({searchTerms} = le parole):",
+            EX_FIGLIO, 12, 210, 416, 16, g_imp_f, 0, 0);
+    g_imp_url = ex_crea("testo", "", EX_FIGLIO, 12, 230, 416, 22,
+                        g_imp_f, ID_IMP_URL, 0);
 
-    ex_crea("pulsante", "Salva",   EX_FIGLIO, 12,  260, 100, 26,
+    ex_crea("etichetta", "Si scrivono in $HOME/.app/exbrowser/impostazioni.txt",
+            EX_FIGLIO, 12, 270, 416, 16, g_imp_f, 0, 0);
+    ex_crea("etichetta", "e si possono modificare a mano.",
+            EX_FIGLIO, 12, 288, 416, 16, g_imp_f, 0, 0);
+
+    ex_crea("pulsante", "Salva",   EX_FIGLIO, 12,  316, 100, 26,
             g_imp_f, ID_IMP_SALVA, 0);
-    ex_crea("pulsante", "Annulla", EX_FIGLIO, 120, 260, 100, 26,
+    ex_crea("pulsante", "Annulla", EX_FIGLIO, 120, 316, 100, 26,
             g_imp_f, ID_IMP_ANNULLA, 0);
 
     ex_testo_metti(g_imp_campo, g_home);
+    ex_testo_metti(g_imp_url, g_ricerca_url);
     imp_etichette();
     ex_fuoco(g_imp_campo);
 
@@ -4885,6 +4962,9 @@ static void impostazioni(void)
 
         strncpy(g_home, t ? t : "", sizeof(g_home) - 1);
         g_home[sizeof(g_home) - 1] = '\0';
+        t = ex_testo_prendi(g_imp_url);
+        strncpy(g_ricerca_url, t ? t : "", sizeof(g_ricerca_url) - 1);
+        g_ricerca_url[sizeof(g_ricerca_url) - 1] = '\0';
         g_js_acceso    = g_imp_js;
         g_img_accese   = g_imp_img;
         g_cache_accesa = g_imp_cache;
@@ -5053,8 +5133,9 @@ static int aggiungi_codificato(char *out, int pos, int max, const char *s)
  * ========================================================================== */
 static void cerca(const char *parole)
 {
-    char url[EXHTTP_URL_MAX];
-    int  pos, fine;
+    char        url[EXHTTP_URL_MAX], q[512];
+    const char *m = modello_ricerca(), *segno;
+    int         pos = 0, fine, n, lung;
 
     while (*parole == ' ' || *parole == '\t') parole++;
     fine = (int)strlen(parole);
@@ -5064,24 +5145,50 @@ static void cerca(const char *parole)
         dico("scrivi che cosa cercare nella casella \"Cerca\"");
         return;
     }
+    n = fine < (int)sizeof(q) - 1 ? fine : (int)sizeof(q) - 1;
+    memcpy(q, parole, (unsigned int)n);
+    q[n] = '\0';
 
-    pos = (int)strlen(g_motori[g_ricerca].modello);
-    if (pos >= (int)sizeof(url)) return;        /* non ci sta: non succede */
-    memcpy(url, g_motori[g_ricerca].modello, (unsigned int)pos);
+    /* where the words go: {searchTerms}, else %s, else the end */
+    segno = strstr(m, "{searchTerms}");
+    lung  = 13;
+    if (!segno) { segno = strstr(m, "%s"); lung = 2; }
+    if (!segno) { segno = m + strlen(m); lung = 0; }
 
+    n = (int)(segno - m);
+    if (n >= (int)sizeof(url)) return;
+    memcpy(url, m, (unsigned int)n);
+    pos = aggiungi_codificato(url, n, (int)sizeof(url) - 1, q);
     {
-        /* aggiungi_codificato vuole una stringa: le parole tagliate della coda
-         * si copiano in un appoggio invece di codificare anche gli spazi. */
-        char q[512];
-        int  n = fine < (int)sizeof(q) - 1 ? fine : (int)sizeof(q) - 1;
+        const char *dopo = segno + lung;
+        int         k = (int)strlen(dopo);
 
-        memcpy(q, parole, (unsigned int)n);
-        q[n] = '\0';
-        pos = aggiungi_codificato(url, pos, (int)sizeof(url) - 1, q);
+        if (pos + k > (int)sizeof(url) - 1) k = (int)sizeof(url) - 1 - pos;
+        memcpy(url + pos, dopo, (unsigned int)k);
+        pos += k;
     }
     url[pos] = '\0';
 
     vai(url, 1, 0);
+}
+
+/* ! WORDS IN THE ADDRESS BAR ARE A SEARCH, as in Firefox (keyword.enabled):
+ * «pane e vino» has spaces, «exos» has no dot — neither is an address. What
+ * has a scheme, a dot, a slash or a colon, or is localhost, is still one. */
+static int sembra_indirizzo(const char *t)
+{
+    while (*t == ' ') t++;
+    if (!*t) return 0;
+    if (strchr(t, ' ')) return strstr(t, "://") != 0;
+    if (strchr(t, '.') || strchr(t, ':') || strchr(t, '/')) return 1;
+    return uguale(t, "localhost");
+}
+
+static void vai_o_cerca(const char *t)
+{
+    if (!t || !t[0]) return;
+    if (sembra_indirizzo(t)) vai(t, 1, 0);
+    else                     cerca(t);
 }
 
 
@@ -5846,9 +5953,16 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 
     case EXM_COMANDO:
         if (wp == ID_VAI) {
-            const char *t = ex_testo_prendi(g_url);
+            /* ! «VAI» NEXT TO THE SEARCH BOX: with the keys in it, it searches.
+             * It went to the address even then, and whoever typed in «Cerca»
+             * and pressed it landed on the page they were already on. */
+            if (ex_fuoco_chi(g_f) == g_cerca) {
+                const char *t = ex_testo_prendi(g_cerca);
 
-            if (t && t[0]) vai(t, 1, 0);
+                cerca(t ? t : "");
+                return 0;
+            }
+            vai_o_cerca(ex_testo_prendi(g_url));
             return 0;
         }
         if (wp == ID_CERCA) {
@@ -6140,7 +6254,7 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
             {
                 const char *t = ex_testo_prendi(g_url);
 
-                if (t && t[0]) vai(t, 1, 0);
+                vai_o_cerca(t);
             }
             return 0;
         }
