@@ -1,5 +1,9 @@
 QUEL CHE E' APERTO — 15 settembre 2026
 
+!!! IL 25 SETTEMBRE: @TAR-GZ FATTO E PROVATO in QEMU (11 prove su 11), e
+    l'ISO si rifa' con tar, gzip e gunzip dentro. Resta @FLOPPY-PIENO: un
+    «Disk full» visto una volta, e non spiegato.
+
 !!! I SETTE FILE DEL 15 SETTEMBRE ADESSO COMPILANO, e sono sul server.
     La sessione della sera li ha costruiti (mancava il typedef Sha256 in
     lib/libc.c, che e' autosufficiente e non include il proprio header),
@@ -215,7 +219,8 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @FILEMGR-MKDIR   FATTO e provato, pulsante «Crea» compreso: da provare sul ferro
   1  @EXIDE-SFOGLIA   FATTO e provato: resta da provarlo su una macchina VERA
   1  @ZIP             FATTO tutto e provato, deflate compreso: resta l'aggiunta
-  1  @TAR-GZ          ! il porting di tar e gz (i sorgenti stanno in gnu/)
+  1  @TAR-GZ          FATTO e provato in QEMU, e nell'ISO: resta il ferro
+  1  @FLOPPY-PIENO    un "Disk full" sul floppy visto una volta: causa non trovata
   1  @NETUPD-GIRA     la barra che gira mentre scarica: ferma = qualcosa non va
   1  @EDIT-CERCA      cerca e sostituisci mancano nell'editor di ExWin
   1  @AVVIO-LOGIN     FATTO e provato in QEMU: resta la macchina vera
@@ -4388,29 +4393,51 @@ un programma: il primo lavoro e' tirarla fuori.
       caratteri per nome, niente zip64 (2 GB), niente archivi divisi su piu'
       volumi e niente cifratura. Sono rifiutati con una frase, non letti a meta'.
 
-! @TAR-GZ IL PORTING DI tar E DI gz.
+! @TAR-GZ tar, gzip E gunzip: FATTI E PROVATI IN QEMU IL 25 SETTEMBRE 2026,
+  per la strada 2 (il nostro, non gnu tar). Diario: «tar, gzip e gunzip».
 
-  I sorgenti li ha scaricati chi ha chiesto il lavoro e stanno in gnu/
-  (gnu_tar-master.zip, zstd-dev.zip). ! QUELLA DIRECTORY E' IGNORATA DA GIT dal
-  22 settembre 2026: e' codice di terzi, come /gcc/ e /freebasic/, e nella
-  cronologia di questo repository non ci va. Quel che sara' NOSTRO nasce sotto
-  bin/ e lib/, come sempre.
+  bin/tar/tar.c, un binario con tre nomi (argv[0] sceglie), statico: inflate.c
+  e deflate.c ci sono compilati dentro, niente exzip.so.
 
-  ! DUE STRADE, E VANNO SCELTE CON GLI OCCHI APERTI:
-    1. PORTARE gnu tar. E' il programma vero, con quarant'anni di casi
-       particolari dentro, e vuole una libc che regga quel che chiede — la
-       nostra e' cresciuta apposta tutto l'anno, ma tar e' esigente;
-    2. SCRIVERE IL NOSTRO, sopra la libreria di @ZIP. Il formato tar e' fatto
-       di intestazioni da 512 byte con i campi in ottale: si legge in un
-       pomeriggio, e infatti tar_estrai() esiste gia' e funziona. Quello che
-       costa e' la compatibilita' con le estensioni (nomi lunghi, GNU, pax).
-    La prima da' compatibilita' e porta dentro codice che non conosciamo; la
-    seconda da' un programma piccolo che sappiamo leggere e che copre il 90%
-    dei casi. Per il 10% restante c'e' sempre la prima.
+      tar c[z]f ARCHIVIO PERCORSO...    tar x[z]f ARCHIVIO [-C DIR]
+      tar t[z]f ARCHIVIO                gzip [-d] FILE   gunzip FILE.gz
 
-  ! E zstd NON E' gz: e' un altro formato, piu' nuovo e piu' veloce, e non lo
-    apre nessuno dei due. Se serve, e' un terzo lavoro — utile, ma da non
-    confondere col primo.
+  tools/prova_tar.sh lo prova in 11 punti, e 11 passano: il giro dentro EX-OS,
+  GNU tar / gzip -t / python tarfile sui nostri archivi, i nostri su quelli di
+  GNU tar in formato gnu ('L') e pax ('x') con un nome oltre i cento
+  caratteri, gzip e gunzip con l'host, il nome che scappa e il CRC guastato.
+
+  QUEL CHE RESTA:
+    - (fatto) NELL'ISO: gzip e gunzip sono bersagli loro, in BINARI_SOLO_CD —
+      senza, verifica-dipendenze-cd fermava `make iso-exos` e con lui
+      exagonx/repo-update.sh. La prova non aspetta l'ISO: copia
+      build/bin-cd/tar sul disco di prova e lo lancia da li';
+    - PROVARLO SUL FERRO (l'Acer);
+    - un [tar] in boot/help.txt, quando l'ISO c'e' davvero;
+    - non coperti, e detti a schermo: collegamenti (hard e simbolici),
+      dispositivi, file sparsi; la lettura e' tutta in memoria, fino a 64 MB.
+
+  ! zstd NON E' gz: e' un altro formato, e non lo apre nessuno dei due. Se
+    serve, e' un terzo lavoro. I sorgenti di gnu tar e di zstd restano in
+    gnu/, ignorata da git.
+
+! @FLOPPY-PIENO UN «Disk full» SUL FLOPPY, VISTO UNA VOLTA (25 settembre 2026)
+
+  Un `make iso-exos` si e' fermato su dist/floppy.img con «Disk full» mentre
+  copiava le librerie, e ha LASCIATO dist/floppy.img SCRITTO A META' — che e'
+  un file tracciato. Si rimette con `git checkout HEAD -- build dist/floppy.img`.
+
+  ! LA PRIMA SPIEGAZIONE ERA SBAGLIATA, ed e' scritta perche' non si rifaccia.
+    Sembrava il compilatore: la macchina di sviluppo ha GCC 14.2, questo PC
+    GCC 12.2, e con GCC 12 ogni *_libc.o esce 1628 byte piu' grande. Ma i
+    PROGRAMMI collegati escono piu' piccoli (8 KB in meno in tutto), e il
+    floppy fatto con GCC 12 ha 37888 byte liberi contro 29696. Il .o non e'
+    il binario: --gc-sections ne butta via la differenza.
+
+  Il make fallito veniva subito dopo uno `make -j4 iso-exos` che era uscito
+  con 0 senza rifare l'ISO. Dopo, con l'albero ripristinato da git, lo stesso
+  bersaglio e' passato. Se si ripresenta: `mdir -i dist/floppy.img ::` e il
+  confronto con `git show HEAD:dist/floppy.img`, PRIMA di rifare niente.
 
 =============================================================================
 @CHIUSA UNA STRADA CHIUSA, PERCHE' NON SI RIAPRA

@@ -170,7 +170,7 @@ PROGRAMMI_FLOPPY := shell id date_prog chmod shutdown ls mem stack disk fdisk mk
 # `make verifica-programmi` — che le due ISO eseguono da sole — confronta
 # le liste con il contenuto di bin/ e si ferma dicendo quali mancano.
 # =============================================================================
-PROGRAMMI_CD := cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog
+PROGRAMMI_CD := cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog tar_prog
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
 PROGRAMMI_EXWIN := exwin_so exdlg_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr edit term fontprova orologio exbrowser exide archivi
 
@@ -1917,6 +1917,40 @@ $(ZIP_BIN): $(ZIP_SRC) $(ZIP_LD) $(EXZIP_STUB) $(EXZIP_HDR) $(EXZIP_SO) \
 
 .PHONY: zip_prog
 zip_prog: dirs $(ZIP_BIN)
+
+# --- /bin/tar, /bin/gzip, /bin/gunzip: @TAR-GZ, la strada 2 ------------------
+#
+# Un programma solo, tre nomi: argv[0] sceglie. E' statico: inflate.c e
+# deflate.c ci sono compilati dentro, niente exzip.so. Vedi bin/tar/tar.c.
+TAR_SRC := bin/tar/tar.c
+TAR_BIN := $(BUILD_BIN_CD)/tar
+TAR_LD  := bin/tar/tar.ld
+
+$(TAR_BIN): $(TAR_SRC) $(TAR_LD) lib/eximg/inflate.c lib/eximg/inflate.h \
+            lib/exzip/deflate.c lib/exzip/deflate.h \
+            $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /bin/tar ==="
+	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -I lib/exzip -c $(TAR_SRC) -o $(BUILD_OBJ)/tar_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -c lib/eximg/inflate.c -o $(BUILD_OBJ)/tar_inflate.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exzip -c lib/exzip/deflate.c -o $(BUILD_OBJ)/tar_deflate.o
+	$(CC) -m32 -c $(LIBC_START)          -o $(BUILD_OBJ)/tar_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(TAR_LD) \
+	    $(BUILD_OBJ)/tar_start.o $(BUILD_OBJ)/tar_main.o $(BUILD_OBJ)/tar_inflate.o \
+	    $(BUILD_OBJ)/tar_deflate.o $(LIBC_PONTI_OBJ) -o $@
+	@echo "[OK] tar compilato: $@"
+
+# gzip and gunzip are copies of tar (argv[0] chooses). They are targets of
+# their own so that BINARI_SOLO_CD can name them: verifica-dipendenze-cd
+# stops the build for any file in build/bin-cd that the ISO does not list.
+GZIP_BIN   := $(BUILD_BIN_CD)/gzip
+GUNZIP_BIN := $(BUILD_BIN_CD)/gunzip
+
+$(GZIP_BIN) $(GUNZIP_BIN): $(TAR_BIN)
+	cp $< $@
+
+.PHONY: tar_prog
+tar_prog: dirs $(TAR_BIN) $(GZIP_BIN) $(GUNZIP_BIN)
 
 # --- /exwin/lib/exzip.so: il formato ZIP, e nient'altro ----------------------
 #
@@ -6749,7 +6783,7 @@ BINARI_SOLO_CD := $(CRYPTTEST_BIN) $(FILIPROVA_BIN) $(NETDETECT_BIN) $(NETTEST_B
                   $(CDINSTALL_BIN) $(SWAPTEST_BIN) $(LIBCTEST_BIN) $(HELLO_BIN) \
                   $(AUDIO_BIN) $(NETUPDATE_BIN) $(WIFI_BIN) $(BLKSCAN_BIN) $(BLKPROVA_BIN) $(AUTOMOUNT_BIN) \
                   $(EJECT_BIN) $(FTPSWAP_BIN) $(SOCCORSO_BIN) \
-                  $(FBPROVA_BIN) $(MEMPROVA_BIN) $(GFEDIT_BIN) $(ZIP_BIN)
+                  $(FBPROVA_BIN) $(MEMPROVA_BIN) $(GFEDIT_BIN) $(ZIP_BIN) $(TAR_BIN) $(GZIP_BIN) $(GUNZIP_BIN)
 # ! QUESTA LISTA E' LA DIPENDENZA DELL'ISO, E VA TENUTA ALLINEATA A
 # DRIVER_CD. Sono due elenchi della stessa cosa: DRIVER_CD dice COSA
 # COSTRUIRE (nomi di bersagli .PHONY), questo dice DA COSA DIPENDE L'IMMAGINE

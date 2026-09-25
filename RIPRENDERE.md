@@ -26,6 +26,70 @@ manca» apre quello.
 
 ---
 
+# 25 settembre 2026 — tar, gzip e gunzip; e repo-update che si fermava
+
+## CHE COSA E' SUCCESSO, IN UNA RIGA PER COSA
+
+    @TAR-GZ     tar, gzip, gunzip: un binario, tre nomi       FATTO e provato
+    @TAR-GZ     tools/prova_tar.sh: 11 prove, 11 passate      NUOVA
+    @TAR-GZ     gzip e gunzip in BINARI_SOLO_CD: l'ISO si rifa' FATTO
+    @FLOPPY-PIENO un «Disk full» visto una volta, non spiegato  APERTO
+    git         .git e .gitignore non erano mai arrivati      RIMESSI
+
+## tar, gzip e gunzip: la strada 2
+
+`bin/tar/tar.c` e' nostro, non gnu tar: intestazioni ustar da 512 byte, gzip
+secondo la RFC 1952 attorno al DEFLATE di `lib/exzip/deflate.c`, e in lettura
+`lib/eximg/inflate.c`. E' statico: non chiede exzip.so. `argv[0]` sceglie fra
+tar, gzip e gunzip. Scrive i nomi lunghi come GNU (voce `L`), legge anche `L`
+e il `path=` delle voci pax.
+
+! **LA PROVA NON ASPETTA L'ISO.** `tools/prova_tar.sh` copia
+`build/bin-cd/{tar,gzip,gunzip}` sul disco di prova e li lancia da
+`/disk/bin`: si prova quel che si e' appena compilato, anche con un'ISO
+vecchia. Il verdetto lo danno GNU tar, `gzip -t` e `tarfile` di Python.
+
+! **DUE ERRORI TROVATI DALLA PROVA, NON DALLA LETTURA:**
+
+- **`mkdir` su una directory che c'e' gia' non risponde sempre EEXIST** su
+  EX-OS (un punto di montaggio come `/disk`, o `.`). `tar x -C /disk/x`
+  falliva sul primo pezzo del percorso. Adesso un `mkdir` fallito si
+  richiede a `stat`: se li' c'e' una directory, va bene. ! Chi scrive un
+  altro «crea le cartelle del percorso» faccia lo stesso;
+- **`./` davanti ai nomi**, che GNU tar scrive per `tar cf a.tar .`: adesso si
+  toglie in estrazione, e la voce `./` stessa e' la destinazione.
+
+## repo-update.sh si fermava: gzip e gunzip fuori dall'elenco
+
+`exagonx/repo-update.sh` falliva al primo passo, `make iso-exos`, e quindi
+anche netinst. Il Makefile ha una guardia, `verifica-dipendenze-cd`: ogni
+file in `build/bin-cd/` dev'essere in `BINARI_SOLO_CD`, o l'ISO non dipende da
+lui e resta vecchia senza errori. La regola di tar copiava `gzip` e `gunzip`
+li' dentro, ma l'elenco nominava solo `$(TAR_BIN)`. Adesso sono bersagli
+loro (`GZIP_BIN`, `GUNZIP_BIN`, copie di tar) e stanno nell'elenco. ! Chi fa
+un programma con piu' nomi, faccia lo stesso.
+
+## @FLOPPY-PIENO: una spiegazione sbagliata, tolta
+
+Un `make iso-exos` si e' fermato con «Disk full» sul floppy, lasciando
+`dist/floppy.img` scritto a meta' (si rimette con `git checkout HEAD -- build
+dist/floppy.img`). **Sembrava il compilatore** — questo PC ha GCC 12.2, la
+macchina di sviluppo GCC 14.2, e con GCC 12 ogni `*_libc.o` esce 1628 byte piu'
+grande — **e non lo era**: i programmi collegati escono piu' piccoli, e il
+floppy fatto qui ha 37888 byte liberi contro 29696. Il `.o` non e' il binario.
+La causa vera non e' trovata; `in_lavorazione.txt` dice cosa guardare se torna.
+
+## git, e MEGA che non lo portava
+
+La cartella arriva fra i PC con MEGA, e `~/MEGA/.megaignore` aveva `-:.*`:
+**ogni file che comincia col punto restava a casa** — `.git/`, `.gitignore`,
+`.htaccess`, `.svga`. `.git` e' stato riportato a mano, la regola e' stata
+tolta, e `git config core.fileMode false`: MEGA mette tutti i file a 777, e
+git li vedeva tutti cambiati. ! **Git su un PC alla volta**: MEGA copia un
+file alla volta e non sa niente di git.
+
+---
+
 # DOVE RIPRENDERE — 22 settembre 2026
 
 > **Tutto e' costruito; NON e' pubblicato e NON e' committato.** La giornata

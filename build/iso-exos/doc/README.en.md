@@ -212,6 +212,23 @@ and the fonts.
 archive EX-OS makes is opened by Info-ZIP's `unzip -t`. An archiver that
 re-reads its own archives only proves it is consistent with itself.
 
+### tar, gzip and gunzip
+
+**tested in QEMU, and by outside readers** — one program, `bin/tar/tar.c`,
+answering to three names. It is static: the DEFLATE of `lib/exzip` and the
+inflate of `lib/eximg` are compiled into it.
+
+```
+tar czf a.tgz folder             create (z = gzip)
+tar tf a.tgz                     list
+tar xf a.tgz -C /disk/out        extract (gzip is recognised by itself)
+gzip file / gunzip file.gz
+```
+
+It reads GNU tar archives with long names too, in GNU and pax format.
+`tools/prova_tar.sh` has its archives opened by GNU tar, `gzip -t` and
+Python, and has EX-OS open archives made by GNU tar.
+
 ### The login page no longer gets covered by the boot messages
 
 **tested in QEMU on an installed disk** — `login` waits for the console to go

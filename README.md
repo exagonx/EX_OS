@@ -225,6 +225,23 @@ già: `lib/eximg/inflate.c` decodifica DEFLATE da mesi per PNG, GIF e i font.
 fatto da EX-OS lo apre `unzip -t` di Info-ZIP. Un archiviatore che rilegge i
 propri archivi prova soltanto di essere coerente con sé stesso.
 
+### tar, gzip e gunzip
+
+**testato in QEMU, e da lettori estranei** — un programma solo, `bin/tar/tar.c`,
+che risponde a tre nomi. È statico: il DEFLATE di `lib/exzip` e l'inflate di
+`lib/eximg` ci sono compilati dentro.
+
+```
+tar czf a.tgz cartella           crea (z = gzip)
+tar tf a.tgz                     elenca
+tar xf a.tgz -C /disk/fuori      estrae (il gzip lo riconosce da sé)
+gzip file / gunzip file.gz
+```
+
+Legge gli archivi di GNU tar anche con i nomi lunghi, nei formati GNU e pax.
+`tools/prova_tar.sh` fa aprire i suoi archivi a GNU tar, `gzip -t` e Python,
+e fa aprire a EX-OS quelli di GNU tar.
+
 ### La pagina d'accesso non si fa più coprire dai messaggi dell'avvio
 
 **testato in QEMU su un disco installato** — `login` aspetta che la console

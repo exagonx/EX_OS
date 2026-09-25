@@ -42,7 +42,20 @@ e' nostro. Gli alberi di terzi vanno riscaricati, ognuno come dice il suo
 
 ---
 
-## 2. La macchina: Debian 12
+## 2. La macchina: Debian 12 o 13
+
+La macchina di sviluppo ha Debian 13 (GCC 14.2); anche Debian 12 (GCC 12.2)
+compila tutto e rifa' l'ISO. Gli oggetti in `build/` escono diversi fra i due,
+ed e' normale.
+
+! **UN make FALLITO SUL FLOPPY lascia `dist/floppy.img` scritto a meta'**, ed
+e' un file tracciato: si rimette con `git checkout HEAD -- build
+dist/floppy.img`. Vedi `@FLOPPY-PIENO` in `in_lavorazione.txt`.
+
+! **MEGA E I FILE COL PUNTO.** Se la cartella viaggia con MEGA, il suo
+`.megaignore` non deve avere `-:.*`, o `.git/` e `.gitignore` non arrivano.
+MEGA mette i file a 777: `git config core.fileMode false`. E git su un PC
+alla volta.
 
 Pacchetti dell'host (quelli che il Makefile e gli script di prova chiamano):
 

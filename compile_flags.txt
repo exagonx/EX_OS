@@ -1,0 +1,12 @@
+-m32
+-std=c11
+-ffreestanding
+-nostdinc
+-Ikernel/include
+-Ilib/include
+-Idrivers/tty
+-Idrivers/kbd
+-Ilib/eximg
+-Ilib/exzip
+-Ilib/exwin
+-Wall
