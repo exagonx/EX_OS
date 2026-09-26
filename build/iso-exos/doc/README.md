@@ -225,6 +225,24 @@ già: `lib/eximg/inflate.c` decodifica DEFLATE da mesi per PNG, GIF e i font.
 fatto da EX-OS lo apre `unzip -t` di Info-ZIP. Un archiviatore che rilegge i
 propri archivi prova soltanto di essere coerente con sé stesso.
 
+### Archivi: una tabella vera, e l'archivio che si costruisce da sé
+
+**testato in QEMU** — colonne **Nome** e **Percorso** separate, un clic
+sull'intestazione ordina (un altro rovescia), il bordo fra le intestazioni si
+trascina, la barra di scorrimento. Ogni file o cartella aggiunti rendono
+l'archivio subito completo: `lib/exzip` sa riaprire un archivio finito e
+aggiungerci (`ex_zip_riapri`). **Opzioni**: compressione (nessuna, veloce,
+normale, avanzata) ed estensione predefinita, in `/exwin/config/archivi.cfg`.
+
+### Ridurre a icona, e la barra dei programmi aperti
+
+**testato in QEMU** — ogni finestra ha il pulsante **«_»** accanto alla
+crocetta, e la barra in basso mostra i programmi aperti con la loro icona. Un
+clic su una voce riapre la finestra ridotta, esattamente dov'era e grande
+com'era, o porta davanti quella nascosta dietro le altre. L'elenco lo tiene il
+server a finestre e lo manda da sé alla barra; i programmi non hanno dovuto
+cambiare una riga. `tools/prova_riduci.sh` lo misura nei pixel.
+
 ### tar, gzip e gunzip
 
 **testato in QEMU, e da lettori estranei** — un programma solo, `bin/tar/tar.c`,

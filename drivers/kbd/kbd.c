@@ -320,6 +320,46 @@ static void echo(const char *s, unsigned n)
     console_write(g_attiva, s, n);
 }
 
+/* =============================================================================
+ * CTRL+ALT+CANC ON A TEXT CONSOLE (@TASTI-SISTEMA, 26 September 2026)
+ *
+ * On every PC since 1981 it means «restart». Here: the first press says what
+ * the second will do; a second press within CAC_FINESTRA ms restarts.
+ *
+ * ! IT IS THE DRIVER THAT DOES IT, NOT A SERVICE, and that is the point of
+ * the key: it must work when what is in front no longer answers. A service
+ * that is stuck would make the key useless in the one case it exists for.
+ *
+ * ! WHEN THE GRAPHICS IS ON SCREEN THE KEY GOES TO THE WINDOW SERVER, which
+ * asks in a window (restart, leave the session, shut down) and restarts by
+ * itself at the second press. Returns 1 when the key was used here.
+ * ============================================================================= */
+#define CAC_FINESTRA 5000u
+static unsigned g_cac_ultimo = 0;
+
+static void echo(const char *s, unsigned n);
+
+static int ctrl_alt_canc(void)
+{
+    static const char avviso[] =
+        "\r\n[Ctrl+Alt+Canc: premilo di nuovo entro 5 secondi e il sistema "
+        "si riavvia]\r\n";
+    int      graf = console_grafica(0);
+    unsigned ora  = uptime_ms();
+
+    if (graf >= 0 && (unsigned)graf == g_attiva) return 0;
+
+    if (g_cac_ultimo && ora - g_cac_ultimo < CAC_FINESTRA) {
+        log_seriale("kbd: Ctrl+Alt+Canc due volte: riavvio");
+        echo("\r\n[riavvio]\r\n", 13);
+        reboot(EXOS_RB_RESTART);
+        return 1;                       /* refused: nothing else to do */
+    }
+    g_cac_ultimo = ora;
+    echo(avviso, sizeof(avviso) - 1);
+    return 1;
+}
+
 static void echo_char(char c)
 {
     echo(&c, 1);
@@ -936,6 +976,10 @@ static void kbd_process_scancode(unsigned char sc)
             return;
         }
     }
+
+    /* Ctrl+Alt+Canc: both Canc keys, the keypad one (0x53) and the
+     * extended one (e0 53). See ctrl_alt_canc(). */
+    if (g_ctrl && g_alt && sc == 0x53 && ctrl_alt_canc()) { g_e0 = 0; return; }
 
     /* Tasti estesi: consegnati come sequenze ANSI, esattamente come
      * faceva il TTY in-kernel. Non passano dal buffer di riga: un

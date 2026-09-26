@@ -111,6 +111,10 @@
 # =============================================================================
 /messaggio-commit.txt
 
+# continua.sh riprende una sessione di Claude Code per il suo ID: la sessione
+# vive in ~/.claude/ di UNA macchina, e fuori da li' lo script non serve.
+/continua.sh
+
 # =============================================================================
 # FreeBASIC — l'albero dei sorgenti con il bootstrap
 #

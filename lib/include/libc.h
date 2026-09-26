@@ -1055,6 +1055,13 @@ int console_switch(unsigned int n);
  * flag tenuto dal server morirebbe con lui lasciando la porta aperta su una
  * stanza vuota. Il kernel ricontrolla da se' che chi l'aveva presa sia vivo. */
 int console_grafica(int azione);
+
+/* The text of the GRAPHICS console — the desktop's log: every line of its
+ * cells, trailing blanks cut, '\n' after each, at most max bytes and no
+ * '\0'. Returns the bytes written, -1 when no graphics is running, a
+ * negative error when the graphics belongs to another user. The window that
+ * shows it is «Registro di sistema» (@EXWIN-LOG, 26 September 2026). */
+int console_testo(char *buf, unsigned int max);
 int console_write(unsigned int n, const void *buf, unsigned int len);
 
 /* =============================================================================

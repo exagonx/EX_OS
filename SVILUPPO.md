@@ -170,7 +170,9 @@ cosa prova e cosa gli serve. Il sito di prova del browser e' in
 - Stringhe a schermo in **ASCII**: la console e' code page 437; gli accenti
   stanno nei commenti.
 - I dati di un programma stanno in `$HOME/.app/<programma>/`, mai in un
-  percorso fisso.
+  percorso fisso. Le **configurazioni dei programmi di ExWin** stanno invece
+  in `/exwin/config/<programma>.cfg` (deciso il 26 settembre 2026, vedi
+  `@ARCHIVI-VISTA`).
 - Un percorso che scriverebbe sopra un file esistente si chiede prima.
 - Un file grande si spezza cosi': prima la mappa fatta da uno script, poi il
   file nuovo con i legami scritti, e solo dopo, eventualmente, la libreria.

@@ -136,6 +136,7 @@ EX_VERSIONE("wserver", "0.003");
 #define C_CLIENT        0x00C0C0C0
 #define C_PRESA         0x00404040
 #define C_CONTORNO      0x00FFFF80
+#define C_RIDUCI        0x00000000  /* the bar inside the minimize button */
 
 extern const unsigned char font8x16[256 * 16];
 
@@ -155,6 +156,12 @@ typedef struct {
      * zona che nessuno guarda piu' — cioe' un rettangolo congelato che
      * risponde ai tasti. Sono due cose diverse e vanno trattate diversamente. */
     unsigned int da_dire;
+    /* ! MINIMIZED IS NOT DESTROYED AND NOT MOVED: the window keeps its place,
+     * its size and its pixels, and only stops being composed (WIN_ST_VISIBILE
+     * goes off). Restoring puts the bit back — «the size it had before»,
+     * as @FIN-ICONA asks, costs nothing because nothing was lost. The flag
+     * tells a minimized window from one its program created hidden. */
+    unsigned int ridotta;
 } Finestra;
 
 static Finestra g_fin[FINESTRE_MAX];
@@ -756,6 +763,17 @@ static void incavo(unsigned int x, unsigned int y, unsigned int w, unsigned int 
     bordo3d(x, y, w, h, C_OMBRA, C_LUCE);
 }
 
+/* Who gets the minimize button: a window a person switches to — with title
+ * and close button, not the desktop, not the taskbar, not a modal dialog
+ * (minimizing the question would leave its owner blocked with nothing on
+ * screen to answer) — and wide enough for two buttons and some title. */
+static int puo_ridursi(const Finestra *f)
+{
+    return (f->stile & WIN_ST_TITOLO) && (f->stile & WIN_ST_CHIUDI) &&
+           !(f->stile & (WIN_ST_MODALE | WIN_ST_SFONDO | WIN_ST_SOPRA)) &&
+           f->w >= 3 * BARRA_H;
+}
+
 static void cornice(const Finestra *f, unsigned int attiva)
 {
     unsigned int alta = (f->stile & WIN_ST_TITOLO) ? BARRA_H : 0;
@@ -798,6 +816,18 @@ static void cornice(const Finestra *f, unsigned int attiva)
             rilievo(cx, cy, cl, cl);
             riempi(cx + 4, cy + 4, cl - 8, cl - 8, C_CHIUDI);
             incavo(cx + 4, cy + 4, cl - 8, cl - 8);
+        }
+
+        /* The minimize button, left of the close one: the same raised
+         * square, with a short bar at the bottom — the «_» everyone knows. */
+        if (puo_ridursi(f)) {
+            unsigned int cx = f->x + f->w - 2 * BARRA_H + 1;
+            unsigned int cy = ty + 2;
+            unsigned int cl = BARRA_H - 4;
+
+            riempi(cx, cy, cl, cl, C_TELAIO);
+            rilievo(cx, cy, cl, cl);
+            riempi(cx + 4, cy + cl - 6, cl - 8, 2, C_RIDUCI);
         }
     }
 }
@@ -1168,7 +1198,11 @@ static int trova_id(unsigned int id)
  * (c'e' sempre, e vincerebbe sempre). */
 static int prende_fuoco_da_solo(int idx)
 {
-    return !(g_fin[idx].stile & (WIN_ST_SFONDO | WIN_ST_SOPRA));
+    /* ! NOT A MINIMIZED ONE EITHER: the keys would go to a window nobody
+     * can see — the same «editor gone mute» as a focus left on a slot that
+     * no longer exists. */
+    return !(g_fin[idx].stile & (WIN_ST_SFONDO | WIN_ST_SOPRA)) &&
+           (g_fin[idx].stile & WIN_ST_VISIBILE);
 }
 
 /* Il fuoco quando quello di prima se n'e' andato: la finestra normale piu' in
@@ -1275,7 +1309,8 @@ static void in_cima(int idx)
 }
 
 /* Chi c'e' sotto il puntatore, dalla cima al fondo. -1 = nessuno.
- * `dove`: 0 = area del client, 1 = barra del titolo, 2 = pulsante chiudi. */
+ * `dove`: 0 = area del client, 1 = barra del titolo, 2 = pulsante chiudi,
+ * 3 = presa, 4 = pulsante riduci. */
 static int sotto(int x, int y, unsigned int *dove)
 {
     int k;
@@ -1309,6 +1344,8 @@ static int sotto(int x, int y, unsigned int *dove)
             *dove = 1;
             if ((f->stile & WIN_ST_CHIUDI) &&
                 x >= (int)(f->x + f->w - BARRA_H)) *dove = 2;
+            else if (puo_ridursi(f) &&
+                     x >= (int)(f->x + f->w - 2 * BARRA_H)) *dove = 4;
             return (int)g_ordine[k];
         }
     }
@@ -1435,9 +1472,36 @@ static void kbd_giro(void)
 
 /* Il tasto va alla finestra col FUOCO, che non e' quella disegnata per ultima:
  * vedi il blocco sopra in_cima(). */
+/* Ctrl+Alt+Canc with the graphics on screen (@TASTI-SISTEMA). The first
+ * press goes to the taskbar, which asks; a second one within five seconds
+ * restarts from here — the server answers even when the taskbar does not,
+ * and that is the case the key exists for. */
+static unsigned int g_cac_ultimo = 0;
+static unsigned int g_elenco_pid;       /* defined with the list, below */
+
+static void ctrl_alt_canc(void)
+{
+    unsigned int ora = uptime_ms();
+
+    if (g_cac_ultimo && ora - g_cac_ultimo < 5000u) {
+        log_seriale("wserver: Ctrl+Alt+Canc due volte: riavvio");
+        reboot(EXOS_RB_RESTART);
+        return;                         /* refused */
+    }
+    g_cac_ultimo = ora;
+    log_seriale("wserver: Ctrl+Alt+Canc");
+    if (g_elenco_pid) ipc_send(g_elenco_pid, WIN_MSG_SISTEMA, 0, 0);
+}
+
 static void kbd_tasto(unsigned int k)
 {
     g_key_chiesta = 0;
+
+    if ((k & KBD_MOD_CTRL) && (k & KBD_MOD_ALT) &&
+        (k & KBD_KEY_MASK) == KBD_K_DEL) {
+        ctrl_alt_canc();
+        return;
+    }
 
     if (g_n_ordine == 0) return;
     if (g_fuoco < 0 || !g_fin[g_fuoco].usata) fuoco_ricalcola();
@@ -1595,6 +1659,53 @@ static void porta_su(int idx)
     sporca_finestra(&g_fin[idx], g_fin[idx].x, g_fin[idx].y);
     if (prima >= 0 && prima != g_fuoco && g_fin[prima].usata)
         sporca_barra(&g_fin[prima]);
+}
+
+/* =============================================================================
+ * MINIMIZE AND RESTORE (@FIN-ICONA, 26 September 2026)
+ *
+ * Minimizing takes the window out of the composition and out of the input:
+ * sotto(), finestra_opaca() and the compositor already skip what is not
+ * WIN_ST_VISIBILE. What it covered is repainted, a drag or resize on it is
+ * dropped, and the focus goes to the next window down.
+ *
+ * ! THE PROGRAM IS NOT TOLD. It keeps running and drawing into its zone,
+ * which simply is not looked at: a minimized clock goes on ticking, and
+ * shows the right time the moment it comes back.
+ * ============================================================================= */
+static void riduci(int idx)
+{
+    Finestra *f = &g_fin[idx];
+
+    if (!f->usata || f->ridotta || !puo_ridursi(f)) return;
+
+    sporca_finestra(f, f->x, f->y);
+    f->ridotta = 1;
+    f->stile  &= ~WIN_ST_VISIBILE;
+
+    if (g_trascino == idx) g_trascino = -1;
+    if (g_ridim == idx) g_ridim = -1;
+    if (g_giu_su == idx) g_giu_su = -1;
+
+    if (g_fuoco == idx) {
+        fuoco_ricalcola();
+        if (g_fuoco >= 0) sporca_barra(&g_fin[g_fuoco]);
+    }
+}
+
+/* Back where it was, as big as it was, in front and with the focus. A
+ * window that is not minimized is only brought to the front: that is what a
+ * click on its taskbar entry means. */
+static void ripristina(int idx)
+{
+    Finestra *f = &g_fin[idx];
+
+    if (!f->usata) return;
+    if (f->ridotta) {
+        f->ridotta = 0;
+        f->stile  |= WIN_ST_VISIBILE;
+    }
+    porta_su(idx);
 }
 
 static void mouse_agisci(void)
@@ -1760,6 +1871,8 @@ static void mouse_agisci(void)
 
         if (dove == 2) {
             manda_evento(&g_fin[idx], WIN_EV_CHIUDI, g_px, g_py, 0, 0);
+        } else if (dove == 4) {
+            riduci(idx);
         } else if (dove == 3) {
             g_ridim = idx;
             g_rw = g_fin[idx].w;
@@ -2101,6 +2214,71 @@ static void raccogli_morti(void)
 }
 
 /* Everything is ours here: this is the one place that reads the mailbox. */
+/* =============================================================================
+ * THE LIST FOR THE TASKBAR (see WIN_MSG_ELENCO in win_proto.h)
+ *
+ * ! IT IS REBUILT AND COMPARED AT EVERY LOOP, NOT SENT FROM EVERY PLACE THAT
+ * CHANGES IT. Creation, death, title, minimize, restore, focus: six places
+ * today, and the seventh added tomorrow would be the one that forgets. A
+ * list of sixteen entries costs less to rebuild than a row of pixels, and
+ * a comparison says exactly whether there is news.
+ *
+ * ! THE LAST SENT COPY CHANGES ONLY IF THE SEND WORKED. A full mailbox —
+ * the taskbar busy drawing — makes the next loop try again, instead of
+ * leaving the taskbar one change behind until the following one.
+ * ============================================================================= */
+static unsigned int g_elenco_pid = 0;   /* who asked; 0 = nobody */
+static WinElenco    g_elenco_detto;     /* the last one that arrived */
+static unsigned int g_elenco_nuovo = 0; /* a new subscriber: send anyway */
+
+static void elenco_fai(WinElenco *el)
+{
+    unsigned int i;
+
+    memset(el, 0, sizeof(*el));
+    for (i = 0; i < FINESTRE_MAX && el->n < WIN_ELENCO_MAX; i++) {
+        const Finestra *f = &g_fin[i];
+        WinVoce *v;
+
+        if (!f->usata || !(f->stile & WIN_ST_TITOLO)) continue;
+        if (f->stile & (WIN_ST_SFONDO | WIN_ST_SOPRA | WIN_ST_MODALE)) continue;
+        if (!(f->stile & WIN_ST_VISIBILE) && !f->ridotta) continue;
+
+        v = &el->v[el->n++];
+        v->id    = f->id;
+        v->pid   = f->pid;
+        v->stato = (f->ridotta ? WIN_VOCE_RIDOTTA : 0) |
+                   ((int)i == g_fuoco ? WIN_VOCE_FUOCO : 0);
+        memcpy(v->titolo, f->titolo, WIN_TITOLO_LEN);
+        v->titolo[WIN_TITOLO_LEN - 1] = '\0';
+    }
+
+    /* Creation order: the slot index is not it (slots are reused), the id
+     * is. Sixteen entries, insertion sort. */
+    for (i = 1; i < el->n; i++) {
+        WinVoce t = el->v[i];
+        int j = (int)i - 1;
+
+        while (j >= 0 && el->v[j].id > t.id) { el->v[j + 1] = el->v[j]; j--; }
+        el->v[j + 1] = t;
+    }
+}
+
+static void elenco_manda(void)
+{
+    WinElenco el;
+
+    if (!g_elenco_pid) return;
+    elenco_fai(&el);
+    if (!g_elenco_nuovo && memcmp(&el, &g_elenco_detto, sizeof(el)) == 0) return;
+
+    if (ipc_send(g_elenco_pid, WIN_MSG_ELENCATA, &el,
+                 (unsigned int)(sizeof(el.n) + el.n * sizeof(WinVoce))) >= 0) {
+        g_elenco_detto = el;
+        g_elenco_nuovo = 0;
+    }
+}
+
 static int tutto_mio(const IpcMessage *meta, void *dato)
 {
     (void)meta; (void)dato;
@@ -2273,6 +2451,43 @@ static int servi_messaggio(unsigned int ms)
             memcpy(g_fin[idx].titolo, t->titolo, WIN_TITOLO_LEN);
             g_fin[idx].titolo[WIN_TITOLO_LEN - 1] = '\0';
             sporca_finestra(&g_fin[idx], g_fin[idx].x, g_fin[idx].y);
+        }
+        break;
+    }
+
+    case WIN_MSG_CHIUDI_ALTRE: {
+        int n;
+
+        log_seriale("wserver: chiudo le applicazioni degli altri");
+        for (n = 0; n < FINESTRE_MAX; n++) {
+            if (!g_fin[n].usata || g_fin[n].pid == meta.sender_pid) continue;
+            if (g_fin[n].ridotta) ripristina(n);
+            manda_evento(&g_fin[n], WIN_EV_CHIUDI, 0, 0, 0, 0);
+        }
+        break;
+    }
+
+    case WIN_MSG_ELENCO:
+        g_elenco_pid   = meta.sender_pid;
+        g_elenco_nuovo = 1;
+        break;
+
+    case WIN_MSG_ATTIVA:
+    case WIN_MSG_RIDUCI: {
+        WinRegione *w = (WinRegione *)buf;
+        int idx;
+        if (meta.len < sizeof(WinRegione)) break;
+        idx = trova_id(w->id);
+        if (idx < 0) break;
+        /* ! A WINDOW BLOCKED BY ITS MODAL IS ACTIVATED BY SHOWING THE
+         * MODAL, as a click on it does: restoring the owner and leaving the
+         * question hidden behind would give a program that does not answer. */
+        if (meta.tipo == WIN_MSG_ATTIVA) {
+            int md = modale_di(g_fin[idx].pid);
+            ripristina(idx);
+            if (md >= 0 && md != idx) porta_su(md);
+        } else {
+            riduci(idx);
         }
         break;
     }
@@ -2638,6 +2853,8 @@ int main(int argc, char **argv)
          * che copia una tabella, per una cosa che cambia quando
          * un'applicazione si chiude e non ha fretta. */
         if (ora - raccolto_ms >= 1000u) { raccolto_ms = ora; raccogli_morti(); }
+
+        elenco_manda();
 
         /* ! LA NOTIZIA DEL CAMBIO DI ZONA SI RIPETE FINCHE' NON ARRIVA,
          * cinque volte al secondo: piu' spesso la mailbox del client la si

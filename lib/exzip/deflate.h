@@ -37,4 +37,10 @@ int           defl_fine(void);
 /* Bytes produced so far (all of them, after defl_fine). */
 unsigned long defl_prodotti(void);
 
+/* How hard to look for repeats, for the streams opened from now on:
+ * 1 = fast, 2 = normal (the default, about zlib -6), 3 = best (about
+ * zlib -9). Anything else is taken as 2. «No compression» is not a level of
+ * deflate: whoever wants it stores (see ex_zip_livello). */
+void          defl_livello(int livello);
+
 #endif

@@ -50,6 +50,8 @@ static struct {
     void (*chiudi)(ExZip *);
     const char *(*errore)(void);
     int (*albero)(ExZip *, const char *, const char *, int *);
+    ExZip *(*riapri)(const char *);
+    void (*livello)(unsigned int);
 } P;
 
 static void *chiedi(const ExLibTesta *t, const char *nome)
@@ -86,6 +88,10 @@ static void assicura(void)
      * partire lo stesso, e senza cartelle. Vedi ex_zip_aggiungi_albero. */
     P.albero   = (int (*)(ExZip *, const char *, const char *, int *))
                  exlib_simbolo(t, "ex_zip_aggiungi_albero");
+    /* ! OPTIONAL TOO (26 September 2026): over an older exzip.so the
+     * program starts, cannot add to a finished archive, and says so. */
+    P.riapri   = (ExZip *(*)(const char *))  exlib_simbolo(t, "ex_zip_riapri");
+    P.livello  = (void (*)(unsigned int))    exlib_simbolo(t, "ex_zip_livello");
 
     P.pronto = 1;
 }
@@ -121,4 +127,16 @@ int ex_zip_aggiungi_albero(ExZip *z, const char *cartella, const char *nome,
     assicura();
     if (saltati) *saltati = 0;
     return P.albero ? P.albero(z, cartella, nome, saltati) : -2;
+}
+
+ExZip *ex_zip_riapri(const char *percorso)
+{
+    assicura();
+    return P.riapri ? P.riapri(percorso) : 0;
+}
+
+void ex_zip_livello(unsigned int livello)
+{
+    assicura();
+    if (P.livello) P.livello(livello);
 }

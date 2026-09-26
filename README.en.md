@@ -212,6 +212,24 @@ and the fonts.
 archive EX-OS makes is opened by Info-ZIP's `unzip -t`. An archiver that
 re-reads its own archives only proves it is consistent with itself.
 
+### Archivi: a real table, and an archive that builds itself
+
+**tested in QEMU** — separate **Nome** and **Percorso** columns, a click on
+a header sorts (another reverses), the borders between headers can be
+dragged, a scroll bar. Every file or directory added leaves the archive
+complete at once: `lib/exzip` can reopen a finished archive and add to it
+(`ex_zip_riapri`). **Opzioni**: compression (none, fast, normal, best) and
+default extension, in `/exwin/config/archivi.cfg`.
+
+### Minimize, and the taskbar of open programs
+
+**tested in QEMU** — every window has a **«_»** button next to the close
+button, and the bottom bar shows the open programs with their icon. A click
+on an entry restores a minimized window, exactly where it was and as large as
+it was, or brings forward one hidden behind the others. The window server
+keeps the list and sends it to the taskbar by itself; programs did not have
+to change a line. `tools/prova_riduci.sh` measures it in pixels.
+
 ### tar, gzip and gunzip
 
 **tested in QEMU, and by outside readers** — one program, `bin/tar/tar.c`,

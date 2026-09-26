@@ -30,6 +30,8 @@ static const char *const g_nomi[] = {
     "ex_zip_chiudi",
     "ex_zip_errore",
     "ex_zip_aggiungi_albero",     /* 23 settembre 2026 */
+    "ex_zip_riapri",              /* 26 settembre 2026 */
+    "ex_zip_livello",             /* 26 settembre 2026 */
     "__lib_avvio"
 };
 
@@ -44,6 +46,8 @@ static void *const g_indirizzi[] = {
     (void *)ex_zip_chiudi,
     (void *)ex_zip_errore,
     (void *)ex_zip_aggiungi_albero,
+    (void *)ex_zip_riapri,
+    (void *)ex_zip_livello,
     (void *)__libc_ponti_avvia
 };
 

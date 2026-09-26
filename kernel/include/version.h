@@ -318,7 +318,18 @@
  *
  * Il comando che la usa e' /bin/date, con -set-date: e -set-time:.
  */
-#define EXOS_VERSION    "0.218"
+/* 0.218 -> 0.219: IL TESTO DELLA CONSOLE DELLA GRAFICA SI PUO' LEGGERE.
+ *
+ * SYS_CONSOLE_TESTO (214) rende, riga per riga, i caratteri della console su
+ * cui gira la grafica. Dal 22 settembre 2026 quel testo resta nelle sue celle
+ * e non si dipinge piu' sopra le finestre (vga.c, e_visibile): era giusto, ma
+ * nessuno poteva piu' leggerlo. E' il registro della scrivania, e la finestra
+ * che lo mostra e' «Registro di sistema» nel menu Avvio (@EXWIN-LOG).
+ *
+ * ! SOLO QUELLA CONSOLE, E SOLO ALLO STESSO UTENTE di chi la tiene (o a root):
+ * il registro della scrivania di un altro non e' di chi chiede.
+ */
+#define EXOS_VERSION    "0.219"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

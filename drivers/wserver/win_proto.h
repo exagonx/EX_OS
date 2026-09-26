@@ -118,6 +118,48 @@ static inline void win_nome_servizio(char *out, unsigned int max)
  * questo messaggio ha effetto, il server non c'e' piu'. */
 #define WIN_MSG_SPEGNI      0x5708  /* nessun corpo                          */
 
+/* =============================================================================
+ * THE LIST OF OPEN WINDOWS, FOR THE TASKBAR — 26 September 2026 (@FIN-ICONA)
+ *
+ * ! THE LIST BELONGS TO THE SERVER, AND THE TASKBAR ASKS FOR IT. The server is
+ * the only one that knows when a window really goes away — a program that
+ * dies while minimized included. A second copy kept by the taskbar would one
+ * day show an entry that reopens nothing.
+ *
+ * WIN_MSG_ELENCO means «keep me informed»: the server answers at once with
+ * WIN_MSG_ELENCATA and sends it again, unasked, every time the list changes
+ * (a window is born or dies, is minimized or restored, changes title or
+ * takes the focus). One subscriber only: the last one that asked. No
+ * polling, and no synchronous wait in the toolkit, which would drop the
+ * events that arrive meanwhile.
+ *
+ * WIN_MSG_ATTIVA: restore it if minimized, bring it to the front, give it
+ * the focus. WIN_MSG_RIDUCI: minimize it, the same as the title-bar button.
+ * Both take any window of this server: the server is per user, so «any»
+ * means «any of mine».
+ * ============================================================================= */
+#define WIN_MSG_ELENCO      0x5709  /* nessun corpo                          */
+#define WIN_MSG_ATTIVA      0x570A  /* WinRegione (solo il campo id)         */
+#define WIN_MSG_RIDUCI      0x570B  /* WinRegione (solo il campo id)         */
+
+/* =============================================================================
+ * «CLOSE EVERY PROGRAM BUT ME», AND STAY ON (@GRAFICA-MODALE, 26 Sept 2026)
+ *
+ * The same close as the X button, sent to every window of every OTHER
+ * process — and, unlike WIN_MSG_SPEGNI, the server does not die. It is what
+ * the desktop needs to shut down or restart WITH THE GRAPHICS STILL ON: ask
+ * the programs to leave, watch them go (the list of WIN_MSG_ELENCATA says
+ * who is left), and only then reboot, showing where it has got to. The
+ * server is the last thing that stops — with WIN_MSG_SPEGNI it went first,
+ * and the reboot scrolled its text over a screen that had just gone back to
+ * text mode.
+ *
+ * ! MINIMIZED WINDOWS ARE RESTORED FIRST: a program that answers the close
+ * with «save the changes?» asks from its own window, and a question asked
+ * from a window nobody can see is a shutdown that never ends.
+ * ============================================================================= */
+#define WIN_MSG_CHIUDI_ALTRE 0x570C /* nessun corpo                          */
+
 /* --- Messaggi dal SERVER al CLIENT --------------------------------------- */
 #define WIN_MSG_CREATA      0x5781  /* WinCreata */
 #define WIN_MSG_EVENTO      0x5782  /* WinEvento */
@@ -130,6 +172,11 @@ static inline void win_nome_servizio(char *out, unsigned int max)
  * Non e' un evento per l'applicazione: e' il toolkit che si aggiorna, cosi'
  * chi chiede «dove sono» ha una risposta vera invece di un ricordo. */
 #define WIN_MSG_POSTA       0x5784  /* WinRegione: x e y, adesso sono queste */
+#define WIN_MSG_ELENCATA    0x5785  /* WinElenco: le finestre aperte         */
+/* Ctrl+Alt+Canc was pressed (@TASTI-SISTEMA): sent to whoever follows the
+ * list of windows (the taskbar), which asks what to do. A second press
+ * within five seconds restarts from the server itself. No body. */
+#define WIN_MSG_SISTEMA     0x5786
 
 /* --- Gli eventi, che il toolkit gira alla procedura di finestra ---------- */
 #define WIN_EV_MOUSE_GIU    1
@@ -281,6 +328,27 @@ typedef struct {
     unsigned int tasto;         /* scancode, per WIN_EV_TASTO */
     unsigned int tempo;         /* millisecondi dall'avvio, presi dal SERVER */
 } WinEvento;
+
+/* One entry of WIN_MSG_ELENCATA. Only windows a person switches to are
+ * listed: with a title bar, and not the desktop, the taskbar or a modal
+ * dialog (that one belongs to its owner's window). Entries come in creation
+ * order, not stacking order, so the taskbar does not reshuffle at every
+ * click. */
+#define WIN_VOCE_RIDOTTA    0x0001  /* minimized */
+#define WIN_VOCE_FUOCO      0x0002  /* has the keyboard focus */
+#define WIN_ELENCO_MAX      16      /* = FINESTRE_MAX in the server */
+
+typedef struct {
+    unsigned int id;
+    unsigned int pid;           /* the owner: the taskbar finds its icon */
+    unsigned int stato;         /* WIN_VOCE_* */
+    char         titolo[WIN_TITOLO_LEN];
+} WinVoce;
+
+typedef struct {
+    unsigned int n;
+    WinVoce      v[WIN_ELENCO_MAX];
+} WinElenco;
 
 /* Il nome della zona condivisa di una finestra: «win», il numero della
  * finestra, un punto e il giro — «win7.0», poi «win7.1» dopo il primo

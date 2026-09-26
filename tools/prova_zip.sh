@@ -177,7 +177,15 @@ z.writestr('../../boot/rubato.txt','questo non deve uscire\n')
 z.writestr('buono.txt','questo invece si\n')
 z.close()
 d = bytearray(open('$D/vero.zip','rb').read())
-d[80] ^= 0xFF
+# ! IL BYTE SI GUASTA A META' DEI DATI, trovato dalla struttura dell archivio,
+# non a un punto fisso. Era d[80]: il 26 settembre 2026 lo zip dell host ha
+# scritto le voci in un altro ordine, il byte 80 e' caduto nella misura di
+# un intestazione locale - che il nostro estrattore giustamente non legge,
+# prende le misure dal catalogo - e un archivio sano passava per rotto.
+import struct
+i = max(zipfile.ZipFile('$D/vero.zip').infolist(), key=lambda v: v.compress_size)
+n, x = struct.unpack('<HH', bytes(d[i.header_offset + 26:i.header_offset + 30]))
+d[i.header_offset + 30 + n + x + i.compress_size // 2] ^= 0xFF
 open('$D/rotto.zip','wb').write(bytes(d))
 "
 "$DEBUGFS" -w -R "write $D/cattivo.zip cattivo.zip" "$OFF" > /dev/null 2>&1

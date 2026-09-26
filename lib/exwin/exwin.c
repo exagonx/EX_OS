@@ -887,6 +887,69 @@ void ex_spegni_scrivania(void)
     ipc_send((unsigned int)g_server, WIN_MSG_SPEGNI, 0, 0);
 }
 
+/* -----------------------------------------------------------------------------
+ * The open windows, for a taskbar (see exwin.h and WIN_MSG_ELENCO)
+ *
+ * ! THE LIST ARRIVES IN THE MESSAGE LOOP, NOT AS AN ANSWER WAITED FOR. The
+ * server sends it whenever it changes; prendi_msg() keeps a copy and hands
+ * EXM_FINESTRE to the follower. A synchronous «ask and wait» would throw
+ * away the clicks that arrive during the wait — see the loop in ex_crea.
+ * --------------------------------------------------------------------------- */
+static ExFinestra   g_segui = 0;        /* who receives EXM_FINESTRE */
+static WinElenco    g_el;               /* the last list received */
+static unsigned int g_el_nuovo = 0;     /* arrived while nobody was reading */
+
+static void elenco_prendi(const unsigned char *buf, unsigned int len)
+{
+    memset(&g_el, 0, sizeof(g_el));
+    if (len > sizeof(g_el)) len = sizeof(g_el);
+    memcpy(&g_el, buf, len);
+    if (g_el.n > WIN_ELENCO_MAX) g_el.n = WIN_ELENCO_MAX;
+    g_el_nuovo = 1;
+}
+
+void ex_finestre_segui(ExFinestra f)
+{
+    g_segui = f;
+    if (!server_trova()) return;
+    ipc_send((unsigned int)g_server, WIN_MSG_ELENCO, 0, 0);
+}
+
+int ex_finestre_elenco(ExVoceFin *v, int max)
+{
+    int i, n = (int)g_el.n;
+
+    if (!v || max <= 0) return n;
+    for (i = 0; i < n && i < max; i++) {
+        v[i].id    = g_el.v[i].id;
+        v[i].pid   = g_el.v[i].pid;
+        v[i].stato = (g_el.v[i].stato & WIN_VOCE_RIDOTTA ? EX_VF_RIDOTTA : 0) |
+                     (g_el.v[i].stato & WIN_VOCE_FUOCO   ? EX_VF_FUOCO   : 0);
+        memcpy(v[i].titolo, g_el.v[i].titolo, sizeof(v[i].titolo));
+        v[i].titolo[sizeof(v[i].titolo) - 1] = '\0';
+    }
+    return n;
+}
+
+static void finestra_chiedi(unsigned int tipo, unsigned int id)
+{
+    WinRegione w;
+
+    if (!server_trova()) return;
+    memset(&w, 0, sizeof(w));
+    w.id = id;
+    ipc_send((unsigned int)g_server, tipo, &w, sizeof(w));
+}
+
+void ex_finestra_attiva(unsigned int id) { finestra_chiedi(WIN_MSG_ATTIVA, id); }
+
+void ex_chiudi_le_altre(void)
+{
+    if (!server_trova()) return;
+    ipc_send((unsigned int)g_server, WIN_MSG_CHIUDI_ALTRE, 0, 0);
+}
+void ex_finestra_riduci(unsigned int id) { finestra_chiedi(WIN_MSG_RIDUCI, id); }
+
 void ex_fuoco_via(ExFinestra f)
 {
     Oggetto *r = radice(f);
@@ -4110,13 +4173,24 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
         Lista *L = 0;
         int j;
 
-        char *avanzo = 0;
+        char         *avanzo = 0;
+        ExIcona      *avanzo_ic = 0;
+        unsigned int  avanzo_cap = 0;
 
-        /* Stessa regola dell'area: prima un posto col buffer gia' pronto. */
+        /* Stessa regola dell'area: prima un posto col buffer gia' pronto.
+         *
+         * ! E SI TIENE TUTTO QUELLO CHE IL POSTO AVEVA: le righe, le icone e
+         * la capacita'. Fino al 26 settembre 2026 si teneva solo `voci`; il
+         * memset qui sotto azzerava `ic` e `cap`, e il controllo piu' in basso
+         * rifiutava la lista. Cioe': in ogni programma, la seconda lista creata
+         * dopo averne distrutta una NON SI CREAVA — il secondo dialogo dei file
+         * di Archivi non si apriva, senza un messaggio. */
         for (j = 0; j < LISTA_MAX; j++)
             if (!g_lista[j].usato && g_lista[j].voci) {
                 L = &g_lista[j];
-                avanzo = L->voci;
+                avanzo     = L->voci;
+                avanzo_ic  = L->ic;
+                avanzo_cap = L->cap;
                 break;
             }
         if (!L)
@@ -4126,6 +4200,8 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
 
         memset(L, 0, sizeof(*L));
         L->voci  = avanzo;
+        L->ic    = avanzo_ic;
+        L->cap   = avanzo_cap;
         L->ogg   = (ExFinestra)(i + 1);
         L->righe = (unsigned int)(h / LISTA_RIGA_H);
 
@@ -4268,6 +4344,11 @@ ExFinestra ex_crea(const char *classe, const char *titolo, unsigned int stile,
             if (ipc_recv_timeout(&meta, buf, sizeof(buf), 500) < 0) continue;
             if (meta.tipo == WIN_MSG_CREATA && meta.len >= sizeof(r))
                 memcpy(&r, buf, sizeof(r));
+            /* ! THE TASKBAR LIST IS KEPT, NOT DROPPED: the server has
+             * already counted it as delivered and will not send it again
+             * until something else changes. */
+            else if (meta.tipo == WIN_MSG_ELENCATA)
+                elenco_prendi(buf, meta.len);
         }
         if (r.id == 0) { o->usato = 0; return 0; }
 
@@ -5329,7 +5410,8 @@ static int filtro_finestra(const IpcMessage *m, void *dato)
     int bloccante = *(const int *)dato;
 
     if (m->tipo == WIN_MSG_EVENTO || m->tipo == WIN_MSG_MISURATA ||
-        m->tipo == WIN_MSG_POSTA)
+        m->tipo == WIN_MSG_POSTA || m->tipo == WIN_MSG_ELENCATA ||
+        m->tipo == WIN_MSG_SISTEMA)
         return IPC_MIO;
 
     return bloccante ? IPC_BUTTA : IPC_ALTRUI;
@@ -5396,6 +5478,16 @@ static int prendi_msg(ExMsg *m, int bloccante)
          * riprovare vuol dire girare a vuoto, e la risposta giusta e' «adesso
          * non c'e' niente». */
         if (!bloccante && giri++ > 0) return 0;
+
+        /* A list that arrived while a window was being created. */
+        if (g_el_nuovo && g_segui) {
+            g_el_nuovo  = 0;
+            m->finestra = g_segui;
+            m->msg      = EXM_FINESTRE;
+            m->wp       = 0;
+            m->lp       = 0;
+            return 1;
+        }
 
         /* ! LE SVEGLIE SI GUARDANO PRIMA DI DORMIRE, non dopo: guardarle dopo
          * vorrebbe dire che la prima scade sempre con 200 ms di ritardo anche
@@ -5556,6 +5648,26 @@ static int prendi_msg(ExMsg *m, int bloccante)
             o = ogg(da_win_id(r.id));
             if (o) { o->x = (int)r.x; o->y = (int)r.y; }
             continue;
+        }
+
+        if (meta.tipo == WIN_MSG_SISTEMA) {
+            if (!g_segui) continue;
+            m->finestra = g_segui;
+            m->msg      = EXM_SISTEMA;
+            m->wp       = 0;
+            m->lp       = 0;
+            return 1;
+        }
+
+        if (meta.tipo == WIN_MSG_ELENCATA) {
+            elenco_prendi(buf, meta.len);
+            if (!g_segui) continue;
+            g_el_nuovo  = 0;
+            m->finestra = g_segui;
+            m->msg      = EXM_FINESTRE;
+            m->wp       = 0;
+            m->lp       = 0;
+            return 1;
         }
 
         if (meta.tipo != WIN_MSG_EVENTO || meta.len < sizeof(e)) continue;

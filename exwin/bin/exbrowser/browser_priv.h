@@ -59,10 +59,14 @@
 #include "biscotti.h"
 
 /* ------------------------------------------------------------------ i tetti */
-#define VERSIONE_APP "0.005"
+#define VERSIONE_APP "0.006"
+/* The size the window is BORN with. Since 26 September 2026 it can be
+ * resized (@EXBROWSER-1024): the size it has NOW is g_fin_w x g_fin_h. */
 #define FIN_W       760
 #define MENU_H      20
 #define FIN_H       (520 + MENU_H)
+#define FIN_W_MIN   480         /* below this the address bar has no room */
+#define FIN_H_MIN   240
 #define BARRA_H     30          /* la riga dell'indirizzo, sotto i menu */
 #define BARRA_Y     MENU_H      /* dove comincia */
 #define MARGINE     8
@@ -70,7 +74,7 @@
  * cosi' aggiungerne uno sposta solo l'indirizzo. 150 pixel sono una ventina
  * di caratteri — quanti ne ha una ricerca vera. */
 #define CERCA_W     150
-#define CERCA_X     (FIN_W - MARGINE - 24 - 4 - 44 - 4 - CERCA_W)
+#define CERCA_X     (g_fin_w - MARGINE - 24 - 4 - 44 - 4 - CERCA_W)
 #define PERC_MAX    192
 #define ID_URL      1
 #define ID_VAI      2
@@ -231,6 +235,7 @@ extern VistaImp *g_vi;
 #define g_tab_rif          (g_vi->tab_rif)
 
 extern ExFinestra g_f;
+extern int g_fin_w, g_fin_h;
 extern ExFont g_font_testo;
 extern int g_marg_sx, g_marg_dx;
 

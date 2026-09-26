@@ -38,6 +38,26 @@
 #define CATENA      128         /* candidates per position */
 #define BUONA       8           /* a match this long: look a quarter as hard */
 #define PIGRO       16          /* a match this long: do not try the next byte */
+
+/* =============================================================================
+ * THREE LEVELS, AND THEY ARE ZLIB'S NUMBERS (26 September 2026, @ARCHIVI-VISTA)
+ *
+ * The three knobs above are the ones zlib turns between its levels; the
+ * values are those of its table for levels 1, 6 and 9 (max_chain, good_length,
+ * max_lazy). «Normal» is exactly what this compressor always did, so an
+ * archive made without choosing comes out byte for byte as before — and
+ * tools/prova_deflate.sh, which compares with zlib -6, keeps its meaning.
+ * ============================================================================= */
+static unsigned int g_catena = CATENA, g_buona = BUONA, g_pigro = PIGRO;
+
+void defl_livello(int livello)
+{
+    switch (livello) {
+    case 1:  g_catena = 4;    g_buona = 4;  g_pigro = 4;   break;
+    case 3:  g_catena = 4096; g_buona = 32; g_pigro = 258; break;
+    default: g_catena = CATENA; g_buona = BUONA; g_pigro = PIGRO; break;
+    }
+}
 #define LONTANO     4096        /* a 3-byte match farther than this is not worth it */
 
 #define SIMBOLI     16384       /* symbols per block */
@@ -439,14 +459,14 @@ static int inserisci(int pos)
 
 static int piu_lunga(int cur)
 {
-    unsigned int   catena = CATENA;
+    unsigned int   catena = g_catena;
     unsigned char *scan = S->win + S->strstart;
     int            best = S->prev_length;
     int            limite = S->strstart > MAX_DIST ? S->strstart - MAX_DIST : NIL;
     int            maxlen = S->lookahead < MAX_MATCH ? S->lookahead : MAX_MATCH;
 
     if (best >= maxlen) return maxlen;
-    if (S->prev_length >= BUONA) catena >>= 2;
+    if (S->prev_length >= (int)g_buona) catena >>= 2;
 
     do {
         const unsigned char *m = S->win + cur;
@@ -496,7 +516,7 @@ static void lz(int fine)
         S->prev_match  = S->match_start;
         S->match_length = MIN_MATCH - 1;
 
-        if (hh != NIL && S->prev_length < PIGRO && S->strstart - hh <= MAX_DIST) {
+        if (hh != NIL && S->prev_length < (int)g_pigro && S->strstart - hh <= MAX_DIST) {
             S->match_length = piu_lunga(hh);
             if (S->match_length == MIN_MATCH && S->strstart - S->match_start > LONTANO)
                 S->match_length = MIN_MATCH - 1;

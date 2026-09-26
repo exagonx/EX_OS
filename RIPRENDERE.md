@@ -26,6 +26,116 @@ manca» apre quello.
 
 ---
 
+# 26 settembre 2026 — ridurre a icona, e la barra dei programmi aperti
+
+## CHE COSA E' SUCCESSO, IN UNA RIGA PER COSA
+
+    correzioni  @ARCHIVI-VISTA, @EXBROWSER-1024, @EXIDE-NOMI   PRESE IN CARICO
+    @FIN-ICONA  il pulsante «_», la barra con i programmi aperti FATTO e provato
+    config      /exwin/config/<programma>.cfg, deciso da chi chiede  REGOLA
+    @EXBROWSER-1024 finestra ridimensionabile, window.parent, «.com»  FATTO
+    @ARCHIVI-VISTA  tabella, costruzione automatica, Opzioni        FATTO
+    toolkit     la seconda lista dopo una distrutta non si creava   CORRETTO
+    exzip       riapri, livelli, tabelle che crescono, archivio vuoto FATTO
+    @EXWIN-LOG  «Registro di sistema»: SYS_CONSOLE_TESTO (214)     FATTO, una schermata
+    @GRAFICA-MODALE riavvio e spegnimento con la grafica accesa     FATTO
+    @TASTI-SISTEMA  Ctrl+Alt+Canc in grafica e in testo             FATTO, resta Ctrl+C
+
+## Ridurre a icona: il server disegna il pulsante, e tiene l'elenco
+
+**Il pulsante «_» sta nel server**, accanto alla crocetta, perche' la barra
+del titolo e' sua: nessun programma e' stato cambiato. Ridurre toglie
+`WIN_ST_VISIBILE`, e il compositore, `sotto()` e il fuoco gia' saltavano chi
+non e' visibile — l'unica correzione e' stata `prende_fuoco_da_solo()`, che
+senza il controllo avrebbe dato i tasti a una finestra ridotta. Il programma
+non lo sa nemmeno: continua a disegnare in una zona che nessuno guarda, e
+quando torna e' gia' aggiornato.
+
+**L'elenco e' del server, e arriva da se'.** `WIN_MSG_ELENCO` vuol dire
+«tienimi al corrente»: il server ricostruisce l'elenco a ogni giro del suo
+ciclo, lo confronta con l'ultimo mandato e lo manda solo se e' cambiato. Cosi'
+non c'e' un posto per ogni cosa che lo cambia (nascita, morte, titolo,
+riduzione, fuoco) da ricordarsi di chiamare. ! **Niente attesa sincrona nel
+toolkit**: l'attesa di `ex_crea` butta i messaggi che arrivano nel frattempo,
+e un clic perso sulla barra ogni tanto sarebbe stato il difetto piu' difficile
+da vedere. L'elenco arriva nel ciclo dei messaggi come `EXM_FINESTRE`; se
+arriva proprio durante un `ex_crea`, lo si tiene e lo si consegna dopo.
+
+**L'icona sulla barra** viene dal nome del processo (`procinfo`) confrontato
+col percorso delle voci di `applicazioni.txt`: nessun messaggio nuovo, e chi
+non e' nel menu mostra il titolo senza icona.
+
+## Spegnere con la grafica accesa, e Ctrl+Alt+Canc
+
+**Riavvia e Spegni non spengono piu' prima la scrivania.** Il server riceve
+`WIN_MSG_CHIUDI_ALTRE` (la crocetta a tutti gli altri, i ridotti prima
+riaperti) e resta acceso; pm mostra una finestra che elenca chi non si e'
+ancora chiuso — dall'elenco di @FIN-ICONA, che cosi' serve due volte — e
+quando non c'e' piu' nessuno chiama `reboot()`. ! **La finestra sta in
+basso**: al centro stava esattamente sotto il «salvare?» dell'editor, e non
+si vedeva nel momento in cui aveva qualcosa da dire.
+
+**Ctrl+Alt+Canc**: in grafica wserver lo gira a pm, che chiede Riavvia / Esci
+/ Spegni / Annulla; in testo il driver della tastiera scrive un avviso. **La
+seconda pressione entro 5 secondi riavvia dal server o dal driver**, mai da
+pm: il tasto deve funzionare proprio quando chi sta davanti non risponde.
+! Le prime prove sembravano dire che la seconda pressione non contava: erano
+le fotografie in mezzo (piu' di un secondo l'una) a portarla oltre i cinque
+secondi. Un registro coi due istanti l'ha detto in un giro.
+
+## Il registro della scrivania, letto dal kernel
+
+Dal 22 settembre il testo della console della grafica resta nelle sue celle e
+non si dipinge sopra le finestre; oggi si puo' leggere. **SYS_CONSOLE_TESTO
+(214)** — un numero libero, il blocco 214-218 non era mai stato usato — rende
+le righe di quella console, senza gli spazi in coda, e solo allo stesso utente
+di chi tiene la grafica o a root (kernel 0.219). In pm, menu Avvio >
+«Registro di sistema»: si rilegge ogni secondo, si ridisegna solo se e'
+cambiato, e chi legge in fondo segue le righe nuove.
+
+! **Non e' modale**, e la richiesta lo diceva: un modale blocca tutte le
+finestre del processo, e la barra delle applicazioni e' di pm. ! **E' una
+schermata sola**: le righe che scorrono via si perdono. L'anello di N righe
+e' scritto in `@EXWIN-LOG` come passo dopo.
+
+## Archivi rifatto, e un difetto del toolkit che stava in ogni programma
+
+**exzip sa aggiungere a un archivio finito** (`ex_zip_riapri`): le voci
+vecchie restano dove sono, si scrive dal punto dove cominciava il vecchio
+catalogo e alla fine un catalogo nuovo con tutte. Il file puo' solo crescere,
+quindi niente troncamento. Archivi lo usa per costruirsi da solo a ogni
+aggiunta; «Nuovo» scrive subito un archivio vuoto (22 byte), che `ex_zip_apri`
+adesso accetta. **I livelli** sono i tre numeri di zlib (catena, buona,
+pigra) per 1, 6 e 9; «normale» e' byte per byte quel che si faceva prima
+(`tools/prova_deflate.sh`: BUONO).
+
+! **LE TABELLE DI ExZip CRESCONO CON LE VOCI.** Erano fisse per 65535 voci
+piu' 4 MB di nomi: oltre 6 MB per un archivio di due file, a ogni
+`ex_zip_crea`. Adesso partono da 64 e raddoppiano.
+
+! **E IL GUASTO VERO NON ERA LI'.** Dopo «Nuovo» il dialogo «Aggiungi file»
+non si apriva, senza un messaggio. Due registri sulla seriale l'hanno detto:
+**la lista del dialogo non si creava**. Nel toolkit, una lista che riusa il
+posto di una distrutta salvava il buffer delle righe e poi, col `memset`,
+perdeva le icone e la capacita' — e il controllo subito dopo la rifiutava.
+Cioe': **in ogni programma, la seconda lista dopo una distrutta non nasceva**.
+Il vecchio Archivi teneva la sua lista sempre aperta e non ci inciampava. Chi
+ha visto «il secondo dialogo dei file non compare» in un altro programma,
+aveva visto questo.
+
+! **UNA PROVA CHE GUASTA UN BYTE A UN PUNTO FISSO E' UNA PROVA FRAGILE.**
+`prova_zip.sh` guastava il byte 80 di un archivio fatto da `zip` dell'host;
+oggi lo zip dell'host ha messo le voci in un altro ordine e il byte 80 e'
+caduto in un campo che il nostro estrattore non legge. Adesso si guasta a
+meta' dei dati del file piu' grande, trovato dalla struttura dell'archivio.
+
+! **ExWin prende lo schermo da solo**: nelle prove si lancia il programma
+dopo Alt+F1 e si guarda con Alt+F5. `tools/prova_ridimensiona.sh` usa ancora
+Alt+F2, ed e' per questo che la sua sequenza, copiata, dava una foto della
+shell.
+
+---
+
 # 25 settembre 2026 — tar, gzip e gunzip; e repo-update che si fermava
 
 ## CHE COSA E' SUCCESSO, IN UNA RIGA PER COSA

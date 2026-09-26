@@ -100,6 +100,49 @@ typedef struct {
 
 static Console  g_console[VGA_N_CONSOLE];
 static uint32_t g_visibile = 0;
+
+/* =============================================================================
+ * THE TEXT OF A CONSOLE, FOR WHOEVER CANNOT SEE IT (@EXWIN-LOG, 26 Sept 2026)
+ *
+ * Since 22 September the console of the graphics keeps its text in its cells
+ * and no longer paints it over the windows. That text is the desktop's log —
+ * wserver's messages, and whatever the programs started from the menu print
+ * — and until now nobody could read it. Only the character byte is copied:
+ * colours mean nothing to a list in a window.
+ * ============================================================================= */
+uint32_t vga_console_testo(uint32_t n, char *out, uint32_t max)
+{
+    const Console *c;
+    uint32_t r, k, w = 0, fine = 0, ultima = 0;
+
+    if (n >= VGA_N_CONSOLE || max == 0) return 0;
+    c = &g_console[n];
+
+    /* The last row that has something: rows below it are not sent. */
+    for (r = 0; r < g_righe; r++)
+        for (k = 0; k < g_cols; k++) {
+            char ch = (char)(c->cella[r * g_cols + k] & 0xFF);
+            if (ch != ' ' && ch != 0) { ultima = r + 1; break; }
+        }
+
+    for (r = 0; r < ultima; r++) {
+        uint32_t lun = g_cols;
+
+        while (lun > 0) {
+            char ch = (char)(c->cella[r * g_cols + lun - 1] & 0xFF);
+            if (ch != ' ' && ch != 0) break;
+            lun--;
+        }
+        if (w + lun + 1 > max) break;
+        for (k = 0; k < lun; k++) {
+            char ch = (char)(c->cella[r * g_cols + k] & 0xFF);
+            out[w++] = ch ? ch : ' ';
+        }
+        out[w++] = '\n';
+        fine = w;
+    }
+    return fine;
+}
 static volatile uint16_t *vga_buf = VGA_BASE;
 
 /* Specchio seriale dell'output: vedi vga_set_serial_mirror(). */

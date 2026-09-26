@@ -1487,6 +1487,17 @@ int main(int argc, char **argv)
         ok("replace pure",
            exdom_dove_andare(D, dove, sizeof(dove)) == 1 &&
            strcmp(dove, "/quattro") == 0, dove);
+        /* ! IL RIMANDO DI DuckDuckGo, parola per parola (26 settembre 2026):
+         * ogni link dei risultati passa da una pagina che fa solo questo, e
+         * con `parent` indefinito si restava su una pagina vuota. */
+        prova_gia("parent e' la finestra", c, "String(window.parent === window)", "true");
+        prova_gia("top e self pure", c,
+                  "String(window.top === window && self === window)", "true");
+        gira(c, "window.parent.location.replace(\"https://github.com/exagonx/EX_OS\");",
+             "parent.replace");
+        ok("window.parent.location.replace porta via",
+           exdom_dove_andare(D, dove, sizeof(dove)) == 1 &&
+           strcmp(dove, "https://github.com/exagonx/EX_OS") == 0, dove);
         gira(c, "location.reload();", "reload");
         ok("reload rimanda dove si e' gia'",
            exdom_dove_andare(D, dove, sizeof(dove)) == 1 &&

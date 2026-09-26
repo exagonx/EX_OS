@@ -34,6 +34,51 @@ dice quale. Il CSS «completo» non e' un obiettivo; Amazon che si legge si'.
 
 
 ---------------------------------------------------------------------
+0b. IL 26 SETTEMBRE: @EXBROWSER-1024, MISURATO E CORRETTO
+---------------------------------------------------------------------
+
+  LA FINESTRA SI RIDIMENSIONA (EX_RIDIM). «?», «Vai» e «Cerca» seguono il
+  bordo destro, l'indirizzo prende il resto, la riga di stato il fondo, e la
+  pagina si reimpagina alla larghezza nuova. Sotto 480x240 i controlli non
+  si spostano piu'. Prova: tools/prova_exbrowser_misura.sh.
+
+  I LINK DEI RISULTATI DI DuckDuckGo DAVANO UNA PAGINA VUOTA. Misurato con
+  curl: ogni link e' //duckduckgo.com/l/?uddg=<meta>&rut=<firma>, e quella
+  pagina e' tutta qui:
+
+      <script>window.parent.location.replace("https://...")</script>
+      <noscript><meta http-equiv='refresh' content="0;URL=..."></noscript>
+
+  `parent` non esisteva: lo script si fermava, il <noscript> giustamente non
+  si guardava, e restava il bianco. Adesso self, parent e top sono la
+  finestra (lib/exdom/exdom.c, tre prove in domprova.c).
+
+  E DIETRO C'ERA UN SECONDO GUAIO: /wiki/Example.com diventava «Example.com
+  non e' una pagina web» — il nome finiva in «.com», e prima di scaricare
+  ogni estensione sconosciuta valeva «file». Per gli indirizzi di rete il
+  nome decide solo se e' SICURAMENTE un file (zip, pdf, iso, immagini, o una
+  che ha un programma); il resto si scarica e decide il Content-Type.
+  Provato in QEMU: link vero di DuckDuckGo -> en.wikipedia.org/wiki/Example.com.
+
+  ! UN LINK DI DuckDuckGo SENZA `rut` DA' 400, anche a curl: per le prove si
+    prende un link vero da una ricerca vera.
+
+  I MANUALI DI gcc.gnu.org SI SCARICANO: in QEMU, «Scarica» sul link di
+  gcc-16.2.0/gcc.pdf ha salvato 3330725 byte in $HOME, quanti ne da' curl;
+  `scarica` dalla shell lo stesso, in 5 secondi. Quel che puo' averlo fermato
+  sul ferro, e va chiesto a chi l'ha visto:
+    - INVIO sceglie «Annulla»: per contratto il fuoco sta sull'ultimo
+      pulsante, il prudente (lib/exdlg, ex_dlg_scegli) — «lasciato stare»;
+    - $HOME che manca o sta su un volume di sola lettura: si propone «/».
+
+  VISTI STRADA FACENDO, APERTI:
+    - la finestra «Download» resta vuota per uno scaricamento partito da
+      «Che cosa ne faccio?»: quella strada non passa dai suoi elenchi;
+    - la prima riga di un paragrafo con del corsivo lascia una riga vuota
+      sotto di se' (docs/index.html, «...scritto da zero in C e»): c'era
+      anche prima del ridimensionamento.
+
+---------------------------------------------------------------------
 1. FATTO OGGI, E PROVATO
 ---------------------------------------------------------------------
 

@@ -37,7 +37,7 @@
 #include "exinfo.h"
 
 /* +0.001 a ogni modifica: `pm -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.002"
+#define VERSIONE_APP "0.005"
 EX_VERSIONE("pm", VERSIONE_APP);
 
 #define BARRA_H     28
@@ -59,6 +59,7 @@ EX_VERSIONE("pm", VERSIONE_APP);
 #define ID_GESTISCI 92
 #define ID_INFO     93
 #define ID_IMPOST   94
+#define ID_REGISTRO 96
 
 /* Le quattro risoluzioni: gli stessi nomi che accetta /dev/svga.drv, e
  * nello stesso ordine della tabella dentro Stage 2. */
@@ -635,6 +636,267 @@ static void gest_apri(void)
  * --------------------------------------------------------------------------- */
 static long menu_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp);
 
+/* =============================================================================
+ * THE SYSTEM LOG (@EXWIN-LOG, 26 September 2026)
+ *
+ * What the programs of the desktop print — wserver, and everything started
+ * from this menu, which inherits the console of the graphics — has stayed in
+ * that console's cells since 22 September instead of scrolling over the
+ * windows. console_testo() gives it back (SYS_CONSOLE_TESTO), and this window
+ * shows it, reading again once a second.
+ *
+ * ! IT IS NOT MODAL, although «modal» was in the request. On EX-OS a modal
+ * window blocks every window of its PROCESS, and the taskbar belongs to this
+ * process: a modal log would freeze the taskbar for as long as it is open.
+ * It stays above the others instead (EX_SOPRA is not used either: a log is
+ * read side by side with the program that writes it).
+ *
+ * ! THE TEXT IS REPLACED ONLY WHEN IT CHANGED, and the reader's place is
+ * kept: at the bottom it follows the new lines, higher up it stays where it
+ * was. Refilling every second regardless would throw the reader back to the
+ * top while reading.
+ * ============================================================================= */
+#define REG_W       640
+#define REG_H       360
+#define REG_BUF     8192        /* 128 columns x 48 rows, with the newlines */
+
+static ExFinestra   g_reg = 0, g_reg_area = 0;
+static unsigned int g_reg_firma = 0;
+
+static unsigned int firma(const char *p, int n)
+{
+    unsigned int h = 2166136261u;
+    int i;
+
+    for (i = 0; i < n; i++) h = (h ^ (unsigned char)p[i]) * 16777619u;
+    return h ^ (unsigned int)n;
+}
+
+static void registro_leggi(int forza)
+{
+    static char  buf[REG_BUF];
+    int          n = console_testo(buf, REG_BUF - 1);
+    unsigned int f, vis = 0, prima, righe;
+    int          in_fondo;
+    char        *riga, *dopo;
+
+    if (!g_reg_area) return;
+    if (n < 0) n = sprintf(buf, "Il registro non si legge: %s\n",
+                           n == -1 ? "la grafica non e' accesa"
+                                   : "la scrivania e' di un altro utente");
+    buf[n] = '\0';
+
+    f = firma(buf, n);
+    if (!forza && f == g_reg_firma) return;
+    g_reg_firma = f;
+
+    prima    = ex_area_vista(g_reg_area, &vis);
+    righe    = ex_area_righe(g_reg_area);
+    in_fondo = forza || prima + vis >= righe;
+
+    ex_area_svuota(g_reg_area);
+    for (riga = buf; *riga; riga = dopo) {
+        dopo = strchr(riga, '\n');
+        if (dopo) *dopo++ = '\0'; else dopo = riga + strlen(riga);
+        if (!ex_area_aggiungi(g_reg_area, riga)) break;
+    }
+
+    righe = ex_area_righe(g_reg_area);
+    if (in_fondo) ex_area_mostra_da(g_reg_area, righe > vis ? righe - vis : 0);
+    else          ex_area_mostra_da(g_reg_area, prima);
+    ex_procedura_base(g_reg, EXM_DISEGNA, 0, 0);
+    ex_aggiorna(g_reg);
+}
+
+static long reg_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+{
+    switch (msg) {
+    case EXM_CHIUDI:
+        ex_distruggi(g_reg);
+        g_reg = g_reg_area = 0;
+        return 0;
+    case EXM_TEMPO:
+        registro_leggi(0);
+        return 0;
+    case EXM_MISURA:
+        ex_misura(g_reg_area, EX_X(lp) - 8, EX_Y(lp) - 8);
+        break;
+    }
+    return ex_procedura_base(f, msg, wp, lp);
+}
+
+static void registro_apri(void)
+{
+    if (g_reg) { registro_leggi(1); return; }
+
+    g_reg = ex_crea("finestra", "Registro di sistema",
+                    EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_RIDIM,
+                    EX_AUTO, EX_AUTO, REG_W, REG_H, 0, 0, reg_proc);
+    if (!g_reg) return;
+    g_reg_area = ex_crea("areatesto", "", EX_FIGLIO, 4, 4, REG_W - 8, REG_H - 8,
+                         g_reg, 0, 0);
+    if (!g_reg_area) { ex_distruggi(g_reg); g_reg = 0; return; }
+
+    ex_sveglia(g_reg, 1000);
+    registro_leggi(1);
+}
+
+/* =============================================================================
+ * SHUTTING DOWN AND RESTARTING WITH THE GRAPHICS ON (@GRAFICA-MODALE, 26 Sept)
+ *
+ * Asked: from the desktop, «Riavvia» and «Spegni» scrolled text like a
+ * terminal. They did, for two reasons: «Riavvia» first switched the desktop
+ * off (the server put the screen back to text mode and died) and rebooted
+ * after, so the kernel's messages scrolled on the text screen; «Spegni»
+ * called reboot() at once, without asking any program to close.
+ *
+ * Now both go the same way, and the window server is the LAST to stop:
+ *   1. a window says what is happening — no close button: it is not a
+ *      question;
+ *   2. every other program is asked to close, as with its X button
+ *      (ex_chiudi_le_altre), and the window lists who is left, from the list
+ *      the taskbar already follows;
+ *   3. when nobody is left: «syncing the disks», and reboot(), which syncs.
+ *
+ * ! A PROGRAM THAT DOES NOT CLOSE DOES NOT HOLD THE MACHINE HOSTAGE, and does
+ * not lose its work in silence either: after ARR_ATTESA seconds two buttons
+ * appear, «Procedi comunque» and «Annulla». A program asking «save?» gets
+ * the time to be answered.
+ * ============================================================================= */
+#define ARR_W       440
+#define ARR_H       130
+#define ARR_ATTESA  20          /* seconds before offering to go on anyway */
+#define ID_ARR_VAI  120
+#define ID_ARR_NO   121
+
+static ExFinestra   g_arr = 0, g_arr_testo = 0;
+static int          g_arr_cosa = -1;        /* EXOS_RB_*, -1 = none in progress */
+static unsigned int g_arr_da = 0;           /* uptime_ms() when it started */
+static int          g_arr_pulsanti = 0;
+
+static void arr_dico(const char *t)
+{
+    if (!g_arr) return;
+    ex_testo_metti(g_arr_testo, t);
+    ex_procedura_base(g_arr, EXM_DISEGNA, 0, 0);
+    ex_aggiorna(g_arr);
+}
+
+static void arr_fine(void)
+{
+    if (g_arr) ex_distruggi(g_arr);
+    g_arr = g_arr_testo = 0;
+    g_arr_cosa = -1;
+    g_arr_pulsanti = 0;
+}
+
+static void arr_esegui(void)
+{
+    int cosa = g_arr_cosa;
+
+    arr_dico(cosa == EXOS_RB_RESTART ? "Sincronizzo i dischi e riavvio..."
+                                     : "Sincronizzo i dischi e spengo...");
+    log_seriale(cosa == EXOS_RB_RESTART ? "pm: riavvio, con la grafica accesa"
+                                        : "pm: spengo, con la grafica accesa");
+    reboot(cosa);
+
+    /* ! BACK HERE ONLY IF THE KERNEL SAID NO: from ExWin, when the desktop
+     * is not on a console of this machine. Said in a window: a menu that does
+     * nothing looks broken. The programs are already closed — that part
+     * cannot be undone, and the text says so. */
+    arr_fine();
+    log_seriale("pm: il kernel ha rifiutato");
+    ex_dlg_avviso(cosa == EXOS_RB_RESTART ? "Riavvio" : "Spegnimento",
+                  "I programmi sono stati chiusi, ma il sistema non si "
+                  "riavvia ne' si spegne da qui.\n\n"
+                  "Lo puo' chiedere root, oppure chi sta a una console di "
+                  "questa macchina: da una sessione remota no.");
+}
+
+/* The windows of other programs still open, their titles into `nomi`. */
+static int arr_restano(char *nomi, unsigned int max)
+{
+    ExVoceFin    v[16];
+    int          n = ex_finestre_elenco(v, 16), i, quante = 0;
+    unsigned int io = (unsigned int)getpid();
+
+    if (n > 16) n = 16;
+    nomi[0] = '\0';
+    for (i = 0; i < n; i++) {
+        if (v[i].pid == io) continue;
+        if (quante++) strncat(nomi, ", ", max - strlen(nomi) - 1);
+        strncat(nomi, v[i].titolo, max - strlen(nomi) - 1);
+    }
+    return quante;
+}
+
+static void arr_controlla(void)
+{
+    char         nomi[160], t[240];
+    unsigned int s;
+
+    if (g_arr_cosa < 0 || !g_arr) return;
+    if (arr_restano(nomi, sizeof(nomi)) == 0) { arr_esegui(); return; }
+
+    s = (uptime_ms() - g_arr_da) / 1000;
+    snprintf(t, sizeof(t), "Aspetto che si chiudano (%u s): %s", s, nomi);
+    arr_dico(t);
+
+    if (s >= ARR_ATTESA && !g_arr_pulsanti) {
+        g_arr_pulsanti = 1;
+        ex_crea("pulsante", "Procedi comunque", EX_FIGLIO,
+                ARR_W - 300, ARR_H - 36, 150, 26, g_arr, ID_ARR_VAI, 0);
+        ex_crea("pulsante", "Annulla", EX_FIGLIO,
+                ARR_W - 140, ARR_H - 36, 120, 26, g_arr, ID_ARR_NO, 0);
+        ex_procedura_base(g_arr, EXM_DISEGNA, 0, 0);
+        ex_aggiorna(g_arr);
+    }
+}
+
+static long arr_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
+{
+    if (msg == EXM_TEMPO) { arr_controlla(); return 0; }
+    if (msg == EXM_COMANDO && wp == ID_ARR_VAI) { arr_esegui(); return 0; }
+    if (msg == EXM_COMANDO && wp == ID_ARR_NO) {
+        arr_fine();
+        log_seriale("pm: arresto annullato");
+        return 0;
+    }
+    if (msg == EXM_CHIUDI) return 0;        /* no X: it is not a question */
+    return ex_procedura_base(f, msg, wp, lp);
+}
+
+static void arresta(int cosa)
+{
+    const char *titolo = cosa == EXOS_RB_RESTART ? "Riavvio" : "Spegnimento";
+
+    if (g_arr_cosa >= 0) return;            /* one at a time */
+
+    /* ! AT THE BOTTOM, ABOVE THE TASKBAR, NOT IN THE MIDDLE: the middle is
+     * where the programs ask «save the changes?» — and that is exactly when
+     * this window has something to say. Centred, it sat under the editor's
+     * question and could not be seen (tried in QEMU, 26 September 2026). */
+    g_arr = ex_crea("finestra", titolo, EX_TITOLO | EX_BORDO | EX_SOPRA,
+                    ((int)g_sw - ARR_W) / 2, (int)g_sh - BARRA_H - ARR_H - 30,
+                    ARR_W, ARR_H, 0, 0, arr_proc);
+    if (!g_arr) {
+        /* No window: do it the old way rather than not at all. */
+        reboot(cosa);
+        return;
+    }
+    g_arr_testo = ex_crea("etichetta", "", EX_FIGLIO, 16, 20, ARR_W - 32, 48,
+                          g_arr, 0, 0);
+    g_arr_cosa = cosa;
+    g_arr_da   = uptime_ms();
+    g_arr_pulsanti = 0;
+
+    arr_dico("Chiedo ai programmi di chiudersi...");
+    log_seriale(cosa == EXOS_RB_RESTART ? "pm: riavvio chiesto dal menu"
+                                        : "pm: spegnimento chiesto dal menu");
+    ex_chiudi_le_altre();
+    ex_sveglia(g_arr, 1000);
+}
+
 static void menu_chiudi(void)
 {
     /* ! IL SOTTOMENU SE NE VA COL PADRE. E' una finestra a se', quindi
@@ -780,8 +1042,9 @@ static void menu_apri(void)
      * quando non c'e' niente da avviare. */
     /* Quattro voci fisse adesso — «Applicazioni...», «Informazioni su»,
      * «Esci», «Spegni». */
-    /* Sei voci sotto la riga: Applicazioni, Informazioni, Impostazioni,
-     * Esci, Riavvia, Spegni. Il numero sta qui e non sparso nelle posizioni. */
+    /* Sette voci sotto la riga: Applicazioni, Informazioni, Impostazioni,
+     * Registro, Esci, Riavvia, Spegni. Il numero sta qui e non sparso nelle
+     * posizioni. */
     /* Quante righe in cima: una per categoria, piu' le voci che non ne hanno
      * nessuna. Le altre stanno nei sottomenu e non occupano posto qui. */
     {
@@ -790,7 +1053,7 @@ static void menu_apri(void)
         for (i = 0; i < g_app_n; i++)
             if (!g_app[i].categoria[0]) fuori++;
 
-        h = (int)((g_cat_n + fuori) * VOCE_H) + 8 + 6 * VOCE_H + 6;
+        h = (int)((g_cat_n + fuori) * VOCE_H) + 8 + 7 * VOCE_H + 6;
     }
 
     g_menu_y = (int)g_sh - BARRA_H - h - 2;
@@ -848,8 +1111,13 @@ static void menu_apri(void)
     ex_crea("pulsante", "Impostazioni...", EX_FIGLIO,
             4, 10 + (int)(riga + 2) * VOCE_H, MENU_W - 8, VOCE_H - 2,
             g_menu, ID_IMPOST, 0);
-    ex_crea("pulsante", "Esci", EX_FIGLIO,
+    /* The desktop's log (@EXWIN-LOG): with the things the desktop knows how
+     * to do, before the ones that stop it. */
+    ex_crea("pulsante", "Registro di sistema", EX_FIGLIO,
             4, 10 + (int)(riga + 3) * VOCE_H, MENU_W - 8, VOCE_H - 2,
+            g_menu, ID_REGISTRO, 0);
+    ex_crea("pulsante", "Esci", EX_FIGLIO,
+            4, 10 + (int)(riga + 4) * VOCE_H, MENU_W - 8, VOCE_H - 2,
             g_menu, ID_ESCI, 0);
     /* ! «RIAVVIA» STA FRA «ESCI» E «SPEGNI», ed e' il posto giusto per due
      * ragioni. La prima e' l'ordine di gravita': si esce dalla scrivania, si
@@ -864,10 +1132,10 @@ static void menu_apri(void)
      * comando deve stare nel menu invece che in una console di testo che chi
      * e' nella grafica non sta guardando. */
     ex_crea("pulsante", "Riavvia", EX_FIGLIO,
-            4, 10 + (int)(riga + 4) * VOCE_H, MENU_W - 8, VOCE_H - 2,
+            4, 10 + (int)(riga + 5) * VOCE_H, MENU_W - 8, VOCE_H - 2,
             g_menu, ID_RIAVVIA, 0);
     ex_crea("pulsante", "Spegni", EX_FIGLIO,
-            4, 10 + (int)(riga + 5) * VOCE_H, MENU_W - 8, VOCE_H - 2,
+            4, 10 + (int)(riga + 6) * VOCE_H, MENU_W - 8, VOCE_H - 2,
             g_menu, ID_SPEGNI, 0);
 
     ex_procedura_base(g_menu, EXM_DISEGNA, 0, 0);
@@ -1067,34 +1335,19 @@ static long menu_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
          * console leggibile invece che a uno schermo grafico senza piu'
          * nessuno dentro.
          * ================================================================= */
-        if (wp == ID_RIAVVIA) {
-            log_seriale("pm: riavvio chiesto dal menu");
-            g_riavvia = 1;
-            ex_spegni_scrivania();
-            return 0;
-        }
+        /* ! SINCE 26 SEPTEMBER 2026 THE GRAPHICS STAYS ON UNTIL THE END: see
+         * arresta(). What is written above about «Esci» first and reboot
+         * after was the reason the reboot scrolled text (@GRAFICA-MODALE). */
+        if (wp == ID_RIAVVIA) { arresta(EXOS_RB_RESTART); return 0; }
 
         /* ! SPEGNERE SINCRONIZZA I DISCHI, e lo fa il kernel: qui si chiede e
          * basta. Se rende, vuol dire che ha rifiutato — e allora si dice,
          * invece di lasciare una scrivania che sembra aver ignorato il
          * comando. */
-        if (wp == ID_SPEGNI) {
-            log_seriale("pm: spegnimento chiesto dal menu");
-            reboot(EXOS_RB_POWEROFF);
-            /* ! SI TORNA QUI SOLO SE IL KERNEL HA DETTO DI NO, e da ExWin
-             * succede in un caso solo: la scrivania non e' su una console di
-             * questa macchina. Lo si dice in una finestra, perche' un menu che
-             * non fa niente sembra rotto. */
-            log_seriale("pm: il kernel ha rifiutato lo spegnimento");
-            ex_dlg_avviso("Spegnimento",
-                          "Il sistema non si spegne da qui.\n\n"
-                          "Lo puo' chiedere root, oppure chi sta a una "
-                          "console di questa macchina: da una sessione "
-                          "remota no.");
-            return 0;
-        }
+        if (wp == ID_SPEGNI) { arresta(EXOS_RB_POWEROFF); return 0; }
 
         if (wp == ID_GESTISCI) { gest_apri(); return 0; }
+        if (wp == ID_REGISTRO) { registro_apri(); return 0; }
 
         if (wp == ID_IMPOST) {
             impostazioni_apri();
@@ -1123,12 +1376,208 @@ static long menu_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
     return ex_procedura_base(f, msg, wp, lp);
 }
 
+/* =============================================================================
+ * THE OPEN PROGRAMS ON THE TASKBAR (@FIN-ICONA, 26 September 2026)
+ *
+ * One entry per open window, minimized or not: the taskbar shows what is
+ * running and switches between programs. A click on an entry restores it if
+ * minimized and brings it to the front.
+ *
+ * ! THE LIST IS THE SERVER'S, and arrives by itself as EXM_FINESTRE every
+ * time it changes (ex_finestre_segui). Nothing here is remembered between
+ * two lists except the icons, so a program that dies while minimized
+ * cannot leave an entry behind.
+ *
+ * ! THE ICON COMES FROM THE PROGRAM'S NAME: the pid in the list gives the
+ * process name (procinfo), and the name finds the line of
+ * applicazioni.txt whose path ends with it. A program that is not in the
+ * menu shows its title without an icon — the second of the two roads in
+ * @FIN-ICONA: it costs no new message, and is wrong only for programs the
+ * menu does not know.
+ *
+ * ! WHEN THEY DO NOT FIT, ENTRIES SHRINK TO THE ICON ALONE, as in Windows 95:
+ * that is where the icon is worth more than the title. Past that, the last
+ * ones are not shown (sixteen windows at 640 pixels).
+ * ============================================================================= */
+#define VB_X0        76         /* after «Avvio» */
+#define VB_OROLOGIO 178         /* the clock, a process of its own, is here */
+#define VB_MAX_W    160
+#define VB_MIN_W     28
+#define VB_ICONA     16
+
+typedef struct {
+    ExVoceFin v;
+    ExIcona   ic;
+    int       x, w;
+} VoceBarra;
+
+static VoceBarra g_vb[16];
+static int       g_vb_n = 0;
+
+/* The last path component, without the directories. */
+static const char *base_di(const char *p)
+{
+    const char *b = p;
+
+    for (; *p; p++) if (*p == '/') b = p + 1;
+    return b;
+}
+
+static ExIcona icona_del_pid(unsigned int pid)
+{
+    ProcInfo     pi[PROCINFO_MAX_BATCH];
+    unsigned int start = 0, i;
+    int          n;
+    const char  *nome = 0;
+
+    while (!nome && (n = procinfo(pi, PROCINFO_MAX_BATCH, start)) > 0) {
+        for (i = 0; i < (unsigned int)n; i++)
+            if (pi[i].pid == pid) { nome = base_di(pi[i].name); break; }
+        start += (unsigned int)n;
+        if (nome) {
+            /* pi is overwritten by the next call: keep the name. */
+            static char tieni[PROCINFO_NAME_MAX];
+            strncpy(tieni, nome, sizeof(tieni) - 1);
+            tieni[sizeof(tieni) - 1] = '\0';
+            nome = tieni;
+        }
+    }
+    if (!nome || !nome[0]) return 0;
+
+    for (i = 0; i < g_app_n; i++)
+        if (strcmp(base_di(g_app[i].percorso), nome) == 0) return icona_di(&g_app[i]);
+    return 0;
+}
+
+static void vb_disponi(void)
+{
+    int x1 = (int)g_sw - VB_OROLOGIO, spazio = x1 - VB_X0, w, i, quanti;
+
+    if (g_vb_n == 0 || spazio <= 0) return;
+    w = spazio / g_vb_n;
+    if (w > VB_MAX_W) w = VB_MAX_W;
+    if (w < VB_MIN_W) w = VB_MIN_W;
+    quanti = spazio / w;
+
+    for (i = 0; i < g_vb_n; i++) {
+        g_vb[i].x = VB_X0 + i * w;
+        g_vb[i].w = (i < quanti) ? w - 2 : 0;      /* 0 = not shown */
+    }
+}
+
+static void vb_leggi(void)
+{
+    ExVoceFin v[16];
+    int       n = ex_finestre_elenco(v, 16), i;
+
+    if (n > 16) n = 16;
+    for (i = 0; i < n; i++) {
+        g_vb[i].v  = v[i];
+        g_vb[i].ic = icona_del_pid(v[i].pid);
+    }
+    g_vb_n = n;
+    vb_disponi();
+}
+
+static void vb_disegna(ExFinestra f)
+{
+    int x1 = (int)g_sw - VB_OROLOGIO, i;
+    int y = 2, h = BARRA_H - 4;
+
+    ex_riempi(f, VB_X0, 0, x1 - VB_X0, BARRA_H, EX_GRIGIO);
+
+    for (i = 0; i < g_vb_n; i++) {
+        VoceBarra *b = &g_vb[i];
+        int        tx = b->x + 4, spazio, n;
+        char       t[48];
+        unsigned int ridotta = b->v.stato & EX_VF_RIDOTTA;
+
+        if (b->w <= 0) continue;
+
+        /* ! THE ONE WITH THE FOCUS IS PRESSED IN, the others stick out: the
+         * rule of the toolkit — what sticks out can be pressed. */
+        ex_riempi(f, b->x, y, b->w, h, EX_GRIGIO);
+        if ((b->v.stato & EX_VF_FUOCO) && !ridotta) ex_incavo(f, b->x, y, b->w, h);
+        else                                       ex_rilievo(f, b->x, y, b->w, h);
+
+        if (b->ic) {
+            ex_icona_disegna(f, b->ic, tx, y + (h - VB_ICONA) / 2, VB_ICONA, EX_GRIGIO);
+            tx += VB_ICONA + 4;
+        }
+
+        /* The title, cut to what fits: the system font is 8 pixels wide. */
+        spazio = b->x + b->w - 4 - tx;
+        n = spazio / 8;
+        if (n <= 0) continue;
+        if (n > (int)sizeof(t) - 1) n = (int)sizeof(t) - 1;
+        strncpy(t, b->v.titolo, (size_t)n);
+        t[n] = '\0';
+        /* A minimized one is written in grey: it is there, but not on screen. */
+        ex_scrivi(f, tx, y + (h - 16) / 2, t, ridotta ? 0x00606060 : EX_NERO);
+    }
+}
+
+static int vb_sotto(int x, int y)
+{
+    int i;
+
+    if (y < 2 || y >= BARRA_H - 2) return -1;
+    for (i = 0; i < g_vb_n; i++)
+        if (g_vb[i].w > 0 && x >= g_vb[i].x && x < g_vb[i].x + g_vb[i].w) return i;
+    return -1;
+}
+
 /* -----------------------------------------------------------------------------
  * La barra
  * --------------------------------------------------------------------------- */
 static long barra_proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 {
     if (msg == EXM_COMANDO && wp == ID_AVVIO) { menu_apri(); return 0; }
+
+    /* Ctrl+Alt+Canc (@TASTI-SISTEMA): the three roads, and «Annulla» last —
+     * Enter pressed without reading must do nothing. A second Ctrl+Alt+Canc
+     * within five seconds restarts from the window server, even while this
+     * question is open. */
+    if (msg == EXM_SISTEMA) {
+        /* ! SHORT CAPTIONS: four buttons share the dialog's 420 pixels, and
+         * «Esci dalla sessione» pushed «Annulla» out of it. The words go in
+         * the question instead. */
+        static const char *const voci[4] = {
+            "Riavvia", "Esci", "Spegni", "Annulla"
+        };
+        int r = ex_dlg_scegli("Ctrl+Alt+Canc",
+                              "Riavviare il sistema, uscire dalla sessione "
+                              "grafica o spegnere? Ctrl+Alt+Canc di nuovo "
+                              "entro 5 secondi riavvia subito.", voci, 4);
+
+        if (r == 0) arresta(EXOS_RB_RESTART);
+        else if (r == 1) { log_seriale("pm: uscita dalla sessione (Ctrl+Alt+Canc)");
+                           ex_spegni_scrivania(); }
+        else if (r == 2) arresta(EXOS_RB_POWEROFF);
+        return 0;
+    }
+
+    if (msg == EXM_FINESTRE) {
+        vb_leggi();
+        vb_disegna(f);
+        ex_aggiorna(f);
+        arr_controlla();            /* a shutdown in progress watches it too */
+        return 0;
+    }
+
+    if (msg == EXM_MOUSE_GIU) {
+        int i = vb_sotto(EX_X(lp), EX_Y(lp));
+
+        if (i >= 0) { ex_finestra_attiva(g_vb[i].v.id); return 0; }
+    }
+
+    if (msg == EXM_DISEGNA) {
+        long r = ex_procedura_base(f, msg, wp, lp);
+
+        vb_disegna(f);
+        ex_aggiorna(f);
+        return r;
+    }
     return ex_procedura_base(f, msg, wp, lp);
 }
 
@@ -1249,6 +1698,9 @@ int main(int argc, char **argv)
 
     ex_crea("pulsante", "Avvio", EX_FIGLIO, 2, 2, 70, BARRA_H - 4,
             g_barra, ID_AVVIO, 0);
+
+    /* From now on the server tells the taskbar which windows are open. */
+    ex_finestre_segui(g_barra);
     /* =====================================================================
      * ! L'ANGOLO DESTRO E' DELL'OROLOGIO, e l'orologio e' un PROCESSO A
      * PARTE. Qui c'era la scritta «EX-OS», che non diceva niente che non si

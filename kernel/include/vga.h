@@ -94,6 +94,12 @@ void     vga_ripristina_testo(void);
 int      vga_switch_console(uint32_t n);
 uint32_t vga_visible_console(void);
 
+/* The text of console n as lines: the character of every cell, trailing
+ * blanks cut, '\n' after each line, empty lines at the bottom dropped.
+ * Writes at most max bytes into out (no '\0'); returns how many. See
+ * SYS_CONSOLE_TESTO. */
+uint32_t vga_console_testo(uint32_t n, char *out, uint32_t max);
+
 /* Dice dov'e' il framebuffer e che forma ha. Tutti zero = modo testo.
  * Serve a SYS_VIDEO_INFO, cioe' al server grafico in ring 3. */
 /* =============================================================================

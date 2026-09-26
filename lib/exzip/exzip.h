@@ -139,6 +139,16 @@ int ex_zip_finisci(ExZip *z);
 
 void ex_zip_chiudi(ExZip *z);
 
+/* Reopens a finished archive to add to it (26 September 2026). What comes
+ * back is an archive being written, as from ex_zip_crea(), that already
+ * holds the old entries: ex_zip_aggiungi()... then ex_zip_finisci(), which
+ * is NOT optional — until then the old catalogue is being overwritten. */
+ExZip *ex_zip_riapri(const char *percorso);
+
+/* How hard to compress what is added from now on: 0 = no compression (store
+ * everything), 1 = fast, 2 = normal (the default), 3 = best. */
+void ex_zip_livello(unsigned int livello);
+
 /* The last error, as a sentence to show someone. Never 0. */
 const char *ex_zip_errore(void);
 

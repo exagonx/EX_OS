@@ -59,25 +59,36 @@ struct ExZip {
      * names instead of two. */
     unsigned char *cd;
     unsigned long  cd_n;
-    unsigned long  voce_off[EXZIP_VOCI_MAX];
+    unsigned long *voce_off;        /* one per entry, allocated on opening */
     unsigned int   quante;
 
     /* Writing: what the central directory will have to say, collected while
      * the entries go down. */
-    unsigned long  w_off[EXZIP_VOCI_MAX];     /* local header offset */
-    unsigned long  w_crc[EXZIP_VOCI_MAX];
-    unsigned long  w_dim[EXZIP_VOCI_MAX];
-    unsigned long  w_cdim[EXZIP_VOCI_MAX];    /* size inside the archive */
-    unsigned int   w_met[EXZIP_VOCI_MAX];     /* EXZIP_STORE or EXZIP_DEFLATE */
-    unsigned int   w_data[EXZIP_VOCI_MAX];    /* DOS date and time, packed */
-    unsigned long  w_nome[EXZIP_VOCI_MAX];    /* offset into the name pool */
+    /* ! THE TABLES GROW WITH THE ENTRIES (26 September 2026). They were
+     * fixed arrays for 65535 entries plus a 4 MB name pool: over 6 MB for
+     * an archive of two files, taken at every ex_zip_crea(). In Archivi,
+     * where «Nuovo» creates and then reopens, the window of the next dialog
+     * could no longer be created — and nothing said why. See posto(). */
+    unsigned int   w_cap;                     /* entries the tables can hold */
+    unsigned long *w_off;                     /* local header offset */
+    unsigned long *w_crc;
+    unsigned long *w_dim;
+    unsigned long *w_cdim;                    /* size inside the archive */
+    unsigned int  *w_met;                     /* EXZIP_STORE or EXZIP_DEFLATE */
+    unsigned int  *w_data;                    /* DOS date and time, packed */
+    unsigned int  *w_bit;                     /* general purpose flags: 0 for
+                                               * what we write, kept for what
+                                               * ex_zip_riapri found (UTF-8
+                                               * names, encryption) */
+    unsigned long *w_nome;                    /* offset into the name pool */
     unsigned int   w_quante;
     char          *nomi;                      /* the pool */
     unsigned long  nomi_usati;
+    unsigned long  nomi_cap;
     unsigned long  scritto;                   /* bytes written so far */
 };
 
-/* the names of an archive being written: 65535 of them average 64 bytes */
+/* The names of an archive being written: a ceiling, not an allocation. */
 #define NOMI_POOL   (4 * 1024 * 1024)
 
 /* ! ONE ERROR AT A TIME, AND IT IS A SENTENCE. Returning -errno would push onto
@@ -85,6 +96,16 @@ struct ExZip {
  * and half of them would print the number. The text is in Italian because it
  * ends up on a screen: see the ASCII rule of this system. */
 static char g_err[160] = "";
+
+/* How hard to compress what is added from now on: 0 = store everything,
+ * 1 fast, 2 normal (the default), 3 best. See ex_zip_livello(). */
+static unsigned int g_livello = 2;
+
+void ex_zip_livello(unsigned int livello)
+{
+    g_livello = livello > 3 ? 2 : livello;
+    defl_livello(g_livello ? (int)g_livello : 2);
+}
 
 static void errore(const char *s)
 {
@@ -262,12 +283,19 @@ ExZip *ex_zip_apri(const char *percorso)
         errore("l'archivio ha piu' di 65535 file: serve ZIP64, che non so leggere");
         close(z->fd); free(z); return 0;
     }
+    /* ! AN EMPTY ARCHIVE IS AN ARCHIVE: only the end record, no catalogue.
+     * Archivi builds one the moment «Nuovo» is chosen (26 September 2026),
+     * and every archiver writes the same 22 bytes for it. */
+    if (n_voci == 0 && cd_n == 0 && cd_off <= (unsigned long)dim) return z;
+
     if (cd_n == 0 || cd_off + cd_n > (unsigned long)dim) {
         errore("il catalogo dell'archivio punta fuori dal file");
         close(z->fd); free(z); return 0;
     }
 
     z->cd = (unsigned char *)malloc(cd_n);
+    z->voce_off = (unsigned long *)malloc(n_voci * sizeof(unsigned long));
+    if (z->cd && !z->voce_off) { free(z->cd); z->cd = 0; }
     if (!z->cd) { errore("non c'e' memoria per il catalogo"); close(z->fd); free(z); return 0; }
     z->cd_n = cd_n;
 
@@ -467,6 +495,50 @@ int ex_zip_estrai(ExZip *z, unsigned int i, const char *dove)
  * Writing
  * --------------------------------------------------------------------------- */
 
+/* Room for `voci` entries and `byte` more bytes of names; the tables double
+ * when they grow. 0 when there is no memory or the ceiling is reached. */
+static void *cresci(void *p, unsigned long n, unsigned long dim)
+{
+    void *q = realloc(p, n * dim);
+    return q;
+}
+
+static int posto(ExZip *z, unsigned int voci, unsigned long byte)
+{
+    if (voci > EXZIP_VOCI_MAX || z->nomi_usati + byte > NOMI_POOL) return 0;
+
+    if (voci > z->w_cap) {
+        unsigned int c = z->w_cap ? z->w_cap : 64;
+        void *t;
+
+        while (c < voci) c *= 2;
+        if (c > EXZIP_VOCI_MAX) c = EXZIP_VOCI_MAX;
+
+#define CRESCI(campo) \
+        if (!(t = cresci(z->campo, c, sizeof(*z->campo)))) return 0; \
+        z->campo = t;
+        CRESCI(w_off) CRESCI(w_crc) CRESCI(w_dim) CRESCI(w_cdim)
+        CRESCI(w_met) CRESCI(w_data) CRESCI(w_bit) CRESCI(w_nome)
+#undef CRESCI
+        /* The flags of new entries are 0: realloc leaves the new part as
+         * it finds it. */
+        memset(z->w_bit + z->w_cap, 0, (c - z->w_cap) * sizeof(*z->w_bit));
+        z->w_cap = c;
+    }
+
+    if (z->nomi_usati + byte > z->nomi_cap) {
+        unsigned long c = z->nomi_cap ? z->nomi_cap : 4096;
+        char *t;
+
+        while (c < z->nomi_usati + byte) c *= 2;
+        if (c > NOMI_POOL) c = NOMI_POOL;
+        if (!(t = (char *)realloc(z->nomi, c))) return 0;
+        z->nomi = t;
+        z->nomi_cap = c;
+    }
+    return 1;
+}
+
 ExZip *ex_zip_crea(const char *percorso)
 {
     ExZip *z;
@@ -476,9 +548,6 @@ ExZip *ex_zip_crea(const char *percorso)
     z = (ExZip *)malloc(sizeof(ExZip));
     if (!z) { errore("non c'e' memoria per creare l'archivio"); return 0; }
     memset(z, 0, sizeof(ExZip));
-
-    z->nomi = (char *)malloc(NOMI_POOL);
-    if (!z->nomi) { errore("non c'e' memoria per i nomi"); free(z); return 0; }
 
     z->fd = open(percorso, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (z->fd < 0) { errore("non riesco a creare l'archivio"); free(z); return 0; }
@@ -543,7 +612,7 @@ int ex_zip_aggiungi(ExZip *z, const char *file, const char *nome)
 
     ln = (unsigned int)strlen(nome);
     if (ln == 0 || ln >= EXZIP_NOME_MAX) { errore("nome non valido dentro l'archivio"); return 0; }
-    if (z->nomi_usati + ln + 1 > NOMI_POOL) { errore("troppi nomi: non ci stanno"); return 0; }
+    if (!posto(z, z->w_quante + 1, ln + 1)) { errore("troppi nomi, o non c'e' memoria: non ci stanno"); return 0; }
 
     /* ! THE FILE IS READ TWICE, AND IT IS THE CHEAPEST OF THE THREE WAYS. The
      * local header carries the CRC and the size BEFORE the data, and we only
@@ -552,7 +621,9 @@ int ex_zip_aggiungi(ExZip *z, const char *file, const char *nome)
      * header, then seeking back to patch it, which cannot be done when the
      * archive is a pipe. Reading a file twice off a disk costs nothing next to
      * an archive somebody cannot open. */
-    if (!crc_del_file(file, &crc, &dim, &cdim)) { errore("il file da aggiungere non si legge"); return 0; }
+    /* Level 0 does not even run the compressor: cdim stays 0, and 0 means
+     * store (see below). */
+    if (!crc_del_file(file, &crc, &dim, g_livello ? &cdim : 0)) { errore("il file da aggiungere non si legge"); return 0; }
 
     /* ! DEFLATE ONLY WHEN IT MAKES THE FILE SMALLER (since 23 September
      * 2026; before, everything was stored). A JPEG, a ZIP inside a ZIP, an
@@ -657,8 +728,8 @@ static int voce_cartella(ExZip *z, const char *nome)
     unsigned int  ln = (unsigned int)strlen(nome), data = data_dos();
 
     if (z->w_quante >= EXZIP_VOCI_MAX) { errore("l'archivio e' pieno: 65535 voci (il limite del formato senza ZIP64)"); return 0; }
-    if (ln == 0 || ln >= EXZIP_NOME_MAX || z->nomi_usati + ln + 1 > NOMI_POOL) {
-        errore("nome di cartella troppo lungo per l'archivio");
+    if (ln == 0 || ln >= EXZIP_NOME_MAX || !posto(z, z->w_quante + 1, ln + 1)) {
+        errore("nome di cartella troppo lungo per l'archivio, o niente memoria");
         return 0;
     }
 
@@ -785,7 +856,7 @@ int ex_zip_finisci(ExZip *z)
         metti32(c + 0,  SIG_CENTRALE);
         metti16(c + 4,  20);            /* version made by */
         metti16(c + 6,  20);            /* version needed */
-        metti16(c + 8,  0);
+        metti16(c + 8,  z->w_bit[i]);
         metti16(c + 10, z->w_met[i]);
         metti16(c + 12, z->w_data[i] & 0xFFFF);
         metti16(c + 14, (z->w_data[i] >> 16) & 0xFFFF);
@@ -821,6 +892,91 @@ int ex_zip_finisci(ExZip *z)
     return 1;
 }
 
+/* =============================================================================
+ * ADDING TO AN ARCHIVE THAT IS ALREADY FINISHED (26 September 2026)
+ *
+ * Asked for Archivi — «Costruisci», and the archive built by itself after
+ * every file added — and it was the piece @ZIP still lacked.
+ *
+ * ! THE OLD ENTRIES ARE NOT MOVED OR COPIED. Their data stays where it is;
+ * what is rebuilt is only the catalogue at the end. The archive is read as
+ * for extracting, every entry becomes one «already written» of an archive
+ * being created, and writing starts again WHERE THE OLD CATALOGUE BEGAN:
+ * new entries go over it, and ex_zip_finisci() writes a new catalogue with
+ * old and new entries.
+ *
+ * ! NO TRUNCATE IS NEEDED, AND THAT IS WHY IT CAN BE DONE HERE: what is
+ * written from the old catalogue on is the new entries plus a catalogue that
+ * holds every old entry again, plus the end record — never shorter than what
+ * it replaces.
+ *
+ * ! UNTIL ex_zip_finisci() THE FILE IS NOT AN ARCHIVE, exactly as with
+ * ex_zip_crea(): the old catalogue is being overwritten. Whoever reopens
+ * must finish, or the old entries are lost with it.
+ * ============================================================================= */
+ExZip *ex_zip_riapri(const char *percorso)
+{
+    ExZip        *r, *z;
+    unsigned char fine[FINE_FISSO];
+    long          dim, off_fine;
+    unsigned long cd_off;
+    unsigned int  i;
+
+    r = ex_zip_apri(percorso);
+    if (!r) return 0;
+
+    /* Where the old catalogue starts: read again from the end record, which
+     * ex_zip_apri() has already checked. */
+    dim = lseek(r->fd, 0, SEEK_END);
+    off_fine = trova_fine(r->fd, dim);
+    lseek(r->fd, off_fine, SEEK_SET);
+    if (off_fine < 0 || read(r->fd, fine, FINE_FISSO) != FINE_FISSO) {
+        errore("l'archivio finisce a meta'");
+        ex_zip_chiudi(r);
+        return 0;
+    }
+    cd_off = le32(fine + 16);
+
+    z = (ExZip *)malloc(sizeof(ExZip));
+    if (!z) { errore("non c'e' memoria per riaprire l'archivio"); ex_zip_chiudi(r); return 0; }
+    memset(z, 0, sizeof(ExZip));
+    z->fd = -1;             /* not 0: ex_zip_chiudi() on an error would close stdin */
+
+    for (i = 0; i < r->quante; i++) {
+        const unsigned char *c = r->cd + r->voce_off[i];
+        unsigned int ln = le16(c + 28);
+
+        if (ln == 0 || ln >= EXZIP_NOME_MAX || !posto(z, i + 1, ln + 1)) {
+            errore("un nome nel catalogo non va bene, o non c'e' memoria: non lo riscrivo");
+            ex_zip_chiudi(z); ex_zip_chiudi(r);
+            return 0;
+        }
+        z->w_bit[i]  = le16(c + 8);
+        z->w_met[i]  = le16(c + 10);
+        z->w_data[i] = le16(c + 12) | ((unsigned int)le16(c + 14) << 16);
+        z->w_crc[i]  = le32(c + 16);
+        z->w_cdim[i] = le32(c + 20);
+        z->w_dim[i]  = le32(c + 24);
+        z->w_off[i]  = le32(c + 42);
+        z->w_nome[i] = z->nomi_usati;
+        memcpy(z->nomi + z->nomi_usati, c + CEN_FISSO, ln);
+        z->nomi[z->nomi_usati + ln] = '\0';
+        z->nomi_usati += ln + 1;
+    }
+    z->w_quante = r->quante;
+    ex_zip_chiudi(r);
+
+    z->fd = open(percorso, O_WRONLY, 0);
+    if (z->fd < 0 || lseek(z->fd, (long)cd_off, SEEK_SET) != (long)cd_off) {
+        errore("non riesco a riaprire l'archivio in scrittura");
+        ex_zip_chiudi(z);
+        return 0;
+    }
+    z->scritto   = cd_off;
+    z->scrittura = 1;
+    return z;
+}
+
 void ex_zip_chiudi(ExZip *z)
 {
     if (!z) return;
@@ -830,7 +986,10 @@ void ex_zip_chiudi(ExZip *z)
      * dropped anyway: a program that opens one archive after another would
      * grow otherwise, and the day free() does give memory back this is already
      * the right thing to have written. */
-    if (z->cd)   free(z->cd);
-    if (z->nomi) free(z->nomi);
+    if (z->cd)       free(z->cd);
+    if (z->voce_off) free(z->voce_off);
+    if (z->nomi)     free(z->nomi);
+    if (z->w_off)  { free(z->w_off); free(z->w_crc); free(z->w_dim); free(z->w_cdim);
+                     free(z->w_met); free(z->w_data); free(z->w_bit); free(z->w_nome); }
     free(z);
 }

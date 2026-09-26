@@ -151,6 +151,11 @@ static struct {
     void         (*a_mostra_da)(ExFinestra, unsigned int);
     int          (*guarda_fd)(int, ExGuarda, void *);
     void         (*tab_contenuto)(ExFinestra, int);
+    void         (*finestre_segui)(ExFinestra);
+    int          (*finestre_elenco)(ExVoceFin *, int);
+    void         (*finestra_attiva)(unsigned int);
+    void         (*finestra_riduci)(unsigned int);
+    void         (*chiudi_altre)(void);
 } P;
 
 static void *chiedi(const ExLibTesta *t, const char *nome)
@@ -313,6 +318,18 @@ static void assicura(void)
                       exlib_simbolo(t, "ex_guarda_fd");
     P.tab_contenuto = (void (*)(ExFinestra, int))
                       exlib_simbolo(t, "ex_tab_contenuto");
+    /* ! OPTIONAL, like the two above: a new taskbar over an old exwin.so
+     * starts, and simply shows no entries. */
+    P.finestre_segui  = (void (*)(ExFinestra))
+                        exlib_simbolo(t, "ex_finestre_segui");
+    P.finestre_elenco = (int (*)(ExVoceFin *, int))
+                        exlib_simbolo(t, "ex_finestre_elenco");
+    P.finestra_attiva = (void (*)(unsigned int))
+                        exlib_simbolo(t, "ex_finestra_attiva");
+    P.finestra_riduci = (void (*)(unsigned int))
+                        exlib_simbolo(t, "ex_finestra_riduci");
+    P.chiudi_altre    = (void (*)(void))
+                        exlib_simbolo(t, "ex_chiudi_le_altre");
 
     P.pronto = 1;
 }
@@ -515,6 +532,21 @@ int          ex_guarda_fd(int fd, ExGuarda fn, void *dato)
 /* Optional: an older exwin.so without it just keeps Tab to itself. */
 void         ex_tab_contenuto(ExFinestra f, int si)
 { assicura(); if (P.tab_contenuto) P.tab_contenuto(f, si); }
+
+void         ex_finestre_segui(ExFinestra f)
+{ assicura(); if (P.finestre_segui) P.finestre_segui(f); }
+
+int          ex_finestre_elenco(ExVoceFin *v, int max)
+{ assicura(); return P.finestre_elenco ? P.finestre_elenco(v, max) : 0; }
+
+void         ex_finestra_attiva(unsigned int id)
+{ assicura(); if (P.finestra_attiva) P.finestra_attiva(id); }
+
+void         ex_finestra_riduci(unsigned int id)
+{ assicura(); if (P.finestra_riduci) P.finestra_riduci(id); }
+
+void         ex_chiudi_le_altre(void)
+{ assicura(); if (P.chiudi_altre) P.chiudi_altre(); }
 
 void ex_icona_metti(ExFinestra c, ExIcona ic, unsigned int lato)
 {

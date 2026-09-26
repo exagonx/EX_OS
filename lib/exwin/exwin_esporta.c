@@ -158,6 +158,13 @@ static const char *const g_nomi[] = {
 
     "ex_tab_contenuto",
 
+    /* Added on 26 September 2026: the taskbar (@FIN-ICONA). */
+    "ex_finestre_segui",
+    "ex_finestre_elenco",
+    "ex_finestra_attiva",
+    "ex_finestra_riduci",
+    "ex_chiudi_le_altre",
+
     /* L'avvio della libreria: lo chiama chi la apre, non l'applicazione. */
     "__lib_avvio"
 };
@@ -264,6 +271,12 @@ static void *const g_indirizzi[] = {
     (void *)ex_guarda_fd,
 
     (void *)ex_tab_contenuto,
+
+    (void *)ex_finestre_segui,
+    (void *)ex_finestre_elenco,
+    (void *)ex_finestra_attiva,
+    (void *)ex_finestra_riduci,
+    (void *)ex_chiudi_le_altre,
 
     (void *)__libc_ponti_avvia
 };

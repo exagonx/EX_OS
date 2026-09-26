@@ -1,5 +1,8 @@
 QUEL CHE E' APERTO — 15 settembre 2026
 
+!!! IL 26 SETTEMBRE, TRE DA correzioni.txt: @ARCHIVI-VISTA e @EXBROWSER-1024
+    (urgenti), @EXIDE-NOMI (a comodo).
+
 !!! IL 25 SETTEMBRE: @TAR-GZ FATTO E PROVATO in QEMU (11 prove su 11), e
     l'ISO si rifa' con tar, gzip e gunzip dentro. Resta @FLOPPY-PIENO: un
     «Disk full» visto una volta, e non spiegato.
@@ -201,7 +204,7 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @DIF-GROSSI      cc1plus non entrava in memoria: il corpo passa dal disco
   1  @FILI-MAX        otto fili per processo: e' un numero, non un lavoro
   1  @IMMAGINI        manca un visualizzatore di immagini: il decodificatore c'e' gia'
-  1  @FIN-ICONA       ! riduci a icona, e la barra che mostra i programmi attivi
+  1  @FIN-ICONA       FATTO e provato in QEMU: resta il ferro, e le icone sul desktop
   1  @EXIDE-TETTI     i tetti di exide, da sapere prima di sbatterci
   1  @EXIDE-LIBRERIE  il clic sulle righe di «Librerie» mai riprovato pixel per pixel
   1  @SUONO-ES1371    l'ES1371 vero non e' mai stato eseguito (serve una scheda)
@@ -209,8 +212,8 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @GIT-GCC         togliere dall'indice gli interni di GCC (chi ha il repository)
   1  @WIFI-4318       la radio della Broadcom: manca il firmware, non la voglia
   1  @RUST-0          un programma no_std che gira, compilato da Linux
-  1  @TASTI-SISTEMA   ! CTRL+C che chiede, e CTRL+ALT+CANC che offre tre strade
-  1  @GRAFICA-MODALE  ! l'uscita scorre come testo: ci vuole una finestra
+  1  @TASTI-SISTEMA   ! Ctrl+Alt+Canc FATTO (grafica e testo); resta CTRL+C
+  1  @GRAFICA-MODALE  FATTO: riavvio e spegnimento con la grafica accesa
   1  @FILEMGR-OPS     fatto e provato in QEMU: restano Rinomina e l'avanzamento
   1  @GFEDIT-SEL      FATTO e provato sul ferro: resta da guardare il toolkit
   1  @NETUPDATE-PATH  gli strumenti si installano dove il PATH non guarda
@@ -227,7 +230,7 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @ICONE           FATTE: toolkit, menu, exide e file manager. Mancano i disegni
   1  @EXIDE-ICONE     FATTO tutto e provato: mancano solo i disegni delle icone
   1  @PAINT           ! un Paint Brush per ExWin: BMP, JPG, GIF, PNG, TIFF
-  1  @EXWIN-LOG       ! lo schermo non si sporca piu' (kernel); manca la finestra
+  1  @EXWIN-LOG       la finestra c'e' (una schermata); resta l'anello di N righe
   1  @ICONE-APP       i disegni _64/_128 ci sono e il menu li usa: mancano quattro
   1  @EXBROWSER-NOME  FATTO e provato in QEMU: il navigatore si chiama EXBrowser
   1  @EXBROWSER-CERT  FATTO: catena, CA aggiunte, AES-GCM, P-256, TLS 1.2
@@ -238,6 +241,9 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @ARCHIVI-CARTELLE FATTO e provato: cartelle intere in Archivi e in zip
   1  @EXBROWSER-SCARICA FATTO e provato: apri o scarica un file non web
   1  @EXBROWSER-DOWNLOAD FATTO e provato: la finestra Download, nel toolkit
+  1  @ARCHIVI-VISTA   FATTO e provato in QEMU: tutti e otto i punti
+  1  @EXBROWSER-1024  FATTO e provato in QEMU: resta cosa ha visto sul ferro per gcc
+  1  @EXIDE-NOMI      radio rotondo, «checkbox», «casella testo»
 
   2  @SUONO-EMU8000   l'EMU8000 di una AWE32 resta spento    <- @SUONO-CAMPIONI
   2  @RUST-1          alloc: un GlobalAlloc sopra la malloc  <- @RUST-0
@@ -3381,6 +3387,29 @@ sono arrivate, non quello in cui vanno fatte.
 
 ! @FIN-ICONA LE FINESTRE SI RIDUCONO A ICONA — sul desktop E sulla barra.
 
+  FATTO IL 26 SETTEMBRE 2026 per la barra (diario: «Ridurre a icona»):
+    - il pulsante «_» lo disegna il SERVER, accanto alla crocetta, come la
+      crocetta: nessun programma e' stato toccato. Ridurre toglie
+      WIN_ST_VISIBILE e basta — posto, misura e pixel restano, e riaprire
+      li ritrova (punto 3);
+    - l'elenco e' del server (WIN_MSG_ELENCO / WIN_MSG_ELENCATA), che lo
+      MANDA DA SE' alla barra ogni volta che cambia; pm lo segue con
+      ex_finestre_segui() e riceve EXM_FINESTRE (punti 1 e 4);
+    - un clic su una voce: ex_finestra_attiva() — riapre se ridotta, porta
+      davanti, da' il fuoco; se la finestra aspetta una sua modale, viene
+      davanti la modale;
+    - l'icona: la seconda strada qui sotto, dal nome del processo a
+      applicazioni.txt; venti programmi: le voci si stringono fino alla sola
+      icona.
+    tools/prova_riduci.sh: la voce compare, «_» toglie la finestra e la voce
+    resta in grigio, il clic sulla voce la rimette ESATTAMENTE dov'era.
+
+  RESTA: le icone dei ridotti SULLA SCRIVANIA (chieste nel titolo di questa
+  voce; la specifica del 22 settembre parla solo della barra), un clic sulla
+  voce della finestra gia' davanti che la riduca (come Windows), e la prova
+  sul ferro.
+
+
   Oggi una finestra si chiude e basta. Chiesto: un terzo gesto che la toglie di
   mezzo SENZA buttarla via, e che lasci due modi di ritrovarla — un'icona sulla
   scrivania e una voce sulla barra in basso.
@@ -3549,6 +3578,24 @@ sono arrivate, non quello in cui vanno fatte.
 ! @GRAFICA-MODALE L'USCITA E IL RIAVVIO SCORRONO COME SE FOSSE UN TERMINALE.
   (chiesto il 21 settembre 2026)
 
+  FATTO IL 26 SETTEMBRE 2026 per Riavvia e Spegni (diario: «Spegnere con la
+  grafica accesa»). Le cause erano due: Riavvia prima spegneva la scrivania
+  (modo testo) e poi riavviava, e il testo del kernel scorreva sullo schermo
+  tornato testo; Spegni chiamava reboot() subito, senza chiedere a nessuno di
+  chiudersi. Adesso:
+    - una finestra senza crocetta, in basso sopra la barra (al centro stava
+      sotto la domanda «salvare?» dell'editor, provato), dice cosa succede;
+    - WIN_MSG_CHIUDI_ALTRE: la chiusura della crocetta a ogni programma degli
+      altri, riaprendo prima i ridotti — e il server NON muore;
+    - la finestra elenca chi resta, dall'elenco di @FIN-ICONA; quando non
+      resta nessuno: «Sincronizzo i dischi e riavvio...» e reboot(), con la
+      grafica accesa. Il server e' l'ultimo;
+    - dopo 20 secondi: «Procedi comunque» e «Annulla».
+  Provato in QEMU: con un editor non salvato, la finestra dice «Aspetto che
+  si chiudano: Editor» e il riavvio aspetta la risposta.
+  RESTA: «Esci» (uscire dalla scrivania) torna al testo, ed e' giusto — si
+  esce verso la console; e la prova ripetibile del flusso con l'editor.
+
   Riferito da chi lo usa: dall'ambiente grafico, `exit` e `shutdown` si
   comportano come in console — il testo scorre verso l'alto sopra la
   scrivania, in un posto dove il cursore non esiste nemmeno. Chiesto: una
@@ -3624,7 +3671,20 @@ sono arrivate, non quello in cui vanno fatte.
     che passa dalla console di sistema: la scrivania scorreva di una riga
     al secondo. Provato da tools/prova_ridisegno.sh, che adesso lo fa.
 
-  RESTA la finestra del registro: il testo c'e' gia', nelle celle della
+  LA FINESTRA C'E', DAL 26 SETTEMBRE 2026: menu Avvio > «Registro di
+  sistema». Il kernel rende il testo della console della grafica con
+  SYS_CONSOLE_TESTO (214, kernel 0.219), solo allo stesso utente o a root;
+  pm lo rilegge una volta al secondo e cambia l'area solo se il testo e'
+  cambiato, tenendo il posto di chi legge. tools/prova_registro.sh.
+  ! NON E' MODALE, anche se la richiesta lo diceva: su EX-OS un modale blocca
+    tutte le finestre del PROCESSO, e la barra delle applicazioni e' di pm.
+
+  RESTA: il registro e' UNA SCHERMATA (le celle della console, 48 righe al
+  massimo): quel che scorre via si perde. L'anello di N righe con l'ora e il
+  pid — il gestore qui sopra — e' il passo dopo, e con lui la pipe al posto
+  della console per i figli di pm.
+
+  (Com'era prima:) il testo c'e' gia', nelle celle della
   console della grafica, ma nessuno lo puo' leggere. Serve un modo di
   chiederlo al kernel (o il pezzo della pipe verso un servizio, qui sopra),
   e la finestra di pm che lo mostra.
@@ -3981,6 +4041,94 @@ $ @EDIT-RTF L'EDITOR IN MODALITA' RTF. (chiesto il 23 settembre 2026)
     selezionato dopo) sono gia' state prese una volta e conviene che le due
     risposte siano la stessa.
 
+! @ARCHIVI-VISTA LA FINESTRA «Archivi», RIFATTA COME UN ARCHIVIATORE VERO.
+  (chiesto il 26 settembre 2026, urgente)
+
+  FATTO IL 26 SETTEMBRE 2026, tutti e otto (diario: «Archivi rifatto»):
+    1-4 una tabella disegnata da Archivi: Nome e Percorso separati, Byte,
+        Compresso, Data, Metodo; clic sull'intestazione ordina (di nuovo:
+        rovescia), il bordo fra due intestazioni si trascina, la barra di
+        scorrimento e' quella del toolkit. ! Sta in archivi.c e NON nel
+        toolkit, contro quel che dice il punto qui sotto: un solo utente, e
+        la regola della casa. Il giorno che la vuole il file manager, si
+        sposta in lib/exwin con due programmi con cui provarla;
+    5   Comandi > «Estrai tutto in...», col dialogo che crea la cartella;
+    6   File > «Costruisci», e l'archivio si costruisce DA SOLO a ogni
+        aggiunta: exzip ha ex_zip_riapri() (e @ZIP la sua aggiunta);
+    7-8 Opzioni > Compressione (ex_zip_livello, i livelli 1/6/9 di zlib) ed
+        Estensione predefinita, in /exwin/config/archivi.cfg.
+    Prove: tools/prova_archivi.sh (in QEMU, 6 su 6), tools/prova_riapri.sh
+    (sull'host: riapertura, 302 voci, i livelli), tools/prova_zip.sh.
+
+  Chiesto, parola per parola in correzioni.txt, e sono otto pezzi:
+    1. la BARRA DI SCORRIMENTO dell'elenco, che manca;
+    2. COLONNE CLICCABILI (Nome, Byte, ...): un clic ordina per quella colonna,
+       un secondo clic rovescia l'ordine;
+    3. COLONNE RIDIMENSIONABILI, trascinando il bordo dell'intestazione;
+    4. DUE COLONNE AL POSTO DI UNA: «Nome», col solo nome del file, e
+       «Percorso», col percorso dentro l'archivio (dove verra' estratto) —
+       oggi «Nome» mostra il percorso parziale e i nomi lunghi si perdono;
+    5. Comandi > «Estrai tutto in...»: una modale che sceglie la directory di
+       destinazione, e che la sa anche CREARE;
+    6. File > «Finisci» diventa «Costruisci» — e l'archivio si costruisce
+       comunque DA SOLO quando si aggiunge un file o una cartella;
+    7. un menu «Opzioni», dopo «Comandi», con due modali:
+         «Compressione»: nessuna / veloce / normale / avanzata;
+         «Estensione predefinita»: se non c'e', .zip;
+    8. le opzioni si salvano in /exwin/config/archivi.cfg, e /exwin/config e'
+       la directory delle configurazioni di TUTTI i programmi di ExWin.
+
+  ! IL PUNTO 8 CAMBIA UNA REGOLA DELLA CASA, e l'ha deciso chi l'ha chiesto.
+    SVILUPPO.md diceva «i dati di un programma stanno in $HOME/.app/<nome>/»;
+    per le CONFIGURAZIONI dei programmi di ExWin adesso il posto e'
+    /exwin/config/<programma>.cfg. Una configurazione di sistema vale per
+    tutti gli utenti: se un giorno servira' per utente, $HOME/.app resta il
+    posto dove sovrascriverla.
+
+  ! I PUNTI 1-3 SONO DEL TOOLKIT, non di Archivi: un elenco a colonne con
+    barra, ordinamento e bordi trascinabili serve anche al file manager e alla
+    finestra Download. Chi lo fa guardi prima cosa c'e' gia' in lib/exwin.
+
+  ! «compressione» VUOL DIRE IL LIVELLO DEL DEFLATE di lib/exzip/deflate.c, che
+    oggi e' uno solo (comprime come zlib -6). «nessuna» e' lo store, che c'e'
+    gia'; «veloce» e «avanzata» chiedono al compressore due livelli nuovi.
+
+! @EXBROWSER-1024 EXBrowser A 1024x768: LA FINESTRA, I LINK DEI RISULTATI E
+  GLI SCARICAMENTI. (chiesto il 26 settembre 2026, urgente)
+
+  FATTO IL 26 SETTEMBRE 2026, i numeri in diario_browser.txt (0b):
+    1. la finestra si ridimensiona, e la pagina si reimpagina;
+    2. `window.parent` non c'era, e il rimando di DuckDuckGo si fermava; e
+       /wiki/Example.com passava per un file dal nome. Tutt'e due corretti,
+       provati in QEMU con un link vero;
+    3. in QEMU il manuale gcc.pdf si scarica intero. RESTA da sapere cosa si
+       e' visto sul ferro: Invio sceglie «Annulla» per contratto, e un $HOME
+       in sola lettura propone «/».
+
+  Chiesto, e sono tre guasti diversi:
+    1. a 1024x768 la finestra NON SI RIDIMENSIONA, e serve;
+    2. dopo una ricerca, un clic su un link dei risultati da' una PAGINA VUOTA,
+       e nella barra di stato c'e' «(lo crea javascript)» — cioe' il link non
+       ha un href vero e la destinazione la calcola uno script;
+    3. i manuali di gcc.gnu.org/onlinedocs NON SI SCARICANO.
+
+  ! Il 2 e il 3 vanno PRIMA MISURATI: che pagina di risultati era (quale
+    motore), che cosa c'e' nell'attributo del link, e per i manuali quale
+    risposta da' il server (TLS, redirect, tipo del contenuto, dimensione).
+    diario_browser.txt e' il posto dove scriverlo.
+
+! @EXIDE-NOMI I CONTROLLI DI exide: FORMA E NOMI. (chiesto il 26 settembre
+  2026, a comodo)
+
+  Chiesto:
+    - il pulsante RADIO dev'essere ROTONDO;
+    - «spunta» si chiama «checkbox»;
+    - «casella» si chiama «casella testo».
+
+  ! I NOMI SONO QUELLI DEL PANNELLO E DEL PROGETTO: se entrano nel file del
+    disegno, un progetto vecchio deve continuare ad aprirsi — si cambia
+    l'etichetta mostrata, non la parola salvata, o si leggono tutte e due.
+
 =============================================================================
 @VISTA L'IMPAGINATO NON E' UNA LIBRERIA — e quando conviene che lo diventi
 =============================================================================
@@ -4172,6 +4320,23 @@ nel codice, dove comincia.
 =============================================================================
 @TASTI-SISTEMA I TASTI CHE FERMANO LE COSE (chiesto il 21 settembre 2026)
 =============================================================================
+
+CTRL+ALT+CANC: FATTO IL 26 SETTEMBRE 2026 (tools/prova_tasti_sistema.sh, 3/3)
+  - in grafica lo prende wserver e lo gira a chi segue l'elenco delle
+    finestre, cioe' pm, che chiede: Riavvia, Esci, Spegni, Annulla (Annulla
+    per ultimo: e' quello che sceglie l'Invio). Riavvia e Spegni passano da
+    @GRAFICA-MODALE;
+  - in console di testo lo prende il driver della tastiera: la prima volta
+    scrive l'avviso, la seconda riavvia;
+  - in tutt'e due i casi UNA SECONDA PRESSIONE ENTRO 5 SECONDI RIAVVIA
+    SUBITO, dal server o dal driver — non da pm, che puo' essere proprio
+    quello bloccato. E' la risposta alla domanda «cosa succede se nessuno
+    risponde» scritta qui sotto.
+
+RESTA CTRL+C. ! E IL PEZZO CHE QUI SOTTO SI DA' PER MANCANTE C'E' GIA', in
+  parte: SYS_CONSOLE_SETFG (232) dichiara il processo in primo piano di una
+  console, e SYS_CONSOLE_INFO lo rende (campo fg). Chi fa Ctrl+C parta da li'
+  (la shell lo dichiara? quando?) prima di costruire gruppi di processi.
 
 Due tasti e un servizio, chiesti insieme perche' sono la stessa mancanza: in
 EX-OS, oggi, non c'e' nessun modo di dire «fermati» a qualcosa che gira.

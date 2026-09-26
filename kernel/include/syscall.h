@@ -287,6 +287,12 @@ typedef struct {
 #define SYS_CONSOLE_WRITE  230  /* scrive su una console specifica */
 #define SYS_CONSOLE_INFO   231  /* quante sono, qual e' la mia, qual e' visibile */
 #define SYS_CONSOLE_SETFG  232  /* dichiara il processo in primo piano (job control) */
+/* The text of the GRAPHICS console, for the log window of the desktop
+ * (@EXWIN-LOG). ebx = buffer, ecx = its size. Only the console of the
+ * graphics, and only to the same user as the process that holds it (or
+ * root): another user's desktop log is not theirs to read. A free number,
+ * the block 214-218 was never used. */
+#define SYS_CONSOLE_TESTO  214
 /* Chi rivendica la console della GRAFICA, e chi chiede quale sia.
  * ebx: 0 = chiedi (rende il numero, -1 se nessuna), 1 = prendi (la mia),
  *      2 = lascia. Vedi sys_console_grafica.
@@ -1419,6 +1425,7 @@ int32_t sys_time_set(InterruptFrame *f);
 int32_t sys_console_switch(InterruptFrame *f);
 int32_t sys_console_write(InterruptFrame *f);
 int32_t sys_console_info(InterruptFrame *f);
+int32_t sys_console_testo(InterruptFrame *f);
 int32_t sys_console_setfg(InterruptFrame *f);
 int32_t sys_console_grafica(InterruptFrame *f);
 int32_t sys_ipc_register(InterruptFrame *f);

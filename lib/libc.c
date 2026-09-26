@@ -395,6 +395,7 @@ typedef struct { unsigned int bit; } fd_set;
 #define SYS_CONSOLE_INFO   231
 #define SYS_CONSOLE_SETFG  232
 #define SYS_CONSOLE_GRAFICA 255
+#define SYS_CONSOLE_TESTO  214
 #define SYS_IOCTL         54
 #define SYS_DUP           41
 #define SYS_DUP2          63
@@ -6604,6 +6605,12 @@ int console_setfg(unsigned int pid)
 int console_grafica(int azione)
 {
     return (int)_syscall1(SYS_CONSOLE_GRAFICA, (unsigned int)azione);
+}
+
+/* The text of the graphics console (@EXWIN-LOG): see libc.h. */
+int console_testo(char *buf, unsigned int max)
+{
+    return (int)_syscall2(SYS_CONSOLE_TESTO, (uint32_t)buf, (uint32_t)max);
 }
 
 int ipc_register(const char *name)

@@ -454,6 +454,8 @@ static char          g_storia[STORIA_MAX][EXHTTP_URL_MAX];
 static int           g_storia_n = 0;
 
 ExFinestra    g_f, g_url, g_stato;
+int           g_fin_w = FIN_W, g_fin_h = FIN_H;   /* the size it has now */
+static ExFinestra g_bt_info, g_bt_vai, g_et_cerca;  /* moved on a resize */
 /* La casella della ricerca, accanto a quella dell'indirizzo: non e' esportata
  * perche' la guarda solo la procedura della finestra. */
 static ExFinestra g_cerca;
@@ -635,9 +637,9 @@ static void (*g_img_libera)(EximgBitmap *);
 
 int area_x(void) { return g_vi->cornice ? g_vi->ax : MARGINE; }
 int area_y(void) { return g_vi->cornice ? g_vi->ay : BARRA_Y + BARRA_H + MARGINE; }
-int area_w(void) { return g_vi->cornice ? g_vi->aw : FIN_W - 2 * MARGINE - SCORRI_W; }
+int area_w(void) { return g_vi->cornice ? g_vi->aw : g_fin_w - 2 * MARGINE - SCORRI_W; }
 int area_h(void) { return g_vi->cornice ? g_vi->ah
-                                        : FIN_H - BARRA_Y - BARRA_H - 2 * MARGINE - 20; }
+                                        : g_fin_h - BARRA_Y - BARRA_H - 2 * MARGINE - 20; }
 
 int barra_x(void) { return area_x() + area_w() + 2; }
 
@@ -3506,6 +3508,40 @@ static int e_estensione_da_pagina(const char *ext)
     return 0;
 }
 
+/* =============================================================================
+ * «CERTAINLY A FILE», FROM THE NAME ALONE (@EXBROWSER-1024, 26 September 2026)
+ *
+ * ! FOR AN ADDRESS ON THE NETWORK THE NAME DECIDES ONLY WHEN IT IS SURE. It
+ * used to be the opposite — anything not in the list of page extensions was
+ * a file — and Wikipedia's /wiki/Example.com became «Example.com is not a web
+ * page»: «.com» is a DOS program, and also the end of half the domain names
+ * that articles are named after. The same for /wiki/Node.js, /wiki/C.S. Lewis,
+ * a search for «file.exe»... An extension that is not on this list is
+ * fetched, and the Content-Type decides — the check that already follows
+ * every fetch (e_tipo_da_pagina).
+ *
+ * A local file keeps the old rule: there the name is all there is.
+ * ============================================================================= */
+static const char *programma_per(const char *ext, const char **quale);
+
+static int e_estensione_da_file(const char *ext)
+{
+    static const char *const file[] = {
+        "zip", "gz", "tgz", "tar", "bz2", "xz", "7z", "rar", "zst",
+        "iso", "img", "bin", "exe", "msi", "deb", "rpm", "dmg",
+        "pdf", "ps", "dvi", "djvu", "epub",
+        "doc", "docx", "odt", "xls", "xlsx", "ods", "ppt", "pptx", "odp",
+        "mp3", "ogg", "wav", "flac", "mp4", "avi", "mkv", "webm", "mov",
+        "png", "jpg", "jpeg", "gif", "bmp", "ico", "tif", "tiff", "webp",
+        "ttf", "otf", "woff", "woff2", 0
+    };
+    const char *quale;
+    int i;
+
+    for (i = 0; file[i]; i++) if (strcmp(ext, file[i]) == 0) return 1;
+    return programma_per(ext, &quale) != 0;
+}
+
 static int e_tipo_da_pagina(const char *tipo)
 {
     if (!tipo || !tipo[0]) return 1;        /* nobody said: try it as a page */
@@ -4232,7 +4268,8 @@ static void vai(const char *url, int in_storia, int usa_cache)
         char ext[16];
 
         estensione_di(url, ext, sizeof(ext));
-        if (!e_estensione_da_pagina(ext)) {
+        if (e_locale(url) ? !e_estensione_da_pagina(ext)
+                          : e_estensione_da_file(ext)) {
             if (e_locale(url)) {
                 const char *quale = 0, *bin = programma_per(ext, &quale);
                 char        perc[PERC_MAX], msg[PERC_MAX + 40];
@@ -5944,11 +5981,48 @@ static void tab_premi(void)
                 g_pez[i].y - g_scorri + pezzo_alto(i) / 2);
 }
 
+/* =============================================================================
+ * THE WINDOW CAN BE RESIZED (@EXBROWSER-1024, 26 September 2026)
+ *
+ * ! THE RIGHT-HAND PIECES ARE MEASURED FROM THE RIGHT, as they always were
+ * (see the comment where they are created): «?», «Vai» and the search box
+ * move with the right edge, the address field takes what is left, the
+ * status line follows the bottom. Then the page is laid out again for the
+ * new width — the same impagina() + disegna() that an image of unexpected
+ * size asks for.
+ *
+ * ! BELOW A MINIMUM THE CONTROLS STOP MOVING. The server gives the size the
+ * user dragged; laying out for less than FIN_W_MIN would give the address
+ * field a negative width. The window is smaller, the pieces are cut, and
+ * nothing is computed from a negative number.
+ * ============================================================================= */
+static void ridisponi(int w, int h)
+{
+    g_fin_w = w < FIN_W_MIN ? FIN_W_MIN : w;
+    g_fin_h = h < FIN_H_MIN ? FIN_H_MIN : h;
+
+    ex_sposta(g_bt_info, g_fin_w - MARGINE - 24, BARRA_Y + 4);
+    ex_sposta(g_bt_vai,  g_fin_w - MARGINE - 24 - 4 - 44, BARRA_Y + 4);
+    ex_sposta(g_et_cerca, CERCA_X - 44, BARRA_Y + 7);
+    ex_sposta(g_cerca,   CERCA_X, BARRA_Y + 4);
+    ex_misura(g_url, CERCA_X - 44 - 4 - (MARGINE + 32), 22);
+    ex_sposta(g_stato,   MARGINE, g_fin_h - 18);
+    ex_misura(g_stato, g_fin_w - 2 * MARGINE, 16);
+
+    impagina();
+    if (g_scorri > scorri_max()) g_scorri = scorri_max();
+    disegna();
+}
+
 static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 {
     switch (msg) {
     case EXM_CHIUDI:
         esci();
+        return 0;
+
+    case EXM_MISURA:
+        ridisponi(EX_X(lp), EX_Y(lp));
         return 0;
 
     case EXM_COMANDO:
@@ -6360,7 +6434,8 @@ int main(int argc, char **argv)
     vista_cliente(&g_estranei);
     vista_prepara(&g_principale);
 
-    g_f = ex_crea("finestra", "EXBrowser", EX_TITOLO | EX_BORDO | EX_CHIUDI,
+    g_f = ex_crea("finestra", "EXBrowser",
+                  EX_TITOLO | EX_BORDO | EX_CHIUDI | EX_RIDIM,
                   EX_AUTO, EX_AUTO, FIN_W, FIN_H, 0, 0, proc);
     ex_scarichi_alla_fine(scarico_finito, 0);
     if (!g_f) {
@@ -6419,10 +6494,11 @@ int main(int argc, char **argv)
     /* ! I DUE PULSANTI DI DESTRA SI MISURANO DALLA DESTRA, non dalla
      * sinistra: cosi' aggiungerne uno sposta solo il campo dell'indirizzo, che
      * e' l'unico pezzo che puo' restringersi senza diventare inutile. */
-    ex_crea("pulsante", "?", EX_FIGLIO, FIN_W - MARGINE - 24, BARRA_Y + 4,
-            24, 22, g_f, ID_INFO, 0);
-    ex_crea("pulsante", "Vai", EX_FIGLIO, FIN_W - MARGINE - 24 - 4 - 44,
-            BARRA_Y + 4, 44, 22, g_f, ID_VAI, 0);
+    g_bt_info = ex_crea("pulsante", "?", EX_FIGLIO, g_fin_w - MARGINE - 24,
+                        BARRA_Y + 4, 24, 22, g_f, ID_INFO, 0);
+    g_bt_vai  = ex_crea("pulsante", "Vai", EX_FIGLIO,
+                        g_fin_w - MARGINE - 24 - 4 - 44,
+                        BARRA_Y + 4, 44, 22, g_f, ID_VAI, 0);
 
     /* ! LA CASELLA DELLA RICERCA STA A DESTRA, PRIMA DI «VAI», e si misura
      * anch'essa dalla destra: e' l'indirizzo a restringersi, che e' l'unico
@@ -6432,8 +6508,8 @@ int main(int argc, char **argv)
      * ! E L'ETICHETTA C'E' PERCHE' UNA CASELLA VUOTA NON DICE COS'E'. Due
      * caselle bianche una accanto all'altra sono due misteri; con «Cerca»
      * davanti, la seconda si spiega da sola e la prima resta l'indirizzo. */
-    ex_crea("etichetta", "Cerca", EX_FIGLIO, CERCA_X - 44, BARRA_Y + 7,
-            40, 16, g_f, 0, 0);
+    g_et_cerca = ex_crea("etichetta", "Cerca", EX_FIGLIO, CERCA_X - 44,
+                         BARRA_Y + 7, 40, 16, g_f, 0, 0);
     g_cerca = ex_crea("testo", "", EX_FIGLIO, CERCA_X, BARRA_Y + 4,
                       CERCA_W, 22, g_f, ID_CERCA, 0);
 
@@ -6442,7 +6518,7 @@ int main(int argc, char **argv)
                     g_f, ID_URL, 0);
 
     g_stato = ex_crea("etichetta", "", EX_FIGLIO,
-                      MARGINE, FIN_H - 18, FIN_W - 2 * MARGINE, 16, g_f, 0, 0);
+                      MARGINE, g_fin_h - 18, g_fin_w - 2 * MARGINE, 16, g_f, 0, 0);
 
     /* ! IL TETTO DELLE IMMAGINI SI SCEGLIE QUI, a finestra gia' aperta: prima
      * di ex_crea la memoria che il server a finestre prendera' per questa

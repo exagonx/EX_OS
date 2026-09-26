@@ -1120,6 +1120,30 @@ int32_t sys_console_grafica(InterruptFrame *frame)
     return g_console_grafica;
 }
 
+/* =============================================================================
+ * SYS_CONSOLE_TESTO (214) -- the text of the graphics console (@EXWIN-LOG)
+ *
+ * ebx = buffer, ecx = size. Returns the bytes written, or -1 when there is no
+ * graphics. Same user as the holder, or root: see syscall.h.
+ * ============================================================================= */
+int32_t sys_console_testo(InterruptFrame *frame)
+{
+    char     *buf  = (char *)frame->ebx;
+    uint32_t  max  = frame->ecx;
+    Process  *proc = proc_get_current();
+    Process  *chi;
+
+    if (max == 0) return 0;
+    if (!syscall_verify_ptr(buf, max)) return ERR(EFAULT);
+
+    if (g_console_grafica < 0 || g_console_grafica_pid == 0) return -1;
+    chi = proc_get_by_pid(g_console_grafica_pid);
+    if (chi == NULL || chi->state == PROC_ZOMBIE) return -1;
+    if (proc->uid != 0 && proc->uid != chi->uid) return ERR(EPERM);
+
+    return (int32_t)vga_console_testo((uint32_t)g_console_grafica, buf, max);
+}
+
 /* Riferimento al pool PCB globale (definito in sched.c) */
 
 /* =============================================================================

@@ -3888,6 +3888,19 @@ ExDom *exdom_apri(void *memoria, unsigned int byte,
      * gia' faceva da se'. */
     exjs_metti(js, exjs_globale(js), "window", exjs_globale(js));
 
+    /* ! self, parent AND top ARE THE WINDOW ITSELF in a top-level page, and
+     * leaving them undefined broke real navigation: DuckDuckGo's result
+     * links go through a page whose whole body is
+     *     window.parent.location.replace("https://...")
+     * — with `parent` undefined the script threw, the <noscript> refresh
+     * was (rightly) skipped, and the user got a blank page (@EXBROWSER-1024,
+     * 26 September 2026). Inside a frame they should be the frame's parent;
+     * a frame here gets the same answer, which navigates the frame instead of
+     * the whole page — a smaller error than a page that does nothing. */
+    exjs_metti(js, exjs_globale(js), "self",   exjs_globale(js));
+    exjs_metti(js, exjs_globale(js), "parent", exjs_globale(js));
+    exjs_metti(js, exjs_globale(js), "top",    exjs_globale(js));
+
     /* ! GLI ASCOLTATORI DELLA FINESTRA VANNO SUL GLOBALE, non sul prototipo
      * dei nodi: `window` E' il globale, e il globale non e' un nodo. Il perche'
      * per esteso sta accanto a m_win_addEventListener. */

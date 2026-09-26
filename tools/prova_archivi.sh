@@ -104,7 +104,7 @@ fi
 # File e' il primo menu: «Nuovo...» e' la seconda voce, «Finisci» la terza.
 # Comandi: «Aggiungi file...» e' la terza voce, ma la freccia giu' salta il
 # separatore, quindi due giu'.
-echo "=== 3. ne crea uno: Nuovo, due Aggiungi, Finisci ==="
+echo "=== 3. ne crea uno: Nuovo, due Aggiungi, e si costruisce DA SOLO ==="
 {
     avvia "/exwin/bin/archivi "
     echo "key:f10@2"; echo "key:down@1"; echo "key:ret@3"
@@ -113,7 +113,8 @@ echo "=== 3. ne crea uno: Nuovo, due Aggiungi, Finisci ==="
     echo "/disk/prova/alfa.txt@5"
     echo "key:f10@2"; echo "key:right@1"; echo "key:down,down@2"; echo "key:ret@3"
     echo "/disk/prova/binario@5"
-    echo "key:f10@2"; echo "key:down,down@2"; echo "key:ret@4"
+    # ! NIENTE «Costruisci» (fu «Finisci»): dal 26 settembre 2026 l'archivio
+    # si costruisce da solo a ogni aggiunta, ed e' questo che si prova.
     echo "foto:$D/3-finito.ppm@2"
     echo "key:alt-f1@2"
     echo "zip -l /disk/c.zip@5"
@@ -177,6 +178,81 @@ then
 else
     echo "  [NO]  l'intestazione e' sparita: vedi EXM_DISEGNA in archivi.c"
     esito=1
+fi
+
+# --- 5. quaranta voci: la barra di scorrimento, e un clic su «Byte» --------
+#
+# ! L'ORDINE LO DICE LA PRIMA RIGA: dopo il clic su «Byte» la prima riga deve
+# essere il file piu' piccolo, che si chiama apposta «piccolissimo.txt». Si
+# riconosce dalla fotografia contando i pixel scuri nella prima riga della
+# colonna «Nome» prima e dopo: cambiano solo se la riga e' un'altra.
+echo "=== 5. quaranta voci: scorrimento, e ordinare per Byte ==="
+python3 - "$D" <<'FINEPY'
+import sys, zipfile, random
+d = sys.argv[1]
+random.seed(3)
+z = zipfile.ZipFile(d + "/grande.zip", "w", zipfile.ZIP_DEFLATED)
+for i in range(39):
+    z.writestr("cartella/file%02d.txt" % i, "x" * random.randint(200, 5000))
+z.writestr("piccolissimo.txt", "x")
+z.close()
+FINEPY
+"$DEBUGFS" -w -R "write $D/grande.zip grande.zip" "$OFF" > /dev/null 2>&1
+
+passi_a() {
+    local dx=$1 dy=$2 i d rx ry
+    d=$(( (dx < dy ? dx : dy) / 10 ))
+    for ((i = 0; i < d; i++)); do printf '%s\n' "mon:mouse_move 10 10@0"; done
+    rx=$(( dx - d * 10 )); ry=$(( dy - d * 10 ))
+    for ((i = 10; i <= rx; i += 10)); do printf '%s\n' "mon:mouse_move 10 0@0"; done
+    for ((i = 10; i <= ry; i += 10)); do printf '%s\n' "mon:mouse_move 0 10@0"; done
+    printf '%s\n' "mon:mouse_move $(( rx % 10 )) $(( ry % 10 ))@0"
+}
+{
+    avvia "/exwin/bin/archivi /disk/grande.zip "
+    echo "foto:$D/5-prima.ppm@2"
+} > "$D/args.txt"
+mapfile -t A < "$D/args.txt"
+timeout 400 python3 tools/qemu_drive.py "${A[@]}" > "$D/5a.log" 2>&1
+CL=$(python3 tools/misura_finestre.py --client "$D/5-prima.ppm" 2>/dev/null)
+if [ -z "$CL" ]; then
+    echo "  [NO]  la finestra non si trova nella fotografia"; esito=1
+else
+    read -r CX CY <<< "$CL"
+    # «Byte» e' la terza colonna: 4 + 170 + 170 + 40 dal bordo, a meta' altezza
+    # dell'intestazione (22 + 9 sotto l'inizio del client).
+    {
+        avvia "/exwin/bin/archivi /disk/grande.zip "
+        for i in $(seq 1 5); do echo "mon:mouse_move -600 -600@0"; done
+        passi_a $(( CX + 384 )) $(( CY + 31 ))
+        echo "mon:mouse_button 1@0"
+        echo "mon:mouse_button 0@2"
+        echo "foto:$D/5-dopo.ppm@2"
+    } > "$D/args.txt"
+    mapfile -t A < "$D/args.txt"
+    timeout 400 python3 tools/qemu_drive.py "${A[@]}" > "$D/5b.log" 2>&1
+    if python3 - "$D/5-prima.ppm" "$D/5-dopo.ppm" "$CX" "$CY" <<'FINEPY'
+import sys
+def scuri(p, cx, cy):
+    d = open(p, "rb").read().split(b"\n", 3)
+    w = int(d[1].split()[0]); px = d[3]
+    n = 0
+    for y in range(cy + 40, cy + 56):              # la prima riga
+        for x in range(cx + 8, cx + 170):         # la colonna «Nome»
+            i = (y * w + x) * 3
+            if px[i] < 80 and px[i + 1] < 80 and px[i + 2] < 80: n += 1
+            if (px[i], px[i + 1], px[i + 2]) == (255, 255, 255) and False: pass
+    return n
+cx, cy = int(sys.argv[3]), int(sys.argv[4])
+a, b = scuri(sys.argv[1], cx, cy), scuri(sys.argv[2], cx, cy)
+print("        prima riga, pixel del nome: prima %d, dopo %d" % (a, b))
+sys.exit(0 if a != b else 1)
+FINEPY
+    then
+        echo "  [OK]  un clic su «Byte» ha cambiato la prima riga"
+    else
+        echo "  [NO]  il clic su «Byte» non ha riordinato (vedi $D/5-dopo.ppm)"; esito=1
+    fi
 fi
 
 echo ""

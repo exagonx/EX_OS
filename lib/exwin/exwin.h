@@ -104,6 +104,13 @@ typedef long (*ExProcedura)(ExFinestra, unsigned int, unsigned int, long);
  * sola: il ciclo dei messaggi dorme finche' non arriva un evento, e un
  * orologio si aggiornerebbe solo quando l'utente muove il mouse. */
 #define EXM_TEMPO       0x000D
+/* The list of open windows has changed: read it with ex_finestre_elenco().
+ * Only the window that called ex_finestre_segui() receives it. */
+#define EXM_FINESTRE    0x000E
+/* Ctrl+Alt+Canc was pressed with the graphics on screen (@TASTI-SISTEMA).
+ * Only the window that called ex_finestre_segui() receives it: the desktop,
+ * which asks what to do. */
+#define EXM_SISTEMA     0x000F
 
 #define EX_X(lp)        ((int)((lp) & 0xFFFF))
 #define EX_Y(lp)        ((int)(((lp) >> 16) & 0xFFFF))
@@ -331,6 +338,44 @@ ExFinestra  ex_fuoco_chi(ExFinestra finestra);
  * chiudeva solo la scrivania e lasciava la grafica accesa senza nessuno
  * dentro. Un programma qualunque non ha motivo di chiamarla. */
 void        ex_spegni_scrivania(void);
+
+/* =============================================================================
+ * THE OPEN WINDOWS, FOR A TASKBAR (@FIN-ICONA, 26 September 2026)
+ *
+ * ex_finestre_segui(f): from now on the server sends the list of open
+ * windows whenever it changes, and f receives EXM_FINESTRE each time. The
+ * first list arrives at once. One follower per desktop: the last to ask.
+ *
+ * ex_finestre_elenco(): copies the last list received into v, at most max
+ * entries, in creation order; returns how many there are.
+ *
+ * ex_finestra_attiva(id): restore it if minimized, bring it to the front,
+ * give it the focus. ex_finestra_riduci(id): minimize it — the same as the
+ * «_» button the server draws next to the close button.
+ *
+ * ! THE ids ARE THE SERVER'S, not ExFinestra handles: the windows belong to
+ * other programs. The pid says whose, and is how a taskbar finds the icon.
+ * ============================================================================= */
+#define EX_VF_RIDOTTA   0x0001      /* minimized */
+#define EX_VF_FUOCO     0x0002      /* has the keyboard focus */
+
+typedef struct {
+    unsigned int id;
+    unsigned int pid;
+    unsigned int stato;             /* EX_VF_* */
+    char         titolo[48];
+} ExVoceFin;
+
+void        ex_finestre_segui(ExFinestra f);
+int         ex_finestre_elenco(ExVoceFin *v, int max);
+void        ex_finestra_attiva(unsigned int id);
+void        ex_finestra_riduci(unsigned int id);
+
+/* Asks every program but this one to close, as with their X button; the
+ * server stays on. Used by the desktop to shut down with the graphics still
+ * on (@GRAFICA-MODALE): the list of ex_finestre_segui() then says who is
+ * left. */
+void        ex_chiudi_le_altre(void);
 
 /* -----------------------------------------------------------------------------
  * Gli appunti, senza passare da `ex_area`
