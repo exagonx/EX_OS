@@ -58,7 +58,7 @@
 
 /* +0.001 a ogni modifica: `ip.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ip.drv", "0.003");
+EX_VERSIONE("ip.drv", "0.004");
 
 /* =============================================================================
  * Costanti di protocollo
@@ -743,6 +743,10 @@ static int  prossimo_salto(const unsigned char *dest, unsigned char *hop);
 #define TCP_RTO_MS     600     /* primo intervallo di ritrasmissione */
 #define TCP_TENTATIVI  6       /* poi si dichiara persa la connessione */
 #define TCP_APERTURA_MS 5000   /* attesa predefinita per il collegamento */
+/* ! FIN_WAIT_2 HA UNA SCADENZA (28 settembre 2026): il nostro FIN confermato,
+ * si aspetta quello dell'altro — ma un server che non lo manda teneva lo slot
+ * per sempre. Linux aspetta 60 s (tcp_fin_timeout); qui gli slot sono 24. */
+#define TCP_FIN2_MS    30000
 
 /* Stati interni. Sono piu' di quelli che vede un client (IP_TCP_*) perche'
  * la chiusura ordinata di TCP ha piu' passi di quanti ne interessino a
@@ -811,6 +815,15 @@ typedef struct {
     unsigned int  attesa_pid;    /* chi aspetta una risposta */
     unsigned int  attesa_tipo;   /* IP_MSG_TCP_APRI o IP_MSG_TCP_RICEVI */
     unsigned int  attesa_scade;
+
+    /* ! IL CLIENTE HA CHIUSO: quel che arriva ancora non lo leggera' nessuno
+     * (28 settembre 2026). Senza questo segno uno slot S_MORTA con dei byte
+     * non letti — l'avviso di chiusura del TLS, la coda di una pagina
+     * interrotta — non tornava mai libero, e dopo una pagina di Wikipedia (55
+     * richieste, piu' server) la tabella era piena: -ENFILE alla richiesta
+     * dopo, «non riesco a connettermi (-23)». */
+    unsigned int  chiusa_cliente;
+    unsigned int  fin2_scade;    /* FIN_WAIT_2: quando smettere di aspettare */
 } Conn;
 
 static Conn         g_tcp[IP_TCP_CONNESSIONI];
@@ -1359,6 +1372,9 @@ static void tratta_tcp(const unsigned char *f, unsigned int ihl, unsigned int to
         !seq_prima(c->snd_una, c->fin_seq + 1u)) {
         c->stato = (c->stato == S_ULTIMO_ACK) ? S_MORTA : c->stato;
         c->rto_scade = 0;
+        /* FIN_WAIT_2: si aspetta il suo FIN, ma non per sempre. */
+        if (c->stato == S_FIN_MIO && c->fin2_scade == 0)
+            c->fin2_scade = uptime_ms() + TCP_FIN2_MS;
     }
 
     tcp_spingi(c);
@@ -1377,6 +1393,15 @@ static void tcp_scadenze(void)
         Conn *c = &g_tcp[i];
 
         if (c->stato == S_LIBERA) continue;
+
+        /* FIN_WAIT_2 scaduto: l'altro non chiudera' mai, lo si da' per fatto. */
+        if (c->stato == S_FIN_MIO && c->fin2_scade != 0 &&
+            (int)(ora - c->fin2_scade) >= 0) {
+            c->stato      = S_MORTA;
+            c->fin2_scade = 0;
+            c->rto_scade  = 0;
+            continue;
+        }
 
         /* Attesa del client scaduta (apertura che non si completa). */
         if (c->attesa_pid != 0 && c->attesa_scade != 0 &&
@@ -1435,7 +1460,8 @@ static void tcp_apri(unsigned int cliente, const IpTcpApri *a)
          * letto tutto: buttare via dati non ancora consegnati sarebbe
          * perderli in silenzio. */
         if (g_tcp[i].stato == S_LIBERA ||
-            (g_tcp[i].stato == S_MORTA && g_tcp[i].rx_len == 0 &&
+            (g_tcp[i].stato == S_MORTA &&
+             (g_tcp[i].rx_len == 0 || g_tcp[i].chiusa_cliente) &&
              g_tcp[i].attesa_pid == 0)) {
             c = &g_tcp[i];
             break;
@@ -1668,6 +1694,11 @@ static void tcp_chiudi(unsigned int cliente, const IpTcpRif *r)
         rispondi_esito(cliente, 0);
         return;
     }
+
+    /* Quel che e' arrivato e non e' stato letto non lo leggera' piu' nessuno. */
+    c->chiusa_cliente = 1;
+    c->rx_len = 0;
+    c->rx_off = 0;
 
     if (c->stato == S_APERTA || c->stato == S_FIN_SUO) {
         /* Il FIN va DOPO i dati in coda: il suo numero di sequenza e'

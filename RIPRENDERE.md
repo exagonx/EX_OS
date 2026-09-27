@@ -64,6 +64,17 @@ prendere la console — e `prova_registro.sh` la dava per buona, perche'
 contava il bordo come testo. Sistemate tutte e due. **@PM-SFONDO**: Angolo,
 Centro, Allarga, Ripeti, con `ex_immagine_disponi()` nel toolkit.
 
+## 28 settembre: la ricerca su Wikipedia, e le @media
+
+**«Cerca non fa niente»** non era la ricerca: era la tabella TCP di ip.drv,
+piena dopo una pagina di Wikipedia (-23, ENFILE). Slot morti con byte non
+letti e FIN_WAIT_2 senza scadenza non tornavano mai liberi. ! Per provare i
+siti veri: `EXOS_QEMU_EXTRA=-enable-kvm` — una pagina da 190 KB in TLS arriva
+in 20 secondi invece che in piu' di un minuto. **Wikipedia**: le @media si
+saltavano intere (578 regole su 964); adesso si valutano, con visibility,
+:checked che segue il clic e le <label>. Resta in colonna: mancano width,
+float, padding, flex.
+
 ## Calctor, e un toolkit che non faceva nascere il sessantacinquesimo controllo
 
 **@CALCTOR** e' fatta: tre modalita', display a quattro righe, cronologia in

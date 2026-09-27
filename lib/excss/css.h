@@ -108,10 +108,21 @@ typedef struct {
 
     /* sopra, destra, sotto, sinistra — la stessa rotazione di CSS */
     short         margine[4];
+    /* visibility: 1 visible, 0 hidden/collapse, CSS_FORSE non detta. Si
+     * eredita. Il browser tratta «hidden» come assente: sui siti veri e'
+     * quasi sempre un menu a comparsa in posizione assoluta, il cui posto
+     * non conta (Vector 2022 nasconde cosi' i suoi menu). */
+    unsigned char visibile;
 } CssStile;
 
 /* Mette uno stile a «niente dichiarato». */
 void css_stile_vuoto(CssStile *s);
+
+/* La larghezza della finestra in pixel, contro cui si valutano le @media
+ * (min-width, max-width): va detta PRIMA di css_analizza, e di nuovo quando
+ * la finestra cambia misura (e allora i fogli vanno riletti). 800 finche'
+ * nessuno la dice. Aggiunta il 28 settembre 2026. */
+void css_media_larghezza(int px);
 
 /* -----------------------------------------------------------------------------
  * L'origine di una dichiarazione, che e' meta' della cascata
@@ -198,7 +209,8 @@ typedef struct {
 #define CSS_P_MARG_SOTTO    9
 #define CSS_P_MARG_SX       10
 #define CSS_P_FAMIGLIA      11  /* font-family  */
-#define CSS_P_N             12
+#define CSS_P_VISIBILE      12  /* visibility (28 settembre 2026) */
+#define CSS_P_N             13
 
 typedef struct {
     unsigned short proprieta;   /* CSS_P_*                          */

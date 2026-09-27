@@ -262,7 +262,7 @@ LIV  ETICHETTA        IL COMPITO, IN UNA RIGA
   1  @ARCHIVI-VISTA   FATTO e provato in QEMU: tutti e otto i punti
   1  @EXBROWSER-1024  FATTO e provato in QEMU: resta cosa ha visto sul ferro per gcc
   1  @EXIDE-NOMI      FATTO: nomi nel pannello (fotografati) e nel manuale, radio rotondo
-  1  @EXBROWSER-HTML5 ! Wikipedia impaginata male, «Cerca» non va, scroll delle select, HTML5, CSS
+  1  @EXBROWSER-HTML5 ! «Cerca» FATTO; Wikipedia meglio (@media, visibility, menu): resta il CSS di disposizione
 
   2  @SUONO-EMU8000   l'EMU8000 di una AWE32 resta spento    <- @SUONO-CAMPIONI
   2  @RUST-1          alloc: un GlobalAlloc sopra la malloc  <- @RUST-0
@@ -4417,6 +4417,43 @@ $ @EDIT-RTF L'EDITOR IN MODALITA' RTF. (chiesto il 23 settembre 2026)
     sito: quale elemento HTML5 manca (section, nav, details, dialog...) e
     quale proprieta' CSS (flex, grid, var(), calc(), @media — vedi anche
     @NAV-UNITA e @NAV-BORDER, che ne sono gia' un pezzo).
+
+  IL 28 SETTEMBRE 2026 (exbrowser 0.008, ip.drv 0.004, excss): precisato da
+  chi usa — «qualunque cosa si cerca, Invio o il bottone, ricarica la stessa
+  pagina» — e provato in QEMU su it.wikipedia.org VERO (con -enable-kvm la
+  pagina arriva in 20 secondi invece che in piu' di uno).
+
+  2. «CERCA»: FATTO. La casella della barra funzionava gia'; quella DENTRO
+     Wikipedia componeva l'indirizzo giusto e poi «non riesco a connettermi
+     (-23)», cioe' -ENFILE: la tabella delle connessioni TCP di ip.drv (24
+     posti) era piena. Due buchi:
+       - uno slot S_MORTA con byte non letti non tornava mai libero, anche se
+         il cliente l'aveva chiuso — l'avviso di chiusura del TLS bastava;
+       - FIN_WAIT_2 senza scadenza: un server che non manda il suo FIN teneva
+         lo slot per sempre. Adesso 30 secondi.
+     Una pagina di Wikipedia (55 richieste su piu' server) li riempiva, e la
+     ricerca subito dopo non trovava posto. Provato: «roma» + Invio e
+     «venezia» + il pulsante «Ricerca» portano alle voci. In piu': «Vai»
+     della barra cerca se l'indirizzo e' quello della pagina e in Cerca ci
+     sono parole (il clic dava il fuoco al pulsante e si ricaricava la
+     pagina), e <base href> si rispetta (prima si ignorava).
+  1. WIKIPEDIA: MEGLIO, NON ANCORA «DECENTE». Il foglio di Vector (202 KB)
+     dava 59 regole: le @media si saltavano INTERE, e dentro ce n'erano 578
+     su 964. Adesso lib/excss valuta @media (screen, min/max-width anche in
+     calc(), schema chiaro), @supports (una proprieta' vale se QUESTO lettore
+     la capisce: si prende il ripiego di mask-image) e @layer: 214 regole.
+     ! Le @media si decidono come su uno schermo da 1280 almeno: sotto i
+       1120 pixel Wikipedia nasconde la casella di ricerca, e le regole
+       «strette» vogliono un impaginatore che rifa' la pagina in colonna.
+     Aggiunti: visibility (hidden = assente: e' cosi' che Vector nasconde i
+     menu), :checked che segue il CLIC (l'attributo si aggiorna e si
+     reimpagina), e il clic su una <label> che accende la sua spunta. Il
+     «Menu principale» adesso e' chiuso e si apre cliccandolo.
+     Provato: tools/prove/cssprova.c 95 su 95 (18 nuove).
+     RESTA, ed e' il grosso: le proprieta' di DISPOSIZIONE — width, float,
+     padding, flex, position — non ci sono (il lettore ne conosce 13), quindi
+     la pagina resta in colonna; la rotella del mouse non scorre la pagina;
+     una voce lunga (Roma) supera il tetto di 1 MB e si tronca.
 
   Chiesto:
     - il pulsante RADIO dev'essere ROTONDO;

@@ -93,6 +93,9 @@ typedef struct Vista {
     unsigned int   pagina_n;
     char           ancora[64];
     char           qui[EXHTTP_URL_MAX];
+    /* <base href>, gia' reso assoluto: la base dei riferimenti relativi,
+     * vuota se la pagina non ne ha uno (28 settembre 2026). */
+    char           base[EXHTTP_URL_MAX];
     int            load_sparato;
     ExJsCtx *      js;
     ExDom *        dom;
@@ -111,6 +114,7 @@ VistaEst     *g_ve = &g_principale.est;
 #define g_pagina_n         (g_v->pagina_n)
 #define g_ancora           (g_v->ancora)
 #define g_qui              (g_v->qui)
+#define g_base             (g_v->base)
 #define g_load_sparato     (g_v->load_sparato)
 #define g_js               (g_v->js)
 #define g_dom              (g_v->dom)
@@ -1261,6 +1265,10 @@ static int locale_leggi(const char *url, unsigned char *buf, unsigned int max,
 static int risolvi(const char *rif, char *out, unsigned int max)
 {
     HttpUrl u;
+    /* ! <base href> VINCE SULL'INDIRIZZO DELLA PAGINA, come dice la specifica:
+     * prima si ignorava, e una pagina con <base> mandava moduli, fogli di
+     * stile e immagini tutti nel posto sbagliato. */
+    const char *qui = g_base[0] ? g_base : g_qui;
 
     if (!rif || !rif[0] || max < 2) return 0;
 
@@ -1304,11 +1312,11 @@ static int risolvi(const char *rif, char *out, unsigned int max)
      * riferimento finirebbe in http_url(), che di un «file:» non sa niente, e
      * la voce Aiuto sarebbe una pagina sola e senza uscite.
      * ===================================================================== */
-    if (e_locale(g_qui)) {
+    if (e_locale(qui)) {
         char base[PERC_MAX];
         int  i;
 
-        if (!percorso_di(g_qui, base, sizeof(base))) return 0;
+        if (!percorso_di(qui, base, sizeof(base))) return 0;
 
         /* Un riferimento che comincia con «/» e' gia' un percorso assoluto:
          * la directory della pagina non c'entra. */
@@ -1325,7 +1333,7 @@ static int risolvi(const char *rif, char *out, unsigned int max)
         return 1;
     }
 
-    if (!http_url(g_qui, &u)) return 0;
+    if (!http_url(qui, &u)) return 0;
 
     /* ! «//host/x» E' UN INDIRIZZO SENZA SCHEMA, non un percorso: vuol dire
      * «lo stesso schema della pagina». Le immagini dei siti veri sono scritte
@@ -2419,6 +2427,13 @@ static void raccogli_css(void)
 {
     int i, presi = 0;
 
+    /* ! LE @media SI DECIDONO COME SU UNO SCHERMO DA 1280, ALMENO (28
+     * settembre 2026). Sotto i 1120 pixel Wikipedia nasconde la casella di
+     * ricerca e lascia un pulsante che la apre con uno script; e in generale
+     * le regole «strette» presuppongono un impaginatore che sa rifare la
+     * pagina in colonna (width, float, flex), che qui non c'e'. Le regole da
+     * scrivania sono quelle piu' provate e le meno bisognose di trucchi. */
+    css_media_larghezza(area_w() > 1280 ? area_w() : 1280);
     css_prepara(&g_css, g_css_reg, CSS_REGOLE_MAX, g_css_pezzi, CSS_PEZZI_MAX,
                 g_css_dich, CSS_DICH_MAX, g_css_arena, CSS_ARENA_MAX);
     css_analizza(&g_css, CSS_DI_SISTEMA, sizeof(CSS_DI_SISTEMA) - 1,
@@ -3241,6 +3256,48 @@ static int nodo_sotto(int x, int y)
     return -1;
 }
 
+/* ! UN CLIC SU UNA <label> VALE UN CLIC SULLA SUA SPUNTA (28 settembre 2026),
+ * come in ogni browser: `for="id"`, o la spunta che la label contiene. Su
+ * Wikipedia si apre il «Menu principale» cliccando la scritta, non il
+ * quadratino. Solo spunte e radio: il resto dei controlli si clicca da se'.
+ * Rende l'indice del controllo, o -1. */
+static int ctrl_della_label(int x, int y)
+{
+    int n = nodo_sotto(x, y), bersaglio = -1, i;
+
+    while (n >= 0 && !(g_doc.nodi[n].tipo == HTML_ELEMENTO &&
+                       uguale(html_nome(&g_doc, n), "label")))
+        n = g_doc.nodi[n].padre;
+    if (n < 0) return -1;
+
+    {
+        const char *per = html_attr(&g_doc, n, "for");
+
+        if (per && per[0]) {
+            for (i = 0; i < (int)g_doc.nodi_n; i++) {
+                const char *id;
+
+                if (g_doc.nodi[i].tipo != HTML_ELEMENTO) continue;
+                id = html_attr(&g_doc, i, "id");
+                if (id && strcmp(id, per) == 0) { bersaglio = i; break; }
+            }
+        }
+    }
+    for (i = 0; i < g_ctrl_n; i++) {
+        const Ctrl *c = &g_ctrl[i];
+
+        if (c->tipo != CTRL_SPUNTA && c->tipo != CTRL_RADIO) continue;
+        if (bersaglio >= 0) { if (c->nodo == bersaglio) return i; continue; }
+        {
+            int su = c->nodo;      /* dentro la label? */
+
+            while (su >= 0 && su != n) su = g_doc.nodi[su].padre;
+            if (su == n) return i;
+        }
+    }
+    return -1;
+}
+
 /* C'e' almeno un <script> in questa pagina? Serve solo a scegliere le parole
  * di un messaggio: vedi in fondo a vai(). */
 static int ha_script(void)
@@ -3842,6 +3899,24 @@ static void documento_nuovo(unsigned int n)
     html_prepara(&g_doc, g_nodi, NODI_MAX, g_attr, ATTR_MAX,
                  g_arena, ARENA_MAX);
     html_analizza(&g_doc, (const char *)g_pagina, n);
+
+    /* Il primo <base href> della pagina, reso assoluto rispetto all'indirizzo
+     * vero (g_base e' ancora vuota mentre lo si risolve). */
+    g_base[0] = '\0';
+    {
+        unsigned int k;
+
+        for (k = 0; k < g_doc.nodi_n; k++) {
+            const char *h;
+            char        b[EXHTTP_URL_MAX];
+
+            if (g_doc.nodi[k].tipo != HTML_ELEMENTO) continue;
+            if (!uguale(html_nome(&g_doc, (int)k), "base")) continue;
+            h = html_attr(&g_doc, (int)k, "href");
+            if (h && h[0] && risolvi(h, b, sizeof(b))) strcpy(g_base, b);
+            break;
+        }
+    }
 
     g_scorri = 0;
     g_ctrl_n = 0;
@@ -5754,6 +5829,33 @@ static void barra_mosso(int y)
  * the mouse: same controls, same JavaScript click, same preventDefault. It was
  * the body of EXM_MOUSE_GIU until 23 September 2026.
  * ============================================================================= */
+
+/* ! UNA SPUNTA CLICCATA CAMBIA ANCHE L'ALBERO (28 settembre 2026). Il CSS
+ * guarda `:checked` sull'attributo, e l'attributo non seguiva il clic: i menu
+ * fatti di solo CSS — «:checked ~ .menu {visibility: visible}», cosi' li apre
+ * Vector su Wikipedia — non si aprivano mai. Si rimette l'attributo come dice
+ * lo stato e SI REIMPAGINA SEMPRE: con gli script accesi ctrl_al_dom() ha gia'
+ * scritto l'attributo prima dell'evento, apposta SENZA reimpaginare, e allora
+ * qui non cambierebbe niente — ed e' cosi' che su Wikipedia la spunta si
+ * accendeva e il menu restava chiuso. */
+static void spunte_all_albero(void)
+{
+    int i;
+
+    for (i = 0; i < g_ctrl_n; i++) {
+        const Ctrl *c = &g_ctrl[i];
+        int         ha;
+
+        if (c->tipo != CTRL_SPUNTA && c->tipo != CTRL_RADIO) continue;
+        if (c->nodo < 0 || c->nodo >= (int)g_doc.nodi_n) continue;
+        ha = html_attr(&g_doc, c->nodo, "checked") != 0;
+        if (ha == (c->acceso != 0)) continue;
+        if (c->acceso) html_attr_metti(&g_doc, c->nodo, "checked", "");
+        else           html_attr_togli(&g_doc, c->nodo, "checked");
+    }
+    impagina();
+}
+
 static void clic_pagina(int x, int y)
 {
     int k;
@@ -5766,6 +5868,7 @@ static void clic_pagina(int x, int y)
      * capita, e in quel caso vince il controllo: chi clicca dentro una
      * casella vuole scriverci, non essere portato altrove. */
     k = ctrl_sotto(x, y);
+    if (k < 0) k = ctrl_della_label(x, y);
     if (k >= 0) {
         Ctrl *c = &g_ctrl[k];
 
@@ -5777,6 +5880,7 @@ static void clic_pagina(int x, int y)
             g_ctrl_fuoco = -1;
             if (!clic_al_documento(x, y)) c->acceso = (unsigned char)!c->acceso;
             if (segui_location()) return;
+            spunte_all_albero();
             break;
 
         case CTRL_RADIO: {
@@ -5793,6 +5897,7 @@ static void clic_pagina(int x, int y)
                     g_ctrl[j].acceso = 0;
             c->acceso = 1;
             g_ctrl_fuoco = -1;
+            spunte_all_albero();
             break;
         }
 
@@ -6035,6 +6140,20 @@ static long proc(ExFinestra f, unsigned int msg, unsigned int wp, long lp)
 
                 cerca(t ? t : "");
                 return 0;
+            }
+            /* ! COL MOUSE IL FUOCO E' GIA' DEL PULSANTE (28 settembre 2026):
+             * premere «Vai» glielo da' prima che arrivi il comando, e la prova
+             * qui sopra non vedeva mai la casella Cerca — si ricaricava la
+             * pagina di adesso. Se l'indirizzo e' ancora quello della pagina
+             * e in Cerca ci sono parole, e' una ricerca. */
+            {
+                const char *u = ex_testo_prendi(g_url);
+                const char *t = ex_testo_prendi(g_cerca);
+
+                if (t && t[strspn(t, " \t")] && (!u || !u[0] || strcmp(u, g_qui) == 0)) {
+                    cerca(t);
+                    return 0;
+                }
             }
             vai_o_cerca(ex_testo_prendi(g_url));
             return 0;

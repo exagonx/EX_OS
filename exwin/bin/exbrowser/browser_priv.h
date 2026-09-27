@@ -59,7 +59,7 @@
 #include "biscotti.h"
 
 /* ------------------------------------------------------------------ i tetti */
-#define VERSIONE_APP "0.007"
+#define VERSIONE_APP "0.008"
 /* The size the window is BORN with. Since 26 September 2026 it can be
  * resized (@EXBROWSER-1024): the size it has NOW is g_fin_w x g_fin_h. */
 #define FIN_W       760

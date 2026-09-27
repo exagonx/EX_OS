@@ -88,6 +88,7 @@ void css_stile_vuoto(CssStile *s)
     s->display      = CSS_DISPLAY_EREDITA;
     s->famiglia     = CSS_FAM_EREDITA;
     for (i = 0; i < 4; i++) s->margine[i] = CSS_MISURA_NO;
+    s->visibile     = CSS_FORSE;
 }
 
 void css_prepara(CssFoglio *f,
@@ -338,6 +339,7 @@ static const PropNota PROPRIETA[] = {
     { "margin-bottom",    CSS_P_MARG_SOTTO },
     { "margin-left",      CSS_P_MARG_SX    },
     { "font-family",      CSS_P_FAMIGLIA   },
+    { "visibility",       CSS_P_VISIBILE   },
     { 0, 0 }
 };
 
@@ -402,6 +404,12 @@ static int leggi_valore(unsigned short prop, const char *v, unsigned int n,
 
     case CSS_P_FAMIGLIA:
         return leggi_famiglia(v, n, out);
+
+    case CSS_P_VISIBILE:
+        if (n == 7 && minusc((unsigned char)v[0]) == 'v') { *out = 1; return 1; }
+        if ((n == 6 && minusc((unsigned char)v[0]) == 'h') ||
+            (n == 8 && minusc((unsigned char)v[0]) == 'c')) { *out = 0; return 1; }
+        return 0;
 
     case CSS_P_DISPLAY:
         if (n == 4 && minusc((unsigned char)v[0]) == 'n') { *out = CSS_DISPLAY_NIENTE; return 1; }
@@ -526,6 +534,7 @@ static void css_posa(CssStile *s, unsigned short prop, unsigned int val)
     case CSS_P_CORPO:      s->corpo = (short)((int)val - 32768);       break;
     case CSS_P_ALLINEA:    s->allineamento = (unsigned char)val;       break;
     case CSS_P_DISPLAY:    s->display = (unsigned char)val;            break;
+    case CSS_P_VISIBILE:   s->visibile = (unsigned char)val;           break;
     case CSS_P_MARG_SOPRA: s->margine[0] = (short)((int)val - 32768);  break;
     case CSS_P_MARG_DX:    s->margine[1] = (short)((int)val - 32768);  break;
     case CSS_P_MARG_SOTTO: s->margine[2] = (short)((int)val - 32768);  break;
@@ -980,6 +989,214 @@ static void indice_metti(CssFoglio *f, int k)
     *coda = k;
 }
 
+/* =============================================================================
+ * @media, @supports, @layer (28 settembre 2026)
+ *
+ * ! FINO A OGGI SI SALTAVANO PER INTERO, e su Wikipedia voleva dire 578 regole
+ * su 964 buttate via — 418 dentro un semplice «@media screen». Li' Vector
+ * nasconde i menu a tendina e dispone la pagina: senza, i menu si vedevano
+ * aperti e tutto finiva in colonna.
+ *
+ * @media: si valuta la condizione contro la LARGHEZZA DELLA FINESTRA
+ * (css_media_larghezza, che il browser aggiorna); vale, e le regole dentro si
+ * leggono al loro posto nell'ordine del documento. screen e all valgono, print
+ * no; min-width e max-width in px, em, rem e calc(A +/- B); schema scuro,
+ * movimento ridotto e le caratteristiche che non si conoscono NON valgono.
+ *
+ * @supports: una proprieta' e' «supportata» se QUESTO lettore la capisce — non
+ * se la capisce un browser qualunque. E' il punto: una pagina che offre
+ * `mask-image` o, in alternativa, un ripiego, deve ricevere il ripiego.
+ *
+ * @layer con un blocco: le regole dentro valgono (l'ordine dei livelli non si
+ * distingue: resta quello del documento).
+ * ============================================================================= */
+static int g_media_w = 800;
+
+void css_media_larghezza(int px)
+{
+    if (px > 0) g_media_w = px;
+}
+
+/* Una misura di una media query: «1120px», «40em», «calc(1120px - 1px)». */
+static int media_misura(const char *s, unsigned int n, int *out)
+{
+    unsigned int i = 0;
+    int          v = 0, neg = 0;
+
+    while (i < n && spazio((unsigned char)s[i])) i++;
+    if (i + 5 <= n && minusc((unsigned char)s[i]) == 'c' && s[i + 4] == '(') {
+        int a, b, segno = 1;
+        unsigned int j = i + 5, k;
+
+        k = j;
+        while (k < n && s[k] != '+' && !(s[k] == '-' && k > j && spazio((unsigned char)s[k - 1]))) k++;
+        if (k >= n || !media_misura(s + j, k - j, &a)) return 0;
+        if (s[k] == '-') segno = -1;
+        j = k + 1;
+        k = j;
+        while (k < n && s[k] != ')') k++;
+        if (!media_misura(s + j, k - j, &b)) return 0;
+        *out = a + segno * b;
+        return 1;
+    }
+    if (i < n && s[i] == '-') { neg = 1; i++; }
+    if (i >= n || s[i] < '0' || s[i] > '9') return 0;
+    while (i < n && s[i] >= '0' && s[i] <= '9') v = v * 10 + (s[i++] - '0');
+    if (i < n && s[i] == '.') { i++; while (i < n && s[i] >= '0' && s[i] <= '9') i++; }
+    if (i + 2 <= n && minusc((unsigned char)s[i]) == 'e' && minusc((unsigned char)s[i + 1]) == 'm') v *= 16;
+    else if (i + 3 <= n && minusc((unsigned char)s[i]) == 'r' && minusc((unsigned char)s[i + 1]) == 'e') v *= 16;
+    *out = neg ? -v : v;
+    return 1;
+}
+
+static int pezzo_ug(const char *s, unsigned int n, const char *parola)
+{
+    unsigned int k = 0;
+
+    while (k < n && parola[k] && minusc((unsigned char)s[k]) == parola[k]) k++;
+    return k == n && parola[k] == '\0';
+}
+
+/* «(nome: valore)» o «(nome)», senza le parentesi. */
+static int media_caratteristica(const char *s, unsigned int n)
+{
+    unsigned int i = 0, ni, nf, vi, vf;
+    int          v;
+
+    while (i < n && spazio((unsigned char)s[i])) i++;
+    ni = i;
+    while (i < n && s[i] != ':' && !spazio((unsigned char)s[i])) i++;
+    nf = i;
+    while (i < n && (spazio((unsigned char)s[i]) || s[i] == ':')) i++;
+    vi = i;
+    vf = n;
+    while (vf > vi && spazio((unsigned char)s[vf - 1])) vf--;
+
+    if (pezzo_ug(s + ni, nf - ni, "min-width") || pezzo_ug(s + ni, nf - ni, "min-device-width"))
+        return media_misura(s + vi, vf - vi, &v) && g_media_w >= v;
+    if (pezzo_ug(s + ni, nf - ni, "max-width") || pezzo_ug(s + ni, nf - ni, "max-device-width"))
+        return media_misura(s + vi, vf - vi, &v) && g_media_w <= v;
+    if (pezzo_ug(s + ni, nf - ni, "width"))
+        return media_misura(s + vi, vf - vi, &v) && g_media_w == v;
+    if (pezzo_ug(s + ni, nf - ni, "prefers-color-scheme"))
+        return pezzo_ug(s + vi, vf - vi, "light");
+    if (pezzo_ug(s + ni, nf - ni, "prefers-reduced-motion"))
+        return pezzo_ug(s + vi, vf - vi, "no-preference");
+    if (pezzo_ug(s + ni, nf - ni, "orientation"))
+        return pezzo_ug(s + vi, vf - vi, "landscape");
+    if (pezzo_ug(s + ni, nf - ni, "hover") || pezzo_ug(s + ni, nf - ni, "any-hover"))
+        return vi == vf || pezzo_ug(s + vi, vf - vi, "hover");
+    if (pezzo_ug(s + ni, nf - ni, "pointer") || pezzo_ug(s + ni, nf - ni, "any-pointer"))
+        return vi == vf || pezzo_ug(s + vi, vf - vi, "fine");
+    if (pezzo_ug(s + ni, nf - ni, "color"))
+        return 1;
+    return 0;       /* quel che non si conosce non vale */
+}
+
+/* Una sola query (senza virgole): [only|not] [tipo] [and (c)]... */
+static int media_una(const char *s, unsigned int n)
+{
+    unsigned int i = 0;
+    int          nega = 0, va = 1;
+
+    while (i < n) {
+        unsigned int p;
+
+        while (i < n && spazio((unsigned char)s[i])) i++;
+        if (i >= n) break;
+        if (s[i] == '(') {
+            int liv = 1;
+
+            p = ++i;
+            while (i < n && liv) { if (s[i] == '(') liv++; else if (s[i] == ')') liv--; i++; }
+            if (!media_caratteristica(s + p, (i - 1) - p)) va = 0;
+            continue;
+        }
+        p = i;
+        while (i < n && !spazio((unsigned char)s[i]) && s[i] != '(') i++;
+        if (pezzo_ug(s + p, i - p, "not"))       nega = 1;
+        else if (pezzo_ug(s + p, i - p, "only") || pezzo_ug(s + p, i - p, "and")) { }
+        else if (pezzo_ug(s + p, i - p, "screen") || pezzo_ug(s + p, i - p, "all")) { }
+        else va = 0;                            /* print, speech, tv... */
+    }
+    return nega ? !va : va;
+}
+
+static int media_va(const char *s, unsigned int n)
+{
+    unsigned int i = 0, p = 0;
+    int          liv = 0;
+
+    if (n == 0) return 1;                        /* «@media {» = sempre */
+    for (i = 0; i <= n; i++) {
+        if (i < n && s[i] == '(') liv++;
+        else if (i < n && s[i] == ')') liv--;
+        else if (i == n || (s[i] == ',' && liv == 0)) {
+            if (media_una(s + p, i - p)) return 1;
+            p = i + 1;
+        }
+    }
+    return 0;
+}
+
+/* @supports: not, and, or, (proprieta': valore), selector(...). */
+static int supports_va(const char *s, unsigned int n)
+{
+    unsigned int i = 0;
+    int          ris = -1, op = 0;       /* op: 0 nessuno, 1 and, 2 or */
+
+    while (i < n) {
+        int          v, nega = 0;
+        unsigned int p;
+
+        while (i < n && spazio((unsigned char)s[i])) i++;
+        if (i >= n) break;
+        if (i + 3 <= n && pezzo_ug(s + i, 3, "not") && (i + 3 == n || spazio((unsigned char)s[i + 3]) || s[i + 3] == '(')) {
+            nega = 1; i += 3;
+            while (i < n && spazio((unsigned char)s[i])) i++;
+        }
+        if (i + 3 <= n && pezzo_ug(s + i, 3, "and") && spazio((unsigned char)s[i + 3])) { op = 1; i += 3; continue; }
+        if (i + 2 <= n && pezzo_ug(s + i, 2, "or") && spazio((unsigned char)s[i + 2])) { op = 2; i += 2; continue; }
+
+        if (i + 9 <= n && pezzo_ug(s + i, 9, "selector(")) {
+            int liv = 1;
+            i += 9;
+            while (i < n && liv) { if (s[i] == '(') liv++; else if (s[i] == ')') liv--; i++; }
+            v = 1;
+        } else if (i < n && s[i] == '(') {
+            int liv = 1;
+            unsigned int k, due = 0;
+
+            p = ++i;
+            while (i < n && liv) { if (s[i] == '(') liv++; else if (s[i] == ')') liv--; i++; }
+            /* dentro: una dichiarazione (i due punti al primo livello) o un'altra condizione */
+            liv = 0;
+            for (k = p; k < i - 1; k++) {
+                if (s[k] == '(') liv++;
+                else if (s[k] == ')') liv--;
+                else if (s[k] == ':' && liv == 0) { due = k; break; }
+            }
+            if (due) {
+                unsigned short cod;
+                unsigned int   a = p, b = due;
+                while (a < b && spazio((unsigned char)s[a])) a++;
+                while (b > a && spazio((unsigned char)s[b - 1])) b--;
+                v = prop_codice(s + a, b - a, &cod);
+            } else {
+                v = supports_va(s + p, (i - 1) - p);
+            }
+        } else {
+            while (i < n && !spazio((unsigned char)s[i])) i++;   /* parola ignota */
+            v = 0;
+        }
+        if (nega) v = !v;
+        if (ris < 0)      ris = v;
+        else if (op == 1) ris = ris && v;
+        else              ris = ris || v;
+    }
+    return ris > 0;
+}
+
 unsigned int css_analizza(CssFoglio *f, const char *testo, unsigned int n,
                           unsigned char origine)
 {
@@ -1005,13 +1222,35 @@ unsigned int css_analizza(CssFoglio *f, const char *testo, unsigned int n,
          * `@media` ne ha dentro delle altre, e saltare fino alla prima graffa
          * chiusa lascerebbe il resto del blocco a fare da selettore. */
         if (testo[i] == '@') {
-            int liv = 0;
+            int          liv = 0, entra = 0;
+            unsigned int ni = i + 1, nf, pi, pf, bi = 0, bf = 0;
+
+            /* il nome, e la condizione fino alla graffa (o al punto e virgola) */
+            nf = ni;
+            while (nf < n && nomeok((unsigned char)testo[nf])) nf++;
+            pi = nf;
+            pf = pi;
+            while (pf < n && testo[pf] != '{' && testo[pf] != ';') pf++;
 
             while (i < n) {
-                if (testo[i] == '{') liv++;
-                else if (testo[i] == '}') { liv--; if (liv <= 0) { i++; break; } }
+                if (testo[i] == '{') { if (liv == 0) bi = i + 1; liv++; }
+                else if (testo[i] == '}') { liv--; if (liv <= 0) { bf = i; i++; break; } }
                 else if (testo[i] == ';' && liv == 0) { i++; break; }
                 i++;
+            }
+            if (bi && bf > bi) {
+                while (pf > pi && spazio((unsigned char)testo[pf - 1])) pf--;
+                while (pi < pf && spazio((unsigned char)testo[pi])) pi++;
+                if (pezzo_ug(testo + ni, nf - ni, "media"))
+                    entra = media_va(testo + pi, pf - pi);
+                else if (pezzo_ug(testo + ni, nf - ni, "supports"))
+                    entra = supports_va(testo + pi, pf - pi);
+                else if (pezzo_ug(testo + ni, nf - ni, "layer"))
+                    entra = 1;
+            }
+            if (entra) {
+                fatte += css_analizza(f, testo + bi, bf - bi, origine);
+                if (f->troncato) return fatte;
             }
             continue;
         }
@@ -1411,6 +1650,7 @@ void css_calcola(const CssFoglio *f, const HtmlDoc *d, int nodo,
         out->corsivo      = ereditato->corsivo;
         out->allineamento = ereditato->allineamento;
         out->famiglia     = ereditato->famiglia;   /* il carattere scende */
+        out->visibile     = ereditato->visibile;   /* anche la visibilita' */
     }
 
     if (!f || !d || nodo < 0) return;

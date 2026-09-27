@@ -852,6 +852,12 @@ static void impagina_nodo(int v, const CssStile *ered)
          * si aprono col mouse. Impaginarli lo stesso vorrebbe dire una pagina
          * piena di voci che non dovrebbero vedersi. */
         if (mio.display == CSS_DISPLAY_NIENTE) return;
+        /* ! E `visibility: hidden` LO STESSO, pur tenendo il posto per la
+         * specifica (28 settembre 2026): sui siti veri e' il modo dei menu a
+         * comparsa, in posizione assoluta — Vector 2022 li nasconde cosi', e
+         * li mostra con `:checked ~`. Tenere un buco al loro posto sarebbe
+         * peggio che non tenerlo. */
+        if (mio.visibile == 0) return;
 
         g_stile_ora = mio;
 

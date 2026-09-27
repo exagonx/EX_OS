@@ -42,6 +42,7 @@ static struct {
     void (*inline_)(const char *, unsigned int, CssStile *);
     void (*vuoto)(CssStile *);
     int  (*colore)(const char *, unsigned int, unsigned int *);
+    void (*media_w)(int);
 } P;
 
 static int assicura(void)
@@ -68,6 +69,8 @@ static int assicura(void)
             P.vuoto    = (void (*)(CssStile *))exlib_simbolo(t, "css_stile_vuoto");
             P.colore   = (int (*)(const char *, unsigned int, unsigned int *))
                          exlib_simbolo(t, "css_colore");
+            /* FACOLTATIVA: un'excss.so di prima salta le @media e basta. */
+            P.media_w  = (void (*)(int))exlib_simbolo(t, "css_media_larghezza");
         }
     }
 
@@ -92,6 +95,7 @@ static void vuoto_locale(CssStile *s)
     s->corsivo      = CSS_FORSE;
     s->allineamento = CSS_ALL_EREDITA;
     s->display      = CSS_DISPLAY_EREDITA;
+    s->visibile     = CSS_FORSE;
     for (i = 0; i < 4; i++) s->margine[i] = CSS_MISURA_NO;
 }
 
@@ -146,4 +150,9 @@ int css_colore(const char *v, unsigned int n, unsigned int *out)
 {
     if (assicura() && P.colore) return P.colore(v, n, out);
     return 0;
+}
+
+void css_media_larghezza(int px)
+{
+    if (assicura() && P.media_w) P.media_w(px);
 }

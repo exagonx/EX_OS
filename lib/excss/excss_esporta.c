@@ -40,6 +40,9 @@ static const char *const g_nomi[] = {
     /* Aggiunta il 25 agosto 2026: i colori degli attributi HTML. */
     "css_colore",
 
+    /* Aggiunta il 28 settembre 2026: la larghezza per le @media. */
+    "css_media_larghezza",
+
     "__lib_avvio"
 };
 
@@ -51,6 +54,8 @@ static void *const g_indirizzi[] = {
     (void *)css_stile_vuoto,
 
     (void *)css_colore,
+
+    (void *)css_media_larghezza,
 
     (void *)__libc_ponti_avvia
 };
